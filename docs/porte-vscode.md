@@ -19,7 +19,12 @@ Versão usada nas medições: Code 1.145.2 (`com.microsoft.VSCode`), Electron/Ch
 | Código JS do VS Code (`Contents/Resources/app`) na imagem e executando, laço do AppKit (`-[NSApplication run]` de `nsurl.c` atendendo o CFRunLoop) | ✅ |
 | Thread principal reconhecida (`pthread_main_np`, `+[NSThread isMainThread]`, `performSelectorOnMainThread:`, `CFRunLoopPerformBlock` no loop certo) | ✅ (antes toda thread "era a principal" e o Chromium rodava `[NSApp run]` na thread NetworkConfigWatcher, levando o V8 à thread errada) |
 | Primeiro processo auxiliar (`Code Helper`, serviço de rede) lançado com `posix_spawn` | ✅ |
-| Rendezvous Mach entre processos (`bootstrap_look_up ...MachPortRendezvousServer.<ppid>`) | ❌ sessão "IPC Mach"; `getppid()` agora vem do kernel (antes era sempre 1) |
+| Rendezvous Mach entre processos (`bootstrap_look_up ...MachPortRendezvousServer.<ppid>`) | ✅ (sessão "IPC Mach"; `getppid()` vem do kernel) |
+| Laço do Node rodando (promessas de `fs`, timers): thread "embed" do Electron faz `poll()` no fd do kqueue do libuv | ✅ (`cx_kqueue_peek`; antes o `poll` nunca via o kqueue pronto e o JS parava no 1º `await`) |
+| Módulos nativos `.node` do processo principal (`dlopen`) com o pedaço da libc++ que eles importam (`libcxx.c`) | ✅ policy-watcher, spdlog, sqlite3... (exceções C++ abortam com mensagem) |
+| Startup completo do VS Code (serviços, storage, `lifecycle phase 2`, `windowsManager#open`, `window#ctor`) | ✅ |
+| `new BrowserWindow` → `ElectronNSWindow` (moldura `NSThemeFrame`, cores do sistema, `NSColorSpace`, `@YES`) | ✅ |
+| Memória compartilhada (`mach_make_memory_entry_64` com `MAP_MEM_NAMED_CREATE` + `vm_map`) | ❌ sessão "IPC Mach" (CHECK em `Electron+0xE3F7C8`) |
 | Demais auxiliares (GPU, renderização) e janela na tela | ❌ |
 | Conteúdo de janelas CoreAnimation/IOSurface na tela (CALayer, CALayerHost, IOSurface por porta Mach) | ✅ app de teste no QEMU; com o VS Code ainda não visto (seção "CoreAnimation e IOSurface") |
 
@@ -35,19 +40,38 @@ visitante@mOS ~ % run /Aplicativos/VSCode.app
 dyld[mOS]: símbolo não implementado no libSystem do mOS: _pthread_mach_thread_np
 ```
 
-### Falha atual (6 nov. 2026, 17:50)
+### Falha atual (6 nov. 2026, 20:00)
 
-O processo principal (pid 3) fica vivo e lança o `Code Helper` do serviço de rede (pid 4). O helper morre em
-`base/apple/mach_port_rendezvous_mac.cc:256`: `bootstrap_look_up com.microsoft.VSCode.MachPortRendezvousServer.3`
-devolve 1102 (serviço desconhecido) → "Mach rendezvous failed, terminating process". Falta o bootstrap Mach entre
-processos (kernel `machipc.c` + `mach.c`) e a fonte `DISPATCH_SOURCE_TYPE_MACH_RECV` no `dispatch.c`, com que o servidor
-do processo principal atende os pedidos. Depois disso vêm os helpers de GPU/renderização e a janela (IOSurface/CoreAnimation).
+O VS Code passa por todo o startup do processo principal — o log `[main ...]` aparece na serial (`--verbose`) até
+`window#ctor` — e o `ElectronNSWindow` é criado. Em seguida o Chromium mapeia memória compartilhada
+(`Electron+0x7D9200`: `vm_map` + `vm_deallocate`) e o resultado cai num CHECK (`Electron+0xE3F7C8`). Causa: o
+Chromium cria a região com `mach_make_memory_entry_64(..., offset 0, MAP_MEM_NAMED_CREATE | RW, ...)` (região nova,
+zerada), e o mOS trata `offset` como endereço a copiar. Pedido à sessão "IPC Mach" (mach.c / kernel machipc.c).
 
-Corrigido nesta etapa: toda thread se dizia a principal (`pthread_main_np` sempre 1, `+[NSThread isMainThread]` sempre
-YES), então o Chromium criava um `MessagePumpNSApplication` na thread NetworkConfigWatcher e rodava `[NSApp run]` lá, que
-acabava executando JS sem isolate do V8 (falha em `Electron Framework+0xBF0A4A`). Também: `performSelectorOnMainThread:`
-passa pela fila principal do GCD, `CFRunLoopPerformBlock` roda no loop pedido, `getppid()` vem do kernel (`SYS_PROCLIST`).
+Corrigido nesta etapa (em ordem):
 
+1. Thread principal: `pthread_main_np` e `+[NSThread isMainThread]` diziam sempre "sim"; o Chromium rodava `[NSApp run]`
+   na thread NetworkConfigWatcher (V8 sem isolate, `Electron+0xBF0A4A`). Também `performSelectorOnMainThread:` (fila
+   principal do GCD), `CFRunLoopPerformBlock` (no loop pedido) e `getppid()` real.
+2. Laço do Node: a thread "embed" do Electron espera com `poll(uv_backend_fd)`; `poll` não sabia que um kqueue fica
+   legível com evento pronto → `kqueue.c: cx_kqueue_peek`, usado por `poll` e pelo novo `select` (`darwin.c`).
+3. Módulos nativos: `stage-vscode.ps1 -ComModulosNativos` copia com `\\?\` (caminhos > 260 caracteres, ex.:
+   `vscode-policy-watcher.node`); `libcxx.c` implementa os 62 símbolos de libc++/libc++abi que esses módulos importam.
+4. `os_unfair_lock` era no-op (extra.c): o PartitionAlloc corrompia a freelist com várias threads — era o CHECK
+   intermitente "slotsize/entrypos" (`Electron+0x5F3F9AD`). `pthread_threadid_np` devolve o tid real.
+5. Janela: `NSThemeFrame` (moldura devolvida por `-superview` da view de conteúdo, para o swizzling de `swipeWithEvent:`),
+   `__kCFBooleanTrue/False` como objetos (`@YES` era um ponteiro para ponteiro), cores do sistema que faltavam,
+   `NSColorSpace`, `NSScreen colorSpace`, getters de `NSWindow`, `NSEqualRects`/`NSIntersectionRect`/... (cgdisplay.c),
+   `@{}`/`@[]` vazios (`___NSDictionary0__`/`___NSArray0__`, literals.c).
+
+Diagnóstico novo:
+
+- `/Sistema/Biblioteca/despejar-threads` (posto por `stage-vscode.ps1 -Diagnostico`): o kernel despeja a cada 30 s, no
+  log serial, cada thread de usuário com estado, `rip`/`rsp` e endereços de código na pilha ("despejo:"); serve para
+  achar onde o app ficou parado sem falhar. `proc_fault` também imprime textos legíveis apontados pela pilha.
+- `tools/vscode-teste.ps1 -Persist`: o disco não é descartável (lê-se depois o que o app gravou, ex.: logs do VS Code).
+- Endereços no Electron: offset = endereço − `0x400001010000`; `__TEXT`/`__DATA` têm vmaddr = offset no arquivo, então
+  seletores e strings perto de um endereço saem lendo `__objc_selrefs` (rebase de chained fixups: 36 bits baixos).
 ## Tamanho do que falta (medido com `tools/machocheck.c`)
 
 Caminho crítico (o que o executável `Code` carrega ao abrir):
@@ -233,7 +257,8 @@ portas, objetos do kernel (task 0x103, host 0x203, thread 0x1000+tid, bootstrap 
   para páginas físicas próprias) e de vetores de portas. Enfileira no destino; quem recebe sem mensagem **bloqueia** (`TH_WAITING`,
   `wait_pid = -7`), com prazo acordado pelo escalonador (`wake_sleepers` em `sched.c`). Na recepção os direitos entram no espaço
   de quem recebe, a memória OOL é mapeada (páginas compartilhadas, contadas em `pref[]` como as de COW) e é acrescentado o
-  *trailer* de auditoria de 52 bytes — o `audit_token` leva o pid de quem enviou (`audit_token_to_pid`, usado pelo rendezvous).
+  *trailer* no tamanho pedido em `MACH_RCV_TRAILER_ELEMENTS` (bits 24..27 das opções: 0 → 8 bytes, 1 → 12, 2 → 20, 3+ → 52
+  com o `audit_token`, que leva o pid de quem enviou — `audit_token_to_pid`, usado pelo rendezvous).
 - `SYS_MACH_PORT` — `mach_port_allocate/deallocate/mod_refs/insert_right/extract_right/construct/destruct`, tipos e refs,
   conjuntos (`insert/move/extract_member`), notificações (`request_notification`: sem-remetentes e nome-morto), limites e
   contexto, status/peek/pending (o `cx_mach_pending` do kqueue consulta `MACH_OP_PENDING`), e as portas especiais da task
@@ -241,7 +266,10 @@ portas, objetos do kernel (task 0x103, host 0x203, thread 0x1000+tid, bootstrap 
 - `SYS_MACH_BOOTSTRAP` — registro de serviços **global** no kernel: `check_in` dá o direito de receber ao servidor, `look_up`
   dá um direito de enviar a quem procura, `register` publica um direito que o chamador já tem.
 - `SYS_MACH_VM` — entradas de memória compartilhada (`mach_make_memory_entry_64` / `mach_vm_map`) que viajam como direito numa
-  mensagem e são mapeadas nos dois processos (base::SharedMemory).
+  mensagem e são mapeadas nos dois processos (base::SharedMemory). Com `MAP_MEM_NAMED_CREATE` (0x20000) a entrada é um
+  objeto novo e zerado; sem ele, as páginas já mapeadas em `[offset, offset+size)` do chamador. `mach_vm_map` com
+  `VM_FLAGS_ANYWHERE` mapeia as **mesmas** páginas físicas (respeitando o deslocamento e a proteção). `vm_deallocate` ainda
+  não desmapeia.
 - **Herança**: filhos de `posix_spawn`/`fork` herdam o direito de bootstrap do pai (ou a porta dada a
   `posix_spawnattr_setspecialport_np`) — `machipc_spawn`, chamado em `proc_spawn_in` e no `fork` de `process.c`. `machipc_exit`
   derruba os direitos ao processo sair: portas sem receptor viram mortas e disparam as notificações pendentes.
@@ -259,9 +287,10 @@ descritor de porta (transfere um send novo) e um bloco OOL com uma string; o pai
 resposta. Imprime `machtest: PASS`. (O harness sem QEMU `tools/machotest.c` não cobre este caminho: ele é do carregador Mach-O,
 não do escalonador/portas; o teste roda no QEMU.)
 
-Estado: kernel + libSystem compilando (`build.ps1 -OutDir build-ipc`). Falta confirmar no ciclo integrado do VS Code
-(`tools/vscode-teste.ps1`) que os `Code Helper` passam do `bootstrap_look_up`/`mach_msg` sem cair — feito junto com a sessão do
-caminho principal, que mantém o VM do Electron de pé.
+Estado: `machtest: PASS` no QEMU (`build-ipc`, rodado por um LaunchDaemon para a saída ir à serial): check_in/look_up entre
+processos, mensagem complexa com send-once + porta transferida + OOL, memória compartilhada (o filho cria uma entrada
+`NAMED_CREATE` e manda a porta; o pai mapeia, lê e escreve; o filho vê a escrita do pai) e resposta. No ciclo integrado do VS
+Code os `Code Helper` já passam do rendezvous.
 
 ## CoreAnimation e IOSurface: conteúdo da janela na tela (6 nov. 2026)
 

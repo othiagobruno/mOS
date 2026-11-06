@@ -393,20 +393,53 @@ char *mkdtemp(char *t) {
  * Espera em fatias de 1 ms até o prazo (timeout < 0 = sem prazo). */
 typedef struct { int fd; short events, revents; } cx_pollfd_t;
 int cx_fd_readable(int fd, long *avail, int *eof);
+int cx_fd_writable(int fd);                                    /* kqueue.c: sockets em connect não estão prontos */
+int cx_kqueue_peek(int fd);
 int poll(cx_pollfd_t *fds, unsigned n, int timeout) {
     u64 end = (u64)SYS0(SYS_TIME) + (u64)(timeout < 0 ? 0 : timeout);
     for (;;) {
         int ready = 0;
         for (unsigned i = 0; i < n; i++) {
-            fds[i].revents = (short)(fds[i].events & 0x4);    /* POLLOUT */
+            fds[i].revents = (short)((fds[i].events & 0x4) && cx_fd_writable(fds[i].fd) ? 0x4 : 0);   /* POLLOUT */
             long avail; int eof;
-            if ((fds[i].events & 0x1) && cx_fd_readable(fds[i].fd, &avail, &eof)) fds[i].revents |= eof && !avail ? 0x11 : 0x1;  /* POLLIN (+POLLHUP) */
+            int kq = cx_kqueue_peek(fds[i].fd);               /* fd de kqueue: legível com evento pronto */
+            if (kq >= 0) { if ((fds[i].events & 0x1) && kq) fds[i].revents |= 0x1; }
+            else if ((fds[i].events & 0x1) && cx_fd_readable(fds[i].fd, &avail, &eof)) fds[i].revents |= eof && !avail ? 0x11 : 0x1;  /* POLLIN (+POLLHUP) */
             if (fds[i].revents) ready++;
         }
         if (ready || timeout == 0 || (timeout > 0 && (u64)SYS0(SYS_TIME) >= end)) return ready;
         SYS1(SYS_SLEEP, 1);
     }
 }
+
+/* ---- select sobre o poll acima (fd_set do macOS: 1024 bits em int32; timeval {long sec; int usec}) */
+typedef struct { long sec; int usec; } cx_timeval_t;
+#define CX_FDSET_MAX 1024
+static int fdset_has(const void *s, int fd) { return s && (((const u32 *)s)[fd / 32] >> (fd % 32)) & 1; }
+static void fdset_put(void *s, int fd) { ((u32 *)s)[fd / 32] |= 1u << (fd % 32); }
+int select(int nfds, void *rd, void *wr, void *ex, cx_timeval_t *tv) {
+    cx_pollfd_t p[64];               /* até 64 descritores marcados (o polling do Node usa um) */
+    unsigned n = 0;
+    if (nfds > CX_FDSET_MAX) nfds = CX_FDSET_MAX;
+    for (int fd = 0; fd < nfds && n < 64; fd++) {
+        short ev = (short)((fdset_has(rd, fd) ? 0x1 : 0) | (fdset_has(wr, fd) ? 0x4 : 0));
+        if (ev) { p[n].fd = fd; p[n].events = ev; p[n].revents = 0; n++; }
+    }
+    int timeout = tv ? (int)(tv->sec * 1000 + tv->usec / 1000) : -1;
+    int r = poll(p, n, timeout);
+    unsigned words = (unsigned)(nfds + 31) / 32;
+    for (unsigned w = 0; w < words; w++) { if (rd) ((u32 *)rd)[w] = 0; if (wr) ((u32 *)wr)[w] = 0; if (ex) ((u32 *)ex)[w] = 0; }
+    int count = 0;
+    for (unsigned i = 0; r > 0 && i < n; i++) {
+        if (rd && (p[i].revents & 0x11)) { fdset_put(rd, p[i].fd); count++; }
+        if (wr && (p[i].revents & 0x4)) { fdset_put(wr, p[i].fd); count++; }
+    }
+    return r < 0 ? r : count;
+}
+int select$1050(int nfds, void *rd, void *wr, void *ex, cx_timeval_t *tv) { return select(nfds, rd, wr, ex, tv); }
+int select$DARWIN_EXTSN(int nfds, void *rd, void *wr, void *ex, cx_timeval_t *tv) { return select(nfds, rd, wr, ex, tv); }
+/* FD_SET do SDK novo pergunta se o fd cabe no fd_set */
+int __darwin_check_fd_set_overflow(int fd, const void *set, int unlimited) { (void)set; return unlimited || (fd >= 0 && fd < CX_FDSET_MAX); }
 
 /* ---- posix_spawn: ações de arquivo extras (o SYS_SPAWN do mOS herda stdin/stdout/stderr) */
 int posix_spawn_file_actions_addopen(void *a, int fd, const char *path, int flags, unsigned mode) {

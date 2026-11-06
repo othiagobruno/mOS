@@ -53,7 +53,9 @@ if ($ComModulosNativos) {
             $rel = $f.FullName.Substring($u.Length)
             $t = "$dst\Resources\app\node_modules.asar.unpacked$rel"
             New-Item -ItemType Directory -Force (Split-Path $t) -ErrorAction SilentlyContinue | Out-Null
-            Copy-Item $f.FullName $t -ErrorAction SilentlyContinue
+            # prefixo \\?\: alguns caminhos de origem passam de 260 caracteres (ex.: vscode-policy-watcher.node)
+            try { [IO.File]::Copy('\\?\' + $f.FullName, '\\?\' + $t, $true) }
+            catch { Write-Host "não copiado: $rel ($($_.Exception.Message))" -ForegroundColor Yellow }
         }
     } else { Write-Host "sem $u" -ForegroundColor Yellow }
 }
@@ -77,6 +79,8 @@ if ($Autostart) {
 if ($Diagnostico) {
     Set-Content -Path "$esp\mOS\Sistema\Biblioteca\dyld-registrar" -Value '1' -Encoding ascii
     Set-Content -Path "$esp\mOS\Sistema\Biblioteca\stderr-serial" -Value '1' -Encoding ascii
+    # o kernel despeja as threads de usuário (estado, rip e pilha) no log serial a cada 30 s
+    Set-Content -Path "$esp\mOS\Sistema\Biblioteca\despejar-threads" -Value '1' -Encoding ascii
 }
 $mb = (Get-ChildItem "$esp\mOS\Aplicativos\VSCode.app" -Recurse -File | Measure-Object Length -Sum).Sum / 1MB
 Write-Host ("VSCode.app: {0:N1} MiB" -f $mb) -ForegroundColor Cyan

@@ -450,10 +450,12 @@ static void o_set_value_for_path(id self, SEL c, id v, id path) {
 typedef struct { cx_class_t *isa; u32 kind; u32 pad; double d; i64 i; } nsnum_t;  /* kind: 0 int, 1 double, 2 bool */
 id cx_num_i(i64 v) { nsnum_t *n = (nsnum_t *)cx_alloc_instance(&NSNumber_c); n->kind = 0; n->i = v; n->d = (double)v; return (id)n; }
 id cx_num_d(double v) { nsnum_t *n = (nsnum_t *)cx_alloc_instance(&NSNumber_c); n->kind = 1; n->d = v; n->i = (i64)v; return (id)n; }
-static nsnum_t kcf_true = {&NSNumber_c, 2, 0, 1, 1}, kcf_false = {&NSNumber_c, 2, 0, 0, 0};
-void *__kCFBooleanTrue_ __asm__("__kCFBooleanTrue") = &kcf_true;
+/* __kCFBooleanTrue/False são os PRÓPRIOS objetos (o clang compila @YES/@NO como &__kCFBooleanTrue);
+ * kCFBooleanTrue/False são ponteiros para eles. Antes os dois primeiros eram ponteiros, e @YES virava um
+ * objeto com isa inválido (o Electron cai em [CATransaction setValue:@YES ...]; sessão do VS Code). */
+nsnum_t kcf_true __asm__("__kCFBooleanTrue") = {&NSNumber_c, 2, 0, 1, 1};
+nsnum_t kcf_false __asm__("__kCFBooleanFalse") = {&NSNumber_c, 2, 0, 0, 0};
 id cx_num_bool(BOOL b) { return (id)(b ? &kcf_true : &kcf_false); }
-void *__kCFBooleanFalse_ __asm__("__kCFBooleanFalse") = &kcf_false;
 void *kCFBooleanTrue = &kcf_true, *kCFBooleanFalse = &kcf_false;
 static id n_int(id cls, SEL c, i64 v) { (void)cls; (void)c; return cx_num_i(v); }
 static id n_uint(id cls, SEL c, u64 v) { (void)cls; (void)c; return cx_num_i((i64)v); }

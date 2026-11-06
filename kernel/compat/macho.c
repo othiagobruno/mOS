@@ -223,7 +223,12 @@ bool libsystem_dylib_ok(const char *n) {
                                "/System/Library/Frameworks/ApplicationServices.framework/", "/System/Library/Frameworks/QuartzCore.framework/",
                                "/System/Library/Frameworks/CoreText.framework/",
                                /* sessão CoreAnimation/IOSurface: iosurface.c / quartzcore.c */
-                               "/System/Library/Frameworks/IOSurface.framework/", "/System/Library/Frameworks/CoreVideo.framework/"};
+                               "/System/Library/Frameworks/IOSurface.framework/", "/System/Library/Frameworks/CoreVideo.framework/",
+                               /* compatibilidade dos apps (docs/compat-apps.md): security.c (Keychain, SecCode), cli.c
+                                * (proxies, FSEvents, IOPMAssertion), mach.c (IOKit mínimo) */
+                               "/System/Library/Frameworks/Security.framework/", "/System/Library/Frameworks/SystemConfiguration.framework/",
+                               "/System/Library/Frameworks/CFNetwork.framework/", "/System/Library/Frameworks/CoreServices.framework/",
+                               "/System/Library/Frameworks/IOKit.framework/", "/System/Library/Frameworks/LocalAuthentication.framework/"};
     for (u32 i = 0; i < ARRAY_LEN(fw); i++) if (!strncmp(n, fw[i], strlen(fw[i]))) return true;
     return !strncmp(n, "/usr/lib/system/", 16);
 }

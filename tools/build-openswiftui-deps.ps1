@@ -13,6 +13,9 @@
 #   .\tools\build-openswiftui-deps.ps1 -Only Graph,Subgraph    # só alguns fontes (sem gerar a .a)
 param([string[]]$Repo = @('OpenAttributeGraph', 'Compute', 'OpenRenderBox', 'OpenObservation', 'Foundation', 'OpenCoreGraphics'), [string[]]$Only)
 $root = Split-Path $PSScriptRoot -Parent
+# Foundation/OpenSwiftUICore precisam do FoundationEssentials: compila-o antes se ainda não existe (-Repo FoundationEssentials força)
+if (($Repo -contains 'Foundation' -or $Repo -contains 'OpenSwiftUICore') -and $Repo -notcontains 'FoundationEssentials' -and
+    -not (Test-Path "$PSScriptRoot\..\build\swift\openswiftui\FoundationEssentials\FoundationEssentials.swiftmodule")) { $Repo = @('FoundationEssentials') + $Repo }
 $zig = Join-Path (Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*' | Select-Object -First 1).FullName 'zig.exe'
 $deps = "$root\.tools\openswiftui\deps"
 $swsrc = "$root\.tools\swift-src"
@@ -20,6 +23,8 @@ $outRoot = "$root\build\swift\openswiftui"
 $shim = "$root\userland\sdk\openswiftui\include"   # os/log.h e tipos de CF que faltam nos cabeçalhos do zig
 $full = "$root\build\swift\full"                   # stdlib Swift completa (sessão do runtime Swift)
 $importerInc = "$root\userland\sdk\openswiftui\importer"
+# módulos Swift depois do FoundationEssentials enxergam a pilha dele (veja Build-Swift); vale também para builds parciais
+$script:essReady = Test-Path "$outRoot\FoundationEssentials\FoundationEssentials.swiftmodule"
 
 # ---- libc do macOS para o importador do Swift: cópia dos cabeçalhos Darwin do zig (o ABI que o libSystem do mOS
 # implementa) num módulo clang "MOSDarwin". Em modo de módulos esses cabeçalhos esperam o stddef modular do SDK da
@@ -36,7 +41,10 @@ if (-not (Test-Path "$darwinInc\module.modulemap")) {
         if ($b.Contains('__has_feature(modules)')) { [IO.File]::WriteAllText($h.FullName, $b.Replace('__has_feature(modules)', '0')) }
     }
 }
-Copy-Item "$root\userland\sdk\openswiftui\darwin\*" $darwinInc -Force   # mos_darwin.h + module.modulemap
+# o destrutor do pthread_key_create recebe ponteiro anulável (como na glibc: o OpenSwiftUI fora do Darwin faz guard let)
+$pth = [IO.File]::ReadAllText("$darwinInc\pthread.h")
+if ($pth.Contains('void (* _Nullable)(void *)')) { [IO.File]::WriteAllText("$darwinInc\pthread.h", $pth.Replace('int pthread_key_create(pthread_key_t *, void (* _Nullable)(void *));', 'int pthread_key_create(pthread_key_t *, void (* _Nullable)(void * _Nullable));')) }
+Copy-Item "$root\userland\sdk\openswiftui\darwin\*" $darwinInc -Recurse -Force   # mos_darwin.h, module.modulemap e cabeçalhos do macOS que o zig não traz
 
 # ---- fontes
 $dl = "$root\.tools\openswiftui-dl"
@@ -88,12 +96,21 @@ function Build-Swift($name, $files, $extra, $lang = '5', [bool]$evolution = $tru
     $out = "$outRoot\$name"
     $a = @('-frontend', '-c', '-target', 'x86_64-apple-macos26', '-module-name', $name, '-parse-as-library', '-swift-version', $lang, '-O',
            '-disable-objc-interop', '-I', $full, '-I', "$swsrc\stdlib\public\SwiftShims\swift\shims",
-           '-disable-implicit-concurrency-module-import', '-disable-implicit-string-processing-module-import',
+           '-disable-implicit-concurrency-module-import',
            '-enable-experimental-feature', 'Extern', '-Xcc', '-Wno-nullability-completeness',
            '-Xcc', "-I$importerInc",   # CoreFoundation/CoreGraphics/CommonCrypto C para o importador
            '-Xcc', "-isystem$darwinInc", # libc do macOS (módulo MOSDarwin)
            '-emit-module-path', "$out\$name.swiftmodule", '-o', "$out\${name}_swift.o") + $(if ($evolution) { @('-enable-library-evolution') } else { @() }) + $extra + $files
     # argumentos num arquivo de resposta: a linha de comando do Windows tem limite (o OpenSwiftUICore tem 600+ fontes)
+    $essStack = @('_StringProcessing', '_RegexParser', 'FoundationEssentials', '_FoundationRefs', 'BasicContainers', 'DequeModule', 'OrderedCollections',
+                  '_RopeModule', 'SpanPreview', 'InternalCollectionsUtilities', 'MOSDarwin', 'MOSos', 'Synchronization')
+    if ($script:essReady -and $essStack -notcontains $name) {
+        $more = @(); foreach ($m in $essStack) { $more += @('-I', "$outRoot\$m") }
+        $more += @('-I', "$deps\swift-foundation-main\Sources\_FoundationCShims\include")
+        $a = @($a | Select-Object -First 1) + $more + @($a | Select-Object -Skip 1); $extra = @($extra) + $more
+    }
+    # _StringProcessing (Regex, algoritmos de String) é import implícito só para quem o tem no -I (o próprio stdlib não traz)
+    if ($extra -notcontains "$outRoot\_StringProcessing") { $a = @($a | Select-Object -First 1) + @('-disable-implicit-string-processing-module-import') + @($a | Select-Object -Skip 1) }
     $rsp = "$out\$name.rsp"
     $a = @($a | Where-Object { $_ -ne '-frontend' })  # o swift-frontend.exe já é o frontend
     ($a | ForEach-Object { if ($_ -match '[\s"]') { '"' + ($_ -replace '"', '\"') + '"' } else { $_ } }) -join "`n" | Set-Content -Encoding ascii $rsp
@@ -105,6 +122,43 @@ function Build-Swift($name, $files, $extra, $lang = '5', [bool]$evolution = $tru
     return "$out\${name}_swift.o"
 }
 
+# cópia pré-processada do swift-foundation: o mOS fica no caminho "macOS sem FOUNDATION_FRAMEWORK" (o build SwiftPM do
+# pacote no macOS), com a libc em MOSDarwin e o os.Logger em MOSos (os nomes Darwin/os ligariam o OpenSwiftUI aos
+# caminhos da Apple). Sem _Concurrency: atributos de ator saem, como no OpenSwiftUI.
+function Prepare-SF($name, $srcDir, $overlayDir) {
+    $dst = "$outRoot\src-mos\$name"
+    if (Test-Path $dst) { Remove-Item $dst -Recurse -Force }
+    New-Item -ItemType Directory -Force $dst | Out-Null
+    $utf8 = New-Object Text.UTF8Encoding $false
+    $base = (Resolve-Path $srcDir).Path
+    foreach ($f in Get-ChildItem -LiteralPath $base -Recurse -Filter *.swift -ErrorAction SilentlyContinue) {   # .docc tem caminhos longos demais
+        $rel = $f.FullName.Substring($base.Length + 1)
+        $out = Join-Path $dst $rel
+        New-Item -ItemType Directory -Force (Split-Path $out -Parent) | Out-Null
+        $lines = [IO.File]::ReadAllLines($f.FullName, $utf8)
+        for ($i = 0; $i -lt $lines.Length; $i++) {
+            $l = $lines[$i]
+            if ($l -match '^\s*#\s*(if|elseif)\b') {
+                $l = $l -replace '\bcanImport\(\s*Darwin\s*\)', 'canImport(MOSDarwin)' -replace '\bcanImport\(\s*os\s*\)', 'canImport(MOSos)' -replace '\bcanImport\(\s*MachO\s*\)', 'canImport(MOSDarwin)'
+            } elseif ($l -notmatch '^\s*#') {
+                $l = $l -replace '\bimport\s+(Darwin|MachO)(\.\w+)?\b', 'import MOSDarwin' -replace '\bimport\s+os(\.log)?\s*$', 'import MOSos' -replace '\bDarwin\.', 'MOSDarwin.'
+                $l = $l -replace '@MainActor(\s*\(unsafe\))?\s?', '' -replace '@isolated\(any\)\s?', ''
+                # vários `import Darwin.x`/`internal import MachO.y` viram o mesmo módulo: um só nível de acesso
+                $l = $l -replace '^(\s*)(@preconcurrency\s+)?((internal|package|public|private|fileprivate)\s+)?import MOSDarwin\b', '$1import MOSDarwin'
+            }
+            # sem _StringProcessing (Regex) no mOS: o pacote já tem NO_REGEX; os blocos `#if !hasFeature(Embedded)` que só
+            # existem para conformidades de Regex também passam a depender dele
+            if ($l -match '^\s*#\s*if\s+!hasFeature\(Embedded\)\s*$') {
+                $ahead = ($lines[($i + 1)..([Math]::Min($i + 3, $lines.Length - 1))] -join "`n")
+                if ($ahead -match 'Regex') { $l = $l.TrimEnd() + ' && !NO_REGEX' }
+            }
+            $lines[$i] = $l
+        }
+        [IO.File]::WriteAllLines($out, $lines, $utf8)
+    }
+    if ($overlayDir -and (Test-Path $overlayDir)) { Copy-Item "$overlayDir\*" $dst -Recurse -Force }
+    return $dst
+}
 # cópia pré-processada de fontes Swift: com -target x86_64-apple-macos26, `os(macOS)` é verdadeiro e levaria o
 # código aos caminhos que exigem o SDK/ObjC da Apple; no mOS ele vira `false` só em linhas #if/#elseif (canImport(Darwin)
 # já é falso), forçando os caminhos não-Darwin. Depois os arquivos do overlay (mesmos caminhos relativos) vão por cima.
@@ -133,6 +187,8 @@ function Prepare-Src($name, $srcDir, $overlayDir) {
             $out = Join-Path $dst $rel
             New-Item -ItemType Directory -Force (Split-Path $out -Parent) | Out-Null
             if ($f.Extension -eq '.swift') {
+                # só os atributos de ator saem: os arquivos de substituição (sessão do runtime Swift) são escritos para as
+                # condições #if originais
                 $txt = [IO.File]::ReadAllText($f.FullName, $utf8) -replace '@MainActor(\s*\(unsafe\))?\s?', '' -replace '@isolated\(any\)\s?', ''
                 [IO.File]::WriteAllText($out, $txt, $utf8)
             } else { Copy-Item $f.FullName $out -Force }
@@ -143,6 +199,76 @@ function Prepare-Src($name, $srcDir, $overlayDir) {
 $overlay = "$root\userland\sdk\openswiftui\overlay"   # substituições do mOS em fontes upstream (<Repo>\<Target>\...)
 
 $fails = 0
+if ($Repo -contains 'FoundationEssentials') {
+    # Synchronization (Atomic/Mutex) do Swift 6, que o stdlib do mOS não traz: precisa de Builtin (-parse-stdlib) e @_rawLayout
+    New-Item -ItemType Directory -Force "$outRoot\Synchronization" | Out-Null
+    $sw = Build-Swift 'Synchronization' @(Get-ChildItem "$root\userland\sdk\openswiftui\swift\Synchronization" -Filter *.swift | ForEach-Object FullName) @('-parse-stdlib', '-enable-experimental-feature', 'RawLayout')
+    if ($sw -eq $false) { $fails++ } elseif ($sw) { Write-Archive 'Synchronization' @($sw) }
+    # ---- swift-collections 1.7.3 (github.com/apple/swift-collections, Apache 2.0), a versão que o swift-foundation fixa:
+    # os módulos que o FoundationEssentials usa (AttributedString sobre _RopeModule, Deque, OrderedDictionary)
+    $sc = "$deps\swift-collections-1.7.3\Sources"
+    $scAvail = @{ '5.0' = '10.14.4'; '5.1' = '10.15'; '5.6' = '12.3'; '5.7' = '13.0'; '5.8' = '13.3'; '5.9' = '14.0'; '5.10' = '14.4'
+                  '6.0' = '15.0'; '6.1' = '15.4'; '6.2' = '26.0'; '6.3' = '26.4'; '6.4' = '27.0' }
+    $scFlags = @('-package-name', 'SwiftCollections', '-enable-upcoming-feature', 'MemberImportVisibility')
+    foreach ($ft in 'BuiltinModule', 'Lifetimes', 'InoutLifetimeDependence', 'AddressableParameters', 'AddressableTypes', 'SuppressedAssociatedTypesWithDefaults') { $scFlags += @('-enable-experimental-feature', $ft) }
+    foreach ($k in $scAvail.Keys) { $scFlags += @('-enable-experimental-feature', "AvailabilityMacro=SwiftStdlib ${k}: macOS $($scAvail[$k]), iOS 99, watchOS 99, tvOS 99, visionOS 99") }
+    foreach ($m in @(@('InternalCollectionsUtilities', 'InternalCollectionsUtilities', '6'), @('SpanPreview', 'SpanPreview', '6'), @('BasicContainers', 'BasicContainers', '6'), @('DequeModule', 'DequeModule', '6'),
+                     @('OrderedCollections', 'OrderedCollections', '6'), @('_RopeModule', 'RopeModule', '5'))) {
+        New-Item -ItemType Directory -Force "$outRoot\$($m[0])" | Out-Null
+        $mi = @(); foreach ($d in 'InternalCollectionsUtilities', 'SpanPreview', 'BasicContainers', 'DequeModule', 'OrderedCollections') { $mi += @('-I', "$outRoot\$d") }
+        $sw = Build-Swift $m[0] @(Get-ChildItem "$sc\$($m[1])" -Recurse -Filter *.swift | ForEach-Object FullName) ($scFlags + $mi) $m[2] $false
+        if ($sw -eq $false) { $fails++ } elseif ($sw) { Write-Archive $m[0] @($sw) }
+    }
+}
+if ($Repo -contains 'FoundationEssentials') {
+    # ---- _StringProcessing (github.com/swiftlang/swift-experimental-string-processing, release/6.4.2 = o toolchain):
+    # Regex e os algoritmos de String (contains/replacing/ranges(of:)/split com coleção) que no SDK da Apple vêm com o
+    # stdlib e todo módulo Swift importa implicitamente. Mesma divisão do stdlib: _RegexParser + _CUnicode (C) + _StringProcessing.
+    $spr = "$deps\swift-experimental-string-processing-release-6.4.2\Sources"
+    $spAvail = @(); foreach ($k in '5.7', '5.8', '5.9', '5.10', '6.0', '6.1', '6.2', '6.3', '6.4') { $spAvail += @('-define-availability', "SwiftStdlib ${k}:macOS $($scAvail[$k]), iOS 99, watchOS 99, tvOS 99") }
+    New-Item -ItemType Directory -Force "$outRoot\_RegexParser", "$outRoot\_StringProcessing" | Out-Null
+    $sw = Build-Swift '_RegexParser' @(Get-ChildItem "$spr\_RegexParser" -Recurse -Filter *.swift | ForEach-Object FullName) $spAvail '5' $false
+    if ($sw -eq $false) { $fails++ } elseif ($sw) { Write-Archive '_RegexParser' @($sw) }
+    $fails += Build-Files '_CUnicode' @(Get-ChildItem "$spr\_CUnicode" -Filter *.c | ForEach-Object FullName) @("-I$spr\_CUnicode\include", '-std=gnu11') @()
+    $cuObjs = $script:objs
+    $sw = Build-Swift '_StringProcessing' @(Get-ChildItem "$spr\_StringProcessing" -Recurse -Filter *.swift | ForEach-Object FullName) ($spAvail + @('-I', "$outRoot\_RegexParser", '-Xcc', "-I$spr\_CUnicode\include"))
+    if ($sw -eq $false) { $fails++ } elseif ($sw) { Write-Archive '_StringProcessing' (@($sw) + $cuObjs) }
+    # ---- swift-foundation (github.com/swiftlang/swift-foundation, Apache 2.0): FoundationEssentials
+    $sfs = "$deps\swift-foundation-main\Sources"
+    $sdkSwift = "$root\userland\sdk\openswiftui\swift"
+    # overlay Swift da libc (MOSDarwin) e o os.Logger mínimo (MOSos)
+    New-Item -ItemType Directory -Force "$outRoot\MOSDarwin", "$outRoot\MOSos" | Out-Null
+    $sw = Build-Swift 'MOSDarwin' @("$sdkSwift\MOSDarwin\MOSDarwin.swift") @('-import-underlying-module')
+    if ($sw -eq $false) { $fails++ } elseif ($sw) { Write-Archive 'MOSDarwin' @($sw) }
+    $sw = Build-Swift 'MOSos' @("$sdkSwift\MOSos\MOSos.swift") @()
+    if ($sw -eq $false) { $fails++ } elseif ($sw) { Write-Archive 'MOSos' @($sw) }
+    # _FoundationCShims (C)
+    $csh = "$sfs\_FoundationCShims"
+    $fails += Build-Files '_FoundationCShims' @("$csh\FoundationCShims.c") @("-I$csh\include", '-std=gnu11') @("-I$csh\include")
+    Write-Archive '_FoundationCShims' $script:objs
+    $sfAvail = @()
+    foreach ($v in '6.0.2', '6.1', '6.2', '6.3', '6.4', '6.4.2', '6.5') { $sfAvail += @('-enable-experimental-feature', "AvailabilityMacro=FoundationPreview ${v}:macOS 26, iOS 26, tvOS 26, watchOS 26, visionOS 26") }
+    $sfFlags = @('-package-name', 'SwiftFoundation', '-I', "$outRoot\_StringProcessing", '-I', "$outRoot\_RegexParser", '-I', "$csh\include", '-I', "$outRoot\MOSDarwin", '-I', "$outRoot\MOSos", '-I', "$outRoot\Synchronization",
+                 '-enable-upcoming-feature', 'InferSendableFromCaptures', '-enable-upcoming-feature', 'MemberImportVisibility') + $sfAvail
+    foreach ($ft in 'VariadicGenerics', 'Lifetimes', 'AddressableTypes', 'AllowUnsafeAttribute', 'BuiltinModule', 'AccessLevelOnImport', 'ImportMacroAliases') { $sfFlags += @('-enable-experimental-feature', $ft) }
+    foreach ($d in 'InternalCollectionsUtilities', 'SpanPreview', 'BasicContainers', 'DequeModule', 'OrderedCollections', '_RopeModule') { $sfFlags += @('-I', "$outRoot\$d") }
+    # _FoundationRefs (Ref/MutableRef; no Darwin o stdlib só os tem em OS mais novo)
+    $refSrc = Prepare-SF '_FoundationRefs' "$sfs\_FoundationRefs" $null
+    New-Item -ItemType Directory -Force "$outRoot\_FoundationRefs" | Out-Null
+    $sw = Build-Swift '_FoundationRefs' @(Get-ChildItem $refSrc -Filter *.swift | ForEach-Object FullName) ($sfFlags + @('-I', "$outRoot\MOSDarwin")) '5' $false
+    if ($sw -eq $false) { $fails++ } elseif ($sw) { Write-Archive '_FoundationRefs' @($sw) }
+    $sfFlags += @('-I', "$outRoot\_FoundationRefs")
+    $essSrc = Prepare-SF 'FoundationEssentials' "$sfs\FoundationEssentials" "$overlay\FoundationEssentials"
+    New-Item -ItemType Directory -Force "$outRoot\FoundationEssentials" | Out-Null
+    # fora: ProgressManager (sobre o Observation da Apple) e o NotificationCenter de mensagens (assíncrono, _Concurrency)
+    $files = @(Get-ChildItem $essSrc -Recurse -Filter *.swift | Where-Object { $_.FullName -notmatch '\\(ProgressManager|NotificationCenter)\\' } | ForEach-Object FullName)
+    Write-Host "FoundationEssentials: $($files.Count) fontes..."
+    $sw = Build-Swift 'FoundationEssentials' $files $sfFlags '5' $false   # sem library evolution, como no SwiftPM
+    if ($sw -eq $false) { $fails++ } elseif ($sw) { Write-Archive 'FoundationEssentials' @($sw) }
+}
+# daqui em diante todo módulo Swift enxerga o FoundationEssentials e o que ele importa (o Foundation do mOS o reexporta)
+$script:essReady = Test-Path "$outRoot\FoundationEssentials\FoundationEssentials.swiftmodule"
+
 # ---- Foundation do mOS (userland\sdk\openswiftui\swift\Foundation), antes de tudo: Compute, OAG e OCG o importam.
 # CGFloat/geometria, NSObject, Data, String(format:), helpers de CF. O CoreFoundation é o módulo C de
 # userland\sdk\openswiftui\importer (objetos de libMOSCFRuntime.a); MOSLibm traz o math.h do libSystem.
@@ -157,10 +283,6 @@ if ($Repo -contains 'Foundation' -or $Repo -contains 'OpenCoreGraphics') {
         $sw = Build-Swift 'Dispatch' @(Get-ChildItem "$sdkSwift\Dispatch" -Filter *.swift | ForEach-Object FullName) $modInc
         if ($sw -eq $false) { $fails++ } elseif ($sw) { Write-Archive 'Dispatch' @($sw) }
     }
-    # Synchronization (Atomic) do Swift 6, que o stdlib do mOS não traz: precisa de Builtin (-parse-stdlib) e @_rawLayout
-    New-Item -ItemType Directory -Force "$outRoot\Synchronization" | Out-Null
-    $sw = Build-Swift 'Synchronization' @(Get-ChildItem "$sdkSwift\Synchronization" -Filter *.swift | ForEach-Object FullName) @('-parse-stdlib', '-enable-experimental-feature', 'RawLayout')
-    if ($sw -eq $false) { $fails++ } elseif ($sw) { Write-Archive 'Synchronization' @($sw) }
     foreach ($m in @('CoreGraphics', 'Foundation', 'Logging', 'Glibc')) {   # CoreFoundation é o módulo C de userland\sdk\openswiftui\importer
         New-Item -ItemType Directory -Force "$outRoot\$m" | Out-Null
         $sw = Build-Swift $m @(Get-ChildItem "$sdkSwift\$m" -Filter *.swift | ForEach-Object FullName) $modInc
@@ -288,7 +410,8 @@ if (($Repo -contains 'Foundation' -or $Repo -contains 'CoreText') -and (Test-Pat
     New-Item -ItemType Directory -Force "$outRoot\CoreText_Private" | Out-Null
     $sw = Build-Swift 'CoreText_Private' @(Get-ChildItem "$sdkSwift\CoreText_Private" -Filter *.swift | ForEach-Object FullName) $ctFlags
     if ($sw -eq $false) { $fails++ } elseif ($sw) { Write-Archive 'CoreText_Private' @($sw) }
-}if ($Repo -contains 'OpenCombine') {
+}
+if ($Repo -contains 'OpenCombine') {
     # OpenCombine (github.com/OpenCombine/OpenCombine, MIT): Combine em Swift puro, usado pelo OpenSwiftUI fora do Darwin.
     # Os .gyb já vêm gerados (GENERATED-*.swift). O helper C++ usaria os_unfair_lock no __APPLE__, que no libSystem
     # do mOS não trava nada: a cópia do mOS usa pthread_mutex (trava de verdade no mOS).
@@ -360,8 +483,13 @@ if ($Repo -contains 'OpenRenderBox') {
         $cgp = "$spiInc\Shims\CoreGraphics"; New-Item -ItemType Directory -Force $cgp | Out-Null
         $h = [IO.File]::ReadAllText("$spi\Shims\CoreGraphics\CoreGraphics_Private.h").Replace('float cg_nullable *headroom', 'float * cg_nullable headroom')
         [IO.File]::WriteAllText("$cgp\CoreGraphics_Private.h", $h, (New-Object Text.UTF8Encoding $false))
+        # dyld_Private.h declara um mach_header próprio fora do Darwin; no mOS a libc é a do macOS (MOSDarwin), que já tem
+        $dyp = "$spiInc\Shims\dyld"; New-Item -ItemType Directory -Force $dyp | Out-Null
+        $h = [IO.File]::ReadAllText("$spi\Shims\dyld\dyld_Private.h").Replace("#if OPENSWIFTUI_TARGET_OS_DARWIN`n#include <mach-o/dyld.h>", "#if OPENSWIFTUI_TARGET_OS_DARWIN || defined(OPENSWIFTUI_MOS)`n#include <mach-o/dyld.h>")
+        [IO.File]::WriteAllText("$dyp\dyld_Private.h", $h, (New-Object Text.UTF8Encoding $false))
+        $patched = @{ CoreGraphics_Private = $cgp; dyldPrivate = $dyp }
         foreach ($k in $shimMods.Keys) {
-            $dir = if ($k -eq 'CoreGraphics_Private') { $cgp.Replace('\', '/') } else { "$u/Shims/$($shimMods[$k])" }
+            $dir = if ($patched.ContainsKey($k)) { $patched[$k].Replace('\', '/') } else { "$u/Shims/$($shimMods[$k])" }
             $mm += "`nmodule $k {`n    umbrella `"$dir`"`n    export *`n}`n"
         }
         $mm |

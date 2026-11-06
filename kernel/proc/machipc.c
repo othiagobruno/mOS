@@ -119,6 +119,7 @@ typedef struct kport {
     dnreq_t *dnreqs;          /* pedidos de "nome morto" */
     kmem_t *mem;              /* KP_MEM */
     u64 moff, msize;
+    u8 mprot;                 /* KP_MEM: proteção máxima (VM_PROT_READ 1 | WRITE 2 | EXECUTE 4) */
     struct kport *gnext;      /* lista global (conjuntos procuram seus membros nela) */
 } kport_t;
 
@@ -627,21 +628,30 @@ static u64 map_ool(process_t *p, kmem_t *m) {
 /* trailer de auditoria (52 bytes): o rendezvous do Chromium lê o pid de audit_token_to_pid(msgh_audit).
  * mach_msg_audit_trailer_t: type(4) size(4) seqno(4) security_token(8) audit_token(32) */
 #define TRAILER_SIZE 52
-static void write_trailer(u8 *d, u32 body, u32 seqno, int pid) {
+/* tamanho do trailer pedido pelo receptor (como no XNU): MACH_RCV_TRAILER_ELEMENTS(n) nos bits 24..27
+ * das opções. 0 = só tipo e tamanho (8 bytes, mach_msg_trailer_t: é o que mensagens vazias como as
+ * do WaitableEvent do Chromium esperam); 1 = + seqno (12); 2 = + security token (20); 3+ = + audit token (52). */
+static u32 trailer_size(u32 opt) {
+    u32 el = (opt >> 24) & 0xF;
+    return el == 0 ? 8 : el == 1 ? 12 : el == 2 ? 20 : TRAILER_SIZE;
+}
+static void write_trailer(u8 *d, u32 body, u32 seqno, int pid, u32 tsize) {
     wr32(d, body, 0);                   /* MACH_MSG_TRAILER_FORMAT_0 */
-    wr32(d, body + 4, 32);              /* msgh_trailer_size até o audit token */
-    wr32(d, body + 8, seqno);
-    wr64(d, body + 12, 0);              /* security token (uid, gid) */
-    for (int i = 0; i < 32; i++) d[body + 20 + i] = 0;
-    wr32(d, body + 20, (u32)pid);       /* audit_token.val[0] = pid (uso do mOS) */
-    wr32(d, body + 20 + 20, (u32)pid);  /* val[5] = pid (campo que audit_token_to_pid lê no XNU) */
+    wr32(d, body + 4, tsize);           /* msgh_trailer_size */
+    if (tsize >= 12) wr32(d, body + 8, seqno);
+    if (tsize >= 20) wr64(d, body + 12, 0);              /* security token (uid, gid) */
+    if (tsize >= TRAILER_SIZE) {
+        for (int i = 0; i < 32; i++) d[body + 20 + i] = 0;
+        wr32(d, body + 20, (u32)pid);       /* audit_token.val[0] = pid (uso do mOS) */
+        wr32(d, body + 20 + 20, (u32)pid);  /* val[5] = pid (campo que audit_token_to_pid lê no XNU) */
+    }
 }
 
 /* entrega a mensagem m (já tirada da fila) ao receptor sp, no buffer de usuário ubuf/cap. */
 static u32 deliver(mspace_t *sp, kport_t *rcv, kmsg_t *m, u8 *ubuf, u32 cap, u32 opt) {
     process_t *p = sp->proc;
     u32 body = (m->size + 3) & ~3u;
-    u32 trailer = TRAILER_SIZE;
+    u32 trailer = trailer_size(opt);
     u32 need = body + trailer;
     if (need > cap) {
         if (opt & OPT_RCV_LARGE) {
@@ -707,7 +717,7 @@ static u32 deliver(mspace_t *sp, kport_t *rcv, kmsg_t *m, u8 *ubuf, u32 cap, u32
         d = m->data = nd;
     }
     wr32(d, H_SIZE, m->size);                    /* msgh_size: só header+corpo, sem o trailer (como no XNU) */
-    write_trailer(d, body, m->seqno, m->sender_pid);
+    write_trailer(d, body, m->seqno, m->sender_pid, trailer);
     if (!uvm_copy_out(p, (u64)ubuf, d, need)) { kmsg_free(m); return RCV_INVALID_DATA; }
     kmsg_free(m);
     return KERN_SUCCESS;
@@ -1070,12 +1080,41 @@ static u32 vm_op(mspace_t *sp, u32 op, u64 *a) {
         if (a[3]) { ment_t *e = ent_at(sp, (u32)a[3]); if (e && e->port && e->port->kind == KP_MEM) parent = e->port; }
         kport_t *k = port_new(KP_MEM);
         if (!k) return KERN_RESOURCE_SHORTAGE;
-        if (parent && parent->mem) { k->mem = parent->mem; k->mem->refs++; k->moff = parent->moff + a[1]; k->msize = size; }
+        if (parent && parent->mem) { k->mem = parent->mem; k->mem->refs++; k->moff = parent->moff + a[1]; k->msize = size; k->mprot = parent->mprot & (a[2] & 7 ? (u8)(a[2] & 7) : 7); }
         else {
-            kmem_t *m = ool_copyin(sp->proc, a[1], size ? size : 4096);   /* instantâneo das páginas atuais */
-            if (!m) { port_unref(k); return KERN_RESOURCE_SHORTAGE; }
+            /* MAP_MEM_NAMED_CREATE (0x20000): objeto NOVO, zerado, do tamanho pedido (o caso do
+             * base::SharedMemory do Chromium). Sem ele: as páginas JÁ mapeadas em [offset, offset+size) do
+             * chamador, compartilhadas (não copiadas): quem mapear a entrada vê os mesmos bytes. */
+            bool create = (a[2] & 0x20000) != 0;
+            u64 first = create ? 0 : (a[1] & ~0xFFFULL);
+            u64 npages = create ? (size ? size : 4096) / 4096
+                                : (((a[1] + (size ? size : 4096) + 0xFFF) & ~0xFFFULL) - first) / 4096;
+            kmem_t *m = kcalloc(1, sizeof *m);
+            u64 *pages = m && npages ? kcalloc(npages, sizeof *pages) : NULL;
+            if (!m || (npages && !pages)) { kfree(m); kfree(pages); port_unref(k); return KERN_RESOURCE_SHORTAGE; }
+            m->refs = 1;
+            m->pages = pages;
+            for (u64 i = 0; i < npages; i++, m->npages++) {
+                u64 ph;
+                if (create) {
+                    ph = pmm_alloc(1);
+                    if (!ph) break;
+                    memset((void *)ph, 0, 4096);
+                } else {
+                    u64 va = first + i * 4096;
+                    u64 *pte = uvm_pte(sp->proc, va);
+                    if (!pte && uvm_map(sp->proc, va, 4096)) pte = uvm_pte(sp->proc, va);
+                    if (!pte) break;
+                    ph = *pte & 0x000FFFFFFFFFF000ULL;
+                    uvm_page_get(ph);              /* o objeto passa a ser mais um dono da página */
+                }
+                pages[i] = ph;
+            }
+            if (m->npages != npages) { kmem_unref(m); port_unref(k); return create ? KERN_RESOURCE_SHORTAGE : KERN_INVALID_ADDRESS; }
             k->mem = m;
-            k->msize = size;
+            k->moff = create ? 0 : (a[1] & 0xFFF);
+            k->msize = size ? size : 4096;
+            k->mprot = a[2] & 7 ? (u8)(a[2] & 7) : 7;   /* perm sem bits de proteção: tudo */
         }
         port_ref(k);
         k->srights++;
@@ -1087,20 +1126,41 @@ static u32 vm_op(mspace_t *sp, u32 op, u64 *a) {
     }
     if (op == MACH_VM_MAP) {
         ment_t *e = ent_at(sp, (u32)a[3]);
-        if (!e || !e->port || e->port->kind != KP_MEM || !e->port->mem) return KERN_INVALID_ARGUMENT;
+        if (!e || !e->port || e->port->kind != KP_MEM || !e->port->mem) {
+            /* DIAGNÓSTICO TEMPORÁRIO (vm_map do Chromium no VS Code) */
+            kprintf("mach[diag]: vm_map pid %d objeto 0x%x: %s (tipo de nome 0x%x, tipo de porta %d)\n", sp->pid, (u32)a[3],
+                    !e ? "nome inexistente neste processo" : !e->port ? "nome sem porta" : e->port->kind != KP_MEM ? "não é entrada de memória" : "entrada sem páginas",
+                    e ? e->type : 0, e && e->port ? e->port->kind : -1);
+            return KERN_INVALID_ARGUMENT;
+        }
         kmem_t *m = e->port->mem;
-        u64 want = (a[1] + 0xFFF) & ~0xFFFULL;
-        u64 npages = MIN(m->npages, want / 4096 ? want / 4096 : m->npages);
+        /* a[1] = tamanho (0 = a entrada toda), a[2] = flags (bit 0 = VM_FLAGS_ANYWHERE), a[4] = deslocamento
+         * dentro da entrada, a[5] = proteção atual (VM_PROT_WRITE = 2) */
+        u64 start = e->port->moff + a[4];                 /* byte dentro do objeto */
+        u64 len = a[1] ? a[1] : (e->port->msize > a[4] ? e->port->msize - a[4] : 0);
+        u64 pfirst = start / 4096;
+        u64 npages = ((start & 0xFFF) + len + 0xFFF) / 4096;
+        if (!len || pfirst + npages > m->npages) {
+            kprintf("mach[diag]: vm_map pid %d objeto 0x%x: fora da entrada (len 0x%llx, offset 0x%llx, moff 0x%llx, msize 0x%llx, %llu páginas)\n",
+                    sp->pid, (u32)a[3], len, a[4], e->port->moff, e->port->msize, m->npages);   /* DIAGNÓSTICO TEMPORÁRIO */
+            return KERN_INVALID_ARGUMENT;
+        }
         u64 at = a[0] & ~0xFFFULL;
-        if (!(a[2] & 1) || !at) {                         /* anywhere */
+        if ((a[2] & 1) || !at) {                          /* VM_FLAGS_ANYWHERE: o kernel escolhe */
             if (!sp->proc->mmap_next) sp->proc->mmap_next = USER_MMAP_BASE;
             at = sp->proc->mmap_next;
+            if (at + npages * 4096 > USER_END) return KERN_NO_SPACE;
             sp->proc->mmap_next += npages * 4096 + 4096;
         }
-        u64 base = e->port->moff / 4096;
-        for (u64 i = 0; i < npages && base + i < m->npages; i++)
-            if (!uvm_map_phys(sp->proc, at + i * 4096, m->pages[base + i], true)) return KERN_NO_SPACE;
-        a[0] = at;
+        /* proteção pedida (cur | max, a[5] | a[6]) além da que a entrada permite: KERN_INVALID_RIGHT, como no
+         * XNU. O Chromium depende disso para conferir que uma região só-leitura é mesmo só-leitura
+         * (PlatformSharedMemoryRegion::CheckPlatformHandlePermissionsCorrespondToMode). */
+        u8 want_prot = (u8)((a[5] | a[6]) & 7);
+        if (want_prot & ~e->port->mprot) return KERN_INVALID_RIGHT;
+        bool rw = (a[5] & 2) || (!a[5] && (e->port->mprot & 2));
+        for (u64 i = 0; i < npages; i++)                  /* as MESMAS páginas físicas: memória compartilhada */
+            if (!uvm_map_phys(sp->proc, at + i * 4096, m->pages[pfirst + i], rw)) return KERN_NO_SPACE;
+        a[0] = at + (start & 0xFFF);
         return KERN_SUCCESS;
     }
     if (op == MACH_VM_ENTRY_INFO) {

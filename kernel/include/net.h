@@ -29,6 +29,9 @@ void net_set_active(netdev_t *d);          /* força a interface ativa (renova o
 int net_device_count(void);
 netdev_t *net_device_at(int i);
 
+/* trava da pilha (net.c): quem chama tcp_* ou dns_* fora do laço da área de trabalho segura ela */
+extern spinlock_t g_net_lock;
+
 /* DNS (assíncrono): 1 resolvido, 0 pendente, -1 falha */
 int dns_resolve(const char *host, u32 *ip);
 
@@ -48,6 +51,7 @@ int  tcp_state(int s);
 int  tcp_send(int s, const void *data, int len);  /* bytes aceitos */
 int  tcp_recv(int s, void *buf, int max);     /* bytes lidos; 0 nada; -1 fechado e vazio */
 void tcp_close(int s);
+int  tcp_avail(int s);                          /* bytes recebidos esperando leitura */
 
 /* TLS 1.3 sobre TCP (cliente) */
 typedef struct tls_conn tls_conn_t;
