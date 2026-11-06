@@ -1,0 +1,5 @@
+// mOS SDK — a libc do macOS como módulo clang (veja mos_darwin.h). [system]: avisos dos cabeçalhos ficam quietos.
+module MOSDarwin [system] {
+    umbrella header "mos_darwin.h"
+    export *
+}
