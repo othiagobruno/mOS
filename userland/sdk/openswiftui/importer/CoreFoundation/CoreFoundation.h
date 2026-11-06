@@ -257,6 +257,28 @@ CF_EXPORT UInt8 *_Nullable CFDataGetMutableBytePtr(CFMutableDataRef theData);
 CF_EXPORT void CFDataSetLength(CFMutableDataRef theData, CFIndex length);
 CF_EXPORT void CFDataAppendBytes(CFMutableDataRef theData, const UInt8 *bytes, CFIndex length);
 
+/* ---- CFRuntime (layout do swift-corelibs-foundation; implementação em libMOSCFRuntime.a, src/cf_mos.cpp): tipos
+ * CF novos registrados por bibliotecas (OpenSwiftUI, CoreText). As instâncias são objetos Swift (_MOSCFObject).
+ * Só para o Swift: o C que inclui este cabeçalho (CoreText/ctfont.c) declara a sua própria versão. */
+#if defined(__swift__)
+typedef struct __CFRuntimeClass {
+    CFIndex version;
+    const char *className;
+    void (*_Nullable init)(CFTypeRef cf);
+    CFTypeRef _Nullable (*_Nullable copy)(CFAllocatorRef _Nullable allocator, CFTypeRef cf);
+    void (*_Nullable finalize)(CFTypeRef cf);
+    Boolean (*_Nullable equal)(CFTypeRef cf1, CFTypeRef cf2);
+    CFHashCode (*_Nullable hash)(CFTypeRef cf);
+    CFStringRef _Nullable (*_Nullable copyFormattingDesc)(CFTypeRef cf, CFDictionaryRef _Nullable formatOptions);
+    CFStringRef _Nullable (*_Nullable copyDebugDesc)(CFTypeRef cf);
+    void (*_Nullable reclaim)(CFTypeRef cf);
+    uint32_t (*_Nullable refcount)(intptr_t op, CFTypeRef cf);
+    uintptr_t requiredAlignment;
+} CFRuntimeClass;
+CF_EXPORT CFTypeID _CFRuntimeRegisterClass(const CFRuntimeClass *const cls);
+CF_EXPORT const CFRuntimeClass *_Nullable _CFRuntimeGetClassWithTypeID(CFTypeID typeID);
+CF_EXPORT CFTypeRef _Nullable _CFRuntimeCreateInstance(CFAllocatorRef _Nullable allocator, CFTypeID typeID, CFIndex extraBytes, unsigned char *_Nullable category);
+#endif
 CF_ASSUME_NONNULL_END
 CF_EXTERN_C_END
 

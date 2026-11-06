@@ -299,29 +299,22 @@ id_ _NSYankFromKillRing(void) { return 0; }
 
 /* (CoreVideo fica em corevideo.c, da sessão CoreAnimation/IOSurface) */
 
-/* ---- Security: sem Keychain, autorização nem assinatura de código no mOS */
+/* ---- Security: o resto (Keychain de senhas, SecItem*, SecCode*, SecTrust, SSL*) fica em security.c */
 #define errSecUnimplemented (-4)
 #define errSecNotAvailable (-25291)
 #define errAuthorizationDenied (-60005)
-OSStatus SecKeychainCopyDefault(void **kc) { if (kc) *kc = 0; return errSecNotAvailable; }
-OSStatus SecKeychainGetStatus(void *kc, unsigned *st) { (void)kc; if (st) *st = 0; return errSecNotAvailable; }
+/* há um Keychain só (security.c), sempre destrancado: o objeto é um marcador; as funções aceitam kc = NULL */
+OSStatus SecKeychainCopyDomainDefault(int domain, void **kc);
+OSStatus SecKeychainCopyDefault(void **kc) { return SecKeychainCopyDomainDefault(0, kc); }
+OSStatus SecKeychainGetStatus(void *kc, unsigned *st) { (void)kc; if (st) *st = 7; return 0; }   /* unlocked|readable|writable */
 OSStatus SecKeychainGetUserInteractionAllowed(Boolean *on) { if (on) *on = 0; return 0; }
 OSStatus SecKeychainSetUserInteractionAllowed(Boolean on) { (void)on; return 0; }
-OSStatus SecKeychainFindGenericPassword(void *kc, unsigned sl, const char *svc, unsigned al, const char *acc, unsigned *pl, void **pw, void **item) {
-    (void)kc; (void)sl; (void)svc; (void)al; (void)acc;
-    if (pl) *pl = 0;
-    if (pw) *pw = 0;
-    if (item) *item = 0;
-    return errSecNotAvailable;
-}
 OSStatus SecKeychainItemCreateFromContent(unsigned cls, void *attrs, unsigned len, const void *data, void *kc, void *access, void **item) {
     (void)cls; (void)attrs; (void)len; (void)data; (void)kc; (void)access;
     if (item) *item = 0;
     return errSecNotAvailable;
 }
 OSStatus SecKeychainItemCopyKeychain(void *item, void **kc) { (void)item; if (kc) *kc = 0; return errSecNotAvailable; }
-OSStatus SecKeychainItemDelete(void *item) { (void)item; return errSecNotAvailable; }
-OSStatus SecKeychainItemFreeContent(void *attrs, void *data) { (void)attrs; (void)data; return 0; }
 OSStatus SecAccessCreate(id_ desc, id_ trusted, void **acc) { (void)desc; (void)trusted; if (acc) *acc = 0; return errSecUnimplemented; }
 OSStatus SecAccessCopyACLList(void *acc, id_ *list) { (void)acc; if (list) *list = 0; return errSecUnimplemented; }
 OSStatus SecACLCopyContents(void *acl, id_ *apps, id_ *desc, void *prompt) { (void)acl; (void)prompt; if (apps) *apps = 0; if (desc) *desc = 0; return errSecUnimplemented; }

@@ -2,7 +2,9 @@
 // do OpenSwiftUI usam. NSObject aqui é uma classe Swift nativa (como no swift-corelibs-foundation do
 // Linux): igualdade por isEqual(_:), hash por `hash`, descrição por `description`.
 
+@_exported import FoundationEssentials   // swift-foundation: Date, Calendar, Locale, URL, Data, UUID, AttributedString, JSON...
 @_exported import CoreFoundation
+@_exported import Dispatch          // como o Foundation da Apple (DispatchQueue sem import próprio)
 @_exported import CoreGraphics      // CGFloat (módulo Swift CoreGraphics do mOS)
 @_exported import MOSLibm
 

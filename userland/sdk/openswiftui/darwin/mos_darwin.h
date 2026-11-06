@@ -196,6 +196,9 @@
 #if __has_include(<sys/clonefile.h>)
 #include <sys/clonefile.h>
 #endif
+#if __has_include(<sys/quota.h>)
+#include <sys/quota.h>
+#endif
 #if __has_include(<sys/acl.h>)
 #include <sys/acl.h>
 #endif
@@ -247,4 +250,11 @@
 #include <libkern/OSByteOrder.h>
 #endif
 
-/* errno é macro (*__error()); o overlay Swift do MOSDarwin expõe `errno` como variável. */
+/* errno é macro (*__error()); o overlay Swift do MOSDarwin expõe `errno` como variável. As variádicas abaixo não são
+ * importadas pelo Swift; o overlay as expõe com assinaturas fixas, como o overlay Darwin da Apple. */
+static inline int _mos_open(const char *path, int oflag, mode_t mode) { return open(path, oflag, mode); }
+static inline int _mos_openat(int fd, const char *path, int oflag, mode_t mode) { return openat(fd, path, oflag, mode); }
+static inline int _mos_fcntl(int fd, int cmd, long value) { return fcntl(fd, cmd, value); }
+static inline int _mos_fcntl_ptr(int fd, int cmd, void *ptr) { return fcntl(fd, cmd, ptr); }
+static inline int _mos_ioctl(int fd, unsigned long request, long value) { return ioctl(fd, request, value); }
+static inline int _mos_ioctl_ptr(int fd, unsigned long request, void *ptr) { return ioctl(fd, request, ptr); }

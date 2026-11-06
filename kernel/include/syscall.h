@@ -50,6 +50,7 @@ enum {
     SYS_SIGRETURN,     /* ()                                        volta do tratador (chamado pelo restorer) */
     SYS_SIGKILL,       /* (pid, sig) -> 0                           envia um sinal */
     SYS_DYLD,          /* 42: (op, a, b, c) -> ...                  dlopen em tempo de execução (MOS_DYLD_* abaixo) */
+    SYS_NET,           /* 43: (op, a, b, c) -> ...                  TCP e DNS para os apps (MOS_NET_* abaixo, kernel/net/usersock.c) */
     SYS_COUNT,
     SYS_GUI_FIRST = 64,/* 64..79: interface gráfica dos apps do macOS (kernel/compat/guisys.c) */
     SYS_GUI_LAST = 79,
@@ -154,6 +155,23 @@ typedef struct {
     unsigned long long objc, nobjc;      /* saída: seções ObjC {addr, size, kind}[nobjc] para cx_objc_init_image */
     unsigned long long first, nnew;      /* saída: índices das imagens novas: [first, first + nnew) */
 } mos_dyld_open_t;
+
+/* SYS_NET: a pilha TCP/DNS do kernel (kernel/net) para os sockets AF_INET do libSystem (userland/libsystem/sockets.c).
+ * Tudo é não-bloqueante: quem chama espera (SYS_SLEEP) e pergunta de novo. Conexões são do processo que as abriu
+ * e fecham quando ele sai. IPs em ordem de host (10.0.2.15 = 0x0A00020F). */
+enum {
+    MOS_NET_RESOLVE = 1, /* (nome, u32 *ip) -> 1 pronto, 0 pendente, -1 falha     registros A, com cache */
+    MOS_NET_CONNECT,     /* (ip, porta) -> conexão | -errno                     inicia o SYN */
+    MOS_NET_STATE,       /* (conexão) -> MOS_NET_ST_*                            */
+    MOS_NET_SEND,        /* (conexão, buf, n) -> bytes aceitos (0 = buffer cheio) | -errno */
+    MOS_NET_RECV,        /* (conexão, buf, max) -> bytes; 0 = nada ainda; -1 = fim (fechada e vazia) */
+    MOS_NET_CLOSE,       /* (conexão) -> 0 */
+    MOS_NET_INFO,        /* (u32 out[4]) -> 1 se a rede está configurada: ip, máscara, gateway, dns */
+    MOS_NET_AVAIL,       /* (conexão) -> bytes recebidos esperando leitura (>= 0) | -errno */
+};
+enum { MOS_NET_ST_CLOSED, MOS_NET_ST_CONNECTING, MOS_NET_ST_OPEN, MOS_NET_ST_PEER_CLOSED, MOS_NET_ST_ERROR };
+#define MOS_ENETUNREACH 51
+#define MOS_ECONNREFUSED 61
 
 #define MOS_SEEK_SET 0
 #define MOS_SEEK_CUR 1

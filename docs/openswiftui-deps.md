@@ -10,7 +10,10 @@ Swift completo do mOS (`build\swift\full`, sem interoperabilidade Objective-C, a
 
 | Módulo | O que é | Estado |
 |---|---|---|
-| Foundation (`userland\sdk\openswiftui\swift\Foundation`) | Foundation mínimo do mOS: CGFloat, CGPoint/Size/Rect, NSObject, Data, String(format:), NSAttributedString, NSRange, NSNumber, CharacterSet, helpers de CF | compila e testado |
+| FoundationEssentials ([swift-foundation](https://github.com/swiftlang/swift-foundation), Apache 2.0) | o Foundation oficial em Swift: Date, Calendar, TimeZone, Locale, URL, Data, UUID, AttributedString, CharacterSet, JSON/PropertyList, FileManager, Predicate | compila e testado (`-Essentials`) |
+| _StringProcessing (release/6.4.2) | Regex e algoritmos de String (`contains`/`replacing`/`ranges(of:)`), import implícito | compila e testado |
+| swift-collections 1.7.3 | _RopeModule, Deque, OrderedCollections, BasicContainers (dependências do Essentials) | compila |
+| Foundation (`userland\sdk\openswiftui\swift\Foundation`) | reexporta o FoundationEssentials e acrescenta o que é do Foundation da Apple fora dele: NSObject, NSRange, NSNumber, NSAttributedString, String(format:), helpers de CF e CG | compila e testado |
 | CoreFoundation (`userland\sdk\openswiftui\importer`) | módulo **C** com a API do CF; implementação em `libMOSCFRuntime.a` | compila e testado |
 | MOSCFRuntime (`src\cf_mos.cpp` + `swift\SwiftFoundation`) | CFString/Number/Boolean/Array/Dictionary/Data, `_CFRuntimeRegisterClass`, CFSTR | compila e testado |
 | Compute | motor de grafo (reimplementação do AttributeGraph) | compila e testado (Rule em Swift) |
@@ -22,7 +25,8 @@ Swift completo do mOS (`build\swift\full`, sem interoperabilidade Objective-C, a
 
 No libSystem entraram `coregraphics.c` (CGPath, CGAffineTransform, CGColor/ColorSpace, geometria), `cxxabi.c`
 (operator new/delete, `__cxa_guard_*`, `std::call_once`), `darwinmath.c` (`__sincos_stret`) e `commoncrypto.c`
-(CC_SHA1/CC_SHA256, `uuid_*`, `backtrace`).
+(CC_SHA1/CC_SHA256, `uuid_*`, `backtrace`) e `foundationsys.c` (o que o FoundationEssentials chama e faltava: malloc tipado
+do macOS 14+, `fts_*`, `copyfile`, `removefile`, `sysdir_*`, `statfs`, variantes `*at` e `_l`, xattr, `getpwnam_r`/`getgrgid_r`).
 
 ## Regras do CF (importante para quem escreve código de plataforma)
 
@@ -100,6 +104,32 @@ não-Darwin funcionar no mOS:
 - **Sem _Concurrency**: os atributos `@MainActor`/`@isolated(any)` são retirados dos fontes, e `#isolation` vira `nil`.
   `overlay\OpenSwiftUICore\mOS\ConcurrencyShims.swift` tem `Actor`, `MainActor.assumeIsolated`, `extractIsolation` e
   `ContinuousClock` com visibilidade `package`. Quando o mOS tiver o runtime de concorrência, isso sai.
-- **Falta**: a maior parte do Foundation que o Core usa: Date, Calendar, Locale, TimeZone, AttributedString com
-  escopos, FormatStyle, URL, Bundle, NS* (NSString, NSValue, NSArray, NSCoder...), RunLoop/Timer, UserDefaults, JSON e
-  PropertyList. Na última medição eram cerca de 1450 erros, quase todos "cannot find X".
+- **Falta** (447 erros na medição de 2026-11-06, com o Foundation já sobre o swift-foundation):
+  - formatação com locale do FoundationInternationalization (ICU): `Date.FormatStyle`, `Duration.UnitsFormatStyle`,
+    `NumberFormatter`, `Locale.Language.languageCode`...;
+  - classes do Foundation clássico que o swift-foundation não tem (no Linux vêm do swift-corelibs-foundation):
+    `Bundle`, `NSCalendar`, `NSString`/`NSValue`/`NSArray`/`NSDictionary`, `NSCoder`/`NSKeyedArchiver`, `RunLoop`/`Timer`,
+    `UserDefaults`, `JSONSerialization`, `IndexSet`, `Formatter`;
+  - `String` como `CVarArg` (`String(format:)` com `%@`);
+  - partes de CoreGraphics (`CGContext.scaleBy`, `CGImage.colorSpace`, bitmap contexts);
+  - o plugin de macros `OpenSwiftUIMacros` (`@Entry`), que precisa ser compilado para o host Windows.
+## Foundation: swift-foundation sobre a libc do macOS
+
+O mOS fica no caminho que o swift-foundation usa no build SwiftPM do macOS (`os(macOS)` verdadeiro, sem
+`FOUNDATION_FRAMEWORK`), com três troca de nomes na cópia dos fontes (`Prepare-SF` do build):
+
+- **`Darwin`/`MachO` → `MOSDarwin`**: módulo clang com os cabeçalhos Darwin do zig, copiados para
+  `build\swift\openswiftui\darwin-libc` com `__has_feature(modules)` → 0 (em modo de módulos eles esperam o stddef
+  modular do SDK da Apple). Mais os cabeçalhos que o zig não traz (`userland\sdk\openswiftui\darwin`: `sys/xattr.h`,
+  `removefile.h`, `sysdir.h`, `sys/quota.h`). O overlay Swift (`swift\MOSDarwin`) faz o papel do overlay Darwin:
+  `errno`, `open`/`fcntl`/`ioctl` sem variádica, `S_IF*` como `mode_t`, `POSIXErrorCode`, `CLOCK_*`, `modf`
+  com tupla. Não se chama "Darwin" porque `canImport(Darwin)` levaria o OpenSwiftUI aos caminhos da Apple.
+- **`os` → `MOSos`**: Logger/os_log mínimos, que escrevem no stderr.
+- **Sem _Concurrency**: `@MainActor`/`@isolated(any)` saem. Ficam de fora o `ProgressManager` (usa o Observation
+  da Apple) e o NotificationCenter de mensagens (assíncrono). O NotificationCenter clássico é responsabilidade do Foundation do mOS.
+
+Essa libc também passou a ser a do importador para todos os módulos Swift, no lugar dos `stdio.h`/`pthread.h` mínimos.
+`Synchronization` (`swift\Synchronization`) traz `Atomic` sobre inteiros e `Mutex`.
+
+Ainda não portado: o **FoundationInternationalization** (usa ICU), que traz formatação com locale (números,
+datas por extenso), ListFormatter e Calendar não gregoriano. Sem ele, `Locale` funciona só no básico.

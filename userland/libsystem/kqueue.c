@@ -58,9 +58,18 @@ static kq_t *kqs[MAX_KQ];
 
 /* descritor pronto para leitura? pipes: bytes disponíveis ou a outra ponta fechou (SYS_FSTAT do
  * kernel: is_dir 2 = ponta de leitura); arquivos comuns: sempre. *avail = bytes, *eof = fim. */
+/* sockets do libSystem (sockets.c, descritores a partir de 0x5000): perguntam à conexão TCP do kernel */
+int cx_sock_is(int fd) __attribute__((weak));
+int cx_sock_readable(int fd, long *avail, int *eof) __attribute__((weak));
+int cx_sock_writable(int fd) __attribute__((weak));
+int cx_fd_writable(int fd) {
+    if (fd >= 0x5000 && cx_sock_is && cx_sock_is(fd)) return cx_sock_writable(fd);
+    return 1;                                                    /* arquivos e pipes: sempre */
+}
 int cx_fd_readable(int fd, long *avail, int *eof) {
     mos_stat_t st;
     *avail = 0; *eof = 0;
+    if (fd >= 0x5000 && cx_sock_is && cx_sock_is(fd)) return cx_sock_readable(fd, avail, eof);
     if (fd < 0 || fd >= 0x4000 || SYS2(SYS_FSTAT, fd, &st) < 0) return 0;
     if (st.is_dir == 2) { *avail = (long)st.size; *eof = st.mtime != 0; return st.size > 0 || st.mtime; }
     if (st.is_dir == 3) return 0;
@@ -169,7 +178,7 @@ static int ready(knote_t *k, kevent64_s *out) {
         }
         return 1;
     }
-    case EVFILT_WRITE: out->data = 65536; return 1;
+    case EVFILT_WRITE: if (!cx_fd_writable((int)k->ev.ident)) return 0; out->data = 65536; return 1;
     case EVFILT_READ: {
         long avail; int eof;
         if (!cx_fd_readable((int)k->ev.ident, &avail, &eof)) return 0;
@@ -179,6 +188,31 @@ static int ready(knote_t *k, kevent64_s *out) {
     }
     default: return 0;
     }
+}
+
+/* o kqueue "está legível" (poll/select sobre o fd dele) quando algum evento registrado está pronto.
+ * Sem efeitos colaterais (não limpa gatilhos, não reprograma timers, não recebe mensagens Mach):
+ * a thread de polling do Electron faz poll(uv_backend_fd) e só então acorda o laço do Node. */
+int cx_kqueue_peek(int fd) {
+    int i = fd - KQ_FD_BASE;
+    if (i < 0 || i >= MAX_KQ || !kqs[i]) return -1;
+    kq_t *q = kqs[i];
+    int r = 0;
+    kl(q);
+    for (int k = 0; k < MAX_KN && !r; k++) {
+        knote_t *n = &q->kn[k];
+        if (!n->used || !n->enabled) continue;
+        long avail; int eof;
+        switch (n->ev.filter) {
+        case EVFILT_USER: r = n->triggered; break;
+        case EVFILT_TIMER: r = now_ms() >= n->next_ms; break;
+        case EVFILT_MACHPORT: r = cx_mach_pending((u32)n->ev.ident) > 0; break;
+        case EVFILT_WRITE: r = cx_fd_writable((int)n->ev.ident); break;
+        case EVFILT_READ: r = cx_fd_readable((int)n->ev.ident, &avail, &eof); break;
+        }
+    }
+    ku(q);
+    return r;
 }
 
 int kevent64(int fd, const kevent64_s *changes, int nchanges, kevent64_s *events, int nevents, unsigned flags, const ts_t *timeout) {

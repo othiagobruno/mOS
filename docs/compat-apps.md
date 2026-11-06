@@ -1,0 +1,153 @@
+# Compatibilidade com apps do macOS: Cursor, Claude, Codex, VS Code, Slack, Grok Bot, WhatsApp
+
+Objetivo: rodar sem modificações, no mOS (x86_64), os builds **Intel** oficiais destes sete apps. Este documento é o
+inventário medido (6 nov. 2026), como cada um é montado e iniciado, e o roteiro. O porte detalhado do VS Code, que abre o
+caminho para os Electron, está em [porte-vscode.md](porte-vscode.md). O do Chrome, que serve ao Codex, está em [porte-chrome.md](porte-chrome.md).
+
+## Builds medidos
+
+URLs tiradas dos casks do Homebrew (`https://formulae.brew.sh/api/cask/<nome>.json`), que apontam para o servidor de cada
+fabricante. Baixados em `build/apps/dl/` e extraídos em `build/apps/x/`. DMG com o leitor do próprio mOS (`build/dmgtest.exe`),
+zip com o `tar.exe` do Windows.
+
+| App | Versão | Arquivo (x64) | Base | macOS mín. |
+|---|---|---|---|---|
+| VS Code | 1.145.2 | update.code.visualstudio.com | Electron 43.8.3 (Chromium 150) | 12.0 |
+| Cursor | 3.29.9 | `downloads.cursor.com/production/<hash>/darwin/x64/Cursor-darwin-x64.zip` | Electron 43.8.4 (fork do VS Code) | 12.0 |
+| Claude | 4.23118.0 | `downloads.claude.ai/releases/darwin/universal/...zip` | Electron 44.9.3 | 13.0 |
+| Slack | 4.53.280 | `downloads.slack-edge.com/desktop-releases/mac/x64/...dmg` | Electron 45.2.1 | 13.0 |
+| Grok Bot | 0.79.2 | `downloads.cursor.com/sand/stable/darwin-x64/0.79.2/Grok_Bot_0.79.2_x64.dmg` (cask `grok-bot`, homepage x.ai/bot) | Electron 42.11.16 | 12.0 |
+| Codex (desktop) | 26.623.141536 | `persistent.oaistatic.com/codex-app-prod/Codex-darwin-x64-26.623.141536.zip` | **Chromium 149 com marca própria** (`Codex Framework.framework`), não Electron | 13.0 |
+| Codex CLI | 0.167.0 | `github.com/openai/codex/releases/.../codex-x86_64-apple-darwin.tar.gz` | binário Rust | — |
+| WhatsApp | 2.26.44.21 | `web.whatsapp.com/desktop/mac_native/release/` (DMG) | nativo: Swift + SwiftUI + UIKit (Catalyst) + Combine | 12 |
+
+Cuidados:
+- O `Codex.dmg` da página principal da OpenAI é **só arm64** (cputype `0x0100000C`). Para o mOS vale o zip `darwin-x64` do cask `codex-app`.
+- O redirect `claude.ai/api/desktop/...` devolve 403 sem navegador. Use o zip do cask.
+- O cask `slack` sem arquitetura baixa o universal. O `mac/x64/` é menor.
+
+## Inventário (tools/machocheck.c, bundle inteiro)
+
+"Ausentes" = funções e símbolos distintos importados que o libSystem do mOS não tem. A medição de 6 nov. já inclui
+`security.c` e `cfdata.c` (abaixo) e a libc++ em andamento (`libcxx.c`, de outra sessão).
+
+| App | Imagens x86_64 | Ausentes (antes → agora) | Além do VS Code (antes) | Maiores grupos extras |
+|---|---|---|---|---|
+| VS Code | 11+ | 1.620 → 1.950* | — | (referência) |
+| Slack | 22 | 1.709 → 1.534 | 123 | libc++ 52, CoreFoundation, AVFAudio, CoreSpotlight |
+| Cursor | 49 | 2.378 → 2.089 | 760 | libc++ 279, Swift 237 (só o `cursor-update-supervisor`), Security 84 |
+| Codex desktop | — | 2.481 → 2.231 | 978 | libc++ 271, Swift 259 (helpers nativos), CoreText 54 |
+| Grok Bot | 27 | 2.562 → 2.393 | 974 | Swift 541 (só o helper "Computer Use"), Foundation 219 |
+| Claude | 27 | 4.279 → 4.040 | 2.700 | Swift 1.256 + SwiftUI 547 (`swift_addon.node`, `computer_use.node`, simulador iOS) |
+| WhatsApp | 9 | 8.922 → 8.675 | 8.344 | Swift 3.076, UIKit 582, SwiftUI 555, Combine 283 |
+| **Codex CLI** | 1 | **271 → 90** | 152 | Security zerado; sobram CF, termios, rede |
+
+\* O número do VS Code subiu porque o bundle em `build-vscode` foi preparado de novo, agora com mais módulos nativos. Não é regressão.
+
+Para refazer:
+
+```powershell
+.\build\machocheck.exe build\libSystem.mos "build\apps\x\slack-x64\Slack\Slack.app" build\apps\rel\slack.txt
+```
+
+## Como cada um é montado e iniciado
+
+Validado no código-fonte no GitHub para os abertos (VS Code, Electron, Codex CLI) e pelos binários para os fechados.
+
+**Electron (VS Code, Cursor, Claude, Slack, Grok Bot)**:
+- Partida: `shell/app/electron_main_mac.cc` (electron/electron). Um helper sem `--type=` sai com `EX_USAGE`. Num helper que exige
+  sandbox, uma falha em `InitializeSandbox()` dá `abort()`. O Framework é ligado por `@rpath`, não por `dlopen`.
+- Helpers: `<App> Helper (GPU|Renderer|Plugin).app`. Os utility processes do VS Code (shared process, pty host, file watcher,
+  extension host) usam o `(Plugin)` porque pedem `allowLoadingUnsignedLibraries`.
+- Rendezvous Mach (`base/apple/mach_port_rendezvous_mac.cc`): a validação do par é "só validar" por padrão. Ele chama
+  `SecCodeCopyGuestWithAttributes` com o audit token e não bloqueia se falhar.
+- O VS Code acrescenta `--no-sandbox` e `--disable-gpu-sandbox`, salvo com `--sandbox` (`src/mainImpl.ts`). Os outros sandboxam os
+  renderers por padrão, então o `sandbox_apply` dos helpers precisa responder "sucesso".
+
+**Fuses** (fio de `'0'`/`'1'` depois de `dL7pKGdnNz796PbbjQWNKmHXBZaB9tsX` no Electron Framework), na ordem RunAsNode,
+CookieEncryption, NODE_OPTIONS, Inspect, **AsarIntegrity**, OnlyLoadAppFromAsar, V8Snapshot, FileProtocol, WasmTrap:
+
+| App | Fuses | O que importa para o mOS |
+|---|---|---|
+| VS Code, Cursor | `101100011` | sem integridade de asar e sem criptografia de cookies |
+| Claude, Grok Bot | `010011011` | **integridade do asar** + **cookies criptografados** + só carrega de `app.asar` |
+| Slack | `010011001` | idem |
+
+- Com AsarIntegrity ligado, `shell/common/asar/archive_mac.mm` lê `ElectronAsarIntegrity` do Info.plist do app **externo** com
+  `objectForInfoDictionaryKey`: um dicionário com `Resources/app.asar`, `{algorithm = SHA256, hash}`. Dicionário ausente ou hash
+  diferente dá `LOG(FATAL)`. O `NSBundle` do mOS precisa devolver esse dicionário aninhado, inclusive dentro dos helpers, e o
+  SHA-256 do cabeçalho do asar precisa bater (o CommonCrypto do mOS já tem SHA-256).
+- Com CookieEncryption ligado, a partida busca a chave "&lt;App&gt; Safe Storage" no **Keychain**. Agora funciona (abaixo).
+
+**Codex desktop**: o layout é o do Google Chrome (`Codex Framework.framework/Versions/149.0.7827.197/`, `app_mode_loader`,
+helpers `Codex (GPU|Renderer|Service|Alerts).app`, Sparkle para atualizar), então o caminho é o do porte do Chrome
+(`dlopen` do Framework + `ChromeMain`). Traz `Resources/codex-cli` e um runtime Node (`cua_node`).
+
+**Codex CLI**: um binário Rust (`codex-rs`). O wrapper npm `codex-cli/bin/codex.js` só faz `execve` dele. Para o mOS:
+- Sandbox: `codex-rs/sandboxing/src/seatbelt.rs` roda `/usr/bin/sandbox-exec -p <política> -- comando`. O mOS precisa de um
+  `/usr/bin/sandbox-exec` que execute o comando (pode ignorar a política), ou o usuário escolhe o modo sem sandbox.
+- Login: crate `keyring` (`apple-native`), que é `SecItem*`. Agora funciona.
+
+**WhatsApp**: nativo, sem Chromium. O caminho é o do runtime Swift + OpenSwiftUI (outras sessões, [openswiftui-deps.md](openswiftui-deps.md))
+mais um UIKit/Catalyst, que o mOS ainda não tem.
+
+## Feito nesta etapa
+
+- **`userland/libsystem/security.c`**: Security.framework.
+  - Keychain de senhas de verdade: `SecItemAdd/CopyMatching/Update/Delete` (classes `genp`/`inet`, `kSecReturnData/Attributes/Ref`,
+    `kSecMatchLimitOne/All`, duplicata = `errSecDuplicateItem`) e a API antiga `SecKeychainFindGenericPassword/AddGenericPassword/
+    ItemModifyAttributesAndData/ItemDelete/ItemFreeContent`, que é a do OSCrypt do Chromium. Os itens ficam em
+    `$HOME/Library/Keychains/mos-keychain.txt`, gravado por arquivo temporário + `rename`. **Sem criptografia**: o mOS ainda não
+    tem senha de sessão.
+  - Assinatura de código: todo código é "não assinado" (`errSecCSUnsigned`). `SecCodeCopySelf`/`GuestWithAttributes`/
+    `StaticCodeCreateWithPath` criam os objetos. `SecCodeCopySigningInformation` devolve um dicionário sem identidade, como o macOS faz.
+  - SecTrust guarda a cadeia, mas avalia como "não confiável". `SecTrustSettingsCopy*` devolve `errSecNoTrustSettings`.
+    SecKey/Identity/PKCS12/transforms e SecureTransport (`SSL*`) devolvem os erros documentados. Authorization não concede direitos.
+  - As 177 constantes `kSec*` que os apps importam estão em `security_consts.inc`, com os valores reais da Apple onde conhecidos.
+- **`userland/libsystem/cfdata.c`**: `CFData*` (cria, copia, mutável, acrescenta, troca, ajusta tamanho) e `CFDate*`, em ponte com o
+  NSData/NSDate do mOS. Não existiam, e os sete apps os importam.
+- **`objc.c` (`cx_class_named`)**: programas sem seções ObjC (C/Rust que só usam CoreFoundation, como o Codex CLI) recebiam `nil` em
+  toda classe, porque o runtime só subia com seções ObjC. Agora ele sobe na primeira procura, como o `swiftbridge.c` já fazia.
+- `chrome.c`: os stubs de Keychain substituídos saíram de lá. `SecKeychainCopyDefault`/`GetStatus` dizem "um Keychain, destrancado".
+- **Teste**: `tools/build-sectest.ps1` monta `SecTest.app` (`userland/tests-security/main.c`, compila igual no macOS). No harness dá
+  `sectest: 26/26 ok`, e a segunda execução (`reler`) lê o item gravado pela primeira: `1/1 ok`. O sample Lista dá a mesma saída
+  de antes.
+
+## Rede e Codex CLI no QEMU
+
+- **Sockets TCP de verdade.** A syscall nova `SYS_NET` (43) fica em `kernel/net/usersock.c`. Ela expõe aos apps a pilha TCP/DNS
+  do kernel, com conexões por processo, fechadas quando o processo sai. A trava `g_net_lock` protege o `net_poll`, e `TCP_SOCKS`
+  foi de 16 para 64.
+  - No libSystem, `sockets_inet.inc` implementa AF_INET/TCP: connect bloqueante ou com `O_NONBLOCK`, `SO_ERROR`, send/recv,
+    sendmsg/recvmsg, getpeername, `getaddrinfo`/`getnameinfo`/`inet_pton`/`inet_ntop`.
+  - Os sockets também respondem a `read`/`write`/`fcntl`/`ioctl` (libc.c) e a poll e kqueue (`cx_fd_readable`/`cx_fd_writable`).
+  - Teste: `tools/build-nettest.ps1 -OutDir build-net`, com o app `userland/tests-net`. No QEMU deu **16/16**, com `HTTP/1.1 200`
+    de example.com nos modos bloqueante, não-bloqueante + poll e kqueue.
+- **Codex CLI roda no mOS** (`tools/stage-codex-cli.ps1`, binário oficial 0.167.0 sem modificações; QEMU com 1,5 GB):
+  `codex --version` imprime `codex-cli 0.167.0` (código 0), e `codex login status` imprime `Not logged in`, a resposta certa
+  sem login.
+  - Para chegar lá: `cli.c` (as 87 funções que faltavam), Security/CFNetwork/SystemConfiguration/CoreServices/IOKit/
+    LocalAuthentication na lista de bibliotecas do carregador, `MAX_LOAD` de 256 para 512 MB (o binário tem 277 MB),
+    `fcntl(F_DUPFD)` coerente com `dup()` (o tokio clonava o kqueue como fd 0) e `pthread_attr_setstacksize` respeitado.
+- **Próximo bloqueio do Codex: TLS.** O Codex usa native-tls, que no macOS é o SecureTransport (`SSLCreateContext`/
+  `SSLHandshake`/`SSLRead`/`SSLWrite`), ainda stub no `security.c`. DNS e TCP até `auth.openai.com:443` já funcionam;
+  `codex login --device-auth` para em "error sending request". O kernel tem um cliente TLS 1.3/1.2 (`kernel/net/tls.c`) que
+  pode servir de base.
+
+## Roteiro (do mais perto para o mais longe)
+
+1. **Codex CLI** (faltam 90). É o primeiro app da lista que pode rodar inteiro:
+   - termios (`tcgetattr/tcsetattr/cfmakeraw/openpty/ttyname_r/tcgetpgrp`) para a interface de terminal;
+   - `getaddrinfo/freeaddrinfo/gai_strerror` e TLS (ele usa rustls ou SecureTransport, a conferir);
+   - CFURL, CFError, CFPreferences, CFTimeZone;
+   - FSEvents (pode começar sem eventos) e proxies (`CFNetworkCopyProxiesForURL`, `SCDynamicStore`: "sem proxy");
+   - `proc_pidinfo/proc_pidpath/proc_listchildpids`, `flock/lockf`, `copyfile_state_*`, `acl_*` (sem ACL);
+   - `/usr/bin/sandbox-exec`.
+2. **Slack**: depois do VS Code chegar à janela, sobram só ~123 a mais: libc++ (em andamento), `CFPreferences*`, CoreSpotlight vazio,
+   `AVFAudio` (constantes) e `SMAppService`. Ele exige a integridade do asar e o Safe Storage (este já está pronto).
+3. **Cursor**: o mesmo caminho do VS Code. Os ~760 a mais são libc++ dos módulos `.node` e Security (já coberto). O Swift fica só no
+   supervisor de atualização, que é opcional.
+4. **Grok Bot** e **Claude**: Electron mais integridade do asar. O Swift deles mora em módulos opcionais (computer use, simulador
+   iOS), mas o `swift_addon.node` do Claude talvez carregue na partida e precise do runtime Swift (sessão OpenSwiftUI).
+5. **Codex desktop**: o porte do Chrome (`ChromeMain`) mais CoreText.
+6. **WhatsApp**: runtime Swift, Foundation do Swift, Combine, SwiftUI (OpenSwiftUI) e UIKit/Catalyst. É o mais longe.

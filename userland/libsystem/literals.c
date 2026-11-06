@@ -87,8 +87,19 @@ static void number_class(cx_class_t *k, cx_class_t *m, const char *name) {
     for (u32 i = 0; i < sizeof tab / sizeof tab[0]; i++) cx_add_method(k, tab[i].s, tab[i].f);
 }
 
+/* @{} e @[] vazios (Xcode 15+): o compilador referencia direto os objetos ___NSDictionary0__ e
+ * ___NSArray0__ do CoreFoundation. Mesmo layout de nsdict_t {isa, keys, vals, n, cap} e
+ * nsarr_t {isa, items, n}, com contagem 0; o isa é preenchido na inicialização. */
+u64 cx_empty_dict[5] __asm__("__NSDictionary0__");
+u64 cx_empty_array[3] __asm__("__NSArray0__");
+static void empty_literals(void) {
+    if (!cx_empty_dict[0]) cx_empty_dict[0] = (u64)cx_class_named("NSDictionary");
+    if (!cx_empty_array[0]) cx_empty_array[0] = (u64)cx_class_named("NSArray");
+}
+
 static int classes_ready;
 static void literal_classes(void) {
+    empty_literals();
     if (classes_ready) return;
     classes_ready = 1;
     number_class(&NSConstantIntegerNumber_c, &NSConstantIntegerNumber_m, "NSConstantIntegerNumber");
@@ -96,6 +107,7 @@ static void literal_classes(void) {
     number_class(&NSConstantFloatNumber_c, &NSConstantFloatNumber_m, "NSConstantFloatNumber");
 }
 
+void cx_literals_init(void) { empty_literals(); }   /* cx_darwin_init: vale também sem seções de literais */
 void cx_darwin_literals(u8 *a, u64 size, u64 kind) {
     literal_classes();
     if (kind == 12) {                                  /* dicionários: 40 bytes cada */

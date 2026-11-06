@@ -177,6 +177,142 @@ static void o_perform_on_main(id self, SEL c, SEL s, id a, BOOL wait) {
 }
 static void o_perform_on_main_modes(id self, SEL c, SEL s, id a, BOOL wait, id modes) { (void)modes; o_perform_on_main(self, c, s, a, wait); }
 
+/* NSThemeFrame: no AppKit real a view de conteúdo de uma janela fica dentro da "moldura" da janela, e o
+ * Electron (-[ElectronNSWindow initWithShell:styleMask:]) troca o -swipeWithEvent: da classe de
+ * [[window contentView] superview] — com superview nil o CHECK do swizzling encerra o processo. Aqui a
+ * moldura é um objeto por janela, fora da árvore de desenho do appkit.c: -superview da view de conteúdo
+ * devolve a moldura quando o appkit.c não tem superview para ela. */
+cx_class_t NSThemeFrame_c __asm__("OBJC_CLASS_$_NSThemeFrame");
+cx_class_t NSThemeFrame_m __asm__("OBJC_METACLASS_$_NSThemeFrame");
+void *calloc(size_t n, size_t s);
+/* retornos de struct > 16 bytes (NSRect) vêm por ponteiro oculto: use objc_msgSend_stret */
+void objc_msgSend_stret(void);
+typedef struct { cx_class_t *isa; id window; } theme_frame_t;
+#define MAX_FRAMES 64
+static struct { id window; id frame; } frames[MAX_FRAMES];
+static id (*orig_superview)(id, SEL);
+static id frame_for(id window) {
+    for (int i = 0; i < MAX_FRAMES; i++) if (frames[i].window == window) return frames[i].frame;
+    for (int i = 0; i < MAX_FRAMES; i++)
+        if (!frames[i].window) {
+            /* instância "crua" da classe (sem o estado de view do appkit.c): só responde aos métodos abaixo */
+            theme_frame_t *f = calloc(1, sizeof *f + 64);
+            if (!f) return 0;
+            f->isa = &NSThemeFrame_c;
+            f->window = window;
+            frames[i].window = window; frames[i].frame = (id)f;
+            return (id)f;
+        }
+    return 0;
+}
+static id v_superview_frame(id self, SEL c) {
+    id s = orig_superview ? orig_superview(self, c) : 0;
+    if (s) return s;
+    id w = MSG0(id, self, "window");
+    if (w && MSG0(id, w, "contentView") == self) return frame_for(w);
+    return 0;
+}
+static id tf_window(id self, SEL c) { (void)c; return ((theme_frame_t *)self)->window; }
+static id tf_nil(id self, SEL c) { (void)self; (void)c; return 0; }
+static id tf_subviews(id self, SEL c) {
+    (void)c;
+    id a = MSG0(id, (id)cx_class_named("NSMutableArray"), "array");
+    id cv = MSG0(id, ((theme_frame_t *)self)->window, "contentView");
+    if (cv) MSG(void, a, "addObject:", cv);
+    return a;
+}
+static void tf_event(id self, SEL c, id ev) { (void)self; (void)c; (void)ev; }
+typedef struct { double x, y, w, h; } tf_rect_t;
+static tf_rect_t tf_frame(id self, SEL c) {
+    (void)c;
+    id w = ((theme_frame_t *)self)->window;
+    tf_rect_t r = w ? ((tf_rect_t (*)(id, SEL))objc_msgSend_stret)(w, sel_registerName("frame")) : (tf_rect_t){0, 0, 0, 0};
+    r.x = r.y = 0;
+    return r;
+}
+static void tf_set_size(id self, SEL c, double w, double h) { (void)self; (void)c; (void)w; (void)h; }
+static void tf_add_subview(id self, SEL c, id v) { (void)self; (void)c; (void)v; }   /* desenho ainda não */
+static BOOL tf_yes(id self, SEL c) { (void)self; (void)c; return YES; }
+/* NSWindow: o que o NativeWindowMac do Electron chama ao criar a janela e o appkit.c não tem */
+typedef struct { double x, y, w, h; } nw_rect_t;
+static void w_set_frame_animate(id self, SEL c, nw_rect_t r, BOOL display, BOOL animate) {
+    (void)c; (void)animate;
+    ((void (*)(id, SEL, nw_rect_t, BOOL))objc_msgSend)(self, sel_registerName("setFrame:display:"), r, display);
+}
+static id w_screen(id self, SEL c) { (void)self; (void)c; return MSG0(id, (id)cx_class_named("NSScreen"), "mainScreen"); }
+static BOOL w_yes(id self, SEL c) { (void)self; (void)c; return YES; }
+static BOOL w_no(id self, SEL c) { (void)self; (void)c; return NO; }
+static u64 w_zero(id self, SEL c) { (void)self; (void)c; return 0; }
+static void w_noop1(id self, SEL c, id a) { (void)self; (void)c; (void)a; }
+typedef struct { double x, y; } nw_pt_t;
+static u64 w_style(id self, SEL c) { (void)self; (void)c; return 15; }   /* titled|closable|miniaturizable|resizable */
+static nw_pt_t w_pt_identity(id self, SEL c, nw_pt_t p) {
+    (void)c;
+    nw_rect_t f = ((nw_rect_t (*)(id, SEL))objc_msgSend_stret)(self, sel_registerName("frame"));
+    p.x -= f.x; p.y -= f.y;                                     /* tela -> base da janela */
+    return p;
+}
+static nw_pt_t w_pt_to_screen(id self, SEL c, nw_pt_t p) {
+    (void)c;
+    nw_rect_t f = ((nw_rect_t (*)(id, SEL))objc_msgSend_stret)(self, sel_registerName("frame"));
+    p.x += f.x; p.y += f.y;
+    return p;
+}
+static id tf_nil_1(id self, SEL c, long a) { (void)self; (void)c; (void)a; return 0; }
+static void w_noop_size(id self, SEL c, double w, double h) { (void)self; (void)c; (void)w; (void)h; }
+static nw_pt_t ev_mouse_location(id cls, SEL c) { (void)cls; (void)c; nw_pt_t p = {0, 0}; return p; }
+static void window_methods_init(void) {
+    cx_class_t *w = cx_class_named("NSWindow");
+    if (!w) return;
+#define ADD_IF_MISSING(k, s, f) do { if (!cx_responds(k, sel_registerName(s))) cx_add_method(k, s, (void *)(f)); } while (0)
+    ADD_IF_MISSING(w, "styleMask", w_style);
+    ADD_IF_MISSING(w, "level", w_zero);
+    ADD_IF_MISSING(w, "isMiniaturized", w_no);
+    ADD_IF_MISSING(w, "isZoomed", w_no);
+    ADD_IF_MISSING(w, "isOpaque", w_yes);
+    ADD_IF_MISSING(w, "standardWindowButton:", tf_nil_1);
+    ADD_IF_MISSING(w, "setContentMaxSize:", w_noop_size);
+    ADD_IF_MISSING(w, "setContentMinSize:", w_noop_size);
+    ADD_IF_MISSING(w, "setMaxSize:", w_noop_size);
+    ADD_IF_MISSING(w, "setMinSize:", w_noop_size);
+    ADD_IF_MISSING(w, "convertPointFromScreen:", w_pt_identity);
+    ADD_IF_MISSING(w, "convertPointToScreen:", w_pt_to_screen);
+    cx_class_t *ev = cx_class_named("NSEvent");
+    if (ev && !cx_responds(*(cx_class_t **)ev, sel_registerName("mouseLocation"))) cx_add_cmethod(ev, "mouseLocation", (void *)ev_mouse_location);
+    if (!cx_responds(w, sel_registerName("setFrame:display:animate:"))) cx_add_method(w, "setFrame:display:animate:", (void *)w_set_frame_animate);
+    if (!cx_responds(w, sel_registerName("screen"))) cx_add_method(w, "screen", (void *)w_screen);
+    if (!cx_responds(w, sel_registerName("isOnActiveSpace"))) cx_add_method(w, "isOnActiveSpace", (void *)w_yes);
+    if (!cx_responds(w, sel_registerName("collectionBehavior"))) cx_add_method(w, "collectionBehavior", (void *)w_zero);
+    if (!cx_responds(w, sel_registerName("setIgnoresMouseEvents:"))) cx_add_method(w, "setIgnoresMouseEvents:", (void *)w_noop1);
+    if (!cx_responds(w, sel_registerName("ignoresMouseEvents"))) cx_add_method(w, "ignoresMouseEvents", (void *)w_no);
+    cx_class_t *v = cx_class_named("NSView");
+    if (v && !cx_responds(v, sel_registerName("registerForDraggedTypes:"))) cx_add_method(v, "registerForDraggedTypes:", (void *)w_noop1);
+    cx_class_t *app = cx_class_named("NSApplication");
+    if (app && !cx_responds(app, sel_registerName("isFullKeyboardAccessEnabled"))) cx_add_method(app, "isFullKeyboardAccessEnabled", (void *)w_no);
+}
+
+static void frame_class_init(void) {
+    window_methods_init();
+    cx_class_t *view = cx_class_named("NSView");
+    if (!view) return;
+    cx_define_class(&NSThemeFrame_c, &NSThemeFrame_m, "NSThemeFrame", view, sizeof(theme_frame_t) - 8 + 64);
+    cx_add_method(&NSThemeFrame_c, "window", (void *)tf_window);
+    cx_add_method(&NSThemeFrame_c, "superview", (void *)tf_nil);
+    cx_add_method(&NSThemeFrame_c, "subviews", (void *)tf_subviews);
+    cx_add_method(&NSThemeFrame_c, "frame", (void *)tf_frame);
+    cx_add_method(&NSThemeFrame_c, "bounds", (void *)tf_frame);
+    cx_add_method(&NSThemeFrame_c, "setFrameSize:", (void *)tf_set_size);
+    cx_add_method(&NSThemeFrame_c, "addSubview:", (void *)tf_add_subview);
+    cx_add_method(&NSThemeFrame_c, "isFlipped", (void *)tf_yes);
+    /* eventos que o Electron troca ou consulta na moldura */
+    cx_add_method(&NSThemeFrame_c, "swipeWithEvent:", (void *)tf_event);
+    cx_add_method(&NSThemeFrame_c, "mouseDown:", (void *)tf_event);
+    cx_add_method(&NSThemeFrame_c, "mouseUp:", (void *)tf_event);
+    cx_add_method(&NSThemeFrame_c, "rightMouseDown:", (void *)tf_event);
+    extern void *class_replaceMethod(cx_class_t *c, SEL s, void *imp, const char *types);
+    orig_superview = (id (*)(id, SEL))class_replaceMethod(view, sel_registerName("superview"), (void *)v_superview_frame, "@@:");
+}
+
 /* KVO: registros aceitos, nenhuma notificação de mudança ainda */
 static void kvo_add(id self, SEL c, id obs, id path, u64 opts, void *ctx) { (void)self; (void)c; (void)obs; (void)path; (void)opts; (void)ctx; }
 static void kvo_remove(id self, SEL c, id obs, id path) { (void)self; (void)c; (void)obs; (void)path; }
@@ -332,6 +468,9 @@ void cx_darwin_init(void) {
     cx_main_tid = (int)SYS0(SYS_GETTID);       /* a fila principal do GCD pertence a esta thread */
     extern void cx_cgdisplay_init(void);
     cx_cgdisplay_init();
+    extern void cx_literals_init(void);
+    cx_literals_init();                         /* @{} e @[] vazios (literals.c) */
+    frame_class_init();                         /* NSThemeFrame: moldura da janela para o Electron */
     cx_class_t *ob = cx_class_named("NSObject");
     if (ob) {
         cx_add_method(ob, "addObserver:forKeyPath:options:context:", (void *)kvo_add);

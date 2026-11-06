@@ -198,9 +198,12 @@ static u64 pref_n;
 static bool pref_ready(void) {
     if (pref) return true;
     u64 top = 0;
+    /* só RAM que o pmm pode entregar (livre, do kernel, dos serviços de boot): regiões reservadas do
+     * firmware lá no alto (o QEMU anuncia algumas acima de 1 TiB) faziam esta tabela pedir 512 MiB */
     for (u32 i = 0; i < g_boot->region_count; i++) {
+        u32 ty = g_boot->regions[i].type;
         u64 e = g_boot->regions[i].base + g_boot->regions[i].pages * 4096;
-        if (e > top && g_boot->regions[i].type != MEM_MMIO) top = e;
+        if (e > top && (ty == MEM_FREE || ty == MEM_KERNEL || ty == MEM_ACPI || ty == MEM_BOOTSVC)) top = e;   /* as mesmas do pmm (mm/memory.c) */
     }
     pref_n = top / 4096;
     pref = kcalloc(pref_n, sizeof *pref);
@@ -404,6 +407,7 @@ static void finish(process_t *p, int code) {
     for (int i = 0; i < 32; i++) fd_close(p, i);      /* fecha arquivos e pipes (acorda quem espera) */
     compat_gui_proc_exit(p);
     machipc_exit(p);                                  /* portas Mach: receptores morrem, envios viram nomes mortos */
+    { extern void net_user_exit(process_t *p); net_user_exit(p); }   /* conexões TCP do processo (kernel/net/usersock.c) */
     for (process_t *c = procs; c; c = c->next) if (c->ppid == p->pid) c->ppid = 0;   /* órfãos */
     bool reported = false;
     for (thread_t *t = sched_threads(); t; t = t->next) {
@@ -607,11 +611,59 @@ u64 proc_fault(int_frame_t *f, u64 cr2) {
                 if (o > 150) { kprintf("proc:   pilha:%s\n", line); o = 0; }
             }
             if (o) kprintf("proc:   pilha:%s\n", line);
+            /* textos para onde a pilha aponta (no runtime ObjC do mOS um SEL é um char*): acha o
+             * seletor/classe de um CHECK do Chromium (ex.: swizzling que não achou o método) */
+            int strs = 0;
+            for (int i = 0; i < 96 && strs < 12; i++) {
+                u64 v = words[i];
+                if (v < USER_BASE || v >= USER_BASE + 0x8000000000ULL) continue;
+                char s[49];
+                if (!uvm_copy_in(p, s, v, 48)) continue;
+                s[48] = 0;
+                int k = 0;
+                while (k < 48 && s[k] >= 0x20 && s[k] < 0x7F) k++;
+                if (k < 4 || (k < 48 && s[k] != 0)) continue;   /* só texto ASCII terminado (ou longo) */
+                kprintf("proc:   texto [rsp+%d] %llx: \"%s\"\n", i * 8, v, s);
+                strs++;
+            }
         }
     }
     console_put(msg, strlen(msg));
     finish(p, -(int)(f->vector == 14 ? 11 : 4 + f->vector));
     return sched_switch(f);
+}
+
+/* diagnóstico: com /Sistema/Biblioteca/despejar-threads (e stderr-serial), a cada 30 s o log serial recebe,
+ * para cada thread de usuário, o estado, o rip/rsp salvos e os endereços de código na pilha — para achar
+ * onde um app (ex.: o VS Code) ficou parado sem falhar. Disparado de SYS_SLEEP (contexto de syscall). */
+thread_t *sched_threads(void);
+static void dump_threads_maybe(int_frame_t *cur) {
+    static int on = -1;
+    static u64 last;
+    if (on < 0) on = vfs_lookup("/Sistema/Biblioteca/despejar-threads") != NULL;
+    if (!on || timer_ticks() - last < 30000) return;
+    last = timer_ticks();
+    static const char *st[] = {"pronta", "rodando", "dormindo", "esperando", "morta"};
+    kprintf("despejo: threads em %llu ms\n", (unsigned long long)last);
+    for (thread_t *t = sched_threads(); t; t = t->next) {
+        if (!t->proc || t->state == TH_DEAD || (!t->frame && t != thread_current())) continue;
+        int_frame_t *f = t == thread_current() ? cur : (int_frame_t *)t->frame;   /* a atual: o frame desta syscall */
+        kprintf("despejo: %s pid %d thread %d \"%s\" %s (espera %d) rip %llx rsp %llx\n", t->proc->name, t->proc->pid, t->id,
+                t->name, t->state <= TH_DEAD ? st[t->state] : "?", t->wait_pid, f->rip, f->rsp);
+        u64 words[160];
+        if (!uvm_copy_in(t->proc, words, f->rsp & ~7ULL, sizeof words)) continue;
+        char line[200];
+        usize o = 0;
+        int shown = 0;
+        for (int i = 0; i < 160 && shown < 20; i++) {
+            u64 v = words[i];
+            if (v < USER_BASE + 0x100000ULL || v >= USER_BASE + 0x0E000000ULL) continue;
+            o += (usize)snprintf(line + o, sizeof line - o, " %llx", v);
+            shown++;
+            if (o > 150) { kprintf("despejo:   pilha:%s\n", line); o = 0; }
+        }
+        if (o) kprintf("despejo:   pilha:%s\n", line);
+    }
 }
 
 /* ------------------------------------------------------------ sinais
@@ -858,6 +910,7 @@ u64 proc_syscall(int_frame_t *f) {
         break;
     case SYS_GETPID: r = p->pid; break;
     case SYS_SLEEP:
+        dump_threads_maybe(f);
         t->wake_at = timer_ticks() + a;
         t->state = TH_SLEEPING;
         f->rax = 0;
@@ -1222,6 +1275,7 @@ u64 proc_syscall(int_frame_t *f) {
     case SYS_SIGRETURN: return sig_return(f);
     case SYS_SIGKILL: r = proc_signal((int)a, (int)b) ? 0 : -MOS_ESRCH; break;
     case SYS_DYLD: r = macho_dyld_syscall(p, a, b, c, f->r10); break;   /* dlopen/dlsym (kernel/compat/macho.c) */
+    case SYS_NET: { extern i64 net_user_syscall(process_t *p, u64 op, u64 a, u64 b, u64 c); r = net_user_syscall(p, a, b, c, f->r10); break; }   /* TCP/DNS (kernel/net/usersock.c) */
 
     /* ---- processos e pasta atual */
     case SYS_WAITANY: {

@@ -176,9 +176,18 @@ static __attribute__((noreturn)) void cx_thread_entry(cx_tstart_t *ts) {
     for (;;) {}
 }
 void *mmap(void *addr, size_t len, int prot, int flags, int fd, off_t off);
+/* pthread_attr_t do macOS: {long sig; char opaque[56]}. Guardamos o tamanho de pilha pedido em opaque[0..8)
+ * (sig = ATTR_SIG); sem attr, ou attr de antes, 512 KiB como sempre. O Codex CLI (Rust) pede pilhas grandes para a
+ * thread principal do tokio e estourava os 512 KiB. Limite de 64 MiB (o mmap do kernel aloca na hora). */
+#define ATTR_SIG 0x5448524541445341L
+#define DEF_STACK (512 << 10)
+static size_t attr_stack(const void *a) {
+    if (!a || ((const long *)a)[0] != ATTR_SIG) return DEF_STACK;
+    size_t s = ((const size_t *)a)[1];
+    return s < (64 << 10) ? DEF_STACK : s > (64UL << 20) ? (64UL << 20) : s;
+}
 int pthread_create(unsigned long *t, const void *attr, void *(*fn)(void *), void *arg) {
-    (void)attr;
-    size_t sz = 512 << 10;
+    size_t sz = (attr_stack(attr) + 0xFFF) & ~(size_t)0xFFF;
     char *stack = mmap(0, sz, 3, 0x1002, -1, 0);
     if (stack == (char *)-1) return 35;
     cx_tstart_t *ts = malloc(sizeof *ts);
@@ -259,16 +268,29 @@ int pthread_cond_timedwait_relative_np(void *c, void *m, const void *ts) {
 int pthread_rwlock_rdlock(void *l) { (void)l; return 0; }
 int pthread_rwlock_wrlock(void *l) { (void)l; return 0; }
 int pthread_rwlock_unlock(void *l) { (void)l; return 0; }
-int pthread_attr_init(void *a) { (void)a; return 0; }
+int pthread_attr_init(void *a) { if (a) { ((long *)a)[0] = ATTR_SIG; ((size_t *)a)[1] = DEF_STACK; } return 0; }
 int pthread_attr_destroy(void *a) { (void)a; return 0; }
-int pthread_attr_setstacksize(void *a, size_t s) { (void)a; (void)s; return 0; }
+int pthread_attr_setstacksize(void *a, size_t s) {
+    if (!a || s < 16384) return 22;                              /* EINVAL, como o macOS abaixo de PTHREAD_STACK_MIN */
+    ((long *)a)[0] = ATTR_SIG; ((size_t *)a)[1] = s;
+    return 0;
+}
 size_t pthread_get_stacksize_np(void *t) { (void)t; return 256 << 10; }
 void *pthread_get_stackaddr_np(void *t) { (void)t; return (void *)0x400040000000ULL; }
 int pthread_setname_np(const char *n) { cx_fdprintf(2, "[thread] %ld chama-se \"%s\"\n", SYS0(SYS_GETTID), n ? n : ""); return 0; }   /* diagnóstico temporário */
-int pthread_threadid_np(void *t, u64 *id) { (void)t; if (id) *id = 1; return 0; }
-void os_unfair_lock_lock(void *l) { (void)l; }
-void os_unfair_lock_unlock(void *l) { (void)l; }
-int os_unfair_lock_trylock(void *l) { (void)l; return 1; }
+/* id da thread: o tid do kernel (o Chromium usa como PlatformThread::CurrentId; antes era sempre 1).
+ * Para t != a atual ainda devolve o tid de quem chamou (pthread_t do mOS não guarda o tid). */
+int pthread_threadid_np(void *t, u64 *id) { (void)t; if (id) *id = (u64)SYS0(SYS_GETTID); return 0; }
+/* os_unfair_lock (u32): 0 = livre, senão o tid do dono. O PartitionAlloc do Chromium protege o heap com
+ * ele; como no-op (época de uma thread por processo), a freelist corrompia com várias threads
+ * (CHECK "slotsize"/"entrypos"). Feito pela sessão do VS Code. */
+void os_unfair_lock_lock(void *l) {
+    u32 me = (u32)SYS0(SYS_GETTID);
+    while (!__sync_bool_compare_and_swap((volatile u32 *)l, 0u, me)) SYS0(SYS_YIELD);
+}
+void os_unfair_lock_lock_with_options(void *l, u32 opts) { (void)opts; os_unfair_lock_lock(l); }
+void os_unfair_lock_unlock(void *l) { __sync_lock_release((volatile u32 *)l); }
+int os_unfair_lock_trylock(void *l) { return __sync_bool_compare_and_swap((volatile u32 *)l, 0u, (u32)SYS0(SYS_GETTID)); }
 void os_unfair_lock_assert_owner(void *l) { (void)l; }
 
 /* ================================================================ strings e caminhos */

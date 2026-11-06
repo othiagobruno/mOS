@@ -727,8 +727,15 @@ void setprogname(const char *p) { __progname = p; }
 int system(const char *cmd) { (void)cmd; cx_errno = CX_ENOSYS; return -1; }
 
 /* ================================================================ POSIX básico */
-ssize_t write(int fd, const void *b, size_t n) { return ret_errno(SYS3(SYS_WRITE, fd, b, n)); }
-ssize_t read(int fd, void *b, size_t n) { return ret_errno(SYS3(SYS_READ, fd, b, n)); }
+/* sockets (sockets.c) vivem em descritores do libSystem a partir de 0x5000 */
+int cx_sock_is(int fd) __attribute__((weak));
+long cx_sock_read(int fd, void *b, size_t n) __attribute__((weak));
+long cx_sock_write(int fd, const void *b, size_t n) __attribute__((weak));
+void cx_sock_set_nonblock(int fd, int on) __attribute__((weak));
+int cx_sock_get_nonblock(int fd) __attribute__((weak));
+#define IS_SOCK(fd) ((fd) >= 0x5000 && cx_sock_is && cx_sock_is(fd))
+ssize_t write(int fd, const void *b, size_t n) { if (IS_SOCK(fd)) return cx_sock_write(fd, b, n); return ret_errno(SYS3(SYS_WRITE, fd, b, n)); }
+ssize_t read(int fd, void *b, size_t n) { if (IS_SOCK(fd)) return cx_sock_read(fd, b, n); return ret_errno(SYS3(SYS_READ, fd, b, n)); }
 int close(int fd) {
     /* descritores que não são do kernel (kqueue, sockets: sockets.c / kqueue.c) */
     extern int cx_fake_fd_close(int fd) __attribute__((weak));
@@ -821,11 +828,28 @@ int execvp(const char *f, char *const *a) { (void)f; (void)a; cx_errno = CX_ENOS
 int ioctl(int fd, unsigned long req, ...) {
     /* FIONBIO / FIOCLEX / FIONCLEX (libuv): o mOS ainda não distingue E/S não bloqueante nem
      * close-on-exec por descritor; aceitar mantém pipes e sockets utilizáveis */
+    if (req == 0x8004667eUL && IS_SOCK(fd)) {              /* FIONBIO num socket: liga/desliga o modo não-bloqueante */
+        __builtin_va_list ap; __builtin_va_start(ap, req); int *on = __builtin_va_arg(ap, int *); __builtin_va_end(ap);
+        cx_sock_set_nonblock(fd, on && *on);
+        return 0;
+    }
     if (req == 0x8004667eUL || req == 0x20006601UL || req == 0x20006602UL) return 0;
     if (!isatty(fd)) { cx_errno = CX_ENOTTY; return -1; }
     return -1;
 }
-int fcntl(int fd, int cmd, ...) { (void)fd; (void)cmd; return 0; }
+/* fcntl: em sockets, F_GETFL/F_SETFL guardam O_NONBLOCK (0x4) de verdade; no resto, aceita (como antes) */
+int fcntl(int fd, int cmd, ...) {
+    /* F_DUPFD (0) / F_DUPFD_CLOEXEC (67): como dup() acima, o mesmo descritor. Antes devolvia 0 (= stdin), e o
+     * tokio/mio, que clona o kqueue assim (Registry::try_clone), passava a fazer kevent no fd 0 -> EBADF */
+    if (cmd == 0 || cmd == 67) return dup(fd);
+    if (IS_SOCK(fd) && (cmd == 3 || cmd == 4)) {
+        if (cmd == 3) return 0x2 | (cx_sock_get_nonblock(fd) ? 0x4 : 0);   /* O_RDWR [| O_NONBLOCK] */
+        __builtin_va_list ap; __builtin_va_start(ap, cmd); long fl = __builtin_va_arg(ap, long); __builtin_va_end(ap);
+        cx_sock_set_nonblock(fd, (fl & 0x4) != 0);
+        return 0;
+    }
+    return 0;
+}
 long sysconf(int name) {
     switch (name) {
     case 29: return 4096;   /* _SC_PAGESIZE */
