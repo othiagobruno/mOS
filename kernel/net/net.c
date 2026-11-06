@@ -409,7 +409,16 @@ static void eth_input(const u8 *f, u16 len) {
     else if (type == ETH_P_ARP) arp_input(f + ETH_HLEN, len - ETH_HLEN);
 }
 
+/* o corpo do net_poll; a trava g_net_lock (net.h) o protege das syscalls de rede dos apps (net/usersock.c),
+ * que chegam de qualquer núcleo, enquanto o laço da área de trabalho também chama net_poll */
+static void net_poll_body(void);
+spinlock_t g_net_lock;
 void net_poll(void) {
+    u64 fl = spin_lock_irqsave(&g_net_lock);
+    net_poll_body();
+    spin_unlock_irqrestore(&g_net_lock, fl);
+}
+static void net_poll_body(void) {
     if (!g_netdev) return;
     for (int i = 0; i < 64; i++) {
         int n = g_netdev->recv(rx_frame, sizeof rx_frame);

@@ -51,11 +51,16 @@ static void register_class(cx_class_t *c) {
     all_classes[nclasses++] = c;
 }
 
+static int objc_ready;
+void cx_objc_boot(u64 sects, u64 n);
 cx_class_t *cx_class_named(const char *name) {
     for (u32 i = 0; i < nclasses; i++) {
         cx_rw_t *rw = rw_of(all_classes[i]);
         if (rw && !strcmp(rw->name, name)) return all_classes[i];
     }
+    /* programa sem seções ObjC (C/Rust que só usa CoreFoundation/Security, ex.: o Codex CLI): o runtime e as
+     * classes do Foundation ainda não subiram — sobe agora, como o swiftbridge.c faz, e procura de novo */
+    if (!objc_ready) { cx_objc_boot(0, 0); return cx_class_named(name); }
     return 0;
 }
 

@@ -257,15 +257,62 @@ const char *mach_error_string(kern_return_t e) {
 const char *mach_error_type(kern_return_t e) { (void)e; return "(os/kern)"; }
 void mach_error(const char *s, kern_return_t e) { cx_fdprintf(2, "%s %s (0x%x)\n", s ? s : "", mach_error_string(e), e); }
 
+/* ---- MIG: porta de resposta por thread (o cliente MIG manda o pedido com ela e espera a resposta nela;
+ * o rendezvous do Chromium usa). Fica num slot fixo da TSD (extra.c: cx_tsd). */
+#define TSD_MIG_REPLY 102
+void **cx_tsd(void);
+mach_port_t mig_get_reply_port(void) {
+    void **t = cx_tsd();
+    mach_port_t p = (mach_port_t)(u64)t[TSD_MIG_REPLY];
+    if (!p && mach_port_allocate(TASK_PORT, 1, &p) == KERN_SUCCESS) t[TSD_MIG_REPLY] = (void *)(u64)p;   /* 1 = RECEIVE */
+    return p;
+}
+void mig_dealloc_reply_port(mach_port_t p) {
+    void **t = cx_tsd();
+    if ((mach_port_t)(u64)t[TSD_MIG_REPLY] == p) t[TSD_MIG_REPLY] = 0;
+    mach_port_mod_refs(TASK_PORT, p, 1, -1);
+}
+void mig_put_reply_port(mach_port_t p) { (void)p; }
+
+/* ---- audit token (trailer de auditoria do kernel: val[5] = pid; ver kernel/proc/machipc.c) */
+typedef struct { u32 val[8]; } audit_token_t;
+int audit_token_to_pid(audit_token_t t) { return (int)t.val[5]; }
+int audit_token_to_pidversion(audit_token_t t) { return (int)t.val[7]; }
+u32 audit_token_to_euid(audit_token_t t) { (void)t; return 501; }
+u32 audit_token_to_ruid(audit_token_t t) { (void)t; return 501; }
+u32 audit_token_to_egid(audit_token_t t) { (void)t; return 20; }
+u32 audit_token_to_rgid(audit_token_t t) { (void)t; return 20; }
+u32 audit_token_to_auid(audit_token_t t) { (void)t; return 501; }
+u32 audit_token_to_asid(audit_token_t t) { (void)t; return 0; }
+
+/* task_policy_set/get: o escalonador do mOS não tem políticas por tarefa; aceitar é o comportamento útil */
+kern_return_t task_policy_set(mach_port_t task, int flavor, void *info, u32 count) { (void)task; (void)flavor; (void)info; (void)count; return KERN_SUCCESS; }
+kern_return_t task_policy_get(mach_port_t task, int flavor, void *info, u32 *count, int *get_default) {
+    (void)task; (void)flavor; (void)info; (void)count;
+    if (get_default) *get_default = 1;
+    return KERN_SUCCESS;
+}
+
 /* mach_port_construct(task, options, context, *name): cria uma porta de recepção com limite/contexto.
- * mach_port_options_t: flags(u32), mpl_qlimit(u32), ... — lemos só o qlimit, que basta ao Chromium. */
+ * mach_port_options_t: flags(u32), mpl_qlimit(u32), ... Flags usados: MPO_QLIMIT (0x02: o qlimit só vale
+ * com ele) e MPO_INSERT_SEND_RIGHT (0x10: cria também o direito de envio — o WaitableEvent do Chromium
+ * depende disso, porque depois manda mensagens para a própria porta com COPY_SEND). */
+#define MPO_QLIMIT            0x02
+#define MPO_INSERT_SEND_RIGHT 0x10
+#define MACH_MSG_TYPE_MAKE_SEND_ 20
 kern_return_t mach_port_construct(mach_port_t task, void *options, u64 context, mach_port_t *name) {
-    (void)task;
-    u32 qlimit = options ? ((u32 *)options)[1] : 0;
+    u32 flags = options ? ((u32 *)options)[0] : 0;
+    u32 qlimit = options && (flags & MPO_QLIMIT) ? ((u32 *)options)[1] : 0;
     u64 a[8] = {0, qlimit, context, 0, 0, 0, 0, 0};
     long r = mach_port(MACH_OP_CONSTRUCT, a);
-    if (r == KERN_SUCCESS && name) *name = (u32)a[3];
-    return (kern_return_t)r;
+    if (r != KERN_SUCCESS) return (kern_return_t)r;
+    mach_port_t n = (u32)a[3];
+    if (flags & MPO_INSERT_SEND_RIGHT) {
+        kern_return_t k = mach_port_insert_right(task, n, n, MACH_MSG_TYPE_MAKE_SEND_);
+        if (k != KERN_SUCCESS) return k;
+    }
+    if (name) *name = n;
+    return KERN_SUCCESS;
 }
 
 /* ---- memória compartilhada (base::SharedMemory do Chromium): uma "entrada de memória" é uma porta
@@ -276,11 +323,14 @@ static long mach_vm_syscall(u32 op, u64 *a) { return cx_syscall(SYS_MACH_VM, (lo
 kern_return_t mach_make_memory_entry_64(mach_port_t task, u64 *size, u64 offset, int perm, mach_port_t *handle, mach_port_t parent) {
     (void)task; (void)perm;
     if (!size || !handle) return KERN_INVALID_ARGUMENT;
-    /* offset é, na verdade, o endereço da região a compartilhar (uso do Chromium: make_memory_entry
-     * sobre memória que ele acabou de alocar) */
+    /* com MAP_MEM_NAMED_CREATE (0x20000) o kernel cria um objeto novo e zerado (offset ignorado);
+     * sem ele, offset é o endereço de memória já mapeada a compartilhar (pai = MACH_PORT_NULL) */
     u64 a[8] = {*size, offset, (u64)perm, parent, 0, 0, 0, 0};
     long r = mach_vm_syscall(MACH_VM_MAKE_ENTRY, a);
     if (r == KERN_SUCCESS) { *handle = (u32)a[4]; *size = a[5]; }
+    /* DIAGNÓSTICO TEMPORÁRIO (porte VS Code, vm_map do Chromium): remover depois */
+    static int dbg_me = 200;
+    if (dbg_me > 0) { dbg_me--; cx_fdprintf(2, "mach[diag]: make_memory_entry perm=0x%x size=0x%llx offset=0x%llx pai=0x%x -> kr=0x%x nome=0x%x tam=0x%llx\n", perm, a[0], offset, parent, (u32)r, (u32)a[4], a[5]); }
     return (kern_return_t)r;
 }
 kern_return_t mach_make_memory_entry(mach_port_t task, u64 *size, u64 offset, int perm, mach_port_t *handle, mach_port_t parent) {
@@ -291,8 +341,9 @@ kern_return_t mach_vm_map(mach_port_t task, u64 *addr, u64 size, u64 mask, int f
     (void)task; (void)mask; (void)copy; (void)cur; (void)max; (void)inherit;
     if (!addr) return KERN_INVALID_ARGUMENT;
     if (object) {                                              /* entrada de memória: mapeia no kernel */
-        u64 a[8] = {*addr, size, (u64)flags, object, offset, (u64)cur, 0, 0};
+        u64 a[8] = {*addr, size, (u64)flags, object, offset, (u64)cur, (u64)max, 0};   /* max: proteção máxima pedida */
         long r = mach_vm_syscall(MACH_VM_MAP, a);
+        if (r != KERN_SUCCESS && r != 17 /* esperado: escrita numa entrada só-leitura */) cx_fdprintf(2, "mach[diag]: vm_map FALHOU objeto=0x%x size=0x%llx flags=0x%x offset=0x%llx cur=%d -> kr=0x%x\n", object, size, flags, offset, cur, (u32)r);  /* DIAGNÓSTICO TEMPORÁRIO */
         if (r == KERN_SUCCESS) *addr = a[0];
         return (kern_return_t)r;
     }

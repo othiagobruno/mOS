@@ -15,7 +15,7 @@
 #define SYS_DIR       "/mOS"
 #define SYNC_DELAY_MS 1500
 #ifndef MAX_LOAD                       /* sobrescrevível em builds de teste (ex.: -DMAX_LOAD=...) */
-#define MAX_LOAD      (256ull << 20)
+#define MAX_LOAD      (512ull << 20)  /* o Codex CLI (Rust, um binário só) tem 277 MB; antes 256 MB */
 #endif
 
 static fatfs_t *sys;

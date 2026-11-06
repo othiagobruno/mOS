@@ -172,3 +172,9 @@ extension Int {
 @_transparent public func fmod(_ x: CGFloat, _ y: CGFloat) -> CGFloat { CGFloat(x.native.truncatingRemainder(dividingBy: y.native)) }
 @_transparent public func copysign(_ x: CGFloat, _ y: CGFloat) -> CGFloat { CGFloat(Double(signOf: y.native, magnitudeOf: x.native)) }
 @_transparent public func fabs(_ x: CGFloat) -> CGFloat { CGFloat(x.native.magnitude) }
+
+// argumento de printf/String(format:) (%f): passa como Double
+extension CGFloat: CVarArg, _CVarArgPassedAsDouble, _CVarArgAligned {
+    public var _cVarArgEncoding: [Int] { native._cVarArgEncoding }
+    public var _cVarArgAlignment: Int { native._cVarArgAlignment }
+}

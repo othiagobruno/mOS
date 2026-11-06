@@ -4,7 +4,7 @@
  * sentidos e RST. Segmentos fora de ordem são descartados (o remetente os retransmite). */
 #include "netpriv.h"
 
-#define TCP_SOCKS     16
+#define TCP_SOCKS     64        /* o Chromium abre dezenas de conexões (antes 16, só o navegador do kernel) */
 #define TX_BUF        (64 * 1024)
 #define RX_BUF        (64 * 1024)
 #define OUR_MSS       1460
@@ -274,6 +274,12 @@ int tcp_recv(int s, void *buf, int max) {
         if (SEQ_GT(right, t->rcv_adv) && gain >= MIN((u32)RX_BUF / 4, 2u * t->mss)) t->ack_now = true;
     }
     return (int)n;
+}
+
+/* bytes recebidos esperando leitura (para poll/kqueue dos apps, net/usersock.c) */
+int tcp_avail(int s) {
+    tcb_t *t = get(s);
+    return t && !t->user_closed ? (int)t->rx_len : 0;
 }
 
 void tcp_close(int s) {

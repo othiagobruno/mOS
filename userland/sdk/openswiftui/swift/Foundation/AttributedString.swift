@@ -36,7 +36,7 @@ extension Range where Bound == Int {
 
 // MARK: - NSNumber
 
-open class NSNumber: NSObject, @unchecked Sendable {
+open class NSNumber: NSObject, NSCopying, NSSecureCoding, ExpressibleByIntegerLiteral, ExpressibleByFloatLiteral, ExpressibleByBooleanLiteral, @unchecked Sendable {
     private enum Storage { case int(Int64), uint(UInt64), double(Double), bool(Bool) }
     private let storage: Storage
     public init(value: Int) { storage = .int(Int64(value)) }
@@ -74,6 +74,50 @@ open class NSNumber: NSObject, @unchecked Sendable {
         return doubleValue == o.doubleValue
     }
     open override var hash: Int { doubleValue.hashValue }
+
+    public var _isBool: Bool { if case .bool = storage { return true }; return false }
+    public var _isFloating: Bool { if case .double = storage { return true }; return false }
+    open var int8Value: Int8 { Int8(truncatingIfNeeded: int64Value) }
+    open var int16Value: Int16 { Int16(truncatingIfNeeded: int64Value) }
+    open var uint8Value: UInt8 { UInt8(truncatingIfNeeded: int64Value) }
+    open var uint16Value: UInt16 { UInt16(truncatingIfNeeded: int64Value) }
+    open var uint32Value: UInt32 { UInt32(truncatingIfNeeded: int64Value) }
+    open var uint64Value: UInt64 {
+        if case .uint(let v) = storage { return v }
+        return UInt64(truncatingIfNeeded: int64Value)
+    }
+    open var integerValue: Int { intValue }
+    open var decimalValue: Decimal {
+        switch storage {
+        case .int(let v): Decimal(v)
+        case .uint(let v): Decimal(v)
+        case .double(let v): Decimal(v)
+        case .bool(let v): v ? 1 : 0
+        }
+    }
+    public required convenience init(integerLiteral v: Int) { self.init(value: v) }
+    public required convenience init(floatLiteral v: Double) { self.init(value: v) }
+    public required convenience init(booleanLiteral v: Bool) { self.init(value: v) }
+    open func compare(_ other: NSNumber) -> ComparisonResult {
+        doubleValue < other.doubleValue ? .orderedAscending : doubleValue > other.doubleValue ? .orderedDescending : .orderedSame
+    }
+
+    open func copy(with zone: NSZone? = nil) -> Any { self }
+    public static var supportsSecureCoding: Bool { true }
+    open func encode(with coder: NSCoder) {
+        switch storage {
+        case .int(let v): coder.encode(v, forKey: "NS.intval")
+        case .uint(let v): coder.encode(Int64(bitPattern: v), forKey: "NS.uintval")
+        case .double(let v): coder.encode(v, forKey: "NS.dblval")
+        case .bool(let v): coder.encode(v, forKey: "NS.boolval")
+        }
+    }
+    public required convenience init?(coder: NSCoder) {
+        if coder.containsValue(forKey: "NS.boolval") { self.init(value: coder.decodeBool(forKey: "NS.boolval")) }
+        else if coder.containsValue(forKey: "NS.dblval") { self.init(value: coder.decodeDouble(forKey: "NS.dblval")) }
+        else if coder.containsValue(forKey: "NS.uintval") { self.init(value: UInt64(bitPattern: coder.decodeInt64(forKey: "NS.uintval"))) }
+        else { self.init(value: coder.decodeInt64(forKey: "NS.intval")) }
+    }
 }
 
 // MARK: - NSAttributedString
@@ -260,81 +304,15 @@ public struct ObjCBool: ExpressibleByBooleanLiteral, Sendable {
     public init(booleanLiteral value: Bool) { boolValue = value }
 }
 
-// MARK: - CharacterSet e String
-
-public struct CharacterSet: Hashable, Sendable, SetAlgebra {
-    public typealias Element = Unicode.Scalar
-    private enum Kind: Hashable, Sendable { case scalars(Set<UInt32>), whitespaces, newlines, whitespacesAndNewlines, decimalDigits, letters, alphanumerics, punctuation }
-    private var kinds: [Kind]
-    private var inverted_ = false
-    private init(kinds: [Kind]) { self.kinds = kinds }
-    public init() { kinds = [.scalars([])] }
-    public init(charactersIn string: String) { kinds = [.scalars(Set(string.unicodeScalars.map(\.value)))] }
-
-    public static var whitespaces: CharacterSet { CharacterSet(kinds: [.whitespaces]) }
-    public static var newlines: CharacterSet { CharacterSet(kinds: [.newlines]) }
-    public static var whitespacesAndNewlines: CharacterSet { CharacterSet(kinds: [.whitespacesAndNewlines]) }
-    public static var decimalDigits: CharacterSet { CharacterSet(kinds: [.decimalDigits]) }
-    public static var letters: CharacterSet { CharacterSet(kinds: [.letters]) }
-    public static var alphanumerics: CharacterSet { CharacterSet(kinds: [.alphanumerics]) }
-    public static var punctuationCharacters: CharacterSet { CharacterSet(kinds: [.punctuation]) }
-    public var inverted: CharacterSet { var c = self; c.inverted_.toggle(); return c }
-
-    // espaços/quebras/dígitos por tabela explícita; letras e pontuação fora do ASCII pelas propriedades Unicode
-    // da stdlib (no mOS as tabelas Unicode do runtime são parciais: o ASCII não passa por elas)
-    private static func isNewline(_ v: UInt32) -> Bool { v == 0x0A || v == 0x0B || v == 0x0C || v == 0x0D || v == 0x85 || v == 0x2028 || v == 0x2029 }
-    private static func isSpace(_ v: UInt32) -> Bool {
-        v == 0x20 || v == 0x09 || v == 0xA0 || v == 0x1680 || (v >= 0x2000 && v <= 0x200A) || v == 0x202F || v == 0x205F || v == 0x3000
-    }
-    private static func isDigit(_ v: UInt32) -> Bool { (v >= 0x30 && v <= 0x39) || (v >= 0x660 && v <= 0x669) || (v >= 0xFF10 && v <= 0xFF19) }
-    private static func isLetter(_ s: Unicode.Scalar) -> Bool {
-        let v = s.value
-        if v < 0x80 { return (v >= 0x41 && v <= 0x5A) || (v >= 0x61 && v <= 0x7A) }
-        if v < 0x250 { return v >= 0xC0 && v != 0xD7 && v != 0xF7 }       /* Latin-1 / Latin Extended */
-        return s.properties.isAlphabetic
-    }
-    private static func isPunct(_ s: Unicode.Scalar) -> Bool {
-        let v = s.value
-        if v < 0x80 { return "!\"#%&'()*,-./:;?@[\\]_{}".unicodeScalars.contains(s) }
-        return s.properties.generalCategory.isPunctuation
-    }
-    private static func matches(_ k: Kind, _ s: Unicode.Scalar) -> Bool {
-        let v = s.value
-        switch k {
-        case .scalars(let set): return set.contains(v)
-        case .whitespaces: return isSpace(v)
-        case .newlines: return isNewline(v)
-        case .whitespacesAndNewlines: return isSpace(v) || isNewline(v)
-        case .decimalDigits: return isDigit(v)
-        case .letters: return isLetter(s)
-        case .alphanumerics: return isLetter(s) || isDigit(v)
-        case .punctuation: return isPunct(s)
-        }
-    }
-    public func contains(_ member: Unicode.Scalar) -> Bool { kinds.contains { Self.matches($0, member) } != inverted_ }
-
-    // SetAlgebra (o suficiente para unir conjuntos; operações sobre conjuntos invertidos não são exatas)
-    public func union(_ other: CharacterSet) -> CharacterSet { CharacterSet(kinds: kinds + other.kinds) }
-    public func intersection(_ other: CharacterSet) -> CharacterSet { var r = CharacterSet(); r.kinds = [.scalars([])]; _ = other; return r }
-    public func symmetricDifference(_ other: CharacterSet) -> CharacterSet { union(other) }
-    @discardableResult public mutating func insert(_ newMember: Unicode.Scalar) -> (inserted: Bool, memberAfterInsert: Unicode.Scalar) {
-        let had = contains(newMember)
-        kinds.append(.scalars([newMember.value]))
-        return (!had, newMember)
-    }
-    @discardableResult public mutating func remove(_ member: Unicode.Scalar) -> Unicode.Scalar? { nil }
-    @discardableResult public mutating func update(with newMember: Unicode.Scalar) -> Unicode.Scalar? { insert(newMember); return nil }
-    public mutating func formUnion(_ other: CharacterSet) { kinds += other.kinds }
-    public mutating func formIntersection(_ other: CharacterSet) { self = intersection(other) }
-    public mutating func formSymmetricDifference(_ other: CharacterSet) { formUnion(other) }
-    public mutating func insert(charactersIn string: String) { kinds.append(.scalars(Set(string.unicodeScalars.map(\.value)))) }
-}
+// MARK: - String (CharacterSet, rangeOfCharacter e CompareOptions vêm do FoundationEssentials)
 
 extension StringProtocol {
+    /// (no FoundationEssentials só existe no build FOUNDATION_FRAMEWORK da Apple)
     public func rangeOfCharacter(from aSet: CharacterSet, options mask: String.CompareOptions = [], range aRange: Range<Index>? = nil) -> Range<Index>? {
         let s = String(self)
         let r = aRange.map { Range(uncheckedBounds: (String.Index($0.lowerBound, within: s) ?? s.startIndex, String.Index($0.upperBound, within: s) ?? s.endIndex)) } ?? (s.startIndex ..< s.endIndex)
         let scalars = s.unicodeScalars
+        guard r.lowerBound < r.upperBound else { return nil }
         var i = mask.contains(.backwards) ? scalars.index(before: r.upperBound) : r.lowerBound
         while mask.contains(.backwards) ? i >= r.lowerBound : i < r.upperBound {
             if aSet.contains(scalars[i]) {
@@ -377,15 +355,6 @@ extension StringProtocol {
 }
 
 extension String {
-    public struct CompareOptions: OptionSet, Sendable {
-        public let rawValue: UInt
-        public init(rawValue: UInt) { self.rawValue = rawValue }
-        public static let caseInsensitive = CompareOptions(rawValue: 1)
-        public static let literal = CompareOptions(rawValue: 2)
-        public static let backwards = CompareOptions(rawValue: 4)
-        public static let anchored = CompareOptions(rawValue: 8)
-        public static let numeric = CompareOptions(rawValue: 64)
-    }
     /// Comprimento em UTF-16 (o `length` do NSString).
     public var _nsLength: Int { utf16.count }
 }
