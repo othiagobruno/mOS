@@ -1,0 +1,4 @@
+module MOSLibm {
+    header "MOSLibm.h"
+    export *
+}

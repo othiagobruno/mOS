@@ -1,0 +1,51 @@
+﻿# mOS - teste de execução das dependências do OpenSwiftUI (Foundation/CoreFoundation do mOS, OpenCoreGraphics,
+# OpenQuartzCore, OpenObservation, Compute + OpenAttributeGraphShims, OpenRenderBox) com o Swift completo, sem QEMU:
+# liga userland\sdk\openswiftui\tests\{main.swift,cside.cpp} e roda no build\machotest.exe sobre um libSystem
+# montado com os fontes atuais (em build\swift\openswiftui\test, sem tocar em build\libSystem.mos).
+# Pré-requisitos: tools\build-openswiftui-deps.ps1, build\swift\full (stdlib + runtime) e build\machotest.exe.
+param([string]$Main)   # outro programa de teste no lugar de tests\main.swift (para isolar falhas)
+$root = Split-Path $PSScriptRoot -Parent
+$tc = (Get-ChildItem "$root\.tools\swift\LocalApp\Programs\Swift\Toolchains" -Directory)[0].FullName
+$zig = (Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*')[0].FullName + '\zig.exe'
+$o = "$root\build\swift\openswiftui"
+$full = "$root\build\swift\full"
+$deps = "$root\.tools\openswiftui\deps"
+$tests = "$root\userland\sdk\openswiftui\tests"
+$out = "$o\test"
+New-Item -ItemType Directory -Force "$out\vfs" | Out-Null
+
+$ls = "$out\libSystem.mos"
+$src = Get-ChildItem "$root\userland\libsystem\*" -Include *.c, *.S | ForEach-Object FullName
+& $zig cc -target x86_64-freestanding-none -O2 -g0 -ffreestanding -fno-stack-protector -fno-builtin -nostdlib -static -no-pie -fpie -mno-red-zone -w `
+    "-Wl,--image-base=0x400000100000" "-Wl,-e,cx_start" "-Wl,--no-gc-sections" $src -o $ls 2>&1 | Select-Object -First 10
+if ($LASTEXITCODE) {
+    # outra frente pode estar no meio de uma edição do libSystem: usa o último build\libSystem.mos bom
+    if (-not (Test-Path "$root\build\libSystem.mos")) { Write-Host 'libSystem FALHOU' -ForegroundColor Red; exit 1 }
+    Write-Host 'libSystem dos fontes atuais não compila; usando build\libSystem.mos' -ForegroundColor Yellow
+    Copy-Item "$root\build\libSystem.mos" $ls -Force
+}
+
+$cmp = "$deps\Compute-main\Sources"
+$mods = @('-I', "$root\userland\sdk\openswiftui\swift\MOSLibm", '-I', "$o\OpenObservation\include", '-I', "$cmp\ComputeCxx\include") +
+        (@('Dispatch', 'CoreGraphics', 'Foundation', 'OpenCoreGraphics', 'OpenQuartzCore', 'OpenObservation', 'Compute', 'OpenAttributeGraphShims') | ForEach-Object { '-I', "$o\$_" }) +
+        @('-Xcc', "-I$root\userland\sdk\openswiftui\importer", '-Xcc', "-I$cmp\Platform\include", '-Xcc', "-I$cmp\ComputeCxx\include")
+$log = & "$tc\usr\bin\swiftc.exe" -frontend -c -target x86_64-apple-macos26 -module-name DepsTest -O -disable-objc-interop -I $full `
+    -I "$root\.tools\swift-src\stdlib\public\SwiftShims\swift\shims" @mods -Xcc -Wno-nullability-completeness $(if ($Main) { $Main } else { "$tests\main.swift" }) -o "$out\main.o" 2>&1 | ForEach-Object { "$_" }
+$err = $log | Select-String ' error: '
+if ($err) { $err | Select-Object -First 20 | ForEach-Object Line; Write-Host 'Swift FALHOU' -ForegroundColor Red; exit 1 }
+
+$s1 = "$deps\OpenAttributeGraph-main\Sources"; $s2 = "$deps\OpenRenderBox-main\Sources"; $shim = "$root\userland\sdk\openswiftui\include"
+& $zig c++ -target x86_64-macos -O1 -w -c -std=c++20 -fno-exceptions -fno-rtti -fblocks -I $shim -include "$shim\mos_openswiftui_prelude.h" `
+    -I "$s1\OpenAttributeGraphCxx\include" -I "$s1\Platform\include" -I $s1 -isystem "$s1\SwiftCorelibs\include" -I "$s2\OpenRenderBoxCxx\include" `
+    -isystem "$root\userland\sdk\include" -isystem "$root\.tools\swift-src\include" -isystem "$root\.tools\swift-src\stdlib\public\SwiftShims" `
+    -DOPENATTRIBUTEGRAPH -DOPENRENDERBOX -DOPENRENDERBOX_CF_CGTYPES "$tests\cside.cpp" -o "$out\cside.o" 2>&1 | Select-Object -First 15
+if ($LASTEXITCODE) { Write-Host 'C++ FALHOU' -ForegroundColor Red; exit 1 }
+
+$libs = @('OpenAttributeGraphShims', 'Compute', 'OpenCoreGraphics', 'OpenQuartzCore', 'OpenObservation', 'OpenRenderBox', 'Foundation', 'CoreGraphics', 'MOSCFRuntime') | ForEach-Object { "$o\$_\lib$_.a" }
+$rt = Get-ChildItem "$full\runtime\*.o" | ForEach-Object FullName
+& $zig c++ -target x86_64-macos "$out\main.o" "$out\cside.o" @libs "$full\swiftCore.o" @rt -o "$out\depstest" "-Wl,-undefined,dynamic_lookup" 2>&1 | Select-Object -First 30
+if ($LASTEXITCODE) { Write-Host 'link FALHOU' -ForegroundColor Red; exit 1 }
+
+$run = & "$root\build\machotest.exe" $ls "$out\vfs" "$out\depstest" 2>&1 | ForEach-Object { "$_" }
+$run
+if (-not ($run -match '^TUDO OK')) { Write-Host 'teste FALHOU' -ForegroundColor Red; exit 1 }

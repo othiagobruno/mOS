@@ -1,0 +1,420 @@
+//
+//  Text+NSAttributedString.swift
+//  OpenSwiftUICore
+//
+//  Audited for 6.5.4
+//  Status: WIP
+//
+//  mOS: cópia do upstream; CTFont dos atributos por CFTypeID + bitcast (sem ObjC o `as! CTFont` derruba o app).
+
+package import Foundation
+package import UIFoundation_Private
+#if canImport(CoreText)
+package import CoreText
+package import CoreText_Private
+#endif
+#if canImport(Darwin)
+package import OpenSwiftUI_SPI
+#endif
+
+package func makeParagraphStyle(environment: EnvironmentValues) -> NSMutableParagraphStyle {
+    let layoutProperties = TextLayoutProperties(environment)
+    let paragraphStyle = NSMutableParagraphStyle()
+    paragraphStyle.horizontalAlignment = NSTextHorizontalAlignment(
+        layoutProperties.multilineTextAlignment,
+        layoutDirection: layoutProperties.layoutDirection,
+        writingMode: layoutProperties.writingMode
+    )
+    let isBalanced = environment.paragraphTypesetting.storage == .balanced
+    switch environment.textJustification.storage {
+    case let .full(full):
+        paragraphStyle.fullyJustified = true
+        paragraphStyle.spansAllLines = full.allLines || isBalanced
+    case .none:
+        paragraphStyle.fullyJustified = false
+        paragraphStyle.spansAllLines = isBalanced
+    }
+    paragraphStyle.lineBreakMode = switch layoutProperties.truncationMode {
+    case .head: .byTruncatingHead
+    case .tail: .byTruncatingTail
+    case .middle: .byTruncatingMiddle
+    }
+    paragraphStyle.lineSpacing = layoutProperties.lineSpacing
+    paragraphStyle.lineBreakStrategy = .standard
+    if !environment.avoidsOrphans {
+        paragraphStyle.lineBreakStrategy = paragraphStyle.lineBreakStrategy.subtracting(.pushOut)
+    }
+    paragraphStyle.lineHeightMultiple = layoutProperties.lineHeightMultiple
+    paragraphStyle.maximumLineHeight = layoutProperties.maximumLineHeight
+    paragraphStyle.minimumLineHeight = layoutProperties.minimumLineHeight
+    let hyphenationDisabled = layoutProperties.hyphenationDisabled
+    paragraphStyle.hyphenationFactor = hyphenationDisabled ? 0 : Float(layoutProperties.hyphenationFactor)
+    paragraphStyle.secondaryLineBreakMode = hyphenationDisabled ? .byClipping : .byWordWrapping
+    paragraphStyle.firstLineHeadIndent = layoutProperties.bodyHeadOutdent
+    if environment.bodyHeadOutdent > 0 {
+        paragraphStyle.baseWritingDirection = environment.writingMode == .verticalRightToLeft
+            ? .leftToRight
+            : NSWritingDirection(layoutProperties.layoutDirection)
+    }
+    paragraphStyle.allowsDefaultTighteningForTruncation = environment.allowsTightening
+    return paragraphStyle
+}
+
+extension NSAttributedString.Key {
+    package static let resolvableAttributeConfiguration: NSAttributedString.Key = .init("OpenSwiftUI.resolvableAttributeConfiguration")
+
+    package static let _textScale: NSAttributedString.Key = .init(_kCTTextScaleAttributeName)
+
+    #if canImport(CoreText)
+    package static let _textScaleRatio: NSAttributedString.Key = .init(kCTTextScaleRatioAttributeName as String)
+    #endif
+
+    package static let _textScaleStaticWeightMatching: NSAttributedString.Key = .init("NSTextScaleStaticWeightMatching")
+}
+
+extension NSAttributedString {
+    package func firstAttribute<T>(_ type: T.Type) -> T? where T: ResolvableStringAttribute {
+        _openSwiftUIUnimplementedFailure()
+    }
+}
+
+extension NSMutableAttributedString {
+    package func addResolvableAttributes(with config: ResolvableAttributeConfiguration) {
+        _openSwiftUIUnimplementedFailure()
+    }
+
+    package func resolveAttributes(in context: ResolvableStringResolutionContext) {
+        _openSwiftUIUnimplementedFailure()
+    }
+}
+
+extension Text {
+    package func resolveAttributedString(
+        in environment: EnvironmentValues,
+        includeDefaultAttributes: Bool = true,
+        options: Text.ResolveOptions = [.includeSupportForRepeatedResolution],
+        idiom: AnyInterfaceIdiom? = nil
+    ) -> NSAttributedString? {
+        var container = Text.Resolved()
+        container.includeDefaultAttributes = includeDefaultAttributes
+        container.idiom = idiom
+        var configuration = environment.typesettingConfiguration
+        if !storage.allowsTypesettingLanguage() {
+            configuration.language = .automatic
+        }
+        container.style.typesettingConfiguration = configuration
+        resolve(into: &container, in: environment, with: options)
+        let attributedString = container.attributedString
+        if let attributedString {
+            _ = attributedString.resolveUpdateSchedule(recalculate: true)
+        }
+        return attributedString
+    }
+
+    package func resolveAttributedStringAndProperties(
+        in environment: EnvironmentValues,
+        includeDefaultAttributes: Bool = true,
+        options: Text.ResolveOptions = [.includeSupportForRepeatedResolution],
+        idiom: AnyInterfaceIdiom? = nil
+    ) -> (NSAttributedString?, Text.ResolvedProperties) {
+        var container = Text.Resolved()
+        container.includeDefaultAttributes = includeDefaultAttributes
+        container.idiom = idiom
+        var configuration = environment.typesettingConfiguration
+        if !storage.allowsTypesettingLanguage() {
+            configuration.language = .automatic
+        }
+        container.style.typesettingConfiguration = configuration
+        if options.contains([.allowsKeyColors, .allowsTextSuffix]) {
+            let styles = environment.textSuffix.styles
+            if !styles.isEmpty {
+                container.properties.styles = styles
+                container.properties.features = .keyColor
+            }
+        }
+        resolve(into: &container, in: environment, with: options)
+        let attributedString = container.attributedString
+        container.properties.suffix = .none
+        if options.contains(.allowsTextSuffix) {
+            let suffix = environment.textSuffix
+            switch suffix {
+            case .none:
+                break
+            case .truncated:
+                container.properties.suffix = suffix
+            case let .alwaysVisible(line, _):
+                let offset = attributedString?.length ?? 0
+                // TODO: append ConcreteCustomTextAttachment(LineAttachment(line:bounds:))
+                _openSwiftUIUnimplementedWarning()
+                container.properties.registerCustomAttachment(at: offset)
+                container.properties.suffix = suffix
+            }
+        }
+        if let attributedString {
+            _ = attributedString.resolveUpdateSchedule(recalculate: true)
+        }
+        return (attributedString, container.properties)
+    }
+}
+
+extension EnvironmentValues {
+    package func resolveNSAttributes(
+        includeDefaultAttributes: Bool = true,
+        options: Text.ResolveOptions = []
+    ) -> [NSAttributedString.Key: Any] {
+        var properties = Text.ResolvedProperties()
+        let style = Text.Style()
+        return style.nsAttributes(
+            content: nil,
+            environment: self,
+            includeDefaultAttributes: includeDefaultAttributes,
+            with: options,
+            properties: &properties
+        )
+    }
+}
+
+extension NSAttributedString {
+    package func scaled(by factor: CGFloat) -> NSAttributedString {
+        guard factor != 1.0 else {
+            return self
+        }
+        #if canImport(Darwin)
+        return _ui_attributedSubstring(
+            from: NSRange(location: 0, length: length),
+            scaledBy: factor
+        )
+        #else
+        _openSwiftUIPlatformUnimplementedWarning()
+        return self
+        #endif
+    }
+
+    package struct EncodedFontMetrics {
+        package var capHeight: CGFloat, ascender: CGFloat, descender: CGFloat, leading: CGFloat
+        package var outsets: EdgeInsets
+
+        init(capHeight: CGFloat, ascender: CGFloat, descender: CGFloat, leading: CGFloat, outsets: EdgeInsets) {
+            self.capHeight = capHeight
+            self.ascender = ascender
+            self.descender = descender
+            self.leading = leading
+            self.outsets = outsets
+        }
+
+        init() {
+            self.capHeight = .zero
+            self.ascender = .zero
+            self.descender = .zero
+            self.leading = .zero
+            self.outsets = .zero
+        }
+    }
+
+    package var maxFontMetrics: EncodedFontMetrics {
+        #if canImport(CoreText)
+        var capHeight: CGFloat = 0
+        var ascender: CGFloat = 0
+        var descender: CGFloat = 0
+        var leading: CGFloat?
+        var outsets = EdgeInsets.zero
+        let hasOversizedScalars = string.rangeOfCharacter(from: Self.oversizedScalars) != nil
+        let usesTextRenderingMetrics = Semantics.TextRenderingMetrics.isEnabled
+        enumerateAttribute(
+            .kitFont,
+            in: NSRange(location: 0, length: length),
+            options: .longestEffectiveRangeNotRequired
+        ) { value, _, _ in
+            guard let value else {
+                return
+            }
+            #if canImport(Darwin)
+            let font = value as! CTFont
+            #else
+            guard let font = mosCTFont(value) else { return }
+            #endif
+            let fontAscender = font.ascender
+            let fontDescender = font.descender
+            capHeight.formMax(font.capHeight)
+            ascender.formMax(fontAscender)
+            descender.formMax(fontDescender)
+            leading = leading.map { max($0, font.leading) } ?? font.leading
+            if hasOversizedScalars || font.mayRequireLanguageAwareOutsets {
+                var left: CGFloat = 0
+                var top: CGFloat = 0
+                var right: CGFloat = 0
+                var bottom: CGFloat = 0
+                if CTFontGetLanguageAwareOutsets(font, &left, &top, &right, &bottom) {
+                    outsets.top.formMax(top)
+                    outsets.leading.formMax(left)
+                    outsets.bottom.formMax(bottom)
+                    outsets.trailing.formMax(right)
+                    return
+                }
+            }
+            if usesTextRenderingMetrics, !font.isSystemUIFont {
+                var clippingAscender = fontAscender
+                var clippingDescender = fontDescender
+                if CTFontGetClippingMetrics(font, &clippingAscender, &clippingDescender) {
+                    outsets.top.formMax(max(0, clippingAscender - fontAscender))
+                    outsets.bottom.formMax(max(0, clippingDescender - fontDescender))
+                }
+            }
+        }
+        return EncodedFontMetrics(
+            capHeight: capHeight,
+            ascender: ascender,
+            descender: -descender,
+            leading: leading ?? 0,
+            outsets: outsets
+        )
+        #else
+        _openSwiftUIPlatformUnimplementedWarning()
+        return EncodedFontMetrics()
+        #endif
+    }
+}
+
+extension Text.Style {
+    package func nsAttributes(
+        content: (() -> String)?,
+        environment: EnvironmentValues,
+        includeDefaultAttributes: Bool,
+        with options: Text.ResolveOptions,
+        properties: inout Text.ResolvedProperties
+    ) -> [NSAttributedString.Key: Any] {
+        var attributes: [NSAttributedString.Key: Any] = [:]
+        let shouldRedactContent = environment.shouldRedactContent
+        var modifiers = environment.fontModifiers
+        if !clearedFontModifiers.isEmpty {
+            modifiers = modifiers.filter { !clearedFontModifiers.contains($0.typeID) }
+        }
+        modifiers.append(contentsOf: fontModifiers)
+        properties.paragraph.compositionLanguage = .unset
+        typesettingConfiguration.language.apply(
+            content: content,
+            locale: environment.locale,
+            to: &attributes,
+            modifiers: &modifiers,
+            properties: &properties
+        )
+        typesettingConfiguration.languageAwareLineHeightRatio.apply(to: &modifiers)
+        if let font = baseFont.resolve(in: environment, includeDefaultAttributes: includeDefaultAttributes) {
+            attributes[.kitFont] = font.platformFont(in: environment, modifiers: modifiers)
+        } else {
+            attributes[.kitFont] = nil
+        }
+        if let color = color.resolve(
+            in: environment,
+            with: options,
+            properties: &properties,
+            includeDefaultAttributes: includeDefaultAttributes && !options.contains(.writeAuxiliaryMetadata)
+        ) {
+            attributes[.kitForegroundColor] = color.kitColor
+            properties.addColor(color)
+        }
+        if let backgroundColor {
+            let resolved = backgroundColor.resolve(in: environment)
+            attributes[.kitBackgroundColor] = resolved.kitColor
+            properties.addColor(resolved)
+        }
+        let baselineOffsetValue = baselineOffset ?? environment.defaultBaselineOffset
+        if baselineOffsetValue != 0 {
+            attributes[.kitBaselineOffset] = baselineOffsetValue
+        }
+        let kerningValue = kerning ?? environment.defaultKerning
+        if kerningValue != 0 {
+            attributes[.kitKern] = kerningValue
+        }
+        let trackingValue = tracking ?? environment.defaultTracking
+        if trackingValue != 0 {
+            attributes[.kitTracking] = trackingValue
+        }
+        if let resolved = strikethrough.resolve(in: environment, fallbackStyle: environment.strikethroughStyle) {
+            attributes[.kitStrikethroughStyle] = NSNumber(value: resolved.nsUnderlineStyle.rawValue)
+            if let color = resolved.color {
+                attributes[.kitStrikethroughColor] = color.kitColor
+                properties.addColor(color)
+            }
+        }
+        if let resolved = underline.resolve(in: environment, fallbackStyle: environment.underlineStyle) {
+            attributes[.kitUnderlineStyle] = NSNumber(value: resolved.nsUnderlineStyle.rawValue)
+            if let color = resolved.color {
+                attributes[.kitUnderlineColor] = color.kitColor
+                properties.addColor(color)
+            }
+        }
+        if let encapsulation {
+            attributes[NSTextEncapsulationAttributeName] = encapsulation.resolve(in: environment)
+        }
+        if !environment.shouldRedactContent, (scale ?? environment.textScale) == .secondary {
+            attributes[._textScale] = _kCTTextScaleSecondary
+        }
+        #if canImport(Darwin)
+        if let adaptiveImageGlyph {
+            attributes[.adaptiveImageGlyph] = NSAdaptiveImageGlyph(
+                ctAdaptiveImageGlyph: CTAdaptiveImageGlyph._adaptiveImageGlyph(
+                    convertingFrom: adaptiveImageGlyph
+                )
+            )
+        }
+        #endif
+        if let shadow {
+            let resolved = shadow.shadow.resolve(in: environment).style
+            properties.insets.formPointwiseMin(resolved.insets)
+            #if canImport(Darwin)
+            if let platformColor = CoreColor.platformColor(resolvedColor: resolved.color),
+               let kitShadow = CoreMakeNSShadow(
+                   color: platformColor,
+                   offsetX: resolved.offset.width,
+                   offsetY: resolved.offset.height,
+                   blurRadius: resolved.radius * 2
+               ) {
+                attributes[.kitShadow] = kitShadow
+            }
+            #endif
+        } else if options.contains(.includeTransitions), let transition {
+            #if canImport(Darwin)
+            if let kitShadow = CoreMakeNSShadowWithCustomStyleIndex(
+                system: .default,
+                index: CGFloat(properties.transitions.count)
+            ) {
+                attributes[.kitShadow] = kitShadow
+            }
+            #endif
+            properties.transitions.append(transition.resolved)
+        }
+        if includeDefaultAttributes || shouldRedactContent {
+            attributes[.kitParagraphStyle] = properties.paragraph.style(environment: environment)
+        }
+        if options.contains(.includeAccessibility), !shouldRedactContent {
+            resolveAccessibilitySpeechAttributes(
+                into: &attributes,
+                environment: environment,
+                includeDefaultAttributes: includeDefaultAttributes
+            )
+            resolveAccessibilityTextAttributes(
+                into: &attributes,
+                environment: environment
+            )
+        }
+        if !customAttributes.isEmpty {
+            attributes[.customAttributes] = Text.CustomAttributes(attributes: customAttributes)
+        }
+        #if canImport(CoreText)
+        #if canImport(Darwin)
+        let superscriptFont = attributes[.kitFont] as! CTFont?
+        #else
+        let superscriptFont = mosCTFont(attributes[.kitFont])
+        #endif
+        if superscript != nil, let font = superscriptFont {
+            let baselineOffset = attributes[.kitBaselineOffset] as? CGFloat ?? .zero
+            let newFont = font.scaled(by: 0.65, toMultipleOf: 0.25, maintainVisualWeight: true)
+            let newBaselineOffset = baselineOffset + (font.capHeight - newFont.capHeight)
+            attributes[.kitFont] = newFont
+            attributes[.kitBaselineOffset] = newBaselineOffset
+        }
+        #endif
+        return attributes
+    }
+}

@@ -1,0 +1,9 @@
+cacert.pem - Mozilla CA certificate store, in PEM format
+
+Source:  https://curl.se/ca/cacert.pem  (extracted by curl's mk-ca-bundle.pl
+         from Mozilla NSS certdata.txt; see https://curl.se/docs/caextract.html)
+License: Mozilla Public License 2.0 (MPL 2.0), https://www.mozilla.org/MPL/2.0/
+
+Embedded into the kernel by kernel/arch/certs.S and used by kernel/net/x509.c
+as the TLS trust anchors. To update, replace the file with a newer download
+and rebuild.

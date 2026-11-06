@@ -1,0 +1,13 @@
+Bem-vindo ao mOS!
+
+O mOS é um sistema operacional open source, escrito do zero, inspirado na
+experiência clássica do Mac. Ele roda direto de um pendrive em qualquer PC
+com firmware UEFI.
+
+Atalhos úteis:
+  Cmd (tecla Windows) + Espaço  ->  Busca
+  Cmd + Q                       ->  Fechar o aplicativo
+  Cmd + W                       ->  Fechar a janela
+  Cmd + Tab                     ->  Alternar entre aplicativos
+
+Divirta-se!

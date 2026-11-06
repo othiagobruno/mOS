@@ -1,0 +1,46 @@
+# --- Saídas de build ---
+/build/
+/build-*/
+*.img
+*.EFI
+*.efi
+
+# --- Toolchains e downloads locais (Zig, Swift, Chrome, OpenSwiftUI...) ---
+/.tools/
+
+# --- Artefatos de compilação ---
+*.o
+*.obj
+*.a
+*.lib
+*.exe
+*.pdb
+*.ilk
+*.dll
+*.so
+*.dylib
+a.out
+zig-cache/
+.zig-cache/
+zig-out/
+
+# --- Logs e capturas de teste (QEMU / serial) ---
+*.log
+qemu.out
+qemu.err
+shots/
+
+# --- Mídia gerada ---
+*.wav
+
+# --- Editores / SO ---
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Claude Code (configurações locais) ---
+.claude/settings.local.json

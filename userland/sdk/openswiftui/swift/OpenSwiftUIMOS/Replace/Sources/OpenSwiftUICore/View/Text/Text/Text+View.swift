@@ -1,0 +1,1989 @@
+//
+//  Text+View.swift
+//  OpenSwiftUICore
+//
+//  Audited for 6.5.4
+//  Status: WIP
+//  ID: 641995D812913A47B866B20B88782376 (SwiftUICore)
+//
+//  mOS: cópia do upstream; sem o SPI Objective-C de caracteres altos/emoji e sem cgStyleHandler do RenderBox.
+
+package import Foundation
+package import OpenAttributeGraphShims
+public import OpenCoreGraphicsShims
+package import OpenRenderBoxShims
+import OpenSwiftUI_SPI
+import UIFoundation_Private
+#if canImport(CoreText)
+package import CoreText
+#endif
+
+// MARK: - Text + View
+
+@available(OpenSwiftUI_v1_0, *)
+extension Text: UnaryView, PrimitiveView {
+    nonisolated public static func _makeView(
+        view: _GraphValue<Self>,
+        inputs: _ViewInputs
+    ) -> _ViewOutputs {
+        if let representation = inputs.requestedTextRepresentation,
+           representation.shouldMakeRepresentation(inputs: inputs) {
+            var outputs = makeCommonAttributes(view: view, inputs: inputs)
+            let options = representation.representationOptions(inputs: inputs)
+            let helper = ResolvedTextHelper(
+                time: inputs.time,
+                referenceDate: inputs.referenceDate,
+                includeDefaultAttributes: options.contains(.includeStyledText),
+                allowsKeyColors: false,
+                archiveOptions: inputs.archivedView,
+                features: [],
+                attachmentsAsAuxiliaryMetadata: inputs.hasWidgetMetadata,
+                idiom: inputs.base.interfaceIdiom,
+                lastText: nil,
+                nextUpdate: .time(.zero),
+                sizeVariant: .regular
+            )
+            let resolvedText = Attribute(
+                ResolvedTextFilter(
+                    text: view.value,
+                    environment: inputs.environment,
+                    helper: helper
+                )
+            )
+            let context = Attribute(
+                MakeRepresentableContext(
+                    text: resolvedText,
+                    referenceDate: inputs.referenceDate,
+                    environment: inputs.environment
+                )
+            )
+            representation.makeRepresentation(
+                inputs: inputs,
+                context: context,
+                outputs: &outputs
+            )
+            return outputs
+        } else {
+            return makeCommonAttributes(view: view, inputs: inputs)
+        }
+    }
+
+    nonisolated private static func makeCommonAttributes(
+        view: _GraphValue<Self>,
+        inputs: _ViewInputs
+    ) -> _ViewOutputs {
+        var newInputs = inputs
+        let allowsSelection = inputs.base[TextAllowsSelection.self] &&
+            !inputs.base[TextSelectionForbidden.self]
+        let textRenderer = inputs.textRenderer
+        var features: ResolvedProperties.Features = inputs.archivedView.isArchived ? [] : .useTextSuffix
+        if textRenderer.attribute != nil {
+            features.formUnion([.customRenderer, .produceTextLayout])
+        } else {
+            if inputs.preferences.contains(Text.LayoutKey.self) {
+                features.formUnion(.produceTextLayout)
+            }
+        }
+        if inputs.prefersTextLayoutManager {
+            features.formUnion(.useTextLayoutManager)
+        }
+        let resolvedText: Attribute<ResolvedStyledText>
+        let sizeFittingLayoutComputer: Attribute<LayoutComputer>?
+        if inputs.variantThatFits {
+            let filter = SizeFittingTextFilter(
+                size: inputs.size,
+                text: view.value,
+                environment: inputs.environment,
+                time: inputs.time,
+                referenceDate: inputs.referenceDate,
+                includeDefaultAttributes: true,
+                allowsKeyColors: true,
+                archiveOptions: inputs.archivedView,
+                features: features,
+                attachmentsAsAuxiliaryMetadata: inputs.hasWidgetMetadata,
+                idiom: inputs.base.interfaceIdiom
+            )
+            resolvedText = Attribute(filter)
+            sizeFittingLayoutComputer = Attribute(
+                SizeFittingTextLayoutComputer(
+                    text: view.value,
+                    environment: inputs.environment,
+                    renderer: textRenderer,
+                    cache: filter.cache
+                )
+            )
+            newInputs.requestsLayoutComputer = false
+        } else {
+            let helper = ResolvedTextHelper(
+                time: inputs.time,
+                referenceDate: inputs.referenceDate,
+                includeDefaultAttributes: true,
+                allowsKeyColors: true,
+                archiveOptions: inputs.archivedView,
+                features: features,
+                attachmentsAsAuxiliaryMetadata: inputs.hasWidgetMetadata,
+                idiom: inputs.base.interfaceIdiom,
+                lastText: nil,
+                nextUpdate: .time(.zero),
+                sizeVariant: .regular
+            )
+            resolvedText = Attribute(
+                ResolvedTextFilter(
+                    text: view.value,
+                    environment: inputs.environment,
+                    helper: helper
+                )
+            )
+            sizeFittingLayoutComputer = nil
+        }
+        newInputs.base.options.formUnion(.doNotScrape)
+        var outputs: _ViewOutputs
+        if allowsSelection {
+            if let representation = newInputs.textSelectionRepresentation {
+                outputs = representation.makeSelectableText(
+                    resolvedText: resolvedText,
+                    inputs: newInputs
+                )
+            } else {
+                outputs = _ViewOutputs()
+            }
+        } else {
+            outputs = makeTextChildQuery(
+                newInputs.textAccessibilityProvider,
+                styledText: resolvedText,
+                view: view.value,
+                render: textRenderer,
+                inputs: newInputs,
+                isScrapeable: inputs.isScrapeable
+            )
+        }
+        if let textAlwaysOnProvider = inputs.textAlwaysOnProvider {
+            textAlwaysOnProvider.makeAlwaysOn(
+                inputs: inputs,
+                schedule: resolvedText.schedule,
+                outputs: &outputs
+            )
+        }
+        if let sizeFittingLayoutComputer {
+            outputs.layoutComputer = sizeFittingLayoutComputer
+        }
+        return outputs
+    }
+
+    nonisolated private static func makeTextChildQuery<P>(
+        _ provider: P.Type,
+        styledText: Attribute<ResolvedStyledText>,
+        view: Attribute<Text>,
+        render: WeakAttribute<TextRendererBoxBase>,
+        inputs: _ViewInputs,
+        isScrapeable: Bool
+    ) -> _ViewOutputs where P: TextAccessibilityProvider {
+        let query = Attribute(
+            TextChildQuery<P>(
+                resolvedText: styledText,
+                unresolvedText: view,
+                renderer: render,
+                environment: inputs.environment,
+                position: inputs.position,
+                size: inputs.size,
+                transform: inputs.transform,
+                parentID: inputs.scrapeableParentID
+            )
+        )
+        if isScrapeable {
+            query.flags = .scrapeable
+        }
+        return TextChildQuery<P>.Value.makeDebuggableView(
+            view: .init(query),
+            inputs: inputs
+        )
+    }
+
+    private struct MakeRepresentableContext: Rule, AsyncAttribute {
+        @Attribute var text: ResolvedStyledText
+        @WeakAttribute var referenceDate: Date??
+        @Attribute var environment: EnvironmentValues
+
+        var value: PlatformTextRepresentableContext {
+            let context = ResolvableStringResolutionContext(
+                referenceDate: referenceDate ?? nil,
+                environment: environment
+            )
+            return PlatformTextRepresentableContext(
+                text: text.resolvedContent(in: context) ?? text.storage
+            )
+        }
+    }
+}
+
+// MARK: - AccessibilityStyledTextContentView
+
+package struct AccessibilityStyledTextContentView<Provider>: View where Provider: TextAccessibilityProvider {
+    package var text: ResolvedStyledText
+
+    package var unresolvedText: Text
+
+    package var renderer: TextRendererBoxBase?
+
+    package var needsDrawingGroup: Bool
+
+    package init(
+        text: ResolvedStyledText,
+        unresolvedText: Text,
+        renderer: TextRendererBoxBase? = nil,
+        needsDrawingGroup: Bool = false
+    ) {
+        self.text = text
+        self.unresolvedText = unresolvedText
+        self.renderer = renderer
+        self.needsDrawingGroup = needsDrawingGroup
+    }
+
+    package var body: some View {
+        Provider.makeView(
+            content: StyledTextContentView(
+                text: text,
+                renderer: renderer,
+                needsDrawingGroup: needsDrawingGroup
+            ),
+            text: unresolvedText,
+            resolved: text
+        )
+    }
+}
+
+// MARK: - StyledTextContentView [WIP]
+
+package struct StyledTextContentView: UnaryView, PrimitiveView, ShapeStyledLeafView {
+    package var text: ResolvedStyledText
+    package var renderer: TextRendererBoxBase?
+    package var needsDrawingGroup: Bool
+
+    package init(
+        text: ResolvedStyledText,
+        renderer: TextRendererBoxBase? = nil,
+        needsDrawingGroup: Bool = false
+    ) {
+        self.text = text
+        self.renderer = renderer
+        self.needsDrawingGroup = needsDrawingGroup
+    }
+
+    package static var animatesSize: Bool {
+        false
+    }
+
+    package func shape(in size: CGSize) -> FramedShape {
+        var frame = CGRect(origin: .zero, size: size)
+        if let renderer {
+            frame = frame.outset(by: renderer.displayPadding)
+        }
+        let shape: ShapeStyle.RenderedShape.Shape = .text(self)
+        return (shape, frame)
+    }
+
+    nonisolated package static func _makeView(
+        view: _GraphValue<Self>,
+        inputs: _ViewInputs
+    ) -> _ViewOutputs {
+        var newInputs = inputs
+        if inputs.preferences.requiresViewResponders {
+            newInputs.preferences.requiresViewResponders = false
+        }
+        let shapeStyles = inputs.resolvedShapeStyles(
+            role: .stroke,
+            mode: nil
+        )
+        var outputs: _ViewOutputs
+        if inputs.preferences.requiresDisplayList {
+            if inputs.archivedView.isArchived {
+                newInputs.environment = Attribute(
+                    ArchivedTransitionEnvironment(
+                        view: view.value,
+                        environment: inputs.environment
+                    )
+                )
+                // TODO: ContentTransition
+                _openSwiftUIUnimplementedWarning()
+                // FIXME
+                outputs = .init()
+            } else {
+                let group = _ShapeStyle_InterpolatorGroup()
+                if inputs.needsGeometry {
+                    newInputs.position = inputs.animatedPosition()
+                }
+                outputs = makeLeafView(
+                    view: view,
+                    inputs: newInputs,
+                    styles: shapeStyles,
+                    interpolatorGroup: group
+                )
+                // TODO: outputs.applyInterpolatorGroup
+            }
+        } else {
+            outputs = makeLeafView(
+                view: view,
+                inputs: newInputs,
+                styles: shapeStyles,
+                interpolatorGroup: nil
+            )
+        }
+        if inputs.requestsLayoutComputer {
+            outputs.layoutComputer = Attribute(
+                StyledTextLayoutComputer(textView: view.value)
+            )
+        }
+        // TODO: Text.Layout.Key
+        if inputs.preferences.requiresViewResponders {
+            outputs.preferences.viewResponders = Attribute(
+                StyledTextResponderFilter(
+                    responder: StyledTextResponder(
+                        view: view.value,
+                        styles: shapeStyles,
+                        inputs: inputs
+                    )
+                )
+            )
+        }
+        return outputs
+    }
+
+    package typealias Body = Never
+
+    package typealias ShapeUpdateData = Void
+
+    private struct ArchivedTransitionEnvironment: Rule, AsyncAttribute {
+        @Attribute var view: StyledTextContentView
+        @Attribute var environment: EnvironmentValues
+
+        var value: EnvironmentValues {
+            _openSwiftUIUnimplementedWarning()
+            return environment
+        }
+    }
+}
+
+// MARK: - TextLayoutProperties
+
+@_spi(Private)
+@available(OpenSwiftUI_v3_0, *)
+public struct TextLayoutProperties: Equatable {
+    public var lineLimit: Int?
+
+    package var lowerLineLimit: Int?
+
+    public var truncationMode: Text.TruncationMode = .tail
+
+    public var multilineTextAlignment: TextAlignment = .leading
+
+    public var layoutDirection: LayoutDirection = .leftToRight
+
+    package var transitionStyle: ContentTransition.Style = .default
+
+    public var minScaleFactor: CGFloat = 1.0
+
+    public var lineSpacing: CGFloat = .zero
+
+    public var lineHeightMultiple: CGFloat = .zero
+
+    public var maximumLineHeight: CGFloat = MaximumLineHeightKey.defaultValue
+
+    public var minimumLineHeight: CGFloat = MinimumLineHeightKey.defaultValue
+
+    public var hyphenationFactor: CGFloat = .zero
+
+    package var hyphenationDisabled: Bool = false
+
+    package var writingMode: Text.WritingMode = .horizontalTopToBottom
+
+    package var bodyHeadOutdent: CGFloat = .zero
+
+    package var pixelLength: CGFloat = 1.0
+
+    package var textSizing: Text.Sizing = .standard
+
+    fileprivate var textShape: TextShape = .bounds
+
+    private struct Flags: OptionSet {
+        var rawValue: UInt8
+
+        static let widthIsFlexible = Flags(rawValue: 1 << 0)
+
+        static let sizeFitting = Flags(rawValue: 1 << 1)
+    }
+
+    private var flags: Flags = []
+
+    package var widthIsFlexible: Bool {
+        get { flags.contains(.widthIsFlexible) }
+        set { flags.setValue(newValue, for: .widthIsFlexible) }
+    }
+
+    package var sizeFitting: Bool {
+        get { flags.contains(.sizeFitting) }
+        set { flags.setValue(newValue, for: .sizeFitting) }
+    }
+
+    package init() {
+        _openSwiftUIEmptyStub()
+    }
+
+    public init(_ env: EnvironmentValues) {
+        self = env[Key.self]
+    }
+
+    private struct Key: DerivedEnvironmentKey {
+        static func value(in environment: EnvironmentValues) -> TextLayoutProperties {
+            TextLayoutProperties(from: environment)
+        }
+    }
+
+    init(from env: EnvironmentValues) {
+        lineLimit = env.lineLimit
+        lowerLineLimit = env.lowerLineLimit
+        truncationMode = env.truncationMode
+        multilineTextAlignment = env.multilineTextAlignment
+        layoutDirection = env.layoutDirection
+        transitionStyle = env.contentTransitionStyle
+        minScaleFactor = env.minimumScaleFactor
+        lineSpacing = env.lineSpacing
+        lineHeightMultiple = env.lineHeightMultiple
+        maximumLineHeight = env.maximumLineHeight
+        minimumLineHeight = env.minimumLineHeight
+        hyphenationFactor = env.hyphenationFactor
+        hyphenationDisabled = env.hyphenationDisabled
+        writingMode = env.writingMode
+        bodyHeadOutdent = env.bodyHeadOutdent
+        pixelLength = env.pixelLength
+        textSizing = env.textSizing
+        textShape = env.textShape
+        widthIsFlexible = switch env.textJustification.storage {
+        case .full(let full): full.flexible
+        case .none: false
+        }
+    }
+
+    package func update(
+        _ env: inout EnvironmentValues,
+        from old: TextLayoutProperties
+    ) {
+        if lineLimit != old.lineLimit {
+            env.lineLimit = lineLimit
+        }
+        if lowerLineLimit != old.lowerLineLimit {
+            env.lowerLineLimit = lowerLineLimit
+        }
+        if truncationMode != old.truncationMode {
+            env.truncationMode = truncationMode
+        }
+        if multilineTextAlignment != old.multilineTextAlignment {
+            env.multilineTextAlignment = multilineTextAlignment
+        }
+        if layoutDirection != old.layoutDirection {
+            env.layoutDirection = layoutDirection
+        }
+        if minScaleFactor != old.minScaleFactor {
+            env.minimumScaleFactor = minScaleFactor
+        }
+        if lineSpacing != old.lineSpacing {
+            env.lineSpacing = lineSpacing
+        }
+        if lineHeightMultiple != old.lineHeightMultiple {
+            env.lineHeightMultiple = lineHeightMultiple
+        }
+        if maximumLineHeight != old.maximumLineHeight {
+            env.maximumLineHeight = maximumLineHeight
+        }
+        if minimumLineHeight != old.minimumLineHeight {
+            env.minimumLineHeight = minimumLineHeight
+        }
+        if hyphenationFactor != old.hyphenationFactor {
+            env.hyphenationFactor = hyphenationFactor
+        }
+        if hyphenationDisabled != old.hyphenationDisabled {
+            env.hyphenationDisabled = hyphenationDisabled
+        }
+        if transitionStyle != old.transitionStyle {
+            env.contentTransitionStyle = transitionStyle
+        }
+        if textSizing != old.textSizing {
+            env.textSizing = textSizing
+        }
+        if writingMode != old.writingMode {
+            env.writingMode = writingMode
+        }
+        if textShape != old.textShape {
+            env.textShape = textShape
+        }
+    }
+}
+
+@_spi(Private)
+@available(*, unavailable)
+extension TextLayoutProperties: Sendable {}
+
+// MARK: - TextLayoutProperties + ProtobufMessage [TODO]
+
+@_spi(Private)
+extension TextLayoutProperties: ProtobufMessage {
+    package func encode(to encoder: inout ProtobufEncoder) throws {
+        _openSwiftUIUnimplementedFailure()
+    }
+
+    package init(from decoder: inout ProtobufDecoder) throws {
+        _openSwiftUIUnimplementedFailure()
+    }
+}
+
+#if canImport(CoreText)
+extension NSAttributedString {
+    #if canImport(Darwin)
+    static let oversizedScalars: CharacterSet = {
+        guard let characterSet = CTFontCopySystemUIFontExcessiveLineHeightCharacterSet() else {
+            return CharacterSet()
+        }
+        return characterSet as CharacterSet
+    }()
+
+    static let oversizedScalarsWithoutEmoji = oversizedScalars.subtracting(
+        NSCharacterSet.ic_emoji as CharacterSet
+    )
+    #else
+    // mOS: a fonte do sistema do mOS não tem caracteres de altura excessiva (o CoreText do mOS devolve nil
+    // em CTFontCopySystemUIFontExcessiveLineHeightCharacterSet) e não há o NSCharacterSet.ic_emoji do SPI
+    // Objective-C nem a ponte CFCharacterSet → CharacterSet
+    static let oversizedScalars = CharacterSet()
+
+    static let oversizedScalarsWithoutEmoji = CharacterSet()
+    #endif
+
+    fileprivate func allFonts() -> Set<CTFont> {
+        var fonts: Set<CTFont> = []
+        enumerateAttribute(
+            .kitFont,
+            in: NSRange(location: 0, length: length),
+            options: []
+        ) { value, _, _ in
+            guard let value else {
+                return
+            }
+            #if canImport(Darwin)
+            let font = value as! CTFont
+            #else
+            guard let font = mosCTFont(value) else { return }   // mOS: CFTypeID + bitcast
+            #endif
+            fonts.insert(font)
+        }
+        return fonts
+    }
+
+    func oversizedDrawingMargin(from characterSet: CharacterSet) -> EdgeInsets {
+        guard string.rangeOfCharacter(from: characterSet) != nil else {
+            return .zero
+        }
+        return allFonts().reduce(into: .zero) { margins, font in
+            var left: CGFloat = 0
+            var top: CGFloat = 0
+            var right: CGFloat = 0
+            var bottom: CGFloat = 0
+            guard CTFontGetLanguageAwareOutsets(
+                font,
+                &left,
+                &top,
+                &right,
+                &bottom
+            ) else {
+                return
+            }
+            margins.top.formMax(top)
+            margins.leading.formMax(left)
+            margins.bottom.formMax(bottom)
+            margins.trailing.formMax(right)
+        }
+    }
+}
+#endif
+
+// MARK: - ResolvedStyledText [Blocked by ORB]
+
+@available(OpenSwiftUI_v6_0, *)
+@usableFromInline
+package class ResolvedStyledText: CustomStringConvertible {
+    final package var layoutProperties: TextLayoutProperties
+
+    final package var layoutMargins: EdgeInsets
+
+    final package var scaleFactorOverride: CGFloat? {
+        didSet {
+            resetCache()
+        }
+    }
+
+    package func resetCache() {
+        _openSwiftUIBaseClassAbstractMethod()
+    }
+
+    final package let storage: NSAttributedString?
+
+    final package let stylePadding: EdgeInsets
+
+    final package let archiveOptions: ArchivedViewInput.Value
+
+    package var drawingMargins: EdgeInsets {
+        .zero
+    }
+
+    final package let isCollapsible: Bool
+
+    final package let features: Text.ResolvedProperties.Features
+
+    final package let styles: [_ShapeStyle_Pack.Style]
+
+    final package let transitions: [Text.ResolvedProperties.Transition]
+
+    final package var isDynamic: Bool {
+        guard let storage else {
+            return false
+        }
+        return storage.isDynamic
+    }
+
+    final package var isEmpty: Bool {
+        guard let storage else {
+            return true
+        }
+        return storage.length == 0
+    }
+
+    final package var needsStyledRendering: Bool {
+        features.contains(.keyColor) || (
+            features.contains(.attachments) &&
+            archiveOptions.isArchived &&
+            !isDynamic
+        )
+    }
+
+    final package var needsRBDisplayList: Bool {
+        !isDynamic && (
+            features.contains(.customRenderer) ||
+            (archiveOptions.isArchived && archiveOptions.preciseTextLayout)
+        )
+    }
+
+    final private var _computedMaxFontMetrics: NSAttributedString.EncodedFontMetrics?
+
+    final package var maxFontMetrics: NSAttributedString.EncodedFontMetrics {
+        if let _computedMaxFontMetrics {
+            return _computedMaxFontMetrics
+        }
+        let metrics = storage?.maxFontMetrics ?? .init()
+        _computedMaxFontMetrics = metrics
+        return metrics
+    }
+
+    final var schedule: (any TimelineSchedule)? {
+        guard let storage, storage.isDynamic else {
+            return nil
+        }
+        return storage.updateSchedule
+    }
+
+    package init(
+        storage: NSAttributedString?,
+        layoutProperties: TextLayoutProperties,
+        layoutMargins: EdgeInsets?,
+        stylePadding: EdgeInsets,
+        archiveOptions: ArchivedViewInput.Value,
+        isCollapsible: Bool,
+        features: Text.ResolvedProperties.Features,
+        suffix _: ResolvedTextSuffix,
+        attachments _: Text.ResolvedProperties.CustomAttachments,
+        styles: [_ShapeStyle_Pack.Style],
+        transitions: [Text.ResolvedProperties.Transition],
+        scaleFactorOverride _: CGFloat?
+    ) {
+        self.storage = storage
+        self.layoutProperties = layoutProperties
+        self.stylePadding = stylePadding
+        self.archiveOptions = archiveOptions
+        self.isCollapsible = isCollapsible
+        self.features = features
+        self.styles = styles
+        self.transitions = transitions
+        var computedMaxFontMetrics: NSAttributedString.EncodedFontMetrics? = nil
+        if let layoutMargins {
+            self.layoutMargins = layoutMargins
+        } else if let storage {
+            self.layoutMargins = layoutProperties.textSizing.layoutMargins(
+                for: storage,
+                metrics: &computedMaxFontMetrics,
+                layoutProperties: layoutProperties
+            )
+        } else {
+            self.layoutMargins = .zero
+        }
+        self._computedMaxFontMetrics = computedMaxFontMetrics
+    }
+
+    package func lineHeightScalingAdjustment(
+        lineHeightMultiple: CGFloat,
+        maximumLineHeight: CGFloat,
+        minimumLineHeight: CGFloat
+    ) -> CGFloat {
+        guard (lineHeightMultiple != 0 && lineHeightMultiple < 1) ||
+                maximumLineHeight != 0 ||
+                minimumLineHeight != 0
+        else {
+            return .zero
+        }
+        let fontMetrics = maxFontMetrics
+        let fontLineHeight = fontMetrics.ascender - fontMetrics.descender
+        let multiple = lineHeightMultiple == 0 ? 1 : lineHeightMultiple
+        let proposedLineHeight = multiple * fontLineHeight
+        let maximum = maximumLineHeight == 0 ? proposedLineHeight : maximumLineHeight
+        let constrainedLineHeight = proposedLineHeight.clamp(
+            min: minimumLineHeight,
+            max: maximum
+        )
+        return constrainedLineHeight < fontLineHeight
+            ? fontLineHeight - constrainedLineHeight
+            : .zero
+    }
+
+    final package func draw(
+        in drawingArea: CGRect,
+        with measuredSize: CGSize,
+        applyingMarginOffsets: Bool = true,
+        context: TextDrawingContext = .shared,
+        renderer: TextRendererBoxBase? = nil
+    ) {
+        draw(
+            in: drawingArea,
+            with: measuredSize,
+            applyingMarginOffsets: applyingMarginOffsets,
+            containsResolvable: isDynamic,
+            context: context,
+            renderer: renderer
+        )
+    }
+
+    package var majorAxis: Axis {
+        _openSwiftUIBaseClassAbstractMethod()
+    }
+
+    package func drawingScale(size: CGSize) -> CGFloat {
+        _openSwiftUIBaseClassAbstractMethod()
+    }
+
+    package func spacing() -> Spacing {
+        _openSwiftUIBaseClassAbstractMethod()
+    }
+
+    package func sizeThatFits(_ proposedSize: _ProposedSize) -> CGSize {
+        _openSwiftUIBaseClassAbstractMethod()
+    }
+
+    package func size(in request: CGSize) -> CGSize {
+        _openSwiftUIBaseClassAbstractMethod()
+    }
+
+    package func frameSize(in request: CGSize) -> CGSize {
+        size(in: request)
+    }
+
+    package func truncates(in proposedSize: _ProposedSize) -> Bool {
+        _openSwiftUIBaseClassAbstractMethod()
+    }
+
+    package func metrics(
+        in size: CGSize,
+        layoutMargins: EdgeInsets?
+    ) -> NSAttributedString.Metrics {
+        _openSwiftUIBaseClassAbstractMethod()
+    }
+
+    package func size(
+        in request: CGSize,
+        context: TextDrawingContext
+    ) -> CGSize {
+        _openSwiftUIBaseClassAbstractMethod()
+    }
+
+    package func explicitAlignment(
+        _ k: AlignmentKey,
+        at size: CGSize
+    ) -> CGFloat? {
+        _openSwiftUIBaseClassAbstractMethod()
+    }
+
+    package func linkURL(
+        at point: CGPoint,
+        in size: CGSize
+    ) -> URL? {
+        _openSwiftUIBaseClassAbstractMethod()
+    }
+
+    package func draw(
+        in drawingArea: CGRect,
+        with measuredSize: CGSize,
+        applyingMarginOffsets: Bool,
+        containsResolvable: Bool,
+        context: TextDrawingContext,
+        renderer: TextRendererBoxBase? = nil
+    ) {
+        _openSwiftUIBaseClassAbstractMethod()
+    }
+
+    package func layoutValue(
+        in drawingArea: CGRect,
+        with measuredSize: CGSize,
+        applyingMarginOffsets: Bool = true
+    ) -> Text.Layout? {
+        nil
+    }
+
+    final package func resolvedContent(in context: ResolvableStringResolutionContext) -> NSAttributedString? {
+        guard let storage else {
+            return nil
+        }
+        guard storage.isDynamic, archiveOptions.isArchived else {
+            return storage
+        }
+        guard let mutable = storage.mutableCopy() as? NSMutableAttributedString else {
+            return nil
+        }
+        ResolvableTextSegmentAttribute.update(mutable, in: context)
+        return mutable
+    }
+
+    final package func resolvingContent(in context: ResolvableStringResolutionContext) -> ResolvedStyledText {
+        guard let storage,
+              storage.isDynamic,
+              let mutable = storage.mutableCopy() as? NSMutableAttributedString
+        else {
+            return self
+        }
+        ResolvableTextSegmentAttribute.update(mutable, in: context)
+        return ResolvedStyledText.styledText(
+            storage: mutable,
+            layoutProperties: layoutProperties,
+            layoutMargins: nil,
+            stylePadding: stylePadding,
+            archiveOptions: archiveOptions,
+            isCollapsible: isCollapsible,
+            features: features,
+            suffix: .none,
+            attachments: .init(),
+            styles: styles,
+            transitions: transitions,
+            scaleFactorOverride: scaleFactorOverride
+        )
+    }
+
+    final package func nextUpdate(
+        after time: Time,
+        equivalentDate date: Date,
+        reduceFrequency: Bool = false
+    ) -> Time {
+        let nextDate = schedule?.nextEntry(
+            after: date,
+            mode: reduceFrequency ? .lowFrequency : .normal,
+            limit: .minimumTimelineScheduleLimit
+        )
+        guard let nextDate else {
+            return .infinity
+        }
+        return time + nextDate.timeIntervalSince(date)
+    }
+
+    final package var updatesAsynchronously: Bool {
+        isDynamic && archiveOptions.isArchived
+    }
+
+    @usableFromInline
+    final package var description: String {
+        storage?.string ?? ""
+    }
+
+    final package var accessibilityText: Text {
+        guard let storage else {
+            return Text("")
+        }
+        return AccessibilityText(storage).text
+    }
+
+    // TODO: RB
+
+    final package var cgStyleHandler: ORBCGStyleHandler? {
+        #if canImport(Darwin)
+        _openSwiftUIUnimplementedFailure()
+        #else
+        // mOS: o texto é desenhado direto no canvas (MOSDisplayListRenderer), sem RenderBox
+        nil
+        #endif
+    }
+
+    final package func makeRBDisplayList(
+        for size: CGSize,
+        renderer: TextRendererBoxBase?,
+        deviceScale: CGFloat
+    ) -> any ORBDisplayListContents {
+        #if canImport(Darwin)
+        let list = ORBDisplayList()
+        list.defaultColorSpace = .SRGB
+        list.deviceScale = deviceScale
+        let context = CoreGraphicsContext(cgContext: list.beginCGContext(withAlpha: 1))
+        context.push()
+        draw(in: CGRect(origin: .zero, size: size), with: size, renderer: renderer)
+        context.pop()
+        list.endCGContext()
+        return list.moveContents()
+        #else
+        _openSwiftUIPlatformUnimplementedFailure()
+        #endif
+    }
+
+    struct Layers {
+        var foreground: (any ORBDisplayListContents)?
+        var custom: [(Int, any ORBDisplayListContents)]
+        var unstyled: (any ORBDisplayListContents)?
+    }
+
+    final func layers(
+        for size: CGSize,
+        renderer: TextRendererBoxBase?,
+        deviceScale: CGFloat
+    ) -> Layers {
+        let list = makeRBDisplayList(for: size, renderer: renderer, deviceScale: deviceScale)
+        guard needsStyledRendering else {
+            return Layers(foreground: nil, custom: [], unstyled: list)
+        }
+        let predicate = ORBDisplayListPredicate()
+        predicate.addCondition(withFill: .foregroundKeyColorAnyAlpha, colorSpace: .linearSRGB)
+        let foreground = predicate.copyFilteredDisplayList(list)
+        var custom: [(Int, any ORBDisplayListContents)] = []
+        for index in styles.indices {
+            predicate.removeAll()
+            predicate.addCondition(
+                withFill: ORBColor(red: -1, green: -1, blue: Float(index) / 1024, alpha: ORBColor.invalidComponent),
+                colorSpace: .linearSRGB
+            )
+            let layer = predicate.copyFilteredDisplayList(list)
+            if !layer.isEmpty() {
+                custom.append((index, layer))
+            }
+        }
+        predicate.removeAll()
+        predicate.addCondition(withFill: .keyColorAnyAlpha, colorSpace: .linearSRGB)
+        predicate.invertsResult = true
+        let unstyled = predicate.copyFilteredDisplayList(list)
+        return Layers(
+            foreground: foreground.isEmpty() ? nil : foreground,
+            custom: custom,
+            unstyled: unstyled.isEmpty() ? nil : unstyled
+        )
+    }
+}
+
+extension ORBColor {
+    static let foregroundKeyColorAnyAlpha = ORBColor(red: -1, green: -1, blue: -1, alpha: invalidComponent)
+    static let keyColorAnyAlpha = ORBColor(red: -1, green: -1, blue: invalidComponent, alpha: invalidComponent)
+}
+
+extension ResolvedStyledText {
+    package func textSizeCacheMetrics(in size: CGSize) -> (UInt?, CGSize) {
+        let metrics = metrics(in: size, layoutMargins: nil)
+        return (metrics.numberOfLines, metrics.size)
+    }
+
+    package func linkURLMetrics(
+        in size: CGSize,
+        layoutMargins: EdgeInsets
+    ) -> CGFloat {
+        metrics(in: size, layoutMargins: layoutMargins).scale
+    }
+}
+
+@available(*, unavailable)
+extension ResolvedStyledText: Sendable {}
+
+// FIXME: RB
+package class ORBCGStyleHandler {}
+
+// MARK: - ResolvedStyledText + layout extension
+
+extension ResolvedStyledText {
+    package func firstBaseline(in size: CGSize) -> CGFloat {
+        explicitAlignment(
+            VerticalAlignment.firstTextBaseline.key,
+            at: size
+        ) ?? .zero
+    }
+
+    package func lastBaseline(in size: CGSize) -> CGFloat {
+        explicitAlignment(
+            VerticalAlignment.lastTextBaseline.key,
+            at: size
+        ) ?? size.height
+    }
+
+    package func frame(in request: CGSize, renderer: TextRendererBoxBase?) -> CGRect {
+        let textSize: CGSize
+        if let renderer {
+            textSize = renderer.sizeThatFits(
+                proposal: ProposedViewSize(
+                    width: request.width,
+                    height: request.height
+                ),
+                text: .init(text: self)
+            )
+        } else {
+            textSize = frameSize(in: request)
+        }
+        let padding = layoutProperties.bodyHeadOutdent
+        let isVertical = layoutProperties.writingMode != .horizontalTopToBottom
+        let topInset: CGFloat = isVertical ? 0 : -padding
+        let adjustedWidth = textSize.width + padding
+        let insets = layoutMargins - drawingMargins
+        let rect = CGRect(
+            x: topInset,
+            y: 0,
+            width: adjustedWidth,
+            height: textSize.height
+        )
+        return rect.inset(by: insets)
+    }
+
+    package func frameOffset() -> CGSize {
+        let dm = drawingMargins
+        let lm = layoutMargins
+        var width = lm.leading - dm.leading
+        let isHorizontal = layoutProperties.writingMode == .horizontalTopToBottom
+        if isHorizontal {
+            width -= layoutProperties.bodyHeadOutdent
+        }
+        let height = -(dm.top - lm.top)
+        return CGSize(width: width, height: height)
+    }
+}
+
+// MARK: - TextDrawingContext
+
+@_spi(ForOpenSwiftUIOnly)
+@available(OpenSwiftUI_v6_0, *)
+final public class TextDrawingContext {
+    @AtomicBox
+    var ctx: NSStringDrawingContext
+
+    private init() {
+        let ctx = NSStringDrawingContext()
+        ctx.wrapsForTruncationMode = true
+        ctx.wantsBaselineOffset = true
+        ctx.wantsScaledLineHeight = true
+        ctx.wantsScaledBaselineOffset = true
+        ctx.cachesLayout = true
+        self.ctx = ctx
+    }
+
+    static let shared = TextDrawingContext()
+}
+
+@_spi(ForOpenSwiftUIOnly)
+@available(*, unavailable)
+extension TextDrawingContext: Sendable {}
+
+// MARK: - ResolvedStyledText + styledText
+
+extension ResolvedStyledText {
+    package static func styledText(
+        storage: NSAttributedString?,
+        layoutProperties: TextLayoutProperties,
+        layoutMargins: EdgeInsets?,
+        stylePadding: EdgeInsets,
+        archiveOptions: ArchivedViewInput.Value,
+        isCollapsible: Bool,
+        features: Text.ResolvedProperties.Features,
+        suffix: ResolvedTextSuffix,
+        attachments: Text.ResolvedProperties.CustomAttachments,
+        styles: [_ShapeStyle_Pack.Style],
+        transitions: [Text.ResolvedProperties.Transition],
+        scaleFactorOverride: CGFloat?
+    ) -> ResolvedStyledText {
+        let layoutManagerFeatures: Text.ResolvedProperties.Features = [
+            .customRenderer,
+            .useTextLayoutManager,
+            .produceTextLayout,
+            .checkInterpolationStrategy,
+        ]
+        let requiresTextLayoutManager =
+            layoutProperties.writingMode != .horizontalTopToBottom ||
+            !features.intersection(layoutManagerFeatures).isEmpty ||
+            !attachments.isEmpty ||
+            suffix != .none ||
+            layoutProperties.textShape != .bounds
+        if requiresTextLayoutManager {
+            return TextLayoutManager(
+                storage: storage,
+                layoutProperties: layoutProperties,
+                layoutMargins: layoutMargins,
+                stylePadding: stylePadding,
+                archiveOptions: archiveOptions,
+                isCollapsible: isCollapsible,
+                features: features,
+                suffix: suffix,
+                attachments: attachments,
+                styles: styles,
+                transitions: transitions,
+                scaleFactorOverride: scaleFactorOverride
+            )
+        } else {
+            return StringDrawing(
+                storage: storage,
+                layoutProperties: layoutProperties,
+                layoutMargins: layoutMargins,
+                stylePadding: stylePadding,
+                archiveOptions: archiveOptions,
+                isCollapsible: isCollapsible,
+                features: features,
+                suffix: suffix,
+                attachments: attachments,
+                styles: styles,
+                transitions: transitions,
+                scaleFactorOverride: scaleFactorOverride
+            )
+        }
+    }
+
+    package static func styledText(
+        storage: NSAttributedString?,
+        stylePadding: EdgeInsets = EdgeInsets(),
+        layoutProperties: TextLayoutProperties,
+        archiveOptions: ArchivedViewInput.Value = .init(),
+        isCollapsible: Bool = false,
+        features: Text.ResolvedProperties.Features = .init(),
+        suffix: ResolvedTextSuffix = .none,
+        attachments: Text.ResolvedProperties.CustomAttachments = .init(),
+        styles: [_ShapeStyle_Pack.Style] = .init(),
+        transitions: [Text.ResolvedProperties.Transition] = .init()
+    ) -> ResolvedStyledText {
+        styledText(
+            storage: storage,
+            layoutProperties: layoutProperties,
+            layoutMargins: nil,
+            stylePadding: stylePadding,
+            archiveOptions: archiveOptions,
+            isCollapsible: isCollapsible,
+            features: features,
+            suffix: suffix,
+            attachments: attachments,
+            styles: styles,
+            transitions: transitions,
+            scaleFactorOverride: nil
+        )
+    }
+
+    package static func styledText(
+        storage: NSAttributedString?,
+        stylePadding: EdgeInsets = EdgeInsets(),
+        environment: EnvironmentValues,
+        archiveOptions: ArchivedViewInput.Value = .init(),
+        isCollapsible: Bool = false,
+        features: Text.ResolvedProperties.Features = .init(),
+        suffix: ResolvedTextSuffix = .none,
+        attachments: Text.ResolvedProperties.CustomAttachments = .init(),
+        styles: [_ShapeStyle_Pack.Style] = .init(),
+        transitions: [Text.ResolvedProperties.Transition] = .init(),
+        writingMode: Text.WritingMode?,
+        sizeFitting: Bool = false
+    ) -> ResolvedStyledText {
+        var layoutProperties = TextLayoutProperties(environment)
+        if let writingMode {
+            layoutProperties.writingMode = writingMode
+        }
+        layoutProperties.sizeFitting = sizeFitting
+        return styledText(
+            storage: storage,
+            layoutProperties: layoutProperties,
+            layoutMargins: nil,
+            stylePadding: stylePadding,
+            archiveOptions: archiveOptions,
+            isCollapsible: isCollapsible,
+            features: features,
+            suffix: suffix,
+            attachments: attachments,
+            styles: styles,
+            transitions: transitions,
+            scaleFactorOverride: nil
+        )
+    }
+}
+
+// MARK: - CodableResolvedStyledText
+
+struct CodableResolvedStyledText: ProtobufMessage {
+    var base: ResolvedStyledText
+
+    init(base: ResolvedStyledText) {
+        self.base = base
+    }
+
+    init(from decoder: inout ProtobufDecoder) throws {
+        var storage: NSAttributedString?
+        var stylePadding = EdgeInsets.zero
+        var layoutMargins = EdgeInsets.zero
+        var layoutProperties = TextLayoutProperties()
+        var transitions: [Text.ResolvedProperties.Transition] = []
+        var features = Text.ResolvedProperties.Features()
+        // Configuration (tag 4) is encode-only metadata.
+        while let field = try decoder.nextField() {
+            switch field.tag {
+            case 1:
+                let value: CodableAttributedString = try decoder.messageField(field)
+                storage = value.base
+            case 2:
+                stylePadding = try decoder.messageField(field)
+            case 3:
+                layoutMargins = try decoder.messageField(field)
+            case 5:
+                layoutProperties = try decoder.messageField(field)
+            case 6:
+                let transition: ContentTransition = try decoder.messageField(field)
+                transitions.append(.init(transition: transition))
+            case 7:
+                features = .init(rawValue: UInt16(truncatingIfNeeded: try decoder.uintField(field)))
+            default:
+                try decoder.skipField(field)
+            }
+        }
+        guard let storage else {
+            throw ProtobufDecoder.DecodingError.failed
+        }
+        base = ResolvedStyledText.styledText(
+            storage: storage,
+            layoutProperties: layoutProperties,
+            layoutMargins: layoutMargins,
+            stylePadding: stylePadding,
+            archiveOptions: .isArchived,
+            isCollapsible: false,
+            features: features,
+            suffix: .none,
+            attachments: .init(),
+            styles: [],
+            transitions: transitions,
+            scaleFactorOverride: nil
+        )
+    }
+
+    func encode(to encoder: inout ProtobufEncoder) throws {
+        if let storage = base.storage {
+            try encoder.messageField(1, CodableAttributedString(storage))
+        }
+        try encoder.messageField(2, base.stylePadding, defaultValue: .zero)
+        try encoder.messageField(3, base.layoutMargins, defaultValue: .zero)
+        if let storage = base.storage {
+            try encoder.codableField(4, storage.resolvableAttributeConfiguration)
+        }
+        try encoder.messageField(5, base.layoutProperties)
+        for transition in base.transitions {
+            try encoder.messageField(6, transition.transition)
+        }
+        encoder.uintField(7, UInt(base.features.rawValue))
+    }
+}
+
+// MARK: - DynamicTextViewFactory
+
+struct DynamicTextViewFactory: DisplayList.ViewFactory {
+    var text: ResolvedStyledText
+    var size: CGSize
+    var identity: DisplayList.Identity
+
+    func makeView() -> AnyView {
+        AnyView(DynamicTextView(text: text, size: size))
+    }
+
+    var viewType: any Any.Type {
+        DynamicTextView.self
+    }
+}
+
+// MARK: - StyledTextLayoutComputer
+
+private struct StyledTextLayoutComputer: StatefulRule, AsyncAttribute {
+    @Attribute var textView: StyledTextContentView
+
+    typealias Value = LayoutComputer
+
+    mutating func updateValue() {
+        let engine = StyledTextLayoutEngine(
+            text: textView.text,
+            renderer: textView.renderer
+        )
+        update(to: engine)
+    }
+}
+
+// MARK: - TextLayoutQuery
+
+private struct TextLayoutQuery: Rule, AsyncAttribute {
+    @Attribute var resolvedText: ResolvedStyledText
+    @Attribute var position: CGPoint
+    @Attribute var size: CGSize
+    @Attribute var transform: ViewTransform
+
+    var value: [Text.LayoutKey.AnchoredLayout] {
+        guard let layout = resolvedText.layoutValue(
+            in: CGRect(origin: .zero, size: size),
+            with: size,
+            applyingMarginOffsets: false
+        ) else {
+            return []
+        }
+        let origin = Anchor<CGPoint>.Source.topLeading.prepare(
+            geometry: AnchorGeometry(
+                position: $position,
+                size: $size,
+                transform: $transform
+            )
+        )
+        return [.init(origin: origin, layout: layout)]
+    }
+}
+
+// MARK: - ResolvedTextFilter
+
+private struct ResolvedTextFilter: StatefulRule, AsyncAttribute {
+    @Attribute var text: Text
+    @Attribute var environment: EnvironmentValues
+    var helper: ResolvedTextHelper
+
+    typealias Value = ResolvedStyledText
+
+    // NOTE: Forces the output’s mainRef to false, regardless of those inputs.
+    static var flags: Flags { .asyncThread }
+
+    mutating func updateValue() {
+        let (text, textChanged) = $text.changedValue()
+        let (environment, environmentChanged) = $environment.changedValue()
+        let shouldUpdate: Bool
+        if !hasValue {
+            shouldUpdate = true
+        } else if textChanged, helper.lastText != text {
+            shouldUpdate = true
+        } else if environmentChanged,
+                  helper.tracker.hasDifferentUsedValues(environment.plist) {
+            shouldUpdate = true
+        } else {
+            switch helper.nextUpdate {
+            case let .time(nextUpdate):
+                shouldUpdate = helper.time >= nextUpdate
+            case let .recipe(lastTime, lastDate, reduceFrequency, resolved):
+                let nextUpdate = resolved.nextUpdate(
+                    after: lastTime,
+                    equivalentDate: lastDate,
+                    reduceFrequency: reduceFrequency
+                )
+                helper.nextUpdate = .time(nextUpdate)
+                shouldUpdate = helper.time >= nextUpdate
+            case .none:
+                shouldUpdate = false
+            }
+        }
+        if shouldUpdate {
+            value = helper.resolve(text, with: environment, sizeFitting: false)!
+        }
+        let nextUpdate: Time?
+        switch helper.nextUpdate {
+        case let .time(time):
+            nextUpdate = time
+        case let .recipe(lastTime, lastDate, reduceFrequency, resolved):
+            let time = resolved.nextUpdate(
+                after: lastTime,
+                equivalentDate: lastDate,
+                reduceFrequency: reduceFrequency
+            )
+            helper.nextUpdate = .time(time)
+            nextUpdate = time
+        case .none:
+            nextUpdate = nil
+        }
+        if let nextUpdate, helper.time < nextUpdate {
+            ViewGraph.current.nextUpdate.views.at(nextUpdate)
+        }
+    }
+}
+
+// MARK: - ResolvedTextHelper
+
+struct ResolvedTextHelper {
+    enum NextUpdate {
+        case time(Time)
+        case recipe(lastTime: Time, lastDate: Date, reduceFrequency: Bool, resolved: ResolvedStyledText)
+        case none
+    }
+
+    @Attribute var time: Time
+    @WeakAttribute var referenceDate: Date??
+    let includeDefaultAttributes: Bool
+    let allowsKeyColors: Bool
+    let archiveOptions: ArchivedViewInput.Value
+    let features: Text.ResolvedProperties.Features
+    let attachmentsAsAuxiliaryMetadata: Bool
+    let idiom: AnyInterfaceIdiom
+    let tracker: PropertyList.Tracker
+    var lastText: Text?
+    var nextUpdate: ResolvedTextHelper.NextUpdate
+    var sizeVariant: TextSizeVariant
+
+    init(
+        time: Attribute<Time>,
+        referenceDate: WeakAttribute<Date?>,
+        includeDefaultAttributes: Bool,
+        allowsKeyColors: Bool,
+        archiveOptions: ArchivedViewInput.Value,
+        features: Text.ResolvedProperties.Features,
+        attachmentsAsAuxiliaryMetadata: Bool,
+        idiom: AnyInterfaceIdiom,
+        lastText: Text?,
+        nextUpdate: ResolvedTextHelper.NextUpdate,
+        sizeVariant: TextSizeVariant
+    ) {
+        self._time = time
+        self._referenceDate = referenceDate
+        self.includeDefaultAttributes = includeDefaultAttributes
+        self.allowsKeyColors = allowsKeyColors
+        self.archiveOptions = archiveOptions
+        self.features = features
+        self.attachmentsAsAuxiliaryMetadata = attachmentsAsAuxiliaryMetadata
+        self.idiom = idiom
+        self.tracker = .init()
+        self.lastText = lastText
+        self.nextUpdate = nextUpdate
+        self.sizeVariant = sizeVariant
+    }
+
+    mutating func resolve(
+        _ text: Text?,
+        with sourceEnvironment: EnvironmentValues,
+        sizeFitting: Bool
+    ) -> ResolvedStyledText? {
+        tracker.reset()
+        guard var text else {
+            nextUpdate = .none
+            return nil
+        }
+        var environment = EnvironmentValues(
+            sourceEnvironment.plist,
+            tracker: tracker
+        )
+        if let referenceDate {
+            environment.resolvableStringReferenceDate = referenceDate
+        }
+        if sizeVariant != .regular {
+            environment.textSizeVariant = sizeVariant
+        }
+        lastText = text
+
+        let resolutionDate: Date
+        if let date = environment.stringResolutionDate {
+            resolutionDate = date
+        } else {
+            _ = time
+            resolutionDate = .now
+        }
+        environment.stringResolutionDate = resolutionDate
+        if includeDefaultAttributes {
+            var shape = _ShapeStyle_Shape(
+                operation: .prepareText(level: 0),
+                environment: environment
+            )
+            ForegroundStyle()._apply(to: &shape)
+            if case let .preparedText(result) = shape.result {
+                text = result.apply(to: text)
+            }
+        }
+        var options = Text.ResolveOptions(for: environment)
+        options.formUnion(
+            attachmentsAsAuxiliaryMetadata
+                ? .writeAuxiliaryMetadata
+                : .includeTransitions
+        )
+        if allowsKeyColors {
+            options.formUnion(.allowsKeyColors)
+        }
+        if features.contains(.useTextSuffix) {
+            options.formUnion(.allowsTextSuffix)
+        }
+        if archiveOptions.isArchived {
+            options.formUnion(.includeSupportForRepeatedResolution)
+        }
+        let (storage, properties) = text.resolveAttributedStringAndProperties(
+            in: environment,
+            includeDefaultAttributes:
+                includeDefaultAttributes || attachmentsAsAuxiliaryMetadata,
+            options: options,
+            idiom: idiom
+        )
+        let resolved = ResolvedStyledText.styledText(
+            storage: storage,
+            stylePadding: properties.insets.negatedInsets,
+            environment: environment,
+            archiveOptions: archiveOptions,
+            isCollapsible: text.isCollapsible(),
+            features: features.union(properties.features),
+            suffix: properties.suffix,
+            attachments: properties.customAttachments,
+            styles: properties.styles,
+            transitions: properties.transitions,
+            writingMode: nil,
+            sizeFitting: sizeFitting
+        )
+        let isDynamic = resolved.isDynamic
+        if !archiveOptions.isArchived,
+           referenceDate == nil || referenceDate == .some(nil),
+           isDynamic
+        {
+            nextUpdate = .recipe(
+                lastTime: time,
+                lastDate: resolutionDate,
+                reduceFrequency: environment.isLuminanceReduced,
+                resolved: resolved
+            )
+        } else {
+            nextUpdate = .none
+        }
+        return resolved
+    }
+}
+
+// MARK: - TextChildQuery
+
+private struct TextChildQuery<P>: Rule, AsyncAttribute, ScrapeableAttribute where P: TextAccessibilityProvider {
+    @Attribute var resolvedText: ResolvedStyledText
+    @Attribute var unresolvedText: Text
+    @WeakAttribute var renderer: TextRendererBoxBase?
+    @Attribute var environment: EnvironmentValues
+    @Attribute var position: CGPoint
+    @Attribute var size: ViewSize
+    @Attribute var transform: ViewTransform
+    let parentID: ScrapeableID
+
+    static func scrapeContent(from ident: AnyAttribute) -> ScrapeableContent.Item? {
+        let query = ident.info.body.assumingMemoryBound(to: TextChildQuery.self)[]
+        return ScrapeableContent.Item(
+            .text(query.unresolvedText, query.resolvedText, query.environment),
+            ids: .none,
+            query.parentID,
+            position: query.$position,
+            size: query.$size,
+            transform: query.$transform
+        )
+    }
+
+    var value: some View {
+        let accessibilityView = AccessibilityStyledTextContentView<P>(
+            text: resolvedText,
+            unresolvedText: unresolvedText,
+            renderer: renderer,
+            needsDrawingGroup: renderer != nil ? environment.textRendererAddsDrawingGroup : false
+        )
+        return accessibilityView.body
+    }
+}
+
+// MARK: - ResolvedOptionalTextFilter
+
+struct ResolvedOptionalTextFilter: StatefulRule, AsyncAttribute {
+    @Attribute var text: Text?
+    @Attribute var environment: EnvironmentValues
+    var helper: ResolvedTextHelper
+
+    typealias Value = ResolvedStyledText?
+
+    // NOTE: Forces the output’s mainRef to false, regardless of those inputs.
+    static var flags: Flags { .asyncThread }
+
+    mutating func updateValue() {
+        let (text, textChanged) = $text.changedValue()
+        let (environment, environmentChanged) = $environment.changedValue()
+        let shouldUpdate: Bool
+        if !hasValue {
+            shouldUpdate = true
+        } else if textChanged, helper.lastText != text {
+            shouldUpdate = true
+        } else if environmentChanged,
+                  helper.tracker.hasDifferentUsedValues(environment.plist) {
+            shouldUpdate = true
+        } else {
+            switch helper.nextUpdate {
+            case let .time(nextUpdate):
+                shouldUpdate = helper.time >= nextUpdate
+            case let .recipe(lastTime, lastDate, reduceFrequency, resolved):
+                let nextUpdate = resolved.nextUpdate(
+                    after: lastTime,
+                    equivalentDate: lastDate,
+                    reduceFrequency: reduceFrequency
+                )
+                helper.nextUpdate = .time(nextUpdate)
+                shouldUpdate = helper.time >= nextUpdate
+            case .none:
+                shouldUpdate = false
+            }
+        }
+        if shouldUpdate {
+            value = helper.resolve(text, with: environment, sizeFitting: false)
+        }
+        let nextUpdate: Time?
+        switch helper.nextUpdate {
+        case let .time(time):
+            nextUpdate = time
+        case let .recipe(lastTime, lastDate, reduceFrequency, resolved):
+            let time = resolved.nextUpdate(
+                after: lastTime,
+                equivalentDate: lastDate,
+                reduceFrequency: reduceFrequency
+            )
+            helper.nextUpdate = .time(time)
+            nextUpdate = time
+        case .none:
+            nextUpdate = nil
+        }
+        if let nextUpdate, helper.time < nextUpdate {
+            ViewGraph.current.nextUpdate.views.at(nextUpdate)
+        }
+    }
+}
+
+// MARK: - DynamicTextView
+
+private struct DynamicTextView: PrimitiveView, UnaryView {
+    var text: ResolvedStyledText
+    var size: CGSize
+
+    static func _makeView(
+        view: _GraphValue<DynamicTextView>,
+        inputs: _ViewInputs
+    ) -> _ViewOutputs {
+        let frame = Attribute(DynamicTextFrame(
+            view: view.value,
+            position: inputs.position
+        ))
+        let filtered = Attribute(DynamicTextFilter(
+            environment: inputs.environment,
+            referenceDate: inputs.referenceDate,
+            time: inputs.time,
+            size: frame.size,
+            view: view.value
+        ))
+        var newInputs = inputs
+        newInputs.position = frame.origin
+        newInputs.size = frame.size
+        newInputs.environment = Attribute(DynamicTextEnvironment(
+            environment: inputs.environment,
+            transaction: inputs.transaction,
+            date: filtered.date,
+            lastDate: .distantPast
+        ))
+        var outputs = StyledTextContentView._makeView(
+            view: .init(filtered.view),
+            inputs: newInputs
+        )
+        if let textAlwaysOnProvider = inputs.textAlwaysOnProvider {
+            textAlwaysOnProvider.makeAlwaysOn(
+                inputs: inputs,
+                schedule: filtered.schedule,
+                outputs: &outputs
+            )
+        }
+        return outputs
+    }
+
+    private struct DynamicTextHelper: SizeFittingTextResolver {
+        let view: DynamicTextView
+        lazy var widthAdaptedText: ResolvedStyledText = {
+            var isUniqueSizeVariant = sizeVariant == .regular
+            let storage: NSMutableAttributedString?
+            if view.text.layoutProperties.sizeFitting {
+                storage = view.text.storage.map { storage in
+                    let result = NSMutableAttributedString(attributedString: storage)
+                    result.enumerateAttribute(.resolvableTextSegment, in: result.range) { value, range, _ in
+                        guard let value = value as? ResolvableTextSegmentAttribute.Value,
+                              let resolvable = result.attribute(
+                                  value.resolvableAttributeKey,
+                                  at: range.location,
+                                  effectiveRange: nil
+                              ) as? any ResolvableStringAttribute else {
+                            return
+                        }
+                        let variant = resolvable.sizeVariant(sizeVariant)
+                        isUniqueSizeVariant = isUniqueSizeVariant || variant.exact
+                        result.addAttribute(
+                            value.resolvableAttributeKey,
+                            value: variant.resolvable,
+                            range: range
+                        )
+                    }
+                    return result
+                }
+                _ = storage?.resolveUpdateSchedule(recalculate: true)
+            } else {
+                storage = nil
+            }
+            var features = view.text.features
+            features.setValue(isUniqueSizeVariant, for: .isUniqueSizeVariant)
+            return ResolvedStyledText.styledText(
+                storage: storage ?? view.text.storage,
+                layoutProperties: view.text.layoutProperties,
+                layoutMargins: view.text.layoutMargins,
+                stylePadding: view.text.stylePadding,
+                archiveOptions: view.text.archiveOptions,
+                isCollapsible: view.text.isCollapsible,
+                features: features,
+                suffix: .none,
+                attachments: .init(),
+                styles: view.text.styles,
+                transitions: view.text.transitions,
+                scaleFactorOverride: view.text.scaleFactorOverride
+            )
+        }()
+        var sizeVariant: TextSizeVariant = .regular
+
+        func shouldUpdate(
+            for input: ResolvableStringResolutionContext,
+            inputChanged: Bool
+        ) -> Bool {
+            inputChanged
+        }
+
+        mutating func value(
+            for input: ResolvableStringResolutionContext
+        ) -> SizeFittingTextCacheValue<StyledTextLayoutEngine> {
+            let text = widthAdaptedText.resolvingContent(in: input)
+            var archiveOptions = text.archiveOptions
+            archiveOptions.flags.subtract(.isArchived)
+            let layoutText = ResolvedStyledText.styledText(
+                storage: text.storage,
+                layoutProperties: text.layoutProperties,
+                layoutMargins: text.layoutMargins,
+                stylePadding: text.stylePadding,
+                archiveOptions: archiveOptions,
+                isCollapsible: text.isCollapsible,
+                features: text.features,
+                suffix: .none,
+                attachments: .init(),
+                styles: text.styles,
+                transitions: text.transitions,
+                scaleFactorOverride: text.scaleFactorOverride
+            )
+            return SizeFittingTextCacheValue(
+                text: text,
+                engine: StyledTextLayoutEngine(text: layoutText, renderer: nil),
+                renderer: nil
+            )
+        }
+
+        var narrowerVariant: DynamicTextHelper {
+            DynamicTextHelper(view: view, sizeVariant: sizeVariant.nextDown)
+        }
+    }
+
+    private struct DynamicTextFilter: StatefulRule, AsyncAttribute {
+        struct Value {
+            var view: StyledTextContentView
+            var date: Date
+            var schedule: (any TimelineSchedule)?
+        }
+
+        @Attribute var environment: EnvironmentValues
+        @WeakAttribute var referenceDate: Date??
+        @Attribute var time: Time
+        @Attribute var size: ViewSize
+        @Attribute var view: DynamicTextView
+        lazy var textManager = makeTextManager()
+        let tracker: PropertyList.Tracker
+        var nextTime: Time
+        var lastDate: Date
+
+        // NOTE: Forces the output’s mainRef to false, regardless of those inputs.
+        static var flags: Flags { .asyncThread }
+
+        init(
+            environment: Attribute<EnvironmentValues>,
+            referenceDate: WeakAttribute<Date?>,
+            time: Attribute<Time>,
+            size: Attribute<ViewSize>,
+            view: Attribute<DynamicTextView>
+        ) {
+            _environment = environment
+            _referenceDate = referenceDate
+            _time = time
+            _size = size
+            _view = view
+            tracker = .init()
+            nextTime = .zero
+            lastDate = .distantPast
+        }
+
+        func makeTextManager() -> TextManager {
+            TextManager(
+                sizeFittingTextCache: SizeFittingTextCache(
+                    resolver: DynamicTextHelper(view: view),
+                    logic: StickyTextSizeFittingLogic(),
+                    initialInput: ResolvableStringResolutionContext(environment: environment)
+                )
+            )
+        }
+
+        mutating func updateValue() {
+            let (environment, environmentChanged) = $environment.changedValue()
+            let (view, viewChanged) = $view.changedValue()
+            let inputsChanged = viewChanged || (
+                environmentChanged && tracker.hasDifferentUsedValues(environment.plist)
+            )
+            let isDynamic = view.text.isDynamic
+            let date: Date
+            if isDynamic {
+                if let referenceDate = referenceDate ?? nil {
+                    date = referenceDate
+                } else if time < nextTime {
+                    date = lastDate
+                } else if let resolutionDate = environment.stringResolutionDate {
+                    date = resolutionDate
+                } else {
+                    _ = time
+                    date = .now
+                }
+            } else {
+                date = lastDate
+            }
+            if inputsChanged {
+                textManager = makeTextManager()
+            }
+            if inputsChanged || date != lastDate || !hasValue {
+                tracker.reset()
+                let resolved: ResolvedStyledText
+                if isDynamic {
+                    var trackedEnvironment = EnvironmentValues(environment.plist, tracker: tracker)
+                    trackedEnvironment.stringResolutionDate = date
+                    if view.text.features.contains(.sensitive) {
+                        trackedEnvironment.sensitiveContent = true
+                    }
+                    let context = ResolvableStringResolutionContext(
+                        referenceDate: referenceDate ?? nil,
+                        environment: trackedEnvironment,
+                        maximumWidth: size.width
+                    )
+                    resolved = textManager.resolve(in: context, for: size)
+                    nextTime = resolved.nextUpdate(
+                        after: time,
+                        equivalentDate: date,
+                        reduceFrequency: environment.isLuminanceReduced
+                    )
+                } else {
+                    resolved = view.text
+                }
+                lastDate = date
+                value = Value(
+                    view: StyledTextContentView(
+                        text: resolved,
+                        renderer: nil,
+                        needsDrawingGroup: false
+                    ),
+                    date: date,
+                    schedule: resolved.schedule
+                )
+            }
+            if isDynamic, time < nextTime {
+                ViewGraph.current.nextUpdate.views.at(nextTime)
+            }
+        }
+    }
+
+    private struct TextManager {
+        let sizeFittingTextCache: SizeFittingTextCache<DynamicTextHelper, StickyTextSizeFittingLogic>
+
+        func resolve(
+            in context: ResolvableStringResolutionContext,
+            for size: ViewSize
+        ) -> ResolvedStyledText {
+            sizeFittingTextCache.input = (context, true)
+            let text = sizeFittingTextCache.withValue(for: size.proposal) { $0.text }
+            sizeFittingTextCache.withResolver(for: size.proposal) { resolver in
+                sizeFittingTextCache.logic.committedValue = (resolver.sizeVariant, size.proposal)
+            }
+            return text
+        }
+    }
+
+    private struct DynamicTextEnvironment: StatefulRule, AsyncAttribute {
+        @Attribute var environment: EnvironmentValues
+        @Attribute var transaction: Transaction
+        @Attribute var date: Date
+        var lastDate: Date
+
+        typealias Value = EnvironmentValues
+
+        mutating func updateValue() {
+            var environment = environment
+            if date != lastDate {
+                let transaction = Graph.withoutUpdate { self.transaction }
+                environment.contentTransitionState.applyDynamicTextAnimation(in: transaction)
+            }
+            lastDate = date
+            value = environment
+        }
+    }
+
+    private struct DynamicTextFrame: Rule, AsyncAttribute {
+        @Attribute var view: DynamicTextView
+        @Attribute var position: CGPoint
+
+        var value: ViewFrame {
+            let frame = view.text.frame(in: view.size, renderer: nil)
+            return ViewFrame(
+                origin: CGPoint(x: position.x - frame.origin.x, y: position.y - frame.origin.y),
+                size: .fixed(view.size)
+            )
+        }
+    }
+}
+
+// MARK: - StyledTextLayoutEngine
+
+struct StyledTextLayoutEngine: LayoutEngine {
+    var text: ResolvedStyledText
+    var renderer: TextRendererBoxBase?
+
+    func spacing() -> Spacing {
+        text.spacing()
+    }
+
+    func sizeThatFits(_ proposedSize: _ProposedSize) -> CGSize {
+        if let renderer {
+            return renderer.sizeThatFits(
+                proposal: .init(proposedSize),
+                text: .init(text: text)
+            )
+        } else {
+            guard proposedSize != .zero else {
+                return .zero
+            }
+            return text.sizeThatFits(proposedSize)
+        }
+    }
+
+    func lengthThatFits(_ proposal: _ProposedSize, in axis: Axis) -> CGFloat {
+        if axis == .horizontal, proposal.width == .zero {
+            return .zero
+        }
+        return sizeThatFits(proposal)[axis]
+    }
+
+    func explicitAlignment(_ k: AlignmentKey, at viewSize: ViewSize) -> CGFloat? {
+        text.explicitAlignment(k, at: viewSize.value)
+    }
+
+    var debugContentDescription: String? {
+        text.storage?.string
+    }
+}

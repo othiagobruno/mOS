@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Exemplo do Horizonte</title>
+<style>
+  body { font-family: sans-serif; margin: 0; background: #fbfbfd; color: #222; line-height: 1.5; }
+  .page { max-width: 760px; margin: 0 auto; padding: 28px 32px 48px; }
+  header { background: linear-gradient(#4f7cff, #2a4fd6); color: white; padding: 26px 32px; }
+  header h1 { margin: 0; font-size: 30px; }
+  header p { margin: 4px 0 0; color: #dce4ff; }
+  h2 { color: #2a4fd6; border-bottom: 2px solid #e3e8f5; padding-bottom: 4px; margin-top: 32px; }
+  .destaque { background: #fff6d6; border: 1px solid #f0d97a; border-radius: 8px; padding: 10px 14px; }
+  .vermelho { color: #c62828; }
+  #nota { font-size: 13px; color: #666; }
+  table.dados { border-collapse: collapse; width: 100%; margin: 10px 0; }
+  table.dados th { background: #2a4fd6; color: white; padding: 6px 10px; text-align: left; }
+  table.dados td { padding: 6px 10px; border-bottom: 1px solid #dde3f0; }
+  table.dados tr:nth-child(odd) td { background: #f2f5fc; }
+  .num { text-align: right; }
+  blockquote { border-left: 4px solid #9db2ff; margin-left: 0; padding: 2px 16px; color: #555; background: #f4f6fd; }
+  pre { background: #1e2433; color: #d6e2ff; padding: 12px 14px; border-radius: 6px; }
+  code { background: #eef1f8; padding: 1px 4px; border-radius: 3px; }
+  .galeria img { border: 1px solid #ccd; margin: 4px 8px 4px 0; vertical-align: middle; }
+  ul.check li { list-style-type: square; }
+  .rodape { margin-top: 40px; font-size: 12px; color: #888; text-align: center; }
+</style>
+<script>document.write("JavaScript não deveria aparecer!");</script>
+</head>
+<body>
+<header>
+  <h1>Bem-vindo ao Horizonte</h1>
+  <p>Uma página de exemplo que testa o motor web do mOS.</p>
+</header>
+<div class="page">
+
+<p class="destaque">Este documento fica em <code>/Users/Visitante/Documentos/Exemplo.html</code>.
+Ele tem <b>negrito</b>, <i>itálico</i>, <u>sublinhado</u>, <s>riscado</s>, <span class="vermelho">texto colorido</span>,
+<mark>marca-texto</mark>, H<sub>2</sub>O, E = mc<sup>2</sup> e <small>letras pequenas</small>.</p>
+
+<noscript><p><b>Sem JavaScript:</b> este parágrafo vem de um elemento &lt;noscript&gt; e deve aparecer.</p></noscript>
+
+<p>Índice: <a href="#listas">Listas</a> &middot; <a href="#tabela">Tabela</a> &middot; <a href="#imagens">Imagens</a> &middot;
+<a href="#formulario">Formulário</a> &middot; <a href="Bem-vindo.txt">Bem-vindo.txt</a> &middot; <a href="about:ajuda">Ajuda do mOS</a></p>
+
+<h2 id="listas">1. Listas</h2>
+<ul>
+  <li>Item com marcador
+    <ul>
+      <li>Sub-item (círculo)
+        <ul><li>Sub-sub-item (quadrado)</li></ul>
+      </li>
+    </ul>
+  </li>
+  <li>Outro item com um <a href="../Imagens/">link para a pasta Imagens</a></li>
+  <li>Entidades: &amp; &lt; &gt; &copy; &reg; &euro; &#8364; &#x2603; &eacute;&ccedil;&atilde;o &mdash; &hellip;
+</ul>
+<ol>
+  <li>Primeiro passo
+  <li>Segundo passo
+  <li>Terceiro passo
+</ol>
+<ol type="i" start="4">
+  <li>Romano quatro</li>
+  <li>Romano cinco</li>
+</ol>
+<dl>
+  <dt><b>HTML</b></dt><dd>Linguagem de marcação das páginas.</dd>
+  <dt><b>CSS</b></dt><dd>Folhas de estilo em cascata.</dd>
+</dl>
+
+<h2 id="tabela">2. Tabela</h2>
+<table class="dados">
+  <tr><th>Planeta</th><th>Tipo</th><th class="num">Diâmetro (km)</th><th class="num">Luas</th></tr>
+  <tr><td>Mercúrio</td><td>Rochoso</td><td class="num">4.879</td><td class="num">0</td></tr>
+  <tr><td>Vênus</td><td>Rochoso</td><td class="num">12.104</td><td class="num">0</td></tr>
+  <tr><td>Terra</td><td>Rochoso</td><td class="num">12.742</td><td class="num">1</td></tr>
+  <tr><td>Júpiter</td><td>Gasoso</td><td class="num">139.820</td><td class="num">95</td></tr>
+  <tr><td colspan="3"><i>Total de luas listadas</i></td><td class="num"><b>96</b></td></tr>
+</table>
+
+<p>Tabela no estilo antigo, com atributos:</p>
+<table border="1" cellpadding="6" cellspacing="0" bgcolor="#ffffff" align="center">
+  <tr bgcolor="#e8eefc"><th>Atalho</th><th>Ação</th></tr>
+  <tr><td align="center"><code>⌘T</code></td><td>Nova aba</td></tr>
+  <tr><td align="center"><code>⌘L</code></td><td>Barra de endereços</td></tr>
+</table>
+
+<h2 id="imagens">3. Imagens</h2>
+<p class="galeria">
+  <img src="../Imagens/horizonte.png" alt="Logo PNG" width="240" height="150">
+  <img src="../Imagens/dunas.jpg" alt="Paisagem JPEG" width="200">
+  <img src="../Imagens/nao-existe.png" alt="Imagem ausente">
+</p>
+<p id="nota">À esquerda, um PNG com transparência e cantos arredondados; ao lado, um JPEG reduzido; por fim, o texto alternativo de uma imagem que não existe.</p>
+
+<h2>4. Citação e código</h2>
+<blockquote>
+  “A simplicidade é o último grau de sofisticação.” &mdash; atribuída a Leonardo da Vinci
+</blockquote>
+<pre>
+int main(void) {
+    printf("Olá, mOS!\n");   /* espaços   preservados */
+    return 0;
+}
+</pre>
+<hr>
+<center>Este texto está centralizado com &lt;center&gt;.</center>
+<p style="text-align:right; color:#2a4fd6">Alinhado à direita com <code>style=""</code>.</p>
+
+<h2 id="formulario">5. Formulário</h2>
+<form action="http://lite.duckduckgo.com/lite/" method="get">
+  <p>Buscar na Web: <input type="text" name="q" value="mOS sistema operacional" size="32">
+  <input type="submit" value="Pesquisar"></p>
+  <p><input type="checkbox" name="seguro" checked> Busca segura &nbsp;
+     <select name="kl"><option value="br-pt">Brasil</option><option value="pt-pt">Portugal</option><option value="us-en">EUA</option></select></p>
+</form>
+
+<p><a href="#">Voltar ao topo</a> &middot; <a href="http://example.com/">example.com (rede)</a></p>
+<p class="rodape">Feito para o mOS &copy; 2026 &mdash; sem JavaScript, com muito carinho.</p>
+</div>
+</body>
+</html>

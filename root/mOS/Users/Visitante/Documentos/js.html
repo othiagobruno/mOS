@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Brisa: JavaScript no Horizonte</title>
+<style>
+body { margin: 0; background: #f2f4f8; color: #1d1d1f; font-family: sans-serif; }
+.wrap { max-width: 860px; margin: 0 auto; padding: 18px 26px 40px; }
+h1 { font-size: 24px; margin: 0 0 4px; }
+.sub { color: #6e6e73; font-size: 13px; margin: 0 0 14px; }
+.card { background: #ffffff; border: 1px solid #dcdfe6; border-radius: 10px; padding: 10px 16px; margin: 0 0 12px; }
+.card h2 { font-size: 15px; margin: 0 0 8px; color: #0a5fd0; }
+.big { font-size: 26px; font-weight: bold; }
+.ok { color: #1e8e3e; font-weight: bold; }
+.erro { color: #c5221f; font-weight: bold; }
+.mono { font-family: monospace; font-size: 12px; }
+#resultado { font-size: 18px; padding: 6px 10px; border-radius: 6px; background: #fff4d6; }
+#barra { height: 14px; width: 30px; background: #0a84ff; border-radius: 7px; }
+#tarefas li { margin: 2px 0; }
+.feita { color: #9a9aa0; text-decoration: line-through; }
+.destaque { background: #e6f0ff; }
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>Brisa: JavaScript no Horizonte</h1>
+<p class="sub">Página de demonstração e autoteste do motor JavaScript do mOS.</p>
+<noscript><p class="erro">O JavaScript está desativado (Visualizar &rsaquo; Ativar JavaScript).</p></noscript>
+
+<div class="card">
+<h2>Autoteste</h2>
+<p id="resultado">JS: aguardando...</p>
+<p id="falhas" class="mono"></p>
+</div>
+
+<div class="card">
+<h2>Contador</h2>
+<p><span id="contador" class="big">0</span> &nbsp; <button type="button" id="btn-mais">Somar 1</button> <button type="button" id="btn-zerar">Zerar</button></p>
+</div>
+
+<div class="card">
+<h2>Relógio</h2>
+<p><span id="relogio" class="big">--:--:--</span> &nbsp; <span id="data" class="sub"></span></p>
+</div>
+
+<div class="card">
+<h2>Animação de estilo</h2>
+<div id="barra"></div>
+<p id="anim-info" class="sub">largura: 30px</p>
+</div>
+
+<div class="card">
+<h2>Lista de tarefas</h2>
+<p><input type="text" id="nova-tarefa" size="30" placeholder="Nova tarefa"> <button type="button" id="btn-add">Adicionar</button></p>
+<ul id="tarefas"></ul>
+<p id="tarefas-info" class="sub"></p>
+</div>
+
+<div class="card">
+<h2>Validação de formulário</h2>
+<form id="form-cadastro" action="#">
+<p>Nome: <input type="text" name="nome" id="f-nome" size="20"> E-mail: <input type="text" name="email" id="f-email" size="24"> <input type="submit" value="Enviar"></p>
+</form>
+<p id="form-msg" class="sub">Preencha os campos e envie.</p>
+</div>
+
+<div class="card">
+<h2>JSON, regex, closures e classes</h2>
+<p id="demo-json" class="mono"></p>
+<p id="demo-regex" class="mono"></p>
+<p id="demo-classe" class="mono"></p>
+<p id="demo-rede" class="mono">Rede: aguardando...</p>
+<p id="demo-modulo" class="mono">Módulo: aguardando...</p>
+</div>
+</div>
+
+<script>
+"use strict";
+// ---------------------------------------------------------------- autoteste
+var testes = [];
+function teste(nome, cond) { testes.push({ nome: nome, ok: !!cond }); }
+function igual(nome, a, b) { testes.push({ nome: nome + " (" + String(a) + ")", ok: a === b }); }
+
+// linguagem
+igual("aritmética", 2 + 3 * 4, 14);
+igual("concatenação", "mOS " + 1, "mOS 1");
+igual("ponto flutuante", 0.1 + 0.2, 0.30000000000000004);
+igual("toFixed", (3.14159).toFixed(2), "3.14");
+igual("let em bloco", (function () { let x = 1; { let x = 2; } return x; })(), 1);
+var fs = [];
+for (let i = 0; i < 3; i++) fs.push(() => i * 10);
+igual("closures em laço", fs.map(f => f()).join(","), "0,10,20");
+igual("template literal", `soma=${1 + 2}`, "soma=3");
+igual("parâmetro padrão", (function (a, b = 10) { return a + b; })(5), 15);
+igual("rest/spread", ((...xs) => Math.max(...xs))(4, 9, 2), 9);
+var [pa, , pc = 3] = [1, 2];
+igual("desestruturação de vetor", pa + pc, 4);
+var { nome: nm, idade = 30 } = { nome: "Ana" };
+igual("desestruturação de objeto", nm + idade, "Ana30");
+igual("encadeamento opcional", ({ a: null }).a?.b, undefined);
+igual("coalescência nula", null ?? "padrão", "padrão");
+var sum = 0;
+for (const v of [1, 2, 3, 4]) sum += v;
+igual("for-of", sum, 10);
+var ks = [];
+for (var k in { x: 1, y: 2 }) ks.push(k);
+igual("for-in", ks.join(""), "xy");
+igual("switch", (function (v) { switch (v) { case "a": return 1; case "b": return 2; default: return 0; } })("b"), 2);
+var capt = "";
+try { null.prop; } catch (e) { capt = e.name; } finally { capt += "!"; }
+igual("try/catch/finally", capt, "TypeError!");
+igual("typeof", typeof undefined + typeof 1 + typeof "s", "undefinednumberstring");
+igual("instanceof", [] instanceof Array, true);
+igual("in / delete", (function () { var o = { a: 1 }; delete o.a; return "a" in o; })(), false);
+
+// classes
+class Forma {
+  constructor(nome) { this.nome = nome; }
+  area() { return 0; }
+  descricao() { return this.nome + " com área " + this.area().toFixed(1); }
+}
+class Retangulo extends Forma {
+  constructor(l, a) { super("retângulo"); this.l = l; this.a = a; }
+  area() { return this.l * this.a; }
+  static quadrado(l) { return new Retangulo(l, l); }
+}
+var q = Retangulo.quadrado(3);
+igual("classe + herança", q.descricao(), "retângulo com área 9.0");
+igual("super/instanceof", q instanceof Forma, true);
+
+// biblioteca
+igual("Array map/filter/reduce", [1, 2, 3, 4, 5].map(x => x * x).filter(x => x % 2).reduce((a, b) => a + b, 0), 35);
+igual("Array sort numérico", [10, 2, 33, 4].sort((a, b) => a - b).join(), "2,4,10,33");
+igual("Array splice", (function () { var a = [1, 2, 3, 4]; a.splice(1, 2); return a.join(); })(), "1,4");
+igual("Array includes/indexOf", [5, 6, 7].includes(6) && [5, 6, 7].indexOf(7) === 2, true);
+igual("String split/join", "a-b-c".split("-").reverse().join("+"), "c+b+a");
+igual("String padStart/repeat", "7".padStart(3, "0") + "ab".repeat(2), "007abab");
+igual("String maiúsculas acentuadas", "ação".toUpperCase(), "AÇÃO");
+igual("String trim/includes", "  olá mundo ".trim().includes("mundo"), true);
+igual("Regex test", /^[\w.]+@[\w]+\.[a-z]{2,}$/.test("ana.silva@mos.org"), true);
+igual("Regex replace com grupos", "2026-11-06".replace(/(\d+)-(\d+)-(\d+)/, "$3/$2/$1"), "06/11/2026");
+igual("Regex global", "a1b22c333".match(/\d+/g).length, 3);
+igual("Regex preguiçoso", "<b>x</b>".match(/<.+?>/)[0], "<b>");
+var obj = { n: 1.5, s: "aspas \"e\" acentos é", l: [1, null, true], o: { x: -2 } };
+var copia = JSON.parse(JSON.stringify(obj));
+igual("JSON ida e volta", copia.s === obj.s && copia.o.x === -2 && copia.l[2] === true, true);
+igual("Math", Math.round(Math.sqrt(2) * 1000) / 1000, 1.414);
+igual("Date", new Date(2024, 1, 29).getDate(), 29);
+var m = new Map(); m.set("um", 1); m.set("dois", 2);
+igual("Map", m.get("dois") + m.size, 4);
+igual("Set", new Set([1, 1, 2, 3, 3]).size, 3);
+var contadorPrivado = (function () { var c = 0; return function () { return ++c; }; })();
+contadorPrivado(); contadorPrivado();
+igual("closure com estado", contadorPrivado(), 3);
+igual("bind", (function () { return this.v * 2; }).bind({ v: 21 })(), 42);
+localStorage.setItem("brisa-teste", "valor");
+igual("localStorage", localStorage.getItem("brisa-teste"), "valor");
+
+// geradores
+function* contar(n) { for (let i = 1; i <= n; i++) yield i; return "fim"; }
+igual("gerador: spread", [...contar(4)].join(), "1,2,3,4");
+var gq = contar(2);
+igual("gerador: next/done", JSON.stringify([gq.next(), gq.next(), gq.next()]), "[{\"value\":1,\"done\":false},{\"value\":2,\"done\":false},{\"value\":\"fim\",\"done\":true}]");
+function* fibo() { var a = 0, b = 1; for (;;) { yield a; [a, b] = [b, a + b]; } }
+var fibs = [];
+for (const v of fibo()) { if (v > 30) break; fibs.push(v); }
+igual("gerador infinito + for-of + break", fibs.join(), "0,1,1,2,3,5,8,13,21");
+function* acumula() { var total = 0; while (true) { var v = yield total; if (v === undefined) return total; total += v; } }
+var ac = acumula(); ac.next(); ac.next(5); ac.next(7);
+igual("gerador: next(valor)", ac.next().value, 12);
+function* juntar() { yield* [1, 2]; var r = yield* contar(1); yield r; }
+igual("yield*", [...juntar()].join(), "1,2,1,fim");
+var limpo = false;
+function* comFinally() { try { yield 1; yield 2; } finally { limpo = true; } }
+var cf = comFinally(); cf.next();
+igual("gerador: return() + finally", cf.return(9).value === 9 && limpo, true);
+class Intervalo { constructor(a, b) { this.a = a; this.b = b; } *[Symbol.iterator]() { for (let i = this.a; i <= this.b; i++) yield i; } }
+igual("classe iterável com *[Symbol.iterator]", Array.from(new Intervalo(3, 6)).join(), "3,4,5,6");
+
+// BigInt
+igual("BigInt: typeof", typeof 10n, "bigint");
+igual("BigInt: 2n ** 100n", String(2n ** 100n), "1267650600228229401496703205376");
+igual("BigInt: multiplicação grande", (123456789012345678901234567890n * 987654321098765432109876543210n).toString(), "121932631137021795226185032733622923332237463801111263526900");
+igual("BigInt: divisão/resto com sinal", (-7n / 2n) + "," + (-7n % 2n), "-3,-1");
+igual("BigInt: toString(radix)", (255n).toString(16) + " " + (2n ** 64n).toString(16), "ff 10000000000000000");
+igual("BigInt: comparações mistas com Number", 10n > 9 && 2n == 2 && !(2n === 2) && 1n < 1.5, true);
+var erroMistura = "";
+try { 1n + 1; } catch (e) { erroMistura = e.name; }
+igual("BigInt: misturar com Number lança TypeError", erroMistura, "TypeError");
+igual("BigInt(): conversões", BigInt("0x1f") + BigInt(10) + BigInt(true), 42n);
+
+// DOM
+var div = document.createElement("div");
+div.id = "teste-dom";
+div.className = "a b";
+div.innerHTML = "<p class='item'>um</p><p class='item'>dois</p><span>três</span>";
+document.body.appendChild(div);
+igual("getElementById", document.getElementById("teste-dom") === div, true);
+igual("querySelectorAll", document.querySelectorAll("#teste-dom .item").length, 2);
+igual("querySelector", document.querySelector("#teste-dom span").textContent, "três");
+div.classList.add("c");
+div.classList.remove("a");
+igual("classList", div.className, "b c");
+div.setAttribute("data-valor", "42");
+igual("dataset/getAttribute", div.dataset.valor + div.getAttribute("data-valor"), "4242");
+div.style.backgroundColor = "red";
+igual("style", div.style.backgroundColor, "red");
+var li = document.createElement("li");
+li.appendChild(document.createTextNode("nó de texto"));
+div.insertBefore(li, div.firstChild);
+igual("insertBefore/firstChild", div.firstChild.textContent, "nó de texto");
+var cliques = 0;
+div.addEventListener("click", function (e) { cliques++; e.preventDefault(); });
+var ev = new Event("click", { bubbles: true });
+var naoCancelado = div.querySelector("span").dispatchEvent(ev);
+igual("addEventListener + bubbling + preventDefault", cliques === 1 && naoCancelado === false, true);
+div.remove();
+igual("remove()", document.getElementById("teste-dom"), null);
+igual("document.title", document.title, "Brisa: JavaScript no Horizonte");
+
+var ordem = [];
+Promise.resolve("p").then(v => ordem.push(v));
+ordem.push("s");
+
+function mostrarResultado() {
+  igual("Promise/microtarefas", ordem.join(""), "sp");
+  var okc = testes.filter(t => t.ok).length;
+  var msg = "JS: " + okc + "/" + testes.length + " testes OK";
+  var r = document.getElementById("resultado");
+  r.textContent = msg;
+  r.className = okc === testes.length ? "ok" : "erro";
+  var falhas = testes.filter(t => !t.ok).map(t => "falhou: " + t.nome);
+  document.getElementById("falhas").textContent = falhas.join(" | ");
+  console.log(msg);
+  if (falhas.length) console.warn(falhas.join("\n"));
+}
+
+// ---------------------------------------------------------------- contador
+var contagem = 0;
+var elContador = document.getElementById("contador");
+document.getElementById("btn-mais").addEventListener("click", function () {
+  contagem++;
+  elContador.textContent = String(contagem);
+  console.log("contador = " + contagem);
+});
+document.getElementById("btn-zerar").onclick = function () { contagem = 0; elContador.textContent = "0"; };
+
+// ---------------------------------------------------------------- relógio
+function doisDigitos(n) { return n < 10 ? "0" + n : String(n); }
+function atualizarRelogio() {
+  var d = new Date();
+  document.getElementById("relogio").textContent = doisDigitos(d.getHours()) + ":" + doisDigitos(d.getMinutes()) + ":" + doisDigitos(d.getSeconds());
+  document.getElementById("data").textContent = d.toLocaleDateString("pt-BR");
+}
+atualizarRelogio();
+setInterval(atualizarRelogio, 1000);
+
+// ---------------------------------------------------------------- animação
+var largura = 30, passo = 12;
+var barra = document.getElementById("barra");
+setInterval(function () {
+  largura += passo;
+  if (largura >= 400 || largura <= 30) passo = -passo;
+  barra.style.width = largura + "px";
+  barra.style.backgroundColor = largura > 200 ? "#34c759" : "#0a84ff";
+  document.getElementById("anim-info").textContent = "largura: " + largura + "px";
+}, 250);
+
+// ---------------------------------------------------------------- tarefas
+var lista = document.getElementById("tarefas");
+var campo = document.getElementById("nova-tarefa");
+var tarefas = ["Testar o motor JavaScript", "Escrever documentação"];
+function desenharTarefas() {
+  lista.innerHTML = "";
+  tarefas.forEach(function (texto, i) {
+    var item = document.createElement("li");
+    item.textContent = texto + " ";
+    var b = document.createElement("button");
+    b.type = "button";
+    b.textContent = "Remover";
+    b.addEventListener("click", function () { tarefas.splice(i, 1); desenharTarefas(); });
+    item.appendChild(b);
+    lista.appendChild(item);
+  });
+  document.getElementById("tarefas-info").textContent = tarefas.length + (tarefas.length === 1 ? " tarefa" : " tarefas");
+}
+function adicionar() {
+  var t = campo.value.trim();
+  if (!t) return;
+  tarefas.push(t);
+  console.log("tarefa adicionada: " + t);
+  campo.value = "";
+  desenharTarefas();
+}
+document.getElementById("btn-add").addEventListener("click", adicionar);
+campo.addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); adicionar(); } });
+desenharTarefas();
+
+// ---------------------------------------------------------------- formulário
+document.getElementById("form-cadastro").addEventListener("submit", function (e) {
+  e.preventDefault();
+  var nome = document.getElementById("f-nome").value.trim();
+  var email = document.getElementById("f-email").value.trim();
+  var msg = document.getElementById("form-msg");
+  var erros = [];
+  if (nome.length < 2) erros.push("o nome precisa de pelo menos 2 letras");
+  if (!/^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(email)) erros.push("o e-mail é inválido");
+  console.log("formulário: " + (erros.length ? erros.join("; ") : "válido"));
+  if (erros.length) { msg.textContent = "Erro: " + erros.join("; ") + "."; msg.className = "erro"; }
+  else { msg.textContent = "Obrigado, " + nome + "! Cadastro de " + email + " validado."; msg.className = "ok"; }
+});
+
+// ---------------------------------------------------------------- demos
+var pessoa = { nome: "Beatriz", linguagens: ["C", "JavaScript"], ativo: true };
+var texto = JSON.stringify(pessoa);
+document.getElementById("demo-json").textContent = "JSON: " + texto + " -> " + JSON.parse(texto).linguagens.length + " linguagens";
+var frase = "Contato: ana@mos.org, beto@exemplo.com.br";
+document.getElementById("demo-regex").textContent = "Regex: e-mails = " + frase.match(/[\w.]+@[\w.]+/g).join(" e ");
+class Pilha {
+  #itens = [];
+  empilhar(x) { this.#itens.push(x); return this; }
+  get tamanho() { return this.#itens.length; }
+}
+var p = new Pilha().empilhar(1).empilhar(2).empilhar(3);
+document.getElementById("demo-classe").textContent = "Classe Pilha: tamanho " + p.tamanho + "; " + q.descricao();
+
+document.addEventListener("DOMContentLoaded", function () { teste("DOMContentLoaded", true); });
+// testes assíncronos: async/await, fetch() e XMLHttpRequest sobre o arquivo local dados.json
+const esperar = (ms, v) => new Promise(r => setTimeout(() => r(v), ms));
+function xhrGet(url, tipo) {
+  return new Promise(function (ok, falha) {
+    var x = new XMLHttpRequest();
+    var estados = [];
+    x.onreadystatechange = function () { estados.push(x.readyState); };
+    if (tipo) x.responseType = tipo;
+    x.onload = function () { ok({ x: x, estados: estados }); };
+    x.onerror = function () { falha(new Error("XHR falhou")); };
+    x.open("GET", url);
+    x.send();
+  });
+}
+async function testesAssincronos() {
+  igual("await de Promise", await esperar(20, 42), 42);
+  const dobro = async x => (await x) * 2;
+  igual("async arrow", await dobro(Promise.resolve(21)), 42);
+  async function falha() { await null; throw new RangeError("de propósito"); }
+  var pego = "";
+  try { await falha(); } catch (e) { pego = e.name + ": " + e.message; }
+  igual("await + try/catch", pego, "RangeError: de propósito");
+  var soma = 0;
+  for (const v of [1, 2, 3]) soma += await esperar(1, v);
+  igual("await em laço", soma, 6);
+  igual("Promise.all de async", (await Promise.all([dobro(1), dobro(2)])).join(), "2,4");
+  const objAsync = { k: "ok", async m() { await esperar(1); return this.k; } };
+  igual("método async", await objAsync.m(), "ok");
+  const resp = await fetch("dados.json");
+  igual("fetch: ok/status", resp.ok + "/" + resp.status, "true/200");
+  igual("fetch: headers.get", resp.headers.get("Content-Type"), "application/json");
+  const dados = await resp.json();
+  igual("fetch: json()", dados.itens.length + " " + dados.itens[1].nome, "3 pão");
+  igual("fetch: soma dos preços", dados.itens.reduce((a, i) => a + i.preco, 0), 16.25);
+  const texto = await (await fetch("/Users/Visitante/Documentos/dados.json")).text();
+  igual("fetch: text() com caminho absoluto", texto.indexOf("café") > 0, true);
+  igual("fetch: 404", (await fetch("nao-existe.json")).status, 404);
+  var erroRede = "";
+  try { await fetch("ftp://exemplo/arquivo"); } catch (e) { erroRede = e.name; }
+  igual("fetch: falha rejeita com TypeError", erroRede, "TypeError");
+  const r1 = await xhrGet("dados.json");
+  igual("XHR: status/responseText", r1.x.status + " " + JSON.parse(r1.x.responseText).versao, "200 2");
+  igual("XHR: readyState 1 -> 4", r1.estados.join(), "1,4");
+  const r2 = await xhrGet("dados.json", "json");
+  igual("XHR: responseType json", r2.x.response.ativo, true);
+  // geradores async e for await
+  async function* quadradosAsync(n) { for (let i = 1; i <= n; i++) { await esperar(1); yield i * i; } }
+  var quads = [];
+  for await (const q of quadradosAsync(4)) quads.push(q);
+  igual("gerador async + for await", quads.join(), "1,4,9,16");
+  var deSync = "";
+  for await (const v of [Promise.resolve("a"), "b", esperar(2, "c")]) deSync += v;
+  igual("for await sobre iterável síncrono de Promises", deSync, "abc");
+  const ga = quadradosAsync(3);
+  const ga1 = await ga.next(), ga2 = await ga.return("fim"), ga3 = await ga.next();
+  igual("gerador async: next/return", ga1.value + "/" + ga2.value + "/" + ga2.done + "/" + ga3.done, "1/fim/true/true");
+  // import() dinâmico (o módulo util já foi carregado pelo <script type="module">)
+  const dyn = await import("./modulo-dinamico.js");
+  igual("import() dinâmico: default + nomeado", dyn.mensagem + " " + dyn.default(), "carregado dinamicamente 4");
+  const util2 = await import("/Users/Visitante/Documentos/modulo-util.js");
+  igual("import(): módulo avaliado uma única vez", util2.contador + "/" + globalThis.avaliacoesUtil, "2/1");
+  var erroImport = "";
+  try { await import("./nao-existe.js"); } catch (e) { erroImport = e.name; }
+  igual("import(): módulo inexistente rejeita", erroImport, "TypeError");
+}
+window.addEventListener("load", function () {
+  teste("evento load", true);
+  testesAssincronos().then(mostrarResultado, function (e) { teste("testes assíncronos sem exceção (" + e + ")", false); mostrarResultado(); });
+  // demonstração de rede real (não conta no autoteste: depende de Internet)
+  var elRede = document.getElementById("demo-rede");
+  fetch("http://example.com/")
+    .then(r => r.text().then(t => {
+      var m = t.match(/<title>([^<]*)<\/title>/i);
+      elRede.textContent = "Rede: fetch http://example.com/ -> " + r.status + ", " + t.length + " bytes, título \"" + (m ? m[1] : "?") + "\"";
+      console.log(elRede.textContent);
+    }))
+    .catch(e => { elRede.textContent = "Rede indisponível: " + e.message; console.warn(elRede.textContent); });
+});
+</script>
+<script type="module">
+// módulo de verdade: imports nomeados, default, namespace, reexportações e bindings vivos
+import Pilha, { soma, adicionar, contador, incrementar, VERSAO } from "./modulo-util.js";
+import * as reexp from "./modulo-reexporta.js";
+import { PilhaPadrao, versao, area, util } from "./modulo-reexporta.js";
+import { fatorialGrande } from "./modulos/matematica.js";
+igual("módulo: import nomeado + export { as }", soma(1, 2, 3) + adicionar(4), 10);
+igual("módulo: import default (classe)", new Pilha().empilhar("a").empilhar("b").tamanho, 2);
+const antes = contador;
+incrementar();
+incrementar();
+igual("módulo: binding vivo", contador - antes, 2);
+var erroImportacao = "";
+try { contador = 5; } catch (e) { erroImportacao = e.name; }
+igual("módulo: importação é somente leitura", erroImportacao, "TypeError");
+igual("módulo: export * from", reexp.soma(2, 2), 4);
+igual("módulo: export { default as } from", PilhaPadrao === Pilha && versao === VERSAO, true);
+igual("módulo: export * as (vivo)", util.contador, 2);
+igual("módulo: import em subpasta", area(7), 49);
+igual("módulo: namespace", Object.prototype.toString.call(reexp) + " " + typeof reexp.incrementar, "[object Module] function");
+igual("módulo: import.meta.url", reexp.origem.endsWith("/Documentos/modulo-reexporta.js"), true);
+igual("módulo: escopo próprio (não vaza para window)", typeof window.VERSAO, "undefined");
+igual("módulo: BigInt exportado", String(fatorialGrande(25n)), "15511210043330985984000000");
+document.getElementById("demo-modulo").textContent = "Módulo: Pilha v" + VERSAO + ", contador " + contador + ", 25! = " + fatorialGrande(25n);
+</script>
+</body>
+</html>

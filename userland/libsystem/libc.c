@@ -1,0 +1,1113 @@
+/*
+ * mOS libSystem — núcleo: partida, exit, malloc, string, ctype (formato do macOS), stdlib,
+ * matemática, tempo e chamadas POSIX básicas. Roda em ring 3; fala com o kernel via sys.h.
+ *
+ * Os nomes seguem os símbolos do libSystem do macOS sem o "_" inicial do Mach-O
+ * (ex.: o import "_printf" liga em printf, "___error" em __error).
+ */
+#include "sys.h"
+#include "libc.h"
+
+/* ================================================================ estado global */
+int cx_errno;
+char **environ;
+int NXArgc;
+char **NXArgv;
+const char *__progname;
+unsigned long __stack_chk_guard = 0x5f6d4f53434f4d00ULL;
+unsigned int mach_task_self_ = 0x103;
+u64 cx_image_base;
+
+int *__error(void) { return &cx_errno; }
+int *__errno_location(void) { return &cx_errno; }
+
+static long ret_errno(long r) {
+    if (r < 0) { cx_errno = (int)-r; return -1; }
+    return r;
+}
+
+/* ================================================================ exit / atexit */
+#define MAX_ATEXIT 64
+static struct { void (*fn)(void *); void *arg; int kind; } atexit_tab[MAX_ATEXIT];
+static int atexit_n;
+
+int atexit(void (*fn)(void)) {
+    if (atexit_n >= MAX_ATEXIT) return -1;
+    atexit_tab[atexit_n].fn = (void (*)(void *))fn;
+    atexit_tab[atexit_n].kind = 0;
+    atexit_n++;
+    return 0;
+}
+
+int __cxa_atexit(void (*fn)(void *), void *arg, void *dso) {
+    (void)dso;
+    if (atexit_n >= MAX_ATEXIT) return -1;
+    atexit_tab[atexit_n].fn = fn;
+    atexit_tab[atexit_n].arg = arg;
+    atexit_tab[atexit_n].kind = 1;
+    atexit_n++;
+    return 0;
+}
+
+__attribute__((noreturn)) void _exit(int code) {
+    SYS1(SYS_EXIT, code);
+    for (;;) {}
+}
+__attribute__((noreturn)) void _Exit(int code) { _exit(code); }
+
+__attribute__((noreturn)) void exit(int code) {
+    while (atexit_n > 0) {
+        atexit_n--;
+        if (atexit_tab[atexit_n].kind) atexit_tab[atexit_n].fn(atexit_tab[atexit_n].arg);
+        else ((void (*)(void))atexit_tab[atexit_n].fn)();
+    }
+    cx_stdio_flush_all();
+    _exit(code);
+}
+
+__attribute__((noreturn)) void abort(void) {
+    cx_fdprintf(2, "Abort trap: 6 (chamado de %p)\n", __builtin_return_address(0));
+    cx_stdio_flush_all();
+    _exit(134);
+}
+
+__attribute__((noreturn)) void __stack_chk_fail(void) {
+    cx_puts_fd(2, "*** stack smashing detected ***: terminated\n");
+    _exit(134);
+}
+
+__attribute__((noreturn)) void __assert_rtn(const char *func, const char *file, int line, const char *expr) {
+    cx_fdprintf(2, "Assertion failed: (%s), function %s, file %s, line %d.\n", expr, func, file, line);
+    abort();
+}
+
+/* chamado por stubs gerados pelo loader para símbolos que não existem aqui */
+__attribute__((noreturn)) void cx_unresolved(const char *name) {
+    cx_stdio_flush_all();
+    cx_fdprintf(2, "dyld[mOS]: símbolo não implementado no libSystem do mOS: %s\n", name);
+    _exit(127);
+}
+
+__attribute__((noreturn)) void dyld_stub_binder(void) { cx_unresolved("dyld_stub_binder"); }
+
+/* ================================================================ partida */
+typedef int (*main_fn)(int, char **, char **, char **);
+typedef void (*init_fn)(int, char **, char **, char **, void *);
+
+__attribute__((noreturn)) void cx_start(cx_start_t *s) {
+    int argc = (int)s->argc;
+    char **argv = (char **)s->argv, **envp = (char **)s->envp, **apple = (char **)s->apple;
+    environ = envp;
+    cx_image_base = s->image_base;
+    cx_libc_init();
+    NXArgc = argc;
+    NXArgv = argv;
+    __progname = argc > 0 ? argv[0] : "app";
+    for (const char *p = __progname; *p; p++) if (*p == '/') __progname = p + 1;
+    cx_stdio_init();
+    if (s->n_objc_sects) { extern void cx_objc_boot(u64, u64); cx_objc_boot(s->objc_sects, s->n_objc_sects); }
+    u64 *funcs = (u64 *)s->init_funcs;
+    for (u64 i = 0; i < s->n_init_funcs; i++) ((init_fn)funcs[i])(argc, argv, envp, apple, 0);
+    u32 *offs = (u32 *)s->init_offsets;
+    for (u64 i = 0; i < s->n_init_offsets; i++) ((init_fn)(s->image_base + offs[i]))(argc, argv, envp, apple, 0);
+    exit(((main_fn)s->main)(argc, argv, envp, apple));
+}
+
+/* ================================================================ malloc (brk) */
+typedef struct blk { size_t size; struct blk *next; } blk_t;   /* size inclui o cabeçalho */
+#define HDR 16
+#define MAGIC_USED 0x00A110CEull
+#define MAGIC_ALIGNED 0x0A11619Eull   /* bloco alinhado: cabeçalho = {ponteiro bruto, MAGIC_ALIGNED} */
+static blk_t *free_list;
+static char *heap_end;
+
+static void *more_core(size_t bytes) {
+    if (!heap_end) heap_end = (char *)SYS1(SYS_BRK, 0);
+    size_t grow = (bytes + 0xFFFF) & ~(size_t)0xFFFF;
+    char *old = heap_end;
+    long r = SYS1(SYS_BRK, old + grow);
+    if (r < 0 || (char *)r < old + grow) return 0;
+    heap_end = (char *)r;
+    blk_t *b = (blk_t *)old;
+    b->size = grow;
+    return b;
+}
+
+static void insert_free(blk_t *b) {
+    blk_t **pp = &free_list, *prev = 0;
+    while (*pp && *pp < b) { prev = *pp; pp = &(*pp)->next; }
+    b->next = *pp;
+    *pp = b;
+    if (b->next && (char *)b + b->size == (char *)b->next) { b->size += b->next->size; b->next = b->next->next; }
+    if (prev && (char *)prev + prev->size == (char *)b) { prev->size += b->size; prev->next = b->next; }
+}
+
+/* o heap é compartilhado pelas threads (preemptivas): uma trava simples */
+static volatile int heap_lock;
+static void hl(void) { while (__sync_lock_test_and_set(&heap_lock, 1)) SYS0(SYS_YIELD); }
+static void hu(void) { __sync_lock_release(&heap_lock); }
+static void *malloc_unlocked(size_t n);
+static void free_unlocked(void *p);
+void *malloc(size_t n) { hl(); void *p = malloc_unlocked(n); hu(); return p; }
+void free(void *p) { if (!p) return; hl(); free_unlocked(p); hu(); }
+static void *malloc_unlocked(size_t n) {
+    size_t need = (n + HDR + 15) & ~(size_t)15;
+    if (need < 32) need = 32;
+    for (int pass = 0; pass < 2; pass++) {
+        for (blk_t **pp = &free_list; *pp; pp = &(*pp)->next) {
+            blk_t *b = *pp;
+            if (b->size < need) continue;
+            if (b->size - need >= 64) {
+                blk_t *rest = (blk_t *)((char *)b + need);
+                rest->size = b->size - need;
+                rest->next = b->next;
+                *pp = rest;
+                b->size = need;
+            } else *pp = b->next;
+            b->next = (blk_t *)MAGIC_USED;
+            return (char *)b + HDR;
+        }
+        blk_t *nb = more_core(need);
+        if (!nb) break;
+        insert_free(nb);
+    }
+    cx_errno = CX_ENOMEM;
+    return 0;
+}
+
+static void free_unlocked(void *p) {
+    if (!p) return;
+    blk_t *b = (blk_t *)((char *)p - HDR);
+    if (b->next == (blk_t *)MAGIC_ALIGNED) { free_unlocked((void *)b->size); return; }
+    if (b->next != (blk_t *)MAGIC_USED) { hu(); cx_fdprintf(2, "malloc: *** error for object %p: pointer being freed was not allocated\n", p); abort(); }
+    insert_free(b);
+}
+
+size_t malloc_size(const void *p) {
+    if (!p) return 0;
+    blk_t *b = (blk_t *)((char *)p - HDR);
+    if (b->next == (blk_t *)MAGIC_ALIGNED) return malloc_size((void *)b->size) - (size_t)((char *)p - (char *)b->size);
+    return b->size - HDR;
+}
+size_t malloc_good_size(size_t n) { return (n + 15) & ~(size_t)15; }
+
+void *calloc(size_t n, size_t s) {
+    if (s && n > (size_t)-1 / s) { cx_errno = CX_ENOMEM; return 0; }
+    void *p = malloc(n * s);
+    if (p) memset(p, 0, n * s);
+    return p;
+}
+
+void *realloc(void *p, size_t n) {
+    if (!p) return malloc(n);
+    if (!n) { free(p); return 0; }
+    size_t have = malloc_size(p);
+    if (have >= n) return p;
+    void *q = malloc(n);
+    if (q) { memcpy(q, p, have); free(p); }
+    return q;
+}
+
+void *reallocf(void *p, size_t n) { void *q = realloc(p, n); if (!q) free(p); return q; }
+void *valloc(size_t n) { return malloc(n); }
+
+int posix_memalign(void **out, size_t align, size_t n) {
+    if (align <= 16) { *out = malloc(n); return *out ? 0 : CX_ENOMEM; }
+    if (align & (align - 1)) return CX_EINVAL;
+    char *raw = malloc(n + align + HDR);
+    if (!raw) return CX_ENOMEM;
+    char *al = (char *)(((u64)raw + HDR + align - 1) & ~(u64)(align - 1));
+    blk_t *h = (blk_t *)(al - HDR);
+    h->size = (size_t)raw;
+    h->next = (blk_t *)MAGIC_ALIGNED;
+    *out = al;
+    return 0;
+}
+void *aligned_alloc(size_t align, size_t n) { void *p; return posix_memalign(&p, align, n) ? 0 : p; }
+void *memalign(size_t align, size_t n) { return aligned_alloc(align, n); }
+
+/* ================================================================ memória e strings */
+void *memcpy(void *d, const void *s, size_t n) {
+    void *r = d;
+    __asm__ volatile("rep movsb" : "+D"(d), "+S"(s), "+c"(n) :: "memory");
+    return r;
+}
+
+void *memmove(void *d, const void *s, size_t n) {
+    u8 *a = d;
+    const u8 *b = s;
+    if (a == b || !n) return d;
+    if (a < b || a >= b + n) return memcpy(d, s, n);
+    const u8 *se = b + n - 1;
+    u8 *de = a + n - 1;
+    __asm__ volatile("std; rep movsb; cld" : "+D"(de), "+S"(se), "+c"(n) :: "memory");
+    return d;
+}
+
+void *memset(void *d, int c, size_t n) {
+    void *r = d;
+    __asm__ volatile("rep stosb" : "+D"(d), "+c"(n) : "a"(c) : "memory");
+    return r;
+}
+
+void bzero(void *d, size_t n) { memset(d, 0, n); }
+void __bzero(void *d, size_t n) { memset(d, 0, n); }
+void bcopy(const void *s, void *d, size_t n) { memmove(d, s, n); }
+void memset_pattern16(void *d, const void *pat, size_t n) {
+    u8 *a = d;
+    for (size_t i = 0; i < n; i++) a[i] = ((const u8 *)pat)[i & 15];
+}
+
+int memcmp(const void *a, const void *b, size_t n) {
+    const u8 *x = a, *y = b;
+    for (size_t i = 0; i < n; i++) if (x[i] != y[i]) return x[i] - y[i];
+    return 0;
+}
+int bcmp(const void *a, const void *b, size_t n) { return memcmp(a, b, n); }
+
+void *memchr(const void *s, int c, size_t n) {
+    const u8 *p = s;
+    for (size_t i = 0; i < n; i++) if (p[i] == (u8)c) return (void *)(p + i);
+    return 0;
+}
+
+void *memrchr(const void *s, int c, size_t n) {
+    const u8 *p = s;
+    while (n--) if (p[n] == (u8)c) return (void *)(p + n);
+    return 0;
+}
+
+size_t strlen(const char *s) { const char *p = s; while (*p) p++; return (size_t)(p - s); }
+size_t strnlen(const char *s, size_t n) { size_t i = 0; while (i < n && s[i]) i++; return i; }
+
+int strcmp(const char *a, const char *b) {
+    while (*a && *a == *b) { a++; b++; }
+    return (u8)*a - (u8)*b;
+}
+
+int strncmp(const char *a, const char *b, size_t n) {
+    for (; n; n--, a++, b++) {
+        if (*a != *b) return (u8)*a - (u8)*b;
+        if (!*a) return 0;
+    }
+    return 0;
+}
+
+int strcasecmp(const char *a, const char *b) {
+    for (;; a++, b++) {
+        int x = tolower((u8)*a), y = tolower((u8)*b);
+        if (x != y || !x) return x - y;
+    }
+}
+
+int strncasecmp(const char *a, const char *b, size_t n) {
+    for (; n; n--, a++, b++) {
+        int x = tolower((u8)*a), y = tolower((u8)*b);
+        if (x != y || !x) return x - y;
+    }
+    return 0;
+}
+
+int strcoll(const char *a, const char *b) { return strcmp(a, b); }
+size_t strxfrm(char *d, const char *s, size_t n) { size_t l = strlen(s); if (n) { size_t k = l < n - 1 ? l : n - 1; memcpy(d, s, k); d[k] = 0; } return l; }
+
+char *strcpy(char *d, const char *s) { char *r = d; while ((*d++ = *s++)) {} return r; }
+char *stpcpy(char *d, const char *s) { while ((*d = *s++)) d++; return d; }
+
+char *strncpy(char *d, const char *s, size_t n) {
+    size_t i = 0;
+    for (; i < n && s[i]; i++) d[i] = s[i];
+    for (; i < n; i++) d[i] = 0;
+    return d;
+}
+
+char *strcat(char *d, const char *s) { strcpy(d + strlen(d), s); return d; }
+
+char *strncat(char *d, const char *s, size_t n) {
+    char *e = d + strlen(d);
+    size_t i = 0;
+    for (; i < n && s[i]; i++) e[i] = s[i];
+    e[i] = 0;
+    return d;
+}
+
+size_t strlcpy(char *d, const char *s, size_t n) {
+    size_t l = strlen(s);
+    if (n) { size_t k = l < n - 1 ? l : n - 1; memcpy(d, s, k); d[k] = 0; }
+    return l;
+}
+
+size_t strlcat(char *d, const char *s, size_t n) {
+    size_t dl = strnlen(d, n);
+    if (dl == n) return n + strlen(s);
+    return dl + strlcpy(d + dl, s, n - dl);
+}
+
+char *strchr(const char *s, int c) {
+    for (;; s++) {
+        if (*s == (char)c) return (char *)s;
+        if (!*s) return 0;
+    }
+}
+
+char *strrchr(const char *s, int c) {
+    const char *r = 0;
+    for (;; s++) {
+        if (*s == (char)c) r = s;
+        if (!*s) return (char *)r;
+    }
+}
+
+char *strchrnul(const char *s, int c) { while (*s && *s != (char)c) s++; return (char *)s; }
+char *index(const char *s, int c) { return strchr(s, c); }
+char *rindex(const char *s, int c) { return strrchr(s, c); }
+
+char *strstr(const char *h, const char *n) {
+    size_t nl = strlen(n);
+    if (!nl) return (char *)h;
+    for (; *h; h++) if (*h == *n && !strncmp(h, n, nl)) return (char *)h;
+    return 0;
+}
+
+char *strcasestr(const char *h, const char *n) {
+    size_t nl = strlen(n);
+    if (!nl) return (char *)h;
+    for (; *h; h++) if (!strncasecmp(h, n, nl)) return (char *)h;
+    return 0;
+}
+
+char *strnstr(const char *h, const char *n, size_t len) {
+    size_t nl = strlen(n);
+    if (!nl) return (char *)h;
+    for (size_t i = 0; i + nl <= len && h[i]; i++) if (!strncmp(h + i, n, nl)) return (char *)h + i;
+    return 0;
+}
+
+size_t strspn(const char *s, const char *a) { size_t i = 0; while (s[i] && strchr(a, s[i])) i++; return i; }
+size_t strcspn(const char *s, const char *r) { size_t i = 0; while (s[i] && !strchr(r, s[i])) i++; return i; }
+char *strpbrk(const char *s, const char *a) { s += strcspn(s, a); return *s ? (char *)s : 0; }
+
+char *strtok_r(char *s, const char *d, char **save) {
+    if (!s) s = *save;
+    if (!s) return 0;
+    s += strspn(s, d);
+    if (!*s) { *save = 0; return 0; }
+    char *e = s + strcspn(s, d);
+    if (*e) { *e = 0; *save = e + 1; } else *save = 0;
+    return s;
+}
+char *strtok(char *s, const char *d) { static char *save; return strtok_r(s, d, &save); }
+
+char *strsep(char **sp, const char *d) {
+    char *s = *sp;
+    if (!s) return 0;
+    char *e = s + strcspn(s, d);
+    if (*e) { *e = 0; *sp = e + 1; } else *sp = 0;
+    return s;
+}
+
+char *strdup(const char *s) { size_t n = strlen(s) + 1; char *d = malloc(n); if (d) memcpy(d, s, n); return d; }
+char *strndup(const char *s, size_t n) { size_t l = strnlen(s, n); char *d = malloc(l + 1); if (d) { memcpy(d, s, l); d[l] = 0; } return d; }
+
+char *strerror(int e) {
+    switch (e) {
+    case 0: return "Undefined error: 0";
+    case CX_EPERM: return "Operation not permitted";
+    case CX_ENOENT: return "No such file or directory";
+    case CX_EIO: return "Input/output error";
+    case CX_EBADF: return "Bad file descriptor";
+    case CX_ENOMEM: return "Cannot allocate memory";
+    case CX_EACCES: return "Permission denied";
+    case CX_EEXIST: return "File exists";
+    case CX_ENOTDIR: return "Not a directory";
+    case CX_EISDIR: return "Is a directory";
+    case CX_EINVAL: return "Invalid argument";
+    case CX_EMFILE: return "Too many open files";
+    case CX_ENOTTY: return "Inappropriate ioctl for device";
+    case CX_ENOSPC: return "No space left on device";
+    case CX_ESPIPE: return "Illegal seek";
+    case CX_EROFS: return "Read-only file system";
+    case CX_ERANGE: return "Result too large";
+    case CX_ENOSYS: return "Function not implemented";
+    }
+    return "Unknown error";
+}
+
+int strerror_r(int e, char *buf, size_t n) { strlcpy(buf, strerror(e), n); return 0; }
+
+/* variantes "fortify" (_FORTIFY_SOURCE): checam o tamanho do destino */
+static __attribute__((noreturn)) void chk_fail(void) {
+    cx_puts_fd(2, "detected buffer overflow\n");
+    abort();
+}
+void *__memcpy_chk(void *d, const void *s, size_t n, size_t dl) { if (n > dl) chk_fail(); return memcpy(d, s, n); }
+void *__memmove_chk(void *d, const void *s, size_t n, size_t dl) { if (n > dl) chk_fail(); return memmove(d, s, n); }
+void *__memset_chk(void *d, int c, size_t n, size_t dl) { if (n > dl) chk_fail(); return memset(d, c, n); }
+char *__strcpy_chk(char *d, const char *s, size_t dl) { if (strlen(s) >= dl) chk_fail(); return strcpy(d, s); }
+char *__stpcpy_chk(char *d, const char *s, size_t dl) { if (strlen(s) >= dl) chk_fail(); return stpcpy(d, s); }
+char *__strcat_chk(char *d, const char *s, size_t dl) { if (strlen(d) + strlen(s) >= dl) chk_fail(); return strcat(d, s); }
+char *__strncpy_chk(char *d, const char *s, size_t n, size_t dl) { if (n > dl) chk_fail(); return strncpy(d, s, n); }
+char *__strncat_chk(char *d, const char *s, size_t n, size_t dl) { (void)dl; return strncat(d, s, n); }
+size_t __strlcpy_chk(char *d, const char *s, size_t n, size_t dl) { if (n > dl) chk_fail(); return strlcpy(d, s, n); }
+size_t __strlcat_chk(char *d, const char *s, size_t n, size_t dl) { if (n > dl) chk_fail(); return strlcat(d, s, n); }
+
+/* ================================================================ ctype (layout do macOS) */
+/* _RuneLocale: magic[8], encoding[32], sgetrune, sputrune, invalid_rune, runetype[256],
+ * maplower[256], mapupper[256], ... — os macros de <ctype.h> leem estas tabelas diretamente. */
+#define _A 0x00000100u
+#define _C 0x00000200u
+#define _D 0x00000400u
+#define _G 0x00000800u
+#define _L 0x00001000u
+#define _P 0x00002000u
+#define _S 0x00004000u
+#define _U 0x00008000u
+#define _X 0x00010000u
+#define _B 0x00020000u
+#define _R 0x00040000u
+
+typedef struct {
+    char magic[8];
+    char encoding[32];
+    void *sgetrune, *sputrune;
+    int invalid_rune;
+    u32 runetype[256];
+    int maplower[256];
+    int mapupper[256];
+    u8 rest[256];   /* runetype_ext etc.: zerado */
+} rune_locale_t;
+
+rune_locale_t _DefaultRuneLocale;
+rune_locale_t *_CurrentRuneLocale = &_DefaultRuneLocale;
+
+static void ctype_init(void) {
+    rune_locale_t *r = &_DefaultRuneLocale;
+    memcpy(r->magic, "RuneMagA", 8);
+    memcpy(r->encoding, "NONE", 5);
+    r->invalid_rune = 0xFFFD;
+    for (int c = 0; c < 256; c++) {
+        u32 t = 0;
+        if (c < 0x20 || c == 0x7F) t |= _C;
+        if (c == ' ' || (c >= '\t' && c <= '\r')) t |= _S;
+        if (c == ' ' || c == '\t') t |= _B;
+        if (c >= '0' && c <= '9') t |= _D | _X | _G | _R | (u32)(c - '0');
+        if (c >= 'a' && c <= 'z') t |= _L | _A | _G | _R;
+        if (c >= 'A' && c <= 'Z') t |= _U | _A | _G | _R;
+        if ((c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) t |= _X | (u32)(10 + ((c | 0x20) - 'a'));
+        if (c > 0x20 && c < 0x7F && !(t & (_A | _D))) t |= _P | _G | _R;
+        if (c == ' ') t |= _R;
+        r->runetype[c] = c < 0x80 ? t : 0;
+        r->maplower[c] = (c >= 'A' && c <= 'Z') ? c + 32 : c;
+        r->mapupper[c] = (c >= 'a' && c <= 'z') ? c - 32 : c;
+    }
+}
+
+int __maskrune(int c, unsigned long mask) { return (c >= 0 && c < 256) ? (int)(_DefaultRuneLocale.runetype[c] & mask) : 0; }
+int __maskrune_l(int c, unsigned long mask, void *l) { (void)l; return __maskrune(c, mask); }
+int __istype(int c, unsigned long mask) { return !!__maskrune(c, mask); }
+int __isctype(int c, unsigned long mask) { return !!__maskrune(c, mask); }
+int __tolower(int c) { return (c >= 'A' && c <= 'Z') ? c + 32 : c; }
+int __toupper(int c) { return (c >= 'a' && c <= 'z') ? c - 32 : c; }
+int ___tolower(int c) { return __tolower(c); }
+int ___toupper(int c) { return __toupper(c); }
+int tolower(int c) { return __tolower(c); }
+int toupper(int c) { return __toupper(c); }
+int isalpha(int c) { return (c | 32) >= 'a' && (c | 32) <= 'z'; }
+int isdigit(int c) { return c >= '0' && c <= '9'; }
+int isalnum(int c) { return isalpha(c) || isdigit(c); }
+int isspace(int c) { return c == ' ' || (c >= '\t' && c <= '\r'); }
+int isupper(int c) { return c >= 'A' && c <= 'Z'; }
+int islower(int c) { return c >= 'a' && c <= 'z'; }
+int isxdigit(int c) { return isdigit(c) || ((c | 32) >= 'a' && (c | 32) <= 'f'); }
+int isprint(int c) { return c >= 0x20 && c < 0x7F; }
+int isgraph(int c) { return c > 0x20 && c < 0x7F; }
+int ispunct(int c) { return isgraph(c) && !isalnum(c); }
+int iscntrl(int c) { return (c >= 0 && c < 0x20) || c == 0x7F; }
+int isblank(int c) { return c == ' ' || c == '\t'; }
+int isascii(int c) { return c >= 0 && c < 0x80; }
+int toascii(int c) { return c & 0x7F; }
+int digittoint(int c) { return isdigit(c) ? c - '0' : isxdigit(c) ? 10 + ((c | 32) - 'a') : 0; }
+
+/* ================================================================ stdlib */
+int abs(int x) { return x < 0 ? -x : x; }
+long labs(long x) { return x < 0 ? -x : x; }
+long long llabs(long long x) { return x < 0 ? -x : x; }
+typedef struct { int quot, rem; } div_t;
+typedef struct { long quot, rem; } ldiv_t;
+div_t div(int a, int b) { div_t r = {a / b, a % b}; return r; }
+ldiv_t ldiv(long a, long b) { ldiv_t r = {a / b, a % b}; return r; }
+
+static unsigned long long parse_ull(const char *s, char **end, int base, int *neg, int *ok) {
+    const char *p = s;
+    while (isspace((u8)*p)) p++;
+    *neg = 0;
+    if (*p == '+' || *p == '-') { *neg = *p == '-'; p++; }
+    if ((base == 0 || base == 16) && p[0] == '0' && (p[1] | 32) == 'x' && isxdigit((u8)p[2])) { p += 2; base = 16; }
+    else if (base == 0 && p[0] == '0') base = 8;
+    else if (base == 0) base = 10;
+    unsigned long long v = 0;
+    const char *start = p;
+    *ok = 1;
+    for (;; p++) {
+        int d;
+        if (isdigit((u8)*p)) d = *p - '0';
+        else if (isalpha((u8)*p)) d = (*p | 32) - 'a' + 10;
+        else break;
+        if (d >= base) break;
+        unsigned long long nv = v * base + d;
+        if (nv / base != v && *ok) { *ok = 0; }
+        v = nv;
+    }
+    if (end) *end = (char *)(p == start ? s : p);
+    return v;
+}
+
+long long strtoll(const char *s, char **end, int base) {
+    int neg, ok;
+    unsigned long long v = parse_ull(s, end, base, &neg, &ok);
+    if (!ok || v > (neg ? 0x8000000000000000ULL : 0x7FFFFFFFFFFFFFFFULL)) { cx_errno = CX_ERANGE; return neg ? (-0x7FFFFFFFFFFFFFFFLL - 1) : 0x7FFFFFFFFFFFFFFFLL; }
+    return neg ? -(long long)v : (long long)v;
+}
+long strtol(const char *s, char **end, int base) { return (long)strtoll(s, end, base); }
+unsigned long long strtoull(const char *s, char **end, int base) {
+    int neg, ok;
+    unsigned long long v = parse_ull(s, end, base, &neg, &ok);
+    if (!ok) { cx_errno = CX_ERANGE; return ~0ULL; }
+    return neg ? -v : v;
+}
+unsigned long strtoul(const char *s, char **end, int base) { return (unsigned long)strtoull(s, end, base); }
+long long strtoq(const char *s, char **end, int base) { return strtoll(s, end, base); }
+unsigned long long strtouq(const char *s, char **end, int base) { return strtoull(s, end, base); }
+long long strtoimax(const char *s, char **end, int base) { return strtoll(s, end, base); }
+unsigned long long strtoumax(const char *s, char **end, int base) { return strtoull(s, end, base); }
+int atoi(const char *s) { return (int)strtol(s, 0, 10); }
+long atol(const char *s) { return strtol(s, 0, 10); }
+long long atoll(const char *s) { return strtoll(s, 0, 10); }
+
+double strtod(const char *s, char **end) {
+    const char *p = s;
+    while (isspace((u8)*p)) p++;
+    int neg = 0;
+    if (*p == '+' || *p == '-') { neg = *p == '-'; p++; }
+    if (!strncasecmp(p, "inf", 3)) { if (end) *end = (char *)p + (strncasecmp(p, "infinity", 8) ? 3 : 8); return neg ? -__builtin_inf() : __builtin_inf(); }
+    if (!strncasecmp(p, "nan", 3)) { if (end) *end = (char *)p + 3; return __builtin_nan(""); }
+    double v = 0;
+    int digits = 0, exp10 = 0;
+    while (isdigit((u8)*p)) { v = v * 10 + (*p++ - '0'); digits++; }
+    if (*p == '.') {
+        p++;
+        while (isdigit((u8)*p)) { v = v * 10 + (*p++ - '0'); exp10--; digits++; }
+    }
+    if (!digits) { if (end) *end = (char *)s; return 0; }
+    if ((*p | 32) == 'e') {
+        const char *q = p + 1;
+        int eneg = 0, e = 0;
+        if (*q == '+' || *q == '-') { eneg = *q == '-'; q++; }
+        if (isdigit((u8)*q)) {
+            while (isdigit((u8)*q)) { if (e < 10000) e = e * 10 + (*q - '0'); q++; }
+            exp10 += eneg ? -e : e;
+            p = q;
+        }
+    }
+    if (end) *end = (char *)p;
+    double scale = 1, base = 10;
+    int e = exp10 < 0 ? -exp10 : exp10;
+    while (e) { if (e & 1) scale *= base; base *= base; e >>= 1; }
+    v = exp10 < 0 ? v / scale : v * scale;
+    return neg ? -v : v;
+}
+float strtof(const char *s, char **end) { return (float)strtod(s, end); }
+long double strtold(const char *s, char **end) { return strtod(s, end); }
+double atof(const char *s) { return strtod(s, 0); }
+
+static void swap_bytes(u8 *a, u8 *b, size_t n) { while (n--) { u8 t = *a; *a++ = *b; *b++ = t; } }
+
+void qsort(void *base, size_t n, size_t sz, int (*cmp)(const void *, const void *)) {
+    /* heapsort: O(n log n) garantido, sem recursão */
+    u8 *a = base;
+    if (n < 2) return;
+    for (size_t start = n / 2; start-- > 0;) {
+        size_t root = start;
+        for (;;) {
+            size_t child = root * 2 + 1;
+            if (child >= n) break;
+            if (child + 1 < n && cmp(a + child * sz, a + (child + 1) * sz) < 0) child++;
+            if (cmp(a + root * sz, a + child * sz) >= 0) break;
+            swap_bytes(a + root * sz, a + child * sz, sz);
+            root = child;
+        }
+    }
+    for (size_t end = n - 1; end > 0; end--) {
+        swap_bytes(a, a + end * sz, sz);
+        size_t root = 0;
+        for (;;) {
+            size_t child = root * 2 + 1;
+            if (child >= end) break;
+            if (child + 1 < end && cmp(a + child * sz, a + (child + 1) * sz) < 0) child++;
+            if (cmp(a + root * sz, a + child * sz) >= 0) break;
+            swap_bytes(a + root * sz, a + child * sz, sz);
+            root = child;
+        }
+    }
+}
+
+void qsort_r(void *base, size_t n, size_t sz, void *thunk, int (*cmp)(void *, const void *, const void *)) {
+    /* inserção estável: suficiente para o uso típico */
+    u8 *a = base, *tmp = malloc(sz);
+    if (!tmp) return;
+    for (size_t i = 1; i < n; i++) {
+        memcpy(tmp, a + i * sz, sz);
+        size_t j = i;
+        while (j > 0 && cmp(thunk, a + (j - 1) * sz, tmp) > 0) { memcpy(a + j * sz, a + (j - 1) * sz, sz); j--; }
+        memcpy(a + j * sz, tmp, sz);
+    }
+    free(tmp);
+}
+
+void *bsearch(const void *key, const void *base, size_t n, size_t sz, int (*cmp)(const void *, const void *)) {
+    size_t lo = 0, hi = n;
+    while (lo < hi) {
+        size_t mid = (lo + hi) / 2;
+        const void *e = (const u8 *)base + mid * sz;
+        int c = cmp(key, e);
+        if (!c) return (void *)e;
+        if (c < 0) hi = mid; else lo = mid + 1;
+    }
+    return 0;
+}
+
+static u64 rng_state = 1;
+void srand(unsigned s) { rng_state = s ? s : 1; }
+int rand(void) { rng_state = rng_state * 1103515245 + 12345; return (int)((rng_state >> 16) & 0x7FFFFFFF); }
+void srandom(unsigned s) { srand(s); }
+long random(void) { return rand(); }
+static u64 xs = 0x9E3779B97F4A7C15ULL;
+u32 arc4random(void) {
+    if (xs == 0x9E3779B97F4A7C15ULL) xs ^= (u64)SYS0(SYS_TIME) * 0x2545F4914F6CDD1DULL + (u64)SYS0(SYS_UNIXTIME);
+    xs ^= xs << 13; xs ^= xs >> 7; xs ^= xs << 17;
+    return (u32)(xs >> 16);
+}
+u32 arc4random_uniform(u32 n) { return n ? arc4random() % n : 0; }
+void arc4random_buf(void *buf, size_t n) { u8 *b = buf; while (n--) *b++ = (u8)arc4random(); }
+
+char *getenv(const char *name) {
+    size_t n = strlen(name);
+    for (char **e = environ; e && *e; e++)
+        if (!strncmp(*e, name, n) && (*e)[n] == '=') return *e + n + 1;
+    return 0;
+}
+
+int setenv(const char *name, const char *val, int overwrite) {
+    if (getenv(name) && !overwrite) return 0;
+    size_t cnt = 0;
+    while (environ && environ[cnt]) cnt++;
+    char **ne = malloc((cnt + 2) * sizeof(char *));
+    if (!ne) return -1;
+    size_t k = 0, nl = strlen(name);
+    for (size_t i = 0; i < cnt; i++) if (strncmp(environ[i], name, nl) || environ[i][nl] != '=') ne[k++] = environ[i];
+    char *kv = malloc(nl + strlen(val) + 2);
+    if (!kv) return -1;
+    strcpy(kv, name); kv[nl] = '='; strcpy(kv + nl + 1, val);
+    ne[k++] = kv;
+    ne[k] = 0;
+    environ = ne;
+    return 0;
+}
+int unsetenv(const char *name) {
+    size_t nl = strlen(name), k = 0;
+    for (size_t i = 0; environ && environ[i]; i++) if (strncmp(environ[i], name, nl) || environ[i][nl] != '=') environ[k++] = environ[i];
+    if (environ) environ[k] = 0;
+    return 0;
+}
+char ***_NSGetEnviron(void) { return &environ; }
+int *_NSGetArgc(void) { return &NXArgc; }
+char ***_NSGetArgv(void) { return &NXArgv; }
+const char *getprogname(void) { return __progname; }
+void setprogname(const char *p) { __progname = p; }
+int system(const char *cmd) { (void)cmd; cx_errno = CX_ENOSYS; return -1; }
+
+/* ================================================================ POSIX básico */
+ssize_t write(int fd, const void *b, size_t n) { return ret_errno(SYS3(SYS_WRITE, fd, b, n)); }
+ssize_t read(int fd, void *b, size_t n) { return ret_errno(SYS3(SYS_READ, fd, b, n)); }
+int close(int fd) {
+    /* descritores que não são do kernel (kqueue, sockets: sockets.c / kqueue.c) */
+    extern int cx_fake_fd_close(int fd) __attribute__((weak));
+    if (fd >= 0x4000 && cx_fake_fd_close) return cx_fake_fd_close(fd);
+    return (int)ret_errno(SYS1(SYS_CLOSE, fd));
+}
+off_t lseek(int fd, off_t off, int wh) { return ret_errno(SYS3(SYS_LSEEK, fd, off, wh)); }
+/* diretório atual: mantido no próprio processo (PWD), usado para caminhos relativos */
+static char cx_cwd[1024] = "/";
+const char *cx_path(const char *in, char *out, size_t cap) {
+    if (!in) return in;
+    if (in[0] == '/') { strlcpy(out, in, cap); return out; }
+    size_t n = strlcpy(out, cx_cwd, cap);
+    if (n && out[n - 1] != '/') strlcat(out, "/", cap);
+    while (in[0] == '.' && in[1] == '/') in += 2;
+    if (!strcmp(in, ".")) in = "";
+    strlcat(out, in, cap);
+    return out;
+}
+#define PATH(var, in) char var##_buf[1024]; const char *var = cx_path(in, var##_buf, sizeof var##_buf)
+
+int open(const char *path, int flags, ...) {
+    int k = 0;
+    if ((flags & 3) == MAC_O_WRONLY) k |= MOS_O_WRONLY;
+    if ((flags & 3) == MAC_O_RDWR) k |= MOS_O_RDWR;
+    if (flags & MAC_O_CREAT) k |= MOS_O_CREAT;
+    if (flags & MAC_O_TRUNC) k |= MOS_O_TRUNC;
+    if (flags & MAC_O_APPEND) k |= MOS_O_APPEND;
+    PATH(p, path);
+    if ((flags & MAC_O_EXCL) && (flags & MAC_O_CREAT)) {
+        mos_stat_t st;
+        if (SYS2(SYS_STAT, p, &st) == 0) { cx_errno = CX_EEXIST; return -1; }
+    }
+    return (int)ret_errno(SYS2(SYS_OPEN, p, k));
+}
+int creat(const char *path, int mode) { return open(path, 0x0601, mode); }
+int unlink(const char *path) { PATH(p, path); return (int)ret_errno(SYS1(SYS_UNLINK, p)); }
+int remove(const char *p) { return unlink(p); }
+int mkdir(const char *path, int mode) { (void)mode; PATH(p, path); return (int)ret_errno(SYS1(SYS_MKDIR, p)); }
+int rename(const char *a, const char *b) { PATH(pa, a); PATH(pb, b); return (int)ret_errno(SYS2(SYS_RENAME, pa, pb)); }
+int rmdir(const char *p) { return unlink(p); }
+/* o Terminal do mOS não interpreta sequências ANSI: com TERM=dumb os programas não colorem a saída */
+int isatty(int fd) {
+    const char *t = getenv("TERM");
+    if (fd >= 0 && fd <= 2 && t && strcmp(t, "dumb")) return 1;
+    cx_errno = CX_ENOTTY;
+    return 0;
+}
+int getpid(void) { return (int)SYS0(SYS_GETPID); }
+/* getppid: o kernel guarda o pai e o informa em SYS_PROCLIST (índice sobre os processos vivos, sem
+ * buracos; 0 = fim). Pai morto (ppid 0/-1) → 1, como no Unix. Resultado guardado por ~1 s e refeito se
+ * o pid mudar (fork). Necessário para o rendezvous Mach do Chromium ("...RendezvousServer.<ppid>"). */
+int getppid(void) {
+    static int cached_pid, cached_ppid;
+    static long cached_ms;
+    int me = (int)SYS0(SYS_GETPID);
+    long now = (long)SYS0(SYS_TIME);
+    if (cached_pid == me && now - cached_ms < 1000) return cached_ppid;
+    int pp = 1;
+    mos_procinfo_t pi;
+    for (long i = 0; SYS2(SYS_PROCLIST, i, &pi) == 1; i++)
+        if ((int)pi.pid == me) { pp = (int)pi.ppid > 0 ? (int)pi.ppid : 1; break; }
+    cached_pid = me; cached_ppid = pp; cached_ms = now;
+    return pp;
+}
+unsigned getuid(void) { return 501; }
+unsigned geteuid(void) { return 501; }
+unsigned getgid(void) { return 20; }
+unsigned getegid(void) { return 20; }
+char *getcwd(char *b, size_t n) {
+    if (!b) return strdup(cx_cwd);
+    if (strlen(cx_cwd) >= n) { cx_errno = CX_ERANGE; return 0; }
+    return strcpy(b, cx_cwd);
+}
+int chdir(const char *path) {
+    mos_stat_t st;
+    PATH(p, path);
+    if (ret_errno(SYS2(SYS_STAT, p, &st)) < 0) return -1;
+    if (!st.is_dir) { cx_errno = CX_ENOTDIR; return -1; }
+    strlcpy(cx_cwd, p, sizeof cx_cwd);
+    return 0;
+}
+int access(const char *path, int mode) { mos_stat_t st; (void)mode; PATH(p, path); return ret_errno(SYS2(SYS_STAT, p, &st)) < 0 ? -1 : 0; }
+int fsync(int fd) { (void)fd; return 0; }
+int dup(int fd) { return fd; }
+int dup2(int a, int b) { (void)a; return b; }
+int pipe(int *fds) { return (int)ret_errno(SYS1(SYS_PIPE, fds)); }   /* o kernel tem pipes (SYS_PIPE) */
+int fork(void) { return (int)ret_errno(SYS0(SYS_FORK)); }
+int execvp(const char *f, char *const *a) { (void)f; (void)a; cx_errno = CX_ENOSYS; return -1; }
+int ioctl(int fd, unsigned long req, ...) {
+    /* FIONBIO / FIOCLEX / FIONCLEX (libuv): o mOS ainda não distingue E/S não bloqueante nem
+     * close-on-exec por descritor; aceitar mantém pipes e sockets utilizáveis */
+    if (req == 0x8004667eUL || req == 0x20006601UL || req == 0x20006602UL) return 0;
+    if (!isatty(fd)) { cx_errno = CX_ENOTTY; return -1; }
+    return -1;
+}
+int fcntl(int fd, int cmd, ...) { (void)fd; (void)cmd; return 0; }
+long sysconf(int name) {
+    switch (name) {
+    case 29: return 4096;   /* _SC_PAGESIZE */
+    case 57: case 58: return 1; /* _SC_NPROCESSORS_* */
+    }
+    return -1;
+}
+int getpagesize(void) { return 4096; }
+int sigaction(int s, const void *a, void *o) { (void)s; (void)a; (void)o; return 0; }
+void *signal(int s, void *h) { (void)s; (void)h; return 0; }
+int raise(int s) { cx_fdprintf(2, "sinal %d\n", s); exit(128 + s); }
+int kill(int pid, int s) { (void)pid; (void)s; return 0; }
+int sigemptyset(void *set) { *(u32 *)set = 0; return 0; }
+int sigaddset(void *set, int s) { *(u32 *)set |= 1u << (s - 1); return 0; }
+int sigprocmask(int how, const void *s, void *o) { (void)how; (void)s; (void)o; return 0; }
+int pthread_sigmask(int how, const void *s, void *o) { (void)how; (void)s; (void)o; return 0; }
+int setlocale_dummy;
+char *setlocale(int cat, const char *loc) { (void)cat; (void)loc; return "C"; }
+
+/* stat do macOS ($INODE64): 144 bytes */
+typedef struct {
+    u32 st_dev; u16 st_mode, st_nlink; u64 st_ino; u32 st_uid, st_gid, st_rdev;
+    i64 atime, atime_ns, mtime, mtime_ns, ctime, ctime_ns, btime, btime_ns;
+    i64 st_size, st_blocks; i32 st_blksize; u32 st_flags, st_gen; i32 lspare; i64 qspare[2];
+} mac_stat_t;
+
+static void to_mac_stat(const mos_stat_t *s, mac_stat_t *m) {
+    memset(m, 0, sizeof *m);
+    /* is_dir: 0 arquivo, 1 pasta, 2/3 pipe (ponta de leitura/escrita: kernel, SYS_FSTAT) */
+    m->st_mode = s->is_dir >= 2 ? 0010600 : s->is_dir ? 0040755 : 0100644;
+    m->st_nlink = 1;
+    m->st_uid = 501;
+    m->st_gid = 20;
+    m->atime = m->mtime = m->ctime = m->btime = s->mtime;
+    m->st_size = (i64)s->size;
+    m->st_blocks = (i64)((s->size + 511) / 512);
+    m->st_blksize = 4096;
+}
+
+int stat(const char *path, mac_stat_t *m) {
+    mos_stat_t s;
+    PATH(p, path);
+    if (ret_errno(SYS2(SYS_STAT, p, &s)) < 0) return -1;
+    to_mac_stat(&s, m);
+    return 0;
+}
+int lstat(const char *p, mac_stat_t *m) { return stat(p, m); }
+int fstat(int fd, mac_stat_t *m) {
+    mos_stat_t s;
+    if (fd >= 0 && fd <= 2) { memset(m, 0, sizeof *m); m->st_mode = 0020620; return 0; }
+    if (ret_errno(SYS2(SYS_FSTAT, fd, &s)) < 0) return -1;
+    to_mac_stat(&s, m);
+    return 0;
+}
+
+/* diretórios: DIR com entradas do macOS (struct dirent $INODE64: 1048 bytes) */
+typedef struct {
+    u64 d_ino, d_seekoff; u16 d_reclen, d_namlen; u8 d_type; char d_name[1024];
+} mac_dirent_t;
+typedef struct { char path[1024]; long index; mac_dirent_t ent; } cx_dir_t;
+
+cx_dir_t *opendir(const char *path) {
+    mos_stat_t st;
+    PATH(p, path);
+    if (ret_errno(SYS2(SYS_STAT, p, &st)) < 0) return 0;
+    if (!st.is_dir) { cx_errno = CX_ENOTDIR; return 0; }
+    cx_dir_t *d = calloc(1, sizeof *d);
+    if (d) strlcpy(d->path, p, sizeof d->path);
+    return d;
+}
+mac_dirent_t *readdir(cx_dir_t *d) {
+    mos_stat_t st = {0};
+    if (SYS4(SYS_READDIR, d->path, d->index, d->ent.d_name, sizeof d->ent.d_name) != 1) return 0;
+    char full[2048];
+    strlcpy(full, d->path, sizeof full);
+    if (full[strlen(full) - 1] != '/') strlcat(full, "/", sizeof full);
+    strlcat(full, d->ent.d_name, sizeof full);
+    SYS2(SYS_STAT, full, &st);
+    d->index++;
+    d->ent.d_ino = (u64)d->index;
+    d->ent.d_seekoff = (u64)d->index;
+    d->ent.d_namlen = (u16)strlen(d->ent.d_name);
+    d->ent.d_reclen = sizeof d->ent;
+    d->ent.d_type = st.is_dir ? 4 : 8;
+    return &d->ent;
+}
+int closedir(cx_dir_t *d) { free(d); return 0; }
+void rewinddir(cx_dir_t *d) { d->index = 0; }
+
+/* ================================================================ tempo */
+typedef struct { long tv_sec; int tv_usec; } mac_timeval_t;
+typedef struct { long tv_sec; long tv_nsec; } mac_timespec_t;
+
+long time(long *t) { long v = SYS0(SYS_UNIXTIME); if (t) *t = v; return v; }
+int gettimeofday(mac_timeval_t *tv, void *tz) {
+    (void)tz;
+    u64 ms = (u64)SYS0(SYS_TIME);
+    if (tv) { tv->tv_sec = SYS0(SYS_UNIXTIME); tv->tv_usec = (int)(ms % 1000) * 1000; }
+    return 0;
+}
+int clock_gettime(int clk, mac_timespec_t *ts) {
+    u64 ms = (u64)SYS0(SYS_TIME);
+    if (clk == 0) { ts->tv_sec = SYS0(SYS_UNIXTIME); ts->tv_nsec = (long)(ms % 1000) * 1000000; }
+    else { ts->tv_sec = (long)(ms / 1000); ts->tv_nsec = (long)(ms % 1000) * 1000000; }
+    return 0;
+}
+u64 clock_gettime_nsec_np(int clk) { mac_timespec_t t; clock_gettime(clk, &t); return (u64)t.tv_sec * 1000000000ull + (u64)t.tv_nsec; }
+unsigned long clock(void) { return (unsigned long)SYS0(SYS_TIME) * 1000; }   /* CLOCKS_PER_SEC = 10^6 */
+u64 mach_absolute_time(void) { return (u64)SYS0(SYS_TIME) * 1000000ull; }
+u64 mach_continuous_time(void) { return mach_absolute_time(); }
+int mach_timebase_info(u32 *info) { info[0] = 1; info[1] = 1; return 0; }
+unsigned sleep(unsigned s) { SYS1(SYS_SLEEP, (long)s * 1000); return 0; }
+int usleep(unsigned us) { SYS1(SYS_SLEEP, (us + 999) / 1000); return 0; }
+int nanosleep(const mac_timespec_t *r, mac_timespec_t *rem) {
+    SYS1(SYS_SLEEP, r->tv_sec * 1000 + (r->tv_nsec + 999999) / 1000000);
+    if (rem) { rem->tv_sec = 0; rem->tv_nsec = 0; }
+    return 0;
+}
+
+/* struct tm do macOS: 9 ints + long tm_gmtoff + char *tm_zone */
+typedef struct { int sec, min, hour, mday, mon, year, wday, yday, isdst; long gmtoff; const char *zone; } mac_tm_t;
+static mac_tm_t tm_buf;
+
+mac_tm_t *gmtime_r(const long *t, mac_tm_t *tm) {
+    long s = *t, days = s / 86400, rem = s % 86400;
+    if (rem < 0) { rem += 86400; days--; }
+    tm->hour = (int)(rem / 3600); tm->min = (int)(rem % 3600 / 60); tm->sec = (int)(rem % 60);
+    tm->wday = (int)((days + 4) % 7); if (tm->wday < 0) tm->wday += 7;
+    long y = 1970;
+    for (;;) {
+        int leap = (y % 4 == 0 && y % 100) || y % 400 == 0;
+        long n = leap ? 366 : 365;
+        if (days < n) break;
+        days -= n; y++;
+    }
+    tm->year = (int)(y - 1900); tm->yday = (int)days;
+    static const int md[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+    int leap = (y % 4 == 0 && y % 100) || y % 400 == 0, m = 0;
+    while (m < 12) { int n = md[m] + (m == 1 && leap); if (days < n) break; days -= n; m++; }
+    tm->mon = m; tm->mday = (int)days + 1; tm->isdst = 0; tm->gmtoff = 0; tm->zone = "UTC";
+    return tm;
+}
+mac_tm_t *gmtime(const long *t) { return gmtime_r(t, &tm_buf); }
+mac_tm_t *localtime_r(const long *t, mac_tm_t *tm) { return gmtime_r(t, tm); }
+mac_tm_t *localtime(const long *t) { return gmtime_r(t, &tm_buf); }
+long mktime(mac_tm_t *tm) {
+    long y = tm->year + 1900, days = 0;
+    for (long i = 1970; i < y; i++) days += ((i % 4 == 0 && i % 100) || i % 400 == 0) ? 366 : 365;
+    static const int md[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+    for (int m = 0; m < tm->mon; m++) days += md[m] + (m == 1 && ((y % 4 == 0 && y % 100) || y % 400 == 0));
+    return ((days + tm->mday - 1) * 24 + tm->hour) * 3600L + tm->min * 60L + tm->sec;
+}
+long timegm(mac_tm_t *tm) { return mktime(tm); }
+double difftime(long a, long b) { return (double)(a - b); }
+
+size_t strftime(char *s, size_t max, const char *fmt, const mac_tm_t *tm) {
+    static const char *wd[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+    static const char *mn[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+    size_t o = 0;
+    char tmp[64];
+    for (; *fmt && o + 1 < max; fmt++) {
+        if (*fmt != '%') { s[o++] = *fmt; continue; }
+        fmt++;
+        tmp[0] = 0;
+        switch (*fmt) {
+        case 'Y': cx_snprintf(tmp, sizeof tmp, "%d", tm->year + 1900); break;
+        case 'y': cx_snprintf(tmp, sizeof tmp, "%02d", tm->year % 100); break;
+        case 'm': cx_snprintf(tmp, sizeof tmp, "%02d", tm->mon + 1); break;
+        case 'd': cx_snprintf(tmp, sizeof tmp, "%02d", tm->mday); break;
+        case 'e': cx_snprintf(tmp, sizeof tmp, "%2d", tm->mday); break;
+        case 'H': cx_snprintf(tmp, sizeof tmp, "%02d", tm->hour); break;
+        case 'I': cx_snprintf(tmp, sizeof tmp, "%02d", tm->hour % 12 ? tm->hour % 12 : 12); break;
+        case 'M': cx_snprintf(tmp, sizeof tmp, "%02d", tm->min); break;
+        case 'S': cx_snprintf(tmp, sizeof tmp, "%02d", tm->sec); break;
+        case 'p': strcpy(tmp, tm->hour < 12 ? "AM" : "PM"); break;
+        case 'a': strcpy(tmp, wd[tm->wday % 7]); break;
+        case 'b': case 'h': strcpy(tmp, mn[tm->mon % 12]); break;
+        case 'j': cx_snprintf(tmp, sizeof tmp, "%03d", tm->yday + 1); break;
+        case 'Z': strcpy(tmp, "UTC"); break;
+        case 'z': strcpy(tmp, "+0000"); break;
+        case 'F': cx_snprintf(tmp, sizeof tmp, "%d-%02d-%02d", tm->year + 1900, tm->mon + 1, tm->mday); break;
+        case 'T': cx_snprintf(tmp, sizeof tmp, "%02d:%02d:%02d", tm->hour, tm->min, tm->sec); break;
+        case 'c': cx_snprintf(tmp, sizeof tmp, "%s %s %2d %02d:%02d:%02d %d", wd[tm->wday % 7], mn[tm->mon % 12], tm->mday, tm->hour, tm->min, tm->sec, tm->year + 1900); break;
+        case '%': strcpy(tmp, "%"); break;
+        default: tmp[0] = '%'; tmp[1] = *fmt; tmp[2] = 0;
+        }
+        for (char *t = tmp; *t && o + 1 < max; t++) s[o++] = *t;
+    }
+    if (max) s[o] = 0;
+    return o;
+}
+char *asctime(const mac_tm_t *tm) { static char b[32]; strftime(b, sizeof b, "%c\n", tm); return b; }
+char *ctime(const long *t) { return asctime(localtime(t)); }
+void tzset(void) {}
+char *tzname[2] = {"UTC", "UTC"};
+
+/* ================================================================ matemática (x87/SSE) */
+double fabs(double x) { return __builtin_fabs(x); }
+float fabsf(float x) { return __builtin_fabsf(x); }
+double sqrt(double x) { double r; __asm__("sqrtsd %1, %0" : "=x"(r) : "x"(x)); return r; }
+float sqrtf(float x) { float r; __asm__("sqrtss %1, %0" : "=x"(r) : "x"(x)); return r; }
+double floor(double x) { double r; __asm__("roundsd $9, %1, %0" : "=x"(r) : "x"(x)); return r; }
+double ceil(double x) { double r; __asm__("roundsd $10, %1, %0" : "=x"(r) : "x"(x)); return r; }
+double trunc(double x) { double r; __asm__("roundsd $11, %1, %0" : "=x"(r) : "x"(x)); return r; }
+double round(double x) { return x < 0 ? -floor(-x + 0.5) : floor(x + 0.5); }
+long lround(double x) { return (long)round(x); }
+double rint(double x) { double r; __asm__("roundsd $4, %1, %0" : "=x"(r) : "x"(x)); return r; }
+double nearbyint(double x) { return rint(x); }
+float floorf(float x) { return (float)floor(x); }
+float ceilf(float x) { return (float)ceil(x); }
+float roundf(float x) { return (float)round(x); }
+double fmod(double a, double b) { double r; __asm__("1: fprem; fnstsw %%ax; sahf; jp 1b" : "=t"(r) : "0"(a), "u"(b) : "ax", "cc"); return r; }
+double sin(double x) { double r; __asm__("fsin" : "=t"(r) : "0"(x)); return r; }
+double cos(double x) { double r; __asm__("fcos" : "=t"(r) : "0"(x)); return r; }
+double tan(double x) { double r, one; __asm__("fptan" : "=t"(one), "=u"(r) : "0"(x)); return r; }
+double atan2(double y, double x) { double r; __asm__("fpatan" : "=t"(r) : "0"(x), "u"(y) : "st(1)"); return r; }
+double atan(double x) { return atan2(x, 1.0); }
+double asin(double x) { return atan2(x, sqrt(1 - x * x)); }
+double acos(double x) { return atan2(sqrt(1 - x * x), x); }
+double log2(double x) { double r; __asm__("fld1; fxch; fyl2x" : "=t"(r) : "0"(x)); return r; }
+double log(double x) { return log2(x) * 0.69314718055994530942; }
+double log10(double x) { return log2(x) * 0.30102999566398119521; }
+double log1p(double x) { return log(1 + x); }
+double exp2(double x) {
+    double r;
+    __asm__("fld %%st(0); frndint; fsub %%st, %%st(1); fxch; f2xm1; fld1; faddp; fscale; fstp %%st(1)" : "=t"(r) : "0"(x));
+    return r;
+}
+double exp(double x) { return exp2(x * 1.44269504088896340736); }
+double expm1(double x) { return exp(x) - 1; }
+double pow(double b, double e) {
+    if (e == 0) return 1;
+    if (b == 0) return e > 0 ? 0 : __builtin_inf();
+    if (e == (double)(long)e && e > -1e9 && e < 1e9) {
+        long n = (long)e;
+        int neg = n < 0;
+        if (neg) n = -n;
+        double r = 1, x = b;
+        while (n) { if (n & 1) r *= x; x *= x; n >>= 1; }
+        return neg ? 1 / r : r;
+    }
+    if (b < 0) return __builtin_nan("");
+    return exp2(e * log2(b));
+}
+float powf(float b, float e) { return (float)pow(b, e); }
+float sinf(float x) { return (float)sin(x); }
+float cosf(float x) { return (float)cos(x); }
+float expf(float x) { return (float)exp(x); }
+float logf(float x) { return (float)log(x); }
+double sinh(double x) { return (exp(x) - exp(-x)) / 2; }
+double cosh(double x) { return (exp(x) + exp(-x)) / 2; }
+double tanh(double x) { double e = exp(2 * x); return (e - 1) / (e + 1); }
+double hypot(double a, double b) { return sqrt(a * a + b * b); }
+double cbrt(double x) { return x < 0 ? -pow(-x, 1.0 / 3) : pow(x, 1.0 / 3); }
+double ldexp(double x, int e) { return x * exp2(e); }
+double frexp(double x, int *e) {
+    if (x == 0) { *e = 0; return 0; }
+    u64 b; memcpy(&b, &x, 8);
+    int ex = (int)((b >> 52) & 0x7FF);
+    if (!ex) { x *= 18446744073709551616.0; memcpy(&b, &x, 8); ex = (int)((b >> 52) & 0x7FF) - 64; }
+    *e = ex - 1022;
+    b = (b & ~(0x7FFull << 52)) | (1022ull << 52);
+    memcpy(&x, &b, 8);
+    return x;
+}
+double modf(double x, double *ip) { double t = trunc(x); *ip = t; return x - t; }
+double fmax(double a, double b) { return a > b ? a : b; }
+double fmin(double a, double b) { return a < b ? a : b; }
+int __isnand(double x) { return x != x; }
+int __isinfd(double x) { return x == __builtin_inf() || x == -__builtin_inf(); }
+int __isfinited(double x) { return !__isnand(x) && !__isinfd(x); }
+int __signbitd(double x) { u64 b; memcpy(&b, &x, 8); return (int)(b >> 63); }
+int __fpclassifyd(double x) {
+    if (x != x) return 1;                       /* FP_NAN */
+    if (__isinfd(x)) return 2;                  /* FP_INFINITE */
+    if (x == 0) return 3;                       /* FP_ZERO */
+    return fabs(x) < 2.2250738585072014e-308 ? 5 : 4; /* FP_SUBNORMAL : FP_NORMAL */
+}
+
+/* ================================================================ inicialização */
+void cx_libc_init(void) {
+    ctype_init();
+    const char *pwd = getenv("PWD");
+    if (pwd && pwd[0] == '/') strlcpy(cx_cwd, pwd, sizeof cx_cwd);
+}

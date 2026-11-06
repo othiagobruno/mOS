@@ -1,0 +1,131 @@
+// mOS: cÃ³pia do upstream sem bridging s (Swift sem ObjC); conversÃµes pelos helpers _mos* do CoreText do mOS.
+//
+//  TypesettingLanguageAwareLineHeightRatio.swift
+//  OpenSwiftUICore
+//
+//  Audited for 6.5.4
+//  Status: Complete
+
+#if canImport(CoreText)
+import CoreText_Private
+#endif
+
+// MARK: - TypesettingLanguageAwareLineHeightRatio
+
+@_spi(Private)
+@available(OpenSwiftUI_v5_0, *)
+public struct TypesettingLanguageAwareLineHeightRatio: Sendable, Equatable {
+    enum Storage: Equatable {
+        case custom(Double)
+        case automatic
+        case disable
+        case legacy
+    }
+
+    var storage: TypesettingLanguageAwareLineHeightRatio.Storage
+
+    public static let automatic: TypesettingLanguageAwareLineHeightRatio = .init(storage: .automatic)
+
+    public static let disable: TypesettingLanguageAwareLineHeightRatio = .init(storage: .disable)
+
+    public static let legacy: TypesettingLanguageAwareLineHeightRatio = .init(storage: .legacy)
+
+    public static func custom(_ ratio: Double) -> TypesettingLanguageAwareLineHeightRatio {
+        .init(storage: .custom(ratio.clamp(min: 0.0, max: 1.0)))
+    }
+}
+
+// MARK: - View + typesettingLanguageAwareLineHeightRatio
+
+@available(OpenSwiftUI_v1_0, *)
+extension View {
+    @_spi(Private)
+    @available(OpenSwiftUI_v5_0, *)
+    nonisolated public func typesettingLanguageAwareLineHeightRatio(
+        _ ratio: TypesettingLanguageAwareLineHeightRatio,
+        isEnabled: Bool = true
+    ) -> some View {
+        transformEnvironment(\.typesettingConfiguration) {
+            if isEnabled {
+                $0.languageAwareLineHeightRatio = ratio
+            }
+        }
+    }
+}
+
+// MARK: - LanguageAwareLineHeightRatioTextModifier
+
+class LanguageAwareLineHeightRatioTextModifier: AnyTextModifier {
+    let ratio: TypesettingLanguageAwareLineHeightRatio
+
+    init(ratio: TypesettingLanguageAwareLineHeightRatio) {
+        self.ratio = ratio
+    }
+
+    override func modify(style: inout Text.Style, environment: EnvironmentValues) {
+        style.typesettingConfiguration.languageAwareLineHeightRatio = ratio
+    }
+
+    override func isEqual(to other: AnyTextModifier) -> Bool {
+        guard let other = other as? LanguageAwareLineHeightRatioTextModifier else {
+            return false
+        }
+        return ratio == other.ratio
+    }
+}
+
+// MARK: - Text + typesettingLanguageAwareLineHeightRatio
+
+@available(OpenSwiftUI_v1_0, *)
+extension Text {
+    @_spi(Private)
+    @available(OpenSwiftUI_v5_0, *)
+    public func typesettingLanguageAwareLineHeightRatio(
+        _ ratio: TypesettingLanguageAwareLineHeightRatio,
+        isEnabled: Bool = true
+    ) -> Text {
+        guard isEnabled else {
+            return self
+        }
+        return modified(with: .anyTextModifier(LanguageAwareLineHeightRatioTextModifier(ratio: ratio)))
+    }
+}
+
+// MARK: - LanguageAwareLineHeightRatioFontModifier
+
+extension TypesettingLanguageAwareLineHeightRatio {
+    func apply(to modifiers: inout [AnyFontModifier]) {
+        let modifier: LanguageAwareLineHeightRatioFontModifier
+        switch storage {
+        case .automatic:
+            return
+        case let .custom(ratio):
+            modifier = .init(ratio: ratio)
+        case .disable:
+            modifier = .init(ratio: 0)
+        case .legacy:
+            modifier = .init(ratio: 0.33)
+        }
+        modifiers.append(.dynamic(modifier))
+    }
+}
+
+struct LanguageAwareLineHeightRatioFontModifier: FontModifier {
+    let ratio: Double
+
+    func modify(
+        descriptor: inout CTFontDescriptor,
+        in context: Font.Context
+    ) {
+        #if canImport(CoreText)
+        descriptor = CTFontDescriptorCreateCopyWithAttributes(
+            descriptor,
+            [
+                kCTFontLanguageAwareLineHeightRatioAttribute: ratio,
+            ]._mosCF
+        )
+        #else
+        _openSwiftUIPlatformUnimplementedWarning()
+        #endif
+    }
+}

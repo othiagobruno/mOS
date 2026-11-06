@@ -1,0 +1,4 @@
+module _MOSCoreTextC {
+    header "MOSCoreTextC.h"
+    export *
+}

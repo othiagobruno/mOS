@@ -1,0 +1,1726 @@
+/*
+ * mOS — carregador de executáveis Mach-O (o "dyld" do mOS), no espírito do ravynOS.
+ *
+ * Layout do processo (região de usuário, ver proc.h):
+ *   0x400000100000  libSystem.mos   (ELF estático: build/libSystem.mos, embutido no kernel)
+ *   0x400001000000  imagem Mach-O   (com slide; os segmentos ficam contíguos)
+ *        ...        stubs de símbolos ausentes, depois o heap (brk)
+ *   USER_STACK_TOP  pilha: strings, argv, envp, apple, bloco de partida
+ *
+ * Os binds (dyld_info clássico ou chained fixups) são resolvidos contra a tabela de símbolos
+ * do libSystem.mos. A execução começa em cx_start (libSystem), que roda os inicializadores e
+ * chama main().
+ */
+#ifdef MOS_HOST_TEST
+#include "host_proc.h"
+#else
+#include "proc.h"
+#endif
+#include "compat.h"
+#ifdef MOS_HOST_TEST
+#undef SYS_OPEN
+#endif
+#include "syscall.h"           /* SYS_DYLD / MOS_DYLD_* (dlopen em tempo de execução) e errno */
+
+#define LIBSYSTEM_BASE (USER_BASE + 0x00100000ULL)
+#define IMAGE_BASE   (USER_BASE + 0x01000000ULL)
+#define IMAGE_LIMIT  (USER_STACK_TOP - USER_STACK_SIZE - 0x200000ULL)
+#ifdef MACHO_DEBUG
+#define DBG(...) kprintf(__VA_ARGS__)
+#else
+#define DBG(...) do {} while (0)
+#endif
+
+#ifdef MOS_HOST_TEST
+const u8 *libsystem_mos, *libsystem_mos_end;
+#else
+extern const u8 libsystem_mos[], libsystem_mos_end[];
+#endif
+
+static u16 rd16(const u8 *p) { return (u16)(p[0] | p[1] << 8); }
+static u32 rd32(const u8 *p) { return (u32)p[0] | (u32)p[1] << 8 | (u32)p[2] << 16 | (u32)p[3] << 24; }
+static u64 rd64(const u8 *p) { return (u64)rd32(p) | (u64)rd32(p + 4) << 32; }
+static u32 be32_(const u8 *p) { return (u32)p[0] << 24 | (u32)p[1] << 16 | (u32)p[2] << 8 | p[3]; }
+static u64 be64_(const u8 *p) { return (u64)be32_(p) << 32 | be32_(p + 4); }
+
+/* ================================================================ libSystem.mos (ELF) */
+typedef struct { const char *name; u64 addr; } lsym_t;
+static lsym_t *lsyms;
+static u32 nlsyms;
+static u64 ls_entry;
+
+static bool libsystem_index(char *err, usize errlen) {
+    if (lsyms) return true;
+    const u8 *e = libsystem_mos;
+    usize len = (usize)(libsystem_mos_end - libsystem_mos);
+    if (!e || len < 64 || memcmp(e, "\x7F" "ELF", 4)) { snprintf(err, errlen, "libSystem.mos ausente do kernel"); return false; }
+    ls_entry = rd64(e + 24) + (rd16(e + 16) == 3 ? LIBSYSTEM_BASE : 0);
+    u64 shoff = rd64(e + 40);
+    u16 shentsize = rd16(e + 58), shnum = rd16(e + 60);
+    if (shoff + (u64)shnum * shentsize > len) { snprintf(err, errlen, "libSystem.mos corrompido"); return false; }
+    for (u16 i = 0; i < shnum; i++) {
+        const u8 *sh = e + shoff + (u64)i * shentsize;
+        if (rd32(sh + 4) != 2) continue;               /* SHT_SYMTAB */
+        u64 off = rd64(sh + 24), size = rd64(sh + 32), entsz = rd64(sh + 56);
+        const u8 *strsh = e + shoff + (u64)rd32(sh + 40) * shentsize;
+        u64 stroff = rd64(strsh + 24);
+        if (!entsz || off + size > len) break;
+        u64 n = size / entsz;
+        lsyms = kcalloc(n, sizeof(lsym_t));
+        if (!lsyms) break;
+        for (u64 k = 0; k < n; k++) {
+            const u8 *s = e + off + k * entsz;
+            u8 info = s[4];
+            u16 shndx = rd16(s + 6);
+            if ((info >> 4) != 1 || !shndx) continue;  /* só GLOBAL definidos */
+            if ((info & 15) > 2) continue;             /* NOTYPE (rótulos de asm), OBJECT ou FUNC */
+            lsyms[nlsyms].name = (const char *)e + stroff + rd32(s);
+            lsyms[nlsyms].addr = rd64(s + 8) + (rd16(e + 16) == 3 ? LIBSYSTEM_BASE : 0);
+            nlsyms++;
+        }
+        break;
+    }
+    if (!nlsyms) { snprintf(err, errlen, "libSystem.mos sem tabela de símbolos"); return false; }
+    return true;
+}
+
+static u64 ls_lookup_exact(const char *name, usize n) {
+    for (u32 i = 0; i < nlsyms; i++)
+        if (!strncmp(lsyms[i].name, name, n) && !lsyms[i].name[n]) return lsyms[i].addr;
+    return 0;
+}
+
+/* nome Mach-O ("_printf", "_fopen$DARWIN_EXTSN", "___stdoutp") -> endereço no libSystem */
+static u64 ls_lookup(const char *mname) {
+    if (mname[0] == '_') mname++;
+    usize n = strlen(mname);
+    u64 a = ls_lookup_exact(mname, n);
+    if (a) return a;
+    const char *d = strchr(mname, '$');                /* variantes $INODE64, $UNIX2003... */
+    return d ? ls_lookup_exact(mname, (usize)(d - mname)) : 0;
+}
+
+/* O libSystem.mos é um ELF "static-pie": é carregado em LIBSYSTEM_BASE e as relocações
+ * R_X86_64_RELATIVE do PT_DYNAMIC são aplicadas aqui. */
+
+static bool map_libsystem(process_t *p, char *err, usize errlen) {
+    const u8 *e = libsystem_mos;
+    usize elen = (usize)(libsystem_mos_end - libsystem_mos);
+    u64 phoff = rd64(e + 32);
+    u16 phentsize = rd16(e + 54), phnum = rd16(e + 56);
+    u64 span = 0, dyn_va = 0, dyn_sz = 0;
+    for (u16 i = 0; i < phnum; i++) {
+        const u8 *ph = e + phoff + (u64)i * phentsize;
+        if (rd32(ph) == 1 && rd64(ph + 16) + rd64(ph + 40) > span) span = rd64(ph + 16) + rd64(ph + 40);
+        if (rd32(ph) == 2) { dyn_va = rd64(ph + 16); dyn_sz = rd64(ph + 40); }
+    }
+    span = (span + 0xFFF) & ~0xFFFULL;
+    if (!span || span > 0x00F00000) { snprintf(err, errlen, "libSystem.mos com tamanho inválido"); return false; }
+    u8 *buf = kcalloc(1, span);
+    if (!buf) { snprintf(err, errlen, "sem memória para o libSystem"); return false; }
+    for (u16 i = 0; i < phnum; i++) {
+        const u8 *ph = e + phoff + (u64)i * phentsize;
+        if (rd32(ph) != 1) continue;
+        u64 off = rd64(ph + 8), va = rd64(ph + 16), fsz = rd64(ph + 32);
+        if (off + fsz > elen || va + fsz > span) { kfree(buf); snprintf(err, errlen, "libSystem.mos corrompido"); return false; }
+        memcpy(buf + va, e + off, fsz);
+    }
+    u64 rela = 0, relasz = 0, relaent = 24;
+    for (u64 o = 0; dyn_va && o + 16 <= dyn_sz; o += 16) {
+        u64 tag = rd64(buf + dyn_va + o), val = rd64(buf + dyn_va + o + 8);
+        if (tag == 0) break;
+        if (tag == 7) rela = val;           /* DT_RELA */
+        if (tag == 8) relasz = val;         /* DT_RELASZ */
+        if (tag == 9) relaent = val;        /* DT_RELAENT */
+    }
+    for (u64 o = 0; rela && relaent && o + relaent <= relasz; o += relaent) {
+        u64 r_off = rd64(buf + rela + o), r_info = rd64(buf + rela + o + 8), r_add = rd64(buf + rela + o + 16);
+        if ((r_info & 0xFFFFFFFF) != 8 || r_off + 8 > span) continue;   /* R_X86_64_RELATIVE */
+        u64 v = LIBSYSTEM_BASE + r_add;
+        memcpy(buf + r_off, &v, 8);
+    }
+    bool ok = uvm_map(p, LIBSYSTEM_BASE, span) && uvm_copy_out(p, LIBSYSTEM_BASE, buf, span);
+    kfree(buf);
+    if (!ok) snprintf(err, errlen, "sem memória para o libSystem");
+    return ok;
+}
+/* ================================================================ Mach-O */
+#define LC_SEGMENT_64          0x19
+#define LC_LOAD_DYLIB          0x0C
+#define LC_LOAD_WEAK_DYLIB     0x80000018
+#define LC_REEXPORT_DYLIB      0x8000001F
+#define LC_LAZY_LOAD_DYLIB     0x20
+#define LC_LOAD_UPWARD_DYLIB   0x80000023
+#define LC_DYLD_INFO           0x22
+#define LC_DYLD_INFO_ONLY      0x80000022
+#define LC_DYLD_CHAINED_FIXUPS 0x80000034
+#define LC_MAIN                0x80000028
+#define LC_UNIXTHREAD          0x05
+#define LC_VERSION_MIN_MACOSX  0x24
+#define LC_BUILD_VERSION       0x32
+#define LC_ID_DYLIB            0x0D
+#define LC_RPATH               0x8000001C
+#define LC_DYLD_EXPORTS_TRIE   0x80000033
+#define MH_PIE                 0x200000
+#define MH_EXECUTE             2
+#define MH_DYLIB               6
+#define MH_BUNDLE              8       /* plugins carregados com dlopen (ex.: os .node do Node.js) */
+
+#define MAX_SEGS   16
+#define MAX_DYLIBS 160
+#define MAX_RPATHS 8
+#define MAX_IMAGES 96          /* executável + dylibs/frameworks do bundle + as carregadas com dlopen */
+#define MAX_OBJC   128         /* seções ObjC somando todas as imagens */
+
+typedef struct {
+    char name[17];
+    u64 vmaddr, vmsize, fileoff, filesize;
+    bool zero;              /* __PAGEZERO */
+} seg_t;
+
+typedef struct {
+    const u8 *m;            /* início do slice x86_64 */
+    usize len;
+    seg_t segs[MAX_SEGS];
+    int nsegs;
+    const char *dylibs[MAX_DYLIBS];
+    bool dylib_weak[MAX_DYLIBS];
+    int ndylibs;
+    u64 vmin, vmax;
+    u64 entryoff;
+    bool has_main;
+    const u8 *dyld_info;    /* comando LC_DYLD_INFO(_ONLY) */
+    const u8 *chained;      /* comando LC_DYLD_CHAINED_FIXUPS */
+    u64 init_ptrs_addr, init_ptrs_count;     /* __mod_init_func */
+    u64 init_offs_addr, init_offs_count;     /* __init_offsets */
+    struct { u64 addr, size, kind; } objc[24];   /* seções Objective-C, repassadas ao runtime */
+    int nobjc;
+    bool has_tlv;
+    u64 tlv_lo, tlv_hi;                      /* template TLS (__thread_data + __thread_bss) */
+    u64 tlv_init_end;                        /* fim dos dados inicializados (__thread_data) */
+    u64 tlv_desc[8], tlv_desc_size[8];       /* seções de descritores (__thread_vars) */
+    int ntlv_desc;    u32 flags;
+    u32 minos;              /* 0xMMMMmmpp */
+    u32 ftype;              /* MH_EXECUTE ou MH_DYLIB */
+    const char *rpaths[MAX_RPATHS];          /* LC_RPATH (podem usar @executable_path/@loader_path) */
+    int nrpaths;
+    const u8 *trie;         /* export trie (LC_DYLD_EXPORTS_TRIE ou parte de exports do dyld_info) */
+    u32 triesz;
+} mach_t;
+
+/* nomes de bibliotecas que o libSystem.mos substitui */
+bool libsystem_dylib_ok(const char *n) {
+    static const char *ok[] = {
+        "/usr/lib/libSystem.B.dylib", "/usr/lib/libSystem.dylib", "/usr/lib/libc.dylib",
+        "/usr/lib/libm.dylib", "/usr/lib/libdl.dylib", "/usr/lib/libpthread.dylib",
+        "/usr/lib/libinfo.dylib", "/usr/lib/libgcc_s.1.dylib", "/usr/lib/libiconv.2.dylib", "/usr/lib/libiconv.dylib",
+    };
+    for (u32 i = 0; i < ARRAY_LEN(ok); i++) if (!strcmp(n, ok[i])) return true;
+    /* frameworks implementados pelo libSystem do mOS (runtime ObjC, Foundation, AppKit, CG) */
+    static const char *fw[] = {"/usr/lib/libobjc.A.dylib", "/System/Library/Frameworks/Foundation.framework/",
+                               "/System/Library/Frameworks/AppKit.framework/", "/System/Library/Frameworks/Cocoa.framework/",
+                               "/System/Library/Frameworks/CoreFoundation.framework/", "/System/Library/Frameworks/CoreGraphics.framework/",
+                               "/System/Library/Frameworks/ApplicationServices.framework/", "/System/Library/Frameworks/QuartzCore.framework/",
+                               "/System/Library/Frameworks/CoreText.framework/",
+                               /* sessão CoreAnimation/IOSurface: iosurface.c / quartzcore.c */
+                               "/System/Library/Frameworks/IOSurface.framework/", "/System/Library/Frameworks/CoreVideo.framework/"};
+    for (u32 i = 0; i < ARRAY_LEN(fw); i++) if (!strncmp(n, fw[i], strlen(fw[i]))) return true;
+    return !strncmp(n, "/usr/lib/system/", 16);
+}
+
+static const char *arch_name(u32 cpu) {
+    switch (cpu) {
+    case 0x01000007: return "x86_64";
+    case 0x0100000C: return "arm64";
+    case 7: return "i386";
+    case 12: return "arm";
+    case 18: return "ppc";
+    case 0x01000012: return "ppc64";
+    }
+    return "desconhecida";
+}
+
+/* escolhe o slice x86_64 de um binário universal; lista as arquiteturas em archs */
+static bool pick_slice(const u8 *img, usize len, const u8 **out, usize *olen, char *archs, usize acap, char *err, usize errlen) {
+    archs[0] = 0;
+    u32 magic = be32_(img);
+    if (magic == 0xCAFEBABE || magic == 0xCAFEBABF) {
+        bool b64 = magic == 0xCAFEBABF;
+        u32 n = be32_(img + 4);
+        if (n == 0 || n > 32) { snprintf(err, errlen, "binário universal inválido"); return false; }
+        const u8 *found = NULL;
+        usize flen = 0;
+        for (u32 i = 0; i < n; i++) {
+            const u8 *a = img + 8 + i * (b64 ? 32 : 20);
+            if ((usize)(a - img) + (b64 ? 32 : 20) > len) break;
+            u32 cpu = be32_(a);
+            u64 off = b64 ? be64_(a + 8) : be32_(a + 8), sz = b64 ? be64_(a + 16) : be32_(a + 12);
+            usize al = strlen(archs);
+            snprintf(archs + al, acap - al, "%s%s", al ? ", " : "", arch_name(cpu));
+            if (cpu == 0x01000007 && off < len && sz <= len - off) { found = img + off; flen = (usize)sz; }
+        }
+        if (!found) { snprintf(err, errlen, "sem versão x86_64 (só %s)", archs); return false; }
+        *out = found;
+        *olen = flen;
+        return true;
+    }
+    if (len >= 8 && rd32(img) == 0xFEEDFACF) {
+        snprintf(archs, acap, "%s", arch_name(rd32(img + 4)));
+        *out = img;
+        *olen = len;
+        return true;
+    }
+    snprintf(err, errlen, "não é um executável Mach-O de 64 bits");
+    return false;
+}
+
+static bool parse(mach_t *mo, const u8 *m, usize len, bool dylib, char *err, usize errlen) {
+    memset(mo, 0, sizeof *mo);
+    mo->m = m;
+    mo->len = len;
+    if (len < 32 || rd32(m) != 0xFEEDFACF) { snprintf(err, errlen, "cabeçalho Mach-O inválido"); return false; }
+    if (rd32(m + 4) != 0x01000007) { snprintf(err, errlen, "arquitetura %s não suportada (o mOS roda x86_64)", arch_name(rd32(m + 4))); return false; }
+    u32 ftype = rd32(m + 12), ncmds = rd32(m + 16), sizeofcmds = rd32(m + 20);
+    mo->flags = rd32(m + 24);
+    mo->ftype = ftype;
+    if (!dylib && ftype != MH_EXECUTE) { snprintf(err, errlen, "não é um executável (tipo Mach-O %u)", ftype); return false; }
+    if (dylib && ftype != MH_DYLIB && ftype != MH_BUNDLE) { snprintf(err, errlen, "não é uma biblioteca dinâmica (tipo Mach-O %u)", ftype); return false; }
+    if (32 + (u64)sizeofcmds > len) { snprintf(err, errlen, "comandos de carga fora do arquivo"); return false; }
+    mo->vmin = ~0ULL;
+    const u8 *c = m + 32, *end = m + 32 + sizeofcmds;
+    for (u32 i = 0; i < ncmds; i++) {
+        if (c + 8 > end) { snprintf(err, errlen, "comando de carga truncado"); return false; }
+        u32 cmd = rd32(c), csz = rd32(c + 4);
+        if (csz < 8 || c + csz > end) { snprintf(err, errlen, "comando de carga inválido"); return false; }
+        switch (cmd) {
+        case LC_SEGMENT_64: {
+            if (csz < 72) break;
+            u64 vmaddr = rd64(c + 24), vmsize = rd64(c + 32), fileoff = rd64(c + 40), filesize = rd64(c + 48);
+            u32 initprot = rd32(c + 60), nsects = rd32(c + 64);
+            /* os índices de segmento do dyld_info contam todos os LC_SEGMENT_64, inclusive o
+             * __PAGEZERO: ele entra na lista, mas não na imagem */
+            bool zero = !vmaddr && !initprot;
+            if (mo->nsegs >= MAX_SEGS) { snprintf(err, errlen, "segmentos demais"); return false; }
+            if (fileoff > len || filesize > len - fileoff || filesize > vmsize) { snprintf(err, errlen, "segmento fora do arquivo"); return false; }
+            seg_t *s = &mo->segs[mo->nsegs++];
+            memcpy(s->name, c + 8, 16);
+            s->name[16] = 0;
+            s->vmaddr = vmaddr; s->vmsize = vmsize; s->fileoff = fileoff; s->filesize = zero ? 0 : filesize;
+            s->zero = zero;
+            if (zero) break;
+            if (vmaddr < mo->vmin) mo->vmin = vmaddr;
+            if (vmaddr + vmsize > mo->vmax) mo->vmax = vmaddr + vmsize;
+            for (u32 k = 0; k < nsects && 72 + (k + 1) * 80 <= csz; k++) {
+                const u8 *sc = c + 72 + k * 80;
+                u32 type = rd32(sc + 64) & 0xFF;
+                u64 addr = rd64(sc + 32), size = rd64(sc + 40);
+                if (type == 0x09) { mo->init_ptrs_addr = addr; mo->init_ptrs_count = size / 8; }
+                if (type == 0x16) { mo->init_offs_addr = addr; mo->init_offs_count = size / 4; }
+                if (type == 0x11 || type == 0x12) {               /* dados TLS (modelo) */
+                    if (!mo->tlv_hi || addr < mo->tlv_lo) mo->tlv_lo = addr;
+                    if (addr + size > mo->tlv_hi) mo->tlv_hi = addr + size;
+                    if (type == 0x11 && addr + size > mo->tlv_init_end) mo->tlv_init_end = addr + size;
+                }
+                if (type == 0x13 && mo->ntlv_desc < 8) {          /* descritores */
+                    mo->tlv_desc[mo->ntlv_desc] = addr;
+                    mo->tlv_desc_size[mo->ntlv_desc++] = size;
+                }
+                if (type == 0x15) mo->has_tlv = true;             /* inicializadores TLS: não suportados */
+                {
+                    static const char *names[] = {"", "__objc_classlist", "__objc_catlist", "__objc_selrefs", "__objc_classrefs",
+                                                  "__objc_superrefs", "__objc_protolist", "__cfstring", "__objc_nlclslist",
+                                                  "__objc_nlcatlist", "__objc_protorefs", "__objc_catlist2",
+                                                  /* 12..16: literais constantes do Xcode 15+ (@{...}, @[...], @42, @1.5) */
+                                                  "__objc_dictobj", "__objc_arrayobj", "__objc_intobj", "__objc_doubleobj", "__objc_floatobj"};
+                    char sn[17];
+                    memcpy(sn, sc, 16);
+                    sn[16] = 0;
+                    for (u64 kd = 1; kd < ARRAY_LEN(names); kd++)
+                        if (!strcmp(sn, names[kd]) && mo->nobjc < 24) {
+                            mo->objc[mo->nobjc].addr = addr;
+                            mo->objc[mo->nobjc].size = size;
+                            mo->objc[mo->nobjc++].kind = kd;
+                        }
+                }
+            }
+            break;
+        }
+        case LC_LOAD_DYLIB: case LC_LOAD_WEAK_DYLIB: case LC_REEXPORT_DYLIB: case LC_LAZY_LOAD_DYLIB: case LC_LOAD_UPWARD_DYLIB: {
+            u32 off = rd32(c + 8);
+            if (off >= csz || mo->ndylibs >= MAX_DYLIBS) break;
+            mo->dylib_weak[mo->ndylibs] = cmd == LC_LOAD_WEAK_DYLIB;
+            mo->dylibs[mo->ndylibs++] = (const char *)c + off;
+            break;
+        }
+        case LC_DYLD_INFO: case LC_DYLD_INFO_ONLY: {
+            mo->dyld_info = c;
+            u32 eo = rd32(c + 40), es = rd32(c + 44);
+            if (es && (u64)eo + es <= len) { mo->trie = m + eo; mo->triesz = es; }
+            break;
+        }
+        case LC_DYLD_EXPORTS_TRIE: {
+            u32 eo = rd32(c + 8), es = rd32(c + 12);
+            if (es && (u64)eo + es <= len) { mo->trie = m + eo; mo->triesz = es; }
+            break;
+        }
+        case LC_RPATH: {
+            u32 off = rd32(c + 8);
+            if (off < csz && mo->nrpaths < MAX_RPATHS) mo->rpaths[mo->nrpaths++] = (const char *)c + off;
+            break;
+        }
+        case LC_DYLD_CHAINED_FIXUPS: mo->chained = c; break;
+        case LC_MAIN: mo->entryoff = rd64(c + 8); mo->has_main = true; break;
+        case LC_VERSION_MIN_MACOSX: mo->minos = rd32(c + 8); break;
+        case LC_BUILD_VERSION: mo->minos = rd32(c + 12); break;
+        }
+        c += csz;
+    }
+    if (mo->vmin == ~0ULL || mo->vmax <= mo->vmin) { snprintf(err, errlen, "nenhum segmento"); return false; }
+    return true;
+}
+
+static void dylib_short(const char *path, char *out, usize cap) {
+    /* "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit" -> "AppKit.framework" */
+    const char *fw = strstr(path, ".framework");
+    if (fw) {
+        const char *s = fw;
+        while (s > path && s[-1] != '/') s--;
+        snprintf(out, cap, "%.*s.framework", (int)(fw - s), s);
+        return;
+    }
+    const char *b = strrchr(path, '/');
+    snprintf(out, cap, "%s", b ? b + 1 : path);
+}
+
+/* ---- leitura de opcodes ULEB/SLEB */
+static u64 uleb(const u8 **p, const u8 *end) {
+    u64 v = 0;
+    int sh = 0;
+    while (*p < end) {
+        u8 b = *(*p)++;
+        if (sh < 64) v |= (u64)(b & 0x7F) << sh;
+        sh += 7;
+        if (!(b & 0x80)) break;
+    }
+    return v;
+}
+static i64 sleb(const u8 **p, const u8 *end) {
+    i64 v = 0;
+    int sh = 0;
+    u8 b = 0;
+    while (*p < end) {
+        b = *(*p)++;
+        if (sh < 64) v |= (i64)(b & 0x7F) << sh;
+        sh += 7;
+        if (!(b & 0x80)) break;
+    }
+    if (sh < 64 && (b & 0x40)) v |= -((i64)1 << sh);
+    return v;
+}
+
+/* ================================================================ arquivos das dependências */
+#ifdef MOS_HOST_TEST
+const u8 *host_read_file(const char *path, usize *len);   /* tools/machotest.c */
+static const u8 *dep_read(const char *path, usize *len) { return host_read_file(path, len); }
+static bool dyld_tolerant(void) { return getenv("MACHOTEST_TOLERANT") != NULL; }
+#else
+#include "vfs.h"
+static const u8 *dep_read(const char *path, usize *len) {
+    vnode_t *v = vfs_lookup(path);
+    if (!v || v->dir || !v->data || !v->size) return NULL;
+    *len = v->size;
+    return v->data;
+}
+/* modo experimental: se este arquivo existir, bibliotecas do sistema que o mOS não tem não impedem
+ * o app de abrir; as funções delas viram stubs que encerram o processo dizendo o que faltou */
+#define DYLD_TOLERANT_FLAG "/Sistema/Biblioteca/dyld-experimental"
+static bool dyld_tolerant(void) { return vfs_lookup(DYLD_TOLERANT_FLAG) != NULL; }
+#endif
+
+/* ================================================================ estado do carregamento */
+typedef struct {
+    mach_t mo;
+    char path[320];
+    int idx;
+    u64 base;               /* endereço final de mo.vmin */
+    i64 slide;
+    u64 hdr;                /* endereço final do cabeçalho Mach-O */
+    i16 dep[MAX_DYLIBS];    /* imagem carregada para cada dylib pedida (-1: sistema / ausente) */
+    bool visited;
+    int refs;               /* dlopen/dlclose (o mOS nunca descarrega a imagem) */
+    u8 *own;                /* cópia própria dos comandos de carga + export trie (image_persist) */
+} image_t;
+
+typedef struct {
+    image_t *im[MAX_IMAGES];
+    int n;
+    int order[MAX_IMAGES], norder;     /* dependências antes de quem as usa; o executável por último */
+    /* símbolos ausentes viram stubs */
+    char **missing;
+    u32 nmissing, capmissing;
+    u64 stub_base, end;
+    u64 unresolved_fn;
+    /* bibliotecas do sistema que o mOS não tem (as 4 primeiras por nome) */
+    char absent[400];
+    int nabsent;
+    char archs[96];
+    /* inicializadores (endereços finais) e seções ObjC de todas as imagens */
+    u64 *inits;
+    u32 ninits, capinits;
+    struct { u64 addr, size, kind; } objc[MAX_OBJC];
+    int nobjc;
+    bool report_only, tolerant;
+    bool tlv_per_thread;    /* o libSystem tem cx_tlv_bootstrap: TLS por thread */
+    char *err;
+    usize errlen;
+    /* carga em tempo de execução (dlopen): o grafo fica vivo em process_t.dyld depois do macho_load */
+    int first_new;          /* primeira imagem da carga atual (registros TLS da área de stubs dela) */
+    char lasterr[240];      /* último erro do dlopen (dlerror) */
+} link_t;
+
+typedef struct {
+    link_t *K;
+    image_t *I;
+    mach_t *mo;
+    u8 *img;                /* imagem montada em memória do kernel (NULL no modo relatório) */
+    u64 size;               /* vmax - vmin */
+    i64 slide;              /* endereço final = vmaddr + slide */
+    bool report_only;
+    char *err;
+    usize errlen;
+} load_t;
+
+static u64 *slot_at(load_t *L, u64 vmaddr) {
+    if (!L->img || vmaddr < L->mo->vmin || vmaddr + 8 > L->mo->vmax) return NULL;
+    return (u64 *)(L->img + (vmaddr - L->mo->vmin));
+}
+
+/* índice do stub para um símbolo ausente (cria se preciso) */
+/* a área de stubs começa com uma página: 64 bytes zerados (constantes ausentes apontam para eles), os
+ * registros de TLS por imagem {modelo, tamanho inicializado, tamanho total, índice} e int3 no resto */
+#define ZERO_AREA 0x1000
+#define TLV_RECORD(idx) (64 + (u64)(idx) * 32)
+
+/* constantes (dados) pelo nome, nas convenções da Apple: _kCFxxx, NSxxxKey, xxxNotification... Um
+ * stub de código no lugar de uma constante faz o app ler as instruções do stub como ponteiro. */
+static bool data_like(const char *n) {
+    if (n[0] == '_') n++;
+    if (n[0] == 'k' && n[1] >= 'A' && n[1] <= 'Z') return true;
+    if (!strncmp(n, "OBJC_EHTYPE_$_", 14) || !strncmp(n, "OBJC_IVAR_$_", 12)) return true;
+    static const char *pre[] = {"NSAccessibility", "NSAppearanceName", "NSPasteboardType", "NSPasteboardName", "NSPrint",
+                                "NSCalendarIdentifier", "NSLocale", "NSImageHint", "CATransform3DIdentity", "CGAffineTransformIdentity",
+                                "CGRectNull", "CGRectZero", "CGRectInfinite", "CGPointZero", "CGSizeZero", "NSZeroRect", "NSZeroPoint", "NSZeroSize"};
+#define WIDE_CONSTS 1      /* prefixos/sufixos extras (AppKit) */
+    static const char *suf[] = {"Key", "Keys", "Notification", "Domain", "Exception", "Constant", "Identifier", "Attribute",
+                                "AttributeName", "Mode", "Option", "Version", "VersionString", "VersionNumber"
+#if WIDE_CONSTS
+                                , "Type", "Role", "Subrole", "ColorSpace", "Trait", "PboardType", "DocumentType"
+#endif
+                                };
+    usize l = strlen(n);
+    if (l < 3 || n[0] < 'A' || n[0] > 'Z') return false;   /* constantes públicas começam com maiúscula */
+    /* funções com nome de constante: CFBundleGetValueForInfoDictionaryKey, CFNotificationCenterPostNotification... */
+    static const char *verbs[] = {"Get", "Copy", "Create", "Set", "Add", "Remove", "Post", "Register", "Make", "Apply",
+                                  "Find", "Contains", "Append", "Insert", "Replace", "Perform", "Observe"};
+    for (u32 i = 0; i < ARRAY_LEN(verbs); i++) {
+        const char *v = strstr(n, verbs[i]);
+        if (v && v > n && v[strlen(verbs[i])] >= 'A' && v[strlen(verbs[i])] <= 'Z') return false;
+    }
+    /* NSAccessibility tem funções com nome de constante (UnignoredChildren, RoleDescription...):
+     * só são constantes as que terminam num destes */
+    if (!strncmp(n, "NSAccessibility", 15)) {
+        static const char *acc[] = {"Role", "Subrole", "Action", "Value", "Attribute", "Notification"};
+        for (u32 i = 0; i < ARRAY_LEN(acc); i++) {
+            usize al = strlen(acc[i]);
+            if (l > al && !strcmp(n + l - al, acc[i])) return true;
+        }
+        return false;
+    }
+    for (u32 i = 0; WIDE_CONSTS && i < ARRAY_LEN(pre); i++) if (!strncmp(n, pre[i], strlen(pre[i]))) return true;
+    for (u32 i = 0; i < ARRAY_LEN(suf); i++) {
+        usize sl = strlen(suf[i]);
+        if (l > sl && !strcmp(n + l - sl, suf[i])) return true;
+    }
+    return false;
+}
+
+static u64 missing_stub(link_t *K, const char *name) {
+    for (u32 i = 0; i < K->nmissing; i++) if (!strcmp(K->missing[i], name)) return K->stub_base + ZERO_AREA + i * 32;
+    if (K->nmissing == K->capmissing) {
+        u32 nc = K->capmissing ? K->capmissing * 2 : 32;
+        char **p = krealloc(K->missing, nc * sizeof(char *));
+        if (!p) return 0;
+        K->missing = p;
+        K->capmissing = nc;
+    }
+    K->missing[K->nmissing] = strdup(name);
+    return K->stub_base + ZERO_AREA + (K->nmissing++) * 32;
+}
+
+/* ---- export trie (formato do dyld): devolve o início da informação terminal do símbolo */
+static const u8 *trie_find(const u8 *t, u32 n, const char *s) {
+    const u8 *end = t + n, *p = t;
+    for (int guard = 0; guard < 4096 && p < end; guard++) {
+        u64 tsz = uleb(&p, end);
+        if (!*s) return tsz ? p : NULL;
+        const u8 *ch = p + tsz;
+        if (ch >= end) return NULL;
+        u8 nch = *ch++;
+        const u8 *next = NULL;
+        for (u8 i = 0; i < nch && ch < end; i++) {
+            const char *q = s;
+            const u8 *e = ch;
+            while (e < end && *e && *e == (u8)*q) { e++; q++; }
+            bool match = e < end && !*e;
+            while (ch < end && *ch) ch++;
+            ch++;
+            u64 off = uleb(&ch, end);
+            if (match) { s = q; next = t + off; break; }
+        }
+        if (!next || next >= end) return NULL;
+        p = next;
+    }
+    return NULL;
+}
+
+static u64 image_export(link_t *K, int idx, const char *name, int depth) {
+    if (idx < 0 || idx >= K->n || depth > 8) return 0;
+    image_t *I = K->im[idx];
+    if (!I->mo.trie) return 0;
+    const u8 *end = I->mo.trie + I->mo.triesz;
+    const u8 *p = trie_find(I->mo.trie, I->mo.triesz, name);
+    if (!p) return 0;
+    u64 flags = uleb(&p, end);
+    if (flags & 0x08) {                                   /* REEXPORT: vem de outra biblioteca */
+        u64 ord = uleb(&p, end);
+        const char *nm = (p < end && *p) ? (const char *)p : name;
+        if (ord >= 1 && ord <= (u64)I->mo.ndylibs && I->dep[ord - 1] >= 0) return image_export(K, I->dep[ord - 1], nm, depth + 1);
+        return ls_lookup(nm);
+    }
+    if (flags & 0x10) return I->hdr + uleb(&p, end);      /* STUB_AND_RESOLVER: usa o stub */
+    u64 v = uleb(&p, end);
+    if ((flags & 3) == 2) return v;                       /* ABSOLUTE */
+    return I->hdr + v;
+}
+
+/* ord: ordinal da biblioteca (1..n) ou especial (0 a própria imagem, -1 o executável, -2 busca plana) */
+static u64 resolve(load_t *L, int ord, const char *name, bool weak) {
+    link_t *K = L->K;
+    image_t *I = L->I;
+    u64 a = 0;
+    if (K->tlv_per_thread && !strcmp(name, "__tlv_bootstrap")) return ls_lookup("_cx_tlv_bootstrap");
+    if (ord > 0 && ord <= I->mo.ndylibs && I->dep[ord - 1] >= 0) a = image_export(K, I->dep[ord - 1], name, 0);
+    else if (ord == 0) a = image_export(K, I->idx, name, 0);
+    else if (ord == -1) a = image_export(K, 0, name, 0);
+    if (!a) a = ls_lookup(name);
+    for (int i = 0; i < K->n && !a; i++) a = image_export(K, i, name, 0);
+    if (a) return a;
+    if (weak) return 0;
+    u64 stub = missing_stub(K, name);
+    /* classe ObjC que o mOS não tem: um stub de código não serve como classe (o runtime leria o isa
+     * de dentro dele). Usa NSObject no lugar: subclasses continuam válidas e mensagens que só a classe
+     * original entende caem no tratamento de seletor desconhecido do runtime. O nome fica na lista
+     * de ausentes. */
+    if (!strncmp(name, "_OBJC_CLASS_$_", 14)) { u64 o = ls_lookup("_OBJC_CLASS_$_NSObject"); if (o) return o; }
+    if (!strncmp(name, "_OBJC_METACLASS_$_", 18)) { u64 o = ls_lookup("_OBJC_METACLASS_$_NSObject"); if (o) return o; }
+    if (stub && data_like(name)) return K->stub_base;     /* constante ausente: lê 0 / nil */
+    return stub;
+}
+
+static bool do_bind(load_t *L, u64 vmaddr, const char *name, bool weak, i64 addend, int ord) {
+    u64 v = resolve(L, ord, name, weak);
+    if (L->report_only) return true;
+    u64 *s = slot_at(L, vmaddr);
+    if (!s) { snprintf(L->err, L->errlen, "bind fora da imagem (%s)", name); return false; }
+    *s = v ? v + (u64)addend : 0;
+    return true;
+}
+
+/* ---- dyld_info clássico */
+static bool run_rebase(load_t *L, const u8 *p, const u8 *end) {
+    mach_t *mo = L->mo;
+    int seg = 0;
+    u64 off = 0;
+    if (L->report_only) return true;
+    while (p < end) {
+        u8 b = *p++, op = b & 0xF0, imm = b & 0x0F;
+        u64 count = 0, skip = 0;
+        switch (op) {
+        case 0x00: return true;
+        case 0x10: break;                                       /* SET_TYPE_IMM */
+        case 0x20: seg = imm; off = uleb(&p, end); break;       /* SET_SEGMENT_AND_OFFSET_ULEB */
+        case 0x30: off += uleb(&p, end); break;
+        case 0x40: off += (u64)imm * 8; break;
+        case 0x50: count = imm; skip = 0; goto rebase;
+        case 0x60: count = uleb(&p, end); skip = 0; goto rebase;
+        case 0x70: count = 1; skip = uleb(&p, end); goto rebase;
+        case 0x80: count = uleb(&p, end); skip = uleb(&p, end); goto rebase;
+        default: snprintf(L->err, L->errlen, "opcode de rebase desconhecido 0x%x", b); return false;
+        }
+        continue;
+    rebase:
+        if (seg >= mo->nsegs) { snprintf(L->err, L->errlen, "rebase em segmento inválido"); return false; }
+        for (u64 i = 0; i < count; i++) {
+            u64 *s = slot_at(L, mo->segs[seg].vmaddr + off);
+            if (!s) { snprintf(L->err, L->errlen, "rebase fora da imagem"); return false; }
+            /* valor fora da imagem = símbolo absoluto codificado como rebase: não recebe slide (ver run_chained) */
+            if (*s >= mo->vmin && *s <= mo->vmax) *s += (u64)L->slide;
+            off += 8 + skip;
+        }
+    }
+    return true;
+}
+
+static bool run_bind(load_t *L, const u8 *p, const u8 *end, bool lazy) {
+    mach_t *mo = L->mo;
+    int seg = 0, ordinal = 0;
+    u64 off = 0;
+    i64 addend = 0;
+    const char *sym = "";
+    bool weak = false;
+    while (p < end) {
+        u8 b = *p++, op = b & 0xF0, imm = b & 0x0F;
+        u64 count, skip;
+        switch (op) {
+        case 0x00: if (!lazy) return true; break;               /* DONE (lazy: separa entradas) */
+        case 0x10: ordinal = imm; break;
+        case 0x20: ordinal = (int)uleb(&p, end); break;
+        case 0x30: ordinal = imm ? (int)(i8)(0xF0 | imm) : 0; break;
+        case 0x40:
+            sym = (const char *)p;
+            weak = (imm & 1) != 0;
+            while (p < end && *p) p++;
+            p++;
+            break;
+        case 0x50: break;
+        case 0x60: addend = sleb(&p, end); break;
+        case 0x70: seg = imm; off = uleb(&p, end); break;
+        case 0x80: off += uleb(&p, end); break;
+        case 0x90: count = 1; skip = 0; goto bind;
+        case 0xA0: count = 1; skip = uleb(&p, end); goto bind;
+        case 0xB0: count = 1; skip = (u64)imm * 8; goto bind;
+        case 0xC0: count = uleb(&p, end); skip = uleb(&p, end); goto bind;
+        default: snprintf(L->err, L->errlen, "opcode de bind desconhecido 0x%x", b); return false;
+        }
+        continue;
+    bind:
+        if (seg >= mo->nsegs) { snprintf(L->err, L->errlen, "bind em segmento inválido"); return false; }
+        if (ordinal > 0 && ordinal <= mo->ndylibs && mo->dylib_weak[ordinal - 1]) weak = true;
+        for (u64 i = 0; i < count; i++) {
+            if (!do_bind(L, mo->segs[seg].vmaddr + off, sym, weak, addend, ordinal)) return false;
+            off += 8 + skip;
+            if (L->report_only) { off += (count - i - 1) * (8 + skip); break; }
+        }
+    }
+    return true;
+}
+
+/* ---- chained fixups (macOS 11+) */
+static bool run_chained(load_t *L) {
+    mach_t *mo = L->mo;
+    u32 dataoff = rd32(mo->chained + 8), datasize = rd32(mo->chained + 12);
+    if ((u64)dataoff + datasize > mo->len || datasize < 28) { snprintf(L->err, L->errlen, "chained fixups fora do arquivo"); return false; }
+    const u8 *h = mo->m + dataoff, *hend = h + datasize;
+    u32 starts_off = rd32(h + 4), imports_off = rd32(h + 8), symbols_off = rd32(h + 12);
+    u32 imports_count = rd32(h + 16), imports_format = rd32(h + 20);
+    if (rd32(h) != 0 || starts_off >= datasize || imports_off > datasize || symbols_off > datasize) {
+        snprintf(L->err, L->errlen, "cabeçalho de chained fixups inválido");
+        return false;
+    }
+    /* resolve os imports uma vez */
+    u64 *targets = imports_count ? kcalloc(imports_count, sizeof(u64)) : NULL;
+    if (imports_count && !targets) { snprintf(L->err, L->errlen, "sem memória"); return false; }
+    usize isz = imports_format == 1 ? 4 : imports_format == 2 ? 8 : 16;
+    for (u32 i = 0; i < imports_count; i++) {
+        const u8 *im = h + imports_off + i * isz;
+        if (im + isz > hend) { kfree(targets); snprintf(L->err, L->errlen, "import fora da tabela"); return false; }
+        int lib;
+        u32 name_off;
+        bool weak;
+        i64 addend = 0;
+        if (imports_format == 3) {
+            u16 l = rd16(im);
+            lib = l >= 0xFFF0 ? (int)(i16)l : (int)l;
+            weak = (rd16(im + 2) & 1) != 0; name_off = rd32(im + 4); addend = (i64)rd64(im + 8);
+        } else {
+            u32 v = rd32(im), l = v & 0xFF;
+            lib = l >= 0xF0 ? (int)(i8)l : (int)l;
+            weak = (v >> 8) & 1; name_off = v >> 9;
+            if (imports_format == 2) addend = (i32)rd32(im + 4);
+        }
+        if (lib > 0 && lib <= mo->ndylibs && mo->dylib_weak[lib - 1]) weak = true;
+        const char *name = (const char *)h + symbols_off + name_off;
+        if ((const u8 *)name >= hend) { kfree(targets); snprintf(L->err, L->errlen, "nome de import inválido"); return false; }
+        u64 a = resolve(L, lib, name, weak);
+        targets[i] = a ? a + (u64)addend : 0;
+    }
+    const u8 *si = h + starts_off;
+    u32 seg_count = rd32(si);
+    bool ok = true;
+    for (u32 s = 0; ok && s < seg_count && s < (u32)mo->nsegs + 1; s++) {
+        u32 so = rd32(si + 4 + s * 4);
+        if (!so) continue;
+        const u8 *ss = si + so;
+        if (ss + 22 > hend) { ok = false; break; }
+        u16 page_size = rd16(ss + 4), fmt = rd16(ss + 6), page_count = rd16(ss + 20);
+        u64 seg_off = rd64(ss + 8);
+        if (fmt != 2 && fmt != 6) { snprintf(L->err, L->errlen, "formato de ponteiro encadeado %u não suportado", fmt); ok = false; break; }
+        if (L->report_only) continue;
+        for (u16 pg = 0; ok && pg < page_count; pg++) {
+            u16 start = rd16(ss + 22 + pg * 2);
+            if (start == 0xFFFF) continue;
+            u64 va = mo->vmin + seg_off + (u64)pg * page_size + start;
+            for (int guard = 0; guard < 100000; guard++) {
+                u64 *slot = slot_at(L, va);
+                if (!slot) { snprintf(L->err, L->errlen, "fixup fora da imagem"); ok = false; break; }
+                u64 v = *slot, next = (v >> 51) & 0xFFF;
+                if (v >> 63) {
+                    u32 ord = (u32)(v & 0xFFFFFF);
+                    i64 add = (i64)((v >> 24) & 0xFF);
+                    if (ord >= imports_count) { snprintf(L->err, L->errlen, "ordinal de import inválido"); ok = false; break; }
+                    *slot = targets[ord] ? targets[ord] + (u64)add : 0;
+                } else {
+                    /* DYLD_CHAINED_PTR_64: alvo é vmaddr; _64_OFFSET: deslocamento a partir do cabeçalho.
+                     * Alvo fora da imagem = valor absoluto que o linker do zig codificou como rebase (ex.:
+                     * __swiftImmortalRefCount = 0x80000004ffffffff no contador dos objetos estáticos do Swift):
+                     * vai como está, sem slide (o ld64 da Apple nem gera rebase para símbolo absoluto). */
+                    u64 target = v & 0xFFFFFFFFFULL, high8 = (v >> 36) & 0xFF;
+                    bool inside = fmt == 2 ? (target >= mo->vmin && target <= mo->vmax) : target <= mo->vmax - mo->vmin;
+                    u64 addr = !inside ? target : fmt == 2 ? target + (u64)L->slide : L->I->hdr + target;
+                    *slot = addr | (high8 << 56);
+                }
+                if (!next) break;
+                va += next * 4;
+            }
+        }
+    }
+    kfree(targets);
+    return ok;
+}
+
+static bool apply_dyld_info(load_t *L) {
+    mach_t *mo = L->mo;
+    if (mo->dyld_info) {
+        const u8 *d = mo->dyld_info;
+        struct { u32 off, size; } part[4] = {{rd32(d + 8), rd32(d + 12)}, {rd32(d + 16), rd32(d + 20)}, {rd32(d + 24), rd32(d + 28)}, {rd32(d + 32), rd32(d + 36)}};
+        for (int i = 0; i < 4; i++)
+            if ((u64)part[i].off + part[i].size > mo->len) { snprintf(L->err, L->errlen, "dyld_info fora do arquivo"); return false; }
+        const u8 *m = mo->m;
+        if (part[0].size && !run_rebase(L, m + part[0].off, m + part[0].off + part[0].size)) return false;
+        if (part[1].size && !run_bind(L, m + part[1].off, m + part[1].off + part[1].size, false)) return false;
+        /* weak binds: só substituem se o libSystem tiver o símbolo — ignorados */
+        if (part[3].size && !run_bind(L, m + part[3].off, m + part[3].off + part[3].size, true)) return false;
+        return true;
+    }
+    if (mo->ftype == MH_EXECUTE && !(mo->flags & MH_PIE)) { snprintf(L->err, L->errlen, "executável sem informações de relocação (não é PIE)"); return false; }
+    return true;
+}
+
+static void push_init(link_t *K, u64 a) {
+    if (K->ninits == K->capinits) {
+        u32 nc = K->capinits ? K->capinits * 2 : 64;
+        u64 *n = krealloc(K->inits, nc * sizeof(u64));
+        if (!n) return;
+        K->inits = n;
+        K->capinits = nc;
+    }
+    K->inits[K->ninits++] = a;
+}
+
+/* aplica os fixups de uma imagem em buf (NULL: só resolve os símbolos, para o relatório) e
+ * recolhe inicializadores e seções ObjC */
+static bool image_fix(link_t *K, image_t *I, u8 *buf) {
+    mach_t *mo = &I->mo;
+    load_t L = {.K = K, .I = I, .mo = mo, .img = buf, .size = mo->vmax - mo->vmin, .slide = I->slide,
+                .report_only = !buf, .err = K->err, .errlen = K->errlen};
+    if (buf)
+        for (int i = 0; i < mo->nsegs; i++) {
+            seg_t *s = &mo->segs[i];
+            if (!s->zero && s->filesize) memcpy(buf + (s->vmaddr - mo->vmin), mo->m + s->fileoff, s->filesize);
+        }
+    bool ok = mo->chained ? run_chained(&L) : apply_dyld_info(&L);
+    if (!ok || !buf) return ok;
+    /* TLS (thread_local): com o cx_tlv_bootstrap do libSystem, cada thread tem sua cópia do modelo e a
+     * chave do descritor aponta para o registro da imagem (TLV_RECORD); sem ele, o modelo é a única
+     * cópia (processos de uma thread) e a chave é o endereço do modelo */
+    u64 key_val = K->tlv_per_thread ? K->stub_base + TLV_RECORD(I->idx - K->first_new) : mo->tlv_lo + (u64)I->slide;
+    for (int i = 0; i < mo->ntlv_desc; i++)
+        for (u64 a = mo->tlv_desc[i]; a + 24 <= mo->tlv_desc[i] + mo->tlv_desc_size[i]; a += 24) {
+            u64 *key = slot_at(&L, a + 8);
+            if (key) *key = key_val;
+        }
+    for (u64 k = 0; k < mo->init_ptrs_count; k++) {
+        u64 *s = slot_at(&L, mo->init_ptrs_addr + k * 8);
+        if (s && *s) push_init(K, *s);
+    }
+    for (u64 k = 0; k < mo->init_offs_count; k++) {
+        u64 a = mo->init_offs_addr + k * 4;
+        if (a < mo->vmin || a + 4 > mo->vmax) break;
+        push_init(K, I->hdr + rd32(buf + (a - mo->vmin)));
+    }
+    for (int i = 0; i < mo->nobjc && K->nobjc < MAX_OBJC; i++) {
+        K->objc[K->nobjc].addr = mo->objc[i].addr + (u64)I->slide;
+        K->objc[K->nobjc].size = mo->objc[i].size;
+        K->objc[K->nobjc++].kind = mo->objc[i].kind;
+    }
+    return true;
+}
+
+/* ---- caminhos (@executable_path, @loader_path, @rpath) */
+static void path_dir(const char *p, char *out, usize cap) {
+    const char *s = NULL;
+    for (const char *q = p; *q; q++) if (*q == '/' || *q == '\\') s = q;
+    if (!s) snprintf(out, cap, ".");
+    else snprintf(out, cap, "%.*s", (int)(s - p), p);
+}
+
+/* normaliza "a/b/../c" -> "a/c" (aceita '\' dos caminhos do host) */
+static void path_norm(char *p, usize cap) {
+    char tmp[384];
+    snprintf(tmp, sizeof tmp, "%s", p);
+    for (char *c = tmp; *c; c++) if (*c == '\\') *c = '/';
+    const char *comp[64];
+    int nc = 0;
+    bool abs = tmp[0] == '/';
+    char *s = tmp;
+    while (*s) {
+        while (*s == '/') *s++ = 0;
+        if (!*s) break;
+        char *b = s;
+        while (*s && *s != '/') s++;
+        if (*s) *s++ = 0;
+        if (!strcmp(b, ".")) continue;
+        if (!strcmp(b, "..") && nc > 0 && strcmp(comp[nc - 1], "..")) { nc--; continue; }
+        if (nc < 64) comp[nc++] = b;
+    }
+    usize o = 0;
+    if (abs && cap > 1) p[o++] = '/';
+    for (int i = 0; i < nc && o + 1 < cap; i++) {
+        int w = snprintf(p + o, cap - o, "%s%s", i ? "/" : "", comp[i]);
+        if (w < 0) break;
+        o += (usize)w;
+    }
+    if (o >= cap) o = cap - 1;
+    p[o] = 0;
+}
+
+static void path_subst(const char *s, const char *loader, const char *exe, char *out, usize cap) {
+    char d[320];
+    if (!strncmp(s, "@executable_path", 16)) { path_dir(exe, d, sizeof d); snprintf(out, cap, "%s%s", d, s + 16); }
+    else if (!strncmp(s, "@loader_path", 12)) { path_dir(loader, d, sizeof d); snprintf(out, cap, "%s%s", d, s + 12); }
+    else snprintf(out, cap, "%s", s);
+}
+
+static int find_loaded(link_t *K, const char *p) {
+    for (int i = 0; i < K->n; i++) if (!strcmp(K->im[i]->path, p)) return i;
+    return -1;
+}
+
+/* procura cand (e, num .framework, as variantes Versions/A e Versions/Current, já que o FAT não tem
+ * links simbólicos). Devolve o índice se já carregada; senão -1, com *data preenchido se achou */
+static int locate(link_t *K, char *cand, usize cap, const u8 **data, usize *len) {
+    *data = NULL;
+    path_norm(cand, cap);
+    char alt[384];
+    for (int v = 0; v < 3; v++) {
+        const char *p = cand;
+        if (v) {
+            const char *fw = strstr(cand, ".framework/");
+            if (!fw) break;
+            const char *tail = fw + 11;
+            if (strchr(tail, '/')) break;
+            snprintf(alt, sizeof alt, "%.*sVersions/%s/%s", (int)(tail - cand), cand, v == 1 ? "A" : "Current", tail);
+            p = alt;
+        }
+        int i = find_loaded(K, p);
+        if (i >= 0) return i;
+        *data = dep_read(p, len);
+        if (*data) {
+            if (p != cand) snprintf(cand, cap, "%s", p);
+            return -1;
+        }
+    }
+    return -1;
+}
+
+static void note_absent(link_t *K, const char *dylib) {
+    char s[96];
+    dylib_short(dylib, s, sizeof s);
+    usize n = strlen(s);
+    for (const char *f = K->absent; (f = strstr(f, s)); f += n)
+        if ((f == K->absent || f[-1] == ' ') && (!f[n] || f[n] == ',')) return;
+    if (K->nabsent < 4) {
+        usize l = strlen(K->absent);
+        snprintf(K->absent + l, sizeof K->absent - l, "%s%s", l ? ", " : "", s);
+    }
+    K->nabsent++;
+}
+
+static int link_add(link_t *K, const char *path, const u8 *file, usize flen, bool dylib);
+
+/* acha e carrega uma dependência "@..." pedida por I; -1: não achou; -2: erro (em K->err) */
+static int link_dep(link_t *K, image_t *I, const char *name) {
+    char cand[384], base[320];
+    const u8 *data;
+    usize len;
+    const char *exe = K->im[0]->path;
+    if (!strncmp(name, "@rpath/", 7)) {
+        for (int pass = 0; pass < 2; pass++) {
+            image_t *R = pass ? K->im[0] : I;
+            if (pass && R == I) break;
+            for (int r = 0; r < R->mo.nrpaths; r++) {
+                path_subst(R->mo.rpaths[r], R->path, exe, base, sizeof base);
+                snprintf(cand, sizeof cand, "%s/%s", base, name + 7);
+                int i = locate(K, cand, sizeof cand, &data, &len);
+                if (i >= 0) return i;
+                if (data) { i = link_add(K, cand, data, len, true); return i < 0 ? -2 : i; }
+            }
+        }
+        return -1;
+    }
+    path_subst(name, I->path, exe, cand, sizeof cand);
+    int i = locate(K, cand, sizeof cand, &data, &len);
+    if (i >= 0) return i;
+    if (!data) return -1;
+    i = link_add(K, cand, data, len, true);
+    return i < 0 ? -2 : i;
+}
+
+static int link_add(link_t *K, const char *path, const u8 *file, usize flen, bool dylib) {
+    char nm[96];
+    dylib_short(path, nm, sizeof nm);
+    if (K->n >= MAX_IMAGES) { snprintf(K->err, K->errlen, "bibliotecas demais no bundle (máximo %d)", MAX_IMAGES); return -1; }
+    image_t *I = kcalloc(1, sizeof *I);
+    if (!I) { snprintf(K->err, K->errlen, "sem memória"); return -1; }
+    const u8 *m;
+    usize ml;
+    char archs[96] = "", e[160];
+    bool ok = pick_slice(file, flen, &m, &ml, archs, sizeof archs, e, sizeof e) && parse(&I->mo, m, ml, dylib, e, sizeof e);
+    if (!K->n) snprintf(K->archs, sizeof K->archs, "%s", archs);
+    if (ok && I->mo.has_tlv) { snprintf(e, sizeof e, "usa inicializadores thread-local, ainda não suportados"); ok = false; }
+    if (!ok) {
+        if (dylib) snprintf(K->err, K->errlen, "%s: %s", nm, e);
+        else snprintf(K->err, K->errlen, "%s", e);
+        kfree(I);
+        return -1;
+    }
+    snprintf(I->path, sizeof I->path, "%s", path);
+    I->idx = K->n;
+    K->im[K->n++] = I;
+    for (int i = 0; i < I->mo.ndylibs; i++) {
+        const char *dn = I->mo.dylibs[i];
+        I->dep[i] = -1;
+        if (dn[0] == '@') {
+            int d = link_dep(K, I, dn);
+            if (d == -2) return -1;
+            if (d >= 0) { I->dep[i] = (i16)d; continue; }
+            if (I->mo.dylib_weak[i]) continue;
+            char s[96];
+            dylib_short(dn, s, sizeof s);
+            snprintf(K->err, K->errlen, "%s não está dentro do app (pedido por %s)", s, nm);
+            return -1;
+        }
+        if (I->mo.dylib_weak[i] || libsystem_dylib_ok(dn)) continue;
+        note_absent(K, dn);
+    }
+    return I->idx;
+}
+
+static void link_order(link_t *K, int i) {
+    image_t *I = K->im[i];
+    if (I->visited) return;
+    I->visited = true;
+    for (int d = 0; d < I->mo.ndylibs; d++) if (I->dep[d] >= 0) link_order(K, I->dep[d]);
+    K->order[K->norder++] = i;
+}
+
+/* põe a imagem em at; devolve o próximo endereço livre (alinhado a 64 KiB) */
+static u64 place_image(image_t *I, u64 at) {
+    u64 size = I->mo.vmax - I->mo.vmin;
+    I->base = at;
+    I->slide = (i64)(at - I->mo.vmin);
+    I->hdr = at;
+    for (int s = 0; s < I->mo.nsegs; s++)
+        if (!I->mo.segs[s].zero && !I->mo.segs[s].fileoff && I->mo.segs[s].filesize) { I->hdr = I->mo.segs[s].vmaddr + (u64)I->slide; break; }
+    return (at + size + 0xFFFF) & ~0xFFFFULL;
+}
+
+static bool link_layout(link_t *K) {
+    u64 at = IMAGE_BASE;
+    for (int i = 0; i < K->n; i++) {
+        at = place_image(K->im[i], at);
+        if (at > IMAGE_LIMIT - 0x100000) {
+            snprintf(K->err, K->errlen, "o app não cabe no espaço de um processo do mOS (%llu MiB)", (unsigned long long)((at - IMAGE_BASE) >> 20));
+            return false;
+        }
+    }
+    K->stub_base = K->end = at;
+    return true;
+}
+
+static link_t *link_new(char *err, usize errlen, bool report_only) {
+    link_t *K = kcalloc(1, sizeof *K);
+    if (!K) { snprintf(err, errlen, "sem memória"); return NULL; }
+    K->err = err;
+    K->errlen = errlen;
+    K->report_only = report_only;
+    K->tolerant = dyld_tolerant();
+    K->unresolved_fn = ls_lookup("_cx_unresolved");
+    K->tlv_per_thread = ls_lookup("_cx_tlv_bootstrap") != 0;
+#ifndef MOS_HOST_TEST
+    /* diagnóstico do porte: registra cada função ausente e devolve 0 em vez de encerrar */
+    if (vfs_lookup("/Sistema/Biblioteca/dyld-registrar")) { u64 f = ls_lookup("_cx_unresolved_log"); if (f) K->unresolved_fn = f; }
+#endif
+    return K;
+}
+
+static void link_free(link_t *K) {
+    if (!K) return;
+    for (int i = 0; i < K->n; i++) { kfree(K->im[i]->own); kfree(K->im[i]); }
+    for (u32 i = 0; i < K->nmissing; i++) kfree(K->missing[i]);
+    kfree(K->missing);
+    kfree(K->inits);
+    kfree(K);
+}
+
+/* monta o grafo de imagens a partir do executável (as bibliotecas ausentes ficam em K->absent) */
+static bool link_open(link_t *K, const char *path, const u8 *img, usize len) {
+    if (link_add(K, path, img, len, false) < 0) return false;
+    link_order(K, 0);
+    return link_layout(K);
+}
+
+static void absent_summary(link_t *K, char *out, usize cap) {
+    if (K->nabsent > 4) snprintf(out, cap, "%s e mais %d", K->absent, K->nabsent - 4);
+    else snprintf(out, cap, "%s", K->absent);
+}
+
+/* área de stubs da carga atual (imagens K->first_new..K->n-1), montada no kernel e copiada para
+ * K->stub_base:
+ *   [0, 64)       zeros: constantes ausentes apontam para cá (leem 0 / nil)
+ *   [64, 0x1000)  registros TLS por imagem {modelo, tamanho inicializado, tamanho total, índice}; o
+ *                 resto é int3: uma chamada a uma "constante" que era função para ali
+ *   stubs         "movabs rdi, nome; movabs rax, cx_unresolved; jmp rax" por símbolo ausente
+ *   nomes, inicializadores (endereços absolutos), seções ObjC {addr, size, kind} */
+static u8 *stub_area(link_t *K, usize *area_out, usize *inits_off, usize *objc_off) {
+    usize stub_code = ZERO_AREA + (usize)K->nmissing * 32, names = 0;
+    for (u32 i = 0; i < K->nmissing; i++) names += strlen(K->missing[i]) + 1;
+    *inits_off = (stub_code + names + 7) & ~(usize)7;
+    *objc_off = *inits_off + (usize)K->ninits * 8;
+    usize area = (*objc_off + (usize)K->nobjc * 24 + 0xFFF) & ~(usize)0xFFF;
+    u8 *stubs = kcalloc(1, area);
+    if (!stubs) return NULL;
+    memset(stubs + 64, 0xCC, ZERO_AREA - 64);
+    for (int i = K->first_new; i < K->n; i++) {            /* registros de TLS por imagem */
+        u64 *r = (u64 *)(stubs + TLV_RECORD(i - K->first_new));
+        mach_t *m = &K->im[i]->mo;
+        r[0] = m->tlv_hi ? m->tlv_lo + (u64)K->im[i]->slide : 0;
+        r[1] = m->tlv_init_end > m->tlv_lo ? m->tlv_init_end - m->tlv_lo : 0;
+        r[2] = m->tlv_hi > m->tlv_lo ? m->tlv_hi - m->tlv_lo : 0;
+        r[3] = (u64)i;                                     /* índice global: a tabela por thread do libSystem */
+    }
+    usize no = stub_code;
+    for (u32 i = 0; i < K->nmissing; i++) {
+        u8 *s = stubs + ZERO_AREA + i * 32;
+        u64 name_va = K->stub_base + no;
+        usize nl = strlen(K->missing[i]) + 1;
+        memcpy(stubs + no, K->missing[i], nl);
+        no += nl;
+        s[0] = 0x48; s[1] = 0xBF; memcpy(s + 2, &name_va, 8);              /* movabs rdi, imm64 */
+#ifdef MOS_HOST_TEST
+        /* machotest com MACHOTEST_STUB_LOG: registra a chamada e devolve 0 (mapeia o que o app usa) */
+        if (getenv("MACHOTEST_STUB_LOG")) {
+            s[10] = 0xB8; s[11] = 0xFF; s[12] = 0x7F; s[13] = 0; s[14] = 0;  /* mov eax, 0x7FFF */
+            s[15] = 0xCD; s[16] = 0x80;                                     /* int 0x80 */
+            s[17] = 0x31; s[18] = 0xC0;                                     /* xor eax, eax */
+            s[19] = 0xC3;                                                   /* ret */
+            continue;
+        }
+#endif
+        s[10] = 0x48; s[11] = 0xB8; memcpy(s + 12, &K->unresolved_fn, 8);  /* movabs rax, imm64 */
+        s[20] = 0xFF; s[21] = 0xE0;                                       /* jmp rax */
+    }
+    if (K->ninits) memcpy(stubs + *inits_off, K->inits, (usize)K->ninits * 8);
+    u64 *ob = (u64 *)(stubs + *objc_off);
+    for (int i = 0; i < K->nobjc; i++) { ob[i * 3] = K->objc[i].addr; ob[i * 3 + 1] = K->objc[i].size; ob[i * 3 + 2] = K->objc[i].kind; }
+    *area_out = area;
+    return stubs;
+}
+
+/* ================================================================ dlopen em tempo de execução
+ * Depois do macho_load o grafo (link_t) fica em process_t.dyld. SYS_DYLD (syscall.h) carrega
+ * MH_DYLIB/MH_BUNDLE no processo em execução: as imagens novas vão para a região de mmap, recebem os
+ * fixups contra as imagens já carregadas + libSystem e ganham uma área de stubs própria; o libSystem
+ * (userland/libsystem/dlfcn.c) registra as seções ObjC e roda os inicializadores que voltam. */
+
+/* o que o dlopen/dlsym ainda consultam de uma imagem carregada (comandos de carga: nomes das dylibs e
+ * LC_RPATH; export trie) passa para uma cópia do kernel: o arquivo no VFS pode ser regravado ou
+ * apagado enquanto o processo roda */
+static usize own_len(image_t *I) { return I->own ? 32 + rd32(I->own + 20) + I->mo.triesz : 0; }
+
+static void image_rebase_ptrs(image_t *I, const u8 *from, const u8 *to) {
+    mach_t *mo = &I->mo;
+    for (int i = 0; i < mo->ndylibs; i++) mo->dylibs[i] = (const char *)to + ((const u8 *)mo->dylibs[i] - from);
+    for (int i = 0; i < mo->nrpaths; i++) mo->rpaths[i] = (const char *)to + ((const u8 *)mo->rpaths[i] - from);
+    if (mo->dyld_info) mo->dyld_info = to + (mo->dyld_info - from);
+    if (mo->chained) mo->chained = to + (mo->chained - from);
+}
+
+static void image_persist(image_t *I) {
+    mach_t *mo = &I->mo;
+    if (I->own || !mo->m) return;
+    usize hl = 32 + rd32(mo->m + 20);
+    u8 *o = kmalloc(hl + mo->triesz + 1);
+    if (!o) return;                                       /* sem memória: continua apontando para o arquivo */
+    memcpy(o, mo->m, hl);
+    if (mo->triesz) memcpy(o + hl, mo->trie, mo->triesz);
+    image_rebase_ptrs(I, mo->m, o);
+    if (mo->trie) mo->trie = o + hl;
+    mo->m = o;
+    mo->len = hl;                                         /* os dados da linkedit não estão mais aqui */
+    I->own = o;
+}
+
+static void link_keep(process_t *p, link_t *K) {
+    for (int i = 0; i < K->n; i++) { image_persist(K->im[i]); K->im[i]->refs = 1; }
+    for (u32 i = 0; i < K->nmissing; i++) kfree(K->missing[i]);
+    kfree(K->missing);
+    K->missing = NULL; K->nmissing = K->capmissing = 0;
+    kfree(K->inits);
+    K->inits = NULL; K->ninits = K->capinits = 0;
+    K->nobjc = 0;
+    K->err = K->lasterr; K->errlen = sizeof K->lasterr; K->lasterr[0] = 0;
+    if (p->dyld) link_free(p->dyld);
+    p->dyld = K;
+}
+
+/* fork: o filho tem a mesma memória, então recebe uma cópia do grafo */
+void *macho_dyld_clone(void *v) {
+    link_t *S = v;
+    if (!S) return NULL;
+    link_t *K = kmalloc(sizeof *K);
+    if (!K) return NULL;
+    memcpy(K, S, sizeof *K);
+    K->missing = NULL; K->nmissing = K->capmissing = 0;
+    K->inits = NULL; K->ninits = K->capinits = 0;
+    K->err = K->lasterr; K->errlen = sizeof K->lasterr;
+    int ok = 0;
+    for (; ok < S->n; ok++) {
+        image_t *I = kmalloc(sizeof *I);
+        if (!I) break;
+        memcpy(I, S->im[ok], sizeof *I);
+        if (I->own) {
+            usize l = own_len(I);
+            u8 *o = kmalloc(l + 1);
+            if (!o) { kfree(I); break; }
+            memcpy(o, I->own, l);
+            image_rebase_ptrs(I, I->own, o);
+            if (I->mo.trie) I->mo.trie = o + (I->mo.trie - I->own);
+            I->mo.m = o;
+            I->own = o;
+        }
+        K->im[ok] = I;
+    }
+    K->n = ok;
+    if (ok < S->n) { link_free(K); return NULL; }
+    return K;
+}
+
+void macho_dyld_free(void *v) { link_free(v); }
+
+static int image_at(link_t *K, u64 a) {
+    for (int i = 0; i < K->n; i++) {
+        image_t *I = K->im[i];
+        if (a >= I->base && a < I->base + (I->mo.vmax - I->mo.vmin)) return i;
+    }
+    return -1;
+}
+
+static void dyld_rollback(link_t *K, int n0) {
+    for (int i = n0; i < K->n; i++) { kfree(K->im[i]->own); kfree(K->im[i]); K->im[i] = NULL; }
+    K->n = n0;
+}
+
+/* RTLD_NOLOAD: só procura entre as já carregadas */
+static int dyld_find_loaded(link_t *K, image_t *C, const char *req, const char *cwd) {
+    char cand[384];
+    if (!strncmp(req, "@rpath/", 7)) {
+        usize rl = strlen(req + 6);                         /* "/resto" */
+        for (int i = 0; i < K->n; i++) {
+            usize pl = strlen(K->im[i]->path);
+            if (pl >= rl && !strcmp(K->im[i]->path + pl - rl, req + 6)) return i;
+        }
+        return -1;
+    }
+    if (req[0] == '@') path_subst(req, C->path, K->im[0]->path, cand, sizeof cand);
+    else if (req[0] == '/') snprintf(cand, sizeof cand, "%s", req);
+    else snprintf(cand, sizeof cand, "%s/%s", cwd, req);
+    const u8 *d;
+    usize l;
+    return locate(K, cand, sizeof cand, &d, &l);
+}
+
+#define DYLD_H_LIBSYSTEM 0x10000            /* handle de dlopen("/usr/lib/libSystem.B.dylib") e afins */
+
+static i64 dyld_open(process_t *p, link_t *K, const char *req, u64 out_va, u64 caller, const char *cwd) {
+    mos_dyld_open_t o;
+    if (!uvm_copy_in(p, &o, out_va, sizeof o)) return -MOS_EFAULT;
+    bool noload = (o.flags & MOS_RTLD_NOLOAD) != 0;
+    memset(&o, 0, sizeof o);
+    K->lasterr[0] = 0;
+    if (libsystem_dylib_ok(req)) return DYLD_H_LIBSYSTEM;
+    int ci = image_at(K, caller);
+    image_t *C = K->im[ci >= 0 ? ci : 0];
+    if (noload) {
+        int i = dyld_find_loaded(K, C, req, cwd);
+        if (i < 0) { snprintf(K->lasterr, sizeof K->lasterr, "%s: não está carregada (RTLD_NOLOAD)", req); return -MOS_ENOENT; }
+        K->im[i]->refs++;
+        return uvm_copy_out(p, out_va, &o, sizeof o) ? i : -MOS_EFAULT;
+    }
+    int n0 = K->n;
+    char absent[400];
+    int nabsent = K->nabsent;
+    memcpy(absent, K->absent, sizeof absent);
+    K->absent[0] = 0;
+    K->nabsent = 0;
+    int idx;
+    if (req[0] == '@') idx = link_dep(K, C, req);         /* @rpath (da imagem que chamou e do executável), @loader_path... */
+    else {
+        char cand[384];
+        const u8 *data;
+        usize len;
+        if (req[0] == '/') snprintf(cand, sizeof cand, "%s", req);
+        else snprintf(cand, sizeof cand, "%s/%s", cwd, req);
+        idx = locate(K, cand, sizeof cand, &data, &len);   /* >= 0: já carregada; -1 com data: achou o arquivo */
+        if (idx < 0 && data) { int ai = link_add(K, cand, data, len, true); idx = ai < 0 ? -2 : ai; }
+    }
+    i64 r = idx;
+    if (idx == -1) {
+        bool sys = !strncmp(req, "/System/", 8) || !strncmp(req, "/usr/lib/", 9);
+        snprintf(K->lasterr, sizeof K->lasterr, sys ? "%s: biblioteca do sistema que o mOS ainda não tem" : "%s: arquivo não encontrado", req);
+        r = -MOS_ENOENT;
+    } else if (idx == -2) r = -MOS_EINVAL;             /* mensagem já em K->lasterr (link_add) */
+    if (r >= 0 && K->n > n0 && K->nabsent && !K->tolerant) {
+        char need[200];
+        absent_summary(K, need, sizeof need);
+        snprintf(K->lasterr, sizeof K->lasterr, "%s requer %s, que o mOS ainda não tem", req, need);
+        r = -MOS_ENOENT;
+    }
+    if (r >= 0 && K->n > n0) {
+        /* imagens novas: ordem de dependência, endereços na região de mmap, fixups e área de stubs */
+        K->first_new = n0;
+        K->norder = 0;
+        for (int i = n0; i < K->n; i++) link_order(K, i);
+        if (!p->mmap_next) p->mmap_next = USER_MMAP_BASE;
+        u64 base0 = (p->mmap_next + 0xFFFF) & ~0xFFFFULL, at = base0;
+        for (int i = n0; i < K->n; i++) at = place_image(K->im[i], at);
+        K->stub_base = K->end = at;
+        if (at + 0x200000 > USER_END || !uvm_map(p, base0, at - base0)) {
+            snprintf(K->lasterr, sizeof K->lasterr, "%s: sem memória para a imagem", req);
+            r = -MOS_ENOMEM;
+        } else p->mmap_next = at;
+        for (int k = 0; r >= 0 && k < K->norder; k++) {
+            image_t *I = K->im[K->order[k]];
+            u64 size = I->mo.vmax - I->mo.vmin;
+            u8 *buf = kcalloc(1, size);
+            if (!buf) { snprintf(K->lasterr, sizeof K->lasterr, "sem memória para a imagem (%llu KiB)", (unsigned long long)(size >> 10)); r = -MOS_ENOMEM; break; }
+            if (!image_fix(K, I, buf)) r = -MOS_EINVAL;
+            else if (!uvm_copy_out(p, I->base, buf, size)) { snprintf(K->lasterr, sizeof K->lasterr, "falha ao copiar a imagem"); r = -MOS_EFAULT; }
+            kfree(buf);
+        }
+        usize area = 0, inits_off = 0, objc_off = 0;
+        u8 *stubs = r >= 0 ? stub_area(K, &area, &inits_off, &objc_off) : NULL;
+        if (r >= 0 && (!stubs || !uvm_map(p, K->stub_base, area) || !uvm_copy_out(p, K->stub_base, stubs, area))) {
+            snprintf(K->lasterr, sizeof K->lasterr, "sem memória para o processo");
+            r = -MOS_ENOMEM;
+        }
+        kfree(stubs);
+        if (r >= 0) {
+            p->mmap_next = K->stub_base + area + 0x1000;
+            o.inits = K->stub_base + inits_off; o.ninits = K->ninits;
+            o.objc = K->stub_base + objc_off; o.nobjc = (u64)K->nobjc;
+            o.first = (u64)n0; o.nnew = (u64)(K->n - n0);
+            kprintf("dyld: dlopen %s: %d imagem(ns) em %llx (%u símbolo(s) ausente(s)%s%s)\n", req, K->n - n0,
+                    (unsigned long long)base0, K->nmissing, K->nmissing ? ", ex.: " : "", K->nmissing ? K->missing[0] : "");
+            for (int i = n0; i < K->n; i++) image_persist(K->im[i]);
+        }
+        for (u32 i = 0; i < K->nmissing; i++) kfree(K->missing[i]);
+        kfree(K->missing);
+        K->missing = NULL; K->nmissing = K->capmissing = 0;
+        kfree(K->inits);
+        K->inits = NULL; K->ninits = K->capinits = 0;
+        K->nobjc = 0;
+        K->first_new = 0;
+    }
+    if (r < 0) dyld_rollback(K, n0);
+    K->nabsent = nabsent;
+    memcpy(K->absent, absent, sizeof absent);
+    if (r < 0) return r;
+    K->im[idx]->refs++;
+    return uvm_copy_out(p, out_va, &o, sizeof o) ? r : -MOS_EFAULT;
+}
+
+/* imagem e as dependências dela (em largura), como o dlsym com handle do dyld */
+static u64 dyld_sym_tree(link_t *K, int root, const char *name) {
+    int q[MAX_IMAGES], h = 0, t = 0;
+    u8 seen[MAX_IMAGES] = {0};
+    q[t++] = root;
+    seen[root] = 1;
+    while (h < t) {
+        int i = q[h++];
+        u64 a = image_export(K, i, name, 0);
+        if (a) return a;
+        image_t *I = K->im[i];
+        for (int d = 0; d < I->mo.ndylibs; d++) {
+            int j = I->dep[d];
+            if (j >= 0 && j < K->n && !seen[j] && t < MAX_IMAGES) { seen[j] = 1; q[t++] = j; }
+        }
+    }
+    return 0;
+}
+
+static u64 dyld_sym(link_t *K, i64 h, const char *sym, u64 caller) {
+    char name[1032];
+    snprintf(name, sizeof name, "_%s", sym);              /* dlsym recebe o nome C, sem o "_" do Mach-O */
+    u64 a = 0;
+    int ci = image_at(K, caller);
+    if (h == DYLD_H_LIBSYSTEM) return ls_lookup(name);
+    if (h >= 0) {
+        if (h >= K->n) return 0;
+        a = dyld_sym_tree(K, (int)h, name);
+    } else if (h == MOS_RTLD_DEFAULT) {
+        for (int i = 0; i < K->n && !a; i++) a = image_export(K, i, name, 0);
+    } else if (h == MOS_RTLD_MAIN_ONLY) {
+        return image_export(K, 0, name, 0);
+    } else if (h == MOS_RTLD_SELF) {
+        a = dyld_sym_tree(K, ci >= 0 ? ci : 0, name);
+    } else if (h == MOS_RTLD_NEXT) {
+        for (int i = ci + 1; i < K->n && !a; i++) a = image_export(K, i, name, 0);
+    } else return 0;
+    return a ? a : ls_lookup(name);
+}
+
+/* string de usuário (até cap - 1 bytes), por trechos que não cruzam página */
+static bool ustr(process_t *p, u64 va, char *out, usize cap) {
+    usize i = 0;
+    while (i + 1 < cap) {
+        usize chunk = 4096 - (usize)((va + i) & 0xFFF);
+        if (chunk > cap - 1 - i) chunk = cap - 1 - i;
+        if (!uvm_copy_in(p, out + i, va + i, chunk)) return false;
+        for (usize k = 0; k < chunk; k++) if (!out[i + k]) return true;
+        i += chunk;
+    }
+    out[cap - 1] = 0;
+    return true;
+}
+
+/* SYS_DYLD (op, a, b, c): ver MOS_DYLD_* em kernel/include/syscall.h */
+i64 macho_dyld_syscall(process_t *p, u64 op, u64 a, u64 b, u64 c) {
+    link_t *K = p->dyld;
+    if (!K) return -MOS_EINVAL;                           /* processo que não é Mach-O */
+    K->err = K->lasterr;
+    K->errlen = sizeof K->lasterr;
+    switch (op) {
+    case MOS_DYLD_OPEN: {
+        char path[384];
+        if (!ustr(p, a, path, sizeof path)) return -MOS_EFAULT;
+#ifdef MOS_HOST_TEST
+        const char *cwd = "";
+#else
+        const char *cwd = p->cwd;
+#endif
+        return dyld_open(p, K, path, b, c, cwd);
+    }
+    case MOS_DYLD_SYM: {
+        char name[1024];
+        if (!ustr(p, b, name, sizeof name)) return -MOS_EFAULT;
+        return (i64)dyld_sym(K, (i64)a, name, c);
+    }
+    case MOS_DYLD_CLOSE:
+        if (a < (u64)K->n && K->im[a]->refs > 0) K->im[a]->refs--;
+        return 0;
+    case MOS_DYLD_COUNT: return K->n;
+    case MOS_DYLD_IMAGE: {
+        if (a >= (u64)K->n) return 0;
+        image_t *I = K->im[a];
+        if (b && c) {
+            usize l = strlen(I->path);
+            if (l + 1 > c) l = c - 1;
+            char z = 0;
+            if (!uvm_copy_out(p, b, I->path, l) || !uvm_copy_out(p, b + l, &z, 1)) return -MOS_EFAULT;
+        }
+        return (i64)I->hdr;
+    }
+    case MOS_DYLD_FIND: { int i = image_at(K, a); return i >= 0 ? i : -MOS_ESRCH; }
+    case MOS_DYLD_ERROR: {
+        usize l = strlen(K->lasterr);
+        if (!a || !b) return (i64)l;
+        if (l + 1 > b) l = b - 1;
+        char z = 0;
+        if (!uvm_copy_out(p, a, K->lasterr, l) || !uvm_copy_out(p, a + l, &z, 1)) return -MOS_EFAULT;
+        return (i64)l;
+    }
+    }
+    return -MOS_EINVAL;
+}
+
+/* ================================================================ argv / pilha */
+static int split_args(const char *arg, char **out, int max, char *store, usize cap) {
+    int n = 0;
+    usize o = 0;
+    const char *p = arg;
+    while (p && *p && n < max) {
+        while (*p == ' ' || *p == '\t') p++;
+        if (!*p) break;
+        out[n++] = store + o;
+        char q = 0;
+        while (*p && (q || (*p != ' ' && *p != '\t'))) {
+            if (!q && (*p == '"' || *p == '\'')) { q = *p++; continue; }
+            if (q && *p == q) { q = 0; p++; continue; }
+            if (*p == '\\' && p[1]) p++;
+            if (o + 1 < cap) store[o++] = *p;
+            p++;
+        }
+        if (o < cap) store[o++] = 0;
+    }
+    return n;
+}
+
+typedef struct { u8 *buf; usize cap, used; u64 top; } ustack_t;   /* cresce para baixo */
+
+static u64 us_push(ustack_t *s, const void *data, usize n, usize align) {
+    usize pos = (s->cap - s->used - n) & ~(align - 1);
+    if (pos > s->cap || s->cap - pos < n) return 0;
+    memcpy(s->buf + pos, data, n);
+    s->used = s->cap - pos;
+    return s->top - (s->cap - pos);
+}
+
+/* diretório atual do próximo processo (macho_spawn) */
+static char next_cwd[256] = "/Users/Visitante";
+void macho_set_cwd(const char *cwd) { snprintf(next_cwd, sizeof next_cwd, "%s", cwd && cwd[0] == '/' ? cwd : "/Users/Visitante"); }
+
+/* ================================================================ entrada principal */
+bool macho_load(process_t *p, const u8 *img, usize len, const char *arg, u64 *entry,
+                u64 *user_rsp, u64 *rdi, char *err, usize errlen) {
+    if (!libsystem_index(err, errlen)) return false;
+    link_t *K = link_new(err, errlen, false);
+    if (!K) return false;
+    bool ok = link_open(K, p->path, img, len);
+    if (ok && !K->im[0]->mo.has_main) { snprintf(err, errlen, "sem LC_MAIN (executáveis anteriores ao macOS 10.8 não são suportados)"); ok = false; }
+    if (ok && K->nabsent && !K->tolerant) {
+        char need[200];
+        absent_summary(K, need, sizeof need);
+        snprintf(err, errlen, "requer %s, que o mOS ainda não tem", need);
+        ok = false;
+    }
+    if (ok) ok = map_libsystem(p, err, errlen);
+    DBG("libsystem mapeado %d\n", ok);
+    if (ok && !uvm_map(p, IMAGE_BASE, K->end - IMAGE_BASE)) { snprintf(err, errlen, "sem memória para o processo"); ok = false; }
+    /* cada imagem é montada no kernel, recebe os fixups e vai para o processo (uma por vez) */
+    for (int k = 0; ok && k < K->norder; k++) {
+        image_t *I = K->im[K->order[k]];
+        u64 size = I->mo.vmax - I->mo.vmin;
+        u8 *buf = kcalloc(1, size);
+        if (!buf) { snprintf(err, errlen, "sem memória para a imagem (%llu KiB)", (unsigned long long)(size >> 10)); ok = false; break; }
+        ok = image_fix(K, I, buf);
+        if (ok && !uvm_copy_out(p, I->base, buf, size)) { snprintf(err, errlen, "falha ao copiar a imagem"); ok = false; }
+        kfree(buf);
+    }
+    if (!ok) { link_free(K); return false; }
+    if (K->n > 1) kprintf("macho: %d imagens carregadas (executável + bibliotecas do bundle)\n", K->n);
+#ifdef MOS_HOST_TEST
+    if (getenv("MACHOTEST_MAP"))
+        for (int i = 0; i < K->n; i++) {
+            const char *s = strrchr(K->im[i]->path, '/');
+            kprintf("  %012llx-%012llx %s (ObjC: %d seções)\n", (unsigned long long)K->im[i]->base,
+                    (unsigned long long)(K->im[i]->base + K->im[i]->mo.vmax - K->im[i]->mo.vmin), s ? s + 1 : K->im[i]->path, K->im[i]->mo.nobjc);
+        }
+#endif
+    if (K->nabsent) kprintf("macho: modo experimental, %d biblioteca(s) do sistema ausente(s) (ex.: %s)\n", K->nabsent, K->absent);
+
+    usize area, inits_off, objc_off;
+    u8 *stubs = stub_area(K, &area, &inits_off, &objc_off);
+    if (!stubs) { snprintf(err, errlen, "sem memória"); link_free(K); return false; }
+    if (K->nmissing) kprintf("macho: %u símbolo(s) ausente(s) no libSystem do mOS (ex.: %s)\n", K->nmissing, K->missing[0]);
+    ok = uvm_map(p, K->stub_base, area) && uvm_copy_out(p, K->stub_base, stubs, area);
+    kfree(stubs);
+    if (!ok) { snprintf(err, errlen, "sem memória para o processo"); link_free(K); return false; }
+    DBG("imagem copiada\n");
+    p->brk = p->brk_start = K->stub_base + area + 0x10000;
+
+    image_t *I0 = K->im[0];
+    mach_t *mo = &I0->mo;
+    /* pilha: strings + vetores + bloco de partida */
+    u64 slo = USER_STACK_TOP - USER_STACK_SIZE;
+    if (!uvm_map(p, slo, USER_STACK_SIZE)) { snprintf(err, errlen, "sem memória para a pilha"); link_free(K); return false; }
+    ustack_t st = {kmalloc(32768), 32768, 0, USER_STACK_TOP};
+    char *argstore = kmalloc(4096);
+    char **av = kmalloc(sizeof(char *) * 64);
+    u64 *tmp = kmalloc(sizeof(u64) * 3 * MAX_OBJC);
+    if (!st.buf || !argstore || !av || !tmp) {
+        kfree(st.buf); kfree(argstore); kfree(av); kfree(tmp);
+        snprintf(err, errlen, "sem memória");
+        link_free(K);
+        return false;
+    }
+    int argc = 1;
+    av[0] = p->path;
+    argc += split_args(arg, av + 1, 62, argstore, 4096);
+    u64 uargv[64], uenv[8], uapple[2];
+    for (int i = 0; i < argc; i++) uargv[i] = us_push(&st, av[i], strlen(av[i]) + 1, 1);
+    char pwd[272];
+    snprintf(pwd, sizeof pwd, "PWD=%s", next_cwd);
+    macho_set_cwd(NULL);
+    const char *envs[] = {"HOME=/Users/Visitante", "USER=visitante", "LOGNAME=visitante",
+                          "PATH=/Sistema/Programas:/usr/bin:/bin", "TERM=dumb", "LANG=pt_BR.UTF-8",
+                          pwd, "SHELL=/bin/msh"};
+    for (u32 i = 0; i < ARRAY_LEN(envs); i++) uenv[i] = us_push(&st, envs[i], strlen(envs[i]) + 1, 1);
+    char ep[200];
+    snprintf(ep, sizeof ep, "executable_path=%s", p->path);
+    uapple[0] = us_push(&st, ep, strlen(ep) + 1, 1);
+    uapple[1] = 0;
+    u64 z = 0;
+    us_push(&st, &z, 8, 16);
+    us_push(&st, uapple, sizeof uapple, 8);
+    u64 apple_va = st.top - st.used;
+    us_push(&st, &z, 8, 8);
+    us_push(&st, uenv, sizeof(u64) * ARRAY_LEN(envs), 8);
+    u64 env_va = st.top - st.used;
+    us_push(&st, &z, 8, 8);
+    us_push(&st, uargv, sizeof(u64) * (usize)argc, 8);
+    u64 argv_va = st.top - st.used;
+    u64 main_va = 0;
+    for (int i = 0; i < mo->nsegs; i++)
+        if (!strcmp(mo->segs[i].name, "__TEXT")) main_va = mo->segs[i].vmaddr + (u64)I0->slide - mo->segs[i].fileoff + mo->entryoff;
+    u64 objc_va = 0;
+    if (K->nobjc) {
+        for (int i = 0; i < K->nobjc; i++) {
+            tmp[i * 3] = K->objc[i].addr;
+            tmp[i * 3 + 1] = K->objc[i].size;
+            tmp[i * 3 + 2] = K->objc[i].kind;
+        }
+        objc_va = us_push(&st, tmp, sizeof(u64) * 3 * (usize)K->nobjc, 16);
+    }
+    /* inicializadores de todas as imagens, na ordem de dependência, como ponteiros absolutos */
+    u64 blk[12] = {
+        main_va,
+        K->ninits ? K->stub_base + inits_off : 0, K->ninits,
+        0, 0,
+        I0->hdr, (u64)argc, argv_va, env_va, apple_va, objc_va, (u64)K->nobjc,
+    };
+    u64 blk_va = us_push(&st, blk, sizeof blk, 16);
+    u64 ret0 = 0;
+    us_push(&st, &ret0, 8, 16);                         /* rsp = 16n: "endereço de retorno" falso */
+    u64 rsp = st.top - st.used - 8;                     /* entra em cx_start com rsp = 16n - 8 */
+    us_push(&st, &ret0, 8, 8);
+    ok = blk_va && main_va && uvm_copy_out(p, st.top - st.used, st.buf + (st.cap - st.used), st.used);
+    kfree(st.buf);
+    kfree(argstore);
+    kfree(av);
+    kfree(tmp);
+    (void)objc_off;                                     /* na partida as seções ObjC vão pela pilha */
+    if (!ok) { link_free(K); snprintf(err, errlen, "falha ao montar a pilha"); return false; }
+    /* o grafo de imagens fica vivo para o dlopen em tempo de execução (SYS_DYLD) */
+    link_keep(p, K);
+    *entry = ls_entry;
+    *user_rsp = rsp;
+    *rdi = blk_va;
+    return true;
+}
+
+#ifdef MOS_HOST_TEST
+/* tools/machotest.c: nome da função do libSystem que contém addr (para diagnosticar falhas) */
+const char *macho_host_symbolize(u64 addr, u64 *off) {
+    /* todas as funções da tabela de símbolos do ELF, inclusive as static (locais) */
+    const u8 *e = libsystem_mos;
+    const char *best = NULL;
+    u64 ba = 0, bias = rd16(e + 16) == 3 ? LIBSYSTEM_BASE : 0;
+    u64 shoff = rd64(e + 40);
+    u16 shentsize = rd16(e + 58), shnum = rd16(e + 60);
+    for (u16 i = 0; i < shnum; i++) {
+        const u8 *sh = e + shoff + (u64)i * shentsize;
+        if (rd32(sh + 4) != 2) continue;
+        u64 so = rd64(sh + 24), size = rd64(sh + 32), entsz = rd64(sh + 56);
+        u64 stroff = rd64(e + shoff + (u64)rd32(sh + 40) * shentsize + 24);
+        for (u64 k = 0; entsz && k < size / entsz; k++) {
+            const u8 *s = e + so + k * entsz;
+            if ((s[4] & 15) != 2 || !rd16(s + 6)) continue;      /* só FUNC definidas */
+            u64 a = rd64(s + 8) + bias;
+            if (a <= addr && a > ba) { ba = a; best = (const char *)e + stroff + rd32(s); }
+        }
+    }
+    if (off) *off = addr - ba;
+    return best;
+}
+#endif
+
+/* ================================================================ relatório */
+bool macho_report_image(const u8 *img, usize len, const char *name, char *out, usize cap) {
+    char err[200] = "", verdict[320];
+    static char body[4096];
+    usize o = 0;
+#define OUT(...) do { if (o < sizeof body) o += (usize)snprintf(body + o, sizeof body - o, __VA_ARGS__); } while (0)
+    bool runs = false;
+    body[0] = 0;
+    link_t *K = NULL;
+    if (!libsystem_index(err, sizeof err)) snprintf(verdict, sizeof verdict, "Veredito: %s", err);
+    else if (!(K = link_new(err, sizeof err, true))) snprintf(verdict, sizeof verdict, "Veredito: %s", err);
+    else if (!link_open(K, name, img, len)) {
+        OUT("%s\n", name);
+        if (K->archs[0]) OUT("Arquiteturas: %s\n", K->archs);
+        snprintf(verdict, sizeof verdict, "Veredito: não roda no mOS (%s)", err);
+    } else {
+        image_t *I0 = K->im[0];
+        mach_t *mo = &I0->mo;
+        OUT("%s\nArquiteturas: %s\n", name, K->archs);
+        if (mo->minos) OUT("macOS mínimo: %u.%u\n", mo->minos >> 16, (mo->minos >> 8) & 0xFF);
+        OUT("Ligação: %s\n", mo->chained ? "chained fixups (macOS 11+)" : mo->dyld_info ? "dyld_info" : "nenhuma");
+        OUT("Bibliotecas:\n");
+        int shown = 0;
+        for (int i = 0; i < mo->ndylibs; i++) {
+            char s[96];
+            dylib_short(mo->dylibs[i], s, sizeof s);
+            if (I0->dep[i] >= 0) { OUT("  [ok] %s (dentro do app)\n", s); continue; }
+            if (libsystem_dylib_ok(mo->dylibs[i])) { OUT("  [ok] %s\n", s); continue; }
+            if (shown < 10) { OUT("  [falta] %s%s\n", s, mo->dylib_weak[i] ? " (opcional)" : ""); shown++; }
+        }
+        if (K->n > 1) {
+            u64 total = 0;
+            for (int i = 1; i < K->n; i++) total += K->im[i]->mo.vmax - K->im[i]->mo.vmin;
+            OUT("Bibliotecas do próprio app: %d (%llu MiB)\n", K->n - 1, (unsigned long long)(total >> 20));
+        }
+        char need[200] = "";
+        absent_summary(K, need, sizeof need);
+        if (K->nabsent) OUT("Bibliotecas do sistema que o mOS não tem (%d): %s\n", K->nabsent, need);
+        bool libs_ok = !K->nabsent || K->tolerant;
+        bool built = libs_ok;
+        for (int k = 0; built && k < K->norder; k++) built = image_fix(K, K->im[K->order[k]], NULL);
+        if (built && K->nmissing) {
+            OUT("Símbolos sem implementação no libSystem do mOS (%u):", K->nmissing);
+            u32 nshow = K->nmissing > 12 ? 8 : K->nmissing;      /* listas enormes escondem o veredito no Terminal */
+            for (u32 i = 0; i < nshow; i++) OUT(" %s", K->missing[i]);
+            if (nshow < K->nmissing) OUT(" ... e mais %u", K->nmissing - nshow);
+            OUT("\n");
+        }
+        runs = built && mo->has_main;
+        if (!libs_ok) snprintf(verdict, sizeof verdict, "Veredito: precisa de %s, que o mOS ainda não tem", need);
+        else if (!built) snprintf(verdict, sizeof verdict, "Veredito: não carrega (%s)", err);
+        else if (!mo->has_main) snprintf(verdict, sizeof verdict, "Veredito: formato antigo (sem LC_MAIN)");
+        else if (K->nabsent) snprintf(verdict, sizeof verdict, "Veredito: modo experimental — carrega, mas para na primeira chamada a uma das %u funções ausentes", K->nmissing);
+        else if (K->nmissing) snprintf(verdict, sizeof verdict, "Veredito: roda, mas para se chamar um dos símbolos acima");
+        else snprintf(verdict, sizeof verdict, "Veredito: compatível — roda no mOS");
+    }
+    link_free(K);
+#undef OUT
+    /* o veredito é sempre a última linha, mesmo que o corpo precise ser cortado */
+    usize vl = strlen(verdict) + 2;
+    if (cap <= vl) { snprintf(out, cap, "%s", verdict); return runs; }
+    usize room = cap - vl - 1, bl = strlen(body);
+    if (bl > room) {
+        bl = room > 5 ? room - 5 : 0;
+        while (bl && body[bl - 1] != '\n') bl--;
+        snprintf(out, cap, "%.*s...\n%s\n", (int)bl, body, verdict);
+    } else snprintf(out, cap, "%s%s\n", body, verdict);
+    return runs;
+}

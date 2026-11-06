@@ -1,0 +1,116 @@
+// mOS — versão do mOS deste arquivo do Compute (github.com/OpenSwiftUIProject/Compute, MIT).
+// O C++ e os cabeçalhos do Compute seguem o caminho Darwin (TARGET_OS_MAC) no mOS, mas sem ObjC não há
+// s CFString/autorelease: as descrições vão por String.cfString (+1, sem pool) e String(_: CFString).
+import ComputeCxx
+import Foundation
+
+struct ProtocolConformance {
+    var metadata: Metadata
+    var witnessTable: UnsafeRawPointer
+}
+
+extension String {
+
+    static func _describing<Subject>(_ subject: UnsafeRawPointer, of type: Subject.Type) -> String {
+        return String(describing: subject.assumingMemoryBound(to: Subject.self).pointee)
+    }
+
+}
+
+@_silgen_name("IAGRetainClosure")
+func IAGRetainClosure(
+    _ closure: @escaping (UnsafeMutableRawPointer, AnyAttribute) -> Void
+) -> _IAGClosureStorage
+
+extension _AttributeType {
+
+    nonisolated(unsafe) static let vtable: UnsafePointer<_AttributeVTable> = {
+        let vtable = UnsafeMutablePointer<_AttributeVTable>.allocate(
+            capacity: 1
+        )
+        vtable.pointee.version = 0
+        vtable.pointee.type_destroy = { pointer in
+            pointer.deallocate()
+        }
+        vtable.pointee.self_destroy = { attributeType, body in
+            attributeType.pointee.attributeBody._destroySelf(body)
+        }
+        #if true // mOS: API Darwin dos cabeçalhos
+        vtable.pointee.self_description = { attributeType, body in
+            let description: String
+            if let selfType = attributeType.pointee.self_id.type
+                as? any CustomStringConvertible.Type
+            {
+                description = String._describing(body, of: selfType)
+            } else {
+                description = attributeType.pointee.self_id.description
+            }
+            return Unmanaged<CFString>.passRetained(description.cfString)  // mOS: sem pool de autorelease
+        }
+        vtable.pointee.value_description = { attributeType, value in
+            let valueType = attributeType.pointee.value_id.type
+            let description = String._describing(value, of: valueType)
+            return Unmanaged<CFString>.passRetained(description.cfString)  // mOS: sem pool de autorelease
+        }
+        #else
+        vtable.pointee.copy_self_description = { attributeType, body in
+            let description: String
+            if let selfType = attributeType.pointee.self_id.type
+                as? any CustomStringConvertible.Type
+            {
+                description = String._describing(body, of: selfType)
+            } else {
+                description = attributeType.pointee.self_id.description
+            }
+            return Unmanaged<CFString>.passRetained(description.cfString)
+        }
+        vtable.pointee.copy_value_description = { attributeType, value in
+            let valueType = attributeType.pointee.value_id.type
+            let description = String._describing(value, of: valueType)
+            return Unmanaged<CFString>.passRetained(description.cfString)
+        }
+        #endif
+        vtable.pointee.update_default = { attributeType, body in
+            attributeType.pointee.attributeBody._updateDefault(body)
+        }
+        return UnsafePointer(vtable)
+    }()
+
+    init(
+        selfType: any _AttributeBody.Type,
+        valueType: Metadata,
+        flags: Flags,
+        update: @escaping (UnsafeMutableRawPointer, AnyAttribute) -> Void,
+    ) {
+        var flags = flags
+        flags.insert(selfType.flags)
+        flags.insert(Flags(rawValue: UInt32(selfType.comparisonMode.rawValue)))
+        if selfType._hasDestroySelf {
+            flags.insert(.hasDestroySelf)
+        }
+
+        let retainedUpdate = IAGRetainClosure(update)
+        let conformance = unsafeBitCast(
+            selfType as any _AttributeBody.Type,
+            to: ProtocolConformance.self
+        )
+        self.init(
+            self_id: Metadata(selfType),
+            value_id: valueType,
+            update: retainedUpdate,
+            vtable: _AttributeType.vtable,
+            flags: flags,
+            internal_offset: 0,
+            value_layout: nil,
+            body_conformance: __Unnamed_struct_body_conformance(
+                type_id: conformance.metadata,
+                witness_table: conformance.witnessTable
+            )
+        )
+    }
+
+    var attributeBody: any _AttributeBody.Type {
+        return unsafeBitCast(body_conformance, to: (any _AttributeBody.Type).self)
+    }
+
+}

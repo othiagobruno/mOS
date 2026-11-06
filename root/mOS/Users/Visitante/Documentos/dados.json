@@ -1,0 +1,10 @@
+{
+  "titulo": "Dados de teste do Horizonte",
+  "versao": 2,
+  "itens": [
+    { "nome": "maçã", "preco": 3.5 },
+    { "nome": "pão", "preco": 0.75 },
+    { "nome": "café", "preco": 12 }
+  ],
+  "ativo": true
+}

@@ -1,0 +1,603 @@
+/*
+ * mOS libSystem — funções da libc do macOS que apps grandes usam e que faltavam (porte do VS Code,
+ * docs/porte-vscode.md). O mOS só tem a codificação UTF-8; as variantes _l ignoram o locale.
+ */
+#include "sys.h"
+
+size_t strlen(const char *s);
+int cx_fdprintf(int fd, const char *fmt, ...);
+void *memcpy(void *d, const void *s, size_t n);
+void *memset(void *d, int c, size_t n);
+void *malloc(size_t n);
+void free(void *p);
+
+typedef int wchar_t_;
+typedef struct { u32 pending; int need; } cx_mbstate_t;   /* cabe no mbstate_t do macOS (128 bytes) */
+
+/* decodifica um caractere UTF-8; devolve bytes usados, 0 para o NUL, -1 inválido, -2 incompleto */
+static long utf8_dec(wchar_t_ *out, const unsigned char *s, size_t n) {
+    if (!n) return -2;
+    unsigned c = s[0];
+    int len = c < 0x80 ? 1 : (c & 0xE0) == 0xC0 ? 2 : (c & 0xF0) == 0xE0 ? 3 : (c & 0xF8) == 0xF0 ? 4 : 0;
+    if (!len) return -1;
+    if ((size_t)len > n) return -2;
+    unsigned v = len == 1 ? c : c & (0x3F >> (len - 1));
+    for (int i = 1; i < len; i++) {
+        if ((s[i] & 0xC0) != 0x80) return -1;
+        v = v << 6 | (s[i] & 0x3F);
+    }
+    if (out) *out = (wchar_t_)v;
+    return v ? len : 0;
+}
+
+int mbtowc(wchar_t_ *pwc, const char *s, size_t n) {
+    if (!s) return 0;                               /* UTF-8 não tem estado */
+    long r = utf8_dec(pwc, (const unsigned char *)s, n);
+    return r < 0 ? -1 : (int)r;
+}
+int mbtowc_l(wchar_t_ *pwc, const char *s, size_t n, void *loc) { (void)loc; return mbtowc(pwc, s, n); }
+
+size_t mbrtowc(wchar_t_ *pwc, const char *s, size_t n, void *ps) {
+    (void)ps;
+    if (!s) return 0;
+    long r = utf8_dec(pwc, (const unsigned char *)s, n);
+    return r == -1 ? (size_t)-1 : r == -2 ? (size_t)-2 : (size_t)r;
+}
+size_t mbrtowc_l(wchar_t_ *pwc, const char *s, size_t n, void *ps, void *loc) { (void)loc; return mbrtowc(pwc, s, n, ps); }
+int mblen(const char *s, size_t n) { return mbtowc(0, s, n); }
+int mblen_l(const char *s, size_t n, void *loc) { (void)loc; return mblen(s, n); }
+size_t mbrlen(const char *s, size_t n, void *ps) { return mbrtowc(0, s, n, ps); }
+size_t mbrlen_l(const char *s, size_t n, void *ps, void *loc) { (void)loc; return mbrlen(s, n, ps); }
+
+int wctomb(char *s, wchar_t_ wc) {
+    if (!s) return 0;
+    unsigned v = (unsigned)wc;
+    if (v < 0x80) { s[0] = (char)v; return 1; }
+    if (v < 0x800) { s[0] = (char)(0xC0 | v >> 6); s[1] = (char)(0x80 | (v & 0x3F)); return 2; }
+    if (v < 0x10000) { s[0] = (char)(0xE0 | v >> 12); s[1] = (char)(0x80 | ((v >> 6) & 0x3F)); s[2] = (char)(0x80 | (v & 0x3F)); return 3; }
+    if (v < 0x110000) {
+        s[0] = (char)(0xF0 | v >> 18); s[1] = (char)(0x80 | ((v >> 12) & 0x3F));
+        s[2] = (char)(0x80 | ((v >> 6) & 0x3F)); s[3] = (char)(0x80 | (v & 0x3F));
+        return 4;
+    }
+    return -1;
+}
+int wctomb_l(char *s, wchar_t_ wc, void *loc) { (void)loc; return wctomb(s, wc); }
+size_t wcrtomb(char *s, wchar_t_ wc, void *ps) { (void)ps; char b[4]; int r = wctomb(s ? s : b, wc); return r < 0 ? (size_t)-1 : (size_t)r; }
+size_t wcrtomb_l(char *s, wchar_t_ wc, void *ps, void *loc) { (void)loc; return wcrtomb(s, wc, ps); }
+int mbsinit(const void *ps) { (void)ps; return 1; }
+
+/* ---- diagnóstico do porte (/Sistema/Biblioteca/dyld-registrar): o carregador liga os stubs de
+ * funções ausentes a esta função, que avisa uma vez por nome e devolve 0 */
+long cx_unresolved_log(const char *name) {
+    static const char *seen[1024];
+    static int nseen;
+    for (int i = 0; i < nseen; i++) if (seen[i] == name) return 0;
+    if (nseen < 1024) seen[nseen++] = name;
+    cx_fdprintf(2, "dyld[mOS]: ausente (seguindo com 0): %s\n", name);
+    return 0;
+}
+
+/* ---- thread_local por thread (chamado por cx_tlv_bootstrap, tlv.S). desc = {thunk, key, offset};
+ * key = registro da imagem {modelo, tamanho inicializado, tamanho total, índice}. Os blocos de cada
+ * thread ficam numa tabela no slot TSD_TLV da TSD (extra.c: cx_tsd). */
+#define TSD_TLV 101
+#define TLV_IMAGES 128      /* índices de imagem (MAX_IMAGES de kernel/compat/macho.c, inclui as do dlopen) */
+void **cx_tsd(void);
+void *calloc(size_t n, size_t s);
+void *cx_tlv_get(const u64 *desc) {
+    const u64 *rec = (const u64 *)desc[1];
+    void **t = cx_tsd();
+    void **tab = t[TSD_TLV];
+    if (!tab) { tab = calloc(TLV_IMAGES, sizeof(void *)); t[TSD_TLV] = tab; }
+    u64 idx = rec[3] < TLV_IMAGES ? rec[3] : 0;
+    if (!tab[idx]) {
+        u64 total = rec[2] ? rec[2] : 16;
+        u8 *b = calloc(1, (size_t)total);                 /* calloc: a parte __thread_bss já vem zerada */
+        if (rec[0] && rec[1]) memcpy(b, (const void *)rec[0], (size_t)rec[1]);
+        tab[idx] = b;
+    }
+    return (u8 *)tab[idx] + desc[2];
+}
+
+/* ---- os_log: o mOS ainda não tem log unificado; tudo desligado (o app segue normalmente) */
+char _os_log_default[64];                 /* OS_LOG_DEFAULT = &_os_log_default */
+char _os_log_disabled[64];
+/* objetos os_* (os_log, os_activity...): os do mOS são estáticos, então retain/release não fazem nada */
+void *os_retain(void *o) { return o; }
+void os_release(void *o) { (void)o; }
+void *os_log_create(const char *subsystem, const char *category) { (void)subsystem; (void)category; return _os_log_disabled; }
+int os_log_type_enabled(void *log, unsigned char type) { (void)log; (void)type; return 0; }
+void _os_log_impl(void *dso, void *log, unsigned char type, const char *fmt, void *buf, unsigned size) {
+    (void)dso; (void)log; (void)type; (void)fmt; (void)buf; (void)size;
+}
+void _os_log_error_impl(void *dso, void *log, unsigned char type, const char *fmt, void *buf, unsigned size) {
+    (void)dso; (void)log; (void)type; (void)fmt; (void)buf; (void)size;
+}
+void _os_log_debug_impl(void *dso, void *log, unsigned char type, const char *fmt, void *buf, unsigned size) {
+    (void)dso; (void)log; (void)type; (void)fmt; (void)buf; (void)size;
+}
+void _os_log_fault_impl(void *dso, void *log, unsigned char type, const char *fmt, void *buf, unsigned size) {
+    (void)dso; (void)log; (void)type; (void)fmt; (void)buf; (void)size;
+}
+
+/* ---- CoreFoundation em ponte com o Foundation do mOS (CFStringRef = NSString*, CFBundleRef = NSBundle*...) */
+typedef void *id_;
+typedef struct cx_class cx_class_t;
+cx_class_t *cx_class_named(const char *name);
+id_ objc_msgSend(id_ self, void *op, ...);
+void *sel_registerName(const char *name);
+id_ objc_retain(id_ o);
+void objc_release(id_ o);
+#define MSG0_(T, o, s) ((T (*)(id_, void *))objc_msgSend)((id_)(o), sel_registerName(s))
+#define MSG1_(T, o, s, a) ((T (*)(id_, void *, __typeof__(a)))objc_msgSend)((id_)(o), sel_registerName(s), (a))
+
+id_ CFRetain(id_ o) { return o ? objc_retain(o) : o; }
+void CFRelease(id_ o) { if (o) objc_release(o); }
+
+id_ CFBundleGetMainBundle(void) { return MSG0_(id_, cx_class_named("NSBundle"), "mainBundle"); }
+/* regra "Create/Copy": quem chama é dono (+1) */
+id_ CFStringCreateWithFileSystemRepresentation(void *alloc, const char *s) {
+    (void)alloc;
+    if (!s) return 0;
+    id_ str = MSG1_(id_, cx_class_named("NSString"), "stringWithUTF8String:", s);
+    return str ? objc_retain(str) : 0;
+}
+
+id_ CFBundleGetValueForInfoDictionaryKey(id_ bundle, id_ key) {
+    return bundle && key ? MSG1_(id_, bundle, "objectForInfoDictionaryKey:", key) : 0;
+}
+
+/* ---- constantes CFString do CoreFoundation, no formato de @"..." ({isa, flags, ptr, len}) */
+extern char cx_cfconst_isa[] __asm__("__CFConstantStringClassReference");
+typedef struct { void *isa; u64 flags; const char *s; u64 n; } cx_cfconst_t;
+#define CFCONST(var, text) \
+    static cx_cfconst_t var##_s = {cx_cfconst_isa, 0x7c8, text, sizeof(text) - 1}; \
+    const void *var = &var##_s;
+CFCONST(kCFBundleNameKey, "CFBundleName")
+CFCONST(kCFBundleIdentifierKey, "CFBundleIdentifier")
+CFCONST(kCFBundleVersionKey, "CFBundleVersion")
+CFCONST(kCFBundleExecutableKey, "CFBundleExecutable")
+CFCONST(kCFBundleInfoDictionaryVersionKey, "CFBundleInfoDictionaryVersion")
+CFCONST(kCFBundleDevelopmentRegionKey, "CFBundleDevelopmentRegion")
+CFCONST(kCFBundleLocalizationsKey, "CFBundleLocalizations")
+CFCONST(kCFRunLoopDefaultMode, "kCFRunLoopDefaultMode")
+CFCONST(kCFRunLoopCommonModes, "kCFRunLoopCommonModes")
+CFCONST(NSDefaultRunLoopMode, "kCFRunLoopDefaultMode")
+CFCONST(NSRunLoopCommonModes, "kCFRunLoopCommonModes")
+CFCONST(NSLocalizedDescriptionKey, "NSLocalizedDescription")
+CFCONST(NSLocalizedFailureReasonErrorKey, "NSLocalizedFailureReason")
+CFCONST(NSLocalizedRecoverySuggestionErrorKey, "NSLocalizedRecoverySuggestion")
+CFCONST(NSUnderlyingErrorKey, "NSUnderlyingError")
+CFCONST(NSFilePathErrorKey, "NSFilePath")
+CFCONST(NSCocoaErrorDomain, "NSCocoaErrorDomain")
+CFCONST(NSPOSIXErrorDomain, "NSPOSIXErrorDomain")
+CFCONST(NSOSStatusErrorDomain, "NSOSStatusErrorDomain")
+CFCONST(NSInvalidArgumentException, "NSInvalidArgumentException")
+CFCONST(NSInternalInconsistencyException, "NSInternalInconsistencyException")
+CFCONST(NSGenericException, "NSGenericException")
+CFCONST(NSRangeException, "NSRangeException")
+CFCONST(kCFErrorDomainPOSIX, "NSPOSIXErrorDomain")
+CFCONST(kCFErrorDomainOSStatus, "NSOSStatusErrorDomain")
+CFCONST(kCFErrorDomainCocoa, "NSCocoaErrorDomain")
+CFCONST(kCFErrorLocalizedDescriptionKey, "NSLocalizedDescription")
+CFCONST(kCFErrorUnderlyingErrorKey, "NSUnderlyingError")
+CFCONST(kCFLocaleIdentifier, "locale:id")
+CFCONST(kCFPreferencesCurrentApplication, "kCFPreferencesCurrentApplication")
+CFCONST(kCFPreferencesAnyApplication, "kCFPreferencesAnyApplication")
+CFCONST(kCFPreferencesCurrentUser, "kCFPreferencesCurrentUser")
+CFCONST(kCFPreferencesAnyUser, "kCFPreferencesAnyUser")
+CFCONST(kCFPreferencesCurrentHost, "kCFPreferencesCurrentHost")
+CFCONST(kCFPreferencesAnyHost, "kCFPreferencesAnyHost")
+/* kCFAllocatorDefault e kCFAllocatorSystemDefault são NULL de propósito: "use o padrão" */
+const void *kCFAllocatorDefault = 0, *kCFAllocatorSystemDefault = 0, *kCFAllocatorMalloc = 0, *kCFAllocatorNull = 0;
+id_ CFBundleGetIdentifier(id_ bundle) { return bundle ? MSG0_(id_, bundle, "bundleIdentifier") : 0; }
+
+/* CFString: o NSString do mOS guarda UTF-8; os índices (CFRange) são tratados como bytes, o que vale
+ * para ASCII (chaves, caminhos e nomes que o Chromium converte ao iniciar) */
+#define ENC_UTF8  0x08000100u
+#define ENC_ASCII 0x0600u
+#define ENC_UTF16 0x0100u
+static const char *cf_utf8(id_ s) { return s ? MSG0_(const char *, s, "UTF8String") : 0; }
+long CFStringGetLength(id_ s) { const char *u = cf_utf8(s); return u ? (long)strlen(u) : 0; }
+const char *CFStringGetCStringPtr(id_ s, u32 enc) { return (enc == ENC_UTF8 || enc == ENC_ASCII) ? cf_utf8(s) : 0; }
+unsigned char CFStringGetCString(id_ s, char *buf, long size, u32 enc) {
+    (void)enc;
+    const char *u = cf_utf8(s);
+    if (!u || !buf || size <= 0) return 0;
+    size_t n = strlen(u);
+    if ((long)n + 1 > size) return 0;
+    memcpy(buf, u, n + 1);
+    return 1;
+}
+/* CFIndex CFStringGetBytes(str, CFRange{loc,len}, enc, lossByte, isExternal, buffer, maxBufLen, usedBufLen*) */
+long CFStringGetBytes(id_ s, long loc, long len, u32 enc, u8 loss, u8 ext, u8 *buf, long max, long *used) {
+    (void)loss; (void)ext;
+    const char *u = cf_utf8(s);
+    long total = u ? (long)strlen(u) : 0;
+    if (loc < 0 || loc > total) loc = total;
+    if (len < 0 || loc + len > total) len = total - loc;
+    long out = 0;
+    if (enc == ENC_UTF16) {                              /* só ASCII -> UTF-16LE */
+        for (long i = 0; i < len; i++) {
+            if (buf) { if (out + 2 > max) break; buf[out] = (u8)u[loc + i]; buf[out + 1] = 0; }
+            out += 2;
+        }
+        if (used) *used = out;
+        return out / 2;
+    }
+    if (buf) { out = len < max ? len : max; memcpy(buf, u + loc, (size_t)out); } else out = len;
+    if (used) *used = out;
+    return buf ? out : len;
+}
+/* tamanho máximo do caminho em UTF-8 (+ NUL) */
+long CFStringGetMaximumSizeOfFileSystemRepresentation(id_ s) { return CFStringGetLength(s) * 3 + 1; }
+long CFStringGetMaximumSizeForEncoding(long len, u32 enc) { return enc == ENC_UTF16 ? len * 2 : len * 3; }
+u8 CFStringGetFileSystemRepresentation(id_ s, char *buf, long max) { return CFStringGetCString(s, buf, max, ENC_UTF8); }
+/* CFComparisonResult CFStringCompare(a, b, options): kCFCompareCaseInsensitive = 1 */
+long CFStringCompare(id_ a, id_ b, u64 opts) {
+    const char *x = cf_utf8(a), *y = cf_utf8(b);
+    if (!x) x = "";
+    if (!y) y = "";
+    for (;; x++, y++) {
+        int cx = (unsigned char)*x, cy = (unsigned char)*y;
+        if (opts & 1) { if (cx >= 'A' && cx <= 'Z') cx += 32; if (cy >= 'A' && cy <= 'Z') cy += 32; }
+        if (cx != cy) return cx < cy ? -1 : 1;
+        if (!cx) return 0;
+    }
+}
+/* CFDictionary/CFArray/CFNumber em ponte com NSDictionary/NSArray/NSNumber */
+id_ CFDictionaryGetValue(id_ d, id_ key) { return d && key ? MSG1_(id_, d, "objectForKey:", key) : 0; }
+u8 CFDictionaryGetValueIfPresent(id_ d, id_ key, id_ *out) { id_ v = CFDictionaryGetValue(d, key); if (out) *out = v; return v != 0; }
+u8 CFDictionaryContainsKey(id_ d, id_ key) { return CFDictionaryGetValue(d, key) != 0; }
+long CFDictionaryGetCount(id_ d) { return d ? MSG0_(long, d, "count") : 0; }
+long CFArrayGetCount(id_ a) { return a ? MSG0_(long, a, "count") : 0; }
+id_ CFArrayGetValueAtIndex(id_ a, long i) { return a ? MSG1_(id_, a, "objectAtIndex:", (u64)i) : 0; }
+
+/* CFNotificationCenter: o centro local é o NSNotificationCenter padrão; observadores C ainda não são
+ * chamados (registro aceito), e o centro "Darwin" (entre processos) não existe no mOS */
+id_ CFNotificationCenterGetLocalCenter(void) { return MSG0_(id_, cx_class_named("NSNotificationCenter"), "defaultCenter"); }
+id_ CFNotificationCenterGetDarwinNotifyCenter(void) { return CFNotificationCenterGetLocalCenter(); }
+id_ CFNotificationCenterGetDistributedCenter(void) { return CFNotificationCenterGetLocalCenter(); }
+void CFNotificationCenterAddObserver(id_ c, const void *obs, void *cb, id_ name, const void *obj, long behavior) {
+    (void)c; (void)obs; (void)cb; (void)name; (void)obj; (void)behavior;
+}
+void CFNotificationCenterRemoveObserver(id_ c, const void *obs, id_ name, const void *obj) { (void)c; (void)obs; (void)name; (void)obj; }
+void CFNotificationCenterRemoveEveryObserver(id_ c, const void *obs) { (void)c; (void)obs; }
+void CFNotificationCenterPostNotification(id_ c, id_ name, const void *obj, id_ info, u8 now) { (void)c; (void)name; (void)obj; (void)info; (void)now; }
+
+/* SystemConfiguration mínimo: sem configd no mOS. Criar um "store" falha de forma documentada
+ * (NULL + SCError), e as consultas de proxy/rede dizem "sem configuração" (conexão direta). */
+#define kSCStatusFailed 1001
+id_ SCDynamicStoreCreate(void *alloc, id_ name, void *cb, void *ctx) { (void)alloc; (void)name; (void)cb; (void)ctx; return 0; }
+id_ SCDynamicStoreCreateWithOptions(void *alloc, id_ name, id_ opts, void *cb, void *ctx) { (void)alloc; (void)name; (void)opts; (void)cb; (void)ctx; return 0; }
+id_ SCDynamicStoreCopyProxies(id_ store) { (void)store; return 0; }
+id_ SCDynamicStoreCopyValue(id_ store, id_ key) { (void)store; (void)key; return 0; }
+u8 SCDynamicStoreSetNotificationKeys(id_ s, id_ k, id_ p) { (void)s; (void)k; (void)p; return 0; }
+id_ SCDynamicStoreCreateRunLoopSource(void *alloc, id_ s, long order) { (void)alloc; (void)s; (void)order; return 0; }
+id_ SCDynamicStoreKeyCreateNetworkGlobalEntity(void *alloc, id_ domain, id_ entity) { (void)alloc; (void)domain; (void)entity; return 0; }
+id_ SCDynamicStoreCopyComputerName(id_ s, u32 *enc) { (void)s; if (enc) *enc = ENC_UTF8; return CFStringCreateWithFileSystemRepresentation(0, "mOS"); }
+id_ SCDynamicStoreCopyLocalHostName(id_ s) { (void)s; return CFStringCreateWithFileSystemRepresentation(0, "mos"); }
+int SCError(void) { return kSCStatusFailed; }
+const char *SCErrorString(int status) { (void)status; return "SystemConfiguration não disponível no mOS"; }
+id_ CFNetworkCopySystemProxySettings(void) { return objc_retain(MSG0_(id_, cx_class_named("NSDictionary"), "dictionary")); }
+
+u8 CFEqual(id_ a, id_ b) { return a == b || (a && b && MSG1_(signed char, a, "isEqual:", b)); }
+u64 CFHash(id_ a) { return a ? MSG0_(u64, a, "hash") : 0; }
+
+/* "NoCopy": o mOS copia mesmo assim (o desalocador do chamador não é usado) */
+id_ CFStringCreateWithBytes(void *alloc, const u8 *b, long n, u32 enc, u8 ext);
+id_ CFStringCreateWithBytesNoCopy(void *alloc, const u8 *b, long n, u32 enc, u8 ext, void *dealloc) {
+    (void)dealloc;
+    return CFStringCreateWithBytes(alloc, b, n, enc, ext);
+}
+long long llround(double x) { return x >= 0 ? (long long)(x + 0.5) : -(long long)(-x + 0.5); }
+long long llroundf(float x) { return llround((double)x); }
+
+id_ CFStringCreateWithCString(void *alloc, const char *s, u32 enc) { (void)enc; return CFStringCreateWithFileSystemRepresentation(alloc, s); }
+id_ CFStringCreateWithBytes(void *alloc, const u8 *b, long n, u32 enc, u8 ext) {
+    (void)ext;
+    if (!b || n < 0) return 0;
+    char *t = malloc((size_t)n + 1);
+    if (!t) return 0;
+    long o = 0;
+    if (enc == ENC_UTF16) for (long i = 0; i + 1 < n; i += 2) { unsigned c = b[i] | b[i + 1] << 8; o += wctomb(t + o, (wchar_t_)(c < 0x80 ? c : '?')); }
+    else { memcpy(t, b, (size_t)n); o = n; }
+    t[o] = 0;
+    id_ r = CFStringCreateWithFileSystemRepresentation(alloc, t);
+    free(t);
+    return r;
+}
+
+/* ---- sysctl: informações do sistema. O mOS se apresenta como Darwin 23 (macOS 14) para apps que
+ * exigem uma versão mínima; os números de CPU vêm do kernel. */
+extern int cx_errno;
+int strcmp(const char *a, const char *b);
+int strncmp(const char *a, const char *b, size_t n);
+/* statvfs/statfs: o volume do sistema (FAT32); números aproximados, suficientes para "há espaço" */
+typedef struct { u64 bsize, frsize; u32 blocks, bfree, bavail, files, ffree, favail; u64 fsid, flag, namemax; } cx_statvfs_t;
+int statvfs(const char *path, void *out) {
+    (void)path;
+    if (!out) return -1;
+    memset(out, 0, sizeof(cx_statvfs_t));
+    cx_statvfs_t *s = out;
+    s->bsize = s->frsize = 4096;
+    s->blocks = 131072; s->bfree = s->bavail = 65536;        /* 512 MiB, metade livre */
+    s->files = s->ffree = s->favail = 65536;
+    s->namemax = 255;
+    return 0;
+}
+int fstatvfs(int fd, void *out) { (void)fd; return statvfs("/", out); }
+/* resolver: sem /etc/resolv.conf no mOS; falha documentada (o Chromium usa o resolvedor interno) */
+int res_9_ninit(void *state) { (void)state; return -1; }
+void res_9_ndestroy(void *state) { (void)state; }
+void res_9_nclose(void *state) { (void)state; }
+
+/* confstr: pastas do usuário do Darwin (o Chromium monta o sandbox dos processos filhos com elas) */
+int mkdir(const char *p, unsigned mode);
+size_t strlcpy(char *d, const char *s, size_t n);
+size_t confstr(int name, char *buf, size_t len) {
+    const char *v;
+    switch (name) {
+    case 65536: v = "/Users/Visitante/"; break;                       /* _CS_DARWIN_USER_DIR */
+    case 65537: v = "/Users/Visitante/tmp/"; break;                   /* _CS_DARWIN_USER_TEMP_DIR */
+    case 65538: v = "/Users/Visitante/Library/Caches/"; break;        /* _CS_DARWIN_USER_CACHE_DIR */
+    case 1: v = "/usr/bin:/bin:/Sistema/Programas"; break;            /* _CS_PATH */
+    default: cx_errno = CX_EINVAL; return 0;
+    }
+    if (name == 65537) mkdir("/Users/Visitante/tmp", 0700);
+    if (name == 65538) { mkdir("/Users/Visitante/Library", 0700); mkdir("/Users/Visitante/Library/Caches", 0700); }
+    size_t n = strlen(v) + 1;
+    if (buf && len) strlcpy(buf, v, len);
+    return n;
+}
+
+/* ---- arquivos temporários: troca os X finais por letras aleatórias até achar um nome livre */
+int open(const char *path, int flags, ...);
+int access(const char *p, int m);
+void arc4random_buf(void *b, size_t n);
+static int fill_template(char *t, int suffix) {
+    size_t n = strlen(t);
+    if ((size_t)suffix > n) return -1;
+    size_t end = n - (size_t)suffix, x = 0;
+    while (x < end && t[end - 1 - x] == 'X') x++;
+    if (x < 6) { cx_errno = CX_EINVAL; return -1; }
+    static const char al[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    u8 r[32];
+    arc4random_buf(r, sizeof r);
+    for (size_t i = 0; i < x; i++) t[end - x + i] = al[r[i % 32] % 62];
+    return 0;
+}
+int mkstemps(char *t, int suffix) {
+    for (int tries = 0; tries < 100; tries++) {
+        if (fill_template(t, suffix) < 0) return -1;
+        if (access(t, 0) == 0) continue;
+        return open(t, 0x0202 | 0x0800, 0600);               /* O_RDWR | O_CREAT | O_EXCL (macOS) */
+    }
+    cx_errno = CX_EEXIST;
+    return -1;
+}
+int mkstemp(char *t) { return mkstemps(t, 0); }
+int mkostemp(char *t, int flags) { (void)flags; return mkstemps(t, 0); }
+char *mktemp(char *t) { return fill_template(t, 0) < 0 ? 0 : t; }
+char *mkdtemp(char *t) {
+    for (int tries = 0; tries < 100; tries++) {
+        if (fill_template(t, 0) < 0) return 0;
+        if (access(t, 0) == 0) continue;
+        return mkdir(t, 0700) == 0 ? t : 0;
+    }
+    return 0;
+}
+
+/* ---- poll: escrita sempre pronta; leitura pela consulta ao kernel (cx_fd_readable, kqueue.c).
+ * Espera em fatias de 1 ms até o prazo (timeout < 0 = sem prazo). */
+typedef struct { int fd; short events, revents; } cx_pollfd_t;
+int cx_fd_readable(int fd, long *avail, int *eof);
+int poll(cx_pollfd_t *fds, unsigned n, int timeout) {
+    u64 end = (u64)SYS0(SYS_TIME) + (u64)(timeout < 0 ? 0 : timeout);
+    for (;;) {
+        int ready = 0;
+        for (unsigned i = 0; i < n; i++) {
+            fds[i].revents = (short)(fds[i].events & 0x4);    /* POLLOUT */
+            long avail; int eof;
+            if ((fds[i].events & 0x1) && cx_fd_readable(fds[i].fd, &avail, &eof)) fds[i].revents |= eof && !avail ? 0x11 : 0x1;  /* POLLIN (+POLLHUP) */
+            if (fds[i].revents) ready++;
+        }
+        if (ready || timeout == 0 || (timeout > 0 && (u64)SYS0(SYS_TIME) >= end)) return ready;
+        SYS1(SYS_SLEEP, 1);
+    }
+}
+
+/* ---- posix_spawn: ações de arquivo extras (o SYS_SPAWN do mOS herda stdin/stdout/stderr) */
+int posix_spawn_file_actions_addopen(void *a, int fd, const char *path, int flags, unsigned mode) {
+    (void)a; (void)fd; (void)path; (void)flags; (void)mode;
+    return 0;
+}
+int posix_spawn_file_actions_addinherit_np(void *a, int fd) { (void)a; (void)fd; return 0; }
+int posix_spawn_file_actions_addchdir_np(void *a, const char *p) { (void)a; (void)p; return 0; }
+int posix_spawnattr_setbinpref_np(void *a, size_t n, int *pref, size_t *ocount) { (void)a; (void)pref; if (ocount) *ocount = n; return 0; }
+/* porta especial do PRÓXIMO filho de posix_spawn (bootstrap, which = 4): o mach.c/kernel usam no
+ * machipc_spawn. Movido para o kernel (MACH_OP_SPAWN_SPECIAL); o objeto `a` do atributo não é usado. */
+int posix_spawnattr_setspecialport_np(void *a, u32 port, int which) {
+    (void)a;
+    u64 args[8] = {(u64)which, port, 0, 0, 0, 0, 0, 0};
+    cx_syscall(SYS_MACH_PORT, (long)MACH_OP_SPAWN_SPECIAL, (long)args, 0, 0, 0);
+    return 0;
+}
+
+/* bootstrap (launchd), task_get/set_special_port e bootstrap_port: agora em userland/libsystem/mach.c,
+ * usando as syscalls de portas Mach do kernel (registro de serviços global entre processos). */
+
+/* ---- sandbox e Keychain: o mOS não tem; "permitido" e "sem keychain" */
+int sandbox_check(int pid, const char *op, int type, ...) { (void)pid; (void)op; (void)type; return 0; }
+int sandbox_init(const char *profile, u64 flags, char **err) { (void)profile; (void)flags; if (err) *err = 0; return 0; }
+int sandbox_init_with_parameters(const char *profile, u64 flags, const char *const params[], char **err) {
+    (void)profile; (void)flags; (void)params; if (err) *err = 0; return 0;
+}
+void sandbox_free_error(char *err) { (void)err; }
+int SecKeychainAddCallback(void *cb, u32 mask, void *ctx) { (void)cb; (void)mask; (void)ctx; return 0; }
+int SecKeychainRemoveCallback(void *cb) { (void)cb; return 0; }
+
+/* ---- NSSearchPathForDirectoriesInDomains: pastas do usuário do mOS */
+id_ NSSearchPathForDirectoriesInDomains(unsigned long dir, unsigned long mask, u8 expand) {
+    (void)mask; (void)expand;
+    const char *p;
+    switch (dir) {
+    case 5: p = "/Users/Visitante/Library"; break;                        /* NSLibraryDirectory */
+    case 9: p = "/Users/Visitante/Documentos"; break;                     /* NSDocumentDirectory */
+    case 12: p = "/Users/Visitante/Mesa"; break;                          /* NSDesktopDirectory */
+    case 13: p = "/Users/Visitante/Library/Caches"; break;                /* NSCachesDirectory */
+    case 14: p = "/Users/Visitante/Library/Application Support"; break;   /* NSApplicationSupportDirectory */
+    case 15: p = "/Users/Visitante/Downloads"; break;                     /* NSDownloadsDirectory */
+    default: p = "/Users/Visitante/Library"; break;
+    }
+    if (dir == 14 || dir == 13) { mkdir("/Users/Visitante/Library", 0700); mkdir(p, 0700); }
+    id_ a = MSG0_(id_, cx_class_named("NSMutableArray"), "array");
+    MSG1_(void, a, "addObject:", MSG1_(id_, cx_class_named("NSString"), "stringWithUTF8String:", p));
+    return a;
+}
+
+/* variantes _l (locale): o mOS só tem o locale C/UTF-8 */
+int vsnprintf(char *b, size_t n, const char *fmt, __builtin_va_list ap);
+int snprintf_l(char *b, size_t n, void *loc, const char *fmt, ...) {
+    (void)loc;
+    __builtin_va_list ap;
+    __builtin_va_start(ap, fmt);
+    int r = vsnprintf(b, n, fmt, ap);
+    __builtin_va_end(ap);
+    return r;
+}
+int pthread_getname_np(void *t, char *buf, size_t len) { (void)t; if (buf && len) buf[0] = 0; return 0; }
+typedef struct { const char *name; int kind; u64 num; const char *str; } sysctl_ent_t;   /* kind: 4/8 bytes, 0 texto */
+static int sysctl_put(const sysctl_ent_t *e, void *old, size_t *oldlen) {
+    u64 n = e->kind ? (u64)e->kind : strlen(e->str) + 1;
+    u64 v = e->num;
+    if (!strcmp(e->name, "hw.ncpu") || !strcmp(e->name, "hw.activecpu") || !strcmp(e->name, "hw.logicalcpu") ||
+        !strcmp(e->name, "hw.physicalcpu") || !strcmp(e->name, "hw.logicalcpu_max") || !strcmp(e->name, "hw.physicalcpu_max") ||
+        !strcmp(e->name, "machdep.cpu.core_count") || !strcmp(e->name, "machdep.cpu.thread_count") ||
+        !strncmp(e->name, "hw.perflevel0.", 14) && e->kind) {
+        long c = SYS0(SYS_CPUS);
+        v = c > 0 ? (u64)c : 1;
+    }
+    if (!oldlen) return 0;
+    if (!old) { *oldlen = n; return 0; }
+    if (*oldlen < n) { cx_errno = CX_ENOMEM; return -1; }
+    if (e->kind == 4) *(u32 *)old = (u32)v;
+    else if (e->kind == 8) *(u64 *)old = v;
+    else memcpy(old, e->str, n);
+    *oldlen = n;
+    return 0;
+}
+static const sysctl_ent_t sysctl_tab[] = {
+    {"hw.ncpu", 4, 1, 0}, {"hw.activecpu", 4, 1, 0}, {"hw.logicalcpu", 4, 1, 0}, {"hw.physicalcpu", 4, 1, 0},
+    {"hw.logicalcpu_max", 4, 1, 0}, {"hw.physicalcpu_max", 4, 1, 0},
+    {"machdep.cpu.core_count", 4, 1, 0}, {"machdep.cpu.thread_count", 4, 1, 0},
+    {"hw.memsize", 8, 2ull << 30, 0}, {"hw.pagesize", 8, 4096, 0}, {"hw.pagesize32", 4, 4096, 0},
+    {"hw.cachelinesize", 8, 64, 0}, {"hw.l1dcachesize", 8, 32768, 0}, {"hw.l1icachesize", 8, 32768, 0},
+    {"hw.l2cachesize", 8, 262144, 0}, {"hw.l3cachesize", 8, 8u << 20, 0},
+    {"hw.cpufrequency", 8, 2000000000ull, 0}, {"hw.cpufrequency_max", 8, 2000000000ull, 0}, {"hw.busfrequency", 8, 100000000ull, 0},
+    {"hw.byteorder", 4, 1234, 0}, {"hw.cputype", 4, 0x01000007, 0}, {"hw.cpusubtype", 4, 3, 0}, {"hw.cpu64bit_capable", 4, 1, 0},
+    {"hw.optional.x86_64", 4, 1, 0}, {"hw.optional.sse2", 4, 1, 0}, {"hw.optional.sse3", 4, 1, 0}, {"hw.optional.arm64", 4, 0, 0},
+    {"sysctl.proc_translated", 4, 0, 0}, {"sysctl.proc_native", 4, 1, 0},
+    {"hw.model", 0, 0, "mOS1,1"}, {"hw.machine", 0, 0, "x86_64"}, {"hw.targettype", 0, 0, "mOS"},
+    {"machdep.cpu.brand_string", 0, 0, "mOS Virtual CPU"}, {"machdep.cpu.vendor", 0, 0, "GenuineIntel"},
+    {"machdep.cpu.family", 4, 6, 0}, {"machdep.cpu.model", 4, 85, 0}, {"machdep.cpu.stepping", 4, 4, 0},
+    {"kern.ostype", 0, 0, "Darwin"}, {"kern.osrelease", 0, 0, "23.0.0"}, {"kern.osversion", 0, 0, "23A344"},
+    {"kern.osproductversion", 0, 0, "14.0"}, {"kern.osproductversioncompat", 0, 0, "14.0"},
+    {"kern.version", 0, 0, "Darwin Kernel Version 23.0.0: mOS Nucleo; RELEASE_X86_64"},
+    {"kern.hostname", 0, 0, "mOS"}, {"kern.osrevision", 4, 199506, 0},
+    {"kern.maxfilesperproc", 4, 32, 0}, {"kern.maxfiles", 4, 256, 0}, {"kern.argmax", 4, 262144, 0},
+    {"kern.maxproc", 4, 64, 0}, {"kern.maxprocperuid", 4, 64, 0}, {"kern.securelevel", 4, 0, 0},
+    {"hw.nperflevels", 4, 1, 0}, {"hw.perflevel0.logicalcpu", 4, 1, 0}, {"hw.perflevel0.physicalcpu", 4, 1, 0},
+    {"hw.perflevel0.logicalcpu_max", 4, 1, 0}, {"hw.perflevel0.physicalcpu_max", 4, 1, 0}, {"hw.perflevel0.name", 0, 0, "Performance"},
+    {"kern.memorystatus_vm_pressure_level", 4, 1, 0}, {"kern.memorystatus_level", 4, 100, 0},
+    {"kern.hv_support", 4, 0, 0}, {"kern.tcsm_available", 4, 0, 0}, {"kern.tcsm_enable", 4, 0, 0}, {"kern.secure_kernel", 4, 0, 0}, {"security.mac.lockdown_mode_state", 4, 0, 0},
+};
+int sysctlbyname(const char *name, void *old, size_t *oldlen, const void *newp, size_t newlen) {
+    (void)newp; (void)newlen;
+    if (!name) { cx_errno = CX_EINVAL; return -1; }
+    for (u32 i = 0; i < sizeof sysctl_tab / sizeof sysctl_tab[0]; i++)
+        if (!strcmp(sysctl_tab[i].name, name)) return sysctl_put(&sysctl_tab[i], old, oldlen);
+    cx_fdprintf(2, "[sysctl] chave desconhecida no mOS: %s\n", name);
+    cx_errno = CX_ENOENT;
+    return -1;
+}
+/* sysctl por MIB: os mais comuns (CTL_KERN=1, CTL_HW=6) mapeados para os nomes */
+int sysctl(int *mib, unsigned n, void *old, size_t *oldlen, void *newp, size_t newlen) {
+    if (!mib || n < 2) { cx_errno = CX_EINVAL; return -1; }
+    const char *name = 0;
+    if (mib[0] == 1) switch (mib[1]) {
+        case 1: name = "kern.ostype"; break;        case 2: name = "kern.osrelease"; break;
+        case 3: name = "kern.osrevision"; break;    case 4: name = "kern.version"; break;
+        case 6: name = "kern.maxproc"; break;       case 7: name = "kern.maxfiles"; break;
+        case 8: name = "kern.argmax"; break;        case 10: name = "kern.hostname"; break;
+        case 65: name = "kern.osversion"; break;
+        case 14:                                    /* KERN_PROC: struct kinfo_proc zerada = sem depurador */
+            if (oldlen) { if (old) { memset(old, 0, *oldlen); } else *oldlen = 648; }
+            return 0;
+    }
+    else if (mib[0] == 6) switch (mib[1]) {
+        case 1: name = "hw.machine"; break;         case 2: name = "hw.model"; break;
+        case 3: name = "hw.ncpu"; break;            case 4: name = "hw.byteorder"; break;
+        case 7: name = "hw.pagesize32"; break;      case 24: name = "hw.memsize"; break;
+        case 25: name = "hw.activecpu"; break;
+    }
+    if (!name) { cx_errno = CX_ENOENT; return -1; }
+    return sysctlbyname(name, old, oldlen, newp, newlen);
+}
+int sysctlnametomib(const char *name, int *mib, size_t *n) {
+    static const struct { const char *s; int a, b; } t[] = {
+        {"kern.ostype", 1, 1}, {"kern.osrelease", 1, 2}, {"kern.version", 1, 4}, {"kern.osversion", 1, 65},
+        {"hw.ncpu", 6, 3}, {"hw.memsize", 6, 24}, {"hw.pagesize", 6, 7}, {"hw.activecpu", 6, 25}, {"hw.model", 6, 2},
+    };
+    for (u32 i = 0; i < sizeof t / sizeof t[0]; i++)
+        if (!strcmp(t[i].s, name)) {
+            if (!n || *n < 2) { cx_errno = CX_ENOMEM; return -1; }
+            mib[0] = t[i].a; mib[1] = t[i].b; *n = 2;
+            return 0;
+        }
+    cx_errno = CX_ENOENT;
+    return -1;
+}
+
+/* ---- atributos de pthread que faltavam (o pthread_create do mOS usa pilhas de 512 KiB) */
+int pthread_attr_getstacksize(const void *a, size_t *s) { (void)a; if (s) *s = 512 << 10; return 0; }
+int pthread_attr_getstack(const void *a, void **addr, size_t *s) { (void)a; if (addr) *addr = 0; if (s) *s = 512 << 10; return 0; }
+int pthread_attr_setstack(void *a, void *addr, size_t s) { (void)a; (void)addr; (void)s; return 0; }
+int pthread_attr_setdetachstate(void *a, int st) { (void)a; (void)st; return 0; }
+int pthread_attr_getdetachstate(const void *a, int *st) { (void)a; if (st) *st = 1; return 0; }   /* JOINABLE */
+int pthread_attr_setguardsize(void *a, size_t s) { (void)a; (void)s; return 0; }
+int pthread_attr_getguardsize(const void *a, size_t *s) { (void)a; if (s) *s = 4096; return 0; }
+int pthread_attr_setscope(void *a, int s) { (void)a; (void)s; return 0; }
+int pthread_attr_setschedpolicy(void *a, int p) { (void)a; (void)p; return 0; }
+int pthread_attr_setschedparam(void *a, const void *p) { (void)a; (void)p; return 0; }
+int pthread_attr_getschedparam(const void *a, int *p) { (void)a; if (p) *p = 31; return 0; }
+int pthread_attr_setinheritsched(void *a, int i) { (void)a; (void)i; return 0; }
+int pthread_attr_set_qos_class_np(void *a, unsigned q, int r) { (void)a; (void)q; (void)r; return 0; }
+int pthread_set_qos_class_self_np(unsigned q, int r) { (void)q; (void)r; return 0; }
+unsigned qos_class_self(void) { return 0x21; }                    /* QOS_CLASS_USER_INTERACTIVE */
+unsigned qos_class_main(void) { return 0x21; }
+int pthread_setschedparam(void *t, int pol, const void *p) { (void)t; (void)pol; (void)p; return 0; }
+int pthread_getschedparam(void *t, int *pol, int *p) { (void)t; if (pol) *pol = 1; if (p) *p = 31; return 0; }
+int sched_get_priority_min(int p) { (void)p; return 15; }
+int sched_get_priority_max(int p) { (void)p; return 47; }
+
+/* ---- limites de recursos */
+typedef struct { u64 cur, max; } cx_rlimit_t;
+#define RLIM_INFINITY 0x7FFFFFFFFFFFFFFFull
+int getrlimit(int res, cx_rlimit_t *r) {
+    if (!r) { cx_errno = CX_EFAULT; return -1; }
+    switch (res) {
+    case 3: r->cur = r->max = 8u << 20; break;          /* RLIMIT_STACK */
+    case 8: r->cur = r->max = 32; break;                /* RLIMIT_NOFILE: 32 descritores por processo no mOS */
+    case 4: r->cur = r->max = 0; break;                 /* RLIMIT_CORE */
+    default: r->cur = r->max = RLIM_INFINITY; break;
+    }
+    return 0;
+}
+int setrlimit(int res, const cx_rlimit_t *r) { (void)res; (void)r; return 0; }
+
+/* MB_CUR_MAX no macOS é ___mb_cur_max() */
+int __mb_cur_max = 4;
+int ___mb_cur_max(void) { return 4; }
+int ___mb_cur_max_l(void *loc) { (void)loc; return 4; }
