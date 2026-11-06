@@ -81,7 +81,25 @@ cabeçalhos ObjC de `userland\sdk\include`), e versões mínimas de `stdio.h`, `
 
 ## OpenSwiftUI_SPI
 
-Compilado com um include próprio (`build\swift\openswiftui\OpenSwiftUI_SPI\include`): só o módulo `OpenSwiftUI_SPI`
-(os `*_Private` do upstream, como `CoreText_Private`, ficam de fora porque o mOS tem módulos Swift com esses nomes) e o
+Compilado com um include próprio (`build\swift\openswiftui\OpenSwiftUI_SPI\include`): o módulo `OpenSwiftUI_SPI` e os
+módulos `Shims\` do upstream (`libAccessibilityPrivate`, `UIFoundation_Private`, `QuartzCore_Private`...; quase vazios fora do
+Darwin), menos `CoreText_Private`, que no mOS é módulo Swift. `CoreGraphics_Private.h` vai numa cópia corrigida. E o
 mOS como plataforma não-Darwin (`-DOPENSWIFTUI_MOS` no `OpenSwiftUITargetConditionals.h`). Os `.c` de Overlay/Util vão
 em `libOpenSwiftUI_SPI.a`; os `.m` (Objective-C) e `Shims\` (interfaces privadas da Apple) ficam de fora.
+
+## OpenSwiftUICore (em andamento)
+
+`.\tools\build-openswiftui-deps.ps1 -Repo OpenSwiftUICore` compila os 665 fontes num módulo só (argumentos do
+swift-frontend num arquivo `.rsp`, porque a linha de comando do Windows não comporta). O que o build faz para o caminho
+não-Darwin funcionar no mOS:
+
+- **Glibc**: o OpenSwiftUI só conhece Darwin ou Glibc. O módulo `Glibc` do mOS (`swift\Glibc`) reexporta MOSLibm e
+  CoreGraphics. Só entra no `-I` do OpenSwiftUI.
+- **Synchronization**: `Atomic<UInt32/Int32/Int>`, em `swift\Synchronization`, com `-parse-stdlib` e `@_rawLayout`
+  (o stdlib do mOS não traz o módulo).
+- **Sem _Concurrency**: os atributos `@MainActor`/`@isolated(any)` são retirados dos fontes, e `#isolation` vira `nil`.
+  `overlay\OpenSwiftUICore\mOS\ConcurrencyShims.swift` tem `Actor`, `MainActor.assumeIsolated`, `extractIsolation` e
+  `ContinuousClock` com visibilidade `package`. Quando o mOS tiver o runtime de concorrência, isso sai.
+- **Falta**: a maior parte do Foundation que o Core usa: Date, Calendar, Locale, TimeZone, AttributedString com
+  escopos, FormatStyle, URL, Bundle, NS* (NSString, NSValue, NSArray, NSCoder...), RunLoop/Timer, UserDefaults, JSON e
+  PropertyList. Na última medição eram cerca de 1450 erros, quase todos "cannot find X".

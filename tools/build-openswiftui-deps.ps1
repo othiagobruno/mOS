@@ -21,6 +21,23 @@ $shim = "$root\userland\sdk\openswiftui\include"   # os/log.h e tipos de CF que 
 $full = "$root\build\swift\full"                   # stdlib Swift completa (sessão do runtime Swift)
 $importerInc = "$root\userland\sdk\openswiftui\importer"
 
+# ---- libc do macOS para o importador do Swift: cópia dos cabeçalhos Darwin do zig (o ABI que o libSystem do mOS
+# implementa) num módulo clang "MOSDarwin". Em modo de módulos esses cabeçalhos esperam o stddef modular do SDK da
+# Apple; na cópia `__has_feature(modules)` vira 0 e os tipos saem dos __darwin_* como num build sem módulos.
+# O nome não é "Darwin" de propósito: canImport(Darwin) levaria o OpenSwiftUI aos caminhos do SDK/ObjC da Apple.
+$darwinInc = "$outRoot\darwin-libc"
+$darwinSrc = Join-Path (Split-Path $zig -Parent) 'lib\libc\include\any-darwin-any'
+if (-not (Test-Path "$darwinInc\module.modulemap")) {
+    New-Item -ItemType Directory -Force $outRoot | Out-Null
+    if (Test-Path $darwinInc) { Remove-Item $darwinInc -Recurse -Force }
+    Copy-Item $darwinSrc $darwinInc -Recurse
+    foreach ($h in Get-ChildItem $darwinInc -Recurse -File) {
+        $b = [IO.File]::ReadAllText($h.FullName)
+        if ($b.Contains('__has_feature(modules)')) { [IO.File]::WriteAllText($h.FullName, $b.Replace('__has_feature(modules)', '0')) }
+    }
+}
+Copy-Item "$root\userland\sdk\openswiftui\darwin\*" $darwinInc -Force   # mos_darwin.h + module.modulemap
+
 # ---- fontes
 $dl = "$root\.tools\openswiftui-dl"
 New-Item -ItemType Directory -Force $deps, $dl | Out-Null
@@ -73,7 +90,8 @@ function Build-Swift($name, $files, $extra, $lang = '5', [bool]$evolution = $tru
            '-disable-objc-interop', '-I', $full, '-I', "$swsrc\stdlib\public\SwiftShims\swift\shims",
            '-disable-implicit-concurrency-module-import', '-disable-implicit-string-processing-module-import',
            '-enable-experimental-feature', 'Extern', '-Xcc', '-Wno-nullability-completeness',
-           '-Xcc', "-I$importerInc",   # CoreFoundation C mínimo para o importador (a libc do zig quebra em modo de módulos)
+           '-Xcc', "-I$importerInc",   # CoreFoundation/CoreGraphics/CommonCrypto C para o importador
+           '-Xcc', "-isystem$darwinInc", # libc do macOS (módulo MOSDarwin)
            '-emit-module-path', "$out\$name.swiftmodule", '-o', "$out\${name}_swift.o") + $(if ($evolution) { @('-enable-library-evolution') } else { @() }) + $extra + $files
     # argumentos num arquivo de resposta: a linha de comando do Windows tem limite (o OpenSwiftUICore tem 600+ fontes)
     $rsp = "$out\$name.rsp"
