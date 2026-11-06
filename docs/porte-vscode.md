@@ -319,6 +319,10 @@ e a porta do surface é uma entrada de memória do kernel. No harness (`tools/ma
 com `img`; os samples Lista, Formulario e Bloco dão saída idêntica com e sem o gancho (comparado com um libSystem compilado com
 `-DQC_SEM_GANCHO`, que desliga o `cx_quartzcore_init`).
 
+Medido com `tools/machocheck.c` no bundle inteiro do VS Code: QuartzCore 21 imports / **0** ausentes, IOSurface 48 / **0**,
+CoreVideo 65 / **0**, OpenGL 2 / 0; do Metal sobram só 19 classes `MTL*Descriptor` (o carregador as liga ao `NSObject`, e
+`MTLCreateSystemDefaultDevice` = nil faz o Chromium não usá-las).
+
 **Lição do carregador**: símbolos `__attribute__((weak))` do libSystem **não** são exportados aos apps (o `CGSMainConnectionID`
 fraco virou "símbolo não implementado"); use definições fortes.
 

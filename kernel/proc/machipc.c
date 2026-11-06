@@ -156,10 +156,10 @@ static kport_t *g_bootstrap;  /* o "launchd" do mOS: objeto do kernel, nunca lib
 static struct { char name[128]; kport_t *port; } bs_reg[256];
 static int log_left = 300;    /* diagnóstico no log serial, limitado */
 
-static void mlog(const char *fmt, u64 a, u64 b, const char *s) {
+static void mlog(const char *fmt, const char *s, u64 a, u64 b) {
     if (log_left <= 0) return;
     log_left--;
-    kprintf(fmt, a, b, s ? s : "");
+    kprintf(fmt, s ? s : "", a, b);
 }
 
 /* ------------------------------------------------------------ portas e memória */
@@ -320,8 +320,9 @@ static u32 rd32(const u8 *b, u32 o) { return (u32)b[o] | (u32)b[o+1] << 8 | (u32
 static void wr32(u8 *b, u32 o, u32 v) { b[o] = v; b[o+1] = v >> 8; b[o+2] = v >> 16; b[o+3] = v >> 24; }
 static u64 rd64(const u8 *b, u32 o) { return (u64)rd32(b, o) | (u64)rd32(b, o+4) << 32; }
 static void wr64(u8 *b, u32 o, u64 v) { wr32(b, o, (u32)v); wr32(b, o+4, (u32)(v >> 32)); }
-static u8 bits_local(u32 bits) { return bits & 0x1f; }
-static u8 bits_remote(u32 bits) { return (bits >> 8) & 0x1f; }
+/* MACH_MSGH_BITS(remote, local) = remote | (local << 8): a disposição do destino fica no byte baixo */
+static u8 bits_remote(u32 bits) { return bits & 0x1f; }
+static u8 bits_local(u32 bits) { return (bits >> 8) & 0x1f; }
 
 /* ------------------------------------------------------------ enfileirar e acordar */
 static void kmsg_free(kmsg_t *m) {
@@ -1034,7 +1035,7 @@ static u32 bootstrap_op(mspace_t *sp, u32 op, const char *name, u32 *out_name) {
         if (e) { e->type |= T_RECEIVE; port_unref(p); } else e = ent_add(sp, 0, T_RECEIVE, p);
         if (!e) { port_unref(p); return BS_NO_MEMORY; }
         *out_name = e->name;
-        mlog("mach: bootstrap check_in '%s' (pid %llu)\n", (u64)sp->pid, 0, name);
+        mlog("mach: bootstrap check_in '%s' (pid %llu)\n", name, (u64)sp->pid, 0);
         return 0;
     }
     if (op == MACH_BS_LOOK_UP) {
@@ -1043,7 +1044,7 @@ static u32 bootstrap_op(mspace_t *sp, u32 op, const char *name, u32 *out_name) {
         port_ref(p);
         p->srights++;
         *out_name = insert_recv_right(sp, p, MT_MOVE_SEND);
-        mlog("mach: bootstrap look_up '%s' -> porta %llx (pid %llu)\n", (u64)*out_name, (u64)sp->pid, name);
+        mlog("mach: bootstrap look_up '%s' -> nome %llx (pid %llu)\n", name, (u64)*out_name, (u64)sp->pid);
         return 0;
     }
     if (op == MACH_BS_REGISTER) {
