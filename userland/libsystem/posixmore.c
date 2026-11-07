@@ -671,3 +671,160 @@ char *inet_ntoa(cx_in_addr_t a) {
     b[o] = 0;
     return b;
 }
+
+/* ============================================================ coreutils 9.11 e portable-ruby 3.4.5 */
+int chdir(const char *p);
+int fork(void);
+int symlink(const char *t, const char *p);
+long readlink(const char *p, char *b, size_t n);
+int execve(const char *path, char *const argv[], char *const envp[]);
+extern char **environ;
+int open(const char *p, int flags, ...);
+long read(int fd, void *b, size_t n);
+int close(int fd);
+int clock_gettime(int clk, cx_ts_t *ts);
+char *getlogin(void);
+size_t strlcpy(char *d, const char *s, size_t n);
+const void *_dyld_get_image_header(unsigned i);
+int usleep(unsigned us);
+
+/* half (binary16) -> float: o compiler-rt do macOS exporta isto pelo libSystem */
+float __extendhfsf2(unsigned short h) {
+    unsigned s = (unsigned)(h >> 15) << 31, e = (h >> 10) & 0x1F, m = h & 0x3FF, f;
+    if (e == 0) {
+        if (!m) f = s;
+        else { e = 127 - 15 + 1; while (!(m & 0x400)) { m <<= 1; e--; } m &= 0x3FF; f = s | e << 23 | m << 13; }
+    } else if (e == 31) f = s | 0x7F800000u | m << 13;
+    else f = s | (e + 127 - 15) << 23 | m << 13;
+    union { unsigned u; float x; } v = {f};
+    return v.x;
+}
+
+/* ACL: o sistema de arquivos do mOS não tem; ENOTSUP faz o ls e o cp seguirem sem elas */
+void *acl_get_file(const char *p, int t) { (void)p; (void)t; cx_errno = 45; return 0; }
+void *acl_get_link_np(const char *p, int t) { (void)p; (void)t; cx_errno = 45; return 0; }
+void *acl_get_fd_np(int fd, int t) { (void)fd; (void)t; cx_errno = 45; return 0; }
+int acl_set_file(const char *p, int t, void *a) { (void)p; (void)t; (void)a; cx_errno = 45; return -1; }
+
+int clock_getres(int clk, cx_ts_t *ts) { (void)clk; if (ts) { ts->tv_sec = 0; ts->tv_nsec = 1000000; } return 0; }   /* relógio do kernel: 1 ms */
+int clock_settime(int clk, const cx_ts_t *ts) { (void)clk; (void)ts; cx_errno = 1; return -1; }
+int settimeofday(const void *tv, const void *tz) { (void)tv; (void)tz; cx_errno = 1; return -1; }
+long gethostid(void) { return 0; }
+int fdatasync(int fd) { (void)fd; return 0; }
+void setutxent(void) {}
+void endutxent(void) {}
+void *getutxent(void) { return 0; }            /* sem registro de logins (who/users ficam vazios) */
+int utmpxname(const char *f) { (void)f; return 0; }
+
+/* *at(): AT_FDCWD (-2) ou caminho absoluto; um dirfd de verdade vira o caminho dele (SYS_FDPATH) */
+static const char *at_path(int dirfd, const char *p, char *buf, size_t cap) {
+    if (dirfd == -2 || p[0] == '/') return p;
+    char d[1024];
+    if (cx_syscall(SYS_FDPATH, dirfd, (long)d, sizeof d, 0, 0) < 0) { cx_errno = 9; return 0; }
+    size_t n = strlen(d);
+    if (n + strlen(p) + 2 > cap) { cx_errno = 63; return 0; }
+    memcpy(buf, d, n);
+    buf[n] = '/';
+    strlcpy(buf + n + 1, p, cap - n - 1);
+    return buf;
+}
+int fchownat(int fd, const char *p, unsigned u, unsigned g, int fl) { (void)fd; (void)p; (void)u; (void)g; (void)fl; return 0; }
+int mkfifoat(int fd, const char *p, unsigned short m) { (void)fd; (void)p; (void)m; cx_errno = 45; return -1; }
+int mknodat(int fd, const char *p, unsigned short m, int dev) { (void)fd; (void)p; (void)m; (void)dev; cx_errno = 1; return -1; }
+long readlinkat(int fd, const char *p, char *b, size_t n) { char t[1024]; const char *q = at_path(fd, p, t, sizeof t); return q ? readlink(q, b, n) : -1; }
+int symlinkat(const char *tgt, int fd, const char *p) { char t[1024]; const char *q = at_path(fd, p, t, sizeof t); return q ? symlink(tgt, q) : -1; }
+int fchdir(int fd) {
+    char d[1024];
+    long r = cx_syscall(SYS_FDPATH, fd, (long)d, sizeof d, 0, 0);
+    if (r < 0) { cx_errno = (int)-r; return -1; }
+    return chdir(d);
+}
+
+/* sigset_t do macOS: 32 bits */
+int sigdelset(unsigned *s, int n) { if (n < 1 || n > 32) { cx_errno = 22; return -1; } *s &= ~(1u << (n - 1)); return 0; }
+int sigfillset(unsigned *s) { *s = 0xFFFFFFFFu; return 0; }
+int sigismember(const unsigned *s, int n) { if (n < 1 || n > 32) { cx_errno = 22; return -1; } return (*s >> (n - 1)) & 1; }
+int sigsuspend(const unsigned *m) { (void)m; usleep(100000); cx_errno = 4; return -1; }   /* EINTR depois de 100 ms */
+
+/* strmode: "drwxr-xr-x " (10 caracteres, espaço e NUL), como o ls -l */
+void strmode(unsigned short mode, char *p) {
+    unsigned t = mode & 0170000;
+    *p++ = t == 0040000 ? 'd' : t == 0120000 ? 'l' : t == 0020000 ? 'c' : t == 0060000 ? 'b' : t == 0010000 ? 'p' : t == 0140000 ? 's' : '-';
+    static const char rwx[] = "rwxrwxrwx";
+    for (int i = 0; i < 9; i++) p[i] = (mode >> (8 - i)) & 1 ? rwx[i] : '-';
+    if (mode & 04000) p[2] = p[2] == 'x' ? 's' : 'S';
+    if (mode & 02000) p[5] = p[5] == 'x' ? 's' : 'S';
+    if (mode & 01000) p[8] = p[8] == 'x' ? 't' : 'T';
+    p[9] = ' ';
+    p[10] = 0;
+}
+int vfork(void) { return fork(); }
+
+/* execl/execle: variádicas sobre o execve */
+int execl(const char *path, const char *a0, ...) {
+    char *av[64];
+    int n = 0;
+    __builtin_va_list ap;
+    __builtin_va_start(ap, a0);
+    for (const char *s = a0; s && n < 63; s = __builtin_va_arg(ap, const char *)) av[n++] = (char *)s;
+    __builtin_va_end(ap);
+    av[n] = 0;
+    return execve(path, av, environ);
+}
+int execle(const char *path, const char *a0, ...) {
+    char *av[64];
+    int n = 0;
+    __builtin_va_list ap;
+    __builtin_va_start(ap, a0);
+    for (const char *s = a0; s && n < 63; s = __builtin_va_arg(ap, const char *)) av[n++] = (char *)s;
+    av[n] = 0;
+    char *const *ev = __builtin_va_arg(ap, char *const *);
+    __builtin_va_end(ap);
+    return execve(path, av, ev);
+}
+
+/* times(): sem contagem de CPU por processo aqui; devolve o relógio em ticks de 100 Hz */
+typedef struct { unsigned long tms_utime, tms_stime, tms_cutime, tms_cstime; } cx_tms_t;
+unsigned long times(cx_tms_t *t) {
+    if (t) memset(t, 0, sizeof *t);
+    cx_ts_t ts;
+    clock_gettime(6, &ts);                         /* CLOCK_MONOTONIC_RAW */
+    return (unsigned long)ts.tv_sec * 100 + (unsigned long)ts.tv_nsec / 10000000;
+}
+/* truncate: o kernel grava arquivos inteiros; lê o começo e regrava com o tamanho pedido (o resto zerado) */
+int truncate(const char *path, long long len) {
+    if (len < 0) { cx_errno = 22; return -1; }
+    char *buf = len ? calloc(1, (size_t)len) : 0;
+    if (len && !buf) { cx_errno = 12; return -1; }
+    int fd = open(path, 0);
+    if (fd < 0) { free(buf); return -1; }
+    long got = 0, k;
+    while (got < len && (k = read(fd, buf + got, (size_t)(len - got))) > 0) got += k;
+    close(fd);
+    long r = cx_syscall(SYS_WRITEFILE, (long)path, (long)buf, (long)len, 0, 0);
+    free(buf);
+    if (r < 0) { cx_errno = (int)-r; return -1; }
+    return 0;
+}
+char *crypt(const char *k, const char *salt) { (void)k; (void)salt; cx_errno = 45; return 0; }
+void *gethostbyname(const char *n) { (void)n; return 0; }     /* o ruby usa getaddrinfo; estes são legados */
+void *gethostbyaddr(const void *a, unsigned l, int t) { (void)a; (void)l; (void)t; return 0; }
+int getlogin_r(char *buf, size_t n) { const char *s = getlogin(); if (!s) s = "visitante"; if (strlen(s) + 1 > n) return 34; strlcpy(buf, s, n); return 0; }
+int setreuid(unsigned r, unsigned e) { (void)r; (void)e; return 0; }
+int setregid(unsigned r, unsigned e) { (void)r; (void)e; return 0; }
+int setruid(unsigned r) { (void)r; return 0; }
+int setrgid(unsigned r) { (void)r; return 0; }
+/* ucontext: o ruby usa as próprias corrotinas em assembly no x86_64; estas só falham */
+int getcontext(void *u) { (void)u; cx_errno = 45; return -1; }
+int setcontext(const void *u) { (void)u; cx_errno = 45; return -1; }
+void makecontext(void *u, void (*f)(void), int argc, ...) { (void)u; (void)f; (void)argc; }
+int fgetattrlist(int fd, void *al, void *buf, size_t n, unsigned opt) { (void)fd; (void)al; (void)buf; (void)n; (void)opt; cx_errno = 45; return -1; }
+int proc_regionfilename(int pid, unsigned long long addr, void *buf, unsigned size) { (void)pid; (void)addr; (void)buf; (void)size; return 0; }
+int vm_region_recurse_64(unsigned task, unsigned long long *addr, unsigned long long *size, unsigned *depth, void *info, unsigned *cnt) {
+    (void)task; (void)addr; (void)size; (void)depth; (void)info; (void)cnt;
+    return 1;                                       /* KERN_INVALID_ADDRESS: o ruby para de varrer as regiões */
+}
+int unw_get_proc_name(void *cur, char *buf, size_t len, unsigned long long *off) { (void)cur; if (buf && len) buf[0] = 0; if (off) *off = 0; return -6540; }   /* UNW_ENOINFO */
+long __syscall(long n, ...) { (void)n; cx_errno = 78; return -1; }   /* ENOSYS */
+const void *_NSGetMachExecuteHeader(void) { return _dyld_get_image_header(0); }
+void CFStringNormalize(void *s, long form) { (void)s; (void)form; }   /* só NFC/ASCII no mOS: nada a fazer */

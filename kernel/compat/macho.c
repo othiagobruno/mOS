@@ -1038,12 +1038,18 @@ static int link_add(link_t *K, const char *path, const u8 *file, usize flen, boo
                 const u8 *data;
                 usize len;
                 int d = locate(K, cand, sizeof cand, &data, &len);
-                if (d < 0 && !data && !strcmp(cand, "/usr/lib/libncurses.5.4.dylib")) {
-                    /* o ncurses do sistema não existe no mOS: o readline do Homebrew usa o ncursesw dele
-                     * (mesma API; uma cópia só, para o estado do terminal ser um só) */
-                    snprintf(cand, sizeof cand, "/usr/local/opt/ncurses/lib/libncursesw.6.dylib");
-                    d = locate(K, cand, sizeof cand, &data, &len);
-                }
+                /* bibliotecas de /usr/lib que o mOS não tem: usa a fórmula equivalente do Homebrew (mesma API;
+                 * uma cópia só, para o estado global — ex.: o terminal do ncurses — ser um só) */
+                static const char *const usrlib_alias[][2] = {
+                    {"/usr/lib/libncurses.5.4.dylib", "/usr/local/opt/ncurses/lib/libncursesw.6.dylib"},
+                    {"/usr/lib/libz.1.dylib",         "/usr/local/opt/zlib/lib/libz.1.dylib"},
+                    {"/usr/lib/libffi.dylib",         "/usr/local/opt/libffi/lib/libffi.8.dylib"},
+                };
+                for (usize k = 0; d < 0 && !data && k < sizeof usrlib_alias / sizeof usrlib_alias[0]; k++)
+                    if (!strcmp(cand, usrlib_alias[k][0])) {
+                        snprintf(cand, sizeof cand, "%s", usrlib_alias[k][1]);
+                        d = locate(K, cand, sizeof cand, &data, &len);
+                    }
                 if (d < 0 && data) d = link_add(K, cand, data, len, true);
                 if (d == -1 && data) return -1;
                 if (d >= 0) { I->dep[i] = (i16)d; continue; }

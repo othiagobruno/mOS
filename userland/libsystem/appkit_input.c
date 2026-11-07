@@ -270,7 +270,9 @@ static id v_registered_drag(id self, SEL c) {
 static void add_if_missing(cx_class_t *k, const char *sel, void *imp) {
     if (k && !cx_responds(k, sel_registerName(sel))) cx_add_method(k, sel, imp);
 }
+void cx_vscode_cf_classes(void);
 void cx_appkit_input_init(void) {
+    cx_vscode_cf_classes();     /* vscode_cf.c: classes internas de CF (locale, UUID, CharacterSet, BinaryHeap) e kCFNull */
     cx_class_t *resp = cx_class_named("NSResponder");
     cx_class_t *view = cx_class_named("NSView");
     cx_class_t *obj = cx_class_named("NSObject");

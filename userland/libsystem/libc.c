@@ -865,6 +865,10 @@ int fcntl(int fd, int cmd, ...) {
         cx_sock_set_nonblock(fd, (fl & 0x4) != 0);
         return 0;
     }
+    if (cmd == 50) {                                    /* F_GETPATH: caminho do fd (SYS_FDPATH) */
+        __builtin_va_list ap; __builtin_va_start(ap, cmd); char *buf = __builtin_va_arg(ap, char *); __builtin_va_end(ap);
+        return ret_errno(SYS3(SYS_FDPATH, fd, buf, 1024)) < 0 ? -1 : 0;
+    }
     return 0;
 }
 long sysconf(int name) {
@@ -1012,6 +1016,8 @@ mac_dirent_t *readdir(cx_dir_t *d) {
     return &d->ent;
 }
 int closedir(cx_dir_t *d) { free(d); return 0; }
+long telldir(cx_dir_t *d) { return d->index; }
+void seekdir(cx_dir_t *d, long pos) { d->index = pos; }
 void rewinddir(cx_dir_t *d) { d->index = 0; }
 
 /* ================================================================ tempo */

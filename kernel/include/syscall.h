@@ -54,6 +54,7 @@ enum {
     SYS_SPAWNVEC,      /* 44: (path, mos_spawn_vec_t*) -> pid       argv e envp completos (posix_spawn do Electron) */
     SYS_EXECVE,        /* 45: (path, mos_spawn_vec_t*) -> só volta com erro   troca a imagem (mesmo pid, fds e sessão) */
     SYS_WAITPID,       /* 46: (pid, int *status, opções) -> pid      status POSIX; pid -1 = qualquer filho; MOS_WNOHANG */
+    SYS_FDPATH,        /* 47: (fd, buf, cap) -> tamanho             caminho do arquivo aberto (F_GETPATH, fchdir) */
     SYS_COUNT,
     SYS_GUI_FIRST = 64,/* 64..79: interface gráfica dos apps do macOS (kernel/compat/guisys.c) */
     SYS_GUI_LAST = 79,

@@ -1735,6 +1735,13 @@ u64 proc_syscall(int_frame_t *f) {
         r = uvm_copy_out(p, a, p->cwd, n) ? (i64)n - 1 : -MOS_EFAULT;
         break;
     }
+    case SYS_FDPATH: {                                      /* fcntl(F_GETPATH) e fchdir no libSystem */
+        if (fd_get(p, a) < 0 || p->fds[a].kind != FD_FILE) { r = -MOS_EBADF; break; }
+        usize n = strlen(p->fds[a].path) + 1;
+        if (n > c) { r = -MOS_EINVAL; break; }
+        r = uvm_copy_out(p, b, p->fds[a].path, n) ? (i64)n - 1 : -MOS_EFAULT;
+        break;
+    }
     case SYS_PROCLIST: {
         process_t *q = procs;
         for (u64 i = 0; q; q = q->next) if (!q->exited && i++ == a) break;

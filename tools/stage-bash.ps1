@@ -34,6 +34,34 @@ foreach ($t in 'x\xterm-256color', 'x\xterm', 'd\dumb', 'v\vt100') {
 }
 New-Item -ItemType Directory -Force "$usr\bin" | Out-Null
 Copy-Item -Force "$bs\bin\bash" "$usr\bin\bash"
+# link simbólico do mOS: arquivo "#mOS-link:<alvo>" (o execve do kernel e o stat do libSystem seguem)
+function New-MosLink([string]$at, [string]$target) { [IO.File]::WriteAllText($at, "#mOS-link:$target", [Text.Encoding]::ASCII) }
+# coreutils 9.11 (+ gmp): gX em /usr/local/bin, e X -> gX (o que o libexec/gnubin do Homebrew faz)
+$cu = Get-ChildItem "$b\coreutils" -Directory -ErrorAction SilentlyContinue | Select-Object -First 1
+if ($cu) {
+    $gmp = (Get-ChildItem "$b\gmp" -Directory | Select-Object -First 1).FullName
+    New-Item -ItemType Directory -Force "$usr\opt\gmp\lib" | Out-Null
+    Copy-Item -Force "$gmp\lib\libgmp.10.dylib" "$usr\opt\gmp\lib\"
+    foreach ($f in Get-ChildItem "$($cu.FullName)\bin" -File) {
+        Copy-Item -Force $f.FullName "$usr\bin\$($f.Name)"
+        if ($f.Name.StartsWith('g') -and $f.Name -ne 'g[') { New-MosLink "$usr\bin\$($f.Name.Substring(1))" $f.Name }
+    }
+    New-MosLink "$usr\bin\[" 'g['
+}
+# portable-ruby 3.4.5 (+ zlib, libffi do Homebrew no lugar de /usr/lib/libz e /usr/lib/libffi)
+$pr = Get-ChildItem "$b\portable-ruby" -Directory -ErrorAction SilentlyContinue | Select-Object -First 1
+if ($pr) {
+    foreach ($f in 'zlib', 'libffi') { New-Item -ItemType Directory -Force "$usr\opt\$f\lib" | Out-Null }
+    Copy-Item -Force (Get-ChildItem "$b\zlib\*\lib\libz.1.*.dylib" | Select-Object -First 1).FullName "$usr\opt\zlib\lib\libz.1.dylib"
+    Copy-Item -Force (Get-ChildItem "$b\libffi\*\lib\libffi.8.dylib" | Select-Object -First 1).FullName "$usr\opt\libffi\lib\"
+    $dst = "$usr\opt\portable-ruby"
+    if (Test-Path $dst) { Remove-Item -Recurse -Force $dst }
+    New-Item -ItemType Directory -Force $dst | Out-Null
+    foreach ($d in 'bin', 'lib') {
+        robocopy "$($pr.FullName)\$d" "$dst\$d" /E /XD '*.dSYM' /NFL /NDL /NJH /NJS /NP | Out-Null
+    }
+    New-MosLink "$usr\bin\ruby" '/usr/local/opt/portable-ruby/bin/ruby'
+}
 Copy-Item -Force (Join-Path $root $Script) "$usr\bash-teste.sh"
 "Programa=/usr/local/bin/bash`nArgumentos=/usr/local/bash-teste.sh`nAtrasoMs=$AtrasoMs" | Set-Content -Encoding ascii "$esp\mOS\Sistema\Biblioteca\LaunchDaemons\sh.brew.bash.servico"
 Set-Content -Path "$esp\mOS\Sistema\Biblioteca\stderr-serial" -Value '1' -Encoding ascii
