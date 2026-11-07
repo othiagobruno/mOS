@@ -96,3 +96,44 @@ static void wk_warn(const char *what) {
 - (BOOL)canGoBack { return NO; }
 - (BOOL)canGoForward { return NO; }
 @end
+
+/* o que o Sparkle referencia (notas de versão numa WebView): classes reais, sem motor HTML como o WKWebView acima */
+@interface WKUserScript : NSObject
+- (instancetype)initWithSource:(NSString *)source injectionTime:(long)t forMainFrameOnly:(BOOL)main;
+@end
+@implementation WKUserScript
+- (instancetype)initWithSource:(NSString *)source injectionTime:(long)t forMainFrameOnly:(BOOL)main { return [super init]; }
+@end
+
+/* listas de regras de conteúdo: o mOS não compila nenhuma; o completion responde "sem lista" */
+@interface WKContentRuleListStore : NSObject
++ (instancetype)defaultStore;
+- (void)compileContentRuleListForIdentifier:(NSString *)i encodedContentRuleList:(NSString *)l completionHandler:(void (^)(id list, NSError *err))h;
+- (void)lookUpContentRuleListForIdentifier:(NSString *)i completionHandler:(void (^)(id list, NSError *err))h;
+@end
+@implementation WKContentRuleListStore
++ (instancetype)defaultStore { static WKContentRuleListStore *s; if (!s) s = [[self alloc] init]; return s; }
+- (void)compileContentRuleListForIdentifier:(NSString *)i encodedContentRuleList:(NSString *)l completionHandler:(void (^)(id list, NSError *err))h { if (h) h(nil, nil); }
+- (void)lookUpContentRuleListForIdentifier:(NSString *)i completionHandler:(void (^)(id list, NSError *err))h { if (h) h(nil, nil); }
+@end
+
+/* WebView legada (WebKit1) e as preferências dela */
+@interface WebPreferences : NSObject
++ (instancetype)standardPreferences;
+@property BOOL javaScriptEnabled;
+@property BOOL plugInsEnabled;
+@end
+@implementation WebPreferences
++ (instancetype)standardPreferences { static WebPreferences *s; if (!s) s = [[self alloc] init]; return s; }
+@end
+
+@interface WebView : NSView
+@property (strong) WebPreferences *preferences;
+@property (assign) id frameLoadDelegate;   /* MRC: assign, como era o weak antes do ARC */
+@property (assign) id policyDelegate;
+@property (assign) id UIDelegate;
+- (id)mainFrame;
+@end
+@implementation WebView
+- (id)mainFrame { return nil; }
+@end

@@ -77,7 +77,7 @@ $utf8 = New-Object Text.UTF8Encoding $false
 # POSIXErrorCode, open/fcntl/ioctl...), aqui sobre o módulo clang com o nome da Apple
 $md = [IO.File]::ReadAllText("$root\userland\sdk\openswiftui\swift\MOSDarwin\MOSDarwin.swift", $utf8)
 [IO.File]::WriteAllText("$gen\Darwin.swift", "// GERADO por tools\build-swift-overlays-objc.ps1 a partir de MOSDarwin.swift`n" + $md.Replace('@_exported import MOSDarwin', '@_exported import Darwin').Replace('MOSDarwin.', 'Darwin.'), $utf8)
-Build-Overlay 'Darwin' @("$gen\Darwin.swift")
+Build-Overlay 'Darwin' (@("$gen\Darwin.swift") + @(Get-ChildItem "$sdkSrc\Darwin" -Filter *.swift -ErrorAction SilentlyContinue | ForEach-Object FullName))   # + stdin/stdout/stderr
 Build-Overlay 'ObjectiveC'
 Build-Overlay 'CoreFoundation'
 # CoreGraphics: CGFloat do módulo CoreGraphics do OpenSwiftUI (userland\sdk\openswiftui\swift\CoreGraphics) + CGGeometry.swift

@@ -44,3 +44,10 @@ extension CGRect {
         self = r
     }
 }
+
+// CGContext.draw(_:in:byTiling:) — o overlay da Apple chama CGContextDrawImage / CGContextDrawTiledImage
+extension CGContext {
+    public func draw(_ image: CGImage, in rect: CGRect, byTiling: Bool = false) {
+        if byTiling { __CGContextDrawTiledImage(self, rect, image) } else { __CGContextDrawImage(self, rect, image) }
+    }
+}

@@ -100,6 +100,25 @@ foreach ($d in 'app.asar.unpacked', 'native', 'plugins', 'default_app', 'com.ope
         try { Copy-X64 $f.FullName $t } catch { }
     }
 }
+# Sparkle.framework do próprio app (o sparkle.node o carrega; o FAT não tem links, então Versions/B inteiro)
+$sp = "$src\Frameworks\Sparkle.framework\Versions\B"
+if (Test-Path -LiteralPath $sp) {
+    foreach ($f in Get-ChildItem -LiteralPath $sp -Recurse -File) {
+        $t = "$dst\Frameworks\Sparkle.framework\Versions\B" + $f.FullName.Substring($sp.Length)
+        try { Copy-X64 $f.FullName $t } catch { }
+    }
+}
+# runtime Swift do mOS (docs/swift-objc-runtime.md): /usr/lib/swift/libswift*.dylib e os frameworks Mach-O (Combine,
+# WebKit, ImageIO...), para os helpers e módulos .node em Swift (native/*.node, bare-modifier-monitor...)
+$swd = "$root\build\swift\objc\dylib"
+if (Test-Path "$swd\usr\lib\swift") {
+    New-Item -ItemType Directory -Force "$esp\mOS\usr\lib\swift" | Out-Null
+    Copy-Item "$swd\usr\lib\swift\*.dylib" "$esp\mOS\usr\lib\swift\" -Force
+    if (Test-Path "$swd\System\Library\Frameworks") {
+        New-Item -ItemType Directory -Force "$esp\mOS\System\Library\Frameworks" | Out-Null
+        Copy-Item "$swd\System\Library\Frameworks\*" "$esp\mOS\System\Library\Frameworks\" -Recurse -Force
+    }
+}
 Remove-Item -LiteralPath "$esp\mOS\Sistema\Biblioteca\dyld-experimental" -ErrorAction SilentlyContinue
 if ($Diagnostico) {
     Set-Content -Path "$esp\mOS\Sistema\Biblioteca\dyld-registrar" -Value '1' -Encoding ascii

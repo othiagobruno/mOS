@@ -300,6 +300,13 @@ typedef struct MOS_CG_BRIDGED CGImage *CGImageRef;
 typedef struct MOS_CG_BRIDGED CGFont *CGFontRef;
 typedef uint16_t CGGlyph;
 
+#if defined(MOS_SWIFT_OBJC)
+/* para o CGContext.draw(_:in:byTiling:) do overlay Swift (userland/sdk/swift-objc/CoreGraphics), como na Apple escondidas
+ * do Swift; implementadas em userland/libsystem/coregraphics.c e compat_agentes.c */
+CG_EXTERN void CGContextDrawImage(CGContextRef _Nullable c, CGRect rect, CGImageRef _Nullable image) __attribute__((swift_private));
+CG_EXTERN void CGContextDrawTiledImage(CGContextRef _Nullable c, CGRect rect, CGImageRef _Nullable image) __attribute__((swift_private));
+#endif
+
 CF_ASSUME_NONNULL_END
 CG_EXTERN_C_END
 

@@ -189,3 +189,111 @@ u32 CFBundleGetVersionNumber(id_ bundle) {
     unsigned ma = part[0] % 100, mi = part[1] % 10, bu = part[2] % 10;
     return (u32)(((ma / 10) << 4 | (ma % 10)) << 24 | (mi << 4 | bu) << 16 | 0x80u << 8);
 }
+
+/* CGContextDrawTiledImage: repete a imagem com o tamanho de rect a partir da origem dele, cobrindo o contexto inteiro
+ * (o mOS não guarda a área de recorte; com a CTM identidade o espaço do usuário é o do bitmap). O overlay Swift
+ * CoreGraphics o usa em CGContext.draw(_:in:byTiling:) (módulos nativos do Codex desktop). */
+typedef struct { double x, y, w, h; } cg_rect_t;
+void CGContextDrawImage(void *c, cg_rect_t r, void *img);
+size_t CGBitmapContextGetWidth(void *c);
+size_t CGBitmapContextGetHeight(void *c);
+void CGContextDrawTiledImage(void *c, cg_rect_t r, void *img) {
+    if (!c || !img || r.w <= 0 || r.h <= 0) return;
+    double W = (double)CGBitmapContextGetWidth(c), H = (double)CGBitmapContextGetHeight(c);
+    if (W <= 0 || H <= 0) { CGContextDrawImage(c, r, img); return; }
+    long kx = (long)(r.x / r.w), ky = (long)(r.y / r.h);
+    double x0 = r.x - (double)kx * r.w, y0 = r.y - (double)ky * r.h;
+    while (x0 > 0) x0 -= r.w;
+    while (y0 > 0) y0 -= r.h;
+    int n = 0;
+    for (double y = y0; y < H && n < 16384; y += r.h)
+        for (double x = x0; x < W && n < 16384; x += r.w, n++) {
+            cg_rect_t t = {x, y, r.w, r.h};
+            CGContextDrawImage(c, t, img);
+        }
+}
+
+/* ---- o que o Sparkle (atualizador do Codex desktop e de outros apps) importa */
+id_ objc_getClass(const char *n);
+/* Info.plist de um bundle pela URL (Contents/Info.plist, ou Info.plist na raiz para bundles rasos) */
+id_ CFBundleCopyInfoDictionaryInDirectory(id_ url) {
+    if (!url) return 0;
+    id_ path = ((id_(*)(id_, id_))objc_msgSend)(url, sel_registerName("path"));
+    if (!path) return 0;
+    static const char *const sub[] = {"Contents/Info.plist", "Info.plist"};
+    for (int i = 0; i < 2; i++) {
+        id_ s = CFStringCreateWithCString(0, sub[i], 0x08000100);
+        id_ p = ((id_(*)(id_, id_, id_))objc_msgSend)(path, sel_registerName("stringByAppendingPathComponent:"), s);
+        CFRelease(s);
+        id_ d = ((id_(*)(id_, id_, id_))objc_msgSend)(objc_getClass("NSDictionary"), sel_registerName("dictionaryWithContentsOfFile:"), p);
+        if (d) return ((id_(*)(id_, id_))objc_msgSend)(d, sel_registerName("retain"));
+    }
+    return 0;
+}
+/* nome IANA -> CFStringEncoding (os que o mOS converte); desconhecido: kCFStringEncodingInvalidId */
+const char *cx_cstr(id_ s);
+int strcasecmp(const char *a, const char *b);
+u32 CFStringConvertIANACharSetNameToEncoding(id_ name) {
+    const char *n = name ? cx_cstr(name) : 0;
+    if (!n) return 0xffffffffu;
+    static const struct { const char *n; u32 e; } t[] = {
+        {"utf-8", 0x08000100}, {"utf8", 0x08000100}, {"us-ascii", 0x0600}, {"ascii", 0x0600},
+        {"iso-8859-1", 0x0201}, {"latin1", 0x0201}, {"windows-1252", 0x0500}, {"cp1252", 0x0500},
+        {"utf-16", 0x0100}, {"utf-16be", 0x10000100}, {"utf-16le", 0x14000100}, {"macintosh", 0},
+    };
+    for (unsigned i = 0; i < sizeof t / sizeof t[0]; i++) if (!strcasecmp(n, t[i].n)) return t[i].e;
+    return 0xffffffffu;
+}
+/* asserções de energia por processo: nenhuma (o mOS não as guarda), num dicionário vazio */
+int IOPMCopyAssertionsByProcess(id_ *out) {
+    if (!out) return (int)0xe00002c2;   /* kIOReturnBadArgument */
+    *out = ((id_(*)(id_, id_))objc_msgSend)(objc_getClass("NSMutableDictionary"), sel_registerName("new"));
+    return 0;
+}
+/* usuário do console: o único do mOS */
+id_ SCDynamicStoreCopyConsoleUser(void *store, u32 *uid, u32 *gid) {
+    (void)store;
+    if (uid) *uid = 501;
+    if (gid) *gid = 20;
+    return CFStringCreateWithCString(0, "visitante", 0x08000100);
+}
+
+/* ---- libbz2, lado da compressão: o mOS só descomprime (bzip2.c). Quem comprime recebe BZ_CONFIG_ERROR (-9), o erro
+ * de "biblioteca sem essa função"; o Sparkle usa isto só para montar patches delta e cai para a atualização inteira. */
+void *BZ2_bzWriteOpen(int *bzerror, void *f, int blockSize100k, int verbosity, int workFactor) {
+    (void)f; (void)blockSize100k; (void)verbosity; (void)workFactor;
+    if (bzerror) *bzerror = -9;
+    return 0;
+}
+void BZ2_bzWrite(int *bzerror, void *b, void *buf, int len) { (void)b; (void)buf; (void)len; if (bzerror) *bzerror = -9; }
+void BZ2_bzWriteClose64(int *bzerror, void *b, int abandon, u32 *in_lo, u32 *in_hi, u32 *out_lo, u32 *out_hi) {
+    (void)b; (void)abandon;
+    if (in_lo) *in_lo = 0; if (in_hi) *in_hi = 0; if (out_lo) *out_lo = 0; if (out_hi) *out_hi = 0;
+    if (bzerror) *bzerror = -9;
+}
+int BZ2_bzBuffToBuffCompress(char *dest, unsigned *destlen, char *src, unsigned srclen, int b, int v, int w) {
+    (void)dest; (void)destlen; (void)src; (void)srclen; (void)b; (void)v; (void)w;
+    return -9;
+}
+
+/* ---- libxar (arquivos .xar dos patches delta do Sparkle): o mOS não lê nem grava xar. xar_open devolve NULL, como
+ * para um arquivo inválido, e o resto responde "vazio" sem tocar em nada; o Sparkle trata e usa a atualização inteira. */
+void *xar_open(const char *file, int flags) { (void)file; (void)flags; return 0; }
+int xar_close(void *x) { (void)x; return 0; }
+int xar_opt_set(void *x, const char *opt, const char *val) { (void)x; (void)opt; (void)val; return -1; }
+void *xar_add_frompath(void *x, void *parent, const char *name, const char *realpath) { (void)x; (void)parent; (void)name; (void)realpath; return 0; }
+void *xar_add_frombuffer(void *x, void *parent, const char *name, char *buf, size_t len) { (void)x; (void)parent; (void)name; (void)buf; (void)len; return 0; }
+int xar_extract_tofile(void *x, void *f, const char *path) { (void)x; (void)f; (void)path; return -1; }
+void *xar_iter_new(void) { return 0; }
+void xar_iter_free(void *i) { (void)i; }
+void *xar_file_first(void *x, void *i) { (void)x; (void)i; return 0; }
+void *xar_file_next(void *i) { (void)i; return 0; }
+char *xar_get_path(void *f) { (void)f; return 0; }
+int xar_prop_get(void *f, const char *key, const char **value) { (void)f; (void)key; if (value) *value = 0; return -1; }
+int xar_prop_set(void *f, const char *key, const char *value) { (void)f; (void)key; (void)value; return -1; }
+void *xar_subdoc_first(void *x) { (void)x; return 0; }
+void *xar_subdoc_next(void *s) { (void)s; return 0; }
+const char *xar_subdoc_name(void *s) { (void)s; return 0; }
+void *xar_subdoc_new(void *x, const char *name) { (void)x; (void)name; return 0; }
+int xar_subdoc_prop_get(void *s, const char *key, const char **value) { (void)s; (void)key; if (value) *value = 0; return -1; }
+int xar_subdoc_prop_set(void *s, const char *key, const char *value) { (void)s; (void)key; (void)value; return -1; }
