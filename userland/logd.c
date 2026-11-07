@@ -65,7 +65,7 @@ void _start(const char *arg) {
         if (r) { if (r != 0x10004004) sleep_ms(10); continue; }
         mhdr_t *h = (mhdr_t *)msg;
         svc_body_t *b = svc_body(msg, sizeof msg, 0);
-        unsigned reply = (h->bits >> 8 & 0x1f) == D_MOVE_SO ? h->local : 0;
+        unsigned reply = (h->bits & 0x1f) == D_MOVE_SO ? h->remote : 0   /* na recepção a porta de resposta vem no remote */;
         if (!b || h->id != SVC_MSG_ID || b->op != LG_WRITE) { if (reply) svc_reply(reply, 22, 0, 0, 0, 0); continue; }
         int pid = msg_sender_pid(msg);
         if (!pid) pid = (int)b->b;

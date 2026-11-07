@@ -7,7 +7,7 @@
  *     header Mach (24 bytes) | svc_body_t | n1 bytes | n2 bytes
  * Pedido que leva um direito de envio (notify_register_mach_port/dispatch, configd notificações):
  *     header com MACH_MSGH_BITS_COMPLEX | u32 contagem = 1 | descritor de porta (12) | svc_body_t | ...
- * O id do header é SVC_MSG_ID. Pedido com resposta leva a porta de resposta no local (MAKE_SEND_ONCE);
+ * O id do header é SVC_MSG_ID. Pedido com resposta leva a porta de resposta no local (MAKE_SEND_ONCE; quem recebe a acha no remote);
  * a resposta é header | svc_body_t (op = código de retorno) | dados. */
 #pragma once
 

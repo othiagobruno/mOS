@@ -275,7 +275,7 @@ void _start(const char *arg) {
         mhdr_t *h = (mhdr_t *)msg;
         unsigned rport = 0;
         svc_body_t *b = svc_body(msg, sizeof msg, &rport);
-        unsigned rp = (h->bits >> 8 & 0x1f) == D_MOVE_SO ? h->local : 0;
+        unsigned rp = (h->bits & 0x1f) == D_MOVE_SO ? h->remote : 0   /* na recepção a porta de resposta vem no remote */;
         if (!b || h->id != SVC_MSG_ID) { if (rport) port_drop(rport); if (rp) svc_reply(rp, 22, 0, 0, 0, 0); continue; }
         char k[160];
         usize kl = b->n1 < sizeof k - 1 ? b->n1 : sizeof k - 1;

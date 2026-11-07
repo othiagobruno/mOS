@@ -205,6 +205,16 @@ static job_t *load_plist(const char *path, const char **why) {
     if (!j) { *why = "tabela cheia"; goto out; }
     scopy(j->src, path, sizeof j->src);
     scopy(j->prog, plist_str(root, "Program"), sizeof j->prog);
+    /* BundleProgram (SMAppService): caminho relativo ao .app que contém o plist (…/X.app/Contents/Library/…) */
+    const char *bprog = plist_str(root, "BundleProgram");
+    if (!j->prog[0] && bprog) {
+        const char *cut = 0;
+        for (const char *s = path; *s; s++) if (!strncmp(s, "/Contents/Library/", 18)) cut = s;
+        if (cut) {
+            usize n = (usize)(cut - path);
+            if (n + 2 + strlen(bprog) < sizeof j->prog) { memcpy(j->prog, path, n); j->prog[n] = '/'; scopy(j->prog + n + 1, bprog, sizeof j->prog - n - 1); }
+        }
+    }
     pnode_t *pa = plist_get(root, "ProgramArguments");
     if (pa && pa->type == PN_ARRAY)
         for (pnode_t *c = pa->child; c && j->argc < MAX_ARGS; c = c->next) if (c->type == PN_STRING) scopy(j->argv[j->argc++], c->str, sizeof j->argv[0]);
@@ -254,7 +264,7 @@ static void stop_job(job_t *j) { if (j->pid > 0) sigkill(j->pid, MOS_SIGTERM); }
 static void handle_ctl(unsigned char *msg, unsigned len) {
     mhdr_t *h = (mhdr_t *)msg;
     svc_body_t *b = svc_body(msg, len, 0);
-    unsigned reply = (h->bits >> 8 & 0x1f) == D_MOVE_SO ? h->local : 0;
+    unsigned reply = (h->bits & 0x1f) == D_MOVE_SO ? h->remote : 0   /* na recepção a porta de resposta vem no remote */;
     if (!b || h->id != SVC_MSG_ID) { if (reply) svc_reply(reply, 22, 0, 0, 0, 0); return; }
     char s1[320], s2[320];
     scopy(s1, b->n1 ? svc_s1(b) : "", b->n1 + 1 < sizeof s1 ? b->n1 + 1 : sizeof s1);

@@ -37,7 +37,9 @@ int usleep(unsigned us);
 #define kSCStatusInvalidArgument 1002
 #define kSCStatusNoKey 1004
 #define kSCStatusNoStoreServer 4004
-static __thread int sc_err;
+/* sem __thread: o libSystem é freestanding e o %fs das threads é 0 (ler %fs:0 derrubava o Chrome na partida,
+ * em net/base/network_config_watcher_apple.cc); o SCError() fica por processo */
+static int sc_err;
 int SCError(void) { return sc_err; }
 const char *SCErrorString(int status) {
     switch (status) {

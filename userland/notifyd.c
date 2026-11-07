@@ -61,7 +61,7 @@ void _start(const char *arg) {
         mhdr_t *h = (mhdr_t *)msg;
         unsigned rport = 0;
         svc_body_t *b = svc_body(msg, sizeof msg, &rport);
-        unsigned reply = (h->bits >> 8 & 0x1f) == D_MOVE_SO ? h->local : 0;
+        unsigned reply = (h->bits & 0x1f) == D_MOVE_SO ? h->remote : 0   /* na recepção a porta de resposta vem no remote */;
         if (!b || h->id != SVC_MSG_ID) { if (rport) port_drop(rport); if (reply) svc_reply(reply, 22, 0, 0, 0, 0); continue; }
         int pid = msg_sender_pid(msg);
         char nm[128];

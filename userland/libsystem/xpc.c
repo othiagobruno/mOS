@@ -16,8 +16,10 @@
  *    handler recebe XPC_ERROR_CONNECTION_INVALID uma vez, send_message_with_reply e o sync devolvem o mesmo
  *    singleton imortal, a barreira roda e o cancel não repete o evento. Se o look_up acha o serviço, os dois
  *    lados trocam dicionários XPC por mach_msg (formato próprio do mOS: os dois extremos são esta libxpc).
- *    Conexão anônima, sem nome, continua inválida.
- *  - xpc_main, com XPC_SERVICE_NAME no ambiente, faz check_in desse nome e fica à espera; sem o nome, sai.
+ *    Conexão anônima, sem nome, continua inválida. Serviços vêm do launchd (userland/init.c, docs/servicos.md):
+ *    sob demanda, e os XPC services do bundle (Contents/XPCServices) são registrados nele na hora (LC_SUBMIT).
+ *    Se o serviço morre, o cliente recebe INTERRUPTED e o próximo envio reconecta; o par de um cliente morto, INVALID.
+ *  - xpc_main, com XPC_SERVICE_NAME no ambiente (ou o CFBundleIdentifier), faz check_in desse nome e fica à espera.
  *    xpc_pipe_* (API privada do launchd) devolve EINVAL; xpc_dictionary_copy_mach_send devolve MACH_PORT_NULL.
  * A entrega usa dispatch_async_f na fila da conexão (a libdispatch do mOS ainda roda na hora, na thread de quem
  * chama: dispatch.c).

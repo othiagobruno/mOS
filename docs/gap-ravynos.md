@@ -26,7 +26,7 @@ Legenda: ✅ o mOS já tem · 🟡 parcial ou stub · ❌ não tem
 | Syscalls | ✅ `int 0x80`, 31 chamadas (`include/syscall.h`, `-errno`) | `xnu/bsd/kern/syscalls.master`, `Libraries/Libsystem/libsystem_kernel` | Tabela própria; o Mach-O entra por cima (sessão de compatibilidade). |
 | VM com espaços por processo, *page fault*, COW | ✅ espaços por processo, `brk`, `mmap`/`munmap`; paginação sob demanda (anônima e de arquivo, `mm/lazy.c`); COW no `fork` e nas imagens Mach-O compartilhadas, com contagem atômica de donos por página (`proc/process.c`) | `xnu/osfmk/vm/` | Falta `MAP_SHARED` gravável de arquivo, proteção no PTE (NX desligado) e paginação para disco. |
 | IPC (portas Mach / pipes) | 🟡 pipes (`pipe`, `spawnio`, `dup2`, `a \| b` no msh), sessões de terminal, `wait`/`waitany` | `xnu/osfmk/ipc/`, `xnu/bsd/kern` (pipes, kqueue) | Sem portas Mach nem kqueue. |
-| SMP / APIC / HPET | ✅ `arch/smp.c`: MADT, LAPIC calibrado, HPET, APs acordados (INIT-SIPI) | `Kernel/Extensions/AppleAPIC`, `xnu/osfmk/i386` | Os APs ficam ociosos: UI, rede, USB e áudio são de um núcleo só. |
+| SMP / APIC / HPET | ✅ `arch/smp.c`: MADT, LAPIC calibrado, HPET, APs acordados (INIT-SIPI), TSS e temporizador por núcleo; `proc/sched.c`: threads de usuário em todos os núcleos com trava grande do kernel, IPI de TLB shootdown e de encerramento (`docs/smp.md`) | `Kernel/Extensions/AppleAPIC`, `xnu/osfmk/i386` | Trava grande (uma syscall por vez); UI, rede, USB, áudio e threads do kernel seguem no BSP. Próximo passo: travas por subsistema (VFS, Mach IPC, heap de páginas). |
 | Loader ELF64 | ✅ `proc/elf.c`: estático, em 0x400000000000 | — | Programas em `userland/`, compilados pelo `build.ps1`. |
 | Loader Mach-O | 🟡 gancho `macho_load()` no `proc_spawn` (sessão "Compatibilidade DMG" implementando) | `xnu/bsd/kern/mach_loader.c`, `mach_fat.c`; `Libraries/dyld` | |
 | Sinais, tty/pty, kqueue | 🟡 sessões de terminal (`proc_spawn_tty`, `read(0)` bloqueante, Ctrl+C via `proc_tty_interrupt`); sinais POSIX completos no usuário (`sigaction` com `SA_SIGINFO`/`SA_RESTART`/`SA_ONSTACK`, máscara por thread, `sigsuspend`, `sigwait`, `sigaltstack`, quadro com ucontext do Darwin, faltas viram SIGSEGV/SIGBUS/SIGFPE; `docs/sinais.md`) | `xnu/bsd/kern` | |
@@ -102,10 +102,10 @@ Legenda: ✅ o mOS já tem · 🟡 parcial ou stub · ❌ não tem
 ### 7. Userland e serviços
 | Recurso | mOS | ravynOS |
 |---|---|---|
-| init / launchd | ✅ `userland/init.c`: serviços em `/Sistema/Biblioteca/LaunchDaemons/*.servico`, com `ManterVivo` | `BSD/sbin/launchd`, `SystemLibrary/LaunchDaemons` |
+| init / launchd | ✅ `userland/init.c`: `.servico` do mOS e plists do launchd (`MachServices` sob demanda, `RunAtLoad`, `KeepAlive`), `launchctl`, XPC sobre Mach (`docs/servicos.md`) | `BSD/sbin/launchd`, `SystemLibrary/LaunchDaemons` |
 | Shell real (sh/zsh/bash) | ✅ `userland/sh.c` (msh em ring 3: cd, ls, cat, ps, kill, programas, `&`) + terminal embutido | `BSD/bin/sh`, `BSD/usr.bin/zsh`, `GNU/bin/bash` |
 | Utilitários Unix (ls, cp, grep, ...) | 🟡 embutidos do msh e do terminal | `BSD/bin`, `BSD/usr.bin` |
-| syslog, notifyd, configd, mDNS | ❌ | `BSD/usr.sbin/*` |
+| syslog, notifyd, configd, mDNS | 🟡 `userland/logd.c` (os_log/syslog/asl, `log show`), `notifyd.c`, `configd.c` (SCDynamicStore com rede e proxies); falta mDNS | `BSD/usr.sbin/*` |
 | Toolchain nativa (clang/ld64) | ❌ | `Developer/Default.xctoolchain` |
 
 ## O que dá para reaproveitar de fato (e licenças)
@@ -130,7 +130,7 @@ Os itens 1 a 5 da ordem original estão feitos: AHCI + NVMe + FAT gravável e pe
 
 O que ainda falta:
 - **Mach-O**: o carregador está sendo feito pela sessão "Compatibilidade DMG", sobre o gancho `macho_load()`.
-- **Trabalho real nos APs**: exige trancas (locks) na UI, no VFS e nos drivers, que hoje dependem de um núcleo só.
+- **SMP fino**: os APs já rodam processos e threads de usuário em paralelo (`docs/smp.md`), mas o kernel inteiro está sob uma trava grande e o desktop só a solta nos `hlt`. Falta trocar por travas por subsistema (VFS, Mach IPC, rede, heap de páginas) e tirar a UI/drivers do BSP.
 - **Escrita em volumes de `/Volumes`**: FAT de outros discos e HFS+.
 - **Memória virtual**: `MAP_SHARED` gravável de arquivo (gravar de volta), bits de proteção no PTE e paginação para disco. COW, `fork` e paginação sob demanda (anônima e de arquivo) estão feitos.
 - **Processos**: parar/continuar processos (SIGSTOP/SIGTSTP/SIGCONT) e sinais de tempo real. Os tratadores de sinal no usuário estão feitos (`docs/sinais.md`).
