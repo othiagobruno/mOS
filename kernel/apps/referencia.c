@@ -21,6 +21,7 @@ static struct {
     char summary[4000], err[96];
     char hist[20][64];
     int nhist, scroll;
+    bool want_focus;
 } DI;
 
 static void strip_html(const char *in, char *out, int n) {
@@ -122,7 +123,8 @@ static void di_paint(window_t *w, ui_t *u) {
         if (ui_sidebar_item(u, 119000 + i, rect_make(10, y, sb - 20, 26), DI.hist[i], !strcasecmp(DI.hist[i], DI.shown), NULL)) { char t[64]; snprintf(t, 64, "%s", DI.hist[i]); snprintf(DI.q, 64, "%s", t); di_lookup(t); }
         y += 28;
     }
-    if (ui_searchfield(u, UI_ID, rect_make(u->cw - 12 - 240, TOOLBAR_Y(28), 240, 28), DI.q, sizeof DI.q)) di_lookup(DI.q);
+    if (DI.want_focus) { u->focus = 119500; u->caret = u->sel_anchor = (int)strlen(DI.q); DI.want_focus = false; }
+    if (ui_searchfield(u, 119500, rect_make(u->cw - 12 - 240, TOOLBAR_Y(28), 240, 28), DI.q, sizeof DI.q)) di_lookup(DI.q);
     static const char *srcs[3] = {"Português", "Inglês", "Wikipédia"};
     int ns = ui_segmented(u, UI_ID, rect_make(sb + 14, TOOLBAR_Y(28), 300, 28), srcs, 3, DI.src);
     if (ns != DI.src) { DI.src = ns; if (DI.shown[0]) { char t[64]; snprintf(t, 64, "%s", DI.shown); di_lookup(t); } }
@@ -185,6 +187,7 @@ static void di_launch(app_t *a) {
     DI.w->on_close = di_close;
     DI.w->toolbar_h = TOOLBAR_H;
     DI.w->sidebar_w = 200;
+    DI.want_focus = true;
 }
 static void di_icon(surface_t *s, int x, int y, int sz) {
     float u = sz / 64.0f;
@@ -210,7 +213,8 @@ static void kc_paint(window_t *w, ui_t *u) {
     y += 22;
     ui_sidebar_item(u, 120000, rect_make(10, y, sb - 20, 28), "Raízes do Sistema", true, glyph_sb_disk);
     y += 34;
-    ui_label(u, 18, y + 2, "Senhas e códigos ficam no app Senhas.", FONT_REGULAR, 11, T.text3);
+    text_wrap(s, font_get(FONT_REGULAR), 11, rect_make(18, y - 8, sb - 36, 40), 15, T.text3, "Senhas e códigos ficam no app Senhas.", true);
+    y += 10;
     if (ui_button_style(u, UI_ID, rect_make(10, y + 24, sb - 20, 26), "Abrir Senhas", BTN_GRAY, true, NULL)) app_launch(apps_find("senhas"));
     ui_searchfield(u, UI_ID, rect_make(u->cw - 12 - 220, TOOLBAR_Y(28), 220, 28), KC.search, sizeof KC.search);
     rect_t a = rect_make(sb, w->toolbar_h, u->cw - sb, u->ch - w->toolbar_h);

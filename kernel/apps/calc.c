@@ -74,7 +74,7 @@ static double p_primary(ps_t *s) {
     if (eat(s, "−") || eat(s, "-")) return -p_primary(s);
     if (eat(s, "π")) return KIT_PI;
     if (C.mode != MODE_PROG && eat(s, "e") && !isalpha(*s->p)) return 2.718281828459045;
-    static const char *fn[] = {"sin⁻¹", "cos⁻¹", "tan⁻¹", "sinh", "cosh", "tanh", "sin", "cos", "tan", "ln", "log₂", "log", "√", "∛"};
+    static const char *fn[] = {"sin⁻¹", "cos⁻¹", "tan⁻¹", "sinh", "cosh", "tanh", "sin", "cos", "tan", "ln", "log₂", "log", "√", "³√"};
     for (int i = 0; i < (int)ARRAY_LEN(fn); i++) {
         if (!eat(s, fn[i])) continue;
         double x = p_primary(s);
@@ -228,7 +228,7 @@ static void backspace(void) {
     int n = (int)strlen(C.expr);
     if (!n) return;
     /* apaga um token inteiro (funções, operadores de várias letras) */
-    static const char *toks[] = {"sin⁻¹(", "cos⁻¹(", "tan⁻¹(", "sinh(", "cosh(", "tanh(", "sin(", "cos(", "tan(", "log₂(", "log(", "ln(", "√(", "∛(", "AND", "XOR", "OR", "<<", ">>", "mod", "ʸ√"};
+    static const char *toks[] = {"sin⁻¹(", "cos⁻¹(", "tan⁻¹(", "sinh(", "cosh(", "tanh(", "sin(", "cos(", "tan(", "log₂(", "log(", "ln(", "√(", "³√(", "AND", "XOR", "OR", "<<", ">>", "mod", "ʸ√"};
     for (int i = 0; i < (int)ARRAY_LEN(toks); i++) { int l = (int)strlen(toks[i]); if (n >= l && !strcmp(C.expr + n - l, toks[i])) { C.expr[n - l] = 0; return; } }
     C.expr[utf8_prev(C.expr, n)] = 0;
 }
@@ -276,7 +276,7 @@ static void press(const char *k) {
     static const struct { const char *key, *ins; } fx[] = {
         {"sin", "sin("}, {"cos", "cos("}, {"tan", "tan("}, {"sin⁻¹", "sin⁻¹("}, {"cos⁻¹", "cos⁻¹("}, {"tan⁻¹", "tan⁻¹("},
         {"sinh", "sinh("}, {"cosh", "cosh("}, {"tanh", "tanh("}, {"ln", "ln("}, {"log₁₀", "log("}, {"log₂", "log₂("},
-        {"√x", "√("}, {"³√x", "∛("}, {"x²", "²"}, {"x³", "³"}, {"xʸ", "^"}, {"eˣ", "e^"}, {"10ˣ", "10^"}, {"2ˣ", "2^"},
+        {"√x", "√("}, {"³√x", "³√("}, {"x²", "²"}, {"x³", "³"}, {"xʸ", "^"}, {"eˣ", "e^"}, {"10ˣ", "10^"}, {"2ˣ", "2^"},
         {"1/x", "1÷"}, {"x!", "!"}, {"EE", "E"}, {"ʸ√x", "ʸ√"}, {"NOT", "~"}, {"X<<Y", "<<"}, {"X>>Y", ">>"},
     };
     for (int i = 0; i < (int)ARRAY_LEN(fx); i++)

@@ -11,7 +11,7 @@
 param([Parameter(Mandatory = $true)][string]$App, [switch]$SemBuild, [int]$Ocioso = 40, [int]$Limite = 600,
       [int]$Memory = 2700, [int]$Port = 5917, [string]$OutDir = 'build-vscode',
       [switch]$Persist, [string]$Argumentos = '--in-process-gpu --disable-gpu --no-sandbox --verbose --enable-logging',
-      [string]$Tracepoints = '', [switch]$Electron, [string]$Nome = 'Code', [string]$Servico = '')
+      [string]$Tracepoints = '', [switch]$Electron, [string]$Nome = 'Code', [string]$Servico = '', [string]$Accel = '')
 $root = Split-Path $PSScriptRoot -Parent
 Set-Location $root
 if (-not $Servico) { $Servico = if ($Electron) { 'com.mos.electron-teste' } else { 'com.microsoft.vscode' } }
@@ -45,6 +45,7 @@ if (-not $SemBuild) {
 $serial = "$OutDir/serial-rapido.log"
 Remove-Item $serial -ErrorAction SilentlyContinue
 # reset da CPU (triple fault com -no-reboot fecha o QEMU em silêncio): registradores em qemu-reset.log
+$env:MOS_QEMU_ACCEL = $Accel   # -Accel whpx: hipervisor do Windows (run.ps1)
 $env:MOS_QEMU_LOG = "$root\$OutDir\qemu-reset.log"
 Remove-Item $env:MOS_QEMU_LOG -ErrorAction SilentlyContinue
 Start-Process powershell -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$root\run.ps1`" -Headless -Memory $Memory -Image $OutDir/mOS.img -Port $Port -Serial $serial$(if ($Persist) { ' -Persist' })" -WindowStyle Hidden | Out-Null

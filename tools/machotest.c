@@ -73,6 +73,7 @@ const u8 *host_read_file(const char *path, usize *len) {
 
 /* ---- syscalls do mOS sobre a pasta g_root */
 static void host_path(u64 upath, char *out, size_t cap) {
+    if (!strcmp((const char *)upath, "/dev/null")) { snprintf(out, cap, "NUL"); return; }   /* como o kernel */
     snprintf(out, cap, "%s%s", g_root, (const char *)upath);
     for (char *c = out; *c; c++) if (*c == '/') *c = '\\';
 }

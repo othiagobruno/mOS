@@ -920,6 +920,9 @@ static void K(cx_class_t *k, cx_class_t *m, const char *name, cx_class_t *super,
 static id S(const char *s) { return ret(cx_str(s)); }
 #include "corebluetooth_server.inc"   /* papel periférico (servidor GATT) */
 
+/* para o swiftobjc.c, que roda depois do foundation_more.c (no boot o cx_corebluetooth_init vem antes do NSUUID existir) */
+void cx_foundation_gaps(void) { foundation_gaps(); }
+
 void cx_corebluetooth_init(void) {
     foundation_gaps();
     cx_class_t *obj = cx_class_named("NSObject");

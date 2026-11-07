@@ -130,6 +130,7 @@ struct img {
     struct img *next;
 };
 surface_t *image_decode(const u8 *d, usize n);
+bool raw_inflate(const u8 *d, usize n, u8 *out, usize cap, usize *olen);   /* deflate cru (zip) */
 surface_t *image_scale(const surface_t *src, int w, int h); /* filtro de área / bilinear */
 
 /* ============================================================ controles de formulário */

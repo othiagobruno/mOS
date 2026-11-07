@@ -313,10 +313,8 @@ static void frame_class_init(void) {
     orig_superview = (id (*)(id, SEL))class_replaceMethod(view, sel_registerName("superview"), (void *)v_superview_frame, "@@:");
 }
 
-/* KVO: registros aceitos, nenhuma notificação de mudança ainda */
-static void kvo_add(id self, SEL c, id obs, id path, u64 opts, void *ctx) { (void)self; (void)c; (void)obs; (void)path; (void)opts; (void)ctx; }
-static void kvo_remove(id self, SEL c, id obs, id path) { (void)self; (void)c; (void)obs; (void)path; }
-static void kvo_remove_ctx(id self, SEL c, id obs, id path, void *ctx) { (void)self; (void)c; (void)obs; (void)path; (void)ctx; }
+/* KVO do NSObject: kvo.c */
+extern void cx_kvo_init(cx_class_t *ob);
 static id ws_center(id self, SEL c) { (void)self; (void)c; return MSG0(id, (id)cx_class_named("NSNotificationCenter"), "defaultCenter"); }
 
 /* NSNotificationQueue: publica na hora no centro padrão */
@@ -477,9 +475,7 @@ void cx_darwin_init(void) {
     cx_coretext_init();                         /* NSFont/CTFont para o gfx::PlatformFontMac (coretext.c) */
     cx_class_t *ob = cx_class_named("NSObject");
     if (ob) {
-        cx_add_method(ob, "addObserver:forKeyPath:options:context:", (void *)kvo_add);
-        cx_add_method(ob, "removeObserver:forKeyPath:", (void *)kvo_remove);
-        cx_add_method(ob, "removeObserver:forKeyPath:context:", (void *)kvo_remove_ctx);
+        cx_kvo_init(ob);
     }
     if (ob) cx_add_method(ob, "setDelegate:", (void *)any_set_delegate);
     cx_define_class(&NSLocale_c, &NSLocale_m, "NSLocale", ob, 0);

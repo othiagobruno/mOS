@@ -410,3 +410,33 @@ static inline bool kit_json_str(const char *json, const char *path, char *out, i
     out[k] = 0;
     return true;
 }
+
+/* ------------------------------------------------------------ base64 */
+static inline int kit_b64_encode(const u8 *in, int n, char *out, int cap) {
+    static const char *t = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    int k = 0;
+    for (int i = 0; i < n && k + 4 < cap; i += 3) {
+        u32 v = (u32)in[i] << 16 | (i + 1 < n ? (u32)in[i + 1] << 8 : 0) | (i + 2 < n ? in[i + 2] : 0);
+        out[k++] = t[v >> 18 & 63];
+        out[k++] = t[v >> 12 & 63];
+        out[k++] = i + 1 < n ? t[v >> 6 & 63] : '=';
+        out[k++] = i + 2 < n ? t[v & 63] : '=';
+    }
+    out[k] = 0;
+    return k;
+}
+static inline int kit_b64_val(char c) {
+    return c >= 'A' && c <= 'Z' ? c - 'A' : c >= 'a' && c <= 'z' ? c - 'a' + 26 : c >= '0' && c <= '9' ? c - '0' + 52 : c == '+' || c == '-' ? 62 : c == '/' || c == '_' ? 63 : -1;
+}
+static inline int kit_b64_decode(const char *in, int n, u8 *out, int cap) {
+    u32 acc = 0;
+    int bits = 0, k = 0;
+    for (int i = 0; i < n && k < cap; i++) {
+        int v = kit_b64_val(in[i]);
+        if (v < 0) continue;
+        acc = acc << 6 | (u32)v;
+        bits += 6;
+        if (bits >= 8) { bits -= 8; out[k++] = (u8)(acc >> bits); }
+    }
+    return k;
+}

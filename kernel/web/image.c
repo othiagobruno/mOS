@@ -190,6 +190,19 @@ static bool zlib_inflate(const u8 *d, usize n, u8 *out, usize cap, usize *olen) 
     return ok || s.olen > 0;
 }
 
+/* deflate cru (entradas de .zip/.epub): out com capacidade fixa; devolve true se algo foi descomprimido */
+bool raw_inflate(const u8 *d, usize n, u8 *out, usize cap, usize *olen) {
+    inf_t s = {0};
+    s.in = d;
+    s.n = n;
+    s.out = out;
+    s.ocap = cap;
+    s.fixed_cap = true;
+    bool ok = inflate_raw(&s);
+    *olen = s.olen;
+    return ok || s.olen > 0;
+}
+
 /* ============================================================ PNG */
 static u32 be32(const u8 *p) { return (u32)p[0] << 24 | (u32)p[1] << 16 | (u32)p[2] << 8 | p[3]; }
 

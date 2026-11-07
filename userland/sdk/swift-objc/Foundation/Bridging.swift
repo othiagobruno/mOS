@@ -342,3 +342,34 @@ extension Set: _ObjectiveCBridgeable {
         return r ?? []
     }
 }
+
+// MARK: - AnyHashable (chaves de [AnyHashable: Any], como userInfo): vai o valor base, não uma caixa __SwiftValue
+
+extension AnyHashable: _ObjectiveCBridgeable {
+    public func _bridgeToObjectiveC() -> NSObject {
+        _mosObject(base) as! NSObject
+    }
+    // como a representação própria do AnyHashable na Apple: NSString vira String e NSNumber inteiro vira Int
+    internal static func _mosHashable(_ x: NSObject) -> AnyHashable {
+        if let s = x as? NSString { return AnyHashable(_mosString(s)) }
+        if let n = x as? NSNumber { let d = n.doubleValue; return d == d.rounded() && abs(d) < 9e15 ? AnyHashable(n.intValue) : AnyHashable(d) }
+        return AnyHashable(x)
+    }
+    public static func _forceBridgeFromObjectiveC(_ x: NSObject, result: inout AnyHashable?) { result = _mosHashable(x) }
+    public static func _conditionallyBridgeFromObjectiveC(_ x: NSObject, result: inout AnyHashable?) -> Bool {
+        result = _mosHashable(x); return true
+    }
+    @_effects(readonly)
+    public static func _unconditionallyBridgeFromObjectiveC(_ source: NSObject?) -> AnyHashable {
+        _mosHashable(source ?? NSNull())
+    }
+}
+
+// como na Apple: AnyHashable(NSString) é AnyHashable(String) e AnyHashable(NSNumber) o número Swift, para que chaves que
+// voltam do ObjC (userInfo, [AnyHashable: Any]) sejam iguais às criadas em Swift
+extension NSString: _HasCustomAnyHashableRepresentation {
+    @nonobjc public func _toCustomAnyHashable() -> AnyHashable? { AnyHashable(_mosString(self)) }
+}
+extension NSNumber: _HasCustomAnyHashableRepresentation {
+    @nonobjc public func _toCustomAnyHashable() -> AnyHashable? { AnyHashable._mosHashable(self) }
+}

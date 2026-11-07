@@ -417,7 +417,8 @@ static id o_retain(id self, SEL c) { (void)c; return objc_retain(self); }
 static void o_release(id self, SEL c) { (void)c; objc_release(self); }
 static id o_autorelease(id self, SEL c) { (void)c; return objc_autorelease(self); }
 static void nc_remove_all(id target);
-static void o_dealloc(id self, SEL c) { (void)c; nc_remove_all(self); cx_object_free(self); }
+extern void cx_kvo_forget(id self);
+static void o_dealloc(id self, SEL c) { (void)c; nc_remove_all(self); cx_kvo_forget(self); cx_object_free(self); }
 static void o_void(id self, SEL c) { (void)self; (void)c; }
 static void *o_zone(id self, SEL c) { (void)self; (void)c; return 0; }
 static IMP o_method_for(id self, SEL c, SEL s) { (void)c; return cx_lookup(self->isa, s); }
@@ -891,7 +892,13 @@ static u64 pi_mem(id self, SEL c) { (void)self; (void)c; return 1ull << 30; }
 typedef struct obs { id target; SEL sel; id name; id object; void *block; struct obs *next; } obs_t;
 static obs_t *observers;
 typedef struct { cx_class_t *isa; id name, object, info; } nsnote_t;
-id cx_note(id name, id object, id info) { nsnote_t *n = (nsnote_t *)cx_alloc_instance(&NSNotification_c); n->name = name; n->object = object; n->info = info; return (id)n; }
+/* como no macOS, a notificação retém nome, objeto e userInfo (quem a cria pode soltar os seus logo depois: a ponte
+ * Notification -> NSNotification do Swift, por exemplo) */
+id cx_note(id name, id object, id info) {
+    nsnote_t *n = (nsnote_t *)cx_alloc_instance(&NSNotification_c);
+    n->name = objc_retain(name); n->object = objc_retain(object); n->info = objc_retain(info);
+    return (id)n;
+}
 static id nn_name(id self, SEL c) { (void)c; return ((nsnote_t *)self)->name; }
 static id nn_object(id self, SEL c) { (void)c; return ((nsnote_t *)self)->object; }
 static id nn_info(id self, SEL c) { (void)c; return ((nsnote_t *)self)->info; }
@@ -1032,8 +1039,12 @@ typedef struct { cx_class_t *isa; char *path; id info; id outer; } nsbundle_t;
 static void b_root(id self, char *p, u64 cap) {
     if (self && BUNDLE(self)->path) { strlcpy(p, BUNDLE(self)->path, cap); return; }
     strlcpy(p, NXArgv && NXArgv[0] ? NXArgv[0] : "/", cap);
-    char *m = strstr(p, ".app/");
-    if (m) m[4] = 0;
+    /* o bundle principal é o .app que contém Contents/MacOS/<executável>: o mais interno. Helpers aninhados
+     * (Chrome: X.app/.../Helpers/Y Helper.app/Contents/MacOS/Y Helper) leem o Info.plist DELES (LSUIElement) */
+    char *m = 0;
+    for (char *q = strstr(p, "/Contents/MacOS/"); q; q = strstr(q + 1, "/Contents/MacOS/")) m = q;
+    if (m && m - p >= 4 && !strncmp(m - 4, ".app", 4)) *m = 0;
+    else if ((m = strstr(p, ".app/"))) m[4] = 0;
     else { char *s = strrchr(p, '/'); if (s && s != p) *s = 0; }
 }
 static int b_ends(const char *p, const char *suf) { u64 l = strlen(p), s = strlen(suf); return l >= s && !strcmp(p + l - s, suf); }
@@ -1057,6 +1068,7 @@ static id b_path(id self, SEL c) { (void)c; char p[1024]; b_root(self, p, sizeof
 static id b_resources(id self, SEL c) { (void)c; char p[1100]; b_res_dir(self, p, sizeof p); return cx_str(p); }
 static id b_with_path(id cls, SEL c, id path) {
     (void)c;
+    if (path && N(path) && access(S(path), 0) != 0) cx_fdprintf(2, "NSBundle[mOS]: bundleWithPath: caminho inexistente: %s\n", S(path));
     if (!path || !N(path) || access(S(path), 0) != 0) return 0;
     nsbundle_t *b = (nsbundle_t *)cx_alloc_instance((cx_class_t *)cls);
     b->path = strdup(S(path));

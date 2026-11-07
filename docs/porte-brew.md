@@ -97,13 +97,28 @@ Correções desta etapa:
   `raise` com tradução de números (macOS ↔ kernel) e um restorer. `alarm`/`setitimer` por thread auxiliar.
   Também `glob`, `execlp`, `stpncpy`, `rpmatch`, `getopt`, `openlog`, `uidna_*` (ASCII) e stubs de LDAP.
 
-Bloqueios abertos:
-1. **Corrupção de heap no kernel ao rodar o curl**: `kfree: ponteiro inválido` e depois uma falta de página
-   (`CR2=0x101000000e8`) logo depois de o loader montar as 13 imagens do curl. Para achar a função, falta o
-   endereço de carga do kernel no log, porque o build apaga o PDB.
-2. **TCP não conecta**: o DNS funciona (o ruby resolve `example.com`), mas `TCPSocket.new` e o curl ficam esperando
-   o `connect`. Ainda não se sabe se é a pilha TCP do kernel ou o `poll`/`socketpair` do libSystem.
-3. O git local (`init`/`add`/`commit`) não foi testado depois do `/dev/null`, porque a bateria parou no curl.
+Corrupção de heap resolvida (7 nov. 2026); os 28 casos locais passam, incluindo `git init/add/commit/log/status`:
+- **Causa**: `process_t old = {0}` na pilha do kernel, dentro do `execve`. Com `PROC_MAX_FDS = 256`, a struct tem
+  ~73 KB e a pilha do kernel 32 KiB, então zerar a struct escrevia zeros abaixo da pilha, em cima de blocos do heap
+  (magic 0, "kfree: ponteiro inválido", pilhas "já liberadas" no `reap` e falta de página depois). Agora o espaço
+  antigo é trocado com `np`, que está no heap. **Nunca pôr `process_t` na pilha do kernel.**
+- Os caminhos das dependências absolutas do loader (`link_abs_dep`) ficam no heap: o `link_add` é recursivo pela
+  cadeia de dylibs.
+- **git add (segfault)**: o clang da Apple troca `memset(p, 0, n)` por `__bzero(p, n)` e usa o retorno como se fosse
+  o do memset. O `__bzero` do libSystem era `void`, e o `rep stosb` inlinado deixava `rax = 0`, então o
+  `mem_pool_calloc` do git devolvia NULL. Agora `bzero`/`__bzero` devolvem o destino.
+- `rename` substitui o destino (POSIX). O git grava `X.lock` e renomeia por cima.
+- Ferramentas de depuração:
+  - O pânico mostra a base do kernel, os registradores e os endereços do kernel na pilha.
+  - `kfree` inválido mostra o magic e o chamador. O `reap` avisa quando uma thread já tem a pilha liberada.
+  - `kheap_check(onde)` (mm/memory.c) e `heap_probe` (proc/process.c) conferem as listas do heap.
+  - `tools/kernel-map.ps1` compila o kernel com PDB e traduz `base+0x…` em função:linha (dbghelp).
+  - `tools/machosym.c` traduz endereços de um Mach-O pela LC_SYMTAB.
+  - O harness tem `/dev/null` e `MACHOTEST_WATCHDOG`.
+
+Bloqueio aberto:
+- **TCP não conecta**: o DNS funciona (o ruby resolve `example.com`), mas `TCPSocket.new`, o curl e o git remoto ficam
+  esperando o `connect`. Ainda não se sabe se é a pilha TCP do kernel ou o laço do libSystem.
 
 Faltam, na ordem em que o bash e o ruby tropeçam:
 

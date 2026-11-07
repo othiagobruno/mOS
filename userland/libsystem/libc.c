@@ -300,8 +300,10 @@ void *memset(void *d, int c, size_t n) {
     return r;
 }
 
-void bzero(void *d, size_t n) { memset(d, 0, n); }
-void __bzero(void *d, size_t n) { memset(d, 0, n); }
+/* o clang da Apple troca memset(p, 0, n) por __bzero(p, n) e usa o retorno como o do memset: no macOS o
+ * __bzero deixa o destino em rax. Como void, o rep stosb inlinado deixava rax = 0 (o git recebia NULL). */
+void *bzero(void *d, size_t n) { return memset(d, 0, n); }
+void *__bzero(void *d, size_t n) { return memset(d, 0, n); }
 void bcopy(const void *s, void *d, size_t n) { memmove(d, s, n); }
 void memset_pattern16(void *d, const void *pat, size_t n) {
     u8 *a = d;

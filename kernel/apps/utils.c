@@ -1,4 +1,4 @@
-/* mOS — Monitor de Atividade, Console, Campo Minado, Visualizador e Música */
+/* mOS — Monitor de Atividade, Console e Campo Minado */
 #include "apps.h"
 #include "net.h"
 #include "proc.h"
@@ -146,47 +146,81 @@ static int con_scroll;
 extern char klog_buf[];
 extern usize klog_len;
 
+static struct { char q[64]; bool errors_only, paused; usize base, frozen_len; } CO;
+static const char *memchr_kit(const char *p, const char *end) { while (p < end && *p != '\n') p++; return p; }
+static bool con_is_err(const char *l) {
+    return strstr(l, "EXCE") || strstr(l, "falha") || strstr(l, "erro") || strstr(l, "FAIL") || strstr(l, "error") || strstr(l, "inválid");
+}
 static void paint_con(window_t *w, ui_t *u) {
     surface_t *s = u->s;
-    gfx_fill(s, 0, 0, u->cw, u->ch, T.content_bg);
-    int lh = 16, cols = (u->cw - 20) / mono_cell_w(12);
-    int nl = 0;
-    for (usize i = 0; i < klog_len; i++) if (klog_buf[i] == '\n') nl++;
-    int content = nl * lh + 20;
-    int rows = u->ch / lh;
-    static int last_nl;
-    if (nl != last_nl) { con_scroll = MAX(0, content - u->ch); last_nl = nl; }
-    if (u->wheel) con_scroll = CLAMP(con_scroll + u->wheel * 48, 0, MAX(0, content - u->ch));
-    int first = con_scroll / lh, line = 0;
-    char buf[256];
-    const char *p = klog_buf;
-    while (*p && line < first + rows + 1) {
-        const char *e = strchr(p, '\n');
-        int n = e ? (int)(e - p) : (int)strlen(p);
-        if (line >= first) {
-            int k = MIN(n, 255);
-            memcpy(buf, p, k);
-            buf[k] = 0;
-            u32 c = strstr(buf, "EXCE") || strstr(buf, "falha") || strstr(buf, "erro") ? RGB(230, 80, 70) : T.text;
-            mono_draw(s, 12, 10, 14 + (line - first) * lh - con_scroll % lh, c, buf, cols);
-        }
-        line++;
-        if (!e) break;
-        p = e + 1;
+    int top = w->toolbar_h;
+    gfx_fill(s, 0, top, u->cw, u->ch - top, T.content_bg);
+    /* barra de ferramentas: pausar, limpar, salvar, só erros e busca */
+    int tx = 96;
+    if (ui_toolbar_button(u, UI_ID, rect_make(tx, TOOLBAR_Y(28), 90, 28), CO.paused ? "Retomar" : "Pausar", true)) { CO.paused = !CO.paused; CO.frozen_len = klog_len; }
+    if (ui_toolbar_button(u, UI_ID, rect_make(tx + 98, TOOLBAR_Y(28), 80, 28), "Limpar", true)) { CO.base = klog_len; con_scroll = 0; }
+    if (ui_toolbar_button(u, UI_ID, rect_make(tx + 186, TOOLBAR_Y(28), 80, 28), "Salvar", true)) {
+        char p[200];
+        snprintf(p, sizeof p, "%s/kernel.log", home_sub("/Mesa"));
+        vfs_write_file(p, klog_buf, klog_len);
+        notify("Console", "Registro salvo na Mesa (kernel.log).");
     }
-    ui_scroll(u, UI_ID, rect_make(0, 0, u->cw, u->ch), content, &con_scroll);
+    static const char *flt[2] = {"Todas", "Erros"};
+    CO.errors_only = ui_segmented(u, UI_ID, rect_make(tx + 274, TOOLBAR_Y(28), 140, 28), flt, 2, CO.errors_only);
+    ui_searchfield(u, UI_ID, rect_make(u->cw - 12 - 200, TOOLBAR_Y(28), 200, 28), CO.q, sizeof CO.q);
+    usize len = CO.paused ? CO.frozen_len : klog_len;
+    if (CO.base > len) CO.base = 0;
+    int lh = 16, cols = (u->cw - 20) / mono_cell_w(12);
+    char q[64];
+    snprintf(q, sizeof q, "%s", CO.q);
+    for (char *c = q; *c; c++) *c = (char)tolower(*c);
+    /* conta as linhas que passam no filtro */
+    static int last_shown;
+    rect_t view = rect_make(0, top, u->cw, u->ch - top);
+    int shown = 0, first = con_scroll / lh, rows = view.h / lh + 2;
+    rect_t pc = surface_push_clip(s, view);
+    char buf[256], low[256];
+    const char *p = klog_buf + CO.base, *end = klog_buf + len;
+    while (p < end) {
+        const char *e = memchr_kit(p, end);
+        int n = (int)(e - p), k = MIN(n, 255);
+        memcpy(buf, p, k);
+        buf[k] = 0;
+        bool ok = true;
+        if (CO.errors_only && !con_is_err(buf)) ok = false;
+        if (ok && q[0]) { for (int i = 0; i <= k; i++) low[i] = (char)tolower(buf[i]); if (!strstr(low, q)) ok = false; }
+        if (ok) {
+            if (shown >= first && shown < first + rows) {
+                u32 c = con_is_err(buf) ? RGB(230, 80, 70) : strstr(buf, "aviso") ? RGB(220, 150, 30) : T.text;
+                mono_draw(s, 12, 10, top + 14 + (shown - first) * lh - con_scroll % lh, c, buf, cols);
+            }
+            shown++;
+        }
+        p = e < end ? e + 1 : end;
+    }
+    surface_pop_clip(s, pc);
+    int content = shown * lh + 20;
+    if (shown != last_shown && !CO.paused && !q[0]) { con_scroll = MAX(0, content - view.h); }
+    last_shown = shown;
+    ui_scroll(u, UI_ID, view, content, &con_scroll);
+    char st[64];
+    snprintf(st, sizeof st, "%d mensage%s", shown, shown == 1 ? "m" : "ns");
+    int sw = text_width(font_get(FONT_REGULAR), 11, st);
+    text_draw(s, font_get(FONT_REGULAR), 11, u->cw - 22 - sw, u->ch - 8, T.text3, st);
 }
 static void con_tick(app_t *a) {
     static usize last;
-    if (con_w && klog_len != last) { last = klog_len; wm_invalidate(con_w); }
+    if (con_w && klog_len != last && !CO.paused) { last = klog_len; wm_invalidate(con_w); }
 }
 static void con_close(window_t *w) { con_w = NULL; }
 static void con_launch(app_t *a) {
     if (con_w) { wm_focus(con_w); return; }
-    con_w = wm_create(&app_console, "Console — kernel.log", -1, -1, 760, 440, WIN_RESIZABLE);
+    con_w = wm_create(&app_console, "Console", -1, -1, 900, 520, WIN_RESIZABLE);
     if (!con_w) return;
     con_w->paint = paint_con;
     con_w->on_close = con_close;
+    con_w->toolbar_h = TOOLBAR_H;
+    con_w->title_x = -1;
 }
 app_t app_console = {.name = "Console", .exec = "console", .draw_icon = icon_console, .launch = con_launch, .tick = con_tick};
 
@@ -269,181 +303,4 @@ static void mines_launch(app_t *a) {
 }
 app_t app_minas = {.name = "Campo Minado", .exec = "minas", .draw_icon = icon_minas, .launch = mines_launch, .pinned = true};
 
-/* ================================================================== Visualizador (BMP/PPM) */
-static surface_t *decode_bmp(const u8 *d, usize n) {
-    if (n < 54 || d[0] != 'B' || d[1] != 'M') return NULL;
-    u32 off = *(u32 *)(d + 10);
-    i32 w = *(i32 *)(d + 18), h = *(i32 *)(d + 22);
-    u16 bpp = *(u16 *)(d + 28);
-    if (w <= 0 || w > 8192 || h == 0 || (bpp != 24 && bpp != 32)) return NULL;
-    bool flip = h > 0;
-    if (h < 0) h = -h;
-    if (h > 8192) return NULL;
-    surface_t *s = surface_new(w, h);
-    int rs = ((w * bpp / 8) + 3) & ~3;
-    for (int y = 0; y < h; y++) {
-        const u8 *row = d + off + (usize)(flip ? h - 1 - y : y) * rs;
-        if (row + w * bpp / 8 > d + n) break;
-        for (int x = 0; x < w; x++) {
-            const u8 *p = row + x * (bpp / 8);
-            s->px[y * w + x] = RGB(p[2], p[1], p[0]);
-        }
-    }
-    return s;
-}
-static surface_t *decode_ppm(const u8 *d, usize n) {
-    if (n < 8 || d[0] != 'P' || d[1] != '6') return NULL;
-    const char *p = (const char *)d + 2;
-    int vals[3], k = 0;
-    while (k < 3 && p < (const char *)d + n) {
-        while (isspace(*p)) p++;
-        if (*p == '#') { while (*p && *p != '\n') p++; continue; }
-        vals[k++] = (int)strtol(p, (char **)&p, 10);
-    }
-    p++;
-    int w = vals[0], h = vals[1];
-    if (w <= 0 || h <= 0 || w > 8192 || h > 8192 || (usize)((const u8 *)p - d) + (usize)w * h * 3 > n) return NULL;
-    surface_t *s = surface_new(w, h);
-    const u8 *q = (const u8 *)p;
-    for (int i = 0; i < w * h; i++, q += 3) s->px[i] = RGB(q[0], q[1], q[2]);
-    return s;
-}
-/* PNG/JPEG/BMP/GIF ficam em kernel/web/image.c; BMP e PPM daqui servem de reserva */
-surface_t *image_decode(const u8 *d, usize n);   /* kernel/web/image.c */
-static surface_t *viewer_decode(const u8 *d, usize n) {
-    surface_t *s = image_decode(d, n);
-    if (!s) s = decode_bmp(d, n);
-    return s ? s : decode_ppm(d, n);
-}
 
-typedef struct { surface_t *img; char name[64]; } view_t;
-static void paint_view(window_t *w, ui_t *u) {
-    view_t *v = w->data;
-    gfx_fill(u->s, 0, 0, u->cw, u->ch, T.dark ? RGB(30, 30, 30) : RGB(236, 236, 236));
-    if (!v->img) { ui_label_center(u, rect_make(0, 0, u->cw, u->ch), "Formato de imagem não suportado", FONT_REGULAR, 15, T.text2); return; }
-    float sc = MIN((float)u->cw / v->img->w, (float)u->ch / v->img->h);
-    if (sc > 1) sc = 1;
-    int dw = (int)(v->img->w * sc), dh = (int)(v->img->h * sc);
-    gfx_blit_scaled(u->s, v->img, (u->cw - dw) / 2, (u->ch - dh) / 2, dw, dh, 255);
-}
-static void view_close(window_t *w) { view_t *v = w->data; surface_free(v->img); kfree(v); }
-void viewer_open_file(const char *path) {
-    vnode_t *n = vfs_lookup(path);
-    if (!n) return;
-    view_t *v = kcalloc(1, sizeof(view_t));
-    v->img = viewer_decode(n->data, n->size);
-    strncpy(v->name, n->name, 63);
-    int w = v->img ? MIN(v->img->w, 1000) : 400, h = v->img ? MIN(v->img->h, 640) : 300;
-    window_t *win = wm_create(&app_visualizador, n->name, -1, -1, MAX(w, 300), MAX(h, 200), WIN_RESIZABLE);
-    if (!win) return;
-    app_visualizador.running = true;
-    win->data = v;
-    win->paint = paint_view;
-    win->on_close = view_close;
-}
-static void view_launch(app_t *a) { finder_open_path(home_sub("/Imagens")); }
-app_t app_visualizador = {.name = "Visualizador", .exec = "visualizador", .draw_icon = icon_visualizador, .launch = view_launch};
-
-/* ================================================================== Música: sintetizador e piano */
-static window_t *mus_w;
-static int mus_song = -1;
-static u64 mus_next;
-static int mus_pos;
-static int mus_wave;
-
-typedef struct { const char *name; const char *notes; int bpm; } song_t;
-/* notação: nota+oitava+duração(1=semínima,2=mínima,h=colcheia); "R" = pausa. Melodias de domínio público. */
-static const song_t songs[] = {
-    {"Ode à Alegria — Beethoven", "E4 E4 F4 G4 G4 F4 E4 D4 C4 C4 D4 E4 E4. D4h D42 E4 E4 F4 G4 G4 F4 E4 D4 C4 C4 D4 E4 D4. C4h C42", 120},
-    {"Brilha, Brilha Estrelinha", "C4 C4 G4 G4 A4 A4 G42 F4 F4 E4 E4 D4 D4 C42 G4 G4 F4 F4 E4 E4 D42 G4 G4 F4 F4 E4 E4 D42", 110},
-    {"Für Elise (início) — Beethoven", "E5h D#5h E5h D#5h E5h B4h D5h C5h A42 C4h E4h A4h B42 E4h G#4h B4h C52 E4h E5h D#5h E5h D#5h E5h B4h D5h C5h A42", 130},
-    {"Greensleeves (trad.)", "A4 C52 D5 E5. F5h E5 D52 B4 G4. A4h B4 C52 A4 A4. G#4h A4 B42 G#4 E42", 100},
-};
-
-static int note_freq(const char *n, int *len) {
-    static const int semis[7] = {9, 11, 0, 2, 4, 5, 7}; /* A B C D E F G */
-    const char *p = n;
-    if (*p == 'R') { *len = 1; return 0; }
-    int s = semis[*p - 'A'];
-    p++;
-    if (*p == '#') { s++; p++; }
-    int oct = *p++ - '0';
-    int midi = 12 * (oct + 1) + s;
-    float f = 440.0f * fpow(2.0f, (midi - 69) / 12.0f);
-    *len = 4;
-    if (*p == '2') *len = 8;
-    else if (*p == 'h') *len = 2;
-    else if (*p == '.') *len = 6;
-    return (int)f;
-}
-
-void synth_note(float freq, int ms, int wave, float vol);
-
-static void mus_tick(app_t *a) {
-    if (mus_song < 0) return;
-    u64 now = timer_ticks();
-    if (now < mus_next) return;
-    const char *p = songs[mus_song].notes;
-    int idx = 0;
-    while (*p && idx < mus_pos) { while (*p && *p != ' ') p++; while (*p == ' ') p++; idx++; }
-    if (!*p) { mus_song = -1; if (mus_w) wm_invalidate(mus_w); return; }
-    int len;
-    int f = note_freq(p, &len);
-    int ms = 60000 / songs[mus_song].bpm * len / 4;
-    if (f) synth_note((float)f, ms - 20, mus_wave, 0.5f);
-    mus_next = now + ms;
-    mus_pos++;
-    if (mus_w) wm_invalidate(mus_w);
-}
-
-static void paint_mus(window_t *w, ui_t *u) {
-    surface_t *s = u->s;
-    gfx_fill(s, 0, 0, u->cw, u->ch, T.content_bg);
-    ui_label(u, 20, 14, "Biblioteca", FONT_BOLD, 18, T.text);
-    for (int i = 0; i < (int)ARRAY_LEN(songs); i++) {
-        rect_t r = rect_make(0, 46 + i * 30, u->cw, 30);
-        bool sel = i == mus_song;
-        if (ui_list_row(u, 900 + i, r, sel, i % 2)) { mus_song = i; mus_pos = 0; mus_next = 0; }
-        ui_label(u, 20, r.y + 7, songs[i].name, sel ? FONT_SEMIBOLD : FONT_REGULAR, 13, sel ? RGB(255, 255, 255) : T.text);
-    }
-    int y = 46 + ARRAY_LEN(songs) * 30 + 14;
-    static const char *waves[] = {"Piano", "Órgão", "Sintetizador"};
-    ui_label(u, 20, y + 3, "Timbre:", FONT_REGULAR, 13, T.text);
-    mus_wave = ui_segmented(u, UI_ID, rect_make(80, y, 270, 22), waves, 3, mus_wave);
-    if (mus_song >= 0 && ui_button(u, UI_ID, rect_make(u->cw - 110, y, 90, 24), "Parar", false)) mus_song = -1;
-    /* teclado de piano: 2 oitavas */
-    int ky = y + 40, kh = u->ch - ky - 12, nw = 14, kw = (u->cw - 40) / nw;
-    static const int white_semi[7] = {0, 2, 4, 5, 7, 9, 11};
-    for (int i = 0; i < nw; i++) {
-        rect_t r = rect_make(20 + i * kw, ky, kw - 1, kh);
-        bool held = ui_hit(u, r) && u->down;
-        gfx_round_rect_ex(s, r.x, r.y, r.w, r.h, 0, 0, 4, 4, held ? RGB(210, 210, 214) : RGB(252, 252, 252), held ? RGB(190, 190, 196) : RGB(236, 236, 236));
-        gfx_round_rect_stroke(s, r.x, r.y, r.w, r.h, 4, 1, RGBA(0, 0, 0, 60));
-        if (ui_hit(u, r) && u->pressed) {
-            int midi = 60 + (i / 7) * 12 + white_semi[i % 7];
-            synth_note(440.0f * fpow(2.0f, (midi - 69) / 12.0f), 600, mus_wave, 0.6f);
-        }
-    }
-    static const int black_after[5] = {0, 1, 3, 4, 5};
-    static const int black_semi[5] = {1, 3, 6, 8, 10};
-    for (int o = 0; o < 2; o++)
-        for (int b = 0; b < 5; b++) {
-            int i = o * 7 + black_after[b];
-            rect_t r = rect_make(20 + (i + 1) * kw - kw / 3, ky, kw * 2 / 3, kh * 6 / 10);
-            gfx_round_rect_ex(s, r.x, r.y, r.w, r.h, 0, 0, 3, 3, RGB(50, 50, 54), RGB(20, 20, 22));
-            if (ui_hit(u, r) && u->pressed) {
-                int midi = 60 + o * 12 + black_semi[b];
-                synth_note(440.0f * fpow(2.0f, (midi - 69) / 12.0f), 600, mus_wave, 0.6f);
-            }
-        }
-    if (!audio_available()) ui_label(u, 20, u->ch - 28, "Sem saída de áudio disponível.", FONT_REGULAR, 11, T.text2);
-}
-static void mus_close(window_t *w) { mus_w = NULL; mus_song = -1; }
-static void mus_launch(app_t *a) {
-    if (mus_w) { wm_focus(mus_w); return; }
-    mus_w = wm_create(&app_musica, "Música", -1, -1, 620, 440, 0);
-    if (!mus_w) return;
-    mus_w->paint = paint_mus;
-    mus_w->on_close = mus_close;
-}
-app_t app_musica = {.name = "Música", .exec = "musica", .draw_icon = icon_musica, .launch = mus_launch, .tick = mus_tick, .pinned = true};

@@ -78,8 +78,8 @@ typedef struct tty {
 struct process {
     int pid, ppid;
     char name[32];
-    char path[128];
-    u64 *pml4;              /* espaço de endereçamento (físico = virtual no kernel) */
+    char path[384];         /* caminhos de helpers dentro de bundles passam de 128 (Chrome: ~200 caracteres) */
+    u64 *pml4;             /* espaço de endereçamento (físico = virtual no kernel) */
     u64 brk, brk_start;     /* heap */
     int exit_code;
     bool exited;

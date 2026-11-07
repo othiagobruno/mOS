@@ -90,4 +90,7 @@ void cx_swiftobjc_init(void) {
     DEF(OS_dispatch_workloop, OS_dispatch_queue);
     DEF(OS_os_log, OS_object);
 #undef DEF
+    /* NSUUID -initWithUUIDString:/-initWithUUIDBytes:, isEqual:/hash por valor... (corebluetooth.c): no boot o CoreBluetooth
+     * sobe antes do foundation_more.c definir o NSUUID; aqui ele já existe. A ponte UUID <-> NSUUID do Swift usa isso. */
+    { extern void cx_foundation_gaps(void); cx_foundation_gaps(); }
 }

@@ -575,3 +575,14 @@ static void icon(surface_t *s, int x, int y, int sz) {
 
 app_t app_lembretes = {.name = "Lembretes", .exec = "lembretes", .draw_icon = icon, .launch = launch, .tick = tick,
                        .on_menu = on_menu, .menus = menus, .nmenus = 3, .pinned = true, .always_tick = true};
+
+/* para outros apps (Atalhos): cria um lembrete na primeira lista */
+bool reminders_add(const char *title) {
+    load();
+    rem_t *x = rem_new(0);
+    if (!x) return false;
+    snprintf(x->title, sizeof x->title, "%s", title && title[0] ? title : "Novo Lembrete");
+    save();
+    if (R.w) wm_invalidate(R.w);
+    return true;
+}

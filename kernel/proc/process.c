@@ -493,7 +493,6 @@ static void finish(process_t *p, int code) {
         }
     }
     p->ppid = reported ? -1 : p->ppid;   /* -1: já informado a quem esperava (não volta no waitany) */
-    heap_probe("fim de", p);
 }
 
 static u32 le32_(const u8 *b) { return (u32)b[0] | (u32)b[1] << 8 | (u32)b[2] << 16 | (u32)b[3] << 24; }
@@ -1194,7 +1193,6 @@ static vnode_t *exec_resolve(char *path, usize cap, char ***argv, int *argc) {
 /* troca a imagem do processo atual. A imagem nova é montada num processo provisório; só depois
  * de carregada com sucesso o espaço de endereçamento antigo é descartado (falha = execve volta erro). */
 static i64 proc_exec(int_frame_t *f, thread_t *t, process_t *p, char *path, char **argv, int argc, char **env, int envc) {
-    heap_probe("antes do execve em", p);
     vnode_t *v = exec_resolve(path, 256, &argv, &argc);
     if (!v) { free_vec(argv, argc); free_vec(env, envc); return -MOS_ENOENT; }
     process_t *np = kcalloc(1, sizeof *np);
@@ -1244,7 +1242,6 @@ static i64 proc_exec(int_frame_t *f, thread_t *t, process_t *p, char *path, char
             usp = sp;
         }
     }
-    heap_probe("carregou a imagem nova em", p);
     free_vec(argv, argc);
     free_vec(env, envc);
     if (!ok) {
@@ -1304,7 +1301,6 @@ static i64 proc_exec(int_frame_t *f, thread_t *t, process_t *p, char *path, char
     fx[0] = 0x7F; fx[1] = 0x03;
     fx[24] = 0x80; fx[25] = 0x1F;
     kprintf("proc: execve pid %d -> %s (%llu KiB)\n", p->pid, p->name, p->mem_pages * 4);
-    heap_probe("execve ->", p);
     return 0;
 }
 
@@ -1862,7 +1858,6 @@ u64 proc_syscall(int_frame_t *f) {
         q->next = procs;
         procs = q;
         kprintf("proc: fork de %s (pid %d -> %d, %llu KiB compartilhados)\n", p->name, p->pid, q->pid, q->mem_pages * 4);
-        heap_probe("fork de", p);
         r = q->pid;                                     /* o pai vê o pid do filho */
         break;
     }

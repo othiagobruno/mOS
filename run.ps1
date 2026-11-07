@@ -11,7 +11,8 @@
 #                  "unplugged" unless the image was built with build.ps1 -MonitorExtra WxH
 #   -UsbInput : adds USB test devices on the xHCI bus (usb-kbd, usb-mouse, usb-tablet, usb-storage
 #               backed by build\usb-stick.img, a 16 MiB raw disk with an MBR signature, created on demand)
-param([switch]$Headless, [int]$Memory = 1024, [string]$Image = 'build/mOS.img', [int]$Port = 4444, [string]$Serial = 'build/serial-test.log', [string]$ExtraDisk = '', [switch]$Persist, [switch]$UsbInput, [string]$NvmeDisk = '', [switch]$BootNvme, [switch]$BootUsb, [string]$WavOut = $env:MOS_WAVOUT, [switch]$NoNet, [int]$Cpus = 4, [string]$Vga = 'std', [int]$Monitores = 1)
+param([switch]$Headless, [int]$Memory = 1024, [string]$Image = 'build/mOS.img', [int]$Port = 4444, [string]$Serial = 'build/serial-test.log', [string]$ExtraDisk = '', [switch]$Persist, [switch]$UsbInput, [string]$NvmeDisk = '', [switch]$BootNvme, [switch]$BootUsb, [string]$WavOut = $env:MOS_WAVOUT, [switch]$NoNet, [int]$Cpus = 4, [string]$Vga = 'std', [int]$Monitores = 1,
+      [string]$Accel = $env:MOS_QEMU_ACCEL)
 $root = $PSScriptRoot
 Set-Location $root
 $qemuDir = 'C:\Program Files\qemu'
@@ -50,6 +51,9 @@ if ($UsbInput) {
 }
 if ($Headless) { $qargs += @('-display', 'none', '-qmp', "tcp:127.0.0.1:$Port,server,nowait", '-serial', "file:$Serial"); if (-not $Persist) { $qargs += '-snapshot' } }
 else { $qargs += @('-display', 'sdl', '-serial', 'file:build/serial.log') }
+# -Accel whpx (ou MOS_QEMU_ACCEL=whpx): o hipervisor do Windows em vez da emulação (TCG). Sem o parâmetro nada muda.
+# Com o WHPX o convidado roda perto da velocidade nativa: o VS Code no TCG levava minutos só para compilar o JS do workbench.
+if ($Accel) { $qargs += @('-accel', $Accel) }
 # MOS_QEMU_LOG=<arquivo>: o QEMU registra resets da CPU (com os registradores) e erros do convidado. Com -no-reboot,
 # um triple fault do Nucleo fecha o QEMU sem deixar rastro no log serial; este arquivo diz onde foi.
 if ($env:MOS_QEMU_LOG) { $qargs += @('-d', 'cpu_reset,guest_errors', '-D', $env:MOS_QEMU_LOG) }

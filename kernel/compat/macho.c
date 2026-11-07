@@ -1714,7 +1714,7 @@ bool macho_load(process_t *p, const u8 *img, usize len, const char *arg, u64 *en
             if (!uenv[i]) args_ok = false;
         }
     }
-    char ep[200];
+    char ep[420];           /* "executable_path=" + caminho (process_t.path tem até 384) */
     snprintf(ep, sizeof ep, "executable_path=%s", p->path);
     uapple[0] = us_push(&st, ep, strlen(ep) + 1, 1);
     uapple[1] = 0;

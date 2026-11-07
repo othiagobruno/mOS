@@ -7,7 +7,7 @@
 #define USER_STACK_SIZE (2048u << 10)
 
 typedef struct process {
-    char path[128];
+    char path[384];
     u64 brk, brk_start;
     u64 mem_pages;
     u64 mmap_next;          /* região de mmap (o dlopen põe as imagens novas aqui) */
