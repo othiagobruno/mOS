@@ -25,6 +25,7 @@ int *__error(void);
 #define ENOENT_ 2
 #define ENOSYS_ 78
 #define ENOTSUP_ 45
+#define KERN_SUCCESS 0
 #define KERN_FAILURE 5
 
 size_t strlen(const char *s);
@@ -199,9 +200,10 @@ int getattrlist(const char *p, void *al, void *buf, size_t sz, unsigned opts) { 
 char *_dirhelper(int which, char *buf, size_t len) { (void)which; (void)buf; (void)len; return 0; }
 int proc_get_wakemon_params(int pid, int *rate, int *flags) { (void)pid; (void)rate; (void)flags; SET_ERRNO(ENOTSUP_); return -1; }
 
-/* ---- Mach: tarefas de outros processos não existem no mOS */
-kern_return_t task_suspend(unsigned t) { (void)t; return KERN_FAILURE; }
-kern_return_t task_resume(unsigned t) { (void)t; return KERN_FAILURE; }
+/* O Chromium suspende o filho só para registrar as portas do rendezvous e depois retoma.
+ * O mOS não congela a tarefa (o filho já corre); responder falha fazia o pai desistir dele. */
+kern_return_t task_suspend(unsigned t) { (void)t; return KERN_SUCCESS; }
+kern_return_t task_resume(unsigned t) { (void)t; return KERN_SUCCESS; }
 kern_return_t task_create_identity_token(unsigned t, unsigned *tok) { (void)t; if (tok) *tok = 0; return KERN_FAILURE; }
 kern_return_t task_identity_token_get_task_port(unsigned tok, int flavor, unsigned *port) { (void)tok; (void)flavor; if (port) *port = 0; return KERN_FAILURE; }
 /* mach_port_insert_member agora é implementado de verdade em mach.c (portas Mach no kernel, conjuntos

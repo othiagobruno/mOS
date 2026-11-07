@@ -64,7 +64,8 @@ if ($ComModulosNativos) {
 $res = "Frameworks\Electron Framework.framework\Resources"
 New-Item -ItemType Directory -Force "$dst\$res" | Out-Null
 $resSrc = "$src\Frameworks\Electron Framework.framework\Versions\A\Resources"
-Get-ChildItem $resSrc -File | Copy-Item -Destination "$dst\$res\"
+if (-not (Test-Path -LiteralPath $resSrc)) { $resSrc = "$src\Frameworks\Electron Framework.framework\Resources" }
+Get-ChildItem -LiteralPath $resSrc -File | Copy-Item -Destination "$dst\$res\"
 foreach ($l in 'en.lproj', 'pt_BR.lproj') { if (Test-Path "$resSrc\$l") { Copy-Item -Recurse "$resSrc\$l" "$dst\$res\" } }
 $lib = "Frameworks\Electron Framework.framework\Versions\A\Libraries"
 New-Item -ItemType Directory -Force "$dst\$lib" | Out-Null

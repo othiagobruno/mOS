@@ -603,7 +603,29 @@ kern_return_t mach_msg_overwrite(mach_msg_header_t *msg, int option, u32 send_si
     (void)rcv_msg; (void)rcv_limit;
     return mach_msg(msg, option, send_size, rcv_size, rcv_name, timeout, notify);
 }
-void mach_msg_destroy(mach_msg_header_t *msg) { (void)msg; }
+void mach_msg_destroy(mach_msg_header_t *msg) {
+    if (!msg) return;
+    /* só direitos MOVE são do receptor (MAKE/COPY continuam com quem enviou). Soltá-los dispara
+     * MACH_NOTIFY_SEND_ONCE no kernel quando o direito é send-once — é o que desbloqueia o cliente
+     * do rendezvous se o servidor recusa o pedido. */
+    u32 bits = msg->bits;
+    u32 remote = bits & 0x1f, local = (bits >> 8) & 0x1f;
+    if ((remote == 16 || remote == 17 || remote == 18) && msg->remote) mach_port_deallocate(0, msg->remote);
+    if ((local == 16 || local == 17 || local == 18) && msg->local) mach_port_deallocate(0, msg->local);
+    if (!(bits & 0x80000000u)) return;
+    u8 *b = (u8 *)msg;
+    u32 nd = *(u32 *)(b + 24);
+    u32 off = 28;
+    for (u32 i = 0; i < nd && i < 64 && off + 12 <= msg->size; i++) {
+        u8 type = b[off + 11];
+        if (type == 0) {
+            u32 name = *(u32 *)(b + off);
+            u8 disp = b[off + 10];
+            if ((disp == 16 || disp == 17 || disp == 18) && name) mach_port_deallocate(0, name);
+            off += 12;
+        } else off += 16;
+    }
+}
 kern_return_t mach_msg_send(mach_msg_header_t *msg) { return msg ? mach_msg(msg, MACH_SEND_MSG, msg->size, 0, 0, 0, 0) : KERN_INVALID_ARGUMENT; }
 kern_return_t mach_msg_receive(mach_msg_header_t *msg) { return msg ? mach_msg(msg, MACH_RCV_MSG, 0, msg->size, msg->local, 0, 0) : KERN_INVALID_ARGUMENT; }
 

@@ -561,20 +561,53 @@ static void set_window_rec(id v, id w) {
     s->window = w;
     for (u32 i = 0; i < s->nsub; i++) set_window_rec(s->sub[i], w);
 }
-static void v_add_sub(id self, SEL c, id sub) {
-    (void)c;
+/* at é o índice depois de tirar sub do pai antigo. A última subview é a de cima (o hit-test anda de trás pra frente). */
+static void v_insert_sub(id self, id sub, u32 at) {
     if (!sub) return;
     vstate_t *s = vs(self), *ss = vs(sub);
     objc_retain(sub);
     if (ss->superview) {
         vstate_t *ps = vs(ss->superview);
-        for (u32 i = 0; i < ps->nsub; i++) if (ps->sub[i] == sub) { memmove(ps->sub + i, ps->sub + i + 1, (ps->nsub - i - 1) * sizeof(id)); ps->nsub--; objc_release(sub); break; }
+        for (u32 i = 0; i < ps->nsub; i++) if (ps->sub[i] == sub) {
+            memmove(ps->sub + i, ps->sub + i + 1, (ps->nsub - i - 1) * sizeof(id));
+            ps->nsub--;
+            objc_release(sub);
+            if (ps == s && i < at) at--;
+            break;
+        }
     }
+    if (at > s->nsub) at = s->nsub;
     if (s->nsub == s->capsub) { s->capsub = s->capsub ? s->capsub * 2 : 8; s->sub = realloc(s->sub, s->capsub * sizeof(id)); }
-    s->sub[s->nsub++] = sub;
+    memmove(s->sub + at + 1, s->sub + at, (s->nsub - at) * sizeof(id));
+    s->sub[at] = sub;
+    s->nsub++;
     ss->superview = self;
     set_window_rec(sub, s->window);
     if (cx_responds(sub->isa, sel_registerName("viewDidMoveToWindow")) && s->window) MSG0(void, sub, "viewDidMoveToWindow");
+    mark(self);
+}
+static void v_add_sub(id self, SEL c, id sub) { (void)c; v_insert_sub(self, sub, vs(self)->nsub); }
+/* NSWindowAbove = 1 (depois de other, por cima), NSWindowBelow = -1 (no lugar de other, por baixo). other nulo: above vai pro fim, below pro começo. */
+static void v_add_positioned(id self, SEL c, id sub, i64 place, id other) {
+    (void)c;
+    vstate_t *s = vs(self);
+    u32 at = place < 0 ? 0 : s->nsub;
+    if (other && other != sub) {
+        for (u32 i = 0; i < s->nsub; i++) if (s->sub[i] == other) { at = place < 0 ? i : i + 1; break; }
+    }
+    v_insert_sub(self, sub, at);
+}
+typedef i64 (*vsort_fn)(id, id, void *);
+static void v_sort_sub(id self, SEL c, vsort_fn cmp, void *ctx) {
+    (void)c;
+    if (!cmp) return;
+    vstate_t *s = vs(self);
+    for (u32 i = 1; i < s->nsub; i++) {
+        id v = s->sub[i];
+        u32 j = i;
+        while (j > 0 && cmp(s->sub[j - 1], v, ctx) > 0) { s->sub[j] = s->sub[j - 1]; j--; }
+        s->sub[j] = v;
+    }
     mark(self);
 }
 static void v_remove(id self, SEL c) {
@@ -1055,6 +1088,16 @@ static void w_set_released(id self, SEL c, BOOL b) { (void)c; ws(self)->released
 static id w_first(id self, SEL c) { (void)c; return ws(self)->first; }
 static BOOL w_make_first(id self, SEL c, id r) { (void)c; wstate_t *s = ws(self); if (s->first) mark(s->first); s->first = r; if (r) mark(r); return YES; }
 static i64 w_number(id self, SEL c) { (void)c; return ws(self)->gid; }
+/* NSWindowOcclusionStateVisible = 2. Sem isto o Chromium trata a janela como coberta e não compõe. */
+static u64 w_occlusion(id self, SEL c) { (void)self; (void)c; return 2; }
+/* r está na base da janela (origem embaixo à esquerda do content, que no mOS coincide com a base). */
+static NSRect w_convert_to_screen(id self, SEL c, NSRect r) {
+    (void)c;
+    wstate_t *s = ws(self);
+    r.o.x += s->frame.o.x;
+    r.o.y += s->frame.o.y;
+    return r;
+}
 
 static id app_windows;
 static void w_show(id self, SEL c, id sender) {
@@ -1735,7 +1778,31 @@ static void r_key_down(id self, SEL c, id e) {
 /* ================================================================ NSApplication */
 typedef struct { id delegate, menu; BOOL running, launched, terminating; int modal_result; BOOL in_modal; } appstate_t;
 static appstate_t app;
-static id ap_shared(id cls, SEL c) { (void)c; if (!NSApp) NSApp = MSG0(id, MSG0(id, cls, "alloc"), "init"); return NSApp; }
+static id app_singleton;
+/* O renderer do Chromium (RendererMainPlatformDelegate::EnableSandbox) faz CHECK(NSApp == nil)
+ * depois de o próprio Init já ter chamado sharedApplication. O singleton continua existindo para
+ * quem manda a mensagem; o global exportado fica nulo nos helpers (--type=renderer/gpu/utility
+ * ou executável "Code Helper ..."). O processo do app (sem --type=) publica NSApp normalmente. */
+static int nsapp_is_helper(void) {
+    extern int NXArgc;
+    extern char **NXArgv;
+    extern const char *__progname;
+    if (__progname && strstr(__progname, "Helper")) return 1;
+    if (!NXArgv) return 0;
+    for (int i = 1; i < NXArgc; i++) {
+        const char *a = NXArgv[i];
+        if (a && strncmp(a, "--type=", 7) == 0 && a[7]) return 1;
+    }
+    return 0;
+}
+static id ap_shared(id cls, SEL c) {
+    (void)c;
+    if (!app_singleton) {
+        app_singleton = MSG0(id, MSG0(id, cls, "alloc"), "init");
+        if (!nsapp_is_helper()) NSApp = app_singleton;
+    }
+    return app_singleton;
+}
 static void ap_set_delegate(id self, SEL c, id d) { (void)self; (void)c; app.delegate = d; }
 static id ap_delegate(id self, SEL c) { (void)self; (void)c; return app.delegate; }
 static BOOL ap_set_policy(id self, SEL c, i64 p) { (void)self; (void)c; (void)p; return YES; }
@@ -3096,12 +3163,15 @@ void cx_appkit_init(void) {
     M(NSWindow, "setAcceptsMouseMovedEvents:", noop1_m); M(NSWindow, "setInitialFirstResponder:", noop1_m); M(NSWindow, "setStyleMask:", noop1_m);
     M(NSWindow, "setCollectionBehavior:", noop1_m); M(NSWindow, "setAppearance:", noop1_m); M(NSWindow, "setFrameOrigin:", noop1_m);
     M(NSWindow, "setFrameTopLeftPoint:", noop1_m); M(NSWindow, "windowNumber", w_number); M(NSWindow, "setTabbingMode:", noop1_m);
+    M(NSWindow, "occlusionState", w_occlusion); M(NSWindow, "convertRectToScreen:", w_convert_to_screen);
     M(NSWindow, "isKeyWindow", yes_m); M(NSWindow, "isMainWindow", yes_m);
 
     DEF(NSView, NSResponder);
     M(NSView, "initWithFrame:", v_init_frame); M(NSView, "init", v_init); M(NSView, "frame", v_frame); M(NSView, "bounds", v_bounds);
     M(NSView, "setFrame:", v_set_frame); M(NSView, "setFrameSize:", v_set_size); M(NSView, "setFrameOrigin:", v_set_origin);
-    M(NSView, "addSubview:", v_add_sub); M(NSView, "removeFromSuperview", v_remove); M(NSView, "subviews", v_subviews);
+    M(NSView, "addSubview:", v_add_sub); M(NSView, "addSubview:positioned:relativeTo:", v_add_positioned);
+    M(NSView, "sortSubviewsUsingFunction:context:", v_sort_sub); M(NSView, "setNextKeyView:", noop1_m);
+    M(NSView, "removeFromSuperview", v_remove); M(NSView, "subviews", v_subviews);
     M(NSView, "superview", v_superview); M(NSView, "window", v_window); M(NSView, "setNeedsDisplay:", v_set_needs);
     M(NSView, "setNeedsDisplayInRect:", v_set_needs_rect); M(NSView, "display", v_display); M(NSView, "needsDisplay", v_needs);
     M(NSView, "setHidden:", v_set_hidden); M(NSView, "isHidden", v_hidden); M(NSView, "setAutoresizingMask:", v_set_autoresize);

@@ -29,7 +29,8 @@ $defs = @('-DswiftCore_EXPORTS', '-DSWIFT_RUNTIME', '-DSWIFT_OBJC_INTEROP=0', '-
           '-DSWIFT_TARGET_LIBRARY_NAME=swiftRuntimeCore', '-DSWIFT_STDLIB_HAS_TYPE_PRINTING=1', '-DSWIFT_ENABLE_REFLECTION=1',
           '-DLLVM_DISABLE_ABI_BREAKING_CHECKS_ENFORCING=1', '-DSWIFT_RUNTIME_ENABLE_LEAK_CHECKER=0', '-DSWIFT_STDLIB_HAS_DLADDR',
           '-DSWIFT_STDLIB_OVERRIDABLE_RETAIN_RELEASE=1', '-DSWIFT_STDLIB_HAS_STDIN',
-          '-DSWIFT_STDLIB_HAS_ENVIRON', '-DSWIFT_STDLIB_HAS_LOCALE', '-DSWIFT_INLINE_NAMESPACE=__runtime', '-DSWIFT_RUNTIME_OS_VERSIONING=0')
+          '-DSWIFT_STDLIB_HAS_ENVIRON', '-DSWIFT_STDLIB_HAS_LOCALE', '-DSWIFT_STDLIB_ENABLE_UNICODE_DATA=1',
+          '-DSWIFT_INLINE_NAMESPACE=__runtime', '-DSWIFT_RUNTIME_OS_VERSIONING=0')
 $inc = @("-I$src\include", "-I$src\stdlib\include", "-I$src\stdlib\public\SwiftShims", "-I$src\stdlib\public", "-I$rt")
 $fl = @('-target', 'x86_64-macos', '-std=c++20', '-O2', '-fno-exceptions', '-fno-rtti', '-ffunction-sections', '-fno-sanitize=all', '-w', '-c')
 $ok = 0; $bad = @()

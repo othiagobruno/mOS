@@ -556,7 +556,7 @@ if ($Repo -contains 'OpenSwiftUICore') {
                    'OPENSWIFTUI_SUPPORT_2024_API', 'OPENSWIFTUI_CF_CGTYPES', 'OPENRENDERBOX_CF_CGTYPES', 'OPENSWIFTUI_OPENCOMBINE', 'OPENSWIFTUI_SWIFT_LOG',
                    'OPENSWIFTUI_COMPUTE', 'OPENSWIFTUI_MOS', 'OPENSWIFTUI_XCFRAMEWORK_BUILD') { $flags += '-D', $d }
     foreach ($ft in 'BareSlashRegexLiterals', 'InternalImportsByDefault', 'InferSendableFromCaptures') { $flags += '-enable-upcoming-feature', $ft }
-    $flags += '-package-name', 'OpenSwiftUI', '-module-abi-name', 'OpenSwiftUI', '-experimental-spi-only-imports', '-unavailable-decl-optimization=stub'
+    $flags += '-package-name', 'OpenSwiftUI', '-module-abi-name', 'SwiftUI', '-experimental-spi-only-imports', '-unavailable-decl-optimization=stub'
     # macros de disponibilidade do Package.swift no modo "ignorar disponibilidade" (todas na versão mínima)
     $minv = 'macOS 10.15, iOS 13.0, tvOS 13.0, watchOS 6.0, visionOS 1.0'
     foreach ($v in 'v1_0', 'v1_4', 'v2_0', 'macOS_v2_0', 'v2_1', 'v2_3', 'v3_0', 'iOS_v3_0', 'macOS_v3_0', 'v3_2', 'v3_4', 'v4_0', 'iOS_v4_0', 'watchOS_v4_0',
@@ -620,7 +620,7 @@ if ($Repo -contains 'OpenSwiftUI') {
                    'OPENSWIFTUI_SUPPORT_2024_API', 'OPENSWIFTUI_CF_CGTYPES', 'OPENRENDERBOX_CF_CGTYPES', 'OPENSWIFTUI_OPENCOMBINE', 'OPENSWIFTUI_SWIFT_LOG',
                    'OPENSWIFTUI_COMPUTE', 'OPENSWIFTUI_MOS', 'OPENSWIFTUI_XCFRAMEWORK_BUILD') { $flags += '-D', $d }
     foreach ($ft in 'BareSlashRegexLiterals', 'InternalImportsByDefault', 'InferSendableFromCaptures') { $flags += '-enable-upcoming-feature', $ft }
-    $flags += '-package-name', 'OpenSwiftUI', '-experimental-spi-only-imports', '-unavailable-decl-optimization=stub'
+    $flags += '-package-name', 'OpenSwiftUI', '-module-abi-name', 'SwiftUI', '-experimental-spi-only-imports', '-unavailable-decl-optimization=stub'
     $minv = 'macOS 10.15, iOS 13.0, tvOS 13.0, watchOS 6.0, visionOS 1.0'
     foreach ($v in 'v1_0', 'v1_4', 'v2_0', 'macOS_v2_0', 'v2_1', 'v2_3', 'v3_0', 'iOS_v3_0', 'macOS_v3_0', 'v3_2', 'v3_4', 'v4_0', 'iOS_v4_0', 'watchOS_v4_0',
                    'v4_1', 'v4_4', 'v5_0', 'v5_1', 'v5_2', 'v5_4', 'v5_5', 'v6_0', 'v7_0', 'v8_0') { $flags += '-define-availability', "OpenSwiftUI_${v}:$minv" }

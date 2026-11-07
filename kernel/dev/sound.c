@@ -13,7 +13,10 @@
  *   desafinados + quadrada uma oitava abaixo, tabelas limitadas em banda por
  *   oitava, passa-baixas de 2 polos com envelope de corte);
  * - envelope ADSR por voz;
- * - o backend (HDA ou AC'97) chama snd_render() quando precisa de amostras.
+ * - o backend (HDA ou AC'97) chama snd_render() quando precisa de amostras;
+ * - a captura (microfone) chega por snd_capture() e fica num anel de ~0,7 s.
+ *   audio_capture_read() consome; com o monitor ligado, o mesmo áudio entra
+ *   na saída, com a latência do buffer de playback.
  */
 #include "kernel.h"
 
@@ -29,9 +32,13 @@
 bool hda_probe(char *name, usize n);
 void hda_service(void);
 void hda_set_mute(bool mute);
+bool hda_input_available(void);
+const char *hda_input_name(void);
 bool ac97_probe(char *name, usize n);
 void ac97_service(void);
 void ac97_set_mute(bool mute);
+bool ac97_input_available(void);
+const char *ac97_input_name(void);
 
 enum { BK_NONE, BK_HDA, BK_AC97 };
 static int backend;
@@ -396,6 +403,44 @@ static void voice_block(voice_t *v, i32 *acc, int n) {
     if (!alive) v->on = 0;
 }
 
+/* ---------------------------------------------------------------- captura (48 kHz estéreo) */
+#define CAP_N    32768
+#define CAP_MASK (CAP_N - 1)
+static i16 *cap_ring;
+static u32 cap_w, cap_r, cap_m;
+static int cap_vol = 100;
+static bool cap_on, cap_monitor;
+static char inname[80] = "Nenhuma entrada";
+static spinlock_t cap_lock;
+
+static i16 cap_gain(i16 s, i32 g) {
+    i32 v = (i32)(((i64)s * g) >> 16);
+    return (i16)CLAMP(v, -32768, 32767);
+}
+
+void snd_capture(const i16 *src, u32 frames) {
+    if (!cap_on || !cap_ring || !src || !frames) return;
+    i32 g = cap_vol <= 0 ? 0 : (i32)cap_vol * 65536 / 100;
+    while (frames) {
+        u32 n = MIN(frames, 128);
+        i16 tmp[128 * 2];
+        for (u32 i = 0; i < n; i++) {
+            tmp[i * 2] = cap_gain(src[i * 2], g);
+            tmp[i * 2 + 1] = cap_gain(src[i * 2 + 1], g);
+        }
+        u64 fl = spin_lock_irqsave(&cap_lock);
+        for (u32 i = 0; i < n; i++) {
+            cap_ring[cap_w * 2] = tmp[i * 2];
+            cap_ring[cap_w * 2 + 1] = tmp[i * 2 + 1];
+            cap_w = (cap_w + 1) & CAP_MASK;
+            if (cap_w == cap_r) cap_r = (cap_r + 1) & CAP_MASK;
+        }
+        spin_unlock_irqrestore(&cap_lock, fl);
+        src += n * 2;
+        frames -= n;
+    }
+}
+
 /* ---------------------------------------------------------------- mixer */
 static inline i32 soft_clip(i32 x) {
     /* limitador suave acima de 0,75 FS, nunca passa de 1,0 FS */
@@ -425,6 +470,24 @@ static void mix_block(i16 *dst, int n, bool late) {
                 kfree(b->data);
                 b->data = NULL;
                 pq_head = (pq_head + 1) % PCMQ;
+            }
+        }
+        if (cap_monitor && cap_on && cap_ring) {
+            i16 mon[BLOCK * 2];
+            int got = 0;
+            u64 fl = spin_lock_irqsave(&cap_lock);
+            u32 avail = (cap_w - cap_m) & CAP_MASK;
+            if (avail > CAP_N / 2) cap_m = (cap_w - 960) & CAP_MASK; /* ~20 ms, sem despejar o anel inteiro */
+            while (got < n && cap_m != cap_w) {
+                mon[got * 2] = cap_ring[cap_m * 2];
+                mon[got * 2 + 1] = cap_ring[cap_m * 2 + 1];
+                cap_m = (cap_m + 1) & CAP_MASK;
+                got++;
+            }
+            spin_unlock_irqrestore(&cap_lock, fl);
+            for (int i = 0; i < got; i++) {
+                acc[i * 2] += mon[i * 2];
+                acc[i * 2 + 1] += mon[i * 2 + 1];
             }
         }
         g1 = gm_cur + (gm_target - gm_cur) / 8;          /* rampa ~5 ms: sem estalos ao mudar o volume */
@@ -489,20 +552,59 @@ void snd_late_done(void) {
 /* ---------------------------------------------------------------- API pública */
 bool audio_init(void) {
     gm_target = gm_cur = (i32)(vol_curve(volume) * 65536.0f);
+    cap_ring = kmalloc(CAP_N * 4);
+    if (cap_ring) memset(cap_ring, 0, CAP_N * 4);
     if (hda_probe(devname, sizeof devname)) backend = BK_HDA;
     else if (ac97_probe(devname, sizeof devname)) backend = BK_AC97;
     build_tables();   /* também sem placa: o fone Bluetooth (audio_tap) usa o mesmo mixer */
+    cap_on = false;
+    strcpy(inname, "Nenhuma entrada");
+    if (cap_ring && backend == BK_HDA && hda_input_available()) {
+        cap_on = true;
+        snprintf(inname, sizeof inname, "%s", hda_input_name());
+    } else if (cap_ring && backend == BK_AC97 && ac97_input_available()) {
+        cap_on = true;
+        snprintf(inname, sizeof inname, "%s", ac97_input_name());
+    }
     if (!backend) {
         strcpy(devname, "Nenhum dispositivo");
         kprintf("Áudio: nenhum dispositivo de saída encontrado\n");
         return false;
     }
     kprintf("Áudio: %s, volume %d%%\n", devname, volume);
+    if (cap_on) kprintf("Áudio: entrada %s, ganho %d%%\n", inname, cap_vol);
+    else kprintf("Áudio: nenhuma entrada\n");
     return true;
 }
 
 bool audio_available(void) { return backend != BK_NONE || audio_tap; }
 const char *audio_device_name(void) { return devname; }
+
+bool audio_input_available(void) { return cap_on; }
+const char *audio_input_name(void) { return inname; }
+void audio_set_input_volume(int pct) { cap_vol = CLAMP(pct, 0, 100); }
+int audio_get_input_volume(void) { return cap_vol; }
+void audio_set_input_monitor(bool on) {
+    u64 fl = spin_lock_irqsave(&cap_lock);
+    cap_monitor = on && cap_on;
+    if (cap_monitor) cap_m = cap_w;                      /* não reproduz o que já estava no anel */
+    spin_unlock_irqrestore(&cap_lock, fl);
+}
+bool audio_get_input_monitor(void) { return cap_monitor; }
+
+u32 audio_capture_read(i16 *dst, u32 frames) {
+    if (!cap_on || !cap_ring || !dst || !frames) return 0;
+    u64 fl = spin_lock_irqsave(&cap_lock);
+    u32 n = 0;
+    while (n < frames && cap_r != cap_w) {
+        dst[n * 2] = cap_ring[cap_r * 2];
+        dst[n * 2 + 1] = cap_ring[cap_r * 2 + 1];
+        cap_r = (cap_r + 1) & CAP_MASK;
+        n++;
+    }
+    spin_unlock_irqrestore(&cap_lock, fl);
+    return n;
+}
 
 void audio_poll(void) {
     if (backend == BK_HDA) hda_service();

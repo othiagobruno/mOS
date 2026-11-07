@@ -594,6 +594,10 @@ u64 proc_fault(int_frame_t *f, u64 cr2) {
     /* o programa tem tratador para esta falha? entrega o sinal */
     int sig = f->vector == 14 || f->vector == 13 ? MOS_SIGSEGV : f->vector == 0 ? MOS_SIGFPE : f->vector == 6 ? MOS_SIGILL : 0;
     if (sig && p->sig_handler[sig] > MOS_SIG_IGN && !(p->sig_pending & (1u << sig))) {
+        /* CHECK do Chromium é ud2. O crashpad instala tratador e sai em silêncio; sem esta linha
+         * o renderer do VS Code desaparece do dump sem "processo encerrado". */
+        if (f->vector == 6)
+            kprintf("proc: %s (pid %d): instrução inválida em 0x%llx (entregue ao tratador)\n", p->name, p->pid, f->rip);
         p->sig_pending |= 1u << sig;
         return proc_signal_check(f);
     }
@@ -908,6 +912,17 @@ u64 proc_syscall(int_frame_t *f) {
     i64 r = -MOS_EINVAL;
     switch (f->rax) {
     case SYS_EXIT:
+        /* diagnóstico (despejar-threads): quem encerra um helper do VS Code, com código e pilha */
+        if (!strncmp(p->name, "Code Helper", 11) && vfs_lookup("/Sistema/Biblioteca/despejar-threads")) {
+            kprintf("proc: %s (pid %d) chamou exit(%d), thread %d\n", p->name, p->pid, (int)a, t ? t->id : -1);
+            u64 w[64];
+            if (uvm_copy_in(p, w, f->rsp & ~7ULL, sizeof w)) {
+                char line[200]; usize o = 0; int shown = 0;
+                for (int i = 0; i < 64 && shown < 14; i++)
+                    if (w[i] >= USER_BASE + 0x100000ULL && w[i] < USER_BASE + 0x0E000000ULL) { o += (usize)snprintf(line + o, sizeof line - o, " %llx", w[i]); shown++; }
+                if (o) kprintf("proc:   pilha:%s\n", line);
+            }
+        }
         finish(p, (int)a);
         return sched_switch(f);
     case SYS_WRITE:

@@ -333,13 +333,22 @@ static u8 bits_remote(u32 bits) { return bits & 0x1f; }
 static u8 bits_local(u32 bits) { return (bits >> 8) & 0x1f; }
 
 /* ------------------------------------------------------------ enfileirar e acordar */
+static void send_notify(kport_t *note, int id, u32 arg);
+static void so_drop_unused(kport_t *p);   /* send-once destruído sem uso: avisa quem recebe */
+
 static void kmsg_free(kmsg_t *m) {
     if (!m) return;
     if (m->dest) port_unref(m->dest);
-    if (m->reply) port_unref(m->reply);
+    if (m->reply) {
+        if (m->reply_type == MT_MOVE_SEND_ONCE) so_drop_unused(m->reply);
+        else port_unref(m->reply);
+    }
     for (u32 i = 0; i < m->nitems; i++) {
         kitem_t *it = &m->items[i];
-        if (it->kind == D_PORT && it->port) port_unref(it->port);
+        if (it->kind == D_PORT && it->port) {
+            if (it->type == MT_MOVE_SEND_ONCE) so_drop_unused(it->port);
+            else port_unref(it->port);
+        }
         else if ((it->kind == D_OOL || it->kind == D_OOL_VOL) && it->buf) kfree(it->buf);
         else if (it->kind == D_OOL_PORTS && it->ports) {
             for (u32 j = 0; j < it->count; j++) if (it->ports[j]) port_unref(it->ports[j]);
@@ -376,10 +385,25 @@ static int enqueue(kport_t *dest, kmsg_t *m) {
                              : do_rcv(w, (kport_t *)w->mach_wait, (u8 *)w->mach_buf, w->mach_rsize, w->mach_opt);
         f->rax = r;
         w->mach_wait = NULL;
+        w->mach_peek = false;
         w->mach_deadline = 0;
         w->state = TH_READY;
     }
     return KERN_SUCCESS;
+}
+
+/* send-once que ninguém usou (mach_msg_destroy, deallocate, mensagem descartada): o XNU entrega
+ * MACH_NOTIFY_SEND_ONCE na porta de recepção. O cliente do rendezvous do Chromium está bloqueado
+ * nela; sem este aviso ele espera para sempre, ou o processo trata a falta de portas como
+ * "o pai morreu" e sai com código 0. `p` é a referência de quem solta o direito. */
+static void so_drop_unused(kport_t *p) {
+    if (!p) return;
+    if (p->sorights) p->sorights--;
+    if (!p->dead && p->recv) {
+        port_ref(p);
+        send_notify(p, NOTE_SEND_ONCE, 0);
+    }
+    port_unref(p);
 }
 
 /* notificação do kernel: mensagem simples (id) para a porta de notificação, com send-once consumido */
@@ -485,24 +509,26 @@ static kport_t *copyin_right(mspace_t *sp, u32 name, u8 disp, u8 *out_type, u32 
     }
 }
 
-/* lê as npages páginas do intervalo [addr, addr+size) do processo para páginas físicas novas
- * (cópia; o mOS ainda não compartilha OOL como cópia-na-escrita entre espaços) */
+/* copia [addr, addr+size) para páginas novas, com os bytes no começo da primeira página.
+ * O XNU entrega OOL assim: o endereço recebido é alinhado e os `size` bytes começam nele.
+ * O canal Mojo (channel_mac) lê o payload em descriptor->address; se o deslocamento original
+ * dentro da página fosse preservado, a mensagem chegaria zerada e o Ping nunca voltava. */
 static kmem_t *ool_copyin(process_t *p, u64 addr, u64 size) {
-    u64 first = addr & ~0xFFFULL, last = (addr + size + 0xFFF) & ~0xFFFULL;
-    u64 npages = size ? (last - first) / 4096 : 0;
+    u64 npages = size ? (size + 0xFFF) / 4096 : 0;
     kmem_t *m = kcalloc(1, sizeof *m);
     if (!m) return NULL;
     m->refs = 1;
     m->npages = npages;
     m->pages = npages ? kcalloc(npages, sizeof *m->pages) : NULL;
     if (npages && !m->pages) { kfree(m); return NULL; }
+    u64 done = 0;
     for (u64 i = 0; i < npages; i++) {
         u64 ph = pmm_alloc(1);
         if (!ph) { kmem_unref(m); return NULL; }
         memset((void *)ph, 0, 4096);
-        u64 va = first + i * 4096, off = va < addr ? addr - va : 0;
-        u64 n = MIN(4096 - off, addr + size - (va + off));
-        if (n && n <= 4096) uvm_copy_in(p, (void *)(ph + off), va + off, n);
+        u64 n = MIN(4096, size - done);
+        if (n) uvm_copy_in(p, (void *)ph, addr + done, n);
+        done += n;
         m->pages[i] = ph;
     }
     return m;
@@ -688,9 +714,13 @@ static u32 deliver(mspace_t *sp, kport_t *rcv, kmsg_t *m, u8 *ubuf, u32 cap, u32
     for (u32 i = 0; i < m->nitems; i++) {
         kitem_t *it = &m->items[i];
         if (it->kind == D_PORT) {
-            u32 nm = insert_recv_right(sp, it->port, it->type);
+            u8 got = it->type;
+            u32 nm = insert_recv_right(sp, it->port, got);
             it->port = NULL;
             wr32(d, it->off, nm);
+            /* o receptor vê o tipo do direito que ganhou (PORT_SEND/RECEIVE/SEND_ONCE = 17/16/18).
+             * COPY_SEND (19) e MAKE_SEND (20) deixados no descritor derrubam o canal Mojo. */
+            if (got) { d[it->off + 10] = got; d[it->off + 11] = D_PORT; }
         } else if (it->kind == D_OOL || it->kind == D_OOL_VOL) {
             kmem_t *km = (kmem_t *)it->buf;
             u64 at = map_ool(p, km);
@@ -760,7 +790,10 @@ static u32 do_send(mspace_t *sp, u64 uaddr, u32 send_size, u32 opt, u32 timeout)
     u32 kr = build_kmsg(sp, data, send_size, &m);   /* consome `data` em caso de sucesso */
     if (kr) { kfree(data); return kr; }
     kport_t *dest = m->dest;
-    if (dest->dead || !dest->recv) {        /* destino sem receptor: entrega impossível */
+    /* recv nulo com a porta viva: o direito de receber está em trânsito (MOVE_RECEIVE na resposta
+     * do rendezvous). No XNU a mensagem entra na fila e espera o receptor; descartar aqui mata o
+     * handshake do Mojo e o renderer sai com exit(0) depois de 15s sem Ping. */
+    if (dest->dead) {
         kmsg_free(m);
         return SEND_INVALID_DEST;
     }
@@ -853,7 +886,13 @@ static u32 port_op(mspace_t *sp, u32 op, u64 *a) {
             return KERN_SUCCESS;
         }
         if (op == MACH_OP_DESTRUCT && (e->type & T_RECEIVE)) { if (e->port) e->port->recv = NULL; ent_del(sp, e); return KERN_SUCCESS; }
-        if (e->type & T_SO) { ent_del(sp, e); return KERN_SUCCESS; }
+        if (e->type & T_SO) {
+            kport_t *p = e->port;
+            port_ref(p);                 /* sobrevive ao ent_del para o aviso de send-once */
+            ent_del(sp, e);
+            so_drop_unused(p);
+            return KERN_SUCCESS;
+        }
         return KERN_INVALID_RIGHT;
     }
     case MACH_OP_MOD_REFS: {
@@ -1334,6 +1373,32 @@ u64 machipc_syscall(int_frame_t *f) {
     case SYS_MACH_PORT: {
         u64 a[8] = {0};
         if (!uvm_copy_in(proc, a, f->rsi, sizeof a)) { f->rax = KERN_INVALID_ADDRESS; return (u64)f; }
+        /* espera haver mensagem, sem receber (a fonte MACH_RECV do libdispatch). Sem isto a thread
+         * do servidor de rendezvous girava em vão e podia atender o pedido antes de o pai registrar
+         * as portas do filho — o renderer do Electron então sai com código 0. */
+        if ((u32)f->rdi == MACH_OP_WAIT) {
+            ment_t *e = ent_find(sp, (u32)a[0]);
+            if (!e || !e->port || !(e->type & (T_RECEIVE | T_PSET))) { f->rax = KERN_INVALID_NAME; return (u64)f; }
+            kport_t *rcv = e->port;
+            bool has = rcv->kind == KP_SET ? false : rcv->qn > 0;
+            if (rcv->kind == KP_SET)
+                for (kport_t *q = ports_all; q; q = q->gnext)
+                    if (q->pset == rcv && q->qn) { has = true; break; }
+            if (has) { f->rax = KERN_SUCCESS; return (u64)f; }
+            u64 ms = a[1];
+            if (!ms) { f->rax = KERN_SUCCESS; return (u64)f; }   /* prazo 0: só consulta */
+            t->frame = (u64)f;
+            t->mach_wait = rcv;
+            t->mach_peek = true;
+            t->mach_buf = 0;
+            t->mach_rsize = 0;
+            t->mach_opt = 0;
+            t->mach_deadline = ms == ~0ULL ? 0 : timer_ticks() + ms;
+            t->wait_pid = WAIT_MACH;
+            t->state = TH_WAITING;
+            f->rax = KERN_SUCCESS;           /* prazo ou mensagem: quem chamou olha cx_mach_pending */
+            return sched_switch(f);
+        }
         u32 r = port_op(sp, (u32)f->rdi, a);
         uvm_copy_out(proc, f->rsi, a, sizeof a);
         f->rax = r;

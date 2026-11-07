@@ -523,7 +523,7 @@ static void add_sep(void) { add_item(NULL, NULL, 0, false, false); }
 
 static char about_label[64], quit_label[64], hide_label[64];
 static char win_labels[12][64];
-static char net_l1[96], net_l2[96], net_l3[96], bt_l1[96], snd_l1[96], clock_l1[96];
+static char net_l1[96], net_l2[96], net_l3[96], bt_l1[96], snd_l1[96], snd_in[96], clock_l1[96];
 
 static void submenu_close(void);
 static void submenu_open(int parent);
@@ -695,10 +695,12 @@ static void open_bar_menu(int title) {
         add_item("Desativar Foco", NULL, ACT_FOCUS_0, g_focus_mode == 0, false);
     } else if (title == TITLE_VOL) {
         snprintf(snd_l1, sizeof snd_l1, "Saída: %s", audio_device_name());
+        snprintf(snd_in, sizeof snd_in, "Entrada: %s", audio_input_available() ? audio_input_name() : "nenhuma");
         add_item("Volume", NULL, 0, true, false);
         add_item("", NULL, -77, false, false); /* linha especial: slider */
         add_sep();
         add_item(snd_l1, NULL, 0, true, false);
+        add_item(snd_in, NULL, 0, true, false);
         add_sep();
         add_item("Preferências de Som…", NULL, ACT_SND_PREFS, false, false);
     } else if (title == TITLE_CLOCK) {

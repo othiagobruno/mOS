@@ -215,8 +215,13 @@ int cx_kqueue_peek(int fd) {
     return r;
 }
 
+/* flags do kevent64 (sys/event.h): IMMEDIATE = não espera; ERROR_EVENTS = só aplica as mudanças e devolve os erros,
+ * sem esperar nem colher eventos (o waker do Bun registra a porta Mach assim; esperando, o Claude Code travava) */
+#define KEVENT_FLAG_IMMEDIATE    0x1
+#define KEVENT_FLAG_ERROR_EVENTS 0x2
 int kevent64(int fd, const kevent64_s *changes, int nchanges, kevent64_s *events, int nevents, unsigned flags, const ts_t *timeout) {
-    (void)flags;
+    static const ts_t zero_ts;
+    if (flags & KEVENT_FLAG_IMMEDIATE) timeout = &zero_ts;
     int i = fd - KQ_FD_BASE;
     if (i < 0 || i >= MAX_KQ || !kqs[i]) { cx_errno = CX_EBADF; return -1; }
     kq_t *q = kqs[i];
@@ -232,7 +237,7 @@ int kevent64(int fd, const kevent64_s *changes, int nchanges, kevent64_s *events
         }
     }
     ku(q);
-    if (out || nevents == 0) return out;
+    if (out || nevents == 0 || (flags & KEVENT_FLAG_ERROR_EVENTS)) return out;
     u64 deadline = timeout ? now_ms() + (u64)timeout->sec * 1000 + (u64)timeout->nsec / 1000000 : ~0ull;
     for (;;) {
         kl(q);

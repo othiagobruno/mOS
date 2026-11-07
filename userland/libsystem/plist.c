@@ -164,7 +164,11 @@ static id bp_obj(bp_t *bp, u64 idx, int depth) {
         free(o);
         return s;
     }
-    case 0x8: return cx_num_i((i64)be(p + 1, (*p & 0x0F) + 1));   /* UID (NSKeyedArchiver) */
+    case 0x8: {                                                /* UID (NSKeyedArchiver): o mesmo formato do plist XML */
+        id d = mdict();
+        dset(d, cx_str("CF$UID"), cx_num_i((i64)be(p + 1, (*p & 0x0F) + 1)));
+        return d;
+    }
     case 0xA: case 0xC: {
         if (!bp_len(bp, &p, &len)) return 0;
         id a = cx_arr_new(0);

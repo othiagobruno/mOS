@@ -55,7 +55,7 @@ static const char *pane_names[P_COUNT] = {
 };
 static const char *pane_kw[P_COUNT] = {
     "conta senha usuario login administrador", "wifi rede sem fio wpa senha internet", "bluetooth fone teclado mouse parear",
-    "rede ethernet ip dhcp dns roteador internet cabo", "notificacoes alertas nao perturbe foco", "som volume audio alto-falante saida",
+    "rede ethernet ip dhcp dns roteador internet cabo", "notificacoes alertas nao perturbe foco", "som volume audio alto-falante saida microfone entrada",
     "geral sistema", "aparencia tema escuro claro cor destaque", "mesa dock tamanho ampliacao", "monitores tela resolucao display",
     "papel de parede fundo imagem dunas seda", "privacidade seguranca certificados https tls senha", "teclado layout abnt2 atalhos",
     "sobre mac chip memoria processador versao serie", "atualizacao software versao", "armazenamento disco espaco memoria",
@@ -573,7 +573,7 @@ static void paint_notif(void) {
 /* ================================================================== Som */
 static void paint_som(void) {
     static int saved_vol = 60;
-    hero(P_SOM, "Volume de saída e sons do sistema.", NULL, 0);
+    hero(P_SOM, "Volume, microfone e sons do sistema.", NULL, 0);
     section("Saída");
     rect_t g = group(3);
     row_value(row(g, 0, "Dispositivo"), audio_available() ? audio_device_name() : "Nenhum dispositivo de áudio");
@@ -587,6 +587,18 @@ static void paint_som(void) {
         if (mute) { saved_vol = MAX(audio_get_volume(), 10); audio_set_volume(0); }
         else audio_set_volume(saved_vol);
     }
+    section("Entrada");
+    rect_t gi = group(3);
+    row_value(row(gi, 0, "Dispositivo"), audio_input_available() ? audio_input_name() : "Nenhuma entrada");
+    rect_t ri = row(gi, 1, "Volume de entrada");
+    float iv = (float)audio_get_input_volume();
+    if (ui_slider(U, UI_ID, rect_make(ri.x, ri.y + RH / 2 - 10, ri.w, 20), &iv, 0, 100) && audio_input_available())
+        audio_set_input_volume((int)iv);
+    bool mon = audio_get_input_monitor();
+    if (row_switch(UI_ID, row(gi, 2, "Ouvir entrada"), &mon, audio_input_available())) audio_set_input_monitor(mon);
+    if (audio_input_available())
+        footnote("Ouvir a entrada mistura o microfone nos alto-falantes, com o atraso do buffer de saída. O som pode realimentar.", 0);
+    else footnote("Nenhum microfone ou entrada de linha foi encontrado neste controlador.", 0);
     section("Efeitos sonoros");
     rect_t g2 = group(3);
     row_switch(UI_ID, row(g2, 0, "Som nas notificações"), &g_notify_sound, true);

@@ -720,5 +720,6 @@ int vsscanf(const char *s, const char *fmt, va_list ap) { scan_src_t r = {s, 0, 
 int vfscanf(FILE *f, const char *fmt, va_list ap) { scan_src_t r = {0, f, 0}; return vscan(&r, fmt, ap); }
 int vscanf(const char *fmt, va_list ap) { return vfscanf(__stdinp, fmt, ap); }
 int sscanf(const char *s, const char *fmt, ...) { va_list ap; va_start(ap, fmt); int r = vsscanf(s, fmt, ap); va_end(ap); return r; }
+int sscanf_l(const char *s, void *loc, const char *fmt, ...) { (void)loc; va_list ap; va_start(ap, fmt); int r = vsscanf(s, fmt, ap); va_end(ap); return r; }
 int fscanf(FILE *f, const char *fmt, ...) { va_list ap; va_start(ap, fmt); int r = vfscanf(f, fmt, ap); va_end(ap); return r; }
 int scanf(const char *fmt, ...) { va_list ap; va_start(ap, fmt); int r = vfscanf(__stdinp, fmt, ap); va_end(ap); return r; }

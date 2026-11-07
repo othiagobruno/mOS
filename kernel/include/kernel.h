@@ -224,6 +224,13 @@ extern void (*audio_tap)(const i16 *stereo, u32 frames);  /* derivação do mixe
 extern bool audio_route_bluetooth;                         /* silencia a saída interna enquanto o fone toca */
 const char *audio_device_name(void);
 void   audio_poll(void);
+bool   audio_input_available(void);
+const char *audio_input_name(void);
+void   audio_set_input_volume(int pct);                 /* 100 = 0 dB sobre o ganho do hardware */
+int    audio_get_input_volume(void);
+void   audio_set_input_monitor(bool on);                /* mistura a entrada na saída */
+bool   audio_get_input_monitor(void);
+u32    audio_capture_read(i16 *stereo_samples, u32 frames); /* 48 kHz estéreo; quadros copiados */
 void   sound_startup_chime(void);
 void   sound_click(void);
 void   sound_alert(void);

@@ -151,6 +151,7 @@ static void wake_sleepers(void) {
         else if (t->state == TH_WAITING && t->wait_pid == -7 && t->mach_deadline && now >= t->mach_deadline) {
             t->mach_deadline = 0;
             t->mach_wait = NULL;
+            t->mach_peek = false;
             t->state = TH_READY;
         }
     }

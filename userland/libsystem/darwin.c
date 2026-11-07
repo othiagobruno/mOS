@@ -69,6 +69,13 @@ int mbsinit(const void *ps) { (void)ps; return 1; }
 
 /* ---- diagnóstico do porte (/Sistema/Biblioteca/dyld-registrar): o carregador liga os stubs de
  * funções ausentes a esta função, que avisa uma vez por nome e devolve 0 */
+/* RendererMainPlatformDelegate::EnableSandbox chama estes três e exige que existam
+ * (o retorno de CGSSetDenyWindowServerConnections tem de ser kCGErrorSuccess, em coregraphics.c).
+ * Não há LaunchServices nem CoreServices da Apple: o efeito pedido é "este processo não fala com eles". */
+void SetApplicationIsDaemon(int is_daemon) { (void)is_daemon; }
+void _LSSetApplicationLaunchServicesServerConnectionStatus(int status, void *err_block) { (void)status; (void)err_block; }
+void _CSCheckFixDisable(void) {}
+
 long cx_unresolved_log(const char *name) {
     static const char *seen[1024];
     static int nseen;

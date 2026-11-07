@@ -107,7 +107,6 @@ package final class AppGraph: GraphHost {
 
     override package func instantiateOutputs() {
         "outputs".withCString { mos_log($0) }
-        data.updateSeed.unsafeIncrement()
         let outputs = rootSubgraph.apply {
             "cena".withCString { mos_log($0) }
             var inputs = _SceneInputs(

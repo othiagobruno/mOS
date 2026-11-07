@@ -462,6 +462,8 @@ static BOOL pi_at_least(id self, SEL c, os_version_t v) {
 static id pi_os_string(id self, SEL c) { (void)self; (void)c; return ns_str("Versão 14.0 (mOS)"); }
 
 void cx_darwin_init(void) {
+    extern void cx_foundation_more_init(void);
+    cx_foundation_more_init();                  /* o resto do Foundation (classes e símbolos que os apps importam) */
     extern void **cx_tsd(void);
     cx_tsd();                                   /* GS da thread principal antes do código do app */
     extern int cx_main_tid;

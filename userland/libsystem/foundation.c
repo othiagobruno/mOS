@@ -69,7 +69,67 @@ static id s_alloc(id cls, SEL c) { (void)c; nsstr_t *o = (nsstr_t *)cx_alloc_ins
 static void str_set(id self, const char *s, u64 n) { nsstr_t *o = (nsstr_t *)self; o->s = malloc(n + 1); memcpy(o->s, s, n); o->s[n] = 0; o->n = n; }
 static id i_init_utf8(id self, SEL c, const char *s) { (void)c; if (!s) return 0; str_set(self, s, strlen(s)); return self; }
 static id i_init_string(id self, SEL c, id s) { (void)c; const char *t = cx_cstr(s); str_set(self, t, strlen(t)); return self; }
-static id i_init_bytes(id self, SEL c, const void *b, u64 n, u64 enc) { (void)c; (void)enc; str_set(self, b, n); return self; }
+static u64 utf8_put(char *o, u32 cp) {
+    if (cp < 0x80) { o[0] = (char)cp; return 1; }
+    if (cp < 0x800) { o[0] = (char)(0xC0 | cp >> 6); o[1] = (char)(0x80 | (cp & 0x3F)); return 2; }
+    if (cp < 0x10000) { o[0] = (char)(0xE0 | cp >> 12); o[1] = (char)(0x80 | ((cp >> 6) & 0x3F)); o[2] = (char)(0x80 | (cp & 0x3F)); return 3; }
+    o[0] = (char)(0xF0 | cp >> 18); o[1] = (char)(0x80 | ((cp >> 12) & 0x3F));
+    o[2] = (char)(0x80 | ((cp >> 6) & 0x3F)); o[3] = (char)(0x80 | (cp & 0x3F));
+    return 4;
+}
+/* NSUTF16StringEncoding = 10, NSUTF16LE = 0x94000100, NSUTF16BE = 0x90000100.
+ * CF: UTF-16 = 0x0100, UTF-16LE = 0x14000100, UTF-16BE = 0x10000100.
+ * be: 0 little, 1 big, -1 BOM (senão little, que é o nativo daqui). */
+static int enc_is_utf16(u64 enc, int *be) {
+    if (enc == 10 || enc == 0x0100) { *be = -1; return 1; }
+    if (enc == 0x94000100ull || enc == 0x14000100ull) { *be = 0; return 1; }
+    if (enc == 0x90000100ull || enc == 0x10000100ull) { *be = 1; return 1; }
+    return 0;
+}
+static id i_init_bytes(id self, SEL c, const void *b, u64 n, u64 enc) {
+    (void)c;
+    if (!b) return 0;
+    int be = 0;
+    if (!enc_is_utf16(enc, &be)) { str_set(self, b, n); return self; }
+    const u8 *p = b;
+    u64 i = 0;
+    if (be < 0) {
+        be = 0;
+        if (n >= 2) {
+            u16 bom = (u16)p[0] | ((u16)p[1] << 8);
+            if (bom == 0xFEFF) i = 2;
+            else if (bom == 0xFFFE) { be = 1; i = 2; }
+        }
+    }
+    char *out = malloc(n * 2 + 1);
+    if (!out) return 0;
+    u64 o = 0;
+    while (i + 1 < n) {
+        u16 u = be ? (u16)((p[i] << 8) | p[i + 1]) : (u16)(p[i] | (p[i + 1] << 8));
+        i += 2;
+        u32 cp = u;
+        if (u >= 0xD800 && u <= 0xDBFF && i + 1 < n) {
+            u16 u2 = be ? (u16)((p[i] << 8) | p[i + 1]) : (u16)(p[i] | (p[i + 1] << 8));
+            if (u2 >= 0xDC00 && u2 <= 0xDFFF) { i += 2; cp = 0x10000 + (((u32)(u - 0xD800) << 10) | (u32)(u2 - 0xDC00)); }
+        }
+        if (cp >= 0x110000) continue;
+        o += utf8_put(out + o, cp);
+    }
+    out[o] = 0;
+    str_set(self, out, o);
+    free(out);
+    return self;
+}
+static id i_init_chars(id self, SEL c, const void *ch, u64 n) { return i_init_bytes(self, c, ch, n * 2, 0x94000100ull); }
+static id i_init_chars_free(id self, SEL c, void *ch, u64 n, BOOL free_it) {
+    id r = i_init_chars(self, c, ch, n);
+    if (free_it && ch) free(ch);
+    return r;
+}
+static id s_with_chars(id cls, SEL c, const void *ch, u64 n) {
+    id o = i_init_chars(MSG0(id, cls, "alloc"), c, ch, n);
+    return o ? cx_autorelease(o) : 0;
+}
 static id i_init_cstr(id self, SEL c, const char *s, u64 enc) { (void)enc; return i_init_utf8(self, c, s); }
 static id i_init(id self, SEL c) { (void)c; return self; }
 
@@ -1003,14 +1063,6 @@ static id b_exec(id self, SEL c) {
 }
 static id dict_with_file(id cls, SEL c, id path) { (void)cls; (void)c; id d = cx_plist_file(cx_cstr(path)); return d ? cx_autorelease(d) : 0; }
 static id dict_init_file(id self, SEL c, id path) { (void)c; objc_release(self); return cx_plist_file(cx_cstr(path)); }
-extern id cx_plist_parse(const u8 *b, u64 n);
-static id pls_parse(id cls, SEL c, id data, u64 opts, u64 *fmt, id *err) {
-    (void)cls; (void)c; (void)opts;
-    if (fmt) *fmt = 100;
-    if (err) *err = 0;
-    id r = data ? cx_plist_parse(MSG0(const u8 *, data, "bytes"), MSG0(u64, data, "length")) : 0;
-    return r ? cx_autorelease(r) : 0;
-}
 static id b_ident(id self, SEL c) {
     id i = b_info(self, c, cx_str("CFBundleIdentifier"));
     return i ? i : (BUNDLE(self)->path ? 0 : cx_str("com.mos.app"));
@@ -1105,6 +1157,8 @@ void cx_foundation_init(void) {
     CM(NSString, "stringWithContentsOfFile:encoding:error:", s_with_file_ar); CM(NSString, "stringWithContentsOfFile:usedEncoding:error:", s_with_file_ar);
     M(NSString, "dealloc", str_dealloc); M(NSString, "initWithUTF8String:", i_init_utf8); M(NSString, "initWithString:", i_init_string); M(NSString, "initWithFormat:", i_init_format);
     M(NSString, "initWithFormat:arguments:", i_init_format_args); M(NSString, "initWithBytes:length:encoding:", i_init_bytes);
+    M(NSString, "initWithCharacters:length:", i_init_chars); M(NSString, "initWithCharactersNoCopy:length:freeWhenDone:", i_init_chars_free);
+    CM(NSString, "stringWithCharacters:length:", s_with_chars);
     M(NSString, "initWithCString:encoding:", i_init_cstr); M(NSString, "initWithContentsOfFile:encoding:error:", i_init_file);
     M(NSString, "UTF8String", i_utf8); M(NSString, "cStringUsingEncoding:", i_cstr_enc); M(NSString, "fileSystemRepresentation", i_utf8);
     M(NSString, "length", i_length); M(NSString, "lengthOfBytesUsingEncoding:", i_lenbytes); M(NSString, "characterAtIndex:", i_char_at);
@@ -1159,8 +1213,6 @@ void cx_foundation_init(void) {
     CM(NSDictionary, "dictionaryWithObject:forKey:", d_with_obj_key_ar); CM(NSDictionary, "dictionaryWithObjectsAndKeys:", d_with_objs_and_keys);
     CM(NSDictionary, "dictionaryWithDictionary:", d_with_dict_ar); CM(NSDictionary, "dictionaryWithContentsOfFile:", dict_with_file); M(NSDictionary, "initWithContentsOfFile:", dict_init_file);
     CM(NSArray, "arrayWithContentsOfFile:", dict_with_file); M(NSArray, "initWithContentsOfFile:", dict_init_file);
-    { cx_class_t *pls = cx_define_class(calloc(1, sizeof(cx_class_t)), calloc(1, sizeof(cx_class_t)), "NSPropertyListSerialization", &NSObject_c, 0);
-      cx_add_cmethod(pls, "propertyListWithData:options:format:error:", (void *)pls_parse); }
     M(NSDictionary, "dealloc", dict_dealloc); M(NSDictionary, "initWithObjects:forKeys:count:", d_init_objs_keys); M(NSDictionary, "objectForKey:", d_get); M(NSDictionary, "objectForKeyedSubscript:", d_get);
     M(NSDictionary, "valueForKey:", d_get); M(NSDictionary, "count", d_count); M(NSDictionary, "allKeys", d_keys); M(NSDictionary, "allValues", d_vals);
     M(NSDictionary, "countByEnumeratingWithState:objects:count:", d_fast); M(NSDictionary, "enumerateKeysAndObjectsUsingBlock:", d_enum_block);

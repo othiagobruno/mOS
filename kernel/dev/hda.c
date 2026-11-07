@@ -8,6 +8,13 @@
  * de conexão -> liga energia, desmuta amplificadores, seleciona conexões ->
  * stream de saída 48 kHz/16 bits/estéreo com BDL cíclica.
  *
+ * Captura (microfone, senão entrada de linha): o pino de entrada é a fonte,
+ * então o caminho segue quem lista cada widget até um conversor de entrada
+ * (ADC), sem reprogramar widgets que já estão no caminho de saída. O stream
+ * de entrada (tag 2) grava no próprio anel; hda_service copia o que o DMA
+ * já escreveu para o mixer (snd_capture). Sem pino ou sem stream de entrada
+ * a saída segue sozinha.
+ *
  * Sem interrupções: o laço principal chama hda_service(), que lê a posição
  * do DMA (LPIB) e mantém 200-600 ms de áudio à frente (a folga cresce se o
  * laço principal atrasar), pedindo amostras ao mixer (snd_render em
@@ -26,6 +33,7 @@ void snd_render(i16 *dst, u32 frames); /* sound.c: mixer (estéreo intercalado) 
 bool snd_late_pending(void);
 void snd_render_late(i16 *dst, u32 frames);
 void snd_late_done(void);
+void snd_capture(const i16 *stereo, u32 frames); /* sound.c: anel da entrada */
 
 /* ---------------------------------------------------------------- registradores */
 #define GCAP      0x00
@@ -76,6 +84,7 @@ void snd_late_done(void);
 #define V_SET_PINCTL   0x707
 #define V_SET_EAPD     0x70C
 #define V_GET_CFGDEF   0xF1C
+#define V_GET_SENSE    0xF09
 #define V4_SET_FMT     0x2
 #define V4_SET_AMP     0x3
 /* parâmetros */
@@ -104,8 +113,10 @@ enum { WT_OUT = 0, WT_IN, WT_MIX, WT_SEL, WT_PIN, WT_POWER, WT_KNOB, WT_BEEP, WT
 #define MAX_AHEAD   28800                 /* ...até 600 ms (< meio anel) */
 #define LATE_GAP    480                   /* sons novos entram 10 ms à frente do DMA */
 #define RESYNC_GAP  480                   /* 10 ms de margem após um underrun */
-#define STREAM_TAG  1
-#define FMT_48K_16_2 0x0011               /* base 48 kHz, 16 bits, 2 canais */
+#define STREAM_TAG     1
+#define STREAM_TAG_IN  2
+#define FMT_48K_16_2   0x0011             /* base 48 kHz, 16 bits, 2 canais */
+#define FMT_48K_16_1   0x0010             /* o mesmo, 1 canal */
 
 #define MAX_NID   128
 #define MAX_CONN  16
@@ -137,6 +148,14 @@ static struct {
     int           ndacs;
     u8            outpins[8];
     int           noutpins;
+    u8            on_play[MAX_NID];       /* widgets do caminho de saída: a captura não os mexe */
+    /* stream de entrada */
+    u32           in_sd;
+    i16          *in_ring;
+    u32          *in_bdl;
+    u32           in_rpos, in_first;
+    bool          in_running, in_saw, in_mono;
+    const char   *in_name;
     /* stream */
     u32           sd;
     i16          *ring;
@@ -370,6 +389,16 @@ static u16 amp_gain(u32 caps) {
     return (u16)(off > steps ? steps : off);
 }
 
+/* ganho db acima de 0 dB (o offset), limitado ao último passo. O campo de
+ * passo é em unidades de 0,25 dB e o 0 do hardware vale 0,25 dB. */
+static u16 amp_boost(u32 caps, int db) {
+    u32 steps = (caps >> 8) & 0x7F, off = caps & 0x7F;
+    u32 q = ((caps >> 16) & 0x7F) + 1;
+    u32 g = off + (u32)db * 4 / q;
+    if (g > steps) g = steps;
+    return (u16)g;
+}
+
 static void power_up(u8 nid) {
     if (H.w[nid].caps & (1u << 10)) verb(nid, V_SET_POWER, 0); /* D0 */
 }
@@ -378,6 +407,7 @@ static void setup_path(u8 *path, u8 *idx, int n) {
     for (int i = 0; i < n; i++) {
         u8 nid = path[i];
         widget_t *w = &H.w[nid];
+        H.on_play[nid] = 1;
         power_up(nid);
         if (w->caps & (1u << 2)) {                        /* amplificador de saída: desmuta, 0 dB */
             u32 c = amp_caps(nid, true);
@@ -429,6 +459,7 @@ static int pin_rank(widget_t *w, bool strict) {
 /* escolhe pinos e DACs; devolve o número de pinos configurados */
 static int build_paths(bool strict) {
     H.ndacs = 0; H.noutpins = 0;
+    memset(H.on_play, 0, sizeof H.on_play);
     for (int rank = 3; rank >= 1; rank--) {
         for (int n = H.wstart; n < H.wstart + H.wcount && n < MAX_NID; n++) {
             widget_t *w = &H.w[n];
@@ -506,6 +537,285 @@ static bool codec_probe(int cad) {
     return H.ndacs > 0;
 }
 
+/* ---------------------------------------------------------------- captura */
+static bool is_analog_adc(u8 nid) {
+    widget_t *w = &H.w[nid];
+    return w->type == WT_IN && !(w->caps & (1u << 9));
+}
+
+static const char *input_label(u32 cfg) {
+    u32 dev = (cfg >> 20) & 15, conn = cfg >> 30;
+    if (dev == 10 && conn == 2) return "Microfone interno";
+    if (dev == 10) return "Microfone";
+    if (dev == 8) return "Entrada de linha";
+    if (dev == 9) return "Entrada auxiliar";
+    return "Entrada";
+}
+
+/* maior = preferido. Jack com presença detectada passa na frente do microfone interno. */
+static int pin_in_rank(u8 nid) {
+    widget_t *w = &H.w[nid];
+    if (w->type != WT_PIN) return -1;
+    u32 conn = w->cfg >> 30, dev = (w->cfg >> 20) & 15;
+    if (!(w->pincap & (1u << 5))) return -1;              /* não é capaz de entrada */
+    if (w->caps & (1u << 9)) return -1;                   /* pino digital */
+    if (conn == 1) return -1;                             /* sem conexão física */
+    int rank = dev == 10 ? 4 : dev == 8 ? 3 : dev == 9 ? 2 : -1;
+    if (rank < 0) return -1;
+    if (dev == 10 && conn == 2) rank = 5;                 /* microfone de placa */
+    if (conn != 2 && (w->pincap & (1u << 2))) {
+        bool dead = H.dead;
+        u32 s = verb(nid, V_GET_SENSE, 0);
+        if (H.dead && !dead) H.dead = false;              /* pino sem sentido: ignora a presença */
+        else if (s & 0x80000000u) rank += 3;              /* plugado agora */
+    }
+    return rank;
+}
+
+/* quem tem `src` na lista de conexões: o sinal sai de src e entra nesse widget.
+ * idx = índice dessa conexão. */
+static int fed_by(u8 src, u8 *dsts, u8 *idxs, int max) {
+    int n = 0;
+    for (int i = H.wstart; i < H.wstart + H.wcount && i < MAX_NID; i++) {
+        widget_t *w = &H.w[i];
+        for (int k = 0; k < w->nconn; k++) {
+            if (w->conn[k] != src) continue;
+            if (n < max) { dsts[n] = (u8)i; idxs[n] = (u8)k; n++; }
+            break;
+        }
+    }
+    return n;
+}
+
+/* path[0] = pino, path[n-1] = ADC. idx[i] = conexão de path[i+1] que seleciona path[i]. */
+static int dfs_cap(u8 nid, int depth, u8 *path, u8 *idx, u8 *visited) {
+    if (nid >= MAX_NID || depth >= MAX_PATH || visited[nid]) return 0;
+    path[depth] = nid;
+    if (depth > 0 && is_analog_adc(nid)) return depth + 1;
+    if (depth > 0 && (H.on_play[nid] || H.w[nid].type == WT_OUT)) return 0;
+    visited[nid] = 1;
+    u8 dsts[MAX_CONN], ixs[MAX_CONN];
+    int n = fed_by(nid, dsts, ixs, MAX_CONN);
+    for (int i = 0; i < n; i++) {
+        idx[depth] = ixs[i];
+        int len = dfs_cap(dsts[i], depth + 1, path, idx, visited);
+        if (len) { visited[nid] = 0; return len; }
+    }
+    visited[nid] = 0;
+    return 0;
+}
+
+static bool adc_pcm_ok(u8 adc) {
+    bool dead = H.dead;
+    u32 pcm = (H.w[adc].caps & (1u << 4)) ? param(adc, P_PCM) : param(H.afg, P_PCM);
+    if (H.dead && !dead) { H.dead = false; return true; } /* leitura falhou: tenta assim mesmo */
+    if (!pcm || pcm == 0xFFFFFFFFu) return true;
+    return (pcm & (1u << 6)) && (pcm & (1u << 17));       /* 48 kHz e 16 bits */
+}
+
+static u8 mic_vref(widget_t *p) {
+    if (p->pincap & (1u << 11)) return 4;                 /* 80% */
+    if (p->pincap & (1u << 12)) return 5;                 /* 100% */
+    if (p->pincap & (1u << 9)) return 1;                  /* 50% */
+    return 0;
+}
+
+static void setup_capture_path(u8 *path, u8 *idx, int n) {
+    for (int i = 0; i < n; i++) power_up(path[i]);
+    u8 pin = path[0];
+    widget_t *p = &H.w[pin];
+    u32 dev = (p->cfg >> 20) & 15;
+    u8 ctl = 0x20;                                        /* habilita entrada */
+    if (dev == 10) ctl |= mic_vref(p);                    /* polarização de eletreto */
+    verb(pin, V_SET_PINCTL, ctl);
+
+    bool boosted = false;
+    if (p->caps & (1u << 1)) {                            /* boost no próprio pino, se houver */
+        u32 c = amp_caps(pin, false);
+        verb4(pin, V4_SET_AMP, 0x7000 | amp_boost(c, 20));
+        boosted = true;
+    }
+    for (int i = 0; i < n - 1; i++) {
+        u8 dst = path[i + 1];
+        widget_t *w = &H.w[dst];
+        u8 sel = idx[i];
+        bool boost = !boosted;                            /* +20 dB no primeiro estágio que tiver amplificador */
+        if (w->nconn > 1 && w->type != WT_MIX) verb(dst, V_SET_CONSEL, sel);
+        if (w->caps & (1u << 1)) {
+            u32 c = amp_caps(dst, false);
+            u16 g = boost ? amp_boost(c, 20) : amp_gain(c);
+            if (w->type == WT_MIX) {
+                for (int k = 0; k < w->nconn; k++)
+                    verb4(dst, V4_SET_AMP, 0x7000 | (k << 8) | (k == sel ? g : 0x80));
+            } else verb4(dst, V4_SET_AMP, 0x7000 | (sel << 8) | g);
+            if (boost) boosted = true;
+        }
+        if (i + 1 == n - 1 && (w->caps & (1u << 2))) {    /* saída do ADC em 0 dB */
+            u32 c = amp_caps(dst, true);
+            verb4(dst, V4_SET_AMP, 0xB000 | amp_gain(c));
+        }
+    }
+}
+
+static u32 pick_input_sd(void) {
+    int iss = (H.gcap >> 8) & 15, oss = (H.gcap >> 12) & 15, bss = (H.gcap >> 3) & 31;
+    if (iss) return SD_BASE;                              /* primeiro stream de entrada */
+    u32 b0 = SD_BASE + (u32)(iss + oss) * 0x20;           /* primeiro bidirecional */
+    if (bss && b0 != H.sd) return b0;
+    if (bss > 1 && b0 + 0x20 != H.sd) return b0 + 0x20;
+    return 0;
+}
+
+static void emit_capture(u32 at, u32 n) {
+    if (!H.in_mono) { snd_capture(H.in_ring + at * 2, n); return; }
+    static i16 tmp[128 * 2];
+    while (n) {
+        u32 c = MIN(n, 128);
+        for (u32 i = 0; i < c; i++) {
+            i16 s = H.in_ring[at + i];
+            tmp[i * 2] = tmp[i * 2 + 1] = s;
+        }
+        snd_capture(tmp, c);
+        at += c;
+        n -= c;
+    }
+}
+
+static void capture_service(void) {
+    if (!H.in_running) return;
+    u32 sd = H.in_sd;
+    u8 st = r8(sd + SD_STS);
+    if (st & 0x1C) w8(sd + SD_STS, st & 0x1C);
+    u32 bpf = H.in_mono ? 2u : 4u;
+    u32 ring_bytes = RING_FRAMES * bpf;
+    u32 lpib_reg = r32(sd + SD_LPIB);
+    __asm__ volatile("lfence" ::: "memory");
+    /* o buffer de posição (já ligado pela saída) acompanha a captura melhor
+     * que o LPIB em vários controladores Intel; cai para o LPIB se vier zerado */
+    u32 sdi = (sd - SD_BASE) / 0x20;
+    u32 pos = H.posbuf ? ((volatile u32 *)H.posbuf)[sdi * 2] : 0;
+    u32 lpib = (pos && pos < ring_bytes) ? pos : lpib_reg;
+    if (lpib >= ring_bytes) lpib %= ring_bytes;
+    u32 cap = (lpib / bpf) & RING_MASK;
+    if (!H.in_saw && lpib != H.in_first) {
+        H.in_saw = true;
+        kprintf("HDA: DMA de entrada ativo (LPIB %u -> %u)\n", H.in_first, lpib);
+    }
+    u32 avail = (cap - H.in_rpos) & RING_MASK;
+    if (avail <= 48) return;
+    if (avail > HALF_RING) {                              /* o DMA deu a volta: fica com o trecho recente */
+        H.in_rpos = (cap - 480) & RING_MASK;
+        avail = 480;
+        static int nov;
+        if (nov++ < 4) kprintf("HDA: overrun da captura; descartando áudio antigo\n");
+    }
+    u32 todo = avail - 48;                                /* não lê o quadro que o DMA ainda escreve */
+    while (todo) {
+        u32 c = MIN(todo, RING_FRAMES - H.in_rpos);
+        emit_capture(H.in_rpos, c);
+        H.in_rpos = (H.in_rpos + c) & RING_MASK;
+        todo -= c;
+    }
+}
+
+static bool capture_setup(void) {
+    H.in_running = false;
+    typedef struct { u8 nid; int rank; } cand_t;
+    cand_t cands[16];
+    int nc = 0;
+    for (int n = H.wstart; n < H.wstart + H.wcount && n < MAX_NID; n++) {
+        int rank = pin_in_rank((u8)n);
+        if (rank < 0 || nc >= 16) continue;
+        int i = nc++;
+        while (i > 0 && cands[i - 1].rank < rank) { cands[i] = cands[i - 1]; i--; }
+        cands[i].nid = (u8)n;
+        cands[i].rank = rank;
+    }
+    if (!nc) { kprintf("HDA: nenhum pino de entrada (microfone ou linha)\n"); return false; }
+
+    u8 path[MAX_PATH], idx[MAX_PATH];
+    int len = 0;
+    for (int i = 0; i < nc && !len; i++) {
+        u8 visited[MAX_NID];
+        memset(visited, 0, sizeof visited);
+        len = dfs_cap(cands[i].nid, 0, path, idx, visited);
+        if (!len) {
+            kprintf("HDA:   pino 0x%02x (%s): nenhum ADC alcançável\n", cands[i].nid, dev_name(H.w[cands[i].nid].cfg));
+            continue;
+        }
+        if (!adc_pcm_ok(path[len - 1])) {
+            kprintf("HDA:   ADC 0x%02x sem PCM 48 kHz/16 bits\n", path[len - 1]);
+            len = 0;
+        }
+    }
+    if (!len) return false;
+
+    u32 sd = pick_input_sd();
+    if (!sd) { kprintf("HDA: controlador sem stream de entrada livre\n"); return false; }
+
+    bool dead = H.dead;
+    setup_capture_path(path, idx, len);
+    if (H.dead && !dead) {
+        kprintf("HDA: captura abortada (codec parou de responder)\n");
+        H.dead = false;
+        return false;
+    }
+    u8 adc = path[len - 1];
+    u32 caps = H.w[adc].caps;
+    u32 ch = ((((caps >> 13) & 7) << 1) | (caps & 1)) + 1;
+    bool mono = ch < 2;
+    u16 fmt = mono ? FMT_48K_16_1 : FMT_48K_16_2;
+    verb4(adc, V4_SET_FMT, fmt);
+    verb(adc, V_SET_STREAM, (STREAM_TAG_IN << 4));
+    if (H.dead) { H.dead = false; return false; }
+
+    u32 bpf = mono ? 2u : 4u;
+    u64 rphys, bphys;
+    i16 *ring = dma_alloc(RING_FRAMES * bpf, &rphys);
+    u32 *bdl = dma_alloc(4096, &bphys);
+    if (!ring || !bdl) return false;
+    if (((rphys | bphys) >> 32) && !(H.gcap & 1)) return false;
+
+    w8(sd + SD_CTL, 0);
+    wait_reg(sd + SD_CTL, 8, 2, 0, 10);
+    w8(sd + SD_CTL, 1);
+    wait_reg(sd + SD_CTL, 8, 1, 1, 10);
+    delay_ms(1);
+    w8(sd + SD_CTL, 0);
+    w8(sd + SD_STS, 0x1C);
+    for (int i = 0; i < NBDL; i++) {
+        u64 a = rphys + (u64)i * SEG_FRAMES * bpf;
+        bdl[i * 4 + 0] = (u32)a;
+        bdl[i * 4 + 1] = (u32)(a >> 32);
+        bdl[i * 4 + 2] = SEG_FRAMES * bpf;
+        bdl[i * 4 + 3] = 0;
+    }
+    w32(sd + SD_BDPL, (u32)bphys);
+    w32(sd + SD_BDPU, (u32)(bphys >> 32));
+    w32(sd + SD_CBL, RING_FRAMES * bpf);
+    w16(sd + SD_LVI, NBDL - 1);
+    w16(sd + SD_FMT, fmt);
+    w8(sd + SD_CTL + 2, (STREAM_TAG_IN << 4) | (r8(sd + SD_CTL + 2) & 0x0F));
+    w8(sd + SD_CTL, 0x02);
+    if (!wait_reg(sd + SD_CTL, 8, 2, 2, 10)) { kprintf("HDA: stream de entrada não iniciou\n"); w8(sd + SD_CTL, 0); return false; }
+
+    H.in_sd = sd;
+    H.in_ring = ring;
+    H.in_bdl = bdl;
+    H.in_rpos = 0;
+    H.in_first = r32(sd + SD_LPIB);
+    H.in_mono = mono;
+    H.in_name = input_label(H.w[path[0]].cfg);
+    H.in_running = true;
+    char buf[96];
+    int o = 0;
+    for (int i = 0; i < len && o < (int)sizeof buf - 8; i++)
+        o += snprintf(buf + o, sizeof buf - o, i ? " -> 0x%02x" : "0x%02x", path[i]);
+    kprintf("HDA:   captura %s, pino 0x%02x: %s (ADC%s)\n", H.in_name, path[0], buf, mono ? ", mono" : "");
+    kprintf("HDA: stream %d de entrada (SD @0x%02x): 48 kHz, 16 bits, %s\n", STREAM_TAG_IN, sd, mono ? "mono" : "estéreo");
+    return true;
+}
+
 /* ---------------------------------------------------------------- stream de saída */
 static bool stream_setup(void) {
     int iss = (H.gcap >> 8) & 15, oss = (H.gcap >> 12) & 15, bss = (H.gcap >> 3) & 31;
@@ -577,6 +887,7 @@ static void ring_zero(u32 at, u32 n) {
 
 void hda_service(void) {
     if (!H.running) return;
+    capture_service();
     u32 sd = H.sd;
     u8 st = r8(sd + SD_STS);
     if (st & 0x18) {                                      /* erro de FIFO / descritor */
@@ -687,10 +998,17 @@ static bool probe_controller(pci_dev_t *d) {
     if (!corb_setup()) H.immediate = true;
     for (int cad = 0; cad < 15; cad++) {
         if (!(sts & (1u << cad))) continue;
-        if (codec_probe(cad)) return stream_setup();
+        if (codec_probe(cad)) {
+            if (!stream_setup()) return false;
+            capture_setup();                              /* a saída não depende da captura */
+            return true;
+        }
     }
     return false;
 }
+
+bool hda_input_available(void) { return H.in_running; }
+const char *hda_input_name(void) { return H.in_name ? H.in_name : "Nenhuma entrada"; }
 
 bool hda_probe(char *name, usize n) {
     for (int i = 0;; i++) {

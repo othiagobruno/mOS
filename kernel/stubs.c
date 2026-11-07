@@ -11,6 +11,13 @@ __attribute__((weak)) void audio_set_volume(int p) { vol = p; }
 __attribute__((weak)) int audio_get_volume(void) { return vol; }
 __attribute__((weak)) const char *audio_device_name(void) { return "Nenhum dispositivo"; }
 __attribute__((weak)) void audio_poll(void) {}
+__attribute__((weak)) bool audio_input_available(void) { return false; }
+__attribute__((weak)) const char *audio_input_name(void) { return "Nenhuma entrada"; }
+__attribute__((weak)) void audio_set_input_volume(int p) { (void)p; }
+__attribute__((weak)) int audio_get_input_volume(void) { return 0; }
+__attribute__((weak)) void audio_set_input_monitor(bool on) { (void)on; }
+__attribute__((weak)) bool audio_get_input_monitor(void) { return false; }
+__attribute__((weak)) u32 audio_capture_read(i16 *s, u32 f) { (void)s; (void)f; return 0; }
 __attribute__((weak)) void sound_startup_chime(void) {}
 __attribute__((weak)) void sound_click(void) {}
 __attribute__((weak)) void sound_alert(void) {}

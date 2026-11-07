@@ -1014,6 +1014,11 @@ void *CGImageGetDataProvider(void *img) {
     return o->cb_info;
 }
 void *CFDataCreate(void *alloc, const u8 *bytes, long n);
+/* kCGErrorSuccess = 0. O renderer chama isto dentro de DisableSystemServices e faz CHECK_EQ com 0. */
+int CGSSetDenyWindowServerConnections(int deny) { (void)deny; return 0; }
+/* 0 = suavização ligada. RenderThreadImpl usa isto para decidir LCD text; 0 é o default do macOS. */
+int CGFontRenderingGetFontSmoothingDisabled(void) { return 0; }
+
 void *CGDataProviderCopyData(void *p) {
     cgobj_t *o = as_kind(p, CGK_PR);
     if (!o || !o->data) return 0;
