@@ -13,6 +13,7 @@
 #include "launchsvc.h"
 
 extern int g_kbd_layout;
+#include "i18n.h"
 extern int g_tz_offset_min;
 extern bool g_rtc_is_utc;
 extern bool g_notify_dnd, g_notify_sound;
@@ -715,11 +716,13 @@ static void paint_data(void) {
 
 static void paint_idioma(void) {
     rect_t g = group(3);
-    static const char *langs[] = {"Português (Brasil)"};
-    ui_popup_inline(U, UI_ID, row(g, 0, "Idioma principal"), langs, 1, 0);
+    static const char *langs[] = {"Português (Brasil)", "English"};
+    int nl = ui_popup_inline(U, UI_ID, row(g, 0, "Idioma principal"), langs, 2, g_lang);
+    if (nl != g_lang) { g_lang = nl; sysprefs_save(); wm_damage_all(); }   /* vale para o assistente e o login; o resto segue em português */
     row_value(row(g, 1, "Região"), "Brasil");
     static const char *lay[] = {"Português (ABNT2)", "Inglês (EUA)"};
-    g_kbd_layout = ui_popup_inline(U, UI_ID, row(g, 2, "Teclado"), lay, 2, g_kbd_layout);
+    int nk = ui_popup_inline(U, UI_ID, row(g, 2, "Teclado"), lay, 2, g_kbd_layout);
+    if (nk != g_kbd_layout) { g_kbd_layout = nk; sysprefs_save(); }
     section("Formatos");
     rect_t g2 = group(2);
     row_value(row(g2, 0, "Data"), "06/11/2026 · sexta-feira, 6 de novembro");
@@ -1154,7 +1157,8 @@ static void paint_teclado(void) {
     hero(P_TECLADO, "Layout do teclado e atalhos.", NULL, 0);
     rect_t g = group(2);
     static const char *lay[] = {"Português (ABNT2)", "Inglês (EUA)"};
-    g_kbd_layout = ui_popup_inline(U, UI_ID, row(g, 0, "Layout"), lay, 2, g_kbd_layout);
+    int nk = ui_popup_inline(U, UI_ID, row(g, 0, "Layout"), lay, 2, g_kbd_layout);
+    if (nk != g_kbd_layout) { g_kbd_layout = nk; sysprefs_save(); }
     rect_t r = row(g, 1, "Teste");
     static char test[128];
     ui_textfield(U, UI_ID, rect_make(r.x, r.y + 7, r.w, 26), test, sizeof test, "Digite: ação, çedilha, à, ê…");

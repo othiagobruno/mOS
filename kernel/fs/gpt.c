@@ -1,5 +1,6 @@
 /* mOS — escrita de tabela de partições GPT (MBR protetor + cabeçalhos primário e de backup) */
 #include "fs.h"
+#include "crypto.h"
 
 static u32 crc_tab[256];
 u32 crc32_calc(const void *data, usize n) {
@@ -18,7 +19,7 @@ u32 crc32_calc(const void *data, usize n) {
 static void put32(u8 *p, u32 v) { p[0] = (u8)v; p[1] = (u8)(v >> 8); p[2] = (u8)(v >> 16); p[3] = (u8)(v >> 24); }
 static void put64(u8 *p, u64 v) { put32(p, (u32)v); put32(p + 4, (u32)(v >> 32)); }
 static void rand_guid(u8 *g) {
-    for (int i = 0; i < 16; i += 4) put32(g + i, rand32() ^ (u32)rdtsc());
+    crypto_random(g, 16);                           /* CSPRNG (net/crypto.c): GUIDs únicos mesmo entre instalações no mesmo hardware */
     g[7] = (g[7] & 0x0F) | 0x40;   /* versão 4 */
     g[8] = (g[8] & 0x3F) | 0x80;
 }

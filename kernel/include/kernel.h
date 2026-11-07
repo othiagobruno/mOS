@@ -37,6 +37,13 @@ typedef struct {
     boot_file_t   files[MAX_BOOT_FILES];
     u32           file_count;
     u64           kernel_base, kernel_size;
+    /* caminhos de dispositivo UEFI (bytes brutos, nós até o End Node) capturados antes do ExitBootServices:
+     * boot_dp = dispositivo de onde o firmware carregou a imagem do kernel; files_dp = volume que forneceu \mOS\.
+     * Vazio (len 0) = desconhecido. Usados por fs/origin.c para identificar a mídia de origem sem heurística. */
+    u8            boot_dp[256];
+    u16           boot_dp_len;
+    u8            files_dp[256];
+    u16           files_dp_len;
 } boot_info_t;
 
 extern boot_info_t *g_boot;

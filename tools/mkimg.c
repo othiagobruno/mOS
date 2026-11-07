@@ -239,10 +239,203 @@ static void write_node(node *n) {
     }
 }
 
+
+/* ------------------------------------------------------------------ manifesto do payload de instalação
+ * O instalador do mOS (kernel/fs/install.c) copia SÓ os arquivos listados em /mOS/Sistema/Instalacao/manifesto.txt, cada
+ * um conferido por SHA-256, e o próprio manifesto termina com uma linha ASSINATURA-SHA256 (hash do que vem antes). Os
+ * hashes são calculados aqui, sobre os mesmos bytes que entram na imagem: nada de sessão (contas, logs, preferências, o
+ * estado do sistema) pode entrar no payload depois do build. Ficam FORA do payload: a pasta Instalacao e o arquivo
+ * Biblioteca/estado-sistema (marca "LIVE" desta mídia). Formato:
+ *   mOS-MANIFESTO-1 <n> <total de bytes>
+ *   <sha256 hex> <tamanho> <caminho>        (ordenado por strcmp dos caminhos; caminhos absolutos na ESP)
+ *   ASSINATURA-SHA256 <sha256 hex de tudo acima>
+ */
+typedef struct { uint32_t h[8]; uint8_t buf[64]; uint64_t total; uint32_t n; } sha_t;
+static const uint32_t K256[64] = {
+ 0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
+ 0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
+ 0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
+ 0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2};
+#define ROR(x, n) (((x) >> (n)) | ((x) << (32 - (n))))
+static void sha_block(sha_t *c, const uint8_t *p) {
+    uint32_t w[64], a, b, cc, d, e, f, g, h;
+    for (int i = 0; i < 16; i++) w[i] = (uint32_t)p[i*4] << 24 | (uint32_t)p[i*4+1] << 16 | (uint32_t)p[i*4+2] << 8 | p[i*4+3];
+    for (int i = 16; i < 64; i++) {
+        uint32_t s0 = ROR(w[i-15], 7) ^ ROR(w[i-15], 18) ^ (w[i-15] >> 3), s1 = ROR(w[i-2], 17) ^ ROR(w[i-2], 19) ^ (w[i-2] >> 10);
+        w[i] = w[i-16] + s0 + w[i-7] + s1;
+    }
+    a = c->h[0]; b = c->h[1]; cc = c->h[2]; d = c->h[3]; e = c->h[4]; f = c->h[5]; g = c->h[6]; h = c->h[7];
+    for (int i = 0; i < 64; i++) {
+        uint32_t t1 = h + (ROR(e, 6) ^ ROR(e, 11) ^ ROR(e, 25)) + ((e & f) ^ (~e & g)) + K256[i] + w[i];
+        uint32_t t2 = (ROR(a, 2) ^ ROR(a, 13) ^ ROR(a, 22)) + ((a & b) ^ (a & cc) ^ (b & cc));
+        h = g; g = f; f = e; e = d + t1; d = cc; cc = b; b = a; a = t1 + t2;
+    }
+    c->h[0] += a; c->h[1] += b; c->h[2] += cc; c->h[3] += d; c->h[4] += e; c->h[5] += f; c->h[6] += g; c->h[7] += h;
+}
+static void sha_init(sha_t *c) {
+    static const uint32_t iv[8] = {0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19};
+    memcpy(c->h, iv, sizeof iv); c->total = 0; c->n = 0;
+}
+static void sha_update(sha_t *c, const void *d, size_t len) {
+    const uint8_t *p = d;
+    c->total += len;
+    while (len) {
+        size_t k = 64 - c->n < len ? 64 - c->n : len;
+        memcpy(c->buf + c->n, p, k); c->n += (uint32_t)k; p += k; len -= k;
+        if (c->n == 64) { sha_block(c, c->buf); c->n = 0; }
+    }
+}
+static void sha_final(sha_t *c, uint8_t out[32]) {
+    uint64_t bits = c->total * 8;
+    uint8_t pad = 0x80;
+    sha_update(c, &pad, 1);
+    pad = 0;
+    while (c->n != 56) sha_update(c, &pad, 1);
+    uint8_t l[8];
+    for (int i = 0; i < 8; i++) l[i] = (uint8_t)(bits >> (56 - 8 * i));
+    sha_update(c, l, 8);
+    for (int i = 0; i < 8; i++) { out[i*4] = (uint8_t)(c->h[i] >> 24); out[i*4+1] = (uint8_t)(c->h[i] >> 16); out[i*4+2] = (uint8_t)(c->h[i] >> 8); out[i*4+3] = (uint8_t)c->h[i]; }
+}
+static void sha_hex(const void *d, size_t n, char out[65]) {
+    sha_t c; uint8_t h[32];
+    sha_init(&c); sha_update(&c, d, n); sha_final(&c, h);
+    for (int i = 0; i < 32; i++) sprintf(out + i * 2, "%02x", h[i]);
+}
+
+typedef struct { char *path; node *n; } mitem;
+static mitem *mitems; static size_t nmitems, capmitems;
+
+static void collect(node *n, const char *prefix) {
+    char path[1400];
+    for (node *c = n->child; c; c = c->next) {
+        snprintf(path, sizeof path, "%s/%s", prefix, c->name);
+        if (c->is_dir) {
+            if (!strcmp(path, "/mOS/Sistema/Instalacao")) continue;                 /* o próprio manifesto */
+            collect(c, path);
+            continue;
+        }
+        if (!strcmp(path, "/mOS/Sistema/Biblioteca/estado-sistema")) continue;      /* marca da mídia, não do payload */
+        if (strlen(path) > 1000) { fprintf(stderr, "mkimg: caminho longo demais para o payload (>1000): %s\n", path); exit(1); }
+        if (strchr(c->name, '\n') || strchr(c->name, '\\') || !strcmp(c->name, "..")) { fprintf(stderr, "mkimg: nome inválido no payload: %s\n", path); exit(1); }
+        if (strcmp(path, "/EFI/BOOT/BOOTX64.EFI") && strncmp(path, "/mOS/", 5)) { fprintf(stderr, "mkimg: arquivo fora de /EFI/BOOT/BOOTX64.EFI e /mOS/: %s\n", path); exit(1); }
+        if (nmitems == capmitems) { capmitems = capmitems ? capmitems * 2 : 256; mitems = realloc(mitems, capmitems * sizeof *mitems); }
+        mitems[nmitems].path = strdup(path); mitems[nmitems].n = c; nmitems++;
+    }
+}
+static int cmp_mitem(const void *a, const void *b) { return strcmp(((const mitem *)a)->path, ((const mitem *)b)->path); }
+
+static node *sub_dir(node *parent, const char *name) {
+    for (node *c = parent->child; c; c = c->next) if (c->is_dir && !strcmp(c->name, name)) return c;
+    node *d = calloc(1, sizeof(node));
+    strncpy(d->name, name, 255); d->is_dir = 1; d->parent = parent;
+    node **t = &parent->child; while (*t) t = &(*t)->next; *t = d;
+    return d;
+}
+static void add_file(node *dir, const char *name, const void *data, size_t size) {
+    node *f = calloc(1, sizeof(node));
+    strncpy(f->name, name, 255); f->parent = dir; f->size = (uint32_t)size;
+    f->data = malloc(size + 1); memcpy(f->data, data, size);
+    node **t = &dir->child; while (*t) t = &(*t)->next; *t = f;
+}
+
+
+/* ------------------------------------------------------------------ política de conteúdo limpo do payload
+ * O payload (o que o instalador copia) é só o SISTEMA. O staging (a árvore passada ao mkimg) é REJEITADO — o build falha e
+ * nenhuma imagem é gerada — se contiver contas, hashes de senha, logs, preferências, estado, pastas pessoais ou qualquer
+ * resíduo de sessão. Dados de exemplo "de fábrica" ficam em um overlay Live separado (--live-overlay), que só pode conter
+ * /mOS/Users/ e NUNCA entra no manifesto. */
+static const char *const DENY_PREFIX[] = {
+    "/mOS/Users", "/mOS/Sistema/Biblioteca/Usuarios", "/mOS/Sistema/Biblioteca/Logs", "/mOS/Sistema/Biblioteca/Preferencias",
+    "/mOS/Sistema/Instalacao", "/mOS/tmp", "/mOS/Volumes", "/mOS/Sistema/Biblioteca/estado-sistema", NULL};
+static const char *deny_reason(const char *path, const char *name) {
+    for (int i = 0; DENY_PREFIX[i]; i++) {
+        size_t n = strlen(DENY_PREFIX[i]);
+        if (!strncmp(path, DENY_PREFIX[i], n) && (path[n] == 0 || path[n] == '/')) return "área pessoal, de sessão ou gerada pelo build";
+    }
+    size_t l = strlen(name);
+    if (l > 6 && !strcmp(name + l - 6, ".conta")) return "arquivo de conta de usuário";
+    if (l > 4 && !strcmp(name + l - 4, ".log")) return "registro (log)";
+    if (!strcmp(name, ".Lixeira") || !strcmp(name, ".DS_Store") || !strcmp(name, "Thumbs.db")) return "resíduo de sessão";
+    return NULL;
+}
+static void validate_staging(node *n, const char *prefix) {
+    char path[1400];
+    for (node *c = n->child; c; c = c->next) {
+        snprintf(path, sizeof path, "%s/%s", prefix, c->name);
+        const char *why = deny_reason(path, c->name);
+        if (why) { fprintf(stderr, "mkimg: staging CONTAMINADO: %s (%s). Nenhuma imagem foi gerada.\n", path, why); exit(1); }
+        if (c->is_dir) validate_staging(c, path);
+    }
+}
+static void validate_overlay(node *n, const char *prefix) {
+    char path[1400];
+    for (node *c = n->child; c; c = c->next) {
+        snprintf(path, sizeof path, "%s/%s", prefix, c->name);
+        if (strcmp(path, "/mOS") && strcmp(path, "/mOS/Users") && strncmp(path, "/mOS/Users/", 11)) {
+            fprintf(stderr, "mkimg: o overlay Live só pode conter /mOS/Users/: %s\n", path); exit(1);
+        }
+        size_t l = strlen(c->name);
+        if ((l > 6 && !strcmp(c->name + l - 6, ".conta")) || (l > 4 && !strcmp(c->name + l - 4, ".log")) || !strcmp(c->name, ".Lixeira")) {
+            fprintf(stderr, "mkimg: overlay Live com conta/log/resíduo de sessão: %s\n", path); exit(1);
+        }
+        if (c->is_dir) validate_overlay(c, path);
+    }
+}
+static int merge_overlay(node *dst, node *src) {
+    int files = 0;
+    node *c = src->child;
+    while (c) {
+        node *nx = c->next;
+        if (c->is_dir) {
+            node *d = sub_dir(dst, c->name);
+            files += merge_overlay(d, c);
+        } else {
+            for (node *e = dst->child; e; e = e->next)
+                if (!strcmp(e->name, c->name)) { fprintf(stderr, "mkimg: overlay colide com o payload: %s\n", c->name); exit(1); }
+            c->parent = dst; c->next = NULL;
+            node **t = &dst->child; while (*t) t = &(*t)->next; *t = c;
+            files++;
+        }
+        c = nx;
+    }
+    return files;
+}
+
+static void make_manifest(node *root) {
+    collect(root, "");
+    qsort(mitems, nmitems, sizeof *mitems, cmp_mitem);
+    int has_loader = 0;
+    uint64_t total = 0;
+    for (size_t i = 0; i < nmitems; i++) { total += mitems[i].n->size; if (!strcmp(mitems[i].path, "/EFI/BOOT/BOOTX64.EFI")) has_loader = 1; }
+    if (!has_loader) { fprintf(stderr, "mkimg: falta /EFI/BOOT/BOOTX64.EFI no payload\n"); exit(1); }
+    size_t cap = 128 + nmitems * 1100 + 128, len = 0;
+    char *m = malloc(cap);
+    len += (size_t)snprintf(m + len, cap - len, "mOS-MANIFESTO-1 %zu %llu\n", nmitems, (unsigned long long)total);
+    for (size_t i = 0; i < nmitems; i++) {
+        char hx[65];
+        sha_hex(mitems[i].n->data, mitems[i].n->size, hx);
+        len += (size_t)snprintf(m + len, cap - len, "%s %u %s\n", hx, (unsigned)mitems[i].n->size, mitems[i].path);
+    }
+    char sg[65];
+    sha_hex(m, len, sg);
+    len += (size_t)snprintf(m + len, cap - len, "ASSINATURA-SHA256 %s\n", sg);
+    node *mos = sub_dir(root, "mOS"), *sis = sub_dir(mos, "Sistema"), *bib = sub_dir(sis, "Biblioteca"), *ins = sub_dir(sis, "Instalacao");
+    add_file(ins, "manifesto.txt", m, len);
+    add_file(bib, "estado-sistema", "LIVE\n", 5);
+    printf("mkimg: manifesto do payload: %zu arquivos, %llu bytes (assinatura %.16s…)\n", nmitems, (unsigned long long)total, sg);
+    free(m);
+}
+
 static void guid(uint8_t *g) { for (int i = 0; i < 16; i++) g[i] = rand() & 0xFF; g[7] = (g[7] & 0x0F) | 0x40; g[8] = (g[8] & 0x3F) | 0x80; }
 
 int main(int argc, char **argv) {
-    if (argc < 4) { fprintf(stderr, "uso: mkimg <saida.img> <dir> <MiB>\n"); return 1; }
+    if (argc < 4) { fprintf(stderr, "uso: mkimg <saida.img> <dir> <MiB> [--live-overlay <dir>]\n"); return 1; }
+    const char *overlay_dir = NULL;
+    for (int i = 4; i < argc; i++) {
+        if (!strcmp(argv[i], "--live-overlay") && i + 1 < argc) overlay_dir = argv[++i];
+        else { fprintf(stderr, "mkimg: argumento desconhecido: %s\n", argv[i]); return 1; }
+    }
+    remove(argv[1]);   /* fail-closed: se o build falhar, nunca sobra uma imagem antiga para ser gravada por engano */
     srand((unsigned)time(NULL));
     img_size = (uint64_t)atoi(argv[3]) << 20;
     uint64_t total_lba = img_size / SECTOR;
@@ -308,6 +501,13 @@ int main(int argc, char **argv) {
     bs[510] = 0x55; bs[511] = 0xAA;
 
     node *root = load_tree(argv[2], "", NULL);
+    validate_staging(root, "");
+    make_manifest(root);
+    if (overlay_dir) {
+        node *ov = load_tree(overlay_dir, "", NULL);
+        validate_overlay(ov, "");
+        printf("mkimg: overlay Live (fora do payload e do manifesto): %d arquivos\n", merge_overlay(root, ov));
+    }
     alloc_clusters(root);
     write_node(root);
 

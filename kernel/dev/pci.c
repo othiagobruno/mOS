@@ -1,5 +1,6 @@
 /* mOS — enumeração do barramento PCI (mecanismo de configuração #1) */
 #include "kernel.h"
+#include "storage.h"
 
 static pci_dev_t devs[64];
 static int ndevs;
@@ -89,5 +90,29 @@ const char *pci_class_name(u8 c, u8 s) {
     case 0x0C: return s == 3 ? "Controlador USB" : s == 5 ? "SMBus" : "Barramento serial";
     case 0x0D: return "Controlador sem fio";
     default: return "Dispositivo";
+    }
+}
+
+/* Cadeia de pontes até o dispositivo, da raiz para baixo: {dispositivo, função}. É o que o firmware UEFI
+ * descreve com os nós Pci(dev,fn) do caminho de dispositivo. npci = 0 se não for possível montar a cadeia
+ * (ponte não encontrada, barramento raiz != 0): quem usa deve tratar como identidade desconhecida. */
+void pci_chain(pci_dev_t *d, diskphys_t *p) {
+    u8 tmp[8][2];
+    int n = 0;
+    pci_dev_t *cur = d;
+    p->npci = 0;
+    for (int guard = 0; guard < 8 && cur; guard++) {
+        tmp[n][0] = cur->dev; tmp[n][1] = cur->fn; n++;
+        if (cur->bus == 0) {
+            for (int i = 0; i < n; i++) { p->pci[i][0] = tmp[n - 1 - i][0]; p->pci[i][1] = tmp[n - 1 - i][1]; }
+            p->npci = (u8)n;
+            return;
+        }
+        pci_dev_t *br = NULL;
+        for (int i = 0; i < ndevs && !br; i++) {
+            pci_dev_t *x = &devs[i];
+            if (x->class_ == 6 && x->subclass == 4 && ((cfg_read(x->bus, x->dev, x->fn, 0x18) >> 8) & 0xFF) == cur->bus) br = x;
+        }
+        cur = br;
     }
 }

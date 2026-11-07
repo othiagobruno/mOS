@@ -2,6 +2,9 @@
 #include "ui.h"
 #include "apps.h"
 #include "account.h"
+#include "i18n.h"
+#include "sysstate.h"
+#include "crypto.h"
 
 static bool active;
 static int sel;                 /* conta selecionada */
@@ -65,7 +68,8 @@ void login_boot(void) {
         account_at(i, n, sizeof n, f, sizeof f, &hp);
         if (hp) any = true;
     }
-    if (any || account_count() > 1) login_show();
+    /* sem Visitante (sistema instalado / live persistente) a sessão NUNCA começa sem senha */
+    if (any || account_count() > 1 || !sysstate_guest_allowed()) login_show();
 }
 
 static void finish_login(const char *name) {
@@ -74,8 +78,8 @@ static void finish_login(const char *name) {
     pw[0] = 0;
     if (bg) { surface_free(bg); bg = NULL; }
     char m[128];
-    snprintf(m, sizeof m, "Bem-vindo(a), %s", account_fullname());
-    notify(m, "Sessão iniciada.");
+    snprintf(m, sizeof m, "%s, %s", tr(S_WELCOME_TITLE), account_fullname());
+    notify(m, tr(S_LOGIN_WELCOME));
     sound_startup_chime();
     wm_damage_all();
 }
@@ -86,7 +90,7 @@ static void try_login(void) {
     account_at(sel, n, sizeof n, f, sizeof f, &hp);
     if (account_verify(n, pw)) { finish_login(n); return; }
     shake_until = timer_ticks() + 450;
-    snprintf(msg, sizeof msg, "Senha incorreta");
+    snprintf(msg, sizeof msg, "%s", tr(S_LOGIN_BAD));
     pw[0] = 0; caret = 0;
     sound_alert();
     wm_damage_all();
@@ -116,11 +120,10 @@ void login_draw(surface_t *s) {
     gfx_blit_rect(s, bg, s->clip, s->clip.x, s->clip.y);
     datetime_t dt;
     rtc_now(&dt);
-    static const char *wd[7] = {"domingo", "segunda-feira", "terça-feira", "quarta-feira", "quinta-feira", "sexta-feira", "sábado"};
-    static const char *mo[12] = {"janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"};
     char t[64];
     /* data e hora grandes no topo; a hora com sombra suave, em branco levemente translúcido (vidro) */
-    snprintf(t, sizeof t, "%s, %d de %s", wd[dt.weekday], dt.day, mo[dt.month - 1]);
+    if (g_lang == LANG_EN) snprintf(t, sizeof t, "%s, %s %d", i18n_weekday(dt.weekday), i18n_month(dt.month), dt.day);
+    else snprintf(t, sizeof t, "%s, %d de %s", i18n_weekday(dt.weekday), dt.day, i18n_month(dt.month));
     text_draw_center(s, font_get(FONT_SEMIBOLD), 21, rect_make(0, 54, W, 30), RGBA(255, 255, 255, 235), t);
     snprintf(t, sizeof t, "%d:%02d", dt.hour, dt.minute);
     text_draw_center(s, font_get(FONT_BOLD), 112, rect_make(0, 82, W, 150), RGBA(0, 0, 0, 40), t);
@@ -141,7 +144,7 @@ void login_draw(surface_t *s) {
     glass_panel(s, fx, fy, fw, fh, fh / 2.0f, GLASS_CLEAR);
     gfx_round_rect_stroke(s, fx + 0.5f, fy + 0.5f, fw - 1, fh - 1, fh / 2.0f - 0.5f, 1, RGBA(255, 255, 255, 90));
     int base = fy + 21;
-    if (!pw[0]) text_draw_center(s, fr, 13.5f, rect_make(fx, fy, fw - 12, fh), RGBA(255, 255, 255, 170), haspw ? "Digite a Senha" : "Tecle Return para entrar");
+    if (!pw[0]) text_draw_center(s, fr, 13.5f, rect_make(fx, fy, fw - 12, fh), RGBA(255, 255, 255, 170), haspw ? tr(S_LOGIN_PW) : tr(S_LOGIN_ENTER));
     int dots = (int)strlen(pw);
     for (int i = 0; i < dots && i < 22; i++) gfx_circle(s, fx + 20 + i * 11, fy + fh / 2.0f, 3.3f, RGB(255, 255, 255));
     if (pw[0] && ((timer_ticks() - blink0) / 530) % 2 == 0) gfx_fill(s, fx + 16 + dots * 11, fy + 8, 2, fh - 16, RGB(255, 255, 255));
@@ -152,7 +155,7 @@ void login_draw(surface_t *s) {
         glyph_chevron(s, fx + fw - 26, fy + fh / 2 - 9, 18, RGB(255, 255, 255), 0);
     }
     if (msg[0]) text_draw_center(s, fr, 13, rect_make(0, fy + fh + 10, W, 20), RGB(255, 200, 190), msg);
-    else if (verifying) text_draw_center(s, fr, 13, rect_make(0, fy + fh + 10, W, 20), RGBA(255, 255, 255, 200), "Verificando…");
+    else if (verifying) text_draw_center(s, fr, 13, rect_make(0, fy + fh + 10, W, 20), RGBA(255, 255, 255, 200), tr(S_LOGIN_VERIFY));
     /* outras contas: fileira pequena acima do usuário */
     if (n > 1) {
         int bw = 84, total = n * bw, x0 = (W - total) / 2, by = (int)cy - 110;
@@ -173,8 +176,8 @@ void login_draw(surface_t *s) {
     gfx_circle(s, W / 2 + 60, py, 15, RGBA(255, 255, 255, 46));
     gfx_ring_arc(s, W / 2 + 60, py + 1, 7, 1.8f, 0.6f, 2 * PI_F - 0.6f, RGB(255, 255, 255));
     gfx_line(s, W / 2 + 60, py - 9, W / 2 + 60, py + 1, 1.8f, RGB(255, 255, 255));
-    text_draw_center(s, fr, 11, rect_make(W / 2 - 110, py + 20, 100, 16), RGBA(255, 255, 255, 200), "Reiniciar");
-    text_draw_center(s, fr, 11, rect_make(W / 2 + 10, py + 20, 100, 16), RGBA(255, 255, 255, 200), "Desligar");
+    text_draw_center(s, fr, 11, rect_make(W / 2 - 110, py + 20, 100, 16), RGBA(255, 255, 255, 200), tr(S_LOGIN_RESTART));
+    text_draw_center(s, fr, 11, rect_make(W / 2 + 10, py + 20, 100, 16), RGBA(255, 255, 255, 200), tr(S_LOGIN_SHUTDOWN));
 }
 
 bool login_handle_event(input_event_t *e) {
@@ -188,7 +191,8 @@ bool login_handle_event(input_event_t *e) {
         else if (e->key == KEY_ESC) { pw[0] = 0; msg[0] = 0; }
         else if (e->key == KEY_LEFT && sel > 0) { sel--; pw[0] = 0; msg[0] = 0; }
         else if (e->key == KEY_RIGHT && sel < account_count() - 1) { sel++; pw[0] = 0; msg[0] = 0; }
-        else if (e->key >= 32 && e->key < 0x100 && len < 60) { len += utf8_encode((u32)e->key, pw + len); pw[len] = 0; msg[0] = 0; }
+        else if (e->key >= 32 && e->key < 0x100 && len < 60) {
+            crypto_rng_add_entropy(&e->key, sizeof e->key); len += utf8_encode((u32)e->key, pw + len); pw[len] = 0; msg[0] = 0; }
         blink0 = timer_ticks();
         wm_damage_all();
         return true;

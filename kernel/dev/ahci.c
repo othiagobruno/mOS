@@ -82,6 +82,8 @@ typedef struct {
 
 typedef struct { u32 dba, dbau, rsv, dbc; } prd_t;
 
+static pci_dev_t *hba_pci;                  /* controlador AHCI (identidade física dos discos) */
+
 typedef struct {
     int  port;
     u8  *ctl;  u64 ctl_phys;     /* página de controle */
@@ -210,6 +212,8 @@ static bool issue(ahci_disk_t *d, u8 cmd, u64 lba, u16 count, u32 bytes, bool wr
 #define DIRECT_MAX (4u << 20)                        /* teto de um PRD; LBA48 conta até 65536 setores */
 
 static bool rw_sectors(ahci_disk_t *d, u64 lba, u64 n, u8 *data, bool write) {
+    /* contenção de escrita: único ponto onde este driver emite ATA WRITE (storage.c) */
+    if (write && !storage_write_ok(&d->dev, lba * d->ss, n * d->ss)) return false;
     /* DMA direto no buffer de quem chamou (identidade = físico): sem bounce e sem memcpy, comandos de
      * até 4 MiB. Exige endereço par e, sem S64A, abaixo de 4 GiB. */
     u64 total = n * d->ss;
@@ -315,7 +319,7 @@ static bool identify(ahci_disk_t *d) {
     return true;
 }
 
-static bool setup_port(int p) {
+static bool setup_port(int p, bool need_sig) {
     ahci_disk_t *d = kcalloc(1, sizeof(*d));
     if (!d) return false;
     d->port = p;
@@ -341,6 +345,19 @@ static bool setup_port(int p) {
     pw(p, P_IE, 0);
     pw(p, P_IS, 0xFFFFFFFFu);
     pw(p, P_SERR, 0xFFFFFFFFu);
+    if (need_sig) {
+        /* Porta com dispositivo presente mas assinatura ainda 0xFFFFFFFF: o firmware não a inicializou (disco de dados que o UEFI
+         * não usou). Com o recebimento de FIS ligado, um COMRESET faz o dispositivo mandar o D2H com a assinatura. */
+        start_engine(p);
+        if (!reset_port(p)) { kprintf("ahci: porta %d: COMRESET falhou\n", p); goto fail; }
+        u64 end = timer_ticks() + 3000;
+        while (pr(p, P_SIG) == 0xFFFFFFFFu && timer_ticks() < end) sleep_ms(1);
+        u32 sg = pr(p, P_SIG);
+        if (sg != SIG_SATA) { kprintf("ahci: porta %d: assinatura %08x depois do COMRESET (não é disco), ignorada\n", p, sg); goto fail; }
+        pw(p, P_IS, 0xFFFFFFFFu);
+        pw(p, P_SERR, 0xFFFFFFFFu);
+        if (!stop_engine(p)) { kprintf("ahci: porta %d: motor não parou\n", p); goto fail; }
+    }
     if (!wait_clear(p, P_TFD, TFD_BSY | TFD_DRQ, 1000)) {
         if (!reset_port(p) || !wait_clear(p, P_TFD, TFD_BSY | TFD_DRQ, 2000)) {
             kprintf("ahci: porta %d: dispositivo ocupado (TFD %08x)\n", p, pr(p, P_TFD));
@@ -363,7 +380,16 @@ static bool setup_port(int p) {
             p, d->model, d->serial, d->fw, d->sectors, d->ss);
     char name[16];
     snprintf(name, sizeof name, "sata%d", p);
+    d->dev.lbs = d->ss;
     storage_register(&d->dev, name, d->desc);
+    {
+        diskphys_t ph;
+        memset(&ph, 0, sizeof ph);
+        ph.kind = PHYS_SATA;
+        ph.sata_port = (u32)p;
+        if (hba_pci) pci_chain(hba_pci, &ph);
+        storage_set_phys(&d->dev, &ph);
+    }
     return true;
 fail:
     if (d->ctl) pmm_free(d->ctl_phys, 1);
@@ -381,8 +407,6 @@ static void take_ownership(void) {
     if (hr(HBA_BOHC) & BOHC_BB) sleep_ms(2000);   /* firmware pediu mais tempo */
 }
 
-static bool selftest(ahci_disk_t *d);
-
 void ahci_init(void) {
     for (int nth = 0;; nth++) {
         pci_dev_t *pd = pci_find_class(1, 6, nth);
@@ -393,6 +417,7 @@ void ahci_init(void) {
         pci_enable_bus_master(pd);
         vmm_map_mmio(base, 0x2000);
         abar = (volatile u8 *)base;
+        hba_pci = pd;
         take_ownership();
         hw(HBA_GHC, hr(HBA_GHC) | GHC_AE);
         hw(HBA_GHC, hr(HBA_GHC) & ~GHC_IE);       /* só polling por enquanto */
@@ -404,13 +429,12 @@ void ahci_init(void) {
             if (!(pi & (1u << p))) continue;
             u32 ssts = pr(p, P_SSTS), sig = pr(p, P_SIG);
             if ((ssts & 0xF) != 3) continue;      /* nada conectado */
-            if (sig != SIG_SATA) { kprintf("ahci: porta %d: assinatura %08x (não é disco), ignorada\n", p, sig); continue; }
-            setup_port(p);
+            if (sig != SIG_SATA && sig != 0xFFFFFFFFu) { kprintf("ahci: porta %d: assinatura %08x (não é disco), ignorada\n", p, sig); continue; }
+            setup_port(p, sig != SIG_SATA);
         }
         break; /* um controlador por enquanto (abar é global) */
     }
     if (abar) snprintf(status, sizeof status, ndisks == 1 ? "%d disco SATA" : "%d discos SATA", ndisks);
-    for (int i = 0; i < ndisks; i++) selftest(disks[i]);
 }
 
 int ahci_disk_count(void) { return ndisks; }
@@ -418,28 +442,5 @@ const char *ahci_disk_desc(int i) { return i >= 0 && i < ndisks ? disks[i]->desc
 blkdev_t *ahci_disk(int i) { return i >= 0 && i < ndisks ? &disks[i]->dev : NULL; }
 const char *ahci_status(void) { return status; }
 
-/* Autoteste de escrita: só roda em discos cujo setor 0 começa com "mOS-AHCI-TEST" (imagem de teste
- * criada por tools\qemu-test.ps1 -AhciTest). Nunca toca em discos comuns. */
-static bool selftest(ahci_disk_t *d) {
-    static const char magic[] = "mOS-AHCI-TEST";
-    u8 *s0 = kmalloc(d->ss);
-    if (!s0) return false;
-    bool ok = disk_read(&d->dev, 0, s0, d->ss) && !memcmp(s0, magic, sizeof magic - 1);
-    kfree(s0);
-    if (!ok) return false;
-    const u64 n = 300 << 10;                     /* > bounce: força várias transferências */
-    u8 *a = kmalloc(n), *b = kmalloc(n);
-    bool pass = a && b;
-    for (u64 i = 0; pass && i < n; i++) a[i] = (u8)(i * 7 + (i >> 9));
-    pass = pass && disk_write(&d->dev, 4096 + 3, a, n) && disk_flush(&d->dev); /* desalinhado de propósito */
-    if (pass) memset(b, 0, n);
-    pass = pass && disk_read(&d->dev, 4096 + 3, b, n) && !memcmp(a, b, n);
-    /* alinhado: setores inteiros num buffer par, pelo caminho de DMA direto (sem bounce) */
-    if (pass) memset(b, 0, n);
-    pass = pass && disk_write(&d->dev, 1 << 20, a, n) && disk_flush(&d->dev) &&
-           disk_read(&d->dev, 1 << 20, b, n) && !memcmp(a, b, n) &&
-           disk_read(&d->dev, 4096 + 3, b, 1000) && !memcmp(a, b, 1000);   /* e o trecho desalinhado continua lá */
-    kprintf("ahci: autoteste de escrita na porta %d: %s\n", d->port, pass ? "OK" : "FALHOU");
-    kfree(a); kfree(b);
-    return pass;
-}
+/* Não há autoteste de escrita neste driver: o antigo, por "assinatura" no setor 0, gravava em qualquer disco que a
+ * tivesse e foi removido. A escrita só acontece dentro de faixas liberadas por storage_grant_write(). */

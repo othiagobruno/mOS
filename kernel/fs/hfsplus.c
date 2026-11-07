@@ -375,8 +375,24 @@ static void hfs_trim(dmount_t *m) {
     h->cache_ino = 0;
 }
 
+/* Consentimento do usuário (por volume): liga a escrita num volume que foi montado só leitura porque o disco não estava liberado.
+ * Com journal pendente NÃO liga (o replay mudaria as estruturas já carregadas): o volume continua só leitura. */
+static bool hfs_enable_write(dmount_t *m) {
+    hfs_t *h = m->priv;
+    if (!h) return false;
+    if (h->wr) return true;
+    u8 vh[512];
+    if (h->own_dev || !blk_writable(h->dev) || !blk_read(h->dev, 1024, vh, sizeof vh)) return false;   /* wrapper HFS fica só leitura */
+    if (be32(vh + 4) & 0x2000) {
+        bool jro = false;
+        if (!hfs_journal_prepare(h->dev, vh, false, &jro) || jro) return false;
+    }
+    m->writable = hfs_wr_open(h, vh);
+    return m->writable;
+}
+
 static const dfs_ops_t HFS_OPS = {"HFS+", hfs_readdir, hfs_read, hfs_unmount, hfs_free_node, hfs_trim,
-                                  hfs_wr_write, hfs_wr_mkdir, hfs_wr_remove, hfs_wr_rename, hfs_wr_sync};
+                                  hfs_wr_write, hfs_wr_mkdir, hfs_wr_remove, hfs_wr_rename, hfs_wr_sync, hfs_enable_write};
 
 static bool tree_header(hfs_t *h, int tree, fork_t *f, u32 *ns, u32 *root) {
     if (!f->size) { *root = 0; return true; }

@@ -29,13 +29,24 @@ typedef struct blkdev {
     void *ctx;
     u64 base;                                              /* deslocamento (partições) */
     struct blkdev *parent;
+    u32 lbs;                                               /* tamanho do bloco lógico do hardware (0 = 512) */
 } blkdev_t;
+
+/* Contenção de escrita (dev/storage.c): todo disco físico começa SEM permissão de escrita. Os drivers
+ * (ahci/nvme/usb_msc) recusam qualquer comando de escrita fora das faixas liberadas por storage_grant_write(),
+ * e blk_writable() só vale enquanto houver faixa liberada que cubra o dispositivo. */
+#ifdef MOS_HOST_TEST
+static inline bool blk_policy_allows(struct blkdev *d) { (void)d; return true; }
+#else
+bool blk_policy_allows(struct blkdev *d);
+#endif
 
 static inline bool blk_read(blkdev_t *d, u64 off, void *buf, u64 len) {
     if (off > d->size || len > d->size - off) return false;
     return d->read(d, off, buf, len);
 }
-static inline bool blk_writable(blkdev_t *d) { return d->write != NULL; }
+static inline bool blk_hw_writable(blkdev_t *d) { return d->write != NULL; }   /* o hardware aceita escrita (ignora a política) */
+static inline bool blk_writable(blkdev_t *d) { return d->write != NULL && blk_policy_allows(d); }
 static inline bool blk_write(blkdev_t *d, u64 off, const void *buf, u64 len) {
     if (!d->write || off > d->size || len > d->size - off) return false;
     return d->write(d, off, buf, len);
@@ -83,6 +94,7 @@ typedef struct dfs_ops {
     bool (*remove)(struct dmount *m, const char *path);                /* arquivo ou pasta (recursivo) */
     bool (*rename)(struct dmount *m, const char *from, const char *to);/* mover/renomear no mesmo volume */
     bool (*sync)(struct dmount *m);                                    /* grava caches; true = tudo no disco */
+    bool (*enable_write)(struct dmount *m);                            /* o usuário permitiu gravar neste volume (vfs_bridge.c: vol_enable_write); NULL = não suporta */
 } dfs_ops_t;
 
 /* uma imagem aberta: disco virtual + partições; vive enquanto houver volume montado dela */
@@ -156,6 +168,7 @@ bool     fat_mkdir(fatfs_t *fs, const char *path);   /* o pai precisa existir; t
 bool     fat_remove(fatfs_t *fs, const char *path);  /* arquivo ou pasta (recursivo) */
 bool     fat_rename(fatfs_t *fs, const char *from, const char *to);
 bool     fat_sync(fatfs_t *fs);
+void     fat_enable_rw(fatfs_t *fs);                 /* reavalia a política de escrita (depois de storage_grant_write) */
 void     fat_set_system(fatfs_t *fs);                /* este volume não é exposto em /Volumes */
 int      fat_probe(blkdev_t *dev, const char *source, const char *fmt);
 

@@ -288,6 +288,36 @@ void hmac(int alg, const u8 *key, usize klen, const void *msg, usize mlen, u8 *o
     secure_zero(pad, sizeof(pad));
 }
 
+void pbkdf2_hmac_sha256(const u8 *pw, usize pwlen, const u8 *salt, usize saltlen, u32 iters, u8 *out, usize dklen) {
+    u8 k[64], pad[64], u[32], t[32], inner[32];
+    memset(k, 0, sizeof k);
+    if (pwlen > 64) sha256(pw, pwlen, k);
+    else if (pwlen) memcpy(k, pw, pwlen);
+    sha256_ctx ictx, octx, c;
+    for (int i = 0; i < 64; i++) pad[i] = k[i] ^ 0x36;
+    sha256_init(&ictx); sha256_update(&ictx, pad, 64);
+    for (int i = 0; i < 64; i++) pad[i] = k[i] ^ 0x5c;
+    sha256_init(&octx); sha256_update(&octx, pad, 64);
+    if (iters < 1) iters = 1;
+    for (u32 blk = 1; dklen; blk++) {
+        u8 be[4] = {(u8)(blk >> 24), (u8)(blk >> 16), (u8)(blk >> 8), (u8)blk};
+        c = ictx; sha256_update(&c, salt, saltlen); sha256_update(&c, be, 4); sha256_final(&c, inner);
+        c = octx; sha256_update(&c, inner, 32); sha256_final(&c, u);
+        memcpy(t, u, 32);
+        for (u32 j = 1; j < iters; j++) {
+            c = ictx; sha256_update(&c, u, 32); sha256_final(&c, inner);
+            c = octx; sha256_update(&c, inner, 32); sha256_final(&c, u);
+            for (int x = 0; x < 32; x++) t[x] ^= u[x];
+        }
+        usize n = dklen < 32 ? dklen : 32;
+        memcpy(out, t, n);
+        out += n; dklen -= n;
+    }
+    secure_zero(k, sizeof k); secure_zero(pad, sizeof pad); secure_zero(u, sizeof u);
+    secure_zero(t, sizeof t); secure_zero(inner, sizeof inner);
+    secure_zero(&ictx, sizeof ictx); secure_zero(&octx, sizeof octx); secure_zero(&c, sizeof c);
+}
+
 void hkdf_extract(int alg, const u8 *salt, usize slen, const u8 *ikm, usize ilen, u8 *prk) {
     u8 zero[HASH_MAX_LEN] = {0};
     if (!salt || !slen) { salt = zero; slen = hash_len(alg); }
@@ -791,6 +821,7 @@ int aes_gcm_open(const aes_gcm_ctx *c, const u8 iv[12], const u8 *aad, usize ale
 static u8 rng_key[32];
 static u64 rng_ctr;
 static bool rng_seeded;
+static rng_status_t rng_st;
 
 static inline void cpuid_(u32 leaf, u32 sub, u32 *a, u32 *b, u32 *c, u32 *d) {
     __asm__ volatile("cpuid" : "=a"(*a), "=b"(*b), "=c"(*c), "=d"(*d) : "a"(leaf), "c"(sub));
@@ -825,7 +856,7 @@ static void rng_seed(void) {
         for (int i = 0; i < 8; i++) {
             u64 v;
             for (int tries = 0; tries < 10; tries++)
-                if (rdrand64(&v)) { sha256_update(&h, &v, 8); break; }
+                if (rdrand64(&v)) { sha256_update(&h, &v, 8); rng_st.rdrand_ok++; break; }
         }
     }
     if (maxleaf >= 7) {
@@ -834,7 +865,7 @@ static void rng_seed(void) {
             for (int i = 0; i < 4; i++) {
                 u64 v;
                 for (int tries = 0; tries < 20; tries++)
-                    if (rdseed64(&v)) { sha256_update(&h, &v, 8); break; }
+                    if (rdseed64(&v)) { sha256_update(&h, &v, 8); rng_st.rdseed_ok++; break; }
             }
         }
     }
@@ -847,6 +878,7 @@ static void rng_seed(void) {
         u64 now = rdtsc();
         u32 delta = (u32)(now - prev);
         sha256_update(&h, &delta, 4);
+        rng_st.jitter_samples++;
         prev = now;
     }
     u32 av = acc;
@@ -855,6 +887,24 @@ static void rng_seed(void) {
     sha256_update(&h, &tk, 8);
     sha256_final(&h, rng_key);
     rng_seeded = true;
+    rng_st.seeded = true;
+    kprintf("rng: semeado (RDRAND %d/8, RDSEED %d/4, jitter %d amostras)%s\n", rng_st.rdrand_ok, rng_st.rdseed_ok, rng_st.jitter_samples,
+            crypto_rng_hw() ? "" : " — SEM gerador de hardware: só jitter/relógios (fraco)");
+}
+
+void crypto_rng_status(rng_status_t *st) { *st = rng_st; }
+#ifdef MOS_UNIT_TESTS
+static int rng_test_force = -1;                  /* só em builds de teste: 0 = finge "sem gerador de hardware", 1 = finge "com" */
+void crypto_rng_test_force_hw(int v) { rng_test_force = v; }
+#endif
+/* "adequado" = RDSEED/RDRAND realmente entregaram valores na semeadura. NÃO é uma validação de entropia: só diz que existe uma
+ * fonte de hardware dedicada. Sem ela (só jitter/relógios), senhas NÃO são criadas (lib/account.c) e a persistência é recusada. */
+bool crypto_rng_hw(void) {
+#ifdef MOS_UNIT_TESTS
+    if (rng_test_force >= 0) return rng_test_force != 0;
+#endif
+    if (!rng_seeded) rng_seed();
+    return rng_st.rdseed_ok > 0 || rng_st.rdrand_ok >= 4;
 }
 
 void crypto_rng_add_entropy(const void *data, usize len) {

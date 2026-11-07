@@ -41,6 +41,8 @@ void hash_buf(int alg, const void *data, usize len, u8 *out);
 
 /* ---------- HMAC / HKDF ---------- */
 void hmac(int alg, const u8 *key, usize klen, const void *msg, usize mlen, u8 *out);
+/* PBKDF2-HMAC-SHA256 (RFC 8018). Duas compressões SHA-256 por iteração (ipad/opad pré-calculados). */
+void pbkdf2_hmac_sha256(const u8 *pw, usize pwlen, const u8 *salt, usize saltlen, u32 iters, u8 *out, usize dklen);
 void hkdf_extract(int alg, const u8 *salt, usize slen, const u8 *ikm, usize ilen, u8 *prk);
 void hkdf_expand(int alg, const u8 *prk, const u8 *info, usize ilen, u8 *out, usize olen);
 /* HKDF-Expand-Label do TLS 1.3 (rótulo sem o prefixo "tls13 ") */
@@ -105,3 +107,10 @@ extern bool g_tls_insecure;
 /* ---------- CSPRNG (DRBG ChaCha20 com apagamento de chave) ---------- */
 void crypto_rng_add_entropy(const void *data, usize len);
 void crypto_random(void *buf, usize len);
+/* Estado das fontes de entropia usadas na semeadura (auditoria; NÃO é uma certificação de entropia). */
+typedef struct { bool seeded; int rdrand_ok, rdseed_ok, jitter_samples; } rng_status_t;
+void crypto_rng_status(rng_status_t *st);
+bool crypto_rng_hw(void);               /* RDSEED/RDRAND entregaram valores na semeadura (semeia se preciso). Não é validação de entropia */
+#ifdef MOS_UNIT_TESTS
+void crypto_rng_test_force_hw(int v);   /* -1 = real, 0 = finge sem gerador de hardware, 1 = finge com */
+#endif

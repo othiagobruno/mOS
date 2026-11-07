@@ -3,8 +3,8 @@
 #   wait:<ms>  shot:<name>  shothead:<head>,<name>  move:<x>,<y>  click  rclick  key:<qcode>[+<qcode>]  type:<text>  scroll:<n>
 # Example: .\tools\qemu-test.ps1 -Steps "wait:6000;shot:desk;move:20,10;click;wait:500;shot:menu"
 #   -Port     : porta QMP (padrão: uma porta livre qualquer, para várias sessões poderem testar ao mesmo tempo)
-#   -AhciTest : attaches a scratch SATA disk marked "mOS-AHCI-TEST"; the kernel runs its AHCI write self-test on it
-param([string]$Steps = 'wait:6000;shot:screen', [int]$Memory = 1024, [switch]$KeepRunning, [string]$OutDir = 'build', [int]$Port = 0, [switch]$AhciTest, [switch]$Persist, [string]$NvmeDisk = '', [switch]$BootNvme, [switch]$UsbInput, [switch]$BootUsb, [switch]$NoNet, [string]$Vga = 'std', [int]$Monitores = 1)
+#   (o autoteste de escrita por "assinatura" do AHCI foi removido do kernel: ele gravava em qualquer disco com a assinatura)
+param([string]$Steps = 'wait:6000;shot:screen', [int]$Memory = 1024, [switch]$KeepRunning, [string]$OutDir = 'build', [int]$Port = 0, [switch]$Persist, [string]$NvmeDisk = '', [switch]$BootNvme, [switch]$UsbInput, [switch]$BootUsb, [switch]$NoNet, [string]$Vga = 'std', [int]$Monitores = 1)
 $root = Split-Path $PSScriptRoot -Parent
 Set-Location $root
 New-Item -ItemType Directory -Force $OutDir\shots | Out-Null
@@ -27,14 +27,6 @@ if ($Port -gt 0) {
 Remove-Item $OutDir\serial-test.log -ErrorAction SilentlyContinue
 
 $extra = ''
-if ($AhciTest) {
-    $scratch = "$root\$OutDir\ahci-test.img"
-    $bytes = New-Object byte[] (8MB)
-    $m = [Text.Encoding]::ASCII.GetBytes('mOS-AHCI-TEST')
-    [Array]::Copy($m, $bytes, $m.Length)
-    [IO.File]::WriteAllBytes($scratch, $bytes)
-    $extra = " -ExtraDisk `"$scratch`""
-}
 if ($Persist) { $extra += ' -Persist' }
 if ($NvmeDisk) { $extra += " -NvmeDisk `"$NvmeDisk`"" }
 if ($BootNvme) { $extra += ' -BootNvme' }
