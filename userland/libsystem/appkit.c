@@ -102,6 +102,7 @@ typedef struct {
     BOOL visible, released_when_closed, closed, needs, is_modal_panel;
     int level;
     id cvc;                         /* contentViewController */
+    double last_render;             /* cx_now() do último render_window (teto de quadros do pump) */
 } wstate_t;
 
 typedef struct { double r, g, b, a; } rgba_t;     /* NSColor: campos logo após o isa */
@@ -2197,11 +2198,19 @@ static int pump(void) {
     while (SYS1(GUI_POLL, &g) == 1) { dispatch(&g); got++; }
     double next = cx_run_timers();
     cx_ca_poll();                              /* CALayerHost de outro processo: geração nova pede redesenho */
+    /* teto de 25 quadros/s por janela: o compositor do Chromium (e cada IOSurfaceUnlock de escrita, quartzcore.c)
+     * marca a janela a cada quadro, e o render_window (autolayout, composição inteira em software, flush, present)
+     * roda na thread principal — a mesma do JS do Electron. Sem teto, a thread principal do VS Code vivia
+     * redesenhando e a navegação da janela não andava. Cedo demais: s->needs fica ligado e o próximo pump desenha. */
+    double now = cx_now();
     nsarr_t *a = (nsarr_t *)app_windows;
     for (u64 i = 0; a && i < a->n; i++) {
         id w = a->items[i];
         wstate_t *s = ws(w);
-        if (s->visible && (s->needs || tree_needs(s->content))) render_window(w);
+        if (!s->visible || !(s->needs || tree_needs(s->content))) continue;
+        if (now - s->last_render < 0.04) continue;
+        s->last_render = now;
+        render_window(w);
     }
     objc_autoreleasePoolPop(pool);
     if (got) return 0;
@@ -3736,4 +3745,21 @@ void cx_gfx_image_px(int x, int y, int w, int h, const u32 *px) {
     memcpy(b + 16, px, (usize)w * h * 4);
     put(GC_IMAGE, b, (u32)n);
     free(b);
+}
+
+/* CGEventPost (slack_frameworks.c): uma tecla sintética entra na janela-chave deste app como se viesse do window server */
+void cx_post_key_event(u16 mac, u64 flags, int down) {
+    int key = -1;
+    for (int k = 1; k < 0x110 && key < 0; k++) if (mac_keycode(k) == mac) key = k;
+    id w = key_window_obj();
+    if (key < 0 || !w) return;
+    gui_event_t g;
+    memset(&g, 0, sizeof g);
+    g.type = down ? GEV_KEY_DOWN : GEV_KEY_UP;
+    g.win = (u32)ws(w)->gid;
+    g.mods = ((flags >> 17) & 1 ? 1 : 0) | ((flags >> 18) & 1 ? 2 : 0) | ((flags >> 19) & 1 ? 4 : 0) | ((flags >> 20) & 1 ? 8 : 0);
+    if ((g.mods & 1) && key >= 'a' && key <= 'z') key -= 32;
+    g.key = key;
+    if (key >= 32 && key < 127 && !(g.mods & (2 | 8))) g.text[0] = (char)key;
+    dispatch(&g);
 }

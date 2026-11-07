@@ -52,7 +52,12 @@ Dentro do mOS (QEMU, 3 GiB), aberto pelo Launchpad:
 | Crashpad | ✅ `fork` + `chrome_crashpad_handler` sobem; `shutdown` em socketpair não dá mais EBADF (sockets.c) |
 | Singleton do perfil | ✅ `stat` devolve o modo pedido em `mkdir`/`chmod` (0700 do `mkdtemp`; libc.c) |
 | `base/mac/mac_util.mm` | ✅ sysctls que faltavam (darwin.c) |
-| **Próximo bloqueio** | ❌ cai em `__cxa_guard_release` (libc++abi embutida no Chrome), no caminho de *landing pad*: algo está desenrolando a pilha, e o `_Unwind_RaiseException` do mOS devolve "fim da pilha" |
+| Swizzle do menu Serviços | ✅ não era exceção: o `int3` em `0x4483d77` era o `CHECK` do bloco de `+[ChromeSwizzleServicesMenuUpdater install]`, que exige as classes privadas `_NSServiceEntry` (`-bundleIdentifier`) e `_NSServicesMenuUpdater` (`-populateMenu:withServiceEntries:forDisplay:`, `-plugMenu:intoMenu:`); criadas em `chrome.c` (`cx_chrome_init`, chamado por `cx_objc_boot`) |
+| Menu principal | ✅ o Chrome monta o `NSMenu` (avisos de `NSMenuItem setAlternate:/setHidden:/setImage:`, `NSMenu itemWithTag:`, `sectionHeaderWithTitle:` ainda não implementados, sem cair) |
+| **Agora** | ⏳ o processo fica vivo (minutos) sem janela e sem iniciar nenhum `Google Chrome Helper` (GPU/Renderer): falta descobrir em que ele espera |
+
+Ferramentas: `tools\stage-chrome.ps1 -AutoAbrir` (o `init` abre o Chrome no boot, sem depender do mouse no QEMU) e
+os tracepoints (`/Sistema/Biblioteca/diag-tracepoints`), que agora também valem para imagens do `dlopen` (macho.c).
 
 Para achar a causa de cada queda: `llvm-objdump -d --start-address=... ` (LLVM em `C:\Program Files\LLVM\bin`) no
 framework de `build-chrome\esp\...`; o endereço do log menos `0x400100000000` é o endereço no arquivo.

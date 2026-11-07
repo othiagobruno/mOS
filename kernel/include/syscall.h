@@ -242,6 +242,8 @@ enum { MOS_NET_ST_CLOSED, MOS_NET_ST_CONNECTING, MOS_NET_ST_OPEN, MOS_NET_ST_PEE
 #define MOS_ENOSPC 28
 #define MOS_ESRCH   3
 #define MOS_ECHILD 10
+#define MOS_ENOTDIR 20
+#define MOS_ENOTEMPTY 66   /* valores do macOS */
 #define MOS_EPIPE  32
 #define MOS_EAGAIN 35            /* valores do macOS */
 #define MOS_ETIMEDOUT 60

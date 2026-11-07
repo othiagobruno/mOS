@@ -6,6 +6,12 @@ static app_t *all_apps[] = {
     &app_arquivos, &app_horizonte, &app_terminal, &app_notas, &app_editor, &app_calculadora, &app_calendario,
     &app_musica, &app_minas, &app_visualizador, &app_atividade, &app_console, &app_preferencias, &app_sobre,
     &app_componentes, &app_instalador,
+    &app_lembretes, &app_contatos,
+    &app_disco,
+    &app_sysinfo,
+    &app_xadrez,
+    &app_stickies,
+    &app_relogio,
 };
 
 /* apps do macOS (.app em /Aplicativos) registrados dinamicamente: aparecem no Launchpad e na Busca */
@@ -214,6 +220,10 @@ void open_path(const char *path) {
         } else {
             notify("Não foi possível abrir a imagem", n->name);
         }
+    } else if (!strcasecmp(e, "ics")) {
+        calendar_import_file(path);
+    } else if (!strcasecmp(e, "vcf")) {
+        contacts_import_file(path);
     } else if (!strcasecmp(e, "app")) {
         char ex[64];
         strncpy(ex, n->name, sizeof ex - 1);

@@ -99,7 +99,8 @@ u64 isr_dispatch(int_frame_t *f) {
                  exc_names[f->vector], f->vector, f->error, f->rip, cr2);
         kprintf("\n*** EXCEÇÃO: %s\n", msg);
         {   /* para traduzir em funções (build com /map): base de carga, registradores e endereços do kernel na pilha */
-            u64 kb = g_boot ? g_boot->kernel_base : 0;
+            extern char __ImageBase;
+            u64 kb = (u64)&__ImageBase;
             kprintf("*** kernel em 0x%llx (RIP-base = 0x%llx) rax=%llx rbx=%llx rcx=%llx rdx=%llx rsi=%llx rdi=%llx\n",
                     kb, f->rip - kb, f->rax, f->rbx, f->rcx, f->rdx, f->rsi, f->rdi);
             const u64 *sp = (const u64 *)(f->rsp & ~7ULL);

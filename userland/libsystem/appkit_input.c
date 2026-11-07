@@ -568,6 +568,7 @@ static void r_key_up_fwd(id self, SEL c, id e) { (void)c; id n = ain_resp(self, 
 void cx_appkit_input_init(void) {
     cx_gamecontroller_init();   /* gamecontroller.c: GameController e CoreHaptics */
     { extern void cx_vision_init(void); cx_vision_init(); }   /* vision.c */
+    { extern void cx_slack_frameworks_init(void); cx_slack_frameworks_init(); }   /* slack_frameworks.c */
     if (cx_corebluetooth_init) cx_corebluetooth_init();   /* corebluetooth.c */
     cx_framework_classes_init(); /* vscode_fwclasses.c: classes de frameworks ausentes */
     cx_appkit_extra_init();     /* appkit_extra.c: painéis, barra de status, NSAnimation, NSParagraphStyle... */

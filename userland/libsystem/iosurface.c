@@ -267,6 +267,11 @@ IOSurfaceRef IOSurfaceLookupFromMachPort(mach_port_t port) {
     if (mach_vm_map(mach_task_self(), &b, len, 0, 1, port, 0, 0, 3, 3, 0) != KERN_SUCCESS || !b) return 0;
     iosurf_t *s = surf_import((u8 *)b, len);
     if (!s) munmap((void *)b, (size_t)len);
+    extern int cx_ca_diag(void);
+    static int nimp;
+    if (s && cx_ca_diag() && (++nimp <= 5 || nimp % 120 == 0))
+        cx_fdprintf(2, "[ca] IOSurface de outro processo (porta %u, pid %u): %ux%u -> id local %u (#%d)\n",
+                    port, (u32)(ctx >> 32) & 0xFFFF, s->w, s->h, s->sid, nimp);
     return s;
 }
 /* variantes por XPC: o mOS não tem XPC */

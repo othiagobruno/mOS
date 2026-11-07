@@ -27,7 +27,7 @@ Versão usada nas medições: Code 1.145.2 (`com.microsoft.VSCode`), Electron/Ch
 | Memória compartilhada (`MAP_MEM_NAMED_CREATE`, `vm_map`, entradas só-leitura recusando escrita com `KERN_INVALID_RIGHT`) | ✅ (sessão "IPC Mach") |
 | Fontes: `NSFont`/`CTFont` (métricas, descritores, coleções; `coretext.c`) | ✅ métricas e glifos (`CTFontDrawGlyphs` rasteriza num `CGBitmapContext`) |
 | **Janela do VS Code na tela** (`ElectronNSWindow` 1200×800, fundo do tema, menu do app, ícone no Dock) | ✅ 6 nov. 2026 20:31 — `build-vscode\shots\janela-vscode-primeira.png` |
-| Processo de renderização (`Code Helper (Renderer)`) e conteúdo da janela | ❌ o helper sobe (pid 5) e cai em `Electron+0x1B24D59` na thread principal dele |
+| Processo de renderização (`Code Helper (Renderer)`) e conteúdo da janela | ❌ o renderer passa do sandbox (`sandbox_check`/Seatbelt aceitos em darwin.c), da memória protegida (`mach_vm_region` real, sessão IPC Mach) e chega ao `RenderThreadImpl` (thread "Compositor"); num ciclo longo saiu sozinho ~2,5 min depois, sem falha; noutro ainda estava vivo aos 240 s. Conteúdo ainda vazio |
 | Conteúdo de janelas CoreAnimation/IOSurface na tela (CALayer, CALayerHost, IOSurface por porta Mach) | ✅ no mesmo processo e entre processos (CAContext publicado; seção "CoreAnimation e IOSurface") |
 
 No Terminal do mOS:
@@ -42,6 +42,17 @@ visitante@mOS ~ % run /Aplicativos/VSCode.app
 dyld[mOS]: símbolo não implementado no libSystem do mOS: _pthread_mach_thread_np
 ```
 
+### Estado em 7 nov. 2026, 02:40 (sessão pausada)
+
+- Janela do VS Code abre e o processo principal fica vivo; o `Code Helper (Renderer)` sobe e não cai mais nos CHECKs
+  de sandbox (renderer exige estar em Seatbelt: `sandbox_check(getpid(), NULL)`) nem de `base::ProtectedMemory`
+  (`mach_vm_region` com a proteção registrada; offsets no helper usam a base `0x400001040000`).
+- Em aberto: por que o renderer sai (~2,5 min, sem falha) ou não entrega quadro. Para investigar: o kernel registra
+  `proc: Code Helper ... chamou exit(N)` com a pilha (process.c, ligado por `despejar-threads`); rode
+  `tools\vscode-teste.ps1 -Persist -Ocioso 300 -Limite 1200` e procure "chamou exit". O renderer estava inicializando o
+  canal de GPU (`EstablishGpuChannel`) / compositor quando foi visto pela última vez.
+- Correções mínimas feitas em arquivos de outras sessões para destravar o build comum: `coregraphics.c` (campo `cb`
+  repetido → `cbt`/`rel_cb`), `xpc.c` (`sync_wait` declarado em `xconn_t`; dono desconhecido — conferir).
 ### Janela aberta (6 nov. 2026, 20:31)
 
 O processo principal do VS Code abre a `BrowserWindow`: a janela aparece no mOS com o fundo do tema, título, botões e

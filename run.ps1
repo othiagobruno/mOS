@@ -50,4 +50,7 @@ if ($UsbInput) {
 }
 if ($Headless) { $qargs += @('-display', 'none', '-qmp', "tcp:127.0.0.1:$Port,server,nowait", '-serial', "file:$Serial"); if (-not $Persist) { $qargs += '-snapshot' } }
 else { $qargs += @('-display', 'sdl', '-serial', 'file:build/serial.log') }
+# MOS_QEMU_LOG=<arquivo>: o QEMU registra resets da CPU (com os registradores) e erros do convidado. Com -no-reboot,
+# um triple fault do Nucleo fecha o QEMU sem deixar rastro no log serial; este arquivo diz onde foi.
+if ($env:MOS_QEMU_LOG) { $qargs += @('-d', 'cpu_reset,guest_errors', '-D', $env:MOS_QEMU_LOG) }
 & $qemu @qargs

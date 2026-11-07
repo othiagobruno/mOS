@@ -34,7 +34,7 @@ Cuidados:
 | App | Imagens x86_64 | Ausentes (antes → agora) | Além do VS Code (antes) | Maiores grupos extras |
 |---|---|---|---|---|
 | VS Code | 11+ | 1.620 → 1.950* | — | (referência) |
-| Slack | 22 | 1.709 → 1.534 | 123 | libc++ 52, CoreFoundation, AVFAudio, CoreSpotlight |
+| Slack | 22 | 1.709 → 1.534 → **32** (7 nov.) | 123 | só libc++ 28, libcompression 3 e libz 1, que vêm de dylibs reais (`/usr/lib/libc++.1.dylib`, `userland/frameworks`) que o `machocheck` não enxerga; o resto entrou em `slack_frameworks.c` e `bzip2.c` |
 | Cursor | 49 | 2.378 → 2.089 | 760 | libc++ 279, Swift 237 (só o `cursor-update-supervisor`), Security 84 |
 | Codex desktop | — | 2.481 → 2.231 | 978 | libc++ 271, Swift 259 (helpers nativos), CoreText 54 |
 | Grok Bot | 27 | 2.562 → 2.393 | 974 | Swift 541 (só o helper "Computer Use"), Foundation 219 |

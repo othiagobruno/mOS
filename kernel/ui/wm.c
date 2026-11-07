@@ -727,7 +727,7 @@ static void paint_window(window_t *w) {
     if (th || w->toolbar_h) {
         /* barra de título e de ferramentas unificadas, sem degradê: só a cor da janela */
         int hh = th + w->toolbar_h;
-        u32 tb = focused ? T.title_top : T.title_inactive;
+        u32 tb = w->title_bg ? w->title_bg : focused ? T.title_top : T.title_inactive;
         gfx_round_rect_ex(s, 0, 0, w->w, hh, WIN_RADIUS, WIN_RADIUS, 0, 0, tb, tb);
         /* separador fino na base do cabeçalho, só sobre o conteúdo (não atravessa a barra lateral) */
         if (w->toolbar_h) gfx_fill(s, w->sidebar_w, hh, w->w - w->sidebar_w, 1, T.separator);
@@ -754,7 +754,7 @@ static void paint_window(window_t *w) {
         int tx = (w->w - tw) / 2;
         if (tx < 84) tx = 84;
         int base = (TITLEBAR_H - (text_ascent(f, FONT_UI) + text_descent(f, FONT_UI))) / 2 + text_ascent(f, FONT_UI);
-        text_draw_ellipsis(s, font_get(FONT_SEMIBOLD), FONT_UI, tx, base, w->w - tx - 10, focused ? T.text : T.text3, w->title);
+        text_draw_ellipsis(s, font_get(FONT_SEMIBOLD), FONT_UI, tx, base, w->w - tx - 10, w->title_bg ? RGBA(40, 40, 30, focused ? 230 : 140) : focused ? T.text : T.text3, w->title);
     }
     /* conteúdo */
     ui_t *u = &w->ui;

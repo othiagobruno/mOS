@@ -3515,7 +3515,7 @@ void desktop_run(void) {
         persist_tick();
         for (int i = 0; i < apps_count(); i++) {
             app_t *a = apps_get(i);
-            if (a->running && a->tick) a->tick(a);
+            if ((a->running || a->always_tick) && a->tick) a->tick(a);
         }
         desktop_tick();
         u64 now = timer_ticks();
@@ -3540,3 +3540,5 @@ void desktop_displays_changed(void) {
     if (resized) desktop_rebuild_wallpaper();
     wm_damage_all();
 }
+/* app Captura de Tela: abre a barra de captura (1 tela inteira, 2 janela, 3 seleção) */
+void desktop_screenshot_ui(int mode) { sc_open(mode); }

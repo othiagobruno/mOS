@@ -128,6 +128,10 @@ static void reap(void) {
     for (thread_t **pp = &threads->next; *pp;) {
         thread_t *t = *pp;
         if (t->state == TH_DEAD && t != current) {
+            extern bool kheap_live(const void *p);
+            if (!kheap_live(t) || !kheap_live(t->kstack))   /* diagnóstico do kfree duplo (docs/porte-brew.md) */
+                kprintf("reap: thread %d \"%s\" (pid %d) já liberada: t=%p vivo=%d kstack=%p vivo=%d\n", t->id, t->name,
+                        t->proc ? t->proc->pid : -1, t, kheap_live(t), t->kstack, kheap_live(t->kstack));
             *pp = t->next;
             if (last_user == t) last_user = NULL;
             if (t->proc) proc_thread_exited(t);

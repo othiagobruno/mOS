@@ -64,8 +64,56 @@ foreach ($ft in 'VariadicGenerics', 'Lifetimes', 'AddressableTypes', 'AllowUnsaf
 Build-Mod '_FoundationRefs' @(Get-ChildItem "$sfs\_FoundationRefs" -Recurse -Filter *.swift | ForEach-Object FullName) $sfFlags '5' $false
 # FoundationEssentials: nomes mangled da Apple (módulo Foundation); fora o ProgressManager e as mensagens do
 # NotificationCenter, como no caminho sem ObjC
-$ess = @(Get-ChildItem "$sfs\FoundationEssentials" -Recurse -Filter *.swift -ErrorAction SilentlyContinue | Where-Object { $_.FullName -notmatch '\\(ProgressManager|NotificationCenter)\\' } | ForEach-Object FullName)
+#
+# Cópia preparada do fonte (build\swift\objc\foundation-src): no Foundation da Apple, Data.ReadingOptions,
+# String.CompareOptions etc. são as opções NS_OPTIONS do ObjC (FOUNDATION_FRAMEWORK), e os nomes mangled levam o nome C
+# delas (So20NSDataReadingOptionsV); no pacote são structs próprias. Aqui só esses apelidos mudam: o #if de cada um
+# passa a valer com MOS_NS_OPTIONS, apontando para os tipos do módulo clang _MOSNSOptions
+# (userland\sdk\swift-objc\sdk\Foundation\NSFoundationOptions.h). Leitura/gravação em UTF-8 pelo .NET (PowerShell 5.1).
+$aliases = [ordered]@{ 'NSData.ReadingOptions' = 'NSDataReadingOptions'; 'NSData.WritingOptions' = 'NSDataWritingOptions'
+                       'NSData.Base64EncodingOptions' = 'NSDataBase64EncodingOptions'; 'NSData.Base64DecodingOptions' = 'NSDataBase64DecodingOptions'
+                       'NSString.CompareOptions' = 'NSStringCompareOptions'
+                       'NSURL.BookmarkResolutionOptions' = 'NSURLBookmarkResolutionOptions'; 'NSURL.BookmarkCreationOptions' = 'NSURLBookmarkCreationOptions' }
+$prep = "$objc\foundation-src\FoundationEssentials"
+if (-not $Only -or $Only -contains 'FoundationEssentials') {
+    if (Test-Path $prep) { Remove-Item $prep -Recurse -Force }
+    $utf8 = New-Object Text.UTF8Encoding $false
+    $base = "$sfs\FoundationEssentials"
+    $patched = 0
+    foreach ($f in Get-ChildItem $base -Recurse -Filter *.swift -ErrorAction SilentlyContinue | Where-Object { $_.FullName -notmatch '\\(ProgressManager|NotificationCenter)\\' }) {
+        $dst = Join-Path $prep $f.FullName.Substring($base.Length + 1)
+        New-Item -ItemType Directory -Force (Split-Path $dst) | Out-Null
+        $lines = [Collections.Generic.List[string]]([IO.File]::ReadAllLines($f.FullName, $utf8))
+        $touched = $false
+        for ($i = 0; $i -lt $lines.Count; $i++) {
+            $m = [regex]::Match($lines[$i], '^\s*public typealias \w+ = (NS\w+\.\w+)\s*$')
+            if (-not $m.Success -or -not $aliases.Contains($m.Groups[1].Value)) { continue }
+            $lines[$i] = $lines[$i].Replace($m.Groups[1].Value, $aliases[$m.Groups[1].Value])
+            $touched = $true
+            # a diretiva que abre o bloco: #if <cond> (vale também com MOS_NS_OPTIONS) ou #else (o #if dele deixa de valer)
+            $j = $i - 1
+            while ($j -ge 0 -and $lines[$j] -notmatch '^\s*#\s*(if|else|elseif)\b') { $j-- }
+            if ($j -lt 0 -or $lines[$j] -match 'MOS_NS_OPTIONS') { continue }
+            if ($lines[$j] -match '^\s*#\s*if\s+(.+)$') { $lines[$j] = "#if ($($Matches[1].Trim())) || MOS_NS_OPTIONS"; continue }
+            $depth = 0; $k = $j - 1
+            for (; $k -ge 0; $k--) {
+                if ($lines[$k] -match '^\s*#\s*endif\b') { $depth++ }
+                elseif ($lines[$k] -match '^\s*#\s*if\b') { if ($depth -eq 0) { break } else { $depth-- } }
+            }
+            if ($k -ge 0 -and $lines[$k] -notmatch 'MOS_NS_OPTIONS' -and $lines[$k] -match '^\s*#\s*if\s+(.+)$') { $lines[$k] = "#if ($($Matches[1].Trim())) && !MOS_NS_OPTIONS" }
+        }
+        if ($touched) { $patched++ }
+        # em todos os arquivos: com MemberImportVisibility, quem usa .atomic/.caseInsensitive... precisa do import
+        $lines.Insert(0, 'import _MOSNSOptions   // mOS: opções NS_OPTIONS da Apple (tools\build-swift-foundation-objc.ps1)')
+        [IO.File]::WriteAllLines($dst, $lines, $utf8)
+    }
+    # arquivos do mOS no próprio módulo (pontes Data/URL/Date... com o ABI da Apple: userland\sdk\swift-objc\FoundationEssentials-mos)
+    New-Item -ItemType Directory -Force "$prep\_mos" | Out-Null
+    Copy-Item "$root\userland\sdk\swift-objc\FoundationEssentials-mos\*.swift" "$prep\_mos" -Force
+    Write-Host "FoundationEssentials: fonte preparado ($patched arquivos com opções NS_OPTIONS)"
+}
+$ess = @(Get-ChildItem $prep -Recurse -Filter *.swift | ForEach-Object FullName)
 # DATA_LEGACY_ABI: a representação do Data do ABI da Apple (enum _Representation, RangeReference), que o código
 # inlinável dos binários usa; o padrão do pacote é a representação nova
-Build-Mod 'FoundationEssentials' $ess ($sfFlags + @('-module-abi-name', 'Foundation', '-D', 'DATA_LEGACY_ABI'))
+Build-Mod 'FoundationEssentials' $ess ($sfFlags + @('-module-abi-name', 'Foundation', '-D', 'DATA_LEGACY_ABI', '-D', 'MOS_NS_OPTIONS'))
 exit $fails

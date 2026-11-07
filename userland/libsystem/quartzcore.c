@@ -135,6 +135,23 @@ typedef struct { cx_class_t *isa; double r, g, b, a; } qcolor_t;   /* = cgcolor_
 
 static int rendering;                /* não marcar views durante o desenho */
 static int publishing;               /* achatando um CAContext: não republicar no meio */
+
+/* ---- diagnóstico: com /Sistema/Biblioteca/ca-log, linhas "[ca] ..." na saída de erro (que o
+ * stderr-serial leva ao log serial) mostram o caminho do quadro: contents IOSurface, CAContext
+ * publicado, CALayerHost ligado, quadro composto na janela (com a contagem de pixels visíveis). */
+int access(const char *p, int m);
+int cx_ca_diag(void) {
+    static int on = -1;
+    if (on < 0) on = access("/Sistema/Biblioteca/ca-log", 0) == 0;
+    return on;
+}
+#define QLOG(...) do { if (cx_ca_diag()) { cx_fdprintf(2, "[ca] " __VA_ARGS__); cx_fdprintf(2, "\n"); } } while (0)
+static int log_now(int *n) { ++*n; return *n <= 5 || *n % 120 == 0; }   /* os 5 primeiros e 1 a cada 120 */
+static u32 count_visible(const u32 *px, size_t n) {   /* amostra: pixels com alfa != 0, de 7 em 7 */
+    u32 c = 0;
+    for (size_t i = 0; i < n; i += 7) if (px[i] >> 24) c++;
+    return c * 7;
+}
 static volatile int surf_dirty;      /* IOSurfaceUnlock chegou durante o desenho */
 static int tx_depth;                  /* CATransaction aberta: mudanças esperam o commit para publicar */
 static void layer_dirty(id l);
@@ -308,7 +325,20 @@ static AT l_affine(id self, SEL c) { (void)c; return CATransform3DGetAffineTrans
 static void l_set_affine(id self, SEL c, AT a) { (void)c; ls(self)->tf = CATransform3DMakeAffineTransform(a); layer_dirty(self); }
 
 static id l_contents(id self, SEL c) { (void)c; return ls(self)->contents; }
-static void l_set_contents(id self, SEL c, id v) { (void)c; keep(&ls(self)->contents, v); layer_dirty(self); }
+static void l_set_contents(id self, SEL c, id v) {
+    (void)c;
+    keep(&ls(self)->contents, v);
+    layer_dirty(self);
+    static int n;
+    if (v && cx_ca_diag() && log_now(&n)) {
+        extern u64 IOSurfaceGetWidth(id), IOSurfaceGetHeight(id);
+        extern u32 IOSurfaceGetID(id);
+        cx_class_t *k = object_getClass(v);
+        if (cx_is_subclass(k, &IOSurface_c))
+            QLOG("contents #%d: IOSurface id=%u %llux%llu no layer %p", n, IOSurfaceGetID(v), IOSurfaceGetWidth(v), IOSurfaceGetHeight(v), (void *)self);
+        else QLOG("contents #%d: %s no layer %p", n, cx_class_name(k), (void *)self);
+    }
+}
 static double l_cscale(id self, SEL c) { (void)c; return ls(self)->cscale; }
 static void l_set_cscale(id self, SEL c, double v) { (void)c; ls(self)->cscale = v > 0 ? v : 1; layer_dirty(self); }
 static R l_crect(id self, SEL c) { (void)c; return ls(self)->crect; }
@@ -469,7 +499,12 @@ static id l_presentation(id self, SEL c) { (void)c; return self; }
 
 /* ---- CALayerHost */
 static u32 lh_cid(id self, SEL c) { (void)c; return ls(self)->ctx_id; }
-static void lh_set_cid(id self, SEL c, u32 cid) { (void)c; lst_t *s = ls(self); s->ctx_id = cid; s->host_layer = YES; host_add(self); layer_dirty(self); }
+static void lh_set_cid(id self, SEL c, u32 cid) {
+    (void)c;
+    lst_t *s = ls(self);
+    s->ctx_id = cid; s->host_layer = YES; host_add(self); layer_dirty(self);
+    QLOG("CALayerHost %p -> contextId %u", (void *)self, cid);
+}
 
 /* ---- CAContext */
 /* O kernel dá um id único. Sem ele (harness), o contador local basta: só há um processo. */
@@ -513,6 +548,7 @@ static void ctx_set_layer(id self, SEL c, id l) {
     keep(&k->layer, l);
     if (l) { ls(l)->ctx = self; layer_dirty(l); }
     qc_mark_hosts(k->cid, 0);
+    QLOG("CAContext %u: layer %p", k->cid, (void *)l);
 }
 static void ctx_invalidate(id self, SEL c) {
     (void)c;
@@ -1072,6 +1108,7 @@ static void publish_context(cactx_t *k) {
     hdr->h = h;
     u64 a[8] = {k->cid, k->port, 0, 0, 0, 0, 0, 0};
     if (ca_vm(MACH_VM_CA_PUBLISH, a) == 0) hdr->gen = (u32)a[2];
+    { static int n; if (cx_ca_diag() && log_now(&n)) QLOG("CAContext %u publicado #%d: %dx%d geração %u, ~%u pixels visíveis", k->cid, n, w, h, hdr->gen, count_visible((u32 *)(k->mem + 4096), (size_t)w * h)); }
     rendering--;
     publishing = 0;
     /* um IOSurfaceUnlock durante o achatamento pede mais um quadro, fora desta chamada */
@@ -1132,6 +1169,7 @@ static int ca_frame(u32 cid, src_t *s) {
             v->w = h->w;
             v->h = h->h;
         }
+        { static int n; if (cx_ca_diag() && log_now(&n)) QLOG("contexto remoto %u: quadro %dx%d geração %u (#%d)", cid, v->w, v->h, (u32)g[1], n); }
         v->cid = cid;
         v->gen = (u32)g[1];
     }
@@ -1224,6 +1262,7 @@ static void layer_draw_hook(id view, int phase, double tlx, double tly, double w
     memset(cv, 0, need * 4);
     touched = NO;
     render(l, m, k, 1, 0, YES);
+    { static int n; if (cx_ca_diag() && log_now(&n)) QLOG("quadro #%d na janela %d: view %s %dx%d em (%d,%d), ~%u pixels de layer visíveis", n, cx_gui_cur_gid, cx_class_name(object_getClass(view)), cvw, cvh, cvx, cvy, touched ? count_visible(cv, need) : 0); }
     send_canvas();
     rendering--;
 }

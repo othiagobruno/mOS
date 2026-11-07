@@ -313,6 +313,13 @@ void *kmalloc(usize n) {
     return NULL;
 }
 
+/* diagnóstico: o bloco ainda está alocado? (pega kfree duplo antes de acontecer) */
+bool kheap_live(const void *p) {
+    if (!p) return true;
+    const blk_t *b = (const blk_t *)p - 1;
+    return b->magic == MAGIC_USED || b->magic == MAGIC_BIG;
+}
+
 void kfree(void *p) {
     if (!p) return;
     blk_t *b = (blk_t *)p - 1;
@@ -324,7 +331,12 @@ void kfree(void *p) {
         pmm_free((u64)b, b->size / 4096);
         return;
     }
-    if (b->magic != MAGIC_USED) { kprintf("kfree: ponteiro inválido %p\n", p); return; }
+    if (b->magic != MAGIC_USED) {   /* chamador como base+RVA: tools/kernel-map.ps1 -Addr traduz */
+        extern char __ImageBase;
+        kprintf("kfree: ponteiro inválido %p magic %llx (chamado de base+0x%llx)\n", p, (u64)b->magic,
+                (u64)__builtin_return_address(0) - (u64)&__ImageBase);
+        return;
+    }
     u64 f = spin_lock_irqsave(&heap_lock);
     used_bytes -= b->size;
     if (b->size <= SMALL_MAX) {

@@ -173,6 +173,7 @@ typedef struct window {
     rect_t fs_restore;
     int tab_group;              /* abas: janelas com o mesmo grupo (≠ 0) dividem um quadro; só uma aparece */
     bool tab_hidden;            /* aba que não é a da frente */
+    u32 title_bg;               /* cor própria da barra de título (0 = do tema; ex.: Notas Autoadesivas) */
 } window_t;
 
 typedef struct app {
@@ -194,6 +195,7 @@ typedef struct app {
     int badge;                  /* número no selo vermelho do ícone (0 = sem selo) */
     bool attention;             /* pula no Dock até o app ficar ativo */
     bool open_at_login;         /* Opções > Abrir ao Iniciar */
+    bool always_tick;           /* tick roda mesmo com o app fechado (alarmes, lembretes) */
 } app_t;
 
 /* window server */

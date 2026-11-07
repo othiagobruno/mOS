@@ -15,7 +15,7 @@
 #   e o framework x86_64 tem 264 MiB).
 # -Diagnostico: funcoes ausentes seguem com 0 (e sao registradas) e a saida dos apps vai ao log serial.
 param([Parameter(Mandatory = $true)][string]$App, [string]$OutDir = 'build-chrome', [int]$SizeMiB = 1024,
-      [switch]$KernelTeste, [switch]$Diagnostico, [string]$ComDmg = '')
+      [switch]$KernelTeste, [switch]$Diagnostico, [string]$ComDmg = '', [switch]$AutoAbrir)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 $src = Join-Path (Resolve-Path $App).Path 'Contents'
@@ -82,6 +82,10 @@ if ($Diagnostico) {
     Set-Content -Path "$esp\mOS\Sistema\Biblioteca\dyld-registrar" -Value '1' -Encoding ascii
     Set-Content -Path "$esp\mOS\Sistema\Biblioteca\stderr-serial" -Value '1' -Encoding ascii
 }
+# -AutoAbrir: o init abre o Chrome sozinho no boot (testes no QEMU sem depender do mouse)
+$svc = "$esp\mOS\Sistema\Biblioteca\LaunchDaemons\com.google.chrome.teste.servico"
+if ($AutoAbrir) { [IO.File]::WriteAllText($svc, "Programa=/Aplicativos/Google Chrome.app/Contents/MacOS/Google Chrome`n", [Text.Encoding]::ASCII) }
+elseif (Test-Path -LiteralPath $svc) { Remove-Item -LiteralPath $svc }
 if ($ComDmg) {
     New-Item -ItemType Directory -Force "$esp\mOS\Users\Visitante\Downloads" | Out-Null
     Copy-Item -LiteralPath $ComDmg "$esp\mOS\Users\Visitante\Downloads\"

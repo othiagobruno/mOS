@@ -19,7 +19,9 @@ icon_fn icon_arquivos, icon_horizonte, icon_terminal, icon_prefs, icon_editor, i
 /* cada app expõe sua definição */
 extern app_t app_arquivos, app_horizonte, app_terminal, app_preferencias, app_editor, app_notas,
     app_calculadora, app_calendario, app_atividade, app_console, app_musica, app_minas, app_visualizador, app_sobre, app_instalador,
-    app_componentes;
+    app_componentes, app_lembretes, app_contatos;
+void contacts_import_file(const char *path);
+void calendar_import_file(const char *path);
 
 /* fonte monoespaçada (simulada em células fixas) para o Terminal e o Console */
 int  mono_cell_w(float size);
@@ -42,3 +44,8 @@ void        textarea_set_size(textarea_t *t, float size);
 void        textarea_paint(window_t *w, ui_t *u, textarea_t *t, rect_t area);
 void        textarea_insert(textarea_t *t, const char *s);
 void        textarea_free(textarea_t *t);
+extern app_t app_relogio;
+extern app_t app_stickies;
+extern app_t app_xadrez;
+extern app_t app_sysinfo;
+extern app_t app_disco;

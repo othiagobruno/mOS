@@ -1335,6 +1335,7 @@ u64 proc_syscall(int_frame_t *f) {
      * ficava sempre pronta, roubando a CPU de quem tinha trabalho. Conferir o valor e bloquear é atômico aqui:
      * syscalls rodam com interrupções desligadas num núcleo só, então nenhum FUTEX_WAKE cai no meio. */
     case SYS_FUTEX_WAIT: {
+        dump_threads_maybe(f);       /* o despejo periódico também sai daqui: um app todo parado em futex não chama SYS_SLEEP */
         u32 cur;
         if ((a & 3) || !uvm_copy_in(p, &cur, a, 4)) { r = -MOS_EFAULT; break; }
         if (cur != (u32)b) { r = -MOS_EAGAIN; break; }
@@ -1672,7 +1673,14 @@ u64 proc_syscall(int_frame_t *f) {
         *slash = 0;
         vnode_t *np = vfs_lookup(to[0] ? to : "/");
         if (!np || !np->dir) { r = -MOS_ENOENT; break; }
-        if (vfs_child(np, slash + 1)) { r = -MOS_EEXIST; break; }
+        vnode_t *old = vfs_child(np, slash + 1);
+        if (old == v) { r = 0; break; }
+        if (old) {                                          /* POSIX: o destino é substituído (o git grava X.lock e renomeia) */
+            if (old->dir && !v->dir) { r = -MOS_EISDIR; break; }
+            if (!old->dir && v->dir) { r = -MOS_ENOTDIR; break; }
+            if (old->dir && old->child) { r = -MOS_ENOTEMPTY; break; }
+            if (!vfs_delete(old)) { r = -MOS_EINVAL; break; }
+        }
         r = vfs_move(v, np, slash + 1) ? 0 : -MOS_EINVAL;
         break;
     }

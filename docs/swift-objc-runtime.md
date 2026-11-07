@@ -207,11 +207,28 @@ da Apple, só o que o overlay usa; os apps ObjC do mOS continuam com `userland/s
 - **Teste:** `userland/tests-swiftobjc/foundation/main.swift` → **23/23** (pontes nos dois sentidos, casts por
   `Any`/`AnyObject`, literais, for-in). **32 dos 316** símbolos do Postico batem.
 
-**Próximos marcos:**
-- **B — tipos-valor do swift-foundation** (a base do Foundation do macOS 14+, então o layout inlinável de `Data` bate):
-  FoundationEssentials (e o que for preciso do FoundationInternationalization) com interop e
-  `-module-abi-name Foundation`, para os tipos saírem como `$s10Foundation4DataV`. Depois, as pontes Data/URL/Date/
-  UUID/Locale/TimeZone/IndexSet/Notification/URLRequest ↔ NSData/NSURL/NSDate/... e o `URLResourceValues`.
+**Marco B — tipos-valor do swift-foundation (em andamento, 2026-11-07).** `tools/build-swift-foundation-objc.ps1` compila
+para `build/swift/objc/overlays`, com interop e como pacote no macOS: `Darwin`/`os` de verdade, sem as reescritas
+MOSDarwin/MOSos. Entram:
+- Synchronization, swift-collections 1.7.3 (InternalCollectionsUtilities, SpanPreview, BasicContainers, DequeModule,
+  OrderedCollections, _RopeModule), `_FoundationCShims` (C) e `_FoundationRefs`. O `_FoundationRefs` vai sem library
+  evolution, porque o código dele não a aceita.
+- **FoundationEssentials: 280 fontes, 9,3 MB**, com library evolution (os binários importam *dispatch thunks* como
+  `JSONDecoder.decode`), `-module-abi-name Foundation` (os tipos saem `$s10Foundation…`) e `-D DATA_LEGACY_ABI`. É a
+  representação de `Data` do ABI da Apple (`enum _Representation`, `RangeReference`), que o `Package.swift` liga nas
+  plataformas Apple e que o código inlinável dos binários usa.
+- O SDK ganhou os submódulos `Darwin.crt_externs/sysdir/uuid` e `MachO.dyld` (sem cabeçalho próprio), e o overlay `os`
+  ganhou `Logger`/`OSLogMessage`.
+- **Postico: 197 dos 316** símbolos batem (eram 32 com o marco A).
+- **O que falta neste marco:**
+  - **Opções como apelidos dos `NS_OPTIONS` ObjC:** no Foundation da Apple (`FOUNDATION_FRAMEWORK`),
+    `Data.ReadingOptions`, `Base64EncodingOptions`, `String.CompareOptions`, as opções de bookmark de URL etc. são
+    `NSData.ReadingOptions`..., e os nomes mangled levam `So20NSDataReadingOptionsV`. No pacote são structs próprias.
+    Plano: um módulo clang pequeno, só com esses `NS_OPTIONS` (também incluído pelo Foundation.h do overlay), e
+    trocar só esses `#if FOUNDATION_FRAMEWORK` numa cópia preparada do fonte.
+  - **Pontes** de Data/URL/Date/UUID/Locale/TimeZone ↔ NSData/NSURL/NSDate/NSUUID/NSLocale/NSTimeZone.
+  - **Tipos que o swift-foundation não tem:** IndexSet, Notification, URLRequest, URLResourceValues, KVO e
+    IntegerFormatStyle (do FoundationInternationalization, que depende de ICU).
 - **C — extensões sobre ObjC:** StringProtocol (sobre NSString), erros (NSError, CustomNSError, LocalizedError,
   `_convertErrorToNSError`, os ganchos do runtime em `ErrorObject.mm`), KVO, NSURLSession async, NSCoder, FileManager.
 - **D — entrega:** `Foundation.framework` hoje conta como "do libSystem" no carregador, então o overlay Swift precisa
