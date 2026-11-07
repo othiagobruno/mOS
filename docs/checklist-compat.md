@@ -49,7 +49,7 @@ Legenda: **feito** = existe e tem teste; **parcial** = existe e falta parte; **f
 | Sinais POSIX | **feito** | `kernel/proc/process.c` (bloco "sinais", `SYS_SIG`) + `libc.c`/`sigjmp.S`: `sigaction` com `SA_SIGINFO`/`SA_RESTART`/`SA_ONSTACK`/`SA_RESETHAND`/`SA_NODEFER`, máscara e pendentes por thread, `sigprocmask`/`pthread_sigmask`, `sigpending`, `sigsuspend`, `sigwait`, `sigaltstack`, `pthread_kill`/`raise`; quadro com siginfo/ucontext/mcontext do Darwin e `_sigtramp`; EINTR e refazer com `SA_RESTART`; faltas viram SIGSEGV/SIGBUS/SIGFPE/SIGILL/SIGTRAP; SIGCHLD com siginfo. Teste `userland/tests-signals`. Falta parar/continuar processos (`docs/sinais.md`) |
 | Launch Services | **parcial** | `LSOpen*`/`LSCopy*` em `chrome.c`. O mOS abre `.app` pelo Finder/Dock |
 | Bundle loading (`.app`, `Info.plist`, `NSBundle`) | **feito** | `kernel/compat/bundle.c`, `plist.c` |
-| Rede (TCP/DNS/TLS para os apps) | **feito** | `kernel/net/usersock.c`, `sockets_inet.inc`, `securetransport.c` |
+| Rede (TCP/DNS/TLS para os apps) | **feito** | `kernel/net/usersock.c`, `sockets_inet.inc`, `securetransport.c`. IPv6 ([ipv6.md](ipv6.md)): `AF_INET6` dual-stack (v4 mapeado, `IPV6_V6ONLY`), `getaddrinfo` com AAAA (IPv4 primeiro em `AF_UNSPEC`, AAAA só com rota IPv6), servidor TCP (`bind`/`listen`/`accept`) em v4 e v6, laço local `127.0.0.1`/`::1`, ping/ping6 sem root. Teste `tools/build-nettest6.ps1`: 11/11. Falta UDP para os apps |
 
 ## Electron
 

@@ -69,7 +69,7 @@ Legenda: ✅ o mOS já tem · 🟡 parcial ou stub · ❌ não tem
 | Ethernet/ARP/IPv4/ICMP/UDP/DHCP/DNS/TCP | ✅ `kernel/net/` (sessão principal) | Pilha BSD completa: `xnu/bsd/net*`, `netinet`, `netinet6` |
 | TLS | ✅ `net/tls.c` + `net/crypto.c` próprios | `BSD/lib/bearssl` (MIT) |
 | HTTP | ✅ `net/http.c` | `BSD/usr.bin/curl` |
-| IPv6 | ❌ | `netinet6` |
+| IPv6 | ✅ `net/ipv6.c`: NDP, SLAAC + RDNSS, ICMPv6, UDP/TCP sobre IPv6, DNS AAAA, laço local `::1`/`127.x`; nos apps `AF_INET6` dual-stack e servidor TCP (bind/listen/accept). Falta UDP para os apps e DHCPv6 ([ipv6.md](ipv6.md)) | `netinet6` |
 
 ### 5. Bibliotecas e runtime
 | Recurso | mOS | ravynOS | Observação |
@@ -135,4 +135,4 @@ O que ainda falta:
 - **Memória virtual**: `MAP_SHARED` gravável de arquivo (gravar de volta), bits de proteção no PTE e paginação para disco. COW, `fork` e paginação sob demanda (anônima e de arquivo) estão feitos.
 - **Processos**: parar/continuar processos (SIGSTOP/SIGTSTP/SIGCONT) e sinais de tempo real. Os tratadores de sinal no usuário estão feitos (`docs/sinais.md`).
 - **Interface**: tela de login (sessão principal, com o backend de contas já pronto), atalho de captura de tela (sessão de UI).
-- **Grandes portes**: IPv6, objc4/Foundation/AppKit e toolchain nativa.
+- **Grandes portes**: objc4/Foundation/AppKit e toolchain nativa. O IPv6 está feito ([ipv6.md](ipv6.md)); falta UDP para os apps.

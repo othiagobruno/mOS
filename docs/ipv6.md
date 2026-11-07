@@ -56,6 +56,11 @@ O teste cobre:
 
 O user-net do QEMU já traz IPv6 (`ipv6=on` é o padrão): prefixo `fec0::/64` por RA, gateway `fec0::2` e DNS `fec0::3`.
 
+Resultado (7 nov. 2026, QEMU user-net):
+- `net6test: 11/11 ok`. O SLAAC deu `fec0::5054:ff:fe12:3456/64` com roteador `fe80::2` e DNS `fec0::3`. O AAAA de `example.com` voltou (`2606:4700:10::…`), e o GET em `[fec0::2]:8086` respondeu `HTTP/1.0 200 OK` do servidor do host.
+- O teste IPv4 antigo (`tools/build-nettest.ps1`) passou com 16/16.
+- Com o IPv6 configurado na rede, o Chrome (`stage-chrome.ps1 -AutoAbrir`) abriu `https://example.com` e o Slack (`stage-electron.ps1 -Autostart`) mostrou a tela de entrada, nos dois casos sem erro de rede no log.
+
 ## Falta
 
 - UDP para os apps (v4 e v6), o que também ligaria o teste de IPv6 do Chromium.
