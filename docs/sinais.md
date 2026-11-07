@@ -65,7 +65,16 @@ o `pthread_join` não são interrompidos: o sinal fica pendente para a próxima 
 `SIGBUS` como no macOS; fora da região de usuário é sempre `SIGSEGV`. `#GP` vira `SIGSEGV`, exceto `int3`
 (que no ring 3 chega como `#GP` com erro `0x1A`): vira `SIGTRAP` com o `rip` depois da instrução. `#DE` e
 `#MF`/`#XM` viram `SIGFPE`, `#UD` `SIGILL`, `#AC` `SIGBUS`. Bloqueado, ignorado ou sem tratador, o processo
-morre com o diagnóstico de sempre na serial; pilha estourada na entrega também mata (`SIGSEGV`).
+morre com o diagnóstico de sempre na serial (agora com o código de erro e o PTE); pilha estourada na entrega
+também mata (`SIGSEGV`).
+
+Antes de virar sinal, uma falta de página cuja página **já** permite o acesso é tratada como espúria: com threads
+em vários núcleos, outro núcleo pode ter mapeado a página sob demanda ou quebrado o COW entre a falta e a trava
+grande. O kernel invalida a entrada da TLB local e repete a instrução. Sem isso, o marcador concorrente do V8
+(`lock cmpxchg` no bitmap de marcação) matava o Claude.app logo depois de abrir.
+
+Diagnóstico: com `/Sistema/Biblioteca/despejar-threads` (o `-Diagnostico` do `stage-electron`), as primeiras 400
+entregas, envios e interrupções saem na serial como linhas `sinal: ...`.
 
 ## Outras chamadas
 

@@ -813,13 +813,23 @@ static u64 proc_fault_(int_frame_t *f, u64 cr2) {
         extern bool lazy_fault(process_t *p, u64 va);
         if (lazy_fault(p, cr2)) return (u64)f;
     }
+    /* falta espúria (SMP): outro núcleo mapeou a página ou quebrou o COW entre a falta e esta trava, ou a TLB deste
+     * núcleo ainda tinha a entrada velha. Se a página agora permite o acesso, invalida a entrada local e repete.
+     * Sem isto o marcador concorrente do V8 (lock cmpxchg no bitmap de marcação) matava o Claude.app. */
+    if (f->vector == 14 && cr2 >= USER_BASE && cr2 < USER_END) {
+        u64 *e = uvm_pte(p, cr2);
+        if (e && (*e & PTE_P) && (*e & PTE_U) && (!(f->error & 2) || ((*e & PTE_RW) && !(*e & PTE_COW)))) {
+            __asm__ volatile("invlpg (%0)" :: "r"(cr2) : "memory");
+            return (u64)f;
+        }
+    }
     /* tracepoint de diagnóstico (proc/tracepoint.c): registra, devolve o byte original e repete a instrução */
     { extern bool tp_hit(process_t *p, int_frame_t *f); if (tp_hit(p, f)) return (u64)f; }
     /* o programa tem tratador para esta falha? vira sinal da thread (SIGSEGV/SIGBUS/SIGFPE/SIGILL/SIGTRAP) */
     if (sig_fault(f, t, p, cr2)) return proc_signal_check(f);
     char msg[160];
-    if (f->vector == 14) snprintf(msg, sizeof msg, "%s (pid %d): %s em 0x%llx, endereço 0x%llx — processo encerrado\n",
-                                  p->name, p->pid, fault_name(f->vector), f->rip, cr2);
+    if (f->vector == 14) snprintf(msg, sizeof msg, "%s (pid %d): %s em 0x%llx, endereço 0x%llx (erro %llx) — processo encerrado\n",
+                                  p->name, p->pid, fault_name(f->vector), f->rip, cr2, (unsigned long long)f->error);
     else snprintf(msg, sizeof msg, "%s (pid %d): %s (vetor %llu) em 0x%llx — processo encerrado\n",
                   p->name, p->pid, fault_name(f->vector), (unsigned long long)f->vector, f->rip);
     kprintf("proc: %s", msg);
@@ -827,6 +837,7 @@ static u64 proc_fault_(int_frame_t *f, u64 cr2) {
     thread_t *ft = thread_current();
     kprintf("proc:   thread %d, rsp 0x%llx, rax 0x%llx, rbx 0x%llx, rdi 0x%llx, rsi 0x%llx\n",
             ft ? ft->id : -1, f->rsp, f->rax, f->rbx, f->rdi, f->rsi);
+    if (f->vector == 14) { u64 *pe = uvm_pte(p, cr2); kprintf("proc:   pte de 0x%llx: 0x%llx\n", cr2, pe ? *pe : 0ULL); }
     {   /* endereços de código na pilha do usuário (prováveis endereços de retorno).
          * Uma palavra por vez: o topo da pilha pode estar na última página mapeada. */
         char line[200];
@@ -976,8 +987,16 @@ static bool sig_interruptible(thread_t *t) {
 }
 
 /* tira t da espera com -EINTR, desfazendo as referências que o pipe/terminal/tty guardam dela */
+/* diagnóstico: com /Sistema/Biblioteca/despejar-threads, as primeiras entregas e interrupções vão para a serial */
+static bool sig_diag(void) {
+    static int on = -1, n;
+    if (on < 0) on = vfs_lookup("/Sistema/Biblioteca/despejar-threads") != NULL;
+    return on && n++ < 400;
+}
 static void sig_interrupt(thread_t *t) {
     process_t *p = t->proc;
+    if (sig_diag()) kprintf("sinal: %s pid %d thread %d acordada com EINTR (espera %d, syscall %llu)\n", p->name, p->pid, t->id,
+                            t->state == TH_SLEEPING ? -100 : t->wait_pid, (unsigned long long)t->sys_nr);
     if (p->tty && p->tty->reader == t) p->tty->reader = NULL;
     if (t->wait_pid == -3 || t->wait_pid == -4)
         for (int i = 0; i < PROC_MAX_FDS; i++) {
@@ -1049,6 +1068,8 @@ bool proc_signal_info(int pid, int sig, int code, int spid, int status) {
     u64 fl = irq_save();
     process_t *p = find(pid);
     siginfo_k k = { code, spid, status, 0 };
+    if (p && sig_diag()) kprintf("sinal: %d para %s pid %d (de pid %d, %s)\n", sig, p->name, pid, spid,
+                                 sig_ignored(p, sig) ? "ignorado" : p->sig_handler[sig] > MOS_SIG_IGN ? "tratador" : "padrão");
     bool ok = p && !p->exited && sig_post(p, NULL, sig, &k);
     irq_restore(fl);
     return ok;
@@ -1068,6 +1089,8 @@ static void sys_restart(int_frame_t *f, thread_t *t) { f->rip -= 2; f->rax = t->
 static u64 sig_deliver(int_frame_t *f, thread_t *t, process_t *p, int sig, const siginfo_k *k) {
     u32 fl = p->sig_flags[sig];
     u64 h = p->sig_handler[sig], tramp = p->sig_tramp[sig];
+    if (sig_diag()) kprintf("sinal: %d entregue a %s pid %d thread %d (rip 0x%llx, flags 0x%x, interrompida %d, syscall %llu)\n", sig,
+                            p->name, p->pid, t->id, f->rip, fl, t->sig_intr, (unsigned long long)t->sys_nr);
     if (t->sig_intr) {                                   /* syscall interrompida: EINTR, ou refeita com SA_RESTART */
         t->sig_intr = false;
         if ((fl & MOS_SA_RESTART) && sys_restartable(t->sys_nr)) sys_restart(f, t);
