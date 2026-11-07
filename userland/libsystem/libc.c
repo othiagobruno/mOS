@@ -862,6 +862,11 @@ static void diag_mojo_backtrace(const void *b, size_t n) {
 static unsigned char cx_nb[CX_NBMAX];
 static int nb_on(int fd) { return fd >= 0 && fd < CX_NBMAX && cx_nb[fd]; }
 static void nb_set(int fd, int on) { if (fd >= 0 && fd < CX_NBMAX) cx_nb[fd] = (unsigned char)(on != 0); }
+/* modo de acesso de cada fd (O_RDONLY/O_WRONLY/O_RDWR + 1; 0 = não sei = O_RDWR) para o F_GETFL. O Chrome confere
+ * (fcntl(fd, F_GETFL) & O_ACCMODE) == O_RDONLY antes de passar um arquivo a outro processo, e caía com O_RDWR fixo. */
+static unsigned char cx_acc[CX_NBMAX];
+static void acc_set(int fd, int mode) { if (fd >= 0 && fd < CX_NBMAX) cx_acc[fd] = (unsigned char)(mode < 0 ? 0 : (mode & 3) + 1); }
+static int acc_get(int fd) { return fd >= 0 && fd < CX_NBMAX && cx_acc[fd] ? cx_acc[fd] - 1 : 2; }
 ssize_t write(int fd, const void *b, size_t n) {
     if (IS_SOCK(fd)) return cx_sock_write(fd, b, n);
     if (fd == 2 && b && n >= 16) diag_mojo_backtrace(b, n);
@@ -883,6 +888,7 @@ int close(int fd) {
     /* descritores que não são do kernel (kqueue, sockets: sockets.c / kqueue.c) */
     extern int cx_fake_fd_close(int fd) __attribute__((weak));
     if ((fd >= 0x4000 || IS_SOCK(fd)) && cx_fake_fd_close) return cx_fake_fd_close(fd);
+    acc_set(fd, -1);
     nb_set(fd, 0);
     return (int)ret_errno(SYS1(SYS_CLOSE, fd));
 }
@@ -925,6 +931,7 @@ int open(const char *path, int flags, ...) {
     }
     int fd = (int)ret_errno(SYS2(SYS_OPEN, p, k));
     if (fd >= 0) nb_set(fd, (flags & 0x4) != 0);          /* O_NONBLOCK */
+    if (fd >= 0) acc_set(fd, flags & 3);
     return fd;
 }
 int creat(const char *path, int mode) { return open(path, 0x0601, mode); }
@@ -1010,6 +1017,7 @@ int dup2(int a, int b) {
     if (a == b) return b;
     long r = SYS2(SYS_DUP2, a, b);
     if (r < 0 && a >= 0 && a <= 2) return b;
+    if (r >= 0 && a >= 0 && a < CX_NBMAX && b >= 0 && b < CX_NBMAX) cx_acc[b] = cx_acc[a];   /* o duplicado herda o modo de acesso */
     return (int)ret_errno(r);
 }
 int dup(int fd) {
@@ -1025,7 +1033,7 @@ int dup(int fd) {
 }
 int pipe(int *fds) {                                                   /* o kernel tem pipes (SYS_PIPE) */
     int r = (int)ret_errno(SYS1(SYS_PIPE, fds));
-    if (r == 0) { nb_set(fds[0], 0); nb_set(fds[1], 0); }
+    if (r == 0) { nb_set(fds[0], 0); nb_set(fds[1], 0); acc_set(fds[0], 0); acc_set(fds[1], 1); }
     return r;
 }
 int fork(void) { return (int)ret_errno(SYS0(SYS_FORK)); }
@@ -1074,7 +1082,7 @@ int fcntl(int fd, int cmd, ...) {
         cx_sock_set_nonblock(fd, (fl & 0x4) != 0);
         return 0;
     }
-    if (cmd == 3) return 0x2 | (nb_on(fd) ? 0x4 : 0);   /* F_GETFL: O_RDWR [| O_NONBLOCK] */
+    if (cmd == 3) return acc_get(fd) | (nb_on(fd) ? 0x4 : 0);   /* F_GETFL: modo de acesso [| O_NONBLOCK] */
     if (cmd == 4) {                                     /* F_SETFL: só O_NONBLOCK tem efeito */
         __builtin_va_list ap; __builtin_va_start(ap, cmd); long fl = __builtin_va_arg(ap, long); __builtin_va_end(ap);
         nb_set(fd, (fl & 0x4) != 0);

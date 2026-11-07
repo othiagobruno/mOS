@@ -95,7 +95,10 @@ int getgrnam_r(const char *name, mac_group_t *g, char *buf, size_t len, mac_grou
 void cx_perm_set(const char *path, unsigned mode);   /* libc.c: o stat devolve o modo pedido */
 int chmod(const char *p, unsigned short m) { char st[STAT_SIZE]; int r = stat(p, st); if (r == 0) cx_perm_set(p, m); return r; }
 int fchmod(int fd, unsigned short m) { (void)fd; (void)m; return 0; }
-int lchmod(const char *p, unsigned short m) { return chmod(p, m); }
+int lstat(const char *p, void *st);
+/* lchmod: o modo do próprio link (não segue). Links do mOS não têm modo: basta o link existir. Seguir o link
+ * falhava em links relativos de dentro de .app (Versions/Current) e o brew caía no "sudo chmod -R". */
+int lchmod(const char *p, unsigned short m) { char st[STAT_SIZE]; (void)m; return lstat(p, st); }
 int chown(const char *p, unsigned u, unsigned g) { char st[STAT_SIZE]; (void)u; (void)g; return stat(p, st); }
 int fchown(int fd, unsigned u, unsigned g) { (void)fd; (void)u; (void)g; return 0; }
 int lchown(const char *p, unsigned u, unsigned g) { return chown(p, u, g); }

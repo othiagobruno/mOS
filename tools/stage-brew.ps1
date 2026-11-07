@@ -43,7 +43,7 @@ Copy-Item -Force "$PSScriptRoot\brew-shims\pkgutil" "$mos\usr\sbin\pkgutil"
 Copy-Item -Force "$PSScriptRoot\brew-shims\xcode-select" "$mos\usr\bin\xcode-select"
 # casks: hdiutil/diskutil sobre o leitor de .dmg do kernel (imgtool), ditto/mkbom para copiar do volume,
 # xattr e codesign que aceitam e não fazem nada (o VFS não guarda atributos; o kernel não confere assinaturas)
-foreach ($t in 'hdiutil', 'ditto', 'mkbom', 'xattr', 'codesign') { Copy-Item -Force "$PSScriptRoot\brew-shims\$t" "$mos\usr\bin\$t" }
+foreach ($t in 'hdiutil', 'ditto', 'mkbom', 'xattr', 'codesign', 'sudo') { Copy-Item -Force "$PSScriptRoot\brew-shims\$t" "$mos\usr\bin\$t" }
 Copy-Item -Force "$PSScriptRoot\brew-shims\diskutil" "$mos\usr\sbin\diskutil"
 New-Item -ItemType Directory -Force "$mos\Applications" | Out-Null
 # Command Line Tools de mentira: o brew (macOS 14, Tier 3) as exige mesmo para bottles; o clang só informa a versão

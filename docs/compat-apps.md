@@ -286,5 +286,18 @@ se sabe se é trabalho legítimo, lento no harness, ou um laço sem fim causado 
    supervisor de atualização, que é opcional.
 4. **Grok Bot** e **Claude**: Electron mais integridade do asar. O Swift deles mora em módulos opcionais (computer use, simulador
    iOS), mas o `swift_addon.node` do Claude talvez carregue na partida e precise do runtime Swift (sessão OpenSwiftUI).
+   Estado em 7 nov.: o Claude 4.23118 sobe, monta os menus em pt-BR e carrega claude.ai/login numa WebContentsView. O
+   `swift_addon.node` falta, e o app segue sem ele. Faltava, e já foi resolvido:
+   - `-[NSString compare:options:]`: o Electron 44 confere o SHA-256 do `ElectronAsarIntegrity` contra um hash embutido, e as
+     chaves saíam fora de ordem;
+   - a fonte de dispatch liberada antes do cancel handler (`source_pthread`);
+   - o RDX do `sendto` (ver Slack).
+   Ele também se recusa a subir com `--log-net-log`.
+
+**Rede dos apps Chromium/Electron (7 nov.)**: toda escrita de socket voltava ERR_NETWORK_CHANGED (-21). No macOS de 13.3 a
+26.1, o Chromium confere o RDX depois de `sendto()` (o XNU deixa 0 ali) para contornar um bug do kernel. O `sendto` do libSystem
+agora devolve RAX:RDX. Com isso o Slack carrega a tela de login de app.slack.com e o Chrome abre https://example.com/. Para
+investigar rede: `--log-net-log=/Users/Visitante/n.json` com `vscode-teste.ps1 -Persist`; o arquivo sai da imagem pelo
+`build\fatcat.exe` (`tools/fatcat.c`).
 5. **Codex desktop**: o porte do Chrome (`ChromeMain`) mais CoreText.
 6. **WhatsApp**: runtime Swift, Foundation do Swift, Combine, SwiftUI (OpenSwiftUI) e UIKit/Catalyst. É o mais longe.

@@ -195,6 +195,33 @@ do Chromium (`MapSystemError`) nem nas constantes `mov $-21` rastreadas. Houve u
 serviço de rede ("DNS config watch failed to start"). Próximo suspeito: o resolvedor de DNS do Chrome (cliente DNS próprio
 por UDP, que o mOS ainda não tem, e o `HostResolverManager` abortando jobs com ERR_NETWORK_CHANGED na mudança de DNS).
 
+### Navega, digita, abas e HTTPS (7 nov. 2026, 9h45)
+
+![https://example.com no Chrome do mOS](img-chrome-https.png)
+
+- **Rede**: a causa do ERR_NETWORK_CHANGED foi achada pela sessão do VS Code. O Chromium 15x, para contornar um bug do
+  XNU, confere o RDX depois de `sendto()`, e o `sendto` do libSystem deixava lixo ali (`sockets_inet.inc` agora devolve
+  RAX = resultado e RDX = 0). Depois disso o navegador caía em
+  `CHECK((fcntl(fd, F_GETFL) & O_ACCMODE) == O_RDONLY)`: o F_GETFL devolvia sempre O_RDWR. libc.c guarda o modo de acesso
+  de cada fd (`open`, `pipe`, `dup`/`dup2`). Com isso **`https://example.com/` carrega** (TLS do BoringSSL do Chrome).
+- **Página local** (`file:///Users/Visitante/Documentos/chrome-teste.html`): acentos, negrito, sublinhado, link,
+  flexbox, gradiente, sombra, SVG, `<canvas>`, tabela, campo de texto e JS rodam ([captura](img-chrome-pagina-local.png)).
+- **Entrada**: digitação no campo (o evento `input` do JS dispara), ⌘A/⌘C, ⌘L (foca a barra de endereço), ⌘V (cola),
+  ⌘T (Nova Guia renderizada) e ⌘W (fecha só a aba; a outra volta desenhada).
+  - Kernel (`kernel/ui/desktop.c`): o ⌘W segue o atalho do menu do app antes do "fechar janela" do sistema, e em app do
+    macOS o ⌘L é do app (o Launchpad continua no F4).
+  - AppKit: `viewWillMoveToWindow:`/`viewDidMoveToWindow` vão para a subárvore inteira, e `setHidden:` manda
+    `viewDidHide`/`viewDidUnhide` (a `WebContentsViewCocoa` recalcula a visibilidade da página aí; antes a aba que voltava
+    ficava em branco).
+- **Menus**: "Janela" e "Ajuda" do sistema só entram na barra quando o app não traz os dele (antes, duplicados).
+- **Processos**: o utilitário `mac_notifications` fazia `CHECK(NSApp)` e o navegador o recriava sem parar. Agora o
+  `NSApp` é publicado nesse utilitário, e continua nulo nos outros helpers (o renderer exige `NSApp == nil`). Abrir e
+  fechar abas não deixa renderers: o navegador encerra o da aba fechada com SIGTERM.
+
+Pendentes: *itálico* sai reto (falta face itálica ou oblíqua sintética); árabe/hebraico/CJK sem fonte de fallback
+(caixinhas); a janela de primeira execução (`--no-first-run` por enquanto); fechar a janela pelo botão vermelho derruba
+o navegador no desmonte (`windowWillClose:`); o aviso do `--no-sandbox`.
+
 Ferramentas: `tools\stage-chrome.ps1 -AutoAbrir` (o `init` abre o Chrome no boot, sem depender do mouse no QEMU) e
 os tracepoints (`/Sistema/Biblioteca/diag-tracepoints`), que agora também valem para imagens do `dlopen` (macho.c).
 

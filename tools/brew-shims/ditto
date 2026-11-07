@@ -19,6 +19,7 @@ mkdir -p "$dst"
 if [ -n "$bom" ]; then
   while IFS= read -r p; do
     p=${p#./}; [ -n "$p" ] && [ "$p" != "." ] || continue
+    [ -e "$src/$p" ] || [ -L "$src/$p" ] || { echo "ditto: pulando $p (não existe no volume)" >&2; continue; }
     if [ -d "$src/$p" ] && [ ! -L "$src/$p" ]; then mkdir -p "$dst/$p"
     else mkdir -p "$(dirname "$dst/$p")"; cp -P "$src/$p" "$dst/$p" || exit 1; fi
   done < "$bom"

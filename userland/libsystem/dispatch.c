@@ -341,12 +341,17 @@ typedef struct cx_source {
 #define SMAGIC 0x6D4F53737263ull
 
 void *dispatch_get_context(void *o);   /* vscode_libc.c */
+void cx_dispatch_retain(void *o);
+void cx_dispatch_release(void *o);
 static void source_fire(void *arg) {
     cx_source_t *s = arg;
     if (s->canceled) return;
     if (s->handler_block) RUN_BLOCK(s->handler_block);
     else if (s->handler_fn) s->handler_fn(s->ctx ? s->ctx : dispatch_get_context(s));   /* _f recebe o dispatch_set_context */
 }
+/* disparo enfileirado na fila principal: segura a fonte até rodar (o dono pode cancelar e liberar no meio) */
+static void source_fire_async(void *arg) { source_fire(arg); cx_dispatch_release(arg); }
+static void source_fire_main(cx_source_t *s) { cx_dispatch_retain(s); dispatch_async_f(s->queue, s, source_fire_async); }
 
 /* thread da fonte TIMER: espera o prazo (em fatias, para obedecer cancel/suspend), dispara na fila da fonte e,
  * com intervalo, reprograma; sem intervalo (DISPATCH_TIME_FOREVER), fica desarmada até outro set_timer */
@@ -358,7 +363,7 @@ static void timer_thread(void *arg) {
         if (d) { SYS1(SYS_SLEEP, d > 20 ? 20 : d); continue; }
         if (s->interval && s->interval < (~0ull >> 1)) s->start = (u64)SYS0(SYS_TIME) * 1000000ull + s->interval;
         else s->armed = 0;
-        if (s->queue == &_dispatch_main_q) dispatch_async_f(s->queue, s, source_fire);
+        if (s->queue == &_dispatch_main_q) source_fire_main(s);
         else source_fire(s);
     }
     if (s->cancel_block) RUN_BLOCK(s->cancel_block);
@@ -377,7 +382,7 @@ static void source_thread(void *arg) {
         if (s->canceled) break;
         if (!cx_mach_pending(s->port)) continue;   /* só prazo; nada chegou */
         /* o handler lê a mensagem (dispatch_source_merge_data/mach_msg); dispara na fila da fonte */
-        if (is_main_q(s->queue)) dispatch_async_f(s->queue, s, source_fire);
+        if (is_main_q(s->queue)) source_fire_main(s);
         else source_fire(s);
     }
     if (s->cancel_block) RUN_BLOCK(s->cancel_block);
@@ -428,8 +433,13 @@ unsigned long dispatch_source_get_data(void *s) { (void)s; return 0; }
 unsigned long dispatch_source_get_mask(void *s) { (void)s; return 0; }
 void dispatch_source_merge_data(void *s, unsigned long v) { (void)s; (void)v; }
 
+/* A thread da fonte segura uma referência até o fim (handler de cancelamento incluído), como o GCD, que só libera
+ * a fonte depois do cancel handler. O Chromium (base::apple::DispatchSourceMach::Cancel, usado no Claude desktop)
+ * faz dispatch_source_cancel + dispatch_release em seguida. Sem a referência, a fonte era liberada antes e a thread
+ * chamava o cancel_block lido de memória livre (proteção geral em source_pthread). */
 static void *source_pthread(void *a) {
     if (((cx_source_t *)a)->type == _dispatch_source_type_timer) timer_thread(a); else source_thread(a);
+    cx_dispatch_release(a);
     return 0;
 }
 
@@ -483,7 +493,9 @@ static void source_resume(cx_source_t *s) {
     s->active = 1;
     if (!s->tid) {
         unsigned long t = 0;
+        cx_dispatch_retain(s);                       /* a referência da thread (solta no fim de source_pthread) */
         if (pthread_create(&t, 0, source_pthread, s) == 0) { pthread_detach(t); s->tid = (int)t ? (int)t : 1; }
+        else cx_dispatch_release(s);
     }
 }
 void dispatch_activate(void *o) { if (is_source(o)) source_resume(o); }

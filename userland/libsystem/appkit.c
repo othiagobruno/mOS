@@ -601,9 +601,20 @@ static void set_window_rec(id v, id w) {
     if (changed && cx_responds(v->isa, sel_registerName("viewDidMoveToWindow"))) MSG0(void, v, "viewDidMoveToWindow");
 }
 /* at é o índice depois de tirar sub do pai antigo. A última subview é a de cima (o hit-test anda de trás pra frente). */
+/* diagnóstico (ca-log): movimentos das views do Chromium (WebContentsViewCocoa, RenderWidgetHostViewCocoa...) */
+static BOOL cr_view(id v) {
+    extern int cx_ca_diag(void);
+    if (!v || !cx_ca_diag()) return NO;
+    const char *n = cx_class_name(object_getClass(v));
+    return n && (strstr(n, "WebContents") || strstr(n, "RenderWidget"));
+}
 static void v_insert_sub(id self, id sub, u32 at) {
     if (!sub) return;
     vstate_t *s = vs(self), *ss = vs(sub);
+    if (cr_view(sub))
+        cx_fdprintf(2, "[ca] addSubview: %s %p <- %s %p na posição %u de %u (antes em %s %p)\n", cx_class_name(object_getClass(self)), (void *)self,
+                    cx_class_name(object_getClass(sub)), (void *)sub, at, s->nsub,
+                    ss->superview ? cx_class_name(object_getClass(ss->superview)) : "-", (void *)ss->superview);
     objc_retain(sub);
     if (ss->superview) {
         vstate_t *ps = vs(ss->superview);
@@ -655,6 +666,8 @@ static void v_remove(id self, SEL c) {
     (void)c;
     vstate_t *s = vs(self);
     if (!s->superview) return;
+    if (cr_view(self)) cx_fdprintf(2, "[ca] removeFromSuperview: %s %p de %s %p\n", cx_class_name(object_getClass(self)), (void *)self,
+                                   cx_class_name(object_getClass(s->superview)), (void *)s->superview);
     vstate_t *ps = vs(s->superview);
     for (u32 i = 0; i < ps->nsub; i++) if (ps->sub[i] == self) { memmove(ps->sub + i, ps->sub + i + 1, (ps->nsub - i - 1) * sizeof(id)); ps->nsub--; break; }
     mark(s->superview);
@@ -698,10 +711,12 @@ static void notify_hidden(id v, BOOL h, BOOL top) {
     if (cx_responds(v->isa, sel)) ((void (*)(id, SEL))objc_msgSend)(v, sel);
     for (u32 i = 0; i < s->nsub; i++) notify_hidden(s->sub[i], h, NO);
 }
+static BOOL cr_view(id v);
 static void v_set_hidden(id self, SEL c, BOOL h) {
     (void)c;
     vstate_t *s = vs(self);
     BOOL was = s->hidden;
+    if (!was != !h && cr_view(self)) cx_fdprintf(2, "[ca] setHidden:%d %s %p\n", (int)h, cx_class_name(object_getClass(self)), (void *)self);
     s->hidden = h;
     mark(s->superview ? s->superview : self);
     if (!was != !h) notify_hidden(self, h, YES);
@@ -776,25 +791,36 @@ static BOOL abs_rect(id v, absr_t *out) {
     return YES;
 }
 static double win_h(id w) { wstate_t *s = ws(w); return s->frame.s.h; }
+/* conversões entre views passam pela base da janela (from/to nil = a janela, como no AppKit) */
+static NSPoint v_convert_to(id self, SEL c, NSPoint p, id to);
 static NSPoint v_convert_from(id self, SEL c, NSPoint p, id from) {
-    (void)c;
     absr_t a;
-    if (from || !abs_rect(self, &a)) return p;
+    if (from == self) return p;
+    if (from) p = v_convert_to(from, c, p, 0);    /* da outra view para a janela */
+    if (!abs_rect(self, &a)) return p;
     double wy = win_h(vs(self)->window) - p.y;   /* janela (Cocoa) -> pixels */
     NSPoint r = {p.x - a.tlx, a.flipped ? wy - a.tly : a.tly + a.h - wy};
     return r;
 }
 static NSPoint v_convert_to(id self, SEL c, NSPoint p, id to) {
-    (void)c;
     absr_t a;
-    if (to || !abs_rect(self, &a)) return p;
+    if (to == self) return p;
+    if (!abs_rect(self, &a)) return p;
     double py = a.flipped ? a.tly + p.y : a.tly + a.h - p.y;
     NSPoint r = {a.tlx + p.x, win_h(vs(self)->window) - py};
-    return r;
+    return to ? v_convert_from(to, c, r, 0) : r;
 }
 /* os dois cantos: entre uma view invertida (isFlipped) e outra não, a origem do retângulo troca de canto */
 static NSRect v_convert_rect_to(id self, SEL c, NSRect r, id to) {
     NSPoint a = v_convert_to(self, c, r.o, to), b = v_convert_to(self, c, (NSPoint){r.o.x + r.s.w, r.o.y + r.s.h}, to);
+    r.o.x = a.x < b.x ? a.x : b.x;
+    r.o.y = a.y < b.y ? a.y : b.y;
+    return r;
+}
+/* -convertRect:fromView: (nil = a janela). O Chromium posiciona a NSView de uma WebContentsView filha
+ * (NativeViewHostMac::ShowWidget / WebContentsNSViewBridge::SetBounds) com [[superview] convertRect:fromView:nil]. */
+static NSRect v_convert_rect_from(id self, SEL c, NSRect r, id from) {
+    NSPoint a = v_convert_from(self, c, r.o, from), b = v_convert_from(self, c, (NSPoint){r.o.x + r.s.w, r.o.y + r.s.h}, from);
     r.o.x = a.x < b.x ? a.x : b.x;
     r.o.y = a.y < b.y ? a.y : b.y;
     return r;
@@ -1441,9 +1467,29 @@ static void w_perform_close(id self, SEL c, id sender) {
 static void w_display(id self, SEL c) { (void)c; ws(self)->needs = YES; }
 
 static void autolayout_window(id w);
+/* diagnóstico (ca-log): a árvore de views da janela (classe, frame, oculta), a cada ~15 s nas primeiras vezes.
+ * Mostra se uma WebContentsView filha (Electron addChildView) entrou na árvore e com que frame. */
+static void dump_view_tree(id v, int depth) {
+    if (!v || depth > 12) return;
+    vstate_t *s = vs(v);
+    cx_fdprintf(2, "[ca] %*s%s (%.0f,%.0f %.0fx%.0f)%s subviews %u\n", depth * 2, "", cx_class_name(object_getClass(v)),
+                s->frame.o.x, s->frame.o.y, s->frame.s.w, s->frame.s.h, s->hidden ? " OCULTA" : "", s->nsub);
+    for (u32 i = 0; i < s->nsub; i++) dump_view_tree(s->sub[i], depth + 1);
+}
+static void maybe_dump_tree(id w) {
+    extern int cx_ca_diag(void);
+    static u64 last; static int n;
+    if (!cx_ca_diag() || n >= 8) return;
+    u64 now = (u64)SYS0(SYS_TIME);
+    if (last && now - last < 15000) return;
+    last = now; n++;
+    cx_fdprintf(2, "[ca] árvore de views da janela %d (%.0fx%.0f):\n", ws(w)->gid, ws(w)->frame.s.w, ws(w)->frame.s.h);
+    dump_view_tree(ws(w)->content, 1);
+}
 static void render_window(id w) {
     wstate_t *s = ws(w);
     if (s->gid <= 0 || !s->visible) return;
+    maybe_dump_tree(w);
     if (vs(s->content)->frame.s.w != s->frame.s.w || vs(s->content)->frame.s.h != s->frame.s.h)
         v_set_frame(s->content, 0, r_make(0, 0, s->frame.s.w, s->frame.s.h));   /* com autoresizing das subviews */
     vs(s->content)->frame = r_make(0, 0, s->frame.s.w, s->frame.s.h);
@@ -2369,6 +2415,15 @@ static BOOL ap_set_policy(id self, SEL c, i64 p) { (void)self; (void)c; (void)p;
 static void ap_set_menu(id self, SEL c, id m) { (void)self; (void)c; keep(&app.menu, m); menus_dirty = YES; }
 static id ap_menu(id self, SEL c) { (void)self; (void)c; return app.menu; }
 static id ap_windows(id self, SEL c) { (void)self; (void)c; return app_windows ? app_windows : cx_arr_new(&NSMutableArray_c); }
+/* -orderedWindows: as janelas visíveis da frente para trás (a última trazida à frente fica no fim de app_windows).
+ * O WebContentsOcclusionCheckerMac do Chromium percorre esta lista para decidir se cada WebContents está visível. */
+static id ap_ordered_windows(id self, SEL c) {
+    (void)self; (void)c;
+    id r = cx_arr_new(&NSMutableArray_c);
+    nsarr_t *a = (nsarr_t *)app_windows;
+    for (u64 i = a ? a->n : 0; i-- > 0;) if (ws(a->items[i])->visible) cx_arr_add(r, a->items[i]);
+    return r;
+}
 static id ap_key_window(id self, SEL c) {
     (void)self; (void)c;
     nsarr_t *a = (nsarr_t *)app_windows;
@@ -2797,6 +2852,10 @@ static void mi_set_action(id self, SEL c, SEL a) { (void)c; mn(self)->action = a
 static void mi_set_title(id self, SEL c, id t) { (void)c; keep(&mn(self)->title, t); menus_dirty = YES; }
 static void mi_set_key(id self, SEL c, id k) { (void)c; keep(&mn(self)->key, k); menus_dirty = YES; }
 static void mi_set_tag(id self, SEL c, i64 t) { (void)c; mn(self)->tag = t; }
+/* dica e atalho com o item escondido: a barra do mOS não mostra dicas nem atalhos ocultos; aceita e ignora */
+static void mi_set_tooltip(id self, SEL c, id t) { (void)self; (void)c; (void)t; }
+static id mi_tooltip(id self, SEL c) { (void)self; (void)c; return 0; }
+static void mi_set_bool_ignored(id self, SEL c, BOOL b) { (void)self; (void)c; (void)b; }
 static i64 mi_tag(id self, SEL c) { (void)c; return mn(self)->tag; }
 static i64 mi_state(id self, SEL c) { (void)c; return mn(self)->state; }
 static void mi_set_submenu(id self, SEL c, id m) { (void)c; keep(&mn(self)->submenu, m); menus_dirty = YES; }
@@ -3963,6 +4022,7 @@ void cx_appkit_init(void) {
     M(NSApplication, "setActivationPolicy:", ap_set_policy); M(NSApplication, "activateIgnoringOtherApps:", ap_activate); M(NSApplication, "activate", noop_m);
     M(NSApplication, "setMainMenu:", ap_set_menu); M(NSApplication, "mainMenu", ap_menu); M(NSApplication, "terminate:", ap_terminate);
     M(NSApplication, "stop:", ap_stop); M(NSApplication, "finishLaunching", ap_finish_launching); M(NSApplication, "windows", ap_windows);
+    M(NSApplication, "orderedWindows", ap_ordered_windows);
     M(NSApplication, "keyWindow", ap_key_window); M(NSApplication, "mainWindow", ap_key_window); M(NSApplication, "sendAction:to:from:", ap_send_action);
     M(NSApplication, "runModalForWindow:", ap_run_modal); M(NSApplication, "stopModalWithCode:", ap_stop_modal_code); M(NSApplication, "stopModal", ap_stop_modal);
     M(NSApplication, "setWindowsMenu:", noop1_m); M(NSApplication, "setServicesMenu:", noop1_m); M(NSApplication, "setHelpMenu:", noop1_m);
@@ -4007,6 +4067,7 @@ void cx_appkit_init(void) {
     M(NSView, "setHidden:", v_set_hidden); M(NSView, "isHidden", v_hidden); M(NSView, "setAutoresizingMask:", v_set_autoresize);
     M(NSView, "autoresizingMask", v_autoresize); M(NSView, "drawRect:", v_draw_rect); M(NSView, "isFlipped", no_m);
     M(NSView, "convertPoint:fromView:", v_convert_from); M(NSView, "convertPoint:toView:", v_convert_to); M(NSView, "convertRect:toView:", v_convert_rect_to);
+    M(NSView, "convertRect:fromView:", v_convert_rect_from);
     M(NSView, "setTag:", v_set_tag); M(NSView, "tag", v_tag); M(NSView, "viewWithTag:", v_view_with_tag); M(NSView, "setToolTip:", v_set_tooltip);
     M(NSView, "setWantsLayer:", v_set_wants_layer); M(NSView, "layer", v_layer); M(NSView, "acceptsFirstResponder", v_accepts_first);
     M(NSView, "intrinsicContentSize", v_intrinsic); M(NSView, "sizeToFit", v_size_to_fit); M(NSView, "fittingSize", v_fitting);
@@ -4208,6 +4269,8 @@ void cx_appkit_init(void) {
     M(NSMenuItem, "setTarget:", mi_set_target); M(NSMenuItem, "title", mi_title); M(NSMenuItem, "setKeyEquivalentModifierMask:", mi_set_mask);
     M(NSMenuItem, "setAction:", mi_set_action); M(NSMenuItem, "setTitle:", mi_set_title); M(NSMenuItem, "setKeyEquivalent:", mi_set_key); M(NSMenuItem, "tag", mi_tag); M(NSMenuItem, "state", mi_state);
     M(NSMenuItem, "setTag:", mi_set_tag); M(NSMenuItem, "setState:", mi_set_state); M(NSMenuItem, "setEnabled:", mi_set_enabled);
+    M(NSMenuItem, "setToolTip:", mi_set_tooltip); M(NSMenuItem, "toolTip", mi_tooltip);
+    M(NSMenuItem, "setAllowsKeyEquivalentWhenHidden:", mi_set_bool_ignored);
     M(NSMenuItem, "isSeparatorItem", mi_is_sep); M(NSMenuItem, "setHidden:", mi_set_hidden); M(NSMenuItem, "isHidden", mi_hidden);
     M(NSMenuItem, "setAlternate:", mi_set_alternate); M(NSMenuItem, "isAlternate", mi_alternate);
     M(NSMenuItem, "setImage:", mi_set_image); M(NSMenuItem, "image", mi_image);

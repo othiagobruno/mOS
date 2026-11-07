@@ -1,0 +1,5 @@
+#!/bin/bash
+# mOS: um usuário só, sem senha. O sudo de mentira só roda o comando (aceita -E, -n, -u <usuário>, --).
+while [ $# -gt 0 ]; do case "$1" in -E|-n|-H|-S|-k) shift ;; -u) shift 2 ;; --) shift; break ;; -*) shift ;; *) break ;; esac; done
+[ $# -gt 0 ] || exit 0
+exec "$@"
