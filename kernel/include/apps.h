@@ -27,3 +27,18 @@ void mono_draw(surface_t *s, float size, int x, int baseline, u32 color, const c
 
 /* medição de CPU ociosa (Monitor de Atividade) */
 extern volatile u64 g_idle_ticks;
+
+/* área de texto multilinha reutilizável (o motor do Editor de Texto), para outros apps.
+ * bg 0 = T.content_bg, 1 = transparente; fg 0 = T.text; pad 0 = 14 px */
+typedef struct textarea textarea_t;
+textarea_t *textarea_new(float size, u32 bg, u32 fg, int pad);
+void        textarea_set(textarea_t *t, const char *s, int n);   /* n < 0: até o fim */
+const char *textarea_text(textarea_t *t, int *len);
+bool        textarea_dirty(textarea_t *t, bool clear);
+bool        textarea_focused(textarea_t *t);
+void        textarea_focus(textarea_t *t, bool on);
+void        textarea_colors(textarea_t *t, u32 bg, u32 fg);
+void        textarea_set_size(textarea_t *t, float size);
+void        textarea_paint(window_t *w, ui_t *u, textarea_t *t, rect_t area);
+void        textarea_insert(textarea_t *t, const char *s);
+void        textarea_free(textarea_t *t);

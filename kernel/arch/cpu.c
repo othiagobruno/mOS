@@ -98,6 +98,17 @@ u64 isr_dispatch(int_frame_t *f) {
         snprintf(msg, sizeof(msg), "%s (vetor %llu, erro 0x%llx) em RIP=0x%llx CR2=0x%llx",
                  exc_names[f->vector], f->vector, f->error, f->rip, cr2);
         kprintf("\n*** EXCEÇÃO: %s\n", msg);
+        {   /* para traduzir em funções (build com /map): base de carga, registradores e endereços do kernel na pilha */
+            u64 kb = g_boot ? g_boot->kernel_base : 0;
+            kprintf("*** kernel em 0x%llx (RIP-base = 0x%llx) rax=%llx rbx=%llx rcx=%llx rdx=%llx rsi=%llx rdi=%llx\n",
+                    kb, f->rip - kb, f->rax, f->rbx, f->rcx, f->rdx, f->rsi, f->rdi);
+            const u64 *sp = (const u64 *)(f->rsp & ~7ULL);
+            int shown = 0;
+            for (int i = 0; i < 512 && shown < 16; i++) {
+                u64 v = sp[i];
+                if (kb && v > kb && v < kb + 0x1000000ULL) { kprintf("***   [rsp+%d] base+0x%llx\n", i * 8, v - kb); shown++; }
+            }
+        }
         panic_screen(msg, f);
         for (;;) { cli(); hlt(); }
     }

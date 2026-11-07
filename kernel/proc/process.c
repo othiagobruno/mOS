@@ -762,8 +762,8 @@ static void dump_threads_maybe(int_frame_t *cur) {
     for (thread_t *t = sched_threads(); t; t = t->next) {
         if (!t->proc || t->state == TH_DEAD || (!t->frame && t != thread_current())) continue;
         int_frame_t *f = t == thread_current() ? cur : (int_frame_t *)t->frame;   /* a atual: o frame desta syscall */
-        kprintf("despejo: %s pid %d thread %d \"%s\" %s (espera %d) rip %llx rsp %llx\n", t->proc->name, t->proc->pid, t->id,
-                t->name, t->state <= TH_DEAD ? st[t->state] : "?", t->wait_pid, f->rip, f->rsp);
+        kprintf("despejo: %s pid %d thread %d \"%s\" %s (espera %d) rip %llx rsp %llx cpu %llu ms\n", t->proc->name, t->proc->pid, t->id,
+                t->name, t->state <= TH_DEAD ? st[t->state] : "?", t->wait_pid, f->rip, f->rsp, (unsigned long long)t->cpu_ms);
         /* palavra por palavra até o fim da pilha mapeada: uma thread rasa (logo abaixo do topo) não cabia em
          * um bloco de 1280 bytes e saía sem nenhuma linha de pilha */
         u64 words[160];

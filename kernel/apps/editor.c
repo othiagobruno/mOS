@@ -16,6 +16,11 @@ typedef struct {
     int nundo, nredo;
     u64 last_snap;
     int last_kind;
+    /* área de texto embutida em outro app (textarea_*): cores próprias, sem ⌘S */
+    bool embedded;
+    u32 bg, fg;
+    int pad;
+    bool focused;
 } ed_t;
 
 enum { ED_TYPE = 1, ED_DEL, ED_OTHER };
@@ -166,15 +171,22 @@ static vline_t lines[8192];
 static void paint_editor(window_t *w, ui_t *u, ed_t *e, rect_t area) {
     surface_t *s = u->s;
     font_t *f = font_get(FONT_REGULAR);
-    gfx_fill(s, area.x, area.y, area.w, area.h, T.content_bg);
-    int pad = 14, lh = (int)(e->size * 1.45f);
+    if (e->bg != 1) gfx_fill(s, area.x, area.y, area.w, area.h, e->bg ? e->bg : T.content_bg);   /* bg 1 = transparente */
+    u32 fg = e->fg ? e->fg : T.text;
+    int pad = e->pad ? e->pad : 14, lh = (int)(e->size * 1.45f);
     int n = layout(e, f, area.w - pad * 2 - 12, lines, 8192);
     /* linha do caret */
     int cl = 0;
     for (int i = 0; i < n; i++) if (e->caret >= lines[i].start && (e->caret < lines[i].end || (e->caret == lines[i].end && (i == n - 1 || lines[i + 1].start > e->caret)))) { cl = i; break; }
     if (e->caret == e->len) cl = n - 1;
     /* teclado */
-    if (u->key && !(u->mods & MOD_CMD)) {
+    if (e->embedded) {
+        if (u->pressed) e->focused = ui_hit(u, area);
+        if (e->focused && u->pressed) u->focus = 0;
+        if (u->focus) e->focused = false;
+    }
+    bool keys = !e->embedded || e->focused;
+    if (keys && u->key && !(u->mods & MOD_CMD)) {
         int k = u->key;
         if (k == KEY_BACKSPACE || k == KEY_DELETE) ed_snapshot(e, ED_DEL);
         else if (k == KEY_ENTER || k == KEY_TAB || u->text[0]) ed_snapshot(e, (e->sel >= 0 && e->sel != e->caret) ? ED_OTHER : ED_TYPE);
@@ -220,10 +232,10 @@ static void paint_editor(window_t *w, ui_t *u, ed_t *e, rect_t area) {
         if (cy < e->scroll) e->scroll = cy;
         if (cy + lh > e->scroll + area.h - pad * 2) e->scroll = cy + lh - area.h + pad * 2;
     }
-    if (u->key && (u->mods & MOD_CMD)) {
+    if (keys && u->key && (u->mods & MOD_CMD)) {
         int ck = tolower(u->key);
         if (ck == 'a') { e->sel = 0; e->caret = e->len; u->key_used = true; }
-        if (ck == 's') { ed_save_or_ask(e); u->key_used = true; }
+        if (ck == 's' && !e->embedded) { ed_save_or_ask(e); u->key_used = true; }
         if (ck == 'c') { ed_copy(e); u->key_used = true; }
         if (ck == 'x' && e->sel >= 0 && e->sel != e->caret) { ed_snapshot(e, ED_OTHER); ed_copy(e); ed_insert(e, "", 0); u->key_used = true; }
         if (ck == 'v') { const char *c = clipboard_get(); if (*c) { ed_snapshot(e, ED_OTHER); ed_insert(e, c, (int)strlen(c)); } u->key_used = true; }
@@ -258,10 +270,10 @@ static void paint_editor(window_t *w, ui_t *u, ed_t *e, rect_t area) {
             int xb = text_width_n(f, e->size, e->buf + lines[i].start, b - lines[i].start);
             gfx_fill(s, area.x + pad + xa, y, MAX(4, xb - xa), lh, T.selection);
         }
-        text_draw_n(s, f, e->size, area.x + pad, base, T.text, e->buf + lines[i].start, lines[i].end - lines[i].start);
-        if (i == cl && wm_focused() == w && ((u->now - u->caret_blink) / 530) % 2 == 0) {
+        text_draw_n(s, f, e->size, area.x + pad, base, fg, e->buf + lines[i].start, lines[i].end - lines[i].start);
+        if (i == cl && wm_focused() == w && keys && ((u->now - u->caret_blink) / 530) % 2 == 0) {
             int cx = text_width_n(f, e->size, e->buf + lines[i].start, e->caret - lines[i].start);
-            gfx_fill(s, area.x + pad + cx, y + 1, 1, lh - 2, T.text);
+            gfx_fill(s, area.x + pad + cx, y + 1, 1, lh - 2, fg);
         }
     }
     surface_pop_clip(s, pc);
@@ -424,3 +436,43 @@ static void notes_launch(app_t *a) {
 }
 
 app_t app_notas = {.name = "Notas", .exec = "notas", .draw_icon = icon_notas, .launch = notes_launch, .pinned = true};
+
+/* ------------------------------------------------------------------ área de texto para outros apps */
+textarea_t *textarea_new(float size, u32 bg, u32 fg, int pad) {
+    ed_t *e = kcalloc(1, sizeof(ed_t));
+    if (!e) return NULL;
+    e->size = size; e->sel = -1; e->embedded = true; e->bg = bg; e->fg = fg; e->pad = pad;
+    ed_ensure(e, 0);
+    e->buf[0] = 0;
+    return (textarea_t *)e;
+}
+void textarea_set(textarea_t *t, const char *s, int n) {
+    ed_t *e = (ed_t *)t;
+    if (!e) return;
+    if (n < 0) n = s ? (int)strlen(s) : 0;
+    e->len = 0;
+    ed_ensure(e, n);
+    if (n) memcpy(e->buf, s, n);
+    e->len = n;
+    e->buf[n] = 0;
+    e->caret = MIN(e->caret, n); e->sel = -1; e->dirty = false; e->scroll = 0;
+    for (int i = 0; i < e->nundo; i++) snap_free(&e->undo[i].buf);
+    for (int i = 0; i < e->nredo; i++) snap_free(&e->redo[i].buf);
+    e->nundo = e->nredo = 0;
+}
+const char *textarea_text(textarea_t *t, int *len) { ed_t *e = (ed_t *)t; if (len) *len = e ? e->len : 0; return e ? e->buf : ""; }
+bool textarea_dirty(textarea_t *t, bool clear) { ed_t *e = (ed_t *)t; bool d = e && e->dirty; if (e && clear) e->dirty = false; return d; }
+bool textarea_focused(textarea_t *t) { ed_t *e = (ed_t *)t; return e && e->focused; }
+void textarea_focus(textarea_t *t, bool on) { ed_t *e = (ed_t *)t; if (e) { e->focused = on; if (on) e->caret = e->len; } }
+void textarea_colors(textarea_t *t, u32 bg, u32 fg) { ed_t *e = (ed_t *)t; if (e) { e->bg = bg; e->fg = fg; } }
+void textarea_set_size(textarea_t *t, float size) { ed_t *e = (ed_t *)t; if (e) e->size = size; }
+void textarea_paint(window_t *w, ui_t *u, textarea_t *t, rect_t area) { if (t) paint_editor(w, u, (ed_t *)t, area); }
+void textarea_insert(textarea_t *t, const char *s) { ed_t *e = (ed_t *)t; if (e && s) ed_insert(e, s, (int)strlen(s)); }
+void textarea_free(textarea_t *t) {
+    ed_t *e = (ed_t *)t;
+    if (!e) return;
+    for (int i = 0; i < e->nundo; i++) snap_free(&e->undo[i].buf);
+    for (int i = 0; i < e->nredo; i++) snap_free(&e->redo[i].buf);
+    kfree(e->buf);
+    kfree(e);
+}

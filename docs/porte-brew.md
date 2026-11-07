@@ -75,6 +75,36 @@ funções, `$(...)`, `[[ =~ ]]` com `BASH_REMATCH`, `case` com glob, arrays, com
 - Pendente: o `du` informa 0 para arquivos de verdade (falta conferir `st_blocks`). Também não existem sed,
   grep, awk, tar, gzip, curl nem git no mOS.
 
+### sed, grep, tar, gzip, xz, curl e git (7 nov. 2026)
+
+`tools/fetch-bottles.sh <fórmulas>` baixa os bottles Intel (`.sonoma`, ou `.all` para ca-certificates) com as
+dependências de execução tiradas do `sh.brew.tab` do manifesto. `tools/stage-bash.ps1 -Script tools/testdata/brew-rede.sh`
+instala tudo em `/usr/local/opt/<f>` (git-core vira links para o `git`: 560 MB → 4 MB) e cria `/bin/sh`, `/bin/bash`
+e `/usr/bin/env`. Os bottles Intel já usam o prefixo `/usr/local`, então não é preciso relocar texto.
+
+No QEMU, 20/20 casos locais passam: GNU sed 4.10, grep 3.12 (com `-P`/pcre2), tar 1.35 (`czf`/`xzf`/`cJf`/`tJf`),
+gzip 1.14 e xz 5.8.3. O `curl --version` lista OpenSSL 3.6.3, zlib, brotli, zstd, nghttp2 e libssh2.
+
+Correções desta etapa:
+- Kernel: `/dev/null` (o git não abre sem ele). `mtime` real (o gzip recusava 1970). `kill(pid, 0)`.
+  `fd_copy` pegava a referência do pipe depois de fechar o destino (kfree duplo no `dup2` do bash).
+  Threads mortas esperando num pipe saem do `rwait`/`wwait`. `trim_zombies` não descarta mais o zumbi que o pai
+  ainda vai recolher (o `tar` perdia o `gzip` filho: "Cannot waitpid").
+- Loader: `@@HOMEBREW_CELLAR@@/<f>/<v>/X` cai em `/usr/local/opt/<f>/X`. Aliases de `/usr/lib` para libcurl e
+  libexpat. `libresolv`, `libicucore`, `LDAP.framework`, `Kerberos.framework` e `GSS.framework` são aceitos.
+- libSystem: `st_ino` por caminho e `st_dev` (o grep e o tar achavam que liam a própria saída).
+  `fstat` de 0-2 redirecionados mostra o pipe ou arquivo real. Sinais de verdade: `sigaction`/`signal`/`kill`/
+  `raise` com tradução de números (macOS ↔ kernel) e um restorer. `alarm`/`setitimer` por thread auxiliar.
+  Também `glob`, `execlp`, `stpncpy`, `rpmatch`, `getopt`, `openlog`, `uidna_*` (ASCII) e stubs de LDAP.
+
+Bloqueios abertos:
+1. **Corrupção de heap no kernel ao rodar o curl**: `kfree: ponteiro inválido` e depois uma falta de página
+   (`CR2=0x101000000e8`) logo depois de o loader montar as 13 imagens do curl. Para achar a função, falta o
+   endereço de carga do kernel no log, porque o build apaga o PDB.
+2. **TCP não conecta**: o DNS funciona (o ruby resolve `example.com`), mas `TCPSocket.new` e o curl ficam esperando
+   o `connect`. Ainda não se sabe se é a pilha TCP do kernel ou o `poll`/`socketpair` do libSystem.
+3. O git local (`init`/`add`/`commit`) não foi testado depois do `/dev/null`, porque a bateria parou no curl.
+
 Faltam, na ordem em que o bash e o ruby tropeçam:
 
 1. **Grupos de processo e `SIGCHLD`** entregue ao pai (`setpgid`, `tcsetpgrp`), para o controle de jobs do bash.

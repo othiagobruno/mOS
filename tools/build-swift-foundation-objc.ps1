@@ -65,5 +65,7 @@ Build-Mod '_FoundationRefs' @(Get-ChildItem "$sfs\_FoundationRefs" -Recurse -Fil
 # FoundationEssentials: nomes mangled da Apple (módulo Foundation); fora o ProgressManager e as mensagens do
 # NotificationCenter, como no caminho sem ObjC
 $ess = @(Get-ChildItem "$sfs\FoundationEssentials" -Recurse -Filter *.swift -ErrorAction SilentlyContinue | Where-Object { $_.FullName -notmatch '\\(ProgressManager|NotificationCenter)\\' } | ForEach-Object FullName)
-Build-Mod 'FoundationEssentials' $ess ($sfFlags + @('-module-abi-name', 'Foundation'))
+# DATA_LEGACY_ABI: a representação do Data do ABI da Apple (enum _Representation, RangeReference), que o código
+# inlinável dos binários usa; o padrão do pacote é a representação nova
+Build-Mod 'FoundationEssentials' $ess ($sfFlags + @('-module-abi-name', 'Foundation', '-D', 'DATA_LEGACY_ABI'))
 exit $fails
