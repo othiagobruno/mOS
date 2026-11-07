@@ -30,8 +30,10 @@ enum { TH_READY, TH_RUNNING, TH_SLEEPING, TH_WAITING, TH_DEAD };
 
 typedef struct process process_t;
 
-/* pipe entre processos (SYS_PIPE): 4 KiB; leitura bloqueia se vazio, escrita se cheio */
-enum { FD_FILE, FD_PIPE_R, FD_PIPE_W };
+/* pipe entre processos (SYS_PIPE): 4 KiB; leitura bloqueia se vazio, escrita se cheio.
+ * FD_PTY_M/FD_PTY_S: ponta mestre/escrava de um pseudoterminal (proc/pty.c), com a referência em .pty */
+enum { FD_FILE, FD_PIPE_R, FD_PIPE_W, FD_PTY_M, FD_PTY_S };
+struct pty;
 typedef struct pipe {
     char buf[4096];
     u32 head, tail, count;
@@ -64,6 +66,21 @@ typedef struct thread {
     u32 mach_rsize, mach_opt;
     bool mach_peek;         /* MACH_OP_WAIT: só espera haver mensagem */
     u64 futex_va;           /* TH_WAITING com wait_pid = -8: palavra do SYS_FUTEX_WAIT (prazo em wake_at; 0 = sem) */
+    /* leitura/escrita esperando num pseudoterminal (proc/pty.c): wait_pid = -9, TH_WAITING (ou TH_SLEEPING com
+     * prazo, VTIME), buffer em read_buf/read_len. Zerado na entrada de toda syscall: a espera nunca sobrevive a ela. */
+    struct pty *pty_wait;
+    u8 pty_mode;            /* PTY_RD_MASTER.. (pty.c) */
+    /* sinais (process.c, bloco "sinais"): conjuntos com o bit (1 << sinal) na numeração do kernel */
+    u32 sig_mask;           /* bloqueados nesta thread (herdada pela thread nova e pelo fork) */
+    u32 sig_pending;        /* só desta thread: faltas e pthread_kill */
+    u32 sig_saved_mask;     /* sigsuspend: máscara a restaurar depois do tratador */
+    bool sig_suspended;     /* sig_saved_mask vale */
+    bool sig_intr;          /* acordada de uma espera por um sinal: rax = -EINTR, a syscall pode ser refeita */
+    u32 sig_wait_set;       /* MOS_SIGOP_WAIT (wait_pid = -11): conjunto esperado; saída em wait_status */
+    u64 sys_nr;             /* número da última syscall (para refazê-la com SA_RESTART) */
+    u64 ss_sp, ss_size;     /* sigaltstack (ss_size 0 = desligada) */
+    struct { int code, pid, status; u64 addr; } sig_info[32];   /* siginfo dos pendentes desta thread */
+    u16 sig_trapno; u32 sig_err;                                 /* __es da última falta entregue */
 } thread_t;
 
 /* sessão de terminal: entrada (stdin) e saída (stdout/stderr) de um grupo de processos */
@@ -87,12 +104,16 @@ struct process {
     u64 start_ms;
     thread_t *main;
     struct process *next;
-    struct { bool used; int flags; u64 off; char path[256]; u8 kind; struct pipe *pipe; } fds[PROC_MAX_FDS];   /* arquivos (VFS) e pipes */
+    struct { bool used; int flags; u64 off; char path[256]; u8 kind; struct pipe *pipe; struct pty *pty; } fds[PROC_MAX_FDS];   /* arquivos (VFS), pipes e terminais */
     u64 mmap_next;          /* próxima região anônima (SYS_MMAP) */
     int nthreads;           /* threads vivas ou ainda não recolhidas (a memória sai com a última) */
     u64 sig_handler[32];    /* 0 = padrão, 1 = ignorar, senão endereço do tratador */
     u64 sig_restorer;       /* rotina de usuário que chama SYS_SIGRETURN */
-    u32 sig_pending;
+    u32 sig_pending;        /* de kill(): vão para a primeira thread que não os bloqueie */
+    u32 sig_amask[32];      /* sa_mask de cada ação (bloqueados enquanto o tratador roda) */
+    u32 sig_flags[32];      /* sa_flags (MOS_SA_*) */
+    u64 sig_tramp[32];      /* trampolim do libSystem (0 = chamada direta com sig_restorer) */
+    struct { int code, pid, status; u64 addr; } sig_info[32];   /* siginfo dos pendentes do processo */
     struct { int tid, code; } texit[16];   /* códigos de threads já encerradas (para join) */
     tty_t *tty;             /* NULL = console global do sistema */
     char cwd[128];          /* pasta atual (caminhos relativos nas syscalls) */
@@ -102,6 +123,10 @@ struct process {
     int spawn_argc;
     char **spawn_env;
     int spawn_envc;
+    /* sessão e grupo de processos (POSIX; proc/pty.c): herdados no fork/spawn; filhos do kernel e do init começam
+     * a própria sessão. ctty = terminal de controle da sessão (NULL = nenhum) */
+    int pgid, sid;
+    struct pty *ctty;
 };
 
 /* ---- portas Mach entre processos (proc/machipc.c) */
@@ -109,6 +134,19 @@ void      machipc_spawn(process_t *parent, process_t *child);   /* filho novo: p
 void      machipc_exit(process_t *p);                           /* destrói os direitos do processo */
 u64       machipc_syscall(int_frame_t *f);                      /* SYS_MACH_FIRST..SYS_MACH_LAST */
 void      machipc_set_prot(process_t *p, u64 lo, u64 hi, u32 prot);   /* proteção registrada de [lo, hi) (mach_vm_region) */
+
+/* ---- pseudoterminais, sessões e grupos (proc/pty.c) */
+int       pty_open_path(process_t *p, int fd, const char *path, int flags);   /* /dev/ptmx, /dev/ttysNNN, /dev/tty: 0, -errno,
+                                                                               1 = não é caminho de terminal */
+bool      pty_stat_path(const char *path);                                 /* o caminho é de um terminal (SYS_STAT) */
+void      pty_fd_ref(struct pty *t, bool master, int delta);               /* +1 ao copiar um fd, -1 ao fechar */
+u64       pty_rw(int_frame_t *f, thread_t *th, process_t *p, int fd, bool rd, u64 buf, u64 len);   /* pode bloquear */
+i64       pty_fstat(process_t *p, int fd, u64 st_va);                       /* mos_stat_t de um fd de terminal */
+i64       pty_syscall(process_t *p, u64 op, u64 a, u64 b, u64 c);         /* SYS_TTY */
+void      pty_proc_init(process_t *child, process_t *parent, unsigned spawn_flags);   /* sessão e grupo de um processo novo */
+void      pty_proc_exit(process_t *p);                                      /* líder de sessão saindo: SIGHUP e desliga o terminal */
+process_t *proc_list(void);                                                 /* lista de processos (proc/process.c) */
+process_t *proc_find(int pid);
 
 /* páginas físicas compartilhadas entre espaços (memória Mach, proc/process.c) */
 bool      uvm_map_phys(process_t *p, u64 va, u64 phys, bool rw);  /* mais uma referência à página */
@@ -149,7 +187,8 @@ int       proc_exit_code(int pid);                               /* -1000 se ain
 u64       proc_syscall(int_frame_t *f);         /* int 0x80 */
 u64       proc_fault(int_frame_t *f, u64 cr2);  /* exceção em ring 3: COW, sinal ou encerra o processo */
 u64       proc_signal_check(int_frame_t *f);    /* antes de voltar ao ring 3: entrega sinais pendentes */
-bool      proc_signal(int pid, int sig);        /* envia um sinal (SIGKILL encerra na hora) */
+bool      proc_signal(int pid, int sig);        /* envia um sinal (SIGKILL encerra na hora); siginfo SI_USER */
+bool      proc_signal_info(int pid, int sig, int code, int spid, int status);   /* idem, com si_code/si_pid/si_status */
 thread_t *uthread_clone(process_t *p, const int_frame_t *src);   /* fork: mesma posição de retorno */
 void      proc_reap(process_t *p);
 void      proc_thread_exited(thread_t *t);

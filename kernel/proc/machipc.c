@@ -167,7 +167,10 @@ static void prot_set(mspace_t *sp, u64 lo, u64 hi, u32 prot);
 
 static kport_t *ports_all;
 static kport_t *g_bootstrap;  /* o "launchd" do mOS: objeto do kernel, nunca liberado */
-static struct { char name[128]; kport_t *port; } bs_reg[256];
+/* owner: o launchd que reservou o nome (MACH_BS_RESERVE). Enquanto o daemon não roda, o direito de receber fica
+ * com ele (no conjunto owner_pset, nome owner_name); o check_in do daemon leva o direito com a fila, e quando o
+ * daemon morre o direito volta ao launchd em vez de a porta morrer (ativação sob demanda, como no launchd). */
+static struct { char name[128]; kport_t *port; struct mspace *owner; u32 owner_name; kport_t *owner_pset; } bs_reg[256];
 static int log_left = 300;    /* diagnóstico no log serial, limitado */
 
 static void mlog(const char *fmt, const char *s, u64 a, u64 b) {
@@ -1201,15 +1204,72 @@ static int bs_find(const char *name) {
     return -1;
 }
 
+/* mensagem simples do próprio kernel para um serviço registrado (Launch Services: URL ou documento para o app
+ * que já está aberto). Corpo depois do header; sem direitos nem descritores. 0 = na fila, -1 = sem servidor */
+int machipc_post_service(const char *name, int id, const void *body, u32 n) {
+    int i = bs_find(name);
+    if (i < 0 || !bs_reg[i].port || bs_reg[i].port->dead || !bs_reg[i].port->recv) return -1;
+    kport_t *port = bs_reg[i].port;
+    if (port->qn >= 64) return -1;
+    u32 size = (H_SIZE_BYTES + n + 3) & ~3u;
+    kmsg_t *m = kcalloc(1, sizeof *m);
+    u8 *d = kcalloc(1, size + 8);
+    if (!m || !d) { kfree(m); kfree(d); return -1; }
+    wr32(d, H_BITS, 0);
+    wr32(d, H_SIZE, size);
+    wr32(d, H_ID, (u32)id);
+    memcpy(d + H_SIZE_BYTES, body, n);
+    m->data = d;
+    m->size = size;
+    port_ref(port);
+    m->dest = port;                    /* referência nossa; nenhum direito de envio consumido */
+    m->dest_type = 0;
+    m->sender_pid = 0;
+    enqueue(port, m);
+    return 0;
+}
+
 static u32 bootstrap_op(mspace_t *sp, u32 op, const char *name, u32 *out_name) {
     int i = bs_find(name);
     /* serviço cujo servidor morreu: sai do registro (look_up dá 1102 e um novo check_in cria porta nova,
      * em vez de ressuscitar a morta) */
-    if (i >= 0 && bs_reg[i].port->dead) { port_unref(bs_reg[i].port); bs_reg[i].port = NULL; bs_reg[i].name[0] = 0; i = -1; }
+    if (i >= 0 && bs_reg[i].port->dead) {
+        port_unref(bs_reg[i].port); bs_reg[i].port = NULL; bs_reg[i].name[0] = 0;
+        bs_reg[i].owner = NULL; bs_reg[i].owner_name = 0; bs_reg[i].owner_pset = NULL;
+        i = -1;
+    }
+    if (op == MACH_BS_RESERVE) {
+        /* o launchd reserva o nome: fica com o direito de receber até o daemon fazer check_in */
+        if (i >= 0) {
+            kport_t *p = bs_reg[i].port;
+            bs_reg[i].owner = sp;
+            if (p->recv == sp) { *out_name = name_of_recv(sp, p); return 0; }
+            if (p->recv) { *out_name = 0; return BS_SERVICE_ACTIVE; }   /* o daemon já está no ar */
+        }
+        u32 r = bootstrap_op(sp, MACH_BS_CHECK_IN, name, out_name);
+        if (r) return r;
+        i = bs_find(name);
+        if (i >= 0) { bs_reg[i].owner = sp; bs_reg[i].owner_name = *out_name; bs_reg[i].owner_pset = NULL; }
+        return 0;
+    }
     if (op == MACH_BS_CHECK_IN) {
         kport_t *p;
         if (i >= 0) {
             p = bs_reg[i].port;
+            mspace_t *own = bs_reg[i].owner;
+            if (p->recv && own && p->recv == own && sp != own) {
+                /* o daemon chegou: tira o direito do launchd (a fila vai junto com a porta) */
+                ment_t *oe = ent_of_port(own, p);
+                bs_reg[i].owner_pset = p->pset;
+                p->pset = NULL;
+                p->recv = NULL;
+                if (oe) {
+                    bs_reg[i].owner_name = oe->name;
+                    oe->type &= ~T_RECEIVE;
+                    if (!(oe->type & (T_SEND | T_SO | T_DEAD))) ent_del(own, oe);
+                }
+                mlog("mach: bootstrap '%s' passa do launchd ao pid %llu\n", name, (u64)sp->pid, 0);
+            }
             if (p->recv) return BS_SERVICE_ACTIVE;        /* já há um servidor */
         } else {
             for (i = 0; i < 256 && bs_reg[i].port; i++) {}
@@ -1219,6 +1279,7 @@ static u32 bootstrap_op(mspace_t *sp, u32 op, const char *name, u32 *out_name) {
             port_ref(p);                                  /* o registro global guarda uma referência */
             snprintf(bs_reg[i].name, sizeof bs_reg[i].name, "%s", name);
             bs_reg[i].port = p;
+            bs_reg[i].owner = NULL; bs_reg[i].owner_name = 0; bs_reg[i].owner_pset = NULL;
         }
         port_ref(p);
         p->recv = sp;
@@ -1594,6 +1655,27 @@ void machipc_spawn(process_t *parent, process_t *child) {
     if (inherit) set_bootstrap(sp, inherit);              /* consome a referência */
 }
 
+/* terminou o daemon de um nome reservado pelo launchd: o direito de receber (com o que estiver na fila) volta ao
+ * launchd, no mesmo nome e no mesmo conjunto; os clientes continuam com envios válidos. true = devolvido */
+static bool bs_give_back(kport_t *port, mspace_t *dying) {
+    for (int j = 0; j < 256; j++) {
+        if (bs_reg[j].port != port) continue;
+        mspace_t *own = bs_reg[j].owner;
+        if (!own || own == dying || port->dead) return false;
+        u32 nm = bs_reg[j].owner_name;
+        if (nm && ent_at(own, nm)) nm = 0;
+        port_ref(port);
+        ment_t *e = ent_add(own, nm, T_RECEIVE, port);
+        if (!e) { port_unref(port); return false; }
+        bs_reg[j].owner_name = e->name;
+        port->recv = own;
+        port->pset = bs_reg[j].owner_pset;
+        mlog("mach: bootstrap '%s' volta ao launchd (pid %llu terminou)\n", bs_reg[j].name, (u64)dying->pid, 0);
+        return true;
+    }
+    return false;
+}
+
 void machipc_exit(process_t *p) {
     mspace_t *sp = p ? p->mach : NULL;
     if (!sp) return;
@@ -1611,9 +1693,13 @@ void machipc_exit(process_t *p) {
     /* 2. as portas que este processo recebia morrem: quem tem envio para elas recebe o aviso de
      *    nome-morto, e os serviços do bootstrap dele param de responder (look_up devolve 1102).
      *    (Antes o registro zerava o receptor primeiro, e as portas de serviço nunca morriam.) */
+    for (int j = 0; j < 256; j++) if (bs_reg[j].owner == sp) bs_reg[j].owner = NULL;
     for (u32 i = 0; i < sp->n; i++) {
         kport_t *port = sp->e[i].port;
-        if (port && (sp->e[i].type & T_RECEIVE) && (port->recv == sp || !port->recv)) port_kill(port);
+        if (port && (sp->e[i].type & T_RECEIVE) && (port->recv == sp || !port->recv)) {
+            if (bs_give_back(port, sp)) continue;      /* serviço do launchd: o direito volta para ele */
+            port_kill(port);
+        }
     }
     /* 3. larga os outros direitos: envio (pode disparar sem-remetentes em outro processo) e send-once
      *    (aviso de send-once não usado) */

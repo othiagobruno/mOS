@@ -19,17 +19,19 @@ __attribute__((weak)) void dfs_mount_all(void) {}
 __attribute__((weak)) bool vfs_is_volume(vnode_t *n) { (void)n; return false; }
 __attribute__((weak)) bool vfs_eject(vnode_t *vol) { (void)vol; return false; }
 __attribute__((weak)) int vfs_mount_file(vnode_t *f) { (void)f; return 0; }
+__attribute__((weak)) bool vfs_ext_writable(vnode_t *n) { (void)n; return false; }
 
 static int ensuring;
 static void ensure(vnode_t *n) {
     if (n && n->ext && !ensuring) { ensuring++; vfs_ensure(n); ensuring--; }
 }
 
-/* volumes externos (.dmg etc.) são somente leitura: o nó ou algum ancestral tem ext.
+/* volumes externos (.dmg, APFS...) são somente leitura: o ancestral mais próximo com ext decide;
+ * volumes FAT/HFS+ de discos graváveis aceitam escrita (vfs_bridge.c leva as mudanças ao disco).
  * Exceção: enquanto a ponte materializa um volume (dentro de ensure) ela pode criar nós. */
 static bool read_only(vnode_t *n) {
     if (ensuring) return false;
-    for (; n; n = n->parent) if (n->ext) return true;
+    for (; n; n = n->parent) if (n->ext) return !vfs_ext_writable(n);
     return false;
 }
 bool vfs_is_read_only(vnode_t *n) { return read_only(n); }
@@ -169,7 +171,7 @@ static void unlink_node(vnode_t *n) {
 }
 
 bool vfs_delete(vnode_t *n) {
-    if (!n || n == &root || !n->parent || read_only(n)) return false;
+    if (!n || n == &root || !n->parent || read_only(n) || vfs_is_volume(n)) return false; /* volume: vfs_eject */
     persist_delete(n);
     unlink_node(n);
     free_tree(n);
@@ -177,7 +179,7 @@ bool vfs_delete(vnode_t *n) {
 }
 
 bool vfs_move(vnode_t *n, vnode_t *np, const char *newname) {
-    if (!n || !np || !np->dir || n == &root || read_only(n) || read_only(np)) return false;
+    if (!n || !np || !np->dir || n == &root || read_only(n) || read_only(np) || vfs_is_volume(n)) return false;
     for (vnode_t *p = np; p; p = p->parent) if (p == n) return false;
     const char *nm = newname ? newname : n->name;
     char name[256];

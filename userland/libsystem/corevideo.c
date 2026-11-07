@@ -83,8 +83,21 @@ static void stamp(cvts_t *t, i64 frame, u64 host) {
      * Antes ia 1|2|4: o período e a escala não eram "válidos" para quem confere as flags (vsync do Chromium) */
     t->flags2 = 1 | 2 | 8 | 16;
 }
+/* Como no macOS, CVDisplayLinkStop/Release esperam o callback em andamento terminar: o Chrome para o link no
+ * destrutor do ui::DisplayLinkMac e libera o contexto logo depois; o callback que ainda rodava escrevia em memória
+ * liberada e corrompia o heap (o mapa global de DisplayLinkMac caía ao fechar a janela). Dentro do próprio callback
+ * (mesma thread) não espera. */
+static cvlink_t *volatile g_in_cb;
+static void *volatile g_link_tid;
+void *pthread_self(void);
+static void wait_callback(cvlink_t *l) {
+    __sync_synchronize();
+    if (!g_link_tid || pthread_self() == g_link_tid) return;
+    while (g_in_cb == l) SYS0(SYS_YIELD);
+}
 static void *link_thread(void *arg) {
     (void)arg;
+    g_link_tid = pthread_self();
     for (;;) {
         usleep(PERIOD_US);
         cvlink_t *run[MAX_LINKS];
@@ -101,7 +114,10 @@ static void *link_thread(void *arg) {
             stamp(&b, l->frame + 1, now + PERIOD_US * 1000ull);
             u64 fo = 0;
             { extern int cx_ca_diag(void); if (cx_ca_diag() && (l->frame <= 3 || l->frame % 600 == 0)) cx_fdprintf(2, "[ca] CVDisplayLink %p: disparo %llu\n", (void *)l, (unsigned long long)l->frame); }
+            g_in_cb = l;
+            __sync_synchronize();
             if (l->running) l->cb(l, &a, &b, 0, &fo, l->ctx);
+            g_in_cb = 0;
             objc_release((id)l);
         }
     }
@@ -129,7 +145,7 @@ int CVDisplayLinkCreateWithCGDisplay(u32 display, cvlink_t **out) {
 int CVDisplayLinkCreateWithCGDisplays(u32 *displays, long n, cvlink_t **out) { return CVDisplayLinkCreateWithCGDisplay(n > 0 && displays ? displays[0] : 1, out); }
 int CVDisplayLinkCreateWithActiveCGDisplays(cvlink_t **out) { return CVDisplayLinkCreateWithCGDisplay(1, out); }
 cvlink_t *CVDisplayLinkRetain(cvlink_t *l) { if (l) objc_retain((id)l); return l; }
-void CVDisplayLinkRelease(cvlink_t *l) { if (l) { l->running = 0; objc_release((id)l); } }
+void CVDisplayLinkRelease(cvlink_t *l) { if (l) { l->running = 0; wait_callback(l); objc_release((id)l); } }
 int CVDisplayLinkSetOutputCallback(cvlink_t *l, cvcb_t cb, void *ctx) { if (!l) return kCVReturnInvalidArgument; l->cb = cb; l->ctx = ctx; return kCVReturnSuccess; }
 int CVDisplayLinkStart(cvlink_t *l) {
     if (!l) return kCVReturnInvalidArgument;
@@ -142,7 +158,7 @@ int CVDisplayLinkStart(cvlink_t *l) {
     }
     return kCVReturnSuccess;
 }
-int CVDisplayLinkStop(cvlink_t *l) { if (!l) return kCVReturnInvalidArgument; l->running = 0; return kCVReturnSuccess; }
+int CVDisplayLinkStop(cvlink_t *l) { if (!l) return kCVReturnInvalidArgument; l->running = 0; wait_callback(l); return kCVReturnSuccess; }
 u8 CVDisplayLinkIsRunning(cvlink_t *l) { return l && l->running; }
 u32 CVDisplayLinkGetCurrentCGDisplay(cvlink_t *l) { return l ? l->display : 0; }
 int CVDisplayLinkSetCurrentCGDisplay(cvlink_t *l, u32 d) { if (!l) return kCVReturnInvalidArgument; l->display = d; return kCVReturnSuccess; }

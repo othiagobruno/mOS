@@ -2,6 +2,7 @@
 #include "apps.h"
 #include "account.h"
 #include "compat.h"
+#include "launchsvc.h"
 
 enum { A_EJECT = 40, A_NEWFOLDER = 1, A_NEWWINDOW, A_TRASH, A_EMPTYTRASH, A_ICONS, A_LIST, A_GO_HOME, A_GO_DOCS, A_GO_APPS, A_GO_DL, A_NEWFILE, A_GETINFO,
        A_NEWTAB = 60, A_OPEN, A_RENAME, A_COLS, A_GALLERY, A_GROUPS, A_SORT0 = 70 /* +0..3 */, A_TAG0 = 80 /* +1..7 */ };
@@ -60,6 +61,7 @@ typedef struct {
 
 extern void popup_open(int sx, int sy, int w, const char **items, int n, int sel, window_t *win, int id);
 extern bool popup_take_result(window_t *win, int id, int *val);
+extern void popup_open_menu(int sx, int sy, int w, const menu_item_t *items, int n, window_t *win, int id);
 extern surface_t *image_decode(const u8 *d, usize n);
 #define CTX_ITEM_ID  0x7A001
 #define CTX_BG_ID    0x7A002
@@ -274,7 +276,14 @@ static const char *shown_name(item_t *it) {
     return b;
 }
 
-static const char *node_kind(vnode_t *n) { return is_bundle(n) ? "Aplicativo" : vfs_kind(n); }
+/* "Tipo": a descrição do Launch Services (o nome que o app que abre dá ao tipo, ou a do sistema) */
+static const char *node_kind(vnode_t *n) {
+    if (is_bundle(n)) return "Aplicativo";
+    if (!n) return "";
+    char p[512];
+    vfs_path(n, p, sizeof p);
+    return ls_kind_for_path(p);
+}
 
 /* ícone genérico de app do macOS (quando o bundle não tem um .icns legível) */
 static void icon_mac_generic(surface_t *s, int x, int y, int sz) {
@@ -302,6 +311,10 @@ static void draw_item_icon(surface_t *sf, item_t *it, int x, int y, int size) {
         else icon_mac_generic(sf, x, y, size);
     } else if (n->dir) icon_folder(sf, x, y, size, RGB(104, 182, 240));
     else {
+        char dp[512];
+        vfs_path(n, dp, sizeof dp);
+        surface_t *di = ls_doc_icon(dp, size);   /* ícone do documento no app que o abre */
+        if (di) { gfx_blend(sf, di, x, y, 255); return; }
         const char *e = vfs_ext(n->name);
         char up[8];
         int i = 0;
@@ -633,6 +646,50 @@ static void move_to_trash(fstate_t *s, item_t *it) {
 
 /* ---------------- Obter Informações (⌘I): janela pequena com geral, etiquetas e permissões */
 typedef struct { char path[256]; app_t *app; } info_t;
+
+/* "Abrir com:" do Obter Informações: o app deste documento e "Alterar Tudo…" para todos do mesmo tipo */
+static char ci_path[256];
+static ls_app_t *ci_app;
+static void change_all_answer(int button, void *ctx) {
+    (void)ctx;
+    if (button == 0 && ci_app) ls_set_default_for_path_type(ci_path, ci_app);
+}
+void finder_choose_app(const char *path);
+static int info_open_with(ui_t *u, info_t *in, vnode_t *n, int y) {
+    surface_t *sf = u->s;
+    gfx_fill(sf, 12, y, u->cw - 24, 1, T.separator);
+    y += 10;
+    text_draw(sf, font_get(FONT_SEMIBOLD), 12.5f, 16, y + 12, T.text, "Abrir com:");
+    y += 22;
+    static ls_app_t *list[20];
+    static char labels[22][160];
+    static const char *items[22];
+    int k = ls_handlers_for_path(in->path, LS_ROLE_ALL, list, 20);
+    ls_app_t *cur = k ? list[0] : NULL;
+    for (int i = 0; i < k; i++) {
+        snprintf(labels[i], sizeof labels[i], i == 0 ? "%s (padrão)" : "%s", ls_app_name(list[i]));
+        items[i] = labels[i];
+    }
+    items[k] = "Outro…";
+    rect_t pr = rect_make(46, y, u->cw - 62, 26);
+    if (cur) ls_app_draw_icon(cur, sf, 18, y + 2, 22);
+    int sel = ui_popup(u, 0x7C001, pr, items, k + 1, cur ? 0 : k);
+    if (sel == k && cur) finder_choose_app(in->path);
+    else if (sel > 0 && sel < k) ls_set_handler_for_file(in->path, list[sel]);   /* só este documento */
+    y += 34;
+    text_draw(sf, font_get(FONT_REGULAR), 11.5f, 18, y + 10, T.text2, "Use este app para abrir todos os documentos como este.");
+    y += 22;
+    if (ui_button_style(u, 0x7C002, rect_make(u->cw - 132, y, 116, 26), "Alterar Tudo…", BTN_GRAY, cur != NULL, NULL) && cur) {
+        snprintf(ci_path, sizeof ci_path, "%s", in->path);
+        ci_app = cur;
+        static char msg[400];
+        snprintf(msg, sizeof msg, "Tem certeza de que deseja alterar todos os documentos semelhantes para que sejam abertos com o app “%s”?", ls_app_name(cur));
+        static const char *btn[] = {"Continuar", "Cancelar"};
+        alert_show(msg, "Esta alteração será aplicada a todos os documentos com o mesmo tipo.", btn, 2, change_all_answer, NULL);
+    }
+    (void)n;
+    return y + 36;
+}
 static void info_paint(window_t *w, ui_t *u) {
     info_t *in = w->data;
     surface_t *sf = u->s;
@@ -668,6 +725,7 @@ static void info_paint(window_t *w, ui_t *u) {
         text_draw(sf, font_get(FONT_SEMIBOLD), 12, 104 - kw, y + 13, T.text2, rows[i].k);
         text_draw_ellipsis(sf, font_get(FONT_REGULAR), 12, 110, y + 13, u->cw - 124, T.text, rows[i].v);
     }
+    if (n && !n->dir) y = info_open_with(u, in, n, y + 10) - 10;
     /* Etiquetas: clicar alterna */
     y += 10;
     gfx_fill(sf, 12, y, u->cw - 24, 1, T.separator);
@@ -698,7 +756,7 @@ static void open_info(item_t *it) {
     if (it->node) vfs_path(it->node, in->path, sizeof in->path);
     char t[160];
     snprintf(t, sizeof t, "Informações de %s", shown_name(it));
-    window_t *w = wm_create(&app_arquivos, t, -1, -1, 300, 380, 0);
+    window_t *w = wm_create(&app_arquivos, t, -1, -1, 300, it->node && !it->node->dir ? 500 : 380, 0);
     if (!w) { kfree(in); return; }
     w->data = in;
     w->paint = info_paint;
@@ -762,15 +820,153 @@ static surface_t *preview_image(fstate_t *s, vnode_t *n) {
     return s->ql_img;
 }
 
+/* ---------------- "Abrir com": apps que o Launch Services diz que abrem o item, o padrão primeiro */
+#define OW_MAX 20
+static ls_app_t *ow_apps[OW_MAX];
+static int ow_n;
+static char ow_path[512];
+static char ow_labels[OW_MAX][160];
+#define OW_ICON(i) static void ow_icon##i(surface_t *s, int x, int y, int sz, u32 c) { (void)c; ls_app_draw_icon(ow_apps[i], s, x - 1, y - 1, sz + 2); }
+OW_ICON(0) OW_ICON(1) OW_ICON(2) OW_ICON(3) OW_ICON(4) OW_ICON(5) OW_ICON(6) OW_ICON(7) OW_ICON(8) OW_ICON(9)
+OW_ICON(10) OW_ICON(11) OW_ICON(12) OW_ICON(13) OW_ICON(14) OW_ICON(15) OW_ICON(16) OW_ICON(17) OW_ICON(18) OW_ICON(19)
+static void (*const ow_icons[OW_MAX])(surface_t *, int, int, int, u32) = {
+    ow_icon0, ow_icon1, ow_icon2, ow_icon3, ow_icon4, ow_icon5, ow_icon6, ow_icon7, ow_icon8, ow_icon9,
+    ow_icon10, ow_icon11, ow_icon12, ow_icon13, ow_icon14, ow_icon15, ow_icon16, ow_icon17, ow_icon18, ow_icon19};
+enum { OW_ACT = 1000, OW_OTHER = 1999 };
+
+/* monta o submenu (padrão, separador, os outros em ordem alfabética, separador, Outro…) */
+static int ow_build(const char *path, menu_item_t *out, int max) {
+    snprintf(ow_path, sizeof ow_path, "%s", path);
+    ow_n = ls_handlers_for_path(path, LS_ROLE_ALL, ow_apps, OW_MAX);
+    for (int i = 2; i < ow_n; i++)         /* o padrão fica no topo; o resto por nome */
+        for (int j = i; j > 1 && strcasecmp(ls_app_name(ow_apps[j]), ls_app_name(ow_apps[j - 1])) < 0; j--) { ls_app_t *t = ow_apps[j]; ow_apps[j] = ow_apps[j - 1]; ow_apps[j - 1] = t; }
+    int k = 0;
+    for (int i = 0; i < ow_n && k < max - 3; i++) {
+        if (i == 0) snprintf(ow_labels[i], sizeof ow_labels[i], "%s (padrão)", ls_app_name(ow_apps[i]));
+        else snprintf(ow_labels[i], sizeof ow_labels[i], "%s", ls_app_name(ow_apps[i]));
+        out[k] = (menu_item_t){ow_labels[i], NULL, OW_ACT + i};
+        out[k].icon = ow_icons[i];
+        k++;
+        if (i == 0 && ow_n > 1) { out[k] = (menu_item_t){NULL}; out[k].disabled = true; k++; }
+    }
+    if (k) { out[k] = (menu_item_t){NULL}; out[k].disabled = true; k++; }
+    out[k++] = (menu_item_t){"Outro…", NULL, OW_OTHER};
+    return k;
+}
+
+/* ---------------- Escolher Aplicativo (Outro… / "Não há um aplicativo definido") */
+typedef struct { char path[512]; int sel, scroll, all; int always; ls_app_t *list[96]; int n; } choose_t;
+static void choose_fill(choose_t *c) {
+    c->n = 0;
+    if (!c->all) c->n = ls_handlers_for_path(c->path, LS_ROLE_ALL, c->list, 96);
+    if (c->all || !c->n) {
+        c->n = 0;
+        for (int i = 0; i < ls_app_count() && c->n < 96; i++) {
+            ls_app_t *a = ls_app_at(i);
+            if (!strcmp(ls_app_id(a), "com.apple.finder")) continue;
+            c->list[c->n++] = a;
+        }
+        for (int i = 1; i < c->n; i++)
+            for (int j = i; j > 0 && strcasecmp(ls_app_name(c->list[j]), ls_app_name(c->list[j - 1])) < 0; j--) { ls_app_t *t = c->list[j]; c->list[j] = c->list[j - 1]; c->list[j - 1] = t; }
+    }
+    if (c->sel >= c->n) c->sel = c->n ? 0 : -1;
+}
+static void choose_paint(window_t *w, ui_t *u) {
+    choose_t *c = w->data;
+    surface_t *sf = u->s;
+    const char *nm = strrchr(c->path, '/') ? strrchr(c->path, '/') + 1 : c->path;
+    char msg[400];
+    snprintf(msg, sizeof msg, "Escolha um aplicativo para abrir o documento “%s”.", nm);
+    text_draw_ellipsis(sf, font_get(FONT_REGULAR), 13, 20, 28, u->cw - 40, T.text, msg);
+    static const char *modes[] = {"Aplicativos Recomendados", "Todos os Aplicativos"};
+    ui_label(u, 20, 52, "Habilitar:", FONT_REGULAR, 12.5f, T.text2);
+    int prev = c->all;
+    c->all = ui_popup(u, 0x7B001, rect_make(90, 38, 230, 24), modes, 2, c->all);
+    if (c->all != prev || !c->n) choose_fill(c);
+    rect_t list = rect_make(20, 72, u->cw - 40, u->ch - 72 - 92);
+    ui_group_box(u, list);
+    int rh = 30, ch = c->n * rh;
+    ui_scroll(u, 0x7B002, list, ch, &c->scroll);
+    rect_t clip0 = surface_push_clip(sf, list);
+    for (int i = 0; i < c->n; i++) {
+        rect_t r = rect_make(list.x + 4, list.y + 4 + i * rh - c->scroll, list.w - 8, rh - 2);
+        if (r.y + r.h < list.y || r.y > list.y + list.h) continue;
+        if (ui_list_row(u, 0x7B100 + i, r, i == c->sel, false)) {
+            if (c->sel == i && u->dblclick) { c->sel = i; goto open_now; }
+            c->sel = i;
+        }
+        ls_app_draw_icon(c->list[i], sf, r.x + 6, r.y + 3, 22);
+        text_draw_ellipsis(sf, font_get(FONT_REGULAR), 13, r.x + 36, r.y + 19, r.w - 44, i == c->sel ? RGB(255, 255, 255) : T.text, ls_app_name(c->list[i]));
+    }
+    surface_pop_clip(sf, clip0);
+    ui_checkbox_ex(u, 0x7B003, 20, u->ch - 80, "Sempre Abrir com", &c->always, true);
+    if (ui_button_style(u, 0x7B004, rect_make(u->cw - 200, u->ch - 44, 84, 28), "Cancelar", BTN_GRAY, true, NULL)) { wm_close(w); return; }
+    if (ui_button_style(u, 0x7B005, rect_make(u->cw - 108, u->ch - 44, 88, 28), "Abrir", BTN_FILLED | BTN_DEFAULT, c->sel >= 0, NULL)) goto open_now;
+    if (u->key == KEY_ESC) { wm_close(w); return; }
+    return;
+open_now:
+    if (c->sel < 0 || c->sel >= c->n) return;
+    {
+        ls_app_t *a = c->list[c->sel];
+        if (c->always) ls_set_handler_for_file(c->path, a);   /* "Sempre Abrir com": este documento */
+        ls_open(c->path, a);
+        wm_close(w);
+    }
+}
+static void choose_close(window_t *w) { kfree(w->data); }
+void finder_choose_app(const char *path) {
+    choose_t *c = kcalloc(1, sizeof *c);
+    if (!c) return;
+    snprintf(c->path, sizeof c->path, "%s", path);
+    c->sel = -1;
+    choose_fill(c);
+    window_t *w = wm_create(&app_arquivos, "Escolher Aplicativo", -1, -1, 460, 480, 0);
+    if (!w) { kfree(c); return; }
+    w->data = c;
+    w->paint = choose_paint;
+    w->on_close = choose_close;
+}
+
+static void ow_result(int v) {
+    if (v == OW_OTHER) { finder_choose_app(ow_path); return; }
+    int i = v - OW_ACT;
+    if (i >= 0 && i < ow_n) ls_open(ow_path, ow_apps[i]);
+}
+
 static void context_menus(ui_t *u, fstate_t *s, item_t *items, int n, bool ctx_item, bool ctx_bg) {
-    static const char *item_menu[] = {"Abrir", "Visualização Rápida", "Renomear", "Obter Informações", "Mover para o Lixo",
-                                      "Etiqueta Vermelho", "Etiqueta Laranja", "Etiqueta Amarelo", "Etiqueta Verde", "Etiqueta Azul", "Etiqueta Roxo", "Etiqueta Cinza"};
+    static const char *const tag_labels[] = {"Etiqueta Vermelho", "Etiqueta Laranja", "Etiqueta Amarelo", "Etiqueta Verde", "Etiqueta Azul", "Etiqueta Roxo", "Etiqueta Cinza"};
     static const char *bg_menu[] = {"Nova Pasta", "Visualizar como Ícones", "Visualizar como Lista", "Visualizar como Colunas"};
     rect_t cr = wm_content_rect(u->win);
-    if (ctx_item) popup_open(cr.x + u->mx, cr.y + u->my, 210, item_menu, items[s->sel >= 0 && s->sel < n ? s->sel : 0].node ? 12 : 4, -1, u->win, CTX_ITEM_ID);
+    if (ctx_item) {
+        item_t *it = &items[s->sel >= 0 && s->sel < n ? s->sel : 0];
+        static menu_item_t mi[24], sub[24];
+        static menu_t sub_menu = {"Abrir com", sub, 0};
+        int k = 0;
+        mi[k++] = (menu_item_t){"Abrir", NULL, 0};
+        char p[512] = "";
+        if (it->node) vfs_path(it->node, p, sizeof p);
+        /* documentos: "Abrir com ›" (pastas e apps não têm) */
+        if (it->node && !it->node->dir) {
+            sub_menu.count = ow_build(p, sub, 24);
+            mi[k] = (menu_item_t){"Abrir com", NULL, -1};
+            mi[k++].submenu = &sub_menu;
+        }
+        mi[k] = (menu_item_t){NULL}; mi[k++].disabled = true;
+        mi[k++] = (menu_item_t){"Visualização Rápida", NULL, 1};
+        mi[k++] = (menu_item_t){"Renomear", NULL, 2};
+        mi[k++] = (menu_item_t){"Obter Informações", NULL, 3};
+        if (it->node) {
+            mi[k++] = (menu_item_t){"Mover para o Lixo", NULL, 4};
+            mi[k] = (menu_item_t){NULL}; mi[k++].disabled = true;
+            for (int t = 0; t < 7; t++) mi[k++] = (menu_item_t){tag_labels[t], NULL, 5 + t};
+        }
+        popup_open_menu(cr.x + u->mx, cr.y + u->my, 220, mi, k, u->win, CTX_ITEM_ID);
+    }
     if (ctx_bg) popup_open(cr.x + u->mx, cr.y + u->my, 210, bg_menu, 4, -1, u->win, CTX_BG_ID);
-    int v;
-    if (popup_take_result(u->win, CTX_ITEM_ID, &v) && s->sel >= 0 && s->sel < n) {
+    int v = -1;
+    bool got = popup_take_result(u->win, CTX_ITEM_ID, &v);
+    if (got && v >= OW_ACT) { ow_result(v); u->clicked_any = true; }
+    else if (got && v >= 0 && s->sel >= 0 && s->sel < n) {
         item_t *it = &items[s->sel];
         if (v == 0) open_item(s, it);
         else if (v == 1) s->ql = true;

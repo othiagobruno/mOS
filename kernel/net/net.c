@@ -101,6 +101,7 @@ static void activate(netdev_t *d) {
     }
     if (!stack_ready) { stack_ready = true; dns_init(); }
     dhcp_init();     /* nova interface: nova concessão (udp_bind é idempotente) */
+    ipv6_start();    /* link-local novo (MAC da interface) e pedido de RA */
 }
 
 void net_set_active(netdev_t *d) { if (d) activate(d); }
@@ -135,7 +136,7 @@ void net_on_configured(void) {
 }
 
 /* =================================================================== Ethernet */
-static bool eth_send(const u8 *dst_mac, u16 type, const void *payload, u16 len) {
+bool net_eth_send(const u8 *dst_mac, u16 type, const void *payload, u16 len) {
     if (!g_netdev || len > ETH_MTU) return false;
     memcpy(tx_frame, dst_mac, 6);
     memcpy(tx_frame + 6, g_net.mac, 6);
@@ -185,7 +186,7 @@ static void arp_send(u16 op, const u8 *tmac, u32 tip, const u8 *eth_dst) {
     wr16(p, 1); wr16(p + 2, ETH_P_IP); p[4] = 6; p[5] = 4; wr16(p + 6, op);
     memcpy(p + 8, g_net.mac, 6); wr32(p + 14, g_net.ip);
     memcpy(p + 18, tmac, 6); wr32(p + 24, tip);
-    eth_send(eth_dst, ETH_P_ARP, p, sizeof p);
+    net_eth_send(eth_dst, ETH_P_ARP, p, sizeof p);
 }
 
 static void arp_request(u32 ip) {
@@ -197,7 +198,7 @@ static void arp_flush(u32 ip, const u8 *mac) {
     if (!arp_q) return;
     for (int i = 0; i < ARP_QUEUE; i++)
         if (arp_q[i].used && arp_q[i].hop == ip) {
-            eth_send(mac, ETH_P_IP, arp_q[i].data, arp_q[i].len);
+            net_eth_send(mac, ETH_P_IP, arp_q[i].data, arp_q[i].len);
             arp_q[i].used = false;
         }
 }
@@ -247,8 +248,16 @@ static bool ip_is_local_bcast(u32 dst) {
     return dst == IP_BROADCAST || (g_net.mask && g_net.mask != IP_BROADCAST && (dst | g_net.mask) == IP_BROADCAST && (dst & g_net.mask) == (g_net.ip & g_net.mask));
 }
 
-bool ipv4_send(u32 dst, u8 proto, const void *payload, u16 len) {
-    if (!g_netdev || len > ETH_MTU - IP_HLEN) return false;
+bool ipv4_send(u32 dst, u8 proto, const void *payload, u16 len) { return ipv4_send_from(0, dst, proto, payload, len); }
+
+/* 127.x e o próprio endereço não saem pela placa: voltam pela fila do laço local (ipv6.c) */
+static bool ip4_is_self(u32 dst) { return (dst >> 24) == 127 || (g_net.configured && dst == g_net.ip); }
+
+bool ipv4_send_from(u32 src, u32 dst, u8 proto, const void *payload, u16 len) {
+    if (len > ETH_MTU - IP_HLEN) return false;
+    bool self = ip4_is_self(dst);
+    if (!g_netdev && !self) return false;
+    if (!src) src = (dst >> 24) == 127 ? 0x7F000001 : g_net.ip;
     static u8 pkt[ETH_MTU];
     u8 *h = pkt;
     h[0] = 0x45; h[1] = 0;
@@ -257,19 +266,19 @@ bool ipv4_send(u32 dst, u8 proto, const void *payload, u16 len) {
     wr16(h + 6, 0x4000);                    /* DF */
     h[8] = 64; h[9] = proto;
     wr16(h + 10, 0);
-    wr32(h + 12, g_net.ip);
+    wr32(h + 12, src);
     wr32(h + 16, dst);
     wr16(h + 10, inet_csum_fold(inet_csum_add(0, h, IP_HLEN)));
     memcpy(pkt + IP_HLEN, payload, len);
     u16 total = IP_HLEN + len;
 
-    if (ip_is_local_bcast(dst) || !g_net.configured) return eth_send(MAC_BCAST, ETH_P_IP, pkt, total);
-    if ((dst >> 24) == 127 || dst == g_net.ip) return false;
+    if (self) return net_loop_enqueue(false, pkt, total);
+    if (ip_is_local_bcast(dst) || !g_net.configured) return net_eth_send(MAC_BCAST, ETH_P_IP, pkt, total);
 
     u32 hop = (g_net.mask && (dst & g_net.mask) == (g_net.ip & g_net.mask)) ? dst : g_net.gw;
     if (!hop) return false;
     arp_entry_t *e = arp_find(hop);
-    if (e && e->valid) return eth_send(e->mac, ETH_P_IP, pkt, total);
+    if (e && e->valid) return net_eth_send(e->mac, ETH_P_IP, pkt, total);
 
     /* enfileira até o ARP responder */
     if (!arp_q) arp_q = kcalloc(ARP_QUEUE, sizeof(arp_pending_t));
@@ -293,7 +302,7 @@ bool ipv4_send(u32 dst, u8 proto, const void *payload, u16 len) {
 
 static void icmp_input(u32 src, const u8 *p, u16 len);
 
-static void ipv4_input(const u8 *p, u16 len) {
+static void ipv4_input_from(const u8 *p, u16 len, bool from_loop) {
     if (len < IP_HLEN || (p[0] >> 4) != 4) return;
     u16 ihl = (u16)((p[0] & 15) * 4);
     u16 tot = rd16(p + 2);
@@ -302,16 +311,19 @@ static void ipv4_input(const u8 *p, u16 len) {
     u16 frag = rd16(p + 6);
     if ((frag & 0x2000) || (frag & 0x1FFF)) return;   /* fragmentos não são suportados */
     u32 src = rd32(p + 12), dst = rd32(p + 16);
-    bool ours = dst == IP_BROADCAST || ip_is_local_bcast(dst) || (g_net.ip && dst == g_net.ip) || !g_net.configured;
+    bool loop = from_loop && ip4_is_self(dst);
+    if ((dst >> 24) == 127 && !loop) return;          /* 127.x vindo da placa: descarta */
+    bool ours = loop || dst == IP_BROADCAST || ip_is_local_bcast(dst) || (g_net.ip && dst == g_net.ip) || !g_net.configured;
     if (!ours) return;
     const u8 *pl = p + ihl;
     u16 plen = tot - ihl;
     switch (p[9]) {
     case IPPROTO_ICMP: icmp_input(src, pl, plen); break;
     case IPPROTO_UDP:  udp_input(src, dst, pl, plen); break;
-    case IPPROTO_TCP:  if (g_net.configured && dst == g_net.ip) tcp_input(src, dst, pl, plen); break;
+    case IPPROTO_TCP:  if (loop || (g_net.configured && dst == g_net.ip)) tcp_input(src, dst, pl, plen); break;
     }
 }
+void ipv4_input(const u8 *p, u16 len) { ipv4_input_from(p, len, true); }
 
 /* =================================================================== ICMP */
 #define PING_ID     0x6D4F
@@ -354,6 +366,10 @@ static void icmp_input(u32 src, const u8 *p, u16 len) {
         u16 seq = rd16(p + 6);
         ping_slot_t *s = &pings[seq % PING_SLOTS];
         if (s->used && s->seq == seq && !s->replied) { s->replied = true; s->rtt = timer_ticks() - s->sent; }
+    } else if (p[0] == 0) {                             /* resposta ao ping de um app (anel de ipv6.c) */
+        u8 from[16];
+        ip6_from_v4(src, from);
+        icmp_echo_deliver(from, p, len);
     }
 }
 
@@ -375,12 +391,12 @@ bool udp_bind(u16 port, udp_handler_t h) {
 }
 
 bool udp_send(u32 dst_ip, u16 src_port, u16 dst_port, const void *data, u16 len) {
-    if (!g_netdev || len > ETH_MTU - IP_HLEN - 8) return false;
+    if (len > ETH_MTU - IP_HLEN - 8) return false;
     static u8 p[ETH_MTU];
     u16 ulen = 8 + len;
     wr16(p, src_port); wr16(p + 2, dst_port); wr16(p + 4, ulen); wr16(p + 6, 0);
     memcpy(p + 8, data, len);
-    u32 s = inet_pseudo_sum(g_net.ip, dst_ip, IPPROTO_UDP, ulen);
+    u32 s = inet_pseudo_sum((dst_ip >> 24) == 127 ? 0x7F000001 : g_net.ip, dst_ip, IPPROTO_UDP, ulen);
     u16 c = inet_csum_fold(inet_csum_add(s, p, ulen));
     wr16(p + 6, c ? c : 0xFFFF);
     return ipv4_send(dst_ip, IPPROTO_UDP, p, ulen);
@@ -394,19 +410,25 @@ void udp_input(u32 src, u32 dst, const u8 *p, u16 len) {
         u32 s = inet_pseudo_sum(src, dst, IPPROTO_UDP, ulen);
         if (inet_csum_fold(inet_csum_add(s, p, ulen)) != 0) return;
     }
-    u16 sport = rd16(p), dport = rd16(p + 2);
+    udp_deliver(src, rd16(p), rd16(p + 2), p + 8, (u16)(ulen - 8));
+}
+
+/* entrega ao dono da porta (IPv4 e IPv6: no IPv6 src = 0) */
+void udp_deliver(u32 src, u16 sport, u16 dport, const u8 *data, u16 len) {
     for (int i = 0; i < UDP_BINDS; i++)
-        if (udp_binds[i].h && udp_binds[i].port == dport) { udp_binds[i].h(src, sport, p + 8, ulen - 8); return; }
+        if (udp_binds[i].h && udp_binds[i].port == dport) { udp_binds[i].h(src, sport, data, len); return; }
 }
 
 /* =================================================================== laço */
 static void eth_input(const u8 *f, u16 len) {
     if (len < ETH_HLEN) return;
     const u8 *dst = f;
-    if (memcmp(dst, g_net.mac, 6) && memcmp(dst, MAC_BCAST, 6)) return;
+    /* unicast nosso, broadcast ou multicast IPv6 (33:33:..., o e1000 deixa passar todo multicast) */
+    if (memcmp(dst, g_net.mac, 6) && memcmp(dst, MAC_BCAST, 6) && !(dst[0] == 0x33 && dst[1] == 0x33)) return;
     u16 type = rd16(f + 12);
-    if (type == ETH_P_IP) ipv4_input(f + ETH_HLEN, len - ETH_HLEN);
+    if (type == ETH_P_IP) ipv4_input_from(f + ETH_HLEN, len - ETH_HLEN, false);
     else if (type == ETH_P_ARP) arp_input(f + ETH_HLEN, len - ETH_HLEN);
+    else if (type == ETH_P_IPV6) ipv6_eth_input(f + ETH_HLEN, len - ETH_HLEN);
 }
 
 /* o corpo do net_poll; a trava g_net_lock (net.h) o protege das syscalls de rede dos apps (net/usersock.c),
@@ -419,7 +441,8 @@ void net_poll(void) {
     spin_unlock_irqrestore(&g_net_lock, fl);
 }
 static void net_poll_body(void) {
-    if (!g_netdev) return;
+    net_loop_drain();
+    if (!g_netdev) { tcp_tick(timer_ticks()); net_loop_drain(); return; }   /* o laço local funciona sem placa */
     for (int i = 0; i < 64; i++) {
         int n = g_netdev->recv(rx_frame, sizeof rx_frame);
         if (n <= 0) break;
@@ -435,13 +458,16 @@ static void net_poll_body(void) {
         if (up != g_net.link) {
             g_net.link = up;
             kprintf("net: link %s\n", up ? "ativo" : "inativo");
-            if (up) net_dhcp_renew();
+            if (up) { net_dhcp_renew(); ipv6_start(); }
         }
         arp_tick(now);
     }
     dhcp_tick(now);
+    ipv6_tick(now);
     dns_tick(now);
-    tcp_tick(now);}
+    tcp_tick(now);
+    net_loop_drain();
+}
 
 void net_init(void) {
     if (!e1000_probe()) rtl8139_probe();

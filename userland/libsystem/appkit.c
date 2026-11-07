@@ -1330,8 +1330,9 @@ static BOOL w_make_first(id self, SEL c, id r) {
     return YES;
 }
 static i64 w_number(id self, SEL c) { (void)c; return ws(self)->gid; }
-/* NSWindowOcclusionStateVisible = 2. Sem isto o Chromium trata a janela como coberta e não compõe. */
-static u64 w_occlusion(id self, SEL c) { (void)self; (void)c; return 2; }
+/* NSWindowOcclusionStateVisible = 2 enquanto a janela está na tela (o Chromium não compõe uma janela "coberta"); 0 antes
+ * de aparecer e depois de um orderOut:, como no macOS. As duas transições postam NSWindowDidChangeOcclusionStateNotification. */
+static u64 w_occlusion(id self, SEL c) { (void)c; return ws(self)->visible ? 2 : 0; }
 /* r está na base da janela (origem embaixo à esquerda do content, que no mOS coincide com a base). */
 static NSRect w_convert_to_screen(id self, SEL c, NSRect r) {
     (void)c;
@@ -1389,12 +1390,38 @@ static void w_order_in(id self) {
         }
         if (!app_windows) app_windows = cx_arr_new(&NSMutableArray_c);
         cx_arr_add(app_windows, self);
-    } else SYS1(GUI_WIN_FOCUS, s->gid);
+    } else if (!s->visible) SYS2(GUI_WIN_FOCUS, s->gid, GUI_FOCUS_SHOW);   /* escondida por orderOut: volta na frente */
+    else SYS1(GUI_WIN_FOCUS, s->gid);
     s->visible = YES;
     s->closed = NO;
     s->needs = YES;
 }
-static void w_order_out_core(id self) { (void)self; }
+/* NSWindowDidChangeOcclusionStateNotification (e o delegate): a janela apareceu ou sumiu. O Chromium recalcula aí a
+ * visibilidade das páginas (WebContentsViewCocoa) e solta ou suspende o compositor da janela. */
+static void w_post_occlusion(id self) {
+    static id occ;
+    if (!occ) occ = cx_str("NSWindowDidChangeOcclusionStateNotification");
+    id d = ws(self)->delegate, n = cx_note(occ, self, 0);
+    if (d && cx_responds(d->isa, sel_registerName("windowDidChangeOcclusionState:"))) MSG(void, d, "windowDidChangeOcclusionState:", n);
+    cx_post(n);
+}
+/* orderOut: some da tela sem ser destruída (o window server esconde a janela; conteúdo e posição ficam). Antes era
+ * um no-op: popups de <select>, dicas e janelas auxiliares do Electron ficavam na tela depois de "escondidas". */
+static void w_order_out_core(id self) {
+    wstate_t *s = ws(self);
+    if (!s->visible) return;
+    s->visible = NO;
+    if (s->gid > 0) SYS2(GUI_WIN_FOCUS, s->gid, GUI_FOCUS_HIDE);
+    if (g_key_window == self) {
+        g_key_window = 0;
+        static id resign;
+        if (!resign) resign = cx_str("NSWindowDidResignKeyNotification");
+        id d = s->delegate, n = cx_note(resign, self, 0);
+        if (d && cx_responds(d->isa, sel_registerName("windowDidResignKey:"))) MSG(void, d, "windowDidResignKey:", n);
+        cx_post(n);
+    }
+    w_post_occlusion(self);
+}
 /* Como no Cocoa, orderFront:/makeKeyAndOrderFront:/orderOut: passam por -orderWindow:relativeTo: (despacho dinâmico),
  * e é ali que as subclasses observam a ordem: a NativeWidgetMacNSWindow do Chromium sobrescreve esse método e só então
  * nota a janela visível e solta o compositor (RecyclableCompositorMac::Unsuspend). Sem isso o cc ficava com o main frame
@@ -1404,13 +1431,7 @@ static void w_order_window(id self, SEL c, i64 place, i64 rel) {
     if (place == 0) { w_order_out_core(self); return; }
     BOOL was = ws(self)->visible;
     w_order_in(self);
-    if (!was) {
-        static id occ;
-        if (!occ) occ = cx_str("NSWindowDidChangeOcclusionStateNotification");
-        id d = ws(self)->delegate, n = cx_note(occ, self, 0);
-        if (d && cx_responds(d->isa, sel_registerName("windowDidChangeOcclusionState:"))) MSG(void, d, "windowDidChangeOcclusionState:", n);
-        cx_post(n);
-    }
+    if (!was) w_post_occlusion(self);
 }
 static void w_show(id self, SEL c, id sender) {
     (void)sender;
@@ -1450,6 +1471,7 @@ static void w_set_content_size(id self, SEL c, NSSize z) {
 }
 static void close_window(id self, BOOL from_wm) {
     wstate_t *s = ws(self);
+    { extern int cx_ca_diag(void); if (cx_ca_diag()) cx_fdprintf(2, "[DIAGTMP] close_window %s %p closed=%d delegate %s %p\n", cx_class_name(object_getClass(self)), self, s->closed, s->delegate ? cx_class_name(object_getClass(s->delegate)) : "-", s->delegate); }
     if (s->closed) return;
     s->closed = YES;
     s->visible = NO;
@@ -1464,8 +1486,12 @@ static void w_close(id self, SEL c) { (void)c; close_window(self, NO); }
 static void w_perform_close(id self, SEL c, id sender) {
     (void)c; (void)sender;
     wstate_t *s = ws(self);
-    if (s->delegate && cx_responds(s->delegate->isa, sel_registerName("windowShouldClose:")) && !MSG(BOOL, s->delegate, "windowShouldClose:", self)) return;
-    close_window(self, NO);
+    SEL q = sel_registerName("windowShouldClose:");
+    /* como no Cocoa: pergunta ao delegate (ou à própria janela, se ela responder) e fecha por -close, que a subclasse
+     * pode sobrescrever (o Chrome recusa aqui e fecha as abas antes, chamando -close depois) */
+    if (s->delegate && cx_responds(s->delegate->isa, q)) { if (!MSG(BOOL, s->delegate, "windowShouldClose:", self)) return; }
+    else if (cx_responds(self->isa, q) && !MSG(BOOL, self, "windowShouldClose:", self)) return;
+    MSG(void, self, "close");
 }
 static void w_display(id self, SEL c) { (void)c; ws(self)->needs = YES; }
 
@@ -2389,20 +2415,18 @@ static id app_singleton;
  * depois de o próprio Init já ter chamado sharedApplication. O singleton continua existindo para
  * quem manda a mensagem; o global exportado fica nulo nos helpers (--type=renderer/gpu/utility
  * ou executável "Code Helper ..."). O processo do app (sem --type=) publica NSApp normalmente. */
-/* Exceção: o utilitário de notificações do Chrome (--utility-sub-type=mac_notifications...) roda um laço de eventos
- * do AppKit e faz CHECK(NSApp) — sem o global ele caía e o navegador o recriava sem parar. */
+/* Só o renderer quer o global nulo. Os utilitários que rodam um laço de eventos do AppKit fazem CHECK(NSApp) em
+ * base::MessagePumpNSApplication::DoRun: o de notificações do Chrome (mac_notifications) e, no Claude desktop, o
+ * áudio (audio.mojom.AudioService) e a captura de vídeo (video_capture.mojom.VideoCaptureService). Sem o global
+ * eles caíam ao subir, e o navegador os recriava sem parar (dezenas de "Claude Helper" por minuto). */
 static int nsapp_is_helper(void) {
     extern int NXArgc;
     extern char **NXArgv;
-    extern const char *__progname;
-    int helper = __progname && strstr(__progname, "Helper");
     for (int i = 1; NXArgv && i < NXArgc; i++) {
         const char *a = NXArgv[i];
-        if (!a) continue;
-        if (!strncmp(a, "--utility-sub-type=mac_notifications", 36)) return 0;
-        if (strncmp(a, "--type=", 7) == 0 && a[7]) helper = 1;
+        if (a && !strcmp(a, "--type=renderer")) return 1;
     }
-    return helper;
+    return 0;
 }
 static id ap_shared(id cls, SEL c) {
     (void)c;
@@ -2454,6 +2478,7 @@ static void ap_finish_launching(id self, SEL c) {
     note = cx_note(NSApplicationDidFinishLaunchingNotification, self, 0);
     if (d && cx_responds(d->isa, sel_registerName("applicationDidFinishLaunching:"))) MSG(void, d, "applicationDidFinishLaunching:", note);
     cx_post(note);
+    { extern void cx_openurl_listen(void); cx_openurl_listen(); }   /* URLs de outros apps (slack://, claude://): openurl.c */
 }
 static id find_window(int gid) {
     nsarr_t *a = (nsarr_t *)app_windows;
@@ -2487,8 +2512,9 @@ static void dispatch(gui_event_t *g) {
         g_mouse_screen.y = s->frame.o.y + (s->frame.s.h - g->y);
     }
     switch (g->type) {
-    case GEV_CLOSE:
-        close_window(w, YES);
+    case GEV_CLOSE:   /* key = 1: pedido do botão vermelho/⌘W/Dock (a janela continua); 0: já destruída pelo sistema */
+        if (g->key == 1) MSG(void, w, "performClose:", w);
+        else close_window(w, YES);
         break;
     case GEV_RESIZE: {
         s->frame.s.w = g->w;

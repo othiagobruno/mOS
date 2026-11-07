@@ -42,6 +42,64 @@ visitante@mOS ~ % run /Aplicativos/VSCode.app
 dyld[mOS]: símbolo não implementado no libSystem do mOS: _pthread_mach_thread_np
 ```
 
+### Terminal integrado: pseudoterminais (7 nov. 2026)
+
+O terminal integrado do VS Code (e do Cursor e do Claude, que usam o mesmo `node-pty`) precisa de PTY. O
+`node-pty` 1.2.0-beta.18 do VS Code 1.145 faz, no *pty host* (um utility process do Electron): `posix_openpt` +
+`grantpt` + `unlockpt` + `ioctl(TIOCPTYGNAME)`, `open(escravo, O_RDWR | O_NOCTTY)`, `tcsetattr` e `TIOCSWINSZ` no
+escravo, e `posix_spawn` do `spawn-helper` (dentro de `node_modules.asar.unpacked/node-pty/build/Release/`) com
+`POSIX_SPAWN_SETSID | CLOEXEC_DEFAULT | SETSIGDEF | SETSIGMASK` e `dup2` do escravo para 0/1/2. O helper faz
+`close(open(ttyname(0), O_RDWR))` (adota o terminal de controle), `chdir` e `execvp` do shell. O mestre fica
+`O_NONBLOCK`; a leitura é um `tty.ReadStream` do libuv (EVFILT_READ no kqueue do libSystem), a escrita é `fs.write`
+no threadpool (EAGAIN = tenta de novo), a saída do filho vem por `kqueue` EVFILT_PROC + `waitpid`, o redimensionamento
+é `ioctl(mestre, TIOCSWINSZ)` e o título da aba é `tcgetpgrp(mestre)` + `sysctl(KERN_PROC_PID)` (`p_comm`).
+
+**Kernel** (`kernel/proc/pty.c`, novo; ganchos em `process.c`, ABI em `syscall.h`):
+- `SYS_OPEN("/dev/ptmx")` cria um par (até `MOS_PTY_MAX` = 64) e devolve o mestre; `/dev/ttysNNN` abre o escravo
+  depois do `TIOCPTYUNLK`; `/dev/tty` abre o terminal de controle (ENXIO sem ele). Os fds ganham os tipos
+  `FD_PTY_M`/`FD_PTY_S` e uma referência ao par (`fds[].pty`, contada em `fd_close`/`fd_copy`/fork/spawn/fileports).
+- Disciplina de linha: ICANON (ERASE com IUTF8, KILL, WERASE, REPRINT, LNEXT, EOF, EOL), ECHO/ECHOE/ECHOK/ECHOKE/
+  ECHOCTL/ECHONL, ISIG (^C, ^\ e ^Z viram sinais para o grupo em primeiro plano, com flush), ICRNL/INLCR/IGNCR/
+  ISTRIP, IXON/IXANY, IMAXBEL, OPOST/ONLCR/OCRNL, VMIN/VTIME no modo cru. Trocar de canônico para cru entrega a linha
+  pendente; de cru para canônico, a entrada crua não lida é reeditada (como o PENDIN do BSD).
+- `struct termios` e os pedidos de `ioctl` com os números do macOS (`TIOCGETA`/`TIOCSETA[WF]`, `TIOCGWINSZ`/
+  `TIOCSWINSZ` com SIGWINCH, `TIOCSCTTY`/`TIOCNOTTY`, `TIOCGPGRP`/`TIOCSPGRP`, `TIOCGSID`, `FIONREAD`, `TIOCOUTQ`,
+  `TIOCSTI`, `TIOCFLUSH`, `TIOCSTOP`/`TIOCSTART`, `TIOCPTYGRANT`/`TIOCPTYUNLK`/`TIOCPTYGNAME` só no mestre, como o
+  libuv espera para distinguir mestre e escravo).
+- Sessões e grupos POSIX: `process_t` ganhou `pgid`, `sid` e `ctty`, herdados no fork/spawn; filhos do kernel e do
+  init começam a própria sessão (como os jobs do launchd); `POSIX_SPAWN_SETSID`/`SETPGROUP` valem. Um líder de sessão
+  sem terminal que abre um escravo sem `O_NOCTTY` o adota. `SYS_TTY` (56) tem `MOS_TTY_IOCTL`, `NAME`, `SETFL`
+  (O_NONBLOCK no kernel), `SETSID`, `SETPGID`, `GETPGID`, `GETSID`, `KILLPG` e `PROCINFO`.
+- Espera: read sem dados e write com a fila cheia bloqueiam a thread (`wait_pid = -9`, `thread_t.pty_wait`,
+  zerado na entrada de toda syscall), salvo com `MOS_O_NONBLOCK`; cada mudança no par conclui as operações pendentes.
+  `fstat` de um terminal: `is_dir = 5`, `size` = bytes que um read devolve agora, `mtime = 1` se daria fim de arquivo.
+- Fim de linha: fechar o último mestre manda SIGHUP ao líder da sessão (e ao grupo em frente); o escravo lê 0 e
+  escreve EIO. Sem nenhum escravo aberto, o mestre lê fim de arquivo (o node-pty fecha o terminal assim). O líder
+  de sessão que sai manda SIGHUP ao grupo em frente e a sessão perde o terminal.
+- Sinais de parada e de aviso (STOP, TSTP, TTIN, TTOU, CONT, WINCH, URG, INFO, IO) são ignorados por padrão (o mOS
+  não para processos; antes o ^Z ou um redimensionamento encerravam o programa), e um sinal ignorado some sem acordar
+  a thread com EINTR.
+
+**libSystem** (`userland/libsystem/pty.c`, novo): `posix_openpt`/`grantpt`/`unlockpt`/`ptsname(_r)`/`openpty`/
+`forkpty`/`login_tty`, termios inteiro (`tcgetattr`, `tcsetattr`, `cfmakeraw`, `cf*speed`, `tcflush`, `tcdrain`,
+`tcflow`, `tcsendbreak`, `tcgetwinsize`), `isatty`/`ttyname(_r)`/`ctermid`, `setsid`/`setpgid`/`getpgid`/`getpgrp`/
+`getsid`/`tcgetpgrp`/`tcsetpgrp`/`tcgetsid`/`killpg`, `cx_tty_ioctl` (o `ioctl` de `libc.c` manda para lá o que não
+é FIONBIO/FIOCLEX), `kill(0, s)`/`kill(-pg, s)` de grupo, e o `sysctl(KERN_PROC_PID)` com nome, grupo e terminal
+(`cx_kinfo_proc`, chamado de `darwin.c`). Os stubs antigos saíram de `cli.c`, `posixmore.c`, `vscode_libc.c`,
+`extra.c` e `libc.c`. `open` passa `O_NOCTTY`/`O_NONBLOCK` ao kernel e `fcntl(F_SETFL)`/`FIONBIO` o avisam; o
+`poll`/`select` voltam com EINTR quando um tratador de sinal roda (o readline do bash trata ^C e SIGWINCH assim). O
+console do mOS (fds 0–2 fora da tabela do kernel) continua como antes: é terminal se `TERM` não é `dumb`, e o nome
+falso passou a `/dev/console` (não colide com `/dev/ttys000`).
+
+**Testes**
+- `tools/ptytest.c`, no Windows, com o `pty.c` do kernel e processos/threads simulados: `ptytest: 80/80 ok`
+  (`zig cc -target x86_64-windows-gnu -O1 -Ikernel/include tools/ptytest.c -o build/ptytest.exe`).
+- `tools/build-ptytest.ps1 -OutDir build-pty` (`userland/tests-pty/main.c`, compila igual no macOS): o caminho do
+  node-pty com o próprio binário como spawn-helper e um filho que confere sessão, terminal de controle, eco, SIGWINCH
+  e ^C; depois o bash do Homebrew interativo (prompt, aritmética, `ls`, `tty`, `stty size`, `$COLUMNS` depois do
+  TIOCSWINSZ, ^C num `sleep`, `exit`). O `-ComBash` do `stage-vscode.ps1` agora põe também `ls`, `cat`, `stty`,
+  `tty` e `sleep` do coreutils.
+
 ### Estado em 7 nov. 2026, 02:40 (sessão pausada)
 
 - Janela do VS Code abre e o processo principal fica vivo; o `Code Helper (Renderer)` sobe e não cai mais nos CHECKs

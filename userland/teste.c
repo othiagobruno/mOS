@@ -204,6 +204,10 @@ void _start(const char *arg) {
         int dt2 = spawn("dispatchteste", 0);
         CHECK(dt2 > 0 && wait(dt2) == 0, "dispatchteste (Mach-O): filas, grupos, fontes, semáforos e isa OS_dispatch_*");
     }
+    if (file_size("/Sistema/Programas/sinaisteste") > 0) {   /* Mach-O: sinais POSIX (userland/tests-signals) */
+        int st3 = spawn("sinaisteste", 0);
+        CHECK(st3 > 0 && wait(st3) == 0, "sinaisteste (Mach-O): tratadores, máscaras, sigsuspend, sigaltstack, EINTR/SA_RESTART");
+    }
 
     print(fails ? "teste: %d FALHA(S)\n" : "teste: TODOS OS TESTES OK\n", (i64)fails);
     exit(fails);

@@ -30,6 +30,14 @@ bool vfs_is_volume(vnode_t *n); /* n é a raiz de um volume montado em /Volumes 
 bool vfs_eject(vnode_t *vol);   /* desmonta e libera o volume (n deixa de ser válido) */
 int  vfs_mount_file(vnode_t *f); /* monta uma imagem .dmg/.img; devolve nº de volumes criados (0 = falha/já montada) */
 bool vfs_is_read_only(vnode_t *n); /* dentro de um volume externo (somente leitura) */
+bool vfs_ext_writable(vnode_t *n); /* n->ext é de um volume gravável (FAT/HFS+ em disco) */
+/* escrita em volumes de /Volumes (vfs_bridge.c), chamados pelos ganchos de persistência */
+void vol_mark(vnode_t *n);                  /* pasta criada (já) ou arquivo alterado (depois) */
+void vol_delete(vnode_t *n);                /* antes de remover n */
+void vol_move(const char *old_path, vnode_t *n); /* depois de mover/renomear */
+bool vol_sync_all(void);                    /* grava o pendente de todos os volumes */
+void vol_tick(void);                        /* gravação atrasada (~1,5 s depois da última mudança) */
+bool vol_flush(vnode_t *vol);               /* grava o pendente de um volume (antes de ejetar) */
 
 vnode_t *vfs_root(void);
 vnode_t *vfs_lookup(const char *path);

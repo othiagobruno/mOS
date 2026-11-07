@@ -29,7 +29,7 @@ Legenda: ✅ o mOS já tem · 🟡 parcial ou stub · ❌ não tem
 | SMP / APIC / HPET | ✅ `arch/smp.c`: MADT, LAPIC calibrado, HPET, APs acordados (INIT-SIPI) | `Kernel/Extensions/AppleAPIC`, `xnu/osfmk/i386` | Os APs ficam ociosos: UI, rede, USB e áudio são de um núcleo só. |
 | Loader ELF64 | ✅ `proc/elf.c`: estático, em 0x400000000000 | — | Programas em `userland/`, compilados pelo `build.ps1`. |
 | Loader Mach-O | 🟡 gancho `macho_load()` no `proc_spawn` (sessão "Compatibilidade DMG" implementando) | `xnu/bsd/kern/mach_loader.c`, `mach_fat.c`; `Libraries/dyld` | |
-| Sinais, tty/pty, kqueue | 🟡 sessões de terminal (`proc_spawn_tty`, `read(0)` bloqueante, Ctrl+C via `proc_tty_interrupt`); sem handlers de sinal no usuário | `xnu/bsd/kern` | |
+| Sinais, tty/pty, kqueue | 🟡 sessões de terminal (`proc_spawn_tty`, `read(0)` bloqueante, Ctrl+C via `proc_tty_interrupt`); sinais POSIX completos no usuário (`sigaction` com `SA_SIGINFO`/`SA_RESTART`/`SA_ONSTACK`, máscara por thread, `sigsuspend`, `sigwait`, `sigaltstack`, quadro com ucontext do Darwin, faltas viram SIGSEGV/SIGBUS/SIGFPE; `docs/sinais.md`) | `xnu/bsd/kern` | |
 | Segurança (MAC, credenciais) | ❌ | `xnu/security` | Baixa prioridade. |
 
 ### 2. Drivers
@@ -133,6 +133,6 @@ O que ainda falta:
 - **Trabalho real nos APs**: exige trancas (locks) na UI, no VFS e nos drivers, que hoje dependem de um núcleo só.
 - **Escrita em volumes de `/Volumes`**: FAT de outros discos e HFS+.
 - **Memória virtual**: `MAP_SHARED` gravável de arquivo (gravar de volta), bits de proteção no PTE e paginação para disco. COW, `fork` e paginação sob demanda (anônima e de arquivo) estão feitos.
-- **Processos**: handlers de sinal no usuário.
+- **Processos**: parar/continuar processos (SIGSTOP/SIGTSTP/SIGCONT) e sinais de tempo real. Os tratadores de sinal no usuário estão feitos (`docs/sinais.md`).
 - **Interface**: tela de login (sessão principal, com o backend de contas já pronto), atalho de captura de tela (sessão de UI).
 - **Grandes portes**: IPv6, objc4/Foundation/AppKit e toolchain nativa.

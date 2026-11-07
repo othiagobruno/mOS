@@ -843,13 +843,25 @@ int cx_bitmap_draw_glyph(void *ctx, double x, double y, const u8 *alpha, int gw,
     int oy = (int)floor(py) + top;
     u32 fill = o->fill ? o->fill : cx_cg_fill_argb();
     if (!fill) fill = 0xFF000000;
+    /* itálico sintético: o Skia (SkScalerContext_Mac) põe a inclinação na matriz de texto (c = 0,25 para o
+     * font-style: italic de uma fonte sem face itálica). Cada linha do glifo anda c/d px por px de altura acima
+     * da linha de base, com a cobertura dividida entre os dois pixels vizinhos. */
+    double shear = (o->td > 1e-6 || o->td < -1e-6) ? o->tc / o->td : 0;
+    if (shear > 1 || shear < -1) shear = 0;
     for (int gy = 0; gy < gh; gy++) {
+        double dx = shear ? shear * (double)(-(top + gy)) : 0;
+        int ix = (int)floor(dx);
+        u32 fr = shear ? (u32)((dx - ix) * 256) : 0;          /* fração para o pixel da direita, em 1/256 */
         for (int gx = 0; gx < gw; gx++) {
             u8 cov = alpha[(size_t)gy * gw + gx];
             if (!cov) continue;
-            u32 A = ((fill >> 24) * cov) / 255;
-            u32 src = A << 24 | (((fill >> 16) & 255) * A / 255) << 16 | (((fill >> 8) & 255) * A / 255) << 8 | ((fill & 255) * A / 255);
-            blend_at(o, ox + gx, oy + gy, src);
+            for (int part = 0; part < (fr ? 2 : 1); part++) {
+                u32 c = fr ? (part ? cov * fr : cov * (256 - fr)) >> 8 : cov;
+                if (!c) continue;
+                u32 A = ((fill >> 24) * c) / 255;
+                u32 src = A << 24 | (((fill >> 16) & 255) * A / 255) << 16 | (((fill >> 8) & 255) * A / 255) << 8 | ((fill & 255) * A / 255);
+                blend_at(o, ox + ix + gx + part, oy + gy, src);
+            }
         }
     }
     return 1;

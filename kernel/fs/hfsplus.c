@@ -1,40 +1,12 @@
 /*
- * mOS — driver HFS+/HFSX somente leitura (TN1150).
+ * mOS — driver HFS+/HFSX (TN1150): leitura aqui, escrita em hfsplus_wr.c (só em discos graváveis).
  * Suporta: catálogo e extents overflow, wrapper HFS, hard links de arquivo, symlinks e
  * arquivos com compressão transparente (decmpfs: zlib, LZVN, LZFSE).
  */
-#include "fs.h"
-
-#define HFS_EPOCH_DELTA 2082844800ll
-#define FOURCC(a, b, c, d) ((u32)(a) << 24 | (u32)(b) << 16 | (u32)(c) << 8 | (u32)(d))
-
-typedef struct { u32 start, count; } ext_t;
-typedef struct { u64 size; u32 n; ext_t *ext; } fork_t;
-
-typedef struct {
-    blkdev_t *dev;
-    u32 bs;
-    fork_t cat, ext, attr;
-    u32 cat_ns, ext_ns, attr_ns;
-    u32 cat_root, ext_root, attr_root;
-    u32 priv_dir;            /* "\0\0\0\0HFS+ Private Data" (hard links) */
-    u8 *node;                /* buffer de nó */
-    bool own_dev;            /* dev é um slice criado aqui (wrapper HFS) */
-    u64 cache_ino;           /* último arquivo decmpfs descomprimido */
-    u8 *cache;
-    u64 cache_len;
-} hfs_t;
-
-typedef struct {
-    u8 data[80], rsrc[80];   /* HFSPlusForkData crus */
-    u32 file_id, link_ino;
-    bool compressed;
-    fork_t dfork;            /* extents completos (carregados na 1ª leitura) */
-    bool loaded;
-} hfs_file_t;
+#include "hfsplus_int.h"
 
 /* ------------------------------------------------------------ forks */
-static bool fork_read(hfs_t *h, const fork_t *f, u64 off, void *buf, u64 len) {
+bool hfs_fork_read(hfs_t *h, const fork_t *f, u64 off, void *buf, u64 len) {
     u8 *out = buf;
     u64 pos = 0;
     for (u32 i = 0; i < f->n && len; i++) {
@@ -64,7 +36,7 @@ static int ext_cmp(const u8 *k, const void *t) {
     return 0;
 }
 
-static bool fork_load(hfs_t *h, const u8 *fd, u32 file_id, u8 fork_type, fork_t *f) {
+bool hfs_fork_load(hfs_t *h, const u8 *fd, u32 file_id, u8 fork_type, fork_t *f) {
     f->size = be64(fd);
     u32 total = be32(fd + 12), have = 0;
     f->n = 0;
@@ -114,7 +86,7 @@ static bool read_node(hfs_t *h, int tree, u32 idx) {
     const fork_t *f = tree == 0 ? &h->cat : tree == 1 ? &h->ext : &h->attr;
     u32 ns = tree == 0 ? h->cat_ns : tree == 1 ? h->ext_ns : h->attr_ns;
     if ((u64)(idx + 1) * ns > f->size) return false;
-    return fork_read(h, f, (u64)idx * ns, h->node, ns);
+    return hfs_fork_read(h, f, (u64)idx * ns, h->node, ns);
 }
 
 static int cat_cmp(const u8 *k, const void *t);
@@ -195,9 +167,9 @@ static u8 *get_xattr(hfs_t *h, u32 file_id, const char *name, u64 *len) {
         fork_t f;
         u8 fd[80];
         memcpy(fd, d + 8, 80);
-        if (!fork_load(h, fd, 0, 0, &f) || f.size > (16u << 20)) { kfree(f.ext); return NULL; }
+        if (!hfs_fork_load(h, fd, 0, 0, &f) || f.size > (16u << 20)) { kfree(f.ext); return NULL; }
         u8 *b = kmalloc(f.size ? f.size : 1);
-        if (b && !fork_read(h, &f, 0, b, f.size)) { kfree(b); b = NULL; }
+        if (b && !hfs_fork_read(h, &f, 0, b, f.size)) { kfree(b); b = NULL; }
         if (b) *len = f.size;
         kfree(f.ext);
         return b;
@@ -315,7 +287,7 @@ static bool prepare(hfs_t *h, dnode_t *v, hfs_file_t *f) {
         }
         f->link_ino = 0;
     }
-    if (!f->compressed && !fork_load(h, f->data, f->file_id, 0, &f->dfork)) return false;
+    if (!f->compressed && !hfs_fork_load(h, f->data, f->file_id, 0, &f->dfork)) return false;
     f->loaded = true;
     return true;
 }
@@ -323,7 +295,7 @@ static bool prepare(hfs_t *h, dnode_t *v, hfs_file_t *f) {
 typedef struct { hfs_t *h; fork_t f; } rsrc_ctx_t;
 static bool rsrc_reader(void *ctx, u64 off, void *buf, u64 len) {
     rsrc_ctx_t *r = ctx;
-    return fork_read(r->h, &r->f, off, buf, len);
+    return hfs_fork_read(r->h, &r->f, off, buf, len);
 }
 
 static bool load_compressed(hfs_t *h, hfs_file_t *f) {
@@ -332,7 +304,7 @@ static bool load_compressed(hfs_t *h, hfs_file_t *f) {
     u8 *x = get_xattr(h, f->file_id, "com.apple.decmpfs", &xl);
     if (!x) return false;
     rsrc_ctx_t rc = {h, {0}};
-    bool ok = fork_load(h, f->rsrc, f->file_id, 0xFF, &rc.f);
+    bool ok = hfs_fork_load(h, f->rsrc, f->file_id, 0xFF, &rc.f);
     u64 out = 0;
     u8 *buf = ok ? decmpfs_decode(x, xl, rsrc_reader, &rc, rc.f.size, &out) : NULL;
     kfree(rc.f.ext);
@@ -377,11 +349,12 @@ static i64 hfs_read(dmount_t *m, dnode_t *v, u64 off, void *buf, u64 len) {
     }
     if (off >= f->dfork.size) return 0;
     len = MIN(len, f->dfork.size - off);
-    return fork_read(h, &f->dfork, off, buf, len) ? (i64)len : -1;
+    return hfs_fork_read(h, &f->dfork, off, buf, len) ? (i64)len : -1;
 }
 
 static void hfs_unmount(dmount_t *m) {
     hfs_t *h = m->priv;
+    if (h->wr) hfs_wr_close(h);          /* grava o pendente e marca o volume como desmontado direito */
     kfree(h->cat.ext); kfree(h->ext.ext); kfree(h->attr.ext);
     kfree(h->node); kfree(h->cache);
     if (h->own_dev) blk_release(h->dev); /* o resto pertence à imagem (dfs.c) */
@@ -402,12 +375,13 @@ static void hfs_trim(dmount_t *m) {
     h->cache_ino = 0;
 }
 
-static const dfs_ops_t HFS_OPS = {"HFS+", hfs_readdir, hfs_read, hfs_unmount, hfs_free_node, hfs_trim};
+static const dfs_ops_t HFS_OPS = {"HFS+", hfs_readdir, hfs_read, hfs_unmount, hfs_free_node, hfs_trim,
+                                  hfs_wr_write, hfs_wr_mkdir, hfs_wr_remove, hfs_wr_rename, hfs_wr_sync};
 
 static bool tree_header(hfs_t *h, int tree, fork_t *f, u32 *ns, u32 *root) {
     if (!f->size) { *root = 0; return true; }
     u8 hdr[512];
-    if (!fork_read(h, f, 0, hdr, sizeof(hdr))) return false;
+    if (!hfs_fork_read(h, f, 0, hdr, sizeof(hdr))) return false;
     *root = be32(hdr + 14 + 2);
     *ns = be16(hdr + 14 + 18);
     return *ns >= 512 && *ns <= 32768 && (*ns & (*ns - 1)) == 0;
@@ -429,17 +403,29 @@ int hfsplus_probe(blkdev_t *dev, const char *source, const char *fmt) {
         sig = be16(vh);
     }
     if (sig != 0x482B && sig != 0x4858) { if (vol != dev) blk_release(vol); return 0; }
+    /* journal: com transações pendentes, o replay vem antes de ler qualquer estrutura (pode mudar o
+     * próprio cabeçalho). Sem poder repetir (disco só leitura, journal em outro disco), monta só leitura.
+     * Volumes dentro de um wrapper HFS ficam só leitura. */
+    bool ro = vol != dev || !blk_writable(vol);
+    if (be32(vh + 4) & 0x2000) {
+        bool jro = false;
+        if (!hfs_journal_prepare(vol, vh, !ro, &jro) || !blk_read(vol, 1024, vh, 512)) {
+            if (vol != dev) blk_release(vol);
+            return 0;
+        }
+        if (jro) ro = true;
+    }
     hfs_t *h = kcalloc(1, sizeof(*h));
     h->dev = vol;
     h->own_dev = vol != dev;
     h->bs = be32(vh + 40);
     bool ok = h->bs >= 512 && (h->bs & (h->bs - 1)) == 0;
-    ok = ok && fork_load(h, vh + 192, 3, 0, &h->ext);
+    ok = ok && hfs_fork_load(h, vh + 192, 3, 0, &h->ext);
     h->node = kmalloc(32768);
     ok = ok && h->node && tree_header(h, 1, &h->ext, &h->ext_ns, &h->ext_root);
-    ok = ok && fork_load(h, vh + 272, 4, 0, &h->cat);
+    ok = ok && hfs_fork_load(h, vh + 272, 4, 0, &h->cat);
     ok = ok && tree_header(h, 0, &h->cat, &h->cat_ns, &h->cat_root) && h->cat_root;
-    ok = ok && fork_load(h, vh + 352, 8, 0, &h->attr);
+    ok = ok && hfs_fork_load(h, vh + 352, 8, 0, &h->attr);
     ok = ok && tree_header(h, 2, &h->attr, &h->attr_ns, &h->attr_root);
     if (!ok) {
         kprintf("hfs+: volume inválido\n");
@@ -463,6 +449,7 @@ int hfsplus_probe(blkdev_t *dev, const char *source, const char *fmt) {
     dmount_t *m = dfs_attach(&HFS_OPS, vol, name, source, fs, h, 2);
     if (!m) { hfs_unmount(&(dmount_t){.priv = h}); return 0; }
     dfs_first_child(m->root);
+    if (!ro) m->writable = hfs_wr_open(h, vh);
     (void)sig;
     return 1;
 }

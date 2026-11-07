@@ -15,7 +15,9 @@ param([Parameter(Mandatory = $true)][string]$App, [switch]$SemBuild, [int]$Ocios
       [switch]$Persist, [string]$Argumentos = '--in-process-gpu --disable-gpu --no-sandbox --verbose --enable-logging',
       [string]$Tracepoints = '', [switch]$Electron, [string]$Nome = 'Code', [string]$Servico = '', [string]$Accel = '',
       [int]$Capturas = 30, [string]$Passos = '', [int]$PassosApos = 150, [switch]$ComBash, [int]$SizeMiB = 0,
-      [int]$MaxModuloMiB = 16)
+      [int]$MaxModuloMiB = 16, [string]$SubstituirApp = '', [string]$AbrirURL = '', [int]$AbrirAposMs = 120000,
+      [string]$ComApp = '')
+# -AbrirURL / -AbrirAposMs / -ComApp (com -Electron): vão ao stage-electron (open <url> pelo init; outro .app na imagem)
 # -Capturas N: a cada N s depois que o app sobe, captura a tela (QMP) em $OutDir\shots\cap-*.png e diz se a janela existe
 # e quanto do conteúdo foi desenhado (tools\analisa-tela.ps1); 0 desliga
 # -Passos "move:x,y;click;type:..." -PassosApos N: N s depois que o app sobe, roda esses passos de entrada pelo QMP
@@ -41,7 +43,7 @@ function Save-Tela([string]$Png) {
 function Stage-App {
     if ($Electron) {
         $mib = if ($SizeMiB) { $SizeMiB } else { 1024 }
-        .\tools\stage-electron.ps1 -App $App -OutDir $OutDir -Diagnostico -CaLog -Autostart -SizeMiB $mib -MaxModuloMiB $MaxModuloMiB -Args0 $Argumentos -Tracepoints $Tracepoints 6>&1 2>&1 | ForEach-Object { "$_" }
+        .\tools\stage-electron.ps1 -App $App -OutDir $OutDir -Diagnostico -CaLog -Autostart -SizeMiB $mib -MaxModuloMiB $MaxModuloMiB -Args0 $Argumentos -Tracepoints $Tracepoints -SubstituirApp $SubstituirApp -AbrirURL $AbrirURL -AbrirAposMs $AbrirAposMs -ComApp $ComApp 6>&1 2>&1 | ForEach-Object { "$_" }
     }
     else { .\tools\stage-vscode.ps1 -App $App -OutDir $OutDir -Diagnostico -ComApp -ComModulosNativos -Autostart -SizeMiB 768 -Args0 $Argumentos -Tracepoints $Tracepoints -CaLog -ComBash:$ComBash 6>&1 2>&1 | ForEach-Object { "$_" } }
 }

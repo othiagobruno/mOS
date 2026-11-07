@@ -1026,16 +1026,15 @@ static void nc_deliver_async(obs_t *o, id note) {
 }
 void cx_post(id note) {
     nsnote_t *n = (nsnote_t *)note;
-    { static u64 dbg_p; nsnote_t *dn = (nsnote_t *)note; if ((++dbg_p % 2000) == 0 || dbg_p < 6) cx_fdprintf(2, "DBG post #%llu %s obj=%s\n", (unsigned long long)dbg_p, dn->name ? S(MSG0(id, dn->name, "description")) : "?", dn->object ? object_getClassName(dn->object) : "nil"); }
-    { static u64 dbg_q; if (++dbg_q == 100) for (obs_t *q = observers; q; q = q->next) cx_fdprintf(2, "  NOME %s bloco=%d\n", q->name ? (q->name_bad ? "(ruim)" : S(MSG0(id, q->name, "description"))) : "(nil)", q->block != 0); }
-    { static int dbg_once; nsnote_t *dn = (nsnote_t *)note; if (!dbg_once && dn->name && !strcmp(S(MSG0(id, dn->name, "description")), "WAExposureKeyDidChange")) { dbg_once = 1;
-        for (obs_t *q = observers; q; q = q->next) if (q->name && q->name_bad == 0 && obj_eq(q->name, dn->name)) cx_fdprintf(2, "  OBS alvo=%s sel=%s bloco=%p fila=%p obj=%p\n", q->target ? object_getClassName(q->target) : "-", q->sel ? (const char *)q->sel : "-", q->block ? *(void **)((u8 *)q->block + 16) : 0, q->queue, q->object); } }
     for (obs_t *o = observers; o; o = o->next) {
         if (o->name && o->name != n->name && (o->name_bad || !obj_eq(o->name, n->name))) continue;
         if (o->object && o->object != n->object) continue;
         if (o->block && o->queue) nc_deliver_async(o, note);
         else if (o->block) { void (*inv)(void *, id) = *(void **)((u8 *)o->block + 16); inv(o->block, note); }
-        else if (o->target) ((void (*)(id, SEL, id))objc_msgSend)(o->target, o->sel, note);
+        else if (o->target) {
+            { extern int cx_ca_diag(void); if (cx_ca_diag() && o->sel == sel_registerName("windowWillClose:")) cx_fdprintf(2, "[DIAGTMP] post windowWillClose: -> %s %p obj %p\n", cx_class_name(object_getClass(o->target)), o->target, n->object); }
+            ((void (*)(id, SEL, id))objc_msgSend)(o->target, o->sel, note);
+        }
     }
 }
 static void nc_post(id self, SEL c, id note) { (void)self; (void)c; cx_post(note); }
@@ -1169,7 +1168,13 @@ static void ud_kvo_notify(id self, id key, id v) {
                 ud_change(v, ud_obs[i].opts), ud_obs[i].ctx);
 }
 static id ud_obj(id self, SEL c, id k) { id d = ud_dict_of(self, c, NO); return d ? d_get(d, c, k) : 0; }
-static void ud_set(id self, SEL c, id v, id k) { d_set(ud_dict_of(self, c, YES), v, k); ud_kvo_notify(self, k, v); }
+/* como no macOS, o KVO só dispara quando o valor muda: regravar o mesmo valor (preferências do WhatsApp) não notifica */
+static void ud_set(id self, SEL c, id v, id k) {
+    id d = ud_dict_of(self, c, YES), old = d_get(d, c, k);
+    if (old && v && (old == v || MSG(BOOL, old, "isEqual:", v))) return;
+    d_set(d, v, k);
+    ud_kvo_notify(self, k, v);
+}
 static float ud_float(id self, SEL c, id k) { id v = ud_obj(self, c, k); return v ? (float)MSG0(double, v, "doubleValue") : 0.0f; }
 static BOOL ud_bool(id self, SEL c, id k) { id v = ud_obj(self, c, k); return v ? MSG0(BOOL, v, "boolValue") : NO; }
 static i64 ud_int(id self, SEL c, id k) { id v = ud_obj(self, c, k); return v ? MSG0(i64, v, "integerValue") : 0; }
@@ -1381,7 +1386,30 @@ static id fm_contents(id self, SEL c, id path, id *err) {
     closedir(d);
     return a;
 }
-static BOOL fm_mkdir(id self, SEL c, id path, BOOL inter, id attrs, id *err) { (void)self; (void)c; (void)inter; (void)attrs; (void)err; return mkdir(cx_cstr(path), 0755) == 0; }
+/* withIntermediateDirectories: cria os níveis que faltam e aceita a pasta já existente (como a Apple). Antes só o
+ * último nível era criado: o contêiner do App Group do WhatsApp ("Library/Group Containers/<grupo>") nunca existia, e
+ * travas, banco e logs dentro dele falhavam (o logger tentava de novo a cada linha). */
+static BOOL fm_mkdir(id self, SEL c, id path, BOOL inter, id attrs, id *err) {
+    (void)self; (void)c; (void)attrs;
+    if (err) *err = 0;
+    const char *p = path ? cx_cstr(path) : 0;
+    if (!p || !*p) return NO;
+    mos_stat_t st;
+    if (!inter) return mkdir(p, 0755) == 0;
+    if (SYS2(SYS_STAT, p, &st) == 0) return st.is_dir ? YES : NO;
+    char b[1024];
+    u64 n = strlen(p);
+    if (n >= sizeof b) return NO;
+    memcpy(b, p, n + 1);
+    for (u64 i = 1; i <= n; i++) {
+        if (b[i] != '/' && b[i] != 0) continue;
+        char sv = b[i];
+        b[i] = 0;
+        if (SYS2(SYS_STAT, b, &st) != 0 && mkdir(b, 0755) != 0 && SYS2(SYS_STAT, b, &st) != 0) return NO;
+        b[i] = sv;
+    }
+    return YES;
+}
 int cx_remove_tree(const char *p);   /* libc.c: apaga arquivo ou pasta inteira (unlink/rmdir agora são POSIX) */
 static BOOL fm_remove(id self, SEL c, id path, id *err) { (void)self; (void)c; (void)err; return cx_remove_tree(cx_cstr(path)) == 0; }
 static id fm_cwd(id self, SEL c) { (void)self; (void)c; char b[1024]; return cx_str(getcwd(b, sizeof b)); }

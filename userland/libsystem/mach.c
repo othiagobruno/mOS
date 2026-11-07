@@ -685,25 +685,7 @@ void mach_msg_destroy(mach_msg_header_t *msg) {
 kern_return_t mach_msg_send(mach_msg_header_t *msg) { return msg ? mach_msg(msg, MACH_SEND_MSG, msg->size, 0, 0, 0, 0) : KERN_INVALID_ARGUMENT; }
 kern_return_t mach_msg_receive(mach_msg_header_t *msg) { return msg ? mach_msg(msg, MACH_RCV_MSG, 0, msg->size, msg->local, 0, 0) : KERN_INVALID_ARGUMENT; }
 
-/* ---- notify(3): o mOS não tem notifyd; registros funcionam, mas nada é notificado */
-static int next_token = 1;
-u32 notify_register_dispatch(const char *name, int *token, void *queue, void *handler) {
-    (void)name; (void)queue; (void)handler;
-    if (token) *token = __sync_fetch_and_add(&next_token, 1);
-    return 0;                                          /* NOTIFY_STATUS_OK */
-}
-u32 notify_register_check(const char *name, int *token) { return notify_register_dispatch(name, token, 0, 0); }
-u32 notify_register_mach_port(const char *name, mach_port_t *port, int flags, int *token) {
-    (void)flags;
-    if (port) mach_port_allocate(TASK_PORT, 1, port);
-    return notify_register_dispatch(name, token, 0, 0);
-}
-u32 notify_check(int token, int *changed) { (void)token; if (changed) *changed = 0; return 0; }
-u32 notify_get_state(int token, u64 *state) { (void)token; if (state) *state = 0; return 0; }
-u32 notify_set_state(int token, u64 state) { (void)token; (void)state; return 0; }
-u32 notify_post(const char *name) { (void)name; return 0; }
-u32 notify_cancel(int token) { (void)token; return 0; }
-int notify_is_valid_token(int token) { return token > 0; }
+/* ---- notify(3): em svcclient.c, sobre o notifyd (userland/notifyd.c) */
 
 /* IOKit energia: sem informação (kIOReturnUnsupported) */
 int IOPMCopyCPUPowerStatus(void **status) { if (status) *status = 0; return (int)0xe00002c7; }

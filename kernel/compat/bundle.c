@@ -135,8 +135,10 @@ static int icns_px(const u8 *t) {
 
 static u32 be32(const u8 *p) { return (u32)p[0] << 24 | (u32)p[1] << 16 | (u32)p[2] << 8 | p[3]; }
 
-static struct { char path[300]; int size; surface_t *s; } icon_cache[16];
+static struct { char path[400]; int size; surface_t *s; } icon_cache[48];
 static int icon_next;
+
+static surface_t *icns_load(const char *p, const char *key, int size);
 
 surface_t *macho_bundle_icon(const char *app, int size) {
     if (size < 8 || size > 1024) return NULL;
@@ -149,6 +151,18 @@ surface_t *macho_bundle_icon(const char *app, int size) {
     usize fl = strlen(file);
     if (fl < 5 || strcasecmp(file + fl - 5, ".icns")) snprintf(file + fl, sizeof file - fl, ".icns");
     snprintf(p, sizeof p, "%s/Contents/Resources/%s", app, file);
+    return icns_load(p, app, size);
+}
+
+/* um .icns qualquer (ícones de documento: CFBundleTypeIconFile), no mesmo cache */
+surface_t *macho_icns_file(const char *icns_path, int size) {
+    if (size < 8 || size > 1024) return NULL;
+    for (u32 i = 0; i < ARRAY_LEN(icon_cache); i++)
+        if (icon_cache[i].s && icon_cache[i].size == size && !strcmp(icon_cache[i].path, icns_path)) return icon_cache[i].s;
+    return icns_load(icns_path, icns_path, size);
+}
+
+static surface_t *icns_load(const char *p, const char *app, int size) {
     vnode_t *v = vfs_lookup(p);
     if (!v || v->dir || !v->data || v->size < 16 || memcmp(v->data, "icns", 4)) return NULL;
     /* a menor entrada PNG que cubra o tamanho pedido (ou a maior que houver) */

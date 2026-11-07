@@ -28,7 +28,6 @@ ssize_t pwrite(int fd, const void *b, size_t n, off_t off);
 static void *q_or_global(void *q) { return q ? q : dispatch_get_global_queue(0, 0); }
 
 void *dispatch_io_create(unsigned long type, int fd, void *queue, void *cleanup) {
-    { static int dbg; if (dbg++ < 20) cx_fdprintf(2, "DBG io_create fd=%d tipo=%lu\n", fd, type); }
     cx_io_t *io = calloc(1, sizeof *io);
     if (!io) return 0;
     io->isa = OS_dispatch_io_c; io->magic = IOMAGIC; io->fd = fd; io->type = type;
@@ -36,7 +35,6 @@ void *dispatch_io_create(unsigned long type, int fd, void *queue, void *cleanup)
     return io;
 }
 void *dispatch_io_create_with_path(unsigned long type, const char *path, int oflag, unsigned mode, void *queue, void *cleanup) {
-    { static int dbg; if (dbg++ < 20) cx_fdprintf(2, "DBG io_create_with_path %s\n", path ? path : "(nil)"); }
     int fd = open(path, oflag, mode);
     if (fd < 0) return 0;
     cx_io_t *io = dispatch_io_create(type, fd, queue, cleanup);
@@ -75,6 +73,7 @@ static id io_read_all(int fd, int random, off64 off, usz n, int *err) {
     usz cap = 64 * 1024, len = 0;
     unsigned char *buf = malloc(cap);
     *err = 0;
+    if (fd < 0) { free(buf); *err = 9; return 0; }                /* EBADF, como o libdispatch */
     if (!buf) { *err = 12; return 0; }
     while (len < n) {
         if (len == cap) {
@@ -93,7 +92,6 @@ static id io_read_all(int fd, int random, off64 off, usz n, int *err) {
     return d;
 }
 void dispatch_io_read(void *io, off64 off, usz n, void *queue, void *handler) {
-    { static int dbg; if (dbg++ < 20) cx_fdprintf(2, "DBG io_read io=%p fd=%d n=%llu\n", io, io ? ((cx_io_t *)io)->fd : -1, (unsigned long long)n); }
     cx_io_t *c = io;
     int err = 9;
     id d = 0;

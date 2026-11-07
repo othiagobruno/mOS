@@ -311,7 +311,7 @@ static bool setup_rings(void) {
 
     wr(REG_TIPG, 10u | (8u << 10) | (6u << 20));
     wr(REG_TCTL, TCTL_EN | TCTL_PSP | TCTL_CT(0x0F) | TCTL_COLD(0x40) | TCTL_RTLC);
-    wr(REG_RCTL, RCTL_EN | RCTL_BAM | RCTL_BSIZE_2048 | RCTL_SECRC);
+    wr(REG_RCTL, RCTL_EN | RCTL_BAM | RCTL_MPE | RCTL_BSIZE_2048 | RCTL_SECRC);   /* MPE: multicast do IPv6 (NDP) */
     return true;
 }
 

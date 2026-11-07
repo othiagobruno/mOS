@@ -118,26 +118,10 @@ void *cx_tlv_get(const u64 *desc) {
     return (u8 *)tab[idx] + desc[2];
 }
 
-/* ---- os_log: o mOS ainda não tem log unificado; tudo desligado (o app segue normalmente) */
-char _os_log_default[64];                 /* OS_LOG_DEFAULT = &_os_log_default */
-char _os_log_disabled[64];
+/* ---- os_log, syslog e asl: oslog.c (vão ao logd) */
 /* objetos os_* (os_log, os_activity...): os do mOS são estáticos, então retain/release não fazem nada */
 void *os_retain(void *o) { return o; }
 void os_release(void *o) { (void)o; }
-void *os_log_create(const char *subsystem, const char *category) { (void)subsystem; (void)category; return _os_log_disabled; }
-int os_log_type_enabled(void *log, unsigned char type) { (void)log; (void)type; return 0; }
-void _os_log_impl(void *dso, void *log, unsigned char type, const char *fmt, void *buf, unsigned size) {
-    (void)dso; (void)log; (void)type; (void)fmt; (void)buf; (void)size;
-}
-void _os_log_error_impl(void *dso, void *log, unsigned char type, const char *fmt, void *buf, unsigned size) {
-    (void)dso; (void)log; (void)type; (void)fmt; (void)buf; (void)size;
-}
-void _os_log_debug_impl(void *dso, void *log, unsigned char type, const char *fmt, void *buf, unsigned size) {
-    (void)dso; (void)log; (void)type; (void)fmt; (void)buf; (void)size;
-}
-void _os_log_fault_impl(void *dso, void *log, unsigned char type, const char *fmt, void *buf, unsigned size) {
-    (void)dso; (void)log; (void)type; (void)fmt; (void)buf; (void)size;
-}
 
 /* ---- CoreFoundation em ponte com o Foundation do mOS (CFStringRef = NSString*, CFBundleRef = NSBundle*...) */
 typedef void *id_;
@@ -356,29 +340,7 @@ void CFNotificationCenterRemoveObserver(id_ c, const void *obs, id_ name, const 
 void CFNotificationCenterRemoveEveryObserver(id_ c, const void *obs) { (void)c; (void)obs; }
 void CFNotificationCenterPostNotification(id_ c, id_ name, const void *obj, id_ info, u8 now) { (void)c; (void)name; (void)obj; (void)info; (void)now; }
 
-/* SystemConfiguration mínimo: sem configd no mOS. O "store" é um objeto CF de verdade (um dicionário vazio),
- * como um configd cuja configuração nunca muda: o crate Rust system-configuration (os_proxy_resolver.node do
- * VS Code) entra em pânico com NULL. As consultas de proxy/rede dizem "sem configuração" (conexão direta),
- * as notificações são aceitas e nunca disparam, e a fonte de run loop é uma fonte versão 0 que nunca sinaliza. */
-#define kSCStatusFailed 1001
-id_ CFDictionaryCreateMutable(void *alloc, long cap, const void *kcb, const void *vcb);
-void *CFRunLoopSourceCreate(void *alloc, long order, void *ctx);
-id_ SCDynamicStoreCreate(void *alloc, id_ name, void *cb, void *ctx) { (void)alloc; (void)name; (void)cb; (void)ctx; return CFDictionaryCreateMutable(0, 0, 0, 0); }
-id_ SCDynamicStoreCreateWithOptions(void *alloc, id_ name, id_ opts, void *cb, void *ctx) { (void)opts; return SCDynamicStoreCreate(alloc, name, cb, ctx); }
-id_ SCDynamicStoreCopyProxies(id_ store) { (void)store; return 0; }
-id_ SCDynamicStoreCopyValue(id_ store, id_ key) { (void)store; (void)key; return 0; }
-u8 SCDynamicStoreSetNotificationKeys(id_ s, id_ k, id_ p) { (void)k; (void)p; return s != 0; }
-id_ SCDynamicStoreCreateRunLoopSource(void *alloc, id_ s, long order) {
-    if (!s) return 0;
-    void *ctx[10] = {0};   /* CFRunLoopSourceContext versão 0, sem callbacks */
-    return (id_)CFRunLoopSourceCreate(alloc, order, ctx);
-}
-id_ SCDynamicStoreKeyCreateNetworkGlobalEntity(void *alloc, id_ domain, id_ entity) { (void)domain; (void)entity; return CFStringCreateWithFileSystemRepresentation(alloc, "State:/Network/Global/Proxies"); }
-id_ SCDynamicStoreCopyComputerName(id_ s, u32 *enc) { (void)s; if (enc) *enc = ENC_UTF8; return CFStringCreateWithFileSystemRepresentation(0, "mOS"); }
-id_ SCDynamicStoreCopyLocalHostName(id_ s) { (void)s; return CFStringCreateWithFileSystemRepresentation(0, "mos"); }
-int SCError(void) { return kSCStatusFailed; }
-const char *SCErrorString(int status) { (void)status; return "SystemConfiguration não disponível no mOS"; }
-id_ CFNetworkCopySystemProxySettings(void) { return objc_retain(MSG0_(id_, cx_class_named("NSDictionary"), "dictionary")); }
+/* SystemConfiguration (SCDynamicStore, proxies, CFNetworkCopySystemProxySettings): sysconfig.c, sobre o configd */
 
 u8 CFEqual(id_ a, id_ b) { return a == b || (a && b && MSG1_(signed char, a, "isEqual:", b)); }
 u64 CFHash(id_ a) { return a ? MSG0_(u64, a, "hash") : 0; }
@@ -540,7 +502,9 @@ int poll(cx_pollfd_t *fds, unsigned n, int timeout) {
             if (fds[i].revents) ready++;
         }
         if (ready || timeout == 0 || (timeout > 0 && (u64)SYS0(SYS_TIME) >= end)) return ready;
-        SYS1(SYS_SLEEP, 1);
+        /* um sinal com tratador interrompe o cochilo (o kernel devolve -EINTR): poll/select voltam com EINTR, como no
+         * macOS. O readline do bash espera em pselect e só trata ^C e SIGWINCH quando ele volta assim */
+        if (SYS1(SYS_SLEEP, 1) == -4) { cx_errno = 4; return -1; }
     }
 }
 
@@ -773,9 +737,10 @@ int sysctl(int *mib, unsigned n, void *old, size_t *oldlen, void *newp, size_t n
         case 6: name = "kern.maxproc"; break;       case 7: name = "kern.maxfiles"; break;
         case 8: name = "kern.argmax"; break;        case 10: name = "kern.hostname"; break;
         case 65: name = "kern.osversion"; break;
-        case 14:                                    /* KERN_PROC: struct kinfo_proc zerada = sem depurador */
-            if (oldlen) { if (old) { memset(old, 0, *oldlen); } else *oldlen = 648; }
-            return 0;
+        case 14: {                                  /* KERN_PROC: pty.c (KERN_PROC_PID com nome e grupo; sem depurador) */
+            extern int cx_kinfo_proc(int *mib, unsigned n, void *old, size_t *oldlen);
+            return cx_kinfo_proc(mib, n, old, oldlen);
+        }
     }
     else if (mib[0] == 6) switch (mib[1]) {
         case 1: name = "hw.machine"; break;         case 2: name = "hw.model"; break;

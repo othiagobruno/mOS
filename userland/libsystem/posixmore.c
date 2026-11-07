@@ -202,10 +202,7 @@ void endservent(void) {}
 void *getservent(void) { return 0; }
 
 /* ------------------------------------------------------------ processos, terminal e tempo */
-int getpgrp(void) { return getpid(); }
-int tcsetpgrp(int fd, int pg) { (void)fd; (void)pg; return 0; }
-char *ttyname(int fd) { return isatty(fd) ? "/dev/ttys000" : 0; }
-unsigned long cfgetospeed(const void *t) { (void)t; return 38400; }
+/* getpgrp, tcsetpgrp, ttyname e cfgetospeed: em pty.c (SYS_TTY) */
 int getdtablesize(void) { return 256; }                /* PROC_MAX_FDS do kernel (proc.h) */
 /* alarm/setitimer(ITIMER_REAL): o kernel não tem temporizadores por processo; uma thread auxiliar dorme e
  * manda SIGALRM ao próprio processo. Cada armação nova aumenta a geração; a thread antiga vê e desiste. */
@@ -218,6 +215,11 @@ static volatile long long itimer_deadline_ms, itimer_interval_ms;
 static long long now_ms(void) { return (long long)cx_syscall(SYS_TIME, 0, 0, 0, 0, 0); }
 static void *itimer_thread(void *arg) {
     unsigned long gen = (unsigned long)arg;
+    {   /* a auxiliar bloqueia tudo: o SIGALRM tem de cair numa thread do programa, não nesta */
+        int pthread_sigmask(int how, const void *s, void *o);
+        unsigned all = 0xFFFFFFFFu;
+        pthread_sigmask(1, &all, 0);
+    }
     for (;;) {
         long long left = itimer_deadline_ms - now_ms();
         if (itimer_gen != gen) return 0;
@@ -799,7 +801,7 @@ int fchdir(int fd) {
 int sigdelset(unsigned *s, int n) { if (n < 1 || n > 32) { cx_errno = 22; return -1; } *s &= ~(1u << (n - 1)); return 0; }
 int sigfillset(unsigned *s) { *s = 0xFFFFFFFFu; return 0; }
 int sigismember(const unsigned *s, int n) { if (n < 1 || n > 32) { cx_errno = 22; return -1; } return (*s >> (n - 1)) & 1; }
-int sigsuspend(const unsigned *m) { (void)m; usleep(100000); cx_errno = 4; return -1; }   /* EINTR depois de 100 ms */
+/* sigsuspend, sigwait, sigpending, sigprocmask: libc.c (SYS_SIG) */
 
 /* strmode: "drwxr-xr-x " (10 caracteres, espaço e NUL), como o ls -l */
 void strmode(unsigned short mode, char *p) {
@@ -973,12 +975,10 @@ int rpmatch(const char *r) {
     if (*r == 'n' || *r == 'N') return 0;
     return -1;
 }
-int sigwait(const unsigned *set, int *sig) { (void)set; (void)sig; return 78; }   /* ENOSYS: sem fila de sinais por thread */
 int optreset;                                    /* getopt do BSD: o getopt_long daqui recomeça sozinho com optind = 1 */
 int getopt_long(int argc, char *const argv[], const char *s, const void *lo, int *idx);
 int getopt(int argc, char *const argv[], const char *s) { return getopt_long(argc, argv, s, 0, 0); }
-void openlog(const char *id, int opt, int fac) { (void)id; (void)opt; (void)fac; }
-void closelog(void) {}
+/* openlog/closelog: oslog.c */
 int acl_delete_def_file(const char *p) { (void)p; cx_errno = 45; return -1; }
 void *acl_from_text(const char *t) { (void)t; cx_errno = 45; return 0; }
 char *acl_to_text(void *a, long *len) { (void)a; if (len) *len = 0; cx_errno = 45; return 0; }
@@ -1120,5 +1120,4 @@ static int idna_copy(const char *name, int len, char *dest, int cap, int *err) {
 int uidna_nameToASCII_UTF8(void *u, const char *name, int len, char *dest, int cap, void *info, int *err) { (void)u; (void)info; return idna_copy(name, len, dest, cap, err); }
 int uidna_nameToUnicodeUTF8(void *u, const char *name, int len, char *dest, int cap, void *info, int *err) { (void)u; (void)info; return idna_copy(name, len, dest, cap, err); }
 
-/* pseudo-terminais: o mOS ainda não tem; o ruby 4 importa ptsname_r (PTY.spawn) */
-int ptsname_r(int fd, char *buf, size_t len) { (void)fd; (void)buf; (void)len; cx_errno = 25; return -1; }   /* ENOTTY */
+/* ptsname_r (o ruby 4 importa para PTY.spawn): em pty.c, com os pseudoterminais do kernel */

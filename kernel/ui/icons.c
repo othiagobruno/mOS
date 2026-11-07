@@ -417,6 +417,7 @@ surface_t *icon_for(app_t *a, int size) {
     const char *bundle = compat_app_bundle(a);
     surface_t *bic = bundle ? macho_bundle_icon(bundle, size) : NULL;
     if (bic) gfx_blend(s, bic, 0, 0, 255);
+    else if (tahoe_icon(a->exec, s, 0, 0, size)) {}   /* ícones do sistema no estilo Tahoe (icons_tahoe.c) */
     else if (a->draw_icon) a->draw_icon(s, 0, 0, size);
     /* Padrão do sistema: todo ícone de app é um quadrado arredondado. Ícones de outro formato
      * (redondos, recortados) são colocados, reduzidos, sobre uma placa clara (ou escura). */

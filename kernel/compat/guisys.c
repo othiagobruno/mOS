@@ -136,6 +136,20 @@ static void proxy_close(window_t *w) {
     push(g->ga, &e);
     g->w = NULL;                                   /* a janela do window server deixa de existir */
 }
+/* botão vermelho, ⌘W do sistema, Dock: como no macOS, o app recebe o pedido (performClose:) e pode recusar
+ * (o windowShouldClose: do Chrome recusa e fecha as abas antes); se aceitar, destrói a janela por GUI_WIN_DESTROY.
+ * GEV_CLOSE com key = 1 é o pedido; com key = 0, a janela já não existe. */
+static bool proxy_close_request(window_t *w) {
+    gwin_t *g = gwin_of(w);
+    if (!g) return false;
+    gui_event_t e;
+    memset(&e, 0, sizeof e);
+    e.type = GEV_CLOSE;
+    e.win = (u32)g->id;
+    e.key = 1;
+    push(g->ga, &e);
+    return true;
+}
 
 /* ------------------------------------------------------------ app (menubar/Cmd+Q) */
 static void free_menus(app_t *a) {
@@ -272,7 +286,7 @@ static gwin_t *win_get(process_t *p, u64 id) {
 }
 
 static void destroy(gwin_t *g) {
-    if (g->w) { window_t *w = g->w; g->w = NULL; w->on_close = NULL; wm_close(w); }
+    if (g->w) { window_t *w = g->w; g->w = NULL; w->on_close = NULL; w->on_close_request = NULL; wm_close(w); }
     surface_free(g->back);
     surface_free(g->shown);
     kfree(g->ime);
@@ -438,6 +452,7 @@ i64 compat_gui_syscall(process_t *p, u64 n, u64 a, u64 b, u64 c, u64 d, u64 e) {
         if (cr.h != h || cr.w != w) { g->w->h += h - cr.h; g->w->w += w - cr.w; }
         g->w->paint = proxy_paint;
         g->w->on_close = proxy_close;
+        g->w->on_close_request = proxy_close_request;
         g->w->on_key = proxy_key;
         g->w->min_w = 160; g->w->min_h = 90;
         ga->nwin++;
@@ -620,6 +635,7 @@ i64 compat_gui_syscall(process_t *p, u64 n, u64 a, u64 b, u64 c, u64 d, u64 e) {
         gwin_t *g = win_get(p, a);
         if (!g) return -MOS_EBADF;
         if (b == GUI_FOCUS_MOVE) return g->w && wm_begin_move(g->w) ? 0 : -MOS_EAGAIN;
+        if (b == GUI_FOCUS_HIDE || b == GUI_FOCUS_SHOW) { if (g->w) wm_set_hidden(g->w, b == GUI_FOCUS_HIDE); return 0; }
         if (g->w) wm_focus(g->w);
         return 0;
     }

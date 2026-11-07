@@ -2,10 +2,12 @@
  * mOS — LAPIC, HPET e partida dos processadores de aplicação (SMP).
  *
  * Os núcleos são descobertos pela tabela ACPI MADT e acordados com INIT-SIPI-SIPI. Cada AP passa
- * pelo trampolim (arch/smp_tramp.S), carrega a GDT/IDT do kernel, liga o próprio LAPIC e vira um
- * operário de par_for: a UI, a rede, o USB e o áudio continuam no BSP (ver proc.h), mas o trabalho
- * pesado e sem estado (composição, desfoque, vidro, sombras, cópias para o framebuffer) é dividido
- * entre todos os núcleos. Também ficam aqui o LAPIC (EOI, IPIs, temporizador calibrado) e o HPET.
+ * pelo trampolim (arch/smp_tramp.S), carrega a GDT/IDT do kernel, assume o modo do BSP (CR0/CR4/EFER/
+ * XCR0), ganha um TSS próprio, liga o LAPIC com o temporizador em 1 ms e vira a thread ociosa daquele
+ * núcleo: roda threads de usuário escolhidas pelo escalonador (proc/sched.c, trava grande do kernel)
+ * e, quando não há nenhuma, atende os trabalhos de par_for (composição, desfoque, vidro, sombras, cópias
+ * para o framebuffer). A UI, a rede, o USB, o áudio e as threads do kernel ficam no BSP. Também ficam
+ * aqui o LAPIC (EOI, IPIs, temporizador calibrado) e o HPET.
  */
 #include "proc.h"
 
@@ -19,7 +21,6 @@
 #define LAPIC_TICR  0x380
 #define LAPIC_TCCR  0x390
 #define LAPIC_TDCR  0x3E0
-#define MAX_CPUS    64
 
 typedef struct PACKED { char sig[4]; u32 len; u8 rev, sum; char oem[6], table[8]; u32 oemrev, creator, crev; } sdt_t;
 
@@ -187,22 +188,58 @@ extern u8 ap_tramp_start[], ap_tramp_end[], ap_tramp_pm32[], ap_tramp_lm64[];
 typedef struct PACKED { u16 limit; u64 base; } dtr_t;
 static dtr_t kgdt, kidt;
 static volatile u8 *tramp;
+static u64 bsp_cr0, bsp_cr4, bsp_efer, bsp_xcr0;
+static u8 cpu_apic[MAX_CPUS];
+
+u8 smp_apic_id(int cpu) { return cpu >= 0 && cpu < MAX_CPUS ? cpu_apic[cpu] : 0; }
+
+/* IPI fixo para um núcleo (proc/sched.c: TLB shootdown e threads mortas) */
+void smp_send_ipi(int cpu, u8 vec) {
+    if (!lapic || cpu < 0 || cpu >= ncpus_online) return;
+    u64 f = irq_save();
+    for (int i = 0; i < 100000 && (lr(LAPIC_ICRLO) & (1u << 12)); i++) __asm__ volatile("pause");
+    lw(LAPIC_ICRHI, (u32)cpu_apic[cpu] << 24);
+    lw(LAPIC_ICRLO, 0x4000 | vec);                             /* fixo, asserção, destino físico */
+    irq_restore(f);
+}
+
+static inline u64 rdmsr_(u32 m) { u32 lo, hi; __asm__ volatile("rdmsr" : "=a"(lo), "=d"(hi) : "c"(m)); return (u64)hi << 32 | lo; }
+static inline void wrmsr_(u32 m, u64 v) { __asm__ volatile("wrmsr" :: "c"(m), "a"((u32)v), "d"((u32)(v >> 32))); }
+
+extern void sched_ap_init(int cpu);
 
 static void ap_entry(void) {
-    /* GDT e IDT do kernel; sem ltr: o TSS é do BSP (o AP nunca roda código de ring 3) */
+    /* GDT e IDT do kernel */
     __asm__ volatile("lgdt %0; lidt %1" :: "m"(kgdt), "m"(kidt));
     __asm__ volatile(
         "mov $0x10, %%ax; mov %%ax, %%ds; mov %%ax, %%es; mov %%ax, %%ss; mov %%ax, %%fs; mov %%ax, %%gs;"
         "lea 1f(%%rip), %%rax; pushq $0x08; pushq %%rax; lretq; 1:" ::: "rax", "memory");
+    /* o mesmo modo de operação do BSP: o AP roda código de usuário (NX nas PTEs, SSE/XSAVE, FSGSBASE, WP) */
+    __asm__ volatile("mov %0, %%cr0" :: "r"(bsp_cr0) : "memory");
+    __asm__ volatile("mov %0, %%cr4" :: "r"(bsp_cr4) : "memory");
+    wrmsr_(0xC0000080, rdmsr_(0xC0000080) | (bsp_efer & ((1ULL << 11) | 1ULL)));   /* EFER.NXE, EFER.SCE */
+    if (bsp_cr4 & (1ULL << 18)) __asm__ volatile("xsetbv" :: "c"(0), "a"((u32)bsp_xcr0), "d"((u32)(bsp_xcr0 >> 32)));
     /* PAT igual ao do BSP (framebuffer em WC) */
     u64 pat = 0x0007010600070106ULL;
-    __asm__ volatile("wrmsr" :: "c"(0x277), "a"((u32)pat), "d"((u32)(pat >> 32)));
+    wrmsr_(0x277, pat);
     /* FPU/SSE limpos: os trabalhos usam ponto flutuante e SSE2 */
     u32 mxcsr = 0x1F80;
     __asm__ volatile("fninit; ldmxcsr %0" :: "m"(mxcsr));
     lapic_enable();
     int cpu = __atomic_add_fetch(&ncpus_online, 1, __ATOMIC_SEQ_CST) - 1;
     if (cpu >= MAX_CPUS) for (;;) __asm__ volatile("cli; hlt");
+    cpu_apic[cpu] = (u8)(lr(LAPIC_ID) >> 24);
+    /* TSS próprio: rsp0 das threads de usuário que este núcleo roda e pilha IST para NMI/falta dupla */
+    u8 *ist = kmalloc(16384);
+    cpu_tss_init(cpu, ist ? (((u64)ist + 16384) & ~15ULL) : 0);
+    wrmsr_(0xC0000101, 0);                                     /* GS de usuário: a troca de contexto define */
+    sched_ap_init(cpu);
+    /* fatia do escalonador neste núcleo: temporizador do LAPIC periódico, 1 ms, vetor 0xF0 */
+    if (lapic_hz) {
+        lw(LAPIC_TDCR, 0x3);                                   /* divide por 16 */
+        lw(LAPIC_LVT_T, 0x20000 | 0xF0);
+        lw(LAPIC_TICR, (u32)MAX(lapic_hz / 16 / 1000, 1));
+    }
     __atomic_add_fetch(&ap_ready, 1, __ATOMIC_SEQ_CST);
     ap_loop(cpu);
 }
@@ -234,6 +271,7 @@ void smp_init(void) {
     lapic = (volatile u8 *)lbase;
     g_lapic_eoi = lbase + LAPIC_EOI;
     bsp_id = lr(LAPIC_ID) >> 24;
+    cpu_apic[0] = (u8)bsp_id;
     lapic_enable();
     lapic_calibrate();
     kprintf("smp: LAPIC v%u em 0x%llx, BSP %u, temporizador %llu MHz, %d núcleo(s) na MADT\n",
@@ -244,6 +282,15 @@ void smp_init(void) {
     u64 page = low_page();
     if (!page || cr3 >> 32) { kprintf("smp: sem página baixa para o trampolim, só o BSP\n"); return; }
     __asm__ volatile("sgdt %0; sidt %1" : "=m"(kgdt), "=m"(kidt));
+    __asm__ volatile("mov %%cr0, %0; mov %%cr4, %1" : "=r"(bsp_cr0), "=r"(bsp_cr4));
+    {   /* FSGSBASE: o sched_init do BSP só liga depois (proc_init); os APs já nascem com ela */
+        u32 a = 7, b = 0, c = 0, d = 0;
+        __asm__ volatile("cpuid" : "+a"(a), "=b"(b), "+c"(c), "=d"(d));
+        if (b & 1) bsp_cr4 |= 1ULL << 16;
+        bsp_cr4 &= ~(1ULL << 12);                             /* LA57 não muda em modo longo: fica o do trampolim */
+    }
+    bsp_efer = rdmsr_(0xC0000080);
+    if (bsp_cr4 & (1ULL << 18)) { u32 lo, hi; __asm__ volatile("xgetbv" : "=a"(lo), "=d"(hi) : "c"(0)); bsp_xcr0 = (u64)hi << 32 | lo; }
     tramp = (volatile u8 *)page;
     memset((void *)tramp, 0, 4096);
     memcpy((void *)tramp, ap_tramp_start, ap_tramp_end - ap_tramp_start);

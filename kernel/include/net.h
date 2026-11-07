@@ -32,12 +32,38 @@ netdev_t *net_device_at(int i);
 /* trava da pilha (net.c): quem chama tcp_* ou dns_* fora do laço da área de trabalho segura ela */
 extern spinlock_t g_net_lock;
 
+/* IPv6 (net/ipv6.c). Endereços de 16 bytes em ordem de rede; o IPv4 aparece como ::ffff:a.b.c.d (mapeado). */
+typedef struct {
+    u8 ll[16];            /* fe80::/64 + EUI-64 do MAC */
+    u8 global[16];        /* SLAAC: prefixo do RA + EUI-64 */
+    u8 router[16];        /* roteador padrão (link-local, do RA) */
+    u8 dns[16];           /* RDNSS do RA */
+    u8 prefix_len;
+    bool ll_ok, global_ok, has_router, dns_ok, ra_seen;
+    u64 router_until;
+} net6_info_t;
+net6_info_t *net6_info(void);
+extern const u8 IP6_ANY[16], IP6_LOOPBACK[16];
+void ip6_to_str(const u8 *a, char *buf);     /* buf: 46 bytes */
+bool str_to_ip6(const char *s, u8 *out);
+void ip6_from_v4(u32 ip, u8 *out);
+bool ip6_is_v4mapped(const u8 *a);
+u32  ip6_to_v4(const u8 *a);
+bool ip6_eq(const u8 *a, const u8 *b);
+bool ip6_is_any(const u8 *a);
+bool ip6_is_local(const u8 *a);              /* 127.x, ::1 ou um endereço desta máquina */
+bool ip6_has_global_route(void);             /* endereço global + roteador padrão */
+
 /* DNS (assíncrono): 1 resolvido, 0 pendente, -1 falha */
 int dns_resolve(const char *host, u32 *ip);
+int dns_resolve6(const char *host, u8 *ip16);  /* registros AAAA */
 
 /* ICMP echo */
 bool icmp_ping_send(u32 ip, u16 seq);
 bool icmp_ping_reply(u16 seq, u64 *rtt_ms);
+/* eco de qualquer família montado por quem chama (ping/ping6 dos apps); respostas ficam num anel por identificador */
+bool icmp_echo_send(const u8 *dst16, const void *msg, u16 len);
+int  icmp_echo_recv(u16 id, u8 *from16, void *buf, int max);
 
 /* UDP */
 typedef void (*udp_handler_t)(u32 src_ip, u16 src_port, const u8 *data, u16 len);
@@ -47,6 +73,15 @@ bool udp_send(u32 dst_ip, u16 src_port, u16 dst_port, const void *data, u16 len)
 /* TCP (sockets não-bloqueantes) */
 enum { TCP_CLOSED, TCP_CONNECTING, TCP_OPEN, TCP_PEER_CLOSED, TCP_ERROR };
 int  tcp_connect(u32 ip, u16 port);           /* devolve id ou -1 */
+int  tcp_connect6(const u8 *ip16, u16 port);  /* qualquer família (v4 mapeado); -1 sem rota, -2 recusada (local sem escuta) */
+/* abertura passiva: ouvintes têm ids a partir de TCP_LISTEN_BASE */
+#define TCP_LISTEN_BASE 0x20000
+#define TCP_L_V4   1      /* aceita IPv4 (mapeado) */
+#define TCP_L_V6   2      /* aceita IPv6 */
+int  tcp_listen(const u8 *lip16, u16 port, int backlog, int fam_mask);  /* lip16 NULL/:: = qualquer; porta 0 = efêmera; -1 erro, -2 em uso */
+int  tcp_accept(int l);                       /* conexão pronta ou -1 */
+int  tcp_pending(int l);                      /* conexões prontas para accept */
+bool tcp_endpoints(int s, u8 *lip16, u16 *lport, u8 *rip16, u16 *rport);
 int  tcp_state(int s);
 int  tcp_send(int s, const void *data, int len);  /* bytes aceitos */
 int  tcp_recv(int s, void *buf, int max);     /* bytes lidos; 0 nada; -1 fechado e vazio */

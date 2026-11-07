@@ -10,6 +10,7 @@
 #include "storage.h"
 #include "proc.h"
 #include "crypto.h"
+#include "launchsvc.h"
 
 extern int g_kbd_layout;
 extern int g_tz_offset_min;
@@ -806,6 +807,19 @@ static void paint_mesa(void) {
     extern bool g_desktop_widgets;
     bool wd = g_desktop_widgets;
     if (row_switch(UI_ID, row(g2, 1, "Mostrar widgets na mesa"), &wd, true)) { g_desktop_widgets = wd; wm_damage_all(); }
+    /* como no macOS (Mesa e Dock > Janelas): o navegador que abre links (http, https e páginas HTML) */
+    section("Janelas");
+    rect_t gb = group(1);
+    {
+        ls_app_t *br[16];
+        static char bl[16][128];
+        static const char *bi[16];
+        int nb = ls_browsers(br, 16), cur = 0;
+        ls_app_t *def = ls_default_browser();
+        for (int i = 0; i < nb; i++) { snprintf(bl[i], sizeof bl[i], "%s", ls_app_name(br[i])); bi[i] = bl[i]; if (br[i] == def) cur = i; }
+        int ns = nb ? ui_popup_inline(U, UI_ID, row(gb, 0, "Navegador padrão"), bi, nb, cur) : 0;
+        if (nb && ns != cur && ns >= 0 && ns < nb) ls_set_default_browser(br[ns]);
+    }
     /* cantos ativos: uma ação por canto da tela */
     section("Cantos Ativos");
     extern int g_hot_corner[4];

@@ -1,6 +1,7 @@
 /* mOS — registro de aplicativos, abertura de arquivos por tipo e utilidades comuns */
 #include "apps.h"
 #include "compat.h"
+#include "launchsvc.h"
 
 static app_t *all_apps[] = {
     &app_arquivos, &app_horizonte, &app_terminal, &app_notas, &app_editor, &app_calculadora, &app_calendario,
@@ -40,10 +41,10 @@ static app_t *all_apps[] = {
 };
 
 /* apps do macOS (.app em /Aplicativos) registrados dinamicamente: aparecem no Launchpad e na Busca */
-#define MAX_MAC_APPS 24
+#define MAX_MAC_APPS 96
 static app_t *mac_apps[MAX_MAC_APPS];
 static int nmac;
-static void macos_run(const char *path, const char *name);
+static void macos_run(const char *path, const char *name, const char *args);
 static int last_spawn_pid = -1;      /* pid do último macos_run bem-sucedido */
 static int mac_pid[MAX_MAC_APPS];
 
@@ -60,7 +61,7 @@ static void mac_launch(app_t *a) {
     if (proxy) { wm_bring_app(proxy); return; }   /* já aberto: traz as janelas do processo */
     a->running = false;                /* as janelas pertencem ao processo (proxy do guisys), não a este atalho */
     last_spawn_pid = -1;
-    macos_run(a->exec + 4, a->name);   /* exec = "mac:<caminho>" */
+    macos_run(a->exec + 4, a->name, "");   /* exec = "mac:<caminho>" */
     if (i < nmac) mac_pid[i] = last_spawn_pid;
 }
 
@@ -96,6 +97,7 @@ static void watch_tick(void) {
 /* a cada quadro: o atalho fica "rodando" (bolinha no Dock) enquanto o processo tiver janelas */
 void apps_refresh_mac(void) {
     watch_tick();
+    ls_tick();
     extern window_t *wm_nth(int);
     for (int i = 0; i < nmac; i++) {
         if (!(mac_pid[i] > 0 && compat_gui_app_for_pid(mac_pid[i]))) {
@@ -113,12 +115,23 @@ void apps_refresh_mac(void) {
 }
 
 static void scan_mac_apps(void) {
+    /* .app apagado: o atalho sai do Launchpad (a memória fica: o Dock pode guardar o ponteiro) */
+    int k = 0;
+    for (int i = 0; i < nmac; i++) {
+        if (vfs_lookup(mac_apps[i]->exec + 4)) { mac_pid[k] = mac_pid[i]; mac_apps[k++] = mac_apps[i]; }
+        else kprintf("apps: \"%s\" removido\n", mac_apps[i]->name);
+    }
+    nmac = k;
     vnode_t *d = vfs_lookup("/Aplicativos");
     for (vnode_t *c = d && d->dir ? d->child : NULL; c && nmac < MAX_MAC_APPS; c = c->next) {
         usize l = strlen(c->name);
         if (!c->dir || l <= 4 || strcasecmp(c->name + l - 4, ".app") || !vfs_child(c, "Contents")) continue;
         char path[300];
         snprintf(path, sizeof path, "/Aplicativos/%s", c->name);
+        bool known = false;
+        for (int i = 0; i < nmac; i++) if (!strcmp(mac_apps[i]->exec + 4, path)) known = true;
+        if (known) continue;
+        mac_pid[nmac] = 0;
         app_t *a = kcalloc(1, sizeof(app_t));
         char *nm = kmalloc(128), *ex = kmalloc(310);
         if (!a || !nm || !ex) break;
@@ -142,6 +155,19 @@ void apps_register_all(void) {
     }
     app_arquivos.running = true;
     scan_mac_apps();
+    ls_init();                         /* Launch Services: tipos, quem abre o quê (chama apps_sync_mac) */
+}
+
+/* launchsvc.c: /Aplicativos mudou (app instalado ou apagado) */
+void apps_sync_mac(void) { scan_mac_apps(); wm_damage_all(); }
+
+/* launchsvc.c: inicia um .app com argumentos (URL para o navegador); pid ou -1 */
+int apps_run_mac(const char *bundle, const char *args) {
+    const char *b = strrchr(bundle, '/');
+    last_spawn_pid = -1;
+    macos_run(bundle, b ? b + 1 : bundle, args ? args : "");
+    for (int i = 0; i < nmac; i++) if (!strcmp(mac_apps[i]->exec + 4, bundle) && last_spawn_pid > 0) mac_pid[i] = last_spawn_pid;
+    return last_spawn_pid;
 }
 
 /* atalho de /Aplicativos que representa um app proxy (janelas de um processo do macOS); NULL se nenhum */
@@ -181,7 +207,7 @@ void app_quit(app_t *a) {
     if (strcmp(a->exec, "arquivos")) a->running = false;
 }
 
-static void macos_run(const char *path, const char *name) {
+static void macos_run(const char *path, const char *name, const char *args) {
     usize pl = strlen(path);
     bool gui = pl > 4 && !strcasecmp(path + pl - 4, ".app");   /* bundle: o app abre as próprias janelas */
     char *rep = kmalloc(8192);
@@ -209,7 +235,7 @@ static void macos_run(const char *path, const char *name) {
     cwd[sizeof cwd - 1] = 0;
     char *sl = strrchr(cwd, '/');
     if (sl && sl != cwd) *sl = 0;
-    int pid = macho_spawn(path, "", cwd, err, sizeof err);
+    int pid = macho_spawn(path, args, cwd, err, sizeof err);
     if (pid < 0) { notify("Não foi possível abrir", err); return; }
     last_spawn_pid = pid;
     if (gui) { kprintf("apps: %s iniciado (pid %d)\n", name, pid); watch_add(pid, name); return; }
@@ -219,50 +245,35 @@ static void macos_run(const char *path, const char *name) {
     notify("App do macOS iniciado", m);
 }
 
+/* "Não há um aplicativo definido para abrir o documento" (como o Finder): Escolher Aplicativo… / Cancelar */
+static char noapp_path[300];
+static void noapp_answer(int button, void *ctx) {
+    (void)ctx;
+    extern void finder_choose_app(const char *path);
+    if (button == 0) finder_choose_app(noapp_path);
+}
+
+/* o documento parece texto? (sem bytes nulos no começo) */
+static bool looks_text(vnode_t *n) {
+    usize k = MIN(n->size, (usize)4096);
+    for (usize i = 0; i < k; i++) if (!n->data[i]) return false;
+    return true;
+}
+
 void open_path(const char *path) {
     vnode_t *n = vfs_lookup(path);
     if (!n) return;
-    usize nl0 = strlen(n->name);
-    bool bundle = n->dir && nl0 > 4 && !strcasecmp(n->name + nl0 - 4, ".app") && vfs_child(n, "Contents");
-    if (bundle) { macos_run(path, n->name); return; }
+    /* executável solto (sem bundle): roda, com a saída no Terminal */
+    if (!n->dir && n->data && macho_is_macho(n->data, n->size)) { macos_run(path, n->name, ""); return; }
+    /* bundles, pastas e documentos: o Launch Services escolhe o app (a escolha do usuário, ou o de maior posto) */
+    if (ls_open(path, NULL)) return;
     if (n->dir) { finder_open_path(path); return; }
-    if (macho_is_macho(n->data, n->size)) { macos_run(path, n->name); return; }
-    const char *e = vfs_ext(n->name);
-    if (!strcasecmp(e, "html") || !strcasecmp(e, "htm")) {
-        char url[160];
-        snprintf(url, sizeof url, "file://%s", path);
-        app_launch(&app_horizonte);
-        browser_open_url(url);
-    } else if (!strcasecmp(e, "bmp") || !strcasecmp(e, "ppm") || !strcasecmp(e, "png") || !strcasecmp(e, "jpg") || !strcasecmp(e, "jpeg")) {
-        viewer_open_file(path);
-    } else if (!strcasecmp(e, "dmg") || !strcasecmp(e, "img")) {
-        char msg[300];
-        if (vfs_mount_file(n) > 0) {
-            snprintf(msg, sizeof msg, "\"%s\" montado", n->name);
-            notify(msg, "Disponível em Volumes, na barra lateral do Arquivos.");
-            vnode_t *vols = vfs_lookup("/Volumes");
-            if (vols && vols->child) finder_open_path("/Volumes");
-        } else {
-            notify("Não foi possível abrir a imagem", n->name);
-        }
-    } else if (!strcasecmp(e, "gif") || !strcasecmp(e, "wav")) {
-        quicktime_open_file(path);
-    } else if (!strcasecmp(e, "epub")) {
-        books_open_file(path);
-    } else if (!strcasecmp(e, "ics")) {
-        calendar_import_file(path);
-    } else if (!strcasecmp(e, "vcf")) {
-        contacts_import_file(path);
-    } else if (!strcasecmp(e, "app")) {
-        char ex[64];
-        strncpy(ex, n->name, sizeof ex - 1);
-        ex[sizeof ex - 1] = 0;
-        char *d = strrchr(ex, '.');
-        if (d) *d = 0;
-        for (int i = 0; i < apps_count(); i++) if (!strcmp(apps_get(i)->name, ex)) app_launch(apps_get(i));
-    } else {
-        editor_open_file(path);
-    }
+    if (!n->size || looks_text(n)) { editor_open_file(path); return; }
+    snprintf(noapp_path, sizeof noapp_path, "%s", path);
+    char title[360];
+    snprintf(title, sizeof title, "Não há um aplicativo definido para abrir o documento “%s”.", n->name);
+    static const char *btn[] = {"Escolher Aplicativo…", "Cancelar"};
+    alert_show(title, "Escolha um aplicativo para abrir o documento. Para usá-lo sempre, marque “Sempre Abrir com”.", btn, 2, noapp_answer, NULL);
 }
 
 /* ---------------------------------------------------------------- texto monoespaçado */

@@ -699,12 +699,17 @@ __attribute__((noreturn)) void _Unwind_Resume(void *e) { (void)e; cx_puts_fd(2, 
 
 /* processos, usuários e sistema */
 int sched_yield(void) { SYS0(SYS_YIELD); return 0; }
-int pause(void) { for (;;) SYS1(SYS_SLEEP, 1000); }
+/* pause: libc.c (sigsuspend com a máscara atual) */
 /* status no formato do macOS (WIFEXITED/WEXITSTATUS/WIFSIGNALED); opt: WNOHANG = 1, o resto é ignorado */
 int waitpid(int pid, int *st, int opt) {
     int s = 0;
     long r = cx_syscall(SYS_WAITPID, pid, (long)&s, opt & MOS_WNOHANG, 0, 0);
     if (r < 0) { cx_errno = (int)-r; return -1; }
+    {   /* WTERMSIG vem com o número do kernel (USR1 10, CHLD 17...): o macOS espera o dele */
+        extern int cx_sig_from_mos(int);
+        int ts = s & 0x7F;
+        if (ts && ts != 0x7F) s = (s & ~0x7F) | cx_sig_from_mos(ts);
+    }
     if (st && r > 0) *st = s;
     return (int)r;
 }
@@ -714,10 +719,9 @@ int wait4(int pid, int *st, int opt, void *ru) { if (ru) memset(ru, 0, 144); ret
 int setuid(unsigned u) { (void)u; return 0; }
 int setgid(unsigned g) { (void)g; return 0; }
 int setgroups(int n, const unsigned *g) { (void)n; (void)g; return 0; }
-int setpgid(int a, int b) { (void)a; (void)b; return 0; }
-int setsid(void) { return 1; }
+/* setpgid e setsid: em pty.c (sessões e grupos do kernel, SYS_TTY) */
 int chroot(const char *p) { (void)p; cx_errno = CX_EPERM; return -1; }
-int sigaltstack(const void *ss, void *old) { (void)ss; (void)old; return 0; }
+/* sigaltstack: libc.c (SYS_SIG) */
 #define FA_MAGIC 0x6D4F5346u
 #define AT_MAGIC 0x6D4F5354u
 typedef struct { u32 magic; int n; mos_spawn_fa_t op[MOS_SPAWN_FA_MAX]; } cx_fa;

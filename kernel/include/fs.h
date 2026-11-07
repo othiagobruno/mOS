@@ -8,6 +8,9 @@
  *   .dmg (UDIF: raw, zero, ADC, zlib, bzip2, LZFSE, LZMA)  ->  disco virtual
  *   disco virtual (GPT, APM, MBR ou volume direto)   ->  partições
  *   partição HFS+/HFSX ou contêiner APFS             ->  /Volumes/<nome>
+ *
+ * Volumes FAT12/16/32 e HFS+/HFSX de discos graváveis (AHCI, NVMe, pendrive) também aceitam escrita
+ * (dfs_ops_t.write_file & cia.; ver docs/volumes-graveis.md). Imagens .dmg e APFS continuam só leitura.
  */
 #pragma once
 #ifdef MOS_HOST_TEST
@@ -72,6 +75,14 @@ typedef struct dfs_ops {
     void (*unmount)(struct dmount *m);                                 /* libera o estado do driver */
     void (*free_node)(struct dnode *n);                                /* libera o conteúdo de n->priv */
     void (*trim)(struct dmount *m);                                    /* solta caches (pressão de memória) */
+    /* escrita (opcional: NULL = somente leitura; vale só com dmount->writable). Caminhos relativos à raiz
+     * do volume ("/a/b.txt"), nomes UTF-8. O VFS do sistema (vfs_bridge.c) chama estas funções quando um
+     * processo/app altera algo em /Volumes/<nome>. Cada chamada deixa o volume consistente no disco. */
+    bool (*write_file)(struct dmount *m, const char *path, const void *data, u64 len); /* cria ou substitui */
+    bool (*mkdir)(struct dmount *m, const char *path);                 /* o pai existe; true se já existir */
+    bool (*remove)(struct dmount *m, const char *path);                /* arquivo ou pasta (recursivo) */
+    bool (*rename)(struct dmount *m, const char *from, const char *to);/* mover/renomear no mesmo volume */
+    bool (*sync)(struct dmount *m);                                    /* grava caches; true = tudo no disco */
 } dfs_ops_t;
 
 /* uma imagem aberta: disco virtual + partições; vive enquanto houver volume montado dela */
@@ -91,6 +102,7 @@ typedef struct dmount {
     char format[32];        /* "UDZO", "ULFO", ... */
     void *priv;
     dimage_t *img;
+    bool writable;          /* o driver aceita write_file/mkdir/remove/rename (disco gravável) */
     struct dmount *next;
 } dmount_t;
 

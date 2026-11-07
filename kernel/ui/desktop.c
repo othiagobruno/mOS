@@ -760,6 +760,22 @@ void popup_open(int sx, int sy, int w, const char **items, int n, int sel, windo
     wm_damage_all();
 }
 
+/* menu de contexto completo: separadores (label NULL), cabeçalhos, itens desativados, símbolos e submenus
+ * (ex.: "Abrir com ›"). O resultado é o campo action do item escolhido, no menu ou no submenu. */
+void popup_open_menu(int sx, int sy, int w, const menu_item_t *items, int n, window_t *win, int id) {
+    submenu_close();
+    M.kind = MK_POPUP;
+    M.n = 0;
+    for (int i = 0; i < n && M.n < (int)ARRAY_LEN(M.items); i++) M.items[M.n++] = items[i];
+    M.x = sx; M.y = sy; M.w = w;
+    M.hover = -1;
+    M.popup_win = win; M.popup_id = id;
+    M.armed = true;
+    M.opened_at = timer_ticks();
+    menu_layout();
+    wm_damage_all();
+}
+
 bool popup_take_result(window_t *win, int id, int *val) {
     if (popup_res.ready && popup_res.win == win && popup_res.id == id) {
         popup_res.ready = false;
@@ -3051,7 +3067,14 @@ static bool desktop_handle_event_local(input_event_t *e) {
                     wm_damage_all();
                     return true;
                 }
-                if (e->key == KEY_ENTER) { int act = SM.items[SM.hover].action; desktop_close_menus(); run_action(act); return true; }
+                if (e->key == KEY_ENTER) {
+                    int act = SM.items[SM.hover].action, kind = M.kind, pid = M.popup_id;
+                    window_t *pw = M.popup_win;
+                    desktop_close_menus();
+                    if (kind == MK_POPUP) { popup_res.win = pw; popup_res.id = pid; popup_res.val = act; popup_res.ready = true; wm_invalidate(pw); }
+                    else run_action(act);
+                    return true;
+                }
                 return true;
             }
             if (e->key == KEY_ESC) { desktop_close_menus(); return true; }
@@ -3207,10 +3230,12 @@ static bool desktop_handle_event_local(input_event_t *e) {
         if (SM.open && rect_contains(sm_rect(), x, y)) {
             int si = list_item_at(SM.items, SM.n, sm_rect(), x, y);
             if (si != SM.hover || M.hover != -1) { SM.hover = si; M.hover = -1; wm_damage_all(); }
-            if (lr && si >= 0 && !SM.items[si].disabled) {
-                int act = SM.items[si].action;
+            if (lr && si >= 0 && !SM.items[si].disabled && SM.items[si].label && !SM.items[si].header) {
+                int act = SM.items[si].action, kind = M.kind, pid = M.popup_id;
+                window_t *pw = M.popup_win;
                 desktop_close_menus();
-                run_action(act);
+                if (kind == MK_POPUP) { popup_res.win = pw; popup_res.id = pid; popup_res.val = act; popup_res.ready = true; wm_invalidate(pw); }
+                else run_action(act);
             }
             return true;
         }

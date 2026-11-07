@@ -1,4 +1,4 @@
-/* mOS — TCP (RFC 793/1122/5681/6298, apenas abertura ativa)
+/* mOS — TCP (RFC 793/1122/5681/6298) sobre IPv4 e IPv6, abertura ativa e passiva (listen/accept)
  * Janela deslizante com retransmissão (go-back-N + retransmissão rápida), controle de congestionamento
  * simples (slow start / congestion avoidance), opção MSS, buffer de recepção de 64 KiB, FIN nos dois
  * sentidos e RST. Segmentos fora de ordem são descartados (o remetente os retransmite). */
@@ -22,7 +22,7 @@
 #define F_PSH 0x08
 #define F_ACK 0x10
 
-enum { S_FREE, S_SYN_SENT, S_ESTAB, S_FIN_WAIT1, S_FIN_WAIT2, S_CLOSING, S_TIME_WAIT, S_CLOSE_WAIT, S_LAST_ACK, S_ERR };
+enum { S_FREE, S_SYN_SENT, S_SYN_RCVD, S_ESTAB, S_FIN_WAIT1, S_FIN_WAIT2, S_CLOSING, S_TIME_WAIT, S_CLOSE_WAIT, S_LAST_ACK, S_ERR };
 
 #define SEQ_LT(a, b) ((i32)((a) - (b)) < 0)
 #define SEQ_LE(a, b) ((i32)((a) - (b)) <= 0)
@@ -37,7 +37,9 @@ typedef struct {
     bool ack_now;
     const char *err;
 
-    u32 rip;
+    u8  rip[16], lip[16];   /* endereços remoto e local (IPv4 como ::ffff:a.b.c.d) */
+    u8  from_l;         /* ouvinte de origem + 1 (abertura passiva); 0 = conexão ativa ou já aceita */
+    bool ready;         /* passiva estabelecida, esperando accept */
     u16 lport, rport;
 
     u32 iss, snd_una, snd_nxt, snd_max, snd_wnd, fin_seq;
@@ -73,13 +75,15 @@ static void tcb_free(tcb_t *t) {
     memset(t, 0, sizeof *t);
 }
 
+static u16 our_mss(const tcb_t *t) { return ip6_is_v4mapped(t->rip) ? OUR_MSS : OUR_MSS - 20; }   /* IPv6: cabeçalho de 40 */
+
 static u16 rx_window(tcb_t *t) {
     u32 free_ = RX_BUF - t->rx_len;
     return (u16)MIN(free_, 65535u);
 }
 
 /* monta e envia um segmento; dados copiados do anel de TX a partir de off (relativo a snd_una) */
-static void send_raw(u32 rip, u16 lport, u16 rport, u32 seq, u32 ack, u8 flags, u16 win,
+static void send_raw(const u8 *lip, const u8 *rip, u16 lport, u16 rport, u32 seq, u32 ack, u8 flags, u16 win,
                      const u8 *opts, int optlen, tcb_t *t, u32 off, u16 dlen) {
     static u8 seg[ETH_MTU];
     int hl = 20 + optlen;
@@ -100,17 +104,17 @@ static void send_raw(u32 rip, u16 lport, u16 rport, u32 seq, u32 ack, u8 flags, 
         if (first < dlen) memcpy(seg + hl + first, t->tx, dlen - first);
     }
     u16 total = (u16)(hl + dlen);
-    u32 s = inet_pseudo_sum(g_net.ip, rip, IPPROTO_TCP, total);
+    u32 s = l4_pseudo_sum(lip, rip, IPPROTO_TCP, total);
     wr16(seg + 16, inet_csum_fold(inet_csum_add(s, seg, total)));
-    ipv4_send(rip, IPPROTO_TCP, seg, total);
+    ip_send_any(lip, rip, IPPROTO_TCP, seg, total);
 }
 
 static void xmit(tcb_t *t, u32 seq, u8 flags, u32 off, u16 dlen) {
     u8 opt[4];
     int optlen = 0;
-    if (flags & F_SYN) { opt[0] = 2; opt[1] = 4; wr16(opt + 2, OUR_MSS); optlen = 4; }
+    if (flags & F_SYN) { opt[0] = 2; opt[1] = 4; wr16(opt + 2, our_mss(t)); optlen = 4; }
     u16 win = rx_window(t);
-    send_raw(t->rip, t->lport, t->rport, seq, (flags & F_ACK) ? t->rcv_nxt : 0, flags, win, opt, optlen, t, off, dlen);
+    send_raw(t->lip, t->rip, t->lport, t->rport, seq, (flags & F_ACK) ? t->rcv_nxt : 0, flags, win, opt, optlen, t, off, dlen);
     if (flags & F_ACK) {
         t->rcv_adv = t->rcv_nxt + win;
         t->ack_now = false;
@@ -185,8 +189,31 @@ static void rtt_sample(tcb_t *t, u32 r) {
 }
 
 /* =================================================================== API */
-int tcp_connect(u32 ip, u16 port) {
-    if (!g_netdev || !g_net.configured || !ip || !port) return -1;
+/* ---- ouvintes (abertura passiva) */
+#define TCP_LISTENERS 16
+typedef struct { bool used; u8 lip[16]; u16 port; int backlog; int fam; } listener_t;
+static listener_t lsn[TCP_LISTENERS];
+
+static bool port_in_use(u16 p, int skip) {
+    for (int i = 0; i < TCP_SOCKS; i++) if (i != skip && socks[i].st != S_FREE && socks[i].lport == p) return true;
+    for (int i = 0; i < TCP_LISTENERS; i++) if (lsn[i].used && lsn[i].port == p) return true;
+    return false;
+}
+
+/* ouvinte para um SYN que chegou em dst:port (o endereço vazio aceita qualquer um da família) */
+static listener_t *listener_for(const u8 *dst, u16 port) {
+    bool v4 = ip6_is_v4mapped(dst);
+    listener_t *any = NULL;
+    for (int i = 0; i < TCP_LISTENERS; i++) {
+        listener_t *l = &lsn[i];
+        if (!l->used || l->port != port || !(l->fam & (v4 ? TCP_L_V4 : TCP_L_V6))) continue;
+        if (ip6_eq(l->lip, dst)) return l;
+        if (ip6_is_any(l->lip) || (v4 && ip6_is_v4mapped(l->lip) && !ip6_to_v4(l->lip))) any = l;
+    }
+    return any;
+}
+
+static int tcb_new(const u8 *rip, u16 rport, const u8 *lip) {
     int s = -1;
     for (int i = 0; i < TCP_SOCKS; i++) if (socks[i].st == S_FREE) { s = i; break; }
     if (s < 0) return -1;
@@ -195,16 +222,9 @@ int tcp_connect(u32 ip, u16 port) {
     t->tx = kmalloc(TX_BUF);
     t->rx = kmalloc(RX_BUF);
     if (!t->tx || !t->rx) { kfree(t->tx); kfree(t->rx); t->tx = t->rx = NULL; return -1; }
-    t->rip = ip;
-    t->rport = port;
-    /* porta efêmera única */
-    for (int tries = 0; tries < 64; tries++) {
-        u16 p = net_ephemeral_port();
-        bool dup = false;
-        for (int i = 0; i < TCP_SOCKS; i++) if (i != s && socks[i].st != S_FREE && socks[i].lport == p) dup = true;
-        t->lport = p;
-        if (!dup) break;
-    }
+    memcpy(t->rip, rip, 16);
+    memcpy(t->lip, lip, 16);
+    t->rport = rport;
     t->iss = rand32() ^ (u32)(timer_ticks() * 250);
     t->snd_una = t->iss;
     t->snd_nxt = t->iss + 1;
@@ -213,6 +233,31 @@ int tcp_connect(u32 ip, u16 port) {
     t->cwnd = 10 * OUR_MSS;
     t->ssthresh = 0xFFFF;
     t->rto = RTO_INIT;
+    return s;
+}
+
+int tcp_connect(u32 ip, u16 port) {
+    if (!ip) return -1;
+    u8 a[16];
+    ip6_from_v4(ip, a);
+    int s = tcp_connect6(a, port);
+    return s < 0 ? -1 : s;
+}
+
+int tcp_connect6(const u8 *ip, u16 port) {
+    if (!port || ip6_is_any(ip) || (ip6_is_v4mapped(ip) && !ip6_to_v4(ip))) return -1;
+    u8 lip[16];
+    if (!ip6_source_for(ip, lip)) return -1;                 /* sem endereço/rota para essa família */
+    if (ip6_is_local(ip) && !listener_for(ip, port)) return -2;   /* local sem escuta: recusa na hora, como o BSD */
+    int s = tcb_new(ip, port, lip);
+    if (s < 0) return -1;
+    tcb_t *t = &socks[s];
+    /* porta efêmera única */
+    for (int tries = 0; tries < 64; tries++) {
+        u16 p = net_ephemeral_port();
+        t->lport = p;
+        if (!port_in_use(p, s)) break;
+    }
     t->st = S_SYN_SENT;
     xmit(t, t->iss, F_SYN, 0, 0);
     t->rtt_on = true; t->rtt_seq = t->iss; t->rtt_t0 = timer_ticks();
@@ -220,12 +265,79 @@ int tcp_connect(u32 ip, u16 port) {
     return s;
 }
 
+int tcp_listen(const u8 *lip, u16 port, int backlog, int fam) {
+    if (!fam) return -1;
+    if (lip && !ip6_is_any(lip) && !(ip6_is_v4mapped(lip) && !ip6_to_v4(lip)) && !ip6_is_local(lip)) return -1;   /* EADDRNOTAVAIL */
+    if (!port) {
+        for (int tries = 0; tries < 64 && !port; tries++) { u16 p = net_ephemeral_port(); if (!port_in_use(p, -1)) port = p; }
+        if (!port) return -2;
+    }
+    /* mesma porta: só se as famílias não se cruzam (um ouvinte v4 e outro v6-only, como no BSD) */
+    for (int i = 0; i < TCP_LISTENERS; i++) if (lsn[i].used && lsn[i].port == port && (lsn[i].fam & fam)) return -2;
+    for (int i = 0; i < TCP_SOCKS; i++) if (socks[i].st != S_FREE && socks[i].lport == port && !socks[i].from_l) return -2;
+    for (int i = 0; i < TCP_LISTENERS; i++) {
+        listener_t *l = &lsn[i];
+        if (l->used) continue;
+        memset(l, 0, sizeof *l);
+        l->used = true;
+        if (lip) memcpy(l->lip, lip, 16);
+        l->port = port;
+        l->backlog = backlog > 0 ? MIN(backlog, 32) : 8;
+        l->fam = fam;
+        return TCP_LISTEN_BASE + i;
+    }
+    return -1;
+}
+
+static listener_t *lget(int l) {
+    int i = l - TCP_LISTEN_BASE;
+    return i >= 0 && i < TCP_LISTENERS && lsn[i].used ? &lsn[i] : NULL;
+}
+u16 tcp_listen_port(int l) { listener_t *x = lget(l); return x ? x->port : 0; }
+
+int tcp_pending(int l) {
+    if (!lget(l)) return 0;
+    int n = 0, idx = l - TCP_LISTEN_BASE + 1;
+    for (int i = 0; i < TCP_SOCKS; i++) if (socks[i].st != S_FREE && socks[i].from_l == idx && socks[i].ready) n++;
+    return n;
+}
+
+int tcp_accept(int l) {
+    if (!lget(l)) return -1;
+    int idx = l - TCP_LISTEN_BASE + 1;
+    for (int i = 0; i < TCP_SOCKS; i++)
+        if (socks[i].st != S_FREE && socks[i].from_l == idx && socks[i].ready) {
+            socks[i].from_l = 0;
+            socks[i].ready = false;
+            return i;
+        }
+    return -1;
+}
+
+bool tcp_endpoints(int s, u8 *lip, u16 *lport, u8 *rip, u16 *rport) {
+    listener_t *x = lget(s);
+    if (x) {
+        if (lip) memcpy(lip, x->lip, 16);
+        if (lport) *lport = x->port;
+        if (rip) memset(rip, 0, 16);
+        if (rport) *rport = 0;
+        return true;
+    }
+    tcb_t *t = get(s);
+    if (!t) return false;
+    if (lip) memcpy(lip, t->lip, 16);
+    if (lport) *lport = t->lport;
+    if (rip) memcpy(rip, t->rip, 16);
+    if (rport) *rport = t->rport;
+    return true;
+}
+
 int tcp_state(int s) {
     if (s >= TCP_MEM_BASE) return memsock_state(s);
     tcb_t *t = get(s);
     if (!t) return TCP_CLOSED;
     switch (t->st) {
-    case S_SYN_SENT: return TCP_CONNECTING;
+    case S_SYN_SENT: case S_SYN_RCVD: return TCP_CONNECTING;
     case S_ESTAB: case S_FIN_WAIT1: case S_FIN_WAIT2: return t->peer_fin ? TCP_PEER_CLOSED : TCP_OPEN;
     case S_ERR: return TCP_ERROR;
     default: return TCP_PEER_CLOSED;
@@ -286,13 +398,26 @@ int tcp_avail(int s) {
 }
 
 void tcp_close(int s) {
+    listener_t *l = lget(s);
+    if (l) {                                      /* ouvinte: as conexões ainda não aceitas são abortadas */
+        int idx = s - TCP_LISTEN_BASE + 1;
+        for (int i = 0; i < TCP_SOCKS; i++) {
+            tcb_t *c = &socks[i];
+            if (c->st == S_FREE || c->from_l != idx) continue;
+            send_raw(c->lip, c->rip, c->lport, c->rport, c->snd_nxt, 0, F_RST, 0, NULL, 0, NULL, 0, 0);
+            tcb_free(c);
+        }
+        memset(l, 0, sizeof *l);
+        return;
+    }
     tcb_t *t = get(s);
     if (!t || t->user_closed) return;
     t->user_closed = true;
     t->rx_len = 0;
     switch (t->st) {
     case S_SYN_SENT:
-        send_raw(t->rip, t->lport, t->rport, t->snd_nxt, 0, F_RST, 0, NULL, 0, NULL, 0, 0);
+    case S_SYN_RCVD:
+        send_raw(t->lip, t->rip, t->lport, t->rport, t->snd_nxt, 0, F_RST, 0, NULL, 0, NULL, 0, 0);
         tcb_free(t);
         break;
     case S_ERR:
@@ -308,15 +433,15 @@ void tcp_close(int s) {
 }
 
 /* =================================================================== entrada */
-static void reply_rst(u32 src, const u8 *p, u16 dlen) {
+static void reply_rst(const u8 *src, const u8 *dst, const u8 *p, u16 dlen) {
     u8 flags = p[13];
     if (flags & F_RST) return;
     u16 sport = rd16(p), dport = rd16(p + 2);
     u32 seq = rd32(p + 4), ack = rd32(p + 8);
-    if (flags & F_ACK) send_raw(src, dport, sport, ack, 0, F_RST, 0, NULL, 0, NULL, 0, 0);
+    if (flags & F_ACK) send_raw(dst, src, dport, sport, ack, 0, F_RST, 0, NULL, 0, NULL, 0, 0);
     else {
         u32 sl = dlen + ((flags & F_SYN) ? 1 : 0) + ((flags & F_FIN) ? 1 : 0);
-        send_raw(src, dport, sport, 0, seq + sl, F_RST | F_ACK, 0, NULL, 0, NULL, 0, 0);
+        send_raw(dst, src, dport, sport, 0, seq + sl, F_RST | F_ACK, 0, NULL, 0, NULL, 0, 0);
     }
 }
 
@@ -330,7 +455,7 @@ static void parse_mss(tcb_t *t, const u8 *p, int hl) {
         if (l < 2 || i + l > hl) break;
         if (k == 2 && l == 4) {
             u16 m = rd16(p + i + 2);
-            if (m >= 64) t->mss = (u16)MIN(m, (u16)OUR_MSS);
+            if (m >= 64) t->mss = (u16)MIN(m, our_mss(t));
         }
         i += l;
     }
@@ -346,8 +471,35 @@ static void on_fin_acked(tcb_t *t, u64 now) {
 }
 
 void tcp_input(u32 src, u32 dst, const u8 *p, u16 len) {
+    u8 s6[16], d6[16];
+    ip6_from_v4(src, s6);
+    ip6_from_v4(dst, d6);
+    tcp_input6(s6, d6, p, len);
+}
+
+/* SYN para um ouvinte: nova conexão em SYN_RCVD, responde SYN+ACK */
+static void passive_open(listener_t *l, const u8 *src, const u8 *dst, const u8 *p, int hl, u16 sport, u16 dport, u32 seq, u16 win) {
+    int idx = (int)(l - lsn) + 1, pend = 0;
+    for (int i = 0; i < TCP_SOCKS; i++) if (socks[i].st != S_FREE && socks[i].from_l == idx) pend++;
+    if (pend >= l->backlog) return;               /* fila cheia: ignora o SYN (o cliente tenta de novo) */
+    int s = tcb_new(src, sport, dst);
+    if (s < 0) return;
+    tcb_t *t = &socks[s];
+    t->lport = dport;
+    t->from_l = (u8)idx;
+    t->rcv_nxt = seq + 1;
+    t->rcv_adv = t->rcv_nxt;
+    t->snd_wnd = win;
+    parse_mss(t, p, hl);
+    t->st = S_SYN_RCVD;
+    xmit(t, t->iss, F_SYN | F_ACK, 0, 0);
+    t->rtt_on = true; t->rtt_seq = t->iss; t->rtt_t0 = timer_ticks();
+    arm_rto(t);
+}
+
+void tcp_input6(const u8 *src, const u8 *dst, const u8 *p, u16 len) {
     if (len < 20) return;
-    u32 cs = inet_pseudo_sum(src, dst, IPPROTO_TCP, len);
+    u32 cs = l4_pseudo_sum(src, dst, IPPROTO_TCP, len);
     if (inet_csum_fold(inet_csum_add(cs, p, len)) != 0) return;
     int hl = (p[12] >> 4) * 4;
     if (hl < 20 || hl > len) return;
@@ -361,11 +513,34 @@ void tcp_input(u32 src, u32 dst, const u8 *p, u16 len) {
 
     tcb_t *t = NULL;
     for (int i = 0; i < TCP_SOCKS; i++)
-        if (socks[i].st != S_FREE && socks[i].rip == src && socks[i].rport == sport && socks[i].lport == dport) { t = &socks[i]; break; }
-    if (!t || t->st == S_ERR) { reply_rst(src, p, (u16)dlen); return; }
+        if (socks[i].st != S_FREE && socks[i].rport == sport && socks[i].lport == dport && ip6_eq(socks[i].rip, src) && ip6_eq(socks[i].lip, dst)) { t = &socks[i]; break; }
+    if (!t && (flags & (F_SYN | F_ACK | F_RST)) == F_SYN) {
+        listener_t *l = listener_for(dst, dport);
+        if (l) { passive_open(l, src, dst, p, hl, sport, dport, seq, win); return; }
+    }
+    if (!t || t->st == S_ERR) { reply_rst(src, dst, p, (u16)dlen); return; }
+
+    if (t->st == S_SYN_RCVD) {
+        if (flags & F_RST) { tcb_free(t); return; }
+        if ((flags & F_SYN) && !(flags & F_ACK)) { xmit(t, t->iss, F_SYN | F_ACK, 0, 0); return; }   /* SYN repetido */
+        if (!(flags & F_ACK)) return;
+        if (ack != t->iss + 1) { reply_rst(src, dst, p, (u16)dlen); return; }
+        t->snd_una = t->snd_nxt = t->snd_max = ack;
+        t->snd_wnd = win;
+        t->st = S_ESTAB;
+        t->rto_at = 0;
+        if (t->retries == 0) rtt_sample(t, (u32)(now - t->rtt_t0));
+        else t->rto = RTO_INIT;
+        t->rtt_on = false;
+        t->retries = 0;
+        t->cwnd = 10u * t->mss;
+        if (t->from_l) t->ready = true;
+        if (flags & F_SYN) return;
+        /* segue: o mesmo segmento pode trazer dados */
+    }
 
     if (t->st == S_SYN_SENT) {
-        if ((flags & F_ACK) && ack != t->iss + 1) { reply_rst(src, p, (u16)dlen); return; }
+        if ((flags & F_ACK) && ack != t->iss + 1) { reply_rst(src, dst, p, (u16)dlen); return; }
         if (flags & F_RST) { if (flags & F_ACK) set_error(t, "conexão recusada"); return; }
         if ((flags & F_SYN) && (flags & F_ACK)) {
             t->rcv_nxt = seq + 1;
@@ -478,6 +653,14 @@ out:
 
 /* =================================================================== temporizadores */
 static void on_rto(tcb_t *t, u64 now) {
+    if (t->st == S_SYN_RCVD) {                    /* SYN+ACK sem resposta: repete; desiste em silêncio */
+        if (++t->retries > SYN_RETRIES) { tcb_free(t); return; }
+        t->rto = MIN(t->rto * 2, (u32)RTO_MAX);
+        t->rtt_on = false;
+        xmit(t, t->iss, F_SYN | F_ACK, 0, 0);
+        t->rto_at = now + t->rto;
+        return;
+    }
     if (t->st == S_SYN_SENT) {
         if (++t->retries > SYN_RETRIES) { set_error(t, "tempo esgotado ao conectar"); return; }
         t->rto = MIN(t->rto * 2, (u32)RTO_MAX);
@@ -523,6 +706,6 @@ void tcp_tick(u64 now) {
             on_rto(t, now);
             if (t->st == S_FREE || t->st == S_ERR) continue;
         }
-        if (t->ack_now && t->st != S_SYN_SENT) xmit(t, t->snd_nxt, F_ACK, 0, 0);
+        if (t->ack_now && t->st != S_SYN_SENT && t->st != S_SYN_RCVD) xmit(t, t->snd_nxt, F_ACK, 0, 0);
     }
 }

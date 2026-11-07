@@ -2,7 +2,7 @@
 export HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_ANALYTICS=1 HOMEBREW_NO_ENV_HINTS=1 HOMEBREW_NO_INSTALL_CLEANUP=1
 export PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Sistema/Programas
 b() { local nome=$1; shift; echo "cask: == $nome"; timeout -s KILL 1500 "$@" > /tmp-b.txt 2>&1; local rc=$?
-      local n=0; while IFS= read -r l; do n=$((n+1)); [ $n -le 50 ] && echo "cask:   ${l:0:220}"; done < /tmp-b.txt
+      local n=0 t; t=$(wc -l < /tmp-b.txt); while IFS= read -r l; do n=$((n+1)); { [ $n -le 25 ] || [ $n -gt $((t-25)) ]; } && echo "cask:   ${l:0:220}"; done < /tmp-b.txt
       echo "cask: rc=$rc ($n linhas)"; }
 echo "cask: inicio"
 b "hdiutil imageinfo (sem arquivo)" hdiutil imageinfo -format /nao-existe.dmg
@@ -18,6 +18,9 @@ b "volumes depois"                    ls /Volumes
 b "brew list --cask"                  brew list --cask --versions
 b "uninstall --cask keycastr"         brew uninstall --cask keycastr
 b "app keycastr removido"             ls /Applications
+b "vazão 10 MB (curl -r)"           curl -sS -m 600 -r 0-10485759 -o /tmp-10m.bin -w '%{size_download} bytes em %{time_total} s (%{speed_download} B/s)\n' https://downloads.slack-edge.com/desktop-releases/mac/x64/4.53.280/Slack-4.53.280-macOS.dmg
+b "download slack (curl)"            curl -sS -m 1200 -o /tmp-slack.dmg -w '%{size_download} bytes em %{time_total} s (%{speed_download} B/s)\n' https://downloads.slack-edge.com/desktop-releases/mac/x64/4.53.280/Slack-4.53.280-macOS.dmg
+b "slack.dmg"                        ls -la /tmp-slack.dmg
 b "install --cask slack"              brew install --cask slack
 b "app slack"                         ls /Applications/Slack.app/Contents/MacOS
 echo "cask: fim"

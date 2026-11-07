@@ -434,7 +434,8 @@ static void s_paint(window_t *w, ui_t *u) {
     surface_pop_clip(s, pc);
     ui_scroll(u, UI_ID, lv, n * 52 + 12, &S.scroll);
     /* barra de ferramentas */
-    if (ui_button_icon(u, UI_ID, rect_make(u->cw - 12 - 32, TOOLBAR_Y(28), 32, 28), glyph_plus, true)) {
+    if (ui_button_icon(u, UI_ID, rect_make(u->cw - 12 - 32, TOOLBAR_Y(28), 32, 28), glyph_plus, true) || ((u->mods & MOD_CMD) && u->key == 'n' && !S.editing)) {
+        u->key_used = true;
         for (int i = 0; i < MAXPW; i++) if (!S.p[i].used) {
             memset(&S.p[i], 0, sizeof S.p[i]);
             S.p[i].used = true;
@@ -528,3 +529,6 @@ static void s_icon(surface_t *s, int x, int y, int sz) {
     gfx_line(s, x + 41 * u, y + 43 * u, x + 46 * u, y + 38 * u, 4 * u, RGB(255, 255, 255));
 }
 app_t app_senhas = {.name = "Senhas", .exec = "senhas", .draw_icon = s_icon, .launch = s_launch};
+
+/* Launch Services: documento de script aberto pelo Arquivos ou por outro app */
+void script_open_file(const char *path) { app_launch(&app_script); if (E.ta) e_open(path); }

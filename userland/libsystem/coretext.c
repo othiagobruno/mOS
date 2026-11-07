@@ -298,9 +298,9 @@ void *CTFontCreatePathForGlyph(id f, u16 g, const void *matrix) { (void)f; (void
 void *CTFontCopyGraphicsFont(id f, void *attrs) { (void)f; (void)attrs; return 0; }
 id CTFontCopyAvailableTables(id f, u32 options) {
     (void)options;
-    /* fourcc da Apple, em ordem: cmap glyf loca head hhea hmtx maxp name post OS/2 GPOS GSUB */
+    /* fourcc da Apple, em ordem: cmap glyf loca head hhea hmtx maxp name post OS/2 GPOS GSUB 'CFF ' */
     static const u32 tags[] = {0x636D6170u, 0x676C7966u, 0x6C6F6361u, 0x68656164u, 0x68686561u, 0x686D7478u,
-                               0x6D617870u, 0x6E616D65u, 0x706F7374u, 0x4F532F32u, 0x47504F53u, 0x47535542u};
+                               0x6D617870u, 0x6E616D65u, 0x706F7374u, 0x4F532F32u, 0x47504F53u, 0x47535542u, 0x43464620u};
     id a = MSG0(id, cls("NSMutableArray"), "array");
     int w = fweight(f);
     for (u32 i = 0; font_live() && i < sizeof tags / sizeof tags[0]; i++)
@@ -493,8 +493,8 @@ id CTFontManagerCopyAvailableFontFamilyNames(void) {
 /* ---- fontes a partir de dados: as fontes web do Chromium (SkTypeface_Mac::MakeFromStream) chegam
  * aqui já passadas pelo OTS. O kernel valida de novo, guarda a fonte e devolve o id da face, que vai no
  * descritor (USER_ID_KEY) e daí para o NSFont; tabelas, cmap, avanços e glifos saem dela por GUI_FONT
- * como os da Inter. TrueType com glyf só: CFF (OTTO) e o que o kernel recusar devolvem nil, e o Blink
- * segue para a próxima fonte da lista, como antes. */
+ * como os da Inter. TrueType (glyf) e OpenType CFF ('OTTO', kernel/gfx/font_cff.inc: as fontes web do Slack);
+ * o que o kernel recusar (CFF2, tabelas malformadas) devolve nil, e o Blink segue para a próxima fonte da lista. */
 long CFDataGetLength(id d);
 const u8 *CFDataGetBytePtr(id d);
 static u32 rd16(const u8 *p) { return (u32)p[0] << 8 | p[1]; }

@@ -197,16 +197,18 @@ static const char *uti_parent(const char *t) {
     for (size_t i = 0; i < sizeof map / sizeof *map; i++) if (!strcmp(map[i][0], t)) return map[i][1];
     return 0;
 }
+int cx_ls_conforms(const char *a, const char *b);   /* openurl.c: árvore de tipos do Launch Services (kernel) */
 u8 UTTypeConformsTo(id a, id b) {
     if (!a || !b) return 0;
     const char *t = cx_cstr(a), *want = cx_cstr(b);
+    if (cx_ls_conforms(t, want)) return 1;
     for (int depth = 0; t && depth < 16; depth++, t = uti_parent(t)) if (!strcmp(t, want)) return 1;
     return 0;
 }
 
 /* ================================================================ SMAppService */
 cx_class_t SMAppService_c __asm__("OBJC_CLASS_$_SMAppService"), SMAppService_m __asm__("OBJC_METACLASS_$_SMAppService");
-typedef struct { void *isa; id ident; i64 status; } smapp_t;
+typedef struct { void *isa; id ident; i64 status; int kind; } smapp_t;     /* kind: 1 agente, 2 daemon (plist no bundle) */
 static id g_services;
 static id sm_named(id k, const char *kind, id ident) {
     if (!g_services) g_services = ret(mdict());
@@ -223,10 +225,39 @@ static id sm_named(id k, const char *kind, id ident) {
 }
 static id sm_main(id k, SEL c) { (void)c; return sm_named(k, "main", 0); }
 static id sm_login(id k, SEL c, id i) { (void)c; return sm_named(k, "login", i); }
-static id sm_agent(id k, SEL c, id p) { (void)c; return sm_named(k, "agent", p); }
+static id sm_agent(id k, SEL c, id p) { (void)c; id s = sm_named(k, "agent", p); ((smapp_t *)s)->kind = 1; return s; }
+static id sm_daemon(id k, SEL c, id p) { (void)c; id s = sm_named(k, "daemon", p); ((smapp_t *)s)->kind = 2; return s; }
 static i64 sm_status(id s, SEL c) { (void)c; return ((smapp_t *)s)->status; }      /* 0 notRegistered, 1 enabled */
-static BOOL sm_register(id s, SEL c, id *err) { (void)c; if (err) *err = 0; ((smapp_t *)s)->status = 1; return YES; }
-static BOOL sm_unregister(id s, SEL c, id *err) { (void)c; if (err) *err = 0; ((smapp_t *)s)->status = 0; return YES; }
+/* agente/daemon: o plist em Contents/Library/LaunchAgents|LaunchDaemons do app vai ao launchd (launchctl load) */
+int cx_launchd_cmd(unsigned op, const char *arg, char *out, unsigned cap);
+static BOOL sm_plist_path(smapp_t *m, char *path, size_t cap) {
+    id b = MSG0(id, (id)cx_class_named("NSBundle"), "mainBundle");
+    id bp = b ? MSG0(id, b, "bundlePath") : 0;
+    if (!bp || !m->ident) return NO;
+    snprintf(path, cap, "%s/Contents/Library/%s/%s", cx_cstr(bp), m->kind == 2 ? "LaunchDaemons" : "LaunchAgents", cx_cstr(m->ident));
+    return YES;
+}
+static BOOL sm_register(id s, SEL c, id *err) {
+    (void)c;
+    smapp_t *m = (smapp_t *)s;
+    if (err) *err = 0;
+    char path[1024], out[256];
+    if (m->kind && sm_plist_path(m, path, sizeof path)) {
+        int r = cx_launchd_cmd(2 /* LC_LOAD */, path, out, sizeof out);
+        if (r != 0 && !strstr(out, "carregado")) { m->status = 3; return NO; }   /* notFound */
+    }
+    m->status = 1;
+    return YES;
+}
+static BOOL sm_unregister(id s, SEL c, id *err) {
+    (void)c;
+    smapp_t *m = (smapp_t *)s;
+    if (err) *err = 0;
+    char path[1024];
+    if (m->kind && sm_plist_path(m, path, sizeof path)) cx_launchd_cmd(3 /* LC_UNLOAD */, path, 0, 0);
+    m->status = 0;
+    return YES;
+}
 static void sm_unregister_cb(id s, SEL c, void *done) { sm_unregister(s, c, 0); call_blk1(done, 0); }
 static void sm_open_settings(id k, SEL c) { (void)k; (void)c; }
 
@@ -395,7 +426,7 @@ void cx_slack_frameworks_init(void) {
 
     K(&SMAppService_c, &SMAppService_m, "SMAppService", obj, (u32)(sizeof(smapp_t) - 8));
     AC(&SMAppService_c, "mainAppService", sm_main); AC(&SMAppService_c, "loginItemServiceWithIdentifier:", sm_login);
-    AC(&SMAppService_c, "agentServiceWithPlistName:", sm_agent); AC(&SMAppService_c, "daemonServiceWithPlistName:", sm_agent);
+    AC(&SMAppService_c, "agentServiceWithPlistName:", sm_agent); AC(&SMAppService_c, "daemonServiceWithPlistName:", sm_daemon);
     AC(&SMAppService_c, "openSystemSettingsLoginItems", sm_open_settings);
     A(&SMAppService_c, "status", sm_status); A(&SMAppService_c, "registerAndReturnError:", sm_register);
     A(&SMAppService_c, "unregisterAndReturnError:", sm_unregister); A(&SMAppService_c, "unregisterWithCompletionHandler:", sm_unregister_cb);

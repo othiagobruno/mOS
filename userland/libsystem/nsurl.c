@@ -233,6 +233,10 @@ static tf_rect_t tf_frame(id self, SEL c) {
 static void tf_set_size(id self, SEL c, double w, double h) { (void)self; (void)c; (void)w; (void)h; }
 static void tf_add_subview(id self, SEL c, id v) { (void)self; (void)c; (void)v; }   /* desenho ainda não */
 static BOOL tf_yes(id self, SEL c) { (void)self; (void)c; return YES; }
+/* a moldura não tem o estado de view do appkit.c: o -isHidden herdado do NSView lia lixo (12) e toda a janela tinha um
+ * "ancestral oculto". O Chromium (-[WebContentsViewCocoa updateWebContentsVisibility]) via então toda página como
+ * oculta, e uma WebContentsView filha (o claude.ai no Claude desktop) nunca era mostrada. */
+static BOOL tf_no(id self, SEL c) { (void)self; (void)c; return NO; }
 /* NSWindow: o que o NativeWindowMac do Electron chama ao criar a janela e o appkit.c não tem */
 typedef struct { double x, y, w, h; } nw_rect_t;
 static void w_set_frame_animate(id self, SEL c, nw_rect_t r, BOOL display, BOOL animate) {
@@ -304,6 +308,8 @@ static void frame_class_init(void) {
     cx_add_method(&NSThemeFrame_c, "setFrameSize:", (void *)tf_set_size);
     cx_add_method(&NSThemeFrame_c, "addSubview:", (void *)tf_add_subview);
     cx_add_method(&NSThemeFrame_c, "isFlipped", (void *)tf_yes);
+    cx_add_method(&NSThemeFrame_c, "isHidden", (void *)tf_no);
+    cx_add_method(&NSThemeFrame_c, "isHiddenOrHasHiddenAncestor", (void *)tf_no);
     /* eventos que o Electron troca ou consulta na moldura */
     cx_add_method(&NSThemeFrame_c, "swipeWithEvent:", (void *)tf_event);
     cx_add_method(&NSThemeFrame_c, "mouseDown:", (void *)tf_event);
@@ -581,6 +587,7 @@ void cx_darwin_init(void) {
     }
     { extern void cx_quartzcore_init(void); cx_quartzcore_init(); }   /* IOSurface/CALayer (quartzcore.c) */
     { extern void cx_electron_compat_init(void); cx_electron_compat_init(); }   /* KVC, envios adiados... (electron_compat.c) */
+    { extern void cx_openurl_init(void); cx_openurl_init(); }   /* openURL:, LaunchServices e kAEGetURL entre apps (openurl.c) */
 }
 
 /* ---- CFURL (CFURLRef = NSURL*); regra Create/Copy: +1 */

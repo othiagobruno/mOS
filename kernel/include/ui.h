@@ -161,6 +161,9 @@ typedef struct window {
     rect_t restore;
     void (*paint)(struct window *w, ui_t *u);
     void (*on_close)(struct window *w);
+    /* pedido de fechar (botão vermelho, ⌘W, Dock): se devolver true, quem decide é o dono da janela (apps do macOS:
+     * performClose:/windowShouldClose:), e wm_close não fecha nada agora */
+    bool (*on_close_request)(struct window *w);
     void (*on_key)(struct window *w, input_event_t *e);
     void *data;
     ui_t ui;
@@ -206,6 +209,7 @@ void      wm_close(window_t *w);
 void      wm_invalidate(window_t *w);
 void      wm_focus(window_t *w);
 bool      wm_begin_move(window_t *w);            /* o botão esquerdo apertado no conteúdo de w passa a mover w */
+void      wm_set_hidden(window_t *w, bool hidden);  /* orderOut:/orderFront: de app: esconde ou mostra sem destruir */
 window_t *wm_focused(void);
 app_t    *wm_active_app(void);
 void      wm_set_title(window_t *w, const char *t);
@@ -280,6 +284,7 @@ void   app_quit(app_t *a);
 
 /* ícones desenhados vetorialmente */
 surface_t *icon_for(app_t *a, int size);
+bool tahoe_icon(const char *exec, surface_t *s, int x, int y, int size);   /* ícone do sistema no estilo Tahoe */
 void icon_folder(surface_t *s, int x, int y, int size, u32 tint);
 void icon_document(surface_t *s, int x, int y, int size, const char *ext);
 void icon_disk(surface_t *s, int x, int y, int size);

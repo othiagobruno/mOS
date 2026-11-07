@@ -429,14 +429,12 @@ typedef struct { id appURL; id itemURLs; const void *passThruParams; u32 launchF
 OSStatus LSOpenFromURLSpec(const ls_spec_t *spec, id *launched) {
     if (launched) *launched = 0;
     if (!spec) return -50;
-    id items = spec->itemURLs;
-    u64 n = items ? MSG0(u64, items, "count") : 0;
-    OSStatus r = n ? 0 : -10814;   /* kLSApplicationNotFoundErr */
-    for (u64 i = 0; i < n; i++) { OSStatus e = ls_open(MSG(id, items, "objectAtIndex:", i)); if (e) r = e; }
-    return r;
+    extern int cx_ls_open_urls(id app, id urls);   /* openurl.c: com o app pedido (appURL) ou o padrão de cada item */
+    if (spec->appURL || spec->itemURLs) return cx_ls_open_urls(spec->appURL, spec->itemURLs);
+    return -10814;   /* kLSApplicationNotFoundErr */
 }
-id LSCopyDefaultApplicationURLForURL(id url, u32 roles, id *err) { (void)url; (void)roles; if (err) *err = 0; return 0; }
-OSStatus LSSetDefaultHandlerForURLScheme(id scheme, id bundle) { (void)scheme; (void)bundle; return 0; }
+/* LSCopyDefaultApplicationURLForURL e as outras consultas de quem abre o quê: openurl.c */
+/* LSSetDefaultHandlerForURLScheme: openurl.c (banco do Launch Services no kernel) */
 u8 FSEventStreamSetExclusionPaths(void *s, id paths) { (void)s; (void)paths; return 1; }
 /* Apple Events: registro aceito; não há outro app para conversar */
 typedef struct { u32 type; void *data; } ae_desc_t;

@@ -120,6 +120,17 @@ foreach ($s in $Steps.Split(';')) {
         # kdown:<qcode> / kup:<qcode> — hold and release a key (e.g. meta_l for Cmd+Tab)
         'kdown' { $null = Qmp @{ execute = 'input-send-event'; arguments = @{ events = @(@{ type = 'key'; data = @{ down = $true; key = @{ type = 'qcode'; data = $arg } } }) } }; Start-Sleep -Milliseconds 40 }
         'kup' { $null = Qmp @{ execute = 'input-send-event'; arguments = @{ events = @(@{ type = 'key'; data = @{ down = $false; key = @{ type = 'qcode'; data = $arg } } }) } }; Start-Sleep -Milliseconds 40 }
+        # amove:<x>,<y> — posição absoluta pelo tablet USB (exige -UsbInput); não perde passos com o sistema carregado.
+        # amovew:<w>,<h> ajusta o tamanho da tela usado na escala (padrão 1440x900)
+        'amovew' { $script:aw, $script:ah = $arg.Split(',') | ForEach-Object { [int]$_ } }
+        'amove' {
+            $x, $y = $arg.Split(',') | ForEach-Object { [int]$_ }
+            $w = if ($script:aw) { $script:aw } else { 1440 }; $h = if ($script:ah) { $script:ah } else { 900 }
+            $ax = [int]([Math]::Min(32767, $x * 32767 / ($w - 1))); $ay = [int]([Math]::Min(32767, $y * 32767 / ($h - 1)))
+            $null = Qmp @{ execute = 'input-send-event'; arguments = @{ events = @(
+                        @{ type = 'abs'; data = @{ axis = 'x'; value = $ax } }, @{ type = 'abs'; data = @{ axis = 'y'; value = $ay } }) } }
+            Start-Sleep -Milliseconds 120
+        }
         'down' { Btn 'left' $true; Start-Sleep -Milliseconds 60 }
         'up' { Btn 'left' $false; Start-Sleep -Milliseconds 60 }
         'drag' {

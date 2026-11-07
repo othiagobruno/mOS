@@ -56,11 +56,13 @@ isr\n:
 .endr
     ISR_NOERR 128               /* int 0x80: syscalls (proc/process.c) */
     ISR_NOERR 240               /* IPI de wake-up dos APs / temporizador do LAPIC (arch/smp.c) */
+    ISR_NOERR 242               /* IPI "olhe o escalonador": TLB e threads mortas (proc/sched.c) */
     ISR_NOERR 255               /* interrupção espúria do LAPIC */
-    .globl isr128, isr240, isr255
+    .globl isr128, isr240, isr242, isr255
 
     /* IPI que acorda os APs operários (arch/smp.c, vetor 0xF1): só o EOI. Não passa pelo isr_common,
-     * que chamaria o escalonador (ele é do BSP). Os APs nunca estão em ring 3 nem usam a FPU aqui. */
+     * que chamaria o escalonador. Se pegar um AP em ring 3 (rodando uma thread de usuário), a pilha é a
+     * rsp0 do TSS daquele núcleo e nada além de rax é tocado. */
     .globl isr_wake
 isr_wake:
     push %rax
@@ -97,6 +99,11 @@ isr_common:
     mov %rbx, %rsp
     sub $512, %rsp              /* a área FXSAVE de cada thread fica logo abaixo do seu frame */
     and $-16, %rsp
+    /* já na pilha da thread que vai rodar (abaixo da área FXSAVE): só agora a trava grande pode ser
+     * solta (proc/sched.c, sched_post) — outro núcleo pode pegar a thread anterior e usar a pilha dela */
+    sub $32, %rsp
+    call sched_post
+    add $32, %rsp
     fxrstor (%rsp)
     mov %rbx, %rsp
     pop %r15

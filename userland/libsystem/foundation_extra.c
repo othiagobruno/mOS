@@ -656,6 +656,16 @@ static void d_get_bytes_range(id self, SEL c, void *buf, fx_rng_t r) {
 static id x_init_self3(id self, SEL c, u64 a, u64 b, u64 n) { (void)c; (void)a; (void)b; (void)n; return self; }
 static id x_init_self2(id self, SEL c, u64 a, u64 n) { (void)c; (void)a; (void)n; return self; }
 static id ht_with_opts(id k, SEL c, u64 o) { (void)c; (void)o; return MSG0(id, k, "weakObjectsHashTable"); }
+/* -createFileAtPath:contents:attributes: (o logger do WhatsApp cria o arquivo do dia com ele) e
+ * -setAttributes:ofItemAtPath:error: (permissões/datas: aceito sem efeito) */
+static BOOL fm_create_file(id self, SEL c, id path, id data, id attrs) {
+    (void)self; (void)c; (void)attrs;
+    if (!path) return 0;
+    if (data) return MSG(BOOL, data, "writeToFile:atomically:", path, (BOOL)1);
+    id empty = MSG(id, cls("NSData"), "dataWithBytes:length:", (const void *)"", (u64)0);
+    return MSG(BOOL, empty, "writeToFile:atomically:", path, (BOOL)1);
+}
+static BOOL fm_set_attrs(id self, SEL c, id attrs, id path, id *err) { (void)self; (void)c; (void)attrs; (void)path; if (err) *err = 0; return 1; }
 /* -rangeOfString:options: (NSCaseInsensitiveSearch 1, NSBackwardsSearch 4, NSAnchoredSearch 8; o resto é literal) */
 typedef struct { u64 loc, len; } fx_range_t;
 static unsigned short fx_fold(unsigned short ch) { return ch >= 'A' && ch <= 'Z' ? (unsigned short)(ch + 32) : ch; }
@@ -718,9 +728,64 @@ static id loc_components(id ident) {
 static id loc_cmp_m(id k, SEL c, id ident) { (void)k; (void)c; return loc_components(ident); }
 static id loc_nil(id self, SEL c) { (void)self; (void)c; return 0; }
 id CFLocaleCreateComponentsFromLocaleIdentifier(void *alloc, id ident) { (void)alloc; return objc_retain(loc_components(ident)); }
+/* -attributesOfFileSystemForPath:error: com os tamanhos do volume (o WhatsApp lê NSFileSystemFreeSize na partida e
+ * registrava "nil-value"); o mOS ainda não informa o espaço real: 64 GiB, 32 GiB livres */
+extern id NSFileSystemSize, NSFileSystemFreeSize, NSFileSystemNodes, NSFileSystemFreeNodes, NSFileSystemNumber;
+static id fm_fs_attrs(id self, SEL c, id path, id *err) {
+    (void)self; (void)c; (void)path;
+    if (err) *err = 0;
+    id d = MSG0(id, cls("NSMutableDictionary"), "dictionary"), N = cls("NSNumber");
+    id v1 = MSG(id, N, "numberWithUnsignedLongLong:", (u64)64 << 30); MSG(void, d, "setObject:forKey:", v1, NSFileSystemSize);
+    id v2 = MSG(id, N, "numberWithUnsignedLongLong:", (u64)32 << 30); MSG(void, d, "setObject:forKey:", v2, NSFileSystemFreeSize);
+    id v3 = MSG(id, N, "numberWithUnsignedLongLong:", (u64)1 << 24); MSG(void, d, "setObject:forKey:", v3, NSFileSystemNodes);
+    id v4 = MSG(id, N, "numberWithUnsignedLongLong:", (u64)1 << 23); MSG(void, d, "setObject:forKey:", v4, NSFileSystemFreeNodes);
+    id v5 = MSG(id, N, "numberWithUnsignedLongLong:", (u64)1); MSG(void, d, "setObject:forKey:", v5, NSFileSystemNumber);
+    return d;
+}
+/* NSNumber: os acessores sem sinal que faltavam (o WhatsApp lê o espaço livre com unsignedLongLongValue) */
+static u64 n_ull(id self, SEL c) { (void)c; return (u64)MSG0(i64, self, "longLongValue"); }
+static unsigned short n_us(id self, SEL c) { (void)c; return (unsigned short)MSG0(i64, self, "longLongValue"); }
+static unsigned char n_uc(id self, SEL c) { (void)c; return (unsigned char)MSG0(i64, self, "longLongValue"); }
+/* -sortedArrayUsingDescriptors: (ordenação estável, por inserção, com -compareObject:toObject: de cada descritor) */
+static i64 sd_cmp(id descs, id a, id b) {
+    u64 nd = descs ? MSG0(u64, descs, "count") : 0;
+    for (u64 k = 0; k < nd; k++) {
+        id d = MSG(id, descs, "objectAtIndex:", k);
+        i64 r = MSG(i64, d, "compareObject:toObject:", a, b);
+        if (r) return r;
+    }
+    return 0;
+}
+static id a_sorted_desc(id self, SEL c, id descs) {
+    (void)c;
+    id m = MSG0(id, self, "mutableCopy");
+    u64 n = MSG0(u64, m, "count");
+    id *v = malloc((n + 1) * sizeof *v);
+    if (!v) return objc_autorelease(m);
+    for (u64 i = 0; i < n; i++) v[i] = MSG(id, m, "objectAtIndex:", i);
+    for (u64 i = 1; i < n; i++) {
+        id x = v[i]; u64 j = i;
+        while (j > 0 && sd_cmp(descs, v[j - 1], x) > 0) { v[j] = v[j - 1]; j--; }
+        v[j] = x;
+    }
+    id out = MSG(id, cls("NSArray"), "arrayWithObjects:count:", (id *)v, n);
+    free(v);
+    objc_release(m);
+    return out;
+}
+static void ma_sort_desc(id self, SEL c, id descs) {
+    id s = a_sorted_desc(self, c, descs);
+    MSG(void, self, "setArray:", s);
+}
 /* classes que sobem depois do cx_foundation_extra_init (nsurl.c, foundation_more.c): chamado por cx_foundation_gaps */
 void cx_foundation_extra_late(void) {
     cx_class_t *ku = cx_class_named("NSKeyedUnarchiver"), *lo = cx_class_named("NSLocale"), *s = cx_class_named("NSString");
+    { cx_class_t *fmx = cx_class_named("NSFileManager"); if (fmx) cx_add_method(fmx, "attributesOfFileSystemForPath:error:", (void *)fm_fs_attrs); }
+    { cx_class_t *nn = cx_class_named("NSNumber"), *aa = cx_class_named("NSArray"), *ma = cx_class_named("NSMutableArray");
+      if (nn) { cx_add_method(nn, "unsignedLongLongValue", (void *)n_ull); cx_add_method(nn, "unsignedLongValue", (void *)n_ull);
+                cx_add_method(nn, "unsignedShortValue", (void *)n_us); cx_add_method(nn, "unsignedCharValue", (void *)n_uc); }
+      if (aa) cx_add_method(aa, "sortedArrayUsingDescriptors:", (void *)a_sorted_desc);
+      if (ma) cx_add_method(ma, "sortUsingDescriptors:", (void *)ma_sort_desc); }
     if (ku) { cx_add_cmethod(ku, "setClass:forClassName:", (void *)ku_set_class); cx_add_method(ku, "setClass:forClassName:", (void *)ku_set_class); }
     if (lo) { cx_add_cmethod(lo, "localeWithLocaleIdentifier:", (void *)loc_with_ident); cx_add_method(lo, "initWithLocaleIdentifier:", (void *)loc_init_ident);
               cx_add_cmethod(lo, "componentsFromLocaleIdentifier:", (void *)loc_cmp_m); cx_add_method(lo, "scriptCode", (void *)loc_nil);
@@ -757,7 +822,9 @@ void cx_foundation_extra_init(void) {
       { cx_class_t *dt = cx_class_named("NSDate"), *fm2 = cx_class_named("NSFileManager");
         if (dt) { cx_add_method(dt, "isEqualToDate:", (void *)dt_eq); cx_add_method(dt, "dateByAddingTimeInterval:", (void *)dt_adding); }
         if (s) { cx_add_method(s, "stringByDeletingPathExtension", (void *)s_del_ext); cx_add_method(s, "writeToURL:atomically:encoding:error:", (void *)s_write_url); }
-        if (fm2) cx_add_method(fm2, "contentsOfDirectoryAtURL:includingPropertiesForKeys:options:error:", (void *)fm_contents_url);
+        if (fm2) { cx_add_method(fm2, "contentsOfDirectoryAtURL:includingPropertiesForKeys:options:error:", (void *)fm_contents_url);
+                   cx_add_method(fm2, "createFileAtPath:contents:attributes:", (void *)fm_create_file);
+                   cx_add_method(fm2, "setAttributes:ofItemAtPath:error:", (void *)fm_set_attrs); }
         if (data) { cx_add_method(data, "getBytes:length:", (void *)d_get_bytes); cx_add_method(data, "getBytes:range:", (void *)d_get_bytes_range); }
         if (ob && !cx_class_named("NSCache")) {
             cx_define_class(&NSCache_c, &NSCache_m, "NSCache", ob, sizeof(fx_cache_t) - 8);

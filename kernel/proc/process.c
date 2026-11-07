@@ -126,6 +126,7 @@ bool proc_tty_write(int pid, const char *data, usize len) {
 
 static void finish(process_t *p, int code);
 bool proc_signal(int pid, int sig);
+bool proc_signal_info(int pid, int sig, int code, int spid, int status);
 
 int proc_tty_interrupt(int pid) {
     u64 fl = irq_save();
@@ -453,6 +454,9 @@ static process_t *find(int pid) {
     for (process_t *p = procs; p; p = p->next) if (p->pid == pid) return p;
     return NULL;
 }
+/* para proc/pty.c: sessões, grupos e sinais de terminal percorrem os processos */
+process_t *proc_list(void) { return procs; }
+process_t *proc_find(int pid) { return find(pid); }
 
 static void unlink_proc(process_t *dead) {
     for (process_t **pp = &procs; *pp; pp = &(*pp)->next)
@@ -543,7 +547,9 @@ static void finish(process_t *p, int code) {
             if (p->tty && p->tty->reader == t) p->tty->reader = NULL;
             t->state = TH_DEAD;
         }
-    for (int i = 0; i < PROC_MAX_FDS; i++) fd_close(p, i);      /* fecha arquivos e pipes (acorda quem espera) */
+    { extern void smp_kick_proc(process_t *p); smp_kick_proc(p); }   /* as que rodam em outro núcleo saem do ring 3 já */
+    pty_proc_exit(p);                                 /* líder de sessão: SIGHUP ao grupo em frente, a sessão perde o terminal */
+    for (int i = 0; i < PROC_MAX_FDS; i++) fd_close(p, i);      /* fecha arquivos, pipes e terminais (acorda quem espera) */
     compat_gui_proc_exit(p);
     machipc_exit(p);                                  /* portas Mach: receptores morrem, envios viram nomes mortos */
     { extern void net_user_exit(process_t *p); net_user_exit(p); }   /* conexões TCP do processo (kernel/net/usersock.c) */
@@ -577,12 +583,11 @@ static void finish(process_t *p, int code) {
     p->ppid = reported ? -1 : p->ppid;   /* -1: já informado a quem esperava (não volta no waitany) */
     /* SIGCHLD ao pai que tem tratador para ele: o libuv (Node/Electron) só colhe filhos assim, com o tratador
      * acordando o loop, que chama waitpid(WNOHANG). Sem isto nenhum child_process do VS Code (shell de login,
-     * git, ripgrep da busca) dava 'exit'. Sem tratador o sinal seria ignorado, e não manda para não acordar
-     * com EINTR uma espera do pai à toa. */
+     * git, ripgrep da busca) dava 'exit'. Sem tratador (ação padrão: ignorar) o sinal some em sig_post sem acordar
+     * ninguém com EINTR, salvo se o pai estiver num sigwait por ele. siginfo: CLD_EXITED/CLD_KILLED, pid e status. */
     if (parent > 0) {
-        process_t *pp = find(parent);
-        if (pp && !pp->exited && pp->sig_handler[MOS_SIGCHLD] != MOS_SIG_DFL && pp->sig_handler[MOS_SIGCHLD] != MOS_SIG_IGN)
-            proc_signal(parent, MOS_SIGCHLD);
+        bool killed = code < 0 && code >= -31;
+        proc_signal_info(parent, MOS_SIGCHLD, killed ? MOS_CLD_KILLED : MOS_CLD_EXITED, p->pid, killed ? -code : code & 0xFF);
     }
 }
 
@@ -629,6 +634,7 @@ static void spawn_apply_fds(process_t *child, process_t *parent, mos_spawn_fa_t 
             if (src && src->fds[a].used) fd_copy(child, b, src, a);
         } else if (k == MOS_SPAWN_FA_OPEN && a >= 0 && a < PROC_MAX_FDS && acts[i].path[0]) {
             if (child->fds[a].used) fd_close(child, a);
+            if (pty_open_path(child, a, acts[i].path, acts[i].flags) <= 0) continue;   /* /dev/ptmx, /dev/ttysNNN, /dev/tty */
             memset(&child->fds[a], 0, sizeof child->fds[a]);
             child->fds[a].used = true;
             child->fds[a].kind = FD_FILE;
@@ -656,6 +662,7 @@ int proc_spawn_in(const char *path, const char *arg, tty_t *tty,
     p->pid = next_pid++;
     thread_t *cur = thread_current();
     p->ppid = cur && cur->proc ? cur->proc->pid : 0;
+    pty_proc_init(p, cur ? cur->proc : NULL, spawn_flags);   /* sessão e grupo (POSIX_SPAWN_SETSID do node-pty) */
     strncpy(p->cwd, cur && cur->proc ? cur->proc->cwd : account_home(), sizeof p->cwd - 1);
     p->tty = tty;
     if (tty) tty->refs++;
@@ -782,7 +789,14 @@ static const char *fault_name(u64 v) {
     }
 }
 
+static bool sig_fault(int_frame_t *f, thread_t *t, process_t *p, u64 cr2);
+static u64 proc_fault_(int_frame_t *f, u64 cr2);
+/* a falta pode matar o processo e trocar de thread: a que volta também passa pela entrega de sinais */
 u64 proc_fault(int_frame_t *f, u64 cr2) {
+    u64 r = proc_fault_(f, cr2);
+    return ((int_frame_t *)r)->cs & 3 ? proc_signal_check((int_frame_t *)r) : r;
+}
+static u64 proc_fault_(int_frame_t *f, u64 cr2) {
     thread_t *t = thread_current();
     process_t *p = t->proc;
     if (!p) return (u64)f;
@@ -798,16 +812,8 @@ u64 proc_fault(int_frame_t *f, u64 cr2) {
     }
     /* tracepoint de diagnóstico (proc/tracepoint.c): registra, devolve o byte original e repete a instrução */
     { extern bool tp_hit(process_t *p, int_frame_t *f); if (tp_hit(p, f)) return (u64)f; }
-    /* o programa tem tratador para esta falha? entrega o sinal */
-    int sig = f->vector == 14 || f->vector == 13 ? MOS_SIGSEGV : f->vector == 0 ? MOS_SIGFPE : f->vector == 6 ? MOS_SIGILL : 0;
-    if (sig && p->sig_handler[sig] > MOS_SIG_IGN && !(p->sig_pending & (1u << sig))) {
-        /* CHECK do Chromium é ud2. O crashpad instala tratador e sai em silêncio; sem esta linha
-         * o renderer do VS Code desaparece do dump sem "processo encerrado". */
-        if (f->vector == 6)
-            kprintf("proc: %s (pid %d): instrução inválida em 0x%llx (entregue ao tratador)\n", p->name, p->pid, f->rip);
-        p->sig_pending |= 1u << sig;
-        return proc_signal_check(f);
-    }
+    /* o programa tem tratador para esta falha? vira sinal da thread (SIGSEGV/SIGBUS/SIGFPE/SIGILL/SIGTRAP) */
+    if (sig_fault(f, t, p, cr2)) return proc_signal_check(f);
     char msg[160];
     if (f->vector == 14) snprintf(msg, sizeof msg, "%s (pid %d): %s em 0x%llx, endereço 0x%llx — processo encerrado\n",
                                   p->name, p->pid, fault_name(f->vector), f->rip, cr2);
@@ -910,85 +916,426 @@ static void dump_threads_maybe(int_frame_t *cur) {
 }
 
 /* ------------------------------------------------------------ sinais
- * Entrega na volta para o ring 3: grava na pilha do usuário o frame interrompido e o estado FXSAVE,
- * empilha o endereço do "restorer" (que chama SYS_SIGRETURN) e desvia para o tratador(sig). */
-typedef struct { int_frame_t frame; u8 fx[512]; u64 magic; } sigframe_t;
+ * Modelo (detalhes em syscall.h, SYS_SIG): ações por processo (tratador, sa_mask, sa_flags, trampolim), máscara e
+ * pendentes por thread, pendentes de kill() no processo. A entrega é sempre na volta ao ring 3 (fim de syscall,
+ * de interrupção ou de falta): proc_signal_check escolhe um sinal não bloqueado, monta o quadro na pilha do
+ * usuário (siginfo + ucontext + mcontext no layout do Darwin) e desvia para o trampolim/tratador.
+ * Quem está bloqueado numa espera interrompível (sleep, pipe, terminal, wait, futex, sigsuspend, sigwait) é
+ * acordado com -EINTR; se nenhum tratador acabar rodando nela (o sinal foi para outra thread, ou virou
+ * "ignorar"), ou se a ação tem SA_RESTART e a syscall é refazível, ela é refeita (rip volta 2 bytes, para o int
+ * 0x80/syscall, e rax volta a ser o número). Esperas Mach e o join de thread não são interrompidas: o sinal fica
+ * pendente para a próxima thread que voltar ao ring 3. */
+#define SIG_BIT(s) (1u << (s))
+#define SIG_UNBLOCKABLE (SIG_BIT(MOS_SIGKILL) | SIG_BIT(MOS_SIGSTOP))
 #define SIGFRAME_MAGIC 0x6D4F535349474E4CULL   /* "mOSSIGNL" */
+#define SIG_MINSTKSZ 32768                     /* MINSIGSTKSZ do macOS */
+#define WAIT_SIGSUSPEND -10
+#define WAIT_SIGWAIT    -11
 
-static bool default_ignored(int sig) { return sig == MOS_SIGCHLD; }
+/* quadro na pilha do usuário (endereço 16-alinhado; o endereço de retorno fica logo abaixo) */
+typedef struct {
+    u64 magic;
+    u64 uctx;                   /* endereço de .uc: o restorer antigo acha o quadro pelo rsp */
+    mos_siginfo_t info;
+    mos_ucontext_t uc;
+    mos_mcontext_t mc;
+    u64 pad;
+} usigframe_t;
+_Static_assert(sizeof(mos_siginfo_t) == 104 && sizeof(mos_ucontext_t) == 56 && sizeof(mos_mcontext_t) == 712,
+               "layout do Darwin x86-64");
+_Static_assert(sizeof(usigframe_t) % 16 == 0, "quadro alinhado");
 
-u64 proc_signal_check(int_frame_t *f) {
-    thread_t *t = thread_current();
-    process_t *p = t ? t->proc : NULL;
-    if (!p || p->exited || !p->sig_pending || (f->cs & 3) != 3) return (u64)f;
-    int sig = 0;
-    while (!(p->sig_pending & (1u << sig))) sig++;
-    p->sig_pending &= ~(1u << sig);
+typedef struct { int code, pid, status; u64 addr; } siginfo_k;
+
+/* ação padrão "ignorar" (macOS: CHLD, URG, CONT, WINCH, INFO, IO). O mOS não para processos, então os de parada
+ * (STOP, TSTP, TTIN, TTOU) também são ignorados: antes o ^Z do terminal ou o SIGWINCH de um redimensionamento
+ * encerravam o programa em primeiro plano */
+static bool default_ignored(int sig) {
+    switch (sig) {
+    case MOS_SIGCHLD: case MOS_SIGURG: case MOS_SIGCONT: case MOS_SIGWINCH: case MOS_SIGINFO: case MOS_SIGIO:
+    case MOS_SIGSTOP: case MOS_SIGTSTP: case MOS_SIGTTIN: case MOS_SIGTTOU:
+        return true;
+    }
+    return false;
+}
+static bool sig_ignored(process_t *p, int sig) {
     u64 h = p->sig_handler[sig];
-    if (h == MOS_SIG_IGN || (h == MOS_SIG_DFL && default_ignored(sig))) return proc_signal_check(f);
-    if (h == MOS_SIG_DFL || !p->sig_restorer) {                     /* ação padrão: encerra */
-        char m[96];
-        snprintf(m, sizeof m, "%s (pid %d) encerrado pelo sinal %d\n", p->name, p->pid, sig);
-        if (sig != MOS_SIGINT) kprintf("proc: %s", m);
-        finish(p, -sig);
-        return sched_switch(f);
-    }
-    sigframe_t *sf = kmalloc(sizeof *sf);
-    if (!sf) { finish(p, -sig); return sched_switch(f); }
-    sf->frame = *f;
-    memcpy(sf->fx, (void *)(((u64)f - 512) & ~15ULL), 512);
-    sf->magic = SIGFRAME_MAGIC;
-    u64 sp = ((f->rsp - 128 - sizeof *sf) & ~15ULL);                 /* respeita a red zone */
-    u64 ret = sp - 8;
-    bool ok = uvm_copy_out(p, sp, sf, sizeof *sf) && uvm_copy_out(p, ret, &p->sig_restorer, 8);
-    kfree(sf);
-    if (!ok) { finish(p, -MOS_SIGSEGV); return sched_switch(f); }   /* pilha estourada */
-    f->rsp = ret;                                                    /* rsp = 16n+8, como depois de um call */
-    f->rip = h;
-    f->rdi = (u64)sig;
-    return (u64)f;
+    return h == MOS_SIG_IGN || (h == MOS_SIG_DFL && default_ignored(sig));
+}
+static u8 *fx_area(int_frame_t *f) { return (u8 *)(((u64)f - 512) & ~15ULL); }
+
+/* a espera desta thread pode ser interrompida por um sinal? */
+static bool sig_interruptible(thread_t *t) {
+    if (t->state == TH_SLEEPING) return true;      /* SYS_SLEEP, leitura de terminal com VTIME, sigwait com prazo */
+    if (t->state != TH_WAITING) return false;
+    int w = t->wait_pid;
+    return w > 0 || w == -1 || w == -2 || w == -3 || w == -4 || w == -8 || w == -9 || w == WAIT_SIGSUSPEND || w == WAIT_SIGWAIT;
 }
 
-static u64 sig_return(int_frame_t *f) {
-    thread_t *t = thread_current();
+/* tira t da espera com -EINTR, desfazendo as referências que o pipe/terminal/tty guardam dela */
+static void sig_interrupt(thread_t *t) {
     process_t *p = t->proc;
-    sigframe_t *sf = kmalloc(sizeof *sf);
-    if (!sf || !uvm_copy_in(p, sf, f->rsp, sizeof *sf) || sf->magic != SIGFRAME_MAGIC) {
-        kfree(sf);
-        finish(p, -MOS_SIGSEGV);
-        return sched_switch(f);
-    }
-    int_frame_t saved = sf->frame;
-    saved.cs = 0x1B; saved.ss = 0x23;                                /* nunca volta para outro anel */
-    saved.rflags = (saved.rflags & 0xCD5) | 0x202;                   /* só flags aritméticas + IF */
-    *f = saved;
-    memcpy((void *)(((u64)f - 512) & ~15ULL), sf->fx, 512);
-    kfree(sf);
-    return proc_signal_check(f);
+    if (p->tty && p->tty->reader == t) p->tty->reader = NULL;
+    if (t->wait_pid == -3 || t->wait_pid == -4)
+        for (int i = 0; i < PROC_MAX_FDS; i++) {
+            pipe_t *pp = p->fds[i].used ? p->fds[i].pipe : NULL;
+            if (pp && pp->rwait == t) pp->rwait = NULL;
+            if (pp && pp->wwait == t) pp->wwait = NULL;
+        }
+    t->pty_wait = NULL;
+    t->futex_va = 0;
+    t->wake_at = 0;
+    t->wait_posix = false;
+    t->wait_pid = 0;
+    t->sig_wait_set = 0;
+    ((int_frame_t *)t->frame)->rax = (u64)-MOS_EINTR;
+    t->sig_intr = true;
+    t->state = TH_READY;
 }
 
-bool proc_signal(int pid, int sig) {
+/* sigwait em andamento que aceita sig: entrega direto (devolve true) */
+static bool sig_to_waiter(process_t *p, thread_t *only, int sig, const siginfo_k *k) {
+    for (thread_t *t = sched_threads(); t; t = t->next) {
+        if (t->proc != p || (only && t != only) || t->wait_pid != WAIT_SIGWAIT || !(t->sig_wait_set & SIG_BIT(sig))) continue;
+        if (t->state != TH_WAITING && t->state != TH_SLEEPING) continue;
+        if (t->wait_status) {
+            mos_siginfo_t si;
+            memset(&si, 0, sizeof si);
+            si.si_signo = sig; si.si_code = k->code; si.si_pid = k->pid; si.si_status = k->status; si.si_addr = k->addr; si.si_uid = 501;
+            uvm_copy_out(p, t->wait_status, &si, sizeof si);
+        }
+        ((int_frame_t *)t->frame)->rax = (u64)sig;
+        t->wait_pid = 0; t->sig_wait_set = 0; t->wake_at = 0; t->wait_status = 0;
+        t->state = TH_READY;
+        return true;
+    }
+    return false;
+}
+
+static void sig_kill_default(process_t *p, int sig) {
+    char m[96];
+    snprintf(m, sizeof m, "%s (pid %d) encerrado pelo sinal %d\n", p->name, p->pid, sig);
+    if (sig != MOS_SIGINT) kprintf("proc: %s", m);
+    finish(p, -sig);
+}
+
+/* sinal para o processo (kill) ou para uma thread (pthread_kill, faltas) */
+static bool sig_post(process_t *p, thread_t *th, int sig, const siginfo_k *k) {
+    if (!p || p->exited) return false;
+    if (sig == MOS_SIGKILL) { finish(p, -MOS_SIGKILL); return true; }
+    if (sig_to_waiter(p, th, sig, k)) return true;      /* sigwait pega mesmo bloqueado (é o uso normal) */
+    if (sig_ignored(p, sig)) return true;               /* some aqui, sem acordar ninguém com EINTR (SIGWINCH...) */
+    if (th) { th->sig_pending |= SIG_BIT(sig); th->sig_info[sig].code = k->code; th->sig_info[sig].pid = k->pid;
+              th->sig_info[sig].status = k->status; th->sig_info[sig].addr = k->addr; }
+    else    { p->sig_pending |= SIG_BIT(sig); p->sig_info[sig].code = k->code; p->sig_info[sig].pid = k->pid;
+              p->sig_info[sig].status = k->status; p->sig_info[sig].addr = k->addr; }
+    /* uma thread que não o bloqueia e está parada numa espera interrompível volta com EINTR para recebê-lo.
+     * Se nenhuma está (todas rodando, ou em mach_msg), a primeira que voltar ao ring 3 o entrega. */
+    thread_t *cur = thread_current();
+    for (thread_t *t = sched_threads(); t; t = t->next) {
+        if (t->proc != p || (th && t != th) || (t->sig_mask & SIG_BIT(sig))) continue;
+        if (t == cur && t->state == TH_RUNNING) return true;   /* sai na volta desta syscall */
+        if (sig_interruptible(t)) { sig_interrupt(t); return true; }
+    }
+    return true;
+}
+
+bool proc_signal_info(int pid, int sig, int code, int spid, int status) {
     if (sig == 0) return proc_alive(pid);                /* kill(pid, 0): só pergunta se o processo existe */
     if (sig < 0 || sig >= MOS_NSIG) return false;
     u64 fl = irq_save();
     process_t *p = find(pid);
-    bool ok = p && !p->exited;
-    if (ok) {
-        if (sig == MOS_SIGKILL) finish(p, -MOS_SIGKILL);
-        else {
-            p->sig_pending |= 1u << sig;
-            /* acorda quem estiver dormindo/esperando para receber o sinal (a syscall devolve -EINTR) */
-            for (thread_t *t = sched_threads(); t; t = t->next)
-                if (t->proc == p && (t->state == TH_SLEEPING || t->state == TH_WAITING)) {
-                    if (p->tty && p->tty->reader == t) p->tty->reader = NULL;
-                    ((int_frame_t *)t->frame)->rax = (u64)-4;
-                    t->state = TH_READY;
-                    break;
-                }
-        }
-    }
+    siginfo_k k = { code, spid, status, 0 };
+    bool ok = p && !p->exited && sig_post(p, NULL, sig, &k);
     irq_restore(fl);
     return ok;
+}
+
+bool proc_signal(int pid, int sig) {
+    thread_t *c = thread_current();
+    return proc_signal_info(pid, sig, MOS_SI_USER, c && c->proc ? c->proc->pid : 0, 0);
+}
+
+/* syscalls que o SA_RESTART refaz (as demais bloqueantes devolvem EINTR, como no macOS: sleep, poll, sigsuspend) */
+static bool sys_restartable(u64 nr) {
+    return nr == SYS_READ || nr == SYS_WRITE || nr == SYS_WAITPID || nr == SYS_WAIT || nr == SYS_WAITANY || nr == SYS_FUTEX_WAIT;
+}
+static void sys_restart(int_frame_t *f, thread_t *t) { f->rip -= 2; f->rax = t->sys_nr; }   /* int 0x80 e syscall: 2 bytes */
+
+static u64 sig_deliver(int_frame_t *f, thread_t *t, process_t *p, int sig, const siginfo_k *k) {
+    u32 fl = p->sig_flags[sig];
+    u64 h = p->sig_handler[sig], tramp = p->sig_tramp[sig];
+    if (t->sig_intr) {                                   /* syscall interrompida: EINTR, ou refeita com SA_RESTART */
+        t->sig_intr = false;
+        if ((fl & MOS_SA_RESTART) && sys_restartable(t->sys_nr)) sys_restart(f, t);
+    }
+    u32 oldmask = t->sig_suspended ? t->sig_saved_mask : t->sig_mask;   /* sigsuspend: a volta restaura a máscara antiga */
+    t->sig_suspended = false;
+    bool onalt = t->ss_size && f->rsp > t->ss_sp && f->rsp <= t->ss_sp + t->ss_size;
+    bool usealt = (fl & MOS_SA_ONSTACK) && t->ss_size && !onalt;
+    u64 top = usealt ? t->ss_sp + t->ss_size : f->rsp - 128;            /* fora da red zone */
+    u64 fa = (top - sizeof(usigframe_t)) & ~15ULL, ret = fa - 8;
+    usigframe_t *sf = kcalloc(1, sizeof *sf);
+    if (!sf) { finish(p, -sig); return sched_switch(f); }
+    sf->magic = SIGFRAME_MAGIC;
+    sf->uctx = fa + __builtin_offsetof(usigframe_t, uc);
+    sf->info.si_signo = sig; sf->info.si_code = k->code; sf->info.si_pid = k->pid; sf->info.si_uid = 501;
+    sf->info.si_status = k->status; sf->info.si_addr = k->addr;
+    sf->uc.uc_onstack = onalt || usealt;
+    sf->uc.uc_sigmask = oldmask;
+    sf->uc.uc_stack.sp = t->ss_sp; sf->uc.uc_stack.size = t->ss_size;
+    sf->uc.uc_stack.flags = !t->ss_size ? MOS_SS_DISABLE : (onalt || usealt) ? MOS_SS_ONSTACK : 0;
+    sf->uc.uc_mcsize = sizeof(mos_mcontext_t);
+    sf->uc.uc_mcontext = fa + __builtin_offsetof(usigframe_t, mc);
+    mos_mcontext_t *mc = &sf->mc;
+    if (k->addr || t->sig_trapno) { mc->trapno = t->sig_trapno; mc->err = t->sig_err; mc->faultvaddr = k->addr; }
+    t->sig_trapno = 0; t->sig_err = 0;
+    mos_thread_state_t *s = &mc->ss;
+    s->rax = f->rax; s->rbx = f->rbx; s->rcx = f->rcx; s->rdx = f->rdx; s->rdi = f->rdi; s->rsi = f->rsi;
+    s->rbp = f->rbp; s->rsp = f->rsp; s->r8 = f->r8; s->r9 = f->r9; s->r10 = f->r10; s->r11 = f->r11;
+    s->r12 = f->r12; s->r13 = f->r13; s->r14 = f->r14; s->r15 = f->r15; s->rip = f->rip; s->rflags = f->rflags;
+    s->cs = f->cs;
+    memcpy(mc->fx, fx_area(f), 512);
+    u64 retv = tramp ? 0 : p->sig_restorer;
+    bool ok = uvm_copy_out(p, fa, sf, sizeof *sf) && uvm_copy_out(p, ret, &retv, 8);
+    kfree(sf);
+    if (!ok) {                                           /* pilha (ou sigaltstack) estourada: como no macOS, morre */
+        kprintf("proc: %s (pid %d): sem pilha para entregar o sinal %d (rsp 0x%llx)\n", p->name, p->pid, sig, f->rsp);
+        finish(p, -MOS_SIGSEGV);
+        return sched_switch(f);
+    }
+    t->sig_mask = (t->sig_mask | p->sig_amask[sig] | ((fl & MOS_SA_NODEFER) ? 0 : SIG_BIT(sig))) & ~SIG_UNBLOCKABLE;
+    if ((fl & MOS_SA_RESETHAND) && sig != MOS_SIGILL && sig != MOS_SIGTRAP) {
+        p->sig_handler[sig] = MOS_SIG_DFL;
+        p->sig_flags[sig] &= ~MOS_SA_SIGINFO;
+    }
+    f->rsp = ret;                                        /* rsp = 16n+8, como depois de um call */
+    if (tramp) {                                         /* _sigtramp(handler, estilo, sinal, siginfo*, ucontext*) */
+        f->rip = tramp;
+        f->rdi = h;
+        f->rsi = (fl & MOS_SA_SIGINFO) ? 30 : 1;         /* UC_FLAVOR : UC_TRAD */
+        f->rdx = (u64)sig;
+        f->rcx = fa + __builtin_offsetof(usigframe_t, info);
+        f->r8 = fa + __builtin_offsetof(usigframe_t, uc);
+    } else {                                             /* handler(sinal, siginfo*, ucontext*) e volta pelo restorer */
+        f->rip = h;
+        f->rdi = (u64)sig;
+        f->rsi = fa + __builtin_offsetof(usigframe_t, info);
+        f->rdx = fa + __builtin_offsetof(usigframe_t, uc);
+    }
+    f->rflags = (f->rflags & ~0x500ULL) | 0x200;         /* DF e TF limpos (ABI), IF ligado */
+    return (u64)f;
+}
+
+u64 proc_signal_check(int_frame_t *f) {
+    thread_t *t = thread_current();
+    process_t *p = t ? t->proc : NULL;
+    if (!p || (f->cs & 3) != 3) return (u64)f;
+    if (p->exited) return t->state == TH_DEAD ? sched_switch(f) : (u64)f;   /* morto agora (kill -9 em si mesmo): não volta */
+    for (;;) {
+        u32 ready = (t->sig_pending | p->sig_pending) & ~(t->sig_mask & ~SIG_UNBLOCKABLE);
+        if (!ready) break;
+        u32 own = t->sig_pending & ready;                /* os da thread (faltas) primeiro */
+        int sig = __builtin_ctz(own ? own : ready);
+        siginfo_k k;
+        if (t->sig_pending & SIG_BIT(sig)) {
+            t->sig_pending &= ~SIG_BIT(sig);
+            k.code = t->sig_info[sig].code; k.pid = t->sig_info[sig].pid; k.status = t->sig_info[sig].status; k.addr = t->sig_info[sig].addr;
+        } else {
+            p->sig_pending &= ~SIG_BIT(sig);
+            k.code = p->sig_info[sig].code; k.pid = p->sig_info[sig].pid; k.status = p->sig_info[sig].status; k.addr = p->sig_info[sig].addr;
+        }
+        if (sig_ignored(p, sig)) continue;
+        u64 h = p->sig_handler[sig];
+        if (h == MOS_SIG_DFL || (!p->sig_tramp[sig] && !p->sig_restorer)) {   /* ação padrão: encerra */
+            sig_kill_default(p, sig);
+            return sched_switch(f);
+        }
+        return sig_deliver(f, t, p, sig, &k);
+    }
+    /* acordada por um sinal que não chegou a rodar tratador nesta thread: refaz a espera, sem EINTR à toa */
+    if (t->sig_suspended) { t->sig_mask = t->sig_saved_mask; t->sig_suspended = false; }
+    if (t->sig_intr) { t->sig_intr = false; sys_restart(f, t); }
+    return (u64)f;
+}
+
+/* volta do tratador: o quadro em fa (validado pelo magic), registradores do mcontext para onde uc_mcontext aponta */
+static u64 sig_restore(int_frame_t *f, u64 fa) {
+    thread_t *t = thread_current();
+    process_t *p = t->proc;
+    usigframe_t *sf = kmalloc(sizeof *sf);
+    bool ok = sf && uvm_copy_in(p, sf, fa, sizeof *sf) && sf->magic == SIGFRAME_MAGIC;
+    if (ok && sf->uc.uc_mcontext != fa + __builtin_offsetof(usigframe_t, mc))   /* o programa trocou o mcontext */
+        ok = uvm_copy_in(p, &sf->mc, sf->uc.uc_mcontext, sizeof sf->mc);
+    const mos_thread_state_t *s = ok ? &sf->mc.ss : NULL;
+    if (ok && (s->rip >= 0x0000800000000000ULL || s->rsp >= 0x0000800000000000ULL)) ok = false;   /* iretq não canônico: #GP no kernel */
+    if (!ok) {
+        kprintf("proc: %s (pid %d): sigreturn com quadro inválido em 0x%llx\n", p->name, p->pid, fa);
+        kfree(sf);
+        finish(p, -MOS_SIGSEGV);
+        return sched_switch(f);
+    }
+    f->rax = s->rax; f->rbx = s->rbx; f->rcx = s->rcx; f->rdx = s->rdx; f->rdi = s->rdi; f->rsi = s->rsi;
+    f->rbp = s->rbp; f->rsp = s->rsp; f->r8 = s->r8; f->r9 = s->r9; f->r10 = s->r10; f->r11 = s->r11;
+    f->r12 = s->r12; f->r13 = s->r13; f->r14 = s->r14; f->r15 = s->r15; f->rip = s->rip;
+    f->cs = 0x1B; f->ss = 0x23;                                      /* nunca volta para outro anel */
+    f->rflags = (s->rflags & 0xDD5) | 0x202;                         /* flags aritméticas, DF e TF + IF */
+    u8 *fx = fx_area(f);
+    memcpy(fx, sf->mc.fx, 512);
+    u32 mxcsr, mmask;
+    memcpy(&mxcsr, fx + 24, 4); memcpy(&mmask, fx + 28, 4);
+    mxcsr &= mmask ? mmask : 0xFFBF;                                 /* bit reservado ligado: fxrstor daria #GP */
+    memcpy(fx + 24, &mxcsr, 4);
+    t->sig_mask = sf->uc.uc_sigmask & ~SIG_UNBLOCKABLE;
+    t->sig_intr = false;
+    kfree(sf);
+    return proc_signal_check(f);
+}
+static u64 sig_return(int_frame_t *f) { return sig_restore(f, f->rsp); }   /* SYS_SIGRETURN: o restorer, com rsp no quadro */
+
+/* SYS_SIG */
+static u64 sig_syscall(int_frame_t *f, thread_t *t, process_t *p) {
+    u64 op = f->rdi, a = f->rsi, b = f->rdx, c = f->r10;
+    i64 r = 0;
+    switch (op) {
+    case MOS_SIGOP_ACTION: {
+        int sig = (int)a;
+        if (sig <= 0 || sig >= MOS_NSIG || (b && (sig == MOS_SIGKILL || sig == MOS_SIGSTOP))) { r = -MOS_EINVAL; break; }
+        mos_sigaction_t o = { p->sig_handler[sig], p->sig_tramp[sig], p->sig_amask[sig], p->sig_flags[sig] }, n;
+        if (b && !uvm_copy_in(p, &n, b, sizeof n)) { r = -MOS_EFAULT; break; }
+        if (c && !uvm_copy_out(p, c, &o, sizeof o)) { r = -MOS_EFAULT; break; }
+        if (!b) break;
+        if (n.handler > MOS_SIG_IGN && (n.handler < USER_BASE || n.handler >= USER_END)) { r = -MOS_EINVAL; break; }
+        p->sig_handler[sig] = n.handler;
+        p->sig_tramp[sig] = n.handler > MOS_SIG_IGN ? n.tramp : 0;
+        p->sig_amask[sig] = n.mask & ~SIG_UNBLOCKABLE;
+        p->sig_flags[sig] = n.flags;
+        if (sig_ignored(p, sig)) {                       /* POSIX: pendentes de um sinal que passa a ser ignorado somem */
+            p->sig_pending &= ~SIG_BIT(sig);
+            for (thread_t *w = sched_threads(); w; w = w->next) if (w->proc == p) w->sig_pending &= ~SIG_BIT(sig);
+        }
+        break;
+    }
+    case MOS_SIGOP_MASK: {
+        u32 set = 0, old = t->sig_mask;
+        if (b && !uvm_copy_in(p, &set, b, 4)) { r = -MOS_EFAULT; break; }
+        if (b) {
+            if (a == MOS_SIG_BLOCK) t->sig_mask |= set;
+            else if (a == MOS_SIG_UNBLOCK) t->sig_mask &= ~set;
+            else if (a == MOS_SIG_SETMASK) t->sig_mask = set;
+            else { r = -MOS_EINVAL; break; }
+            t->sig_mask &= ~SIG_UNBLOCKABLE;
+        }
+        if (c && !uvm_copy_out(p, c, &old, 4)) r = -MOS_EFAULT;
+        break;                                           /* o que ficou desbloqueado sai na volta (proc_signal_check) */
+    }
+    case MOS_SIGOP_PENDING: {
+        u32 s = t->sig_pending | p->sig_pending;
+        if (!uvm_copy_out(p, a, &s, 4)) r = -MOS_EFAULT;
+        break;
+    }
+    case MOS_SIGOP_SUSPEND:
+        t->sig_saved_mask = t->sig_mask;
+        t->sig_suspended = true;
+        t->sig_mask = (u32)a & ~SIG_UNBLOCKABLE;
+        f->rax = (u64)-MOS_EINTR;
+        if ((t->sig_pending | p->sig_pending) & ~t->sig_mask) return proc_signal_check(f);   /* já há um: entrega agora */
+        t->wait_pid = WAIT_SIGSUSPEND;
+        t->state = TH_WAITING;
+        return sched_switch(f);
+    case MOS_SIGOP_ALTSTACK: {
+        bool onalt = t->ss_size && f->rsp > t->ss_sp && f->rsp <= t->ss_sp + t->ss_size;
+        mos_sigstack_t o = { t->ss_sp, t->ss_size, !t->ss_size ? MOS_SS_DISABLE : onalt ? MOS_SS_ONSTACK : 0, 0 }, n;
+        if (a && !uvm_copy_in(p, &n, a, sizeof n)) { r = -MOS_EFAULT; break; }
+        if (b && !uvm_copy_out(p, b, &o, sizeof o)) { r = -MOS_EFAULT; break; }
+        if (!a) break;
+        if (onalt) { r = -MOS_EPERM; break; }
+        if (n.flags & MOS_SS_DISABLE) { t->ss_sp = 0; t->ss_size = 0; break; }
+        if (n.flags & ~MOS_SS_DISABLE) { r = -MOS_EINVAL; break; }
+        if (n.size < SIG_MINSTKSZ) { r = -MOS_ENOMEM; break; }
+        if (n.sp < USER_BASE || n.sp + n.size > USER_END) { r = -MOS_EINVAL; break; }
+        t->ss_sp = n.sp; t->ss_size = n.size;
+        break;
+    }
+    case MOS_SIGOP_RETURN: return sig_restore(f, a - __builtin_offsetof(usigframe_t, uc));
+    case MOS_SIGOP_TKILL: {
+        int sig = (int)b;
+        thread_t *j = NULL;
+        for (thread_t *w = sched_threads(); w; w = w->next) if (w->id == (int)a && w->proc == p && w->state != TH_DEAD) j = w;
+        if (!j) { r = -MOS_ESRCH; break; }
+        if (sig < 0 || sig >= MOS_NSIG) { r = -MOS_EINVAL; break; }
+        if (!sig) break;
+        siginfo_k k = { MOS_SI_USER, p->pid, 0, 0 };
+        sig_post(p, j, sig, &k);
+        break;
+    }
+    case MOS_SIGOP_WAIT: {
+        u32 set = (u32)a & ~SIG_UNBLOCKABLE;
+        u32 hit = (t->sig_pending | p->sig_pending) & set;
+        if (hit) {
+            int sig = __builtin_ctz(hit);
+            bool own = t->sig_pending & SIG_BIT(sig);
+            mos_siginfo_t si;
+            memset(&si, 0, sizeof si);
+            si.si_signo = sig; si.si_uid = 501;
+            si.si_code = own ? t->sig_info[sig].code : p->sig_info[sig].code;
+            si.si_pid = own ? t->sig_info[sig].pid : p->sig_info[sig].pid;
+            si.si_status = own ? t->sig_info[sig].status : p->sig_info[sig].status;
+            si.si_addr = own ? t->sig_info[sig].addr : p->sig_info[sig].addr;
+            if (own) t->sig_pending &= ~SIG_BIT(sig); else p->sig_pending &= ~SIG_BIT(sig);
+            if (b) uvm_copy_out(p, b, &si, sizeof si);
+            r = sig;
+            break;
+        }
+        if (!c) { r = -MOS_EAGAIN; break; }
+        t->sig_wait_set = set;
+        t->wait_status = b;
+        t->wait_pid = WAIT_SIGWAIT;
+        f->rax = (u64)-MOS_EAGAIN;                       /* prazo vencido (TH_SLEEPING acorda sem mexer no rax) */
+        if (c == ~0ULL) { t->wake_at = 0; t->state = TH_WAITING; }
+        else { t->wake_at = timer_ticks() + c; t->state = TH_SLEEPING; }
+        return sched_switch(f);
+    }
+    default: r = -MOS_EINVAL;
+    }
+    f->rax = (u64)r;
+    return proc_signal_check(f);
+}
+
+/* falta em ring 3 que o programa trata: vira sinal da thread (devolve false se deve matar o processo) */
+static bool sig_fault(int_frame_t *f, thread_t *t, process_t *p, u64 cr2) {
+    int sig = 0, code = 0;
+    u64 addr = cr2;
+    switch (f->vector) {
+    case 14:   /* como o macOS: ausente = SIGSEGV, proteção = SIGBUS. Fora da região de usuário a página pode estar
+                * presente (mapa de identidade do kernel, sem o bit U), mas para o programa ela não existe: SIGSEGV */
+        if ((f->error & 1) && cr2 >= USER_BASE && cr2 < USER_END) { sig = MOS_SIGBUS; code = MOS_BUS_ADRERR; } else { sig = MOS_SIGSEGV; code = MOS_SEGV_MAPERR; }
+        break;
+    case 13:
+        /* int3 (e int n) em ring 3 chega como #GP com erro = (vetor << 3) | 2, porque as portas têm DPL 0 */
+        if (f->error == ((3 << 3) | 2)) { sig = MOS_SIGTRAP; code = MOS_TRAP_BRKPT; addr = f->rip; f->rip += 1; break; }
+        sig = MOS_SIGSEGV; code = 0; addr = 0;           /* EXC_I386_GPFLT: endereço não canônico, instrução privilegiada */
+        break;
+    case 0: sig = MOS_SIGFPE; code = MOS_FPE_INTDIV; addr = f->rip; break;
+    case 16: case 19: sig = MOS_SIGFPE; code = MOS_FPE_FLTINV; addr = f->rip; break;
+    case 6: sig = MOS_SIGILL; code = MOS_ILL_ILLOPC; addr = f->rip; break;
+    case 17: sig = MOS_SIGBUS; code = MOS_BUS_ADRALN; break;
+    case 1: case 3: sig = MOS_SIGTRAP; code = MOS_TRAP_BRKPT; addr = f->rip; break;
+    default: return false;
+    }
+    /* bloqueado, ignorado ou sem tratador: o macOS mata (repetir a instrução daria a mesma falta para sempre) */
+    if (p->sig_handler[sig] <= MOS_SIG_IGN || (t->sig_mask & SIG_BIT(sig))) {
+        if (f->vector == 13 && sig == MOS_SIGTRAP) f->rip -= 1;
+        return false;
+    }
+    /* CHECK do Chromium é ud2. O crashpad instala tratador e sai em silêncio; sem esta linha
+     * o renderer do VS Code desaparece do dump sem "processo encerrado". */
+    if (f->vector == 6)
+        kprintf("proc: %s (pid %d): instrução inválida em 0x%llx (entregue ao tratador)\n", p->name, p->pid, f->rip);
+    t->sig_pending |= SIG_BIT(sig);
+    t->sig_info[sig].code = code; t->sig_info[sig].pid = 0; t->sig_info[sig].status = 0; t->sig_info[sig].addr = addr;
+    t->sig_trapno = (u16)f->vector; t->sig_err = (u32)f->error;
+    return true;
 }
 
 /* ------------------------------------------------------------ arquivos por descritor */
@@ -1052,6 +1399,8 @@ static void pipe_service(pipe_t *pp) {
 static void fd_close(process_t *p, int fd) {
     if (!p->fds[fd].used) return;
     pipe_t *pp = p->fds[fd].pipe;
+    struct pty *ty = p->fds[fd].pty;
+    bool tm = p->fds[fd].kind == FD_PTY_M;
     if (pp) {
         if (p->fds[fd].kind == FD_PIPE_R) pp->readers--; else pp->writers--;
         pipe_service(pp);
@@ -1059,6 +1408,8 @@ static void fd_close(process_t *p, int fd) {
     }
     p->fds[fd].used = false;
     p->fds[fd].pipe = NULL;
+    p->fds[fd].pty = NULL;
+    if (ty) pty_fd_ref(ty, tm, -1);                   /* depois de soltar o fd: o par pode ser liberado aqui */
 }
 
 static void fd_copy(process_t *dst, int dfd, process_t *src, int sfd) {
@@ -1066,6 +1417,7 @@ static void fd_copy(process_t *dst, int dfd, process_t *src, int sfd) {
      * última referência, fechar primeiro liberaria o pipe que a cópia ainda vai usar (kfree duplo depois) */
     __typeof__(src->fds[0]) e = src->fds[sfd];
     if (e.pipe) { if (e.kind == FD_PIPE_R) e.pipe->readers++; else e.pipe->writers++; }
+    if (e.pty) pty_fd_ref(e.pty, e.kind == FD_PTY_M, +1);
     if (dst->fds[dfd].used) fd_close(dst, dfd);
     dst->fds[dfd] = e;
 }
@@ -1082,6 +1434,7 @@ void *proc_fd_snapshot(process_t *p, int fd) {
     *s = p->fds[fd];
     s->flags &= ~MOS_O_CLOEXEC;
     if (s->pipe) { if (s->kind == FD_PIPE_R) s->pipe->readers++; else s->pipe->writers++; }
+    if (s->pty) pty_fd_ref(s->pty, s->kind == FD_PTY_M, +1);
     return s;
 }
 int proc_fd_from_snapshot(process_t *p, const void *snap) {
@@ -1091,6 +1444,7 @@ int proc_fd_from_snapshot(process_t *p, const void *snap) {
         p->fds[fd] = *s;
         p->fds[fd].used = true;
         if (s->pipe) { if (s->kind == FD_PIPE_R) s->pipe->readers++; else s->pipe->writers++; }
+        if (s->pty) pty_fd_ref(s->pty, s->kind == FD_PTY_M, +1);
         return fd;
     }
     return -MOS_EMFILE;
@@ -1104,6 +1458,7 @@ void proc_fd_snapshot_free(void *snap) {
         pipe_service(pp);
         if (pp->readers <= 0 && pp->writers <= 0) kfree(pp);
     }
+    if (s->pty) pty_fd_ref(s->pty, s->kind == FD_PTY_M, -1);
     kfree(s);
 }
 
@@ -1383,6 +1738,7 @@ static i64 proc_exec(int_frame_t *f, thread_t *t, process_t *p, char *path, char
             if (p->tty && p->tty->reader == o) p->tty->reader = NULL;
             o->state = TH_DEAD;
         }
+    { extern void smp_kick_proc(process_t *p); smp_kick_proc(p); }   /* idem nos outros núcleos (proc/sched.c) */
     p->main = t;
     drop_pipe_waiters(p, t);
     compat_gui_proc_exit(p);
@@ -1410,6 +1766,8 @@ static i64 proc_exec(int_frame_t *f, thread_t *t, process_t *p, char *path, char
         if (p->sig_handler[s] > MOS_SIG_IGN) p->sig_handler[s] = 0;
     p->sig_restorer = 0;
     p->sig_pending = 0;
+    for (int s = 0; s < 32; s++) { p->sig_tramp[s] = 0; p->sig_flags[s] = 0; p->sig_amask[s] = 0; }
+    t->ss_sp = 0; t->ss_size = 0;                      /* a máscara da thread continua (POSIX) */
     t->gs_base = 0;
     __asm__ volatile("wrmsr" :: "c"(0xC0000101u), "a"(0u), "d"(0u));   /* GS de usuário: o dyld novo monta o TLS */
     irq_restore(fl);
@@ -1429,10 +1787,20 @@ static i64 proc_exec(int_frame_t *f, thread_t *t, process_t *p, char *path, char
     return 0;
 }
 
+static u64 proc_syscall_(int_frame_t *f);
+/* a syscall pode bloquear e trocar de thread: a thread que volta ao ring 3 (talvez acordada por um sinal, com
+ * rax = -EINTR) passa pela entrega de sinais, que também decide se a syscall interrompida é refeita */
 u64 proc_syscall(int_frame_t *f) {
+    u64 r = proc_syscall_(f);
+    return ((int_frame_t *)r)->cs & 3 ? proc_signal_check((int_frame_t *)r) : r;
+}
+static u64 proc_syscall_(int_frame_t *f) {
     thread_t *t = thread_current();
     process_t *p = t->proc;
     if (!p || (f->cs & 3) != 3) { f->rax = (u64)-MOS_EINVAL; return (u64)f; }
+    t->sys_nr = f->rax;          /* SA_RESTART refaz a syscall com este número */
+    t->sig_intr = false;
+    t->pty_wait = NULL;          /* uma espera num terminal (pty.c) nunca passa da syscall em que começou */
     u64 a = f->rdi, b = f->rsi, c = f->rdx;
     char path[256];
     i64 r = -MOS_EINVAL;
@@ -1452,6 +1820,7 @@ u64 proc_syscall(int_frame_t *f) {
         finish(p, (int)a);
         return sched_switch(f);
     case SYS_WRITE:
+        if (fd_get(p, a) >= 0 && p->fds[a].pty) return pty_rw(f, t, p, (int)a, false, b, c);   /* terminal (pty.c) */
         if (fd_get(p, a) >= 0 && p->fds[a].pipe) {
             if (p->fds[a].kind != FD_PIPE_W) { r = -MOS_EBADF; break; }
             return pipe_op(f, t, p->fds[a].pipe, false, b, c);
@@ -1645,6 +2014,10 @@ u64 proc_syscall(int_frame_t *f) {
                                    (!strncmp(p->name, "Code", 4) && !p->name[4] && strstr(path, ".asar")));   /* AsarURLLoader */
         /* EMFILE vai sempre para o log (raro e sério: o processo principal do VS Code abre dezenas de arquivos) */
         if (fd < 0) { kprintf("open[diag]: %s (pid %d): EMFILE %s\n", p->name, p->pid, path); r = -MOS_EMFILE; break; }
+        {   /* terminais (pty.c): /dev/ptmx cria um par, /dev/ttysNNN abre o escravo, /dev/tty o terminal de controle */
+            int pr = pty_open_path(p, fd, path, (int)b);
+            if (pr <= 0) { r = pr < 0 ? pr : fd; break; }
+        }
         vnode_t *v = is_devnull(path) ? NULL : vfs_lookup(path);
         bool wr = b & (MOS_O_WRONLY | MOS_O_RDWR);
         if (is_devnull(path)) { /* sem vnode: read/write tratam pelo caminho */ }
@@ -1668,6 +2041,7 @@ u64 proc_syscall(int_frame_t *f) {
         p->fds[fd].used = true;
         p->fds[fd].kind = FD_FILE;
         p->fds[fd].pipe = NULL;
+        p->fds[fd].pty = NULL;
         p->fds[fd].flags = (int)b;
         p->fds[fd].off = 0;
         strncpy(p->fds[fd].path, path, sizeof p->fds[fd].path - 1);
@@ -1766,6 +2140,7 @@ u64 proc_syscall(int_frame_t *f) {
         break;
     }
     case SYS_READ: {
+        if (fd_get(p, a) >= 0 && p->fds[a].pty) return pty_rw(f, t, p, (int)a, true, b, c);    /* terminal (pty.c) */
         if (fd_get(p, a) >= 0 && p->fds[a].pipe) {
             if (p->fds[a].kind != FD_PIPE_R) { r = -MOS_EBADF; break; }
             return pipe_op(f, t, p->fds[a].pipe, true, b, c);
@@ -1798,7 +2173,7 @@ u64 proc_syscall(int_frame_t *f) {
     /* pread/pwrite: deslocamento explícito, posição do fd intocada. No libSystem eram lseek+read+lseek, o que quebrava
      * com threads lendo o mesmo fd (o pool do libuv lendo o node_modules.asar enquanto o AsarURLLoader lia também) */
     case SYS_PREAD: {
-        if (fd_get(p, a) < 0 || p->fds[a].pipe) { r = fd_get(p, a) < 0 ? -MOS_EBADF : -MOS_ESPIPE; break; }
+        if (fd_get(p, a) < 0 || p->fds[a].pipe || p->fds[a].pty) { r = fd_get(p, a) < 0 ? -MOS_EBADF : -MOS_ESPIPE; break; }
         if (p->fds[a].flags & MOS_O_WRONLY) { r = -MOS_EBADF; break; }
         if (is_devnull(p->fds[a].path)) { r = 0; break; }
         vnode_t *v = vfs_lookup(p->fds[a].path);
@@ -1810,7 +2185,7 @@ u64 proc_syscall(int_frame_t *f) {
         break;
     }
     case SYS_PWRITE: {
-        if (fd_get(p, a) < 0 || p->fds[a].pipe) { r = fd_get(p, a) < 0 ? -MOS_EBADF : -MOS_ESPIPE; break; }
+        if (fd_get(p, a) < 0 || p->fds[a].pipe || p->fds[a].pty) { r = fd_get(p, a) < 0 ? -MOS_EBADF : -MOS_ESPIPE; break; }
         if (!(p->fds[a].flags & (MOS_O_WRONLY | MOS_O_RDWR))) { r = -MOS_EBADF; break; }
         if (is_devnull(p->fds[a].path)) { r = (i64)c; break; }
         u8 *tmp = c ? kmalloc(c) : NULL;
@@ -1821,7 +2196,7 @@ u64 proc_syscall(int_frame_t *f) {
         break;
     }
     case SYS_FTRUNCATE: {
-        if (fd_get(p, a) < 0 || p->fds[a].pipe) { r = fd_get(p, a) < 0 ? -MOS_EBADF : -MOS_EINVAL; break; }
+        if (fd_get(p, a) < 0 || p->fds[a].pipe || p->fds[a].pty) { r = fd_get(p, a) < 0 ? -MOS_EBADF : -MOS_EINVAL; break; }
         if (!(p->fds[a].flags & (MOS_O_WRONLY | MOS_O_RDWR))) { r = -MOS_EBADF; break; }
         if (is_devnull(p->fds[a].path)) { r = 0; break; }
         r = file_truncate(p->fds[a].path, b);
@@ -1829,6 +2204,7 @@ u64 proc_syscall(int_frame_t *f) {
     }
     case SYS_LSEEK: {
         if (fd_get(p, a) < 0) { r = -MOS_EBADF; break; }
+        if (p->fds[a].pty) { r = -MOS_ESPIPE; break; }      /* terminal: sem posição */
         vnode_t *v = vfs_lookup(p->fds[a].path);
         i64 base = c == MOS_SEEK_SET ? 0 : c == MOS_SEEK_CUR ? (i64)p->fds[a].off : c == MOS_SEEK_END ? (i64)(v ? v->size : 0) : -1;
         i64 pos = base + (i64)b;
@@ -1842,6 +2218,7 @@ u64 proc_syscall(int_frame_t *f) {
         vnode_t *v;
         /* pipe: is_dir = 2 (ponta de leitura) ou 3 (escrita); size = bytes para ler (ou espaço livre);
          * mtime = 1 se a outra ponta já fechou. É o que kqueue/poll do libSystem usam para saber se há dados. */
+        if (f->rax == SYS_FSTAT && fd_get(p, a) >= 0 && p->fds[a].pty) { r = pty_fstat(p, (int)a, b); break; }   /* is_dir 5 */
         if (f->rax == SYS_FSTAT && fd_get(p, a) >= 0 && p->fds[a].pipe) {
             pipe_t *pp = p->fds[a].pipe;
             bool rd = p->fds[a].kind == FD_PIPE_R;
@@ -1857,6 +2234,11 @@ u64 proc_syscall(int_frame_t *f) {
         else { if (!copy_path(p, path, a)) { r = -MOS_EFAULT; break; } sp = path; }
         if (is_devnull(sp)) {                               /* is_dir 4 = dispositivo de caracteres (libSystem) */
             mos_stat_t st = {0, 4, unix_now()};
+            r = uvm_copy_out(p, b, &st, sizeof st) ? 0 : -MOS_EFAULT;
+            break;
+        }
+        if (f->rax == SYS_STAT && pty_stat_path(sp)) {      /* /dev/ptmx, /dev/tty, /dev/ttysNNN: terminal */
+            mos_stat_t st = {0, 5, unix_now()};
             r = uvm_copy_out(p, b, &st, sizeof st) ? 0 : -MOS_EFAULT;
             break;
         }
@@ -1960,7 +2342,7 @@ u64 proc_syscall(int_frame_t *f) {
             extern bool lazy_add_file(process_t *p, u64 va, u64 len, const char *path, u64 foff);
             u64 foff = f->r10;
             if (fd_get(p, c) < 0) { r = -MOS_EBADF; break; }
-            if (p->fds[c].pipe || is_devnull(p->fds[c].path)) { r = -MOS_EINVAL; break; }
+            if (p->fds[c].pipe || p->fds[c].pty || is_devnull(p->fds[c].path)) { r = -MOS_EINVAL; break; }
             if (p->fds[c].flags & MOS_O_WRONLY) { r = -13; break; }       /* EACCES */
             if (!len || len > (64ull << 30) || (foff & 0xFFF)) { r = -MOS_EINVAL; break; }
             vnode_t *v = vfs_lookup(p->fds[c].path);
@@ -2029,6 +2411,7 @@ u64 proc_syscall(int_frame_t *f) {
         if (a < USER_BASE || a >= USER_END || b < USER_BASE || b > USER_END) { r = -MOS_EINVAL; break; }
         thread_t *nt = uthread_create(p, a, b, c);
         if (!nt) { r = -MOS_ENOMEM; break; }
+        nt->sig_mask = t->sig_mask;                     /* pthread_create: a thread nova herda a máscara */
         p->nthreads++;
         r = nt->id;
         break;
@@ -2094,14 +2477,19 @@ u64 proc_syscall(int_frame_t *f) {
         q->dyld = macho_dyld_clone(p->dyld);            /* imagens do dlopen: mesma memória, cópia do grafo */
         memcpy(q->sig_handler, p->sig_handler, sizeof q->sig_handler);
         q->sig_restorer = p->sig_restorer;
+        memcpy(q->sig_tramp, p->sig_tramp, sizeof q->sig_tramp);
+        memcpy(q->sig_flags, p->sig_flags, sizeof q->sig_flags);
+        memcpy(q->sig_amask, p->sig_amask, sizeof q->sig_amask);
         q->start_ms = timer_ticks();
         q->tty = p->tty;
         if (q->tty) q->tty->refs++;
+        q->pgid = p->pgid; q->sid = p->sid; q->ctty = p->ctty;   /* mesmo grupo, sessão e terminal de controle */
         machipc_spawn(p, q);                            /* como no macOS: o filho só herda as portas especiais */
         { extern void lazy_fork(process_t *from, process_t *to); lazy_fork(p, q); }   /* faixas sob demanda (mm/lazy.c) */
         for (int i = 0; i < PROC_MAX_FDS; i++) if (p->fds[i].used) fd_copy(q, i, p, i);
         f->rax = 0;                                     /* o filho vê 0 */
         thread_t *ct = uthread_clone(q, f);
+        if (ct) { ct->sig_mask = t->sig_mask; ct->ss_sp = t->ss_sp; ct->ss_size = t->ss_size; }   /* máscara e sigaltstack passam ao filho */
         if (!ct) { for (int i = 0; i < PROC_MAX_FDS; i++) fd_close(q, i); free_address_space(q); if (q->tty) q->tty->refs--; kfree(q); r = -MOS_ENOMEM; break; }
         {   /* o filho herda o GS de usuário da thread que chamou fork (TLS: pthread_getspecific, thread_local);
              * com 0, o primeiro acesso a TLS no filho falhava (o ruby caía logo depois do fork) */
@@ -2124,11 +2512,18 @@ u64 proc_syscall(int_frame_t *f) {
         if (b > MOS_SIG_IGN && (b < USER_BASE || b >= USER_END)) { r = -MOS_EFAULT; break; }
         r = (i64)p->sig_handler[a];
         p->sig_handler[a] = b;
+        p->sig_tramp[a] = 0; p->sig_flags[a] = 0; p->sig_amask[a] = 0;   /* interface antiga (mos.h): chamada direta */
         if (c) p->sig_restorer = c;
         break;
     case SYS_SIGRETURN: return sig_return(f);
+    case SYS_SIG: return sig_syscall(f, t, p);           /* ações, máscaras, sigsuspend, sigaltstack, sigwait */
     case SYS_SIGKILL: r = proc_signal((int)a, (int)b) ? 0 : -MOS_ESRCH; break;
+    case SYS_TTY:                                         /* terminais, sessões e grupos (proc/pty.c) */
+        r = pty_syscall(p, a, b, c, f->r10);
+        if (p->exited) return sched_switch(f);            /* killpg do próprio grupo com SIGKILL */
+        break;
     case SYS_DYLD: r = macho_dyld_syscall(p, a, b, c, f->r10); break;   /* dlopen/dlsym (kernel/compat/macho.c) */
+    case SYS_LS: { extern i64 ls_syscall(process_t *p, u64 op, u64 ureq); r = ls_syscall(p, a, b); break; }   /* Launch Services (kernel/compat/launchsvc.c) */
     case SYS_NET: { extern i64 net_user_syscall(process_t *p, u64 op, u64 a, u64 b, u64 c); r = net_user_syscall(p, a, b, c, f->r10); break; }   /* TCP/DNS (kernel/net/usersock.c) */
 
     /* ---- processos e pasta atual */
@@ -2276,5 +2671,6 @@ void proc_init(void) {
         proc_spawn("/Sistema/Programas/teste", "autoteste");
         sh_test_pid = proc_spawn_tty("/Sistema/Programas/sh", NULL);
         if (sh_test_pid > 0) kthread_create("teste-sh", sh_test, NULL);
+        if (vfs_lookup("/Sistema/Programas/smpteste")) proc_spawn("/Sistema/Programas/smpteste", NULL);   /* SMP: carga paralela */
     }
 }

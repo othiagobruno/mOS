@@ -46,6 +46,8 @@ Copy-Item -Force "$PSScriptRoot\brew-shims\xcode-select" "$mos\usr\bin\xcode-sel
 foreach ($t in 'hdiutil', 'ditto', 'mkbom', 'xattr', 'codesign', 'sudo') { Copy-Item -Force "$PSScriptRoot\brew-shims\$t" "$mos\usr\bin\$t" }
 Copy-Item -Force "$PSScriptRoot\brew-shims\diskutil" "$mos\usr\sbin\diskutil"
 New-Item -ItemType Directory -Force "$mos\Applications" | Out-Null
+# chown/chgrp ficam em /usr/sbin no macOS (o brew roda "sudo chown" nos .app dos casks)
+foreach ($t in 'chown', 'chgrp') { if (Test-Path "$mos\usr\local\bin\$t") { New-MosLink "$mos\usr\sbin\$t" "/usr/local/bin/$t" } }
 # Command Line Tools de mentira: o brew (macOS 14, Tier 3) as exige mesmo para bottles; o clang só informa a versão
 New-Item -ItemType Directory -Force "$mos\Library\Developer\CommandLineTools\usr\bin" | Out-Null
 Copy-Item -Force "$PSScriptRoot\brew-shims\clang" "$mos\Library\Developer\CommandLineTools\usr\bin\clang"

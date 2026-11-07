@@ -160,10 +160,134 @@ static i64 tls_user_op(process_t *p, u64 op, u64 a, u64 b, u64 c) {
 }
 
 #define CHUNK 16384
+void net_loop_drain(void);
+static i64 net6_user_op(process_t *p, u64 op, u64 a, u64 b, u64 c);
+/* a trava da pilha; o laço local (127.x, ::1) anda a cada syscall, sem esperar o net_poll da área de trabalho */
+void tcp_tick(u64 now);
+static u64 net_lock(void) {
+    u64 fl = spin_lock_irqsave(&g_net_lock);
+    net_loop_drain();
+    tcp_tick(timer_ticks());     /* ACKs pendentes (ack_now) também saem já */
+    net_loop_drain();
+    return fl;
+}
+
+static int us_alloc(process_t *p, int tcp) {
+    for (int i = 0; i < USOCKS; i++) if (!us[i].pid) { us[i].pid = p->pid; us[i].tcp = tcp; return i; }
+    return -1;
+}
+
+/* conexão para qualquer família; o loopback sem escuta é recusado na hora (como o connect do BSD) */
+static i64 connect_any(process_t *p, const u8 *a16, u16 port) {
+    u64 fl = net_lock();
+    int slot = -1;
+    for (int i = 0; i < USOCKS; i++) if (!us[i].pid) { slot = i; break; }
+    if (slot < 0) { spin_unlock_irqrestore(&g_net_lock, fl); return -MOS_EMFILE; }
+    int t = tcp_connect6(a16, port);
+    if (t >= 0) us_alloc(p, t);
+    spin_unlock_irqrestore(&g_net_lock, fl);
+    return t >= 0 ? slot : t == -2 ? -MOS_ECONNREFUSED : -MOS_ENETUNREACH;
+}
+
+static i64 net6_user_op(process_t *p, u64 op, u64 a, u64 b, u64 c) {
+    u64 fl;
+    i64 r;
+    u8 a16[16];
+    switch (op) {
+    case MOS_NET_RESOLVE6: {
+        char host[256];
+        usize i = 0;
+        for (; i < sizeof host - 1; i++) {
+            if (!uvm_copy_in(p, &host[i], a + i, 1)) return -MOS_EFAULT;
+            if (!host[i]) break;
+        }
+        host[i] = 0;
+        fl = net_lock();
+        r = dns_resolve6(host, a16);
+        spin_unlock_irqrestore(&g_net_lock, fl);
+        if (r == 1 && b && !uvm_copy_out(p, b, a16, 16)) return -MOS_EFAULT;
+        return r;
+    }
+    case MOS_NET_CONNECT6:
+        if (!uvm_copy_in(p, a16, a, 16)) return -MOS_EFAULT;
+        return connect_any(p, a16, (u16)b);
+    case MOS_NET_LISTEN: {
+        if (a) { if (!uvm_copy_in(p, a16, a, 16)) return -MOS_EFAULT; }
+        else memset(a16, 0, 16);
+        int fam = (int)((c >> 16) & 3);
+        int backlog = (int)(c & 0xFFFF);
+        fl = net_lock();
+        int l = tcp_listen(a16, (u16)b, backlog, fam ? fam : (TCP_L_V4 | TCP_L_V6));
+        int slot = l >= 0 ? us_alloc(p, l) : -1;
+        if (l >= 0 && slot < 0) tcp_close(l);
+        spin_unlock_irqrestore(&g_net_lock, fl);
+        if (l == -2) return -MOS_EADDRINUSE;
+        if (l < 0) return -MOS_EADDRNOTAVAIL;
+        return slot >= 0 ? slot : -MOS_EMFILE;
+    }
+    case MOS_NET_ACCEPT: {
+        fl = net_lock();
+        int l = handle_of(p, a);
+        if (l < TCP_LISTEN_BASE) { spin_unlock_irqrestore(&g_net_lock, fl); return -MOS_EINVAL; }
+        int slot = -1;
+        for (int i = 0; i < USOCKS; i++) if (!us[i].pid) { slot = i; break; }
+        int t = slot >= 0 ? tcp_accept(l) : -1;
+        if (t >= 0) us_alloc(p, t);
+        spin_unlock_irqrestore(&g_net_lock, fl);
+        if (slot < 0) return -MOS_EMFILE;
+        return t >= 0 ? slot : -MOS_EAGAIN;
+    }
+    case MOS_NET_ADDRS: {
+        mos_net_addrs_t o;
+        memset(&o, 0, sizeof o);
+        fl = net_lock();
+        int t = handle_of(p, a);
+        bool ok = t >= 0 && tcp_endpoints(t, o.lip, &o.lport, o.rip, &o.rport);
+        spin_unlock_irqrestore(&g_net_lock, fl);
+        if (!ok) return -MOS_EBADF;
+        if (b && !uvm_copy_out(p, b, &o, sizeof o)) return -MOS_EFAULT;
+        return 0;
+    }
+    case MOS_NET_INFO6: {
+        mos_net6_info_t o;
+        memset(&o, 0, sizeof o);
+        net6_info_t *g = net6_info();
+        if (g->ll_ok) { memcpy(o.ll, g->ll, 16); o.flags |= MOS_NET6_LL; }
+        if (g->global_ok) { memcpy(o.global, g->global, 16); o.flags |= MOS_NET6_GLOBAL; o.prefix_len = g->prefix_len; }
+        if (g->has_router) { memcpy(o.router, g->router, 16); o.flags |= MOS_NET6_ROUTER; }
+        if (g->dns_ok) { memcpy(o.dns, g->dns, 16); o.flags |= MOS_NET6_DNS; }
+        if (a && !uvm_copy_out(p, a, &o, sizeof o)) return -MOS_EFAULT;
+        return ip6_has_global_route();
+    }
+    case MOS_NET_ICMP_SEND: {
+        u8 msg[1200];
+        if (c < 8 || c > sizeof msg) return -MOS_EINVAL;
+        if (!uvm_copy_in(p, a16, a, 16) || !uvm_copy_in(p, msg, b, (usize)c)) return -MOS_EFAULT;
+        fl = net_lock();
+        bool ok = icmp_echo_send(a16, msg, (u16)c);
+        spin_unlock_irqrestore(&g_net_lock, fl);
+        return ok ? (i64)c : -MOS_ENETUNREACH;
+    }
+    case MOS_NET_ICMP_RECV: {
+        u8 buf[16 + 256];
+        if (c < 16) return -MOS_EINVAL;
+        int max = (int)(c - 16 > 256 ? 256 : c - 16);
+        fl = net_lock();
+        int n = icmp_echo_recv((u16)a, buf, buf + 16, max);
+        spin_unlock_irqrestore(&g_net_lock, fl);
+        if (n <= 0) return 0;
+        if (!uvm_copy_out(p, b, buf, (usize)(16 + n))) return -MOS_EFAULT;
+        return 16 + n;
+    }
+    }
+    return -MOS_EINVAL;
+}
+
 i64 net_user_syscall(process_t *p, u64 op, u64 a, u64 b, u64 c) {
     i64 r;
     u64 fl;
     if (op >= MOS_NET_TLS_NEW && op <= MOS_NET_TLS_FREE) return tls_user_op(p, op, a, b, c);
+    if (op >= MOS_NET_RESOLVE6 && op <= MOS_NET_ICMP_RECV) return net6_user_op(p, op, a, b, c);
     if (op == MOS_NET_TLS_ROOTS) {             /* a mesma lista que o tls.c usa (kernel/arch/certs.S) */
         extern const char mos_cacert_pem[], mos_cacert_pem_end[];
         u64 len = (u64)(mos_cacert_pem_end - mos_cacert_pem);
@@ -181,25 +305,19 @@ i64 net_user_syscall(process_t *p, u64 op, u64 a, u64 b, u64 c) {
         }
         host[i] = 0;
         u32 ip = 0;
-        fl = spin_lock_irqsave(&g_net_lock);
+        fl = net_lock();
         r = dns_resolve(host, &ip);
         spin_unlock_irqrestore(&g_net_lock, fl);
         if (r == 1 && b && !uvm_copy_out(p, b, &ip, sizeof ip)) return -MOS_EFAULT;
         return r;
     }
-    case MOS_NET_CONNECT: {
-        int slot = -1;
-        fl = spin_lock_irqsave(&g_net_lock);
-        for (int i = 0; i < USOCKS; i++) if (!us[i].pid) { slot = i; break; }
-        if (slot < 0) { spin_unlock_irqrestore(&g_net_lock, fl); return -MOS_EMFILE; }
-        net_info_t *ni = net_info();
-        int t = ni && ni->configured ? tcp_connect((u32)a, (u16)b) : -1;
-        if (t >= 0) { us[slot].pid = p->pid; us[slot].tcp = t; }
-        spin_unlock_irqrestore(&g_net_lock, fl);
-        return t >= 0 ? slot : -MOS_ENETUNREACH;
+    case MOS_NET_CONNECT: {                        /* IPv4 (a = ip em ordem de host); o mesmo caminho do CONNECT6 */
+        u8 a16[16];
+        ip6_from_v4((u32)a, a16);
+        return connect_any(p, a16, (u16)b);
     }
     case MOS_NET_STATE: {
-        fl = spin_lock_irqsave(&g_net_lock);
+        fl = net_lock();
         int t = handle_of(p, a);
         r = t < 0 ? -MOS_EBADF : tcp_state(t);
         spin_unlock_irqrestore(&g_net_lock, fl);
@@ -212,7 +330,7 @@ i64 net_user_syscall(process_t *p, u64 op, u64 a, u64 b, u64 c) {
         while ((u64)done < c) {
             usize n = c - (u64)done > CHUNK ? CHUNK : (usize)(c - (u64)done);
             if (!uvm_copy_in(p, buf, b + (u64)done, n)) { kfree(buf); return done ? done : -MOS_EFAULT; }
-            fl = spin_lock_irqsave(&g_net_lock);
+            fl = net_lock();
             int t = handle_of(p, a);
             int k = t < 0 ? -2 : tcp_send(t, buf, (int)n);
             spin_unlock_irqrestore(&g_net_lock, fl);
@@ -228,7 +346,7 @@ i64 net_user_syscall(process_t *p, u64 op, u64 a, u64 b, u64 c) {
         usize max = c > CHUNK ? CHUNK : (usize)c;
         u8 *buf = kmalloc(max ? max : 1);
         if (!buf) return -MOS_ENOMEM;
-        fl = spin_lock_irqsave(&g_net_lock);
+        fl = net_lock();
         int t = handle_of(p, a);
         int k = t < 0 ? -2 : tcp_recv(t, buf, (int)max);
         spin_unlock_irqrestore(&g_net_lock, fl);
@@ -238,16 +356,16 @@ i64 net_user_syscall(process_t *p, u64 op, u64 a, u64 b, u64 c) {
         return k;
     }
     case MOS_NET_CLOSE: {
-        fl = spin_lock_irqsave(&g_net_lock);
+        fl = net_lock();
         int t = handle_of(p, a);
         if (t >= 0) { tcp_close(t); us[a].pid = 0; }
         spin_unlock_irqrestore(&g_net_lock, fl);
         return t >= 0 ? 0 : -MOS_EBADF;
     }
     case MOS_NET_AVAIL: {
-        fl = spin_lock_irqsave(&g_net_lock);
+        fl = net_lock();
         int t = handle_of(p, a);
-        r = t < 0 ? -MOS_EBADF : tcp_avail(t);
+        r = t < 0 ? -MOS_EBADF : t >= TCP_LISTEN_BASE ? tcp_pending(t) : tcp_avail(t);
         spin_unlock_irqrestore(&g_net_lock, fl);
         return r;
     }

@@ -131,7 +131,9 @@ static inline u32  inl(u16 p)  { u32 v; __asm__ volatile("inl %1,%0" : "=a"(v) :
 static inline void io_wait(void) { outb(0x80, 0); }
 static inline void cli(void) { __asm__ volatile("cli"); }
 static inline void sti(void) { __asm__ volatile("sti"); }
-static inline void hlt(void) { __asm__ volatile("hlt"); }
+void cpu_idle(void);           /* proc/sched.c: o hlt que solta a trava grande se for o desktop no BSP */
+static inline void hlt_raw(void) { __asm__ volatile("hlt"); }
+static inline void hlt(void) { cpu_idle(); }
 static inline u64  read_cr3(void) { u64 v; __asm__ volatile("mov %%cr3,%0" : "=r"(v)); return v; }
 static inline void mmio_w32(volatile void *base, u32 off, u32 v) { *(volatile u32 *)((u8 *)base + off) = v; }
 static inline u32  mmio_r32(volatile void *base, u32 off) { return *(volatile u32 *)((u8 *)base + off); }
@@ -151,6 +153,21 @@ static inline u64 spin_lock_irqsave(spinlock_t *l) {
     return f;
 }
 static inline void spin_unlock_irqrestore(spinlock_t *l, u64 f) { __atomic_store_n(&l->v, 0, __ATOMIC_RELEASE); irq_restore(f); }
+
+/* ---------- SMP: núcleos, trava grande do kernel e TLB (arch/cpu.c, arch/smp.c, proc/sched.c)
+ * Cada núcleo tem o próprio TSS na GDT (seletor 0x28 + 16*cpu), então o `str` diz em que núcleo estamos.
+ * Trava grande (BKL): todo código do kernel roda com ela, exceto os tratadores de IRQ do PIC (PIT e PS/2, só
+ * no BSP), os trabalhos de par_for e os laços ociosos. O ring 3 roda sem ela em qualquer núcleo; quem entra
+ * no kernel vindo do usuário (syscall, falta, temporizador) a pega. O desktop a segura o tempo todo e só a
+ * solta em cpu_idle() (todo hlt() da thread 0 com interrupções ligadas) — o mesmo ponto em que o modelo
+ * antigo deixava threads de usuário rodarem; fora dali, syscalls continuam "com o desktop parado". */
+#define MAX_CPUS 64
+static inline int this_cpu(void) { u16 s; __asm__ volatile("str %0" : "=r"(s)); return s >= 0x28 ? (s - 0x28) >> 4 : 0; }
+void   cpu_tss_init(int cpu, u64 ist_top);      /* AP: descritor do TSS próprio + ltr */
+bool   bkl_held(void);                          /* este núcleo segura a trava grande */
+void   smp_tlb_shootdown(u64 cr3);              /* invalida o TLB dos OUTROS núcleos com esse CR3 (com a BKL) */
+void   smp_send_ipi(int cpu, u8 vec);
+u8     smp_apic_id(int cpu);
 
 /* ---------- trabalho paralelo nos núcleos extras (arch/smp.c)
  * par_for divide [0, n) em pedaços de `grain` itens e os distribui entre o BSP e os APs; volta só

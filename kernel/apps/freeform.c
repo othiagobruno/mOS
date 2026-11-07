@@ -158,6 +158,7 @@ static bool obj_hit(obj_t *o, float bx, float by) {
 /* ------------------------------------------------------------ desenho dos objetos */
 static void draw_obj(surface_t *s, obj_t *o, int ax, int ay, bool sel) {
     rect_t r = obj_screen(o, ax, ay);
+    u32 ink = (T.dark && (o->color & 0xFFFFFF) == 0x1E1E20) ? RGB(235, 235, 240) : o->color;   /* tinta preta some no modo escuro */
     float z = F.zoom;
     switch (o->kind) {
     case K_NOTE:
@@ -179,25 +180,25 @@ static void draw_obj(surface_t *s, obj_t *o, int ax, int ay, bool sel) {
     case K_DIAMOND: { float t[] = {r.x + r.w / 2.0f, (float)r.y, (float)r.x + r.w, r.y + r.h / 2.0f, r.x + r.w / 2.0f, (float)r.y + r.h, (float)r.x, r.y + r.h / 2.0f}; gfx_polygon(s, t, 4, o->color); } break;
     case K_LINE: {
         float x0 = ax + sx_(o->x), y0 = ay + sy_(o->y), x1 = ax + sx_(o->x + o->w), y1 = ay + sy_(o->y + o->h);
-        gfx_line(s, x0, y0, x1, y1, MAX(1.5f, 3 * z), o->color);
+        gfx_line(s, x0, y0, x1, y1, MAX(1.5f, 3 * z), ink);
         /* ponta de seta */
         float dx = x1 - x0, dy = y1 - y0, l = fsqrt(dx * dx + dy * dy);
         if (l > 1) {
             dx /= l; dy /= l;
             float hs = 12 * z;
             float t[] = {x1, y1, x1 - dx * hs - dy * hs * 0.5f, y1 - dy * hs + dx * hs * 0.5f, x1 - dx * hs + dy * hs * 0.5f, y1 - dy * hs - dx * hs * 0.5f};
-            gfx_polygon(s, t, 3, o->color);
+            gfx_polygon(s, t, 3, ink);
         }
     } break;
     case K_PEN:
         for (int k = 1; k < o->npts; k++)
-            gfx_line(s, ax + sx_(o->x + o->pts[k * 2 - 2]), ay + sy_(o->y + o->pts[k * 2 - 1]), ax + sx_(o->x + o->pts[k * 2]), ay + sy_(o->y + o->pts[k * 2 + 1]), MAX(1.5f, 3 * z), o->color);
+            gfx_line(s, ax + sx_(o->x + o->pts[k * 2 - 2]), ay + sy_(o->y + o->pts[k * 2 - 1]), ax + sx_(o->x + o->pts[k * 2]), ay + sy_(o->y + o->pts[k * 2 + 1]), MAX(1.5f, 3 * z), ink);
         break;
     case K_TEXT: break;
     }
     if (o->text[0] && !(F.editing && F.edit_obj == (int)(o - F.o))) {
         bool dark_bg = o->kind != K_NOTE && o->kind != K_TEXT && (C_R(o->color) * 3 + C_G(o->color) * 6 + C_B(o->color)) / 10 < 150;
-        u32 tc = o->kind == K_TEXT ? o->color : dark_bg ? RGB(255, 255, 255) : RGB(30, 30, 32);
+        u32 tc = o->kind == K_TEXT ? ink : dark_bg ? RGB(255, 255, 255) : RGB(30, 30, 32);
         float fs = (o->kind == K_TEXT ? 22 : 15) * z;
         if (fs >= 5) {
             rect_t tr = rect_inset(r, (int)(10 * z));

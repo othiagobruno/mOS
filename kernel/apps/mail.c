@@ -1103,3 +1103,36 @@ static void icon(surface_t *s, int x, int y, int sz) {
     gfx_line(s, x + 50 * u, y + 21 * u, x + 32 * u, y + 36 * u, 2.2f * u, RGB(30, 120, 240));
 }
 app_t app_mail = {.name = "Mail", .exec = "mail", .draw_icon = icon, .launch = launch, .tick = tick, .on_menu = on_menu, .menus = menus, .nmenus = 1, .pinned = true};
+
+/* Launch Services: mailto:fulano@x.com?subject=Oi&body=... abre uma mensagem nova (Mail é o leitor padrão) */
+static void pct_decode(const char *s, usize n, char *out, usize cap) {
+    usize o = 0;
+    for (usize i = 0; i < n && o + 1 < cap; i++) {
+        if (s[i] == '%' && i + 2 < n) {
+            int hi = s[i + 1] <= '9' ? s[i + 1] - '0' : (s[i + 1] | 32) - 'a' + 10, lo = s[i + 2] <= '9' ? s[i + 2] - '0' : (s[i + 2] | 32) - 'a' + 10;
+            out[o++] = (char)(hi * 16 + lo);
+            i += 2;
+        } else out[o++] = s[i] == '+' ? ' ' : s[i];
+    }
+    out[o] = 0;
+}
+void mail_open_url(const char *url) {
+    char to[256] = "", subj[256] = "", body[1024] = "";
+    const char *p = url && !strncasecmp(url, "mailto:", 7) ? url + 7 : (url ? url : "");
+    const char *q = strchr(p, '?');
+    pct_decode(p, q ? (usize)(q - p) : strlen(p), to, sizeof to);
+    while (q && *q) {
+        q++;
+        const char *amp = strchr(q, '&'), *eq = strchr(q, '=');
+        usize len = amp ? (usize)(amp - q) : strlen(q);
+        if (eq && eq < q + len) {
+            usize kl = (usize)(eq - q);
+            if (kl == 7 && !strncasecmp(q, "subject", 7)) pct_decode(eq + 1, len - kl - 1, subj, sizeof subj);
+            else if (kl == 4 && !strncasecmp(q, "body", 4)) pct_decode(eq + 1, len - kl - 1, body, sizeof body);
+        }
+        q = amp;
+    }
+    app_launch(&app_mail);
+    compose(to, subj, NULL);
+    if (body[0] && ML.ta) textarea_set(ML.ta, body, -1);
+}

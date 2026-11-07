@@ -1,0 +1,6 @@
+{
+  "name": "teste-wcv",
+  "version": "1.0.0",
+  "description": "mOS: teste de composição de WebContentsView (Electron)",
+  "main": "main.js"
+}

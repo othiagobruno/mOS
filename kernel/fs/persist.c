@@ -7,7 +7,7 @@
  *   - pastas criadas, apagadas e renomeadas/movidas vão para o disco na hora;
  *   - arquivos alterados ficam "sujos" e são gravados inteiros por persist_tick() ~1,5 s depois da
  *     última alteração (ou em persist_sync(), chamado antes de desligar/reiniciar).
- * /Volumes e /tmp nunca são gravados. Caminho no disco = "/mOS" + caminho no VFS.
+ * /Volumes e /tmp nunca são gravados aqui (volumes graváveis de /Volumes: vfs_bridge.c). Caminho no disco = "/mOS" + caminho no VFS.
  */
 #include "vfs.h"
 #include "storage.h"
@@ -198,6 +198,7 @@ static bool mkdirs_parent(const char *fpath) {
 
 void persist_mark(vnode_t *n) {
     char vp[1024];
+    vol_mark(n);                         /* dentro de /Volumes/<gravável>: vai para aquele disco */
     if (!tracked(n, vp, sizeof vp)) return;
     if (n->dir) {
         char fp[1040];
@@ -212,6 +213,7 @@ void persist_mark(vnode_t *n) {
 
 void persist_delete(vnode_t *n) {
     char vp[1024], fp[1040];
+    vol_delete(n);
     if (!tracked(n, vp, sizeof vp)) return;
     fpath_of(vp, fp, sizeof fp);
     bool dir;
@@ -225,6 +227,7 @@ static void add_tree(vnode_t *n) {
 }
 
 void persist_move(const char *old_vpath, vnode_t *n) {
+    vol_move(old_vpath, n);              /* antes: tira de n as referências ao volume de origem */
     if (!enabled || quiet) return;
     char vp[1024];
     bool was = tracked_path(old_vpath), now = tracked(n, vp, sizeof vp);
@@ -266,6 +269,7 @@ static int write_dirty(vnode_t *n, int depth) {
 }
 
 void persist_sync(void) {
+    vol_sync_all();                      /* volumes graváveis de /Volumes (antes de desligar, etc.) */
     if (!enabled || !pending) return;
     pending = false;
     u64 t0 = timer_ticks();
@@ -290,5 +294,6 @@ static void save_klog(void) {
 
 void persist_tick(void) {
     save_klog();
+    vol_tick();
     if (pending && timer_ticks() - last_change >= SYNC_DELAY_MS) persist_sync();
 }

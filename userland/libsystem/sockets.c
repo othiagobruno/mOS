@@ -4,7 +4,7 @@
  * O kernel do mOS ainda não tem a API de sockets. AF_UNIX existe só dentro do processo: socket/bind/
  * listen funcionam (bind cria o arquivo do socket), e connect sem servidor neste processo devolve
  * ECONNREFUSED — o que basta para o VS Code e o Chromium concluírem "sou a primeira instância".
- * AF_INET (TCP) passa pela pilha de rede do kernel (SYS_NET, sockets_inet.inc); AF_INET6 = EAFNOSUPPORT. Os
+ * AF_INET e AF_INET6 (TCP, cliente e servidor) passam pela pilha de rede do kernel (SYS_NET, sockets_inet.inc). Os
  * descritores ficam a partir de SOCK_FD_BASE; read/write/fcntl/ioctl/close do libc e o kqueue/poll os entregam aqui.
  *
  * symlink/readlink: o FAT não tem links; o link vira um arquivo pequeno marcado com o destino.
@@ -41,8 +41,12 @@ extern int cx_errno;
 
 typedef struct {
     int used, family, type, listening; char path[108];
-    /* AF_INET (TCP pelo kernel, SYS_NET): conexão do kernel (-1 = nenhuma), modo, estado do connect */
-    int kc, nonblock, connecting, err; unsigned rip; unsigned short rport;
+    /* AF_INET/AF_INET6 (TCP pelo kernel, SYS_NET): conexão do kernel (-1 = nenhuma), modo, estado do connect.
+     * Endereços em 16 bytes (IPv4 como ::ffff:a.b.c.d); kl = ouvinte do kernel (listen); proto = 1/58 nos sockets
+     * de ping (SOCK_DGRAM + IPPROTO_ICMP/ICMPV6) */
+    int kc, nonblock, connecting, err; unsigned short rport;
+    int kl, v6only, bound, proto; unsigned short lport, icmp_id;
+    unsigned char raddr[16], laddr[16];
     /* bytes já tirados do kernel por recv(MSG_PEEK) e ainda não entregues (o próximo recv os devolve primeiro) */
     unsigned short peek_len; unsigned char peek[512];
 } sock_t;
@@ -54,13 +58,22 @@ static sock_t *sock_of(int fd) {
 }
 
 int socket(int domain, int type, int proto) {
-    (void)proto;
-    if (domain == 2 && (type & 0xF) != 1) { cx_errno = CX_EPROTONOSUPPORT; return -1; }   /* AF_INET: só TCP */
-    if (domain != 1 && domain != 2) { cx_errno = CX_EAFNOSUPPORT; return -1; }        /* AF_UNIX e AF_INET */
+    if (domain != 1 && domain != 2 && domain != 30) { cx_errno = CX_EAFNOSUPPORT; return -1; }   /* AF_UNIX, AF_INET, AF_INET6 */
+    int icmp = 0;
+    if (domain != 1 && (type & 0xF) != 1) {
+        /* fora o TCP, só o "socket de ping" do Darwin (SOCK_DGRAM + ICMP/ICMPv6). UDP ainda não: o teste de IPv6 do
+         * Chromium (socket UDP para 2001:4860:4860::8888) falha e ele pede só registros A, como antes */
+        if ((type & 0xF) == 2 && ((domain == 2 && proto == 1) || (domain == 30 && proto == 58))) icmp = proto;
+        else { cx_errno = CX_EPROTONOSUPPORT; return -1; }
+    }
     for (int i = 0; i < MAX_SOCK; i++)
         if (!__sync_lock_test_and_set(&socks[i].used, 1)) {
-            socks[i].family = domain; socks[i].type = type; socks[i].listening = 0; socks[i].path[0] = 0;
-            socks[i].kc = -1; socks[i].nonblock = 0; socks[i].connecting = 0; socks[i].err = 0; socks[i].rip = 0; socks[i].rport = 0; socks[i].peek_len = 0;
+            sock_t *s = &socks[i];
+            int used = s->used;
+            memset(s, 0, sizeof *s);
+            s->used = used;
+            s->family = domain; s->type = type;
+            s->kc = -1; s->kl = -1; s->proto = icmp;
             return SOCK_FD_BASE + i;
         }
     cx_errno = CX_EMFILE;
@@ -117,7 +130,7 @@ static int un_accept(int fd, void *addr, u32 *len) { (void)addr; (void)len; cx_e
  * distingue fd fechado, então na prática só fd negativo dá EBADF.) */
 static int fd_open(int fd) { extern int fcntl(int, int, ...); return fd >= 0 && fcntl(fd, 1 /* F_GETFD */) >= 0; }
 int shutdown(int fd, int how) { (void)how; return sock_of(fd) || fd_open(fd) ? 0 : (cx_errno = CX_EBADF, -1); }
-int setsockopt(int fd, int level, int name, const void *v, u32 len) { (void)level; (void)name; (void)v; (void)len; return sock_of(fd) || fd_open(fd) ? 0 : (cx_errno = CX_EBADF, -1); }
+/* setsockopt: sockets_inet.inc (IPV6_V6ONLY; o resto vale como feito) */
 static int un_getsockopt(int fd, int level, int name, void *v, u32 *len) {
     (void)level; (void)name;
     if (!sock_of(fd)) { cx_errno = CX_EBADF; return -1; }

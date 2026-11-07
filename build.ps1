@@ -65,6 +65,12 @@ Copy-Item "$root\build\libcxx\libc++.1.dylib" "$esp\mOS\usr\lib\libc++.1.dylib" 
 & "$root\tools\build-sqlite.ps1"
 if ($LASTEXITCODE -ne 0) { Write-Host 'libsqlite3 build FAILED' -ForegroundColor Red; exit 1 }
 if (Test-Path "$root\build\sqlite\libsqlite3.dylib") { Copy-Item "$root\build\sqlite\libsqlite3.dylib" "$esp\mOS\usr\lib\libsqlite3.dylib" -Force }
+# ferramentas de linha de comando do macOS em Mach-O (userland\cli-macos\<nome>.c -> /usr/bin/<nome>): open(1)
+New-Item -ItemType Directory -Force "$esp\mOS\usr\bin" | Out-Null
+foreach ($c in Get-ChildItem "$root\userland\cli-macos" -Filter *.c -ErrorAction SilentlyContinue) {
+    & $zig cc -target x86_64-macos -O2 $c.FullName -o "$esp\mOS\usr\bin\$($c.BaseName)" "-Wl,-undefined,dynamic_lookup" 2>&1 | ForEach-Object { "$_" }
+    if ($LASTEXITCODE -ne 0) { Write-Host "/usr/bin/$($c.BaseName) FAILED" -ForegroundColor Red; exit 1 }
+}
 
 # user-mode programs (ring 3): userland\*.c -> \mOS\Sistema\Programas\<name> (static ELF64 at 0x400000000000)
 $progs = Get-ChildItem "$root\userland" -Filter *.c -ErrorAction SilentlyContinue
@@ -93,6 +99,9 @@ if ($LASTEXITCODE -ne 0) { Write-Host "Swift apps FAILED" -ForegroundColor Red; 
         # libdispatch em C (filas, grupos, fontes, semáforos, isa OS_dispatch_*): o "teste" também o chama
         & $zig cc -target x86_64-macos -O1 "$root\userland\tests-dispatch\main.c" -o "$pdir\dispatchteste" "-Wl,-undefined,dynamic_lookup" 2>&1 | ForEach-Object { "$_" }
         if ($LASTEXITCODE -ne 0) { Write-Host "dispatchteste FAILED" -ForegroundColor Red; exit 1 }
+        # sinais POSIX (tratadores, máscaras, sigsuspend, sigaltstack, EINTR/SA_RESTART, SIGCHLD): o "teste" também o chama
+        & $zig cc -target x86_64-macos -O1 "$root\userland\tests-signals\main.c" -o "$pdir\sinaisteste" "-Wl,-undefined,dynamic_lookup" 2>&1 | ForEach-Object { "$_" }
+        if ($LASTEXITCODE -ne 0) { Write-Host "sinaisteste FAILED" -ForegroundColor Red; exit 1 }
         # simulated Wi-Fi radio + access point (kernel/wifi/sim.c); boot with run.ps1 -NoNet to test it end to end
         Set-Content -Path "$esp\mOS\Sistema\Biblioteca\wifi-simulado" -Value 'mOS-Teste' -Encoding ascii
     }

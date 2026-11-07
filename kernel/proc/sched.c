@@ -1,26 +1,113 @@
 /*
- * mOS — threads e escalonador (um núcleo).
+ * mOS — threads e escalonador (SMP com trava grande do kernel).
  *
  * A troca de contexto acontece na saída de interrupções: isr_common salva todos os registradores
  * (e o estado FXSAVE logo abaixo) na pilha da thread interrompida e restaura o frame que
  * isr_dispatch devolver. Uma thread nova começa com um frame "falso" que o iretq consome.
  *
- * Política (ver proc.h): a thread 0 (desktop) só cede o processador quando é interrompida num
- * `hlt`; as demais rodam em fatias de SCHED_SLICE_MS e, ao fim de cada fatia, o desktop volta.
+ * Núcleos: cada um tem o próprio estado (pcpu_t: thread atual, ociosa, fatia, CR3). O BSP roda a
+ * thread 0 (desktop), as threads do kernel e threads de usuário; os APs rodam só threads de usuário
+ * (e a própria thread ociosa, que também atende os trabalhos de par_for). A fatia dos APs vem do
+ * temporizador do LAPIC (vetor 0xF0, 1 ms); a do BSP, do PIT.
+ *
+ * Trava grande (BKL, kernel.h): todo código do kernel roda com ela, menos os tratadores de IRQ do PIC,
+ * os trabalhos de par_for e os laços ociosos. Quem entra vindo do ring 3 por syscall ou falta espera
+ * por ela; temporizadores só a tentam (se estiver ocupada, a thread de usuário segue rodando). Ela é
+ * solta só em sched_post, chamada pelo isr_common já na pilha da thread que vai rodar: até ali o núcleo
+ * ainda está na pilha da thread anterior, que outro núcleo poderia pegar.
+ *
+ * Política do BSP (como antes): a thread 0 só cede o processador quando é interrompida num `hlt`; as
+ * demais rodam em fatias de SCHED_SLICE_MS e, ao fim de cada fatia, o desktop volta. O desktop solta a
+ * trava em todo hlt() que faz (cpu_idle) — é aí que as syscalls dos outros núcleos andam.
+ *
+ * Outros núcleos rodando um processo que mudou: smp_tlb_shootdown (TLB) e smp_kick_proc (threads que
+ * morreram) marcam `pending` no núcleo alvo e, se ele está no ring 3, mandam o IPI 0xF2 e esperam ele
+ * entrar no kernel. A marca e `in_user` seguem o protocolo de Dekker (seq_cst dos dois lados): o alvo
+ * publica in_user = 1 e só então relê pending antes de voltar ao usuário.
  */
 #include "proc.h"
 
 #define KSTACK_SIZE (32u << 10)
+#define PEND_FLUSH   1u        /* recarregar o CR3 antes de voltar ao ring 3 */
+#define PEND_RESCHED 2u        /* a thread atual pode ter morrido: passar pelo escalonador */
+#define VEC_KICK     0xF2
+
+typedef struct {
+    thread_t *cur, *idle, *last_user;
+    u64 slice_start, last_account;
+    u64 cr3;                   /* CR3 em uso (para o shootdown) */
+    volatile u32 pending;
+    volatile u32 in_user;      /* 1 = rodando (ou a caminho do) ring 3 */
+    volatile u8 release;       /* sched_post solta a trava */
+    volatile u8 spinning;      /* esperando a trava com interrupções abertas (BSP) */
+    bool online;
+} pcpu_t;
 
 static thread_t thread0 = {.id = 0, .name = "desktop", .state = TH_RUNNING};
-static thread_t *threads = &thread0, *current = &thread0;
-static thread_t *last_user;          /* última thread (não-desktop) que rodou: round-robin */
+static pcpu_t pc[MAX_CPUS] = {[0] = {.cur = &thread0, .idle = &thread0, .online = true}};
+static thread_t *threads = &thread0;
 static int next_tid = 1;
-static u64 slice_start, last_account;
+static int ncpu = 1;                    /* índices de núcleo em uso: [0, ncpu) */
 static u64 kernel_cr3;
+static volatile int bkl_owner = 0;      /* o BSP nasce com a trava */
+static volatile bool desk_idle;         /* a thread 0 está em cpu_idle (sem a trava) */
 
-thread_t *thread_current(void) { return current; }
+static inline pcpu_t *me_pc(void) { return &pc[this_cpu()]; }
+thread_t *thread_current(void) { thread_t *t = me_pc()->cur; return t ? t : &thread0; }
 thread_t *sched_threads(void) { return threads; }
+
+/* ------------------------------------------------------------ trava grande */
+static inline bool bkl_try_(int me) {
+    int e = -1;
+    if (__atomic_load_n(&bkl_owner, __ATOMIC_RELAXED) == me) return true;
+    return __atomic_compare_exchange_n(&bkl_owner, &e, me, false, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED);
+}
+static inline void bkl_drop(void) { __atomic_store_n(&bkl_owner, -1, __ATOMIC_RELEASE); }
+bool bkl_held(void) { return __atomic_load_n(&bkl_owner, __ATOMIC_RELAXED) == this_cpu(); }
+
+static inline void flush_if_pending(pcpu_t *c) {
+    if (!(__atomic_load_n(&c->pending, __ATOMIC_SEQ_CST) & PEND_FLUSH)) return;
+    __atomic_and_fetch(&c->pending, ~PEND_FLUSH, __ATOMIC_SEQ_CST);
+    __asm__ volatile("mov %%cr3,%%rax; mov %%rax,%%cr3" ::: "rax", "memory");
+}
+
+/* espera a trava. No BSP abre as interrupções entre as tentativas: o PIT continua contando (código
+ * do kernel em outro núcleo pode estar medindo tempo) e o PS/2 não perde bytes; essas interrupções
+ * aninhadas fazem só o mínimo (sched_nested) */
+void sched_klock(void) {
+    int me = this_cpu();
+    pcpu_t *c = &pc[me];
+    if (!bkl_try_(me)) {
+        c->spinning = 1;
+        while (!bkl_try_(me)) {
+            if (me == 0) __asm__ volatile("sti; pause; cli" ::: "memory");
+            else __asm__ volatile("pause");
+        }
+        c->spinning = 0;
+    }
+    flush_if_pending(c);
+}
+bool sched_ktry(void) {
+    int me = this_cpu();
+    if (!bkl_try_(me)) return false;
+    flush_if_pending(&pc[me]);
+    return true;
+}
+bool sched_nested(void) { return me_pc()->spinning; }
+
+/* todo hlt() (kernel.h): se for o desktop no BSP com a trava e interrupções ligadas, dorme sem a trava, e as
+ * syscalls de outros núcleos andam; senão é um hlt comum */
+void cpu_idle(void) {
+    u64 fl = irq_save();
+    if (this_cpu() != 0 || pc[0].cur != &thread0 || !bkl_held() || !(fl & 0x200)) { irq_restore(fl); hlt_raw(); return; }
+    desk_idle = true;
+    bkl_drop();
+    __asm__ volatile("sti; hlt; cli" ::: "memory");
+    while (!bkl_try_(0)) __asm__ volatile("sti; pause; cli" ::: "memory");
+    desk_idle = false;
+    flush_if_pending(&pc[0]);
+    irq_restore(fl);
+}
 
 /* GS de usuário por thread: o macOS guarda os dados específicos de cada thread (pthread_getspecific,
  * TLS do Chromium) em gs:[chave*8]. O kernel não usa GS, então só troca a base (MSR IA32_GS_BASE) na
@@ -32,7 +119,8 @@ static void wr_msr(u32 m, u64 v) { __asm__ volatile("wrmsr" :: "c"(m), "a"((u32)
 
 void sched_init(void) {
     kernel_cr3 = read_cr3();
-    slice_start = last_account = timer_ticks();
+    pc[0].slice_start = pc[0].last_account = timer_ticks();
+    pc[0].cr3 = kernel_cr3;
     u32 a = 7, b = 0, c = 0, d = 0;
     __asm__ volatile("cpuid" : "+a"(a), "=b"(b), "+c"(c), "=d"(d));
     if (b & 1) {                                     /* CPUID.7.EBX[0]: FSGSBASE */
@@ -43,7 +131,33 @@ void sched_init(void) {
     gs_switch = true;
 }
 
-void sched_make_ready(thread_t *t) { if (t->state != TH_DEAD) t->state = TH_READY; }
+/* AP acordado (arch/smp.c): thread ociosa = o próprio laço do AP, na pilha de partida */
+void sched_ap_init(int cpu) {
+    if (cpu <= 0 || cpu >= MAX_CPUS) return;
+    thread_t *t = kcalloc(1, sizeof *t);
+    if (!t) return;
+    t->id = -cpu;
+    snprintf(t->name, sizeof t->name, "ocioso %d", cpu);
+    t->state = TH_RUNNING;
+    pcpu_t *c = &pc[cpu];
+    c->idle = c->cur = t;
+    c->cr3 = read_cr3();
+    c->slice_start = c->last_account = timer_ticks();
+    __atomic_store_n(&c->online, true, __ATOMIC_SEQ_CST);
+    int n = cpu + 1, old = __atomic_load_n(&ncpu, __ATOMIC_RELAXED);
+    while (old < n && !__atomic_compare_exchange_n(&ncpu, &old, n, false, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED)) {}
+}
+
+/* a thread está em execução em algum núcleo */
+static bool on_cpu(const thread_t *t) {
+    for (int i = 0; i < ncpu; i++) if (pc[i].cur == t) return true;
+    return false;
+}
+
+void sched_make_ready(thread_t *t) {
+    if (t->state == TH_DEAD || t->state == TH_RUNNING) return;
+    t->state = TH_READY;
+}
 
 /* frame inicial: o iretq "volta" para rip com os registradores dados; FXSAVE padrão logo abaixo */
 static u64 build_frame(thread_t *t, u64 rip, u64 rsp, bool user, u64 rcx, u64 rdx) {
@@ -123,17 +237,17 @@ thread_t *uthread_clone(process_t *p, const int_frame_t *src) {
     return t;
 }
 
-/* libera threads mortas (nunca a atual: ainda estamos na pilha dela) */
+/* libera threads mortas que nenhum núcleo está rodando (a atual de cada um ainda está na pilha dela) */
 static void reap(void) {
     for (thread_t **pp = &threads->next; *pp;) {
         thread_t *t = *pp;
-        if (t->state == TH_DEAD && t != current) {
+        if (t->state == TH_DEAD && !on_cpu(t)) {
             extern bool kheap_live(const void *p);
             if (!kheap_live(t) || !kheap_live(t->kstack))   /* diagnóstico do kfree duplo (docs/porte-brew.md) */
                 kprintf("reap: thread %d \"%s\" (pid %d) já liberada: t=%p vivo=%d kstack=%p vivo=%d\n", t->id, t->name,
                         t->proc ? t->proc->pid : -1, t, kheap_live(t), t->kstack, kheap_live(t->kstack));
             *pp = t->next;
-            if (last_user == t) last_user = NULL;
+            for (int i = 0; i < ncpu; i++) if (pc[i].last_user == t) pc[i].last_user = NULL;
             if (t->proc) proc_thread_exited(t);
             kfree(t->kstack);
             kfree(t);
@@ -141,10 +255,10 @@ static void reap(void) {
     }
 }
 
-static void account(void) {
+static void account(pcpu_t *c) {
     u64 now = timer_ticks();
-    current->cpu_ms += now - last_account;
-    last_account = now;
+    c->cur->cpu_ms += now - c->last_account;
+    c->last_account = now;
 }
 
 static void wake_sleepers(void) {
@@ -168,38 +282,38 @@ static void wake_sleepers(void) {
     }
 }
 
-/* próxima thread pronta depois de `from` (round-robin), sem contar a thread 0 */
-static thread_t *next_ready(thread_t *from) {
+/* próxima thread pronta depois de `from` (round-robin), sem contar a thread 0, nenhuma que já esteja
+ * em outro núcleo e, fora do BSP, nenhuma thread do kernel (elas supõem o modelo de um núcleo) */
+static thread_t *next_ready(int me, thread_t *from) {
+    if (!from || from == pc[me].idle) from = &thread0;
     thread_t *t = from;
-    for (int guard = 0; guard < 4096; guard++) {
-        t = t->next ? t->next : threads->next;
-        if (!t) return NULL;
-        if (t != &thread0 && t->state == TH_READY) return t;
+    for (int guard = 0; guard < 100000; guard++) {
+        t = t->next ? t->next : threads;
+        if (t != &thread0 && t->state == TH_READY && (me == 0 || t->proc) && !on_cpu(t)) return t;
         if (t == from) break;
     }
     return NULL;
 }
 
-static u64 switch_to(int_frame_t *f, thread_t *to) {
-    if (to == current) { current->state = TH_RUNNING; return (u64)f; }
-    account();
-    current->frame = (u64)f;
-    if (current->state == TH_RUNNING) current->state = TH_READY;
-    thread_t *from = current;
-    if (from != &thread0) last_user = from;
+static u64 switch_to(pcpu_t *c, int_frame_t *f, thread_t *to) {
+    thread_t *from = c->cur;
+    if (to == from) { from->state = TH_RUNNING; return (u64)f; }
+    account(c);
+    from->frame = (u64)f;
+    if (from->state == TH_RUNNING) from->state = TH_READY;
+    if (from != &thread0 && from != c->idle) c->last_user = from;
     if (gs_switch) { from->gs_base = rd_msr(MSR_GS_BASE); wr_msr(MSR_GS_BASE, to->gs_base); }
-    current = to;
+    c->cur = to;
     to->state = TH_RUNNING;
-    slice_start = timer_ticks();
+    c->slice_start = timer_ticks();
     u64 cr3 = to->proc ? (u64)to->proc->pml4 : kernel_cr3;
-    u64 cur_cr3 = read_cr3();
-    if (cr3 != cur_cr3) __asm__ volatile("mov %0,%%cr3" :: "r"(cr3) : "memory");
+    if (cr3 != read_cr3()) __asm__ volatile("mov %0,%%cr3" :: "r"(cr3) : "memory");
+    c->cr3 = cr3;
     if (to->kstack) tss_set_rsp0(to->kstack_top);
-    (void)from;
     return to->frame;
 }
 
-/* chamado ao fim de toda interrupção de hardware */
+/* chamado ao fim de interrupções de hardware, com a trava */
 static u64 irq_exit(int_frame_t *f, bool timer);
 __attribute__((weak)) u64 proc_signal_check(int_frame_t *f) { return (u64)f; }
 
@@ -211,32 +325,127 @@ u64 sched_irq_exit(int_frame_t *f, bool timer) {
 }
 
 static u64 irq_exit(int_frame_t *f, bool timer) {
-    if (!timer || !threads->next) return (u64)f;   /* nenhuma outra thread: caminho de sempre */
+    int me = this_cpu();
+    pcpu_t *c = &pc[me];
+    thread_t *cur = c->cur;
+    if (!timer || (!threads->next && cur == c->idle)) return (u64)f;   /* nenhuma outra thread */
     wake_sleepers();
-    if (current == &thread0) {
+    if (me == 0 && cur == &thread0) {
         /* o desktop só cede quando a interrupção o pegou num hlt (ocioso); o hlt tem 1 byte */
         if ((f->cs & 3) || *(u8 *)(f->rip - 1) != 0xF4) return (u64)f;
         reap();
-        thread_t *t = next_ready(last_user ? last_user : &thread0);
-        return t ? switch_to(f, t) : (u64)f;
+        thread_t *t = next_ready(0, c->last_user);
+        return t ? switch_to(c, f, t) : (u64)f;
     }
-    if (timer_ticks() - slice_start < SCHED_SLICE_MS) return (u64)f;
+    if (cur == c->idle) {                       /* AP ocioso (parado no hlt do laço dele) */
+        thread_t *t = next_ready(me, c->last_user);
+        return t ? switch_to(c, f, t) : (u64)f;
+    }
+    if (cur->state == TH_RUNNING && timer_ticks() - c->slice_start < SCHED_SLICE_MS) return (u64)f;
     reap();
-    return switch_to(f, &thread0);              /* fim da fatia: o desktop roda */
+    if (me == 0) return switch_to(c, f, &thread0);   /* fim da fatia: o desktop roda */
+    thread_t *t = next_ready(me, cur);
+    if (!t) t = cur->state == TH_RUNNING ? cur : c->idle;
+    return switch_to(c, f, t);
 }
 
-/* a thread atual bloqueou ou terminou (chamado em syscalls, com IF = 0) */
+/* a thread atual bloqueou ou terminou (chamado em syscalls, com IF = 0 e a trava) */
 u64 sched_switch(int_frame_t *f) {
+    int me = this_cpu();
+    pcpu_t *c = &pc[me];
     wake_sleepers();
-    thread_t *t = next_ready(current);
-    if (!t || t == current) t = current->state == TH_RUNNING ? current : &thread0;
-    return switch_to(f, t);
+    thread_t *t = next_ready(me, c->cur);
+    if (!t || t == c->cur) t = c->cur->state == TH_RUNNING ? c->cur : c->idle;
+    return switch_to(c, f, t);
 }
 
 /* threads do kernel encerram por aqui: marca como morta e entra num hlt até o escalonador trocar */
 void thread_exit(void) {
     cli();
-    current->state = TH_DEAD;
+    me_pc()->cur->state = TH_DEAD;
     sti();
     for (;;) hlt();   /* a próxima interrupção de timer troca de thread (fim de fatia) */
+}
+
+/* ------------------------------------------------------------ entrada e saída do kernel (arch/cpu.c) */
+static inline bool is_kidle(pcpu_t *c, thread_t *t) { return t == &thread0 ? desk_idle : t == c->idle; }
+
+void sched_kentry(int_frame_t *f) {
+    if (!(f->cs & 3)) return;
+    pcpu_t *c = me_pc();
+    __atomic_store_n(&c->in_user, 0, __ATOMIC_SEQ_CST);
+    flush_if_pending(c);
+}
+
+/* depois de pegar a trava numa entrada do ring 3: a thread pode ter sido morta por outro núcleo enquanto
+ * rodava (finish/execve). Devolve o frame de outra thread, ou 0 se a atual segue viva. */
+u64 sched_dead_check(int_frame_t *f) {
+    pcpu_t *c = me_pc();
+    __atomic_and_fetch(&c->pending, ~PEND_RESCHED, __ATOMIC_SEQ_CST);
+    return c->cur->state == TH_DEAD ? sched_switch(f) : 0;
+}
+
+/* decide o que fazer com a trava antes de voltar para o frame r */
+u64 sched_kexit(u64 r) {
+    int me = this_cpu();
+    pcpu_t *c = &pc[me];
+    for (;;) {
+        int_frame_t *f = (int_frame_t *)r;
+        bool held = __atomic_load_n(&bkl_owner, __ATOMIC_RELAXED) == me;
+        if (f->cs & 3) {
+            __atomic_store_n(&c->in_user, 1, __ATOMIC_SEQ_CST);
+            u32 pend = __atomic_load_n(&c->pending, __ATOMIC_SEQ_CST);
+            if (pend) {
+                __atomic_store_n(&c->in_user, 0, __ATOMIC_SEQ_CST);
+                flush_if_pending(c);
+                if (pend & PEND_RESCHED) {
+                    sched_klock();
+                    u64 d = sched_dead_check(f);
+                    if (d) r = d;
+                }
+                continue;
+            }
+            if (held) c->release = 1;
+            return r;
+        }
+        if (is_kidle(c, c->cur)) { if (held) c->release = 1; return r; }
+        if (!held) sched_klock();               /* thread do kernel (ou o desktop fora do hlt): roda com a trava */
+        return r;
+    }
+}
+
+/* isr_common, já na pilha da thread que vai rodar */
+void sched_post(void) {
+    pcpu_t *c = me_pc();
+    if (c->release) { c->release = 0; bkl_drop(); }
+}
+
+/* ------------------------------------------------------------ IPIs para outros núcleos */
+static void kick_wait(int cpu, u32 bit) {
+    pcpu_t *c = &pc[cpu];
+    __atomic_or_fetch(&c->pending, bit, __ATOMIC_SEQ_CST);
+    if (!__atomic_load_n(&c->in_user, __ATOMIC_SEQ_CST)) return;   /* vai ver a marca antes de voltar ao ring 3 */
+    smp_send_ipi(cpu, VEC_KICK);
+    for (u64 spins = 0; __atomic_load_n(&c->in_user, __ATOMIC_SEQ_CST) && (__atomic_load_n(&c->pending, __ATOMIC_SEQ_CST) & bit);
+         spins++) {
+        __asm__ volatile("pause");
+        if (spins == 200000000ULL) { kprintf("smp: núcleo %d não respondeu ao IPI (pendente %u)\n", cpu, c->pending); break; }
+    }
+}
+
+void smp_tlb_shootdown(u64 cr3) {
+    int me = this_cpu();
+    cr3 &= ~0xFFFULL;
+    for (int i = 0; i < ncpu; i++)
+        if (i != me && pc[i].online && (pc[i].cr3 & ~0xFFFULL) == cr3) kick_wait(i, PEND_FLUSH);
+}
+
+/* threads de p foram marcadas TH_DEAD (fim do processo, execve): tira dos outros núcleos as que estão rodando
+ * no ring 3, antes de a memória do processo ser liberada */
+void smp_kick_proc(process_t *p) {
+    int me = this_cpu();
+    for (int i = 0; i < ncpu; i++) {
+        thread_t *t = pc[i].cur;
+        if (i != me && pc[i].online && t && t->proc == p) kick_wait(i, PEND_RESCHED);
+    }
 }

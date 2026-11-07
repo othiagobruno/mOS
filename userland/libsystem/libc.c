@@ -916,6 +916,8 @@ int open(const char *path, int flags, ...) {
     if (flags & MAC_O_TRUNC) k |= MOS_O_TRUNC;
     if (flags & MAC_O_APPEND) k |= MOS_O_APPEND;
     if (flags & 0x1000000) k |= MOS_O_CLOEXEC;            /* O_CLOEXEC do macOS: o execve do kernel fecha */
+    if (flags & 0x20000) k |= MOS_O_NOCTTY;               /* O_NOCTTY: abrir um escravo de pty não o adota como terminal */
+    if (flags & 0x4) k |= MOS_O_NONBLOCK;                 /* O_NONBLOCK: nos terminais o kernel devolve EAGAIN */
     PATH(p, path);
     if ((flags & MAC_O_EXCL) && (flags & MAC_O_CREAT)) {
         mos_stat_t st;
@@ -964,13 +966,8 @@ int rmdir(const char *path) {
     if (SYS4(SYS_READDIR, p, 0, name, sizeof name) == 1) { cx_errno = 66; return -1; }   /* ENOTEMPTY */
     return (int)ret_errno(SYS1(SYS_UNLINK, p));
 }
-/* o Terminal do mOS não interpreta sequências ANSI: com TERM=dumb os programas não colorem a saída */
-int isatty(int fd) {
-    const char *t = getenv("TERM");
-    if (fd >= 0 && fd <= 2 && t && strcmp(t, "dumb")) return 1;
-    cx_errno = CX_ENOTTY;
-    return 0;
-}
+/* isatty: em pty.c (pseudoterminais do kernel; o console do mOS segue a regra do TERM) */
+int isatty(int fd);
 int getpid(void) { return (int)SYS0(SYS_GETPID); }
 /* getppid: o kernel guarda o pai e o informa em SYS_PROCLIST (índice sobre os processos vivos, sem
  * buracos; 0 = fim). Pai morto (ppid 0/-1) → 1, como no Unix. Resultado guardado por ~1 s e refeito se
@@ -1049,14 +1046,17 @@ int ioctl(int fd, unsigned long req, ...) {
     if (req == 0x8004667eUL) {                               /* FIONBIO num fd do kernel (pipe): o O_NONBLOCK daqui */
         __builtin_va_list ap; __builtin_va_start(ap, req); int *on = __builtin_va_arg(ap, int *); __builtin_va_end(ap);
         nb_set(fd, on && *on);
+        if (fd < 0x4000) SYS3(SYS_TTY, MOS_TTY_SETFL, fd, on && *on);   /* terminais: o kernel decide o EAGAIN */
         return 0;
     }
     if (req == 0x20006601UL || req == 0x20006602UL) {          /* FIOCLEX / FIONCLEX */
         if (!IS_SOCK(fd) && fd < 0x4000) SYS3(SYS_FDFLAGS, fd, 1, req == 0x20006601UL);
         return 0;
     }
-    if (!isatty(fd)) { cx_errno = CX_ENOTTY; return -1; }
-    return -1;
+    /* o resto é de terminal (TIOCGETA, TIOCSWINSZ, TIOCPTYGNAME, FIONREAD...): pty.c, com o SYS_TTY do kernel */
+    extern int cx_tty_ioctl(int fd, unsigned long req, void *arg);
+    __builtin_va_list ap; __builtin_va_start(ap, req); void *arg = __builtin_va_arg(ap, void *); __builtin_va_end(ap);
+    return cx_tty_ioctl(fd, req, arg);
 }
 /* fcntl: em sockets, F_GETFL/F_SETFL guardam O_NONBLOCK (0x4) de verdade; no resto, aceita (como antes) */
 int fcntl(int fd, int cmd, ...) {
@@ -1086,6 +1086,7 @@ int fcntl(int fd, int cmd, ...) {
     if (cmd == 4) {                                     /* F_SETFL: só O_NONBLOCK tem efeito */
         __builtin_va_list ap; __builtin_va_start(ap, cmd); long fl = __builtin_va_arg(ap, long); __builtin_va_end(ap);
         nb_set(fd, (fl & 0x4) != 0);
+        if (fd >= 0 && fd < 0x4000) SYS3(SYS_TTY, MOS_TTY_SETFL, fd, (fl & 0x4) != 0);   /* terminais: o kernel decide o EAGAIN */
         return 0;
     }
     if (cmd == 50) {                                    /* F_GETPATH: caminho do fd (SYS_FDPATH) */
@@ -1118,55 +1119,139 @@ static int sig_to_mos(int s) {
     return s;
 }
 static int sig_from_mos(int s) { return sig_to_mos(s); }   /* a bijeção é a própria inversa */
-typedef struct { void *handler; u32 mask; int flags; } mac_sigaction_t;
-static mac_sigaction_t cx_sigs[32];                         /* tratadores do programa, por número do macOS */
-__attribute__((naked, used)) static void cx_sig_restorer(void) {
-    __asm__ volatile("mov %0, %%eax\n\tint $0x80\n\tud2" :: "i"(SYS_SIGRETURN));
+int cx_sig_to_mos(int s) { return sig_to_mos(s); }          /* para o resto do libSystem (waitpid, pty.c) */
+int cx_sig_from_mos(int s) { return sig_from_mos(s); }
+/* sigset_t do macOS: bit (s - 1) do número do macOS; o kernel usa bit (s) do número dele */
+u32 cx_sigmask_to_mos(u32 m) {
+    u32 r = 0;
+    for (int s = 1; s < 32; s++) if (m & (1u << (s - 1))) r |= 1u << sig_to_mos(s);
+    return r;
 }
-/* o kernel chama isto com o número dele; o tratador do programa recebe o do macOS (e um siginfo mínimo) */
-static void cx_sig_dispatch(int mossig) {
+u32 cx_sigmask_from_mos(u32 m) {
+    u32 r = 0;
+    for (int s = 1; s < 32; s++) if (m & (1u << s)) r |= 1u << (sig_from_mos(s) - 1);
+    return r;
+}
+/* Sinais de verdade (kernel/proc/process.c, SYS_SIG): o kernel guarda tratador, sa_mask e sa_flags; na entrega
+ * monta siginfo/ucontext/mcontext do Darwin na pilha e chama cx_sigtramp, como o _sigtramp do macOS. O trampolim
+ * traduz o número e a máscara para os do macOS, chama o tratador e volta pelo MOS_SIGOP_RETURN, que restaura o
+ * contexto (inclusive o que o tratador tiver mudado no mcontext, ex.: __ss.__rip). */
+typedef struct { void *handler; u32 mask; int flags; } mac_sigaction_t;
+static __attribute__((used, noreturn)) void cx_sigtramp(void *h, int style, int mossig, mos_siginfo_t *si, mos_ucontext_t *uc) {
+    (void)style;
     int s = sig_from_mos(mossig);
-    if (s <= 0 || s >= 32) return;
-    mac_sigaction_t a = cx_sigs[s];
-    if ((u64)a.handler <= 1) return;
-    if (a.flags & 0x4) {                                    /* SA_RESETHAND */
-        cx_sigs[s].handler = 0;
-        SYS3(SYS_SIGACTION, mossig, 0, 0);
-    }
-    if (a.flags & 0x40) {                                   /* SA_SIGINFO: (sig, siginfo_t *, ucontext *) */
-        struct { int si_signo, si_errno, si_code, si_pid; u32 si_uid; int si_status; void *si_addr; u64 pad[10]; } info;
-        memset(&info, 0, sizeof info);
-        info.si_signo = s;
-        ((void (*)(int, void *, void *))a.handler)(s, &info, 0);
-    } else ((void (*)(int))a.handler)(s);
+    int saved_errno = cx_errno;
+    si->si_signo = s;
+    if (s == 20 && si->si_code == MOS_CLD_KILLED) si->si_status = sig_from_mos(si->si_status);   /* SIGCHLD de filho morto por sinal */
+    uc->uc_sigmask = cx_sigmask_from_mos(uc->uc_sigmask);
+    ((void (*)(int, void *, void *))h)(s, si, uc);     /* o macOS passa (sinal, siginfo, ucontext) nos dois estilos */
+    uc->uc_sigmask = cx_sigmask_to_mos(uc->uc_sigmask);
+    cx_errno = saved_errno;
+    SYS2(SYS_SIG, MOS_SIGOP_RETURN, uc);
+    for (;;) __asm__ volatile("ud2");
 }
 int sigaction(int s, const mac_sigaction_t *a, mac_sigaction_t *o) {
     if (s <= 0 || s >= 32 || ((s == 9 || s == 17) && a)) { cx_errno = CX_EINVAL; return -1; }   /* KILL e STOP fixos */
-    if (o) *o = cx_sigs[s];
-    if (!a) return 0;
-    cx_sigs[s] = *a;
-    u64 h = (u64)a->handler <= 1 ? (u64)a->handler : (u64)cx_sig_dispatch;   /* SIG_DFL 0 / SIG_IGN 1 passam direto */
-    long r = SYS3(SYS_SIGACTION, sig_to_mos(s), h, (u64)cx_sig_restorer);
+    mos_sigaction_t n, old;
+    memset(&old, 0, sizeof old);
+    if (a) {
+        n.handler = (u64)a->handler;
+        n.tramp = (u64)cx_sigtramp;
+        n.mask = cx_sigmask_to_mos(a->mask);
+        n.flags = (u32)a->flags;
+    }
+    long r = SYS4(SYS_SIG, MOS_SIGOP_ACTION, sig_to_mos(s), a ? &n : 0, &old);
     if (r < 0) { cx_errno = (int)-r; return -1; }
+    if (o) { o->handler = (void *)old.handler; o->mask = cx_sigmask_from_mos(old.mask); o->flags = (int)old.flags; }
     return 0;
 }
+/* signal() do BSD/macOS: a syscall interrompida é refeita (SA_RESTART), salvo depois de siginterrupt(s, 1) */
+static u32 sig_interrupt_set;                               /* bits (s - 1), números do macOS */
 void *signal(int s, void *h) {
-    mac_sigaction_t a = {h, 0, 0}, o = {0, 0, 0};
+    mac_sigaction_t a = {h, 0, (sig_interrupt_set & (1u << (s - 1))) ? 0 : MOS_SA_RESTART}, o = {0, 0, 0};
     if (sigaction(s, &a, &o) < 0) return (void *)-1;     /* SIG_ERR */
     return o.handler;
 }
+int siginterrupt(int s, int flag) {
+    mac_sigaction_t a;
+    if (sigaction(s, 0, &a) < 0) return -1;
+    if (flag) { sig_interrupt_set |= 1u << (s - 1); a.flags &= ~MOS_SA_RESTART; }
+    else { sig_interrupt_set &= ~(1u << (s - 1)); a.flags |= MOS_SA_RESTART; }
+    return sigaction(s, &a, 0);
+}
 int kill(int pid, int s) {
-    if (pid == 0 || pid == -1) pid = getpid();             /* sem grupos de processo: o grupo é o próprio processo */
-    if (pid < -1) pid = -pid;
+    extern int cx_kill_group(int pg, int sig);             /* pty.c: grupos de processos do kernel (SYS_TTY) */
+    if (pid == 0) return cx_kill_group(0, s);              /* o grupo de quem chama (^C do bash, kill 0) */
+    if (pid < -1) return cx_kill_group(-pid, s);           /* kill(-pgrp): o grupo inteiro */
+    if (pid == -1) pid = getpid();                         /* "todos os processos": no mOS, só o próprio */
     long r = SYS2(SYS_SIGKILL, pid, s ? sig_to_mos(s) : 0);
     if (r < 0) { cx_errno = CX_ESRCH; return -1; }
     return 0;
 }
-int raise(int s) { return kill(getpid(), s); }
+/* raise = pthread_kill(pthread_self()): o sinal vai para a thread que chamou e sai na volta da syscall */
+int raise(int s) {
+    if (s <= 0 || s >= 32) { cx_errno = CX_EINVAL; return -1; }
+    long r = SYS3(SYS_SIG, MOS_SIGOP_TKILL, SYS0(SYS_GETTID), sig_to_mos(s));
+    if (r < 0) return kill(getpid(), s);
+    return 0;
+}
+int cx_pthread_kill_tid(long tid, int s) {                 /* vscode_libc.c: pthread_kill */
+    if (s < 0 || s >= 32) return CX_EINVAL;
+    long r = SYS3(SYS_SIG, MOS_SIGOP_TKILL, tid, s ? sig_to_mos(s) : 0);
+    return r < 0 ? (int)-r : 0;
+}
 int sigemptyset(void *set) { *(u32 *)set = 0; return 0; }
-int sigaddset(void *set, int s) { *(u32 *)set |= 1u << (s - 1); return 0; }
-int sigprocmask(int how, const void *s, void *o) { (void)how; (void)s; (void)o; return 0; }
-int pthread_sigmask(int how, const void *s, void *o) { (void)how; (void)s; (void)o; return 0; }
+int sigaddset(void *set, int s) {
+    if (s < 1 || s > 31) { cx_errno = CX_EINVAL; return -1; }
+    *(u32 *)set |= 1u << (s - 1);
+    return 0;
+}
+/* máscara da thread (o kernel não tem máscara por processo: sigprocmask = pthread_sigmask, como no macOS) */
+int pthread_sigmask(int how, const void *s, void *o) {
+    u32 set = s ? cx_sigmask_to_mos(*(const u32 *)s) : 0, old = 0;
+    long r = SYS4(SYS_SIG, MOS_SIGOP_MASK, how, s ? &set : 0, &old);
+    if (r < 0) return (int)-r;
+    if (o) *(u32 *)o = cx_sigmask_from_mos(old);
+    return 0;
+}
+int sigprocmask(int how, const void *s, void *o) {
+    int e = pthread_sigmask(how, s, o);
+    if (e) { cx_errno = e; return -1; }
+    return 0;
+}
+int sigpending(void *set) {
+    u32 k = 0;
+    long r = SYS2(SYS_SIG, MOS_SIGOP_PENDING, &k);
+    if (r < 0) { cx_errno = (int)-r; return -1; }
+    *(u32 *)set = cx_sigmask_from_mos(k);
+    return 0;
+}
+/* sigsuspend: troca a máscara e dorme até um tratador rodar; sempre -1/EINTR */
+int sigsuspend(const unsigned *m) {
+    long r = SYS2(SYS_SIG, MOS_SIGOP_SUSPEND, cx_sigmask_to_mos(*m));
+    cx_errno = r < 0 ? (int)-r : MOS_EINTR;
+    return -1;
+}
+int pause(void) {
+    u32 cur = 0;
+    pthread_sigmask(MOS_SIG_BLOCK, 0, &cur);
+    return sigsuspend(&cur);
+}
+int sigwait(const unsigned *set, int *sig) {
+    for (;;) {
+        long r = SYS4(SYS_SIG, MOS_SIGOP_WAIT, cx_sigmask_to_mos(*set), 0, ~0UL);
+        if (r == -MOS_EINTR) continue;                     /* um tratador rodou no meio: o macOS também volta a esperar */
+        if (r < 0) return (int)-r;
+        if (sig) *sig = sig_from_mos((int)r);
+        return 0;
+    }
+}
+/* stack_t do macOS = mos_sigstack_t (ss_sp, ss_size, ss_flags) */
+int sigaltstack(const void *ss, void *old) {
+    long r = SYS3(SYS_SIG, MOS_SIGOP_ALTSTACK, ss, old);
+    if (r < 0) { cx_errno = (int)-r; return -1; }
+    return 0;
+}
 int setlocale_dummy;
 char *setlocale(int cat, const char *loc) { (void)cat; (void)loc; return "C"; }
 
@@ -1179,8 +1264,8 @@ typedef struct {
 
 static void to_mac_stat(const mos_stat_t *s, mac_stat_t *m) {
     memset(m, 0, sizeof *m);
-    /* is_dir: 0 arquivo, 1 pasta, 2/3 pipe (ponta de leitura/escrita), 4 dispositivo (/dev/null) */
-    m->st_mode = s->is_dir == 4 ? 0020666 : s->is_dir >= 2 ? 0010600 : s->is_dir ? 0040755 : 0100644;
+    /* is_dir: 0 arquivo, 1 pasta, 2/3 pipe (ponta de leitura/escrita), 4 dispositivo (/dev/null), 5 terminal (pty) */
+    m->st_mode = s->is_dir == 5 ? 0020620 : s->is_dir == 4 ? 0020666 : s->is_dir >= 2 ? 0010600 : s->is_dir ? 0040755 : 0100644;
     m->st_dev = 0x1000002;      /* um só volume; o st_ino (hash do caminho) separa os arquivos */
     m->st_nlink = 1;
     m->st_uid = 501;
@@ -1233,8 +1318,25 @@ static void exec_bits(const char *abs, mac_stat_t *m) {
 /* st_ino: o VFS não tem números de inode; um hash do caminho absoluto separa os arquivos (o grep, o tar e o
  * cp comparam dev+ino para não ler a própria saída). Bit 63 livre para pipes e o console. */
 static u64 path_ino(const char *abs) {
+    /* o hash é do caminho normalizado ("a/b/.." = "a", "./" e barras repetidas somem): o fts do coreutils volta
+     * das subpastas por openat(fd, "..") e confere dev/ino com o da pasta-mãe; sem isso, chmod -R dava ENOENT */
+    char n[1024];
+    usize o = 0;
+    for (const char *s = abs; *s;) {
+        while (*s == '/') s++;
+        if (!*s) break;
+        const char *e = s;
+        while (*e && *e != '/') e++;
+        usize k = (usize)(e - s);
+        if (k == 1 && s[0] == '.') {}
+        else if (k == 2 && s[0] == '.' && s[1] == '.') { while (o > 0 && n[o - 1] != '/') o--; if (o > 0) o--; }
+        else if (o + k + 2 < sizeof n) { n[o++] = '/'; memcpy(n + o, s, k); o += k; }
+        s = e;
+    }
+    if (!o) n[o++] = '/';
+    n[o] = 0;
     u64 h = 1469598103934665603ULL;
-    for (const unsigned char *p = (const unsigned char *)abs; *p; p++) h = (h ^ *p) * 1099511628211ULL;
+    for (const unsigned char *p = (const unsigned char *)n; *p; p++) h = (h ^ *p) * 1099511628211ULL;
     h &= 0x7FFFFFFFFFFFFFFFULL;
     return h ? h : 1;
 }
@@ -1496,9 +1598,16 @@ double log2(double x) { double r; __asm__("fld1; fxch; fyl2x" : "=t"(r) : "0"(x)
 double log(double x) { return log2(x) * 0.69314718055994530942; }
 double log10(double x) { return log2(x) * 0.30102999566398119521; }
 double log1p(double x) { return log(1 + x); }
+/* 2^x = 2^n * 2^f, n = rint(x), f em [-0.5, 0.5] (domínio do f2xm1). A versão antiga, toda em x87, fazia
+ * "fsub %st, %st(1)", que na sintaxe AT&T dá n - x: a fração saía com o sinal trocado (exp2(-0.5) = 1.414,
+ * exp2(0.7) = 2.46) e com ela exp/pow/powf de todo app; o skcms do Chrome caía no CHECK de cor finita. */
 double exp2(double x) {
-    double r;
-    __asm__("fld %%st(0); frndint; fsub %%st, %%st(1); fxch; f2xm1; fld1; faddp; fscale; fstp %%st(1)" : "=t"(r) : "0"(x));
+    if (x != x) return x;
+    if (x >= 1024) return __builtin_inf();
+    if (x < -1100) return 0;
+    double n = rint(x), f = x - n, r;
+    __asm__("f2xm1; fld1; faddp" : "=t"(r) : "0"(f));
+    __asm__("fscale" : "=t"(r) : "0"(r), "u"(n));
     return r;
 }
 double exp(double x) { return exp2(x * 1.44269504088896340736); }

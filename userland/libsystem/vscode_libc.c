@@ -55,16 +55,7 @@ __attribute__((noreturn)) void abort_report_np(const char *fmt, ...) {
     if (n > 0) { write(2, b, (size_t)(n < (int)sizeof b ? n : (int)sizeof b - 1)); write(2, "\n", 1); }
     abort();
 }
-void syslog_darwin(int prio, const char *fmt, ...) __asm__("syslog$DARWIN_EXTSN");
-void syslog_darwin(int prio, const char *fmt, ...) {
-    (void)prio;
-    char b[1024];
-    va_list ap;
-    va_start(ap, fmt);
-    int n = vsnprintf(b, sizeof b, fmt, ap);
-    va_end(ap);
-    if (n > 0) { write(2, b, (size_t)(n < (int)sizeof b ? n : (int)sizeof b - 1)); write(2, "\n", 1); }
-}
+/* syslog$DARWIN_EXTSN: oslog.c (vai ao logd) */
 /* os_signpost: Instruments não existe aqui */
 int os_signpost_enabled(void *log) { (void)log; return 0; }
 void _os_signpost_emit_with_name_impl(void *dso, void *log, int type, u64 id, const char *name, const char *fmt, u8 *buf, u32 size) {
@@ -203,7 +194,7 @@ int setpriority(int which, unsigned who, int prio) { (void)which; (void)who; (vo
 int initgroups(const char *name, int gid) { (void)name; (void)gid; return 0; }
 int setegid(unsigned g) { (void)g; return 0; }
 int seteuid(unsigned u) { (void)u; return 0; }
-int getsid(int pid) { return pid ? pid : getpid(); }
+/* getsid: em pty.c (sessões do kernel, SYS_TTY) */
 int getgrouplist(const char *name, int base, int *groups, int *ngroups) {
     (void)name;
     if (!ngroups) return -1;
@@ -351,17 +342,9 @@ void *tmpfile(void) {
     return f;
 }
 
-/* ================================================================ terminais (termios) e pty */
-int cfsetospeed(void *t, unsigned long s) { (void)t; (void)s; return 0; }
-int cfsetispeed(void *t, unsigned long s) { (void)t; (void)s; return 0; }
-unsigned long cfgetispeed(const void *t) { (void)t; return 38400; }
-int tcdrain(int fd) { (void)fd; return 0; }
-/* o mOS ainda não tem pseudoterminais (openpty em cli.c também falha): o terminal integrado do VS Code
- * mostra o erro do node-pty em vez de travar */
-int posix_openpt(int flags) { (void)flags; set_errno(E_NOENT); return -1; }
-int grantpt(int fd) { (void)fd; set_errno(E_INVAL); return -1; }
-int unlockpt(int fd) { (void)fd; set_errno(E_INVAL); return -1; }
-char *ptsname(int fd) { (void)fd; set_errno(E_INVAL); return 0; }
+/* ================================================================ terminais (termios) e pty
+ * cf*speed, tcdrain, posix_openpt, grantpt, unlockpt e ptsname: em pty.c, sobre os pseudoterminais do kernel
+ * (kernel/proc/pty.c): o terminal integrado do VS Code abre o shell por eles (node-pty) */
 
 /* ================================================================ rede */
 typedef struct { u8 b[16]; } vs_in6_addr_t;
@@ -435,10 +418,7 @@ int fileport_makefd(mach_port_t port) {
     if (r != 0) { set_errno(r == 6 ? 24 : 9); return -1; }   /* KERN_RESOURCE_SHORTAGE -> EMFILE; senão EBADF */
     return (int)a[1];
 }
-u32 notify_register_file_descriptor(const char *name, int *fd, int flags, int *token) {
-    (void)name; (void)fd; (void)flags; (void)token;
-    return 1000000;   /* NOTIFY_STATUS_FAILED */
-}
+/* notify_register_file_descriptor: svcclient.c (notifyd) */
 
 /* ================================================================ Mach: host, threads, VM */
 typedef struct { u32 free_count, active_count, inactive_count, wire_count; u64 zero_fill_count, reactivations, pageins,
@@ -588,7 +568,16 @@ void *getsectdata(const char *seg, const char *sect, unsigned long *size) { (voi
 void pthread_exit(void *r) __attribute__((noreturn));
 void pthread_exit(void *r) { SYS1(SYS_THREAD_EXIT, (long)r); for (;;) {} }
 int kill(int pid, int s);
-int pthread_kill(unsigned long t, int sig) { (void)t; return sig ? kill(getpid(), sig) : 0; }
+/* pthread_t daqui é o tid (pthread_create) ou main_thread + (tid & 0xFFF) (pthread_self, extra.c) */
+int cx_pthread_kill_tid(long tid, int s);
+void *pthread_self(void);
+int pthread_kill(unsigned long t, int sig) {
+    unsigned long self = (unsigned long)pthread_self();
+    long tid = t == self ? (long)cx_syscall(SYS_GETTID, 0, 0, 0, 0, 0) : t < 0x100000UL ? (long)t : (long)(t & 0xFFF);
+    int e = cx_pthread_kill_tid(tid, sig);
+    if (e == 3 && sig) return kill(getpid(), sig) ? 3 : 0;   /* tid desconhecido: manda ao processo, como antes */
+    return e;
+}
 void *pthread_override_qos_class_start_np(unsigned long t, unsigned qos, int prio) { (void)t; (void)qos; (void)prio; static int dummy; return &dummy; }
 int pthread_override_qos_class_end_np(void *o) { (void)o; return 0; }
 int pthread_condattr_init(void *a) { memset(a, 0, 16); return 0; }

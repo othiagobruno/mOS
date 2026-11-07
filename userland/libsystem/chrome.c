@@ -411,7 +411,7 @@ id_ SCNetworkInterfaceGetBSDName(void *i) { (void)i; return 0; }
 id_ SCNetworkInterfaceGetHardwareAddressString(void *i) { (void)i; return 0; }
 
 /* ---- LaunchServices / Spotlight */
-OSStatus LSRegisterURL(id_ url, Boolean update) { (void)url; (void)update; return -10814; }   /* kLSApplicationNotFoundErr */
+/* LSRegisterURL: openurl.c */
 void *MDItemCreate(void *alloc, id_ path) { (void)alloc; (void)path; return 0; }
 Boolean MDItemSetAttribute(void *item, id_ name, id_ value) { (void)item; (void)name; (void)value; return 0; }
 

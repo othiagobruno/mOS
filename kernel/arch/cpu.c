@@ -7,11 +7,22 @@ typedef struct PACKED {
     u32 rsv0; u64 rsp[3]; u64 rsv1; u64 ist[7]; u64 rsv2; u16 rsv3; u16 iopb;
 } tss_t;
 
-static u64 gdt[8] ALIGNED(16);
-static tss_t tss ALIGNED(16);
+/* 0x00..0x20: nulo, código/dados do kernel e do usuário; a partir de 0x28, um TSS (16 bytes) por núcleo */
+static u64 gdt[5 + 2 * MAX_CPUS] ALIGNED(16);
+static tss_t tss[MAX_CPUS] ALIGNED(16);
 static u8 ist_stack[16384] ALIGNED(16);
 extern void gdt_load(dtr_t *d, u16 tss_sel);
 extern void idt_load(dtr_t *d);
+
+static void tss_desc(int cpu, u64 ist_top) {
+    tss_t *t = &tss[cpu];
+    memset(t, 0, sizeof *t);
+    t->ist[0] = ist_top;
+    t->iopb = sizeof *t;
+    u64 base = (u64)t, lim = sizeof *t - 1;
+    gdt[5 + 2 * cpu] = (lim & 0xFFFF) | ((base & 0xFFFFFF) << 16) | (0x89ULL << 40) | (((lim >> 16) & 0xF) << 48) | (((base >> 24) & 0xFF) << 56);
+    gdt[6 + 2 * cpu] = base >> 32;
+}
 
 void gdt_init(void) {
     gdt[0] = 0;
@@ -19,16 +30,19 @@ void gdt_init(void) {
     gdt[2] = 0x00CF92000000FFFFULL; /* 0x10 dados kernel */
     gdt[3] = 0x00AFFA000000FFFFULL; /* 0x18 código usuário */
     gdt[4] = 0x00CFF2000000FFFFULL; /* 0x20 dados usuário */
-    u64 base = (u64)&tss, lim = sizeof(tss) - 1;
-    memset(&tss, 0, sizeof(tss));
-    tss.ist[0] = (u64)ist_stack + sizeof(ist_stack);
-    tss.iopb = sizeof(tss);
-    gdt[5] = (lim & 0xFFFF) | ((base & 0xFFFFFF) << 16) | (0x89ULL << 40) | (((lim >> 16) & 0xF) << 48) | (((base >> 24) & 0xFF) << 56);
-    gdt[6] = base >> 32;
+    tss_desc(0, (u64)ist_stack + sizeof(ist_stack));
     static dtr_t d;
     d.limit = sizeof(gdt) - 1;
     d.base = (u64)gdt;
     gdt_load(&d, 0x28);
+}
+
+/* AP: o próprio TSS (rsp0 das threads que ele roda; pilha IST para NMI e falta dupla) */
+void cpu_tss_init(int cpu, u64 ist_top) {
+    if (cpu <= 0 || cpu >= MAX_CPUS) return;
+    tss_desc(cpu, ist_top);
+    u16 sel = (u16)(0x28 + 16 * cpu);
+    __asm__ volatile("ltr %0" :: "r"(sel));
 }
 
 /* ------------------------------------------------------------------ IDT */
@@ -55,9 +69,9 @@ static void set_gate(int n, u64 h, u8 ist) {
     idt[n].zero = 0;
 }
 
-extern void isr128(void), isr240(void), isr255(void), isr_wake(void);
+extern void isr128(void), isr240(void), isr242(void), isr255(void), isr_wake(void);
 
-void tss_set_rsp0(u64 rsp0) { tss.rsp[0] = rsp0; }
+void tss_set_rsp0(u64 rsp0) { tss[this_cpu()].rsp[0] = rsp0; }
 
 void idt_init(void) {
     for (int i = 0; i < 49; i++) set_gate(i, isr_table[i], (i == 8 || i == 2) ? 1 : 0);
@@ -65,6 +79,7 @@ void idt_init(void) {
     idt[0x80].type = 0xEE;          /* DPL 3: o ring 3 pode chamar int 0x80 */
     set_gate(0xF0, (u64)isr240, 0);
     set_gate(0xF1, (u64)isr_wake, 0);  /* acorda os APs de par_for (arch/smp.c) */
+    set_gate(0xF2, (u64)isr242, 0);    /* "olhe o escalonador": TLB e threads mortas em outro núcleo (proc/sched.c) */
     set_gate(0xFF, (u64)isr255, 0);
     static dtr_t d;
     d.limit = sizeof(idt) - 1;
@@ -83,41 +98,79 @@ __attribute__((weak)) u64 sched_irq_exit(int_frame_t *f, bool timer) { (void)tim
 __attribute__((weak)) u64 proc_syscall(int_frame_t *f) { f->rax = (u64)-1; return (u64)f; }
 __attribute__((weak)) u64 proc_fault(int_frame_t *f, u64 cr2) { (void)cr2; return (u64)f; }
 __attribute__((weak)) void lapic_eoi(void) {}
+/* trava grande do kernel e estado por núcleo (proc/sched.c); fracos = um núcleo, sem trava */
+__attribute__((weak)) bool sched_nested(void) { return false; }
+__attribute__((weak)) void sched_kentry(int_frame_t *f) { (void)f; }
+__attribute__((weak)) void sched_klock(void) {}
+__attribute__((weak)) bool sched_ktry(void) { return true; }
+__attribute__((weak)) u64 sched_dead_check(int_frame_t *f) { (void)f; return 0; }
+__attribute__((weak)) u64 sched_kexit(u64 r) { return r; }
+__attribute__((weak)) void sched_post(void) {}
 
-/* devolve o frame a ser restaurado por isr_common (outro = troca de contexto) */
-u64 isr_dispatch(int_frame_t *f) {
-    if (f->vector == 0x80) return proc_syscall(f);
-    if (f->vector == 0xF0) { lapic_eoi(); return sched_irq_exit(f, false); }
-    if (f->vector == 0xFF) return (u64)f;                     /* espúria: sem EOI */
-    if (f->vector < 32) {
-        char msg[160];
-        u64 cr2;
-        __asm__ volatile("mov %%cr2,%0" : "=r"(cr2));
-        if ((f->cs & 3) == 3 && f->vector != 8 && f->vector != 2 && f->vector != 18)
-            return proc_fault(f, cr2);                        /* só o processo morre */
-        snprintf(msg, sizeof(msg), "%s (vetor %llu, erro 0x%llx) em RIP=0x%llx CR2=0x%llx",
-                 exc_names[f->vector], f->vector, f->error, f->rip, cr2);
-        kprintf("\n*** EXCEÇÃO: %s\n", msg);
-        {   /* para traduzir em funções (build com /map): base de carga, registradores e endereços do kernel na pilha */
-            extern char __ImageBase;
-            u64 kb = (u64)&__ImageBase;
-            kprintf("*** kernel em 0x%llx (RIP-base = 0x%llx) rax=%llx rbx=%llx rcx=%llx rdx=%llx rsi=%llx rdi=%llx\n",
-                    kb, f->rip - kb, f->rax, f->rbx, f->rcx, f->rdx, f->rsi, f->rdi);
-            const u64 *sp = (const u64 *)(f->rsp & ~7ULL);
-            int shown = 0;
-            for (int i = 0; i < 512 && shown < 16; i++) {
-                u64 v = sp[i];
-                if (kb && v > kb && v < kb + 0x1000000ULL) { kprintf("***   [rsp+%d] base+0x%llx\n", i * 8, v - kb); shown++; }
-            }
+static void exc_panic(int_frame_t *f) {
+    char msg[160];
+    u64 cr2;
+    __asm__ volatile("mov %%cr2,%0" : "=r"(cr2));
+    snprintf(msg, sizeof(msg), "%s (vetor %llu, erro 0x%llx) em RIP=0x%llx CR2=0x%llx [núcleo %d]",
+             exc_names[f->vector], f->vector, f->error, f->rip, cr2, this_cpu());
+    kprintf("\n*** EXCEÇÃO: %s\n", msg);
+    {   /* para traduzir em funções (build com /map): base de carga, registradores e endereços do kernel na pilha */
+        extern char __ImageBase;
+        u64 kb = (u64)&__ImageBase;
+        kprintf("*** kernel em 0x%llx (RIP-base = 0x%llx) rax=%llx rbx=%llx rcx=%llx rdx=%llx rsi=%llx rdi=%llx\n",
+                kb, f->rip - kb, f->rax, f->rbx, f->rcx, f->rdx, f->rsi, f->rdi);
+        const u64 *sp = (const u64 *)(f->rsp & ~7ULL);
+        int shown = 0;
+        for (int i = 0; i < 512 && shown < 16; i++) {
+            u64 v = sp[i];
+            if (kb && v > kb && v < kb + 0x1000000ULL) { kprintf("***   [rsp+%d] base+0x%llx\n", i * 8, v - kb); shown++; }
         }
-        panic_screen(msg, f);
-        for (;;) { cli(); hlt(); }
     }
+    panic_screen(msg, f);
+    for (;;) { cli(); hlt(); }
+}
+
+/* IRQs do PIC (PIT, PS/2; só chegam ao BSP): rodam sem a trava grande — só mexem nos próprios buffers */
+static int pic_irq(int_frame_t *f) {
     int irq = (int)f->vector - 32;
     if (irq >= 0 && irq < 17 && irq_handlers[irq]) irq_handlers[irq](f);
     if (irq >= 8 && irq < 16) outb(0xA0, 0x20);
     if (irq < 16) outb(0x20, 0x20);
-    return sched_irq_exit(f, irq == 0);
+    return irq;
+}
+
+/* devolve o frame a ser restaurado por isr_common (outro = troca de contexto).
+ * 0xF0 = temporizador do LAPIC (fatia nos APs), 0xF2 = IPI de "olhe o escalonador/TLB" (proc/sched.c). */
+u64 isr_dispatch(int_frame_t *f) {
+    if (sched_nested()) {           /* interrupção no meio da espera pela trava grande: só o mínimo */
+        if (f->vector < 32) exc_panic(f);
+        if (f->vector == 0xF0 || f->vector == 0xF2) lapic_eoi();
+        else if (f->vector != 0xFF) pic_irq(f);
+        return (u64)f;
+    }
+    sched_kentry(f);
+    u64 r;
+    if (f->vector == 0x80) {
+        sched_klock();
+        r = sched_dead_check(f);
+        if (!r) r = proc_syscall(f);
+    } else if (f->vector == 0xF0 || f->vector == 0xF2) {
+        lapic_eoi();
+        r = sched_ktry() ? sched_irq_exit(f, this_cpu() != 0 || f->vector == 0xF2) : (u64)f;
+    } else if (f->vector == 0xFF) {
+        r = (u64)f;                                           /* espúria: sem EOI */
+    } else if (f->vector < 32) {
+        if ((f->cs & 3) != 3 || f->vector == 8 || f->vector == 2 || f->vector == 18) exc_panic(f);
+        u64 cr2;
+        __asm__ volatile("mov %%cr2,%0" : "=r"(cr2));
+        sched_klock();
+        r = sched_dead_check(f);
+        if (!r) r = proc_fault(f, cr2);                       /* só o processo morre */
+    } else {
+        int irq = pic_irq(f);
+        r = sched_ktry() ? sched_irq_exit(f, irq == 0) : (u64)f;
+    }
+    return sched_kexit(r);
 }
 
 /* ------------------------------------------------------------------ PIC */

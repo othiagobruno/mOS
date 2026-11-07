@@ -228,10 +228,11 @@ O que a partida mostrou, na ordem:
    categorias. As preferências do WhatsApp são propriedades `@dynamic` declaradas em categorias e protocolos, com os
    acessores gerados em tempo de execução. As duas coisas agora existem (`objc.c`). Também se protege uma classe ainda
    sem nome em `objc_getClass`.
-5. **Ainda ausente na partida:** a libsqlite3 (`sqlite3_libversion_number`, `sqlite3_config`). Não há fonte nem
-   binário do SQLite no disco; embuti-lo (domínio público) depende de baixar o amálgama. `dispatch_io_*`,
-   `dispatch_read/write` (`dispatch_io.c`) e `CFReadStream*`/`CFWriteStream*` sobre `NSInputStream` (`cfstream.c`)
-   já existem.
+5. **SQLite:** o amálgama oficial 3.54.1 (domínio público, em `.tools\sqlite-dl`, SHA3-256 conferido) vira
+   `build\sqlite\libsqlite3.dylib` (`tools\build-sqlite.ps1`, chamado pelo `build.ps1`, que a põe em `/usr/lib` da
+   imagem). As 84 importações dela existem no libSystem, e a partida já cria bancos com ela. Também existem
+   `dispatch_io_*`, `dispatch_read/write` (`dispatch_io.c`) e `CFReadStream*`/`CFWriteStream*` sobre o
+   `NSInputStream` (`cfstream.c`).
 6. **Só no harness:** as syscalls 12, 31, 33, 39, 48, 81 (Mach) e 83 não são emuladas pelo `machotest`. No QEMU elas
    existem.
 
@@ -266,14 +267,49 @@ Também entraram: `NSCache`, `NSDate isEqualToDate:/dateByAddingTimeInterval:`, 
 `writeToURL:atomically:encoding:error:`, `contentsOfDirectoryAtURL:…`, `getBytes:length:/range:`, os `init` de
 `NSMapTable`/`NSHashTable` e `UIApplication.backgroundTimeRemaining`.
 
-**Onde está agora:** sem quedas; depois do SQLite ausente, o app fica num laço longo de formatação de strings
-(`withVaList` → `String(format:)`) dentro de código genérico do SharedModules, e o watchdog o encerra. Ainda não
-se sabe se é trabalho legítimo, lento no harness, ou um laço sem fim causado por algum stub.
+### Terceira rodada (7 nov. 2026): desempenho, preferências e o log do próprio WhatsApp
+
+- **Liberação quadrática:** todo `-dealloc` percorria a lista inteira de observadores do `NSNotificationCenter`
+  (`str_dealloc` aparecia em metade das amostras). Agora um conjunto de alvos com hash deixa a liberação comum em
+  O(1) (`foundation.c`).
+- **`createDirectoryAtPath:withIntermediateDirectories:YES`** só criava o último nível, e o contêiner do App Group
+  (`Library/Group Containers/group.net.whatsapp.WhatsApp.shared`) nunca existia. Agora cria os intermediários e
+  aceita a pasta existente. Com isso o WhatsApp cria as travas, `Message/Media` e o **próprio log**, em
+  `…/Logs/WhatsApp_2/whatsapp-*.log`, que é a melhor ferramenta para seguir a partida.
+- **`NSUserDefaults`:** `removeObjectForKey:` não fazia nada; `setObject:nil` não removia; o KVO disparava mesmo sem
+  mudança. Entraram `dictionaryRepresentation`, `dataForKey:`, `URLForKey:`, os domínios persistentes etc.
+- Também: `createFileAtPath:contents:attributes:`, `setAttributes:ofItemAtPath:error:`,
+  `attributesOfFileSystemForPath:error:` com tamanhos (o app registrava `NSFileSystemFreeSize/error/nil-value`) e
+  EBADF no `dispatch_io` com fd inválido.
+
+**Onde está agora:** o log do WhatsApp mostra a partida até `app-group-preparer//…/marked-as-new-install-or-upgrade`.
+Logo depois começa um laço em `/props-store//gabp.o`: a chave de configuração vem nil, ele usa o padrão, grava
+`ABExposureKey: nil`, posta `WAExposureKeyDidChange` (sem observadores no `NSNotificationCenter`) e repete por um
+bloco que se reagenda. Não é o KVO do `NSUserDefaults`, que só disparou para `LogCounter`. O componente vazio em
+`/props-store//` é só a junção de `'%@%@%@'` (`"/props-store/"` + `"/gabp.o"` + `"/default"`), não um identificador
+vazio.
+
+O que se sabe do laço (quarta rodada):
+- Ele roda na fila serial `com.whatsapp.properties-store.gabp.o`: um bloco (thunk em SharedModules +0x20f97) se
+  reagenda nela. O trampolim do dispatch evita o estouro de pilha, mas não o laço.
+- O armazenamento tem a mensagem `skip set/ABExposureKey: %@`, ou seja, pula a gravação quando o valor não muda; no
+  mOS ele sempre grava `nil`, como se o valor atual nunca fosse nil.
+- **Não é determinístico:** numa rodada a partida passou do `gabp.o`, seguiu para `/props-store//abp.p` e caiu
+  dentro do `malloc` com o heap já corrompido (chamado de `stringByAppendingPathComponent:`). Há uma escrita fora
+  de bloco antes desse ponto, ainda não localizada.
+- O log grava `00:00:00.000` e o nome `whatsapp-1970-01-01-00-00-00`, embora o `clock_gettime(CLOCK_REALTIME)`, o
+  `time()` e a ponte `Date ↔ NSDate` estejam certos. Falta descobrir de qual relógio ou formatador o logger tira a
+  hora: se for o `NSDateFormatter`/`DateFormatter` do mOS formatando o epoch, a lógica do app com validade de
+  propriedades pode estar vendo datas de 1970.
+- Corrigidos nesta rodada: `NSNumber.unsignedLongLongValue` e afins (o app via 0 MB de espaço livre),
+  `sortedArrayUsingDescriptors:`/`sortUsingDescriptors:` e EBADF no `dispatch_io` com fd inválido.
 
 ## Roteiro (do mais perto para o mais longe)
 
 1. **Codex CLI** (faltam 90). É o primeiro app da lista que pode rodar inteiro:
-   - termios (`tcgetattr/tcsetattr/cfmakeraw/openpty/ttyname_r/tcgetpgrp`) para a interface de terminal;
+   - ~~termios (`tcgetattr/tcsetattr/cfmakeraw/openpty/ttyname_r/tcgetpgrp`)~~: feitos de verdade, com pseudoterminais
+     no kernel (`kernel/proc/pty.c`, `userland/libsystem/pty.c`; ver "Terminal integrado" em [porte-vscode.md](porte-vscode.md));
+     o mesmo caminho abre o shell no terminal integrado do VS Code, do Cursor e do Claude (node-pty);
    - ~~`getaddrinfo` e TLS~~: feitos (SecureTransport real; o login por código de dispositivo chega à OpenAI). Falta concluir
      um login de ponta a ponta e conferir o polling do token;
    - CFURL, CFError, CFPreferences, CFTimeZone;
@@ -291,13 +327,29 @@ se sabe se é trabalho legítimo, lento no harness, ou um laço sem fim causado 
    - `-[NSString compare:options:]`: o Electron 44 confere o SHA-256 do `ElectronAsarIntegrity` contra um hash embutido, e as
      chaves saíam fora de ordem;
    - a fonte de dispatch liberada antes do cancel handler (`source_pthread`);
-   - o RDX do `sendto` (ver Slack).
-   Ele também se recusa a subir com `--log-net-log`.
+   - o RDX do `sendto` (ver Slack);
+   - a WebContentsView filha (o claude.ai) sempre oculta: o `NSThemeFrame` falso do `nsurl.c` devolvia `isHidden` lixo, e o
+     `-[WebContentsViewCocoa updateWebContentsVisibility]` via um ancestral oculto. O teste mínimo `tools/testdata/electron-wcv`
+     (BrowserWindow + WebContentsView sobre o Electron do Cursor) reproduz e confere;
+   - `orderOut:` era um no-op (janelas escondidas ficavam na tela). Agora o window server esconde e mostra
+     (`GUI_FOCUS_HIDE`/`GUI_FOCUS_SHOW`), e `occlusionState` segue a visibilidade.
+   Os addons em Swift (`swift_addon.node`, `computer_use.node`) ficam fora da imagem até o runtime Swift deles existir: o dyld
+   ligava ~466 símbolos ausentes a 0 e o processo caía. Ele também se recusa a subir com `--log-net-log`.
 
 **Rede dos apps Chromium/Electron (7 nov.)**: toda escrita de socket voltava ERR_NETWORK_CHANGED (-21). No macOS de 13.3 a
 26.1, o Chromium confere o RDX depois de `sendto()` (o XNU deixa 0 ali) para contornar um bug do kernel. O `sendto` do libSystem
 agora devolve RAX:RDX. Com isso o Slack carrega a tela de login de app.slack.com e o Chrome abre https://example.com/. Para
 investigar rede: `--log-net-log=/Users/Visitante/n.json` com `vscode-teste.ps1 -Persist`; o arquivo sai da imagem pelo
 `build\fatcat.exe` (`tools/fatcat.c`).
+
+**Fontes web CFF (7 nov.)**: as fontes web do Slack (e de muitos sites) são OpenType com contornos CFF (`OTTO`). Antes o
+kernel as recusava e o Blink caía na fonte seguinte da lista. O `kernel/gfx/font_cff.inc` (incluído por `font.c`) faz:
+- a leitura dos INDEX e DICT do CFF 1;
+- o interpretador de charstrings Type 2, com subrotinas locais e globais, flex, CID com FDSelect e aritmética;
+- as cúbicas viram segmentos para o mesmo rasterizador da glyf;
+- o `font_sane` confere a estrutura inteira, e o interpretador limita leituras, pilha, profundidade, operações e segmentos.
+
+Para testar no host, sem VM: `tools/cfftest.c` com `tools/woff2otf.js` (os RobotoSlab da documentação do QEMU são CFF
+subrotinizados: 1052 glifos sem erro). Um fuzz com a tabela colada a uma página sem acesso não leu fora dela.
 5. **Codex desktop**: o porte do Chrome (`ChromeMain`) mais CoreText.
 6. **WhatsApp**: runtime Swift, Foundation do Swift, Combine, SwiftUI (OpenSwiftUI) e UIKit/Catalyst. É o mais longe.

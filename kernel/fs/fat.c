@@ -5,7 +5,8 @@
  * volta; a FAT passa por um cache de blocos de 4 KiB gravado em todas as cópias no fat_sync().
  * Ao substituir um arquivo, a nova cadeia de clusters é gravada antes de a antiga ser liberada.
  *
- * Também registra volumes FAT32 no dfs (somente leitura em /Volumes), exceto o volume do sistema.
+ * Também registra volumes FAT12/16/32 no dfs (/Volumes), exceto o volume do sistema. Em discos
+ * graváveis eles aceitam escrita pelo VFS (vfs_bridge.c); partições EFI ficam só leitura.
  */
 #include "fs.h"
 
@@ -746,6 +747,18 @@ bool fat_write_file(fatfs_t *fs, const char *path, const void *data, u64 len) {
     if (!open_parent(fs, path, &d, &leaf)) return false;
     u32 n = (u32)((len + fs->clus - 1) / fs->clus);
     u32 first = n ? alloc_chain(fs, n) : 0;
+    if (n && !first) {
+        /* disco cheio: substituir um arquivo grande pede o dobro do espaço. Solta a cadeia antiga antes
+         * (perde a garantia de "a versão velha sobrevive a uma falha", mas o arquivo cabe) */
+        fent_t *o = kmalloc(sizeof *o);
+        if (o && dir_find(&d, leaf, o) && !(o->attr & ATTR_DIR) && o->clus) {
+            u8 *e = d.buf + o->sfn * 32;
+            e[20] = e[21] = e[26] = e[27] = 0;
+            e[28] = e[29] = e[30] = e[31] = 0;
+            if (dir_store(fs, &d)) { free_chain(fs, o->clus); first = alloc_chain(fs, n); }
+        }
+        kfree(o);
+    }
     bool ok = !n || (first && chain_write(fs, first, data, len));
     fent_t *f = ok ? kmalloc(sizeof *f) : NULL;
     if (ok && f) {
@@ -924,12 +937,30 @@ static i64 dfat_read(dmount_t *m, dnode_t *f, u64 off, void *buf, u64 len) {
 
 static void dfat_unmount(dmount_t *m) {
     fatfs_t *fs = m->priv;
+    if (fs->rw && !fat_sync(fs)) kprintf("fat: \"%s\": erro ao gravar a FAT ao desmontar\n", m->volname);
     for (int s = 0; s < FCACHE; s++) kfree(fs->cache[s].data);
     kfree(fs);
     m->priv = NULL;
 }
 
-static const dfs_ops_t FAT_OPS = {"FAT", dfat_readdir, dfat_read, dfat_unmount, NULL, NULL};
+/* escrita em /Volumes: as funções de caminho acima já deixam o volume consistente a cada chamada */
+static bool dfat_write(dmount_t *m, const char *p, const void *data, u64 len) { return fat_write_file(m->priv, p, data, len); }
+static bool dfat_mkdir(dmount_t *m, const char *p) { return fat_mkdir(m->priv, p); }
+static bool dfat_remove(dmount_t *m, const char *p) { return fat_remove(m->priv, p); }
+static bool dfat_rename(dmount_t *m, const char *a, const char *b) { return fat_rename(m->priv, a, b); }
+static bool dfat_sync(dmount_t *m) { return fat_sync(m->priv); }
+
+static const dfs_ops_t FAT_OPS = {"FAT", dfat_readdir, dfat_read, dfat_unmount, NULL, NULL,
+                                  dfat_write, dfat_mkdir, dfat_remove, dfat_rename, dfat_sync};
+
+/* partição de sistema EFI (a do Windows/macOS/Linux de outro disco): fica só leitura para não
+ * estragar o boot de outro sistema por engano. Critério: rótulo típico e pasta /EFI na raiz. */
+static bool looks_like_esp(fatfs_t *fs) {
+    bool dir = false;
+    if (!fat_stat(fs, "/EFI", &dir, NULL) || !dir) return false;
+    return !fs->label[0] || !strcasecmp(fs->label, "EFI") || !strcasecmp(fs->label, "SYSTEM") ||
+           !strcasecmp(fs->label, "ESP") || fat_stat(fs, "/EFI/Microsoft", NULL, NULL) || fat_stat(fs, "/EFI/APPLE", NULL, NULL);
+}
 
 int fat_probe(blkdev_t *dev, const char *source, const char *fmt) {
     if (s_system) {
@@ -941,8 +972,14 @@ int fat_probe(blkdev_t *dev, const char *source, const char *fmt) {
     }
     fatfs_t *fs = fat_mount(dev);
     if (!fs) return 0;
-    fs->rw = false;                      /* em /Volumes: somente leitura por enquanto */
+    /* fat_mount liga rw se o dispositivo aceita escrita (disco físico); imagens em RAM ficam só leitura */
+    if (fs->rw && looks_like_esp(fs)) {
+        kprintf("fat: \"%s\" parece uma partição EFI: montada só leitura\n", fs->label[0] ? fs->label : "sem nome");
+        fs->rw = false;
+    }
     dmount_t *m = dfs_attach(&FAT_OPS, dev, fs->label[0] ? fs->label : "Sem Título", source, fmt, fs, fs->root);
-    if (!m) { dfat_unmount(&(dmount_t){.priv = fs}); return 0; }
+    if (!m) { fs->rw = false; dfat_unmount(&(dmount_t){.priv = fs}); return 0; }
+    m->writable = fs->rw;
+    if (fs->rw) kprintf("fat: \"%s\" (FAT%d) gravável\n", m->volname, fs->type);
     return 1;
 }

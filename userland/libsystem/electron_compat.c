@@ -178,6 +178,18 @@ static void app_set_appearance(id self, SEL c, id a) {
 static BOOL v_hidden_or_ancestor(id self, SEL c) {
     (void)c;
     int guard = 0;
+    {   /* diagnóstico (ca-log): a cadeia da WebContentsViewCocoa (o Chromium decide aqui se a página está oculta) */
+        extern int cx_ca_diag(void);
+        const char *cn = cx_class_name(object_getClass(self));
+        if (cx_ca_diag() && cn && strstr(cn, "WebContentsViewCocoa")) {
+            static int nlog;
+            if (nlog++ < 12)
+                for (id v = self; v && guard < 16; v = MSG0(id, v, "superview"), guard++)
+                    cx_fdprintf(2, "[ca] isHiddenOrHasHiddenAncestor %p: %s %p oculta %d janela %p\n", (void *)self,
+                                cx_class_name(object_getClass(v)), (void *)v, (int)MSG0(BOOL, v, "isHidden"), (void *)MSG0(id, v, "window"));
+            guard = 0;
+        }
+    }
     for (id v = self; v && guard < 256; v = MSG0(id, v, "superview"), guard++)
         if (MSG0(BOOL, v, "isHidden")) return YES;
     return NO;
@@ -355,6 +367,11 @@ static ec_const_t ec_nonblink_s = {cx_cfconst_isa, 0x7c8, EC_NONBLINK, sizeof(EC
 const void *AXPrefersNonBlinkingTextInsertionIndicatorDidChangeNotification = &ec_nonblink_s;
 unsigned char AXPrefersNonBlinkingTextInsertionIndicator(void) { return 0; }   /* o cursor pisca, como no padrão */
 
+/* -className / +className (do Foundation do macOS, via NSScriptClassDescription): o nome da classe. O Chromium monta o
+ * userInfo do aviso de oclusão em -[NSWindow setOccluded:] com @{[WebContentsOcclusionCheckerMac className]: @YES}. */
+static id o_class_name(id self, SEL c) { (void)c; return cx_str(cx_class_name(object_getClass(self))); }
+static id c_class_name(id self, SEL c) { (void)c; return cx_str(cx_class_name((cx_class_t *)self)); }
+
 /* ================================================================ registro */
 static void add_if_missing(cx_class_t *k, const char *sel, void *imp) {
     if (k && !cx_responds(k, sel_registerName(sel))) cx_add_method(k, sel, imp);
@@ -370,6 +387,8 @@ void cx_electron_compat_init(void) {
     add_if_missing(ob, "setValuesForKeysWithDictionary:", (void *)o_set_values);
     add_if_missing(ob, "performSelector:withObject:afterDelay:", (void *)o_perform_delay);
     add_if_missing(ob, "performSelector:withObject:afterDelay:inModes:", (void *)o_perform_delay_modes);
+    add_if_missing(ob, "className", (void *)o_class_name);
+    add_cls_if_missing(ob, "className", (void *)c_class_name);
     add_cls_if_missing(ob, "cancelPreviousPerformRequestsWithTarget:", (void *)c_cancel_all);
     add_cls_if_missing(ob, "cancelPreviousPerformRequestsWithTarget:selector:object:", (void *)c_cancel);
     cx_class_t *rl = cls("NSRunLoop");

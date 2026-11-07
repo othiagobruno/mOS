@@ -164,6 +164,17 @@ bool wm_begin_move(window_t *w) {
     return true;
 }
 
+/* -[NSWindow orderOut:] / orderFront: de um app do macOS: a janela some da tela e do foco (wm_focused só olha as
+ * visíveis) sem ser destruída, e volta na frente. Janelas em grupo de abas ficam por conta das abas. */
+void wm_set_hidden(window_t *w, bool hidden) {
+    if (!w || w->tab_group || w->closing) return;
+    if (w->visible == !hidden) { if (!hidden) wm_focus(w); return; }
+    w->visible = !hidden;
+    w->needs_paint = true;
+    wm_damage(win_bounds(w));
+    if (!hidden) wm_focus(w);
+}
+
 void wm_focus(window_t *w) {
     int i = index_of(w);
     if (i < 0) return;
@@ -272,6 +283,7 @@ static void destroy(window_t *w) {
 
 void wm_close(window_t *w) {
     if (!w || w->closing) return;
+    if (w->on_close_request && w->on_close_request(w)) return;
     if (w->on_close) w->on_close(w);
     if (w->tab_group) tab_leave(w);
     if (w->fullscreen && space_win == w) space_switch(NULL, -1);   /* fechar em tela cheia volta para a mesa */
@@ -281,7 +293,7 @@ void wm_close(window_t *w) {
 }
 
 void wm_close_app(app_t *a) {
-    for (int i = nwins - 1; i >= 0; i--) if (wins[i]->app == a) wm_close(wins[i]);
+    for (int i = nwins - 1; i >= 0; i--) if (wins[i]->app == a) { wins[i]->on_close_request = NULL; wm_close(wins[i]); }
 }
 
 void wm_set_title(window_t *w, const char *t) {

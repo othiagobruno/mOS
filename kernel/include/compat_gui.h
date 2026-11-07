@@ -141,6 +141,10 @@ typedef struct {
 /* GUI_WIN_FOCUS (id, GUI_FOCUS_MOVE): passa o arrasto do botão esquerdo, que está apertado sobre o
  * conteúdo dessa janela, para mover a janela. -EAGAIN se não há botão apertado nela. */
 #define GUI_FOCUS_MOVE 0x4D4F5645
+/* GUI_WIN_FOCUS (id, GUI_FOCUS_HIDE / GUI_FOCUS_SHOW): -[NSWindow orderOut:] esconde a janela sem destruí-la (conteúdo,
+ * posição e o ícone do app no Dock ficam) e orderFront: a mostra de novo, na frente. */
+#define GUI_FOCUS_HIDE 0x48494445
+#define GUI_FOCUS_SHOW 0x53484F57
 
 /* eventos */
 enum { GEV_NONE, GEV_MOUSE_DOWN, GEV_MOUSE_UP, GEV_MOUSE_MOVE, GEV_RIGHT_DOWN, GEV_SCROLL,

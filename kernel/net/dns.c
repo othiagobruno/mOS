@@ -1,4 +1,5 @@
-/* mOS — cliente DNS assíncrono (registros A, cache com TTL, seguimento de CNAME) */
+/* mOS — cliente DNS assíncrono (registros A e AAAA, cache com TTL, seguimento de CNAME). O servidor é o do DHCP
+ * (IPv4); numa rede só IPv6, o do RA (RDNSS, ipv6.c) por UDP sobre IPv6. */
 #include "netpriv.h"
 
 #define DNS_CACHE     32
@@ -15,6 +16,8 @@ typedef struct {
     char name[DNS_NAME_MAX + 1];    /* nome pedido pelo usuário (chave) */
     char qname[DNS_NAME_MAX + 1];   /* nome consultado agora (após CNAMEs) */
     u32  ip;
+    u8   ip6[16];
+    u16  qtype;                     /* 1 = A, 28 = AAAA */
     u16  id;
     u8   tries, cnames;
     u64  sent, expires, used;
@@ -52,7 +55,8 @@ static int encode_name(u8 *o, const char *name) {
 static void send_query(dns_entry_t *e) {
     u32 srv = dns_server();
     e->sent = timer_ticks();
-    if (!srv || !g_net.configured) { e->tries = 0; return; }   /* reenviado por dns_tick */
+    bool v6 = !(srv && g_net.configured) && g6.dns_ok;      /* rede só IPv6: o servidor do RA */
+    if (!v6 && (!srv || !g_net.configured)) { e->tries = 0; return; }   /* reenviado por dns_tick */
     e->tries++;
     u8 q[300];
     e->id = (u16)rand32();
@@ -61,9 +65,10 @@ static void send_query(dns_entry_t *e) {
     wr16(q + 4, 1); wr16(q + 6, 0); wr16(q + 8, 0); wr16(q + 10, 0);
     int n = encode_name(q + 12, e->qname);
     if (n < 0) { e->state = DE_FAIL; e->expires = timer_ticks() + DNS_NEG_MS; return; }
-    wr16(q + 12 + n, 1);          /* tipo A */
+    wr16(q + 12 + n, e->qtype ? e->qtype : 1);   /* tipo A ou AAAA */
     wr16(q + 14 + n, 1);          /* classe IN */
-    udp_send(srv, dns_port, DNS_PORT, q, (u16)(16 + n));
+    if (v6) udp6_send(g6.dns, dns_port, DNS_PORT, q, (u16)(16 + n));
+    else udp_send(srv, dns_port, DNS_PORT, q, (u16)(16 + n));
 }
 
 /* lê um nome (com compressão) em out; devolve o deslocamento após o nome no registro, ou -1 */
@@ -119,6 +124,8 @@ static void dns_rx(u32 src, u16 sport, const u8 *m, u16 len) {
     char cur[DNS_NAME_MAX + 1];
     strcpy(cur, e->qname);
     u32 found = 0, ttl_found = 0;
+    u8 found6[16];
+    u16 want = e->qtype ? e->qtype : 1;
     bool got_cname = false;
     for (int pass = 0; pass < DNS_MAX_CNAME + 1 && !found; pass++) {
         int o = off;
@@ -132,7 +139,8 @@ static void dns_rx(u32 src, u16 sport, const u8 *m, u16 len) {
             o += 10;
             if (o + rdl > len) break;
             if (cls == 1 && name_eq(nm, cur)) {
-                if (type == 1 && rdl == 4) { found = rd32(m + o); ttl_found = ttl; break; }
+                if (want == 1 && type == 1 && rdl == 4) { found = rd32(m + o); ttl_found = ttl; break; }
+                if (want == 28 && type == 28 && rdl == 16) { memcpy(found6, m + o, 16); found = 1; ttl_found = ttl; break; }
                 if (type == 5) {
                     if (read_name(m, len, (u16)o, target, sizeof target) > 0) {
                         strcpy(cur, target);
@@ -146,7 +154,8 @@ static void dns_rx(u32 src, u16 sport, const u8 *m, u16 len) {
         if (!advanced) break;
     }
     if (found) {
-        e->ip = found;
+        if (want == 28) memcpy(e->ip6, found6, 16);
+        else e->ip = found;
         e->state = DE_OK;
         u32 ttl = CLAMP(ttl_found, 30u, 86400u);
         e->expires = now + (u64)ttl * 1000;
@@ -164,19 +173,17 @@ static void dns_rx(u32 src, u16 sport, const u8 *m, u16 len) {
     e->expires = now + DNS_NEG_MS;
 }
 
-int dns_resolve(const char *host, u32 *ip) {
-    if (!host || !*host) return -1;
-    if (str_to_ip(host, ip)) return 1;
-    if (!strcasecmp(host, "localhost")) { if (ip) *ip = 0x7F000001; return 1; }
+/* procura (nome, tipo) no cache ou inicia a consulta; 1 com *out preenchido, 0 pendente, -1 falha */
+static int lookup(const char *host, u16 qtype, dns_entry_t **out) {
     if (!g_netdev || strlen(host) > DNS_NAME_MAX) return -1;
     u64 now = timer_ticks();
     dns_entry_t *slot = NULL;
     for (int i = 0; i < DNS_CACHE; i++) {
         dns_entry_t *e = &cache[i];
-        if (e->state == DE_FREE || !name_eq(e->name, host)) continue;
+        if (e->state == DE_FREE || e->qtype != qtype || !name_eq(e->name, host)) continue;
         if ((e->state == DE_OK || e->state == DE_FAIL) && now >= e->expires) { e->state = DE_FREE; break; }
         e->used = now;
-        if (e->state == DE_OK) { if (ip) *ip = e->ip; return 1; }
+        if (e->state == DE_OK) { *out = e; return 1; }
         if (e->state == DE_FAIL) return -1;
         return 0;
     }
@@ -190,6 +197,7 @@ int dns_resolve(const char *host, u32 *ip) {
     memset(slot, 0, sizeof *slot);
     strcpy(slot->name, host);
     strcpy(slot->qname, host);
+    slot->qtype = qtype;
     /* remove ponto final */
     usize l = strlen(slot->qname);
     if (l && slot->qname[l - 1] == '.') slot->qname[l - 1] = 0;
@@ -199,12 +207,35 @@ int dns_resolve(const char *host, u32 *ip) {
     return slot->state == DE_FAIL ? -1 : 0;
 }
 
+int dns_resolve(const char *host, u32 *ip) {
+    if (!host || !*host) return -1;
+    if (str_to_ip(host, ip)) return 1;
+    if (!strcasecmp(host, "localhost")) { if (ip) *ip = 0x7F000001; return 1; }
+    dns_entry_t *e;
+    int r = lookup(host, 1, &e);
+    if (r == 1 && ip) *ip = e->ip;
+    return r;
+}
+
+/* registros AAAA; "localhost" = ::1 e endereços literais voltam direto */
+int dns_resolve6(const char *host, u8 *ip6) {
+    if (!host || !*host) return -1;
+    u8 lit[16];
+    if (str_to_ip6(host, lit)) { if (ip6) memcpy(ip6, lit, 16); return 1; }
+    if (str_to_ip(host, NULL)) return -1;               /* IPv4 literal não tem AAAA */
+    if (!strcasecmp(host, "localhost")) { if (ip6) memcpy(ip6, IP6_LOOPBACK, 16); return 1; }
+    dns_entry_t *e;
+    int r = lookup(host, 28, &e);
+    if (r == 1 && ip6) memcpy(ip6, e->ip6, 16);
+    return r;
+}
+
 void dns_tick(u64 now) {
     for (int i = 0; i < DNS_CACHE; i++) {
         dns_entry_t *e = &cache[i];
         if (e->state != DE_PENDING) continue;
         /* aguardando configuração da rede: não gasta tentativas */
-        if (!g_net.configured) { e->sent = now; continue; }
+        if (!g_net.configured && !g6.dns_ok) { e->sent = now; continue; }
         if (e->tries == 0 || now - e->sent >= DNS_RETRY_MS * (u64)e->tries) {
             if (e->tries >= DNS_TRIES) { e->state = DE_FAIL; e->expires = now + DNS_NEG_MS; continue; }
             send_query(e);

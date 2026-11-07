@@ -246,6 +246,11 @@ bool libsystem_dylib_ok(const char *n) {
     return !strncmp(n, "/usr/lib/system/", 16);
 }
 
+/* libc++ e libc++abi: vêm da dylib do LLVM no disco quando ela existe (link_image e dyld_open); o libSystem só as
+ * substitui quando ela falta */
+#define LIBCXX_DISK "/usr/lib/libc++.1.dylib"
+static bool libcxx_name(const char *n) { return !strcmp(n, LIBCXX_DISK) || !strcmp(n, "/usr/lib/libc++abi.dylib"); }
+
 static const char *arch_name(u32 cpu) {
     switch (cpu) {
     case 0x01000007: return "x86_64";
@@ -1102,6 +1107,15 @@ static int link_add(link_t *K, const char *path, const u8 *file, usize flen, boo
             snprintf(K->err, K->errlen, "%s não está dentro do app (pedido por %s)", s, nm);
             return -1;
         }
+        if (libcxx_name(dn)) {
+            /* libc++/libc++abi: a do LLVM no disco (/usr/lib/libc++.1.dylib, tools/build-libcxx.ps1, com a libc++abi
+             * dentro), que tem o layout que o código inline dos módulos .node e do runtime Swift espera (ios_base,
+             * vtables de stringstream, facetas de locale, chrono). Sem ela no disco (imagem antiga, machotest sem
+             * /usr/lib), o desvio para o libSystem (cxxabi.c e libcxx.c), como antes. */
+            int d = link_abs_dep(K, LIBCXX_DISK);
+            if (d == -2) return -1;
+            if (d >= 0) { I->dep[i] = (i16)d; continue; }
+        }
         if (libsystem_dylib_ok(dn)) {
             /* Foundation.framework é do libSystem, mas a parte Swift dele (overlay + FoundationEssentials com o ABI da
              * Apple, docs/swift-objc-runtime.md, fase 5) é uma dylib Mach-O: no macOS 14+ ela mora dentro do framework,
@@ -1387,7 +1401,9 @@ static i64 dyld_open(process_t *p, link_t *K, const char *req, u64 out_va, u64 c
     bool noload = (o.flags & MOS_RTLD_NOLOAD) != 0;
     memset(&o, 0, sizeof o);
     K->lasterr[0] = 0;
-    if (libsystem_dylib_ok(req)) return DYLD_H_LIBSYSTEM;
+    usize cxx_len;
+    if (libcxx_name(req) && dep_read(LIBCXX_DISK, &cxx_len)) req = LIBCXX_DISK;   /* a libc++ do disco, como no link_image */
+    else if (libsystem_dylib_ok(req)) return DYLD_H_LIBSYSTEM;
     int ci = image_at(K, caller);
     image_t *C = K->im[ci >= 0 ? ci : 0];
     if (noload) {
@@ -1879,7 +1895,8 @@ bool macho_load(process_t *p, const u8 *img, usize len, const char *arg, u64 *en
     /* SHELL: o bash do Homebrew quando está na imagem (o VS Code roda "$SHELL -i -l -c" para ler o ambiente de
      * login e abre o terminal integrado com ele). O msh do Terminal não é um arquivo, então sem bash não há um
      * shell que aceite -c: o caminho antigo continua e o spawn falha logo (ENOENT) em vez de esperar o prazo. */
-    const char *shell_env = vfs_lookup("/usr/local/bin/bash") ? "SHELL=/usr/local/bin/bash" : "SHELL=/bin/msh";
+    usize bash_len;                                      /* dep_read: vfs_lookup no kernel, arquivo no harness do host */
+    const char *shell_env = dep_read("/usr/local/bin/bash", &bash_len) ? "SHELL=/usr/local/bin/bash" : "SHELL=/bin/msh";
     const char *envs[] = {"HOME=/Users/Visitante", "USER=visitante", "LOGNAME=visitante",
                           "PATH=/usr/local/bin:/Sistema/Programas:/usr/bin:/bin", p->tty ? "TERM=xterm-256color" : "TERM=dumb",   /* sessão do Terminal: isatty(0..2) verdadeiro */
                           "LANG=pt_BR.UTF-8",

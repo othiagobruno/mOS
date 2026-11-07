@@ -1,5 +1,9 @@
-/* mOS — leitor e rasterizador TrueType (glyf/loca/cmap/hmtx/kern GPOS par-a-par) */
+/* mOS — leitor e rasterizador TrueType (glyf/loca/cmap/hmtx/kern GPOS par-a-par) e OpenType CFF (font_cff.inc) */
 #include "gfx.h"
+
+struct cff;
+static struct cff *cff_load(const u8 *p, u32 n, u32 nglyphs);   /* font_cff.inc */
+static bool cff_check(const u8 *p, u32 n, u32 nglyphs);
 
 extern void raster_line(float *acc, int w, int h, float x0, float y0, float x1, float y1);
 extern void raster_finish(const float *acc, int n, u8 *out);
@@ -17,6 +21,7 @@ struct font {
     i16 loca_fmt, ascender, descender, linegap;
     u8 cmap_fmt;
     int id;
+    struct cff *cff;        /* contornos CFF ('OTTO', fontes web dos apps); NULL = glyf */
     /* kerning: pares (g1<<16|g2) → ajuste, ordenados */
     u32 *kern_keys;
     i16 *kern_vals;
@@ -189,6 +194,11 @@ static void font_load_into(struct font *f, int id, const u8 *d, const u8 *e, boo
     f->loca = find_table(f, "loca");
     f->glyf = find_table(f, "glyf");
     f->gpos = find_table(f, "GPOS");
+    f->cff = NULL;
+    if (!f->glyf) {                                      /* OpenType CFF: só as fontes dos apps (font_sane já conferiu) */
+        u32 cl = 0, co = find_table_len(f, "CFF ", &cl);
+        if (co && cl) f->cff = cff_load(d + co, cl, f->nglyphs);
+    }
     u32 cmap = find_table(f, "cmap");
     u16 n = be16(d + cmap + 2);
     u32 best = 0;
@@ -247,14 +257,16 @@ void font_init(void) {
 
 font_t *font_get(int w) { return &fonts[CLAMP(w, 0, FONT_COUNT - 1)]; }
 
-/* TrueType com glyf/loca/cmap (não CFF): confere as tabelas antes de usar dados vindos do disco */
-static bool font_valid(const u8 *d, u32 n) {
+/* diretório sfnt com as tabelas de que o leitor precisa: TrueType (glyf/loca) ou, com cff, OpenType 'OTTO' */
+static bool font_dir_ok(const u8 *d, u32 n, bool cff) {
     if (!d || n < 12) return false;
     u32 tag = (u32)d[0] << 24 | d[1] << 16 | d[2] << 8 | d[3];
-    if (tag != 0x00010000 && tag != 0x74727565) return false;           /* 1.0 ou 'true' */
+    if (cff ? tag != 0x4F54544F : (tag != 0x00010000 && tag != 0x74727565)) return false;   /* 'OTTO'; 1.0 ou 'true' */
     u16 nt = be16(d + 4);
     if (12 + (u32)nt * 16 > n) return false;
-    const char *need[] = {"head", "maxp", "hhea", "hmtx", "loca", "glyf", "cmap"};
+    static const char *const need_ttf[] = {"head", "maxp", "hhea", "hmtx", "loca", "glyf", "cmap"};
+    static const char *const need_cff[] = {"head", "maxp", "hhea", "hmtx", "CFF ", "cmap", "cmap"};
+    const char *const *need = cff ? need_cff : need_ttf;
     for (int k = 0; k < 7; k++) {
         bool ok = false;
         for (u16 i = 0; i < nt; i++) {
@@ -266,6 +278,8 @@ static bool font_valid(const u8 *d, u32 n) {
     }
     return true;
 }
+/* TrueType com glyf/loca/cmap: a fonte de fallback do disco (o CFF só entra pelas fontes dos apps, em font_sane) */
+static bool font_valid(const u8 *d, u32 n) { return font_dir_ok(d, n, false); }
 bool font_set_fallback(const u8 *d, u32 n) {
     if (!font_valid(d, n)) return false;
     /* cópia própria: arquivos de volumes externos podem sair da memória (LRU do vfs_bridge) */
@@ -361,7 +375,8 @@ static bool cmap_sane(const u8 *c, u32 cl) {
     return true;
 }
 static bool font_sane(const u8 *d, u32 n) {
-    if (!font_valid(d, n)) return false;
+    bool cff = n >= 4 && be32(d) == 0x4F54544F;          /* 'OTTO': contornos na tabela CFF, sem glyf/loca */
+    if (!font_dir_ok(d, n, cff)) return false;
     u16 nt = be16(d + 4);
     for (u16 i = 0; i < nt; i++) {                       /* font_table copia qualquer tabela */
         const u8 *r = d + 12 + i * 16;
@@ -379,10 +394,14 @@ static bool font_sane(const u8 *d, u32 n) {
     if (hl < 54 || ml < 6 || hhl < 36) return false;
     u32 upem = be16(d + head + 18), ng = be16(d + maxp + 4), nh = be16(d + hhea + 34);
     i16 lf = bes16(d + head + 50);
-    if (upem < 16 || upem > 16384 || (lf != 0 && lf != 1) || !ng || !nh) return false;
+    if (upem < 16 || upem > 16384 || (!cff && lf != 0 && lf != 1) || !ng || !nh) return false;
     if (nh * 4 > hml) return false;
-    if ((ng + 1) * (lf ? 4u : 2u) > ll) return false;
     if (!cmap_sane(d + cmap, cl)) return false;
+    if (cff) {                                           /* estrutura inteira do CFF; os charstrings, o interpretador confere */
+        u32 xl = 0, xo = find_table_len(&t, "CFF ", &xl);
+        return cff_check(d + xo, xl, ng);
+    }
+    if ((ng + 1) * (lf ? 4u : 2u) > ll) return false;
     u32 prev = 0;
     for (u32 g = 0; g <= ng; g++) {                      /* loca crescente e dentro da glyf; cada glifo são */
         u32 o = lf ? be32(d + loca + g * 4) : be16(d + loca + g * 2) * 2u;
@@ -407,7 +426,8 @@ int font_register(u8 *d, u32 n, bool *kept) {
     user_bytes += n;
     nuser = i + 1;                                       /* publica só depois de pronta */
     *kept = true;
-    kprintf("Fontes: fonte de app registrada (id %d, %u glifos, %u bytes)\n", FONT_USER_BASE + (int)i, userfonts[i].nglyphs, n);
+    kprintf("Fontes: fonte de app registrada (id %d, %u glifos, %u bytes%s)\n", FONT_USER_BASE + (int)i, userfonts[i].nglyphs, n,
+            userfonts[i].cff ? ", CFF" : "");
     return FONT_USER_BASE + (int)i;
 }
 bool font_has_fallback(void) { return fallback.data != NULL; }
@@ -460,6 +480,8 @@ static void add_quad(lines_t *l, float x0, float y0, float cx, float cy, float x
         px = x; py = y;
     }
 }
+
+#include "font_cff.inc"   /* OpenType CFF: INDEX/DICT e charstrings Type 2 (usa lines_t, add_line e be16) */
 
 static u32 glyph_offset(struct font *f, u16 g, u32 *len) {
     if (g >= f->nglyphs) { *len = 0; return 0; }
@@ -587,18 +609,35 @@ static void raster_into(struct font *f, float size, u16 gi, glyph_t *g) {
         for (int i = 0; i < 256; i++) gamma_lut[i] = (u8)(fpow(i / 255.0f, 0.78f) * 255 + 0.5f);
         gamma_ready = true;
     }
-    u32 len;
-    u32 off = glyph_offset(f, gi, &len);
-    if (!len) return;
     float scale = size / f->upem;
-    const u8 *p = f->data + off;
-    float xmin = bes16(p + 2) * scale, ymin = bes16(p + 4) * scale, xmax = bes16(p + 6) * scale, ymax = bes16(p + 8) * scale;
-    int x0 = (int)ffloor(xmin) - 1, y0 = (int)ffloor(-ymax) - 1;
-    int w = (int)fceil(xmax) - x0 + 2, hh = (int)fceil(-ymin) - y0 + 2;
-    if (w <= 0 || hh <= 0 || w >= 1024 || hh >= 1024) return;
     lines_t l = {0};
-    xform_t id = {1, 0, 0, 1, 0, 0};
-    glyph_outline(f, gi, id, scale, (float)-x0, (float)-y0, &l, 0);
+    int x0, y0, w, hh;
+    if (f->cff) {
+        /* o CFF não guarda a caixa do glifo: contorno com a origem em (0, 0) e a caixa a partir dos pontos */
+        if (!cff_outline(f->cff, gi, scale, 0, 0, &l) || !l.n) { kfree(l.pts); return; }
+        float mnx = l.pts[0], mxx = l.pts[0], mny = l.pts[1], mxy = l.pts[1];
+        for (int i = 0; i < l.n; i += 2) {
+            if (l.pts[i] < mnx) mnx = l.pts[i];
+            if (l.pts[i] > mxx) mxx = l.pts[i];
+            if (l.pts[i + 1] < mny) mny = l.pts[i + 1];
+            if (l.pts[i + 1] > mxy) mxy = l.pts[i + 1];
+        }
+        x0 = (int)ffloor(mnx) - 1; y0 = (int)ffloor(mny) - 1;
+        w = (int)fceil(mxx) - x0 + 2; hh = (int)fceil(mxy) - y0 + 2;
+        if (w <= 0 || hh <= 0 || w >= 1024 || hh >= 1024) { kfree(l.pts); return; }
+        for (int i = 0; i < l.n; i += 2) { l.pts[i] -= (float)x0; l.pts[i + 1] -= (float)y0; }
+    } else {
+        u32 len;
+        u32 off = glyph_offset(f, gi, &len);
+        if (!len) return;
+        const u8 *p = f->data + off;
+        float xmin = bes16(p + 2) * scale, ymin = bes16(p + 4) * scale, xmax = bes16(p + 6) * scale, ymax = bes16(p + 8) * scale;
+        x0 = (int)ffloor(xmin) - 1; y0 = (int)ffloor(-ymax) - 1;
+        w = (int)fceil(xmax) - x0 + 2; hh = (int)fceil(-ymin) - y0 + 2;
+        if (w <= 0 || hh <= 0 || w >= 1024 || hh >= 1024) return;
+        xform_t id = {1, 0, 0, 1, 0, 0};
+        glyph_outline(f, gi, id, scale, (float)-x0, (float)-y0, &l, 0);
+    }
     float *acc = kcalloc((usize)w * hh + 4, sizeof(float));
     if (!acc) { kfree(l.pts); return; }
     for (int i = 0; i < l.n; i += 4) raster_line(acc, w, hh, l.pts[i], l.pts[i + 1], l.pts[i + 2], l.pts[i + 3]);

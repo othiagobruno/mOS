@@ -21,6 +21,9 @@ static inline void wr32(u8 *p, u32 v) { p[0] = (u8)(v >> 24); p[1] = (u8)(v >> 1
 #define ETH_FRAME_MAX 1518
 #define ETH_P_IP      0x0800
 #define ETH_P_ARP     0x0806
+#define ETH_P_IPV6    0x86DD
+#define IP6_HLEN      40
+#define IPPROTO_ICMPV6 58
 #define IP_HLEN       20
 #define IPPROTO_ICMP  1
 #define IPPROTO_TCP   6
@@ -40,6 +43,26 @@ u32  inet_csum_add(u32 sum, const void *data, usize len);
 u16  inet_csum_fold(u32 sum);
 u32  inet_pseudo_sum(u32 src, u32 dst, u8 proto, u16 len);
 bool ipv4_send(u32 dst, u8 proto, const void *payload, u16 len);
+bool ipv4_send_from(u32 src, u32 dst, u8 proto, const void *payload, u16 len);   /* src 0 = o da interface */
+void ipv4_input(const u8 *p, u16 len);
+bool net_eth_send(const u8 *dst_mac, u16 type, const void *payload, u16 len);
+void udp_deliver(u32 src, u16 sport, u16 dport, const u8 *data, u16 len);
+
+/* IPv6 e laço local (ipv6.c) */
+extern net6_info_t g6;
+u32  l4_pseudo_sum(const u8 *src16, const u8 *dst16, u8 proto, u16 len);
+bool ip6_source_for(const u8 *dst16, u8 *src16);
+bool ipv6_send(const u8 *src16, const u8 *dst16, u8 nh, const void *payload, u16 len);   /* src NULL = escolhe */
+bool ip_send_any(const u8 *src16, const u8 *dst16, u8 proto, const void *payload, u16 len);
+bool udp6_send(const u8 *dst16, u16 sport, u16 dport, const void *data, u16 len);
+void ipv6_input(const u8 *p, u16 len);        /* do laço local */
+void ipv6_eth_input(const u8 *p, u16 len);    /* da placa */
+void ipv6_start(void);
+void ipv6_tick(u64 now);
+bool net_loop_enqueue(bool v6, const void *pkt, u16 len);
+void net_loop_drain(void);
+void icmp_echo_deliver(const u8 *from16, const u8 *msg, u16 len);
+void tcp_input6(const u8 *src16, const u8 *dst16, const u8 *seg, u16 len);
 u16  net_ephemeral_port(void);
 
 /* sub-módulos */

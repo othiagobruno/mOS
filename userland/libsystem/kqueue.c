@@ -75,6 +75,8 @@ int cx_fd_readable(int fd, long *avail, int *eof) {
     if (fd < 0 || fd >= 0x4000 || SYS2(SYS_FSTAT, fd, &st) < 0) return 0;
     if (st.is_dir == 2) { *avail = (long)st.size; *eof = st.mtime != 0; return st.size > 0 || st.mtime; }
     if (st.is_dir == 3) return 0;
+    /* terminal (kernel/proc/pty.c): size = o que um read devolve agora; mtime = 1 se o read daria fim de arquivo */
+    if (st.is_dir == 5) { *avail = (long)st.size; *eof = st.mtime != 0; return st.size > 0 || st.mtime; }
     *avail = (long)st.size;
     return 1;
 }

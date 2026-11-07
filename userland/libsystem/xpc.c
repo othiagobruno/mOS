@@ -69,6 +69,8 @@ typedef struct {
     u32 next_id;
     u32 sync_id;
     int resumed, invalid_sent, canceled, live;
+    int is_peer;                         /* lado do servidor (criada pelo ouvinte para um cliente) */
+    volatile int interrupted;            /* o serviço morreu: o próximo envio reconecta (launchd o reinicia) */
     int peer_pid;
     volatile int sync_done;
     volatile int sync_wait;               /* send_message_with_reply_sync esperando a resposta */
@@ -575,6 +577,9 @@ static int trailer_pid(const u8 *msg) {
     u32 body = (r32p(msg, 4) + 3u) & ~3u;
     return (int)r32p(msg, body + 40);          /* audit_token.val[5], com MACH_RCV_TRAILER_ELEMENTS(3) */
 }
+#define XPC_ERROR_CONNECTION_INTERRUPTED (&_xpc_error_connection_interrupted)
+static void xp_fail_pending(xo_t *c, xo_t *err);
+static void xp_watch_dead(unsigned send, unsigned recv);
 static int port_alloc(unsigned *out) {
     *out = 0;
     return mach_port_allocate(0x103u, 1, out) == 0 && *out ? 0 : -1;
@@ -913,6 +918,19 @@ static void *xp_recv_main(void *arg) {
             if ((unsigned)kr == 0x10004004u) continue;   /* RCV_TOO_LARGE: o kernel já descartou */
             break;
         }
+        if (r32p(buf, 20) == 72 /* MACH_NOTIFY_DEAD_NAME */) {
+            /* o outro lado morreu. Cliente de um serviço com nome: INTERRUPTED, e o próximo envio reconecta (o launchd
+             * guarda a porta do serviço e o inicia de novo). Lado do servidor: o cliente foi embora, INVALID. */
+            if (k->is_peer || !k->name) break;
+            k->live = 0;
+            k->interrupted = 1;
+            k->sync_reply = XPC_ERROR_CONNECTION_INTERRUPTED;
+            k->sync_done = 1;
+            if (k->send) { mach_port_deallocate(0x103u, k->send); k->send = 0; }
+            xp_fail_pending(c, XPC_ERROR_CONNECTION_INTERRUPTED);
+            if (k->handler) deliver(c, k->handler, XPC_ERROR_CONNECTION_INTERRUPTED, 1, 0, 0);
+            break;
+        }
         if (r32p(buf, 20) != XP_DATA || r32p(buf, 24) != XP_MAGIC) continue;
         u32 n = r32p(buf, 32);
         if (36u + n > 48u * 1024u) continue;
@@ -924,9 +942,11 @@ static void *xp_recv_main(void *arg) {
         xp_give(c, obj, r32p(buf, 28));
     }
     free(buf);
-    k->live = 0;
-    k->sync_done = 1;
-    if (!k->canceled) conn_invalidate(c);
+    if (!k->interrupted) {
+        k->live = 0;
+        k->sync_done = 1;
+        if (!k->canceled) { xp_fail_pending(c, XPC_ERROR_CONNECTION_INVALID); conn_invalidate(c); }
+    }
     objc_release((id)c);
     return 0;
 }
@@ -954,12 +974,14 @@ static void *xp_listener_main(void *arg) {
         peer->u.conn->recv = mine;
         peer->u.conn->live = 1;
         peer->u.conn->resumed = 1;
+        peer->u.conn->is_peer = 1;
         peer->u.conn->peer_pid = trailer_pid(buf);
         if (xp_welcome(client, mine) != 0) {
             mach_port_deallocate(0x103u, mine);
             objc_release((id)peer);
             continue;
         }
+        xp_watch_dead(client, mine);           /* o cliente morre: aviso de nome morto na porta do par -> INVALID */
         /* a thread já recebe durante o callback: um send_message_with_reply_sync feito ali tem quem leia a resposta.
          * mensagem que chegue antes do set_event_handler fica em early[] e é entregue quando o bloco é instalado. */
         objc_retain((id)peer);
@@ -995,11 +1017,89 @@ static int xp_handshake(unsigned svc, unsigned recv, unsigned *peer) {
     w32p(msg, 28, recv);
     msg[38] = XP_MAKE_SEND;
     msg[39] = 0;
-    /* SEND|RCV|RCV_TIMEOUT, 5 s: sem ouvinte do outro lado o resume não fica preso */
-    int kr = mach_msg(msg, 1 | 2 | 0x100, 40, sizeof msg, recv, 5000, 0);
+    /* SEND|RCV|RCV_TIMEOUT, 30 s: sem ouvinte do outro lado o resume não fica preso. O prazo cobre o launchd iniciar
+     * o daemon sob demanda (um Mach-O leva alguns segundos para carregar no QEMU) */
+    int kr = mach_msg(msg, 1 | 2 | 0x100, 40, sizeof msg, recv, 30000, 0);
     if (kr != 0 || r32p(msg, 20) != XP_WELCOME) return -1;
     *peer = r32p(msg, 28);
     return *peer ? 0 : -1;
+}
+
+/* serviço XPC dentro do bundle do app (Contents/XPCServices/<x>.xpc, CFBundleIdentifier = nome): o launchd o registra
+ * sob demanda com o executável do .xpc; o look_up seguinte acha o nome. 0 = registrado */
+int cx_launchd_submit(const char *label, const char *program);
+id cx_plist_file(const char *path);
+static int xp_bundle_service(const char *name) {
+    id b = MSG0(id, (id)cx_class_named("NSBundle"), "mainBundle");
+    id bp = b ? MSG0(id, b, "bundlePath") : 0;
+    const char *root = bp ? cx_cstr(bp) : 0;
+    if (!root || !name) return -1;
+    char dir[768], path[1024], exe[1024];
+    snprintf(dir, sizeof dir, "%s/Contents/XPCServices", root);
+    void *d = opendir(dir);
+    if (!d) return -1;
+    int found = -1;
+    for (void *e; found && (e = readdir(d));) {
+        const char *ent = (const char *)e + 21;             /* struct dirent do macOS ($INODE64): d_name no byte 21 */
+        size_t n = strlen(ent);
+        if (n < 5 || strcmp(ent + n - 4, ".xpc")) continue;
+        snprintf(path, sizeof path, "%s/%s/Contents/Info.plist", dir, ent);
+        id info = cx_plist_file(path);
+        id ident = info ? MSG(id, info, "objectForKey:", cx_str("CFBundleIdentifier")) : 0;
+        id execn = info ? MSG(id, info, "objectForKey:", cx_str("CFBundleExecutable")) : 0;
+        const char *is = ident ? cx_cstr(ident) : 0;
+        int same_dir = n - 4 == strlen(name) && !strncmp(ent, name, n - 4);
+        if (!(is && !strcmp(is, name)) && !same_dir) continue;
+        if (execn) snprintf(exe, sizeof exe, "%s/%s/Contents/MacOS/%s", dir, ent, cx_cstr(execn));
+        else snprintf(exe, sizeof exe, "%s/%s/Contents/MacOS/%.*s", dir, ent, (int)(n - 4), ent);
+        if (access(exe, 0) != 0) continue;
+        found = cx_launchd_submit(name, exe) == 0 ? 0 : -1;
+    }
+    closedir(d);
+    return found;
+}
+/* aviso de nome morto no envio `send`, entregue na nossa porta `recv` (msgh_id 72) */
+int mach_port_request_notification(unsigned task, unsigned name, int variant, unsigned sync, unsigned notify, int poly, unsigned *prev);
+static void xp_watch_dead(unsigned send, unsigned recv) {
+    unsigned prev = 0;
+    mach_port_request_notification(0x103u, send, 72, 0, recv, 21 /* MAKE_SEND_ONCE */, &prev);
+}
+static void xp_fail_pending(xo_t *c, xo_t *err) {
+    xconn_t *k = c->u.conn;
+    for (int i = 0; i < 4; i++) {
+        xp_lock(k);
+        u32 id = k->pend[i].id;
+        xp_unlock(k);
+        if (!id) continue;
+        void *q = 0;
+        void *b = xp_pend_take(k, id, &q);
+        if (b) deliver(c, b, err, 0, 0, q);
+    }
+}
+/* cliente: acha o serviço (bootstrap; senão um XPC service do bundle), faz o aperto de mão e inicia a recepção */
+static int xp_connect(xo_t *c) {
+    xconn_t *k = c->u.conn;
+    unsigned svc = 0;
+    if (bootstrap_look_up(bootstrap_port, k->name, &svc) != 0 || !svc) {
+        svc = 0;
+        if (xp_bundle_service(k->name) != 0 || bootstrap_look_up(bootstrap_port, k->name, &svc) != 0 || !svc) return -1;
+    }
+    if (!k->recv && port_alloc(&k->recv) != 0) { mach_port_deallocate(0x103u, svc); return -1; }
+    unsigned peer = 0;
+    int r = xp_handshake(svc, k->recv, &peer);
+    mach_port_deallocate(0x103u, svc);
+    if (r != 0) return -1;
+    k->send = peer;
+    xp_watch_dead(peer, k->recv);
+    k->interrupted = 0;
+    k->live = 1;
+    xp_start(c, xp_recv_main);
+    return 0;
+}
+/* depois de INTERRUPTED, o próximo envio reconecta (como a libxpc, que reabre a conexão com o serviço) */
+static void xp_revive(xo_t *c) {
+    xconn_t *k = c->u.conn;
+    if (k->interrupted && !k->canceled && !k->live && xp_connect(c) != 0) { k->interrupted = 0; conn_invalidate(c); }
 }
 void xpc_connection_resume(xpc_connection_t c) {
     if (!IS_CONN(c) || c->u.conn->resumed) return;
@@ -1014,15 +1114,7 @@ void xpc_connection_resume(xpc_connection_t c) {
         xp_start(c, xp_listener_main);
         return;
     }
-    unsigned svc = 0;
-    if (bootstrap_look_up(bootstrap_port, k->name, &svc) != 0 || !svc) { conn_invalidate(c); return; }
-    unsigned recv = 0, peer = 0;
-    if (port_alloc(&recv) != 0) { conn_invalidate(c); return; }
-    k->recv = recv;
-    if (xp_handshake(svc, recv, &peer) != 0) { conn_invalidate(c); return; }
-    k->send = peer;
-    k->live = 1;
-    xp_start(c, xp_recv_main);
+    if (xp_connect(c) != 0) conn_invalidate(c);
 }
 void xpc_connection_activate(xpc_connection_t c) { xpc_connection_resume(c); }
 void xpc_connection_suspend(xpc_connection_t c) { (void)c; }
@@ -1036,6 +1128,7 @@ void xpc_connection_cancel(xpc_connection_t c) {
     conn_invalidate(c);
 }
 void xpc_connection_send_message(xpc_connection_t c, xpc_object_t msg) {
+    if (IS_CONN(c)) xp_revive(c);
     if (!IS_CONN(c) || !c->u.conn->live) return;
     xconn_t *k = c->u.conn;
     u32 rid = k->inbound_reply;
@@ -1049,6 +1142,7 @@ void xpc_connection_send_barrier(xpc_connection_t c, void *block) {
 void xpc_connection_send_message_with_reply(xpc_connection_t c, xpc_object_t msg, void *queue, void *handler) {
     if (!IS_CONN(c) || !handler) return;
     xconn_t *k = c->u.conn;
+    xp_revive(c);
     if (!k->live) { deliver(c, handler, XPC_ERROR_CONNECTION_INVALID, 1, 0, queue); return; }
     u32 id = ++k->next_id;
     if (!id) id = ++k->next_id;
@@ -1062,6 +1156,7 @@ void xpc_connection_send_message_with_reply(xpc_connection_t c, xpc_object_t msg
 }
 xpc_object_t xpc_connection_send_message_with_reply_sync(xpc_connection_t c, xpc_object_t msg) {
     fix_statics();
+    if (IS_CONN(c)) xp_revive(c);
     if (!IS_CONN(c) || !c->u.conn->live) return XPC_ERROR_CONNECTION_INVALID;
     xconn_t *k = c->u.conn;
     u32 id = ++k->next_id;
@@ -1082,7 +1177,13 @@ xpc_object_t xpc_connection_send_message_with_reply_sync(xpc_connection_t c, xpc
 
 /* ---------------------------------------------------------------- serviço, eventos, transações, pipes */
 void xpc_main(void (*handler)(xpc_connection_t)) {
+    /* o launchd põe XPC_SERVICE_NAME (o Label do job, ou o CFBundleIdentifier de um .xpc); sem ele, o identificador do bundle */
     const char *name = getenv("XPC_SERVICE_NAME");
+    if (!name || !name[0]) {
+        id b = MSG0(id, (id)cx_class_named("NSBundle"), "mainBundle");
+        id ident = b ? MSG0(id, b, "bundleIdentifier") : 0;
+        name = ident ? cx_cstr(ident) : 0;
+    }
     if (!name || !name[0] || !handler) exit(0);
     xo_t *c = xpc_connection_create_mach_service(name, 0, XPC_LISTENER);
     if (!IS_CONN(c)) exit(1);
