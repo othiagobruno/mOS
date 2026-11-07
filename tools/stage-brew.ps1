@@ -16,6 +16,16 @@ function New-MosLink([string]$at, [string]$target) { [IO.File]::WriteAllText($at
 
 $hb = "$mos\usr\local\Homebrew"
 robocopy (Join-Path $root $Brew) $hb /E /NFL /NDL /NJH /NJS /NP | Out-Null
+# symlinks do repositório (modo 120000; ex.: vendor/gems/mechanize -> mechanize-2.14.2/): no Windows o git os grava
+# como texto com o alvo; viram links do mOS (o kernel segue no meio do caminho, o libSystem no fim)
+$links = git -C (Join-Path $root $Brew) ls-files -s | Where-Object { $_ -match '^120000 ' } | ForEach-Object { ($_ -split "`t", 2)[1] }
+foreach ($l in $links) {
+    $f = Join-Path $hb ($l -replace '/', '\')
+    if (-not (Test-Path -LiteralPath $f -PathType Leaf)) { continue }
+    $t = ([IO.File]::ReadAllText($f)).Trim().TrimEnd('/')
+    New-MosLink $f $t
+}
+Write-Host "links do repositório: $($links.Count)"
 $ver = (Get-Content "$hb\Library\Homebrew\vendor\portable-ruby-version" -TotalCount 1).Trim()
 $rsrc = Join-Path $root "$Ruby\$ver"
 if (-not (Test-Path $rsrc)) { Write-Host "falta o portable-ruby $ver em $Ruby" -ForegroundColor Red; exit 1 }
@@ -29,6 +39,11 @@ New-Item -ItemType Directory -Force "$mos\System\Library\CoreServices", "$mos\us
 Copy-Item -Force "$PSScriptRoot\brew-shims\SystemVersion.plist" "$mos\System\Library\CoreServices\"
 Copy-Item -Force "$PSScriptRoot\brew-shims\sw_vers" "$mos\usr\bin\sw_vers"
 Copy-Item -Force "$PSScriptRoot\brew-shims\sysctl" "$mos\usr\sbin\sysctl"
+Copy-Item -Force "$PSScriptRoot\brew-shims\pkgutil" "$mos\usr\sbin\pkgutil"
+Copy-Item -Force "$PSScriptRoot\brew-shims\xcode-select" "$mos\usr\bin\xcode-select"
+# Command Line Tools de mentira: o brew (macOS 14, Tier 3) as exige mesmo para bottles; o clang só informa a versão
+New-Item -ItemType Directory -Force "$mos\Library\Developer\CommandLineTools\usr\bin" | Out-Null
+Copy-Item -Force "$PSScriptRoot\brew-shims\clang" "$mos\Library\Developer\CommandLineTools\usr\bin\clang"
 # ferramentas que o macOS tem em /usr/bin e /bin: links para as do Homebrew (GNU) em /usr/local/bin
 $usrbin = 'curl', 'git', 'env', 'tar', 'gzip', 'xz', 'sed', 'grep', 'egrep', 'uname', 'id', 'which', 'readlink', 'basename',
           'dirname', 'head', 'tail', 'sort', 'tr', 'wc', 'cut', 'uniq', 'touch', 'tee', 'stat', 'printf', 'true', 'false',

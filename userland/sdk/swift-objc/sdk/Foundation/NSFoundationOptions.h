@@ -72,5 +72,28 @@ typedef MOS_OPTIONS(NSUInteger, NSURLBookmarkResolutionOptions) {
     NSURLBookmarkResolutionWithoutImplicitStartAccessing MOS_SN(withoutImplicitStartAccessing) = 1UL << 15,
 };
 
+
+/* ---- ComparisonResult: na Apple é o enum ObjC (o nome mangled leva So18NSComparisonResultV) */
+typedef enum __attribute__((enum_extensibility(closed))) __attribute__((swift_name("ComparisonResult"))) NSComparisonResult : NSInteger NSComparisonResult;
+enum __attribute__((enum_extensibility(closed))) NSComparisonResult : NSInteger {
+    NSOrderedAscending MOS_SN(orderedAscending) = -1L,
+    NSOrderedSame MOS_SN(orderedSame) = 0,
+    NSOrderedDescending MOS_SN(orderedDescending) = 1,
+};
+
+/* ---- NSString.EnumerationOptions (String.EnumerationOptions na Apple) */
+typedef MOS_OPTIONS(NSUInteger, NSStringEnumerationOptions) {
+    NSStringEnumerationByLines MOS_SN(byLines) = 0,
+    NSStringEnumerationByParagraphs MOS_SN(byParagraphs) = 1,
+    NSStringEnumerationByComposedCharacterSequences MOS_SN(byComposedCharacterSequences) = 2,
+    NSStringEnumerationByWords MOS_SN(byWords) = 3,
+    NSStringEnumerationBySentences MOS_SN(bySentences) = 4,
+    NSStringEnumerationByCaretPositions MOS_SN(byCaretPositions) = 5,
+    NSStringEnumerationByDeletionClusters MOS_SN(byDeletionClusters) = 6,
+    NSStringEnumerationReverse MOS_SN(reverse) = 1UL << 8,
+    NSStringEnumerationSubstringNotRequired MOS_SN(substringNotRequired) = 1UL << 9,
+    NSStringEnumerationLocalized MOS_SN(localized) = 1UL << 10,
+};
+
 #undef MOS_SN
 #undef MOS_OPTIONS

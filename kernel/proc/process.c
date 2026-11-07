@@ -1530,6 +1530,21 @@ u64 proc_syscall(int_frame_t *f) {
         if (!copy_path(p, path, a)) { r = -MOS_EFAULT; break; }
         int fd = -1;
         for (int i = 3; i < PROC_MAX_FDS; i++) if (!p->fds[i].used) { fd = i; break; }
+        {   /* /dev/fd/N e /dev/std{in,out,err}: um dup do descritor (o bash usa /dev/fd/63 em "< <(comando)") */
+            int src = -1;
+            if (!strncmp(path, "/dev/fd/", 8) && path[8] >= '0' && path[8] <= '9') { src = 0; for (const char *q = path + 8; *q >= '0' && *q <= '9'; q++) src = src * 10 + (*q - '0'); }
+            else if (!strcmp(path, "/dev/stdin")) src = 0;
+            else if (!strcmp(path, "/dev/stdout")) src = 1;
+            else if (!strcmp(path, "/dev/stderr")) src = 2;
+            if (src >= 0) {
+                if (src >= PROC_MAX_FDS || !p->fds[src].used) { r = -MOS_ENOENT; break; }   /* 0-2 do console: sem entrada */
+                if (fd < 0) { r = -MOS_EMFILE; break; }
+                fd_copy(p, fd, p, src);
+                p->fds[fd].flags &= ~MOS_O_CLOEXEC;
+                r = fd;
+                break;
+            }
+        }
         /* diagnóstico (com despejar-threads): open que falha nos helpers do VS Code vai para o log serial */
         static int open_diag = -1;
         if (open_diag < 0) open_diag = vfs_lookup("/Sistema/Biblioteca/despejar-threads") != NULL;

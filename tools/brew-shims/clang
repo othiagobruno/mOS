@@ -1,0 +1,8 @@
+#!/bin/bash
+# mOS: "Command Line Tools" de mentira. O Homebrew no macOS 14 Intel exige que existam, mesmo instalando só bottles.
+# Não há compilador no mOS: só a versão responde; compilar falha com uma mensagem clara.
+case "$1" in
+  --version|-v) echo "Apple clang version 16.0.0 (clang-1600.0.26.6)"; echo "Target: x86_64-apple-darwin23.6.0"; echo "Thread model: posix"; echo "InstalledDir: /Library/Developer/CommandLineTools/usr/bin"; exit 0 ;;
+esac
+echo "clang: o mOS ainda não tem compilador (só bottles do Homebrew)" >&2
+exit 1

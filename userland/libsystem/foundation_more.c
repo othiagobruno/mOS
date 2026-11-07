@@ -330,15 +330,30 @@ static id err_with(id cls, SEL c, id dom, i64 code, id info) {
 static id err_domain(id s, SEL c) { (void)c; erec_t *e = erec_of(s); return e ? e->domain : ns("NSCocoaErrorDomain"); }
 static i64 err_code(id s, SEL c) { (void)c; erec_t *e = erec_of(s); return e ? e->code : 0; }
 static id err_info(id s, SEL c) { (void)c; erec_t *e = erec_of(s); return e ? e->info : 0; }
+/* -initWithDomain:code:userInfo: (o NSError(domain:code:userInfo:) do Swift; também em subclasses) */
+static id err_init(id self, SEL c, id dom, i64 code, id info) {
+    (void)c;
+    if (!self) return 0;
+    erec_t *e = erec_of(self);
+    if (e) { e->domain = retain(dom); e->info = retain(info); e->code = code; return self; }
+    if (nerec == cerec) { cerec = cerec ? cerec * 2 : 16; erecs = realloc(erecs, cerec * sizeof *erecs); }
+    erecs[nerec++] = (erec_t){self, retain(dom), retain(info), code};
+    return self;
+}
+/* as descrições perguntam ao próprio objeto (-userInfo/-domain/-code): o __SwiftNativeNSError do runtime Swift (erro
+ * Swift visto como NSError) sobrescreve esses três e não tem registro aqui */
 static id err_desc(id s, SEL c) {
     (void)c;
-    erec_t *e = erec_of(s);
-    id d = e && e->info ? dget(e->info, "NSLocalizedDescription") : 0;
+    id info = MSG0(id, s, "userInfo");
+    id d = info ? dget(info, "NSLocalizedDescription") : 0;
     if (d) return d;
-    char b[128];
-    cx_snprintf(b, sizeof b, "%s %lld", e && e->domain ? cs(e->domain) : "erro", e ? (long long)e->code : 0);
+    id dom = MSG0(id, s, "domain");
+    char b[160];
+    cx_snprintf(b, sizeof b, "A operação não pôde ser concluída. (%s erro %lld.)", dom ? cs(dom) : "erro", (long long)MSG0(i64, s, "code"));
     return ar(ns(b));
 }
+static id err_reason(id s, SEL c) { (void)c; id info = MSG0(id, s, "userInfo"); return info ? dget(info, "NSLocalizedFailureReason") : 0; }
+static id err_suggestion(id s, SEL c) { (void)c; id info = MSG0(id, s, "userInfo"); return info ? dget(info, "NSLocalizedRecoverySuggestion") : 0; }
 
 /* ---------------------------------------------------------------- JSON */
 static const char *js_skip(const char *p, const char *e) { while (p < e && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) p++; return p; }
@@ -2421,6 +2436,8 @@ void cx_foundation_more_init(void) {
     CM(NSError, "errorWithDomain:code:userInfo:", err_with);
     M(NSError, "domain", err_domain); M(NSError, "code", err_code); M(NSError, "userInfo", err_info);
     M(NSError, "localizedDescription", err_desc); M(NSError, "description", err_desc);
+    M(NSError, "initWithDomain:code:userInfo:", err_init);
+    M(NSError, "localizedFailureReason", err_reason); M(NSError, "localizedRecoverySuggestion", err_suggestion);
 
     DEF(&NSJSONSerialization_c, &NSJSONSerialization_m, "NSJSONSerialization", ob, 0);
     CM(NSJSONSerialization, "JSONObjectWithData:options:error:", json_obj);

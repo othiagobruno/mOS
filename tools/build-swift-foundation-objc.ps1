@@ -108,6 +108,26 @@ if (-not $Only -or $Only -contains 'Foundation') {
         for ($i = 0; $i -lt $lines.Count; $i++) { if ($lines[$i] -notmatch '^\s*#') { $lines[$i] = $lines[$i].Replace('FoundationEssentials.', 'Foundation.') } }
         # o pacote declara um URLResourceKey vazio (fora da Apple não há o NSURLResourceKey); aqui ele é o do ObjC
         for ($i = 0; $i -lt $lines.Count; $i++) { if ($lines[$i] -match '^\s*public struct URLResourceKey \{\}\s*$') { $lines[$i] = '// mOS: URLResourceKey = NSURLResourceKey (ObjC)'; $touched = $true } }
+        # erros como na Apple (marco C): CocoaError e POSIXError são _BridgedStoredNSError guardando um NSError, e valem os
+        # códigos e o CustomNSError do ramo FOUNDATION_FRAMEWORK. Só esses blocos (pela ordem do #if no arquivo); os outros
+        # (chaves do userInfo como String, acessores) continuam no ramo do pacote. Os protocolos de ponte, NSError: Error e
+        # as conversões ficam em userland\sdk\swift-objc\Foundation\NSError.swift.
+        $errBlocks = @{ 'CocoaError.swift' = @(1, 9); 'ErrorCodes.swift' = @(1, 2, 3); 'ErrorCodes+POSIX.swift' = @(1) }
+        if ($f.Directory.Name -eq 'Error' -and $errBlocks.ContainsKey($f.Name)) {
+            $nth = 0
+            for ($i = 0; $i -lt $lines.Count; $i++) {
+                if ($lines[$i] -match '^\s*#\s*if\s+FOUNDATION_FRAMEWORK\s*$') {
+                    $nth++
+                    if ($errBlocks[$f.Name] -contains $nth) { $lines[$i] = '#if FOUNDATION_FRAMEWORK || MOS_NSERROR' }
+                }
+                # dentro do módulo Foundation o importador não faz a ponte NSString -> String
+                $lines[$i] = $lines[$i].Replace('return NSCocoaErrorDomain', 'return _mosString(NSCocoaErrorDomain)').Replace('return NSPOSIXErrorDomain', 'return _mosString(NSPOSIXErrorDomain)').Replace('return (self as NSError).localizedDescription', 'return _mosString((self as NSError).localizedDescription)')
+            }
+        }
+        # ComparisonResult: na Apple é o NSComparisonResult do ObjC (módulo _MOSNSOptions); o enum Swift do pacote sai
+        if ($f.Name -eq 'ComparisonResult.swift') {
+            for ($i = 0; $i -lt $lines.Count; $i++) { if ($lines[$i] -match '^\s*#\s*if\s+!FOUNDATION_FRAMEWORK\s*$') { $lines[$i] = '#if !FOUNDATION_FRAMEWORK && !MOS_NS_OPTIONS'; break } }
+        }
         # em todos os arquivos: com MemberImportVisibility, quem usa .atomic/.caseInsensitive... precisa do import
         $lines.Insert(0, 'import _MOSNSOptions   // mOS: opções NS_OPTIONS da Apple (tools\build-swift-foundation-objc.ps1)')
         [IO.File]::WriteAllLines($dst, $lines, $utf8)
@@ -124,6 +144,6 @@ if (-not $Only -or $Only -contains 'Foundation') {
 $fnd = @(Get-ChildItem $prep -Recurse -Filter *.swift | ForEach-Object FullName) + @(Get-ChildItem "$root\userland\sdk\swift-objc\Foundation" -Filter *.swift | ForEach-Object FullName)
 foreach ($x in 'FoundationEssentials.swiftmodule', 'FoundationEssentials.o') { Remove-Item "$out\$x" -ErrorAction SilentlyContinue }   # da estrutura antiga
 if (-not $Only -or $Only -contains 'Foundation') {
-    Build-Mod 'Foundation' $fnd ($sfFlags + @('-import-underlying-module', '-autolink-force-load', '-D', 'DATA_LEGACY_ABI', '-D', 'MOS_NS_OPTIONS'))
+    Build-Mod 'Foundation' $fnd ($sfFlags + @('-import-underlying-module', '-autolink-force-load', '-D', 'DATA_LEGACY_ABI', '-D', 'MOS_NS_OPTIONS', '-D', 'MOS_NSERROR'))
 }
 exit $fails

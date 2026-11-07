@@ -1254,6 +1254,12 @@ AR1(n_int32, int) AR1(n_int, i64) AR1(n_uint, u64) AR1(n_double, double) AR1(n_f
 AR0(a_array) AR1(a_with_obj, id) AR2(a_with_objs_count, const id *, u64) AR1(a_with_array, id) AR1(a_cap, u64)
 AR0(d_dict) AR1(d_cap, u64) AR3(d_with_objs_keys, const id *, const id *, u64) AR2(d_with_obj_key, id, id) AR1(d_with_dict, id)
 AR0(dt_date) AR1(dt_since_now, double) AR1(dt_since_1970, double) AR3(nn_with, id, id, id)
+/* +distantFuture / +distantPast: 1º de janeiro de 4001 e do ano 1, como no macOS (63113904000 s e -63114076800 s da data
+ * de referência de 2001). Antes, distantFuture era "agora": o -[NSRunLoop runMode:beforeDate:distantFuture] do
+ * MessagePumpNSRunLoop do Chromium voltava na hora sem rodar o run loop, a thread do viz girava sem atender as fontes e
+ * nenhuma tarefa postada para ela rodava (os disparos do display link inclusive): o compositor nunca desenhava. */
+static id dt_distant_future(id cls, SEL c) { return dt_since_1970_ar(cls, c, 64092211200.0); }
+static id dt_distant_past(id cls, SEL c) { return dt_since_1970_ar(cls, c, -62135769600.0); }
 
 void cx_foundation_init(void) {
     cx_define_class(&NSObject_c, &NSObject_m, "NSObject", 0, 0);
@@ -1357,7 +1363,8 @@ void cx_foundation_init(void) {
 
     cx_define_class(&NSDate_c, &NSDate_m, "NSDate", &NSObject_c, 8);
     CM(NSDate, "date", dt_date_ar); CM(NSDate, "now", dt_date_ar); CM(NSDate, "dateWithTimeIntervalSinceNow:", dt_since_now_ar);
-    CM(NSDate, "dateWithTimeIntervalSince1970:", dt_since_1970_ar); CM(NSDate, "distantFuture", dt_date_ar);
+    CM(NSDate, "dateWithTimeIntervalSince1970:", dt_since_1970_ar); CM(NSDate, "distantFuture", dt_distant_future);
+    CM(NSDate, "distantPast", dt_distant_past);
     M(NSDate, "init", i_self); M(NSDate, "timeIntervalSince1970", dt_ti1970); M(NSDate, "timeIntervalSinceNow", dt_tinow);
     M(NSDate, "timeIntervalSinceReferenceDate", dt_tiref); M(NSDate, "timeIntervalSinceDate:", dt_since); M(NSDate, "description", dt_desc);
 

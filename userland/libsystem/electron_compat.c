@@ -292,6 +292,28 @@ static id url_values(id self, SEL c, id keys, id *err) {
 }
 static BOOL url_set_value(id self, SEL c, id value, id key, id *err) { (void)self; (void)c; (void)value; (void)key; if (err) *err = 0; return YES; }
 
+/* ================================================================ NSArray com blocos, NSMapTable */
+/* -indexOfObjectPassingTest: / -indexOfObjectWithOptions:passingTest: (NSEnumerationReverse = 2): sem o método, o
+ * "ainda não implementado" devolvia 0, que quer dizer "achou no índice 0" (o certo é NSNotFound) */
+#define NS_NOT_FOUND 0x7FFFFFFFFFFFFFFFULL
+static u64 a_index_test_opts(id self, SEL c, u64 opts, void *blk) {
+    (void)c;
+    if (!blk) return NS_NOT_FOUND;
+    BOOL (*inv)(void *, id, u64, BOOL *) = *(void **)((u8 *)blk + 16);
+    u64 n = MSG0(u64, self, "count");
+    BOOL stop = NO;
+    for (u64 k = 0; k < n && !stop; k++) {
+        u64 i = (opts & 2) ? n - 1 - k : k;
+        if (inv(blk, MSG(id, self, "objectAtIndex:", i), i, &stop)) return i;
+    }
+    return NS_NOT_FOUND;
+}
+static u64 a_index_test(id self, SEL c, void *blk) { return a_index_test_opts(self, c, 0, blk); }
+/* NSMapTable: as variantes com referência fraca usam a tabela forte do foundation_more.c (o pior caso é segurar um
+ * objeto a mais, nunca um ponteiro solto) */
+static id mt_strong(id cls_, SEL c) { (void)c; return MSG0(id, cls_, "strongToStrongObjectsMapTable"); }
+static id mt_with_opts(id cls_, SEL c, u64 ko, u64 vo) { (void)c; (void)ko; (void)vo; return MSG0(id, cls_, "strongToStrongObjectsMapTable"); }
+
 /* ================================================================ registro */
 static void add_if_missing(cx_class_t *k, const char *sel, void *imp) {
     if (k && !cx_responds(k, sel_registerName(sel))) cx_add_method(k, sel, imp);
@@ -331,6 +353,16 @@ void cx_electron_compat_init(void) {
     add_if_missing(aem, "currentAppleEvent", (void *)nil_m);
     add_if_missing(aem, "currentReplyAppleEvent", (void *)nil_m);
     add_if_missing(cls("NSFontManager"), "availableMembersOfFontFamily:", (void *)fm_members);
+    cx_class_t *arr = cls("NSArray");
+    add_if_missing(arr, "indexOfObjectPassingTest:", (void *)a_index_test);
+    add_if_missing(arr, "indexOfObjectWithOptions:passingTest:", (void *)a_index_test_opts);
+    cx_class_t *mt = cls("NSMapTable");
+    if (mt && cx_responds(mt->isa, sel_registerName("strongToStrongObjectsMapTable"))) {
+        add_cls_if_missing(mt, "strongToWeakObjectsMapTable", (void *)mt_strong);
+        add_cls_if_missing(mt, "weakToStrongObjectsMapTable", (void *)mt_strong);
+        add_cls_if_missing(mt, "weakToWeakObjectsMapTable", (void *)mt_strong);
+        add_cls_if_missing(mt, "mapTableWithKeyOptions:valueOptions:", (void *)mt_with_opts);
+    }
     cx_class_t *url = cls("NSURL");
     add_if_missing(url, "getResourceValue:forKey:error:", (void *)url_get_value);
     add_if_missing(url, "resourceValuesForKeys:error:", (void *)url_values);

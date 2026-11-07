@@ -165,10 +165,18 @@ int pthread_once(pthread_once_t *o, void (*fn)(void)) {
     return 0;
 }
 /* threads de verdade: SYS_THREAD_CREATE com pilha própria (mmap) */
-typedef struct { void *(*fn)(void *); void *arg; } cx_tstart_t;
+typedef struct { void *(*fn)(void *); void *arg; u64 stack_top, stack_size; } cx_tstart_t;
+/* pilha de cada thread criada aqui, pela mesma chave do pthread_self (tid & 0xFFF): pthread_get_stackaddr_np devolvia o
+ * topo da pilha da thread principal para todas, e o V8 de um Web Worker do renderer do VS Code via a própria pilha
+ * acima do "início" (CHECK numa verificação de pilha, int3). A própria thread registra antes de rodar o código dela. */
+static struct { u64 top, size; } thread_stacks[4096];
+static char main_thread[8192];                  /* pthread_self() = main_thread + (tid & 0xFFF) */
 static __attribute__((noreturn)) void cx_thread_entry(cx_tstart_t *ts) {
     void *(*fn)(void *) = ts->fn;
     void *arg = ts->arg;
+    long me = SYS0(SYS_GETTID);
+    thread_stacks[me & 0xFFF].top = ts->stack_top;
+    thread_stacks[me & 0xFFF].size = ts->stack_size;
     free(ts);
     cx_tsd();                                   /* tabela TSD própria desta thread (GS) */
     void *r = fn(arg);
@@ -194,6 +202,8 @@ int pthread_create(unsigned long *t, const void *attr, void *(*fn)(void *), void
     if (!ts) return 35;
     ts->fn = fn;
     ts->arg = arg;
+    ts->stack_top = (u64)stack + sz;
+    ts->stack_size = sz;
     u64 top = ((u64)stack + sz) & ~15ULL;
     top -= 8;                                   /* rsp = 16n - 8, como logo após um call */
     *(u64 *)top = 0;
@@ -208,7 +218,7 @@ int pthread_join(unsigned long t, void **ret) {
     if (ret) *ret = (void *)r;
     return 0;
 }
-int pthread_detach(unsigned long t) { (void)t; return 0; }static char main_thread[8192];
+int pthread_detach(unsigned long t) { (void)t; return 0; }
 void *pthread_self(void) { long tid = SYS0(SYS_GETTID); return tid > 1 ? (void *)(main_thread + (tid & 0xFFF)) : main_thread; }
 int pthread_equal(void *a, void *b) { return a == b; }
 /* thread principal = a que rodou cx_darwin_init (cx_main_tid, dispatch.c); antes disso, ou em apps que
@@ -360,8 +370,17 @@ int pthread_attr_setstacksize(void *a, size_t s) {
     ((long *)a)[0] = ATTR_SIG; ((size_t *)a)[1] = s;
     return 0;
 }
-size_t pthread_get_stacksize_np(void *t) { (void)t; return 256 << 10; }
-void *pthread_get_stackaddr_np(void *t) { (void)t; return (void *)0x400040000000ULL; }
+/* pilha da thread t (pthread_self() = main_thread + (tid & 0xFFF)): a de uma thread do pthread_create, ou a da thread
+ * principal do processo (USER_STACK_TOP, 2 MiB: kernel/include/proc.h) */
+static u64 stack_index(void *t) { return (u64)((char *)t - main_thread); }
+size_t pthread_get_stacksize_np(void *t) {
+    u64 i = stack_index(t);
+    return i < 4096 && thread_stacks[i].top ? (size_t)thread_stacks[i].size : (size_t)(2048 << 10);
+}
+void *pthread_get_stackaddr_np(void *t) {
+    u64 i = stack_index(t);
+    return i < 4096 && thread_stacks[i].top ? (void *)thread_stacks[i].top : (void *)0x400040000000ULL;
+}
 int pthread_setname_np(const char *n) { char *getenv(const char *); if (getenv("CX_TRACE_THREADS")) cx_fdprintf(2, "[thread] %ld chama-se \"%s\"\n", SYS0(SYS_GETTID), n ? n : ""); return 0; }   /* diagnóstico temporário */
 /* id da thread: o tid do kernel (o Chromium usa como PlatformThread::CurrentId; antes era sempre 1).
  * Para t != a atual ainda devolve o tid de quem chamou (pthread_t do mOS não guarda o tid). */

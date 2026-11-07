@@ -1,0 +1,8 @@
+#!/bin/bash
+# mOS: aponta para as Command Line Tools de mentira (tools/brew-shims/clang).
+case "$1" in
+  -p|--print-path) echo "/Library/Developer/CommandLineTools" ;;
+  -v|--version) echo "xcode-select version 2409." ;;
+  --install) echo "xcode-select: o mOS não tem as Command Line Tools de verdade" >&2; exit 1 ;;
+  *) echo "/Library/Developer/CommandLineTools" ;;
+esac

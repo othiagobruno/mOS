@@ -1,0 +1,10 @@
+#!/bin/bash
+# mOS: recibo do pacote das Command Line Tools (o Homebrew lê a versão daqui).
+for a in "$@"; do
+  case "$a" in
+    --pkg-info=com.apple.pkg.CLTools_Executables|--pkg-info=com.apple.pkg.CLTools_SDK_macOS14)
+      printf 'package-id: %s\nversion: 16.2.0.0.1.1733547573\nvolume: /\nlocation: /\ninstall-time: 1733600000\n' "${a#--pkg-info=}"; exit 0 ;;
+    --pkg-info=*) echo "No receipt for '${a#--pkg-info=}' found at '/'." >&2; exit 1 ;;
+  esac
+done
+exit 1

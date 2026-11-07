@@ -4,7 +4,8 @@
  * /Sistema/Biblioteca/diag-tracepoints, uma linha por grupo de pontos:
  *     <parte do nome do processo>|<nome da imagem>|<deslocamento hex>[,<deslocamento hex>...]
  * ex.: Renderer|Electron Framework|0x1ced5c8,0x1ced5f5,0x2017084@r14
- * "@registrador" depois do deslocamento também despeja 128 bytes a partir do endereço nesse registrador.
+ * "@registrador" depois do deslocamento também despeja 128 bytes a partir do endereço nesse registrador;
+ * "@pilha" imprime a pilha de chamadas (até 24 endereços de retorno, pela cadeia de rbp).
  *
  * Quando o carregador Mach-O monta um processo cujo nome contém o primeiro campo, cada imagem cujo nome de
  * arquivo é o segundo campo recebe um int3 (0xCC) em base + (deslocamento - vmin): o deslocamento é o endereço
@@ -30,6 +31,7 @@ static int parse_reg(const char **s) {
     n[k] = 0;
     *s = p;
     if (!strcmp(n, "rsp")) return 100;
+    if (!strcmp(n, "pil")) { if (!strncmp(p, "ha", 2)) *s = p + 2; return 101; }   /* "@pilha": a cadeia de rbp */
     for (int i = 0; i < (int)(sizeof regnames / sizeof *regnames); i++) if (!strcmp(n, regnames[i])) return i;
     return -1;
 }
@@ -109,7 +111,18 @@ bool tp_hit(process_t *p, int_frame_t *f) {
                 "rsi 0x%llx rdi 0x%llx r8 0x%llx r12 0x%llx r13 0x%llx r14 0x%llx r15 0x%llx rsp 0x%llx rbp 0x%llx\n",
                 p->name, p->pid, t ? t->id : -1, tps[i].img, (unsigned long long)tps[i].off,
                 f->rax, f->rbx, f->rcx, f->rdx, f->rsi, f->rdi, f->r8, f->r12, f->r13, f->r14, f->r15, f->rsp, f->rbp);
-        if (tps[i].dump >= 0) {
+        if (tps[i].dump == 101) {
+            /* "@pilha": percorre a cadeia de rbp ({rbp salvo, endereço de retorno}) e imprime os retornos —
+             * em código com frame pointer (o Chromium tem) é a pilha de chamadas inteira */
+            u64 fp = f->rbp;
+            for (int k = 0; k < 24 && fp; k++) {
+                u64 fr[2];
+                if ((fp & 7) || !uvm_copy_in(p, fr, fp, sizeof fr)) break;
+                kprintf("tracepoint:   pilha #%d retorno 0x%llx (quadro 0x%llx)\n", k, (unsigned long long)fr[1], (unsigned long long)fp);
+                if (fr[0] <= fp) break;                 /* a pilha cresce para baixo: o próximo quadro fica acima */
+                fp = fr[0];
+            }
+        } else if (tps[i].dump >= 0) {
             u64 src = tps[i].dump == 100 ? f->rsp : ((u64 *)f)[tps[i].dump];
             u64 w[16];
             if (uvm_copy_in(p, w, src, sizeof w))

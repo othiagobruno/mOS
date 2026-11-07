@@ -141,7 +141,19 @@ void CFRunLoopSourceSignal(void *s) { if (s) ((cf_obj_t *)s)->signaled = 1; }
 void CFRunLoopSourceInvalidate(void *s) { if (s) ((cf_obj_t *)s)->valid = 0; }
 unsigned char CFRunLoopSourceIsValid(void *s) { return s && ((cf_obj_t *)s)->valid; }
 void CFRunLoopSourceGetContext(void *s, src_ctx_t *ctx) { if (s && ctx) *ctx = ((cf_obj_t *)s)->sctx; }
-void CFRunLoopAddSource(void *rl, void *s, void *mode) { (void)mode; add_item(rl, s); }
+void CFRunLoopAddSource(void *rl, void *s, void *mode) {
+    (void)mode;
+    {   /* diagnóstico (ca-log): em que loop cada fonte entra e quem pede (o MessagePumpNSRunLoop do Chromium põe as fontes
+         * de trabalho no loop da thread dele; se cair no de outra, as tarefas postadas para ela nunca rodam) */
+        extern int cx_ca_diag(void);
+        extern int cx_fdprintf(int fd, const char *fmt, ...);
+        static int n;
+        if (rl && cx_ca_diag() && ++n <= 40)
+            cx_fdprintf(2, "[ca] CFRunLoopAddSource %p (perform %p) no loop da thread %d, pedido pela thread %d\n", s,
+                        s ? (void *)((cf_obj_t *)s)->sctx.perform : 0, ((cf_obj_t *)rl)->tid, (int)SYS0(SYS_GETTID));
+    }
+    add_item(rl, s);
+}
 void CFRunLoopRemoveSource(void *rl, void *s, void *mode) { (void)mode; remove_item(rl, s); }
 unsigned char CFRunLoopContainsSource(void *rl, void *s, void *mode) { (void)mode; return (unsigned char)contains(rl, s); }
 

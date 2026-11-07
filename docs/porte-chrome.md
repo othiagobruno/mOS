@@ -82,6 +82,22 @@ Desde que as filas ganharam `isa` (`OS_dispatch_queue_*`), o ARC do Chrome as li
 é o caminho `-release` → `dealloc` → `object_dispose` → `cx_object_free` nesses objetos sem cabeçalho de objeto do
 mOS (as pilhas das threads que giravam já mostravam `cx_object_free`/`object_dispose`). A queda continua em `0x9cc3297`.
 
+Rodada seguinte (WHPX): o release ObjC das filas foi descartado (objc_release só age com `OBJ_MAGIC` ou classe CRR).
+O mzone.c agora reconhece o dono de verdade (`malloc_zone_from_ptr`, `z_claimed`, `malloc_zone_claimed_address`), sem
+regressão no harness nem no VS Code (o renderer dele deixou de cair). A queda do Chrome não mudou, mas o tracepoint no
+detector (`+0x9cc34a0`) fechou o que o PartitionAlloc acha na lista livre: `OBJC_CLASS_$_OS_dispatch_queue_main+0x10`,
+um objeto "fila principal" do mOS (classes `OS_dispatch_*`, da sessão do runtime Swift/ObjC, swiftobjc.c) dentro de um
+bloco que o PA considera livre. Próximo passo, com essa sessão: de onde vêm instâncias com esse isa, se passam pela zona
+padrão (trocada pelo PA) e se algum release/dealloc delas chama `free` em objeto estático.
+
+**Correção do diagnóstico (7 nov.):** não é corrupção de lista livre. Em `+0x83968` o valor é comparado com
+`0x3FFE00000` (limite de alocação do PartitionAlloc) e vai para a rotina de falta de memória (`+0x839c4`/`+0x9cc34a0`):
+é o **tamanho** de uma alocação. Ele é sempre o primeiro word de um objeto fila principal do mOS mais 0x10 (o PA soma 16 e
+alinha a 8): `QMAGIC+0x13` com o layout antigo, `OS_dispatch_queue_main+0x10` com o `isa`. Alguma API entrega ao Chrome a
+fila principal (ou objeto de dispatch com o mesmo começo) onde ele espera outra estrutura e lê o 1º campo como tamanho;
+a chamada vem de uma thread que não é a principal. Para achar a cadeia, falta um tracepoint condicional (os atuais disparam
+na 1ª passagem, que é uma alocação comum): ex. só quando `rdi > 0x3FFE00000`, em kernel/proc/tracepoint.c.
+
 Ferramentas: `tools\stage-chrome.ps1 -AutoAbrir` (o `init` abre o Chrome no boot, sem depender do mouse no QEMU) e
 os tracepoints (`/Sistema/Biblioteca/diag-tracepoints`), que agora também valem para imagens do `dlopen` (macho.c).
 

@@ -67,7 +67,7 @@ typedef struct {
 /* ---- NSString */
 typedef NSUInteger NSStringEncoding;
 /* NSStringCompareOptions e as outras opções: NSFoundationOptions.h (módulo _MOSNSOptions) */
-typedef NS_ENUM(NSInteger, NSComparisonResult) { NSOrderedAscending = -1L, NSOrderedSame, NSOrderedDescending };
+/* NSComparisonResult (ComparisonResult no Swift): NSFoundationOptions.h */
 
 @interface NSString : NSObject <NSCopying, NSMutableCopying, NSSecureCoding>
 @property (readonly) NSUInteger length;
@@ -180,7 +180,7 @@ typedef NS_ENUM(NSInteger, NSComparisonResult) { NSOrderedAscending = -1L, NSOrd
 
 /* ---- erros */
 typedef NSString *NSErrorDomain;
-typedef NSString *NSErrorUserInfoKey NS_TYPED_EXTENSIBLE_ENUM;
+typedef NSString *NSErrorUserInfoKey;   /* como no SDK da Apple: sem tipo próprio no Swift (userInfo é [String: Any]) */
 
 @interface NSError : NSObject <NSCopying, NSSecureCoding>
 - (instancetype)initWithDomain:(NSErrorDomain)domain code:(NSInteger)code userInfo:(nullable NSDictionary<NSErrorUserInfoKey, id> *)dict;
@@ -201,6 +201,11 @@ FOUNDATION_EXPORT NSErrorUserInfoKey const NSUnderlyingErrorKey;
 FOUNDATION_EXPORT NSErrorDomain const NSCocoaErrorDomain;
 FOUNDATION_EXPORT NSErrorDomain const NSPOSIXErrorDomain;
 FOUNDATION_EXPORT NSErrorDomain const NSOSStatusErrorDomain;
+FOUNDATION_EXPORT NSErrorDomain const NSURLErrorDomain;
+/* CFError (o CoreFoundation do importador não tem o CFError.h): no mOS é um NSError; o Swift o vê como a classe CFError */
+typedef struct __attribute__((objc_bridge(NSError))) __CFError *CFErrorRef;
+FOUNDATION_EXPORT NSErrorUserInfoKey const NSURLErrorFailingURLErrorKey;
+FOUNDATION_EXPORT NSErrorUserInfoKey const NSURLErrorFailingURLStringErrorKey;
 
 /* ---- tipos-valor (pontes do marco B) */
 @interface NSData : NSObject <NSCopying, NSMutableCopying, NSSecureCoding>

@@ -186,8 +186,12 @@ char *fgetln(FILE *f, size_t *len) {          /* devolve a linha (sem garantir \
     return buf;
 }
 
-void *getgrgid(unsigned g) { (void)g; return 0; }           /* sem banco de grupos */
-void *getgrnam(const char *n) { (void)n; return 0; }
+/* grupos: só "staff" (20), como o usuário do mOS (getgrgid_r em foundationsys.c) */
+int getgrgid_r(unsigned gid, void *g, char *buf, size_t len, void **res);
+int getgrnam_r(const char *name, void *g, char *buf, size_t len, void **res);
+static struct { char *n, *p; unsigned gid; char **mem; } cx_grp; static char cx_grpbuf[64];
+void *getgrgid(unsigned g) { void *r = 0; getgrgid_r(g, &cx_grp, cx_grpbuf, sizeof cx_grpbuf, &r); return r; }
+void *getgrnam(const char *n) { void *r = 0; getgrnam_r(n, &cx_grp, cx_grpbuf, sizeof cx_grpbuf, &r); return r; }
 int mkdirat(int fd, const char *p, unsigned short mode) {
     if (fd == -2 || (p && p[0] == '/')) return mkdir(p, mode);   /* AT_FDCWD do macOS é -2 */
     SET_ERRNO(ENOSYS_);

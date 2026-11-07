@@ -131,7 +131,7 @@ extension NSURLSession {
     public func data(for request: URLRequest, delegate: (any NSURLSessionTaskDelegate)? = nil) async throws -> (Data, NSURLResponse) {
         try await withCheckedThrowingContinuation { (c: CheckedContinuation<(Data, NSURLResponse), Error>) in
             let task = self.dataTask(with: request._bridgeToObjectiveC()) { data, response, error in
-                if let error { c.resume(throwing: _MOSNSErrorBox(error)); return }
+                if let error { c.resume(throwing: error); return }
                 c.resume(returning: (data.map { Data._unconditionallyBridgeFromObjectiveC($0) } ?? Data(), response ?? NSURLResponse()))
             }
             task.resume()
@@ -139,9 +139,3 @@ extension NSURLSession {
     }
 }
 
-/// erro do NSURLSession como Error Swift até as pontes de NSError (marco C)
-internal struct _MOSNSErrorBox: Error, CustomStringConvertible {
-    let error: NSError
-    init(_ e: NSError) { error = e }
-    var description: String { _mosString(error.localizedDescription) }
-}

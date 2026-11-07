@@ -2264,13 +2264,28 @@ static void run_loop_until(double until) {
             int r = CFRunLoopRunInMode(0, left, 1);          /* uma passada: volta depois de uma fonte ou no prazo */
             if (r == 2) return;                              /* CFRunLoopStop */
             if (r == 1) {                                    /* sem fontes nem timers: espera sem girar */
+                {   /* diagnóstico (ca-log): uma thread rodando um loop vazio não recebe as tarefas postadas para ela */
+                    extern int cx_ca_diag(void);
+                    static int seen[64], nseen;
+                    int me = (int)SYS0(SYS_GETTID), k = 0;
+                    while (k < nseen && seen[k] != me) k++;
+                    if (k == nseen && nseen < 64 && cx_ca_diag()) { seen[nseen++] = me; cx_fdprintf(2, "[ca] NSRunLoop: thread %d roda um loop sem fontes nem timers\n", me); }
+                }
                 double l = until - cx_now();
                 if (l > 0) SYS1(SYS_SLEEP, l > 0.05 ? 50 : (int)(l * 1000) + 1);
             }
         } while (until >= 1e299);                            /* -[NSRunLoop run]: para sempre, como antes */
         return;
     }
-    while (cx_now() < until) { int ms = pump(); if (ms) SYS1(SYS_SLEEP, ms); }
+    /* thread principal: AppKit + CFRunLoop. -runMode:beforeDate: volta depois de atender uma entrada (evento de janela ou
+     * fonte do run loop) ou no prazo, como no macOS; -[NSRunLoop run] (prazo infinito) segue para sempre */
+    while (cx_now() < until) {
+        int ms = pump();
+        int r = CFRunLoopRunInMode(0, 0, 1);
+        if (until < 1e299 && (!ms || r == 4)) return;
+        if (r == 4) ms = 0;
+        if (ms) SYS1(SYS_SLEEP, ms);
+    }
 }
 static void ap_run(id self, SEL c) {
     ap_finish_launching(self, c);

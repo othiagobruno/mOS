@@ -79,7 +79,9 @@ static void stamp(cvts_t *t, i64 frame, u64 host) {
     t->videoTime = frame * PERIOD_US;
     t->hostTime = host;
     t->rateScalar = 1;
-    t->flags2 = 1 | 2 | 4;                   /* VideoTimeValid | HostTimeValid | ... */
+    /* VideoTimeValid | HostTimeValid | VideoRefreshPeriodValid | RateScalarValid (sem SMPTE: os campos dele são zero).
+     * Antes ia 1|2|4: o período e a escala não eram "válidos" para quem confere as flags (vsync do Chromium) */
+    t->flags2 = 1 | 2 | 8 | 16;
 }
 static void *link_thread(void *arg) {
     (void)arg;
