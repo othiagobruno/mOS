@@ -7,10 +7,51 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
+#include <pthread.h>
 
 static int fails;
 #define CHECK(c, ...) do { if (c) printf("  ok  " __VA_ARGS__); else { fails++; printf("  FALHOU  " __VA_ARGS__); } printf("\n"); } while (0)
 
+
+/* pthread_rwlock e pthread_once com threads em núcleos diferentes (SMP): eram no-op/não atômicos no libSystem */
+static pthread_rwlock_t rw = PTHREAD_RWLOCK_INITIALIZER;
+static volatile long rw_a, rw_b, rw_bad;
+static pthread_once_t once = PTHREAD_ONCE_INIT;
+static volatile int once_runs, once_val, once_bad;
+static void once_init(void) {
+    __atomic_add_fetch(&once_runs, 1, __ATOMIC_SEQ_CST);
+    for (volatile int i = 0; i < 2000000; i++) {}             /* devagar: as outras threads chegam no meio */
+    once_val = 1234;
+}
+static void *rw_worker(void *arg) {
+    (void)arg;
+    pthread_once(&once, once_init);
+    if (once_val != 1234) __atomic_add_fetch(&once_bad, 1, __ATOMIC_SEQ_CST);
+    for (int i = 0; i < 20000; i++) {
+        if (i % 4) {
+            pthread_rwlock_rdlock(&rw);
+            long a = rw_a;
+            for (volatile int k = 0; k < 20; k++) {}
+            if (rw_b != a) rw_bad++;
+            pthread_rwlock_unlock(&rw);
+        } else {
+            pthread_rwlock_wrlock(&rw);
+            long a = rw_a;
+            for (volatile int k = 0; k < 20; k++) {}
+            rw_a = a + 1;
+            rw_b = a + 1;
+            pthread_rwlock_unlock(&rw);
+        }
+    }
+    return 0;
+}
+static void rwlock_test(void) {
+    pthread_t th[4];
+    for (int i = 0; i < 4; i++) pthread_create(&th[i], 0, rw_worker, 0);
+    for (int i = 0; i < 4; i++) pthread_join(th[i], 0);
+    CHECK(once_runs == 1 && !once_bad, "pthread_once com 4 threads (rodou %d vez(es), %d viram antes do fim)", once_runs, once_bad);
+    CHECK(rw_a == 4 * 5000 && rw_b == rw_a && !rw_bad, "pthread_rwlock com 4 threads (%ld escritas, %ld leituras inconsistentes)", rw_a, rw_bad);
+}
 static int run_wait(const char *path, char *const av[]) {
     pid_t pid = fork();
     if (pid == 0) { execvp(path, av); _exit(99); }
@@ -69,6 +110,7 @@ int main(void) {
     st = run_wait("/tmp-posix.sh", a4);
     CHECK(WIFEXITED(st) && WEXITSTATUS(st) == 42, "execvp de script com #!");
 
+    rwlock_test();
     printf(fails ? "posixteste: %d FALHA(S)\n" : "posixteste: TODOS OS TESTES OK\n", fails);
     return fails ? 1 : 0;
 }

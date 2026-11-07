@@ -158,10 +158,22 @@ int pthread_key_delete(pthread_key_t k) { if (k < TSD_SLOTS) key_used[k] = 0; re
 void *pthread_getspecific(pthread_key_t k) { return k < TSD_SLOTS ? cx_tsd()[k] : 0; }
 int pthread_setspecific(pthread_key_t k, const void *v) { if (k >= TSD_SLOTS) return CX_EINVAL; cx_tsd()[k] = (void *)v; return 0; }
 typedef struct { long sig; char opaque[8]; } pthread_once_t;
+/* int em +8 (o opaque zerado de PTHREAD_ONCE_INIT): 0 = nunca rodou, 1 = rodando, 2 = pronto. Quem chega com 1 dorme
+ * até o 2: antes marcava "pronto" antes de chamar fn, e uma segunda thread (em outro núcleo, desde o SMP) voltava na
+ * hora e usava o estado ainda não iniciado. */
+int cx_futex_wait(volatile int *w, int expected, long ms);
+int cx_futex_wake(volatile int *w, int n);
 int pthread_once(pthread_once_t *o, void (*fn)(void)) {
-    if (o->opaque[0] == 0x5A) return 0;
-    o->opaque[0] = 0x5A;
-    fn();
+    volatile int *st = (volatile int *)o->opaque;
+    if (__atomic_load_n(st, __ATOMIC_ACQUIRE) == 2) return 0;
+    int z = 0;
+    if (__atomic_compare_exchange_n(st, &z, 1, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+        fn();
+        __atomic_store_n(st, 2, __ATOMIC_RELEASE);
+        cx_futex_wake(st, 0x7FFFFFFF);
+        return 0;
+    }
+    while (__atomic_load_n(st, __ATOMIC_ACQUIRE) != 2) cx_futex_wait(st, 1, -1);
     return 0;
 }
 /* threads de verdade: SYS_THREAD_CREATE com pilha própria (mmap) */
@@ -360,9 +372,48 @@ int pthread_cond_timedwait_relative_np(void *c, void *m, const void *ts) {
     const long *t = ts;
     return cond_wait_ms(c, m, t[0] * 1000 + t[1] / 1000000);
 }
-int pthread_rwlock_rdlock(void *l) { (void)l; return 0; }
-int pthread_rwlock_wrlock(void *l) { (void)l; return 0; }
-int pthread_rwlock_unlock(void *l) { (void)l; return 0; }
+/* pthread_rwlock_t do macOS tem 200 bytes ({long sig; char opaque[192]}); PTHREAD_RWLOCK_INITIALIZER zera o opaque.
+ * int em +8 = estado (0 livre, n > 0 leitores, -1 escritor), int em +12 = quantos dormem no futex do estado.
+ * Antes era tudo no-op (época de um núcleo): o V8 (base::SharedMutex) e o Chromium ficavam sem exclusão nenhuma
+ * com threads rodando em núcleos diferentes. */
+static volatile int *rws(void *l) { return (volatile int *)((char *)l + 8); }
+static volatile int *rww(void *l) { return (volatile int *)((char *)l + 12); }
+static void rw_sleep(void *l, int seen) {
+    __atomic_add_fetch(rww(l), 1, __ATOMIC_SEQ_CST);
+    if (__atomic_load_n(rws(l), __ATOMIC_SEQ_CST) == seen) cx_futex_wait(rws(l), seen, -1);
+    __atomic_sub_fetch(rww(l), 1, __ATOMIC_SEQ_CST);
+}
+int pthread_rwlock_tryrdlock(void *l) {
+    int s = __atomic_load_n(rws(l), __ATOMIC_RELAXED);
+    while (s >= 0)
+        if (__atomic_compare_exchange_n(rws(l), &s, s + 1, 0, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED)) return 0;
+    return 16;                                                   /* EBUSY */
+}
+int pthread_rwlock_trywrlock(void *l) {
+    int z = 0;
+    return __atomic_compare_exchange_n(rws(l), &z, -1, 0, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED) ? 0 : 16;
+}
+int pthread_rwlock_rdlock(void *l) {
+    for (;;) {
+        if (!pthread_rwlock_tryrdlock(l)) return 0;
+        rw_sleep(l, -1);
+    }
+}
+int pthread_rwlock_wrlock(void *l) {
+    for (;;) {
+        if (!pthread_rwlock_trywrlock(l)) return 0;
+        int s = __atomic_load_n(rws(l), __ATOMIC_RELAXED);
+        if (s) rw_sleep(l, s);
+    }
+}
+int pthread_rwlock_unlock(void *l) {
+    int s = __atomic_load_n(rws(l), __ATOMIC_RELAXED), n;
+    if (s == -1) { __atomic_store_n(rws(l), 0, __ATOMIC_SEQ_CST); n = 0; }
+    else if (s > 0) n = __atomic_sub_fetch(rws(l), 1, __ATOMIC_SEQ_CST);
+    else return 1;                                               /* EPERM: não estava travado */
+    if (!n && __atomic_load_n(rww(l), __ATOMIC_SEQ_CST)) cx_futex_wake(rws(l), 0x7FFFFFFF);
+    return 0;
+}
 int pthread_attr_init(void *a) { if (a) { ((long *)a)[0] = ATTR_SIG; ((size_t *)a)[1] = DEF_STACK; } return 0; }
 int pthread_attr_destroy(void *a) { (void)a; return 0; }
 int pthread_attr_setstacksize(void *a, size_t s) {

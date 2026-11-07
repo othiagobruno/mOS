@@ -405,13 +405,11 @@ kern_return_t semaphore_timedwait(mach_port_t sem, u64 ts) {
     return sem_wait_ms(s, (long)ms);
 }
 
-/* ---- pthreads que faltavam (os mutex/rwlock do mOS não têm protocolo nem estado a iniciar) */
+/* ---- pthreads que faltavam (o mutex do mOS não tem protocolo; o rwlock fica em extra.c, estado zerado aqui) */
 int pthread_mutexattr_setprotocol(void *a, int p) { (void)a; (void)p; return 0; }
 int pthread_mutexattr_setpolicy_np(void *a, int p) { (void)a; (void)p; return 0; }
 int pthread_rwlock_init(void *l, const void *a) { (void)a; for (int i = 0; i < 8; i++) ((u64 *)l)[i] = 0; return 0; }
 int pthread_rwlock_destroy(void *l) { (void)l; return 0; }
-int pthread_rwlock_tryrdlock(void *l) { (void)l; return 0; }
-int pthread_rwlock_trywrlock(void *l) { (void)l; return 0; }
 
 const char *mach_error_string(kern_return_t e) {
     switch (e) {
