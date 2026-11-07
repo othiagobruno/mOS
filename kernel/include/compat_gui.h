@@ -181,12 +181,16 @@ enum {
  *   1 cmap:   rdx = codepoint. Devolve o índice do glifo.
  *   2 avanço: rdx = glifo. Devolve unidades | (upem << 16).
  *   3 métricas: r10 = gui_font_metrics_t. Devolve 0.
- *   4 raster: r10 = gui_glyph_req_t (preenchida). Devolve w*h, ou 0 se o glifo é vazio. */
+ *   4 raster: r10 = gui_glyph_req_t (preenchida). Devolve w*h, ou 0 se o glifo é vazio.
+ *   5 registrar: rdx = tamanho, r10 = bytes de uma fonte TrueType (glyf, até 8 MiB). Devolve o id da
+ *     fonte (32 a 79), que serve de peso nas outras operações; o mesmo arquivo devolve o mesmo id.
+ *     -EINVAL se a fonte não é TrueType válida ou não há mais vaga. */
 #define GF_TABLE 0
 #define GF_CMAP 1
 #define GF_ADVANCE 2
 #define GF_METRICS 3
 #define GF_RASTER 4
+#define GF_REGISTER 5
 typedef struct { i32 upem, ascender, descender, nglyphs; } gui_font_metrics_t;
 typedef struct {
     u32 weight, glyph;

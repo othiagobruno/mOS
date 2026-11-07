@@ -224,16 +224,21 @@ int pclose(void *f) { (void)f; set_errno(10 /* ECHILD */); return -1; }
 /* ================================================================ arquivos */
 int futimens(int fd, const vs_timespec_t t[2]) { (void)fd; (void)t; return 0; }
 int utimensat(int dfd, const char *p, const vs_timespec_t t[2], int flag) {
-    (void)dfd; (void)t; (void)flag;
-    char st[256];
-    return stat(p, st);
+    (void)t; (void)flag;
+    const char *cx_at_path(int dirfd, const char *p, char *buf, size_t cap);   /* posixmore.c: dirfd -> caminho (GNU tar) */
+    char tp[1024], st[256];
+    const char *q = cx_at_path(dfd, p, tp, sizeof tp);
+    return q ? stat(q, st) : -1;
 }
 void cx_perm_set(const char *path, unsigned mode);   /* libc.c: o stat devolve o modo pedido */
 int fchmodat(int dfd, const char *p, unsigned short mode, int flag) {
-    (void)dfd; (void)flag;
-    char st[256];
-    int r = stat(p, st);
-    if (r == 0) cx_perm_set(p, mode);
+    (void)flag;
+    const char *cx_at_path(int dirfd, const char *p, char *buf, size_t cap);
+    char tp[1024], st[256];
+    const char *q = cx_at_path(dfd, p, tp, sizeof tp);   /* relativo ao dirfd (GNU tar) */
+    if (!q) return -1;
+    int r = stat(q, st);
+    if (r == 0) cx_perm_set(q, mode);
     return r;
 }
 int lchflags(const char *p, u32 flags) { (void)flags; char st[256]; return stat(p, st); }

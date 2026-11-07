@@ -193,9 +193,10 @@ static struct { char *n, *p; unsigned gid; char **mem; } cx_grp; static char cx_
 void *getgrgid(unsigned g) { void *r = 0; getgrgid_r(g, &cx_grp, cx_grpbuf, sizeof cx_grpbuf, &r); return r; }
 void *getgrnam(const char *n) { void *r = 0; getgrnam_r(n, &cx_grp, cx_grpbuf, sizeof cx_grpbuf, &r); return r; }
 int mkdirat(int fd, const char *p, unsigned short mode) {
-    if (fd == -2 || (p && p[0] == '/')) return mkdir(p, mode);   /* AT_FDCWD do macOS é -2 */
-    SET_ERRNO(ENOSYS_);
-    return -1;
+    const char *cx_at_path(int dirfd, const char *p, char *buf, size_t cap);   /* posixmore.c: dirfd -> caminho */
+    char t[1024];
+    const char *q = cx_at_path(fd, p, t, sizeof t);   /* o GNU tar cria as pastas com mkdirat(dirfd, ...) */
+    return q ? mkdir(q, mode) : -1;
 }
 int utime(const char *p, const void *times) { (void)p; (void)times; return 0; }   /* o VFS não guarda datas por arquivo */
 int shm_open(const char *n, int fl, ...) { (void)n; (void)fl; SET_ERRNO(ENOSYS_); return -1; }

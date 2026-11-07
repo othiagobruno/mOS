@@ -172,7 +172,9 @@ static int gpos_kern(struct font *f, u16 g1, u16 g2) {
 static int kern_cache_lookup(struct font *f, u16 a, u16 b);
 
 /* ------------------------------------------------------------ init */
-static void font_load_into(struct font *f, int id, const u8 *d, const u8 *e) {
+/* kern = false nas fontes dos apps: o GPOS não passa por font_sane, então o leitor nem olha para ele
+ * (o kerning delas é do HarfBuzz do app, que lê as tabelas por GF_TABLE) */
+static void font_load_into(struct font *f, int id, const u8 *d, const u8 *e, bool kern) {
     /* (f vem do chamador) */
     f->data = d; f->size = (u32)(e - d); f->id = id;
     u32 head = find_table(f, "head"), maxp = find_table(f, "maxp"), hhea = find_table(f, "hhea");
@@ -201,6 +203,7 @@ static void font_load_into(struct font *f, int id, const u8 *d, const u8 *e) {
     }
     f->cmap_sub = best;
     f->cmap_fmt = bestfmt;
+    if (!kern) { f->gpos = 0; f->kern_keys = NULL; f->kern_vals = NULL; f->kern_n = 0; return; }
     /* pré-calcula kerning para pares ASCII comuns (rápido em tempo de desenho) */
     u16 gl[95];
     for (int c = 32; c < 127; c++) gl[c - 32] = glyph_index(f, c);
@@ -232,7 +235,7 @@ static int kern_cache_lookup(struct font *f, u16 a, u16 b) {
     return 0;
 }
 
-static void font_load(int id, const u8 *d, const u8 *e) { font_load_into(&fonts[id], id, d, e); }
+static void font_load(int id, const u8 *d, const u8 *e) { font_load_into(&fonts[id], id, d, e, true); }
 
 void font_init(void) {
     font_load(FONT_REGULAR, font_regular_ttf, font_regular_ttf_end);
@@ -269,8 +272,143 @@ bool font_set_fallback(const u8 *d, u32 n) {
     u8 *copy = kmalloc(n);
     if (!copy) return false;
     memcpy(copy, d, n);
-    font_load_into(&fallback, FONT_COUNT, copy, copy + n);   /* id próprio: o cache de glifos não mistura com a Inter */
+    font_load_into(&fallback, FONT_COUNT, copy, copy + n, true);   /* id próprio: o cache de glifos não mistura com a Inter */
     return fallback.data != NULL;
+}
+
+/* ------------------------------------------------------------ fontes dos apps
+ * Fontes web que o Chromium entrega ao CoreText (CTFontManagerCreateFontDescriptorFromData), registradas
+ * por GF_REGISTER. Os bytes vêm de um processo e o leitor acima confia nas tabelas, então font_sane
+ * confere antes tudo o que ele vai ler: diretório, head/maxp/hhea/hmtx, cada entrada da loca, cada
+ * subtabela 4 e 12 da cmap e cada glifo. Fonte que não passa é recusada inteira.
+ * Ficam até o desligamento: o cache de glifos guarda o id, e reaproveitar a vaga misturaria glifos de
+ * fontes diferentes. O mesmo arquivo registrado de novo (outro processo, outra aba) devolve o mesmo id. */
+#define FONT_USER_BYTES (32u << 20)
+static struct font userfonts[FONT_USER_MAX];
+static u32 user_sum[FONT_USER_MAX];
+static u32 nuser, user_bytes;
+
+static bool span_ok(u32 n, u32 off, u32 len) { return off <= n && len <= n - off; }
+/* um glifo (p, len) inteiro dentro dos seus bytes, do jeito que glyph_outline e raster_into o lêem */
+static bool glyph_sane(const u8 *p, u32 len) {
+    if (len < 10) return false;                          /* raster_into lê a caixa (p+2..p+9) */
+    i16 nc = bes16(p);
+    if (nc == 0) return true;                            /* glyph_outline ignora */
+    if (nc < 0) {                                        /* composto: registros até o fim da cadeia */
+        u32 q = 10;
+        u16 flags;
+        do {
+            if (q + 4 > len) return false;
+            flags = be16(p + q);
+            q += 4 + ((flags & 1) ? 4 : 2);
+            if (flags & 8) q += 2;
+            else if (flags & 0x40) q += 4;
+            else if (flags & 0x80) q += 8;
+            if (q > len) return false;
+        } while (flags & 0x20);
+        return true;                                     /* índices dos componentes: glyph_offset confere */
+    }
+    u32 q = 10 + (u32)nc * 2;
+    if (q + 2 > len) return false;
+    u32 last = 0;
+    for (int c = 0; c < nc; c++) {                       /* fins de contorno estritamente crescentes */
+        u32 e = be16(p + 10 + c * 2);
+        if (c && e <= last) return false;
+        last = e;
+    }
+    u32 npts = last + 1;
+    q += 2 + be16(p + q);                                /* instruções */
+    if (q > len) return false;
+    u32 xb = 0, yb = 0;
+    for (u32 i = 0; i < npts;) {                         /* bandeiras (com repetição), somando os bytes de x e y */
+        if (q >= len) return false;
+        u8 f = p[q++];
+        u32 rep = 1;
+        if (f & 8) { if (q >= len) return false; rep += p[q++]; }
+        if (rep > npts - i) rep = npts - i;
+        xb += rep * ((f & 2) ? 1u : (f & 16) ? 0u : 2u);
+        yb += rep * ((f & 4) ? 1u : (f & 32) ? 0u : 2u);
+        i += rep;
+    }
+    return (u64)q + xb + yb <= len;
+}
+/* subtabelas 4 e 12 da cmap: o que glyph_index pode ler para qualquer codepoint */
+static bool cmap_sane(const u8 *c, u32 cl) {
+    if (cl < 4) return false;
+    u16 n = be16(c + 2);
+    if (4 + (u32)n * 8 > cl) return false;
+    for (u16 i = 0; i < n; i++) {
+        u32 off = be32(c + 4 + i * 8 + 4);
+        if (off > cl || cl - off < 4) return false;
+        u32 room = cl - off;
+        const u8 *t = c + off;
+        u16 fmt = be16(t);
+        if (fmt == 12) {
+            if (room < 16 || be32(t + 12) > (room - 16) / 12) return false;
+        } else if (fmt == 4) {
+            if (room < 14) return false;
+            u32 segx2 = be16(t + 6);
+            if ((segx2 & 1) || 14 + segx2 * 4 + 2 > room) return false;
+            u32 at_ranges = 14 + segx2 * 3 + 2;
+            for (u32 s = 0; s < segx2 / 2; s++) {
+                u32 end = be16(t + 14 + s * 2), start = be16(t + 14 + segx2 + 2 + s * 2);
+                u32 ro = be16(t + at_ranges + s * 2);
+                if (!ro || end < start) continue;
+                if (at_ranges + s * 2 + ro + (end - start) * 2 + 2 > room) return false;
+            }
+        }
+    }
+    return true;
+}
+static bool font_sane(const u8 *d, u32 n) {
+    if (!font_valid(d, n)) return false;
+    u16 nt = be16(d + 4);
+    for (u16 i = 0; i < nt; i++) {                       /* font_table copia qualquer tabela */
+        const u8 *r = d + 12 + i * 16;
+        if (!span_ok(n, be32(r + 8), be32(r + 12))) return false;
+    }
+    struct font t;
+    memset(&t, 0, sizeof t);
+    t.data = d; t.size = n;
+    u32 hl = 0, ml = 0, hhl = 0, hml = 0, ll = 0, gl = 0, cl = 0;
+    u32 head = find_table_len(&t, "head", &hl), maxp = find_table_len(&t, "maxp", &ml);
+    u32 hhea = find_table_len(&t, "hhea", &hhl);
+    find_table_len(&t, "hmtx", &hml);                   /* só o tamanho: nh * 4 cabe nele */
+    u32 loca = find_table_len(&t, "loca", &ll), glyf = find_table_len(&t, "glyf", &gl);
+    u32 cmap = find_table_len(&t, "cmap", &cl);
+    if (hl < 54 || ml < 6 || hhl < 36) return false;
+    u32 upem = be16(d + head + 18), ng = be16(d + maxp + 4), nh = be16(d + hhea + 34);
+    i16 lf = bes16(d + head + 50);
+    if (upem < 16 || upem > 16384 || (lf != 0 && lf != 1) || !ng || !nh) return false;
+    if (nh * 4 > hml) return false;
+    if ((ng + 1) * (lf ? 4u : 2u) > ll) return false;
+    if (!cmap_sane(d + cmap, cl)) return false;
+    u32 prev = 0;
+    for (u32 g = 0; g <= ng; g++) {                      /* loca crescente e dentro da glyf; cada glifo são */
+        u32 o = lf ? be32(d + loca + g * 4) : be16(d + loca + g * 2) * 2u;
+        if (o > gl || (g && o < prev)) return false;
+        if (g && o > prev && !glyph_sane(d + glyf + prev, o - prev)) return false;
+        prev = o;
+    }
+    return true;
+}
+/* d veio de kmalloc; *kept diz se a fonte ficou com o buffer (aí quem chamou não libera) */
+int font_register(u8 *d, u32 n, bool *kept) {
+    *kept = false;
+    if (!d || n < 12) return -1;
+    u32 sum = 2166136261u;
+    for (u32 i = 0; i < n; i++) { sum ^= d[i]; sum *= 16777619u; }
+    for (u32 i = 0; i < nuser; i++)
+        if (user_sum[i] == sum && userfonts[i].size == n && !memcmp(userfonts[i].data, d, n)) return FONT_USER_BASE + (int)i;
+    if (nuser >= FONT_USER_MAX || user_bytes + n > FONT_USER_BYTES || !font_sane(d, n)) return -1;
+    u32 i = nuser;
+    font_load_into(&userfonts[i], FONT_USER_BASE + (int)i, d, d + n, false);
+    user_sum[i] = sum;
+    user_bytes += n;
+    nuser = i + 1;                                       /* publica só depois de pronta */
+    *kept = true;
+    kprintf("Fontes: fonte de app registrada (id %d, %u glifos, %u bytes)\n", FONT_USER_BASE + (int)i, userfonts[i].nglyphs, n);
+    return FONT_USER_BASE + (int)i;
 }
 bool font_has_fallback(void) { return fallback.data != NULL; }
 /* procura a fonte nos lugares de costume; chamado depois que o sistema de arquivos está montado */
@@ -341,6 +479,7 @@ static void glyph_outline(struct font *fn, u16 g, xform_t m, float scale, float 
     if (!len || depth > 4) return;
     const u8 *p = fn->data + off;
     i16 nc = bes16(p);
+    if (!nc) return;                                     /* sem contornos: não há fins de contorno a ler */
     if (nc < 0) {
         const u8 *q = p + 10;
         u16 flags;
@@ -510,6 +649,8 @@ bool font_has_glyph(font_t *f, u32 cp) { return glyph_index(f, cp) != 0 || (fall
 
 static struct font *face(int weight) {
     if (weight == FONT_FALLBACK_WEIGHT && fallback.data) return &fallback;
+    /* fonte de app; id que não foi registrado cai na regular (nunca numa face sem dados) */
+    if (weight >= FONT_USER_BASE) return weight < FONT_USER_BASE + (int)nuser ? &userfonts[weight - FONT_USER_BASE] : &fonts[0];
     if (weight < 0) weight = 0;
     if (weight >= FONT_COUNT) weight = FONT_COUNT - 1;
     return &fonts[weight];

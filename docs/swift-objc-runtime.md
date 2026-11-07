@@ -258,8 +258,36 @@ MOSDarwin/MOSos. Entram:
   `String(format:)`, e `IntegerFormatStyle`/`BinaryInteger.formatted` (FoundationInternationalization, depende de ICU).
 - **WhatsApp:** 7.783 → **4.730** símbolos ausentes distintos com os dylibs Swift do mOS (`libswiftCore` 1.957 → 0,
   `_Concurrency` 190 → 0, `libswiftFoundation` 1.119 → 425, `libswiftDispatch` 122 → 28). Ver [compat-apps.md](compat-apps.md).
-- **C — extensões sobre ObjC:** StringProtocol (sobre NSString), erros (NSError, CustomNSError, LocalizedError,
-  `_convertErrorToNSError`, os ganchos do runtime em `ErrorObject.mm`), KVO, NSURLSession async, NSCoder, FileManager.
+- **Marco C — extensões sobre ObjC (pronto para o Postico, 2026-11-07).** **Postico: 316 de 316.**
+  - **Erros** (`userland/sdk/swift-objc/Foundation/NSError.swift`): `_ObjectiveCBridgeableError`, `_BridgedNSError`,
+    `_BridgedStoredNSError`, `NSError: Error`, `CFError: Error`, `URLError` (+ `Code`), `_convertErrorToNSError`,
+    `_convertNSErrorToError` e os ganchos que o runtime (`ErrorObject.mm`) procura por `dlsym`:
+    `_getErrorDefaultUserInfo` (CustomNSError.errorUserInfo + textos do LocalizedError) e `_bridgeNSErrorToError(_:out:)`.
+    CocoaError/POSIXError e os códigos vêm do próprio swift-foundation: a preparação liga só os blocos
+    `FOUNDATION_FRAMEWORK` deles (`-D MOS_NSERROR`), e eles passam a guardar um NSError como na Apple.
+    `NSErrorUserInfoKey` virou `typedef NSString *` simples (como no SDK da Apple), e o `CFErrorRef` foi declarado no
+    Foundation.h (o CoreFoundation do importador não tem o CFError.h). libSystem: `-[NSError initWithDomain:code:userInfo:]`
+    (faltava) e as descrições passam a perguntar ao objeto (`-userInfo/-domain/-code`), o que vale para o
+    `__SwiftNativeNSError` do runtime.
+  - **StringProtocol** (`StringAPI.swift`): `range(of:options:range:locale:)`, `compare`, `localizedStandardCompare`,
+    `trimmingCharacters`, `components(separatedBy: CharacterSet)`, `replacingOccurrences`, `padding`, `folding`,
+    percent encoding, `enumerateSubstrings` etc., em Swift puro sobre a String (opções caseInsensitive,
+    diacriticInsensitive, backwards, anchored, numeric, regularExpression). `ComparisonResult` passou a ser o
+    `NSComparisonResult` do ObjC (módulo `_MOSNSOptions`), como na Apple, e `String.EnumerationOptions` o
+    `NSStringEnumerationOptions`. Os `String(format:)`/`init(contentsOf:)` ganharam os `__shared` do nome mangled da Apple.
+    Ainda sem: `applyingTransform` e a normalização Unicode (as variantes `*Mapping` devolvem o texto como está).
+  - **NSCoder/FileManager/UndoManager/IntegerFormatStyle** (`Coders.swift`): `decodeObject(of:forKey:)`,
+    `decodeDictionary`, `decodeTopLevelObject`; `enumerator(at:…)` sobre o `-enumeratorAtURL:…` novo do libSystem
+    (`NSDirectoryEnumerator`, foundation_extra.c) e `replaceItemAt`; `registerUndo(withTarget:handler:)`;
+    `IntegerFormatStyle` e `BinaryInteger.formatted` (só agrupamento de milhares).
+  - **Testes:** `userland/tests-swiftobjc/foundation3` → **35/35**.
+  - **Limites encontrados:** sem o FoundationInternationalization (ICU), todo `Locale` do swift-foundation é o `en_001`
+    (`_LocaleUnlocalized`, por desenho do pacote). Num método do módulo Foundation, um `#selector` estático chegou vazio
+    ao libSystem (o `Selector("…")` funciona); falta investigar o registro das selrefs dessa imagem.
+  - **WhatsApp:** 4.412 → **4.265** ausentes; o Foundation Swift dele cai para **278**. O que sobra é quase todo
+    FoundationInternationalization (Date/Number/List FormatStyle, Measurement, NSDecimal, PersonNameComponents,
+    AttributedString de Markdown), mais os publicadores do Combine no Foundation (NotificationCenter, Timer,
+    URLSession.DataTaskPublisher, KVO), `NSURLSession.bytes/download` async, NSScanner e NSFileHandle.
 - **D — entrega:** `Foundation.framework` hoje conta como "do libSystem" no carregador, então o overlay Swift precisa
   entrar como imagem extra (p. ex. carregar `Foundation.framework/Versions/C/Foundation` do VFS quando existir) ou
   como `/usr/lib/swift/libswiftFoundation.dylib` puxada pela `libswiftCore`.

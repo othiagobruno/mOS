@@ -68,7 +68,9 @@ void *dispatch_queue_create_with_target$V2(const char *label, void *attr, void *
 const char *dispatch_queue_get_label(void *q) { return q ? ((cx_queue_t *)q)->label : _dispatch_main_q.label; }
 void dispatch_set_target_queue(void *o, void *q) { (void)o; (void)q; }
 void *cx_dispatch_current(void);
-void *dispatch_get_current_queue(void) { void *q = cx_dispatch_current(); return q ? q : &_dispatch_main_q; }
+/* como no macOS: fora de um bloco de fila, a thread principal está na fila principal e as outras numa fila global
+ * (antes devolvia a principal em qualquer thread — um objeto fila principal onde o chamador esperava outra fila) */
+void *dispatch_get_current_queue(void) { void *q = cx_dispatch_current(); return q ? q : &global_q[0]; }
 void *dispatch_queue_attr_make_with_qos_class(void *attr, unsigned qos, int prio) { (void)qos; (void)prio; return attr; }
 void *dispatch_queue_attr_make_with_autorelease_frequency(void *attr, unsigned long f) { (void)f; return attr; }
 
@@ -407,6 +409,18 @@ void *dispatch_queue_get_specific(void *q, const void *key) {
     return r;
 }
 void *dispatch_get_specific(const void *key) { return dispatch_queue_get_specific(cx_dispatch_current(), key); }
+/* objeto liberado: as specifics dele saem (com o destrutor), senão um objeto novo no mesmo endereço herdaria os valores */
+static void spec_forget(void *q) {
+    void *ctxs[16]; void (*dtors[16])(void *); int n;
+    do {
+        n = 0;
+        while (__sync_lock_test_and_set(&spec_lock, 1)) SYS0(SYS_YIELD);
+        for (int i = 0; i < SPEC_MAX && n < 16; i++)
+            if (spec[i].q == q) { ctxs[n] = spec[i].ctx; dtors[n] = spec[i].dtor; n++; spec[i].q = 0; }
+        __sync_lock_release(&spec_lock);
+        for (int i = 0; i < n; i++) if (ctxs[i] && dtors[i]) dtors[i](ctxs[i]);
+    } while (n == 16);
+}
 /* resume/activate de uma fonte MACH_RECV: liga a escuta e, na primeira vez, sobe a thread que espera
  * na porta. Em objetos que não são fonte (filas etc.), não há o que retomar. */
 static void source_resume(cx_source_t *s) {
@@ -459,7 +473,7 @@ void cx_dispatch_release(void *o) {
     int last = i < 0;
     if (i >= 0 && --rc_tab[i].extra <= 0) rc_tab[i].o = (void *)1;      /* volta à referência de criação */
     __sync_lock_release(&rc_lock);
-    if (last) free(o);
+    if (last) { spec_forget(o); free(o); }
 }
 /* -retainCount dos objetos OS_dispatch_* (swiftobjc.c): a referência de criação + os retains extras */
 long cx_dispatch_retain_count(void *o) {

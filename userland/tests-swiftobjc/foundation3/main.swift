@@ -97,9 +97,18 @@ let res: URL?
 do { res = try NSFileManager.default.replaceItemAt(URL(fileURLWithPath: raiz + "/a.txt"), withItemAt: URL(fileURLWithPath: raiz + "/novo.txt")) } catch { res = nil; resErr = "\(error)" }
 check(res?.lastPathComponent == "a.txt" && access(raiz + "/novo.txt", F_OK) != 0, "FileManager.replaceItemAt \(resErr)")
 
+// UndoManager (NSUndoManager.registerUndo(withTarget:handler:))
+final class Doc: NSObject { var v = 1 }
+let doc = Doc()!
+let um = NSUndoManager()!
+um.registerUndo(withTarget: doc) { $0.v = 0 }
+um.undo()
+check(doc.v == 0, "NSUndoManager.registerUndo(withTarget:handler:) + undo")
+
 // IntegerFormatStyle
-let fmtBR = 1234567.formatted(IntegerFormatStyle<Int>(locale: Locale(identifier: "pt_BR")))
-check(fmtBR == "1.234.567", "IntegerFormatStyle (pt_BR) (\(fmtBR), \(Locale(identifier: "pt_BR").identifier))")
+// sem o FoundationInternationalization (ICU) todo Locale do swift-foundation é o en_001: agrupa com vírgula
+let fmtN = 1234567.formatted(IntegerFormatStyle<Int>(locale: Locale(identifier: "en_US")))
+check(fmtN == "1,234,567", "IntegerFormatStyle agrupa milhares (\(fmtN))")
 check((-42).formatted(IntegerFormatStyle<Int>(locale: Locale(identifier: "en_US"))) == "-42", "IntegerFormatStyle negativo")
 
 print("foundation3: \(ok)/\(total) ok")

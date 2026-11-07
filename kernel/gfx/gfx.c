@@ -433,21 +433,30 @@ static void shadow_rows(void *c, int b, int e, int cpu) {
 }
 
 /* ============================================================ rasterizador de área (font-rs) */
+/* finito (nem NaN nem infinito), pelos bits: não depende de como o compilador trata NaN */
+static inline bool fin_(float f) { u32 b; memcpy(&b, &f, 4); return (b & 0x7F800000u) != 0x7F800000u; }
+/* acc tem w*h células. Os pontos podem vir de fontes dos apps (GF_REGISTER), fora da caixa do glifo ou
+ * absurdos: todo índice fica dentro da linha e da altura, e coordenada não finita é descartada. */
 void raster_line(float *acc, int w, int h, float x0, float y0, float x1, float y1) {
+    if (w < 2 || h < 1 || !fin_(x0) || !fin_(y0) || !fin_(x1) || !fin_(y1)) return;
     if (fabsf_(y0 - y1) < 1e-6f) return;
     float dir = 1;
     if (y0 > y1) { float t = x0; x0 = x1; x1 = t; t = y0; y0 = y1; y1 = t; dir = -1; }
     float dxdy = (x1 - x0) / (y1 - y0);
     float x = x0;
     if (y0 < 0) { x -= y0 * dxdy; y0 = 0; }
-    int ys = (int)y0, ye = MIN(h, (int)fceil(y1));
+    if (y0 >= h) return;                                  /* também evita (int) de valor enorme */
+    int ys = (int)y0, ye = (int)fceil(MIN((float)h, y1));
     for (int yy = ys; yy < ye; yy++) {
         int ls = yy * w;
         float dy = MIN((float)(yy + 1), y1) - MAX((float)yy, y0);
         float xn = x + dxdy * dy;
         float d = dy * dir;
         float a0x = x < xn ? x : xn, a1x = x < xn ? xn : x;
-        if (a0x < 0) a0x = 0;
+        /* as duas pontas em [0, w - 1.001]; !(v >= 0) também pega NaN de x somado a dxdy enorme */
+        if (!(a0x >= 0)) a0x = 0;
+        if (!(a1x >= 0)) a1x = 0;
+        if (a0x > w - 1.001f) a0x = w - 1.001f;
         if (a1x > w - 1.001f) a1x = w - 1.001f;
         float x0f = ffloor(a0x);
         int x0i = (int)x0f;

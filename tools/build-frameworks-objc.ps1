@@ -40,9 +40,22 @@ foreach ($fw in Get-ChildItem "$root\userland\frameworks" -Directory) {
     # pasta lib<X> -> /usr/lib/lib<X>.dylib; as outras -> /System/Library/Frameworks/<X>.framework/Versions/A/<X>
     if ($name -like 'lib*') { $dir = "$dst\usr\lib"; $file = "$name.dylib"; $install = "/usr/lib/$name.dylib" }
     else { $dir = "$dst\System\Library\Frameworks\$name.framework\Versions\A"; $file = $name; $install = "/System/Library/Frameworks/$name.framework/Versions/A/$name" }
+    # install-path (opcional): 1ª linha = caminho de instalação (ex.: o UIKit do Catalyst, em /System/iOSSupport/...);
+    # as outras = caminhos onde o mesmo binário também fica (o VFS não tem links simbólicos)
+    $alias = @()
+    if (Test-Path "$($fw.FullName)\install-path") {
+        $ip = @(Get-Content "$($fw.FullName)\install-path" | Where-Object { $_ -match '^/' })
+        $install = $ip[0]; $alias = @($ip | Select-Object -Skip 1)
+        $dir = $dst + (Split-Path $install -Parent).Replace('/', '\'); $file = Split-Path $install -Leaf
+    }
     New-Item -ItemType Directory -Force $dir | Out-Null
     $log = & $zig cc -target x86_64-macos -shared -o "$dir\$file" "-Wl,-install_name,$install" '-Wl,-undefined,dynamic_lookup' @objs 2>&1 | ForEach-Object { "$_" }
     if ($LASTEXITCODE -ne 0) { $log | Select-Object -First 8 | ForEach-Object { "  $_" }; Write-Host "${name}: link FALHOU" -ForegroundColor Red; $fails++; continue }
+    foreach ($a in $alias) {
+        $ad = $dst + (Split-Path $a -Parent).Replace('/', '\')
+        New-Item -ItemType Directory -Force $ad | Out-Null
+        Copy-Item "$dir\$file" "$ad\$(Split-Path $a -Leaf)" -Force
+    }
     Write-Host ("{0}: ok ({1:N0} KB) -> {2}" -f $name, ((Get-Item "$dir\$file").Length / 1KB), $install)
 }
 # zlib: o bottle do Homebrew (zlib 1.3.2, licença zlib)

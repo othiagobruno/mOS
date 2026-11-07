@@ -24,6 +24,8 @@ static int fails, total;
 static int fcount;
 static void inc_f(void *ctx) { (void)ctx; fcount++; }
 static char chave;
+static int destruidos;
+static void conta_destrutor(void *p) { (void)p; destruidos++; }
 
 int main(void) {
     printf("dispatchteste: libdispatch em C\n");
@@ -138,6 +140,29 @@ int main(void) {
     __block int ok3 = 0;
     dispatch_sync(depois2, ^{ ok3 = 1; });
     CHECK(ok3, "objc_release final libera e o dispatch continua funcionando");
+
+    /* numa thread comum, fora de bloco, a "fila atual" é uma global (nunca a principal, como no macOS) */
+    __block void *atual = 0;
+    dispatch_semaphore_t sa = dispatch_semaphore_create(0);
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_MSEC), dispatch_get_global_queue(0, 0), ^{
+        atual = dispatch_get_current_queue(); dispatch_semaphore_signal(sa);
+    });
+    dispatch_semaphore_wait(sa, dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC));
+    CHECK(atual && atual != (void *)dispatch_get_main_queue(), "dispatch_get_current_queue fora da principal não é a principal");
+
+    /* a specific de uma fila liberada sai com ela (destrutor chamado); um objeto novo no mesmo endereço não a herda */
+    static char chave2;
+    dispatch_queue_t qm = dispatch_queue_create("mos.morta", 0);
+    dispatch_queue_set_specific(qm, &chave2, (void *)0x55, conta_destrutor);
+    dispatch_release(qm);
+    CHECK(destruidos == 1, "o destrutor da specific roda quando a fila é liberada");
+    int herdou = 0;
+    for (int i = 0; i < 8; i++) {
+        dispatch_queue_t nq = dispatch_queue_create("mos.nova", 0);
+        if (dispatch_queue_get_specific(nq, &chave2)) herdou = 1;
+        dispatch_release(nq);
+    }
+    CHECK(!herdou, "specific de fila liberada não passa para a fila nova no mesmo endereço");
 
     printf("dispatchteste: %d/%d ok\n", total - fails, total);
     return fails;

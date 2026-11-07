@@ -194,7 +194,12 @@ int fcopyfile(int from, int to, void *state, u32 flags) {
 }
 /* link físico: o VFS não tem; uma cópia mantém o conteúdo visível pelos dois nomes */
 int link(const char *a, const char *b) { char st[STAT_SIZE]; if (stat(b, st) == 0) { SET(CX_EEXIST); return -1; } return copy_file(a, b); }
-int linkat(int fa, const char *a, int fb, const char *b, int flag) { (void)flag; return at_ok(fa, a) && at_ok(fb, b) ? link(a, b) : -1; }
+int linkat(int fa, const char *a, int fb, const char *b, int flag) {
+    (void)flag;
+    char ta[1024], tb[1024];
+    const char *qa = cx_at_path(fa, a, ta, sizeof ta), *qb = qa ? cx_at_path(fb, b, tb, sizeof tb) : 0;
+    return qb ? link(qa, qb) : -1;
+}
 
 /* ======================================================================== removefile */
 typedef int (*removefile_cb)(void *state, const char *path, void *ctx);

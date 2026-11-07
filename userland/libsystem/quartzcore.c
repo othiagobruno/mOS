@@ -1249,6 +1249,29 @@ void cx_ca_poll(void) {
     }
 }
 
+/* diagnóstico (ca-log): árvore de layers */
+static int qc_tree_has_surface(id l, int depth) {
+    if (!l || depth > 16) return 0;
+    lst_t *L = ls(l);
+    if (L->contents && cx_is_subclass(object_getClass(L->contents), &IOSurface_c)) return 1;
+    for (u32 i = 0; i < L->nsub; i++) if (qc_tree_has_surface(L->sub[i], depth + 1)) return 1;
+    return 0;
+}
+static void qc_dump_tree(id l, int depth) {
+    if (!l || depth > 10) return;
+    lst_t *L = ls(l);
+    extern u64 IOSurfaceGetWidth(id), IOSurfaceGetHeight(id);
+    BOOL surf = L->contents && cx_is_subclass(object_getClass(L->contents), &IOSurface_c);
+    QLOG("%*s%s %p bounds (%.0f,%.0f %.0fx%.0f) pos (%.1f,%.1f) anchor (%.2f,%.2f) escala (%.2f,%.2f) oculto %d op %.2f masks %d flip %d "
+         "autoresize %u contents %s%s%llux%llu gravity %s cscale %.2f filhos %u",
+         depth * 2, "", cx_class_name(object_getClass(l)), (void *)l, L->bounds.o.x, L->bounds.o.y, L->bounds.s.w, L->bounds.s.h,
+         L->pos.x, L->pos.y, L->anchor.x, L->anchor.y, L->tf.m[0], L->tf.m[5], L->hidden, L->opacity, L->masks, L->flipped,
+         L->autoresize, L->contents ? cx_class_name(object_getClass(L->contents)) : "-", surf ? " " : "",
+         surf ? IOSurfaceGetWidth(L->contents) : 0ULL, surf ? IOSurfaceGetHeight(L->contents) : 0ULL,
+         L->gravity ? cx_cstr(L->gravity) : "-", L->cscale, L->nsub);
+    for (u32 i = 0; i < L->nsub; i++) qc_dump_tree(L->sub[i], depth + 1);
+}
+
 /* o gancho chamado pelo appkit.c (draw_view_tree) */
 static void layer_draw_hook(id view, int phase, double tlx, double tly, double w, double h,
                             double cx0, double cy0, double cx1, double cy1) {
@@ -1291,6 +1314,11 @@ static void layer_draw_hook(id view, int phase, double tlx, double tly, double w
     touched = NO;
     render(l, m, k, 1, 0, YES);
     { static int n; if (cx_ca_diag() && log_now(&n)) QLOG("quadro #%d na janela %d: view %s %dx%d em (%d,%d), ~%u pixels de layer visíveis", n, cx_gui_cur_gid, cx_class_name(object_getClass(view)), cvw, cvh, cvx, cvy, touched ? count_visible(cv, need) : 0); }
+    {   /* diagnóstico (ca-log): a árvore de layers de uma view que tem um IOSurface embaixo, nas 2 primeiras vezes
+         * (o IOSurface do display do Chromium nunca chegava a ser lido no desenho) */
+        static int ndump;
+        if (cx_ca_diag() && ndump < 2 && qc_tree_has_surface(l, 0)) { ndump++; QLOG("árvore de layers da view %s:", cx_class_name(object_getClass(view))); qc_dump_tree(l, 0); }
+    }
     send_canvas();
     rendering--;
 }

@@ -1079,8 +1079,13 @@ static void w_set_content(id self, SEL c, id v) {
     if (!v) return;
     keep(&s->content, v);
     vs(v)->superview = 0;
+    /* a view ganha o tamanho do conteúdo da janela e as subviews seguem o autoresizing: o Chromium cria a
+     * ViewsCompositorSuperview (o layer do compositor da janela) com os bounds da BridgedContentView antes de ela entrar
+     * na janela; sem o autoresizing aqui ela ficava 0x0 e o quadro do compositor nunca aparecia */
+    NSSize old = vs(v)->frame.s;
     vs(v)->frame = r_make(0, 0, s->frame.s.w, s->frame.s.h);
     set_window_rec(v, self);
+    if (old.w != vs(v)->frame.s.w || old.h != vs(v)->frame.s.h) resize_children(v, old);
     s->needs = YES;
 }
 static void w_set_delegate(id self, SEL c, id d) { (void)c; ws(self)->delegate = d; }
@@ -1169,6 +1174,8 @@ static void autolayout_window(id w);
 static void render_window(id w) {
     wstate_t *s = ws(w);
     if (s->gid <= 0 || !s->visible) return;
+    if (vs(s->content)->frame.s.w != s->frame.s.w || vs(s->content)->frame.s.h != s->frame.s.h)
+        v_set_frame(s->content, 0, r_make(0, 0, s->frame.s.w, s->frame.s.h));   /* com autoresizing das subviews */
     vs(s->content)->frame = r_make(0, 0, s->frame.s.w, s->frame.s.h);
     autolayout_window(w);
     ncmd = 0;

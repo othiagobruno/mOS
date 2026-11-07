@@ -594,6 +594,16 @@ i64 compat_gui_syscall(process_t *p, u64 n, u64 a, u64 b, u64 c, u64 d, u64 e) {
             kfree(tmp);
             return ok ? n : -MOS_EFAULT;
         }
+        if (op == GF_REGISTER) {
+            if (!d || c < 12 || c > (8u << 20)) return -MOS_EINVAL;
+            u8 *buf = kmalloc((u32)c);
+            if (!buf) return -MOS_ENOMEM;
+            if (!uvm_copy_in(p, buf, d, (usize)c)) { kfree(buf); return -MOS_EFAULT; }
+            bool kept = false;
+            int id = font_register(buf, (u32)c, &kept);
+            if (!kept) kfree(buf);
+            return id >= 0 ? id : -MOS_EINVAL;
+        }
         return -MOS_EINVAL;
     }
     case GUI_DRAG: return drag_syscall(p, a, b, c, d, e);

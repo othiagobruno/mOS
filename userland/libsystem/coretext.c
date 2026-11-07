@@ -16,6 +16,7 @@ id CFDataCreate(void *alloc, const u8 *bytes, long n);
 void *malloc(size_t n);
 void free(void *p);
 void *memset(void *d, int c, size_t n);
+void *memcpy(void *d, const void *s, size_t n);
 
 id objc_retain(id o);
 id cx_num_i(i64 v);
@@ -63,17 +64,49 @@ typedef struct { double x, y, w, h; } ct_rect_t;
 
 static id cls(const char *n) { return (id)cx_class_named(n); }
 static double fsize(id f) { if (!f) return 13; double s = MSG0(double, f, "pointSize"); return s > 0 ? s : 13; }
-static const char *fname(id f) { id n = f ? MSG0(id, f, "fontName") : 0; return n ? cx_cstr(n) : ".AppleSystemUIFont"; }
+
+/* NSFont do mOS: {isa, double size, int weight, int mono} em appkit.c. weight é a face do kernel
+ * (GUI_FONT): 0..3 = Inter regular, medium, semibold, bold; 32..79 = fonte que o app registrou a partir
+ * de dados (GF_REGISTER: as fontes web do Chromium, como os codicons do VS Code). */
+typedef struct { double size; int weight; int mono; } ft_t;
+static ft_t *ftf(id f) { return (ft_t *)((u8 *)f + 8); }
+#define USER_BASE 32
+#define USER_MAX 48
+#define USER_ID_KEY "mOSFontId"      /* no descritor de uma fonte registrada: o id da face */
+static int is_user(int w) { return w >= USER_BASE && w < USER_BASE + USER_MAX; }
+/* nomes das fontes registradas, lidos da tabela 'name' (por processo; o id vem do kernel) */
+static struct { char ps[96], family[96], full[96]; } unames[USER_MAX];
+/* peso gravado no NSFont, ou -1 se o objeto não parece um NSFont do appkit.c */
+static int fweight_raw(id f) {
+    if (!f) return -1;
+    ft_t *ft = ftf(f);
+    if (!(ft->size > 0 && ft->size < 1e6)) return -1;
+    return (ft->weight >= 0 && ft->weight <= 3) || is_user(ft->weight) ? ft->weight : -1;
+}
+static const char *fname(id f) {
+    int w = fweight_raw(f);
+    if (is_user(w)) return unames[w - USER_BASE].ps[0] ? unames[w - USER_BASE].ps : "mOS-WebFont";
+    id n = f ? MSG0(id, f, "fontName") : 0;
+    return n ? cx_cstr(n) : ".AppleSystemUIFont";
+}
 static u32 ftraits(id f) {
     const char *n = fname(f);
+    int w = fweight_raw(f);
     u32 t = 0;
-    if (strstr(n, "Bold") || strstr(n, "bold") || strstr(n, "Semibold")) t |= TRAIT_BOLD;
+    if (w == 2 || w == 3) t |= TRAIT_BOLD;
+    if (strstr(n, "Bold") || strstr(n, "bold") || strstr(n, "Semibold") || strstr(n, "Black") || strstr(n, "Heavy")) t |= TRAIT_BOLD;
     if (strstr(n, "Italic") || strstr(n, "Oblique")) t |= TRAIT_ITALIC;
     if (strstr(n, "Mono") || strstr(n, "Menlo") || strstr(n, "Courier")) t |= TRAIT_MONO;
+    if (w >= 0 && w <= 3 && ftf(f)->mono) t |= TRAIT_MONO;
     if (n[0] == '.') t |= TRAIT_UI;
     return t;
 }
 static id family_of(id f) {
+    int w = fweight_raw(f);
+    if (is_user(w)) {
+        const char *fam = unames[w - USER_BASE].family;
+        return cx_str(fam[0] ? fam : fname(f));
+    }
     const char *n = fname(f);
     if (n[0] == '.') return cx_str(n);
     if (strstr(n, "Menlo") || strstr(n, "Mono")) return cx_str("Menlo");
@@ -82,17 +115,27 @@ static id family_of(id f) {
 static id font_of_size(double size, int bold) {
     return MSG(id, cls("NSFont"), bold ? "boldSystemFontOfSize:" : "systemFontOfSize:", size > 0 ? size : 13.0);
 }
-/* NSFont do mOS: {isa, double size, int weight, int mono} em appkit.c */
 static int fweight(id f) {
     if (!f) return 0;
-    typedef struct { double size; int weight; int mono; } ft_t;
-    ft_t *ft = (ft_t *)((u8 *)f + 8);
-    if (ft->size > 0 && ft->size < 512 && ft->weight >= 0 && ft->weight <= 3) return ft->weight;
-    const char *n = fname(f);
+    int w = fweight_raw(f);
+    if (w >= 0) return w;
+    id nm = MSG0(id, f, "fontName");
+    const char *n = nm ? cx_cstr(nm) : "";
     if (strstr(n, "Bold") || strstr(n, "bold")) return 3;
     if (strstr(n, "Semibold")) return 2;
     if (strstr(n, "Medium")) return 1;
     return 0;
+}
+/* NSFont novo (systemFontOfSize: devolve sempre um objeto novo) com a face w */
+static id font_with_face(double size, int w, int mono) {
+    id n = font_of_size(size, 0);
+    if (n) { ftf(n)->weight = w; ftf(n)->mono = mono; }
+    return n;
+}
+/* cópia de f em outro tamanho, com a mesma face (inclusive a de uma fonte registrada) */
+static id font_copy(id f, double size) {
+    int w = fweight_raw(f);
+    return font_with_face(size, w >= 0 ? w : fweight(f), w >= 0 && w <= 3 ? ftf(f)->mono : 0);
 }
 static int font_live(void) {
     static int v;
@@ -276,7 +319,10 @@ void *CTFontCopyTable(id f, u32 tag, u32 options) {
     free(buf);
     return data;
 }
-void *CGFontCopyTableForTag(void *font, u32 tag) { return CTFontCopyTable((id)font, tag, 0); }
+/* o Skia cai aqui quando CTFontCopyTable não acha a tabela, com o CGFont de CTFontCopyGraphicsFont,
+ * que é nulo no mOS: sem fonte não há tabela (antes vinha a da Inter, e o HarfBuzz aplicava o GPOS da
+ * Inter aos glifos de outra fonte) */
+void *CGFontCopyTableForTag(void *font, u32 tag) { return font ? CTFontCopyTable((id)font, tag, 0) : 0; }
 void *CTFontCopyCharacterSet(id f) { (void)f; return 0; }
 id CTFontCopyDefaultCascadeListForLanguages(id f, id langs) { (void)f; (void)langs; return objc_retain(MSG0(id, cls("NSArray"), "array")); }
 id CTFontCopyVariation(id f) { (void)f; return 0; }
@@ -290,11 +336,16 @@ id CTFontCopyName(id f, id key) { (void)key; return objc_retain(cx_str(fname(f))
 id CTFontCopyLocalizedName(id f, id key, id *lang) { if (lang) *lang = 0; return CTFontCopyName(f, key); }
 
 /* ---- traços e atributos */
+/* kCTFontWeightTrait de cada face da Inter (NSFontWeightRegular, Medium, Semibold, Bold): o Blink e o
+ * Skia tiram daqui o peso CSS da fonte, e um peso menor que o pedido vira negrito sintético */
+static const double face_weight_trait[4] = {0.0, 0.23, 0.3, 0.4};
 static id traits_dict(id f) {
     u32 t = ftraits(f);
+    int w = fweight_raw(f);
+    double wt = (w >= 0 && w <= 3) ? face_weight_trait[w] : (t & TRAIT_BOLD) ? 0.4 : 0.0;
     id d = MSG0(id, cls("NSMutableDictionary"), "dictionary");
     MSG(void, d, "setObject:forKey:", cx_num_i((i64)t), (id)kCTFontSymbolicTrait);
-    MSG(void, d, "setObject:forKey:", cx_num_d((t & TRAIT_BOLD) ? 0.4 : 0.0), (id)kCTFontWeightTrait);
+    MSG(void, d, "setObject:forKey:", cx_num_d(wt), (id)kCTFontWeightTrait);
     MSG(void, d, "setObject:forKey:", cx_num_d(0.0), (id)kCTFontWidthTrait);
     MSG(void, d, "setObject:forKey:", cx_num_d((t & TRAIT_ITALIC) ? 0.07 : 0.0), (id)kCTFontSlantTrait);
     return d;
@@ -309,19 +360,63 @@ static id descriptor_for(id f) {
     MSG(void, d, "setObject:forKey:", cx_str((ftraits(f) & TRAIT_BOLD) ? "Bold" : "Regular"), (id)kCTFontStyleNameAttribute);
     MSG(void, d, "setObject:forKey:", traits_dict(f), (id)kCTFontTraitsAttribute);
     MSG(void, d, "setObject:forKey:", cx_num_d(fsize(f)), (id)kCTFontSizeAttribute);
+    int w = fweight_raw(f);
+    if (is_user(w)) MSG(void, d, "setObject:forKey:", cx_num_i(w), cx_str(USER_ID_KEY));
     return d;
 }
 id CTFontCopyFontDescriptor(id f) { return objc_retain(descriptor_for(f)); }
 id CTFontCopyAttribute(id f, id key) { id v = MSG(id, descriptor_for(f), "objectForKey:", key); return v ? objc_retain(v) : 0; }
 
 /* ---- criação */
+/* peso pedido por um descritor, como face da Inter (0..3); -1 = não pede. O Blink pede o peso da fonte
+ * do sistema pelo eixo 'wght' de kCTFontVariationAttribute (100..900); o Skia, por kCTFontWeightTrait. */
+static int desc_weight(id desc) {
+    if (!desc) return -1;
+    id var = MSG(id, desc, "objectForKey:", (id)kCTFontVariationAttribute);
+    if (var) {
+        /* chaves são CFNumber com o tag do eixo: compara pelo valor, não pela igualdade do dicionário */
+        id keys = MSG0(id, var, "allKeys");
+        u64 n = keys ? MSG0(u64, keys, "count") : 0;
+        for (u64 i = 0; i < n; i++) {
+            id k = MSG(id, keys, "objectAtIndex:", i);
+            if (!k || MSG0(i64, k, "longLongValue") != 0x77676874) continue;     /* 'wght' */
+            id v = MSG(id, var, "objectForKey:", k);
+            double w = v ? MSG0(double, v, "doubleValue") : 400;
+            return w >= 650 ? 3 : w >= 550 ? 2 : w >= 450 ? 1 : 0;
+        }
+    }
+    id tr = MSG(id, desc, "objectForKey:", (id)kCTFontTraitsAttribute);
+    if (tr) {
+        id v = MSG(id, tr, "objectForKey:", (id)kCTFontWeightTrait);
+        if (v) {
+            double w = MSG0(double, v, "doubleValue");
+            return w >= 0.35 ? 3 : w >= 0.27 ? 2 : w >= 0.2 ? 1 : 0;
+        }
+        id s = MSG(id, tr, "objectForKey:", (id)kCTFontSymbolicTrait);
+        if (s && (MSG0(i64, s, "longLongValue") & TRAIT_BOLD)) return 3;
+    }
+    return -1;
+}
+static int desc_user_id(id desc) {
+    id u = desc ? MSG(id, desc, "objectForKey:", cx_str(USER_ID_KEY)) : 0;
+    int w = u ? (int)MSG0(i64, u, "longLongValue") : -1;
+    return is_user(w) ? w : -1;
+}
 static id font_from_desc(id desc, double size) {
-    id name = desc ? MSG(id, desc, "objectForKey:", (id)kCTFontNameAttribute) : 0;
-    if (!name && desc) name = MSG(id, desc, "objectForKey:", (id)kCTFontFamilyNameAttribute);
     if (size <= 0 && desc) { id s = MSG(id, desc, "objectForKey:", (id)kCTFontSizeAttribute); if (s) size = MSG0(double, s, "doubleValue"); }
     if (size <= 0) size = 13;
+    /* fonte registrada (CTFontManagerCreateFontDescriptorFromData): pelo id no descritor. Pelo nome não:
+     * no macOS uma fonte criada de dados não entra no catálogo, e uma fonte web chamada "Helvetica" não
+     * pode tomar o lugar da do sistema. */
+    int u = desc_user_id(desc);
+    if (u >= 0) return font_with_face(size, u, 0);
+    id name = desc ? MSG(id, desc, "objectForKey:", (id)kCTFontNameAttribute) : 0;
+    if (!name && desc) name = MSG(id, desc, "objectForKey:", (id)kCTFontFamilyNameAttribute);
     id f = name ? MSG(id, cls("NSFont"), "fontWithName:size:", name, size) : 0;
-    return f ? f : font_of_size(size, 0);
+    if (!f) f = font_of_size(size, 0);
+    int w = desc_weight(desc), fw = fweight_raw(f);
+    if (w >= 0 && fw >= 0 && fw <= 3) ftf(f)->weight = w;   /* fontWithName:size: devolve um objeto novo */
+    return f;
 }
 id CTFontCreateWithName(id name, double size, const void *matrix) {
     (void)matrix;
@@ -331,18 +426,29 @@ id CTFontCreateWithName(id name, double size, const void *matrix) {
 }
 id CTFontCreateWithFontDescriptor(id desc, double size, const void *matrix) { (void)matrix; return objc_retain(font_from_desc(desc, size)); }
 id CTFontCreateUIFontForLanguage(u32 type, double size, id lang) { (void)type; (void)lang; return objc_retain(font_of_size(size > 0 ? size : 13, 0)); }
+/* O Skia copia toda fonte para o tamanho do texto com um descritor que só traz variações
+ * (SkCTFontCreateExactCopy), e o Blink pede o peso da fonte do sistema do mesmo jeito: um descritor sem
+ * nome mantém a face de f (antes virava a regular, e uma fonte web virava a Inter). */
 id CTFontCreateCopyWithAttributes(id f, double size, const void *matrix, id desc) {
     (void)matrix;
-    if (desc) return objc_retain(font_from_desc(desc, size > 0 ? size : fsize(f)));
-    if (size <= 0 || size == fsize(f)) return objc_retain(f);
-    id n = MSG(id, cls("NSFont"), "fontWithName:size:", MSG0(id, f, "fontName"), size);
-    return objc_retain(n ? n : font_of_size(size, (ftraits(f) & TRAIT_BOLD) != 0));
+    double s = size > 0 ? size : fsize(f);
+    if (desc && (desc_user_id(desc) >= 0 || MSG(id, desc, "objectForKey:", (id)kCTFontNameAttribute) ||
+                 MSG(id, desc, "objectForKey:", (id)kCTFontFamilyNameAttribute)))
+        return objc_retain(font_from_desc(desc, s));
+    int w = desc_weight(desc);
+    if (w < 0 && (size <= 0 || size == fsize(f)) && f) return objc_retain(f);
+    id n = font_copy(f, s);
+    int fw = fweight_raw(n);
+    if (n && w >= 0 && fw >= 0 && fw <= 3) ftf(n)->weight = w;
+    return objc_retain(n);
 }
 id CTFontCreateCopyWithSymbolicTraits(id f, double size, const void *matrix, u32 value, u32 mask) {
     (void)matrix;
     double s = size > 0 ? size : fsize(f);
-    if ((mask & TRAIT_BOLD) || (value & TRAIT_BOLD)) return objc_retain(font_of_size(s, (value & TRAIT_BOLD) != 0));
-    return CTFontCreateCopyWithAttributes(f, size, 0, 0);
+    id n = font_copy(f, s);
+    int fw = fweight_raw(n);
+    if (n && fw >= 0 && fw <= 3 && (mask & TRAIT_BOLD)) ftf(n)->weight = (value & TRAIT_BOLD) ? 3 : 0;
+    return objc_retain(n);
 }
 typedef struct { long loc, len; } ct_range_t;
 id CTFontCreateForString(id f, id str, ct_range_t r) { (void)str; (void)r; return objc_retain(f ? f : font_of_size(13, 0)); }
@@ -384,7 +490,75 @@ id CTFontManagerCopyAvailableFontFamilyNames(void) {
     for (u32 i = 1; i < sizeof families / sizeof families[0]; i++) MSG(void, a, "addObject:", cx_str(families[i]));
     return objc_retain(a);
 }
-id CTFontManagerCreateFontDescriptorFromData(id data) { (void)data; return 0; }
+/* ---- fontes a partir de dados: as fontes web do Chromium (SkTypeface_Mac::MakeFromStream) chegam
+ * aqui já passadas pelo OTS. O kernel valida de novo, guarda a fonte e devolve o id da face, que vai no
+ * descritor (USER_ID_KEY) e daí para o NSFont; tabelas, cmap, avanços e glifos saem dela por GUI_FONT
+ * como os da Inter. TrueType com glyf só: CFF (OTTO) e o que o kernel recusar devolvem nil, e o Blink
+ * segue para a próxima fonte da lista, como antes. */
+long CFDataGetLength(id d);
+const u8 *CFDataGetBytePtr(id d);
+static u32 rd16(const u8 *p) { return (u32)p[0] << 8 | p[1]; }
+/* nameID da tabela 'name' em ASCII: prefere Unicode (plataforma 0 ou Windows 3,1/3,0, UTF-16BE) e
+ * aceita Mac Roman (1,0); o que não é ASCII imprimível vira '_' */
+static void name_entry(const u8 *t, long n, u32 want, char *out, int cap) {
+    out[0] = 0;
+    if (n < 6) return;
+    u32 count = rd16(t + 2), so = rd16(t + 4);
+    int best = 0;
+    for (u32 i = 0; i < count && 6 + (long)(i + 1) * 12 <= n; i++) {
+        const u8 *r = t + 6 + i * 12;
+        u32 pid = rd16(r), eid = rd16(r + 2), nid = rd16(r + 6), len = rd16(r + 8), off = rd16(r + 10);
+        if (nid != want || (long)so + off + len > n) continue;
+        int utf16 = pid == 0 || (pid == 3 && eid <= 1);
+        int score = utf16 ? 2 : (pid == 1 && eid == 0) ? 1 : 0;
+        if (score <= best) continue;
+        const u8 *s = t + so + off;
+        int k = 0;
+        for (u32 j = 0; j + (utf16 ? 1u : 0u) < len && k < cap - 1; j += utf16 ? 2 : 1) {
+            u32 c = utf16 ? rd16(s + j) : s[j];
+            out[k++] = (c >= 0x20 && c < 0x7F) ? (char)c : '_';
+        }
+        out[k] = 0;
+        if (k) best = score;
+    }
+}
+static void user_names_load(int fid) {
+    int i = fid - USER_BASE;
+    long n = SYS5(GUI_FONT, GF_TABLE, fid, 0x6E616D65u, 0, 0);          /* 'name' */
+    u8 *t = (n > 0 && n <= (1 << 20)) ? malloc((size_t)n) : 0;
+    if (t && SYS5(GUI_FONT, GF_TABLE, fid, 0x6E616D65u, t, n) > 0) {
+        name_entry(t, n, 6, unames[i].ps, sizeof unames[i].ps);
+        name_entry(t, n, 1, unames[i].family, sizeof unames[i].family);
+        name_entry(t, n, 4, unames[i].full, sizeof unames[i].full);
+    }
+    free(t);
+    if (!unames[i].ps[0]) {                                         /* sem nome: "mOS-WebFont-<id>" */
+        const char *p = "mOS-WebFont-";
+        int k = 0;
+        while (*p) unames[i].ps[k++] = *p++;
+        unames[i].ps[k++] = (char)('0' + fid / 10);
+        unames[i].ps[k++] = (char)('0' + fid % 10);
+        unames[i].ps[k] = 0;
+    }
+    if (!unames[i].family[0]) memcpy(unames[i].family, unames[i].ps, sizeof unames[i].ps);
+    if (!unames[i].full[0]) memcpy(unames[i].full, unames[i].family, sizeof unames[i].family);
+}
+id CTFontManagerCreateFontDescriptorFromData(id data) {
+    if (!data || !font_live()) return 0;
+    const u8 *b = CFDataGetBytePtr(data);
+    long n = CFDataGetLength(data);
+    if (!b || n < 12 || n > (8 << 20)) return 0;
+    long r = SYS5(GUI_FONT, GF_REGISTER, 0, n, b, 0);
+    if (!is_user((int)r)) return 0;
+    int fid = (int)r, i = fid - USER_BASE;
+    user_names_load(fid);
+    id d = MSG0(id, cls("NSMutableDictionary"), "dictionary");
+    MSG(void, d, "setObject:forKey:", cx_str(unames[i].ps), (id)kCTFontNameAttribute);
+    MSG(void, d, "setObject:forKey:", cx_str(unames[i].family), (id)kCTFontFamilyNameAttribute);
+    MSG(void, d, "setObject:forKey:", cx_str(unames[i].full), (id)kCTFontDisplayNameAttribute);
+    MSG(void, d, "setObject:forKey:", cx_num_i(fid), cx_str(USER_ID_KEY));
+    return objc_retain(d);
+}
 id CTFontCollectionCreateFromAvailableFonts(id options) { (void)options; return objc_retain(MSG0(id, cls("NSMutableArray"), "array")); }
 id CTFontCollectionCreateMatchingFontDescriptors(id coll) {
     (void)coll;

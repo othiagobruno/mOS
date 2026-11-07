@@ -77,7 +77,7 @@ extension NSUndoManager {
         let action = _MOSUndoAction { handler($0 as! TargetType) }
         // a ação fica viva enquanto o alvo vive (como o bloco guardado pela Apple)
         objc_setAssociatedObject(target, Unmanaged.passUnretained(action).toOpaque(), action, .OBJC_ASSOCIATION_RETAIN)
-        registerUndo(withTarget: action, selector: #selector(_MOSUndoAction.perform(_:)), object: target)
+        registerUndo(withTarget: action, selector: Selector(("perform:")), object: target)
     }
 }
 

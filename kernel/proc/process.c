@@ -644,6 +644,10 @@ int proc_spawn_in(const char *path, const char *arg, tty_t *tty,
         p->spawn_argv = NULL; p->spawn_argc = 0; p->spawn_env = NULL; p->spawn_envc = 0;
         kprintf("proc: iniciado %s (Mach-O, pid %d, %llu KiB)\n", p->name, p->pid, p->mem_pages * 4);
         if (xargc || xenvc) kprintf("proc: %s pid %d recebeu %d argumentos e %d variáveis de ambiente\n", p->name, p->pid, xargc, xenvc);
+        /* processos do Chromium/Electron: o tipo vem em --type= (e --utility-sub-type=), não no nome do helper */
+        for (int i = 0; xargv && i < xargc; i++)
+            if (xargv[i] && (!strncmp(xargv[i], "--type=", 7) || !strncmp(xargv[i], "--utility-sub-type=", 19)))
+                kprintf("proc: %s pid %d %s\n", p->name, p->pid, xargv[i]);
         return p->pid;
     }
     if (!elf_load(p, v->data, v->size, &entry, err, sizeof err)) {

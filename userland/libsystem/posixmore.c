@@ -263,10 +263,12 @@ int setitimer(int which, const cx_itimerval_t *nv, cx_itimerval_t *ov) {
 }
 int getitimer(int which, cx_itimerval_t *v) { return setitimer(which, 0, v); }
 int getrusage(int who, void *ru) { (void)who; memset(ru, 0, 144); return 0; }
+const char *cx_at_path(int dirfd, const char *p, char *buf, size_t cap);
 int faccessat(int fd, const char *path, int mode, int flag) {
     (void)flag;
-    if (fd != -2 && path[0] != '/') { cx_errno = 9; return -1; }   /* só AT_FDCWD (-2) ou caminho absoluto */
-    return access(path, mode);
+    char t[1024];
+    const char *q = cx_at_path(fd, path, t, sizeof t);   /* AT_FDCWD (-2), absoluto ou relativo ao dirfd */
+    return q ? access(q, mode) : -1;
 }
 int fpurge(void *f) { (void)f; return 0; }
 typedef struct { long tv_sec; int tv_usec; } cx_tv_t;
@@ -895,8 +897,46 @@ static int vol_caps(const cx_attrlist_t *al, void *buf, size_t n) {
     o[5] = 0x100 | 0x200 | 0x2;                    /* valid: CASE_SENSITIVE, CASE_PRESERVING, SYMBOLICLINKS */
     return 0;
 }
-int fgetattrlist(int fd, void *al, void *buf, size_t n, unsigned opt) { (void)fd; (void)opt; return vol_caps(al, buf, n); }
-int cx_getattrlist(const char *p, void *al, void *buf, size_t n, unsigned opt) { (void)opt; if (access(p, 0)) return -1; return vol_caps(al, buf, n); }
+/* atributos de objeto: ATTR_CMN_OBJTAG (0x10: tipo do sistema de arquivos; aqui VT_NON, então o Dir.empty?
+ * do ruby não usa o atalho do HFS e cai no readdir) e ATTR_DIR_ENTRYCOUNT (dirattr 0x2: entradas da pasta). */
+void *opendir(const char *p);
+void *readdir(void *d);
+int closedir(void *d);
+static int obj_attrs(const char *path, const cx_attrlist_t *al, void *buf, size_t n) {
+    if (al->volattr || al->fileattr || al->forkattr || (al->commonattr & ~0x10u) || (al->dirattr & ~0x2u) ||
+        (!al->commonattr && !al->dirattr)) { cx_errno = 45; return -1; }
+    unsigned *o = buf;
+    size_t need = 4 + (al->commonattr ? 4 : 0) + (al->dirattr ? 4 : 0);
+    if (n < need) { cx_errno = 34; return -1; }
+    int k = 1;
+    if (al->commonattr & 0x10) o[k++] = 0;                 /* VT_NON */
+    if (al->dirattr & 0x2) {
+        void *d = opendir(path);
+        if (!d) return -1;
+        unsigned cnt = 0;
+        while (readdir(d)) cnt++;                         /* o readdir do mOS não devolve "." nem ".." */
+        closedir(d);
+        o[k++] = cnt;
+    }
+    o[0] = (unsigned)need;
+    return 0;
+}
+int fgetattrlist(int fd, void *al, void *buf, size_t n, unsigned opt) {
+    (void)opt;
+    const cx_attrlist_t *a = al;
+    if (a && a->volattr) return vol_caps(al, buf, n);
+    char p[1024];
+    long r = cx_syscall(SYS_FDPATH, fd, (long)p, sizeof p, 0, 0);
+    if (r < 0) { cx_errno = (int)-r; return -1; }
+    return obj_attrs(p, al, buf, n);
+}
+int cx_getattrlist(const char *p, void *al, void *buf, size_t n, unsigned opt) {
+    (void)opt;
+    if (access(p, 0)) return -1;
+    const cx_attrlist_t *a = al;
+    if (a && a->volattr) return vol_caps(al, buf, n);
+    return obj_attrs(p, al, buf, n);
+}
 
 /* ============================================================ sed 4.10, grep 3.12, tar 1.35, xz, curl 8.21, git 2.55 */
 int execvp(const char *file, char *const argv[]);
