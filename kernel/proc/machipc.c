@@ -1363,6 +1363,8 @@ static u32 vm_op(mspace_t *sp, u32 op, u64 *a) {
                     u64 va = first + i * 4096;
                     u64 *pte = uvm_pte(sp->proc, va);
                     if (!pte && uvm_map(sp->proc, va, 4096)) pte = uvm_pte(sp->proc, va);
+                    /* página COW (fork, imagem compartilhada entre processos): fica privada antes de ser compartilhada */
+                    { extern bool uvm_make_private(process_t *p, u64 va); if (pte && uvm_make_private(sp->proc, va)) pte = uvm_pte(sp->proc, va); }
                     if (!pte) break;
                     ph = *pte & 0x000FFFFFFFFFF000ULL;
                     uvm_page_get(ph);              /* o objeto passa a ser mais um dono da página */

@@ -31,6 +31,11 @@ void dispatch_once_f(long *pred, void *ctx, dispatch_function_t fn) {
 static void run_block_fn(void *b) { RUN_BLOCK(b); }
 void dispatch_once(long *pred, void *block) { dispatch_once_f(pred, block, run_block_fn); }
 
+/* diagnóstico: com /Sistema/Biblioteca/despejar-threads, registra o endereço de cada fila/grupo criado */
+int cx_fdprintf(int fd, const char *fmt, ...);
+int access(const char *p, int m);
+static int cx_diag_dispatch(void) { static int on = -1; if (on < 0) on = access("/Sistema/Biblioteca/despejar-threads", 0) == 0; return on; }
+
 /* ---- filas */
 /* o 1º word é o isa ObjC (classes OS_dispatch_* de swiftobjc.c), como no macOS: o Swift abre existenciais e lê o
  * tipo dinâmico pelo isa; o magic vem logo depois */
@@ -52,6 +57,7 @@ void *dispatch_get_global_queue(long priority, unsigned long flags) {
 void *dispatch_queue_create(const char *label, void *attr) {
     cx_queue_t *q = malloc(sizeof *q);
     if (!q) return 0;
+    if (cx_diag_dispatch()) cx_fdprintf(2, "dispatch[diag]: fila \"%s\" em %llx\n", label ? label : "", (unsigned long long)(u64)q);
     q->isa = attr ? OS_dispatch_queue_concurrent_c : OS_dispatch_queue_serial_c;
     q->magic = QMAGIC;
     q->label = strdup(label ? label : "");
@@ -454,4 +460,14 @@ void cx_dispatch_release(void *o) {
     if (i >= 0 && --rc_tab[i].extra <= 0) rc_tab[i].o = (void *)1;      /* volta à referência de criação */
     __sync_lock_release(&rc_lock);
     if (last) free(o);
+}
+/* -retainCount dos objetos OS_dispatch_* (swiftobjc.c): a referência de criação + os retains extras */
+long cx_dispatch_retain_count(void *o) {
+    if (!o) return 0;
+    if (rc_static(o)) return 0x7FFFFFFF;
+    while (__sync_lock_test_and_set(&rc_lock, 1)) SYS0(SYS_YIELD);
+    int i = rc_find(o, 0);
+    long n = 1 + (i >= 0 ? rc_tab[i].extra : 0);
+    __sync_lock_release(&rc_lock);
+    return n;
 }

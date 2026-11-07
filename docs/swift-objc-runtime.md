@@ -287,6 +287,30 @@ fonte (`build/swift/objc/combine-src`):
   merge, MergeMany, Optional/Result.Publisher, tryMap/catch, `@Published`/`ObservableObject`, cancelamento).
 - **WhatsApp:** Combine 283 → **0** ausentes; total 4.730 → **4.444**.
 
+**Dispatch, o resto do overlay da Apple (pronto, 2026-11-07).** O WhatsApp pedia 28 símbolos que faltavam no overlay
+Dispatch do mOS. `userland/sdk/swift-objc/Dispatch/DispatchExtras.swift`: `DispatchSpecificKey` e
+`get/setSpecific` (de instância e de classe), `concurrentPerform`, `DispatchSource.MemoryPressureEvent`/`FileSystemEvent`
+e as fontes correspondentes (criadas, mas o mOS ainda não as dispara), `DispatchData` (sobre o `dispatch_data_t`, que no
+mOS é um CFData) com a ponte ObjC, e `_dispatchPreconditionTest` (sempre verdadeiro). `Dispatch/Combine/DispatchScheduler.swift`:
+`DispatchQueue: Scheduler` com `SchedulerTimeType`/`Stride`/`SchedulerOptions` — como na Apple, é o Dispatch que importa
+o Combine; o arquivo só entra quando o `Combine.swiftmodule` existe, e o `build-swift-combine-objc.ps1` recompila o
+Dispatch no fim. No libSystem:
+- `dispatch_queue_set_specific`/`get_specific`/`dispatch_get_specific` de verdade (eram stubs), e a fila em execução
+  por thread (`cx_dispatch_current`, também em `dispatch_get_current_queue`): o mOS roda os blocos na thread de quem
+  chama, então a fila é registrada em volta de cada execução.
+- **Os objetos do dispatch (filas, grupos, fontes, semáforos) têm isa ObjC** (`OS_dispatch_*`, de `swiftobjc.c`) no
+  1º word, como no macOS; o magic foi para o 2º. Sem isso o runtime Swift lia o magic como classe ao abrir um
+  existencial (`DispatchSourceTimer`) e caía. **Retain/release ObjC** deles (ARC do Chromium, Swift, -retain/-release,
+  autorelease pool) vão para a contagem do dispatch.c: `cx_is_dispatch_object` (objc.c) reconhece o isa antes do
+  `hdr()`, e `cx_object_free` os recusa — eles não têm `objhdr_t`, e o `hdr()` leria os 16 bytes de outra alocação.
+  As classes ganham `-retain/-release/-retainCount/-autorelease` e `-dealloc` vazio (swiftobjc.c). Num app C sem seções
+  ObjC o runtime não sobe e as classes ficam indefinidas, o que é inofensivo (ninguém lê o isa).
+- **Testes:** dispatch 19/19, combine 16/16 (`receive(on:)`, `debounce` com `DispatchQueue`).
+- **WhatsApp:** Dispatch 28 → **0**; total 4.444 → **4.415**.
+- **QEMU (WHPX):** `userland/tests-dispatch/main.c` (filas, grupos, fontes, semáforos, `dispatch_after`, retain/release,
+  `set/get_specific`, isa) roda no boot de teste (`build.ps1 -Tests`, chamado pelo `teste` como o posixteste): **19/19** e
+  "teste: TODOS OS TESTES OK". O VS Code subiu (Code, Renderer, Helpers, workbench) com um libSystem que já tinha o isa.
+
 ### 6. SwiftUI.framework
 
 - OpenSwiftUI e OpenSwiftUICore com `-enable-objc-interop`, nome ABI `SwiftUI` (já feito) e library evolution

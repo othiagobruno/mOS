@@ -267,6 +267,38 @@ bool uvm_map_phys(process_t *p, u64 va, u64 phys, bool rw) {
     return true;
 }
 
+/* imagens Mach-O compartilhadas entre processos (macho.c, icache): as mesmas páginas físicas em cópia-na-escrita, como
+ * no fork. uvm_share_cow põe a página de va em COW e dá mais uma referência a ela (a do cache); uvm_map_cow mapeia em
+ * va, como COW, uma página do cache. */
+bool uvm_share_cow(process_t *p, u64 va, u64 *phys) {
+    u64 *e = uvm_pte(p, va);
+    if (!e || !pref_ready()) return false;
+    u64 ph = *e & PTE_ADDR;
+    uvm_page_get(ph);
+    if (*e & PTE_RW) *e = (*e & ~PTE_RW) | PTE_COW;
+    if ((u64)p->pml4 == read_cr3()) __asm__ volatile("invlpg (%0)" :: "r"(va & ~0xFFFULL) : "memory");
+    *phys = ph;
+    return true;
+}
+bool uvm_map_cow(process_t *p, u64 va, u64 phys) {
+    if (!pref_ready()) return false;
+    u64 *e = walk(p, va & ~0xFFFULL, true);
+    if (!e) return false;
+    if (*e & PTE_P) { page_put(*e & PTE_ADDR); p->mem_pages--; }
+    uvm_page_get(phys);
+    *e = (phys & PTE_ADDR) | PTE_P | PTE_U | PTE_COW;
+    p->mem_pages++;
+    if ((u64)p->pml4 == read_cr3()) __asm__ volatile("invlpg (%0)" :: "r"(va & ~0xFFFULL) : "memory");
+    return true;
+}
+u16 uvm_page_refs(u64 phys) { return page_refs(phys); }
+/* página COW (fork, imagem compartilhada) vira privada antes de ir, com escrita, para outro processo
+ * (mach_make_memory_entry de uma faixa existente): senão o outro escreveria na cópia de todos */
+bool uvm_make_private(process_t *p, u64 va) {
+    u64 *e = uvm_pte(p, va);
+    return e && (!(*e & PTE_COW) || cow_break(p, e, va));
+}
+
 bool lazy_fault(process_t *p, u64 va);   /* kernel/mm/lazy.c: memória sob demanda ainda não tocada */
 bool uvm_copy_out(process_t *p, u64 va, const void *src, usize len) {
     const u8 *s = src;
@@ -351,6 +383,7 @@ __attribute__((weak)) i64 macho_dyld_syscall(process_t *p, u64 op, u64 a, u64 b,
     (void)p; (void)op; (void)a; (void)b; (void)c;
     return -MOS_EINVAL;
 }
+__attribute__((weak)) void macho_icache_trim(void) {}   /* imagens compartilhadas que ninguém mais usa */
 
 static void free_address_space(process_t *p) {
     if (p->dyld) { macho_dyld_free(p->dyld); p->dyld = NULL; }
@@ -365,6 +398,7 @@ static void free_address_space(process_t *p) {
     }
     pmm_free((u64)p->pml4, 1);
     p->pml4 = NULL;
+    macho_icache_trim();
 }
 
 /* ------------------------------------------------------------ ciclo de vida */
@@ -1500,6 +1534,9 @@ u64 proc_syscall(int_frame_t *f) {
         static int open_diag = -1;
         if (open_diag < 0) open_diag = vfs_lookup("/Sistema/Biblioteca/despejar-threads") != NULL;
         bool diag = open_diag && !strncmp(p->name, "Code Helper", 11);
+        /* caches em disco do Chromium (Cache_Data, GPUCache, Code Cache): "Unable to create cache" sem outra pista */
+        bool cdiag = open_diag && (strstr(path, "Cache") || strstr(path, "cache") ||
+                                   (!strncmp(p->name, "Code", 4) && !p->name[4] && strstr(path, ".asar")));   /* AsarURLLoader */
         /* EMFILE vai sempre para o log (raro e sério: o processo principal do VS Code abre dezenas de arquivos) */
         if (fd < 0) { kprintf("open[diag]: %s (pid %d): EMFILE %s\n", p->name, p->pid, path); r = -MOS_EMFILE; break; }
         vnode_t *v = is_devnull(path) ? NULL : vfs_lookup(path);
@@ -1507,14 +1544,19 @@ u64 proc_syscall(int_frame_t *f) {
         if (is_devnull(path)) { /* sem vnode: read/write tratam pelo caminho */ }
         else if (!v) {
             if (!(b & MOS_O_CREAT)) {
-                if (diag || (open_diag && strstr(path, "workbench"))) kprintf("open[diag]: %s (pid %d): ENOENT %s\n", p->name, p->pid, path);
+                if (diag || cdiag || (open_diag && strstr(path, "workbench"))) kprintf("open[diag]: %s (pid %d): ENOENT %s\n", p->name, p->pid, path);
                 r = -MOS_ENOENT;
                 break;
             }
-            if (!vfs_write_file(path, "", 0)) { r = -MOS_ENOENT; break; }
-        } else if (v->dir && wr) { r = -MOS_EISDIR; break; }
+            if (!vfs_write_file(path, "", 0)) {
+                if (cdiag) kprintf("open[diag]: %s (pid %d): ENOENT ao criar %s (flags %llx)\n", p->name, p->pid, path, b);
+                r = -MOS_ENOENT;
+                break;
+            }
+        } else if (v->dir && wr) { if (cdiag) kprintf("open[diag]: %s (pid %d): EISDIR %s\n", p->name, p->pid, path); r = -MOS_EISDIR; break; }
         else if (wr && (b & MOS_O_TRUNC)) vfs_write_file(path, "", 0);
-        if (diag && strstr(p->name, "Renderer")) kprintf("open[diag]: %s (pid %d): ok %s%s\n", p->name, p->pid, path, v && v->dir ? " (pasta)" : "");
+        if (cdiag) kprintf("open[diag]: %s (pid %d): ok %s flags %llx%s\n", p->name, p->pid, path, b, v && v->dir ? " (pasta)" : v ? "" : " (criado)");
+        else if (diag && strstr(p->name, "Renderer")) kprintf("open[diag]: %s (pid %d): ok %s%s\n", p->name, p->pid, path, v && v->dir ? " (pasta)" : "");
         /* a página do workbench: quem a abre (e se abre) diz em que ponto a navegação da janela para */
         else if (open_diag && strstr(path, "workbench")) kprintf("open[diag]: %s (pid %d): ok %s\n", p->name, p->pid, path);
         p->fds[fd].used = true;
@@ -1615,6 +1657,31 @@ u64 proc_syscall(int_frame_t *f) {
         r = (i64)n;
         break;
     }
+    /* pread/pwrite: deslocamento explícito, posição do fd intocada. No libSystem eram lseek+read+lseek, o que quebrava
+     * com threads lendo o mesmo fd (o pool do libuv lendo o node_modules.asar enquanto o AsarURLLoader lia também) */
+    case SYS_PREAD: {
+        if (fd_get(p, a) < 0 || p->fds[a].pipe) { r = fd_get(p, a) < 0 ? -MOS_EBADF : -MOS_ESPIPE; break; }
+        if (p->fds[a].flags & MOS_O_WRONLY) { r = -MOS_EBADF; break; }
+        if (is_devnull(p->fds[a].path)) { r = 0; break; }
+        vnode_t *v = vfs_lookup(p->fds[a].path);
+        if (!v) { r = -MOS_ENOENT; break; }
+        if (v->dir) { r = -MOS_EISDIR; break; }
+        u64 off = f->r10, n = off < v->size ? MIN(c, v->size - off) : 0;
+        if (n && (!v->data || !uvm_copy_out(p, b, v->data + off, n))) { r = -MOS_EFAULT; break; }
+        r = (i64)n;
+        break;
+    }
+    case SYS_PWRITE: {
+        if (fd_get(p, a) < 0 || p->fds[a].pipe) { r = fd_get(p, a) < 0 ? -MOS_EBADF : -MOS_ESPIPE; break; }
+        if (!(p->fds[a].flags & (MOS_O_WRONLY | MOS_O_RDWR))) { r = -MOS_EBADF; break; }
+        if (is_devnull(p->fds[a].path)) { r = (i64)c; break; }
+        u8 *tmp = c ? kmalloc(c) : NULL;
+        if (c && !tmp) { r = -MOS_ENOMEM; break; }
+        if (c && !uvm_copy_in(p, tmp, b, c)) { kfree(tmp); r = -MOS_EFAULT; break; }
+        r = file_pwrite(p->fds[a].path, f->r10, tmp, c);
+        kfree(tmp);
+        break;
+    }
     case SYS_LSEEK: {
         if (fd_get(p, a) < 0) { r = -MOS_EBADF; break; }
         vnode_t *v = vfs_lookup(p->fds[a].path);
@@ -1676,6 +1743,8 @@ u64 proc_syscall(int_frame_t *f) {
     case SYS_MKDIR:
         if (!copy_path(p, path, a)) { r = -MOS_EFAULT; break; }
         r = vfs_mkdir(path) ? 0 : -MOS_ENOENT;
+        if (r && vfs_lookup("/Sistema/Biblioteca/despejar-threads") && (strstr(path, "Cache") || strstr(path, "cache")))
+            kprintf("mkdir[diag]: %s (pid %d): falhou %s%s\n", p->name, p->pid, path, vfs_lookup(path) ? " (já existe)" : "");
         break;
     case SYS_UNLINK: {
         if (!copy_path(p, path, a)) { r = -MOS_EFAULT; break; }

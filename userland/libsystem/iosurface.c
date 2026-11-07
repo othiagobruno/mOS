@@ -153,6 +153,12 @@ typedef iosurf_t *IOSurfaceRef;
 
 IOSurfaceRef IOSurfaceCreate(id props) {
     i64 w = dnum(props, kIOSurfaceWidth, 0), h = dnum(props, kIOSurfaceHeight, 0);
+    {   /* diagnóstico (ca-log): quem cria superfícies e de que tamanho (o caminho do quadro do Chromium) */
+        extern int cx_ca_diag(void);
+        static int ncr;
+        if (cx_ca_diag() && (++ncr <= 8 || ncr % 120 == 0))
+            cx_fdprintf(2, "[ca] IOSurfaceCreate %lldx%lld formato %08llx (#%d)\n", w, h, (long long)dnum(props, kIOSurfacePixelFormat, 0), ncr);
+    }
     if (w <= 0 || h <= 0 || w > 16384 || h > 16384) return 0;
     iosurf_t *s = surf_new();
     if (!s) return 0;
@@ -241,6 +247,11 @@ IOSurfaceRef IOSurfaceLookup(u32 sid) { return sid ? find(sid, 0) : 0; }
  * sobre o bloco do surface, com CTX_MAGIC|id no contexto. Sem IPC no kernel: PORT_LOCAL | id. */
 mach_port_t IOSurfaceCreateMachPort(IOSurfaceRef s) {
     if (!s) return 0;
+    {
+        extern int cx_ca_diag(void);
+        static int nmp;
+        if (cx_ca_diag() && (++nmp <= 5 || nmp % 120 == 0)) cx_fdprintf(2, "[ca] IOSurfaceCreateMachPort id %u %ux%u (#%d)\n", s->sid, s->w, s->h, nmp);
+    }
     u64 size = s->memlen;
     mach_port_t p = 0;
     if (s->mem && mach_make_memory_entry_64(mach_task_self(), &size, (u64)s->mem, 3 /* READ|WRITE */, &p, 0) == KERN_SUCCESS && p) {

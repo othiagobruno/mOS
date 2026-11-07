@@ -55,9 +55,13 @@ id_ CFDataCreateMutableCopy(void *alloc, long cap, id_ d) { (void)cap; return d 
 /* No mOS todos os alocadores CF são NULL (darwin.c), então kCFAllocatorNull ("não libere, o bloco é meu") não se
  * distingue do padrão: o bloco é copiado e NUNCA liberado aqui (um vazamento pequeno em vez de liberar memória
  * de quem pediu kCFAllocatorNull). */
+void cx_cf_allocator_dispose_bytes(const void *alloc, void *bytes);   /* vscode_cf.c */
 id_ CFDataCreateWithBytesNoCopy(void *alloc, const u8 *bytes, long n, void *dealloc) {
-    (void)dealloc;
-    return CFDataCreate(alloc, bytes, n);
+    id_ d = CFDataCreate(alloc, bytes, n);
+    /* alocador personalizado (CFAllocatorCreate): os bytes já foram copiados, então o CFData não precisa mais deles e
+     * o deallocate dele roda agora (no macOS rodaria quando o CFData fosse liberado) */
+    if (d) cx_cf_allocator_dispose_bytes(dealloc, (void *)bytes);
+    return d;
 }
 
 long CFDataGetLength(id_ d) { return d ? (long)MSG0(u64, d, "length") : 0; }

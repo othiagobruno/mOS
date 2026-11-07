@@ -58,10 +58,33 @@ static vnode_t *add_child(vnode_t *dir, const char *name, bool isdir) {
     return n;
 }
 
-static vnode_t *walk(const char *path, bool create_dirs, bool last_is_dir) {
-    vnode_t *cur = &root;
+/* links simbólicos do mOS: arquivo que começa com "#mOS-link:<alvo>" (o libSystem cria com symlink()).
+ * O walk segue os links nos componentes do MEIO do caminho, como diretórios ("opt/tree" -> "../Cellar/tree/2.3.2",
+ * "portable-ruby/current" -> "4.0.9"); o último componente fica com quem chama (stat segue, lstat não, o execve
+ * do kernel segue). Alvo relativo vale a partir da pasta do link. */
+#define VFS_LINK_MAGIC "#mOS-link:"
+static vnode_t *walk_at(vnode_t *start, const char *path, bool create_dirs, bool last_is_dir, int depth);
+static vnode_t *follow_dir_link(vnode_t *dirnode, vnode_t *c, int depth) {
+    usize ml = sizeof VFS_LINK_MAGIC - 1;
+    if (c->dir) return c;
+    ensure(c);
+    if (!c->data || c->size <= ml || c->size >= ml + 512 || memcmp(c->data, VFS_LINK_MAGIC, ml)) return c;
+    if (depth >= 8) return NULL;                            /* ELOOP */
+    char tgt[512];
+    usize n = c->size - ml;
+    memcpy(tgt, c->data + ml, n);
+    tgt[n] = 0;
+    while (n && (tgt[n - 1] == '\n' || tgt[n - 1] == '\r')) tgt[--n] = 0;
+    return walk_at(tgt[0] == '/' ? &root : dirnode, tgt, false, false, depth + 1);
+}
+
+static vnode_t *walk(const char *path, bool create_dirs, bool last_is_dir) { return walk_at(&root, path, create_dirs, last_is_dir, 0); }
+
+static vnode_t *walk_at(vnode_t *start, const char *path, bool create_dirs, bool last_is_dir, int depth) {
+    vnode_t *cur = start;
     char part[256];
     const char *p = path;
+    if (*p == '/') cur = &root;
     while (*p) {
         while (*p == '/') p++;
         if (!*p) break;
@@ -77,6 +100,12 @@ static vnode_t *walk(const char *path, bool create_dirs, bool last_is_dir) {
             bool more = false;
             for (const char *q = p; *q; q++) if (*q != '/') { more = true; break; }
             c = add_child(cur, part, more || last_is_dir);
+        }
+        bool more_parts = false;
+        for (const char *q = p; *q; q++) if (*q != '/') { more_parts = true; break; }
+        if (more_parts && !c->dir) {                        /* componente do meio que é um link: segue */
+            c = follow_dir_link(cur, c, depth);
+            if (!c || !c->dir) return NULL;
         }
         cur = c;
     }

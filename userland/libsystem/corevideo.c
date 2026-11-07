@@ -98,6 +98,7 @@ static void *link_thread(void *arg) {
             stamp(&a, l->frame, now);
             stamp(&b, l->frame + 1, now + PERIOD_US * 1000ull);
             u64 fo = 0;
+            { extern int cx_ca_diag(void); if (cx_ca_diag() && (l->frame <= 3 || l->frame % 600 == 0)) cx_fdprintf(2, "[ca] CVDisplayLink %p: disparo %llu\n", (void *)l, (unsigned long long)l->frame); }
             if (l->running) l->cb(l, &a, &b, 0, &fo, l->ctx);
             objc_release((id)l);
         }
@@ -130,6 +131,7 @@ void CVDisplayLinkRelease(cvlink_t *l) { if (l) { l->running = 0; objc_release((
 int CVDisplayLinkSetOutputCallback(cvlink_t *l, cvcb_t cb, void *ctx) { if (!l) return kCVReturnInvalidArgument; l->cb = cb; l->ctx = ctx; return kCVReturnSuccess; }
 int CVDisplayLinkStart(cvlink_t *l) {
     if (!l) return kCVReturnInvalidArgument;
+    { extern int cx_ca_diag(void); if (cx_ca_diag()) cx_fdprintf(2, "[ca] CVDisplayLinkStart %p (tela %u, callback %p)\n", (void *)l, l->display, (void *)l->cb); }
     l->running = 1;
     if (!__sync_lock_test_and_set(&thread_up, 1)) {
         unsigned long t;

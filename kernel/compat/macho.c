@@ -1606,6 +1606,115 @@ static u64 us_push(ustack_t *s, const void *data, usize n, usize align) {
 static char next_cwd[256] = "/Users/Visitante";
 void macho_set_cwd(const char *cwd) { snprintf(next_cwd, sizeof next_cwd, "%s", cwd && cwd[0] == '/' ? cwd : "/Users/Visitante"); }
 
+#ifndef MOS_HOST_TEST
+/* ================================================================ imagens compartilhadas entre processos (icache)
+ * O Electron Framework (208 MiB) era montado num buffer contíguo do kernel e copiado inteiro em cada processo: o VS
+ * Code tem 6 a 8 processos com ele, e numa VM de 2,7 GiB o 6º já não achava 208 MiB contíguos ("sem memória para a
+ * imagem"): o host de extensões não subia. Agora:
+ *  - a imagem grande é montada direto nas páginas do processo (CR3 dele durante o image_fix; a syscall roda com as
+ *    interrupções desligadas), sem o buffer contíguo;
+ *  - depois dos fixups o conteúdo só depende do link (bases e tamanhos das imagens, área de stubs, libSystem). Para o
+ *    mesmo link, as páginas físicas da primeira carga entram nos processos seguintes como cópia-na-escrita (o mesmo
+ *    mecanismo do fork, process.c): só a página que um processo escrever vira dele. Os efeitos da montagem no link
+ *    (stubs de símbolos ausentes, na ordem; inicializadores) ficam guardados e são repetidos;
+ *  - a entrada sai quando nenhum processo a usa (macho_icache_trim, ao liberar um espaço de endereços). Tirar uma
+ *    entrada só larga a referência do cache: quem ainda mapeia as páginas continua com elas. */
+#define ICACHE_MAX 6
+#define ICACHE_MIN (16ull << 20)         /* só imagens grandes */
+typedef struct {
+    bool used;
+    u64 key, base, size, npages;
+    u64 *phys;
+    char **missing; u32 nmissing;        /* símbolos ausentes que a montagem acrescentou, na ordem */
+    u64 *inits; u32 ninits;              /* inicializadores que ela registrou */
+} icache_t;
+static icache_t icache[ICACHE_MAX];
+bool uvm_share_cow(process_t *p, u64 va, u64 *phys);
+bool uvm_map_cow(process_t *p, u64 va, u64 phys);
+u16 uvm_page_refs(u64 phys);
+void uvm_page_put(u64 phys);
+
+static u64 fnv(u64 h, const void *d, usize n) { const u8 *b = d; for (usize i = 0; i < n; i++) { h ^= b[i]; h *= 1099511628211ull; } return h; }
+static u64 fnv64(u64 h, u64 v) { return fnv(h, &v, 8); }
+/* tudo o que muda o conteúdo de I depois dos fixups: o link inteiro (o executável pelo conteúdo, as outras imagens pelo
+ * caminho e pelos bytes no VFS), a ordem de montagem, a área de stubs e os modos do carregador */
+static u64 icache_key(link_t *K, image_t *I) {
+    u64 h = 1469598103934665603ull;
+    h = fnv64(h, (u64)K->n); h = fnv64(h, K->stub_base); h = fnv64(h, K->end); h = fnv64(h, (u64)K->first_new);
+    h = fnv64(h, (u64)K->tolerant); h = fnv64(h, (u64)K->tlv_per_thread); h = fnv64(h, (u64)K->norder);
+    for (int k = 0; k < K->norder; k++) h = fnv64(h, (u64)K->order[k]);
+    for (int i = 0; i < K->n; i++) {
+        image_t *J = K->im[i];
+        h = fnv64(h, J->base); h = fnv64(h, J->mo.vmax - J->mo.vmin); h = fnv64(h, (u64)J->mo.len); h = fnv64(h, (u64)J->idx);
+        if (i) { h = fnv(h, J->path, strlen(J->path)); h = fnv64(h, (u64)(usize)J->mo.m); }
+        else h = fnv(h, J->mo.m, J->mo.len < (4u << 20) ? J->mo.len : (4u << 20));
+    }
+    h = fnv(h, I->path, strlen(I->path));
+    return fnv64(h, I->base);
+}
+static icache_t *icache_find(u64 key, image_t *I) {
+    u64 size = I->mo.vmax - I->mo.vmin;
+    for (int i = 0; i < ICACHE_MAX; i++)
+        if (icache[i].used && icache[i].key == key && icache[i].base == I->base && icache[i].size == size) return &icache[i];
+    return NULL;
+}
+static void icache_drop(icache_t *c) {
+    for (u64 j = 0; j < c->npages; j++) if (c->phys[j]) uvm_page_put(c->phys[j]);
+    for (u32 i = 0; i < c->nmissing; i++) kfree(c->missing[i]);
+    kfree(c->missing); kfree(c->inits); kfree(c->phys);
+    memset(c, 0, sizeof *c);
+}
+/* sem processo usando: só o cache segura a página do cabeçalho (ninguém escreve nela) */
+void macho_icache_trim(void) {
+    for (int i = 0; i < ICACHE_MAX; i++)
+        if (icache[i].used && icache[i].npages && uvm_page_refs(icache[i].phys[0]) <= 1) {
+            kprintf("macho: imagem compartilhada liberada (%llu MiB)\n", (unsigned long long)(icache[i].size >> 20));
+            icache_drop(&icache[i]);
+        }
+}
+/* acerto no cache: repete os efeitos da montagem no link e mapeia as páginas em COW.
+ * 1 = mapeada; 0 = falta memória; -1 = o link divergiu (quem chama monta a imagem do jeito normal) */
+static int icache_map(process_t *p, link_t *K, image_t *I, icache_t *c) {
+    u32 m0 = K->nmissing;
+    for (u32 i = 0; i < c->nmissing; i++) missing_stub(K, c->missing[i]);
+    if (K->nmissing != m0 + c->nmissing) { kprintf("macho: link divergiu do cache em %s; montando de novo\n", I->path); return -1; }
+    for (u32 i = 0; i < c->ninits; i++) push_init(K, c->inits[i]);
+    for (int i = 0; i < I->mo.nobjc && K->nobjc < MAX_OBJC; i++) {
+        K->objc[K->nobjc].addr = I->mo.objc[i].addr + (u64)I->slide;
+        K->objc[K->nobjc].size = I->mo.objc[i].size;
+        K->objc[K->nobjc++].kind = I->mo.objc[i].kind;
+    }
+    for (u64 j = 0; j < c->npages; j++)
+        if (!uvm_map_cow(p, I->base + j * 4096, c->phys[j])) return 0;
+    return 1;
+}
+/* primeira carga de uma imagem grande: as páginas do processo viram COW e o cache fica com uma referência */
+static void icache_add(process_t *p, link_t *K, image_t *I, u64 key, u32 m0, u32 i0) {
+    u64 size = I->mo.vmax - I->mo.vmin;
+    icache_t *c = NULL;
+    for (int pass = 0; pass < 2 && !c; pass++) {
+        if (pass) macho_icache_trim();
+        for (int i = 0; i < ICACHE_MAX && !c; i++) if (!icache[i].used) c = &icache[i];
+    }
+    if (!c) return;
+    u64 np = (size + 4095) / 4096;
+    u32 nm = K->nmissing - m0, ni = K->ninits - i0;
+    u64 *phys = kcalloc(np, sizeof *phys);
+    char **miss = nm ? kcalloc(nm, sizeof *miss) : NULL;
+    u64 *inits = ni ? kcalloc(ni, sizeof *inits) : NULL;
+    if (!phys || (nm && !miss) || (ni && !inits)) { kfree(phys); kfree(miss); kfree(inits); return; }
+    for (u32 i = 0; i < nm; i++) miss[i] = strdup(K->missing[m0 + i]);
+    for (u32 i = 0; i < ni; i++) inits[i] = K->inits[i0 + i];
+    c->used = true; c->key = key; c->base = I->base; c->size = size; c->phys = phys; c->npages = 0;
+    c->missing = miss; c->nmissing = nm; c->inits = inits; c->ninits = ni;
+    for (u64 j = 0; j < np; j++, c->npages++)
+        if (!uvm_share_cow(p, I->base + j * 4096, &phys[j])) { icache_drop(c); return; }
+    const char *s = strrchr(I->path, '/');
+    kprintf("macho: %s (%llu MiB) compartilhada entre processos (cópia na escrita)\n", s ? s + 1 : I->path,
+            (unsigned long long)(size >> 20));
+}
+#endif
+
 /* ================================================================ entrada principal */
 bool macho_load(process_t *p, const u8 *img, usize len, const char *arg, u64 *entry,
                 u64 *user_rsp, u64 *rdi, char *err, usize errlen) {
@@ -1622,16 +1731,67 @@ bool macho_load(process_t *p, const u8 *img, usize len, const char *arg, u64 *en
     }
     if (ok) ok = map_libsystem(p, err, errlen);
     DBG("libsystem mapeado %d\n", ok);
+#ifdef MOS_HOST_TEST
     if (ok && !uvm_map(p, IMAGE_BASE, K->end - IMAGE_BASE)) { snprintf(err, errlen, "sem memória para o processo"); ok = false; }
-    /* cada imagem é montada no kernel, recebe os fixups e vai para o processo (uma por vez) */
+#else
+    /* imagens grandes que um processo com o mesmo link já montou entram compartilhadas (icache_map); o resto da faixa
+     * (as outras imagens e as folgas entre elas) é memória nova, como antes */
+    icache_t *hit[MAX_IMAGES];
+    u64 ikey[MAX_IMAGES];
+    for (int i = 0; i < K->n; i++) {
+        image_t *I = K->im[i];
+        hit[i] = NULL; ikey[i] = 0;
+        if (!ok || I->mo.vmax - I->mo.vmin < ICACHE_MIN) continue;
+        ikey[i] = icache_key(K, I);
+        hit[i] = icache_find(ikey[i], I);
+    }
+    for (u64 a = IMAGE_BASE; ok && a < K->end;) {
+        u64 next = K->end;
+        bool shared = false;
+        for (int i = 0; i < K->n; i++) {
+            if (!hit[i]) continue;
+            u64 b = K->im[i]->base, e = (b + K->im[i]->mo.vmax - K->im[i]->mo.vmin + 0xFFF) & ~0xFFFULL;
+            if (a >= b && a < e) { shared = true; next = e; break; }
+            if (b > a && b < next) next = b;
+        }
+        if (!shared && !uvm_map(p, a, next - a)) { snprintf(err, errlen, "sem memória para o processo"); ok = false; }
+        a = next;
+    }
+#endif
+    /* cada imagem recebe os fixups e vai para o processo (uma por vez) */
     for (int k = 0; ok && k < K->norder; k++) {
         image_t *I = K->im[K->order[k]];
         u64 size = I->mo.vmax - I->mo.vmin;
-        u8 *buf = kcalloc(1, size);
-        if (!buf) { snprintf(err, errlen, "sem memória para a imagem (%llu KiB)", (unsigned long long)(size >> 10)); ok = false; break; }
-        ok = image_fix(K, I, buf);
-        if (ok && !uvm_copy_out(p, I->base, buf, size)) { snprintf(err, errlen, "falha ao copiar a imagem"); ok = false; }
-        kfree(buf);
+#ifndef MOS_HOST_TEST
+        icache_t *c = hit[K->order[k]];
+        if (c) {
+            int r = icache_map(p, K, I, c);
+            if (r > 0) {
+                extern void tp_arm(process_t *p, const char *path, u64 base, u64 vmin);
+                tp_arm(p, I->path, I->base, I->mo.vmin);
+                continue;
+            }
+            if (!r || !uvm_map(p, I->base, size)) { snprintf(err, errlen, "sem memória para o processo"); ok = false; break; }
+        }
+        u32 m0 = K->nmissing, i0 = K->ninits;
+        if (size >= ICACHE_MIN) {
+            /* grande: montada direto nas páginas do processo (já mapeadas e zeradas), sem buffer contíguo no kernel */
+            u64 fl = irq_save(), old_cr3 = read_cr3();          /* sem troca de tarefa com o CR3 emprestado */
+            __asm__ volatile("mov %0, %%cr3" :: "r"((u64)p->pml4) : "memory");
+            ok = image_fix(K, I, (u8 *)I->base);
+            __asm__ volatile("mov %0, %%cr3" :: "r"(old_cr3) : "memory");
+            irq_restore(fl);
+            if (!ok) break;
+            if (ikey[K->order[k]]) icache_add(p, K, I, ikey[K->order[k]], m0, i0);
+        } else
+#endif
+        {
+            u8 *buf = kcalloc(1, size);
+            if (!buf) { snprintf(err, errlen, "sem memória para a imagem (%llu KiB)", (unsigned long long)(size >> 10)); ok = false; break; }
+            ok = image_fix(K, I, buf);
+            if (ok && !uvm_copy_out(p, I->base, buf, size)) { snprintf(err, errlen, "falha ao copiar a imagem"); ok = false; }
+            kfree(buf);
+        }
 #ifndef MOS_HOST_TEST
         /* diagnóstico: pontos de /Sistema/Biblioteca/diag-tracepoints (kernel/proc/tracepoint.c) */
         if (ok) { extern void tp_arm(process_t *p, const char *path, u64 base, u64 vmin); tp_arm(p, I->path, I->base, I->mo.vmin); }

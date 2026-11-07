@@ -896,8 +896,23 @@ ssize_t readv(int fd, const mac_iovec_t *iov, int n) {
     }
     return total;
 }
-ssize_t pread(int fd, void *b, size_t n, off_t off) { off_t c = lseek(fd, 0, 1); lseek(fd, off, 0); ssize_t r = read(fd, b, n); lseek(fd, c, 0); return r; }
-ssize_t pwrite(int fd, const void *b, size_t n, off_t off) { off_t c = lseek(fd, 0, 1); lseek(fd, off, 0); ssize_t r = write(fd, b, n); lseek(fd, c, 0); return r; }
+/* pread/pwrite: deslocamento explícito no kernel (SYS_PREAD/SYS_PWRITE), atômico entre threads. Com lseek+read+lseek,
+ * duas threads no mesmo fd (o pool do libuv e o AsarURLLoader do Electron lendo o node_modules.asar) liam do lugar
+ * errado. Fd que não é arquivo do kernel (EBADF: sockets e fds do próprio libSystem) segue pelo caminho antigo. */
+ssize_t pread(int fd, void *b, size_t n, off_t off) {
+    if (off < 0) { cx_errno = 22; return -1; }
+    long r = SYS4(SYS_PREAD, fd, b, n, off);
+    if (r >= 0) return r;
+    if (r != -9) { cx_errno = (int)-r; return -1; }
+    off_t c = lseek(fd, 0, 1); lseek(fd, off, 0); ssize_t k = read(fd, b, n); lseek(fd, c, 0); return k;
+}
+ssize_t pwrite(int fd, const void *b, size_t n, off_t off) {
+    if (off < 0) { cx_errno = 22; return -1; }
+    long r = SYS4(SYS_PWRITE, fd, b, n, off);
+    if (r >= 0) return r;
+    if (r != -9) { cx_errno = (int)-r; return -1; }
+    off_t c = lseek(fd, 0, 1); lseek(fd, off, 0); ssize_t k = write(fd, b, n); lseek(fd, c, 0); return k;
+}
 
 typedef struct { char path[1024]; long index; } cx_dir_hdr_t;   /* prefixo de cx_dir_t (libc.c) */
 /* dirfd e fdopendir ficam em libc.c (precisam do DIR) */

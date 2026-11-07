@@ -63,8 +63,79 @@ void cx_vscode_cf_init(void) {
     kCFNull = n;
 }
 
-/* ================================================================ alocadores e tipos básicos */
-void *CFAllocatorCreate(void *alloc, const void *ctx) { (void)alloc; (void)ctx; return (void *)kCFAllocatorMallocZone; }
+/* ================================================================ alocadores e tipos básicos
+ * CFAllocatorCreate devolve um objeto de verdade, com o contexto (o CFRelease nele funciona; antes era a constante 8 e o
+ * renderer do VS Code morria em objc_release ao criar uma fonte de memória, no SkFontMgr_mac do Skia). Os Create* do
+ * libSystem continuam alocando com malloc; CFAllocatorAllocate/Reallocate/Deallocate usam as funções do contexto, e
+ * CFDataCreateWithBytesNoCopy (cfdata.c), que copia os bytes, devolve-os na hora pelo deallocate do alocador. */
+typedef struct {
+    long version; void *info; const void *(*retain)(const void *); void (*release)(const void *);
+    void *copy_desc;
+    void *(*allocate)(long size, unsigned long hint, void *info);
+    void *(*reallocate)(void *ptr, long size, unsigned long hint, void *info);
+    void (*deallocate)(void *ptr, void *info);
+    long (*preferred)(long size, unsigned long hint, void *info);
+} cf_alloc_ctx_t;
+typedef struct { cx_class_t *isa; cf_alloc_ctx_t ctx; } cf_alloc_t;
+static cx_class_t cfalloc_c, cfalloc_m;
+void cx_object_free(id o);
+static void cfa_dealloc(id self, SEL c) {
+    (void)c;
+    cf_alloc_t *a = (cf_alloc_t *)self;
+    if (a->ctx.release && a->ctx.info) a->ctx.release(a->ctx.info);
+    cx_object_free(self);
+}
+/* o alocador personalizado por trás de um ponteiro (0 para as constantes, que no mOS são NULL ou 8) */
+static cf_alloc_t *cf_alloc_obj(const void *a) {
+    return (u64)a >= 0x10000 && ((cf_alloc_t *)a)->isa == &cfalloc_c ? (cf_alloc_t *)a : 0;
+}
+void *CFAllocatorCreate(void *alloc, const void *ctx) {
+    (void)alloc;
+    if (!ctx || !cfalloc_c.isa) return 0;
+    cf_alloc_t *a = (cf_alloc_t *)cx_alloc_instance(&cfalloc_c);
+    if (!a) return 0;
+    memcpy(&a->ctx, ctx, sizeof a->ctx);
+    if (a->ctx.retain && a->ctx.info) a->ctx.info = (void *)a->ctx.retain(a->ctx.info);
+    return a;
+}
+void cx_cf_allocator_dispose_bytes(const void *alloc, void *bytes) {   /* cfdata.c */
+    cf_alloc_t *a = cf_alloc_obj(alloc);
+    if (a && a->ctx.deallocate && bytes) a->ctx.deallocate(bytes, a->ctx.info);
+}
+void *CFAllocatorAllocate(const void *alloc, long size, unsigned long hint) {
+    cf_alloc_t *a = cf_alloc_obj(alloc);
+    if (size <= 0) return 0;
+    return a && a->ctx.allocate ? a->ctx.allocate(size, hint, a->ctx.info) : malloc((size_t)size);
+}
+void *CFAllocatorReallocate(const void *alloc, void *ptr, long size, unsigned long hint) {
+    cf_alloc_t *a = cf_alloc_obj(alloc);
+    if (a) {
+        if (!ptr) return size > 0 && a->ctx.allocate ? a->ctx.allocate(size, hint, a->ctx.info) : 0;
+        if (size <= 0) { if (a->ctx.deallocate) a->ctx.deallocate(ptr, a->ctx.info); return 0; }
+        return a->ctx.reallocate ? a->ctx.reallocate(ptr, size, hint, a->ctx.info) : 0;
+    }
+    if (size <= 0) { free(ptr); return 0; }
+    return realloc(ptr, (size_t)size);
+}
+void CFAllocatorDeallocate(const void *alloc, void *ptr) {
+    cf_alloc_t *a = cf_alloc_obj(alloc);
+    if (!ptr) return;
+    if (a) { if (a->ctx.deallocate) a->ctx.deallocate(ptr, a->ctx.info); }
+    else free(ptr);
+}
+long CFAllocatorGetPreferredSizeForSize(const void *alloc, long size, unsigned long hint) {
+    cf_alloc_t *a = cf_alloc_obj(alloc);
+    return a && a->ctx.preferred ? a->ctx.preferred(size, hint, a->ctx.info) : size;
+}
+void CFAllocatorGetContext(const void *alloc, void *ctx) {
+    cf_alloc_t *a = cf_alloc_obj(alloc);
+    if (!ctx) return;
+    if (a) memcpy(ctx, &a->ctx, sizeof a->ctx);
+    else { memset(ctx, 0, sizeof(cf_alloc_ctx_t)); }
+}
+const void *CFAllocatorGetDefault(void) { return 0; }
+void CFAllocatorSetDefault(const void *alloc) { (void)alloc; }
+unsigned long CFAllocatorGetTypeID(void) { return 2; }
 id CFAutorelease(id o) { return o ? objc_autorelease(o) : 0; }
 id CFCopyDescription(id o) { return o ? objc_retain(MSG0(id, o, "description")) : 0; }
 
@@ -588,5 +659,7 @@ void cx_vscode_cf_classes(void) {
     cx_add_method(&uuid_c, "getUUIDBytes:", (void *)uuid_get_bytes);
     cx_define_class(&cs_c, &cs_m, "__mOSCFCharacterSet", ob, 8);
     cx_define_class(&bh_c, &bh_m, "__mOSCFBinaryHeap", ob, (u32)(sizeof(cfbh_t) - 8));
+    cx_define_class(&cfalloc_c, &cfalloc_m, "__NSCFAllocator", ob, (u32)(sizeof(cf_alloc_t) - 8));
+    cx_add_method(&cfalloc_c, "dealloc", (void *)cfa_dealloc);
     cx_vscode_cf_init();
 }

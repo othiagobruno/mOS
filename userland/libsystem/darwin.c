@@ -148,8 +148,10 @@ void objc_release(id_ o);
 #define MSG0_(T, o, s) ((T (*)(id_, void *))objc_msgSend)((id_)(o), sel_registerName(s))
 #define MSG1_(T, o, s, a) ((T (*)(id_, void *, __typeof__(a)))objc_msgSend)((id_)(o), sel_registerName(s), (a))
 
-id_ CFRetain(id_ o) { return o ? objc_retain(o) : o; }
-void CFRelease(id_ o) { if (o) objc_release(o); }
+/* abaixo de 64 KiB não há objeto: são as constantes falsas do mOS (kCFAllocatorMallocZone = 8...), que no macOS são
+ * objetos estáticos em que retain/release não fazem nada */
+id_ CFRetain(id_ o) { return (u64)o >= 0x10000 ? objc_retain(o) : o; }
+void CFRelease(id_ o) { if ((u64)o >= 0x10000) objc_release(o); }
 
 id_ CFBundleGetMainBundle(void) { return MSG0_(id_, cx_class_named("NSBundle"), "mainBundle"); }
 /* regra "Create/Copy": quem chama é dono (+1) */

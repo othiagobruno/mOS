@@ -1,0 +1,8 @@
+#!/bin/bash
+# mOS: o macOS que o mOS informa ao Homebrew (Sonoma, Intel). Ver docs/porte-brew.md.
+case "$1" in
+  -productName) echo "macOS" ;;
+  -productVersion) echo "14.7.6" ;;
+  -buildVersion) echo "23H626" ;;
+  *) printf 'ProductName:\t\tmacOS\nProductVersion:\t\t14.7.6\nBuildVersion:\t\t23H626\n' ;;
+esac

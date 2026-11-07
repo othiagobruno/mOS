@@ -59,6 +59,8 @@ enum {
     SYS_FUTEX_WAIT,    /* 48: (u32 *end, valor, prazo ms; ~0 = sem) -> 0 acordada, -MOS_EAGAIN valor já mudou, -MOS_ETIMEDOUT */
     SYS_FUTEX_WAKE,    /* 49: (u32 *end, n) -> quantas threads acordou */
     SYS_FDFLAGS,       /* 50: (fd, mudar, valor) -> flags        FD_CLOEXEC por fd: mudar=1 grava valor (0/1); devolve 1 se close-on-exec */
+    SYS_PREAD,         /* 51: (fd, buf, n, deslocamento em r10) -> lidos      sem mexer na posição do fd (atômico entre threads) */
+    SYS_PWRITE,        /* 52: (fd, buf, n, deslocamento em r10) -> escritos */
     SYS_COUNT,
     SYS_GUI_FIRST = 64,/* 64..79: interface gráfica dos apps do macOS (kernel/compat/guisys.c) */
     SYS_GUI_LAST = 79,
@@ -246,6 +248,7 @@ enum { MOS_NET_ST_CLOSED, MOS_NET_ST_CONNECTING, MOS_NET_ST_OPEN, MOS_NET_ST_PEE
 #define MOS_ENOTDIR 20
 #define MOS_ENOTEMPTY 66   /* valores do macOS */
 #define MOS_EPIPE  32
+#define MOS_ESPIPE 29            /* pread/pwrite num pipe */
 #define MOS_EAGAIN 35            /* valores do macOS */
 #define MOS_ETIMEDOUT 60
 

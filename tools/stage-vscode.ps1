@@ -10,7 +10,7 @@
 param([Parameter(Mandatory = $true)][string]$App, [string]$OutDir = 'build-vscode', [int]$SizeMiB = 512, [switch]$Diagnostico, [switch]$ComApp, [switch]$Autostart,
       [switch]$ComModulosNativos, [int]$MaxModuloMiB = 32,
       [string]$Args0 = '--in-process-gpu --disable-gpu --no-sandbox --verbose --enable-logging',
-      [string]$Tracepoints = '')
+      [string]$Tracepoints = '', [switch]$CaLog)
 $root = Split-Path $PSScriptRoot -Parent
 $src = Join-Path $App 'Contents'
 $esp = Join-Path $root "$OutDir\esp"
@@ -89,6 +89,9 @@ if ($Diagnostico) {
 $tpFile = "$esp\mOS\Sistema\Biblioteca\diag-tracepoints"
 if ($Tracepoints) { ($Tracepoints -split ';') -join "`n" | Set-Content -Path $tpFile -Encoding ascii }
 else { Remove-Item $tpFile -ErrorAction SilentlyContinue }
+# -CaLog: o QuartzCore registra cada IOSurface posto num layer, cada CAContext publicado e cada quadro composto (como no stage-electron)
+if ($CaLog) { Set-Content -Path "$esp\mOS\Sistema\Biblioteca\ca-log" -Value '1' -Encoding ascii }
+else { Remove-Item "$esp\mOS\Sistema\Biblioteca\ca-log" -ErrorAction SilentlyContinue }
 $mb = (Get-ChildItem "$esp\mOS\Aplicativos\VSCode.app" -Recurse -File | Measure-Object Length -Sum).Sum / 1MB
 Write-Host ("VSCode.app: {0:N1} MiB" -f $mb) -ForegroundColor Cyan
 & (Join-Path $root "$OutDir\mkimg.exe") (Join-Path $root "$OutDir\mOS.img") $esp $SizeMiB

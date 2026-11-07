@@ -611,13 +611,35 @@ static id crr_send(id o, const char *sel) {
     if (!s) { s = sel_registerName(sel); if (n < 8) { names[n] = sel; cache[n++] = s; } }
     return ((id (*)(id, SEL))objc_msgSend)(o, s);
 }
+/* objetos do libdispatch (dispatch.c, extra.c): o isa é uma classe OS_dispatch_* (swiftobjc.c), mas eles não têm o
+ * cabeçalho objhdr_t. Retain/release ObjC (ARC do Chromium com OS_OBJECT_USE_OBJC, o Swift) usam a contagem do
+ * dispatch.c, como o libdispatch da Apple; nunca o hdr()/dealloc/cx_object_free genérico. O dispatch_data não entra:
+ * no mOS ele é um CFData de verdade. */
+#define DQ(N) extern cx_class_t N##_dqc __asm__("OBJC_CLASS_$_" #N);
+DQ(OS_dispatch_queue) DQ(OS_dispatch_queue_serial) DQ(OS_dispatch_queue_concurrent) DQ(OS_dispatch_queue_main)
+DQ(OS_dispatch_queue_global) DQ(OS_dispatch_queue_attr) DQ(OS_dispatch_group) DQ(OS_dispatch_semaphore)
+DQ(OS_dispatch_source) DQ(OS_dispatch_io) DQ(OS_dispatch_workloop) DQ(OS_dispatch_object)
+#undef DQ
+void cx_dispatch_retain(void *o);
+void cx_dispatch_release(void *o);
+long cx_dispatch_retain_count(void *o);
+int cx_is_dispatch_object(id o) {
+    if (!o || ((u64)o & 7)) return 0;
+    cx_class_t *c = o->isa;
+    return c == &OS_dispatch_queue_serial_dqc || c == &OS_dispatch_queue_concurrent_dqc || c == &OS_dispatch_queue_main_dqc ||
+           c == &OS_dispatch_queue_global_dqc || c == &OS_dispatch_group_dqc || c == &OS_dispatch_semaphore_dqc ||
+           c == &OS_dispatch_source_dqc || c == &OS_dispatch_queue_dqc || c == &OS_dispatch_queue_attr_dqc ||
+           c == &OS_dispatch_io_dqc || c == &OS_dispatch_workloop_dqc || c == &OS_dispatch_object_dqc;
+}
 id objc_retain(id o) {
+    if (cx_is_dispatch_object(o)) { cx_dispatch_retain(o); return o; }
     objhdr_t *h = hdr(o);
     if (h) __sync_fetch_and_add(&h->rc, 1);
     else if (is_crr(o)) crr_send(o, "retain");
     return o;
 }
 void objc_release(id o) {
+    if (cx_is_dispatch_object(o)) { cx_dispatch_release(o); return; }
     objhdr_t *h = hdr(o);
     if (!h) { if (is_crr(o)) crr_send(o, "release"); return; }
     if (__sync_sub_and_fetch(&h->rc, 1) == 0) {
@@ -626,6 +648,7 @@ void objc_release(id o) {
     }
 }
 i32 cx_retain_count(id o) {
+    if (cx_is_dispatch_object(o)) { long n = cx_dispatch_retain_count(o); return n > 0x7FFFFFFF ? 0x7FFFFFFF : (i32)n; }
     objhdr_t *h = hdr(o);
     if (h) return h->rc;
     if (is_crr(o)) { u64 n = (u64)crr_send(o, "retainCount"); return n > 0x7FFFFFFF ? 0x7FFFFFFF : (i32)n; }
@@ -654,6 +677,7 @@ void *objc_destructInstance(id o) {
     return o;
 }
 void cx_object_free(id o) {
+    if (cx_is_dispatch_object(o)) return;           /* sem objhdr_t: a memória é do dispatch.c */
     objhdr_t *h = hdr(o);
     if (!h) return;
     weak_clear(o);
@@ -669,7 +693,7 @@ static id *pool;
 static u64 npool, cappool;
 static volatile int pool_lock;
 id objc_autorelease(id o) {
-    if (!hdr(o) && !is_crr(o)) return o;
+    if (!hdr(o) && !is_crr(o) && !cx_is_dispatch_object(o)) return o;
     while (__sync_lock_test_and_set(&pool_lock, 1)) SYS0(SYS_YIELD);
     if (npool == cappool) { cappool = cappool ? cappool * 2 : 1024; pool = realloc(pool, cappool * sizeof(id)); }
     pool[npool++] = o;

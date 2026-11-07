@@ -160,6 +160,10 @@ void _start(const char *arg) {
         int pt = spawn("posixteste", 0);
         CHECK(pt > 0 && wait(pt) == 0, "posixteste (Mach-O): fork/exec/wait, dup2, links e #!");
     }
+    if (file_size("/Sistema/Programas/dispatchteste") > 0) {   /* Mach-O: libdispatch em C (userland/tests-dispatch) */
+        int dt2 = spawn("dispatchteste", 0);
+        CHECK(dt2 > 0 && wait(dt2) == 0, "dispatchteste (Mach-O): filas, grupos, fontes, semáforos e isa OS_dispatch_*");
+    }
 
     print(fails ? "teste: %d FALHA(S)\n" : "teste: TODOS OS TESTES OK\n", (i64)fails);
     exit(fails);

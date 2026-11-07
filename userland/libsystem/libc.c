@@ -122,10 +122,10 @@ typedef struct blk { size_t size; struct blk *next; } blk_t;   /* size inclui o 
 #define MAGIC_USED 0x00A110CEull
 #define MAGIC_ALIGNED 0x0A11619Eull   /* bloco alinhado: cabeçalho = {ponteiro bruto, MAGIC_ALIGNED} */
 static blk_t *free_list;
-static char *heap_end;
+static char *heap_base, *heap_end;
 
 static void *more_core(size_t bytes) {
-    if (!heap_end) heap_end = (char *)SYS1(SYS_BRK, 0);
+    if (!heap_end) heap_base = heap_end = (char *)SYS1(SYS_BRK, 0);
     size_t grow = (bytes + 0xFFFF) & ~(size_t)0xFFFF;
     char *old = heap_end;
     long r = SYS1(SYS_BRK, old + grow);
@@ -161,7 +161,22 @@ static void hu(void) { if (__sync_fetch_and_sub(&heap_lock, 1) != 1) { heap_lock
 static void *malloc_unlocked(size_t n);
 static void free_unlocked(void *p);
 void *malloc(size_t n) { hl(); void *p = malloc_unlocked(n); hu(); return p; }
-void free(void *p) { if (!p) return; hl(); free_unlocked(p); hu(); }
+/* Ponteiro fora do heap (brk): como no macOS, free/malloc_size/realloc procuram a zona dona (mzone.c). O Chromium troca
+ * as funções da zona padrão pelas do PartitionAlloc e o Skia aloca por ela (base::UncheckedMalloc) mas chama
+ * malloc_size()/free() do libSystem: ler o "cabeçalho" de um bloco do PartitionAlloc derrubava o renderer (falta de
+ * página em malloc_size com um ponteiro alinhado à página). As versões cx_heap_* só conhecem o heap e são as que a zona
+ * padrão usa: o shim do Chromium devolve à zona original o que não é dele, e passar de novo pelas zonas seria recursão. */
+static int in_heap(const void *p) { return heap_base && (const char *)p >= heap_base && (const char *)p < heap_end; }
+size_t cx_zone_size(const void *p);
+int cx_zone_free(void *p);
+void *cx_zone_realloc(void *p, size_t n, int *done);
+static void not_allocated(const void *p) { cx_fdprintf(2, "malloc: *** error for object %p: pointer being freed was not allocated\n", p); abort(); }
+void cx_heap_free(void *p) { if (!p) return; if (!in_heap(p)) not_allocated(p); hl(); free_unlocked(p); hu(); }
+void free(void *p) {
+    if (!p) return;
+    if (!in_heap(p)) { if (!cx_zone_free(p)) not_allocated(p); return; }
+    hl(); free_unlocked(p); hu();
+}
 
 /* caixas por tamanho para blocos pequenos (até SMALL_MAX bytes com o cabeçalho): listas LIFO por tamanho exato,
  * malloc e free em O(1), sem coalescer. A lista livre geral (ordenada por endereço, first-fit) fica só com os
@@ -233,11 +248,16 @@ static void free_unlocked(void *p) {
     insert_free(b);
 }
 
+size_t cx_heap_size(const void *p) {
+    if (!p || !in_heap(p)) return 0;
+    blk_t *b = (blk_t *)((char *)p - HDR);
+    if (b->next == (blk_t *)MAGIC_ALIGNED) return cx_heap_size((void *)b->size) - (size_t)((char *)p - (char *)b->size);
+    if (b->next != (blk_t *)MAGIC_USED) return 0;            /* não é início de bloco em uso */
+    return b->size - HDR;
+}
 size_t malloc_size(const void *p) {
     if (!p) return 0;
-    blk_t *b = (blk_t *)((char *)p - HDR);
-    if (b->next == (blk_t *)MAGIC_ALIGNED) return malloc_size((void *)b->size) - (size_t)((char *)p - (char *)b->size);
-    return b->size - HDR;
+    return in_heap(p) ? cx_heap_size(p) : cx_zone_size(p);
 }
 size_t malloc_good_size(size_t n) { return (n + 15) & ~(size_t)15; }
 
@@ -248,14 +268,24 @@ void *calloc(size_t n, size_t s) {
     return p;
 }
 
-void *realloc(void *p, size_t n) {
+void *cx_heap_realloc(void *p, size_t n) {
     if (!p) return malloc(n);
-    if (!n) { free(p); return 0; }
-    size_t have = malloc_size(p);
+    if (!in_heap(p)) not_allocated(p);
+    if (!n) { cx_heap_free(p); return 0; }
+    size_t have = cx_heap_size(p);
     if (have >= n) return p;
     void *q = malloc(n);
-    if (q) { memcpy(q, p, have); free(p); }
+    if (q) { memcpy(q, p, have); cx_heap_free(p); }
     return q;
+}
+void *realloc(void *p, size_t n) {
+    if (p && !in_heap(p)) {
+        int done = 0;
+        void *q = cx_zone_realloc(p, n, &done);
+        if (!done) not_allocated(p);
+        return q;
+    }
+    return cx_heap_realloc(p, n);
 }
 
 void *reallocf(void *p, size_t n) { void *q = realloc(p, n); if (!q) free(p); return q; }
@@ -930,10 +960,14 @@ char *getcwd(char *b, size_t n) {
     if (strlen(cx_cwd) >= n) { cx_errno = CX_ERANGE; return 0; }
     return strcpy(b, cx_cwd);
 }
+static int link_step(char *abs, size_t cap, long *tlen);
 int chdir(const char *path) {
     mos_stat_t st;
     PATH(p, path);
-    if (ret_errno(SYS2(SYS_STAT, p, &st)) < 0) return -1;
+    char rp[1024];                                       /* a pasta pode ser um link (opt/<f>, portable-ruby/current) */
+    strlcpy(rp, p, sizeof rp);
+    for (int hop = 0; hop < 8 && link_step(rp, sizeof rp, 0); hop++) {}
+    if (ret_errno(SYS2(SYS_STAT, rp, &st)) < 0) return -1;
     if (!st.is_dir) { cx_errno = CX_ENOTDIR; return -1; }
     strlcpy(cx_cwd, p, sizeof cx_cwd);
     return 0;
@@ -951,8 +985,11 @@ int dup2(int a, int b) {
 int dup(int fd) {
     mos_stat_t st;
     if (fd >= 0 && fd <= 2 && SYS2(SYS_FSTAT, fd, &st) < 0) return fd;   /* console: igual a antes */
-    for (int i = 3; i < 32; i++)
-        if (SYS2(SYS_FSTAT, i, &st) < 0) return dup2(fd, i);
+    /* até PROC_MAX_FDS (256): procurar só até 32 dava EMFILE no processo principal do VS Code, que passa de 32 fds
+     * abertos, e o AsarURLLoader do Electron (base::File::Duplicate) não lia nada de dentro do node_modules.asar */
+    /* livre = SYS_FDFLAGS dá EBADF (o fstat também falha num arquivo apagado ainda aberto, e o dup2 o sobrescreveria) */
+    for (int i = 3; i < 256; i++)
+        if (SYS3(SYS_FDFLAGS, i, 0, 0) == -9) return dup2(fd, i);
     cx_errno = 24;   /* EMFILE */
     return -1;
 }
@@ -1234,6 +1271,10 @@ typedef struct { char path[1024]; long index; mac_dirent_t ent; int fd1; } cx_di
 cx_dir_t *opendir(const char *path) {
     mos_stat_t st;
     PATH(p, path);
+    char rp[1024];                                       /* segue o link da última parte (pasta-link do Homebrew) */
+    strlcpy(rp, p, sizeof rp);
+    for (int hop = 0; hop < 8 && link_step(rp, sizeof rp, 0); hop++) {}
+    p = rp;
     if (ret_errno(SYS2(SYS_STAT, p, &st)) < 0) return 0;
     if (!st.is_dir) { cx_errno = CX_ENOTDIR; return 0; }
     cx_dir_t *d = calloc(1, sizeof *d);

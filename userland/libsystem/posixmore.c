@@ -1079,3 +1079,6 @@ static int idna_copy(const char *name, int len, char *dest, int cap, int *err) {
 }
 int uidna_nameToASCII_UTF8(void *u, const char *name, int len, char *dest, int cap, void *info, int *err) { (void)u; (void)info; return idna_copy(name, len, dest, cap, err); }
 int uidna_nameToUnicodeUTF8(void *u, const char *name, int len, char *dest, int cap, void *info, int *err) { (void)u; (void)info; return idna_copy(name, len, dest, cap, err); }
+
+/* pseudo-terminais: o mOS ainda não tem; o ruby 4 importa ptsname_r (PTY.spawn) */
+int ptsname_r(int fd, char *buf, size_t len) { (void)fd; (void)buf; (void)len; cx_errno = 25; return -1; }   /* ENOTTY */

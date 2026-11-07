@@ -71,6 +71,21 @@ void *voucher_copy_without_importance(void) { return 0; }
 void voucher_release(void *v) { (void)v; }
 void *voucher_retain(void *v) { return v; }
 
+/* ---- retain/release ObjC dos objetos do dispatch (objc.c manda objc_retain/objc_release deles para cá): a contagem é a
+ * do dispatch.c (dispatch_retain/dispatch_release), como no libdispatch da Apple; nunca o dealloc/object_dispose do
+ * NSObject, porque estes objetos não têm o cabeçalho objhdr_t. -dealloc não faz nada: quem libera é o dispatch_release. */
+void cx_dispatch_retain(void *o);
+void cx_dispatch_release(void *o);
+long cx_dispatch_retain_count(void *o);       /* dispatch.c */
+static id os_retain(id self, SEL c) { (void)c; cx_dispatch_retain(self); return self; }
+static void os_release(id self, SEL c) { (void)c; cx_dispatch_release(self); }
+static u64 os_retain_count(id self, SEL c) { (void)c; return (u64)cx_dispatch_retain_count(self); }
+id objc_autorelease(id o);
+static id os_autorelease(id self, SEL c) { (void)c; return objc_autorelease(self); }
+static void os_dealloc(id self, SEL c) { (void)self; (void)c; }
+static BOOL os_try_retain(id self, SEL c) { (void)c; cx_dispatch_retain(self); return YES; }
+static BOOL os_deallocating(id self, SEL c) { (void)self; (void)c; return NO; }
+
 /* chamado por cx_objc_boot (objc.c) depois do Foundation */
 void cx_swiftobjc_init(void) {
 #define DEF(N, S) cx_define_class(&N##_c, &N##_m, #N, &S##_c, 0)
@@ -90,6 +105,14 @@ void cx_swiftobjc_init(void) {
     DEF(OS_dispatch_workloop, OS_dispatch_queue);
     DEF(OS_os_log, OS_object);
 #undef DEF
+    /* as subclasses herdam (OS_dispatch_data não existe como objeto: o dispatch_data_t do mOS é um CFData) */
+    cx_add_method(&OS_dispatch_object_c, "retain", (void *)os_retain);
+    cx_add_method(&OS_dispatch_object_c, "release", (void *)os_release);
+    cx_add_method(&OS_dispatch_object_c, "retainCount", (void *)os_retain_count);
+    cx_add_method(&OS_dispatch_object_c, "autorelease", (void *)os_autorelease);
+    cx_add_method(&OS_dispatch_object_c, "dealloc", (void *)os_dealloc);
+    cx_add_method(&OS_dispatch_object_c, "_tryRetain", (void *)os_try_retain);
+    cx_add_method(&OS_dispatch_object_c, "_isDeallocating", (void *)os_deallocating);
     /* NSUUID -initWithUUIDString:/-initWithUUIDBytes:, isEqual:/hash por valor... (corebluetooth.c): no boot o CoreBluetooth
      * sobe antes do foundation_more.c definir o NSUUID; aqui ele já existe. A ponte UUID <-> NSUUID do Swift usa isso. */
     { extern void cx_foundation_gaps(void); cx_foundation_gaps(); }

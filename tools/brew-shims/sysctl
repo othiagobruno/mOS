@@ -1,0 +1,17 @@
+#!/bin/bash
+# mOS: as chaves de sysctl que o Homebrew e os scripts de instalação perguntam (x86_64, sem Rosetta).
+[ "$1" = "-n" ] && shift
+for k in "$@"; do
+  case "$k" in
+    hw.optional.arm64|sysctl.proc_translated|hw.optional.avx512f) echo 0 ;;
+    hw.optional.sse4_2|hw.optional.avx1_0|hw.optional.avx2_0) echo 1 ;;
+    hw.ncpu|hw.logicalcpu|hw.physicalcpu|hw.activecpu) echo 4 ;;
+    hw.memsize) echo 2147483648 ;;
+    hw.cputype) echo 7 ;;
+    hw.cpufamily) echo 260141638 ;;
+    machdep.cpu.brand_string) echo "mOS virtual x86_64" ;;
+    kern.osproductversion) echo 14.7.6 ;;
+    kern.osrelease) echo 23.6.0 ;;
+    *) echo "sysctl: unknown oid '$k'" >&2; exit 1 ;;
+  esac
+done

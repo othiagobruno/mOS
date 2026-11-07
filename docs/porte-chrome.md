@@ -56,6 +56,32 @@ Dentro do mOS (QEMU, 3 GiB), aberto pelo Launchpad:
 | Menu principal | ✅ o Chrome monta o `NSMenu` (avisos de `NSMenuItem setAlternate:/setHidden:/setImage:`, `NSMenu itemWithTag:`, `sectionHeaderWithTitle:` ainda não implementados, sem cair) |
 | **Agora** | ⏳ o processo fica vivo (minutos) sem janela e sem iniciar nenhum `Google Chrome Helper` (GPU/Renderer): falta descobrir em que ele espera |
 
+### Helpers sobem (7 nov. 2026, manhã)
+
+| Bloqueio | Causa no mOS | Correção |
+|---|---|---|
+| Thread principal girando sem parar | `dispatch_async` na fila principal antes do CFRunLoop executava na hora; o `-rebuildMenu` do Chrome se reagenda | dispatch.c: de dentro de um bloco já executado assim, vai para a fila |
+| Laço infinito no menu | NSMenu sem `itemAtIndex:`/`removeItemAtIndex:`/`numberOfItems`, NSMenuItem sem `isSeparatorItem` | appkit.c: NSMenu/NSMenuItem completos (índice, tag, título, separador, oculto, alternativo, imagem, cabeçalho de seção) |
+| Helper não carregava `libaperitif.dylib` | `process_t.path` tinha 128 bytes; o caminho do helper tem 198 e `@executable_path` saía cortado | proc.h (e tools/host_proc.h): 384; macho.c: `executable_path=` com 420 |
+| Helper: `CHECK(bundle)` do framework | `mainBundle` cortava no PRIMEIRO `.app/` (o Chrome de fora); o helper lia o Info.plist errado e não se via como processo de fundo (`LSUIElement`) | foundation.c `b_root`: o `.app` que contém `Contents/MacOS/<exe>` |
+| Helper: `thread_local` lia lixo | slot 101 da TSD usado por dois donos: tabela de TLS (darwin.c) e objeto NSThread (nsurl.c) | darwin.c: TLS no slot 110; lista dos slots fixos documentada |
+| `dispatch_retain` não fazia nada e `dispatch_release` liberava na hora | — | dispatch.c/extra.c: contagem de referências; objetos estáticos nunca liberados |
+
+**Agora:** o processo principal sobe, inicia o Crashpad e dois `Google Chrome Helper (Aperitif)`, que ficam vivos. O
+principal cai na detecção de corrupção do PartitionAlloc (código `0x13`, `0x9cc34a0`, chamada de `0x83b51` logo depois
+de `os_unfair_lock_unlock` da raiz): a "lista livre" tem `0x6D4F5351756588` = `QMAGIC` das filas do dispatch.c + 0x13.
+Já descartado: liberar fila cedo (com `dispatch_release` sem free nenhum a queda continua), `free`/`in_heap` (brk e mmap
+não se sobrepõem) e o COW do `fork` (todas as páginas marcadas). Próximo passo: achar quem escreve uma `cx_queue_t`
+num bloco do PartitionAlloc (tracepoint no `dispatch_queue_create` com `@rax` na volta, comparado com o endereço do
+bloco corrompido, que sai de `r14`/`r12` em `0x83b28`).
+
+Atualização (com o libSystem de 7 nov., WHPX): com `despejar-threads`, o dispatch.c registra o endereço de cada fila
+(`dispatch[diag]`). As filas ficam no heap brk do mOS (`0x40000142ccf0`, `0x40000143ce30`...), fora do PartitionAlloc;
+então não é o malloc do mOS entregando memória do Chrome, e sim o PartitionAlloc tratando uma fila do mOS como bloco livre.
+Desde que as filas ganharam `isa` (`OS_dispatch_queue_*`), o ARC do Chrome as libera com `objc_release`; a próxima pista
+é o caminho `-release` → `dealloc` → `object_dispose` → `cx_object_free` nesses objetos sem cabeçalho de objeto do
+mOS (as pilhas das threads que giravam já mostravam `cx_object_free`/`object_dispose`). A queda continua em `0x9cc3297`.
+
 Ferramentas: `tools\stage-chrome.ps1 -AutoAbrir` (o `init` abre o Chrome no boot, sem depender do mouse no QEMU) e
 os tracepoints (`/Sistema/Biblioteca/diag-tracepoints`), que agora também valem para imagens do `dlopen` (macho.c).
 

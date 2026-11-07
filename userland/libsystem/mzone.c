@@ -41,12 +41,18 @@ typedef struct malloc_zone {
     void (*try_free_default)(struct malloc_zone *, void *);
 } malloc_zone_t;
 
-static size_t z_size(malloc_zone_t *z, const void *p) { (void)z; return p ? malloc_size(p) : 0; }
+/* a zona padrão só conhece o heap do libc.c (cx_heap_*): ponteiros de fora são de outra zona, e é free/malloc_size/
+ * realloc do libSystem que procuram a dona (cx_zone_* abaixo). O shim do Chromium devolve à zona original o que não é
+ * do PartitionAlloc; se a zona original voltasse a procurar pelas zonas, seria recursão. */
+size_t cx_heap_size(const void *p);
+void cx_heap_free(void *p);
+void *cx_heap_realloc(void *p, size_t n);
+static size_t z_size(malloc_zone_t *z, const void *p) { (void)z; return cx_heap_size(p); }
 static void *z_malloc(malloc_zone_t *z, size_t n) { (void)z; return malloc(n); }
 static void *z_calloc(malloc_zone_t *z, size_t n, size_t s) { (void)z; return calloc(n, s); }
 static void *z_valloc(malloc_zone_t *z, size_t n) { (void)z; void *p; return posix_memalign(&p, 4096, n) ? 0 : p; }
-static void z_free(malloc_zone_t *z, void *p) { (void)z; free(p); }
-static void *z_realloc(malloc_zone_t *z, void *p, size_t n) { (void)z; return realloc(p, n); }
+static void z_free(malloc_zone_t *z, void *p) { (void)z; cx_heap_free(p); }
+static void *z_realloc(malloc_zone_t *z, void *p, size_t n) { (void)z; return cx_heap_realloc(p, n); }
 static void z_destroy(malloc_zone_t *z) { (void)z; }
 static unsigned z_batch_malloc(malloc_zone_t *z, size_t n, void **out, unsigned num) {
     unsigned i = 0;
@@ -57,7 +63,9 @@ static void z_batch_free(malloc_zone_t *z, void **ps, unsigned num) { for (unsig
 static void *z_memalign(malloc_zone_t *z, size_t a, size_t n) { (void)z; void *p; return posix_memalign(&p, a < 16 ? 16 : a, n) ? 0 : p; }
 static void z_free_definite(malloc_zone_t *z, void *p, size_t n) { (void)n; z->free(z, p); }
 static size_t z_pressure(malloc_zone_t *z, size_t goal) { (void)z; (void)goal; return 0; }
-static int z_claimed(malloc_zone_t *z, void *p) { (void)z; return p != 0; }
+/* a zona padrão original só é dona do que está no heap brk (antes dizia "é meu" para qualquer ponteiro, e quem decidia a
+ * dona por aqui — ex.: o shim do Chromium — podia entregar ao PartitionAlloc um bloco que não era dele, ou vice-versa) */
+static int z_claimed(malloc_zone_t *z, void *p) { (void)z; return cx_heap_size(p) != 0; }
 static void z_try_free_default(malloc_zone_t *z, void *p) { z->free(z, p); }
 
 static int i_zero(void) { return 0; }
@@ -84,7 +92,15 @@ static unsigned nzones = 1;
 
 malloc_zone_t *malloc_default_zone(void) { return DZ; }
 malloc_zone_t *malloc_default_purgeable_zone(void) { return DZ; }
-malloc_zone_t *malloc_zone_from_ptr(const void *p) { return p ? DZ : 0; }
+static malloc_zone_t *zone_owner(const void *p, size_t *sz);
+/* como no macOS: a zona cujo size() reconhece o ponteiro, ou NULL. Bloco do heap brk -> a zona padrão (se o Chromium
+ * trocou as funções dela, o shim devolve às originais o que não é do PartitionAlloc); fora do heap, a primeira zona que
+ * o reconheça (o PartitionAlloc, pela zona padrão trocada); ninguém -> NULL (antes: sempre a zona padrão). */
+malloc_zone_t *malloc_zone_from_ptr(const void *p) {
+    if (!p) return 0;
+    if (cx_heap_size(p)) return DZ;
+    return zone_owner(p, 0);
+}
 
 /* kern_return_t malloc_get_all_zones(task, reader, vm_address_t **addresses, unsigned *count) */
 int malloc_get_all_zones(unsigned task, void *reader, u64 **addresses, unsigned *count) {
@@ -94,6 +110,31 @@ int malloc_get_all_zones(unsigned task, void *reader, u64 **addresses, unsigned 
     if (addresses) *addresses = addrs;
     if (count) *count = nzones;
     return 0;
+}
+
+/* dona de um ponteiro fora do heap: como no macOS, a primeira zona cujo size() o reconhece. A zona padrão entra se o
+ * Chromium trocou as funções dela (o size do PartitionAlloc devolve 0 para o que não é dele). */
+static malloc_zone_t *zone_owner(const void *p, size_t *sz) {
+    if (!p) return 0;
+    for (unsigned i = 0; i < nzones; i++) {
+        malloc_zone_t *z = zones[i];
+        if (!z || !z->size || z->size == z_size) continue;
+        size_t s = z->size(z, p);
+        if (s) { if (sz) *sz = s; return z; }
+    }
+    return 0;
+}
+size_t cx_zone_size(const void *p) { size_t s = 0; return zone_owner(p, &s) ? s : 0; }
+int cx_zone_free(void *p) {
+    malloc_zone_t *z = zone_owner(p, 0);
+    if (!z || !z->free) return 0;
+    z->free(z, p);
+    return 1;
+}
+void *cx_zone_realloc(void *p, size_t n, int *done) {
+    malloc_zone_t *z = zone_owner(p, 0);
+    *done = z && z->realloc;
+    return *done ? z->realloc(z, p, n) : 0;
 }
 
 void malloc_zone_register(malloc_zone_t *z) { if (nzones < 8) zones[nzones++] = z; }
@@ -113,4 +154,9 @@ void *malloc_zone_realloc(malloc_zone_t *z, void *p, size_t n) { return (z ? z :
 void *malloc_zone_memalign(malloc_zone_t *z, size_t a, size_t n) { return (z ? z : DZ)->memalign(z ? z : DZ, a, n); }
 void malloc_zone_free(malloc_zone_t *z, void *p) { (z ? z : DZ)->free(z ? z : DZ, p); }
 size_t malloc_zone_pressure_relief(malloc_zone_t *z, size_t goal) { (void)z; (void)goal; return 0; }
-int malloc_zone_claimed_address(malloc_zone_t *z, void *p) { (void)z; return p != 0; }
+int malloc_zone_claimed_address(malloc_zone_t *z, void *p) {
+    if (!p) return 0;
+    if (!z) z = DZ;
+    if (z->version >= 10 && z->claimed_address) return z->claimed_address(z, p);
+    return z->size && z->size(z, p) != 0;
+}

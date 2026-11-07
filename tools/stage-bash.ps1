@@ -66,7 +66,7 @@ if ($pr) {
 # com links em /usr/local/bin. Os bottles Intel já usam o prefixo /usr/local; as dylibs ficam no opt de verdade
 # porque o loader não segue links ao carregar dependências.
 $feitas = @('bash', 'readline', 'ncurses', 'gettext', 'coreutils', 'gmp', 'portable-ruby', 'zlib', 'libffi')
-$gnu = @{ 'gsed' = 'sed'; 'ggrep' = 'grep'; 'gegrep' = 'egrep'; 'gfgrep' = 'fgrep'; 'gtar' = 'tar' }   # o "gnubin" de cada uma
+$gnu = @{ 'gsed' = 'sed'; 'ggrep' = 'grep'; 'gegrep' = 'egrep'; 'gfgrep' = 'fgrep'; 'gtar' = 'tar'; 'gfind' = 'find'; 'gxargs' = 'xargs'; 'gawk' = 'awk' }   # o "gnubin" de cada uma
 foreach ($fd in Get-ChildItem $b -Directory) {
     if ($feitas -contains $fd.Name) { continue }
     $src = Get-ChildItem $fd.FullName -Directory | Select-Object -First 1
