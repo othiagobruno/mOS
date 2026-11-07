@@ -7,6 +7,7 @@
  * arquivo, no estilo do TweetNaCl (domínio público): corpo GF(2^255-19) em 16 limbs, coordenadas estendidas.
  * Todas devolvem 0 em sucesso. mos_ck_selftest() confere os vetores dos RFCs.
  */
+#define MOS_HOST_TEST 1                    /* os cabeçalhos do kernel pelo shim de userland/libsystem/kshim */
 #include "sys.h"
 #include "kshim/crypto.h"
 #include "kshim/x509.h"
@@ -122,7 +123,7 @@ int mos_ck_aes_gcm_open(const u8 *key, size_t klen, const u8 nonce[12], const u8
     if (klen != 16 && klen != 32) return -2;
     aes_gcm_ctx c;
     aes_gcm_init(&c, key, (u32)klen);
-    int r = aes_gcm_open(&c, nonce, aad, alen, in, n, tag, out);
+    int r = aes_gcm_open(&c, nonce, aad, alen, in, n, out, tag);
     secure_zero(&c, sizeof c);
     return r == 0 ? 0 : -1;
 }
@@ -131,7 +132,7 @@ int mos_ck_chachapoly_seal(const u8 key[32], const u8 nonce[12], const u8 *aad, 
     return 0;
 }
 int mos_ck_chachapoly_open(const u8 key[32], const u8 nonce[12], const u8 *aad, size_t alen, const u8 *in, size_t n, const u8 tag[16], u8 *out) {
-    return chacha20poly1305_open(key, nonce, aad, alen, in, n, tag, out) == 0 ? 0 : -1;
+    return chacha20poly1305_open(key, nonce, aad, alen, in, n, out, tag) == 0 ? 0 : -1;
 }
 /* AES Key Wrap (RFC 3394), com o AES-ECB do CommonCrypto */
 static int aes_block(int dec, const u8 *key, size_t klen, const u8 in[16], u8 out[16]) {
@@ -365,9 +366,6 @@ int mos_ck_ec_shared(int bits, const u8 *priv, const u8 *peer, u8 *out) {
     int c = curve_id(bits), B = mos_ck_ec_size(bits);
     return c ? ecdh_shared(c, out, priv, peer, (u32)(1 + 2 * B)) : -1;
 }
-/* ponto comprimido (02/03 || X) → 04 || X || Y: y = sqrt(x^3 - 3x + b); p ≡ 3 (mod 4) nas três curvas, raiz por expoente
- * (p+1)/4. Feito com a aritmética de pk.c pela via pública: tenta as duas paridades e confere com ecdsa? Não — o
- * CryptoKit aceita compactRepresentation só como entrada; resolvemos aqui com bignum simples de 32 bits. */
 
 /* ================================================================ autoteste (vetores dos RFCs) */
 static int hexeq(const u8 *b, size_t n, const char *hex) {
