@@ -114,3 +114,28 @@ o Cursor abre na tela de login **sem nenhum aviso**: o ambiente do shell resolve
 Extension Host fica de pé os 7 minutos da rodada e as chamadas a `api2.cursor.sh` voltam `[unauthenticated]`.
 Pendentes: o login (do usuário), o git (o bottle tem 619 MiB, grande demais para a RAM da VM como está) e o
 `/usr/bin/security` que o ProxyResolver chama para ler certificados.
+
+## Antigravity na VM (7 nov., noite)
+
+**O Antigravity 2.29.0 abre a tela "Welcome to Antigravity"** (Continue with Google / Use Business Account) com o
+`language_server` rodando (forks, porta própria, `~/Library/Logs/Antigravity/language_server.log`).
+
+- O Antigravity 2 só abre a janela depois que o `language_server` responde. O `stage-electron.ps1` não copia
+  `Resources/bin`; copie à mão para `build-ag\esp\mOS\Aplicativos\Antigravity.app\Contents\Resources\bin`.
+- O `language_server` é **Go não-PIE** (sem `MH_PIE`, `dyld_info` com só 4 rebases) e o mOS desliza tudo para
+  `IMAGE_BASE`. O carregador (`nonpie_slide` em `kernel/compat/macho.c`) agora desliza os ponteiros absolutos dos
+  dados. A regra foi afinada contra os falsos positivos que apareceram, um por rodada:
+  1. `0x100000000` como par de `int32 {0, 1}` (inicializador C++): nada abaixo da primeira seção é alvo;
+  2. pares `{nameOff, 1}` em `__go_type` caindo no `__text`: lá, valor no código precisa ser início de função
+     (`LC_FUNCTION_STARTS`) — "name offset out of range";
+  3. tabelas de saltos do Go em `__rodata` (endereços no meio das funções) e o `maxpc` da moduledata: a regra 2 só
+     vale em `__go_type`;
+  4. `{PkgPath, Mcount=1}` do `uncommontype` que por acaso cai num início de função: em `__go_type` o valor também
+     precisa ter a forma do `equal` (seguido do `gcdata`) ou do `Hasher` (depois de três ponteiros) — "invalid type
+     descriptor";
+  5. a pclntab (`__lrodata_gopcln`) é fluxo de bytes: fica de fora ("index out of range" no `funcfile`). O
+     `__noptrdata` fica dentro: "sem ponteiros" é só para o coletor, e ele guarda a lista de `inittask`;
+  6. funcvals isolados em `__go_type` (o `Hasher` de um `mapType` aponta para um `{fn}` no meio dos nomes): aceitos
+     quando o endereço deles é alvo de outro ponteiro.
+  Resultado: 955.502 ponteiros deslizados, 2.809 valores recusados, 197.699 funções.
+- Memória: `-Memory 3400` (como o Cursor).
