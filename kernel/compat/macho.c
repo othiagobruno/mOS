@@ -1939,11 +1939,18 @@ bool macho_load(process_t *p, const u8 *img, usize len, const char *arg, u64 *en
     u64 *uenv = kmalloc(sizeof(u64) * (usize)envc);
     u64 uapple[2];
     bool args_ok = uargv && uenv;
+    /* As strings vão num bloco só, em ordem crescente como no XNU: argv[0] < argv[1] < ... < envp... < apple.
+     * O libuv (process.title do Node/Electron) e o setproctitle reescrevem o argv em lugar contando com isso:
+     * tamanho = argv[argc-1] + strlen - argv[0]. Com as strings empilhadas uma a uma de cima para baixo (ordem
+     * invertida), o tamanho saía negativo e o memset do "Cursor Helper: shared-process" passava do topo da pilha.
+     * Primeiro só se medem os tamanhos; os endereços saem do começo do bloco. */
+    usize *soff = kmalloc(sizeof(usize) * ((usize)argc + (usize)envc + 1));
+    if (!soff) args_ok = false;
+    usize sblk = 0;
     for (int i = 0; args_ok && i < argc; i++) {
         const char *s = full ? p->spawn_argv[i] : av[i];
-        if (!s) s = "";
-        uargv[i] = us_push(&st, s, strlen(s) + 1, 1);
-        if (!uargv[i]) args_ok = false;
+        soff[i] = sblk;
+        sblk += strlen(s ? s : "") + 1;
     }
     char pwd[272];
     snprintf(pwd, sizeof pwd, "PWD=%s", next_cwd);
@@ -1957,22 +1964,37 @@ bool macho_load(process_t *p, const u8 *img, usize len, const char *arg, u64 *en
                           "PATH=/usr/local/bin:/Sistema/Programas:/usr/bin:/bin", p->tty ? "TERM=xterm-256color" : "TERM=dumb",   /* sessão do Terminal: isatty(0..2) verdadeiro */
                           "LANG=pt_BR.UTF-8",
                           pwd, shell_env};
-    if (p->spawn_envc > 0 && p->spawn_env) {
-        for (int i = 0; args_ok && i < envc; i++) {
-            const char *s = p->spawn_env[i] ? p->spawn_env[i] : "";
-            uenv[i] = us_push(&st, s, strlen(s) + 1, 1);
-            if (!uenv[i]) args_ok = false;
-        }
-    } else {
-        for (u32 i = 0; args_ok && i < ARRAY_LEN(envs); i++) {
-            uenv[i] = us_push(&st, envs[i], strlen(envs[i]) + 1, 1);
-            if (!uenv[i]) args_ok = false;
-        }
+    bool own_env = p->spawn_envc > 0 && p->spawn_env;
+    int nenv = own_env ? envc : (int)ARRAY_LEN(envs);
+    for (int i = 0; args_ok && i < nenv; i++) {
+        const char *s = own_env ? (p->spawn_env[i] ? p->spawn_env[i] : "") : envs[i];
+        soff[argc + i] = sblk;
+        sblk += strlen(s) + 1;
     }
     char ep[420];           /* "executable_path=" + caminho (process_t.path tem até 384) */
     snprintf(ep, sizeof ep, "executable_path=%s", p->path);
-    uapple[0] = us_push(&st, ep, strlen(ep) + 1, 1);
+    usize ep_off = sblk;
+    sblk += strlen(ep) + 1;
+    u8 *sblkbuf = args_ok ? kmalloc(sblk ? sblk : 1) : NULL;
+    if (!sblkbuf) args_ok = false;
+    for (int i = 0; args_ok && i < argc; i++) {
+        const char *s = full ? p->spawn_argv[i] : av[i];
+        if (!s) s = "";
+        memcpy(sblkbuf + soff[i], s, strlen(s) + 1);
+    }
+    for (int i = 0; args_ok && i < nenv; i++) {
+        const char *s = own_env ? (p->spawn_env[i] ? p->spawn_env[i] : "") : envs[i];
+        memcpy(sblkbuf + soff[argc + i], s, strlen(s) + 1);
+    }
+    if (args_ok) memcpy(sblkbuf + ep_off, ep, strlen(ep) + 1);
+    u64 sbase = args_ok ? us_push(&st, sblkbuf, sblk, 8) : 0;
+    if (!sbase) args_ok = false;
+    for (int i = 0; args_ok && i < argc; i++) uargv[i] = sbase + soff[i];
+    for (int i = 0; args_ok && i < nenv; i++) uenv[i] = sbase + soff[argc + i];
+    uapple[0] = args_ok ? sbase + ep_off : 0;
     uapple[1] = 0;
+    kfree(sblkbuf);
+    kfree(soff);
     u64 z = 0;
     us_push(&st, &z, 8, 16);
     us_push(&st, uapple, sizeof uapple, 8);
