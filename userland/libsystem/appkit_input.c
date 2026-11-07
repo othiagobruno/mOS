@@ -6,13 +6,15 @@
  *    doCommandBySelector: (deleteBackward:, insertNewline:, moveLeft:...); caractere imprimível vira
  *    insertText:replacementRange: (ou insertText:). Com ⌘ nada é interpretado (vai por performKeyEquivalent:).
  *  - NSTextInputContext: +currentInputContext, -initWithClient:, -handleEvent: (passa por
- *    interpretKeyEvents: no cliente), marked text descartável. Sem IME de composição por enquanto: o texto
- *    chega já confirmado, como num teclado US/ABNT2 sem teclas mortas.
+ *    interpretKeyEvents: no cliente), fontes de entrada (teclado, japonês, chinês, coreano). Antes da
+ *    interpretação, o método de entrada (appkit_ime.c) fica com as teclas de composição e fala com o cliente por
+ *    setMarkedText:/insertText:.
  *  - -[NSView inputContext] para quem implementa NSTextInputClient.
  *  - Arrastar: NSDraggingItem, NSDraggingSession, -[NSView beginDraggingSessionWithItems:event:source:].
- *    Os itens vão para o pasteboard de arrasto ("Apple CFPasteboard drag"); como o servidor de janelas do mOS
- *    ainda não leva o arrasto a outra janela, a sessão termina na hora com NSDragOperationNone e a fonte
- *    recebe draggingSession:endedAtPoint:operation: (o Chromium libera o estado do arrasto nesse ponto).
+ *    Os itens vão para o pasteboard de arrasto ("Apple CFPasteboard drag") e, serializados, para o window server
+ *    (GUI_DRAG), que segue o cursor e entrega o arrasto à janela de qualquer app embaixo dele. O destino recebe
+ *    um NSDraggingInfo (draggingEntered:/Updated:/Exited:, prepare/perform/concludeDragOperation:); a fonte,
+ *    draggingSession:movedToPoint: e endedAtPoint:operation: com a operação feita.
  *  - registerForDraggedTypes:/unregisterDraggedTypes/registeredDraggedTypes guardam os tipos de verdade.
  */
 #include "foundation.h"
@@ -565,6 +567,7 @@ void cx_corebluetooth_init(void) __attribute__((weak));
 static void r_key_up_fwd(id self, SEL c, id e) { (void)c; id n = ain_resp(self, "nextResponder") ? MSG0(id, self, "nextResponder") : 0; if (n && n != self) MSG(void, n, "keyUp:", e); }
 void cx_appkit_input_init(void) {
     cx_gamecontroller_init();   /* gamecontroller.c: GameController e CoreHaptics */
+    { extern void cx_vision_init(void); cx_vision_init(); }   /* vision.c */
     if (cx_corebluetooth_init) cx_corebluetooth_init();   /* corebluetooth.c */
     cx_framework_classes_init(); /* vscode_fwclasses.c: classes de frameworks ausentes */
     cx_appkit_extra_init();     /* appkit_extra.c: painéis, barra de status, NSAnimation, NSParagraphStyle... */

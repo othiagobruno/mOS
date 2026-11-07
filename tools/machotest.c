@@ -92,7 +92,7 @@ static int hd_seq, hd_src_win, hd_pending_end = -1, hd_foreign, ime_src;
 /* controle de jogo, áudio e periférico Bluetooth LE simulados (GUI_DEVICE) */
 static gui_gamepad_t hd_pad;
 static u64 hd_audio_frames;
-static int hd_audio_said, hd_bt_state = 2, hd_bt_scan, hd_bt_link;
+static int hd_audio_said, hd_bt_state = 2, hd_bt_scan, hd_bt_link, hd_periph;
 static u8 hd_att[16][64];
 static int hd_att_len[16], hd_att_rh, hd_att_rt;
 static void hd_att_push(const u8 *p, int n) { memcpy(hd_att[hd_att_rh], p, n); hd_att_len[hd_att_rh] = n; hd_att_rh = (hd_att_rh + 1) % 16; }
@@ -274,6 +274,15 @@ static long long gui_syscall(u64 n, u64 a, u64 b, u64 c, u64 d) {
             printf("[gui] evento: %s\n", tok);
             return 0;
         }
+        else if (!strcmp(tok, "btcentral")) {
+            /* um central conecta no anúncio do app e faz a descoberta GATT de praxe, lê 2A19 e assina as notificações */
+            static const u8 q[][8] = {{3, 0x02, 0x17, 0x00}, {7, 0x10, 0x01, 0x00, 0xff, 0xff, 0x00, 0x28}, {7, 0x08, 0x01, 0x00, 0xff, 0xff, 0x03, 0x28},
+                                      {3, 0x0A, 0x03, 0x00}, {5, 0x04, 0x04, 0x00, 0xff, 0xff}, {5, 0x12, 0x04, 0x00, 0x01, 0x00}};
+            hd_periph = 1; hd_bt_link = 2;
+            for (int i = 0; i < 6; i++) hd_att_push(q[i] + 1, q[i][0]);
+            printf("[gui] evento: %s\n", tok);
+            return 0;
+        }
         else if (!strncmp(tok, "keyup:", 6)) { e->type = GEV_KEY_UP; e->key = tok[6]; e->text[0] = tok[6]; }
         else if (sscanf(tok, "dgenter:%d,%d", &x, &y) == 2 || sscanf(tok, "dgmove:%d,%d", &x, &y) == 2 || sscanf(tok, "dgdrop:%d,%d", &x, &y) == 2 || !strcmp(tok, "dgexit")) {
             /* "dgforeign": a sessão parece vir de outro processo (o destino lê o conteúdo por DG_DATA) */
@@ -339,8 +348,11 @@ static long long gui_syscall(u64 n, u64 a, u64 b, u64 c, u64 d) {
             return 1;
         case DEV_BT_CONNECT: printf("[bt] conectar ao dispositivo %llu\n", (unsigned long long)b); hd_bt_link = 2; return 0;
         case DEV_BT_DISCONNECT: printf("[bt] desconectar\n"); hd_bt_link = 0; return 0;
-        case DEV_BT_LINK: { gui_bt_link_t *o = (gui_bt_link_t *)b; memset(o, 0, sizeof *o); o->state = hd_bt_link; o->mtu = 23; strcpy(o->addr, "C0:FF:EE:00:00:01"); return 0; }
-        case DEV_BT_ATT_SEND: return hd_gatt_request((const u8 *)b, (int)c);
+        case DEV_BT_LINK: { gui_bt_link_t *o = (gui_bt_link_t *)b; memset(o, 0, sizeof *o); o->state = hd_bt_link; o->mtu = 23; o->role = hd_periph; strcpy(o->addr, "C0:FF:EE:00:00:01"); return 0; }
+        case DEV_BT_ATT_SEND:
+            if (hd_periph) { printf("[bt] o app (periférico) respondeu:"); for (u64 i = 0; i < c; i++) printf(" %02x", ((const u8 *)b)[i]); printf("\n"); return 0; }
+            return hd_gatt_request((const u8 *)b, (int)c);
+        case DEV_BT_ADVERTISE: printf("[bt] anúncio %s (%llu bytes)\n", d ? "ligado" : "desligado", (unsigned long long)c); return 0;
         case DEV_BT_ATT_RECV:
             if (hd_att_rt == hd_att_rh) return hd_bt_link ? 0 : -1;
             { int n = hd_att_len[hd_att_rt]; memcpy((void *)b, hd_att[hd_att_rt], n); hd_att_rt = (hd_att_rt + 1) % 16; return n; }

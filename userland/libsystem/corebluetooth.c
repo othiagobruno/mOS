@@ -9,8 +9,8 @@
  * Um timer de 10 ms no run loop principal lê o canal e o estado do enlace; os métodos do delegate são chamados na
  * fila passada ao CBCentralManager (a principal se nil).
  *
- * Limites do mOS: uma conexão LE por vez (o kernel tem um enlace), e o papel periférico (CBPeripheralManager,
- * anunciar e servir GATT) informa CBManagerStateUnsupported.
+ * Limite do mOS: uma conexão LE por vez (o kernel tem um enlace). O papel periférico (CBPeripheralManager:
+ * anunciar e servir GATT) está em corebluetooth_server.inc.
  */
 #include "foundation.h"
 #include "sys.h"
@@ -175,7 +175,7 @@ cx_class_t CBPeripheralManager_c __asm__("OBJC_CLASS_$_CBPeripheralManager"), CB
 cx_class_t CBMOSTicker_c __asm__("OBJC_CLASS_$_CBMOSTicker"), CBMOSTicker_m __asm__("OBJC_METACLASS_$_CBMOSTicker");
 
 typedef struct { void *isa; id uuid; id peripheral; BOOL primary; u16 start, end; id chars, included; } cbsvc_t;
-typedef struct { void *isa; id uuid; id service; u8 props; u16 decl, vh, end; id value, descs; BOOL notifying; u16 cccd; } cbchr_t;
+typedef struct { void *isa; id uuid; id service; u8 props; u16 decl, vh, end; id value, descs; BOOL notifying; u16 cccd; u64 perms; BOOL fixed, subscribed; } cbchr_t;
 typedef struct { void *isa; id uuid; id chr; u16 h; id value; } cbdsc_t;
 typedef struct {
     void *isa;
@@ -245,6 +245,7 @@ static void dcall_run(void *p) {
 }
 /* delegate da central ou do periférico, na fila escolhida */
 static void *central_queue(id central);
+static void server_tick(void);
 static void foundation_gaps(void);
 static void deliver(id central, id obj, const char *sel, int nargs, id a1, id a2, id a3, id a4) {
     if (!obj) return;
@@ -841,22 +842,9 @@ static void cb_tick(id s, SEL c, id t) {
         if (g.head && !g.head->sent && g.head->kind == -OP_DESCS) op_done(g.head, 0);
         op_kick();
     }
+    if (!g.per) server_tick();                     /* papel periférico (corebluetooth_server.inc) */
 }
 
-/* ================================================================ CBPeripheralManager (sem papel periférico no mOS) */
-typedef struct { void *isa; id delegate; void *queue; BOOL sent; } cbpm_t;
-static id pm_init3(id s, SEL c, id d, void *q, id o) {
-    (void)c; (void)o;
-    ((cbpm_t *)s)->delegate = d; ((cbpm_t *)s)->queue = q;
-    if (d) deliver(0, d, "peripheralManagerDidUpdateState:", 1, s, 0, 0, 0);
-    return s;
-}
-static id pm_init2(id s, SEL c, id d, void *q) { return pm_init3(s, c, d, q, 0); }
-static i64 pm_state(id s, SEL c) { (void)s; (void)c; return 2; }            /* CBManagerStateUnsupported */
-static BOOL pm_advertising(id s, SEL c) { (void)s; (void)c; return NO; }
-static void pm_noop1(id s, SEL c, id a) { (void)s; (void)c; (void)a; }
-static void pm_noop0(id s, SEL c) { (void)s; (void)c; }
-static i64 pm_auth(id k, SEL c) { (void)k; (void)c; return 3; }
 
 /* ================================================================ lacunas do Foundation que estes frameworks usam
  * Só entram se ninguém mais definiu (o NSUUID mora em foundation_more.c: bytes em box_t.p, offset 72). */
@@ -930,6 +918,8 @@ static void K(cx_class_t *k, cx_class_t *m, const char *name, cx_class_t *super,
 #define A(k, s, f) cx_add_method(k, s, (void *)(f))
 #define AC(k, s, f) cx_add_cmethod(k, s, (void *)(f))
 static id S(const char *s) { return ret(cx_str(s)); }
+#include "corebluetooth_server.inc"   /* papel periférico (servidor GATT) */
+
 void cx_corebluetooth_init(void) {
     foundation_gaps();
     cx_class_t *obj = cx_class_named("NSObject");
@@ -1006,11 +996,7 @@ void cx_corebluetooth_init(void) {
     A(m, "retrievePeripheralsWithIdentifiers:", cm_retrieve); A(m, "retrieveConnectedPeripheralsWithServices:", cm_retrieve_connected);
     AC(m, "supportsFeatures:", cm_supports);
     K(&CBPeripheralManager_c, &CBPeripheralManager_m, "CBPeripheralManager", &CBManager_c, (u32)(sizeof(cbpm_t) - 8));
-    cx_class_t *pm = &CBPeripheralManager_c;
-    A(pm, "initWithDelegate:queue:", pm_init2); A(pm, "initWithDelegate:queue:options:", pm_init3); A(pm, "state", pm_state);
-    A(pm, "isAdvertising", pm_advertising); A(pm, "startAdvertising:", pm_noop1); A(pm, "stopAdvertising", pm_noop0);
-    A(pm, "addService:", pm_noop1); A(pm, "removeService:", pm_noop1); A(pm, "removeAllServices", pm_noop0);
-    AC(pm, "authorizationStatus", pm_auth);
+    server_register(obj);
     K(&CBMOSTicker_c, &CBMOSTicker_m, "CBMOSTicker", obj, 0);
     A(&CBMOSTicker_c, "tick:", cb_tick);
 }

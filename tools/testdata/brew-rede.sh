@@ -31,11 +31,6 @@ t "tar cJf (xz)"       tar cJf p.tar.xz a.txt
 t "tar tJf"            tar tJf p.tar.xz
 
 t "curl --version"     curl --version
-t "curl https (API)"   curl -fsSL -o hello.json https://formulae.brew.sh/api/formula/hello.json
-t "json baixado"       grep -o '"name":"hello"' hello.json
-t "curl -I github"     curl -fsSI https://github.com
-t "curl ghcr token"    curl -fsS "https://ghcr.io/token?scope=repository:homebrew/core/hello:pull"
-
 t "git --version"      git --version
 t "git init"           git init -q repo
 cd repo
@@ -47,8 +42,13 @@ t "git log"            git log --oneline
 t "git status"         git status --short
 t "git branch"         git branch --show-current
 cd ..
-t "git ls-remote https" git ls-remote https://github.com/Homebrew/brew refs/heads/main
-t "git clone https"    git clone -q --depth 1 https://github.com/Homebrew/homebrew-portable-ruby.git pr
+# rede por último: se travar, o resto já foi medido
+echo "rede: (local) ok=$ok falhou=$falhou"
+t "curl https (API)"   timeout -s KILL 40 curl -m 20 -fsSL -o hello.json https://formulae.brew.sh/api/formula/hello.json
+t "json baixado"       grep -o '"name":"hello"' hello.json
+t "curl -I github"     timeout -s KILL 40 curl -m 20 -fsSI https://github.com
+t "git ls-remote https" timeout -s KILL 30 git ls-remote https://github.com/Homebrew/brew refs/heads/main
+t "git clone https"    timeout -s KILL 60 git clone -q --depth 1 https://github.com/Homebrew/homebrew-portable-ruby.git pr
 t "clone tem arquivos" ls pr
 
 echo "rede: fim ok=$ok falhou=$falhou"

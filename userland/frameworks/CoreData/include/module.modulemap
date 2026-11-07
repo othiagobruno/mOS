@@ -1,0 +1,5 @@
+// mOS — módulo clang CoreData mínimo para compilar o overlay Swift (CoreData.swift) com os nomes da Apple
+module CoreData [system] {
+    header "CoreData_mos.h"
+    export *
+}

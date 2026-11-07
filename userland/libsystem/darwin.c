@@ -615,6 +615,13 @@ static const sysctl_ent_t sysctl_tab[] = {
     {"hw.perflevel0.logicalcpu_max", 4, 1, 0}, {"hw.perflevel0.physicalcpu_max", 4, 1, 0}, {"hw.perflevel0.name", 0, 0, "Performance"},
     {"kern.memorystatus_vm_pressure_level", 4, 1, 0}, {"kern.memorystatus_level", 4, 100, 0},
     {"kern.hv_support", 4, 0, 0}, {"kern.tcsm_available", 4, 0, 0}, {"kern.tcsm_enable", 4, 0, 0}, {"kern.secure_kernel", 4, 0, 0}, {"security.mac.lockdown_mode_state", 4, 0, 0},
+    /* pedidos pelo Google Chrome (base/mac, base/cpu, net): CPU x86_64 com SSE2/SSE3, sem AVX-512 */
+    {"kern.hv_vmm_present", 4, 0, 0}, {"kern.nx", 4, 1, 0}, {"hw.packages", 4, 1, 0}, {"hw.optional.avx512f", 4, 0, 0},
+    {"hw.cacheconfig", 8, 1, 0},                                   /* 1 CPU compartilha cada nível de cache */
+    {"machdep.cpu.signature", 4, 0x50654, 0},                      /* família 6, modelo 85, stepping 4 (acima) */
+    {"machdep.cpu.feature_bits", 8, 0x178bfbffull | (0x00000201ull << 32), 0},   /* EDX: FPU..SSE2; ECX: SSE3, SSSE3 */
+    {"machdep.cpu.extfeature_bits", 8, 0x20100800ull, 0},          /* SYSCALL, XD (NX), EM64T */
+    {"net.inet.ip.portrange.first", 4, 49152, 0}, {"net.inet.ip.portrange.last", 4, 65535, 0},
 };
 int sysctlbyname(const char *name, void *old, size_t *oldlen, const void *newp, size_t newlen) {
     (void)newp; (void)newlen;

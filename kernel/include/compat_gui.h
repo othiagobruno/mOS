@@ -52,6 +52,7 @@ enum {
 #define DEV_BT_ATT_SEND 13
 #define DEV_BT_ATT_RECV 14
 #define DEV_BT_LINK 15
+#define DEV_BT_ADVERTISE 16   /* (dados AD, bytes <= 31, ligar) papel periférico: anuncia; a conexão de entrada vira o canal ATT cru */
 
 /* botões no layout do GCExtendedGamepad */
 #define PAD_A        (1u << 0)
@@ -97,6 +98,8 @@ typedef struct {
     int mtu;
     char addr[18];
     char err[64];
+    int role;                      /* 0 central (nós conectamos), 1 periférico (conectaram no nosso anúncio) */
+    int advertising;
 } gui_bt_link_t;
 
 /* GUI_DRAG

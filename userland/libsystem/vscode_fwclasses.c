@@ -71,9 +71,6 @@ cx_class_t UNNotificationSound_c __asm__("OBJC_CLASS_$_UNNotificationSound"); cx
 cx_class_t UNTextInputNotificationAction_c __asm__("OBJC_CLASS_$_UNTextInputNotificationAction"); cx_class_t UNTextInputNotificationAction_m __asm__("OBJC_METACLASS_$_UNTextInputNotificationAction");
 cx_class_t UNTextInputNotificationResponse_c __asm__("OBJC_CLASS_$_UNTextInputNotificationResponse"); cx_class_t UNTextInputNotificationResponse_m __asm__("OBJC_METACLASS_$_UNTextInputNotificationResponse");
 cx_class_t UNUserNotificationCenter_c __asm__("OBJC_CLASS_$_UNUserNotificationCenter"); cx_class_t UNUserNotificationCenter_m __asm__("OBJC_METACLASS_$_UNUserNotificationCenter");
-cx_class_t VNDetectBarcodesRequest_c __asm__("OBJC_CLASS_$_VNDetectBarcodesRequest"); cx_class_t VNDetectBarcodesRequest_m __asm__("OBJC_METACLASS_$_VNDetectBarcodesRequest");
-cx_class_t VNDetectFaceLandmarksRequest_c __asm__("OBJC_CLASS_$_VNDetectFaceLandmarksRequest"); cx_class_t VNDetectFaceLandmarksRequest_m __asm__("OBJC_METACLASS_$_VNDetectFaceLandmarksRequest");
-cx_class_t VNImageRequestHandler_c __asm__("OBJC_CLASS_$_VNImageRequestHandler"); cx_class_t VNImageRequestHandler_m __asm__("OBJC_METACLASS_$_VNImageRequestHandler");
 cx_class_t WKWebView_c __asm__("OBJC_CLASS_$_WKWebView"); cx_class_t WKWebView_m __asm__("OBJC_METACLASS_$_WKWebView");
 cx_class_t WKWebViewConfiguration_c __asm__("OBJC_CLASS_$_WKWebViewConfiguration"); cx_class_t WKWebViewConfiguration_m __asm__("OBJC_METACLASS_$_WKWebViewConfiguration");
 cx_class_t WKWebsiteDataStore_c __asm__("OBJC_CLASS_$_WKWebsiteDataStore"); cx_class_t WKWebsiteDataStore_m __asm__("OBJC_METACLASS_$_WKWebsiteDataStore");
@@ -145,9 +142,6 @@ void cx_framework_classes_init(void) {
     d(&UNNotificationSound_c, &UNNotificationSound_m, "UNNotificationSound", "NSObject");
     d(&UNTextInputNotificationResponse_c, &UNTextInputNotificationResponse_m, "UNTextInputNotificationResponse", "NSObject");
     d(&UNUserNotificationCenter_c, &UNUserNotificationCenter_m, "UNUserNotificationCenter", "NSObject");
-    d(&VNDetectBarcodesRequest_c, &VNDetectBarcodesRequest_m, "VNDetectBarcodesRequest", "NSObject");
-    d(&VNDetectFaceLandmarksRequest_c, &VNDetectFaceLandmarksRequest_m, "VNDetectFaceLandmarksRequest", "NSObject");
-    d(&VNImageRequestHandler_c, &VNImageRequestHandler_m, "VNImageRequestHandler", "NSObject");
     d(&WKWebView_c, &WKWebView_m, "WKWebView", "NSView");
     d(&WKWebViewConfiguration_c, &WKWebViewConfiguration_m, "WKWebViewConfiguration", "NSObject");
     d(&WKWebsiteDataStore_c, &WKWebsiteDataStore_m, "WKWebsiteDataStore", "NSObject");

@@ -55,6 +55,9 @@ enum {
     SYS_EXECVE,        /* 45: (path, mos_spawn_vec_t*) -> só volta com erro   troca a imagem (mesmo pid, fds e sessão) */
     SYS_WAITPID,       /* 46: (pid, int *status, opções) -> pid      status POSIX; pid -1 = qualquer filho; MOS_WNOHANG */
     SYS_FDPATH,        /* 47: (fd, buf, cap) -> tamanho             caminho do arquivo aberto (F_GETPATH, fchdir) */
+    /* futex: espera numa palavra de 32 bits do processo (pthread_mutex/cond e semáforos do libSystem) */
+    SYS_FUTEX_WAIT,    /* 48: (u32 *end, valor, prazo ms; ~0 = sem) -> 0 acordada, -MOS_EAGAIN valor já mudou, -MOS_ETIMEDOUT */
+    SYS_FUTEX_WAKE,    /* 49: (u32 *end, n) -> quantas threads acordou */
     SYS_COUNT,
     SYS_GUI_FIRST = 64,/* 64..79: interface gráfica dos apps do macOS (kernel/compat/guisys.c) */
     SYS_GUI_LAST = 79,
@@ -240,6 +243,8 @@ enum { MOS_NET_ST_CLOSED, MOS_NET_ST_CONNECTING, MOS_NET_ST_OPEN, MOS_NET_ST_PEE
 #define MOS_ESRCH   3
 #define MOS_ECHILD 10
 #define MOS_EPIPE  32
+#define MOS_EAGAIN 35            /* valores do macOS */
+#define MOS_ETIMEDOUT 60
 
 typedef struct {
     int pid, ppid, state;     /* state: 0 pronto, 1 rodando, 2 dormindo, 3 esperando */

@@ -239,17 +239,30 @@ int kevent64(int fd, const kevent64_s *changes, int nchanges, kevent64_s *events
     ku(q);
     if (out || nevents == 0 || (flags & KEVENT_FLAG_ERROR_EVENTS)) return out;
     u64 deadline = timeout ? now_ms() + (u64)timeout->sec * 1000 + (u64)timeout->nsec / 1000000 : ~0ull;
+    /* ainda é consulta periódica (o kernel não espera em várias portas e descritores de uma vez), mas o cochilo
+     * dobra enquanto nada acontece (1, 2, 4, 8 ms) e nunca passa do próximo timer: com 1 ms fixo, as ~10 threads
+     * de E/S do Chromium e do Node acordavam 10 mil vezes por segundo e tomavam a CPU de quem tinha trabalho */
+    u32 nap = 1;
     for (;;) {
+        u64 next_timer = ~0ull;
         kl(q);
         for (int k = 0; k < MAX_KN && out < nevents; k++) {
-            if (!ready(&q->kn[k], &events[out])) continue;
-            if (q->kn[k].ev.flags & EV_ONESHOT) q->kn[k].used = 0;
+            knote_t *n = &q->kn[k];
+            if (!ready(n, &events[out])) {
+                if (n->used && n->enabled && n->ev.filter == EVFILT_TIMER && n->next_ms < next_timer) next_timer = n->next_ms;
+                continue;
+            }
+            if (n->ev.flags & EV_ONESHOT) n->used = 0;
             out++;
         }
         ku(q);
         if (out) return out;
-        if (now_ms() >= deadline) return 0;
-        SYS1(SYS_SLEEP, 1);
+        u64 now = now_ms();
+        if (now >= deadline) return 0;
+        u64 until = deadline < next_timer ? deadline : next_timer;
+        u64 left = until > now ? until - now : 1;
+        SYS1(SYS_SLEEP, nap < left ? nap : left);
+        if (nap < 8) nap <<= 1;
     }
 }
 

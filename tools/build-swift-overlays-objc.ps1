@@ -40,6 +40,7 @@ if (-not $wt.Contains('mOS: workgroup')) {
 }
 Copy-Item "$sdkSrc\sdk\module.modulemap" "$inc\module.modulemap" -Force
 Copy-Item "$sdkSrc\sdk\os\log.h" "$inc\os\log.h" -Force
+Copy-Item "$sdkSrc\sdk\Foundation" $inc -Recurse -Force   # Foundation em ObjC para o overlay Foundation (fase 5)
 # CoreFoundation e CoreGraphics em C: os mesmos cabeçalhos que o importador do OpenSwiftUI usa
 foreach ($fw in 'CoreFoundation') { Copy-Item "$root\userland\sdk\openswiftui\importer\$fw" $inc -Recurse -Force }
 Copy-Item "$root\userland\sdk\include\CoreGraphics" $inc -Recurse -Force   # o do SDK (com MOS_SWIFT_OBJC: nomes da Apple)
@@ -84,6 +85,8 @@ $cg = [IO.File]::ReadAllText("$root\userland\sdk\openswiftui\swift\CoreGraphics\
 Build-Overlay 'CoreGraphics' @("$gen\CGFloat.swift", "$sdkSrc\CoreGraphics\CGGeometry.swift")
 Build-Overlay 'os'
 Build-Overlay 'Dispatch'
+# Foundation (fase 5): pontes ObjC e API sobre as classes do Foundation do libSystem do mOS
+Build-Overlay 'Foundation'
 # Observation: o OpenObservation (github.com/OpenSwiftUIProject, MIT; porte do Observation da Apple) com o nome do
 # módulo da Apple, no caminho Darwin em Swift puro (sem a parte C++ do toolchain)
 $obs = "$root\.tools\openswiftui\deps\OpenObservation-main\Sources\OpenObservation"

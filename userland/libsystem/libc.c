@@ -145,17 +145,63 @@ static void insert_free(blk_t *b) {
     if (prev && (char *)prev + prev->size == (char *)b) { prev->size += b->size; prev->next = b->next; }
 }
 
-/* o heap é compartilhado pelas threads (preemptivas): uma trava simples */
+/* o heap é compartilhado pelas threads (preemptivas): uma trava, no mesmo protocolo do pthread_mutex (extra.c):
+ * 0 livre, 1 travada, 2 travada com alguém esperando no futex. Girar com SYS_YIELD fazia comboio: com o dono
+ * preemptado no meio da varredura da lista livre, até 6 threads do VS Code ficavam prontas só esperando a vez. */
 static volatile int heap_lock;
-static void hl(void) { while (__sync_lock_test_and_set(&heap_lock, 1)) SYS0(SYS_YIELD); }
-static void hu(void) { __sync_lock_release(&heap_lock); }
+int cx_futex_wait(volatile int *w, int expected, long ms);
+int cx_futex_wake(volatile int *w, int n);
+static void hl(void) {
+    int c = __sync_val_compare_and_swap(&heap_lock, 0, 1);
+    if (!c) return;
+    if (c != 2) c = __sync_lock_test_and_set(&heap_lock, 2);
+    while (c) { cx_futex_wait(&heap_lock, 2, -1); c = __sync_lock_test_and_set(&heap_lock, 2); }
+}
+static void hu(void) { if (__sync_fetch_and_sub(&heap_lock, 1) != 1) { heap_lock = 0; cx_futex_wake(&heap_lock, 1); } }
 static void *malloc_unlocked(size_t n);
 static void free_unlocked(void *p);
 void *malloc(size_t n) { hl(); void *p = malloc_unlocked(n); hu(); return p; }
 void free(void *p) { if (!p) return; hl(); free_unlocked(p); hu(); }
+
+/* caixas por tamanho para blocos pequenos (até SMALL_MAX bytes com o cabeçalho): listas LIFO por tamanho exato,
+ * malloc e free em O(1), sem coalescer. A lista livre geral (ordenada por endereço, first-fit) fica só com os
+ * blocos grandes: antes, cada malloc e cada free do Chromium/V8/Node percorria milhares de blocos com a trava
+ * do heap presa. O cabeçalho é o mesmo (size + MAGIC_USED): malloc_size, realloc e posix_memalign não mudam,
+ * e um free duplo continua sendo pego (o next de um bloco na caixa não é MAGIC_USED). */
+#define SMALL_MAX 1024
+#define NBINS (SMALL_MAX / 16 + 1)
+static blk_t *bins[NBINS];
+static void *general_alloc(size_t need);
+/* reabastece a caixa de `need`: um pedaço da lista geral cortado em até 32 blocos desse tamanho */
+static void bin_refill(size_t need) {
+    char *c = general_alloc(need * 32);
+    if (!c) return;
+    blk_t *big = (blk_t *)(c - HDR);
+    size_t total = big->size, k = total / need, rest = total - k * need;
+    char *base = (char *)big;
+    for (size_t i = 0; i < k; i++) {
+        blk_t *b = (blk_t *)(base + i * need);
+        b->size = need + (i == k - 1 ? rest : 0);    /* a sobra (< 64, múltiplo de 16) vai no último */
+        size_t idx = b->size / 16;
+        if (b->size <= SMALL_MAX) { b->next = bins[idx]; bins[idx] = b; }
+        else { b->next = (blk_t *)MAGIC_USED; insert_free(b); }
+    }
+}
 static void *malloc_unlocked(size_t n) {
     size_t need = (n + HDR + 15) & ~(size_t)15;
     if (need < 32) need = 32;
+    if (need <= SMALL_MAX) {
+        blk_t *b = bins[need / 16];
+        if (!b) { bin_refill(need); b = bins[need / 16]; }
+        if (b) {
+            bins[need / 16] = b->next;
+            b->next = (blk_t *)MAGIC_USED;
+            return (char *)b + HDR;
+        }
+    }
+    return general_alloc(need);
+}
+static void *general_alloc(size_t need) {
     for (int pass = 0; pass < 2; pass++) {
         for (blk_t **pp = &free_list; *pp; pp = &(*pp)->next) {
             blk_t *b = *pp;
@@ -183,6 +229,7 @@ static void free_unlocked(void *p) {
     blk_t *b = (blk_t *)((char *)p - HDR);
     if (b->next == (blk_t *)MAGIC_ALIGNED) { free_unlocked((void *)b->size); return; }
     if (b->next != (blk_t *)MAGIC_USED) { hu(); cx_fdprintf(2, "malloc: *** error for object %p: pointer being freed was not allocated\n", p); abort(); }
+    if (b->size <= SMALL_MAX) { size_t idx = b->size / 16; b->next = bins[idx]; bins[idx] = b; return; }
     insert_free(b);
 }
 
@@ -925,10 +972,58 @@ long sysconf(int name) {
     return -1;
 }
 int getpagesize(void) { return 4096; }
-int sigaction(int s, const void *a, void *o) { (void)s; (void)a; (void)o; return 0; }
-void *signal(int s, void *h) { (void)s; (void)h; return 0; }
-int raise(int s) { cx_fdprintf(2, "sinal %d\n", s); exit(128 + s); }
-int kill(int pid, int s) { (void)pid; (void)s; return 0; }
+/* sinais sobre SYS_SIGACTION/SYS_SIGKILL/SYS_SIGRETURN. O kernel numera como o Linux (USR1 10, USR2 12,
+ * CHLD 17); o macOS usa BUS 10, SYS 12, STOP 17, CHLD 20, USR1 30, USR2 31. As trocas são uma bijeção. */
+static int sig_to_mos(int s) {
+    switch (s) { case 10: return 30; case 12: return 31; case 30: return 10; case 31: return 12; case 20: return 17; case 17: return 20; }
+    return s;
+}
+static int sig_from_mos(int s) { return sig_to_mos(s); }   /* a bijeção é a própria inversa */
+typedef struct { void *handler; u32 mask; int flags; } mac_sigaction_t;
+static mac_sigaction_t cx_sigs[32];                         /* tratadores do programa, por número do macOS */
+__attribute__((naked, used)) static void cx_sig_restorer(void) {
+    __asm__ volatile("mov %0, %%eax\n\tint $0x80\n\tud2" :: "i"(SYS_SIGRETURN));
+}
+/* o kernel chama isto com o número dele; o tratador do programa recebe o do macOS (e um siginfo mínimo) */
+static void cx_sig_dispatch(int mossig) {
+    int s = sig_from_mos(mossig);
+    if (s <= 0 || s >= 32) return;
+    mac_sigaction_t a = cx_sigs[s];
+    if ((u64)a.handler <= 1) return;
+    if (a.flags & 0x4) {                                    /* SA_RESETHAND */
+        cx_sigs[s].handler = 0;
+        SYS3(SYS_SIGACTION, mossig, 0, 0);
+    }
+    if (a.flags & 0x40) {                                   /* SA_SIGINFO: (sig, siginfo_t *, ucontext *) */
+        struct { int si_signo, si_errno, si_code, si_pid; u32 si_uid; int si_status; void *si_addr; u64 pad[10]; } info;
+        memset(&info, 0, sizeof info);
+        info.si_signo = s;
+        ((void (*)(int, void *, void *))a.handler)(s, &info, 0);
+    } else ((void (*)(int))a.handler)(s);
+}
+int sigaction(int s, const mac_sigaction_t *a, mac_sigaction_t *o) {
+    if (s <= 0 || s >= 32 || ((s == 9 || s == 17) && a)) { cx_errno = CX_EINVAL; return -1; }   /* KILL e STOP fixos */
+    if (o) *o = cx_sigs[s];
+    if (!a) return 0;
+    cx_sigs[s] = *a;
+    u64 h = (u64)a->handler <= 1 ? (u64)a->handler : (u64)cx_sig_dispatch;   /* SIG_DFL 0 / SIG_IGN 1 passam direto */
+    long r = SYS3(SYS_SIGACTION, sig_to_mos(s), h, (u64)cx_sig_restorer);
+    if (r < 0) { cx_errno = (int)-r; return -1; }
+    return 0;
+}
+void *signal(int s, void *h) {
+    mac_sigaction_t a = {h, 0, 0}, o = {0, 0, 0};
+    if (sigaction(s, &a, &o) < 0) return (void *)-1;     /* SIG_ERR */
+    return o.handler;
+}
+int kill(int pid, int s) {
+    if (pid == 0 || pid == -1) pid = getpid();             /* sem grupos de processo: o grupo é o próprio processo */
+    if (pid < -1) pid = -pid;
+    long r = SYS2(SYS_SIGKILL, pid, s ? sig_to_mos(s) : 0);
+    if (r < 0) { cx_errno = CX_ESRCH; return -1; }
+    return 0;
+}
+int raise(int s) { return kill(getpid(), s); }
 int sigemptyset(void *set) { *(u32 *)set = 0; return 0; }
 int sigaddset(void *set, int s) { *(u32 *)set |= 1u << (s - 1); return 0; }
 int sigprocmask(int how, const void *s, void *o) { (void)how; (void)s; (void)o; return 0; }

@@ -15,6 +15,8 @@ $t0 = Get-Date
 if (-not $SemBuild) {
     $b = .\build.ps1 -OutDir $OutDir 6>&1 2>&1 | ForEach-Object { "$_" }
     if ($LASTEXITCODE -ne 0) { 'build falhou:'; $b | Where-Object { $_ -match 'error' } | Select-Object -First 8; exit 1 }
+    # o libSystem exato desta rodada (outras sessões recompilam build\ e os endereços deixam de bater)
+    Copy-Item "$root\build\libSystem.mos" "$root\$OutDir\libSystem.mos" -Force
     .\tools\stage-vscode.ps1 -App $App -OutDir $OutDir -Diagnostico -ComApp -ComModulosNativos -Autostart -SizeMiB 768 -Args0 $Argumentos -Tracepoints $Tracepoints | Out-Null
 }
 "build+imagem: {0:N0} s" -f ((Get-Date) - $t0).TotalSeconds
@@ -57,6 +59,7 @@ $m = $log | Select-String -Pattern 'proc: Code.* em (0x[0-9a-f]+)' | Select-Obje
 if ($m) {
     $a = $m.Matches[0].Groups[1].Value
     $v = [Convert]::ToUInt64($a.Substring(2), 16)
-    if ($v -lt 0x400001000000) { 'falha em libSystem: ' + (& "$root\build\machocheck.exe" --sym "$root\build\libSystem.mos" $a.Substring(2)) }
+    $ls = if (Test-Path "$root\$OutDir\libSystem.mos") { "$root\$OutDir\libSystem.mos" } else { "$root\build\libSystem.mos" }
+    if ($v -lt 0x400001000000) { 'falha em libSystem: ' + (& "$root\build\machocheck.exe" --sym $ls $a.Substring(2)) }
     else { 'falha em Electron Framework+0x{0:X}' -f ($v - 0x400001010000) }
 }

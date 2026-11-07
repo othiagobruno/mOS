@@ -23,6 +23,7 @@ for ($i = 0; $i -lt $base.Count; $i++) {
     [void]$args.Add($line)
 }
 [void]$args.Add('-I'); [void]$args.Add("$o\SwiftUI")
+if (Test-Path "$o\CryptoKit\CryptoKit.swiftmodule") { [void]$args.Add('-I'); [void]$args.Add("$o\CryptoKit") }   # tools\build-cryptokit.ps1
 [void]$args.Add('-module-name'); [void]$args.Add($Name)
 $args.AddRange([string[]]$src)
 $obj = "$out\$Name.o"

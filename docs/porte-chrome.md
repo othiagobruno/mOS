@@ -41,6 +41,22 @@ falta para o VS Code (`docs/porte-vscode.md`), então os dois portes andam junto
   Sobram 21 classes ObjC (o carregador as liga a `NSObject`), 3 constantes que podem ser nulas e 3 que são de outras
   sessões: `CFDictionaryApplyFunction` (cfcollections.c), `IOSurfaceGetBytesPerElementOfPlane` e `dispatch_data_create`.
 
+### Com o dlopen (7 nov. 2026, madrugada)
+
+Dentro do mOS (QEMU, 3 GiB), aberto pelo Launchpad:
+
+| Etapa | Estado |
+|---|---|
+| `dlopen` do framework (264 MiB) | ✅ 13 símbolos ausentes (de 1.992 no começo) |
+| ICU (`icudtl.dat`) | ✅ depois de `NSBundle` achar `Resources/` numa pasta `Versions/<v>` (foundation.c) |
+| Crashpad | ✅ `fork` + `chrome_crashpad_handler` sobem; `shutdown` em socketpair não dá mais EBADF (sockets.c) |
+| Singleton do perfil | ✅ `stat` devolve o modo pedido em `mkdir`/`chmod` (0700 do `mkdtemp`; libc.c) |
+| `base/mac/mac_util.mm` | ✅ sysctls que faltavam (darwin.c) |
+| **Próximo bloqueio** | ❌ cai em `__cxa_guard_release` (libc++abi embutida no Chrome), no caminho de *landing pad*: algo está desenrolando a pilha, e o `_Unwind_RaiseException` do mOS devolve "fim da pilha" |
+
+Para achar a causa de cada queda: `llvm-objdump -d --start-address=... ` (LLVM em `C:\Program Files\LLVM\bin`) no
+framework de `build-chrome\esp\...`; o endereço do log menos `0x400100000000` é o endereço no arquivo.
+
 Como o Chrome inicia: o executável `Contents/MacOS/Google Chrome` (0,3 MiB) só monta o caminho
 `../Frameworks/Google Chrome Framework.framework/Versions/<versão>/Google Chrome Framework`, chama `dlopen`,
 procura `ChromeMain` com `dlsym` e pula para lá. Sem `dlopen` em tempo de execução ele para nesse ponto:

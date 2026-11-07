@@ -74,6 +74,8 @@ static void lk(void) { while (__sync_lock_test_and_set(&lock, 1)) SYS0(SYS_YIELD
 static void ulk(void) { __sync_lock_release(&lock); }
 
 extern int cx_main_tid;                                    /* dispatch.c / cx_darwin_init */
+int cx_futex_wait(volatile int *w, int expected, long ms);   /* extra.c: espera no kernel (SYS_FUTEX_WAIT) */
+int cx_futex_wake(volatile int *w, int n);
 static cf_obj_t *loop_for(int tid) {
     lk();
     cf_obj_t *r = 0;
@@ -272,11 +274,18 @@ int CFRunLoopRunInMode(void *mode, double seconds, unsigned char return_after_so
         if (now >= deadline) { result = 3; break; }
         notify(rl, ACT_BEFORE_WAITING);
         double until = next < deadline ? next : deadline;
+        /* espera no futex sobre rl->wake: CFRunLoopWakeUp/Stop/PerformBlock acordam na hora. Fontes sinalizadas
+         * sem WakeUp e a fila principal do GCD ainda são conferidas a cada volta; o cochilo dobra até 8 ms enquanto
+         * nada acontece (com 1 ms fixo, cada run loop ocioso acordava mil vezes por segundo) */
+        u32 nap = 1;
         while (!rl->wake && !rl->stop && CFAbsoluteTimeGetCurrent() < until) {
             int pending = 0;
             for (int i = 0; i < rl->nitems; i++) if (rl->items[i]->type == T_SOURCE && rl->items[i]->signaled) { pending = 1; break; }
             if (pending || rl->nblocks || (is_main && cx_dispatch_pending())) break;
-            SYS1(SYS_SLEEP, 1);
+            double left = (until - CFAbsoluteTimeGetCurrent()) * 1000.0;
+            long ms = left < 1 ? 1 : left < (double)nap ? (long)left : (long)nap;
+            cx_futex_wait(&rl->wake, 0, ms);
+            if (nap < 8) nap <<= 1;
         }
         rl->wake = 0;
         notify(rl, ACT_AFTER_WAITING);
@@ -286,8 +295,8 @@ int CFRunLoopRunInMode(void *mode, double seconds, unsigned char return_after_so
     return result;
 }
 void CFRunLoopRun(void) { while (CFRunLoopRunInMode(0, 1e10, 0) == 3) {} }
-void CFRunLoopStop(void *rl) { if (rl) { ((cf_obj_t *)rl)->stop = 1; ((cf_obj_t *)rl)->wake = 1; } }
-void CFRunLoopWakeUp(void *rl) { if (rl) ((cf_obj_t *)rl)->wake = 1; }
+void CFRunLoopStop(void *rl) { if (rl) { ((cf_obj_t *)rl)->stop = 1; ((cf_obj_t *)rl)->wake = 1; cx_futex_wake(&((cf_obj_t *)rl)->wake, 0x7FFFFFFF); } }
+void CFRunLoopWakeUp(void *rl) { if (rl) { ((cf_obj_t *)rl)->wake = 1; cx_futex_wake(&((cf_obj_t *)rl)->wake, 0x7FFFFFFF); } }
 unsigned char CFRunLoopIsWaiting(void *rl) { return rl && ((cf_obj_t *)rl)->running; }
 id CFRunLoopCopyCurrentMode(void *rl) { (void)rl; return objc_retain(cx_str("kCFRunLoopDefaultMode")); }
 void CFRunLoopAddCommonMode(void *rl, void *mode) { (void)rl; (void)mode; }
@@ -304,4 +313,5 @@ void CFRunLoopPerformBlock(void *rl, void *mode, void *block) {
     if (l->nblocks < MAX_BLOCKS) { l->blocks[l->nblocks++] = _Block_copy(block); ulk(); }
     else { ulk(); if (l == CFRunLoopGetCurrent()) RUN_BLK(block); }   /* lista cheia: só na própria thread */
     l->wake = 1;
+    cx_futex_wake(&l->wake, 0x7FFFFFFF);
 }

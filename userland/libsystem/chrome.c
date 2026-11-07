@@ -227,6 +227,20 @@ int BZ2_bzDecompress(void *s) { (void)s; return -2; }                           
 int BZ2_bzDecompressEnd(void *s) { (void)s; return 0; }
 
 /* ---- Objective-C */
+/* Classes privadas do AppKit que o Chrome procura por nome e cujos métodos ele troca (swizzle). Sem elas, o
+ * Chrome falha num CHECK logo no início: +[ChromeSwizzleServicesMenuUpdater install] (chrome_browser_application_mac.mm)
+ * exige _NSServicesMenuUpdater com -populateWithServiceEntries:forDisplay:. O mOS não tem menu Serviços: no-op. */
+void *objc_allocateClassPair(void *super, const char *name, unsigned long extra);
+void objc_registerClassPair(void *c);
+signed char class_addMethod(void *c, void *sel, void *imp, const char *types);
+static void svc_populate(id_ self, void *cmd, id_ entries, id_ display) { (void)self; (void)cmd; (void)entries; (void)display; }
+void cx_chrome_init(void) {         /* chamado por cx_objc_boot (objc.c) */
+    void *c = objc_allocateClassPair(cx_class_named("NSObject"), "_NSServicesMenuUpdater", 0);
+    if (!c) return;
+    class_addMethod(c, sel_registerName("populateWithServiceEntries:forDisplay:"), (void *)svc_populate, "v32@0:8@16@24");
+    objc_registerClassPair(c);
+}
+
 typedef id_ (*objc_exc_pre_t)(id_);
 static objc_exc_pre_t exc_pre;
 objc_exc_pre_t objc_setExceptionPreprocessor(objc_exc_pre_t fn) { objc_exc_pre_t o = exc_pre; exc_pre = fn; return o; }

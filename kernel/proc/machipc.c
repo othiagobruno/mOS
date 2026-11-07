@@ -307,6 +307,25 @@ static void set_bootstrap(mspace_t *sp, kport_t *port) {
     if (port) ent_add(sp, BOOTSTRAP_NAME, T_SEND, port);
 }
 
+/* diagnóstico (despejo de threads, process.c): portas deste processo com mensagens esperando na fila. Se a
+ * navegação de uma janela para no meio, isto diz se a mensagem chegou e ninguém recebeu (fila cheia) ou se
+ * nunca saiu do outro processo (filas vazias). Só lê: não cria o espaço de nomes. */
+void machipc_dump_queues(process_t *p) {
+    mspace_t *sp = p ? (mspace_t *)p->mach : NULL;
+    if (!sp) return;
+    int shown = 0;
+    for (kport_t *k = ports_all; k && shown < 12; k = k->gnext) {
+        if (k->recv != sp || !k->qn) continue;
+        u32 name = name_of_recv(sp, k);
+        u32 set = k->pset ? name_of_recv(sp, k->pset) : 0;
+        u32 id = 0;
+        if (k->qh && k->qh->data && k->qh->size >= 24) memcpy(&id, k->qh->data + 20, 4);
+        kprintf("despejo:   %s pid %d: porta 0x%x com %u mensagem(ns) na fila (conjunto 0x%x, limite %u); a primeira: id %u, de pid %d\n",
+                p->name, p->pid, name, k->qn, set, k->qlimit, id, k->qh ? k->qh->sender_pid : -1);
+        shown++;
+    }
+}
+
 static mspace_t *sp_of(process_t *p) {
     if (!p) return NULL;
     if (!p->mach) {

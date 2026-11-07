@@ -59,6 +59,7 @@ typedef struct thread {
     u64 mach_buf;           /* buffer de recepção (endereço de usuário) */
     u32 mach_rsize, mach_opt;
     bool mach_peek;         /* MACH_OP_WAIT: só espera haver mensagem */
+    u64 futex_va;           /* TH_WAITING com wait_pid = -8: palavra do SYS_FUTEX_WAIT (prazo em wake_at; 0 = sem) */
 } thread_t;
 
 /* sessão de terminal: entrada (stdin) e saída (stdout/stderr) de um grupo de processos */

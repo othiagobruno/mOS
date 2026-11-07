@@ -591,6 +591,7 @@ int ecdh_keygen(int curve, u8 *priv, u8 *pub) {
     for (int tries = 0;; tries++) {              /* 1 <= d < n por rejeição */
         if (tries > 64) return -1;
         crypto_random(priv, B);
+        if (curve == EC_P521) priv[0] &= 0x01;     /* 521 bits: sem isto quase todo sorteio passaria de n */
         bn_from_be(d, n, priv, B);
         if (!bn_is_zero(d, n) && bn_cmp(d, C->N.m, n) < 0) break;
     }
@@ -688,6 +689,7 @@ int ecdsa_sign(int curve, const u8 *priv, const u8 *digest, u32 dlen, u8 *r_out,
     for (int tries = 0; tries < 64; tries++) {
         u8 kb[EC_LIMBS * 4];
         crypto_random(kb, B);
+        if (curve == EC_P521) kb[0] &= 0x01;
         bn_from_be(k, n, kb, B);
         secure_zero(kb, sizeof kb);
         if (bn_is_zero(k, n) || bn_cmp(k, C->N.m, n) >= 0) continue;

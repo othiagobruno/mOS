@@ -126,7 +126,8 @@ int openpty(int *m, int *s, char *name, const void *t, const void *ws) {
 int getpgid(int pid) { return pid ? pid : getpid(); }        /* cada processo é o próprio grupo */
 int killpg(int pg, int sig) {
     if (pg <= 0) { cx_errno = CX_EINVAL; return -1; }
-    long r = SYS2(SYS_SIGKILL, pg, sig);
+    extern int kill(int, int);   /* libc.c: traduz o número do sinal para o do kernel */
+    long r = kill(pg, sig);
     if (r < 0) { cx_errno = CX_ESRCH; return -1; }
     return 0;
 }

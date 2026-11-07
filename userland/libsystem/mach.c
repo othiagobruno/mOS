@@ -340,7 +340,10 @@ kern_return_t host_kernel_version(mach_port_t host, char *ver) {
  * semaphore_t é um nome de porta de 32 bits: SEM_BASE + índice numa tabela. */
 #define SEM_BASE 0x20000u
 #define MAX_SEMS 1024
-typedef struct { volatile int count; int used; } cx_sem_t;
+typedef struct { volatile int count; int used; volatile int waiters; } cx_sem_t;
+/* futex do kernel (extra.c): quem espera dorme no contador em vez de girar com SYS_YIELD */
+int cx_futex_wait(volatile int *w, int expected, long ms);
+int cx_futex_wake(volatile int *w, int n);
 static cx_sem_t sems[MAX_SEMS];
 static cx_sem_t *sem_of(mach_port_t name) {
     u32 i = name - SEM_BASE;
@@ -349,7 +352,7 @@ static cx_sem_t *sem_of(mach_port_t name) {
 kern_return_t semaphore_create(mach_port_t task, mach_port_t *sem, int policy, int value) {
     (void)task; (void)policy;
     for (u32 i = 0; i < MAX_SEMS; i++)
-        if (!__sync_lock_test_and_set(&sems[i].used, 1)) { sems[i].count = value; *sem = SEM_BASE + i; return KERN_SUCCESS; }
+        if (!__sync_lock_test_and_set(&sems[i].used, 1)) { sems[i].count = value; sems[i].waiters = 0; *sem = SEM_BASE + i; return KERN_SUCCESS; }
     return KERN_FAILURE;
 }
 kern_return_t semaphore_destroy(mach_port_t task, mach_port_t sem) { (void)task; cx_sem_t *s = sem_of(sem); if (s) s->used = 0; return KERN_SUCCESS; }
@@ -357,35 +360,49 @@ kern_return_t semaphore_signal(mach_port_t sem) {
     cx_sem_t *s = sem_of(sem);
     if (!s) return KERN_INVALID_ARGUMENT;
     __sync_fetch_and_add(&s->count, 1);
+    if (s->waiters) cx_futex_wake(&s->count, 1);
     return KERN_SUCCESS;
 }
+/* como no XNU: acorda quem está esperando agora e não deixa crédito para quem vier depois */
 kern_return_t semaphore_signal_all(mach_port_t sem) {
     cx_sem_t *s = sem_of(sem);
     if (!s) return KERN_INVALID_ARGUMENT;
-    __sync_fetch_and_add(&s->count, 1 << 20);
+    int w = s->waiters;
+    if (w > 0) { __sync_fetch_and_add(&s->count, w); cx_futex_wake(&s->count, 0x7FFFFFFF); }
     return KERN_SUCCESS;
 }
 static int sem_try(cx_sem_t *s) {
     int c = s->count;
     return c > 0 && __sync_bool_compare_and_swap(&s->count, c, c - 1);
 }
+/* espera até conseguir uma unidade; ms < 0 = sem prazo. 0 = conseguiu, 49 = KERN_OPERATION_TIMED_OUT */
+static kern_return_t sem_wait_ms(cx_sem_t *s, long ms) {
+    u64 end = ms < 0 ? 0 : (u64)SYS0(SYS_TIME) + (u64)ms;
+    for (;;) {
+        if (sem_try(s)) return KERN_SUCCESS;
+        long left = -1;
+        if (ms >= 0) {
+            u64 now = (u64)SYS0(SYS_TIME);
+            if (now >= end) return 49;
+            left = (long)(end - now);
+        }
+        __sync_fetch_and_add(&s->waiters, 1);
+        int c = s->count;
+        if (c <= 0) cx_futex_wait(&s->count, c, left);
+        __sync_fetch_and_sub(&s->waiters, 1);
+    }
+}
 kern_return_t semaphore_wait(mach_port_t sem) {
     cx_sem_t *s = sem_of(sem);
     if (!s) return KERN_INVALID_ARGUMENT;
-    while (!sem_try(s)) SYS0(SYS_YIELD);
-    return KERN_SUCCESS;
+    return sem_wait_ms(s, -1);
 }
 /* mach_timespec_t {unsigned sec; int nsec} passado por valor (cabe em um registrador) */
 kern_return_t semaphore_timedwait(mach_port_t sem, u64 ts) {
     cx_sem_t *s = sem_of(sem);
     if (!s) return KERN_INVALID_ARGUMENT;
     u64 ms = (ts & 0xFFFFFFFFu) * 1000ull + (u64)((ts >> 32) & 0xFFFFFFFFu) / 1000000ull;
-    u64 end = (u64)SYS0(SYS_TIME) + ms;
-    while (!sem_try(s)) {
-        if ((u64)SYS0(SYS_TIME) >= end) return 49;         /* KERN_OPERATION_TIMED_OUT */
-        SYS0(SYS_YIELD);
-    }
-    return KERN_SUCCESS;
+    return sem_wait_ms(s, (long)ms);
 }
 
 /* ---- pthreads que faltavam (os mutex/rwlock do mOS não têm protocolo nem estado a iniciar) */

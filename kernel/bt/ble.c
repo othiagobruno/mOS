@@ -41,6 +41,8 @@ typedef struct {
 static bt_le_dev_t devs[MAX_DEVS];
 static int ndevs;
 static bool scanning, ready;
+static bool advertising;          /* CBPeripheralManager anunciando: a próxima conexão de entrada vira canal ATT cru */
+static bool periph_role;          /* o enlace atual é como periférico (o central é o outro lado) */
 static u64 auto_until;          /* varredura automática do primeiro uso */
 static u8 my_addr[6];
 
@@ -537,6 +539,12 @@ static void handle_event(const u8 *ev, int len) {
         if (sub == 0x02) parse_adv(p, len - 3);
         else if ((sub == 0x01 || sub == 0x0A) && len >= 3 + 12) {     /* conexão (normal ou melhorada) */
             if (p[0]) { char m[64]; snprintf(m, sizeof m, "falha ao conectar (HCI 0x%02x)", p[0]); fail(m); c.st = C_IDLE; if (c.raw) { raw_failed = true; c.raw = false; } return; }
+            if (p[3] == 1 && advertising) {               /* papel periférico: um central conectou no nosso anúncio */
+                advertising = false;                     /* o controlador para de anunciar ao conectar */
+                memcpy(c.addr, p + 5, 6); c.type = p[4];
+                c.raw = true; periph_role = true;
+                raw_failed = raw_gone = false; raw_rh = raw_rt = 0;
+            }
             c.handle = le16(p + 1) & 0x0FFF;
             c.mtu = 23;
             c.gstep = 0;
@@ -567,6 +575,7 @@ static void handle_event(const u8 *ev, int len) {
         memcpy(a, c.addr, 6);
         bool had = c.st == C_READY && (c.bonded || c.have_ltk) && !c.raw;
         if (c.raw) raw_gone = true;
+        periph_role = false;
         memset(&c, 0, sizeof c);
         if (had) create_conn(a, t);                                   /* volta sozinho quando o mouse acordar */
     }
@@ -677,6 +686,25 @@ i64 bt_user_syscall(process_t *p, u64 op, u64 b, u64 cc, u64 d) {
         c.raw = true;
         if (!create_conn(devs[b].addr, devs[b].type)) { c.raw = false; raw_failed = true; return -MOS_EINVAL; }
         return 0;
+    case DEV_BT_ADVERTISE: {
+        /* b = dados do anúncio (AD structures, até 31 bytes), cc = tamanho, d = ligar */
+        if (!ready) return -MOS_EINVAL;
+        if (!d) { u8 off = 0; bt_hci_cmd(0x200A, &off, 1, 1000); advertising = false; return 0; }
+        if (cc > 31 || c.st != C_IDLE) return -MOS_EINVAL;
+        u8 ad[32] = {0};
+        ad[0] = (u8)cc;
+        if (cc && !uvm_copy_in(p, ad + 1, b, cc)) return -MOS_EFAULT;
+        u8 prm[15] = {0};
+        put16(prm, 0x00A0); put16(prm + 2, 0x00A0);          /* 100 ms */
+        prm[4] = 0x00;                                        /* ADV_IND: conectável, descobrível */
+        prm[13] = 0x07;                                       /* os três canais */
+        if (bt_hci_cmd(0x2006, prm, 15, 1000)) return -MOS_EINVAL;
+        if (bt_hci_cmd(0x2008, ad, 32, 1000)) return -MOS_EINVAL;
+        u8 on = 1;
+        if (bt_hci_cmd(0x200A, &on, 1, 1000)) return -MOS_EINVAL;
+        advertising = true;
+        return 0;
+    }
     case DEV_BT_DISCONNECT:
         if (c.raw && c.st) { u8 q[3]; put16(q, c.handle); q[2] = 0x13; bt_hci_cmd(0x0406, q, 3, 1000); }
         return 0;
@@ -704,6 +732,8 @@ i64 bt_user_syscall(process_t *p, u64 op, u64 b, u64 cc, u64 d) {
         gui_bt_link_t o;
         memset(&o, 0, sizeof o);
         o.state = c.raw ? (c.st == C_READY ? 2 : c.st ? 1 : 0) : raw_failed ? 3 : 0;
+        o.role = periph_role ? 1 : 0;
+        o.advertising = advertising;
         o.mtu = c.mtu ? c.mtu : 23;
         if (c.raw) addr_str(c.addr, o.addr);
         snprintf(o.err, sizeof o.err, "%s", c.err);

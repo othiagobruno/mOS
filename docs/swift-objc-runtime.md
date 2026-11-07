@@ -2,7 +2,7 @@
 
 Estado (2026-11-07): **fases 1 e 2 prontas; na fase 3, a stdlib e os overlays pequenos estão prontos** (testes Swift
 13/13, 18/18, Dispatch 14/14 e _Concurrency 9/9); da fase 3 só falta UniformTypeIdentifiers, que depende do Foundation.
-O resto em plano. Ponto de partida: o Postico 2.3.5 (9817)
+**Fase 4 pronta para as libswift** (22 dylibs com os nomes da Apple; os testes passam carregando do disco). O resto em plano. Ponto de partida: o Postico 2.3.5 (9817)
 (`.tools/postico-x/`), o primeiro app Swift + SwiftUI da Apple que medimos símbolo a símbolo.
 
 ## Por que
@@ -168,18 +168,55 @@ Cada fase termina com um teste no harness (`build/machotest.exe`) que roda sozin
 
 ### 4. Entrega como dylibs Mach-O
 
-- Ligar cada biblioteca como dylib x86_64 com o nome de instalação da Apple (`/usr/lib/swift/libswiftCore.dylib`,
-  `/System/Library/Frameworks/SwiftUI.framework/Versions/A/SwiftUI`…), com o linker do zig, e colocá-las no VFS da
-  imagem do mOS e no `machotest`.
-- Uma cópia só do runtime por processo: todas as dylibs dependem da `libswiftCore.dylib`, e ninguém liga
-  `libswiftRuntime.a` de forma estática.
-- **Teste:** `machotest --report` do Postico com as `libswift*` e o SwiftUI marcados `[ok]`.
+**Pronta para as libswift (2026-11-07).** O SwiftUI.framework fica para a fase 6.
+
+- `tools/link-swift-dylibs-objc.ps1` → `build/swift/objc/dylib/usr/lib/swift/*.dylib`: 22 dylibs x86_64 ligadas pelo zig,
+  com `-install_name /usr/lib/swift/libswift<X>.dylib` e `-undefined dynamic_lookup`. A `libswiftCore` leva a stdlib e
+  o runtime inteiros (uma cópia por processo). As outras resolvem contra ela pela busca plana do carregador do mOS,
+  que lê do VFS as dylibs de caminho absoluto que o libSystem não substitui.
+  A libc++ do zig entra estática em cada uma. Como na Apple, o FORCE_LOAD do `_Builtin_float` fica na `libswiftDarwin`.
+- `tools/link-swift-objc.ps1 -Dylib` liga um teste contra as dylibs, como um binário da Apple. Roda com
+  `build/swift/objc/dylib` como raiz do VFS do harness.
+- **Teste:** concurrency 9/9 (23 imagens carregadas do disco), nsobject 18/18 e dispatch 14/14 no modo dylib.
+- **Postico** (raiz `build/postico-root` = `usr/lib/swift` + `Applications/Postico 2.app`): as `libswift*` resolvem.
+  O carregador para nas bibliotecas que o mOS ainda não tem: `libz.1.dylib`, `libc++.1.dylib`, SecurityInterface,
+  WebKit, Metal (o framework do mOS existe na imagem, não na raiz do harness), AudioToolbox, CoreData, QuickLookUI,
+  **SwiftUI** (fase 6) e `libswiftUniformTypeIdentifiers` (fase 5).
+- **Falta:** pôr as dylibs na imagem do mOS (`build.ps1`) e o `machotest --report` aceitar uma raiz de VFS.
 
 ### 5. Foundation Swift com ponte ObjC
 
-- O overlay `$s10Foundation…` (243 símbolos no Postico) mora dentro do `Foundation.framework`. Recompilar
-  FoundationEssentials + o Foundation do mOS com interop, com conformidades `_ObjectiveCBridgeable` sobre
-  as classes do `foundation.c` (NSString, NSData, NSURL, NSDate, NSError, NSNumber, coleções).
+O Postico importa **316** símbolos Swift do Foundation, em três blocos: (1) as pontes `_ObjectiveCBridgeable`;
+(2) os tipos-valor (URL 52, Data 25 com código *inlinável* — `Data._Representation`, `__DataStorage` —, JSON e
+PropertyList, UUID, URLComponents, Calendar, Locale, FormatStyle...); (3) as extensões Swift sobre classes ObjC
+(StringProtocol, NSError/LocalizedError/CustomNSError, KVO `observe`, `NSURLSession.data(for:)`, NSCoder, NSLog). As 30
+classes ObjC que as pontes precisam já existem no libSystem do mOS.
+
+**Marco A — pontes centrais (pronto, 2026-11-07).** Overlay `Foundation` em `userland/sdk/swift-objc/Foundation`
+(`Bridging.swift`, `Literals.swift`, `Misc.swift`), compilado pelo `tools/build-swift-overlays-objc.ps1` sobre um módulo
+clang `Foundation` próprio (`userland/sdk/swift-objc/sdk/Foundation/Foundation.h`). Esse cabeçalho declara, no formato
+da Apple, só o que o overlay usa; os apps ObjC do mOS continuam com `userland/sdk/include/Foundation`.
+- Pontes de String/Substring, de todos os inteiros, Double/Float/CGFloat/Bool ↔ NSNumber, e de Array/Dictionary/Set ↔
+  NSArray/NSDictionary/NSSet; literais de NSString/NSNumber/NSArray/NSDictionary; iteração por `NSFastEnumerationIterator`;
+  `NSNotFound`, `NSLog`, `String(format:)`, `String: CVarArg` e `init(truncating: NSNumber)`.
+- **Diferente da Apple, de propósito:** a ponte para ObjC cria objetos do Foundation do mOS (cópia), em vez de devolver o
+  armazenamento Swift como subclasse de NSString/NSArray. Os métodos do `foundation.c` leem a representação interna
+  deles, e assim só recebem objetos que entendem. Na volta, a leitura é pelos métodos públicos.
+- O `NSNumber` do mOS só tem `initWithInt:`/`initWithInteger:`/`initWithDouble:`; o overlay mapeia os outros tipos
+  para eles (Bool vira 0/1).
+- **Teste:** `userland/tests-swiftobjc/foundation/main.swift` → **23/23** (pontes nos dois sentidos, casts por
+  `Any`/`AnyObject`, literais, for-in). **32 dos 316** símbolos do Postico batem.
+
+**Próximos marcos:**
+- **B — tipos-valor do swift-foundation** (a base do Foundation do macOS 14+, então o layout inlinável de `Data` bate):
+  FoundationEssentials (e o que for preciso do FoundationInternationalization) com interop e
+  `-module-abi-name Foundation`, para os tipos saírem como `$s10Foundation4DataV`. Depois, as pontes Data/URL/Date/
+  UUID/Locale/TimeZone/IndexSet/Notification/URLRequest ↔ NSData/NSURL/NSDate/... e o `URLResourceValues`.
+- **C — extensões sobre ObjC:** StringProtocol (sobre NSString), erros (NSError, CustomNSError, LocalizedError,
+  `_convertErrorToNSError`, os ganchos do runtime em `ErrorObject.mm`), KVO, NSURLSession async, NSCoder, FileManager.
+- **D — entrega:** `Foundation.framework` hoje conta como "do libSystem" no carregador, então o overlay Swift precisa
+  entrar como imagem extra (p. ex. carregar `Foundation.framework/Versions/C/Foundation` do VFS quando existir) ou
+  como `/usr/lib/swift/libswiftFoundation.dylib` puxada pela `libswiftCore`.
 - O `_MOSCFObject` (CF como objeto Swift, [[openswiftui-deps-port]]) deixa de ser necessário nesta variante:
   aqui os objetos CF do mOS são objetos ObjC de verdade.
 
@@ -195,10 +232,32 @@ Cada fase termina com um teste no harness (`build/machotest.exe`) que roda sozin
 
 ### 7. Postico de ponta a ponta
 
-- As bibliotecas não-Swift que faltam: libz, libc++ (a do `libcxx.c` exposta como `libc++.1.dylib`), Security/
-  SecurityInterface, CoreData, CFNetwork, IOKit, AudioToolbox, QuickLookUI, Metal (já existe como
-  framework do mOS), WebKit (provavelmente só stub).
-- **Teste final:** a janela de conexão do Postico aparece no harness (`MACHOTEST_DUMP`).
+**Bibliotecas não-Swift prontas (2026-11-07).** Com elas, o carregador só para no SwiftUI (fase 6) e na
+`libswiftUniformTypeIdentifiers` (fase 5).
+
+- **Carregador** (`kernel/compat/macho.c`, `libsystem_dylib_ok`): `libc++.1.dylib`/`libc++abi.dylib` (`cxxabi.c` e
+  `libcxx.c`), `Metal`/`MetalKit` (`metal.c`) e `UniformTypeIdentifiers` (`UTType` em `vscode_media.c`) passam a contar
+  como fornecidos pelo libSystem.
+- **Frameworks Mach-O de verdade** (`tools/build-frameworks-objc.ps1`, fontes em `userland/frameworks/<Nome>`), no
+  caminho da Apple em `build/swift/objc/dylib`; pastas `lib*` vão para `/usr/lib`:
+  - **CoreData:** as classes (NSManagedObjectModel, NSPersistentStoreCoordinator, NSManagedObjectContext,
+    NSEntityDescription, NSFetchRequest, NSManagedObject) e as constantes, com um armazenamento **só em memória** (sem
+    SQLite nem `.momd`; fetch por entidade, sem predicados). Também o overlay Swift `NSManagedObjectContext.fetch`,
+    compilado num módulo clang mínimo próprio.
+  - **WebKit:** WKWebView (NSView vazia; carregamentos ignorados) e WKWebViewConfiguration.
+  - **SecurityInterface:** SFCertificateTrustPanel responde "cancelar".
+  - **QuickLookUI:** QLPreviewView vazia.
+  - **AudioToolbox:** AudioServices (o alerta vira NSBeep).
+  - **ImageIO:** CGImageSource/Destination, que ainda devolvem NULL.
+  - **ServiceManagement:** SMJob* falham.
+  - **libcompression:** sem codecs.
+
+  As constantes CFString usam a literal do clang (`__builtin___CFStringMakeConstantString`).
+- **libz:** o bottle do Homebrew (zlib 1.3.2) em `/usr/local/opt/zlib/lib`, para onde o carregador já redireciona
+  `/usr/lib/libz.1.dylib`.
+- Os 11 símbolos do CoreData e os do WebKit, SecurityInterface, QuickLookUI e AudioToolbox que o Postico importa
+  batem. Os do Sparkle (ImageIO, ServiceManagement, UTType) também.
+- **Teste final:** a janela de conexão do Postico aparecer no harness (`MACHOTEST_DUMP`), depois das fases 5 e 6.
 
 ## Ordem e dependências
 

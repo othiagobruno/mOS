@@ -207,8 +207,61 @@ int tcsetpgrp(int fd, int pg) { (void)fd; (void)pg; return 0; }
 char *ttyname(int fd) { return isatty(fd) ? "/dev/ttys000" : 0; }
 unsigned long cfgetospeed(const void *t) { (void)t; return 38400; }
 int getdtablesize(void) { return 32; }                 /* a tabela de fds do kernel tem 32 entradas */
-unsigned alarm(unsigned s) { (void)s; return 0; }       /* sem SIGALRM ainda: o alarme nunca dispara */
-int setitimer(int which, const void *nv, void *ov) { (void)which; (void)nv; if (ov) memset(ov, 0, 32); return 0; }
+/* alarm/setitimer(ITIMER_REAL): o kernel não tem temporizadores por processo; uma thread auxiliar dorme e
+ * manda SIGALRM ao próprio processo. Cada armação nova aumenta a geração; a thread antiga vê e desiste. */
+int pthread_create(unsigned long *t, const void *attr, void *(*fn)(void *), void *arg);
+int pthread_detach(unsigned long t);
+int usleep(unsigned us);
+int kill(int pid, int s);
+static volatile unsigned long itimer_gen;
+static volatile long long itimer_deadline_ms, itimer_interval_ms;
+static long long now_ms(void) { return (long long)cx_syscall(SYS_TIME, 0, 0, 0, 0, 0); }
+static void *itimer_thread(void *arg) {
+    unsigned long gen = (unsigned long)arg;
+    for (;;) {
+        long long left = itimer_deadline_ms - now_ms();
+        if (itimer_gen != gen) return 0;
+        if (left > 0) { usleep((unsigned)(left > 50 ? 50 : left) * 1000); continue; }   /* acorda a cada 50 ms para ver a geração */
+        if (itimer_gen != gen) return 0;
+        kill(getpid(), 14);                                  /* SIGALRM */
+        if (itimer_interval_ms <= 0) { if (itimer_gen == gen) itimer_deadline_ms = 0; return 0; }
+        itimer_deadline_ms += itimer_interval_ms;
+    }
+}
+static long long itimer_arm(long long first_ms, long long interval_ms) {
+    long long old = itimer_deadline_ms ? itimer_deadline_ms - now_ms() : 0;
+    unsigned long gen = ++itimer_gen;
+    itimer_interval_ms = interval_ms;
+    itimer_deadline_ms = first_ms > 0 ? now_ms() + first_ms : 0;
+    if (first_ms > 0) {
+        unsigned long th;
+        if (pthread_create(&th, 0, itimer_thread, (void *)gen) == 0) pthread_detach(th);
+    }
+    return old > 0 ? old : 0;
+}
+unsigned alarm(unsigned s) {
+    long long old = itimer_arm((long long)s * 1000, 0);
+    return (unsigned)((old + 999) / 1000);
+}
+typedef struct { long tv_sec; int tv_usec; } cx_itv_tv_t;
+typedef struct { cx_itv_tv_t it_interval, it_value; } cx_itimerval_t;
+int setitimer(int which, const cx_itimerval_t *nv, cx_itimerval_t *ov) {
+    if (which != 0) { if (ov) memset(ov, 0, sizeof *ov); return 0; }   /* só ITIMER_REAL; VIRTUAL/PROF não disparam */
+    long long left = itimer_deadline_ms ? itimer_deadline_ms - now_ms() : 0;
+    if (ov) {
+        memset(ov, 0, sizeof *ov);
+        if (left > 0) { ov->it_value.tv_sec = left / 1000; ov->it_value.tv_usec = (int)(left % 1000) * 1000; }
+        ov->it_interval.tv_sec = itimer_interval_ms / 1000; ov->it_interval.tv_usec = (int)(itimer_interval_ms % 1000) * 1000;
+    }
+    if (nv) {
+        long long first = (long long)nv->it_value.tv_sec * 1000 + nv->it_value.tv_usec / 1000;
+        long long iv = (long long)nv->it_interval.tv_sec * 1000 + nv->it_interval.tv_usec / 1000;
+        if (!first && (nv->it_value.tv_sec || nv->it_value.tv_usec)) first = 1;
+        itimer_arm(first, iv);
+    }
+    return 0;
+}
+int getitimer(int which, cx_itimerval_t *v) { return setitimer(which, 0, v); }
 int getrusage(int who, void *ru) { (void)who; memset(ru, 0, 144); return 0; }
 int faccessat(int fd, const char *path, int mode, int flag) {
     (void)flag;

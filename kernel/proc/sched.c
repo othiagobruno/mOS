@@ -154,6 +154,13 @@ static void wake_sleepers(void) {
             t->mach_peek = false;
             t->state = TH_READY;
         }
+        /* SYS_FUTEX_WAIT com prazo (process.c): volta com -ETIMEDOUT */
+        else if (t->state == TH_WAITING && t->wait_pid == -8 && t->wake_at && now >= t->wake_at) {
+            ((int_frame_t *)t->frame)->rax = (u64)-60;      /* -MOS_ETIMEDOUT (syscall.h) */
+            t->wake_at = 0;
+            t->futex_va = 0;
+            t->state = TH_READY;
+        }
     }
 }
 

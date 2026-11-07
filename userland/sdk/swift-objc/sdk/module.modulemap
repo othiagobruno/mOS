@@ -4,6 +4,15 @@
 module Darwin [system] [extern_c] {
     umbrella header "mos_darwin.h"
     export *
+    // submódulos que o swift-foundation importa (import Darwin.uuid...): recortes do guarda-chuva, sem cabeçalho próprio
+    module crt_externs { export * }
+    module sysdir { export * }
+    module uuid { export * }
+}
+
+module MachO [system] [extern_c] {
+    export *
+    module dyld { export * }
 }
 
 module ObjectiveC [system] [extern_c] {
@@ -33,5 +42,11 @@ module Dispatch [system] [extern_c] {
     header "os/object.h"
     header "os/clock.h"
     header "os/workgroup.h"
+    export *
+}
+
+// Foundation em ObjC para o overlay Swift Foundation (só o que ele usa; classes do libSystem do mOS)
+module Foundation [system] [extern_c] {
+    header "Foundation/Foundation.h"
     export *
 }

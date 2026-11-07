@@ -68,3 +68,53 @@ public func os_log(_ message: StaticString, dso: UnsafeRawPointer? = #dsohandle,
     guard type == .error || type == .fault else { return }
     fputs(_mosFormat(message, args) + "\n", __stderrp)
 }
+
+// MARK: - Logger (o que o swift-foundation e os apps usam; como o MOSos do caminho sem ObjC: erro/falha no stderr)
+
+public struct OSLogPrivacy: Sendable, Equatable {
+    let _raw: Int
+    public static var `public`: OSLogPrivacy { OSLogPrivacy(_raw: 0) }
+    public static var `private`: OSLogPrivacy { OSLogPrivacy(_raw: 1) }
+    public static var sensitive: OSLogPrivacy { OSLogPrivacy(_raw: 2) }
+    public static var auto: OSLogPrivacy { OSLogPrivacy(_raw: 3) }
+}
+
+public struct OSLogInterpolation: StringInterpolationProtocol, Sendable {
+    public var _text = ""
+    public init(literalCapacity: Int, interpolationCount: Int) {}
+    public mutating func appendLiteral(_ s: String) { _text += s }
+    public mutating func appendInterpolation<T>(_ value: @autoclosure () -> T, privacy: OSLogPrivacy = .auto) { _text += String(describing: value()) }
+    public mutating func appendInterpolation(_ value: @autoclosure () -> String, privacy: OSLogPrivacy = .auto) { _text += value() }
+}
+
+public struct OSLogMessage: ExpressibleByStringInterpolation, ExpressibleByStringLiteral, Sendable {
+    public let _text: String
+    public init(stringLiteral value: String) { _text = value }
+    public init(stringInterpolation: OSLogInterpolation) { _text = stringInterpolation._text }
+}
+
+@usableFromInline internal func _mosLogLine(_ level: String, _ category: String, _ message: String) {
+    var line = "[\(level)]"
+    if !category.isEmpty { line += " \(category):" }
+    fputs(line + " " + message + "\n", __stderrp)
+}
+
+public struct Logger: @unchecked Sendable {
+    let _category: String
+    public init(subsystem: String, category: String) { _category = category }
+    public init(_ log: OSLog) { _category = "" }
+    public init() { _category = "" }
+
+    public func log(level: OSLogType, _ message: OSLogMessage) {
+        if level == .error || level == .fault { _mosLogLine(level == .error ? "error" : "fault", _category, message._text) }
+    }
+    public func log(_ message: OSLogMessage) {}
+    public func trace(_ message: OSLogMessage) {}
+    public func debug(_ message: OSLogMessage) {}
+    public func info(_ message: OSLogMessage) {}
+    public func notice(_ message: OSLogMessage) {}
+    public func warning(_ message: OSLogMessage) { _mosLogLine("warning", _category, message._text) }
+    public func error(_ message: OSLogMessage) { _mosLogLine("error", _category, message._text) }
+    public func critical(_ message: OSLogMessage) { _mosLogLine("critical", _category, message._text) }
+    public func fault(_ message: OSLogMessage) { _mosLogLine("fault", _category, message._text) }
+}

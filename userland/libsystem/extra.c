@@ -215,40 +215,125 @@ int pthread_equal(void *a, void *b) { return a == b; }
  * não passam por ele, toda thread responde 1 como antes (feito pela sessão do VS Code, com o ok da DMG) */
 extern int cx_main_tid;
 int pthread_main_np(void) { return !cx_main_tid || (int)SYS0(SYS_GETTID) == cx_main_tid; }
-/* pthread_mutex_t do macOS tem 64 bytes ({long sig; char opaque[56]}): usamos o primeiro int do opaque */
-static volatile int *mx(void *m) { return (volatile int *)((char *)m + 8); }
-int pthread_mutex_init(void *m, const void *a) { (void)a; *mx(m) = 0; return 0; }
-int pthread_mutex_destroy(void *m) { (void)m; return 0; }
-int pthread_mutex_lock(void *m) { while (__sync_lock_test_and_set(mx(m), 1)) SYS0(SYS_YIELD); return 0; }
-int pthread_mutex_trylock(void *m) { return __sync_lock_test_and_set(mx(m), 1) ? 16 : 0; }
-int pthread_mutex_unlock(void *m) { __sync_lock_release(mx(m)); return 0; }
-int pthread_mutexattr_init(void *a) { (void)a; return 0; }
-int pthread_mutexattr_settype(void *a, int t) { (void)a; (void)t; return 0; }
-int pthread_mutexattr_destroy(void *a) { (void)a; return 0; }
-int pthread_cond_init(void *c, const void *a) { (void)c; (void)a; return 0; }
-int pthread_cond_destroy(void *c) { (void)c; return 0; }
-static volatile int *cv(void *c) { return (volatile int *)((char *)c + 8); }
-int pthread_cond_signal(void *c) { __sync_fetch_and_add(cv(c), 1); return 0; }
-int pthread_cond_broadcast(void *c) { __sync_fetch_and_add(cv(c), 1); return 0; }
-int pthread_cond_wait(void *c, void *m) {
-    int seq = *cv(c);
-    pthread_mutex_unlock(m);
-    while (*cv(c) == seq) SYS0(SYS_YIELD);
-    return pthread_mutex_lock(m);
+/* futex do kernel (SYS_FUTEX_WAIT/WAKE, kernel/proc/process.c): a thread que espera fica parada no kernel em vez de
+ * girar com SYS_YIELD. ms < 0 = sem prazo. Devolve 0 (acordada), -35 (o valor já tinha mudado), -60 (prazo) ou -4
+ * (sinal). Sem o futex (o harness machotest não o emula: -EINVAL), cede a CPU como antes e o chamador confere de novo. */
+static int futex_ok = 1;
+int cx_futex_wait(volatile int *w, int expected, long ms) {
+    if (futex_ok) {
+        long r = SYS3(SYS_FUTEX_WAIT, w, expected, ms < 0 ? ~0UL : (unsigned long)ms);
+        if (r != -22) return (int)r;
+        futex_ok = 0;
+    }
+    SYS0(SYS_YIELD);
+    return 0;
 }
+int cx_futex_wake(volatile int *w, int n) { return futex_ok ? (int)SYS2(SYS_FUTEX_WAKE, w, n) : 0; }
+
+/* pthread_mutex_t do macOS tem 64 bytes ({long sig; char opaque[56]}): usamos o primeiro int do opaque.
+ * 0 = livre, 1 = travado, 2 = travado com alguém esperando (o mutex de "Futexes Are Tricky", Drepper): sem disputa,
+ * travar e destravar não entram no kernel; com disputa, quem espera dorme no futex até o destravar acordá-lo. */
+static volatile int *mx(void *m) { return (volatile int *)((char *)m + 8); }
+static void mutex_acquire(volatile int *w) {
+    int c = __sync_val_compare_and_swap(w, 0, 1);
+    if (!c) return;
+    if (c != 2) c = __sync_lock_test_and_set(w, 2);
+    while (c) { cx_futex_wait(w, 2, -1); c = __sync_lock_test_and_set(w, 2); }
+}
+static void mutex_release(volatile int *w) { if (__sync_fetch_and_sub(w, 1) != 1) { *w = 0; cx_futex_wake(w, 1); } }
+
+/* tipos de mutex: PTHREAD_MUTEX_NORMAL 0, ERRORCHECK 1, RECURSIVE 2. O SQLite (no Chromium e no vscode-sqlite3.node)
+ * cria os mutexes das conexões como recursivos e entra de novo neles na mesma thread; ignorando o tipo, a thread
+ * travava em si mesma (no VS Code, sql::Database::OpenInternal no processo principal, para sempre).
+ * pthread_mutexattr_t do macOS tem 16 bytes ({long sig; char opaque[8]}): o tipo fica no int em +8.
+ * No pthread_mutex_t: +8 palavra do futex, +12 tipo + 1 (0 = não informado: vale o sig dos inicializadores
+ * estáticos), +16 dono (tid), +20 contagem — o mesmo layout do std::recursive_mutex de libcxx.c. */
+#define MTX_SIG_ERRORCHECK 0x32AAABA1L      /* PTHREAD_ERRORCHECK_MUTEX_INITIALIZER */
+#define MTX_SIG_RECURSIVE  0x32AAABA2L      /* PTHREAD_RECURSIVE_MUTEX_INITIALIZER */
+static volatile int *mtype(void *m) { return (volatile int *)((char *)m + 12); }
+static volatile int *mowner(void *m) { return (volatile int *)((char *)m + 16); }
+static volatile int *mcount(void *m) { return (volatile int *)((char *)m + 20); }
+static int mutex_type(void *m) {
+    int t = *mtype(m);
+    if (t >= 1 && t <= 3) return t - 1;
+    long sig = *(volatile long *)m;
+    return sig == MTX_SIG_RECURSIVE ? 2 : sig == MTX_SIG_ERRORCHECK ? 1 : 0;
+}
+int pthread_mutex_init(void *m, const void *a) {
+    int t = a ? ((const int *)a)[2] : 0;
+    if (t < 0 || t > 2) t = 0;
+    *mx(m) = 0; *mowner(m) = 0; *mcount(m) = 0;
+    *mtype(m) = t + 1;
+    return 0;
+}
+int pthread_mutex_destroy(void *m) { (void)m; return 0; }
+int pthread_mutex_lock(void *m) {
+    int t = mutex_type(m);
+    if (!t) { mutex_acquire(mx(m)); return 0; }
+    int me = (int)SYS0(SYS_GETTID);
+    if (*mowner(m) == me) {                  /* só o dono vê o próprio tid aqui */
+        if (t == 2) { (*mcount(m))++; return 0; }
+        return 11;                           /* EDEADLK */
+    }
+    mutex_acquire(mx(m));
+    *mowner(m) = me;
+    *mcount(m) = 1;
+    return 0;
+}
+int pthread_mutex_trylock(void *m) {
+    int t = mutex_type(m);
+    int me = t ? (int)SYS0(SYS_GETTID) : 0;
+    if (t == 2 && *mowner(m) == me) { (*mcount(m))++; return 0; }
+    if (__sync_val_compare_and_swap(mx(m), 0, 1)) return 16;   /* EBUSY */
+    if (t) { *mowner(m) = me; *mcount(m) = 1; }
+    return 0;
+}
+int pthread_mutex_unlock(void *m) {
+    int t = mutex_type(m);
+    if (t) {
+        if (*mowner(m) != (int)SYS0(SYS_GETTID)) return 1;      /* EPERM */
+        if (t == 2 && --*mcount(m) > 0) return 0;
+        *mowner(m) = 0;
+        *mcount(m) = 0;
+    }
+    mutex_release(mx(m));
+    return 0;
+}
+int pthread_mutexattr_init(void *a) { ((long *)a)[0] = 0x4D545841L; ((int *)a)[2] = 0; return 0; }   /* _PTHREAD_MUTEX_ATTR_SIG */
+int pthread_mutexattr_settype(void *a, int t) { if (t < 0 || t > 2) return 22; ((int *)a)[2] = t; return 0; }
+int pthread_mutexattr_gettype(const void *a, int *t) { if (t) *t = ((const int *)a)[2]; return 0; }
+int pthread_mutexattr_destroy(void *a) { (void)a; return 0; }
+int pthread_cond_init(void *c, const void *a) { (void)a; ((volatile int *)((char *)c + 8))[0] = 0; ((volatile int *)((char *)c + 8))[1] = 0; return 0; }
+int pthread_cond_destroy(void *c) { (void)c; return 0; }
+/* pthread_cond_t do macOS tem 48 bytes ({long sig; char opaque[40]}): int em +8 = sequência (cada signal/broadcast
+ * soma 1; o futex espera ela mudar), int em +12 = quantos esperam (signal sem ninguém esperando não entra no kernel).
+ * Quem espera lê a sequência ainda com o mutex travado: um signal depois disso muda o valor e o FUTEX_WAIT volta na
+ * hora (EAGAIN) se ainda não tinha dormido. Acordar sem sinal é permitido pelo POSIX; o chamador confere a condição. */
+static volatile int *cv(void *c) { return (volatile int *)((char *)c + 8); }
+static volatile int *cvw(void *c) { return (volatile int *)((char *)c + 12); }
+int pthread_cond_signal(void *c) { __sync_fetch_and_add(cv(c), 1); if (*cvw(c)) cx_futex_wake(cv(c), 1); return 0; }
+int pthread_cond_broadcast(void *c) { __sync_fetch_and_add(cv(c), 1); if (*cvw(c)) cx_futex_wake(cv(c), 0x7FFFFFFF); return 0; }
 /* espera com prazo: rel_ms < 0 = sem prazo; devolve ETIMEDOUT (60) se o prazo vencer */
 static int cond_wait_ms(void *c, void *m, long rel_ms) {
+    __sync_fetch_and_add(cvw(c), 1);
     int seq = *cv(c);
     u64 end = (u64)SYS0(SYS_TIME) + (u64)(rel_ms < 0 ? 0 : rel_ms);
     pthread_mutex_unlock(m);
     int r = 0;
     while (*cv(c) == seq) {
-        if (rel_ms >= 0 && (u64)SYS0(SYS_TIME) >= end) { r = 60; break; }
-        SYS0(SYS_YIELD);
+        long left = -1;
+        if (rel_ms >= 0) {
+            u64 now = (u64)SYS0(SYS_TIME);
+            if (now >= end) { r = 60; break; }
+            left = (long)(end - now);
+        }
+        cx_futex_wait(cv(c), seq, left);
     }
+    __sync_fetch_and_sub(cvw(c), 1);
     pthread_mutex_lock(m);
     return r;
 }
+int pthread_cond_wait(void *c, void *m) { cond_wait_ms(c, m, -1); return 0; }
 /* ts: struct timespec {long sec; long nsec} absoluto (tempo Unix) */
 int gettimeofday(void *tv, void *tz);
 int pthread_cond_timedwait(void *c, void *m, const void *ts) {
@@ -497,9 +582,15 @@ int getentropy(void *buf, size_t n) { arc4random_buf(buf, n); return 0; }
 int SecRandomCopyBytes(void *rnd, size_t n, void *buf) { (void)rnd; arc4random_buf(buf, n); return 0; }
 
 /* libdispatch: semáforos de um processo com uma thread */
-typedef struct { long count; } cx_sema_t;
-void *dispatch_semaphore_create(long v) { cx_sema_t *s = malloc(sizeof *s); if (s) s->count = v; return s; }
-long dispatch_semaphore_signal(void *s) { __sync_fetch_and_add(&((cx_sema_t *)s)->count, 1); return 0; }
+/* contador + quantos esperam; a espera dorme no futex sobre os 32 bits baixos do contador (x86: mesmo endereço) */
+typedef struct { long count; volatile int waiters; } cx_sema_t;
+void *dispatch_semaphore_create(long v) { cx_sema_t *s = malloc(sizeof *s); if (s) { s->count = v; s->waiters = 0; } return s; }
+long dispatch_semaphore_signal(void *s) {
+    cx_sema_t *x = s;
+    __sync_fetch_and_add(&x->count, 1);
+    if (x->waiters) cx_futex_wake((volatile int *)&x->count, 1);
+    return 0;
+}
 /* dispatch_time, como no macOS: absoluto, em ns na base do mach_absolute_time (SYS_TIME em ms * 10^6);
  * DISPATCH_TIME_NOW = 0, DISPATCH_TIME_FOREVER = ~0, DISPATCH_WALLTIME_NOW = ~1 (aqui o mesmo relógio). O bit 63
  * (DISPATCH_UP_OR_MONOTONIC_TIME_MASK, relógio contínuo do Swift) não muda a base no mOS. */
@@ -518,8 +609,15 @@ long dispatch_semaphore_wait(void *s, u64 timeout) {
     for (;;) {
         long c = x->count;
         if (c > 0) { if (__sync_bool_compare_and_swap(&x->count, c, c - 1)) return 0; continue; }
-        if (limit != ~0ull && now_ns() >= limit) return 1;
-        SYS1(SYS_SLEEP, 1);
+        long left = -1;
+        if (limit != ~0ull) {
+            u64 now = now_ns();
+            if (now >= limit) return 1;
+            left = (long)((limit - now + 999999) / 1000000);
+        }
+        __sync_fetch_and_add(&x->waiters, 1);
+        if (x->count == c) cx_futex_wait((volatile int *)&x->count, (int)c, left);
+        __sync_fetch_and_sub(&x->waiters, 1);
     }
 }
 void dispatch_release(void *o) { free(o); }

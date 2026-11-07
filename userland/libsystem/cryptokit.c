@@ -112,7 +112,7 @@ int mos_ck_hkdf(int alg, const u8 *ikm, size_t ilen, const u8 *salt, size_t slen
 
 /* ================================================================ AEADs */
 int mos_ck_aes_gcm_seal(const u8 *key, size_t klen, const u8 nonce[12], const u8 *aad, size_t alen, const u8 *in, size_t n, u8 *out, u8 tag[16]) {
-    if (klen != 16 && klen != 32) return -2;                  /* AES-192 não: o AES do kernel é 128/256 */
+    if (klen != 16 && klen != 24 && klen != 32) return -2;
     aes_gcm_ctx c;
     aes_gcm_init(&c, key, (u32)klen);
     aes_gcm_seal(&c, nonce, aad, alen, in, n, out, tag);
@@ -120,7 +120,7 @@ int mos_ck_aes_gcm_seal(const u8 *key, size_t klen, const u8 nonce[12], const u8
     return 0;
 }
 int mos_ck_aes_gcm_open(const u8 *key, size_t klen, const u8 nonce[12], const u8 *aad, size_t alen, const u8 *in, size_t n, const u8 tag[16], u8 *out) {
-    if (klen != 16 && klen != 32) return -2;
+    if (klen != 16 && klen != 24 && klen != 32) return -2;
     aes_gcm_ctx c;
     aes_gcm_init(&c, key, (u32)klen);
     int r = aes_gcm_open(&c, nonce, aad, alen, in, n, out, tag);
@@ -412,6 +412,10 @@ int mos_ck_selftest(void) {
     memset(k, 0, 32);
     mos_ck_aes_gcm_seal(k, 16, k, 0, 0, 0, 0, o, t);
     if (!hexeq(t, 16, "58e2fccefa7e3061367f1d57a4e7455a")) fail |= 1 << bit; bit++;
+    /* 16: AES-192-GCM, NIST caso 7 (chave e IV zero, texto vazio) */
+    memset(k, 0, 32);
+    mos_ck_aes_gcm_seal(k, 24, k, 0, 0, 0, 0, o, t);
+    if (!hexeq(t, 16, "cd33b28ac773f74ba00ed1f312572435")) fail |= 1 << 16;
     /* 7: ChaCha20-Poly1305 ida e volta (o vetor do RFC 8439 já é testado no tlstest) e adulteração */
     for (int i = 0; i < 32; i++) k[i] = (u8)(0x80 + i);
     memcpy(m, "Ladies and Gentlemen of the class of '99", 40);

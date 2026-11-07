@@ -384,12 +384,23 @@ bool proc_alive(int pid) { process_t *p = find(pid); return p && !p->exited; }
 int proc_exit_code(int pid) { process_t *p = find(pid); return p && p->exited ? p->exit_code : -1000; }
 
 /* processos encerrados ficam como "zumbis" até alguém chamar wait; limita quantos sobram */
+/* zumbi que alguém ainda vai recolher: o pai está vivo e não recebeu o código (ppid > 0). Descartar esse
+ * faz o waitpid do pai falhar com ECHILD (o tar perdia o gzip filho assim). Esses só saem acima de um teto alto. */
+static bool zombie_awaited(process_t *z) {
+    if (z->ppid <= 0) return false;
+    process_t *par = find(z->ppid);
+    return par && !par->exited;
+}
 static void trim_zombies(void) {
-    int n = 0;
-    for (process_t *p = procs; p; p = p->next) if (p->exited && !p->main) n++;
+    int n = 0, awaited = 0;
+    for (process_t *p = procs; p; p = p->next)
+        if (p->exited && !p->main) { if (zombie_awaited(p)) awaited++; else n++; }
     while (n-- > MAX_ZOMBIES)
         for (process_t *p = procs; p; p = p->next)
-            if (p->exited && !p->main) { unlink_proc(p); break; }
+            if (p->exited && !p->main && !zombie_awaited(p)) { unlink_proc(p); break; }
+    while (awaited-- > MAX_ZOMBIES * 16)                       /* pai que nunca chama wait: não cresce sem limite */
+        for (process_t *p = procs; p; p = p->next)
+            if (p->exited && !p->main && zombie_awaited(p)) { unlink_proc(p); break; }
 }
 
 /* uma thread de usuário foi recolhida pelo escalonador; a memória sai com a última do processo */
@@ -421,10 +432,23 @@ static int posix_status(int code) {
 }
 
 /* marca o fim do processo e acorda quem espera por ele */
+/* threads de p que esperam num pipe: o pipe pode sobreviver (outro processo tem a outra ponta) e a
+ * thread vai ser liberada pelo escalonador; o ponteiro em rwait/wwait viraria memória solta (kfree duplo) */
+static void drop_pipe_waiters(process_t *p, thread_t *keep) {
+    for (process_t *q = procs; q; q = q->next)
+        for (int i = 0; i < 32; i++) {
+            pipe_t *pp = q->fds[i].used ? q->fds[i].pipe : NULL;
+            if (!pp) continue;
+            if (pp->rwait && pp->rwait->proc == p && pp->rwait != keep) pp->rwait = NULL;
+            if (pp->wwait && pp->wwait->proc == p && pp->wwait != keep) pp->wwait = NULL;
+        }
+}
+
 static void finish(process_t *p, int code) {
     if (p->exited) return;
     p->exited = true;
     p->exit_code = code;
+    drop_pipe_waiters(p, NULL);
     for (thread_t *t = sched_threads(); t; t = t->next)   /* todas as threads do processo */
         if (t->proc == p) {
             if (p->tty && p->tty->reader == t) p->tty->reader = NULL;
@@ -759,6 +783,8 @@ static void dump_threads_maybe(int_frame_t *cur) {
         }
         if (o) kprintf("despejo:   pilha:%s\n", line);
     }
+    /* filas Mach com mensagens que ninguém recebeu ainda (machipc.c) */
+    { extern void machipc_dump_queues(process_t *p); for (process_t *q = procs; q; q = q->next) machipc_dump_queues(q); }
 }
 
 /* ------------------------------------------------------------ sinais
@@ -820,7 +846,8 @@ static u64 sig_return(int_frame_t *f) {
 }
 
 bool proc_signal(int pid, int sig) {
-    if (sig <= 0 || sig >= MOS_NSIG) return false;
+    if (sig == 0) return proc_alive(pid);                /* kill(pid, 0): só pergunta se o processo existe */
+    if (sig < 0 || sig >= MOS_NSIG) return false;
     u64 fl = irq_save();
     process_t *p = find(pid);
     bool ok = p && !p->exited;
@@ -1221,6 +1248,7 @@ static i64 proc_exec(int_frame_t *f, thread_t *t, process_t *p, char *path, char
             o->state = TH_DEAD;
         }
     p->main = t;
+    drop_pipe_waiters(p, t);
     compat_gui_proc_exit(p);
     { extern void lazy_exit(process_t *p); lazy_exit(p); }
     process_t old = {0};
@@ -1301,6 +1329,36 @@ u64 proc_syscall(int_frame_t *f) {
         f->rax = 0;
         t->state = TH_READY;
         return sched_switch(f);
+
+    /* ---- futex: espera numa palavra de 32 bits do processo. O libSystem monta pthread_mutex/cond e os semáforos
+     * em cima disto; antes eles giravam com SYS_YIELD e cada thread ociosa do Chromium (ThreadPool, V8, libuv)
+     * ficava sempre pronta, roubando a CPU de quem tinha trabalho. Conferir o valor e bloquear é atômico aqui:
+     * syscalls rodam com interrupções desligadas num núcleo só, então nenhum FUTEX_WAKE cai no meio. */
+    case SYS_FUTEX_WAIT: {
+        u32 cur;
+        if ((a & 3) || !uvm_copy_in(p, &cur, a, 4)) { r = -MOS_EFAULT; break; }
+        if (cur != (u32)b) { r = -MOS_EAGAIN; break; }
+        if (!c) { r = -MOS_ETIMEDOUT; break; }
+        t->futex_va = a;
+        t->wake_at = c == ~0ULL ? 0 : timer_ticks() + c;    /* o prazo é do escalonador (wake_sleepers) */
+        t->wait_pid = -8;
+        t->state = TH_WAITING;
+        f->rax = 0;                                          /* acordada por FUTEX_WAKE */
+        return sched_switch(f);
+    }
+    case SYS_FUTEX_WAKE: {
+        i64 n = 0;
+        for (thread_t *w = sched_threads(); w && n < (i64)(b ? b : 1); w = w->next) {
+            if (w->state != TH_WAITING || w->wait_pid != -8 || w->proc != p || w->futex_va != a) continue;
+            ((int_frame_t *)w->frame)->rax = 0;
+            w->futex_va = 0;
+            w->wake_at = 0;
+            w->state = TH_READY;
+            n++;
+        }
+        r = n;
+        break;
+    }
     case SYS_TIME: r = (i64)timer_ticks(); break;
     case SYS_BRK:
         if (a == 0) r = (i64)p->brk;

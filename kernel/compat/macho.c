@@ -217,6 +217,8 @@ bool libsystem_dylib_ok(const char *n) {
         "/usr/lib/libinfo.dylib", "/usr/lib/libgcc_s.1.dylib", "/usr/lib/libiconv.2.dylib", "/usr/lib/libiconv.dylib",
         /* git e curl do Homebrew: res_9_* (darwin.c) e uidna_* (posixmore.c, só nomes ASCII) */
         "/usr/lib/libresolv.9.dylib", "/usr/lib/libicucore.A.dylib",
+        /* libc++/libc++abi: operator new/delete, guardas de estáticos e o resto em cxxabi.c e libcxx.c */
+        "/usr/lib/libc++.1.dylib", "/usr/lib/libc++abi.dylib",
     };
     for (u32 i = 0; i < ARRAY_LEN(ok); i++) if (!strcmp(n, ok[i])) return true;
     /* frameworks implementados pelo libSystem do mOS (runtime ObjC, Foundation, AppKit, CG) */
@@ -227,6 +229,10 @@ bool libsystem_dylib_ok(const char *n) {
                                "/System/Library/Frameworks/CoreText.framework/",
                                /* sessão CoreAnimation/IOSurface: iosurface.c / quartzcore.c */
                                "/System/Library/Frameworks/IOSurface.framework/", "/System/Library/Frameworks/CoreVideo.framework/",
+                               /* Metal por software (metal.c, metalexec.c, mtlshader.c; docs/metal.md) */
+                               "/System/Library/Frameworks/Metal.framework/", "/System/Library/Frameworks/MetalKit.framework/",
+                               /* UTType e as constantes UTType* (vscode_media.c) */
+                               "/System/Library/Frameworks/UniformTypeIdentifiers.framework/",
                                /* compatibilidade dos apps (docs/compat-apps.md): security.c (Keychain, SecCode), cli.c
                                 * (proxies, FSEvents, IOPMAssertion), mach.c (IOKit mínimo) */
                                "/System/Library/Frameworks/Security.framework/", "/System/Library/Frameworks/SystemConfiguration.framework/",
@@ -1399,6 +1405,10 @@ static i64 dyld_open(process_t *p, link_t *K, const char *req, u64 out_va, u64 c
             if (!image_fix(K, I, buf)) r = -MOS_EINVAL;
             else if (!uvm_copy_out(p, I->base, buf, size)) { snprintf(K->lasterr, sizeof K->lasterr, "falha ao copiar a imagem"); r = -MOS_EFAULT; }
             kfree(buf);
+#ifndef MOS_HOST_TEST
+            /* diagnóstico: os tracepoints valem também para imagens do dlopen (ex.: Google Chrome Framework) */
+            if (r >= 0) { extern void tp_arm(process_t *p, const char *path, u64 base, u64 vmin); tp_arm(p, I->path, I->base, I->mo.vmin); }
+#endif
         }
         usize area = 0, inits_off = 0, objc_off = 0;
         u8 *stubs = r >= 0 ? stub_area(K, &area, &inits_off, &objc_off) : NULL;
