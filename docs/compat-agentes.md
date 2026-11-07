@@ -149,3 +149,22 @@ Pendentes: o login (do usuário), o git (o bottle tem 619 MiB, grande demais par
   do Electron dizia não e o app ficava no diálogo modal "Mover o Grok Bot para a pasta Aplicativos?" (o thread
   principal aparece em `modal_loop` no despejo de threads).
 Pendentes: o login (do usuário) e o helper "Computer Use" (Swift, 84 símbolos de entrada sintética e acessibilidade).
+
+## Codex desktop na VM (7 nov., noite)
+
+**O Codex desktop 26.623 (runtime OWL) abre "Get started with Codex"** (Sign in with ChatGPT), com o agente
+`codex app-server` (0.142.5) inicializado pelo stdio.
+
+```
+.\build.ps1 -OutDir build-codex
+.\tools\stage-chromeapp.ps1 -App build\apps\x\codex\Codex.app -OutDir build-codex -Autostart -Diagnostico -ComCLI -SizeMiB 1536
+.\tools\vscode-teste.ps1 -Electron -App build\apps\x\codex\Codex.app -Nome Codex -Servico com.mos.chromeapp-teste -OutDir build-codex -Memory 3400 -Accel whpx -SemBuild
+```
+
+- GPU: sem `--disable-gpu` o ANGLE tenta Metal e OpenGL e o processo cai (proteção geral no thread da GPU); só com
+  ele, o Chromium 149 nega o "acesso à GPU" (`--enable-unsafe-swiftshader` libera o SwiftShader).
+- O `codex app-server` saía com código 0: **o `socketpair` do mOS era um pipe só**, e o libuv usa socketpair para o
+  stdin dos filhos. Agora o kernel cria um par bidirecional (`SYS_PIPE` com `MOS_PIPE_SOCKPAIR`, `FD_PIPE_RW`). Isso
+  vale para qualquer filho do Node/Electron que leia stdin (servidores de linguagem por stdio, ferramentas do agente).
+- Pendentes: o login (do usuário); os helpers em Swift (`native/bare-modifier-monitor`, `launch-services-helper`,
+  `*.node`) pedem as `libswift*` de `build\swift\objc\dylib`, que o stage ainda não põe na imagem; o Sparkle.
