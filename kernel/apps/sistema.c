@@ -63,7 +63,7 @@ static void collect(int sec) {
         kv("Nome do Processador", "%s", brand);
         kv("Fabricante", "%s", vendor);
         kv("Arquitetura", "x86_64 (long mode)");
-        kv("Núcleos ativos", "%d (os extras trabalham em paralelo na composição gráfica)", par_cpus());
+        kv("Núcleos ativos", "%d (rodam processos e a composição gráfica em paralelo)", par_cpus());
         u64 t0 = rdtsc(), m0 = timer_ticks();
         while (timer_ticks() - m0 < 20) __asm__ volatile("pause");
         u64 t1 = rdtsc();

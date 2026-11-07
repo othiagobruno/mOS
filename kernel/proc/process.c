@@ -1976,6 +1976,7 @@ static u64 proc_syscall_(int_frame_t *f) {
         if (q->exited) {
             r = q->exit_code;
             if (!q->main) unlink_proc(q);
+            else q->ppid = -1;              /* já informado (SMP: a thread morta ainda não foi recolhida); não volta no waitpid(-1) */
             break;
         }
         t->wait_pid = q->pid;

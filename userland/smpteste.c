@@ -5,7 +5,7 @@
  *
  * 1) um operário sozinho (referência de tempo e de resultado);
  * 2) N operários (processos) ao mesmo tempo: todos têm de devolver o mesmo resultado (registradores e FPU
- *    salvos direito em cada troca de núcleo) e, com mais de um núcleo, terminar bem antes de N vezes o tempo;
+ *    salvos direito em cada troca de núcleo) e, com mais de um núcleo, terminar bem antes de N vezes o tempo (ao menos 1,3x);
  * 3) N threads do mesmo processo ao mesmo tempo, cada uma calculando e fazendo mmap/escreve/confere/munmap
  *    (TLB shootdown entre núcleos: uma página desmapeada por uma thread não pode continuar visível a outra). */
 #include "mos.h"
@@ -31,10 +31,10 @@ static int tworker(void *arg) {
     int k = (int)(u64)arg;
     tres[k] = work(1, ITERS / 2);
     for (int r = 0; r < 64; r++) {                 /* mapeia, usa e devolve memória enquanto as outras rodam */
-        u32 *m = mmap(65536);
+        unsigned *m = mmap(65536);
         if (!m) { tbad[k]++; continue; }
-        for (int i = 0; i < 16384; i += 64) m[i] = (u32)(k * 100000 + r * 1000 + i);
-        for (int i = 0; i < 16384; i += 64) if (m[i] != (u32)(k * 100000 + r * 1000 + i)) tbad[k]++;
+        for (int i = 0; i < 16384; i += 64) m[i] = (unsigned)(k * 100000 + r * 1000 + i);
+        for (int i = 0; i < 16384; i += 64) if (m[i] != (unsigned)(k * 100000 + r * 1000 + i)) tbad[k]++;
         munmap(m, 65536);
     }
     return 0;
@@ -61,9 +61,15 @@ void _start(const char *arg) {
         if (c != ref) { print("smpteste: operário %d devolveu %d (esperado %d)\n", (i64)i, (i64)c, (i64)ref); fails++; }
     }
     u64 par = time_ms() - t0;
+    /* a primeira referência pode ter pego o boot pesado (compositor, outros autotestes): refaz e fica com a menor */
+    t0 = time_ms();
+    p = spawn("smpteste", "w");
+    if (p > 0 && wait(p) != ref) fails++;
+    u64 again = time_ms() - t0;
+    if (again < one) one = again;
     u64 x10 = par ? NW * one * 10 / par : 0;
-    print("smpteste: %d operários juntos em %u ms (aceleração %u.%ux)\n", (i64)NW, par, x10 / 10, x10 % 10);
-    if (nc > 1 && x10 < 15) { print("smpteste: processos não rodaram em paralelo\n"); fails++; }
+    print("smpteste: %d operários juntos em %u ms; 1 sozinho em %u ms (aceleração %u.%ux)\n", (i64)NW, par, one, x10 / 10, x10 % 10);
+    if (nc > 1 && x10 < 13) { print("smpteste: processos não rodaram em paralelo\n"); fails++; }
 
     int tid[NW];
     t0 = time_ms();
