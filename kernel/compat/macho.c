@@ -198,6 +198,15 @@ typedef struct {
     struct { u64 addr, size, kind; } objc[24];   /* seções Objective-C, repassadas ao runtime */
     int nobjc;
     bool has_tlv;
+    /* seções de dados (sem instruções, sem zerofill, fora do __LINKEDIT): onde um executável sem MH_PIE guarda os
+     * ponteiros absolutos que precisam do slide (ver nonpie_slide) */
+    struct { u64 addr, size; bool strict; } dsect[48];   /* strict: descritores de tipo do Go (pares de int32 no meio) */
+    int ndsect;
+    u64 first_sect;         /* endereço da primeira seção: abaixo dele só há o cabeçalho e os comandos */
+    struct { u64 addr, size; } csect[16];   /* seções de código */
+    int ncsect;
+    const u8 *fstarts; u32 fstarts_size;      /* LC_FUNCTION_STARTS: ULEB dos inícios de função */
+    u64 pcln_text;          /* &pcHeader.textStart do Go (pclntab), 0 se não houver */
     u64 tlv_lo, tlv_hi;                      /* template TLS (__thread_data + __thread_bss) */
     u64 tlv_init_end;                        /* fim dos dados inicializados (__thread_data) */
     u64 tlv_desc[8], tlv_desc_size[8];       /* seções de descritores (__thread_vars) */
@@ -383,6 +392,23 @@ static bool parse(mach_t *mo, const u8 *m, usize len, bool dylib, char *err, usi
                 const u8 *sc = c + 72 + k * 80;
                 u32 type = rd32(sc + 64) & 0xFF;
                 u64 addr = rd64(sc + 32), size = rd64(sc + 40);
+                if (size && (!mo->first_sect || addr < mo->first_sect)) mo->first_sect = addr;
+                {   /* S_ATTR_PURE_INSTRUCTIONS | S_ATTR_SOME_INSTRUCTIONS; zerofill: S_ZEROFILL, S_GB_ZEROFILL, S_THREAD_LOCAL_ZEROFILL */
+                    u32 sflags = rd32(sc + 64);
+                    bool code = (sflags & 0x80000400u) != 0, zf = type == 0x01 || type == 0x0C || type == 0x12;
+                    if (code && size && mo->ncsect < 16) { mo->csect[mo->ncsect].addr = addr; mo->csect[mo->ncsect++].size = size; }
+                    /* pclntab do Go: fluxo de bytes e offsets (os falsos positivos ali davam "index out of range" no
+                     * funcfile); só o textStart do pcHeader (offset 24) é ponteiro, e ele entra pelo pcln_text. O
+                     * __noptrdata fica: "sem ponteiros" é só para o coletor; ele guarda a lista de inittask do doInit. */
+                    bool pcln = !strncmp((const char *)sc, "__lrodata_gopcln", 16) || !strncmp((const char *)sc, "__gopclntab", 16);
+                    if (pcln && size >= 32) mo->pcln_text = addr + 24;
+                    bool noptr = pcln;
+                    if (!code && !zf && !noptr && size >= 8 && strncmp((const char *)c + 8, "__LINKEDIT", 16) && mo->ndsect < 48) {
+                        mo->dsect[mo->ndsect].addr = addr;
+                        mo->dsect[mo->ndsect].strict = !strncmp((const char *)sc, "__go_type", 16);
+                        mo->dsect[mo->ndsect++].size = size;
+                    }
+                }
                 if (type == 0x09) { mo->init_ptrs_addr = addr; mo->init_ptrs_count = size / 8; }
                 if (type == 0x16) { mo->init_offs_addr = addr; mo->init_offs_count = size / 4; }
                 if (type == 0x11 || type == 0x12) {               /* dados TLS (modelo) */
@@ -438,6 +464,11 @@ static bool parse(mach_t *mo, const u8 *m, usize len, bool dylib, char *err, usi
             break;
         }
         case LC_DYLD_CHAINED_FIXUPS: mo->chained = c; break;
+        case 0x26: {   /* LC_FUNCTION_STARTS */
+            u32 fo = rd32(c + 8), fs = rd32(c + 12);
+            if (fs && (u64)fo + fs <= len) { mo->fstarts = m + fo; mo->fstarts_size = fs; }
+            break;
+        }
         case LC_MAIN: mo->entryoff = rd64(c + 8); mo->has_main = true; break;
         case LC_UNIXTHREAD: if (csz >= 16 && rd32(c + 8) == 4) mo->has_thread = true; break;   /* x86_THREAD_STATE64 */
         case LC_VERSION_MIN_MACOSX: mo->minos = rd32(c + 8); break;
@@ -868,8 +899,118 @@ static bool run_chained(load_t *L) {
     return ok;
 }
 
+/* Executável sem MH_PIE (ex.: o language_server do Antigravity, Go com cgo): foi feito para 0x100000000, mas o mOS
+ * põe toda imagem em IMAGE_BASE, e o dyld_info dele só traz 4 rebases. O código x86-64 do Go e do clang é relativo ao
+ * RIP (o objdump não acha imediatos nem deslocamentos absolutos dentro da imagem), então o que fica errado são os
+ * ponteiros absolutos nos dados: __mod_init_func, a moduledata e as tabelas de tipos do Go, vtables. Sem relocações
+ * no arquivo, varremos as seções de dados e somamos o slide a cada palavra alinhada que cai dentro da imagem. Um
+ * inteiro que por acaso caia em [vmin, vmax) — de 4,29 a ~4,5 bilhões — também mudaria; nos dados de um executável
+ * isso é raro, e sem a varredura o programa nem chega ao main. */
+/* v aponta para dentro da imagem, antes ou depois do slide? */
+static bool in_img(const mach_t *mo, i64 slide, u64 v) {
+    return (v >= mo->vmin && v < mo->vmax) || (v >= mo->vmin + (u64)slide && v < mo->vmax + (u64)slide);
+}
+static void u64_sift(u64 *a, u64 i, u64 n) {
+    for (;;) {
+        u64 c = 2 * i + 1;
+        if (c >= n) return;
+        if (c + 1 < n && a[c + 1] > a[c]) c++;
+        if (a[i] >= a[c]) return;
+        u64 t = a[i]; a[i] = a[c]; a[c] = t;
+        i = c;
+    }
+}
+static void u64_sort(u64 *a, u64 n) {   /* heapsort: sem recursão nem memória extra */
+    for (u64 i = n / 2; i-- > 0;) u64_sift(a, i, n);
+    for (u64 e = n; e-- > 1;) { u64 t = a[0]; a[0] = a[e]; a[e] = t; u64_sift(a, 0, e); }
+}
+static bool u64_has(const u64 *a, u64 n, u64 v) {
+    u64 l = 0, h = n;
+    while (l < h) { u64 m = (l + h) / 2; if (a[m] < v) l = m + 1; else h = m; }
+    return l < n && a[l] == v;
+}
+static void nonpie_slide(load_t *L) {
+    mach_t *mo = L->mo;
+    u64 n = 0, rej = 0;
+    /* o cabeçalho não é alvo de ponteiro de dados, e 0x100000000 (= vmin) é também o par de int32 {0, 1}: um contador
+     * de 16 milhões no inicializador de dependências do C++ do language_server */
+    u64 lo = mo->first_sect > mo->vmin ? mo->first_sect : mo->vmin + 1;
+    /* inícios de função (LC_FUNCTION_STARTS, deslocamentos ULEB a partir do __TEXT): um valor que cai numa seção de
+     * código, dentro de __go_type, só é ponteiro se for o início de uma função ou a borda de uma seção (nas outras seções
+     * há tabelas de saltos do Go com endereços absolutos no meio das funções). Os descritores de tipo do Go têm pares
+     * de int32 {nameOff, 1} que, lidos como 64 bits, caem no __text; deslizados, davam "name offset out of range". */
+    u64 text = mo->vmin, nf = 0, *fs = NULL;
+    for (int i = 0; i < mo->nsegs; i++) if (!strcmp(mo->segs[i].name, "__TEXT")) text = mo->segs[i].vmaddr;
+    if (mo->fstarts) {
+        const u8 *p = mo->fstarts, *e = p + mo->fstarts_size;
+        u64 cnt = 0;
+        for (const u8 *q = p; q < e;) { if (!uleb(&q, e)) break; cnt++; }
+        fs = cnt ? kmalloc(cnt * 8) : NULL;
+        u64 a = text;
+        for (const u8 *q = p; fs && q < e && nf < cnt;) { u64 d = uleb(&q, e); if (!d) break; a += d; fs[nf++] = a; }
+    }
+    /* funcvals do Go dentro de __go_type (o Hasher de um mapType aponta para um {fn} isolado no meio dos nomes): o
+     * endereço deles é alvo de outro ponteiro; o par falso {PkgPath, 1} do uncommontype nunca é (acha-se por offset).
+     * Passe 1: todos os valores, ainda sem slide, que apontam para dentro das seções estritas. */
+    u64 nt = 0, *tg = NULL;
+    for (int pass = 0; pass < 2; pass++) {
+        for (int i = 0; i < mo->ndsect; i++) {
+            u64 a = (mo->dsect[i].addr + 7) & ~7ull, e = mo->dsect[i].addr + mo->dsect[i].size;
+            for (; a + 8 <= e; a += 8) {
+                u64 *s = slot_at(L, a);
+                if (!s) continue;
+                for (int k = 0; k < mo->ndsect; k++)
+                    if (mo->dsect[k].strict && *s >= mo->dsect[k].addr && *s < mo->dsect[k].addr + mo->dsect[k].size) {
+                        if (pass) tg[nt] = *s;
+                        nt++;
+                        break;
+                    }
+            }
+        }
+        if (pass) break;
+        tg = nt ? kmalloc(nt * 8) : NULL;
+        if (!tg) break;
+        nt = 0;
+    }
+    if (tg) u64_sort(tg, nt); else nt = 0;
+    for (int i = 0; i < mo->ndsect; i++) {
+        u64 a = (mo->dsect[i].addr + 7) & ~7ull, e = mo->dsect[i].addr + mo->dsect[i].size;
+        for (; a + 8 <= e; a += 8) {
+            u64 *s = slot_at(L, a);
+            if (!s || *s < lo || *s >= mo->vmax) continue;
+            u64 v = *s;
+            bool in_code = false, edge = false;
+            for (int k = 0; k < mo->ncsect; k++)
+                if (v >= mo->csect[k].addr && v <= mo->csect[k].addr + mo->csect[k].size) {
+                    in_code = true;
+                    if (v == mo->csect[k].addr || v == mo->csect[k].addr + mo->csect[k].size) edge = true;
+                }
+            if (in_code && !edge && fs && mo->dsect[i].strict) {   /* fora dos tipos há tabelas de saltos e o maxpc: meio do código */
+                u64 l = 0, h = nf;                                   /* busca binária: fs está em ordem crescente */
+                while (l < h) { u64 m2 = (l + h) / 2; if (fs[m2] < v) l = m2 + 1; else h = m2; }
+                if ((l >= nf || fs[l] != v) && !u64_has(tg, nt, a)) { rej++; continue; }
+                /* início de função, mas pode ser o par {PkgPath, Mcount=1|Xcount=0} do uncommontype. O equal de um _type
+                 * vem seguido do gcdata (ponteiro ou 0); o falso, de {Moff, 0} (inteiro pequeno). O Hasher de um mapType
+                 * vem depois de três ponteiros (Key, Elem, Group). Os anteriores já podem ter levado o slide. */
+                u64 *nx = slot_at(L, a + 8), *p1 = slot_at(L, a - 8), *p2 = slot_at(L, a - 16), *p3 = slot_at(L, a - 24);
+                bool next_ok = !nx || !*nx || (*nx >= mo->vmin && *nx < mo->vmax);
+                bool three = p1 && p2 && p3 && in_img(mo, L->slide, *p1) && in_img(mo, L->slide, *p2) && in_img(mo, L->slide, *p3);
+                if (!next_ok && !three && !u64_has(tg, nt, a)) { rej++; continue; }
+            }
+            *s += (u64)L->slide;
+            n++;
+        }
+    }
+    if (mo->pcln_text) { u64 *t = slot_at(L, mo->pcln_text); if (t && *t >= lo && *t < mo->vmax) { *t += (u64)L->slide; n++; } }
+    if (fs) kfree(fs);
+    if (tg) kfree(tg);
+    kprintf("macho: executável sem PIE: %llu ponteiros deslizados em %d seções de dados (%llu valores no código recusados, %llu funções)\n",
+            (unsigned long long)n, mo->ndsect, (unsigned long long)rej, (unsigned long long)nf);
+}
+
 static bool apply_dyld_info(load_t *L) {
     mach_t *mo = L->mo;
+    if (mo->dyld_info && L->img && L->slide && mo->ftype == MH_EXECUTE && !(mo->flags & MH_PIE)) nonpie_slide(L);
     if (mo->dyld_info) {
         const u8 *d = mo->dyld_info;
         struct { u32 off, size; } part[4] = {{rd32(d + 8), rd32(d + 12)}, {rd32(d + 16), rd32(d + 20)}, {rd32(d + 24), rd32(d + 28)}, {rd32(d + 32), rd32(d + 36)}};
