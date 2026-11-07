@@ -241,6 +241,8 @@ void dfs_mount_all(void) {
 
 static bool vol_pending;
 static u64 vol_last;
+/* mudança que foi direto ao disco: um sync logo depois (o HFS+ volta a marcar "desmontado corretamente") */
+static void touch(void) { vol_pending = true; vol_last = timer_ticks(); }
 
 bool vfs_ext_writable(vnode_t *n) {
     dnode_t *d = n ? n->ext : NULL;
@@ -326,6 +328,7 @@ void vol_mark(vnode_t *n) {
         char p[1024];
         if (!n->ext && rel_path(vol, n, p, sizeof p) && !m->ops->mkdir(m, p))
             kprintf("vol: \"%s\": não foi possível criar a pasta %s\n", m->volname, p);
+        touch();
         return;
     }
     detach_file(n);
@@ -344,6 +347,7 @@ void vol_delete(vnode_t *n) {
     if (!m->writable || !rel_path(vol, n, p, sizeof p)) return;
     /* um arquivo novo ainda não gravado não existe no disco: falhar aqui é normal */
     if (!m->ops->remove(m, p) && !n->dirty) kprintf("vol: \"%s\": não foi possível apagar %s\n", m->volname, p);
+    touch();
 }
 
 /* marca uma subárvore inteira como nova no volume em que ela está agora */
@@ -364,7 +368,7 @@ void vol_move(const char *old_path, vnode_t *n) {
     if (ovol && ovol == nvol) {                      /* dentro do mesmo volume */
         dmount_t *m = mount_of(nvol);
         if (!m->writable || !rel_path(nvol, n, np, sizeof np)) return;
-        if (m->ops->rename(m, orel, np)) return;
+        if (m->ops->rename(m, orel, np)) { touch(); return; }
         /* não estava no disco (arquivo novo pendente) ou o driver recusou: regrava em np */
         m->ops->remove(m, orel);
         materialize(n, 0);
@@ -420,4 +424,108 @@ bool vol_sync_all(void) {
 
 void vol_tick(void) {
     if (vol_pending && timer_ticks() - vol_last >= VOL_SYNC_DELAY_MS) vol_sync_all();
+}
+
+/* ------------------------------------------------------------ autoteste (QEMU)
+ * Com /Sistema/Biblioteca/voltest, cada volume gravável recebe gravações pelo VFS (o mesmo caminho do
+ * msh, dos apps e do Finder) e o resultado vai para a serial. O conteúdo de "voltest" escolhe o fim:
+ * "ejetar" = ejeta todos os volumes testados (o eject tem que gravar o pendente). A imagem é conferida
+ * depois no host com tools/volimg (check/cat). */
+static int st_fails;
+#define ST(c, what) do { if (!(c)) { st_fails++; kprintf("voltest:   FALHOU: %s\n", what); } } while (0)
+
+static bool st_same(const char *path, const char *want, usize n) {
+    vnode_t *v = vfs_lookup(path);
+    return v && !v->dir && v->size == n && (!n || (v->data && !memcmp(v->data, want, n)));
+}
+
+void vol_selftest(void) {
+    vnode_t *flag = vfs_lookup("/Sistema/Biblioteca/voltest");
+    if (!flag) return;
+    bool eject = flag->data && flag->size >= 6 && !memcmp(flag->data, "ejetar", 6);
+    vnode_t *vols = vfs_lookup("/Volumes");
+    vnode_t *todo[16];
+    int nt = 0;
+    for (vnode_t *c = vols ? vols->child : NULL; c && nt < 16; c = c->next)
+        if (vfs_is_volume(c) && mount_of(c)->writable) todo[nt++] = c;
+    kprintf("voltest: %d volume(s) gravável(is)\n", nt);
+    char *b = kmalloc(1024), *p = kmalloc(1200);
+    u8 *big = kmalloc(1 << 20);
+    if (!b || !p || !big) { kfree(b); kfree(p); kfree(big); return; }
+    for (u32 i = 0; i < (1u << 20); i++) big[i] = (u8)(i * 7 + (i >> 11));
+    for (int t = 0; t < nt; t++) {
+        vnode_t *vol = todo[t];
+        st_fails = 0;
+        u64 t0 = timer_ticks();
+        snprintf(b, 1024, "/Volumes/%s", vol->name);
+        snprintf(p, 1200, "%s/seed.txt", b);
+        ST(st_same(p, "semente do volimg\n", 18), "leitura de seed.txt");
+        snprintf(p, 1200, "%s/mOS teste", b);
+        ST(vfs_mkdir(p), "mkdir");
+        snprintf(p, 1200, "%s/mOS teste/olá, ação.txt", b);
+        ST(vfs_write_file(p, "gravado pelo mOS\n", 17), "arquivo com acentos");
+        snprintf(p, 1200, "%s/mOS teste/Muitos", b);
+        vfs_mkdir(p);
+        for (int i = 0; i < 60; i++) {
+            char c[48];
+            snprintf(p, 1200, "%s/mOS teste/Muitos/item %02d com nome longo.txt", b, i);
+            int n = snprintf(c, sizeof c, "item %d\n", i);
+            ST(vfs_write_file(p, c, (usize)n), "muitos arquivos");
+        }
+        snprintf(p, 1200, "%s/mOS teste/grande.bin", b);
+        ST(vfs_write_file(p, big, 1 << 20), "1 MB");
+        snprintf(p, 1200, "%s/mOS teste/log.txt", b);
+        vnode_t *lg = vfs_write_file(p, "linha 1\n", 8);
+        ST(lg && vfs_append(lg, "linha 2\n", 8), "append");
+        /* renomear e mover dentro do volume */
+        snprintf(p, 1200, "%s/mOS teste/renomear.txt", b);
+        vnode_t *rn = vfs_write_file(p, "antes\n", 6);
+        snprintf(p, 1200, "%s/mOS teste", b);
+        ST(rn && vfs_move(rn, vfs_lookup(p), "renomeado.txt"), "renomear");
+        snprintf(p, 1200, "%s/A/B", b);
+        vfs_mkdir(p);
+        snprintf(p, 1200, "%s/A/B/dentro.txt", b);
+        vfs_write_file(p, "dentro de B\n", 12);
+        vol_sync_all();                                   /* B e dentro.txt já no disco antes de mover */
+        snprintf(p, 1200, "%s/A/B", b);
+        ST(vfs_move(vfs_lookup(p), vol, "B movida"), "mover pasta");
+        snprintf(p, 1200, "%s/A", b);
+        ST(vfs_delete(vfs_lookup(p)), "apagar pasta vazia");
+        /* apagar com conteúdo */
+        snprintf(p, 1200, "%s/Lixo/sub", b);
+        vfs_mkdir(p);
+        snprintf(p, 1200, "%s/Lixo/sub/x.txt", b);
+        vfs_write_file(p, "x", 1);
+        vol_sync_all();
+        snprintf(p, 1200, "%s/Lixo", b);
+        ST(vfs_delete(vfs_lookup(p)), "apagar pasta com conteúdo");
+        /* de casa para o volume e do volume para casa */
+        const char *home = home_sub("/Documentos/de-casa-para-o-volume.txt");
+        vnode_t *hf = vfs_write_file(home, "veio da pasta pessoal\n", 22);
+        ST(hf && vfs_move(hf, vol, NULL), "mover de casa para o volume");
+        snprintf(p, 1200, "%s/mOS teste/sai.txt", b);
+        vfs_write_file(p, "sai do volume\n", 14);
+        vol_sync_all();
+        vnode_t *docs = vfs_lookup(home_sub("/Documentos"));
+        ST(vfs_move(vfs_lookup(p), docs, "voltou-do-volume.txt"), "mover do volume para casa");
+        ST(st_same(home_sub("/Documentos/voltou-do-volume.txt"), "sai do volume\n", 14), "conteúdo de quem saiu");
+        /* sobrescrever (truncar) */
+        snprintf(p, 1200, "%s/mOS teste/grande.bin", b);
+        ST(vfs_write_file(p, big, 300000), "truncar 1 MB -> 300 KB");
+        ST(vol_flush(vol), "gravar o pendente");
+        /* pendente na hora de ejetar: o eject tem que gravar */
+        snprintf(p, 1200, "%s/pendente.txt", b);
+        vfs_write_file(p, "gravado no eject\n", 17);
+        char name[256];
+        snprintf(name, sizeof name, "%s", vol->name);
+        kprintf("voltest: \"%s\": %s (%d falha(s), %llu ms)\n", name, st_fails ? "FALHOU" : "OK", st_fails, timer_ticks() - t0);
+    }
+    if (eject) for (int t = 0; t < nt; t++) {
+        char name[256];
+        snprintf(name, sizeof name, "%s", todo[t]->name);
+        kprintf("voltest: ejetar \"%s\": %s\n", name, vfs_eject(todo[t]) ? "OK" : "FALHOU");
+    }
+    kfree(b);
+    kfree(p);
+    kfree(big);
 }

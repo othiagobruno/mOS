@@ -26,6 +26,8 @@ void storage_mount_all(void) {
         dmount_t *before = dfs_mounts();
         if (dfs_mount_disk(disks[i].dev, disks[i].name)) dfs_publish_new(before);
     }
+    extern void vol_selftest(void);       /* fs/vfs_bridge.c: só com /Sistema/Biblioteca/voltest */
+    vol_selftest();
     extern void install_selftest(void);
     install_selftest();
 }

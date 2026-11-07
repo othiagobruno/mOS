@@ -1061,8 +1061,11 @@ static bool bt_grow(hfs_wr_t *w, int t) {
     u8 *hd = bt_hdr(w, t);
     if (!hd) return false;
     u32 bs = w->h->bs, ns = b->ns;
+    /* cresce pelo clump ou dobrando (o que for maior): só cabem 8 extents no cabeçalho do volume,
+     * então dobrar garante espaço para a árvore crescer 256 vezes */
     u32 clump = be32(hd + 32);
     if (clump < ns * 8) clump = ns * 8;
+    if ((u64)clump < b->fork->size) clump = b->fork->size > (64u << 20) ? (64u << 20) : (u32)b->fork->size;
     u32 blocks = (clump + bs - 1) / bs;
     u32 total = be32(hd + 22), add = (u32)((u64)blocks * bs / ns);
     /* o mapa de nós precisa ter bits para os novos nós */
@@ -1093,7 +1096,12 @@ static bool bt_grow(hfs_wr_t *w, int t) {
     for (u32 i = 0; ok && i < e->count; i++) ok = blk_write(w->h->dev, (u64)(e->start + i) * bs, z, bs);
     kfree(z);
     ok = ok && fork_append(w, f, w->vh + b->vh_off, e->start, e->count);
-    if (!ok) { blocks_mark(w, e->start, e->count, false); kfree(e); return false; }
+    if (!ok) {
+        kprintf("hfs+: não foi possível crescer a B-tree %u (%u extents)\n", b->file_id, f->n);
+        blocks_mark(w, e->start, e->count, false);
+        kfree(e);
+        return false;
+    }
     kfree(e);
     hd = bt_hdr(w, t);
     put32(hd + 22, total + add);
@@ -1374,6 +1382,14 @@ static u32 find_priv_dir(hfs_wr_t *w) {
 /* ================================================================ operações */
 static hfs_wr_t *wr_of(dmount_t *m) { hfs_t *h = m->priv; return h ? h->wr : NULL; }
 
+/* "desmontado corretamente" (kHFSVolumeUnmountedBit) vale enquanto não há operação em andamento: cada
+ * operação é uma transação completa, então em repouso (depois do sync) o volume está consistente e um
+ * desligamento sem ejetar não exige fsck. A 1ª operação depois do sync desmarca, na mesma transação. */
+static void begin_op(hfs_wr_t *w) {
+    u32 a = be32(w->vh + 4);
+    if (a & VA_UNMOUNTED) { put32(w->vh + 4, a & ~VA_UNMOUNTED); w->vh_dirty = true; }
+}
+
 /* hard link (arquivo 'hlnk'/'hfs+'): a chave do inode na pasta privada */
 static bool hardlink_inode_key(hfs_wr_t *w, const u8 *rec, u8 *k) {
     if (be32(rec + 48) != FOURCC('h', 'l', 'n', 'k') || be32(rec + 52) != FOURCC('h', 'f', 's', '+')) return false;
@@ -1391,6 +1407,7 @@ static bool hardlink_inode_key(hfs_wr_t *w, const u8 *rec, u8 *k) {
 bool hfs_wr_write(dmount_t *m, const char *path, const void *data, u64 len) {
     hfs_wr_t *w = wr_of(m);
     if (!w) return false;
+    begin_op(w);
     u32 parent;
     u16 leaf[255];
     int ln;
@@ -1452,6 +1469,7 @@ bool hfs_wr_write(dmount_t *m, const char *path, const void *data, u64 len) {
 bool hfs_wr_mkdir(dmount_t *m, const char *path) {
     hfs_wr_t *w = wr_of(m);
     if (!w) return false;
+    begin_op(w);
     u32 parent;
     u16 leaf[255];
     int ln;
@@ -1566,6 +1584,7 @@ static bool remove_entry(hfs_wr_t *w, u32 parent, const u16 *name, int n, int de
 bool hfs_wr_remove(dmount_t *m, const char *path) {
     hfs_wr_t *w = wr_of(m);
     if (!w) return false;
+    begin_op(w);
     u32 parent;
     u16 leaf[255];
     int ln;
@@ -1576,6 +1595,7 @@ bool hfs_wr_remove(dmount_t *m, const char *path) {
 bool hfs_wr_rename(dmount_t *m, const char *from, const char *to) {
     hfs_wr_t *w = wr_of(m);
     if (!w) return false;
+    begin_op(w);
     u32 p1, p2;
     u16 n1[255], n2[255];
     int l1, l2;
@@ -1616,6 +1636,8 @@ bool hfs_wr_rename(dmount_t *m, const char *from, const char *to) {
 bool hfs_wr_sync(dmount_t *m) {
     hfs_wr_t *w = wr_of(m);
     if (!w) return true;
+    u32 a = be32(w->vh + 4);
+    if (!(a & VA_UNMOUNTED)) { put32(w->vh + 4, a | VA_UNMOUNTED); w->vh_dirty = true; }   /* em repouso: consistente */
     bool ok = true;
     if (w->ndirty || w->vh_dirty) ok = tx_commit(w);
     return blk_flush(w->h->dev) && ok;
@@ -1672,9 +1694,9 @@ static int jnl_replay(hfs_wr_t *w) {
         if (jnl_cksum(bl, 32) != ck) { kprintf("hfs+: journal: lista de blocos com checksum ruim em %llu\n", hpos); applied = -1; break; }
         u32 maxb = w->jle ? le16(bl) : be16(bl), num = w->jle ? le16(bl + 2) : be16(bl + 2);
         u32 used = jget32(w, bl + 4);
-        if (!num || num > maxb || (u64)(num) * 16 > w->blhdr_size || used < w->blhdr_size || used > w->jsize) { applied = -1; break; }
+        if (!num || num > maxb || (u64)(num + 1) * 16 > w->blhdr_size || used < w->blhdr_size || used > w->jsize) { applied = -1; break; }
         for (u32 i = 1; i < num; i++) {
-            const u8 *bi = bl + 16 * i;
+            const u8 *bi = bl + 16 + 16 * i;       /* binfo[i]: depois dos 16 bytes do cabeçalho */
             u64 bnum = jget64(w, bi);
             u32 bsize = jget32(w, bi + 8);
             if (bsize > (16u << 20)) { applied = -1; break; }
@@ -1827,8 +1849,8 @@ bool hfs_wr_open(hfs_t *h, const u8 *vh) {
     }
     nodes_drop(w);
     if (!ok) { kprintf("hfs+: estruturas inesperadas: montado só leitura\n"); wr_free(w); return false; }
-    /* montado para escrita: "não desmontado" até hfs_wr_close; quem usa journal se identifica como HFSJ */
-    put32(w->vh + 4, (attr & ~VA_UNMOUNTED) & ~VA_INCONSIST);
+    /* quem usa journal se identifica como HFSJ; o bit "desmontado" segue begin_op/hfs_wr_sync */
+    put32(w->vh + 4, attr & ~VA_INCONSIST);
     put32(w->vh + 8, w->jnl ? FOURCC('H', 'F', 'S', 'J') : FOURCC('1', '0', '.', '0'));
     w->vh_dirty = true;
     h->wr = w;

@@ -859,6 +859,18 @@ bool fat_rename(fatfs_t *fs, const char *from, const char *to) {
     bool ok = f && g && resolve(fs, pfrom, g) && (g->attr & ATTR_DIR) && dir_load(fs, g->clus, &ds) && dir_find(&ds, lfrom, f);
     u32 src_parent = ds.clus;
     if (ok) ok = resolve(fs, pto, g) && (g->attr & ATTR_DIR);
+    /* pasta não pode ir para dentro dela mesma: sobe pelos ".." do destino até a raiz */
+    if (ok && (f->attr & ATTR_DIR) && f->clus) {
+        u32 c = g->clus;
+        for (int guard = 0; ok && c && c != fs->root && guard < 4096; guard++) {
+            if (c == f->clus) { ok = false; break; }
+            dirbuf_t up;
+            if (!dir_load(fs, c, &up)) break;
+            u32 pc = up.len >= 64 && !memcmp(up.buf + 32, "..         ", 11) ? (u32)le16(up.buf + 52) << 16 | le16(up.buf + 58) : 0;
+            kfree(up.buf);
+            c = pc;
+        }
+    }
     if (ok) {
         bool same = g->clus == src_parent;
         dirbuf_t *dst = same ? &ds : &dd;

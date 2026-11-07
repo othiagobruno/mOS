@@ -55,8 +55,8 @@ Legenda: ✅ o mOS já tem · 🟡 parcial ou stub · ❌ não tem
 |---|---|---|---|
 | APFS (leitura) | ✅ | ❌ (só headers de terceiros) | **Aqui o mOS está na frente.** |
 | HFS+ leitura | ✅ | ✅ `Kernel/Extensions/hfs` | |
-| **HFS+ escrita, journal, fsck, newfs** | ❌ | `Extensions/hfs`, `BSD/sbin/{fsck,newfs,mount}_hfs` | Para ter disco persistente, é o caminho mais completo. |
-| **FAT12/16/32 (msdosfs)** | ✅ `fs/fat.c` leitura e escrita com LFN, formatação FAT32 (`fat_format`); `fs/persist.c` grava o VFS em `\mOS\` | `Kernel/Extensions/msdosfs` | Volumes FAT de outros discos aparecem em `/Volumes` só para leitura. |
+| **HFS+ escrita, journal** | ✅ `fs/hfsplus_wr.c`: transações, B-trees com split, bitmap, extents overflow, replay e escrita journaled ([volumes-graveis.md](volumes-graveis.md)) | `Extensions/hfs` | fsck/newfs só no host (`tools/volimg.c`); criar xattrs e hard links em cadeia ainda não. |
+| **FAT12/16/32 (msdosfs)** | ✅ `fs/fat.c` leitura e escrita com LFN, formatação FAT32 (`fat_format`); `fs/persist.c` grava o VFS em `\mOS\` | `Kernel/Extensions/msdosfs` | Volumes FAT de outros discos são graváveis em `/Volumes` (partições EFI ficam só leitura). |
 | Partições GPT (escrita) e instalador | ✅ `fs/gpt.c`, `fs/install.c` (app "Instalar mOS" da sessão principal) | `SysApps/Installer` | Testado: SATA → NVMe, o disco instalado boota sozinho. |
 | DMG (UDIF) | ✅ | ❌ no kernel | |
 | Partições GPT/APM/MBR | ✅ | `IOStorageFamily` | |
@@ -131,7 +131,6 @@ Os itens 1 a 5 da ordem original estão feitos: AHCI + NVMe + FAT gravável e pe
 O que ainda falta:
 - **Mach-O**: o carregador está sendo feito pela sessão "Compatibilidade DMG", sobre o gancho `macho_load()`.
 - **SMP fino**: os APs já rodam processos e threads de usuário em paralelo (`docs/smp.md`), mas o kernel inteiro está sob uma trava grande e o desktop só a solta nos `hlt`. Falta trocar por travas por subsistema (VFS, Mach IPC, rede, heap de páginas) e tirar a UI/drivers do BSP.
-- **Escrita em volumes de `/Volumes`**: FAT de outros discos e HFS+.
 - **Memória virtual**: `MAP_SHARED` gravável de arquivo (gravar de volta), bits de proteção no PTE e paginação para disco. COW, `fork` e paginação sob demanda (anônima e de arquivo) estão feitos.
 - **Processos**: parar/continuar processos (SIGSTOP/SIGTSTP/SIGCONT) e sinais de tempo real. Os tratadores de sinal no usuário estão feitos (`docs/sinais.md`).
 - **Interface**: tela de login (sessão principal, com o backend de contas já pronto), atalho de captura de tela (sessão de UI).
