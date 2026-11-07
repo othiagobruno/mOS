@@ -107,5 +107,32 @@ Apps Catalyst (o WhatsApp para Mac é um) ligam o UIKit pelo caminho do Catalyst
   conjunto de toques chegava vazio e o cache de células da tabela nunca ficava guardado).
 - Testes: `catalyst` **23/23** (Auto Layout por âncoras, tabela com só as células visíveis, roda do mouse e limite da
   rolagem, seleção por toque, push/pop com a barra), `uikit` **28/28** (coleção real alimentada pelo diffable).
-- Ainda não: modais (`present`), animações (os blocos rodam na hora), alfa dos ancestrais, prioridades no Auto Layout,
-  layout composicional de verdade (vira lista).
+- (Modais, animações e prioridades: seção seguinte.)
+
+## Modais, alertas, animações e prioridades do Auto Layout (7 nov. 2026)
+
+- **`UIKitModal.m`:** `presentViewController:animated:completion:` põe a view do controlador num contêiner sobre a
+  janela (fundo escurecido; folha centralizada de 540×620 no estilo padrão do Catalyst, tela inteira em
+  `FullScreen`/`OverFullScreen`), sempre sobre o topo da pilha de apresentações; `dismissViewControllerAnimated:` fecha o
+  apresentado (vale chamado no apresentador ou no apresentado), com `viewWill/DidAppear`/`Disappear` e o completion.
+  `presentedViewController`/`presentingViewController`/`modalPresentationStyle` ficam em objetos associados (nenhum ivar
+  novo no `UIViewController`). `UIAlertController`/`UIAlertAction`: título, mensagem, campos de texto
+  (`addTextFieldWithConfigurationHandler:`), botões lado a lado (até dois) ou empilhados (folha de ações); tocar chama o
+  handler e fecha.
+- **`UIKitAnimation.m`:** o bloco muda o modelo na hora (como no UIKit) e só a apresentação anda: o mOS fotografa as
+  views das janelas antes e depois do bloco (com o Auto Layout resolvido dos dois lados, então animar a constante de uma
+  restrição + `layoutIfNeeded` funciona) e anima `frame`, `alpha` e `backgroundColor`. A NSView hospedeira desenha com os
+  valores interpolados e devolve o modelo logo depois. Curvas: pontos de controle do `CAMediaTimingFunction` do
+  CoreAnimation do libSystem (easeInOut, easeIn, easeOut, linear), cúbicas próprias e mola amortecida (`dampingRatio`).
+  API: `animateWithDuration:` (todas as variantes, com atraso e opções), `usingSpringWithDamping:`,
+  `animateKeyframesWithDuration:` + `addKeyframeWithRelativeStartTime:`, `transitionWithView:`, `performWithoutAnimation:`,
+  `UIViewPropertyAnimator` (pausar, `fractionComplete`, inverter, `stopAnimation:`, `finishAnimationAtPosition:`,
+  `pausesOnCompletion`, `runningPropertyAnimatorWithDuration:`), `UICubicTimingParameters`, `UISpringTimingParameters`.
+  Relógio a 60 Hz por `NSTimer`; `+[UIView _mosAdvanceAnimationClock:]` adianta o relógio nos testes.
+- **Prioridades no Auto Layout:** as igualdades são resolvidas da maior para a menor prioridade (uma obrigatória fixa o
+  atributo antes das opcionais), e os limites `>=`/`<=`, constantes ou relativos a outra view, ajustam bordas, centro,
+  largura e altura sem vencer igualdades de prioridade maior.
+- Teste `catalyst` **33/33** (prioridades, folha modal, alerta com handler, `animate` no meio da curva e no fim, mola que
+  passa do alvo, `UIViewPropertyAnimator` com fração manual e parada no meio); `uikit` 28/28.
+- Ainda não: `transform`, animação de `contentOffset`, transições com imagem (`transitionWithView:` só anima as
+  propriedades), popovers, alfa dos ancestrais.

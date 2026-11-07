@@ -90,6 +90,7 @@ long cx_unresolved_log(const char *name) {
  * thread ficam numa tabela no slot TSD_TLV da TSD (extra.c: cx_tsd). */
 /* slots fixos da TSD (abaixo de KEY_FIRST = 128, extra.c), um por uso — NÃO repetir:
  *   100 TSD_THREAD_DICT (nsurl.c)   101 TSD_THREAD_OBJ (nsurl.c)   102 TSD_MIG_REPLY (mach.c)   103 TSD_ERRNO (libc.c)
+ *   104 TSD_POOL (objc.c: autorelease pool da thread)
  *   110 TSD_TLV (aqui)
  * O TLV já esteve no 101 e colidia com o NSThread: um helper do Chrome que chamava +[NSThread currentThread]
  * tinha a tabela de thread_local sobrescrita pelo objeto e caía no próximo acesso a uma variável thread_local. */
@@ -217,8 +218,40 @@ id_ CFBundleGetIdentifier(id_ bundle) { return bundle ? MSG0_(id_, bundle, "bund
 #define ENC_UTF8  0x08000100u
 #define ENC_ASCII 0x0600u
 #define ENC_UTF16 0x0100u
+/* as outras que o Chromium e o Node pedem: UTF-16 com ordem explícita (o base::SysNSStringToUTF16 usa LE), UTF-32,
+ * Latin-1 e Mac Roman */
+#define ENC_UTF16BE 0x10000100u
+#define ENC_UTF16LE 0x14000100u
+#define ENC_UTF32   0x0c000100u
+#define ENC_UTF32BE 0x18000100u
+#define ENC_UTF32LE 0x1c000100u
+#define ENC_LATIN1  0x0201u
+#define ENC_MACROMAN 0u
 static const char *cf_utf8(id_ s) { return s ? MSG0_(const char *, s, "UTF8String") : 0; }
-long CFStringGetLength(id_ s) { const char *u = cf_utf8(s); return u ? (long)strlen(u) : 0; }
+/* UTF-8 -> UTF-16 (sem terminador): devolve o número de unidades; out NULL só conta */
+static long cf_u16(const char *s, u16 *out) {
+    long n = 0;
+    const unsigned char *p = (const unsigned char *)s;
+    while (p && *p) {
+        u32 c;
+        int k;
+        if (*p < 0x80) { c = *p; k = 1; }
+        else if ((*p & 0xE0) == 0xC0 && (p[1] & 0xC0) == 0x80) { c = (u32)(*p & 0x1F) << 6 | (p[1] & 0x3F); k = 2; }
+        else if ((*p & 0xF0) == 0xE0 && (p[1] & 0xC0) == 0x80 && (p[2] & 0xC0) == 0x80) {
+            c = (u32)(*p & 0x0F) << 12 | (u32)(p[1] & 0x3F) << 6 | (p[2] & 0x3F); k = 3;
+        } else if ((*p & 0xF8) == 0xF0 && (p[1] & 0xC0) == 0x80 && (p[2] & 0xC0) == 0x80 && (p[3] & 0xC0) == 0x80) {
+            c = (u32)(*p & 0x07) << 18 | (u32)(p[1] & 0x3F) << 12 | (u32)(p[2] & 0x3F) << 6 | (p[3] & 0x3F); k = 4;
+        } else { c = 0xFFFD; k = 1; }
+        p += k;
+        if (c >= 0x10000) {
+            if (out) { c -= 0x10000; out[n] = (u16)(0xD800 | (c >> 10)); out[n + 1] = (u16)(0xDC00 | (c & 0x3FF)); }
+            n += 2;
+        } else { if (out) out[n] = (u16)c; n++; }
+    }
+    return n;
+}
+/* em unidades UTF-16, como no CoreFoundation (e como o -[NSString length]); era em bytes UTF-8 */
+long CFStringGetLength(id_ s) { const char *u = cf_utf8(s); return u ? cf_u16(u, 0) : 0; }
 const char *CFStringGetCStringPtr(id_ s, u32 enc) { return (enc == ENC_UTF8 || enc == ENC_ASCII) ? cf_utf8(s) : 0; }
 unsigned char CFStringGetCString(id_ s, char *buf, long size, u32 enc) {
     (void)enc;
@@ -230,24 +263,55 @@ unsigned char CFStringGetCString(id_ s, char *buf, long size, u32 enc) {
     return 1;
 }
 /* CFIndex CFStringGetBytes(str, CFRange{loc,len}, enc, lossByte, isExternal, buffer, maxBufLen, usedBufLen*) */
+/* range em unidades UTF-16; devolve quantas unidades converteu e, em *used, os bytes. O Chromium converte o texto
+ * digitado com kCFStringEncodingUTF16LE: antes só a codificação 0x0100 era UTF-16 (e só ASCII), a LE caía no ramo UTF-8
+ * e uma letra virava 1 byte = 0 unidades, e nenhum caractere chegava ao renderer. Sem buffer só mede. Caractere que a
+ * codificação não tem vira lossByte, ou a conversão para ali (lossByte 0), como no CoreFoundation. */
 long CFStringGetBytes(id_ s, long loc, long len, u32 enc, u8 loss, u8 ext, u8 *buf, long max, long *used) {
-    (void)loss; (void)ext;
+    (void)ext;
     const char *u = cf_utf8(s);
-    long total = u ? (long)strlen(u) : 0;
+    long total = u ? cf_u16(u, 0) : 0;
     if (loc < 0 || loc > total) loc = total;
     if (len < 0 || loc + len > total) len = total - loc;
-    long out = 0;
-    if (enc == ENC_UTF16) {                              /* só ASCII -> UTF-16LE */
-        for (long i = 0; i < len; i++) {
-            if (buf) { if (out + 2 > max) break; buf[out] = (u8)u[loc + i]; buf[out + 1] = 0; }
-            out += 2;
+    u16 *w = total ? malloc((size_t)total * 2) : 0;
+    if (total && !w) { if (used) *used = 0; return 0; }
+    if (w) cf_u16(u, w);
+    int u16le = enc == ENC_UTF16 || enc == ENC_UTF16LE, u16be = enc == ENC_UTF16BE;
+    int u32le = enc == ENC_UTF32 || enc == ENC_UTF32LE, u32be = enc == ENC_UTF32BE;
+    u32 limit = enc == ENC_ASCII || enc == ENC_MACROMAN ? 0x80 : enc == ENC_LATIN1 ? 0x100 : 0;   /* 0 = UTF-8 */
+    long out = 0, i = 0;
+    while (i < len) {
+        u32 c = w[loc + i];
+        int units = 1;
+        if (!u16le && !u16be && c >= 0xD800 && c < 0xDC00 && i + 1 < len && w[loc + i + 1] >= 0xDC00 && w[loc + i + 1] < 0xE000) {
+            c = 0x10000 + ((c - 0xD800) << 10) + (w[loc + i + 1] - 0xDC00);
+            units = 2;
         }
-        if (used) *used = out;
-        return out / 2;
+        u8 t[4];
+        int k;
+        if (u16le) { t[0] = (u8)c; t[1] = (u8)(c >> 8); k = 2; }
+        else if (u16be) { t[0] = (u8)(c >> 8); t[1] = (u8)c; k = 2; }
+        else if (u32le) { t[0] = (u8)c; t[1] = (u8)(c >> 8); t[2] = (u8)(c >> 16); t[3] = (u8)(c >> 24); k = 4; }
+        else if (u32be) { t[0] = (u8)(c >> 24); t[1] = (u8)(c >> 16); t[2] = (u8)(c >> 8); t[3] = (u8)c; k = 4; }
+        else if (limit) {
+            if (c < limit) t[0] = (u8)c;
+            else if (loss) t[0] = loss;
+            else break;
+            k = 1;
+        } else if (c < 0x80) { t[0] = (u8)c; k = 1; }
+        else if (c < 0x800) { t[0] = (u8)(0xC0 | c >> 6); t[1] = (u8)(0x80 | (c & 0x3F)); k = 2; }
+        else if (c < 0x10000) { t[0] = (u8)(0xE0 | c >> 12); t[1] = (u8)(0x80 | ((c >> 6) & 0x3F)); t[2] = (u8)(0x80 | (c & 0x3F)); k = 3; }
+        else { t[0] = (u8)(0xF0 | c >> 18); t[1] = (u8)(0x80 | ((c >> 12) & 0x3F)); t[2] = (u8)(0x80 | ((c >> 6) & 0x3F)); t[3] = (u8)(0x80 | (c & 0x3F)); k = 4; }
+        if (buf) {
+            if (out + k > max) break;
+            memcpy(buf + out, t, (size_t)k);
+        }
+        out += k;
+        i += units;
     }
-    if (buf) { out = len < max ? len : max; memcpy(buf, u + loc, (size_t)out); } else out = len;
+    free(w);
     if (used) *used = out;
-    return buf ? out : len;
+    return i;
 }
 /* tamanho máximo do caminho em UTF-8 (+ NUL) */
 long CFStringGetMaximumSizeOfFileSystemRepresentation(id_ s) { return CFStringGetLength(s) * 3 + 1; }
@@ -666,6 +730,7 @@ static const sysctl_ent_t sysctl_tab[] = {
     {"machdep.cpu.family", 4, 6, 0}, {"machdep.cpu.model", 4, 85, 0}, {"machdep.cpu.stepping", 4, 4, 0},
     {"kern.ostype", 0, 0, "Darwin"}, {"kern.osrelease", 0, 0, "23.0.0"}, {"kern.osversion", 0, 0, "23A344"},
     {"kern.osproductversion", 0, 0, "14.0"}, {"kern.osproductversioncompat", 0, 0, "14.0"},
+    {"kern.iossupportversion", 0, 0, "17.0"},   /* Mac Catalyst: versão do iOSSupport do macOS 14 (UIKit em /System/iOSSupport) */
     {"kern.version", 0, 0, "Darwin Kernel Version 23.0.0: mOS Nucleo; RELEASE_X86_64"},
     {"kern.hostname", 0, 0, "mOS"}, {"kern.osrevision", 4, 199506, 0},
     {"kern.maxfilesperproc", 4, 32, 0}, {"kern.maxfiles", 4, 256, 0}, {"kern.argmax", 4, 262144, 0},

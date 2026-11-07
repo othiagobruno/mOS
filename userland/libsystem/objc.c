@@ -58,7 +58,7 @@ void cx_objc_boot(u64 sects, u64 n);
 cx_class_t *cx_class_named(const char *name) {
     for (u32 i = 0; i < nclasses; i++) {
         cx_rw_t *rw = rw_of(all_classes[i]);
-        if (rw && !strcmp(rw->name, name)) return all_classes[i];
+        if (rw && rw->name && name && !strcmp(rw->name, name)) return all_classes[i];   /* classe ainda sem nome (Swift genérica em realização) */
     }
     /* programa sem seções ObjC (C/Rust que só usa CoreFoundation/Security, ex.: o Codex CLI): o runtime e as
      * classes do Foundation ainda não subiram — sobe agora, como o swiftbridge.c faz, e procura de novo */
@@ -315,11 +315,45 @@ IMP cx_lookup(cx_class_t *c, SEL sel) {
     return imp;
 }
 
-/* chamados por objc_msgSend (objc_msg.S) */
-IMP cx_msg_lookup(cx_class_t *c, SEL sel) { IMP i = cx_lookup(c, sel); return i ? i : (IMP)missing_imp; }
-IMP cx_msg_lookup_stret(cx_class_t *c, SEL sel) { IMP i = cx_lookup(c, sel); return i ? i : (IMP)missing_stret; }
+/* +resolveInstanceMethod: / +resolveClassMethod: (resolução dinâmica, como no runtime da Apple): na falta do método,
+ * a classe pode acrescentá-lo (class_addMethod) e devolver YES; aí a busca é refeita. Usado por @dynamic
+ * (WhatsApp: preferências), Core Data e proxies. Uma resolução por vez por seletor (evita laço). */
+static IMP resolve_and_lookup(cx_class_t *c, SEL sel) {
+    static SEL busy[8];
+    static u32 nbusy;
+    if (!c || !sel || nbusy >= 8) return 0;
+    for (u32 i = 0; i < nbusy; i++) if (busy[i] == sel) return 0;
+    cx_rw_t *rw = rw_of(c);
+    if (!rw) return 0;
+    int meta = rw->meta & 1;
+    id target = (id)c;
+    if (meta) {                                           /* a classe cuja metaclasse é c */
+        target = 0;
+        for (u32 k = 0; k < nclasses; k++) if (all_classes[k]->isa == c) { target = (id)all_classes[k]; break; }
+        if (!target) return 0;
+    }
+    SEL rs = sel_registerName(meta ? "resolveClassMethod:" : "resolveInstanceMethod:");
+    IMP r = cx_lookup(target->isa, rs);
+    if (!r) return 0;
+    busy[nbusy++] = sel;
+    BOOL ok = ((BOOL (*)(id, SEL, SEL))r)(target, rs, sel);
+    nbusy--;
+    return ok ? cx_lookup(c, sel) : 0;
+}
 
-BOOL cx_responds(cx_class_t *c, SEL sel) { return cx_lookup(c, sel) != 0; }
+/* chamados por objc_msgSend (objc_msg.S) */
+IMP cx_msg_lookup(cx_class_t *c, SEL sel) {
+    IMP i = cx_lookup(c, sel);
+    if (!i) i = resolve_and_lookup(c, sel);
+    return i ? i : (IMP)missing_imp;
+}
+IMP cx_msg_lookup_stret(cx_class_t *c, SEL sel) {
+    IMP i = cx_lookup(c, sel);
+    if (!i) i = resolve_and_lookup(c, sel);
+    return i ? i : (IMP)missing_stret;
+}
+
+BOOL cx_responds(cx_class_t *c, SEL sel) { return cx_lookup(c, sel) != 0 || resolve_and_lookup(c, sel) != 0; }
 BOOL cx_is_subclass(cx_class_t *c, cx_class_t *of) { for (; c; c = c->super) if (c == of) return YES; return NO; }
 
 /* +initialize: chamado uma vez, na primeira mensagem à classe */
@@ -715,23 +749,39 @@ void cx_object_free(id o) {
 }
 id object_dispose(id o) { cx_object_free(o); return 0; }
 
-/* autorelease pools: pilha de objetos; o marcador é a altura da pilha */
-static id *pool;
-static u64 npool, cappool;
-static volatile int pool_lock;
+/* autorelease pools: uma pilha de objetos POR THREAD (slot TSD_POOL da TSD, como no runtime da Apple); o marcador é
+ * a altura da pilha. Com uma pilha global, o pop de uma thread soltava os objetos que outra acabara de pôr no pool e
+ * ainda usava: o renderer do VS Code caía no CoreText de uma thread de rasterização com um dicionário já liberado.
+ * Sem FSGSBASE, cx_tsd devolve a tabela global e o pool volta a ser um só, como antes. */
+#define TSD_POOL 104
+typedef struct { id *v; u64 n, cap; } arpool_t;
+void **cx_tsd(void);
+static arpool_t *my_pool(void) {
+    void **t = cx_tsd();
+    arpool_t *p = t[TSD_POOL];
+    if (!p) { p = calloc(1, sizeof *p); t[TSD_POOL] = p; }
+    return p;
+}
 id objc_autorelease(id o) {
     if (!hdr(o) && !is_crr(o) && !cx_is_dispatch_object(o)) return o;
-    while (__sync_lock_test_and_set(&pool_lock, 1)) SYS0(SYS_YIELD);
-    if (npool == cappool) { cappool = cappool ? cappool * 2 : 1024; pool = realloc(pool, cappool * sizeof(id)); }
-    pool[npool++] = o;
-    __sync_lock_release(&pool_lock);
+    arpool_t *p = my_pool();
+    if (!p) return o;
+    if (p->n == p->cap) {
+        u64 nc = p->cap ? p->cap * 2 : 256;
+        id *nv = realloc(p->v, nc * sizeof(id));
+        if (!nv) return o;                               /* sem memória: o objeto fica sem dono (vaza), não cai */
+        p->v = nv; p->cap = nc;
+    }
+    p->v[p->n++] = o;
     return o;
 }
-void *objc_autoreleasePoolPush(void) { return (void *)(npool + 1); }
+void *objc_autoreleasePoolPush(void) { arpool_t *p = my_pool(); return (void *)((p ? p->n : 0) + 1); }
 void objc_autoreleasePoolPop(void *m) {
+    arpool_t *p = my_pool();
+    if (!p) return;
     u64 mk = (u64)m - 1;
-    while (npool > mk) {
-        id o = pool[--npool];
+    while (p->n > mk) {                                  /* um dealloc pode pôr mais objetos no pool: p->v relido a cada volta */
+        id o = p->v[--p->n];
         objc_release(o);
     }
 }
@@ -867,6 +917,20 @@ static void attach_category(const u8 *cat) {
     cx_rw_t *rw = rw_of(c), *mrw = rw_of(c->isa);
     if (rw) load_methods(rw, *(const u8 *const *)(cat + 16));
     if (mrw) load_methods(mrw, *(const u8 *const *)(cat + 24));
+    /* propriedades da categoria (category_t.instanceProperties): class_copyPropertyList/class_getProperty as veem,
+     * como no runtime da Apple (o WhatsApp gera os acessores das @dynamic a partir delas) */
+    const u8 *pl = *(const u8 *const *)(cat + 40);
+    if (rw && pl) {
+        u32 pes = *(const u32 *)pl, pcnt = *(const u32 *)(pl + 4);
+        if (pcnt && pcnt < 4096) {
+            rw->props = realloc(rw->props, (rw->nprops + pcnt) * sizeof *rw->props);
+            for (u32 i = 0; i < pcnt; i++) {
+                rw->props[rw->nprops + i].name = *(const char *const *)(pl + 8 + (u64)i * pes);
+                rw->props[rw->nprops + i].attrs = *(const char *const *)(pl + 16 + (u64)i * pes);
+            }
+            rw->nprops += pcnt;
+        }
+    }
 }
 
 void cx_objc_init_image(u64 sects, u64 n) {

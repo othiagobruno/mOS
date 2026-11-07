@@ -1,0 +1,27 @@
+#!/bin/bash
+# mOS: ditto de mentira. Cobre o que o Homebrew usa: "ditto --bom lista -- origem destino" (copia só os
+# caminhos da lista), "ditto origem destino" (cópia recursiva) e "ditto -x -k arq.zip destino" (unzip).
+bom=""; extract=0; zip=0; args=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --bom) bom=$2; shift 2 ;;
+    -x) extract=1; shift ;;
+    -k) zip=1; shift ;;
+    --) shift; args+=("$@"); break ;;
+    -*) shift ;;
+    *) args+=("$1"); shift ;;
+  esac
+done
+src=${args[0]}; dst=${args[1]}
+[ -n "$src" ] && [ -n "$dst" ] || { echo "uso: ditto [--bom lista] origem destino" >&2; exit 1; }
+if [ $extract = 1 ] && [ $zip = 1 ]; then mkdir -p "$dst"; exec unzip -qo "$src" -d "$dst"; fi
+mkdir -p "$dst"
+if [ -n "$bom" ]; then
+  while IFS= read -r p; do
+    p=${p#./}; [ -n "$p" ] && [ "$p" != "." ] || continue
+    if [ -d "$src/$p" ] && [ ! -L "$src/$p" ]; then mkdir -p "$dst/$p"
+    else mkdir -p "$(dirname "$dst/$p")"; cp -P "$src/$p" "$dst/$p" || exit 1; fi
+  done < "$bom"
+else
+  if [ -d "$src" ]; then cp -RP "$src/." "$dst/"; else cp -P "$src" "$dst"; fi
+fi

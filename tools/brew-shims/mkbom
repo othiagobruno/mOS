@@ -1,0 +1,6 @@
+#!/bin/bash
+# mOS: mkbom de mentira. O "BOM" aqui é só a lista de caminhos (o ditto daqui lê a mesma lista).
+in=""; out=""
+while [ $# -gt 0 ]; do case "$1" in -i) in=$2; shift 2 ;; -s|--) shift ;; *) out=$1; shift ;; esac; done
+[ -n "$in" ] && [ -n "$out" ] || { echo "uso: mkbom -s -i lista bom" >&2; exit 1; }
+cp "$in" "$out"

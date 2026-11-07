@@ -270,18 +270,21 @@ Boolean CFStringHasPrefix(id_ s, id_ p) {
 id_ CFStringCreateCopy(void *alloc, id_ s) { (void)alloc; id_ c = s ? MSG0(id_, s, "copy") : 0; return c; }
 id_ CFStringCreateMutableCopy(void *alloc, long max, id_ s) { (void)alloc; (void)max; return s ? MSG0(id_, s, "mutableCopy") : 0; }
 void CFStringAppend(id_ m, id_ s) { if (m && s) (void)MSG1(id_, m, "appendString:", s); }
-/* índices em bytes de UTF-8, como no resto do CFString do mOS (darwin.c) */
+/* índices em unidades UTF-16, como o CFStringGetLength (darwin.c) e o CFStringGetCharacters (vscode_cf.c) */
+void *malloc(unsigned long n);
+void free(void *p);
+long CFStringGetLength(id_ s);
+void CFStringGetCharacters(id_ s, CFRange r, unsigned short *out);
+id_ CFStringCreateWithCharacters(void *alloc, const unsigned short *chars, long n);
 id_ CFStringCreateWithSubstring(void *alloc, id_ s, CFRange r) {
     (void)alloc;
-    const char *u = utf8(s);
-    if (!u || r.loc < 0 || r.len < 0 || (size_t)(r.loc + r.len) > strlen(u)) return 0;
-    char tmp[1024];
-    char *b = r.len < (long)sizeof tmp ? tmp : 0;
-    if (!b) return 0;
-    for (long i = 0; i < r.len; i++) b[i] = u[r.loc + i];
-    b[r.len] = 0;
-    id_ o = nsstr(b);
-    return o ? objc_retain(o) : 0;
+    if (!s || r.loc < 0 || r.len < 0 || r.loc + r.len > CFStringGetLength(s)) return 0;
+    unsigned short tmp[512], *w = r.len <= 512 ? tmp : malloc((size_t)r.len * 2);
+    if (!w) return 0;
+    CFStringGetCharacters(s, r, w);
+    id_ o = CFStringCreateWithCharacters(0, w, r.len);   /* +1, como todo Create */
+    if (w != tmp) free(w);
+    return o;
 }
 CFRange CFStringGetRangeOfCharacterClusterAtIndex(id_ s, long i, int type) {
     (void)type;

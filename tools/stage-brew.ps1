@@ -41,6 +41,11 @@ Copy-Item -Force "$PSScriptRoot\brew-shims\sw_vers" "$mos\usr\bin\sw_vers"
 Copy-Item -Force "$PSScriptRoot\brew-shims\sysctl" "$mos\usr\sbin\sysctl"
 Copy-Item -Force "$PSScriptRoot\brew-shims\pkgutil" "$mos\usr\sbin\pkgutil"
 Copy-Item -Force "$PSScriptRoot\brew-shims\xcode-select" "$mos\usr\bin\xcode-select"
+# casks: hdiutil/diskutil sobre o leitor de .dmg do kernel (imgtool), ditto/mkbom para copiar do volume,
+# xattr e codesign que aceitam e não fazem nada (o VFS não guarda atributos; o kernel não confere assinaturas)
+foreach ($t in 'hdiutil', 'ditto', 'mkbom', 'xattr', 'codesign') { Copy-Item -Force "$PSScriptRoot\brew-shims\$t" "$mos\usr\bin\$t" }
+Copy-Item -Force "$PSScriptRoot\brew-shims\diskutil" "$mos\usr\sbin\diskutil"
+New-Item -ItemType Directory -Force "$mos\Applications" | Out-Null
 # Command Line Tools de mentira: o brew (macOS 14, Tier 3) as exige mesmo para bottles; o clang só informa a versão
 New-Item -ItemType Directory -Force "$mos\Library\Developer\CommandLineTools\usr\bin" | Out-Null
 Copy-Item -Force "$PSScriptRoot\brew-shims\clang" "$mos\Library\Developer\CommandLineTools\usr\bin\clang"
@@ -51,7 +56,7 @@ New-Item -ItemType Directory -Force $sdk | Out-Null
 # ferramentas que o macOS tem em /usr/bin e /bin: links para as do Homebrew (GNU) em /usr/local/bin
 $usrbin = 'curl', 'git', 'env', 'tar', 'gzip', 'xz', 'sed', 'grep', 'egrep', 'uname', 'id', 'which', 'readlink', 'basename',
           'dirname', 'head', 'tail', 'sort', 'tr', 'wc', 'cut', 'uniq', 'touch', 'tee', 'stat', 'printf', 'true', 'false',
-          'install', 'du', 'od', 'xargs', 'find', 'awk', 'mktemp', 'nproc', 'realpath', 'shasum', 'md5'
+          'install', 'du', 'od', 'xargs', 'find', 'awk', 'mktemp', 'nproc', 'realpath', 'shasum', 'md5', 'unzip', 'zip', 'timeout'
 $bin = 'ls', 'cat', 'mkdir', 'rm', 'rmdir', 'cp', 'mv', 'ln', 'chmod', 'date', 'echo', 'pwd', 'sleep', 'test', 'expr', 'hostname', 'ps'
 foreach ($t in $usrbin) { if (Test-Path "$mos\usr\local\bin\$t") { New-MosLink "$mos\usr\bin\$t" "/usr/local/bin/$t" } }
 foreach ($t in $bin) { if (Test-Path "$mos\usr\local\bin\$t") { New-MosLink "$mos\bin\$t" "/usr/local/bin/$t" } }

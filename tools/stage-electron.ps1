@@ -53,6 +53,14 @@ if (Test-Path -LiteralPath "$src\$lib") {
     New-Item -ItemType Directory -Force "$dst\$lib" | Out-Null
     Get-ChildItem -LiteralPath "$src\$lib" -File | Copy-Item -Destination "$dst\$lib\"
 }
+# Helpers do framework (chrome_crashpad_handler): o crashpad o inicia pelo caminho sem Versions/A, que no macOS é um
+# link simbólico; sem ele o Slack (que liga o crashReporter) parava num FATAL de posix_spawnp
+$hlp = "$src\Frameworks\Electron Framework.framework\Versions\A\Helpers"
+if (Test-Path -LiteralPath $hlp) {
+    $th = "$dst\Frameworks\Electron Framework.framework\Helpers"
+    New-Item -ItemType Directory -Force $th | Out-Null
+    Get-ChildItem -LiteralPath $hlp -File | Copy-Item -Destination "$th\"
+}
 # código do app
 New-Item -ItemType Directory -Force "$dst\Resources" | Out-Null
 foreach ($f in 'app.asar', 'electron.icns') { if (Test-Path -LiteralPath "$src\Resources\$f") { Copy-Item -LiteralPath "$src\Resources\$f" "$dst\Resources\" } }

@@ -326,32 +326,40 @@ u8 CFStringHasSuffix(id s, id suf) {
     return nb <= na && !memcmp(a + na - nb, b, nb);
 }
 enum { kCFCompareCaseInsensitive = 1, kCFCompareBackwards = 4, kCFCompareAnchored = 8 };
-static int eq_at(const char *a, const char *b, size_t n, int ci) {
-    for (size_t i = 0; i < n; i++) {
-        int x = (u8)a[i], y = (u8)b[i];
-        if (ci) { x = tolower(x); y = tolower(y); }
+/* índices em unidades UTF-16, como o CFStringGetLength (darwin.c) e o CFStringGetCharacters */
+static int eq16_at(const u16 *a, const u16 *b, long n, int ci) {
+    for (long i = 0; i < n; i++) {
+        u16 x = a[i], y = b[i];
+        if (ci) { if (x >= 'A' && x <= 'Z') x += 32; if (y >= 'A' && y <= 'Z') y += 32; }
         if (x != y) return 0;
     }
     return 1;
 }
-/* índices em bytes, coerentes com o CFStringGetLength do mOS */
 u8 CFStringFindWithOptions(id s, id find, cf_range_t range, u64 opts, cf_range_t *res) {
-    const char *a = utf8(s), *b = utf8(find);
-    long na = (long)strlen(a), nb = (long)strlen(b);
+    const char *a8 = utf8(s), *b8 = utf8(find);
+    long na = to_utf16(a8, 0, 0), nb = to_utf16(b8, 0, 0);
     long lo = range.loc < 0 ? 0 : range.loc, hi = range.loc + range.len;
     if (hi > na) hi = na;
     int ci = (opts & kCFCompareCaseInsensitive) != 0;
     if (!nb || hi - lo < nb) return 0;
-    if (opts & kCFCompareBackwards) {
-        long start = opts & kCFCompareAnchored ? hi - nb : lo;
-        for (long i = hi - nb; i >= start; i--)
-            if (eq_at(a + i, b, (size_t)nb, ci)) { if (res) { res->loc = i; res->len = nb; } return 1; }
-    } else {
-        long end = opts & kCFCompareAnchored ? lo : hi - nb;
-        for (long i = lo; i <= end; i++)
-            if (eq_at(a + i, b, (size_t)nb, ci)) { if (res) { res->loc = i; res->len = nb; } return 1; }
+    u16 *a = malloc((size_t)(na + 1) * 2), *b = malloc((size_t)(nb + 1) * 2);
+    u8 found = 0;
+    if (a && b) {
+        to_utf16(a8, a, na);
+        to_utf16(b8, b, nb);
+        if (opts & kCFCompareBackwards) {
+            long start = opts & kCFCompareAnchored ? hi - nb : lo;
+            for (long i = hi - nb; i >= start && !found; i--)
+                if (eq16_at(a + i, b, nb, ci)) { if (res) { res->loc = i; res->len = nb; } found = 1; }
+        } else {
+            long end = opts & kCFCompareAnchored ? lo : hi - nb;
+            for (long i = lo; i <= end && !found; i++)
+                if (eq16_at(a + i, b, nb, ci)) { if (res) { res->loc = i; res->len = nb; } found = 1; }
+        }
     }
-    return 0;
+    free(a);
+    free(b);
+    return found;
 }
 id CFStringCreateExternalRepresentation(void *alloc, id s, u32 enc, u8 loss) {
     (void)alloc; (void)loss;

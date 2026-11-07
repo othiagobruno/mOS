@@ -563,16 +563,27 @@ static id v_init(id self, SEL c) { return v_init_frame(self, c, r_make(0, 0, 0, 
 static NSRect v_frame(id self, SEL c) { (void)c; return vs(self)->frame; }
 static NSRect v_bounds(id self, SEL c) { (void)c; NSRect r = vs(self)->frame; r.o.x = r.o.y = 0; return r; }
 static void resize_children(id v, NSSize old);
-static void v_set_frame(id self, SEL c, NSRect f) {
+/* Como no Cocoa: setFrame: manda setFrameOrigin: e setFrameSize: por mensagem, e setFrameSize: reposiciona as subviews
+ * (autoresizingMask) mandando setFrame: a cada uma. As subclasses observam por aí: a RenderWidgetHostViewCocoa do
+ * Chromium sobrescreve setFrameSize: para avisar o renderer do tamanho; antes ele ficava com viewport vazio. */
+static void v_set_size(id self, SEL c, NSSize sz) {
     (void)c;
     vstate_t *s = vs(self);
     NSSize old = s->frame.s;
-    s->frame = f;
-    if (old.w != f.s.w || old.h != f.s.h) resize_children(self, old);
+    s->frame.s = sz;
+    if (old.w != sz.w || old.h != sz.h) resize_children(self, old);
     mark(self);
 }
-static void v_set_size(id self, SEL c, NSSize sz) { NSRect f = vs(self)->frame; f.s = sz; v_set_frame(self, c, f); }
-static void v_set_origin(id self, SEL c, NSPoint p) { NSRect f = vs(self)->frame; f.o = p; v_set_frame(self, c, f); }
+static void v_set_origin(id self, SEL c, NSPoint p) { (void)c; vs(self)->frame.o = p; mark(self); }
+static void v_set_frame(id self, SEL c, NSRect f) {
+    (void)c;
+    vstate_t *s = vs(self);
+    if (s->frame.o.x != f.o.x || s->frame.o.y != f.o.y)
+        ((void (*)(id, SEL, NSPoint))objc_msgSend)(self, sel_registerName("setFrameOrigin:"), f.o);
+    if (s->frame.s.w != f.s.w || s->frame.s.h != f.s.h)
+        ((void (*)(id, SEL, NSSize))objc_msgSend)(self, sel_registerName("setFrameSize:"), f.s);
+    mark(self);
+}
 static void set_window_rec(id v, id w) {
     vstate_t *s = vs(v);
     s->window = w;
@@ -695,7 +706,7 @@ static void resize_children(id v, NSSize old) {
         int hx = !!(m & 1) + !!(m & 2) + !!(m & 4), hy = !!(m & 8) + !!(m & 16) + !!(m & 32);
         if (hx) { double d = dw / hx; if (m & 1) f.o.x += d; if (m & 2) f.s.w += d; }
         if (hy) { double d = dh / hy; if (m & 8) f.o.y += d; if (m & 16) f.s.h += d; }
-        v_set_frame(s->sub[i], 0, f);
+        ((void (*)(id, SEL, NSRect))objc_msgSend)(s->sub[i], sel_registerName("setFrame:"), f);
     }
 }
 
@@ -1241,7 +1252,24 @@ static id w_bg(id self, SEL c) { (void)c; return ws(self)->bg; }
 static BOOL w_visible(id self, SEL c) { (void)c; return ws(self)->visible; }
 static void w_set_released(id self, SEL c, BOOL b) { (void)c; ws(self)->released_when_closed = b; }
 static id w_first(id self, SEL c) { (void)c; return ws(self)->first; }
-static BOOL w_make_first(id self, SEL c, id r) { (void)c; wstate_t *s = ws(self); if (s->first) mark(s->first); s->first = r; if (r) mark(r); return YES; }
+/* -[NSWindow makeFirstResponder:], como no Cocoa: o atual tem de aceitar resignFirstResponder, e o novo recebe
+ * becomeFirstResponder (se recusar, a janela fica sem respondedor). É nesse becomeFirstResponder que a
+ * RenderWidgetHostViewCocoa avisa o host (OnFirstResponderChanged -> GotFocus -> SetFocus no renderer): sem ele a página
+ * nunca tinha foco, o Blink descartava o texto digitado e o editor do VS Code não mostrava o cursor. */
+static BOOL w_make_first(id self, SEL c, id r) {
+    (void)c;
+    wstate_t *s = ws(self);
+    if (s->first == r) return YES;
+    id old = s->first;
+    if (old && !MSG0(BOOL, old, "resignFirstResponder")) return NO;
+    s->first = r;
+    if (old) mark(old);
+    if (r) {
+        if (!MSG0(BOOL, r, "becomeFirstResponder")) { s->first = 0; return NO; }
+        mark(r);
+    }
+    return YES;
+}
 static i64 w_number(id self, SEL c) { (void)c; return ws(self)->gid; }
 /* NSWindowOcclusionStateVisible = 2. Sem isto o Chromium trata a janela como coberta e não compõe. */
 static u64 w_occlusion(id self, SEL c) { (void)self; (void)c; return 2; }
@@ -1280,8 +1308,7 @@ static void w_become_key(id self) {
     if (d && cx_responds(d->isa, sel_registerName("windowDidBecomeKey:"))) MSG(void, d, "windowDidBecomeKey:", nk);
     cx_post(nk);
 }
-static void w_show(id self, SEL c, id sender) {
-    (void)c; (void)sender;
+static void w_order_in(id self) {
     wstate_t *s = ws(self);
     if (s->gid <= 0) {
         u32 fl = (s->style & 8) ? GUI_WF_RESIZABLE : 0;
@@ -1307,9 +1334,34 @@ static void w_show(id self, SEL c, id sender) {
     s->visible = YES;
     s->closed = NO;
     s->needs = YES;
+}
+static void w_order_out_core(id self) { (void)self; }
+/* Como no Cocoa, orderFront:/makeKeyAndOrderFront:/orderOut: passam por -orderWindow:relativeTo: (despacho dinâmico),
+ * e é ali que as subclasses observam a ordem: a NativeWidgetMacNSWindow do Chromium sobrescreve esse método e só então
+ * nota a janela visível e solta o compositor (RecyclableCompositorMac::Unsuspend). Sem isso o cc ficava com o main frame
+ * adiado para sempre (Scheduler::SetDeferBeginMainFrame(true), CanDraw "no root layer") e a janela vazia. */
+static void w_order_window(id self, SEL c, i64 place, i64 rel) {
+    (void)c; (void)rel;
+    if (place == 0) { w_order_out_core(self); return; }
+    BOOL was = ws(self)->visible;
+    w_order_in(self);
+    if (!was) {
+        static id occ;
+        if (!occ) occ = cx_str("NSWindowDidChangeOcclusionStateNotification");
+        id d = ws(self)->delegate, n = cx_note(occ, self, 0);
+        if (d && cx_responds(d->isa, sel_registerName("windowDidChangeOcclusionState:"))) MSG(void, d, "windowDidChangeOcclusionState:", n);
+        cx_post(n);
+    }
+}
+static void w_show(id self, SEL c, id sender) {
+    (void)sender;
+    ((void (*)(id, SEL, i64, i64))objc_msgSend)(self, sel_registerName("orderWindow:relativeTo:"), 1, 0);   /* NSWindowAbove */
     if (c == sel_registerName("makeKeyAndOrderFront:") || c == sel_registerName("makeKeyWindow")) w_become_key(self);
 }
-static void w_order_out(id self, SEL c, id sender) { (void)c; (void)sender; (void)self; }
+static void w_order_out(id self, SEL c, id sender) {
+    (void)c; (void)sender;
+    ((void (*)(id, SEL, i64, i64))objc_msgSend)(self, sel_registerName("orderWindow:relativeTo:"), 0, 0);   /* NSWindowOut */
+}
 static void w_center(id self, SEL c) { (void)self; (void)c; }
 static void w_set_min(id self, SEL c, NSSize z) { (void)self; (void)c; (void)z; }
 static void w_set_frame(id self, SEL c, NSRect r, BOOL disp) {
@@ -3895,6 +3947,7 @@ void cx_appkit_init(void) {
     M(NSWindow, "parentWindow", w_parent); M(NSWindow, "setParentWindow:", w_set_parent); M(NSWindow, "addChildWindow:ordered:", w_add_child); M(NSWindow, "removeChildWindow:", w_remove_child); M(NSWindow, "frame", w_frame);
     M(NSWindow, "contentRectForFrameRect:", w_content_rect_for); M(NSWindow, "frameRectForContentRect:", w_frame_rect_for);
     M(NSWindow, "makeKeyAndOrderFront:", w_show); M(NSWindow, "orderFront:", w_show); M(NSWindow, "orderFrontRegardless", w_show); M(NSWindow, "makeKeyWindow", w_show);
+    M(NSWindow, "orderWindow:relativeTo:", w_order_window);
     M(NSWindow, "orderOut:", w_order_out); M(NSWindow, "center", w_center); M(NSWindow, "close", w_close); M(NSWindow, "performClose:", w_perform_close);
     M(NSWindow, "setBackgroundColor:", w_set_bg); M(NSWindow, "backgroundColor", w_bg); M(NSWindow, "isVisible", w_visible);
     M(NSWindow, "setReleasedWhenClosed:", w_set_released); M(NSWindow, "firstResponder", w_first); M(NSWindow, "makeFirstResponder:", w_make_first);

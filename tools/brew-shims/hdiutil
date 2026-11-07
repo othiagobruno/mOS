@@ -1,0 +1,25 @@
+#!/bin/bash
+# mOS: hdiutil de mentira sobre o leitor de .dmg do kernel (só leitura), via /Sistema/Programas/imgtool.
+# O suficiente para o Homebrew: imageinfo -format, attach -plist, detach. Ver docs/porte-brew.md.
+cmd=$1; shift
+img=""; for a in "$@"; do case "$a" in -*) ;; *) img=$a ;; esac; done
+case "$cmd" in
+  imageinfo) [ -f "$img" ] || { echo "hdiutil: imageinfo failed - No such file or directory" >&2; exit 1; }; echo "UDZO" ;;
+  attach)
+    [ -f "$img" ] || { echo "hdiutil: attach failed - No such file or directory" >&2; exit 1; }
+    case "$img" in /*) ;; *) img="$PWD/$img" ;; esac
+    out=$(/Sistema/Programas/imgtool "attach $img") || { echo "hdiutil: attach failed - not recognized" >&2; exit 1; }
+    plist=0; for a in "$@"; do [ "$a" = "-plist" ] && plist=1; done
+    if [ $plist = 1 ]; then
+      printf '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0">\n<dict>\n\t<key>system-entities</key>\n\t<array>\n'
+      n=0
+      while IFS= read -r m; do [ -n "$m" ] || continue; n=$((n+1))
+        printf '\t\t<dict>\n\t\t\t<key>dev-entry</key>\n\t\t\t<string>/dev/disk9s%d</string>\n\t\t\t<key>mount-point</key>\n\t\t\t<string>%s</string>\n\t\t</dict>\n' "$n" "$m"
+      done <<< "$out"
+      printf '\t</array>\n</dict>\n</plist>\n'
+    else
+      while IFS= read -r m; do [ -n "$m" ] && printf '/dev/disk9s1\tApple_HFS\t%s\n' "$m"; done <<< "$out"
+    fi ;;
+  detach|eject) /Sistema/Programas/imgtool "detach $img" || exit 1; echo "\"disk9\" ejected." ;;
+  *) echo "hdiutil: $cmd: não suportado no mOS" >&2; exit 1 ;;
+esac

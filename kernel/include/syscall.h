@@ -62,6 +62,8 @@ enum {
     SYS_PREAD,         /* 51: (fd, buf, n, deslocamento em r10) -> lidos      sem mexer na posição do fd (atômico entre threads) */
     SYS_PWRITE,        /* 52: (fd, buf, n, deslocamento em r10) -> escritos */
     SYS_FTRUNCATE,     /* 53: (fd, tamanho) -> 0                    muda o tamanho de um arquivo aberto (zeros ao crescer) */
+    SYS_IMGATTACH,     /* 54: (caminho .dmg, buf, cap) -> nº de volumes     monta em /Volumes; buf recebe os caminhos, um por linha (hdiutil) */
+    SYS_IMGDETACH,     /* 55: (ponto de montagem) -> 0              desmonta um volume de /Volumes */
     SYS_COUNT,
     SYS_GUI_FIRST = 64,/* 64..79: interface gráfica dos apps do macOS (kernel/compat/guisys.c) */
     SYS_GUI_LAST = 79,

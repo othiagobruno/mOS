@@ -86,10 +86,12 @@ while (((Get-Date) - $t1).TotalSeconds -lt $Limite) {
     if (-not (Test-Path $serial)) { continue }
     $txt = Get-Content $serial -Raw -ErrorAction SilentlyContinue
     if (-not $txt) { continue }
-    if (-not $started -and $txt -match "proc: iniciado $NomeRx") { $started = Get-Date }
+    if (-not $started -and $txt -match "proc: iniciado $NomeRx \(Mach-O, pid (\d+)") { $started = Get-Date; $mainPid = $Matches[1] }
     $sig = ($txt -replace '(?m)^(persist|despejo):.*\r?\n', '').Length   # gravações de arquivo não contam como atividade
     if ($sig -ne $lastLen) { $lastLen = $sig; $lastChange = Get-Date }
-    if ($txt -match "proc: $NomeRx \(pid \d+\): [^\r\n]*encerrado|init: $ServicoRx \(pid \d+\) terminou") { $fim = 'o processo terminou'; break }
+    # só o processo principal (o 1º "iniciado"): um filho com o mesmo nome (o fork do crashpad no Slack) também morre
+    $pidRx = if ($mainPid) { $mainPid } else { '\d+' }
+    if ($txt -match "proc: $NomeRx \(pid $pidRx\): [^\r\n]*encerrado|init: $ServicoRx \(pid \d+\) terminou") { $fim = 'o processo terminou'; break }
     if ($started -and ((Get-Date) - $lastChange).TotalSeconds -ge $Ocioso) { $fim = "log parado por $Ocioso s (processo vivo)"; break }
     if (((Get-Date) - $t1).TotalSeconds -gt 20 -and -not (Get-CimInstance Win32_Process -Filter "Name='qemu-system-x86_64.exe'" |
             Where-Object { $_.CommandLine -match "tcp:127.0.0.1:$Port," })) { $fim = 'o QEMU fechou (reset da CPU: veja qemu-reset.log)'; break }

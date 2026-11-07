@@ -1,0 +1,4 @@
+#!/bin/bash
+# mOS: o kernel não verifica assinaturas. --verify passa; assinar (-s -) é aceito sem efeito.
+for a in "$@"; do case "$a" in -d|--display) echo "Executable=${@: -1}"; echo "Signature=adhoc"; exit 0 ;; esac; done
+exit 0

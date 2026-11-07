@@ -39,7 +39,7 @@ Cuidados:
 | Codex desktop | — | 2.481 → 2.231 | 978 | libc++ 271, Swift 259 (helpers nativos), CoreText 54 |
 | Grok Bot | 27 | 2.562 → 2.393 | 974 | Swift 541 (só o helper "Computer Use"), Foundation 219 |
 | Claude | 27 | 4.279 → 4.040 | 2.700 | Swift 1.256 + SwiftUI 547 (`swift_addon.node`, `computer_use.node`, simulador iOS) |
-| WhatsApp | 9 | 8.922 → 8.675 → 7.783 → 4.730 (dylibs Swift do mOS) → 4.444 (Combine) → 4.415 (Dispatch) → 4.265 (Foundation, marco C) → 3.694 (UIKit.framework do Catalyst) → 3.622 → **3.413** (libswiftUIKit completa, 7 nov.; ver [uikit-catalyst.md](uikit-catalyst.md)) | 8.344 | SwiftUI 555, Swift Foundation 278 (quase tudo ICU), libc++ 271 |
+| WhatsApp | 9 | 8.922 → 8.675 → 7.783 → 4.730 (dylibs Swift do mOS) → 4.444 (Combine) → 4.415 (Dispatch) → 4.265 (Foundation, marco C) → 3.694 (UIKit.framework do Catalyst) → 3.622 → 3.413 (libswiftUIKit completa, 7 nov.; ver [uikit-catalyst.md](uikit-catalyst.md)) → **3.105** com a `libc++.1.dylib` do LLVM (`tools\build-libcxx.ps1`) no diretório de varredura; o kernel ainda desvia a libc++ para o libSystem | 8.344 | SwiftUI 555, Swift Foundation 278 (quase tudo ICU) |
 | **Codex CLI** | 1 | **271 → 90** | 152 | Security zerado; sobram CF, termios, rede |
 
 \* O número do VS Code subiu porque o bundle em `build-vscode` foi preparado de novo, agora com mais módulos nativos. Não é regressão.
@@ -191,6 +191,53 @@ BoringSSL do próprio Bun, sem SecureTransport. Preparação: `tools/stage-claud
   registra a porta Mach do "waker" (`EVFILT_MACHPORT` + `MACH_RCV_MSG`) e espera sem prazo, na primeira e única chamada ao
   kqueue, sem ter criado nenhuma thread e antes de o JavaScript fazer qualquer E/S. Próximo passo: descobrir o que o laço
   espera (uma tarefa enviada a uma thread que não foi criada, ou um envio à porta do waker que o kqueue não vê).
+
+## WhatsApp: primeira partida no harness (7 nov. 2026)
+
+Raiz montada em `build\wa-run`: junções `System` e `usr\lib\swift` para `build\swift\objc\dylib`, o app em
+`Applications\WhatsApp.app`, e a `libc++.1.dylib` do LLVM copiada como `usr\lib\libc++.1.dylib` e `libc++abi.dylib`.
+
+```bash
+MACHOTEST_STUB_LOG=1 MACHOTEST_TOLERANT=1 MACHOTEST_MAP=1 MACHOTEST_WATCHDOG=240000 \
+  MACHOTEST_PATH=/Applications/WhatsApp.app/Contents/MacOS/WhatsApp \
+  ./build/machotest-wa.exe build/libSystem.mos build/wa-run build/wa-run/Applications/WhatsApp.app/Contents/MacOS/WhatsApp
+```
+
+O `MACHOTEST_TOLERANT` deixa passar as 122 bibliotecas do sistema que faltam, e o `MACHOTEST_STUB_LOG` faz cada
+símbolo ausente devolver 0 e ser registrado. O `machotest-wa.exe` é um machotest feito de uma cópia do
+`kernel/compat/macho.c` em que a libc++ vem do disco: o kernel ainda a desvia para o libSystem (`libsystem_dylib_ok`).
+Essa mudança no kernel está combinada com a sessão do VS Code e ainda não foi feita.
+
+O que a partida mostrou, na ordem:
+
+1. **Bibliotecas ausentes:** sem o modo tolerante o carregador recusa o app (libxml2, libsqlite3, libz, CoreMedia e mais
+   118). No modo tolerante carregam 33 imagens: o executável, SharedModules, WAAppKitBridge, as dylibs Swift, o UIKit e
+   CoreData/Combine/AudioToolbox/ImageIO do mOS.
+2. **libc++:** a primeira chamada (`std::chrono::steady_clock::now`) já precisa da libc++ real. Com a dylib do LLVM vinda
+   do disco, as chamadas passam.
+3. **Foundation:** faltavam `createDirectoryAtURL:…`, `initWithBytesNoCopy:…`, `initWithObjects:` (varargs),
+   `containerURLForSecurityApplicationGroupIdentifier:`, `NSThread name/callStackReturnAddresses`,
+   `NSPurgeableData +dataWithLength:`, `dataUsingEncoding:`, `stringByAppendingPathExtension:`,
+   `arrayByAddingObjectsFromArray:`, `numberWithUnsignedLong:`, `NSMutableDictionary initWithCapacity:`,
+   `NSBundle localizations`, `NSLocale localeWithLocaleIdentifier:/componentsFromLocaleIdentifier:/scriptCode`,
+   `rangeOfString:options:`, `stringByPaddingToLength:…`, `URLsForDirectory:inDomains:`, `NSKeyedUnarchiver
+   setClass:forClassName:`, `CFStringConvertEncodingToNSStringEncoding` e `CFLocaleCreateComponentsFromLocaleIdentifier`.
+   Todos foram feitos (`foundation_extra.c`, `cfencoding.c`), além de `kern.iossupportversion` = 17.0 no sysctl
+   (`darwin.c`).
+4. **Runtime ObjC:** o mOS não tinha `+resolveInstanceMethod:`/`+resolveClassMethod:` e não anexava as propriedades das
+   categorias. As preferências do WhatsApp são propriedades `@dynamic` declaradas em categorias e protocolos, com os
+   acessores gerados em tempo de execução. As duas coisas agora existem (`objc.c`). Também se protege uma classe ainda
+   sem nome em `objc_getClass`.
+5. **Ainda ausentes na partida:** `sqlite3_*` (falta a libsqlite3), `dispatch_io_create/read/set_low_water` e
+   `CFReadStreamCreateWithFile`.
+6. **Onde para:** `swift_unknownObjectRelease` num objeto de isa nulo (objeto já liberado ou sobreliberado), chamado do
+   executável principal, que não tem símbolos. Este é o próximo passo de depuração.
+7. **Só no harness:** as syscalls 12, 31, 33, 39, 48, 81 (Mach) e 83 não são emuladas pelo `machotest`. No QEMU elas
+   existem.
+
+Também apareceu: o UIKit entra duas vezes (pelo caminho de `/System/iOSSupport/…/Versions/A/UIKit` e pela cópia
+`UIKit.framework/UIKit`), o que duplica as classes. O carregador deveria tratar os dois caminhos como a mesma imagem,
+ou a cópia deveria ser um link.
 
 ## Roteiro (do mais perto para o mais longe)
 

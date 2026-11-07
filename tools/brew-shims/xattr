@@ -1,0 +1,7 @@
+#!/bin/bash
+# mOS: o VFS não guarda atributos estendidos. -w/-d/-c aceitam e não fazem nada; -p/-l não acham nada.
+case "$1" in
+  -p) echo "xattr: ${@: -1}: No such xattr: ${@: -2:1}" >&2; exit 1 ;;
+  -l|-h) exit 0 ;;
+  *) exit 0 ;;
+esac

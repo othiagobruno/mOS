@@ -1654,6 +1654,38 @@ u64 proc_syscall(int_frame_t *f) {
         if (a != b) { fd_copy(p, (int)b, p, (int)a); p->fds[b].flags &= ~MOS_O_CLOEXEC; }   /* POSIX: a cópia nasce sem FD_CLOEXEC */
         r = (i64)b;
         break;
+    case SYS_IMGATTACH: {                                   /* hdiutil attach (casks .dmg do Homebrew): monta pelo leitor do kernel */
+        extern int vfs_mount_file(vnode_t *f);
+        if (!copy_path(p, path, a)) { r = -MOS_EFAULT; break; }
+        vnode_t *img = vfs_lookup(path);
+        if (!img || img->dir) { r = -MOS_ENOENT; break; }
+        vnode_t *vols = vfs_lookup("/Volumes");
+        vnode_t *had[64];
+        int nhad = 0;
+        for (vnode_t *ch = vols && vols->dir ? vols->child : NULL; ch && nhad < 64; ch = ch->next) had[nhad++] = ch;
+        int n = vfs_mount_file(img);
+        if (n <= 0) { r = -MOS_EINVAL; break; }             /* não é imagem conhecida, ou já montada */
+        vols = vfs_lookup("/Volumes");
+        char out[1024];
+        usize o = 0;
+        for (vnode_t *ch = vols ? vols->child : NULL; ch; ch = ch->next) {
+            bool old = false;
+            for (int i = 0; i < nhad; i++) if (had[i] == ch) old = true;
+            if (old || o + strlen(ch->name) + 11 >= sizeof out) continue;
+            o += (usize)snprintf(out + o, sizeof out - o, "/Volumes/%s\n", ch->name);
+        }
+        if (c && o) { usize k = o < c - 1 ? o : c - 1; if (!uvm_copy_out(p, b, out, k)) { r = -MOS_EFAULT; break; } u8 z = 0; uvm_copy_out(p, b + k, &z, 1); }
+        r = n;
+        break;
+    }
+    case SYS_IMGDETACH: {                                   /* hdiutil detach */
+        if (!copy_path(p, path, a)) { r = -MOS_EFAULT; break; }
+        vnode_t *vol = vfs_lookup(path);
+        if (!vol) { r = -MOS_ENOENT; break; }
+        if (!vfs_is_volume(vol)) { r = -MOS_EINVAL; break; }
+        r = vfs_eject(vol) ? 0 : -MOS_EINVAL;
+        break;
+    }
     case SYS_FDFLAGS:                                       /* fcntl F_GETFD/F_SETFD: o git espera EOF no pipe de aviso do exec */
         if (fd_get(p, a) < 0) { r = -MOS_EBADF; break; }
         if (b) { if (c) p->fds[a].flags |= MOS_O_CLOEXEC; else p->fds[a].flags &= ~MOS_O_CLOEXEC; }

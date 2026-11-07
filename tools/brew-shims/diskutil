@@ -1,0 +1,9 @@
+#!/bin/bash
+# mOS: diskutil de mentira para o Homebrew (info -plist de um ponto de montagem, eject/unmount pelo imgtool).
+cmd=$1; shift
+target=""; for a in "$@"; do case "$a" in -*|force) ;; *) target=$a ;; esac; done
+case "$cmd" in
+  info) printf '<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0">\n<dict>\n\t<key>MountPoint</key>\n\t<string>%s</string>\n\t<key>FilesystemType</key>\n\t<string>hfs</string>\n</dict>\n</plist>\n' "$target" ;;
+  eject|unmount|unmountDisk) /Sistema/Programas/imgtool "detach $target" || exit 1; echo "Disk $target ejected" ;;
+  *) echo "diskutil: $cmd: não suportado no mOS" >&2; exit 1 ;;
+esac

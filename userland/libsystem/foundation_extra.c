@@ -316,6 +316,13 @@ static id fm_enum_url(id self, SEL c, id url, id keys, u64 opts, void *handler) 
     return p ? de_new(cx_cstr(p), opts, 1) : 0;
 }
 static id fm_enum_path(id self, SEL c, id path) { (void)self; (void)c; return path ? de_new(cx_cstr(path), 0, 0) : 0; }
+/* -createDirectoryAtURL:withIntermediateDirectories:attributes:error: (o WhatsApp cria o contêiner na partida) */
+static BOOL fm_mkdir_url(id self, SEL c, id url, BOOL inter, id attrs, id *err) {
+    (void)c;
+    id p = url ? MSG0(id, url, "path") : 0;
+    if (!p) { if (err) *err = 0; return NO; }
+    return MSG(BOOL, self, "createDirectoryAtPath:withIntermediateDirectories:attributes:error:", p, inter, attrs, err);
+}
 static void de_skip(id self, SEL c) { (void)self; (void)c; }
 static u64 de_level(id self, SEL c) { (void)self; (void)c; return 0; }
 
@@ -463,9 +470,197 @@ struct { void **vtable; const char *name; cx_class_t *cls; } OBJC_EHTYPE_NSExcep
 /* ================================================================ registro */
 #define IM(k, s, f) cx_add_method(&k##_c, s, (void *)(f))
 #define CM_(k, s, f) cx_add_cmethod(&k##_c, s, (void *)(f))
+/* -[NSString initWithBytesNoCopy:length:encoding:freeWhenDone:]: copia (o NSString do mOS guarda os próprios bytes) */
+static id s_init_nocopy(id self, SEL c, void *b, u64 n, u64 enc, BOOL freeit) {
+    (void)c;
+    id r = MSG(id, self, "initWithBytes:length:encoding:", (const void *)b, n, enc);
+    if (freeit && b) free(b);
+    return r;
+}
+/* -[NSArray initWithObjects:...] (lista terminada em nil) */
+static id a_init_objs_va(id self, SEL c, id first, ...) {
+    (void)c;
+    id buf[256]; u64 n = 0;
+    va_list ap; va_start(ap, first);
+    for (id o = first; o && n < 256; o = va_arg(ap, id)) buf[n++] = o;
+    va_end(ap);
+    return MSG(id, self, "initWithObjects:count:", (id *)buf, n);
+}
+/* contêiner de App Group (Catalyst/sandbox): ~/Library/Group Containers/<grupo>, criado na primeira vez */
+id NSHomeDirectory(void);
+static id fm_group_container(id self, SEL c, id group) {
+    (void)c;
+    if (!group) return 0;
+    char p[1024];
+    cx_snprintf(p, sizeof p, "%s/Library/Group Containers/%s", cx_cstr(NSHomeDirectory()), cx_cstr(group));
+    MSG(BOOL, self, "createDirectoryAtPath:withIntermediateDirectories:attributes:error:", cx_str(p), (BOOL)1, (id)0, (id *)0);
+    return MSG(id, cls("NSURL"), "fileURLWithPath:", cx_str(p));
+}
+static id th_ret_addrs(id self, SEL c) { (void)self; (void)c; return MSG0(id, cls("NSArray"), "array"); }
+static id th_name(id self, SEL c) { (void)c; return cx_str(MSG0(BOOL, self, "isMainThread") ? "main" : ""); }
+static void th_set_name(id self, SEL c, id n) { (void)self; (void)c; (void)n; }
+static id pd_with_length(id k, SEL c, u64 n) { (void)k; return md_with_length(cls("NSMutableData"), c, n); }
+static id pd_with_capacity(id k, SEL c, u64 n) { (void)k; (void)n; return md_with_length(cls("NSMutableData"), c, 0); }
+static BOOL pd_yes(id self, SEL c) { (void)self; (void)c; return 1; }
+static BOOL pd_no(id self, SEL c) { (void)self; (void)c; return 0; }
+static void pd_noop(id self, SEL c) { (void)self; (void)c; }
+/* ---- lacunas da partida do WhatsApp (Catalyst): preferências, locale, bundle, caminhos */
+static id s_data_enc(id self, SEL c, u64 enc) {
+    (void)c;
+    id D = cls("NSData");
+    if (enc == 10 || enc == 0x94000100ul || enc == 0x90000100ul) {         /* UTF-16 (Unicode: BOM + nativo; LE; BE) */
+        u64 n = MSG0(u64, self, "length"), bom = enc == 10 ? 1 : 0;
+        unsigned short *b = malloc((n + bom) * 2 + 2);
+        if (!b) return 0;
+        if (bom) b[0] = 0xFEFF;
+        for (u64 i = 0; i < n; i++) {
+            unsigned short ch = MSG(unsigned short, self, "characterAtIndex:", i);
+            b[i + bom] = enc == 0x90000100ul ? (unsigned short)((ch >> 8) | (ch << 8)) : ch;
+        }
+        id r = MSG(id, D, "dataWithBytes:length:", (const void *)b, (n + bom) * 2);
+        free(b);
+        return r;
+    }
+    const char *u = MSG0(const char *, self, "UTF8String");
+    return MSG(id, D, "dataWithBytes:length:", (const void *)(u ? u : ""), (u64)(u ? strlen(u) : 0));
+}
+static id s_data_enc_lossy(id self, SEL c, u64 enc, BOOL lossy) { (void)lossy; return s_data_enc(self, c, enc); }
+static id s_append_ext(id self, SEL c, id ext) {
+    (void)c;
+    if (!ext || !MSG0(u64, ext, "length")) return self;
+    char b[2048];
+    cx_snprintf(b, sizeof b, "%s.%s", cx_cstr(self), cx_cstr(ext));
+    return cx_str(b);
+}
+static id a_adding_array(id self, SEL c, id other) {
+    (void)c;
+    id m = MSG0(id, self, "mutableCopy");
+    if (other) MSG(void, m, "addObjectsFromArray:", other);
+    return objc_autorelease(m);
+}
+static id n_with_ulong(id k, SEL c, u64 v) { (void)c; return MSG(id, k, "numberWithUnsignedLongLong:", v); }
+static id d_init_cap(id self, SEL c, u64 n) { (void)c; (void)n; return MSG0(id, self, "init"); }
+static void ku_set_class(id self, SEL c, id k, id name) { (void)self; (void)c; (void)k; (void)name; }
+static id b_localizations(id self, SEL c) { (void)c; return MSG0(id, self, "preferredLocalizations"); }
+static id loc_with_ident(id k, SEL c, id ident) { (void)c; (void)ident; return MSG0(id, k, "currentLocale"); }
+static id loc_init_ident(id self, SEL c, id ident) { (void)c; (void)ident; id r = MSG0(id, (id)self->isa, "currentLocale"); return objc_retain(r); }
+id NSSearchPathForDirectoriesInDomains(unsigned long dir, unsigned long mask, unsigned char expand);
+static id fm_urls_for_dir(id self, SEL c, u64 dir, u64 mask) {
+    (void)self; (void)c;
+    id paths = NSSearchPathForDirectoriesInDomains(dir, mask, 1);
+    id out = MSG0(id, cls("NSMutableArray"), "array");
+    u64 n = paths ? MSG0(u64, paths, "count") : 0;
+    for (u64 i = 0; i < n; i++) {
+        id p = MSG(id, paths, "objectAtIndex:", i);
+        id u = MSG(id, cls("NSURL"), "fileURLWithPath:", p);
+        MSG(void, out, "addObject:", u);
+    }
+    return out;
+}
+static id fm_url_for_dir(id self, SEL c, u64 dir, u64 dom, id near, BOOL create, id *err) {
+    (void)near;
+    id a = fm_urls_for_dir(self, c, dir, dom ? dom : 1);
+    id u = MSG0(u64, a, "count") ? MSG(id, a, "objectAtIndex:", (u64)0) : 0;
+    if (u && create) { id up = MSG0(id, u, "path"); MSG(BOOL, self, "createDirectoryAtPath:withIntermediateDirectories:attributes:error:", up, (BOOL)1, (id)0, (id *)0); }
+    if (!u && err) *err = 0;
+    return u;
+}
+/* -rangeOfString:options: (NSCaseInsensitiveSearch 1, NSBackwardsSearch 4, NSAnchoredSearch 8; o resto é literal) */
+typedef struct { u64 loc, len; } fx_range_t;
+static unsigned short fx_fold(unsigned short ch) { return ch >= 'A' && ch <= 'Z' ? (unsigned short)(ch + 32) : ch; }
+static fx_range_t s_range_opts(id self, SEL c, id pat, u64 opts) {
+    (void)c;
+    fx_range_t nf = {0x7fffffffffffffffull, 0};
+    if (!pat) return nf;
+    u64 n = MSG0(u64, self, "length"), m = MSG0(u64, pat, "length");
+    if (!m || m > n) return nf;
+    unsigned short *h = malloc((n + m) * 2), *p = h + n;
+    if (!h) return nf;
+    for (u64 i = 0; i < n; i++) h[i] = MSG(unsigned short, self, "characterAtIndex:", i);
+    for (u64 i = 0; i < m; i++) p[i] = MSG(unsigned short, pat, "characterAtIndex:", i);
+    int ci = opts & 1, back = opts & 4, anch = opts & 8;
+    fx_range_t r = nf;
+    for (u64 k = 0; k <= n - m; k++) {
+        u64 at = back ? n - m - k : k;
+        u64 j = 0;
+        for (; j < m; j++) { unsigned short a = h[at + j], b = p[j]; if (ci ? fx_fold(a) != fx_fold(b) : a != b) break; }
+        if (j == m) { r.loc = at; r.len = m; break; }
+        if (anch) break;
+    }
+    free(h);
+    return r;
+}
+/* -stringByPaddingToLength:withString:startingAtIndex: */
+static id s_pad(id self, SEL c, u64 len, id pad, u64 start) {
+    (void)c;
+    u64 n = MSG0(u64, self, "length");
+    if (len <= n) return MSG(id, self, "substringToIndex:", len);
+    u64 pn = pad ? MSG0(u64, pad, "length") : 0;
+    if (!pn) return self;
+    unsigned short *b = malloc(len * 2 + 2);
+    if (!b) return self;
+    for (u64 i = 0; i < n; i++) b[i] = MSG(unsigned short, self, "characterAtIndex:", i);
+    for (u64 i = n, k = start % pn; i < len; i++, k = (k + 1) % pn) b[i] = MSG(unsigned short, pad, "characterAtIndex:", k);
+    id r = MSG(id, cls("NSString"), "stringWithCharacters:length:", (const unsigned short *)b, len);
+    free(b);
+    return r;
+}
+/* +[NSLocale componentsFromLocaleIdentifier:] / CFLocaleCreateComponentsFromLocaleIdentifier: "ll", "ll_CC",
+ * "ll_Scrp_CC" ou com '-'; @calendar=... é ignorado */
+static id loc_components(id ident) {
+    id d = MSG0(id, cls("NSMutableDictionary"), "dictionary");
+    const char *s = ident ? cx_cstr(ident) : "";
+    char part[3][16] = {{0}}; int np = 0, k = 0;
+    for (const char *q = s; *q && *q != '@' && np < 3; q++) {
+        if (*q == '_' || *q == '-') { part[np][k] = 0; np++; k = 0; continue; }
+        if (k < 15) part[np][k++] = *q;
+    }
+    if (np < 3) { part[np][k] = 0; np++; }
+    if (part[0][0]) { id v = cx_str(part[0]); MSG(void, d, "setObject:forKey:", v, cx_str("kCFLocaleLanguageCodeKey")); }
+    for (int i = 1; i < np; i++) {
+        if (!part[i][0]) continue;
+        id v = cx_str(part[i]);
+        MSG(void, d, "setObject:forKey:", v, cx_str(strlen(part[i]) == 4 ? "kCFLocaleScriptCodeKey" : "kCFLocaleCountryCodeKey"));
+    }
+    return d;
+}
+static id loc_cmp_m(id k, SEL c, id ident) { (void)k; (void)c; return loc_components(ident); }
+static id loc_nil(id self, SEL c) { (void)self; (void)c; return 0; }
+id CFLocaleCreateComponentsFromLocaleIdentifier(void *alloc, id ident) { (void)alloc; return objc_retain(loc_components(ident)); }
+/* classes que sobem depois do cx_foundation_extra_init (nsurl.c, foundation_more.c): chamado por cx_foundation_gaps */
+void cx_foundation_extra_late(void) {
+    cx_class_t *ku = cx_class_named("NSKeyedUnarchiver"), *lo = cx_class_named("NSLocale"), *s = cx_class_named("NSString");
+    if (ku) { cx_add_cmethod(ku, "setClass:forClassName:", (void *)ku_set_class); cx_add_method(ku, "setClass:forClassName:", (void *)ku_set_class); }
+    if (lo) { cx_add_cmethod(lo, "localeWithLocaleIdentifier:", (void *)loc_with_ident); cx_add_method(lo, "initWithLocaleIdentifier:", (void *)loc_init_ident);
+              cx_add_cmethod(lo, "componentsFromLocaleIdentifier:", (void *)loc_cmp_m); cx_add_method(lo, "scriptCode", (void *)loc_nil);
+              cx_add_method(lo, "variantCode", (void *)loc_nil); }
+    if (s) { cx_add_method(s, "rangeOfString:options:", (void *)s_range_opts); cx_add_method(s, "stringByPaddingToLength:withString:startingAtIndex:", (void *)s_pad); }
+}
 void cx_foundation_extra_init(void) {
     cx_class_t *ob = cx_class_named("NSObject"), *data = cx_class_named("NSData");
     OBJC_EHTYPE_NSException.vtable = objc_ehtype_vtable + 2;
+    { cx_class_t *s = cx_class_named("NSString"), *a = cx_class_named("NSArray");
+      if (s) cx_add_method(s, "initWithBytesNoCopy:length:encoding:freeWhenDone:", (void *)s_init_nocopy);
+      if (a) cx_add_method(a, "initWithObjects:", (void *)a_init_objs_va);
+      cx_class_t *fmc = cx_class_named("NSFileManager"), *thc = cx_class_named("NSThread"), *pdc = cx_class_named("NSPurgeableData");
+      if (fmc) cx_add_method(fmc, "containerURLForSecurityApplicationGroupIdentifier:", (void *)fm_group_container);
+      if (thc) { cx_add_cmethod(thc, "callStackReturnAddresses", (void *)th_ret_addrs); cx_add_cmethod(thc, "callStackSymbols", (void *)th_ret_addrs);
+                 cx_add_method(thc, "name", (void *)th_name); cx_add_method(thc, "setName:", (void *)th_set_name); }
+      /* NSPurgeableData: um NSMutableData que nunca é descartado */
+      if (pdc) { cx_add_cmethod(pdc, "dataWithLength:", (void *)pd_with_length); cx_add_cmethod(pdc, "dataWithCapacity:", (void *)pd_with_capacity); }
+      if (data) { cx_add_method(data, "beginContentAccess", (void *)pd_yes); cx_add_method(data, "endContentAccess", (void *)pd_noop);
+                  cx_add_method(data, "discardContentIfPossible", (void *)pd_noop); cx_add_method(data, "isContentDiscarded", (void *)pd_no); }
+      { cx_class_t *ns = cx_class_named("NSNumber"), *md = cx_class_named("NSMutableDictionary"),
+                   *bu = cx_class_named("NSBundle");
+        if (s) { cx_add_method(s, "dataUsingEncoding:", (void *)s_data_enc); cx_add_method(s, "dataUsingEncoding:allowLossyConversion:", (void *)s_data_enc_lossy);
+                 cx_add_method(s, "stringByAppendingPathExtension:", (void *)s_append_ext); }
+        if (a) cx_add_method(a, "arrayByAddingObjectsFromArray:", (void *)a_adding_array);
+        if (ns) cx_add_cmethod(ns, "numberWithUnsignedLong:", (void *)n_with_ulong);
+        if (md) cx_add_method(md, "initWithCapacity:", (void *)d_init_cap);
+        if (bu) cx_add_method(bu, "localizations", (void *)b_localizations);
+        if (fmc) { cx_add_method(fmc, "URLsForDirectory:inDomains:", (void *)fm_urls_for_dir);
+                   cx_add_method(fmc, "URLForDirectory:inDomain:appropriateForURL:create:error:", (void *)fm_url_for_dir); } }
+    }
     OBJC_EHTYPE_NSException.cls = cx_class_named("NSException");
     if (data && !cx_class_named("NSMutableData")) {
         cx_define_class(&NSMutableData_c, &NSMutableData_m, "NSMutableData", data, 8);
@@ -524,6 +719,7 @@ void cx_foundation_extra_init(void) {
         if (fm) {
             cx_add_method(fm, "enumeratorAtURL:includingPropertiesForKeys:options:errorHandler:", (void *)fm_enum_url);
             cx_add_method(fm, "enumeratorAtPath:", (void *)fm_enum_path);
+            cx_add_method(fm, "createDirectoryAtURL:withIntermediateDirectories:attributes:error:", (void *)fm_mkdir_url);
         }
     }
     if (!cx_class_named("NSOrderedSet")) {
