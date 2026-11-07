@@ -284,6 +284,8 @@ Ainda falta:
   `CTFontCreatePathForGlyph(f, g, NULL)` a todo glifo de avanço zero e descarta o glifo se o caminho vier vazio; o mOS
   devolvia NULL, e todos os pontos e diacríticos sumiam. Agora, sem matriz, a função devolve a caixa do glifo.
 - Conferido no QEMU com uma página local nas cinco escritas (ligação, direita-para-esquerda e pontos certos).
+  E em https://example.com/, o caso das caixinhas ([captura](img-chrome-example-com.png)): o árabe e o chinês aparecem
+  certos junto do latim e do cirílico.
 
 Como o Chrome inicia: o executável `Contents/MacOS/Google Chrome` (0,3 MiB) só monta o caminho
 `../Frameworks/Google Chrome Framework.framework/Versions/<versão>/Google Chrome Framework`, chama `dlopen`,
