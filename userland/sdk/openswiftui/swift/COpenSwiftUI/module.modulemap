@@ -1,0 +1,4 @@
+module COpenSwiftUI {
+    header "COpenSwiftUI.h"
+    export *
+}

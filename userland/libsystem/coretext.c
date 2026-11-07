@@ -95,11 +95,12 @@ static int fweight(id f) {
     return 0;
 }
 static int font_live(void) {
-    static int v = -1;
-    if (v >= 0) return v;
+    static int v;
+    if (v) return 1;
     gui_font_metrics_t m;
     memset(&m, 0, sizeof m);
-    v = SYS5(GUI_FONT, GF_METRICS, 0, 0, &m, 0) >= 0 && m.upem > 0;
+    /* upem 0 enquanto a Inter não carregou: tenta de novo na próxima, não grava o fracasso */
+    if (SYS5(GUI_FONT, GF_METRICS, 0, 0, &m, 0) >= 0 && m.upem > 0) v = 1;
     return v;
 }
 static int face_metrics(id f, gui_font_metrics_t *m) {
@@ -180,7 +181,7 @@ double CTFontGetAdvancesForGlyphs(id f, int orientation, const u16 *glyphs, ct_s
 }
 /* pinta o alfa do glifo num CGBitmapContext (coregraphics.c). 0 = não é bitmap. */
 int cx_bitmap_draw_glyph(void *ctx, double x, double y, const u8 *alpha, int w, int h, int left, int top);
-static int raster_glyph(id f, u16 g, float size, i16 *w, i16 *h, i16 *left, i16 *top, u8 **buf) {
+static int glyph_box(id f, u16 g, float size, i16 *w, i16 *h, i16 *left, i16 *top) {
     gui_glyph_req_t req;
     memset(&req, 0, sizeof req);
     req.weight = (u32)fweight(f);
@@ -189,10 +190,20 @@ static int raster_glyph(id f, u16 g, float size, i16 *w, i16 *h, i16 *left, i16 
     long n = SYS5(GUI_FONT, GF_RASTER, 0, 0, &req, 0);
     if (n < 0) return 0;
     *w = (i16)req.w; *h = (i16)req.h; *left = (i16)req.left; *top = (i16)req.top;
-    if (n <= 0 || !req.w || !req.h) { *buf = 0; return 1; }
-    u8 *b = malloc((size_t)n);
+    return 1;
+}
+static int raster_glyph(id f, u16 g, float size, i16 *w, i16 *h, i16 *left, i16 *top, u8 **buf) {
+    if (!glyph_box(f, g, size, w, h, left, top)) return 0;
+    if (*w <= 0 || *h <= 0) { *buf = 0; return 1; }
+    u32 n = (u32)(*w) * (u32)(*h);
+    u8 *b = malloc(n);
     if (!b) return 0;
-    req.cap = (u32)n;
+    gui_glyph_req_t req;
+    memset(&req, 0, sizeof req);
+    req.weight = (u32)fweight(f);
+    req.glyph = g;
+    req.size = size > 0 ? size : (float)fsize(f);
+    req.cap = n;
     req.buf = (u64)(size_t)b;
     long n2 = SYS5(GUI_FONT, GF_RASTER, 0, 0, &req, 0);
     if (n2 < 0) { free(b); return 0; }
@@ -201,25 +212,31 @@ static int raster_glyph(id f, u16 g, float size, i16 *w, i16 *h, i16 *left, i16 
 }
 ct_rect_t CTFontGetBoundingRectsForGlyphs(id f, int orientation, const u16 *glyphs, ct_rect_t *rects, long n) {
     (void)orientation;
-    ct_rect_t last = {0, -0.241 * fsize(f), advance_fake(f), 1.193 * fsize(f)};
+    ct_rect_t uni = {0, 0, 0, 0};
+    int any = 0;
     for (long i = 0; i < n; i++) {
-        ct_rect_t r = last;
+        ct_rect_t r = {0, -0.241 * fsize(f), advance_fake(f), 1.193 * fsize(f)};
         if (font_live() && glyphs) {
             i16 w = 0, h = 0, left = 0, top = 0;
-            u8 *buf = 0;
-            if (raster_glyph(f, glyphs[i], (float)fsize(f), &w, &h, &left, &top, &buf)) {
+            if (glyph_box(f, glyphs[i], (float)fsize(f), &w, &h, &left, &top)) {
                 /* top é o deslocamento y-down a partir da linha de base (negativo = acima) */
                 r.x = left;
                 r.y = -(double)(top + h);
                 r.w = w;
                 r.h = h;
-                free(buf);
             }
         }
         if (rects) rects[i] = r;
-        last = r;
+        if (!any) { uni = r; any = 1; }
+        else {
+            double x1 = uni.x < r.x ? uni.x : r.x;
+            double y1 = uni.y < r.y ? uni.y : r.y;
+            double x2 = uni.x + uni.w > r.x + r.w ? uni.x + uni.w : r.x + r.w;
+            double y2 = uni.y + uni.h > r.y + r.h ? uni.y + uni.h : r.y + r.h;
+            uni.x = x1; uni.y = y1; uni.w = x2 - x1; uni.h = y2 - y1;
+        }
     }
-    return last;
+    return uni;
 }
 double cx_bm_scale(const void *ctx);
 void CTFontDrawGlyphs(id f, const u16 *glyphs, const ct_pt_t *pos, size_t n, void *ctx) {

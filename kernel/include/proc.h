@@ -94,6 +94,7 @@ struct process {
 void      machipc_spawn(process_t *parent, process_t *child);   /* filho novo: porta de bootstrap herdada */
 void      machipc_exit(process_t *p);                           /* destrói os direitos do processo */
 u64       machipc_syscall(int_frame_t *f);                      /* SYS_MACH_FIRST..SYS_MACH_LAST */
+void      machipc_set_prot(process_t *p, u64 lo, u64 hi, u32 prot);   /* proteção registrada de [lo, hi) (mach_vm_region) */
 
 /* páginas físicas compartilhadas entre espaços (memória Mach, proc/process.c) */
 bool      uvm_map_phys(process_t *p, u64 va, u64 phys, bool rw);  /* mais uma referência à página */

@@ -177,7 +177,7 @@ function Prepare-Src($name, $srcDir, $overlayDir) {
             # sem runtime de concorrência (_Concurrency) no mOS: condições que dependem dele saem inteiras
             if ($lines[$i] -match '^\s*#\s*(if|elseif)\b.*canImport\(\s*_Concurrency\s*\)') { $lines[$i] = ($lines[$i] -replace '^(\s*#\s*(?:if|elseif)).*$', '$1 false // mOS: sem _Concurrency') }
             # ... e os atributos de isolamento de ator somem (tudo roda numa thread de UI; sem executor de atores)
-            elseif ($lines[$i] -notmatch '^\s*#') { $lines[$i] = $lines[$i] -replace '@MainActor(\s*\(unsafe\))?\s?', '' -replace '@isolated\(any\)\s?', '' }
+            elseif ($lines[$i] -notmatch '^\s*#') { $lines[$i] = $lines[$i] -replace '@MainActor(\s*\(unsafe\))?\s?', '' -replace '@isolated\(any\)\s?', '' -replace '\{\s+in\b', '{' }
         }
         [IO.File]::WriteAllLines($out, $lines, $utf8)
     }
@@ -189,7 +189,7 @@ function Prepare-Src($name, $srcDir, $overlayDir) {
             if ($f.Extension -eq '.swift') {
                 # só os atributos de ator saem: os arquivos de substituição (sessão do runtime Swift) são escritos para as
                 # condições #if originais
-                $txt = [IO.File]::ReadAllText($f.FullName, $utf8) -replace '@MainActor(\s*\(unsafe\))?\s?', '' -replace '@isolated\(any\)\s?', ''
+                $txt = [IO.File]::ReadAllText($f.FullName, $utf8) -replace '@MainActor(\s*\(unsafe\))?\s?', '' -replace '@isolated\(any\)\s?', '' -replace '\{\s+in\b', '{'
                 [IO.File]::WriteAllText($out, $txt, $utf8)
             } else { Copy-Item $f.FullName $out -Force }
         }
@@ -531,6 +531,14 @@ if ($Repo -contains 'OpenSwiftUICore') {
         $txt = [IO.File]::ReadAllText($pf.FullName, $utf8)
         if ($txt.Contains('#isolation')) { [IO.File]::WriteAllText($pf.FullName, $txt.Replace('#isolation', 'nil'), $utf8) }
     }
+    # O pré-processador troca canImport(Darwin) por false. O glifo adaptativo precisa existir: o CoreText do mOS tem o tipo.
+    $rt = Join-Path $coreSrc 'View\Text\Resolve\ResolvedText.swift'
+    if (Test-Path $rt) {
+        $t = [IO.File]::ReadAllText($rt, $utf8)
+        $n = $t.Replace("#if canImport(Darwin)`r`n        var adaptiveImageGlyph", "#if canImport(CoreText)`r`n        var adaptiveImageGlyph")
+        $n = $n.Replace("#if canImport(Darwin)`n        var adaptiveImageGlyph", "#if canImport(CoreText)`n        var adaptiveImageGlyph")
+        if ($n -ne $t) { [IO.File]::WriteAllText($rt, $n, $utf8) }
+    }
     $files = @(Get-ChildItem $coreSrc -Recurse -Filter *.swift | ForEach-Object FullName) + @(Get-ChildItem "$mos\Core" -Filter *.swift -ErrorAction SilentlyContinue | ForEach-Object FullName)
     $cmp = "$deps\Compute-main\Sources"
     $mods = 'Dispatch', 'CoreGraphics', 'Foundation', 'Logging', 'CoreText', 'CoreText_Private', 'Compute', 'OpenAttributeGraphShims', 'OpenCoreGraphics',
@@ -546,7 +554,7 @@ if ($Repo -contains 'OpenSwiftUICore') {
                      '-DOPENSWIFTUI_OPENCOMBINE')) { $flags += '-Xcc', $a }
     foreach ($d in 'OPENSWIFTUI', 'OPENSWIFTUI_RELEASE_2024', 'OPENSWIFTUI_SUPPORT_2021_API', 'OPENSWIFTUI_SUPPORT_2022_API', 'OPENSWIFTUI_SUPPORT_2023_API',
                    'OPENSWIFTUI_SUPPORT_2024_API', 'OPENSWIFTUI_CF_CGTYPES', 'OPENRENDERBOX_CF_CGTYPES', 'OPENSWIFTUI_OPENCOMBINE', 'OPENSWIFTUI_SWIFT_LOG',
-                   'OPENSWIFTUI_COMPUTE', 'OPENSWIFTUI_MOS') { $flags += '-D', $d }
+                   'OPENSWIFTUI_COMPUTE', 'OPENSWIFTUI_MOS', 'OPENSWIFTUI_XCFRAMEWORK_BUILD') { $flags += '-D', $d }
     foreach ($ft in 'BareSlashRegexLiterals', 'InternalImportsByDefault', 'InferSendableFromCaptures') { $flags += '-enable-upcoming-feature', $ft }
     $flags += '-package-name', 'OpenSwiftUI', '-module-abi-name', 'OpenSwiftUI', '-experimental-spi-only-imports', '-unavailable-decl-optimization=stub'
     # macros de disponibilidade do Package.swift no modo "ignorar disponibilidade" (todas na versão mínima)
@@ -558,5 +566,73 @@ if ($Repo -contains 'OpenSwiftUICore') {
     Write-Host "OpenSwiftUICore: $($files.Count) fontes..."
     $sw = Build-Swift 'OpenSwiftUICore' $files $flags '5' $false
     if ($sw -eq $false) { $fails++ } elseif ($sw) { Write-Archive 'OpenSwiftUICore' @($sw) }
+}
+if ($Repo -contains 'OpenSwiftUI') {
+    # Timer.publish (o ProgressView sem Objective-C). O OpenCombineFoundation upstream depende de KVO e URLSession.
+    $ocfFlags = $modInc + @('-I', "$outRoot\OpenCombine", '-I', "$deps\OpenCombine-master\Sources\COpenCombineHelpers\include",
+                            '-Xcc', "-I$deps\OpenCombine-master\Sources\COpenCombineHelpers\include",
+                            '-enable-upcoming-feature', 'InternalImportsByDefault')
+    New-Item -ItemType Directory -Force "$outRoot\OpenCombineFoundation" | Out-Null
+    $sw = Build-Swift 'OpenCombineFoundation' @("$sdkSwift\OpenCombineFoundation\TimerPublisher.swift") $ocfFlags '5' $false
+    if ($sw -eq $false) { $fails++ } elseif ($sw) { Write-Archive 'OpenCombineFoundation' @($sw) }
+    # Camada de plataforma: o módulo que `import SwiftUI` reexporta. Mesmos defines do Core, mais o
+    # host do mOS (App/MOSApp.swift) que apresenta a view no window server.
+    $osui = "$root\.tools\openswiftui\main\OpenSwiftUI-main\Sources"
+    $mos = "$sdkSwift\OpenSwiftUIMOS"
+    $uiSrc = Prepare-Src 'OpenSwiftUI' "$osui\OpenSwiftUI" "$mos\Replace\Sources\OpenSwiftUI"
+    $utf8 = New-Object Text.UTF8Encoding $false
+    foreach ($pf in Get-ChildItem $uiSrc -Recurse -Filter *.swift) {
+        $txt = [IO.File]::ReadAllText($pf.FullName, $utf8)
+        $hadIso = $txt.Contains('#isolation')
+        if ($hadIso) { $txt = $txt.Replace('#isolation', 'nil') }
+        # os arquivos de substituição guardam o caminho do mOS no #else de os(macOS). O alvo é macOS,
+        # então essa condição vira false aqui (o Core não passa por este passo).
+        $lines = $txt -split "`r?`n", -1
+        $changed = $false
+        for ($i = 0; $i -lt $lines.Length; $i++) {
+            if ($lines[$i] -match '^\s*#\s*(if|elseif)\b' -and $lines[$i] -match 'os\(\s*macOS\s*\)|canImport\(\s*CoreGraphics\s*\)') {
+                $n = [regex]::Replace([regex]::Replace($lines[$i], '\bos\(\s*macOS\s*\)', 'false'), '\bcanImport\(\s*CoreGraphics\s*\)', 'false')
+                if ($n -ne $lines[$i]) { $lines[$i] = $n; $changed = $true }
+            } elseif ($lines[$i] -notmatch '^\s*#') {
+                $n = [regex]::Replace($lines[$i], '\)\s+async\b', ')')
+                $n = [regex]::Replace($n, '\basync\s+throws\b', 'throws')
+                $n = [regex]::Replace($n, '\basync\s+->', '->')
+                $n = [regex]::Replace($n, '(?<!\.)\bawait\b', '')
+                if ($n -ne $lines[$i]) { $lines[$i] = $n; $changed = $true }
+            }
+        }
+        if ($changed -or $hadIso) { [IO.File]::WriteAllLines($pf.FullName, $lines, $utf8) }
+    }
+    $files = @(Get-ChildItem $uiSrc -Recurse -Filter *.swift | ForEach-Object FullName) + @(Get-ChildItem "$mos\App" -Filter *.swift -ErrorAction SilentlyContinue | ForEach-Object FullName)
+    $cmp = "$deps\Compute-main\Sources"
+    $mods = 'Dispatch', 'CoreGraphics', 'Foundation', 'Logging', 'CoreText', 'CoreText_Private', 'Compute', 'OpenAttributeGraphShims', 'OpenCoreGraphics',
+            'OpenCoreGraphicsShims', 'OpenQuartzCore', 'OpenQuartzCoreShims', 'OpenRenderBox', 'OpenRenderBoxShims', 'OpenObservation', 'OpenCombine', 'OpenCombineFoundation', 'Synchronization', 'Glibc', 'OpenSwiftUICore'
+    $flags = @('-I', "$sdkSwift\MOSLibm", '-I', "$sdkSwift\COpenSwiftUI", '-I', "$outRoot\OpenSwiftUI_SPI\include", '-I', "$outRoot\OpenObservation\include",
+               '-I', "$cmp\ComputeCxx\include", '-I', "$deps\OpenRenderBox-main\Sources\OpenRenderBoxCxx\include",
+               '-I', "$deps\OpenCombine-master\Sources\COpenCombineHelpers\include", '-I', "$sdkSwift\CoreText\include",
+               '-I', "$root\userland\sdk\swift\MOSBridge")
+    foreach ($m in $mods) { $flags += '-I', "$outRoot\$m" }
+    foreach ($a in @("-I$outRoot\OpenSwiftUI_SPI\include", "-I$deps\OpenRenderBox-main\Sources\OpenRenderBoxCxx\include", "-I$cmp\Platform\include",
+                     "-I$cmp\ComputeCxx\include", "-I$deps\OpenCombine-master\Sources\COpenCombineHelpers\include", "-I$sdkSwift\CoreText\include",
+                     '-DOPENSWIFTUI', '-DOPENSWIFTUI_MOS', '-DOPENSWIFTUI_CF_CGTYPES', '-DOPENRENDERBOX_CF_CGTYPES', '-DOPENSWIFTUI_LINK_COREUI=0',
+                     '-DOPENSWIFTUI_OPENCOMBINE')) { $flags += '-Xcc', $a }
+    foreach ($d in 'OPENSWIFTUI', 'OPENSWIFTUI_RELEASE_2024', 'OPENSWIFTUI_SUPPORT_2021_API', 'OPENSWIFTUI_SUPPORT_2022_API', 'OPENSWIFTUI_SUPPORT_2023_API',
+                   'OPENSWIFTUI_SUPPORT_2024_API', 'OPENSWIFTUI_CF_CGTYPES', 'OPENRENDERBOX_CF_CGTYPES', 'OPENSWIFTUI_OPENCOMBINE', 'OPENSWIFTUI_SWIFT_LOG',
+                   'OPENSWIFTUI_COMPUTE', 'OPENSWIFTUI_MOS', 'OPENSWIFTUI_XCFRAMEWORK_BUILD') { $flags += '-D', $d }
+    foreach ($ft in 'BareSlashRegexLiterals', 'InternalImportsByDefault', 'InferSendableFromCaptures') { $flags += '-enable-upcoming-feature', $ft }
+    $flags += '-package-name', 'OpenSwiftUI', '-experimental-spi-only-imports', '-unavailable-decl-optimization=stub'
+    $minv = 'macOS 10.15, iOS 13.0, tvOS 13.0, watchOS 6.0, visionOS 1.0'
+    foreach ($v in 'v1_0', 'v1_4', 'v2_0', 'macOS_v2_0', 'v2_1', 'v2_3', 'v3_0', 'iOS_v3_0', 'macOS_v3_0', 'v3_2', 'v3_4', 'v4_0', 'iOS_v4_0', 'watchOS_v4_0',
+                   'v4_1', 'v4_4', 'v5_0', 'v5_1', 'v5_2', 'v5_4', 'v5_5', 'v6_0', 'v7_0', 'v8_0') { $flags += '-define-availability', "OpenSwiftUI_${v}:$minv" }
+    $flags += '-define-availability', '_distantFuture:macOS 99.0, iOS 99.0, tvOS 99.0, watchOS 99.0, visionOS 99.0'
+    New-Item -ItemType Directory -Force "$outRoot\OpenSwiftUI" | Out-Null
+    Write-Host "OpenSwiftUI: $($files.Count) fontes..."
+    $sw = Build-Swift 'OpenSwiftUI' $files $flags '5' $false
+    if ($sw -eq $false) { $fails++ } elseif ($sw) {
+        Write-Archive 'OpenSwiftUI' @($sw)
+        New-Item -ItemType Directory -Force "$outRoot\SwiftUI" | Out-Null
+        $sw2 = Build-Swift 'SwiftUI' @("$sdkSwift\SwiftUI\SwiftUI.swift") ($flags + @('-I', "$outRoot\OpenSwiftUI")) '5' $false
+        if ($sw2 -eq $false) { $fails++ } elseif ($sw2) { Write-Archive 'SwiftUI' @($sw2) }
+    }
 }
 exit $fails

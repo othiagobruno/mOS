@@ -621,12 +621,15 @@ typedef struct {
     int owns;
     double ta, tb, tc, td, tx, ty;          /* matriz de texto */
     double ca, cb, cc, cd, cu, cv;          /* CTM: x' = ca*x + cc*y + cu */
+    i32 cl, ct, cr, cbt;                     /* recorte em pixels do bitmap, [cl,cr) × [ct,cbt) */
     u32 fill;
     int gsp;
     double gstk[8][6];
+    double tstk[8][6];
+    i32 cstk[8][4];
     u32 fillstk[8];
     void *cb_info;
-    void (*cb)(void *, const void *, size_t);
+    void (*rel_cb)(void *, const void *, size_t);
     u64 cb_size;
 } cgobj_t;
 static cx_class_t BM_c, BM_m, IM_c, IM_m, PR_c, PR_m;
@@ -636,7 +639,7 @@ extern u32 cx_cg_fill_argb(void);
 static void cg_dealloc(id self, SEL c) {
     (void)c;
     cgobj_t *o = (cgobj_t *)self;
-    if (o->kind == CGK_PR && o->cb) o->cb(o->cb_info, o->data, (size_t)o->cb_size);
+    if (o->kind == CGK_PR && o->rel_cb) o->rel_cb(o->cb_info, o->data, (size_t)o->cb_size);
     if (o->kind == CGK_IM && o->cb_info) objc_release((id)o->cb_info);
     if (o->owns) free(o->data);
     o->data = 0;
@@ -678,7 +681,7 @@ void *CGDataProviderCreateWithData(void *info, const void *data, size_t size, vo
     o->data = (u8 *)data;
     o->cb_size = size;
     o->cb_info = info;
-    o->cb = release;
+    o->rel_cb = release;
     return o;
 }
 void CGDataProviderRelease(void *p) { if (as_kind(p, CGK_PR)) objc_release((id)p); }
@@ -758,6 +761,7 @@ void *CGBitmapContextCreate(void *data, size_t w, size_t h, size_t bpc, size_t b
     o->data = data; o->w = (u32)w; o->h = (u32)h; o->bpr = (u32)bpr; o->bpp = bpp; o->info = bitmapInfo; o->owns = owns;
     /* como no macOS: origem embaixo à esquerda, y para cima */
     o->ca = 1; o->cd = -1; o->cv = (double)h;
+    o->cl = 0; o->ct = 0; o->cr = (i32)w; o->cbt = (i32)h;
     o->fill = 0xFF000000;
     return o;
 }
@@ -799,7 +803,7 @@ static void store_px(u8 *dp, u32 info, u32 argb) {
     else { dp[0] = (u8)R; dp[1] = (u8)G; dp[2] = (u8)B; dp[3] = (u8)A; }
 }
 static void blend_at(cgobj_t *o, int x, int y, u32 src) {
-    if (x < 0 || y < 0 || (u32)x >= o->w || (u32)y >= o->h || !(src >> 24)) return;
+    if (x < o->cl || y < o->ct || x >= o->cr || y >= o->cbt || !(src >> 24)) return;
     u8 *dp = o->data + (size_t)y * o->bpr + (size_t)x * o->bpp;
     if (o->bpp == 1) {
         u32 a = src >> 24;
@@ -873,6 +877,9 @@ int cx_bm_save(const void *c) {
     if (!o || o->gsp >= 8) return o ? 1 : 0;
     o->gstk[o->gsp][0] = o->ca; o->gstk[o->gsp][1] = o->cb; o->gstk[o->gsp][2] = o->cc;
     o->gstk[o->gsp][3] = o->cd; o->gstk[o->gsp][4] = o->cu; o->gstk[o->gsp][5] = o->cv;
+    o->tstk[o->gsp][0] = o->ta; o->tstk[o->gsp][1] = o->tb; o->tstk[o->gsp][2] = o->tc;
+    o->tstk[o->gsp][3] = o->td; o->tstk[o->gsp][4] = o->tx; o->tstk[o->gsp][5] = o->ty;
+    o->cstk[o->gsp][0] = o->cl; o->cstk[o->gsp][1] = o->ct; o->cstk[o->gsp][2] = o->cr; o->cstk[o->gsp][3] = o->cbt;
     o->fillstk[o->gsp] = o->fill;
     o->gsp++;
     return 1;
@@ -884,8 +891,67 @@ int cx_bm_restore(const void *c) {
     o->gsp--;
     o->ca = o->gstk[o->gsp][0]; o->cb = o->gstk[o->gsp][1]; o->cc = o->gstk[o->gsp][2];
     o->cd = o->gstk[o->gsp][3]; o->cu = o->gstk[o->gsp][4]; o->cv = o->gstk[o->gsp][5];
+    o->ta = o->tstk[o->gsp][0]; o->tb = o->tstk[o->gsp][1]; o->tc = o->tstk[o->gsp][2];
+    o->td = o->tstk[o->gsp][3]; o->tx = o->tstk[o->gsp][4]; o->ty = o->tstk[o->gsp][5];
+    o->cl = o->cstk[o->gsp][0]; o->ct = o->cstk[o->gsp][1]; o->cr = o->cstk[o->gsp][2]; o->cbt = o->cstk[o->gsp][3];
     o->fill = o->fillstk[o->gsp];
     return 1;
+}
+static void dev_box(cgobj_t *o, double x, double y, double w, double h, int *x0, int *y0, int *x1, int *y1) {
+    double xs[4], ys[4];
+    int n = 0;
+    for (int j = 0; j < 2; j++)
+        for (int i = 0; i < 2; i++, n++)
+            ctm_of(o, i ? x + w : x, j ? y + h : y, &xs[n], &ys[n]);
+    double minx = xs[0], maxx = xs[0], miny = ys[0], maxy = ys[0];
+    for (int i = 1; i < 4; i++) {
+        if (xs[i] < minx) minx = xs[i];
+        if (xs[i] > maxx) maxx = xs[i];
+        if (ys[i] < miny) miny = ys[i];
+        if (ys[i] > maxy) maxy = ys[i];
+    }
+    *x0 = (int)floor(minx); *y0 = (int)floor(miny);
+    *x1 = (int)ceil(maxx); *y1 = (int)ceil(maxy);
+}
+static void clamp_box(cgobj_t *o, int *x0, int *y0, int *x1, int *y1) {
+    if (*x0 < o->cl) *x0 = o->cl;
+    if (*y0 < o->ct) *y0 = o->ct;
+    if (*x1 > o->cr) *x1 = o->cr;
+    if (*y1 > o->cbt) *y1 = o->cbt;
+}
+int cx_bm_fill_rect(const void *c, double x, double y, double w, double h) {
+    cgobj_t *o = as_kind(c, CGK_BM);
+    if (!o || !o->data) return 0;
+    int x0, y0, x1, y1;
+    dev_box(o, x, y, w, h, &x0, &y0, &x1, &y1);
+    clamp_box(o, &x0, &y0, &x1, &y1);
+    u32 fill = o->fill ? o->fill : 0xFF000000u;
+    for (int py = y0; py < y1; py++)
+        for (int px = x0; px < x1; px++) blend_at(o, px, py, fill);
+    return 1;
+}
+int cx_bm_clear_rect(const void *c, double x, double y, double w, double h) {
+    cgobj_t *o = as_kind(c, CGK_BM);
+    if (!o || !o->data) return 0;
+    int x0, y0, x1, y1;
+    dev_box(o, x, y, w, h, &x0, &y0, &x1, &y1);
+    clamp_box(o, &x0, &y0, &x1, &y1);
+    for (int py = y0; py < y1; py++) {
+        u8 *row = o->data + (size_t)py * o->bpr;
+        for (int px = x0; px < x1; px++) {
+            u8 *dp = row + (size_t)px * o->bpp;
+            for (u32 i = 0; i < o->bpp; i++) dp[i] = 0;
+        }
+    }
+    return 1;
+}
+void CGContextClipToRect(void *c, CGRect rect) {
+    cgobj_t *o = as_kind(c, CGK_BM);
+    if (!o) return;
+    int x0, y0, x1, y1;
+    dev_box(o, rect.origin.x, rect.origin.y, rect.size.width, rect.size.height, &x0, &y0, &x1, &y1);
+    clamp_box(o, &x0, &y0, &x1, &y1);
+    o->cl = x0; o->ct = y0; o->cr = x1; o->cbt = y1;
 }
 void *CGBitmapContextCreateImage(void *c) {
     cgobj_t *o = as_kind(c, CGK_BM);

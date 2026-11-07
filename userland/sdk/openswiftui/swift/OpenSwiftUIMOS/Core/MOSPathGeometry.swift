@@ -6,6 +6,41 @@
 // O traço (strokedPath) usa o gerador de contorno em C (mos_path_stroke_outline) via MOSPathBridge.
 package import Foundation
 package import OpenCoreGraphicsShims
+package import OpenRenderBoxShims
+
+@_silgen_name("CGPathCreateMutable")
+private func _mosCGPathCreateMutable() -> MOSCGMutablePathRef
+@_silgen_name("CGPathMoveToPoint")
+private func _mosCGPathMoveToPoint(_ path: MOSCGMutablePathRef, _ m: UnsafeRawPointer?, _ x: Double, _ y: Double)
+@_silgen_name("CGPathAddLineToPoint")
+private func _mosCGPathAddLineToPoint(_ path: MOSCGMutablePathRef, _ m: UnsafeRawPointer?, _ x: Double, _ y: Double)
+@_silgen_name("CGPathAddQuadCurveToPoint")
+private func _mosCGPathAddQuadCurveToPoint(_ path: MOSCGMutablePathRef, _ m: UnsafeRawPointer?, _ cpx: Double, _ cpy: Double, _ x: Double, _ y: Double)
+@_silgen_name("CGPathAddCurveToPoint")
+private func _mosCGPathAddCurveToPoint(_ path: MOSCGMutablePathRef, _ m: UnsafeRawPointer?, _ cp1x: Double, _ cp1y: Double, _ cp2x: Double, _ cp2y: Double, _ x: Double, _ y: Double)
+@_silgen_name("CGPathCloseSubpath")
+private func _mosCGPathCloseSubpath(_ path: MOSCGMutablePathRef)
+@_silgen_name("CGPathApply")
+private func _mosCGPathApply(_ path: MOSCGPathRef, _ info: UnsafeMutableRawPointer?, _ function: @convention(c) (UnsafeMutableRawPointer?, UnsafePointer<MOSCGPathElement>?) -> Void)
+
+private final class _MOSPathApplyBox {
+    var elements: [Path.Element] = []
+}
+
+private func _mosApplyPath(_ info: UnsafeMutableRawPointer?, _ element: UnsafePointer<MOSCGPathElement>?) {
+    guard let info, let element else { return }
+    let box = Unmanaged<_MOSPathApplyBox>.fromOpaque(info).takeUnretainedValue()
+    let e = element.pointee
+    func pt(_ i: Int) -> CGPoint { e.points[i] }
+    switch e.type.rawValue {
+    case 0: box.elements.append(.move(to: pt(0)))
+    case 1: box.elements.append(.line(to: pt(0)))
+    case 2: box.elements.append(.quadCurve(to: pt(2), control: pt(0)))
+    case 3: box.elements.append(.curve(to: pt(4), control1: pt(0), control2: pt(2)))
+    case 4: box.elements.append(.closeSubpath)
+    default: break
+    }
+}
 
 package enum MOSPathGeometry {
     /// 4 (√2 − 1) / 3: controle de Bézier cúbica para um quarto de círculo.
@@ -41,6 +76,28 @@ package enum MOSPathGeometry {
     }
 
     package static func elements(of path: CGPath) -> [Path.Element] { path.elements.map(element) }
+
+    /// Ponteiro C (libSystem) com os mesmos elementos. O ORBPath do RenderBox recebe este ponteiro.
+    package static func cPath(_ path: CGPath) -> MOSCGPathRef {
+        let p = _mosCGPathCreateMutable()
+        for e in path.elements {
+            switch e {
+            case let .moveToPoint(q): _mosCGPathMoveToPoint(p, nil, Double(q.x), Double(q.y))
+            case let .addLineToPoint(q): _mosCGPathAddLineToPoint(p, nil, Double(q.x), Double(q.y))
+            case let .addQuadCurveToPoint(c, q): _mosCGPathAddQuadCurveToPoint(p, nil, Double(c.x), Double(c.y), Double(q.x), Double(q.y))
+            case let .addCurveToPoint(c1, c2, q): _mosCGPathAddCurveToPoint(p, nil, Double(c1.x), Double(c1.y), Double(c2.x), Double(c2.y), Double(q.x), Double(q.y))
+            case .closeSubpath: _mosCGPathCloseSubpath(p)
+            }
+        }
+        return p
+    }
+
+    /// Classe CGPath do OpenCoreGraphics a partir do ponteiro C que o ORBPath devolve.
+    package static func swiftPath(_ path: MOSCGPathRef) -> CGPath {
+        let box = _MOSPathApplyBox()
+        _mosCGPathApply(path, Unmanaged.passUnretained(box).toOpaque(), _mosApplyPath)
+        return cgPath(box.elements)
+    }
 
     // MARK: - formas
 

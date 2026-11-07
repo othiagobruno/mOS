@@ -262,8 +262,6 @@ extension NSMutableAttributedString {
     }
 }
 
-let NSTextEncapsulationAttributeName: NSAttributedString.Key = .init("NSTextEncapsulation")
-
 package class NSTextEncapsulation: CFCompatObject {
     package var scale: NSTextEncapsulationScale = .medium
     package var shape: NSTextEncapsulationShape = .roundedRectangle

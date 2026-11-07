@@ -108,7 +108,7 @@ package struct GraphicsImage: Equatable, Sendable {
     }
 
     package var headroom: Image.Headroom {
-        #if canImport(CoreGraphics)
+        #if canImport(Darwin)
         guard case let .cgImage(image) = contents,
                 let colorSpace = image.colorSpace,
                 CGColorSpaceUsesITUR_2100TF(colorSpace)

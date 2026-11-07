@@ -583,7 +583,7 @@ package enum NamedImage {
                 }
                 let resolved = try delegate.resolveImage(uuid: uuid)
                 let cgImage = resolved.cgImage
-                #if canImport(CoreGraphics)
+                #if canImport(Darwin)
                 let width = CGFloat(cgImage.width)
                 let height = CGFloat(cgImage.height)
                 #else

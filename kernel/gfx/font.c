@@ -408,8 +408,11 @@ static void raster_into(struct font *f, float size, u16 gi, glyph_t *g) {
     xform_t id = {1, 0, 0, 1, 0, 0};
     glyph_outline(f, gi, id, scale, (float)-x0, (float)-y0, &l, 0);
     float *acc = kcalloc((usize)w * hh + 4, sizeof(float));
+    if (!acc) { kfree(l.pts); return; }
     for (int i = 0; i < l.n; i += 4) raster_line(acc, w, hh, l.pts[i], l.pts[i + 1], l.pts[i + 2], l.pts[i + 3]);
-    g->bmp = kmalloc((usize)w * hh);
+    u8 *bmp = kmalloc((usize)w * hh);
+    if (!bmp) { kfree(acc); kfree(l.pts); return; }
+    g->bmp = bmp;
     raster_finish(acc, w * hh, g->bmp);
     for (int i = 0; i < w * hh; i++) g->bmp[i] = gamma_lut[g->bmp[i]];
     kfree(acc);
@@ -429,9 +432,17 @@ static glyph_t *glyph_cached(struct font *f, float size, u32 key, u16 gi) {
         }
     spin_unlock_irqrestore(&font_lock, fl);
     glyph_t *g = kcalloc(1, sizeof(glyph_t));
+    if (!g) return 0;
     g->key_cp = key; g->key_size = sz; g->key_font = (u16)f->id;
     raster_into(f, size, gi, g);
     fl = spin_lock_irqsave(&font_lock);
+    for (glyph_t *e = gcache[h]; e; e = e->next)
+        if (e->key_cp == key && e->key_size == sz && e->key_font == f->id) {
+            spin_unlock_irqrestore(&font_lock, fl);
+            kfree(g->bmp);
+            kfree(g);
+            return e;
+        }
     g->next = gcache[h];
     gcache[h] = g;
     spin_unlock_irqrestore(&font_lock, fl);
@@ -464,6 +475,14 @@ int font_table(int weight, u32 tag, void *dst, u32 cap) {
 u16 font_glyph_id(int weight, u32 cp) { return glyph_index(face(weight), cp); }
 void font_face_metrics(int weight, i32 *upem, i32 *asc, i32 *desc, i32 *nglyphs) {
     struct font *f = face(weight);
+    /* upem 0 = a face ainda não foi carregada. Quem chama distingue isso de uma métrica real. */
+    if (!f->data) {
+        if (upem) *upem = 0;
+        if (asc) *asc = 0;
+        if (desc) *desc = 0;
+        if (nglyphs) *nglyphs = 0;
+        return;
+    }
     if (upem) *upem = f->upem ? f->upem : 2048;
     if (asc) *asc = f->ascender;
     if (desc) *desc = f->descender;
@@ -477,7 +496,9 @@ int font_raster_glyph(int weight, u16 glyph, float size, u8 *dst, u32 cap, i16 *
     struct font *f = face(weight);
     if (size < 1) size = 1;
     if (size > 512) size = 512;
+    if (!f->data) return 0;
     glyph_t *g = glyph_cached(f, size, 0x80000000u | glyph, glyph);
+    if (!g) return -1;
     if (w) *w = g->w;
     if (h) *h = g->h;
     if (left) *left = g->left;

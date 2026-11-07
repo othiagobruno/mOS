@@ -373,8 +373,7 @@ fraco virou "símbolo não implementado"); use definições fortes.
   `objc[mOS]: -[CALayer ...] ainda não implementado` no log: não deu nesta sessão por falta de RAM livre no host (0,5–0,9 GB
   livres; o VM do VS Code usa 2,7 GB).
 - `CAContext` entre processos está no kernel (`MACH_VM_CA_*`): o quadro é a árvore achatada, não cada sublayer ao vivo.
-- `CGImage` como `contents` (o CoreGraphics do mOS ainda não tem `CGImageCreate`); `cornerRadius`, sombras, filtros, `mask` e
-  transformações com rotação são aceitos e ignorados no desenho; amostragem sem filtro linear; formatos de 8 bytes (`RGhA`) e
-  `l10r` não são desenhados.
+- `CGImage` como `contents`, `cornerRadius`, sombra, `mask` e rotação entram no desenho. Filtros Core Image e
+  formatos de 8 bytes (`RGhA`, `l10r`) continuam de fora. A amostragem linear vale quando a escala não é 1:1.
 - `@{}` vazio compilado pelo Xcode 15+ usa o símbolo `___NSDictionary0__`, que o libSystem não exporta (o app de teste usa
   `[NSDictionary dictionary]`).

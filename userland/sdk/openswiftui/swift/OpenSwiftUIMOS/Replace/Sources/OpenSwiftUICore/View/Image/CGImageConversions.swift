@@ -101,7 +101,7 @@ private struct CGImageProvider: ImageProvider {
 
 extension CGImage {
     package var size: CGSize {
-        #if canImport(CoreGraphics)
+        #if canImport(Darwin)
         CGSize(width: CGFloat(width), height: CGFloat(height))
         #else
         // mOS: o CGImage do OpenCoreGraphics é uma classe vazia (sem pixels nem dimensões);
@@ -110,7 +110,7 @@ extension CGImage {
         #endif
     }
 
-    #if canImport(CoreGraphics)
+    #if canImport(Darwin)
     private static let sRGB: CGColorSpace = CGColorSpace(name: CGColorSpace.sRGB)!
 
     package static func context(_ pixelWidth: Int, _ pixelHeight: Int, prefersMask: Bool) -> CGContext? {

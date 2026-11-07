@@ -6,6 +6,7 @@
 //  Status: Complete
 //  ID: D73865907660DC2CCEED4B77967EA955 (SwiftUI)
 
+import CoreGraphics
 import OpenSwiftUICore
 
 // MARK: - PlatformSliderCoordinator

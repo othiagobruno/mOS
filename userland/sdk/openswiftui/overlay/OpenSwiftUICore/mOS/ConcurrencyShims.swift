@@ -35,14 +35,15 @@ package func extractIsolation<F>(_ fn: F) -> (any Actor)? { nil }
 @_silgen_name("mach_absolute_time") private func _mos_mach_absolute_time() -> UInt64
 
 /// Substituto de `_Concurrency.ContinuousClock` (o relógio monotônico do mOS, em nanossegundos).
-package struct ContinuousClock: Sendable {
-    package init() {}
+/// Público: os eventos do CAHostingLayer são API pública e recebem `Instant`.
+public struct ContinuousClock: Sendable {
+    public init() {}
 
-    package struct Instant: Sendable, Hashable, Comparable {
-        package var _nanoseconds: UInt64
-        package init(_nanoseconds: UInt64) { self._nanoseconds = _nanoseconds }
+    public struct Instant: Sendable, Hashable, Comparable {
+        public var _nanoseconds: UInt64
+        public init(_nanoseconds: UInt64) { self._nanoseconds = _nanoseconds }
 
-        package static var now: Instant { Instant(_nanoseconds: _mos_mach_absolute_time()) }
+        public static var now: Instant { Instant(_nanoseconds: _mos_mach_absolute_time()) }
 
         package func duration(to other: Instant) -> Duration {
             .nanoseconds(Int64(bitPattern: other._nanoseconds &- _nanoseconds))
@@ -51,7 +52,7 @@ package struct ContinuousClock: Sendable {
             let (s, a) = duration.components
             return Instant(_nanoseconds: _nanoseconds &+ UInt64(bitPattern: s &* 1_000_000_000 &+ a / 1_000_000_000))
         }
-        package static func < (l: Instant, r: Instant) -> Bool { l._nanoseconds < r._nanoseconds }
+        public static func < (l: Instant, r: Instant) -> Bool { l._nanoseconds < r._nanoseconds }
     }
 
     package var now: Instant { .now }

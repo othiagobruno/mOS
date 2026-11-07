@@ -159,6 +159,28 @@ mais um UIKit/Catalyst, que o mOS ainda não tem.
     `resume`, o handler recebe `XPC_ERROR_CONNECTION_INVALID` (uma vez), e as respostas, inclusive a síncrona, são esse erro.
   - Teste: `tools/build-xpctest.ps1` + `machotest` (`userland/tests-xpc`): **24/24**.
 
+## Claude Code (CLI) no mOS
+
+Build: `downloads.claude.ai/claude-code-releases/2.1.311/darwin-x64/claude` (cask `claude-code`; o SHA-256 confere). É um
+Mach-O x86_64 único de 274 MB: o Bun (Zig + JavaScriptCore) com o `cli.js` embutido (`/$bunfs/root/cli`). O TLS é o
+BoringSSL do próprio Bun, sem SecureTransport. Preparação: `tools/stage-claude-code.ps1` (QEMU com 1,5 GB).
+
+- **machocheck: 356 ausentes.** libicucore 184 (o ICU do sistema: Intl, normalização, quebra de texto, fusos), libSystem 87
+  (`setjmp`/`longjmp`, `wait4`, `popen`, `getifaddrs`, `__ulock_*`, `thread_suspend`/`thread_get_state` do coletor do JSC,
+  `DNSService*`...), libc++ 82.
+- **O que já foi destravado** para ele subir no QEMU:
+  - TSD da thread principal no GS desde a partida. O Bun lê `gs:[0]` (o `pthread_self` do macOS) antes de chamar qualquer
+    pthread; o `cx_tsd()` agora roda no `cx_start`.
+  - **Memória anônima sob demanda.** O SYS_MMAP ganhou `b = 3` (`kernel/mm/lazy.c`): o mmap anônimo com acesso só reserva
+    endereços, e cada página vira RAM na primeira falta, também quando o kernel copia para o processo (`uvm_copy_in/out`).
+    O JavaScriptCore reserva 1–4 GB assim; antes, todas essas chamadas falhavam.
+  - **Faixas grandes alinhadas ao próprio tamanho** (potência de 2, até 4 GB). O alocador do JSC exige o endereço alinhado
+    a N (`test rax, N-1` → `int3`).
+- **Onde parou** (`claude --version`): o JSC inicializa e o grafo de módulos embutido é encontrado. O laço de eventos do Bun
+  registra a porta Mach do "waker" (`EVFILT_MACHPORT` + `MACH_RCV_MSG`) e espera sem prazo, na primeira e única chamada ao
+  kqueue, sem ter criado nenhuma thread e antes de o JavaScript fazer qualquer E/S. Próximo passo: descobrir o que o laço
+  espera (uma tarefa enviada a uma thread que não foi criada, ou um envio à porta do waker que o kqueue não vê).
+
 ## Roteiro (do mais perto para o mais longe)
 
 1. **Codex CLI** (faltam 90). É o primeiro app da lista que pode rodar inteiro:

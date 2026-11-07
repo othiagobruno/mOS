@@ -19,9 +19,10 @@
  *    As propriedades contextId/layer existem de verdade: o Chromium só usa o caminho remoto se
  *    class_getProperty as achar (RemoteLayerAPISupported).
  *
- * Suportado no desenho: bounds/position/anchorPoint, transform (escala e translação), geometryFlipped,
+ * Suportado no desenho: bounds/position/anchorPoint, transform e sublayerTransform (com rotação), geometryFlipped,
  * sublayers por zPosition, hidden, opacity, masksToBounds, backgroundColor, borda, contents
- * (IOSurface BGRA ou NSImage) com contentsRect/contentsScale/contentsGravity. Sem animações:
+ * (IOSurface, CGImage ou NSImage) com contentsRect/contentsScale/contentsGravity, cantos,
+ * sombra, máscara e rotação. Sem animações:
  * toda mudança vale na hora (como com setDisableActions:YES, que é o que o Chromium usa).
  */
 #include "foundation.h"
@@ -351,7 +352,7 @@ static void l_set_delegate(id self, SEL c, id d) { (void)c; ls(self)->delegate =
 static id l_name(id self, SEL c) { (void)c; return ls(self)->name; }
 static void l_set_name(id self, SEL c, id n) { (void)c; keep(&ls(self)->name, n ? MSG0(id, n, "copy") : 0); if (n) objc_release(ls(self)->name); }
 static id l_mask(id self, SEL c) { (void)c; return ls(self)->mask; }
-static void l_set_mask(id self, SEL c, id m) { (void)c; keep(&ls(self)->mask, m); }
+static void l_set_mask(id self, SEL c, id m) { (void)c; keep(&ls(self)->mask, m); layer_dirty(self); }
 static id l_actions(id self, SEL c) { (void)c; return ls(self)->actions; }
 static void l_set_actions(id self, SEL c, id a) { (void)c; keep(&ls(self)->actions, a); }
 static id l_style(id self, SEL c) { (void)c; return ls(self)->style; }
@@ -577,8 +578,8 @@ static id tx_value(id cls, SEL c, id k) { (void)cls; (void)c; (void)k; return 0;
 static void tx_lock(id cls, SEL c) { (void)cls; (void)c; }
 
 /* ================================================================ composição por software */
-/* mapa afim por eixo: pixel = a + b * coordenada do layer */
-typedef struct { double ax, bx, ay, by; } map_t;
+/* sx = ax + bx*lx + cx*ly; sy = ay + cy*lx + by*ly. cx e cy são a rotação/cisalhamento. */
+typedef struct { double ax, bx, ay, by, cx, cy; } map_t;
 typedef struct { int x0, y0, x1, y1; } clip_t;
 
 static u32 *cv;                         /* buffer ARGB pré-multiplicado da área visível da view */
@@ -587,22 +588,38 @@ static size_t cvcap;
 static BOOL touched;
 
 static map_t child_map(map_t p, lst_t *c) {
-    double w = c->bounds.s.w, h = c->bounds.s.h, sx = c->tf.m[0], sy = c->tf.m[5];
+    double w = c->bounds.s.w, h = c->bounds.s.h;
+    double a = c->tf.m[0], b = c->tf.m[1], tc = c->tf.m[4], d = c->tf.m[5];
     double tx = c->tf.m[12], ty = c->tf.m[13];
-    if (sx == 0) sx = 1;
-    if (sy == 0) sy = 1;
+    if (a == 0 && b == 0 && tc == 0 && d == 0) { a = 1; d = 1; }
+    double yb = c->flipped ? -1 : 1;
+    double vxk = -(c->bounds.o.x + c->anchor.x * w);
+    double vyk = c->flipped ? (c->bounds.o.y + h - c->anchor.y * h) : -(c->bounds.o.y + c->anchor.y * h);
+    double px0 = c->pos.x + tx + a * vxk + tc * vyk;
+    double py0 = c->pos.y + ty + b * vxk + d * vyk;
+    double al = a, cl = tc * yb, bl = b, dl = d * yb;
     map_t m;
-    m.bx = p.bx * sx;
-    m.ax = p.ax + p.bx * (c->pos.x + tx - sx * (c->bounds.o.x + c->anchor.x * w));
-    if (c->flipped) {
-        m.by = -p.by * sy;
-        m.ay = p.ay + p.by * (c->pos.y + ty + sy * (c->bounds.o.y + h - c->anchor.y * h));
-    } else {
-        m.by = p.by * sy;
-        m.ay = p.ay + p.by * (c->pos.y + ty - sy * (c->bounds.o.y + c->anchor.y * h));
-    }
+    m.ax = p.ax + p.bx * px0 + p.cx * py0;
+    m.ay = p.ay + p.cy * px0 + p.by * py0;
+    m.bx = p.bx * al + p.cx * bl;
+    m.cx = p.bx * cl + p.cx * dl;
+    m.cy = p.cy * al + p.by * bl;
+    m.by = p.cy * cl + p.by * dl;
     return m;
 }
+static map_t apply_stf(map_t p, T3 t) {
+    double a = t.m[0], b = t.m[1], c = t.m[4], d = t.m[5], tx = t.m[12], ty = t.m[13];
+    if (a == 0 && b == 0 && c == 0 && d == 0) { a = 1; d = 1; }
+    map_t m;
+    m.ax = p.ax + p.bx * tx + p.cx * ty;
+    m.ay = p.ay + p.cy * tx + p.by * ty;
+    m.bx = p.bx * a + p.cx * b;
+    m.cx = p.bx * c + p.cx * d;
+    m.cy = p.cy * a + p.by * b;
+    m.by = p.cy * c + p.by * d;
+    return m;
+}
+static int map_shear(map_t m) { return m.cx != 0 || m.cy != 0; }
 static clip_t clip_and(clip_t a, double x0, double y0, double x1, double y1) {
     int ix0 = (int)(x0 + 0.5), iy0 = (int)(y0 + 0.5), ix1 = (int)(x1 + 0.5), iy1 = (int)(y1 + 0.5);
     if (ix0 > a.x0) a.x0 = ix0;
@@ -784,12 +801,117 @@ static int cmp_z(const void *a, const void *b) {
     double za = ls(*(id *)a)->z, zb = ls(*(id *)b)->z;
     return za < zb ? -1 : za > zb;
 }
+static void map_point(map_t m, double lx, double ly, double *sx, double *sy) {
+    *sx = m.ax + m.bx * lx + m.cx * ly;
+    *sy = m.ay + m.cy * lx + m.by * ly;
+}
+/* o buffer foi desenhado com `loc` (eixos retos). Cada pixel da tela volta à coordenada do layer e amostra. */
+static void splat_affine(const u32 *src, int sw, int sh, map_t loc, map_t sc, clip_t k,
+                         double lx0, double ly0, double lx1, double ly1) {
+    if (!cv || !src || sw < 1 || sh < 1) return;
+    double xs[4], ys[4];
+    map_point(sc, lx0, ly0, &xs[0], &ys[0]);
+    map_point(sc, lx1, ly0, &xs[1], &ys[1]);
+    map_point(sc, lx0, ly1, &xs[2], &ys[2]);
+    map_point(sc, lx1, ly1, &xs[3], &ys[3]);
+    double minx = xs[0], maxx = xs[0], miny = ys[0], maxy = ys[0];
+    for (int i = 1; i < 4; i++) {
+        if (xs[i] < minx) minx = xs[i];
+        if (xs[i] > maxx) maxx = xs[i];
+        if (ys[i] < miny) miny = ys[i];
+        if (ys[i] > maxy) maxy = ys[i];
+    }
+    clip_t c = clip_and(k, minx, miny, maxx, maxy);
+    c = clip_and(c, cvx, cvy, cvx + cvw, cvy + cvh);
+    if (c.x0 >= c.x1 || c.y0 >= c.y1) return;
+    double det = sc.bx * sc.by - sc.cx * sc.cy;
+    if (det < 1e-8 && det > -1e-8) return;
+    double inv = 1.0 / det;
+    touched = YES;
+    for (int y = c.y0; y < c.y1; y++) {
+        u32 *row = cv + (size_t)(y - cvy) * cvw - cvx;
+        for (int x = c.x0; x < c.x1; x++) {
+            double dx = x + 0.5 - sc.ax, dy = y + 0.5 - sc.ay;
+            double lx = (sc.by * dx - sc.cx * dy) * inv;
+            double ly = (-sc.cy * dx + sc.bx * dy) * inv;
+            if (lx < lx0 || lx > lx1 || ly < ly0 || ly > ly1) continue;
+            double bu = loc.ax + loc.bx * lx + loc.cx * ly;
+            double bv = loc.ay + loc.cy * lx + loc.by * ly;
+            if (bu < 0 || bv < 0 || bu >= sw || bv >= sh) continue;
+            int x0 = (int)bu, y0 = (int)bv;
+            int x1 = x0 + 1 < sw ? x0 + 1 : x0, y1 = y0 + 1 < sh ? y0 + 1 : y0;
+            double tx = bu - x0, ty = bv - y0;
+            u32 p00 = src[(size_t)y0 * sw + x0], p10 = src[(size_t)y0 * sw + x1];
+            u32 p01 = src[(size_t)y1 * sw + x0], p11 = src[(size_t)y1 * sw + x1];
+            u32 p = 0;
+            for (int ch = 0; ch < 4; ch++) {
+                double aa = ((p00 >> (ch * 8)) & 255) * (1 - tx) + ((p10 >> (ch * 8)) & 255) * tx;
+                double bb = ((p01 >> (ch * 8)) & 255) * (1 - tx) + ((p11 >> (ch * 8)) & 255) * tx;
+                u32 v = (u32)(aa * (1 - ty) + bb * ty + 0.5);
+                if (v > 255) v = 255;
+                p |= v << (ch * 8);
+            }
+            if (p >> 24) row[x] = over(p, row[x]);
+        }
+    }
+}
+static int xform_once, mask_once;
 static void render(id l, map_t m, clip_t k, float op, int depth, BOOL skip_bg) {
     lst_t *L = ls(l);
     if (L->hidden || depth > 64) return;
+    float op_in = op;
     op *= L->opacity;
     if (op <= 0.002f) return;
     if (L->needs_display) l_display(l, 0);
+    if (xform_once) xform_once = 0;
+    else if (map_shear(m) && L->bounds.s.w >= 1 && L->bounds.s.h >= 1 && cv) {
+        int bw = (int)(L->bounds.s.w + 0.5), bh = (int)(L->bounds.s.h + 0.5);
+        if (bw > 4096) bw = 4096;
+        if (bh > 4096) bh = 4096;
+        if (bw < 1) bw = 1;
+        if (bh < 1) bh = 1;
+        u32 *buf = calloc((size_t)bw * bh, 4);
+        if (buf) {
+            u32 *ocv = cv; int ocx = cvx, ocy = cvy, ocw = cvw, och = cvh; BOOL ot = touched;
+            cv = buf; cvx = 0; cvy = 0; cvw = bw; cvh = bh; touched = NO;
+            double sx = bw / L->bounds.s.w, sy = bh / L->bounds.s.h;
+            map_t loc = {-L->bounds.o.x * sx, sx, 0, sy, 0, 0};
+            if (m.by >= 0) loc.ay = -L->bounds.o.y * sy;
+            else { loc.by = -sy; loc.ay = (L->bounds.o.y + L->bounds.s.h) * sy; }
+            xform_once = 1;
+            render(l, loc, (clip_t){0, 0, bw, bh}, op_in, depth, skip_bg);
+            cv = ocv; cvx = ocx; cvy = ocy; cvw = ocw; cvh = och; touched = ot;
+            splat_affine(buf, bw, bh, loc, m, k, L->bounds.o.x, L->bounds.o.y,
+                         L->bounds.o.x + L->bounds.s.w, L->bounds.o.y + L->bounds.s.h);
+            free(buf);
+            return;
+        }
+    }
+    if (mask_once) mask_once = 0;
+    else if (L->mask && cv && cvw > 0 && cvh > 0) {
+        size_t n = (size_t)cvw * cvh;
+        u32 *tmp = calloc(n, 4), *mb = calloc(n, 4);
+        if (tmp && mb) {
+            u32 *ocv = cv; int ocx = cvx, ocy = cvy, ocw = cvw, och = cvh; BOOL ot = touched;
+            cv = tmp; touched = NO;
+            mask_once = 1;
+            render(l, m, k, op_in, depth, skip_bg);
+            cv = mb; touched = NO;
+            render(L->mask, child_map(m, ls(L->mask)), k, 1, depth + 1, NO);
+            cv = ocv; cvx = ocx; cvy = ocy; cvw = ocw; cvh = och; touched = ot;
+            for (size_t i = 0; i < n; i++) {
+                u32 a = mb[i] >> 24;
+                if (!a || !(tmp[i] >> 24)) continue;
+                u32 p = a == 255 ? tmp[i] : scale_px(tmp[i], a);
+                u32 *px = ocv + i;
+                *px = over(p, *px);
+                touched = YES;
+            }
+            free(tmp); free(mb);
+            return;
+        }
+        free(tmp); free(mb);
+    }
     double xa = m.ax + m.bx * L->bounds.o.x, xb = m.ax + m.bx * (L->bounds.o.x + L->bounds.s.w);
     double ya = m.ay + m.by * L->bounds.o.y, yb = m.ay + m.by * (L->bounds.o.y + L->bounds.s.h);
     double rx0 = xa < xb ? xa : xb, rx1 = xa < xb ? xb : xa, ry0 = ya < yb ? ya : yb, ry1 = ya < yb ? yb : ya;
@@ -843,11 +965,7 @@ static void render(id l, map_t m, clip_t k, float op, int depth, BOOL skip_bg) {
             if (any_z) {                        /* ordem estável por zPosition */
                 for (u32 i = 1; i < n; i++) for (u32 j = i; j > 0 && cmp_z(&subs[j - 1], &subs[j]) > 0; j--) { id t = subs[j]; subs[j] = subs[j - 1]; subs[j - 1] = t; }
             }
-            map_t sm = m;                       /* sublayerTransform: escala e translação */
-            if (L->stf.m[0]) sm.bx *= L->stf.m[0];
-            if (L->stf.m[5]) sm.by *= L->stf.m[5];
-            sm.ax += m.bx * L->stf.m[12];
-            sm.ay += m.by * L->stf.m[13];
+            map_t sm = apply_stf(m, L->stf);
             for (u32 i = 0; i < n; i++) render(subs[i], child_map(sm, ls(subs[i])), kk, op, depth + 1, NO);
             if (subs != tmp) free(subs);
         }

@@ -46,6 +46,27 @@ u8 *getsectiondata(const void *header, const char *seg, const char *sect, u64 *s
     }
     return 0;
 }
+/* getsegbyname/getsectbyname (<mach-o/getsect.h>): o comando de carga do EXECUTÁVEL principal, como no macOS (os
+ * campos ficam com os endereços do arquivo; quem chama soma _dyld_get_image_vmaddr_slide(0)). O Bun (Claude Code)
+ * acha o JavaScript embutido no segmento __BUN assim; devolver NULL o deixava sem o programa. */
+const seg64_t *getsegbyname(const char *seg) {
+    const mh64_t *mh = _dyld_get_image_header(0);
+    if (!mh || mh->magic != 0xFEEDFACFu || !seg) return 0;
+    const u8 *p = (const u8 *)(mh + 1);
+    for (u32 i = 0; i < mh->ncmds; i++) {
+        const seg64_t *s = (const seg64_t *)p;
+        if (s->cmd == LC_SEGMENT_64 && nameq(s->segname, seg)) return s;
+        p += s->cmdsize;
+    }
+    return 0;
+}
+const sect64_t *getsectbyname(const char *seg, const char *sect) {
+    const seg64_t *s = getsegbyname(seg);
+    if (!s || !sect) return 0;
+    const sect64_t *x = (const sect64_t *)(s + 1);
+    for (u32 k = 0; k < s->nsects; k++) if (nameq(x[k].sectname, sect)) return &x[k];
+    return 0;
+}
 u8 *getsegmentdata(const void *header, const char *seg, u64 *size) {
     const mh64_t *mh = header;
     if (size) *size = 0;

@@ -66,7 +66,7 @@ extension NSAttributedString.Key {
     package static let _textScale: NSAttributedString.Key = .init(_kCTTextScaleAttributeName)
 
     #if canImport(CoreText)
-    package static let _textScaleRatio: NSAttributedString.Key = .init(kCTTextScaleRatioAttributeName as String)
+    package static let _textScaleRatio: NSAttributedString.Key = .init(String(kCTTextScaleRatioAttributeName))
     #endif
 
     package static let _textScaleStaticWeightMatching: NSAttributedString.Key = .init("NSTextScaleStaticWeightMatching")

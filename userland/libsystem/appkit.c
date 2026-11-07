@@ -492,6 +492,8 @@ static id cgp(void) { if (!cg_path) cg_path = bp_new(); return cg_path; }
 void cx_bm_set_fill(const void *c, u32 argb);
 int cx_bm_save(const void *c);
 int cx_bm_restore(const void *c);
+int cx_bm_fill_rect(const void *c, double x, double y, double w, double h);
+int cx_bm_clear_rect(const void *c, double x, double y, double w, double h);
 void CGContextSetRGBFillColor(id c, double r, double g, double b, double a) {
     ctx.fill = argb(cx_color(r, g, b, a));
     cx_bm_set_fill(c, ctx.fill);
@@ -502,9 +504,15 @@ void CGContextSetGrayStrokeColor(id c, double g, double a) { CGContextSetRGBStro
 void CGContextSetFillColorWithColor(id c, id color) { ctx.fill = argb(color); cx_bm_set_fill(c, ctx.fill); }
 void CGContextSetStrokeColorWithColor(id c, id color) { (void)c; ctx.stroke = argb(color); }
 void CGContextSetLineWidth(id c, double w) { (void)c; ctx.line_width = w; pth(cgp())->lw = w; }
-void CGContextFillRect(id c, CGRect r) { (void)c; NSRectFill(r); }
+void CGContextFillRect(id c, CGRect r) {
+    if (cx_bm_fill_rect(c, r.o.x, r.o.y, r.s.w, r.s.h)) return;
+    NSRectFill(r);
+}
 void CGContextFillRects(id c, const CGRect *r, u64 n) { for (u64 i = 0; i < n; i++) CGContextFillRect(c, r[i]); }
-void CGContextClearRect(id c, CGRect r) { (void)c; double x, y, w, h; px_rect(r, &x, &y, &w, &h); g_fill(x, y, w, h, 0xFFFFFFFF); }
+void CGContextClearRect(id c, CGRect r) {
+    if (cx_bm_clear_rect(c, r.o.x, r.o.y, r.s.w, r.s.h)) return;
+    double x, y, w, h; px_rect(r, &x, &y, &w, &h); g_fill(x, y, w, h, 0xFFFFFFFF);
+}
 void CGContextStrokeRect(id c, CGRect r) { (void)c; id p = bp_rect(0, 0, r); pth(p)->lw = ctx.line_width; bp_stroke(p, 0); }
 void CGContextStrokeRectWithWidth(id c, CGRect r, double w) { (void)c; id p = bp_rect(0, 0, r); pth(p)->lw = w; bp_stroke(p, 0); }
 void CGContextFillEllipseInRect(id c, CGRect r) { (void)c; bp_fill(bp_oval(0, 0, r), 0); }

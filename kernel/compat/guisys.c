@@ -549,8 +549,10 @@ i64 compat_gui_syscall(process_t *p, u64 n, u64 a, u64 b, u64 c, u64 d, u64 e) {
             if (!uvm_copy_in(p, &req, d, sizeof req)) return -MOS_EFAULT;
             if (req.cap > (1u << 20)) req.cap = 1u << 20;
             u8 *tmp = req.cap ? kmalloc(req.cap) : NULL;
+            if (req.cap && !tmp) return -MOS_ENOMEM;
             i16 w = 0, h = 0, left = 0, top = 0;
             int n = font_raster_glyph((int)req.weight, (u16)req.glyph, req.size, tmp, req.cap, &w, &h, &left, &top);
+            if (n < 0) { kfree(tmp); return -MOS_ENOMEM; }
             req.w = w; req.h = h; req.left = left; req.top = top;
             bool ok = uvm_copy_out(p, d, &req, sizeof req);
             if (ok && tmp && req.buf && n > 0) {

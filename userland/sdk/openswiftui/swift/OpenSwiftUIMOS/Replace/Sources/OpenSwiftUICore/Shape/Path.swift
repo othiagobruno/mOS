@@ -77,7 +77,7 @@ public struct Path: Equatable, LosslessStringConvertible, @unchecked Sendable {
             switch kind {
             #if canImport(CoreGraphics) || !OPENSWIFTUI_CF_CGTYPES
             case .cgPath:
-                path = ORBPath(cgPath: data.cgPath.takeRetainedValue())
+                path = ORBPath(cgPath: MOSPathGeometry.cPath(data.cgPath.takeRetainedValue()))
             #endif
             case .rbPath:
                 path = data.rbPath
@@ -170,7 +170,7 @@ public struct Path: Equatable, LosslessStringConvertible, @unchecked Sendable {
                 let storage = unsafeBitCast(self, to: ORBPath.Storage.self)
                 rbPath = ORBPath(storage: storage, callbacks: Self.bufferCallbacks)
             }
-            return rbPath.cgPath
+            return MOSPathGeometry.swiftPath(rbPath.cgPath)
         }
         #endif
 
@@ -178,7 +178,7 @@ public struct Path: Equatable, LosslessStringConvertible, @unchecked Sendable {
         fileprivate var rbPath: ORBPath {
             switch kind {
             case .cgPath:
-                return ORBPath(cgPath: data.cgPath.takeUnretainedValue())
+                return ORBPath(cgPath: MOSPathGeometry.cPath(data.cgPath.takeUnretainedValue()))
             case .rbPath:
                 return data.rbPath
             case .buffer:
@@ -191,7 +191,7 @@ public struct Path: Equatable, LosslessStringConvertible, @unchecked Sendable {
         fileprivate var boundingRect: CGRect {
             switch kind {
             case .cgPath:
-                #if canImport(CoreGraphics)
+                #if canImport(Darwin)
                 return data.cgPath.takeUnretainedValue().boundingBoxOfPath
                 #else
                 // mOS
@@ -513,7 +513,7 @@ public struct Path: Equatable, LosslessStringConvertible, @unchecked Sendable {
     /// `Path.stringRepresentation`. Fails if the `string` does not
     /// describe a valid path.
     public init?(_ string: String) {
-        #if canImport(CoreGraphics)
+        #if canImport(Darwin)
         let mutablePath = CGMutablePath()
         let nsString = string as NSString
         guard let str = nsString.utf8String else {
@@ -724,7 +724,7 @@ public struct Path: Equatable, LosslessStringConvertible, @unchecked Sendable {
 
     /// Calls `body` with each element in the path.
     public func forEach(_ body: (Path.Element) -> Void) {
-        #if canImport(CoreGraphics)
+        #if canImport(Darwin)
         // FIXME: Use RB API instead of CG API
         cgPath.applyWithBlock { element in
             let element = element.pointee
@@ -1047,7 +1047,7 @@ extension Path {
         if case .empty = storage {
             self = path.applying(transform)
         } else if !path.isEmpty {
-            #if canImport(CoreGraphics)
+            #if canImport(Darwin)
             let result = cgPath.mutableCopy()!
             result.addPath(path.cgPath, transform: transform)
             self = Path(result)
@@ -1156,7 +1156,7 @@ extension Path {
             _openSwiftUIUnreachableCode()
         default:
             // TBA
-            #if canImport(CoreGraphics)
+            #if canImport(Darwin)
             var transform = transform
             return Path(cgPath.copy(using: &transform)!)
             #else
@@ -1309,9 +1309,14 @@ private let temporaryPathCallbacks: UnsafePointer<ORBPath.Callbacks> = {
         return storage.boundingRect
     }
     callbacks.cgPath = { object in
+        #if canImport(Darwin)
         let storage = unsafeBitCast(object, to: ORBPath.Storage.self)
         let cgPath = storage.cgPath
         return cgPath.map { .passUnretained($0) }
+        #else
+        _ = object
+        return nil
+        #endif
     }
     pointer.initialize(to: callbacks)
     return UnsafePointer(pointer)

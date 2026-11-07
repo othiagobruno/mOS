@@ -265,7 +265,6 @@ extension CTAdaptiveImageGlyph {
 @_silgen_name("kCTTextScaleRatioAttributeName")
 let kCTTextScaleRatioAttributeName: CFString
 
-@_silgen_name("NSTextEncapsulationAttributeName")
-let NSTextEncapsulationAttributeName: NSAttributedString.Key
+let NSTextEncapsulationAttributeName: NSAttributedString.Key = .init("NSTextEncapsulation")
 
 #endif

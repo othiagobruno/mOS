@@ -827,7 +827,7 @@ int dup(int fd) { return fd; }
 int dup2(int a, int b) { (void)a; return b; }
 int pipe(int *fds) { return (int)ret_errno(SYS1(SYS_PIPE, fds)); }   /* o kernel tem pipes (SYS_PIPE) */
 int fork(void) { return (int)ret_errno(SYS0(SYS_FORK)); }
-int execvp(const char *f, char *const *a) { (void)f; (void)a; cx_errno = CX_ENOSYS; return -1; }
+/* execve/execvp ficam em extra.c (precisam do posix_spawnp e do atalho do sandbox-exec) */
 int ioctl(int fd, unsigned long req, ...) {
     /* FIONBIO / FIOCLEX / FIONCLEX (libuv): o mOS ainda não distingue E/S não bloqueante nem
      * close-on-exec por descritor; aceitar mantém pipes e sockets utilizáveis */

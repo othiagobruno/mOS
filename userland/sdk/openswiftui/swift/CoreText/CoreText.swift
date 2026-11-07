@@ -366,3 +366,28 @@ public func _mos_CTFontGetAccessibilityBoldWeightOfWeight(_ weight: CGFloat) -> 
 @_silgen_name("kCTFontWeightSemibold") public let kCTFontWeightSemibold: CGFloat
 @_silgen_name("kCTFontWeightBold") public let kCTFontWeightBold: CGFloat
 @_silgen_name("kCTFontWeightBlack") public let kCTFontWeightBlack: CGFloat
+
+// MARK: - Hashable e tipos que o OpenSwiftUI espera do CoreText da Apple
+
+extension CTFont: @retroactive Hashable {
+    public static func == (lhs: CTFont, rhs: CTFont) -> Bool { CFEqual(lhs, rhs) }
+    public func hash(into hasher: inout Hasher) { hasher.combine(CFHash(self)) }
+}
+extension CTGlyphInfo: @retroactive Hashable {
+    public static func == (lhs: CTGlyphInfo, rhs: CTGlyphInfo) -> Bool { CFEqual(lhs, rhs) }
+    public func hash(into hasher: inout Hasher) { hasher.combine(CFHash(self)) }
+}
+
+public class CTLine: Hashable, @unchecked Sendable {
+    public init() {}
+    public static func == (lhs: CTLine, rhs: CTLine) -> Bool { lhs === rhs }
+    public func hash(into hasher: inout Hasher) { hasher.combine(ObjectIdentifier(self)) }
+}
+
+public struct CTCompositionLanguage: RawRepresentable, Hashable, Codable, Sendable {
+    public var rawValue: Int32
+    public init(rawValue: Int32) { self.rawValue = rawValue }
+    public static let unset = CTCompositionLanguage(rawValue: 0)
+}
+
+public func CTParagraphStyleGetCompositionLanguageForLanguage(_ language: CFString?) -> CTCompositionLanguage { .unset }

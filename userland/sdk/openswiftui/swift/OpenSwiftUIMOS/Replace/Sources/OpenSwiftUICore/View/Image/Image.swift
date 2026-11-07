@@ -233,7 +233,7 @@ package struct ImageResolutionContext {
     }
 
     package func effectiveAllowedDynamicRange(for image: GraphicsImage) -> Image.DynamicRange? {
-        #if canImport(CoreGraphics)
+        #if canImport(Darwin)
         guard allowedDynamicRange != .none else {
             return .none
         }

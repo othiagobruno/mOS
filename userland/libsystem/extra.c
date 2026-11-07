@@ -189,7 +189,7 @@ static size_t attr_stack(const void *a) {
 int pthread_create(unsigned long *t, const void *attr, void *(*fn)(void *), void *arg) {
     size_t sz = (attr_stack(attr) + 0xFFF) & ~(size_t)0xFFF;
     char *stack = mmap(0, sz, 3, 0x1002, -1, 0);
-    if (stack == (char *)-1) return 35;
+    if (stack == (char *)-1) { cx_fdprintf(2, "[thread] pthread_create: sem pilha de %lu KiB\n", (unsigned long)(sz >> 10)); return 35; }
     cx_tstart_t *ts = malloc(sizeof *ts);
     if (!ts) return 35;
     ts->fn = fn;
@@ -198,7 +198,7 @@ int pthread_create(unsigned long *t, const void *attr, void *(*fn)(void *), void
     top -= 8;                                   /* rsp = 16n - 8, como logo após um call */
     *(u64 *)top = 0;
     long tid = SYS3(SYS_THREAD_CREATE, cx_thread_entry, top, ts);
-    if (tid < 0) { free(ts); return 35; }
+    if (tid < 0) { free(ts); cx_fdprintf(2, "[thread] pthread_create: o kernel recusou a thread (%ld)\n", tid); return 35; }
     cx_fdprintf(2, "[thread] %ld: entrada %p, arg %p\n", tid, (void *)fn, arg);   /* diagnóstico temporário (porte do VS Code) */
     *t = (unsigned long)tid;
     return 0;
@@ -441,19 +441,10 @@ void _tlv_atexit(void (*fn)(void *), void *obj) { __cxa_atexit(fn, obj, 0); }
 
 /* memória virtual */
 #define CX_MMAP_BASE 0x400100000000ULL   /* USER_MMAP_BASE do kernel */
-/* TEMPORÁRIO (diagnóstico do Claude Code): /Sistema/Biblioteca/mmap-trace liga o registro de mmap/mprotect */
-static int mtrace = -1;
-static void mt(const char *what, void *a, size_t len, int prot, int flags, long r) {
-    if (mtrace < 0) { mos_stat_t st; mtrace = SYS2(SYS_STAT, "/Sistema/Biblioteca/mmap-trace", &st) == 0; }
-    if (mtrace) cx_fdprintf(2, "[mm] %s %p %lx prot %d fl %x -> %lx\n", what, a, (unsigned long)len, prot, flags, r);
-}
-static void *mmap_real(void *addr, size_t len, int prot, int flags, int fd, off_t off);
 void *mmap(void *addr, size_t len, int prot, int flags, int fd, off_t off) {
-    void *r = mmap_real(addr, len, prot, flags, fd, off);
-    mt("mmap", addr, len, prot, flags, (long)r);
-    return r;
-}
-static void *mmap_real(void *addr, size_t len, int prot, int flags, int fd, off_t off) {
+    /* MAP_JIT (0x800): o V8 pede uma região anônima executável. O NX está desligado no mOS,
+     * então a página de usuário já executa; aqui só garantimos o caminho anônimo. */
+    if (flags & 0x800) flags |= 0x1000;
     /* MAP_FIXED sobre a pilha (página de guarda do Rust, por exemplo): a região já existe */
     if ((flags & 0x10) && addr && (u64)addr >= 0x400000000000ULL && (u64)addr < 0x400040000000ULL) return addr;
     /* MAP_FIXED|MAP_ANON dentro da área de mmap (ex.: trecho de uma reserva do PartitionAlloc):
@@ -479,15 +470,23 @@ static void *mmap_real(void *addr, size_t len, int prot, int flags, int fd, off_
     return (void *)r;
 }
 int munmap(void *a, size_t len) { return SYS2(SYS_MUNMAP, a, len) < 0 ? -1 : 0; }
+void cx_mach_record_prot(u64 addr, u64 len, int prot);   /* mach.c: proteção registrada, lida pelo mach_vm_region */
 int mprotect(void *a, size_t len, int prot) {
-    /* liberar acesso a um trecho reservado: as páginas que faltam passam a vir sob demanda (as existentes ficam) */
+    /* liberar acesso a um trecho reservado: as páginas que faltam passam a vir sob demanda (as existentes ficam).
+     * Os bits de proteção não mudam o PTE: EFER.NXE está desligado, então leitura/escrita já executa.
+     * A proteção pedida fica registrada no kernel para o mach_vm_region (base::ProtectedMemory do Chromium). */
+    if (len) cx_mach_record_prot((u64)a, (u64)len, prot);
     if (prot && len && (u64)a >= CX_MMAP_BASE) {
         long r = SYS3(SYS_MMAP, len, 3, a);
-        mt("mprotect", a, len, prot, 0, r);
         if (r < 0) { cx_errno = (int)-r; return -1; }
-    } else mt("mprotect", a, len, prot, 0, 0);
+    }
     return 0;
 }
+/* JIT do macOS 11+. O V8 alterna escrita e execução com isto. No mOS as duas já valem ao mesmo tempo. */
+void pthread_jit_write_protect_np(int enabled) { (void)enabled; }
+int pthread_jit_write_protect_supported_np(void) { return 1; }
+void pthread_jit_write_with_callback_np(void (*cb)(void *), void *ctx) { if (cb) cb(ctx); }
+void sys_icache_invalidate(void *start, size_t len) { (void)start; (void)len; }
 int madvise(void *a, size_t len, int adv) { (void)a; (void)len; (void)adv; return 0; }
 int posix_madvise(void *a, size_t len, int adv) { (void)a; (void)len; (void)adv; return 0; }
 int mlock(const void *a, size_t len) { (void)a; (void)len; return 0; }
@@ -572,6 +571,42 @@ int posix_spawnp(int *pid, const char *f, const void *fa, const void *at, char *
 int posix_spawn(int *pid, const char *f, const void *fa, const void *at, char *const *av, char *const *ev) {
     return posix_spawnp(pid, f, fa, at, av, ev);
 }
+/* execve substitui o processo: gera o programa novo, espera e sai com o código dele (o pai que deu
+ * wait continua vendo este pid). /usr/bin/sandbox-exec não existe como arquivo: o Codex o chama com
+ * `-p <política> -- comando`. A política é ignorada (o Seatbelt daqui não confina) e o comando roda. */
+void _exit(int code);
+int execve(const char *path, char *const argv[], char *const envp[]) {
+    (void)envp;
+    if (!path || !path[0]) { cx_errno = CX_EINVAL; return -1; }
+    const char *run = path;
+    char *const *av = argv;
+    const char *base = path;
+    for (const char *s = path; *s; s++) if (*s == '/') base = s + 1;
+    if (!strcmp(base, "sandbox-exec")) {
+        int i = 1;
+        while (av && av[i]) {
+            if (!strcmp(av[i], "--")) { i++; break; }
+            if ((!strcmp(av[i], "-p") || !strcmp(av[i], "-f") || !strcmp(av[i], "-n") || !strcmp(av[i], "-D")) && av[i + 1]) {
+                i += 2;
+                continue;
+            }
+            if (av[i][0] == '-') { i++; continue; }
+            break;
+        }
+        if (!av || !av[i]) { cx_errno = CX_EINVAL; return -1; }
+        run = av[i];
+        av = av + i;
+    }
+    int pid = 0;
+    int rc = posix_spawnp(&pid, run, 0, 0, av ? av : argv, 0);
+    if (rc != 0 || pid <= 0) { cx_errno = rc ? rc : CX_ENOENT; return -1; }
+    int st = 0;
+    waitpid(pid, &st, 0);
+    _exit((st >> 8) & 0xFF);
+    return -1;
+}
+int execv(const char *path, char *const argv[]) { return execve(path, argv, 0); }
+int execvp(const char *file, char *const argv[]) { return execve(file, argv, 0); }
 
 typedef struct { char sysname[256], nodename[256], release[256], version[256], machine[256]; } mac_utsname_t;
 int uname(mac_utsname_t *u) {

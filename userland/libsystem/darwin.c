@@ -503,6 +503,32 @@ char *sandbox_extension_issue_file(const char *ext_class, const char *path, u32 
 }
 long sandbox_extension_consume(const char *token) { (void)token; return 1; }
 int sandbox_extension_release(long handle) { (void)handle; return 0; }
+
+/* csops: o binário não é assinado (sem CS_VALID, igual ao SecCode). ADHOC + GET_TASK_ALLOW +
+ * DEBUGGED deixam o V8 e o Crashpad seguirem sem tratar o processo como inválido. */
+int csops(int pid, unsigned int ops, void *useraddr, size_t usersize) {
+    (void)pid;
+    if (ops == 0) {                                                                 /* CS_OPS_STATUS */
+        if (!useraddr || usersize < 4) { cx_errno = CX_EINVAL; return -1; }
+        *(u32 *)useraddr = 0x2u | 0x4u | 0x10000000u | 0x40000000u;                 /* ADHOC | GET_TASK_ALLOW | DEBUGGED | DEV_CODE */
+        return 0;
+    }
+    if (ops == 5 && useraddr && usersize >= 20) { memset(useraddr, 0, 20); return 0; } /* CS_OPS_CDHASH */
+    if (ops == 4 && useraddr && usersize > 1) {                                     /* CS_OPS_PIDPATH */
+        extern char **NXArgv;
+        const char *p = NXArgv && NXArgv[0] ? NXArgv[0] : "/app";
+        size_t n = strlen(p);
+        if (n + 1 > usersize) { cx_errno = CX_ENOMEM; return -1; }
+        memcpy(useraddr, p, n + 1);
+        return 0;
+    }
+    cx_errno = CX_ENOSYS;
+    return -1;
+}
+int csops_audittoken(int pid, unsigned int ops, void *useraddr, size_t usersize, void *token) {
+    (void)token;
+    return csops(pid, ops, useraddr, usersize);
+}
 int SecKeychainAddCallback(void *cb, u32 mask, void *ctx) { (void)cb; (void)mask; (void)ctx; return 0; }
 int SecKeychainRemoveCallback(void *cb) { (void)cb; return 0; }
 

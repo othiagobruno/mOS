@@ -116,7 +116,33 @@ static int filho(void) {
     return 0;
 }
 
+/* proteção registrada (mach_vm_region): mprotect(READ) numa faixa, RW no meio dela, e endereço sem registro */
+static u8 protbuf[4 * 4096] __attribute__((aligned(4096)));
+static int teste_protecao(void) {
+    u64 base = (u64)protbuf;
+    u64 p1[8] = {base, 4 * 4096, 1 /* READ */, 0,0,0,0,0};
+    u64 p2[8] = {base + 4096, 4096, 3 /* RW */, 0,0,0,0,0};
+    if (mvm(MACH_VM_PROTECT, p1) || mvm(MACH_VM_PROTECT, p2)) { print("machtest: FALHA vm_protect\n"); return 1; }
+    u64 r0[8] = {base + 10, 0,0,0,0,0,0,0}, r1[8] = {base + 4096 + 8, 0,0,0,0,0,0,0}, r2[8] = {base + 3 * 4096, 0,0,0,0,0,0,0};
+    u64 r3[8] = {base + 64 * 4096 * 16, 0,0,0,0,0,0,0};    /* longe: sem registro */
+    if (mvm(MACH_VM_REGION, r0) || mvm(MACH_VM_REGION, r1) || mvm(MACH_VM_REGION, r2) || mvm(MACH_VM_REGION, r3)) {
+        print("machtest: FALHA vm_region\n"); return 1;
+    }
+    int ok = r0[3] == 1 && r0[1] == base && r0[2] == 4096 &&       /* [base, base+4K): só leitura */
+             r1[3] == 3 && r1[1] == base + 4096 && r1[2] == 4096 && /* o meio: RW */
+             r2[3] == 1 && r2[1] == base + 2 * 4096 && r2[2] == 2 * 4096 &&   /* o resto da divisão: só leitura */
+             r3[3] == 7;                                            /* sem registro: RWX, como antes */
+    if (!ok) {
+        print("machtest: FALHA protecao (r0 %d/%d r1 %d/%d r2 %d/%d r3 %d)\n", (i64)r0[3], (i64)r0[2],
+              (i64)r1[3], (i64)r1[2], (i64)r2[3], (i64)r2[2], (i64)r3[3]);
+        return 1;
+    }
+    print("machtest: protecao registrada OK (READ, RW no meio, divisao, sem registro = RWX)\n");
+    return 0;
+}
+
 static int pai(void) {
+    if (teste_protecao()) return 1;
     u32 svc = 0;
     int r = (int)mbs(MACH_BS_CHECK_IN, SVC, &svc);
     if (r != 0 || !svc) { print("machtest: FALHA check_in r=%d\n", (i64)r); return 1; }

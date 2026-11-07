@@ -150,7 +150,14 @@ typedef struct mspace {
     u32 n, cap;
     u32 next_idx;
     kport_t *spawn_special;   /* bootstrap do próximo filho */
+    /* proteção REGISTRADA por faixa (initprot dos segmentos Mach-O, mprotect, mach_vm_protect), para
+     * mach_vm_region responder como o macOS. Não muda a PTE: o V8 escreve em código marcado RX pelo
+     * caminho MAP_JIT (pthread_jit_write_protect_np é vazio aqui), e uma PTE só-leitura o derrubaria. */
+    struct prange { u64 lo, hi; u32 prot; } *pr;
+    u32 npr, cappr;
 } mspace_t;
+
+static void prot_set(mspace_t *sp, u64 lo, u64 hi, u32 prot);
 
 static kport_t *ports_all;
 static kport_t *g_bootstrap;  /* o "launchd" do mOS: objeto do kernel, nunca liberado */
@@ -1151,7 +1158,7 @@ static u32 ca_op(mspace_t *sp, u32 op, u64 *a) {
 
 /* ------------------------------------------------------------ memória compartilhada (SYS_MACH_VM) */
 static u32 vm_op(mspace_t *sp, u32 op, u64 *a) {
-    if (op >= MACH_VM_CA_ALLOC) return ca_op(sp, op, a);
+    if (op >= MACH_VM_CA_ALLOC && op <= MACH_VM_CA_DROP) return ca_op(sp, op, a);   /* só a faixa das CA (4..8) */
     if (op == MACH_VM_MAKE_ENTRY) {
         u64 size = (a[0] + 0xFFF) & ~0xFFFULL;
         kport_t *parent = NULL;
@@ -1246,7 +1253,73 @@ static u32 vm_op(mspace_t *sp, u32 op, u64 *a) {
         a[1] = e && e->port && e->port->mem ? e->port->mem->npages * 4096 : 0;
         return KERN_SUCCESS;
     }
+    if (op == MACH_VM_PROTECT) {
+        if (a[0] < USER_BASE || a[0] + a[1] > USER_END || a[0] + a[1] < a[0]) return KERN_INVALID_ADDRESS;
+        prot_set(sp, a[0], a[0] + a[1], (u32)a[2]);
+        return KERN_SUCCESS;
+    }
+    if (op == MACH_VM_REGION) {
+        u64 addr = a[0];
+        if (addr < USER_BASE || addr >= USER_END) return KERN_INVALID_ADDRESS;
+        /* faixa registrada que contém o endereço; sem registro: a página, RWX (o NX está desligado) */
+        for (u32 i = 0; i < sp->npr; i++)
+            if (addr >= sp->pr[i].lo && addr < sp->pr[i].hi) {
+                a[1] = sp->pr[i].lo;
+                a[2] = sp->pr[i].hi - sp->pr[i].lo;
+                a[3] = sp->pr[i].prot;
+                a[4] = 7;
+                return KERN_SUCCESS;
+            }
+        a[1] = addr & ~0xFFFULL;
+        a[2] = 4096;
+        a[3] = 7;
+        a[4] = 7;
+        return KERN_SUCCESS;
+    }
     return KERN_INVALID_ARGUMENT;
+}
+
+/* ------------------------------------------------------------ proteção registrada (mach_vm_region) */
+#define MAX_PRANGES 8192
+static void prot_set(mspace_t *sp, u64 lo, u64 hi, u32 prot) {
+    lo &= ~0xFFFULL;
+    hi = (hi + 0xFFF) & ~0xFFFULL;
+    if (hi <= lo) return;
+    /* tira [lo, hi) das faixas existentes (cortando ou dividindo), depois acrescenta a nova */
+    for (u32 i = 0; i < sp->npr; i++) {
+        struct prange *r = &sp->pr[i];
+        if (r->hi <= lo || r->lo >= hi) continue;
+        if (r->lo < lo && r->hi > hi) {                   /* a nova cai no meio: divide em duas */
+            if (sp->npr == sp->cappr) {                   /* garante espaço ANTES de mexer (r pode mudar de lugar) */
+                if (sp->npr >= MAX_PRANGES) return;
+                u32 nc = sp->cappr ? sp->cappr * 2 : 64;
+                struct prange *n = krealloc(sp->pr, nc * sizeof *n);
+                if (!n) return;
+                sp->pr = n; sp->cappr = nc;
+                r = &sp->pr[i];
+            }
+            struct prange tail = {hi, r->hi, r->prot};
+            r->hi = lo;
+            sp->pr[sp->npr++] = tail;
+            continue;
+        }
+        if (r->lo < lo) r->hi = lo;                       /* corta a ponta direita */
+        else if (r->hi > hi) r->lo = hi;                  /* corta a ponta esquerda */
+        else { sp->pr[i--] = sp->pr[--sp->npr]; }         /* coberta por inteiro: sai */
+    }
+    if (sp->npr >= MAX_PRANGES) return;                   /* tabela cheia: fica o padrão (RWX) */
+    if (sp->npr == sp->cappr) {
+        u32 nc = sp->cappr ? sp->cappr * 2 : 64;
+        struct prange *n = krealloc(sp->pr, nc * sizeof *n);
+        if (!n) return;
+        sp->pr = n; sp->cappr = nc;
+    }
+    sp->pr[sp->npr++] = (struct prange){lo, hi, prot & 7};
+}
+
+void machipc_set_prot(process_t *p, u64 lo, u64 hi, u32 prot) {
+    mspace_t *sp = sp_of(p);
+    if (sp) prot_set(sp, lo, hi, prot);
 }
 
 /* ------------------------------------------------------------ entrada das syscalls */
@@ -1295,9 +1368,16 @@ u64 machipc_syscall(int_frame_t *f) {
 /* ------------------------------------------------------------ ciclo de vida do processo */
 void machipc_spawn(process_t *parent, process_t *child) {
     if (!child) return;
+    bool fresh = !child->mach;                            /* fork: o carregador Mach-O não passou por aqui */
     mspace_t *sp = sp_of(child);
     if (!sp) return;
     mspace_t *psp = parent ? parent->mach : NULL;
+    /* fork: mesma memória do pai, então a mesma proteção registrada. (Um filho Mach-O de posix_spawn já
+     * registrou a dos próprios segmentos no macho_load, antes de chegar aqui.) */
+    if (fresh && psp && psp->npr && !sp->npr) {
+        sp->pr = kmalloc(psp->npr * sizeof *sp->pr);
+        if (sp->pr) { memcpy(sp->pr, psp->pr, psp->npr * sizeof *sp->pr); sp->npr = sp->cappr = psp->npr; }
+    }
     /* herda a porta de bootstrap: a escolhida por posix_spawnattr_setspecialport_np, senão a do pai */
     kport_t *inherit = NULL;
     if (psp) {
@@ -1328,5 +1408,6 @@ void machipc_exit(process_t *p) {
     }
     while (sp->n) { kport_t *port = sp->e[sp->n - 1].port; sp->n--; port_unref(port); }
     kfree(sp->e);
+    kfree(sp->pr);
     kfree(sp);
 }

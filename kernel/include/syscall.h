@@ -105,6 +105,9 @@ enum {
     MACH_VM_MAKE_ENTRY = 1, /* a0 = tamanho, a1 = deslocamento/endereço, a2 = perm, a3 = pai -> a4 = nome, a5 = tamanho */
     MACH_VM_MAP,            /* a0 = endereço (entrada se fixo), a1 = tamanho, a2 = flags, a3 = objeto, a4 = deslocamento, a5 = prot -> a0 */
     MACH_VM_ENTRY_INFO,     /* a0 = objeto -> a1 = tamanho */
+    MACH_VM_PROTECT = 16,   /* (16+: longe das MACH_VM_CA_* da sessão CoreAnimation, 4..) */
+                            /* a0 = endereço, a1 = tamanho, a2 = prot (VM_PROT_*): registra a proteção (mprotect) */
+    MACH_VM_REGION = 17,    /* a0 = endereço -> a1 = início, a2 = tamanho, a3 = prot, a4 = prot máxima */
     MACH_VM_CA_ALLOC = 4,   /* () -> a0 = id de CAContext, único no sistema */
     MACH_VM_CA_PUBLISH,     /* a0 = id, a1 = nome da entrada de memória -> a2 = geração */
     MACH_VM_CA_GEN,         /* a0 = id -> a1 = geração (0 = ninguém publicou) */

@@ -6,7 +6,11 @@
 #include <stdarg.h>
 #include <stddef.h>
 
-/* stdio que o Foundation usa (String(format:)) */
+/* stdio que o Foundation usa (String(format:)). A libc Darwin do zig troca vsnprintf por uma macro
+   de fortify; o Swift precisa da função. */
+#ifdef vsnprintf
+#undef vsnprintf
+#endif
 int vsnprintf(char *buffer, size_t size, const char *format, va_list args);
 
 double sin(double), cos(double), tan(double), asin(double), acos(double), atan(double), atan2(double, double);

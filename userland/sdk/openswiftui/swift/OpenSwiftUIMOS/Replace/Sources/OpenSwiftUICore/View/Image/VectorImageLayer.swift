@@ -197,7 +197,7 @@ package class CachedVectorImageContents: VectorImageContents {
     }
 
     package override func image(size: CGSize, imageScale: CGFloat, prefersMask: Bool) -> CGImage? {
-        #if canImport(CoreGraphics)
+        #if canImport(Darwin)
         let nativeSize = self.size
         let sizeMatches = size == nativeSize
         let key = CacheKey(hasColor: !prefersMask)

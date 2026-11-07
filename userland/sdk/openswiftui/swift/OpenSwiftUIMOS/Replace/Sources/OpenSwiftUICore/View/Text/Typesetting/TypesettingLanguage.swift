@@ -235,7 +235,7 @@ extension TypesettingLanguage {
             if let content,
                let identifier = CTFontCopyTallestTextStyleLanguageForString(
                    _mosCFString(content())
-               ) as String? {
+               ).map(String.init) {
                 return .font(identifier: identifier)
             }
             #endif

@@ -176,6 +176,7 @@ typedef struct {
     char name[17];
     u64 vmaddr, vmsize, fileoff, filesize;
     bool zero;              /* __PAGEZERO */
+    u32 prot;               /* initprot (VM_PROT_*): registrada para o mach_vm_region (machipc.c) */
 } seg_t;
 
 typedef struct {
@@ -312,6 +313,7 @@ static bool parse(mach_t *mo, const u8 *m, usize len, bool dylib, char *err, usi
             s->name[16] = 0;
             s->vmaddr = vmaddr; s->vmsize = vmsize; s->fileoff = fileoff; s->filesize = zero ? 0 : filesize;
             s->zero = zero;
+            s->prot = initprot;
             if (zero) break;
             if (vmaddr < mo->vmin) mo->vmin = vmaddr;
             if (vmaddr + vmsize > mo->vmax) mo->vmax = vmaddr + vmsize;
@@ -1039,6 +1041,25 @@ static void link_order(link_t *K, int i) {
     K->order[K->norder++] = i;
 }
 
+/* registra a proteção inicial (initprot) de cada segmento das imagens [from, n) no kernel, para o
+ * mach_vm_region do libSystem responder como o macOS (o base::ProtectedMemory do Chromium confere que o
+ * segmento PROTECTED_MEMORY é só leitura). Não muda a PTE: ver machipc.c. */
+static void segs_prot(process_t *p, link_t *K, int from) {
+#ifndef MOS_HOST_TEST
+    for (int i = from; i < K->n; i++) {
+        image_t *I = K->im[i];
+        for (int s = 0; s < I->mo.nsegs; s++) {
+            seg_t *g = &I->mo.segs[s];
+            if (g->zero || !g->vmsize) continue;
+            u64 lo = g->vmaddr + (u64)I->slide;
+            machipc_set_prot(p, lo, lo + g->vmsize, g->prot);
+        }
+    }
+#else
+    (void)p; (void)K; (void)from;
+#endif
+}
+
 /* põe a imagem em at; devolve o próximo endereço livre (alinhado a 64 KiB) */
 static u64 place_image(image_t *I, u64 at) {
     u64 size = I->mo.vmax - I->mo.vmin;
@@ -1347,6 +1368,7 @@ static i64 dyld_open(process_t *p, link_t *K, const char *req, u64 out_va, u64 c
             o.first = (u64)n0; o.nnew = (u64)(K->n - n0);
             kprintf("dyld: dlopen %s: %d imagem(ns) em %llx (%u símbolo(s) ausente(s)%s%s)\n", req, K->n - n0,
                     (unsigned long long)base0, K->nmissing, K->nmissing ? ", ex.: " : "", K->nmissing ? K->missing[0] : "");
+            segs_prot(p, K, n0);
             for (int i = n0; i < K->n; i++) image_persist(K->im[i]);
         }
         for (u32 i = 0; i < K->nmissing; i++) kfree(K->missing[i]);
@@ -1626,6 +1648,7 @@ bool macho_load(process_t *p, const u8 *img, usize len, const char *arg, u64 *en
     kfree(tmp);
     (void)objc_off;                                     /* na partida as seções ObjC vão pela pilha */
     if (!ok) { link_free(K); snprintf(err, errlen, "falha ao montar a pilha"); return false; }
+    segs_prot(p, K, 0);
     /* o grafo de imagens fica vivo para o dlopen em tempo de execução (SYS_DYLD) */
     link_keep(p, K);
     *entry = ls_entry;

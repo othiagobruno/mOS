@@ -147,16 +147,26 @@ typedef struct {
     u16 user_wired_count;
 } vm_region_basic_info_64_t;
 #pragma pack(pop)
+/* registra no kernel a proteção pedida para [addr, addr+len) (mprotect em extra.c e mach_vm_protect chamam).
+ * VM_PROT_* e PROT_* têm os mesmos bits (READ 1, WRITE 2, EXEC 4). Só registra: a PTE não muda. */
+void cx_mach_record_prot(u64 addr, u64 len, int prot) {
+    u64 q[8] = {addr, len, (u64)(prot & 7), 0, 0, 0, 0, 0};
+    cx_syscall(SYS_MACH_VM, (long)MACH_VM_PROTECT, (long)q, 0, 0, 0);
+}
 kern_return_t mach_vm_region(mach_port_t task, u64 *addr, u64 *size, int flavor, void *info, u32 *count, mach_port_t *obj) {
     (void)task;
     if (obj) *obj = 0;
     if (!addr || !size || *addr < 0x400000000000ULL || *addr >= 0x408000000000ULL) return KERN_INVALID_ADDRESS;
-    *addr &= ~0xFFFULL;
-    *size = 4096;
+    /* a proteção vem do kernel (machipc.c, MACH_VM_REGION): initprot dos segmentos Mach-O e o que o
+     * mprotect/mach_vm_protect pediram. Sem registro: a página, RWX (o NX está desligado no mOS). */
+    u64 q[8] = {*addr, 0, 0, 7, 7, 0, 0, 0};
+    if (cx_syscall(SYS_MACH_VM, (long)MACH_VM_REGION, (long)q, 0, 0, 0) != KERN_SUCCESS) return KERN_INVALID_ADDRESS;
+    *addr = q[1];
+    *size = q[2];
     if (flavor == VM_REGION_BASIC_INFO_64 && info && count && *count >= sizeof(vm_region_basic_info_64_t) / 4) {
         vm_region_basic_info_64_t *b = info;
-        b->protection = 3;           /* VM_PROT_READ | VM_PROT_WRITE */
-        b->max_protection = 7;
+        b->protection = (int)q[3];
+        b->max_protection = (int)q[4];
         b->inheritance = 1;          /* VM_INHERIT_COPY */
         b->shared = b->reserved = 0;
         b->offset = 0;
@@ -166,21 +176,164 @@ kern_return_t mach_vm_region(mach_port_t task, u64 *addr, u64 *size, int flavor,
     }
     return KERN_SUCCESS;
 }
+int mprotect(void *a, size_t len, int prot);
 kern_return_t mach_vm_protect(mach_port_t task, u64 addr, u64 size, int set_max, int prot) {
-    (void)task; (void)addr; (void)size; (void)set_max; (void)prot;
-    return KERN_SUCCESS;            /* o mOS ainda mapeia tudo leitura/escrita */
+    (void)task;
+    if (!size) return KERN_SUCCESS;
+    if (!set_max) cx_mach_record_prot(addr, size, prot);  /* o mprotect abaixo também registra; aqui cobre prot = 0 */
+    /* o mesmo que mprotect: uma reserva PROT_NONE passa a ter páginas sob demanda.
+     * prot == 0 continua sucesso e não desmapeia. */
+    if (prot && mprotect((void *)addr, (size_t)size, prot) != 0) return KERN_INVALID_ADDRESS;
+    return KERN_SUCCESS;
 }
 kern_return_t vm_protect(mach_port_t task, u64 addr, u64 size, int set_max, int prot) { return mach_vm_protect(task, addr, size, set_max, prot); }
 kern_return_t vm_region_64(mach_port_t task, u64 *addr, u64 *size, int flavor, void *info, u32 *count, mach_port_t *obj) {
     return mach_vm_region(task, addr, size, flavor, info, count, obj);
 }
 
-/* ---- Security mínima: o mOS não tem entitlements nem assinatura; "sem SecTask" é resposta válida */
-void *SecTaskCreateFromSelf(void *allocator) { (void)allocator; return 0; }
+/* ---- SecTask: não há AMFI. O objeto existe para o Chromium perguntar, e os entitlements
+ * de JIT, biblioteca do bundle e rede vêm concedidos (kCFBooleanTrue, +1). O resto é NULL. */
+extern void *kCFBooleanTrue;
+const char *cx_cstr(void *o);
+void *cx_str(const char *s);
+void *objc_retain(void *o);
+void *SecTaskCreateFromSelf(void *allocator) { (void)allocator; return cx_str("mOS-sectask"); }
 void *SecTaskCopyValueForEntitlement(void *task, void *entitlement, void **error) {
-    (void)task; (void)entitlement;
+    (void)task;
     if (error) *error = 0;
+    const char *k = entitlement ? cx_cstr(entitlement) : 0;
+    if (!k) return 0;
+    if (!strncmp(k, "com.apple.security.cs.", 22) ||
+        !strcmp(k, "com.apple.security.get-task-allow") ||
+        !strcmp(k, "com.apple.security.network.client") ||
+        !strcmp(k, "com.apple.security.network.server"))
+        return objc_retain(kCFBooleanTrue);
     return 0;
+}
+kern_return_t task_for_pid(mach_port_t target, int pid, mach_port_t *task) {
+    (void)target;
+    if (!task) return KERN_INVALID_ARGUMENT;
+    if (pid == (int)SYS0(SYS_GETPID)) { *task = TASK_PORT; return KERN_SUCCESS; }
+    *task = 0;
+    return KERN_FAILURE;
+}
+kern_return_t pid_for_task(mach_port_t task, int *pid) {
+    if (!pid) return KERN_INVALID_ARGUMENT;
+    if (task == TASK_PORT) { *pid = (int)SYS0(SYS_GETPID); return KERN_SUCCESS; }
+    *pid = 0;
+    return KERN_FAILURE;
+}
+kern_return_t host_get_special_port(mach_port_t host, int node, int which, mach_port_t *port) {
+    (void)host; (void)node; (void)which;
+    if (port) *port = 0;
+    return KERN_FAILURE;             /* sem host_priv */
+}
+
+/* ---- task_info / thread_info / host_info (sabores que o Chromium lê na partida).
+ * Contagem em natural_t (4 bytes). Buffer menor que o sabor: KERN_INVALID_ARGUMENT. */
+typedef struct { int seconds, microseconds; } cx_time_value_t;
+typedef struct {
+    int suspend_count; int pad;
+    u64 virtual_size, resident_size;
+    cx_time_value_t user_time, system_time;
+    int policy;
+} cx_task_basic64_t;
+typedef struct {
+    u64 virtual_size, resident_size, resident_size_max;
+    cx_time_value_t user_time, system_time;
+    int policy, suspend_count;
+} cx_mach_task_basic_t;
+typedef struct { u64 addr, size; int format; } cx_task_dyld_t;
+typedef struct {
+    cx_time_value_t user_time, system_time;
+    int cpu_usage, policy, run_state, flags, suspend_count, sleep_time;
+} cx_thread_basic_t;
+typedef struct { u64 thread_id, thread_handle, dispatch_qaddr; } cx_thread_id_t;
+typedef struct {
+    int max_cpus, avail_cpus, memory_size, cpu_type, cpu_subtype, cpu_threadtype;
+    int physical_cpu, physical_cpu_max, logical_cpu, logical_cpu_max;
+    u64 max_mem;
+} cx_host_basic_t;
+
+static int info_fit(void *info, u32 *count, u32 bytes) {
+    if (!info || !count || *count < bytes / 4 || bytes > 1024) return 0;
+    memset(info, 0, bytes);
+    *count = bytes / 4;
+    return 1;
+}
+kern_return_t task_info(mach_port_t task, int flavor, void *info, u32 *count) {
+    if (task && task != TASK_PORT) return KERN_INVALID_ARGUMENT;
+    if (flavor == 5 && info_fit(info, count, sizeof(cx_task_basic64_t))) {          /* TASK_BASIC_INFO_64 */
+        cx_task_basic64_t *b = info;
+        b->virtual_size = b->resident_size = 64ull << 20;
+        b->policy = 1;
+        return KERN_SUCCESS;
+    }
+    if (flavor == 20 && info_fit(info, count, sizeof(cx_mach_task_basic_t))) {      /* MACH_TASK_BASIC_INFO */
+        cx_mach_task_basic_t *b = info;
+        b->virtual_size = b->resident_size = b->resident_size_max = 64ull << 20;
+        b->policy = 1;
+        return KERN_SUCCESS;
+    }
+    if (flavor == 17 && info_fit(info, count, sizeof(cx_task_dyld_t))) {            /* TASK_DYLD_INFO */
+        ((cx_task_dyld_t *)info)->format = 1;                                       /* 64 bits; sem all_image_info */
+        return KERN_SUCCESS;
+    }
+    if (flavor == 15 && info_fit(info, count, 32)) {                                /* TASK_AUDIT_TOKEN */
+        u32 *v = info;
+        v[0] = v[1] = v[3] = 501; v[2] = v[4] = 20; v[5] = (u32)SYS0(SYS_GETPID); v[7] = 1;
+        return KERN_SUCCESS;
+    }
+    if (flavor == 13 && info_fit(info, count, 8)) { ((u32 *)info)[0] = 501; ((u32 *)info)[1] = 20; return KERN_SUCCESS; }
+    if ((flavor == 22 || flavor == 23) && info && count && *count >= 4) {          /* TASK_VM_INFO */
+        u32 n = *count > 128 ? 128 : *count;
+        memset(info, 0, n * 4);
+        *count = n;
+        if (n >= 2) ((u64 *)info)[0] = 64ull << 20;                                 /* virtual_size */
+        if (n >= 4) ((u32 *)info)[3] = 4096;                                        /* page_size */
+        if (n >= 6) ((u64 *)info)[2] = 32ull << 20;                                 /* resident_size */
+        if (n >= 38) *(u64 *)((u8 *)info + 144) = 32ull << 20;                      /* phys_footprint */
+        return KERN_SUCCESS;
+    }
+    return KERN_INVALID_ARGUMENT;
+}
+kern_return_t thread_info(mach_port_t thread, int flavor, void *info, u32 *count) {
+    u32 tid = thread >= THREAD_BASE ? thread - THREAD_BASE : (u32)SYS0(SYS_GETTID);
+    if (flavor == 3 && info_fit(info, count, sizeof(cx_thread_basic_t))) {          /* THREAD_BASIC_INFO */
+        ((cx_thread_basic_t *)info)->run_state = 1;                                 /* TH_STATE_RUNNING */
+        ((cx_thread_basic_t *)info)->policy = 1;
+        return KERN_SUCCESS;
+    }
+    if (flavor == 4 && info_fit(info, count, sizeof(cx_thread_id_t))) {             /* THREAD_IDENTIFIER_INFO */
+        ((cx_thread_id_t *)info)->thread_id = tid;
+        ((cx_thread_id_t *)info)->thread_handle = tid;
+        return KERN_SUCCESS;
+    }
+    return KERN_INVALID_ARGUMENT;
+}
+kern_return_t host_info(mach_port_t host, int flavor, void *info, u32 *count) {
+    (void)host;
+    if (flavor == 1 && info_fit(info, count, sizeof(cx_host_basic_t))) {            /* HOST_BASIC_INFO */
+        cx_host_basic_t *h = info;
+        long c = SYS0(SYS_CPUS);
+        int n = c > 0 ? (int)c : 1;
+        h->max_cpus = h->avail_cpus = h->physical_cpu = h->physical_cpu_max = h->logical_cpu = h->logical_cpu_max = n;
+        h->memory_size = 0x80000000;
+        h->cpu_type = 0x01000007;                                                   /* CPU_TYPE_X86_64 */
+        h->cpu_subtype = 3;
+        h->max_mem = 2ull << 30;
+        return KERN_SUCCESS;
+    }
+    return KERN_INVALID_ARGUMENT;
+}
+kern_return_t host_kernel_version(mach_port_t host, char *ver) {
+    (void)host;
+    if (!ver) return KERN_INVALID_ARGUMENT;
+    const char *s = "Darwin Kernel Version 23.0.0: mOS Nucleo; RELEASE_X86_64";
+    u32 i = 0;
+    for (; s[i] && i < 511; i++) ver[i] = s[i];
+    ver[i] = 0;
+    return KERN_SUCCESS;
 }
 
 /* ---- semáforos Mach (contador + espera cooperativa; o mOS tem threads preemptivas).
@@ -367,9 +520,11 @@ kern_return_t mach_vm_deallocate(mach_port_t task, u64 addr, u64 size) {
     u64 base = addr & ~0xFFFULL;
     u64 end = (addr + size + 0xFFF) & ~0xFFFULL;
     if (end < base) return KERN_INVALID_ARGUMENT;
-    /* o V8 e o PartitionAlloc soltam regiões com isto. Antes a chamada dizia sucesso e deixava
-     * as páginas no lugar; um mapeamento seguinte no mesmo endereço lia lixo. */
-    if (munmap((void *)base, (size_t)(end - base)) != 0) return KERN_INVALID_ADDRESS;
+    /* o V8 e o PartitionAlloc soltam regiões com isto. Na arena de mmap o intervalo sai de
+     * verdade, senão o próximo mapeamento no mesmo endereço lia lixo. Fora dela (a imagem
+     * Mach-O) o kernel recusa a chamada inteira e nada é desmapeado; devolver erro faz o
+     * PartitionAlloc abortar o renderer. */
+    munmap((void *)base, (size_t)(end - base));
     return KERN_SUCCESS;
 }
 kern_return_t vm_deallocate(mach_port_t task, u64 addr, u64 size) { return mach_vm_deallocate(task, addr, size); }
