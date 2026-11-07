@@ -606,3 +606,350 @@ void *CGColorGetColorSpace(const void *c) {
     if (!srgb) srgb = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);   /* referência mantida: "Get" não transfere posse */
     return srgb;
 }
+
+/* ======================================================================== bitmap, CGImage, data provider
+ * O Skia do Chromium pede um CGBitmapContext, desenha com CTFontDrawGlyphs e lê os pixels.
+ * CGImage vira contents de CALayer (quartzcore.c pergunta por cx_cgimage_src). */
+#define CGK_BM 0xC6B10001u
+#define CGK_IM 0xC6B10002u
+#define CGK_PR 0xC6B10003u
+typedef struct {
+    cx_class_t *isa;
+    u32 kind;
+    u8 *data;
+    u32 w, h, bpr, bpp, info;
+    int owns;
+    double ta, tb, tc, td, tx, ty;          /* matriz de texto */
+    double ca, cb, cc, cd, cu, cv;          /* CTM: x' = ca*x + cc*y + cu */
+    u32 fill;
+    int gsp;
+    double gstk[8][6];
+    u32 fillstk[8];
+    void *cb_info;
+    void (*cb)(void *, const void *, size_t);
+    u64 cb_size;
+} cgobj_t;
+static cx_class_t BM_c, BM_m, IM_c, IM_m, PR_c, PR_m;
+static int cg_ready;
+extern void cx_object_free(id o);
+extern u32 cx_cg_fill_argb(void);
+static void cg_dealloc(id self, SEL c) {
+    (void)c;
+    cgobj_t *o = (cgobj_t *)self;
+    if (o->kind == CGK_PR && o->cb) o->cb(o->cb_info, o->data, (size_t)o->cb_size);
+    if (o->kind == CGK_IM && o->cb_info) objc_release((id)o->cb_info);
+    if (o->owns) free(o->data);
+    o->data = 0;
+    o->kind = 0;
+    cx_object_free(self);
+}
+static void cg_ensure(void) {
+    if (cg_ready) return;
+    cx_class_t *ns = cx_class_named("NSObject");
+    if (!ns) return;
+    u32 extra = (u32)(sizeof(cgobj_t) - sizeof(void *));
+    cx_define_class(&BM_c, &BM_m, "CGBitmapContext", ns, extra);
+    cx_define_class(&IM_c, &IM_m, "CGImage", ns, extra);
+    cx_define_class(&PR_c, &PR_m, "CGDataProvider", ns, extra);
+    cx_add_method(&BM_c, "dealloc", (void *)cg_dealloc);
+    cx_add_method(&IM_c, "dealloc", (void *)cg_dealloc);
+    cx_add_method(&PR_c, "dealloc", (void *)cg_dealloc);
+    cg_ready = 1;
+}
+static cgobj_t *as_kind(const void *p, u32 kind) {
+    cgobj_t *o = (cgobj_t *)p;
+    return o && o->kind == kind ? o : 0;
+}
+static cgobj_t *cg_new(cx_class_t *cls, u32 kind) {
+    cg_ensure();
+    if (!cg_ready) return 0;
+    cgobj_t *o = (cgobj_t *)cx_alloc_instance(cls);
+    if (!o) return 0;
+    o->kind = kind;
+    o->ta = 1;
+    o->td = 1;
+    return o;
+}
+
+void *CGDataProviderCreateWithData(void *info, const void *data, size_t size, void (*release)(void *, const void *, size_t)) {
+    if (!data || !size) return 0;
+    cgobj_t *o = cg_new(&PR_c, CGK_PR);
+    if (!o) return 0;
+    o->data = (u8 *)data;
+    o->cb_size = size;
+    o->cb_info = info;
+    o->cb = release;
+    return o;
+}
+void CGDataProviderRelease(void *p) { if (as_kind(p, CGK_PR)) objc_release((id)p); }
+void *CGDataProviderRetain(void *p) { if (as_kind(p, CGK_PR)) objc_retain((id)p); return p; }
+
+static u32 px_argb(const u8 *s, u32 info) {
+    u32 ainfo = info & 31;
+    int first = ainfo == 2 || ainfo == 4 || ainfo == 6;
+    u8 A, R, G, B;
+    if (first) { B = s[0]; G = s[1]; R = s[2]; A = s[3]; }
+    else { R = s[0]; G = s[1]; B = s[2]; A = s[3]; }
+    if (ainfo == 0 || ainfo == 5 || ainfo == 6) A = 255;
+    return (u32)A << 24 | (u32)R << 16 | (u32)G << 8 | B;
+}
+void *CGImageCreate(size_t w, size_t h, size_t bpc, size_t bpp, size_t bpr, const void *space, u32 info,
+                    void *provider, const void *decode, bool shouldInterpolate, int intent) {
+    (void)space; (void)decode; (void)shouldInterpolate; (void)intent;
+    cgobj_t *p = as_kind(provider, CGK_PR);
+    if (!p || !w || !h || bpc != 8 || (bpp != 32 && bpp != 8)) return 0;
+    if ((u64)w * h * 4 > (32u << 20)) return 0;
+    if (!bpr) bpr = w * (bpp / 8);
+    if (!h || bpr > p->cb_size / h) return 0;
+    cgobj_t *o = cg_new(&IM_c, CGK_IM);
+    if (!o) return 0;
+    o->w = (u32)w; o->h = (u32)h; o->bpr = (u32)w * 4; o->bpp = 4; o->info = info; o->owns = 1;
+    o->data = malloc((size_t)o->bpr * h);
+    if (!o->data) { objc_release((id)o); return 0; }
+    u32 ainfo = info & 31;
+    o->owns = 1;
+    int prem = ainfo == 1 || ainfo == 2;
+    /* guarda AARRGGBB. Já pré-multiplicado fica marcado para o compositor não multiplicar de novo. */
+    o->cb_size = prem ? 1 : 0;
+    for (size_t y = 0; y < h; y++) {
+        u32 *row = (u32 *)(o->data + y * o->bpr);
+        const u8 *src = p->data + y * bpr;
+        if (bpp == 8) {
+            for (size_t x = 0; x < w; x++) { u8 v = src[x]; row[x] = 0xFF000000u | (u32)v << 16 | (u32)v << 8 | v; }
+        } else {
+            for (size_t x = 0; x < w; x++) row[x] = px_argb(src + x * 4, info);
+        }
+    }
+    return o;
+}
+void CGImageRelease(void *img) { if (as_kind(img, CGK_IM)) objc_release((id)img); }
+void *CGImageRetain(void *img) { if (as_kind(img, CGK_IM)) objc_retain((id)img); return img; }
+size_t CGImageGetWidth(void *img) { cgobj_t *o = as_kind(img, CGK_IM); return o ? o->w : 0; }
+size_t CGImageGetHeight(void *img) { cgobj_t *o = as_kind(img, CGK_IM); return o ? o->h : 0; }
+size_t CGImageGetBytesPerRow(void *img) { cgobj_t *o = as_kind(img, CGK_IM); return o ? o->bpr : 0; }
+int cx_cgimage_src(const void *img, const u8 **px, long *bpr, int *w, int *h, int *premul) {
+    cgobj_t *o = as_kind(img, CGK_IM);
+    if (!o || !o->data) return 0;
+    if (px) *px = o->data;
+    if (bpr) *bpr = (long)o->bpr;
+    if (w) *w = (int)o->w;
+    if (h) *h = (int)o->h;
+    if (premul) *premul = o->cb_size ? 1 : 0;
+    return 1;
+}
+
+void *CGBitmapContextCreate(void *data, size_t w, size_t h, size_t bpc, size_t bpr, void *space, u32 bitmapInfo) {
+    (void)space;
+    if (!w || !h || bpc != 8) return 0;
+    u32 ainfo = bitmapInfo & 31;
+    u32 bpp = ainfo == 7 ? 1 : 4;
+    if (!bpr) bpr = w * bpp;
+    if (bpr < w * bpp) return 0;
+    if ((u64)bpr * h > (32u << 20)) return 0;
+    int owns = 0;
+    if (!data) {
+        data = malloc(bpr * h);
+        if (!data) return 0;
+        memset(data, 0, bpr * h);
+        owns = 1;
+    }
+    cgobj_t *o = cg_new(&BM_c, CGK_BM);
+    if (!o) { if (owns) free(data); return 0; }
+    o->data = data; o->w = (u32)w; o->h = (u32)h; o->bpr = (u32)bpr; o->bpp = bpp; o->info = bitmapInfo; o->owns = owns;
+    /* como no macOS: origem embaixo à esquerda, y para cima */
+    o->ca = 1; o->cd = -1; o->cv = (double)h;
+    o->fill = 0xFF000000;
+    return o;
+}
+void CGContextRelease(void *c) { if (as_kind(c, CGK_BM)) objc_release((id)c); }
+void *CGContextRetain(void *c) { if (as_kind(c, CGK_BM)) objc_retain((id)c); return c; }
+void *CGBitmapContextGetData(void *c) { cgobj_t *o = as_kind(c, CGK_BM); return o ? o->data : 0; }
+size_t CGBitmapContextGetWidth(void *c) { cgobj_t *o = as_kind(c, CGK_BM); return o ? o->w : 0; }
+size_t CGBitmapContextGetHeight(void *c) { cgobj_t *o = as_kind(c, CGK_BM); return o ? o->h : 0; }
+size_t CGBitmapContextGetBytesPerRow(void *c) { cgobj_t *o = as_kind(c, CGK_BM); return o ? o->bpr : 0; }
+size_t CGBitmapContextGetBitsPerPixel(void *c) { cgobj_t *o = as_kind(c, CGK_BM); return o ? o->bpp * 8 : 0; }
+size_t CGBitmapContextGetBitsPerComponent(void *c) { return as_kind(c, CGK_BM) ? 8 : 0; }
+u32 CGBitmapContextGetBitmapInfo(void *c) { cgobj_t *o = as_kind(c, CGK_BM); return o ? o->info : 0; }
+void CGContextSetTextMatrix(void *c, CGAffineTransform t) {
+    cgobj_t *o = as_kind(c, CGK_BM);
+    if (!o) return;
+    o->ta = t.a; o->tb = t.b; o->tc = t.c; o->td = t.d; o->tx = t.tx; o->ty = t.ty;
+}
+CGAffineTransform CGContextGetTextMatrix(void *c) {
+    cgobj_t *o = as_kind(c, CGK_BM);
+    CGAffineTransform t = CGAffineTransformIdentity;
+    if (!o) return t;
+    t.a = o->ta; t.b = o->tb; t.c = o->tc; t.d = o->td; t.tx = o->tx; t.ty = o->ty;
+    return t;
+}
+static u32 over_px(u32 s, u32 d) {
+    u32 a = s >> 24;
+    if (a == 255) return s;
+    if (!a) return d;
+    u32 k = 255 - a;
+    u32 rb = ((d & 0xFF00FF) * k + 0x800080) >> 8 & 0xFF00FF;
+    u32 ag = ((d >> 8 & 0xFF00FF) * k + 0x800080) & 0xFF00FF00;
+    return s + (rb | ag);
+}
+static void store_px(u8 *dp, u32 info, u32 argb) {
+    u32 ainfo = info & 31;
+    int first = ainfo == 0 || ainfo == 2 || ainfo == 4 || ainfo == 6;
+    u32 A = argb >> 24, R = (argb >> 16) & 255, G = (argb >> 8) & 255, B = argb & 255;
+    if (first) { dp[0] = (u8)B; dp[1] = (u8)G; dp[2] = (u8)R; dp[3] = (u8)A; }
+    else { dp[0] = (u8)R; dp[1] = (u8)G; dp[2] = (u8)B; dp[3] = (u8)A; }
+}
+static void blend_at(cgobj_t *o, int x, int y, u32 src) {
+    if (x < 0 || y < 0 || (u32)x >= o->w || (u32)y >= o->h || !(src >> 24)) return;
+    u8 *dp = o->data + (size_t)y * o->bpr + (size_t)x * o->bpp;
+    if (o->bpp == 1) {
+        u32 a = src >> 24;
+        if (a > dp[0]) dp[0] = (u8)a;
+        return;
+    }
+    u32 dst = px_argb(dp, o->info);
+    u32 ainfo = o->info & 31;
+    if (ainfo != 1 && ainfo != 2) {
+        u32 a = dst >> 24;
+        if (a && a < 255) dst = a << 24 | (((dst >> 16) & 255) * a / 255) << 16 | (((dst >> 8) & 255) * a / 255) << 8 | ((dst & 255) * a / 255);
+    }
+    store_px(dp, o->info, over_px(src, dst));
+}
+static void ctm_of(const cgobj_t *o, double x, double y, double *dx, double *dy) {
+    *dx = o->ca * x + o->cc * y + o->cu;
+    *dy = o->cb * x + o->cd * y + o->cv;
+}
+static void dev_of(const cgobj_t *o, double x, double y, double *dx, double *dy) {
+    double ux = o->ta * x + o->tc * y + o->tx;
+    double uy = o->tb * x + o->td * y + o->ty;
+    ctm_of(o, ux, uy, dx, dy);
+}
+int cx_bitmap_draw_glyph(void *ctx, double x, double y, const u8 *alpha, int gw, int gh, int left, int top) {
+    cgobj_t *o = as_kind(ctx, CGK_BM);
+    if (!o || !o->data || !alpha || gw <= 0 || gh <= 0) return 0;
+    double px, py;
+    dev_of(o, x, y, &px, &py);
+    int ox = (int)floor(px) + left;
+    int oy = (int)floor(py) + top;
+    u32 fill = o->fill ? o->fill : cx_cg_fill_argb();
+    if (!fill) fill = 0xFF000000;
+    for (int gy = 0; gy < gh; gy++) {
+        for (int gx = 0; gx < gw; gx++) {
+            u8 cov = alpha[(size_t)gy * gw + gx];
+            if (!cov) continue;
+            u32 A = ((fill >> 24) * cov) / 255;
+            u32 src = A << 24 | (((fill >> 16) & 255) * A / 255) << 16 | (((fill >> 8) & 255) * A / 255) << 8 | ((fill & 255) * A / 255);
+            blend_at(o, ox + gx, oy + gy, src);
+        }
+    }
+    return 1;
+}
+void cx_bm_set_fill(const void *c, u32 argb) { cgobj_t *o = as_kind(c, CGK_BM); if (o) o->fill = argb; }
+double cx_bm_scale(const void *c) {
+    cgobj_t *o = as_kind(c, CGK_BM);
+    if (!o) return 1;
+    double s1 = sqrt(o->cb * o->cb + o->cd * o->cd);
+    double s2 = sqrt(o->tb * o->tb + o->td * o->td);
+    double s = s1 * s2;
+    return s > 0.02 ? s : 1;
+}
+static void ctm_concat(cgobj_t *o, double a, double b, double c, double d, double tx, double ty) {
+    double na = o->ca * a + o->cc * b, nb = o->cb * a + o->cd * b;
+    double nc = o->ca * c + o->cc * d, nd = o->cb * c + o->cd * d;
+    double nu = o->ca * tx + o->cc * ty + o->cu, nv = o->cb * tx + o->cd * ty + o->cv;
+    o->ca = na; o->cb = nb; o->cc = nc; o->cd = nd; o->cu = nu; o->cv = nv;
+}
+void CGContextTranslateCTM(void *c, double tx, double ty) { cgobj_t *o = as_kind(c, CGK_BM); if (o) ctm_concat(o, 1, 0, 0, 1, tx, ty); }
+void CGContextScaleCTM(void *c, double sx, double sy) { cgobj_t *o = as_kind(c, CGK_BM); if (o) ctm_concat(o, sx, 0, 0, sy, 0, 0); }
+void CGContextConcatCTM(void *c, CGAffineTransform t) { cgobj_t *o = as_kind(c, CGK_BM); if (o) ctm_concat(o, t.a, t.b, t.c, t.d, t.tx, t.ty); }
+CGAffineTransform CGContextGetCTM(void *c) {
+    cgobj_t *o = as_kind(c, CGK_BM);
+    CGAffineTransform t = CGAffineTransformIdentity;
+    if (!o) return t;
+    t.a = o->ca; t.b = o->cb; t.c = o->cc; t.d = o->cd; t.tx = o->cu; t.ty = o->cv;
+    return t;
+}
+int cx_bm_save(const void *c) {
+    cgobj_t *o = as_kind(c, CGK_BM);
+    if (!o || o->gsp >= 8) return o ? 1 : 0;
+    o->gstk[o->gsp][0] = o->ca; o->gstk[o->gsp][1] = o->cb; o->gstk[o->gsp][2] = o->cc;
+    o->gstk[o->gsp][3] = o->cd; o->gstk[o->gsp][4] = o->cu; o->gstk[o->gsp][5] = o->cv;
+    o->fillstk[o->gsp] = o->fill;
+    o->gsp++;
+    return 1;
+}
+int cx_bm_restore(const void *c) {
+    cgobj_t *o = as_kind(c, CGK_BM);
+    if (!o) return 0;
+    if (o->gsp <= 0) return 1;
+    o->gsp--;
+    o->ca = o->gstk[o->gsp][0]; o->cb = o->gstk[o->gsp][1]; o->cc = o->gstk[o->gsp][2];
+    o->cd = o->gstk[o->gsp][3]; o->cu = o->gstk[o->gsp][4]; o->cv = o->gstk[o->gsp][5];
+    o->fill = o->fillstk[o->gsp];
+    return 1;
+}
+void *CGBitmapContextCreateImage(void *c) {
+    cgobj_t *o = as_kind(c, CGK_BM);
+    if (!o || !o->data) return 0;
+    void *p = CGDataProviderCreateWithData(0, o->data, (size_t)o->bpr * o->h, 0);
+    void *img = CGImageCreate(o->w, o->h, 8, o->bpp * 8, o->bpr, 0, o->info, p, 0, false, 0);
+    CGDataProviderRelease(p);
+    return img;
+}
+void CGContextDrawImage(void *c, CGRect rect, void *image) {
+    cgobj_t *o = as_kind(c, CGK_BM);
+    cgobj_t *im = as_kind(image, CGK_IM);
+    if (!o || !im || !o->data || !im->data || rect.size.width == 0 || rect.size.height == 0) return;
+    double det = o->ca * o->cd - o->cb * o->cc;
+    if (det > -1e-12 && det < 1e-12) return;
+    double xs[4], ys[4];
+    double rx[2] = {rect.origin.x, rect.origin.x + rect.size.width};
+    double ry[2] = {rect.origin.y, rect.origin.y + rect.size.height};
+    int n = 0;
+    for (int j = 0; j < 2; j++) for (int i = 0; i < 2; i++, n++) ctm_of(o, rx[i], ry[j], &xs[n], &ys[n]);
+    int x0 = (int)floor(xs[0]), y0 = (int)floor(ys[0]), x1 = x0, y1 = y0;
+    for (int i = 1; i < 4; i++) {
+        int ix = (int)floor(xs[i]), iy = (int)floor(ys[i]);
+        if (ix < x0) x0 = ix; if (ix > x1) x1 = ix; if (iy < y0) y0 = iy; if (iy > y1) y1 = iy;
+    }
+    if (x0 < 0) x0 = 0; if (y0 < 0) y0 = 0;
+    if (x1 >= (int)o->w) x1 = (int)o->w - 1; if (y1 >= (int)o->h) y1 = (int)o->h - 1;
+    for (int y = y0; y <= y1; y++) {
+        for (int x = x0; x <= x1; x++) {
+            double dx = x + 0.5 - o->cu, dy = y + 0.5 - o->cv;
+            double ux = (o->cd * dx - o->cc * dy) / det;
+            double uy = (-o->cb * dx + o->ca * dy) / det;
+            double u = (ux - rect.origin.x) / rect.size.width;
+            double v = (uy - rect.origin.y) / rect.size.height;
+            if (u < 0 || u > 1 || v < 0 || v > 1) continue;
+            int sx = (int)(u * (im->w - 1) + 0.5), sy = (int)((1 - v) * (im->h - 1) + 0.5);
+            if (sx < 0) sx = 0; if (sy < 0) sy = 0;
+            if (sx >= (int)im->w) sx = (int)im->w - 1; if (sy >= (int)im->h) sy = (int)im->h - 1;
+            u32 p = ((u32 *)(im->data + (size_t)sy * im->bpr))[sx];
+            if (!im->cb_size) {
+                u32 a = p >> 24;
+                if (a < 255) p = a << 24 | (((p >> 16) & 255) * a / 255) << 16 | (((p >> 8) & 255) * a / 255) << 8 | ((p & 255) * a / 255);
+            }
+            blend_at(o, x, y, p);
+        }
+    }
+}
+size_t CGImageGetBitsPerPixel(void *img) { return as_kind(img, CGK_IM) ? 32 : 0; }
+size_t CGImageGetBitsPerComponent(void *img) { return as_kind(img, CGK_IM) ? 8 : 0; }
+u32 CGImageGetBitmapInfo(void *img) { cgobj_t *o = as_kind(img, CGK_IM); return o ? o->info : 0; }
+u32 CGImageGetAlphaInfo(void *img) { cgobj_t *o = as_kind(img, CGK_IM); return o ? (o->info & 31) : 0; }
+void *CGImageGetColorSpace(void *img) {
+    if (!as_kind(img, CGK_IM)) return 0;
+    return CGColorGetColorSpace(img);
+}
+void *CGImageGetDataProvider(void *img) {
+    cgobj_t *o = as_kind(img, CGK_IM);
+    if (!o || !o->data) return 0;
+    if (!o->cb_info) o->cb_info = CGDataProviderCreateWithData(0, o->data, (size_t)o->bpr * o->h, 0);
+    return o->cb_info;
+}
+void *CFDataCreate(void *alloc, const u8 *bytes, long n);
+void *CGDataProviderCopyData(void *p) {
+    cgobj_t *o = as_kind(p, CGK_PR);
+    if (!o || !o->data) return 0;
+    return CFDataCreate(0, o->data, (long)o->cb_size);
+}

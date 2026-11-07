@@ -489,11 +489,17 @@ typedef NSRect CGRect;
 typedef NSPoint CGPoint;
 static id cg_path;
 static id cgp(void) { if (!cg_path) cg_path = bp_new(); return cg_path; }
-void CGContextSetRGBFillColor(id c, double r, double g, double b, double a) { (void)c; ctx.fill = argb(cx_color(r, g, b, a)); }
+void cx_bm_set_fill(const void *c, u32 argb);
+int cx_bm_save(const void *c);
+int cx_bm_restore(const void *c);
+void CGContextSetRGBFillColor(id c, double r, double g, double b, double a) {
+    ctx.fill = argb(cx_color(r, g, b, a));
+    cx_bm_set_fill(c, ctx.fill);
+}
 void CGContextSetRGBStrokeColor(id c, double r, double g, double b, double a) { (void)c; ctx.stroke = argb(cx_color(r, g, b, a)); }
 void CGContextSetGrayFillColor(id c, double g, double a) { CGContextSetRGBFillColor(c, g, g, g, a); }
 void CGContextSetGrayStrokeColor(id c, double g, double a) { CGContextSetRGBStrokeColor(c, g, g, g, a); }
-void CGContextSetFillColorWithColor(id c, id color) { (void)c; ctx.fill = argb(color); }
+void CGContextSetFillColorWithColor(id c, id color) { ctx.fill = argb(color); cx_bm_set_fill(c, ctx.fill); }
 void CGContextSetStrokeColorWithColor(id c, id color) { (void)c; ctx.stroke = argb(color); }
 void CGContextSetLineWidth(id c, double w) { (void)c; ctx.line_width = w; pth(cgp())->lw = w; }
 void CGContextFillRect(id c, CGRect r) { (void)c; NSRectFill(r); }
@@ -513,8 +519,8 @@ void CGContextClosePath(id c) { (void)c; bp_close(cgp(), 0); }
 void CGContextFillPath(id c) { (void)c; bp_fill(cgp(), 0); bp_remove_all(cgp(), 0); }
 void CGContextStrokePath(id c) { (void)c; pth(cgp())->lw = ctx.line_width; bp_stroke(cgp(), 0); bp_remove_all(cgp(), 0); }
 void CGContextDrawPath(id c, int mode) { if (mode == 0 || mode == 3) bp_fill(cgp(), 0); if (mode >= 2) bp_stroke(cgp(), 0); bp_remove_all(cgp(), 0); (void)c; }
-void CGContextSaveGState(id c) { gc_save(c, 0); }
-void CGContextRestoreGState(id c) { gc_restore(c, 0); }
+void CGContextSaveGState(id c) { if (!cx_bm_save(c)) gc_save(c, 0); }
+void CGContextRestoreGState(id c) { if (!cx_bm_restore(c)) gc_restore(c, 0); }
 void CGContextSetLineCap(id c, int v) { (void)c; (void)v; }
 void CGContextSetLineJoin(id c, int v) { (void)c; (void)v; }
 void CGContextSetShouldAntialias(id c, int v) { (void)c; (void)v; }

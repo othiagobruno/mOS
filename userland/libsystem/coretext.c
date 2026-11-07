@@ -180,12 +180,12 @@ double CTFontGetAdvancesForGlyphs(id f, int orientation, const u16 *glyphs, ct_s
 }
 /* pinta o alfa do glifo num CGBitmapContext (coregraphics.c). 0 = não é bitmap. */
 int cx_bitmap_draw_glyph(void *ctx, double x, double y, const u8 *alpha, int w, int h, int left, int top);
-static int raster_glyph(id f, u16 g, i16 *w, i16 *h, i16 *left, i16 *top, u8 **buf) {
+static int raster_glyph(id f, u16 g, float size, i16 *w, i16 *h, i16 *left, i16 *top, u8 **buf) {
     gui_glyph_req_t req;
     memset(&req, 0, sizeof req);
     req.weight = (u32)fweight(f);
     req.glyph = g;
-    req.size = (float)fsize(f);
+    req.size = size > 0 ? size : (float)fsize(f);
     long n = SYS5(GUI_FONT, GF_RASTER, 0, 0, &req, 0);
     if (n < 0) return 0;
     *w = (i16)req.w; *h = (i16)req.h; *left = (i16)req.left; *top = (i16)req.top;
@@ -207,7 +207,7 @@ ct_rect_t CTFontGetBoundingRectsForGlyphs(id f, int orientation, const u16 *glyp
         if (font_live() && glyphs) {
             i16 w = 0, h = 0, left = 0, top = 0;
             u8 *buf = 0;
-            if (raster_glyph(f, glyphs[i], &w, &h, &left, &top, &buf)) {
+            if (raster_glyph(f, glyphs[i], (float)fsize(f), &w, &h, &left, &top, &buf)) {
                 /* top é o deslocamento y-down a partir da linha de base (negativo = acima) */
                 r.x = left;
                 r.y = -(double)(top + h);
@@ -221,19 +221,32 @@ ct_rect_t CTFontGetBoundingRectsForGlyphs(id f, int orientation, const u16 *glyp
     }
     return last;
 }
+double cx_bm_scale(const void *ctx);
 void CTFontDrawGlyphs(id f, const u16 *glyphs, const ct_pt_t *pos, size_t n, void *ctx) {
     if (!f || !glyphs || !pos || !ctx || !font_live()) return;
+    double sc = cx_bm_scale(ctx);
+    float sz = (float)(fsize(f) * (sc > 0 ? sc : 1));
     for (size_t i = 0; i < n; i++) {
         i16 w = 0, h = 0, left = 0, top = 0;
         u8 *buf = 0;
-        if (!raster_glyph(f, glyphs[i], &w, &h, &left, &top, &buf)) continue;
+        if (!raster_glyph(f, glyphs[i], sz, &w, &h, &left, &top, &buf)) continue;
         if (buf) cx_bitmap_draw_glyph(ctx, pos[i].x, pos[i].y, buf, w, h, left, top);
         free(buf);
     }
 }
 void *CTFontCreatePathForGlyph(id f, u16 g, const void *matrix) { (void)f; (void)g; (void)matrix; return 0; }
 void *CTFontCopyGraphicsFont(id f, void *attrs) { (void)f; (void)attrs; return 0; }
-id CTFontCopyAvailableTables(id f, u32 options) { (void)f; (void)options; return objc_retain(MSG0(id, cls("NSArray"), "array")); }
+id CTFontCopyAvailableTables(id f, u32 options) {
+    (void)options;
+    /* fourcc da Apple, em ordem: cmap glyf loca head hhea hmtx maxp name post OS/2 GPOS GSUB */
+    static const u32 tags[] = {0x636D6170u, 0x676C7966u, 0x6C6F6361u, 0x68656164u, 0x68686561u, 0x686D7478u,
+                               0x6D617870u, 0x6E616D65u, 0x706F7374u, 0x4F532F32u, 0x47504F53u, 0x47535542u};
+    id a = MSG0(id, cls("NSMutableArray"), "array");
+    int w = fweight(f);
+    for (u32 i = 0; font_live() && i < sizeof tags / sizeof tags[0]; i++)
+        if (SYS5(GUI_FONT, GF_TABLE, w, tags[i], 0, 0) > 0) MSG(void, a, "addObject:", cx_num_i((i64)tags[i]));
+    return objc_retain(a);
+}
 void *CTFontCopyTable(id f, u32 tag, u32 options) {
     (void)options;
     if (!font_live()) return 0;

@@ -28,7 +28,7 @@ Versão usada nas medições: Code 1.145.2 (`com.microsoft.VSCode`), Electron/Ch
 | Fontes: `NSFont`/`CTFont` (métricas, descritores, coleções; `coretext.c`) | ✅ métricas; glifos ainda não desenham |
 | **Janela do VS Code na tela** (`ElectronNSWindow` 1200×800, fundo do tema, menu do app, ícone no Dock) | ✅ 6 nov. 2026 20:31 — `build-vscode\shots\janela-vscode-primeira.png` |
 | Processo de renderização (`Code Helper (Renderer)`) e conteúdo da janela | ❌ o helper sobe (pid 5) e cai em `Electron+0x1B24D59` na thread principal dele |
-| Conteúdo de janelas CoreAnimation/IOSurface na tela (CALayer, CALayerHost, IOSurface por porta Mach) | ✅ app de teste no QEMU; com o VS Code ainda não visto (seção "CoreAnimation e IOSurface") |
+| Conteúdo de janelas CoreAnimation/IOSurface na tela (CALayer, CALayerHost, IOSurface por porta Mach) | ✅ no mesmo processo e entre processos (CAContext publicado; seção "CoreAnimation e IOSurface") |
 
 No Terminal do mOS:
 
@@ -335,9 +335,12 @@ seguida dos pixels. `IOSurfaceCreateMachPort` cria uma **entrada de memória** d
 Mach) sobre o bloco e põe marca|pid|id no contexto da porta; cada chamada devolve um direito novo, que o chamador desaloca, como
 no macOS. `IOSurfaceLookupFromMachPort`: se a porta é deste processo (contexto), devolve o mesmo objeto; senão mapeia a entrada
 (`mach_vm_map`), lê o cabeçalho e monta um IOSurface que enxerga os **mesmos pixels** — é o caminho do `Code Helper (GPU)` para o
-processo principal. Sem IPC no kernel (harness `machotest`), a porta é o nome local `0x7F000000 | id`. Os `CAContext` ainda são
-só do processo: um `CALayerHost` mostra o layer de um `CAContext` do mesmo processo (vale para `--in-process-gpu`); entre
-processos o Chromium por software manda o IOSurface (`CALayerParams.io_surface_mach_port`), não o `contextId`.
+processo principal. Sem IPC no kernel (harness `machotest`), a porta é o nome local `0x7F000000 | id`. Um `CALayerHost`
+mostra a árvore viva de um `CAContext` do mesmo processo. Entre processos o dono achata a árvore num buffer compartilhado
+(`MACH_VM_CA_PUBLISH` em `machipc.c`) e o host do outro processo o desenha; o `pump` do AppKit pede redesenho quando a
+geração muda. É o caminho remoto do Chromium (`ca_context_id`), o mais comum com GPU. Por software ele ainda pode mandar
+o IOSurface (`CALayerParams.io_surface_mach_port`). `class_getProperty` acha `contextId` e `layer`, então
+`RemoteLayerAPISupported` passa. `createFencePort` devolve um direito de envio; o commit não espera a cerca.
 
 **Teste** (`userland/testes/CamadaIOSurface/main.m`, compila igual no macOS): `NSWindow` + `NSTextField` + `NSView` com
 `wantsLayer`, layer raiz cinza, um sublayer com `contents` = IOSurface 240×180 BGRA pintado à mão (degradê, faixas que andam a
@@ -369,8 +372,7 @@ fraco virou "símbolo não implementado"); use definições fortes.
 - Rodar o VS Code (`tools/vscode-teste.ps1 ... -OutDir build-ca -Port 5923`) até a janela e conferir os avisos
   `objc[mOS]: -[CALayer ...] ainda não implementado` no log: não deu nesta sessão por falta de RAM livre no host (0,5–0,9 GB
   livres; o VM do VS Code usa 2,7 GB).
-- `CAContext` entre processos (`CALayerHost` mostrando um contexto de outro processo) — só se o Chromium usar o caminho remoto
-  (GPU de verdade); por software ele manda o IOSurface.
+- `CAContext` entre processos está no kernel (`MACH_VM_CA_*`): o quadro é a árvore achatada, não cada sublayer ao vivo.
 - `CGImage` como `contents` (o CoreGraphics do mOS ainda não tem `CGImageCreate`); `cornerRadius`, sombras, filtros, `mask` e
   transformações com rotação são aceitos e ignorados no desenho; amostragem sem filtro linear; formatos de 8 bytes (`RGhA`) e
   `l10r` não são desenhados.

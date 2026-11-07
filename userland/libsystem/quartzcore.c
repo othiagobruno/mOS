@@ -119,6 +119,8 @@ typedef struct lst {
     u32 autoresize;                  /* autoresizingMask */
     id bgc, borderc;                 /* CGColor (= NSColor do mOS) */
     double radius, border_w;
+    double shadow_r, shadow_ox, shadow_oy, shadow_op;
+    id shadowc;
     id *sub;
     u32 nsub, capsub;
     id super, delegate, name, mask;
@@ -131,6 +133,8 @@ typedef struct lst {
 typedef struct { cx_class_t *isa; double r, g, b, a; } qcolor_t;   /* = cgcolor_t / rgba_t */
 
 static int rendering;                /* não marcar views durante o desenho */
+static int publishing;               /* achatando um CAContext: não republicar no meio */
+static volatile int surf_dirty;      /* IOSurfaceUnlock chegou durante o desenho */
 static int tx_depth;                  /* CATransaction aberta: mudanças esperam o commit para publicar */
 static void layer_dirty(id l);
 static void note_ctx_id(u32 cid);
@@ -217,7 +221,9 @@ static id l_init_with(id self, SEL c, id other) {
         s->bounds = o->bounds; s->pos = o->pos; s->anchor = o->anchor; s->z = o->z; s->tf = o->tf; s->stf = o->stf;
         s->cscale = o->cscale; s->crect = o->crect; s->opacity = o->opacity; s->hidden = o->hidden; s->masks = o->masks;
         s->opaque = o->opaque; s->flipped = o->flipped; s->radius = o->radius; s->border_w = o->border_w;
+        s->shadow_r = o->shadow_r; s->shadow_ox = o->shadow_ox; s->shadow_oy = o->shadow_oy; s->shadow_op = o->shadow_op;
         keep(&s->contents, o->contents); keep(&s->gravity, o->gravity); keep(&s->bgc, o->bgc); keep(&s->borderc, o->borderc);
+        keep(&s->shadowc, o->shadowc);
     }
     return self;
 }
@@ -228,7 +234,7 @@ static void l_dealloc(id self, SEL c) {
     if (s) {
         for (u32 i = 0; i < s->nsub; i++) { ls(s->sub[i])->super = 0; objc_release(s->sub[i]); }
         free(s->sub);
-        id objs[] = {s->contents, s->gravity, s->bgc, s->borderc, s->name, s->mask, s->actions, s->style, s->filters, s->minf, s->magf};
+        id objs[] = {s->contents, s->gravity, s->bgc, s->borderc, s->shadowc, s->name, s->mask, s->actions, s->style, s->filters, s->minf, s->magf};
         for (u32 i = 0; i < sizeof objs / sizeof objs[0]; i++) if (objs[i]) objc_release(objs[i]);
         if (s->host_layer) host_remove(self);
         for (int i = 0; i < nvl; i++) if (vl[i].layer == self) vl[i].layer = 0;
@@ -332,6 +338,14 @@ static double l_border_w(id self, SEL c) { (void)c; return ls(self)->border_w; }
 static void l_set_border_w(id self, SEL c, double w) { (void)c; ls(self)->border_w = w; layer_dirty(self); }
 static double l_radius(id self, SEL c) { (void)c; return ls(self)->radius; }
 static void l_set_radius(id self, SEL c, double r) { (void)c; ls(self)->radius = r; layer_dirty(self); }
+static double l_shadow_r(id self, SEL c) { (void)c; return ls(self)->shadow_r; }
+static void l_set_shadow_r(id self, SEL c, double r) { (void)c; ls(self)->shadow_r = r; layer_dirty(self); }
+static double l_shadow_op(id self, SEL c) { (void)c; return ls(self)->shadow_op; }
+static void l_set_shadow_op(id self, SEL c, double o) { (void)c; ls(self)->shadow_op = o < 0 ? 0 : o > 1 ? 1 : o; layer_dirty(self); }
+static S l_shadow_off(id self, SEL c) { (void)c; S o = {ls(self)->shadow_ox, ls(self)->shadow_oy}; return o; }
+static void l_set_shadow_off(id self, SEL c, S o) { (void)c; ls(self)->shadow_ox = o.w; ls(self)->shadow_oy = o.h; layer_dirty(self); }
+static id l_shadow_c(id self, SEL c) { (void)c; return ls(self)->shadowc; }
+static void l_set_shadow_c(id self, SEL c, id col) { (void)c; keep(&ls(self)->shadowc, col); layer_dirty(self); }
 static id l_delegate(id self, SEL c) { (void)c; return ls(self)->delegate; }
 static void l_set_delegate(id self, SEL c, id d) { (void)c; ls(self)->delegate = d; }
 static id l_name(id self, SEL c) { (void)c; return ls(self)->name; }
@@ -625,13 +639,34 @@ static inline u32 scale_px(u32 s, u32 k) {      /* s * k/255 (opacidade) */
     u32 ag = ((s >> 8 & 0xFF00FF) * k + 0x800080) & 0xFF00FF00;
     return rb | ag;
 }
+/* canto arredondado: pilha, porque um layer filho pode recortar dentro do pai */
+typedef struct { double x0, y0, x1, y1, r; } rr_t;
+static rr_t rr_stk[8];
+static int rr_n;
+static int rr_outside(double x0, double y0, double x1, double y1, double rad, int x, int y) {
+    if (rad < 0.5) return 0;
+    double px = x + 0.5, py = y + 0.5, r = rad;
+    double ix0 = x0 + r, iy0 = y0 + r, ix1 = x1 - r, iy1 = y1 - r;
+    if (px >= x0 && px <= x1 && py >= iy0 && py <= iy1) return 0;
+    if (py >= y0 && py <= y1 && px >= ix0 && px <= ix1) return 0;
+    double dx = px < ix0 ? ix0 - px : px > ix1 ? px - ix1 : 0;
+    double dy = py < iy0 ? iy0 - py : py > iy1 ? py - iy1 : 0;
+    return dx * dx + dy * dy > r * r;
+}
+static int rr_out(int x, int y) {
+    for (int i = 0; i < rr_n; i++) if (rr_outside(rr_stk[i].x0, rr_stk[i].y0, rr_stk[i].x1, rr_stk[i].y1, rr_stk[i].r, x, y)) return 1;
+    return 0;
+}
 static void fill(clip_t k, double x0, double y0, double x1, double y1, u32 pc) {
     k = clip_and(k, x0, y0, x1, y1);
     if (k.x0 >= k.x1 || k.y0 >= k.y1 || !(pc >> 24)) return;
     touched = YES;
     for (int y = k.y0; y < k.y1; y++) {
         u32 *row = cv + (size_t)(y - cvy) * cvw - cvx;
-        for (int x = k.x0; x < k.x1; x++) row[x] = over(pc, row[x]);
+        for (int x = k.x0; x < k.x1; x++) {
+            if (rr_out(x, y)) continue;
+            row[x] = over(pc, row[x]);
+        }
     }
 }
 
@@ -676,19 +711,41 @@ static void blit(clip_t k, const src_t *s, double sx0, double sy0, double sw, do
     if (!ko) return;
     touched = YES;
     double fx = sw / (dx1 - dx0), fy = sh / (dy1 - dy0);
+    int linear = fx < 0.98 || fx > 1.02 || fy < 0.98 || fy > 1.02;
     for (int y = c.y0; y < c.y1; y++) {
-        int sy = (int)(sy0 + (y + 0.5 - dy0) * fy);
+        double sy = sy0 + (y + 0.5 - dy0) * fy;
         if (sy < 0) sy = 0;
-        if (sy >= s->h) sy = s->h - 1;
-        const u32 *srow = (const u32 *)(s->px + (long)sy * s->bpr);
+        if (sy > s->h - 1) sy = s->h - 1;
         u32 *row = cv + (size_t)(y - cvy) * cvw - cvx;
         double u = sx0 + (c.x0 + 0.5 - dx0) * fx;
         for (int x = c.x0; x < c.x1; x++, u += fx) {
-            int sx = (int)u;
+            if (rr_out(x, y)) continue;
+            double sx = u;
             if (sx < 0) sx = 0;
-            if (sx >= s->w) sx = s->w - 1;
-            u32 p = srow[sx];
-            if (!s->premul) p = premul(p, 1);
+            if (sx > s->w - 1) sx = s->w - 1;
+            int x0 = (int)sx, y0 = (int)sy;
+            u32 p;
+            if (!linear) {
+                p = ((const u32 *)(s->px + (long)y0 * s->bpr))[x0];
+            } else {
+                int x1 = x0 + 1 < s->w ? x0 + 1 : x0, y1 = y0 + 1 < s->h ? y0 + 1 : y0;
+                u32 p00 = ((const u32 *)(s->px + (long)y0 * s->bpr))[x0];
+                u32 p10 = ((const u32 *)(s->px + (long)y0 * s->bpr))[x1];
+                u32 p01 = ((const u32 *)(s->px + (long)y1 * s->bpr))[x0];
+                u32 p11 = ((const u32 *)(s->px + (long)y1 * s->bpr))[x1];
+                if (!s->premul) { p00 = premul(p00, 1); p10 = premul(p10, 1); p01 = premul(p01, 1); p11 = premul(p11, 1); }
+                double tx = sx - x0, ty = sy - y0;
+                u32 o = 0;
+                for (int ch = 0; ch < 4; ch++) {
+                    double a = ((p00 >> (ch * 8)) & 255) * (1 - tx) + ((p10 >> (ch * 8)) & 255) * tx;
+                    double b = ((p01 >> (ch * 8)) & 255) * (1 - tx) + ((p11 >> (ch * 8)) & 255) * tx;
+                    u32 v = (u32)(a * (1 - ty) + b * ty + 0.5);
+                    if (v > 255) v = 255;
+                    o |= v << (ch * 8);
+                }
+                p = o;
+            }
+            if (!linear && !s->premul) p = premul(p, 1);
             if (ko != 255) p = scale_px(p, ko);
             row[x] = over(p, row[x]);
         }
@@ -736,8 +793,36 @@ static void render(id l, map_t m, clip_t k, float op, int depth, BOOL skip_bg) {
     double xa = m.ax + m.bx * L->bounds.o.x, xb = m.ax + m.bx * (L->bounds.o.x + L->bounds.s.w);
     double ya = m.ay + m.by * L->bounds.o.y, yb = m.ay + m.by * (L->bounds.o.y + L->bounds.s.h);
     double rx0 = xa < xb ? xa : xb, rx1 = xa < xb ? xb : xa, ry0 = ya < yb ? ya : yb, ry1 = ya < yb ? yb : ya;
+    if (L->shadow_op > 0.01 && L->shadow_r > 0.5) {
+        double sc = m.bx < 0 ? -m.bx : m.bx;
+        double rad = L->shadow_r * (sc > 0 ? sc : 1);
+        double dx = L->shadow_ox * m.bx, dy = L->shadow_oy * m.by;
+        u32 col = L->shadowc ? color_of(L->shadowc) : 0xFF000000u;
+        for (int i = 3; i >= 1; i--) {
+            double e = rad * i / 3.0;
+            float a = (float)L->shadow_op * (float)(4 - i) / 6.f;
+            fill(k, rx0 + dx - e, ry0 + dy - e, rx1 + dx + e, ry1 + dy + e, premul(col, op * a));
+        }
+    }
+    int pushed = 0;
+    if (L->radius > 0.5 && rr_n < 8) {
+        double sc = m.bx < 0 ? -m.bx : m.bx;
+        rr_stk[rr_n].x0 = rx0; rr_stk[rr_n].y0 = ry0; rr_stk[rr_n].x1 = rx1; rr_stk[rr_n].y1 = ry1;
+        rr_stk[rr_n].r = L->radius * (sc > 0 ? sc : 1);
+        rr_n++;
+        pushed = 1;
+    }
     if (!skip_bg && L->bgc) fill(k, rx0, ry0, rx1, ry1, premul(color_of(L->bgc), op));
     if (L->contents) draw_contents(L, k, rx0, ry0, rx1, ry1, m.by < 0, op);
+    if (L->border_w > 0 && L->borderc) {
+        u32 bc = premul(color_of(L->borderc), op);
+        double b = L->border_w;
+        fill(k, rx0, ry0, rx1, ry0 + b, bc);
+        fill(k, rx0, ry1 - b, rx1, ry1, bc);
+        fill(k, rx0, ry0 + b, rx0 + b, ry1 - b, bc);
+        fill(k, rx1 - b, ry0 + b, rx1, ry1 - b, bc);
+    }
+    if (pushed && !L->masks) { rr_n--; pushed = 0; }
     clip_t kk = L->masks ? clip_and(k, rx0, ry0, rx1, ry1) : k;
     /* CALayerHost: árvore do mesmo processo, ou o quadro publicado por outro */
     if (L->host_layer && L->ctx_id) {
@@ -767,14 +852,7 @@ static void render(id l, map_t m, clip_t k, float op, int depth, BOOL skip_bg) {
             if (subs != tmp) free(subs);
         }
     }
-    if (L->border_w > 0 && L->borderc) {
-        u32 bc = premul(color_of(L->borderc), op);
-        double b = L->border_w;
-        fill(k, rx0, ry0, rx1, ry0 + b, bc);
-        fill(k, rx0, ry1 - b, rx1, ry1, bc);
-        fill(k, rx0, ry0 + b, rx0 + b, ry1 - b, bc);
-        fill(k, rx1 - b, ry0 + b, rx1, ry1 - b, bc);
-    }
+    if (pushed && rr_n > 0) rr_n--;
 }
 
 /* manda o buffer à janela em faixas GC_IMAGE (ARGB não pré-multiplicado, como o kernel espera) */
@@ -834,7 +912,7 @@ static void tree_extent(id l, int depth, double *w, double *h) {
     for (u32 i = 0; i < s->nsub; i++) tree_extent(s->sub[i], depth + 1, w, h);
 }
 static void publish_context(cactx_t *k) {
-    if (!k || !k->layer || publishing) return;
+    if (!k || !k->layer || publishing || ca_kernel == 0) return;
     lst_t *L = ls(k->layer);
     int w = (int)(L->bounds.s.w + 0.5), h = (int)(L->bounds.s.h + 0.5);
     if (w < 1 || h < 1) {
@@ -878,6 +956,8 @@ static void publish_context(cactx_t *k) {
     if (ca_vm(MACH_VM_CA_PUBLISH, a) == 0) hdr->gen = (u32)a[2];
     rendering--;
     publishing = 0;
+    /* um IOSurfaceUnlock durante o achatamento pede mais um quadro, fora desta chamada */
+    if (surf_dirty) { surf_dirty = 0; note_ctx_id(k->cid); }
 }
 static u32 dirty_cid[MAX_CTX];
 static int ndirty;
@@ -1076,7 +1156,6 @@ static void v_set_policy(id self, SEL c, i64 p) { (void)self; (void)c; (void)p; 
 /* IOSurfaceUnlock de escrita (em qualquer thread): marca as views com layer, que o laço do AppKit
  * redesenha no próximo giro (-setNeedsDisplay: só liga uma flag). O -run do appkit.c não passa por
  * cx_runloop_hook, então a marcação é feita aqui mesmo; o gancho do laço fica como reforço. */
-static volatile int surf_dirty;
 void cx_iosurface_changed(id s) {
     (void)s;
     if (rendering) { surf_dirty = 1; return; }
@@ -1131,6 +1210,10 @@ void cx_quartzcore_init(void) {
     LM("borderColor", l_borderc); LM("setBorderColor:", l_set_borderc);
     LM("borderWidth", l_border_w); LM("setBorderWidth:", l_set_border_w);
     LM("cornerRadius", l_radius); LM("setCornerRadius:", l_set_radius);
+    LM("shadowRadius", l_shadow_r); LM("setShadowRadius:", l_set_shadow_r);
+    LM("shadowOpacity", l_shadow_op); LM("setShadowOpacity:", l_set_shadow_op);
+    LM("shadowOffset", l_shadow_off); LM("setShadowOffset:", l_set_shadow_off);
+    LM("shadowColor", l_shadow_c); LM("setShadowColor:", l_set_shadow_c);
     LM("delegate", l_delegate); LM("setDelegate:", l_set_delegate);
     LM("name", l_name); LM("setName:", l_set_name); LM("mask", l_mask); LM("setMask:", l_set_mask);
     LM("actions", l_actions); LM("setActions:", l_set_actions); LM("style", l_style); LM("setStyle:", l_set_style);
@@ -1142,8 +1225,7 @@ void cx_quartzcore_init(void) {
     LM("setDrawsAsynchronously:", l_noop_b); LM("setAllowsGroupOpacity:", l_noop_b); LM("setAllowsEdgeAntialiasing:", l_noop_b);
     LM("setShouldRasterize:", l_noop_b); LM("setNeedsDisplayOnBoundsChange:", l_noop_b); LM("setDoubleSided:", l_noop_b);
     LM("setWantsExtendedDynamicRangeContent:", l_noop_b); LM("setContentsOpaque:", l_noop_b);
-    LM("setRasterizationScale:", l_noop_d); LM("setShadowOpacity:", l_noop_d); LM("setShadowRadius:", l_noop_d);
-    LM("setMinificationFilterBias:", l_noop_d); LM("setShadowColor:", l_noop_o); LM("setLayoutManager:", l_noop_o);
+    LM("setRasterizationScale:", l_noop_d); LM("setMinificationFilterBias:", l_noop_d); LM("setLayoutManager:", l_noop_o);
     LM("setContentsMultiplyColor:", l_noop_o); LM("setEDRMetadata:", l_noop_o);
     LM("setNeedsDisplay", l_set_needs_display); LM("setNeedsDisplayInRect:", l_set_needs_display_rect);
     LM("setContentsChanged", l_set_needs_display);   /* privado: o Chromium avisa que o IOSurface mudou no lugar */
@@ -1210,7 +1292,7 @@ void cx_quartzcore_init(void) {
     cx_add_method(&CAContext_c, "setFencePort:", (void *)ctx_set_fence);
     cx_add_method(&CAContext_c, "setFencePort:commitHandler:", (void *)ctx_set_fence_blk);
     class_addProperty(&CAContext_c, "contextId", "TI,R,N", 6);
-    class_addProperty(&CAContext_c, "layer", "T@\"CALayer\",&,N", 16);
+    class_addProperty(&CAContext_c, "layer", "T@\"CALayer\",&,N", 15);
 
     cx_class_t *nv = cx_class_named("NSView");
     if (nv) {
