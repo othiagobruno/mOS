@@ -122,12 +122,15 @@ if ($ComBash) {
         # o link X -> gX do mOS (o gnubin do Homebrew); só dependem do libSystem
         $cu = Get-ChildItem "$b\coreutils" -Directory -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($cu) {
-            foreach ($n in 'ls', 'cat', 'stty', 'tty', 'sleep') {
+            foreach ($n in 'ls', 'cat', 'stty', 'tty', 'sleep', 'uname') {
                 Copy-Item -Force -LiteralPath "$($cu.FullName)\bin\g$n" -Destination "$usr\bin\g$n"
                 [IO.File]::WriteAllText("$usr\bin\$n", "#mOS-link:g$n", [Text.Encoding]::ASCII)
             }
         }
-        Write-Host "bash do Homebrew em /usr/local/bin/bash$(if ($cu) { ' (+ ls, cat, stty, tty, sleep)' })" -ForegroundColor Cyan
+        # o script de integração de shell do VS Code (shellIntegration-bash.sh) chama uname e sed a cada prompt
+        $gs = Get-ChildItem "$b\gnu-sed\*\bin\gsed" -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($gs) { Copy-Item -Force -LiteralPath $gs.FullName -Destination "$usr\bin\gsed"; [IO.File]::WriteAllText("$usr\bin\sed", "#mOS-link:gsed", [Text.Encoding]::ASCII) }
+        Write-Host "bash do Homebrew em /usr/local/bin/bash$(if ($cu) { ' (+ ls, cat, stty, tty, sleep, uname)' })$(if ($gs) { ' (+ sed)' })" -ForegroundColor Cyan
     }
 }
 $mb = (Get-ChildItem "$esp\mOS\Aplicativos\VSCode.app" -Recurse -File | Measure-Object Length -Sum).Sum / 1MB

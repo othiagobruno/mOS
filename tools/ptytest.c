@@ -160,6 +160,10 @@ int main(void) {
     check(pty_stat_path("/dev/ttys000") && !pty_stat_path("/dev/ttys001") && pty_stat_path("/dev/tty"), "stat de /dev/ttysNNN");
     check(x_tty(host, MOS_TTY_SETFL, (u64)m, 1) == 0, "O_NONBLOCK no mestre");
     check(x_read(ht, m, buf, sizeof buf) == -MOS_EAGAIN, "mestre vazio e não-bloqueante: EAGAIN");
+    /* termios padrão de um par novo (sem TIOCSETA): eco e edição */
+    x_write(ht, m, "ab\x7f" "c\r");
+    check_bytes(buf, x_read(ht, s, buf, sizeof buf), "ac\n", "termios padrão: linha editada");
+    check_bytes(buf, drain(ht, m, buf, sizeof buf), "ab\b \bc\r\n", "termios padrão: eco com ECHOE e ONLCR");
 
     /* termios do node-pty (pty.cc) e o tamanho */
     mac_termios_t tio;

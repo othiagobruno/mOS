@@ -58,7 +58,7 @@ else {
     # coreutils: só ls/cat/stty/tty/sleep (gX em /usr/local/bin e o link X -> gX do mOS, como o gnubin do Homebrew)
     $cu = Get-ChildItem "$b\coreutils" -Directory -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($cu) {
-        foreach ($n in 'ls', 'cat', 'stty', 'tty', 'sleep') {
+        foreach ($n in 'ls', 'cat', 'stty', 'tty', 'sleep', 'uname') {
             Copy-Item -Force -LiteralPath "$($cu.FullName)\bin\g$n" -Destination "$usr\bin\g$n"
             [IO.File]::WriteAllText("$usr\bin\$n", "#mOS-link:g$n", [Text.Encoding]::ASCII)
         }

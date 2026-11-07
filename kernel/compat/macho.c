@@ -190,6 +190,7 @@ typedef struct {
     u64 vmin, vmax;
     u64 entryoff;
     bool has_main;
+    bool has_thread;        /* LC_UNIXTHREAD (alvo anterior ao macOS 10.8): a entrada é o start do crt1 */
     const u8 *dyld_info;    /* comando LC_DYLD_INFO(_ONLY) */
     const u8 *chained;      /* comando LC_DYLD_CHAINED_FIXUPS */
     u64 init_ptrs_addr, init_ptrs_count;     /* __mod_init_func */
@@ -394,6 +395,7 @@ static bool parse(mach_t *mo, const u8 *m, usize len, bool dylib, char *err, usi
         }
         case LC_DYLD_CHAINED_FIXUPS: mo->chained = c; break;
         case LC_MAIN: mo->entryoff = rd64(c + 8); mo->has_main = true; break;
+        case LC_UNIXTHREAD: if (csz >= 16 && rd32(c + 8) == 4) mo->has_thread = true; break;   /* x86_THREAD_STATE64 */
         case LC_VERSION_MIN_MACOSX: mo->minos = rd32(c + 8); break;
         case LC_BUILD_VERSION: mo->minos = rd32(c + 12); break;
         }
@@ -1756,6 +1758,18 @@ bool macho_load(process_t *p, const u8 *img, usize len, const char *arg, u64 *en
     link_t *K = link_new(err, errlen, false);
     if (!K) return false;
     bool ok = link_open(K, p->path, img, len);
+    /* LC_UNIXTHREAD (alvo anterior ao macOS 10.8, como o spawn-helper do node-pty do VS Code): o start do crt1 só monta
+     * argc/argv/envp e chama exit(main(...)), que é o que o cx_start do libSystem faz com o LC_MAIN. Entra pelo _main
+     * exportado; as cópias de NXArgc/environ do crt1 dentro do executável ficam sem valor. */
+    if (ok && !K->im[0]->mo.has_main && K->im[0]->mo.has_thread) {
+        image_t *I0 = K->im[0];
+        u64 mainp = image_export(K, 0, "_main", 0);
+        u64 text = 0;
+        bool have_text = false;
+        for (int i = 0; i < I0->mo.nsegs; i++)
+            if (!strcmp(I0->mo.segs[i].name, "__TEXT")) { text = I0->mo.segs[i].vmaddr + (u64)I0->slide - I0->mo.segs[i].fileoff; have_text = true; }
+        if (mainp && have_text && mainp >= text) { I0->mo.entryoff = mainp - text; I0->mo.has_main = true; }
+    }
     if (ok && !K->im[0]->mo.has_main) { snprintf(err, errlen, "sem LC_MAIN (executáveis anteriores ao macOS 10.8 não são suportados)"); ok = false; }
     if (ok && K->nabsent && !K->tolerant) {
         char need[200];

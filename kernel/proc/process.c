@@ -631,7 +631,10 @@ static void spawn_apply_fds(process_t *child, process_t *parent, mos_spawn_fa_t 
             if (a >= 0 && a < PROC_MAX_FDS) fd_close(child, a);
         } else if (k == MOS_SPAWN_FA_DUP2 && a >= 0 && a < PROC_MAX_FDS && b >= 0 && b < PROC_MAX_FDS) {
             process_t *src = (child->fds[a].used) ? child : parent;
-            if (src && src->fds[a].used) fd_copy(child, b, src, a);
+            /* como o dup2: a cópia nasce sem FD_CLOEXEC (addinherit_np é dup2(fd, fd)). O libuv marca CLOEXEC nas pontas
+             * dos pipes de stdio; copiada, a marca fechava o stdout no execve do filho (o "bash -ilc 'Code -p ...'" que o
+             * VS Code usa para ler o ambiente do shell escrevia o JSON no console e o resultado vinha vazio) */
+            if (src && src->fds[a].used) { fd_copy(child, b, src, a); child->fds[b].flags &= ~MOS_O_CLOEXEC; }
         } else if (k == MOS_SPAWN_FA_OPEN && a >= 0 && a < PROC_MAX_FDS && acts[i].path[0]) {
             if (child->fds[a].used) fd_close(child, a);
             if (pty_open_path(child, a, acts[i].path, acts[i].flags) <= 0) continue;   /* /dev/ptmx, /dev/ttysNNN, /dev/tty */

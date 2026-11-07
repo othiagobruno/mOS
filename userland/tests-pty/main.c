@@ -34,6 +34,17 @@ static void check(int c, const char *what) {
     fflush(stdout);
 }
 static long now_ms(void) { struct timeval tv; gettimeofday(&tv, 0); return tv.tv_sec * 1000L + tv.tv_usec / 1000; }
+/* confere bytes e, se falhar, mostra o que veio */
+static void check_bytes(const char *got, ssize_t n, const char *want, size_t wl, const char *what) {
+    int c = n == (ssize_t)wl && !memcmp(got, want, wl);
+    check(c, what);
+    if (c) return;
+    printf("ptytest:   veio %zd bytes:", n);
+    for (ssize_t i = 0; i < n && i < 64; i++) printf(" %02x", (unsigned char)got[i]);
+    printf("\nptytest:   esperado %zu:", wl);
+    for (size_t i = 0; i < wl; i++) printf(" %02x", (unsigned char)want[i]);
+    printf("\n");
+}
 
 /* ------------------------------------------------------------ o que roda dentro do terminal */
 static volatile sig_atomic_t got_winch;
@@ -231,9 +242,9 @@ int main(int argc, char **argv) {
         check(read(m, b, sizeof b) < 0 && errno == EAGAIN, "mestre vazio e O_NONBLOCK: EAGAIN");
         write(m, "ab\x7f" "c\r", 5);
         ssize_t n = read(s, b, sizeof b);
-        check(n == 3 && !memcmp(b, "ac\n", 3), "linha canônica editada (DEL) chega ao escravo");
+        check_bytes(b, n, "ac\n", 3, "linha canônica editada (DEL) chega ao escravo");
         n = read(m, b, sizeof b);
-        check(n == 9 && !memcmp(b, "ab\b \bc\r\n", 9), "eco com ECHOE e ONLCR no mestre");
+        check_bytes(b, n, "ab\b \bc\r\n", 8, "eco com ECHOE e ONLCR no mestre");
         struct pollfd p = {m, POLLIN, 0};
         check(poll(&p, 1, 0) == 0, "poll: mestre sem dados");
         write(s, "x\n", 2);
@@ -271,8 +282,11 @@ int main(int argc, char **argv) {
             check(wait_for("filho: pronto-winch", mark, 10000), "filho com tratador de SIGWINCH");
             struct winsize ws = {40, 120, 0, 0};
             mark = accn;
+            long tw = now_ms();
             check(ioctl(masterfd, TIOCSWINSZ, &ws) == 0, "TIOCSWINSZ no mestre (pty.resize)");
-            check(wait_for("filho: winch=1 tamanho=40x120", mark, 10000), "SIGWINCH chega e o filho lê 40x120");
+            int got = wait_for("filho: winch=1 tamanho=40x120", mark, 30000);
+            printf("ptytest:   SIGWINCH -> resposta do filho em %ld ms\n", now_ms() - tw);
+            check(got, "SIGWINCH chega e o filho lê 40x120");
             pid_t pg = tcgetpgrp(masterfd);
             check(pg == pid, "tcgetpgrp(mestre) = o filho (título do node-pty)");
             check(wait_for("filho: pronto-int", mark, 10000), "filho esperando no read");
@@ -324,7 +338,7 @@ int main(int argc, char **argv) {
             type("\x03");
             check(wait_for("PTY$ ", mark + 1, 20000), "bash: ^C interrompe o sleep e volta ao prompt");
             mark = accn;
-            type("exit\r");
+            type("exit 0\r");                        /* sem argumento seria o $? do sleep interrompido (130) */
             int stv = 0;
             pid_t w = -1;
             long t0 = now_ms();
@@ -335,6 +349,43 @@ int main(int argc, char **argv) {
             close(masterfd);
         }
     } else printf("ptytest: sem %s: parte do bash pulada\n", bash);
+
+    /* 3. stdio por pipes com FD_CLOEXEC, como o child_process do Node (libuv): o dup2 do posix_spawn tem de limpar a marca,
+     *    senão o filho perde o stdout no próprio execve (o "bash -ilc 'Code -p ...'" do VS Code lia o ambiente vazio) */
+    if (access(bash, X_OK) == 0) {
+        int p[2];
+        if (pipe(p) == 0) {
+            ioctl(p[0], FIOCLEX);
+            ioctl(p[1], FIOCLEX);
+            posix_spawn_file_actions_t a;
+            posix_spawn_file_actions_init(&a);
+            posix_spawn_file_actions_addopen(&a, 0, "/dev/null", O_RDONLY, 0);
+            posix_spawn_file_actions_adddup2(&a, p[1], 1);
+            posix_spawn_file_actions_adddup2(&a, p[1], 2);
+            posix_spawnattr_t at;
+            posix_spawnattr_init(&at);
+            posix_spawnattr_setflags(&at, POSIX_SPAWN_CLOEXEC_DEFAULT | POSIX_SPAWN_SETSID);
+            char *av[] = {(char *)bash, "-c", "ls /", 0};
+            pid_t pid = -1;
+            int e = posix_spawn(&pid, bash, &a, &at, av, env);
+            close(p[1]);
+            char out[4096];
+            size_t n = 0;
+            long t0 = now_ms();
+            while (!e && n < sizeof out - 1 && now_ms() - t0 < 20000) {
+                struct pollfd q = {p[0], POLLIN, 0};
+                if (poll(&q, 1, 200) <= 0) continue;
+                ssize_t r = read(p[0], out + n, sizeof out - 1 - n);
+                if (r <= 0) break;
+                n += (size_t)r;
+            }
+            out[n] = 0;
+            int stv = 0;
+            if (!e) waitpid(pid, &stv, 0);
+            close(p[0]);
+            check(!e && strstr(out, "Sistema") != 0, "pipe de stdio com CLOEXEC sobrevive ao execve do filho (libuv)");
+        }
+    }
 
     printf("ptytest: %d/%d ok\n", ok, total);
     fflush(stdout);

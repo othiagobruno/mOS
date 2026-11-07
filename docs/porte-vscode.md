@@ -44,6 +44,15 @@ dyld[mOS]: símbolo não implementado no libSystem do mOS: _pthread_mach_thread_
 
 ### Terminal integrado: pseudoterminais (7 nov. 2026)
 
+**Funciona no VS Code** (QEMU com WHPX, `tools\vscode-teste.ps1 -ComBash`): a paleta "Terminal: Create New Terminal"
+oferece o perfil `bash -l`, o pty host abre o par, o `spawn-helper` adota `/dev/ttys001` como terminal de controle e
+faz `execve` do bash; o painel mostra o prompt `bash-5.3$`, `ls /` lista `Aplicativos Users private usr Sistema Volumes
+tmp`, `echo ola-$((40+2))` dá `ola-42`, `stty size` dá `13 43` e, com a barra lateral fechada (⌘B, painel mais largo),
+`13 69`; `sleep 30` + ^C volta ao prompt. O ambiente do shell de login volta a ser lido (`getUnixShellEnvironment#result`
+cheio). Na primeira partida o diálogo de boas-vindas do Copilot fica na frente e engole as teclas: feche-o ("Continue
+without Signing In", em 1070,673 na captura de 1440x900) antes de abrir o terminal. Capturas em `build-vscode\shots\`
+(`vs-bash.png`, `vs-cmds3.png`, `vs-ctrlc3.png`, `vs3-cmds.png`).
+
 O terminal integrado do VS Code (e do Cursor e do Claude, que usam o mesmo `node-pty`) precisa de PTY. O
 `node-pty` 1.2.0-beta.18 do VS Code 1.145 faz, no *pty host* (um utility process do Electron): `posix_openpt` +
 `grantpt` + `unlockpt` + `ioctl(TIOCPTYGNAME)`, `open(escravo, O_RDWR | O_NOCTTY)`, `tcsetattr` e `TIOCSWINSZ` no
@@ -92,13 +101,46 @@ console do mOS (fds 0–2 fora da tabela do kernel) continua como antes: é term
 falso passou a `/dev/console` (não colide com `/dev/ttys000`).
 
 **Testes**
-- `tools/ptytest.c`, no Windows, com o `pty.c` do kernel e processos/threads simulados: `ptytest: 80/80 ok`
+- `tools/ptytest.c`, no Windows, com o `pty.c` do kernel e processos/threads simulados: `ptytest: 82/82 ok`
   (`zig cc -target x86_64-windows-gnu -O1 -Ikernel/include tools/ptytest.c -o build/ptytest.exe`).
 - `tools/build-ptytest.ps1 -OutDir build-pty` (`userland/tests-pty/main.c`, compila igual no macOS): o caminho do
   node-pty com o próprio binário como spawn-helper e um filho que confere sessão, terminal de controle, eco, SIGWINCH
   e ^C; depois o bash do Homebrew interativo (prompt, aritmética, `ls`, `tty`, `stty size`, `$COLUMNS` depois do
-  TIOCSWINSZ, ^C num `sleep`, `exit`). O `-ComBash` do `stage-vscode.ps1` agora põe também `ls`, `cat`, `stty`,
-  `tty` e `sleep` do coreutils.
+  TIOCSWINSZ, ^C num `sleep`, `exit 0`). O `-ComBash` do `stage-vscode.ps1` agora põe também `ls`, `cat`, `stty`,
+  `tty` e `sleep` do coreutils. **No QEMU (WHPX, SMP, 512 MB): `ptytest: 44/44 ok` em três rodadas seguidas**, com o
+  SIGWINCH respondido em 2–23 ms. O que o mestre leu do bash:
+
+```
+PTY$ echo ola-$((40+2))
+ola-42
+PTY$ cd / && ls
+Aplicativos  Sistema  Users  Volumes  private  tmp  usr
+PTY$ tty; stty size
+/dev/ttys000
+24 80
+PTY$ echo cols=$COLUMNS lines=$LINES        (depois de TIOCSWINSZ 33x111: o readline redesenha em 111 colunas)
+cols=111 lines=33
+PTY$ ^C
+PTY$ exit
+```
+
+- Achado no caminho: o `stat()` do libSystem abria o arquivo para procurar o marcador de link do mOS (`peek_file`);
+  em `/dev/ptmx` isso criaria um par e em `/dev/ttysNNN` adotaria o terminal e esperaria digitação. `/dev/*` não é
+  mais aberto ali.
+- Achado no VS Code: o `spawn-helper` do node-pty é um executável com alvo antigo (`LC_UNIXTHREAD`, sem `LC_MAIN`) e o
+  carregador o recusava ("sem LC_MAIN"); o pty host então abortava (o `Napi::Error` do node-pty é uma exceção C++, e
+  o libSystem ainda não desenrola exceções) e o VS Code o relançava em laço. `kernel/compat/macho.c` agora entra
+  pelo `_main` exportado quando só há `LC_UNIXTHREAD` (o `cx_start` faz o papel do `start` do crt1).
+- Achado no VS Code: a ação `dup2` do `posix_spawn` copiava o `FD_CLOEXEC` do pai. O libuv marca CLOEXEC nas pontas
+  dos pipes de stdio, então o filho perdia o stdout no próprio `execve`: o `bash -ilc 'Code -p ...'` que o VS Code usa
+  para ler o ambiente do shell de login escrevia o JSON no console e o resultado vinha `{}`. `spawn_apply_fds`
+  (process.c) limpa a marca como o `dup2` (teste "pipe de stdio com CLOEXEC" do PtyTest, 45/45).
+- O `-ComBash` também põe `uname` e `sed`: o script de integração de shell do VS Code chama os dois a cada prompt, e sem
+  eles cada comando mostrava "sed: command not found" e "history: write error" (o `history 1 | sed ...` perdia o
+  leitor: EPIPE, que o `strerror` do libSystem também não conhecia e agora diz "Broken pipe"). Com os dois, o terminal
+  fica limpo e as marcas de comando da integração de shell aparecem.
+- Em aberto, fora do PTY: o xterm.js desenha as letras do terminal espaçadas demais (medida da fonte monoespaçada no
+  renderer).
 
 ### Estado em 7 nov. 2026, 02:40 (sessão pausada)
 

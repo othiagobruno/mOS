@@ -499,6 +499,12 @@ char *strerror(int e) {
     case 0: return "Undefined error: 0";
     case CX_EPERM: return "Operation not permitted";
     case CX_ENOENT: return "No such file or directory";
+    case 3: return "No such process";                    /* ESRCH (os seis daqui: textos do macOS, que um terminal mostra) */
+    case 4: return "Interrupted system call";            /* EINTR */
+    case 6: return "Device not configured";              /* ENXIO: /dev/tty sem terminal de controle */
+    case 10: return "No child processes";                /* ECHILD */
+    case 32: return "Broken pipe";                       /* EPIPE: "history 1 | sed" com o sed ausente dava "Unknown error" */
+    case 35: return "Resource temporarily unavailable";  /* EAGAIN */
     case CX_EIO: return "Input/output error";
     case CX_EBADF: return "Bad file descriptor";
     case CX_ENOMEM: return "Cannot allocate memory";
@@ -1281,6 +1287,9 @@ static void to_mac_stat(const mos_stat_t *s, mac_stat_t *m) {
  * comandos no PATH pelo bit de execução. */
 #define LINK_MAGIC "#mOS-link:"
 static long peek_file(const char *abs, char *buf, long n) {
+    /* dispositivos não são links nem executáveis, e abrir já tem efeito: /dev/ptmx cria um par de terminais e ler
+     * um escravo de pty espera digitação (o stat de /dev/ttysNNN travava assim) */
+    if (abs[0] == '/' && abs[1] == 'd' && abs[2] == 'e' && abs[3] == 'v' && abs[4] == '/') return -1;
     long fd = SYS2(SYS_OPEN, abs, 0);
     if (fd < 0) return -1;
     long r = SYS3(SYS_READ, fd, buf, n);
