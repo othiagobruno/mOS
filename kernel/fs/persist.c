@@ -187,6 +187,8 @@ static bool tracked(vnode_t *n, char *vpath, usize cap) {
 static void fpath_of(const char *vpath, char *out, usize cap) { snprintf(out, cap, SYS_DIR "%s", vpath); }
 
 /* cria no disco as pastas que faltam até o pai de fpath */
+/* cria as pastas que faltam até a mãe de fpath. Iterativo: a versão recursiva gastava 1 KiB por pasta nova, e uma
+ * árvore funda criada de uma vez (node_modules) estourava os 32 KiB de pilha das threads do kernel */
 static bool mkdirs_parent(const char *fpath) {
     char tmp[1040];
     strncpy(tmp, fpath, sizeof tmp - 1);
@@ -196,11 +198,19 @@ static bool mkdirs_parent(const char *fpath) {
     *slash = 0;
     bool dir;
     if (fat_stat(sys, tmp, &dir, NULL)) return dir;
-    if (!mkdirs_parent(tmp)) return false;
-    return fat_mkdir(sys, tmp);
+    for (char *p = tmp + 1;; p++) {
+        if (*p != '/' && *p) continue;
+        char c = *p;
+        *p = 0;
+        if (fat_stat(sys, tmp, &dir, NULL)) { if (!dir) return false; }
+        else if (!fat_mkdir(sys, tmp)) return false;
+        *p = c;
+        if (!c) break;
+    }
+    return true;
 }
 
-void persist_mark(vnode_t *n) {
+__attribute__((noinline)) void persist_mark(vnode_t *n) {   /* noinline: o add_tree recursivo não leva o vp[] junto */
     char vp[1024];
     vol_mark(n);                         /* dentro de /Volumes/<gravável>: vai para aquele disco */
     if (!tracked(n, vp, sizeof vp)) return;
