@@ -84,7 +84,9 @@ New-Item -ItemType Directory -Force "$dst\$fs\Resources" | Out-Null
 Get-ChildItem -LiteralPath "$src\$fs\Resources" -File | Where-Object { $_.Name -notmatch 'arm64' } | ForEach-Object { Copy-Item -LiteralPath $_.FullName "$dst\$fs\Resources\" }
 foreach ($l in 'en.lproj', 'pt_BR.lproj') { if (Test-Path -LiteralPath "$src\$fs\Resources\$l") { Copy-Item -LiteralPath "$src\$fs\Resources\$l" "$dst\$fs\Resources\" -Recurse } }
 
-Set-Content -Path "$esp\mOS\Sistema\Biblioteca\dyld-experimental" -Value 'Google Chrome' -Encoding ascii
+# sem o modo experimental (dyld-experimental): o Chrome tem de abrir como uma instalacao normal; os frameworks que ele
+# pede estao na lista do carregador (kernel/compat/macho.c, libsystem_dylib_ok)
+Remove-Item -LiteralPath "$esp\mOS\Sistema\Biblioteca\dyld-experimental" -ErrorAction SilentlyContinue
 if ($Diagnostico) {
     Set-Content -Path "$esp\mOS\Sistema\Biblioteca\dyld-registrar" -Value '1' -Encoding ascii
     Set-Content -Path "$esp\mOS\Sistema\Biblioteca\stderr-serial" -Value '1' -Encoding ascii

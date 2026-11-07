@@ -6,7 +6,7 @@ Versão medida: Chrome 157.0.8103.39 (`googlechrome.dmg` universal, 270 MiB, de 
 O Chrome é Chromium puro: o mesmo motor do Electron que o VS Code usa. Quase tudo o que falta para ele é o que
 falta para o VS Code (`docs/porte-vscode.md`), então os dois portes andam juntos.
 
-## Onde estamos (6 nov. 2026)
+## Onde estamos (6 nov. 2026; estado atual na seção "Sem flags, aberto pelo Launchpad")
 
 | Etapa | Estado |
 |---|---|
@@ -227,6 +227,47 @@ os tracepoints (`/Sistema/Biblioteca/diag-tracepoints`), que agora também valem
 
 Para achar a causa de cada queda: `llvm-objdump -d --start-address=... ` (LLVM em `C:\Program Files\LLVM\bin`) no
 framework de `build-chrome\esp\...`; o endereço do log menos `0x400100000000` é o endereço no arquivo.
+
+### Sem flags, aberto pelo Launchpad (7 nov. 2026, tarde)
+
+![Wikipédia no Chrome sem flags](img-chrome-wikipedia.png)
+
+O Chrome agora abre como uma instalação normal: **sem nenhuma flag** (sem `--no-sandbox`, `--in-process-gpu`,
+`--disable-gpu`, `--no-first-run`) e **sem o modo experimental** (`/Sistema/Biblioteca/dyld-experimental`). Testado no
+QEMU: Launchpad → busca "chrome" → Enter → diálogo de primeira execução pelo mouse (desmarcar "navegador padrão", OK) →
+"Continuar sem fazer login" → Nova Guia → ⌘L, `pt.wikipedia.org`, Enter → a página carrega inteira e rola.
+
+| Problema | Causa | Correção |
+|---|---|---|
+| Sub-recursos HTTPS falham (despezzas.com sem CSS/imagens) | O `recv` ignorava `MSG_PEEK`. O Chromium espia 1 byte (`SocketPosix::IsConnectedAndIdle`) ao reaproveitar socket do pool; o mOS consumia o byte e o fluxo TLS desalinhava: alertas record_overflow/bad_record_mac/protocol_version, e depois `PROTOCOL_IS_SHUTDOWN` (error_reason 194) em toda escrita | sockets.c/sockets_inet.inc: buffer de bytes espiados por socket; `MSG_WAITALL` e `MSG_DONTWAIT` também |
+| Renderer caía com CSS de cor (`oklab(...)`), página branca | **`exp2` do libSystem errado para todo app**: `fsub %st, %st(1)` em AT&T dá n − x, a fração saía com o sinal trocado (`exp2(-0.5)` = 1,414). `exp`/`pow`/`powf` herdavam; o skcms (`sign*powf(a*x+b,g)+e`) dava não finito e caía no CHECK `Framework+0xb1a843a` | libc.c: n = rint(x), f = x − n, `f2xm1` + `fscale`; NaN/±inf tratados. Conferido no host contra a libm (erro ≤ 1e-7 em float) |
+| Navegador caía ao fechar a janela (botão vermelho ou ⌘W na última aba) | `windowNumber` devolvia o gid do window server, 0 para janelas que nunca foram à tela. As três `NativeWidgetMacOverlayNSWindow` ficavam com 0 no mapa global do Chrome indexado por `windowNumber`, e o destrutor apagava `end()` (`Framework+0x2f5b793`) | appkit.c: número único e fixo por janela. Também: o botão vermelho, o ⌘W do sistema e o Dock viram **pedido** (`on_close_request` no wm.c/guisys.c → `performClose:` → `windowShouldClose:` → `-close` por mensagem), como no Cocoa; `CVDisplayLinkStop`/`Release` esperam o callback em andamento (corevideo.c) |
+| Queda na partida em `network_config_watcher_apple.cc` | sysconfig.c novo usava `static __thread`; o libSystem é freestanding e o `%fs` das threads é 0 | variável comum |
+| CHECK `(fcntl(fd, F_GETFL) & O_ACCMODE) == O_RDONLY` depois de "Continuar sem fazer login" | fd que não veio do `open()` deste processo (fileport) → F_GETFL dizia O_RDWR | kernel: `SYS_FDFLAGS` com b = 2 devolve o modo da abertura; libc.c pergunta ao kernel quando não sabe |
+| Itálico reto | o Skia põe a inclinação do itálico sintético na matriz de texto (c = 0,25) e o `cx_bitmap_draw_glyph` a ignorava | coregraphics.c: cisalhamento por linha do glifo, com a cobertura dividida entre dois pixels |
+| Diálogo de primeira execução sem controles | (resolvido pelas correções de visibilidade/oclusão das outras sessões: `NSThemeFrame`, `occlusionState`) | caixa de seleção, link, OK e a tela "Faça login no Chrome" (WebUI) funcionam pelo mouse |
+| Sem `dyld-experimental` o Chrome não abria | 41 bibliotecas do sistema "ausentes" (Carbon, CoreImage, libsandbox, SkyLight...) | macho.c: os frameworks que o Chrome pede entram na lista do `libsystem_dylib_ok`; o que faltar vira stub que encerra dizendo o nome. O `stage-chrome.ps1` não grava mais o arquivo |
+
+Também: ⌘V na barra de endereço confirmado (⌘L ⌘C numa aba, ⌘T, ⌘L ⌘V: a URL aparece; a falha anterior era só espera
+curta); o relatório de falha do kernel imprime a cadeia de rbp (`proc:   chamadas: ...`), que deu as pilhas acima.
+
+Ainda falta:
+- **Processo de GPU**: sem flags ele sobe e sai cinco vezes ("Exiting GPU process due to errors during initialization":
+  ANGLE/Metal e o SwiftShader falham em `GLDisplayEGL::Initialize`, sem nenhum `dlopen` do `libvulkan.dylib`); depois o
+  Chrome compõe por software no navegador e tudo aparece. Custa ~10 s na partida e deixa sem WebGL. Próximo passo: por que
+  o ANGLE não tenta o Vulkan/SwiftShader (o mesmo caminho do `--use-angle=swiftshader`).
+- Queda intermitente: um fd que o Chrome passa por Mojo já não existe no kernel (`fileport_makeport` EBADF em
+  `wrapped_platform_handle.cc:105` e CHECK no `close` de `scoped_file.cc:45`). Viu-se duas vezes, uma no navegador e uma
+  num helper. Suspeita: alguém fecha um fd do Chrome (libSystem abrindo/fechando arquivos internos em outra thread?).
+- `OnDeviceModelService` (IA local, pede GPU) cai num CHECK (`Framework+0x2548f49`); o Chrome segue.
+- Depois de fechar a última janela o processo continua vivo (como no macOS), mas o mOS tira o Chrome do Dock e da barra
+  de menus (app sem janela perde o foco); falta o "reabrir" pelo Dock.
+- Árabe/hebraico/CJK continuam em caixinhas: o mOS só tem a Inter. Precisa de uma fonte livre (ex.: Noto Sans
+  Arabic/Hebrew/CJK, OFL) instalada no sistema e o `CTFontCreateForString` escolher a face pelo cmap.
+- O clique no banner de cookies do despezzas.com não fez efeito numa rodada (os cliques do diálogo, da WebUI e do
+  Launchpad funcionaram); repetir com espera maior.
+- Instalar pelo Horizonte (baixar o `.dmg`, montar, arrastar para Aplicativos) de ponta a ponta ainda não foi testado
+  nesta sessão; o carregamento e a abertura já não dependem de nada que o `stage-chrome.ps1` faça além de copiar o app.
 
 Como o Chrome inicia: o executável `Contents/MacOS/Google Chrome` (0,3 MiB) só monta o caminho
 `../Frameworks/Google Chrome Framework.framework/Versions/<versão>/Google Chrome Framework`, chama `dlopen`,
