@@ -42,7 +42,11 @@ int         nvme_disk_count(void);
 bool        fat_format(blkdev_t *part, const char *label);          /* FAT32, 33 MB .. 2 TB */
 int         fat_type(fatfs_t *fs);                                   /* 12, 16 ou 32 */
 bool        gpt_create_single_esp(blkdev_t *disk, const char *name, u64 *part_off, u64 *part_size);
-u32         crc32_calc(const void *data, usize n);
+typedef struct { u64 first, last; const u8 *type; const char *name; } gpt_new_t;   /* LBAs inclusivos */
+extern const u8 GPT_TYPE_ESP[16], GPT_TYPE_DATA[16];
+bool        gpt_create(blkdev_t *disk, const gpt_new_t *parts, int n);              /* tabela NOVA (apaga a anterior), 1..4 partições */
+bool        gpt_add_partition(blkdev_t *disk, const gpt_new_t *p, int *number);     /* acrescenta numa GPT válida, sem tocar nas demais */
+u32        crc32_calc(const void *data, usize n);
 
 /* ---- volume do sistema (fs/persist.c) */
 fatfs_t    *persist_volume(void);                                   /* NULL se rodando só em RAM */

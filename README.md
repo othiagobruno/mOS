@@ -55,12 +55,21 @@ teclado (ABNT2/US) valem antes de qualquer senha, e depois você escolhe:
 - **Live (padrão):** nada é gravado em nenhum disco; a conta que você cria existe só na RAM e some ao desligar.
 - **Live com persistência no pendrive (USB):** só depois de um consentimento explícito; grava contas, preferências e
   arquivos no próprio pendrive (somente na partição dele; outros discos nunca são tocados). Não há criptografia.
-- **Instalar:** em um **disco inteiro** (apaga o disco) ou em uma **partição dedicada já existente** (tipo ESP, vazia ou só
-  com um mOS anterior; a tabela de partições e as demais partições não são alteradas). Antes da primeira gravação você
-  digita o identificador do alvo (ex.: `sata0` ou `sata0p2`). A cópia vem de um payload com manifesto de SHA-256 gerado no
-  build, é verificada arquivo a arquivo, e o carregador EFI é o último a aparecer no destino. A conta e a senha são
-  criadas no **primeiro boot do sistema instalado**, sem o pendrive. Não há editor de partições, redimensionamento nem
-  ESP compartilhada; um alvo incompatível nunca vira "apagar o disco".
+- **Instalar:** o assistente pergunta **onde** (disco, espaço livre ou partição), **como usar o disco** e se quer
+  **formatar antes**:
+  - **disco inteiro** (apaga o disco): uma partição mOS ocupando tudo, ou **particionado**: a partição do mOS com o tamanho
+    escolhido (− / +) e o restante numa partição FAT32 "DADOS", que aparece em `/Volumes`;
+  - **espaço livre** de um disco GPT: cria uma partição nova (tamanho escolhido) só com uma entrada a mais na tabela; as
+    partições existentes não são alteradas nem movidas;
+  - **partição dedicada já existente** (tipo ESP, vazia ou só com um mOS anterior; a tabela e as demais partições não são alteradas);
+  - **formatar antes**: a formatação rápida só cria o sistema de arquivos; a completa grava zeros em todo o destino (o disco
+    inteiro, ou só a partição do mOS) antes de instalar.
+
+  Antes da primeira gravação você digita o identificador do alvo (ex.: `sata0` ou `sata0p2`). A cópia vem de um payload
+  com manifesto de SHA-256 gerado no build, é verificada arquivo a arquivo, e o carregador EFI é o último a aparecer no
+  destino. Ao terminar, o computador reinicia sozinho (15 s) e o **primeiro boot do sistema instalado** abre direto em
+  **Criar usuário** (idioma e teclado escolhidos no pendrive já valem), depois **Boas-vindas**, e então o mOS. Não há
+  redimensionamento de partições nem ESP compartilhada; um alvo incompatível nunca vira "apagar o disco".
 
 Se o mOS não conseguir identificar **com certeza** de qual disco/partição foi iniciado (caminho de dispositivo UEFI +
 identidade física + identidade da partição), ele roda só na RAM e a persistência e a instalação ficam bloqueadas.

@@ -31,7 +31,12 @@ typedef struct {
     char   err[112];             /* PT_BAD: o motivo */
     u8     snap[32];             /* SHA-256 das áreas de metadados (setor 0, cabeçalhos e entradas): revalidação */
     u64    total_sectors;
+    u64    first_usable, last_usable;   /* GPT: limites usáveis do cabeçalho primário */
 } ptable_t;
+
+/* espaço livre (só GPT) entre as partições, alinhado a 1 MiB, com pelo menos min_sectors setores. Devolve quantos achou. */
+typedef struct { u64 first, last; } gap_t;   /* LBAs inclusivos */
+int         part_free_gaps(const ptable_t *t, gap_t *out, int max, u64 min_sectors);
 
 /* false só em erro de leitura. Tabela inconsistente => true com kind == PT_BAD e err preenchido. */
 bool        partscan(blkdev_t *disk, ptable_t *t);

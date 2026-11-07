@@ -4,7 +4,9 @@
  * respondendo e mostrar o progresso.
  *
  * Ordem das escritas no destino (a ordem é o que torna uma queda de energia segura):
- *   1. (disco inteiro) GPT nova;  2. formatar FAT32;  3. estado "INSTALANDO";  4. cópia dos arquivos do manifesto
+ *   0. (formatar antes) zeros em todo o destino — no disco inteiro antes da GPT; numa partição nova, depois de criá-la;
+ *   1. (disco inteiro) GPT nova, com a partição "DADOS" se particionado; (espaço livre) entrada nova na GPT existente;
+ *   2. formatar FAT32 (e a "DADOS");  3. estado "INSTALANDO";  4. cópia dos arquivos do manifesto
  *   (menos o carregador), cada um com o SHA-256 conferido na leitura;  5. preferências de idioma/teclado;
  *   6. sync + flush;  7. releitura de TODOS os arquivos copiados e conferência dos SHA-256;
  *   8. carregador como arquivo temporário (\EFI\BOOT\MOSNEW.TMP) + releitura conferida;  9. estado "PRIMEIRO_BOOT";
@@ -132,6 +134,7 @@ static u64 need_bytes(void) {
     u64 n = install_payload()->total_bytes;
     return MAX(64 * MIB, n + n / 4 + 32 * MIB);
 }
+u64 install_min_bytes(void) { return (need_bytes() + MIB - 1) / MIB * MIB; }
 
 int install_reason_str(int ir) {
     switch (ir) {
@@ -148,6 +151,7 @@ int install_reason_str(int ir) {
     case IR_NOT_ESP: return S_IR_NOT_ESP;
     case IR_NOT_DEDICATED: return S_IR_NOT_DEDICATED;
     case IR_BUSY: return S_IR_BUSY;
+    case IR_NOT_FREE: return S_IR_NOT_FREE;
     }
     return S_IR_NO_ORIGIN;
 }
@@ -230,30 +234,77 @@ int install_check_part(int disk, const ptable_t *t, int idx) {
     return IR_OK;
 }
 
-void install_confirm_phrase(int mode, int disk, int part_number, char *out, usize cap) {
-    if (mode == INST_PART) snprintf(out, cap, "%sp%d", storage_disk_name(disk), part_number);
-    else snprintf(out, cap, "%s", storage_disk_name(disk));
+/* espaço livre: o disco precisa ter GPT válida dos dois lados (a entrada nova é gravada nas duas cópias) e o espaço tem
+ * de ser, de fato, um dos espaços livres da tabela atual */
+int install_check_gap(int disk, const ptable_t *t, const gap_t *g) {
+    int r = check_common(disk);
+    if (r) return r;
+    if (t->kind == PT_BAD) return IR_BAD_TABLE;
+    if (t->kind != PT_GPT) return IR_NO_TABLE;
+    if (!t->backup_ok) return IR_NO_BACKUP;
+    if (t->n >= PT_MAX_PARTS) return IR_NOT_FREE;
+    gap_t gs[16];
+    int n = part_free_gaps(t, gs, 16, 1), hit = -1;
+    for (int i = 0; i < n; i++) if (g->first >= gs[i].first && g->last <= gs[i].last) hit = i;
+    if (hit < 0 || g->last < g->first) return IR_NOT_FREE;
+    u64 size = (g->last - g->first + 1) * 512;
+    if (size < need_bytes()) return IR_TOO_SMALL;
+    if (size > (2048ull * 1024 * MIB) - 64 * MIB) return IR_TOO_BIG;
+    return IR_OK;
+}
+
+void install_confirm_phrase(const install_plan_t *pl, char *out, usize cap) {
+    if (pl->mode == INST_PART) snprintf(out, cap, "%sp%d", storage_disk_name(pl->disk), pl->part_number);
+    else snprintf(out, cap, "%s", storage_disk_name(pl->disk));
 }
 
 /* ------------------------------------------------------------------ execução */
-enum { PH_PRECHECK, PH_PART, PH_FORMAT, PH_COPY, PH_PREFS, PH_SYNC, PH_VERIFY, PH_LOADER, PH_FINISH };
+enum { PH_PRECHECK, PH_ZERO, PH_PART, PH_FORMAT, PH_COPY, PH_PREFS, PH_SYNC, PH_VERIFY, PH_LOADER, PH_FINISH };
 
 static install_status_t st;
 static int phase, next_i;
 static blkdev_t *tdisk, *part;
-static u64 grant_off, grant_len, grant_want_len, copy_total, copy_done;   /* copy_*: só a fase de cópia (sem o carregador), para o percentual */
-static u64 part_off_sel, part_size_sel;
+static u64 copy_total, copy_done;                 /* copy_*: só a fase de cópia (sem o carregador), para o percentual */
+static u64 part_off_sel, part_size_sel;           /* a partição do sistema (ESP) */
+static u64 data_off, data_size;                   /* INST_DISK particionado: a partição "DADOS" (0 = não há) */
+static u64 newp_first, newp_last;                 /* INST_NEWPART: a partição a criar */
+static u64 zero_off, zero_len, zero_pos;          /* "formatar antes": a faixa a zerar e quanto já foi */
+static bool zfill;
+static gpt_new_t layout[2];
+static int nlayout;
 static fatfs_t *dst;
 static char pref_lang[8], pref_kbd[8];
+/* faixas liberadas para escrita: o disco inteiro, a partição, ou (partição nova) a partição + as duas áreas da GPT */
+static struct { u64 off, len; } grants[3], want[3];
+static int ngr, nwant;
 
 const install_status_t *install_status(void) { return &st; }
-static bool mode_is_disk(void) { return st.mode == INST_DISK; }
+
+/* percentual: com "formatar antes" a fase de zeros ocupa 10..38% e o resto é comprimido no que sobra */
+static int P(int p) { return !zfill || p < 12 ? p : 38 + (p - 12) * 62 / 88; }
 
 static void cleanup(void) {
     if (dst) { fat_unmount(dst); dst = NULL; }
     if (part) { blk_release(part); part = NULL; }
-    if (tdisk && grant_len) storage_revoke_write(tdisk, grant_off, grant_len);
-    grant_len = 0;
+    for (int i = 0; tdisk && i < ngr; i++) storage_revoke_write(tdisk, grants[i].off, grants[i].len);
+    ngr = 0;
+}
+
+/* a fase depois de cada etapa de preparação, conforme o modo */
+static int after(int ph) {
+    switch (st.mode) {
+    case INST_DISK:    /* zeros no disco todo, GPT nova, formatar */
+        if (ph == PH_PRECHECK) return zfill ? PH_ZERO : PH_PART;
+        if (ph == PH_ZERO) return PH_PART;
+        return PH_FORMAT;
+    case INST_NEWPART: /* entrada nova na GPT, zeros só nela, formatar */
+        if (ph == PH_PRECHECK) return PH_PART;
+        if (ph == PH_PART) return zfill ? PH_ZERO : PH_FORMAT;
+        return PH_FORMAT;
+    default:           /* partição existente: zeros só nela, formatar */
+        if (ph == PH_PRECHECK) return zfill ? PH_ZERO : PH_FORMAT;
+        return PH_FORMAT;
+    }
 }
 
 static void fail(const char *msg) {
@@ -269,13 +320,14 @@ static void ferr(const char *what, const char *path) {
     fail(m);
 }
 
-bool install_begin(int mode, int disk, int part_number, const u8 snap[32], const char *typed, const char *lang_pref, const char *kbd_pref) {
-    if (st.state == INSTALL_RUNNING) return false;
+bool install_begin(const install_plan_t *pl, const u8 snap[32], const char *typed, const char *lang_pref, const char *kbd_pref) {
+    if (st.state == INSTALL_RUNNING || !pl) return false;
     memset(&st, 0, sizeof st);
-    st.mode = mode; st.disk = disk; st.part_number = part_number;
+    int mode = pl->mode, disk = pl->disk;
+    st.mode = mode; st.disk = disk; st.part_number = mode == INST_PART ? pl->part_number : 0;
 #define REFUSE(m) do { st.state = INSTALL_ERROR; snprintf(st.error, sizeof st.error, "%s", m); kprintf("install: recusado, nada foi gravado: %s\n", m); return false; } while (0)
     char expect[40];
-    install_confirm_phrase(mode, disk, part_number, expect, sizeof expect);
+    install_confirm_phrase(pl, expect, sizeof expect);
     snprintf(st.target, sizeof st.target, "%s", expect);
     if (!typed || strcmp(typed, expect)) REFUSE("A confirmação digitada não confere.");
     blkdev_t *d = storage_disk(disk);
@@ -284,20 +336,55 @@ bool install_begin(int mode, int disk, int part_number, const u8 snap[32], const
     if (!t) REFUSE("Sem memória.");
     if (!partscan(d, t)) { kfree(t); REFUSE("Não foi possível ler a tabela de partições do destino."); }
     if (memcmp(t->snap, snap, 32)) { kfree(t); REFUSE("A tabela de partições do destino mudou desde a seleção. Nada foi gravado."); }
-    int ir, idx = -1;
-    if (mode == INST_DISK) ir = install_check_disk(disk, t);
-    else {
-        for (int i = 0; i < t->n; i++) if (t->p[i].number == part_number) idx = i;
+    int ir = IR_NO_TABLE, idx = -1;
+    u64 nsec = d->size / 512, fu = t->first_usable, lu = t->last_usable;
+    data_off = data_size = 0;
+    nlayout = 0;
+    nwant = 0;
+    if (mode == INST_DISK) {
+        ir = install_check_disk(disk, t);
+        u64 first = 2048, end = (nsec - 34 + 1) / 2048 * 2048 - 1;          /* último LBA, terminando alinhado a 1 MiB */
+        u64 esp_last = end;
+        if (pl->mos_bytes) {
+            u64 sec = (pl->mos_bytes / 512 + 2047) / 2048 * 2048;
+            if (first + sec - 1 < end && (end - (first + sec - 1)) * 512 >= INSTALL_DATA_MIN) esp_last = first + sec - 1;
+        }
+        if ((esp_last - first + 1) * 512 < need_bytes()) ir = IR_TOO_SMALL;
+        layout[nlayout++] = (gpt_new_t){first, esp_last, GPT_TYPE_ESP, "mOS"};
+        if (esp_last < end) {
+            layout[nlayout++] = (gpt_new_t){esp_last + 1, end, GPT_TYPE_DATA, "Dados"};
+            data_off = (esp_last + 1) * 512; data_size = (end - esp_last) * 512;
+        }
+        part_off_sel = first * 512; part_size_sel = (esp_last - first + 1) * 512;
+        want[nwant].off = 0; want[nwant++].len = d->size;
+    } else if (mode == INST_NEWPART) {
+        gap_t g = {pl->gap_first, pl->gap_last};
+        ir = install_check_gap(disk, t, &g);
+        u64 sec = pl->mos_bytes ? (pl->mos_bytes / 512 + 2047) / 2048 * 2048 : g.last - g.first + 1;
+        newp_first = g.first;
+        newp_last = MIN(g.first + sec - 1, g.last);
+        if (ir == IR_OK && (newp_last - newp_first + 1) * 512 < need_bytes()) ir = IR_TOO_SMALL;
+        part_off_sel = newp_first * 512; part_size_sel = (newp_last - newp_first + 1) * 512;
+        /* só as áreas de metadados da GPT (início e fim do disco) e a faixa da partição nova */
+        want[nwant].off = 0; want[nwant++].len = fu * 512;
+        want[nwant].off = part_off_sel; want[nwant++].len = part_size_sel;
+        want[nwant].off = (lu + 1) * 512; want[nwant++].len = d->size - (lu + 1) * 512;
+    } else {
+        for (int i = 0; i < t->n; i++) if (t->p[i].number == pl->part_number) idx = i;
         ir = idx < 0 ? IR_NO_TABLE : install_check_part(disk, t, idx);
         if (ir == IR_OK) { part_off_sel = t->p[idx].first * 512; part_size_sel = (t->p[idx].last - t->p[idx].first + 1) * 512; }
+        want[nwant].off = part_off_sel; want[nwant++].len = part_size_sel;
     }
     kfree(t);
     if (ir) REFUSE("O alvo não é (mais) compatível com a instalação. Nada foi gravado.");
     snprintf(pref_lang, sizeof pref_lang, "%s", lang_pref ? lang_pref : "pt");
     snprintf(pref_kbd, sizeof pref_kbd, "%s", kbd_pref ? kbd_pref : "abnt2");
     tdisk = d;
-    grant_off = mode == INST_DISK ? 0 : part_off_sel;
-    grant_len = 0;                                  /* a escrita só é liberada DEPOIS de conferir a origem inteira (PH_PRECHECK) */
+    ngr = 0;                                        /* a escrita só é liberada DEPOIS de conferir a origem inteira (PH_PRECHECK) */
+    zfill = pl->zero_fill;
+    zero_off = mode == INST_DISK ? 0 : part_off_sel;
+    zero_len = mode == INST_DISK ? d->size : part_size_sel;
+    zero_pos = 0;
     next_i = 0;
     phase = PH_PRECHECK;
     st.state = INSTALL_RUNNING;
@@ -305,9 +392,10 @@ bool install_begin(int mode, int disk, int part_number, const u8 snap[32], const
     st.files_total = nmf;
     copy_total = copy_done = 0;
     for (int i = 0; i < nmf; i++) { st.bytes_total += mf[i].size; if (i != loader_idx) copy_total += mf[i].size; }
-    grant_want_len = mode == INST_DISK ? d->size : part_size_sel;
     snprintf(st.step, sizeof st.step, "Preparando %s", expect);
-    kprintf("install: INSTALANDO em %s (%s)\n", expect, mode == INST_DISK ? "disco inteiro" : "partição dedicada");
+    kprintf("install: INSTALANDO em %s (%s%s; sistema %llu MB%s%s)\n", expect,
+            mode == INST_DISK ? (data_size ? "disco inteiro, particionado" : "disco inteiro") : mode == INST_NEWPART ? "partição nova no espaço livre" : "partição dedicada",
+            zfill ? ", formatação completa com zeros" : "", part_size_sel >> 20, data_size ? ", dados " : "", data_size ? "sim" : "");
     return true;
 #undef REFUSE
 }
@@ -346,7 +434,7 @@ void install_poll(void) {
     if (st.state != INSTALL_RUNNING) return;
     static int last_logged = -1;
     if (phase != last_logged) {                       /* uma linha por fase: serve de ponto de referência nos testes de queda de energia */
-        static const char *names[] = {"PRECHECK", "PART", "FORMAT", "COPY", "PREFS", "SYNC", "VERIFY", "LOADER", "FINISH"};
+        static const char *names[] = {"PRECHECK", "ZERO", "PART", "FORMAT", "COPY", "PREFS", "SYNC", "VERIFY", "LOADER", "FINISH"};
         kprintf("install: fase %s\n", names[phase]);
         last_logged = phase;
     }
@@ -355,10 +443,13 @@ void install_poll(void) {
         /* Nada foi gravado ainda. Confere TODA a origem contra o manifesto antes da primeira escrita: se um arquivo da mídia
          * estiver corrompido, a instalação recusa sem ter tocado no destino. */
         if (next_i >= nmf) {
-            if (!storage_grant_write(tdisk, grant_off, grant_want_len)) { fail("O armazenamento recusou liberar a escrita. Nada foi gravado."); return; }
-            grant_len = grant_want_len;
+            for (int i = 0; i < nwant; i++) {
+                if (!want[i].len) continue;
+                if (!storage_grant_write(tdisk, want[i].off, want[i].len)) { fail("O armazenamento recusou liberar a escrita. Nada foi gravado."); return; }
+                grants[ngr++] = want[i];
+            }
             next_i = 0;
-            phase = mode_is_disk() ? PH_PART : PH_FORMAT;
+            phase = after(PH_PRECHECK);
             st.percent = 8;
             return;
         }
@@ -372,25 +463,63 @@ void install_poll(void) {
         st.percent = 8 * next_i / (nmf ? nmf : 1);
         return;
     }
-    case PH_PART: {
-        u64 off = 0, size = 0;
-        snprintf(st.step, sizeof st.step, "Criando a tabela de partições");
+    case PH_ZERO: {
+        /* "formatar antes": zeros em fatias de 4 MiB, ~40 ms por quadro para a interface continuar respondendo */
+        static u8 *zb;
+        const u64 chunk = 4 * MIB;
+        if (!zb) zb = kcalloc(1, chunk);
+        if (!zb) { fail("Sem memória para apagar o destino."); return; }
         st.wrote = true;
-        if (!gpt_create_single_esp(tdisk, "mOS", &off, &size)) { fail("Não foi possível gravar a tabela de partições."); return; }
-        part_off_sel = off; part_size_sel = size;
-        st.percent = 10;
-        phase = PH_FORMAT;
+        u64 t0 = timer_ticks();
+        while (zero_pos < zero_len && timer_ticks() - t0 < 40) {
+            u64 n = MIN(chunk, zero_len - zero_pos);
+            if (!blk_write(tdisk, zero_off + zero_pos, zb, n)) { fail("Falha ao gravar zeros no destino (setor com defeito?)."); return; }
+            zero_pos += n;
+        }
+        char a[24], b[24];
+        snprintf(a, sizeof a, "%llu", zero_pos >> 20);
+        snprintf(b, sizeof b, "%llu", zero_len >> 20);
+        snprintf(st.step, sizeof st.step, "Formatando: gravando zeros (%s de %s MB)", a, b);
+        st.percent = 10 + (int)(zero_pos * 28 / (zero_len ? zero_len : 1));
+        if (zero_pos >= zero_len) {
+            if (!blk_flush(tdisk)) { fail("Falha ao descarregar as gravações no disco."); return; }
+            kprintf("install: %llu MB zerados\n", zero_len >> 20);
+            phase = after(PH_ZERO);
+        }
+        return;
+    }
+    case PH_PART: {
+        st.wrote = true;
+        if (st.mode == INST_DISK) {
+            snprintf(st.step, sizeof st.step, nlayout > 1 ? "Particionando o disco (mOS + Dados)" : "Criando a tabela de partições");
+            if (!gpt_create(tdisk, layout, nlayout)) { fail("Não foi possível gravar a tabela de partições."); return; }
+        } else {
+            snprintf(st.step, sizeof st.step, "Criando a partição do mOS no espaço livre");
+            gpt_new_t np = {newp_first, newp_last, GPT_TYPE_ESP, "mOS"};
+            int num = 0;
+            if (!gpt_add_partition(tdisk, &np, &num)) { fail("Não foi possível acrescentar a partição na tabela."); return; }
+            st.part_number = num;
+            kprintf("install: partição %d criada (LBA %llu..%llu)\n", num, newp_first, newp_last);
+        }
+        st.percent = MAX(st.percent, P(10));
+        phase = after(PH_PART);
         return;
     }
     case PH_FORMAT:
         snprintf(st.step, sizeof st.step, "Formatando (FAT32)");
         st.wrote = true;
+        if (data_size) {
+            blkdev_t *dp = blk_slice(tdisk, data_off, data_size);
+            bool ok = dp && fat_format(dp, "DADOS");
+            blk_release(dp);
+            if (!ok) { fail("Não foi possível formatar a partição de dados."); return; }
+        }
         part = blk_slice(tdisk, part_off_sel, part_size_sel);
         if (!part || !fat_format(part, "MOS")) { fail("Não foi possível formatar o destino."); return; }
         dst = fat_mount(part);
         if (!dst) { fail("O volume recém-formatado não pôde ser montado."); return; }
         if (!put(STATE, "INSTALANDO\n", 11)) { fail("Não foi possível gravar o estado de instalação."); return; }
-        st.percent = 12;
+        st.percent = MAX(st.percent, P(12));
         phase = PH_COPY;
         return;
     case PH_COPY: {
@@ -408,7 +537,7 @@ void install_poll(void) {
         st.bytes_done += len;
         st.files_done++;
         copy_done += len;
-        st.percent = 12 + (int)(copy_done * 56 / (copy_total ? copy_total : 1));
+        st.percent = P(12 + (int)(copy_done * 56 / (copy_total ? copy_total : 1)));
         return;
     }
     case PH_PREFS: {
@@ -416,24 +545,24 @@ void install_poll(void) {
         char b[64];
         int n = snprintf(b, sizeof b, "idioma=%s\nteclado=%s\n", pref_lang, pref_kbd);
         if (!put(PREFS, b, (u64)n)) { fail("Não foi possível gravar as preferências."); return; }
-        st.percent = 70;
+        st.percent = P(70);
         phase = PH_SYNC;
         return;
     }
     case PH_SYNC:
         snprintf(st.step, sizeof st.step, "Gravando no disco");
         if (!fat_sync(dst) || !blk_flush(part)) { fail("Falha ao descarregar as gravações no disco."); return; }
-        st.percent = 72;
+        st.percent = P(72);
         next_i = 0;
         phase = PH_VERIFY;
         return;
     case PH_VERIFY: {
         while (next_i < nmf && next_i == loader_idx) next_i++;
-        if (next_i >= nmf) { phase = PH_LOADER; st.percent = 92; return; }
+        if (next_i >= nmf) { phase = PH_LOADER; st.percent = P(92); return; }
         mfile_t *m = &mf[next_i++];
         snprintf(st.step, sizeof st.step, "Verificando %s", m->path);
         if (!verify_dst(m->path, m)) { ferr("Verificação falhou (conteúdo gravado difere do manifesto)", m->path); return; }
-        st.percent = 72 + 20 * next_i / (nmf ? nmf : 1);
+        st.percent = P(72 + 20 * next_i / (nmf ? nmf : 1));
         return;
     }
     case PH_LOADER: {

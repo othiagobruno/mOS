@@ -56,3 +56,8 @@ void sysprefs_load(void) {
         l = nl ? nl + 1 : NULL;
     }
 }
+
+bool sysprefs_present(void) {
+    vnode_t *v = vfs_lookup(PREFS_FILE);
+    return v && !v->dir && v->size > 0;
+}

@@ -168,6 +168,37 @@ static void test_partscan(void) {
     kfree(t);
 }
 
+/* particionar: GPT com ESP + Dados, espaços livres e partição nova acrescentada sem mexer nas outras */
+static void test_gpt_layout(void) {
+    blkdev_t *d = ram_new(64);
+    if (!d) { CHECK(false, "RAM disk de 64 MiB"); return; }
+    ptable_t *t = kmalloc(sizeof *t);
+    u64 nsec = d->size / 512;
+    gpt_new_t two[2] = {{2048, 2048 + 40960 - 1, GPT_TYPE_ESP, "mOS"}, {2048 + 40960, 2048 + 40960 + 20480 - 1, GPT_TYPE_DATA, "Dados"}};
+    CHECK(gpt_create(d, two, 2), "gpt_create com ESP + Dados");
+    CHECK(partscan(d, t) && t->kind == PT_GPT && t->n == 2 && t->backup_ok && t->p[0].esp && !t->p[1].esp, "as duas partições são lidas, com backup");
+    CHECK(t->first_usable == 34 && t->last_usable == nsec - 34, "limites usáveis expostos pelo partscan");
+    gap_t g[4];
+    int ng = part_free_gaps(t, g, 4, 2048);
+    CHECK(ng == 1 && g[0].first == 2048 + 40960 + 20480 && g[0].first % 2048 == 0 && (g[0].last + 1) % 2048 == 0 && g[0].last <= nsec - 34,
+          "um espaço livre depois de Dados, alinhado a 1 MiB");
+    u8 e2[128];
+    blk_read(d, 1024 + 128, e2, 128);
+    gpt_new_t np = {g[0].first, g[0].first + 4096 - 1, GPT_TYPE_ESP, "mOS2"};
+    int num = 0;
+    CHECK(gpt_add_partition(d, &np, &num) && num == 3, "gpt_add_partition usa a 1ª entrada vazia");
+    CHECK(partscan(d, t) && t->kind == PT_GPT && t->n == 3 && t->backup_ok && t->p[2].first == np.first && t->p[2].last == np.last, "GPT continua válida dos dois lados com a nova");
+    u8 e2b[128];
+    blk_read(d, 1024 + 128, e2b, 128);
+    CHECK(!memcmp(e2, e2b, 128), "a entrada de Dados ficou byte a byte igual");
+    gpt_new_t bad = {g[0].first + 1000, g[0].first + 9000, GPT_TYPE_ESP, "x"};
+    CHECK(!gpt_add_partition(d, &bad, &num), "partição que cruza outra é recusada");
+    gpt_new_t out = {np.last + 1, nsec, GPT_TYPE_ESP, "x"};
+    CHECK(!gpt_add_partition(d, &out, &num), "partição fora dos limites é recusada");
+    ram_free(d);
+    kfree(t);
+}
+
 /* ------------------------------------------------------------------ caminho de dispositivo UEFI + identidade física */
 static int node(u8 *o, u8 ty, u8 sub, const u8 *body, int bl) { o[0] = ty; o[1] = sub; o[2] = (u8)(bl + 4); o[3] = 0; memcpy(o + 4, body, bl); return bl + 4; }
 
@@ -237,6 +268,7 @@ static void test_policy(void) {
     for (int i = 0; i < nd && a && b; i++) {
         blkdev_t *d = storage_disk(i);
         if (!d || !d->write || d->size < (4u << 20)) continue;
+        if (blk_writable(d)) continue;      /* já há liberação (o disco do sistema instalado/persistente): o teste é só para discos sem nenhuma */
         u64 off = 1u << 20;                                        /* 1 MiB: dentro do disco, longe da tabela */
         CHECK(blk_read(d, off, a, 4096), "leitura do disco real");
         u64 before = storage_denied_writes();
@@ -351,6 +383,7 @@ void unit_tests_run(void) {
     test_crypto();
     test_entropy();
     test_partscan();
+    test_gpt_layout();
     test_origin();
     test_policy();
     test_accounts();

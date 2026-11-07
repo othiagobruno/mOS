@@ -1922,6 +1922,8 @@ static void shutdown_cb(int b, void *ctx) {
     if (b == 1) { shutdown_pending = kind; shutdown_at = timer_ticks() + 400; }
 }
 
+void desktop_request_restart(void) { shutdown_pending = 1; shutdown_at = timer_ticks() + 400; }
+
 void desktop_shutdown_dialog(int kind) {
     static const char *btns_off[] = {"Cancelar", "Desligar"};
     static const char *btns_rb[] = {"Cancelar", "Reiniciar"};

@@ -21,4 +21,5 @@ const char *i18n_month(int m);                  /* 1..12 */
 /* preferências do sistema: /Sistema/Biblioteca/Preferencias/com.mos.sistema.cfg (idioma=pt|en, teclado=abnt2|us) */
 void sysprefs_load(void);
 void sysprefs_save(void);
+bool sysprefs_present(void);                    /* o arquivo existe (ex.: gravado pelo instalador com o idioma escolhido) */
 int  sysprefs_format(char *out, usize cap);     /* texto do arquivo (usado também pelo instalador) */

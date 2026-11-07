@@ -119,6 +119,7 @@ static bool scan_gpt(blkdev_t *disk, ptable_t *t, const u8 *s0, const u8 *h1) {
     if (!blk_read(disk, elba * 512, e, elen)) { kfree(e); return false; }
     if (crc32_calc(e, elen) != ecrc) { kfree(e); bad(t, "GPT: CRC da tabela de entradas não confere."); return true; }
     memcpy(t->disk_guid, h1 + 56, 16);
+    t->first_usable = fu; t->last_usable = lu;
     int n = 0;
     for (u32 i = 0; i < ne; i++) {
         const u8 *x = e + (u64)i * esz;
@@ -215,4 +216,21 @@ bool partscan(blkdev_t *disk, ptable_t *t) {
         }
     }
     return true;
+}
+
+/* ------------------------------------------------------------------ espaço livre */
+int part_free_gaps(const ptable_t *t, gap_t *out, int max, u64 min_sectors) {
+    if (t->kind != PT_GPT || !t->last_usable) return 0;
+    int ord[PT_MAX_PARTS], n = t->n, k = 0;           /* partições em ordem de início */
+    for (int i = 0; i < n; i++) ord[i] = i;
+    for (int i = 1; i < n; i++)
+        for (int j = i; j > 0 && t->p[ord[j]].first < t->p[ord[j - 1]].first; j--) { int x = ord[j]; ord[j] = ord[j - 1]; ord[j - 1] = x; }
+    u64 cur = t->first_usable;
+    for (int i = 0; i <= n && k < max; i++) {
+        u64 end = i < n ? t->p[ord[i]].first : t->last_usable + 1;     /* exclusivo */
+        u64 f = (cur + 2047) / 2048 * 2048, l = end / 2048 * 2048;     /* [f, l) alinhado a 1 MiB */
+        if (l > f && l - f >= 2048 && l - f >= min_sectors) { out[k].first = f; out[k].last = l - 1; k++; }
+        if (i < n && t->p[ord[i]].last + 1 > cur) cur = t->p[ord[i]].last + 1;
+    }
+    return k;
 }

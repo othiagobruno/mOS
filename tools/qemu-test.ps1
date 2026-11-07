@@ -4,7 +4,7 @@
 # Example: .\tools\qemu-test.ps1 -Steps "wait:6000;shot:desk;move:20,10;click;wait:500;shot:menu"
 #   -Port     : porta QMP (padrão: uma porta livre qualquer, para várias sessões poderem testar ao mesmo tempo)
 #   (o autoteste de escrita por "assinatura" do AHCI foi removido do kernel: ele gravava em qualquer disco com a assinatura)
-param([string]$Steps = 'wait:6000;shot:screen', [int]$Memory = 1024, [switch]$KeepRunning, [string]$OutDir = 'build', [int]$Port = 0, [switch]$Persist, [string]$NvmeDisk = '', [switch]$BootNvme, [switch]$UsbInput, [switch]$BootUsb, [switch]$NoNet, [string]$Vga = 'std', [int]$Monitores = 1)
+param([string]$Steps = 'wait:6000;shot:screen', [int]$Memory = 1024, [switch]$KeepRunning, [string]$OutDir = 'build', [int]$Port = 0, [switch]$Persist, [string]$NvmeDisk = '', [string]$ExtraDisk = '', [switch]$BootNvme, [switch]$UsbInput, [switch]$BootUsb, [switch]$NoNet, [string]$Vga = 'std', [int]$Monitores = 1)
 $root = Split-Path $PSScriptRoot -Parent
 Set-Location $root
 New-Item -ItemType Directory -Force $OutDir\shots | Out-Null
@@ -29,6 +29,7 @@ Remove-Item $OutDir\serial-test.log -ErrorAction SilentlyContinue
 $extra = ''
 if ($Persist) { $extra += ' -Persist' }
 if ($NvmeDisk) { $extra += " -NvmeDisk `"$NvmeDisk`"" }
+if ($ExtraDisk) { $extra += " -ExtraDisk `"$ExtraDisk`"" }   # 2º disco SATA (ex.: testes do instalador com vários discos)
 if ($BootNvme) { $extra += ' -BootNvme' }
 if ($UsbInput) { $extra += ' -UsbInput' }
 if ($BootUsb) { $extra += ' -BootUsb' }
