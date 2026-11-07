@@ -178,7 +178,7 @@ static void load_legacy(const char *path, const char *fname) {
             if (kl == 8 && !strncmp(l, "Programa", 8)) scopy(j->prog, v, sizeof j->prog);
             else if (kl == 10 && !strncmp(l, "Argumentos", 10)) scopy(j->args, v, sizeof j->args);
             else if (kl == 10 && !strncmp(l, "ManterVivo", 10)) j->keep = !strcmp(v, "sim");
-            else if (kl == 7 && !strncmp(l, "AtrasoMs", 7)) j->delay_ms = atoi(v);
+            else if (kl == 8 && !strncmp(l, "AtrasoMs", 8)) j->delay_ms = atoi(v);
         }
         while (*l && *l != '\n') l++;
         if (*l) l++;
