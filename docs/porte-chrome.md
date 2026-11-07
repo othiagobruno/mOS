@@ -262,12 +262,28 @@ Ainda falta:
 - `OnDeviceModelService` (IA local, pede GPU) cai num CHECK (`Framework+0x2548f49`); o Chrome segue.
 - Depois de fechar a última janela o processo continua vivo (como no macOS), mas o mOS tira o Chrome do Dock e da barra
   de menus (app sem janela perde o foco); falta o "reabrir" pelo Dock.
-- Árabe/hebraico/CJK continuam em caixinhas: o mOS só tem a Inter. Precisa de uma fonte livre (ex.: Noto Sans
-  Arabic/Hebrew/CJK, OFL) instalada no sistema e o `CTFontCreateForString` escolher a face pelo cmap.
+- ~~Árabe/hebraico/CJK em caixinhas~~: resolvido, ver abaixo.
 - O clique no banner de cookies do despezzas.com não fez efeito numa rodada (os cliques do diálogo, da WebUI e do
   Launchpad funcionaram); repetir com espera maior.
 - Instalar pelo Horizonte (baixar o `.dmg`, montar, arrastar para Aplicativos) de ponta a ponta ainda não foi testado
   nesta sessão; o carregamento e a abertura já não dependem de nada que o `stage-chrome.ps1` faça além de copiar o app.
+
+### Árabe, hebraico e CJK (7 nov. 2026, 15h30)
+
+![Escritas no Chrome do mOS](img-chrome-escritas.png)
+
+- **Fontes**: Noto Sans Arabic, Hebrew, SC, JP e KR (SIL OFL 1.1, licença em `Noto-OFL.txt`) em
+  `root/mOS/Sistema/Biblioteca/Fontes`, que o `build.ps1` copia para a imagem. As CJK são os subconjuntos OpenType/CFF do
+  repositório noto-cjk (até 7,9 MiB, abaixo do limite de 8 MiB do GF_REGISTER).
+- **Fallback** (coretext.c): `CTFontCreateForString(WithLanguage)` confere no cmap se a fonte pedida tem o primeiro
+  caractere do trecho. Se não tem, registra sob demanda a primeira Noto que tem o glifo; o mesmo arquivo dá o mesmo id em
+  todo processo. Para Han a ordem segue o idioma: ja → JP, ko → KR, o resto → SC; kana vai para JP e hangul para KR.
+- **Kernel** (font_cff.inc): `CFF_MAX_FD` subiu de 16 para 64. As Noto CJK com CID têm 18 FDs e eram recusadas
+  (conferido no host com `tools/cfftest.c`).
+- **Pontos do árabe**: a Noto separa os pontos em marcas (`ccmp`) e as posiciona pelo GPOS. O Skia pergunta
+  `CTFontCreatePathForGlyph(f, g, NULL)` a todo glifo de avanço zero e descarta o glifo se o caminho vier vazio; o mOS
+  devolvia NULL, e todos os pontos e diacríticos sumiam. Agora, sem matriz, a função devolve a caixa do glifo.
+- Conferido no QEMU com uma página local nas cinco escritas (ligação, direita-para-esquerda e pontos certos).
 
 Como o Chrome inicia: o executável `Contents/MacOS/Google Chrome` (0,3 MiB) só monta o caminho
 `../Frameworks/Google Chrome Framework.framework/Versions/<versão>/Google Chrome Framework`, chama `dlopen`,

@@ -11,7 +11,7 @@
  * profundidade das subrotinas (10), o número de operações e o de segmentos. Hints, a largura no charstring (o avanço vem da
  * hmtx) e acentos por endchar (seac) são ignorados. CFF2 (fontes variáveis) não é aceito. */
 
-#define CFF_MAX_FD 16
+#define CFF_MAX_FD 64        /* as Noto Sans CJK (CID) têm ~20 FDs; antes 16 recusava todas */
 #define CFF_MAX_SEGS 65536   /* segmentos por glifo: um charstring malicioso não esgota a memória do kernel */
 
 typedef struct { u32 off, count, data; u8 osz; } cff_index_t;   /* data: dados - 1 (os deslocamentos começam em 1) */

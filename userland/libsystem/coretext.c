@@ -294,7 +294,17 @@ void CTFontDrawGlyphs(id f, const u16 *glyphs, const ct_pt_t *pos, size_t n, voi
         free(buf);
     }
 }
-void *CTFontCreatePathForGlyph(id f, u16 g, const void *matrix) { (void)f; (void)g; (void)matrix; return 0; }
+/* Ainda sem contornos vetoriais (o kernel só entrega o raster). Mas o Skia (SkScalerContext_Mac::generateMetrics)
+ * pergunta CTFontCreatePathForGlyph(f, g, NULL) a todo glifo de avanço zero e, se o caminho vier vazio, o trata como
+ * vazio: os pontos do árabe (ccmp os separa em marcas), os diacríticos combinantes e os niqqud sumiam. Sem matriz,
+ * devolve a caixa do glifo quando ele tem tinta; com matriz (o caminho de verdade, texto muito grande) segue NULL. */
+void *CGPathCreateWithRect(ct_rect_t r, const void *m);
+void *CTFontCreatePathForGlyph(id f, u16 g, const void *matrix) {
+    if (matrix || !f || !font_live()) return 0;
+    i16 w = 0, h = 0, left = 0, top = 0;
+    if (!glyph_box(f, g, (float)fsize(f), &w, &h, &left, &top) || w <= 0 || h <= 0) return 0;
+    return CGPathCreateWithRect((ct_rect_t){left, -(double)(top + h), w, h}, 0);
+}
 void *CTFontCopyGraphicsFont(id f, void *attrs) { (void)f; (void)attrs; return 0; }
 id CTFontCopyAvailableTables(id f, u32 options) {
     (void)options;
@@ -451,8 +461,66 @@ id CTFontCreateCopyWithSymbolicTraits(id f, double size, const void *matrix, u32
     return objc_retain(n);
 }
 typedef struct { long loc, len; } ct_range_t;
-id CTFontCreateForString(id f, id str, ct_range_t r) { (void)str; (void)r; return objc_retain(f ? f : font_of_size(13, 0)); }
-id CTFontCreateForStringWithLanguage(id f, id str, ct_range_t r, id lang) { (void)lang; return CTFontCreateForString(f, str, r); }
+/* ---- fontes de reserva (fallback): árabe, hebraico e CJK
+ * A Inter do kernel só tem latim, grego e cirílico. Quando o primeiro caractere do trecho não tem glifo na fonte
+ * pedida, o Blink (FontCache::PlatformFallbackFontForCharacter) pede outra a CTFontCreateForStringWithLanguage; aqui
+ * as Noto Sans de /Sistema/Biblioteca/Fontes (OFL) são registradas no kernel na primeira vez que fazem falta
+ * (GF_REGISTER; o mesmo arquivo dá o mesmo id em todo processo) e entra a primeira que tem o glifo. Para Han, a ordem
+ * segue o idioma: ja → JP, ko → KR, o resto → SC. */
+extern u8 *cx_read_file(const char *path, u64 *len);
+static void user_names_load(int fid);
+#define FB_DIR "/Sistema/Biblioteca/Fontes/"
+enum { FB_AR, FB_HE, FB_SC, FB_JP, FB_KR, FB_N };
+static const char *const fb_file[FB_N] = {"NotoSansArabic-Regular.ttf", "NotoSansHebrew-Regular.ttf", "NotoSansSC-Regular.otf",
+                                          "NotoSansJP-Regular.otf", "NotoSansKR-Regular.otf"};
+static int fb_id[FB_N];                 /* 0 = ainda não tentou; -1 = falhou; senão o id da face */
+static volatile int fb_lock;
+static int fb_face(int i) {
+    while (__sync_lock_test_and_set(&fb_lock, 1)) SYS0(SYS_YIELD);
+    if (!fb_id[i]) {
+        char p[128];
+        snprintf(p, sizeof p, FB_DIR "%s", fb_file[i]);
+        u64 n = 0;
+        u8 *b = font_live() ? cx_read_file(p, &n) : 0;
+        long r = b && n >= 12 && n <= (8 << 20) ? SYS5(GUI_FONT, GF_REGISTER, 0, (long)n, b, 0) : -1;
+        free(b);
+        fb_id[i] = is_user((int)r) ? (int)r : -1;
+        if (fb_id[i] > 0) user_names_load(fb_id[i]);
+    }
+    int id = fb_id[i];
+    __sync_lock_release(&fb_lock);
+    return id;
+}
+static int has_glyph(int face, u32 cp) { return SYS5(GUI_FONT, GF_CMAP, face, cp, 0, 0) > 0; }
+static u32 str_cp(id str, ct_range_t r) {
+    if (!str || r.len <= 0) return 0;
+    u32 c = (u16)MSG(u16, str, "characterAtIndex:", (u64)r.loc);
+    if (c >= 0xD800 && c < 0xDC00 && r.len > 1) {
+        u32 d = (u16)MSG(u16, str, "characterAtIndex:", (u64)r.loc + 1);
+        if (d >= 0xDC00 && d < 0xE000) c = 0x10000 + ((c - 0xD800) << 10) + (d - 0xDC00);
+    }
+    return c;
+}
+static id font_for_cp(id f, u32 cp, const char *lang) {
+    if (!f) f = font_of_size(13, 0);
+    if (!cp || !font_live() || has_glyph(fweight(f), cp)) return f;
+    int order[FB_N] = {FB_AR, FB_HE, FB_SC, FB_JP, FB_KR};
+    if (lang && !strncmp(lang, "ja", 2)) { order[2] = FB_JP; order[3] = FB_SC; }
+    else if (lang && !strncmp(lang, "ko", 2)) { order[2] = FB_KR; order[4] = FB_SC; }
+    if ((cp >= 0x3040 && cp < 0x3100) || (cp >= 0x31F0 && cp < 0x3200)) { order[2] = FB_JP; order[3] = FB_SC; }   /* kana */
+    if ((cp >= 0xAC00 && cp < 0xD7B0) || (cp >= 0x1100 && cp < 0x1200) || (cp >= 0x3130 && cp < 0x3190)) {   /* hangul */
+        order[2] = FB_KR; order[4] = FB_SC;
+    }
+    for (int k = 0; k < FB_N; k++) {
+        int face = fb_face(order[k]);
+        if (face > 0 && has_glyph(face, cp)) return font_with_face(fsize(f), face, 0);
+    }
+    return f;
+}
+id CTFontCreateForString(id f, id str, ct_range_t r) { return objc_retain(font_for_cp(f, str_cp(str, r), 0)); }
+id CTFontCreateForStringWithLanguage(id f, id str, ct_range_t r, id lang) {
+    return objc_retain(font_for_cp(f, str_cp(str, r), lang && cx_is_str(lang) ? cx_cstr(lang) : 0));
+}
 
 /* ---- descritores */
 id CTFontDescriptorCreateWithAttributes(id attrs) {
