@@ -31,7 +31,7 @@ Legenda: **feito** = existe e tem teste; **parcial** = existe e falta parte; **f
 |---|---|---|
 | AppKit (NSApplication, NSWindow, NSView, eventos, nib) | **parcial** | `appkit.c`, `nibarchive.c`, `kernel/compat/guisys.c`. Os samples Cocoa abrem janela no window server do mOS |
 | CoreGraphics | **parcial** | `coregraphics.c`, `cgdisplay.c` |
-| QuartzCore / CALayer / CAContext | **parcial** | `quartzcore.c`, `iosurface.c` |
+| QuartzCore / CALayer / CAContext | **parcial** | `quartzcore.c`, `iosurface.c`; animações reais (`CABasicAnimation`, keyframes, mola, grupos), `CAShapeLayer`, `CAGradientLayer`, `CATextLayer`, `CADisplayLink`, `NSValue` com structs em `coreanimation.c` (ver `docs/metal.md`) |
 | Integração com o window server do mOS | **feito** | `guisys.c` (janelas do mOS ↔ NSWindow, eventos → NSEvent) |
 | Metal | **parcial** | Metal por software (sem driver de GPU): `metal.c` (API, `CAMetalLayer`, `MTKView`), `metalexec.c` (rasterizador, compute, blit), `mtlshader.c`/`mtlexec.c` (compilador e interpretador de MSL). Shaders só do fonte, sem `.metallib` (AIR). Chromium/Electron continuam sem device. Ver `docs/metal.md` |
 

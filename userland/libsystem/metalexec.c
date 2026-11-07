@@ -8,7 +8,7 @@
  */
 #include "metalint.h"
 
-double pow(double, double), floor(double), sqrt(double), round(double), fabs(double), ldexp(double, int);
+double pow(double, double), floor(double), sqrt(double), round(double), fabs(double), ldexp(double, int), ceil(double);
 u16 msl_f2h(float f);
 float msl_h2f(u16 h);
 
@@ -1124,7 +1124,7 @@ static void blit_bt(cmd_t *c, int to_tex) {
             if (to_tex) memcpy(tp, bp, row); else memcpy(bp, tp, row);
         }
 }
-static void gen_mips(mtex_t *m) {
+void mx_gen_mips(mtex_t *m) {
     for (int l = 1; l < m->levels; l++)
         for (int s = 0; s < m->t.slices; s++) {
             int w = m->t.w >> l, h = m->t.h >> l, pw = m->t.w >> (l - 1), ph = m->t.h >> (l - 1);
@@ -1147,6 +1147,37 @@ static void gen_mips(mtex_t *m) {
                     if (n) for (int i = 0; i < 4; i++) acc[i] /= n;
                     msl_tex_store(&m->t, x, y, 0, s, l, acc);
                 }
+        }
+}
+
+/* MPSImageBilinearScale/LanczosScale: destino[x,y] = fonte[(x - tx)/sx, (y - ty)/sy]; na redução cada
+ * pixel do destino é a média de uma grade de amostras bilineares (filtro de caixa sobre a área coberta) */
+static void scale_tex(cmd_t *c) {
+    mtex_t *s = c->sc.s, *d = c->sc.d;
+    if (!s || !d || !s->t.data || !d->t.data) return;
+    double sx = c->sc.has_t ? c->sc.t[0] : (double)d->w / (double)s->w, sy = c->sc.has_t ? c->sc.t[1] : (double)d->h / (double)s->h;
+    double tx = c->sc.has_t ? c->sc.t[2] : 0, ty = c->sc.has_t ? c->sc.t[3] : 0;
+    if (sx == 0 || sy == 0) return;
+    int kx = sx < 1 ? (int)ceil(1 / sx) : 1, ky = sy < 1 ? (int)ceil(1 / sy) : 1;
+    if (kx > 8) kx = 8;
+    if (ky > 8) ky = 8;
+    if (c->sc.lanczos) { if (kx < 2 && sx < 1) kx = 2; if (ky < 2 && sy < 1) ky = 2; }
+    msl_samp_t sm;
+    memset(&sm, 0, sizeof sm);
+    sm.minf = sm.magf = 1;
+    sm.lodmax = 0;
+    for (int y = 0; y < (int)d->h; y++)
+        for (int x = 0; x < (int)d->w; x++) {
+            double acc[4] = {0, 0, 0, 0}, v[4];
+            for (int j = 0; j < ky; j++)
+                for (int i = 0; i < kx; i++) {
+                    double dx = x + (i + 0.5) / kx, dy = y + (j + 0.5) / ky;
+                    double cc[2] = {(dx - tx) / sx, (dy - ty) / sy};
+                    msl_tex_sample(&s->t, &sm, cc, 2, 0, 0, v);
+                    for (int k = 0; k < 4; k++) acc[k] += v[k];
+                }
+            for (int k = 0; k < 4; k++) acc[k] /= kx * ky;
+            msl_tex_store(&d->t, x, y, 0, 0, 0, acc);
         }
 }
 
@@ -1176,7 +1207,8 @@ void mx_exec_cmd(cmd_t *c) {
     case C_COPY_TB: blit_bt(c, 0); break;
     case C_COPY_TT: blit_tt(c); break;
     case C_FILL: if (c->fill.b && c->fill.off + c->fill.n <= c->fill.b->len) memset(c->fill.b->p + c->fill.off, c->fill.v, c->fill.n); break;
-    case C_MIPS: if (c->mips.t) gen_mips(c->mips.t); break;
+    case C_MIPS: if (c->mips.t) mx_gen_mips(c->mips.t); break;
     case C_SIGNAL: mx_signal_event(c->sig.ev, c->sig.v); break;
+    case C_SCALE: scale_tex(c); break;
     }
 }

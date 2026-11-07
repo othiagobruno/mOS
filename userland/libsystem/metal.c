@@ -168,19 +168,23 @@ static void set_err(id *err, id e) { if (err) *err = e; }
 
 /* ================================================================ descritores genéricos */
 /* tipos: u (NSUInteger/enum), b (BOOL), f (float), d (double), o (objeto retido), w (objeto fraco),
- * O (objeto criado sob demanda), A (array indexado sob demanda), c (MTLClearColor) */
-typedef struct { const char *name; char ty; u64 def; double dd; cx_class_t *cls; } pspec_t;
+ * O (objeto criado sob demanda), A (array indexado sob demanda), c (MTLClearColor), p (CGPoint/CGSize),
+ * t (CATransform3D). Também usado pelo coreanimation.c (animações e camadas): cada classe tem a lista
+ * completa das suas propriedades, guardadas depois das ivars da superclasse, com um u64 de "já
+ * inicializado" na frente (instâncias criadas sem -init, como as do +[CALayer layer], recebem os
+ * valores padrão no primeiro acesso). */
 typedef struct {
-    cx_class_t *cls;
+    cx_class_t *cls, *real_super;   /* real_super: primeiro ancestral que não é descritor genérico */
     const pspec_t *ps;
     int np, nslots;
-    int off[48];
-    SEL get[48], set[48], isget[48];
+    u32 base;
+    int off[64];
+    SEL get[64], set[64], isget[64];
     cx_class_t *elem;        /* classes de array: elemento */
+    void (*changed)(id self, const char *prop);
 } dclass_t;
-static dclass_t g_dc[96];
+static dclass_t g_dc[160];
 static int g_ndc;
-typedef struct { cx_class_t *isa; u64 s[]; } dobj_t;
 typedef struct { cx_class_t *isa; cx_class_t *elem; id it[32]; } darr_t;
 
 static dclass_t *dc_of(id o) {
@@ -197,7 +201,14 @@ static int dprop_name(dclass_t *d, const char *n) {
     for (int i = 0; i < d->np; i++) if (!strcmp(d->ps[i].name, n)) return i;
     return -1;
 }
-static u64 *dslot(id o, dclass_t *d, int i) { return &((dobj_t *)o)->s[d->off[i]]; }
+static u64 *dbase(id o, dclass_t *d) { return (u64 *)((u8 *)o + d->base); }
+static void d_defaults(id self, dclass_t *d);
+static u64 *dslot(id o, dclass_t *d, int i) {
+    u64 *b = dbase(o, d);
+    if (!b[0]) { b[0] = 1; d_defaults(o, d); }
+    return &b[1 + d->off[i]];
+}
+static void dchanged(id o, dclass_t *d, int i) { if (d->changed) d->changed(o, d->ps[i].name); }
 static id d_autoobj(cx_class_t *c) { return MSG0(id, MSG0(id, (id)c, "alloc"), "init"); }
 static id darr_new(cx_class_t *arrcls) {
     darr_t *a = (darr_t *)cx_alloc_instance(arrcls);
@@ -218,71 +229,82 @@ static u64 dg_u(id self, SEL c) {
 static float dg_f(id self, SEL c) { dclass_t *d = dc_of(self); int i = d ? dprop(d, c) : -1; float f = 0; if (i >= 0) memcpy(&f, dslot(self, d, i), 4); return f; }
 static double dg_d(id self, SEL c) { dclass_t *d = dc_of(self); int i = d ? dprop(d, c) : -1; double f = 0; if (i >= 0) memcpy(&f, dslot(self, d, i), 8); return f; }
 static mtl_cc_t dg_c(id self, SEL c) { dclass_t *d = dc_of(self); int i = d ? dprop(d, c) : -1; mtl_cc_t v = {0, 0, 0, 1}; if (i >= 0) memcpy(&v, dslot(self, d, i), sizeof v); return v; }
+typedef struct { double x, y; } dpt_t;
+typedef struct { double m[16]; } dt3_t;
+static dpt_t dg_p(id self, SEL c) { dclass_t *d = dc_of(self); int i = d ? dprop(d, c) : -1; dpt_t v = {0, 0}; if (i >= 0) memcpy(&v, dslot(self, d, i), sizeof v); return v; }
+static dt3_t dg_t(id self, SEL c) { dclass_t *d = dc_of(self); int i = d ? dprop(d, c) : -1; dt3_t v = {{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}}; if (i >= 0) memcpy(&v, dslot(self, d, i), sizeof v); return v; }
 static void ds_u(id self, SEL c, u64 v) {
     dclass_t *d = dc_of(self);
     int i = d ? dprop(d, c) : -1;
     if (i < 0) return;
     u64 *s = dslot(self, d, i);
     char t = d->ps[i].ty;
-    if (t == 'b') { *s = (u8)v != 0; return; }
-    if (t == 'o' || t == 'O' || t == 'A') {
+    if (t == 'b') v = (u8)v != 0;
+    else if (t == 'o' || t == 'O' || t == 'A') {
         id n = (id)v;
         if ((id)*s == n) return;
         if (n) objc_retain(n);
         if (*s) objc_release((id)*s);
-        *s = (u64)n;
-        return;
     }
     *s = v;
+    dchanged(self, d, i);
 }
-static void ds_f(id self, SEL c, float v) { dclass_t *d = dc_of(self); int i = d ? dprop(d, c) : -1; if (i >= 0) memcpy(dslot(self, d, i), &v, 4); }
-static void ds_d(id self, SEL c, double v) { dclass_t *d = dc_of(self); int i = d ? dprop(d, c) : -1; if (i >= 0) memcpy(dslot(self, d, i), &v, 8); }
-static void ds_c(id self, SEL c, mtl_cc_t v) { dclass_t *d = dc_of(self); int i = d ? dprop(d, c) : -1; if (i >= 0) memcpy(dslot(self, d, i), &v, sizeof v); }
+#define DSET(fn, T) static void fn(id self, SEL c, T v) { dclass_t *d = dc_of(self); int i = d ? dprop(d, c) : -1; if (i < 0) return; memcpy(dslot(self, d, i), &v, sizeof v); dchanged(self, d, i); }
+DSET(ds_f, float) DSET(ds_d, double) DSET(ds_c, mtl_cc_t) DSET(ds_p, dpt_t) DSET(ds_t, dt3_t)
 
 static void d_defaults(id self, dclass_t *d) {
+    u64 *b = dbase(self, d);
+    b[0] = 1;
     for (int i = 0; i < d->np; i++) {
-        u64 *s = dslot(self, d, i);
+        u64 *s = &b[1 + d->off[i]];
         const pspec_t *p = &d->ps[i];
         switch (p->ty) {
         case 'f': { float f = (float)p->dd; memcpy(s, &f, 4); break; }
         case 'd': memcpy(s, &p->dd, 8); break;
         case 'c': { mtl_cc_t v = {0, 0, 0, 1}; memcpy(s, &v, sizeof v); break; }
+        case 't': { dt3_t v = {{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}}; memcpy(s, &v, sizeof v); break; }
+        case 'p': { double v[2] = {p->dd, (double)(i64)p->def / 1000.0}; memcpy(s, v, sizeof v); break; }
         case 'u': case 'b': *s = p->def; break;
         }
     }
 }
 static id d_init(id self, SEL c) {
-    (void)c;
     dclass_t *d = dc_of(self);
-    if (d) d_defaults(self, d);
+    if (d && d->real_super) {
+        IMP si = cx_lookup(d->real_super, c);
+        if (si) self = ((id (*)(id, SEL))si)(self, c);
+    }
+    if (self && d && !dbase(self, d)[0]) d_defaults(self, d);
     return self;
 }
 static void d_release_all(id self, dclass_t *d) {
+    u64 *b = dbase(self, d);
+    if (!b[0]) return;
     for (int i = 0; i < d->np; i++) {
         char t = d->ps[i].ty;
-        u64 *s = dslot(self, d, i);
+        u64 *s = &b[1 + d->off[i]];
         if ((t == 'o' || t == 'O' || t == 'A') && *s) { objc_release((id)*s); *s = 0; }
     }
 }
 static void d_dealloc(id self, SEL c) {
-    (void)c;
     dclass_t *d = dc_of(self);
     if (d) d_release_all(self, d);
-    super_dealloc(self, cx_class_named("NSObject"));
+    super_dealloc(self, d && d->real_super ? d->real_super : cx_class_named("NSObject"));
+    (void)c;
 }
 static id d_copy(id self, SEL c) {
     (void)c;
     dclass_t *d = dc_of(self);
     id n = cx_alloc_instance(self->isa);
     if (!d) return n;
-    memcpy(((dobj_t *)n)->s, ((dobj_t *)self)->s, (u64)d->nslots * 8);
+    dslot(self, d, 0);
+    memcpy(dbase(n, d), dbase(self, d), (u64)(d->nslots + 1) * 8);
     for (int i = 0; i < d->np; i++) {
         char t = d->ps[i].ty;
-        u64 *s = dslot(n, d, i);
+        u64 *s = &dbase(n, d)[1 + d->off[i]];
         if (!*s) continue;
         if (t == 'o') objc_retain((id)*s);
         else if (t == 'O' || t == 'A') *s = (u64)MSG0(id, (id)*s, "copy");
-        else if (t == 'w') {}
     }
     return n;
 }
@@ -292,7 +314,7 @@ static void d_reset(id self, SEL c) {
     dclass_t *d = dc_of(self);
     if (!d) return;
     d_release_all(self, d);
-    memset(((dobj_t *)self)->s, 0, (u64)d->nslots * 8);
+    memset(dbase(self, d), 0, (u64)(d->nslots + 1) * 8);
     d_defaults(self, d);
 }
 /* arrays de descritores */
@@ -336,20 +358,33 @@ static char *sel_buf(const char *pre, const char *name, const char *suf) {
     strcat(s, suf);
     return s;
 }
-static void def_desc(cx_class_t *cls, cx_class_t *meta, const char *name, const pspec_t *ps) {
+void mtl_def_desc(cx_class_t *cls, cx_class_t *meta, const char *name, const pspec_t *ps, cx_class_t *super, void (*changed)(id, const char *)) {
     dclass_t *d = &g_dc[g_ndc++];
+    if (!super) super = cx_class_named("NSObject");
     d->cls = cls;
     d->ps = ps;
+    d->changed = changed;
+    d->base = (cx_instance_size(super) + 7) & ~7u;
+    cx_class_t *rs = super;
+    for (int again = 1; again && rs;) {
+        again = 0;
+        for (int i = 0; i < g_ndc - 1; i++) if (g_dc[i].cls == rs) { rs = rs->super; again = 1; break; }
+    }
+    d->real_super = rs;
     int slots = 0, np = 0;
-    for (; ps && ps[np].name; np++) { d->off[np] = slots; slots += ps[np].ty == 'c' ? 4 : 1; }
+    for (; ps && ps[np].name; np++) {
+        d->off[np] = slots;
+        char t = ps[np].ty;
+        slots += t == 'c' ? 4 : t == 'p' ? 2 : t == 't' ? 16 : 1;
+    }
     d->np = np;
     d->nslots = slots;
-    cx_define_class(cls, meta, name, cx_class_named("NSObject"), (u32)(slots * 8));
+    cx_define_class(cls, meta, name, super, (u32)((slots + 1) * 8 + (d->base - cx_instance_size(super))));
     for (int i = 0; i < np; i++) {
         const pspec_t *p = &ps[i];
         char t = p->ty;
-        void *g = t == 'f' ? (void *)dg_f : t == 'd' ? (void *)dg_d : t == 'c' ? (void *)dg_c : (void *)dg_u;
-        void *s = t == 'f' ? (void *)ds_f : t == 'd' ? (void *)ds_d : t == 'c' ? (void *)ds_c : (void *)ds_u;
+        void *g = t == 'f' ? (void *)dg_f : t == 'd' ? (void *)dg_d : t == 'c' ? (void *)dg_c : t == 'p' ? (void *)dg_p : t == 't' ? (void *)dg_t : (void *)dg_u;
+        void *s = t == 'f' ? (void *)ds_f : t == 'd' ? (void *)ds_d : t == 'c' ? (void *)ds_c : t == 'p' ? (void *)ds_p : t == 't' ? (void *)ds_t : (void *)ds_u;
         cx_add_method(cls, p->name, g);
         d->get[i] = sel_registerName(p->name);
         if (t == 'b') {
@@ -369,6 +404,7 @@ static void def_desc(cx_class_t *cls, cx_class_t *meta, const char *name, const 
     cx_add_method(cls, "copyWithZone:", (void *)d_copyz);
     cx_add_method(cls, "reset", (void *)d_reset);
 }
+static void def_desc(cx_class_t *cls, cx_class_t *meta, const char *name, const pspec_t *ps) { mtl_def_desc(cls, meta, name, ps, 0, 0); }
 static void def_darr(cx_class_t *cls, cx_class_t *meta, const char *name, cx_class_t *elem) {
     dclass_t *d = &g_dc[g_ndc++];
     d->cls = cls;
@@ -380,14 +416,24 @@ static void def_darr(cx_class_t *cls, cx_class_t *meta, const char *name, cx_cla
     cx_add_method(cls, "copy", (void *)da_copy);
     cx_add_method(cls, "copyWithZone:", (void *)da_copyz);
 }
-/* leitura dos descritores pelo runtime */
-static u64 dget(id o, const char *name) {
+/* leitura dos descritores pelo runtime (também usada pelo coreanimation.c) */
+u64 mtl_dget(id o, const char *name) { dclass_t *d = dc_of(o); int i = d ? dprop_name(d, name) : -1; return i >= 0 ? *dslot(o, d, i) : 0; }
+double mtl_dgetd(id o, const char *name) { dclass_t *d = dc_of(o); int i = d ? dprop_name(d, name) : -1; double v = 0; if (i >= 0) memcpy(&v, dslot(o, d, i), 8); return v; }
+float mtl_dgetf(id o, const char *name) { dclass_t *d = dc_of(o); int i = d ? dprop_name(d, name) : -1; float v = 0; if (i >= 0) memcpy(&v, dslot(o, d, i), 4); return v; }
+void mtl_dgetv(id o, const char *name, double *out, int n) { dclass_t *d = dc_of(o); int i = d ? dprop_name(d, name) : -1; if (i >= 0) memcpy(out, dslot(o, d, i), (u64)n * 8); }
+void mtl_dsetv(id o, const char *name, const double *in, int n) { dclass_t *d = dc_of(o); int i = d ? dprop_name(d, name) : -1; if (i >= 0) memcpy(dslot(o, d, i), in, (u64)n * 8); }
+void mtl_dseto(id o, const char *name, id v) {
     dclass_t *d = dc_of(o);
     int i = d ? dprop_name(d, name) : -1;
-    return i >= 0 ? *dslot(o, d, i) : 0;
+    if (i < 0) return;
+    u64 *s = dslot(o, d, i);
+    if (v) objc_retain(v);
+    if (*s) objc_release((id)*s);
+    *s = (u64)v;
 }
-static double dgetd(id o, const char *name) { dclass_t *d = dc_of(o); int i = d ? dprop_name(d, name) : -1; double v = 0; if (i >= 0) memcpy(&v, dslot(o, d, i), 8); return v; }
-static float dgetf(id o, const char *name) { dclass_t *d = dc_of(o); int i = d ? dprop_name(d, name) : -1; float v = 0; if (i >= 0) memcpy(&v, dslot(o, d, i), 4); return v; }
+#define dget mtl_dget
+#define dgetd mtl_dgetd
+#define dgetf mtl_dgetf
 static mtl_cc_t dgetc(id o, const char *name) { dclass_t *d = dc_of(o); int i = d ? dprop_name(d, name) : -1; mtl_cc_t v = {0, 0, 0, 1}; if (i >= 0) memcpy(&v, dslot(o, d, i), sizeof v); return v; }
 static id darr_at(id o, const char *name, int idx) {
     darr_t *a = (darr_t *)dget(o, name);
@@ -479,25 +525,26 @@ static const pspec_t ps_tileca[] = {{"pixelFormat", 'u'}, P_END};
 static const pspec_t ps_none[] = {P_END};
 
 /* construtores de classe dos descritores */
+#define TDS(o, n, v) (*dslot((o), dc_of(o), dprop_name(dc_of(o), (n))) = (u64)(v))
 static id td_2d(id cls, SEL c, u64 fmt, u64 w, u64 h, BOOL mip) {
     (void)c;
     id d = d_autoobj((cx_class_t *)cls);
-    ((dobj_t *)d)->s[1] = fmt;
-    ((dobj_t *)d)->s[2] = w;
-    ((dobj_t *)d)->s[3] = h;
-    if (mip) { u64 m = w > h ? w : h, n = 1; while (m > 1) { m >>= 1; n++; } ((dobj_t *)d)->s[5] = n; }
+    TDS(d, "pixelFormat", fmt);
+    TDS(d, "width", w);
+    TDS(d, "height", h);
+    if (mip) { u64 m = w > h ? w : h, n = 1; while (m > 1) { m >>= 1; n++; } TDS(d, "mipmapLevelCount", n); }
     return objc_autorelease(d);
 }
 static id td_cube(id cls, SEL c, u64 fmt, u64 size, BOOL mip) {
     id d = td_2d(cls, c, fmt, size, size, mip);
-    ((dobj_t *)d)->s[0] = MSL_TEX_CUBE;
+    TDS(d, "textureType", MSL_TEX_CUBE);
     return d;
 }
 static id td_buffer(id cls, SEL c, u64 fmt, u64 w, u64 opts, u64 usage) {
     id d = td_2d(cls, c, fmt, w, 1, NO);
-    ((dobj_t *)d)->s[0] = MSL_TEX_BUFFER;
-    ((dobj_t *)d)->s[8] = opts;
-    ((dobj_t *)d)->s[12] = usage;
+    TDS(d, "textureType", MSL_TEX_BUFFER);
+    TDS(d, "resourceOptions", opts);
+    TDS(d, "usage", usage);
     return d;
 }
 static id dnew_ar(id cls, SEL c) { (void)c; return objc_autorelease(d_autoobj((cx_class_t *)cls)); }
@@ -2130,6 +2177,241 @@ CFCONST(MTKTextureLoaderOriginTopLeft, "MTKTextureLoaderOriginTopLeft")
 CFCONST(MTKTextureLoaderOriginBottomLeft, "MTKTextureLoaderOriginBottomLeft")
 CFCONST(MTKTextureLoaderOriginFlippedVertically, "MTKTextureLoaderOriginFlippedVertically")
 
+/* ================================================================ MTKTextureLoader */
+#include "../../kernel/include/compat_gui.h"
+int cx_cgimage_src(const void *img, const u8 **px, long *bpr, int *w, int *h, int *premul);
+CFCONST(MTKTextureLoaderOptionAllocateMipmaps, "MTKTextureLoaderOptionAllocateMipmaps")
+CFCONST(MTKTextureLoaderOptionTextureCPUCacheMode, "MTKTextureLoaderOptionTextureCPUCacheMode")
+CFCONST(MTKTextureLoaderOptionCubeLayout, "MTKTextureLoaderOptionCubeLayout")
+CFCONST(MTKTextureLoaderOptionLoadAsArray, "MTKTextureLoaderOptionLoadAsArray")
+CFCONST(MTKTextureLoaderCubeLayoutVertical, "MTKTextureLoaderCubeLayoutVertical")
+CFCONST(MTKTextureLoaderErrorDomain, "MTKTextureLoaderErrorDomain")
+CFCONST(MTKTextureLoaderErrorKey, "MTKTextureLoaderErrorKey")
+CLASS(MTKTextureLoader)
+typedef struct { cx_class_t *isa; id dev; } mtkl_t;
+static int opt_bool(id opts, const void *key, int dflt) {
+    id v = opts ? MSG(id, opts, "objectForKey:", (id)key) : 0;
+    return v ? MSG0(BOOL, v, "boolValue") != 0 : dflt;
+}
+static u64 opt_u(id opts, const void *key, u64 dflt) {
+    id v = opts ? MSG(id, opts, "objectForKey:", (id)key) : 0;
+    return v ? MSG0(u64, v, "unsignedLongLongValue") : dflt;
+}
+/* pixels AARRGGBB (u32, = BGRA na memória) -> textura BGRA8 */
+static id tex_from_argb(const u8 *px, long bpr, int w, int h, id opts, id *err) {
+    if (!px || w <= 0 || h <= 0) { set_err(err, mk_error("MTKTextureLoaderErrorDomain", 0, "imagem inválida")); return 0; }
+    int srgb = opt_bool(opts, MTKTextureLoaderOptionSRGB, 1);
+    int gen = opt_bool(opts, MTKTextureLoaderOptionGenerateMipmaps, 0);
+    int mips = gen || opt_bool(opts, MTKTextureLoaderOptionAllocateMipmaps, 0);
+    id org = opts ? MSG(id, opts, "objectForKey:", (id)MTKTextureLoaderOptionOrigin) : 0;
+    int flip = org && (!strcmp(cx_cstr(org), "MTKTextureLoaderOriginBottomLeft") || !strcmp(cx_cstr(org), "MTKTextureLoaderOriginFlippedVertically"));
+    id td = MSG(id, (id)&MTLTextureDescriptor_c, "texture2DDescriptorWithPixelFormat:width:height:mipmapped:", (u64)(srgb ? 81 : 80), (u64)w, (u64)h, (BOOL)(mips ? YES : NO));
+    MSG(void, td, "setUsage:", opt_u(opts, MTKTextureLoaderOptionTextureUsage, 1));
+    MSG(void, td, "setStorageMode:", opt_u(opts, MTKTextureLoaderOptionTextureStorageMode, 0));
+    mtex_t *t = (mtex_t *)tex_new(td);
+    if (!t) { set_err(err, mk_error("MTKTextureLoaderErrorDomain", 0, "sem memória para a textura")); return 0; }
+    for (int y = 0; y < h; y++) memcpy(mx_texel(&t->t, 0, flip ? h - 1 - y : y, 0, 0, 0), px + (u64)y * bpr, (u64)w * 4);
+    if (gen) { gpu_lock(); mx_gen_mips(t); gpu_unlock(); }
+    return (id)t;
+}
+static id tex_from_bytes(const u8 *data, u64 n, id opts, id *err) {
+    long need = data && n ? SYS4(GUI_DECODE_IMAGE, data, n, 0, 0) : 0;
+    if (need <= 8) { set_err(err, mk_error("MTKTextureLoaderErrorDomain", 0, "formato de imagem não reconhecido")); return 0; }
+    u8 *out = malloc((size_t)need);
+    if (!out || SYS4(GUI_DECODE_IMAGE, data, n, out, need) != need) { free(out); set_err(err, mk_error("MTKTextureLoaderErrorDomain", 0, "falha ao decodificar a imagem")); return 0; }
+    int w = (int)((u32 *)out)[0], h = (int)((u32 *)out)[1];
+    id t = tex_from_argb(out + 8, (long)w * 4, w, h, opts, err);
+    free(out);
+    return t;
+}
+static id tl_init(id s, SEL c, id dev) { (void)c; ((mtkl_t *)s)->dev = dev ? objc_retain(dev) : 0; return s; }
+static id tl_dev(id s, SEL c) { (void)c; return ((mtkl_t *)s)->dev; }
+static void tl_dealloc(id s, SEL c) { (void)c; if (((mtkl_t *)s)->dev) objc_release(((mtkl_t *)s)->dev); super_dealloc(s, cx_class_named("NSObject")); }
+static id tl_cgimage(id s, SEL c, void *img, id opts, id *err) {
+    (void)s; (void)c;
+    const u8 *px;
+    long bpr;
+    int w, h, pm;
+    if (!img || !cx_cgimage_src(img, &px, &bpr, &w, &h, &pm)) { set_err(err, mk_error("MTKTextureLoaderErrorDomain", 0, "CGImage inválida")); return 0; }
+    return tex_from_argb(px, bpr, w, h, opts, err);
+}
+static id tl_data(id s, SEL c, id data, id opts, id *err) {
+    (void)s; (void)c;
+    if (!data) return 0;
+    return tex_from_bytes(MSG0(const u8 *, data, "bytes"), MSG0(u64, data, "length"), opts, err);
+}
+static id tl_url(id s, SEL c, id url, id opts, id *err) {
+    (void)s; (void)c;
+    id p = url ? MSG0(id, url, "path") : 0;
+    u64 n = 0;
+    char *b = p ? read_file(cx_cstr(p), &n) : 0;
+    if (!b) { set_err(err, mk_error("MTKTextureLoaderErrorDomain", 0, "arquivo não encontrado: %s", p ? cx_cstr(p) : "?")); return 0; }
+    id t = tex_from_bytes((const u8 *)b, n, opts, err);
+    free(b);
+    return t;
+}
+static id tl_name(id s, SEL c, id name, double scale, id bundle, id opts, id *err) {
+    (void)s; (void)c; (void)scale;
+    if (!bundle) bundle = MSG0(id, (id)cx_class_named("NSBundle"), "mainBundle");
+    id rp = bundle ? MSG0(id, bundle, "resourcePath") : 0;
+    static const char *ext[] = {"", ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tga"};
+    for (u64 i = 0; rp && name && i < sizeof ext / sizeof *ext; i++) {
+        char p[1200];
+        snprintf(p, sizeof p, "%s/%s%s", cx_cstr(rp), cx_cstr(name), ext[i]);
+        u64 n = 0;
+        char *b = read_file(p, &n);
+        if (!b) continue;
+        id t = tex_from_bytes((const u8 *)b, n, opts, err);
+        free(b);
+        if (t) return t;
+    }
+    set_err(err, mk_error("MTKTextureLoaderErrorDomain", 0, "imagem %s não encontrada no bundle", name ? cx_cstr(name) : "?"));
+    return 0;
+}
+static id tl_name_gamut(id s, SEL c, id name, double scale, u64 gamut, id bundle, id opts, id *err) { (void)gamut; return tl_name(s, c, name, scale, bundle, opts, err); }
+static id tl_urls(id s, SEL c, id urls, id opts, id *err) {
+    id a = cx_arr_new(cx_class_named("NSMutableArray"));
+    u64 n = urls ? MSG0(u64, urls, "count") : 0;
+    for (u64 i = 0; i < n; i++) {
+        id t = tl_url(s, c, MSG(id, urls, "objectAtIndex:", i), opts, err);
+        if (!t) t = objc_retain(MSG0(id, (id)cx_class_named("NSNull"), "null"));
+        cx_arr_add(a, t);
+        objc_release(t);
+    }
+    return objc_autorelease(a);
+}
+static void tl_url_blk(id s, SEL c, id u, id o, void *blk) { id err = 0; id t = tl_url(s, c, u, o, &err); if (blk) BLK2(blk, t, err); if (t) objc_release(t); }
+static void tl_data_blk(id s, SEL c, id d, id o, void *blk) { id err = 0; id t = tl_data(s, c, d, o, &err); if (blk) BLK2(blk, t, err); if (t) objc_release(t); }
+static void tl_cgimage_blk(id s, SEL c, void *i, id o, void *blk) { id err = 0; id t = tl_cgimage(s, c, i, o, &err); if (blk) BLK2(blk, t, err); if (t) objc_release(t); }
+static void tl_name_blk(id s, SEL c, id n, double sc, id b, id o, void *blk) { id err = 0; id t = tl_name(s, c, n, sc, b, o, &err); if (blk) BLK2(blk, t, err); if (t) objc_release(t); }
+
+/* ================================================================ CVMetalTextureCache */
+CFCONST(kCVMetalTextureUsage, "MetalTextureUsage") CFCONST(kCVMetalTextureStorageMode, "MetalTextureStorageMode")
+CFCONST(kCVMetalTextureCacheMaximumTextureAgeKey, "MaximumTextureAge")
+SCLASS(CVMTCache) SCLASS(CVMTex)
+typedef struct { cx_class_t *isa; id dev; } cvmtc_t;
+typedef struct { cx_class_t *isa; id tex, pb; } cvmt_t;
+id CVPixelBufferGetIOSurface(id pb);
+void *CVPixelBufferGetBaseAddress(id pb);
+u64 CVPixelBufferGetBytesPerRow(id pb);
+void *CVPixelBufferGetBaseAddressOfPlane(id pb, u64 i);
+u64 CVPixelBufferGetBytesPerRowOfPlane(id pb, u64 i);
+int CVMetalTextureCacheCreate(void *alloc, id cattrs, id dev, id tattrs, id *out) {
+    (void)alloc; (void)cattrs; (void)tattrs;
+    if (!out) return -6661;   /* kCVReturnInvalidArgument */
+    cvmtc_t *c = (cvmtc_t *)cx_alloc_instance(&CVMTCache_c);
+    c->dev = dev ? objc_retain(dev) : 0;
+    *out = (id)c;
+    return 0;
+}
+int CVMetalTextureCacheCreateTextureFromImage(void *alloc, id cache, id pb, id tattrs, u64 fmt, u64 w, u64 h, u64 plane, id *out) {
+    (void)alloc;
+    if (!cache || !pb || !out) return -6661;
+    *out = 0;
+    id td = MSG(id, (id)&MTLTextureDescriptor_c, "texture2DDescriptorWithPixelFormat:width:height:mipmapped:", fmt, w, h, (BOOL)NO);
+    id u = tattrs ? MSG(id, tattrs, "objectForKey:", (id)kCVMetalTextureUsage) : 0;
+    MSG(void, td, "setUsage:", u ? MSG0(u64, u, "unsignedLongLongValue") : (u64)1);
+    id surf = CVPixelBufferGetIOSurface(pb);
+    id tex = 0;
+    if (surf) tex = dv_newtex_surf(g_dev, 0, td, surf, plane);
+    else {
+        u8 *base = plane ? CVPixelBufferGetBaseAddressOfPlane(pb, plane) : CVPixelBufferGetBaseAddress(pb);
+        u64 bpr = plane ? CVPixelBufferGetBytesPerRowOfPlane(pb, plane) : CVPixelBufferGetBytesPerRow(pb);
+        if (base) {
+            mtex_t *t = (mtex_t *)new_obj(&MTex_c);
+            if (tex_from_desc(t, td)) { t->levels = 1; mx_tex_layout(t, bpr); t->t.data = base; tex = (id)t; }
+            else objc_release((id)t);
+        }
+    }
+    if (!tex) return -6683;   /* kCVReturnPixelBufferNotMetalCompatible */
+    cvmt_t *m = (cvmt_t *)cx_alloc_instance(&CVMTex_c);
+    m->tex = tex;
+    m->pb = objc_retain(pb);
+    *out = (id)m;
+    return 0;
+}
+id CVMetalTextureGetTexture(id t) { return t ? ((cvmt_t *)t)->tex : 0; }
+BOOL CVMetalTextureIsFlipped(id t) { (void)t; return NO; }
+void CVMetalTextureGetCleanTexCoords(id t, float *ll, float *lr, float *ur, float *ul) {
+    (void)t;
+    if (ll) { ll[0] = 0; ll[1] = 1; }
+    if (lr) { lr[0] = 1; lr[1] = 1; }
+    if (ur) { ur[0] = 1; ur[1] = 0; }
+    if (ul) { ul[0] = 0; ul[1] = 0; }
+}
+void CVMetalTextureCacheFlush(id c, u64 opts) { (void)c; (void)opts; }
+u64 CVMetalTextureCacheGetTypeID(void) { return 0x2B7; }
+u64 CVMetalTextureGetTypeID(void) { return 0x2B8; }
+static void cvmtc_dealloc(id s, SEL c) { (void)c; if (((cvmtc_t *)s)->dev) objc_release(((cvmtc_t *)s)->dev); super_dealloc(s, cx_class_named("NSObject")); }
+static void cvmt_dealloc(id s, SEL c) { (void)c; cvmt_t *m = (cvmt_t *)s; if (m->tex) objc_release(m->tex); if (m->pb) objc_release(m->pb); super_dealloc(s, cx_class_named("NSObject")); }
+static void tl_register(void) {
+    cx_class_t *ob = cx_class_named("NSObject");
+    cx_define_class(&MTKTextureLoader_c, &MTKTextureLoader_m, "MTKTextureLoader", ob, (u32)(sizeof(mtkl_t) - 8));
+    M(MTKTextureLoader, "initWithDevice:", tl_init); M(MTKTextureLoader, "device", tl_dev); M(MTKTextureLoader, "dealloc", tl_dealloc);
+    M(MTKTextureLoader, "newTextureWithCGImage:options:error:", tl_cgimage);
+    M(MTKTextureLoader, "newTextureWithContentsOfURL:options:error:", tl_url);
+    M(MTKTextureLoader, "newTextureWithData:options:error:", tl_data);
+    M(MTKTextureLoader, "newTextureWithName:scaleFactor:bundle:options:error:", tl_name);
+    M(MTKTextureLoader, "newTextureWithName:scaleFactor:displayGamut:bundle:options:error:", tl_name_gamut);
+    M(MTKTextureLoader, "newTexturesWithContentsOfURLs:options:error:", tl_urls);
+    M(MTKTextureLoader, "newTextureWithContentsOfURL:options:completionHandler:", tl_url_blk);
+    M(MTKTextureLoader, "newTextureWithData:options:completionHandler:", tl_data_blk);
+    M(MTKTextureLoader, "newTextureWithCGImage:options:completionHandler:", tl_cgimage_blk);
+    M(MTKTextureLoader, "newTextureWithName:scaleFactor:bundle:options:completionHandler:", tl_name_blk);
+    cx_define_class(&CVMTCache_c, &CVMTCache_m, "CVMetalTextureCache", ob, (u32)(sizeof(cvmtc_t) - 8));
+    M(CVMTCache, "dealloc", cvmtc_dealloc);
+    cx_define_class(&CVMTex_c, &CVMTex_m, "CVMetalTexture", ob, (u32)(sizeof(cvmt_t) - 8));
+    M(CVMTex, "dealloc", cvmt_dealloc);
+}
+
+/* ================================================================ MetalPerformanceShaders (escala de imagem) */
+CLASS(MPSKernel) CLASS(MPSUnaryImageKernel) CLASS(MPSImageScale) CLASS(MPSImageBilinearScale) CLASS(MPSImageLanczosScale)
+typedef struct { MHDR; u64 opts; int has_t, lanczos; double t[4]; } mps_t;
+BOOL MPSSupportsMTLDevice(id dev) { return dev && dev == g_dev; }
+static id mps_init(id s, SEL c, id dev) {
+    (void)c;
+    mps_t *k = (mps_t *)s;
+    k->dev = dev;
+    k->lanczos = cx_is_subclass(s->isa, &MPSImageLanczosScale_c);
+    return s;
+}
+static const double *mps_get_t(id s, SEL c) { (void)c; mps_t *k = (mps_t *)s; return k->has_t ? k->t : 0; }
+static void mps_set_t(id s, SEL c, const double *t) { (void)c; mps_t *k = (mps_t *)s; k->has_t = t != 0; if (t) memcpy(k->t, t, sizeof k->t); }
+static u64 mps_opts(id s, SEL c) { (void)c; return ((mps_t *)s)->opts; }
+static void mps_set_opts(id s, SEL c, u64 o) { (void)c; ((mps_t *)s)->opts = o; }
+static void mps_encode(id s, SEL c, id cb, id src, id dst) {
+    (void)c;
+    mcb_t *b = (mcb_t *)cb;
+    mps_t *k = (mps_t *)s;
+    if (!b || !src || !dst || b->status >= 2) return;
+    if (b->enc) { enc_end((menc_t *)b->enc); objc_release(b->enc); b->enc = 0; }
+    cmd_t *x = cb_cmd(b, C_SCALE);
+    if (!x) return;
+    cb_retain(b, src);
+    cb_retain(b, dst);
+    x->sc.s = (mtex_t *)src;
+    x->sc.d = (mtex_t *)dst;
+    x->sc.has_t = k->has_t;
+    x->sc.lanczos = k->lanczos;
+    memcpy(x->sc.t, k->t, sizeof x->sc.t);
+}
+static void mps_encode_inplace(id s, SEL c, id cb, id *tex, void *fallback) { (void)s; (void)c; (void)cb; (void)tex; (void)fallback; }
+static BOOL mps_encode_inplace_b(id s, SEL c, id cb, id *tex, void *fallback) { (void)s; (void)c; (void)cb; (void)tex; (void)fallback; return NO; }
+static void mps_register(void) {
+    cx_class_t *ob = cx_class_named("NSObject");
+    cx_define_class(&MPSKernel_c, &MPSKernel_m, "MPSKernel", &MObj_c, (u32)(sizeof(mps_t) - sizeof(mobj_t)));
+    M(MPSKernel, "initWithDevice:", mps_init); M(MPSKernel, "options", mps_opts); M(MPSKernel, "setOptions:", mps_set_opts);
+    cx_define_class(&MPSUnaryImageKernel_c, &MPSUnaryImageKernel_m, "MPSUnaryImageKernel", &MPSKernel_c, 0);
+    M(MPSUnaryImageKernel, "encodeToCommandBuffer:sourceTexture:destinationTexture:", mps_encode);
+    M(MPSUnaryImageKernel, "encodeToCommandBuffer:inPlaceTexture:fallbackCopyAllocator:", mps_encode_inplace_b);
+    cx_define_class(&MPSImageScale_c, &MPSImageScale_m, "MPSImageScale", &MPSUnaryImageKernel_c, 0);
+    M(MPSImageScale, "scaleTransform", mps_get_t); M(MPSImageScale, "setScaleTransform:", mps_set_t);
+    cx_define_class(&MPSImageBilinearScale_c, &MPSImageBilinearScale_m, "MPSImageBilinearScale", &MPSImageScale_c, 0);
+    cx_define_class(&MPSImageLanczosScale_c, &MPSImageLanczosScale_m, "MPSImageLanczosScale", &MPSImageScale_c, 0);
+    (void)ob;
+    (void)mps_encode_inplace;
+}
+
 /* ---- registro */
 static void def_obj(cx_class_t *c, cx_class_t *m, const char *name, u32 size) {
     cx_define_class(c, m, name, &MObj_c, size - 8);
@@ -2534,6 +2816,11 @@ void cx_metal_init(void) {
         M(MTKView, "setNeedsDisplay:", mtk_set_needs); M(MTKView, "_mosMetalTick:", mtk_tick);
         M(MTKView, "wantsUpdateLayer", ret_yes); M(MTKView, "isOpaque", ret_yes);
     }
+
+    tl_register();
+    mps_register();
+    /* resto do QuartzCore (animações, CAShapeLayer, CAGradientLayer, CATextLayer, CADisplayLink...) */
+    { void cx_coreanimation_init(void); cx_coreanimation_init(); }
 
     /* o device */
     mdev_t *d = (mdev_t *)cx_alloc_instance(&MDev_c);

@@ -300,6 +300,44 @@ int CVPixelBufferPoolCreatePixelBufferWithAuxAttributes(void *alloc, cvpool_t *p
     return CVPixelBufferPoolCreatePixelBuffer(alloc, pool, out);
 }
 void CVPixelBufferPoolFlush(cvpool_t *pool, u64 opts) { (void)pool; (void)opts; }
+
+/* ---- anexos em lote, atributos do pool e constantes usadas pelo WhatsApp */
+CFCONST(kCVImageBufferAlphaChannelModeKey, "AlphaChannelMode") CFCONST(kCVImageBufferAlphaChannelMode_StraightAlpha, "StraightAlpha")
+CFCONST(kCVImageBufferAlphaChannelMode_PremultipliedAlpha, "PremultipliedAlpha")
+CFCONST(kCVBufferTimeScaleKey, "TimeScale") CFCONST(kCVBufferTimeValueKey, "TimeValue") CFCONST(kCVBufferMovieTimeKey, "QTMovieTime")
+CFCONST(kCVBufferPropagatedAttachmentsKey, "PropagatedAttachments") CFCONST(kCVBufferNonPropagatedAttachmentsKey, "NonPropagatedAttachments")
+CFCONST(kCVPixelBufferCGBitmapContextCompatibilityKey, "CGBitmapContextCompatibility")
+
+CFCONST(kCVImageBufferChromaLocationBottomFieldKey, "ChromaLocationBottomField")
+CFCONST(kCVPixelBufferIOSurfaceCoreAnimationCompatibilityKey, "IOSurfaceCoreAnimationCompatibility")
+CFCONST(kCVPixelBufferPoolMaximumBufferAgeKey, "MaximumBufferAge") CFCONST(kCVImageBufferICCProfileKey, "ICCProfile")
+id CVBufferCopyAttachments(cvpb_t *p, u32 mode) {
+    (void)mode;
+    if (!p || !p->attach || !MSG0(u64, p->attach, "count")) return 0;
+    return MSG0(id, p->attach, "copy");
+}
+void CVBufferSetAttachments(cvpb_t *p, id dict, u32 mode) {
+    if (!p || !dict) return;
+    id keys = MSG0(id, dict, "allKeys");
+    u64 n = MSG0(u64, keys, "count");
+    for (u64 i = 0; i < n; i++) {
+        id k = MSG(id, keys, "objectAtIndex:", i);
+        CVBufferSetAttachment(p, k, MSG(id, dict, "objectForKey:", k), mode);
+    }
+}
+void *CGColorSpaceCreateDeviceRGB(void);
+void *CVImageBufferCreateColorSpaceFromAttachments(id attrs) { (void)attrs; return CGColorSpaceCreateDeviceRGB(); }
+id CVPixelBufferPoolGetPixelBufferAttributes(cvpool_t *pool) {
+    if (!pool) return 0;
+    id d = MSG0(id, (id)cx_class_named("NSMutableDictionary"), "dictionary");
+    id w = cx_num_i(pool->w), h = cx_num_i(pool->h), f = cx_num_i(pool->fmt);
+    MSG(void, d, "setObject:forKey:", w, (id)kCVPixelBufferWidthKey);
+    MSG(void, d, "setObject:forKey:", h, (id)kCVPixelBufferHeightKey);
+    MSG(void, d, "setObject:forKey:", f, (id)kCVPixelBufferPixelFormatTypeKey);
+    objc_release(w); objc_release(h); objc_release(f);
+    return d;
+}
+id CVPixelBufferPoolGetAttributes(cvpool_t *pool) { (void)pool; return MSG0(id, (id)cx_class_named("NSDictionary"), "dictionary"); }
 cvpool_t *CVPixelBufferPoolRetain(cvpool_t *p) { if (p) objc_retain((id)p); return p; }
 void CVPixelBufferPoolRelease(cvpool_t *p) { if (p) objc_release((id)p); }
 

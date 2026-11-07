@@ -101,7 +101,7 @@ typedef struct {
 } attach_t;
 typedef struct { attach_t c[8], d, s; u64 rtw, rth; } rpass_t;
 
-enum { C_RBEGIN = 1, C_DRAW, C_REND, C_DISPATCH, C_COPY_BB, C_COPY_BT, C_COPY_TB, C_COPY_TT, C_FILL, C_MIPS, C_SIGNAL };
+enum { C_RBEGIN = 1, C_DRAW, C_REND, C_DISPATCH, C_COPY_BB, C_COPY_BT, C_COPY_TB, C_COPY_TT, C_FILL, C_MIPS, C_SIGNAL, C_SCALE };
 typedef struct cmd {
     int k;
     union {
@@ -120,6 +120,7 @@ typedef struct cmd {
         struct { mbuf_t *b; u64 off, n; u8 v; } fill;
         struct { mtex_t *t; } mips;
         struct { id ev; u64 v; } sig;
+        struct { mtex_t *s, *d; double t[4]; int has_t, lanczos; } sc;   /* MPSImageScale */
     };
 } cmd_t;
 
@@ -133,3 +134,14 @@ u8 *mx_texel(const msl_tex_t *t, int x, int y, int z, int slice, int lvl);
 void mx_to_bgra8(mtex_t *src, u8 *dst, u64 dbpr);
 void mx_exec_cmd(cmd_t *c);
 void mx_signal_event(id ev, u64 v);
+
+/* propriedades genéricas (metal.c), também usadas pelo coreanimation.c */
+typedef struct { const char *name; char ty; u64 def; double dd; cx_class_t *cls; } pspec_t;
+void mtl_def_desc(cx_class_t *cls, cx_class_t *meta, const char *name, const pspec_t *ps, cx_class_t *super, void (*changed)(id, const char *));
+u64 mtl_dget(id o, const char *name);
+double mtl_dgetd(id o, const char *name);
+float mtl_dgetf(id o, const char *name);
+void mtl_dgetv(id o, const char *name, double *out, int n);
+void mtl_dsetv(id o, const char *name, const double *in, int n);
+void mtl_dseto(id o, const char *name, id v);
+void mx_gen_mips(mtex_t *m);

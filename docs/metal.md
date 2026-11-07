@@ -100,3 +100,59 @@ sampler`, teste de profundidade, blit textura→buffer e erro de compilação co
 O harness tem `MACHOTEST_DUMP=<arquivo.bmp>`, que grava o último quadro da janela (é de onde saiu a
 imagem acima, com o sample `Triangulo`). No Git Bash, rode com `MSYS_NO_PATHCONV=1` e caminhos no
 formato `C:/...`, senão o `MACHOTEST_PATH` vira um caminho do Windows.
+
+## Metal ao redor: MetalKit, CoreVideo e MPS
+
+- **`MTKTextureLoader`**: texturas a partir de `CGImage`, `NSData`, URL, nome no bundle (PNG/JPEG/GIF/BMP
+  pela decodificação do sistema) e listas de URLs, com as opções sRGB, mipmaps (gerados), uso, modo de
+  armazenamento e origem (inverte as linhas), nas versões síncronas e com `completionHandler`.
+- **`CVMetalTextureCache`**: `CVMetalTextureCacheCreateTextureFromImage` cria a textura sobre o IOSurface do
+  `CVPixelBuffer` (ou sobre a memória dele, se não tiver IOSurface), por plano.
+- **MetalPerformanceShaders**: `MPSSupportsMTLDevice`, `MPSImageBilinearScale` e `MPSImageLanczosScale`
+  (com `scaleTransform`; na redução o destino é a média da área coberta).
+
+## CoreAnimation (`coreanimation.c`)
+
+O WhatsApp (Catalyst) e o SwiftUI usam a parte de animação e as camadas especiais do QuartzCore. Ficam num
+arquivo próprio, em cima do `CALayer` do `quartzcore.c`, inicializado pelo `cx_metal_init`:
+
+![Camadas no mOS (QEMU)](img-camadas.png)
+
+- **Animações de verdade**: `-[CALayer addAnimation:forKey:]` (que era no-op) agora copia a animação e um
+  animador a 60 Hz calcula o valor a cada quadro e o aplica pelo setter tipado do layer. Vale para
+  `CABasicAnimation` (from/to/by, additive), `CASpringAnimation` (massa, rigidez, amortecimento,
+  `settlingDuration`), `CAKeyframeAnimation` (values, keyTimes, timingFunctions, discreto/linear, `path`),
+  `CAAnimationGroup` e `CATransition` (só tempo e delegate). Duração, `beginTime`, `speed`, `timeOffset`,
+  `repeatCount`/`repeatDuration` (inclusive infinito), `autoreverses`, `fillMode` + `removedOnCompletion`,
+  `animationDidStart:`/`animationDidStop:finished:`, `removeAnimationForKey:`, `animationForKey:`,
+  `animationKeys`. Key paths: opacity, position(.x/.y), anchorPoint, bounds(.origin/.size e componentes),
+  frame, transform(.scale/.rotation/.translation e eixos), sublayerTransform, cores (fundo, borda, sombra,
+  preenchimento, traço, texto), cornerRadius, borderWidth, zPosition, sombra, lineWidth, strokeStart/End,
+  startPoint/endPoint e, de forma discreta, qualquer outra propriedade de objeto. `CAMediaTimingFunction`
+  com as curvas padrão e pontos de controle.
+- **`CAShapeLayer`**: path com retas, quadráticas e cúbicas, preenchimento nonzero/even-odd, traço com
+  largura, pontas (butt/round/square), junções (miter com limite, round, bevel), tracejado com fase e
+  `strokeStart`/`strokeEnd`. **`CAGradientLayer`**: axial, radial e cônico, com `locations`.
+  **`CATextLayer`**: `NSString`/`NSAttributedString`, fonte, tamanho, cor, alinhamento, quebra de linha e
+  reticências. As três desenham com antisserrilhado num IOSurface BGRA pré-multiplicado que vira o
+  `contents`; o desenho é refeito no quadro seguinte a qualquer mudança de propriedade, tamanho ou escala,
+  e respeita `geometryFlipped` (inclusive herdado).
+- **`CADisplayLink`**: `displayLinkWithTarget:selector:` (iOS/Catalyst) e
+  `-[NSView/NSWindow/NSScreen displayLinkWithTarget:selector:]` (macOS 14), com timestamp, targetTimestamp,
+  duração, pausa e `preferredFramesPerSecond`.
+- **`NSValue`** com structs (CGPoint, CGSize, CGRect, CATransform3D, CGAffineTransform, NSRange, insets,
+  ponteiros), que o Foundation do mOS não tinha e as animações usam.
+- **Só modelo** (as propriedades existem, o desenho é o do `CALayer` comum): `CAReplicatorLayer` (réplicas
+  não são geradas), `CATiledLayer`, `CAEmitterLayer`/`CAEmitterCell` (sem partículas), `CAScrollLayer`.
+  `CARenderer` existe sem desenhar. Também `CATransform3DMakeRotation`/`Rotate`, `CAFrameRateRange` e as
+  constantes `kCA*`.
+- O quartzcore.c continua desenhando só escala e translação do `transform`: rotações animadas mudam o valor,
+  mas não aparecem rotacionadas.
+
+Medido com `machocheck` no WhatsApp: QuartzCore 61 → **0** símbolos ausentes, MetalKit 1 → 0, CoreVideo
+21 → 0, MetalPerformanceShaders 3 → 0 (o Metal em si já estava em 0); no total, de 7.894 para 7.783 símbolos distintos ausentes. O sample `userland/samples/Camadas`
+mostra tudo isso (imagem acima, no QEMU).
+
+**Validação no QEMU (7 nov.)**: com o libSystem oficial, o `MetalTest` passa inteiro no mOS de verdade
+(14/14 no log serial) e o `Triangulo` gira na janela; o `Camadas` desenha forma, gradiente e texto e anima o
+quadrado, com os delegates chamados e o `CADisplayLink` contando quadros.
