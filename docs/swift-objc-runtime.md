@@ -164,7 +164,12 @@ Cada fase termina com um teste no harness (`build/machotest.exe`) que roda sozin
     swiftobjc 13/13, swiftobjctest 23/23, objcrttest 25/25, deps do OpenSwiftUI TUDO OK.
   - **Não testado:** VS Code/Chrome no QEMU com as mudanças do dispatch acima (semáforo que bloqueia, `dispatch_time`
     absoluto, run loop principal que não termina mais por "sem fontes" depois que a fila principal é usada).
-- **Falta:** `UniformTypeIdentifiers` (9), que fica para a fase 5 porque usa `URLResourceValues` do Foundation.
+- **UniformTypeIdentifiers (pronto, 2026-11-07):** `userland/sdk/swift-objc/UniformTypeIdentifiers/UTType.swift` (struct `UTType` com os
+  tipos declarados, inicializadores por identificador, extensão, MIME e tag, `conforms(to:)`, `UTTagClass`, a ponte para a
+  classe ObjC e `URLResourceValues.contentType`) sobre a classe `UTType` do libSystem (`vscode_media.c`), declarada em
+  `sdk/UniformTypeIdentifiers/UniformTypeIdentifiers.h` com `swift_name("_UTTypeObjC")` (o nome mangled da ponte continua
+  `__C.UTType`). Gera `libswiftUniformTypeIdentifiers.dylib`. Cobre todos os imports do Postico (9), do WhatsApp (28), do
+  helper Computer Use do Grok Bot e dos módulos nativos do Codex desktop. O Postico passa a parar só no SwiftUI.
 
 ### 4. Entrega como dylibs Mach-O
 

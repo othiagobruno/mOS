@@ -41,6 +41,7 @@ if (-not $wt.Contains('mOS: workgroup')) {
 Copy-Item "$sdkSrc\sdk\module.modulemap" "$inc\module.modulemap" -Force
 Copy-Item "$sdkSrc\sdk\os\log.h" "$inc\os\log.h" -Force
 Copy-Item "$sdkSrc\sdk\Foundation" $inc -Recurse -Force   # Foundation em ObjC para o overlay Foundation (fase 5)
+Copy-Item "$sdkSrc\sdk\UniformTypeIdentifiers" $inc -Recurse -Force   # a classe UTType do libSystem (overlay UniformTypeIdentifiers)
 # CoreFoundation e CoreGraphics em C: os mesmos cabeçalhos que o importador do OpenSwiftUI usa
 foreach ($fw in 'CoreFoundation') { Copy-Item "$root\userland\sdk\openswiftui\importer\$fw" $inc -Recurse -Force }
 Copy-Item "$root\userland\sdk\include\CoreGraphics" $inc -Recurse -Force   # o do SDK (com MOS_SWIFT_OBJC: nomes da Apple)
@@ -109,6 +110,10 @@ if (Test-Path $spr) {
     }
     Build-Overlay '_StringProcessing' @(Get-ChildItem "$spr\_StringProcessing" -Recurse -Filter *.swift | ForEach-Object FullName) $false ($spAvail + @('-Xcc', "-I$spr\_CUnicode\include"))
 }
+
+# UniformTypeIdentifiers (fase 5): o struct UTType sobre a classe ObjC do libSystem; importa o Foundation, que o
+# tools\build-swift-foundation-objc.ps1 compila (só entra quando ele já existe)
+if (Test-Path "$out\Foundation.swiftmodule") { Build-Overlay 'UniformTypeIdentifiers' }
 
 # módulos de que o Postico só importa o _swift_FORCE_LOAD_$_swift<Módulo> (a API vem dos frameworks em C/ObjC)
 foreach ($m in '_Builtin_float', 'simd', 'XPC', 'QuartzCore', 'Metal', 'IOKit', 'OSLog', 'Spatial', 'CoreAudio', 'CoreImage', 'CoreMIDI', 'QuickLookUI') {

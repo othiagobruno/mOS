@@ -42,6 +42,7 @@ if (Test-Path (Ov 'Foundation')) {
         (Ov 'Synchronization'), (Ov 'InternalCollectionsUtilities'), (Ov 'SpanPreview'), (Ov 'BasicContainers'), (Ov 'DequeModule'),
         (Ov 'OrderedCollections'), (Ov '_RopeModule'))
 }
+if (Test-Path (Ov 'UniformTypeIdentifiers')) { Link-Dylib 'libswiftUniformTypeIdentifiers' @(Ov 'UniformTypeIdentifiers') }
 Link-Dylib 'libswift_RegexParser' @(Ov '_RegexParser')
 Link-Dylib 'libswift_StringProcessing' (@(Ov '_StringProcessing') + @(Get-ChildItem "$ov\_CUnicode_*.o" | ForEach-Object FullName))
 foreach ($m in 'simd', 'XPC', 'QuartzCore', 'Metal', 'IOKit', 'OSLog', 'Spatial', 'CoreAudio', 'CoreImage', 'CoreMIDI', 'QuickLookUI') {

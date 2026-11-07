@@ -63,3 +63,9 @@ module UIKit [system] [extern_c] {
     header "UIKit/UIKit.h"
     export *
 }
+
+// UniformTypeIdentifiers (fase 5): a classe UTType do libSystem, para o overlay Swift (libswiftUniformTypeIdentifiers)
+module UniformTypeIdentifiers [system] [extern_c] {
+    header "UniformTypeIdentifiers/UniformTypeIdentifiers.h"
+    export *
+}
