@@ -84,6 +84,42 @@ static FILE *fds[MAXFD];
  * (MACHOTEST_EVENTS="f:3;down:265,75;up:265,75;key:a;text:abc;close") */
 static int gw, gh, frames, poll_idle, nwin, curwin = 1;
 static const char *script;
+/* MACHOTEST_DUMP=<arquivo.bmp>: compõe os GC_CLEAR/GC_IMAGE dos quadros numa tela do tamanho da
+ * janela e grava o último quadro apresentado como BMP (para conferir o conteúdo dos layers) */
+static unsigned *dump_cv;
+static int dump_w, dump_h;
+static void dump_op(unsigned op, const unsigned char *q) {
+    if (!getenv("MACHOTEST_DUMP") || gw <= 0 || gh <= 0) return;
+    if (!dump_cv || dump_w != gw || dump_h != gh) { free(dump_cv); dump_cv = calloc((size_t)gw * gh, 4); dump_w = gw; dump_h = gh; }
+    if (!dump_cv) return;
+    if (op == GC_CLEAR) { unsigned c = *(const unsigned *)q; for (int i = 0; i < gw * gh; i++) dump_cv[i] = c; return; }
+    if (op != GC_IMAGE) return;
+    int x = ((const int *)q)[0], y = ((const int *)q)[1], w = ((const int *)q)[2], h = ((const int *)q)[3];
+    const unsigned *px = (const unsigned *)(q + 16);
+    for (int j = 0; j < h; j++)
+        for (int i = 0; i < w; i++) {
+            int X = x + i, Y = y + j;
+            if (X >= 0 && Y >= 0 && X < gw && Y < gh) dump_cv[Y * gw + X] = px[j * w + i];
+        }
+}
+static void dump_write(void) {
+    const char *path = getenv("MACHOTEST_DUMP");
+    if (!path || !dump_cv) return;
+    FILE *f = fopen(path, "wb");
+    if (!f) return;
+    int row = (dump_w * 3 + 3) & ~3, size = 54 + row * dump_h;
+    unsigned char h[54] = {'B', 'M'};
+    *(int *)(h + 2) = size; *(int *)(h + 10) = 54; *(int *)(h + 14) = 40; *(int *)(h + 18) = dump_w; *(int *)(h + 22) = -dump_h;
+    *(short *)(h + 26) = 1; *(short *)(h + 28) = 24;
+    fwrite(h, 1, 54, f);
+    unsigned char *r = calloc(1, row);
+    for (int y = 0; y < dump_h; y++) {
+        for (int x = 0; x < dump_w; x++) { unsigned c = dump_cv[y * dump_w + x]; r[x * 3] = c & 255; r[x * 3 + 1] = (c >> 8) & 255; r[x * 3 + 2] = (c >> 16) & 255; }
+        fwrite(r, 1, row, f);
+    }
+    free(r);
+    fclose(f);
+}
 static long long gui_syscall(u64 n, u64 a, u64 b, u64 c, u64 d) {
     switch (n) {
     case GUI_WIN_CREATE: gw = (int)b; gh = (int)c; nwin++; printf("[gui] janela %d \"%s\" %dx%d\n", nwin, (const char *)a, gw, gh); return nwin;
@@ -98,6 +134,7 @@ static long long gui_syscall(u64 n, u64 a, u64 b, u64 c, u64 d) {
             u32 op = *(const u32 *)(p + o), len = *(const u32 *)(p + o + 4);
             if (len < 8) break;
             if (op < 16) counts[op]++;
+            dump_op(op, p + o + 8);
             if (op == GC_RRECT && getenv("MACHOTEST_FRAMES") && getenv("MACHOTEST_FRAMES")[0] == '3' && strlen(texts) < 1800) {
                 const float *r = (const float *)(p + o + 8);
                 if (r[2] > 39.5f && r[2] < 40.5f) { char t[32]; snprintf(t, sizeof t, "h%d ", (int)(r[3] + 0.5f)); strcat(texts, t); }
@@ -118,7 +155,7 @@ static long long gui_syscall(u64 n, u64 a, u64 b, u64 c, u64 d) {
             printf("[gui] quadro %d: %d rrect, %d poly, %d linha, %d img, %d texto: %s\n", frames, counts[GC_RRECT], counts[GC_POLY], counts[GC_LINE], counts[GC_IMAGE], counts[GC_TEXT], texts);
         return 0;
     }
-    case GUI_PRESENT: frames++; return 0;
+    case GUI_PRESENT: frames++; dump_write(); return 0;
     case GUI_POLL: {
         gui_event_t *e = (gui_event_t *)a;
         if (!script || !*script) {

@@ -33,7 +33,7 @@ Legenda: **feito** = existe e tem teste; **parcial** = existe e falta parte; **f
 | CoreGraphics | **parcial** | `coregraphics.c`, `cgdisplay.c` |
 | QuartzCore / CALayer / CAContext | **parcial** | `quartzcore.c`, `iosurface.c` |
 | Integração com o window server do mOS | **feito** | `guisys.c` (janelas do mOS ↔ NSWindow, eventos → NSEvent) |
-| Metal | **falta** | só `MTLCreateSystemDefaultDevice` = nil (`corevideo.c`), e o Chromium cai para o caminho de software. Não há driver de GPU (ver README) |
+| Metal | **parcial** | Metal por software (sem driver de GPU): `metal.c` (API, `CAMetalLayer`, `MTKView`), `metalexec.c` (rasterizador, compute, blit), `mtlshader.c`/`mtlexec.c` (compilador e interpretador de MSL). Shaders só do fonte, sem `.metallib` (AIR). Chromium/Electron continuam sem device. Ver `docs/metal.md` |
 
 ## Sistema
 

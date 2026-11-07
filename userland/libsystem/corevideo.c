@@ -1,6 +1,6 @@
 /*
  * mOS libSystem — CoreVideo mínimo (porte do VS Code): CVDisplayLink (o "vsync" do Chromium) e
- * CVPixelBuffer sobre IOSurface (iosurface.c). Mais os stubs de "sem GPU" (Metal/CGL) que fazem o
+ * CVPixelBuffer sobre IOSurface (iosurface.c). Mais os stubs de "sem OpenGL" (CGL) que fazem o
  * Chromium escolher a composição por software.
  *
  * CVDisplayLink: uma thread do libSystem chama, a cada ~16,7 ms (60 Hz), o callback de cada link
@@ -306,20 +306,14 @@ void CVPixelBufferPoolRelease(cvpool_t *p) { if (p) objc_release((id)p); }
 u8 CVIsCompressedPixelFormatAvailable(u32 fmt) { (void)fmt; return 0; }
 id CVPixelFormatDescriptionCreateWithPixelFormatType(void *alloc, u32 fmt) { (void)alloc; (void)fmt; return 0; }
 
-/* ================================================================ sem GPU */
-/* Sem Metal e sem OpenGL: o Chromium cai para o SwiftShader / composição por software */
-id MTLCreateSystemDefaultDevice(void) { return 0; }
-id MTLCopyAllDevices(void) { return objc_retain(MSG0(id, (id)cx_class_named("NSArray"), "array")); }
-id MTLCopyAllDevicesWithObserver(id *observer, void *handler) { if (observer) *observer = 0; (void)handler; return MTLCopyAllDevices(); }
-CFCONST(MTLDeviceWasAddedNotification, "MTLDeviceWasAddedNotification")
-CFCONST(MTLDeviceRemovalRequestedNotification, "MTLDeviceRemovalRequestedNotification")
-CFCONST(MTLDeviceWasRemovedNotification, "MTLDeviceWasRemovedNotification")
-CFCONST(MTLCommonCounterSetTimestamp, "timestamp")
-CFCONST(MTLCommonCounterTimestamp, "GPUTimestamp")
+/* ================================================================ sem OpenGL */
+/* Metal: metal.c (por software). OpenGL não existe: o Chromium cai para o SwiftShader */
 int CGLChoosePixelFormat(const int *attrs, void **pix, int *npix) { (void)attrs; if (pix) *pix = 0; if (npix) *npix = 0; return 10002; /* kCGLBadPixelFormat */ }
 int CGLReleasePixelFormat(void *pix) { (void)pix; return 0; }
 
+void cx_metal_init(void);
 void cx_corevideo_init(void) {
+    cx_metal_init();
     cx_class_t *ob = cx_class_named("NSObject");
     cx_define_class(&CVDisplayLink_c, &CVDisplayLink_m, "CVDisplayLink", ob, sizeof(cvlink_t) - 8);
     cx_add_method(&CVDisplayLink_c, "dealloc", (void *)link_dealloc);
