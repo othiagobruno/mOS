@@ -53,7 +53,12 @@ if ($Headless) { $qargs += @('-display', 'none', '-qmp', "tcp:127.0.0.1:$Port,se
 else { $qargs += @('-display', 'sdl', '-serial', 'file:build/serial.log') }
 # -Accel whpx (ou MOS_QEMU_ACCEL=whpx): o hipervisor do Windows em vez da emulação (TCG). Sem o parâmetro nada muda.
 # Com o WHPX o convidado roda perto da velocidade nativa: o VS Code no TCG levava minutos só para compilar o JS do workbench.
-if ($Accel) { $qargs += @('-accel', $Accel) }
+if ($Accel) {
+    $qargs += @('-accel', $Accel)
+    # sem VMX/SVM no convidado: com -cpu max o OVMF configura o MSR 0x3A (IA32_FEATURE_CONTROL) em cada núcleo e o
+    # WHPX responde #GP ainda no PlatformPei, antes do mOS
+    if ($Accel -match 'whpx') { $i = [array]::IndexOf($qargs, '-cpu'); if ($i -ge 0) { $qargs[$i + 1] = 'max,-vmx,-svm' } }
+}
 # MOS_QEMU_LOG=<arquivo>: o QEMU registra resets da CPU (com os registradores) e erros do convidado. Com -no-reboot,
 # um triple fault do Nucleo fecha o QEMU sem deixar rastro no log serial; este arquivo diz onde foi.
 if ($env:MOS_QEMU_LOG) { $qargs += @('-d', 'cpu_reset,guest_errors', '-D', $env:MOS_QEMU_LOG) }

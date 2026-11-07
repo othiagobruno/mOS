@@ -779,13 +779,13 @@ void setprogname(const char *p) { __progname = p; }
 int system(const char *cmd) { (void)cmd; cx_errno = CX_ENOSYS; return -1; }
 
 /* ================================================================ POSIX básico */
-/* sockets (sockets.c) vivem em descritores do libSystem a partir de 0x5000 */
+/* sockets (sockets.c) vivem em descritores do libSystem 768-831 (abaixo do FD_SETSIZE do select) */
 int cx_sock_is(int fd) __attribute__((weak));
 long cx_sock_read(int fd, void *b, size_t n) __attribute__((weak));
 long cx_sock_write(int fd, const void *b, size_t n) __attribute__((weak));
 void cx_sock_set_nonblock(int fd, int on) __attribute__((weak));
 int cx_sock_get_nonblock(int fd) __attribute__((weak));
-#define IS_SOCK(fd) ((fd) >= 0x5000 && cx_sock_is && cx_sock_is(fd))
+#define IS_SOCK(fd) ((fd) >= 768 && (fd) < 1024 && cx_sock_is && cx_sock_is(fd))
 /* diagnóstico do porte do VS Code: o Chromium registra as recusas do Mojo ("Invalid message: ...") sem dizer qual
  * campo falhou. Quando esse texto passa por aqui, a cadeia de frames (rbp; o Chromium do Mac mantém o ponteiro de
  * frame) vai junto para a serial, como imagem+deslocamento: o chamador de ReportValidationError é o Accept do stub,
@@ -822,16 +822,35 @@ static void diag_mojo_backtrace(const void *b, size_t n) {
     line[o++] = '\n';
     SYS3(SYS_WRITE, 2, line, o);
 }
+/* O_NONBLOCK nos fds do kernel (pipes): o kernel só bloqueia; aqui a leitura de pipe vazio e a escrita em pipe
+ * cheio viram EAGAIN quando o fd está marcado. O curl (par de "despertar" num socketpair = pipe) drena o pipe
+ * lendo até EAGAIN; sem isso a segunda leitura esperava para sempre. Herdado no fork, como a tabela do kernel. */
+#define CX_NBMAX 256
+static unsigned char cx_nb[CX_NBMAX];
+static int nb_on(int fd) { return fd >= 0 && fd < CX_NBMAX && cx_nb[fd]; }
+static void nb_set(int fd, int on) { if (fd >= 0 && fd < CX_NBMAX) cx_nb[fd] = (unsigned char)(on != 0); }
 ssize_t write(int fd, const void *b, size_t n) {
     if (IS_SOCK(fd)) return cx_sock_write(fd, b, n);
     if (fd == 2 && b && n >= 16) diag_mojo_backtrace(b, n);
+    if (nb_on(fd) && n) {
+        mos_stat_t st;   /* pipe: is_dir 3 = ponta de escrita, size = espaço livre, mtime = 1 se não há leitor */
+        if (SYS2(SYS_FSTAT, fd, &st) == 0 && st.is_dir == 3 && st.size == 0 && !st.mtime) { cx_errno = 35; return -1; }   /* EAGAIN */
+    }
     return ret_errno(SYS3(SYS_WRITE, fd, b, n));
 }
-ssize_t read(int fd, void *b, size_t n) { if (IS_SOCK(fd)) return cx_sock_read(fd, b, n); return ret_errno(SYS3(SYS_READ, fd, b, n)); }
+ssize_t read(int fd, void *b, size_t n) {
+    if (IS_SOCK(fd)) return cx_sock_read(fd, b, n);
+    if (nb_on(fd) && n) {
+        mos_stat_t st;   /* pipe: is_dir 2 = ponta de leitura, size = bytes prontos, mtime = 1 se o escritor fechou */
+        if (SYS2(SYS_FSTAT, fd, &st) == 0 && st.is_dir == 2 && st.size == 0 && !st.mtime) { cx_errno = 35; return -1; }   /* EAGAIN */
+    }
+    return ret_errno(SYS3(SYS_READ, fd, b, n));
+}
 int close(int fd) {
     /* descritores que não são do kernel (kqueue, sockets: sockets.c / kqueue.c) */
     extern int cx_fake_fd_close(int fd) __attribute__((weak));
-    if (fd >= 0x4000 && cx_fake_fd_close) return cx_fake_fd_close(fd);
+    if ((fd >= 0x4000 || IS_SOCK(fd)) && cx_fake_fd_close) return cx_fake_fd_close(fd);
+    nb_set(fd, 0);
     return (int)ret_errno(SYS1(SYS_CLOSE, fd));
 }
 off_t lseek(int fd, off_t off, int wh) { return ret_errno(SYS3(SYS_LSEEK, fd, off, wh)); }
@@ -856,12 +875,15 @@ int open(const char *path, int flags, ...) {
     if (flags & MAC_O_CREAT) k |= MOS_O_CREAT;
     if (flags & MAC_O_TRUNC) k |= MOS_O_TRUNC;
     if (flags & MAC_O_APPEND) k |= MOS_O_APPEND;
+    if (flags & 0x1000000) k |= MOS_O_CLOEXEC;            /* O_CLOEXEC do macOS: o execve do kernel fecha */
     PATH(p, path);
     if ((flags & MAC_O_EXCL) && (flags & MAC_O_CREAT)) {
         mos_stat_t st;
         if (SYS2(SYS_STAT, p, &st) == 0) { cx_errno = CX_EEXIST; return -1; }
     }
-    return (int)ret_errno(SYS2(SYS_OPEN, p, k));
+    int fd = (int)ret_errno(SYS2(SYS_OPEN, p, k));
+    if (fd >= 0) nb_set(fd, (flags & 0x4) != 0);          /* O_NONBLOCK */
+    return fd;
 }
 int creat(const char *path, int mode) { return open(path, 0x0601, mode); }
 int unlink(const char *path) { PATH(p, path); return (int)ret_errno(SYS1(SYS_UNLINK, p)); }
@@ -934,7 +956,11 @@ int dup(int fd) {
     cx_errno = 24;   /* EMFILE */
     return -1;
 }
-int pipe(int *fds) { return (int)ret_errno(SYS1(SYS_PIPE, fds)); }   /* o kernel tem pipes (SYS_PIPE) */
+int pipe(int *fds) {                                                   /* o kernel tem pipes (SYS_PIPE) */
+    int r = (int)ret_errno(SYS1(SYS_PIPE, fds));
+    if (r == 0) { nb_set(fds[0], 0); nb_set(fds[1], 0); }
+    return r;
+}
 int fork(void) { return (int)ret_errno(SYS0(SYS_FORK)); }
 /* execve/execvp ficam em extra.c (precisam do posix_spawnp e do atalho do sandbox-exec) */
 int ioctl(int fd, unsigned long req, ...) {
@@ -945,7 +971,15 @@ int ioctl(int fd, unsigned long req, ...) {
         cx_sock_set_nonblock(fd, on && *on);
         return 0;
     }
-    if (req == 0x8004667eUL || req == 0x20006601UL || req == 0x20006602UL) return 0;
+    if (req == 0x8004667eUL) {                               /* FIONBIO num fd do kernel (pipe): o O_NONBLOCK daqui */
+        __builtin_va_list ap; __builtin_va_start(ap, req); int *on = __builtin_va_arg(ap, int *); __builtin_va_end(ap);
+        nb_set(fd, on && *on);
+        return 0;
+    }
+    if (req == 0x20006601UL || req == 0x20006602UL) {          /* FIOCLEX / FIONCLEX */
+        if (!IS_SOCK(fd) && fd < 0x4000) SYS3(SYS_FDFLAGS, fd, 1, req == 0x20006601UL);
+        return 0;
+    }
     if (!isatty(fd)) { cx_errno = CX_ENOTTY; return -1; }
     return -1;
 }
@@ -953,11 +987,30 @@ int ioctl(int fd, unsigned long req, ...) {
 int fcntl(int fd, int cmd, ...) {
     /* F_DUPFD (0) / F_DUPFD_CLOEXEC (67): como dup() acima, o mesmo descritor. Antes devolvia 0 (= stdin), e o
      * tokio/mio, que clona o kqueue assim (Registry::try_clone), passava a fazer kevent no fd 0 -> EBADF */
-    if (cmd == 0 || cmd == 67) return dup(fd);
+    if (cmd == 0 || cmd == 67) {
+        int nfd = dup(fd);
+        if (cmd == 67 && nfd >= 0 && !IS_SOCK(nfd)) SYS3(SYS_FDFLAGS, nfd, 1, 1);   /* F_DUPFD_CLOEXEC */
+        return nfd;
+    }
+    /* F_GETFD (1) / F_SETFD (2): FD_CLOEXEC no kernel (SYS_FDFLAGS). O git cria um pipe de aviso com
+     * FD_CLOEXEC e espera EOF nele para saber que o exec do filho deu certo; ignorado, o pai esperava para sempre. */
+    if ((cmd == 1 || cmd == 2) && !IS_SOCK(fd) && fd < 0x4000) {
+        long a = 0;
+        if (cmd == 2) { __builtin_va_list ap; __builtin_va_start(ap, cmd); a = __builtin_va_arg(ap, long); __builtin_va_end(ap); }
+        long r = SYS3(SYS_FDFLAGS, fd, cmd == 2, a & 1);
+        if (r < 0) { if (fd <= 2) return 0; cx_errno = (int)-r; return -1; }   /* 0-2 do console: sem entrada no kernel */
+        return cmd == 1 ? (int)r : 0;
+    }
     if (IS_SOCK(fd) && (cmd == 3 || cmd == 4)) {
         if (cmd == 3) return 0x2 | (cx_sock_get_nonblock(fd) ? 0x4 : 0);   /* O_RDWR [| O_NONBLOCK] */
         __builtin_va_list ap; __builtin_va_start(ap, cmd); long fl = __builtin_va_arg(ap, long); __builtin_va_end(ap);
         cx_sock_set_nonblock(fd, (fl & 0x4) != 0);
+        return 0;
+    }
+    if (cmd == 3) return 0x2 | (nb_on(fd) ? 0x4 : 0);   /* F_GETFL: O_RDWR [| O_NONBLOCK] */
+    if (cmd == 4) {                                     /* F_SETFL: só O_NONBLOCK tem efeito */
+        __builtin_va_list ap; __builtin_va_start(ap, cmd); long fl = __builtin_va_arg(ap, long); __builtin_va_end(ap);
+        nb_set(fd, (fl & 0x4) != 0);
         return 0;
     }
     if (cmd == 50) {                                    /* F_GETPATH: caminho do fd (SYS_FDPATH) */

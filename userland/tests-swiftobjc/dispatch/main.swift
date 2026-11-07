@@ -73,4 +73,23 @@ check(DispatchQoS.unspecified.qosClass == .unspecified && DispatchQoS.QoSClass(r
 check(DispatchWorkItemFlags.barrier.contains(.barrier) && !DispatchWorkItemFlags([]).contains(.barrier), "DispatchWorkItemFlags")
 check(DispatchQueue.Attributes.concurrent.contains(.concurrent), "DispatchQueue.Attributes")
 
+// valores por fila
+let chave = DispatchSpecificKey<String>()
+let qs = DispatchQueue(label: "mos.especifico")
+qs.setSpecific(key: chave, value: "oi")
+var dentro: String?
+qs.sync { dentro = DispatchQueue.getSpecific(key: chave) }
+check(qs.getSpecific(key: chave) == "oi" && dentro == "oi" && DispatchQueue.getSpecific(key: chave) == nil, "setSpecific/getSpecific")
+qs.setSpecific(key: chave, value: nil)
+check(qs.getSpecific(key: chave) == nil, "setSpecific(nil)")
+
+var soma = 0
+DispatchQueue.concurrentPerform(iterations: 5) { soma += $0 }
+check(soma == 10, "concurrentPerform")
+
+let dd = ([1, 2, 3] as [UInt8]).withUnsafeBytes { DispatchData(bytes: $0) }
+check(dd.count == 3 && dd[2] == 3 && Array(dd) == [1, 2, 3], "DispatchData")
+
+check(_dispatchPreconditionTest(.onQueue(.main)), "_dispatchPreconditionTest")
+
 print("dispatch: \(ok)/\(total) ok")

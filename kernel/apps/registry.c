@@ -7,6 +7,9 @@ static app_t *all_apps[] = {
     &app_musica, &app_minas, &app_visualizador, &app_atividade, &app_console, &app_preferencias, &app_sobre,
     &app_componentes, &app_instalador,
     &app_lembretes, &app_contatos,
+    &app_imagecapture,
+    &app_automator,
+    &app_quicktime,
     &app_livros,
     &app_mail,
     &app_atalhos,
@@ -242,6 +245,8 @@ void open_path(const char *path) {
         } else {
             notify("Não foi possível abrir a imagem", n->name);
         }
+    } else if (!strcasecmp(e, "gif") || !strcasecmp(e, "wav")) {
+        quicktime_open_file(path);
     } else if (!strcasecmp(e, "epub")) {
         books_open_file(path);
     } else if (!strcasecmp(e, "ics")) {

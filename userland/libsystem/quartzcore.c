@@ -606,6 +606,16 @@ static void tx_set_completion(id cls, SEL c, void *blk) {
     if (!tx_depth) { ((blk_t *)blk)->invoke(blk); return; }
     if (ntx_blocks < 32) tx_blocks[ntx_blocks++] = _Block_copy(blk);
 }
+/* +addCommitHandler:forPhase: (macOS 11+): roda no commit da transação aberta. Sem transação explícita, a implícita do
+ * Core Animation fecha no fim da volta do run loop — aqui, na próxima volta (fila principal do GCD). */
+void dispatch_async(void *q, void *block);
+void *dispatch_get_main_queue(void);
+static void tx_add_commit_handler(id cls, SEL c, void *blk, long phase) {
+    (void)cls; (void)c; (void)phase;
+    if (!blk) return;
+    if (tx_depth && ntx_blocks < 32) { tx_blocks[ntx_blocks++] = _Block_copy(blk); return; }
+    dispatch_async(dispatch_get_main_queue(), blk);
+}
 static void tx_set_value(id cls, SEL c, id v, id k) {
     (void)cls; (void)c;
     if (k && !strcmp(cx_cstr(k), "disableActions")) tx_disable = v && MSG0(BOOL, v, "boolValue");
@@ -1431,6 +1441,7 @@ void cx_quartzcore_init(void) {
     cx_add_cmethod(&CATransaction_c, "animationDuration", (void *)tx_get_duration);
     cx_add_cmethod(&CATransaction_c, "setAnimationTimingFunction:", (void *)l_noop_o);
     cx_add_cmethod(&CATransaction_c, "setCompletionBlock:", (void *)tx_set_completion);
+    cx_add_cmethod(&CATransaction_c, "addCommitHandler:forPhase:", (void *)tx_add_commit_handler);
     cx_add_cmethod(&CATransaction_c, "setValue:forKey:", (void *)tx_set_value);
     cx_add_cmethod(&CATransaction_c, "valueForKey:", (void *)tx_value);
 

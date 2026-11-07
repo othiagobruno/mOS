@@ -361,8 +361,56 @@ int getnameinfo(const void *sa, u32 salen, char *host, u32 hlen, char *serv, u32
     }
     return 0;
 }
+/* IPv6 em texto (RFC 4291: grupos hexadecimais, um "::" e IPv4 no fim). 1 = válido, 0 = não é IPv6.
+ * O curl testa "inet_pton(AF_INET6, host) != 0" para saber se o host é um endereço: devolver -1 aqui fazia
+ * todo nome de host virar "endereço IPv6" e a verificação do certificado TLS falhar. */
+static int parse_ipv6(const char *s, u8 out[16]) {
+    u16 g[8];
+    int n = 0, gap = -1;
+    if (s[0] == ':') { if (s[1] != ':') return 0; s++; }
+    while (*s) {
+        if (*s == ':') {
+            if (gap >= 0) return 0;
+            gap = n;
+            s++;
+            if (!*s) break;
+            continue;
+        }
+        const char *dot = 0;
+        for (const char *q = s; *q && *q != ':'; q++) if (*q == '.') { dot = q; break; }
+        if (dot) {                                            /* IPv4 embutido: só no fim */
+            unsigned ip;
+            if (n > 6 || !parse_ipv4(s, &ip)) return 0;
+            g[n++] = (u16)(ip >> 16); g[n++] = (u16)ip;
+            s += strlen(s);
+            break;
+        }
+        unsigned v = 0;
+        int k = 0;
+        for (; k < 4; k++, s++) {
+            char c = *s;
+            int d = c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
+            if (d < 0) break;
+            v = v << 4 | (unsigned)d;
+        }
+        if (!k || n >= 8) return 0;
+        g[n++] = (u16)v;
+        if (*s == ':') { s++; if (!*s) return 0; if (*s == ':') continue; }
+        else if (*s) return 0;
+    }
+    if (gap < 0 ? n != 8 : n > 7) return 0;
+    u16 full[8] = {0};
+    if (gap < 0) memcpy(full, g, sizeof full);
+    else {
+        for (int i = 0; i < gap; i++) full[i] = g[i];
+        for (int i = gap; i < n; i++) full[8 - (n - i)] = g[i];
+    }
+    for (int i = 0; i < 8; i++) { out[2 * i] = (u8)(full[i] >> 8); out[2 * i + 1] = (u8)full[i]; }
+    return 1;
+}
 int inet_pton(int af, const char *src, void *dst) {
     unsigned ip;
+    if (af == 30) return parse_ipv6(src, dst);                /* AF_INET6 */
     if (af != 2) { cx_errno = CX_EAFNOSUPPORT; return -1; }
     if (!parse_ipv4(src, &ip)) return 0;
     u8 *d = dst;
@@ -370,6 +418,36 @@ int inet_pton(int af, const char *src, void *dst) {
     return 1;
 }
 const char *inet_ntop(int af, const void *src, char *dst, u32 size) {
+    if (af == 30) {                                           /* AF_INET6: grupos em hexa, a maior sequência de zeros vira "::" */
+        const u8 *a = src;
+        u16 g[8];
+        for (int i = 0; i < 8; i++) g[i] = (u16)(a[2 * i] << 8 | a[2 * i + 1]);
+        int bs = -1, bl = 0;
+        for (int i = 0; i < 8;) {
+            if (g[i]) { i++; continue; }
+            int j = i;
+            while (j < 8 && !g[j]) j++;
+            if (j - i > bl && j - i > 1) { bs = i; bl = j - i; }
+            i = j;
+        }
+        char buf[48];
+        u32 o = 0;
+        static const char hx[] = "0123456789abcdef";
+        for (int i = 0; i < 8; i++) {
+            if (i == bs) { buf[o++] = ':'; i += bl - 1; continue; }   /* o ':' do grupo seguinte completa o "::" */
+            if (i) buf[o++] = ':';
+            int started = 0;
+            for (int sh = 12; sh >= 0; sh -= 4) {
+                int d = (g[i] >> sh) & 15;
+                if (d || started || sh == 0) { buf[o++] = hx[d]; started = 1; }
+            }
+        }
+        if (bs >= 0 && bs + bl == 8) buf[o++] = ':';          /* "1::" e "::" terminam com o par */
+        buf[o] = 0;
+        if (o + 1 > size) { cx_errno = 28; return 0; }
+        memcpy(dst, buf, o + 1);
+        return dst;
+    }
     if (af != 2) { cx_errno = CX_EAFNOSUPPORT; return 0; }
     if (!fmt_ipv4(be32(src), dst, size)) { cx_errno = 28; return 0; }   /* ENOSPC */
     return dst;

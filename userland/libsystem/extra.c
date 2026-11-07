@@ -583,8 +583,10 @@ int SecRandomCopyBytes(void *rnd, size_t n, void *buf) { (void)rnd; arc4random_b
 
 /* libdispatch: semáforos de um processo com uma thread */
 /* contador + quantos esperam; a espera dorme no futex sobre os 32 bits baixos do contador (x86: mesmo endereço) */
-typedef struct { long count; volatile int waiters; } cx_sema_t;
-void *dispatch_semaphore_create(long v) { cx_sema_t *s = malloc(sizeof *s); if (s) { s->count = v; s->waiters = 0; } return s; }
+/* 1º word: isa ObjC (OS_dispatch_semaphore), como no macOS */
+extern char OS_dispatch_semaphore_c[] __asm__("OBJC_CLASS_$_OS_dispatch_semaphore");
+typedef struct { void *isa; long count; volatile int waiters; } cx_sema_t;
+void *dispatch_semaphore_create(long v) { cx_sema_t *s = malloc(sizeof *s); if (s) { s->isa = OS_dispatch_semaphore_c; s->count = v; s->waiters = 0; } return s; }
 long dispatch_semaphore_signal(void *s) {
     cx_sema_t *x = s;
     __sync_fetch_and_add(&x->count, 1);
@@ -620,8 +622,12 @@ long dispatch_semaphore_wait(void *s, u64 timeout) {
         __sync_fetch_and_sub(&x->waiters, 1);
     }
 }
-void dispatch_release(void *o) { free(o); }
-void dispatch_retain(void *o) { (void)o; }
+/* contagem de referências em dispatch.c (antes: retain não fazia nada e release liberava na hora, o que
+ * causava uso depois de liberar em todo par retain/release e free() nas filas estáticas) */
+void cx_dispatch_retain(void *o);
+void cx_dispatch_release(void *o);
+void dispatch_release(void *o) { cx_dispatch_release(o); }
+void dispatch_retain(void *o) { cx_dispatch_retain(o); }
 
 /* unwinder: só usado em panics; sem tabelas, informa "fim da pilha" */
 int _Unwind_Backtrace(void *fn, void *arg) { (void)fn; (void)arg; return 5; }

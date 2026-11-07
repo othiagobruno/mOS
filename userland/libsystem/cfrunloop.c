@@ -92,10 +92,21 @@ void *CFRunLoopGetMain(void) { if (!main_loop) loop_for(cx_main_tid ? cx_main_ti
 
 static void add_item(cf_obj_t *rl, cf_obj_t *it) {
     if (!rl || !it) return;
+    cf_obj_t *dead[MAX_ITEMS];
+    int ndead = 0;
     lk();
     for (int i = 0; i < rl->nitems; i++) if (rl->items[i] == it) { ulk(); return; }
+    /* lista cheia: timers de um disparo já vencidos e observadores invalidados nunca saíam do loop (ninguém chama
+     * Remove depois de um timer de um disparo); abre espaço com eles, soltos fora da trava */
+    if (rl->nitems >= MAX_ITEMS)
+        for (int i = 0; i < rl->nitems;) {
+            cf_obj_t *x = rl->items[i];
+            if (!x->valid && (x->type == T_TIMER || x->type == T_OBSERVER)) { rl->items[i] = rl->items[--rl->nitems]; dead[ndead++] = x; }
+            else i++;
+        }
     if (rl->nitems < MAX_ITEMS) { rl->items[rl->nitems++] = (cf_obj_t *)objc_retain((id)it); }
     ulk();
+    for (int i = 0; i < ndead; i++) objc_release((id)dead[i]);
     if (it->type == T_SOURCE && it->sctx.schedule) it->sctx.schedule(it->sctx.info, rl, 0);
 }
 static void remove_item(cf_obj_t *rl, cf_obj_t *it) {

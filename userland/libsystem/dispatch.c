@@ -32,11 +32,16 @@ static void run_block_fn(void *b) { RUN_BLOCK(b); }
 void dispatch_once(long *pred, void *block) { dispatch_once_f(pred, block, run_block_fn); }
 
 /* ---- filas */
-typedef struct cx_queue { u64 magic; char *label; int serial; } cx_queue_t;
+/* o 1º word é o isa ObjC (classes OS_dispatch_* de swiftobjc.c), como no macOS: o Swift abre existenciais e lê o
+ * tipo dinâmico pelo isa; o magic vem logo depois */
+extern char OS_dispatch_queue_main_c[] __asm__("OBJC_CLASS_$_OS_dispatch_queue_main"), OS_dispatch_queue_global_c[] __asm__("OBJC_CLASS_$_OS_dispatch_queue_global"),
+    OS_dispatch_queue_serial_c[] __asm__("OBJC_CLASS_$_OS_dispatch_queue_serial"), OS_dispatch_queue_concurrent_c[] __asm__("OBJC_CLASS_$_OS_dispatch_queue_concurrent"),
+    OS_dispatch_group_c[] __asm__("OBJC_CLASS_$_OS_dispatch_group"), OS_dispatch_source_c[] __asm__("OBJC_CLASS_$_OS_dispatch_source");
+typedef struct cx_queue { void *isa; u64 magic; char *label; int serial; } cx_queue_t;
 #define QMAGIC 0x6D4F5351756575ull
-cx_queue_t _dispatch_main_q = {QMAGIC, "com.apple.main-thread", 1};   /* dispatch_get_main_queue() = &_dispatch_main_q */
-static cx_queue_t global_q[4] = {{QMAGIC, "com.apple.root.default-qos", 0}, {QMAGIC, "com.apple.root.user-initiated-qos", 0},
-                                 {QMAGIC, "com.apple.root.utility-qos", 0}, {QMAGIC, "com.apple.root.background-qos", 0}};
+cx_queue_t _dispatch_main_q = {OS_dispatch_queue_main_c, QMAGIC, "com.apple.main-thread", 1};   /* dispatch_get_main_queue() = &_dispatch_main_q */
+static cx_queue_t global_q[4] = {{OS_dispatch_queue_global_c, QMAGIC, "com.apple.root.default-qos", 0}, {OS_dispatch_queue_global_c, QMAGIC, "com.apple.root.user-initiated-qos", 0},
+                                 {OS_dispatch_queue_global_c, QMAGIC, "com.apple.root.utility-qos", 0}, {OS_dispatch_queue_global_c, QMAGIC, "com.apple.root.background-qos", 0}};
 
 extern volatile int cx_dispatch_main_used;   /* abaixo, junto do mq_push */
 void *dispatch_get_main_queue(void) { cx_dispatch_main_used = 1; return &_dispatch_main_q; }
@@ -47,6 +52,7 @@ void *dispatch_get_global_queue(long priority, unsigned long flags) {
 void *dispatch_queue_create(const char *label, void *attr) {
     cx_queue_t *q = malloc(sizeof *q);
     if (!q) return 0;
+    q->isa = attr ? OS_dispatch_queue_concurrent_c : OS_dispatch_queue_serial_c;
     q->magic = QMAGIC;
     q->label = strdup(label ? label : "");
     q->serial = attr == 0;
@@ -55,7 +61,8 @@ void *dispatch_queue_create(const char *label, void *attr) {
 void *dispatch_queue_create_with_target$V2(const char *label, void *attr, void *target) { (void)target; return dispatch_queue_create(label, attr); }
 const char *dispatch_queue_get_label(void *q) { return q ? ((cx_queue_t *)q)->label : _dispatch_main_q.label; }
 void dispatch_set_target_queue(void *o, void *q) { (void)o; (void)q; }
-void *dispatch_get_current_queue(void) { return &_dispatch_main_q; }
+void *cx_dispatch_current(void);
+void *dispatch_get_current_queue(void) { void *q = cx_dispatch_current(); return q ? q : &_dispatch_main_q; }
 void *dispatch_queue_attr_make_with_qos_class(void *attr, unsigned qos, int prio) { (void)qos; (void)prio; return attr; }
 void *dispatch_queue_attr_make_with_autorelease_frequency(void *attr, unsigned long f) { (void)f; return attr; }
 
@@ -64,6 +71,39 @@ void *dispatch_queue_attr_make_with_autorelease_frequency(void *attr, unsigned l
  * na hora, na thread de quem chamou. */
 int cx_main_tid;                                   /* definido em cx_darwin_init (thread principal) */
 static int on_main(void) { return !cx_main_tid || (int)SYS0(SYS_GETTID) == cx_main_tid; }
+
+/* fila em execução em cada thread (o mOS roda os blocos das outras filas na thread de quem chama): é o que
+ * dispatch_get_specific e dispatch_get_current_queue consultam. Sem registro, a thread principal está na fila
+ * principal e as outras em fila nenhuma. */
+#define CURQ_MAX 128
+static struct { int tid; void *q; } curq[CURQ_MAX];
+static volatile int curq_lock;
+static void cql(void) { while (__sync_lock_test_and_set(&curq_lock, 1)) SYS0(SYS_YIELD); }
+static void cqu(void) { __sync_lock_release(&curq_lock); }
+/* troca a fila da thread atual; devolve a anterior (0 = sem registro) */
+static void *cur_swap(void *q) {
+    int tid = (int)SYS0(SYS_GETTID), free_i = -1;
+    void *old = 0;
+    cql();
+    int i;
+    for (i = 0; i < CURQ_MAX; i++) {
+        if (curq[i].tid == tid) break;
+        if (!curq[i].tid && free_i < 0) free_i = i;
+    }
+    if (i < CURQ_MAX) { old = curq[i].q; if (q) curq[i].q = q; else curq[i].tid = 0; }
+    else if (q && free_i >= 0) { curq[free_i].tid = tid; curq[free_i].q = q; }
+    cqu();
+    return old;
+}
+void *cx_dispatch_current(void) {
+    int tid = (int)SYS0(SYS_GETTID);
+    void *q = 0;
+    cql();
+    for (int i = 0; i < CURQ_MAX; i++) if (curq[i].tid == tid) { q = curq[i].q; break; }
+    cqu();
+    return q ? q : (on_main() ? (void *)&_dispatch_main_q : 0);
+}
+#define RUN_ON(q, stmt) do { void *o_ = cur_swap(q); stmt; cur_swap(o_); } while (0)
 typedef struct mq_item { void *ctx; dispatch_function_t fn; void *block; u64 when_ms; volatile int *done; struct mq_item *next; } mq_item_t;
 static mq_item_t *mq_head, *mq_tail;
 static volatile int mq_lock;
@@ -99,7 +139,7 @@ int cx_dispatch_drain_main(void) {
         if (prev) prev->next = it->next; else mq_head = it->next;
         if (mq_tail == it) mq_tail = prev;
         mqu();
-        if (it->block) { RUN_BLOCK(it->block); _Block_release(it->block); } else it->fn(it->ctx);
+        RUN_ON(&_dispatch_main_q, if (it->block) { RUN_BLOCK(it->block); _Block_release(it->block); } else it->fn(it->ctx));
         if (it->done) *it->done = 1;
         free(it);
         ran++;
@@ -115,13 +155,13 @@ int cx_dispatch_pending(void) { return mq_head != 0; }
 static int is_main_q(void *q) { return q == &_dispatch_main_q && (cx_main_queue_live || !on_main()); }
 /* trabalho com atraso fora da fila principal (dispatch_after em fila global/própria, Task.sleep do Swift): as filas
  * ainda não têm threads, então cada item adiado espera na sua própria thread e roda lá ao vencer */
-typedef struct { void *ctx; dispatch_function_t fn; void *block; u64 delay_ms; } delayed_t;
+typedef struct { void *ctx; dispatch_function_t fn; void *block; u64 delay_ms; void *q; } delayed_t;
 int pthread_create(unsigned long *t, const void *attr, void *(*fn)(void *), void *arg);
 int pthread_detach(unsigned long t);
 static void *delayed_run(void *arg) {
     delayed_t *d = arg;
     if (d->delay_ms) SYS1(SYS_SLEEP, d->delay_ms);
-    if (d->block) { RUN_BLOCK(d->block); _Block_release(d->block); } else d->fn(d->ctx);
+    RUN_ON(d->q, if (d->block) { RUN_BLOCK(d->block); _Block_release(d->block); } else d->fn(d->ctx));
     free(d);
     return 0;
 }
@@ -138,7 +178,7 @@ static void q_async(void *q, void *ctx, dispatch_function_t fn, void *block, u64
     }
     if (q == &_dispatch_main_q && on_main()) {
         main_inline_depth++;
-        if (block) RUN_BLOCK(block); else fn(ctx);
+        RUN_ON(q, if (block) RUN_BLOCK(block); else fn(ctx));
         main_inline_depth--;
         return;
     }
@@ -146,13 +186,13 @@ static void q_async(void *q, void *ctx, dispatch_function_t fn, void *block, u64
         delayed_t *d = malloc(sizeof *d);
         unsigned long t;
         if (d) {
-            d->ctx = ctx; d->fn = fn; d->block = block ? _Block_copy(block) : 0; d->delay_ms = delay_ms;
+            d->ctx = ctx; d->fn = fn; d->block = block ? _Block_copy(block) : 0; d->delay_ms = delay_ms; d->q = q;
             if (pthread_create(&t, 0, delayed_run, d) == 0) { pthread_detach(t); return; }
             if (d->block) _Block_release(d->block);
             free(d);
         }
     }
-    if (block) RUN_BLOCK(block); else fn(ctx);
+    RUN_ON(q, if (block) RUN_BLOCK(block); else fn(ctx));
 }
 static void q_sync(void *q, void *ctx, dispatch_function_t fn, void *block) {
     if (is_main_q(q) && !on_main()) {
@@ -161,7 +201,7 @@ static void q_sync(void *q, void *ctx, dispatch_function_t fn, void *block) {
         while (!done) SYS0(SYS_YIELD);
         return;
     }
-    if (block) RUN_BLOCK(block); else fn(ctx);
+    RUN_ON(q, if (block) RUN_BLOCK(block); else fn(ctx));
 }
 /* dispatch_time: nanossegundos a partir de "agora" (DISPATCH_TIME_NOW = 0) */
 u64 cx_dispatch_deadline_ns(u64 t);   /* extra.c: dispatch_time é absoluto (ns), como no macOS */
@@ -183,8 +223,8 @@ void dispatch_after(u64 when, void *q, void *block) { q_async(q, 0, 0, block, de
 void dispatch_apply_f(size_t n, void *q, void *ctx, void (*fn)(void *, size_t)) { (void)q; for (size_t i = 0; i < n; i++) fn(ctx, i); }
 
 /* grupos: como tudo roda na hora, um grupo está sempre vazio */
-typedef struct { u64 magic; long n; } cx_group_t;
-void *dispatch_group_create(void) { cx_group_t *g = malloc(sizeof *g); if (g) { g->magic = QMAGIC; g->n = 0; } return g; }
+typedef struct { void *isa; u64 magic; long n; } cx_group_t;
+void *dispatch_group_create(void) { cx_group_t *g = malloc(sizeof *g); if (g) { g->isa = OS_dispatch_group_c; g->magic = QMAGIC; g->n = 0; } return g; }
 void dispatch_group_enter(void *g) { __sync_fetch_and_add(&((cx_group_t *)g)->n, 1); }
 void dispatch_group_leave(void *g) { __sync_fetch_and_sub(&((cx_group_t *)g)->n, 1); }
 long dispatch_group_wait(void *g, u64 timeout) {
@@ -216,8 +256,10 @@ char _dispatch_source_type_write[8];
 char _dispatch_source_type_signal[8];
 char _dispatch_source_type_data_add[8];
 char _dispatch_source_type_data_or[8];
+char _dispatch_source_type_vnode[8];          /* fontes de arquivo: dispatch_source_create ainda devolve NULL */
 
 typedef struct cx_source {
+    void *isa;                /* OS_dispatch_source */
     u64 magic;
     const void *type;
     u32 port;                 /* MACH_RECV: porta escutada */
@@ -284,6 +326,7 @@ void *dispatch_source_create(const void *type, unsigned long handle, unsigned lo
     cx_source_t *s = malloc(sizeof *s);
     if (!s) return 0;
     for (unsigned i = 0; i < sizeof *s; i++) ((char *)s)[i] = 0;
+    s->isa = OS_dispatch_source_c;
     s->magic = SMAGIC;
     s->type = type;
     s->port = (u32)handle;
@@ -326,9 +369,38 @@ static void *source_pthread(void *a) {
     return 0;
 }
 
-void *dispatch_get_specific(const void *key) { (void)key; return 0; }
-void *dispatch_queue_get_specific(void *q, const void *key) { (void)q; (void)key; return 0; }
-void dispatch_queue_set_specific(void *q, const void *key, void *ctx, void (*dtor)(void *)) { (void)q; (void)key; (void)ctx; (void)dtor; }
+/* contexto por (fila, chave): dispatch_queue_set_specific / dispatch_queue_get_specific; dispatch_get_specific
+ * olha a fila em execução na thread (cx_dispatch_current). Trocar ou apagar chama o destrutor do valor antigo. */
+#define SPEC_MAX 256
+static struct { void *q; const void *key; void *ctx; void (*dtor)(void *); } spec[SPEC_MAX];
+static volatile int spec_lock;
+void dispatch_queue_set_specific(void *q, const void *key, void *ctx, void (*dtor)(void *)) {
+    if (!q || !key) return;
+    void *old = 0; void (*odtor)(void *) = 0;
+    while (__sync_lock_test_and_set(&spec_lock, 1)) SYS0(SYS_YIELD);
+    int i, free_i = -1;
+    for (i = 0; i < SPEC_MAX; i++) {
+        if (spec[i].q == q && spec[i].key == key) break;
+        if (!spec[i].q && free_i < 0) free_i = i;
+    }
+    if (i < SPEC_MAX) {
+        old = spec[i].ctx; odtor = spec[i].dtor;
+        if (ctx) { spec[i].ctx = ctx; spec[i].dtor = dtor; } else spec[i].q = 0;
+    } else if (ctx && free_i >= 0) {
+        spec[free_i].q = q; spec[free_i].key = key; spec[free_i].ctx = ctx; spec[free_i].dtor = dtor;
+    }
+    __sync_lock_release(&spec_lock);
+    if (old && odtor) odtor(old);
+}
+void *dispatch_queue_get_specific(void *q, const void *key) {
+    void *r = 0;
+    if (!q || !key) return 0;
+    while (__sync_lock_test_and_set(&spec_lock, 1)) SYS0(SYS_YIELD);
+    for (int i = 0; i < SPEC_MAX; i++) if (spec[i].q == q && spec[i].key == key) { r = spec[i].ctx; break; }
+    __sync_lock_release(&spec_lock);
+    return r;
+}
+void *dispatch_get_specific(const void *key) { return dispatch_queue_get_specific(cx_dispatch_current(), key); }
 /* resume/activate de uma fonte MACH_RECV: liga a escuta e, na primeira vez, sobe a thread que espera
  * na porta. Em objetos que não são fonte (filas etc.), não há o que retomar. */
 static void source_resume(cx_source_t *s) {
@@ -341,3 +413,45 @@ static void source_resume(cx_source_t *s) {
 void dispatch_activate(void *o) { if (is_source(o)) source_resume(o); }
 void dispatch_resume(void *o) { if (is_source(o)) source_resume(o); }
 void dispatch_suspend(void *o) { if (is_source(o)) ((cx_source_t *)o)->active = 0; }
+
+/* ---- dispatch_retain/dispatch_release com contagem de referências de verdade.
+ * Antes, retain não fazia nada e release liberava na hora: todo par retain/release (o Chrome usa
+ * base::apple::ScopedDispatchObject) liberava o objeto ainda em uso, e um release da fila principal ou de
+ * uma global chamava free() em memória estática. O mOS seguia escrevendo na fila liberada (o QMAGIC
+ * aparecia na lista livre do PartitionAlloc do Chrome, que derrubava o processo por "corrupção").
+ * Os objetos de dispatch do mOS são structs diferentes, sem campo de contagem comum: a contagem extra
+ * (retains além da referência de criação) fica numa tabela à parte, indexada pelo ponteiro. */
+extern char __ehdr_start[], _end[];            /* a imagem do libSystem: objetos estáticos nunca são liberados */
+#define RC_SLOTS 4096
+static struct { void *o; long extra; } rc_tab[RC_SLOTS];
+static volatile int rc_lock;
+static int rc_find(void *o, int create) {
+    unsigned long h = ((unsigned long)o >> 4) % RC_SLOTS;
+    int first_free = -1;
+    for (int n = 0; n < RC_SLOTS; n++, h = (h + 1) % RC_SLOTS) {
+        if (rc_tab[h].o == o) return (int)h;
+        if (!rc_tab[h].o) { if (first_free < 0) first_free = (int)h; break; }
+        if (rc_tab[h].o == (void *)1 && first_free < 0) first_free = (int)h;   /* lápide */
+    }
+    if (!create || first_free < 0) return -1;
+    rc_tab[first_free].o = o;
+    rc_tab[first_free].extra = 0;
+    return first_free;
+}
+static int rc_static(void *o) { return (char *)o >= __ehdr_start && (char *)o < _end; }
+void cx_dispatch_retain(void *o) {
+    if (!o || rc_static(o)) return;
+    while (__sync_lock_test_and_set(&rc_lock, 1)) SYS0(SYS_YIELD);
+    int i = rc_find(o, 1);
+    if (i >= 0) rc_tab[i].extra++;
+    __sync_lock_release(&rc_lock);
+}
+void cx_dispatch_release(void *o) {
+    if (!o || rc_static(o)) return;
+    while (__sync_lock_test_and_set(&rc_lock, 1)) SYS0(SYS_YIELD);
+    int i = rc_find(o, 0);
+    int last = i < 0;
+    if (i >= 0 && --rc_tab[i].extra <= 0) rc_tab[i].o = (void *)1;      /* volta à referência de criação */
+    __sync_lock_release(&rc_lock);
+    if (last) free(o);
+}

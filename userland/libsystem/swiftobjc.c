@@ -5,7 +5,7 @@
  * No SDK da Apple elas são "objc_runtime_visible": o código Swift só usa o objeto-classe (_OBJC_CLASS_$_OS_...,
  * objc_lookUpClass) para metadata, casts e inits de conveniência das extensões do overlay Dispatch. Sem elas o
  * carregador poria NSObject no lugar. Hierarquia como no macOS: NSObject > OS_object > OS_dispatch_object > ...
- * Os objetos do dispatch do mOS (dispatch.c) ainda não têm estas classes no isa.
+ * Os objetos do dispatch do mOS (dispatch.c, extra.c) têm estas classes no isa (1º word).
  */
 #include "foundation.h"
 

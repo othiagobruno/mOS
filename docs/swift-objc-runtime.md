@@ -219,16 +219,45 @@ MOSDarwin/MOSos. Entram:
   plataformas Apple e que o código inlinável dos binários usa.
 - O SDK ganhou os submódulos `Darwin.crt_externs/sysdir/uuid` e `MachO.dyld` (sem cabeçalho próprio), e o overlay `os`
   ganhou `Logger`/`OSLogMessage`.
-- **Postico: 197 dos 316** símbolos batem (eram 32 com o marco A).
-- **O que falta neste marco:**
-  - **Opções como apelidos dos `NS_OPTIONS` ObjC:** no Foundation da Apple (`FOUNDATION_FRAMEWORK`),
-    `Data.ReadingOptions`, `Base64EncodingOptions`, `String.CompareOptions`, as opções de bookmark de URL etc. são
-    `NSData.ReadingOptions`..., e os nomes mangled levam `So20NSDataReadingOptionsV`. No pacote são structs próprias.
-    Plano: um módulo clang pequeno, só com esses `NS_OPTIONS` (também incluído pelo Foundation.h do overlay), e
-    trocar só esses `#if FOUNDATION_FRAMEWORK` numa cópia preparada do fonte.
-  - **Pontes** de Data/URL/Date/UUID/Locale/TimeZone ↔ NSData/NSURL/NSDate/NSUUID/NSLocale/NSTimeZone.
-  - **Tipos que o swift-foundation não tem:** IndexSet, Notification, URLRequest, URLResourceValues, KVO e
-    IntegerFormatStyle (do FoundationInternationalization, que depende de ICU).
+- **Um módulo só, `Foundation`.** O FoundationEssentials (cópia preparada em `build/swift/objc/foundation-src`) e os
+  fontes do mOS em `userland/sdk/swift-objc/Foundation/*.swift` compilam juntos, com `-import-underlying-module` sobre o
+  módulo clang `Foundation`. Em módulos separados as pontes viravam extensões de outro módulo e o nome mangled ganhava o
+  contexto de extensão (`AAE`), diferente do da Apple; e Foundation ↔ FoundationEssentials virava dependência circular.
+  Dentro do próprio módulo `Foundation` o importador **não** faz a ponte NSString ↔ String nem NSDictionary ↔
+  Dictionary, então os fontes do mOS usam os tipos ObjC explicitamente; e os wrappers `NS_TYPED_EXTENSIBLE_ENUM`
+  (`URLResourceKey`, `NSNotification.Name`) ganham `Hashable` à mão (`TypedEnums.swift`).
+- **Opções `NS_OPTIONS` (pronto):** módulo clang `_MOSNSOptions` (`sdk/Foundation/NSFoundationOptions.h`, também
+  incluído pelo Foundation.h) com `NSDataReadingOptions`, `NSDataWritingOptions`, Base64, `NSStringCompareOptions` e as
+  opções de bookmark, com os `swift_name` da Apple. A preparação troca os `#if FOUNDATION_FRAMEWORK` desses tipos por
+  apelidos (`-D MOS_NS_OPTIONS`), põe `import _MOSNSOptions` em todo arquivo (MemberImportVisibility) e tira o
+  `public struct URLResourceKey {}` do pacote, que escondia o tipo ObjC.
+- **Pontes (pronto):** Data/URL/Date/UUID/Locale/TimeZone ↔ NSData/NSURL/NSDate/NSUUID/NSLocale/NSTimeZone
+  (`ValueBridging.swift`). `AnyHashable(NSString)`/`AnyHashable(NSNumber)` viram o valor Swift
+  (`_HasCustomAnyHashableRepresentation`), como na Apple, para chaves de `userInfo` voltarem iguais.
+- **Tipos que o swift-foundation não tem (pronto):** `IndexSet`, `Notification` (+ ponte), `URLRequest` (+ ponte),
+  `NSURLSession.data(for:delegate:)` async, `URLResourceValues` com `URL.resourceValues/setResourceValues`, bookmarks e
+  escopo de segurança, e o KVO do Swift (`observe(_:options:changeHandler:)`, `NSKeyValueObservation`).
+- **libSystem:** KVO de verdade no NSObject (`userland/libsystem/kvo.c`; antes `addObserver:forKeyPath:` era um stub
+  vazio). O setter da chave é trocado na classe que o define por um trampolim que chama `willChangeValueForKey:` /
+  `didChangeValueForKey:` em volta do original — sem trocar o isa, porque uma subclasse ObjC criada em tempo de execução
+  não teria a vtable de uma classe Swift. Opções New/Old/Initial/Prior; setters com struct não são interceptados.
+  Também: `NSNotification` passou a reter nome/objeto/userInfo, e os métodos do `NSUUID` (`initWithUUIDString:`...)
+  passam a ser instalados (`cx_foundation_gaps`, chamado do `cx_swiftobjc_init`: no boot o CoreBluetooth subia antes
+  do NSUUID existir).
+- **Entrega (pronto):** `libswiftFoundation.dylib` (Foundation.o + `_FoundationRefs` + `_FoundationCShims` +
+  Synchronization + coleções) pelo `tools/link-swift-dylibs-objc.ps1`. O carregador (`kernel/compat/macho.c`), quando
+  uma imagem depende de `/System/Library/Frameworks/Foundation.framework/`, também carrega
+  `/usr/lib/swift/libswiftFoundation.dylib` do VFS, se existir — os binários da Apple importam os símbolos Swift do
+  Foundation pelo próprio `Foundation.framework`.
+- **Testes:** `essentials` 21/21 e `foundation2` 19/19 (pontes, IndexSet, Notification, URLRequest,
+  URLResourceValues, KVO), além das suítes anteriores (main.m 23, swift 13, nsobject 18, dispatch 14, concurrency 9,
+  foundation 23).
+- **Postico: 272 dos 316** símbolos batem (eram 32 com o marco A, 197 no começo do marco B). Os 44 que faltam são do
+  marco C: erros (`CustomNSError`, `LocalizedError`, `_convertErrorToNSError`, `POSIXError`, `URLError`),
+  `StringProtocol` sobre NSString, NSCoder, FileManager, UndoManager, variantes de `String(contentsOf:)`/
+  `String(format:)`, e `IntegerFormatStyle`/`BinaryInteger.formatted` (FoundationInternationalization, depende de ICU).
+- **WhatsApp:** 7.783 → **4.730** símbolos ausentes distintos com os dylibs Swift do mOS (`libswiftCore` 1.957 → 0,
+  `_Concurrency` 190 → 0, `libswiftFoundation` 1.119 → 425, `libswiftDispatch` 122 → 28). Ver [compat-apps.md](compat-apps.md).
 - **C — extensões sobre ObjC:** StringProtocol (sobre NSString), erros (NSError, CustomNSError, LocalizedError,
   `_convertErrorToNSError`, os ganchos do runtime em `ErrorObject.mm`), KVO, NSURLSession async, NSCoder, FileManager.
 - **D — entrega:** `Foundation.framework` hoje conta como "do libSystem" no carregador, então o overlay Swift precisa
@@ -236,6 +265,27 @@ MOSDarwin/MOSos. Entram:
   como `/usr/lib/swift/libswiftFoundation.dylib` puxada pela `libswiftCore`.
 - O `_MOSCFObject` (CF como objeto Swift, [[openswiftui-deps-port]]) deixa de ser necessário nesta variante:
   aqui os objetos CF do mOS são objetos ObjC de verdade.
+
+### 5b. Combine.framework (pronto, 2026-11-07)
+
+O WhatsApp importa 283 símbolos do Combine. `tools/build-swift-combine-objc.ps1` compila o OpenCombine (MIT, já em
+`.tools/openswiftui/deps`) como o módulo `Combine`, com interop e library evolution, e liga
+`/System/Library/Frameworks/Combine.framework/Versions/A/Combine` em `build/swift/objc/dylib`. A cópia preparada do
+fonte (`build/swift/objc/combine-src`):
+- `OpenCombine.` → `Combine.`; `@_implementationOnly import COpenCombineHelpers` (o C++ do CombineIdentifier e da
+  trava fica fora da interface; o `.o` vai para `overlays`, onde o link estático o pega).
+- Os atributos de layout do Combine da Apple, que a library evolution exige para o código `@inlinable`:
+  `@frozen` em `AnyPublisher`, `AnySubscriber`, `Subscribers.Demand` e `ImmediateScheduler…Stride`;
+  `@_fixed_layout` nas caixas `@usableFromInline` (`PublisherBoxBase`, `ClosureBasedAnySubscriber`...).
+- `Optional.Publisher` e `Result.Publisher` saem do invólucro `OCombine` do OpenCombine (que existe para não colidir com
+  o Combine da Apple) e moram direto em `Optional`/`Result`, como na Apple — o nome mangled muda.
+- O que o OpenCombine não tem, escrito para o mOS em `userland/sdk/swift-objc/Combine/CombineLatestMerge.swift`:
+  `Publishers.CombineLatest`/`3`/`4`, `Merge`/`3`…`8`, `MergeMany` e os operadores `combineLatest`/`merge(with:)`.
+  Demanda ilimitada para cima; para baixo, a demanda é respeitada (CombineLatest guarda só a combinação mais recente,
+  Merge uma fila).
+- **Teste:** `userland/tests-swiftobjc/combine/main.swift` → **13/13** (Just, Sequence, Subjects, combineLatest,
+  merge, MergeMany, Optional/Result.Publisher, tryMap/catch, `@Published`/`ObservableObject`, cancelamento).
+- **WhatsApp:** Combine 283 → **0** ausentes; total 4.730 → **4.444**.
 
 ### 6. SwiftUI.framework
 

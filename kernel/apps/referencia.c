@@ -321,12 +321,12 @@ static void am_paint(window_t *w, ui_t *u) {
     int sb = w->sidebar_w;
     int y = w->toolbar_h + 4;
     bool has_in = audio_input_available();
-    if (ui_sidebar_item(u, 121000, rect_make(10, y, sb - 20, 44), audio_device_name(), AM.sel == 0, glyph_speaker_small)) AM.sel = 0;
-    text_draw(s, font_get(FONT_REGULAR), 11, 48, y + 38, T.text2, "0 entradas / 2 saídas");
-    y += 50;
+    if (ui_sidebar_item(u, 121000, rect_make(10, y, sb - 20, 30), audio_device_name(), AM.sel == 0, glyph_speaker_small)) AM.sel = 0;
+    text_draw(s, font_get(FONT_REGULAR), 11, 48, y + 44, T.text2, "0 entradas / 2 saídas");
+    y += 58;
     if (has_in) {
-        if (ui_sidebar_item(u, 121001, rect_make(10, y, sb - 20, 44), audio_input_name(), AM.sel == 1, NULL)) AM.sel = 1;
-        text_draw(s, font_get(FONT_REGULAR), 11, 48, y + 38, T.text2, "2 entradas / 0 saídas");
+        if (ui_sidebar_item(u, 121001, rect_make(10, y, sb - 20, 30), audio_input_name(), AM.sel == 1, glyph_speaker_small)) AM.sel = 1;
+        text_draw(s, font_get(FONT_REGULAR), 11, 48, y + 44, T.text2, "2 entradas / 0 saídas");
     }
     rect_t a = rect_make(sb, w->toolbar_h, u->cw - sb, u->ch - w->toolbar_h);
     gfx_fill(s, a.x, a.y, a.w, a.h, T.content_bg);

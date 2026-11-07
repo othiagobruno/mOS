@@ -84,7 +84,11 @@ $cg = [IO.File]::ReadAllText("$root\userland\sdk\openswiftui\swift\CoreGraphics\
 [IO.File]::WriteAllText("$gen\CGFloat.swift", "// GERADO por tools\build-swift-overlays-objc.ps1 a partir do CGFloat.swift do OpenSwiftUI`n" + $cg.Replace('@_exported import MOSLibm', "@_exported import CoreGraphics`nimport Darwin"), $utf8)
 Build-Overlay 'CoreGraphics' @("$gen\CGFloat.swift", "$sdkSrc\CoreGraphics\CGGeometry.swift")
 Build-Overlay 'os'
-Build-Overlay 'Dispatch'
+# DispatchQueue: Scheduler (Dispatch\Combine) só quando o Combine já existe (tools\build-swift-combine-objc.ps1, que
+# recompila o Dispatch no fim)
+$dsp = @(Get-ChildItem "$sdkSrc\Dispatch" -Filter *.swift | ForEach-Object FullName)
+if (Test-Path "$out\Combine.swiftmodule") { $dsp += @(Get-ChildItem "$sdkSrc\Dispatch\Combine" -Filter *.swift | ForEach-Object FullName) }
+Build-Overlay 'Dispatch' $dsp
 # Foundation (fase 5): compilado por tools/build-swift-foundation-objc.ps1 (um módulo só com o swift-foundation)
 # Observation: o OpenObservation (github.com/OpenSwiftUIProject, MIT; porte do Observation da Apple) com o nome do
 # módulo da Apple, no caminho Darwin em Swift puro (sem a parte C++ do toolchain)

@@ -614,7 +614,16 @@ OSStatus SecCodeCheckValidity(id_ code, u32 flags, id_ req) { (void)code; (void)
 OSStatus SecCodeCheckValidityWithErrors(id_ code, u32 flags, id_ req, id_ *err) { if (err) *err = 0; return SecCodeCheckValidity(code, flags, req); }
 OSStatus SecStaticCodeCheckValidity(id_ code, u32 flags, id_ req) { (void)code; (void)flags; (void)req; return errSecCSUnsigned; }
 OSStatus SecStaticCodeCheckValidityWithErrors(id_ code, u32 flags, id_ req, id_ *err) { if (err) *err = 0; return errSecCSUnsigned; }
-OSStatus SecCodeCopyDesignatedRequirement(id_ code, u32 flags, id_ *req) { (void)code; (void)flags; if (req) *req = 0; return errSecCSUnsigned; }
+/* requisito designado: o macOS dá um a todo app distribuído (até aos assinados ad hoc). Devolver "não assinado" aqui
+ * fazia o Squirrel (autoUpdater do Electron) lançar NSException ao criar o SQRLUpdater (SQRLCodeSignature); o Electron
+ * tem @try/@catch em volta, mas o mOS ainda não desenrola exceções, e o VS Code abortava logo depois de abrir o workbench,
+ * ao configurar o feed de atualização. As verificações (SecCodeCheckValidity...) continuam dizendo "não assinado". */
+OSStatus SecCodeCopyDesignatedRequirement(id_ code, u32 flags, id_ *req) {
+    (void)code; (void)flags;
+    if (!req) return errSecParam;
+    *req = str_n("designated => identifier \"mOS.unsigned\"", 39);
+    return errSecSuccess;
+}
 OSStatus SecCodeCopyPath(id_ code, u32 flags, id_ *path) {
     (void)code; (void)flags;
     if (path) *path = 0;

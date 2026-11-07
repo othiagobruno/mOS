@@ -88,7 +88,11 @@ long cx_unresolved_log(const char *name) {
 /* ---- thread_local por thread (chamado por cx_tlv_bootstrap, tlv.S). desc = {thunk, key, offset};
  * key = registro da imagem {modelo, tamanho inicializado, tamanho total, índice}. Os blocos de cada
  * thread ficam numa tabela no slot TSD_TLV da TSD (extra.c: cx_tsd). */
-#define TSD_TLV 101
+/* slots fixos da TSD (abaixo de KEY_FIRST = 128, extra.c), um por uso — NÃO repetir:
+ *   100 TSD_THREAD_DICT (nsurl.c)   101 TSD_THREAD_OBJ (nsurl.c)   102 TSD_MIG_REPLY (mach.c)   110 TSD_TLV (aqui)
+ * O TLV já esteve no 101 e colidia com o NSThread: um helper do Chrome que chamava +[NSThread currentThread]
+ * tinha a tabela de thread_local sobrescrita pelo objeto e caía no próximo acesso a uma variável thread_local. */
+#define TSD_TLV 110
 #define TLV_IMAGES 128      /* índices de imagem (MAX_IMAGES de kernel/compat/macho.c, inclui as do dlopen) */
 void **cx_tsd(void);
 void *calloc(size_t n, size_t s);
@@ -101,6 +105,11 @@ void *cx_tlv_get(const u64 *desc) {
     if (!tab[idx]) {
         u64 total = rec[2] ? rec[2] : 16;
         u8 *b = calloc(1, (size_t)total);                 /* calloc: a parte __thread_bss já vem zerada */
+        if (!b) {
+            cx_fdprintf(2, "tlv[mOS]: sem memória para o TLS da thread (imagem %llu, %llu bytes, registro %llx)\n",
+                        (unsigned long long)idx, (unsigned long long)total, (unsigned long long)(u64)rec);
+            return (u8 *)0 + desc[2];
+        }
         if (rec[0] && rec[1]) memcpy(b, (const void *)rec[0], (size_t)rec[1]);
         tab[idx] = b;
     }

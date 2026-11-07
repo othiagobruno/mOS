@@ -580,6 +580,7 @@ void cx_darwin_init(void) {
         cx_add_method(b, "URLForResource:withExtension:subdirectory:", (void *)b_url_for_sub);
     }
     { extern void cx_quartzcore_init(void); cx_quartzcore_init(); }   /* IOSurface/CALayer (quartzcore.c) */
+    { extern void cx_electron_compat_init(void); cx_electron_compat_init(); }   /* KVC, envios adiados... (electron_compat.c) */
 }
 
 /* ---- CFURL (CFURLRef = NSURL*); regra Create/Copy: +1 */

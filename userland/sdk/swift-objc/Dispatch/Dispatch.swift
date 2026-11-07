@@ -3,8 +3,8 @@
 // Os tipos de objeto vêm dos cabeçalhos do macOS (dispatch/*.h do zig, modo OS_OBJECT do Swift): DispatchQueue é a
 // classe OS_dispatch_queue, DispatchGroup OS_dispatch_group, DispatchSourceProtocol o protocolo OS_dispatch_source...
 // As funções são as do libdispatch em C do libSystem do mOS (dispatch.c, extra.c), chamadas por @_silgen_name.
-// Limite conhecido: os objetos do dispatch do mOS ainda não são objetos ObjC (o 1º word é um "magic", não um isa);
-// o Swift só os passa adiante (retain/release da libobjc são inócuos neles), sem mandar mensagens.
+// Os objetos do dispatch do mOS (filas, grupos, fontes, semáforos) têm o isa da classe OS_dispatch_* no 1º word, como
+// no macOS (o Swift lê o tipo dinâmico pelo isa ao abrir existenciais); retain/release da libobjc são inócuos neles.
 
 @_exported import Dispatch
 import Darwin

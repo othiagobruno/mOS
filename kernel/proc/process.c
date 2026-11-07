@@ -528,7 +528,7 @@ static void fd_copy(process_t *dst, int dfd, process_t *src, int sfd);
 static void spawn_apply_fds(process_t *child, process_t *parent, mos_spawn_fa_t *acts, int n, unsigned flags) {
     if (!child) return;
     if (parent && !(flags & MOS_SPAWN_CLOEXEC_DEFAULT))
-        for (int i = 0; i < PROC_MAX_FDS; i++) if (parent->fds[i].used) fd_copy(child, i, parent, i);
+        for (int i = 0; i < PROC_MAX_FDS; i++) if (parent->fds[i].used && !(parent->fds[i].flags & MOS_O_CLOEXEC)) fd_copy(child, i, parent, i);   /* posix_spawn = exec: FD_CLOEXEC não passa */
     for (int i = 0; i < n; i++) {
         int k = acts[i].kind, a = acts[i].a, b = acts[i].b;
         if (k == MOS_SPAWN_FA_CLOSE) {
@@ -1550,8 +1550,13 @@ u64 proc_syscall(int_frame_t *f) {
     }
     case SYS_DUP2:
         if (fd_get(p, a) < 0 || b >= PROC_MAX_FDS) { r = -MOS_EBADF; break; }
-        if (a != b) fd_copy(p, (int)b, p, (int)a);
+        if (a != b) { fd_copy(p, (int)b, p, (int)a); p->fds[b].flags &= ~MOS_O_CLOEXEC; }   /* POSIX: a cópia nasce sem FD_CLOEXEC */
         r = (i64)b;
+        break;
+    case SYS_FDFLAGS:                                       /* fcntl F_GETFD/F_SETFD: o git espera EOF no pipe de aviso do exec */
+        if (fd_get(p, a) < 0) { r = -MOS_EBADF; break; }
+        if (b) { if (c) p->fds[a].flags |= MOS_O_CLOEXEC; else p->fds[a].flags &= ~MOS_O_CLOEXEC; }
+        r = (p->fds[a].flags & MOS_O_CLOEXEC) ? 1 : 0;
         break;
     case SYS_SPAWNIO: {
         char arg[256];

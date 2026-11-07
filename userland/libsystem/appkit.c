@@ -1191,8 +1191,39 @@ static BOOL tree_needs(id v) {
 }
 
 /* ================================================================ NSEvent */
-typedef struct { u64 type; double x, y; u64 mods; u16 keycode; id chars; i64 clicks; id window; double dy; } evstate_t;
+typedef struct { u64 type; double x, y; u64 mods; u16 keycode; id chars; i64 clicks; id window; double dy;
+                 double ts; i64 wnum, d1, d2; short subtype; } evstate_t;
 static evstate_t *evs(id e) { return ST(e); }
+/* o Chromium lê estes em todo evento de teclado/mouse (ui/events/cocoa); os que devolvem double/float não podem cair no
+ * "ainda não implementado" (que só zera rax: xmm0 voltaria com lixo) */
+u64 mach_absolute_time(void);
+static double ev_ts(id self, SEL c) { (void)c; return evs(self)->ts; }
+static i64 ev_wnum(id self, SEL c) { (void)c; return evs(self)->wnum; }
+static short ev_subtype(id self, SEL c) { (void)c; return evs(self)->subtype; }
+static i64 ev_data1(id self, SEL c) { (void)c; return evs(self)->d1; }
+static i64 ev_data2(id self, SEL c) { (void)c; return evs(self)->d2; }
+static i64 ev_button(id self, SEL c) {
+    (void)c;
+    u64 t = evs(self)->type;
+    return t == 3 || t == 4 || t == 7 ? 1 : t == 25 || t == 26 || t == 27 ? 2 : 0;
+}
+static float ev_pressure(id self, SEL c) {
+    (void)c;
+    u64 t = evs(self)->type;
+    return t == 1 || t == 3 || t == 6 || t == 7 || t == 25 || t == 27 ? 1.0f : 0.0f;
+}
+static float ev_fzero(id self, SEL c) { (void)self; (void)c; return 0; }
+static i64 ev_izero(id self, SEL c) { (void)self; (void)c; return 0; }
+static id ev_other(id cls, SEL c, u64 type, NSPoint loc, u64 mods, double ts, i64 wnum, id ctx, short subtype, i64 d1, i64 d2) {
+    (void)cls; (void)c; (void)ctx;
+    id e = objc_autorelease(cx_alloc_instance(&NSEvent_c));
+    evstate_t *s = calloc(1, sizeof *s);
+    ST(e) = s;
+    s->type = type; s->x = loc.x; s->y = loc.y; s->mods = mods;
+    s->ts = ts > 0 ? ts : (double)mach_absolute_time() / 1e9;
+    s->wnum = wnum; s->subtype = subtype; s->d1 = d1; s->d2 = d2;
+    return e;
+}
 static u64 ev_type(id self, SEL c) { (void)c; return evs(self)->type; }
 static NSPoint ev_loc(id self, SEL c) { (void)c; NSPoint p = {evs(self)->x, evs(self)->y}; return p; }
 static u64 ev_mods(id self, SEL c) { (void)c; return evs(self)->mods; }
@@ -1228,6 +1259,7 @@ static id make_event(u64 type, id win, double px, double py, gui_event_t *g) {
     s->mods = mac_mods(g->mods);
     s->clicks = g->clicks;
     s->dy = -g->w;
+    s->ts = (double)mach_absolute_time() / 1e9;
     if (type == 10 || type == 11) {          /* keyDown / keyUp */
         s->keycode = mac_keycode(g->key);
         u32 cp = 0;
@@ -2269,17 +2301,27 @@ static BOOL ap_send_action(id self, SEL c, SEL a, id to, id from) {
     if (to && cx_responds(to->isa, a)) { ((void (*)(id, SEL, id))objc_msgSend)(to, a, from); return YES; }
     return NO;
 }
-static i64 ap_run_modal(id self, SEL c, id w) {
-    (void)self; (void)c;
+/* laço modal: como no AppKit, o run loop principal continua rodando (fontes, timers e a fila principal do GCD) — o
+ * Chromium põe a fonte de trabalho da thread de UI nos modos comuns, que incluem o modo de painel modal. Sem isso, um
+ * diálogo do Electron congelava a thread de UI inteira. -runModalForWindow: não fecha a janela ao sair (quem chamou
+ * fecha); só o NSAlert fecha a dele. */
+static i64 modal_loop(id w) {
     w_show(w, 0, 0);
     BOOL old = app.in_modal;
+    int saved = app.modal_result;
     app.in_modal = YES;
     app.modal_result = -1000;
-    while (app.modal_result == -1000 && ws(w)->visible) { int ms = pump(); if (ms) SYS1(SYS_SLEEP, ms); }
+    while (app.modal_result == -1000 && ws(w)->visible) {
+        int ms = pump();
+        if (pthread_main_np() && CFRunLoopRunInMode(0, 0, 1) == 4) ms = 0;
+        if (ms) SYS1(SYS_SLEEP, ms);
+    }
     app.in_modal = old;
-    if (ws(w)->visible) close_window(w, NO);
-    return app.modal_result == -1000 ? -1001 : app.modal_result;
+    i64 r = app.modal_result == -1000 ? -1001 : app.modal_result;
+    app.modal_result = old ? saved : app.modal_result;
+    return r;
 }
+static i64 ap_run_modal(id self, SEL c, id w) { (void)self; (void)c; return modal_loop(w); }
 static void ap_stop_modal_code(id self, SEL c, i64 code) { (void)self; (void)c; app.modal_result = (int)code; }
 static void ap_stop_modal(id self, SEL c) { (void)self; (void)c; app.modal_result = -1000 + 1; }
 
@@ -2292,19 +2334,53 @@ int NSApplicationMain(int argc, const char **argv) {
     return 0;
 }
 
-/* ================================================================ NSAlert */
-typedef struct { id message, info, buttons; i64 style; } alertst_t;
+/* ================================================================ NSAlert
+ * Os botões são NSButton de verdade, criados em -addButtonWithTitle: (o Electron faz [[alert addButtonWithTitle:t]
+ * setTag:i] e depois troca a tecla padrão pelos -buttons; antes o método devolvia o título, uma NSString). Como no
+ * AppKit, a tag padrão é 1000, 1001... e -runModal devolve a tag do botão clicado. */
+typedef struct { id message, info, buttons, suppress, accessory, icon, window; i64 style; BOOL shows_suppress; } alertst_t;
 static alertst_t *al(id a) { if (!ST(a)) { alertst_t *s = calloc(1, sizeof *s); s->buttons = cx_arr_new(&NSMutableArray_c); s->message = cx_str("Alerta"); ST(a) = s; } return ST(a); }
 static void al_set_msg(id self, SEL c, id m) { (void)c; keep(&al(self)->message, m); }
 static void al_set_info(id self, SEL c, id m) { (void)c; keep(&al(self)->info, m); }
-static id al_add_button(id self, SEL c, id t) { (void)c; id b = cx_str(cx_cstr(t)); cx_arr_add(al(self)->buttons, b); return b; }
-static void al_set_style(id self, SEL c, i64 s) { (void)c; al(self)->style = s; }
-static void al_button_hit(id self, SEL c, id sender) { (void)self; (void)c; app.modal_result = 1000 + vs(sender)->tag; }
+static id al_msg(id self, SEL c) { (void)c; return al(self)->message; }
+static id al_info(id self, SEL c) { (void)c; return al(self)->info; }
+static void al_button_hit(id self, SEL c, id sender) { (void)self; (void)c; app.modal_result = vs(sender)->tag; }
 static cx_class_t AlertTarget_c, AlertTarget_m;
+static id g_alert_target;
+static id al_add_button(id self, SEL c, id t) {
+    (void)c;
+    alertst_t *s = al(self);
+    if (!g_alert_target) g_alert_target = cx_alloc_instance(&AlertTarget_c);
+    id b = bt_with_title((id)&NSButton_c, 0, t ? t : cx_str(""), g_alert_target, sel_registerName("cxAlertButton:"));
+    u64 n = ((nsarr_t *)s->buttons)->n;
+    vs(b)->tag = (int)(1000 + n);
+    if (!n) keep(&vs(b)->key_equiv, cx_str("\r"));
+    cx_arr_add(s->buttons, b);
+    return b;
+}
+static id al_buttons(id self, SEL c) { (void)c; return al(self)->buttons; }
+static void al_set_style(id self, SEL c, i64 s) { (void)c; al(self)->style = s; }
+static i64 al_style(id self, SEL c) { (void)c; return al(self)->style; }
+static void al_set_icon(id self, SEL c, id i) { (void)c; keep(&al(self)->icon, i); }
+static id al_icon(id self, SEL c) { (void)c; return al(self)->icon; }
+static void al_set_accessory(id self, SEL c, id v) { (void)c; keep(&al(self)->accessory, v); }
+static id al_accessory(id self, SEL c) { (void)c; return al(self)->accessory; }
+static void al_set_shows_suppress(id self, SEL c, BOOL b) { (void)c; al(self)->shows_suppress = b; }
+static BOOL al_shows_suppress(id self, SEL c) { (void)c; return al(self)->shows_suppress; }
+static id bt_checkbox(id cls, SEL c, id title, id target, SEL action);
+static id al_suppress(id self, SEL c) {
+    (void)c;
+    alertst_t *s = al(self);
+    if (!s->suppress) s->suppress = objc_retain(bt_checkbox((id)&NSButton_c, 0, cx_str("Não perguntar novamente"), 0, 0));
+    return s->suppress;
+}
+static id al_window(id self, SEL c) { (void)c; return al(self)->window; }
+static void al_noop(id self, SEL c) { (void)self; (void)c; }
+static void al_noop1(id self, SEL c, id a) { (void)self; (void)c; (void)a; }
 static i64 al_run(id self, SEL c) {
     (void)c;
     alertst_t *s = al(self);
-    if (!((nsarr_t *)s->buttons)->n) cx_arr_add(s->buttons, cx_str("OK"));
+    if (!((nsarr_t *)s->buttons)->n) al_add_button(self, 0, cx_str("OK"));
     double W = 420;
     NSSize ms = text_size(cx_cstr(s->message), 13, 3);
     double infoh = 0;
@@ -2323,20 +2399,47 @@ static i64 al_run(id self, SEL c) {
         v_set_frame(inf, 0, r_make(20, 56, W - 40, infoh));
         v_add_sub(cv, 0, inf);
     }
-    id tgt = cx_alloc_instance(&AlertTarget_c);
     nsarr_t *bs = (nsarr_t *)s->buttons;
     double x = W - 20;
     for (u64 i = 0; i < bs->n; i++) {
-        id b = bt_with_title((id)&NSButton_c, 0, bs->items[i], tgt, sel_registerName("cxAlertButton:"));
-        vs(b)->tag = (int)i;
-        if (i == 0) vs(b)->key_equiv = cx_str("\r");
+        id b = bs->items[i];
         double bw = vs(b)->frame.s.w;
         x -= bw;
         v_set_frame(b, 0, r_make(x, 16, bw, 24));
         x -= 10;
         v_add_sub(cv, 0, b);
     }
-    return ap_run_modal(NSApp, 0, w);
+    keep(&s->window, w);
+    i64 r = modal_loop(w);
+    if (ws(w)->visible) close_window(w, NO);
+    return r;
+}
+/* folha: o macOS prende o alerta à janela e volta na hora; aqui o alerta roda como modal na próxima volta do run loop
+ * principal e o bloco recebe a resposta. Assim o -[NSApp runModalForWindow:] que o Electron chama logo depois (caixa
+ * síncrona) já está rodando quando o bloco chama -stopModal. */
+typedef struct { id alert; void *handler; } alsheet_t;
+void _Block_release(const void *b);
+static void al_sheet_run(void *p) {
+    alsheet_t *d = p;
+    i64 r = al_run(d->alert, 0);
+    if (d->handler) { void (*inv)(void *, i64) = *(void **)((u8 *)d->handler + 16); inv(d->handler, r); _Block_release(d->handler); }
+    objc_release(d->alert);
+    free(d);
+}
+void dispatch_async_f(void *q, void *ctx, void (*fn)(void *));
+void *dispatch_get_main_queue(void);
+static void al_begin_sheet(id self, SEL c, id win, void *handler) {
+    (void)c; (void)win;
+    alsheet_t *d = calloc(1, sizeof *d);
+    if (!d) return;
+    d->alert = objc_retain(self);
+    d->handler = handler ? _Block_copy(handler) : 0;
+    dispatch_async_f(dispatch_get_main_queue(), d, al_sheet_run);
+}
+static void al_begin_sheet_delegate(id self, SEL c, id win, id delegate, SEL did_end, void *ctx) {
+    (void)c; (void)win;
+    i64 r = al_run(self, 0);
+    if (delegate && did_end) ((void (*)(id, SEL, id, i64, void *))objc_msgSend)(delegate, did_end, self, r, ctx);
 }
 
 /* ================================================================ NSMenu (aceito, sem efeito visual) */
@@ -3716,6 +3819,14 @@ void cx_appkit_init(void) {
     M(NSEvent, "characters", ev_chars); M(NSEvent, "charactersIgnoringModifiers", ev_chars); M(NSEvent, "clickCount", ev_clicks);
     M(NSEvent, "window", ev_window); M(NSEvent, "scrollingDeltaY", ev_dy); M(NSEvent, "deltaY", ev_dy); M(NSEvent, "deltaX", ev_zero);
     M(NSEvent, "scrollingDeltaX", ev_zero); M(NSEvent, "isARepeat", no_m);
+    CM(NSEvent, "otherEventWithType:location:modifierFlags:timestamp:windowNumber:context:subtype:data1:data2:", ev_other);
+    M(NSEvent, "timestamp", ev_ts); M(NSEvent, "windowNumber", ev_wnum); M(NSEvent, "subtype", ev_subtype);
+    M(NSEvent, "data1", ev_data1); M(NSEvent, "data2", ev_data2); M(NSEvent, "buttonNumber", ev_button);
+    M(NSEvent, "pressure", ev_pressure); M(NSEvent, "deltaZ", ev_zero); M(NSEvent, "magnification", ev_zero);
+    M(NSEvent, "rotation", ev_fzero); M(NSEvent, "tangentialPressure", ev_fzero); M(NSEvent, "stageTransition", ev_zero);
+    M(NSEvent, "eventNumber", ev_izero); M(NSEvent, "phase", ev_izero); M(NSEvent, "momentumPhase", ev_izero);
+    M(NSEvent, "hasPreciseScrollingDeltas", no_m); M(NSEvent, "isDirectionInvertedFromDevice", no_m);
+    M(NSEvent, "stage", ev_izero); M(NSEvent, "CGEvent", ev_izero);
 
     DEF(NSMenu, NSObject);
     M(NSMenu, "initWithTitle:", mn_init_title); M(NSMenu, "addItem:", mn_add); M(NSMenu, "itemArray", mn_items); M(NSMenu, "items", mn_items);
@@ -3741,6 +3852,14 @@ void cx_appkit_init(void) {
     DEF(NSAlert, NSObject);
     M(NSAlert, "setMessageText:", al_set_msg); M(NSAlert, "setInformativeText:", al_set_info); M(NSAlert, "addButtonWithTitle:", al_add_button);
     M(NSAlert, "setAlertStyle:", al_set_style); M(NSAlert, "runModal", al_run);
+    M(NSAlert, "messageText", al_msg); M(NSAlert, "informativeText", al_info); M(NSAlert, "buttons", al_buttons);
+    M(NSAlert, "alertStyle", al_style); M(NSAlert, "setIcon:", al_set_icon); M(NSAlert, "icon", al_icon);
+    M(NSAlert, "setAccessoryView:", al_set_accessory); M(NSAlert, "accessoryView", al_accessory);
+    M(NSAlert, "setShowsSuppressionButton:", al_set_shows_suppress); M(NSAlert, "showsSuppressionButton", al_shows_suppress);
+    M(NSAlert, "suppressionButton", al_suppress); M(NSAlert, "window", al_window); M(NSAlert, "layout", al_noop);
+    M(NSAlert, "setShowsHelp:", al_noop1); M(NSAlert, "setHelpAnchor:", al_noop1); M(NSAlert, "setDelegate:", al_noop1);
+    M(NSAlert, "beginSheetModalForWindow:completionHandler:", al_begin_sheet);
+    M(NSAlert, "beginSheetModalForWindow:modalDelegate:didEndSelector:contextInfo:", al_begin_sheet_delegate);
     cx_define_class(&AlertTarget_c, &AlertTarget_m, "_CXAlertTarget", &NSObject_c, 0);
     cx_add_method(&AlertTarget_c, "cxAlertButton:", (void *)al_button_hit);
 

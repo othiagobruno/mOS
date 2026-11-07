@@ -58,18 +58,18 @@ static kq_t *kqs[MAX_KQ];
 
 /* descritor pronto para leitura? pipes: bytes disponíveis ou a outra ponta fechou (SYS_FSTAT do
  * kernel: is_dir 2 = ponta de leitura); arquivos comuns: sempre. *avail = bytes, *eof = fim. */
-/* sockets do libSystem (sockets.c, descritores a partir de 0x5000): perguntam à conexão TCP do kernel */
+/* sockets do libSystem (sockets.c, descritores 768-831): perguntam à conexão TCP do kernel */
 int cx_sock_is(int fd) __attribute__((weak));
 int cx_sock_readable(int fd, long *avail, int *eof) __attribute__((weak));
 int cx_sock_writable(int fd) __attribute__((weak));
 int cx_fd_writable(int fd) {
-    if (fd >= 0x5000 && cx_sock_is && cx_sock_is(fd)) return cx_sock_writable(fd);
+    if (fd >= 768 && cx_sock_is && cx_sock_is(fd)) return cx_sock_writable(fd);
     return 1;                                                    /* arquivos e pipes: sempre */
 }
 int cx_fd_readable(int fd, long *avail, int *eof) {
     mos_stat_t st;
     *avail = 0; *eof = 0;
-    if (fd >= 0x5000 && cx_sock_is && cx_sock_is(fd)) return cx_sock_readable(fd, avail, eof);
+    if (fd >= 768 && cx_sock_is && cx_sock_is(fd)) return cx_sock_readable(fd, avail, eof);
     if (fd < 0 || fd >= 0x4000 || SYS2(SYS_FSTAT, fd, &st) < 0) return 0;
     if (st.is_dir == 2) { *avail = (long)st.size; *eof = st.mtime != 0; return st.size > 0 || st.mtime; }
     if (st.is_dir == 3) return 0;

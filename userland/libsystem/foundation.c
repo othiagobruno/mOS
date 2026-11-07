@@ -1204,6 +1204,30 @@ static id exc_raise(id cls, SEL c, id name, id fmt, ...) {
     cx_fdprintf(2, "*** Exceção '%s': %s\n", cx_cstr(name), cx_cstr(m));
     abort();
 }
+/* NSException com nome, motivo e userInfo: antes +exceptionWithName:reason:userInfo: devolvia nil e um @throw do app
+ * (ex.: o Squirrel do Electron) abortava com "exceção não tratada: nil", sem dizer qual. O mOS ainda não desenrola
+ * exceções até um @catch; isto ao menos faz o objc_exception_throw contar o nome e o motivo. */
+typedef struct { cx_class_t *isa; id name, reason, info; } nsexc_t;
+static id exc_init(id self, SEL c, id name, id reason, id info) {
+    (void)c;
+    nsexc_t *e = (nsexc_t *)self;
+    e->name = objc_retain(name); e->reason = objc_retain(reason); e->info = objc_retain(info);
+    return self;
+}
+static id exc_with(id cls, SEL c, id name, id reason, id info) { return cx_autorelease(exc_init(cx_alloc_instance((cx_class_t *)cls), c, name, reason, info)); }
+static id exc_name(id self, SEL c) { (void)c; return ((nsexc_t *)self)->name; }
+static id exc_reason(id self, SEL c) { (void)c; return ((nsexc_t *)self)->reason; }
+static id exc_info(id self, SEL c) { (void)c; return ((nsexc_t *)self)->info; }
+static id exc_desc(id self, SEL c) {
+    (void)c;
+    nsexc_t *e = (nsexc_t *)self;
+    char b[600];
+    snprintf(b, sizeof b, "%s: %s", e->name ? cx_cstr(e->name) : "NSException", e->reason ? cx_cstr(e->reason) : "(sem motivo)");
+    return cx_str(b);
+}
+void objc_exception_throw(id e) __attribute__((noreturn));
+static void exc_raise_self(id self, SEL c) { (void)c; objc_exception_throw(self); }
+static id exc_symbols(id self, SEL c) { (void)self; return a_array((id)&NSMutableArray_c, c); }
 
 /* ================================================================ registro */
 #define M(cls, s, f) cx_add_method(&cls##_c, s, (void *)(f))
@@ -1403,6 +1427,9 @@ void cx_foundation_init(void) {
     M(NSSet, "allObjects", a_copy); M(NSSet, "anyObject", a_first); M(NSSet, "member:", a_first);
     cx_define_class(&NSNull_c, &NSNull_m, "NSNull", &NSObject_c, 0);
     CM(NSNull, "null", g_singleton); M(NSNull, "description", null_desc);
-    cx_define_class(&NSException_c, &NSException_m, "NSException", &NSObject_c, 0);
+    cx_define_class(&NSException_c, &NSException_m, "NSException", &NSObject_c, sizeof(nsexc_t) - 8);
+    CM(NSException, "exceptionWithName:reason:userInfo:", exc_with); M(NSException, "initWithName:reason:userInfo:", exc_init);
+    M(NSException, "name", exc_name); M(NSException, "reason", exc_reason); M(NSException, "userInfo", exc_info);
+    M(NSException, "description", exc_desc); M(NSException, "raise", exc_raise_self); M(NSException, "callStackSymbols", exc_symbols);
     CM(NSException, "raise:format:", exc_raise);
 }

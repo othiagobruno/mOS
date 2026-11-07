@@ -229,26 +229,33 @@ void cx_kvo_add(id self, SEL c, id obs, id path, u64 opts, void *ctx) {
     if (opts & 4) notify(&r, change_dict(value_of(self, path), 0, opts & 1, 0, 1));
 }
 
-void cx_kvo_remove_ctx(id self, SEL c, id obs, id path, void *ctx) {
-    (void)c;
-    lock();
-    for (int i = nregs - 1; i >= 0; i--)
-        if (regs[i].obj == self && regs[i].obs == obs && str_eq(regs[i].path, path) && (!ctx || regs[i].ctx == ctx)) {
-            objc_release(regs[i].path); objc_release(regs[i].key);
+/* tira os registros que casam; as strings são soltas fora da trava (o dealloc delas passa por cx_kvo_forget) */
+static void drop(id self, id obs, id path, void *ctx, int all_of_obj) {
+    id dead[64];
+    int nd;
+    do {
+        nd = 0;
+        lock();
+        for (int i = nregs - 1; i >= 0 && nd < 62; i--) {
+            int hit = all_of_obj ? regs[i].obj == self
+                                 : regs[i].obj == self && regs[i].obs == obs && str_eq(regs[i].path, path) && (!ctx || regs[i].ctx == ctx);
+            if (!hit) continue;
+            dead[nd++] = regs[i].path; dead[nd++] = regs[i].key;
             regs[i] = regs[--nregs];
-            if (ctx) break;      /* com contexto, sai um registro só */
+            if (ctx && !all_of_obj) break;      /* com contexto, sai um registro só */
         }
-    unlock();
+        unlock();
+        for (int i = 0; i < nd; i++) objc_release(dead[i]);
+    } while (nd >= 62);
 }
+
+void cx_kvo_remove_ctx(id self, SEL c, id obs, id path, void *ctx) { (void)c; drop(self, obs, path, ctx, 0); }
 void cx_kvo_remove(id self, SEL c, id obs, id path) { cx_kvo_remove_ctx(self, c, obs, path, 0); }
 
 /* o objeto observado morreu: os registros dele saem (chamado pelo dealloc do NSObject) */
 void cx_kvo_forget(id self) {
     if (!nregs) return;
-    lock();
-    for (int i = nregs - 1; i >= 0; i--)
-        if (regs[i].obj == self) { objc_release(regs[i].path); objc_release(regs[i].key); regs[i] = regs[--nregs]; }
-    unlock();
+    drop(self, 0, 0, 0, 1);
 }
 
 static id kvo_info(id self, SEL c) { (void)self; (void)c; return 0; }

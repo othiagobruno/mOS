@@ -58,6 +58,7 @@ enum {
     /* futex: espera numa palavra de 32 bits do processo (pthread_mutex/cond e semáforos do libSystem) */
     SYS_FUTEX_WAIT,    /* 48: (u32 *end, valor, prazo ms; ~0 = sem) -> 0 acordada, -MOS_EAGAIN valor já mudou, -MOS_ETIMEDOUT */
     SYS_FUTEX_WAKE,    /* 49: (u32 *end, n) -> quantas threads acordou */
+    SYS_FDFLAGS,       /* 50: (fd, mudar, valor) -> flags        FD_CLOEXEC por fd: mudar=1 grava valor (0/1); devolve 1 se close-on-exec */
     SYS_COUNT,
     SYS_GUI_FIRST = 64,/* 64..79: interface gráfica dos apps do macOS (kernel/compat/guisys.c) */
     SYS_GUI_LAST = 79,

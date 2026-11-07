@@ -39,7 +39,7 @@ Cuidados:
 | Codex desktop | — | 2.481 → 2.231 | 978 | libc++ 271, Swift 259 (helpers nativos), CoreText 54 |
 | Grok Bot | 27 | 2.562 → 2.393 | 974 | Swift 541 (só o helper "Computer Use"), Foundation 219 |
 | Claude | 27 | 4.279 → 4.040 | 2.700 | Swift 1.256 + SwiftUI 547 (`swift_addon.node`, `computer_use.node`, simulador iOS) |
-| WhatsApp | 9 | 8.922 → 8.675 | 8.344 | Swift 3.076, UIKit 582, SwiftUI 555, Combine 283 |
+| WhatsApp | 9 | 8.922 → 8.675 → 7.783 → 4.730 (dylibs Swift do mOS) → **4.444** (Combine.framework, 7 nov.) | 8.344 | UIKit 571, SwiftUI 555, Swift Foundation 425, libswiftUIKit 278, libc++ 271 |
 | **Codex CLI** | 1 | **271 → 90** | 152 | Security zerado; sobram CF, termios, rede |
 
 \* O número do VS Code subiu porque o bundle em `build-vscode` foi preparado de novo, agora com mais módulos nativos. Não é regressão.
@@ -48,6 +48,16 @@ Para refazer:
 
 ```powershell
 .\build\machocheck.exe build\libSystem.mos "build\apps\x\slack-x64\Slack\Slack.app" build\apps\rel\slack.txt
+```
+
+Para apps Swift (WhatsApp, Postico), o `machocheck` só enxerga os dylibs Swift do mOS (`build\swift\objc\dylib`, de
+[swift-objc-runtime.md](swift-objc-runtime.md)) se eles estiverem na pasta varrida. Uma pasta com duas junções resolve:
+
+```powershell
+New-Item -ItemType Directory build\wa-scan
+cmd /c mklink /J build\wa-scan\WhatsApp.app "build\apps\x\whatsapp\WhatsApp Installer\WhatsApp.app"
+cmd /c mklink /J build\wa-scan\swift build\swift\objc\dylib
+.\build\machocheck.exe build\libSystem.mos build\wa-scan build\apps\rel\whatsapp.txt
 ```
 
 ## Como cada um é montado e iniciado

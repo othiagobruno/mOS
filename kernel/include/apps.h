@@ -23,6 +23,7 @@ extern app_t app_arquivos, app_horizonte, app_terminal, app_preferencias, app_ed
 void contacts_import_file(const char *path);
 void calendar_import_file(const char *path);
 void books_open_file(const char *path);
+void quicktime_open_file(const char *path);
 
 /* fonte monoespaçada (simulada em células fixas) para o Terminal e o Console */
 int  mono_cell_w(float size);
@@ -72,3 +73,6 @@ extern app_t app_jogos;
 extern app_t app_atalhos;
 extern app_t app_mail;
 extern app_t app_livros;
+extern app_t app_quicktime;
+extern app_t app_automator;
+extern app_t app_imagecapture;

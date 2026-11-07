@@ -23,7 +23,7 @@ int access(const char *p, int m);
 int unlink(const char *p);
 extern int cx_errno;
 
-#define SOCK_FD_BASE 0x5000
+#define SOCK_FD_BASE 768   /* abaixo de 1024 (FD_SETSIZE): o git e o libcurl usam select/fd_set; acima dos 256 fds do kernel */
 #define MAX_SOCK 64
 #define CX_EAFNOSUPPORT 47
 #define CX_ECONNREFUSED 61

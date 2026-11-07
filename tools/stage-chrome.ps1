@@ -103,6 +103,9 @@ if ($KernelTeste) {
         '-mno-red-zone', '-fshort-wchar', '-fno-sanitize=all', '-fno-strict-aliasing', '-nostdlib', '-Ikernel/include', '-I.', '-std=gnu11',
         '-Wno-unused-command-line-argument', '-DMAX_LOAD=(512ull<<20)')
     $ErrorActionPreference = 'Continue'
+    # cópia do libSystem que vai embutido neste kernel: outras sessões recompilam build\libSystem.mos, e os
+    # endereços do log (machocheck --sym) só batem com a cópia exata
+    Copy-Item "$root\build\libSystem.mos" "$root\$OutDir\libSystem-embutido.mos" -Force
     & $zig cc @cflags @sources -o "$OutDir/BOOTX64-teste.EFI" 2>&1 | ForEach-Object { "$_" }
     $ok = $LASTEXITCODE -eq 0
     Pop-Location
