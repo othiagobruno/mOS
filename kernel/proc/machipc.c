@@ -195,6 +195,7 @@ static kport_t *port_new(u8 kind) {
 }
 
 static void port_kill(kport_t *p);
+static void srights_drop(kport_t *p);   /* um direito de envio deixou de existir (pode disparar "sem remetentes") */
 
 static void port_ref(kport_t *p) { if (p) p->refs++; }
 static void port_unref(kport_t *p) {
@@ -222,6 +223,13 @@ static void ent_fix(ment_t *e) {
         e->srefs = 0;
         e->type = T_DEAD;
     }
+}
+
+/* nome do processo, já convertido em nome morto se a porta morreu (consultas de mach_port_*) */
+static ment_t *ent_get(mspace_t *sp, u32 name) {
+    ment_t *e = ent_at(sp, name);
+    if (e) ent_fix(e);
+    return e;
 }
 
 static ment_t *ent_add(mspace_t *sp, u32 name, u32 type, kport_t *port) {
@@ -301,7 +309,7 @@ static kport_t *bootstrap_port(void) {
 static void set_bootstrap(mspace_t *sp, kport_t *port) {
     ment_t *old = ent_at(sp, BOOTSTRAP_NAME);
     if (old) {
-        if (old->port && (old->type & T_SEND)) old->port->srights--;
+        if (old->port && (old->type & T_SEND)) srights_drop(old->port);
         ent_del(sp, old);
     }
     if (port) ent_add(sp, BOOTSTRAP_NAME, T_SEND, port);
@@ -362,22 +370,27 @@ static u8 bits_local(u32 bits) { return (bits >> 8) & 0x1f; }
 static void send_notify(kport_t *note, int id, u32 arg);
 static void so_drop_unused(kport_t *p);   /* send-once destruído sem uso: avisa quem recebe */
 
+/* direito em trânsito descartado (mensagem destruída ou já entregue sem ele): solta conforme o tipo */
+static void drop_transit(kport_t *p, u8 type) {
+    if (!p) return;
+    if (type == MT_MOVE_SEND_ONCE) { so_drop_unused(p); return; }
+    if (type == MT_MOVE_SEND) srights_drop(p);
+    else if (type == MT_MOVE_RECEIVE && !p->recv) port_kill(p);   /* receive que ninguém recebeu: a porta morre */
+    port_unref(p);
+}
+
 static void kmsg_free(kmsg_t *m) {
     if (!m) return;
-    if (m->dest) port_unref(m->dest);
-    if (m->reply) {
-        if (m->reply_type == MT_MOVE_SEND_ONCE) so_drop_unused(m->reply);
-        else port_unref(m->reply);
-    }
+    if (m->dest) { if (m->dest_type == MT_MOVE_SEND) srights_drop(m->dest); port_unref(m->dest); }
+    if (m->reply) drop_transit(m->reply, m->reply_type);
     for (u32 i = 0; i < m->nitems; i++) {
         kitem_t *it = &m->items[i];
-        if (it->kind == D_PORT && it->port) {
-            if (it->type == MT_MOVE_SEND_ONCE) so_drop_unused(it->port);
-            else port_unref(it->port);
-        }
-        else if ((it->kind == D_OOL || it->kind == D_OOL_VOL) && it->buf) kfree(it->buf);
+        if (it->kind == D_PORT && it->port) drop_transit(it->port, it->type);
+        else if ((it->kind == D_OOL || it->kind == D_OOL_VOL) && it->buf) kmem_unref((kmem_t *)it->buf);
         else if (it->kind == D_OOL_PORTS && it->ports) {
-            for (u32 j = 0; j < it->count; j++) if (it->ports[j]) port_unref(it->ports[j]);
+            u8 t = it->ptype == MT_MAKE_SEND || it->ptype == MT_COPY_SEND || it->ptype == MT_MOVE_SEND ? MT_MOVE_SEND :
+                   it->ptype == MT_MAKE_SEND_ONCE ? MT_MOVE_SEND_ONCE : it->ptype;
+            for (u32 j = 0; j < it->count; j++) drop_transit(it->ports[j], t);
             kfree(it->ports);
         }
     }
@@ -432,20 +445,42 @@ static void so_drop_unused(kport_t *p) {
     port_unref(p);
 }
 
-/* notificação do kernel: mensagem simples (id) para a porta de notificação, com send-once consumido */
+/* notificação do kernel para a porta de notificação, com o send-once consumido. Layout do XNU
+ * (mach/notify.h): header + NDR_record_t (8 bytes) + o argumento (u32) — not_port do nome morto,
+ * not_count do sem-remetentes. MACH_NOTIFY_SEND_ONCE é só o header. */
 static void send_notify(kport_t *note, int id, u32 arg) {
     if (!note || note->dead || !note->recv) { port_unref(note); return; }
     kmsg_t *m = kcalloc(1, sizeof *m);
     u8 *d = kcalloc(1, H_SIZE_BYTES + 16);
     if (!m || !d) { kfree(m); kfree(d); port_unref(note); return; }
+    u32 size = id == NOTE_SEND_ONCE ? H_SIZE_BYTES : H_SIZE_BYTES + 12;
     wr32(d, H_BITS, MT_MOVE_SEND_ONCE);
-    wr32(d, H_SIZE, H_SIZE_BYTES + 4);
+    wr32(d, H_SIZE, size);
     wr32(d, H_ID, id);
-    wr32(d, H_SIZE_BYTES, arg);        /* corpo mínimo: nome morto / contagem */
+    if (size > H_SIZE_BYTES) {
+        d[H_SIZE_BYTES + 4] = 1;       /* NDR_record.int_rep = 1 (little-endian), resto zero */
+        wr32(d, H_SIZE_BYTES + 8, arg);
+    }
     m->data = d;
-    m->size = H_SIZE_BYTES + 4;
+    m->size = size;
     m->dest = note;                    /* já é a nossa referência */
+    m->dest_type = MT_MOVE_SEND_ONCE;
+    /* o send-once guardado pelo pedido vira esta mensagem (o aviso de send-once não usado, de
+     * so_drop_unused, já descontou o direito) */
+    if (id != NOTE_SEND_ONCE && note->sorights) note->sorights--;
     enqueue(note, m);
+}
+
+/* um direito de envio deixou de existir: entrada sem urefs, mensagem entregue ou descartada com ele,
+ * processo que saiu. Sem nenhum, dispara o "sem remetentes" pedido (MACH_NOTIFY_NO_SENDERS + mscount). */
+static void srights_drop(kport_t *p) {
+    if (!p) return;
+    if (p->srights) p->srights--;
+    if (!p->srights && p->ns_notify && !p->dead && p->recv) {
+        kport_t *n = p->ns_notify;
+        p->ns_notify = NULL;
+        send_notify(n, NOTE_NO_SENDERS, p->mscount);
+    }
 }
 
 /* ------------------------------------------------------------ destruir uma porta */
@@ -470,7 +505,9 @@ static void port_kill(kport_t *p) {
     while (p->qh) { kmsg_t *m = p->qh; p->qh = m->next; kmsg_free(m); }
     p->qt = NULL;
     p->qn = 0;
-    if (p->ns_notify) { send_notify(p->ns_notify, NOTE_NO_SENDERS, 0); p->ns_notify = NULL; }
+    /* o pedido de sem-remetentes morre com a porta: o send-once guardado é destruído sem uso
+     * (o XNU entrega MACH_NOTIFY_SEND_ONCE na porta de notificação, não um falso NO_SENDERS) */
+    if (p->ns_notify) { kport_t *n = p->ns_notify; p->ns_notify = NULL; so_drop_unused(n); }
     dead_name_notify(p);
     /* tira dos conjuntos: só zera o ponteiro, o conjunto varre a lista global ao receber */
     p->pset = NULL;
@@ -498,13 +535,14 @@ static kport_t *copyin_right(mspace_t *sp, u32 name, u8 disp, u8 *out_type, u32 
         if (disp == MT_COPY_SEND && !(e->type & T_SEND)) { *kr = SEND_INVALID_RIGHT; return NULL; }
         port_ref(p);
         p->srights++;
+        if (disp == MT_MAKE_SEND) p->mscount++;         /* make-send count: vai no aviso de sem-remetentes */
         *out_type = MT_MOVE_SEND;
         return p;
     case MT_MOVE_SEND:
         if (!(e->type & T_SEND)) { *kr = SEND_INVALID_RIGHT; return NULL; }
         port_ref(p);
         p->srights++;                       /* a referência do remetente vira a da mensagem */
-        if (--e->srefs == 0) { e->type &= ~T_SEND; p->srights--; if (!e->type) ent_del(sp, e); }
+        if (--e->srefs == 0) { e->type &= ~T_SEND; srights_drop(p); if (!e->type) ent_del(sp, e); }
         *out_type = MT_MOVE_SEND;
         return p;
     case MT_MAKE_SEND_ONCE:
@@ -661,13 +699,15 @@ static u32 insert_recv_right(mspace_t *sp, kport_t *port, u8 rtype) {
     }
     ment_t *e = ent_of_port(sp, port);
     if (e) {
+        /* junta no nome existente: se ele já tinha envio, são dois direitos virando um (urefs) */
+        if (e->type & T_SEND) srights_drop(port);
         e->type |= T_SEND;
         e->srefs++;
         port_unref(port);                               /* já tínhamos uma referência */
         return e->name;
     }
     e = ent_add(sp, 0, T_SEND, port);
-    if (!e) { port->srights--; port_unref(port); return 0; }
+    if (!e) { srights_drop(port); port_unref(port); return 0; }
     return e->name;
 }
 
@@ -735,7 +775,11 @@ static u32 deliver(mspace_t *sp, kport_t *rcv, kmsg_t *m, u8 *ubuf, u32 cap, u32
     wr32(d, H_REMOTE, rname);
     wr32(d, H_LOCAL, lname);
     /* o destino já foi consumido na recepção; libera-o */
-    if (m->dest) { port_unref(m->dest); m->dest = NULL; }
+    if (m->dest) {                               /* o direito de destino é consumido pela entrega */
+        if (m->dest_type == MT_MOVE_SEND) srights_drop(m->dest);
+        port_unref(m->dest);
+        m->dest = NULL;
+    }
     /* descritores */
     for (u32 i = 0; i < m->nitems; i++) {
         kitem_t *it = &m->items[i];
@@ -880,6 +924,16 @@ static u32 right_type_flag(int right) {
            right == RIGHT_SEND_ONCE ? T_SO : right == RIGHT_DEAD_NAME ? T_DEAD : T_SEND;
 }
 
+/* o processo largou o direito de receber (mod_refs -1, mach_port_destruct): a porta morre de verdade —
+ * quem tem envio recebe o aviso de nome morto — e, se o nome também tinha envio, ele vira nome morto */
+static void drop_receive(mspace_t *sp, ment_t *e) {
+    kport_t *p = e->port;
+    e->type &= ~T_RECEIVE;
+    if (p && (p->recv == sp || !p->recv)) port_kill(p);
+    if (e->type & T_SEND) { srights_drop(p); ent_fix(e); }
+    if (!e->type) ent_del(sp, e);
+}
+
 static u32 port_op(mspace_t *sp, u32 op, u64 *a) {
     switch (op) {
     case MACH_OP_ALLOCATE: {
@@ -939,10 +993,10 @@ static u32 port_op(mspace_t *sp, u32 op, u64 *a) {
         if (!e) return KERN_INVALID_NAME;
         if (e->type & T_DEAD) { if (--e->drefs == 0) ent_del(sp, e); return KERN_SUCCESS; }
         if (e->type & T_SEND) {
-            if (--e->srefs == 0) { if (e->port) e->port->srights--; e->type &= ~T_SEND; if (!e->type) ent_del(sp, e); }
+            if (--e->srefs == 0) { if (e->port) srights_drop(e->port); e->type &= ~T_SEND; if (!e->type) ent_del(sp, e); }
             return KERN_SUCCESS;
         }
-        if (op == MACH_OP_DESTRUCT && (e->type & T_RECEIVE)) { if (e->port) e->port->recv = NULL; ent_del(sp, e); return KERN_SUCCESS; }
+        if (op == MACH_OP_DESTRUCT && (e->type & T_RECEIVE)) { drop_receive(sp, e); return KERN_SUCCESS; }
         if (e->type & T_SO) {
             kport_t *p = e->port;
             port_ref(p);                 /* sobrevive ao ent_del para o aviso de send-once */
@@ -959,13 +1013,23 @@ static u32 port_op(mspace_t *sp, u32 op, u64 *a) {
         if (a[1] == RIGHT_SEND && (e->type & T_SEND)) {
             if ((i64)e->srefs + delta < 0) return KERN_INVALID_VALUE;
             e->srefs += (u32)delta;
-            if (e->srefs == 0) { if (e->port) e->port->srights--; e->type &= ~T_SEND; if (!e->type) ent_del(sp, e); }
+            if (e->srefs == 0) { if (e->port) srights_drop(e->port); e->type &= ~T_SEND; if (!e->type) ent_del(sp, e); }
         } else if (a[1] == RIGHT_DEAD_NAME && (e->type & T_DEAD)) {
             if ((i64)e->drefs + delta < 0) return KERN_INVALID_VALUE;
             e->drefs += (u32)delta;
             if (e->drefs == 0) ent_del(sp, e);
-        } else if ((i64)delta < 0 && (e->type & (T_RECEIVE | T_SO | T_PSET))) {
+        } else if ((i64)delta < 0 && a[1] == RIGHT_RECEIVE && (e->type & T_RECEIVE)) {
+            drop_receive(sp, e);
+        } else if ((i64)delta < 0 && a[1] == RIGHT_SEND_ONCE && (e->type & T_SO)) {
+            kport_t *p = e->port;
+            port_ref(p);
             ent_del(sp, e);
+            so_drop_unused(p);
+        } else if ((i64)delta < 0 && a[1] == RIGHT_PORT_SET && (e->type & T_PSET)) {
+            for (kport_t *q = ports_all; q; q = q->gnext) if (q->pset == e->port) q->pset = NULL;   /* membros saem do conjunto */
+            ent_del(sp, e);
+        } else if ((i64)delta < 0 && (e->type & (T_RECEIVE | T_SO | T_PSET))) {
+            return KERN_INVALID_RIGHT;
         }
         return KERN_SUCCESS;
     }
@@ -999,7 +1063,7 @@ static u32 port_op(mspace_t *sp, u32 op, u64 *a) {
         return KERN_SUCCESS;
     }
     case MACH_OP_TYPE: {
-        ment_t *e = ent_at(sp, (u32)a[0]);
+        ment_t *e = ent_get(sp, (u32)a[0]);
         if (!e) { if (ent_find(sp, (u32)a[0])) e = ent_at(sp, (u32)a[0]); }
         if (!e) return KERN_INVALID_NAME;
         a[1] = e->type;
@@ -1028,32 +1092,44 @@ static u32 port_op(mspace_t *sp, u32 op, u64 *a) {
         return KERN_SUCCESS;
     }
     case MACH_OP_NOTIFY: {
-        ment_t *e = ent_at(sp, (u32)a[0]);
+        ment_t *e = ent_get(sp, (u32)a[0]);
+        if (e) ent_fix(e);                         /* envio para porta já morta vira nome morto */
         if (!e || !e->port) return KERN_INVALID_NAME;
-        u8 t;
+        u8 t = 0;
         u32 kr;
         kport_t *note = a[3] ? copyin_right(sp, (u32)a[3], (u8)a[4], &t, &kr) : NULL;
+        a[5] = 0;
         if (a[1] == NOTE_DEAD_NAME) {
+            if (!(e->type & (T_SEND | T_SO | T_DEAD))) { drop_transit(note, t); return KERN_INVALID_RIGHT; }
+            if (e->port->dead || (e->type & T_DEAD)) {          /* já morta: avisa na hora, como o XNU */
+                if (note) send_notify(note, NOTE_DEAD_NAME, (u32)a[0]);
+                return KERN_SUCCESS;
+            }
             dnreq_t *r = kcalloc(1, sizeof *r);
             if (r) { r->sp = sp; r->name = (u32)a[0]; r->notify = note; r->next = e->port->dnreqs; e->port->dnreqs = r; }
-            else port_unref(note);
-            a[5] = 0;
+            else drop_transit(note, t);
         } else if (a[1] == NOTE_NO_SENDERS) {
-            if (e->port->ns_notify) port_unref(e->port->ns_notify);
-            e->port->ns_notify = note;
-            e->port->ns_sync = (u32)a[2];
-            a[5] = 0;
-        } else port_unref(note);
+            if (!(e->type & T_RECEIVE)) { drop_transit(note, t); return KERN_INVALID_RIGHT; }
+            kport_t *p = e->port;
+            if (p->ns_notify) { kport_t *old = p->ns_notify; p->ns_notify = NULL; so_drop_unused(old); }
+            p->ns_notify = note;
+            p->ns_sync = (u32)a[2];
+            /* XNU: sem nenhum envio agora e sync <= mscount, o aviso sai na hora */
+            if (note && !p->srights && p->ns_sync <= p->mscount) {
+                p->ns_notify = NULL;
+                send_notify(note, NOTE_NO_SENDERS, p->mscount);
+            }
+        } else drop_transit(note, t);
         return KERN_SUCCESS;
     }
     case MACH_OP_SET_ATTR: {
-        ment_t *e = ent_at(sp, (u32)a[0]);
+        ment_t *e = ent_get(sp, (u32)a[0]);
         if (!e || !e->port) return KERN_INVALID_NAME;
         if (a[1] == 1 /* MACH_PORT_LIMITS_INFO */) e->port->qlimit = (u32)a[2];
         return KERN_SUCCESS;
     }
     case MACH_OP_STATUS: {
-        ment_t *e = ent_at(sp, (u32)a[0]);
+        ment_t *e = ent_get(sp, (u32)a[0]);
         if (!e || !e->port) return KERN_INVALID_NAME;
         kport_t *p = e->port;
         a[1] = p->qn; a[2] = p->seqno; a[3] = p->qlimit;
@@ -1061,19 +1137,19 @@ static u32 port_op(mspace_t *sp, u32 op, u64 *a) {
         return KERN_SUCCESS;
     }
     case MACH_OP_SET_CONTEXT: {
-        ment_t *e = ent_at(sp, (u32)a[0]);
+        ment_t *e = ent_get(sp, (u32)a[0]);
         if (!e || !e->port) return KERN_INVALID_NAME;
         e->port->context = a[1];
         return KERN_SUCCESS;
     }
     case MACH_OP_GET_CONTEXT: {
-        ment_t *e = ent_at(sp, (u32)a[0]);
+        ment_t *e = ent_get(sp, (u32)a[0]);
         if (!e || !e->port) return KERN_INVALID_NAME;
         a[1] = e->port->context;
         return KERN_SUCCESS;
     }
     case MACH_OP_PENDING: {
-        ment_t *e = ent_at(sp, (u32)a[0]);
+        ment_t *e = ent_get(sp, (u32)a[0]);
         if (!e || !e->port) { a[1] = 0; return KERN_SUCCESS; }
         kport_t *p = e->port;
         if (p->kind == KP_SET) {
@@ -1084,7 +1160,7 @@ static u32 port_op(mspace_t *sp, u32 op, u64 *a) {
         return KERN_SUCCESS;
     }
     case MACH_OP_PEEK: {
-        ment_t *e = ent_at(sp, (u32)a[0]);
+        ment_t *e = ent_get(sp, (u32)a[0]);
         if (!e || !e->port || !e->port->qh) return KERN_FAILURE;
         kmsg_t *m = e->port->qh;
         a[1] = m->size; a[2] = m->seqno; a[3] = rd32(m->data, H_ID);
@@ -1106,7 +1182,7 @@ static u32 port_op(mspace_t *sp, u32 op, u64 *a) {
     }
     case MACH_OP_SPAWN_SPECIAL: {
         if (a[0] == 4) {
-            if (sp->spawn_special) { sp->spawn_special->srights--; port_unref(sp->spawn_special); sp->spawn_special = NULL; }
+            if (sp->spawn_special) { srights_drop(sp->spawn_special); port_unref(sp->spawn_special); sp->spawn_special = NULL; }
             ment_t *e = ent_find(sp, (u32)a[1]);
             if (e && e->port && (e->type & T_SEND)) { port_ref(e->port); e->port->srights++; sp->spawn_special = e->port; }
         }
@@ -1127,6 +1203,9 @@ static int bs_find(const char *name) {
 
 static u32 bootstrap_op(mspace_t *sp, u32 op, const char *name, u32 *out_name) {
     int i = bs_find(name);
+    /* serviço cujo servidor morreu: sai do registro (look_up dá 1102 e um novo check_in cria porta nova,
+     * em vez de ressuscitar a morta) */
+    if (i >= 0 && bs_reg[i].port->dead) { port_unref(bs_reg[i].port); bs_reg[i].port = NULL; bs_reg[i].name[0] = 0; i = -1; }
     if (op == MACH_BS_CHECK_IN) {
         kport_t *p;
         if (i >= 0) {
@@ -1143,7 +1222,6 @@ static u32 bootstrap_op(mspace_t *sp, u32 op, const char *name, u32 *out_name) {
         }
         port_ref(p);
         p->recv = sp;
-        p->dead = false;
         ment_t *e = ent_of_port(sp, p);
         if (e) { e->type |= T_RECEIVE; port_unref(p); } else e = ent_add(sp, 0, T_RECEIVE, p);
         if (!e) { port_unref(p); return BS_NO_MEMORY; }
@@ -1519,16 +1597,31 @@ void machipc_exit(process_t *p) {
     if (!sp) return;
     ca_drop_pid(sp->pid);
     p->mach = NULL;
-    if (sp->spawn_special) { sp->spawn_special->srights--; port_unref(sp->spawn_special); }
-    /* tira os serviços que este processo servia do registro global (viram "serviço inativo") */
-    for (int i = 0; i < 256; i++)
-        if (bs_reg[i].port && bs_reg[i].port->recv == sp) bs_reg[i].port->recv = NULL;
-    /* larga cada nome; as portas que ficam sem receptor morrem e notificam (dentro de port_unref) */
+    if (sp->spawn_special) { srights_drop(sp->spawn_special); port_unref(sp->spawn_special); }
+    /* 1. pedidos de nome-morto feitos POR este processo em portas de outros: apontam para este espaço,
+     *    que vai ser liberado (antes ficavam lá e o aviso escrevia em memória solta) */
+    for (kport_t *q = ports_all; q; q = q->gnext)
+        for (dnreq_t **rr = &q->dnreqs; *rr;) {
+            dnreq_t *r = *rr;
+            if (r->sp == sp) { *rr = r->next; port_unref(r->notify); kfree(r); }
+            else rr = &r->next;
+        }
+    /* 2. as portas que este processo recebia morrem: quem tem envio para elas recebe o aviso de
+     *    nome-morto, e os serviços do bootstrap dele param de responder (look_up devolve 1102).
+     *    (Antes o registro zerava o receptor primeiro, e as portas de serviço nunca morriam.) */
     for (u32 i = 0; i < sp->n; i++) {
         kport_t *port = sp->e[i].port;
-        if (port && (sp->e[i].type & T_RECEIVE) && port->recv == sp) { port->recv = NULL; port_kill(port); }
+        if (port && (sp->e[i].type & T_RECEIVE) && (port->recv == sp || !port->recv)) port_kill(port);
     }
-    while (sp->n) { kport_t *port = sp->e[sp->n - 1].port; sp->n--; port_unref(port); }
+    /* 3. larga os outros direitos: envio (pode disparar sem-remetentes em outro processo) e send-once
+     *    (aviso de send-once não usado) */
+    while (sp->n) {
+        ment_t e = sp->e[--sp->n];
+        if (!e.port) continue;
+        if ((e.type & T_SEND) && !(e.type & T_DEAD)) srights_drop(e.port);
+        if (e.type & T_SO) { so_drop_unused(e.port); continue; }   /* consome a referência */
+        port_unref(e.port);
+    }
     kfree(sp->e);
     kfree(sp->pr);
     kfree(sp);

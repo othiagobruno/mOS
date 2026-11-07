@@ -37,6 +37,25 @@ static u64 r64(const u8 *b, u32 o) { return (u64)r32(b,o) | (u64)r32(b,o+4)<<32;
 #define RIGHT_RECEIVE 1
 #define D_PORT 0
 #define D_OOL  1
+#define RCV_TIMEOUT 0x100
+#define NOTE_NO_SENDERS 70
+#define NOTE_DEAD_NAME  72
+
+static u32 nova_porta(void) {
+    u64 a[8] = {RIGHT_RECEIVE, 0,0,0,0,0,0,0};
+    return mport(MACH_OP_ALLOCATE, a) ? 0 : (u32)a[2];
+}
+/* espera um aviso do kernel na porta: id (70/72) e o argumento depois do NDR (offset 32) */
+static int espera_aviso_ms(u32 port, u32 *id, u32 *arg, u32 ms) {
+    u8 m[128];
+    for (int i = 0; i < 128; i++) m[i] = 0;
+    mos_mach_msg_args_t a = {(u64)m, RCV | RCV_TIMEOUT, 0, sizeof m, port, ms, 0};
+    int r = (int)mmsg(&a);
+    *id = r32(m, 20);
+    *arg = r32(m, 32);
+    return r;
+}
+static int espera_aviso(u32 port, u32 *id, u32 *arg) { return espera_aviso_ms(port, id, arg, 2000); }
 
 static const char *SVC = "mOS.machtest.servico";
 static u8 oolbuf[4096] __attribute__((aligned(4096)));
@@ -179,6 +198,14 @@ static int pai(void) {
         print("machtest: FALHA conteudo (reply=%d)\n", (i64)(int)reply);
         return 1;
     }
+    /* pedidos de aviso, ANTES de o filho sair:
+     *   - nome morto na porta que o filho transferiu (ele tem a recepção; ao sair, ela morre);
+     *   - sem remetentes no serviço (o único envio é o do look_up do filho). */
+    u32 np_dead = nova_porta(), np_ns = nova_porta();
+    if (!np_dead || !np_ns) { print("machtest: FALHA alocar portas de aviso\n"); return 1; }
+    u64 n1[8] = {portname, NOTE_DEAD_NAME, 0, np_dead, MAKE_SEND_ONCE, 0, 0, 0};
+    u64 n2[8] = {svc, NOTE_NO_SENDERS, 0, np_ns, MAKE_SEND_ONCE, 0, 0, 0};
+    if (mport(MACH_OP_NOTIFY, n1) || mport(MACH_OP_NOTIFY, n2)) { print("machtest: FALHA request_notification\n"); return 1; }
     /* responde pela porta send-once */
     u8 rep[64];
     for (int i = 0; i < 64; i++) rep[i] = 0;
@@ -195,6 +222,102 @@ static int pai(void) {
     waitany(&st);
     print("machtest: filho saiu com %d\n", (i64)st);
     if (st != 0) { print("machtest: FALHA (filho)\n"); return 1; }
+
+    /* o filho saiu: a porta dele morreu e o envio do serviço sumiu */
+    u32 id1 = 0, arg1 = 0, id2 = 0, arg2 = 0;
+    int k1 = espera_aviso(np_dead, &id1, &arg1), k2 = espera_aviso(np_ns, &id2, &arg2);
+    if (k1 || id1 != NOTE_DEAD_NAME || arg1 != portname) {
+        print("machtest: FALHA aviso de nome morto (kr=0x%x id=%d nome=%d, esperado %d)\n", (i64)(u32)k1, (i64)id1, (i64)arg1, (i64)portname);
+        return 1;
+    }
+    u64 ty[8] = {portname, 0,0,0,0,0,0,0};
+    mport(MACH_OP_TYPE, ty);
+    u8 dm[32];
+    for (int i = 0; i < 32; i++) dm[i] = 0;
+    w32(dm, 0, (u32)COPY_SEND); w32(dm, 4, 24); w32(dm, 8, portname); w32(dm, 20, 1);
+    mos_mach_msg_args_t ds = {(u64)dm, SEND, 24, 0, 0, 0, 0};
+    i64 kd = mmsg(&ds);
+    if (!(ty[1] & 0x100000u) || kd != 0x10000003) {
+        print("machtest: FALHA nome morto (tipo 0x%x, envio kr=0x%x)\n", (i64)ty[1], (i64)(u32)kd);
+        return 1;
+    }
+    print("machtest: aviso de nome morto OK (nome %d, tipo DEAD_NAME, envio -> SEND_INVALID_DEST)\n", (i64)portname);
+    if (k2 || id2 != NOTE_NO_SENDERS) {
+        print("machtest: FALHA sem remetentes entre processos (kr=0x%x id=%d)\n", (i64)(u32)k2, (i64)id2);
+        return 1;
+    }
+    print("machtest: sem remetentes entre processos OK (o envio do filho sumiu ao sair)\n");
+
+    /* sem remetentes no mesmo processo: make-send, pedido, deallocate do envio */
+    u32 p = nova_porta(), np3 = nova_porta();
+    u64 ir[8] = {p, p, MAKE_SEND, 0,0,0,0,0};
+    u64 n3[8] = {p, NOTE_NO_SENDERS, 0, np3, MAKE_SEND_ONCE, 0, 0, 0};
+    if (mport(MACH_OP_INSERT_RIGHT, ir) || mport(MACH_OP_NOTIFY, n3)) { print("machtest: FALHA preparar sem remetentes\n"); return 1; }
+    u32 id3 = 0, arg3 = 0;
+    if (espera_aviso_ms(np3, &id3, &arg3, 0) == 0) { print("machtest: FALHA aviso cedo demais (ainda havia envio)\n"); return 1; }
+    u64 dl[8] = {p, 0,0,0,0,0,0,0};
+    mport(MACH_OP_DEALLOCATE, dl);
+    if (espera_aviso(np3, &id3, &arg3) || id3 != NOTE_NO_SENDERS || arg3 != 1) {
+        print("machtest: FALHA sem remetentes local (id=%d mscount=%d)\n", (i64)id3, (i64)arg3);
+        return 1;
+    }
+    print("machtest: sem remetentes local OK (mscount %d)\n", (i64)arg3);
+
+    /* send-once não usado: o "servidor" destrói o pedido sem responder; o cliente bloqueado na porta de
+     * resposta tem de receber MACH_NOTIFY_SEND_ONCE (71), como no rendezvous do Chromium */
+    u32 srv = nova_porta(), rsp = nova_porta();
+    u8 rq[32];
+    for (int i = 0; i < 32; i++) rq[i] = 0;
+    w32(rq, 0, (u32)MAKE_SEND | ((u32)MAKE_SEND_ONCE << 8)); w32(rq, 4, 24); w32(rq, 8, srv); w32(rq, 12, rsp); w32(rq, 20, 0x77);
+    mos_mach_msg_args_t qs = {(u64)rq, SEND, 24, 0, 0, 0, 0};
+    u8 got[96];
+    mos_mach_msg_args_t qr = {(u64)got, RCV, 0, sizeof got, srv, 0, 0};
+    if (mmsg(&qs) || mmsg(&qr)) { print("machtest: FALHA pedido para destruir\n"); return 1; }
+    u64 dso[8] = {r32(got, 8), 0,0,0,0,0,0,0};       /* o send-once que veio no pedido */
+    mport(MACH_OP_DEALLOCATE, dso);
+    u32 id4 = 0, arg4 = 0;
+    int k4 = espera_aviso(rsp, &id4, &arg4);
+    if (k4 || id4 != 71) { print("machtest: FALHA aviso de send-once nao usado (kr=0x%x id=%d)\n", (i64)(u32)k4, (i64)id4); return 1; }
+    print("machtest: send-once destruido sem resposta -> aviso 71 OK\n");
+
+    /* servidor que morre: o serviço sai do registro (look_up -> 1102) e um novo check_in cria porta nova */
+    int pid2 = fork();
+    if (pid2 == 0) {
+        u32 s2 = 0;
+        exit(mbs(MACH_BS_CHECK_IN, "mOS.machtest.morto", &s2) ? 1 : 0);
+    }
+    int st2 = 0;
+    waitany(&st2);
+    u32 s3 = 0;
+    i64 kl = mbs(MACH_BS_LOOK_UP, "mOS.machtest.morto", &s3);
+    u32 s4 = 0;
+    i64 kc = mbs(MACH_BS_CHECK_IN, "mOS.machtest.morto", &s4);
+    u32 s5 = 0;
+    i64 kl2 = mbs(MACH_BS_LOOK_UP, "mOS.machtest.morto", &s5);
+    if (st2 != 0 || kl != 1102 || kc != 0 || !s4 || kl2 != 0) {
+        print("machtest: FALHA servico morto (filho %d, look_up %d, check_in %d, look_up %d)\n", (i64)st2, kl, kc, kl2);
+        return 1;
+    }
+    print("machtest: servico de processo morto -> 1102, novo check_in OK\n");
+
+    /* largar a recepção com mod_refs(RECEIVE, -1): a porta morre, o aviso de nome morto sai e o nome
+     * (que também tinha envio) vira DEAD_NAME */
+    u32 q = nova_porta(), np4 = nova_porta();
+    u64 iq[8] = {q, q, MAKE_SEND, 0,0,0,0,0};
+    u64 n4[8] = {q, NOTE_DEAD_NAME, 0, np4, MAKE_SEND_ONCE, 0, 0, 0};
+    u64 mr[8] = {q, RIGHT_RECEIVE, (u64)-1, 0,0,0,0,0};
+    if (mport(MACH_OP_INSERT_RIGHT, iq) || mport(MACH_OP_NOTIFY, n4) || mport(MACH_OP_MOD_REFS, mr)) {
+        print("machtest: FALHA preparar mod_refs\n"); return 1;
+    }
+    u32 id5 = 0, arg5 = 0;
+    int k5 = espera_aviso(np4, &id5, &arg5);
+    u64 tq[8] = {q, 0,0,0,0,0,0,0};
+    mport(MACH_OP_TYPE, tq);
+    if (k5 || id5 != NOTE_DEAD_NAME || arg5 != q || !(tq[1] & 0x100000u)) {
+        print("machtest: FALHA mod_refs(RECEIVE,-1) (kr=0x%x id=%d nome=%d tipo=0x%x)\n", (i64)(u32)k5, (i64)id5, (i64)arg5, (i64)tq[1]);
+        return 1;
+    }
+    print("machtest: mod_refs(RECEIVE,-1) mata a porta -> aviso 72 e DEAD_NAME OK\n");
     print("machtest: PASS\n");
     return 0;
 }
