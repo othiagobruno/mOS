@@ -9,12 +9,17 @@
 
 /* ---- o que o Foundation.h mínimo do SDK do mOS não declara (as classes existem no libSystem) */
 typedef struct _NSZone NSZone;
+@interface NSProcessInfo (MOSUptime)
+- (NSTimeInterval)systemUptime;
+@end
 typedef NS_ENUM(NSInteger, NSComparisonResult) { NSOrderedAscending = -1L, NSOrderedSame, NSOrderedDescending };
 @interface NSSet : NSObject <NSFastEnumeration>
 + (instancetype)set;
 - (NSUInteger)count;
 - (NSArray *)allObjects;
 - (BOOL)containsObject:(id)o;
+- (id)anyObject;
++ (instancetype)setWithObject:(id)o;
 @end
 @interface NSMutableSet : NSSet
 - (void)addObject:(id)o;
@@ -39,6 +44,7 @@ typedef struct { CGFloat top, left, bottom, right; } UIEdgeInsets;
 - (BOOL)resignFirstResponder;
 - (BOOL)canBecomeFirstResponder;
 - (BOOL)isFirstResponder;
+- (void)touchesBegan:(NSSet *)touches withEvent:(id)event;
 @end
 
 @class UIView, UIWindow, UIViewController, UIScene, UIWindowScene, UISceneSession, UIColor, UIFont, UIImage, UIScreen;
@@ -56,6 +62,10 @@ typedef struct { CGFloat top, left, bottom, right; } UIEdgeInsets;
 + (UIColor *)systemBackgroundColor;
 + (UIColor *)labelColor;
 + (UIColor *)systemGreenColor;
++ (UIColor *)systemGray4Color;
++ (UIColor *)placeholderTextColor;
++ (UIColor *)opaqueSeparatorColor;
+- (UIColor *)colorWithAlphaComponent:(CGFloat)a;
 + (UIColor *)systemBlueColor;
 + (UIColor *)whiteColor;
 + (UIColor *)blackColor;
@@ -123,6 +133,8 @@ typedef struct { CGFloat top, left, bottom, right; } UIEdgeInsets;
     UIColor *_tintColor;
     NSInteger _contentMode;
     NSUInteger _autoresizingMask;
+    NSMutableArray *_gestures;      /* UIGestureRecognizer */
+    id _viewController;             /* o UIViewController dono (não retido): próximo na cadeia de resposta */
 }
 - (instancetype)initWithFrame:(CGRect)frame;
 - (CGRect)frame;
@@ -153,6 +165,7 @@ typedef struct { CGFloat top, left, bottom, right; } UIEdgeInsets;
 - (CGSize)sizeThatFits:(CGSize)s;
 - (void)sizeToFit;
 - (CGSize)intrinsicContentSize;
+- (void)_mosSolveLayout;
 - (NSInteger)tag;
 - (void)setTag:(NSInteger)t;
 - (UIView *)viewWithTag:(NSInteger)t;
@@ -169,6 +182,7 @@ typedef struct { CGFloat top, left, bottom, right; } UIEdgeInsets;
     UIViewController *_rootViewController;
     UIWindowScene *_windowScene;
     BOOL _key;
+    UIResponder *_firstResponder;   /* não retido */
 }
 - (instancetype)initWithWindowScene:(UIWindowScene *)scene;
 - (void)makeKeyAndVisible;
@@ -182,6 +196,9 @@ typedef struct { CGFloat top, left, bottom, right; } UIEdgeInsets;
     NSMutableArray *_handlers;      /* _UIControlHandler */
     BOOL _disabled, _selected, _highlighted;
 }
+- (void)addTarget:(id)t action:(SEL)a forControlEvents:(NSUInteger)e;
+- (void)sendActionsForControlEvents:(NSUInteger)e;
+- (void)setHighlighted:(BOOL)h;
 @end
 
 @interface UILabel : UIView {
@@ -314,4 +331,180 @@ typedef struct { CGFloat top, left, bottom, right; } UIEdgeInsets;
     NSMutableDictionary *_titles;
 }
 + (instancetype)buttonWithType:(NSInteger)type;
+@end
+
+/* ---- eventos (UIKitEvents.m): toques vindos do mouse do AppKit, gestos */
+@interface UITouch : NSObject {
+@public
+    UIView *_view;
+    UIWindow *_window;
+    CGPoint _loc, _prev;            /* coordenadas da janela */
+    NSInteger _phase, _tapCount;
+    NSTimeInterval _timestamp;
+}
+- (CGPoint)locationInView:(UIView *)v;
+- (CGPoint)previousLocationInView:(UIView *)v;
+@end
+@interface UIEvent : NSObject {
+@public
+    NSSet *_touches;
+    NSTimeInterval _timestamp;
+}
+- (NSSet *)allTouches;
+@end
+@interface UIGestureRecognizer : NSObject {
+@public
+    NSMutableArray *_targets;       /* pares alvo/seletor em _UIGestureTarget */
+    UIView *_view;                  /* não retido */
+    NSInteger _state;
+    BOOL _disabled;
+    id _delegate;
+    CGPoint _start, _cur;           /* coordenadas da janela */
+    NSTimeInterval _t0;
+}
+- (instancetype)initWithTarget:(id)target action:(SEL)action;
+- (void)_mosBegan:(UITouch *)t;
+- (void)_mosMoved:(UITouch *)t;
+- (void)_mosEnded:(UITouch *)t;
+- (void)_mosFire;
+@end
+@interface UITapGestureRecognizer : UIGestureRecognizer {
+@public
+    NSUInteger _taps;
+}
+@end
+@interface UIPanGestureRecognizer : UIGestureRecognizer
+@end
+@interface UILongPressGestureRecognizer : UIGestureRecognizer {
+@public
+    NSTimeInterval _minDuration;
+}
+@end
+
+/* NSView hospedeira de uma UIWindow: desenha a árvore (UIKitCore.m) e traduz mouse/teclado em toques (UIKitEvents.m) */
+@interface _UIHostingView : NSView {
+@public
+    UIWindow *_uiWindow;
+    UITouch *_touch;                /* o toque em curso (botão do mouse apertado) */
+    NSArray *_touchGestures;        /* os gestos que estão acompanhando o toque */
+}
+@end
+
+/* ---- controles com comportamento (UIKitControls.m) */
+@interface UITextField : UIControl {
+@public
+    NSString *_text, *_placeholder;
+    UIFont *_tfFont;
+    UIColor *_tfColor;
+    NSInteger _tfAlignment, _borderStyle;
+    id _tfDelegate;                 /* não retido */
+    BOOL _editing, _secure;
+}
+@end
+@interface UISwitch : UIControl {
+@public
+    BOOL _on;
+    UIColor *_onTint;
+}
+@end
+
+/* ---- rolagem, tabelas, coleções, navegação, layout (UIKitViews.m) */
+@interface UIScrollView : UIView {
+@public
+    CGSize _contentSize;
+    UIEdgeInsets _contentInset;
+    id _scrollDelegate;             /* não retido */
+    BOOL _scrollDisabled;
+    CGPoint _dragLast;
+}
+- (CGPoint)contentOffset;
+- (void)setContentOffset:(CGPoint)p;
+- (void)_mosScrollBy:(CGFloat)dy dx:(CGFloat)dx;
+@end
+@interface UITableViewCell : UIView {
+@public
+    UIView *_contentView;
+    UILabel *_textLabel, *_detailLabel;
+    NSString *_reuseId;
+    NSInteger _style, _row, _section;
+    BOOL _cellSelected;
+}
+- (UILabel *)textLabel;
+@end
+@interface UITableView : UIScrollView {
+@public
+    id _dataSource, _tvDelegate;    /* não retidos */
+    CGFloat _rowHeight, _headerHeight;
+    NSMutableDictionary *_registered;   /* identificador -> classe */
+    NSMutableDictionary *_cells;        /* "seção:linha" -> célula visível */
+    NSMutableArray *_rowY;              /* [seção][linha] -> NSNumber y */
+    NSInteger _selSection, _selRow;
+    CGPoint _touchStart;
+}
+- (void)reloadData;
+@end
+@interface UICollectionReusableView : UIView {
+@public
+    NSString *_reuseId;
+}
+@end
+@interface UICollectionViewCell : UICollectionReusableView {
+@public
+    UIView *_contentView;
+    UILabel *_mosLabel;
+    BOOL _cellSelected;
+}
+@end
+@interface UICollectionViewListCell : UICollectionViewCell
+@end
+@interface UICollectionViewLayout : NSObject {
+@public
+    id _collectionView;             /* não retido */
+}
+@end
+@interface UICollectionViewFlowLayout : UICollectionViewLayout {
+@public
+    CGSize _itemSize;
+    CGFloat _lineSpacing, _itemSpacing;
+    NSInteger _direction;
+    UIEdgeInsets _sectionInset;
+}
+@end
+@interface UICollectionViewCompositionalLayout : UICollectionViewLayout
+@end
+@interface UICollectionView : UIScrollView {
+@public
+    id _dataSource, _cvDelegate;    /* não retidos */
+    UICollectionViewLayout *_layout;
+    NSMutableDictionary *_registered;
+    NSMutableDictionary *_cells;
+    NSMutableArray *_frames;            /* [seção][item] -> NSValue-like: guardado como 4 NSNumber */
+    CGPoint _touchStart;
+}
+- (void)reloadData;
+@end
+@interface UINavigationItem : NSObject {
+@public
+    NSString *_title;
+    id _rightItems, _leftItems, _titleView;
+}
+@end
+@interface UINavigationBar : UIView {
+@public
+    id _navController;              /* não retido */
+}
+@end
+@interface UINavigationController : UIViewController {
+@public
+    NSMutableArray *_vcs;
+    UINavigationBar *_bar;
+    BOOL _barHidden;
+}
+- (void)pushViewController:(UIViewController *)vc animated:(BOOL)a;
+- (UIViewController *)popViewControllerAnimated:(BOOL)a;
+@end
+@interface UILayoutGuide : NSObject {
+@public
+    UIView *_owningView;            /* não retido */
+}
 @end

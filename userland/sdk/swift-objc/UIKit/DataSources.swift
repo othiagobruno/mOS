@@ -140,6 +140,16 @@ open class UICollectionViewDiffableDataSource<SectionIdentifierType: Hashable, I
         let s = _snapshot.sectionIdentifiers
         return index >= 0 && index < s.count ? s[index] : nil
     }
+
+    // UICollectionViewDataSource (a UICollectionView do mOS pergunta por estes seletores)
+    @objc open func numberOfSections(in collectionView: UICollectionView) -> Int { _snapshot.numberOfSections }
+    @objc open func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
+        sectionIdentifier(for: section).map { _snapshot.numberOfItems(inSection: $0) } ?? 0
+    }
+    @objc open func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
+        if let item = itemIdentifier(for: indexPath), let c = _cellProvider(collectionView, indexPath, item) { return c }
+        return UICollectionViewCell(frame: CGRect())
+    }
 }
 
 extension UICollectionViewDiffableDataSource {

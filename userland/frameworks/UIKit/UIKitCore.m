@@ -24,6 +24,7 @@ extern void CGContextRestoreGState(CGContextRef c);
 extern void CGContextTranslateCTM(CGContextRef c, CGFloat x, CGFloat y);
 extern void CGContextScaleCTM(CGContextRef c, CGFloat x, CGFloat y);
 extern void CGContextClipToRect(CGContextRef c, CGRect r);
+extern void CGContextSetAlpha(CGContextRef c, CGFloat a);
 
 extern void CGContextDrawImage(CGContextRef c, CGRect r, void *img);
 extern void *CGColorCreateSRGB(CGFloat r, CGFloat g, CGFloat b, CGFloat a);
@@ -222,7 +223,7 @@ C(systemPinkColor, 1, .18, .33, 1) C(systemPurpleColor, .69, .32, .87, 1) C(syst
 }
 - (instancetype)initWithCoder:(NSCoder *)c { (void)c; return [self initWithFrame:CGRectMake(0, 0, 0, 0)]; }
 - (void)dealloc { [_subviews release]; [_backgroundColor release]; [_tintColor release]; [_layer release]; [super dealloc]; }
-- (UIResponder *)nextResponder { return _superview; }
+- (UIResponder *)nextResponder { return _viewController ? (UIResponder *)_viewController : (UIResponder *)_superview; }
 - (CGRect)frame { return _frame; }
 - (void)setFrame:(CGRect)f { _frame = f; [self setNeedsLayout]; [self setNeedsDisplay]; }
 - (CGRect)bounds { return CGRectMake(_boundsOrigin.x, _boundsOrigin.y, _frame.size.width, _frame.size.height); }
@@ -297,7 +298,11 @@ C(systemPinkColor, 1, .18, .33, 1) C(systemPurpleColor, .69, .32, .87, 1) C(syst
 - (void)setNeedsDisplay { UIWindow *w = [self window]; if (w && w->_nsWindow) [w->_nsWindow.contentView setNeedsDisplay:YES]; }
 - (void)setNeedsDisplayInRect:(CGRect)r { (void)r; [self setNeedsDisplay]; }
 - (void)setNeedsLayout {}
-- (void)layoutIfNeeded { [self layoutSubviews]; for (UIView *s in _subviews) [s layoutIfNeeded]; }
+- (void)layoutIfNeeded {
+    [self layoutSubviews];
+    if (_viewController && [_viewController respondsToSelector:@selector(viewDidLayoutSubviews)]) [_viewController viewDidLayoutSubviews];
+    for (UIView *s in [[_subviews copy] autorelease]) [s layoutIfNeeded];
+}
 - (void)layoutSubviews {}
 - (void)drawRect:(CGRect)r { (void)r; }
 - (CGSize)sizeThatFits:(CGSize)s { (void)s; return _frame.size; }
@@ -337,7 +342,7 @@ C(systemPinkColor, 1, .18, .33, 1) C(systemPurpleColor, .69, .32, .87, 1) C(syst
     if (_hidden || _alpha < 0.01) return;
     CGRect b = [self bounds];
     CGContextSaveGState(c);
-    /* alpha parcial: o CG do libSystem ainda não tem CGContextSetAlpha; a view desenha opaca */
+    if (_alpha < 1) CGContextSetAlpha(c, _alpha);       /* alfa da view (multiplica as cores desenhadas) */
     if (_clipsToBounds) CGContextClipToRect(c, CGRectMake(0, 0, b.size.width, b.size.height));
     if (_backgroundColor && _backgroundColor->_a > 0) {
         CGContextSetFillColorWithColor(c, [_backgroundColor CGColor]);
@@ -451,17 +456,13 @@ C(systemPinkColor, 1, .18, .33, 1) C(systemPurpleColor, .69, .32, .87, 1) C(syst
 @end
 
 /* ================================================================ NSView hospedeira: desenha a árvore de uma UIWindow */
-@interface _UIHostingView : NSView {
-@public
-    UIWindow *_uiWindow;
-}
-@end
 @implementation _UIHostingView
 - (BOOL)isFlipped { return YES; }
 - (void)drawRect:(NSRect)dirty {
     (void)dirty;
     CGContextRef c = (CGContextRef)[NSGraphicsContext currentContext].CGContext;
     if (!c || !_uiWindow) return;
+    [_uiWindow _mosSolveLayout];                         /* Auto Layout (UIKitViews.m) */
     [_uiWindow layoutIfNeeded];
     CGContextSaveGState(c);
     [_uiWindow _mosRender:c];
@@ -486,6 +487,7 @@ C(systemPinkColor, 1, .18, .33, 1) C(systemPurpleColor, .69, .32, .87, 1) C(syst
     if (s) { if (!s->_windows) s->_windows = [[NSMutableArray alloc] init]; [s->_windows addObject:self]; }
 }
 - (UIWindow *)window { return self; }
+- (UIResponder *)nextResponder { return [UIApplication sharedApplication]; }
 - (UIViewController *)rootViewController { return _rootViewController; }
 - (void)setRootViewController:(UIViewController *)vc {
     if (_rootViewController) [[_rootViewController view] removeFromSuperview];
@@ -534,9 +536,9 @@ C(systemPinkColor, 1, .18, .33, 1) C(systemPurpleColor, .69, .32, .87, 1) C(syst
 - (void)dealloc { [_view release]; [_title release]; [_children release]; [super dealloc]; }
 - (UIResponder *)nextResponder { return _view ? _view->_superview : nil; }
 - (BOOL)isViewLoaded { return _view != nil; }
-- (void)loadView { _view = [[UIView alloc] initWithFrame:[[UIScreen mainScreen] bounds]]; _view.backgroundColor = [UIColor systemBackgroundColor]; }
+- (void)loadView { _view = [[UIView alloc] initWithFrame:[[UIScreen mainScreen] bounds]]; _view.backgroundColor = [UIColor systemBackgroundColor]; _view->_viewController = self; }
 - (UIView *)view { if (!_view) { [self loadView]; [self viewDidLoad]; } return _view; }
-- (void)setView:(UIView *)v { [_view release]; _view = [v retain]; }
+- (void)setView:(UIView *)v { if (_view && _view->_viewController == self) _view->_viewController = nil; [_view release]; _view = [v retain]; if (v) v->_viewController = self; }
 - (UIView *)viewIfLoaded { return _view; }
 - (void)loadViewIfNeeded { (void)[self view]; }
 - (void)viewDidLoad {}
@@ -607,6 +609,7 @@ static UIApplication *g_app;
 @implementation UIApplication
 + (void)initialize { _mos_uikit_constants_init(); }
 + (UIApplication *)sharedApplication { return g_app; }
+- (UIResponder *)nextResponder { return [_delegate isKindOfClass:[UIResponder class]] ? _delegate : nil; }
 - (id)delegate { return _delegate; }
 - (void)setDelegate:(id)d { _delegate = [d retain]; }
 - (NSSet *)connectedScenes { return _scenes ? [[_scenes copy] autorelease] : [NSSet set]; }

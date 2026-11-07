@@ -160,6 +160,8 @@ typedef struct {
 } gui_event_t;
 
 typedef struct { int width, ascent, descent; } gui_metrics_t;
+/* GUI_WIN_INFO: tamanho do conteúdo, foco e visibilidade da janela. GUI_SCREEN: w x h é a tela abaixo da barra de
+ * menus, focused = 1 e visible = altura que o Dock reserva embaixo (2 com o Dock oculto; kernels antigos: 1). */
 typedef struct { int w, h, focused, visible; } gui_wininfo_t;
 
 /* comandos de desenho: cabeçalho {u32 op, u32 bytes} + carga; coordenadas em pixels do conteúdo */

@@ -919,8 +919,18 @@ int open(const char *path, int flags, ...) {
     return fd;
 }
 int creat(const char *path, int mode) { return open(path, 0x0601, mode); }
-int unlink(const char *path) { PATH(p, path); return (int)ret_errno(SYS1(SYS_UNLINK, p)); }
-int remove(const char *p) { return unlink(p); }
+/* o SYS_UNLINK do kernel apaga pastas inteiras; unlink/rmdir seguem o POSIX por cima dele: unlink de pasta é
+ * EPERM e rmdir só apaga pasta vazia (o Homebrew poda pastas "vazias" com rmdir; recursivo, apagava o Homebrew).
+ * cx_remove_tree é o recursivo explícito (NSFileManager removeItemAtPath:). */
+int cx_remove_tree(const char *path) { PATH(p, path); return (int)ret_errno(SYS1(SYS_UNLINK, p)); }
+int unlink(const char *path) {
+    mos_stat_t st;
+    PATH(p, path);
+    if (SYS2(SYS_STAT, p, &st) == 0 && st.is_dir == 1) { cx_errno = 1; return -1; }   /* EPERM */
+    return (int)ret_errno(SYS1(SYS_UNLINK, p));
+}
+int rmdir(const char *path);
+int remove(const char *path) { mos_stat_t st; PATH(p, path); return SYS2(SYS_STAT, p, &st) == 0 && st.is_dir == 1 ? rmdir(path) : unlink(path); }
 void cx_perm_set(const char *path, unsigned mode);
 int mkdir(const char *path, int mode) {
     PATH(p, path);
@@ -929,7 +939,15 @@ int mkdir(const char *path, int mode) {
     return r;
 }
 int rename(const char *a, const char *b) { PATH(pa, a); PATH(pb, b); return (int)ret_errno(SYS2(SYS_RENAME, pa, pb)); }
-int rmdir(const char *p) { return unlink(p); }
+int rmdir(const char *path) {
+    mos_stat_t st;
+    char name[256];
+    PATH(p, path);
+    if (ret_errno(SYS2(SYS_STAT, p, &st)) < 0) return -1;
+    if (st.is_dir != 1) { cx_errno = CX_ENOTDIR; return -1; }
+    if (SYS4(SYS_READDIR, p, 0, name, sizeof name) == 1) { cx_errno = 66; return -1; }   /* ENOTEMPTY */
+    return (int)ret_errno(SYS1(SYS_UNLINK, p));
+}
 /* o Terminal do mOS não interpreta sequências ANSI: com TERM=dumb os programas não colorem a saída */
 int isatty(int fd) {
     const char *t = getenv("TERM");

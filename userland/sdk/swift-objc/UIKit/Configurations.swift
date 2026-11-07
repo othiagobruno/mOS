@@ -175,8 +175,8 @@ public struct UICellAccessory {
     public enum DisplayedState: Hashable { case always, whenEditing, whenNotEditing }
     public enum LayoutDimension: Hashable { case actual, standard, custom(CGFloat) }
     public enum Placement {
-        case leading(displayed: DisplayedState = .always, at: (([UICellAccessory]) -> Int)? = nil)
-        case trailing(displayed: DisplayedState = .always, at: (([UICellAccessory]) -> Int)? = nil)
+        case leading(displayed: DisplayedState = .always, at: ([UICellAccessory]) -> Int = { _ in 0 })
+        case trailing(displayed: DisplayedState = .always, at: ([UICellAccessory]) -> Int = { $0.count })
     }
     public struct OutlineDisclosureOptions {
         public enum Style: Hashable { case automatic, header, cell }
@@ -184,8 +184,8 @@ public struct UICellAccessory {
         public var isHidden: Bool?
         public var reservedLayoutWidth: LayoutDimension?
         public var tintColor: UIColor?
-        public init(style: Style = .automatic, isHidden: Bool? = nil, reservedLayoutWidth: LayoutDimension? = nil, tintColor: UIColor? = nil) {
-            self.style = style; self.isHidden = isHidden; self.reservedLayoutWidth = reservedLayoutWidth; self.tintColor = tintColor
+        public init(style: Style? = nil, isHidden: Bool? = nil, reservedLayoutWidth: LayoutDimension? = nil, tintColor: UIColor? = nil) {
+            self.style = style ?? .automatic; self.isHidden = isHidden; self.reservedLayoutWidth = reservedLayoutWidth; self.tintColor = tintColor
         }
     }
     public struct CustomViewConfiguration {
@@ -337,7 +337,10 @@ extension UITableViewCell {
     public func defaultContentConfiguration() -> UIListContentConfiguration { .cell() }
     public var contentConfiguration: UIContentConfiguration? {
         get { _uiGet(self, _kContentConfig) }
-        set { _uiSet(self, _kContentConfig, newValue) }
+        set {
+            _uiSet(self, _kContentConfig, newValue)
+            if let l = newValue as? UIListContentConfiguration { textLabel?.text = l.text.map { _uiNS($0) } }   /* o desenho é o do textLabel */
+        }
     }
     public var backgroundConfiguration: UIBackgroundConfiguration? {
         get { _uiGet(self, _kBackgroundConfig) }
@@ -353,7 +356,10 @@ extension UITableViewCell {
 extension UICollectionViewCell {
     public var contentConfiguration: UIContentConfiguration? {
         get { _uiGet(self, _kContentConfig) }
-        set { _uiSet(self, _kContentConfig, newValue) }
+        set {
+            _uiSet(self, _kContentConfig, newValue)
+            if let l = newValue as? UIListContentConfiguration { _mosTextLabel().text = l.text.map { _uiNS($0) } }
+        }
     }
     public var backgroundConfiguration: UIBackgroundConfiguration? {
         get { _uiGet(self, _kBackgroundConfig) }

@@ -47,6 +47,7 @@ UIKIT_EXTERN UIAccessibilityTraits UIAccessibilityTraitButton;
 - (instancetype)initWithFrame:(CGRect)frame __attribute__((objc_designated_initializer));
 - (nullable instancetype)initWithCoder:(NSCoder *)coder __attribute__((objc_designated_initializer));
 - (BOOL)isDescendantOfView:(UIView *)view;
+@property (nonatomic) NSInteger tag;
 @end
 
 /* ---- menus e ações */
@@ -213,6 +214,7 @@ typedef NS_ENUM(NSInteger, UITableViewRowAnimation) {
 @interface UICollectionViewLayout : NSObject
 @end
 @interface UICollectionView : UIScrollView
+- (instancetype)initWithFrame:(CGRect)frame collectionViewLayout:(UICollectionViewLayout *)layout;
 - (void)registerClass:(nullable Class)cellClass forCellWithReuseIdentifier:(NSString *)identifier;
 - (id)dequeueReusableCellWithReuseIdentifier:(NSString *)identifier forIndexPath:(id)indexPath;
 - (void)registerClass:(nullable Class)viewClass forSupplementaryViewOfKind:(NSString *)kind withReuseIdentifier:(NSString *)identifier;
@@ -220,13 +222,19 @@ typedef NS_ENUM(NSInteger, UITableViewRowAnimation) {
 - (void)reloadData;
 @property (nonatomic, weak, nullable) id dataSource;
 @end
+@interface UILabel : UIView
+@property (nullable, nonatomic, copy) NSString *text;
+@end
 @interface UITableViewCell : UIView
+@property (nonatomic, readonly, nullable) UILabel *textLabel;
+@property (nonatomic, readonly, nullable) UILabel *detailTextLabel;
 @end
 @interface UITableViewHeaderFooterView : UIView
 @end
 @interface UICollectionReusableView : UIView
 @end
 @interface UICollectionViewCell : UICollectionReusableView
+- (UILabel *)_mosTextLabel;
 @end
 @interface UICollectionViewListCell : UICollectionViewCell
 @end

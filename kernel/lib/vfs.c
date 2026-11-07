@@ -113,6 +113,13 @@ static vnode_t *walk_at(vnode_t *start, const char *path, bool create_dirs, bool
 }
 
 vnode_t *vfs_lookup(const char *path) { vnode_t *n = walk(path, false, false); ensure(n); return n; }
+/* pasta pelo caminho, seguindo também um link no último componente ("opt/tree" -> Cellar): rename e afins */
+vnode_t *vfs_lookup_dir(const char *path) {
+    vnode_t *n = walk(path, false, false);
+    if (n && !n->dir && n->parent) n = follow_dir_link(n->parent, n, 0);
+    ensure(n);
+    return n && n->dir ? n : NULL;
+}
 vnode_t *vfs_mkdir(const char *path) { return walk(path, true, true); }
 
 vnode_t *vfs_create(const char *path) {

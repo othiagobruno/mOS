@@ -504,7 +504,9 @@ i64 compat_gui_syscall(process_t *p, u64 n, u64 a, u64 b, u64 c, u64 d, u64 e) {
         return uvm_copy_out(p, b, &i, sizeof i) ? 0 : -MOS_EFAULT;
     }
     case GUI_SCREEN: {
-        gui_wininfo_t i = {g_screen->w, g_screen->h - MENUBAR_H, 1, 1};
+        /* visible = altura que o Dock reserva embaixo (o NSScreen.visibleFrame dos apps tira isso) */
+        int dock = g_screen->h - desktop_dock_top();
+        gui_wininfo_t i = {g_screen->w, g_screen->h - MENUBAR_H, 1, dock > 1 ? dock : 2};
         return uvm_copy_out(p, a, &i, sizeof i) ? 0 : -MOS_EFAULT;
     }
     case GUI_SET_MENU: {

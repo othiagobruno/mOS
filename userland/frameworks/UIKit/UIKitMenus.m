@@ -144,3 +144,4 @@ static char k_corner;
 - (CGFloat)_mosPreferredCornerRadius { NSNumber *n = objc_getAssociatedObject(self, &k_corner); return n ? n.doubleValue : NAN; }
 - (void)set_mosPreferredCornerRadius:(CGFloat)r { objc_setAssociatedObject(self, &k_corner, [NSNumber numberWithDouble:r], OBJC_ASSOCIATION_RETAIN); }
 @end
+

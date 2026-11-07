@@ -33,6 +33,7 @@ bool vfs_is_read_only(vnode_t *n); /* dentro de um volume externo (somente leitu
 
 vnode_t *vfs_root(void);
 vnode_t *vfs_lookup(const char *path);
+vnode_t *vfs_lookup_dir(const char *path);   /* segue link também no último componente; NULL se não for pasta */
 vnode_t *vfs_mkdir(const char *path);              /* cria toda a cadeia */
 vnode_t *vfs_create(const char *path);             /* arquivo vazio (sobrescreve) */
 vnode_t *vfs_write_file(const char *path, const void *data, usize n);

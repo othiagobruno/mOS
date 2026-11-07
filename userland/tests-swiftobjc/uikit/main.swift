@@ -59,4 +59,50 @@ let tracos: UIAccessibilityTraits = [.init(rawValue: 1), .init(rawValue: 4)]
 check(tracos.contains(.init(rawValue: 4)) && tracos.rawValue == 5, "UIAccessibilityTraits como OptionSet")
 check(UIContentSizeCategory.small < UIContentSizeCategory.large && !UIContentSizeCategory.medium.isAccessibilityCategory, "UIContentSizeCategory")
 
+// terceira leva: configurações, data sources, registros, ponteiro, atributos
+var cfg = UIButton.Configuration.filled()
+cfg.title = "Entrar"
+cfg.cornerStyle = .capsule
+let b2 = UIButton(configuration: cfg, primaryAction: nil)
+check(b2.configuration?.title == "Entrar" && b2.configuration?.cornerStyle == .capsule && b2.configuration == cfg, "UIButton.Configuration")
+var lista = UIListContentConfiguration.subtitleCell()
+lista.text = "Ana"; lista.secondaryText = "online"
+let celula = UITableViewCell(frame: CGRect())
+celula.contentConfiguration = lista
+check((celula.contentConfiguration as? UIListContentConfiguration)?.secondaryText == "online", "UITableViewCell.contentConfiguration")
+var fundo = UIBackgroundConfiguration.listGroupedCell()
+fundo.cornerRadius = 12
+celula.backgroundConfiguration = fundo
+check(celula.backgroundConfiguration?.cornerRadius == 12, "UIBackgroundConfiguration")
+
+let tabela = UITableView(frame: CGRect())
+let ds = UITableViewDiffableDataSource<Int, String>(tableView: tabela) { tv, ip, item in
+    let c = UITableViewCell(frame: CGRect()); c.tag = item.count; return c
+}
+var s2 = NSDiffableDataSourceSnapshot<Int, String>()
+s2.appendSections([0, 1]); s2.appendItems(["a", "bb"], toSection: 0); s2.appendItems(["ccc"], toSection: 1)
+ds.apply(s2, animatingDifferences: false)
+check(ds.numberOfSections(in: tabela) == 2 && ds.tableView(tabela, numberOfRowsInSection: 0) == 2, "UITableViewDiffableDataSource: contagens")
+check(ds.itemIdentifier(for: IndexPath(row: 1, section: 0)) == "bb" && ds.indexPath(for: "ccc") == IndexPath(row: 0, section: 1), "UITableViewDiffableDataSource: itens")
+check(ds.tableView(tabela, cellForRowAt: IndexPath(row: 0, section: 1)).tag == 3, "UITableViewDiffableDataSource: célula do cellProvider")
+
+let colecao = UICollectionView(frame: CGRect())
+let reg = UICollectionView.CellRegistration<UICollectionViewListCell, String> { c, _, item in c.tag = item.count * 10 }
+let cds = UICollectionViewDiffableDataSource<Int, String>(collectionView: colecao) { cv, ip, item in
+    cv.dequeueConfiguredReusableCell(using: reg, for: ip, item: item)
+}
+var s3 = NSDiffableDataSourceSnapshot<Int, String>()
+s3.appendSections([7]); s3.appendItems(["xy"])
+cds.apply(s3)
+check(cds.snapshot().numberOfItems == 1 && cds.sectionIdentifier(for: 0) == 7, "UICollectionViewDiffableDataSource")
+let cel = colecao.dequeueConfiguredReusableCell(using: reg, for: IndexPath(item: 0, section: 0), item: "abc")
+check(cel.tag == 30, "CellRegistration + dequeueConfiguredReusableCell")
+let lc = cel
+lc.accessories = [UICellAccessory.outlineDisclosure()]
+check(lc.accessories.count == 1, "UICollectionViewListCell.accessories")
+
+var texto = AttributedString("oi")
+texto.uiKit.foregroundColor = UIColor()
+check(texto.uiKit.foregroundColor != nil, "AttributeScopes.UIKitAttributes")
+
 print("uikit: \(ok)/\(total) ok")

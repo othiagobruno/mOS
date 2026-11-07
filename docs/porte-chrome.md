@@ -122,6 +122,44 @@ Testado com `-Argumentos '--disable-gpu --in-process-gpu --no-sandbox'` (o proce
 Próximo: a renderização (só dois helpers sobem; ver se o renderer da página de boas-vindas nasce e se o quadro do
 compositor chega à NSWindow, como no Electron do VS Code) e o TLS do serviço de rede ("handshake failed", net_error -21).
 
+### Renderers nascem (7 nov. 2026, 7h)
+
+Por que só dois helpers subiam, em ordem:
+
+1. **A janela "Que bom te ver" é o diálogo nativo de primeira execução** (Cocoa, modal). Nenhum `WebContentsImpl::Init`
+   rodava (tracepoints nos nomes de TRACE_EVENT: `WebContentsImpl::Init`, `NavigationControllerImpl::LoadURLWithParams`,
+   `RenderProcessHostImpl::Init`...): o navegador espera o diálogo fechar, e o AppKit do mOS não desenha os controles dele.
+   Por enquanto: `--no-first-run --no-default-browser-check`. (Pendente: desenhar o diálogo.)
+2. **`MACaptionAppearanceCopyForegroundColor` devolvia NULL** e o `CaptionStyle` do Chrome exige uma cor sRGB com 4
+   componentes (CHECK em `Framework+0x27b0ebb`). chrome.c devolve branco/preto como o padrão do sistema.
+3. **Os executáveis dos helpers "Aperitif" (Renderer, GPU, Alerts) não existiam na imagem**: o caminho
+   `.../Helpers/Google Chrome Helper (Aperitif Renderer).app/Contents/MacOS/...` tem 272 caracteres e o `dmgtest` e o
+   `mkimg` usavam `fopen`/`opendir` ANSI (limite de 260), sem erro. Os dois agora usam `\\?\` + funções wide no Windows
+   (o `dmgtest` também acusa "NÃO GRAVADO"), e o `stage-chrome.ps1` também (o alias `lp` do PowerShell é Out-Printer:
+   a função chama `Get-LongPath`).
+4. Com os helpers: o navegador caía em `-[NSView removeFromSuperview]` lendo o estado de um pai já liberado. NSView ganhou
+   `dealloc` que solta as subviews (superview = nil), como no Cocoa.
+5. `csops(CS_OPS_TEAMID / CS_OPS_VALIDATION_CATEGORY)` dava ENOSYS e o `ProcessRequirement` do rendezvous Mach falhava
+   ("HasSameTeamIdentifier failed"; "about:blank page took too long to load"). darwin.c responde como binário sem
+   assinatura: sem Team ID (ENOENT) e categoria NONE (10).
+6. `mach_msg` devolvia -4 (espera interrompida por sinal, ex.: SIGCHLD) e o `WaitableEvent` do Chromium tem
+   `CHECK(kr == MACH_RCV_TIMED_OUT)`. mach.c retoma a recepção com o prazo restante (ou devolve `MACH_RCV_INTERRUPTED`
+   a quem pediu `MACH_RCV_INTERRUPT`), como o XNU.
+
+Resultado: a janela principal do navegador abre (1200x760, sem o diálogo), ~13 processos `--type=renderer` sobem e ficam
+vivos, e o navegador não cai mais. Teste: `-Argumentos '--no-sandbox --in-process-gpu --disable-gpu
+--enable-logging=stderr --no-first-run --no-default-browser-check'`.
+
+Pendentes:
+- **Conteúdo da janela em branco**: o quadro do compositor não chega ao NSWindow (nenhuma IOSurface no log). Próximo
+  passo: o caminho `SoftwareOutputDeviceMac` → IOSurface → `DisplayCALayerTree`/`CALayerHost` (notas do porte do VS Code).
+- O utility `mac_notifications.mojom.MacNotificationProvider` cai num CHECK (`Framework+0x344f26f`); o navegador o recria.
+- Renderer caiu uma vez em `cx_lookup` dentro de `descriptor_for` (coretext.c, `fontName` de uma fonte já liberada?);
+  não repetiu nas rodadas seguintes.
+- `DumpWithoutCrashing` frequentes vêm de `base/metrics/histogram.cc` (inofensivos por ora).
+- TLS do serviço de rede ("handshake failed", net_error -21) e "Janela/Ajuda" duplicados na barra.
+- O nome do processo é cortado em 31 caracteres ("Google Chrome Helper (Aperitif ").
+
 Ferramentas: `tools\stage-chrome.ps1 -AutoAbrir` (o `init` abre o Chrome no boot, sem depender do mouse no QEMU) e
 os tracepoints (`/Sistema/Biblioteca/diag-tracepoints`), que agora também valem para imagens do `dlopen` (macho.c).
 
@@ -162,7 +200,7 @@ preparação deve gravar só a fatia x86_64 (afinar os binários universais), e 
 # extrair o .app com o leitor de DMG do próprio mOS (no Windows)
 zig cc -target x86_64-windows-gnu -O2 -DMOS_HOST_TEST -Ikernel/include -Itools tools/dmgtest.c `
   kernel/fs/{apfs,blkdev,bzip2,dfs,dmg,hfsplus,inflate,lzfse,xz,fat}.c <stub com rtc_now/rand32> -o build/dmgtest.exe
-.\build\dmgtest.exe googlechrome.dmg saida      # use um caminho sem espaços ou relativo
+.\build\dmgtest.exe googlechrome.dmg saida      # caminhos longos (>260) funcionam; "!" na lista = arquivo não gravado
 
 # inventário do que falta
 .\build\machocheck.exe build\libSystem.mos "saida\Google Chrome\Google Chrome.app" faltando.txt

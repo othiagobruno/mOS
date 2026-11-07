@@ -745,6 +745,7 @@ static void d_add_entries(id self, SEL c, id o) {
     if (!self || !s) return;
     for (u64 i = 0; i < s->n && i < 100000; i++) d_set(self, s->vals[i], s->keys[i]);
 }
+static void d_set_dict(id self, SEL c, id o) { if (!self || o == self) return; d_remove_all(self, c); d_add_entries(self, c, o); }
 static id d_copy(id self, SEL c) { return d_with_dict((id)&NSDictionary_c, c, self); }
 static id d_mcopy(id self, SEL c) { return d_with_dict((id)&NSMutableDictionary_c, c, self); }
 
@@ -1189,7 +1190,8 @@ static id fm_contents(id self, SEL c, id path, id *err) {
     return a;
 }
 static BOOL fm_mkdir(id self, SEL c, id path, BOOL inter, id attrs, id *err) { (void)self; (void)c; (void)inter; (void)attrs; (void)err; return mkdir(cx_cstr(path), 0755) == 0; }
-static BOOL fm_remove(id self, SEL c, id path, id *err) { (void)self; (void)c; (void)err; return unlink(cx_cstr(path)) == 0; }
+int cx_remove_tree(const char *p);   /* libc.c: apaga arquivo ou pasta inteira (unlink/rmdir agora são POSIX) */
+static BOOL fm_remove(id self, SEL c, id path, id *err) { (void)self; (void)c; (void)err; return cx_remove_tree(cx_cstr(path)) == 0; }
 static id fm_cwd(id self, SEL c) { (void)self; (void)c; char b[1024]; return cx_str(getcwd(b, sizeof b)); }
 
 /* NSNull, NSCharacterSet, NSError, NSException (mínimos) */
@@ -1350,7 +1352,7 @@ void cx_foundation_init(void) {
     M(NSDictionary, "description", d_description); M(NSDictionary, "copy", d_copy); M(NSDictionary, "mutableCopy", d_mcopy);
     M(NSMutableDictionary, "setObject:forKey:", d_setobj); M(NSMutableDictionary, "addEntriesFromDictionary:", d_add_entries);
     M(NSMutableDictionary, "setObject:forKeyedSubscript:", d_setobj);
-    M(NSMutableDictionary, "setValue:forKey:", d_setobj); M(NSMutableDictionary, "removeObjectForKey:", d_remove); M(NSMutableDictionary, "removeAllObjects", d_remove_all);
+    M(NSMutableDictionary, "setValue:forKey:", d_setobj); M(NSMutableDictionary, "removeObjectForKey:", d_remove); M(NSMutableDictionary, "removeAllObjects", d_remove_all); M(NSMutableDictionary, "setDictionary:", d_set_dict);
 
     cx_define_class(&NSAutoreleasePool_c, &NSAutoreleasePool_m, "NSAutoreleasePool", &NSObject_c, 0);
     M(NSAutoreleasePool, "drain", o_void);
@@ -1430,7 +1432,7 @@ void cx_foundation_init(void) {
     M(NSError, "localizedDescription", err_desc); M(NSError, "description", err_desc);
     cx_define_class(&NSSet_c, &NSSet_m, "NSSet", &NSArray_c, 0);
     cx_define_class(&NSMutableSet_c, &NSMutableSet_m, "NSMutableSet", &NSMutableArray_c, 0);
-    CM(NSSet, "set", a_array_ar); CM(NSSet, "setWithArray:", a_with_array_ar); CM(NSSet, "setWithObjects:", a_with_objs);
+    CM(NSSet, "set", a_array_ar); CM(NSSet, "setWithArray:", a_with_array_ar); CM(NSSet, "setWithObjects:", a_with_objs); CM(NSSet, "setWithObject:", a_with_obj_ar);
     M(NSSet, "allObjects", a_copy); M(NSSet, "anyObject", a_first); M(NSSet, "member:", a_first);
     cx_define_class(&NSNull_c, &NSNull_m, "NSNull", &NSObject_c, 0);
     CM(NSNull, "null", g_singleton); M(NSNull, "description", null_desc);

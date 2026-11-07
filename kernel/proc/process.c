@@ -502,6 +502,7 @@ static void finish(process_t *p, int code) {
     { extern void net_user_exit(process_t *p); net_user_exit(p); }   /* conexões TCP do processo (kernel/net/usersock.c) */
     { extern void lazy_exit(process_t *p); lazy_exit(p); }           /* faixas de memória sob demanda (kernel/mm/lazy.c) */
     for (process_t *c = procs; c; c = c->next) if (c->ppid == p->pid) c->ppid = 0;   /* órfãos */
+    int parent = p->ppid;
     bool reported = false;
     for (thread_t *t = sched_threads(); t; t = t->next) {
         if (t->state != TH_WAITING) continue;
@@ -527,6 +528,15 @@ static void finish(process_t *p, int code) {
         }
     }
     p->ppid = reported ? -1 : p->ppid;   /* -1: já informado a quem esperava (não volta no waitany) */
+    /* SIGCHLD ao pai que tem tratador para ele: o libuv (Node/Electron) só colhe filhos assim, com o tratador
+     * acordando o loop, que chama waitpid(WNOHANG). Sem isto nenhum child_process do VS Code (shell de login,
+     * git, ripgrep da busca) dava 'exit'. Sem tratador o sinal seria ignorado, e não manda para não acordar
+     * com EINTR uma espera do pai à toa. */
+    if (parent > 0) {
+        process_t *pp = find(parent);
+        if (pp && !pp->exited && pp->sig_handler[MOS_SIGCHLD] != MOS_SIG_DFL && pp->sig_handler[MOS_SIGCHLD] != MOS_SIG_IGN)
+            proc_signal(parent, MOS_SIGCHLD);
+    }
 }
 
 static u32 le32_(const u8 *b) { return (u32)b[0] | (u32)b[1] << 8 | (u32)b[2] << 16 | (u32)b[3] << 24; }
@@ -1816,7 +1826,7 @@ u64 proc_syscall(int_frame_t *f) {
         if (!v) { r = -MOS_ENOENT; break; }
         if (!slash || !slash[1]) { r = -MOS_EINVAL; break; }
         *slash = 0;
-        vnode_t *np = vfs_lookup(to[0] ? to : "/");
+        vnode_t *np = vfs_lookup_dir(to[0] ? to : "/");   /* a pasta de destino pode ser um link (opt/<f> -> Cellar) */
         if (!np || !np->dir) { r = -MOS_ENOENT; break; }
         vnode_t *old = vfs_child(np, slash + 1);
         if (old == v) { r = 0; break; }

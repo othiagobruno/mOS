@@ -596,9 +596,37 @@ typedef struct { u32 bits, size; mach_port_t remote, local; u32 voucher; int id;
 #define MACH_RCV_TIMED_OUT    0x10004003
 #define MACH_RCV_TOO_LARGE    0x10004004
 #define MACH_SEND_INVALID_DEST 0x10000003
+#define MACH_SEND_INTERRUPT    0x40
+#define MACH_RCV_INTERRUPT     0x400
+#define MACH_SEND_INTERRUPTED  0x10000007
+#define MACH_RCV_INTERRUPTED   0x10004005
+static u64 mono_ms(void) {
+    extern u64 clock_gettime_nsec_np(int clk);
+    return clock_gettime_nsec_np(6) / 1000000;              /* CLOCK_MONOTONIC (macOS) */
+}
 kern_return_t mach_msg(mach_msg_header_t *msg, int option, u32 send_size, u32 rcv_size, mach_port_t rcv_name, u32 timeout, mach_port_t notify) {
     mos_mach_msg_args_t a = {(u64)msg, (u32)option, send_size, rcv_size, rcv_name, timeout, notify};
+    u64 t0 = (option & MACH_RCV_TIMEOUT) ? mono_ms() : 0;
     kern_return_t r = (kern_return_t)cx_syscall(SYS_MACH_MSG, (long)&a, 0, 0, 0, 0);
+    /* -4: a espera foi interrompida por um sinal (ex.: SIGCHLD de um helper que saiu). O XNU devolve
+     * MACH_*_INTERRUPTED só a quem pediu MACH_*_INTERRUPT; aos outros, retoma a recepção sozinho. O envio
+     * (se havia) já foi feito antes de bloquear, então só a recepção recomeça, com o prazo que sobrou.
+     * O WaitableEvent do Chromium tem CHECK(kr == MACH_RCV_TIMED_OUT) e derrubava o navegador com -4. */
+    while (r == -4) {
+        int rcv = (option & MACH_RCV_MSG) != 0;
+        if (option & (rcv ? MACH_RCV_INTERRUPT : MACH_SEND_INTERRUPT)) return rcv ? MACH_RCV_INTERRUPTED : MACH_SEND_INTERRUPTED;
+        if (!rcv) { a.option = (u32)option; }
+        else {
+            a.option = (u32)option & ~(u32)MACH_SEND_MSG;
+            a.send_size = 0;
+            if (option & MACH_RCV_TIMEOUT) {
+                u64 gone = mono_ms() - t0;
+                if (gone >= timeout) return MACH_RCV_TIMED_OUT;
+                a.timeout = timeout - (u32)gone;
+            }
+        }
+        r = (kern_return_t)cx_syscall(SYS_MACH_MSG, (long)&a, 0, 0, 0, 0);
+    }
     /* diagnóstico (ca-log): erro de recepção que não é prazo/interrupção. O ChannelMac do Mojo para de vigiar o canal
      * quando o mach_msg falha, e as mensagens seguintes ficam na fila para sempre */
     if (r && (option & 2) && r != 0x10004003 && r != 0x10004005) {

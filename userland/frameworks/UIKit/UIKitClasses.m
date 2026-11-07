@@ -9,18 +9,18 @@
 #define K(N, S) @interface N : S @end @implementation N @end
 
 /* ---- views */
-K(UIImageView, UIView) K(UIScrollView, UIView) K(UITableView, UIScrollView) K(UICollectionView, UIScrollView)
-K(UITextView, UIScrollView) K(UITextField, UIControl) K(UISearchTextField, UITextField)
-K(UISearchBar, UIView) K(UINavigationBar, UIView) K(UIToolbar, UIView) K(UITabBar, UIView) K(UIStackView, UIView)
+K(UIImageView, UIView) 
+K(UITextView, UIScrollView) K(UISearchTextField, UITextField)
+K(UISearchBar, UIView) K(UIToolbar, UIView) K(UITabBar, UIView) K(UIStackView, UIView)
 K(UIVisualEffectView, UIView) K(UIActivityIndicatorView, UIView) K(UIProgressView, UIView) K(UIPickerView, UIView)
-K(UIDatePicker, UIControl) K(UISwitch, UIControl) K(UISlider, UIControl) K(UIStepper, UIControl)
+K(UIDatePicker, UIControl) K(UISlider, UIControl) K(UIStepper, UIControl)
 K(UISegmentedControl, UIControl) K(UIPageControl, UIControl) K(UIRefreshControl, UIControl) K(UIInputView, UIView)
-K(UITableViewCell, UIView) K(UITableViewHeaderFooterView, UIView) K(UICollectionReusableView, UIView)
-K(UICollectionViewCell, UICollectionReusableView) K(UICollectionViewListCell, UICollectionViewCell)
+K(UITableViewHeaderFooterView, UIView)
+/* UIScrollView, UITableView(Cell), UICollectionView(+células, layouts), UINavigation*, UILayoutGuide: UIKitViews.m */
 K(UIListContentView, UIView)
 
 /* ---- view controllers */
-K(UINavigationController, UIViewController) K(UITabBarController, UIViewController)
+K(UITabBarController, UIViewController)
 K(UISplitViewController, UIViewController) K(UITableViewController, UIViewController)
 K(UICollectionViewController, UIViewController) K(UIAlertController, UIViewController)
 K(UISearchController, UIViewController) K(UIPageViewController, UIViewController)
@@ -28,14 +28,14 @@ K(UIActivityViewController, UIViewController) K(UIDocumentPickerViewController, 
 K(UIImagePickerController, UINavigationController)
 
 /* ---- gestos */
-K(UIGestureRecognizer, NSObject) K(UITapGestureRecognizer, UIGestureRecognizer) K(UIPanGestureRecognizer, UIGestureRecognizer)
-K(UILongPressGestureRecognizer, UIGestureRecognizer) K(UISwipeGestureRecognizer, UIGestureRecognizer)
+/* UIGestureRecognizer, UITapGestureRecognizer, UIPanGestureRecognizer, UILongPressGestureRecognizer, UITouch, UIEvent: UIKitEvents.m */
+K(UISwipeGestureRecognizer, UIGestureRecognizer)
 K(UIPinchGestureRecognizer, UIGestureRecognizer) K(UIRotationGestureRecognizer, UIGestureRecognizer)
 K(UIHoverGestureRecognizer, UIGestureRecognizer) K(UIScreenEdgePanGestureRecognizer, UIPanGestureRecognizer)
 
 /* ---- barras, menus, ações */
 K(UITabBarItem, UIBarItem) K(UIBarButtonItemGroup, NSObject)
-K(UINavigationItem, NSObject) K(UIBarAppearance, NSObject) K(UINavigationBarAppearance, UIBarAppearance)
+K(UIBarAppearance, NSObject) K(UINavigationBarAppearance, UIBarAppearance)
 K(UIToolbarAppearance, UIBarAppearance) K(UITabBarAppearance, UIBarAppearance)
 /* UIMenuElement, UIMenu, UIAction, UICommand, UIKeyCommand, UIBarItem, UIBarButtonItem, UIButton: UIKitMenus.m */
 K(UIDeferredMenuElement, UIMenuElement) K(UIMenuSystem, NSObject)
@@ -60,11 +60,11 @@ K(UIPreviewParameters, NSObject) K(UITargetedPreview, NSObject) K(UIPreviewTarge
 K(UIPreviewInteraction, NSObject) K(UIDragItem, NSObject) K(UIDragInteraction, NSObject) K(UIDropInteraction, NSObject)
 K(UIDropProposal, NSObject) K(UITableViewDropProposal, UIDropProposal) K(UIPointerInteraction, NSObject)
 K(UIPointerStyle, NSObject) K(UIToolTipInteraction, NSObject) K(UILargeContentViewerInteraction, NSObject)
-K(UITextInteraction, NSObject) K(UIEvent, NSObject) K(UITouch, NSObject) K(UIPress, NSObject)
+K(UITextInteraction, NSObject) K(UIPress, NSObject)
 
 /* ---- coleções e tabelas */
-K(UICollectionViewLayout, NSObject) K(UICollectionViewFlowLayout, UICollectionViewLayout)
-K(UICollectionViewCompositionalLayout, UICollectionViewLayout) K(UICollectionViewCompositionalLayoutConfiguration, NSObject)
+
+K(UICollectionViewCompositionalLayoutConfiguration, NSObject)
 K(UICollectionViewLayoutAttributes, NSObject) K(UICollectionViewLayoutInvalidationContext, NSObject)
 K(UICollectionViewFlowLayoutInvalidationContext, UICollectionViewLayoutInvalidationContext)
 K(UICollectionViewUpdateItem, NSObject) K(UICollectionViewDiffableDataSource, NSObject)
@@ -73,7 +73,7 @@ K(NSCollectionLayoutItem, NSObject) K(NSCollectionLayoutGroup, NSCollectionLayou
 K(NSCollectionLayoutEdgeSpacing, NSObject) K(NSCollectionLayoutSpacing, NSObject)
 K(NSCollectionLayoutSupplementaryItem, NSCollectionLayoutItem)
 K(NSCollectionLayoutBoundarySupplementaryItem, NSCollectionLayoutSupplementaryItem)
-K(NSCollectionLayoutDecorationItem, NSCollectionLayoutItem) K(UILayoutGuide, NSObject)
+K(NSCollectionLayoutDecorationItem, NSCollectionLayoutItem)
 K(UIListContentConfiguration, NSObject) K(UIBackgroundConfiguration, NSObject) K(UIButtonConfiguration, NSObject)
 K(UICellAccessoryCustomView, NSObject) K(UILocalizedIndexedCollation, NSObject)
 
@@ -97,4 +97,4 @@ K(UIPresentationController, NSObject) K(UISheetPresentationController, UIPresent
 K(UISheetPresentationControllerDetent, NSObject) K(UISceneOpenURLOptions, NSObject) K(UIOpenURLContext, NSObject)
 K(UIWindowSceneActivationRequestOptions, NSObject) K(UIPasteboard, NSObject) K(UIDocumentInteractionController, NSObject)
 K(UIAccessibilityElement, NSObject) K(UIAccessibilityCustomAction, NSObject) K(UIAccessibilityCustomRotor, NSObject)
-K(UIAccessibilityCustomRotorItemResult, NSObject) K(NSShadow, NSObject)
+K(UIAccessibilityCustomRotorItemResult, NSObject) K(NSShadow, NSObject) K(UICellConfigurationState, NSObject)

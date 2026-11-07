@@ -63,3 +63,26 @@ Apps Catalyst (o WhatsApp para Mac é um) ligam o UIKit pelo caminho do Catalyst
   `UIButton.Configuration` (35), as configurações de lista/célula/fundo (`UIListContentConfiguration`,
   `UIBackgroundConfiguration`, `UICellAccessory`, `UICellConfigurationState`), os data sources "diffable" (classes
   genéricas), as registrations de célula, `UIPointerStyle`/`UIPointerEffect` e `AttributeScopes.UIKitAttributes`.
+
+## libswiftUIKit completa, entrada e controles (7 nov. 2026)
+
+- **Terceira leva do overlay** (`Configurations.swift`, `DataSources.swift`): `UIButton.Configuration` (+ `UIButton.configuration`
+  e `init(configuration:primaryAction:)`), `UIListContentConfiguration`, `UIBackgroundConfiguration`,
+  `UICellConfigurationState` (com a ponte para a classe ObjC), `UICellAccessory`, `UICollectionLayoutListConfiguration`,
+  `UIListSeparatorConfiguration`, `NSCollectionLayoutSection.list`, os acessores de configuração das células,
+  `UITableViewDiffableDataSource`/`UICollectionViewDiffableDataSource` (respondem como `UITableViewDataSource`),
+  `UICollectionView.CellRegistration`/`SupplementaryRegistration` + `dequeueConfigured…`, `UIPointerEffect`/`UIPointerShape`/
+  `UIPointerStyle`, `AttributeScopes.UIKitAttributes`, `UIFocusSystem.focusSystem(for:)`, `UITextDirection.layout`,
+  `UILayoutPriority`. No Foundation, a ponte `IndexPath ↔ NSIndexPath`.
+- **WhatsApp: libswiftUIKit 0 ausentes**; total **3.413**. Teste `uikit` **26/26**.
+- **Entrada** (`UIKitEvents.m`): a NSView hospedeira traduz mouse em `UITouch`/`UIEvent` na view do `hitTest:`;
+  `touchesBegan/Moved/Ended` sobem pela cadeia de resposta (view → view controller → superview → janela → `UIApplication`
+  → delegate); gestos de toque, arrastar e toque longo acompanham o toque; o teclado vai para o primeiro respondedor
+  (`insertText:`/`deleteBackward`).
+- **Controles** (`UIKitControls.m`): `UIControl` com alvos/ações e `UIAction` (TouchDown, TouchUpInside,
+  PrimaryActionTriggered); `UIButton` desenha o título; `UITextField` edita pelo teclado (delegate, EditingChanged,
+  `UITextFieldTextDidChangeNotification`); `UISwitch` alterna e manda ValueChanged.
+- **libSystem:** `CGContextSetAlpha` no CoreGraphics (alfa global do contexto nas cores de preenchimento e traço); a
+  `UIView` o usa para `alpha < 1` (ainda sem multiplicar pelo alfa dos ancestrais).
+- Teste `catalyst` **15/15** (cliques, gesto, cadeia de resposta, teclado, interruptor).
+- Ainda não: Auto Layout, rolagem de verdade (`UIScrollView`), desenho de tabelas/coleções, navegação/modais, animações.

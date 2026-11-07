@@ -187,8 +187,11 @@ typedef struct {
     BOOL flipped;
     u32 fill, stroke;
     double line_width;
+    double galpha;                  /* CGContextSetAlpha: multiplica o alfa das cores de preenchimento e traço */
 } ctx_t;
-static ctx_t ctx = {0, 0, 0, 0, NO, 0xFF000000, 0xFF000000, 1};
+static ctx_t ctx = {0, 0, 0, 0, NO, 0xFF000000, 0xFF000000, 1, 1};
+/* aplica o alfa global (CGContextSetAlpha) a uma cor ARGB */
+static u32 ga(u32 argb) { if (ctx.galpha >= 1) return argb; u32 a = (u32)((argb >> 24) * (ctx.galpha > 0 ? ctx.galpha : 0) + 0.5); return (a << 24) | (argb & 0xFFFFFF); }
 u32 cx_cg_fill_argb(void) { return ctx.fill; }
 static ctx_t ctx_stack[16];
 static int ctx_sp;
@@ -497,14 +500,24 @@ int cx_bm_restore(const void *c);
 int cx_bm_fill_rect(const void *c, double x, double y, double w, double h);
 int cx_bm_clear_rect(const void *c, double x, double y, double w, double h);
 void CGContextSetRGBFillColor(id c, double r, double g, double b, double a) {
-    ctx.fill = argb(cx_color(r, g, b, a));
+    ctx.fill = ga(argb(cx_color(r, g, b, a)));
     cx_bm_set_fill(c, ctx.fill);
 }
-void CGContextSetRGBStrokeColor(id c, double r, double g, double b, double a) { (void)c; ctx.stroke = argb(cx_color(r, g, b, a)); }
+void CGContextSetRGBStrokeColor(id c, double r, double g, double b, double a) { (void)c; ctx.stroke = ga(argb(cx_color(r, g, b, a))); }
 void CGContextSetGrayFillColor(id c, double g, double a) { CGContextSetRGBFillColor(c, g, g, g, a); }
 void CGContextSetGrayStrokeColor(id c, double g, double a) { CGContextSetRGBStrokeColor(c, g, g, g, a); }
-void CGContextSetFillColorWithColor(id c, id color) { ctx.fill = argb(color); cx_bm_set_fill(c, ctx.fill); }
-void CGContextSetStrokeColorWithColor(id c, id color) { (void)c; ctx.stroke = argb(color); }
+void CGContextSetFillColorWithColor(id c, id color) { ctx.fill = ga(argb(color)); cx_bm_set_fill(c, ctx.fill); }
+/* alfa global do contexto: vale para as cores definidas depois e para a cor de preenchimento atual */
+void CGContextSetAlpha(id c, double a) {
+    double old = ctx.galpha > 0 ? ctx.galpha : 1;
+    if (a < 0) a = 0;
+    if (a > 1) a = 1;
+    ctx.galpha = a;
+    u32 fa = (u32)((ctx.fill >> 24) / old * a + 0.5); if (fa > 255) fa = 255;
+    ctx.fill = (fa << 24) | (ctx.fill & 0xFFFFFF);
+    cx_bm_set_fill(c, ctx.fill);
+}
+void CGContextSetStrokeColorWithColor(id c, id color) { (void)c; ctx.stroke = ga(argb(color)); }
 void CGContextSetLineWidth(id c, double w) { (void)c; ctx.line_width = w; pth(cgp())->lw = w; }
 void CGContextFillRect(id c, CGRect r) {
     if (cx_bm_fill_rect(c, r.o.x, r.o.y, r.s.w, r.s.h)) return;
@@ -622,6 +635,25 @@ static void v_remove(id self, SEL c) {
     s->superview = 0;
     set_window_rec(self, 0);
     objc_release(self);
+}
+/* Como no Cocoa: a view que morre solta as subviews (superview = nil). Sem isto os filhos guardavam o ponteiro do
+ * pai já liberado, e o removeFromSuperview seguinte (Chrome, views::View) lia o estado de outro objeto no lugar. */
+static void v_dealloc(id self, SEL c) {
+    vstate_t *s = ST(self);
+    if (s) {
+        for (u32 i = 0; i < s->nsub; i++) {
+            id sub = s->sub[i];
+            vstate_t *ss = ST(sub);
+            if (ss && ss->superview == self) { ss->superview = 0; set_window_rec(sub, 0); }
+            objc_release(sub);
+        }
+        s->nsub = 0;
+        free(s->sub);
+        s->sub = 0;
+        s->capsub = 0;
+        s->superview = 0;
+    }
+    ((void (*)(id, SEL))cx_lookup(&NSResponder_c, c))(self, c);
 }
 static id v_subviews(id self, SEL c) { (void)c; vstate_t *s = vs(self); id a = cx_arr_new(&NSMutableArray_c); for (u32 i = 0; i < s->nsub; i++) cx_arr_add(a, s->sub[i]); return a; }
 static id v_superview(id self, SEL c) { (void)c; return vs(self)->superview; }
@@ -1345,6 +1377,13 @@ static double ev_dy(id self, SEL c) { (void)c; return evs(self)->dy; }
 static double ev_zero(id self, SEL c) { (void)self; (void)c; return 0; }
 static u64 g_mods;
 static u64 ev_cmods(id cls, SEL c) { (void)cls; (void)c; return g_mods; }
+/* +[NSEvent pressedMouseButtons] e +[NSEvent mouseLocation], do último evento de mouse: o Chromium marca
+ * kLeftButtonDown nos modificadores do evento pelo primeiro (o Blink tira daí o "buttons" e o pointerdown) e usa
+ * o segundo para saber se o cursor está na janela. Bit 0 = esquerdo, 1 = direito. */
+static u64 g_pressed_buttons;
+static NSPoint g_mouse_screen;
+static u64 ev_pressed_buttons(id cls, SEL c) { (void)cls; (void)c; return g_pressed_buttons; }
+static NSPoint ev_mouse_location(id cls, SEL c) { (void)cls; (void)c; return g_mouse_screen; }
 
 static u64 mac_mods(u32 m) { return ((m & 1) ? 1u << 17 : 0) | ((m & 2) ? 1u << 18 : 0) | ((m & 4) ? 1u << 19 : 0) | ((m & 8) ? 1u << 20 : 0); }
 static u16 mac_keycode(int k) {
@@ -2244,6 +2283,13 @@ static void dispatch(gui_event_t *g) {
     g_mods = mac_mods(g->mods);
     { extern void cx_gc_mouse_event(int type, int x, int y, int buttons, int scroll);   /* GCMouse */
       if (g->type >= GEV_MOUSE_DOWN && g->type <= GEV_SCROLL) cx_gc_mouse_event((int)g->type, g->x, g->y, g->buttons, g->w); }
+    if (g->type >= GEV_MOUSE_DOWN && g->type <= GEV_SCROLL) {
+        /* o direito chega só como GEV_RIGHT_DOWN (sem soltar): vale até o próximo evento de mouse */
+        g_pressed_buttons = (g->type == GEV_MOUSE_UP ? 0 : (g->buttons & 1) | (g->type == GEV_MOUSE_DOWN ? 1 : 0)) |
+                            (g->type == GEV_RIGHT_DOWN ? 2 : 0);
+        g_mouse_screen.x = s->frame.o.x + g->x;
+        g_mouse_screen.y = s->frame.o.y + (s->frame.s.h - g->y);
+    }
     switch (g->type) {
     case GEV_CLOSE:
         close_window(w, YES);
@@ -3073,7 +3119,15 @@ static id tcv_tf(id self, SEL c) { (void)c; return vs(self)->text_field; }
 static id sc_main(id cls, SEL c) { (void)c; static id s; if (!s) s = cx_alloc_instance((cx_class_t *)cls); return s; }
 static id sc_screens(id cls, SEL c) { id a = cx_arr_new(&NSMutableArray_c); cx_arr_add(a, sc_main(cls, c)); return a; }
 static NSRect sc_frame(id self, SEL c) { (void)self; (void)c; gui_wininfo_t i = {1440, 876, 1, 1}; SYS1(GUI_SCREEN, &i); return r_make(0, 0, i.w, i.h + 24); }
-static NSRect sc_visible(id self, SEL c) { (void)self; (void)c; gui_wininfo_t i = {1440, 876, 1, 1}; SYS1(GUI_SCREEN, &i); return r_make(0, 70, i.w, i.h - 70); }
+/* sem a faixa do Dock (o kernel diz quanto ele reserva em .visible; os antigos devolviam 1): o Electron usa isto como
+ * workArea, e o VS Code abria a janela até atrás do Dock, escondendo a barra de status */
+static NSRect sc_visible(id self, SEL c) {
+    (void)self; (void)c;
+    gui_wininfo_t i = {1440, 876, 1, 1};
+    SYS1(GUI_SCREEN, &i);
+    int dock = i.visible > 1 && i.visible < i.h / 2 ? i.visible : 70;
+    return r_make(0, dock, i.w, i.h - dock);
+}
 static double sc_scale(id self, SEL c) { (void)self; (void)c; return 1.0; }
 static id generic_singleton(id cls, SEL c) { (void)c; static struct { id c, o; } t[8]; for (int i = 0; i < 8; i++) { if (t[i].c == cls) return t[i].o; if (!t[i].c) { t[i].c = cls; t[i].o = cx_alloc_instance((cx_class_t *)cls); return t[i].o; } } return 0; }
 static BOOL ws_open_url(id self, SEL c, id u) { (void)self; (void)c; (void)u; return NO; }
@@ -3172,6 +3226,16 @@ static id anchor_for(id v, int attr) {
     an(a)->view = v;
     an(a)->attr = attr;
     return a;
+}
+/* para o UIKit do mOS (userland/frameworks/UIKit): âncoras de qualquer objeto (UIView) e as restrições ativas, que o
+ * UIKit resolve para as suas views (este resolvedor só cuida de NSView) */
+id cx_layout_anchor(id v, int attr) { return anchor_for(v, attr); }
+u32 cx_layout_constraints(id **out) { if (out) *out = lcs; return nlc; }
+int cx_layout_constraint_info(id c, id *a, int *aa, int *rel, id *b, int *ba, double *mult, double *k, float *prio) {
+    lc_t *s = c ? (lc_t *)ST(c) : 0;
+    if (!s) return 0;
+    *a = s->a; *aa = s->aa; *rel = s->rel; *b = s->b; *ba = s->ba; *mult = s->mult; *k = s->k; *prio = s->prio;
+    return 1;
 }
 #define ANCHOR(name, attr) static id name(id self, SEL c) { (void)c; return anchor_for(self, attr); }
 ANCHOR(v_leading_a, LA_LEADING) ANCHOR(v_trailing_a, LA_TRAILING) ANCHOR(v_left_a, LA_LEFT) ANCHOR(v_right_a, LA_RIGHT)
@@ -3776,7 +3840,7 @@ void cx_appkit_init(void) {
     M(NSView, "setFrame:", v_set_frame); M(NSView, "setFrameSize:", v_set_size); M(NSView, "setFrameOrigin:", v_set_origin);
     M(NSView, "addSubview:", v_add_sub); M(NSView, "addSubview:positioned:relativeTo:", v_add_positioned);
     M(NSView, "sortSubviewsUsingFunction:context:", v_sort_sub); M(NSView, "setNextKeyView:", noop1_m);
-    M(NSView, "removeFromSuperview", v_remove); M(NSView, "subviews", v_subviews);
+    M(NSView, "removeFromSuperview", v_remove); M(NSView, "subviews", v_subviews); M(NSView, "dealloc", v_dealloc);
     M(NSView, "superview", v_superview); M(NSView, "window", v_window); M(NSView, "setNeedsDisplay:", v_set_needs);
     M(NSView, "setNeedsDisplayInRect:", v_set_needs_rect); M(NSView, "display", v_display); M(NSView, "needsDisplay", v_needs);
     M(NSView, "setHidden:", v_set_hidden); M(NSView, "isHidden", v_hidden); M(NSView, "setAutoresizingMask:", v_set_autoresize);
@@ -3955,7 +4019,7 @@ void cx_appkit_init(void) {
     M(NSGraphicsContext, "restoreGraphicsState", gc_restore); M(NSGraphicsContext, "setShouldAntialias:", noop1_m);
 
     DEF(NSEvent, NSObject);
-    CM(NSEvent, "modifierFlags", ev_cmods);
+    CM(NSEvent, "modifierFlags", ev_cmods); CM(NSEvent, "pressedMouseButtons", ev_pressed_buttons); CM(NSEvent, "mouseLocation", ev_mouse_location);
     M(NSEvent, "type", ev_type); M(NSEvent, "locationInWindow", ev_loc); M(NSEvent, "modifierFlags", ev_mods); M(NSEvent, "keyCode", ev_keycode);
     M(NSEvent, "characters", ev_chars); M(NSEvent, "charactersIgnoringModifiers", ev_chars); M(NSEvent, "clickCount", ev_clicks);
     M(NSEvent, "window", ev_window); M(NSEvent, "scrollingDeltaY", ev_dy); M(NSEvent, "deltaY", ev_dy); M(NSEvent, "deltaX", ev_zero);

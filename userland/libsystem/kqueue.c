@@ -22,6 +22,8 @@ typedef struct { long sec, nsec; } ts_t;
 
 #define EVFILT_READ     (-1)
 #define EVFILT_WRITE    (-2)
+#define EVFILT_PROC     (-5)
+#define NOTE_EXIT       0x80000000u
 #define EVFILT_TIMER    (-7)
 #define EVFILT_MACHPORT (-8)
 #define EVFILT_USER     (-10)
@@ -76,6 +78,12 @@ int cx_fd_readable(int fd, long *avail, int *eof) {
     *avail = (long)st.size;
     return 1;
 }
+
+/* EVFILT_PROC/NOTE_EXIT: nas plataformas Apple o libuv (Node/Electron) sabe que um filho terminou por aqui, não
+ * por SIGCHLD; sem isto o child_process nunca dava 'exit' (o VS Code esgotava o prazo do shell de login e a busca
+ * com o ripgrep não terminava). Pronto quando o kernel já não tem o processo como vivo (zumbi ou colhido): kill(pid, 0)
+ * falha. Quem registrou colhe depois com waitpid(WNOHANG). */
+static int proc_exited(u64 pid) { return SYS2(SYS_SIGKILL, (long)pid, 0) < 0; }
 
 static void kl(kq_t *q) { while (__sync_lock_test_and_set(&q->lock, 1)) SYS0(SYS_YIELD); }
 static void ku(kq_t *q) { __sync_lock_release(&q->lock); }
@@ -205,6 +213,13 @@ static int ready(knote_t *k, kevent64_s *out) {
         if (eof) out->flags |= 0x8000;                   /* EV_EOF */
         return 1;
     }
+    case EVFILT_PROC:
+        if (!(k->ev.fflags & NOTE_EXIT) || !proc_exited(k->ev.ident)) return 0;
+        out->fflags = NOTE_EXIT;
+        out->flags |= 0x8000;                            /* EV_EOF, como no macOS */
+        out->data = 0;
+        k->enabled = 0;                                  /* uma vez só (o libuv ainda pede EV_ONESHOT) */
+        return 1;
     default: return 0;
     }
 }
@@ -228,6 +243,7 @@ int cx_kqueue_peek(int fd) {
         case EVFILT_MACHPORT: r = cx_mach_pending((u32)n->ev.ident) > 0; break;
         case EVFILT_WRITE: r = cx_fd_writable((int)n->ev.ident); break;
         case EVFILT_READ: r = cx_fd_readable((int)n->ev.ident, &avail, &eof); break;
+        case EVFILT_PROC: r = (n->ev.fflags & NOTE_EXIT) && proc_exited(n->ev.ident); break;
         }
     }
     ku(q);

@@ -576,6 +576,12 @@ int csops(int pid, unsigned int ops, void *useraddr, size_t usersize) {
         return 0;
     }
     if (ops == 5 && useraddr && usersize >= 20) { memset(useraddr, 0, 20); return 0; } /* CS_OPS_CDHASH */
+    /* CS_OPS_TEAMID: sem Team ID (o XNU responde ENOENT); CS_OPS_VALIDATION_CATEGORY: CS_VALIDATION_CATEGORY_NONE.
+     * O ProcessRequirement do Chromium (rendezvous Mach com os helpers) trata isso como build sem assinatura e
+     * pula a validação; com ENOSYS o requisito falhava e os renderers não recebiam as portas ("about:blank
+     * demorou demais" e um renderer novo atrás do outro). */
+    if (ops == 14) { cx_errno = CX_ENOENT; return -1; }
+    if (ops == 17 && useraddr && usersize >= 4) { *(u32 *)useraddr = 10; return 0; }
     if (ops == 4 && useraddr && usersize > 1) {                                     /* CS_OPS_PIDPATH */
         extern char **NXArgv;
         const char *p = NXArgv && NXArgv[0] ? NXArgv[0] : "/app";
