@@ -105,3 +105,12 @@ lido pelo `build\fatcat.exe`). As causas, em ordem:
 
 Com 1 a 3 corrigidos, o Extension Host ativa as extensões (`cursor-retrieval`, `cursor-checkout`, `vscode.git`...) e
 o Cursor conversa com `api2.cursor.sh` (as respostas são `[unauthenticated]`, como deve ser antes do login).
+
+### Cursor: estado final do dia
+
+Com `-Memory 3400` e o bash do Homebrew na imagem (`tools\stage-bash.ps1 -OutDir build-cursor -Bottles <pasta só com
+bash, readline, ncurses, gettext, coreutils, gmp e zlib>`, depois tirar o `sh.brew.bash.servico` e refazer o mkimg),
+o Cursor abre na tela de login **sem nenhum aviso**: o ambiente do shell resolve (`SHELL=/usr/local/bin/bash`), o
+Extension Host fica de pé os 7 minutos da rodada e as chamadas a `api2.cursor.sh` voltam `[unauthenticated]`.
+Pendentes: o login (do usuário), o git (o bottle tem 619 MiB, grande demais para a RAM da VM como está) e o
+`/usr/bin/security` que o ProxyResolver chama para ler certificados.
