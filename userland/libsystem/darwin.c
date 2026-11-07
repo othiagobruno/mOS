@@ -321,14 +321,48 @@ long long llround(double x) { return x >= 0 ? (long long)(x + 0.5) : -(long long
 long long llroundf(float x) { return llround((double)x); }
 
 id_ CFStringCreateWithCString(void *alloc, const char *s, u32 enc) { (void)enc; return CFStringCreateWithFileSystemRepresentation(alloc, s); }
+/* um ponto de código em UTF-8 */
+static long put_utf8(char *t, unsigned c) {
+    if (c < 0x80) { t[0] = (char)c; return 1; }
+    if (c < 0x800) { t[0] = (char)(0xC0 | c >> 6); t[1] = (char)(0x80 | (c & 63)); return 2; }
+    if (c < 0x10000) { t[0] = (char)(0xE0 | c >> 12); t[1] = (char)(0x80 | (c >> 6 & 63)); t[2] = (char)(0x80 | (c & 63)); return 3; }
+    t[0] = (char)(0xF0 | c >> 18); t[1] = (char)(0x80 | (c >> 12 & 63)); t[2] = (char)(0x80 | (c >> 6 & 63)); t[3] = (char)(0x80 | (c & 63));
+    return 4;
+}
+/* Codificações do CoreFoundation que chegam aqui: UTF-8 (0x08000100), ASCII (0x0600), Unicode/UTF-16 com BOM ou na ordem
+ * da máquina (0x0100), UTF-16BE (0x10000100), UTF-16LE (0x14000100), UTF-32 (0x0c000100/BE 0x18000100/LE 0x1c000100),
+ * ISO Latin 1 (0x0201), Windows-1252 (0x0500), MacRoman (0). Antes só 0x0100 era UTF-16 (e sem acentos): o Chrome cria os
+ * textos da interface com UTF-16LE e eles viravam só a 1ª letra ("O\0K\0" lido como C string). */
 id_ CFStringCreateWithBytes(void *alloc, const u8 *b, long n, u32 enc, u8 ext) {
     (void)ext;
     if (!b || n < 0) return 0;
-    char *t = malloc((size_t)n + 1);
+    char *t = malloc((size_t)n * 2 + 4);                   /* UTF-16 -> no máximo 3 bytes a cada 2; Latin-1 -> 2 a cada 1 */
     if (!t) return 0;
     long o = 0;
-    if (enc == ENC_UTF16) for (long i = 0; i + 1 < n; i += 2) { unsigned c = b[i] | b[i + 1] << 8; o += wctomb(t + o, (wchar_t_)(c < 0x80 ? c : '?')); }
-    else { memcpy(t, b, (size_t)n); o = n; }
+    if (enc == ENC_UTF16 || enc == 0x10000100u || enc == 0x14000100u) {
+        int be = enc == 0x10000100u;
+        long i = 0;
+        if (enc == ENC_UTF16 && n >= 2) {                   /* BOM; sem ela, a ordem da máquina (little-endian) */
+            if (b[0] == 0xFE && b[1] == 0xFF) { be = 1; i = 2; } else if (b[0] == 0xFF && b[1] == 0xFE) i = 2;
+        }
+        for (; i + 1 < n; i += 2) {
+            unsigned c = be ? (unsigned)b[i] << 8 | b[i + 1] : b[i] | (unsigned)b[i + 1] << 8;
+            if (c >= 0xD800 && c < 0xDC00 && i + 3 < n) {   /* par substituto */
+                unsigned d = be ? (unsigned)b[i + 2] << 8 | b[i + 3] : b[i + 2] | (unsigned)b[i + 3] << 8;
+                if (d >= 0xDC00 && d < 0xE000) { c = 0x10000 + ((c - 0xD800) << 10) + (d - 0xDC00); i += 2; }
+            }
+            o += put_utf8(t + o, c);
+        }
+    } else if (enc == 0x0c000100u || enc == 0x18000100u || enc == 0x1c000100u) {
+        int be = enc == 0x18000100u;
+        for (long i = 0; i + 3 < n; i += 4) {
+            unsigned c = be ? (unsigned)b[i] << 24 | (unsigned)b[i + 1] << 16 | (unsigned)b[i + 2] << 8 | b[i + 3]
+                            : b[i] | (unsigned)b[i + 1] << 8 | (unsigned)b[i + 2] << 16 | (unsigned)b[i + 3] << 24;
+            o += put_utf8(t + o, c < 0x110000 ? c : '?');
+        }
+    } else if (enc == 0x0201u || enc == 0x0500u || enc == 0) {
+        for (long i = 0; i < n; i++) o += put_utf8(t + o, b[i]);   /* Latin-1 (aproximação para 1252/MacRoman acima de 0x7F) */
+    } else { memcpy(t, b, (size_t)n); o = n; }
     t[o] = 0;
     id_ r = CFStringCreateWithFileSystemRepresentation(alloc, t);
     free(t);
@@ -508,9 +542,16 @@ int sandbox_init_with_parameters(const char *profile, u64 flags, const char *con
     (void)profile; (void)flags; (void)params; if (err) *err = 0; sandbox_applied = 1; return 0;
 }
 void sandbox_free_error(char *err) { (void)err; }
-/* API privada usada pelo sandbox::Seatbelt do Chromium: perfis compilados são objetos opacos */
-typedef struct { u64 magic; } sb_obj_t;
-static sb_obj_t sb_profile = {0x5342}, sb_params = {0x5350};
+/* API privada usada pelo sandbox::Seatbelt do Chromium. O perfil compilado NÃO é opaco: o Chromium lê os campos de
+ * struct sandbox_profile {builtin, data, size} (sandbox/mac/seatbelt.cc) e copia `size` bytes de `data` para mandar ao
+ * helper. Antes era uma struct de 8 bytes: o Chrome lia o "size" 16 bytes adiante, na memória estática vizinha (a classe
+ * OS_dispatch_queue_main), e pedia uma alocação de ~70 TiB — o PartitionAlloc derrubava o processo por falta de memória.
+ * O mOS não aplica sandbox (sandbox_apply só marca): o bytecode é um marcador pequeno. */
+typedef struct { const char *builtin; const u8 *data; size_t size; } sb_profile_t;
+static const u8 sb_bytecode[8] = {'m', 'O', 'S', '-', 's', 'b', 0, 0};
+static sb_profile_t sb_profile = {0, sb_bytecode, sizeof sb_bytecode};
+typedef struct { u64 magic, pad[7]; } sb_params_t;          /* parâmetros: opacos para quem chama */
+static sb_params_t sb_params = {0x5350, {0}};
 void *sandbox_create_params(void) { return &sb_params; }
 int sandbox_set_param(void *params, const char *key, const char *value) { (void)params; (void)key; (void)value; return 0; }
 void sandbox_free_params(void *params) { (void)params; }

@@ -278,6 +278,47 @@ static u64 en_fast(id self, SEL c, fe_state_t *st, id *buf, u64 len) {
     return k;
 }
 
+/* ---- NSDirectoryEnumerator: -[NSFileManager enumeratorAtURL:includingPropertiesForKeys:options:errorHandler:] e
+ * -enumeratorAtPath:. A árvore é lida inteira na criação (pré-ordem; diretórios antes do conteúdo), como uma lista para o
+ * NSEnumerator. Opções: SkipsSubdirectoryDescendants (1), SkipsHiddenFiles (4). -skipDescendants ainda não poda. */
+KLASS(NSDirectoryEnumerator)
+int cx_snprintf(char *buf, unsigned long n, const char *fmt, ...);
+static void de_walk(id out, const char *dir, const char *rel, u64 opts, int asurl, int depth) {
+    if (depth > 64) return;
+    void *d = opendir(dir);
+    if (!d) return;
+    u8 *e;
+    while ((e = readdir(d))) {
+        const char *nm = (const char *)e + 21;           /* o nome no dirent do mOS (como o fm_contents) */
+        if (!strcmp(nm, ".") || !strcmp(nm, "..")) continue;
+        if ((opts & 4) && nm[0] == '.') continue;
+        char full[1024], r[1024];
+        cx_snprintf(full, sizeof full, "%s/%s", dir, nm);
+        cx_snprintf(r, sizeof r, rel[0] ? "%s/%s" : "%s%s", rel, nm);
+        cx_arr_add(out, asurl ? MSG(id, cls("NSURL"), "fileURLWithPath:", cx_str(full)) : cx_str(r));
+        if (!(opts & 1)) {
+            void *sub = opendir(full);
+            if (sub) { closedir(sub); de_walk(out, full, r, opts, asurl, depth + 1); }
+        }
+    }
+    closedir(d);
+}
+static id de_new(const char *root, u64 opts, int asurl) {
+    id items = cx_arr_new(0);
+    de_walk(items, root, "", opts, asurl, 0);
+    en_t *e = (en_t *)cx_alloc_instance(&NSDirectoryEnumerator_c);
+    e->items = items;
+    return objc_autorelease((id)e);
+}
+static id fm_enum_url(id self, SEL c, id url, id keys, u64 opts, void *handler) {
+    (void)self; (void)c; (void)keys; (void)handler;
+    id p = url ? MSG0(id, url, "path") : 0;
+    return p ? de_new(cx_cstr(p), opts, 1) : 0;
+}
+static id fm_enum_path(id self, SEL c, id path) { (void)self; (void)c; return path ? de_new(cx_cstr(path), 0, 0) : 0; }
+static void de_skip(id self, SEL c) { (void)self; (void)c; }
+static u64 de_level(id self, SEL c) { (void)self; (void)c; return 0; }
+
 /* ================================================================ NSOrderedSet / NSMutableOrderedSet */
 typedef struct { cx_class_t *isa; id arr; } os_t;
 static id os_arr(id self) { os_t *o = (os_t *)self; if (!o->arr) o->arr = objc_retain(cx_arr_new(0)); return o->arr; }
@@ -475,6 +516,15 @@ void cx_foundation_extra_init(void) {
         cx_define_class(&NSEnumerator_c, &NSEnumerator_m, "NSEnumerator", ob, 16);
         IM(NSEnumerator, "nextObject", en_next); IM(NSEnumerator, "allObjects", en_all);
         IM(NSEnumerator, "countByEnumeratingWithState:objects:count:", en_fast);
+    }
+    if (!cx_class_named("NSDirectoryEnumerator")) {
+        cx_define_class(&NSDirectoryEnumerator_c, &NSDirectoryEnumerator_m, "NSDirectoryEnumerator", &NSEnumerator_c, 0);
+        IM(NSDirectoryEnumerator, "skipDescendants", de_skip); IM(NSDirectoryEnumerator, "level", de_level);
+        cx_class_t *fm = cx_class_named("NSFileManager");
+        if (fm) {
+            cx_add_method(fm, "enumeratorAtURL:includingPropertiesForKeys:options:errorHandler:", (void *)fm_enum_url);
+            cx_add_method(fm, "enumeratorAtPath:", (void *)fm_enum_path);
+        }
     }
     if (!cx_class_named("NSOrderedSet")) {
         cx_define_class(&NSOrderedSet_c, &NSOrderedSet_m, "NSOrderedSet", ob, 8);

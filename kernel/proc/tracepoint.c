@@ -17,7 +17,9 @@
 #include "vfs.h"
 
 #define TP_MAX 256
-static struct { int pid; u64 va, off; u8 orig; i8 dump; char img[40]; } tps[TP_MAX];
+/* left: disparos que ainda faltam ("0xdesl*N" = N; sem *, 1). Depois de um disparo com left > 1 a instrução original roda
+ * em passo único (TF) e o #DB seguinte (vetor 1) recoloca o 0xCC: step_tid = a thread que está passando por ele. */
+static struct { int pid; u64 va, off; u8 orig; i8 dump; char img[40]; int left, hits, step_tid; } tps[TP_MAX];
 static int ntp;
 
 /* nomes na ordem do int_frame_t (r15 primeiro); -1 = sem despejo */
@@ -75,7 +77,13 @@ void tp_arm(process_t *p, const char *path, u64 base, u64 vmin) {
                     const char *q = b3;
                     while (q < eol && ntp < TP_MAX) {
                         u64 off = parse_hex(&q);
-                        int dump = -1;
+                        int dump = -1, count = 1;
+                        if (q < eol && *q == '*') {             /* "*N": dispara até N vezes */
+                            q++;
+                            count = 0;
+                            while (q < eol && *q >= '0' && *q <= '9') count = count * 10 + (*q++ - '0');
+                            if (count < 1) count = 1;
+                        }
                         if (q < eol && *q == '@') { q++; dump = parse_reg(&q); }
                         if (off >= vmin) {
                             u64 va = base + (off - vmin);
@@ -83,6 +91,7 @@ void tp_arm(process_t *p, const char *path, u64 base, u64 vmin) {
                             if (uvm_copy_in(p, &orig, va, 1) && uvm_copy_out(p, va, &cc, 1)) {
                                 tps[ntp].pid = p->pid; tps[ntp].va = va; tps[ntp].off = off; tps[ntp].orig = orig;
                                 tps[ntp].dump = (i8)dump;
+                                tps[ntp].left = count; tps[ntp].hits = 0; tps[ntp].step_tid = 0;
                                 strncpy(tps[ntp].img, im, sizeof tps[ntp].img - 1);
                                 ntp++;
                                 kprintf("tracepoint: %s (pid %d) %s+0x%llx armado em 0x%llx\n", p->name, p->pid, im,
@@ -102,14 +111,29 @@ void tp_arm(process_t *p, const char *path, u64 base, u64 vmin) {
 
 /* #GP (ou #BP) num ponto armado: registra, devolve o byte e segue. true = tratado. */
 bool tp_hit(process_t *p, int_frame_t *f) {
-    if (!ntp || (f->vector != 13 && f->vector != 3)) return false;
+    if (!ntp) return false;
+    /* passo único depois de um disparo repetível: a instrução original já rodou; recoloca o int3 e tira o TF */
+    if (f->vector == 1) {
+        thread_t *t = thread_current();
+        for (int i = 0; i < ntp; i++) {
+            if (tps[i].pid != p->pid || !tps[i].step_tid || !t || tps[i].step_tid != t->id) continue;
+            u8 cc = 0xCC;
+            uvm_copy_out(p, tps[i].va, &cc, 1);
+            tps[i].step_tid = 0;
+            f->rflags &= ~0x100ULL;
+            return true;
+        }
+        return false;
+    }
+    if (f->vector != 13 && f->vector != 3) return false;
     u64 at = f->vector == 3 ? f->rip - 1 : f->rip;
     for (int i = 0; i < ntp; i++) {
         if (tps[i].pid != p->pid || tps[i].va != at) continue;
         thread_t *t = thread_current();
-        kprintf("tracepoint: %s (pid %d, thread %d) %s+0x%llx: rax 0x%llx rbx 0x%llx rcx 0x%llx rdx 0x%llx "
+        tps[i].hits++;
+        kprintf("tracepoint: %s (pid %d, thread %d) %s+0x%llx #%d: rax 0x%llx rbx 0x%llx rcx 0x%llx rdx 0x%llx "
                 "rsi 0x%llx rdi 0x%llx r8 0x%llx r12 0x%llx r13 0x%llx r14 0x%llx r15 0x%llx rsp 0x%llx rbp 0x%llx\n",
-                p->name, p->pid, t ? t->id : -1, tps[i].img, (unsigned long long)tps[i].off,
+                p->name, p->pid, t ? t->id : -1, tps[i].img, (unsigned long long)tps[i].off, tps[i].hits,
                 f->rax, f->rbx, f->rcx, f->rdx, f->rsi, f->rdi, f->r8, f->r12, f->r13, f->r14, f->r15, f->rsp, f->rbp);
         if (tps[i].dump == 101) {
             /* "@pilha": percorre a cadeia de rbp ({rbp salvo, endereço de retorno}) e imprime os retornos —
@@ -133,7 +157,11 @@ bool tp_hit(process_t *p, int_frame_t *f) {
         }
         uvm_copy_out(p, at, &tps[i].orig, 1);
         f->rip = at;
-        tps[i] = tps[--ntp];
+        if (--tps[i].left > 0 && t) {
+            /* repetível: roda a instrução original em passo único; o #DB recoloca o int3 (acima) */
+            tps[i].step_tid = t->id;
+            f->rflags |= 0x100ULL;
+        } else tps[i] = tps[--ntp];
         return true;
     }
     return false;

@@ -60,4 +60,46 @@ check(_convertErrorToNSError(Simples.a).code == 0 && (_convertNSErrorToError(ns1
 func lanca() throws { throw CocoaError(.fileWriteNoPermission) }
 do { try lanca(); check(false, "throw CocoaError") } catch let e as CocoaError { check(e.code == .fileWriteNoPermission, "throw/catch CocoaError") } catch { check(false, "throw CocoaError") }
 
+// StringProtocol sobre a API de NSString
+let s = "  Olá, Mundo café  "
+check(s.trimmingCharacters(in: .whitespaces) == "Olá, Mundo café", "trimmingCharacters(in:)")
+check(s.range(of: "MUNDO", options: .caseInsensitive) != nil && s.range(of: "mundo") == nil, "range(of:options:)")
+check(s.contains("Mundo") && s.localizedCaseInsensitiveContains("CAFÉ"), "contains / localizedCaseInsensitiveContains")
+check("arquivo10".localizedStandardCompare("arquivo9") == .orderedDescending
+      && "a".compare("B", options: .caseInsensitive, range: nil, locale: nil) == .orderedAscending, "compare numérico e sem caixa")
+check("a-b-c".replacingOccurrences(of: "-", with: "+") == "a+b+c", "replacingOccurrences")
+check("a,b;c".components(separatedBy: CharacterSet(charactersIn: ",;")) == ["a", "b", "c"], "components(separatedBy: CharacterSet)")
+check("ab".padding(toLength: 5, withPad: "xy", startingAt: 0) == "abxyx", "padding")
+check("café".folding(options: .diacriticInsensitive, locale: nil) == "cafe", "folding diacriticInsensitive")
+check("a b".addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) == "a%20b" && "a%20b".removingPercentEncoding == "a b",
+      "percent encoding")
+check(String(format: "%d-%@", 7, "x") == "7-x" && "x".appendingFormat("%d", 3) == "x3", "String(format:) e appendingFormat")
+var palavras: [String] = []
+let frase = "um dois três"
+frase.enumerateSubstrings(in: frase.startIndex..., options: .byWords) { w, _, _, _ in if let w { palavras.append(w) } }
+check(palavras == ["um", "dois", "três"], "enumerateSubstrings(byWords)")
+check("x1y".rangeOfCharacter(from: .decimalDigits).map { String("x1y"[$0]) } == "1", "rangeOfCharacter(from:)")
+check(String("abc" as NSString) == "abc", "String(NSString)")
+
+// FileManager (NSFileManager): enumerator(at:) e replaceItemAt
+let raiz = "/mos-f3"   // na raiz do harness/VFS
+_ = mkdir(raiz, 0o755); _ = mkdir(raiz + "/sub", 0o755)
+_ = FileManagerTouch(raiz + "/a.txt"); _ = FileManagerTouch(raiz + "/sub/b.txt")
+func FileManagerTouch(_ p: String) -> Bool { let f = fopen(p, "w"); if let f { fputs("x", f); fclose(f) }; return f != nil }
+var achados: [String] = []
+if let en = NSFileManager.default.enumerator(at: URL(fileURLWithPath: raiz), includingPropertiesForKeys: nil) {
+    while let u = en.nextObject() as? NSURL { achados.append((u as URL).lastPathComponent) }
+}
+check(Set(achados) == ["a.txt", "sub", "b.txt"], "FileManager.enumerator(at:) (\(achados.sorted()))")
+_ = FileManagerTouch(raiz + "/novo.txt")
+var resErr = ""
+let res: URL?
+do { res = try NSFileManager.default.replaceItemAt(URL(fileURLWithPath: raiz + "/a.txt"), withItemAt: URL(fileURLWithPath: raiz + "/novo.txt")) } catch { res = nil; resErr = "\(error)" }
+check(res?.lastPathComponent == "a.txt" && access(raiz + "/novo.txt", F_OK) != 0, "FileManager.replaceItemAt \(resErr)")
+
+// IntegerFormatStyle
+let fmtBR = 1234567.formatted(IntegerFormatStyle<Int>(locale: Locale(identifier: "pt_BR")))
+check(fmtBR == "1.234.567", "IntegerFormatStyle (pt_BR) (\(fmtBR), \(Locale(identifier: "pt_BR").identifier))")
+check((-42).formatted(IntegerFormatStyle<Int>(locale: Locale(identifier: "en_US"))) == "-42", "IntegerFormatStyle negativo")
+
 print("foundation3: \(ok)/\(total) ok")

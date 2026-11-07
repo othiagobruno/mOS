@@ -598,7 +598,18 @@ typedef struct { u32 bits, size; mach_port_t remote, local; u32 voucher; int id;
 #define MACH_SEND_INVALID_DEST 0x10000003
 kern_return_t mach_msg(mach_msg_header_t *msg, int option, u32 send_size, u32 rcv_size, mach_port_t rcv_name, u32 timeout, mach_port_t notify) {
     mos_mach_msg_args_t a = {(u64)msg, (u32)option, send_size, rcv_size, rcv_name, timeout, notify};
-    return (kern_return_t)cx_syscall(SYS_MACH_MSG, (long)&a, 0, 0, 0, 0);
+    kern_return_t r = (kern_return_t)cx_syscall(SYS_MACH_MSG, (long)&a, 0, 0, 0, 0);
+    /* diagnóstico (ca-log): erro de recepção que não é prazo/interrupção. O ChannelMac do Mojo para de vigiar o canal
+     * quando o mach_msg falha, e as mensagens seguintes ficam na fila para sempre */
+    if (r && (option & 2) && r != 0x10004003 && r != 0x10004005) {
+        extern int cx_ca_diag(void);
+        extern int cx_fdprintf(int fd, const char *fmt, ...);
+        static int n;
+        if (cx_ca_diag() && ++n <= 30)
+            cx_fdprintf(2, "[ca] mach_msg: recepção na porta 0x%x falhou: 0x%x (opção 0x%x, tamanho %u, thread %ld)\n",
+                        rcv_name, (unsigned)r, (unsigned)option, rcv_size, SYS0(SYS_GETTID));
+    }
+    return r;
 }
 /* mach_port_peek: há mensagem? devolve tamanho/seqno/id da próxima sem consumir */
 kern_return_t mach_port_peek(mach_port_t task, mach_port_t name, u32 type, u32 *seq, u32 *size, void *ctx, void *trailer, u32 *tsize) {

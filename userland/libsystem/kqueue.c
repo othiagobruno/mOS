@@ -53,7 +53,7 @@ typedef struct {
     u64 next_ms;            /* EVFILT_TIMER */
     u64 period_ms;
 } knote_t;
-typedef struct { int used; knote_t kn[MAX_KN]; volatile int lock; } kq_t;
+typedef struct { int used; knote_t kn[MAX_KN]; volatile int lock; int rr; } kq_t;   /* rr: onde a próxima varredura começa */
 static kq_t *kqs[MAX_KQ];
 
 /* descritor pronto para leitura? pipes: bytes disponíveis ou a outra ponta fechou (SYS_FSTAT do
@@ -117,6 +117,14 @@ static knote_t *find(kq_t *q, u64 ident, i16 filter) {
 /* aplica uma mudança; devolve 0 ou um errno */
 static int apply(kq_t *q, const kevent64_s *c) {
     knote_t *k = find(q, c->ident, c->filter);
+    if (c->filter == EVFILT_MACHPORT && (c->flags & (EV_ADD | EV_DELETE))) {   /* diagnóstico (ca-log): portas vigiadas */
+        extern int cx_ca_diag(void);
+        extern int cx_fdprintf(int fd, const char *fmt, ...);
+        static int n;
+        if (cx_ca_diag() && ++n <= 60)
+            cx_fdprintf(2, "[ca] kqueue %p: EVFILT_MACHPORT %s porta 0x%llx (fflags 0x%x, thread %ld)\n", (void *)q,
+                        (c->flags & EV_DELETE) ? "tira" : "põe", (unsigned long long)c->ident, (unsigned)c->fflags, SYS0(SYS_GETTID));
+    }
     if (c->flags & EV_DELETE) { if (!k) return CX_ENOENT; k->used = 0; return 0; }
     if (c->flags & EV_ADD) {
         if (!k) {
@@ -169,6 +177,17 @@ static int ready(knote_t *k, kevent64_s *out) {
     }
     case EVFILT_MACHPORT: {
         int n = cx_mach_pending((u32)k->ev.ident);
+        {   /* diagnóstico (ca-log): a 1ª vez que cada porta aparece pronta (a porta do canal Mojo do renderer ficava com
+             * mensagens paradas mesmo vigiada) */
+            extern int cx_ca_diag(void);
+            extern int cx_fdprintf(int fd, const char *fmt, ...);
+            static u32 seen[256]; static int nseen;
+            if (n && cx_ca_diag()) {
+                int s = 0;
+                while (s < nseen && seen[s] != (u32)k->ev.ident) s++;
+                if (s == nseen && nseen < 256) { seen[nseen++] = (u32)k->ev.ident; cx_fdprintf(2, "[ca] kevent64: porta 0x%x pronta (%d msg, fflags 0x%x, thread %ld)\n", (u32)k->ev.ident, n, (unsigned)k->ev.fflags, SYS0(SYS_GETTID)); }
+            }
+        }
         if (!n) return 0;
         out->data = (i64)k->ev.ident;
         if ((k->ev.fflags & MACH_RCV_MSG) && k->ev.ext[0] && k->ev.ext[1]) {
@@ -246,7 +265,12 @@ int kevent64(int fd, const kevent64_s *changes, int nchanges, kevent64_s *events
     for (;;) {
         u64 next_timer = ~0ull;
         kl(q);
-        for (int k = 0; k < MAX_KN && out < nevents; k++) {
+        /* rodízio: a varredura começa depois do último entregue. Começando sempre do knote 0, um evento sempre pronto
+         * (porta de nível alto que o dono não esvazia) enchia o buffer do chamador a cada volta e os de índice maior
+         * nunca eram entregues */
+        int start = q->rr, last = -1;
+        for (int j = 0; j < MAX_KN && out < nevents; j++) {
+            int k = (start + j) % MAX_KN;
             knote_t *n = &q->kn[k];
             if (!ready(n, &events[out])) {
                 if (n->used && n->enabled && n->ev.filter == EVFILT_TIMER && n->next_ms < next_timer) next_timer = n->next_ms;
@@ -254,7 +278,9 @@ int kevent64(int fd, const kevent64_s *changes, int nchanges, kevent64_s *events
             }
             if (n->ev.flags & EV_ONESHOT) n->used = 0;
             out++;
+            last = k;
         }
+        if (last >= 0) q->rr = (last + 1) % MAX_KN;
         ku(q);
         if (out) return out;
         u64 now = now_ms();

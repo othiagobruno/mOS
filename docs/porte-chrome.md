@@ -98,6 +98,30 @@ fila principal (ou objeto de dispatch com o mesmo começo) onde ele espera outra
 a chamada vem de uma thread que não é a principal. Para achar a cadeia, falta um tracepoint condicional (os atuais disparam
 na 1ª passagem, que é uma alocação comum): ex. só quando `rdi > 0x3FFE00000`, em kernel/proc/tracepoint.c.
 
+### Primeira janela (7 nov. 2026, manhã)
+
+Com `0x83b51@pilha` (modo novo do tracepoint: a cadeia de rbp inteira) a alocação absurda saiu de
+`sandbox_create_params`/`sandbox_compile_string` (sandbox::Seatbelt): o Chromium lê o perfil compilado como
+`struct sandbox_profile {builtin, data, size}` e copia `size` bytes; o mOS devolvia uma struct de 8 bytes e o "size" era a
+memória estática vizinha (a classe `OS_dispatch_queue_main`). darwin.c agora devolve a struct real com um bytecode marcador.
+
+Depois disso o Chrome abre **a primeira janela**: barra de menus completa em português (Arquivo, Editar, Visualização,
+Histórico, Favoritos, Perfis, Guia, Janela, Ajuda), a janela "Que bom te ver no Google Chrome!" e um alerta "Ocorreu um erro
+ao abrir seu perfil...". Os textos vinham só com a 1ª letra: `CFStringCreateWithBytes` só tratava `0x0100` como UTF-16 e o
+Chrome usa UTF-16LE (`0x14000100`); agora UTF-16 (BOM/LE/BE, pares substitutos), UTF-32 e Latin-1 viram UTF-8 completo.
+
+Próximos: o erro de perfil (arquivos do perfil em `~/Library/Application Support/Google/Chrome`), o conteúdo da janela
+(renderização pelos helpers: o processo de GPU sai com "errors during initialization", sem GPU) e "Janela/Ajuda"
+duplicados na barra (o mOS acrescenta os dele).
+
+**Perfil (7 nov., 6h):** o alerta "Ocorreu um erro ao abrir seu perfil" vinha do SQLite ("Unable to commit a
+transaction" no `login_database`): o `ftruncate` do libSystem dava ENOTSUP sempre que o tamanho mudava (o journal é truncado
+a cada commit) e o `fcntl(F_GETLK)` não preenchia a `struct flock`. Agora há `SYS_FTRUNCATE` (53) no kernel e F_GETLK
+responde `F_UNLCK`. Sem o alerta, a janela "Que bom te ver no Google Chrome!" fica ativa — com o conteúdo em branco.
+Testado com `-Argumentos '--disable-gpu --in-process-gpu --no-sandbox'` (o processo de GPU deixa de encerrar).
+Próximo: a renderização (só dois helpers sobem; ver se o renderer da página de boas-vindas nasce e se o quadro do
+compositor chega à NSWindow, como no Electron do VS Code) e o TLS do serviço de rede ("handshake failed", net_error -21).
+
 Ferramentas: `tools\stage-chrome.ps1 -AutoAbrir` (o `init` abre o Chrome no boot, sem depender do mouse no QEMU) e
 os tracepoints (`/Sistema/Biblioteca/diag-tracepoints`), que agora também valem para imagens do `dlopen` (macho.c).
 

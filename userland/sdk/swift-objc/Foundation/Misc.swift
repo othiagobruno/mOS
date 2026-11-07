@@ -8,12 +8,26 @@ public func NSLog(_ format: String, _ args: CVarArg...) {
 }
 
 extension String {
-    public init(format: String, _ arguments: CVarArg...) {
+    // assinaturas da Apple (__shared entra no nome mangled)
+    public init(format: __shared String, _ arguments: CVarArg...) {
         self = _mosString(NSString(format: format, arguments: arguments))
     }
 
-    public init(format: String, arguments: [CVarArg]) {
+    public init(format: __shared String, arguments: __shared [CVarArg]) {
         self = _mosString(NSString(format: format, arguments: arguments))
+    }
+
+    /// o mOS formata sempre no locale "C" (o do libSystem)
+    public init(format: __shared String, locale: __shared Locale?, _ args: CVarArg...) {
+        self = _mosString(NSString(format: format, arguments: args))
+    }
+
+    public init(format: __shared String, locale: __shared Locale?, arguments: __shared [CVarArg]) {
+        self = _mosString(NSString(format: format, arguments: arguments))
+    }
+
+    public static func localizedStringWithFormat(_ format: String, _ arguments: CVarArg...) -> String {
+        _mosString(NSString(format: format, arguments: arguments))
     }
 }
 

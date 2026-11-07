@@ -61,6 +61,7 @@ enum {
     SYS_FDFLAGS,       /* 50: (fd, mudar, valor) -> flags        FD_CLOEXEC por fd: mudar=1 grava valor (0/1); devolve 1 se close-on-exec */
     SYS_PREAD,         /* 51: (fd, buf, n, deslocamento em r10) -> lidos      sem mexer na posição do fd (atômico entre threads) */
     SYS_PWRITE,        /* 52: (fd, buf, n, deslocamento em r10) -> escritos */
+    SYS_FTRUNCATE,     /* 53: (fd, tamanho) -> 0                    muda o tamanho de um arquivo aberto (zeros ao crescer) */
     SYS_COUNT,
     SYS_GUI_FIRST = 64,/* 64..79: interface gráfica dos apps do macOS (kernel/compat/guisys.c) */
     SYS_GUI_LAST = 79,

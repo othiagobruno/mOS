@@ -827,6 +827,22 @@ static void dump_threads_maybe(int_frame_t *cur) {
             if (o > 150) { kprintf("despejo:   pilha:%s\n", line); o = 0; }
         }
         if (o) kprintf("despejo:   pilha:%s\n", line);
+        /* cadeia de quadros (rbp -> [rbp+8]): o Chromium mantém o ponteiro de quadro, então isto é a pilha de chamadas
+         * de verdade (a varredura acima também pega endereços velhos que sobraram na pilha) */
+        {
+            char fl[200];
+            usize fo = 0;
+            u64 bp = f->rbp;
+            for (int d = 0; d < 12 && bp && !(bp & 7); d++) {
+                u64 pair[2];
+                if (!uvm_copy_in(t->proc, pair, bp, 16) || !pair[1]) break;
+                fo += (usize)snprintf(fl + fo, sizeof fl - fo, " %llx", pair[1]);
+                if (fo > 150) { kprintf("despejo:   quadros:%s\n", fl); fo = 0; }
+                if (pair[0] <= bp) break;                   /* a cadeia sobe na pilha */
+                bp = pair[0];
+            }
+            if (fo) kprintf("despejo:   quadros:%s\n", fl);
+        }
     }
     /* filas Mach com mensagens que ninguém recebeu ainda (machipc.c) */
     { extern void machipc_dump_queues(process_t *p); for (process_t *q = procs; q; q = q->next) machipc_dump_queues(q); }
@@ -1049,6 +1065,20 @@ static u64 pipe_op(int_frame_t *f, thread_t *t, pipe_t *pp, bool rd, u64 buf, u6
 }
 
 /* grava len bytes na posição off (o VFS guarda arquivos inteiros: reconstrói o conteúdo) */
+/* ftruncate: o SQLite (journal TRUNCATE, encolher o banco) precisa; sem isso o commit do perfil do Chrome falhava */
+static i64 file_truncate(const char *path, u64 nsz) {
+    vnode_t *v = vfs_lookup(path);
+    if (!v) return -MOS_ENOENT;
+    if (v->dir) return -MOS_EISDIR;
+    if (nsz == v->size) return 0;
+    if (nsz > (256ull << 20)) return -MOS_ENOSPC;
+    u8 *buf = kcalloc(1, nsz ? nsz : 1);
+    if (!buf) return -MOS_ENOMEM;
+    if (v->data) memcpy(buf, v->data, MIN(nsz, (u64)v->size));
+    vnode_t *w = vfs_write_file(path, buf, nsz);
+    kfree(buf);
+    return w ? 0 : -MOS_ENOENT;
+}
 static i64 file_pwrite(const char *path, u64 off, const u8 *data, u64 len) {
     vnode_t *v = vfs_lookup(path);
     if (v && v->dir) return -MOS_EISDIR;
@@ -1697,6 +1727,13 @@ u64 proc_syscall(int_frame_t *f) {
         kfree(tmp);
         break;
     }
+    case SYS_FTRUNCATE: {
+        if (fd_get(p, a) < 0 || p->fds[a].pipe) { r = fd_get(p, a) < 0 ? -MOS_EBADF : -MOS_EINVAL; break; }
+        if (!(p->fds[a].flags & (MOS_O_WRONLY | MOS_O_RDWR))) { r = -MOS_EBADF; break; }
+        if (is_devnull(p->fds[a].path)) { r = 0; break; }
+        r = file_truncate(p->fds[a].path, b);
+        break;
+    }
     case SYS_LSEEK: {
         if (fd_get(p, a) < 0) { r = -MOS_EBADF; break; }
         vnode_t *v = vfs_lookup(p->fds[a].path);
@@ -1942,6 +1979,12 @@ u64 proc_syscall(int_frame_t *f) {
         f->rax = 0;                                     /* o filho vê 0 */
         thread_t *ct = uthread_clone(q, f);
         if (!ct) { for (int i = 0; i < PROC_MAX_FDS; i++) fd_close(q, i); free_address_space(q); if (q->tty) q->tty->refs--; kfree(q); r = -MOS_ENOMEM; break; }
+        {   /* o filho herda o GS de usuário da thread que chamou fork (TLS: pthread_getspecific, thread_local);
+             * com 0, o primeiro acesso a TLS no filho falhava (o ruby caía logo depois do fork) */
+            u32 lo, hi;
+            __asm__ volatile("rdmsr" : "=a"(lo), "=d"(hi) : "c"(0xC0000101u));
+            ct->gs_base = (u64)hi << 32 | lo;
+        }
         q->main = ct;
         q->nthreads = 1;
         q->next = procs;

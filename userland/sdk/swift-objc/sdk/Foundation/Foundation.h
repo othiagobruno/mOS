@@ -321,4 +321,45 @@ typedef NS_OPTIONS(NSUInteger, NSKeyValueObservingOptions) {
 /* ---- NSLog */
 FOUNDATION_EXPORT void NSLogv(NSString *format, va_list args) NS_FORMAT_FUNCTION(1,0);
 
+/* ---- marco C: NSCoder, NSFileManager, NSUndoManager (o que as extensões Swift da Apple usam) */
+@class NSCoder;
+@protocol NSCoding
+- (void)encodeWithCoder:(NSCoder *)coder;
+- (nullable instancetype)initWithCoder:(NSCoder *)coder;
+@end
+
+@interface NSCoder : NSObject
+- (nullable id)decodeObjectForKey:(NSString *)key;
+- (nullable id)decodeObjectOfClass:(Class)aClass forKey:(NSString *)key;
+@end
+
+typedef NS_OPTIONS(NSUInteger, NSDirectoryEnumerationOptions) {
+    NSDirectoryEnumerationSkipsSubdirectoryDescendants = 1UL << 0,
+    NSDirectoryEnumerationSkipsPackageDescendants = 1UL << 1,
+    NSDirectoryEnumerationSkipsHiddenFiles = 1UL << 2,
+    NSDirectoryEnumerationIncludesDirectoriesPostOrder = 1UL << 3,
+    NSDirectoryEnumerationProducesRelativePathURLs = 1UL << 4,
+};
+typedef NS_OPTIONS(NSUInteger, NSFileManagerItemReplacementOptions) {
+    NSFileManagerItemReplacementUsingNewMetadataOnly = 1UL << 0,
+    NSFileManagerItemReplacementWithoutDeletingBackupItem = 1UL << 1,
+};
+
+@interface NSDirectoryEnumerator<ObjectType> : NSEnumerator<ObjectType>
+- (void)skipDescendants;
+@property (readonly) NSUInteger level;
+@end
+
+@interface NSFileManager : NSObject
+@property (class, readonly, strong) NSFileManager *defaultManager;
+- (BOOL)fileExistsAtPath:(NSString *)path;
+- (nullable NSDirectoryEnumerator<NSURL *> *)enumeratorAtURL:(NSURL *)url includingPropertiesForKeys:(nullable NSArray<NSURLResourceKey> *)keys options:(NSDirectoryEnumerationOptions)mask errorHandler:(nullable BOOL (^)(NSURL *url, NSError *error))handler NS_REFINED_FOR_SWIFT;
+@end
+
+@interface NSUndoManager : NSObject
+- (void)registerUndoWithTarget:(id)target selector:(SEL)selector object:(nullable id)anObject;
+- (void)undo;
+@property (readonly) BOOL canUndo;
+@end
+
 NS_ASSUME_NONNULL_END

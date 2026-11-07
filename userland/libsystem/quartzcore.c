@@ -749,6 +749,24 @@ static BOOL get_src(id contents, src_t *s) {
         s->w = (int)IOSurfaceGetWidth(contents);
         s->h = (int)IOSurfaceGetHeight(contents);
         s->premul = YES;
+        {   /* diagnóstico (ca-log): o que há dentro do IOSurface (o display do Chromium desenha nele; a janela do VS Code
+             * continuava lisa mesmo com o renderer mandando quadros) — cores distintas numa grade de 16x16 e 3 amostras */
+            static int n;
+            if (s->px && cx_ca_diag() && log_now(&n)) {
+                u32 seen[64]; int ns = 0;
+                for (int gy = 0; gy < 16; gy++)
+                    for (int gx = 0; gx < 16; gx++) {
+                        u32 v = *(const u32 *)(s->px + (long)(gy * (s->h - 1) / 15) * s->bpr + (long)(gx * (s->w - 1) / 15) * 4);
+                        int k2 = 0;
+                        while (k2 < ns && seen[k2] != v) k2++;
+                        if (k2 == ns && ns < 64) seen[ns++] = v;
+                    }
+                const u32 *p0 = (const u32 *)s->px;
+                QLOG("IOSurface %dx%d (bpr %ld) desenhado #%d: %d cores na grade; (0,0)=%08x centro=%08x (40,100)=%08x", s->w, s->h,
+                     s->bpr, n, ns, p0[0], *(const u32 *)(s->px + (long)(s->h / 2) * s->bpr + (long)(s->w / 2) * 4),
+                     *(const u32 *)(s->px + 100L * s->bpr + 40L * 4));
+            }
+        }
         return s->px != 0;
     }
     extern int cx_cgimage_src(const void *img, const u8 **px, long *bpr, int *w, int *h, int *premul);

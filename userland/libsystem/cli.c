@@ -216,13 +216,12 @@ unsigned umask(unsigned m) { unsigned o = cur_umask; cur_umask = m & 0777; retur
 /* travas de arquivo: o mOS tem um usuário e nenhum outro processo trava os mesmos arquivos; aceitar é o útil */
 int flock(int fd, int op) { (void)fd; (void)op; return 0; }
 int lockf(int fd, int cmd, long len) { (void)fd; (void)cmd; (void)len; return 0; }
-/* o kernel ainda não muda o tamanho de um arquivo aberto */
+/* SYS_FTRUNCATE (o SQLite trunca o journal a cada commit; antes isto dava ENOTSUP e o perfil do Chrome não abria) */
 int ftruncate(int fd, long len) {
-    mos_stat_t st;
-    if (SYS2(SYS_FSTAT, fd, &st) < 0) { cx_errno = CX_EBADF; return -1; }
-    if ((unsigned long long)len == st.size) return 0;
-    cx_errno = CX_ENOTSUP;
-    return -1;
+    if (len < 0) { cx_errno = CX_EINVAL; return -1; }
+    long r = SYS2(SYS_FTRUNCATE, fd, len);
+    if (r < 0) { cx_errno = (int)-r; return -1; }
+    return 0;
 }
 /* fdopendir: libc.c (o caminho do fd vem do SYS_FDPATH) */
 int fclonefileat(int src, int dirfd, const char *dst, unsigned flags) { (void)src; (void)dirfd; (void)dst; (void)flags; cx_errno = CX_ENOTSUP; return -1; }

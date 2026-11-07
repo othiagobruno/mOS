@@ -1054,6 +1054,15 @@ int fcntl(int fd, int cmd, ...) {
         __builtin_va_list ap; __builtin_va_start(ap, cmd); char *buf = __builtin_va_arg(ap, char *); __builtin_va_end(ap);
         return ret_errno(SYS3(SYS_FDPATH, fd, buf, 1024)) < 0 ? -1 : 0;
     }
+    /* travas POSIX (struct flock do macOS: {off_t l_start, l_len; pid_t l_pid; short l_type, l_whence}). O mOS não tem
+     * travas entre processos: F_SETLK/F_SETLKW (8/9) sempre conseguem e F_GETLK (7) responde "ninguém trava" (l_type =
+     * F_UNLCK). Antes F_GETLK devolvia 0 sem preencher a struct: o SQLite lia lixo como trava de outro processo e o
+     * commit falhava ("Unable to commit a transaction" no perfil do Chrome). */
+    if (cmd == 7) {
+        __builtin_va_list ap; __builtin_va_start(ap, cmd); u8 *fl = __builtin_va_arg(ap, u8 *); __builtin_va_end(ap);
+        if (fl) *(short *)(fl + 20) = 2;                /* l_type = F_UNLCK */
+        return 0;
+    }
     return 0;
 }
 long sysconf(int name) {
