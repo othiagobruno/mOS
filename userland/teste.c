@@ -95,6 +95,46 @@ void _start(const char *arg) {
     int fc = wait(fk);
     CHECK(fk > 0 && fc == 33 && shared == 1234 && heap[0] == 11, "fork + COW (filho %d, pai manteve %u/%u)", (i64)fc, shared, (u64)heap[0]);
 
+    /* memória sob demanda (b = 3) + fork: página tocada antes do fork é COW, a não tocada continua sob demanda nos dois */
+    {
+        volatile u64 *lz = (volatile u64 *)sys3(SYS_MMAP, 1 << 20, 3, 0);
+        int lok = (i64)lz > 0;
+        if (lok) lz[0] = 7;                                         /* página 0 tocada; a 128 (512 KiB) não */
+        int lf = lok ? fork() : -1;
+        if (lf == 0) {
+            int okc = lz[0] == 7 && lz[65536] == 0;
+            lz[0] = 8; lz[65536] = 9;
+            exit(okc && lz[0] == 8 && lz[65536] == 9 ? 44 : 1);
+        }
+        int lc = lf > 0 ? wait(lf) : -1;
+        CHECK(lok && lc == 44 && lz[0] == 7 && lz[65536] == 0, "mmap sob demanda + fork (filho %d, pai %u/%u)",
+              (i64)lc, lok ? lz[0] : 0, lok ? lz[65536] : 0);
+        if (lok) munmap((void *)lz, 1 << 20);
+    }
+
+    /* mmap de arquivo sob demanda (b = 4): páginas lidas do arquivo na falta, privadas (MAP_PRIVATE) e COW no fork */
+    {
+        static char fbuf[3 * 4096 + 100];
+        for (usize i = 0; i < sizeof fbuf; i++) fbuf[i] = (char)('a' + i % 23);
+        write_file("/tmp-mmap.bin", fbuf, sizeof fbuf);
+        int fd = open("/tmp-mmap.bin", MOS_O_RDONLY);
+        volatile char *fm = (volatile char *)sys4(SYS_MMAP, 5 * 4096, 4, (u64)fd, 4096);   /* a partir da página 1 */
+        int fok = fd >= 0 && (i64)fm > 0;
+        for (usize i = 0; fok && i < 2 * 4096 + 100; i++) if (fm[i] != fbuf[4096 + i]) fok = 0;
+        if (fok && (fm[2 * 4096 + 100] || fm[4 * 4096])) fok = 0;   /* depois do fim do arquivo: zeros */
+        if (fd >= 0) close(fd);                                     /* o mapeamento sobrevive ao close */
+        int pend = fok && fm[3 * 4096] == 0;                       /* página ainda não tocada: resolvida depois do close */
+        if (fok) fm[0] = '#';                                       /* privada: o arquivo não muda */
+        int ff = fok ? fork() : -1;
+        if (ff == 0) { int okc = fm[0] == '#'; fm[0] = '!'; exit(okc && fm[0] == '!' ? 55 : 1); }
+        int fc2 = ff > 0 ? wait(ff) : -1;
+        i64 rn = sys3(SYS_READFILE, (u64)"/tmp-mmap.bin", (u64)fbuf, sizeof fbuf);
+        CHECK(fok && pend && fc2 == 55 && fm[0] == '#' && rn == (i64)sizeof fbuf && fbuf[4096] == (char)('a' + 4096 % 23),
+              "mmap de arquivo sob demanda (privado, fork %d)", (i64)fc2);
+        if (fok) munmap((void *)fm, 5 * 4096);
+        unlink("/tmp-mmap.bin");
+    }
+
     /* sinais: tratador no próprio processo, SIGTERM padrão e SIGSEGV com tratador */
     signal(MOS_SIGUSR1, on_usr1);
     sigkill(getpid(), MOS_SIGUSR1);

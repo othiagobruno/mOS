@@ -586,8 +586,15 @@ void *mmap(void *addr, size_t len, int prot, int flags, int fd, off_t off) {
         return addr;
     }
     /* anônimo: PROT_NONE = só reservar endereços (as páginas vêm no mprotect); com acesso = sob demanda, como no
-     * macOS (o JavaScriptCore do Claude Code pede 1-4 GB assim e usa uma fração). Arquivo: páginas na hora. */
+     * macOS (o JavaScriptCore do Claude Code pede 1-4 GB assim e usa uma fração). */
     int anon = (flags & 0x1000) != 0;
+    /* arquivo MAP_PRIVATE ou só leitura: o kernel lê cada página na primeira falta (b = 4, kernel/mm/lazy.c).
+     * MAP_SHARED com escrita e o que o kernel recusar (pipe, terminal, /dev/null) seguem pela cópia com read() */
+    if (!anon && fd >= 0 && !(off & 0xFFF) && !((flags & 1) && (prot & 2))) {
+        long k = SYS4(SYS_MMAP, len, 4, fd, off);
+        if (k >= 0) return (void *)k;
+        if (k == -9 || k == -13) { cx_errno = (int)-k; return (void *)-1; }   /* EBADF, EACCES */
+    }
     long r = SYS2(SYS_MMAP, len, anon ? (prot ? 3 : 1) : 0);
     if (r < 0) { cx_errno = (int)-r; return (void *)-1; }
     if (!(flags & 0x1000) && fd >= 0) {           /* MAP_ANON = 0x1000; senão: copia o arquivo */

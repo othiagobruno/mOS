@@ -224,14 +224,48 @@ static bool pref_ready(void) {
     return pref != NULL;
 }
 
-static u16 page_refs(u64 phys) { u64 pn = phys >> 12; return pref && pn < pref_n && pref[pn] ? pref[pn] : 1; }
+/* As contagens são atômicas (CAS): com threads de usuário em vários núcleos, dois processos podem largar ou
+ * copiar a mesma página COW ao mesmo tempo. 0 e 1 querem dizer "um dono só". */
+static u16 page_refs(u64 phys) {
+    u64 pn = phys >> 12;
+    u16 v = pref && pn < pref_n ? __atomic_load_n(&pref[pn], __ATOMIC_ACQUIRE) : 0;
+    return v ? v : 1;
+}
+
+/* mais um dono para a página (fork, imagem compartilhada, memória Mach) */
+static void page_ref_inc(u64 phys) {
+    u64 pn = phys >> 12;
+    if (!pref || pn >= pref_n) return;
+    u16 v = __atomic_load_n(&pref[pn], __ATOMIC_RELAXED), nv;
+    do {
+        nv = (u16)((v ? v : 1) + 1);
+        if (!nv) return;                                /* saturou (65535 donos): a página fica para sempre */
+    } while (!__atomic_compare_exchange_n(&pref[pn], &v, nv, true, __ATOMIC_ACQ_REL, __ATOMIC_RELAXED));
+}
 
 /* larga uma referência à página; libera quando era a última */
 static void page_put(u64 phys) {
     u64 pn = phys >> 12;
-    if (pref && pn < pref_n && pref[pn] > 1) { pref[pn]--; return; }
-    if (pref && pn < pref_n) pref[pn] = 0;
+    if (pref && pn < pref_n) {
+        u16 v = __atomic_load_n(&pref[pn], __ATOMIC_RELAXED);
+        for (;;) {
+            if (v == 0xFFFF) return;                    /* saturada: nunca é liberada */
+            u16 nv = v > 1 ? (u16)(v - 1) : 0;
+            if (__atomic_compare_exchange_n(&pref[pn], &v, nv, true, __ATOMIC_ACQ_REL, __ATOMIC_RELAXED)) {
+                if (v > 1) return;                      /* ainda tem outro dono */
+                break;
+            }
+        }
+    }
     pmm_free(phys, 1);
+}
+
+/* TLB: a CPU atual (se estiver neste espaço) e as outras CPUs com o mesmo CR3. smp_tlb_shootdown fica em
+ * kernel/proc/sched.c (sessão SMP); esta definição fraca vale enquanto só o BSP roda threads de usuário. */
+__attribute__((weak)) void smp_tlb_shootdown(u64 cr3) { (void)cr3; }
+static void vm_flush(process_t *p, u64 va) {
+    if ((u64)p->pml4 == read_cr3()) __asm__ volatile("invlpg (%0)" :: "r"(va & ~0xFFFULL) : "memory");
+    smp_tlb_shootdown((u64)p->pml4);
 }
 
 static bool cow_break(process_t *p, u64 *e, u64 va) {
@@ -240,10 +274,15 @@ static bool cow_break(process_t *p, u64 *e, u64 va) {
         u64 np = pmm_alloc(1);
         if (!np) return false;
         memcpy((void *)np, (void *)phys, 4096);
-        pref[phys >> 12]--;
         *e = np | PTE_P | PTE_RW | PTE_U;
-    } else *e = (*e | PTE_RW) & ~PTE_COW;
-    if ((u64)p->pml4 == read_cr3()) __asm__ volatile("invlpg (%0)" :: "r"(va & ~0xFFFULL) : "memory");
+        vm_flush(p, va);                                /* nenhuma CPU pode continuar lendo a original... */
+        /* ...antes de largar a referência a ela: se o outro dono a largou enquanto copiávamos, esta era a última
+         * e a página é liberada (antes, pref[]-- deixava a página órfã nesse caso) */
+        page_put(phys);
+        return true;
+    }
+    *e = (*e | PTE_RW) & ~PTE_COW;
+    vm_flush(p, va);
     return true;
 }
 
@@ -251,8 +290,7 @@ static bool cow_break(process_t *p, u64 *e, u64 va) {
  * como as do COW; cada mapeamento e cada objeto de memória é um dono */
 void uvm_page_get(u64 phys) {
     if (!pref_ready()) return;
-    u64 pn = phys >> 12;
-    if (pn < pref_n) pref[pn] = (u16)(page_refs(phys) + 1);
+    page_ref_inc(phys);
 }
 void uvm_page_put(u64 phys) { page_put(phys); }
 bool uvm_map_phys(process_t *p, u64 va, u64 phys, bool rw) {
@@ -263,7 +301,7 @@ bool uvm_map_phys(process_t *p, u64 va, u64 phys, bool rw) {
     uvm_page_get(phys);
     *e = (phys & PTE_ADDR) | PTE_P | PTE_U | (rw ? PTE_RW : 0);
     p->mem_pages++;
-    if ((u64)p->pml4 == read_cr3()) __asm__ volatile("invlpg (%0)" :: "r"(va & ~0xFFFULL) : "memory");
+    vm_flush(p, va);
     return true;
 }
 
@@ -276,7 +314,7 @@ bool uvm_share_cow(process_t *p, u64 va, u64 *phys) {
     u64 ph = *e & PTE_ADDR;
     uvm_page_get(ph);
     if (*e & PTE_RW) *e = (*e & ~PTE_RW) | PTE_COW;
-    if ((u64)p->pml4 == read_cr3()) __asm__ volatile("invlpg (%0)" :: "r"(va & ~0xFFFULL) : "memory");
+    vm_flush(p, va);
     *phys = ph;
     return true;
 }
@@ -288,7 +326,17 @@ bool uvm_map_cow(process_t *p, u64 va, u64 phys) {
     uvm_page_get(phys);
     *e = (phys & PTE_ADDR) | PTE_P | PTE_U | PTE_COW;
     p->mem_pages++;
-    if ((u64)p->pml4 == read_cr3()) __asm__ volatile("invlpg (%0)" :: "r"(va & ~0xFFFULL) : "memory");
+    vm_flush(p, va);
+    return true;
+}
+/* página nova (um dono só, já preenchida) em va, se lá ainda não houver página: false = já havia (outra thread
+ * resolveu a mesma falta) ou faltou memória para as tabelas; o chamador então devolve a página. kernel/mm/lazy.c */
+bool uvm_install(process_t *p, u64 va, u64 phys) {
+    u64 *e = walk(p, va & ~0xFFFULL, true);
+    if (!e || (*e & PTE_P)) return false;
+    *e = (phys & PTE_ADDR) | PTE_P | PTE_RW | PTE_U;
+    p->mem_pages++;
+    vm_flush(p, va);
     return true;
 }
 u16 uvm_page_refs(u64 phys) { return page_refs(phys); }
@@ -360,8 +408,7 @@ static bool cow_copy_level(process_t *dst, u64 *s, u64 *d, int level) {
         if (!(s[i] & PTE_P)) continue;
         if (level == 1) {
             if (s[i] & PTE_RW) s[i] = (s[i] & ~PTE_RW) | PTE_COW;
-            u64 pn = (s[i] & PTE_ADDR) >> 12;
-            if (pn < pref_n) pref[pn] = (u16)(page_refs(s[i] & PTE_ADDR) + 1);
+            page_ref_inc(s[i] & PTE_ADDR);
             d[i] = s[i];
             dst->mem_pages++;
             continue;
@@ -1906,6 +1953,26 @@ u64 proc_syscall(int_frame_t *f) {
             r = (i64)at;
             break;
         }
+        /* b = 4: arquivo sob demanda (kernel/mm/lazy.c). c = fd, r10 = deslocamento no arquivo (múltiplo de 4096).
+         * Cada página é lida do arquivo na primeira falta e fica privada do processo (MAP_PRIVATE). Pipes, terminais
+         * e /dev/null devolvem EINVAL: o libSystem cai para a cópia com read() */
+        if (b == 4) {
+            extern bool lazy_add_file(process_t *p, u64 va, u64 len, const char *path, u64 foff);
+            u64 foff = f->r10;
+            if (fd_get(p, c) < 0) { r = -MOS_EBADF; break; }
+            if (p->fds[c].pipe || is_devnull(p->fds[c].path)) { r = -MOS_EINVAL; break; }
+            if (p->fds[c].flags & MOS_O_WRONLY) { r = -13; break; }       /* EACCES */
+            if (!len || len > (64ull << 30) || (foff & 0xFFF)) { r = -MOS_EINVAL; break; }
+            vnode_t *v = vfs_lookup(p->fds[c].path);
+            if (!v) { r = -MOS_ENOENT; break; }
+            if (v->dir) { r = -MOS_EINVAL; break; }
+            u64 at = p->mmap_next;
+            if (at + len > USER_END) { r = -MOS_ENOMEM; MMAP_NOMEM_LOG(); break; }
+            if (!lazy_add_file(p, at, len, p->fds[c].path, foff)) { r = -MOS_ENOMEM; MMAP_NOMEM_LOG(); break; }
+            p->mmap_next += len + 4096;                     /* página de guarda entre regiões */
+            r = (i64)at;
+            break;
+        }
         if (b == 2) {
             u64 at = c & ~0xFFFULL, end = (c + a + 0xFFF) & ~0xFFFULL;
             if (!a || at < USER_MMAP_BASE || end > p->mmap_next || end < at) { r = -MOS_EINVAL; break; }
@@ -1924,18 +1991,28 @@ u64 proc_syscall(int_frame_t *f) {
     case SYS_MUNMAP: {
         if (a < USER_MMAP_BASE || a & 0xFFF || a + b > USER_END) { r = -MOS_EINVAL; break; }
         { extern void lazy_remove(process_t *p, u64 va, u64 len); lazy_remove(p, a, b); }
+        /* as páginas só voltam ao pmm depois que nenhuma CPU as enxerga mais: em lotes de 64, um
+         * smp_tlb_shootdown por lote (com threads do processo em outros núcleos) */
+        u64 gone[64];
+        int ng = 0;
         for (u64 va = a; va < a + b; ) {
             u64 *e = walk(p, va, false);
             /* sem tabela de páginas: os 2 MiB inteiros estão vazios (as reservas do V8 têm terabytes) */
             if (!e) { va = (va + 0x200000) & ~0x1FFFFFULL; continue; }
             if (*e & PTE_P) {
-                page_put(*e & 0x000FFFFFFFFFF000ULL);
+                gone[ng++] = *e & 0x000FFFFFFFFFF000ULL;
                 p->mem_pages--;
                 __asm__ volatile("invlpg (%0)" :: "r"(va) : "memory");
             }
             *e = 0;
             va += 4096;
+            if (ng == 64 || (ng && va >= a + b)) {
+                smp_tlb_shootdown((u64)p->pml4);
+                for (int k = 0; k < ng; k++) page_put(gone[k]);
+                ng = 0;
+            }
         }
+        if (ng) { smp_tlb_shootdown((u64)p->pml4); for (int k = 0; k < ng; k++) page_put(gone[k]); }
         /* liberar o topo devolve os endereços: o V8 e o PartitionAlloc reservam, aparam e soltam regiões
          * de gigabytes em laço, e sem isso o espaço de usuário se esgotava em poucos segundos */
         {
@@ -2007,6 +2084,7 @@ u64 proc_syscall(int_frame_t *f) {
         }
         if (!fork_ok) { free_address_space(q); kfree(q); r = -MOS_ENOMEM; break; }
         __asm__ volatile("mov %%cr3, %%rax; mov %%rax, %%cr3" ::: "rax", "memory");   /* o pai agora é só leitura */
+        smp_tlb_shootdown((u64)p->pml4);                /* também nas outras CPUs com threads do pai */
         q->pid = next_pid++;
         q->ppid = p->pid;
         memcpy(q->name, p->name, sizeof q->name);

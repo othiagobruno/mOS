@@ -21,10 +21,10 @@ Legenda: ✅ o mOS já tem · 🟡 parcial ou stub · ❌ não tem
 ### 1. Núcleo do kernel
 | Recurso | mOS | Onde está no ravynOS | Observação |
 |---|---|---|---|
-| Processos / espaço de usuário (ring 3) | ✅ `proc/process.c`: PML4 por processo, falhas isoladas, `kill` | `xnu/bsd/kern` (proc, fork, exec), `xnu/osfmk/x86_64` | Sem `fork` (só `spawn`). |
+| Processos / espaço de usuário (ring 3) | ✅ `proc/process.c`: PML4 por processo, falhas isoladas, `kill` | `xnu/bsd/kern` (proc, fork, exec), `xnu/osfmk/x86_64` | `fork` com COW (`SYS_FORK`), `execve`, `posix_spawn`, `waitpid`. |
 | Threads + escalonador preemptivo | ✅ `proc/sched.c`: threads do kernel e de usuário, fatias de 4 ms | `xnu/osfmk/kern/sched_*.c` | O desktop é a thread 0 cooperativa (cede só em `hlt`). |
 | Syscalls | ✅ `int 0x80`, 31 chamadas (`include/syscall.h`, `-errno`) | `xnu/bsd/kern/syscalls.master`, `Libraries/Libsystem/libsystem_kernel` | Tabela própria; o Mach-O entra por cima (sessão de compatibilidade). |
-| VM com espaços por processo, *page fault*, COW | 🟡 espaços por processo, `brk`, `mmap`/`munmap` anônimo; sem COW nem paginação sob demanda | `xnu/osfmk/vm/` | |
+| VM com espaços por processo, *page fault*, COW | ✅ espaços por processo, `brk`, `mmap`/`munmap`; paginação sob demanda (anônima e de arquivo, `mm/lazy.c`); COW no `fork` e nas imagens Mach-O compartilhadas, com contagem atômica de donos por página (`proc/process.c`) | `xnu/osfmk/vm/` | Falta `MAP_SHARED` gravável de arquivo, proteção no PTE (NX desligado) e paginação para disco. |
 | IPC (portas Mach / pipes) | 🟡 pipes (`pipe`, `spawnio`, `dup2`, `a \| b` no msh), sessões de terminal, `wait`/`waitany` | `xnu/osfmk/ipc/`, `xnu/bsd/kern` (pipes, kqueue) | Sem portas Mach nem kqueue. |
 | SMP / APIC / HPET | ✅ `arch/smp.c`: MADT, LAPIC calibrado, HPET, APs acordados (INIT-SIPI) | `Kernel/Extensions/AppleAPIC`, `xnu/osfmk/i386` | Os APs ficam ociosos: UI, rede, USB e áudio são de um núcleo só. |
 | Loader ELF64 | ✅ `proc/elf.c`: estático, em 0x400000000000 | — | Programas em `userland/`, compilados pelo `build.ps1`. |
@@ -132,7 +132,7 @@ O que ainda falta:
 - **Mach-O**: o carregador está sendo feito pela sessão "Compatibilidade DMG", sobre o gancho `macho_load()`.
 - **Trabalho real nos APs**: exige trancas (locks) na UI, no VFS e nos drivers, que hoje dependem de um núcleo só.
 - **Escrita em volumes de `/Volumes`**: FAT de outros discos e HFS+.
-- **Memória virtual**: COW e paginação sob demanda.
-- **Processos**: handlers de sinal no usuário e `fork`.
+- **Memória virtual**: `MAP_SHARED` gravável de arquivo (gravar de volta), bits de proteção no PTE e paginação para disco. COW, `fork` e paginação sob demanda (anônima e de arquivo) estão feitos.
+- **Processos**: handlers de sinal no usuário.
 - **Interface**: tela de login (sessão principal, com o backend de contas já pronto), atalho de captura de tela (sessão de UI).
 - **Grandes portes**: IPv6, objc4/Foundation/AppKit e toolchain nativa.

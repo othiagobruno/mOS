@@ -41,6 +41,7 @@ Legenda: **feito** = existe e tem teste; **parcial** = existe e falta parte; **f
 |---|---|---|
 | Mach IPC (ports, direitos, mensagens) | **feito** | `kernel/proc/machipc.c` + `mach.c` (teste `userland/machtest.c`) |
 | XPC | **feito (sem serviços)** | **`xpc.c` (novo)**: todos os tipos de objeto, e conexões que se comportam como num Mac sem o serviço (`XPC_ERROR_CONNECTION_INVALID`). Teste `tools/build-xpctest.ps1`: 24/24. Falta um launchd com serviços XPC registrados |
+| Memória virtual (`mmap`, `fork`, COW) | **feito** | `kernel/proc/process.c` + `kernel/mm/lazy.c`: PML4 por processo; `mmap` anônimo sob demanda (página zerada na primeira falta); `mmap` de arquivo `MAP_PRIVATE`/só leitura sob demanda (cada página lida do arquivo na falta, `SYS_MMAP` b = 4); `fork` (`SYS_FORK`) duplica o espaço em cópia na escrita com contagem atômica de donos por página física, copia fds, pasta atual, grupo/sessão e só a thread que chamou; `vfork` = `fork` e `posix_spawn` intacto (`extra.c`). Teste `userland/teste.c` (fork + COW no heap, na memória sob demanda e no mmap de arquivo; `wait`/`waitpid`). Falta: `MAP_SHARED` gravável de arquivo (ainda é cópia, sem gravar de volta), bits de proteção no PTE (NX desligado) e paginação para disco |
 | Syscalls Darwin | **parcial** | o libSystem traduz para as syscalls do mOS (`int 0x80`, `kernel/include/syscall.h`) |
 | Launch Services | **parcial** | `LSOpen*`/`LSCopy*` em `chrome.c`. O mOS abre `.app` pelo Finder/Dock |
 | Bundle loading (`.app`, `Info.plist`, `NSBundle`) | **feito** | `kernel/compat/bundle.c`, `plist.c` |
