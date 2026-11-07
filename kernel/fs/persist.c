@@ -105,6 +105,7 @@ static bool scan_disk(blkdev_t *disk) {
 }
 
 /* ------------------------------------------------------------ carga inicial */
+#define PERSIST_MAX_DEPTH 64
 typedef struct { char vpath[1024]; char fpath[1040]; int depth; } walk_t;
 
 static void load_tree(const char *vpath, int depth);
@@ -136,7 +137,10 @@ static void load_entry(void *ctx, const char *name, bool is_dir, u64 size) {
 }
 
 static void load_tree(const char *vpath, int depth) {
-    if (depth > 16) return;
+    /* node_modules aninhados passam de 16 níveis: o @opentelemetry do Cursor fica no 17 (/Aplicativos/Cursor.app/.../
+     * platform/node/machine-id), e com 16 os arquivos dele não entravam no VFS (o Extension Host caía no require).
+     * Pilha do boot: 1 MiB (efi_main.c), uns 3 KiB por nível. */
+    if (depth > PERSIST_MAX_DEPTH) { kprintf("persist: %s fundo demais, ignorado\n", vpath); return; }
     walk_t *w = kmalloc(sizeof *w);
     if (!w) return;
     strncpy(w->vpath, vpath, sizeof w->vpath - 1);
@@ -252,7 +256,7 @@ void persist_move(const char *old_vpath, vnode_t *n) {
 /* ------------------------------------------------------------ gravação */
 static int write_dirty(vnode_t *n, int depth) {
     int k = 0;
-    if (depth > 32) return 0;
+    if (depth > PERSIST_MAX_DEPTH) return 0;
     for (vnode_t *c = n->child; c; c = c->next) {
         if (c->ext) continue;
         if (c->dir) { k += write_dirty(c, depth + 1); continue; }

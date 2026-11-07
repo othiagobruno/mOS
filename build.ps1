@@ -65,6 +65,13 @@ Copy-Item "$root\build\libcxx\libc++.1.dylib" "$esp\mOS\usr\lib\libc++.1.dylib" 
 & "$root\tools\build-sqlite.ps1"
 if ($LASTEXITCODE -ne 0) { Write-Host 'libsqlite3 build FAILED' -ForegroundColor Red; exit 1 }
 if (Test-Path "$root\build\sqlite\libsqlite3.dylib") { Copy-Item "$root\build\sqlite\libsqlite3.dylib" "$esp\mOS\usr\lib\libsqlite3.dylib" -Force }
+# zlib (licença zlib) do bottle do Homebrew em /usr/local/opt/zlib/lib, para onde o carregador manda /usr/lib/libz.1.dylib
+# (kernel/compat/macho.c). Módulos nativos a ligam: o file_service.node do Cursor (busca de arquivos) caía sem crc32/inflate.
+$zl = Get-ChildItem "$root\build\brew\x\zlib\*\lib\libz.1.*.dylib" -ErrorAction SilentlyContinue | Select-Object -First 1
+if ($zl) {
+    New-Item -ItemType Directory -Force "$esp\mOS\usr\local\opt\zlib\lib" | Out-Null
+    Copy-Item $zl.FullName "$esp\mOS\usr\local\opt\zlib\lib\libz.1.dylib" -Force
+}
 # ferramentas de linha de comando do macOS em Mach-O (userland\cli-macos\<nome>.c -> /usr/bin/<nome>): open(1)
 New-Item -ItemType Directory -Force "$esp\mOS\usr\bin" | Out-Null
 foreach ($c in Get-ChildItem "$root\userland\cli-macos" -Filter *.c -ErrorAction SilentlyContinue) {
