@@ -217,6 +217,7 @@ bool libsystem_dylib_ok(const char *n) {
         "/usr/lib/libinfo.dylib", "/usr/lib/libgcc_s.1.dylib", "/usr/lib/libiconv.2.dylib", "/usr/lib/libiconv.dylib",
         /* git e curl do Homebrew: res_9_* (darwin.c) e uidna_* (posixmore.c, só nomes ASCII) */
         "/usr/lib/libresolv.9.dylib", "/usr/lib/libicucore.A.dylib",
+        "/usr/lib/libbz2.1.0.dylib",   /* bzip2.c (o unzip do Homebrew a lista; descompressão BZ2_*) */
         /* libc++/libc++abi: operator new/delete, guardas de estáticos e o resto em cxxabi.c e libcxx.c */
         "/usr/lib/libc++.1.dylib", "/usr/lib/libc++abi.dylib",
     };
@@ -940,6 +941,10 @@ static int locate(link_t *K, char *cand, usize cap, const u8 **data, usize *len)
     *data = NULL;
     path_norm(cand, cap);
     char alt[384];
+    /* X.framework/X e X.framework/Versions/A/X são o mesmo arquivo no macOS (link simbólico); a imagem do mOS
+     * não tem links, então os dois existem como cópias. Procura primeiro, por todos os nomes, uma imagem já
+     * carregada: sem isso o UIKit do Catalyst entrava duas vezes (classes duplicadas) no WhatsApp. */
+    for (int pass = 0; pass < 2; pass++)
     for (int v = 0; v < 3; v++) {
         const char *p = cand;
         if (v) {
@@ -950,8 +955,21 @@ static int locate(link_t *K, char *cand, usize cap, const u8 **data, usize *len)
             snprintf(alt, sizeof alt, "%.*sVersions/%s/%s", (int)(tail - cand), cand, v == 1 ? "A" : "Current", tail);
             p = alt;
         }
-        int i = find_loaded(K, p);
-        if (i >= 0) return i;
+        if (pass == 0) {
+            int i = find_loaded(K, p);
+            if (i >= 0) return i;
+            if (v == 0) {                                   /* X.framework/Versions/<v>/X -> X.framework/X */
+                const char *fw = strstr(cand, ".framework/Versions/");
+                const char *vs = fw ? strchr(fw + 20, '/') : NULL;
+                if (vs && !strchr(vs + 1, '/')) {
+                    char base[384];
+                    snprintf(base, sizeof base, "%.*s%s", (int)(fw + 11 - cand), cand, vs + 1);
+                    i = find_loaded(K, base);
+                    if (i >= 0) return i;
+                }
+            }
+            continue;
+        }
         *data = dep_read(p, len);
         if (*data) {
             if (p != cand) snprintf(cand, cap, "%s", p);

@@ -164,6 +164,22 @@ int main(void) {
     }
     CHECK(!herdou, "specific de fila liberada não passa para a fila nova no mesmo endereço");
 
+    /* um bloco que se reagenda na mesma fila (laço por dispatch_async) não pode virar recursão na pilha */
+    dispatch_queue_t ql = dispatch_queue_create("mos.laco", 0);
+    __block int voltas = 0;
+    __block void (^passo)(void);
+    passo = ^{ if (++voltas < 100000) dispatch_async(ql, passo); };
+    dispatch_async(ql, passo);
+    dispatch_sync(ql, ^{});
+    CHECK(voltas == 100000, "dispatch_async que se reagenda 100 mil vezes (%d)", voltas);
+    /* ordem serial: o async pedido dentro de um bloco roda depois dele, antes do sync seguinte */
+    static char ordem[8];
+    char *ord = ordem;
+    __block int k = 0;
+    dispatch_async(ql, ^{ ord[k++] = 'a'; dispatch_async(ql, ^{ ord[k++] = 'c'; }); ord[k++] = 'b'; });
+    dispatch_sync(ql, ^{ ord[k++] = 'd'; });
+    CHECK(strcmp(ordem, "abcd") == 0, "ordem serial com async aninhado (%s)", ordem);
+
     printf("dispatchteste: %d/%d ok\n", total - fails, total);
     return fails;
 }

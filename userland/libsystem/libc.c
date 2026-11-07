@@ -901,6 +901,7 @@ const char *cx_path(const char *in, char *out, size_t cap) {
 }
 #define PATH(var, in) char var##_buf[1024]; const char *var = cx_path(in, var##_buf, sizeof var##_buf)
 
+static int link_step(char *abs, size_t cap, long *tlen);
 int open(const char *path, int flags, ...) {
     int k = 0;
     if ((flags & 3) == MAC_O_WRONLY) k |= MOS_O_WRONLY;
@@ -913,6 +914,14 @@ int open(const char *path, int flags, ...) {
     if ((flags & MAC_O_EXCL) && (flags & MAC_O_CREAT)) {
         mos_stat_t st;
         if (SYS2(SYS_STAT, p, &st) == 0) { cx_errno = CX_EEXIST; return -1; }
+    }
+    if (flags & 0x100000) {                               /* O_DIRECTORY: o cp do GNU testa se o destino é pasta assim */
+        mos_stat_t ds;
+        if (SYS2(SYS_STAT, p, &ds) == 0 && ds.is_dir != 1) {
+            char rp[1024]; strlcpy(rp, p, sizeof rp);           /* pasta-link (opt/<f>) conta como pasta */
+            for (int hop = 0; hop < 8 && link_step(rp, sizeof rp, 0); hop++) {}
+            if (SYS2(SYS_STAT, rp, &ds) != 0 || ds.is_dir != 1) { cx_errno = CX_ENOTDIR; return -1; }
+        }
     }
     int fd = (int)ret_errno(SYS2(SYS_OPEN, p, k));
     if (fd >= 0) nb_set(fd, (flags & 0x4) != 0);          /* O_NONBLOCK */

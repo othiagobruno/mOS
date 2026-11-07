@@ -228,16 +228,47 @@ O que a partida mostrou, na ordem:
    categorias. As preferências do WhatsApp são propriedades `@dynamic` declaradas em categorias e protocolos, com os
    acessores gerados em tempo de execução. As duas coisas agora existem (`objc.c`). Também se protege uma classe ainda
    sem nome em `objc_getClass`.
-5. **Ainda ausentes na partida:** `sqlite3_*` (falta a libsqlite3), `dispatch_io_create/read/set_low_water` e
-   `CFReadStreamCreateWithFile`.
-6. **Onde para:** `swift_unknownObjectRelease` num objeto de isa nulo (objeto já liberado ou sobreliberado), chamado do
-   executável principal, que não tem símbolos. Este é o próximo passo de depuração.
-7. **Só no harness:** as syscalls 12, 31, 33, 39, 48, 81 (Mach) e 83 não são emuladas pelo `machotest`. No QEMU elas
+5. **Ainda ausente na partida:** a libsqlite3 (`sqlite3_libversion_number`, `sqlite3_config`). Não há fonte nem
+   binário do SQLite no disco; embuti-lo (domínio público) depende de baixar o amálgama. `dispatch_io_*`,
+   `dispatch_read/write` (`dispatch_io.c`) e `CFReadStream*`/`CFWriteStream*` sobre `NSInputStream` (`cfstream.c`)
+   já existem.
+6. **Só no harness:** as syscalls 12, 31, 33, 39, 48, 81 (Mach) e 83 não são emuladas pelo `machotest`. No QEMU elas
    existem.
 
-Também apareceu: o UIKit entra duas vezes (pelo caminho de `/System/iOSSupport/…/Versions/A/UIKit` e pela cópia
-`UIKit.framework/UIKit`), o que duplica as classes. O carregador deveria tratar os dois caminhos como a mesma imagem,
-ou a cópia deveria ser um link.
+### Segunda rodada (7 nov. 2026): seis defeitos do runtime achados pela partida
+
+Cada um foi rastreado sem símbolos no executável. O método: mapa de carga (`MACHOTEST_MAP`), endereço de retorno →
+imagem → trecho desmontado (bytes extraídos com `dd` e desmontados como objeto), seções e listas de ivars com
+`llvm-objdump --macho`.
+
+1. **Token do `NSNotificationCenter`:** `addObserverForName:object:queue:usingBlock:` devolvia a struct interna
+   (calloc), sem isa; o app a soltava como objeto (`swift_unknownObjectRelease`). Agora o token é um `NSObject` que a
+   central retém até `removeObserver:` (`foundation.c`).
+2. **Classes Swift com layout em tempo de execução:** campo de tipo resiliente (aqui `metadataLock`, cujo
+   deslocamento fica no `__bss`). O `class_ro_t` traz `RO_HAS_SWIFT_INITIALIZER` (bit 6) e o inicializador em
+   `ro + 72`. O mOS realizava a classe na carga com o layout estático; agora quem realiza é o inicializador do Swift, no
+   primeiro uso, como no `realizeClassMaybeSwift` da Apple. As categorias dessas classes esperam a realização, e
+   `objc_getClass` acha a classe pendente. O `_objc_realizeClassFromSwift` realiza direto: chamar o inicializador de
+   novo fazia o Swift esperar por ele mesmo (`objc.c`).
+3. **`dispatch_async` em fila que não é a principal** rodava o bloco na hora, então um bloco que se reagenda virava
+   recursão até estourar a pilha. Agora há um trampolim por thread: o async pedido de dentro de um bloco roda quando
+   ele termina, na ordem; `dispatch_sync`, `dispatch_group_wait` e `dispatch_semaphore_wait` escoam antes
+   (`dispatch.c`, `extra.c`; `dispatchteste` 30/30 com o laço de 100 mil voltas e a ordem serial).
+4. **Observador de bloco com fila** era chamado dentro do `post`. Agora o bloco vai para a fila (a principal, se for a
+   `mainQueue`) (`foundation.c`).
+5. **Constantes de notificação ausentes** (`NSCurrentLocaleDidChangeNotification` e outras, `wa_consts.c`): no modo
+   tolerante o nome chegava nil, o observador recebia tudo e o contexto de i18n se realimentava.
+6. **UIKit carregado duas vezes:** o executável e o SharedModules pedem `UIKit.framework/UIKit` e
+   `UIKit.framework/Versions/A/UIKit`. O `locate()` do carregador (`kernel/compat/macho.c`) agora procura uma imagem
+   já carregada por todos os nomes do framework antes de ler do disco: 32 imagens em vez de 33.
+
+Também entraram: `NSCache`, `NSDate isEqualToDate:/dateByAddingTimeInterval:`, `stringByDeletingPathExtension`,
+`writeToURL:atomically:encoding:error:`, `contentsOfDirectoryAtURL:…`, `getBytes:length:/range:`, os `init` de
+`NSMapTable`/`NSHashTable` e `UIApplication.backgroundTimeRemaining`.
+
+**Onde está agora:** sem quedas; depois do SQLite ausente, o app fica num laço longo de formatação de strings
+(`withVaList` → `String(format:)`) dentro de código genérico do SharedModules, e o watchdog o encerra. Ainda não
+se sabe se é trabalho legítimo, lento no harness, ou um laço sem fim causado por algum stub.
 
 ## Roteiro (do mais perto para o mais longe)
 

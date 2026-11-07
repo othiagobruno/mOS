@@ -165,7 +165,15 @@ long recvmsg(int fd, void *m, int fl) {
         if (h->iov[i].len) return recv(fd, h->iov[i].base, h->iov[i].len, fl);   /* o primeiro bloco com espaço */
     return 0;
 }
-long sendto(int fd, const void *b, size_t n, int fl, const void *a, u32 al) { (void)a; (void)al; return send(fd, b, n, fl); }
+/* sendto devolve o resultado em RAX e 0 em RDX, como o XNU (rval[1]). O Chromium 15x, no macOS de 13.3 a 26.1, confere o
+ * RDX depois de sendto(): se não for 0, supõe o bug do kernel em que a chamada não aconteceu e devolve
+ * ERR_NETWORK_CHANGED (-21) a toda escrita de socket (TCP e UDP), o "Slack cannot connect -21". Uma função C comum
+ * deixa lixo no RDX; uma struct de dois inteiros volta em RAX:RDX pelo ABI x86-64. */
+typedef struct { long ret, rdx; } cx_sysret_t;
+cx_sysret_t sendto(int fd, const void *b, size_t n, int fl, const void *a, u32 al) {
+    (void)a; (void)al;
+    return (cx_sysret_t){send(fd, b, n, fl), 0};
+}
 long recvfrom(int fd, void *b, size_t n, int fl, void *a, u32 *al) {
     long r = recv(fd, b, n, fl);
     sock_t *s = sock_of(fd);

@@ -12,6 +12,21 @@ param([Parameter(Mandatory = $true)][string]$App, [string]$OutDir = 'build-elect
       [switch]$Autostart, [switch]$Diagnostico, [switch]$CaLog, [int]$MaxModuloMiB = 16,
       [string]$Args0 = '--in-process-gpu --disable-gpu --no-sandbox --enable-logging --v=0', [string]$Tracepoints = '')
 $root = Split-Path $PSScriptRoot -Parent
+# Mach-O universal (x86_64 + arm64): só a fatia x86_64 vai para a imagem, porque o sistema de arquivos da VM mora na RAM
+# (o Electron Framework do Claude tem 404 MB universal). Sem o llvm-lipo do toolchain Swift, copia inteiro (o kernel
+# escolhe a fatia sozinho).
+$lipo = Get-Item "$root\.tools\swift\LocalApp\Programs\Swift\Toolchains\*\usr\bin\llvm-lipo.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+function Copy-Bin([string]$From, [string]$To) {
+    if ($lipo) {
+        $h = New-Object byte[] 4
+        $fs = [IO.File]::OpenRead('\\?\' + $From); $k = $fs.Read($h, 0, 4); $fs.Close()
+        if ($k -eq 4 -and $h[0] -eq 0xCA -and $h[1] -eq 0xFE -and $h[2] -eq 0xBA -and $h[3] -eq 0xBE) {
+            & $lipo.FullName $From -thin x86_64 -output $To 2>$null
+            if ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $To)) { return }
+        }
+    }
+    [IO.File]::Copy('\\?\' + $From, '\\?\' + $To, $true)
+}
 $App = (Get-Item -LiteralPath $App).FullName
 $src = Join-Path $App 'Contents'
 $esp = Join-Path $root "$OutDir\esp"
@@ -26,20 +41,20 @@ $dst = "$dstApp\Contents"
 Remove-Item -Recurse -Force -LiteralPath $dstApp -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force "$dst\MacOS" | Out-Null
 Copy-Item -LiteralPath "$src\Info.plist" "$dst\Info.plist"
-Copy-Item -LiteralPath "$src\MacOS\$exe" "$dst\MacOS\$exe"
+Copy-Bin "$src\MacOS\$exe" "$dst\MacOS\$exe"
 foreach ($fwDir in Get-ChildItem -LiteralPath "$src\Frameworks" -Directory -Filter '*.framework') {
     $fw = $fwDir.Name -replace '\.framework$', ''          # BaseName de pasta mantém a extensão no PS 5.1
     $s = "$($fwDir.FullName)\Versions\A"
     if (-not (Test-Path -LiteralPath "$s\$fw")) { continue }
     $t = "$dst\Frameworks\$fw.framework\Versions\A"
     New-Item -ItemType Directory -Force $t | Out-Null
-    Copy-Item -LiteralPath "$s\$fw" "$t\$fw"
+    Copy-Bin "$s\$fw" "$t\$fw"
 }
 foreach ($h in Get-ChildItem -LiteralPath "$src\Frameworks" -Directory -Filter '* Helper*.app') {
     $t = "$dst\Frameworks\$($h.Name)\Contents"
     New-Item -ItemType Directory -Force "$t\MacOS" | Out-Null
     Copy-Item -LiteralPath "$($h.FullName)\Contents\Info.plist" "$t\Info.plist"
-    Get-ChildItem -LiteralPath "$($h.FullName)\Contents\MacOS" -File | Copy-Item -Destination "$t\MacOS\"
+    foreach ($b in Get-ChildItem -LiteralPath "$($h.FullName)\Contents\MacOS" -File) { Copy-Bin $b.FullName "$t\MacOS\$($b.Name)" }
 }
 # recursos do Electron (sem links simbólicos no FAT32: "Electron Framework.framework\Resources" é onde o Chromium procura)
 $res = "Frameworks\Electron Framework.framework\Resources"
@@ -51,7 +66,7 @@ foreach ($l in 'en.lproj', 'pt_BR.lproj') { if (Test-Path -LiteralPath "$resSrc\
 $lib = "Frameworks\Electron Framework.framework\Versions\A\Libraries"
 if (Test-Path -LiteralPath "$src\$lib") {
     New-Item -ItemType Directory -Force "$dst\$lib" | Out-Null
-    Get-ChildItem -LiteralPath "$src\$lib" -File | Copy-Item -Destination "$dst\$lib\"
+    foreach ($b in Get-ChildItem -LiteralPath "$src\$lib" -File) { Copy-Bin $b.FullName "$dst\$lib\$($b.Name)" }
 }
 # Helpers do framework (chrome_crashpad_handler): o crashpad o inicia pelo caminho sem Versions/A, que no macOS é um
 # link simbólico; sem ele o Slack (que liga o crashReporter) parava num FATAL de posix_spawnp
@@ -59,11 +74,19 @@ $hlp = "$src\Frameworks\Electron Framework.framework\Versions\A\Helpers"
 if (Test-Path -LiteralPath $hlp) {
     $th = "$dst\Frameworks\Electron Framework.framework\Helpers"
     New-Item -ItemType Directory -Force $th | Out-Null
-    Get-ChildItem -LiteralPath $hlp -File | Copy-Item -Destination "$th\"
+    foreach ($b in Get-ChildItem -LiteralPath $hlp -File) { Copy-Bin $b.FullName "$th\$($b.Name)" }
 }
 # código do app
 New-Item -ItemType Directory -Force "$dst\Resources" | Out-Null
 foreach ($f in 'app.asar', 'electron.icns') { if (Test-Path -LiteralPath "$src\Resources\$f") { Copy-Item -LiteralPath "$src\Resources\$f" "$dst\Resources\" } }
+# outros .asar do app (o Claude carrega a interface de ion-dist.asar) e as pastas pequenas que os acompanham
+foreach ($a in Get-ChildItem -LiteralPath "$src\Resources" -File -Filter '*.asar' | Where-Object Name -ne 'app.asar') {
+    Copy-Item -LiteralPath $a.FullName "$dst\Resources\"
+    $base = "$src\Resources\$($a.BaseName)"
+    if ((Test-Path -LiteralPath $base) -and (Get-ChildItem -LiteralPath $base -Recurse -File | Measure-Object Length -Sum).Sum -lt 1MB) {
+        Copy-Item -Recurse -LiteralPath $base "$dst\Resources\"
+    }
+}
 $extra = @()
 if (Test-Path -LiteralPath "$src\Resources\app.asar.unpacked") { $extra += 'app.asar.unpacked' }
 if (-not (Test-Path -LiteralPath "$src\Resources\app.asar") -and (Test-Path -LiteralPath "$src\Resources\app")) { $extra += 'app' }
@@ -73,7 +96,7 @@ foreach ($d in $extra) {
         if ($f.Length -gt $MaxModuloMiB * 1MB) { continue }
         $t = "$dst\Resources\$d" + $f.FullName.Substring($u.Length)
         New-Item -ItemType Directory -Force (Split-Path $t) -ErrorAction SilentlyContinue | Out-Null
-        try { [IO.File]::Copy('\\?\' + $f.FullName, '\\?\' + $t, $true) } catch { }
+        try { Copy-Bin $f.FullName $t } catch { }
     }
 }
 Set-Content -Path "$esp\mOS\Sistema\Biblioteca\dyld-experimental" -Value $name -Encoding ascii

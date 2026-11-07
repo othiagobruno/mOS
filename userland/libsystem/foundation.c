@@ -161,6 +161,7 @@ static id i_init_format(id self, SEL c, id fmt, ...) {
 static id i_init_format_args(id self, SEL c, id fmt, va_list ap) {
     (void)c;
     id o = cx_str_vfmt(fmt, ap);
+    { static u64 dbg_n; if ((++dbg_n % 20000) == 0 || dbg_n < 4) cx_fdprintf(2, "DBG fmt #%llu '%s' -> '%.80s'\n", (unsigned long long)dbg_n, cx_cstr(fmt), ((nsstr_t *)o)->s); }
     str_set(self, ((nsstr_t *)o)->s, ((nsstr_t *)o)->n);
     return self;
 }
@@ -975,19 +976,7 @@ static void nc_deliver_async(obs_t *o, id note) {
     id mainq = oq ? MSG0(id, (id)oq, "mainQueue") : 0;
     dispatch_async_f(o->queue == mainq ? dispatch_get_main_queue() : dispatch_get_global_queue(0, 0), a, nc_async_run);
 }
-static int dbg_post_depth;
-const char *object_getClassName(id o);
-void cx_post_inner(id note);
 void cx_post(id note) {
-    if (++dbg_post_depth == 40) {
-        nsnote_t *dn = (nsnote_t *)note;
-        cx_fdprintf(2, "DBG post profundo: %s obj=%s\n", dn->name ? S(MSG0(id, dn->name, "description")) : "?", dn->object ? object_getClassName(dn->object) : "nil");
-        for (obs_t *o = observers; o; o = o->next) if (!o->name || obj_eq(o->name, dn->name)) cx_fdprintf(2, "  obs alvo=%s sel=%s bloco=%p fila=%p\n", o->target ? object_getClassName(o->target) : "-", o->sel ? (const char *)o->sel : "-", o->block, o->queue);
-    }
-    cx_post_inner(note);
-    dbg_post_depth--;
-}
-void cx_post_inner(id note) {
     nsnote_t *n = (nsnote_t *)note;
     for (obs_t *o = observers; o; o = o->next) {
         if (o->name && o->name != n->name && (o->name_bad || !obj_eq(o->name, n->name))) continue;

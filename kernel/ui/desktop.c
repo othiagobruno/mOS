@@ -457,10 +457,19 @@ static void draw_menubar(surface_t *s) {
         const char *titles[12];
         int nt = 0;
         titles[nt++] = a->name;
-        for (int i = 0; i < a->nmenus && nt < 10; i++) titles[nt++] = a->menus[i].title;
-        titles[nt++] = "Janela";
-        titles[nt++] = "Ajuda";
+        /* "Janela" e "Ajuda" do sistema só quando o app não traz os dele (o Chrome traz: antes apareciam duas vezes).
+         * Os índices nmenus+1/+2 continuam sendo os do sistema; um título que não entra não vira item da barra. */
+        bool has_win = false, has_help = false;
+        for (int i = 0; i < a->nmenus && nt < 10; i++) {
+            const char *t = a->menus[i].title;
+            if (t && (!strcmp(t, "Janela") || !strcmp(t, "Window"))) has_win = true;
+            if (t && (!strcmp(t, "Ajuda") || !strcmp(t, "Help"))) has_help = true;
+            titles[nt++] = t;
+        }
+        titles[nt++] = has_win ? NULL : "Janela";
+        titles[nt++] = has_help ? NULL : "Ajuda";
         for (int i = 0; i < nt; i++) {
+            if (!titles[i]) continue;
             font_t *f = i == 0 ? fb : fr;
             int w = text_width(f, fs, titles[i]) + 2 * BAR_GAP;
             if (x + w > limit_x) break;
@@ -3007,7 +3016,13 @@ static bool desktop_handle_event_local(input_event_t *e) {
         if ((m & MOD_CMD) && e->key == ' ') { desktop_toggle_spotlight(); return true; }
         /* ⌃Espaço troca a fonte de entrada (teclado → japonês → chinês → coreano), como no macOS */
         if ((m & MOD_CTRL) && e->key == ' ') { extern void compat_ime_cycle(int dir); compat_ime_cycle((m & MOD_ALT) ? -1 : 1); return true; }
-        if (e->key == KEY_F4 || ((m & MOD_CMD) && (e->key == 'l' || e->key == 'L'))) { desktop_toggle_launcher(); return true; }
+        /* Launchpad: F4 (como no macOS) e ⌘L. Num app do macOS o ⌘L é do app (Chrome/Safari: barra de endereço). */
+        {
+            app_t *ka = active_app();
+            extern const char *compat_app_bundle(struct app *a);
+            bool mac_app = ka && compat_app_bundle(ka) && !lp_open;
+            if (e->key == KEY_F4 || ((m & MOD_CMD) && (e->key == 'l' || e->key == 'L') && !mac_app)) { desktop_toggle_launcher(); return true; }
+        }
         if (lp_open) return lp_key(e);
         if (e->key == KEY_F3) { desktop_toggle_control_center(); return true; }
         if (cc_open && e->key == KEY_ESC) { desktop_toggle_control_center(); return true; }
@@ -3091,7 +3106,8 @@ static bool desktop_handle_event_local(input_event_t *e) {
             app_t *a = active_app();
             if (k == 'q' && (m & (MOD_SHIFT | MOD_CTRL))) { run_action(ACT_LOCK); return true; }   /* ⇧⌘Q / ⌃⌘Q */
             if (k == 'q') { if (a && strcmp(a->exec, "arquivos")) app_quit(a); return true; }
-            if (k == 'w') { if (f) wm_close(f); return true; }
+            /* ⌘W: se o menu do app tem o atalho (o Chrome: "Fechar guia"), ele vale, como no macOS; senão fecha a janela */
+            if (k == 'w') { if (dispatch_menu_shortcut(a, e)) { wm_damage_all(); return true; } if (f) wm_close(f); return true; }
             if (k == 'm') { if (f) wm_minimize(f); return true; }
             if (k == 'h') { run_action(ACT_APP_HIDE); return true; }
             if (e->key == KEY_TAB) {

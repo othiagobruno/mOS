@@ -240,15 +240,8 @@ static void attach_lazy_cats(cx_class_t *c) {
     for (u32 i = 0; i < nlazy_cats; i++)
         if (lazy_cats[i] && *(cx_class_t *const *)(lazy_cats[i] + 8) == c) { const u8 *cat = lazy_cats[i]; lazy_cats[i] = 0; attach_category(cat); }
 }
-static int dbg_depth;
-static void realize_inner(cx_class_t *c);
 static void realize(cx_class_t *c) {
     if (!c || rw_of(c)) return;
-    if (++dbg_depth > 60) { const u8 *r = (const u8 *)(c->data & ~7ULL); cx_fdprintf(2, "DBG realize profundo: %p %s\n", c, r ? *(const char *const *)(r + 24) : "?"); if (dbg_depth > 70) abort(); }
-    realize_inner(c);
-    dbg_depth--;
-}
-static void realize_inner(cx_class_t *c) {
     if (needs_swift_init(c) && nswift_init_busy < 16) {
         const u8 *ro = (const u8 *)(c->data & ~7ULL);
         int busy = 0;

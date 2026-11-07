@@ -584,10 +584,21 @@ static void v_set_frame(id self, SEL c, NSRect f) {
         ((void (*)(id, SEL, NSSize))objc_msgSend)(self, sel_registerName("setFrameSize:"), f.s);
     mark(self);
 }
-static void set_window_rec(id v, id w) {
+/* Como no Cocoa, quem troca de janela (entra, sai com nil, muda) recebe viewWillMoveToWindow: antes e viewDidMoveToWindow
+ * depois, em TODA a subárvore. A RenderWidgetHostViewCocoa do Chromium fica dentro da WebContentsViewCocoa: ao voltar
+ * para uma aba só a de fora era avisada, e a página continuava "fora da janela" (oculta, conteúdo em branco). */
+static void set_window_quiet(id v, id w) {
     vstate_t *s = vs(v);
     s->window = w;
+    for (u32 i = 0; i < s->nsub; i++) set_window_quiet(s->sub[i], w);
+}
+static void set_window_rec(id v, id w) {
+    vstate_t *s = vs(v);
+    BOOL changed = s->window != w;
+    if (changed && cx_responds(v->isa, sel_registerName("viewWillMoveToWindow:"))) MSG(void, v, "viewWillMoveToWindow:", w);
+    s->window = w;
     for (u32 i = 0; i < s->nsub; i++) set_window_rec(s->sub[i], w);
+    if (changed && cx_responds(v->isa, sel_registerName("viewDidMoveToWindow"))) MSG0(void, v, "viewDidMoveToWindow");
 }
 /* at é o índice depois de tirar sub do pai antigo. A última subview é a de cima (o hit-test anda de trás pra frente). */
 static void v_insert_sub(id self, id sub, u32 at) {
@@ -610,8 +621,10 @@ static void v_insert_sub(id self, id sub, u32 at) {
     s->sub[at] = sub;
     s->nsub++;
     ss->superview = self;
+    BOOL same = ss->window == s->window;
     set_window_rec(sub, s->window);
-    if (cx_responds(sub->isa, sel_registerName("viewDidMoveToWindow")) && s->window) MSG0(void, sub, "viewDidMoveToWindow");
+    /* mesma janela: o set_window_rec não avisa; a view inserida ainda recebe viewDidMoveToWindow, como antes */
+    if (same && s->window && cx_responds(sub->isa, sel_registerName("viewDidMoveToWindow"))) MSG0(void, sub, "viewDidMoveToWindow");
     mark(self);
 }
 static void v_add_sub(id self, SEL c, id sub) { (void)c; v_insert_sub(self, sub, vs(self)->nsub); }
@@ -657,7 +670,7 @@ static void v_dealloc(id self, SEL c) {
         for (u32 i = 0; i < s->nsub; i++) {
             id sub = s->sub[i];
             vstate_t *ss = ST(sub);
-            if (ss && ss->superview == self) { ss->superview = 0; set_window_rec(sub, 0); }
+            if (ss && ss->superview == self) { ss->superview = 0; set_window_quiet(sub, 0); }
             objc_release(sub);
         }
         s->nsub = 0;
@@ -675,7 +688,24 @@ static void v_set_needs(id self, SEL c, BOOL b) { (void)c; if (b) mark(self); }
 static void v_set_needs_rect(id self, SEL c, NSRect r) { (void)c; (void)r; mark(self); }
 static void v_display(id self, SEL c) { (void)c; mark(self); }
 static BOOL v_needs(id self, SEL c) { (void)c; return vs(self)->needs; }
-static void v_set_hidden(id self, SEL c, BOOL h) { (void)c; vs(self)->hidden = h; mark(vs(self)->superview ? vs(self)->superview : self); }
+/* Como no Cocoa: setHidden: avisa viewDidHide / viewDidUnhide à view e às descendentes que não estão ocultas por conta
+ * própria. A WebContentsViewCocoa do Chromium recalcula a visibilidade da página aí: ao voltar para uma aba, a página
+ * ficava "oculta" e em branco. */
+static void notify_hidden(id v, BOOL h, BOOL top) {
+    vstate_t *s = vs(v);
+    if (!top && s->hidden) return;
+    SEL sel = sel_registerName(h ? "viewDidHide" : "viewDidUnhide");
+    if (cx_responds(v->isa, sel)) ((void (*)(id, SEL))objc_msgSend)(v, sel);
+    for (u32 i = 0; i < s->nsub; i++) notify_hidden(s->sub[i], h, NO);
+}
+static void v_set_hidden(id self, SEL c, BOOL h) {
+    (void)c;
+    vstate_t *s = vs(self);
+    BOOL was = s->hidden;
+    s->hidden = h;
+    mark(s->superview ? s->superview : self);
+    if (!was != !h) notify_hidden(self, h, YES);
+}
 static BOOL v_hidden(id self, SEL c) { (void)c; return vs(self)->hidden; }
 static void v_set_autoresize(id self, SEL c, u64 m) { (void)c; vs(self)->autoresize = m; }
 static u64 v_autoresize(id self, SEL c) { (void)c; return vs(self)->autoresize; }
@@ -2310,17 +2340,20 @@ static id app_singleton;
  * depois de o próprio Init já ter chamado sharedApplication. O singleton continua existindo para
  * quem manda a mensagem; o global exportado fica nulo nos helpers (--type=renderer/gpu/utility
  * ou executável "Code Helper ..."). O processo do app (sem --type=) publica NSApp normalmente. */
+/* Exceção: o utilitário de notificações do Chrome (--utility-sub-type=mac_notifications...) roda um laço de eventos
+ * do AppKit e faz CHECK(NSApp) — sem o global ele caía e o navegador o recriava sem parar. */
 static int nsapp_is_helper(void) {
     extern int NXArgc;
     extern char **NXArgv;
     extern const char *__progname;
-    if (__progname && strstr(__progname, "Helper")) return 1;
-    if (!NXArgv) return 0;
-    for (int i = 1; i < NXArgc; i++) {
+    int helper = __progname && strstr(__progname, "Helper");
+    for (int i = 1; NXArgv && i < NXArgc; i++) {
         const char *a = NXArgv[i];
-        if (a && strncmp(a, "--type=", 7) == 0 && a[7]) return 1;
+        if (!a) continue;
+        if (!strncmp(a, "--utility-sub-type=mac_notifications", 36)) return 0;
+        if (strncmp(a, "--type=", 7) == 0 && a[7]) helper = 1;
     }
-    return 0;
+    return helper;
 }
 static id ap_shared(id cls, SEL c) {
     (void)c;

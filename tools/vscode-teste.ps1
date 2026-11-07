@@ -8,11 +8,14 @@
 # -Electron: outro app Electron (Slack, Cursor, Claude...) pelo tools\stage-electron.ps1, com o ca-log ligado; -Nome é o
 # nome do processo principal no log ("Slack") e -Servico o do LaunchDaemon (o do stage-electron é com.mos.electron-teste).
 #   .\tools\vscode-teste.ps1 -Electron -App "build\apps\x\slack-x64\Slack\Slack.app" -Nome Slack -OutDir build-electron
+# -SizeMiB (imagem; 1024 com -Electron) e -MaxModuloMiB (maior arquivo de app.asar.unpacked copiado; 16) vão ao stage-electron.
+# Rede: com -Persist e -Argumentos '... --log-net-log=/Users/Visitante/n.json', o NetLog sai da imagem pelo build\fatcat.exe.
 param([Parameter(Mandatory = $true)][string]$App, [switch]$SemBuild, [int]$Ocioso = 40, [int]$Limite = 600,
       [int]$Memory = 2700, [int]$Port = 5917, [string]$OutDir = 'build-vscode',
       [switch]$Persist, [string]$Argumentos = '--in-process-gpu --disable-gpu --no-sandbox --verbose --enable-logging',
       [string]$Tracepoints = '', [switch]$Electron, [string]$Nome = 'Code', [string]$Servico = '', [string]$Accel = '',
-      [int]$Capturas = 30, [string]$Passos = '', [int]$PassosApos = 150, [switch]$ComBash)
+      [int]$Capturas = 30, [string]$Passos = '', [int]$PassosApos = 150, [switch]$ComBash, [int]$SizeMiB = 0,
+      [int]$MaxModuloMiB = 16)
 # -Capturas N: a cada N s depois que o app sobe, captura a tela (QMP) em $OutDir\shots\cap-*.png e diz se a janela existe
 # e quanto do conteúdo foi desenhado (tools\analisa-tela.ps1); 0 desliga
 # -Passos "move:x,y;click;type:..." -PassosApos N: N s depois que o app sobe, roda esses passos de entrada pelo QMP
@@ -36,7 +39,10 @@ function Save-Tela([string]$Png) {
     } catch { return $false }
 }
 function Stage-App {
-    if ($Electron) { .\tools\stage-electron.ps1 -App $App -OutDir $OutDir -Diagnostico -CaLog -Autostart -SizeMiB 1024 -Args0 $Argumentos -Tracepoints $Tracepoints 6>&1 2>&1 | ForEach-Object { "$_" } }
+    if ($Electron) {
+        $mib = if ($SizeMiB) { $SizeMiB } else { 1024 }
+        .\tools\stage-electron.ps1 -App $App -OutDir $OutDir -Diagnostico -CaLog -Autostart -SizeMiB $mib -MaxModuloMiB $MaxModuloMiB -Args0 $Argumentos -Tracepoints $Tracepoints 6>&1 2>&1 | ForEach-Object { "$_" }
+    }
     else { .\tools\stage-vscode.ps1 -App $App -OutDir $OutDir -Diagnostico -ComApp -ComModulosNativos -Autostart -SizeMiB 768 -Args0 $Argumentos -Tracepoints $Tracepoints -CaLog -ComBash:$ComBash 6>&1 2>&1 | ForEach-Object { "$_" } }
 }
 $t0 = Get-Date
@@ -86,7 +92,10 @@ while (((Get-Date) - $t1).TotalSeconds -lt $Limite) {
     if (-not (Test-Path $serial)) { continue }
     $txt = Get-Content $serial -Raw -ErrorAction SilentlyContinue
     if (-not $txt) { continue }
-    if (-not $started -and $txt -match "proc: iniciado $NomeRx \(Mach-O, pid (\d+)") { $started = Get-Date; $mainPid = $Matches[1] }
+    if (-not $started) {   # [regex]::Match e não -match: o $Matches às vezes vinha nulo aqui (PS 5.1)
+        $m = [regex]::Match([string]$txt, "proc: iniciado $NomeRx \(Mach-O, pid (\d+)")
+        if ($m.Success) { $started = Get-Date; $mainPid = $m.Groups[1].Value }
+    }
     $sig = ($txt -replace '(?m)^(persist|despejo):.*\r?\n', '').Length   # gravações de arquivo não contam como atividade
     if ($sig -ne $lastLen) { $lastLen = $sig; $lastChange = Get-Date }
     # só o processo principal (o 1º "iniciado"): um filho com o mesmo nome (o fork do crashpad no Slack) também morre
