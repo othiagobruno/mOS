@@ -66,7 +66,8 @@ static bool unified(window_t *w) { return w->toolbar_h > 0 && !(w->flags & WIN_N
  * ou logo abaixo da linha de título (janela clássica) */
 #define TAB_H 34
 static int tab_h(window_t *w) { return w->tab_group && !(w->flags & WIN_NO_TITLE) ? TAB_H : 0; }
-static int title_h(window_t *w) { return (w->flags & WIN_NO_TITLE) ? 0 : (unified(w) ? UNIFIED_PAD : TITLEBAR_H) + tab_h(w); }
+/* WIN_FULLSIZE: sem faixa de título, o conteúdo começa no topo (os semáforos são desenhados por cima) */
+static int title_h(window_t *w) { return (w->flags & (WIN_NO_TITLE | WIN_FULLSIZE)) ? 0 : (unified(w) ? UNIFIED_PAD : TITLEBAR_H) + tab_h(w); }
 static int tab_strip_y(window_t *w) { return unified(w) ? 0 : TITLEBAR_H; }
 
 static void traffic_center(window_t *w, int i, float *cx, float *cy) {
@@ -152,6 +153,16 @@ window_t *wm_focused(void) {
 app_t *wm_active_app(void) { window_t *w = wm_focused(); return w ? w->app : NULL; }
 
 void wm_invalidate(window_t *w) { if (w) w->needs_paint = true; }
+
+/* -[NSWindow performWindowDragWithEvent:]: o clique que foi para o conteúdo (o app viu que caiu numa
+ * região de arrastar, como a barra de título que o VS Code desenha) passa a mover a janela até soltar */
+bool wm_begin_move(window_t *w) {
+    if (!w || !(mbuttons & 1) || drag_win != w || drag_mode != DRAG_CONTENT || w->fullscreen) return false;
+    drag_mode = DRAG_MOVE;
+    drag_dx = mx - w->x; drag_dy = my - w->y;
+    drag_start = rect_make(mx, my, 0, 0);
+    return true;
+}
 
 void wm_focus(window_t *w) {
     int i = index_of(w);
@@ -814,6 +825,7 @@ static void paint_window(window_t *w) {
         draw_traffic(s, w, focused);
         draw_sidebar_toggle(s, w);
     } else if (tab_h(w)) draw_tab_bar(s, w, focused);
+    if (w->flags & WIN_FULLSIZE) draw_traffic(s, w, focused);   /* por cima do conteúdo do app */
     /* borda fina */
     gfx_round_rect_stroke(s, 0, 0, w->w, w->h, WIN_RADIUS, 1, T.dark ? RGBA(0, 0, 0, 200) : RGBA(0, 0, 0, 46));
     gfx_specular_rim(s, 1, 1, w->w - 2, w->h - 2, WIN_RADIUS - 1, T.dark ? 70 : 150); /* borda de vidro */

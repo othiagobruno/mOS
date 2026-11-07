@@ -541,6 +541,33 @@ static objhdr_t *hdr(id o) {
     objhdr_t *h = (objhdr_t *)((u8 *)o - 16);
     return h->magic == OBJ_MAGIC ? h : 0;
 }
+/* .cxx_construct: o clang gera para as classes ObjC++ com ivars C++ de construtor não trivial (std::set,
+ * std::map...). O runtime da Apple o chama em toda instância nova, da raiz para a subclasse
+ * (object_cxxConstructFromClass); sem isso esses ivars ficavam zerados, e um std::set zerado cai na primeira
+ * inserção (o _keyDownCodes do RenderWidgetHostViewCocoa derrubava o VS Code na primeira tecla). O resultado
+ * "a cadeia não tem nenhum" fica guardado na classe para não varrer as listas de métodos a cada alloc. */
+static IMP own_method(cx_class_t *c, SEL s) {
+    cx_rw_t *rw = rw_of(c);
+    for (u32 i = 0; rw && i < rw->nm; i++) if (rw->m[i].sel == s) return rw->m[i].imp;
+    return 0;
+}
+id cx_cxx_construct(id o) {
+    static SEL ctor;
+    if (!o) return o;
+    cx_rw_t *lrw = rw_of(o->isa);
+    if (lrw && lrw->cxx_ctor == 1) return o;
+    if (!ctor) ctor = sel_registerName(".cxx_construct");
+    cx_class_t *chain[64];
+    int n = 0;
+    for (cx_class_t *c = o->isa; c && n < 64; c = c->super) chain[n++] = c;
+    int any = 0;
+    for (int i = n; i-- > 0;) {
+        IMP f = own_method(chain[i], ctor);
+        if (f) { any = 1; ((id (*)(id, SEL))f)(o, ctor); }
+    }
+    if (lrw) lrw->cxx_ctor = any ? 2 : 1;
+    return o;
+}
 static id new_obj(cx_class_t *cls, u64 size) {
     u8 *b = calloc(1, 16 + size);
     if (!b) return 0;
@@ -549,7 +576,7 @@ static id new_obj(cx_class_t *cls, u64 size) {
     h->rc = 1;
     id o = (id)(b + 16);
     o->isa = cls;
-    return o;
+    return cx_cxx_construct(o);
 }
 id cx_alloc_instance(cx_class_t *cls) { u32 sz = cx_instance_size(cls); return new_obj(cls, sz < 16 ? 16 : sz); }
 id class_createInstance(cx_class_t *c, u64 extra) { return new_obj(c, cx_instance_size(c) + extra); }

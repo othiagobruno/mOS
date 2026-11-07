@@ -142,7 +142,8 @@ enum {
 /* ============================================================ janelas e apps */
 enum {
     WIN_RESIZABLE = 1, WIN_NO_TITLE = 2, WIN_UNIFIED = 4, WIN_DIALOG = 8, WIN_NO_MINIMIZE = 16,
-    WIN_NO_ZOOM = 32, WIN_DARK_CHROME = 64, WIN_TRANSPARENT = 128, WIN_CENTER = 256
+    WIN_NO_ZOOM = 32, WIN_DARK_CHROME = 64, WIN_TRANSPARENT = 128, WIN_CENTER = 256,
+    WIN_FULLSIZE = 512          /* conteúdo na janela toda, semáforos por cima (apps do macOS, GUI_WF_FULLSIZE) */
 };
 
 struct app;
@@ -204,6 +205,7 @@ window_t *wm_create(app_t *app, const char *title, int x, int y, int w, int h, u
 void      wm_close(window_t *w);
 void      wm_invalidate(window_t *w);
 void      wm_focus(window_t *w);
+bool      wm_begin_move(window_t *w);            /* o botão esquerdo apertado no conteúdo de w passa a mover w */
 window_t *wm_focused(void);
 app_t    *wm_active_app(void);
 void      wm_set_title(window_t *w, const char *t);

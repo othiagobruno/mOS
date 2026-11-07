@@ -7,6 +7,29 @@
  */
 #import <AppKit/AppKit.h>
 
+/* ---- o que o Foundation.h mínimo do SDK do mOS não declara (as classes existem no libSystem) */
+typedef struct _NSZone NSZone;
+typedef NS_ENUM(NSInteger, NSComparisonResult) { NSOrderedAscending = -1L, NSOrderedSame, NSOrderedDescending };
+@interface NSSet : NSObject <NSFastEnumeration>
++ (instancetype)set;
+- (NSUInteger)count;
+- (NSArray *)allObjects;
+- (BOOL)containsObject:(id)o;
+@end
+@interface NSMutableSet : NSSet
+- (void)addObject:(id)o;
+- (void)removeObject:(id)o;
+@end
+@class NSURL;
+@interface NSUUID : NSObject
+@end
+@interface NSAttributedString : NSObject
+- (instancetype)initWithString:(NSString *)s;
+- (NSString *)string;
+@end
+@interface NSMutableAttributedString : NSAttributedString
+@end
+
 typedef struct { CGFloat top, left, bottom, right; } UIEdgeInsets;
 
 /* ---- raiz da cadeia de resposta */
@@ -30,6 +53,13 @@ typedef struct { CGFloat top, left, bottom, right; } UIEdgeInsets;
 - (instancetype)initWithRed:(CGFloat)r green:(CGFloat)g blue:(CGFloat)b alpha:(CGFloat)a;
 - (void *)CGColor;
 - (void)setFill;
++ (UIColor *)systemBackgroundColor;
++ (UIColor *)labelColor;
++ (UIColor *)systemGreenColor;
++ (UIColor *)systemBlueColor;
++ (UIColor *)whiteColor;
++ (UIColor *)blackColor;
++ (UIColor *)clearColor;
 - (void)set;
 @end
 
@@ -123,6 +153,14 @@ typedef struct { CGFloat top, left, bottom, right; } UIEdgeInsets;
 - (CGSize)sizeThatFits:(CGSize)s;
 - (void)sizeToFit;
 - (CGSize)intrinsicContentSize;
+- (NSInteger)tag;
+- (void)setTag:(NSInteger)t;
+- (UIView *)viewWithTag:(NSInteger)t;
+- (CGPoint)convertPoint:(CGPoint)p toView:(UIView *)v;
+- (CGPoint)convertPoint:(CGPoint)p fromView:(UIView *)v;
+- (CGRect)convertRect:(CGRect)r toView:(UIView *)v;
+- (CGRect)convertRect:(CGRect)r fromView:(UIView *)v;
+- (UIColor *)tintColor;
 @end
 
 @interface UIWindow : UIView {
@@ -134,11 +172,16 @@ typedef struct { CGFloat top, left, bottom, right; } UIEdgeInsets;
 }
 - (instancetype)initWithWindowScene:(UIWindowScene *)scene;
 - (void)makeKeyAndVisible;
+- (BOOL)isKeyWindow;
 - (UIViewController *)rootViewController;
 - (void)setRootViewController:(UIViewController *)vc;
 @end
 
-@interface UIControl : UIView
+@interface UIControl : UIView {
+@public
+    NSMutableArray *_handlers;      /* _UIControlHandler */
+    BOOL _disabled, _selected, _highlighted;
+}
 @end
 
 @interface UILabel : UIView {
@@ -204,4 +247,71 @@ typedef struct { CGFloat top, left, bottom, right; } UIEdgeInsets;
 @public
     NSMutableArray *_windows;
 }
+@end
+
+/* ---- menus, ações, comandos, itens de barra, botão (UIKitMenus.m) */
+@interface UIMenuElement : NSObject <NSCopying> {
+@public
+    NSString *_title, *_subtitle;
+    UIImage *_image;
+}
+@end
+@interface UIAction : UIMenuElement {
+@public
+    NSString *_identifier, *_discoverabilityTitle;
+    NSUInteger _attributes;
+    NSInteger _state;
+    void (^_handler)(UIAction *);
+    id _sender;
+}
+- (void)_mosPerform;
+@end
+@interface UIMenu : UIMenuElement {
+@public
+    NSString *_identifier;
+    NSUInteger _options;
+    NSArray *_children;
+}
+@end
+@interface UICommandAlternate : NSObject
+@end
+@interface UICommand : UIMenuElement {
+@public
+    SEL _action;
+    id _propertyList;
+    NSArray *_alternates;
+    NSString *_discoverabilityTitle;
+    NSUInteger _attributes;
+    NSInteger _state;
+}
+@end
+@interface UIKeyCommand : UICommand {
+@public
+    NSString *_input;
+    NSInteger _modifierFlags;
+}
+@end
+@interface UIBarItem : NSObject {
+@public
+    NSString *_title;
+    UIImage *_image;
+    BOOL _enabled;
+    NSInteger _tag;
+}
+@end
+@interface UIBarButtonItem : UIBarItem {
+@public
+    UIAction *_primaryAction;
+    UIMenu *_menu;
+    NSInteger _systemItem;
+    id _target;
+    SEL _action;
+}
+@end
+@interface UIButton : UIControl {
+@public
+    NSInteger _buttonType;
+    NSMutableDictionary *_titles;
+}
++ (instancetype)buttonWithType:(NSInteger)type;
 @end

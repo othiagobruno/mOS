@@ -24,12 +24,17 @@ extern void CGContextRestoreGState(CGContextRef c);
 extern void CGContextTranslateCTM(CGContextRef c, CGFloat x, CGFloat y);
 extern void CGContextScaleCTM(CGContextRef c, CGFloat x, CGFloat y);
 extern void CGContextClipToRect(CGContextRef c, CGRect r);
-extern void CGContextSetAlpha(CGContextRef c, CGFloat a);
+
 extern void CGContextDrawImage(CGContextRef c, CGRect r, void *img);
 extern void *CGColorCreateSRGB(CGFloat r, CGFloat g, CGFloat b, CGFloat a);
 extern size_t CGImageGetWidth(void *img), CGImageGetHeight(void *img);
 extern void *CGImageRetain(void *img);
 extern void CGImageRelease(void *img);
+
+/* remove pelo ponteiro (o NSMutableArray do mOS não tem -removeObjectIdenticalTo:) */
+static void mos_remove_identical(NSMutableArray *a, id o) {
+    for (NSInteger i = (NSInteger)a.count - 1; i >= 0; i--) if ([a objectAtIndex:(NSUInteger)i] == o) [a removeObjectAtIndex:(NSUInteger)i];
+}
 
 /* ================================================================ contexto gráfico (UIGraphicsPushContext...) */
 static CGContextRef g_ctx_stack[32];
@@ -257,12 +262,12 @@ C(systemPinkColor, 1, .18, .33, 1) C(systemPurpleColor, .69, .32, .87, 1) C(syst
     [s willRemoveSubview:self];
     [self willMoveToSuperview:nil];
     _superview = nil;
-    [s->_subviews removeObjectIdenticalTo:self];
+    mos_remove_identical(s->_subviews, self);
     [self didMoveToSuperview];
     [s setNeedsDisplay];
 }
-- (void)bringSubviewToFront:(UIView *)v { if ([_subviews containsObject:v]) { [v retain]; [_subviews removeObjectIdenticalTo:v]; [_subviews addObject:v]; [v release]; [self setNeedsDisplay]; } }
-- (void)sendSubviewToBack:(UIView *)v { if ([_subviews containsObject:v]) { [v retain]; [_subviews removeObjectIdenticalTo:v]; [_subviews insertObject:v atIndex:0]; [v release]; [self setNeedsDisplay]; } }
+- (void)bringSubviewToFront:(UIView *)v { if ([_subviews containsObject:v]) { [v retain]; mos_remove_identical(_subviews, v); [_subviews addObject:v]; [v release]; [self setNeedsDisplay]; } }
+- (void)sendSubviewToBack:(UIView *)v { if ([_subviews containsObject:v]) { [v retain]; mos_remove_identical(_subviews, v); [_subviews insertObject:v atIndex:0]; [v release]; [self setNeedsDisplay]; } }
 - (BOOL)isDescendantOfView:(UIView *)v { for (UIView *x = self; x; x = x->_superview) if (x == v) return YES; return NO; }
 - (UIView *)viewWithTag:(NSInteger)t { if (_tag == t) return self; for (UIView *s in _subviews) { UIView *r = [s viewWithTag:t]; if (r) return r; } return nil; }
 - (UIColor *)backgroundColor { return _backgroundColor; }
@@ -311,7 +316,8 @@ C(systemPinkColor, 1, .18, .33, 1) C(systemPurpleColor, .69, .32, .87, 1) C(syst
 - (CGRect)convertRect:(CGRect)r fromView:(UIView *)v { r.origin = [self convertPoint:r.origin fromView:v]; return r; }
 - (UIView *)hitTest:(CGPoint)p withEvent:(id)e {
     if (_hidden || !_userInteraction || _alpha < 0.01 || ![self pointInside:p withEvent:e]) return nil;
-    for (UIView *s in [_subviews reverseObjectEnumerator]) {
+    for (NSInteger k = (NSInteger)_subviews.count - 1; k >= 0; k--) {
+        UIView *s = [_subviews objectAtIndex:(NSUInteger)k];
         UIView *h = [s hitTest:[self convertPoint:p toView:s] withEvent:e];
         if (h) return h;
     }
@@ -331,7 +337,7 @@ C(systemPinkColor, 1, .18, .33, 1) C(systemPurpleColor, .69, .32, .87, 1) C(syst
     if (_hidden || _alpha < 0.01) return;
     CGRect b = [self bounds];
     CGContextSaveGState(c);
-    if (_alpha < 1) CGContextSetAlpha(c, _alpha);
+    /* alpha parcial: o CG do libSystem ainda não tem CGContextSetAlpha; a view desenha opaca */
     if (_clipsToBounds) CGContextClipToRect(c, CGRectMake(0, 0, b.size.width, b.size.height));
     if (_backgroundColor && _backgroundColor->_a > 0) {
         CGContextSetFillColorWithColor(c, [_backgroundColor CGColor]);
@@ -351,16 +357,66 @@ C(systemPinkColor, 1, .18, .33, 1) C(systemPurpleColor, .69, .32, .87, 1) C(syst
 @end
 
 /* ================================================================ UILabel e UIControl */
+/* um alvo+ação ou um UIAction registrado num controle */
+@interface _UIControlHandler : NSObject {
+@public
+    id _target;                 /* não retido, como no UIKit */
+    SEL _sel;
+    UIAction *_action;
+    NSUInteger _events;
+}
+@end
+@implementation _UIControlHandler
+- (void)dealloc { [_action release]; [super dealloc]; }
+@end
+
 @implementation UIControl
-- (BOOL)isEnabled { return YES; }
-- (void)setEnabled:(BOOL)e { (void)e; }
-- (BOOL)isSelected { return NO; }
-- (void)setSelected:(BOOL)s { (void)s; }
-- (BOOL)isHighlighted { return NO; }
-- (void)setHighlighted:(BOOL)h { (void)h; }
-- (void)addTarget:(id)t action:(SEL)a forControlEvents:(NSUInteger)e { (void)t; (void)a; (void)e; }
-- (void)removeTarget:(id)t action:(SEL)a forControlEvents:(NSUInteger)e { (void)t; (void)a; (void)e; }
-- (void)addAction:(id)a forControlEvents:(NSUInteger)e { (void)a; (void)e; }
+- (void)dealloc { [_handlers release]; [super dealloc]; }
+- (BOOL)isEnabled { return !_disabled; }
+- (void)setEnabled:(BOOL)e { _disabled = !e; [self setNeedsDisplay]; }
+- (BOOL)isSelected { return _selected; }
+- (void)setSelected:(BOOL)s { _selected = s; [self setNeedsDisplay]; }
+- (BOOL)isHighlighted { return _highlighted; }
+- (void)setHighlighted:(BOOL)h { _highlighted = h; [self setNeedsDisplay]; }
+- (_UIControlHandler *)_mosAdd:(NSUInteger)events {
+    if (!_handlers) _handlers = [[NSMutableArray alloc] init];
+    _UIControlHandler *h = [[_UIControlHandler alloc] init];
+    h->_events = events;
+    [_handlers addObject:h];
+    [h release];
+    return h;
+}
+- (void)addTarget:(id)t action:(SEL)a forControlEvents:(NSUInteger)e { _UIControlHandler *h = [self _mosAdd:e]; h->_target = t; h->_sel = a; }
+- (void)addAction:(UIAction *)a forControlEvents:(NSUInteger)e { _UIControlHandler *h = [self _mosAdd:e]; h->_action = [a retain]; }
+- (void)removeTarget:(id)t action:(SEL)a forControlEvents:(NSUInteger)e {
+    for (NSInteger i = (NSInteger)_handlers.count - 1; i >= 0; i--) {
+        _UIControlHandler *h = [_handlers objectAtIndex:(NSUInteger)i];
+        if ((!t || h->_target == t) && (!a || h->_sel == a) && (h->_events & e)) [_handlers removeObjectAtIndex:(NSUInteger)i];
+    }
+}
+- (void)removeAction:(UIAction *)a forControlEvents:(NSUInteger)e {
+    for (NSInteger i = (NSInteger)_handlers.count - 1; i >= 0; i--) {
+        _UIControlHandler *h = [_handlers objectAtIndex:(NSUInteger)i];
+        if (h->_action == a && (h->_events & e)) [_handlers removeObjectAtIndex:(NSUInteger)i];
+    }
+}
+- (NSUInteger)allControlEvents { NSUInteger m = 0; for (_UIControlHandler *h in _handlers) m |= h->_events; return m; }
+- (NSSet *)allTargets { NSMutableSet *s = [NSMutableSet set]; for (_UIControlHandler *h in _handlers) if (h->_target) [s addObject:h->_target]; return s; }
+/* dispara os alvos e ações dos eventos (o toque ainda não chega aqui sozinho: falta ligar os eventos do AppKit) */
+- (void)sendActionsForControlEvents:(NSUInteger)e {
+    NSArray *hs = [[_handlers copy] autorelease];
+    for (_UIControlHandler *h in hs) {
+        if (!(h->_events & e)) continue;
+        if (h->_action) { h->_action->_sender = self; [h->_action _mosPerform]; h->_action->_sender = nil; }
+        else if (h->_target && h->_sel && [h->_target respondsToSelector:h->_sel]) [h->_target performSelector:h->_sel withObject:self];
+    }
+}
+- (void)sendAction:(SEL)a to:(id)t forEvent:(id)ev { (void)ev; if (t && [t respondsToSelector:a]) [t performSelector:a withObject:self]; }
+- (NSUInteger)_mosHandlerCount { return _handlers.count; }
+- (id)_mosHandlerTarget:(NSUInteger)i { return ((_UIControlHandler *)[_handlers objectAtIndex:i])->_target; }
+- (SEL)_mosHandlerSelector:(NSUInteger)i { return ((_UIControlHandler *)[_handlers objectAtIndex:i])->_sel; }
+- (UIAction *)_mosHandlerAction:(NSUInteger)i { return ((_UIControlHandler *)[_handlers objectAtIndex:i])->_action; }
+- (NSUInteger)_mosHandlerEvents:(NSUInteger)i { return ((_UIControlHandler *)[_handlers objectAtIndex:i])->_events; }
 @end
 
 @implementation UILabel
@@ -425,7 +481,7 @@ C(systemPinkColor, 1, .18, .33, 1) C(systemPurpleColor, .69, .32, .87, 1) C(syst
 }
 - (UIWindowScene *)windowScene { return _windowScene; }
 - (void)setWindowScene:(UIWindowScene *)s {
-    if (_windowScene) [_windowScene->_windows removeObjectIdenticalTo:self];
+    if (_windowScene) mos_remove_identical(_windowScene->_windows, self);
     _windowScene = s;
     if (s) { if (!s->_windows) s->_windows = [[NSMutableArray alloc] init]; [s->_windows addObject:self]; }
 }
@@ -495,7 +551,7 @@ C(systemPinkColor, 1, .18, .33, 1) C(systemPurpleColor, .69, .32, .87, 1) C(syst
 - (UIViewController *)parentViewController { return _parent; }
 - (NSArray *)childViewControllers { return _children ? [[_children copy] autorelease] : [NSArray array]; }
 - (void)addChildViewController:(UIViewController *)c { if (!_children) _children = [[NSMutableArray alloc] init]; [_children addObject:c]; c->_parent = self; }
-- (void)removeFromParentViewController { if (_parent) { [_parent->_children removeObjectIdenticalTo:self]; _parent = nil; } }
+- (void)removeFromParentViewController { if (_parent) { mos_remove_identical(_parent->_children, self); _parent = nil; } }
 - (void)willMoveToParentViewController:(UIViewController *)p { (void)p; }
 - (void)didMoveToParentViewController:(UIViewController *)p { (void)p; }
 - (id)traitCollection { return [UITraitCollection currentTraitCollection]; }

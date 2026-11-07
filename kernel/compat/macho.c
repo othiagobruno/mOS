@@ -1858,10 +1858,14 @@ bool macho_load(process_t *p, const u8 *img, usize len, const char *arg, u64 *en
     char pwd[272];
     snprintf(pwd, sizeof pwd, "PWD=%s", next_cwd);
     macho_set_cwd(NULL);
+    /* SHELL: o bash do Homebrew quando está na imagem (o VS Code roda "$SHELL -i -l -c" para ler o ambiente de
+     * login e abre o terminal integrado com ele). O msh do Terminal não é um arquivo, então sem bash não há um
+     * shell que aceite -c: o caminho antigo continua e o spawn falha logo (ENOENT) em vez de esperar o prazo. */
+    const char *shell_env = vfs_lookup("/usr/local/bin/bash") ? "SHELL=/usr/local/bin/bash" : "SHELL=/bin/msh";
     const char *envs[] = {"HOME=/Users/Visitante", "USER=visitante", "LOGNAME=visitante",
                           "PATH=/usr/local/bin:/Sistema/Programas:/usr/bin:/bin", p->tty ? "TERM=xterm-256color" : "TERM=dumb",   /* sessão do Terminal: isatty(0..2) verdadeiro */
                           "LANG=pt_BR.UTF-8",
-                          pwd, "SHELL=/bin/msh"};
+                          pwd, shell_env};
     if (p->spawn_envc > 0 && p->spawn_env) {
         for (int i = 0; args_ok && i < envc; i++) {
             const char *s = p->spawn_env[i] ? p->spawn_env[i] : "";

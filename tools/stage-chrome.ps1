@@ -23,9 +23,14 @@ $esp = Join-Path $root "$OutDir\esp"
 if (-not (Test-Path -LiteralPath "$src\MacOS\Google Chrome")) { Write-Host "nao achei $src\MacOS\Google Chrome" -ForegroundColor Red; exit 1 }
 if (-not (Test-Path "$esp\mOS")) { Write-Host "rode antes: .\build.ps1 -OutDir $OutDir" -ForegroundColor Red; exit 1 }
 
+# caminhos absolutos com \\?\: os executaveis dos helpers "Aperitif" passam de 260 caracteres
+# (".../Helpers/Google Chrome Helper (Aperitif Renderer).app/Contents/MacOS/...") e sumiam da copia
+function Get-LongPath([string]$p) { if ($p.StartsWith('\\?\')) { $p } else { '\\?\' + $p } }
+
 # --- fatia x86_64 de um Mach-O universal (copia como esta se ja for thin)
 function Copy-X64([string]$from, [string]$to) {
-    New-Item -ItemType Directory -Force (Split-Path $to -Parent) | Out-Null
+    $from = Get-LongPath $from; $to = Get-LongPath $to
+    [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($to)) | Out-Null
     $b = [IO.File]::ReadAllBytes($from)
     $be = { param($o) ([uint32]$b[$o] -shl 24) -bor ([uint32]$b[$o + 1] -shl 16) -bor ([uint32]$b[$o + 2] -shl 8) -bor [uint32]$b[$o + 3] }
     $magic = & $be 0
@@ -48,7 +53,7 @@ $ver = (Get-ChildItem -LiteralPath "$src\Frameworks\Google Chrome Framework.fram
 if (-not $ver) { Write-Host 'nao achei a versao do Google Chrome Framework' -ForegroundColor Red; exit 1 }
 $app = "$esp\mOS\Aplicativos\Google Chrome.app"
 $dst = "$app\Contents"
-if (Test-Path -LiteralPath $app) { Remove-Item -LiteralPath $app -Recurse -Force }
+if (Test-Path -LiteralPath $app) { [IO.Directory]::Delete((Get-LongPath $app), $true) }
 New-Item -ItemType Directory -Force "$dst\MacOS", "$dst\Resources" | Out-Null
 Copy-Item -LiteralPath "$src\Info.plist" "$dst\Info.plist"
 Copy-Item -LiteralPath "$src\PkgInfo" "$dst\PkgInfo" -ErrorAction SilentlyContinue
@@ -67,7 +72,9 @@ foreach ($h in Get-ChildItem -LiteralPath "$src\$fs\Helpers" -Directory -Filter 
     $t = "$dst\$fs\Helpers\$($h.Name)\Contents"
     New-Item -ItemType Directory -Force "$t\MacOS" | Out-Null
     Copy-Item -LiteralPath "$($h.FullName)\Contents\Info.plist" "$t\Info.plist"
-    foreach ($x in Get-ChildItem -LiteralPath "$($h.FullName)\Contents\MacOS" -File) { Copy-X64 $x.FullName "$t\MacOS\$($x.Name)" }
+    $exe = @(Get-ChildItem -LiteralPath (Get-LongPath "$($h.FullName)\Contents\MacOS") -File)
+    if (-not $exe) { throw "helper sem executavel (extracao com caminho longo?): $($h.Name)" }
+    foreach ($x in $exe) { Copy-X64 "$($h.FullName)\Contents\MacOS\$($x.Name)" "$t\MacOS\$($x.Name)" }
 }
 foreach ($x in 'chrome_crashpad_handler', 'app_mode_loader', 'web_app_shortcut_copier') {
     if (Test-Path -LiteralPath "$src\$fs\Helpers\$x") { Copy-X64 "$src\$fs\Helpers\$x" "$dst\$fs\Helpers\$x" }
@@ -94,7 +101,7 @@ if ($ComDmg) {
     New-Item -ItemType Directory -Force "$esp\mOS\Users\Visitante\Downloads" | Out-Null
     Copy-Item -LiteralPath $ComDmg "$esp\mOS\Users\Visitante\Downloads\"
 }
-$mb = (Get-ChildItem -LiteralPath $app -Recurse -File | Measure-Object Length -Sum).Sum / 1MB
+$mb = (Get-ChildItem -LiteralPath (Get-LongPath $app) -Recurse -File | Measure-Object Length -Sum).Sum / 1MB
 Write-Host ("Google Chrome.app: {0:N1} MiB" -f $mb) -ForegroundColor Cyan
 
 if ($KernelTeste) {

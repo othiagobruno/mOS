@@ -99,6 +99,7 @@ typedef struct {
     NSRect frame;                   /* tela, origem embaixo à esquerda (contentRect) */
     id content, title, delegate, first, bg, mouse_view;
     u64 style;
+    int frameless;                  /* 0 = não sei, 1 = moldura normal, 2 = conteúdo = moldura (w_frameless) */
     BOOL visible, released_when_closed, closed, needs, is_modal_panel;
     int level;
     id cvc;                         /* contentViewController */
@@ -1090,9 +1091,93 @@ static void w_set_content(id self, SEL c, id v) {
 }
 static void w_set_delegate(id self, SEL c, id d) { (void)c; ws(self)->delegate = d; }
 static id w_delegate(id self, SEL c) { (void)c; return ws(self)->delegate; }
-static NSRect w_frame(id self, SEL c) { (void)c; NSRect r = ws(self)->frame; r.s.h += 22; return r; }
-static NSRect w_content_rect_for(id self, SEL c, NSRect r) { (void)self; (void)c; r.s.h -= 22; return r; }
-static NSRect w_frame_rect_for(id self, SEL c, NSRect r) { (void)self; (void)c; r.s.h += 22; return r; }
+/* NSWindowStyleMaskFullSizeContentView (1 << 15), como o Electron usa com titleBarStyle "hidden" (o VS Code
+ * desenha a própria barra de título): o conteúdo é a janela inteira, moldura = conteúdo, e o window server
+ * só põe os semáforos por cima (GUI_WF_FULLSIZE). Nas outras janelas a moldura tem 22 pt a mais. */
+#define WS_FULLSIZE (1ull << 15)
+/* Janela sem moldura do Electron (frame: false, como a do VS Code): a ElectronNSWindow sobrescreve
+ * contentRectForFrameRect: e devolve a moldura inteira, e o Chromium dimensiona as views por ela. O conteúdo
+ * do mOS tem de ser então a janela toda, como numa FullSizeContentView; senão a RenderWidgetHostViewCocoa
+ * ficava 22-44 pt mais alta que a janela (barra de status cortada e cliques deslocados). Descobre uma vez
+ * por janela chamando a versão da subclasse (que, se chamar a nossa, recebe a resposta normal). */
+static NSRect w_content_rect_for(id self, SEL c, NSRect r);
+void objc_msgSend_stret(void);         /* retorno de NSRect (32 bytes) vem por ponteiro oculto */
+static int probing_frame;
+static BOOL w_frameless(id self, wstate_t *s) {
+    if (s->frameless) return s->frameless == 2;
+    if (probing_frame) return NO;
+    SEL sel = sel_registerName("contentRectForFrameRect:");
+    IMP imp = cx_lookup(self->isa, sel);
+    if (!imp || imp == (IMP)w_content_rect_for) { s->frameless = 1; return NO; }
+    probing_frame = 1;
+    NSRect t = r_make(0, 0, 400, 300);
+    NSRect o = ((NSRect (*)(id, SEL, NSRect))objc_msgSend_stret)(self, sel, t);
+    probing_frame = 0;
+    s->frameless = (o.s.w == t.s.w && o.s.h == t.s.h) ? 2 : 1;
+    return s->frameless == 2;
+}
+static int w_title_h(id self) { wstate_t *s = ws(self); return ((s->style & WS_FULLSIZE) || w_frameless(self, s)) ? 0 : 22; }
+/* -setFrame:display: e -setContentSize: que mudam o tamanho avisam como no Cocoa: o NativeWidgetNSWindowBridge
+ * do Chromium só refaz as contas de conteúdo (views e compositor) no windowDidResize: */
+static void w_did_resize(id self) {
+    wstate_t *s = ws(self);
+    id note = cx_note(NSWindowDidResizeNotification, self, 0);
+    if (s->delegate && cx_responds(s->delegate->isa, sel_registerName("windowDidResize:"))) MSG(void, s->delegate, "windowDidResize:", note);
+    cx_post(note);
+}
+/* diagnóstico (ca-log): as contas de moldura x conteúdo que o Chromium faz, cada tipo com o seu limite de linhas */
+static void geo_log(int *n, const char *what, id w, NSRect in, NSRect out) {
+    extern int cx_ca_diag(void);
+    if (*n < 12 && cx_ca_diag()) {
+        (*n)++;
+        cx_fdprintf(2, "[ca] %s: %dx%d -> %dx%d (janela %d)\n", what, (int)in.s.w, (int)in.s.h, (int)out.s.w, (int)out.s.h, ws(w)->gid);
+    }
+}
+static NSRect w_frame(id self, SEL c) {
+    (void)c;
+    NSRect r = ws(self)->frame;
+    r.s.h += w_title_h(self);
+    static int n; geo_log(&n, "frame", self, ws(self)->frame, r);
+    return r;
+}
+static NSRect w_content_rect_for(id self, SEL c, NSRect r) {
+    (void)c;
+    NSRect o = r; o.s.h -= w_title_h(self);
+    static int n; geo_log(&n, "contentRectForFrameRect", self, r, o);
+    return o;
+}
+static NSRect w_frame_rect_for(id self, SEL c, NSRect r) {
+    (void)c;
+    NSRect o = r; o.s.h += w_title_h(self);
+    static int n; geo_log(&n, "frameRectForContentRect", self, r, o);
+    return o;
+}
+static u64 w_style_mask(id self, SEL c) { (void)c; return ws(self)->style; }
+static void w_set_style_mask(id self, SEL c, u64 m) {
+    (void)c;
+    wstate_t *s = ws(self);
+    if (s->gid > 0) m = (m & ~WS_FULLSIZE) | (s->style & WS_FULLSIZE);   /* a janela do window server não muda */
+    int before = w_title_h(self);
+    s->style = m;
+    int d = before - w_title_h(self);
+    /* a moldura fica onde está e o conteúdo ganha (ou devolve) a faixa da barra de título. Depois que a
+     * janela existe no window server o estilo dela não muda mais (GUI_WIN_CREATE já passou). */
+    if (d && s->gid <= 0) {
+        s->frame.s.h += d;
+        if (s->frame.s.h < 1) s->frame.s.h = 1;
+        if (s->content) v_set_frame(s->content, 0, r_make(0, 0, s->frame.s.w, s->frame.s.h));
+    }
+}
+/* área do conteúdo fora da barra de título (coordenadas da janela, origem embaixo) */
+static NSRect w_content_layout_rect(id self, SEL c) {
+    (void)c;
+    wstate_t *s = ws(self);
+    double h = s->frame.s.h - (w_title_h(self) == 0 ? 28 : 0);
+    return r_make(0, 0, s->frame.s.w, h > 0 ? h : 0);
+}
+/* -[NSWindow performWindowDragWithEvent:]: o Chromium chama no clique numa região de arrastar
+ * (-webkit-app-region: drag); o window server passa a mover a janela com o botão que está apertado */
+static void w_perform_drag(id self, SEL c, id ev) { (void)c; (void)ev; wstate_t *s = ws(self); if (s->gid > 0) SYS2(GUI_WIN_FOCUS, s->gid, GUI_FOCUS_MOVE); }
 static void w_set_bg(id self, SEL c, id col_) { (void)c; keep(&ws(self)->bg, col_); ws(self)->needs = YES; }
 static id w_bg(id self, SEL c) { (void)c; return ws(self)->bg; }
 static BOOL w_visible(id self, SEL c) { (void)c; return ws(self)->visible; }
@@ -1117,10 +1202,15 @@ static void w_show(id self, SEL c, id sender) {
     wstate_t *s = ws(self);
     if (s->gid <= 0) {
         u32 fl = (s->style & 8) ? GUI_WF_RESIZABLE : 0;
-        if (!(s->style & 1) && s->style != 0) fl |= 0;
+        if (w_title_h(self) == 0 && (s->style & 1)) fl |= GUI_WF_FULLSIZE;   /* FullSizeContentView ou sem moldura */
         long id_ = SYS4(GUI_WIN_CREATE, cx_cstr(s->title), (long)s->frame.s.w, (long)s->frame.s.h, fl);
         if (id_ <= 0) { cx_fdprintf(2, "AppKit[mOS]: não foi possível criar a janela (%ld)\n", id_); return; }
         s->gid = (int)id_;
+        {   /* diagnóstico (ca-log): tamanho pedido ao window server x o que o compositor do app desenha */
+            extern int cx_ca_diag(void);
+            if (cx_ca_diag()) cx_fdprintf(2, "[ca] janela %d: conteúdo %dx%d estilo 0x%llx%s\n", s->gid, (int)s->frame.s.w,
+                                          (int)s->frame.s.h, (unsigned long long)s->style, (fl & GUI_WF_FULLSIZE) ? " (tela cheia)" : "");
+        }
         gui_wininfo_t i;
         if (SYS2(GUI_WIN_INFO, s->gid, &i) == 0 && (i.w != (int)s->frame.s.w || i.h != (int)s->frame.s.h)) {
             NSSize old = s->frame.s;
@@ -1141,14 +1231,27 @@ static void w_set_min(id self, SEL c, NSSize z) { (void)self; (void)c; (void)z; 
 static void w_set_frame(id self, SEL c, NSRect r, BOOL disp) {
     (void)c; (void)disp;
     wstate_t *s = ws(self);
-    r.s.h -= 22;
+    NSRect in = r;
+    r.s.h -= w_title_h(self);
+    static int n; geo_log(&n, "setFrame:display:", self, in, r);
     s->frame.o = r.o;
-    if (s->gid <= 0) { s->frame = r; v_set_frame(s->content, 0, r_make(0, 0, r.s.w, r.s.h)); }
+    if (s->gid <= 0) {
+        BOOL changed = s->frame.s.w != r.s.w || s->frame.s.h != r.s.h;
+        s->frame = r;
+        v_set_frame(s->content, 0, r_make(0, 0, r.s.w, r.s.h));
+        if (changed) w_did_resize(self);
+    }
 }
 static void w_set_content_size(id self, SEL c, NSSize z) {
     (void)c;
     wstate_t *s = ws(self);
-    if (s->gid <= 0) { s->frame.s = z; v_set_frame(s->content, 0, r_make(0, 0, z.w, z.h)); }
+    static int n; geo_log(&n, "setContentSize:", self, r_make(0, 0, z.w, z.h), r_make(0, 0, z.w, z.h));
+    if (s->gid <= 0) {
+        BOOL changed = s->frame.s.w != z.w || s->frame.s.h != z.h;
+        s->frame.s = z;
+        v_set_frame(s->content, 0, r_make(0, 0, z.w, z.h));
+        if (changed) w_did_resize(self);
+    }
 }
 static void close_window(id self, BOOL from_wm) {
     wstate_t *s = ws(self);
@@ -2161,6 +2264,15 @@ static void dispatch(gui_event_t *g) {
             if (MSG0(BOOL, v, "acceptsFirstResponder")) w_make_first(w, 0, v);
             else if (s->first && vs(s->first)->kind == K_TEXT) w_make_first(w, 0, 0);
             s->mouse_view = v;
+            {   /* diagnóstico (ca-log): quem recebe os cliques */
+                extern int cx_ca_diag(void);
+                static int nlog;
+                if (nlog < 40 && cx_ca_diag()) {
+                    nlog++;
+                    cx_fdprintf(2, "[ca] mouseDown (%d,%d) cliques %d -> %s %dx%d, primeiro respondedor %s\n", g->x, g->y, g->clicks,
+                                cx_class_name(v->isa), (int)vs(v)->frame.s.w, (int)vs(v)->frame.s.h, s->first ? cx_class_name(s->first->isa) : "-");
+                }
+            }
             MSG(void, v, "mouseDown:", make_event(1, w, g->x, g->y, g));
         } else if (g->type == GEV_RIGHT_DOWN) MSG(void, v, "rightMouseDown:", make_event(3, w, g->x, g->y, g));
         else MSG(void, v, "scrollWheel:", make_event(22, w, g->x, g->y, g));
@@ -2212,6 +2324,11 @@ static void dispatch(gui_event_t *g) {
         }
         {
             id target = s->first ? s->first : s->content;
+            {   /* diagnóstico (ca-log): para onde vão as teclas */
+                extern int cx_ca_diag(void);
+                static int nlog;
+                if (nlog < 40 && cx_ca_diag()) { nlog++; cx_fdprintf(2, "[ca] keyDown tecla %d mods 0x%x -> %s\n", g->key, g->mods, cx_class_name(target->isa)); }
+            }
             MSG(void, target, "keyDown:", e);
         }
     keydone:
@@ -3646,7 +3763,9 @@ void cx_appkit_init(void) {
     M(NSWindow, "setFrame:display:", w_set_frame); M(NSWindow, "setContentSize:", w_set_content_size); M(NSWindow, "display", w_display);
     M(NSWindow, "setFrameAutosaveName:", noop1_m); M(NSWindow, "setTitlebarAppearsTransparent:", noop1_m); M(NSWindow, "setTitleVisibility:", noop1_m);
     M(NSWindow, "setLevel:", noop1_m); M(NSWindow, "setOpaque:", noop1_m); M(NSWindow, "setHasShadow:", noop1_m); M(NSWindow, "setMovableByWindowBackground:", noop1_m);
-    M(NSWindow, "setAcceptsMouseMovedEvents:", noop1_m); M(NSWindow, "setInitialFirstResponder:", noop1_m); M(NSWindow, "setStyleMask:", noop1_m);
+    M(NSWindow, "setAcceptsMouseMovedEvents:", noop1_m); M(NSWindow, "setInitialFirstResponder:", noop1_m);
+    M(NSWindow, "setStyleMask:", w_set_style_mask); M(NSWindow, "styleMask", w_style_mask);
+    M(NSWindow, "contentLayoutRect", w_content_layout_rect); M(NSWindow, "performWindowDragWithEvent:", w_perform_drag);
     M(NSWindow, "setCollectionBehavior:", noop1_m); M(NSWindow, "setAppearance:", noop1_m); M(NSWindow, "setFrameOrigin:", noop1_m);
     M(NSWindow, "setFrameTopLeftPoint:", noop1_m); M(NSWindow, "windowNumber", w_number); M(NSWindow, "setTabbingMode:", noop1_m);
     M(NSWindow, "occlusionState", w_occlusion); M(NSWindow, "convertRectToScreen:", w_convert_to_screen);

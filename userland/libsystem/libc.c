@@ -9,7 +9,6 @@
 #include "libc.h"
 
 /* ================================================================ estado global */
-int cx_errno;
 char **environ;
 int NXArgc;
 char **NXArgv;
@@ -18,8 +17,12 @@ unsigned long __stack_chk_guard = 0x5f6d4f53434f4d00ULL;
 unsigned int mach_task_self_ = 0x103;
 u64 cx_image_base;
 
-int *__error(void) { return &cx_errno; }
-int *__errno_location(void) { return &cx_errno; }
+/* errno da thread: o int fica dentro do próprio slot TSD_ERRNO (sem FSGSBASE, cx_tsd devolve a tabela
+ * global e o errno volta a ser um só, como antes) */
+#define TSD_ERRNO 103
+void **cx_tsd(void);
+int *__error(void) { return (int *)&cx_tsd()[TSD_ERRNO]; }
+int *__errno_location(void) { return __error(); }
 
 static long ret_errno(long r) {
     if (r < 0) { cx_errno = (int)-r; return -1; }

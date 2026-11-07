@@ -10,7 +10,7 @@
 param([Parameter(Mandatory = $true)][string]$App, [string]$OutDir = 'build-vscode', [int]$SizeMiB = 512, [switch]$Diagnostico, [switch]$ComApp, [switch]$Autostart,
       [switch]$ComModulosNativos, [int]$MaxModuloMiB = 32,
       [string]$Args0 = '--in-process-gpu --disable-gpu --no-sandbox --verbose --enable-logging',
-      [string]$Tracepoints = '', [switch]$CaLog)
+      [string]$Tracepoints = '', [switch]$CaLog, [switch]$ComBash, [string]$Bottles = 'build\brew\x')
 $root = Split-Path $PSScriptRoot -Parent
 $src = Join-Path $App 'Contents'
 $esp = Join-Path $root "$OutDir\esp"
@@ -92,6 +92,35 @@ else { Remove-Item $tpFile -ErrorAction SilentlyContinue }
 # -CaLog: o QuartzCore registra cada IOSurface posto num layer, cada CAContext publicado e cada quadro composto (como no stage-electron)
 if ($CaLog) { Set-Content -Path "$esp\mOS\Sistema\Biblioteca\ca-log" -Value '1' -Encoding ascii }
 else { Remove-Item "$esp\mOS\Sistema\Biblioteca\ca-log" -ErrorAction SilentlyContinue }
+# -ComBash: o bash do Homebrew (bottles Intel de -Bottles, os mesmos do tools\stage-bash.ps1) em /usr/local/bin/bash,
+# com readline, ncurses (e o terminfo de xterm-256color) e gettext em /usr/local/opt. Com ele o kernel aponta SHELL
+# para o bash, e o VS Code consegue ler o ambiente do shell de login e abrir o terminal integrado.
+if ($ComBash) {
+    $b = Join-Path $root $Bottles
+    $usr = "$esp\mOS\usr\local"
+    $ok = $true
+    foreach ($f in 'bash', 'readline', 'ncurses', 'gettext') { if (-not (Get-ChildItem "$b\$f" -Directory -ErrorAction SilentlyContinue)) { Write-Host "-ComBash: falta o bottle $f em $b" -ForegroundColor Yellow; $ok = $false } }
+    if ($ok) {
+        $rl = (Get-ChildItem "$b\readline" -Directory | Select-Object -First 1).FullName
+        $nc = (Get-ChildItem "$b\ncurses" -Directory | Select-Object -First 1).FullName
+        $gt = (Get-ChildItem "$b\gettext" -Directory | Select-Object -First 1).FullName
+        $bs = (Get-ChildItem "$b\bash" -Directory | Select-Object -First 1).FullName
+        foreach ($f in 'readline', 'ncurses', 'gettext') { New-Item -ItemType Directory -Force "$usr\opt\$f\lib" | Out-Null }
+        New-Item -ItemType Directory -Force "$usr\bin" | Out-Null
+        Copy-Item -Force "$rl\lib\libreadline.8.dylib", "$rl\lib\libhistory.8.dylib" "$usr\opt\readline\lib\"
+        Copy-Item -Force "$nc\lib\libncursesw.6.dylib" "$usr\opt\ncurses\lib\"
+        Copy-Item -Force "$gt\lib\libintl.8.dylib" "$usr\opt\gettext\lib\"
+        foreach ($t in 'x\xterm-256color', 'x\xterm', 'd\dumb', 'v\vt100') {
+            if (Test-Path "$nc\share\terminfo\$t") {
+                $dir = Split-Path "$usr\opt\ncurses\share\terminfo\$t" -Parent
+                New-Item -ItemType Directory -Force $dir | Out-Null
+                Copy-Item -Force "$nc\share\terminfo\$t" $dir
+            }
+        }
+        Copy-Item -Force "$bs\bin\bash" "$usr\bin\bash"
+        Write-Host "bash do Homebrew em /usr/local/bin/bash" -ForegroundColor Cyan
+    }
+}
 $mb = (Get-ChildItem "$esp\mOS\Aplicativos\VSCode.app" -Recurse -File | Measure-Object Length -Sum).Sum / 1MB
 Write-Host ("VSCode.app: {0:N1} MiB" -f $mb) -ForegroundColor Cyan
 & (Join-Path $root "$OutDir\mkimg.exe") (Join-Path $root "$OutDir\mOS.img") $esp $SizeMiB

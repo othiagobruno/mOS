@@ -12,9 +12,11 @@ param([Parameter(Mandatory = $true)][string]$App, [switch]$SemBuild, [int]$Ocios
       [int]$Memory = 2700, [int]$Port = 5917, [string]$OutDir = 'build-vscode',
       [switch]$Persist, [string]$Argumentos = '--in-process-gpu --disable-gpu --no-sandbox --verbose --enable-logging',
       [string]$Tracepoints = '', [switch]$Electron, [string]$Nome = 'Code', [string]$Servico = '', [string]$Accel = '',
-      [int]$Capturas = 30)
+      [int]$Capturas = 30, [string]$Passos = '', [int]$PassosApos = 150, [switch]$ComBash)
 # -Capturas N: a cada N s depois que o app sobe, captura a tela (QMP) em $OutDir\shots\cap-*.png e diz se a janela existe
 # e quanto do conteúdo foi desenhado (tools\analisa-tela.ps1); 0 desliga
+# -Passos "move:x,y;click;type:..." -PassosApos N: N s depois que o app sobe, roda esses passos de entrada pelo QMP
+# (tools\qmp-passos.ps1: mouse, teclado e capturas shot:<nome> em $OutDir\shots)
 $root = Split-Path $PSScriptRoot -Parent
 Set-Location $root
 if (-not $Servico) { $Servico = if ($Electron) { 'com.mos.electron-teste' } else { 'com.microsoft.vscode' } }
@@ -35,7 +37,7 @@ function Save-Tela([string]$Png) {
 }
 function Stage-App {
     if ($Electron) { .\tools\stage-electron.ps1 -App $App -OutDir $OutDir -Diagnostico -CaLog -Autostart -SizeMiB 1024 -Args0 $Argumentos 6>&1 2>&1 | ForEach-Object { "$_" } }
-    else { .\tools\stage-vscode.ps1 -App $App -OutDir $OutDir -Diagnostico -ComApp -ComModulosNativos -Autostart -SizeMiB 768 -Args0 $Argumentos -Tracepoints $Tracepoints -CaLog 6>&1 2>&1 | ForEach-Object { "$_" } }
+    else { .\tools\stage-vscode.ps1 -App $App -OutDir $OutDir -Diagnostico -ComApp -ComModulosNativos -Autostart -SizeMiB 768 -Args0 $Argumentos -Tracepoints $Tracepoints -CaLog -ComBash:$ComBash 6>&1 2>&1 | ForEach-Object { "$_" } }
 }
 $t0 = Get-Date
 # um QEMU de rodada anterior ainda segura o mOS.img: sem isto o mkimg falhava e a rodada subia a imagem velha
@@ -66,7 +68,7 @@ $env:MOS_QEMU_LOG = "$root\$OutDir\qemu-reset.log"
 Remove-Item $env:MOS_QEMU_LOG -ErrorAction SilentlyContinue
 Start-Process powershell -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$root\run.ps1`" -Headless -Memory $Memory -Image $OutDir/mOS.img -Port $Port -Serial $serial$(if ($Persist) { ' -Persist' })" -WindowStyle Hidden | Out-Null
 $t1 = Get-Date; $started = $null; $lastLen = 0; $lastChange = Get-Date; $fim = 'limite de tempo'
-$lastShot = Get-Date; $nshot = 0
+$lastShot = Get-Date; $nshot = 0; $passosFeitos = -not $Passos
 Get-ChildItem "$root\$OutDir\shots\cap-*.png" -ErrorAction SilentlyContinue | Remove-Item -ErrorAction SilentlyContinue
 while (((Get-Date) - $t1).TotalSeconds -lt $Limite) {
     Start-Sleep -Milliseconds 1500
@@ -74,6 +76,12 @@ while (((Get-Date) - $t1).TotalSeconds -lt $Limite) {
         $lastShot = Get-Date; $nshot++
         $png = "$root\$OutDir\shots\cap-$nshot.png"
         if (Save-Tela $png) { "{0:HH:mm:ss} captura {1}: {2}" -f (Get-Date), $nshot, (& "$root\tools\analisa-tela.ps1" $png) }
+    }
+    if (-not $passosFeitos -and $started -and ((Get-Date) - $started).TotalSeconds -ge $PassosApos) {
+        $passosFeitos = $true
+        "{0:HH:mm:ss} passos de entrada: {1}" -f (Get-Date), $Passos
+        & "$root\tools\qmp-passos.ps1" -Port $Port -Passos $Passos -OutDir $OutDir
+        $lastChange = Get-Date   # os passos contam como atividade (o app pode ficar quieto enquanto espera)
     }
     if (-not (Test-Path $serial)) { continue }
     $txt = Get-Content $serial -Raw -ErrorAction SilentlyContinue

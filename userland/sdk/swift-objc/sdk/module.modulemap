@@ -56,3 +56,10 @@ module _MOSNSOptions [system] [extern_c] {
     header "Foundation/NSFoundationOptions.h"
     export *
 }
+
+// UIKit do Mac Catalyst (docs/uikit-catalyst.md): as declarações ObjC com os nomes da Apple que o overlay Swift
+// (userland\sdk\swift-objc\UIKit -> libswiftUIKit.dylib) usa; as classes estão no UIKit.framework do mOS
+module UIKit [system] [extern_c] {
+    header "UIKit/UIKit.h"
+    export *
+}

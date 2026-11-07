@@ -39,7 +39,7 @@ Cuidados:
 | Codex desktop | — | 2.481 → 2.231 | 978 | libc++ 271, Swift 259 (helpers nativos), CoreText 54 |
 | Grok Bot | 27 | 2.562 → 2.393 | 974 | Swift 541 (só o helper "Computer Use"), Foundation 219 |
 | Claude | 27 | 4.279 → 4.040 | 2.700 | Swift 1.256 + SwiftUI 547 (`swift_addon.node`, `computer_use.node`, simulador iOS) |
-| WhatsApp | 9 | 8.922 → 8.675 → 7.783 → 4.730 (dylibs Swift do mOS) → 4.444 (Combine) → 4.415 (Dispatch) → **4.265** (Foundation, marco C, 7 nov.) | 8.344 | UIKit 571, SwiftUI 555, Swift Foundation 278 (quase tudo ICU), libswiftUIKit 278, libc++ 271 |
+| WhatsApp | 9 | 8.922 → 8.675 → 7.783 → 4.730 (dylibs Swift do mOS) → 4.444 (Combine) → 4.415 (Dispatch) → 4.265 (Foundation, marco C) → 3.694 (UIKit.framework do Catalyst) → **3.622** (libswiftUIKit, 7 nov.; ver [uikit-catalyst.md](uikit-catalyst.md)) | 8.344 | SwiftUI 555, libswiftUIKit 282, Swift Foundation 278 (quase tudo ICU), libc++ 271 |
 | **Codex CLI** | 1 | **271 → 90** | 152 | Security zerado; sobram CF, termios, rede |
 
 \* O número do VS Code subiu porque o bundle em `build-vscode` foi preparado de novo, agora com mais módulos nativos. Não é regressão.

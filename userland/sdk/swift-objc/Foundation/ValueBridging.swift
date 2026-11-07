@@ -146,3 +146,26 @@ extension TimeZone: _ObjectiveCBridgeable {
         return _mosTZ(source)
     }
 }
+
+// MARK: - IndexPath <-> NSIndexPath
+
+extension IndexPath: _ObjectiveCBridgeable {
+    public func _bridgeToObjectiveC() -> NSIndexPath {
+        var idx = self.map { UInt(bitPattern: $0) }
+        let n = idx.count
+        if idx.isEmpty { idx = [0] }
+        return idx.withUnsafeBufferPointer { NSIndexPath(indexes: $0.baseAddress!, length: n) }
+    }
+    public static func _forceBridgeFromObjectiveC(_ x: NSIndexPath, result: inout IndexPath?) {
+        result = IndexPath(indexes: (0..<x.length).map { x.index(atPosition: $0) })
+    }
+    public static func _conditionallyBridgeFromObjectiveC(_ x: NSIndexPath, result: inout IndexPath?) -> Bool {
+        _forceBridgeFromObjectiveC(x, result: &result); return true
+    }
+    @_effects(readonly)
+    public static func _unconditionallyBridgeFromObjectiveC(_ source: NSIndexPath?) -> IndexPath {
+        var r: IndexPath?
+        if let source { _forceBridgeFromObjectiveC(source, result: &r) }
+        return r ?? IndexPath()
+    }
+}

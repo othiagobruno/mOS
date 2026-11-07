@@ -395,7 +395,8 @@ id objc_constructInstance(cx_class_t *c, void *bytes) {
     if (!c || !bytes) return 0;
     memset(bytes, 0, cx_instance_size(c));
     ((id)bytes)->isa = c;
-    return (id)bytes;
+    extern id cx_cxx_construct(id o);            /* ivars C++ (objc.c), como no runtime da Apple */
+    return cx_cxx_construct((id)bytes);
 }
 void *object_getIndexedIvars(id o) { return o ? (u8 *)o + cx_instance_size(o->isa) : 0; }
 

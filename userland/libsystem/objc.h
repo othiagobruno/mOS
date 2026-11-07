@@ -36,6 +36,7 @@ typedef struct cx_rw {
     u32 nivars;
     struct { const char *name; const char *attrs; } *props;
     u32 nprops;
+    u32 cxx_ctor;                   /* .cxx_construct na cadeia: 0 = ainda não visto, 1 = nenhum, 2 = há (objc.c) */
 } cx_rw_t;
 
 #define RW_MAGIC 0x52575843u

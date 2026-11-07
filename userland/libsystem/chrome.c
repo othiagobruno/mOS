@@ -431,9 +431,12 @@ void _nw_parameters_configure_protocol_default_configuration(void *p) { (void)p;
 void _nw_parameters_configure_protocol_disable(void *p) { (void)p; }
 
 /* ---- MediaAccessibility: legendas com a aparência padrão */
-id_ MACaptionAppearanceCopyForegroundColor(int domain, int *behavior) { (void)domain; if (behavior) *behavior = 0; return 0; }
-id_ MACaptionAppearanceCopyBackgroundColor(int domain, int *behavior) { (void)domain; if (behavior) *behavior = 0; return 0; }
-id_ MACaptionAppearanceCopyWindowColor(int domain, int *behavior) { (void)domain; if (behavior) *behavior = 0; return 0; }
+/* No macOS as cores nunca são NULL: o Chrome (CaptionStyle) converte cada uma para sRGB e exige 4 componentes
+ * (CHECK). Texto branco sobre fundo preto, janela transparente, como o padrão do sistema. */
+extern void *CGColorCreateSRGB(double r, double g, double b, double a);
+id_ MACaptionAppearanceCopyForegroundColor(int domain, int *behavior) { (void)domain; if (behavior) *behavior = 0; return (id_)CGColorCreateSRGB(1, 1, 1, 1); }
+id_ MACaptionAppearanceCopyBackgroundColor(int domain, int *behavior) { (void)domain; if (behavior) *behavior = 0; return (id_)CGColorCreateSRGB(0, 0, 0, 1); }
+id_ MACaptionAppearanceCopyWindowColor(int domain, int *behavior) { (void)domain; if (behavior) *behavior = 0; return (id_)CGColorCreateSRGB(0, 0, 0, 1); }
 id_ MACaptionAppearanceCopyFontDescriptorForStyle(int domain, int *behavior, int style) { (void)domain; (void)style; if (behavior) *behavior = 0; return 0; }
 double MACaptionAppearanceGetForegroundOpacity(int domain, int *behavior) { (void)domain; if (behavior) *behavior = 0; return 1.0; }
 double MACaptionAppearanceGetBackgroundOpacity(int domain, int *behavior) { (void)domain; if (behavior) *behavior = 0; return 0.8; }

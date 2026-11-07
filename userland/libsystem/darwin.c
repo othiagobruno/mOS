@@ -89,7 +89,8 @@ long cx_unresolved_log(const char *name) {
  * key = registro da imagem {modelo, tamanho inicializado, tamanho total, índice}. Os blocos de cada
  * thread ficam numa tabela no slot TSD_TLV da TSD (extra.c: cx_tsd). */
 /* slots fixos da TSD (abaixo de KEY_FIRST = 128, extra.c), um por uso — NÃO repetir:
- *   100 TSD_THREAD_DICT (nsurl.c)   101 TSD_THREAD_OBJ (nsurl.c)   102 TSD_MIG_REPLY (mach.c)   110 TSD_TLV (aqui)
+ *   100 TSD_THREAD_DICT (nsurl.c)   101 TSD_THREAD_OBJ (nsurl.c)   102 TSD_MIG_REPLY (mach.c)   103 TSD_ERRNO (libc.c)
+ *   110 TSD_TLV (aqui)
  * O TLV já esteve no 101 e colidia com o NSThread: um helper do Chrome que chamava +[NSThread currentThread]
  * tinha a tabela de thread_local sobrescrita pelo objeto e caía no próximo acesso a uma variável thread_local. */
 #define TSD_TLV 110

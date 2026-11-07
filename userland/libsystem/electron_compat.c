@@ -314,6 +314,36 @@ static u64 a_index_test(id self, SEL c, void *blk) { return a_index_test_opts(se
 static id mt_strong(id cls_, SEL c) { (void)c; return MSG0(id, cls_, "strongToStrongObjectsMapTable"); }
 static id mt_with_opts(id cls_, SEL c, u64 ko, u64 vo) { (void)c; (void)ko; (void)vo; return MSG0(id, cls_, "strongToStrongObjectsMapTable"); }
 
+/* ================================================================ NSString / NSDictionary do caminho do teclado
+ * (o Chromium os chama ao tratar keyDown; sem eles o buffer de getCharacters: voltava com lixo) */
+typedef struct { long loc, len; } ec_range_t;
+void CFStringGetCharacters(id s, ec_range_t r, u16 *out);
+static void s_get_chars(id self, SEL c, u16 *buf) {
+    (void)c;
+    if (!buf) return;
+    ec_range_t r = {0, (long)MSG0(u64, self, "length")};
+    CFStringGetCharacters(self, r, buf);
+}
+static void s_get_chars_range(id self, SEL c, u16 *buf, ec_range_t r) { (void)c; if (buf) CFStringGetCharacters(self, r, buf); }
+/* normalização Unicode (NFC/NFD/NFKC/NFKD): o mOS ainda não normaliza; o texto vem igual (cópia imutável), que é o
+ * resultado certo para ASCII e para texto já composto, o caso das teclas */
+static id s_same_text(id self, SEL c) { (void)c; id r = MSG0(id, self, "copy"); return r ? objc_autorelease(r) : self; }
+/* +[NSDictionary dictionaryWithContentsOfURL:(error:)] e -initWithContentsOfURL:error:: plist de um file:// */
+static id url_path_of(id url) { return url ? MSG0(id, url, "path") : 0; }
+static id d_with_url_err(id cls_, SEL c, id url, id *err) {
+    (void)c;
+    if (err) *err = 0;
+    id p = url_path_of(url);
+    return p ? MSG(id, cls_, "dictionaryWithContentsOfFile:", p) : 0;
+}
+static id d_with_url(id cls_, SEL c, id url) { return d_with_url_err(cls_, c, url, 0); }
+static id d_init_url_err(id self, SEL c, id url, id *err) {
+    (void)c;
+    if (err) *err = 0;
+    id p = url_path_of(url);
+    return p ? MSG(id, self, "initWithContentsOfFile:", p) : 0;
+}
+
 /* ================================================================ registro */
 static void add_if_missing(cx_class_t *k, const char *sel, void *imp) {
     if (k && !cx_responds(k, sel_registerName(sel))) cx_add_method(k, sel, imp);
@@ -367,4 +397,14 @@ void cx_electron_compat_init(void) {
     add_if_missing(url, "getResourceValue:forKey:error:", (void *)url_get_value);
     add_if_missing(url, "resourceValuesForKeys:error:", (void *)url_values);
     add_if_missing(url, "setResourceValue:forKey:error:", (void *)url_set_value);
+    cx_class_t *str = cls("NSString");
+    add_if_missing(str, "getCharacters:", (void *)s_get_chars);
+    add_if_missing(str, "getCharacters:range:", (void *)s_get_chars_range);
+    static const char *norm[] = {"precomposedStringWithCanonicalMapping", "decomposedStringWithCanonicalMapping",
+                                 "precomposedStringWithCompatibilityMapping", "decomposedStringWithCompatibilityMapping"};
+    for (unsigned i = 0; i < sizeof norm / sizeof norm[0]; i++) add_if_missing(str, norm[i], (void *)s_same_text);
+    cx_class_t *dict = cls("NSDictionary");
+    add_cls_if_missing(dict, "dictionaryWithContentsOfURL:error:", (void *)d_with_url_err);
+    add_cls_if_missing(dict, "dictionaryWithContentsOfURL:", (void *)d_with_url);
+    add_if_missing(dict, "initWithContentsOfURL:error:", (void *)d_init_url_err);
 }

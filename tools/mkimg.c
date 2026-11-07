@@ -44,17 +44,68 @@ static void wr16(uint8_t *p, uint16_t v) { p[0] = v; p[1] = v >> 8; }
 static void wr32(uint8_t *p, uint32_t v) { wr16(p, v); wr16(p + 2, v >> 16); }
 static void wr64(uint8_t *p, uint64_t v) { wr32(p, (uint32_t)v); wr32(p + 4, v >> 32); }
 
+#ifdef _WIN32
+#include <windows.h>
+/* Caminhos acima de 260 caracteres (helpers do Chrome: ".../Helpers/Google Chrome Helper (Aperitif Renderer).app/
+ * Contents/MacOS/Google Chrome Helper (Aperitif Renderer)") falhavam no stat/fopen ANSI. Aqui o Windows recebe o
+ * caminho absoluto com \\?\ pelas funções wide; os nomes continuam na página de código ANSI, como o readdir dava. */
+static wchar_t *wpath(const char *p) {
+    static wchar_t rel[4096], full[4200];
+    MultiByteToWideChar(CP_ACP, 0, p, -1, rel, 4096);
+    for (wchar_t *s = rel; *s; s++) if (*s == L'/') *s = L'\\';
+    wcscpy(full, L"\\\\?\\");
+    if (!GetFullPathNameW(rel, 4096, full + 4, NULL)) return rel;
+    return full;
+}
+static int path_stat(const char *p, int *is_dir, uint64_t *size) {
+    WIN32_FILE_ATTRIBUTE_DATA a;
+    if (!GetFileAttributesExW(wpath(p), GetFileExInfoStandard, &a)) return -1;
+    *is_dir = (a.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+    *size = ((uint64_t)a.nFileSizeHigh << 32) | a.nFileSizeLow;
+    return 0;
+}
+static FILE *path_open(const char *p) { return _wfopen(wpath(p), L"rb"); }
+#else
+static int path_stat(const char *p, int *is_dir, uint64_t *size) {
+    struct stat st;
+    if (stat(p, &st)) return -1;
+    *is_dir = S_ISDIR(st.st_mode);
+    *size = (uint64_t)st.st_size;
+    return 0;
+}
+static FILE *path_open(const char *p) { return fopen(p, "rb"); }
+#endif
+
 static node *load_tree(const char *path, const char *name, node *parent) {
     node *n = calloc(1, sizeof(node));
     strncpy(n->name, name, 255);
     n->parent = parent;
-    struct stat st;
-    if (stat(path, &st)) { perror(path); exit(1); }
-    if (S_ISDIR(st.st_mode)) {
+    int is_dir;
+    uint64_t fsize;
+    if (path_stat(path, &is_dir, &fsize)) { perror(path); exit(1); }
+    if (is_dir) {
         n->is_dir = 1;
+        node **tail = &n->child;
+#ifdef _WIN32
+        char pat[1024];
+        snprintf(pat, sizeof pat, "%s/*", path);
+        WIN32_FIND_DATAW fd;
+        HANDLE h = FindFirstFileW(wpath(pat), &fd);
+        if (h != INVALID_HANDLE_VALUE) {
+            do {
+                char en[MAX_PATH * 2];
+                WideCharToMultiByte(CP_ACP, 0, fd.cFileName, -1, en, sizeof en, NULL, NULL);
+                if (!strcmp(en, ".") || !strcmp(en, "..")) continue;
+                char p[1024];
+                snprintf(p, sizeof p, "%s/%s", path, en);
+                *tail = load_tree(p, en, n);
+                tail = &(*tail)->next;
+            } while (FindNextFileW(h, &fd));
+            FindClose(h);
+        }
+#else
         DIR *d = opendir(path);
         struct dirent *e;
-        node **tail = &n->child;
         while ((e = readdir(d))) {
             if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
             char p[1024];
@@ -63,8 +114,11 @@ static node *load_tree(const char *path, const char *name, node *parent) {
             tail = &(*tail)->next;
         }
         closedir(d);
+#endif
     } else {
-        FILE *f = fopen(path, "rb");
+        struct { uint64_t st_size; } st = { fsize };
+        FILE *f = path_open(path);
+        if (!f) { perror(path); exit(1); }
         n->size = (uint32_t)st.st_size;
         n->data = malloc(n->size + 1);
         if (n->size && fread(n->data, 1, n->size, f) != n->size) { perror(path); exit(1); }

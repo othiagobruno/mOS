@@ -425,6 +425,7 @@ i64 compat_gui_syscall(process_t *p, u64 n, u64 a, u64 b, u64 c, u64 d, u64 e) {
         u32 fl = WIN_CENTER;
         if (d & GUI_WF_RESIZABLE) fl |= WIN_RESIZABLE;
         if (d & GUI_WF_NO_TITLE) fl |= WIN_NO_TITLE;
+        if (d & GUI_WF_FULLSIZE) fl |= WIN_FULLSIZE;
         g->back = surface_new(w, h);
         g->shown = surface_new(w, h);
         if (!g->back || !g->shown) { surface_free(g->back); surface_free(g->shown); memset(g, 0, sizeof *g); return -MOS_ENOMEM; }
@@ -616,6 +617,7 @@ i64 compat_gui_syscall(process_t *p, u64 n, u64 a, u64 b, u64 c, u64 d, u64 e) {
     case GUI_WIN_FOCUS: {
         gwin_t *g = win_get(p, a);
         if (!g) return -MOS_EBADF;
+        if (b == GUI_FOCUS_MOVE) return g->w && wm_begin_move(g->w) ? 0 : -MOS_EAGAIN;
         if (g->w) wm_focus(g->w);
         return 0;
     }

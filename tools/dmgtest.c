@@ -6,11 +6,24 @@
  */
 #include "fs.h"
 #ifdef _WIN32
-#include <direct.h>
-#define mkdir_(p) _mkdir(p)
+#include <windows.h>
+/* Caminhos de bundles passam fácil de 260 caracteres (ex.: Helpers/Google Chrome Helper (Aperitif Renderer).app/
+ * Contents/MacOS/...): com fopen/_mkdir ANSI esses arquivos sumiam da extração sem erro. Aqui o caminho vira
+ * absoluto com o prefixo \\?\ e as funções wide (até 32767), e os nomes UTF-8 do HFS+/APFS ficam corretos. */
+static wchar_t *wpath(const char *p) {
+    static wchar_t rel[4096], full[4200];
+    MultiByteToWideChar(CP_UTF8, 0, p, -1, rel, 4096);
+    for (wchar_t *s = rel; *s; s++) if (*s == L'/') *s = L'\\';
+    wcscpy(full, L"\\\\?\\");
+    if (!GetFullPathNameW(rel, 4096, full + 4, NULL)) wcscpy(full + 4, rel);
+    return full;
+}
+static void mkdir_(const char *p) { CreateDirectoryW(wpath(p), NULL); }
+static FILE *fopen_out(const char *p) { return _wfopen(wpath(p), L"wb"); }
 #else
 #include <sys/stat.h>
 #define mkdir_(p) mkdir(p, 0755)
+#define fopen_out(p) fopen(p, "wb")
 #endif
 
 static u32 crc_tab[256];
@@ -51,8 +64,9 @@ static void walk(dnode_t *n, const char *rel) {
         if (outdir && c->type == DN_FILE) {
             char p[2300];
             snprintf(p, sizeof(p), "%s%s", outdir, path);
-            FILE *o = fopen(p, "wb");
-            if (o) { fwrite(b, 1, len, o); fclose(o); }
+            FILE *o = fopen_out(p);
+            if (!o || fwrite(b, 1, len, o) != len) { errors++; printf("! %s  NÃO GRAVADO na saída\n", path); }
+            if (o) fclose(o);
         }
         kfree(b);
     }

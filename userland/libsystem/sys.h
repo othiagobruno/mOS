@@ -20,6 +20,13 @@ typedef unsigned long usize;
 
 #include "../../kernel/include/syscall.h"
 
+/* errno é por thread, como no macOS: __error() devolve o slot TSD_ERRNO (103) da TSD da thread (GS,
+ * extra.c: cx_tsd), e cx_errno é só um apelido. Com um int global, o pool de threads do libuv fazia
+ * "errno = 0" no meio do stat que falhou em outra thread, o -1 virava sucesso com o buffer vazio e o
+ * host de extensões do VS Code caía no stat de node_modules. */
+int *__error(void);
+#define cx_errno (*__error())
+
 static inline long cx_syscall(long n, long a, long b, long c, long d, long e) {
     long r;
     register long r10 __asm__("r10") = d;

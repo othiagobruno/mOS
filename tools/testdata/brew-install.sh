@@ -12,6 +12,8 @@ b "tree"                 tree -L 1 /usr/local
 b "brew install jq"      brew install jq
 b "jq"                   jq -n '{mOS: "brew", ok: true}'
 b "brew list"            brew list --versions
+b "link brew antes"     ls -l /usr/local/bin/brew
 b "brew uninstall tree"  brew uninstall tree
-b "brew doctor"          brew doctor
+b "link brew depois"    ls -l /usr/local/bin/brew
+b "brew doctor"          /usr/local/Homebrew/bin/brew doctor
 echo "brew: fim"

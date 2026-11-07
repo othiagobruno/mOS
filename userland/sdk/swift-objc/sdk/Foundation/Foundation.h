@@ -321,6 +321,13 @@ typedef NS_OPTIONS(NSUInteger, NSKeyValueObservingOptions) {
 /* ---- NSLog */
 FOUNDATION_EXPORT void NSLogv(NSString *format, va_list args) NS_FORMAT_FUNCTION(1,0);
 
+/* ---- NSIndexPath (ponte do IndexPath; tabelas e coleções do UIKit) */
+@interface NSIndexPath : NSObject <NSCopying, NSSecureCoding>
++ (instancetype)indexPathWithIndexes:(const NSUInteger *)indexes length:(NSUInteger)length;
+@property (readonly) NSUInteger length;
+- (NSUInteger)indexAtPosition:(NSUInteger)position;
+@end
+
 /* ---- marco C: NSCoder, NSFileManager, NSUndoManager (o que as extensões Swift da Apple usam) */
 @class NSCoder;
 @protocol NSCoding

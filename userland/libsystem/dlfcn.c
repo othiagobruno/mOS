@@ -177,3 +177,17 @@ int dlopen_preflight(const char *path) {
     mos_stat_t st;
     return SYS2(SYS_STAT, cx_path(path, abs, sizeof abs), &st) == 0;
 }
+
+/* No macOS as bibliotecas do sistema (/usr/lib, /System/Library) moram no shared cache do dyld, não no disco.
+ * O verificador de linkagem do Homebrew pergunta isso (via Fiddle) para não reclamar delas depois de despejar
+ * um bottle. No mOS elas são o próprio libSystem ou os aliases do loader (kernel/compat/macho.c). */
+_Bool _dyld_shared_cache_contains_path(const char *path) {
+    if (!path) return 0;
+    const char *a = "/usr/lib/", *b = "/System/Library/";
+    int i = 0;
+    while (a[i] && path[i] == a[i]) i++;
+    if (!a[i]) return 1;
+    i = 0;
+    while (b[i] && path[i] == b[i]) i++;
+    return !b[i];
+}

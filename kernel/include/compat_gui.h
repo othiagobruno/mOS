@@ -134,6 +134,13 @@ typedef struct {
 /* flags de janela */
 #define GUI_WF_RESIZABLE 1
 #define GUI_WF_NO_TITLE  2
+/* NSWindowStyleMaskFullSizeContentView: o conteúdo ocupa a janela inteira (w x h é a janela toda) e o
+ * window server só desenha os semáforos por cima; quem arrasta a janela é o app (GUI_WIN_FOCUS com
+ * GUI_FOCUS_MOVE, de -[NSWindow performWindowDragWithEvent:]). */
+#define GUI_WF_FULLSIZE  4
+/* GUI_WIN_FOCUS (id, GUI_FOCUS_MOVE): passa o arrasto do botão esquerdo, que está apertado sobre o
+ * conteúdo dessa janela, para mover a janela. -EAGAIN se não há botão apertado nela. */
+#define GUI_FOCUS_MOVE 0x4D4F5645
 
 /* eventos */
 enum { GEV_NONE, GEV_MOUSE_DOWN, GEV_MOUSE_UP, GEV_MOUSE_MOVE, GEV_RIGHT_DOWN, GEV_SCROLL,
