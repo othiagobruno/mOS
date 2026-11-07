@@ -51,6 +51,9 @@ extern OSStatus LSSetDefaultRoleHandlerForContentType(id type, unsigned int role
         NSString *p = [u performSelector:@selector(path)];
         NSLog(@"Descompactador: recebeu %@", p);
         [self.recebidos addObject:p.lastPathComponent ?: p];
+        // prova para os testes: a lista também vai para ~/Downloads/recebido.txt
+        FILE *f = fopen([[NSHomeDirectory() stringByAppendingString:@"/Downloads/recebido.txt"] UTF8String], "a");
+        if (f) { fprintf(f, "%s\n", p.UTF8String); fclose(f); }
     }
     [self atualizar];
 }

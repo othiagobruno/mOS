@@ -4,6 +4,7 @@
 #include "proc.h"
 #include "account.h"
 #include "compat.h"
+#include "launchsvc.h"
 
 #define LINES_MAX 600
 #define COLS_MAX 200
@@ -238,16 +239,30 @@ static void run(term_t *t, char *line) {
             else vfs_move(n, pd, sl + 1);
         }
     } else if (!strcmp(c, "open")) {
-        if (argc < 2) { ERR("uso: open <arquivo|-a App>"); return; }
-        if (!strcmp(argv[1], "-a") && argc > 2) {
-            for (int i = 0; i < apps_count(); i++) if (!strcasecmp(apps_get(i)->name, argv[2])) { app_launch(apps_get(i)); return; }
-            ERR("open: aplicativo não encontrado: %s", argv[2]);
-            return;
+        /* como o /usr/bin/open do macOS: open [-a App | -b identificador] [arquivo ou URL...]; quem abre é o
+         * Launch Services (o padrão do tipo/esquema, ou o app pedido) */
+        if (argc < 2) { ERR("uso: open [-a App | -b identificador] [arquivo ou URL ...]"); return; }
+        ls_app_t *with = NULL;
+        int i = 1;
+        if ((!strcmp(argv[1], "-a") || !strcmp(argv[1], "-b")) && argc > 2) {
+            with = argv[1][1] == 'b' ? ls_app_by_id(argv[2]) : (argv[2][0] == '/' ? ls_app_by_path(argv[2]) : ls_app_by_name(argv[2]));
+            if (!with) { ERR("Unable to find application named '%s'", argv[2]); return; }
+            i = 3;
+            if (i >= argc) { char ap[400]; snprintf(ap, sizeof ap, "%s", ls_app_path(with)); if (ap[0]) ls_open(ap, NULL); else app_launch(ls_app_builtin(with)); return; }
         }
-        if (!strncmp(argv[1], "http", 4)) { app_launch(&app_horizonte); browser_open_url(argv[1]); return; }
-        char p[192];
-        resolve(t, argv[1], p);
-        if (!vfs_lookup(p)) ERR("open: %s: inexistente", argv[1]); else open_path(p);
+        for (; i < argc; i++) {
+            const char *a = argv[i];
+            /* "esquema:" no começo (https://..., mailto:..., slack://...) é URL; o resto é caminho */
+            int sl = 0;
+            while (a[sl] && (isalnum((u8)a[sl]) || a[sl] == '+' || a[sl] == '-' || a[sl] == '.')) sl++;
+            bool url = sl >= 2 && a[sl] == ':' && isalpha((u8)a[0]);
+            if (url) { if (!ls_open(a, with)) ERR("No application knows how to open URL %s", a); continue; }
+            char p[192];
+            resolve(t, a, p);
+            if (!vfs_lookup(p)) { ERR("The file %s does not exist.", p); continue; }
+            if (with) { if (!ls_open(p, with)) ERR("open: %s não abriu %s", ls_app_name(with), a); }
+            else open_path(p);
+        }
     } else if (!strcmp(c, "history")) {
         for (int i = 0; i < t->nhist; i++) OUT("%4d  %s", i + 1, t->hist[i]);
     } else if (!strcmp(c, "date")) {

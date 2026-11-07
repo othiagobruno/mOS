@@ -162,6 +162,76 @@ surface_t *macho_icns_file(const char *icns_path, int size) {
     return icns_load(icns_path, icns_path, size);
 }
 
+/* ícones antigos (até o macOS 10.6 e apps que nunca regeraram o .icns): RGB em PackBits por canal ("is32" 16,
+ * "il32" 32, "ih32" 48, "it32" 128 com 4 bytes de cabeçalho) + máscara de 8 bits ("s8mk"/"l8mk"/"h8mk"/"t8mk"),
+ * e ARGB em PackBits ("ic04" 16, "ic05" 32, "icsb" 18). */
+static bool icns_unpack(const u8 *src, usize n, u8 *dst, usize want, usize *used) {
+    usize i = 0, o = 0;
+    while (o < want && i < n) {
+        u8 b = src[i++];
+        if (b < 0x80) {
+            usize k = (usize)b + 1;
+            if (i + k > n || o + k > want) return false;
+            memcpy(dst + o, src + i, k);
+            i += k; o += k;
+        } else {
+            usize k = (usize)b - 0x80 + 3;
+            if (i >= n || o + k > want) return false;
+            memset(dst + o, src[i++], k);
+            o += k;
+        }
+    }
+    if (used) *used = i;
+    return o == want;
+}
+static surface_t *icns_legacy(const u8 *d, usize n, int size) {
+    static const struct { char rgb[5], mask[5]; int px, skip; } k[] = {
+        {"it32", "t8mk", 128, 4}, {"ih32", "h8mk", 48, 0}, {"il32", "l8mk", 32, 0}, {"is32", "s8mk", 16, 0},
+    };
+    static const struct { char t[5]; int px; } argb[] = {{"ic05", 32}, {"icsb", 18}, {"ic04", 16}};
+    /* a maior entrada que exista (a escala para o tamanho pedido vem depois) */
+    for (u32 pass = 0; pass < 2; pass++) {
+        for (u32 e = 0; e < (pass ? ARRAY_LEN(argb) : ARRAY_LEN(k)); e++) {
+            const u8 *rgb = NULL, *mask = NULL;
+            u32 rl = 0, ml = 0;
+            for (usize o = 8; o + 8 <= n;) {
+                u32 len = be32(d + o + 4);
+                if (len < 8 || len > n - o) break;
+                if (!pass && !memcmp(d + o, k[e].rgb, 4)) { rgb = d + o + 8; rl = len - 8; }
+                if (!pass && !memcmp(d + o, k[e].mask, 4)) { mask = d + o + 8; ml = len - 8; }
+                if (pass && !memcmp(d + o, argb[e].t, 4) && len > 12 && !memcmp(d + o + 8, "ARGB", 4)) { rgb = d + o + 12; rl = len - 12; }
+                o += len;
+            }
+            if (!rgb) continue;
+            int px = pass ? argb[e].px : k[e].px;
+            usize np = (usize)px * px;
+            u8 *pl = kmalloc(np * 4);
+            if (!pl) return NULL;
+            bool ok;
+            if (pass) ok = icns_unpack(rgb, rl, pl, np * 4, NULL);                       /* A, R, G, B */
+            else {
+                usize skip = (usize)k[e].skip;
+                ok = rl > skip && icns_unpack(rgb + skip, rl - skip, pl + np, np * 3, NULL);   /* R, G, B */
+                if (ok) { if (mask && ml >= np) memcpy(pl, mask, np); else memset(pl, 255, np); }
+                /* "is32"/"il32" pequenos às vezes vêm sem compressão (3 bytes por pixel, intercalados) */
+                if (!ok && rl == np * 3) {
+                    for (usize i = 0; i < np; i++) { pl[np + i] = rgb[i * 3]; pl[2 * np + i] = rgb[i * 3 + 1]; pl[3 * np + i] = rgb[i * 3 + 2]; }
+                    if (mask && ml >= np) memcpy(pl, mask, np); else memset(pl, 255, np);
+                    ok = true;
+                }
+            }
+            surface_t *img = ok ? surface_new(px, px) : NULL;
+            if (img) for (int y = 0; y < px; y++) for (int x = 0; x < px; x++) {
+                usize i = (usize)y * px + x;
+                img->px[y * img->stride + x] = RGBA(pl[np + i], pl[2 * np + i], pl[3 * np + i], pl[i]);
+            }
+            kfree(pl);
+            if (img) { (void)size; return img; }
+        }
+    }
+    return NULL;
+}
+
 static surface_t *icns_load(const char *p, const char *app, int size) {
     vnode_t *v = vfs_lookup(p);
     if (!v || v->dir || !v->data || v->size < 16 || memcmp(v->data, "icns", 4)) return NULL;
@@ -179,8 +249,8 @@ static surface_t *icns_load(const char *p, const char *app, int size) {
         }
         o += len;
     }
-    if (!best) return NULL;
-    surface_t *img = image_decode(best, best_len);
+    surface_t *img = best ? image_decode(best, best_len) : NULL;
+    if (!img) img = icns_legacy(v->data, v->size, size);   /* sem PNG (ou PNG ilegível): os formatos antigos */
     if (!img) return NULL;
     surface_t *s = surface_new(size, size);
     if (!s) { surface_free(img); return NULL; }

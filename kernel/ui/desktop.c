@@ -366,7 +366,7 @@ static void draw_launch_icon(surface_t *s, int x, int y, int size) {
 /* ============================================================ alerta */
 static struct {
     bool open;
-    char title[96], msg[256];
+    char title[256], msg[320];
     const char *buttons[3];
     int nb, hover, pressed;
     alert_cb cb;
@@ -829,7 +829,7 @@ static int list_width(menu_item_t *items, int n) {
     for (int i = 0; i < n; i++) {
         menu_item_t *it = &items[i];
         if (!it->label) continue;
-        int iw = c.lx + text_width(it->header ? fh : f, 14, it->label) + 18;
+        int iw = c.lx + text_width(it->header ? fh : f, 14, it->label) + 24;   /* o desenho reserva 20 px à direita */
         if (it->shortcut) iw += shortcut_width(f, 13, it->shortcut) + 30;
         if (it->submenu) iw += 26;
         w = MAX(w, iw);
@@ -1877,8 +1877,10 @@ static rect_t alert_button(int i, rect_t r) {
 
 static rect_t alert_layout(void) {
     rect_t r = alert_rect();
-    int th = text_wrap(NULL, font_get(FONT_REGULAR), 12.5f, rect_make(0, 0, r.w - 40, 0), 17, 0, A.msg, false);
-    r.h = 20 + 22 + th + 18 + 30 + 20;
+    /* o título quebra em várias linhas, como no macOS ("Deseja alterar o navegador padrão para …?") */
+    int tt = text_wrap(NULL, font_get(FONT_BOLD), 14, rect_make(0, 0, r.w - 40, 0), 19, 0, A.title, false);
+    int th = A.msg[0] ? text_wrap(NULL, font_get(FONT_REGULAR), 12.5f, rect_make(0, 0, r.w - 40, 0), 17, 0, A.msg, false) : 0;
+    r.h = 20 + 3 + MAX(tt, 19) + th + 18 + 30 + 20;
     r.y = (SH - r.h) / 2 - SH / 20;
     return r;
 }
@@ -1890,8 +1892,8 @@ static void draw_alert(surface_t *s) {
     gfx_glass(s, r.x, r.y, r.w, r.h, 26, &G[GLASS_THICK]);
     gfx_round_rect_stroke(s, r.x - 0.5f, r.y - 0.5f, r.w + 1, r.h + 1, 26.5f, 1, T.glass_hairline);
     font_t *fb = font_get(FONT_BOLD), *fr = font_get(FONT_REGULAR);
-    text_draw_ellipsis(s, fb, 14, r.x + 20, r.y + 36, r.w - 40, T.glass_text, A.title);
-    text_wrap(s, fr, 12.5f, rect_make(r.x + 20, r.y + 44, r.w - 40, 200), 17, T.glass_text, A.msg, true);
+    int tt = text_wrap(s, fb, 14, rect_make(r.x + 20, r.y + 22, r.w - 40, 120), 19, T.glass_text, A.title, true);
+    text_wrap(s, fr, 12.5f, rect_make(r.x + 20, r.y + 25 + MAX(tt, 19), r.w - 40, 200), 17, T.glass_text, A.msg, true);
     for (int i = 0; i < A.nb; i++) {
         rect_t b = alert_button(i, r);
         bool primary = i == A.nb - 1;

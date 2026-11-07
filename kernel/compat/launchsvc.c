@@ -141,8 +141,8 @@ static const uti_t sys_types[] = {
     {"org.gnu.gnu-zip-archive", "Arquivo gzip", "public.data public.archive", "gz gzip", "application/gzip application/x-gzip"},
     {"org.gnu.gnu-zip-tar-archive", "Arquivo tar compactado", "org.gnu.gnu-zip-archive", "tgz", ""},
     {"public.tar-archive", "Arquivo tar", "public.data public.archive", "tar", "application/x-tar"},
-    {"public.bzip2-archive", "Arquivo bzip2", "public.data public.archive", "bz2 bzip2", "application/x-bzip2"},
-    {"org.tukaani.xz-archive", "Arquivo XZ", "public.data public.archive", "xz", "application/x-xz"},
+    {"public.bzip2-archive", "Arquivo bzip2", "public.data public.archive", "bz2 bzip2 tbz tbz2", "application/x-bzip2"},
+    {"org.tukaani.xz-archive", "Arquivo XZ", "public.data public.archive", "xz txz", "application/x-xz"},
     {"org.7-zip.7-zip-archive", "Arquivo 7-Zip", "public.data public.archive", "7z", "application/x-7z-compressed"},
     {"com.rarlab.rar-archive", "Arquivo RAR", "public.data public.archive", "rar", "application/vnd.rar application/x-rar-compressed"},
     {"public.disk-image", "Imagem de disco", "public.data public.archive", "img", ""},
@@ -517,6 +517,11 @@ static void register_builtins(void) {
     if (a) scheme_add(a, "mailto");
     a = builtin(&app_compactacao, "com.apple.archiveutility", archive_open_file, NULL);
     bclaim(a, "public.zip-archive", LS_ROLE_VIEWER, RANK_DEFAULT);
+    bclaim(a, "public.tar-archive", LS_ROLE_VIEWER, RANK_DEFAULT);
+    bclaim(a, "org.gnu.gnu-zip-archive", LS_ROLE_VIEWER, RANK_DEFAULT);
+    bclaim(a, "org.gnu.gnu-zip-tar-archive", LS_ROLE_VIEWER, RANK_DEFAULT);
+    bclaim(a, "public.bzip2-archive", LS_ROLE_VIEWER, RANK_DEFAULT);
+    bclaim(a, "org.tukaani.xz-archive", LS_ROLE_VIEWER, RANK_DEFAULT);
     a = builtin(&app_dimounter, "com.apple.DiskImageMounter", diskimage_open_file, NULL);
     bclaim(a, "com.apple.disk-image-udif", LS_ROLE_VIEWER, RANK_OWNER);
     bclaim(a, "public.disk-image", LS_ROLE_VIEWER, RANK_OWNER);
@@ -670,8 +675,12 @@ static ls_app_t *register_bundle(const char *path) {
         const pl_t *ex = pl_get(d, "CFBundleTypeExtensions");
         pl_each_str(ex, add_ext_claim, &c);
         pl_each_str(pl_get(d, "CFBundleTypeMIMETypes"), add_mime_claim, &c);
+        /* "****" só é "qualquer tipo" numa entrada sem extensões nem MIME: o VS Code e o Cursor põem "****" ao lado da
+         * extensão em todas as 66 entradas, e o macOS não os torna o app de tudo */
         const pl_t *os = pl_get(d, "CFBundleTypeOSTypes");
-        if (os && os->type == PL_ARRAY) for (pl_t *o = os->child; o; o = o->next) if (o->type == PL_STRING && !strcmp(o->str, "****")) add_ext_claim("*", &c);
+        bool specific = (ex && (ex->type == PL_STRING || ex->count)) || pl_get(d, "CFBundleTypeMIMETypes");
+        if (!specific && os && os->type == PL_ARRAY)
+            for (pl_t *o = os->child; o; o = o->next) if (o->type == PL_STRING && !strcmp(o->str, "****")) add_ext_claim("*", &c);
         if (pl_get(d, "LSTypeIsPackage") && pl_get(d, "LSTypeIsPackage")->num && !ex) add_type_claim("com.apple.package", &c);
     }
     const pl_t *urls = pl_get(info, "CFBundleURLTypes");
@@ -841,16 +850,18 @@ static int rank_type(const char *uti, const char *ext, u32 roles, cand_t *out, i
         int best = 0;
         const claim_t *bc = NULL;
         u8 brank = 0;
+        i64 bestv = 0;
         for (int k = 0; k < a->nclaims; k++) {
             int s = claim_score(&a->claims[k], uti, ext, roles);
             if (!s) continue;
-            i64 v = (i64)a->claims[k].rank * 1000 + s;
-            if (v > (i64)brank * 1000 + best) { best = s; bc = &a->claims[k]; brank = a->claims[k].rank; }
+            i64 v = (s == 1 ? 0 : (i64)a->claims[k].rank * 1000) + s;   /* a genérica não vence a específica */
+            if (v > bestv) { bestv = v; best = s; bc = &a->claims[k]; brank = a->claims[k].rank; }
         }
         if (!bc || (best == 1 && !with_generic)) continue;
         if (n == max) break;
         /* posto, especificidade, app do sistema, ordem de registro */
-        i64 sc = (i64)brank * 100000000 + (i64)(best >= 290 ? 3 : best >= 100 ? 2 : 1) * 10000000 + (a->builtin ? 1000000 : 0) - a->order;
+        /* posto só vale entre declarações que citam o tipo: a genérica ("*", public.data) fica abaixo de todas */
+        i64 sc = (best == 1 ? 0 : (i64)brank * 100000000) + (i64)(best >= 290 ? 3 : best >= 100 ? 2 : 1) * 10000000 + (a->builtin ? 1000000 : 0) - a->order;
         out[n++] = (cand_t){a, sc, bc};
     }
     for (int i = 1; i < n; i++)
@@ -1187,7 +1198,8 @@ static void pend_tick(void) {
         if (!pend[i].url) continue;
         bool done = post_url(pend[i].svc, pend[i].url);
         if (done || timer_ticks() > pend[i].deadline || (pend[i].pid > 0 && !proc_alive(pend[i].pid))) {
-            if (!done) kprintf("ls: o app (%s) não abriu a tempo para receber o documento\n", pend[i].svc + strlen(OU_PREFIX));
+            if (done) kprintf("ls: documento entregue a %s\n", pend[i].svc + strlen(OU_PREFIX));
+            else kprintf("ls: o app (%s) não abriu a tempo para receber o documento\n", pend[i].svc + strlen(OU_PREFIX));
             kfree(pend[i].url);
             pend[i].url = NULL;
         }

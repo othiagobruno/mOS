@@ -677,7 +677,7 @@ static int info_open_with(ui_t *u, info_t *in, vnode_t *n, int y) {
     if (sel == k && cur) finder_choose_app(in->path);
     else if (sel > 0 && sel < k) ls_set_handler_for_file(in->path, list[sel]);   /* só este documento */
     y += 34;
-    text_draw(sf, font_get(FONT_REGULAR), 11.5f, 18, y + 10, T.text2, "Use este app para abrir todos os documentos como este.");
+    text_draw(sf, font_get(FONT_REGULAR), 11.5f, 18, y + 10, T.text2, "Use este app para todos os documentos assim.");
     y += 22;
     if (ui_button_style(u, 0x7C002, rect_make(u->cw - 132, y, 116, 26), "Alterar Tudo…", BTN_GRAY, cur != NULL, NULL) && cur) {
         snprintf(ci_path, sizeof ci_path, "%s", in->path);
@@ -927,6 +927,22 @@ void finder_choose_app(const char *path) {
     w->on_close = choose_close;
 }
 
+/* Comprimir: os itens selecionados viram um .zip na mesma pasta (Utilitário de Compactação, coreservices.c) */
+bool archive_compress(const char *const *paths, int npaths, char *out, usize cap);
+static void compress_selected(fstate_t *s, item_t *items, int n) {
+    static char paths[64][512];
+    const char *pp[64];
+    int k = 0;
+    for (int i = 0; i < n && k < 64; i++) {
+        if (!items[i].node || !is_sel(s, i)) continue;
+        vfs_path(items[i].node, paths[k], sizeof paths[k]);
+        pp[k] = paths[k];
+        k++;
+    }
+    char out[512];
+    if (k) archive_compress(pp, k, out, sizeof out);
+}
+
 static void ow_result(int v) {
     if (v == OW_OTHER) { finder_choose_app(ow_path); return; }
     int i = v - OW_ACT;
@@ -956,6 +972,13 @@ static void context_menus(ui_t *u, fstate_t *s, item_t *items, int n, bool ctx_i
         mi[k++] = (menu_item_t){"Renomear", NULL, 2};
         mi[k++] = (menu_item_t){"Obter Informações", NULL, 3};
         if (it->node) {
+            /* "Comprimir “X”" (ou "Comprimir N Itens" com seleção múltipla), como no Finder */
+            static char comp_label[300];
+            int nsel = 0;
+            for (int i = 0; i < n; i++) if (items[i].node && is_sel(s, i)) nsel++;
+            if (nsel > 1) snprintf(comp_label, sizeof comp_label, "Comprimir %d Itens", nsel);
+            else snprintf(comp_label, sizeof comp_label, "Comprimir “%s”", it->node->name);
+            mi[k++] = (menu_item_t){comp_label, NULL, 12};
             mi[k++] = (menu_item_t){"Mover para o Lixo", NULL, 4};
             mi[k] = (menu_item_t){NULL}; mi[k++].disabled = true;
             for (int t = 0; t < 7; t++) mi[k++] = (menu_item_t){tag_labels[t], NULL, 5 + t};
@@ -973,7 +996,8 @@ static void context_menus(ui_t *u, fstate_t *s, item_t *items, int n, bool ctx_i
         else if (v == 2) rename_begin(u, s, items, n);
         else if (v == 3) open_info(it);
         else if (v == 4) trash_selected(s, items, n);
-        else if (v >= 5 && it->node) tag_toggle(it->node, v - 4);
+        else if (v == 12) compress_selected(s, items, n);
+        else if (v >= 5 && v <= 11 && it->node) tag_toggle(it->node, v - 4);
         u->clicked_any = true;
     }
     if (popup_take_result(u->win, CTX_BG_ID, &v)) {

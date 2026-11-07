@@ -2685,6 +2685,10 @@ static void ap_run(id self, SEL c) {
     BOOL had = NO;
     while (app.running) {
         int ms = pump();
+        /* como o [NSApp run] do macOS: o run loop principal roda junto (fontes, timers do CF e a fila principal do
+         * GCD). Sem isto, um dispatch_async(dispatch_get_main_queue()) vindo de outra thread nunca rodava num app
+         * Cocoa comum (ex.: o documento aberto pelo Finder, entregue pela thread do openurl.c) */
+        if (CFRunLoopRunInMode(0, 0, 1) == 4) ms = 0;
         int vis = visible_windows();
         if (vis) had = YES;
         if (had && !vis && !app.in_modal) {

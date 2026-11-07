@@ -2,6 +2,7 @@
  * volume, aparência clara/escura, criar nota, criar lembrete, copiar texto, som, captura de tela) e
  * execução passo a passo com progresso. Dados em ~/Biblioteca/Atalhos/atalhos.tsv */
 #include "kit.h"
+#include "launchsvc.h"
 
 extern app_t app_atalhos;
 void desktop_screenshot_ui(int mode);
@@ -95,7 +96,7 @@ static void exec_step(void) {
         action_t *a = &s->a[AT.step];
         switch (a->kind) {
         case A_APP: { app_t *ap = apps_find(a->arg); if (ap) app_launch(ap); } break;
-        case A_URL: app_launch(&app_horizonte); browser_open_url(a->arg[0] ? a->arg : "https://www.openstreetmap.org"); break;
+        case A_URL: { ls_open(a->arg[0] ? a->arg : "https://www.openstreetmap.org", NULL); break; }   /* o navegador padrão */
         case A_NOTIFY: notify(s->name, a->arg); break;
         case A_WAIT: AT.wait_until = timer_ticks() + (u64)MAX(1, a->num) * 1000; return;
         case A_VOLUME: audio_set_volume(CLAMP(a->num, 0, 100)); break;

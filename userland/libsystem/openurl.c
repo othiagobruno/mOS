@@ -704,6 +704,58 @@ static int deliver_docs(id url_obj_, const char *path) {
     return 0;
 }
 
+/* kAEOpenDocuments como no macOS: o parâmetro direto ('----') é uma lista ('list') de typeFileURL ('furl');
+ * cada item responde fileURLValue, stringValue e data. Instâncias com o mesmo espaço extra do MOSURLAppleEvent
+ * (g_ev_off): o evento e a lista guardam um NSArray de URLs (texto), o item guarda a URL. */
+static cx_class_t DocEvent_c, DocEvent_m, DescList_c, DescList_m, FileDesc_c, FileDesc_m;
+static id desc_new(cx_class_t *c, id payload) {
+    id d = cx_alloc_instance(c);
+    *ev_slot(d) = objc_retain(payload);
+    return d;
+}
+static u32 de_class(id self, SEL c) { (void)self; (void)c; return K_AEVT; }
+static u32 de_id(id self, SEL c) { (void)self; (void)c; return K_ODOC; }
+static u32 de_type(id self, SEL c) { (void)self; (void)c; return K_AEVT; }
+static id de_param(id self, SEL c, u32 kw) {
+    (void)c;
+    if (kw != K_DIRECT || !*ev_slot(self)) return 0;
+    return MSG0(id, desc_new(&DescList_c, *ev_slot(self)), "autorelease");
+}
+static i64 de_zero(id self, SEL c) { (void)self; (void)c; return 0; }
+static u32 dl_type(id self, SEL c) { (void)self; (void)c; return FOURCC('l', 'i', 's', 't'); }
+static i64 dl_count(id self, SEL c) { (void)c; id a = *ev_slot(self); return a ? (i64)MSG0(u64, a, "count") : 0; }
+static id dl_at(id self, SEL c, i64 i) {          /* índices de Apple Event começam em 1 */
+    (void)c;
+    id a = *ev_slot(self);
+    if (!a || i < 1 || i > (i64)MSG0(u64, a, "count")) return 0;
+    return MSG0(id, desc_new(&FileDesc_c, MSG(id, a, "objectAtIndex:", (u64)(i - 1))), "autorelease");
+}
+static u32 fd_type(id self, SEL c) { (void)self; (void)c; return FOURCC('f', 'u', 'r', 'l'); }
+static id fd_url(id self, SEL c) { (void)c; id s = *ev_slot(self); return s ? MSG(id, cls("NSURL"), "URLWithString:", s) : 0; }
+static id fd_str(id self, SEL c) { (void)c; return *ev_slot(self); }
+static id fd_data(id self, SEL c) {
+    (void)c;
+    const char *s = *ev_slot(self) ? cx_cstr(*ev_slot(self)) : "";
+    return MSG(id, cls("NSData"), "dataWithBytes:length:", s, (u64)strlen(s));
+}
+static id fd_coerce(id self, SEL c, u32 t) { (void)c; (void)t; return self; }
+
+/* com tratador de 'aevt'/'odoc' registrado: ele recebe (no macOS ele substitui o tratador padrão do AppKit) */
+static int deliver_odoc(const char *url) {
+    for (int i = 0; i < g_naeh; i++) {
+        if (g_aeh[i].cls != K_AEVT || g_aeh[i].ev != K_ODOC || !g_aeh[i].h) continue;
+        id list = MSG(id, cls("NSArray"), "arrayWithObject:", cx_str(url));
+        id e = desc_new(&DocEvent_c, list);
+        id prev = g_cur_event;
+        g_cur_event = e;
+        ((void (*)(id, SEL, id, id))objc_msgSend)(g_aeh[i].h, g_aeh[i].s, e, (id)0);
+        g_cur_event = prev;
+        objc_release(e);
+        return 1;
+    }
+    return 0;
+}
+
 static int deliver_event(u32 cls_, u32 ev, id payload) {
     for (int i = 0; i < g_naeh; i++) {
         if (g_aeh[i].cls != cls_ || g_aeh[i].ev != ev || !g_aeh[i].h) continue;
@@ -726,8 +778,8 @@ static void deliver_main(void *ctx) {
     id u = MSG(id, cls("NSURL"), "URLWithString:", cx_str(url));
     int done = 0, doc = !strncmp(url, "file:", 5);
     if (doc) {
-        done = deliver_docs(u, path_c(u));
-        if (!done) done = deliver_event(K_AEVT, K_ODOC, cx_str(url));
+        done = deliver_odoc(url);
+        if (!done) done = deliver_docs(u, path_c(u));
     } else {
         done = deliver_event(K_GURL, K_GURL, cx_str(url));
         if (!done) {
@@ -840,5 +892,27 @@ void cx_openurl_init(void) {
         cx_add_method(&URLEvent_c, "numberOfItems", (void *)ev_count);
         cx_add_method(&URLEvent_c, "stringValue", (void *)ev_str);
         cx_add_method(&URLEvent_c, "dealloc", (void *)ev_dealloc);
+        u32 extra = 8 + (g_ev_off - cx_instance_size(aed));
+        cx_define_class(&DocEvent_c, &DocEvent_m, "MOSOpenDocumentsAppleEvent", aed, extra);
+        cx_add_method(&DocEvent_c, "eventClass", (void *)de_class);
+        cx_add_method(&DocEvent_c, "eventID", (void *)de_id);
+        cx_add_method(&DocEvent_c, "descriptorType", (void *)de_type);
+        cx_add_method(&DocEvent_c, "paramDescriptorForKeyword:", (void *)de_param);
+        cx_add_method(&DocEvent_c, "attributeDescriptorForKeyword:", (void *)ev_nil);
+        cx_add_method(&DocEvent_c, "numberOfItems", (void *)de_zero);
+        cx_add_method(&DocEvent_c, "dealloc", (void *)ev_dealloc);
+        cx_define_class(&DescList_c, &DescList_m, "MOSAEDescList", aed, extra);
+        cx_add_method(&DescList_c, "descriptorType", (void *)dl_type);
+        cx_add_method(&DescList_c, "numberOfItems", (void *)dl_count);
+        cx_add_method(&DescList_c, "descriptorAtIndex:", (void *)dl_at);
+        cx_add_method(&DescList_c, "dealloc", (void *)ev_dealloc);
+        cx_define_class(&FileDesc_c, &FileDesc_m, "MOSAEFileURLDescriptor", aed, extra);
+        cx_add_method(&FileDesc_c, "descriptorType", (void *)fd_type);
+        cx_add_method(&FileDesc_c, "fileURLValue", (void *)fd_url);
+        cx_add_method(&FileDesc_c, "stringValue", (void *)fd_str);
+        cx_add_method(&FileDesc_c, "data", (void *)fd_data);
+        cx_add_method(&FileDesc_c, "coerceToDescriptorType:", (void *)fd_coerce);
+        cx_add_method(&FileDesc_c, "numberOfItems", (void *)de_zero);
+        cx_add_method(&FileDesc_c, "dealloc", (void *)ev_dealloc);
     }
 }
