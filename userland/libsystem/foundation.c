@@ -292,6 +292,42 @@ static id i_replace(id self, SEL c, id a, id b) {
     free(out);
     return r;
 }
+/* pathComponents: "/tmp/a" -> ("/", "tmp", "a"); barra final vira um "/" no fim, como no Foundation da Apple ("tmp/" ->
+ * ("tmp", "/")); barras repetidas contam como uma. O Grok Bot parava aqui (o mOS devolvia nil). */
+static id i_path_components(id self, SEL c) {
+    (void)c;
+    id arr = MSG0(id, &NSMutableArray_c, "array");
+    const char *p = S(self);
+    u64 n = N(self);
+    if (!n) return arr;
+    if (p[0] == '/') cx_arr_add(arr, cx_str("/"));
+    for (u64 i = 0; i < n;) {
+        while (i < n && p[i] == '/') i++;
+        u64 s = i;
+        while (i < n && p[i] != '/') i++;
+        if (i > s) cx_arr_add(arr, cx_str_n(p + s, i - s));
+    }
+    if (n > 1 && p[n - 1] == '/') cx_arr_add(arr, cx_str("/"));
+    return arr;
+}
+/* pathWithComponents: o inverso (um "/" inicial vira a raiz; o "/" final, a barra final) */
+static id s_path_with_components(id cls, SEL c, id comps) {
+    (void)cls; (void)c;
+    u64 cnt = comps ? MSG0(u64, comps, "count") : 0, cap = 2, len = 0;
+    for (u64 i = 0; i < cnt; i++) cap += strlen(cx_cstr(MSG(id, comps, "objectAtIndex:", i))) + 1;
+    char *b = malloc(cap);
+    b[0] = 0;
+    for (u64 i = 0; i < cnt; i++) {
+        const char *t = cx_cstr(MSG(id, comps, "objectAtIndex:", i));
+        if (!strcmp(t, "/")) { if (!len) { b[len++] = '/'; b[len] = 0; } else if (b[len - 1] != '/') { b[len++] = '/'; b[len] = 0; } continue; }
+        if (len && b[len - 1] != '/') b[len++] = '/';
+        strcpy(b + len, t);
+        len += strlen(t);
+    }
+    id r = cx_str(b);
+    free(b);
+    return r;
+}
 static id i_components(id self, SEL c, id sep) {
     (void)c;
     id arr = MSG0(id, &NSMutableArray_c, "array");
@@ -1524,6 +1560,7 @@ void cx_foundation_init(void) {
     M(NSString, "stringByTrimmingCharactersInSet:", i_trim); M(NSString, "intValue", i_int); M(NSString, "integerValue", i_ll);
     M(NSString, "longLongValue", i_ll); M(NSString, "doubleValue", i_double); M(NSString, "floatValue", i_float); M(NSString, "boolValue", i_bool);
     M(NSString, "description", i_self); M(NSString, "copy", i_str_copy); M(NSString, "copyWithZone:", i_str_copy); M(NSString, "mutableCopy", i_str_mcopy);
+    M(NSString, "pathComponents", i_path_components); CM(NSString, "pathWithComponents:", s_path_with_components);
     M(NSString, "lastPathComponent", i_last_path); M(NSString, "pathExtension", i_path_ext); M(NSString, "stringByDeletingLastPathComponent", i_del_last);
     M(NSString, "stringByAppendingPathComponent:", i_append_path); M(NSString, "writeToFile:atomically:encoding:error:", i_write_file);
     M(NSString, "stringByExpandingTildeInPath", i_self); M(NSString, "stringByStandardizingPath", i_self);

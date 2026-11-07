@@ -637,7 +637,18 @@ int SecKeychainRemoveCallback(void *cb) { (void)cb; return 0; }
 
 /* ---- NSSearchPathForDirectoriesInDomains: pastas do usuário do mOS */
 id_ NSSearchPathForDirectoriesInDomains(unsigned long dir, unsigned long mask, u8 expand) {
-    (void)mask; (void)expand;
+    (void)expand;
+    /* NSApplicationDirectory (1), NSAdminApplicationDirectory (4), NSAllApplicationsDirectory (100): os apps do mOS
+     * ficam em /Aplicativos (domínio local, máscara 2) e ~/Applications (usuário, 1). O Electron pergunta aqui no
+     * app.isInApplicationsFolder(); com ~/Library, o Grok Bot abria o "Mover para a pasta Aplicativos?" e parava */
+    if (dir == 1 || dir == 4 || dir == 100) {
+        id_ a = MSG0_(id_, cx_class_named("NSMutableArray"), "array");
+        id_ str = cx_class_named("NSString");
+        if (mask & 1) MSG1_(void, a, "addObject:", MSG1_(id_, str, "stringWithUTF8String:", dir == 4 ? "/Users/Visitante/Applications/Utilities" : "/Users/Visitante/Applications"));
+        if (mask & 2) MSG1_(void, a, "addObject:", MSG1_(id_, str, "stringWithUTF8String:", dir == 4 ? "/Aplicativos/Utilitários" : "/Aplicativos"));
+        if (dir == 100 && (mask & 2)) MSG1_(void, a, "addObject:", MSG1_(id_, str, "stringWithUTF8String:", "/Aplicativos/Utilitários"));
+        return a;
+    }
     const char *p;
     switch (dir) {
     case 5: p = "/Users/Visitante/Library"; break;                        /* NSLibraryDirectory */
