@@ -139,3 +139,13 @@ Pendentes: o login (do usuário), o git (o bottle tem 619 MiB, grande demais par
      quando o endereço deles é alvo de outro ponteiro.
   Resultado: 955.502 ponteiros deslizados, 2.809 valores recusados, 197.699 funções.
 - Memória: `-Memory 3400` (como o Cursor).
+
+## Grok Bot na VM (7 nov., noite)
+
+**O Grok Bot 0.79.2 abre a tela de login** ("Sua equipe de Bots sempre ativos…", "Fazer login") em pt-BR, com
+`-Memory 3400` e `stage-electron.ps1 -MaxModuloMiB 200`. Faltavam:
+- `-[NSString pathComponents]` (o mOS devolvia nil e a partida parava);
+- `NSSearchPathForDirectoriesInDomains(NSApplicationDirectory)`: devolvia `~/Library`, o `isInApplicationsFolder()`
+  do Electron dizia não e o app ficava no diálogo modal "Mover o Grok Bot para a pasta Aplicativos?" (o thread
+  principal aparece em `modal_loop` no despejo de threads).
+Pendentes: o login (do usuário) e o helper "Computer Use" (Swift, 84 símbolos de entrada sintética e acessibilidade).
