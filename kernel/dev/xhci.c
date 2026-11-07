@@ -881,6 +881,7 @@ int xhci_init_all(void) {
     return nhc;
 }
 
+pci_dev_t *xhci_pci_of(usb_dev_t *d) { return d && d->hc ? ((xhci_t *)d->hc)->pci : NULL; }
 int xhci_slot_of(usb_dev_t *d) { return d && d->hcpriv ? ((xdev_t *)d->hcpriv)->slot : 0; }
 int xhci_count(void) { return nhc; }
 int xhci_total_ports(void) {

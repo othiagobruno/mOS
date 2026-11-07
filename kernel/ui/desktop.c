@@ -18,6 +18,11 @@ static inline rect_t to_global(rect_t r) { r.x += PX(); r.y += PY(); return r; }
 
 /* sessão de usuário (ui/login.c, contas em proc/account) */
 extern void login_draw(surface_t *s);
+extern void setup_draw(surface_t *s);
+extern bool setup_handle_event(input_event_t *e);
+extern void setup_tick(void);
+extern bool setup_active(void);
+extern bool setup_boot(void);
 extern bool login_handle_event(input_event_t *e);
 extern void login_boot(void);
 extern void login_tick(void);
@@ -1917,6 +1922,8 @@ static void shutdown_cb(int b, void *ctx) {
     if (b == 1) { shutdown_pending = kind; shutdown_at = timer_ticks() + 400; }
 }
 
+void desktop_request_restart(void) { shutdown_pending = 1; shutdown_at = timer_ticks() + 400; }
+
 void desktop_shutdown_dialog(int kind) {
     static const char *btns_off[] = {"Cancelar", "Desligar"};
     static const char *btns_rb[] = {"Cancelar", "Reiniciar"};
@@ -2948,6 +2955,7 @@ static void desktop_draw_overlay_main(surface_t *s, rect_t D) {
     draw_spotlight(s);
     draw_screencap(s);
     login_draw(s);
+    setup_draw(s);
     draw_alert(s);
 }
 
@@ -3008,6 +3016,7 @@ bool desktop_handle_event(input_event_t *e) {
     return desktop_handle_event_local(&l);
 }
 static bool desktop_handle_event_local(input_event_t *e) {
+    if (setup_active()) return setup_handle_event(e);            /* assistente de configuração/instalação (tela cheia) */
     if (login_active() && !A.open) return login_handle_event(e);
     if (e->type == EV_KEY_DOWN) {
         u16 m = e->mods;
@@ -3350,6 +3359,7 @@ static int last_minute = -1;
 
 void desktop_tick(void) {
     login_tick();
+    setup_tick();
     { extern void apps_refresh_mac(void); apps_refresh_mac(); }   /* apps do macOS abertos: bolinha no Dock */
     datetime_t dt;
     static u64 last_rtc;
@@ -3521,7 +3531,7 @@ void desktop_run(void) {
     desktop_init();
     boot_frame(0.7f);
     apps_register_all();
-    login_boot();
+    if (!setup_boot()) login_boot();     /* o assistente roda antes do login (idioma e teclado valem antes da senha) */
     boot_frame(1.0f);
     sleep_ms(250);
     sound_startup_chime();

@@ -141,6 +141,7 @@ int  xhci_intr_start(usb_dev_t *d, u8 ep, u16 len, usb_xfer_cb cb, void *ctx);
 int  xhci_reset_endpoint(usb_dev_t *d, u8 ep);
 void xhci_free_device(usb_dev_t *d);
 int  xhci_slot_of(usb_dev_t *d);
+pci_dev_t *xhci_pci_of(usb_dev_t *d);   /* controlador PCI ao qual o dispositivo está ligado */
 const char *xhci_name(void *hc);
 
 /* ------------------------------------------------------------------ drivers */

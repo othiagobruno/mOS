@@ -3,7 +3,8 @@
 #   .\build.ps1 -Run     builds and boots in QEMU
 #   .\build.ps1 -Clean   removes build\
 #   .\build.ps1 -Tests   also runs the user-mode self-test (/Sistema/Programas/teste) at boot
-param([switch]$Run, [switch]$Clean, [switch]$Debug, [string]$OutDir = 'build', [switch]$Tests, [string]$MonitorExtra = '')
+#   .\build.ps1 -UnitTests  kernel unit tests at boot (-DMOS_UNIT_TESTS: RAM disks only; results on the serial log as "unit:")
+param([switch]$Run, [switch]$Clean, [switch]$Debug, [string]$OutDir = 'build', [switch]$Tests, [switch]$UnitTests, [string]$MonitorExtra = '')
 $ErrorActionPreference = 'Continue'
 $root = $PSScriptRoot
 Set-Location $root
@@ -25,6 +26,7 @@ $cflags = @(
     '-Wall', '-Wextra', '-Wno-unused-parameter', '-Wno-unused-function', '-Wno-sign-compare',
     '-Wno-missing-field-initializers', '-Wno-unused-command-line-argument'
 )
+if ($UnitTests) { $cflags += '-DMOS_UNIT_TESTS' }
 Write-Host "==> Building libSystem.mos (apps do macOS)" -ForegroundColor Cyan
 & "$root\tools\build-libsystem.ps1"
 if ($LASTEXITCODE -ne 0) { Write-Host "libSystem build FAILED" -ForegroundColor Red; exit 1 }
@@ -43,7 +45,8 @@ if (-not (Test-Path $OutDir/mkimg.exe) -or (Get-Item tools/mkimg.c).LastWriteTim
 $esp = "$root\$OutDir\esp"
 Remove-Item -Recurse -Force $esp -ErrorAction SilentlyContinue
 if (Test-Path $esp) { Start-Sleep -Milliseconds 500; Remove-Item -Recurse -Force $esp -ErrorAction SilentlyContinue }
-if (Test-Path $esp) { Write-Host "aviso: build\esp não pôde ser apagado por inteiro (arquivo em uso?); sobrescrevendo" -ForegroundColor Yellow }
+# fail-closed: um staging que sobrou (arquivo em uso, resíduo de build antigo, contas/logs de uma sessão) NUNCA pode virar payload
+if (Test-Path $esp) { Write-Host "ERRO: build\esp não pôde ser apagado por inteiro (arquivo em uso?). Feche o que o estiver usando e rode de novo; o build não continua com um staging sujo." -ForegroundColor Red; exit 1 }
 New-Item -ItemType Directory -Force "$esp\EFI\BOOT", "$esp\mOS" | Out-Null
 Copy-Item $OutDir/BOOTX64.EFI "$esp\EFI\BOOT\BOOTX64.EFI" -Force
 # o conteúdo de root\mOS para dentro de esp\mOS (com "root\mOS" sem \*, uma esp\mOS que sobrou viraria esp\mOS\mOS)
@@ -112,7 +115,10 @@ if ($LASTEXITCODE -ne 0) { Write-Host "Swift apps FAILED" -ForegroundColor Red; 
 }
 
 Write-Host "==> Creating GPT/FAT32 disk image" -ForegroundColor Cyan
-& $OutDir/mkimg.exe $OutDir/mOS.img $esp 128
+# mkimg REJEITA staging contaminado (contas, logs, preferências, pastas pessoais, estado) e gera o manifesto SHA-256 do payload;
+# os exemplos de fábrica (root-live\mOS\Users) entram só como overlay Live, fora do payload e do manifesto
+Remove-Item $OutDir/mOS.img -ErrorAction SilentlyContinue
+& $OutDir/mkimg.exe $OutDir/mOS.img $esp 128 --live-overlay "$root\root-live"
 if ($LASTEXITCODE -ne 0) { Write-Host "image creation FAILED" -ForegroundColor Red; exit 1 }
 $k = (Get-Item $OutDir/BOOTX64.EFI).Length / 1KB
 Write-Host ("OK: $OutDir\mOS.img (kernel {0:N0} KiB). Flash it to a USB stick with Rufus (DD mode) or balenaEtcher." -f $k) -ForegroundColor Green

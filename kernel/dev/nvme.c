@@ -70,6 +70,7 @@ struct nvme_ctrl {
     char model[41], serial[21], fw[9];
     nvme_ns_t ns[MAX_NS];
     int nns;
+    pci_dev_t *pci;
 };
 
 static nvme_ctrl_t *ctrls[MAX_CTRL];
@@ -173,6 +174,8 @@ static bool rw_direct(nvme_ns_t *ns, u64 lba, u64 n, u8 *data, bool write) {
 /* ---- E/S por blocos (até max_xfer por comando) */
 static bool rw_blocks(nvme_ns_t *ns, u64 lba, u64 n, u8 *data, bool write) {
     nvme_ctrl_t *c = ns->c;
+    /* contenção de escrita: único ponto onde este driver emite NVMe Write (rw_direct só é chamado daqui) */
+    if (write && !storage_write_ok(&ns->dev, lba * ns->ss, n * ns->ss)) return false;
     if (c->dprpl && !((u64)data & 3) && pmm_is_ram((u64)data, n * ns->ss) && n * ns->ss >= 4096)
         return rw_direct(ns, lba, n, data, write);
     u32 maxb = c->max_xfer / ns->ss;
@@ -288,7 +291,16 @@ static void add_namespace(nvme_ctrl_t *c, u32 nsid) {
     char name[16];
     snprintf(name, sizeof name, "nvme%dn%u", c->idx, nsid);
     kprintf("nvme%d: namespace %u, %llu blocos de %u bytes\n", c->idx, nsid, nsze, ns->ss);
+    ns->dev.lbs = ns->ss;
     storage_register(&ns->dev, name, ns->desc);
+    {
+        diskphys_t ph;
+        memset(&ph, 0, sizeof ph);
+        ph.kind = PHYS_NVME;
+        ph.nsid = nsid;
+        if (c->pci) pci_chain(c->pci, &ph);
+        storage_set_phys(&ns->dev, &ph);
+    }
 }
 
 static bool setup(pci_dev_t *pd) {
@@ -297,6 +309,7 @@ static bool setup(pci_dev_t *pd) {
     nvme_ctrl_t *c = kcalloc(1, sizeof *c);
     if (!c) return false;
     c->idx = nctrls;
+    c->pci = pd;
     pci_enable_bus_master(pd);
     vmm_map_mmio(base, 0x4000);
     c->regs = (volatile u8 *)base;

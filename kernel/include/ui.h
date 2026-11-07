@@ -257,6 +257,7 @@ void desktop_close_menus(void);
 bool desktop_menu_open(void);
 void desktop_show_about(void);
 void desktop_shutdown_dialog(int kind); /* 0 desligar, 1 reiniciar */
+void desktop_request_restart(void);    /* reinicia sem perguntar (fim da instalação pelo assistente) */
 void desktop_toggle_spotlight(void);
 void desktop_toggle_control_center(void);
 void desktop_toggle_launcher(void);

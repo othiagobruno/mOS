@@ -76,6 +76,35 @@ static void glyph_eject(surface_t *sf, int x, int y, int sz, u32 c) {
     gfx_fill(sf, x + 1, y + (int)(sz * 0.72f), sz - 2, MAX(2, sz / 6), c);
 }
 
+/* cadeado do volume: fechado = somente leitura (padrão), aberto = gravação permitida pelo usuário */
+static void glyph_vol_lock(surface_t *sf, int x, int y, int sz, u32 c, bool open) {
+    gfx_round_rect(sf, x + 1, y + sz * 0.45f, sz - 2, sz * 0.5f, 2, c);
+    float cx = x + sz * 0.5f, r = sz * 0.26f;
+    if (open) gfx_ring_arc(sf, cx + sz * 0.22f, y + sz * 0.4f, r, 1.6f, 3.4f, 6.1f, c);
+    else gfx_ring_arc(sf, cx, y + sz * 0.42f, r, 1.6f, 3.1416f, 6.2832f, c);
+}
+
+static char consent_path[300];
+
+/* resposta do alerta de consentimento: 0 = "Permitir gravação"; 1 (padrão/Enter) = "Cancelar" */
+static void consent_answer(int button, void *ctx) {
+    (void)ctx;
+    if (button != 0) return;
+    vnode_t *vol = vfs_lookup(consent_path);
+    char err[160] = "";
+    if (vol && vfs_is_volume(vol) && vol_enable_write(vol, err, sizeof err)) notify("Gravação permitida", vol->name);
+    else notify("Gravação não liberada", err[0] ? err : "Volume indisponível.");
+    wm_damage_all();
+}
+
+static void ask_volume_write(vnode_t *vol) {
+    static char title[300];
+    static const char *btn[] = {"Permitir gravação", "Cancelar"};
+    snprintf(consent_path, sizeof consent_path, "/Volumes/%s", vol->name);
+    snprintf(title, sizeof title, "Permitir que o mOS grave em “%s”?", vol->name);
+    alert_show(title, "Só este volume será gravável, até você ejetá-lo; nenhum outro disco é liberado. Não há criptografia nem como desfazer: faça backup antes. Partições EFI, o disco do sistema e volumes cuja origem não foi confirmada são recusados.", btn, 2, consent_answer, NULL);
+}
+
 /* ejeta um volume: antes tira de dentro dele as janelas do Arquivos e o cwd do Terminal */
 void eject_volume(vnode_t *vol) {
     if (!vol || !vfs_is_volume(vol)) return;
@@ -1083,7 +1112,13 @@ static void paint(window_t *w, ui_t *u) {
         for (vnode_t *v = vols ? vols->child : NULL; v && vi < 8; v = v->next, vi++) {
             char vp[128];
             snprintf(vp, sizeof vp, "/Volumes/%s", v->name);
-            if (ui_sidebar_item(u, 130 + vi, rect_make(ix, y, iw - 22, rh), v->name, !strcmp(s->path, vp), glyph_sb_disk)) go(s, vp, true);
+            if (ui_sidebar_item(u, 130 + vi, rect_make(ix, y, iw - 44, rh), v->name, !strcmp(s->path, vp), glyph_sb_disk)) go(s, vp, true);
+            if (vfs_is_volume(v)) {   /* cadeado: consentimento de gravação POR VOLUME (negado por padrão) */
+                rect_t lr = rect_make(ix + iw - 42, y + (rh - 16) / 2, 16, 16);
+                bool wr = vfs_ext_writable(v), lh = ui_hit(u, lr);
+                glyph_vol_lock(u->s, lr.x + 1, lr.y + 1, 14, wr ? RGB(230, 150, 30) : (lh ? T.text : T.text2), wr);
+                if (ui_clicked(u, 170 + vi, lr)) { if (wr) notify("A gravação já está permitida", v->name); else ask_volume_write(v); return; }
+            }
             rect_t er = rect_make(ix + iw - 20, y + (rh - 16) / 2, 16, 16);
             bool hov = ui_hit(u, er);
             glyph_eject(u->s, er.x + 2, er.y + 2, 12, hov ? T.text : T.text2);

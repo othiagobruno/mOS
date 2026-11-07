@@ -31,6 +31,7 @@ bool vfs_eject(vnode_t *vol);   /* desmonta e libera o volume (n deixa de ser v�
 int  vfs_mount_file(vnode_t *f); /* monta uma imagem .dmg/.img; devolve nº de volumes criados (0 = falha/já montada) */
 bool vfs_is_read_only(vnode_t *n); /* dentro de um volume externo (somente leitura) */
 bool vfs_ext_writable(vnode_t *n); /* n->ext é de um volume gravável (FAT/HFS+ em disco) */
+bool vol_enable_write(vnode_t *vol, char *err, usize cap); /* consentimento do usuário para gravar NESTE volume (liberação só da faixa dele) */
 /* escrita em volumes de /Volumes (vfs_bridge.c), chamados pelos ganchos de persistência */
 void vol_mark(vnode_t *n);                  /* pasta criada (já) ou arquivo alterado (depois) */
 void vol_delete(vnode_t *n);                /* antes de remover n */
