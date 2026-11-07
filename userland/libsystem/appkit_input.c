@@ -560,7 +560,12 @@ void cx_foundation_extra_init(void);
 void cx_tracking_init(void);
 void cx_appkit_extra_init(void);
 void cx_framework_classes_init(void);
+void cx_gamecontroller_init(void);
+void cx_corebluetooth_init(void) __attribute__((weak));
+static void r_key_up_fwd(id self, SEL c, id e) { (void)c; id n = ain_resp(self, "nextResponder") ? MSG0(id, self, "nextResponder") : 0; if (n && n != self) MSG(void, n, "keyUp:", e); }
 void cx_appkit_input_init(void) {
+    cx_gamecontroller_init();   /* gamecontroller.c: GameController e CoreHaptics */
+    if (cx_corebluetooth_init) cx_corebluetooth_init();   /* corebluetooth.c */
     cx_framework_classes_init(); /* vscode_fwclasses.c: classes de frameworks ausentes */
     cx_appkit_extra_init();     /* appkit_extra.c: painéis, barra de status, NSAnimation, NSParagraphStyle... */
     cx_tracking_init();         /* hover: NSTrackingArea e mouseEntered/Exited/Moved */
@@ -573,6 +578,7 @@ void cx_appkit_input_init(void) {
     cx_class_t *obj = cx_class_named("NSObject");
     add_if_missing(resp, "interpretKeyEvents:", (void *)r_interpret);
     add_if_missing(resp, "doCommandBySelector:", (void *)r_do_command);
+    add_if_missing(resp, "keyUp:", (void *)r_key_up_fwd);   /* o window server agora entrega "tecla solta" */
     if (!cx_class_named("NSTextInputContext")) {
         cx_define_class(&NSTextInputContext_c, &NSTextInputContext_m, "NSTextInputContext", obj, 16);
         cx_add_cmethod(&NSTextInputContext_c, "currentInputContext", (void *)ti_current_ctx);

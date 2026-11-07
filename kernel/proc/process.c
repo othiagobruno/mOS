@@ -740,8 +740,13 @@ static void dump_threads_maybe(int_frame_t *cur) {
         int_frame_t *f = t == thread_current() ? cur : (int_frame_t *)t->frame;   /* a atual: o frame desta syscall */
         kprintf("despejo: %s pid %d thread %d \"%s\" %s (espera %d) rip %llx rsp %llx\n", t->proc->name, t->proc->pid, t->id,
                 t->name, t->state <= TH_DEAD ? st[t->state] : "?", t->wait_pid, f->rip, f->rsp);
+        /* palavra por palavra até o fim da pilha mapeada: uma thread rasa (logo abaixo do topo) não cabia em
+         * um bloco de 1280 bytes e saía sem nenhuma linha de pilha */
         u64 words[160];
-        if (!uvm_copy_in(t->proc, words, f->rsp & ~7ULL, sizeof words)) continue;
+        int nw = 0;
+        while (nw < 160 && uvm_copy_in(t->proc, &words[nw], (f->rsp & ~7ULL) + (u64)nw * 8, 8)) nw++;
+        if (!nw) continue;
+        for (int k = nw; k < 160; k++) words[k] = 0;
         char line[200];
         usize o = 0;
         int shown = 0;
@@ -908,10 +913,49 @@ static void fd_close(process_t *p, int fd) {
 }
 
 static void fd_copy(process_t *dst, int dfd, process_t *src, int sfd) {
+    /* a referência nova entra antes de fechar o destino: se os dois são do mesmo pipe e o destino era a
+     * última referência, fechar primeiro liberaria o pipe que a cópia ainda vai usar (kfree duplo depois) */
+    __typeof__(src->fds[0]) e = src->fds[sfd];
+    if (e.pipe) { if (e.kind == FD_PIPE_R) e.pipe->readers++; else e.pipe->writers++; }
     if (dst->fds[dfd].used) fd_close(dst, dfd);
-    dst->fds[dfd] = src->fds[sfd];
-    pipe_t *pp = dst->fds[dfd].pipe;
-    if (pp) { if (dst->fds[dfd].kind == FD_PIPE_R) pp->readers++; else pp->writers++; }
+    dst->fds[dfd] = e;
+}
+
+/* fileports (machipc.c, portas KP_FILE): a porta guarda uma cópia da entrada do descritor (caminho, modo,
+ * posição, ponta de pipe com a sua referência); fileport_makefd instala outra cópia no processo que recebeu.
+ * A posição não é compartilhada entre as cópias (cada uma anda sozinha), o que basta para o Mojo: o Chromium
+ * lê esses arquivos com pread/mmap ou do começo. */
+typedef __typeof__(((process_t *)0)->fds[0]) fdent_t;
+void *proc_fd_snapshot(process_t *p, int fd) {
+    if (fd < 0 || fd >= 32 || !p->fds[fd].used) return NULL;
+    fdent_t *s = kmalloc(sizeof *s);
+    if (!s) return NULL;
+    *s = p->fds[fd];
+    s->flags &= ~MOS_O_CLOEXEC;
+    if (s->pipe) { if (s->kind == FD_PIPE_R) s->pipe->readers++; else s->pipe->writers++; }
+    return s;
+}
+int proc_fd_from_snapshot(process_t *p, const void *snap) {
+    const fdent_t *s = snap;
+    for (int fd = 3; fd < 32; fd++) {
+        if (p->fds[fd].used) continue;
+        p->fds[fd] = *s;
+        p->fds[fd].used = true;
+        if (s->pipe) { if (s->kind == FD_PIPE_R) s->pipe->readers++; else s->pipe->writers++; }
+        return fd;
+    }
+    return -MOS_EMFILE;
+}
+void proc_fd_snapshot_free(void *snap) {
+    fdent_t *s = snap;
+    if (!s) return;
+    pipe_t *pp = s->pipe;
+    if (pp) {
+        if (s->kind == FD_PIPE_R) pp->readers--; else pp->writers--;
+        pipe_service(pp);
+        if (pp->readers <= 0 && pp->writers <= 0) kfree(pp);
+    }
+    kfree(s);
 }
 
 /* operação de pipe que pode bloquear: devolve o frame a restaurar */
@@ -950,12 +994,19 @@ static i64 file_pwrite(const char *path, u64 off, const u8 *data, u64 len) {
 static void fill_stat(vnode_t *v, mos_stat_t *st) {
     st->size = v->dir ? 0 : v->size;
     st->is_dir = v->dir;
-    st->mtime = 0;
+    /* vnode->mtime: ms desde o boot (0 = veio no disco de boot); sem data real, vale a hora do boot.
+     * Com 0 (1970) o gzip e o tar reclamam de "timestamp out of range". */
+    i64 boot = unix_now() - (i64)(timer_ticks() / 1000);
+    st->mtime = boot + (i64)(v->mtime / 1000);
 }
+
+/* /dev/null: não existe no VFS; open aceita, write descarta, read dá fim de arquivo (o git exige) */
+static bool is_devnull(const char *path) { return !strcmp(path, "/dev/null"); }
 
 static i64 sys_write(process_t *p, int fd, u64 buf, u64 len) {
     if (fd_get(p, fd) >= 0) {
         if (!(p->fds[fd].flags & (MOS_O_WRONLY | MOS_O_RDWR))) return -MOS_EBADF;
+        if (is_devnull(p->fds[fd].path)) return (i64)len;
         u8 *tmp = len ? kmalloc(len) : NULL;
         if (len && !tmp) return -MOS_ENOMEM;
         if (len && !uvm_copy_in(p, tmp, buf, len)) { kfree(tmp); return -MOS_EFAULT; }
@@ -1375,15 +1426,23 @@ u64 proc_syscall(int_frame_t *f) {
         static int open_diag = -1;
         if (open_diag < 0) open_diag = vfs_lookup("/Sistema/Biblioteca/despejar-threads") != NULL;
         bool diag = open_diag && !strncmp(p->name, "Code Helper", 11);
-        if (fd < 0) { if (diag) kprintf("open[diag]: %s (pid %d): EMFILE %s\n", p->name, p->pid, path); r = -MOS_EMFILE; break; }
-        vnode_t *v = vfs_lookup(path);
+        /* EMFILE vai sempre para o log (raro e sério: o processo principal do VS Code abre dezenas de arquivos) */
+        if (fd < 0) { kprintf("open[diag]: %s (pid %d): EMFILE %s\n", p->name, p->pid, path); r = -MOS_EMFILE; break; }
+        vnode_t *v = is_devnull(path) ? NULL : vfs_lookup(path);
         bool wr = b & (MOS_O_WRONLY | MOS_O_RDWR);
-        if (!v) {
-            if (!(b & MOS_O_CREAT)) { if (diag) kprintf("open[diag]: %s (pid %d): ENOENT %s\n", p->name, p->pid, path); r = -MOS_ENOENT; break; }
+        if (is_devnull(path)) { /* sem vnode: read/write tratam pelo caminho */ }
+        else if (!v) {
+            if (!(b & MOS_O_CREAT)) {
+                if (diag || (open_diag && strstr(path, "workbench"))) kprintf("open[diag]: %s (pid %d): ENOENT %s\n", p->name, p->pid, path);
+                r = -MOS_ENOENT;
+                break;
+            }
             if (!vfs_write_file(path, "", 0)) { r = -MOS_ENOENT; break; }
         } else if (v->dir && wr) { r = -MOS_EISDIR; break; }
         else if (wr && (b & MOS_O_TRUNC)) vfs_write_file(path, "", 0);
         if (diag && strstr(p->name, "Renderer")) kprintf("open[diag]: %s (pid %d): ok %s%s\n", p->name, p->pid, path, v && v->dir ? " (pasta)" : "");
+        /* a página do workbench: quem a abre (e se abre) diz em que ponto a navegação da janela para */
+        else if (open_diag && strstr(path, "workbench")) kprintf("open[diag]: %s (pid %d): ok %s\n", p->name, p->pid, path);
         p->fds[fd].used = true;
         p->fds[fd].kind = FD_FILE;
         p->fds[fd].pipe = NULL;
@@ -1467,6 +1526,7 @@ u64 proc_syscall(int_frame_t *f) {
             return sched_switch(f);
         }
         if (fd_get(p, a) < 0 || (p->fds[a].flags & MOS_O_WRONLY)) { r = -MOS_EBADF; break; }
+        if (is_devnull(p->fds[a].path)) { r = 0; break; }   /* /dev/null: sempre fim de arquivo */
         vnode_t *v = vfs_lookup(p->fds[a].path);
         if (!v) { r = -MOS_ENOENT; break; }
         if (v->dir) { r = -MOS_EISDIR; break; }
@@ -1501,8 +1561,15 @@ u64 proc_syscall(int_frame_t *f) {
             r = uvm_copy_out(p, b, &st, sizeof st) ? 0 : -MOS_EFAULT;
             break;
         }
-        if (f->rax == SYS_FSTAT) { if (fd_get(p, a) < 0) { r = -MOS_EBADF; break; } v = vfs_lookup(p->fds[a].path); }
-        else { if (!copy_path(p, path, a)) { r = -MOS_EFAULT; break; } v = vfs_lookup(path); }
+        const char *sp;
+        if (f->rax == SYS_FSTAT) { if (fd_get(p, a) < 0) { r = -MOS_EBADF; break; } sp = p->fds[a].path; }
+        else { if (!copy_path(p, path, a)) { r = -MOS_EFAULT; break; } sp = path; }
+        if (is_devnull(sp)) {                               /* is_dir 4 = dispositivo de caracteres (libSystem) */
+            mos_stat_t st = {0, 4, unix_now()};
+            r = uvm_copy_out(p, b, &st, sizeof st) ? 0 : -MOS_EFAULT;
+            break;
+        }
+        v = vfs_lookup(sp);
         if (!v) { r = -MOS_ENOENT; break; }
         mos_stat_t st;
         fill_stat(v, &st);

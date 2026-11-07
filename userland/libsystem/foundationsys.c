@@ -92,7 +92,8 @@ int getgrnam_r(const char *name, mac_group_t *g, char *buf, size_t len, mac_grou
 }
 
 /* ======================================================================== metadados que o VFS não guarda */
-int chmod(const char *p, unsigned short m) { char st[STAT_SIZE]; (void)m; return stat(p, st); }
+void cx_perm_set(const char *path, unsigned mode);   /* libc.c: o stat devolve o modo pedido */
+int chmod(const char *p, unsigned short m) { char st[STAT_SIZE]; int r = stat(p, st); if (r == 0) cx_perm_set(p, m); return r; }
 int fchmod(int fd, unsigned short m) { (void)fd; (void)m; return 0; }
 int lchmod(const char *p, unsigned short m) { return chmod(p, m); }
 int chown(const char *p, unsigned u, unsigned g) { char st[STAT_SIZE]; (void)u; (void)g; return stat(p, st); }

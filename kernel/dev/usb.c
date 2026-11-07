@@ -5,7 +5,7 @@
 #include "usb.h"
 
 static usb_dev_t devs[USB_MAX_DEVS];
-static const usb_driver_t *drivers[] = { &usb_hub_driver, &usb_hid_driver, &usb_msc_driver, &usb_bt_driver };
+static const usb_driver_t *drivers[] = { &usb_hub_driver, &usb_hid_driver, &usb_msc_driver, &usb_bt_driver, &usb_xinput_driver };
 #define NDRIVERS ((int)ARRAY_LEN(drivers))
 
 /* ------------------------------------------------------------------ transferências */

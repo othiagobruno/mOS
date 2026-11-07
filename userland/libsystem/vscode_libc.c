@@ -228,10 +228,13 @@ int utimensat(int dfd, const char *p, const vs_timespec_t t[2], int flag) {
     char st[256];
     return stat(p, st);
 }
+void cx_perm_set(const char *path, unsigned mode);   /* libc.c: o stat devolve o modo pedido */
 int fchmodat(int dfd, const char *p, unsigned short mode, int flag) {
-    (void)dfd; (void)mode; (void)flag;
+    (void)dfd; (void)flag;
     char st[256];
-    return stat(p, st);
+    int r = stat(p, st);
+    if (r == 0) cx_perm_set(p, mode);
+    return r;
 }
 int lchflags(const char *p, u32 flags) { (void)flags; char st[256]; return stat(p, st); }
 int mknod(const char *p, unsigned short mode, int dev) { (void)p; (void)mode; (void)dev; set_errno(E_PERM); return -1; }
@@ -404,8 +407,29 @@ int connectx(int s, const void *eps, u32 aid, u32 flags, const void *iov, u32 io
 int disconnectx(int s, u32 aid, u32 cid) { (void)s; (void)aid; (void)cid; set_errno(E_NOTSUP); return -1; }
 void *getservbyport(int port, const char *proto) { (void)port; (void)proto; return 0; }
 void *getservbyname(const char *name, const char *proto) { (void)name; (void)proto; return 0; }
-int fileport_makeport(int fd, mach_port_t *port) { (void)fd; (void)port; set_errno(E_NOTSUP); return -1; }
-int fileport_makefd(mach_port_t port) { (void)port; set_errno(E_NOTSUP); return -1; }
+/* fileports: o kernel guarda uma cópia do descritor numa porta Mach (machipc.c, KP_FILE), que viaja numa mensagem
+ * como qualquer direito de envio; quem recebe ganha um descritor novo para o mesmo arquivo/pipe. O Mojo do Chromium
+ * manda arquivos para os helpers assim. Descritores que só existem no libSystem (kqueue 0x4000+, sockets 0x5000+)
+ * não têm o que copiar: EBADF, e o motivo vai para o stderr. */
+int fileport_makeport(int fd, mach_port_t *port) {
+    if (!port) { set_errno(E_INVAL); return -1; }
+    u64 a[8] = {(u64)(long)fd, 0, 0, 0, 0, 0, 0, 0};
+    long r = cx_syscall(SYS_MACH_PORT, (long)MACH_OP_FILEPORT_MAKE, (long)a, 0, 0, 0);
+    if (r != 0) {
+        static const char m[] = "fileport_makeport: descritor sem cópia no kernel (kqueue/socket do libSystem ou fechado)\n";
+        if (fd >= 0x4000) SYS3(SYS_WRITE, 2, m, sizeof m - 1);
+        set_errno(9);                                  /* EBADF */
+        return -1;
+    }
+    *port = (mach_port_t)a[1];
+    return 0;
+}
+int fileport_makefd(mach_port_t port) {
+    u64 a[8] = {port, 0, 0, 0, 0, 0, 0, 0};
+    long r = cx_syscall(SYS_MACH_PORT, (long)MACH_OP_FILEPORT_FD, (long)a, 0, 0, 0);
+    if (r != 0) { set_errno(r == 6 ? 24 : 9); return -1; }   /* KERN_RESOURCE_SHORTAGE -> EMFILE; senão EBADF */
+    return (int)a[1];
+}
 u32 notify_register_file_descriptor(const char *name, int *fd, int flags, int *token) {
     (void)name; (void)fd; (void)flags; (void)token;
     return 1000000;   /* NOTIFY_STATUS_FAILED */

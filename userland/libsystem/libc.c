@@ -817,7 +817,13 @@ int open(const char *path, int flags, ...) {
 int creat(const char *path, int mode) { return open(path, 0x0601, mode); }
 int unlink(const char *path) { PATH(p, path); return (int)ret_errno(SYS1(SYS_UNLINK, p)); }
 int remove(const char *p) { return unlink(p); }
-int mkdir(const char *path, int mode) { (void)mode; PATH(p, path); return (int)ret_errno(SYS1(SYS_MKDIR, p)); }
+void cx_perm_set(const char *path, unsigned mode);
+int mkdir(const char *path, int mode) {
+    PATH(p, path);
+    int r = (int)ret_errno(SYS1(SYS_MKDIR, p));
+    if (r == 0) cx_perm_set(p, (unsigned)mode & 0777 & ~022u);   /* umask padrão do macOS */
+    return r;
+}
 int rename(const char *a, const char *b) { PATH(pa, a); PATH(pb, b); return (int)ret_errno(SYS2(SYS_RENAME, pa, pb)); }
 int rmdir(const char *p) { return unlink(p); }
 /* o Terminal do mOS não interpreta sequências ANSI: com TERM=dumb os programas não colorem a saída */
@@ -939,8 +945,9 @@ typedef struct {
 
 static void to_mac_stat(const mos_stat_t *s, mac_stat_t *m) {
     memset(m, 0, sizeof *m);
-    /* is_dir: 0 arquivo, 1 pasta, 2/3 pipe (ponta de leitura/escrita: kernel, SYS_FSTAT) */
-    m->st_mode = s->is_dir >= 2 ? 0010600 : s->is_dir ? 0040755 : 0100644;
+    /* is_dir: 0 arquivo, 1 pasta, 2/3 pipe (ponta de leitura/escrita), 4 dispositivo (/dev/null) */
+    m->st_mode = s->is_dir == 4 ? 0020666 : s->is_dir >= 2 ? 0010600 : s->is_dir ? 0040755 : 0100644;
+    m->st_dev = 0x1000002;      /* um só volume; o st_ino (hash do caminho) separa os arquivos */
     m->st_nlink = 1;
     m->st_uid = 501;
     m->st_gid = 20;
@@ -989,6 +996,35 @@ static void exec_bits(const char *abs, mac_stat_t *m) {
     if (mg == 0xFEEDFACFu || mg == 0xBEBAFECAu || mg == 0xCAFEBABEu || mg == 0x464C457Fu || (h[0] == '#' && h[1] == '!'))
         m->st_mode = 0100755;
 }
+/* st_ino: o VFS não tem números de inode; um hash do caminho absoluto separa os arquivos (o grep, o tar e o
+ * cp comparam dev+ino para não ler a própria saída). Bit 63 livre para pipes e o console. */
+static u64 path_ino(const char *abs) {
+    u64 h = 1469598103934665603ULL;
+    for (const unsigned char *p = (const unsigned char *)abs; *p; p++) h = (h ^ *p) * 1099511628211ULL;
+    h &= 0x7FFFFFFFFFFFFFFFULL;
+    return h ? h : 1;
+}
+/* permissões: o FAT não as guarda. O processo lembra o que pediu em mkdir/chmod/fchmodat (com a umask 022 do
+ * macOS) e o stat devolve isso: quem cria uma pasta 0700 (mkdtemp) lê 0700 de volta — o Chrome confere
+ * (CHECK) que a pasta do socket do perfil é 0700. Vale dentro do processo e nos filhos de fork. */
+#define MAX_PERMS 128
+static struct { u64 ino; u16 perm; } perms[MAX_PERMS];
+static int nperms;
+void cx_perm_set(const char *path, unsigned mode) {
+    char abs[1024];
+    cx_path(path, abs, sizeof abs);
+    u64 ino = path_ino(abs);
+    int i = 0;
+    while (i < nperms && perms[i].ino != ino) i++;
+    if (i == nperms) { if (nperms == MAX_PERMS) i = (int)(ino % MAX_PERMS); else nperms++; }
+    perms[i].ino = ino;
+    perms[i].perm = (u16)(mode & 07777);
+}
+static void apply_perm(mac_stat_t *m) {
+    for (int i = 0; i < nperms; i++)
+        if (perms[i].ino == m->st_ino) { m->st_mode = (u16)((m->st_mode & ~07777) | perms[i].perm); return; }
+}
+
 int stat(const char *path, mac_stat_t *m) {
     mos_stat_t s;
     char abs[1024];
@@ -996,7 +1032,9 @@ int stat(const char *path, mac_stat_t *m) {
     for (int hop = 0; hop < 8 && link_step(abs, sizeof abs, 0); hop++) {}
     if (ret_errno(SYS2(SYS_STAT, abs, &s)) < 0) return -1;
     to_mac_stat(&s, m);
+    m->st_ino = path_ino(abs);
     exec_bits(abs, m);
+    apply_perm(m);
     return 0;
 }
 int lstat(const char *path, mac_stat_t *m) {
@@ -1005,6 +1043,7 @@ int lstat(const char *path, mac_stat_t *m) {
     cx_path(path, abs, sizeof abs);
     if (ret_errno(SYS2(SYS_STAT, abs, &s)) < 0) return -1;
     to_mac_stat(&s, m);
+    m->st_ino = path_ino(abs);
     long tl = 0;
     strlcpy(tgt, abs, sizeof tgt);
     if (!s.is_dir && link_step(tgt, sizeof tgt, &tl)) {
@@ -1014,13 +1053,25 @@ int lstat(const char *path, mac_stat_t *m) {
         return 0;
     }
     exec_bits(abs, m);
+    apply_perm(m);
     return 0;
 }
 int fstat(int fd, mac_stat_t *m) {
     mos_stat_t s;
-    if (fd >= 0 && fd <= 2) { memset(m, 0, sizeof *m); m->st_mode = 0020620; return 0; }
-    if (ret_errno(SYS2(SYS_FSTAT, fd, &s)) < 0) return -1;
+    long r = SYS2(SYS_FSTAT, fd, &s);
+    if (r < 0 && fd >= 0 && fd <= 2) {               /* 0-2 sem redirecionar: o console (dispositivo de caracteres) */
+        memset(m, 0, sizeof *m);
+        m->st_mode = 0020620;
+        m->st_dev = 0x1000002;
+        m->st_ino = 0x8000000000000000ULL | 0x100 | (u64)fd;
+        m->st_nlink = 1;
+        return 0;
+    }
+    if (ret_errno(r) < 0) return -1;
     to_mac_stat(&s, m);
+    char p[1024];
+    if (s.is_dir == 2 || s.is_dir == 3) m->st_ino = 0x8000000000000000ULL | ((u64)getpid() << 8) | (u64)fd;   /* pipe */
+    else if (SYS3(SYS_FDPATH, fd, p, sizeof p) >= 0) { m->st_ino = path_ino(p); exec_bits(p, m); }
     return 0;
 }
 

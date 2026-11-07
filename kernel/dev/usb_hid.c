@@ -7,6 +7,7 @@
  *          relativo ou absoluto).  Se o parser falhar e a interface for boot mouse, usa boot protocol.
  */
 #include "usb.h"
+#include "compat_gui.h"      /* PAD_*: layout dos botões do GameController */
 
 #define MAX_HID 12
 
@@ -34,7 +35,14 @@ typedef struct {
     u8   nbtn;
     u8   last_buttons;
     i32  last_x, last_y;
+    /* controle de jogo (type 3): eixos X Y Z Rx Ry Rz, acelerador/freio, direcional e até 16 botões */
+    hfield_t gax[8], ghat;
+    u16  gbtn_off;
+    u8   gnbtn, grid;
+    bool gids;
+    int  pad;
 } hid_t;
+enum { GA_X, GA_Y, GA_Z, GA_RX, GA_RY, GA_RZ, GA_ACCEL, GA_BRAKE };
 
 static hid_t hids[MAX_HID];
 static int key_log;
@@ -257,11 +265,136 @@ static bool parse_report(hid_t *h, const u8 *rd, int len) {
     return false;
 }
 
+/* ------------------------------------------------------------------ controles de jogo HID
+ * Aceita a coleção de aplicação Joystick (0x04) ou Gamepad (0x05) da página Generic Desktop. */
+static bool parse_gamepad(hid_t *h, const u8 *rd, int len) {
+    u16 off[256];
+    memset(off, 0, sizeof off);
+    u32 upage = 0, rsize = 0, rcount = 0, lmax_u = 0;
+    i32 lmin = 0, lmax = 0;
+    u8 rid = 0;
+    bool ids = false, is_pad = false;
+    u32 usages[32];
+    int nus = 0;
+    u32 umin = 0, umax = 0;
+    bool range = false;
+    int pad_rid = -1;
+    for (int i = 0; i < len;) {
+        u8 b = rd[i++];
+        if (b == 0xFE) { if (i + 1 >= len) break; i += 2 + rd[i]; continue; }
+        int sz = b & 3;
+        if (sz == 3) sz = 4;
+        if (i + sz > len) break;
+        u32 uv = 0;
+        for (int k = 0; k < sz; k++) uv |= (u32)rd[i + k] << (8 * k);
+        i32 sv = sz == 1 ? (i8)uv : sz == 2 ? (i16)uv : (i32)uv;
+        i += sz;
+        int type = (b >> 2) & 3, tag = b >> 4;
+        if (type == 0) {
+            if (tag == 10 && uv == 1) {               /* Collection(Application) */
+                u32 u = nus ? usages[0] : 0;
+                if (u == 0x10004 || u == 0x10005) { is_pad = true; if (pad_rid < 0) pad_rid = rid; }
+            } else if (tag == 8 && is_pad && (pad_rid < 0 || rid == pad_rid || !ids)) {   /* Input */
+                bool cnst = uv & 1, var = uv & 2, rel = uv & 4;
+                i32 mx = lmax < lmin ? (i32)lmax_u : lmax;
+                for (u32 k = 0; k < rcount && k < 64; k++) {
+                    u32 u = 0;
+                    if (nus) u = usages[k < (u32)nus ? k : (u32)nus - 1];
+                    else if (range) u = umin + k <= umax ? umin + k : umax;
+                    if (!cnst && var) {
+                        hfield_t f = {true, off[rid], (u16)rsize, lmin, mx, !rel};
+                        if (u >= 0x10030 && u <= 0x10035 && !h->gax[u - 0x10030].have) h->gax[u - 0x10030] = f;
+                        else if (u == 0x20C4 && !h->gax[GA_ACCEL].have) h->gax[GA_ACCEL] = f;
+                        else if (u == 0x20C5 && !h->gax[GA_BRAKE].have) h->gax[GA_BRAKE] = f;
+                        else if (u == 0x10039 && !h->ghat.have) h->ghat = f;
+                        else if ((u >> 16) == 9 && rsize == 1 && (u & 0xFFFF) >= 1 && (u & 0xFFFF) <= 16) {
+                            if (!h->gnbtn) h->gbtn_off = off[rid] - ((u & 0xFFFF) - 1);
+                            if (h->gnbtn < (u & 0xFFFF)) h->gnbtn = (u8)(u & 0xFFFF);
+                        }
+                    }
+                    off[rid] += rsize;
+                }
+                h->grid = rid;
+            } else if (tag == 8) {
+                for (u32 k = 0; k < rcount && k < 64; k++) off[rid] += rsize;
+            }
+            nus = 0; range = false;
+        } else if (type == 1) {
+            switch (tag) {
+            case 0: upage = uv; break;
+            case 1: lmin = sv; break;
+            case 2: lmax = sv; lmax_u = uv; break;
+            case 7: rsize = uv; break;
+            case 8: rid = (u8)uv; ids = true; break;
+            case 9: rcount = uv; break;
+            }
+        } else if (type == 2) {
+            u32 full = sz == 4 ? uv : (upage << 16) | uv;
+            if (tag == 0 && nus < 32) usages[nus++] = full;
+            else if (tag == 1) { umin = full; range = true; }
+            else if (tag == 2) { umax = full; range = true; }
+        }
+    }
+    h->gids = ids;
+    return is_pad && h->gax[GA_X].have && h->gax[GA_Y].have && h->gnbtn >= 2;
+}
+static float gaxis(const hfield_t *f, const u8 *r, u32 len, u32 base, bool sym) {
+    if (!f->have || f->lmax == f->lmin) return 0;
+    i32 v = getbits(r, len, base + f->off, f->size, f->lmin < 0);
+    float t = (float)(v - f->lmin) / (float)(f->lmax - f->lmin);
+    return sym ? t * 2 - 1 : t;
+}
+/* DualShock 4 / DualSense (Sony, 054c): quadrado, X, círculo, triângulo; Z/Rz = analógico direito; Rx/Ry = gatilhos */
+static void gp_report(hid_t *h, const u8 *r, u32 len) {
+    u32 base = 0;
+    if (h->gids) { if (!len || r[0] != h->grid) return; base = 8; }
+    bool sony = h->d->desc.idVendor == 0x054C;
+    bool btn[17] = {0};
+    for (int i = 1; i <= h->gnbtn && i <= 16; i++) btn[i] = getbits(r, len, base + h->gbtn_off + (i - 1), 1, false) != 0;
+    u32 b = 0;
+    if (sony) {
+        static const u32 m[15] = {0, PAD_X, PAD_A, PAD_B, PAD_Y, PAD_LB, PAD_RB, 0, 0, PAD_OPTIONS, PAD_MENU, PAD_LS, PAD_RS, PAD_HOME, PAD_TOUCHPAD};
+        for (int i = 1; i < 15; i++) if (btn[i]) b |= m[i];
+    } else {
+        /* ordem genérica (a mesma do SDL para controles sem mapeamento): A B X Y LB RB Back Start Guide LS RS */
+        static const u32 m[12] = {0, PAD_A, PAD_B, PAD_X, PAD_Y, PAD_LB, PAD_RB, PAD_OPTIONS, PAD_MENU, PAD_HOME, PAD_LS, PAD_RS};
+        for (int i = 1; i < 12; i++) if (btn[i]) b |= m[i];
+    }
+    if (h->ghat.have) {
+        i32 hv = getbits(r, len, base + h->ghat.off, h->ghat.size, false) - h->ghat.lmin;
+        i32 span = h->ghat.lmax - h->ghat.lmin + 1;
+        b |= gamepad_hat_buttons(span == 8 ? hv : span == 4 ? hv * 2 : -1);
+    }
+    float lx = gaxis(&h->gax[GA_X], r, len, base, true), ly = -gaxis(&h->gax[GA_Y], r, len, base, true);
+    float rx = 0, ry = 0, lt = 0, rt = 0;
+    bool z = h->gax[GA_Z].have, rz = h->gax[GA_RZ].have, rxh = h->gax[GA_RX].have, ryh = h->gax[GA_RY].have;
+    if (z && rz) {
+        rx = gaxis(&h->gax[GA_Z], r, len, base, true); ry = -gaxis(&h->gax[GA_RZ], r, len, base, true);
+        if (rxh) lt = gaxis(&h->gax[GA_RX], r, len, base, false);
+        if (ryh) rt = gaxis(&h->gax[GA_RY], r, len, base, false);
+    } else if (rxh && ryh) {
+        rx = gaxis(&h->gax[GA_RX], r, len, base, true); ry = -gaxis(&h->gax[GA_RY], r, len, base, true);
+        if (z) { float t = gaxis(&h->gax[GA_Z], r, len, base, true); if (t < 0) lt = -t; else rt = t; }
+    }
+    if (h->gax[GA_BRAKE].have) lt = gaxis(&h->gax[GA_BRAKE], r, len, base, false);
+    if (h->gax[GA_ACCEL].have) rt = gaxis(&h->gax[GA_ACCEL], r, len, base, false);
+    if (!sony && !h->gax[GA_BRAKE].have && !(z && rz && rxh)) { if (btn[7] && h->gnbtn >= 12) lt = 1; if (btn[8] && h->gnbtn >= 12) rt = 1; }
+    gamepad_report(h->pad, b, lx, ly, rx, ry, lt, rt);
+}
+/* vibração do DualShock 4 por USB: relatório de saída 0x05 (SET_REPORT pelo endpoint de controle) */
+static void ds4_rumble(void *ctx, u8 strong, u8 weak) {
+    hid_t *h = ctx;
+    if (!h->used || !h->active) return;
+    u8 rep[32] = {0x05, 0xFF, 0x00, 0x00, weak, strong};
+    usb_control(h->d, 0x21, 0x09, 0x0205, h->it->num, sizeof rep, rep);
+}
+
 /* ------------------------------------------------------------------ driver */
 static void hid_cb(usb_dev_t *d, u8 ep, u8 *data, u32 len, int status, void *ctx) {
     hid_t *h = ctx;
     if (!h->used || !h->active) return;
     if (h->type == 1) kbd_report(h, data, len);
+    else if (h->type == 3) gp_report(h, data, len);
     else ptr_report(h, data, len);
 }
 
@@ -310,16 +443,25 @@ static void hid_start(usb_dev_t *d, usb_iface_t *it) {
         kprintf("USB HID: teclado (boot protocol) na interface %u, ep %02x\n", it->num, h->ep);
     } else {
         u16 rl = report_desc_len(it);
-        bool ok = false;
+        bool ok = false, gp = false;
         if (rl) {
             u8 *rd = kmalloc(MIN(rl, 4096));
             if (rd) {
                 int n = usb_control(d, 0x81, 6, (USB_DT_REPORT << 8), it->num, MIN(rl, 4096), rd);
-                if (n > 0) ok = parse_report(h, rd, n);
+                if (n > 0) { gp = parse_gamepad(h, rd, n); if (!gp) ok = parse_report(h, rd, n); }   /* controle antes: ele também tem X/Y */
                 kfree(rd);
             }
         }
-        if (ok) {
+        if (gp) {
+            h->type = 3;
+            usb_control(d, 0x21, 0x0A, 0, it->num, 0, NULL);          /* SET_IDLE(0): relatório só quando muda */
+            usb_set_kind(d, USB_KIND_HID);
+            bool sony = d->desc.idVendor == 0x054C;
+            h->pad = gamepad_attach(d->product[0] ? d->product : "Controle de jogo USB", d->desc.idVendor, d->desc.idProduct,
+                                    sony ? PAD_KIND_SONY : PAD_KIND_HID, sony ? PAD_CAP_RUMBLE : 0,
+                                    sony && (d->desc.idProduct == 0x05C4 || d->desc.idProduct == 0x09CC) ? ds4_rumble : NULL, h);
+            kprintf("USB HID: controle de jogo na interface %u (%u botões%s)\n", it->num, h->gnbtn, h->ghat.have ? ", direcional" : "");
+        } else if (ok) {
             h->type = 2;
             if (bootif) usb_control(d, 0x21, 0x0B, 1, it->num, 0, NULL);   /* SET_PROTOCOL(report) */
             usb_control(d, 0x21, 0x0A, 0, it->num, 0, NULL);
@@ -348,6 +490,7 @@ static void hid_detach(usb_dev_t *d, usb_iface_t *it) {
     hid_t *h = it->priv;
     if (!h) return;
     if (h->type == 1) kbd_release_all(h);
+    if (h->type == 3) gamepad_detach(h->pad);
     if (h->type == 2 && h->last_buttons) {
         input_event_t ev = {0};
         ev.type = EV_MOUSE;

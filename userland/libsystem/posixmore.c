@@ -844,3 +844,185 @@ static int vol_caps(const cx_attrlist_t *al, void *buf, size_t n) {
 }
 int fgetattrlist(int fd, void *al, void *buf, size_t n, unsigned opt) { (void)fd; (void)opt; return vol_caps(al, buf, n); }
 int cx_getattrlist(const char *p, void *al, void *buf, size_t n, unsigned opt) { (void)opt; if (access(p, 0)) return -1; return vol_caps(al, buf, n); }
+
+/* ============================================================ sed 4.10, grep 3.12, tar 1.35, xz, curl 8.21, git 2.55 */
+int execvp(const char *file, char *const argv[]);
+int strcoll(const char *a, const char *b);
+char *strdup(const char *s);
+void *realloc(void *p, size_t n);
+void *opendir(const char *p);
+void *readdir(void *d);
+int closedir(void *d);
+int stat(const char *p, void *st);
+void qsort(void *b, size_t n, size_t sz, int (*cmp)(const void *, const void *));
+int snprintf(char *b, size_t n, const char *fmt, ...);
+
+int execlp(const char *file, const char *a0, ...) {
+    char *av[64];
+    int n = 0;
+    __builtin_va_list ap;
+    __builtin_va_start(ap, a0);
+    for (const char *s = a0; s && n < 63; s = __builtin_va_arg(ap, const char *)) av[n++] = (char *)s;
+    __builtin_va_end(ap);
+    av[n] = 0;
+    return execvp(file, av);
+}
+char *stpncpy(char *d, const char *s, size_t n) {
+    size_t i = 0;
+    for (; i < n && s[i]; i++) d[i] = s[i];
+    char *end = d + i;
+    for (; i < n; i++) d[i] = 0;
+    return end;
+}
+int rpmatch(const char *r) {
+    if (!r || !*r) return -1;
+    if (*r == 'y' || *r == 'Y' || *r == 's' || *r == 'S') return 1;   /* "sim" também */
+    if (*r == 'n' || *r == 'N') return 0;
+    return -1;
+}
+int sigwait(const unsigned *set, int *sig) { (void)set; (void)sig; return 78; }   /* ENOSYS: sem fila de sinais por thread */
+int optreset;                                    /* getopt do BSD: o getopt_long daqui recomeça sozinho com optind = 1 */
+int getopt_long(int argc, char *const argv[], const char *s, const void *lo, int *idx);
+int getopt(int argc, char *const argv[], const char *s) { return getopt_long(argc, argv, s, 0, 0); }
+void openlog(const char *id, int opt, int fac) { (void)id; (void)opt; (void)fac; }
+void closelog(void) {}
+int acl_delete_def_file(const char *p) { (void)p; cx_errno = 45; return -1; }
+void *acl_from_text(const char *t) { (void)t; cx_errno = 45; return 0; }
+char *acl_to_text(void *a, long *len) { (void)a; if (len) *len = 0; cx_errno = 45; return 0; }
+
+/* alphasort: dirent do macOS ($INODE64) tem o nome no byte 21 */
+int alphasort(const void *a, const void *b) {
+    const char *x = (const char *)(*(void *const *)a) + 21, *y = (const char *)(*(void *const *)b) + 21;
+    return strcoll(x, y);
+}
+
+/* glob(3) do macOS: glob_t = {gl_pathc, gl_matchc, gl_offs, gl_flags, gl_pathv, ...funções} */
+typedef struct { size_t gl_pathc; int gl_matchc; size_t gl_offs; int gl_flags; char **gl_pathv; void *fns[6]; } mac_glob_t;
+#define GLOB_APPEND   0x0001
+#define GLOB_DOOFFS   0x0002
+#define GLOB_ERR      0x0004
+#define GLOB_MARK     0x0008
+#define GLOB_NOCHECK  0x0010
+#define GLOB_NOSORT   0x0020
+#define GLOB_NOESCAPE 0x2000
+#define GLOB_NOSPACE  (-1)
+#define GLOB_NOMATCH  (-3)
+static int glob_add(mac_glob_t *g, const char *p, int mark) {
+    size_t n = g->gl_offs + g->gl_pathc;
+    char **v = realloc(g->gl_pathv, (n + 2) * sizeof *v);
+    if (!v) return GLOB_NOSPACE;
+    g->gl_pathv = v;
+    size_t l = strlen(p);
+    char *s = malloc(l + 2);
+    if (!s) return GLOB_NOSPACE;
+    memcpy(s, p, l + 1);
+    if (mark && l && s[l - 1] != '/') { s[l] = '/'; s[l + 1] = 0; }
+    v[n] = s;
+    v[n + 1] = 0;
+    g->gl_pathc++;
+    g->gl_matchc++;
+    return 0;
+}
+static int has_magic(const char *s, size_t n) { for (size_t i = 0; i < n; i++) if (s[i] == '*' || s[i] == '?' || s[i] == '[') return 1; return 0; }
+static int is_dir_path(const char *p) {
+    unsigned char st[144];
+    return stat(p, st) == 0 && ((*(unsigned short *)(st + 4)) & 0170000) == 0040000;   /* st_mode no offset 4 */
+}
+/* expande base + o resto do padrão (pat), componente por componente */
+static int glob_walk(const char *base, const char *pat, int flags, mac_glob_t *g) {
+    while (*pat == '/') pat++;
+    if (!*pat) return glob_add(g, base[0] ? base : "/", (flags & GLOB_MARK) && is_dir_path(base));
+    const char *end = strchr(pat, '/');
+    size_t n = end ? (size_t)(end - pat) : strlen(pat);
+    char comp[256], next[1024];
+    if (n >= sizeof comp) return 0;
+    memcpy(comp, pat, n); comp[n] = 0;
+    const char *rest = end ? end : "";
+    if (!has_magic(comp, n)) {
+        snprintf(next, sizeof next, "%s%s%s", base, base[0] && base[strlen(base) - 1] != '/' ? "/" : "", comp);
+        if (!*rest) { unsigned char st[144]; return stat(next, st) == 0 ? glob_add(g, next, (flags & GLOB_MARK) && is_dir_path(next)) : 0; }
+        return glob_walk(next, rest, flags, g);
+    }
+    void *d = opendir(base[0] ? base : ".");
+    if (!d) return 0;
+    const unsigned char *e;
+    int rc = 0;
+    while (!rc && (e = readdir(d))) {
+        const char *name = (const char *)e + 21;
+        if (!strcmp(name, ".") || !strcmp(name, "..")) continue;
+        if (fnmatch(comp, name, FNM_PERIOD | ((flags & GLOB_NOESCAPE) ? FNM_NOESCAPE : 0))) continue;
+        if (base[0]) snprintf(next, sizeof next, "%s%s%s", base, base[strlen(base) - 1] == '/' ? "" : "/", name);
+        else snprintf(next, sizeof next, "%s", name);
+        if (*rest) { if (is_dir_path(next)) rc = glob_walk(next, rest, flags, g); }
+        else rc = glob_add(g, next, (flags & GLOB_MARK) && is_dir_path(next));
+    }
+    closedir(d);
+    return rc;
+}
+static int glob_cmp(const void *a, const void *b) { return strcoll(*(char *const *)a, *(char *const *)b); }
+int glob(const char *pat, int flags, int (*errf)(const char *, int), mac_glob_t *g) {
+    (void)errf;
+    if (!(flags & GLOB_APPEND)) {
+        g->gl_pathc = 0; g->gl_matchc = 0; g->gl_pathv = 0;
+        if (!(flags & GLOB_DOOFFS)) g->gl_offs = 0;
+        if (g->gl_offs) { g->gl_pathv = calloc(g->gl_offs + 1, sizeof(char *)); if (!g->gl_pathv) return GLOB_NOSPACE; }
+    }
+    g->gl_flags = flags;
+    g->gl_matchc = 0;
+    size_t first = g->gl_offs + g->gl_pathc;
+    int rc = glob_walk(pat[0] == '/' ? "/" : "", pat, flags, g);
+    if (rc) return rc;
+    if (!g->gl_matchc) {
+        if (flags & GLOB_NOCHECK) return glob_add(g, pat, 0);
+        return GLOB_NOMATCH;
+    }
+    if (!(flags & GLOB_NOSORT)) qsort(g->gl_pathv + first, g->gl_offs + g->gl_pathc - first, sizeof(char *), glob_cmp);
+    return 0;
+}
+void globfree(mac_glob_t *g) {
+    if (g->gl_pathv) {
+        for (size_t i = g->gl_offs; i < g->gl_offs + g->gl_pathc; i++) free(g->gl_pathv[i]);
+        free(g->gl_pathv);
+    }
+    g->gl_pathv = 0;
+    g->gl_pathc = 0;
+}
+
+/* LDAP.framework (o libcurl suporta ldap://): sem servidor LDAP no mOS, tudo falha com LDAP_NOT_SUPPORTED */
+#define LDAP_NOT_SUPPORTED (-12)
+void *ldap_init(const char *h, int p) { (void)h; (void)p; return 0; }
+int ldap_set_option(void *ld, int o, const void *v) { (void)ld; (void)o; (void)v; return LDAP_NOT_SUPPORTED; }
+int ldap_get_option(void *ld, int o, void *v) { (void)ld; (void)o; (void)v; return LDAP_NOT_SUPPORTED; }
+int ldap_simple_bind_s(void *ld, const char *who, const char *pw) { (void)ld; (void)who; (void)pw; return LDAP_NOT_SUPPORTED; }
+int ldap_search_s(void *ld, const char *b, int s, const char *f, char **a, int ao, void **res) { (void)ld; (void)b; (void)s; (void)f; (void)a; (void)ao; if (res) *res = 0; return LDAP_NOT_SUPPORTED; }
+int ldap_unbind_s(void *ld) { (void)ld; return 0; }
+char *ldap_err2string(int e) { (void)e; return "LDAP não suportado no mOS"; }
+void *ldap_first_entry(void *ld, void *r) { (void)ld; (void)r; return 0; }
+void *ldap_next_entry(void *ld, void *e) { (void)ld; (void)e; return 0; }
+char *ldap_first_attribute(void *ld, void *e, void **b) { (void)ld; (void)e; if (b) *b = 0; return 0; }
+char *ldap_next_attribute(void *ld, void *e, void *b) { (void)ld; (void)e; (void)b; return 0; }
+char *ldap_get_dn(void *ld, void *e) { (void)ld; (void)e; return 0; }
+void **ldap_get_values_len(void *ld, void *e, const char *a) { (void)ld; (void)e; (void)a; return 0; }
+void ldap_value_free_len(void **v) { (void)v; }
+void ldap_memfree(void *p) { (void)p; }
+int ldap_msgfree(void *m) { (void)m; return 0; }
+int ldap_url_parse(const char *u, void **d) { (void)u; if (d) *d = 0; return LDAP_NOT_SUPPORTED; }
+void ldap_free_urldesc(void *d) { (void)d; }
+void ber_free(void *b, int f) { (void)b; (void)f; }
+void ber_memvfree(void **v) { (void)v; }
+
+/* libicucore (IDN do libcurl): nomes ASCII passam em minúsculas; com bytes acima de 0x7F o
+ * pedido falha (U_UNSUPPORTED_ERROR) e o curl informa que não converte o nome */
+static int cx_uidna_obj;
+void *uidna_openUTS46(unsigned opt, int *err) { (void)opt; (void)err; return &cx_uidna_obj; }
+void uidna_close(void *u) { (void)u; }
+static int idna_copy(const char *name, int len, char *dest, int cap, int *err) {
+    if (len < 0) len = (int)strlen(name);
+    for (int i = 0; i < len; i++) if ((unsigned char)name[i] >= 0x80) { *err = 16; return 0; }   /* U_UNSUPPORTED_ERROR */
+    if (len >= cap) { *err = 15; return len; }                                                    /* U_BUFFER_OVERFLOW_ERROR */
+    for (int i = 0; i < len; i++) dest[i] = (char)tolower((unsigned char)name[i]);
+    dest[len] = 0;
+    return len;
+}
+int uidna_nameToASCII_UTF8(void *u, const char *name, int len, char *dest, int cap, void *info, int *err) { (void)u; (void)info; return idna_copy(name, len, dest, cap, err); }
+int uidna_nameToUnicodeUTF8(void *u, const char *name, int len, char *dest, int cap, void *info, int *err) { (void)u; (void)info; return idna_copy(name, len, dest, cap, err); }

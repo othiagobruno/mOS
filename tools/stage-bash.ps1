@@ -62,6 +62,54 @@ if ($pr) {
     }
     New-MosLink "$usr\bin\ruby" '/usr/local/opt/portable-ruby/bin/ruby'
 }
+# demais fórmulas baixadas (tools/fetch-bottles.sh): bin, lib (só .dylib e módulos) e libexec em /usr/local/opt/<f>,
+# com links em /usr/local/bin. Os bottles Intel já usam o prefixo /usr/local; as dylibs ficam no opt de verdade
+# porque o loader não segue links ao carregar dependências.
+$feitas = @('bash', 'readline', 'ncurses', 'gettext', 'coreutils', 'gmp', 'portable-ruby', 'zlib', 'libffi')
+$gnu = @{ 'gsed' = 'sed'; 'ggrep' = 'grep'; 'gegrep' = 'egrep'; 'gfgrep' = 'fgrep'; 'gtar' = 'tar' }   # o "gnubin" de cada uma
+foreach ($fd in Get-ChildItem $b -Directory) {
+    if ($feitas -contains $fd.Name) { continue }
+    $src = Get-ChildItem $fd.FullName -Directory | Select-Object -First 1
+    if (-not $src) { continue }
+    $dst = "$usr\opt\$($fd.Name)"
+    New-Item -ItemType Directory -Force $dst | Out-Null
+    if (Test-Path "$($src.FullName)\lib") {
+        robocopy "$($src.FullName)\lib" "$dst\lib" '*.dylib' /S /XD '*.dSYM' 'pkgconfig' 'cmake' /NFL /NDL /NJH /NJS /NP | Out-Null
+    }
+    if (Test-Path "$($src.FullName)\share\ca-certificates") {   # cert.pem onde o openssl@3 (OPENSSLDIR) procura
+        New-Item -ItemType Directory -Force "$usr\etc\openssl@3", "$usr\etc\ca-certificates" | Out-Null
+        Copy-Item -Force "$($src.FullName)\share\ca-certificates\cacert.pem" "$usr\etc\openssl@3\cert.pem"
+        Copy-Item -Force "$($src.FullName)\share\ca-certificates\cacert.pem" "$usr\etc\ca-certificates\cert.pem"
+    }
+    if (Test-Path "$($src.FullName)\bin") {
+        New-Item -ItemType Directory -Force "$dst\bin" | Out-Null
+        foreach ($f in Get-ChildItem "$($src.FullName)\bin" -File) {
+            Copy-Item -Force -LiteralPath $f.FullName -Destination "$dst\bin\$($f.Name)"
+            New-MosLink "$usr\bin\$($f.Name)" "/usr/local/opt/$($fd.Name)/bin/$($f.Name)"
+            if ($gnu.ContainsKey($f.Name)) { New-MosLink "$usr\bin\$($gnu[$f.Name])" "/usr/local/opt/$($fd.Name)/bin/$($f.Name)" }
+        }
+    }
+    if (Test-Path "$($src.FullName)\libexec") {
+        # git-core: ~180 comandos são cópias do binário git (hardlinks no bottle); viram links do mOS para ele
+        $main = Get-Item -LiteralPath "$($src.FullName)\bin\git" -ErrorAction SilentlyContinue
+        foreach ($f in Get-ChildItem "$($src.FullName)\libexec" -Recurse -File) {
+            $rel = $f.FullName.Substring("$($src.FullName)\libexec".Length)
+            $to = "$dst\libexec$rel"
+            New-Item -ItemType Directory -Force (Split-Path $to -Parent) | Out-Null
+            if ($main -and $f.Name -ne 'git' -and $f.Length -eq $main.Length) { New-MosLink $to "/usr/local/opt/$($fd.Name)/bin/git" }
+            else { Copy-Item -Force -LiteralPath $f.FullName -Destination $to }
+        }
+    }
+    if ($fd.Name -eq 'git' -and (Test-Path "$($src.FullName)\share\git-core")) {
+        robocopy "$($src.FullName)\share\git-core" "$dst\share\git-core" /E /NFL /NDL /NJH /NJS /NP | Out-Null
+    }
+}
+# caminhos fixos do macOS que scripts e programas chamam direto: o tar roda o compressor com
+# /bin/sh -c, o brew começa com #!/bin/bash, e muitos scripts usam #!/usr/bin/env
+New-Item -ItemType Directory -Force "$esp\mOS\bin", "$esp\mOS\usr\bin" | Out-Null
+New-MosLink "$esp\mOS\bin\sh" '/usr/local/bin/bash'
+New-MosLink "$esp\mOS\bin\bash" '/usr/local/bin/bash'
+if (Test-Path "$usr\bin\genv") { New-MosLink "$esp\mOS\usr\bin\env" '/usr/local/bin/genv' }
 Copy-Item -Force (Join-Path $root $Script) "$usr\bash-teste.sh"
 "Programa=/usr/local/bin/bash`nArgumentos=/usr/local/bash-teste.sh`nAtrasoMs=$AtrasoMs" | Set-Content -Encoding ascii "$esp\mOS\Sistema\Biblioteca\LaunchDaemons\sh.brew.bash.servico"
 Set-Content -Path "$esp\mOS\Sistema\Biblioteca\stderr-serial" -Value '1' -Encoding ascii

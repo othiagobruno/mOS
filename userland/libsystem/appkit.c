@@ -698,7 +698,13 @@ static NSPoint v_convert_to(id self, SEL c, NSPoint p, id to) {
     NSPoint r = {a.tlx + p.x, win_h(vs(self)->window) - py};
     return r;
 }
-static NSRect v_convert_rect_to(id self, SEL c, NSRect r, id to) { NSPoint o = v_convert_to(self, c, r.o, to); r.o = o; return r; }
+/* os dois cantos: entre uma view invertida (isFlipped) e outra não, a origem do retângulo troca de canto */
+static NSRect v_convert_rect_to(id self, SEL c, NSRect r, id to) {
+    NSPoint a = v_convert_to(self, c, r.o, to), b = v_convert_to(self, c, (NSPoint){r.o.x + r.s.w, r.o.y + r.s.h}, to);
+    r.o.x = a.x < b.x ? a.x : b.x;
+    r.o.y = a.y < b.y ? a.y : b.y;
+    return r;
+}
 
 /* ================================================================ controles */
 static id dflt_font(void) { static id f; if (!f) f = ft_make(13, 0, 0); return f; }
@@ -1221,7 +1227,7 @@ static id make_event(u64 type, id win, double px, double py, gui_event_t *g) {
     s->mods = mac_mods(g->mods);
     s->clicks = g->clicks;
     s->dy = -g->w;
-    if (type == 10) {
+    if (type == 10 || type == 11) {          /* keyDown / keyUp */
         s->keycode = mac_keycode(g->key);
         u32 cp = 0;
         switch (g->key) {
@@ -2062,6 +2068,7 @@ static void ap_finish_launching(id self, SEL c) {
     (void)c;
     if (app.launched) return;
     app.launched = YES;
+    { extern void cx_gc_app_launched(void); cx_gc_app_launched(); }   /* GameController: controles já ligados */
     id d = app.delegate;
     id note = cx_note(NSApplicationWillFinishLaunchingNotification, self, 0);
     if (d && cx_responds(d->isa, sel_registerName("applicationWillFinishLaunching:"))) MSG(void, d, "applicationWillFinishLaunching:", note);
@@ -2092,6 +2099,8 @@ static void dispatch(gui_event_t *g) {
     if (!w) return;
     wstate_t *s = ws(w);
     g_mods = mac_mods(g->mods);
+    { extern void cx_gc_mouse_event(int type, int x, int y, int buttons, int scroll);   /* GCMouse */
+      if (g->type >= GEV_MOUSE_DOWN && g->type <= GEV_SCROLL) cx_gc_mouse_event((int)g->type, g->x, g->y, g->buttons, g->w); }
     switch (g->type) {
     case GEV_CLOSE:
         close_window(w, YES);
@@ -2136,8 +2145,17 @@ static void dispatch(gui_event_t *g) {
             MSG(void, v, "mouseMoved:", make_event(5, w, g->x, g->y, g));
         }
         break;
+    case GEV_KEY_UP: {
+        extern void cx_gc_keyboard_event(u16 mac_keycode, u64 mods, int down);
+        id e = make_event(11, w, 0, 0, g);
+        cx_gc_keyboard_event(mac_keycode(g->key), mac_mods(g->mods), 0);
+        id target = s->first ? s->first : s->content;
+        if (target) MSG(void, target, "keyUp:", e);
+        break;
+    }
     case GEV_KEY_DOWN: {
         id e = make_event(10, w, 0, 0, g);
+        { extern void cx_gc_keyboard_event(u16 mac_keycode, u64 mods, int down); cx_gc_keyboard_event(mac_keycode(g->key), mac_mods(g->mods), 1); }
         if (menu_shortcut(g)) break;
         if ((g->mods & 8) && (g->key == 'q' || g->key == 'Q')) { MSG(void, NSApp, "terminate:", (id)0); break; }
         if ((g->mods & 8) && (g->key == 'w' || g->key == 'W')) { w_perform_close(w, 0, 0); break; }

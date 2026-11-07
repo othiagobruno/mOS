@@ -89,6 +89,72 @@ static __thread u64 g_r8;
 static u8 *hd_data;
 static u64 hd_len, hd_mask;
 static int hd_seq, hd_src_win, hd_pending_end = -1, hd_foreign, ime_src;
+/* controle de jogo, áudio e periférico Bluetooth LE simulados (GUI_DEVICE) */
+static gui_gamepad_t hd_pad;
+static u64 hd_audio_frames;
+static int hd_audio_said, hd_bt_state = 2, hd_bt_scan, hd_bt_link;
+static u8 hd_att[16][64];
+static int hd_att_len[16], hd_att_rh, hd_att_rt;
+static void hd_att_push(const u8 *p, int n) { memcpy(hd_att[hd_att_rh], p, n); hd_att_len[hd_att_rh] = n; hd_att_rh = (hd_att_rh + 1) % 16; }
+static u16 hd_le16(const u8 *p) { return (u16)(p[0] | p[1] << 8); }
+/* servidor GATT de um sensor: Device Information (0x180A: fabricante) e Battery (0x180F: nível, com notificação) */
+static long long hd_gatt_request(const u8 *q, int n) {
+    static const struct { u16 h, type, uuid; u8 props; u16 vh; } at[] = {
+        {1, 0x2800, 0x180A, 0, 0}, {2, 0x2803, 0x2A29, 0x02, 3}, {3, 0x2A29, 0, 0, 0},
+        {4, 0x2800, 0x180F, 0, 0}, {5, 0x2803, 0x2A19, 0x12, 6}, {6, 0x2A19, 0, 0, 0}, {7, 0x2902, 0, 0, 0},
+    };
+    u8 r[64];
+    int rl = 0;
+    printf("[bt] ATT pedido 0x%02x (%d bytes)\n", q[0], n);
+    switch (q[0]) {
+    case 0x02: r[0] = 0x03; r[1] = 23; r[2] = 0; rl = 3; break;
+    case 0x10: {
+        u16 s = hd_le16(q + 1);
+        r[0] = 0x11; r[1] = 6; rl = 2;
+        for (int i = 0; i < 7; i++) if (at[i].type == 0x2800 && at[i].h >= s && rl + 6 <= 23) {
+            u16 end = at[i].h == 1 ? 3 : 7;
+            r[rl] = (u8)at[i].h; r[rl + 1] = 0; r[rl + 2] = (u8)end; r[rl + 3] = 0; r[rl + 4] = (u8)at[i].uuid; r[rl + 5] = (u8)(at[i].uuid >> 8); rl += 6;
+        }
+        if (rl == 2) { r[0] = 0x01; r[1] = 0x10; r[2] = q[1]; r[3] = q[2]; r[4] = 0x0A; rl = 5; }
+        break;
+    }
+    case 0x08: {
+        u16 s = hd_le16(q + 1), e = hd_le16(q + 3);
+        r[0] = 0x09; r[1] = 7; rl = 2;
+        for (int i = 0; i < 7; i++) if (at[i].type == 0x2803 && at[i].h >= s && at[i].h <= e && rl + 7 <= 23) {
+            r[rl] = (u8)at[i].h; r[rl + 1] = 0; r[rl + 2] = at[i].props; r[rl + 3] = (u8)at[i].vh; r[rl + 4] = 0; r[rl + 5] = (u8)at[i].uuid; r[rl + 6] = (u8)(at[i].uuid >> 8); rl += 7;
+        }
+        if (rl == 2) { r[0] = 0x01; r[1] = 0x08; r[2] = q[1]; r[3] = q[2]; r[4] = 0x0A; rl = 5; }
+        break;
+    }
+    case 0x04: {
+        u16 s = hd_le16(q + 1), e = hd_le16(q + 3);
+        r[0] = 0x05; r[1] = 1; rl = 2;
+        for (int i = 0; i < 7; i++) if (at[i].h >= s && at[i].h <= e && rl + 4 <= 23) { r[rl] = (u8)at[i].h; r[rl + 1] = 0; r[rl + 2] = (u8)at[i].type; r[rl + 3] = (u8)(at[i].type >> 8); rl += 4; }
+        if (rl == 2) { r[0] = 0x01; r[1] = 0x04; r[2] = q[1]; r[3] = q[2]; r[4] = 0x0A; rl = 5; }
+        break;
+    }
+    case 0x0A: {
+        u16 h = hd_le16(q + 1);
+        r[0] = 0x0B; rl = 1;
+        if (h == 3) { memcpy(r + 1, "mOS Labs", 8); rl = 9; }
+        else if (h == 6) { r[1] = 87; rl = 2; }
+        else if (h == 7) { r[1] = 0; r[2] = 0; rl = 3; }
+        else { r[0] = 0x01; r[1] = 0x0A; r[2] = q[1]; r[3] = q[2]; r[4] = 0x02; rl = 5; }
+        break;
+    }
+    case 0x12: {
+        u16 h = hd_le16(q + 1);
+        r[0] = 0x13; rl = 1;
+        if (h == 7 && n >= 5 && (q[3] & 1)) { u8 nt[4] = {0x1B, 6, 0, 88}; hd_att_push(r, rl); hd_att_push(nt, 4); return 0; }
+        break;
+    }
+    case 0x52: return 0;
+    default: r[0] = 0x01; r[1] = q[0]; r[2] = 0; r[3] = 0; r[4] = 0x06; rl = 5;
+    }
+    hd_att_push(r, rl);
+    return 0;
+}
 /* MACHOTEST_DUMP=<arquivo.bmp>: compõe os GC_CLEAR/GC_IMAGE dos quadros numa tela do tamanho da
  * janela e grava o último quadro apresentado como BMP (para conferir o conteúdo dos layers) */
 static unsigned *dump_cv;
@@ -197,6 +263,18 @@ static long long gui_syscall(u64 n, u64 a, u64 b, u64 c, u64 d) {
         }
         else if (!strncmp(tok, "src:", 4)) { e->type = GEV_INPUT_SOURCE; e->key = ime_src = atoi(tok + 4); }
         else if (!strcmp(tok, "dgforeign")) { hd_foreign = !hd_foreign; return 0; }
+        else if (!strncmp(tok, "pad:", 4)) {
+            /* controle simulado no slot 0: pad:on, pad:off, pad:btn:<hex PAD_*>, pad:axes:lx,ly,rx,ry,lt,rt (×100) */
+            const char *pv = tok + 4;
+            if (!strcmp(pv, "on")) { memset(&hd_pad, 0, sizeof hd_pad); hd_pad.connected = 1; strcpy(hd_pad.name, "Controle Xbox (simulado)"); hd_pad.kind = PAD_KIND_XBOX360; hd_pad.caps = PAD_CAP_RUMBLE; hd_pad.vid = 0x045E; hd_pad.pid = 0x028E; }
+            else if (!strcmp(pv, "off")) hd_pad.connected = 0;
+            else if (!strncmp(pv, "btn:", 4)) hd_pad.buttons = (unsigned)strtoul(pv + 4, 0, 16);
+            else if (!strncmp(pv, "axes:", 5)) { int v[6] = {0}; sscanf(pv + 5, "%d,%d,%d,%d,%d,%d", &v[0], &v[1], &v[2], &v[3], &v[4], &v[5]); hd_pad.lx = v[0] / 100.f; hd_pad.ly = v[1] / 100.f; hd_pad.rx = v[2] / 100.f; hd_pad.ry = v[3] / 100.f; hd_pad.lt = v[4] / 100.f; hd_pad.rt = v[5] / 100.f; }
+            hd_pad.seq++;
+            printf("[gui] evento: %s\n", tok);
+            return 0;
+        }
+        else if (!strncmp(tok, "keyup:", 6)) { e->type = GEV_KEY_UP; e->key = tok[6]; e->text[0] = tok[6]; }
         else if (sscanf(tok, "dgenter:%d,%d", &x, &y) == 2 || sscanf(tok, "dgmove:%d,%d", &x, &y) == 2 || sscanf(tok, "dgdrop:%d,%d", &x, &y) == 2 || !strcmp(tok, "dgexit")) {
             /* "dgforeign": a sessão parece vir de outro processo (o destino lê o conteúdo por DG_DATA) */
             e->type = tok[2] == 'e' && tok[3] == 'n' ? GEV_DRAG_ENTER : tok[2] == 'm' ? GEV_DRAG_MOVE : tok[2] == 'd' ? GEV_DRAG_DROP : GEV_DRAG_EXIT;
@@ -244,6 +322,30 @@ static long long gui_syscall(u64 n, u64 a, u64 b, u64 c, u64 d) {
         }
         printf("\n");
         return 0;
+    }
+    case GUI_DEVICE: {
+        switch (a) {
+        case DEV_PAD_GET:
+            if (b >= 4) return 0;
+            if (c) { gui_gamepad_t z; memset(&z, 0, sizeof z); memcpy((void *)c, b == 0 ? &hd_pad : &z, sizeof z); }
+            return 1;
+        case DEV_PAD_RUMBLE: printf("[pad] vibração: controle %llu, forte %llu, fraco %llu, %llu ms\n", (unsigned long long)b, (unsigned long long)(c & 255), (unsigned long long)((c >> 8) & 255), (unsigned long long)d); return 0;
+        case DEV_AUDIO_PLAY: hd_audio_frames += c; if (!hd_audio_said++) printf("[audio] o app tocou PCM (%llu quadros no 1º bloco)\n", (unsigned long long)c); return (long long)c;
+        case DEV_BT_STATE: return hd_bt_state;
+        case DEV_BT_SCAN: printf("[bt] varredura %s\n", b ? "ligada" : "desligada"); hd_bt_scan = (int)b; return 0;
+        case DEV_BT_DEVICE:
+            if (!hd_bt_scan || b >= 1) return 0;
+            { gui_bt_device_t *o = (gui_bt_device_t *)c; memset(o, 0, sizeof *o); strcpy(o->name, "Sensor mOS"); strcpy(o->addr, "C0:FF:EE:00:00:01"); o->rssi = -52; o->connectable = 1; }
+            return 1;
+        case DEV_BT_CONNECT: printf("[bt] conectar ao dispositivo %llu\n", (unsigned long long)b); hd_bt_link = 2; return 0;
+        case DEV_BT_DISCONNECT: printf("[bt] desconectar\n"); hd_bt_link = 0; return 0;
+        case DEV_BT_LINK: { gui_bt_link_t *o = (gui_bt_link_t *)b; memset(o, 0, sizeof *o); o->state = hd_bt_link; o->mtu = 23; strcpy(o->addr, "C0:FF:EE:00:00:01"); return 0; }
+        case DEV_BT_ATT_SEND: return hd_gatt_request((const u8 *)b, (int)c);
+        case DEV_BT_ATT_RECV:
+            if (hd_att_rt == hd_att_rh) return hd_bt_link ? 0 : -1;
+            { int n = hd_att_len[hd_att_rt]; memcpy((void *)b, hd_att[hd_att_rt], n); hd_att_rt = (hd_att_rt + 1) % 16; return n; }
+        }
+        return -MOS_EINVAL;
     }
     case GUI_DRAG: {
         u64 e5 = g_r8;

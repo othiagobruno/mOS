@@ -1640,6 +1640,13 @@ bool wm_handle_event(input_event_t *e) {
         }
         return w != NULL;
     }
+    if (e->type == EV_KEY_UP) {
+        /* só os apps do macOS recebem "tecla solta" (keyUp:, GCKeyboard); os apps nativos tratam só o pressionar */
+        extern void compat_gui_key_up(window_t *w, input_event_t *e);
+        window_t *w = wm_focused();
+        if (w) compat_gui_key_up(w, e);
+        return w != NULL;
+    }
     if (e->type == EV_KEY_DOWN) {
         /* Mission Control: ⌃↑ ou F9; Esc/Enter dentro dele */
         if (((e->mods & MOD_CTRL) && !(e->mods & MOD_CMD) && e->key == KEY_UP) || e->key == KEY_F9) { wm_toggle_mission_control(); return true; }

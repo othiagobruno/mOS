@@ -97,7 +97,12 @@
 #define MAX_MSG        (16u << 20)
 #define MAX_OOL        (256u << 20)
 
-enum { KP_PORT, KP_SET, KP_KOBJ, KP_MEM };
+enum { KP_PORT, KP_SET, KP_KOBJ, KP_MEM, KP_FILE };
+
+/* fileports: cópias de descritores guardadas pelo process.c (proc_fd_snapshot) */
+void *proc_fd_snapshot(process_t *p, int fd);
+int   proc_fd_from_snapshot(process_t *p, const void *snap);
+void  proc_fd_snapshot_free(void *snap);
 
 typedef struct kmem { u64 *pages; u64 npages; int refs; } kmem_t;
 
@@ -120,6 +125,7 @@ typedef struct kport {
     kmem_t *mem;              /* KP_MEM */
     u64 moff, msize;
     u8 mprot;                 /* KP_MEM: proteção máxima (VM_PROT_READ 1 | WRITE 2 | EXECUTE 4) */
+    void *file;               /* KP_FILE: cópia do descritor (fileport_makeport) */
     struct kport *gnext;      /* lista global (conjuntos procuram seus membros nela) */
 } kport_t;
 
@@ -199,6 +205,7 @@ static void port_unref(kport_t *p) {
     for (kport_t **pp = &ports_all; *pp; pp = &(*pp)->gnext)
         if (*pp == p) { *pp = p->gnext; break; }
     kmem_unref(p->mem);
+    if (p->file) proc_fd_snapshot_free(p->file);
     kfree(p);
 }
 
@@ -868,6 +875,27 @@ static u32 port_op(mspace_t *sp, u32 op, u64 *a) {
         ment_t *e = ent_add(sp, (u32)a[1], type, p);
         if (!e) { port_unref(p); return KERN_NAME_EXISTS; }
         a[2] = e->name;
+        return KERN_SUCCESS;
+    }
+    case MACH_OP_FILEPORT_MAKE: {
+        void *s = proc_fd_snapshot(sp->proc, (int)a[0]);
+        if (!s) return KERN_INVALID_ARGUMENT;
+        kport_t *k = port_new(KP_FILE);
+        if (!k) { proc_fd_snapshot_free(s); return KERN_RESOURCE_SHORTAGE; }
+        k->file = s;
+        port_ref(k);
+        k->srights++;
+        ment_t *e = ent_add(sp, 0, T_SEND, k);
+        if (!e) { port_unref(k); return KERN_RESOURCE_SHORTAGE; }
+        a[1] = e->name;
+        return KERN_SUCCESS;
+    }
+    case MACH_OP_FILEPORT_FD: {
+        ment_t *e = ent_find(sp, (u32)a[0]);
+        if (!e || !e->port || e->port->kind != KP_FILE || !e->port->file || !(e->type & T_SEND)) return KERN_INVALID_ARGUMENT;
+        int fd = proc_fd_from_snapshot(sp->proc, e->port->file);
+        if (fd < 0) return KERN_RESOURCE_SHORTAGE;
+        a[1] = (u64)fd;
         return KERN_SUCCESS;
     }
     case MACH_OP_CONSTRUCT: {

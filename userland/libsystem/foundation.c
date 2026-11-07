@@ -1045,7 +1045,13 @@ static void b_res_dir(id self, char *out, u64 cap) {
     else if (b_ends(r, ".framework")) {
         snprintf(out, cap, "%s/Resources", r);
         if (access(out, 0) != 0) snprintf(out, cap, "%s/Versions/A/Resources", r);
-    } else strlcpy(out, r, cap);
+    } else {
+        /* pasta de versão de um framework (X.framework/Versions/157.0...: o Chrome cria o bundle assim) ou
+         * bundle .bundle/.plugin: os recursos ficam em Resources/ ou Contents/Resources/, como no macOS */
+        snprintf(out, cap, "%s/Resources", r);
+        if (access(out, 0) != 0) snprintf(out, cap, "%s/Contents/Resources", r);
+        if (access(out, 0) != 0) strlcpy(out, r, cap);
+    }
 }
 static id b_path(id self, SEL c) { (void)c; char p[1024]; b_root(self, p, sizeof p); return cx_str(p); }
 static id b_resources(id self, SEL c) { (void)c; char p[1100]; b_res_dir(self, p, sizeof p); return cx_str(p); }

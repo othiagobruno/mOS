@@ -122,6 +122,9 @@ enum {
     MACH_OP_SET_SPECIAL,    /* a0 = qual, a1 = nome */
     MACH_OP_SPAWN_SPECIAL,  /* a0 = qual (4 = bootstrap), a1 = nome: porta especial do PRÓXIMO filho (posix_spawnattr_setspecialport_np) */
     MACH_OP_CONSTRUCT,      /* a0 = flags MPO_*, a1 = qlimit, a2 = contexto -> a3 = nome */
+    /* fileports: um descritor que viaja como direito de envio (o Mojo do Chromium passa arquivos assim) */
+    MACH_OP_FILEPORT_MAKE,  /* a0 = fd -> a1 = nome (envio de uma porta que guarda uma cópia do descritor) */
+    MACH_OP_FILEPORT_FD,    /* a0 = nome -> a1 = fd novo neste processo (mesmo arquivo/pipe, mesmo modo) */
 };
 
 /* SYS_MACH_BOOTSTRAP */

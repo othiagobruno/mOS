@@ -25,8 +25,79 @@ enum {
     GUI_FONT,           /* CoreText: tabelas da fonte do sistema e raster de glifos (ver abaixo) */
     GUI_DRAG,           /* arrastar e soltar entre janelas (de qualquer app): rdi = DG_* (ver abaixo) */
     GUI_IME,            /* janela de candidatos do método de entrada: rdi = IME_* (ver abaixo) */
+    GUI_DEVICE,         /* 79: controles de jogo, vibração e Bluetooth LE para os frameworks: rdi = DEV_* (ver abaixo) */
     GUI_LAST = 79
 };
+
+/* GUI_DEVICE
+ *   DEV_PAD_GET    (índice, gui_gamepad_t *)     1 = há esse slot (conectado ou não), 0 = acabou a lista
+ *   DEV_PAD_RUMBLE (índice, forte | fraco << 8, ms)  vibração (0..255 cada motor); 0, 0 para
+ *   DEV_AUDIO_PLAY (amostras, quadros)            toca PCM 48 kHz estéreo i16 no mixer do sistema
+ *   DEV_BT_STATE   ()                             0 sem adaptador, 1 desligado, 2 ligado
+ *   DEV_BT_SCAN    (ligar)                        varredura LE
+ *   DEV_BT_DEVICE  (índice, gui_bt_device_t *)    1 = preenchido, 0 = acabou
+ *   DEV_BT_CONNECT (índice)                       conexão LE com canal ATT cru (o GATT fica no CoreBluetooth)
+ *   DEV_BT_DISCONNECT ()
+ *   DEV_BT_ATT_SEND (pdu, bytes)                  PDU ATT para o periférico conectado
+ *   DEV_BT_ATT_RECV (buf, cap)                    próxima PDU ATT recebida (bytes) ou 0; < 0 = desconectado
+ *   DEV_BT_LINK    (gui_bt_link_t *)              estado da conexão crua */
+#define DEV_PAD_GET 0
+#define DEV_PAD_RUMBLE 1
+#define DEV_AUDIO_PLAY 2      /* (amostras i16 estéreo 48 kHz, quadros) -> quadros aceitos; mixer do sistema */
+#define DEV_BT_STATE 8
+#define DEV_BT_SCAN 9
+#define DEV_BT_DEVICE 10
+#define DEV_BT_CONNECT 11
+#define DEV_BT_DISCONNECT 12
+#define DEV_BT_ATT_SEND 13
+#define DEV_BT_ATT_RECV 14
+#define DEV_BT_LINK 15
+
+/* botões no layout do GCExtendedGamepad */
+#define PAD_A        (1u << 0)
+#define PAD_B        (1u << 1)
+#define PAD_X        (1u << 2)
+#define PAD_Y        (1u << 3)
+#define PAD_LB       (1u << 4)
+#define PAD_RB       (1u << 5)
+#define PAD_LS       (1u << 6)   /* clique do analógico esquerdo */
+#define PAD_RS       (1u << 7)
+#define PAD_MENU     (1u << 8)   /* Start / Options */
+#define PAD_OPTIONS  (1u << 9)   /* Back / Share / View */
+#define PAD_HOME     (1u << 10)
+#define PAD_UP       (1u << 11)
+#define PAD_DOWN     (1u << 12)
+#define PAD_LEFT     (1u << 13)
+#define PAD_RIGHT    (1u << 14)
+#define PAD_TOUCHPAD (1u << 15)
+#define PAD_CAP_RUMBLE 1u
+#define PAD_KIND_HID 1
+#define PAD_KIND_XBOX360 2
+#define PAD_KIND_XBOXONE 3
+#define PAD_KIND_SONY 4
+typedef struct {
+    int connected;
+    unsigned int seq;              /* muda a cada relatório */
+    unsigned int buttons;          /* PAD_* */
+    float lx, ly, rx, ry;          /* -1..1, y para cima positivo */
+    float lt, rt;                  /* 0..1 */
+    char name[48];
+    unsigned short vid, pid;
+    unsigned int kind, caps;
+} gui_gamepad_t;
+typedef struct {
+    char name[32];
+    char addr[18];                 /* "AA:BB:CC:DD:EE:FF" */
+    int rssi;
+    int hid;                       /* anuncia HID (teclado/mouse/controle) */
+    int connectable;
+} gui_bt_device_t;
+typedef struct {
+    int state;                     /* 0 livre, 1 conectando, 2 pronto (ATT cru), 3 falhou */
+    int mtu;
+    char addr[18];
+    char err[64];
+} gui_bt_link_t;
 
 /* GUI_DRAG
  *   DG_BEGIN  (win, payload, bytes, mask)  começa uma sessão; devolve o número de sequência (> 0)
@@ -65,7 +136,8 @@ enum {
 enum { GEV_NONE, GEV_MOUSE_DOWN, GEV_MOUSE_UP, GEV_MOUSE_MOVE, GEV_RIGHT_DOWN, GEV_SCROLL,
        GEV_KEY_DOWN, GEV_CLOSE, GEV_RESIZE, GEV_FOCUS, GEV_QUIT, GEV_MENU,     /* GEV_MENU: key = ação */
        GEV_DRAG_ENTER, GEV_DRAG_MOVE, GEV_DRAG_EXIT, GEV_DRAG_DROP, GEV_DRAG_SRC_MOVE, GEV_DRAG_END,
-       GEV_INPUT_SOURCE };  /* GEV_INPUT_SOURCE: key = nova fonte de entrada (⌃Espaço troca) */
+       GEV_INPUT_SOURCE,    /* key = nova fonte de entrada (⌃Espaço troca) */
+       GEV_KEY_UP };        /* tecla solta (mesmos campos de GEV_KEY_DOWN) */
 
 typedef struct {
     unsigned int type, win;

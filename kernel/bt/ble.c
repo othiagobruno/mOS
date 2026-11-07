@@ -70,8 +70,23 @@ static struct {
     bool has_mouse, has_kbd;
     u16 mouse_handle, kbd_handle;
     u64 t;
+    bool raw;               /* conexão do CoreBluetooth: sem HID, o GATT fica no app (DEV_BT_*) */
     char err[96];
 } c;
+
+/* ---- canal ATT cru do CoreBluetooth (DEV_BT_* do GUI_DEVICE): PDUs recebidas esperando o app */
+#define RAWQ 48
+static u8 raw_pdu[RAWQ][260];
+static u16 raw_len[RAWQ];
+static int raw_rh, raw_rt;
+static bool raw_failed, raw_gone;
+static void raw_push(const u8 *p, int n) {
+    int nx = (raw_rh + 1) % RAWQ;
+    if (nx == raw_rt || n <= 0 || n > 260) return;
+    memcpy(raw_pdu[raw_rh], p, (usize)n);
+    raw_len[raw_rh] = (u16)n;
+    raw_rh = nx;
+}
 
 /* ---- fila de eventos/ACL recebidos nos callbacks */
 #define Q 32
@@ -521,13 +536,14 @@ static void handle_event(const u8 *ev, int len) {
         const u8 *p = ev + 3;
         if (sub == 0x02) parse_adv(p, len - 3);
         else if ((sub == 0x01 || sub == 0x0A) && len >= 3 + 12) {     /* conexão (normal ou melhorada) */
-            if (p[0]) { char m[64]; snprintf(m, sizeof m, "falha ao conectar (HCI 0x%02x)", p[0]); fail(m); c.st = C_IDLE; return; }
+            if (p[0]) { char m[64]; snprintf(m, sizeof m, "falha ao conectar (HCI 0x%02x)", p[0]); fail(m); c.st = C_IDLE; if (c.raw) { raw_failed = true; c.raw = false; } return; }
             c.handle = le16(p + 1) & 0x0FFF;
             c.mtu = 23;
             c.gstep = 0;
             char a[18];
             addr_str(c.addr, a);
             kprintf("ble: conectado a %s (handle %u)\n", a, c.handle);
+            if (c.raw) { c.st = C_READY; raw_rh = raw_rt = 0; kprintf("ble: canal ATT do app pronto\n"); return; }
             c.bonded = bond_load(c.addr);
             if (c.bonded) start_encryption(c.ltk, c.rand, c.ediv);
             else smp_start();
@@ -540,6 +556,7 @@ static void handle_event(const u8 *ev, int len) {
         }
         kprintf("ble: enlace cifrado%s\n", c.sc ? " (LE Secure Connections)" : "");
         if (c.sc && c.have_ltk && !c.bonded) bond_save();           /* no SC a LTK é derivada, não enviada */
+        if (c.raw) { c.st = C_READY; return; }       /* o app continua o GATT dele, agora cifrado */
         c.st = C_GATT;
         c.gstep = 1;
         c.t = timer_ticks();
@@ -548,7 +565,8 @@ static void handle_event(const u8 *ev, int len) {
         kprintf("ble: desconectado (motivo 0x%02x)\n", ev[5]);
         u8 a[6], t = c.type;
         memcpy(a, c.addr, 6);
-        bool had = c.st == C_READY && (c.bonded || c.have_ltk);
+        bool had = c.st == C_READY && (c.bonded || c.have_ltk) && !c.raw;
+        if (c.raw) raw_gone = true;
         memset(&c, 0, sizeof c);
         if (had) create_conn(a, t);                                   /* volta sozinho quando o mouse acordar */
     }
@@ -560,6 +578,7 @@ static void handle_acl(const u8 *a, int len) {
     if (h != c.handle || !c.st) { classic_acl(a, len); return; }   /* outro enlace: clássico */
     if (8 + l2len > len) return;
     if (cid == CID_SMP) smp_rx(a + 8, l2len);
+    else if (cid == CID_ATT && c.raw) raw_push(a + 8, l2len);
     else if (cid == CID_ATT) att_rx(a + 8, l2len);
 }
 
@@ -620,4 +639,76 @@ void bt_stack_init(void) {
     kprintf("ble: nenhum dispositivo vinculado — procurando mouse/teclado em modo de pareamento por 30 s\n");
     bt_le_scan(true);
     auto_until = timer_ticks() + 30000;
+}
+
+/* ---- CoreBluetooth (GUI_DEVICE, DEV_BT_*): varredura, conexão com canal ATT cru e as PDUs em si */
+#include "proc.h"
+#include "syscall.h"
+#include "../include/compat_gui.h"
+static bool raw_send(const u8 *pdu, u16 len) {
+    u8 b[264];
+    if (len + 4 > (int)sizeof b) return false;
+    put16(b, len);
+    put16(b + 2, CID_ATT);
+    memcpy(b + 4, pdu, len);
+    return bt_acl_send(c.handle, b, (u16)(len + 4));
+}
+i64 bt_user_syscall(process_t *p, u64 op, u64 b, u64 cc, u64 d) {
+    (void)d;
+    switch (op) {
+    case DEV_BT_STATE: return ready ? 2 : 0;
+    case DEV_BT_SCAN: return bt_le_scan(b != 0) ? 0 : -MOS_EINVAL;
+    case DEV_BT_DEVICE: {
+        if ((int)b >= ndevs) return 0;
+        gui_bt_device_t o;
+        memset(&o, 0, sizeof o);
+        bt_le_dev_t *v = &devs[b];
+        snprintf(o.name, sizeof o.name, "%s", v->name);
+        addr_str(v->addr, o.addr);
+        o.rssi = v->rssi; o.hid = v->hid; o.connectable = 1;
+        return uvm_copy_out(p, cc, &o, sizeof o) ? 1 : -MOS_EFAULT;
+    }
+    case DEV_BT_CONNECT:
+        if (!ready || (int)b >= ndevs || c.st != C_IDLE) return -MOS_EINVAL;
+        if (scanning) bt_le_scan(false);
+        c.err[0] = 0;
+        raw_failed = raw_gone = false;
+        raw_rh = raw_rt = 0;
+        c.raw = true;
+        if (!create_conn(devs[b].addr, devs[b].type)) { c.raw = false; raw_failed = true; return -MOS_EINVAL; }
+        return 0;
+    case DEV_BT_DISCONNECT:
+        if (c.raw && c.st) { u8 q[3]; put16(q, c.handle); q[2] = 0x13; bt_hci_cmd(0x0406, q, 3, 1000); }
+        return 0;
+    case DEV_BT_ATT_SEND: {
+        if (!c.raw || c.st != C_READY || cc > 256 || !cc) return -MOS_EINVAL;
+        u8 pdu[256];
+        if (!uvm_copy_in(p, pdu, b, cc)) return -MOS_EFAULT;
+        /* Security Request/insuficiência de autenticação: o app pede, o kernel pareia (Just Works) */
+        return raw_send(pdu, (u16)cc) ? 0 : -MOS_EINVAL;
+    }
+    case DEV_BT_ATT_RECV: {
+        if (raw_rt == raw_rh) return (raw_gone || raw_failed) && !c.raw ? -1 : 0;
+        u16 n = raw_len[raw_rt];
+        if (cc < n) return -MOS_EINVAL;
+        if (!uvm_copy_out(p, b, raw_pdu[raw_rt], n)) return -MOS_EFAULT;
+        raw_rt = (raw_rt + 1) % RAWQ;
+        /* resposta de erro "autenticação/cifra insuficiente": pareia e o app repete o pedido */
+        if (n >= 5 && raw_pdu[(raw_rt + RAWQ - 1) % RAWQ][0] == 0x01) {
+            u8 e = raw_pdu[(raw_rt + RAWQ - 1) % RAWQ][4];
+            if ((e == 0x05 || e == 0x0F) && c.st == C_READY) { if (bond_load(c.addr)) start_encryption(c.ltk, c.rand, c.ediv); else smp_start(); }
+        }
+        return n;
+    }
+    case DEV_BT_LINK: {
+        gui_bt_link_t o;
+        memset(&o, 0, sizeof o);
+        o.state = c.raw ? (c.st == C_READY ? 2 : c.st ? 1 : 0) : raw_failed ? 3 : 0;
+        o.mtu = c.mtu ? c.mtu : 23;
+        if (c.raw) addr_str(c.addr, o.addr);
+        snprintf(o.err, sizeof o.err, "%s", c.err);
+        return uvm_copy_out(p, b, &o, sizeof o) ? 0 : -MOS_EFAULT;
+    }
+    }
+    return -MOS_EINVAL;
 }

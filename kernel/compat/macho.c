@@ -215,6 +215,8 @@ bool libsystem_dylib_ok(const char *n) {
         "/usr/lib/libSystem.B.dylib", "/usr/lib/libSystem.dylib", "/usr/lib/libc.dylib",
         "/usr/lib/libm.dylib", "/usr/lib/libdl.dylib", "/usr/lib/libpthread.dylib",
         "/usr/lib/libinfo.dylib", "/usr/lib/libgcc_s.1.dylib", "/usr/lib/libiconv.2.dylib", "/usr/lib/libiconv.dylib",
+        /* git e curl do Homebrew: res_9_* (darwin.c) e uidna_* (posixmore.c, só nomes ASCII) */
+        "/usr/lib/libresolv.9.dylib", "/usr/lib/libicucore.A.dylib",
     };
     for (u32 i = 0; i < ARRAY_LEN(ok); i++) if (!strcmp(n, ok[i])) return true;
     /* frameworks implementados pelo libSystem do mOS (runtime ObjC, Foundation, AppKit, CG) */
@@ -229,7 +231,10 @@ bool libsystem_dylib_ok(const char *n) {
                                 * (proxies, FSEvents, IOPMAssertion), mach.c (IOKit mínimo) */
                                "/System/Library/Frameworks/Security.framework/", "/System/Library/Frameworks/SystemConfiguration.framework/",
                                "/System/Library/Frameworks/CFNetwork.framework/", "/System/Library/Frameworks/CoreServices.framework/",
-                               "/System/Library/Frameworks/IOKit.framework/", "/System/Library/Frameworks/LocalAuthentication.framework/"};
+                               "/System/Library/Frameworks/IOKit.framework/", "/System/Library/Frameworks/LocalAuthentication.framework/",
+                               /* libcurl do Homebrew (docs/porte-brew.md): LDAP e GSS/Kerberos só falham (posixmore.c) */
+                               "/System/Library/Frameworks/LDAP.framework/", "/System/Library/Frameworks/Kerberos.framework/",
+                               "/System/Library/Frameworks/GSS.framework/"};
     for (u32 i = 0; i < ARRAY_LEN(fw); i++) if (!strncmp(n, fw[i], strlen(fw[i]))) return true;
     return !strncmp(n, "/usr/lib/system/", 16);
 }
@@ -1037,6 +1042,17 @@ static int link_add(link_t *K, const char *path, const u8 *file, usize flen, boo
             if (cand[0] == '/') {
                 const u8 *data;
                 usize len;
+                /* /usr/local/Cellar/<fórmula>/<versão>/X: no Homebrew, /usr/local/opt/<fórmula> é um link para
+                 * esse keg. Sem o Cellar no disco, vale o opt; com os dois, o caminho do opt é o canônico, para
+                 * a mesma dylib não entrar duas vezes (uma pelo Cellar, outra pelo opt). */
+                if (!strncmp(cand, "/usr/local/Cellar/", 18)) {
+                    const char *f = cand + 18, *v = strchr(f, '/'), *x = v ? strchr(v + 1, '/') : NULL;
+                    if (x) {
+                        char opt[384];
+                        snprintf(opt, sizeof opt, "/usr/local/opt/%.*s%s", (int)(v - f), f, x);
+                        if (dep_read(opt, &len)) snprintf(cand, sizeof cand, "%s", opt);
+                    }
+                }
                 int d = locate(K, cand, sizeof cand, &data, &len);
                 /* bibliotecas de /usr/lib que o mOS não tem: usa a fórmula equivalente do Homebrew (mesma API;
                  * uma cópia só, para o estado global — ex.: o terminal do ncurses — ser um só) */
@@ -1044,6 +1060,8 @@ static int link_add(link_t *K, const char *path, const u8 *file, usize flen, boo
                     {"/usr/lib/libncurses.5.4.dylib", "/usr/local/opt/ncurses/lib/libncursesw.6.dylib"},
                     {"/usr/lib/libz.1.dylib",         "/usr/local/opt/zlib/lib/libz.1.dylib"},
                     {"/usr/lib/libffi.dylib",         "/usr/local/opt/libffi/lib/libffi.8.dylib"},
+                    {"/usr/lib/libcurl.4.dylib",      "/usr/local/opt/curl/lib/libcurl.4.dylib"},   /* o git usa o curl do sistema */
+                    {"/usr/lib/libexpat.1.dylib",     "/usr/local/opt/expat/lib/libexpat.1.dylib"},
                 };
                 for (usize k = 0; d < 0 && !data && k < sizeof usrlib_alias / sizeof usrlib_alias[0]; k++)
                     if (!strcmp(cand, usrlib_alias[k][0])) {

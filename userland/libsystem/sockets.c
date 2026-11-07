@@ -110,8 +110,12 @@ static int un_connect(int fd, const void *addr, u32 len) {
     return -1;
 }
 static int un_accept(int fd, void *addr, u32 *len) { (void)addr; (void)len; cx_errno = sock_of(fd) ? CX_EAGAIN : CX_EBADF; return -1; }
-int shutdown(int fd, int how) { (void)how; return sock_of(fd) ? 0 : (cx_errno = CX_EBADF, -1); }
-int setsockopt(int fd, int level, int name, const void *v, u32 len) { (void)level; (void)name; (void)v; (void)len; return sock_of(fd) ? 0 : (cx_errno = CX_EBADF, -1); }
+/* as pontas de um socketpair são pipes do kernel (acima): para elas shutdown/setsockopt valem como feitos,
+ * senão o Crashpad do Chrome (child_port_handshake.cc) aborta com EBADF. (O fcntl(F_GETFD) do mOS ainda não
+ * distingue fd fechado, então na prática só fd negativo dá EBADF.) */
+static int fd_open(int fd) { extern int fcntl(int, int, ...); return fd >= 0 && fcntl(fd, 1 /* F_GETFD */) >= 0; }
+int shutdown(int fd, int how) { (void)how; return sock_of(fd) || fd_open(fd) ? 0 : (cx_errno = CX_EBADF, -1); }
+int setsockopt(int fd, int level, int name, const void *v, u32 len) { (void)level; (void)name; (void)v; (void)len; return sock_of(fd) || fd_open(fd) ? 0 : (cx_errno = CX_EBADF, -1); }
 static int un_getsockopt(int fd, int level, int name, void *v, u32 *len) {
     (void)level; (void)name;
     if (!sock_of(fd)) { cx_errno = CX_EBADF; return -1; }

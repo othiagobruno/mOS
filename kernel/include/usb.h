@@ -144,7 +144,12 @@ int  xhci_slot_of(usb_dev_t *d);
 const char *xhci_name(void *hc);
 
 /* ------------------------------------------------------------------ drivers */
-extern const usb_driver_t usb_hid_driver, usb_hub_driver, usb_msc_driver, usb_bt_driver;
+extern const usb_driver_t usb_hid_driver, usb_hub_driver, usb_msc_driver, usb_bt_driver, usb_xinput_driver;
+/* controles de jogo (dev/gamepad.c): registro para o GameController.framework */
+int  gamepad_attach(const char *name, u16 vid, u16 pid, u32 kind, u32 caps, void (*rumble)(void *ctx, u8 strong, u8 weak), void *ctx);
+void gamepad_detach(int id);
+void gamepad_report(int id, u32 buttons, float lx, float ly, float rx, float ry, float lt, float rt);
+u32  gamepad_hat_buttons(int hat);
 void usb_hub_child_gone(usb_dev_t *hub, usb_dev_t *child);
 
 /* ------------------------------------------------------------------ armazenamento em massa

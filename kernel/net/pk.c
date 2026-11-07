@@ -12,7 +12,7 @@
 #include "x509.h"
 
 #define BN_LIMBS 258                     /* 8192 bits + folga */
-#define EC_LIMBS 12                      /* 384 bits */
+#define EC_LIMBS 17                      /* 544 bits (P-521) */
 
 typedef struct {
     int n;                               /* número de limbs */
@@ -280,7 +280,7 @@ typedef struct {
 
 typedef struct { u32 x[EC_LIMBS], y[EC_LIMBS], z[EC_LIMBS]; } jpt;
 
-static curve_t g_p256, g_p384;
+static curve_t g_p256, g_p384, g_p521;
 
 static const char *P256_HEX[] = {
     "ffffffff00000001000000000000000000000000ffffffffffffffffffffffff",
@@ -295,6 +295,15 @@ static const char *P384_HEX[] = {
     "b3312fa7e23ee7e4988e056be3f82d19181d9c6efe8141120314088f5013875ac656398d8a2ed19d2a85c8edd3ec2aef",
     "aa87ca22be8b05378eb1c71ef320ad746e1d3b628ba79b9859f741e082542a385502f25dbf55296c3a545e3872760ab7",
     "3617de4a96262c6f5d9e98bf9292dc29f8f41dbd289a147ce9da3113b5f0b8c00a60b1ce1d7e819d7a431d7c90ea0e5f",
+};
+
+/* secp521r1 (SEC 2): p = 2^521 - 1 */
+static const char *P521_HEX[] = {
+    "01ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "01fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffa51868783bf2f966b7fcc0148f709a5d03bb5c9b8899c47aebb6fb71e91386409",
+    "0051953eb9618e1c9a1f929a21a0b68540eea2da725b99b315f3b8b489918ef109e156193951ec7e937b1652c0bd3bb1bf073573df883d2c34f1ef451fd46b503f00",
+    "00c6858e06b70404e9cd9e3ecb662395b4429c648139053fb521f828af606b4d3dbaa14b5e77efe75928fe1dc127a2ffa8de3348b3c1856a429bf97e7e31c2e5bd66",
+    "011839296a789a3bc0045c8a5fb42c7d1bd998f54449579b446817afbd17273e662c97ee72995ef42640c550b9013fad0761353c7086a272c24088be94769fd16650",
 };
 
 static void hex_limbs(u32 *r, int n, const char *h) {
@@ -409,16 +418,16 @@ static void pt_add(const curve_t *C, jpt *r, const jpt *p, const jpt *q) {
 }
 
 static const curve_t *curve_get(int id) {
-    curve_t *C = id == EC_P256 ? &g_p256 : id == EC_P384 ? &g_p384 : NULL;
+    curve_t *C = id == EC_P256 ? &g_p256 : id == EC_P384 ? &g_p384 : id == EC_P521 ? &g_p521 : NULL;
     if (!C) return NULL;
     if (__atomic_load_n(&C->ready, __ATOMIC_ACQUIRE)) return C->ok ? C : NULL;
     /* inicialização idempotente: corridas apenas repetem o mesmo cálculo */
     curve_t *T = kmalloc(sizeof(curve_t));
     if (!T) return NULL;
     memset(T, 0, sizeof(*T));
-    const char **hx = id == EC_P256 ? P256_HEX : P384_HEX;
-    T->n = id == EC_P256 ? 8 : 12;
-    T->bytes = (u32)T->n * 4;
+    const char **hx = id == EC_P256 ? P256_HEX : id == EC_P384 ? P384_HEX : P521_HEX;
+    T->n = id == EC_P256 ? 8 : id == EC_P384 ? 12 : 17;
+    T->bytes = id == EC_P521 ? 66 : (u32)T->n * 4;    /* P-521: 66 bytes por coordenada */
     u32 p[EC_LIMBS], nn[EC_LIMBS], two[EC_LIMBS];
     hex_limbs(p, T->n, hx[0]);
     hex_limbs(nn, T->n, hx[1]);
@@ -631,4 +640,74 @@ int ecdh_shared(int curve, u8 *shared, const u8 *priv, const u8 *peer, u32 peerl
 int ecdh_p256_keygen(u8 priv[32], u8 pub[65]) { return ecdh_keygen(EC_P256, priv, pub); }
 int ecdh_p256(u8 shared[32], const u8 priv[32], const u8 *peer, u32 peerlen) {
     return ecdh_shared(EC_P256, shared, priv, peer, peerlen);
+}
+/* ======================================================================
+ * Assinatura ECDSA e chave pública a partir da privada (CryptoKit no libSystem: P256/P384.Signing e
+ * KeyAgreement com chave importada). O nonce k é aleatório (CSPRNG), como no CryptoKit da Apple.
+ * ====================================================================== */
+int ec_public_key(int curve, const u8 *priv, u8 *pub) {
+    const curve_t *C = curve_get(curve);
+    if (!C) return -1;
+    int n = C->n;
+    u32 B = C->bytes;
+    u32 d[EC_LIMBS];
+    bn_from_be(d, n, priv, B);
+    if (bn_is_zero(d, n) || bn_cmp(d, C->N.m, n) >= 0) { secure_zero(d, sizeof(d)); return -1; }
+    jpt G, R;
+    memcpy(G.x, C->gx, sizeof(G.x));
+    memcpy(G.y, C->gy, sizeof(G.y));
+    memcpy(G.z, C->P.one, sizeof(G.z));
+    ec_ladder(C, &R, d, &G);
+    secure_zero(d, sizeof(d));
+    if (bn_is_zero(R.z, n)) return -1;
+    u32 x[EC_LIMBS], y[EC_LIMBS];
+    pt_affine(C, x, y, &R);
+    pub[0] = 0x04;
+    bn_to_be(pub + 1, B, x, n);
+    bn_to_be(pub + 1 + B, B, y, n);
+    return 0;
+}
+
+/* r, s: B bytes big-endian cada (a "rawRepresentation" r || s do CryptoKit) */
+int ecdsa_sign(int curve, const u8 *priv, const u8 *digest, u32 dlen, u8 *r_out, u8 *s_out) {
+    const curve_t *C = curve_get(curve);
+    if (!C) return -1;
+    int n = C->n;
+    u32 B = C->bytes;
+    u32 d[EC_LIMBS], e[EC_LIMBS], k[EC_LIMBS], r[EC_LIMBS], s[EC_LIMBS], t[EC_LIMBS], dm[EC_LIMBS], ki[EC_LIMBS], x[EC_LIMBS], y[EC_LIMBS];
+    bn_from_be(d, n, priv, B);
+    if (bn_is_zero(d, n) || bn_cmp(d, C->N.m, n) >= 0) return -1;
+    memset(e, 0, sizeof e);
+    bn_from_be(e, n, digest, dlen > B ? B : dlen);
+    if (bn_cmp(e, C->N.m, n) >= 0) bn_sub(e, e, C->N.m, n);
+    mont_to(&C->N, dm, d);                                   /* d·R */
+    jpt G, R;
+    memcpy(G.x, C->gx, sizeof(G.x));
+    memcpy(G.y, C->gy, sizeof(G.y));
+    memcpy(G.z, C->P.one, sizeof(G.z));
+    for (int tries = 0; tries < 64; tries++) {
+        u8 kb[EC_LIMBS * 4];
+        crypto_random(kb, B);
+        bn_from_be(k, n, kb, B);
+        secure_zero(kb, sizeof kb);
+        if (bn_is_zero(k, n) || bn_cmp(k, C->N.m, n) >= 0) continue;
+        ec_ladder(C, &R, k, &G);
+        if (bn_is_zero(R.z, n)) continue;
+        pt_affine(C, x, y, &R);
+        memcpy(r, x, sizeof r);
+        if (bn_cmp(r, C->N.m, n) >= 0) bn_sub(r, r, C->N.m, n);
+        if (bn_is_zero(r, n)) continue;
+        mont_mul(&C->N, t, r, dm);                           /* r·d (forma normal) */
+        u32 carry = bn_add(t, t, e, n);                      /* e + r·d mod n */
+        if (carry || bn_cmp(t, C->N.m, n) >= 0) bn_sub(t, t, C->N.m, n);
+        mont_to(&C->N, ki, k);
+        mont_pow(&C->N, ki, ki, C->n_2, n);                  /* k^-1 · R */
+        mont_mul(&C->N, s, t, ki);                           /* (e + r·d) · k^-1 */
+        if (bn_is_zero(s, n)) continue;
+        bn_to_be(r_out, B, r, n);
+        bn_to_be(s_out, B, s, n);
+        secure_zero(k, sizeof k); secure_zero(ki, sizeof ki); secure_zero(d, sizeof d); secure_zero(dm, sizeof dm);
+        return 0;
+    }
+    return -1;
 }

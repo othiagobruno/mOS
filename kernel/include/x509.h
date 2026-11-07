@@ -13,7 +13,7 @@
 #include "crypto.h"
 
 /* ---------------------------------------------------------------- pk.c */
-enum { EC_P256 = 1, EC_P384 = 2 };
+enum { EC_P256 = 1, EC_P384 = 2, EC_P521 = 3 };
 
 /* n/e: inteiros big-endian (zeros à esquerda são ignorados); digest = hash da mensagem */
 int rsa_verify_pkcs1(const u8 *n, u32 nlen, const u8 *e, u32 elen, int halg,
@@ -34,6 +34,9 @@ int ecdh_keygen(int curve, u8 *priv, u8 *pub);
 int ecdh_shared(int curve, u8 *shared, const u8 *priv, const u8 *peer, u32 peerlen);
 int ecdh_p256_keygen(u8 priv[32], u8 pub[65]);
 int ecdh_p256(u8 shared[32], const u8 priv[32], const u8 *peer, u32 peerlen);
+/* chave pública 04 || X || Y de uma privada; assinatura ECDSA com nonce aleatório (r e s com B bytes) */
+int ec_public_key(int curve, const u8 *priv, u8 *pub);
+int ecdsa_sign(int curve, const u8 *priv, const u8 *digest, u32 dlen, u8 *r, u8 *s);
 
 /* ---------------------------------------------------------------- x509.c */
 enum { X509_KEY_NONE = 0, X509_KEY_RSA, X509_KEY_EC };

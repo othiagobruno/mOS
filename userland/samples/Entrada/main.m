@@ -3,6 +3,7 @@
 // (ou para outro app) e solte texto/arquivos de outros apps no editor.
 #import <Cocoa/Cocoa.h>
 #include <stdio.h>
+const char *sel_getName(SEL s);
 
 // ---- partes do AppKit que o SDK enxuto do mOS não declara
 typedef NSUInteger NSDragOperation;
@@ -96,7 +97,7 @@ static NSString *plain(id s) { return [s isKindOfClass:[NSString class]] ? s : [
     self.needsDisplay = YES;
 }
 - (void)drawRect:(NSRect)r {
-    [[NSColor textBackgroundColor] set];
+    [[NSColor whiteColor] set];
     NSRectFill(self.bounds);
     NSDictionary *a = @{NSFontAttributeName: [NSFont systemFontOfSize:16]};
     [_text drawAtPoint:NSMakePoint(12, 12) withAttributes:a];
@@ -104,7 +105,7 @@ static NSString *plain(id s) { return [s isKindOfClass:[NSString class]] ? s : [
         NSSize s = [_text sizeWithAttributes:a];
         [_marked drawAtPoint:NSMakePoint(12 + s.width, 12) withAttributes:a];
         NSSize m = [_marked sizeWithAttributes:a];
-        [[NSColor textColor] set];
+        [[NSColor blackColor] set];
         NSRectFill(NSMakeRect(12 + s.width, 12 + 20, m.width, 1));       // sublinhado da composição
     }
 }

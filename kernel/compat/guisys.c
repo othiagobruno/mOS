@@ -112,6 +112,19 @@ static void proxy_key(window_t *w, input_event_t *ev) {
     if (ev->key >= 32 && ev->key < 0x100 && ev->key != 127 && !(ev->mods & (MOD_CMD | MOD_CTRL))) utf8_encode((u32)ev->key, e.text);
     push(g->ga, &e);
 }
+/* tecla solta (wm.c chama para a janela em foco; só as janelas de apps do macOS se interessam) */
+void compat_gui_key_up(window_t *w, input_event_t *ev) {
+    gwin_t *g = gwin_of(w);
+    if (!g || ev->type != EV_KEY_UP) return;
+    gui_event_t e;
+    memset(&e, 0, sizeof e);
+    e.type = GEV_KEY_UP;
+    e.win = (u32)g->id;
+    e.key = ev->key;
+    e.mods = ev->mods;
+    if (ev->key >= 32 && ev->key < 0x100 && ev->key != 127 && !(ev->mods & (MOD_CMD | MOD_CTRL))) utf8_encode((u32)ev->key, e.text);
+    push(g->ga, &e);
+}
 
 static void proxy_close(window_t *w) {
     gwin_t *g = gwin_of(w);
@@ -585,6 +598,11 @@ i64 compat_gui_syscall(process_t *p, u64 n, u64 a, u64 b, u64 c, u64 d, u64 e) {
     }
     case GUI_DRAG: return drag_syscall(p, a, b, c, d, e);
     case GUI_IME: return ime_syscall(p, a, b, c, d, e);
+    case GUI_DEVICE: {
+        extern i64 gamepad_syscall(process_t *p, u64 op, u64 b, u64 c, u64 d);
+        extern i64 bt_user_syscall(process_t *p, u64 op, u64 b, u64 c, u64 d);
+        return a < DEV_BT_STATE ? gamepad_syscall(p, a, b, c, d) : bt_user_syscall(p, a, b, c, d);
+    }
     case GUI_WIN_FOCUS: {
         gwin_t *g = win_get(p, a);
         if (!g) return -MOS_EBADF;

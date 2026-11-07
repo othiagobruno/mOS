@@ -1,6 +1,7 @@
 # --- Saídas de build ---
 /build/
 /build-*/
+/buildsamples/
 *.img
 *.EFI
 *.efi
