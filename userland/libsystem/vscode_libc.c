@@ -771,3 +771,47 @@ int unw_step(void *cur) { (void)cur; return 0; }
 int unw_get_reg(void *cur, int reg, usize *val) { (void)cur; (void)reg; if (val) *val = 0; return UNW_EUNSPEC; }
 int unw_set_reg(void *cur, int reg, usize val) { (void)cur; (void)reg; (void)val; return UNW_EUNSPEC; }
 int unw_is_signal_frame(void *cur) { (void)cur; return 0; }
+
+/* ================================================================ libc++: std::to_string(int) (kerberos.node) */
+/* std::string do libc++ x86_64: curto = byte 0 com tamanho << 1, texto a partir do byte 1 (até 22 chars) */
+typedef struct { u8 b[24]; } vs_stdstring_t;
+vs_stdstring_t vs_to_string_i(int v) __asm__("_ZNSt3__19to_stringEi");
+vs_stdstring_t vs_to_string_i(int v) {
+    vs_stdstring_t s;
+    memset(&s, 0, sizeof s);
+    char t[16];
+    int n = 0;
+    unsigned u = v < 0 ? 0u - (unsigned)v : (unsigned)v;
+    do { t[n++] = (char)('0' + u % 10); u /= 10; } while (u);
+    if (v < 0) t[n++] = '-';
+    s.b[0] = (u8)(n << 1);
+    for (int i = 0; i < n; i++) s.b[1 + i] = (u8)t[n - 1 - i];
+    return s;
+}
+
+/* ================================================================ xlocale (_l) que a libc++ do LLVM importa */
+/* o mOS só tem a locale "C"/UTF-8: as variantes _l delegam para as funções sem locale */
+int __tolower(int c);
+int strcoll(const char *a, const char *b);
+size_t strxfrm(char *d, const char *s, size_t n);
+int wcscoll(const wchar_t_ *a, const wchar_t_ *b);
+wchar_t_ btowc(int c);
+int wctob(wchar_t_ c);
+void *localeconv(void);
+int vs___tolower_l(int c, void *loc) __asm__("___tolower_l");
+int vs___tolower_l(int c, void *loc) { (void)loc; return __tolower(c); }
+int vs___toupper_l(int c, void *loc) __asm__("___toupper_l");
+int vs___toupper_l(int c, void *loc) { (void)loc; return c >= 'a' && c <= 'z' ? c - 32 : c; }
+wchar_t_ btowc_l(int c, void *loc) { (void)loc; return btowc(c); }
+int wctob_l(wchar_t_ c, void *loc) { (void)loc; return wctob(c); }
+void *localeconv_l(void *loc) { (void)loc; return localeconv(); }
+int strcoll_l(const char *a, const char *b, void *loc) { (void)loc; return strcoll(a, b); }
+size_t strxfrm_l(char *d, const char *s, size_t n, void *loc) { (void)loc; return strxfrm(d, s, n); }
+int wcscoll_l(const wchar_t_ *a, const wchar_t_ *b, void *loc) { (void)loc; return wcscoll(a, b); }
+size_t wcsxfrm_l(wchar_t_ *d, const wchar_t_ *s, size_t n, void *loc) {
+    (void)loc;
+    size_t l = 0;
+    while (s[l]) l++;
+    if (n) { size_t k = l < n - 1 ? l : n - 1; for (size_t i = 0; i < k; i++) d[i] = s[i]; d[k] = 0; }
+    return l;
+}

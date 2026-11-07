@@ -1,0 +1,478 @@
+/*
+ * mOS libSystem — mídia, impressão e autenticação que o Electron/VS Code importa (inventário do
+ * tools/machocheck.c):
+ *  - Accelerate/vDSP: implementado de verdade (o WebAudio do Chromium faz convolução, FFT real e
+ *    filtros biquad com ele). FFT real com o empacotamento e a escala da Apple (direta multiplica por 2).
+ *  - CoreMedia: CMTime e o que só lê estruturas; criação de buffers/formatos devolve erro.
+ *  - VideoToolbox: sem codec por hardware (o Chromium decodifica/codifica por software, ffmpeg).
+ *  - CoreAudio/AudioToolbox/CoreMIDI: nenhum dispositivo/componente (áudio do Chromium fica mudo).
+ *  - CUPS: nenhuma impressora. GSS/Kerberos: sem credenciais (autenticação Negotiate falha limpa).
+ *  - UniformTypeIdentifiers: objetos UTType com identificador, extensão e MIME.
+ *  - ServiceManagement: itens de login aceitos; sem launchd para jobs.
+ */
+#include "foundation.h"
+
+void *malloc(size_t n);
+void *calloc(size_t n, size_t s);
+void free(void *p);
+void *memset(void *d, int c, size_t n);
+void *memcpy(void *d, const void *s, size_t n);
+int strcmp(const char *a, const char *b);
+double sin(double), cos(double), sqrt(double), fabs(double);
+id objc_retain(id o);
+id CFArrayCreate(void *alloc, const id *vals, long n, const void *cb);
+id CFDictionaryCreateMutable(void *alloc, long cap, const void *kcb, const void *vcb);
+int clock_gettime(int clk, void *ts);
+typedef int OSStatus;
+#define PI 3.14159265358979323846
+
+/* ================================================================ Accelerate: vDSP */
+typedef struct { float *realp, *imagp; } dsp_split_t;
+typedef struct { float real, imag; } dsp_complex_t;
+typedef long vstride;
+typedef unsigned long vlen;
+void vDSP_vadd(const float *a, vstride ia, const float *b, vstride ib, float *c, vstride ic, vlen n) { for (vlen i = 0; i < n; i++) c[i * ic] = a[i * ia] + b[i * ib]; }
+/* vDSP_vsub(B, IB, A, IA, C, IC, N): C = A - B */
+void vDSP_vsub(const float *b, vstride ib, const float *a, vstride ia, float *c, vstride ic, vlen n) { for (vlen i = 0; i < n; i++) c[i * ic] = a[i * ia] - b[i * ib]; }
+void vDSP_vmul(const float *a, vstride ia, const float *b, vstride ib, float *c, vstride ic, vlen n) { for (vlen i = 0; i < n; i++) c[i * ic] = a[i * ia] * b[i * ib]; }
+void vDSP_vsmul(const float *a, vstride ia, const float *b, float *c, vstride ic, vlen n) { float s = *b; for (vlen i = 0; i < n; i++) c[i * ic] = a[i * ia] * s; }
+void vDSP_vsadd(const float *a, vstride ia, const float *b, float *c, vstride ic, vlen n) { float s = *b; for (vlen i = 0; i < n; i++) c[i * ic] = a[i * ia] + s; }
+void vDSP_vsma(const float *a, vstride ia, const float *b, const float *c, vstride ic, float *d, vstride id_, vlen n) { float s = *b; for (vlen i = 0; i < n; i++) d[i * id_] = a[i * ia] * s + c[i * ic]; }
+void vDSP_vclip(const float *a, vstride ia, const float *lo, const float *hi, float *c, vstride ic, vlen n) {
+    float l = *lo, h = *hi;
+    for (vlen i = 0; i < n; i++) { float v = a[i * ia]; c[i * ic] = v < l ? l : v > h ? h : v; }
+}
+void vDSP_maxmgv(const float *a, vstride ia, float *c, vlen n) {
+    float m = 0;
+    for (vlen i = 0; i < n; i++) { float v = a[i * ia]; if (v < 0) v = -v; if (v > m) m = v; }
+    *c = m;
+}
+void vDSP_svesq(const float *a, vstride ia, float *c, vlen n) { float s = 0; for (vlen i = 0; i < n; i++) s += a[i * ia] * a[i * ia]; *c = s; }
+/* C[n] = soma_p A[n+p] * F[p] (com IF negativo é convolução: F aponta para o último elemento) */
+void vDSP_conv(const float *a, vstride ia, const float *f, vstride if_, float *c, vstride ic, vlen n, vlen p) {
+    for (vlen i = 0; i < n; i++) {
+        float s = 0;
+        for (vlen k = 0; k < p; k++) s += a[(i + k) * ia] * f[(long)k * if_];
+        c[i * ic] = s;
+    }
+}
+/* multiplicação complexa dividida; conj = -1 conjuga A */
+void vDSP_zvmul(const dsp_split_t *a, vstride ia, const dsp_split_t *b, vstride ib, const dsp_split_t *c, vstride ic, vlen n, int conj) {
+    for (vlen i = 0; i < n; i++) {
+        float ar = a->realp[i * ia], ai = a->imagp[i * ia] * (conj == -1 ? -1.0f : 1.0f);
+        float br = b->realp[i * ib], bi = b->imagp[i * ib];
+        c->realp[i * ic] = ar * br - ai * bi;
+        c->imagp[i * ic] = ar * bi + ai * br;
+    }
+}
+void vDSP_ctoz(const dsp_complex_t *c, vstride ic, const dsp_split_t *z, vstride iz, vlen n) {
+    const float *f = (const float *)c;
+    for (vlen i = 0; i < n; i++) { z->realp[i * iz] = f[i * ic]; z->imagp[i * iz] = f[i * ic + 1]; }
+}
+void vDSP_ztoc(const dsp_split_t *z, vstride iz, dsp_complex_t *c, vstride ic, vlen n) {
+    float *f = (float *)c;
+    for (vlen i = 0; i < n; i++) { f[i * ic] = z->realp[i * iz]; f[i * ic + 1] = z->imagp[i * iz]; }
+}
+/* biquad em dupla precisão: A e C têm N+2 elementos (os dois primeiros são o estado inicial) */
+void vDSP_deq22D(const double *a, vstride ia, const double *b, double *c, vstride ic, vlen n) {
+    for (vlen i = 2; i < n + 2; i++)
+        c[i * ic] = a[i * ia] * b[0] + a[(i - 1) * ia] * b[1] + a[(i - 2) * ia] * b[2] - c[(i - 1) * ic] * b[3] - c[(i - 2) * ic] * b[4];
+}
+typedef struct { unsigned long log2n; } fft_setup_t;
+void *vDSP_create_fftsetup(unsigned long log2n, int radix) { (void)radix; fft_setup_t *s = malloc(sizeof *s); if (s) s->log2n = log2n; return s; }
+void vDSP_destroy_fftsetup(void *s) { free(s); }
+/* FFT complexa radix-2 in-place (sinal: -1 direta, +1 inversa), sem escala */
+static void fft_c(double *re, double *im, unsigned long n, int sign) {
+    for (unsigned long i = 1, j = 0; i < n; i++) {
+        unsigned long bit = n >> 1;
+        for (; j & bit; bit >>= 1) j ^= bit;
+        j ^= bit;
+        if (i < j) { double t = re[i]; re[i] = re[j]; re[j] = t; t = im[i]; im[i] = im[j]; im[j] = t; }
+    }
+    for (unsigned long len = 2; len <= n; len <<= 1) {
+        double ang = sign * 2 * PI / (double)len, wr = cos(ang), wi = sin(ang);
+        for (unsigned long i = 0; i < n; i += len) {
+            double cr = 1, ci = 0;
+            for (unsigned long k = 0; k < len / 2; k++) {
+                unsigned long a = i + k, b = a + len / 2;
+                double tr = re[b] * cr - im[b] * ci, ti = re[b] * ci + im[b] * cr;
+                re[b] = re[a] - tr; im[b] = im[a] - ti;
+                re[a] += tr; im[a] += ti;
+                double nr = cr * wr - ci * wi; ci = cr * wi + ci * wr; cr = nr;
+            }
+        }
+    }
+}
+/* FFT real "zrip" da Apple. Entrada/saída empacotadas: realp[0] = termo DC, imagp[0] = termo de Nyquist.
+ * Direta (dir = +1): saída = 2 * DFT. Inversa (dir = -1): sem escala (ida e volta = 2N * x). */
+void vDSP_fft_zrip(void *setup, const dsp_split_t *c, vstride ic, unsigned long log2n, int dir) {
+    (void)setup;
+    unsigned long n = 1ul << log2n, h = n / 2;
+    double *re = malloc(sizeof(double) * n), *im = malloc(sizeof(double) * n);
+    if (!re || !im) { free(re); free(im); return; }
+    if (dir >= 0) {
+        for (unsigned long k = 0; k < h; k++) { re[2 * k] = c->realp[k * ic]; re[2 * k + 1] = c->imagp[k * ic]; im[2 * k] = im[2 * k + 1] = 0; }
+        fft_c(re, im, n, -1);
+        c->realp[0] = (float)(2 * re[0]);
+        c->imagp[0] = (float)(2 * re[h]);
+        for (unsigned long k = 1; k < h; k++) { c->realp[k * ic] = (float)(2 * re[k]); c->imagp[k * ic] = (float)(2 * im[k]); }
+    } else {
+        re[0] = c->realp[0]; im[0] = 0;
+        re[h] = c->imagp[0]; im[h] = 0;
+        for (unsigned long k = 1; k < h; k++) {
+            re[k] = c->realp[k * ic]; im[k] = c->imagp[k * ic];
+            re[n - k] = re[k]; im[n - k] = -im[k];
+        }
+        fft_c(re, im, n, +1);
+        for (unsigned long k = 0; k < h; k++) { c->realp[k * ic] = (float)re[2 * k]; c->imagp[k * ic] = (float)re[2 * k + 1]; }
+    }
+    free(re); free(im);
+}
+
+/* ================================================================ CoreMedia */
+typedef struct { i64 value; i32 timescale; u32 flags; i64 epoch; } cm_time_t;
+#define kCMTimeFlags_Valid 1u
+cm_time_t CMTimeMake(i64 value, i32 timescale) { cm_time_t t = {value, timescale, kCMTimeFlags_Valid, 0}; return t; }
+double CMTimeGetSeconds(cm_time_t t) {
+    if (!(t.flags & kCMTimeFlags_Valid) || !t.timescale) return __builtin_nan("");
+    return (double)t.value / (double)t.timescale;
+}
+u64 CMClockConvertHostTimeToSystemUnits(cm_time_t t) {
+    if (!(t.flags & kCMTimeFlags_Valid) || !t.timescale) return 0;
+    return (u64)((double)t.value * 1e9 / (double)t.timescale);    /* mach_absolute_time em ns no mOS */
+}
+#define kCMBlockBufferBadCustomBlockSourceErr (-12702)
+#define kCMFormatDescriptionError_InvalidParameter (-12710)
+#define kCMSampleBufferError_InvalidMediaFormat (-12743)
+#define CM_FAIL(err) { return err; }
+/* o vídeo/áudio por hardware não existe, então ninguém deveria chegar a montar estes buffers;
+ * quem chegar recebe o erro de parâmetro do macOS */
+OSStatus CMBlockBufferCreateEmpty(void *a, u32 cap, u32 flags, void **out) { (void)a; (void)cap; (void)flags; if (out) *out = 0; CM_FAIL(kCMBlockBufferBadCustomBlockSourceErr) }
+OSStatus CMBlockBufferCreateWithMemoryBlock(void *a, void *mem, size_t len, void *ba, const void *cb, size_t off, size_t dlen, u32 flags, void **out) {
+    (void)a; (void)mem; (void)len; (void)ba; (void)cb; (void)off; (void)dlen; (void)flags; if (out) *out = 0; CM_FAIL(kCMBlockBufferBadCustomBlockSourceErr)
+}
+OSStatus CMBlockBufferCreateContiguous(void *a, void *src, void *ba, const void *cb, size_t off, size_t len, u32 flags, void **out) { (void)a; (void)src; (void)ba; (void)cb; (void)off; (void)len; (void)flags; if (out) *out = 0; CM_FAIL(kCMBlockBufferBadCustomBlockSourceErr) }
+OSStatus CMBlockBufferAppendMemoryBlock(void *b, void *mem, size_t len, void *ba, const void *cb, size_t off, size_t dlen, u32 flags) { (void)b; (void)mem; (void)len; (void)ba; (void)cb; (void)off; (void)dlen; (void)flags; CM_FAIL(kCMBlockBufferBadCustomBlockSourceErr) }
+OSStatus CMBlockBufferGetDataPointer(void *b, size_t off, size_t *lenAt, size_t *total, char **ptr) { (void)b; (void)off; if (lenAt) *lenAt = 0; if (total) *total = 0; if (ptr) *ptr = 0; CM_FAIL(kCMBlockBufferBadCustomBlockSourceErr) }
+size_t CMBlockBufferGetDataLength(void *b) { (void)b; return 0; }
+u8 CMBlockBufferIsRangeContiguous(void *b, size_t off, size_t len) { (void)b; (void)off; (void)len; return 1; }
+OSStatus CMBlockBufferReplaceDataBytes(const void *src, void *b, size_t off, size_t len) { (void)src; (void)b; (void)off; (void)len; CM_FAIL(kCMBlockBufferBadCustomBlockSourceErr) }
+OSStatus CMBlockBufferAssureBlockMemory(void *b) { (void)b; CM_FAIL(kCMBlockBufferBadCustomBlockSourceErr) }
+OSStatus CMAudioFormatDescriptionCreate(void *a, const void *asbd, size_t ls, const void *l, size_t cs, const void *c, id ext, void **out) { (void)a; (void)asbd; (void)ls; (void)l; (void)cs; (void)c; (void)ext; if (out) *out = 0; CM_FAIL(kCMFormatDescriptionError_InvalidParameter) }
+const void *CMAudioFormatDescriptionGetStreamBasicDescription(void *d) { (void)d; return 0; }
+OSStatus CMVideoFormatDescriptionCreate(void *a, u32 codec, i32 w, i32 h, id ext, void **out) { (void)a; (void)codec; (void)w; (void)h; (void)ext; if (out) *out = 0; CM_FAIL(kCMFormatDescriptionError_InvalidParameter) }
+OSStatus CMVideoFormatDescriptionCreateFromH264ParameterSets(void *a, size_t n, const u8 *const *p, const size_t *s, int nal, void **out) { (void)a; (void)n; (void)p; (void)s; (void)nal; if (out) *out = 0; CM_FAIL(kCMFormatDescriptionError_InvalidParameter) }
+OSStatus CMVideoFormatDescriptionCreateFromHEVCParameterSets(void *a, size_t n, const u8 *const *p, const size_t *s, int nal, id ext, void **out) { (void)a; (void)n; (void)p; (void)s; (void)nal; (void)ext; if (out) *out = 0; CM_FAIL(kCMFormatDescriptionError_InvalidParameter) }
+OSStatus CMVideoFormatDescriptionCreateForImageBuffer(void *a, void *img, void **out) { (void)a; (void)img; if (out) *out = 0; CM_FAIL(kCMFormatDescriptionError_InvalidParameter) }
+OSStatus CMVideoFormatDescriptionGetH264ParameterSetAtIndex(void *d, size_t i, const u8 **p, size_t *s, size_t *n, int *nal) { (void)d; (void)i; if (p) *p = 0; if (s) *s = 0; if (n) *n = 0; if (nal) *nal = 0; CM_FAIL(kCMFormatDescriptionError_InvalidParameter) }
+OSStatus CMVideoFormatDescriptionGetHEVCParameterSetAtIndex(void *d, size_t i, const u8 **p, size_t *s, size_t *n, int *nal) { (void)d; (void)i; if (p) *p = 0; if (s) *s = 0; if (n) *n = 0; if (nal) *nal = 0; CM_FAIL(kCMFormatDescriptionError_InvalidParameter) }
+typedef struct { i32 w, h; } cm_dim_t;
+cm_dim_t CMVideoFormatDescriptionGetDimensions(void *d) { (void)d; cm_dim_t r = {0, 0}; return r; }
+u32 CMFormatDescriptionGetMediaSubType(void *d) { (void)d; return 0; }
+id CMFormatDescriptionGetExtension(void *d, id key) { (void)d; (void)key; return 0; }
+OSStatus CMSampleBufferCreate(void *a, void *db, u8 ready, void *cb, void *ref, void *fd, long ns, long nt, const void *t, long nsz, const size_t *sz, void **out) {
+    (void)a; (void)db; (void)ready; (void)cb; (void)ref; (void)fd; (void)ns; (void)nt; (void)t; (void)nsz; (void)sz; if (out) *out = 0; CM_FAIL(kCMSampleBufferError_InvalidMediaFormat)
+}
+OSStatus CMSampleBufferCreateForImageBuffer(void *a, void *img, u8 ready, void *cb, void *ref, void *fd, const void *t, void **out) { (void)a; (void)img; (void)ready; (void)cb; (void)ref; (void)fd; (void)t; if (out) *out = 0; CM_FAIL(kCMSampleBufferError_InvalidMediaFormat) }
+long CMSampleBufferGetNumSamples(void *s) { (void)s; return 0; }
+void *CMSampleBufferGetFormatDescription(void *s) { (void)s; return 0; }
+void *CMSampleBufferGetDataBuffer(void *s) { (void)s; return 0; }
+void *CMSampleBufferGetImageBuffer(void *s) { (void)s; return 0; }
+cm_time_t CMSampleBufferGetPresentationTimeStamp(void *s) { (void)s; cm_time_t t = {0, 0, 0, 0}; return t; }
+id CMSampleBufferGetSampleAttachmentsArray(void *s, u8 create) { (void)s; (void)create; return 0; }
+void CMSetAttachment(void *t, id key, id v, u32 mode) { (void)t; (void)key; (void)v; (void)mode; }
+id CMCopyDictionaryOfAttachments(void *a, void *t, u32 mode) { (void)a; (void)t; (void)mode; return CFDictionaryCreateMutable(0, 0, 0, 0); }
+OSStatus CMIOObjectGetPropertyData(u32 obj, const void *addr, u32 qs, const void *q, u32 sz, u32 *used, void *data) { (void)obj; (void)addr; (void)qs; (void)q; (void)sz; (void)data; if (used) *used = 0; return 0x77686F3F; /* kCMIOHardwareUnknownPropertyError 'who?' */ }
+
+/* ================================================================ VideoToolbox: sem codec por hardware */
+#define kVTCouldNotFindVideoDecoderErr (-12906)
+#define kVTCouldNotFindVideoEncoderErr (-12908)
+#define kVTPropertyNotSupportedErr (-12900)
+u8 VTIsHardwareDecodeSupported(u32 codec) { (void)codec; return 0; }
+void VTRegisterSupplementalVideoDecoderIfAvailable(u32 codec) { (void)codec; }
+OSStatus VTDecompressionSessionCreate(void *a, void *fd, id spec, id attrs, const void *cb, void **out) { (void)a; (void)fd; (void)spec; (void)attrs; (void)cb; if (out) *out = 0; return kVTCouldNotFindVideoDecoderErr; }
+u8 VTDecompressionSessionCanAcceptFormatDescription(void *s, void *fd) { (void)s; (void)fd; return 0; }
+OSStatus VTDecompressionSessionDecodeFrame(void *s, void *sb, u32 flags, void *ref, u32 *info) { (void)s; (void)sb; (void)flags; (void)ref; if (info) *info = 0; return kVTCouldNotFindVideoDecoderErr; }
+void VTDecompressionSessionInvalidate(void *s) { (void)s; }
+OSStatus VTCompressionSessionCreate(void *a, i32 w, i32 h, u32 codec, id spec, id src, void *ca, void *cb, void *ref, void **out) { (void)a; (void)w; (void)h; (void)codec; (void)spec; (void)src; (void)ca; (void)cb; (void)ref; if (out) *out = 0; return kVTCouldNotFindVideoEncoderErr; }
+OSStatus VTCompressionSessionEncodeFrame(void *s, void *img, cm_time_t pts, cm_time_t dur, id props, void *ref, u32 *info) { (void)s; (void)img; (void)pts; (void)dur; (void)props; (void)ref; if (info) *info = 0; return kVTCouldNotFindVideoEncoderErr; }
+OSStatus VTCompressionSessionCompleteFrames(void *s, cm_time_t until) { (void)s; (void)until; return 0; }
+void VTCompressionSessionInvalidate(void *s) { (void)s; }
+OSStatus VTSessionSetProperty(void *s, id key, id v) { (void)s; (void)key; (void)v; return kVTPropertyNotSupportedErr; }
+OSStatus VTSessionCopyProperty(void *s, id key, void *a, void *out) { (void)s; (void)key; (void)a; if (out) *(void **)out = 0; return kVTPropertyNotSupportedErr; }
+OSStatus VTSessionCopySupportedPropertyDictionary(void *s, id *out) { (void)s; if (out) *out = CFDictionaryCreateMutable(0, 0, 0, 0); return 0; }
+OSStatus VTPixelTransferSessionCreate(void *a, void **out) { (void)a; if (out) *out = 0; return kVTCouldNotFindVideoEncoderErr; }
+OSStatus VTPixelTransferSessionTransferImage(void *s, void *src, void *dst) { (void)s; (void)src; (void)dst; return kVTCouldNotFindVideoEncoderErr; }
+void VTPixelTransferSessionInvalidate(void *s) { (void)s; }
+
+/* ================================================================ CoreAudio / AudioToolbox */
+#define kAudioHardwareUnknownPropertyError 0x77686F3F   /* 'who?' */
+#define kAudioHardwareBadObjectError 0x216F626A          /* '!obj' */
+#define kAudioUnitErr_InvalidProperty (-10879)
+#define kAudioConverterErr_FormatNotSupported 0x666D743F /* 'fmt?' */
+/* o objeto de sistema (1) não tem dispositivos: tamanho 0 para as listas, erro para o resto */
+u8 AudioObjectHasProperty(u32 obj, const void *addr) { (void)obj; (void)addr; return 0; }
+OSStatus AudioObjectIsPropertySettable(u32 obj, const void *addr, u8 *out) { (void)obj; (void)addr; if (out) *out = 0; return kAudioHardwareUnknownPropertyError; }
+OSStatus AudioObjectGetPropertyDataSize(u32 obj, const void *addr, u32 qs, const void *q, u32 *size) { (void)addr; (void)qs; (void)q; if (size) *size = 0; return obj == 1 ? 0 : kAudioHardwareBadObjectError; }
+OSStatus AudioObjectGetPropertyData(u32 obj, const void *addr, u32 qs, const void *q, u32 *size, void *data) {
+    (void)addr; (void)qs; (void)q; (void)data;
+    if (obj == 1 && size) {
+        /* kAudioHardwarePropertyDefault*Device: kAudioObjectUnknown (0) */
+        if (*size >= 4) { *(u32 *)data = 0; *size = 4; return 0; }
+        *size = 0;
+        return 0;
+    }
+    if (size) *size = 0;
+    return kAudioHardwareBadObjectError;
+}
+OSStatus AudioObjectSetPropertyData(u32 obj, const void *addr, u32 qs, const void *q, u32 size, const void *data) { (void)obj; (void)addr; (void)qs; (void)q; (void)size; (void)data; return kAudioHardwareUnknownPropertyError; }
+OSStatus AudioObjectAddPropertyListener(u32 obj, const void *addr, void *cb, void *ctx) { (void)obj; (void)addr; (void)cb; (void)ctx; return 0; }
+OSStatus AudioObjectRemovePropertyListener(u32 obj, const void *addr, void *cb, void *ctx) { (void)obj; (void)addr; (void)cb; (void)ctx; return 0; }
+OSStatus AudioObjectAddPropertyListenerBlock(u32 obj, const void *addr, void *q, void *blk) { (void)obj; (void)addr; (void)q; (void)blk; return 0; }
+OSStatus AudioObjectRemovePropertyListenerBlock(u32 obj, const void *addr, void *q, void *blk) { (void)obj; (void)addr; (void)q; (void)blk; return 0; }
+OSStatus AudioHardwareCreateAggregateDevice(id desc, u32 *out) { (void)desc; if (out) *out = 0; return kAudioHardwareBadObjectError; }
+OSStatus AudioHardwareDestroyAggregateDevice(u32 d) { (void)d; return kAudioHardwareBadObjectError; }
+OSStatus AudioDeviceCreateIOProcID(u32 d, void *proc, void *ctx, void **out) { (void)d; (void)proc; (void)ctx; if (out) *out = 0; return kAudioHardwareBadObjectError; }
+OSStatus AudioDeviceDestroyIOProcID(u32 d, void *pid) { (void)d; (void)pid; return 0; }
+OSStatus AudioDeviceStart(u32 d, void *pid) { (void)d; (void)pid; return kAudioHardwareBadObjectError; }
+OSStatus AudioDeviceStop(u32 d, void *pid) { (void)d; (void)pid; return 0; }
+void *AudioComponentFindNext(void *after, const void *desc) { (void)after; (void)desc; return 0; }
+OSStatus AudioComponentInstanceNew(void *c, void **out) { (void)c; if (out) *out = 0; return -50; }
+OSStatus AudioComponentInstanceDispose(void *u) { (void)u; return 0; }
+OSStatus AudioUnitInitialize(void *u) { (void)u; return -50; }
+OSStatus AudioUnitUninitialize(void *u) { (void)u; return 0; }
+OSStatus AudioUnitSetProperty(void *u, u32 id_, u32 sc, u32 el, const void *d, u32 sz) { (void)u; (void)id_; (void)sc; (void)el; (void)d; (void)sz; return kAudioUnitErr_InvalidProperty; }
+OSStatus AudioUnitGetProperty(void *u, u32 id_, u32 sc, u32 el, void *d, u32 *sz) { (void)u; (void)id_; (void)sc; (void)el; (void)d; if (sz) *sz = 0; return kAudioUnitErr_InvalidProperty; }
+OSStatus AudioUnitGetPropertyInfo(void *u, u32 id_, u32 sc, u32 el, u32 *sz, u8 *w) { (void)u; (void)id_; (void)sc; (void)el; if (sz) *sz = 0; if (w) *w = 0; return kAudioUnitErr_InvalidProperty; }
+OSStatus AudioUnitReset(void *u, u32 sc, u32 el) { (void)u; (void)sc; (void)el; return 0; }
+OSStatus AudioUnitRender(void *u, u32 *flags, const void *ts, u32 bus, u32 n, void *list) { (void)u; (void)flags; (void)ts; (void)bus; (void)n; (void)list; return -50; }
+OSStatus AudioOutputUnitStart(void *u) { (void)u; return -50; }
+OSStatus AudioOutputUnitStop(void *u) { (void)u; return 0; }
+OSStatus AudioFormatGetPropertyInfo(u32 id_, u32 sz, const void *spec, u32 *out) { (void)id_; (void)sz; (void)spec; if (out) *out = 0; return kAudioConverterErr_FormatNotSupported; }
+OSStatus AudioFormatGetProperty(u32 id_, u32 sz, const void *spec, u32 *osz, void *out) { (void)id_; (void)sz; (void)spec; (void)out; if (osz) *osz = 0; return kAudioConverterErr_FormatNotSupported; }
+OSStatus AudioConverterNew(const void *src, const void *dst, void **out) { (void)src; (void)dst; if (out) *out = 0; return kAudioConverterErr_FormatNotSupported; }
+OSStatus AudioConverterDispose(void *c) { (void)c; return 0; }
+OSStatus AudioConverterReset(void *c) { (void)c; return 0; }
+OSStatus AudioConverterSetProperty(void *c, u32 id_, u32 sz, const void *d) { (void)c; (void)id_; (void)sz; (void)d; return kAudioConverterErr_FormatNotSupported; }
+OSStatus AudioConverterGetProperty(void *c, u32 id_, u32 *sz, void *d) { (void)c; (void)id_; (void)d; if (sz) *sz = 0; return kAudioConverterErr_FormatNotSupported; }
+OSStatus AudioConverterGetPropertyInfo(void *c, u32 id_, u32 *sz, u8 *w) { (void)c; (void)id_; if (sz) *sz = 0; if (w) *w = 0; return kAudioConverterErr_FormatNotSupported; }
+OSStatus AudioConverterFillComplexBuffer(void *c, void *proc, void *ud, u32 *n, void *list, void *desc) { (void)c; (void)proc; (void)ud; (void)list; (void)desc; if (n) *n = 0; return kAudioConverterErr_FormatNotSupported; }
+
+/* ================================================================ CoreMIDI: nenhuma porta */
+OSStatus MIDIClientCreate(id name, void *cb, void *ref, u32 *out) { (void)name; (void)cb; (void)ref; if (out) *out = 1; return 0; }
+OSStatus MIDIClientDispose(u32 c) { (void)c; return 0; }
+OSStatus MIDIInputPortCreate(u32 c, id name, void *cb, void *ref, u32 *out) { (void)c; (void)name; (void)cb; (void)ref; if (out) *out = 2; return 0; }
+OSStatus MIDIOutputPortCreate(u32 c, id name, u32 *out) { (void)c; (void)name; if (out) *out = 3; return 0; }
+OSStatus MIDIPortConnectSource(u32 p, u32 s, void *ref) { (void)p; (void)s; (void)ref; return -10830; /* kMIDIObjectNotFound */ }
+unsigned long MIDIGetNumberOfSources(void) { return 0; }
+unsigned long MIDIGetNumberOfDestinations(void) { return 0; }
+u32 MIDIGetSource(unsigned long i) { (void)i; return 0; }
+u32 MIDIGetDestination(unsigned long i) { (void)i; return 0; }
+OSStatus MIDISend(u32 port, u32 dest, const void *list) { (void)port; (void)dest; (void)list; return -10830; }
+OSStatus MIDIObjectGetIntegerProperty(u32 o, id p, i32 *v) { (void)o; (void)p; if (v) *v = 0; return -10830; }
+OSStatus MIDIObjectGetStringProperty(u32 o, id p, id *v) { (void)o; (void)p; if (v) *v = 0; return -10830; }
+/* MIDIPacketList: {u32 numPackets; MIDIPacket packet[]}, MIDIPacket: {u64 timeStamp; u16 length; u8 data[]} (packed) */
+void *MIDIPacketListInit(void *list) { u8 *l = list; *(u32 *)l = 0; return l + 4; }
+void *MIDIPacketListAdd(void *list, unsigned long size, void *cur, u64 time, unsigned long n, const u8 *data) {
+    u8 *l = list, *p = cur;
+    if (p + 10 + n > l + size) return 0;
+    memcpy(p, &time, 8);
+    u16 len = (u16)n;
+    memcpy(p + 8, &len, 2);
+    memcpy(p + 10, data, n);
+    (*(u32 *)l)++;
+    return p;
+}
+
+/* ================================================================ CUPS: nenhuma impressora */
+typedef struct { char *name, *instance; int is_default, num_options; void *options; } cups_dest_t;
+int cupsEnumDests(unsigned flags, int msec, int *cancel, unsigned type, unsigned mask, void *cb, void *data) { (void)flags; (void)msec; (void)cancel; (void)type; (void)mask; (void)cb; (void)data; return 1; }
+cups_dest_t *cupsGetNamedDest(void *http, const char *name, const char *inst) { (void)http; (void)name; (void)inst; return 0; }
+int cupsCopyDest(cups_dest_t *d, int n, cups_dest_t **out) { (void)d; (void)out; return n; }
+void cupsFreeDests(int n, cups_dest_t *d) { (void)n; (void)d; }
+void *cupsCopyDestInfo(void *http, cups_dest_t *d) { (void)http; (void)d; return 0; }
+void cupsFreeDestInfo(void *info) { (void)info; }
+int cupsCheckDestSupported(void *http, cups_dest_t *d, void *info, const char *o, const char *v) { (void)http; (void)d; (void)info; (void)o; (void)v; return 0; }
+void *cupsFindDestSupported(void *http, cups_dest_t *d, void *info, const char *o) { (void)http; (void)d; (void)info; (void)o; return 0; }
+void *cupsFindDestDefault(void *http, cups_dest_t *d, void *info, const char *o) { (void)http; (void)d; (void)info; (void)o; return 0; }
+const char *cupsLocalizeDestValue(void *http, cups_dest_t *d, void *info, const char *o, const char *v) { (void)http; (void)d; (void)info; (void)o; return v; }
+const char *cupsGetOption(const char *name, int n, void *opts) { (void)name; (void)n; (void)opts; return 0; }
+int cupsLastError(void) { return 0x0400; /* IPP_STATUS_ERROR_NOT_FOUND */ }
+const char *cupsLastErrorString(void) { return "Nenhuma impressora configurada"; }
+const char *cupsServer(void) { return "/private/var/run/cupsd"; }
+const char *cupsUser(void) { return "visitante"; }
+const char *cupsUserAgent(void) { return "CUPS/2.3"; }
+int ippPort(void) { return 631; }
+void *httpConnect2(const char *host, int port, void *addr, int fam, int enc, int blocking, int msec, int *cancel) { (void)host; (void)port; (void)addr; (void)fam; (void)enc; (void)blocking; (void)msec; (void)cancel; return 0; }
+void httpClose(void *h) { (void)h; }
+void *cupsDoRequest(void *http, void *req, const char *res) { (void)http; (void)res; (void)req; return 0; }
+int cupsSendRequest(void *http, void *req, const char *res, size_t len) { (void)http; (void)req; (void)res; (void)len; return 0x0400; }
+int cupsWriteRequestData(void *http, const char *b, size_t n) { (void)http; (void)b; (void)n; return 0x0400; }
+void *cupsGetResponse(void *http, const char *res) { (void)http; (void)res; return 0; }
+int cupsCancelJob2(void *http, const char *name, int job, int purge) { (void)http; (void)name; (void)job; (void)purge; return 0x0400; }
+/* IPP: as requisições nunca saem; criar/apagar funcionam, leituras não acham nada */
+void *ippNew(void) { return calloc(1, 64); }
+void *ippNewRequest(int op) { (void)op; return calloc(1, 64); }
+void ippDelete(void *ipp) { free(ipp); }
+int ippSetVersion(void *ipp, int maj, int min) { (void)ipp; (void)maj; (void)min; return 1; }
+int ippGetStatusCode(void *ipp) { (void)ipp; return 0x0400; }
+int ippValidateAttributes(void *ipp) { (void)ipp; return 1; }
+void *ippFindAttribute(void *ipp, const char *n, int t) { (void)ipp; (void)n; (void)t; return 0; }
+void *ippFirstAttribute(void *ipp) { (void)ipp; return 0; }
+void *ippNextAttribute(void *ipp) { (void)ipp; return 0; }
+void ippDeleteAttribute(void *ipp, void *a) { (void)ipp; (void)a; }
+void *ippCopyAttribute(void *dst, void *a, int quick) { (void)dst; (void)a; (void)quick; return 0; }
+static u8 ipp_attr_dummy[64];
+void *ippAddInteger(void *ipp, int g, int t, const char *n, int v) { (void)ipp; (void)g; (void)t; (void)n; (void)v; return ipp_attr_dummy; }
+void *ippAddBoolean(void *ipp, int g, const char *n, char v) { (void)ipp; (void)g; (void)n; (void)v; return ipp_attr_dummy; }
+void *ippAddString(void *ipp, int g, int t, const char *n, const char *lang, const char *v) { (void)ipp; (void)g; (void)t; (void)n; (void)lang; (void)v; return ipp_attr_dummy; }
+void *ippAddStrings(void *ipp, int g, int t, const char *n, int c, const char *lang, const char *const *v) { (void)ipp; (void)g; (void)t; (void)n; (void)c; (void)lang; (void)v; return ipp_attr_dummy; }
+void *ippAddRange(void *ipp, int g, const char *n, int lo, int hi) { (void)ipp; (void)g; (void)n; (void)lo; (void)hi; return ipp_attr_dummy; }
+void *ippAddCollection(void *ipp, int g, const char *n, void *v) { (void)ipp; (void)g; (void)n; (void)v; return ipp_attr_dummy; }
+void *ippAddCollections(void *ipp, int g, const char *n, int c, const void **v) { (void)ipp; (void)g; (void)n; (void)c; (void)v; return ipp_attr_dummy; }
+int ippGetCount(void *a) { (void)a; return 0; }
+const char *ippGetName(void *a) { (void)a; return ""; }
+int ippGetGroupTag(void *a) { (void)a; return 0; }
+int ippGetInteger(void *a, int i) { (void)a; (void)i; return 0; }
+const char *ippGetString(void *a, int i, const char **lang) { (void)a; (void)i; if (lang) *lang = 0; return 0; }
+int ippGetRange(void *a, int i, int *hi) { (void)a; (void)i; if (hi) *hi = 0; return 0; }
+int ippGetResolution(void *a, int i, int *y, int *units) { (void)a; (void)i; if (y) *y = 0; if (units) *units = 0; return 0; }
+void *ippGetCollection(void *a, int i) { (void)a; (void)i; return 0; }
+/* pwgMediaForSize: tamanho em centésimos de mm -> tamanho PWG conhecido (só A4 e Carta) */
+typedef struct { const char *pwg, *legacy, *ppd; int width, length; } pwg_media_t;
+pwg_media_t *pwgMediaForSize(int w, int l) {
+    static pwg_media_t a4 = {"iso_a4_210x297mm", "a4", "A4", 21000, 29700}, letter = {"na_letter_8.5x11in", "na-letter", "Letter", 21590, 27940};
+    if (w > 21300 || l > 28800) return &a4;
+    return w >= 21300 ? &letter : (l > 28000 ? &a4 : &letter);
+}
+
+/* ================================================================ GSS-API / Kerberos: sem credenciais */
+typedef struct { u32 length; void *elements; } gss_oid_desc;
+gss_oid_desc __gss_krb5_mechanism_oid_desc = {9, (void *)"\x2a\x86\x48\x86\xf7\x12\x01\x02\x02"};
+gss_oid_desc __gss_spnego_mechanism_oid_desc = {6, (void *)"\x2b\x06\x01\x05\x05\x02"};
+gss_oid_desc __gss_ntlm_mechanism_oid_desc = {10, (void *)"\x2b\x06\x01\x04\x01\x82\x37\x02\x02\x0a"};
+gss_oid_desc __gss_c_nt_hostbased_service_oid_desc = {10, (void *)"\x2a\x86\x48\x86\xf7\x12\x01\x02\x01\x04"};
+gss_oid_desc __gss_c_nt_user_name_oid_desc = {10, (void *)"\x2a\x86\x48\x86\xf7\x12\x01\x02\x01\x01"};
+gss_oid_desc *GSS_C_NT_HOSTBASED_SERVICE = &__gss_c_nt_hostbased_service_oid_desc;
+gss_oid_desc *GSS_C_NT_USER_NAME = &__gss_c_nt_user_name_oid_desc;
+gss_oid_desc *gss_nt_service_name = &__gss_c_nt_hostbased_service_oid_desc;
+#define GSS_S_FAILURE (13u << 16)
+#define GSS_S_NO_CRED (7u << 16)
+typedef struct { size_t length; void *value; } gss_buffer_desc;
+static u32 gss_fail(u32 *minor) { if (minor) *minor = 0; return GSS_S_FAILURE; }
+u32 gss_import_name(u32 *mi, const gss_buffer_desc *b, const gss_oid_desc *t, void **out) { (void)b; (void)t; if (out) *out = 0; return gss_fail(mi); }
+u32 gss_display_name(u32 *mi, void *n, gss_buffer_desc *b, gss_oid_desc **t) { (void)n; if (b) { b->length = 0; b->value = 0; } if (t) *t = 0; return gss_fail(mi); }
+u32 gss_release_name(u32 *mi, void **n) { if (mi) *mi = 0; if (n) *n = 0; return 0; }
+u32 gss_release_buffer(u32 *mi, gss_buffer_desc *b) { if (mi) *mi = 0; if (b) { b->length = 0; b->value = 0; } return 0; }
+u32 gss_release_cred(u32 *mi, void **c) { if (mi) *mi = 0; if (c) *c = 0; return 0; }
+u32 gss_release_oid_set(u32 *mi, void **s) { if (mi) *mi = 0; if (s) *s = 0; return 0; }
+u32 gss_acquire_cred(u32 *mi, void *n, u32 t, void *mechs, int usage, void **out, void **am, u32 *tr) { (void)n; (void)t; (void)mechs; (void)usage; (void)am; if (out) *out = 0; if (tr) *tr = 0; if (mi) *mi = 0; return GSS_S_NO_CRED; }
+u32 gss_acquire_cred_with_password(u32 *mi, void *n, const gss_buffer_desc *pw, u32 t, void *mechs, int usage, void **out, void **am, u32 *tr) { (void)n; (void)pw; (void)t; (void)mechs; (void)usage; (void)am; if (out) *out = 0; if (tr) *tr = 0; if (mi) *mi = 0; return GSS_S_NO_CRED; }
+u32 gss_init_sec_context(u32 *mi, void *cred, void **ctx, void *target, gss_oid_desc *mech, u32 flags, u32 t, void *cb, const gss_buffer_desc *in, gss_oid_desc **amech, gss_buffer_desc *out, u32 *rf, u32 *tr) {
+    (void)cred; (void)ctx; (void)target; (void)mech; (void)flags; (void)t; (void)cb; (void)in; if (amech) *amech = 0; if (out) { out->length = 0; out->value = 0; } if (rf) *rf = 0; if (tr) *tr = 0;
+    if (mi) *mi = 0;
+    return GSS_S_NO_CRED;
+}
+u32 gss_accept_sec_context(u32 *mi, void **ctx, void *cred, const gss_buffer_desc *in, void *cb, void **src, gss_oid_desc **mech, gss_buffer_desc *out, u32 *rf, u32 *tr, void **dcred) {
+    (void)ctx; (void)cred; (void)in; (void)cb; if (src) *src = 0; if (mech) *mech = 0; if (out) { out->length = 0; out->value = 0; } if (rf) *rf = 0; if (tr) *tr = 0; if (dcred) *dcred = 0;
+    return gss_fail(mi);
+}
+u32 gss_delete_sec_context(u32 *mi, void **ctx, gss_buffer_desc *out) { if (mi) *mi = 0; if (ctx) *ctx = 0; if (out) { out->length = 0; out->value = 0; } return 0; }
+u32 gss_inquire_context(u32 *mi, void *ctx, void **src, void **tgt, u32 *t, gss_oid_desc **mech, u32 *flags, int *local, int *open) { (void)ctx; if (src) *src = 0; if (tgt) *tgt = 0; if (t) *t = 0; if (mech) *mech = 0; if (flags) *flags = 0; if (local) *local = 0; if (open) *open = 0; return gss_fail(mi); }
+u32 gss_display_status(u32 *mi, u32 status, int type, const gss_oid_desc *mech, u32 *more, gss_buffer_desc *out) {
+    (void)status; (void)type; (void)mech;
+    static char msg[] = "Kerberos indisponivel no mOS";
+    if (more) *more = 0;
+    if (out) { out->length = sizeof msg - 1; out->value = msg; }
+    if (mi) *mi = 0;
+    return 0;
+}
+u32 gss_indicate_mechs(u32 *mi, void **set) { if (set) *set = 0; return gss_fail(mi); }
+int gss_oid_equal(const gss_oid_desc *a, const gss_oid_desc *b) {
+    if (a == b) return 1;
+    if (!a || !b || a->length != b->length) return 0;
+    for (u32 i = 0; i < a->length; i++) if (((u8 *)a->elements)[i] != ((u8 *)b->elements)[i]) return 0;
+    return 1;
+}
+u32 gss_get_mic(u32 *mi, void *ctx, u32 qop, const gss_buffer_desc *m, gss_buffer_desc *tok) { (void)ctx; (void)qop; (void)m; if (tok) { tok->length = 0; tok->value = 0; } return gss_fail(mi); }
+u32 gss_verify_mic(u32 *mi, void *ctx, const gss_buffer_desc *m, const gss_buffer_desc *tok, u32 *qop) { (void)ctx; (void)m; (void)tok; if (qop) *qop = 0; return gss_fail(mi); }
+u32 gss_wrap(u32 *mi, void *ctx, int conf, u32 qop, const gss_buffer_desc *in, int *cs, gss_buffer_desc *out) { (void)ctx; (void)conf; (void)qop; (void)in; if (cs) *cs = 0; if (out) { out->length = 0; out->value = 0; } return gss_fail(mi); }
+u32 gss_unwrap(u32 *mi, void *ctx, const gss_buffer_desc *in, gss_buffer_desc *out, int *cs, u32 *qop) { (void)ctx; (void)in; if (out) { out->length = 0; out->value = 0; } if (cs) *cs = 0; if (qop) *qop = 0; return gss_fail(mi); }
+u32 gss_iter_creds(u32 *mi, u32 flags, const gss_oid_desc *mech, void *blk) { (void)flags; (void)mech; (void)blk; if (mi) *mi = 0; return 0; }
+id GSSCredentialCopyName(void *cred) { (void)cred; return 0; }
+u32 GSSCredentialGetLifetime(void *cred) { (void)cred; return 0; }
+id GSSNameCreateDisplayString(void *name) { (void)name; return 0; }
+/* krb5: contexto existe, nada mais */
+#define KRB5_CC_NOTFOUND (-1765328243)
+#define KRB5_KT_END (-1765328202)
+int krb5_init_context(void **ctx) { if (ctx) *ctx = calloc(1, 16); return 0; }
+void krb5_free_context(void *ctx) { free(ctx); }
+int krb5_parse_name(void *ctx, const char *n, void **p) { (void)ctx; (void)n; if (p) *p = 0; return KRB5_CC_NOTFOUND; }
+int krb5_unparse_name(void *ctx, void *p, char **n) { (void)ctx; (void)p; if (n) *n = 0; return KRB5_CC_NOTFOUND; }
+void krb5_free_unparsed_name(void *ctx, char *n) { (void)ctx; free(n); }
+void krb5_free_principal(void *ctx, void *p) { (void)ctx; (void)p; }
+void krb5_free_cred_contents(void *ctx, void *c) { (void)ctx; (void)c; }
+int krb5_free_keytab_entry_contents(void *ctx, void *e) { (void)ctx; (void)e; return 0; }
+void krb5_get_init_creds_opt_init(void *o) { if (o) memset(o, 0, 16); }
+int krb5_get_init_creds_password(void *ctx, void *creds, void *client, const char *pw, void *prompter, void *data, int start, const char *svc, void *opts) {
+    (void)ctx; (void)creds; (void)client; (void)pw; (void)prompter; (void)data; (void)start; (void)svc; (void)opts; return KRB5_CC_NOTFOUND;
+}
+int krb5_kt_default(void *ctx, void **kt) { (void)ctx; if (kt) *kt = calloc(1, 16); return 0; }
+int krb5_kt_close(void *ctx, void *kt) { (void)ctx; free(kt); return 0; }
+int krb5_kt_start_seq_get(void *ctx, void *kt, void *cur) { (void)ctx; (void)kt; (void)cur; return 0; }
+int krb5_kt_next_entry(void *ctx, void *kt, void *e, void *cur) { (void)ctx; (void)kt; (void)e; (void)cur; return KRB5_KT_END; }
+int krb5_kt_end_seq_get(void *ctx, void *kt, void *cur) { (void)ctx; (void)kt; (void)cur; return 0; }
+const char *error_message(long code) { (void)code; return "Kerberos indisponivel no mOS"; }
+
+/* ================================================================ libresolv: servidor DNS do QEMU */
+typedef union { struct { u8 len, family; u16 port; u32 addr; u8 zero[8]; } sin; u8 raw[128]; } res_sockaddr_t;
+int res_9_getservers(void *st, res_sockaddr_t *set, int cnt) {
+    (void)st;
+    if (cnt < 1) return 0;
+    memset(&set[0], 0, sizeof set[0]);
+    set[0].sin.len = 16; set[0].sin.family = 2; set[0].sin.port = (u16)(53 << 8);
+    set[0].sin.addr = 0x0302000Au;    /* 10.0.2.3 */
+    return 1;
+}
+
+/* ================================================================ UniformTypeIdentifiers */
+typedef struct { void *isa; const char *ident, *ext, *mime; } uttype_t;
+cx_class_t ut_c __asm__("OBJC_CLASS_$_UTType");
+cx_class_t ut_m __asm__("OBJC_METACLASS_$_UTType");
+extern char cx_cfconst_isa[] __asm__("__CFConstantStringClassReference");
+typedef struct { void *isa; u64 flags; const char *s; u64 n; } mk_const_t;
+#define MK(var, text) static mk_const_t var##_s = {cx_cfconst_isa, 0x7c8, text, sizeof(text) - 1}; const void *var = &var##_s;
+MK(UTTagClassFilenameExtension, "public.filename-extension")
+MK(UTTagClassMIMEType, "public.mime-type")
+static uttype_t ut_png = {&ut_c, "public.png", "png", "image/png"}, ut_text = {&ut_c, "public.utf8-plain-text", "txt", "text/plain"},
+                ut_image = {&ut_c, "public.image", 0, 0}, ut_url = {&ut_c, "com.apple.web-internet-location", "webloc", 0},
+                ut_iloc = {&ut_c, "com.apple.internet-location", 0, 0}, ut_svg = {&ut_c, "public.svg-image", "svg", "image/svg+xml"},
+                ut_content = {&ut_c, "public.content", 0, 0}, ut_app = {&ut_c, "com.apple.application-bundle", "app", 0};
+const void *UTTypePNG = &ut_png, *UTTypeUTF8PlainText = &ut_text, *UTTypeImage = &ut_image, *UTTypeInternetShortcut = &ut_url,
+           *UTTypeInternetLocation = &ut_iloc, *UTTypeSVG = &ut_svg, *UTTypeContent = &ut_content, *UTTypeApplicationBundle = &ut_app;
+static id ut_ident(id self, SEL c) { (void)c; return cx_str(((uttype_t *)self)->ident); }
+static id ut_ext(id self, SEL c) { (void)c; const char *e = ((uttype_t *)self)->ext; return e ? cx_str(e) : 0; }
+static id ut_mime(id self, SEL c) { (void)c; const char *m = ((uttype_t *)self)->mime; return m ? cx_str(m) : 0; }
+static BOOL ut_conforms(id self, SEL c, id other) {
+    (void)c;
+    if (!other || self == other) return YES;
+    const char *o = ((uttype_t *)other)->ident;
+    return !strcmp(o, "public.content") || !strcmp(o, "public.data") || !strcmp(o, "public.item") ||
+           (!strcmp(o, "public.image") && (self == (id)&ut_png || self == (id)&ut_svg)) ||
+           !strcmp(((uttype_t *)self)->ident, o);
+}
+int strcmp(const char *a, const char *b);
+void cx_uttype_init(void) {
+    cx_define_class(&ut_c, &ut_m, "UTType", cx_class_named("NSObject"), 24);
+    cx_add_method(&ut_c, "identifier", (void *)ut_ident);
+    cx_add_method(&ut_c, "description", (void *)ut_ident);
+    cx_add_method(&ut_c, "preferredFilenameExtension", (void *)ut_ext);
+    cx_add_method(&ut_c, "preferredMIMEType", (void *)ut_mime);
+    cx_add_method(&ut_c, "conformsToType:", (void *)ut_conforms);
+}
+
+/* ================================================================ ServiceManagement */
+u8 SMLoginItemSetEnabled(id ident, u8 enabled) { (void)ident; (void)enabled; return 1; }
+id SMCopyAllJobDictionaries(id domain) { (void)domain; return CFArrayCreate(0, 0, 0, 0); }
+u8 SMJobSubmit(id domain, id job, void *auth, id *err) { (void)domain; (void)job; (void)auth; if (err) *err = 0; return 0; }
+u8 SMJobRemove(id domain, id label, void *auth, u8 wait, id *err) { (void)domain; (void)label; (void)auth; (void)wait; if (err) *err = 0; return 1; }

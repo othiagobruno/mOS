@@ -23,8 +23,39 @@ enum {
     GUI_WIN_CREATE = 64, GUI_WIN_DESTROY, GUI_WIN_TITLE, GUI_DRAW, GUI_PRESENT, GUI_POLL,
     GUI_MEASURE, GUI_WIN_INFO, GUI_SCREEN, GUI_WIN_FOCUS, GUI_SET_MENU, GUI_DECODE_IMAGE,
     GUI_FONT,           /* CoreText: tabelas da fonte do sistema e raster de glifos (ver abaixo) */
+    GUI_DRAG,           /* arrastar e soltar entre janelas (de qualquer app): rdi = DG_* (ver abaixo) */
+    GUI_IME,            /* janela de candidatos do método de entrada: rdi = IME_* (ver abaixo) */
     GUI_LAST = 79
 };
+
+/* GUI_DRAG
+ *   DG_BEGIN  (win, payload, bytes, mask)  começa uma sessão; devolve o número de sequência (> 0)
+ *   DG_DATA   (out, cap)                   cópia do conteúdo do arrasto; devolve o tamanho total
+ *   DG_STATUS (seq, op)                    o destino diz qual operação aceita onde o cursor está (0 = nenhuma)
+ *   DG_FINISH (seq, op)                    o destino terminou de soltar (op 0 = falhou); a fonte recebe GEV_DRAG_END
+ *   DG_CANCEL (seq)                        a fonte desiste do arrasto
+ * Conteúdo: u32 ntipos; por tipo: u32 tlen, tipo UTF-8, u32 kind ('S' texto, 'D' dados, 'P' plist XML), u32 dlen, dados.
+ * Eventos: GEV_DRAG_ENTER/MOVE/EXIT/DROP para a janela sob o cursor (x, y no conteúdo; w, h na tela; key = máscara
+ * de operações da fonte; clicks = sequência); GEV_DRAG_SRC_MOVE e GEV_DRAG_END para a janela da fonte
+ * (GEV_DRAG_END: key = operação feita). */
+#define DG_BEGIN  0
+#define DG_DATA   1
+#define DG_STATUS 2
+#define DG_FINISH 3
+#define DG_CANCEL 4
+#define GUI_DRAG_MAX (16u << 20)
+
+/* GUI_IME
+ *   IME_SHOW (win, buf, bytes, x | y << 32)  mostra a composição e os candidatos perto de (x, y) no conteúdo.
+ *            buf: u32 selecionado, u32 n, u32 flags (1 = desenhar a composição: o cliente não mostra marked text),
+ *            depois n+1 strings terminadas em 0 (a primeira é a composição).
+ *   IME_HIDE (win)
+ *   IME_SOURCE_GET () / IME_SOURCE_SET (índice)  fonte de entrada global (0 = teclado, 1 japonês, 2 chinês, 3 coreano) */
+#define IME_SHOW 0
+#define IME_HIDE 1
+#define IME_SOURCE_GET 2
+#define IME_SOURCE_SET 3
+#define GUI_IME_MAX 8192
 
 /* flags de janela */
 #define GUI_WF_RESIZABLE 1
@@ -32,7 +63,9 @@ enum {
 
 /* eventos */
 enum { GEV_NONE, GEV_MOUSE_DOWN, GEV_MOUSE_UP, GEV_MOUSE_MOVE, GEV_RIGHT_DOWN, GEV_SCROLL,
-       GEV_KEY_DOWN, GEV_CLOSE, GEV_RESIZE, GEV_FOCUS, GEV_QUIT, GEV_MENU };   /* GEV_MENU: key = ação */
+       GEV_KEY_DOWN, GEV_CLOSE, GEV_RESIZE, GEV_FOCUS, GEV_QUIT, GEV_MENU,     /* GEV_MENU: key = ação */
+       GEV_DRAG_ENTER, GEV_DRAG_MOVE, GEV_DRAG_EXIT, GEV_DRAG_DROP, GEV_DRAG_SRC_MOVE, GEV_DRAG_END,
+       GEV_INPUT_SOURCE };  /* GEV_INPUT_SOURCE: key = nova fonte de entrada (⌃Espaço troca) */
 
 typedef struct {
     unsigned int type, win;

@@ -1961,14 +1961,52 @@ static void r_mouse_up(id self, SEL c, id e) { (void)c; id sv = cx_is_subclass(s
 static void r_mouse_dragged(id self, SEL c, id e) { (void)c; id sv = cx_is_subclass(self->isa, &NSView_c) ? vs(self)->superview : 0; if (sv) MSG(void, sv, "mouseDragged:", e); }
 static void r_right_down(id self, SEL c, id e) { (void)c; id sv = cx_is_subclass(self->isa, &NSView_c) ? vs(self)->superview : 0; if (sv) MSG(void, sv, "rightMouseDown:", e); }
 static void r_scroll(id self, SEL c, id e) { (void)c; id sv = cx_is_subclass(self->isa, &NSView_c) ? vs(self)->superview : 0; if (sv) MSG(void, sv, "scrollWheel:", e); }
+BOOL cx_ime_native_key(id view, id event);      /* appkit_input.c: método de entrada para os campos nativos */
 static void r_key_down(id self, SEL c, id e) {
     (void)c;
     if (cx_is_subclass(self->isa, &NSView_c)) {
         vstate_t *s = vs(self);
+        if (((s->kind == K_TEXT && s->editable) || s->kind == K_TV) && cx_ime_native_key(self, e)) return;
         if (s->kind == K_TEXT && s->editable) { tf_key(self, e); return; }
         if (s->kind == K_TV) { tx_key(self, e); return; }
         if (s->superview) { MSG(void, s->superview, "keyDown:", e); return; }
     }
+}
+
+/* ---- para appkit_input.c (IME e arrastar/soltar), que não enxerga vstate_t/wstate_t */
+/* texto confirmado pelo método de entrada num campo/NSTextView nativo do mOS */
+void cx_native_insert_text(id v, const char *utf8) {
+    if (!v || !utf8 || !*utf8 || !cx_is_subclass(v->isa, &NSView_c)) return;
+    vstate_t *s = vs(v);
+    if (s->kind == K_TV) { tx_insert(v, utf8); return; }
+    if (s->kind != K_TEXT || !s->editable) return;
+    gui_event_t g;
+    memset(&g, 0, sizeof g);
+    id ev = make_event(10, s->window, 0, 0, &g);
+    evs(ev)->chars = cx_str(utf8);
+    evs(ev)->keycode = 0x7F;
+    evs(ev)->mods = 0;
+    tf_key(v, ev);
+}
+/* retângulo da view na janela, origem em cima à esquerda (pixels do conteúdo) */
+BOOL cx_view_rect_in_window(id v, double *x, double *y, double *w, double *h) {
+    if (!v || !cx_is_subclass(v->isa, &NSView_c)) return NO;
+    absr_t a;
+    if (!abs_rect(v, &a)) return NO;
+    *x = a.tlx; *y = a.tly; *w = a.w; *h = a.h;
+    return YES;
+}
+int cx_window_gid(id w) { return w && cx_is_subclass(w->isa, &NSWindow_c) ? ws(w)->gid : 0; }
+double cx_window_content_h(id w) { return w && cx_is_subclass(w->isa, &NSWindow_c) ? ws(w)->frame.s.h : 0; }
+NSRect cx_window_screen_frame(id w) { NSRect z = {{0, 0}, {0, 0}}; return w && cx_is_subclass(w->isa, &NSWindow_c) ? ws(w)->frame : z; }
+/* view mais funda sob (x, y) do conteúdo (origem em cima à esquerda) */
+id cx_window_hit(id w, double x, double y) {
+    if (!w || !cx_is_subclass(w->isa, &NSWindow_c)) return 0;
+    wstate_t *s = ws(w);
+    if (!s->content) return 0;
+    absr_t a = {0, 0, s->frame.s.w, s->frame.s.h, is_flipped(s->content)};
+    id v = hit(s->content, &a, x, y);
+    return v ? v : s->content;
 }
 
 /* ================================================================ NSApplication */
@@ -2038,10 +2076,19 @@ static id find_window(int gid) {
     return 0;
 }
 static BOOL menu_shortcut(gui_event_t *g);
+id cx_hover_view(id w);              /* appkit_input.c */
+void cx_set_hover_view(id w, id v);
 static void dispatch(gui_event_t *g) {
     if (g->type == GEV_QUIT) { MSG(void, NSApp, "terminate:", (id)0); return; }
     if (g->type == GEV_MENU) { perform_menu(g->key); return; }
+    if (g->type == GEV_INPUT_SOURCE) { extern void cx_ime_source_changed(int src); cx_ime_source_changed(g->key); return; }
     id w = find_window((int)g->win);
+    if (g->type >= GEV_DRAG_ENTER && g->type <= GEV_DRAG_END) {
+        /* arrastar e soltar (appkit_input.c); o fim de um arrasto chega mesmo se a janela da fonte já fechou */
+        extern void cx_drag_event(id win, const gui_event_t *g);
+        cx_drag_event(w, g);
+        return;
+    }
     if (!w) return;
     wstate_t *s = ws(w);
     g_mods = mac_mods(g->mods);
@@ -2075,6 +2122,19 @@ static void dispatch(gui_event_t *g) {
         break;
     case GEV_MOUSE_MOVE:
         if (g->buttons && s->mouse_view) MSG(void, s->mouse_view, "mouseDragged:", make_event(6, w, g->x, g->y, g));
+        else {
+            /* sem botão: hover (o Chromium realça botões, mostra dicas e muda o cursor com estes eventos) */
+            absr_t a = {0, 0, s->frame.s.w, s->frame.s.h, is_flipped(s->content)};
+            id v = hit(s->content, &a, g->x, g->y);
+            if (!v) v = s->content;
+            id prev = cx_hover_view(w);
+            if (prev != v) {
+                if (prev) MSG(void, prev, "mouseExited:", make_event(9, w, g->x, g->y, g));
+                MSG(void, v, "mouseEntered:", make_event(8, w, g->x, g->y, g));
+                cx_set_hover_view(w, v);
+            }
+            MSG(void, v, "mouseMoved:", make_event(5, w, g->x, g->y, g));
+        }
         break;
     case GEV_KEY_DOWN: {
         id e = make_event(10, w, 0, 0, g);

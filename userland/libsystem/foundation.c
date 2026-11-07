@@ -935,10 +935,83 @@ static BOOL th_is_main(id self, SEL c) { (void)self; (void)c; return YES; }
 static id th_current(id cls, SEL c) { return g_singleton(cls, c); }
 static void th_sleep(id cls, SEL c, double s) { (void)cls; (void)c; usleep((unsigned)(s * 1e6)); }
 
-/* NSUserDefaults: em memória (persistência fica para quando o mOS tiver um diretório de prefs) */
+/* NSUserDefaults: em memória (persistência fica para quando o mOS tiver um diretório de prefs).
+ * O padrão (standardUserDefaults, [[NSUserDefaults alloc] init]) usa ud_dict. -initWithSuiteName: dá um objeto por
+ * suíte, com os valores que o macOS traz nesse domínio (ud_system_defaults). */
 static id ud_dict;
-static id ud_obj(id self, SEL c, id k) { (void)self; return ud_dict ? d_get(ud_dict, c, k) : 0; }
-static void ud_set(id self, SEL c, id v, id k) { (void)self; if (!ud_dict) ud_dict = d_dict((id)&NSMutableDictionary_c, c); d_set(ud_dict, v, k); }
+#define UD_SUITES 8
+static struct { id obj; char name[96]; id dict; } ud_suites[UD_SUITES];
+static int ud_nsuites;
+static id ud_dict_of(id self, SEL c, BOOL create) {
+    for (int i = 0; i < ud_nsuites; i++) if (ud_suites[i].obj == self) return ud_suites[i].dict;
+    if (!ud_dict && create) ud_dict = d_dict((id)&NSMutableDictionary_c, c);
+    return ud_dict;
+}
+/* valores de sistema por domínio. com.apple.universalaccess/mouseDriverCursorSize: o Chromium observa essa chave (KVO,
+ * opção Initial) e manda o valor ao renderer em VisualProperties.cursor_accessibility_scale_factor; abaixo de 1 o
+ * renderer recusa o CreateView inteiro (VALIDATION_ERROR_DESERIALIZATION_FAILED) e a janela fica sem conteúdo */
+static void ud_system_defaults(const char *suite, id dict) {
+    if (!strcmp(suite, "com.apple.universalaccess")) {
+        d_set(dict, cx_num_d(1.0), cx_str("mouseDriverCursorSize"));
+        d_set(dict, cx_num_i(0), cx_str("reduceMotion"));
+        d_set(dict, cx_num_i(0), cx_str("reduceTransparency"));
+        d_set(dict, cx_num_i(0), cx_str("increaseContrast"));
+        d_set(dict, cx_num_i(0), cx_str("differentiateWithoutColor"));
+    }
+}
+static id ud_init_suite(id self, SEL c, id name) {
+    if (!name || !N(name) || !S(name)) return self;                 /* suíte nil: o domínio do app */
+    const char *s = S(name);
+    for (int i = 0; i < ud_nsuites; i++)
+        if (!strcmp(ud_suites[i].name, s)) { objc_release(self); return objc_retain(ud_suites[i].obj); }
+    if (ud_nsuites == UD_SUITES) return self;
+    ud_suites[ud_nsuites].obj = objc_retain(self);                  /* a tabela guarda uma referência: vive para sempre */
+    strlcpy(ud_suites[ud_nsuites].name, s, sizeof ud_suites[ud_nsuites].name);
+    ud_suites[ud_nsuites].dict = d_dict((id)&NSMutableDictionary_c, c);
+    ud_system_defaults(s, ud_suites[ud_nsuites].dict);
+    ud_nsuites++;
+    return self;
+}
+/* KVO no NSUserDefaults. Com NSKeyValueObservingOptionInitial (4) o observador recebe o valor atual na hora, como no
+ * Cocoa; com New (1) o valor (ou NSNull) vai em NSKeyValueChangeNewKey. setObject:forKey: depois notifica quem observa
+ * a chave. removeObserver tira o registro (nunca se manda mensagem a um observador já liberado). */
+extern id NSKeyValueChangeNewKey, NSKeyValueChangeKindKey;
+#define UD_OBS 32
+static struct { id ud, obs, path; u64 opts; void *ctx; } ud_obs[UD_OBS];
+static int ud_nobs;
+static id ud_change(id v, u64 opts) {
+    id ch = d_dict((id)&NSMutableDictionary_c, 0);
+    d_set(ch, cx_num_i(1), NSKeyValueChangeKindKey);                /* NSKeyValueChangeSetting */
+    if (opts & 1) d_set(ch, v ? v : g_singleton((id)&NSNull_c, 0), NSKeyValueChangeNewKey);
+    return ch;
+}
+static id ud_obj(id self, SEL c, id k);
+static void ud_kvo_add(id self, SEL c, id obs, id path, u64 opts, void *ctx) {
+    if (!obs || !path) return;
+    if (ud_nobs < UD_OBS) {
+        ud_obs[ud_nobs].ud = self; ud_obs[ud_nobs].obs = obs; ud_obs[ud_nobs].path = objc_retain(path);
+        ud_obs[ud_nobs].opts = opts; ud_obs[ud_nobs].ctx = ctx;
+        ud_nobs++;
+    }
+    if (opts & 4)
+        MSG(void, obs, "observeValueForKeyPath:ofObject:change:context:", path, self, ud_change(ud_obj(self, c, path), opts), ctx);
+}
+static void ud_kvo_remove_ctx(id self, SEL c, id obs, id path, void *ctx) {
+    (void)c; (void)ctx;
+    for (int i = 0; i < ud_nobs;)
+        if (ud_obs[i].ud == self && ud_obs[i].obs == obs && obj_eq(ud_obs[i].path, path)) { objc_release(ud_obs[i].path); ud_obs[i] = ud_obs[--ud_nobs]; }
+        else i++;
+}
+static void ud_kvo_remove(id self, SEL c, id obs, id path) { ud_kvo_remove_ctx(self, c, obs, path, 0); }
+static void ud_kvo_notify(id self, id key, id v) {
+    for (int i = 0; i < ud_nobs; i++)
+        if (ud_obs[i].ud == self && obj_eq(ud_obs[i].path, key))
+            MSG(void, ud_obs[i].obs, "observeValueForKeyPath:ofObject:change:context:", ud_obs[i].path, self,
+                ud_change(v, ud_obs[i].opts), ud_obs[i].ctx);
+}
+static id ud_obj(id self, SEL c, id k) { id d = ud_dict_of(self, c, NO); return d ? d_get(d, c, k) : 0; }
+static void ud_set(id self, SEL c, id v, id k) { d_set(ud_dict_of(self, c, YES), v, k); ud_kvo_notify(self, k, v); }
+static float ud_float(id self, SEL c, id k) { id v = ud_obj(self, c, k); return v ? (float)MSG0(double, v, "doubleValue") : 0.0f; }
 static BOOL ud_bool(id self, SEL c, id k) { id v = ud_obj(self, c, k); return v ? MSG0(BOOL, v, "boolValue") : NO; }
 static i64 ud_int(id self, SEL c, id k) { id v = ud_obj(self, c, k); return v ? MSG0(i64, v, "integerValue") : 0; }
 static double ud_double(id self, SEL c, id k) { id v = ud_obj(self, c, k); return v ? MSG0(double, v, "doubleValue") : 0; }
@@ -1281,6 +1354,11 @@ void cx_foundation_init(void) {
     M(NSUserDefaults, "integerForKey:", ud_int); M(NSUserDefaults, "doubleForKey:", ud_double); M(NSUserDefaults, "setBool:forKey:", ud_set_bool);
     M(NSUserDefaults, "setInteger:forKey:", ud_set_int); M(NSUserDefaults, "setDouble:forKey:", ud_set_double); M(NSUserDefaults, "registerDefaults:", ud_register);
     M(NSUserDefaults, "synchronize", yes_m); M(NSUserDefaults, "removeObjectForKey:", o_void);
+    M(NSUserDefaults, "initWithSuiteName:", ud_init_suite); M(NSUserDefaults, "floatForKey:", ud_float);
+    M(NSUserDefaults, "valueForKey:", ud_obj); M(NSUserDefaults, "valueForKeyPath:", ud_obj);
+    M(NSUserDefaults, "addObserver:forKeyPath:options:context:", ud_kvo_add);
+    M(NSUserDefaults, "removeObserver:forKeyPath:", ud_kvo_remove);
+    M(NSUserDefaults, "removeObserver:forKeyPath:context:", ud_kvo_remove_ctx);
 
     cx_define_class(&NSBundle_c, &NSBundle_m, "NSBundle", &NSObject_c, sizeof(nsbundle_t) - 8);
     CM(NSBundle, "mainBundle", b_main); CM(NSBundle, "bundleWithPath:", b_with_path); CM(NSBundle, "bundleForClass:", b_for_class);

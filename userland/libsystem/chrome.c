@@ -196,7 +196,8 @@ int mkdirat(int fd, const char *p, unsigned short mode) {
 int utime(const char *p, const void *times) { (void)p; (void)times; return 0; }   /* o VFS não guarda datas por arquivo */
 int shm_open(const char *n, int fl, ...) { (void)n; (void)fl; SET_ERRNO(ENOSYS_); return -1; }
 int shm_unlink(const char *n) { (void)n; SET_ERRNO(ENOENT_); return -1; }
-int getattrlist(const char *p, void *al, void *buf, size_t sz, unsigned opts) { (void)p; (void)al; (void)buf; (void)sz; (void)opts; SET_ERRNO(ENOTSUP_); return -1; }
+int cx_getattrlist(const char *p, void *al, void *buf, size_t sz, unsigned opts);   /* posixmore.c: capacidades do volume */
+int getattrlist(const char *p, void *al, void *buf, size_t sz, unsigned opts) { return cx_getattrlist(p, al, buf, sz, opts); }
 char *_dirhelper(int which, char *buf, size_t len) { (void)which; (void)buf; (void)len; return 0; }
 int proc_get_wakemon_params(int pid, int *rate, int *flags) { (void)pid; (void)rate; (void)flags; SET_ERRNO(ENOTSUP_); return -1; }
 

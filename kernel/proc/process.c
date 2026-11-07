@@ -140,6 +140,18 @@ int proc_tty_interrupt(int pid) {
     return n;
 }
 
+/* como proc_tty_interrupt, mas só age (e só ecoa ^C) quando há um processo em primeiro plano no terminal */
+int proc_tty_interrupt_fg(int pid) {
+    u64 fl = irq_save();
+    process_t *lead = find(pid);
+    bool any = false;
+    if (lead && lead->tty)
+        for (process_t *q = procs; q; q = q->next)
+            if (q != lead && q->tty == lead->tty && !q->exited) { any = true; break; }
+    irq_restore(fl);
+    return any ? proc_tty_interrupt(pid) : 0;
+}
+
 void proc_tty_eof(int pid) {
     u64 fl = irq_save();
     process_t *p = find(pid);
@@ -657,6 +669,8 @@ u64 proc_fault(int_frame_t *f, u64 cr2) {
         extern bool lazy_fault(process_t *p, u64 va);
         if (lazy_fault(p, cr2)) return (u64)f;
     }
+    /* tracepoint de diagnóstico (proc/tracepoint.c): registra, devolve o byte original e repete a instrução */
+    { extern bool tp_hit(process_t *p, int_frame_t *f); if (tp_hit(p, f)) return (u64)f; }
     /* o programa tem tratador para esta falha? entrega o sinal */
     int sig = f->vector == 14 || f->vector == 13 ? MOS_SIGSEGV : f->vector == 0 ? MOS_SIGFPE : f->vector == 6 ? MOS_SIGILL : 0;
     if (sig && p->sig_handler[sig] > MOS_SIG_IGN && !(p->sig_pending & (1u << sig))) {
@@ -1412,11 +1426,25 @@ u64 proc_syscall(int_frame_t *f) {
         if (!copy_str_in(p, path, a, sizeof path) || (b && !copy_str_in(p, arg, b, sizeof arg)) ||
             !uvm_copy_in(p, io, c, sizeof io)) { r = -MOS_EFAULT; break; }
         if (strchr(path, '/') && path[0] != '/') { char rel[256]; memcpy(rel, path, sizeof rel); snprintf(path, sizeof path, "%s/%s", p->cwd, rel); }
-        r = proc_spawn(path, b ? arg : NULL);
+        /* O filho recebe só 0..2 (io[i], ou o fd i do pai quando io[i] < 0), aplicados antes de a thread existir:
+         * herdar os demais fds deixaria cópias das pontas de pipe no filho (o `wc` de "seq | wc" segurava a ponta
+         * de escrita e nunca via EOF), e redirecionar depois do spawn corria com o filho já rodando em outro núcleo. */
+        mos_spawn_fa_t acts[3];
+        int nacts = 0;
+        for (int i = 0; i < 3; i++) {
+            int src = io[i] >= 0 ? io[i] : i;
+            if (src >= 32 || fd_get(p, (u64)src) < 0) continue;
+            memset(&acts[nacts], 0, sizeof acts[nacts]);
+            acts[nacts].kind = MOS_SPAWN_FA_DUP2;
+            acts[nacts].a = src;
+            acts[nacts].b = i;
+            nacts++;
+        }
+        extern int proc_spawn_in(const char *path, const char *arg, tty_t *tty,
+                                 char **xargv, int xargc, char **xenv, int xenvc,
+                                 mos_spawn_fa_t *acts, int nacts, unsigned spawn_flags);
+        r = proc_spawn_in(path, b ? arg : NULL, p->tty, NULL, 0, NULL, 0, acts, nacts, MOS_SPAWN_CLOEXEC_DEFAULT);
         if (r < 0) { r = -MOS_ENOENT; break; }
-        process_t *child = find((int)r);
-        for (int i = 0; child && i < 3; i++)
-            if (io[i] >= 0 && fd_get(p, (u64)io[i]) >= 0) fd_copy(child, i, p, io[i]);
         break;
     }
     case SYS_READ: {
@@ -1787,22 +1815,29 @@ static void sh_test(void *arg) {
         "seq 5000 | wc\n"
         "spin 0\n";                                     /* nunca termina: Ctrl+C abaixo */
     static const char after[] = "echo depois do ctrl-c\nexit 7\n";
+    /* Orientado a eventos, não a tempos fixos: sob QEMU sem aceleração o boot é pesado (compositor, bench,
+     * DHCP) e o sh pode levar bem mais que alguns segundos para chegar a cada etapa. */
+    char *out = kcalloc(1, 8192);
+    if (!out) return;
+    usize n = 0;
     u64 t0 = timer_ticks();
-    while (timer_ticks() - t0 < 300) hlt();             /* deixa o sh chegar ao prompt */
+#define SH_PUMP() do { n += proc_tty_read(sh_test_pid, out + n, 8191 - n); out[n] = 0; } while (0)
+    while (timer_ticks() - t0 < 20000 && !strstr(out, "$ ")) { SH_PUMP(); hlt(); }          /* prompt */
     proc_tty_write(sh_test_pid, cmds, sizeof cmds - 1);
-    while (timer_ticks() - t0 < 2500) hlt();            /* o spin já está rodando em primeiro plano */
-    int killed = proc_tty_interrupt(sh_test_pid);
+    while (timer_ticks() - t0 < 60000 && !strstr(out, "23893 bytes")) { SH_PUMP(); hlt(); } /* seq | wc terminou */
+    int killed = 0;
+    for (u64 last = 0; timer_ticks() - t0 < 60000 && !killed; hlt()) {   /* Ctrl+C assim que o spin estiver vivo */
+        SH_PUMP();
+        if (timer_ticks() - last >= 250) { last = timer_ticks(); killed = proc_tty_interrupt_fg(sh_test_pid); }
+    }
     kprintf("teste-sh: Ctrl+C encerrou %d processo(s)\n", killed);
     proc_tty_write(sh_test_pid, after, sizeof after - 1);
-    char *out = kcalloc(1, 8192);
-    usize n = 0;
-    while (out && timer_ticks() - t0 < 8000) {
-        n += proc_tty_read(sh_test_pid, out + n, 8191 - n);
-        if (!proc_alive(sh_test_pid) && timer_ticks() - t0 > 500) { n += proc_tty_read(sh_test_pid, out + n, 8191 - n); break; }
+    while (timer_ticks() - t0 < 90000) {
+        SH_PUMP();
+        if (!proc_alive(sh_test_pid)) { SH_PUMP(); break; }
         hlt();
     }
-    if (!out) return;
-    out[n] = 0;
+#undef SH_PUMP
     kprintf("---- saída da sessão do sh ----\n%s\n-------------------------------\n", out);
     static const char *want[] = {"ola do shell", "/Sistema/Programas $", "teste", "filho: pid", "via-shell",
                                  "gravado pelo sh", "ESTADO", "msh", "comando não encontrado",

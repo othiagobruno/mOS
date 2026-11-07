@@ -43,7 +43,7 @@ if ($cu) {
     New-Item -ItemType Directory -Force "$usr\opt\gmp\lib" | Out-Null
     Copy-Item -Force "$gmp\lib\libgmp.10.dylib" "$usr\opt\gmp\lib\"
     foreach ($f in Get-ChildItem "$($cu.FullName)\bin" -File) {
-        Copy-Item -Force $f.FullName "$usr\bin\$($f.Name)"
+        Copy-Item -Force -LiteralPath $f.FullName -Destination "$usr\bin\$($f.Name)"
         if ($f.Name.StartsWith('g') -and $f.Name -ne 'g[') { New-MosLink "$usr\bin\$($f.Name.Substring(1))" $f.Name }
     }
     New-MosLink "$usr\bin\[" 'g['

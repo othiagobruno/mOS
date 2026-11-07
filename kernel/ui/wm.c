@@ -35,6 +35,7 @@ static void draw_identify(surface_t *s) {
 
 int wm_mouse_x(void) { return mx; }
 int wm_mouse_y(void) { return my; }
+int wm_mouse_buttons(void) { return mbuttons; }
 window_t *wm_window_list(void) { return nwins ? wins[0] : NULL; }
 
 /* ============================================================ dano */

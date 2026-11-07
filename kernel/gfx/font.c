@@ -24,6 +24,8 @@ struct font {
 };
 
 static struct font fonts[FONT_COUNT];
+/* fonte de fallback (CJK e outros alfabetos que a Inter não cobre), carregada do disco em font_load_fallback */
+static struct font fallback;
 
 static inline u16 be16(const u8 *p) { return (u16)(p[0] << 8 | p[1]); }
 static inline i16 bes16(const u8 *p) { return (i16)be16(p); }
@@ -170,8 +172,8 @@ static int gpos_kern(struct font *f, u16 g1, u16 g2) {
 static int kern_cache_lookup(struct font *f, u16 a, u16 b);
 
 /* ------------------------------------------------------------ init */
-static void font_load(int id, const u8 *d, const u8 *e) {
-    struct font *f = &fonts[id];
+static void font_load_into(struct font *f, int id, const u8 *d, const u8 *e) {
+    /* (f vem do chamador) */
     f->data = d; f->size = (u32)(e - d); f->id = id;
     u32 head = find_table(f, "head"), maxp = find_table(f, "maxp"), hhea = find_table(f, "hhea");
     f->upem = be16(d + head + 18);
@@ -230,6 +232,8 @@ static int kern_cache_lookup(struct font *f, u16 a, u16 b) {
     return 0;
 }
 
+static void font_load(int id, const u8 *d, const u8 *e) { font_load_into(&fonts[id], id, d, e); }
+
 void font_init(void) {
     font_load(FONT_REGULAR, font_regular_ttf, font_regular_ttf_end);
     font_load(FONT_MEDIUM, font_medium_ttf, font_medium_ttf_end);
@@ -239,6 +243,55 @@ void font_init(void) {
 }
 
 font_t *font_get(int w) { return &fonts[CLAMP(w, 0, FONT_COUNT - 1)]; }
+
+/* TrueType com glyf/loca/cmap (não CFF): confere as tabelas antes de usar dados vindos do disco */
+static bool font_valid(const u8 *d, u32 n) {
+    if (!d || n < 12) return false;
+    u32 tag = (u32)d[0] << 24 | d[1] << 16 | d[2] << 8 | d[3];
+    if (tag != 0x00010000 && tag != 0x74727565) return false;           /* 1.0 ou 'true' */
+    u16 nt = be16(d + 4);
+    if (12 + (u32)nt * 16 > n) return false;
+    const char *need[] = {"head", "maxp", "hhea", "hmtx", "loca", "glyf", "cmap"};
+    for (int k = 0; k < 7; k++) {
+        bool ok = false;
+        for (u16 i = 0; i < nt; i++) {
+            const u8 *r = d + 12 + i * 16;
+            u32 off = be32(r + 8), len = be32(r + 12);
+            if (!memcmp(r, need[k], 4)) { ok = off < n && len <= n - off && len >= 4; break; }
+        }
+        if (!ok) return false;
+    }
+    return true;
+}
+bool font_set_fallback(const u8 *d, u32 n) {
+    if (!font_valid(d, n)) return false;
+    /* cópia própria: arquivos de volumes externos podem sair da memória (LRU do vfs_bridge) */
+    u8 *copy = kmalloc(n);
+    if (!copy) return false;
+    memcpy(copy, d, n);
+    font_load_into(&fallback, FONT_COUNT, copy, copy + n);   /* id próprio: o cache de glifos não mistura com a Inter */
+    return fallback.data != NULL;
+}
+bool font_has_fallback(void) { return fallback.data != NULL; }
+/* procura a fonte nos lugares de costume; chamado depois que o sistema de arquivos está montado */
+#include "vfs.h"
+bool font_load_fallback(void) {
+    static const char *paths[] = {
+        "/System/Library/Fonts/mOS-CJK.ttf", "/Sistema/Fontes/mOS-CJK.ttf",
+        "/System/Library/Fonts/DroidSansFallbackFull.ttf", "/System/Library/Fonts/DroidSansFallback.ttf",
+        "/Library/Fonts/mOS-CJK.ttf",
+    };
+    if (fallback.data) return true;
+    for (u32 i = 0; i < sizeof paths / sizeof *paths; i++) {
+        vnode_t *v = vfs_lookup(paths[i]);
+        if (!v || v->dir || !vfs_ensure(v) || !v->data) continue;
+        if (font_set_fallback(v->data, (u32)v->size)) {
+            kprintf("Fontes: fallback %s (%u glifos)\n", paths[i], fallback.nglyphs);
+            return true;
+        }
+    }
+    return false;
+}
 
 static int advance_units(struct font *f, u16 g) {
     if (g >= f->nhmetrics) g = f->nhmetrics - 1;
@@ -453,9 +506,10 @@ static glyph_t *glyph_get(struct font *f, float size, u32 cp) {
     return glyph_cached(f, size, cp, glyph_index(f, cp));
 }
 
-bool font_has_glyph(font_t *f, u32 cp) { return glyph_index(f, cp) != 0; }
+bool font_has_glyph(font_t *f, u32 cp) { return glyph_index(f, cp) != 0 || (fallback.data && cp >= 0x80 && glyph_index(&fallback, cp) != 0); }
 
 static struct font *face(int weight) {
+    if (weight == FONT_FALLBACK_WEIGHT && fallback.data) return &fallback;
     if (weight < 0) weight = 0;
     if (weight >= FONT_COUNT) weight = FONT_COUNT - 1;
     return &fonts[weight];
@@ -536,6 +590,15 @@ static float kern_px(struct font *f, float size, u16 a, u16 b) {
     return k ? k * size / f->upem : 0;
 }
 
+/* glifo que falta na Inter: vem da fonte de fallback (CJK, hangul, kana...) */
+static struct font *fallback_for(struct font *f, u32 cp, u16 *g) {
+    if (*g || cp < 0x80 || !fallback.data) return f;
+    u16 fg = glyph_index(&fallback, cp);
+    if (!fg) return f;
+    *g = fg;
+    return &fallback;
+}
+
 int text_width_n(font_t *f, float size, const char *s, int bytes) {
     float x = 0;
     const char *e = bytes < 0 ? NULL : s + bytes;
@@ -544,6 +607,8 @@ int text_width_n(font_t *f, float size, const char *s, int bytes) {
         u32 cp = utf8_decode(&s);
         if (cp == '\t') cp = ' ';
         u16 g = glyph_index(f, cp);
+        struct font *ff = fallback_for(f, cp, &g);
+        if (ff != f) { x += advance_units(ff, g) * size / ff->upem; prev = 0; continue; }
         x += kern_px(f, size, prev, g);
         x += advance_units(f, g) * size / f->upem;
         prev = g;
@@ -564,6 +629,14 @@ int text_draw_n(surface_t *s, font_t *f, float size, int x, int baseline, u32 co
         if (cp == '\t') cp = ' ';
         if (cp == '\n') continue;
         u16 gi = glyph_index(f, cp);
+        struct font *ff = fallback_for(f, cp, &gi);
+        if (ff != f) {
+            glyph_t *g = glyph_cached(ff, size, cp, gi);
+            if (g && g->bmp) gfx_mask(s, (int)(pen + 0.5f) + g->left, baseline + g->top, g->bmp, g->w, g->h, g->w, color);
+            pen += advance_units(ff, gi) * size / ff->upem;
+            prev = 0;
+            continue;
+        }
         pen += kern_px(f, size, prev, gi);
         prev = gi;
         if (cp != ' ') {

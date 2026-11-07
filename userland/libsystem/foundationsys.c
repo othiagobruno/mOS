@@ -121,12 +121,19 @@ static int at_ok(int fd, const char *p) {
     SET(CX_ENOSYS);
     return 0;
 }
-int openat(int fd, const char *p, int flags, ...) { return at_ok(fd, p) ? open(p, flags, 0644) : -1; }
+const char *cx_at_path(int dirfd, const char *p, char *buf, size_t cap);   /* posixmore.c: dirfd -> caminho (SYS_FDPATH) */
+int openat(int fd, const char *p, int flags, ...) { char t[1024]; const char *q = cx_at_path(fd, p, t, sizeof t); return q ? open(q, flags, 0644) : -1; }
 int unlinkat(int fd, const char *p, int flag) {
-    if (!at_ok(fd, p)) return -1;
-    return (flag & AT_REMOVEDIR) ? rmdir(p) : unlink(p);
+    char t[1024];
+    const char *q = cx_at_path(fd, p, t, sizeof t);
+    if (!q) return -1;
+    return (flag & AT_REMOVEDIR) ? rmdir(q) : unlink(q);
 }
-int renameat(int fa, const char *a, int fb, const char *b) { return at_ok(fa, a) && at_ok(fb, b) ? rename(a, b) : -1; }
+int renameat(int fa, const char *a, int fb, const char *b) {
+    char ta[1024], tb[1024];
+    const char *qa = cx_at_path(fa, a, ta, sizeof ta), *qb = qa ? cx_at_path(fb, b, tb, sizeof tb) : 0;
+    return qb ? rename(qa, qb) : -1;
+}
 int renamex_np(const char *a, const char *b, unsigned flags) { (void)flags; return rename(a, b); }
 int renameatx_np(int fa, const char *a, int fb, const char *b, unsigned flags) { (void)flags; return renameat(fa, a, fb, b); }
 

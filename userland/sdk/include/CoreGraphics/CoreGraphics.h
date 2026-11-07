@@ -15,8 +15,9 @@
 /* Para o Swift (o importador clang define __swift__): os tipos CG em C ganham nomes MOS... para não colidir com as
  * classes/structs Swift do OpenCoreGraphics (CGPath, CGColor, CGContext, CGImage, CGPathElement...), e as referências
  * CG*Ref não são "tipos CF" (sem CF_BRIDGED_TYPE): os objetos do libSystem são ObjC e o ARC do Swift sem ObjC os
- * corromperia; chegam ao Swift como ponteiros opacos. Para C/C++ nada muda. */
-#if defined(__swift__)
+ * corromperia; chegam ao Swift como ponteiros opacos. Para C/C++ nada muda.
+ * MOS_SWIFT_OBJC (variante do Swift com interop ObjC, docs/swift-objc-runtime.md): nomes e pontes da Apple, como no SDK. */
+#if defined(__swift__) && !defined(MOS_SWIFT_OBJC)
 #define CGPath MOSCGPath
 #define CGPathRef MOSCGPathRef
 #define CGMutablePathRef MOSCGMutablePathRef

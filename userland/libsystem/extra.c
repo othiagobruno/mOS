@@ -199,7 +199,7 @@ int pthread_create(unsigned long *t, const void *attr, void *(*fn)(void *), void
     *(u64 *)top = 0;
     long tid = SYS3(SYS_THREAD_CREATE, cx_thread_entry, top, ts);
     if (tid < 0) { free(ts); cx_fdprintf(2, "[thread] pthread_create: o kernel recusou a thread (%ld)\n", tid); return 35; }
-    cx_fdprintf(2, "[thread] %ld: entrada %p, arg %p\n", tid, (void *)fn, arg);   /* diagnóstico temporário (porte do VS Code) */
+    { char *getenv(const char *); if (getenv("CX_TRACE_THREADS")) cx_fdprintf(2, "[thread] %ld: entrada %p, arg %p\n", tid, (void *)fn, arg); }   /* diagnóstico (porte do VS Code): CX_TRACE_THREADS=1 */
     *t = (unsigned long)tid;
     return 0;
 }
@@ -277,7 +277,7 @@ int pthread_attr_setstacksize(void *a, size_t s) {
 }
 size_t pthread_get_stacksize_np(void *t) { (void)t; return 256 << 10; }
 void *pthread_get_stackaddr_np(void *t) { (void)t; return (void *)0x400040000000ULL; }
-int pthread_setname_np(const char *n) { cx_fdprintf(2, "[thread] %ld chama-se \"%s\"\n", SYS0(SYS_GETTID), n ? n : ""); return 0; }   /* diagnóstico temporário */
+int pthread_setname_np(const char *n) { char *getenv(const char *); if (getenv("CX_TRACE_THREADS")) cx_fdprintf(2, "[thread] %ld chama-se \"%s\"\n", SYS0(SYS_GETTID), n ? n : ""); return 0; }   /* diagnóstico temporário */
 /* id da thread: o tid do kernel (o Chromium usa como PlatformThread::CurrentId; antes era sempre 1).
  * Para t != a atual ainda devolve o tid de quem chamou (pthread_t do mOS não guarda o tid). */
 int pthread_threadid_np(void *t, u64 *id) { (void)t; if (id) *id = (u64)SYS0(SYS_GETTID); return 0; }
@@ -781,14 +781,18 @@ ssize_t pread(int fd, void *b, size_t n, off_t off) { off_t c = lseek(fd, 0, 1);
 ssize_t pwrite(int fd, const void *b, size_t n, off_t off) { off_t c = lseek(fd, 0, 1); lseek(fd, off, 0); ssize_t r = write(fd, b, n); lseek(fd, c, 0); return r; }
 
 typedef struct { char path[1024]; long index; } cx_dir_hdr_t;   /* prefixo de cx_dir_t (libc.c) */
-int dirfd(void *d) { (void)d; return -1; }
+/* dirfd e fdopendir ficam em libc.c (precisam do DIR) */
 int stat(const char *p, void *st);
 int fstat(int fd, void *st);
+int lstat(const char *p, void *st);
+const char *cx_at_path(int dirfd, const char *p, char *buf, size_t cap);   /* posixmore.c */
 int fstatat(int dfd, const char *p, void *st, int flag) {
-    (void)flag;
-    if (p[0] == '/' || dfd == -2) return stat(p, st);   /* AT_FDCWD = -2 */
+    if (!p[0] && (flag & 0x400)) return fstat(dfd, st);  /* AT_EMPTY_PATH */
     if (!p[0]) return fstat(dfd, st);
-    return stat(p, st);
+    char t[1024];
+    const char *q = cx_at_path(dfd, p, t, sizeof t);     /* AT_FDCWD (-2), absoluto ou relativo ao dirfd */
+    if (!q) return -1;
+    return (flag & 0x20) ? lstat(q, st) : stat(q, st);   /* AT_SYMLINK_NOFOLLOW */
 }
 void *readdir(void *d);
 int readdir_r(void *d, void *entry, void **result) {

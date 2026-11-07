@@ -223,7 +223,7 @@ int ftruncate(int fd, long len) {
     cx_errno = CX_ENOTSUP;
     return -1;
 }
-void *fdopendir$INODE64(int fd) { (void)fd; cx_errno = CX_ENOTSUP; return 0; }   /* o kernel não sabe o caminho de um fd */
+/* fdopendir: libc.c (o caminho do fd vem do SYS_FDPATH) */
 int fclonefileat(int src, int dirfd, const char *dst, unsigned flags) { (void)src; (void)dirfd; (void)dst; (void)flags; cx_errno = CX_ENOTSUP; return -1; }
 int fsctl(const char *p, unsigned long req, void *data, unsigned opts) { (void)p; (void)req; (void)data; (void)opts; cx_errno = CX_ENOTSUP; return -1; }
 int fsetattrlist(int fd, void *al, void *buf, size_t n, unsigned opts) { (void)fd; (void)al; (void)buf; (void)n; (void)opts; cx_errno = CX_ENOTSUP; return -1; }

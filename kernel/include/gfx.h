@@ -107,6 +107,10 @@ int     text_ascent(font_t *f, float size);
 int     text_descent(font_t *f, float size);
 int     text_index_at(font_t *f, float size, const char *utf8, int px); /* deslocamento em bytes */
 bool    font_has_glyph(font_t *f, u32 cp);
+bool    font_load_fallback(void);              /* fonte CJK de /System/Library/Fonts (glyf), se houver */
+bool    font_set_fallback(const u8 *d, u32 n);
+bool    font_has_fallback(void);
+#define FONT_FALLBACK_WEIGHT 16                /* GUI_FONT: peso que seleciona a fonte de fallback */
 /* tabelas sfnt e glifos para o CoreText dos apps (GUI_FONT). tag é o fourcc da Apple (ex.: 0x636D6170 = cmap). */
 int     font_table(int weight, u32 tag, void *dst, u32 cap);          /* tamanho da tabela; 0 se não existe. dst NULL só mede */
 u16     font_glyph_id(int weight, u32 cp);

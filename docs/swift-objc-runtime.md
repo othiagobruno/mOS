@@ -1,6 +1,7 @@
 # Runtime Swift com interoperabilidade ObjC (binários Swift da Apple)
 
-Estado (2026-11-07): **fase 1 pronta**; fases 2–7 em plano. Ponto de partida: o Postico 2.3.5 (9817)
+Estado (2026-11-07): **fases 1 e 2 prontas; na fase 3, a stdlib e os overlays pequenos estão prontos** (testes Swift
+13/13 e 18/18); faltam Dispatch e _Concurrency. O resto em plano. Ponto de partida: o Postico 2.3.5 (9817)
 (`.tools/postico-x/`), o primeiro app Swift + SwiftUI da Apple que medimos símbolo a símbolo.
 
 ## Por que
@@ -72,25 +73,62 @@ Cada fase termina com um teste no harness (`build/machotest.exe`) que roda sozin
   Regressão: `objcrttest` 25/25 e `test-openswiftui-deps` TUDO OK. Os apps grandes no QEMU (VS Code/Chrome)
   ainda não foram testados.
 
-### 2. Runtime Swift com `SWIFT_OBJC_INTEROP=1` (`tools/build-swift-runtime.ps1`, nova saída `build/swift/objc/runtime`)
+### 2. Runtime Swift com `SWIFT_OBJC_INTEROP=1` (`tools/build-swift-runtime-objc.ps1` → `build/swift/objc/runtime`)
 
-- Compilar os `.mm` como Objective-C++ de verdade (`-x objective-c++ -fobjc-runtime=macosx-14`):
-  `SwiftObject.mm` (classe raiz `_SwiftObject`), `SwiftValue.mm` (`__SwiftValue`, a caixa de valores Swift
-  como `id`), `ErrorObject.mm` (`__SwiftNativeNSError`, que precisa de NSError no `foundation.c`),
-  `ReflectionMirrorObjC.mm` e `ObjCRuntimeGetImageNameFromClass.mm`. Hoje eles viram C++ sem ObjC.
-- Cabeçalhos `objc/*.h` do mOS em `userland/sdk/objc/include` (novo).
-- **Teste:** o runtime ligado a um programa C++ que cria uma classe Swift via metadata estática e passa ela
-  por `objc_msgSend`.
+**Pronta (2026-11-07)**, com 89 objetos. Script próprio, separado do `tools/build-swift-runtime.ps1` da outra sessão.
 
-### 3. Stdlib e overlays com `-enable-objc-interop` (`tools/build-swift-full.ps1`, variante)
+- Os `.mm` do runtime e dos stubs são compilados como Objective-C++ de verdade (`-x objective-c++
+  -fobjc-runtime=macosx-14.0`): `SwiftObject`, `SwiftValue`, `ErrorObject`, `ReflectionMirrorObjC`,
+  `ObjCRuntimeGetImageNameFromClass`, `FoundationHelpers`, `OptionalBridgingHelper`, `SwiftNativeNSObject`,
+  `Availability`. Também entra o `SwiftNativeNSXXXBase.mm`, que o script gera com `utils/gyb.py` e o Python do toolchain.
+- Os cabeçalhos `objc/*.h` vêm do zig (`any-darwin-any`). Para Foundation e CoreFoundation há versões mínimas só para
+  o runtime em `userland/sdk/objc/include`; o Foundation dos apps (`userland/sdk/include`) e o CF do importador
+  conflitam com os do zig.
+- O libSystem ganhou `_objc_rootAutorelease`, `_dyld_is_objc_constant` (sempre NÃO, porque o mOS reescreve as CFString
+  constantes) e `os_system_version_get_current_version` (14.0.0, igual ao `kern.osproductversion`).
 
-- A stdlib com interop traz a ponte de coleções e strings (`_SwiftNativeNSString`, `_SwiftDeferredNSArray`
-  etc. e os stubs `SwiftNativeNSXXXBase.mm`). As funções `_swift_stdlib_CFString*` que a ponte de `String`
-  chama vêm do CF do `foundation.c`.
-- Overlays pequenos que o Postico usa: `ObjectiveC`, `Darwin`, `Dispatch`, `CoreFoundation`, `_Concurrency`,
-  `Observation`, `os`, `UniformTypeIdentifiers`, `_StringProcessing`, `simd` (só os símbolos importados).
-- **Teste:** um app Swift nosso, compilado com `-enable-objc-interop` contra os cabeçalhos ObjC do mOS, com
-  `class Foo: NSObject`, `String` → `NSString` → `String` e `[Any]` passado ao AppKit.
+### 3. Stdlib e overlays com `-enable-objc-interop` (`tools/build-swift-full-objc.ps1` → `build/swift/objc`)
+
+**Stdlib pronta (2026-11-07)**: 259 fontes, 7,3 MB, em ~5 min. As flags são as da stdlib da Apple
+(`-disable-objc-attr-requires-foundation-module`, `SWIFT_OBJC_INTEROP=1`). Os overlays continuam pendentes.
+
+- **Teste:** `tools/link-swift-objc.ps1` (ligação estática: app + stdlib + runtime com ObjC) com
+  `userland/tests-swiftobjc/swift/main.swift` → **13/13** no harness. A libobjc vê `_TtC9SwiftObjc5Caixa` com
+  superclasse `_TtCs12_SwiftObject`, `objc_retain`/`release` chegam ao refcount Swift, `-description` responde,
+  a referência fraca ObjC é zerada no `deinit`, e casts de `AnyObject`, `String` e `Dictionary` funcionam.
+- **Visto no teste:** `+[NSString newTaggedNSStringWithASCIIBytes_:length_:]` não existe no `foundation.c`
+  (a ponte de `String` pede e recebe nil). Fica para a fase 5.
+- Com `SWIFT_RUNTIME_OS_VERSIONING` (como na Apple), a stdlib exporta os **584/584** símbolos que o Postico importa da
+  `libswiftCore`. Ela chama `__isPlatformVersionAtLeast`/`__isPlatformOrVariantPlatformVersionAtLeast` do compiler-rt,
+  que agora estão em `objc.c` (macOS 14.0.0).
+
+**Overlays (2026-11-07)**: `tools/build-swift-overlays-objc.ps1` → `build/swift/objc/overlays`. Fontes nossas em
+`userland/sdk/swift-objc/<Módulo>`, com os nomes e layouts do SDK da Apple. Cada um sai com
+`-module-link-name swift<Módulo> -autolink-force-load` (o `_swift_FORCE_LOAD_$_swift<Módulo>` que os binários importam).
+
+- "SDK": cabeçalhos Darwin do zig copiados para `build/swift/objc/sdk/include`, mais `userland/sdk/swift-objc/sdk/module.modulemap`
+  com os módulos clang `Darwin`, `ObjectiveC` (`umbrella "objc"` + `AvailabilityMacros.h`), `os` (um `os/log.h` próprio no
+  formato OS_OBJECT do Swift: `os_log_t` = classe `OS_os_log`, `os_log_type_t` = `OSLogType`) e `CoreGraphics` (o
+  cabeçalho do SDK do mOS com `-DMOS_SWIFT_OBJC`, que desliga os nomes `MOSCG*` do caminho sem ObjC). O `CoreFoundation`
+  vem dos cabeçalhos do importador.
+- `ObjectiveC`: `ObjCBool`, `Selector`, `NSZone`, `autoreleasepool`, `NSObject` Equatable/Hashable/CVarArg e as pontes
+  BOOL/SEL que o compilador chama. `Darwin`: gerado do `MOSDarwin.swift` (errno, POSIXErrorCode...). `CoreFoundation`:
+  `_CFObject`. `CoreGraphics`: `CGFloat` (gerado do `CGFloat.swift` do OpenSwiftUI), Codable de CGPoint/CGSize/CGRect
+  e `CGRect(dictionaryRepresentation:)`. Na Apple o `CGFloat` mora na libswiftCoreFoundation, mas aqui isso não
+  importa: o carregador resolve pela busca plana. `os`: `OSLog`/`OSLogType`, `os_log` (erro e falha vão para o stderr).
+  `Observation`: o OpenObservation (MIT) com o nome da Apple. `_RegexParser`/`_StringProcessing`/`_CUnicode`:
+  swift-experimental-string-processing 6.4.2. Vazios (só o FORCE_LOAD): `_Builtin_float`, `simd`, `XPC`, `QuartzCore`,
+  `Metal`, `IOKit`, `OSLog`, `Spatial`, `CoreAudio`, `CoreImage`, `CoreMIDI`, `QuickLookUI`.
+- **Postico:** todos os símbolos que ele importa de `libswiftCore`, `ObjectiveC`, `CoreFoundation`, `Darwin`, `os`,
+  `CoreGraphics`, `Observation`, `_StringProcessing` e dos 12 módulos vazios existem com os nomes mangled da Apple.
+- **Teste:** `userland/tests-swiftobjc/nsobject/main.swift` (subclasses Swift de NSObject, `@objc`, `#selector`, `isKind`,
+  `==`/`Set` via `isEqual`/`hash`, `deinit`, `autoreleasepool`, Selector, ObjCBool) → **18/18**. O teste das fases 2–3
+  continua em 13/13.
+- **Falta:** `Dispatch` (38 símbolos no Postico). No ABI da Apple, `DispatchQueue` é `OS_dispatch_queue`, uma classe ObjC
+  OS_OBJECT, e o overlay do swift-corelibs-libdispatch é do caminho sem ObjC: precisa ser adaptado, e os objetos do
+  dispatch do mOS precisam ser objetos ObjC válidos. Também falta `_Concurrency` (30; o fonte está em
+  `stdlib/public/Concurrency`, e no Darwin o executor usa o Dispatch). `UniformTypeIdentifiers` (9) fica para a
+  fase 5, porque usa `URLResourceValues` do Foundation.
 
 ### 4. Entrega como dylibs Mach-O
 

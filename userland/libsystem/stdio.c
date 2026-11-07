@@ -14,6 +14,15 @@ typedef struct cx_file {
     short _flags, _file;
     sbuf_t _bf;
     int _lbfsize;
+    /* resto do __sFILE (152 bytes), sempre zerado: o gnulib (coreutils) lê _ub/_ur/_flags direto */
+    void *_cookie, *_close, *_read, *_seek, *_write;
+    sbuf_t _ub;
+    void *_extra;
+    int _ur;
+    unsigned char _ubuf[3], _nbuf[1];
+    sbuf_t _lb;
+    int _blksize;
+    long long _offset;
     /* nosso estado */
     int fd;
     int readable, writable, append;
@@ -26,6 +35,7 @@ typedef struct cx_file {
     struct cx_file *next;
 } FILE;
 
+_Static_assert(__builtin_offsetof(FILE, fd) == 152, "prefixo do FILE deve ter o tamanho do __sFILE do macOS");
 static FILE f_stdin, f_stdout, f_stderr;
 FILE *__stdinp = &f_stdin, *__stdoutp = &f_stdout, *__stderrp = &f_stderr;
 static FILE *open_files;
@@ -63,7 +73,7 @@ int fflush(FILE *f) {
     if (f->wlen) {
         int r = raw_write(f->fd, f->wbuf, f->wlen);
         f->wlen = 0;
-        if (r < 0) { f->err = 1; return -1; }
+        if (r < 0) { f->err = 1; f->_flags |= 0x40; return -1; }
     }
     return 0;
 }
@@ -75,11 +85,11 @@ void cx_stdio_flush_all(void) {
 }
 
 static int put_bytes(FILE *f, const void *data, size_t n) {
-    if (!f->writable) { f->err = 1; cx_errno = CX_EBADF; return -1; }
-    if (f->bufmode == 0) return raw_write(f->fd, data, n) < 0 ? (f->err = 1, -1) : 0;
+    if (!f->writable) { f->err = 1; f->_flags |= 0x40; cx_errno = CX_EBADF; return -1; }
+    if (f->bufmode == 0) return raw_write(f->fd, data, n) < 0 ? (f->err = 1, f->_flags |= 0x40, -1) : 0;
     if (f->wlen + n > f->wcap) {
         if (fflush(f) < 0) return -1;
-        if (n >= 4096) return raw_write(f->fd, data, n) < 0 ? (f->err = 1, -1) : 0;
+        if (n >= 4096) return raw_write(f->fd, data, n) < 0 ? (f->err = 1, f->_flags |= 0x40, -1) : 0;
         if (!f->wbuf) { f->wbuf = malloc(4096); f->wcap = f->wbuf ? 4096 : 0; if (!f->wbuf) return raw_write(f->fd, data, n); }
     }
     memcpy(f->wbuf + f->wlen, data, n);
@@ -89,12 +99,12 @@ static int put_bytes(FILE *f, const void *data, size_t n) {
 }
 
 static int fill(FILE *f) {
-    if (!f->readable) { f->err = 1; return -1; }
+    if (!f->readable) { f->err = 1; f->_flags |= 0x40; return -1; }
     if (f == &f_stdin) fflush(&f_stdout);
     if (!f->rbuf) { f->rbuf = malloc(4096); if (!f->rbuf) return -1; }
     ssize_t r = read(f->fd, f->rbuf, 4096);
-    if (r < 0) { f->err = 1; return -1; }
-    if (r == 0) { f->eof = 1; return -1; }
+    if (r < 0) { f->err = 1; f->_flags |= 0x40; return -1; }
+    if (r == 0) { f->eof = 1; f->_flags |= 0x20; return -1; }
     f->rpos = 0;
     f->rlen = (size_t)r;
     return 0;
@@ -109,7 +119,7 @@ int getc(FILE *f) { return fgetc(f); }
 int getc_unlocked(FILE *f) { return fgetc(f); }
 int getchar(void) { return fgetc(__stdinp); }
 int getchar_unlocked(void) { return fgetc(__stdinp); }
-int ungetc(int c, FILE *f) { if (c < 0) return -1; f->unget = (u8)c; f->eof = 0; return c; }
+int ungetc(int c, FILE *f) { if (c < 0) return -1; f->unget = (u8)c; f->eof = 0; f->_flags &= ~0x20; return c; }
 
 /* usados pelos macros do <stdio.h> do macOS (__sgetc/__sputc) */
 int __srget(FILE *f) { f->_r = 0; return fgetc(f); }
@@ -176,7 +186,7 @@ ssize_t getline(char **line, size_t *cap, FILE *f) { return getdelim(line, cap, 
 
 int feof(FILE *f) { return f->eof; }
 int ferror(FILE *f) { return f->err; }
-void clearerr(FILE *f) { f->eof = f->err = 0; }
+void clearerr(FILE *f) { f->eof = f->err = 0; f->_flags &= ~0x60; }   /* __SEOF|__SERR: os macros feof_unlocked/ferror_unlocked do macOS leem _flags */
 int fileno(FILE *f) { return f->fd; }
 int setvbuf(FILE *f, char *buf, int mode, size_t size) { (void)buf; (void)size; fflush(f); f->bufmode = mode == 2 ? 0 : mode == 1 ? 1 : 2; return 0; }
 void setbuf(FILE *f, char *buf) { setvbuf(f, buf, buf ? 0 : 2, 0); }
@@ -233,7 +243,7 @@ int fseeko(FILE *f, off_t off, int wh) {
     f->rpos = f->rlen = 0;
     f->unget = -1;
     if (lseek(f->fd, off, wh) < 0) return -1;
-    f->eof = 0;
+    f->eof = 0; f->_flags &= ~0x20;
     return 0;
 }
 int fseek(FILE *f, long off, int wh) { return fseeko(f, off, wh); }

@@ -16,6 +16,7 @@ typedef struct process {
     int spawn_argc;
     char **spawn_env;
     int spawn_envc;
+    void *tty;              /* sessão do Terminal (no harness: nenhuma) */
 } process_t;
 
 #define USER_END        0x0000408000000000ULL

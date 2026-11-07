@@ -84,6 +84,11 @@ static FILE *fds[MAXFD];
  * (MACHOTEST_EVENTS="f:3;down:265,75;up:265,75;key:a;text:abc;close") */
 static int gw, gh, frames, poll_idle, nwin, curwin = 1;
 static const char *script;
+static __thread u64 g_r8;
+/* arrastar e soltar e IME simulados (o window server do mOS faz isto em kernel/compat/guisys_dragime.inc) */
+static u8 *hd_data;
+static u64 hd_len, hd_mask;
+static int hd_seq, hd_src_win, hd_pending_end = -1, hd_foreign, ime_src;
 /* MACHOTEST_DUMP=<arquivo.bmp>: compõe os GC_CLEAR/GC_IMAGE dos quadros numa tela do tamanho da
  * janela e grava o último quadro apresentado como BMP (para conferir o conteúdo dos layers) */
 static unsigned *dump_cv;
@@ -158,6 +163,13 @@ static long long gui_syscall(u64 n, u64 a, u64 b, u64 c, u64 d) {
     case GUI_PRESENT: frames++; dump_write(); return 0;
     case GUI_POLL: {
         gui_event_t *e = (gui_event_t *)a;
+        if (hd_pending_end >= 0) {                 /* o destino terminou de soltar: a fonte fica sabendo */
+            memset(e, 0, sizeof *e);
+            e->type = GEV_DRAG_END; e->win = (unsigned)hd_src_win; e->key = hd_pending_end; e->clicks = hd_seq;
+            hd_pending_end = -1;
+            printf("[gui] evento: fim do arrasto\n");
+            return 1;
+        }
         if (!script || !*script) {
             if (++poll_idle > 2000) { memset(e, 0, sizeof *e); e->type = GEV_CLOSE; e->win = 1; script = NULL; printf("[gui] (fim do roteiro: fechando)\n"); return 1; }
             return 0;
@@ -175,7 +187,23 @@ static long long gui_syscall(u64 n, u64 a, u64 b, u64 c, u64 d) {
         if (sscanf(tok, "down:%d,%d", &x, &y) == 2) { e->type = GEV_MOUSE_DOWN; e->x = x; e->y = y; e->clicks = 1; e->buttons = 1; }
         else if (sscanf(tok, "drag:%d,%d", &x, &y) == 2) { e->type = GEV_MOUSE_MOVE; e->x = x; e->y = y; e->buttons = 1; }
         else if (sscanf(tok, "up:%d,%d", &x, &y) == 2) { e->type = GEV_MOUSE_UP; e->x = x; e->y = y; }
-        else if (!strncmp(tok, "key:", 4)) { e->type = GEV_KEY_DOWN; e->key = !strcmp(tok + 4, "ret") ? 10 : !strcmp(tok + 4, "bs") ? 8 : tok[4]; if (e->key >= 32 && e->key < 127) e->text[0] = (char)e->key; }
+        else if (!strncmp(tok, "key:", 4)) {
+            const char *kn = tok + 4;
+            e->type = GEV_KEY_DOWN;
+            e->key = !strcmp(kn, "ret") ? 10 : !strcmp(kn, "bs") ? 8 : !strcmp(kn, "esc") ? 27 : !strcmp(kn, "spc") ? ' ' :
+                     !strcmp(kn, "up") ? 0x100 : !strcmp(kn, "down") ? 0x101 : kn[0];
+            if (e->key >= 32 && e->key < 127) e->text[0] = (char)e->key;
+            if (e->key >= 'A' && e->key <= 'Z') e->mods = 1;   /* maiúscula = Shift */
+        }
+        else if (!strncmp(tok, "src:", 4)) { e->type = GEV_INPUT_SOURCE; e->key = ime_src = atoi(tok + 4); }
+        else if (!strcmp(tok, "dgforeign")) { hd_foreign = !hd_foreign; return 0; }
+        else if (sscanf(tok, "dgenter:%d,%d", &x, &y) == 2 || sscanf(tok, "dgmove:%d,%d", &x, &y) == 2 || sscanf(tok, "dgdrop:%d,%d", &x, &y) == 2 || !strcmp(tok, "dgexit")) {
+            /* "dgforeign": a sessão parece vir de outro processo (o destino lê o conteúdo por DG_DATA) */
+            e->type = tok[2] == 'e' && tok[3] == 'n' ? GEV_DRAG_ENTER : tok[2] == 'm' ? GEV_DRAG_MOVE : tok[2] == 'd' ? GEV_DRAG_DROP : GEV_DRAG_EXIT;
+            e->x = x; e->y = y; e->w = x; e->h = y;
+            e->key = (int)hd_mask;
+            e->clicks = hd_seq + (hd_foreign ? 1000 : 0);
+        }
         else if (!strncmp(tok, "resize:", 7)) { e->type = GEV_RESIZE; sscanf(tok + 7, "%d,%d", &e->w, &e->h); }
         else if (!strcmp(tok, "close")) e->type = GEV_CLOSE;
         else if (!strncmp(tok, "menu:", 5)) { e->type = GEV_MENU; e->key = atoi(tok + 5); }
@@ -217,6 +245,52 @@ static long long gui_syscall(u64 n, u64 a, u64 b, u64 c, u64 d) {
         printf("\n");
         return 0;
     }
+    case GUI_DRAG: {
+        u64 e5 = g_r8;
+        switch (a) {
+        case DG_BEGIN:
+            free(hd_data);
+            hd_data = malloc(d ? d : 1); memcpy(hd_data, (const void *)c, d); hd_len = d;
+            hd_mask = e5; hd_src_win = (int)b; hd_seq++;
+            printf("[drag] começou: janela %d, %llu bytes, máscara %llu\n", (int)b, (unsigned long long)d, (unsigned long long)e5);
+            { u32 nt; memcpy(&nt, hd_data, 4); u64 o = 4;
+              for (u32 i = 0; i < nt && o + 4 <= hd_len; i++) {
+                  u32 tl, kd, dl; memcpy(&tl, hd_data + o, 4); o += 4;
+                  printf("[drag]   tipo %.*s", (int)tl, (const char *)hd_data + o); o += tl;
+                  memcpy(&kd, hd_data + o, 4); memcpy(&dl, hd_data + o + 4, 4); o += 8;
+                  printf(" (%c, %u bytes)%s%.*s\n", (char)kd, dl, kd == 'S' ? ": " : "", kd == 'S' ? (int)dl : 0, (const char *)hd_data + o); o += dl;
+              } }
+            return hd_seq;
+        case DG_DATA:
+            if (!hd_data) return -MOS_ENOENT;
+            if (b && c) memcpy((void *)b, hd_data, c < hd_len ? c : hd_len);
+            return (long long)hd_len;
+        case DG_STATUS: printf("[drag] destino aceita operação %llu\n", (unsigned long long)c); return 0;
+        case DG_FINISH: printf("[drag] destino terminou: operação %llu\n", (unsigned long long)c); hd_pending_end = (int)c; return 0;
+        case DG_CANCEL: printf("[drag] cancelado\n"); return 0;
+        }
+        return -MOS_EINVAL;
+    }
+    case GUI_IME: {
+        u64 e5 = g_r8;
+        switch (a) {
+        case IME_SHOW: {
+            const char *p = (const char *)c;
+            u32 sel, cnt, fl;
+            memcpy(&sel, p, 4); memcpy(&cnt, p + 4, 4); memcpy(&fl, p + 8, 4);
+            p += 12;
+            printf("[ime] candidatos em (%d,%d) sel=%u%s comp=\"%s\":", (int)(u32)e5, (int)(u32)(e5 >> 32), sel, (fl & 1) ? " (com composição)" : "", p);
+            p += strlen(p) + 1;
+            for (u32 i = 0; i < cnt; i++) { printf(" %u.%s", i + 1, p); p += strlen(p) + 1; }
+            printf("\n");
+            return 0;
+        }
+        case IME_HIDE: printf("[ime] candidatos escondidos\n"); return 0;
+        case IME_SOURCE_GET: return ime_src;
+        case IME_SOURCE_SET: ime_src = (int)b; printf("[ime] fonte de entrada %d\n", ime_src); return 0;
+        }
+        return -MOS_EINVAL;
+    }
     case GUI_DECODE_IMAGE: {   /* o harness nÃ£o decodifica: devolve 4x4 sÃ³lido se os dados parecerem PNG */
         const u8 *in = (const u8 *)a;
         if (b < 8 || in[1] != 'P' || in[2] != 'N' || in[3] != 'G') return 0;
@@ -248,7 +322,9 @@ static DWORD WINAPI thread_main(LPVOID p) {
 static CRITICAL_SECTION sys_lock;
 
 static long long do_syscall_locked(u64 n, u64 a, u64 b, u64 c, u64 d);
+static volatile u64 g_last_sys[3];   /* watchdog: última syscall da thread principal */
 static long long do_syscall(u64 n, u64 a, u64 b, u64 c, u64 d) {
+    if (my_tid == 1) { g_last_sys[0] = n; g_last_sys[1] = a; g_last_sys[2] = b; }
     switch (n) {
     case SYS_SLEEP: Sleep((DWORD)a); return 0;
     case SYS_YIELD: SwitchToThread(); return 0;
@@ -390,6 +466,7 @@ static LONG CALLBACK veh(EXCEPTION_POINTERS *ep) {
             c->Rsp = host_saved_rsp;
             return EXCEPTION_CONTINUE_EXECUTION;
         }
+        g_r8 = c->R8;                               /* 5º argumento (GUI_DRAG/GUI_IME) */
         c->Rax = (DWORD64)do_syscall(c->Rax, c->Rdi, c->Rsi, c->Rdx, c->R10);
         c->Rip += 2;
         return EXCEPTION_CONTINUE_EXECUTION;
@@ -433,8 +510,44 @@ static LONG CALLBACK veh(EXCEPTION_POINTERS *ep) {
     return EXCEPTION_CONTINUE_SEARCH;
 }
 
+/* MACHOTEST_WATCHDOG=<ms>: se o programa ainda roda depois desse tempo, congela a thread principal e
+ * mostra onde ela está (rip e pilha, com o libSystem simbolizado), 3 amostras, e encerra. Para travamentos. */
+static HANDLE g_main_thread;
+static DWORD WINAPI watchdog(LPVOID arg) {
+    DWORD ms = (DWORD)(uintptr_t)arg;
+    Sleep(ms);
+    extern const char *macho_host_symbolize(u64 addr, u64 *off);
+    for (int k = 0; k < 3; k++) {
+        SuspendThread(g_main_thread);
+        CONTEXT c = {0};
+        c.ContextFlags = CONTEXT_FULL;
+        GetThreadContext(g_main_thread, &c);
+        u64 off;
+        const char *fn = c.Rip < USER_BASE + 0x01000000ULL ? macho_host_symbolize(c.Rip, &off) : NULL;
+        fprintf(stderr, "[watchdog] amostra %d: rip=%llx %s+0x%llx (última syscall %llu a=%llx b=%llx)\n", k, c.Rip,
+                fn ? fn : "(imagem)", fn ? off : 0, g_last_sys[0], g_last_sys[1], g_last_sys[2]);
+        const u64 *sp = (const u64 *)c.Rsp;
+        int shown = 0;
+        for (int i = 0; i < 8192 && shown < 16 && (u64)(sp + i) < USER_STACK_TOP && c.Rsp >= USER_BASE; i++) {
+            u64 v = sp[i];
+            if (v < USER_BASE + 0x100000ULL || v >= USER_BASE + 0x40000000ULL) continue;
+            fn = v < USER_BASE + 0x01000000ULL ? macho_host_symbolize(v, &off) : NULL;
+            if (fn) fprintf(stderr, "  [sp+%d] libSystem %s+0x%llx\n", i * 8, fn, off);
+            else fprintf(stderr, "  [sp+%d] imagem %llx\n", i * 8, v);
+            shown++;
+        }
+        ResumeThread(g_main_thread);
+        Sleep(300);
+    }
+    fflush(stdout);
+    ExitProcess(124);
+    return 0;
+}
+
 int main(int argc, char **argv) {
     SetConsoleOutputCP(CP_UTF8);
+    DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &g_main_thread, 0, FALSE, DUPLICATE_SAME_ACCESS);
+    if (getenv("MACHOTEST_WATCHDOG")) CreateThread(NULL, 0, watchdog, (LPVOID)(uintptr_t)atoi(getenv("MACHOTEST_WATCHDOG")), 0, NULL);
     InitializeCriticalSection(&sys_lock);
     if (argc >= 4 && !strcmp(argv[1], "--report")) {
         usize ll, ml;

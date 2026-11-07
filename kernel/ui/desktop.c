@@ -3005,7 +3005,8 @@ static bool desktop_handle_event_local(input_event_t *e) {
         if (NC.open && !NC.closing && e->key == KEY_ESC) { nc_toggle(); return true; }
         if (SD.open && M.kind == MK_NONE) return sd_key(e);
         if ((m & MOD_CMD) && e->key == ' ') { desktop_toggle_spotlight(); return true; }
-        if ((m & MOD_CTRL) && e->key == ' ') { desktop_toggle_spotlight(); return true; }
+        /* ⌃Espaço troca a fonte de entrada (teclado → japonês → chinês → coreano), como no macOS */
+        if ((m & MOD_CTRL) && e->key == ' ') { extern void compat_ime_cycle(int dir); compat_ime_cycle((m & MOD_ALT) ? -1 : 1); return true; }
         if (e->key == KEY_F4 || ((m & MOD_CMD) && (e->key == 'l' || e->key == 'L'))) { desktop_toggle_launcher(); return true; }
         if (lp_open) return lp_key(e);
         if (e->key == KEY_F3) { desktop_toggle_control_center(); return true; }
@@ -3469,6 +3470,7 @@ void desktop_run(void) {
     fb_init();
     SW = display_rect(0).w; SH = display_rect(0).h;
     font_init();
+    font_load_fallback();                 /* CJK: o IME e os apps precisam de glifos que a Inter não tem */
     boot_frame(0.15f);
     theme_set(false, 0);
     wm_init();

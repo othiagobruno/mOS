@@ -138,6 +138,7 @@ bool      proc_tty_write(int pid, const char *data, usize len);  /* entrada (std
 void      proc_tty_eof(int pid);                                 /* fim da entrada (Ctrl+D) */
 int       proc_tty_interrupt(int pid);                           /* Ctrl+C: encerra os processos da sessão
                                                                     exceto o líder; devolve quantos */
+int       proc_tty_interrupt_fg(int pid);                        /* idem, só se houver processo em primeiro plano */
 bool      proc_alive(int pid);
 int       proc_exit_code(int pid);                               /* -1000 se ainda roda ou não existe */
 u64       proc_syscall(int_frame_t *f);         /* int 0x80 */

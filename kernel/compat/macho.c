@@ -1581,6 +1581,10 @@ bool macho_load(process_t *p, const u8 *img, usize len, const char *arg, u64 *en
         ok = image_fix(K, I, buf);
         if (ok && !uvm_copy_out(p, I->base, buf, size)) { snprintf(err, errlen, "falha ao copiar a imagem"); ok = false; }
         kfree(buf);
+#ifndef MOS_HOST_TEST
+        /* diagnóstico: pontos de /Sistema/Biblioteca/diag-tracepoints (kernel/proc/tracepoint.c) */
+        if (ok) { extern void tp_arm(process_t *p, const char *path, u64 base, u64 vmin); tp_arm(p, I->path, I->base, I->mo.vmin); }
+#endif
     }
     if (!ok) { link_free(K); return false; }
     if (K->n > 1) kprintf("macho: %d imagens carregadas (executável + bibliotecas do bundle)\n", K->n);

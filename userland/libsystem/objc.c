@@ -476,6 +476,27 @@ cx_class_t *class_setSuperclass(cx_class_t *c, cx_class_t *s) {
     flush_caches();
     return old;
 }
+id objc_autorelease(id o);
+id _objc_rootAutorelease(id o) { return objc_autorelease(o); }
+/* dyld: "este endereço é uma constante ObjC da imagem (ex.: __NSCFConstantString)?". O mOS reescreve as
+ * CFString constantes no carregamento (fix_cfstrings), então o Swift não deve tratá-las como as da Apple. */
+BOOL _dyld_is_objc_constant(int kind, const void *addr) { (void)kind; (void)addr; return NO; }
+/* versão do sistema para #available no runtime Swift (Availability.mm): a mesma do kern.osproductversion */
+int os_system_version_get_current_version(u32 v[3]) { if (!v) return -1; v[0] = 14; v[1] = 0; v[2] = 0; return 0; }
+/* compiler-rt (os_version_check): o que `if #available`/@available chamam (a stdlib Swift com SWIFT_RUNTIME_OS_VERSIONING
+ * e código C/ObjC). Plataforma 1 = macOS; as outras (iOS do Catalyst etc.) não existem no mOS. */
+static int cx_os_at_least(u32 maj, u32 min, u32 sub) {
+    u32 v[3] = {14, 0, 0};
+    if (v[0] != maj) return v[0] > maj;
+    if (v[1] != min) return v[1] > min;
+    return v[2] >= sub;
+}
+int __isPlatformVersionAtLeast(u32 platform, u32 maj, u32 min, u32 sub) { return platform == 1 ? cx_os_at_least(maj, min, sub) : 0; }
+int __isPlatformOrVariantPlatformVersionAtLeast(u32 p, u32 maj, u32 min, u32 sub, u32 vp, u32 vmaj, u32 vmin, u32 vsub) {
+    return __isPlatformVersionAtLeast(p, maj, min, sub) || __isPlatformVersionAtLeast(vp, vmaj, vmin, vsub);
+}
+int __isOSVersionAtLeast(int maj, int min, int sub) { return cx_os_at_least((u32)maj, (u32)min, (u32)sub); }
+
 /* isa do mOS é ponteiro puro e não há tagged pointers: a máscara do x86_64 da Apple preserva o ponteiro */
 const u64 objc_debug_isa_class_mask = 0x00007ffffffffff8ULL;
 const u64 objc_debug_taggedpointer_mask = 0;

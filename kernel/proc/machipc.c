@@ -882,9 +882,13 @@ static u32 port_op(mspace_t *sp, u32 op, u64 *a) {
         a[3] = e->name;
         return KERN_SUCCESS;
     }
+    /* DEALLOCATE, MOD_REFS e GET_REFS aceitam os nomes especiais (task 0x103, host, threads) como o envio de
+     * mensagem aceita (ent_find): o Chromium faz RetainMachSendRight(mach_task_self()) — mod_refs +1 — antes de
+     * mandar a porta da task no ChildProcess.GetTaskPort; com KERN_INVALID_NAME o direito saía vazio e o
+     * processo principal recusava a resposta (VALIDATION_ERROR_UNEXPECTED_INVALID_HANDLE) */
     case MACH_OP_DEALLOCATE:
     case MACH_OP_DESTRUCT: {
-        ment_t *e = ent_at(sp, (u32)a[0]);
+        ment_t *e = ent_find(sp, (u32)a[0]);
         if (!e) return KERN_INVALID_NAME;
         if (e->type & T_DEAD) { if (--e->drefs == 0) ent_del(sp, e); return KERN_SUCCESS; }
         if (e->type & T_SEND) {
@@ -902,7 +906,7 @@ static u32 port_op(mspace_t *sp, u32 op, u64 *a) {
         return KERN_INVALID_RIGHT;
     }
     case MACH_OP_MOD_REFS: {
-        ment_t *e = ent_at(sp, (u32)a[0]);
+        ment_t *e = ent_find(sp, (u32)a[0]);
         if (!e) return KERN_INVALID_NAME;
         i64 delta = (i64)a[2];
         if (a[1] == RIGHT_SEND && (e->type & T_SEND)) {
@@ -955,7 +959,7 @@ static u32 port_op(mspace_t *sp, u32 op, u64 *a) {
         return KERN_SUCCESS;
     }
     case MACH_OP_GET_REFS: {
-        ment_t *e = ent_at(sp, (u32)a[0]);
+        ment_t *e = ent_find(sp, (u32)a[0]);
         if (!e) return KERN_INVALID_NAME;
         a[2] = a[1] == RIGHT_SEND ? e->srefs : a[1] == RIGHT_DEAD_NAME ? e->drefs :
                (e->type & right_type_flag((int)a[1])) ? 1 : 0;

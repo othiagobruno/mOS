@@ -230,6 +230,8 @@ void      wm_compose(void);
 bool      wm_handle_event(input_event_t *e);
 int       wm_mouse_x(void);
 int       wm_mouse_y(void);
+int       wm_mouse_buttons(void);         /* bit 0 esquerdo, bit 1 direito */
+window_t *wm_window_at_point(int x, int y);
 void      wm_set_cursor(int c);
 
 /* desktop: menubar, dock, wallpaper, notificações, busca */

@@ -19,7 +19,8 @@ t "wc -l"              wc -l lista.txt
 t "head -n1"           head -n 1 lista.txt
 t "cat|tail"           tail -n 1 lista.txt
 t "cp"                 cp lista.txt copia.txt
-t "cmp"                cmp lista.txt copia.txt
+sh_cmp() { [ "$(md5sum < lista.txt)" = "$(md5sum < copia.txt)" ]; }
+t "cp conteúdo igual"  sh_cmp
 t "mv"                 mv copia.txt movida.txt
 t "rm"                 rm movida.txt
 t "ln -s + readlink"   ln -sf lista.txt link.txt

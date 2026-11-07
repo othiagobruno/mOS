@@ -34,6 +34,9 @@ typedef struct {
     surface_t *shown;       /* último quadro publicado */
     int lmx, lmy;
     bool linside, ldown;
+    char *ime;              /* candidatos do método de entrada (formato de IME_SHOW) ou NULL */
+    u32 ime_len;
+    int ime_x, ime_y;
 } gwin_t;
 
 static gwin_t wins[MAX_GWIN];
@@ -46,6 +49,11 @@ static void push(gapp_t *ga, const gui_event_t *e) {
     ga->q[ga->qt] = *e;
     ga->qt = n;
 }
+
+static void drag_track(void);
+static bool drag_is_source(gapp_t *ga);
+static void ime_draw(gwin_t *g, surface_t *s);
+static void drag_forget_app(gapp_t *ga);
 
 static gwin_t *gwin_of(window_t *w) {
     for (int i = 0; i < MAX_GWIN; i++) if (wins[i].used && wins[i].w == w) return &wins[i];
@@ -74,6 +82,11 @@ static void proxy_paint(window_t *w, ui_t *u) {
         push(g->ga, &e);
     }
     if (g->shown) gfx_blit(u->s, g->shown, 0, 0);
+    if (g->ime) ime_draw(g, u->s);                 /* candidatos do IME por cima do conteúdo */
+    /* arrasto em andamento: o window server segue o cursor; os cliques e movimentos dele não vão aos apps */
+    bool dragging = drag_is_source(NULL);
+    drag_track();
+    if (dragging) { g->lmx = u->mx; g->lmy = u->my; u->clicked_any = false; return; }
     e.x = u->mx; e.y = u->my; e.buttons = u->down ? 1 : 0;
     e.mods = u->mods;
     if (u->pressed && u->inside) { e.type = GEV_MOUSE_DOWN; e.clicks = u->dblclick ? 2 : 1; push(g->ga, &e); u->active = 1; }
@@ -249,6 +262,7 @@ static void destroy(gwin_t *g) {
     if (g->w) { window_t *w = g->w; g->w = NULL; w->on_close = NULL; wm_close(w); }
     surface_free(g->back);
     surface_free(g->shown);
+    kfree(g->ime);
     g->ga->nwin--;
     memset(g, 0, sizeof *g);
 }
@@ -277,6 +291,7 @@ const char *compat_app_bundle(app_t *a) {
 void compat_gui_proc_exit(process_t *p) {
     gapp_t *ga = gapp_find(p);
     if (!ga) return;
+    drag_forget_app(ga);
     for (int i = 0; i < MAX_GWIN; i++) if (wins[i].used && wins[i].ga == ga) destroy(&wins[i]);
     for (gapp_t **pp = &gapps; *pp; pp = &(*pp)->next)
         if (*pp == ga) { *pp = ga->next; break; }
@@ -375,6 +390,9 @@ static void run_cmds(surface_t *s, const u8 *b, usize n) {
     surface_reset_clip(s);
 }
 
+#include "guisys_dragime.inc"
+static bool drag_is_source(gapp_t *ga) { return drag.active && (!ga || drag.src == ga); }
+
 /* ------------------------------------------------------------ syscalls */
 i64 compat_gui_syscall(process_t *p, u64 n, u64 a, u64 b, u64 c, u64 d, u64 e) {
     (void)e;
@@ -446,6 +464,7 @@ i64 compat_gui_syscall(process_t *p, u64 n, u64 a, u64 b, u64 c, u64 d, u64 e) {
         return 0;
     }
     case GUI_POLL: {
+        drag_track();                              /* o cursor pode ter saído de todas as janelas do app */
         gapp_t *ga = gapp_find(p);
         if (!ga || ga->qh == ga->qt) return 0;
         if (!uvm_copy_out(p, a, &ga->q[ga->qh], sizeof(gui_event_t))) return -MOS_EFAULT;
@@ -564,6 +583,8 @@ i64 compat_gui_syscall(process_t *p, u64 n, u64 a, u64 b, u64 c, u64 d, u64 e) {
         }
         return -MOS_EINVAL;
     }
+    case GUI_DRAG: return drag_syscall(p, a, b, c, d, e);
+    case GUI_IME: return ime_syscall(p, a, b, c, d, e);
     case GUI_WIN_FOCUS: {
         gwin_t *g = win_get(p, a);
         if (!g) return -MOS_EBADF;

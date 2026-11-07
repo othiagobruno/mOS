@@ -1,0 +1,37 @@
+// mOS SDK (variante com interop ObjC, docs/swift-objc-runtime.md) — módulos clang com os nomes da Apple.
+// Copiado por tools\build-swift-overlays-objc.ps1 para build\swift\objc\sdk\include, junto dos cabeçalhos Darwin do zig.
+// Aqui os nomes reais (Darwin, ObjectiveC) são o certo: esta variante imita o SDK do macOS para binários da Apple.
+module Darwin [system] [extern_c] {
+    umbrella header "mos_darwin.h"
+    export *
+}
+
+module ObjectiveC [system] [extern_c] {
+    header "AvailabilityMacros.h"
+    umbrella "objc"
+    export *
+    link "objc"
+}
+
+// os/log.h próprio desta variante (OS_OBJECT com ObjC: os_log_t = OS_os_log)
+module os [system] [extern_c] {
+    header "os/log.h"
+    export *
+}
+
+// CoreFoundation: o modulemap vem com os cabeçalhos do importador (CoreFoundation/module.modulemap)
+module CoreGraphics [system] [extern_c] {
+    umbrella header "CoreGraphics/CoreGraphics.h"
+    export *
+}
+
+// libdispatch: os cabeçalhos do macOS (zig) já trazem os nomes Swift (DISPATCH_SWIFT_NAME, OS_OBJECT_*_SWIFT)
+// e o dispatch_swift_shims.h que o overlay usa
+module Dispatch [system] [extern_c] {
+    umbrella header "dispatch/dispatch.h"
+    header "dispatch/dispatch_swift_shims.h"
+    header "os/object.h"
+    header "os/clock.h"
+    header "os/workgroup.h"
+    export *
+}

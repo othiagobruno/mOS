@@ -27,8 +27,16 @@ $files += Get-ChildItem "$src\lib\Threading\*.cpp" | Where-Object { $_.BaseName 
 # stubs: com interop entram também os .mm (ponte de NSString/coleções: SwiftNativeNSXXXBase, FoundationHelpers)
 $files += Get-ChildItem "$src\stdlib\public\stubs\*.cpp" | Where-Object { $_.BaseName -notmatch 'OptionalParsing|Android|Windows' } | ForEach-Object FullName
 $files += Get-ChildItem "$src\stdlib\public\stubs\*.mm" -ErrorAction SilentlyContinue | ForEach-Object FullName
+# __SwiftNativeNS{Array,Dictionary,Set,String,Enumerator}Base e swift_stdlib_connectNSBaseClasses: gerados pelo gyb
+$gen = "$src\gen\stubs\SwiftNativeNSXXXBase.mm"
+if (-not (Test-Path $gen)) {
+    $py = Get-ChildItem "$root\.tools\swift-py\LocalApp" -Recurse -Filter python.exe | Select-Object -First 1
+    New-Item -ItemType Directory -Force (Split-Path $gen) | Out-Null
+    & $py.FullName "$src\utils\gyb.py" -o $gen "$src\stdlib\public\stubs\SwiftNativeNSXXXBase.mm.gyb"
+}
+if (Test-Path $gen) { $files += $gen }
 $files += Get-ChildItem "$src\stdlib\public\stubs\Unicode\*.cpp" -ErrorAction SilentlyContinue | ForEach-Object FullName
-if ($Only) { $files = $files | Where-Object { $n = [IO.Path]::GetFileNameWithoutExtension($_); $Only -contains $n } }
+if ($Only) { $Only = @($Only | ForEach-Object { $_ -split "," }); $files = $files | Where-Object { $n = [IO.Path]::GetFileNameWithoutExtension($_); $Only -contains $n } }
 $defs = @('-DswiftCore_EXPORTS', '-DSWIFT_RUNTIME', '-DSWIFT_OBJC_INTEROP=1', '-DSWIFT_THREADING_PTHREADS', '-DSWIFT_LIBRARY_EVOLUTION=1',
           '-DSWIFT_TARGET_LIBRARY_NAME=swiftRuntimeCore', '-DSWIFT_STDLIB_HAS_TYPE_PRINTING=1', '-DSWIFT_ENABLE_REFLECTION=1',
           '-DLLVM_DISABLE_ABI_BREAKING_CHECKS_ENFORCING=1', '-DSWIFT_RUNTIME_ENABLE_LEAK_CHECKER=0', '-DSWIFT_STDLIB_HAS_DLADDR',
@@ -36,7 +44,7 @@ $defs = @('-DswiftCore_EXPORTS', '-DSWIFT_RUNTIME', '-DSWIFT_OBJC_INTEROP=1', '-
           '-DSWIFT_STDLIB_HAS_ENVIRON', '-DSWIFT_STDLIB_HAS_LOCALE', '-DSWIFT_STDLIB_ENABLE_UNICODE_DATA=1',
           '-DSWIFT_INLINE_NAMESPACE=__runtime', '-DSWIFT_RUNTIME_OS_VERSIONING=0', '-DNDEBUG')
 $inc = @("-I$src\include", "-I$src\stdlib\include", "-I$src\stdlib\public\SwiftShims", "-I$src\stdlib\public", "-I$rt",
-         "-I$root\userland\sdk\objc\include")   # o que falta dos cabeçalhos privados da Apple (objc-internal.h...)
+         "-I$root\userland\sdk\objc\include")   # Foundation/CoreFoundation mínimos e o que falta dos cabeçalhos privados
 $fl = @('-target', 'x86_64-macos', '-std=c++20', '-O2', '-fno-exceptions', '-fno-rtti', '-ffunction-sections', '-fno-sanitize=all', '-w', '-c')
 $ok = 0; $bad = @()
 foreach ($f in $files) {

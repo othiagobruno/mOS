@@ -737,7 +737,47 @@ long cx_sock_write(int fd, const void *b, size_t n) __attribute__((weak));
 void cx_sock_set_nonblock(int fd, int on) __attribute__((weak));
 int cx_sock_get_nonblock(int fd) __attribute__((weak));
 #define IS_SOCK(fd) ((fd) >= 0x5000 && cx_sock_is && cx_sock_is(fd))
-ssize_t write(int fd, const void *b, size_t n) { if (IS_SOCK(fd)) return cx_sock_write(fd, b, n); return ret_errno(SYS3(SYS_WRITE, fd, b, n)); }
+/* diagnóstico do porte do VS Code: o Chromium registra as recusas do Mojo ("Invalid message: ...") sem dizer qual
+ * campo falhou. Quando esse texto passa por aqui, a cadeia de frames (rbp; o Chromium do Mac mantém o ponteiro de
+ * frame) vai junto para a serial, como imagem+deslocamento: o chamador de ReportValidationError é o Accept do stub,
+ * e é dali que se acha o StructTraits::Read que devolveu false. */
+typedef struct { const char *dli_fname; void *dli_fbase; const char *dli_sname; void *dli_saddr; } cx_dlinfo_t;
+int dladdr(const void *addr, cx_dlinfo_t *info);
+int snprintf(char *b, size_t n, const char *fmt, ...);
+static void diag_mojo_backtrace(const void *b, size_t n) {
+    static const char pat[] = "Invalid message:";
+    const char *s = b;
+    int hit = 0;
+    for (size_t i = 0; i + sizeof pat - 1 <= n && !hit; i++) if (s[i] == 'I' && !memcmp(s + i, pat, sizeof pat - 1)) hit = 1;
+    if (!hit) return;
+    u64 *fp = (u64 *)__builtin_frame_address(0);
+    char line[1400];
+    int o = snprintf(line, sizeof line, "diag[mojo]: pilha:");
+    for (int i = 0; i < 24 && fp; i++) {
+        u64 next = fp[0], ret = fp[1];
+        if (!ret) break;
+        cx_dlinfo_t di;
+        const char *img = "?";
+        u64 off = ret;
+        if (dladdr((void *)ret, &di) && di.dli_fbase) {
+            img = di.dli_fname ? di.dli_fname : "?";
+            const char *sl = strrchr(img, '/');
+            if (sl) img = sl + 1;
+            off = ret - (u64)di.dli_fbase;
+        }
+        o += snprintf(line + o, sizeof line - (size_t)o, " %s+0x%llx", img, (unsigned long long)off);
+        if (o > (int)sizeof line - 80) break;
+        if (next <= (u64)fp || next - (u64)fp > (8u << 20) || (next & 7)) break;
+        fp = (u64 *)next;
+    }
+    line[o++] = '\n';
+    SYS3(SYS_WRITE, 2, line, o);
+}
+ssize_t write(int fd, const void *b, size_t n) {
+    if (IS_SOCK(fd)) return cx_sock_write(fd, b, n);
+    if (fd == 2 && b && n >= 16) diag_mojo_backtrace(b, n);
+    return ret_errno(SYS3(SYS_WRITE, fd, b, n));
+}
 ssize_t read(int fd, void *b, size_t n) { if (IS_SOCK(fd)) return cx_sock_read(fd, b, n); return ret_errno(SYS3(SYS_READ, fd, b, n)); }
 int close(int fd) {
     /* descritores que não são do kernel (kqueue, sockets: sockets.c / kqueue.c) */
@@ -988,7 +1028,7 @@ int fstat(int fd, mac_stat_t *m) {
 typedef struct {
     u64 d_ino, d_seekoff; u16 d_reclen, d_namlen; u8 d_type; char d_name[1024];
 } mac_dirent_t;
-typedef struct { char path[1024]; long index; mac_dirent_t ent; } cx_dir_t;
+typedef struct { char path[1024]; long index; mac_dirent_t ent; int fd1; } cx_dir_t;   /* fd1 = fd + 1 (0: ainda sem fd) */
 
 cx_dir_t *opendir(const char *path) {
     mos_stat_t st;
@@ -1015,7 +1055,20 @@ mac_dirent_t *readdir(cx_dir_t *d) {
     d->ent.d_type = st.is_dir ? 4 : 8;
     return &d->ent;
 }
-int closedir(cx_dir_t *d) { free(d); return 0; }
+int closedir(cx_dir_t *d) { if (d->fd1) SYS1(SYS_CLOSE, d->fd1 - 1); free(d); return 0; }
+/* dirfd: abre a pasta na primeira vez (o kernel aceita open de pasta só para leitura) */
+int dirfd(cx_dir_t *d) {
+    if (!d->fd1) { long fd = SYS2(SYS_OPEN, d->path, 0); if (fd < 0) { cx_errno = (int)-fd; return -1; } d->fd1 = (int)fd + 1; }
+    return d->fd1 - 1;
+}
+/* fdopendir: o caminho do fd vem do kernel (SYS_FDPATH); o DIR passa a ser dono do fd */
+cx_dir_t *fdopendir(int fd) {
+    char p[1024];
+    if (ret_errno(SYS3(SYS_FDPATH, fd, p, sizeof p)) < 0) return 0;
+    cx_dir_t *d = opendir(p);
+    if (d) d->fd1 = fd + 1;
+    return d;
+}
 long telldir(cx_dir_t *d) { return d->index; }
 void seekdir(cx_dir_t *d, long pos) { d->index = pos; }
 void rewinddir(cx_dir_t *d) { d->index = 0; }

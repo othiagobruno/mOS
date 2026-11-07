@@ -9,7 +9,8 @@
 # que o mOS ainda não tem (as funções delas viram stubs que encerram o processo dizendo o nome).
 param([Parameter(Mandatory = $true)][string]$App, [string]$OutDir = 'build-vscode', [int]$SizeMiB = 512, [switch]$Diagnostico, [switch]$ComApp, [switch]$Autostart,
       [switch]$ComModulosNativos, [int]$MaxModuloMiB = 32,
-      [string]$Args0 = '--single-process --in-process-gpu --disable-gpu --no-sandbox --verbose --enable-logging')
+      [string]$Args0 = '--in-process-gpu --disable-gpu --no-sandbox --verbose --enable-logging',
+      [string]$Tracepoints = '')
 $root = Split-Path $PSScriptRoot -Parent
 $src = Join-Path $App 'Contents'
 $esp = Join-Path $root "$OutDir\esp"
@@ -83,6 +84,11 @@ if ($Diagnostico) {
     # o kernel despeja as threads de usuário (estado, rip e pilha) no log serial a cada 30 s
     Set-Content -Path "$esp\mOS\Sistema\Biblioteca\despejar-threads" -Value '1' -Encoding ascii
 }
+# -Tracepoints: pontos de diagnóstico de uma vez só (kernel/proc/tracepoint.c), "processo|imagem|0xdesl,0xdesl"
+# (várias linhas separadas por ';'); sem o parâmetro, o arquivo sai da imagem
+$tpFile = "$esp\mOS\Sistema\Biblioteca\diag-tracepoints"
+if ($Tracepoints) { ($Tracepoints -split ';') -join "`n" | Set-Content -Path $tpFile -Encoding ascii }
+else { Remove-Item $tpFile -ErrorAction SilentlyContinue }
 $mb = (Get-ChildItem "$esp\mOS\Aplicativos\VSCode.app" -Recurse -File | Measure-Object Length -Sum).Sum / 1MB
 Write-Host ("VSCode.app: {0:N1} MiB" -f $mb) -ForegroundColor Cyan
 & (Join-Path $root "$OutDir\mkimg.exe") (Join-Path $root "$OutDir\mOS.img") $esp $SizeMiB

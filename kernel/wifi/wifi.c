@@ -112,7 +112,7 @@ void wifi_selftest_poll(void) {
         return;
     case 4: {
         net_info_t *ni = net_info();
-        if (now - t_step > 1500 && !strstr(ni->driver, "Wi-Fi")) {    /* cabo ativo: ele tem prioridade */
+        if ((net_configured() || now - t_step > 1500) && !strstr(ni->driver, "Wi-Fi")) {    /* cabo ativo: ele tem prioridade */
             kprintf("wifi-teste: pulado DHCP/ping (a interface ativa é \"%s\"; rode com run.ps1 -NoNet)\n", ni->driver);
             wifi_disconnect();
             step = 6;

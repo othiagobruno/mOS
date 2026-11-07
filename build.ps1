@@ -56,6 +56,12 @@ if (Test-Path "$root\firmware") {
     Copy-Item -Recurse "$root\firmware\*" "$esp\mOS\Sistema\Firmware\"
 }
 
+# libc++ do LLVM como /usr/lib/libc++.1.dylib (módulos nativos dos apps Electron; tools\build-libcxx.ps1)
+& "$root\tools\build-libcxx.ps1"
+if ($LASTEXITCODE -ne 0) { Write-Host 'libc++ build FAILED' -ForegroundColor Red; exit 1 }
+New-Item -ItemType Directory -Force "$esp\mOS\usr\lib" | Out-Null
+Copy-Item "$root\build\libcxx\libc++.1.dylib" "$esp\mOS\usr\lib\libc++.1.dylib" -Force
+
 # user-mode programs (ring 3): userland\*.c -> \mOS\Sistema\Programas\<name> (static ELF64 at 0x400000000000)
 $progs = Get-ChildItem "$root\userland" -Filter *.c -ErrorAction SilentlyContinue
 if ($progs) {

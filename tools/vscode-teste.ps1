@@ -7,14 +7,15 @@
 # log e simboliza a falha (libSystem ou Electron Framework).
 param([Parameter(Mandatory = $true)][string]$App, [switch]$SemBuild, [int]$Ocioso = 40, [int]$Limite = 600,
       [int]$Memory = 2700, [int]$Port = 5917, [string]$OutDir = 'build-vscode',
-      [switch]$Persist, [string]$Argumentos = '--in-process-gpu --disable-gpu --no-sandbox --verbose --enable-logging')
+      [switch]$Persist, [string]$Argumentos = '--in-process-gpu --disable-gpu --no-sandbox --verbose --enable-logging',
+      [string]$Tracepoints = '')
 $root = Split-Path $PSScriptRoot -Parent
 Set-Location $root
 $t0 = Get-Date
 if (-not $SemBuild) {
     $b = .\build.ps1 -OutDir $OutDir 6>&1 2>&1 | ForEach-Object { "$_" }
     if ($LASTEXITCODE -ne 0) { 'build falhou:'; $b | Where-Object { $_ -match 'error' } | Select-Object -First 8; exit 1 }
-    .\tools\stage-vscode.ps1 -App $App -OutDir $OutDir -Diagnostico -ComApp -ComModulosNativos -Autostart -SizeMiB 768 -Args0 $Argumentos | Out-Null
+    .\tools\stage-vscode.ps1 -App $App -OutDir $OutDir -Diagnostico -ComApp -ComModulosNativos -Autostart -SizeMiB 768 -Args0 $Argumentos -Tracepoints $Tracepoints | Out-Null
 }
 "build+imagem: {0:N0} s" -f ((Get-Date) - $t0).TotalSeconds
 Get-CimInstance Win32_Process -Filter "Name='qemu-system-x86_64.exe'" | Where-Object { $_.CommandLine -match "tcp:127.0.0.1:$Port," } |

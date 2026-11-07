@@ -717,7 +717,7 @@ void *getutxent(void) { return 0; }            /* sem registro de logins (who/us
 int utmpxname(const char *f) { (void)f; return 0; }
 
 /* *at(): AT_FDCWD (-2) ou caminho absoluto; um dirfd de verdade vira o caminho dele (SYS_FDPATH) */
-static const char *at_path(int dirfd, const char *p, char *buf, size_t cap) {
+const char *cx_at_path(int dirfd, const char *p, char *buf, size_t cap) {   /* também usado por foundationsys.c e extra.c */
     if (dirfd == -2 || p[0] == '/') return p;
     char d[1024];
     if (cx_syscall(SYS_FDPATH, dirfd, (long)d, sizeof d, 0, 0) < 0) { cx_errno = 9; return 0; }
@@ -731,8 +731,8 @@ static const char *at_path(int dirfd, const char *p, char *buf, size_t cap) {
 int fchownat(int fd, const char *p, unsigned u, unsigned g, int fl) { (void)fd; (void)p; (void)u; (void)g; (void)fl; return 0; }
 int mkfifoat(int fd, const char *p, unsigned short m) { (void)fd; (void)p; (void)m; cx_errno = 45; return -1; }
 int mknodat(int fd, const char *p, unsigned short m, int dev) { (void)fd; (void)p; (void)m; (void)dev; cx_errno = 1; return -1; }
-long readlinkat(int fd, const char *p, char *b, size_t n) { char t[1024]; const char *q = at_path(fd, p, t, sizeof t); return q ? readlink(q, b, n) : -1; }
-int symlinkat(const char *tgt, int fd, const char *p) { char t[1024]; const char *q = at_path(fd, p, t, sizeof t); return q ? symlink(tgt, q) : -1; }
+long readlinkat(int fd, const char *p, char *b, size_t n) { char t[1024]; const char *q = cx_at_path(fd, p, t, sizeof t); return q ? readlink(q, b, n) : -1; }
+int symlinkat(const char *tgt, int fd, const char *p) { char t[1024]; const char *q = cx_at_path(fd, p, t, sizeof t); return q ? symlink(tgt, q) : -1; }
 int fchdir(int fd) {
     char d[1024];
     long r = cx_syscall(SYS_FDPATH, fd, (long)d, sizeof d, 0, 0);
@@ -818,7 +818,6 @@ int setrgid(unsigned r) { (void)r; return 0; }
 int getcontext(void *u) { (void)u; cx_errno = 45; return -1; }
 int setcontext(const void *u) { (void)u; cx_errno = 45; return -1; }
 void makecontext(void *u, void (*f)(void), int argc, ...) { (void)u; (void)f; (void)argc; }
-int fgetattrlist(int fd, void *al, void *buf, size_t n, unsigned opt) { (void)fd; (void)al; (void)buf; (void)n; (void)opt; cx_errno = 45; return -1; }
 int proc_regionfilename(int pid, unsigned long long addr, void *buf, unsigned size) { (void)pid; (void)addr; (void)buf; (void)size; return 0; }
 int vm_region_recurse_64(unsigned task, unsigned long long *addr, unsigned long long *size, unsigned *depth, void *info, unsigned *cnt) {
     (void)task; (void)addr; (void)size; (void)depth; (void)info; (void)cnt;
@@ -828,3 +827,20 @@ int unw_get_proc_name(void *cur, char *buf, size_t len, unsigned long long *off)
 long __syscall(long n, ...) { (void)n; cx_errno = 78; return -1; }   /* ENOSYS */
 const void *_NSGetMachExecuteHeader(void) { return _dyld_get_image_header(0); }
 void CFStringNormalize(void *s, long form) { (void)s; (void)form; }   /* só NFC/ASCII no mOS: nada a fazer */
+
+/* getattrlist/fgetattrlist: só ATTR_VOL_CAPABILITIES (o ruby e o Foundation perguntam se o volume diferencia
+ * maiúsculas). Os volumes do mOS (FAT32, APFS/HFS+ só leitura) preservam o caso mas não o diferenciam. */
+typedef struct { unsigned short bitmapcount, reserved; unsigned commonattr, volattr, dirattr, fileattr, forkattr; } cx_attrlist_t;
+static int vol_caps(const cx_attrlist_t *al, void *buf, size_t n) {
+    if (!al || al->commonattr || al->dirattr || al->fileattr || al->forkattr ||
+        (al->volattr & ~0x80020000u) != 0 || !(al->volattr & 0x20000u)) { cx_errno = 45; return -1; }
+    if (n < 4 + 32) { cx_errno = 34; return -1; }
+    unsigned *o = buf;
+    o[0] = 4 + 32;                                 /* tamanho do que foi devolvido */
+    memset(o + 1, 0, 32);
+    o[1] = 0x200 | 0x2;                            /* FORMAT: CASE_PRESERVING | SYMBOLICLINKS (links do libSystem) */
+    o[5] = 0x100 | 0x200 | 0x2;                    /* valid: CASE_SENSITIVE, CASE_PRESERVING, SYMBOLICLINKS */
+    return 0;
+}
+int fgetattrlist(int fd, void *al, void *buf, size_t n, unsigned opt) { (void)fd; (void)opt; return vol_caps(al, buf, n); }
+int cx_getattrlist(const char *p, void *al, void *buf, size_t n, unsigned opt) { (void)opt; if (access(p, 0)) return -1; return vol_caps(al, buf, n); }
