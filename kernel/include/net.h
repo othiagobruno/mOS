@@ -52,6 +52,12 @@ int  tcp_send(int s, const void *data, int len);  /* bytes aceitos */
 int  tcp_recv(int s, void *buf, int max);     /* bytes lidos; 0 nada; -1 fechado e vazio */
 void tcp_close(int s);
 int  tcp_avail(int s);                          /* bytes recebidos esperando leitura */
+/* "sockets de memória" (net/usersock.c): ids >= TCP_MEM_BASE não são TCP, são os canais do TLS dos apps
+ * (SecureTransport do libSystem). tcp_state/send/recv desviam para eles. */
+#define TCP_MEM_BASE 0x10000
+int  memsock_state(int s);
+int  memsock_send(int s, const void *data, int len);
+int  memsock_recv(int s, void *buf, int max);
 
 /* TLS 1.3 sobre TCP (cliente) */
 typedef struct tls_conn tls_conn_t;

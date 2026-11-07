@@ -462,12 +462,47 @@ int posix_spawnattr_setspecialport_np(void *a, u32 port, int which) {
  * usando as syscalls de portas Mach do kernel (registro de serviços global entre processos). */
 
 /* ---- sandbox e Keychain: o mOS não tem; "permitido" e "sem keychain" */
-int sandbox_check(int pid, const char *op, int type, ...) { (void)pid; (void)op; (void)type; return 0; }
-int sandbox_init(const char *profile, u64 flags, char **err) { (void)profile; (void)flags; if (err) *err = 0; return 0; }
+/* Sandbox (Seatbelt): o mOS não restringe nada, mas aceita os perfis e lembra que um foi aplicado.
+ * sandbox_check(pid, NULL, 0) ("o processo está em sandbox?") responde sim depois de um perfil aplicado,
+ * ou num helper do Chromium (--type=...) sem --no-sandbox: no macOS ele recebe o perfil do processo
+ * principal na partida (Seatbelt exec) e o renderer faz CHECK disso. Operações específicas: permitidas. */
+char *strdup(const char *s);
+static volatile int sandbox_applied;
+static int helper_expects_sandbox(void) {
+    extern char **NXArgv;
+    int helper = 0, nosb = 0;
+    for (int i = 1; NXArgv && NXArgv[i]; i++) {
+        if (!strncmp(NXArgv[i], "--type=", 7)) helper = 1;
+        if (!strcmp(NXArgv[i], "--no-sandbox")) nosb = 1;
+    }
+    return helper && !nosb;
+}
+int sandbox_check(int pid, const char *op, int type, ...) {
+    (void)type;
+    if (op) return 0;                                          /* operação permitida */
+    if (pid != (int)SYS0(SYS_GETPID)) return 0;
+    return sandbox_applied || helper_expects_sandbox();
+}
+int sandbox_init(const char *profile, u64 flags, char **err) { (void)profile; (void)flags; if (err) *err = 0; sandbox_applied = 1; return 0; }
 int sandbox_init_with_parameters(const char *profile, u64 flags, const char *const params[], char **err) {
-    (void)profile; (void)flags; (void)params; if (err) *err = 0; return 0;
+    (void)profile; (void)flags; (void)params; if (err) *err = 0; sandbox_applied = 1; return 0;
 }
 void sandbox_free_error(char *err) { (void)err; }
+/* API privada usada pelo sandbox::Seatbelt do Chromium: perfis compilados são objetos opacos */
+typedef struct { u64 magic; } sb_obj_t;
+static sb_obj_t sb_profile = {0x5342}, sb_params = {0x5350};
+void *sandbox_create_params(void) { return &sb_params; }
+int sandbox_set_param(void *params, const char *key, const char *value) { (void)params; (void)key; (void)value; return 0; }
+void sandbox_free_params(void *params) { (void)params; }
+void *sandbox_compile_string(const char *profile, void *params, char **err) { (void)profile; (void)params; if (err) *err = 0; return &sb_profile; }
+void sandbox_free_profile(void *profile) { (void)profile; }
+int sandbox_apply(void *profile) { (void)profile; sandbox_applied = 1; return 0; }
+char *sandbox_extension_issue_file(const char *ext_class, const char *path, u32 flags) {
+    (void)ext_class; (void)flags;
+    return strdup(path ? path : "");                           /* "token" da extensão: o próprio caminho */
+}
+long sandbox_extension_consume(const char *token) { (void)token; return 1; }
+int sandbox_extension_release(long handle) { (void)handle; return 0; }
 int SecKeychainAddCallback(void *cb, u32 mask, void *ctx) { (void)cb; (void)mask; (void)ctx; return 0; }
 int SecKeychainRemoveCallback(void *cb) { (void)cb; return 0; }
 

@@ -471,6 +471,8 @@ void cx_darwin_init(void) {
     extern void cx_literals_init(void);
     cx_literals_init();                         /* @{} e @[] vazios (literals.c) */
     frame_class_init();                         /* NSThemeFrame: moldura da janela para o Electron */
+    extern void cx_coretext_init(void);
+    cx_coretext_init();                         /* NSFont/CTFont para o gfx::PlatformFontMac (coretext.c) */
     cx_class_t *ob = cx_class_named("NSObject");
     if (ob) {
         cx_add_method(ob, "addObserver:forKeyPath:options:context:", (void *)kvo_add);

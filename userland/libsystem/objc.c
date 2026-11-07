@@ -50,6 +50,8 @@ static void register_class(cx_class_t *c) {
     }
     all_classes[nclasses++] = c;
 }
+/* para objc_getClassList/objc_copyClassList (objcrt.c) */
+u32 cx_class_list(cx_class_t ***out) { if (out) *out = all_classes; return nclasses; }
 
 static int objc_ready;
 void cx_objc_boot(u64 sects, u64 n);
@@ -481,6 +483,7 @@ void cx_object_free(id o) {
     if (!h) return;
     weak_clear(o);
     cx_destruct_instance(o);
+    { extern void cx_assoc_remove_all(id o); cx_assoc_remove_all(o); }   /* objetos associados (objcrt.c) */
     h->magic = 0xDEADBEEF;
     free(h);
 }
@@ -651,6 +654,11 @@ void cx_objc_init_image(u64 sects, u64 n) {
             u8 *a = (u8 *)s[i * 3];
             u64 size = s[i * 3 + 1], kind = s[i * 3 + 2];
             if (pass == 0 && kind == 7) fix_cfstrings(a, size);
+            if (pass == 0 && (kind == 6 || kind == 10)) { extern void cx_objc_protocols(u8 *a, u64 size, u64 kind); cx_objc_protocols(a, size, kind); }
+            if (pass == 3 && (kind == 2 || kind == 11)) {
+                extern void cx_objc_category_protocols(const u8 *cat);
+                for (u64 o = 0; o + 8 <= size; o += 8) cx_objc_category_protocols(*(const u8 **)(a + o));
+            }
             if (pass == 1 && kind == 3)
                 for (u64 o = 0; o + 8 <= size; o += 8) *(SEL *)(a + o) = sel_registerName(*(const char **)(a + o));
             if (pass == 2 && kind == 1)

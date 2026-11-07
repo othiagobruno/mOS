@@ -441,18 +441,33 @@ void _tlv_atexit(void (*fn)(void *), void *obj) { __cxa_atexit(fn, obj, 0); }
 
 /* memória virtual */
 #define CX_MMAP_BASE 0x400100000000ULL   /* USER_MMAP_BASE do kernel */
+/* TEMPORÁRIO (diagnóstico do Claude Code): /Sistema/Biblioteca/mmap-trace liga o registro de mmap/mprotect */
+static int mtrace = -1;
+static void mt(const char *what, void *a, size_t len, int prot, int flags, long r) {
+    if (mtrace < 0) { mos_stat_t st; mtrace = SYS2(SYS_STAT, "/Sistema/Biblioteca/mmap-trace", &st) == 0; }
+    if (mtrace) cx_fdprintf(2, "[mm] %s %p %lx prot %d fl %x -> %lx\n", what, a, (unsigned long)len, prot, flags, r);
+}
+static void *mmap_real(void *addr, size_t len, int prot, int flags, int fd, off_t off);
 void *mmap(void *addr, size_t len, int prot, int flags, int fd, off_t off) {
+    void *r = mmap_real(addr, len, prot, flags, fd, off);
+    mt("mmap", addr, len, prot, flags, (long)r);
+    return r;
+}
+static void *mmap_real(void *addr, size_t len, int prot, int flags, int fd, off_t off) {
     /* MAP_FIXED sobre a pilha (página de guarda do Rust, por exemplo): a região já existe */
     if ((flags & 0x10) && addr && (u64)addr >= 0x400000000000ULL && (u64)addr < 0x400040000000ULL) return addr;
     /* MAP_FIXED|MAP_ANON dentro da área de mmap (ex.: trecho de uma reserva do PartitionAlloc):
      * troca o trecho por páginas zeradas, ou só devolve as páginas se for PROT_NONE */
     if ((flags & 0x1010) == 0x1010 && addr && (u64)addr >= CX_MMAP_BASE) {
         SYS2(SYS_MUNMAP, addr, len);
-        if (prot) { long c = SYS3(SYS_MMAP, len, 2, addr); if (c < 0) { cx_errno = (int)-c; return (void *)-1; } }
+        /* b = 3: o trecho vira memória sob demanda (páginas zeradas ao tocar; kernel/mm/lazy.c) */
+        if (prot) { long c = SYS3(SYS_MMAP, len, 3, addr); if (c < 0) { cx_errno = (int)-c; return (void *)-1; } }
         return addr;
     }
-    /* PROT_NONE anônimo = só reservar endereços (as páginas vêm no mprotect) */
-    long r = SYS2(SYS_MMAP, len, (!prot && (flags & 0x1000)) ? 1 : 0);
+    /* anônimo: PROT_NONE = só reservar endereços (as páginas vêm no mprotect); com acesso = sob demanda, como no
+     * macOS (o JavaScriptCore do Claude Code pede 1-4 GB assim e usa uma fração). Arquivo: páginas na hora. */
+    int anon = (flags & 0x1000) != 0;
+    long r = SYS2(SYS_MMAP, len, anon ? (prot ? 3 : 1) : 0);
     if (r < 0) { cx_errno = (int)-r; return (void *)-1; }
     if (!(flags & 0x1000) && fd >= 0) {           /* MAP_ANON = 0x1000; senão: copia o arquivo */
         off_t cur = lseek(fd, 0, 1);
@@ -465,11 +480,12 @@ void *mmap(void *addr, size_t len, int prot, int flags, int fd, off_t off) {
 }
 int munmap(void *a, size_t len) { return SYS2(SYS_MUNMAP, a, len) < 0 ? -1 : 0; }
 int mprotect(void *a, size_t len, int prot) {
-    /* liberar acesso a um trecho reservado aloca as páginas que faltam (as existentes ficam) */
+    /* liberar acesso a um trecho reservado: as páginas que faltam passam a vir sob demanda (as existentes ficam) */
     if (prot && len && (u64)a >= CX_MMAP_BASE) {
-        long r = SYS3(SYS_MMAP, len, 2, a);
+        long r = SYS3(SYS_MMAP, len, 3, a);
+        mt("mprotect", a, len, prot, 0, r);
         if (r < 0) { cx_errno = (int)-r; return -1; }
-    }
+    } else mt("mprotect", a, len, prot, 0, 0);
     return 0;
 }
 int madvise(void *a, size_t len, int adv) { (void)a; (void)len; (void)adv; return 0; }

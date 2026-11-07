@@ -129,16 +129,42 @@ mais um UIKit/Catalyst, que o mOS ainda não tem.
   - Para chegar lá: `cli.c` (as 87 funções que faltavam), Security/CFNetwork/SystemConfiguration/CoreServices/IOKit/
     LocalAuthentication na lista de bibliotecas do carregador, `MAX_LOAD` de 256 para 512 MB (o binário tem 277 MB),
     `fcntl(F_DUPFD)` coerente com `dup()` (o tokio clonava o kqueue como fd 0) e `pthread_attr_setstacksize` respeitado.
-- **Próximo bloqueio do Codex: TLS.** O Codex usa native-tls, que no macOS é o SecureTransport (`SSLCreateContext`/
-  `SSLHandshake`/`SSLRead`/`SSLWrite`), ainda stub no `security.c`. DNS e TCP até `auth.openai.com:443` já funcionam;
-  `codex login --device-auth` para em "error sending request". O kernel tem um cliente TLS 1.3/1.2 (`kernel/net/tls.c`) que
-  pode servir de base.
+## TLS para os apps (SecureTransport) e XPC
+
+- **SecureTransport de verdade** (`userland/libsystem/securetransport.c`). O app continua dono do socket (callbacks de
+  `SSLSetIOFuncs`). O libSystem lê **um registro TLS por vez** (5 bytes de cabeçalho e depois exatamente o corpo; o `read_func`
+  do security-framework repete a leitura até encher o pedido, então pedir mais travaria um socket bloqueante) e o entrega ao kernel.
+  - O kernel roda o motor do navegador (`kernel/net/tls.c`: TLS 1.3/1.2, cadeia até as raízes da Mozilla, nome, datas, OCSP
+    grampeado) sobre um "socket de memória". As operações novas do `SYS_NET` são `MOS_NET_TLS_NEW/FEED/DRAIN/HANDSHAKE/SEND/RECV/
+    ERROR/FREE` (`kernel/net/usersock.c`), e `tcp_state/send/recv` desviam ids `>= TCP_MEM_BASE` para `memsock_*`. Um motor TLS só
+    no sistema, com uma lista de confiança só. A trava `g_tls_lock` serializa o motor.
+  - Semântica do security-framework: `errSSLWouldBlock` retomável, `kSSLSessionOptionBreakOnServerAuth` →
+    `errSSLPeerAuthCompleted` uma vez, e `SSLCopyPeerTrust` devolve uma confiança marcada como válida, porque o kernel já
+    validou a cadeia (`cx_trust_mark_verified` em `security.c`). Um `SecTrustCreateWithCertificates` do próprio app continua
+    "não confiável".
+  - Limites: só cliente, sem certificado de cliente, sem ALPN (o app cai para HTTP/1.1), sem retomada de sessão.
+- **Raízes do sistema**: `SecTrustSettingsCopyCertificates(kSecTrustSettingsDomainSystem)` devolve as 118 raízes da Mozilla do
+  kernel (`MOS_NET_TLS_ROOTS`), e `SecTrustSettingsCopyTrustSettings` devolve um array vazio ("confiar como raiz"). É o caminho do
+  `rustls-native-certs`.
+- **Teste**: `tools/build-tlstest-app.ps1 -OutDir build-tls` (`userland/tests-tls`). No QEMU deu **16/16**: TLS 1.3 com
+  example.com, `HTTP/1.1 200` bloqueante e não-bloqueante, nome errado recusado.
+- **Codex CLI: `codex login --device-auth` funciona.** Ele negocia TLS 1.3 com `auth.openai.com` (cadeia até a ISRG Root X2),
+  recebe o código de dispositivo e mostra a tela "Follow these steps to sign in with ChatGPT using device code
+  authorization". Antes parava em "error sending request".
+- **XPC** (`userland/libsystem/xpc.c`). O modelo de objetos inteiro: null, bool, int64, uint64, double, date, data, string,
+  uuid, fd, array, dictionary e error, com `xpc_copy`, `xpc_equal`, `xpc_hash`, `xpc_copy_description` e os `apply` com blocos.
+  São objetos ObjC da classe `OS_xpc_object`, então ARC/`objc_release` funcionam. `XPC_BOOL_*` e `XPC_ERROR_*` são estáticos e
+  imortais.
+  - Conexões: o mOS não tem um launchd com serviços XPC, então elas se comportam como num Mac sem o serviço. Depois de
+    `resume`, o handler recebe `XPC_ERROR_CONNECTION_INVALID` (uma vez), e as respostas, inclusive a síncrona, são esse erro.
+  - Teste: `tools/build-xpctest.ps1` + `machotest` (`userland/tests-xpc`): **24/24**.
 
 ## Roteiro (do mais perto para o mais longe)
 
 1. **Codex CLI** (faltam 90). É o primeiro app da lista que pode rodar inteiro:
    - termios (`tcgetattr/tcsetattr/cfmakeraw/openpty/ttyname_r/tcgetpgrp`) para a interface de terminal;
-   - `getaddrinfo/freeaddrinfo/gai_strerror` e TLS (ele usa rustls ou SecureTransport, a conferir);
+   - ~~`getaddrinfo` e TLS~~: feitos (SecureTransport real; o login por código de dispositivo chega à OpenAI). Falta concluir
+     um login de ponta a ponta e conferir o polling do token;
    - CFURL, CFError, CFPreferences, CFTimeZone;
    - FSEvents (pode começar sem eventos) e proxies (`CFNetworkCopyProxiesForURL`, `SCDynamicStore`: "sem proxy");
    - `proc_pidinfo/proc_pidpath/proc_listchildpids`, `flock/lockf`, `copyfile_state_*`, `acl_*` (sem ACL);

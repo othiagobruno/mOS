@@ -221,6 +221,7 @@ int tcp_connect(u32 ip, u16 port) {
 }
 
 int tcp_state(int s) {
+    if (s >= TCP_MEM_BASE) return memsock_state(s);
     tcb_t *t = get(s);
     if (!t) return TCP_CLOSED;
     switch (t->st) {
@@ -238,6 +239,7 @@ const char *tcp_error_reason(int s) {
 }
 
 int tcp_send(int s, const void *data, int len) {
+    if (s >= TCP_MEM_BASE) return memsock_send(s, data, len);
     tcb_t *t = get(s);
     if (!t || t->user_closed || len < 0) return -1;
     if (t->st != S_SYN_SENT && t->st != S_ESTAB && t->st != S_CLOSE_WAIT) return -1;
@@ -254,6 +256,7 @@ int tcp_send(int s, const void *data, int len) {
 }
 
 int tcp_recv(int s, void *buf, int max) {
+    if (s >= TCP_MEM_BASE) return memsock_recv(s, buf, max);
     tcb_t *t = get(s);
     if (!t || t->user_closed) return -1;
     if (t->rx_len == 0 || max <= 0) {

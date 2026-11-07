@@ -99,7 +99,10 @@ __attribute__((noreturn)) void cx_start(cx_start_t *s) {
     char **argv = (char **)s->argv, **envp = (char **)s->envp, **apple = (char **)s->apple;
     environ = envp;
     cx_image_base = s->image_base;
+    /* no macOS o processo já começa com o TSD da thread principal no GS (gs:[0] = pthread_self); o Bun (Claude
+     * Code) lê gs:[0] direto antes de qualquer chamada de pthread. cx_tsd (extra.c) cria e liga a tabela. */
     cx_libc_init();
+    { extern void **cx_tsd(void); cx_tsd(); }                   /* depois do malloc pronto: cx_tsd usa calloc */
     NXArgc = argc;
     NXArgv = argv;
     __progname = argc > 0 ? argv[0] : "app";

@@ -322,7 +322,16 @@ static BOOL o_is_member(id self, SEL c, cx_class_t *k) { (void)c; return self->i
 static BOOL c_is_subclass(id cls, SEL c, cx_class_t *k) { (void)c; return cx_is_subclass((cx_class_t *)cls, k); }
 static BOOL o_responds(id self, SEL c, SEL s) { (void)c; return cx_responds(self->isa, s); }
 static BOOL c_instances_respond(id cls, SEL c, SEL s) { (void)c; return cx_responds((cx_class_t *)cls, s); }
-static BOOL o_conforms(id self, SEL c, void *p) { (void)self; (void)c; (void)p; return YES; }
+/* protocolos de verdade (objcrt.c); as classes nativas do mOS não declaram protocolos, então seguem dizendo YES */
+static BOOL o_conforms(id self, SEL c, void *p) {
+    (void)c;
+    extern BOOL class_conformsToProtocol(cx_class_t *cls, void *p);
+    extern int cx_class_is_builtin(cx_class_t *cls);
+    extern BOOL class_isMetaClass(cx_class_t *cls);
+    cx_class_t *k = object_getClass(self);
+    if (k && class_isMetaClass(k)) k = (cx_class_t *)self;   /* +conformsToProtocol: (self é a classe) */
+    return class_conformsToProtocol(k, p) || cx_class_is_builtin(k) ? YES : NO;
+}
 static id o_perform(id self, SEL c, SEL s) { (void)c; return ((id (*)(id, SEL))objc_msgSend)(self, s); }
 static id o_perform1(id self, SEL c, SEL s, id a) { (void)c; return ((id (*)(id, SEL, id))objc_msgSend)(self, s, a); }
 static id o_perform2(id self, SEL c, SEL s, id a, id b) { (void)c; return ((id (*)(id, SEL, id, id))objc_msgSend)(self, s, a, b); }
@@ -875,7 +884,7 @@ static BOOL yes_m(id self, SEL c) { (void)self; (void)c; return YES; }
 /* NSBundle: o mainBundle (path NULL) vem do argv[0]; +bundleWithPath: cria instâncias para outros
  * bundles (.app ou .framework; num .framework o FAT do mOS não tem os links Resources/Current, então
  * também se procura em Versions/A) */
-typedef struct { cx_class_t *isa; char *path; id info; } nsbundle_t;
+typedef struct { cx_class_t *isa; char *path; id info; id outer; } nsbundle_t;
 #define BUNDLE(o) ((nsbundle_t *)(o))
 static void b_root(id self, char *p, u64 cap) {
     if (self && BUNDLE(self)->path) { strlcpy(p, BUNDLE(self)->path, cap); return; }
@@ -946,7 +955,35 @@ static id b_info_dict(id self, SEL c) {
     }
     return b->info;
 }
-static id b_info(id self, SEL c, id key) { return d_get(b_info_dict(self, c), c, key); }
+/* helper do Electron (Code Helper.app dentro de Contents/Frameworks) não traz ElectronAsarIntegrity.
+ * O plist do .app de fora tem o dicionário aninhado Resources/app.asar → {algorithm, hash}. */
+static id b_outer_info(id self) {
+    nsbundle_t *b = BUNDLE(self);
+    if (b->outer == (id)1) return 0;
+    if (b->outer) return b->outer;
+    char r[1024];
+    b_root(self, r, sizeof r);
+    for (;;) {
+        char *s = strrchr(r, '/');
+        if (!s || s == r) break;
+        *s = 0;
+        if (!b_ends(r, ".app")) continue;
+        char f[1100];
+        snprintf(f, sizeof f, "%s/Contents/Info.plist", r);
+        id info = cx_plist_file(f);
+        if (!info) continue;
+        b->outer = info;
+        return info;
+    }
+    b->outer = (id)1;
+    return 0;
+}
+static id b_info(id self, SEL c, id key) {
+    id v = d_get(b_info_dict(self, c), c, key);
+    if (v) return v;
+    id o = b_outer_info(self);
+    return o ? d_get(o, c, key) : 0;
+}
 static id b_exec(id self, SEL c) {
     char r[1024], f[1300];
     b_root(self, r, sizeof r);

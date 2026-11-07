@@ -253,10 +253,12 @@ bool uvm_map_phys(process_t *p, u64 va, u64 phys, bool rw) {
     return true;
 }
 
+bool lazy_fault(process_t *p, u64 va);   /* kernel/mm/lazy.c: memória sob demanda ainda não tocada */
 bool uvm_copy_out(process_t *p, u64 va, const void *src, usize len) {
     const u8 *s = src;
     while (len) {
         u64 *e = uvm_pte(p, va);
+        if (!e && lazy_fault(p, va)) e = uvm_pte(p, va);
         if (!e) return false;
         if ((*e & PTE_COW) && !cow_break(p, e, va)) return false;   /* o kernel também respeita o COW */
         usize k = MIN(len, 4096 - (va & 0xFFF));
@@ -270,6 +272,7 @@ bool uvm_copy_in(process_t *p, void *dst, u64 va, usize len) {
     u8 *d = dst;
     while (len) {
         u64 *e = uvm_pte(p, va);
+        if (!e && lazy_fault(p, va)) e = uvm_pte(p, va);
         if (!e) return false;
         usize k = MIN(len, 4096 - (va & 0xFFF));
         memcpy(d, (u8 *)((*e & PTE_ADDR) + (va & 0xFFF)), k);
@@ -408,6 +411,7 @@ static void finish(process_t *p, int code) {
     compat_gui_proc_exit(p);
     machipc_exit(p);                                  /* portas Mach: receptores morrem, envios viram nomes mortos */
     { extern void net_user_exit(process_t *p); net_user_exit(p); }   /* conexões TCP do processo (kernel/net/usersock.c) */
+    { extern void lazy_exit(process_t *p); lazy_exit(p); }           /* faixas de memória sob demanda (kernel/mm/lazy.c) */
     for (process_t *c = procs; c; c = c->next) if (c->ppid == p->pid) c->ppid = 0;   /* órfãos */
     bool reported = false;
     for (thread_t *t = sched_threads(); t; t = t->next) {
@@ -581,6 +585,11 @@ u64 proc_fault(int_frame_t *f, u64 cr2) {
     if (f->vector == 14 && (f->error & 7) == 7) {
         u64 *e = uvm_pte(p, cr2);
         if (e && (*e & PTE_COW) && cow_break(p, e, cr2)) return (u64)f;
+    }
+    /* página ausente numa faixa de memória sob demanda (mmap anônimo, kernel/mm/lazy.c): página zerada e repete */
+    if (f->vector == 14 && !(f->error & 1)) {
+        extern bool lazy_fault(process_t *p, u64 va);
+        if (lazy_fault(p, cr2)) return (u64)f;
     }
     /* o programa tem tratador para esta falha? entrega o sinal */
     int sig = f->vector == 14 || f->vector == 13 ? MOS_SIGSEGV : f->vector == 0 ? MOS_SIGFPE : f->vector == 6 ? MOS_SIGILL : 0;
@@ -981,14 +990,19 @@ u64 proc_syscall(int_frame_t *f) {
         if (!copy_path(p, path, a)) { r = -MOS_EFAULT; break; }
         int fd = -1;
         for (int i = 3; i < 32; i++) if (!p->fds[i].used) { fd = i; break; }
-        if (fd < 0) { r = -MOS_EMFILE; break; }
+        /* diagnóstico (com despejar-threads): open que falha nos helpers do VS Code vai para o log serial */
+        static int open_diag = -1;
+        if (open_diag < 0) open_diag = vfs_lookup("/Sistema/Biblioteca/despejar-threads") != NULL;
+        bool diag = open_diag && !strncmp(p->name, "Code Helper", 11);
+        if (fd < 0) { if (diag) kprintf("open[diag]: %s (pid %d): EMFILE %s\n", p->name, p->pid, path); r = -MOS_EMFILE; break; }
         vnode_t *v = vfs_lookup(path);
         bool wr = b & (MOS_O_WRONLY | MOS_O_RDWR);
         if (!v) {
-            if (!(b & MOS_O_CREAT)) { r = -MOS_ENOENT; break; }
+            if (!(b & MOS_O_CREAT)) { if (diag) kprintf("open[diag]: %s (pid %d): ENOENT %s\n", p->name, p->pid, path); r = -MOS_ENOENT; break; }
             if (!vfs_write_file(path, "", 0)) { r = -MOS_ENOENT; break; }
         } else if (v->dir && wr) { r = -MOS_EISDIR; break; }
         else if (wr && (b & MOS_O_TRUNC)) vfs_write_file(path, "", 0);
+        if (diag && strstr(p->name, "Renderer")) kprintf("open[diag]: %s (pid %d): ok %s%s\n", p->name, p->pid, path, v && v->dir ? " (pasta)" : "");
         p->fds[fd].used = true;
         p->fds[fd].kind = FD_FILE;
         p->fds[fd].pipe = NULL;
@@ -1150,6 +1164,29 @@ u64 proc_syscall(int_frame_t *f) {
          * dentro da área já reservada (mprotect para leitura/escrita), mantendo as que já existem */
         u64 len = (a + 0xFFF) & ~0xFFFULL;
         if (!p->mmap_next) p->mmap_next = USER_MMAP_BASE;
+        /* b = 3: memória sob demanda (kernel/mm/lazy.c), como o mmap anônimo do macOS. c = 0: faixa nova (só
+         * endereços; cada página vira RAM ao ser tocada); c != 0: [c, c + a) de uma reserva passa a ser sob
+         * demanda (mprotect / MAP_FIXED), mantendo as páginas que já existem */
+        if (b == 3) {
+            extern bool lazy_add(process_t *p, u64 va, u64 len);
+            if (c) {
+                u64 at = c & ~0xFFFULL, end = (c + a + 0xFFF) & ~0xFFFULL;
+                if (!a || at < USER_MMAP_BASE || end > p->mmap_next || end < at) { r = -MOS_EINVAL; break; }
+                r = lazy_add(p, at, end - at) ? 0 : -MOS_ENOMEM;
+                break;
+            }
+            /* faixas grandes ficam alinhadas à maior potência de 2 que cabe no tamanho (até 4 GiB): o alocador do
+             * JavaScriptCore (Bun) pede N bytes e exige o endereço alinhado a N (RELEASE_ASSERT) */
+            u64 al = 4096;
+            if (len >= (2ull << 20)) { al = 1ull << (63 - __builtin_clzll(len)); if (al > (4ull << 30)) al = 4ull << 30; }
+            u64 at = (p->mmap_next + al - 1) & ~(al - 1);
+            if (!len || len > (64ull << 30) || at + len > USER_END) { r = -MOS_ENOMEM; break; }
+            if (!lazy_add(p, at, len)) { r = -MOS_ENOMEM; break; }
+            p->mmap_next = at;
+            p->mmap_next += len + 4096;
+            r = (i64)at;
+            break;
+        }
         if (b == 2) {
             u64 at = c & ~0xFFFULL, end = (c + a + 0xFFF) & ~0xFFFULL;
             if (!a || at < USER_MMAP_BASE || end > p->mmap_next || end < at) { r = -MOS_EINVAL; break; }
@@ -1166,6 +1203,7 @@ u64 proc_syscall(int_frame_t *f) {
     }
     case SYS_MUNMAP: {
         if (a < USER_MMAP_BASE || a & 0xFFF || a + b > USER_END) { r = -MOS_EINVAL; break; }
+        { extern void lazy_remove(process_t *p, u64 va, u64 len); lazy_remove(p, a, b); }
         for (u64 va = a; va < a + b; va += 4096) {
             u64 *e = uvm_pte(p, va);
             if (!e) continue;
@@ -1251,6 +1289,7 @@ u64 proc_syscall(int_frame_t *f) {
         q->tty = p->tty;
         if (q->tty) q->tty->refs++;
         machipc_spawn(p, q);                            /* como no macOS: o filho só herda as portas especiais */
+        { extern void lazy_fork(process_t *from, process_t *to); lazy_fork(p, q); }   /* faixas sob demanda (mm/lazy.c) */
         for (int i = 0; i < 32; i++) if (p->fds[i].used) fd_copy(q, i, p, i);
         f->rax = 0;                                     /* o filho vê 0 */
         thread_t *ct = uthread_clone(q, f);

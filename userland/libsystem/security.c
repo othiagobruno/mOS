@@ -20,8 +20,8 @@
  *    funcionam, e SecCodeCopySigningInformation devolve um dicionário só com o identificador (como o macOS faz
  *    para código não assinado). O rendezvous do Chromium está em modo "só validar", então isso não o bloqueia.
  *  - SecTrust: avaliação devolve "não confiável"; o Chromium/Electron usa o próprio verificador (Chrome Root
- *    Store). SecTrustSettingsCopy* = errSecNoTrustSettings (o normal num Mac sem ajustes).
- *  - SecKey, SecIdentity, PKCS12, transforms e SecureTransport (SSL*): errSecUnimplemented / NULL.
+ *    Store). As confianças do SecureTransport (securetransport.c), já validadas pelo kernel, avaliam como válidas.
+ *  - SecKey, SecIdentity, PKCS12 e transforms: errSecUnimplemented / NULL. O SecureTransport é real: securetransport.c.
  *  - Authorization: criar/liberar funciona; pedir direitos = errAuthorizationDenied.
  * Os stubs antigos de chrome.c/mach.c/darwin.c que este arquivo substitui foram tirados de lá.
  */
@@ -688,6 +688,7 @@ id_ SecPolicyCopyProperties(id_ policy) { (void)policy; return CFDictionaryCreat
 
 /* SecTrust: guarda os certificados; a avaliação diz "não confiável" (o mOS não tem raízes do sistema) */
 typedef struct { id_ certs; } trust_box_t;
+static void trust_unmark(id_ t);
 OSStatus SecTrustCreateWithCertificates(id_ certs, id_ policies, id_ *trust) {
     (void)policies;
     if (!trust) return errSecParam;
@@ -696,6 +697,7 @@ OSStatus SecTrustCreateWithCertificates(id_ certs, id_ policies, id_ *trust) {
     id_ arr = CFArrayCreateMutable(0, 0, 0);
     if (CFGetTypeID(certs) == CFDataGetTypeID()) CFArrayAppendValue(arr, certs);   /* um certificado só */
     else for (long i = 0; i < CFArrayGetCount(certs); i++) CFArrayAppendValue(arr, CFArrayGetValueAtIndex(certs, i));
+    trust_unmark(arr);                                /* endereço reaproveitado de uma confiança antiga */
     *trust = arr;
     return errSecSuccess;
 }
@@ -715,15 +717,23 @@ OSStatus SecTrustSetAnchorCertificatesOnly(id_ trust, Boolean only) { (void)trus
 OSStatus SecTrustSetVerifyDate(id_ trust, id_ d) { (void)trust; (void)d; return errSecSuccess; }
 OSStatus SecTrustSetNetworkFetchAllowed(id_ trust, Boolean on) { (void)trust; (void)on; return errSecSuccess; }
 OSStatus SecTrustSetOCSPResponse(id_ trust, id_ r) { (void)trust; (void)r; return errSecSuccess; }
+#define kSecTrustResultUnspecified 4
 #define kSecTrustResultRecoverableTrustFailure 5
-OSStatus SecTrustEvaluate(id_ trust, u32 *result) { (void)trust; if (result) *result = kSecTrustResultRecoverableTrustFailure; return errSecSuccess; }
+/* confianças que o SecureTransport devolveu (SSLCopyPeerTrust) depois de o kernel validar a cadeia, as datas e o
+ * nome: essas avaliam como válidas; as demais continuam "não confiável" (o mOS não reavalia cadeias aqui) */
+static id_ g_verified[64];
+static unsigned g_nverified;
+void cx_trust_mark_verified(id_ t) { g_verified[g_nverified++ % 64] = t; }
+static void trust_unmark(id_ t) { for (int i = 0; i < 64; i++) if (g_verified[i] == t) g_verified[i] = 0; }
+static int trust_verified(id_ t) { for (int i = 0; t && i < 64; i++) if (g_verified[i] == t) return 1; return 0; }
+OSStatus SecTrustEvaluate(id_ trust, u32 *result) {
+    if (result) *result = trust_verified(trust) ? kSecTrustResultUnspecified : kSecTrustResultRecoverableTrustFailure;
+    return errSecSuccess;
+}
 OSStatus SecTrustGetTrustResult(id_ trust, u32 *result) { return SecTrustEvaluate(trust, result); }
-Boolean SecTrustEvaluateWithError(id_ trust, id_ *err) { (void)trust; if (err) *err = 0; return 0; }
+Boolean SecTrustEvaluateWithError(id_ trust, id_ *err) { if (err) *err = 0; return trust_verified(trust) ? 1 : 0; }
 OSStatus SecTrustEvaluateAsync(id_ trust, void *queue, void *block) { (void)trust; (void)queue; (void)block; return errSecUnimplemented; }
 OSStatus SecTrustEvaluateAsyncWithError(id_ trust, void *queue, void *block) { (void)trust; (void)queue; (void)block; return errSecUnimplemented; }
-/* sem ajustes de confiança do usuário/admin: o resultado normal num Mac */
-OSStatus SecTrustSettingsCopyCertificates(int domain, id_ *certs) { (void)domain; if (certs) *certs = 0; return errSecNoTrustSettings; }
-OSStatus SecTrustSettingsCopyTrustSettings(id_ cert, int domain, id_ *settings) { (void)cert; (void)domain; if (settings) *settings = 0; return errSecNoTrustSettings; }
 
 /* ================================================================ chaves, identidades, PKCS#12, transforms */
 id_ SecKeyCreateRandomKey(id_ params, id_ *err) { (void)params; if (err) *err = 0; return 0; }
@@ -762,29 +772,8 @@ id_ SecTransformConnectTransforms(id_ a, id_ an, id_ b, id_ bn, id_ grp, id_ *er
 Boolean SecTransformSetAttribute(id_ t, id_ k, id_ v, id_ *err) { (void)t; (void)k; (void)v; if (err) *err = 0; return 0; }
 id_ SecTransformExecute(id_ t, id_ *err) { (void)t; if (err) *err = 0; return 0; }
 
-/* ================================================================ SecureTransport (SSL*), sec_protocol
- * Obsoleto no macOS e sem implementação no mOS: SSLCreateContext devolve NULL, que quem usa (native-tls) trata
- * como falha ao montar a conexão. TODO: montar sobre o TLS do mOS (tools/tlstest.c) para o Codex CLI. */
-void *SSLCreateContext(void *alloc, int side, int type) { (void)alloc; (void)side; (void)type; return 0; }
-OSStatus SSLSetIOFuncs(void *c, void *r, void *w) { (void)c; (void)r; (void)w; return errSecUnimplemented; }
-OSStatus SSLSetConnection(void *c, const void *conn) { (void)c; (void)conn; return errSecUnimplemented; }
-OSStatus SSLGetConnection(void *c, const void **conn) { (void)c; if (conn) *conn = 0; return errSecUnimplemented; }
-OSStatus SSLSetPeerDomainName(void *c, const char *n, size_t l) { (void)c; (void)n; (void)l; return errSecUnimplemented; }
-OSStatus SSLSetPeerID(void *c, const void *id, size_t l) { (void)c; (void)id; (void)l; return errSecUnimplemented; }
-OSStatus SSLSetCertificate(void *c, id_ certs) { (void)c; (void)certs; return errSecUnimplemented; }
-OSStatus SSLSetProtocolVersionMin(void *c, int v) { (void)c; (void)v; return errSecUnimplemented; }
-OSStatus SSLSetProtocolVersionMax(void *c, int v) { (void)c; (void)v; return errSecUnimplemented; }
-OSStatus SSLSetSessionOption(void *c, int o, Boolean v) { (void)c; (void)o; (void)v; return errSecUnimplemented; }
-OSStatus SSLSetEnabledCiphers(void *c, const u32 *ci, size_t n) { (void)c; (void)ci; (void)n; return errSecUnimplemented; }
-OSStatus SSLGetEnabledCiphers(void *c, u32 *ci, size_t *n) { (void)c; (void)ci; if (n) *n = 0; return errSecUnimplemented; }
-OSStatus SSLGetNumberEnabledCiphers(void *c, size_t *n) { (void)c; if (n) *n = 0; return errSecUnimplemented; }
-OSStatus SSLHandshake(void *c) { (void)c; return errSecUnimplemented; }
-OSStatus SSLRead(void *c, void *b, size_t n, size_t *done) { (void)c; (void)b; (void)n; if (done) *done = 0; return errSecUnimplemented; }
-OSStatus SSLWrite(void *c, const void *b, size_t n, size_t *done) { (void)c; (void)b; (void)n; if (done) *done = 0; return errSecUnimplemented; }
-OSStatus SSLGetBufferedReadSize(void *c, size_t *n) { (void)c; if (n) *n = 0; return errSecUnimplemented; }
-OSStatus SSLGetSessionState(void *c, int *st) { (void)c; if (st) *st = 0; return errSecUnimplemented; }
-OSStatus SSLCopyPeerTrust(void *c, id_ *trust) { (void)c; if (trust) *trust = 0; return errSecUnimplemented; }
-OSStatus SSLClose(void *c) { (void)c; return errSecUnimplemented; }
+/* ================================================================ sec_protocol (Network.framework)
+ * O SecureTransport (SSL*) e as raízes do sistema (SecTrustSettingsCopy*) estão em securetransport.c. */
 void *sec_trust_copy_ref(void *t) { (void)t; return 0; }
 void sec_protocol_options_set_verify_block(void *o, void *b, void *q) { (void)o; (void)b; (void)q; }
 void sec_protocol_options_append_tls_ciphersuite(void *o, int s) { (void)o; (void)s; }

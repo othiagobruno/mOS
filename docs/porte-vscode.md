@@ -24,8 +24,10 @@ Versão usada nas medições: Code 1.145.2 (`com.microsoft.VSCode`), Electron/Ch
 | Módulos nativos `.node` do processo principal (`dlopen`) com o pedaço da libc++ que eles importam (`libcxx.c`) | ✅ policy-watcher, spdlog, sqlite3... (exceções C++ abortam com mensagem) |
 | Startup completo do VS Code (serviços, storage, `lifecycle phase 2`, `windowsManager#open`, `window#ctor`) | ✅ |
 | `new BrowserWindow` → `ElectronNSWindow` (moldura `NSThemeFrame`, cores do sistema, `NSColorSpace`, `@YES`) | ✅ |
-| Memória compartilhada (`mach_make_memory_entry_64` com `MAP_MEM_NAMED_CREATE` + `vm_map`) | ❌ sessão "IPC Mach" (CHECK em `Electron+0xE3F7C8`) |
-| Demais auxiliares (GPU, renderização) e janela na tela | ❌ |
+| Memória compartilhada (`MAP_MEM_NAMED_CREATE`, `vm_map`, entradas só-leitura recusando escrita com `KERN_INVALID_RIGHT`) | ✅ (sessão "IPC Mach") |
+| Fontes: `NSFont`/`CTFont` (métricas, descritores, coleções; `coretext.c`) | ✅ métricas; glifos ainda não desenham |
+| **Janela do VS Code na tela** (`ElectronNSWindow` 1200×800, fundo do tema, menu do app, ícone no Dock) | ✅ 6 nov. 2026 20:31 — `build-vscode\shots\janela-vscode-primeira.png` |
+| Processo de renderização (`Code Helper (Renderer)`) e conteúdo da janela | ❌ o helper sobe (pid 5) e cai em `Electron+0x1B24D59` na thread principal dele |
 | Conteúdo de janelas CoreAnimation/IOSurface na tela (CALayer, CALayerHost, IOSurface por porta Mach) | ✅ app de teste no QEMU; com o VS Code ainda não visto (seção "CoreAnimation e IOSurface") |
 
 No Terminal do mOS:
@@ -40,7 +42,15 @@ visitante@mOS ~ % run /Aplicativos/VSCode.app
 dyld[mOS]: símbolo não implementado no libSystem do mOS: _pthread_mach_thread_np
 ```
 
-### Falha atual (6 nov. 2026, 20:00)
+### Janela aberta (6 nov. 2026, 20:31)
+
+O processo principal do VS Code abre a `BrowserWindow`: a janela aparece no mOS com o fundo do tema, título, botões e
+o menu do app na barra; o processo principal continua vivo e lança o `Code Helper (Renderer)`. O conteúdo (o workbench)
+ainda não aparece porque o renderer cai ao iniciar (`Electron Framework+0x1B24D59`, thread principal do pid 5) —
+próximo passo. Depois da etapa abaixo vieram: entradas de memória só-leitura (`CheckPlatformHandlePermissionsCorrespondToMode`
+espera `KERN_INVALID_RIGHT` ao mapear com escrita; sessão IPC Mach), `objc_msgSend_stret` nos meus envios que devolvem
+`NSRect`, e `coretext.c` (73 símbolos de CoreText; `NSFont` = `CTFont`).
+### Etapa anterior (6 nov. 2026, 20:00)
 
 O VS Code passa por todo o startup do processo principal — o log `[main ...]` aparece na serial (`--verbose`) até
 `window#ctor` — e o `ElectronNSWindow` é criado. Em seguida o Chromium mapeia memória compartilhada

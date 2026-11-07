@@ -278,7 +278,7 @@ static long long do_syscall_locked(u64 n, u64 a, u64 b, u64 c, u64 d) {
     case SYS_MMAP: {
         /* a mesma regiÃ£o que o dlopen usa (g_proc.mmap_next, compartilhado com macho.c) */
         if (!g_proc.mmap_next) g_proc.mmap_next = mmap_next;
-        if (b == 2) return uvm_map(&g_proc, c, a) ? 0 : -MOS_ENOMEM;   /* aloca trecho de uma reserva */
+        if (b == 2 || (b == 3 && c)) return uvm_map(&g_proc, c, a) ? 0 : -MOS_ENOMEM;   /* aloca trecho de uma reserva (b = 3: sob demanda no kernel; aqui, na hora) */
         u64 len = (a + 0xFFFF) & ~0xFFFFULL, at = (g_proc.mmap_next + 0xFFFF) & ~0xFFFFULL;
         if (b != 1 && !uvm_map(&g_proc, at, len)) return -MOS_ENOMEM;   /* b = 1: sÃ³ reserva endereÃ§os */
         g_proc.mmap_next = at + len;

@@ -105,6 +105,11 @@ enum {
     MACH_VM_MAKE_ENTRY = 1, /* a0 = tamanho, a1 = deslocamento/endereço, a2 = perm, a3 = pai -> a4 = nome, a5 = tamanho */
     MACH_VM_MAP,            /* a0 = endereço (entrada se fixo), a1 = tamanho, a2 = flags, a3 = objeto, a4 = deslocamento, a5 = prot -> a0 */
     MACH_VM_ENTRY_INFO,     /* a0 = objeto -> a1 = tamanho */
+    MACH_VM_CA_ALLOC = 4,   /* () -> a0 = id de CAContext, único no sistema */
+    MACH_VM_CA_PUBLISH,     /* a0 = id, a1 = nome da entrada de memória -> a2 = geração */
+    MACH_VM_CA_GEN,         /* a0 = id -> a1 = geração (0 = ninguém publicou) */
+    MACH_VM_CA_LOOKUP,      /* a0 = id -> a1 = nome (envio), a2 = tamanho, a3 = geração */
+    MACH_VM_CA_DROP,        /* a0 = id: o dono tira o contexto do registro */
 };
 
 #define MOS_O_RDONLY 0x0000
@@ -168,6 +173,17 @@ enum {
     MOS_NET_CLOSE,       /* (conexão) -> 0 */
     MOS_NET_INFO,        /* (u32 out[4]) -> 1 se a rede está configurada: ip, máscara, gateway, dns */
     MOS_NET_AVAIL,       /* (conexão) -> bytes recebidos esperando leitura (>= 0) | -errno */
+    /* TLS do kernel (net/tls.c) sobre um canal de memória, para o SecureTransport do libSystem (security.c): o app
+     * move os bytes cifrados pelas próprias callbacks; o kernel faz o handshake, valida a cadeia e cifra. */
+    MOS_NET_TLS_NEW,       /* (sni) -> sessão | -errno */
+    MOS_NET_TLS_FEED,      /* (sessão, buf, n) -> bytes aceitos; n = 0 marca o fim do fluxo de entrada */
+    MOS_NET_TLS_DRAIN,     /* (sessão, buf, max) -> bytes cifrados a enviar */
+    MOS_NET_TLS_HANDSHAKE, /* (sessão) -> 1 pronto, 0 precisa de mais entrada, -1 erro */
+    MOS_NET_TLS_SEND,      /* (sessão, buf, n) -> bytes aceitos | -1 */
+    MOS_NET_TLS_RECV,      /* (sessão, buf, max) -> bytes; 0 = precisa de mais entrada; -1 = fim ou erro */
+    MOS_NET_TLS_ERROR,     /* (sessão, buf, max) -> tamanho da mensagem de erro */
+    MOS_NET_TLS_FREE,      /* (sessão, buf, max) -> bytes finais (close_notify) copiados para buf */
+    MOS_NET_TLS_ROOTS,     /* (buf, max) -> tamanho do PEM das raízes da Mozilla (buf = 0: só o tamanho) */
 };
 enum { MOS_NET_ST_CLOSED, MOS_NET_ST_CONNECTING, MOS_NET_ST_OPEN, MOS_NET_ST_PEER_CLOSED, MOS_NET_ST_ERROR };
 #define MOS_ENETUNREACH 51
