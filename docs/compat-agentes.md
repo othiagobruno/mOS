@@ -24,6 +24,10 @@ O DMG do Antigravity abre com o leitor do próprio mOS: `build\dmgtest.exe antig
 | Codex desktop: `Codex Framework` + helpers + GL/Vulkan | 1.374 (6 nov.) → 7 | **0** |
 | Grok Bot: módulos `.node` e `sand-webauthn-signer` | 393 | só os `napi_*` (vêm do Electron) e o ImageIO, que é o `ImageIO.framework` Mach-O de `userland/frameworks` |
 
+| Codex desktop: `Resources/codex` (o agente, Rust) e `rg` | 1 (`CFURLCreateWithBytes`) | **0** |
+| Codex desktop: `native/*.node` e `app.asar.unpacked` (com as dylibs Swift de `build\swift\objc\dylib`) | ~980 | só `napi_*`, Sparkle (vem no bundle) e partes Swift/ScreenCaptureKit dos módulos opcionais |
+| Grok Bot: helper "Computer Use" (`CUGrokBotService`, Swift) com as dylibs Swift do mOS | 873 | 84: `CGEvent*` (injetar entrada), `AXUIElement*`, Contacts/EventKit, CryptoKit em Swift, ScreenCaptureKit |
+
 Sobram, de propósito: o helper "Computer Use" do Grok Bot (Swift, 873) e o `cable_ble_scanner` do Antigravity (Swift),
 que são recursos opcionais e esperam o runtime Swift ([swift-objc-runtime.md](swift-objc-runtime.md)).
 
