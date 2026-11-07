@@ -13,8 +13,11 @@
  *  - Qualquer mudança num layer (contents, frame, sublayers...) ou um IOSurfaceUnlock de escrita
  *    marca a view hospedeira com -setNeedsDisplay:, e o laço do AppKit redesenha a janela.
  *  - CAContext/CALayerHost: um layer publicado num CAContext (o processo da GPU do Chromium) é
- *    desenhado no lugar de cada CALayerHost com o mesmo contextId. Por ora só dentro do processo
- *    (--in-process-gpu); entre processos depende do IPC Mach (o contextId viaja numa mensagem).
+ *    desenhado no lugar de cada CALayerHost com o mesmo contextId. No mesmo processo o host desenha
+ *    a árvore viva. Entre processos o dono achata a árvore num buffer compartilhado (MACH_VM_CA_*)
+ *    e o host do outro processo o mostra; o laço do AppKit redesenha quando a geração muda.
+ *    As propriedades contextId/layer existem de verdade: o Chromium só usa o caminho remoto se
+ *    class_getProperty as achar (RemoteLayerAPISupported).
  *
  * Suportado no desenho: bounds/position/anchorPoint, transform (escala e translação), geometryFlipped,
  * sublayers por zPosition, hidden, opacity, masksToBounds, backgroundColor, borda, contents
@@ -30,6 +33,16 @@ void objc_release(id o);
 id objc_autorelease(id o);
 void *class_replaceMethod(cx_class_t *c, SEL s, void *imp, const char *types);
 u64 mach_absolute_time(void);
+void *mmap(void *addr, size_t len, int prot, int flags, int fd, off_t off);
+int munmap(void *a, size_t len);
+typedef u32 mach_port_t;
+mach_port_t mach_task_self(void);
+int mach_make_memory_entry_64(mach_port_t task, u64 *size, u64 offset, int perm, mach_port_t *handle, mach_port_t parent);
+int mach_vm_map(mach_port_t task, u64 *addr, u64 size, u64 mask, int flags, mach_port_t object, u64 offset,
+                int copy, int cur, int max, unsigned inherit);
+int mach_port_deallocate(mach_port_t task, mach_port_t name);
+int mach_port_construct(mach_port_t task, void *options, u64 context, mach_port_t *name);
+BOOL class_addProperty(cx_class_t *c, const char *name, const void *attrs, u32 n);
 
 typedef struct { double x, y; } P;
 typedef struct { double w, h; } S;
@@ -118,7 +131,11 @@ typedef struct lst {
 typedef struct { cx_class_t *isa; double r, g, b, a; } qcolor_t;   /* = cgcolor_t / rgba_t */
 
 static int rendering;                /* não marcar views durante o desenho */
+static int tx_depth;                  /* CATransaction aberta: mudanças esperam o commit para publicar */
 static void layer_dirty(id l);
+static void note_ctx_id(u32 cid);
+static void flush_dirty(void);
+static void fence_fire(void);
 void qc_mark_hosts(u32 cid, int depth);
 
 static lst_t *ls(id l) {
@@ -136,7 +153,15 @@ static lst_t *ls(id l) {
 static id keep(id *slot, id v) { if (v) objc_retain(v); id old = *slot; *slot = v; if (old) objc_release(old); return v; }
 
 /* ---- CAContext: tabela de contextos por id */
-typedef struct { cx_class_t *isa; u32 cid; id layer; id cs; } cactx_t;
+typedef struct {
+    cx_class_t *isa;
+    u32 cid;
+    id layer, cs;
+    u8 *mem;                         /* quadro achatado publicado para os outros processos */
+    u64 memlen;
+    int fw, fh;
+    u32 port;
+} cactx_t;
 #define MAX_CTX 64
 static cactx_t *ctxs[MAX_CTX];
 static u32 next_cid = 0x5000;
@@ -160,7 +185,11 @@ static void layer_dirty_depth(id l, int depth) {
     for (int i = 0; i < 256 && ls(root)->super; i++) root = ls(root)->super;
     lst_t *r = ls(root);
     if (r->host_view) MSG(void, r->host_view, "setNeedsDisplay:", (BOOL)YES);
-    if (r->ctx) qc_mark_hosts(((cactx_t *)r->ctx)->cid, depth + 1);   /* todo CALayerHost deste contexto */
+    if (r->ctx) {
+        u32 cid = ((cactx_t *)r->ctx)->cid;
+        qc_mark_hosts(cid, depth + 1);             /* CALayerHost deste processo */
+        note_ctx_id(cid);                          /* quadro para os outros processos */
+    }
 }
 static void layer_dirty(id l) { layer_dirty_depth(l, 0); }
 
@@ -428,9 +457,32 @@ static u32 lh_cid(id self, SEL c) { (void)c; return ls(self)->ctx_id; }
 static void lh_set_cid(id self, SEL c, u32 cid) { (void)c; lst_t *s = ls(self); s->ctx_id = cid; s->host_layer = YES; host_add(self); layer_dirty(self); }
 
 /* ---- CAContext */
+/* O kernel dá um id único. Sem ele (harness), o contador local basta: só há um processo. */
+static int ca_kernel = -1;
+static long ca_vm(u32 op, u64 *a) {
+    if (!ca_kernel) return -1;
+    long r = cx_syscall(SYS_MACH_VM, (long)op, (long)a, 0, 0, 0);
+    if (ca_kernel < 0) ca_kernel = r == 0 ? 1 : 0;
+    return r;
+}
+static u32 ctx_alloc_id(void) {
+    u64 a[8] = {0};
+    if (ca_vm(MACH_VM_CA_ALLOC, a) == 0 && a[0]) return (u32)a[0];
+    return __sync_fetch_and_add(&next_cid, 1);
+}
+static void ctx_release_pub(cactx_t *k) {
+    if (!k || !k->mem) return;
+    u64 a[8] = {k->cid, 0, 0, 0, 0, 0, 0, 0};
+    ca_vm(MACH_VM_CA_DROP, a);
+    munmap(k->mem, (size_t)k->memlen);
+    k->mem = 0;
+    k->memlen = 0;
+    k->port = 0;
+    k->fw = k->fh = 0;
+}
 static cactx_t *ctx_new(cx_class_t *cls) {
     cactx_t *k = (cactx_t *)cx_alloc_instance(cls);
-    k->cid = __sync_fetch_and_add(&next_cid, 1);
+    k->cid = ctx_alloc_id();
     for (int i = 0; i < MAX_CTX; i++) if (!ctxs[i]) { ctxs[i] = k; break; }
     return k;
 }
@@ -450,6 +502,7 @@ static void ctx_set_layer(id self, SEL c, id l) {
 static void ctx_invalidate(id self, SEL c) {
     (void)c;
     cactx_t *k = (cactx_t *)self;
+    ctx_release_pub(k);
     for (int i = 0; i < MAX_CTX; i++) if (ctxs[i] == k) ctxs[i] = 0;
     qc_mark_hosts(k->cid, 0);
 }
@@ -471,7 +524,6 @@ u32 CGSMainConnectionID(void) { return 1; }
 typedef struct { void *isa; int flags, reserved; void (*invoke)(void *); } blk_t;
 void *_Block_copy(const void *b);
 void _Block_release(const void *b);
-static int tx_depth;
 static BOOL tx_disable;
 static double tx_duration;
 static void *tx_blocks[32];
@@ -484,8 +536,15 @@ static void tx_run_blocks(void) {
     }
 }
 static void tx_begin(id cls, SEL c) { (void)cls; (void)c; tx_depth++; }
-static void tx_commit(id cls, SEL c) { (void)cls; (void)c; if (tx_depth > 0) tx_depth--; if (!tx_depth) tx_run_blocks(); }
-static void tx_flush(id cls, SEL c) { (void)cls; (void)c; if (!tx_depth) tx_run_blocks(); }
+static void tx_commit(id cls, SEL c) {
+    (void)cls; (void)c;
+    if (tx_depth > 0) tx_depth--;
+    if (!tx_depth) { flush_dirty(); fence_fire(); tx_run_blocks(); }
+}
+static void tx_flush(id cls, SEL c) {
+    (void)cls; (void)c;
+    if (!tx_depth) { flush_dirty(); fence_fire(); tx_run_blocks(); }
+}
 static void tx_set_disable(id cls, SEL c, BOOL b) { (void)cls; (void)c; tx_disable = b; }
 static BOOL tx_get_disable(id cls, SEL c) { (void)cls; (void)c; return tx_disable; }
 static void tx_set_duration(id cls, SEL c, double d) { (void)cls; (void)c; tx_duration = d; }
@@ -578,6 +637,7 @@ static void fill(clip_t k, double x0, double y0, double x1, double y1, u32 pc) {
 
 /* fonte de pixels de um contents */
 typedef struct { const u8 *px; long bpr; int w, h; BOOL premul; } src_t;
+static int ca_frame(u32 cid, src_t *s);
 typedef struct { int w, h; u32 *px; double dw, dh; } qc_imgst_t;    /* = imgst_t do appkit.c (NSImage) */
 static BOOL get_src(id contents, src_t *s) {
     if (!contents) return NO;
@@ -593,6 +653,9 @@ static BOOL get_src(id contents, src_t *s) {
         s->premul = YES;
         return s->px != 0;
     }
+    extern int cx_cgimage_src(const void *img, const u8 **px, long *bpr, int *w, int *h, int *premul);
+    int prem = 0;
+    if (cx_cgimage_src(contents, &s->px, &s->bpr, &s->w, &s->h, &prem)) { s->premul = prem ? YES : NO; return YES; }
     cx_class_t *img = cx_class_named("NSImage");
     if (img && cx_is_subclass(k, img)) {
         qc_imgst_t *st = *(qc_imgst_t **)((u8 *)contents + 8);
@@ -676,10 +739,14 @@ static void render(id l, map_t m, clip_t k, float op, int depth, BOOL skip_bg) {
     if (!skip_bg && L->bgc) fill(k, rx0, ry0, rx1, ry1, premul(color_of(L->bgc), op));
     if (L->contents) draw_contents(L, k, rx0, ry0, rx1, ry1, m.by < 0, op);
     clip_t kk = L->masks ? clip_and(k, rx0, ry0, rx1, ry1) : k;
-    /* CALayerHost: a raiz do contexto hospedado entra como sublayer */
+    /* CALayerHost: árvore do mesmo processo, ou o quadro publicado por outro */
     if (L->host_layer && L->ctx_id) {
         id hl = ctx_lookup_layer(L->ctx_id);
         if (hl && hl != l) render(hl, child_map(m, ls(hl)), kk, op, depth + 1, NO);
+        else if (!hl) {
+            src_t rem;
+            if (ca_frame(L->ctx_id, &rem)) blit(kk, &rem, 0, 0, rem.w, rem.h, rx0, ry0, rx1, ry1, op);
+        }
     }
     if (L->nsub) {
         id tmp[64], *subs = L->nsub <= 64 ? tmp : malloc(L->nsub * sizeof(id));
@@ -691,7 +758,9 @@ static void render(id l, map_t m, clip_t k, float op, int depth, BOOL skip_bg) {
             if (any_z) {                        /* ordem estável por zPosition */
                 for (u32 i = 1; i < n; i++) for (u32 j = i; j > 0 && cmp_z(&subs[j - 1], &subs[j]) > 0; j--) { id t = subs[j]; subs[j] = subs[j - 1]; subs[j - 1] = t; }
             }
-            map_t sm = m;                       /* sublayerTransform: só translação */
+            map_t sm = m;                       /* sublayerTransform: escala e translação */
+            if (L->stf.m[0]) sm.bx *= L->stf.m[0];
+            if (L->stf.m[5]) sm.by *= L->stf.m[5];
             sm.ax += m.bx * L->stf.m[12];
             sm.ay += m.by * L->stf.m[13];
             for (u32 i = 0; i < n; i++) render(subs[i], child_map(sm, ls(subs[i])), kk, op, depth + 1, NO);
@@ -739,6 +808,180 @@ static void send_canvas(void) {
             dst[i] = a << 24 | (r > 255 ? 255 : r) << 16 | (g > 255 ? 255 : g) << 8 | (b > 255 ? 255 : b);
         }
         SYS3(GUI_DRAW, cx_gui_cur_gid, strip, len);
+    }
+}
+
+/* quadro publicado: página de cabeçalho + pixels BGRA pré-multiplicados, origem no canto superior esquerdo */
+#define CA_FRAME_MAGIC 0x52464143u
+typedef struct { u32 magic, gen; i32 w, h; } ca_hdr_t;
+
+static void render_layer_to(id layer, u32 *px, int w, int h) {
+    u32 *ocv = cv;
+    int ocx = cvx, ocy = cvy, ocw = cvw, och = cvh;
+    cv = px; cvx = 0; cvy = 0; cvw = w; cvh = h;
+    lst_t *L = ls(layer);
+    map_t m = {-L->bounds.o.x, 1, -L->bounds.o.y, 1};
+    clip_t k = {0, 0, w, h};
+    memset(px, 0, (size_t)w * h * 4);
+    render(layer, m, k, 1, 0, NO);
+    cv = ocv; cvx = ocx; cvy = ocy; cvw = ocw; cvh = och;
+}
+static void tree_extent(id l, int depth, double *w, double *h) {
+    if (!l || depth > 32) return;
+    lst_t *s = ls(l);
+    if (s->bounds.s.w > *w) *w = s->bounds.s.w;
+    if (s->bounds.s.h > *h) *h = s->bounds.s.h;
+    for (u32 i = 0; i < s->nsub; i++) tree_extent(s->sub[i], depth + 1, w, h);
+}
+static void publish_context(cactx_t *k) {
+    if (!k || !k->layer || publishing) return;
+    lst_t *L = ls(k->layer);
+    int w = (int)(L->bounds.s.w + 0.5), h = (int)(L->bounds.s.h + 0.5);
+    if (w < 1 || h < 1) {
+        double mw = 0, mh = 0;
+        tree_extent(k->layer, 0, &mw, &mh);
+        w = (int)(mw + 0.5);
+        h = (int)(mh + 0.5);
+    }
+    if (w < 1 || h < 1) return;
+    if (w > 8192) w = 8192;
+    if (h > 8192) h = 8192;
+    u64 pix = (u64)w * h * 4;
+    u64 need = 4096 + ((pix + 0xFFF) & ~0xFFFULL);
+    publishing = 1;
+    rendering++;
+    if (!k->mem || k->fw != w || k->fh != h || k->memlen < need) {
+        u8 *mem = mmap(0, (size_t)need, 3, 0x1002, -1, 0);
+        if (mem == (void *)-1 || !mem) { rendering--; publishing = 0; return; }
+        memset(mem, 0, 4096);
+        u64 size = need;
+        mach_port_t port = 0;
+        if (mach_make_memory_entry_64(mach_task_self(), &size, (u64)mem, 3, &port, 0) != 0 || !port) {
+            munmap(mem, (size_t)need);
+            rendering--;
+            publishing = 0;
+            return;
+        }
+        if (k->mem) munmap(k->mem, (size_t)k->memlen);
+        k->mem = mem;
+        k->memlen = need;
+        k->fw = w;
+        k->fh = h;
+        k->port = port;
+    }
+    render_layer_to(k->layer, (u32 *)(k->mem + 4096), w, h);
+    ca_hdr_t *hdr = (ca_hdr_t *)k->mem;
+    hdr->magic = CA_FRAME_MAGIC;
+    hdr->w = w;
+    hdr->h = h;
+    u64 a[8] = {k->cid, k->port, 0, 0, 0, 0, 0, 0};
+    if (ca_vm(MACH_VM_CA_PUBLISH, a) == 0) hdr->gen = (u32)a[2];
+    rendering--;
+    publishing = 0;
+}
+static u32 dirty_cid[MAX_CTX];
+static int ndirty;
+static void note_ctx_id(u32 cid) {
+    if (!cid || publishing || rendering) return;
+    for (int i = 0; i < ndirty; i++) if (dirty_cid[i] == cid) goto queued;
+    if (ndirty < MAX_CTX) dirty_cid[ndirty++] = cid;
+queued:
+    if (!tx_depth) flush_dirty();
+}
+static void flush_dirty(void) {
+    if (publishing || !ndirty) return;
+    u32 ids[MAX_CTX];
+    int n = ndirty;
+    ndirty = 0;
+    memcpy(ids, dirty_cid, (size_t)n * sizeof ids[0]);
+    for (int i = 0; i < n; i++)
+        for (int j = 0; j < MAX_CTX; j++)
+            if (ctxs[j] && ctxs[j]->cid == ids[i]) publish_context(ctxs[j]);
+}
+
+/* o processo da janela mapeia o quadro do contexto uma vez e o relê quando a geração muda */
+typedef struct { u32 cid, gen, port; u8 *base; u64 len; int w, h; } rview_t;
+static rview_t rviews[MAX_CTX];
+static int ca_frame(u32 cid, src_t *s) {
+    u64 g[8] = {cid, 0, 0, 0, 0, 0, 0, 0};
+    if (ca_vm(MACH_VM_CA_GEN, g) != 0 || !g[1]) return 0;
+    rview_t *v = 0;
+    for (int i = 0; i < MAX_CTX; i++) {
+        if (rviews[i].cid == cid) { v = &rviews[i]; break; }
+        if (!v && !rviews[i].cid) v = &rviews[i];
+    }
+    if (!v) return 0;
+    if (!v->base || v->gen != (u32)g[1]) {
+        int same = v->base && ((ca_hdr_t *)v->base)->magic == CA_FRAME_MAGIC && ((ca_hdr_t *)v->base)->gen == (u32)g[1]
+                   && ((ca_hdr_t *)v->base)->w == v->w && ((ca_hdr_t *)v->base)->h == v->h;
+        if (!same) {
+            u64 b[8] = {cid, 0, 0, 0, 0, 0, 0, 0};
+            if (ca_vm(MACH_VM_CA_LOOKUP, b) != 0 || !b[1]) return 0;
+            if (v->base && v->port == (u32)b[1] && v->len == b[2]) mach_port_deallocate(mach_task_self(), (u32)b[1]);
+            else {
+                u64 addr = 0;
+                if (mach_vm_map(mach_task_self(), &addr, b[2], 0, 1, (u32)b[1], 0, 0, 3, 3, 0) != 0 || !addr) {
+                    mach_port_deallocate(mach_task_self(), (u32)b[1]);
+                    return 0;
+                }
+                if (v->base) munmap(v->base, (size_t)v->len);
+                v->base = (u8 *)addr;
+                v->len = b[2];
+                v->port = (u32)b[1];
+            }
+            ca_hdr_t *h = (ca_hdr_t *)v->base;
+            if (h->magic != CA_FRAME_MAGIC || h->w < 1 || h->h < 1) return 0;
+            v->w = h->w;
+            v->h = h->h;
+        }
+        v->cid = cid;
+        v->gen = (u32)g[1];
+    }
+    s->px = v->base + 4096;
+    s->bpr = (long)v->w * 4;
+    s->w = v->w;
+    s->h = v->h;
+    s->premul = YES;
+    return s->px != 0;
+}
+
+/* cerca do CAContext: o Chromium pede um direito de envio e o segura até o quadro seguinte.
+ * O commit só precisa não travar; o handler (quando há) corre no fim da transação. */
+static void *fence_blks[16];
+static int nfence;
+static void fence_fire(void) {
+    while (nfence) {
+        void *b = fence_blks[--nfence];
+        ((blk_t *)b)->invoke(b);
+        _Block_release(b);
+    }
+}
+static u32 ctx_fence(id self, SEL c) {
+    (void)self; (void)c;
+    u32 opt[2] = {0x10, 0};                /* MPO_INSERT_SEND_RIGHT */
+    mach_port_t p = 0;
+    if (mach_port_construct(mach_task_self(), opt, 0, &p) != 0) return 0;
+    return p;
+}
+static void ctx_set_fence(id self, SEL c, u32 port) { (void)self; (void)c; (void)port; }
+static void ctx_set_fence_blk(id self, SEL c, u32 port, void *blk) {
+    (void)self; (void)c; (void)port;
+    if (!blk) return;
+    if (!tx_depth) { ((blk_t *)blk)->invoke(blk); return; }
+    if (nfence < 16) fence_blks[nfence++] = _Block_copy(blk);
+}
+
+void cx_ca_poll(void) {
+    for (int i = 0; i < nhosts; i++) {
+        id h = hosts[i];
+        if (!h) continue;
+        u32 cid = ls(h)->ctx_id;
+        if (!cid || ctx_lookup_layer(cid)) continue;
+        u64 a[8] = {cid, 0, 0, 0, 0, 0, 0, 0};
+        if (ca_vm(MACH_VM_CA_GEN, a) != 0 || !a[1]) continue;
+        int seen = 0;
+        for (int j = 0; j < MAX_CTX; j++) if (rviews[j].cid == cid) { seen = rviews[j].gen == (u32)a[1]; break; }
+        if (!seen) layer_dirty(h);
     }
 }
 
@@ -837,6 +1080,7 @@ static volatile int surf_dirty;
 void cx_iosurface_changed(id s) {
     (void)s;
     if (rendering) { surf_dirty = 1; return; }
+    for (int i = 0; i < MAX_CTX; i++) if (ctxs[i] && ctxs[i]->layer) note_ctx_id(ctxs[i]->cid);
     for (int i = 0; i < nvl; i++) if (vl[i].layer) MSG(void, vl[i].view, "setNeedsDisplay:", (BOOL)YES);
 }
 static void (*prev_runloop_hook)(double until);
@@ -902,6 +1146,7 @@ void cx_quartzcore_init(void) {
     LM("setMinificationFilterBias:", l_noop_d); LM("setShadowColor:", l_noop_o); LM("setLayoutManager:", l_noop_o);
     LM("setContentsMultiplyColor:", l_noop_o); LM("setEDRMetadata:", l_noop_o);
     LM("setNeedsDisplay", l_set_needs_display); LM("setNeedsDisplayInRect:", l_set_needs_display_rect);
+    LM("setContentsChanged", l_set_needs_display);   /* privado: o Chromium avisa que o IOSurface mudou no lugar */
     LM("needsDisplay", l_needs_display); LM("display", l_display); LM("displayIfNeeded", l_display_if_needed);
     LM("setNeedsLayout", l_noop); LM("layoutIfNeeded", l_layout_if_needed); LM("layoutSublayers", l_layout_if_needed);
     LM("removeAllAnimations", l_noop); LM("removeAnimationForKey:", l_noop_o); LM("addAnimation:forKey:", l_add_anim);
@@ -919,6 +1164,7 @@ void cx_quartzcore_init(void) {
     cx_add_method(&CALayerHost_c, "setContextId:", (void *)lh_set_cid);
     cx_add_method(&CALayerHost_c, "setInheritsSecurity:", (void *)l_noop_b);
     cx_add_method(&CALayerHost_c, "setPreservesFlip:", (void *)l_noop_b);
+    class_addProperty(&CALayerHost_c, "contextId", "TI,N", 4);
     cx_define_class(&CATransformLayer_c, &CATransformLayer_m, "CATransformLayer", &CALayer_c, 0);
     /* sem Metal nem OpenGL no mOS: as classes existem (o Electron tem subclasses), sem drawable */
     cx_define_class(&CAMetalLayer_c, &CAMetalLayer_m, "CAMetalLayer", &CALayer_c, 0);
@@ -960,6 +1206,11 @@ void cx_quartzcore_init(void) {
     cx_add_method(&CAContext_c, "dealloc", (void *)ctx_dealloc);
     cx_add_method(&CAContext_c, "colorSpace", (void *)ctx_cs);
     cx_add_method(&CAContext_c, "setColorSpace:", (void *)ctx_set_cs);
+    cx_add_method(&CAContext_c, "createFencePort", (void *)ctx_fence);
+    cx_add_method(&CAContext_c, "setFencePort:", (void *)ctx_set_fence);
+    cx_add_method(&CAContext_c, "setFencePort:commitHandler:", (void *)ctx_set_fence_blk);
+    class_addProperty(&CAContext_c, "contextId", "TI,R,N", 6);
+    class_addProperty(&CAContext_c, "layer", "T@\"CALayer\",&,N", 16);
 
     cx_class_t *nv = cx_class_named("NSView");
     if (nv) {

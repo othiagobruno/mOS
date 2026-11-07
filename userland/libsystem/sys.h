@@ -32,6 +32,7 @@ static inline long cx_syscall(long n, long a, long b, long c, long d, long e) {
 #define SYS2(n, a, b) cx_syscall(n, (long)(a), (long)(b), 0, 0, 0)
 #define SYS3(n, a, b, c) cx_syscall(n, (long)(a), (long)(b), (long)(c), 0, 0)
 #define SYS4(n, a, b, c, d) cx_syscall(n, (long)(a), (long)(b), (long)(c), (long)(d), 0)
+#define SYS5(n, a, b, c, d, e) cx_syscall(n, (long)(a), (long)(b), (long)(c), (long)(d), (long)(e))
 
 /* bloco de partida montado pelo loader (kernel/compat/macho.c) e passado em rdi */
 typedef struct {

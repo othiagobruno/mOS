@@ -22,6 +22,7 @@
 enum {
     GUI_WIN_CREATE = 64, GUI_WIN_DESTROY, GUI_WIN_TITLE, GUI_DRAW, GUI_PRESENT, GUI_POLL,
     GUI_MEASURE, GUI_WIN_INFO, GUI_SCREEN, GUI_WIN_FOCUS, GUI_SET_MENU, GUI_DECODE_IMAGE,
+    GUI_FONT,           /* CoreText: tabelas da fonte do sistema e raster de glifos (ver abaixo) */
     GUI_LAST = 79
 };
 
@@ -67,6 +68,26 @@ enum {
 /* GUI_SET_MENU: u32 nmenus; por menu: u32 nlen, título; u32 nitems; por item:
  *   u32 action (0 = separador), u32 flags (1 desabilitado, 2 marcado), u32 nlen, rótulo, u32 klen, atalho.
  * Ações especiais vindas da barra: GUI_MENU_ABOUT, GUI_MENU_PREFS, GUI_MENU_HIDE. */
+/* GUI_FONT: rdi = operação, rsi = peso (0 regular .. 3 bold).
+ *   0 tabela: rdx = tag fourcc, r10 = buffer, r8 = capacidade. Devolve o tamanho (0 = não existe).
+ *   1 cmap:   rdx = codepoint. Devolve o índice do glifo.
+ *   2 avanço: rdx = glifo. Devolve unidades | (upem << 16).
+ *   3 métricas: r10 = gui_font_metrics_t. Devolve 0.
+ *   4 raster: r10 = gui_glyph_req_t (preenchida). Devolve w*h, ou 0 se o glifo é vazio. */
+#define GF_TABLE 0
+#define GF_CMAP 1
+#define GF_ADVANCE 2
+#define GF_METRICS 3
+#define GF_RASTER 4
+typedef struct { i32 upem, ascender, descender, nglyphs; } gui_font_metrics_t;
+typedef struct {
+    u32 weight, glyph;
+    float size;
+    u32 cap;
+    u64 buf;                 /* alfa 8 bits, do chamador */
+    i32 w, h, left, top;
+} gui_glyph_req_t;
+
 #define GUI_MENU_ABOUT 60001
 #define GUI_MENU_PREFS 60002
 #define GUI_MENU_HIDE  60003

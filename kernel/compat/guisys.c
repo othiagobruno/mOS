@@ -517,6 +517,51 @@ i64 compat_gui_syscall(process_t *p, u64 n, u64 a, u64 b, u64 c, u64 d, u64 e) {
         surface_free(img);
         return r;
     }
+    case GUI_FONT: {
+        int op = (int)a, weight = (int)b;
+        if (op == GF_TABLE) {
+            int len = font_table(weight, (u32)c, NULL, 0);
+            if (len <= 0) return 0;
+            if (!d || !e) return len;
+            u32 cap = (u32)e;
+            if (cap > (8u << 20)) cap = 8u << 20;
+            u8 *tmp = kmalloc((u32)len);
+            if (!tmp) return -MOS_ENOMEM;
+            font_table(weight, (u32)c, tmp, (u32)len);
+            u32 n = (u32)len < cap ? (u32)len : cap;
+            bool ok = uvm_copy_out(p, d, tmp, n);
+            kfree(tmp);
+            return ok ? len : -MOS_EFAULT;
+        }
+        if (op == GF_CMAP) return font_glyph_id(weight, (u32)c);
+        if (op == GF_ADVANCE) {
+            i32 upem = 0;
+            font_face_metrics(weight, &upem, NULL, NULL, NULL);
+            return (i64)(u16)font_advance_units(weight, (u16)c) | ((i64)(u16)upem << 16);
+        }
+        if (op == GF_METRICS) {
+            gui_font_metrics_t m;
+            font_face_metrics(weight, &m.upem, &m.ascender, &m.descender, &m.nglyphs);
+            return uvm_copy_out(p, d, &m, sizeof m) ? 0 : -MOS_EFAULT;
+        }
+        if (op == GF_RASTER) {
+            gui_glyph_req_t req;
+            if (!uvm_copy_in(p, &req, d, sizeof req)) return -MOS_EFAULT;
+            if (req.cap > (1u << 20)) req.cap = 1u << 20;
+            u8 *tmp = req.cap ? kmalloc(req.cap) : NULL;
+            i16 w = 0, h = 0, left = 0, top = 0;
+            int n = font_raster_glyph((int)req.weight, (u16)req.glyph, req.size, tmp, req.cap, &w, &h, &left, &top);
+            req.w = w; req.h = h; req.left = left; req.top = top;
+            bool ok = uvm_copy_out(p, d, &req, sizeof req);
+            if (ok && tmp && req.buf && n > 0) {
+                u32 copy = (u32)n < req.cap ? (u32)n : req.cap;
+                ok = uvm_copy_out(p, req.buf, tmp, copy);
+            }
+            kfree(tmp);
+            return ok ? n : -MOS_EFAULT;
+        }
+        return -MOS_EINVAL;
+    }
     case GUI_WIN_FOCUS: {
         gwin_t *g = win_get(p, a);
         if (!g) return -MOS_EBADF;

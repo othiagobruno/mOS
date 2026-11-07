@@ -360,8 +360,19 @@ kern_return_t mach_vm_allocate(mach_port_t task, u64 *addr, u64 size, int flags)
     return mach_vm_map(task, addr, size, 0, flags | 1, 0, 0, 0, 3, 7, 1);
 }
 kern_return_t vm_allocate(mach_port_t task, u64 *addr, u64 size, int flags) { return mach_vm_allocate(task, addr, size, flags); }
-kern_return_t mach_vm_deallocate(mach_port_t task, u64 addr, u64 size) { (void)task; (void)addr; (void)size; return KERN_SUCCESS; }
-kern_return_t vm_deallocate(mach_port_t task, u64 addr, u64 size) { (void)task; (void)addr; (void)size; return KERN_SUCCESS; }
+int munmap(void *addr, size_t len);
+kern_return_t mach_vm_deallocate(mach_port_t task, u64 addr, u64 size) {
+    (void)task;
+    if (!size) return KERN_SUCCESS;
+    u64 base = addr & ~0xFFFULL;
+    u64 end = (addr + size + 0xFFF) & ~0xFFFULL;
+    if (end < base) return KERN_INVALID_ARGUMENT;
+    /* o V8 e o PartitionAlloc soltam regiões com isto. Antes a chamada dizia sucesso e deixava
+     * as páginas no lugar; um mapeamento seguinte no mesmo endereço lia lixo. */
+    if (munmap((void *)base, (size_t)(end - base)) != 0) return KERN_INVALID_ADDRESS;
+    return KERN_SUCCESS;
+}
+kern_return_t vm_deallocate(mach_port_t task, u64 addr, u64 size) { return mach_vm_deallocate(task, addr, size); }
 
 /* ---- IOKit mínimo: o mOS não tem registro de dispositivos nem notificações de energia.
  * MACH_PORT_NULL (0) é a resposta documentada de "não foi possível". */

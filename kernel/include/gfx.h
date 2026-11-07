@@ -107,6 +107,12 @@ int     text_ascent(font_t *f, float size);
 int     text_descent(font_t *f, float size);
 int     text_index_at(font_t *f, float size, const char *utf8, int px); /* deslocamento em bytes */
 bool    font_has_glyph(font_t *f, u32 cp);
+/* tabelas sfnt e glifos para o CoreText dos apps (GUI_FONT). tag é o fourcc da Apple (ex.: 0x636D6170 = cmap). */
+int     font_table(int weight, u32 tag, void *dst, u32 cap);          /* tamanho da tabela; 0 se não existe. dst NULL só mede */
+u16     font_glyph_id(int weight, u32 cp);
+void    font_face_metrics(int weight, i32 *upem, i32 *asc, i32 *desc, i32 *nglyphs);
+i32     font_advance_units(int weight, u16 glyph);
+int     font_raster_glyph(int weight, u16 glyph, float size, u8 *dst, u32 cap, i16 *w, i16 *h, i16 *left, i16 *top);
 int     text_wrap(surface_t *s, font_t *f, float size, rect_t r, int line_h, u32 color, const char *utf8, bool draw);
 u32     utf8_decode(const char **p);
 int     utf8_encode(u32 cp, char *out);

@@ -12,6 +12,11 @@
 #include "foundation.h"
 #include "../../kernel/include/compat_gui.h"
 
+id CFDataCreate(void *alloc, const u8 *bytes, long n);
+void *malloc(size_t n);
+void free(void *p);
+void *memset(void *d, int c, size_t n);
+
 id objc_retain(id o);
 id cx_num_i(i64 v);
 id cx_num_d(double v);
@@ -102,11 +107,6 @@ static int face_metrics(id f, gui_font_metrics_t *m) {
     memset(m, 0, sizeof *m);
     return SYS5(GUI_FONT, GF_METRICS, fweight(f), 0, m, 0) >= 0 && m->upem > 0;
 }
-id CFDataCreate(void *alloc, const u8 *bytes, long n);
-void *malloc(size_t n);
-void free(void *p);
-void *memset(void *d, int c, size_t n);
-
 /* ---- métricas (unidades reais da Inter quando o kernel responde) */
 static double em_metric(id f, int which) {
     gui_font_metrics_t m;

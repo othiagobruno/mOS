@@ -31,6 +31,7 @@ extern cx_class_t NSObject_c __asm__("OBJC_CLASS_$_NSObject");
 extern cx_class_t NSString_c __asm__("OBJC_CLASS_$_NSString");
 extern cx_class_t NSMutableArray_c __asm__("OBJC_CLASS_$_NSMutableArray");
 extern void NSLog(id fmt, ...);
+void cx_ca_poll(void);                     /* quartzcore.c: CALayerHost publicado por outro processo */
 
 id NSApp;
 id NSFontAttributeName, NSForegroundColorAttributeName, NSBackgroundColorAttributeName, NSParagraphStyleAttributeName;
@@ -186,6 +187,7 @@ typedef struct {
     double line_width;
 } ctx_t;
 static ctx_t ctx = {0, 0, 0, 0, NO, 0xFF000000, 0xFF000000, 1};
+u32 cx_cg_fill_argb(void) { return ctx.fill; }
 static ctx_t ctx_stack[16];
 static int ctx_sp;
 
@@ -1839,6 +1841,7 @@ static int pump(void) {
     bind_refresh();
     while (SYS1(GUI_POLL, &g) == 1) { dispatch(&g); got++; }
     double next = cx_run_timers();
+    cx_ca_poll();                              /* CALayerHost de outro processo: geração nova pede redesenho */
     nsarr_t *a = (nsarr_t *)app_windows;
     for (u64 i = 0; a && i < a->n; i++) {
         id w = a->items[i];

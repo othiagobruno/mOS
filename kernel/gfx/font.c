@@ -37,6 +37,14 @@ static u32 find_table(struct font *f, const char *tag) {
     }
     return 0;
 }
+static u32 find_table_len(struct font *f, const char *tag, u32 *len) {
+    u16 n = be16(f->data + 4);
+    for (u16 i = 0; i < n; i++) {
+        const u8 *r = f->data + 12 + i * 16;
+        if (!memcmp(r, tag, 4)) { if (len) *len = be32(r + 12); return be32(r + 8); }
+    }
+    return 0;
+}
 
 /* ------------------------------------------------------------ cmap */
 static u16 glyph_index(struct font *f, u32 cp) {
@@ -380,47 +388,105 @@ typedef struct glyph {
 static glyph_t *gcache[GCACHE];
 static u8 gamma_lut[256];
 static bool gamma_ready;
+static spinlock_t font_lock;
 
-static glyph_t *glyph_get(struct font *f, float size, u32 cp) {
-    u16 sz = (u16)(size * 4);
-    u32 h = (cp * 2654435761u ^ sz * 40503u ^ f->id * 97u) % GCACHE;
-    for (glyph_t *g = gcache[h]; g; g = g->next)
-        if (g->key_cp == cp && g->key_size == sz && g->key_font == f->id) return g;
+static void raster_into(struct font *f, float size, u16 gi, glyph_t *g) {
     if (!gamma_ready) {
         for (int i = 0; i < 256; i++) gamma_lut[i] = (u8)(fpow(i / 255.0f, 0.78f) * 255 + 0.5f);
         gamma_ready = true;
     }
-    glyph_t *g = kcalloc(1, sizeof(glyph_t));
-    g->key_cp = cp; g->key_size = sz; g->key_font = (u16)f->id;
-    u16 gi = glyph_index(f, cp);
     u32 len;
     u32 off = glyph_offset(f, gi, &len);
-    if (len) {
-        float scale = size / f->upem;
-        const u8 *p = f->data + off;
-        float xmin = bes16(p + 2) * scale, ymin = bes16(p + 4) * scale, xmax = bes16(p + 6) * scale, ymax = bes16(p + 8) * scale;
-        int x0 = (int)ffloor(xmin) - 1, y0 = (int)ffloor(-ymax) - 1;
-        int w = (int)fceil(xmax) - x0 + 2, hh = (int)fceil(-ymin) - y0 + 2;
-        if (w > 0 && hh > 0 && w < 1024 && hh < 1024) {
-            lines_t l = {0};
-            xform_t id = {1, 0, 0, 1, 0, 0};
-            glyph_outline(f, gi, id, scale, (float)-x0, (float)-y0, &l, 0);
-            float *acc = kcalloc((usize)w * hh + 4, sizeof(float));
-            for (int i = 0; i < l.n; i += 4) raster_line(acc, w, hh, l.pts[i], l.pts[i + 1], l.pts[i + 2], l.pts[i + 3]);
-            g->bmp = kmalloc((usize)w * hh);
-            raster_finish(acc, w * hh, g->bmp);
-            for (int i = 0; i < w * hh; i++) g->bmp[i] = gamma_lut[g->bmp[i]];
-            kfree(acc);
-            kfree(l.pts);
-            g->w = (i16)w; g->h = (i16)hh; g->left = (i16)x0; g->top = (i16)y0;
+    if (!len) return;
+    float scale = size / f->upem;
+    const u8 *p = f->data + off;
+    float xmin = bes16(p + 2) * scale, ymin = bes16(p + 4) * scale, xmax = bes16(p + 6) * scale, ymax = bes16(p + 8) * scale;
+    int x0 = (int)ffloor(xmin) - 1, y0 = (int)ffloor(-ymax) - 1;
+    int w = (int)fceil(xmax) - x0 + 2, hh = (int)fceil(-ymin) - y0 + 2;
+    if (w <= 0 || hh <= 0 || w >= 1024 || hh >= 1024) return;
+    lines_t l = {0};
+    xform_t id = {1, 0, 0, 1, 0, 0};
+    glyph_outline(f, gi, id, scale, (float)-x0, (float)-y0, &l, 0);
+    float *acc = kcalloc((usize)w * hh + 4, sizeof(float));
+    for (int i = 0; i < l.n; i += 4) raster_line(acc, w, hh, l.pts[i], l.pts[i + 1], l.pts[i + 2], l.pts[i + 3]);
+    g->bmp = kmalloc((usize)w * hh);
+    raster_finish(acc, w * hh, g->bmp);
+    for (int i = 0; i < w * hh; i++) g->bmp[i] = gamma_lut[g->bmp[i]];
+    kfree(acc);
+    kfree(l.pts);
+    g->w = (i16)w; g->h = (i16)hh; g->left = (i16)x0; g->top = (i16)y0;
+}
+
+/* chave 0x80000000 | glifo distingue o cache por índice do cache por codepoint */
+static glyph_t *glyph_cached(struct font *f, float size, u32 key, u16 gi) {
+    u16 sz = (u16)(size * 4);
+    u32 h = (key * 2654435761u ^ sz * 40503u ^ f->id * 97u) % GCACHE;
+    u64 fl = spin_lock_irqsave(&font_lock);
+    for (glyph_t *g = gcache[h]; g; g = g->next)
+        if (g->key_cp == key && g->key_size == sz && g->key_font == f->id) {
+            spin_unlock_irqrestore(&font_lock, fl);
+            return g;
         }
-    }
+    spin_unlock_irqrestore(&font_lock, fl);
+    glyph_t *g = kcalloc(1, sizeof(glyph_t));
+    g->key_cp = key; g->key_size = sz; g->key_font = (u16)f->id;
+    raster_into(f, size, gi, g);
+    fl = spin_lock_irqsave(&font_lock);
     g->next = gcache[h];
     gcache[h] = g;
+    spin_unlock_irqrestore(&font_lock, fl);
     return g;
 }
 
+static glyph_t *glyph_get(struct font *f, float size, u32 cp) {
+    return glyph_cached(f, size, cp, glyph_index(f, cp));
+}
+
 bool font_has_glyph(font_t *f, u32 cp) { return glyph_index(f, cp) != 0; }
+
+static struct font *face(int weight) {
+    if (weight < 0) weight = 0;
+    if (weight >= FONT_COUNT) weight = FONT_COUNT - 1;
+    return &fonts[weight];
+}
+int font_table(int weight, u32 tag, void *dst, u32 cap) {
+    struct font *f = face(weight);
+    if (!f->data) return 0;
+    char t[4] = {(char)(tag >> 24), (char)(tag >> 16), (char)(tag >> 8), (char)tag};
+    u32 len = 0, off = find_table_len(f, t, &len);
+    if (!off || !len || off + len > f->size) return 0;
+    if (dst && cap) {
+        u32 n = len < cap ? len : cap;
+        memcpy(dst, f->data + off, n);
+    }
+    return (int)len;
+}
+u16 font_glyph_id(int weight, u32 cp) { return glyph_index(face(weight), cp); }
+void font_face_metrics(int weight, i32 *upem, i32 *asc, i32 *desc, i32 *nglyphs) {
+    struct font *f = face(weight);
+    if (upem) *upem = f->upem ? f->upem : 2048;
+    if (asc) *asc = f->ascender;
+    if (desc) *desc = f->descender;
+    if (nglyphs) *nglyphs = f->nglyphs;
+}
+i32 font_advance_units(int weight, u16 glyph) {
+    struct font *f = face(weight);
+    return advance_units(f, glyph);
+}
+int font_raster_glyph(int weight, u16 glyph, float size, u8 *dst, u32 cap, i16 *w, i16 *h, i16 *left, i16 *top) {
+    struct font *f = face(weight);
+    if (size < 1) size = 1;
+    if (size > 512) size = 512;
+    glyph_t *g = glyph_cached(f, size, 0x80000000u | glyph, glyph);
+    if (w) *w = g->w;
+    if (h) *h = g->h;
+    if (left) *left = g->left;
+    if (top) *top = g->top;
+    int n = (int)g->w * g->h;
+    if (n < 0) n = 0;
+    if (dst && g->bmp && cap && n) memcpy(dst, g->bmp, n < (int)cap ? (u32)n : cap);
+    return n;
+}
 
 /* ------------------------------------------------------------ UTF-8 */
 u32 utf8_decode(const char **pp) {

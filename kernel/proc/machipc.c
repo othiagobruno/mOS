@@ -1072,8 +1072,86 @@ static u32 bootstrap_op(mspace_t *sp, u32 op, const char *name, u32 *out_name) {
     return KERN_INVALID_ARGUMENT;
 }
 
+/* ------------------------------------------------------------ CAContext entre processos
+ * O Chromium (DisplayCALayerTree) cria um CAContext no processo da GPU e manda só o contextId ao
+ * processo da janela, que o mostra num CALayerHost. O id é único no sistema. A publicação guarda a
+ * entrada de memória do quadro achatado (cabeçalho + pixels); o outro processo pede a geração e,
+ * quando ela muda, mapeia a mesma entrada. */
+#define CA_SLOTS 64
+typedef struct { u32 cid; int pid; u32 gen; kport_t *mem; } ca_slot_t;
+static ca_slot_t ca_tab[CA_SLOTS];
+static u32 ca_next_id = 0x5000;
+
+static void ca_drop_pid(int pid) {
+    for (int i = 0; i < CA_SLOTS; i++)
+        if (ca_tab[i].mem && ca_tab[i].pid == pid) {
+            port_unref(ca_tab[i].mem);
+            ca_tab[i].mem = NULL;
+            ca_tab[i].cid = 0;
+            ca_tab[i].gen = 0;
+        }
+}
+static int ca_find(u32 cid) {
+    for (int i = 0; i < CA_SLOTS; i++) if (ca_tab[i].mem && ca_tab[i].cid == cid) return i;
+    return -1;
+}
+static u32 ca_op(mspace_t *sp, u32 op, u64 *a) {
+    if (op == MACH_VM_CA_ALLOC) {
+        a[0] = ca_next_id++;
+        if (ca_next_id < 0x5000) ca_next_id = 0x5000;
+        return KERN_SUCCESS;
+    }
+    if (op == MACH_VM_CA_GEN) {
+        int i = ca_find((u32)a[0]);
+        a[1] = i >= 0 ? ca_tab[i].gen : 0;
+        return KERN_SUCCESS;
+    }
+    if (op == MACH_VM_CA_DROP) {
+        int i = ca_find((u32)a[0]);
+        if (i >= 0 && ca_tab[i].pid == sp->pid) {
+            port_unref(ca_tab[i].mem);
+            ca_tab[i].mem = NULL;
+            ca_tab[i].cid = 0;
+            ca_tab[i].gen = 0;
+        }
+        return KERN_SUCCESS;
+    }
+    if (op == MACH_VM_CA_PUBLISH) {
+        ment_t *e = ent_at(sp, (u32)a[1]);
+        if (!e || !e->port || e->port->kind != KP_MEM || !e->port->mem) return KERN_INVALID_ARGUMENT;
+        int i = ca_find((u32)a[0]);
+        if (i < 0) {
+            for (int k = 0; k < CA_SLOTS; k++) if (!ca_tab[k].mem) { i = k; break; }
+            if (i < 0) return KERN_RESOURCE_SHORTAGE;
+        }
+        if (ca_tab[i].mem != e->port) {
+            if (ca_tab[i].mem) port_unref(ca_tab[i].mem);
+            port_ref(e->port);
+            ca_tab[i].mem = e->port;
+        }
+        ca_tab[i].cid = (u32)a[0];
+        ca_tab[i].pid = sp->pid;
+        if (!++ca_tab[i].gen) ca_tab[i].gen = 1;
+        a[2] = ca_tab[i].gen;
+        return KERN_SUCCESS;
+    }
+    if (op == MACH_VM_CA_LOOKUP) {
+        int i = ca_find((u32)a[0]);
+        if (i < 0) return KERN_INVALID_ARGUMENT;
+        kport_t *p = ca_tab[i].mem;
+        port_ref(p);
+        p->srights++;
+        a[1] = insert_recv_right(sp, p, MT_MOVE_SEND);
+        a[2] = p->msize;
+        a[3] = ca_tab[i].gen;
+        return a[1] ? KERN_SUCCESS : KERN_RESOURCE_SHORTAGE;
+    }
+    return KERN_INVALID_ARGUMENT;
+}
+
 /* ------------------------------------------------------------ memória compartilhada (SYS_MACH_VM) */
 static u32 vm_op(mspace_t *sp, u32 op, u64 *a) {
+    if (op >= MACH_VM_CA_ALLOC) return ca_op(sp, op, a);
     if (op == MACH_VM_MAKE_ENTRY) {
         u64 size = (a[0] + 0xFFF) & ~0xFFFULL;
         kport_t *parent = NULL;
@@ -1237,6 +1315,7 @@ void machipc_spawn(process_t *parent, process_t *child) {
 void machipc_exit(process_t *p) {
     mspace_t *sp = p ? p->mach : NULL;
     if (!sp) return;
+    ca_drop_pid(sp->pid);
     p->mach = NULL;
     if (sp->spawn_special) { sp->spawn_special->srights--; port_unref(sp->spawn_special); }
     /* tira os serviços que este processo servia do registro global (viram "serviço inativo") */
