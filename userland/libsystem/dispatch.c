@@ -125,8 +125,23 @@ static void *delayed_run(void *arg) {
     free(d);
     return 0;
 }
+/* blocos da fila principal executados na hora (antes do CFRunLoop): um dispatch_async para a fila principal feito
+ * DE DENTRO de um deles vai para a fila, como no macOS. Senão quem se reagenda (o Chrome faz
+ * -rebuildMenu -> dispatch_async(main, ^{ [self rebuildMenu] }) para juntar atualizações) vira recursão sem fim
+ * e a thread principal nunca chega ao laço de eventos. */
+static int main_inline_depth;
 static void q_async(void *q, void *ctx, dispatch_function_t fn, void *block, u64 delay_ms) {
-    if (is_main_q(q) || (q == &_dispatch_main_q && delay_ms)) { mq_push(ctx, fn, block, (u64)SYS0(SYS_TIME) + delay_ms, 0); return; }
+    if (is_main_q(q) || (q == &_dispatch_main_q && delay_ms) ||
+        (q == &_dispatch_main_q && main_inline_depth > 0 && on_main())) {
+        mq_push(ctx, fn, block, (u64)SYS0(SYS_TIME) + delay_ms, 0);
+        return;
+    }
+    if (q == &_dispatch_main_q && on_main()) {
+        main_inline_depth++;
+        if (block) RUN_BLOCK(block); else fn(ctx);
+        main_inline_depth--;
+        return;
+    }
     if (delay_ms && delay_ms < (~0ull >> 3)) {
         delayed_t *d = malloc(sizeof *d);
         unsigned long t;

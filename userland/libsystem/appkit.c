@@ -2217,7 +2217,27 @@ static int pump(void) {
     int ms = next < 0 ? 16 : (int)(next * 1000);
     return ms > 16 ? 16 : ms < 1 ? 1 : ms;
 }
+/* -[NSRunLoop run/runUntilDate:/runMode:beforeDate:] chegam aqui (foundation.c, cx_runloop_hook) de QUALQUER thread.
+ * Só a thread principal bombeia o AppKit (eventos de janela, timers do Foundation, desenho). Uma thread de fundo roda o
+ * CFRunLoop dela: é o que o MessagePumpNSRunLoop do Chromium espera (a fonte de trabalho dele está nesse run loop).
+ * Antes, cinco threads do processo principal do VS Code (e uma do helper de rede) bombeavam o pump em paralelo com a
+ * principal — ~58 s de CPU em 4 min, desenho da janela fora da thread principal e eventos de entrada roubados. */
+int pthread_main_np(void);
+int CFRunLoopRunInMode(void *mode, double seconds, unsigned char return_after_source);
 static void run_loop_until(double until) {
+    if (!pthread_main_np()) {
+        do {
+            double left = until - cx_now();
+            if (left <= 0) return;
+            int r = CFRunLoopRunInMode(0, left, 1);          /* uma passada: volta depois de uma fonte ou no prazo */
+            if (r == 2) return;                              /* CFRunLoopStop */
+            if (r == 1) {                                    /* sem fontes nem timers: espera sem girar */
+                double l = until - cx_now();
+                if (l > 0) SYS1(SYS_SLEEP, l > 0.05 ? 50 : (int)(l * 1000) + 1);
+            }
+        } while (until >= 1e299);                            /* -[NSRunLoop run]: para sempre, como antes */
+        return;
+    }
     while (cx_now() < until) { int ms = pump(); if (ms) SYS1(SYS_SLEEP, ms); }
 }
 static void ap_run(id self, SEL c) {
@@ -2320,7 +2340,8 @@ static i64 al_run(id self, SEL c) {
 }
 
 /* ================================================================ NSMenu (aceito, sem efeito visual) */
-typedef struct { id title, items, key, submenu; SEL action; id target; i64 tag; int state; BOOL sep, disabled; u64 mask; } menust_t;
+typedef struct { id title, items, key, submenu; SEL action; id target; i64 tag; int state; BOOL sep, disabled; u64 mask;
+                 BOOL hidden, alternate, header; id image, represented; } menust_t;
 static menust_t *mn(id m) { if (!ST(m)) { menust_t *s = calloc(1, sizeof *s); s->items = cx_arr_new(&NSMutableArray_c); ST(m) = s; } return ST(m); }
 static id mn_init_title(id self, SEL c, id t) { (void)c; keep(&mn(self)->title, t); menus_dirty = YES; return self; }
 static void mn_add(id self, SEL c, id item) { (void)c; cx_arr_add(mn(self)->items, item); menus_dirty = YES; }
@@ -2347,6 +2368,61 @@ static void mi_set_submenu(id self, SEL c, id m) { (void)c; keep(&mn(self)->subm
 static id mi_submenu(id self, SEL c) { (void)c; return mn(self)->submenu; }
 static void mi_set_target(id self, SEL c, id t) { (void)c; mn(self)->target = t; }
 static id mi_title(id self, SEL c) { (void)c; return mn(self)->title; }
+/* edição do menu por índice/tag (o Chrome reconstrói o menu do app: remove itens do topo até o separador,
+ * -[NSMenu removeItemAtIndex:]/-itemAtIndex: + -[NSMenuItem isSeparatorItem]; sem isso o laço nunca termina) */
+static i64 mn_count(id self, SEL c) { (void)c; return (i64)MSG0(u64, mn(self)->items, "count"); }
+static id mn_item_at(id self, SEL c, i64 i) { return i >= 0 && i < mn_count(self, c) ? MSG(id, mn(self)->items, "objectAtIndex:", (u64)i) : 0; }
+static void mn_remove_at(id self, SEL c, i64 i) { if (i >= 0 && i < mn_count(self, c)) { MSG(void, mn(self)->items, "removeObjectAtIndex:", (u64)i); menus_dirty = YES; } }
+static i64 mn_index_of(id self, SEL c, id item) {
+    i64 n = mn_count(self, c);
+    for (i64 i = 0; i < n; i++) if (mn_item_at(self, c, i) == item) return i;
+    return -1;
+}
+static void mn_remove(id self, SEL c, id item) { mn_remove_at(self, c, mn_index_of(self, c, item)); }
+static void mn_insert_at(id self, SEL c, id item, i64 i) {
+    i64 n = mn_count(self, c);
+    if (!item) return;
+    if (i < 0 || i >= n) { mn_add(self, c, item); return; }
+    MSG(void, mn(self)->items, "insertObject:atIndex:", item, (u64)i);
+    menus_dirty = YES;
+}
+static void mn_remove_all(id self, SEL c) { (void)c; MSG0(void, mn(self)->items, "removeAllObjects"); menus_dirty = YES; }
+static id mn_item_tag(id self, SEL c, i64 tag) {
+    i64 n = mn_count(self, c);
+    for (i64 i = 0; i < n; i++) { id it = mn_item_at(self, c, i); if (it && mn(it)->tag == tag) return it; }
+    return 0;
+}
+static i64 mn_index_tag(id self, SEL c, i64 tag) { id it = mn_item_tag(self, c, tag); return it ? mn_index_of(self, c, it) : -1; }
+static id mn_item_title(id self, SEL c, id t) {
+    i64 n = mn_count(self, c);
+    const char *s = t ? cx_cstr(t) : 0;
+    for (i64 i = 0; s && i < n; i++) { id it = mn_item_at(self, c, i); if (it && mn(it)->title && !strcmp(cx_cstr(mn(it)->title), s)) return it; }
+    return 0;
+}
+static id mn_title_get(id self, SEL c) { (void)c; return mn(self)->title; }
+static BOOL mi_is_sep(id self, SEL c) { (void)c; return mn(self)->sep; }
+static void mi_set_hidden(id self, SEL c, BOOL b) { (void)c; mn(self)->hidden = b; menus_dirty = YES; }
+static BOOL mi_hidden(id self, SEL c) { (void)c; return mn(self)->hidden; }
+static void mi_set_alternate(id self, SEL c, BOOL b) { (void)c; mn(self)->alternate = b; }
+static BOOL mi_alternate(id self, SEL c) { (void)c; return mn(self)->alternate; }
+static void mi_set_image(id self, SEL c, id img) { (void)c; keep(&mn(self)->image, img); }
+static id mi_image(id self, SEL c) { (void)c; return mn(self)->image; }
+static void mi_set_repr(id self, SEL c, id o) { (void)c; keep(&mn(self)->represented, o); }
+static id mi_repr(id self, SEL c) { (void)c; return mn(self)->represented; }
+static BOOL mi_is_header(id self, SEL c) { (void)c; return mn(self)->header; }
+static BOOL mi_enabled(id self, SEL c) { (void)c; return !mn(self)->disabled; }
+static id mi_key(id self, SEL c) { (void)c; return mn(self)->key; }
+static SEL mi_action(id self, SEL c) { (void)c; return mn(self)->action; }
+static id mi_target(id self, SEL c) { (void)c; return mn(self)->target; }
+static BOOL mi_has_submenu(id self, SEL c) { (void)c; return mn(self)->submenu != 0; }
+static id mi_section_header(id cls, SEL c, id title) {          /* +[NSMenuItem sectionHeaderWithTitle:] (macOS 14) */
+    (void)c;
+    id it = MSG0(id, MSG0(id, cls, "alloc"), "init");
+    keep(&mn(it)->title, title);
+    mn(it)->header = YES;
+    mn(it)->disabled = YES;
+    return it;
+}
 
 /* ================================================================ menus -> barra do mOS */
 static id *menu_tab;
@@ -3643,13 +3719,24 @@ void cx_appkit_init(void) {
 
     DEF(NSMenu, NSObject);
     M(NSMenu, "initWithTitle:", mn_init_title); M(NSMenu, "addItem:", mn_add); M(NSMenu, "itemArray", mn_items); M(NSMenu, "items", mn_items);
-    M(NSMenu, "addItemWithTitle:action:keyEquivalent:", mn_add_titled); M(NSMenu, "setAutoenablesItems:", noop1_m); M(NSMenu, "removeAllItems", noop_m);
+    M(NSMenu, "addItemWithTitle:action:keyEquivalent:", mn_add_titled); M(NSMenu, "setAutoenablesItems:", noop1_m); M(NSMenu, "removeAllItems", mn_remove_all);
+    M(NSMenu, "numberOfItems", mn_count); M(NSMenu, "itemAtIndex:", mn_item_at); M(NSMenu, "removeItemAtIndex:", mn_remove_at);
+    M(NSMenu, "removeItem:", mn_remove); M(NSMenu, "insertItem:atIndex:", mn_insert_at); M(NSMenu, "indexOfItem:", mn_index_of);
+    M(NSMenu, "itemWithTag:", mn_item_tag); M(NSMenu, "indexOfItemWithTag:", mn_index_tag); M(NSMenu, "itemWithTitle:", mn_item_title);
+    M(NSMenu, "title", mn_title_get); M(NSMenu, "setTitle:", mn_init_title);
     DEF(NSMenuItem, NSObject);
     CM(NSMenuItem, "separatorItem", mi_sep);
     M(NSMenuItem, "initWithTitle:action:keyEquivalent:", mi_init); M(NSMenuItem, "setSubmenu:", mi_set_submenu); M(NSMenuItem, "submenu", mi_submenu);
     M(NSMenuItem, "setTarget:", mi_set_target); M(NSMenuItem, "title", mi_title); M(NSMenuItem, "setKeyEquivalentModifierMask:", mi_set_mask);
     M(NSMenuItem, "setAction:", mi_set_action); M(NSMenuItem, "setTitle:", mi_set_title); M(NSMenuItem, "setKeyEquivalent:", mi_set_key); M(NSMenuItem, "tag", mi_tag); M(NSMenuItem, "state", mi_state);
     M(NSMenuItem, "setTag:", mi_set_tag); M(NSMenuItem, "setState:", mi_set_state); M(NSMenuItem, "setEnabled:", mi_set_enabled);
+    M(NSMenuItem, "isSeparatorItem", mi_is_sep); M(NSMenuItem, "setHidden:", mi_set_hidden); M(NSMenuItem, "isHidden", mi_hidden);
+    M(NSMenuItem, "setAlternate:", mi_set_alternate); M(NSMenuItem, "isAlternate", mi_alternate);
+    M(NSMenuItem, "setImage:", mi_set_image); M(NSMenuItem, "image", mi_image);
+    M(NSMenuItem, "setRepresentedObject:", mi_set_repr); M(NSMenuItem, "representedObject", mi_repr);
+    M(NSMenuItem, "isSectionHeader", mi_is_header); M(NSMenuItem, "isEnabled", mi_enabled); M(NSMenuItem, "keyEquivalent", mi_key);
+    M(NSMenuItem, "action", mi_action); M(NSMenuItem, "target", mi_target); M(NSMenuItem, "hasSubmenu", mi_has_submenu);
+    CM(NSMenuItem, "sectionHeaderWithTitle:", mi_section_header);
 
     DEF(NSAlert, NSObject);
     M(NSAlert, "setMessageText:", al_set_msg); M(NSAlert, "setInformativeText:", al_set_info); M(NSAlert, "addButtonWithTitle:", al_add_button);

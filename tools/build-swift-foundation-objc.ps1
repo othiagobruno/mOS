@@ -75,7 +75,7 @@ $aliases = [ordered]@{ 'NSData.ReadingOptions' = 'NSDataReadingOptions'; 'NSData
                        'NSString.CompareOptions' = 'NSStringCompareOptions'
                        'NSURL.BookmarkResolutionOptions' = 'NSURLBookmarkResolutionOptions'; 'NSURL.BookmarkCreationOptions' = 'NSURLBookmarkCreationOptions' }
 $prep = "$objc\foundation-src\FoundationEssentials"
-if (-not $Only -or $Only -contains 'FoundationEssentials') {
+if (-not $Only -or $Only -contains 'Foundation') {
     if (Test-Path $prep) { Remove-Item $prep -Recurse -Force }
     $utf8 = New-Object Text.UTF8Encoding $false
     $base = "$sfs\FoundationEssentials"
@@ -103,17 +103,27 @@ if (-not $Only -or $Only -contains 'FoundationEssentials') {
             if ($k -ge 0 -and $lines[$k] -notmatch 'MOS_NS_OPTIONS' -and $lines[$k] -match '^\s*#\s*if\s+(.+)$') { $lines[$k] = "#if ($($Matches[1].Trim())) && !MOS_NS_OPTIONS" }
         }
         if ($touched) { $patched++ }
+        # o fonte se refere ao próprio módulo como FoundationEssentials (nos trechos de quando compila a si mesmo); aqui o
+        # módulo é o Foundation
+        for ($i = 0; $i -lt $lines.Count; $i++) { if ($lines[$i] -notmatch '^\s*#') { $lines[$i] = $lines[$i].Replace('FoundationEssentials.', 'Foundation.') } }
+        # o pacote declara um URLResourceKey vazio (fora da Apple não há o NSURLResourceKey); aqui ele é o do ObjC
+        for ($i = 0; $i -lt $lines.Count; $i++) { if ($lines[$i] -match '^\s*public struct URLResourceKey \{\}\s*$') { $lines[$i] = '// mOS: URLResourceKey = NSURLResourceKey (ObjC)'; $touched = $true } }
         # em todos os arquivos: com MemberImportVisibility, quem usa .atomic/.caseInsensitive... precisa do import
         $lines.Insert(0, 'import _MOSNSOptions   // mOS: opções NS_OPTIONS da Apple (tools\build-swift-foundation-objc.ps1)')
         [IO.File]::WriteAllLines($dst, $lines, $utf8)
     }
-    # arquivos do mOS no próprio módulo (pontes Data/URL/Date... com o ABI da Apple: userland\sdk\swift-objc\FoundationEssentials-mos)
-    New-Item -ItemType Directory -Force "$prep\_mos" | Out-Null
-    Copy-Item "$root\userland\sdk\swift-objc\FoundationEssentials-mos\*.swift" "$prep\_mos" -Force
-    Write-Host "FoundationEssentials: fonte preparado ($patched arquivos com opções NS_OPTIONS)"
+    Write-Host "Foundation: fonte do swift-foundation preparado ($patched arquivos com opções NS_OPTIONS)"
 }
-$ess = @(Get-ChildItem $prep -Recurse -Filter *.swift | ForEach-Object FullName)
-# DATA_LEGACY_ABI: a representação do Data do ABI da Apple (enum _Representation, RangeReference), que o código
-# inlinável dos binários usa; o padrão do pacote é a representação nova
-Build-Mod 'FoundationEssentials' $ess ($sfFlags + @('-module-abi-name', 'Foundation', '-D', 'DATA_LEGACY_ABI', '-D', 'MOS_NS_OPTIONS'))
+# ---- o módulo Foundation, como no SDK da Apple: os fontes do FoundationEssentials (os tipos-valor) + os do mOS
+# (userland\sdk\swift-objc\Foundation: pontes ObjC, IndexSet, Notification, URLRequest, URLResourceValues, KVO...) num módulo
+# só, sobre o módulo clang Foundation (ObjC). Um módulo só porque é assim na Apple: as pontes e os membros que os binários
+# importam ($s10Foundation4DataV19_bridgeToObjectiveC...) ficam no mesmo módulo do tipo, sem contexto de extensão no nome, e
+# o importador só trata NSArray/NSString/NSString-tipado (URLResourceKey) como do Foundation dentro dele.
+# DATA_LEGACY_ABI: a representação do Data do ABI da Apple (enum _Representation, RangeReference), que o código inlinável
+# dos binários usa; o padrão do pacote é a representação nova.
+$fnd = @(Get-ChildItem $prep -Recurse -Filter *.swift | ForEach-Object FullName) + @(Get-ChildItem "$root\userland\sdk\swift-objc\Foundation" -Filter *.swift | ForEach-Object FullName)
+foreach ($x in 'FoundationEssentials.swiftmodule', 'FoundationEssentials.o') { Remove-Item "$out\$x" -ErrorAction SilentlyContinue }   # da estrutura antiga
+if (-not $Only -or $Only -contains 'Foundation') {
+    Build-Mod 'Foundation' $fnd ($sfFlags + @('-import-underlying-module', '-autolink-force-load', '-D', 'DATA_LEGACY_ABI', '-D', 'MOS_NS_OPTIONS'))
+}
 exit $fails

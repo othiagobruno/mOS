@@ -791,7 +791,7 @@ static int tls_check_certificate(tls_conn_t *c, const u8 *const *ders, const u32
         return 0;
     }
     datetime_t now;
-    rtc_now(&now);
+    rtc_now_utc(&now);
     bool clock_ok = now.year >= 2024;
     if (!clock_ok)
         kprintf("[tls] relógio (RTC) parece inválido (%04d-%02d-%02d): validade dos certificados NÃO conferida\n",
@@ -840,7 +840,7 @@ static int tls_check_ocsp(tls_conn_t *c, const u8 *resp, u32 rlen) {
     const u8 *ders[10];
     for (u32 i = 0; i < c->chain_n; i++) ders[i] = c->chain + c->chain_off[i];
     datetime_t now;
-    rtc_now(&now);
+    rtc_now_utc(&now);
     bool clock_ok = now.year >= 2024;
     char msg[256];
     u64 t0 = timer_ticks();

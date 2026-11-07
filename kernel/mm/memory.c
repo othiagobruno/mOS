@@ -313,6 +313,34 @@ void *kmalloc(usize n) {
     return NULL;
 }
 
+/* diagnóstico: confere as listas livres e as classes (magic e encadeamento). Devolve false e diz onde, na
+ * primeira inconsistência; quem chama informa o contexto (ex.: "depois do execve de X"). */
+bool kheap_check(const char *where) {
+    static bool reported;
+    if (reported) return false;
+    u64 f = spin_lock_irqsave(&heap_lock);
+    const char *bad = NULL;
+    const blk_t *at = NULL;
+    int n = 0;
+    for (const blk_t *b = free_list; b && !bad; b = b->next, n++) {
+        if (b->magic != MAGIC_FREE) { bad = "lista livre: magic"; at = b; }
+        else if (b->next && b->next <= b) { bad = "lista livre: ordem"; at = b; }
+        else if (n > 1000000) { bad = "lista livre: laço"; at = b; }
+    }
+    for (u32 c = 0; c < NCLASS && !bad; c++) {
+        n = 0;
+        for (const blk_t *b = class_list[c]; b && !bad; b = b->next, n++)
+            if (b->magic != MAGIC_CACHE && b->magic != MAGIC_USED && b->magic != MAGIC_FREE) { bad = "classe: magic"; at = b; }
+            else if (n > 1000000) { bad = "classe: laço"; at = b; }
+    }
+    spin_unlock_irqrestore(&heap_lock, f);
+    if (bad) {
+        reported = true;
+        kprintf("kheap_check: %s em %p (magic %llx tamanho %llu) — %s\n", bad, at, (u64)at->magic, (u64)at->size, where);
+    }
+    return !bad;
+}
+
 /* diagnóstico: o bloco ainda está alocado? (pega kfree duplo antes de acontecer) */
 bool kheap_live(const void *p) {
     if (!p) return true;

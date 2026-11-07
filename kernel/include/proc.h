@@ -21,6 +21,10 @@
 #define USER_PML4_FIRST ((int)((USER_BASE >> 39) & 511))
 #define USER_STACK_TOP  (USER_BASE + 0x40000000ULL)   /* 1 GiB acima da base */
 #define USER_STACK_SIZE (2048u << 10)   /* 2 MiB: argv/env do Electron passam de 1 MiB */
+/* descritores por processo (o padrão do macOS é 256). Com 32 (29 livres), o processo principal do VS Code dava EMFILE
+ * no state.vscdb, no watcher da pasta User, no /dev/null e no workbench.html, e a janela não carregava.
+ * Cada entrada tem ~288 bytes (o caminho vai junto): ~72 KiB por processo. */
+#define PROC_MAX_FDS 256
 
 enum { TH_READY, TH_RUNNING, TH_SLEEPING, TH_WAITING, TH_DEAD };
 
@@ -83,7 +87,7 @@ struct process {
     u64 start_ms;
     thread_t *main;
     struct process *next;
-    struct { bool used; int flags; u64 off; char path[256]; u8 kind; struct pipe *pipe; } fds[32];   /* arquivos (VFS) e pipes */
+    struct { bool used; int flags; u64 off; char path[256]; u8 kind; struct pipe *pipe; } fds[PROC_MAX_FDS];   /* arquivos (VFS) e pipes */
     u64 mmap_next;          /* próxima região anônima (SYS_MMAP) */
     int nthreads;           /* threads vivas ou ainda não recolhidas (a memória sai com a última) */
     u64 sig_handler[32];    /* 0 = padrão, 1 = ignorar, senão endereço do tratador */

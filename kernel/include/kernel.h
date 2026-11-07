@@ -191,6 +191,7 @@ void   acpi_reboot(void);
 
 typedef struct { int year, month, day, hour, minute, second, weekday; } datetime_t;
 void   rtc_now(datetime_t *dt);
+void   rtc_now_utc(datetime_t *dt);   /* UTC (certificados, OCSP) */
 
 /* fila de eventos de entrada global */
 enum { EV_NONE, EV_KEY_DOWN, EV_KEY_UP, EV_MOUSE, EV_MOUSE_ABS }; /* EV_MOUSE_ABS: posição absoluta de tela em dx/dy */

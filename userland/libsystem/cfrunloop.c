@@ -285,7 +285,10 @@ int CFRunLoopRunInMode(void *mode, double seconds, unsigned char return_after_so
             double left = (until - CFAbsoluteTimeGetCurrent()) * 1000.0;
             long ms = left < 1 ? 1 : left < (double)nap ? (long)left : (long)nap;
             cx_futex_wait(&rl->wake, 0, ms);
-            if (nap < 8) nap <<= 1;
+            /* a principal ainda consulta eventos de janela e a fila principal do GCD: até 8 ms. As outras só acordam
+             * por CFRunLoopWakeUp (instantâneo no futex) ou timer: até 128 ms (com 8 ms, as threads do
+             * MessagePumpNSRunLoop do Chromium gastavam ~15 s de CPU cada em 4 min só acordando) */
+            if (nap < (is_main ? 8u : 128u)) nap <<= 1;
         }
         rl->wake = 0;
         notify(rl, ACT_AFTER_WAITING);

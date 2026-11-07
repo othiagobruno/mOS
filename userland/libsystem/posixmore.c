@@ -206,7 +206,7 @@ int getpgrp(void) { return getpid(); }
 int tcsetpgrp(int fd, int pg) { (void)fd; (void)pg; return 0; }
 char *ttyname(int fd) { return isatty(fd) ? "/dev/ttys000" : 0; }
 unsigned long cfgetospeed(const void *t) { (void)t; return 38400; }
-int getdtablesize(void) { return 32; }                 /* a tabela de fds do kernel tem 32 entradas */
+int getdtablesize(void) { return 256; }                /* PROC_MAX_FDS do kernel (proc.h) */
 /* alarm/setitimer(ITIMER_REAL): o kernel não tem temporizadores por processo; uma thread auxiliar dorme e
  * manda SIGALRM ao próprio processo. Cada armação nova aumenta a geração; a thread antiga vê e desiste. */
 int pthread_create(unsigned long *t, const void *attr, void *(*fn)(void *), void *arg);

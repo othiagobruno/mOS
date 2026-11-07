@@ -1004,6 +1004,52 @@ static int link_dep(link_t *K, image_t *I, const char *name) {
     return i < 0 ? -2 : i;
 }
 
+/* dependência com caminho absoluto fora do sistema (Homebrew: /usr/local/opt/<f>/lib, @@HOMEBREW_PREFIX@@,
+ * @@HOMEBREW_CELLAR@@ e as bibliotecas de /usr/lib que o mOS não tem). -1: não achou; -2: erro (em K->err).
+ * Os caminhos ficam no heap: link_add é recursivo pela cadeia de dependências (git -> libcurl -> libssl ->
+ * libcrypto...) e roda na pilha de 64 KiB do kernel da thread que fez o exec. */
+static int link_abs_dep(link_t *K, const char *dn) {
+    enum { CAP = 384 };
+    char *cand = kmalloc(2 * CAP);
+    if (!cand) { snprintf(K->err, K->errlen, "sem memória"); return -2; }
+    char *opt = cand + CAP;
+    if (!strncmp(dn, "@@HOMEBREW_PREFIX@@", 19)) snprintf(cand, CAP, "/usr/local%s", dn + 19);
+    else if (!strncmp(dn, "@@HOMEBREW_CELLAR@@", 19)) snprintf(cand, CAP, "/usr/local/Cellar%s", dn + 19);
+    else snprintf(cand, CAP, "%s", dn);
+    int d = -1;
+    if (cand[0] == '/') {
+        const u8 *data;
+        usize len;
+        /* /usr/local/Cellar/<fórmula>/<versão>/X: no Homebrew, /usr/local/opt/<fórmula> é um link para esse keg.
+         * Sem o Cellar no disco vale o opt; com os dois, o opt é o canônico (a mesma dylib não entra duas vezes). */
+        if (!strncmp(cand, "/usr/local/Cellar/", 18)) {
+            const char *f = cand + 18, *v = strchr(f, '/'), *x = v ? strchr(v + 1, '/') : NULL;
+            if (x) {
+                snprintf(opt, CAP, "/usr/local/opt/%.*s%s", (int)(v - f), f, x);
+                if (dep_read(opt, &len)) snprintf(cand, CAP, "%s", opt);
+            }
+        }
+        d = locate(K, cand, CAP, &data, &len);
+        /* /usr/lib que o mOS não tem: a fórmula equivalente do Homebrew (mesma API; uma cópia só, para o estado
+         * global — ex.: o terminal do ncurses — ser um só) */
+        static const char *const usrlib_alias[][2] = {
+            {"/usr/lib/libncurses.5.4.dylib", "/usr/local/opt/ncurses/lib/libncursesw.6.dylib"},
+            {"/usr/lib/libz.1.dylib",         "/usr/local/opt/zlib/lib/libz.1.dylib"},
+            {"/usr/lib/libffi.dylib",         "/usr/local/opt/libffi/lib/libffi.8.dylib"},
+            {"/usr/lib/libcurl.4.dylib",      "/usr/local/opt/curl/lib/libcurl.4.dylib"},   /* o git usa o curl do sistema */
+            {"/usr/lib/libexpat.1.dylib",     "/usr/local/opt/expat/lib/libexpat.1.dylib"},
+        };
+        for (usize k = 0; d < 0 && !data && k < sizeof usrlib_alias / sizeof usrlib_alias[0]; k++)
+            if (!strcmp(cand, usrlib_alias[k][0])) {
+                snprintf(cand, CAP, "%s", usrlib_alias[k][1]);
+                d = locate(K, cand, CAP, &data, &len);
+            }
+        if (d < 0 && data) { d = link_add(K, cand, data, len, true); if (d < 0) d = -2; }   /* link_add copia o caminho */
+    }
+    kfree(cand);
+    return d;
+}
+
 static int link_add(link_t *K, const char *path, const u8 *file, usize flen, bool dylib) {
     char nm[96];
     dylib_short(path, nm, sizeof nm);
@@ -1038,46 +1084,23 @@ static int link_add(link_t *K, const char *path, const u8 *file, usize flen, boo
             snprintf(K->err, K->errlen, "%s não está dentro do app (pedido por %s)", s, nm);
             return -1;
         }
-        if (libsystem_dylib_ok(dn)) continue;
-        {   /* dylib com caminho absoluto fora do sistema (ex.: /usr/local/opt/readline/lib, do Homebrew):
-             * carrega do disco. Bottles ainda não relocados trazem @@HOMEBREW_PREFIX@@ / @@HOMEBREW_CELLAR@@. */
-            char cand[384];
-            if (!strncmp(dn, "@@HOMEBREW_PREFIX@@", 19)) snprintf(cand, sizeof cand, "/usr/local%s", dn + 19);
-            else if (!strncmp(dn, "@@HOMEBREW_CELLAR@@", 19)) snprintf(cand, sizeof cand, "/usr/local/Cellar%s", dn + 19);
-            else snprintf(cand, sizeof cand, "%s", dn);
-            if (cand[0] == '/') {
-                const u8 *data;
-                usize len;
-                /* /usr/local/Cellar/<fórmula>/<versão>/X: no Homebrew, /usr/local/opt/<fórmula> é um link para
-                 * esse keg. Sem o Cellar no disco, vale o opt; com os dois, o caminho do opt é o canônico, para
-                 * a mesma dylib não entrar duas vezes (uma pelo Cellar, outra pelo opt). */
-                if (!strncmp(cand, "/usr/local/Cellar/", 18)) {
-                    const char *f = cand + 18, *v = strchr(f, '/'), *x = v ? strchr(v + 1, '/') : NULL;
-                    if (x) {
-                        char opt[384];
-                        snprintf(opt, sizeof opt, "/usr/local/opt/%.*s%s", (int)(v - f), f, x);
-                        if (dep_read(opt, &len)) snprintf(cand, sizeof cand, "%s", opt);
-                    }
-                }
-                int d = locate(K, cand, sizeof cand, &data, &len);
-                /* bibliotecas de /usr/lib que o mOS não tem: usa a fórmula equivalente do Homebrew (mesma API;
-                 * uma cópia só, para o estado global — ex.: o terminal do ncurses — ser um só) */
-                static const char *const usrlib_alias[][2] = {
-                    {"/usr/lib/libncurses.5.4.dylib", "/usr/local/opt/ncurses/lib/libncursesw.6.dylib"},
-                    {"/usr/lib/libz.1.dylib",         "/usr/local/opt/zlib/lib/libz.1.dylib"},
-                    {"/usr/lib/libffi.dylib",         "/usr/local/opt/libffi/lib/libffi.8.dylib"},
-                    {"/usr/lib/libcurl.4.dylib",      "/usr/local/opt/curl/lib/libcurl.4.dylib"},   /* o git usa o curl do sistema */
-                    {"/usr/lib/libexpat.1.dylib",     "/usr/local/opt/expat/lib/libexpat.1.dylib"},
-                };
-                for (usize k = 0; d < 0 && !data && k < sizeof usrlib_alias / sizeof usrlib_alias[0]; k++)
-                    if (!strcmp(cand, usrlib_alias[k][0])) {
-                        snprintf(cand, sizeof cand, "%s", usrlib_alias[k][1]);
-                        d = locate(K, cand, sizeof cand, &data, &len);
-                    }
-                if (d < 0 && data) d = link_add(K, cand, data, len, true);
-                if (d == -1 && data) return -1;
-                if (d >= 0) { I->dep[i] = (i16)d; continue; }
+        if (libsystem_dylib_ok(dn)) {
+            /* Foundation.framework é do libSystem, mas a parte Swift dele (overlay + FoundationEssentials com o ABI da
+             * Apple, docs/swift-objc-runtime.md, fase 5) é uma dylib Mach-O: no macOS 14+ ela mora dentro do framework,
+             * no SDK antigo em /usr/lib/swift/libswiftFoundation.dylib. Se existir no disco, entra junto. */
+            if (!strncmp(dn, "/System/Library/Frameworks/Foundation.framework/", 48)) {
+                char sw[64] = "/usr/lib/swift/libswiftFoundation.dylib";
+                const u8 *data; usize len;
+                int d = locate(K, sw, sizeof sw, &data, &len);
+                if (d < 0 && data) d = link_add(K, sw, data, len, true);
+                if (d >= 0) I->dep[i] = (i16)d;
             }
+            continue;
+        }
+        {   /* dylib com caminho absoluto fora do sistema (ex.: /usr/local/opt/readline/lib, do Homebrew) */
+            int d = link_abs_dep(K, dn);
+            if (d == -2) return -1;
+            if (d >= 0) { I->dep[i] = (i16)d; continue; }
         }
         if (I->mo.dylib_weak[i]) continue;
         note_absent(K, dn);

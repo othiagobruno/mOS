@@ -34,6 +34,14 @@ Link-Dylib 'libswiftCoreFoundation' @(Ov 'CoreFoundation')
 Link-Dylib 'libswiftCoreGraphics' @(Ov 'CoreGraphics')
 Link-Dylib 'libswiftos' @(Ov 'os')
 Link-Dylib 'libswiftObservation' @(Ov 'Observation')
+# Foundation Swift (fase 5): o módulo Foundation (swift-foundation + mOS) e o que ele leva dentro (swift-collections,
+# Synchronization, _FoundationRefs, _FoundationCShims). O WhatsApp a liga direto; o carregador a junta a quem pede o
+# Foundation.framework (kernel/compat/macho.c)
+if (Test-Path (Ov 'Foundation')) {
+    Link-Dylib 'libswiftFoundation' @((Ov 'Foundation'), (Ov '_FoundationRefs'), "$ov\_FoundationCShims_c.o",
+        (Ov 'Synchronization'), (Ov 'InternalCollectionsUtilities'), (Ov 'SpanPreview'), (Ov 'BasicContainers'), (Ov 'DequeModule'),
+        (Ov 'OrderedCollections'), (Ov '_RopeModule'))
+}
 Link-Dylib 'libswift_RegexParser' @(Ov '_RegexParser')
 Link-Dylib 'libswift_StringProcessing' (@(Ov '_StringProcessing') + @(Get-ChildItem "$ov\_CUnicode_*.o" | ForEach-Object FullName))
 foreach ($m in 'simd', 'XPC', 'QuartzCore', 'Metal', 'IOKit', 'OSLog', 'Spatial', 'CoreAudio', 'CoreImage', 'CoreMIDI', 'QuickLookUI') {

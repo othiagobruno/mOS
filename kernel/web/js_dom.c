@@ -3266,6 +3266,18 @@ void js_page_eval_url(js_page_t *p, const char *code) {
     js_leave();
 }
 
+/* Editor de Script: avalia um programa inteiro (sem decodificar como URL nem limitar o tamanho) */
+void js_page_eval(js_page_t *p, const char *code, int len, const char *name) {
+    if (!p || !code) return;
+    int frame;
+    js_enter(&frame);
+    jsrealm *saved = J.realm;
+    J.realm = p->realm;
+    exec_source(p, code, len < 0 ? (int)strlen(code) : len, name ? name : "script", NULL);
+    J.realm = saved;
+    js_leave();
+}
+
 const char *js_page_take_nav(js_page_t *p, bool *reload) {
     if (!p || !p->nav_pending) return NULL;
     p->nav_pending = false;

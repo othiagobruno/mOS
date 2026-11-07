@@ -393,19 +393,19 @@ static void dk_paint(window_t *w, ui_t *u) {
         ui_label(u, bar.x + 166, ly + 3, fb, FONT_REGULAR, 12, T.text2);
     }
     /* tabela de propriedades */
-    rect_t g = rect_make(a.x + 24, ly + 40, a.w - 48, 4 * 30);
+    rect_t g = rect_make(a.x + 24, ly + 40, a.w - 48, 4 * 32);
     ui_group_box(u, g);
     rect_t c;
-    c = ui_form_row(u, g, 0, 30, 4, "Tipo");
+    c = ui_form_row(u, g, 0, 32, 4, "Tipo");
     ui_detail(u, UI_ID, c, it->kind, DETAIL_NONE);
-    c = ui_form_row(u, g, 1, 30, 4, "Capacidade");
+    c = ui_form_row(u, g, 1, 32, 4, "Capacidade");
     ui_detail(u, UI_ID, c, sz, DETAIL_NONE);
-    c = ui_form_row(u, g, 2, 30, 4, "Dispositivo");
+    c = ui_form_row(u, g, 2, 32, 4, "Dispositivo");
     char dv[64];
     if (it->disk >= 0) snprintf(dv, sizeof dv, "%s", storage_disk_name(it->disk));
     else snprintf(dv, sizeof dv, "%s", it->vol == vfs_root() ? "memória (sem disco)" : "imagem montada");
     ui_detail(u, UI_ID, c, dv, DETAIL_NONE);
-    c = ui_form_row(u, g, 3, 30, 4, "Gravável");
+    c = ui_form_row(u, g, 3, 32, 4, "Gravável");
     bool wr = it->disk >= 0 ? storage_disk(it->disk) && storage_disk(it->disk)->write : it->vol == vfs_root();
     ui_detail(u, UI_ID, c, wr ? "Sim" : "Não", DETAIL_NONE);
     /* Primeiros Socorros: verificação da árvore do volume */

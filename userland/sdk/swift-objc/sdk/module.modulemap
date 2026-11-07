@@ -56,9 +56,3 @@ module _MOSNSOptions [system] [extern_c] {
     header "Foundation/NSFoundationOptions.h"
     export *
 }
-
-// as declarações ObjC do Foundation (o módulo Foundation acima as reexporta; o FoundationEssentials as importa)
-module _MOSFoundationObjC [system] [extern_c] {
-    header "Foundation/MOSFoundationObjC.h"
-    export *
-}

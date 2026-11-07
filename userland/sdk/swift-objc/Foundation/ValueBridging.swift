@@ -1,22 +1,8 @@
-// mOS — arquivo extra do FoundationEssentials (fase 5, marco B; tools/build-swift-foundation-objc.ps1): as pontes dos
-// tipos-valor (Data, URL, Date, UUID, Locale, TimeZone) com as classes do Foundation do libSystem do mOS (NSData, NSURL,
-// NSDate, NSUUID, NSLocale, NSTimeZone). Ficam no próprio módulo do tipo, como no Foundation da Apple: numa extensão do
-// overlay o nome mangled levaria contexto de extensão ($s10Foundation4DataVAAE19_bridge...) e não bateria com os binários.
+// mOS — Foundation (fase 5, marco B): as pontes dos tipos-valor (Data, URL, Date, UUID, Locale, TimeZone) com as classes do Foundation do libSystem do mOS (NSData, NSURL,
+// NSDate, NSUUID, NSLocale, NSTimeZone). No mesmo módulo do tipo, como no Foundation da Apple (numa extensão de outro
+// módulo o nome mangled levaria contexto de extensão, $s10Foundation4DataVAAE19_bridge..., e não bateria).
 // Como no marco A, a ida cria objetos do mOS e a volta lê pelos métodos públicos.
 
-import _MOSFoundationObjC
-
-// ajudantes (o FoundationEssentials não enxerga o overlay Foundation)
-fileprivate let _mosUTF8: UInt = 4   // NSUTF8StringEncoding
-fileprivate func _mosNSString(_ s: String) -> NSString {
-    var s = s
-    return s.withUTF8 { b in b.count == 0 ? NSString() : (NSString(bytes: b.baseAddress!, length: b.count, encoding: _mosUTF8) ?? NSString()) }
-}
-fileprivate func _mosString(_ ns: NSString) -> String {
-    let n = ns.lengthOfBytes(usingEncoding: _mosUTF8)
-    guard let p = ns.utf8String else { return "" }
-    return p.withMemoryRebound(to: UInt8.self, capacity: n) { String(decoding: UnsafeBufferPointer(start: $0, count: n), as: UTF8.self) }
-}
 
 // MARK: - Data <-> NSData
 

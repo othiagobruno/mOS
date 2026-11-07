@@ -583,6 +583,12 @@ u32 x509_trust_count(void) {
     return t ? t->n : 0;
 }
 
+/* raiz confiável i (Acesso às Chaves) */
+const x509_cert_t *x509_trust_get(u32 i) {
+    const trust_t *t = trust_get();
+    return t && i < t->n ? &t->a[i].c : NULL;
+}
+
 /* ======================================================================
  * cadeia
  * ====================================================================== */

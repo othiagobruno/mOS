@@ -17,8 +17,9 @@ public struct NSKeyValueObservedChange<Value> {
 internal final class _MOSKVOHelper: NSObject {
     let callback: (NSDictionary?) -> Void
     init(_ callback: @escaping (NSDictionary?) -> Void) { self.callback = callback; super.init() }
-    override func observeValue(forKeyPath keyPath: String?, of object: Any?, change: [String: Any]?, context: UnsafeMutableRawPointer?) {
-        callback(change.map { ($0 as [String: Any])._bridgeToObjectiveC() })
+    // (neste módulo o importador não faz a ponte NSString/NSDictionary: os tipos são os do ObjC)
+    override func observeValue(forKeyPath keyPath: NSString?, of object: Any?, change: NSDictionary?, context: UnsafeMutableRawPointer?) {
+        callback(change)
     }
 }
 
@@ -36,7 +37,7 @@ public class NSKeyValueObservation: NSObject {
 
     /// para de observar (também acontece ao soltar a observação)
     public func invalidate() {
-        if let o = _object, let h = _helper { o.removeObserver(h, forKeyPath: _mosNSString(_keyPath) as String, context: nil) }
+        if let o = _object, let h = _helper { o.removeObserver(h, forKeyPath: _mosNSString(_keyPath), context: nil) }
         _helper = nil
     }
 
@@ -59,7 +60,7 @@ extension _KeyValueCodingAndObserving {
             let prior = (change?.object(forKey: _mosNSString("notificationIsPrior")) as? NSNumber)?.boolValue ?? false
             changeHandler(me, NSKeyValueObservedChange(newValue: value("new"), oldValue: value("old"), indexes: nil, isPrior: prior))
         }
-        obj.addObserver(helper, forKeyPath: path, options: options, context: nil)
+        obj.addObserver(helper, forKeyPath: _mosNSString(path), options: options, context: nil)
         return NSKeyValueObservation(object: obj, keyPath: path, helper: helper)
     }
 }

@@ -47,3 +47,19 @@ void rtc_now(datetime_t *dt) {
     int wd = (D + 13 * (mm + 1) / 5 + k + k / 4 + j / 4 + 5 * j) % 7; /* 0 = sábado */
     dt->weekday = (wd + 6) % 7;
 }
+
+/* hora em UTC (validação de certificados e OCSP): a hora local menos o fuso */
+void rtc_now_utc(datetime_t *dt) {
+    rtc_now(dt);
+    int total = dt->hour * 60 + dt->minute - g_tz_offset_min;
+    int Y = dt->year, M = dt->month, D = dt->day;
+    while (total < 0) {
+        total += 1440;
+        if (--D < 1) { if (--M < 1) { M = 12; Y--; } D = days_in_month(Y, M); }
+    }
+    while (total >= 1440) {
+        total -= 1440;
+        if (++D > days_in_month(Y, M)) { D = 1; if (++M > 12) { M = 1; Y++; } }
+    }
+    dt->year = Y; dt->month = M; dt->day = D; dt->hour = total / 60; dt->minute = total % 60;
+}

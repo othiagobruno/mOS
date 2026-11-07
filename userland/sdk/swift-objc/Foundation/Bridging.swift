@@ -9,9 +9,8 @@
 
 @_exported import Foundation
 @_exported import CoreGraphics
-// os tipos-valor (Data, URL, Date, UUID, JSON...) do swift-foundation, com os nomes da Apple (marco B;
+// os tipos-valor (Data, URL, Date, UUID, JSON...) do swift-foundation compilam neste mesmo módulo (marco B,
 // tools\build-swift-foundation-objc.ps1), como o Foundation da Apple reexporta o seu
-@_exported import FoundationEssentials
 import Darwin
 
 // MARK: - ajudantes

@@ -26,6 +26,7 @@ enum { JSE_CLICK, JSE_INPUT, JSE_CHANGE, JSE_SUBMIT, JSE_KEYDOWN, JSE_KEYUP, JSE
 bool js_page_event(js_page_t *p, node_t *target, int type, int key, u16 mods);
 node_t *js_hit_node(doc_t *d, int x, int y);   /* elemento mais profundo sob o ponto (coord. do documento) */
 void js_page_eval_url(js_page_t *p, const char *code); /* links javascript: */
+void js_page_eval(js_page_t *p, const char *code, int len, const char *name); /* programa inteiro (Editor de Script) */
 
 /* navegação pedida por location.href = ... / reload(); devolve NULL se nenhuma */
 const char *js_page_take_nav(js_page_t *p, bool *reload);

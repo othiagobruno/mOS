@@ -220,3 +220,193 @@ static inline void kit_fmt_num(char *out, int n, double v, int dec) {
     for (char *p = tmp; *p; p++) if (*p == '.') *p = ',';
     snprintf(out, n, "%s", tmp);
 }
+
+/* ------------------------------------------------------------ imagens: BMP de 32 bits (gravar) e 24/32 bits (ler) */
+static inline void kit_put32(u8 *p, u32 v) { p[0] = (u8)v; p[1] = (u8)(v >> 8); p[2] = (u8)(v >> 16); p[3] = (u8)(v >> 24); }
+static inline u32 kit_get32(const u8 *p) { return p[0] | p[1] << 8 | p[2] << 16 | (u32)p[3] << 24; }
+static inline bool kit_save_bmp(const char *path, const surface_t *s) {
+    u32 w = (u32)s->w, h = (u32)s->h, img = w * h * 4, total = 54 + img;
+    u8 *b = kcalloc(total, 1);
+    if (!b) return false;
+    b[0] = 'B'; b[1] = 'M';
+    kit_put32(b + 2, total); kit_put32(b + 10, 54); kit_put32(b + 14, 40); kit_put32(b + 18, w); kit_put32(b + 22, (u32)-(i32)h);
+    b[26] = 1; b[28] = 32;
+    kit_put32(b + 34, img); kit_put32(b + 38, 2835); kit_put32(b + 42, 2835);
+    u8 *d = b + 54;
+    for (u32 y = 0; y < h; y++)
+        for (u32 x = 0; x < w; x++, d += 4) kit_put32(d, s->px[(usize)y * s->stride + x] | 0xFF000000u);
+    bool ok = vfs_write_file(path, b, total) != NULL;
+    kfree(b);
+    return ok;
+}
+static inline surface_t *kit_load_image(const char *path) {
+    vnode_t *v = vfs_lookup(path);
+    if (!v || v->dir || v->size < 16) return NULL;
+    vfs_ensure(v);
+    const u8 *d = v->data;
+    if (d[0] == 'B' && d[1] == 'M' && v->size > 54) {
+        i32 w = (i32)kit_get32(d + 18), h = (i32)kit_get32(d + 22);
+        int bpp = d[28] | d[29] << 8;
+        u32 off = kit_get32(d + 10);
+        bool top = h < 0;
+        if (h < 0) h = -h;
+        if (w <= 0 || h <= 0 || w > 8192 || h > 8192 || (bpp != 24 && bpp != 32)) return NULL;
+        int stride = ((w * bpp / 8) + 3) & ~3;
+        if (off + (u64)stride * h > v->size) return NULL;
+        surface_t *s = surface_new(w, h);
+        for (int y = 0; y < h; y++) {
+            const u8 *row = d + off + (usize)(top ? y : h - 1 - y) * stride;
+            for (int x = 0; x < w; x++) {
+                const u8 *p = row + x * (bpp / 8);
+                s->px[(usize)y * s->stride + x] = 0xFF000000u | (u32)p[2] << 16 | (u32)p[1] << 8 | p[0];
+            }
+        }
+        return s;
+    }
+    return image_decode(d, v->size);
+}
+static inline bool kit_is_image(const char *name) {
+    const char *e = vfs_ext(name);
+    return !strcasecmp(e, "png") || !strcasecmp(e, "jpg") || !strcasecmp(e, "jpeg") || !strcasecmp(e, "bmp") || !strcasecmp(e, "gif");
+}
+
+/* ------------------------------------------------------------ áudio: WAV PCM 16 bits */
+static inline bool kit_save_wav(const char *path, const i16 *st, u32 frames, int channels, int rate) {
+    u32 data = frames * channels * 2, total = 44 + data;
+    u8 *b = kmalloc(total);
+    if (!b) return false;
+    memcpy(b, "RIFF", 4); kit_put32(b + 4, total - 8); memcpy(b + 8, "WAVEfmt ", 8);
+    kit_put32(b + 16, 16); b[20] = 1; b[21] = 0; b[22] = (u8)channels; b[23] = 0;
+    kit_put32(b + 24, rate); kit_put32(b + 28, rate * channels * 2); b[32] = (u8)(channels * 2); b[33] = 0; b[34] = 16; b[35] = 0;
+    memcpy(b + 36, "data", 4); kit_put32(b + 40, data);
+    memcpy(b + 44, st, data);
+    bool ok = vfs_write_file(path, b, total) != NULL;
+    kfree(b);
+    return ok;
+}
+/* carrega um WAV PCM 16 bits como estéreo 48 kHz (reamostragem linear); kfree no retorno */
+static inline i16 *kit_load_wav(const char *path, u32 *frames_out) {
+    vnode_t *v = vfs_lookup(path);
+    if (!v || v->dir || v->size < 44) return NULL;
+    vfs_ensure(v);
+    const u8 *d = v->data;
+    if (memcmp(d, "RIFF", 4) || memcmp(d + 8, "WAVE", 4)) return NULL;
+    int ch = 0, rate = 0, bits = 0;
+    const u8 *pcm = NULL;
+    u32 pcm_len = 0;
+    for (u32 off = 12; off + 8 <= v->size;) {
+        u32 len = kit_get32(d + off + 4);
+        if (!memcmp(d + off, "fmt ", 4) && len >= 16) { ch = d[off + 10]; rate = (int)kit_get32(d + off + 12); bits = d[off + 22]; }
+        else if (!memcmp(d + off, "data", 4)) { pcm = d + off + 8; pcm_len = MIN(len, (u32)(v->size - off - 8)); }
+        off += 8 + len + (len & 1);
+    }
+    if (!pcm || bits != 16 || ch < 1 || ch > 2 || rate < 4000) return NULL;
+    u32 in_frames = pcm_len / (ch * 2);
+    u32 out_frames = (u32)((u64)in_frames * 48000 / rate);
+    i16 *o = kmalloc((usize)out_frames * 4 + 4);
+    if (!o) return NULL;
+    const i16 *src = (const i16 *)pcm;
+    for (u32 i = 0; i < out_frames; i++) {
+        u32 j = (u32)((u64)i * rate / 48000);
+        if (j >= in_frames) j = in_frames - 1;
+        o[i * 2] = src[j * ch];
+        o[i * 2 + 1] = src[j * ch + (ch == 2 ? 1 : 0)];
+    }
+    *frames_out = out_frames;
+    return o;
+}
+
+/* ------------------------------------------------------------ JSON mínimo (leitura por caminho "a.b.c" ou "a.b[3]") */
+static inline const char *kit_json_ws(const char *p) { while (*p == ' ' || *p == '\n' || *p == '\r' || *p == '\t') p++; return p; }
+static inline const char *kit_json_skip(const char *p) {
+    p = kit_json_ws(p);
+    if (*p == '"') { p++; while (*p && *p != '"') { if (*p == '\\' && p[1]) p++; p++; } return *p ? p + 1 : p; }
+    if (*p == '{' || *p == '[') {
+        int depth = 0;
+        for (; *p; p++) {
+            if (*p == '"') { p++; while (*p && *p != '"') { if (*p == '\\' && p[1]) p++; p++; } if (!*p) return p; continue; }
+            if (*p == '{' || *p == '[') depth++;
+            else if (*p == '}' || *p == ']') { if (--depth == 0) return p + 1; }
+        }
+        return p;
+    }
+    while (*p && *p != ',' && *p != '}' && *p != ']') p++;
+    return p;
+}
+/* devolve o início do valor no caminho, ou NULL */
+static inline const char *kit_json_get(const char *p, const char *path) {
+    while (p && *path) {
+        p = kit_json_ws(p);
+        if (*path == '[') {
+            int idx = atoi(path + 1);
+            while (*path && *path != ']') path++;
+            if (*path) path++;
+            if (*path == '.') path++;
+            if (*p != '[') return NULL;
+            p = kit_json_ws(p + 1);
+            for (int i = 0; i < idx; i++) {
+                p = kit_json_ws(kit_json_skip(p));
+                if (*p != ',') return NULL;
+                p = kit_json_ws(p + 1);
+            }
+            continue;
+        }
+        char key[64];
+        int k = 0;
+        while (*path && *path != '.' && *path != '[' && k < 63) key[k++] = *path++;
+        key[k] = 0;
+        if (*path == '.') path++;
+        if (*p != '{') return NULL;
+        p = kit_json_ws(p + 1);
+        bool found = false;
+        while (*p == '"') {
+            const char *ks = p + 1, *ke = ks;
+            while (*ke && *ke != '"') { if (*ke == '\\' && ke[1]) ke++; ke++; }
+            bool match = (int)(ke - ks) == k && !memcmp(ks, key, k);
+            p = kit_json_ws(ke + 1);
+            if (*p == ':') p = kit_json_ws(p + 1);
+            if (match) { found = true; break; }
+            p = kit_json_ws(kit_json_skip(p));
+            if (*p == ',') p = kit_json_ws(p + 1);
+        }
+        if (!found) return NULL;
+    }
+    return p ? kit_json_ws(p) : NULL;
+}
+static inline double kit_json_num(const char *json, const char *path, double def) {
+    const char *p = kit_json_get(json, path);
+    if (!p || (!isdigit((u8)*p) && *p != '-')) return def;
+    bool neg = *p == '-';
+    if (neg) p++;
+    double v = 0, fr = 0.1;
+    while (isdigit((u8)*p)) v = v * 10 + (*p++ - '0');
+    if (*p == '.') { p++; while (isdigit((u8)*p)) { v += (*p++ - '0') * fr; fr /= 10; } }
+    if (*p == 'e' || *p == 'E') { p++; bool en = *p == '-'; if (*p == '-' || *p == '+') p++; int e = 0; while (isdigit((u8)*p)) e = e * 10 + (*p++ - '0'); v *= kit_pow(10, en ? -e : e); }
+    return neg ? -v : v;
+}
+static inline bool kit_json_str(const char *json, const char *path, char *out, int n) {
+    const char *p = kit_json_get(json, path);
+    out[0] = 0;
+    if (!p || *p != '"') return false;
+    p++;
+    int k = 0;
+    while (*p && *p != '"' && k < n - 1) {
+        if (*p == '\\' && p[1]) {
+            p++;
+            if (*p == 'u') {
+                u32 cp = (u32)strtol((char[5]){p[1], p[2], p[3], p[4], 0}, NULL, 16);
+                char u[4];
+                int l = utf8_encode(cp, u);
+                if (k + l < n) { memcpy(out + k, u, l); k += l; }
+                p += 5;
+                continue;
+            }
+            out[k++] = *p == 'n' ? '\n' : *p == 't' ? '\t' : *p;
+            p++;
+            continue;
+        }
+        out[k++] = *p++;
+    }
+    out[k] = 0;
+    return true;
+}

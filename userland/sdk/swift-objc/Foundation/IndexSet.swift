@@ -102,8 +102,8 @@ extension IndexSet: CustomStringConvertible {
 extension IndexSet: _ObjectiveCBridgeable {
     @_semantics("convertToObjectiveC")
     public func _bridgeToObjectiveC() -> NSIndexSet {
-        let m = NSMutableIndexSet()
-        for i in self { m.add(UInt(i)) }
+        let m = NSMutableIndexSet()!
+        for i in self { m.add(i) }
         return m
     }
 
@@ -111,13 +111,13 @@ extension IndexSet: _ObjectiveCBridgeable {
         // o NSIndexSet do mOS não tem enumeração; percorre de firstIndex a lastIndex (o mutável sabe dizer)
         var r = IndexSet()
         let first = ns.firstIndex
-        if first == UInt.max { return r }
+        if first == Int.max || first < 0 { return r }   // NSNotFound
         if let m = ns as? NSMutableIndexSet {
             let last = m.lastIndex
             var i = first
-            while i <= last { if m.contains(i) { r.insert(Int(i)) }; i += 1 }
+            while i <= last { if m.contains(i) { r.insert(i) }; i += 1 }
         } else {
-            r.insert(Int(first))
+            r.insert(first)
         }
         return r
     }

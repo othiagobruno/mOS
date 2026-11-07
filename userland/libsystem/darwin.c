@@ -699,7 +699,7 @@ int getrlimit(int res, cx_rlimit_t *r) {
     if (!r) { cx_errno = CX_EFAULT; return -1; }
     switch (res) {
     case 3: r->cur = r->max = 8u << 20; break;          /* RLIMIT_STACK */
-    case 8: r->cur = r->max = 32; break;                /* RLIMIT_NOFILE: 32 descritores por processo no mOS */
+    case 8: r->cur = r->max = 256; break;               /* RLIMIT_NOFILE: PROC_MAX_FDS do kernel (proc.h) */
     case 4: r->cur = r->max = 0; break;                 /* RLIMIT_CORE */
     default: r->cur = r->max = RLIM_INFINITY; break;
     }

@@ -276,7 +276,7 @@ static void press(const char *k) {
     static const struct { const char *key, *ins; } fx[] = {
         {"sin", "sin("}, {"cos", "cos("}, {"tan", "tan("}, {"sin⁻¹", "sin⁻¹("}, {"cos⁻¹", "cos⁻¹("}, {"tan⁻¹", "tan⁻¹("},
         {"sinh", "sinh("}, {"cosh", "cosh("}, {"tanh", "tanh("}, {"ln", "ln("}, {"log₁₀", "log("}, {"log₂", "log₂("},
-        {"√x", "√("}, {"∛x", "∛("}, {"x²", "²"}, {"x³", "³"}, {"xʸ", "^"}, {"eˣ", "e^"}, {"10ˣ", "10^"}, {"2ˣ", "2^"},
+        {"√x", "√("}, {"³√x", "∛("}, {"x²", "²"}, {"x³", "³"}, {"xʸ", "^"}, {"eˣ", "e^"}, {"10ˣ", "10^"}, {"2ˣ", "2^"},
         {"1/x", "1÷"}, {"x!", "!"}, {"EE", "E"}, {"ʸ√x", "ʸ√"}, {"NOT", "~"}, {"X<<Y", "<<"}, {"X>>Y", ">>"},
     };
     for (int i = 0; i < (int)ARRAY_LEN(fx); i++)
@@ -348,7 +348,7 @@ static void paint(window_t *w, ui_t *u) {
     while (fs > 18 && text_width(f, fs, big) > aw - 28) fs -= 2;
     int tw = text_width(f, fs, big);
     text_draw(s, f, fs, aw - 14 - tw, top + 70, RGB(255, 255, 255), big);
-    if (small[0]) {
+    if (small[0] && strcmp(small, big)) {
         int sw = text_width(f, 15, small);
         text_draw_ellipsis(s, f, 15, MAX(14, aw - 14 - sw), top + 22, aw - 28, RGB(150, 150, 156), small);
     }
@@ -400,7 +400,7 @@ static void paint(window_t *w, ui_t *u) {
     static const key_t sci[5][6] = {
         {{"(", 3}, {")", 3}, {"mc", 3}, {"m+", 3}, {"m−", 3}, {"mr", 3}},
         {{"2nd", 3}, {"x²", 3}, {"x³", 3}, {"xʸ", 3}, {"eˣ", 3}, {"10ˣ", 3}},
-        {{"1/x", 3}, {"√x", 3}, {"∛x", 3}, {"ʸ√x", 3}, {"ln", 3}, {"log₁₀", 3}},
+        {{"1/x", 3}, {"√x", 3}, {"³√x", 3}, {"ʸ√x", 3}, {"ln", 3}, {"log₁₀", 3}},
         {{"x!", 3}, {"sin", 3}, {"cos", 3}, {"tan", 3}, {"e", 3}, {"EE", 3}},
         {{"Rad", 3}, {"sinh", 3}, {"cosh", 3}, {"tanh", 3}, {"π", 3}, {"Rand", 3}}};
     static const key_t prog[5][3] = {

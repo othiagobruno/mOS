@@ -434,9 +434,17 @@ static int posix_status(int code) {
 /* marca o fim do processo e acorda quem espera por ele */
 /* threads de p que esperam num pipe: o pipe pode sobreviver (outro processo tem a outra ponta) e a
  * thread vai ser liberada pelo escalonador; o ponteiro em rwait/wwait viraria memória solta (kfree duplo) */
+/* diagnóstico do heap (kheap_check, mm/memory.c): a primeira operação depois da qual o heap está corrompido */
+static void heap_probe(const char *what, process_t *p) {
+    extern bool kheap_check(const char *where);
+    char w[96];
+    snprintf(w, sizeof w, "%s %s (pid %d)", what, p->name, p->pid);
+    kheap_check(w);
+}
+
 static void drop_pipe_waiters(process_t *p, thread_t *keep) {
     for (process_t *q = procs; q; q = q->next)
-        for (int i = 0; i < 32; i++) {
+        for (int i = 0; i < PROC_MAX_FDS; i++) {
             pipe_t *pp = q->fds[i].used ? q->fds[i].pipe : NULL;
             if (!pp) continue;
             if (pp->rwait && pp->rwait->proc == p && pp->rwait != keep) pp->rwait = NULL;
@@ -454,7 +462,7 @@ static void finish(process_t *p, int code) {
             if (p->tty && p->tty->reader == t) p->tty->reader = NULL;
             t->state = TH_DEAD;
         }
-    for (int i = 0; i < 32; i++) fd_close(p, i);      /* fecha arquivos e pipes (acorda quem espera) */
+    for (int i = 0; i < PROC_MAX_FDS; i++) fd_close(p, i);      /* fecha arquivos e pipes (acorda quem espera) */
     compat_gui_proc_exit(p);
     machipc_exit(p);                                  /* portas Mach: receptores morrem, envios viram nomes mortos */
     { extern void net_user_exit(process_t *p); net_user_exit(p); }   /* conexões TCP do processo (kernel/net/usersock.c) */
@@ -485,6 +493,7 @@ static void finish(process_t *p, int code) {
         }
     }
     p->ppid = reported ? -1 : p->ppid;   /* -1: já informado a quem esperava (não volta no waitany) */
+    heap_probe("fim de", p);
 }
 
 static u32 le32_(const u8 *b) { return (u32)b[0] | (u32)b[1] << 8 | (u32)b[2] << 16 | (u32)b[3] << 24; }
@@ -520,15 +529,15 @@ static void fd_copy(process_t *dst, int dfd, process_t *src, int sfd);
 static void spawn_apply_fds(process_t *child, process_t *parent, mos_spawn_fa_t *acts, int n, unsigned flags) {
     if (!child) return;
     if (parent && !(flags & MOS_SPAWN_CLOEXEC_DEFAULT))
-        for (int i = 0; i < 32; i++) if (parent->fds[i].used) fd_copy(child, i, parent, i);
+        for (int i = 0; i < PROC_MAX_FDS; i++) if (parent->fds[i].used) fd_copy(child, i, parent, i);
     for (int i = 0; i < n; i++) {
         int k = acts[i].kind, a = acts[i].a, b = acts[i].b;
         if (k == MOS_SPAWN_FA_CLOSE) {
-            if (a >= 0 && a < 32) fd_close(child, a);
-        } else if (k == MOS_SPAWN_FA_DUP2 && a >= 0 && a < 32 && b >= 0 && b < 32) {
+            if (a >= 0 && a < PROC_MAX_FDS) fd_close(child, a);
+        } else if (k == MOS_SPAWN_FA_DUP2 && a >= 0 && a < PROC_MAX_FDS && b >= 0 && b < PROC_MAX_FDS) {
             process_t *src = (child->fds[a].used) ? child : parent;
             if (src && src->fds[a].used) fd_copy(child, b, src, a);
-        } else if (k == MOS_SPAWN_FA_OPEN && a >= 0 && a < 32 && acts[i].path[0]) {
+        } else if (k == MOS_SPAWN_FA_OPEN && a >= 0 && a < PROC_MAX_FDS && acts[i].path[0]) {
             if (child->fds[a].used) fd_close(child, a);
             memset(&child->fds[a], 0, sizeof child->fds[a]);
             child->fds[a].used = true;
@@ -776,7 +785,10 @@ static void dump_threads_maybe(int_frame_t *cur) {
         int shown = 0;
         for (int i = 0; i < 160 && shown < 20; i++) {
             u64 v = words[i];
-            if (v < USER_BASE + 0x100000ULL || v >= USER_BASE + 0x0E000000ULL) continue;
+            /* libSystem + imagens do spawn, e as do dlopen (ex.: Google Chrome Framework em USER_BASE + 4 GiB) */
+            bool code = (v >= USER_BASE + 0x100000ULL && v < USER_BASE + 0x0E000000ULL) ||
+                        (v >= USER_BASE + 0x100000000ULL && v < USER_BASE + 0x120000000ULL);
+            if (!code) continue;
             o += (usize)snprintf(line + o, sizeof line - o, " %llx", v);
             shown++;
             if (o > 150) { kprintf("despejo:   pilha:%s\n", line); o = 0; }
@@ -879,7 +891,7 @@ static i64 unix_now(void) {
     return days * 86400 + dt.hour * 3600 + dt.minute * 60 + dt.second;
 }
 
-static int fd_get(process_t *p, u64 fd) { return fd < 32 && p->fds[fd].used ? (int)fd : -1; }
+static int fd_get(process_t *p, u64 fd) { return fd < PROC_MAX_FDS && p->fds[fd].used ? (int)fd : -1; }
 
 /* ------------------------------------------------------------ pipes */
 #define EAGAIN_ 11
@@ -954,7 +966,7 @@ static void fd_copy(process_t *dst, int dfd, process_t *src, int sfd) {
  * lê esses arquivos com pread/mmap ou do começo. */
 typedef __typeof__(((process_t *)0)->fds[0]) fdent_t;
 void *proc_fd_snapshot(process_t *p, int fd) {
-    if (fd < 0 || fd >= 32 || !p->fds[fd].used) return NULL;
+    if (fd < 0 || fd >= PROC_MAX_FDS || !p->fds[fd].used) return NULL;
     fdent_t *s = kmalloc(sizeof *s);
     if (!s) return NULL;
     *s = p->fds[fd];
@@ -964,7 +976,7 @@ void *proc_fd_snapshot(process_t *p, int fd) {
 }
 int proc_fd_from_snapshot(process_t *p, const void *snap) {
     const fdent_t *s = snap;
-    for (int fd = 3; fd < 32; fd++) {
+    for (int fd = 3; fd < PROC_MAX_FDS; fd++) {
         if (p->fds[fd].used) continue;
         p->fds[fd] = *s;
         p->fds[fd].used = true;
@@ -1182,6 +1194,7 @@ static vnode_t *exec_resolve(char *path, usize cap, char ***argv, int *argc) {
 /* troca a imagem do processo atual. A imagem nova é montada num processo provisório; só depois
  * de carregada com sucesso o espaço de endereçamento antigo é descartado (falha = execve volta erro). */
 static i64 proc_exec(int_frame_t *f, thread_t *t, process_t *p, char *path, char **argv, int argc, char **env, int envc) {
+    heap_probe("antes do execve em", p);
     vnode_t *v = exec_resolve(path, 256, &argv, &argc);
     if (!v) { free_vec(argv, argc); free_vec(env, envc); return -MOS_ENOENT; }
     process_t *np = kcalloc(1, sizeof *np);
@@ -1231,6 +1244,7 @@ static i64 proc_exec(int_frame_t *f, thread_t *t, process_t *p, char *path, char
             usp = sp;
         }
     }
+    heap_probe("carregou a imagem nova em", p);
     free_vec(argv, argc);
     free_vec(env, envc);
     if (!ok) {
@@ -1251,9 +1265,11 @@ static i64 proc_exec(int_frame_t *f, thread_t *t, process_t *p, char *path, char
     drop_pipe_waiters(p, t);
     compat_gui_proc_exit(p);
     { extern void lazy_exit(process_t *p); lazy_exit(p); }
-    process_t old = {0};
-    old.pml4 = p->pml4;
-    old.dyld = p->dyld;
+    /* troca o espaço de endereçamento com np (que está no heap) e libera o antigo por ele. Nada de process_t
+     * na pilha: com PROC_MAX_FDS = 256 a struct passa de 64 KiB e um "process_t old = {0}" aqui zerava a
+     * memória abaixo da pilha do kernel (blocos do heap com magic 0, kfree inválido e pânico). */
+    u64 *old_pml4 = p->pml4;
+    void *old_dyld = p->dyld;
     p->pml4 = np->pml4;
     p->dyld = np->dyld;
     p->brk = np->brk; p->brk_start = np->brk_start;
@@ -1262,9 +1278,11 @@ static i64 proc_exec(int_frame_t *f, thread_t *t, process_t *p, char *path, char
     memcpy(p->name, np->name, sizeof p->name);
     memcpy(p->path, np->path, sizeof p->path);
     __asm__ volatile("mov %0, %%cr3" :: "r"((u64)p->pml4) : "memory");
-    free_address_space(&old);
+    np->pml4 = old_pml4;
+    np->dyld = old_dyld;
+    free_address_space(np);
     kfree(np);
-    for (int i = 0; i < 32; i++)                       /* O_CLOEXEC fecha; o resto passa para a imagem nova */
+    for (int i = 0; i < PROC_MAX_FDS; i++)                       /* O_CLOEXEC fecha; o resto passa para a imagem nova */
         if (p->fds[i].used && (p->fds[i].flags & MOS_O_CLOEXEC)) fd_close(p, i);
     for (int s = 0; s < 32; s++)                       /* tratadores somem; "ignorar" continua */
         if (p->sig_handler[s] > MOS_SIG_IGN) p->sig_handler[s] = 0;
@@ -1286,6 +1304,7 @@ static i64 proc_exec(int_frame_t *f, thread_t *t, process_t *p, char *path, char
     fx[0] = 0x7F; fx[1] = 0x03;
     fx[24] = 0x80; fx[25] = 0x1F;
     kprintf("proc: execve pid %d -> %s (%llu KiB)\n", p->pid, p->name, p->mem_pages * 4);
+    heap_probe("execve ->", p);
     return 0;
 }
 
@@ -1480,7 +1499,7 @@ u64 proc_syscall(int_frame_t *f) {
     case SYS_OPEN: {
         if (!copy_path(p, path, a)) { r = -MOS_EFAULT; break; }
         int fd = -1;
-        for (int i = 3; i < 32; i++) if (!p->fds[i].used) { fd = i; break; }
+        for (int i = 3; i < PROC_MAX_FDS; i++) if (!p->fds[i].used) { fd = i; break; }
         /* diagnóstico (com despejar-threads): open que falha nos helpers do VS Code vai para o log serial */
         static int open_diag = -1;
         if (open_diag < 0) open_diag = vfs_lookup("/Sistema/Biblioteca/despejar-threads") != NULL;
@@ -1518,7 +1537,7 @@ u64 proc_syscall(int_frame_t *f) {
         break;
     case SYS_PIPE: {
         int rfd = -1, wfd = -1;
-        for (int i = 3; i < 32; i++) if (!p->fds[i].used) { if (rfd < 0) rfd = i; else { wfd = i; break; } }
+        for (int i = 3; i < PROC_MAX_FDS; i++) if (!p->fds[i].used) { if (rfd < 0) rfd = i; else { wfd = i; break; } }
         if (wfd < 0) { r = -MOS_EMFILE; break; }
         pipe_t *pp = kcalloc(1, sizeof *pp);
         if (!pp) { r = -MOS_ENOMEM; break; }
@@ -1534,7 +1553,7 @@ u64 proc_syscall(int_frame_t *f) {
         break;
     }
     case SYS_DUP2:
-        if (fd_get(p, a) < 0 || b >= 32) { r = -MOS_EBADF; break; }
+        if (fd_get(p, a) < 0 || b >= PROC_MAX_FDS) { r = -MOS_EBADF; break; }
         if (a != b) fd_copy(p, (int)b, p, (int)a);
         r = (i64)b;
         break;
@@ -1551,7 +1570,7 @@ u64 proc_syscall(int_frame_t *f) {
         int nacts = 0;
         for (int i = 0; i < 3; i++) {
             int src = io[i] >= 0 ? io[i] : i;
-            if (src >= 32 || fd_get(p, (u64)src) < 0) continue;
+            if (src >= PROC_MAX_FDS || fd_get(p, (u64)src) < 0) continue;
             memset(&acts[nacts], 0, sizeof acts[nacts]);
             acts[nacts].kind = MOS_SPAWN_FA_DUP2;
             acts[nacts].a = src;
@@ -1834,15 +1853,16 @@ u64 proc_syscall(int_frame_t *f) {
         if (q->tty) q->tty->refs++;
         machipc_spawn(p, q);                            /* como no macOS: o filho só herda as portas especiais */
         { extern void lazy_fork(process_t *from, process_t *to); lazy_fork(p, q); }   /* faixas sob demanda (mm/lazy.c) */
-        for (int i = 0; i < 32; i++) if (p->fds[i].used) fd_copy(q, i, p, i);
+        for (int i = 0; i < PROC_MAX_FDS; i++) if (p->fds[i].used) fd_copy(q, i, p, i);
         f->rax = 0;                                     /* o filho vê 0 */
         thread_t *ct = uthread_clone(q, f);
-        if (!ct) { for (int i = 0; i < 32; i++) fd_close(q, i); free_address_space(q); if (q->tty) q->tty->refs--; kfree(q); r = -MOS_ENOMEM; break; }
+        if (!ct) { for (int i = 0; i < PROC_MAX_FDS; i++) fd_close(q, i); free_address_space(q); if (q->tty) q->tty->refs--; kfree(q); r = -MOS_ENOMEM; break; }
         q->main = ct;
         q->nthreads = 1;
         q->next = procs;
         procs = q;
         kprintf("proc: fork de %s (pid %d -> %d, %llu KiB compartilhados)\n", p->name, p->pid, q->pid, q->mem_pages * 4);
+        heap_probe("fork de", p);
         r = q->pid;                                     /* o pai vê o pid do filho */
         break;
     }

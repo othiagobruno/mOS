@@ -81,6 +81,7 @@ int  x509_match_host(const x509_cert_t *c, const char *host);       /* 1 = corre
 /* lista de confiança: no kernel é carregada sozinha (PEM embutido) no primeiro uso */
 int  x509_trust_load_pem(const char *pem, u32 len);                 /* devolve nº de raízes */
 u32  x509_trust_count(void);
+const x509_cert_t *x509_trust_get(u32 i);                           /* raiz i (NULL se fora) */
 
 /* valida leaf + intermediários (qualquer ordem) até uma raiz confiável, datas
  * (now == NULL: pula a checagem de datas) e o nome do host. err recebe texto pt-BR.

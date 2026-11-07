@@ -36,16 +36,13 @@ public struct Notification: Hashable, Equatable, CustomStringConvertible {
 extension Notification: _ObjectiveCBridgeable {
     @_semantics("convertToObjectiveC")
     public func _bridgeToObjectiveC() -> NSNotification {
-        let info: NSDictionary? = userInfo.map { d in
-            var m: [AnyHashable: Any] = [:]
-            for (k, v) in d { m[k] = v }
-            return (m as [AnyHashable: Any])._bridgeToObjectiveC()
-        }
-        return NSNotification(name: name, object: object, userInfo: info as? [AnyHashable: Any])
+        let info: NSDictionary? = userInfo.map { $0._bridgeToObjectiveC() }
+        return NSNotification(name: name, object: object, userInfo: info)
     }
 
     internal static func _mosNote(_ n: NSNotification) -> Notification {
-        Notification(name: n.name, object: n.object, userInfo: n.userInfo)
+        Notification(name: n.name, object: n.object,
+                     userInfo: n.userInfo.map { Dictionary<AnyHashable, Any>._unconditionallyBridgeFromObjectiveC($0) })
     }
 
     public static func _forceBridgeFromObjectiveC(_ x: NSNotification, result: inout Notification?) { result = _mosNote(x) }

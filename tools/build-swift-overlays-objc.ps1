@@ -85,8 +85,7 @@ $cg = [IO.File]::ReadAllText("$root\userland\sdk\openswiftui\swift\CoreGraphics\
 Build-Overlay 'CoreGraphics' @("$gen\CGFloat.swift", "$sdkSrc\CoreGraphics\CGGeometry.swift")
 Build-Overlay 'os'
 Build-Overlay 'Dispatch'
-# Foundation (fase 5): pontes ObjC e API sobre as classes do Foundation do libSystem do mOS
-Build-Overlay 'Foundation'
+# Foundation (fase 5): compilado por tools/build-swift-foundation-objc.ps1 (um módulo só com o swift-foundation)
 # Observation: o OpenObservation (github.com/OpenSwiftUIProject, MIT; porte do Observation da Apple) com o nome do
 # módulo da Apple, no caminho Darwin em Swift puro (sem a parte C++ do toolchain)
 $obs = "$root\.tools\openswiftui\deps\OpenObservation-main\Sources\OpenObservation"
