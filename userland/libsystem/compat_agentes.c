@@ -147,7 +147,7 @@ void IOHIDManagerRegisterInputReportCallback(void *m, void *cb, void *ctx) { (vo
 int SecTrustSettingsSetTrustSettings(id_ cert, int domain, id_ settings) { (void)cert; (void)domain; (void)settings; return errSecUnimplemented; }
 int SecTrustSettingsRemoveTrustSettings(id_ cert, int domain) { (void)cert; (void)domain; return errSecUnimplemented; }
 
-/* ---- Codex desktop (native/*.node, codex): o resto do que é C */
+/* ---- Codex desktop (os .node de native e o binário codex): o resto do que é C */
 const double kCFCoreFoundationVersionNumber = 2048.0;   /* da ordem do macOS 14, a versão que o mOS informa */
 u64 CGEventSourceFlagsState(int state) { (void)state; return 0; }      /* nenhuma tecla modificadora pressionada */
 unsigned char CGPreflightListenEventAccess(void) { return 0; }        /* sem monitoração de entrada global */
@@ -167,3 +167,25 @@ typedef struct { void *isa; u64 flags; const char *s; u64 n; } cfk_t;
 extern char cx_cfconst_isa2[] __asm__("__CFConstantStringClassReference");
 static cfk_t kCIInputRadiusKey_s = {cx_cfconst_isa2, 0x7c8, "inputRadius", 11};
 const void *kCIInputRadiusKey = &kCIInputRadiusKey_s;
+
+/* CFBundleGetVersionNumber: o CFBundleVersion "M.m.b" no formato NumVersion do Carbon (BCD: major, minor<<4|bug,
+ * estágio final 0x80, 0). Sem versão legível: 0 (cursor_proclist.node). */
+id_ CFBundleGetValueForInfoDictionaryKey(id_ bundle, id_ key);
+id_ CFStringCreateWithCString(void *alloc, const char *s, u32 enc);
+const char *cx_cstr(id_ s);
+void CFRelease(id_ o);
+u32 CFBundleGetVersionNumber(id_ bundle) {
+    id_ k = CFStringCreateWithCString(0, "CFBundleVersion", 0x08000100);
+    id_ v = bundle && k ? CFBundleGetValueForInfoDictionaryKey(bundle, k) : 0;
+    if (k) CFRelease(k);
+    const char *s = v ? cx_cstr(v) : 0;
+    if (!s) return 0;
+    unsigned part[3] = {0, 0, 0}, n = 0;
+    for (; *s && n < 3; s++) {
+        if (*s >= '0' && *s <= '9') part[n] = part[n] * 10 + (unsigned)(*s - '0');
+        else if (*s == '.') n++;
+        else break;
+    }
+    unsigned ma = part[0] % 100, mi = part[1] % 10, bu = part[2] % 10;
+    return (u32)(((ma / 10) << 4 | (ma % 10)) << 24 | (mi << 4 | bu) << 16 | 0x80u << 8);
+}

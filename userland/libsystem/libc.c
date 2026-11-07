@@ -1031,6 +1031,12 @@ int dup2(int a, int b) {
 int dup(int fd) {
     mos_stat_t st;
     if (fd >= 0 && fd <= 2 && SYS2(SYS_FSTAT, fd, &st) < 0) return fd;   /* console: igual a antes */
+    if (fd >= 0x4000) {                                  /* kqueue do libSystem (kqueue.c): o kernel não o conhece */
+        extern int cx_kqueue_dup(int fd);
+        int k = cx_kqueue_dup(fd);
+        if (k >= 0) return k;
+        if (k == -2) return -1;                          /* EMFILE já posto */
+    }
     /* até PROC_MAX_FDS (256): procurar só até 32 dava EMFILE no processo principal do VS Code, que passa de 32 fds
      * abertos, e o AsarURLLoader do Electron (base::File::Duplicate) não lia nada de dentro do node_modules.asar */
     /* livre = SYS_FDFLAGS dá EBADF (o fstat também falha num arquivo apagado ainda aberto, e o dup2 o sobrescreveria) */

@@ -55,7 +55,7 @@ typedef struct {
     u64 next_ms;            /* EVFILT_TIMER */
     u64 period_ms;
 } knote_t;
-typedef struct { int used; knote_t kn[MAX_KN]; volatile int lock; int rr; } kq_t;   /* rr: onde a próxima varredura começa */
+typedef struct { int used; knote_t kn[MAX_KN]; volatile int lock; int rr; int refs; } kq_t;   /* rr: onde a próxima varredura começa; refs: descritores (dup) */
 static kq_t *kqs[MAX_KQ];
 
 /* descritor pronto para leitura? pipes: bytes disponíveis ou a outra ponta fechou (SYS_FSTAT do
@@ -97,6 +97,7 @@ int kqueue(void) {
             kq_t *q = calloc(1, sizeof *q);
             if (!q) { cx_errno = CX_ENOMEM; return -1; }
             q->used = 1;
+            q->refs = 1;
             kqs[i] = q;
             return KQ_FD_BASE + i;
         }
@@ -107,9 +108,20 @@ int kqueue(void) {
 int cx_kqueue_close(int fd) {
     int i = fd - KQ_FD_BASE;
     if (i < 0 || i >= MAX_KQ || !kqs[i]) return -1;
-    free(kqs[i]);
+    if (__sync_sub_and_fetch(&kqs[i]->refs, 1) <= 0) free(kqs[i]);
     kqs[i] = 0;
     return 0;
+}
+/* dup/F_DUPFD de um kqueue: outro descritor para a MESMA fila (o mio do tokio clona o Registry assim; sem isto o
+ * dup caía no kernel, que não conhece estes descritores, e o runtime do tokio falhava com EBADF: o file_service.node
+ * do Cursor entrava em pânico e derrubava o Extension Host). -1 se fd não é um kqueue; EMFILE sem vaga. */
+int cx_kqueue_dup(int fd) {
+    int i = fd - KQ_FD_BASE;
+    if (i < 0 || i >= MAX_KQ || !kqs[i]) return -1;
+    for (int j = 0; j < MAX_KQ; j++)
+        if (!kqs[j]) { __sync_add_and_fetch(&kqs[i]->refs, 1); kqs[j] = kqs[i]; return KQ_FD_BASE + j; }
+    cx_errno = CX_EMFILE;
+    return -2;
 }
 
 static u64 timer_ms(const kevent64_s *e) {
