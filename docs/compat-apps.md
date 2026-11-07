@@ -39,7 +39,7 @@ Cuidados:
 | Codex desktop | — | 2.481 → 2.231 | 978 | libc++ 271, Swift 259 (helpers nativos), CoreText 54 |
 | Grok Bot | 27 | 2.562 → 2.393 | 974 | Swift 541 (só o helper "Computer Use"), Foundation 219 |
 | Claude | 27 | 4.279 → 4.040 | 2.700 | Swift 1.256 + SwiftUI 547 (`swift_addon.node`, `computer_use.node`, simulador iOS) |
-| WhatsApp | 9 | 8.922 → 8.675 → 7.783 → 4.730 (dylibs Swift do mOS) → 4.444 (Combine) → 4.415 (Dispatch) → 4.265 (Foundation, marco C) → 3.694 (UIKit.framework do Catalyst) → 3.622 → 3.413 (libswiftUIKit completa, 7 nov.; ver [uikit-catalyst.md](uikit-catalyst.md)) → **3.105** com a `libc++.1.dylib` do LLVM (`tools\build-libcxx.ps1`) no diretório de varredura; o kernel ainda desvia a libc++ para o libSystem | 8.344 | SwiftUI 555, Swift Foundation 278 (quase tudo ICU) |
+| WhatsApp | 9 | 8.922 → 8.675 → 7.783 → 4.730 (dylibs Swift do mOS) → 4.444 (Combine) → 4.415 (Dispatch) → 4.265 (Foundation, marco C) → 3.694 (UIKit.framework do Catalyst) → 3.622 → 3.413 (libswiftUIKit completa, 7 nov.; ver [uikit-catalyst.md](uikit-catalyst.md)) → **3.105** com a `libc++.1.dylib` do LLVM (`tools\build-libcxx.ps1`) no diretório de varredura; o kernel também a carrega do disco desde 7 nov. | 8.344 | SwiftUI 555, Swift Foundation 278 (quase tudo ICU) |
 | **Codex CLI** | 1 | **271 → 90** | 152 | Security zerado; sobram CF, termios, rede |
 
 \* O número do VS Code subiu porque o bundle em `build-vscode` foi preparado de novo, agora com mais módulos nativos. Não é regressão.
@@ -205,8 +205,10 @@ MACHOTEST_STUB_LOG=1 MACHOTEST_TOLERANT=1 MACHOTEST_MAP=1 MACHOTEST_WATCHDOG=240
 
 O `MACHOTEST_TOLERANT` deixa passar as 122 bibliotecas do sistema que faltam, e o `MACHOTEST_STUB_LOG` faz cada
 símbolo ausente devolver 0 e ser registrado. O `machotest-wa.exe` é um machotest feito de uma cópia do
-`kernel/compat/macho.c` em que a libc++ vem do disco: o kernel ainda a desvia para o libSystem (`libsystem_dylib_ok`).
-Essa mudança no kernel está combinada com a sessão do VS Code e ainda não foi feita.
+`kernel/compat/macho.c` em que a libc++ vem do disco. Desde 7 nov. o kernel faz o mesmo: a libc++ e a libc++abi vêm de
+`/usr/lib/libc++.1.dylib` quando ela existe no disco (`libcxx_name` no `macho.c`, no link e no `dlopen`), e o desvio para o
+libSystem (`cxxabi.c`/`libcxx.c`) só vale quando ela falta. No Slack, o `cf-prefs.node` carrega com 2 imagens (ele e a
+libc++) e 0 símbolos ausentes. O machotest comum passa a fazer o mesmo quando acha a dylib.
 
 O que a partida mostrou, na ordem:
 
@@ -351,5 +353,18 @@ kernel as recusava e o Blink caía na fonte seguinte da lista. O `kernel/gfx/fon
 
 Para testar no host, sem VM: `tools/cfftest.c` com `tools/woff2otf.js` (os RobotoSlab da documentação do QEMU são CFF
 subrotinizados: 1052 glifos sem erro). Um fuzz com a tabela colada a uma página sem acesso não leu fora dela.
+
+**Login pelo navegador (7 nov.)**: o `-[NSWorkspace openURL:]` era um stub que devolvia NO, então o "Sign in" do Slack e o
+"Continue with Google" do Claude não abriam nada. Agora há três peças:
+- `userland/libsystem/openurl.c` faz `openURL:` e afins, as funções `LS*` e o `NSAppleEventManager` sobre o Launch Services
+  do kernel (`kernel/compat/launchsvc.c`, `SYS_LS`), que sabe quem declara cada esquema em `CFBundleURLSchemes`;
+- o processo principal de cada app registra `com.mos.abrir-url.<CFBundleIdentifier>` no bootstrap ao terminar de abrir, e a
+  URL chega como o Apple Event GURL (o Electron emite `open-url`) ou por `application:openURLs:` (o Chrome);
+- `/usr/bin/open` (`userland/cli-macos/open.c`) faz o mesmo da linha de comando.
+
+Conferido na VM: o `shell.openExternal('https://…')` de um app Electron abre o navegador de teste
+(`tools/testdata/navegador-teste`, que declara http/https e mostra as URLs) com a URL na linha de comando. Para repetir:
+`vscode-teste.ps1 -Electron ... -Accel whpx -ComApp "build\navegador-teste\Navegador de Teste.app" -AbrirURL slack://open
+-AbrirAposMs 30000`.
 5. **Codex desktop**: o porte do Chrome (`ChromeMain`) mais CoreText.
 6. **WhatsApp**: runtime Swift, Foundation do Swift, Combine, SwiftUI (OpenSwiftUI) e UIKit/Catalyst. É o mais longe.

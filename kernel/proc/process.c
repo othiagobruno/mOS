@@ -864,6 +864,19 @@ static u64 proc_fault_(int_frame_t *f, u64 cr2) {
             }
         }
         if (o) kprintf("proc:   pilha:%s\n", line);
+        /* a cadeia de rbp ({rbp salvo, retorno}): em código com frame pointer (Chromium, libSystem) é a pilha de
+         * chamadas de verdade, sem os falsos positivos da varredura acima */
+        u64 fp = f->rbp;
+        o = 0;
+        for (int k = 0; k < 20 && fp; k++) {
+            u64 fr[2];
+            if ((fp & 7) || !uvm_copy_in(p, fr, fp, sizeof fr)) break;
+            o += (usize)snprintf(line + o, sizeof line - o, " %llx", (unsigned long long)fr[1]);
+            if (o > 150) { kprintf("proc:   chamadas:%s\n", line); o = 0; }
+            if (fr[0] <= fp) break;
+            fp = fr[0];
+        }
+        if (o) kprintf("proc:   chamadas:%s\n", line);
     }
     console_put(msg, strlen(msg));
     finish(p, -(int)(f->vector == 14 ? 11 : 4 + f->vector));
@@ -2136,6 +2149,9 @@ static u64 proc_syscall_(int_frame_t *f) {
     }
     case SYS_FDFLAGS:                                       /* fcntl F_GETFD/F_SETFD: o git espera EOF no pipe de aviso do exec */
         if (fd_get(p, a) < 0) { r = -MOS_EBADF; break; }
+        /* b = 2: só consulta o modo de acesso da abertura (O_RDONLY/O_WRONLY/O_RDWR), para o F_GETFL de fds que o
+         * libSystem não abriu (fileport, herdados): o Chrome exige O_RDONLY nos arquivos que passa a outro processo */
+        if (b == 2) { r = p->fds[a].flags & 3; break; }
         if (b) { if (c) p->fds[a].flags |= MOS_O_CLOEXEC; else p->fds[a].flags &= ~MOS_O_CLOEXEC; }
         r = (p->fds[a].flags & MOS_O_CLOEXEC) ? 1 : 0;
         break;

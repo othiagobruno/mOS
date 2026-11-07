@@ -872,7 +872,12 @@ static void nb_set(int fd, int on) { if (fd >= 0 && fd < CX_NBMAX) cx_nb[fd] = (
  * (fcntl(fd, F_GETFL) & O_ACCMODE) == O_RDONLY antes de passar um arquivo a outro processo, e caía com O_RDWR fixo. */
 static unsigned char cx_acc[CX_NBMAX];
 static void acc_set(int fd, int mode) { if (fd >= 0 && fd < CX_NBMAX) cx_acc[fd] = (unsigned char)(mode < 0 ? 0 : (mode & 3) + 1); }
-static int acc_get(int fd) { return fd >= 0 && fd < CX_NBMAX && cx_acc[fd] ? cx_acc[fd] - 1 : 2; }
+/* sem registro aqui (fd de fileport, herdado...): pergunta ao kernel o modo da abertura (SYS_FDFLAGS com b = 2) */
+static int acc_get(int fd) {
+    if (fd >= 0 && fd < CX_NBMAX && cx_acc[fd]) return cx_acc[fd] - 1;
+    long r = fd > 2 && fd < 0x4000 ? SYS3(SYS_FDFLAGS, fd, 2, 0) : -1;
+    return r >= 0 && r <= 2 ? (int)r : 2;
+}
 ssize_t write(int fd, const void *b, size_t n) {
     if (IS_SOCK(fd)) return cx_sock_write(fd, b, n);
     if (fd == 2 && b && n >= 16) diag_mojo_backtrace(b, n);

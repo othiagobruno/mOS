@@ -16,7 +16,8 @@ param([Parameter(Mandatory = $true)][string]$App, [switch]$SemBuild, [int]$Ocios
       [string]$Tracepoints = '', [switch]$Electron, [string]$Nome = 'Code', [string]$Servico = '', [string]$Accel = '',
       [int]$Capturas = 30, [string]$Passos = '', [int]$PassosApos = 150, [switch]$ComBash, [int]$SizeMiB = 0,
       [int]$MaxModuloMiB = 16, [string]$SubstituirApp = '', [string]$AbrirURL = '', [int]$AbrirAposMs = 120000,
-      [string]$ComApp = '')
+      [string]$ComApp = '', [int]$Cpus = 4)
+# -Cpus N: núcleos da VM (run.ps1 -Cpus; padrão 4). Com 1, o kernel roda sem os APs: separa bug de SMP do resto.
 # -AbrirURL / -AbrirAposMs / -ComApp (com -Electron): vão ao stage-electron (open <url> pelo init; outro .app na imagem)
 # -Capturas N: a cada N s depois que o app sobe, captura a tela (QMP) em $OutDir\shots\cap-*.png e diz se a janela existe
 # e quanto do conteúdo foi desenhado (tools\analisa-tela.ps1); 0 desliga
@@ -74,7 +75,7 @@ Remove-Item $serial -ErrorAction SilentlyContinue
 $env:MOS_QEMU_ACCEL = $Accel   # -Accel whpx: hipervisor do Windows (run.ps1)
 $env:MOS_QEMU_LOG = "$root\$OutDir\qemu-reset.log"
 Remove-Item $env:MOS_QEMU_LOG -ErrorAction SilentlyContinue
-Start-Process powershell -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$root\run.ps1`" -Headless -Memory $Memory -Image $OutDir/mOS.img -Port $Port -Serial $serial$(if ($Persist) { ' -Persist' })" -WindowStyle Hidden | Out-Null
+Start-Process powershell -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$root\run.ps1`" -Headless -Memory $Memory -Cpus $Cpus -Image $OutDir/mOS.img -Port $Port -Serial $serial$(if ($Persist) { ' -Persist' })" -WindowStyle Hidden | Out-Null
 $t1 = Get-Date; $started = $null; $lastLen = 0; $lastChange = Get-Date; $fim = 'limite de tempo'
 $lastShot = Get-Date; $nshot = 0; $passosFeitos = -not $Passos
 Get-ChildItem "$root\$OutDir\shots\cap-*.png" -ErrorAction SilentlyContinue | Remove-Item -ErrorAction SilentlyContinue

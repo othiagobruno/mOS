@@ -16,6 +16,12 @@ VK(ASAuthorizationPublicKeyCredentialUserVerificationPreferenceDiscouraged, "ASA
 VK(ASAuthorizationPublicKeyCredentialUserVerificationPreferencePreferred, "ASAuthorizationPublicKeyCredentialUserVerificationPreferencePreferred")
 VK(ASAuthorizationPublicKeyCredentialUserVerificationPreferenceRequired, "ASAuthorizationPublicKeyCredentialUserVerificationPreferenceRequired")
 VK(AVCaptureDeviceTypeBuiltInWideAngleCamera, "AVCaptureDeviceTypeBuiltInWideAngleCamera")
+/* Tipos novos (macOS 14+), importados como weak pelo Chromium atrás de @available: o mOS diz ser macOS novo, então
+ * o media/device_monitors/device_monitor_mac.mm os lê direto; sem definição o GOT fica 0 e o utilitário
+ * video_capture caía em ponteiro nulo assim que subia. */
+VK(AVCaptureDeviceTypeContinuityCamera, "AVCaptureDeviceTypeContinuityCamera")
+VK(AVCaptureDeviceTypeExternal, "AVCaptureDeviceTypeExternal")
+VK(AVCaptureDeviceTypeMicrophone, "AVCaptureDeviceTypeMicrophone")
 VK(AVCaptureDeviceTypeExternalUnknown, "AVCaptureDeviceTypeExternalUnknown")
 VK(AVCaptureDeviceWasConnectedNotification, "AVCaptureDeviceWasConnectedNotification")
 VK(AVCaptureDeviceWasDisconnectedNotification, "AVCaptureDeviceWasDisconnectedNotification")

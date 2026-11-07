@@ -1031,10 +1031,7 @@ void cx_post(id note) {
         if (o->object && o->object != n->object) continue;
         if (o->block && o->queue) nc_deliver_async(o, note);
         else if (o->block) { void (*inv)(void *, id) = *(void **)((u8 *)o->block + 16); inv(o->block, note); }
-        else if (o->target) {
-            { extern int cx_ca_diag(void); if (cx_ca_diag() && o->sel == sel_registerName("windowWillClose:")) cx_fdprintf(2, "[DIAGTMP] post windowWillClose: -> %s %p obj %p\n", cx_class_name(object_getClass(o->target)), o->target, n->object); }
-            ((void (*)(id, SEL, id))objc_msgSend)(o->target, o->sel, note);
-        }
+        else if (o->target) ((void (*)(id, SEL, id))objc_msgSend)(o->target, o->sel, note);
     }
 }
 static void nc_post(id self, SEL c, id note) { (void)self; (void)c; cx_post(note); }

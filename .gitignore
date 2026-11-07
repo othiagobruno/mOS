@@ -2,6 +2,7 @@
 /build/
 /build-*/
 /buildsamples/
+/build-*.txt
 *.img
 *.EFI
 *.efi

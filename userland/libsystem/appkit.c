@@ -106,6 +106,7 @@ typedef struct {
     double last_render;             /* cx_now() do último render_window (teto de quadros do pump) */
     double alpha;                   /* alphaValue (0 = nunca definido = 1,0) */
     id parent;                      /* parentWindow (fraco) */
+    i64 number;                     /* windowNumber: único e estável pela vida da janela (0 = ainda não pedido) */
 } wstate_t;
 
 typedef struct { double r, g, b, a; } rgba_t;     /* NSColor: campos logo após o isa */
@@ -1329,7 +1330,16 @@ static BOOL w_make_first(id self, SEL c, id r) {
     }
     return YES;
 }
-static i64 w_number(id self, SEL c) { (void)c; return ws(self)->gid; }
+/* windowNumber: como no macOS, cada janela tem o seu, único e fixo, mesmo antes de ir à tela e depois de fechada.
+ * Antes era o gid do window server (0 sem janela): as NativeWidgetMacOverlayNSWindow do Chrome ficavam todas com 0,
+ * e o mapa global do Chrome indexado por windowNumber apagava end() no fechamento (queda ao fechar a janela). */
+static i64 g_next_wnum = 1000;
+static i64 w_number(id self, SEL c) {
+    (void)c;
+    wstate_t *s = ws(self);
+    if (!s->number) s->number = __sync_add_and_fetch(&g_next_wnum, 1);
+    return s->number;
+}
 /* NSWindowOcclusionStateVisible = 2 enquanto a janela está na tela (o Chromium não compõe uma janela "coberta"); 0 antes
  * de aparecer e depois de um orderOut:, como no macOS. As duas transições postam NSWindowDidChangeOcclusionStateNotification. */
 static u64 w_occlusion(id self, SEL c) { (void)c; return ws(self)->visible ? 2 : 0; }
@@ -1471,7 +1481,6 @@ static void w_set_content_size(id self, SEL c, NSSize z) {
 }
 static void close_window(id self, BOOL from_wm) {
     wstate_t *s = ws(self);
-    { extern int cx_ca_diag(void); if (cx_ca_diag()) cx_fdprintf(2, "[DIAGTMP] close_window %s %p closed=%d delegate %s %p\n", cx_class_name(object_getClass(self)), self, s->closed, s->delegate ? cx_class_name(object_getClass(s->delegate)) : "-", s->delegate); }
     if (s->closed) return;
     s->closed = YES;
     s->visible = NO;
@@ -1613,6 +1622,7 @@ static id make_event(u64 type, id win, double px, double py, gui_event_t *g) {
     ST(e) = s;
     s->type = type;
     s->window = win;
+    s->wnum = win ? MSG0(i64, win, "windowNumber") : 0;
     s->x = px;
     s->y = win ? win_h(win) - py : py;
     s->mods = mac_mods(g->mods);
