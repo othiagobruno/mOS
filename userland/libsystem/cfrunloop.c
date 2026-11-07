@@ -248,6 +248,7 @@ static int has_work(cf_obj_t *rl) {
 extern volatile int cx_main_queue_live;
 int cx_dispatch_drain_main(void);
 int cx_dispatch_pending(void);
+extern volatile int cx_dispatch_main_used;   /* dispatch.c: a fila principal virou fonte do run loop principal */
 int CFRunLoopRunInMode(void *mode, double seconds, unsigned char return_after_source) {
     (void)mode;
     cf_obj_t *rl = CFRunLoopGetCurrent();
@@ -266,7 +267,7 @@ int CFRunLoopRunInMode(void *mode, double seconds, unsigned char return_after_so
         if (is_main) handled += cx_dispatch_drain_main();   /* blocos da fila principal do GCD */
         if (rl->stop) { rl->stop = 0; result = 2; break; }
         if (handled && return_after_source) { result = 4; break; }
-        if (!has_work(rl) && !(is_main && (cx_timers || cx_dispatch_pending()))) { result = 1; break; }
+        if (!has_work(rl) && !(is_main && (cx_timers || cx_dispatch_pending() || cx_dispatch_main_used))) { result = 1; break; }
         double now = CFAbsoluteTimeGetCurrent();
         if (now >= deadline) { result = 3; break; }
         notify(rl, ACT_BEFORE_WAITING);

@@ -38,7 +38,8 @@ cx_queue_t _dispatch_main_q = {QMAGIC, "com.apple.main-thread", 1};   /* dispatc
 static cx_queue_t global_q[4] = {{QMAGIC, "com.apple.root.default-qos", 0}, {QMAGIC, "com.apple.root.user-initiated-qos", 0},
                                  {QMAGIC, "com.apple.root.utility-qos", 0}, {QMAGIC, "com.apple.root.background-qos", 0}};
 
-void *dispatch_get_main_queue(void) { return &_dispatch_main_q; }
+extern volatile int cx_dispatch_main_used;   /* abaixo, junto do mq_push */
+void *dispatch_get_main_queue(void) { cx_dispatch_main_used = 1; return &_dispatch_main_q; }
 void *dispatch_get_global_queue(long priority, unsigned long flags) {
     (void)flags;
     return &global_q[priority > 0 ? 1 : priority == 0 ? 0 : priority == -2 ? 2 : 3];
@@ -72,7 +73,11 @@ void *_Block_copy(const void *b);
 void _Block_release(const void *b);
 void *CFRunLoopGetMain(void);
 void CFRunLoopWakeUp(void *rl);
+/* a fila principal já recebeu trabalho: como o port do libdispatch no macOS, ela passa a ser fonte permanente do
+ * run loop principal (CFRunLoopRun não volta por "sem fontes"; o MainActor do Swift conta com isso) */
+volatile int cx_dispatch_main_used;
 static void mq_push(void *ctx, dispatch_function_t fn, void *block, u64 when_ms, volatile int *done) {
+    cx_dispatch_main_used = 1;
     mq_item_t *it = malloc(sizeof *it);
     if (!it) return;
     it->ctx = ctx; it->fn = fn; it->block = block ? _Block_copy(block) : 0; it->when_ms = when_ms; it->done = done; it->next = 0;
@@ -108,8 +113,30 @@ int cx_dispatch_pending(void) { return mq_head != 0; }
 /* vai para a fila principal: pedidos de outras threads sempre; da própria thread principal, só
  * depois que o CFRunLoop dela existe (antes disso executa na hora, como apps sem CFRunLoop esperam) */
 static int is_main_q(void *q) { return q == &_dispatch_main_q && (cx_main_queue_live || !on_main()); }
+/* trabalho com atraso fora da fila principal (dispatch_after em fila global/própria, Task.sleep do Swift): as filas
+ * ainda não têm threads, então cada item adiado espera na sua própria thread e roda lá ao vencer */
+typedef struct { void *ctx; dispatch_function_t fn; void *block; u64 delay_ms; } delayed_t;
+int pthread_create(unsigned long *t, const void *attr, void *(*fn)(void *), void *arg);
+int pthread_detach(unsigned long t);
+static void *delayed_run(void *arg) {
+    delayed_t *d = arg;
+    if (d->delay_ms) SYS1(SYS_SLEEP, d->delay_ms);
+    if (d->block) { RUN_BLOCK(d->block); _Block_release(d->block); } else d->fn(d->ctx);
+    free(d);
+    return 0;
+}
 static void q_async(void *q, void *ctx, dispatch_function_t fn, void *block, u64 delay_ms) {
-    if (is_main_q(q)) { mq_push(ctx, fn, block, (u64)SYS0(SYS_TIME) + delay_ms, 0); return; }
+    if (is_main_q(q) || (q == &_dispatch_main_q && delay_ms)) { mq_push(ctx, fn, block, (u64)SYS0(SYS_TIME) + delay_ms, 0); return; }
+    if (delay_ms && delay_ms < (~0ull >> 3)) {
+        delayed_t *d = malloc(sizeof *d);
+        unsigned long t;
+        if (d) {
+            d->ctx = ctx; d->fn = fn; d->block = block ? _Block_copy(block) : 0; d->delay_ms = delay_ms;
+            if (pthread_create(&t, 0, delayed_run, d) == 0) { pthread_detach(t); return; }
+            if (d->block) _Block_release(d->block);
+            free(d);
+        }
+    }
     if (block) RUN_BLOCK(block); else fn(ctx);
 }
 static void q_sync(void *q, void *ctx, dispatch_function_t fn, void *block) {
@@ -122,9 +149,11 @@ static void q_sync(void *q, void *ctx, dispatch_function_t fn, void *block) {
     if (block) RUN_BLOCK(block); else fn(ctx);
 }
 /* dispatch_time: nanossegundos a partir de "agora" (DISPATCH_TIME_NOW = 0) */
+u64 cx_dispatch_deadline_ns(u64 t);   /* extra.c: dispatch_time é absoluto (ns), como no macOS */
 static u64 delay_of(u64 when) {
     if (when == ~0ull) return ~0ull >> 2;                       /* DISPATCH_TIME_FOREVER */
-    return when / 1000000ull;
+    u64 at = cx_dispatch_deadline_ns(when), now = (u64)SYS0(SYS_TIME) * 1000000ull;
+    return at > now ? (at - now + 999999ull) / 1000000ull : 0;
 }
 void dispatch_async_f(void *q, void *ctx, dispatch_function_t fn) { q_async(q, ctx, fn, 0, 0); }
 void dispatch_sync_f(void *q, void *ctx, dispatch_function_t fn) { q_sync(q, ctx, fn, 0); }
@@ -185,14 +214,34 @@ typedef struct cx_source {
     dispatch_function_t cancel_fn;
     volatile int active, canceled;
     int tid;
+    volatile u64 start, interval;   /* TIMER: dispatch_source_set_timer (start absoluto em ns; ~0 = sem repetição) */
+    volatile int armed;             /* TIMER: há um disparo programado */
 } cx_source_t;
 #define SMAGIC 0x6D4F53737263ull
 
+void *dispatch_get_context(void *o);   /* vscode_libc.c */
 static void source_fire(void *arg) {
     cx_source_t *s = arg;
     if (s->canceled) return;
     if (s->handler_block) RUN_BLOCK(s->handler_block);
-    else if (s->handler_fn) s->handler_fn(s->ctx);
+    else if (s->handler_fn) s->handler_fn(s->ctx ? s->ctx : dispatch_get_context(s));   /* _f recebe o dispatch_set_context */
+}
+
+/* thread da fonte TIMER: espera o prazo (em fatias, para obedecer cancel/suspend), dispara na fila da fonte e,
+ * com intervalo, reprograma; sem intervalo (DISPATCH_TIME_FOREVER), fica desarmada até outro set_timer */
+static void timer_thread(void *arg) {
+    cx_source_t *s = arg;
+    while (!s->canceled) {
+        if (!s->active || !s->armed) { SYS1(SYS_SLEEP, 2); continue; }
+        u64 d = delay_of(s->start);
+        if (d) { SYS1(SYS_SLEEP, d > 20 ? 20 : d); continue; }
+        if (s->interval && s->interval < (~0ull >> 1)) s->start = (u64)SYS0(SYS_TIME) * 1000000ull + s->interval;
+        else s->armed = 0;
+        if (s->queue == &_dispatch_main_q) dispatch_async_f(s->queue, s, source_fire);
+        else source_fire(s);
+    }
+    if (s->cancel_block) RUN_BLOCK(s->cancel_block);
+    else if (s->cancel_fn) s->cancel_fn(s->ctx ? s->ctx : dispatch_get_context(s));
 }
 
 /* thread da fonte MACH_RECV: espera mensagem na porta e dispara o handler na fila certa */
@@ -216,7 +265,7 @@ static void source_thread(void *arg) {
 
 void *dispatch_source_create(const void *type, unsigned long handle, unsigned long mask, void *queue) {
     (void)mask;
-    if (type != _dispatch_source_type_mach_recv) return 0;   /* só MACH_RECV por enquanto */
+    if (type != _dispatch_source_type_mach_recv && type != _dispatch_source_type_timer) return 0;   /* MACH_RECV e TIMER */
     cx_source_t *s = malloc(sizeof *s);
     if (!s) return 0;
     for (unsigned i = 0; i < sizeof *s; i++) ((char *)s)[i] = 0;
@@ -242,7 +291,14 @@ void dispatch_source_set_cancel_handler_f(void *s, dispatch_function_t fn) {
     if (is_source(s)) ((cx_source_t *)s)->cancel_fn = fn;
 }
 void dispatch_source_set_registration_handler(void *s, void *block) { (void)s; (void)block; }
-void dispatch_source_set_timer(void *s, u64 start, u64 interval, u64 leeway) { (void)s; (void)start; (void)interval; (void)leeway; }
+void dispatch_source_set_timer(void *s, u64 start, u64 interval, u64 leeway) {
+    (void)leeway;
+    if (!is_source(s) || ((cx_source_t *)s)->type != _dispatch_source_type_timer) return;
+    cx_source_t *x = s;
+    x->start = start == ~0ull ? ~0ull : cx_dispatch_deadline_ns(start);
+    x->interval = interval;
+    x->armed = start != ~0ull;
+}
 void dispatch_source_cancel(void *s) { if (is_source(s)) ((cx_source_t *)s)->canceled = 1; }
 long dispatch_source_testcancel(void *s) { return is_source(s) ? ((cx_source_t *)s)->canceled : (s == 0); }
 unsigned long dispatch_source_get_handle(void *s) { return is_source(s) ? ((cx_source_t *)s)->port : 0; }
@@ -250,7 +306,10 @@ unsigned long dispatch_source_get_data(void *s) { (void)s; return 0; }
 unsigned long dispatch_source_get_mask(void *s) { (void)s; return 0; }
 void dispatch_source_merge_data(void *s, unsigned long v) { (void)s; (void)v; }
 
-static void *source_pthread(void *a) { source_thread(a); return 0; }
+static void *source_pthread(void *a) {
+    if (((cx_source_t *)a)->type == _dispatch_source_type_timer) timer_thread(a); else source_thread(a);
+    return 0;
+}
 
 void *dispatch_get_specific(const void *key) { (void)key; return 0; }
 void *dispatch_queue_get_specific(void *q, const void *key) { (void)q; (void)key; return 0; }

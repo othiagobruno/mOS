@@ -1,7 +1,8 @@
 # Runtime Swift com interoperabilidade ObjC (binários Swift da Apple)
 
 Estado (2026-11-07): **fases 1 e 2 prontas; na fase 3, a stdlib e os overlays pequenos estão prontos** (testes Swift
-13/13 e 18/18); faltam Dispatch e _Concurrency. O resto em plano. Ponto de partida: o Postico 2.3.5 (9817)
+13/13, 18/18, Dispatch 14/14 e _Concurrency 9/9); da fase 3 só falta UniformTypeIdentifiers, que depende do Foundation.
+O resto em plano. Ponto de partida: o Postico 2.3.5 (9817)
 (`.tools/postico-x/`), o primeiro app Swift + SwiftUI da Apple que medimos símbolo a símbolo.
 
 ## Por que
@@ -124,11 +125,46 @@ Cada fase termina com um teste no harness (`build/machotest.exe`) que roda sozin
 - **Teste:** `userland/tests-swiftobjc/nsobject/main.swift` (subclasses Swift de NSObject, `@objc`, `#selector`, `isKind`,
   `==`/`Set` via `isEqual`/`hash`, `deinit`, `autoreleasepool`, Selector, ObjCBool) → **18/18**. O teste das fases 2–3
   continua em 13/13.
-- **Falta:** `Dispatch` (38 símbolos no Postico). No ABI da Apple, `DispatchQueue` é `OS_dispatch_queue`, uma classe ObjC
-  OS_OBJECT, e o overlay do swift-corelibs-libdispatch é do caminho sem ObjC: precisa ser adaptado, e os objetos do
-  dispatch do mOS precisam ser objetos ObjC válidos. Também falta `_Concurrency` (30; o fonte está em
-  `stdlib/public/Concurrency`, e no Darwin o executor usa o Dispatch). `UniformTypeIdentifiers` (9) fica para a
-  fase 5, porque usa `URLResourceValues` do Foundation.
+- **Dispatch (2026-11-07): 38/38.** O módulo clang `Dispatch` usa os cabeçalhos reais do macOS que o zig traz (`dispatch/*.h`,
+  já com `DISPATCH_SWIFT_NAME` e OS_OBJECT do Swift). Com isso `DispatchQueue` é `So17OS_dispatch_queueC` e
+  `DispatchSourceRead` é o protocolo `OS_dispatch_source_read`, como na Apple. Na cópia, o script isola a declaração
+  `dispatch_workloop_set_os_workgroup`: no importador Swift o `os_workgroup_t` não fica visível em modo de módulos,
+  embora no clang puro fique. O overlay (`userland/sdk/swift-objc/Dispatch/Dispatch.swift`, nosso) tem DispatchQoS,
+  DispatchWorkItemFlags, DispatchWorkItem, DispatchTime/WallTime/TimeInterval e as extensões de
+  DispatchQueue/Group/Semaphore/Source/SourceProtocol/SourceTimer, sobre as funções C do `dispatch.c` via `@_silgen_name`.
+  O `sync` usa `dispatch_sync_f`, com a closure na pilha: o `dispatch_sync` do mOS copia o bloco, e o Swift
+  acusaria fuga de closure não-escapável. O libSystem ganhou `swiftobjc.c`, com as classes `OS_object`,
+  `OS_dispatch_*` e `OS_os_log` (o código cliente referencia `_OBJC_CLASS_$_OS_dispatch_queue`), e
+  `_availability_version_check`, que o compiler-rt dos binários chama.
+- **Teste:** `userland/tests-swiftobjc/dispatch/main.swift` → **14/14** (fila serial/concorrente, sync com valor e erro,
+  global().async + semáforo, DispatchGroup async/wait/notify, DispatchWorkItem e cancel, DispatchTime, asyncAfter).
+- **Limite conhecido:** os objetos do dispatch do mOS ainda não têm as classes `OS_*` no isa (o 1º word é um "magic"). O
+  Swift só os passa adiante, e retain/release da libobjc não fazem nada com eles. Uma mensagem ObjC a um deles,
+  ou `type(of:)`, quebraria.
+- **_Concurrency (2026-11-07): 30/30.** `tools/build-swift-concurrency-objc.ps1` compila o fonte oficial
+  (`stdlib/public/Concurrency`, 22 C++ + 78 Swift) com o executor do Darwin, `SWIFT_CONCURRENCY_USES_DISPATCH` e as
+  versões reais do `availability-macros.def`, que os `@backDeployed` exigem. Os tipos saem com o nome de módulo `Swift`
+  no ABI, como na Apple. Foi preciso baixar `include/swift/Concurrency/Actor.h` (swift 6.4.2), que faltava no recorte local.
+  O `ThreadingError.cpp` do Concurrency vai para `overlays/dylib-only`: na ligação estática ele duplicaria o do runtime.
+  - **Executor global do mOS** (`userland/sdk/swift-objc/Concurrency/mos_executor.cpp`): instalado pelos ganchos do
+    próprio Concurrency (`swift_task_enqueueGlobal*_hook`), com 4 threads de trabalho e uma lista de prazos. Assim não
+    é preciso dar threads às filas globais do `dispatch.c`. O MainActor continua na fila principal do dispatch.
+  - **libSystem** (`swiftobjc.c`): `dispatch_async_swift_job` (roda o job pelo `VTableInvoke` da DispatchClassMetadata,
+    no offset 48), `dispatch_main`, `dispatch_assert_queue[_not]$V2`, `voucher_*` (sem vouchers).
+  - **Dispatch do mOS mais perto do macOS:**
+    - `dispatch_time` agora é absoluto (ns na base do `mach_absolute_time`); antes era relativo, e os prazos absolutos
+      do Concurrency viravam "atraso = uptime".
+    - `dispatch_after` em fila não principal espera numa thread própria; antes rodava na hora.
+    - Fontes TIMER funcionam (thread por fonte, repetição, cancel), e o handler `_f` recebe o `dispatch_set_context`.
+    - `dispatch_semaphore_wait` bloqueia de verdade, com prazo; antes devolvia "tempo esgotado" na hora.
+    - A fila principal, depois de usada, segura o `CFRunLoopRun` da thread principal como fonte, igual ao port do
+      libdispatch; o MainActor do Swift conta com isso.
+  - **Teste:** `userland/tests-swiftobjc/concurrency/main.swift` → **9/9**, estável em 3 execuções (async, Task.value,
+    actor, withTaskGroup, continuations, cancel, MainActor.run, Task.sleep). Regressão: dispatch 14/14, nsobject 18/18,
+    swiftobjc 13/13, swiftobjctest 23/23, objcrttest 25/25, deps do OpenSwiftUI TUDO OK.
+  - **Não testado:** VS Code/Chrome no QEMU com as mudanças do dispatch acima (semáforo que bloqueia, `dispatch_time`
+    absoluto, run loop principal que não termina mais por "sem fontes" depois que a fila principal é usada).
+- **Falta:** `UniformTypeIdentifiers` (9), que fica para a fase 5 porque usa `URLResourceValues` do Foundation.
 
 ### 4. Entrega como dylibs Mach-O
 

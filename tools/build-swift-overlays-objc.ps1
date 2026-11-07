@@ -28,6 +28,16 @@ if (-not (Test-Path "$inc\mos_darwin.h")) {
     }
     Get-ChildItem "$root\userland\sdk\openswiftui\darwin" | Where-Object Name -ne 'module.modulemap' | Copy-Item -Destination $inc -Recurse -Force
 }
+# dispatch/workloop.h: no importador Swift o os_workgroup_t (os/workgroup_object.h) não chega a essa declaração em
+# modo de módulos (no clang puro chega). Ela só vale com o workgroup visível; o resto do Dispatch não usa.
+$wl = "$inc\dispatch\workloop.h"
+$wt = [IO.File]::ReadAllText($wl)
+if (-not $wt.Contains('mOS: workgroup')) {
+    $decl = 'dispatch_workloop_set_os_workgroup(dispatch_workloop_t workloop,'
+    $i = $wt.IndexOf($decl); $s = $wt.LastIndexOf('API_AVAILABLE', $i); $e = $wt.IndexOf(';', $i) + 1
+    $wt = $wt.Substring(0, $s) + "#if defined(__OS_WORKGROUP_OBJECT__) /* mOS: workgroup */`n" + $wt.Substring($s, $e - $s) + "`n#endif" + $wt.Substring($e)
+    [IO.File]::WriteAllText($wl, $wt)
+}
 Copy-Item "$sdkSrc\sdk\module.modulemap" "$inc\module.modulemap" -Force
 Copy-Item "$sdkSrc\sdk\os\log.h" "$inc\os\log.h" -Force
 # CoreFoundation e CoreGraphics em C: os mesmos cabeçalhos que o importador do OpenSwiftUI usa

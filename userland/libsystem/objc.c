@@ -496,6 +496,12 @@ int __isPlatformOrVariantPlatformVersionAtLeast(u32 p, u32 maj, u32 min, u32 sub
     return __isPlatformVersionAtLeast(p, maj, min, sub) || __isPlatformVersionAtLeast(vp, vmaj, vmin, vsub);
 }
 int __isOSVersionAtLeast(int maj, int min, int sub) { return cx_os_at_least((u32)maj, (u32)min, (u32)sub); }
+/* o que o compiler-rt dos binários chama no libSystem do macOS 11+: {plataforma, versão 0xMMMMmmpp}; vale se alguma bater */
+BOOL _availability_version_check(u32 count, const struct { u32 platform, version; } *v) {
+    for (u32 i = 0; i < count; i++)
+        if (v[i].platform == 1 && cx_os_at_least(v[i].version >> 16, (v[i].version >> 8) & 0xFF, v[i].version & 0xFF)) return YES;
+    return NO;
+}
 
 /* isa do mOS é ponteiro puro e não há tagged pointers: a máscara do x86_64 da Apple preserva o ponteiro */
 const u64 objc_debug_isa_class_mask = 0x00007ffffffffff8ULL;
@@ -864,6 +870,7 @@ void cx_objc_boot(u64 sects, u64 n) {
         }
         cx_appkit_init();
     { extern void cx_darwin_init(void) __attribute__((weak)); if (cx_darwin_init) cx_darwin_init(); }   /* gancho: NSURL/CF da sessão do VS Code */
+    { extern void cx_swiftobjc_init(void); cx_swiftobjc_init(); }   /* classes OS_* para o Swift com interop (swiftobjc.c) */
     }
     if (n) cx_objc_init_image(sects, n);
 }

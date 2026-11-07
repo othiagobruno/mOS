@@ -499,14 +499,29 @@ int SecRandomCopyBytes(void *rnd, size_t n, void *buf) { (void)rnd; arc4random_b
 /* libdispatch: semáforos de um processo com uma thread */
 typedef struct { long count; } cx_sema_t;
 void *dispatch_semaphore_create(long v) { cx_sema_t *s = malloc(sizeof *s); if (s) s->count = v; return s; }
-long dispatch_semaphore_signal(void *s) { ((cx_sema_t *)s)->count++; return 0; }
+long dispatch_semaphore_signal(void *s) { __sync_fetch_and_add(&((cx_sema_t *)s)->count, 1); return 0; }
+/* dispatch_time, como no macOS: absoluto, em ns na base do mach_absolute_time (SYS_TIME em ms * 10^6);
+ * DISPATCH_TIME_NOW = 0, DISPATCH_TIME_FOREVER = ~0, DISPATCH_WALLTIME_NOW = ~1 (aqui o mesmo relógio). O bit 63
+ * (DISPATCH_UP_OR_MONOTONIC_TIME_MASK, relógio contínuo do Swift) não muda a base no mOS. */
+static u64 now_ns(void) { return (u64)SYS0(SYS_TIME) * 1000000ull; }
+u64 cx_dispatch_deadline_ns(u64 t) { return t == 0 || t == ~1ull ? now_ns() : (t & ~(1ull << 63)); }
+u64 dispatch_time(u64 when, long delta) {
+    if (when == ~0ull) return when;
+    u64 base = cx_dispatch_deadline_ns(when);
+    if (delta < 0 && (u64)(-delta) >= base) return 1;
+    return base + (u64)delta;
+}
+/* espera de verdade: agora há threads (atrasos do dispatch.c, executor do Swift) que podem sinalizar */
 long dispatch_semaphore_wait(void *s, u64 timeout) {
     cx_sema_t *x = s;
-    if (x->count > 0) { x->count--; return 0; }
-    (void)timeout;
-    return 1;   /* nenhuma outra thread pode sinalizar: equivale a esgotar o tempo */
+    u64 limit = timeout == ~0ull ? ~0ull : cx_dispatch_deadline_ns(timeout);
+    for (;;) {
+        long c = x->count;
+        if (c > 0) { if (__sync_bool_compare_and_swap(&x->count, c, c - 1)) return 0; continue; }
+        if (limit != ~0ull && now_ns() >= limit) return 1;
+        SYS1(SYS_SLEEP, 1);
+    }
 }
-u64 dispatch_time(u64 when, long delta) { return when + (u64)delta; }
 void dispatch_release(void *o) { free(o); }
 void dispatch_retain(void *o) { (void)o; }
 
