@@ -326,6 +326,13 @@ kern_return_t host_info(mach_port_t host, int flavor, void *info, u32 *count) {
     }
     return KERN_INVALID_ARGUMENT;
 }
+/* host_page_size: a página do mOS é de 4 KiB (a mesma do vm_page_size acima) */
+kern_return_t host_page_size(mach_port_t host, u64 *size) {
+    (void)host;
+    if (!size) return KERN_INVALID_ARGUMENT;
+    *size = vm_page_size;
+    return KERN_SUCCESS;
+}
 kern_return_t host_kernel_version(mach_port_t host, char *ver) {
     (void)host;
     if (!ver) return KERN_INVALID_ARGUMENT;

@@ -32,6 +32,8 @@ CFSTR_DEF(kCGImagePropertyHasAlpha, "HasAlpha")
 CFSTR_DEF(kCGImageSourceCreateThumbnailFromImageAlways, "kCGImageSourceCreateThumbnailFromImageAlways")
 CFSTR_DEF(kCGImageSourceThumbnailMaxPixelSize, "kCGImageSourceThumbnailMaxPixelSize")
 CFSTR_DEF(kCGImageSourceShouldCache, "kCGImageSourceShouldCache")
+CFSTR_DEF(kCGImageSourceShouldCacheImmediately, "kCGImageSourceShouldCacheImmediately")
+CFSTR_DEF(kCGImageSourceCreateThumbnailWithTransform, "kCGImageSourceCreateThumbnailWithTransform")
 CFSTR_DEF(kCGImageDestinationLossyCompressionQuality, "kCGImageDestinationLossyCompressionQuality")
 
 static void warn(const char *what) {

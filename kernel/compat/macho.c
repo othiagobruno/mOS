@@ -276,6 +276,8 @@ bool libsystem_dylib_ok(const char *n) {
                                "/System/Library/Frameworks/OpenDirectory.framework/",
                                "/System/Library/Frameworks/OpenGL.framework/",
                                "/System/Library/Frameworks/Quartz.framework/",
+                               /* Codex desktop (runtime OWL): liga o framework sem importar símbolos (pede QLThumbnail* pelo nome; sem a classe, sem miniatura) */
+                               "/System/Library/Frameworks/QuickLookThumbnailing.framework/",
                                "/System/Library/Frameworks/SafariServices.framework/",
                                "/System/Library/Frameworks/ScreenCaptureKit.framework/",
                                "/System/Library/Frameworks/SecurityInterface.framework/",
