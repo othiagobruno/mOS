@@ -282,6 +282,7 @@ static u64 en_fast(id self, SEL c, fe_state_t *st, id *buf, u64 len) {
  * -enumeratorAtPath:. A árvore é lida inteira na criação (pré-ordem; diretórios antes do conteúdo), como uma lista para o
  * NSEnumerator. Opções: SkipsSubdirectoryDescendants (1), SkipsHiddenFiles (4). -skipDescendants ainda não poda. */
 KLASS(NSDirectoryEnumerator)
+KLASS(NSCache)
 int cx_snprintf(char *buf, unsigned long n, const char *fmt, ...);
 static void de_walk(id out, const char *dir, const char *rel, u64 opts, int asurl, int depth) {
     if (depth > 64) return;
@@ -565,6 +566,96 @@ static id fm_url_for_dir(id self, SEL c, u64 dir, u64 dom, id near, BOOL create,
     if (!u && err) *err = 0;
     return u;
 }
+/* ---- segunda leva da partida do WhatsApp */
+/* NSCache: um dicionário com nome e limites (o mOS não descarta nada sozinho) */
+typedef struct { void *isa; id dict, name, delegate; u64 count_limit, cost_limit; } fx_cache_t;
+static id ca_init(id self, SEL c) { (void)c; fx_cache_t *k = (fx_cache_t *)self; k->dict = objc_retain(MSG0(id, cls("NSMutableDictionary"), "dictionary")); return self; }
+static id ca_get(id self, SEL c, id key) { (void)c; fx_cache_t *k = (fx_cache_t *)self; return k->dict && key ? MSG(id, k->dict, "objectForKey:", key) : 0; }
+static void ca_set(id self, SEL c, id v, id key) {
+    (void)c; fx_cache_t *k = (fx_cache_t *)self;
+    if (!k->dict) ca_init(self, c);
+    if (!key) return;
+    if (v) MSG(void, k->dict, "setObject:forKey:", v, key); else MSG(void, k->dict, "removeObjectForKey:", key);
+}
+static void ca_set_cost(id self, SEL c, id v, id key, u64 cost) { (void)cost; ca_set(self, c, v, key); }
+static void ca_del(id self, SEL c, id key) { (void)c; fx_cache_t *k = (fx_cache_t *)self; if (k->dict && key) MSG(void, k->dict, "removeObjectForKey:", key); }
+static void ca_clear(id self, SEL c) { (void)c; fx_cache_t *k = (fx_cache_t *)self; if (k->dict) MSG0(void, k->dict, "removeAllObjects"); }
+static id ca_name(id self, SEL c) { (void)c; fx_cache_t *k = (fx_cache_t *)self; return k->name ? k->name : cx_str(""); }
+static void ca_set_name(id self, SEL c, id n) { (void)c; fx_cache_t *k = (fx_cache_t *)self; id o = k->name; k->name = n ? MSG0(id, n, "copy") : 0; if (o) objc_release(o); }
+static u64 ca_count_limit(id self, SEL c) { (void)c; return ((fx_cache_t *)self)->count_limit; }
+static void ca_set_count_limit(id self, SEL c, u64 v) { (void)c; ((fx_cache_t *)self)->count_limit = v; }
+static u64 ca_cost_limit(id self, SEL c) { (void)c; return ((fx_cache_t *)self)->cost_limit; }
+static void ca_set_cost_limit(id self, SEL c, u64 v) { (void)c; ((fx_cache_t *)self)->cost_limit = v; }
+static id ca_delegate(id self, SEL c) { (void)c; return ((fx_cache_t *)self)->delegate; }
+static void ca_set_delegate(id self, SEL c, id d) { (void)c; ((fx_cache_t *)self)->delegate = d; }
+static BOOL ca_evicts(id self, SEL c) { (void)self; (void)c; return 1; }
+static void ca_set_evicts(id self, SEL c, BOOL b) { (void)self; (void)c; (void)b; }
+void objc_msgSendSuper(void);
+static void ca_dealloc(id self, SEL c) {
+    fx_cache_t *k = (fx_cache_t *)self;
+    if (k->dict) objc_release(k->dict);
+    if (k->name) objc_release(k->name);
+    struct { id r; cx_class_t *s; } sup = {self, cx_class_named("NSObject")};
+    ((void (*)(void *, SEL))objc_msgSendSuper)(&sup, c);
+}
+/* NSDate */
+static BOOL dt_eq(id self, SEL c, id o) {
+    (void)c;
+    if (!o) return 0;
+    return MSG0(double, self, "timeIntervalSince1970") == MSG0(double, o, "timeIntervalSince1970");
+}
+static id dt_adding(id self, SEL c, double s) { (void)c; double t = MSG0(double, self, "timeIntervalSince1970") + s; return MSG(id, (id)self->isa, "dateWithTimeIntervalSince1970:", t); }
+/* caminhos e arquivos */
+static id s_del_ext(id self, SEL c) {
+    (void)c;
+    const char *s = cx_cstr(self);
+    u64 n = strlen(s), dot = n;
+    for (u64 i = n; i > 0; i--) { if (s[i - 1] == '/') break; if (s[i - 1] == '.') { dot = i - 1; break; } }
+    if (dot == 0 || dot == n || s[dot - 1] == '/') return self;
+    char b[2048];
+    if (dot >= sizeof b) return self;
+    memcpy(b, s, dot); b[dot] = 0;
+    return cx_str(b);
+}
+static BOOL s_write_url(id self, SEL c, id url, BOOL atom, u64 enc, id *err) {
+    (void)c;
+    id p = url ? MSG0(id, url, "path") : 0;
+    if (!p) { if (err) *err = 0; return 0; }
+    return MSG(BOOL, self, "writeToFile:atomically:encoding:error:", p, atom, enc, err);
+}
+static id fm_contents_url(id self, SEL c, id url, id keys, u64 opts, id *err) {
+    (void)c; (void)keys;
+    id p = url ? MSG0(id, url, "path") : 0;
+    if (!p) { if (err) *err = 0; return 0; }
+    id names = MSG(id, self, "contentsOfDirectoryAtPath:error:", p, err);
+    if (!names) return 0;
+    id out = MSG0(id, cls("NSMutableArray"), "array");
+    u64 n = MSG0(u64, names, "count");
+    for (u64 i = 0; i < n; i++) {
+        id nm = MSG(id, names, "objectAtIndex:", i);
+        if ((opts & 4) && cx_cstr(nm)[0] == '.') continue;                  /* NSDirectoryEnumerationSkipsHiddenFiles */
+        id u = MSG(id, url, "URLByAppendingPathComponent:", nm);
+        MSG(void, out, "addObject:", u);
+    }
+    return out;
+}
+static void d_get_bytes(id self, SEL c, void *buf, u64 n) {
+    (void)c;
+    u64 len = MSG0(u64, self, "length");
+    const void *b = MSG0(const void *, self, "bytes");
+    if (buf && b) memcpy(buf, b, n < len ? n : len);
+}
+typedef struct { u64 loc, len; } fx_rng_t;
+static void d_get_bytes_range(id self, SEL c, void *buf, fx_rng_t r) {
+    (void)c;
+    u64 len = MSG0(u64, self, "length");
+    const u8 *b = MSG0(const u8 *, self, "bytes");
+    if (!buf || !b || r.loc >= len) return;
+    memcpy(buf, b + r.loc, r.loc + r.len <= len ? r.len : len - r.loc);
+}
+static id x_init_self3(id self, SEL c, u64 a, u64 b, u64 n) { (void)c; (void)a; (void)b; (void)n; return self; }
+static id x_init_self2(id self, SEL c, u64 a, u64 n) { (void)c; (void)a; (void)n; return self; }
+static id ht_with_opts(id k, SEL c, u64 o) { (void)c; (void)o; return MSG0(id, k, "weakObjectsHashTable"); }
 /* -rangeOfString:options: (NSCaseInsensitiveSearch 1, NSBackwardsSearch 4, NSAnchoredSearch 8; o resto é literal) */
 typedef struct { u64 loc, len; } fx_range_t;
 static unsigned short fx_fold(unsigned short ch) { return ch >= 'A' && ch <= 'Z' ? (unsigned short)(ch + 32) : ch; }
@@ -634,6 +725,9 @@ void cx_foundation_extra_late(void) {
     if (lo) { cx_add_cmethod(lo, "localeWithLocaleIdentifier:", (void *)loc_with_ident); cx_add_method(lo, "initWithLocaleIdentifier:", (void *)loc_init_ident);
               cx_add_cmethod(lo, "componentsFromLocaleIdentifier:", (void *)loc_cmp_m); cx_add_method(lo, "scriptCode", (void *)loc_nil);
               cx_add_method(lo, "variantCode", (void *)loc_nil); }
+    { cx_class_t *mt = cx_class_named("NSMapTable"), *ht = cx_class_named("NSHashTable");
+      if (mt) { cx_add_method(mt, "initWithKeyOptions:valueOptions:capacity:", (void *)x_init_self3); }
+      if (ht) { cx_add_method(ht, "initWithOptions:capacity:", (void *)x_init_self2); cx_add_cmethod(ht, "hashTableWithOptions:", (void *)ht_with_opts); } }
     if (s) { cx_add_method(s, "rangeOfString:options:", (void *)s_range_opts); cx_add_method(s, "stringByPaddingToLength:withString:startingAtIndex:", (void *)s_pad); }
 }
 void cx_foundation_extra_init(void) {
@@ -660,6 +754,22 @@ void cx_foundation_extra_init(void) {
         if (bu) cx_add_method(bu, "localizations", (void *)b_localizations);
         if (fmc) { cx_add_method(fmc, "URLsForDirectory:inDomains:", (void *)fm_urls_for_dir);
                    cx_add_method(fmc, "URLForDirectory:inDomain:appropriateForURL:create:error:", (void *)fm_url_for_dir); } }
+      { cx_class_t *dt = cx_class_named("NSDate"), *fm2 = cx_class_named("NSFileManager");
+        if (dt) { cx_add_method(dt, "isEqualToDate:", (void *)dt_eq); cx_add_method(dt, "dateByAddingTimeInterval:", (void *)dt_adding); }
+        if (s) { cx_add_method(s, "stringByDeletingPathExtension", (void *)s_del_ext); cx_add_method(s, "writeToURL:atomically:encoding:error:", (void *)s_write_url); }
+        if (fm2) cx_add_method(fm2, "contentsOfDirectoryAtURL:includingPropertiesForKeys:options:error:", (void *)fm_contents_url);
+        if (data) { cx_add_method(data, "getBytes:length:", (void *)d_get_bytes); cx_add_method(data, "getBytes:range:", (void *)d_get_bytes_range); }
+        if (ob && !cx_class_named("NSCache")) {
+            cx_define_class(&NSCache_c, &NSCache_m, "NSCache", ob, sizeof(fx_cache_t) - 8);
+            IM(NSCache, "init", ca_init); IM(NSCache, "objectForKey:", ca_get); IM(NSCache, "setObject:forKey:", ca_set);
+            IM(NSCache, "setObject:forKey:cost:", ca_set_cost); IM(NSCache, "removeObjectForKey:", ca_del);
+            IM(NSCache, "removeAllObjects", ca_clear); IM(NSCache, "name", ca_name); IM(NSCache, "setName:", ca_set_name);
+            IM(NSCache, "countLimit", ca_count_limit); IM(NSCache, "setCountLimit:", ca_set_count_limit);
+            IM(NSCache, "totalCostLimit", ca_cost_limit); IM(NSCache, "setTotalCostLimit:", ca_set_cost_limit);
+            IM(NSCache, "delegate", ca_delegate); IM(NSCache, "setDelegate:", ca_set_delegate);
+            IM(NSCache, "evictsObjectsWithDiscardedContent", ca_evicts); IM(NSCache, "setEvictsObjectsWithDiscardedContent:", ca_set_evicts);
+            IM(NSCache, "dealloc", ca_dealloc);
+        } }
     }
     OBJC_EHTYPE_NSException.cls = cx_class_named("NSException");
     if (data && !cx_class_named("NSMutableData")) {

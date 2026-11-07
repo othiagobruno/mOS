@@ -621,6 +621,7 @@ static UIApplication *g_app;
 - (NSString *)preferredContentSizeCategory { return @"UICTContentSizeCategoryL"; }
 - (NSUInteger)beginBackgroundTaskWithExpirationHandler:(void (^)(void))h { (void)h; return 1; }
 - (NSUInteger)beginBackgroundTaskWithName:(NSString *)n expirationHandler:(void (^)(void))h { (void)n; (void)h; return 1; }
+- (NSTimeInterval)backgroundTimeRemaining { return 1.7976931348623157e308; }   /* DBL_MAX: o app está em primeiro plano */
 - (void)endBackgroundTask:(NSUInteger)t { (void)t; }
 - (void)registerForRemoteNotifications {}
 - (void)unregisterForRemoteNotifications {}

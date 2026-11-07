@@ -36,7 +36,7 @@ function Save-Tela([string]$Png) {
     } catch { return $false }
 }
 function Stage-App {
-    if ($Electron) { .\tools\stage-electron.ps1 -App $App -OutDir $OutDir -Diagnostico -CaLog -Autostart -SizeMiB 1024 -Args0 $Argumentos 6>&1 2>&1 | ForEach-Object { "$_" } }
+    if ($Electron) { .\tools\stage-electron.ps1 -App $App -OutDir $OutDir -Diagnostico -CaLog -Autostart -SizeMiB 1024 -Args0 $Argumentos -Tracepoints $Tracepoints 6>&1 2>&1 | ForEach-Object { "$_" } }
     else { .\tools\stage-vscode.ps1 -App $App -OutDir $OutDir -Diagnostico -ComApp -ComModulosNativos -Autostart -SizeMiB 768 -Args0 $Argumentos -Tracepoints $Tracepoints -CaLog -ComBash:$ComBash 6>&1 2>&1 | ForEach-Object { "$_" } }
 }
 $t0 = Get-Date

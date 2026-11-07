@@ -160,6 +160,41 @@ Pendentes:
 - TLS do serviço de rede ("handshake failed", net_error -21) e "Janela/Ajuda" duplicados na barra.
 - O nome do processo é cortado em 31 caracteres ("Google Chrome Helper (Aperitif ").
 
+### A janela desenha: Nova Guia na tela (7 nov. 2026, 8h)
+
+![Nova Guia do Chrome no mOS](img-chrome-nova-guia.png)
+
+O caminho do quadro foi seguido por tracepoints nos nomes de TRACE_EVENT (`ExternalBeginFrameSourceMac::OnDisplayLinkCallback`,
+`DisplayScheduler::*`, `Scheduler::BeginImplFrame`, `TileManager::*`, `CompositorFrameSinkSupport::MaybeSubmitCompositorFrame`,
+`Display::DrawAndSwap`, `SoftwareRenderer::SwapBuffers`, `DisplayCALayerTree::GotIOSurfaceFrame`) e nos desvios de
+`LayerTreeHostImpl::CanDraw` (cada motivo de recusa tem sua string). O que faltava, em ordem:
+
+1. **Abort "coleção alterada durante a enumeração"**: `-[NSMenu itemArray]` devolvia o array interno; o Chrome percorre e
+   remove itens. Agora é uma cópia, como no Cocoa. NSMenu ganhou `delegate`, NSMenuItem `menu`, e NSWindow `alphaValue`,
+   `parentWindow`, `addChildWindow:ordered:`.
+2. **Main frame adiado para sempre** (`Scheduler::SetDeferBeginMainFrame(true)` sem o `false`, `CanDraw` "no root
+   layer"): o `RecyclableCompositorMac` fica suspenso até a janela ser notada visível, e o Chrome nota isso na sobrescrita
+   de `-[NSWindow orderWindow:relativeTo:]` (`NativeWidgetMacNSWindow`). O mOS atendia `orderFront:`/
+   `makeKeyAndOrderFront:` direto; agora eles passam por `orderWindow:relativeTo:` por mensagem, que avisa
+   `windowDidChangeOcclusionState:`. Com isso a interface do navegador (abas, barra de endereço) aparece.
+3. **Renderer com "empty viewport"**: `setFrame:` não chamava `setFrameSize:`/`setFrameOrigin:` por mensagem, e o
+   autoresize mudava o quadro das subviews por dentro. A `RenderWidgetHostViewCocoa` sobrescreve `setFrameSize:` para
+   avisar o renderer do tamanho. Agora segue o Cocoa: `setFrame:` → `setFrameOrigin:` + `setFrameSize:` →
+   `resizeSubviewsWithOldSize:` → `setFrame:` de cada subview, tudo por `objc_msgSend`.
+4. **Queda em `descriptor_for` (coretext.c)**: a pilha de autorelease pools era global, e o `pop` de uma thread liberava
+   objetos de outra. A sessão do VS Code passou os pools para um por thread (`objc.c`, slot TSD 104) ao mesmo tempo.
+
+Resultado: a **Nova Guia renderiza inteira** (logo, pesquisa, atalhos, "Personalizar o Chrome") e o navegador fica estável.
+Teste: `-Argumentos '--no-sandbox --in-process-gpu --disable-gpu --no-first-run --no-default-browser-check'`.
+
+**Rede: ERR_NETWORK_CHANGED.** Abrir `http://example.com/` ou `https://example.com/` mostra "A conexão foi interrompida /
+Foi detectada uma alteração na rede" (ERR_NETWORK_CHANGED, -21), com ou sem TLS. O "handshake failed ... net_error -21"
+do log é o mesmo erro. Já descartado: não há notificação de IP nem de conexão (`NetworkChangeNotifier::*`), nem flush dos
+pools ("IP address changed", "SSL configuration changed", "Cert verifier changed"); o -21 não está na tabela errno → erro
+do Chromium (`MapSystemError`) nem nas constantes `mov $-21` rastreadas. Houve uma `NetworkChangeNotifier::DnsChange` no
+serviço de rede ("DNS config watch failed to start"). Próximo suspeito: o resolvedor de DNS do Chrome (cliente DNS próprio
+por UDP, que o mOS ainda não tem, e o `HostResolverManager` abortando jobs com ERR_NETWORK_CHANGED na mudança de DNS).
+
 Ferramentas: `tools\stage-chrome.ps1 -AutoAbrir` (o `init` abre o Chrome no boot, sem depender do mouse no QEMU) e
 os tracepoints (`/Sistema/Biblioteca/diag-tracepoints`), que agora também valem para imagens do `dlopen` (macho.c).
 

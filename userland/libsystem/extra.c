@@ -652,6 +652,7 @@ u64 dispatch_time(u64 when, long delta) {
 /* espera de verdade: agora há threads (atrasos do dispatch.c, executor do Swift) que podem sinalizar */
 long dispatch_semaphore_wait(void *s, u64 timeout) {
     cx_sema_t *x = s;
+    { extern void cx_dispatch_drain(void); cx_dispatch_drain(); }   /* dispatch.c: blocos adiados por esta thread */
     u64 limit = timeout == ~0ull ? ~0ull : cx_dispatch_deadline_ns(timeout);
     for (;;) {
         long c = x->count;

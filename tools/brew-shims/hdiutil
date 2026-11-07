@@ -4,7 +4,10 @@
 cmd=$1; shift
 img=""; for a in "$@"; do case "$a" in -*) ;; *) img=$a ;; esac; done
 case "$cmd" in
-  imageinfo) [ -f "$img" ] || { echo "hdiutil: imageinfo failed - No such file or directory" >&2; exit 1; }; echo "UDZO" ;;
+  imageinfo)   # só imagem UDIF de verdade: o trailer de 512 bytes no fim começa com "koly" (o brew testa .zip assim também)
+    [ -f "$img" ] || { echo "hdiutil: imageinfo failed - No such file or directory" >&2; exit 1; }
+    [ "$(tail -c 512 "$img" | head -c 4)" = "koly" ] || { echo "hdiutil: imageinfo failed - image not recognized" >&2; exit 1; }
+    echo "UDZO" ;;
   attach)
     [ -f "$img" ] || { echo "hdiutil: attach failed - No such file or directory" >&2; exit 1; }
     case "$img" in /*) ;; *) img="$PWD/$img" ;; esac

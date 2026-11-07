@@ -188,6 +188,13 @@ CFCONST(NSRunLoopCommonModes, "kCFRunLoopCommonModes")
 CFCONST(NSLocalizedDescriptionKey, "NSLocalizedDescription")
 CFCONST(NSLocalizedFailureReasonErrorKey, "NSLocalizedFailureReason")
 CFCONST(NSLocalizedRecoverySuggestionErrorKey, "NSLocalizedRecoverySuggestion")
+/* quarentena (LaunchServices): o Homebrew grava com.apple.quarantine nos downloads dos casks pela Fiddle */
+CFCONST(kLSQuarantineAgentNameKey, "LSQuarantineAgentName")
+CFCONST(kLSQuarantineAgentBundleIdentifierKey, "LSQuarantineAgentBundleIdentifier")
+CFCONST(kLSQuarantineTimeStampKey, "LSQuarantineTimeStamp")
+CFCONST(kCFURLQuarantinePropertiesKey, "NSURLQuarantinePropertiesKey")
+/* o VFS não guarda atributos estendidos: a propriedade (ex.: a quarentena) é aceita e não fica gravada */
+int CFURLSetResourcePropertyForKey(const void *url, const void *key, const void *value, void **err) { (void)url; (void)key; (void)value; if (err) *err = 0; return 1; }
 CFCONST(NSUnderlyingErrorKey, "NSUnderlyingError")
 CFCONST(NSFilePathErrorKey, "NSFilePath")
 CFCONST(NSCocoaErrorDomain, "NSCocoaErrorDomain")

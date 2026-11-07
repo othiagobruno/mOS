@@ -178,6 +178,60 @@ static void *delayed_run(void *arg) {
  * -rebuildMenu -> dispatch_async(main, ^{ [self rebuildMenu] }) para juntar atualizações) vira recursão sem fim
  * e a thread principal nunca chega ao laço de eventos. */
 static int main_inline_depth;
+/* Trampolim por thread: as filas que não são a principal rodam o bloco na própria thread de quem chama. Um
+ * dispatch_async feito de dentro de um bloco que já está rodando (o caso de código que se reagenda na mesma
+ * fila, como os laços do WhatsApp) vira recursão sem fim se rodar na hora. Ele entra numa fila desta thread e
+ * roda quando o bloco atual termina, na ordem em que foi pedido, como numa fila serial de verdade. Quem vai
+ * esperar (dispatch_group_wait, dispatch_semaphore_wait) escoa essa fila antes, para não esperar por um bloco que
+ * só rodaria depois. */
+typedef struct tr_item { void *q, *ctx; dispatch_function_t fn; void *block; struct tr_item *next; } tr_item_t;
+typedef struct { int tid, depth; tr_item_t *head, *tail; } tr_slot_t;
+#define TR_MAX 64
+static tr_slot_t trs[TR_MAX];
+static tr_slot_t *tr_slot(int create) {
+    int tid = (int)SYS0(SYS_GETTID);
+    tr_slot_t *s = 0, *fr = 0;
+    cql();
+    for (int i = 0; i < TR_MAX; i++) {
+        if (trs[i].tid == tid) { s = &trs[i]; break; }
+        if (!trs[i].tid && !fr) fr = &trs[i];
+    }
+    if (!s && create && fr) { fr->tid = tid; fr->depth = 0; fr->head = fr->tail = 0; s = fr; }
+    cqu();
+    return s;
+}
+static void tr_run_pending(tr_slot_t *s) {
+    while (s->head) {
+        tr_item_t *it = s->head;
+        s->head = it->next;
+        if (!s->head) s->tail = 0;
+        RUN_ON(it->q, if (it->block) RUN_BLOCK(it->block); else it->fn(it->ctx));
+        if (it->block) _Block_release(it->block);
+        free(it);
+    }
+}
+void cx_dispatch_drain(void) {
+    tr_slot_t *s = tr_slot(0);
+    if (s && s->head) { s->depth++; tr_run_pending(s); s->depth--; }
+}
+static void q_run_inline(void *q, void *ctx, dispatch_function_t fn, void *block) {
+    tr_slot_t *s = tr_slot(1);
+    if (s && s->depth > 0) {
+        tr_item_t *it = malloc(sizeof *it);
+        if (it) {
+            it->q = q; it->ctx = ctx; it->fn = fn; it->block = block ? _Block_copy(block) : 0; it->next = 0;
+            if (s->tail) s->tail->next = it; else s->head = it;
+            s->tail = it;
+            return;
+        }
+    }
+    if (s) s->depth++;
+    RUN_ON(q, if (block) RUN_BLOCK(block); else fn(ctx));
+    if (s) {
+        tr_run_pending(s);
+        if (--s->depth == 0 && !s->head) { cql(); s->tid = 0; cqu(); }
+    }
+}
 static void q_async(void *q, void *ctx, dispatch_function_t fn, void *block, u64 delay_ms) {
     if (is_main_q(q) || (q == &_dispatch_main_q && delay_ms) ||
         (q == &_dispatch_main_q && main_inline_depth > 0 && on_main())) {
@@ -200,7 +254,7 @@ static void q_async(void *q, void *ctx, dispatch_function_t fn, void *block, u64
             free(d);
         }
     }
-    RUN_ON(q, if (block) RUN_BLOCK(block); else fn(ctx));
+    q_run_inline(q, ctx, fn, block);
 }
 static void q_sync(void *q, void *ctx, dispatch_function_t fn, void *block) {
     if (is_main_q(q) && !on_main()) {
@@ -209,6 +263,7 @@ static void q_sync(void *q, void *ctx, dispatch_function_t fn, void *block) {
         while (!done) SYS0(SYS_YIELD);
         return;
     }
+    cx_dispatch_drain();                         /* os asyncs pedidos antes rodam antes (fila serial) */
     RUN_ON(q, if (block) RUN_BLOCK(block); else fn(ctx));
 }
 /* dispatch_time: nanossegundos a partir de "agora" (DISPATCH_TIME_NOW = 0) */
@@ -237,6 +292,7 @@ void dispatch_group_enter(void *g) { __sync_fetch_and_add(&((cx_group_t *)g)->n,
 void dispatch_group_leave(void *g) { __sync_fetch_and_sub(&((cx_group_t *)g)->n, 1); }
 long dispatch_group_wait(void *g, u64 timeout) {
     (void)timeout;
+    cx_dispatch_drain();                         /* blocos adiados por esta thread (trampolim) */
     while (((cx_group_t *)g)->n > 0) SYS0(SYS_YIELD);
     return 0;
 }

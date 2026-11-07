@@ -10,7 +10,7 @@
 # layer, cada CAContext publicado e cada quadro composto na janela, com a contagem de pixels visíveis.
 param([Parameter(Mandatory = $true)][string]$App, [string]$OutDir = 'build-electron', [int]$SizeMiB = 768,
       [switch]$Autostart, [switch]$Diagnostico, [switch]$CaLog, [int]$MaxModuloMiB = 16,
-      [string]$Args0 = '--in-process-gpu --disable-gpu --no-sandbox --enable-logging --v=0')
+      [string]$Args0 = '--in-process-gpu --disable-gpu --no-sandbox --enable-logging --v=0', [string]$Tracepoints = '')
 $root = Split-Path $PSScriptRoot -Parent
 $App = (Get-Item -LiteralPath $App).FullName
 $src = Join-Path $App 'Contents'
@@ -86,6 +86,10 @@ if ($Diagnostico) {
 }
 if ($CaLog) { Set-Content -Path "$esp\mOS\Sistema\Biblioteca\ca-log" -Value '1' -Encoding ascii }
 else { Remove-Item "$esp\mOS\Sistema\Biblioteca\ca-log" -ErrorAction SilentlyContinue }
+# -Tracepoints: como no stage-vscode.ps1, "processo|imagem|0xdesl[*N][@reg],..." (várias linhas separadas por ';')
+$tpFile = "$esp\mOS\Sistema\Biblioteca\diag-tracepoints"
+if ($Tracepoints) { ($Tracepoints -split ';') -join "`n" | Set-Content -Path $tpFile -Encoding ascii }
+else { Remove-Item $tpFile -ErrorAction SilentlyContinue }
 $mb = (Get-ChildItem -LiteralPath $dstApp -Recurse -File | Measure-Object Length -Sum).Sum / 1MB
 Write-Host ("{0}.app ({1}): {2:N1} MiB" -f $name, $exe, $mb) -ForegroundColor Cyan
 & (Join-Path $root "$OutDir\mkimg.exe") (Join-Path $root "$OutDir\mOS.img") $esp $SizeMiB

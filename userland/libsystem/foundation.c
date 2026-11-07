@@ -893,7 +893,7 @@ static u64 pi_cpus(id self, SEL c) { (void)self; (void)c; return 1; }
 static u64 pi_mem(id self, SEL c) { (void)self; (void)c; return 1ull << 30; }
 
 /* NSNotificationCenter: observadores em lista */
-typedef struct obs { id target; SEL sel; id name; id object; void *block; struct obs *next; int name_bad; } obs_t;
+typedef struct obs { id target; SEL sel; id name; id object; void *block; struct obs *next; int name_bad; id token; id queue; } obs_t;   /* token: o objeto que -addObserverForName:object:queue:usingBlock: devolve */
 static obs_t *observers;
 /* Nome de notificação que não é objeto: uma constante que o libSystem não exporta vira, pelo carregador, um ponteiro
  * para código, e o isEqual: do cx_post nela derrubava o processo (o principal do VS Code, ao virar janela-chave). O isa
@@ -939,20 +939,61 @@ static void nc_add(id self, SEL c, id target, SEL sel, id name, id obj) {
     observers = o;
 }
 static id nc_add_block(id self, SEL c, id name, id obj, id queue, void *blk) {
-    (void)self; (void)c; (void)queue;
+    (void)self; (void)c;
     obs_t *o = calloc(1, sizeof *o);
     o->name = name; o->object = obj; o->block = _Block_copy(blk);
+    o->queue = queue ? objc_retain(queue) : 0;   /* com fila, a entrega é assíncrona (como na Apple) */
     check_name(o);
     o->next = observers;
     observers = o;
-    return (id)o;
+    /* o app guarda e solta o token como objeto (retain/release, removeObserver:): é um NSObject que a central
+     * retém enquanto o observador existe; devolvido autoreleased, como na Apple */
+    o->token = cx_alloc_instance(&NSObject_c);
+    return objc_autorelease(objc_retain(o->token));
 }
+/* observador de bloco com fila: o bloco vai para a fila (a principal, se for a NSOperationQueue.mainQueue), não
+ * roda dentro do post. Rodar na hora fazia um observador que posta de novo virar recursão sem fim (WhatsApp). */
+typedef struct { void *block; id note; } nc_async_t;
+void _Block_release(void *b);
+static void nc_async_run(void *p) {
+    nc_async_t *a = p;
+    void (*inv)(void *, id) = *(void **)((u8 *)a->block + 16);
+    inv(a->block, a->note);
+    _Block_release(a->block);
+    objc_release(a->note);
+    free(a);
+}
+void dispatch_async_f(void *q, void *ctx, void (*fn)(void *));
+void *dispatch_get_global_queue(long prio, unsigned long flags);
+void *dispatch_get_main_queue(void);
+static void nc_deliver_async(obs_t *o, id note) {
+    nc_async_t *a = malloc(sizeof *a);
+    if (!a) return;
+    a->block = _Block_copy(o->block);
+    a->note = objc_retain(note);
+    cx_class_t *oq = cx_class_named("NSOperationQueue");
+    id mainq = oq ? MSG0(id, (id)oq, "mainQueue") : 0;
+    dispatch_async_f(o->queue == mainq ? dispatch_get_main_queue() : dispatch_get_global_queue(0, 0), a, nc_async_run);
+}
+static int dbg_post_depth;
+const char *object_getClassName(id o);
+void cx_post_inner(id note);
 void cx_post(id note) {
+    if (++dbg_post_depth == 40) {
+        nsnote_t *dn = (nsnote_t *)note;
+        cx_fdprintf(2, "DBG post profundo: %s obj=%s\n", dn->name ? S(MSG0(id, dn->name, "description")) : "?", dn->object ? object_getClassName(dn->object) : "nil");
+        for (obs_t *o = observers; o; o = o->next) if (!o->name || obj_eq(o->name, dn->name)) cx_fdprintf(2, "  obs alvo=%s sel=%s bloco=%p fila=%p\n", o->target ? object_getClassName(o->target) : "-", o->sel ? (const char *)o->sel : "-", o->block, o->queue);
+    }
+    cx_post_inner(note);
+    dbg_post_depth--;
+}
+void cx_post_inner(id note) {
     nsnote_t *n = (nsnote_t *)note;
     for (obs_t *o = observers; o; o = o->next) {
         if (o->name && o->name != n->name && (o->name_bad || !obj_eq(o->name, n->name))) continue;
         if (o->object && o->object != n->object) continue;
-        if (o->block) { void (*inv)(void *, id) = *(void **)((u8 *)o->block + 16); inv(o->block, note); }
+        if (o->block && o->queue) nc_deliver_async(o, note);
+        else if (o->block) { void (*inv)(void *, id) = *(void **)((u8 *)o->block + 16); inv(o->block, note); }
         else if (o->target) ((void (*)(id, SEL, id))objc_msgSend)(o->target, o->sel, note);
     }
 }
@@ -961,7 +1002,13 @@ static void nc_post_name(id self, SEL c, id name, id obj) { (void)self; (void)c;
 static void nc_post_name_info(id self, SEL c, id name, id obj, id info) { (void)self; (void)c; cx_post(cx_note(name, obj, info)); }
 static void nc_remove(id self, SEL c, id target) {
     (void)self; (void)c;
-    for (obs_t **pp = &observers; *pp;) if ((*pp)->target == target || (id)*pp == target) *pp = (*pp)->next; else pp = &(*pp)->next;
+    if (!target) return;                       /* removeObserver:nil não tira os observadores de bloco (target nil) */
+    for (obs_t **pp = &observers; *pp;)
+        if ((*pp)->target == target || (id)*pp == target || ((*pp)->token && (*pp)->token == target)) {
+            id tk = (*pp)->token;
+            *pp = (*pp)->next;
+            if (tk) objc_release(tk);
+        } else pp = &(*pp)->next;
 }
 static void nc_remove_name(id self, SEL c, id target, id name, id obj) { (void)name; (void)obj; nc_remove(self, c, target); }
 static void nc_remove_all(id target) { for (obs_t **pp = &observers; *pp;) if ((*pp)->target == target) *pp = (*pp)->next; else pp = &(*pp)->next; }

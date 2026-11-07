@@ -6,6 +6,10 @@ b() { local nome=$1; shift; echo "cask: == $nome"; timeout -s KILL 1500 "$@" > /
       echo "cask: rc=$rc ($n linhas)"; }
 echo "cask: inicio"
 b "hdiutil imageinfo (sem arquivo)" hdiutil imageinfo -format /nao-existe.dmg
+b "hdiutil imageinfo (zip)" hdiutil imageinfo -format /usr/local/Homebrew/.git/HEAD
+RB=/usr/local/Homebrew/Library/Homebrew/vendor/portable-ruby/current/bin/ruby
+b "tempfile .bom"  $RB -rtempfile -e 'Tempfile.create(["", ".bom"]) { |f| f.close; p [f.path, File.directory?(f.path), File.file?(f.path)]; system("ls", "-la", f.path); system("stat", f.path) }'
+b "tmp private"    ls -la /private /tmp
 b "install --cask keycastr (.zip)"    brew install --cask keycastr
 b "app keycastr"                      ls /Applications/KeyCastr.app/Contents/MacOS
 b "install --cask monitorcontrol (.dmg)" brew install --cask monitorcontrol

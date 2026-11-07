@@ -55,6 +55,8 @@ u32 cx_class_list(cx_class_t ***out) { if (out) *out = all_classes; return nclas
 
 static int objc_ready;
 void cx_objc_boot(u64 sects, u64 n);
+static cx_class_t *lazy_class_named(const char *name);
+static int nswift_lazy_any(void);
 cx_class_t *cx_class_named(const char *name) {
     for (u32 i = 0; i < nclasses; i++) {
         cx_rw_t *rw = rw_of(all_classes[i]);
@@ -63,6 +65,7 @@ cx_class_t *cx_class_named(const char *name) {
     /* programa sem seções ObjC (C/Rust que só usa CoreFoundation/Security, ex.: o Codex CLI): o runtime e as
      * classes do Foundation ainda não subiram — sobe agora, como o swiftbridge.c faz, e procura de novo */
     if (!objc_ready) { cx_objc_boot(0, 0); return cx_class_named(name); }
+    if (name && nswift_lazy_any()) return lazy_class_named(name);
     return 0;
 }
 
@@ -210,9 +213,68 @@ static void realize_ro(cx_class_t *c) {
     note_crr(c, rw);
 }
 
+/* Classe Swift cujo layout só sai em tempo de execução (campo de tipo resiliente, superclasse resiliente):
+ * o compilador marca o class_ro_t com RO_HAS_SWIFT_INITIALIZER (bit 6) e põe o inicializador de metadata logo
+ * depois do baseProperties (ro + 72). Como no realizeClassMaybeSwift da Apple, quem realiza é o Swift: o
+ * inicializador calcula o layout (instanceStart/instanceSize e as variáveis de offset dos ivars) e volta por
+ * _objc_realizeClassFromSwift, que realiza com o ro já atualizado. Realizar antes disso (o mOS realiza o
+ * __objc_classlist na carga) deixava tamanho e offsets estáticos: objetos curtos e campos lidos no lugar errado. */
+static cx_class_t *swift_init_busy[16];
+static u32 nswift_init_busy;
+/* Como na Apple, essas classes ficam para o primeiro uso (mensagem, objc_getClass, subclasse): inicializá-las na
+ * carga puxaria tipos de bibliotecas que o app talvez nem use. As categorias delas esperam a realização. */
+static cx_class_t **swift_lazy;
+static u32 nswift_lazy, capswift_lazy;
+static const u8 **lazy_cats;
+static u32 nlazy_cats, caplazy_cats;
+static void attach_category(const u8 *cat);
+static int needs_swift_init(cx_class_t *c) {
+    const u8 *ro = c ? (const u8 *)(c->data & ~7ULL) : 0;
+    return ro && (*(const u32 *)ro & (1u << 6)) && !(*(const u32 *)ro & 1) && *(void *const *)(ro + 72);
+}
+static void push_ptr(void ***arr, u32 *n, u32 *cap, void *p) {
+    if (*n == *cap) { *cap = *cap ? *cap * 2 : 64; *arr = realloc(*arr, *cap * sizeof **arr); }
+    (*arr)[(*n)++] = p;
+}
+static void attach_lazy_cats(cx_class_t *c) {
+    for (u32 i = 0; i < nlazy_cats; i++)
+        if (lazy_cats[i] && *(cx_class_t *const *)(lazy_cats[i] + 8) == c) { const u8 *cat = lazy_cats[i]; lazy_cats[i] = 0; attach_category(cat); }
+}
+static int dbg_depth;
+static void realize_inner(cx_class_t *c);
 static void realize(cx_class_t *c) {
     if (!c || rw_of(c)) return;
+    if (++dbg_depth > 60) { const u8 *r = (const u8 *)(c->data & ~7ULL); cx_fdprintf(2, "DBG realize profundo: %p %s\n", c, r ? *(const char *const *)(r + 24) : "?"); if (dbg_depth > 70) abort(); }
+    realize_inner(c);
+    dbg_depth--;
+}
+static void realize_inner(cx_class_t *c) {
+    if (needs_swift_init(c) && nswift_init_busy < 16) {
+        const u8 *ro = (const u8 *)(c->data & ~7ULL);
+        int busy = 0;
+        for (u32 i = 0; i < nswift_init_busy; i++) if (swift_init_busy[i] == c) busy = 1;
+        cx_class_t *(*init)(cx_class_t *, void *) = *(cx_class_t *(*const *)(cx_class_t *, void *))(ro + 72);
+        if (!busy) {
+            swift_init_busy[nswift_init_busy++] = c;
+            init(c, 0);
+            nswift_init_busy--;
+            if (rw_of(c)) { attach_lazy_cats(c); return; }
+        }
+    }
     realize_ro(c);
+    if (nlazy_cats && rw_of(c)) attach_lazy_cats(c);
+}
+static int nswift_lazy_any(void) { return nswift_lazy != 0; }
+/* classe ainda não realizada por nome (objc_getClass/NSClassFromString de uma classe Swift pendente) */
+static cx_class_t *lazy_class_named(const char *name) {
+    for (u32 i = 0; i < nswift_lazy; i++) {
+        cx_class_t *c = swift_lazy[i];
+        if (!c || rw_of(c)) continue;
+        const u8 *ro = (const u8 *)(c->data & ~7ULL);
+        const char *n = ro ? *(const char *const *)(ro + 24) : 0;
+        if (n && !strcmp(n, name)) { realize(c); return rw_of(c) ? c : 0; }
+    }
+    return 0;
 }
 
 cx_class_t *cx_define_class(cx_class_t *cls, cx_class_t *meta, const char *name, cx_class_t *super, u32 extra) {
@@ -454,7 +516,9 @@ void objc_registerClassPair(cx_class_t *c) { (void)c; }
 cx_class_t *_objc_realizeClassFromSwift(cx_class_t *c, const void *previously) {
     (void)previously;
     if (!c) return 0;
-    if (!rw_of(c)) { realize(c); flush_caches(); }
+    /* o Swift já calculou o layout (é ele que chama, de dentro do inicializador): realiza direto; passar por
+     * realize() chamaria o inicializador de novo e o Swift esperaria por ele mesmo */
+    if (!rw_of(c)) { realize_ro(c); if (nlazy_cats) attach_lazy_cats(c); flush_caches(); }
     return c;
 }
 cx_class_t *objc_readClassPair(cx_class_t *c, const void *image_info) { (void)image_info; return _objc_realizeClassFromSwift(c, 0); }
@@ -913,6 +977,7 @@ static void fix_cfstrings(u8 *a, u64 size) {
 static void attach_category(const u8 *cat) {
     cx_class_t *c = *(cx_class_t *const *)(cat + 8);
     if (!c) return;
+    if (!rw_of(c) && needs_swift_init(c)) { push_ptr((void ***)&lazy_cats, &nlazy_cats, &caplazy_cats, (void *)cat); return; }   /* espera a classe */
     realize(c);
     cx_rw_t *rw = rw_of(c), *mrw = rw_of(c->isa);
     if (rw) load_methods(rw, *(const u8 *const *)(cat + 16));
@@ -952,7 +1017,11 @@ void cx_objc_init_image(u64 sects, u64 n) {
             if (pass == 1 && kind == 3)
                 for (u64 o = 0; o + 8 <= size; o += 8) *(SEL *)(a + o) = sel_registerName(*(const char **)(a + o));
             if (pass == 2 && kind == 1)
-                for (u64 o = 0; o + 8 <= size; o += 8) realize(*(cx_class_t **)(a + o));
+                for (u64 o = 0; o + 8 <= size; o += 8) {
+                    cx_class_t *k = *(cx_class_t **)(a + o);
+                    if (needs_swift_init(k) && !rw_of(k)) push_ptr((void ***)&swift_lazy, &nswift_lazy, &capswift_lazy, k);   /* no primeiro uso */
+                    else realize(k);
+                }
             if (pass == 3 && (kind == 2 || kind == 11))
                 for (u64 o = 0; o + 8 <= size; o += 8) attach_category(*(const u8 **)(a + o));
             if (pass == 4 && kind == 8)
