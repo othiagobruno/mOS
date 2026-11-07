@@ -738,6 +738,12 @@ static id d_description(id self, SEL c) {
     m_append(out, 0, cx_str("}"));
     return out;
 }
+static void d_add_entries(id self, SEL c, id o) {
+    (void)c;
+    nsdict_t *s = (nsdict_t *)o;
+    if (!self || !s) return;
+    for (u64 i = 0; i < s->n && i < 100000; i++) d_set(self, s->vals[i], s->keys[i]);
+}
 static id d_copy(id self, SEL c) { return d_with_dict((id)&NSDictionary_c, c, self); }
 static id d_mcopy(id self, SEL c) { return d_with_dict((id)&NSMutableDictionary_c, c, self); }
 
@@ -845,6 +851,10 @@ static void rl_run_until(id self, SEL c, id date) {
 }
 static void rl_run(id self, SEL c) { rl_run_until(self, c, 0); }
 static BOOL rl_run_mode(id self, SEL c, id mode, id date) { (void)mode; rl_run_until(self, c, date); return YES; }
+extern void *CFRunLoopGetCurrent(void);
+extern const void *kCFRunLoopDefaultMode;
+static id rl_current_mode(id self, SEL c) { (void)self; (void)c; return (id)kCFRunLoopDefaultMode; }
+static void *rl_cf(id self, SEL c) { (void)self; (void)c; return CFRunLoopGetCurrent(); }
 
 /* ================================================================ diversos */
 static id singleton(id cls) {
@@ -1217,7 +1227,8 @@ void cx_foundation_init(void) {
     M(NSDictionary, "valueForKey:", d_get); M(NSDictionary, "count", d_count); M(NSDictionary, "allKeys", d_keys); M(NSDictionary, "allValues", d_vals);
     M(NSDictionary, "countByEnumeratingWithState:objects:count:", d_fast); M(NSDictionary, "enumerateKeysAndObjectsUsingBlock:", d_enum_block);
     M(NSDictionary, "description", d_description); M(NSDictionary, "copy", d_copy); M(NSDictionary, "mutableCopy", d_mcopy);
-    M(NSMutableDictionary, "setObject:forKey:", d_setobj); M(NSMutableDictionary, "setObject:forKeyedSubscript:", d_setobj);
+    M(NSMutableDictionary, "setObject:forKey:", d_setobj); M(NSMutableDictionary, "addEntriesFromDictionary:", d_add_entries);
+    M(NSMutableDictionary, "setObject:forKeyedSubscript:", d_setobj);
     M(NSMutableDictionary, "setValue:forKey:", d_setobj); M(NSMutableDictionary, "removeObjectForKey:", d_remove); M(NSMutableDictionary, "removeAllObjects", d_remove_all);
 
     cx_define_class(&NSAutoreleasePool_c, &NSAutoreleasePool_m, "NSAutoreleasePool", &NSObject_c, 0);
@@ -1247,6 +1258,7 @@ void cx_foundation_init(void) {
     CM(NSRunLoop, "currentRunLoop", rl_current); CM(NSRunLoop, "mainRunLoop", rl_current);
     M(NSRunLoop, "addTimer:forMode:", rl_add_timer); M(NSRunLoop, "run", rl_run); M(NSRunLoop, "runUntilDate:", rl_run_until);
     M(NSRunLoop, "runMode:beforeDate:", rl_run_mode);
+    M(NSRunLoop, "currentMode", rl_current_mode); M(NSRunLoop, "getCFRunLoop", rl_cf);
 
     cx_define_class(&NSNotification_c, &NSNotification_m, "NSNotification", &NSObject_c, 24);
     CM(NSNotification, "notificationWithName:object:userInfo:", nn_with_ar);

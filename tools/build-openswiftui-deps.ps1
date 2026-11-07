@@ -564,7 +564,7 @@ if ($Repo -contains 'OpenSwiftUICore') {
     $flags += '-define-availability', '_distantFuture:macOS 99.0, iOS 99.0, tvOS 99.0, watchOS 99.0, visionOS 99.0'
     New-Item -ItemType Directory -Force "$outRoot\OpenSwiftUICore" | Out-Null
     Write-Host "OpenSwiftUICore: $($files.Count) fontes..."
-    $sw = Build-Swift 'OpenSwiftUICore' $files $flags '5' $false
+    $sw = Build-Swift 'OpenSwiftUICore' $files $flags '5' $true
     if ($sw -eq $false) { $fails++ } elseif ($sw) { Write-Archive 'OpenSwiftUICore' @($sw) }
 }
 if ($Repo -contains 'OpenSwiftUI') {
@@ -627,7 +627,7 @@ if ($Repo -contains 'OpenSwiftUI') {
     $flags += '-define-availability', '_distantFuture:macOS 99.0, iOS 99.0, tvOS 99.0, watchOS 99.0, visionOS 99.0'
     New-Item -ItemType Directory -Force "$outRoot\OpenSwiftUI" | Out-Null
     Write-Host "OpenSwiftUI: $($files.Count) fontes..."
-    $sw = Build-Swift 'OpenSwiftUI' $files $flags '5' $false
+    $sw = Build-Swift 'OpenSwiftUI' $files $flags '5' $true
     if ($sw -eq $false) { $fails++ } elseif ($sw) {
         Write-Archive 'OpenSwiftUI' @($sw)
         New-Item -ItemType Directory -Force "$outRoot\SwiftUI" | Out-Null

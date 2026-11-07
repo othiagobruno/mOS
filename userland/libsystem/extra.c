@@ -528,14 +528,17 @@ __attribute__((noreturn)) void _Unwind_Resume(void *e) { (void)e; cx_puts_fd(2, 
 /* processos, usuários e sistema */
 int sched_yield(void) { SYS0(SYS_YIELD); return 0; }
 int pause(void) { for (;;) SYS1(SYS_SLEEP, 1000); }
+/* status no formato do macOS (WIFEXITED/WEXITSTATUS/WIFSIGNALED); opt: WNOHANG = 1, o resto é ignorado */
 int waitpid(int pid, int *st, int opt) {
-    (void)opt;
-    long r = SYS1(SYS_WAIT, pid);
-    if (r < -255) { cx_errno = 10; return -1; }   /* ECHILD */
-    if (st) *st = (int)(r & 0xFF) << 8;
-    return pid;
+    int s = 0;
+    long r = cx_syscall(SYS_WAITPID, pid, (long)&s, opt & MOS_WNOHANG, 0, 0);
+    if (r < 0) { cx_errno = (int)-r; return -1; }
+    if (st && r > 0) *st = s;
+    return (int)r;
 }
-int wait(int *st) { (void)st; cx_errno = 10; return -1; }
+int wait(int *st) { return waitpid(-1, st, 0); }
+int wait3(int *st, int opt, void *ru) { if (ru) memset(ru, 0, 144); return waitpid(-1, st, opt); }
+int wait4(int pid, int *st, int opt, void *ru) { if (ru) memset(ru, 0, 144); return waitpid(pid, st, opt); }
 int setuid(unsigned u) { (void)u; return 0; }
 int setgid(unsigned g) { (void)g; return 0; }
 int setgroups(int n, const unsigned *g) { (void)n; (void)g; return 0; }
@@ -543,27 +546,109 @@ int setpgid(int a, int b) { (void)a; (void)b; return 0; }
 int setsid(void) { return 1; }
 int chroot(const char *p) { (void)p; cx_errno = CX_EPERM; return -1; }
 int sigaltstack(const void *ss, void *old) { (void)ss; (void)old; return 0; }
-int posix_spawn_file_actions_init(void *a) { (void)a; return 0; }
-int posix_spawn_file_actions_destroy(void *a) { (void)a; return 0; }
-int posix_spawn_file_actions_adddup2(void *a, int x, int y) { (void)a; (void)x; (void)y; return 0; }
-int posix_spawn_file_actions_addclose(void *a, int x) { (void)a; (void)x; return 0; }
-int posix_spawnattr_init(void *a) { (void)a; return 0; }
-int posix_spawnattr_destroy(void *a) { (void)a; return 0; }
-int posix_spawnattr_setflags(void *a, short f) { (void)a; (void)f; return 0; }
+#define FA_MAGIC 0x6D4F5346u
+#define AT_MAGIC 0x6D4F5354u
+typedef struct { u32 magic; int n; mos_spawn_fa_t op[MOS_SPAWN_FA_MAX]; } cx_fa;
+typedef struct { u32 magic; unsigned flags; } cx_at;
+
+static cx_fa *fa_of(void *a) {
+    cx_fa *f = a ? *(cx_fa **)a : 0;
+    return f && f->magic == FA_MAGIC ? f : 0;
+}
+static int fa_push(void *a, mos_spawn_fa_t op) {
+    cx_fa *f = fa_of(a);
+    if (!f || f->n >= MOS_SPAWN_FA_MAX) return 22;
+    f->op[f->n++] = op;
+    return 0;
+}
+int posix_spawn_file_actions_init(void *a) {
+    cx_fa *f = calloc(1, sizeof *f);
+    if (!a || !f) return 12;
+    f->magic = FA_MAGIC;
+    *(void **)a = f;
+    return 0;
+}
+int posix_spawn_file_actions_destroy(void *a) {
+    cx_fa *f = fa_of(a);
+    if (f) free(f);
+    if (a) *(void **)a = 0;
+    return 0;
+}
+int posix_spawn_file_actions_adddup2(void *a, int x, int y) {
+    mos_spawn_fa_t op; memset(&op, 0, sizeof op);
+    op.kind = MOS_SPAWN_FA_DUP2; op.a = x; op.b = y;
+    return fa_push(a, op);
+}
+int posix_spawn_file_actions_addclose(void *a, int x) {
+    mos_spawn_fa_t op; memset(&op, 0, sizeof op);
+    op.kind = MOS_SPAWN_FA_CLOSE; op.a = x;
+    return fa_push(a, op);
+}
+int posix_spawn_file_actions_addopen(void *a, int fd, const char *path, int flags, unsigned mode) {
+    mos_spawn_fa_t op; memset(&op, 0, sizeof op);
+    op.kind = MOS_SPAWN_FA_OPEN; op.a = fd; op.mode = mode;
+    if ((flags & 3) == MAC_O_WRONLY) op.flags |= MOS_O_WRONLY;
+    if ((flags & 3) == MAC_O_RDWR) op.flags |= MOS_O_RDWR;
+    if (flags & MAC_O_CREAT) op.flags |= MOS_O_CREAT;
+    if (flags & MAC_O_TRUNC) op.flags |= MOS_O_TRUNC;
+    if (flags & MAC_O_APPEND) op.flags |= MOS_O_APPEND;
+    if (path) {
+        char buf[256];
+        cx_path(path, buf, sizeof buf);
+        memcpy(op.path, buf, sizeof op.path - 1);
+    }
+    return fa_push(a, op);
+}
+int posix_spawn_file_actions_addinherit_np(void *a, int fd) {
+    return posix_spawn_file_actions_adddup2(a, fd, fd);
+}
+int posix_spawn_file_actions_addchdir_np(void *a, const char *p) {
+    mos_spawn_fa_t op; memset(&op, 0, sizeof op);
+    op.kind = MOS_SPAWN_FA_CHDIR;
+    if (p) {
+        char buf[256];
+        cx_path(p, buf, sizeof buf);
+        memcpy(op.path, buf, sizeof op.path - 1);
+    }
+    return fa_push(a, op);
+}
+int posix_spawnattr_init(void *a) {
+    cx_at *t = calloc(1, sizeof *t);
+    if (!a || !t) return 12;
+    t->magic = AT_MAGIC;
+    *(void **)a = t;
+    return 0;
+}
+int posix_spawnattr_destroy(void *a) {
+    cx_at *t = a ? *(cx_at **)a : 0;
+    if (t && t->magic == AT_MAGIC) free(t);
+    if (a) *(void **)a = 0;
+    return 0;
+}
+int posix_spawnattr_setflags(void *a, short f) {
+    cx_at *t = a ? *(cx_at **)a : 0;
+    if (!t || t->magic != AT_MAGIC) return 22;
+    t->flags = (unsigned)(unsigned short)f;
+    return 0;
+}
 int posix_spawnattr_setpgroup(void *a, int g) { (void)a; (void)g; return 0; }
 int posix_spawnattr_setsigdefault(void *a, const void *s) { (void)a; (void)s; return 0; }
 int posix_spawnattr_setsigmask(void *a, const void *s) { (void)a; (void)s; return 0; }
 int posix_spawnp(int *pid, const char *f, const void *fa, const void *at, char *const *av, char *const *ev) {
-    (void)fa; (void)at; (void)ev;
-    char args[2048] = "";
-    for (int i = 1; av && av[i]; i++) {
-        strlcat(args, i > 1 ? " \"" : "\"", sizeof args);
-        strlcat(args, av[i], sizeof args);
-        strlcat(args, "\"", sizeof args);
-    }
+    /* argv, envp e as file actions vão inteiros. A string de 256 bytes do SYS_SPAWN cortava a chave
+     * ",r," da memória compartilhada e o filho do Electron saía com exit(0). */
     char path[1024];
     cx_path(f, path, sizeof path);
-    long r = SYS2(SYS_SPAWN, f[0] == '/' || strchr(f, '/') ? path : f, args);
+    mos_spawn_vec_t v;
+    memset(&v, 0, sizeof v);
+    v.argv = (u64)av;
+    v.envp = (u64)ev;
+    cx_fa *acts = fa_of((void *)fa);
+    cx_at *attr = at ? *(cx_at **)at : 0;
+    if (acts && acts->n) { v.acts = (u64)acts->op; v.nacts = (unsigned)acts->n; }
+    if (attr && attr->magic == AT_MAGIC) v.flags = attr->flags;
+    const char *use = (f && (f[0] == '/' || strchr(f, '/'))) ? path : f;
+    long r = cx_syscall(SYS_SPAWNVEC, (long)use, (long)&v, 0, 0, 0);
     if (r < 0) return CX_ENOENT;
     if (pid) *pid = (int)r;
     return 0;
@@ -571,12 +656,10 @@ int posix_spawnp(int *pid, const char *f, const void *fa, const void *at, char *
 int posix_spawn(int *pid, const char *f, const void *fa, const void *at, char *const *av, char *const *ev) {
     return posix_spawnp(pid, f, fa, at, av, ev);
 }
-/* execve substitui o processo: gera o programa novo, espera e sai com o código dele (o pai que deu
- * wait continua vendo este pid). /usr/bin/sandbox-exec não existe como arquivo: o Codex o chama com
- * `-p <política> -- comando`. A política é ignorada (o Seatbelt daqui não confina) e o comando roda. */
-void _exit(int code);
+/* execve substitui a imagem do processo (mesmo pid, fds sem O_CLOEXEC e sessão).
+ * /usr/bin/sandbox-exec não existe como arquivo: o Codex o chama com `-p <política> -- comando`.
+ * A política é ignorada (o Seatbelt daqui não confina) e o comando roda. */
 int execve(const char *path, char *const argv[], char *const envp[]) {
-    (void)envp;
     if (!path || !path[0]) { cx_errno = CX_EINVAL; return -1; }
     const char *run = path;
     char *const *av = argv;
@@ -597,16 +680,43 @@ int execve(const char *path, char *const argv[], char *const envp[]) {
         run = av[i];
         av = av + i;
     }
-    int pid = 0;
-    int rc = posix_spawnp(&pid, run, 0, 0, av ? av : argv, 0);
-    if (rc != 0 || pid <= 0) { cx_errno = rc ? rc : CX_ENOENT; return -1; }
-    int st = 0;
-    waitpid(pid, &st, 0);
-    _exit((st >> 8) & 0xFF);
+    /* SYS_EXECVE troca a imagem no mesmo pid (o kernel segue links e "#!"); só volta com erro */
+    char full[1024];
+    cx_path(run, full, sizeof full);
+    const char *use = strchr(run, '/') ? full : run;
+    mos_spawn_vec_t v;
+    memset(&v, 0, sizeof v);
+    v.argv = (u64)(av ? av : argv);
+    v.envp = (u64)envp;
+    long r = cx_syscall(SYS_EXECVE, (long)use, (long)&v, 0, 0, 0);
+    cx_errno = r < 0 ? (int)-r : CX_ENOENT;
     return -1;
 }
-int execv(const char *path, char *const argv[]) { return execve(path, argv, 0); }
-int execvp(const char *file, char *const argv[]) { return execve(file, argv, 0); }
+extern char **environ;
+int execv(const char *path, char *const argv[]) { return execve(path, argv, environ); }
+/* execvp/execvpe: nome sem '/' procura nas pastas do PATH (como no macOS) */
+int execvpe(const char *file, char *const argv[], char *const envp[]) {
+    if (!file || !file[0]) { cx_errno = CX_ENOENT; return -1; }
+    if (strchr(file, '/')) return execve(file, argv, envp);
+    const char *pathv = getenv("PATH");
+    if (!pathv || !pathv[0]) pathv = "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin";
+    char cand[1024];
+    for (const char *s = pathv; ; ) {
+        const char *e = strchr(s, ':');
+        size_t n = e ? (size_t)(e - s) : strlen(s);
+        if (n == 0) n = 1, s = ".";
+        if (n + strlen(file) + 2 < sizeof cand) {
+            memcpy(cand, s, n);
+            cand[n] = '/';
+            strcpy(cand + n + 1, file);
+            execve(cand, argv, envp);                 /* só volta se falhou */
+        }
+        if (!e) break;
+        s = e + 1;
+    }
+    return execve(file, argv, envp);                  /* nome curto: /Sistema/Programas no kernel */
+}
+int execvp(const char *file, char *const argv[]) { return execvpe(file, argv, environ); }
 
 typedef struct { char sysname[256], nodename[256], release[256], version[256], machine[256]; } mac_utsname_t;
 int uname(mac_utsname_t *u) {

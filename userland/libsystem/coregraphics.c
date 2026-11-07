@@ -774,6 +774,13 @@ size_t CGBitmapContextGetBytesPerRow(void *c) { cgobj_t *o = as_kind(c, CGK_BM);
 size_t CGBitmapContextGetBitsPerPixel(void *c) { cgobj_t *o = as_kind(c, CGK_BM); return o ? o->bpp * 8 : 0; }
 size_t CGBitmapContextGetBitsPerComponent(void *c) { return as_kind(c, CGK_BM) ? 8 : 0; }
 u32 CGBitmapContextGetBitmapInfo(void *c) { cgobj_t *o = as_kind(c, CGK_BM); return o ? o->info : 0; }
+void CGContextSetShouldSmoothFonts(void *c, int v) { (void)c; (void)v; }
+void CGContextSetAllowsFontSmoothing(void *c, int v) { (void)c; (void)v; }
+void CGContextSetShouldSubpixelPositionFonts(void *c, int v) { (void)c; (void)v; }
+void CGContextSetAllowsFontSubpixelPositioning(void *c, int v) { (void)c; (void)v; }
+void CGContextSetShouldSubpixelQuantizeFonts(void *c, int v) { (void)c; (void)v; }
+void CGContextSetAllowsFontSubpixelQuantization(void *c, int v) { (void)c; (void)v; }
+void CGContextSetTextDrawingMode(void *c, int mode) { (void)c; (void)mode; }
 void CGContextSetTextMatrix(void *c, CGAffineTransform t) {
     cgobj_t *o = as_kind(c, CGK_BM);
     if (!o) return;

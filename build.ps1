@@ -77,6 +77,9 @@ if ($LASTEXITCODE -ne 0) { Write-Host "Swift apps FAILED" -ForegroundColor Red; 
 # -Tests: the kernel runs /Sistema/Programas/teste at boot (output on the serial log)
     if ($Tests) {
         Set-Content -Path "$pdir\.autoteste" -Value 'teste' -Encoding ascii
+        # teste POSIX em Mach-O (fork/execvp/waitpid, dup2, links, #!): o "teste" nativo o chama no fim
+        & $zig cc -target x86_64-macos -O1 "$root\userland\tests-posix\main.c" -o "$pdir\posixteste" "-Wl,-undefined,dynamic_lookup" 2>&1 | ForEach-Object { "$_" }
+        if ($LASTEXITCODE -ne 0) { Write-Host "posixteste FAILED" -ForegroundColor Red; exit 1 }
         # simulated Wi-Fi radio + access point (kernel/wifi/sim.c); boot with run.ps1 -NoNet to test it end to end
         Set-Content -Path "$esp\mOS\Sistema\Biblioteca\wifi-simulado" -Value 'mOS-Teste' -Encoding ascii
     }

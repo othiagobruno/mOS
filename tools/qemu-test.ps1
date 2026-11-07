@@ -76,7 +76,9 @@ function Key($combo) {
 }
 # mapping for the mOS default keyboard layout (ABNT2)
 $qmap = @{ ' ' = 'spc'; '.' = 'dot'; ',' = 'comma'; '/' = 'ro'; '?' = 'shift+ro'; '-' = 'minus'; '_' = 'shift+minus'; '=' = 'equal'; '+' = 'shift+equal';
-    ':' = 'shift+slash'; ';' = 'slash'; '>' = 'shift+dot'; '<' = 'shift+comma'; '\' = 'less'; '|' = 'shift+less' }
+    ':' = 'shift+slash'; ';' = 'slash'; '>' = 'shift+dot'; '<' = 'shift+comma'; '\' = 'less'; '|' = 'shift+less';
+    '!' = 'shift+1'; '@' = 'shift+2'; '#' = 'shift+3'; '$' = 'shift+4'; '%' = 'shift+5'; '&' = 'shift+7'; '*' = 'shift+8'; '(' = 'shift+9'; ')' = 'shift+0';
+    '[' = 'bracket_right'; ']' = 'backslash'; '{' = 'shift+bracket_right'; '}' = 'shift+backslash'; "'" = 'grave_accent'; '"' = 'shift+grave_accent' }   # ABNT2
 
 foreach ($s in $Steps.Split(';')) {
     $s = $s.Trim(); if (-not $s) { continue }

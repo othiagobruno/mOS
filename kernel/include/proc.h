@@ -13,10 +13,14 @@
 #include "kernel.h"
 
 #define SCHED_SLICE_MS 4
-#define USER_BASE   0x0000400000000000ULL      /* região de usuário: PML4[128], 512 GiB */
-#define USER_END    0x0000408000000000ULL
+/* região de usuário: PML4[128..135], 4 TiB. O V8 do Electron reserva a gaiola do sandbox (~1,34 TiB) de uma vez;
+ * com menos, cai no sandbox parcial e o alocador de ArrayBuffer devolve nulo (BackingStore vazio, aborto) */
+#define USER_PML4_SLOTS 8
+#define USER_BASE   0x0000400000000000ULL
+#define USER_END    (USER_BASE + USER_PML4_SLOTS * 0x8000000000ULL)
+#define USER_PML4_FIRST ((int)((USER_BASE >> 39) & 511))
 #define USER_STACK_TOP  (USER_BASE + 0x40000000ULL)   /* 1 GiB acima da base */
-#define USER_STACK_SIZE (256u << 10)
+#define USER_STACK_SIZE (2048u << 10)   /* 2 MiB: argv/env do Electron passam de 1 MiB */
 
 enum { TH_READY, TH_RUNNING, TH_SLEEPING, TH_WAITING, TH_DEAD };
 
@@ -48,6 +52,7 @@ typedef struct thread {
     int exit_code;          /* SYS_THREAD_EXIT */
     int join_tid;           /* TH_WAITING em SYS_THREAD_JOIN */
     u64 gs_base;            /* base do GS em ring 3 (TLS das threads do macOS: gs:[chave*8]) */
+    bool wait_posix;        /* SYS_WAITPID: rax = pid e status POSIX gravado em wait_status */
     /* espera numa porta Mach (kernel/proc/machipc.c), com wait_pid = -7 e TH_WAITING */
     void *mach_wait;        /* porta ou conjunto esperado */
     u64 mach_deadline;      /* 0 = sem prazo; o escalonador acorda no prazo (rax já tem o erro de tempo) */
@@ -88,6 +93,10 @@ struct process {
     char cwd[128];          /* pasta atual (caminhos relativos nas syscalls) */
     void *dyld;             /* Mach-O: grafo de imagens do carregador, para o dlopen (kernel/compat/macho.c) */
     void *mach;             /* espaço de nomes de portas Mach (kernel/proc/machipc.c); NULL até o primeiro uso */
+    char **spawn_argv;      /* só durante macho_load: argv já copiado para o kernel (posix_spawn) */
+    int spawn_argc;
+    char **spawn_env;
+    int spawn_envc;
 };
 
 /* ---- portas Mach entre processos (proc/machipc.c) */

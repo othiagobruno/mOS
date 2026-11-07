@@ -156,7 +156,7 @@ void cx_mach_record_prot(u64 addr, u64 len, int prot) {
 kern_return_t mach_vm_region(mach_port_t task, u64 *addr, u64 *size, int flavor, void *info, u32 *count, mach_port_t *obj) {
     (void)task;
     if (obj) *obj = 0;
-    if (!addr || !size || *addr < 0x400000000000ULL || *addr >= 0x408000000000ULL) return KERN_INVALID_ADDRESS;
+    if (!addr || !size || *addr < 0x400000000000ULL || *addr >= 0x440000000000ULL) return KERN_INVALID_ADDRESS;
     /* a proteção vem do kernel (machipc.c, MACH_VM_REGION): initprot dos segmentos Mach-O e o que o
      * mprotect/mach_vm_protect pediram. Sem registro: a página, RWX (o NX está desligado no mOS). */
     u64 q[8] = {*addr, 0, 0, 7, 7, 0, 0, 0};

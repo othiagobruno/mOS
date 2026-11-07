@@ -276,6 +276,7 @@ void *CTFontCopyTable(id f, u32 tag, u32 options) {
     free(buf);
     return data;
 }
+void *CGFontCopyTableForTag(void *font, u32 tag) { return CTFontCopyTable((id)font, tag, 0); }
 void *CTFontCopyCharacterSet(id f) { (void)f; return 0; }
 id CTFontCopyDefaultCascadeListForLanguages(id f, id langs) { (void)f; (void)langs; return objc_retain(MSG0(id, cls("NSArray"), "array")); }
 id CTFontCopyVariation(id f) { (void)f; return 0; }

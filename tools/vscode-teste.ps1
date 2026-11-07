@@ -7,7 +7,7 @@
 # log e simboliza a falha (libSystem ou Electron Framework).
 param([Parameter(Mandatory = $true)][string]$App, [switch]$SemBuild, [int]$Ocioso = 40, [int]$Limite = 600,
       [int]$Memory = 2700, [int]$Port = 5917, [string]$OutDir = 'build-vscode',
-      [switch]$Persist, [string]$Argumentos = '--single-process --in-process-gpu --disable-gpu --no-sandbox --verbose --enable-logging')
+      [switch]$Persist, [string]$Argumentos = '--in-process-gpu --disable-gpu --no-sandbox --verbose --enable-logging')
 $root = Split-Path $PSScriptRoot -Parent
 Set-Location $root
 $t0 = Get-Date

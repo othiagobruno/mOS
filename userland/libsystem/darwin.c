@@ -273,16 +273,24 @@ void CFNotificationCenterRemoveObserver(id_ c, const void *obs, id_ name, const 
 void CFNotificationCenterRemoveEveryObserver(id_ c, const void *obs) { (void)c; (void)obs; }
 void CFNotificationCenterPostNotification(id_ c, id_ name, const void *obj, id_ info, u8 now) { (void)c; (void)name; (void)obj; (void)info; (void)now; }
 
-/* SystemConfiguration mínimo: sem configd no mOS. Criar um "store" falha de forma documentada
- * (NULL + SCError), e as consultas de proxy/rede dizem "sem configuração" (conexão direta). */
+/* SystemConfiguration mínimo: sem configd no mOS. O "store" é um objeto CF de verdade (um dicionário vazio),
+ * como um configd cuja configuração nunca muda: o crate Rust system-configuration (os_proxy_resolver.node do
+ * VS Code) entra em pânico com NULL. As consultas de proxy/rede dizem "sem configuração" (conexão direta),
+ * as notificações são aceitas e nunca disparam, e a fonte de run loop é uma fonte versão 0 que nunca sinaliza. */
 #define kSCStatusFailed 1001
-id_ SCDynamicStoreCreate(void *alloc, id_ name, void *cb, void *ctx) { (void)alloc; (void)name; (void)cb; (void)ctx; return 0; }
-id_ SCDynamicStoreCreateWithOptions(void *alloc, id_ name, id_ opts, void *cb, void *ctx) { (void)alloc; (void)name; (void)opts; (void)cb; (void)ctx; return 0; }
+id_ CFDictionaryCreateMutable(void *alloc, long cap, const void *kcb, const void *vcb);
+void *CFRunLoopSourceCreate(void *alloc, long order, void *ctx);
+id_ SCDynamicStoreCreate(void *alloc, id_ name, void *cb, void *ctx) { (void)alloc; (void)name; (void)cb; (void)ctx; return CFDictionaryCreateMutable(0, 0, 0, 0); }
+id_ SCDynamicStoreCreateWithOptions(void *alloc, id_ name, id_ opts, void *cb, void *ctx) { (void)opts; return SCDynamicStoreCreate(alloc, name, cb, ctx); }
 id_ SCDynamicStoreCopyProxies(id_ store) { (void)store; return 0; }
 id_ SCDynamicStoreCopyValue(id_ store, id_ key) { (void)store; (void)key; return 0; }
-u8 SCDynamicStoreSetNotificationKeys(id_ s, id_ k, id_ p) { (void)s; (void)k; (void)p; return 0; }
-id_ SCDynamicStoreCreateRunLoopSource(void *alloc, id_ s, long order) { (void)alloc; (void)s; (void)order; return 0; }
-id_ SCDynamicStoreKeyCreateNetworkGlobalEntity(void *alloc, id_ domain, id_ entity) { (void)alloc; (void)domain; (void)entity; return 0; }
+u8 SCDynamicStoreSetNotificationKeys(id_ s, id_ k, id_ p) { (void)k; (void)p; return s != 0; }
+id_ SCDynamicStoreCreateRunLoopSource(void *alloc, id_ s, long order) {
+    if (!s) return 0;
+    void *ctx[10] = {0};   /* CFRunLoopSourceContext versão 0, sem callbacks */
+    return (id_)CFRunLoopSourceCreate(alloc, order, ctx);
+}
+id_ SCDynamicStoreKeyCreateNetworkGlobalEntity(void *alloc, id_ domain, id_ entity) { (void)domain; (void)entity; return CFStringCreateWithFileSystemRepresentation(alloc, "State:/Network/Global/Proxies"); }
 id_ SCDynamicStoreCopyComputerName(id_ s, u32 *enc) { (void)s; if (enc) *enc = ENC_UTF8; return CFStringCreateWithFileSystemRepresentation(0, "mOS"); }
 id_ SCDynamicStoreCopyLocalHostName(id_ s) { (void)s; return CFStringCreateWithFileSystemRepresentation(0, "mos"); }
 int SCError(void) { return kSCStatusFailed; }
@@ -448,13 +456,7 @@ int select$DARWIN_EXTSN(int nfds, void *rd, void *wr, void *ex, cx_timeval_t *tv
 /* FD_SET do SDK novo pergunta se o fd cabe no fd_set */
 int __darwin_check_fd_set_overflow(int fd, const void *set, int unlimited) { (void)set; return unlimited || (fd >= 0 && fd < CX_FDSET_MAX); }
 
-/* ---- posix_spawn: ações de arquivo extras (o SYS_SPAWN do mOS herda stdin/stdout/stderr) */
-int posix_spawn_file_actions_addopen(void *a, int fd, const char *path, int flags, unsigned mode) {
-    (void)a; (void)fd; (void)path; (void)flags; (void)mode;
-    return 0;
-}
-int posix_spawn_file_actions_addinherit_np(void *a, int fd) { (void)a; (void)fd; return 0; }
-int posix_spawn_file_actions_addchdir_np(void *a, const char *p) { (void)a; (void)p; return 0; }
+/* file actions de posix_spawn ficam em extra.c (dup2, close, open, chdir) */
 int posix_spawnattr_setbinpref_np(void *a, size_t n, int *pref, size_t *ocount) { (void)a; (void)pref; if (ocount) *ocount = n; return 0; }
 /* porta especial do PRÓXIMO filho de posix_spawn (bootstrap, which = 4): o mach.c/kernel usam no
  * machipc_spawn. Movido para o kernel (MACH_OP_SPAWN_SPECIAL); o objeto `a` do atributo não é usado. */

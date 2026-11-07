@@ -53,6 +53,10 @@ Legenda: **feito** = existe e tem teste; **parcial** = existe e falta parte; **f
 | Tudo acima | **parcial** | o caminho está em [porte-vscode.md](porte-vscode.md) e [porte-chrome.md](porte-chrome.md) |
 | JIT do V8 | **parcial** | no x86_64 o V8 só precisa de páginas RWX (`MAP_JIT` é exigência do Hardened Runtime/arm64) |
 | Private APIs comuns do Chromium (CGS*, CAContext, IOSurface) | **parcial** | `quartzcore.c`, `iosurface.c`, `chrome.c` |
+| Glifos (Skia → `CTFontDrawGlyphs` num `CGBitmapContext`) | **feito** | `coretext.c`: raster da fonte do kernel (`GUI_FONT`/`GF_RASTER`) |
+| Área de transferência (`NSPasteboard`, `NSPasteboardItem`) | **feito** | `appkit.c`: pasteboards com nome, `changeCount`, vários tipos (dados/texto/plist), dono que fornece sob demanda; o texto do geral é compartilhado entre apps por `~/.mOS-pasteboard` |
+| Teclado e texto (`interpretKeyEvents:`, `NSTextInputContext`, `inputContext`) | **parcial** | `appkit_input.c`: teclas de edição/navegação viram `doCommandBySelector:`, texto vira `insertText:replacementRange:`. Sem composição de IME (teclas mortas, CJK) |
+| Arrastar e soltar (`NSDraggingItem`/`Session`, `registerForDraggedTypes:`) | **parcial** | `appkit_input.c`: os itens vão ao pasteboard de arrasto e a sessão termina na hora (`NSDragOperationNone`); o servidor de janelas ainda não leva o arrasto a outra janela |
 | Desempenho de renderização | **falta** | sem GPU. O compositor é por CPU multinúcleo |
 
 ## Segurança e assinatura
@@ -60,7 +64,7 @@ Legenda: **feito** = existe e tem teste; **parcial** = existe e falta parte; **f
 | Item | Estado | Onde |
 |---|---|---|
 | Assinatura de código | **parcial** | tudo é "não assinado" (`errSecCSUnsigned`), como o macOS trata código sem assinatura. O rendezvous do Chromium aceita |
-| Sandbox (`sandbox_init`, `sandbox_apply`, `sandbox-exec`) | **parcial** | `sandbox_init` (`darwin.c`) responde "sucesso" sem aplicar política. Ainda faltam o `sandbox_apply` da libsandbox (helpers do Electron) e o `/usr/bin/sandbox-exec` (Codex) |
+| Sandbox (`sandbox_init`, `sandbox_apply`, `sandbox-exec`) | **parcial** | `darwin.c`: `sandbox_init`, `sandbox_compile_string`/`sandbox_apply` (libsandbox dos helpers do Electron), parâmetros e extensões respondem "sucesso" sem aplicar política, e `sandbox_check` diz "em sandbox" depois. `sandbox-exec -p/-f ... comando` (Codex) é tratado no `execve`/`posix_spawn` (`extra.c`): roda o comando direto |
 | Entitlements, Gatekeeper, notarização | **falta** | ignorados de propósito, como o roadmap recomenda no começo |
 
 ## Referências

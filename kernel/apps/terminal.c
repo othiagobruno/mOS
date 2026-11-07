@@ -174,6 +174,7 @@ static void run(term_t *t, char *line) {
         OUT("  uname [-a]      sobre         lspci        ps            dmesg");
         OUT("  ifconfig        ping <host>   nslookup <h> curl <url>    dhcp");
         OUT("  run <prog>      kill <pid>    sh  (shell de usuário em ring 3, interativo)");
+        OUT("  bash [args]     bash do Homebrew (sem readline: a linha é editada pelo Terminal)");
         OUT("  ./prog args     macinfo <arq> (executáveis e .app do macOS, x86_64)");
         OUT("  tema claro|escuro             beep         reboot        shutdown");
     } else if (!strcmp(c, "clear")) {
@@ -330,6 +331,23 @@ static void run(term_t *t, char *line) {
         t->tty_pid = pid;
         t->tty_partial[0] = 0;
         put(t, RGB(150, 150, 150), "[sh em ring 3, pid %d — exit ou Ctrl+D volta ao msh; Ctrl+C encerra]", pid);
+    } else if (!strcmp(c, "bash")) {
+        /* bash do Homebrew (docs/porte-brew.md). O Terminal ainda é de linha (não emula VT100), então o
+         * readline fica desligado: a edição e o histórico da linha são os do próprio Terminal. +m: sem
+         * controle de jobs (o mOS ainda não tem grupos de processo). */
+        static const char bash_path[] = "/usr/local/bin/bash";
+        if (!vfs_lookup(bash_path)) { ERR("bash: %s não existe (tools/stage-bash.ps1 instala)", bash_path); return; }
+        char args[200];
+        const char *rest = raw;
+        while (*rest == ' ') rest++;
+        while (*rest && *rest != ' ') rest++;
+        while (*rest == ' ') rest++;
+        snprintf(args, sizeof args, "--noediting +m %s", rest[0] ? rest : "-i");
+        int pid = proc_spawn_tty(bash_path, args);
+        if (pid < 0) { ERR("bash: não foi possível iniciar %s", bash_path); return; }
+        t->tty_pid = pid;
+        t->tty_partial[0] = 0;
+        put(t, RGB(150, 150, 150), "[bash do Homebrew, pid %d — exit ou Ctrl+D volta ao msh; Ctrl+C interrompe]", pid);
     } else if (!strcmp(c, "kill")) {
         if (argc < 2) { ERR("uso: kill <pid>"); return; }
         if (!proc_kill(atoi(argv[1]))) ERR("kill: processo %s não encontrado", argv[1]); else OUT("processo %s encerrado", argv[1]);
@@ -570,6 +588,21 @@ static void tick_tty(term_t *t) {
     char buf[1024];
     usize n;
     while ((n = proc_tty_read(t->tty_pid, buf, sizeof buf - 1)) > 0) {
+        /* sem emulação de terminal: tira \r, sequências ESC (CSI/OSC) e aplica o backspace */
+        usize o = 0;
+        for (usize i = 0; i < n; i++) {
+            unsigned char ch = (unsigned char)buf[i];
+            if (ch == 0x1B) {
+                if (i + 1 < n && buf[i + 1] == '[') { i += 2; while (i < n && !((unsigned char)buf[i] >= 0x40 && (unsigned char)buf[i] <= 0x7E)) i++; }
+                else if (i + 1 < n && buf[i + 1] == ']') { i += 2; while (i < n && buf[i] != 7 && !(buf[i] == 0x1B && i + 1 < n && buf[i + 1] == '\\')) i++; if (i < n && buf[i] == 0x1B) i++; }
+                else i++;
+                continue;
+            }
+            if (ch == '\r' || ch == 7) continue;
+            if (ch == 8) { if (o) o--; continue; }
+            buf[o++] = (char)ch;
+        }
+        n = o;
         buf[n] = 0;
         char *p = buf;
         for (;;) {
@@ -585,7 +618,7 @@ static void tick_tty(term_t *t) {
     }
     if (!proc_alive(t->tty_pid)) {
         if (t->tty_partial[0]) put(t, 0, "%s", t->tty_partial);
-        put(t, RGB(150, 150, 150), "[sh terminou (código %d)]", proc_exit_code(t->tty_pid));
+        put(t, RGB(150, 150, 150), "[sessão terminou (código %d)]", proc_exit_code(t->tty_pid));
         t->tty_pid = 0;
         t->tty_partial[0] = 0;
         if (t->win) wm_invalidate(t->win);

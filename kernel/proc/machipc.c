@@ -755,6 +755,12 @@ static u32 deliver(mspace_t *sp, kport_t *rcv, kmsg_t *m, u8 *ubuf, u32 cap, u32
     }
     wr32(d, H_SIZE, m->size);                    /* msgh_size: só header+corpo, sem o trailer (como no XNU) */
     write_trailer(d, body, m->seqno, m->sender_pid, trailer);
+    /* 'mrzv' / 'MRZV': pedido e resposta do MachPortRendezvous. Sem as portas o helper sai com exit(0). */
+    {
+        u32 id = rd32(d, H_ID);
+        if (id == 0x6d727a76u || id == 0x4d525a56u)
+            kprintf("mach: rendezvous id 0x%x de pid %d, %u porta(s), %u bytes\n", id, m->sender_pid, m->nitems, m->size);
+    }
     if (!uvm_copy_out(p, (u64)ubuf, d, need)) { kmsg_free(m); return RCV_INVALID_DATA; }
     kmsg_free(m);
     return KERN_SUCCESS;

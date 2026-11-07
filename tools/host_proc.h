@@ -4,7 +4,7 @@
 
 #define USER_BASE       0x0000400000000000ULL
 #define USER_STACK_TOP  (USER_BASE + 0x40000000ULL)
-#define USER_STACK_SIZE (256u << 10)
+#define USER_STACK_SIZE (2048u << 10)
 
 typedef struct process {
     char path[128];
@@ -12,6 +12,10 @@ typedef struct process {
     u64 mem_pages;
     u64 mmap_next;          /* região de mmap (o dlopen põe as imagens novas aqui) */
     void *dyld;             /* grafo de imagens do carregador (macho.c) */
+    char **spawn_argv;
+    int spawn_argc;
+    char **spawn_env;
+    int spawn_envc;
 } process_t;
 
 #define USER_END        0x0000408000000000ULL

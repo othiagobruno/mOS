@@ -1017,7 +1017,7 @@ static int link_add(link_t *K, const char *path, const u8 *file, usize flen, boo
     for (int i = 0; i < I->mo.ndylibs; i++) {
         const char *dn = I->mo.dylibs[i];
         I->dep[i] = -1;
-        if (dn[0] == '@') {
+        if (dn[0] == '@' && dn[1] != '@') {          /* "@@HOMEBREW_...@@" é tratado abaixo */
             int d = link_dep(K, I, dn);
             if (d == -2) return -1;
             if (d >= 0) { I->dep[i] = (i16)d; continue; }
@@ -1027,7 +1027,29 @@ static int link_add(link_t *K, const char *path, const u8 *file, usize flen, boo
             snprintf(K->err, K->errlen, "%s não está dentro do app (pedido por %s)", s, nm);
             return -1;
         }
-        if (I->mo.dylib_weak[i] || libsystem_dylib_ok(dn)) continue;
+        if (libsystem_dylib_ok(dn)) continue;
+        {   /* dylib com caminho absoluto fora do sistema (ex.: /usr/local/opt/readline/lib, do Homebrew):
+             * carrega do disco. Bottles ainda não relocados trazem @@HOMEBREW_PREFIX@@ / @@HOMEBREW_CELLAR@@. */
+            char cand[384];
+            if (!strncmp(dn, "@@HOMEBREW_PREFIX@@", 19)) snprintf(cand, sizeof cand, "/usr/local%s", dn + 19);
+            else if (!strncmp(dn, "@@HOMEBREW_CELLAR@@", 19)) snprintf(cand, sizeof cand, "/usr/local/Cellar%s", dn + 19);
+            else snprintf(cand, sizeof cand, "%s", dn);
+            if (cand[0] == '/') {
+                const u8 *data;
+                usize len;
+                int d = locate(K, cand, sizeof cand, &data, &len);
+                if (d < 0 && !data && !strcmp(cand, "/usr/lib/libncurses.5.4.dylib")) {
+                    /* o ncurses do sistema não existe no mOS: o readline do Homebrew usa o ncursesw dele
+                     * (mesma API; uma cópia só, para o estado do terminal ser um só) */
+                    snprintf(cand, sizeof cand, "/usr/local/opt/ncurses/lib/libncursesw.6.dylib");
+                    d = locate(K, cand, sizeof cand, &data, &len);
+                }
+                if (d < 0 && data) d = link_add(K, cand, data, len, true);
+                if (d == -1 && data) return -1;
+                if (d >= 0) { I->dep[i] = (i16)d; continue; }
+            }
+        }
+        if (I->mo.dylib_weak[i]) continue;
         note_absent(K, dn);
     }
     return I->idx;
@@ -1581,28 +1603,56 @@ bool macho_load(process_t *p, const u8 *img, usize len, const char *arg, u64 *en
     /* pilha: strings + vetores + bloco de partida */
     u64 slo = USER_STACK_TOP - USER_STACK_SIZE;
     if (!uvm_map(p, slo, USER_STACK_SIZE)) { snprintf(err, errlen, "sem memória para a pilha"); link_free(K); return false; }
-    ustack_t st = {kmalloc(32768), 32768, 0, USER_STACK_TOP};
-    char *argstore = kmalloc(4096);
-    char **av = kmalloc(sizeof(char *) * 64);
+    ustack_t st = {NULL, 0, 0, USER_STACK_TOP};
+    /* o Electron passa dezenas de KB de argv (a chave ",r," da memória compartilhada) e o
+     * ambiente do LaunchOptions. O caminho curto (arg string) continua para o shell. */
+    bool full = p->spawn_argc > 0 && p->spawn_argv;
+    usize scap = full || p->spawn_envc > 0 ? (800u << 10) : 32768;
+    st.buf = kmalloc(scap);
+    st.cap = scap;
+    st.used = 0;
+    char *argstore = full ? NULL : kmalloc(4096);
+    char **av = full ? NULL : kmalloc(sizeof(char *) * 64);
     u64 *tmp = kmalloc(sizeof(u64) * 3 * MAX_OBJC);
-    if (!st.buf || !argstore || !av || !tmp) {
+    if (!st.buf || !tmp || (!full && (!argstore || !av))) {
         kfree(st.buf); kfree(argstore); kfree(av); kfree(tmp);
         snprintf(err, errlen, "sem memória");
         link_free(K);
         return false;
     }
     int argc = 1;
-    av[0] = p->path;
-    argc += split_args(arg, av + 1, 62, argstore, 4096);
-    u64 uargv[64], uenv[8], uapple[2];
-    for (int i = 0; i < argc; i++) uargv[i] = us_push(&st, av[i], strlen(av[i]) + 1, 1);
+    if (full) argc = p->spawn_argc;
+    else { av[0] = p->path; argc += split_args(arg, av + 1, 62, argstore, 4096); }
+    u64 *uargv = kmalloc(sizeof(u64) * (usize)(argc > 0 ? argc : 1));
+    int envc = p->spawn_envc > 0 && p->spawn_env ? p->spawn_envc : 8;
+    u64 *uenv = kmalloc(sizeof(u64) * (usize)envc);
+    u64 uapple[2];
+    bool args_ok = uargv && uenv;
+    for (int i = 0; args_ok && i < argc; i++) {
+        const char *s = full ? p->spawn_argv[i] : av[i];
+        if (!s) s = "";
+        uargv[i] = us_push(&st, s, strlen(s) + 1, 1);
+        if (!uargv[i]) args_ok = false;
+    }
     char pwd[272];
     snprintf(pwd, sizeof pwd, "PWD=%s", next_cwd);
     macho_set_cwd(NULL);
     const char *envs[] = {"HOME=/Users/Visitante", "USER=visitante", "LOGNAME=visitante",
-                          "PATH=/Sistema/Programas:/usr/bin:/bin", "TERM=dumb", "LANG=pt_BR.UTF-8",
+                          "PATH=/usr/local/bin:/Sistema/Programas:/usr/bin:/bin", p->tty ? "TERM=xterm-256color" : "TERM=dumb",   /* sessão do Terminal: isatty(0..2) verdadeiro */
+                          "LANG=pt_BR.UTF-8",
                           pwd, "SHELL=/bin/msh"};
-    for (u32 i = 0; i < ARRAY_LEN(envs); i++) uenv[i] = us_push(&st, envs[i], strlen(envs[i]) + 1, 1);
+    if (p->spawn_envc > 0 && p->spawn_env) {
+        for (int i = 0; args_ok && i < envc; i++) {
+            const char *s = p->spawn_env[i] ? p->spawn_env[i] : "";
+            uenv[i] = us_push(&st, s, strlen(s) + 1, 1);
+            if (!uenv[i]) args_ok = false;
+        }
+    } else {
+        for (u32 i = 0; args_ok && i < ARRAY_LEN(envs); i++) {
+            uenv[i] = us_push(&st, envs[i], strlen(envs[i]) + 1, 1);
+            if (!uenv[i]) args_ok = false;
+        }
+    }
     char ep[200];
     snprintf(ep, sizeof ep, "executable_path=%s", p->path);
     uapple[0] = us_push(&st, ep, strlen(ep) + 1, 1);
@@ -1611,12 +1661,15 @@ bool macho_load(process_t *p, const u8 *img, usize len, const char *arg, u64 *en
     us_push(&st, &z, 8, 16);
     us_push(&st, uapple, sizeof uapple, 8);
     u64 apple_va = st.top - st.used;
-    us_push(&st, &z, 8, 8);
-    us_push(&st, uenv, sizeof(u64) * ARRAY_LEN(envs), 8);
-    u64 env_va = st.top - st.used;
-    us_push(&st, &z, 8, 8);
-    us_push(&st, uargv, sizeof(u64) * (usize)argc, 8);
-    u64 argv_va = st.top - st.used;
+    u64 env_va = 0, argv_va = 0;
+    if (args_ok) {
+        us_push(&st, &z, 8, 8);
+        us_push(&st, uenv, sizeof(u64) * (usize)envc, 8);
+        env_va = st.top - st.used;
+        us_push(&st, &z, 8, 8);
+        us_push(&st, uargv, sizeof(u64) * (usize)argc, 8);
+        argv_va = st.top - st.used;
+    }
     u64 main_va = 0;
     for (int i = 0; i < mo->nsegs; i++)
         if (!strcmp(mo->segs[i].name, "__TEXT")) main_va = mo->segs[i].vmaddr + (u64)I0->slide - mo->segs[i].fileoff + mo->entryoff;
@@ -1641,10 +1694,12 @@ bool macho_load(process_t *p, const u8 *img, usize len, const char *arg, u64 *en
     us_push(&st, &ret0, 8, 16);                         /* rsp = 16n: "endereço de retorno" falso */
     u64 rsp = st.top - st.used - 8;                     /* entra em cx_start com rsp = 16n - 8 */
     us_push(&st, &ret0, 8, 8);
-    ok = blk_va && main_va && uvm_copy_out(p, st.top - st.used, st.buf + (st.cap - st.used), st.used);
+    ok = args_ok && blk_va && main_va && uvm_copy_out(p, st.top - st.used, st.buf + (st.cap - st.used), st.used);
     kfree(st.buf);
     kfree(argstore);
     kfree(av);
+    kfree(uargv);
+    kfree(uenv);
     kfree(tmp);
     (void)objc_off;                                     /* na partida as seções ObjC vão pela pilha */
     if (!ok) { link_free(K); snprintf(err, errlen, "falha ao montar a pilha"); return false; }

@@ -106,6 +106,42 @@ void _start(const char *arg) {
     if (sf == 0) { signal(MOS_SIGSEGV, on_segv); *(volatile int *)0x100000 = 1; exit(5); }
     CHECK(wait(sf) == 77, "SIGSEGV entregue ao tratador do programa");
 
+    /* execve + waitpid POSIX (base do bash e do Homebrew) */
+    {
+        int st = -1;
+        int ex = fork();
+        if (ex == 0) {
+            char *av[] = {"filho", "via execve", 0};
+            mos_spawn_vec_t v = {(u64)av, 0, 0, 0, 0};
+            sys3(SYS_EXECVE, (u64)"/Sistema/Programas/filho", (u64)&v, 0);
+            exit(99);                                               /* só chega aqui se o execve falhar */
+        }
+        int wp = (int)sys3(SYS_WAITPID, (u64)ex, (u64)&st, 0);
+        CHECK(ex > 0 && wp == ex && st == (42 << 8), "fork + execve + waitpid (status 0x%x)", (i64)st);
+        int sl = fork();
+        if (sl == 0) { sleep_ms(50); exit(3); }
+        int nh = (int)sys3(SYS_WAITPID, (u64)sl, (u64)&st, MOS_WNOHANG);
+        int w2 = (int)sys3(SYS_WAITPID, (u64)-1, (u64)&st, 0);
+        CHECK(nh == 0 && w2 == sl && st == (3 << 8), "waitpid WNOHANG e pid -1 (status 0x%x)", (i64)st);
+        CHECK(sys3(SYS_WAITPID, (u64)-1, (u64)&st, MOS_WNOHANG) == -MOS_ECHILD, "waitpid sem filhos: ECHILD");
+        static const char sh[] = "#!/Sistema/Programas/filho -x\n";
+        write_file("/tmp-exec.sh", sh, sizeof sh - 1);
+        static const char ln[] = "#mOS-link:tmp-exec.sh";
+        write_file("/tmp-exec-link", ln, sizeof ln - 1);
+        int sb = fork();
+        if (sb == 0) {
+            char *av[] = {"tmp-exec-link", "a1", 0};
+            mos_spawn_vec_t v = {(u64)av, 0, 0, 0, 0};
+            sys3(SYS_EXECVE, (u64)"/tmp-exec-link", (u64)&v, 0);
+            exit(99);
+        }
+        int w3 = (int)sys3(SYS_WAITPID, (u64)sb, (u64)&st, 0);
+        CHECK(w3 == sb && st == (42 << 8), "execve segue link e #! (status 0x%x)", (i64)st);
+        char *bad[] = {"x", 0};
+        mos_spawn_vec_t bv = {(u64)bad, 0, 0, 0, 0};
+        CHECK(sys3(SYS_EXECVE, (u64)"/nao/existe", (u64)&bv, 0) == -MOS_ENOENT, "execve de arquivo ausente volta ENOENT");
+    }
+
     /* processos filhos: código de saída, falha isolada, preempção */
     int c = spawn("filho", "olá do pai");
     CHECK(c > 0 && wait(c) == 42, "filho termina com código 42");
@@ -119,6 +155,11 @@ void _start(const char *arg) {
     int inf = spawn("spin", "0");                      /* nunca termina sozinho */
     sleep_ms(50);
     CHECK(kill(inf) == 0 && wait(inf) == -9, "kill encerra um processo em laço");
+
+    if (file_size("/Sistema/Programas/posixteste") > 0) {   /* Mach-O pelo libSystem (userland/tests-posix) */
+        int pt = spawn("posixteste", 0);
+        CHECK(pt > 0 && wait(pt) == 0, "posixteste (Mach-O): fork/exec/wait, dup2, links e #!");
+    }
 
     print(fails ? "teste: %d FALHA(S)\n" : "teste: TODOS OS TESTES OK\n", (i64)fails);
     exit(fails);

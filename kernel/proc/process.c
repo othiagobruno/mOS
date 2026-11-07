@@ -86,8 +86,10 @@ static process_t *find(int pid);
 int proc_spawn_tty(const char *path, const char *arg) {
     tty_t *t = kcalloc(1, sizeof *t);
     if (!t) return -1;
-    extern int proc_spawn_in(const char *path, const char *arg, tty_t *tty);
-    int pid = proc_spawn_in(path, arg, t);
+    extern int proc_spawn_in(const char *path, const char *arg, tty_t *tty,
+                             char **xargv, int xargc, char **xenv, int xenvc,
+                             mos_spawn_fa_t *acts, int nacts, unsigned spawn_flags);
+    int pid = proc_spawn_in(path, arg, t, NULL, 0, NULL, 0, NULL, 0, 0);
     if (pid < 0) kfree(t);
     return pid;
 }
@@ -341,11 +343,13 @@ __attribute__((weak)) i64 macho_dyld_syscall(process_t *p, u64 op, u64 a, u64 b,
 static void free_address_space(process_t *p) {
     if (p->dyld) { macho_dyld_free(p->dyld); p->dyld = NULL; }
     if (!p->pml4) return;
-    int i = (USER_BASE >> 39) & 511;
-    if (p->pml4[i] & PTE_P) {
+    for (int k = 0; k < USER_PML4_SLOTS; k++) {
+        int i = USER_PML4_FIRST + k;
+        if (!(p->pml4[i] & PTE_P)) continue;
         u64 *pdpt = (u64 *)(p->pml4[i] & PTE_ADDR);
         free_level(pdpt, 3);
         pmm_free((u64)pdpt, 1);
+        p->pml4[i] = 0;
     }
     pmm_free((u64)p->pml4, 1);
     p->pml4 = NULL;
@@ -397,6 +401,13 @@ void proc_reap(process_t *p) { (void)p; }
 
 static void fd_close(process_t *p, int fd);
 
+/* código de saída do mOS -> status do wait(2): sinal em 0x7F, saída normal em 0xFF00.
+ * finish() recebe -sinal quando o processo morre por sinal (proc_kill usa -9). */
+static int posix_status(int code) {
+    if (code < 0 && code >= -31) return -code;
+    return (code & 0xFF) << 8;
+}
+
 /* marca o fim do processo e acorda quem espera por ele */
 static void finish(process_t *p, int code) {
     if (p->exited) return;
@@ -416,7 +427,17 @@ static void finish(process_t *p, int code) {
     bool reported = false;
     for (thread_t *t = sched_threads(); t; t = t->next) {
         if (t->state != TH_WAITING) continue;
-        if (t->wait_pid == p->pid) {
+        if (t->wait_posix && !reported && t->proc && t->proc->pid == p->ppid &&
+            (t->wait_pid == p->pid || t->wait_pid == -1)) {
+            int st = posix_status(code);
+            if (t->wait_status) uvm_copy_out(t->proc, t->wait_status, &st, sizeof st);
+            ((int_frame_t *)t->frame)->rax = (u64)p->pid;
+            t->wait_posix = false;
+            t->state = TH_READY;
+            reported = true;
+        } else if (t->wait_posix) {
+            continue;
+        } else if (t->wait_pid == p->pid) {
             ((int_frame_t *)t->frame)->rax = (u64)(i64)code;
             t->state = TH_READY;
             reported = true;
@@ -440,7 +461,9 @@ __attribute__((weak)) bool macho_load(process_t *p, const u8 *img, usize len, co
     return false;
 }
 
-int proc_spawn_in(const char *path, const char *arg, tty_t *tty);
+int proc_spawn_in(const char *path, const char *arg, tty_t *tty,
+                  char **xargv, int xargc, char **xenv, int xenvc,
+                  mos_spawn_fa_t *acts, int nacts, unsigned spawn_flags);
 
 static void spawn_fail(process_t *p) {
     if (p->tty) p->tty->refs--;      /* quem criou a sessão (proc_spawn_tty) a libera */
@@ -450,10 +473,41 @@ static void spawn_fail(process_t *p) {
 /* o filho herda a sessão e a pasta atual de quem o criou */
 int proc_spawn(const char *path, const char *arg) {
     thread_t *cur = thread_current();
-    return proc_spawn_in(path, arg, cur && cur->proc ? cur->proc->tty : NULL);
+    return proc_spawn_in(path, arg, cur && cur->proc ? cur->proc->tty : NULL, NULL, 0, NULL, 0, NULL, 0, 0);
 }
 
-int proc_spawn_in(const char *path, const char *arg, tty_t *tty) {
+static void fd_close(process_t *p, int fd);
+static void fd_copy(process_t *dst, int dfd, process_t *src, int sfd);
+
+/* fds do posix_spawn: sem CLOEXEC_DEFAULT o filho herda os do pai; as ações rodam em seguida.
+ * dup2 lê o fd no filho se uma ação anterior o criou, senão no pai. */
+static void spawn_apply_fds(process_t *child, process_t *parent, mos_spawn_fa_t *acts, int n, unsigned flags) {
+    if (!child) return;
+    if (parent && !(flags & MOS_SPAWN_CLOEXEC_DEFAULT))
+        for (int i = 0; i < 32; i++) if (parent->fds[i].used) fd_copy(child, i, parent, i);
+    for (int i = 0; i < n; i++) {
+        int k = acts[i].kind, a = acts[i].a, b = acts[i].b;
+        if (k == MOS_SPAWN_FA_CLOSE) {
+            if (a >= 0 && a < 32) fd_close(child, a);
+        } else if (k == MOS_SPAWN_FA_DUP2 && a >= 0 && a < 32 && b >= 0 && b < 32) {
+            process_t *src = (child->fds[a].used) ? child : parent;
+            if (src && src->fds[a].used) fd_copy(child, b, src, a);
+        } else if (k == MOS_SPAWN_FA_OPEN && a >= 0 && a < 32 && acts[i].path[0]) {
+            if (child->fds[a].used) fd_close(child, a);
+            memset(&child->fds[a], 0, sizeof child->fds[a]);
+            child->fds[a].used = true;
+            child->fds[a].kind = FD_FILE;
+            child->fds[a].flags = acts[i].flags;
+            strncpy(child->fds[a].path, acts[i].path, sizeof child->fds[a].path - 1);
+        } else if (k == MOS_SPAWN_FA_CHDIR && acts[i].path[0]) {
+            strncpy(child->cwd, acts[i].path, sizeof child->cwd - 1);
+        }
+    }
+}
+
+int proc_spawn_in(const char *path, const char *arg, tty_t *tty,
+                  char **xargv, int xargc, char **xenv, int xenvc,
+                  mos_spawn_fa_t *acts, int nacts, unsigned spawn_flags) {
     vnode_t *v = vfs_lookup(path);
     if (!v || v->dir) {
         char alt[160];                                  /* nome curto: procura em /Sistema/Programas */
@@ -477,7 +531,7 @@ int proc_spawn_in(const char *path, const char *arg, tty_t *tty) {
     p->pml4 = (u64 *)pmm_alloc(1);
     if (!p->pml4) { spawn_fail(p); return -1; }
     memcpy(p->pml4, kernel_pml4, 4096);
-    p->pml4[(USER_BASE >> 39) & 511] = 0;
+    for (int k = 0; k < USER_PML4_SLOTS; k++) p->pml4[USER_PML4_FIRST + k] = 0;
     p->mem_pages = 1;
 
     char err[128];
@@ -486,12 +540,18 @@ int proc_spawn_in(const char *path, const char *arg, tty_t *tty) {
     if (magic == 0xFEEDFACFu || magic == 0xBEBAFECAu || magic == 0xCAFEBABEu) {
         /* Mach-O (kernel/compat/, sessão de compatibilidade): monta pilha e argumentos sozinho */
         u64 usp = 0, rdi = 0;
+        p->spawn_argv = xargv;
+        p->spawn_argc = xargc;
+        p->spawn_env = xenv;
+        p->spawn_envc = xenvc;
         if (!macho_load(p, v->data, v->size, arg, &entry, &usp, &rdi, err, sizeof err)) {
+            p->spawn_argv = NULL; p->spawn_argc = 0; p->spawn_env = NULL; p->spawn_envc = 0;
             kprintf("proc: %s: %s\n", path, err);
             free_address_space(p);
             spawn_fail(p);
             return -1;
         }
+        spawn_apply_fds(p, cur ? cur->proc : NULL, acts, nacts, spawn_flags);
         u64 fl = irq_save();
         p->next = procs;
         procs = p;
@@ -499,8 +559,13 @@ int proc_spawn_in(const char *path, const char *arg, tty_t *tty) {
         p->main = uthread_create(p, entry, usp, rdi);
         p->nthreads = p->main ? 1 : 0;
         irq_restore(fl);
-        if (!p->main) { finish(p, -1); return -1; }
+        if (!p->main) {
+            p->spawn_argv = NULL; p->spawn_argc = 0; p->spawn_env = NULL; p->spawn_envc = 0;
+            finish(p, -1); return -1;
+        }
+        p->spawn_argv = NULL; p->spawn_argc = 0; p->spawn_env = NULL; p->spawn_envc = 0;
         kprintf("proc: iniciado %s (Mach-O, pid %d, %llu KiB)\n", p->name, p->pid, p->mem_pages * 4);
+        if (xargc || xenvc) kprintf("proc: %s pid %d recebeu %d argumentos e %d variáveis de ambiente\n", p->name, p->pid, xargc, xenvc);
         return p->pid;
     }
     if (!elf_load(p, v->data, v->size, &entry, err, sizeof err)) {
@@ -526,6 +591,7 @@ int proc_spawn_in(const char *path, const char *arg, tty_t *tty) {
     u64 zero = 0;
     uvm_copy_out(p, sp, &zero, 8);
 
+    spawn_apply_fds(p, cur ? cur->proc : NULL, acts, nacts, spawn_flags);
     u64 fl = irq_save();
     p->next = procs;
     procs = p;
@@ -604,42 +670,39 @@ u64 proc_fault(int_frame_t *f, u64 cr2) {
     char msg[160];
     if (f->vector == 14) snprintf(msg, sizeof msg, "%s (pid %d): %s em 0x%llx, endereço 0x%llx — processo encerrado\n",
                                   p->name, p->pid, fault_name(f->vector), f->rip, cr2);
-    else snprintf(msg, sizeof msg, "%s (pid %d): %s em 0x%llx — processo encerrado\n", p->name, p->pid, fault_name(f->vector), f->rip);
+    else snprintf(msg, sizeof msg, "%s (pid %d): %s (vetor %llu) em 0x%llx — processo encerrado\n",
+                  p->name, p->pid, fault_name(f->vector), (unsigned long long)f->vector, f->rip);
     kprintf("proc: %s", msg);
     /* diagnóstico: thread e registradores principais (no log serial) */
     thread_t *ft = thread_current();
     kprintf("proc:   thread %d, rsp 0x%llx, rax 0x%llx, rbx 0x%llx, rdi 0x%llx, rsi 0x%llx\n",
             ft ? ft->id : -1, f->rsp, f->rax, f->rbx, f->rdi, f->rsi);
-    {   /* endereços de código na pilha do usuário (prováveis endereços de retorno) */
-        u64 words[96];
-        if (uvm_copy_in(p, words, f->rsp & ~7ULL, sizeof words)) {
-            char line[200];
-            usize o = 0;
-            int shown = 0;
-            for (int i = 0; i < 96 && shown < 16; i++) {
-                u64 v = words[i];
-                if (v < USER_BASE + 0x100000ULL || v >= USER_BASE + 0x0E000000ULL) continue;
+    {   /* endereços de código na pilha do usuário (prováveis endereços de retorno).
+         * Uma palavra por vez: o topo da pilha pode estar na última página mapeada. */
+        char line[200];
+        usize o = 0;
+        int shown = 0, strs = 0;
+        u64 spw = f->rsp & ~7ULL;
+        for (int i = 0; i < 96 && (shown < 16 || strs < 8); i++) {
+            u64 v = 0;
+            if (!uvm_copy_in(p, &v, spw + (u64)i * 8, 8)) break;
+            if (shown < 16 && v >= USER_BASE + 0x100000ULL && v < USER_BASE + 0x0E000000ULL) {
                 o += (usize)snprintf(line + o, sizeof line - o, " %llx", v);
                 shown++;
                 if (o > 150) { kprintf("proc:   pilha:%s\n", line); o = 0; }
             }
-            if (o) kprintf("proc:   pilha:%s\n", line);
-            /* textos para onde a pilha aponta (no runtime ObjC do mOS um SEL é um char*): acha o
-             * seletor/classe de um CHECK do Chromium (ex.: swizzling que não achou o método) */
-            int strs = 0;
-            for (int i = 0; i < 96 && strs < 12; i++) {
-                u64 v = words[i];
-                if (v < USER_BASE || v >= USER_BASE + 0x8000000000ULL) continue;
+            if (strs < 8 && v >= USER_BASE && v < USER_END) {
                 char s[49];
                 if (!uvm_copy_in(p, s, v, 48)) continue;
                 s[48] = 0;
                 int k = 0;
                 while (k < 48 && s[k] >= 0x20 && s[k] < 0x7F) k++;
-                if (k < 4 || (k < 48 && s[k] != 0)) continue;   /* só texto ASCII terminado (ou longo) */
+                if (k < 4 || (k < 48 && s[k] != 0)) continue;
                 kprintf("proc:   texto [rsp+%d] %llx: \"%s\"\n", i * 8, v, s);
                 strs++;
             }
         }
+        if (o) kprintf("proc:   pilha:%s\n", line);
     }
     console_put(msg, strlen(msg));
     finish(p, -(int)(f->vector == 14 ? 11 : 4 + f->vector));
@@ -903,6 +966,236 @@ static i64 sys_write(process_t *p, int fd, u64 buf, u64 len) {
     return (i64)done;
 }
 
+static void free_vec(char **v, int n) {
+    if (!v) return;
+    for (int i = 0; i < n; i++) kfree(v[i]);
+    kfree(v);
+}
+
+/* copia um vetor NULL-terminado de strings (argv ou envp) do processo pai.
+ * Cada string cabe em 64 KiB; o conjunto, em 384 KiB. O Electron passa bem mais
+ * que os 256 bytes do SYS_SPAWN antigo. */
+static char **copy_user_vec(process_t *parent, u64 uvec, int *out_n) {
+    enum { MAXN = 384, STR = 65536, BUDGET = 384 << 10 };
+    char **v = kcalloc(MAXN, sizeof(char *));
+    if (!v) return NULL;
+    int n = 0;
+    usize used = 0;
+    for (;;) {
+        u64 ptr = 0;
+        if (!uvm_copy_in(parent, &ptr, uvec + (u64)n * 8, 8)) { free_vec(v, n); return NULL; }
+        if (!ptr) break;
+        if (n >= MAXN - 1) { kprintf("proc: spawn: argumentos demais\n"); free_vec(v, n); return NULL; }
+        char *s = kmalloc(STR);
+        if (!s) { free_vec(v, n); return NULL; }
+        if (!copy_str_in(parent, s, ptr, STR) || strlen(s) == STR - 1) {
+            kprintf("proc: spawn: argumento longo demais\n");
+            kfree(s); free_vec(v, n); return NULL;
+        }
+        usize len = strlen(s);
+        if (used + len + 1 > BUDGET) { kprintf("proc: spawn: linha de comando grande demais\n"); kfree(s); free_vec(v, n); return NULL; }
+        used += len + 1;
+        v[n++] = s;
+    }
+    *out_n = n;
+    return v;
+}
+
+/* ------------------------------------------------------------ execve */
+#define LINK_MAGIC "#mOS-link:"          /* links simbólicos do libSystem (userland/libsystem/sockets.c) */
+
+/* segue os links do libSystem: o alvo relativo vale a partir da pasta do link */
+static vnode_t *exec_follow(char *path, usize cap) {
+    for (int hop = 0; hop < 8; hop++) {
+        vnode_t *v = vfs_lookup(path);
+        usize ml = sizeof LINK_MAGIC - 1;
+        if (!v || v->dir || v->size <= ml || memcmp(v->data, LINK_MAGIC, ml)) return v;
+        char tgt[256];
+        usize n = v->size - ml;
+        if (n >= sizeof tgt) return NULL;
+        memcpy(tgt, v->data + ml, n);
+        tgt[n] = 0;
+        while (n && (tgt[n - 1] == '\n' || tgt[n - 1] == '\r')) tgt[--n] = 0;
+        if (tgt[0] == '/') { strncpy(path, tgt, cap - 1); path[cap - 1] = 0; }
+        else {
+            char dir[256];
+            strncpy(dir, path, sizeof dir - 1); dir[sizeof dir - 1] = 0;
+            char *sl = strrchr(dir, '/');
+            if (sl) *sl = 0;
+            snprintf(path, cap, "%s/%s", dir, tgt);
+        }
+    }
+    return NULL;                                   /* ELOOP */
+}
+
+/* acrescenta argumentos na frente do argv (shebang): devolve o vetor novo, libera o antigo */
+static char **vec_prepend(char **v, int *n, const char *x0, const char *x1, const char *x2) {
+    const char *xs[3] = {x0, x1, x2};
+    int k = 0;
+    for (int i = 0; i < 3; i++) if (xs[i]) k++;
+    int skip = *n > 0 ? 1 : 0;                     /* o argv[0] antigo dá lugar ao caminho do script */
+    char **nv = kcalloc((usize)(*n - skip + k + 1), sizeof(char *));
+    if (!nv) return NULL;
+    int o = 0;
+    for (int i = 0; i < 3; i++) if (xs[i]) {
+        usize l = strlen(xs[i]) + 1;
+        nv[o] = kmalloc(l);
+        if (!nv[o]) { free_vec(nv, o); return NULL; }
+        memcpy(nv[o++], xs[i], l);
+    }
+    for (int i = skip; i < *n; i++) nv[o++] = v[i];
+    if (skip && v) kfree(v[0]);
+    kfree(v);
+    *n = o;
+    return nv;
+}
+
+/* resolve o programa: links, nome curto em /Sistema/Programas e "#!interpretador [arg]".
+ * Pode trocar path e argv. Devolve o vnode da imagem binária final. */
+static vnode_t *exec_resolve(char *path, usize cap, char ***argv, int *argc) {
+    for (int depth = 0; depth < 4; depth++) {
+        vnode_t *v = exec_follow(path, cap);
+        if ((!v || v->dir) && path[0] != '/') {
+            char alt[256];
+            snprintf(alt, sizeof alt, "/Sistema/Programas/%s", path);
+            strncpy(path, alt, cap - 1);
+            v = exec_follow(path, cap);
+        }
+        if (!v || v->dir || !v->data || v->size < 4) return NULL;
+        if (v->data[0] != '#' || v->data[1] != '!') return v;
+        char line[256];
+        usize i = 2, o = 0;
+        while (i < v->size && (v->data[i] == ' ' || v->data[i] == '\t')) i++;
+        while (i < v->size && v->data[i] != '\n' && o < sizeof line - 1) line[o++] = (char)v->data[i++];
+        while (o && (line[o - 1] == '\r' || line[o - 1] == ' ' || line[o - 1] == '\t')) o--;
+        line[o] = 0;
+        char *interp = line, *opt = NULL;
+        for (char *s = line; *s; s++) if (*s == ' ' || *s == '\t') {
+            *s++ = 0;
+            while (*s == ' ' || *s == '\t') s++;
+            if (*s) opt = s;
+            break;
+        }
+        if (!interp[0]) return NULL;
+        char script[256];
+        strncpy(script, path, sizeof script - 1); script[sizeof script - 1] = 0;
+        char **nv = vec_prepend(*argv, argc, interp, opt, script);
+        if (!nv) return NULL;
+        *argv = nv;
+        strncpy(path, interp, cap - 1); path[cap - 1] = 0;
+    }
+    return NULL;
+}
+
+/* troca a imagem do processo atual. A imagem nova é montada num processo provisório; só depois
+ * de carregada com sucesso o espaço de endereçamento antigo é descartado (falha = execve volta erro). */
+static i64 proc_exec(int_frame_t *f, thread_t *t, process_t *p, char *path, char **argv, int argc, char **env, int envc) {
+    vnode_t *v = exec_resolve(path, 256, &argv, &argc);
+    if (!v) { free_vec(argv, argc); free_vec(env, envc); return -MOS_ENOENT; }
+    process_t *np = kcalloc(1, sizeof *np);
+    if (!np) { free_vec(argv, argc); free_vec(env, envc); return -MOS_ENOMEM; }
+    np->pid = p->pid;
+    np->ppid = p->ppid;
+    memcpy(np->cwd, p->cwd, sizeof np->cwd);
+    const char *base = strrchr(path, '/');
+    strncpy(np->name, base ? base + 1 : path, sizeof np->name - 1);
+    strncpy(np->path, path, sizeof np->path - 1);
+    np->pml4 = (u64 *)pmm_alloc(1);
+    if (!np->pml4) { kfree(np); free_vec(argv, argc); free_vec(env, envc); return -MOS_ENOMEM; }
+    memcpy(np->pml4, kernel_pml4, 4096);
+    for (int k = 0; k < USER_PML4_SLOTS; k++) np->pml4[USER_PML4_FIRST + k] = 0;
+    np->mem_pages = 1;
+
+    char err[128];
+    u64 entry = 0, usp = 0, rdi = 0;
+    bool ok;
+    u32 magic = le32_(v->data);
+    if (magic == 0xFEEDFACFu || magic == 0xBEBAFECAu || magic == 0xCAFEBABEu) {
+        np->spawn_argv = argv; np->spawn_argc = argc;
+        np->spawn_env = env;   np->spawn_envc = envc;
+        ok = macho_load(np, v->data, v->size, NULL, &entry, &usp, &rdi, err, sizeof err);
+        np->spawn_argv = NULL; np->spawn_env = NULL; np->spawn_argc = np->spawn_envc = 0;
+    } else {
+        /* programa nativo (ELF): recebe os argumentos numa string só, como no SYS_SPAWN */
+        ok = elf_load(np, v->data, v->size, &entry, err, sizeof err);
+        u64 lo = USER_STACK_TOP - USER_STACK_SIZE;
+        if (ok && !uvm_map(np, lo, USER_STACK_SIZE)) { ok = false; snprintf(err, sizeof err, "sem memória para a pilha"); }
+        if (ok) {
+            char arg[1024]; usize o = 0;
+            for (int i = 1; i < argc && o < sizeof arg - 1; i++)
+                o += (usize)snprintf(arg + o, sizeof arg - o, "%s%s", i > 1 ? " " : "", argv[i]);
+            arg[o < sizeof arg ? o : sizeof arg - 1] = 0;
+            u64 sp = USER_STACK_TOP;
+            rdi = 0;
+            if (argc > 1) {
+                usize n = strlen(arg) + 1;
+                sp -= (n + 15) & ~15ULL;
+                uvm_copy_out(np, sp, arg, n);
+                rdi = sp;
+            }
+            sp = (sp & ~15ULL) - 8;
+            u64 zero = 0;
+            uvm_copy_out(np, sp, &zero, 8);
+            usp = sp;
+        }
+    }
+    free_vec(argv, argc);
+    free_vec(env, envc);
+    if (!ok) {
+        kprintf("proc: execve %s: %s\n", path, err);
+        free_address_space(np);
+        kfree(np);
+        return -MOS_ENOENT;
+    }
+
+    /* ponto sem volta: as outras threads morrem, a memória antiga sai */
+    u64 fl = irq_save();
+    for (thread_t *o = sched_threads(); o; o = o->next)
+        if (o->proc == p && o != t) {
+            if (p->tty && p->tty->reader == o) p->tty->reader = NULL;
+            o->state = TH_DEAD;
+        }
+    p->main = t;
+    compat_gui_proc_exit(p);
+    { extern void lazy_exit(process_t *p); lazy_exit(p); }
+    process_t old = {0};
+    old.pml4 = p->pml4;
+    old.dyld = p->dyld;
+    p->pml4 = np->pml4;
+    p->dyld = np->dyld;
+    p->brk = np->brk; p->brk_start = np->brk_start;
+    p->mmap_next = np->mmap_next;
+    p->mem_pages = np->mem_pages;
+    memcpy(p->name, np->name, sizeof p->name);
+    memcpy(p->path, np->path, sizeof p->path);
+    __asm__ volatile("mov %0, %%cr3" :: "r"((u64)p->pml4) : "memory");
+    free_address_space(&old);
+    kfree(np);
+    for (int i = 0; i < 32; i++)                       /* O_CLOEXEC fecha; o resto passa para a imagem nova */
+        if (p->fds[i].used && (p->fds[i].flags & MOS_O_CLOEXEC)) fd_close(p, i);
+    for (int s = 0; s < 32; s++)                       /* tratadores somem; "ignorar" continua */
+        if (p->sig_handler[s] > MOS_SIG_IGN) p->sig_handler[s] = 0;
+    p->sig_restorer = 0;
+    p->sig_pending = 0;
+    t->gs_base = 0;
+    __asm__ volatile("wrmsr" :: "c"(0xC0000101u), "a"(0u), "d"(0u));   /* GS de usuário: o dyld novo monta o TLS */
+    irq_restore(fl);
+
+    u64 cs = f->cs, ss = f->ss;
+    memset(f, 0, sizeof *f);
+    f->cs = cs; f->ss = ss;
+    f->rflags = 0x202;
+    f->rip = entry;
+    f->rsp = usp;
+    f->rdi = rdi;
+    u8 *fx = (u8 *)(((u64)f - 512) & ~15ULL);          /* FPU/SSE limpos, como numa thread nova */
+    memset(fx, 0, 512);
+    fx[0] = 0x7F; fx[1] = 0x03;
+    fx[24] = 0x80; fx[25] = 0x1F;
+    kprintf("proc: execve pid %d -> %s (%llu KiB)\n", p->pid, p->name, p->mem_pages * 4);
+    return 0;
+}
+
 u64 proc_syscall(int_frame_t *f) {
     thread_t *t = thread_current();
     process_t *p = t->proc;
@@ -984,6 +1277,65 @@ u64 proc_syscall(int_frame_t *f) {
         r = proc_spawn(path, b ? arg : NULL);
         if (r < 0) r = -MOS_ENOENT;
         break;
+    }
+    case SYS_SPAWNVEC: {
+        mos_spawn_vec_t v;
+        if (!copy_str_in(p, path, a, sizeof path) || !uvm_copy_in(p, &v, b, sizeof v)) { r = -MOS_EFAULT; break; }
+        if (strchr(path, '/') && path[0] != '/') { char rel[256]; memcpy(rel, path, sizeof rel); snprintf(path, sizeof path, "%s/%s", p->cwd, rel); }
+        char **argv = NULL; int argc = 0;
+        char **env = NULL; int envc = 0;
+        mos_spawn_fa_t acts[MOS_SPAWN_FA_MAX];
+        int nacts = 0;
+        if (v.argv && !(argv = copy_user_vec(p, v.argv, &argc))) { r = -MOS_EFAULT; break; }
+        if (v.envp && !(env = copy_user_vec(p, v.envp, &envc))) { free_vec(argv, argc); r = -MOS_EFAULT; break; }
+        if (v.nacts && v.acts) {
+            nacts = v.nacts > MOS_SPAWN_FA_MAX ? MOS_SPAWN_FA_MAX : (int)v.nacts;
+            if (!uvm_copy_in(p, acts, v.acts, sizeof(mos_spawn_fa_t) * (usize)nacts)) {
+                free_vec(argv, argc); free_vec(env, envc); r = -MOS_EFAULT; break;
+            }
+        }
+        if (!exec_resolve(path, sizeof path, &argv, &argc)) { free_vec(argv, argc); free_vec(env, envc); r = -MOS_ENOENT; break; }
+        r = proc_spawn_in(path, NULL, p->tty, argv, argc, env, envc, nacts ? acts : NULL, nacts, v.flags);
+        free_vec(argv, argc);
+        free_vec(env, envc);
+        if (r < 0) r = -MOS_ENOENT;
+        break;
+    }
+    case SYS_EXECVE: {
+        mos_spawn_vec_t v;
+        if (!copy_str_in(p, path, a, sizeof path) || !uvm_copy_in(p, &v, b, sizeof v)) { r = -MOS_EFAULT; break; }
+        if (path[0] != '/' && strchr(path, '/')) { char rel[256]; memcpy(rel, path, sizeof rel); snprintf(path, sizeof path, "%s/%s", p->cwd, rel); }
+        char **argv = NULL; int argc = 0;
+        char **env = NULL; int envc = 0;
+        if (v.argv && !(argv = copy_user_vec(p, v.argv, &argc))) { r = -MOS_EFAULT; break; }
+        if (v.envp && !(env = copy_user_vec(p, v.envp, &envc))) { free_vec(argv, argc); r = -MOS_EFAULT; break; }
+        r = proc_exec(f, t, p, path, argv, argc, env, envc);   /* libera argv e env */
+        if (r == 0) return (u64)f;                             /* frame já aponta para a imagem nova */
+        break;
+    }
+    case SYS_WAITPID: {
+        int want = (int)(i64)a;
+        bool any = false;
+        r = 0;
+        for (process_t *q = procs; q; q = q->next) {
+            if (q->ppid != p->pid || (want > 0 && q->pid != want)) continue;
+            any = true;
+            if (q->exited) {
+                int st = posix_status(q->exit_code);
+                if (b) uvm_copy_out(p, b, &st, sizeof st);
+                q->ppid = -1;                              /* recolhido: trim_zombies libera depois */
+                r = q->pid;
+                break;
+            }
+        }
+        if (r > 0) break;
+        if (!any) { r = -MOS_ECHILD; break; }
+        if (c & MOS_WNOHANG) { r = 0; break; }
+        t->wait_pid = want > 0 ? want : -1;
+        t->wait_status = b;
+        t->wait_posix = true;
+        t->state = TH_WAITING;
+        return sched_switch(f);
     }
     case SYS_WAIT: {
         process_t *q = find((int)a);
@@ -1174,6 +1526,9 @@ u64 proc_syscall(int_frame_t *f) {
 
     /* ---- memória e tempo */
     case SYS_MMAP: {
+        /* diagnóstico do porte do VS Code: toda recusa de memória aparece no log serial */
+#define MMAP_NOMEM_LOG() kprintf("mmap ENOMEM: pid %d len 0x%llx b %llu c 0x%llx next 0x%llx\n", p->pid, \
+        (unsigned long long)a, (unsigned long long)b, (unsigned long long)c, (unsigned long long)p->mmap_next)
         /* b = 0: memória anônima zerada; b = 1: só reserva endereços, sem páginas (mmap PROT_NONE: o
          * PartitionAlloc do Chromium reserva gigabytes assim); b = 2: aloca as páginas de [c, c + a)
          * dentro da área já reservada (mprotect para leitura/escrita), mantendo as que já existem */
@@ -1188,6 +1543,7 @@ u64 proc_syscall(int_frame_t *f) {
                 u64 at = c & ~0xFFFULL, end = (c + a + 0xFFF) & ~0xFFFULL;
                 if (!a || at < USER_MMAP_BASE || end > p->mmap_next || end < at) { r = -MOS_EINVAL; break; }
                 r = lazy_add(p, at, end - at) ? 0 : -MOS_ENOMEM;
+                if (r) MMAP_NOMEM_LOG();
                 break;
             }
             /* faixas grandes ficam alinhadas à maior potência de 2 que cabe no tamanho (até 4 GiB): o alocador do
@@ -1195,8 +1551,8 @@ u64 proc_syscall(int_frame_t *f) {
             u64 al = 4096;
             if (len >= (2ull << 20)) { al = 1ull << (63 - __builtin_clzll(len)); if (al > (4ull << 30)) al = 4ull << 30; }
             u64 at = (p->mmap_next + al - 1) & ~(al - 1);
-            if (!len || len > (64ull << 30) || at + len > USER_END) { r = -MOS_ENOMEM; break; }
-            if (!lazy_add(p, at, len)) { r = -MOS_ENOMEM; break; }
+            if (!len || len > (64ull << 30) || at + len > USER_END) { r = -MOS_ENOMEM; MMAP_NOMEM_LOG(); break; }
+            if (!lazy_add(p, at, len)) { r = -MOS_ENOMEM; MMAP_NOMEM_LOG(); break; }
             p->mmap_next = at;
             p->mmap_next += len + 4096;
             r = (i64)at;
@@ -1206,12 +1562,13 @@ u64 proc_syscall(int_frame_t *f) {
             u64 at = c & ~0xFFFULL, end = (c + a + 0xFFF) & ~0xFFFULL;
             if (!a || at < USER_MMAP_BASE || end > p->mmap_next || end < at) { r = -MOS_EINVAL; break; }
             r = uvm_map(p, at, end - at) ? 0 : -MOS_ENOMEM;
+            if (r) MMAP_NOMEM_LOG();
             break;
         }
-        u64 max = b == 1 ? (64ull << 30) : (1ull << 32);
-        if (!len || len > max || p->mmap_next + len > USER_END) { r = -MOS_ENOMEM; break; }
+        u64 max = b == 1 ? (1792ull << 30) : (1ull << 32);
+        if (!len || len > max || p->mmap_next + len > USER_END) { r = -MOS_ENOMEM; MMAP_NOMEM_LOG(); break; }
         u64 at = p->mmap_next;
-        if (b != 1 && !uvm_map(p, at, len)) { r = -MOS_ENOMEM; break; }
+        if (b != 1 && !uvm_map(p, at, len)) { r = -MOS_ENOMEM; MMAP_NOMEM_LOG(); break; }
         p->mmap_next += len + 4096;                         /* página de guarda entre regiões */
         r = (i64)at;
         break;
@@ -1219,13 +1576,23 @@ u64 proc_syscall(int_frame_t *f) {
     case SYS_MUNMAP: {
         if (a < USER_MMAP_BASE || a & 0xFFF || a + b > USER_END) { r = -MOS_EINVAL; break; }
         { extern void lazy_remove(process_t *p, u64 va, u64 len); lazy_remove(p, a, b); }
-        for (u64 va = a; va < a + b; va += 4096) {
-            u64 *e = uvm_pte(p, va);
-            if (!e) continue;
-            page_put(*e & 0x000FFFFFFFFFF000ULL);
+        for (u64 va = a; va < a + b; ) {
+            u64 *e = walk(p, va, false);
+            /* sem tabela de páginas: os 2 MiB inteiros estão vazios (as reservas do V8 têm terabytes) */
+            if (!e) { va = (va + 0x200000) & ~0x1FFFFFULL; continue; }
+            if (*e & PTE_P) {
+                page_put(*e & 0x000FFFFFFFFFF000ULL);
+                p->mem_pages--;
+                __asm__ volatile("invlpg (%0)" :: "r"(va) : "memory");
+            }
             *e = 0;
-            p->mem_pages--;
-            __asm__ volatile("invlpg (%0)" :: "r"(va) : "memory");
+            va += 4096;
+        }
+        /* liberar o topo devolve os endereços: o V8 e o PartitionAlloc reservam, aparam e soltam regiões
+         * de gigabytes em laço, e sem isso o espaço de usuário se esgotava em poucos segundos */
+        {
+            u64 end = (a + b + 0xFFF) & ~0xFFFULL;
+            if (b && a < p->mmap_next && end + 4096 >= p->mmap_next) p->mmap_next = a;
         }
         r = 0;
         break;
@@ -1277,19 +1644,20 @@ u64 proc_syscall(int_frame_t *f) {
         u64 *pml4 = q ? (u64 *)pmm_alloc(1) : NULL;
         if (!pml4) { kfree(q); r = -MOS_ENOMEM; break; }
         memcpy(pml4, kernel_pml4, 4096);
-        int ui = (USER_BASE >> 39) & 511;
-        pml4[ui] = 0;
+        for (int k = 0; k < USER_PML4_SLOTS; k++) pml4[USER_PML4_FIRST + k] = 0;
         q->pml4 = pml4;
         q->mem_pages = 1;
-        if (p->pml4[ui] & PTE_P) {
+        bool fork_ok = true;
+        for (int k = 0; k < USER_PML4_SLOTS && fork_ok; k++) {
+            int ui = USER_PML4_FIRST + k;
+            if (!(p->pml4[ui] & PTE_P)) continue;
             u64 nt = pmm_alloc(1);
-            if (!nt) { pmm_free((u64)pml4, 1); kfree(q); r = -MOS_ENOMEM; break; }
+            if (!nt) { fork_ok = false; break; }
             memset((void *)nt, 0, 4096);
             pml4[ui] = nt | PTE_P | PTE_RW | PTE_U;
-            if (!cow_copy_level(q, (u64 *)(p->pml4[ui] & PTE_ADDR), (u64 *)nt, 3)) {
-                free_address_space(q); kfree(q); r = -MOS_ENOMEM; break;
-            }
+            fork_ok = cow_copy_level(q, (u64 *)(p->pml4[ui] & PTE_ADDR), (u64 *)nt, 3);
         }
+        if (!fork_ok) { free_address_space(q); kfree(q); r = -MOS_ENOMEM; break; }
         __asm__ volatile("mov %%cr3, %%rax; mov %%rax, %%cr3" ::: "rax", "memory");   /* o pai agora é só leitura */
         q->pid = next_pid++;
         q->ppid = p->pid;

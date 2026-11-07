@@ -823,8 +823,22 @@ int chdir(const char *path) {
 }
 int access(const char *path, int mode) { mos_stat_t st; (void)mode; PATH(p, path); return ret_errno(SYS2(SYS_STAT, p, &st)) < 0 ? -1 : 0; }
 int fsync(int fd) { (void)fd; return 0; }
-int dup(int fd) { return fd; }
-int dup2(int a, int b) { (void)a; return b; }
+/* dup/dup2 de verdade (SYS_DUP2): o bash redireciona com eles. Os fds 0-2 do console não existem
+ * na tabela do kernel; duplicá-los continua sendo aceito sem efeito, como antes. */
+int dup2(int a, int b) {
+    if (a == b) return b;
+    long r = SYS2(SYS_DUP2, a, b);
+    if (r < 0 && a >= 0 && a <= 2) return b;
+    return (int)ret_errno(r);
+}
+int dup(int fd) {
+    mos_stat_t st;
+    if (fd >= 0 && fd <= 2 && SYS2(SYS_FSTAT, fd, &st) < 0) return fd;   /* console: igual a antes */
+    for (int i = 3; i < 32; i++)
+        if (SYS2(SYS_FSTAT, i, &st) < 0) return dup2(fd, i);
+    cx_errno = 24;   /* EMFILE */
+    return -1;
+}
 int pipe(int *fds) { return (int)ret_errno(SYS1(SYS_PIPE, fds)); }   /* o kernel tem pipes (SYS_PIPE) */
 int fork(void) { return (int)ret_errno(SYS0(SYS_FORK)); }
 /* execve/execvp ficam em extra.c (precisam do posix_spawnp e do atalho do sandbox-exec) */
@@ -892,14 +906,72 @@ static void to_mac_stat(const mos_stat_t *s, mac_stat_t *m) {
     m->st_blksize = 4096;
 }
 
+/* links simbólicos são arquivos que começam com "#mOS-link:" (symlink em sockets.c; o execve do
+ * kernel também os segue). Executáveis (Mach-O, ELF, "#!") aparecem com 0755: o bash procura
+ * comandos no PATH pelo bit de execução. */
+#define LINK_MAGIC "#mOS-link:"
+static long peek_file(const char *abs, char *buf, long n) {
+    long fd = SYS2(SYS_OPEN, abs, 0);
+    if (fd < 0) return -1;
+    long r = SYS3(SYS_READ, fd, buf, n);
+    SYS1(SYS_CLOSE, fd);
+    return r;
+}
+/* se abs é um link, troca abs pelo alvo (relativo à pasta do link) e devolve 1 */
+static int link_step(char *abs, size_t cap, long *tlen) {
+    char buf[1100];
+    long n = peek_file(abs, buf, (long)sizeof buf - 1);
+    long ml = (long)sizeof LINK_MAGIC - 1;
+    if (n <= ml || memcmp(buf, LINK_MAGIC, (size_t)ml)) return 0;
+    buf[n] = 0;
+    char *t = buf + ml;
+    if (tlen) *tlen = n - ml;
+    char next[1024];
+    if (t[0] == '/') strlcpy(next, t, sizeof next);
+    else {
+        strlcpy(next, abs, sizeof next);
+        char *sl = strrchr(next, '/');
+        if (sl) sl[1] = 0;
+        strlcat(next, t, sizeof next);
+    }
+    strlcpy(abs, next, cap);
+    return 1;
+}
+static void exec_bits(const char *abs, mac_stat_t *m) {
+    if ((m->st_mode & 0170000) != 0100000 || m->st_size < 4) return;
+    unsigned char h[4];
+    if (peek_file(abs, (char *)h, 4) != 4) return;
+    u32 mg = (u32)h[0] | (u32)h[1] << 8 | (u32)h[2] << 16 | (u32)h[3] << 24;
+    if (mg == 0xFEEDFACFu || mg == 0xBEBAFECAu || mg == 0xCAFEBABEu || mg == 0x464C457Fu || (h[0] == '#' && h[1] == '!'))
+        m->st_mode = 0100755;
+}
 int stat(const char *path, mac_stat_t *m) {
     mos_stat_t s;
-    PATH(p, path);
-    if (ret_errno(SYS2(SYS_STAT, p, &s)) < 0) return -1;
+    char abs[1024];
+    cx_path(path, abs, sizeof abs);
+    for (int hop = 0; hop < 8 && link_step(abs, sizeof abs, 0); hop++) {}
+    if (ret_errno(SYS2(SYS_STAT, abs, &s)) < 0) return -1;
     to_mac_stat(&s, m);
+    exec_bits(abs, m);
     return 0;
 }
-int lstat(const char *p, mac_stat_t *m) { return stat(p, m); }
+int lstat(const char *path, mac_stat_t *m) {
+    mos_stat_t s;
+    char abs[1024], tgt[1024];
+    cx_path(path, abs, sizeof abs);
+    if (ret_errno(SYS2(SYS_STAT, abs, &s)) < 0) return -1;
+    to_mac_stat(&s, m);
+    long tl = 0;
+    strlcpy(tgt, abs, sizeof tgt);
+    if (!s.is_dir && link_step(tgt, sizeof tgt, &tl)) {
+        m->st_mode = 0120755;
+        m->st_size = tl;
+        m->st_blocks = 0;
+        return 0;
+    }
+    exec_bits(abs, m);
+    return 0;
+}
 int fstat(int fd, mac_stat_t *m) {
     mos_stat_t s;
     if (fd >= 0 && fd <= 2) { memset(m, 0, sizeof *m); m->st_mode = 0020620; return 0; }

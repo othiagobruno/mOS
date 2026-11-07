@@ -247,6 +247,8 @@ static void assoc_drop(id v, u64 policy) { if (v && (policy & 3)) objc_release(v
 
 void objc_setAssociatedObject(id obj, const void *key, id value, u64 policy) {
     if (!obj) return;
+    { extern int cx_is_crr(id o);   /* objeto Swift: avisa, para o dealloc dele passar por objc_destructInstance */
+      if (value && cx_is_crr(obj)) ((void (*)(id, SEL))objc_msgSend)(obj, sel_registerName("_noteAssociatedObjects")); }
     id held = assoc_hold(value, policy);
     id old = 0;
     u64 oldpol = 0;

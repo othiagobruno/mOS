@@ -51,6 +51,9 @@ enum {
     SYS_SIGKILL,       /* (pid, sig) -> 0                           envia um sinal */
     SYS_DYLD,          /* 42: (op, a, b, c) -> ...                  dlopen em tempo de execução (MOS_DYLD_* abaixo) */
     SYS_NET,           /* 43: (op, a, b, c) -> ...                  TCP e DNS para os apps (MOS_NET_* abaixo, kernel/net/usersock.c) */
+    SYS_SPAWNVEC,      /* 44: (path, mos_spawn_vec_t*) -> pid       argv e envp completos (posix_spawn do Electron) */
+    SYS_EXECVE,        /* 45: (path, mos_spawn_vec_t*) -> só volta com erro   troca a imagem (mesmo pid, fds e sessão) */
+    SYS_WAITPID,       /* 46: (pid, int *status, opções) -> pid      status POSIX; pid -1 = qualquer filho; MOS_WNOHANG */
     SYS_COUNT,
     SYS_GUI_FIRST = 64,/* 64..79: interface gráfica dos apps do macOS (kernel/compat/guisys.c) */
     SYS_GUI_LAST = 79,
@@ -62,6 +65,29 @@ enum {
     SYS_MACH_VM = 83,       /* (op, u64 args[8]) -> kern_return_t           entradas de memória compartilhada */
     SYS_MACH_LAST = 95
 };
+
+/* SYS_SPAWNVEC: vetores no espaço do pai. argv e envp são char *const * terminados em NULL.
+ * envp 0 = o ambiente curto padrão (HOME, PATH, …). O Electron passa os dois completos:
+ * a linha de comando leva a chave do rendezvous Mach e o ambiente leva a política de validação.
+ * acts são as posix_spawn_file_actions (dup2/close/open/chdir), na ordem. */
+#define MOS_SPAWN_FA_MAX 48
+#define MOS_SPAWN_FA_DUP2  1
+#define MOS_SPAWN_FA_CLOSE 2
+#define MOS_SPAWN_FA_OPEN  3
+#define MOS_SPAWN_FA_CHDIR 4
+#define MOS_SPAWN_CLOEXEC_DEFAULT 0x4000u   /* o filho começa sem os fds do pai; só as ações abrem */
+typedef struct {
+    int kind, a, b, flags;
+    unsigned mode;
+    char path[256];
+} mos_spawn_fa_t;
+typedef struct {
+    unsigned long long argv;
+    unsigned long long envp;
+    unsigned long long acts;     /* mos_spawn_fa_t[nacts] no pai */
+    unsigned int nacts;
+    unsigned int flags;
+} mos_spawn_vec_t;
 
 /* SYS_MACH_MSG: os argumentos do mach_msg não cabem nos 5 registradores */
 typedef struct {
@@ -121,6 +147,8 @@ enum {
 #define MOS_O_CREAT  0x0040
 #define MOS_O_TRUNC  0x0200
 #define MOS_O_APPEND 0x0400
+#define MOS_O_CLOEXEC 0x1000000  /* valor do macOS: o fd fecha no execve */
+#define MOS_WNOHANG  1           /* SYS_WAITPID: não bloqueia (devolve 0) */
 
 /* sinais (números do Linux/BSD para os comuns) */
 #define MOS_SIGHUP   1
@@ -206,6 +234,7 @@ enum { MOS_NET_ST_CLOSED, MOS_NET_ST_CONNECTING, MOS_NET_ST_OPEN, MOS_NET_ST_PEE
 #define MOS_EMFILE 24
 #define MOS_ENOSPC 28
 #define MOS_ESRCH   3
+#define MOS_ECHILD 10
 #define MOS_EPIPE  32
 
 typedef struct {

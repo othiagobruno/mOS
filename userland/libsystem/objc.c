@@ -117,6 +117,45 @@ static void load_methods(cx_rw_t *rw, const u8 *ml) {
 
 static void realize(cx_class_t *c);
 
+/* ---- classes com retain/release próprios (RR customizado)
+ * Objetos Swift (classe raiz Swift._SwiftObject do runtime Swift com interop ObjC) não passam pelo new_obj:
+ * vêm do swift_allocObject, sem o objhdr_t, com a contagem dentro do objeto. Como no runtime da Apple, a
+ * libobjc manda -retain/-release/-autorelease a eles. Só entram aqui classes raiz (sem superclasse) com
+ * -retain no próprio método e as subclasses delas: o -retain do NSObject chama objc_retain, e encaminhar a
+ * ele entraria em laço. O teste é por ponteiro da classe (sem ler a classe), porque objc_retain também
+ * recebe objetos Swift sem ObjC do resto do mOS, cujo "isa" é metadata sem o formato de objc_class. */
+static cx_class_t **crr_tab;
+static u32 crr_mask, crr_n;
+static int crr_has(cx_class_t *c) {
+    if (!crr_tab || !c) return 0;
+    for (u32 i = (u32)((u64)c >> 4) & crr_mask; crr_tab[i]; i = (i + 1) & crr_mask) if (crr_tab[i] == c) return 1;
+    return 0;
+}
+static void crr_add(cx_class_t *c) {
+    if (crr_has(c)) return;
+    if (!crr_tab || (crr_n + 1) * 2 > crr_mask + 1) {
+        cx_class_t **old = crr_tab;
+        u32 om = crr_mask;
+        crr_mask = old ? om * 2 + 1 : 63;
+        crr_tab = calloc(crr_mask + 1, sizeof *crr_tab);
+        crr_n = 0;
+        if (old) { for (u32 i = 0; i <= om; i++) if (old[i]) crr_add(old[i]); free(old); }
+    }
+    u32 i = (u32)((u64)c >> 4) & crr_mask;
+    while (crr_tab[i]) i = (i + 1) & crr_mask;
+    crr_tab[i] = c;
+    crr_n++;
+}
+/* objeto de uma classe com RR customizado (sem objhdr_t) */
+static int is_crr(id o) { return o && !((u64)o & 7) && crr_has(o->isa); }
+static id crr_send(id o, const char *sel);
+static void note_crr(cx_class_t *c, cx_rw_t *rw) {
+    if (rw->meta) return;
+    if (c->super) { if (crr_has(c->super)) crr_add(c); return; }
+    SEL r = sel_registerName("retain");
+    for (u32 i = 0; i < rw->nm; i++) if (rw->m[i].sel == r) { crr_add(c); return; }
+}
+
 static void realize_ro(cx_class_t *c) {
     const u8 *ro = (const u8 *)(c->data & ~7ULL);
     if (!ro) return;
@@ -168,6 +207,7 @@ static void realize_ro(cx_class_t *c) {
         register_class(c);
     }
     load_methods(rw, *(const u8 *const *)(ro + 32));
+    note_crr(c, rw);
 }
 
 static void realize(cx_class_t *c) {
@@ -319,8 +359,9 @@ cx_class_t *class_getSuperclass(cx_class_t *c) { return c ? c->super : 0; }
 u64 class_getInstanceSize(cx_class_t *c) { return cx_instance_size(c); }
 BOOL class_isMetaClass(cx_class_t *c) { cx_rw_t *rw = rw_of(c); return rw && (rw->meta & 1); }
 BOOL class_respondsToSelector(cx_class_t *c, SEL s) { return c && cx_lookup(c, s) != 0; }
-cx_class_t *objc_getClass(const char *name) { return cx_class_named(name); }
-cx_class_t *objc_lookUpClass(const char *name) { return cx_class_named(name); }
+static cx_class_t *class_by_hook(const char *name);
+cx_class_t *objc_getClass(const char *name) { cx_class_t *c = cx_class_named(name); return c ? c : class_by_hook(name); }
+cx_class_t *objc_lookUpClass(const char *name) { return objc_getClass(name); }
 cx_class_t *objc_getMetaClass(const char *name) { cx_class_t *c = cx_class_named(name); return c ? c->isa : 0; }
 cx_class_t *objc_getRequiredClass(const char *name) { return cx_class_named(name); }
 IMP class_getMethodImplementation(cx_class_t *c, SEL s) { return cx_msg_lookup(c, s); }
@@ -368,6 +409,76 @@ cx_class_t *objc_allocateClassPair(cx_class_t *super, const char *name, u64 extr
     return c;
 }
 void objc_registerClassPair(cx_class_t *c) { (void)c; }
+
+/* ================================================================ o que o runtime Swift (com interop ObjC) chama
+ * Ver docs/swift-objc-runtime.md, fase 1. A metadata de uma classe Swift começa com os mesmos 5 words do
+ * objc_class (isa, superclass, cache[2], data com os bits Swift embaixo); o rw do mOS mora no 2º word do cache,
+ * que o compilador Swift também emite como _objc_empty_vtable/0, então a realização é a mesma das classes ObjC. */
+
+/* classe Swift (estática ou instanciada pelo runtime, ex. genéricas) que o Swift entrega para realizar;
+ * a realização desliza as variáveis de offset dos campos (as mesmas que a lista de ivars aponta) */
+cx_class_t *_objc_realizeClassFromSwift(cx_class_t *c, const void *previously) {
+    (void)previously;
+    if (!c) return 0;
+    if (!rw_of(c)) { realize(c); flush_caches(); }
+    return c;
+}
+cx_class_t *objc_readClassPair(cx_class_t *c, const void *image_info) { (void)image_info; return _objc_realizeClassFromSwift(c, 0); }
+int _objc_supportsLazyRealization(void) { return 1; }
+int cx_is_crr(id o) { return is_crr(o); }
+
+/* ganchos: o Swift procura classes pelo nome mangled (objc_getClass("_TtC...")) e dá nome a imagens */
+typedef BOOL (*cx_getclass_hook_t)(const char *name, cx_class_t **out);
+typedef BOOL (*cx_imagename_hook_t)(cx_class_t *c, const char **out);
+typedef const char *(*cx_namer_hook_t)(cx_class_t *c);
+static BOOL getclass_default(const char *name, cx_class_t **out) { *out = cx_class_named(name); return *out != 0; }
+static cx_getclass_hook_t getclass_hook = getclass_default;
+static cx_class_t *class_by_hook(const char *name) {
+    cx_class_t *c = 0;
+    if (!name || getclass_hook == getclass_default) return 0;
+    return getclass_hook(name, &c) ? c : 0;
+}
+void objc_setHook_getClass(cx_getclass_hook_t h, cx_getclass_hook_t *old) { if (old) *old = getclass_hook; getclass_hook = h; }
+static BOOL imagename_default(cx_class_t *c, const char **out) {
+    extern int dladdr(const void *addr, void *info);
+    struct { const char *fname; void *fbase; const char *sname; void *saddr; } info = {0};
+    *out = (c && dladdr(c, &info)) ? info.fname : 0;
+    return *out != 0;
+}
+static cx_imagename_hook_t imagename_hook = imagename_default;
+void objc_setHook_getImageName(cx_imagename_hook_t h, cx_imagename_hook_t *old) { if (old) *old = imagename_hook; imagename_hook = h; }
+const char *class_getImageName(cx_class_t *c) { const char *n = 0; return imagename_hook(c, &n) ? n : 0; }
+static cx_namer_hook_t namer_hook;
+void objc_setHook_lazyClassNamer(cx_namer_hook_t h, cx_namer_hook_t *old) { if (old) *old = namer_hook; namer_hook = h; }
+static void *copy_fixup;
+void _objc_setClassCopyFixupHandler(void *h) { copy_fixup = h; }   /* só KVO copia classes; o mOS não copia */
+
+/* imagens carregadas: o Swift descobre metadata/conformidades das imagens por aqui (ImageInspectionMachO) */
+typedef void (*cx_loadimage_t)(const void *mh);
+static cx_loadimage_t loadimage_fns[16];
+static int nloadimage;
+static void loadimage_bridge(const void *mh, i64 slide) { (void)slide; for (int i = 0; i < nloadimage; i++) loadimage_fns[i](mh); }
+void objc_addLoadImageFunc(cx_loadimage_t f) {
+    extern void _dyld_register_func_for_add_image(void (*)(const void *, i64));
+    if (!f || nloadimage == 16) return;
+    loadimage_fns[nloadimage++] = f;
+    if (nloadimage == 1) _dyld_register_func_for_add_image(loadimage_bridge);
+    else { extern u32 _dyld_image_count(void); extern const void *_dyld_get_image_header(u32);
+           for (u32 i = 0, n = _dyld_image_count(); i < n; i++) f(_dyld_get_image_header(i)); }
+}
+
+BOOL object_isClass(id o) { cx_rw_t *rw = o ? rw_of(o->isa) : 0; return rw && (rw->meta & 1); }
+cx_class_t *class_setSuperclass(cx_class_t *c, cx_class_t *s) {
+    if (!c) return 0;
+    cx_class_t *old = c->super;
+    c->super = s;
+    if (c->isa && s) c->isa->super = s->isa;
+    flush_caches();
+    return old;
+}
+/* isa do mOS é ponteiro puro e não há tagged pointers: a máscara do x86_64 da Apple preserva o ponteiro */
+const u64 objc_debug_isa_class_mask = 0x00007ffffffffff8ULL;
+const u64 objc_debug_taggedpointer_mask = 0;
 BOOL class_addIvar(cx_class_t *c, const char *name, u64 size, u8 align, const char *types) {
     cx_rw_t *rw = rw_of(c);
     (void)name; (void)types;
@@ -429,7 +540,17 @@ static void weak_unregister(id *loc) {
 id objc_storeWeak(id *loc, id v) {
     wl();
     weak_unregister(loc);
-    if (v && hdr(v)) {
+    int crr = v && !hdr(v) && is_crr(v);
+    if (crr) {
+        /* objeto Swift: pergunta se aceita referência fraca e avisa que tem uma (assim o
+         * swift_deallocClassInstance chama objc_destructInstance, que zera a referência) */
+        wu();
+        int ok = (int)(u64)crr_send(v, "allowsWeakReference") & 0xFF;
+        if (ok) crr_send(v, "_setWeaklyReferenced");
+        wl();
+        if (!ok) { *loc = 0; wu(); return 0; }
+    }
+    if (v && (hdr(v) || crr)) {
         if (nweaks == capweaks) { capweaks = capweaks ? capweaks * 2 : 64; weaks = realloc(weaks, capweaks * sizeof *weaks); }
         weaks[nweaks].loc = loc;
         weaks[nweaks++].obj = v;
@@ -456,16 +577,35 @@ static void weak_clear(id o) {
     wu();
 }
 
-id objc_retain(id o) { objhdr_t *h = hdr(o); if (h) __sync_fetch_and_add(&h->rc, 1); return o; }
+static id crr_send(id o, const char *sel) {
+    static SEL cache[8]; static const char *names[8]; static int n;
+    SEL s = 0;
+    for (int i = 0; i < n; i++) if (names[i] == sel) { s = cache[i]; break; }
+    if (!s) { s = sel_registerName(sel); if (n < 8) { names[n] = sel; cache[n++] = s; } }
+    return ((id (*)(id, SEL))objc_msgSend)(o, s);
+}
+id objc_retain(id o) {
+    objhdr_t *h = hdr(o);
+    if (h) __sync_fetch_and_add(&h->rc, 1);
+    else if (is_crr(o)) crr_send(o, "retain");
+    return o;
+}
 void objc_release(id o) {
     objhdr_t *h = hdr(o);
-    if (!h) return;
+    if (!h) { if (is_crr(o)) crr_send(o, "release"); return; }
     if (__sync_sub_and_fetch(&h->rc, 1) == 0) {
         h->rc = 0x3FFFFFFF;                        /* evita re-entrada durante o dealloc */
         ((void (*)(id, SEL))objc_msgSend)(o, sel_registerName("dealloc"));
     }
 }
-i32 cx_retain_count(id o) { objhdr_t *h = hdr(o); return h ? h->rc : 1; }
+i32 cx_retain_count(id o) {
+    objhdr_t *h = hdr(o);
+    if (h) return h->rc;
+    if (is_crr(o)) { u64 n = (u64)crr_send(o, "retainCount"); return n > 0x7FFFFFFF ? 0x7FFFFFFF : (i32)n; }
+    return 1;
+}
+/* objc_isUniquelyReferenced: o isUniquelyReferenced_nonNull do Swift para objetos ObjC */
+BOOL objc_isUniquelyReferenced(id o) { return cx_retain_count(o) == 1; }
 /* chamado pelo -[NSObject dealloc]: zera weaks e devolve a memória */
 /* objc_destructInstance: o clang gera -.cxx_destruct para soltar as ivars __strong (ARC) de cada classe */
 void cx_destruct_instance(id o) {
@@ -477,7 +617,15 @@ void cx_destruct_instance(id o) {
         for (u32 i = rw->nm; i-- > 0;) if (rw->m[i].sel == cxx) { ((void (*)(id, SEL))rw->m[i].imp)(o, cxx); break; }
     }
 }
-void *objc_destructInstance(id o) { if (o) { cx_destruct_instance(o); weak_clear(o); } return o; }
+/* também chamado pelo swift_deallocClassInstance (runtime Swift com interop) para objetos Swift */
+void *objc_destructInstance(id o) {
+    if (o) {
+        cx_destruct_instance(o);
+        weak_clear(o);
+        { extern void cx_assoc_remove_all(id o); cx_assoc_remove_all(o); }
+    }
+    return o;
+}
 void cx_object_free(id o) {
     objhdr_t *h = hdr(o);
     if (!h) return;
@@ -494,7 +642,7 @@ static id *pool;
 static u64 npool, cappool;
 static volatile int pool_lock;
 id objc_autorelease(id o) {
-    if (!hdr(o)) return o;
+    if (!hdr(o) && !is_crr(o)) return o;
     while (__sync_lock_test_and_set(&pool_lock, 1)) SYS0(SYS_YIELD);
     if (npool == cappool) { cappool = cappool ? cappool * 2 : 1024; pool = realloc(pool, cappool * sizeof(id)); }
     pool[npool++] = o;

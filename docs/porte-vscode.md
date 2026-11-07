@@ -25,7 +25,7 @@ Versão usada nas medições: Code 1.145.2 (`com.microsoft.VSCode`), Electron/Ch
 | Startup completo do VS Code (serviços, storage, `lifecycle phase 2`, `windowsManager#open`, `window#ctor`) | ✅ |
 | `new BrowserWindow` → `ElectronNSWindow` (moldura `NSThemeFrame`, cores do sistema, `NSColorSpace`, `@YES`) | ✅ |
 | Memória compartilhada (`MAP_MEM_NAMED_CREATE`, `vm_map`, entradas só-leitura recusando escrita com `KERN_INVALID_RIGHT`) | ✅ (sessão "IPC Mach") |
-| Fontes: `NSFont`/`CTFont` (métricas, descritores, coleções; `coretext.c`) | ✅ métricas; glifos ainda não desenham |
+| Fontes: `NSFont`/`CTFont` (métricas, descritores, coleções; `coretext.c`) | ✅ métricas e glifos (`CTFontDrawGlyphs` rasteriza num `CGBitmapContext`) |
 | **Janela do VS Code na tela** (`ElectronNSWindow` 1200×800, fundo do tema, menu do app, ícone no Dock) | ✅ 6 nov. 2026 20:31 — `build-vscode\shots\janela-vscode-primeira.png` |
 | Processo de renderização (`Code Helper (Renderer)`) e conteúdo da janela | ❌ o helper sobe (pid 5) e cai em `Electron+0x1B24D59` na thread principal dele |
 | Conteúdo de janelas CoreAnimation/IOSurface na tela (CALayer, CALayerHost, IOSurface por porta Mach) | ✅ no mesmo processo e entre processos (CAContext publicado; seção "CoreAnimation e IOSurface") |
