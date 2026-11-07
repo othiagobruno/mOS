@@ -114,6 +114,7 @@ $swd = "$root\build\swift\objc\dylib"
 if (Test-Path "$swd\usr\lib\swift") {
     New-Item -ItemType Directory -Force "$esp\mOS\usr\lib\swift" | Out-Null
     Copy-Item "$swd\usr\lib\swift\*.dylib" "$esp\mOS\usr\lib\swift\" -Force
+    Copy-Item "$swd\usr\lib\*.dylib" "$esp\mOS\usr\lib\" -Force   # libcompression (o sparkle.node a liga)
     if (Test-Path "$swd\System\Library\Frameworks") {
         New-Item -ItemType Directory -Force "$esp\mOS\System\Library\Frameworks" | Out-Null
         Copy-Item "$swd\System\Library\Frameworks\*" "$esp\mOS\System\Library\Frameworks\" -Recurse -Force

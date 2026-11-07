@@ -254,6 +254,18 @@ void persist_move(const char *old_vpath, vnode_t *n) {
 }
 
 /* ------------------------------------------------------------ gravação */
+/* um arquivo sujo vai ao disco; fora da recursão de propósito: os 2 KiB de caminhos ficariam em cada nível do
+ * write_dirty, e ele roda em threads do kernel com 32 KiB de pilha (sched.c). Com 64 níveis de pastas (node_modules
+ * do Codex e do Cursor) isso estourava a pilha e a VM reiniciava (falha tripla). */
+static __attribute__((noinline)) int write_one(vnode_t *c) {
+    char vp[1024], fp[1040];
+    vfs_path(c, vp, sizeof vp);
+    if (!tracked_path(vp)) return 0;
+    fpath_of(vp, fp, sizeof fp);
+    if (mkdirs_parent(fp) && fat_write_file(sys, fp, c->data, c->size)) return 1;
+    kprintf("persist: falha ao gravar %s (%llu bytes)\n", fp, (u64)c->size);
+    return 0;
+}
 static int write_dirty(vnode_t *n, int depth) {
     int k = 0;
     if (depth > PERSIST_MAX_DEPTH) return 0;
@@ -262,12 +274,7 @@ static int write_dirty(vnode_t *n, int depth) {
         if (c->dir) { k += write_dirty(c, depth + 1); continue; }
         if (!c->dirty) continue;
         c->dirty = false;
-        char vp[1024], fp[1040];
-        vfs_path(c, vp, sizeof vp);
-        if (!tracked_path(vp)) continue;
-        fpath_of(vp, fp, sizeof fp);
-        if (mkdirs_parent(fp) && fat_write_file(sys, fp, c->data, c->size)) k++;
-        else kprintf("persist: falha ao gravar %s (%llu bytes)\n", fp, (u64)c->size);
+        k += write_one(c);
     }
     return k;
 }
