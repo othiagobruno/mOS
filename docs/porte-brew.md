@@ -116,9 +116,46 @@ Corrupção de heap resolvida (7 nov. 2026); os 28 casos locais passam, incluind
   - `tools/machosym.c` traduz endereços de um Mach-O pela LC_SYMTAB.
   - O harness tem `/dev/null` e `MACHOTEST_WATCHDOG`.
 
-Bloqueio aberto:
-- **TCP não conecta**: o DNS funciona (o ruby resolve `example.com`), mas `TCPSocket.new`, o curl e o git remoto ficam
-  esperando o `connect`. Ainda não se sabe se é a pilha TCP do kernel ou o laço do libSystem.
+### Rede: curl https, git clone (7 nov. 2026)
+
+A pilha TCP do kernel estava certa: o `curl` embutido no Terminal baixava HTTPS. Os travamentos estavam no
+libSystem. Com isto, 34/34 em `tools/testdata/brew-rede.sh`, incluindo curl HTTPS (API do Homebrew, HTTP/2 com o
+GitHub), `git ls-remote` e `git clone --depth 1` por HTTPS:
+- **O_NONBLOCK em pipes** (`fcntl F_SETFL`, `FIONBIO`, `open`): a leitura de pipe vazio vira EAGAIN. O curl drena o
+  par de "despertar" (`socketpair` = pipe) até EAGAIN, e sem isso a segunda leitura bloqueava.
+- **`inet_pton(AF_INET6)`** devolvia -1, e o curl tratava todo nome de host como IPv6 (o TLS falhava na verificação
+  do nome). Agora há IPv6 de verdade em `inet_pton`/`inet_ntop`.
+- **FD_CLOEXEC** (`SYS_FDFLAGS` 50, `F_GETFD`/`F_SETFD`, `FIOCLEX`). O git espera EOF no pipe de aviso do exec do filho.
+  O `posix_spawn` não passa fds close-on-exec, e o `dup2` limpa a flag.
+- **Sockets em 768–831**, abaixo do `FD_SETSIZE`: o `select`/`fd_set` do git não chegava a 0x5000.
+
+### brew install de ponta a ponta (7 nov. 2026)
+
+`tools/stage-bash.ps1 -Script tools/testdata/brew-install.sh` seguido de `tools/stage-brew.ps1`. Este monta
+`/usr/local/Homebrew` (clone do Homebrew/brew com `core.autocrlf=false`) e o portable-ruby **4.0.9** (Intel `big_sur`,
+sha256 tirado do próprio repositório) com `current` como link. Também cria `SystemVersion.plist` (macOS 14.7.6),
+`sw_vers`, `sysctl`, `pkgutil` e `xcode-select` de mentira, e as "Command Line Tools" de mentira: um `clang` que só
+informa a versão e um SDK só com o `SDKSettings.json` (o brew no macOS 14 Intel, Tier 3, as exige mesmo para bottles).
+Por fim, links em `/usr/bin` e `/bin`. No QEMU (WHPX): `brew --version`, `brew config`, `brew install tree`,
+`brew install jq` (com a dependência `oniguruma`) e os programas rodando, `brew list` e `brew uninstall`, tudo com
+código 0. Só `tree` e `jq` (e as dependências delas) têm bottle `.sonoma` na versão atual: ~3.800 fórmulas ainda têm.
+
+O que foi preciso:
+- **Links de pasta no VFS** (`kernel/lib/vfs.c`): o walk segue links `#mOS-link:` nos componentes do meio.
+  `vfs_lookup_dir` também segue no último (rename para dentro de `opt/<f>`). O `chdir`/`opendir` do libSystem segue o
+  link final, e o `realpath` resolve link por componente (o brew compara realpaths).
+- `/dev/fd/N` e `/dev/std*` no `open` do kernel (o bash usa `< <(…)`).
+- **fork herda o GS** (TLS) da thread que chamou. O `IO.popen("-")` do ruby caía logo depois do fork.
+- **unlink/rmdir POSIX**: o `SYS_UNLINK` apaga pastas inteiras. O brew poda pastas com `rmdir` e chegou a apagar o
+  próprio Homebrew. O recursivo explícito é `cx_remove_tree` (NSFileManager).
+- `*at()` relativos a dirfd: `mkdirat`, `utimensat`, `fchmodat`, `faccessat`, `linkat` (GNU tar).
+- `getattrlist` com `ATTR_CMN_OBJTAG`/`ATTR_DIR_ENTRYCOUNT` (`Dir.empty?` do ruby), `getgrgid`/`getgrnam`,
+  `ptsname_r`, `_dyld_shared_cache_contains_path` (`/usr/lib` e `/System/Library` contam como shared cache).
+- Os symlinks do repositório do brew (modo 120000) viram links do mOS no stage.
+
+Restos conhecidos: o `brew doctor` avisa que o sistema de arquivos diferencia maiúsculas e que as CLT "não suportam o
+macOS 14". Nenhum dos dois atrapalha a instalação de bottles. Casks, `brew update` (git do tap) e fórmulas compiladas
+do código-fonte (sem clang no mOS) ficam para depois.
 
 Faltam, na ordem em que o bash e o ruby tropeçam:
 

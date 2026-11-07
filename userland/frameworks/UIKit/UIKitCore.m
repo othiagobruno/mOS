@@ -329,13 +329,6 @@ C(systemPinkColor, 1, .18, .33, 1) C(systemPurpleColor, .69, .32, .87, 1) C(syst
     return self;
 }
 - (BOOL)pointInside:(CGPoint)p withEvent:(id)e { (void)e; CGRect b = [self bounds]; return p.x >= b.origin.x && p.y >= b.origin.y && p.x < b.origin.x + b.size.width && p.y < b.origin.y + b.size.height; }
-+ (void)animateWithDuration:(NSTimeInterval)d animations:(void (^)(void))a { (void)d; if (a) a(); }
-+ (void)animateWithDuration:(NSTimeInterval)d animations:(void (^)(void))a completion:(void (^)(BOOL))c { (void)d; if (a) a(); if (c) c(YES); }
-+ (void)animateWithDuration:(NSTimeInterval)d delay:(NSTimeInterval)dl options:(NSUInteger)o animations:(void (^)(void))a completion:(void (^)(BOOL))c {
-    (void)d; (void)dl; (void)o; if (a) a(); if (c) c(YES);
-}
-+ (void)performWithoutAnimation:(void (^)(void))a { if (a) a(); }
-+ (BOOL)areAnimationsEnabled { return NO; }
 
 /* desenho da árvore (chamado pela NSView hospedeira com o contexto já transladado para a origem desta view) */
 - (void)_mosRender:(CGContextRef)c {
@@ -456,6 +449,8 @@ C(systemPinkColor, 1, .18, .33, 1) C(systemPurpleColor, .69, .32, .87, 1) C(syst
 @end
 
 /* ================================================================ NSView hospedeira: desenha a árvore de uma UIWindow */
+void mos_anim_present(void);
+void mos_anim_restore(void);
 @implementation _UIHostingView
 - (BOOL)isFlipped { return YES; }
 - (void)drawRect:(NSRect)dirty {
@@ -465,7 +460,9 @@ C(systemPinkColor, 1, .18, .33, 1) C(systemPurpleColor, .69, .32, .87, 1) C(syst
     [_uiWindow _mosSolveLayout];                         /* Auto Layout (UIKitViews.m) */
     [_uiWindow layoutIfNeeded];
     CGContextSaveGState(c);
+    mos_anim_present();                                  /* valores das animações em curso (UIKitAnimation.m) */
     [_uiWindow _mosRender:c];
+    mos_anim_restore();
     CGContextRestoreGState(c);
 }
 @end
@@ -558,8 +555,6 @@ C(systemPinkColor, 1, .18, .33, 1) C(systemPurpleColor, .69, .32, .87, 1) C(syst
 - (void)didMoveToParentViewController:(UIViewController *)p { (void)p; }
 - (id)traitCollection { return [UITraitCollection currentTraitCollection]; }
 - (void)setNeedsStatusBarAppearanceUpdate {}
-- (void)presentViewController:(UIViewController *)vc animated:(BOOL)a completion:(void (^)(void))c { (void)vc; (void)a; if (c) c(); }
-- (void)dismissViewControllerAnimated:(BOOL)a completion:(void (^)(void))c { (void)a; if (c) c(); }
 @end
 
 /* ================================================================ cenas */

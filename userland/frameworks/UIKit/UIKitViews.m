@@ -273,7 +273,7 @@ typedef id (*mos_cell_fn)(id, SEL, id, id);
 - (void)reloadSections:(id)s withRowAnimation:(NSInteger)x { (void)s; (void)x; [self reloadData]; }
 - (void)touchesBegan:(NSSet *)t withEvent:(UIEvent *)e { [super touchesBegan:t withEvent:e]; UITouch *u = [t anyObject]; _touchStart = u ? u->_loc : CGPointMake(0, 0); }
 - (void)touchesEnded:(NSSet *)t withEvent:(UIEvent *)e {
-    (void)e; fprintf(stderr, "DBG tv ended n=%d\n", (int)[t count]);
+    (void)e;
     UITouch *u = [t anyObject];
     if (!u || fabs(u->_loc.y - _touchStart.y) > 8) return;           /* arrastou: rolagem, não seleção */
     NSIndexPath *ip = [self indexPathForRowAtPoint:[u locationInView:self]];
@@ -552,7 +552,7 @@ static char k_navitem, k_navctl;
     }
 }
 - (void)touchesEnded:(NSSet *)t withEvent:(UIEvent *)e {
-    (void)e; fprintf(stderr, "DBG bar ended nav=%p\n", _navController);
+    (void)e;
     UITouch *u = [t anyObject];
     UINavigationController *n = _navController;
     if (u && [u locationInView:self].x < 90 && n->_vcs.count > 1) [n popViewControllerAnimated:YES];
@@ -696,7 +696,7 @@ ANC(firstBaselineAnchor, 12)
 - (CGSize)systemLayoutSizeFittingSize:(CGSize)s withHorizontalFittingPriority:(float)h verticalFittingPriority:(float)v { (void)h; (void)v; return [self systemLayoutSizeFittingSize:s]; }
 
 /* ---- resolvedor: atributos por view (coordenadas do superview), propagando as igualdades */
-typedef struct { double v[13]; unsigned known; } mos_lv_t;
+typedef struct { double v[13]; float pr[13]; unsigned known; } mos_lv_t;
 static int norm_attr(int a) { return a == 5 ? 1 : a == 6 ? 2 : a == 11 ? 4 : a == 12 ? 3 : a; }
 static double frame_attr(CGRect f, int a) {
     switch (norm_attr(a)) {
@@ -726,10 +726,24 @@ static NSUInteger mos_index(NSArray *a, id o) { NSUInteger n = a.count; for (NSU
     NSUInteger nv = views.count;
     if (!nv) return;
     mos_lv_t *lv = calloc(nv, sizeof *lv);
+    /* prioridades: as maiores primeiro (uma igualdade obrigatória fixa o atributo antes das opcionais) */
+    unsigned *ord = malloc(n * sizeof *ord);
+    float *prio = malloc(n * sizeof *prio);
+    for (unsigned i = 0; i < n; i++) {
+        id a, b; int aa, rel, ba; double m, k; float p = 1000;
+        if (!cx_layout_constraint_info(cs[i], &a, &aa, &rel, &b, &ba, &m, &k, &p)) p = 0;
+        ord[i] = i; prio[i] = p > 0 ? p : 1000;
+    }
+    for (unsigned i = 1; i < n; i++) {                                     /* inserção: estável */
+        unsigned x = ord[i]; unsigned j = i;
+        while (j > 0 && prio[ord[j - 1]] < prio[x]) { ord[j] = ord[j - 1]; j--; }
+        ord[j] = x;
+    }
     for (int round = 0; round < 2; round++) {
         for (NSUInteger i = 0; i < nv; i++) lv[i].known = 0;
         for (int pass = 0; pass < 6; pass++) {
-            for (unsigned i = 0; i < n; i++) {
+            for (unsigned oi = 0; oi < n; oi++) {
+                unsigned i = ord[oi];
                 id a, b; int aa, rel, ba; double m, k; float p;
                 if (!cx_layout_constraint_info(cs[i], &a, &aa, &rel, &b, &ba, &m, &k, &p) || rel != 0) continue;
                 NSUInteger ia = is_uiview(a) ? mos_index(views, a) : NSNotFound;
@@ -740,7 +754,7 @@ static NSUInteger mos_index(NSArray *a, id o) { NSUInteger n = a.count; for (NSU
                 else continue;
                 NSUInteger it = mos_index(views, t);
                 int nt = norm_attr(tat);
-                if (lv[it].known & (1u << nt)) continue;
+                if ((lv[it].known & (1u << nt)) && lv[it].pr[nt] >= prio[i]) continue;   /* já fixado por uma de prioridade maior ou igual */
                 double sv;
                 if (!s) { if (inverse) continue; sv = 0; }
                 else {
@@ -757,6 +771,7 @@ static NSUInteger mos_index(NSArray *a, id o) { NSUInteger n = a.count; for (NSU
                 double val = !s ? k : inverse ? (m != 0 ? (sv - k) / m : sv) : m * sv + k;
                 lv[it].v[nt] = val;
                 lv[it].known |= 1u << nt;
+                lv[it].pr[nt] = prio[i];
             }
         }
         /* frames */
@@ -772,16 +787,40 @@ static NSUInteger mos_index(NSArray *a, id o) { NSUInteger n = a.count; for (NSU
                      : ((K & 1u << 3) && (K & 1u << 10)) ? 2 * (L->v[10] - L->v[3]) : in.height >= 0 ? in.height : f.size.height;
             double x = (K & 1u << 1) ? L->v[1] : (K & 1u << 2) ? L->v[2] - w : (K & 1u << 9) ? L->v[9] - w / 2 : f.origin.x;
             double y = (K & 1u << 3) ? L->v[3] : (K & 1u << 4) ? L->v[4] - h : (K & 1u << 10) ? L->v[10] - h / 2 : f.origin.y;
-            /* limites (>=, <=) de largura/altura constantes */
-            for (unsigned c = 0; c < n; c++) {
+            /* limites (>=, <=), constantes ou relativos a outra view; da menor para a maior prioridade (a maior vence),
+               e só sobre atributos fixados com prioridade menor que a do limite */
+            for (int oi = (int)n - 1; oi >= 0; oi--) {
+                unsigned c = ord[oi];
                 id a, b; int aa, rel, ba; double m, k; float p;
-                if (!cx_layout_constraint_info(cs[c], &a, &aa, &rel, &b, &ba, &m, &k, &p) || a != v || b || rel == 0) continue;
-                if (aa == 7) { if (rel > 0 && w < k) w = k; if (rel < 0 && w > k) w = k; }
-                if (aa == 8) { if (rel > 0 && h < k) h = k; if (rel < 0 && h > k) h = k; }
+                if (!cx_layout_constraint_info(cs[c], &a, &aa, &rel, &b, &ba, &m, &k, &p) || a != v || rel == 0) continue;
+                double lim = k;
+                if (b) {
+                    if (!is_uiview(b)) continue;
+                    UIView *bv = b;
+                    CGRect br = bv == v->_superview ? CGRectMake(0, 0, bv->_frame.size.width, bv->_frame.size.height)
+                              : v->_superview ? [bv convertRect:[bv bounds] toView:v->_superview] : bv->_frame;
+                    lim = m * frame_attr(br, ba) + k;
+                }
+                int na = norm_attr(aa);
+                CGRect cur = CGRectMake(x, y, w, h);
+                double val = frame_attr(cur, aa);
+                if (!(rel > 0 ? val < lim : val > lim)) continue;              /* já satisfeito */
+                /* o atributo fixado por igualdade de prioridade maior ou igual não cede */
+                if ((L->known & (1u << na)) && L->pr[na] >= prio[c]) continue;
+                switch (na) {
+                case 7: w = lim; break;
+                case 8: h = lim; break;
+                case 1: if (K & 1u << 2) w = x + w - lim; x = lim; break;      /* borda esquerda: a direita fica, se fixada */
+                case 2: if (K & 1u << 1) w = lim - x; else x = lim - w; break;
+                case 3: if (K & 1u << 4) h = y + h - lim; y = lim; break;
+                case 4: if (K & 1u << 3) h = lim - y; else y = lim - h; break;
+                case 9: x = lim - w / 2; break;
+                case 10: y = lim - h / 2; break;
+                }
             }
             v->_frame = CGRectMake(x, y, w < 0 ? 0 : w, h < 0 ? 0 : h);
         }
     }
-    free(lv);
+    free(lv); free(ord); free(prio);
 }
 @end

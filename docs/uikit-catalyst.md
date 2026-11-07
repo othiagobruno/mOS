@@ -85,4 +85,27 @@ Apps Catalyst (o WhatsApp para Mac é um) ligam o UIKit pelo caminho do Catalyst
 - **libSystem:** `CGContextSetAlpha` no CoreGraphics (alfa global do contexto nas cores de preenchimento e traço); a
   `UIView` o usa para `alpha < 1` (ainda sem multiplicar pelo alfa dos ancestrais).
 - Teste `catalyst` **15/15** (cliques, gesto, cadeia de resposta, teclado, interruptor).
-- Ainda não: Auto Layout, rolagem de verdade (`UIScrollView`), desenho de tabelas/coleções, navegação/modais, animações.
+
+## Layout, rolagem, tabelas, coleções e navegação (7 nov. 2026)
+
+- **`UIKitViews.m`** (novo): `UIScrollView` (`contentOffset` = origem dos bounds, limitado a `contentSize` +
+  `contentInset`; roda do mouse pela NSView hospedeira e arrasto do toque; `scrollViewDidScroll:`), `UITableView`
+  (alturas por linha/delegate, cria só as células na área visível e solta as que saem, seleção por toque com
+  `didSelectRowAtIndexPath:`, `scrollToRowAtIndexPath:`), `UITableViewCell` (estilos com `textLabel`/`detailTextLabel`),
+  `UICollectionView` com `UICollectionViewFlowLayout` (itens em linhas que quebram pela largura; só rolagem vertical) e
+  `UICollectionViewListCell`, `UINavigationController` (pilha, `UINavigationBar` com título e "‹ Voltar" que faz pop,
+  `navigationItem`/`navigationController`), `UILayoutGuide` (área segura, margens).
+- **Auto Layout:** as âncoras do UIKit reaproveitam as classes de restrição do AppKit do mOS (`cx_layout_anchor`,
+  `cx_layout_constraints`, `cx_layout_constraint_info` no `appkit.c`); a `UIWindow` resolve as restrições ativas das
+  views com `translatesAutoresizingMaskIntoConstraints = NO` por propagação de igualdades (bordas, centro, largura,
+  altura, multiplicador/constante, limites `>=`/`<=` constantes) antes do `layoutSubviews`. Sem prioridades nem
+  desigualdades entre views.
+- **Overlay Swift:** os data sources diffable respondem pelos seletores do protocolo ObjC
+  (`numberOfSectionsInCollectionView:`, `collectionView:cellForItemAtIndexPath:`…), então a `UICollectionView`/`UITableView`
+  do mOS desenha as células do `cellProvider`.
+- **Foundation do libSystem:** `-[NSMutableDictionary setDictionary:]` e `+[NSSet setWithObject:]` (faltavam: o
+  conjunto de toques chegava vazio e o cache de células da tabela nunca ficava guardado).
+- Testes: `catalyst` **23/23** (Auto Layout por âncoras, tabela com só as células visíveis, roda do mouse e limite da
+  rolagem, seleção por toque, push/pop com a barra), `uikit` **28/28** (coleção real alimentada pelo diffable).
+- Ainda não: modais (`present`), animações (os blocos rodam na hora), alfa dos ancestrais, prioridades no Auto Layout,
+  layout composicional de verdade (vira lista).

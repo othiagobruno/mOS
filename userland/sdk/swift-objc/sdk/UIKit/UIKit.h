@@ -213,8 +213,14 @@ typedef NS_ENUM(NSInteger, UITableViewRowAnimation) {
 @end
 @interface UICollectionViewLayout : NSObject
 @end
+@interface UICollectionViewFlowLayout : UICollectionViewLayout
+@property (nonatomic) CGSize itemSize;
+@end
 @interface UICollectionView : UIScrollView
 - (instancetype)initWithFrame:(CGRect)frame collectionViewLayout:(UICollectionViewLayout *)layout;
+- (NSInteger)numberOfSections;
+- (NSInteger)numberOfItemsInSection:(NSInteger)section;
+@property (nonatomic, readonly) NSArray *visibleCells;
 - (void)registerClass:(nullable Class)cellClass forCellWithReuseIdentifier:(NSString *)identifier;
 - (id)dequeueReusableCellWithReuseIdentifier:(NSString *)identifier forIndexPath:(id)indexPath;
 - (void)registerClass:(nullable Class)viewClass forSupplementaryViewOfKind:(NSString *)kind withReuseIdentifier:(NSString *)identifier;

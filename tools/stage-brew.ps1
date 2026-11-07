@@ -44,6 +44,10 @@ Copy-Item -Force "$PSScriptRoot\brew-shims\xcode-select" "$mos\usr\bin\xcode-sel
 # Command Line Tools de mentira: o brew (macOS 14, Tier 3) as exige mesmo para bottles; o clang só informa a versão
 New-Item -ItemType Directory -Force "$mos\Library\Developer\CommandLineTools\usr\bin" | Out-Null
 Copy-Item -Force "$PSScriptRoot\brew-shims\clang" "$mos\Library\Developer\CommandLineTools\usr\bin\clang"
+# SDK só com o SDKSettings.json (o brew doctor confere a versão; não há cabeçalhos nem bibliotecas)
+$sdk = "$mos\Library\Developer\CommandLineTools\SDKs\MacOSX14.5.sdk"
+New-Item -ItemType Directory -Force $sdk | Out-Null
+[IO.File]::WriteAllText("$sdk\SDKSettings.json", '{"CanonicalName":"macosx14.5","DisplayName":"macOS 14.5","Version":"14.5"}', [Text.Encoding]::ASCII)
 # ferramentas que o macOS tem em /usr/bin e /bin: links para as do Homebrew (GNU) em /usr/local/bin
 $usrbin = 'curl', 'git', 'env', 'tar', 'gzip', 'xz', 'sed', 'grep', 'egrep', 'uname', 'id', 'which', 'readlink', 'basename',
           'dirname', 'head', 'tail', 'sort', 'tr', 'wc', 'cut', 'uniq', 'touch', 'tee', 'stat', 'printf', 'true', 'false',

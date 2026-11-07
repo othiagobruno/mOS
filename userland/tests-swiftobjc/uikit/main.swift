@@ -101,6 +101,21 @@ let lc = cel
 lc.accessories = [UICellAccessory.outlineDisclosure()]
 check(lc.accessories.count == 1, "UICollectionViewListCell.accessories")
 
+// a UICollectionView do mOS pergunta ao data source diffable e desenha as células visíveis
+var area = CGRect(); area.size.width = 300; area.size.height = 300
+let grade = UICollectionView(frame: area)   // layout em fluxo padrão (50x50)
+var pedidas = 0
+let gds = UICollectionViewDiffableDataSource<Int, String>(collectionView: grade) { cv, ip, item in
+    pedidas += 1
+    return cv.dequeueConfiguredReusableCell(using: reg, for: ip, item: item)
+}
+var s4 = NSDiffableDataSourceSnapshot<Int, String>()
+s4.appendSections([0, 1]); s4.appendItems(["a", "b", "c"], toSection: 0); s4.appendItems(["d", "e"], toSection: 1)
+gds.apply(s4)
+check(grade.numberOfSections() == 2 && grade.numberOfItems(inSection: 0) == 3 && grade.numberOfItems(inSection: 1) == 2,
+      "UICollectionView consulta o data source diffable")
+check(grade.visibleCells.count == 5 && pedidas == 5, "UICollectionView cria as células visíveis pelo cellProvider (\(pedidas))")
+
 var texto = AttributedString("oi")
 texto.uiKit.foregroundColor = UIColor()
 check(texto.uiKit.foregroundColor != nil, "AttributeScopes.UIKitAttributes")

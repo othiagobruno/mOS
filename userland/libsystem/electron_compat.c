@@ -344,6 +344,17 @@ static id d_init_url_err(id self, SEL c, id url, id *err) {
     return p ? MSG(id, self, "initWithContentsOfFile:", p) : 0;
 }
 
+/* ================================================================ acessibilidade (HIServices)
+ * O Chromium observa a preferência de cursor de texto sem piscar ao focar a view web (windowDidBecomeKey:). Sem a
+ * constante, o carregador ligava a importação a um endereço de código, o "nome" do observador virava lixo e o primeiro
+ * cx_post que chegava à comparação de nomes derrubava o processo principal. */
+extern char cx_cfconst_isa[] __asm__("__CFConstantStringClassReference");
+typedef struct { void *isa; u64 flags; const char *s; u64 n; } ec_const_t;
+#define EC_NONBLINK "AXPrefersNonBlinkingTextInsertionIndicatorDidChangeNotification"
+static ec_const_t ec_nonblink_s = {cx_cfconst_isa, 0x7c8, EC_NONBLINK, sizeof(EC_NONBLINK) - 1};
+const void *AXPrefersNonBlinkingTextInsertionIndicatorDidChangeNotification = &ec_nonblink_s;
+unsigned char AXPrefersNonBlinkingTextInsertionIndicator(void) { return 0; }   /* o cursor pisca, como no padrão */
+
 /* ================================================================ registro */
 static void add_if_missing(cx_class_t *k, const char *sel, void *imp) {
     if (k && !cx_responds(k, sel_registerName(sel))) cx_add_method(k, sel, imp);

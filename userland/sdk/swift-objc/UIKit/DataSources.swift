@@ -67,18 +67,18 @@ open class UITableViewDiffableDataSource<SectionIdentifierType: Hashable, ItemId
     }
 
     // UITableViewDataSource
-    @objc open func numberOfSections(in tableView: UITableView) -> Int { _snapshot.numberOfSections }
+    @objc(numberOfSectionsInTableView:) open func numberOfSections(in tableView: UITableView) -> Int { _snapshot.numberOfSections }
     @objc open func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
         sectionIdentifier(for: section).map { _snapshot.numberOfItems(inSection: $0) } ?? 0
     }
-    @objc open func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
+    @objc(tableView:cellForRowAtIndexPath:) open func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         if let item = itemIdentifier(for: indexPath), let c = _cellProvider(tableView, indexPath, item) { return c }
         return UITableViewCell(frame: CGRect())
     }
     @objc open func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? { nil }
     @objc open func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? { nil }
-    @objc open func tableView(_ tableView: UITableView, canEditRowAt indexPath: IndexPath) -> Bool { false }
-    @objc open func sectionIndexTitles(for tableView: UITableView) -> [String]? { nil }
+    @objc(tableView:canEditRowAtIndexPath:) open func tableView(_ tableView: UITableView, canEditRowAt indexPath: IndexPath) -> Bool { false }
+    @objc(sectionIndexTitlesForTableView:) open func sectionIndexTitles(for tableView: UITableView) -> [String]? { nil }
 }
 
 // MARK: - UICollectionViewDiffableDataSource
@@ -142,11 +142,11 @@ open class UICollectionViewDiffableDataSource<SectionIdentifierType: Hashable, I
     }
 
     // UICollectionViewDataSource (a UICollectionView do mOS pergunta por estes seletores)
-    @objc open func numberOfSections(in collectionView: UICollectionView) -> Int { _snapshot.numberOfSections }
+    @objc(numberOfSectionsInCollectionView:) open func numberOfSections(in collectionView: UICollectionView) -> Int { _snapshot.numberOfSections }
     @objc open func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
         sectionIdentifier(for: section).map { _snapshot.numberOfItems(inSection: $0) } ?? 0
     }
-    @objc open func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
+    @objc(collectionView:cellForItemAtIndexPath:) open func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
         if let item = itemIdentifier(for: indexPath), let c = _cellProvider(collectionView, indexPath, item) { return c }
         return UICollectionViewCell(frame: CGRect())
     }

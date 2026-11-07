@@ -102,7 +102,17 @@ static void run_command(id self, const char *name) {
     if (ain_resp(self, "doCommandBySelector:")) MSG(void, self, "doCommandBySelector:", s);
     else if (cx_responds(object_getClass(self), s)) ((void (*)(id, SEL, id))objc_msgSend)(self, s, (id)0);
 }
+/* diagnóstico (ca-log): o caminho do texto digitado até o cliente (o Chromium só manda o caractere ao renderer se
+ * insertText: chega durante o keyDown) */
+static void text_log(const char *what, id who, const char *extra) {
+    extern int cx_ca_diag(void);
+    extern int cx_fdprintf(int fd, const char *fmt, ...);
+    static int n, nctx;
+    if (!strcmp(what, "inputContext") && ++nctx > 5) return;      /* pedido a cada evento: só os primeiros */
+    if (n < 120 && cx_ca_diag()) { n++; cx_fdprintf(2, "[ca] texto: %s %s %s\n", what, who ? cx_class_name(who->isa) : "-", extra ? extra : ""); }
+}
 static void insert_text(id self, id text) {
+    text_log("insertText", self, text ? cx_cstr(text) : "(nil)");
     if (ain_resp(self, "insertText:replacementRange:"))
         ((void (*)(id, SEL, id, u64, u64))objc_msgSend)(self, sel_registerName("insertText:replacementRange:"), text, NS_NOT_FOUND, 0);
     else if (ain_resp(self, "insertText:")) MSG(void, self, "insertText:", text);
@@ -140,6 +150,7 @@ static void interpret_one(id self, id e) {
 }
 static void r_interpret(id self, SEL c, id events) {
     (void)c;
+    text_log("interpretKeyEvents:", self, 0);
     u64 n = ain_count(events);
     for (u64 i = 0; i < n; i++) interpret_one(self, ain_at(events, i));
 }
@@ -160,6 +171,7 @@ static id ti_client(id self, SEL c) { (void)c; return ((ticx_t *)self)->client; 
 static BOOL ti_handle(id self, SEL c, id e) {
     (void)c;
     id cl = ((ticx_t *)self)->client;
+    text_log("NSTextInputContext handleEvent:", cl, 0);
     if (!cl || !e) return NO;
     u64 t = MSG0(u64, e, "type");
     if (t != 10) return NO;                              /* só NSEventTypeKeyDown */
@@ -200,6 +212,7 @@ static BOOL ti_accepts_glyph(id self, SEL c) { (void)self; (void)c; return NO; }
 static id ti_views[TI_MAX], ti_ctxs[TI_MAX];
 static id v_input_context(id self, SEL c) {
     (void)c;
+    text_log("inputContext", self, 0);
     if (!ain_resp(self, "insertText:replacementRange:") && !ain_resp(self, "setMarkedText:selectedRange:replacementRange:")) return 0;
     for (int i = 0; i < TI_MAX; i++) if (ti_views[i] == self) return ti_ctxs[i];
     id ctx = ti_init_client(cx_alloc_instance(&NSTextInputContext_c), 0, self);

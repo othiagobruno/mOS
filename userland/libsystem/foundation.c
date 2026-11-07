@@ -405,8 +405,11 @@ static id o_description(id self, SEL c) {
 static id c_description(id cls, SEL c) { (void)c; return cx_str(cx_class_name((cx_class_t *)cls)); }
 static u64 o_hash(id self, SEL c) { (void)c; return (u64)self >> 4; }
 static BOOL o_is_equal(id self, SEL c, id o) { (void)c; return self == o; }
-static id o_copy(id self, SEL c) { (void)c; return cx_responds(self->isa, sel_registerName("copyWithZone:")) ? MSG(id, self, "copyWithZone:", (void *)0) : self; }
-static id o_mcopy(id self, SEL c) { (void)c; return cx_responds(self->isa, sel_registerName("mutableCopyWithZone:")) ? MSG(id, self, "mutableCopyWithZone:", (void *)0) : self; }
+/* copy/mutableCopy devolvem +1 (o chamador solta depois). Sem copyWithZone:, o próprio objeto retido: era o objeto sem
+ * retain, e um -[NSEvent copy] do Chromium (guardado até o ACK da tecla) morria na drenagem do pool e derrubava o VS Code */
+extern id objc_retain(id);
+static id o_copy(id self, SEL c) { (void)c; return cx_responds(self->isa, sel_registerName("copyWithZone:")) ? MSG(id, self, "copyWithZone:", (void *)0) : objc_retain(self); }
+static id o_mcopy(id self, SEL c) { (void)c; return cx_responds(self->isa, sel_registerName("mutableCopyWithZone:")) ? MSG(id, self, "mutableCopyWithZone:", (void *)0) : objc_retain(self); }
 extern id objc_retain(id), objc_autorelease(id);
 extern void objc_release(id), cx_object_free(id);
 extern id objc_autorelease(id);
@@ -890,8 +893,31 @@ static u64 pi_cpus(id self, SEL c) { (void)self; (void)c; return 1; }
 static u64 pi_mem(id self, SEL c) { (void)self; (void)c; return 1ull << 30; }
 
 /* NSNotificationCenter: observadores em lista */
-typedef struct obs { id target; SEL sel; id name; id object; void *block; struct obs *next; } obs_t;
+typedef struct obs { id target; SEL sel; id name; id object; void *block; struct obs *next; int name_bad; } obs_t;
 static obs_t *observers;
+/* Nome de notificação que não é objeto: uma constante que o libSystem não exporta vira, pelo carregador, um ponteiro
+ * para código, e o isEqual: do cx_post nela derrubava o processo (o principal do VS Code, ao virar janela-chave). O isa
+ * tem de ser uma classe que o runtime conhece; senão o nome só casa pelo ponteiro, e o ca-log diz quem registrou. */
+u32 cx_class_list(cx_class_t ***out);       /* objc.c */
+static BOOL name_is_object(id x) {
+    u64 p = (u64)x;
+    if (p < 0x10000 || p >= 0x800000000000ull || (p & 7)) return NO;
+    cx_class_t *k = x->isa, **all;
+    u32 n = cx_class_list(&all);
+    for (u32 i = 0; i < n; i++) if (all[i] == k) return YES;
+    return NO;
+}
+static void check_name(obs_t *o) {
+    /* o nome fica retido, como no Cocoa: o Chromium registra observadores com strings que solta logo depois, e o
+     * isEqual: do cx_post seguinte lia memória já reaproveitada (queda do VS Code ao virar janela-chave) */
+    if (!o->name) return;
+    if (name_is_object(o->name)) { objc_retain(o->name); return; }
+    o->name_bad = 1;
+    extern int cx_ca_diag(void);
+    if (cx_ca_diag())
+        cx_fdprintf(2, "[ca] NSNotificationCenter: nome inválido %p (isa %p) no observador %s -%s\n", (void *)o->name,
+                    (void *)o->name->isa, o->target ? cx_class_name(o->target->isa) : "(bloco)", o->sel ? o->sel : "");
+}
 typedef struct { cx_class_t *isa; id name, object, info; } nsnote_t;
 /* como no macOS, a notificação retém nome, objeto e userInfo (quem a cria pode soltar os seus logo depois: a ponte
  * Notification -> NSNotification do Swift, por exemplo) */
@@ -908,6 +934,7 @@ static void nc_add(id self, SEL c, id target, SEL sel, id name, id obj) {
     (void)self; (void)c;
     obs_t *o = calloc(1, sizeof *o);
     o->target = target; o->sel = sel; o->name = name; o->object = obj;
+    check_name(o);
     o->next = observers;
     observers = o;
 }
@@ -915,6 +942,7 @@ static id nc_add_block(id self, SEL c, id name, id obj, id queue, void *blk) {
     (void)self; (void)c; (void)queue;
     obs_t *o = calloc(1, sizeof *o);
     o->name = name; o->object = obj; o->block = _Block_copy(blk);
+    check_name(o);
     o->next = observers;
     observers = o;
     return (id)o;
@@ -922,7 +950,7 @@ static id nc_add_block(id self, SEL c, id name, id obj, id queue, void *blk) {
 void cx_post(id note) {
     nsnote_t *n = (nsnote_t *)note;
     for (obs_t *o = observers; o; o = o->next) {
-        if (o->name && !obj_eq(o->name, n->name)) continue;
+        if (o->name && o->name != n->name && (o->name_bad || !obj_eq(o->name, n->name))) continue;
         if (o->object && o->object != n->object) continue;
         if (o->block) { void (*inv)(void *, id) = *(void **)((u8 *)o->block + 16); inv(o->block, note); }
         else if (o->target) ((void (*)(id, SEL, id))objc_msgSend)(o->target, o->sel, note);

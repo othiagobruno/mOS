@@ -22,7 +22,7 @@ K(UIListContentView, UIView)
 /* ---- view controllers */
 K(UITabBarController, UIViewController)
 K(UISplitViewController, UIViewController) K(UITableViewController, UIViewController)
-K(UICollectionViewController, UIViewController) K(UIAlertController, UIViewController)
+K(UICollectionViewController, UIViewController)
 K(UISearchController, UIViewController) K(UIPageViewController, UIViewController)
 K(UIActivityViewController, UIViewController) K(UIDocumentPickerViewController, UIViewController)
 K(UIImagePickerController, UINavigationController)
@@ -40,7 +40,7 @@ K(UIToolbarAppearance, UIBarAppearance) K(UITabBarAppearance, UIBarAppearance)
 /* UIMenuElement, UIMenu, UIAction, UICommand, UIKeyCommand, UIBarItem, UIBarButtonItem, UIButton: UIKitMenus.m */
 K(UIDeferredMenuElement, UIMenuElement) K(UIMenuSystem, NSObject)
 K(UIMenuController, NSObject) K(UIMenuItem, NSObject) K(UIContextMenuConfiguration, NSObject)
-K(UIContextMenuInteraction, NSObject) K(UIAlertAction, NSObject) K(UIContextualAction, NSObject)
+K(UIContextMenuInteraction, NSObject) K(UIContextualAction, NSObject)
 K(UISwipeActionsConfiguration, NSObject) K(UIActivity, NSObject) K(UIApplicationShortcutItem, NSObject)
 K(UIApplicationShortcutIcon, NSObject)
 
@@ -49,7 +49,7 @@ K(UIVisualEffect, NSObject) K(UIBlurEffect, UIVisualEffect) K(UIVibrancyEffect, 
 K(UIMotionEffect, NSObject) K(UIInterpolatingMotionEffect, UIMotionEffect) K(UIMotionEffectGroup, UIMotionEffect)
 K(UIFeedbackGenerator, NSObject) K(UIImpactFeedbackGenerator, UIFeedbackGenerator)
 K(UISelectionFeedbackGenerator, UIFeedbackGenerator) K(UINotificationFeedbackGenerator, UIFeedbackGenerator)
-K(UIViewPropertyAnimator, NSObject) K(UICubicTimingParameters, NSObject) K(UISpringTimingParameters, NSObject)
+/* UIViewPropertyAnimator, UICubicTimingParameters, UISpringTimingParameters: UIKitAnimation.m */
 K(UIPercentDrivenInteractiveTransition, NSObject) K(UIDynamicAnimator, NSObject) K(UIDynamicBehavior, NSObject)
 K(UIDynamicItemBehavior, UIDynamicBehavior) K(UIFieldBehavior, UIDynamicBehavior) K(UIGravityBehavior, UIDynamicBehavior)
 K(UICollisionBehavior, UIDynamicBehavior) K(UIFocusSystem, NSObject) K(UIFocusEffect, NSObject)

@@ -430,8 +430,12 @@ char *basename_r(const char *p, char *out) {
 char *basename(char *p) { static char b[1024]; return basename_r(p, b); }
 
 int stat(const char *p, void *st);
+long readlink(const char *p, char *b, size_t n);
+int snprintf(char *b, size_t n, const char *f, ...);
+char *strncpy(char *d, const char *s, size_t n);
 char *realpath(const char *path, char *out) {
     char tmp[1024], res[1024];
+    int hops = 0;
     cx_path(path, tmp, sizeof tmp);
     size_t o = 0;
     res[0] = 0;
@@ -443,7 +447,29 @@ char *realpath(const char *path, char *out) {
         size_t n = (size_t)(e - s);
         if (n == 1 && s[0] == '.') {}
         else if (n == 2 && s[0] == '.' && s[1] == '.') { while (o > 0 && res[o - 1] != '/') o--; if (o > 0) o--; }
-        else if (o + n + 2 < sizeof res) { res[o++] = '/'; memcpy(res + o, s, n); o += n; }
+        else if (o + n + 2 < sizeof res) {
+            res[o++] = '/'; memcpy(res + o, s, n); o += n;
+            res[o] = 0;
+            /* componente que é link (arquivo "#mOS-link:"): troca pelo alvo e recomeça com o resto do caminho.
+             * O Homebrew compara realpaths ("/usr/local/bin/tree" -> "/usr/local/Cellar/tree/2.3.2/bin/tree"). */
+            char tgt[1024];
+            long tl = hops < 32 ? readlink(res, tgt, sizeof tgt - 1) : -1;
+            if (tl > 0) {
+                tgt[tl] = 0;
+                char next[1024];
+                if (tgt[0] == '/') snprintf(next, sizeof next, "%s%s", tgt, e);
+                else {
+                    while (o > 0 && res[o - 1] != '/') o--;     /* pasta do link */
+                    res[o] = 0;
+                    snprintf(next, sizeof next, "%s%s%s", res, tgt, e);
+                }
+                strncpy(tmp, next, sizeof tmp - 1); tmp[sizeof tmp - 1] = 0;
+                hops++;
+                o = 0; res[0] = 0;
+                s = tmp;
+                continue;
+            }
+        }
         s = e;
     }
     if (!o) res[o++] = '/';

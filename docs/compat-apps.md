@@ -99,7 +99,8 @@ helpers `Codex (GPU|Renderer|Service|Alerts).app`, Sparkle para atualizar), ent�
 - Login: crate `keyring` (`apple-native`), que é `SecItem*`. Agora funciona.
 
 **WhatsApp**: nativo, sem Chromium. O caminho é o do runtime Swift + OpenSwiftUI (outras sessões, [openswiftui-deps.md](openswiftui-deps.md))
-mais um UIKit/Catalyst, que o mOS ainda não tem.
+mais o UIKit do Catalyst, que já existe ([uikit-catalyst.md](uikit-catalyst.md): cena, janela, entrada, controles, Auto Layout,
+rolagem, tabelas, coleções e navegação; ainda sem modais nem animações).
 
 ## Feito nesta etapa
 

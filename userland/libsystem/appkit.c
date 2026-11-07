@@ -104,6 +104,8 @@ typedef struct {
     int level;
     id cvc;                         /* contentViewController */
     double last_render;             /* cx_now() do último render_window (teto de quadros do pump) */
+    double alpha;                   /* alphaValue (0 = nunca definido = 1,0) */
+    id parent;                      /* parentWindow (fraco) */
 } wstate_t;
 
 typedef struct { double r, g, b, a; } rgba_t;     /* NSColor: campos logo após o isa */
@@ -700,6 +702,23 @@ static void resize_children(id v, NSSize old) {
 /* conversão de pontos (só fromView:nil / toView:nil, a partir da janela) */
 typedef struct { double tlx, tly, w, h; BOOL flipped; } absr_t;
 static BOOL is_flipped(id v) { return MSG0(BOOL, v, "isFlipped"); }
+/* -[NSView hitTest:]: p nas coordenadas da superview (para a contentView, as da janela); devolve a descendente mais
+ * funda que contém o ponto, ou nil. O Chromium só aceita um evento de mouse na RenderWidgetHostViewCocoa se o hitTest:
+ * da contentView devolve ela ou uma descendente (shouldIgnoreMouseEvent:); sem este método todo clique e todo movimento
+ * eram ignorados (ia um kMouseLeave e mais nada). As subviews respondem por mensagem: o Chromium sobrescreve hitTest:. */
+static id v_hit_test(id self, SEL c, NSPoint p) {
+    vstate_t *s = vs(self);
+    if (s->hidden) return 0;
+    id sup = s->superview;
+    NSPoint q = {p.x - s->frame.o.x, p.y - s->frame.o.y};
+    if ((sup ? is_flipped(sup) : NO) != is_flipped(self)) q.y = s->frame.s.h - q.y;
+    if (q.x < 0 || q.y < 0 || q.x >= s->frame.s.w || q.y >= s->frame.s.h) return 0;
+    for (u32 i = s->nsub; i-- > 0;) {
+        id r = ((id (*)(id, SEL, NSPoint))objc_msgSend)(s->sub[i], c, q);
+        if (r) return r;
+    }
+    return self;
+}
 static BOOL abs_rect(id v, absr_t *out) {
     vstate_t *s = vs(v);
     if (!s->window) return NO;
@@ -1123,6 +1142,13 @@ static void w_set_content(id self, SEL c, id v) {
 }
 static void w_set_delegate(id self, SEL c, id d) { (void)c; ws(self)->delegate = d; }
 static id w_delegate(id self, SEL c) { (void)c; return ws(self)->delegate; }
+/* alphaValue guardado (o mOS ainda não compõe a janela com transparência); parentWindow/addChildWindow: só registram */
+static double w_alpha(id self, SEL c) { (void)c; double a = ws(self)->alpha; return a > 0 ? a : (a < 0 ? 0 : 1.0); }
+static void w_set_alpha(id self, SEL c, double a) { (void)c; ws(self)->alpha = a <= 0 ? -1 : a; }
+static id w_parent(id self, SEL c) { (void)c; return ws(self)->parent; }
+static void w_set_parent(id self, SEL c, id p) { (void)c; ws(self)->parent = p; }
+static void w_add_child(id self, SEL c, id child, i64 ord) { (void)c; (void)ord; if (child) ws(child)->parent = self; }
+static void w_remove_child(id self, SEL c, id child) { (void)c; if (child && ws(child)->parent == self) ws(child)->parent = 0; }
 /* NSWindowStyleMaskFullSizeContentView (1 << 15), como o Electron usa com titleBarStyle "hidden" (o VS Code
  * desenha a própria barra de título): o conteúdo é a janela inteira, moldura = conteúdo, e o window server
  * só põe os semáforos por cima (GUI_WF_FULLSIZE). Nas outras janelas a moldura tem 22 pt a mais. */
@@ -1229,6 +1255,31 @@ static NSRect w_convert_to_screen(id self, SEL c, NSRect r) {
 }
 
 static id app_windows;
+/* Janela-chave, como no Cocoa: -makeKeyAndOrderFront: e -makeKeyWindow de uma janela que aceita ser chave
+ * (canBecomeKeyWindow: as popups e dicas do Chromium dizem não) avisam windowDidBecomeMain:/windowDidBecomeKey:, e a
+ * chave anterior recebe windowDidResignKey:. É no windowDidBecomeKey: que o Chromium devolve o foco à view web
+ * (makeFirstResponder: na RenderWidgetHostViewCocoa); sem isso as teclas iam para a BridgedContentView até o 1º clique. */
+static id g_key_window;
+static void w_become_key(id self) {
+    if (g_key_window == self) return;
+    if (cx_responds(self->isa, sel_registerName("canBecomeKeyWindow")) && !MSG0(BOOL, self, "canBecomeKeyWindow")) return;
+    static id main_note_name, resign_note_name;
+    if (!main_note_name) { main_note_name = cx_str("NSWindowDidBecomeMainNotification"); resign_note_name = cx_str("NSWindowDidResignKeyNotification"); }
+    id old = g_key_window;
+    g_key_window = self;
+    if (old) {
+        id od = ws(old)->delegate;
+        id n = cx_note(resign_note_name, old, 0);
+        if (od && cx_responds(od->isa, sel_registerName("windowDidResignKey:"))) MSG(void, od, "windowDidResignKey:", n);
+        cx_post(n);
+    }
+    id d = ws(self)->delegate;
+    id nm = cx_note(main_note_name, self, 0), nk = cx_note(NSWindowDidBecomeKeyNotification, self, 0);
+    if (d && cx_responds(d->isa, sel_registerName("windowDidBecomeMain:"))) MSG(void, d, "windowDidBecomeMain:", nm);
+    cx_post(nm);
+    if (d && cx_responds(d->isa, sel_registerName("windowDidBecomeKey:"))) MSG(void, d, "windowDidBecomeKey:", nk);
+    cx_post(nk);
+}
 static void w_show(id self, SEL c, id sender) {
     (void)c; (void)sender;
     wstate_t *s = ws(self);
@@ -1256,6 +1307,7 @@ static void w_show(id self, SEL c, id sender) {
     s->visible = YES;
     s->closed = NO;
     s->needs = YES;
+    if (c == sel_registerName("makeKeyAndOrderFront:") || c == sel_registerName("makeKeyWindow")) w_become_key(self);
 }
 static void w_order_out(id self, SEL c, id sender) { (void)c; (void)sender; (void)self; }
 static void w_center(id self, SEL c) { (void)self; (void)c; }
@@ -1290,6 +1342,7 @@ static void close_window(id self, BOOL from_wm) {
     if (s->closed) return;
     s->closed = YES;
     s->visible = NO;
+    if (g_key_window == self) g_key_window = 0;
     id d = s->delegate;
     if (d && cx_responds(d->isa, sel_registerName("windowWillClose:"))) MSG(void, d, "windowWillClose:", cx_note(NSWindowWillCloseNotification, self, 0));
     cx_post(cx_note(NSWindowWillCloseNotification, self, 0));
@@ -2629,11 +2682,20 @@ static void al_begin_sheet_delegate(id self, SEL c, id win, id delegate, SEL did
 
 /* ================================================================ NSMenu (aceito, sem efeito visual) */
 typedef struct { id title, items, key, submenu; SEL action; id target; i64 tag; int state; BOOL sep, disabled; u64 mask;
-                 BOOL hidden, alternate, header; id image, represented; } menust_t;
+                 BOOL hidden, alternate, header; id image, represented;
+                 id owner, delegate; } menust_t;   /* owner: o NSMenu que contém o item (fraco); delegate: do NSMenu (fraco) */
 static menust_t *mn(id m) { if (!ST(m)) { menust_t *s = calloc(1, sizeof *s); s->items = cx_arr_new(&NSMutableArray_c); ST(m) = s; } return ST(m); }
 static id mn_init_title(id self, SEL c, id t) { (void)c; keep(&mn(self)->title, t); menus_dirty = YES; return self; }
-static void mn_add(id self, SEL c, id item) { (void)c; cx_arr_add(mn(self)->items, item); menus_dirty = YES; }
-static id mn_items(id self, SEL c) { (void)c; return mn(self)->items; }
+static void mn_add(id self, SEL c, id item) { (void)c; if (!item) return; cx_arr_add(mn(self)->items, item); mn(item)->owner = self; menus_dirty = YES; }
+/* como no Cocoa, itemArray é uma cópia: o Chrome percorre o itemArray removendo itens (antes: "coleção alterada
+ * durante a enumeração" e abort) */
+static id mn_items(id self, SEL c) {
+    (void)c;
+    id src = mn(self)->items, a = cx_arr_new(&NSMutableArray_c);
+    u64 n = MSG0(u64, src, "count");
+    for (u64 i = 0; i < n; i++) cx_arr_add(a, MSG(id, src, "objectAtIndex:", i));
+    return objc_autorelease(a);
+}
 static id mn_add_titled(id self, SEL c, id t, SEL a, id k) {
     id it = MSG0(id, MSG0(id, &NSMenuItem_c, "alloc"), "init");
     menust_t *s = mn(it);
@@ -2660,7 +2722,13 @@ static id mi_title(id self, SEL c) { (void)c; return mn(self)->title; }
  * -[NSMenu removeItemAtIndex:]/-itemAtIndex: + -[NSMenuItem isSeparatorItem]; sem isso o laço nunca termina) */
 static i64 mn_count(id self, SEL c) { (void)c; return (i64)MSG0(u64, mn(self)->items, "count"); }
 static id mn_item_at(id self, SEL c, i64 i) { return i >= 0 && i < mn_count(self, c) ? MSG(id, mn(self)->items, "objectAtIndex:", (u64)i) : 0; }
-static void mn_remove_at(id self, SEL c, i64 i) { if (i >= 0 && i < mn_count(self, c)) { MSG(void, mn(self)->items, "removeObjectAtIndex:", (u64)i); menus_dirty = YES; } }
+static void mn_remove_at(id self, SEL c, i64 i) {
+    if (i < 0 || i >= mn_count(self, c)) return;
+    id it = mn_item_at(self, c, i);
+    if (it && mn(it)->owner == self) mn(it)->owner = 0;
+    MSG(void, mn(self)->items, "removeObjectAtIndex:", (u64)i);
+    menus_dirty = YES;
+}
 static i64 mn_index_of(id self, SEL c, id item) {
     i64 n = mn_count(self, c);
     for (i64 i = 0; i < n; i++) if (mn_item_at(self, c, i) == item) return i;
@@ -2672,9 +2740,15 @@ static void mn_insert_at(id self, SEL c, id item, i64 i) {
     if (!item) return;
     if (i < 0 || i >= n) { mn_add(self, c, item); return; }
     MSG(void, mn(self)->items, "insertObject:atIndex:", item, (u64)i);
+    mn(item)->owner = self;
     menus_dirty = YES;
 }
-static void mn_remove_all(id self, SEL c) { (void)c; MSG0(void, mn(self)->items, "removeAllObjects"); menus_dirty = YES; }
+static void mn_remove_all(id self, SEL c) {
+    while (mn_count(self, c) > 0) mn_remove_at(self, c, mn_count(self, c) - 1);
+}
+static id mi_menu(id self, SEL c) { (void)c; return mn(self)->owner; }
+static id mn_delegate(id self, SEL c) { (void)c; return mn(self)->delegate; }
+static void mn_set_delegate(id self, SEL c, id d) { (void)c; mn(self)->delegate = d; }
 static id mn_item_tag(id self, SEL c, i64 tag) {
     i64 n = mn_count(self, c);
     for (i64 i = 0; i < n; i++) { id it = mn_item_at(self, c, i); if (it && mn(it)->tag == tag) return it; }
@@ -3817,7 +3891,8 @@ void cx_appkit_init(void) {
     M(NSWindow, "setTitle:", w_set_title); M(NSWindow, "title", w_title); M(NSWindow, "contentView", w_content); M(NSWindow, "setContentView:", w_set_content);
     M(NSWindow, "isDocumentEdited", no_m); M(NSWindow, "representedFilename", noop_ret_nil);
     M(NSWindow, "setTouchBar:", noop1_m); M(NSWindow, "touchBar", noop_ret_nil);
-    M(NSWindow, "setDelegate:", w_set_delegate); M(NSWindow, "delegate", w_delegate); M(NSWindow, "frame", w_frame);
+    M(NSWindow, "setDelegate:", w_set_delegate); M(NSWindow, "delegate", w_delegate); M(NSWindow, "alphaValue", w_alpha); M(NSWindow, "setAlphaValue:", w_set_alpha);
+    M(NSWindow, "parentWindow", w_parent); M(NSWindow, "setParentWindow:", w_set_parent); M(NSWindow, "addChildWindow:ordered:", w_add_child); M(NSWindow, "removeChildWindow:", w_remove_child); M(NSWindow, "frame", w_frame);
     M(NSWindow, "contentRectForFrameRect:", w_content_rect_for); M(NSWindow, "frameRectForContentRect:", w_frame_rect_for);
     M(NSWindow, "makeKeyAndOrderFront:", w_show); M(NSWindow, "orderFront:", w_show); M(NSWindow, "orderFrontRegardless", w_show); M(NSWindow, "makeKeyWindow", w_show);
     M(NSWindow, "orderOut:", w_order_out); M(NSWindow, "center", w_center); M(NSWindow, "close", w_close); M(NSWindow, "performClose:", w_perform_close);
@@ -3841,7 +3916,7 @@ void cx_appkit_init(void) {
     M(NSView, "addSubview:", v_add_sub); M(NSView, "addSubview:positioned:relativeTo:", v_add_positioned);
     M(NSView, "sortSubviewsUsingFunction:context:", v_sort_sub); M(NSView, "setNextKeyView:", noop1_m);
     M(NSView, "removeFromSuperview", v_remove); M(NSView, "subviews", v_subviews); M(NSView, "dealloc", v_dealloc);
-    M(NSView, "superview", v_superview); M(NSView, "window", v_window); M(NSView, "setNeedsDisplay:", v_set_needs);
+    M(NSView, "superview", v_superview); M(NSView, "window", v_window); M(NSView, "setNeedsDisplay:", v_set_needs); M(NSView, "hitTest:", v_hit_test);
     M(NSView, "setNeedsDisplayInRect:", v_set_needs_rect); M(NSView, "display", v_display); M(NSView, "needsDisplay", v_needs);
     M(NSView, "setHidden:", v_set_hidden); M(NSView, "isHidden", v_hidden); M(NSView, "setAutoresizingMask:", v_set_autoresize);
     M(NSView, "autoresizingMask", v_autoresize); M(NSView, "drawRect:", v_draw_rect); M(NSView, "isFlipped", no_m);
@@ -4040,6 +4115,7 @@ void cx_appkit_init(void) {
     M(NSMenu, "removeItem:", mn_remove); M(NSMenu, "insertItem:atIndex:", mn_insert_at); M(NSMenu, "indexOfItem:", mn_index_of);
     M(NSMenu, "itemWithTag:", mn_item_tag); M(NSMenu, "indexOfItemWithTag:", mn_index_tag); M(NSMenu, "itemWithTitle:", mn_item_title);
     M(NSMenu, "title", mn_title_get); M(NSMenu, "setTitle:", mn_init_title);
+    M(NSMenu, "delegate", mn_delegate); M(NSMenu, "setDelegate:", mn_set_delegate);
     DEF(NSMenuItem, NSObject);
     CM(NSMenuItem, "separatorItem", mi_sep);
     M(NSMenuItem, "initWithTitle:action:keyEquivalent:", mi_init); M(NSMenuItem, "setSubmenu:", mi_set_submenu); M(NSMenuItem, "submenu", mi_submenu);
@@ -4053,6 +4129,7 @@ void cx_appkit_init(void) {
     M(NSMenuItem, "isSectionHeader", mi_is_header); M(NSMenuItem, "isEnabled", mi_enabled); M(NSMenuItem, "keyEquivalent", mi_key);
     M(NSMenuItem, "action", mi_action); M(NSMenuItem, "target", mi_target); M(NSMenuItem, "hasSubmenu", mi_has_submenu);
     CM(NSMenuItem, "sectionHeaderWithTitle:", mi_section_header);
+    M(NSMenuItem, "menu", mi_menu);
 
     DEF(NSAlert, NSObject);
     M(NSAlert, "setMessageText:", al_set_msg); M(NSAlert, "setInformativeText:", al_set_info); M(NSAlert, "addButtonWithTitle:", al_add_button);

@@ -8,6 +8,7 @@ $t = "$root\build\swiftobjctest\uikit"
 New-Item -ItemType Directory -Force (Split-Path "$t\$fwrel") | Out-Null
 Copy-Item $fw "$t\$fwrel" -Force
 Copy-Item $fw "$t\UIKit-link.dylib" -Force     # cópia com extensão para o ligador
+Remove-Item "$t\UIKitTest" -ErrorAction SilentlyContinue     # se a ligação falhar, não roda o binário antigo
 & "$PSScriptRoot\link-swift-objc.ps1" -Out "$t\UIKitTest" -Module UIKitTest -Libs "$t\UIKit-link.dylib","$root\build\swift\objc\overlays\uikit\UIKit.o" -Sources "$root\userland\tests-swiftobjc\uikit\main.swift" 2>&1 |
     Select-String 'error|ok:' | Select-Object -First 10 | ForEach-Object { $_.Line }
 if (-not (Test-Path "$t\UIKitTest")) { Write-Host 'link FALHOU' -ForegroundColor Red; exit 1 }
