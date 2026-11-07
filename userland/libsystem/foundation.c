@@ -161,7 +161,6 @@ static id i_init_format(id self, SEL c, id fmt, ...) {
 static id i_init_format_args(id self, SEL c, id fmt, va_list ap) {
     (void)c;
     id o = cx_str_vfmt(fmt, ap);
-    { static u64 dbg_n; if ((++dbg_n % 20000) == 0 || dbg_n < 4) cx_fdprintf(2, "DBG fmt #%llu '%s' -> '%.80s'\n", (unsigned long long)dbg_n, cx_cstr(fmt), ((nsstr_t *)o)->s); }
     str_set(self, ((nsstr_t *)o)->s, ((nsstr_t *)o)->n);
     return self;
 }
@@ -188,10 +187,46 @@ static BOOL i_eq_str(id self, SEL c, id o) { (void)c; return o && cx_is_str(o) &
 static u64 i_str_hash(id self, SEL c) { (void)c; u64 h = 1469598103934665603ULL; for (u64 i = 0; i < N(self); i++) { h ^= (u8)S(self)[i]; h *= 1099511628211ULL; } return h; }
 static i64 i_compare(id self, SEL c, id o) { (void)c; int r = strcmp(S(self), cx_cstr(o)); return r < 0 ? -1 : r > 0; }
 static i64 i_casecmp(id self, SEL c, id o) { (void)c; int r = strcasecmp(S(self), cx_cstr(o)); return r < 0 ? -1 : r > 0; }
+typedef struct { u64 loc, len; } nsrange_t;
+/* -compare:options:[range:[locale:]]: NSCaseInsensitiveSearch (1) e NSNumericSearch (64, sequências de dígitos pelo
+ * valor). O resto (NSLiteralSearch, acentos, largura) compara por ponto de código, que no UTF-8 é a ordem dos bytes.
+ * Sem este método o Electron 44 abortava: ele ordena as chaves do ElectronAsarIntegrity com
+ * compare:options:NSLiteralSearch e confere o SHA-256 delas com o embutido no binário. O comparador nil deixava o
+ * heapsort do qsort trocar as duas chaves, e o hash mudava ("Failed to get integrity for validatable asar archive"). */
+static i64 cmp_opts(const char *a, u64 na, const char *b, u64 nb, u64 opt) {
+    u64 i = 0, j = 0;
+    while (i < na && j < nb) {
+        if ((opt & 64) && a[i] >= '0' && a[i] <= '9' && b[j] >= '0' && b[j] <= '9') {
+            while (i + 1 < na && a[i] == '0' && a[i + 1] >= '0' && a[i + 1] <= '9') i++;   /* zeros à esquerda */
+            while (j + 1 < nb && b[j] == '0' && b[j + 1] >= '0' && b[j + 1] <= '9') j++;
+            u64 ie = i, je = j;
+            while (ie < na && a[ie] >= '0' && a[ie] <= '9') ie++;
+            while (je < nb && b[je] >= '0' && b[je] <= '9') je++;
+            if (ie - i != je - j) return ie - i < je - j ? -1 : 1;
+            for (; i < ie; i++, j++) if (a[i] != b[j]) return (u8)a[i] < (u8)b[j] ? -1 : 1;
+            continue;
+        }
+        u8 x = (u8)a[i++], y = (u8)b[j++];
+        if (opt & 1) { if (x >= 'A' && x <= 'Z') x += 32; if (y >= 'A' && y <= 'Z') y += 32; }
+        if (x != y) return x < y ? -1 : 1;
+    }
+    return i < na ? 1 : j < nb ? -1 : 0;
+}
+static i64 i_compare_opts(id self, SEL c, id o, u64 opt) {
+    (void)c;
+    const char *b = o ? cx_cstr(o) : "";
+    return cmp_opts(S(self), N(self), b, strlen(b), opt);
+}
+static i64 i_compare_range(id self, SEL c, id o, u64 opt, nsrange_t r) {
+    (void)c;
+    u64 a = byte_at(S(self), N(self), r.loc), e = byte_at(S(self), N(self), r.loc + r.len);
+    const char *b = o ? cx_cstr(o) : "";
+    return cmp_opts(S(self) + a, e - a, b, strlen(b), opt);
+}
+static i64 i_compare_locale(id self, SEL c, id o, u64 opt, nsrange_t r, id loc) { (void)loc; return i_compare_range(self, c, o, opt, r); }
 static BOOL i_has_prefix(id self, SEL c, id p) { (void)c; const char *t = cx_cstr(p); return !strncmp(S(self), t, strlen(t)); }
 static BOOL i_has_suffix(id self, SEL c, id p) { (void)c; const char *t = cx_cstr(p); u64 l = strlen(t); return l <= N(self) && !memcmp(S(self) + N(self) - l, t, l); }
 static BOOL i_contains(id self, SEL c, id p) { (void)c; return strstr(S(self), cx_cstr(p)) != 0; }
-typedef struct { u64 loc, len; } nsrange_t;
 static nsrange_t i_range_of(id self, SEL c, id p) {
     (void)c;
     const char *f = strstr(S(self), cx_cstr(p));
@@ -663,6 +698,16 @@ static void a_remove_at(id self, SEL c, u64 idx) {
     mutations++;
 }
 static void a_remove_last(id self, SEL c) { nsarr_t *r = (nsarr_t *)self; if (r->n) a_remove_at(self, c, r->n - 1); }
+static void a_remove_range(id self, SEL c, nsrange_t g) {
+    (void)c;
+    nsarr_t *r = (nsarr_t *)self;
+    if (g.loc >= r->n || !g.len) return;
+    u64 e = g.len > r->n - g.loc ? r->n : g.loc + g.len;
+    for (u64 i = g.loc; i < e; i++) objc_release(r->items[i]);
+    memmove(r->items + g.loc, r->items + e, (r->n - e) * sizeof(id));
+    r->n -= e - g.loc;
+    mutations++;
+}
 static void a_remove_all(id self, SEL c) { (void)c; nsarr_t *r = (nsarr_t *)self; for (u64 i = 0; i < r->n; i++) objc_release(r->items[i]); r->n = 0; mutations++; }
 static void a_remove_obj(id self, SEL c, id o) { nsarr_t *r = (nsarr_t *)self; for (u64 i = r->n; i-- > 0;) if (obj_eq(r->items[i], o)) a_remove_at(self, c, i); }
 static void a_replace(id self, SEL c, u64 i, id o) { (void)c; nsarr_t *r = (nsarr_t *)self; if (i < r->n) { objc_retain(o); objc_release(r->items[i]); r->items[i] = o; } else if (i == r->n) cx_arr_add(self, o); }
@@ -931,6 +976,8 @@ static id nn_name(id self, SEL c) { (void)c; return ((nsnote_t *)self)->name; }
 static id nn_object(id self, SEL c) { (void)c; return ((nsnote_t *)self)->object; }
 static id nn_info(id self, SEL c) { (void)c; return ((nsnote_t *)self)->info; }
 static id nn_with(id cls, SEL c, id name, id obj, id info) { (void)cls; (void)c; return cx_note(name, obj, info); }
+const char *object_getClassName(id o);
+static void nc_target_add(id t);
 static void nc_add(id self, SEL c, id target, SEL sel, id name, id obj) {
     (void)self; (void)c;
     obs_t *o = calloc(1, sizeof *o);
@@ -938,6 +985,7 @@ static void nc_add(id self, SEL c, id target, SEL sel, id name, id obj) {
     check_name(o);
     o->next = observers;
     observers = o;
+    nc_target_add(target);
 }
 static id nc_add_block(id self, SEL c, id name, id obj, id queue, void *blk) {
     (void)self; (void)c;
@@ -978,6 +1026,10 @@ static void nc_deliver_async(obs_t *o, id note) {
 }
 void cx_post(id note) {
     nsnote_t *n = (nsnote_t *)note;
+    { static u64 dbg_p; nsnote_t *dn = (nsnote_t *)note; if ((++dbg_p % 2000) == 0 || dbg_p < 6) cx_fdprintf(2, "DBG post #%llu %s obj=%s\n", (unsigned long long)dbg_p, dn->name ? S(MSG0(id, dn->name, "description")) : "?", dn->object ? object_getClassName(dn->object) : "nil"); }
+    { static u64 dbg_q; if (++dbg_q == 100) for (obs_t *q = observers; q; q = q->next) cx_fdprintf(2, "  NOME %s bloco=%d\n", q->name ? (q->name_bad ? "(ruim)" : S(MSG0(id, q->name, "description"))) : "(nil)", q->block != 0); }
+    { static int dbg_once; nsnote_t *dn = (nsnote_t *)note; if (!dbg_once && dn->name && !strcmp(S(MSG0(id, dn->name, "description")), "WAExposureKeyDidChange")) { dbg_once = 1;
+        for (obs_t *q = observers; q; q = q->next) if (q->name && q->name_bad == 0 && obj_eq(q->name, dn->name)) cx_fdprintf(2, "  OBS alvo=%s sel=%s bloco=%p fila=%p obj=%p\n", q->target ? object_getClassName(q->target) : "-", q->sel ? (const char *)q->sel : "-", q->block ? *(void **)((u8 *)q->block + 16) : 0, q->queue, q->object); } }
     for (obs_t *o = observers; o; o = o->next) {
         if (o->name && o->name != n->name && (o->name_bad || !obj_eq(o->name, n->name))) continue;
         if (o->object && o->object != n->object) continue;
@@ -1000,7 +1052,42 @@ static void nc_remove(id self, SEL c, id target) {
         } else pp = &(*pp)->next;
 }
 static void nc_remove_name(id self, SEL c, id target, id name, id obj) { (void)name; (void)obj; nc_remove(self, c, target); }
-static void nc_remove_all(id target) { for (obs_t **pp = &observers; *pp;) if ((*pp)->target == target) *pp = (*pp)->next; else pp = &(*pp)->next; }
+/* Todo -dealloc chama nc_remove_all. Percorrer a lista inteira de observadores em cada liberação era quadrático:
+ * o WhatsApp registra milhares de observadores de bloco na partida e passava o tempo todo em str_dealloc. Um
+ * conjunto (hash aberto) dos alvos com observador de seletor deixa a liberação de um objeto comum em O(1). */
+static id *nc_targets;
+static u32 nc_tcap, nc_tn;
+static u32 nc_th(id t) { return (u32)(((u64)t >> 4) * 0x9E3779B1u); }
+static int nc_target_has(id t) {
+    if (!nc_tn || !t) return 0;
+    for (u32 i = nc_th(t) & (nc_tcap - 1); nc_targets[i]; i = (i + 1) & (nc_tcap - 1)) if (nc_targets[i] == t) return 1;
+    return 0;
+}
+static void nc_target_add(id t) {
+    if (!t || nc_target_has(t)) return;
+    if ((nc_tn + 1) * 2 > nc_tcap) {
+        u32 oc = nc_tcap; id *old = nc_targets;
+        nc_tcap = oc ? oc * 2 : 64;
+        nc_targets = calloc(nc_tcap, sizeof *nc_targets);
+        nc_tn = 0;
+        for (u32 i = 0; i < oc; i++) if (old[i] && old[i] != (id)1) nc_target_add(old[i]);
+        free(old);
+    }
+    u32 i = nc_th(t) & (nc_tcap - 1);
+    while (nc_targets[i] && nc_targets[i] != (id)1) i = (i + 1) & (nc_tcap - 1);
+    nc_targets[i] = t;
+    nc_tn++;
+}
+static void nc_target_del(id t) {                     /* lápide (1): a sequência de sondagem continua */
+    if (!nc_tn || !t) return;
+    for (u32 i = nc_th(t) & (nc_tcap - 1); nc_targets[i]; i = (i + 1) & (nc_tcap - 1))
+        if (nc_targets[i] == t) { nc_targets[i] = (id)1; return; }
+}
+static void nc_remove_all(id target) {
+    if (!nc_target_has(target)) return;
+    for (obs_t **pp = &observers; *pp;) if ((*pp)->target == target) *pp = (*pp)->next; else pp = &(*pp)->next;
+    nc_target_del(target);
+}
 
 /* NSThread: o processo tem uma thread */
 static BOOL th_is_main(id self, SEL c) { (void)self; (void)c; return YES; }
@@ -1090,6 +1177,47 @@ static double ud_double(id self, SEL c, id k) { id v = ud_obj(self, c, k); retur
 static void ud_set_bool(id self, SEL c, BOOL b, id k) { ud_set(self, c, cx_num_i(b), k); }
 static void ud_set_int(id self, SEL c, i64 b, id k) { ud_set(self, c, cx_num_i(b), k); }
 static void ud_set_double(id self, SEL c, double b, id k) { ud_set(self, c, cx_num_d(b), k); }
+/* -removeObjectForKey: e setObject:nil (era um no-op: o armazenamento de preferências do WhatsApp removia uma chave,
+ * conferia, achava de novo e tentava sem fim). Mais o resto da API que os apps usam. */
+static void ud_remove(id self, SEL c, id k) {
+    id d = ud_dict_of(self, c, NO);
+    if (!d || !k) return;
+    if (!d_get(d, c, k)) return;
+    d_remove(d, c, k);
+    ud_kvo_notify(self, k, 0);
+}
+static void ud_set_or_remove(id self, SEL c, id v, id k) { if (!v) ud_remove(self, c, k); else ud_set(self, c, v, k); }
+static id ud_dict_repr(id self, SEL c) { id d = ud_dict_of(self, c, NO); return d ? d_mcopy(d, c) : d_dict((id)&NSMutableDictionary_c, c); }
+static id ud_typed(id self, SEL c, id k, cx_class_t *want) {
+    id v = ud_obj(self, c, k);
+    return v && want && cx_is_subclass(v->isa, want) ? v : 0;
+}
+static id ud_data(id self, SEL c, id k) { return ud_typed(self, c, k, cx_class_named("NSData")); }
+static id ud_str_array(id self, SEL c, id k) { return ud_typed(self, c, k, &NSArray_c); }
+static id ud_url(id self, SEL c, id k) {
+    id v = ud_obj(self, c, k);
+    if (!v) return 0;
+    if (cx_is_subclass(v->isa, &NSString_c)) return MSG(id, (id)cx_class_named("NSURL"), "fileURLWithPath:", v);
+    return v;
+}
+static void ud_set_url(id self, SEL c, id u, id k) { ud_set_or_remove(self, c, u ? MSG0(id, u, "absoluteString") : 0, k); }
+static void ud_set_float(id self, SEL c, float f, id k) { ud_set(self, c, cx_num_d((double)f), k); }
+static BOOL ud_forced(id self, SEL c, id k) { (void)self; (void)c; (void)k; return NO; }
+static void ud_noop1(id self, SEL c, id a) { (void)self; (void)c; (void)a; }
+static id ud_persistent(id self, SEL c, id name) { (void)name; return ud_dict_repr(self, c); }
+static void ud_remove_persistent(id self, SEL c, id name) {
+    (void)name;
+    id d = ud_dict_of(self, c, NO);
+    if (!d) return;
+    id keys = MSG0(id, d, "allKeys");
+    u64 n = MSG0(u64, keys, "count");
+    for (u64 i = 0; i < n; i++) ud_remove(self, c, MSG(id, keys, "objectAtIndex:", i));
+}
+static void ud_set_persistent(id self, SEL c, id dict, id name) {
+    ud_remove_persistent(self, c, name);
+    nsdict_t *s = (nsdict_t *)dict;
+    for (u64 i = 0; dict && i < s->n; i++) ud_set(self, c, s->vals[i], s->keys[i]);
+}
 static void ud_register(id self, SEL c, id d) {
     nsdict_t *s = (nsdict_t *)d;
     for (u64 i = 0; d && i < s->n; i++) if (!ud_obj(self, c, s->keys[i])) ud_set(self, c, s->vals[i], s->keys[i]);
@@ -1361,6 +1489,8 @@ void cx_foundation_init(void) {
     M(NSString, "length", i_length); M(NSString, "lengthOfBytesUsingEncoding:", i_lenbytes); M(NSString, "characterAtIndex:", i_char_at);
     M(NSString, "isEqualToString:", i_eq_str); M(NSString, "isEqual:", i_eq_str); M(NSString, "hash", i_str_hash);
     M(NSString, "compare:", i_compare); M(NSString, "caseInsensitiveCompare:", i_casecmp); M(NSString, "localizedCompare:", i_compare);
+    M(NSString, "compare:options:", i_compare_opts); M(NSString, "compare:options:range:", i_compare_range);
+    M(NSString, "compare:options:range:locale:", i_compare_locale);
     M(NSString, "hasPrefix:", i_has_prefix); M(NSString, "hasSuffix:", i_has_suffix); M(NSString, "containsString:", i_contains);
     M(NSString, "rangeOfString:", i_range_of); M(NSString, "stringByAppendingString:", i_append); M(NSString, "stringByAppendingFormat:", i_append_fmt);
     M(NSString, "substringFromIndex:", i_substr_from); M(NSString, "substringToIndex:", i_substr_to); M(NSString, "substringWithRange:", i_substr_range);
@@ -1401,6 +1531,7 @@ void cx_foundation_init(void) {
     M(NSArray, "enumerateObjectsUsingBlock:", a_enum_block); M(NSArray, "sortedArrayUsingSelector:", a_sorted_sel); M(NSArray, "sortedArrayUsingComparator:", a_sorted_cmp);
     M(NSMutableArray, "addObject:", a_add); M(NSMutableArray, "addObjectsFromArray:", a_add_all); M(NSMutableArray, "insertObject:atIndex:", a_insert);
     M(NSMutableArray, "removeObjectAtIndex:", a_remove_at); M(NSMutableArray, "removeLastObject", a_remove_last); M(NSMutableArray, "removeAllObjects", a_remove_all);
+    M(NSMutableArray, "removeObjectsInRange:", a_remove_range);
     M(NSMutableArray, "removeObject:", a_remove_obj); M(NSMutableArray, "replaceObjectAtIndex:withObject:", a_replace);
     M(NSMutableArray, "setObject:atIndexedSubscript:", a_set_sub); M(NSMutableArray, "sortUsingSelector:", a_sort_sel);
 
@@ -1465,10 +1596,16 @@ void cx_foundation_init(void) {
     cx_define_class(&NSUserDefaults_c, &NSUserDefaults_m, "NSUserDefaults", &NSObject_c, 0);
     CM(NSUserDefaults, "standardUserDefaults", g_singleton);
     M(NSUserDefaults, "objectForKey:", ud_obj); M(NSUserDefaults, "stringForKey:", ud_obj); M(NSUserDefaults, "arrayForKey:", ud_obj);
-    M(NSUserDefaults, "dictionaryForKey:", ud_obj); M(NSUserDefaults, "setObject:forKey:", ud_set); M(NSUserDefaults, "boolForKey:", ud_bool);
+    M(NSUserDefaults, "dictionaryForKey:", ud_obj); M(NSUserDefaults, "setObject:forKey:", ud_set_or_remove); M(NSUserDefaults, "boolForKey:", ud_bool);
     M(NSUserDefaults, "integerForKey:", ud_int); M(NSUserDefaults, "doubleForKey:", ud_double); M(NSUserDefaults, "setBool:forKey:", ud_set_bool);
     M(NSUserDefaults, "setInteger:forKey:", ud_set_int); M(NSUserDefaults, "setDouble:forKey:", ud_set_double); M(NSUserDefaults, "registerDefaults:", ud_register);
-    M(NSUserDefaults, "synchronize", yes_m); M(NSUserDefaults, "removeObjectForKey:", o_void);
+    M(NSUserDefaults, "synchronize", yes_m); M(NSUserDefaults, "removeObjectForKey:", ud_remove);
+    M(NSUserDefaults, "dictionaryRepresentation", ud_dict_repr); M(NSUserDefaults, "dataForKey:", ud_data);
+    M(NSUserDefaults, "stringArrayForKey:", ud_str_array); M(NSUserDefaults, "URLForKey:", ud_url); M(NSUserDefaults, "setURL:forKey:", ud_set_url);
+    M(NSUserDefaults, "setFloat:forKey:", ud_set_float); M(NSUserDefaults, "objectIsForcedForKey:", ud_forced);
+    M(NSUserDefaults, "addSuiteNamed:", ud_noop1); M(NSUserDefaults, "removeSuiteNamed:", ud_noop1);
+    M(NSUserDefaults, "persistentDomainForName:", ud_persistent); M(NSUserDefaults, "removePersistentDomainForName:", ud_remove_persistent);
+    M(NSUserDefaults, "setPersistentDomain:forName:", ud_set_persistent); M(NSUserDefaults, "setValue:forKey:", ud_set_or_remove);
     M(NSUserDefaults, "initWithSuiteName:", ud_init_suite); M(NSUserDefaults, "floatForKey:", ud_float);
     M(NSUserDefaults, "valueForKey:", ud_obj); M(NSUserDefaults, "valueForKeyPath:", ud_obj);
     M(NSUserDefaults, "addObserver:forKeyPath:options:context:", ud_kvo_add);
