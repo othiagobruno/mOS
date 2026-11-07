@@ -67,3 +67,41 @@ que são recursos opcionais e esperam o runtime Swift ([swift-objc-runtime.md](s
 
 O harness do host (`machotest`) não roda o `language_server`: cai na primeira instrução de um inicializador estático
 a 48 MiB do início do texto, um limite do harness, não do mOS. O teste dele é na VM.
+
+## Cursor na VM (7 nov., tarde)
+
+- **O Cursor 3.29.9 abre e mostra a tela de login** ("CURSOR — The best way to code with AI", Log In / Sign Up),
+  com a interface "glass" completa (`workbench.glass.main.js`).
+- Na primeira rodada a janela ficava branca: o `stage-electron.ps1` pula arquivos acima de `-MaxModuloMiB` (16), e o
+  Cursor tem seis maiores que isso, entre eles os dois workbench (`workbench.glass.main.js` 45 MiB,
+  `workbench.desktop.main.js` 37 MiB), o `resources/helpers/node` (120 MiB), o `file_service.darwin-x64.node` (39 MiB)
+  e o `daemon.cjs` do agent host (20 MiB). Para o Cursor use `-MaxModuloMiB 128`.
+- O staging dele é lento (14 mil arquivos, 640 MiB em `Resources/app`; ~45 min com a máquina sob pressão de memória).
+  Para repetir sem refazer: copie o que faltar para `build-cursor\esp\...`, rode o `build-cursor\mkimg.exe` e o
+  `vscode-teste.ps1 ... -SemBuild`.
+- Falta: o Extension Host (`Cursor Helper (Plugin)`) sai com código 1 antes de ativar extensões, três vezes; sem ele
+  não há o "Connect transport" (login, modelos, analytics). O tracing do Sentry no processo principal também falha
+  com `Cannot find module './machine-id/getMachineId'`, embora o arquivo exista e o driver FAT o leia (`fatcat`);
+  não é fatal.
+
+### Extension Host do Cursor: as quatro causas (7 nov., noite)
+
+Para ler a saída do Extension Host, que morria sem log, o `extensionHostProcess.js` da imagem de teste virou um
+carregador que fazia `import()` do original e gravava o erro em `/Users/Visitante/exthost-diag.log` (com `-Persist`,
+lido pelo `build\fatcat.exe`). As causas, em ordem:
+
+1. **VFS parava em 16 níveis** (`kernel/fs/persist.c`): `.../node_modules/@sentry/node/node_modules/@opentelemetry/
+   resources/build/src/detectors/platform/node/machine-id` está no nível 17, e os 42 arquivos mais fundos da imagem
+   nunca entravam no VFS (o diretório existia vazio). O `import` do OpenTelemetry falhava e o host saía com código 1.
+   Agora o limite é 64 (o boot tem 1 MiB de pilha) e o que passar disso aparece no log.
+2. **zlib ausente**: o `file_service.darwin-x64.node` liga `/usr/lib/libz.1.dylib`; o carregador já a manda para
+   `/usr/local/opt/zlib/lib`, mas a imagem base não tinha o arquivo. O `build.ps1` passa a copiar o bottle do Homebrew.
+3. **dup de kqueue**: o tokio (`file-service/src/init.rs`) falhava em criar o runtime com EBADF, porque o mio clona o
+   kqueue com `F_DUPFD_CLOEXEC` e o `dup()` mandava ao kernel um descritor que só o libSystem conhece. O `kqueue.c`
+   ganhou `cx_kqueue_dup`, com contagem de referências.
+4. **memória da VM**: com 2,7 GiB, o processo principal parou em `mach_make_memory_entry_64: (6)` e o host em
+   `memcpy`/`kmalloc: sem memória`. Os ~950 MiB do Cursor ficam na RAM (livre cai de 1.720 para 499 MiB com seis
+   processos, mesmo com o Electron Framework compartilhado). O Cursor precisa de `-Memory 3400` ou mais.
+
+Com 1 a 3 corrigidos, o Extension Host ativa as extensões (`cursor-retrieval`, `cursor-checkout`, `vscode.git`...) e
+o Cursor conversa com `api2.cursor.sh` (as respostas são `[unauthenticated]`, como deve ser antes do login).
