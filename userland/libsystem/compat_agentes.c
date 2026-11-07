@@ -146,3 +146,24 @@ void IOHIDManagerRegisterInputReportCallback(void *m, void *cb, void *ctx) { (vo
 #define errSecUnimplemented (-4)
 int SecTrustSettingsSetTrustSettings(id_ cert, int domain, id_ settings) { (void)cert; (void)domain; (void)settings; return errSecUnimplemented; }
 int SecTrustSettingsRemoveTrustSettings(id_ cert, int domain) { (void)cert; (void)domain; return errSecUnimplemented; }
+
+/* ---- Codex desktop (native/*.node, codex): o resto do que é C */
+const double kCFCoreFoundationVersionNumber = 2048.0;   /* da ordem do macOS 14, a versão que o mOS informa */
+u64 CGEventSourceFlagsState(int state) { (void)state; return 0; }      /* nenhuma tecla modificadora pressionada */
+unsigned char CGPreflightListenEventAccess(void) { return 0; }        /* sem monitoração de entrada global */
+unsigned char CGRequestListenEventAccess(void) { return 0; }
+void CGContextSetInterpolationQuality(void *ctx, int q) { (void)ctx; (void)q; }   /* o rasterizador do mOS é um só */
+void IOHIDDeviceRegisterRemovalCallback(void *d, void *cb, void *ctx) { (void)d; (void)cb; (void)ctx; }
+id_ IOHIDManagerCopyDevices(void *m) { (void)m; return 0; }            /* NULL: nenhum dispositivo, como a Apple */
+u32 IORegistryEntryFromPath(u32 master, const char *path) { (void)master; (void)path; return 0; }   /* MACH_PORT_NULL */
+typedef int wchar32;
+wchar32 *wcsncpy(wchar32 *d, const wchar32 *s, size_t n) {
+    size_t i = 0;
+    for (; i < n && s[i]; i++) d[i] = s[i];
+    for (; i < n; i++) d[i] = 0;
+    return d;
+}
+typedef struct { void *isa; u64 flags; const char *s; u64 n; } cfk_t;
+extern char cx_cfconst_isa2[] __asm__("__CFConstantStringClassReference");
+static cfk_t kCIInputRadiusKey_s = {cx_cfconst_isa2, 0x7c8, "inputRadius", 11};
+const void *kCIInputRadiusKey = &kCIInputRadiusKey_s;

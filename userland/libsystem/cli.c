@@ -315,6 +315,19 @@ id_ CFURLCreateWithString(void *alloc, id_ s, id_ base) {
     id_ u = MSG1(id_, CLS("NSURL"), "URLWithString:", s);
     return u ? objc_retain(u) : 0;
 }
+/* CFURLCreateWithBytes: os bytes na codificação dada viram a string da URL, relativa à base se houver (o codex da
+ * OpenAI, binário Rust, monta as URLs assim) */
+id_ CFStringCreateWithBytes(void *alloc, const u8 *b, long n, u32 enc, u8 ext);
+void CFRelease(id_ o);
+id_ CFURLCreateWithBytes(void *alloc, const u8 *bytes, long len, u32 enc, id_ base) {
+    (void)alloc;
+    if (!bytes || len < 0) return 0;
+    id_ s = CFStringCreateWithBytes(0, bytes, len, enc, 0);
+    if (!s) return 0;
+    id_ u = base ? MSG2(id_, CLS("NSURL"), "URLWithString:relativeToURL:", s, base) : MSG1(id_, CLS("NSURL"), "URLWithString:", s);
+    CFRelease(s);
+    return u ? objc_retain(u) : 0;
+}
 id_ CFURLCopyAbsoluteURL(id_ u) { return u ? CFRetain(u) : 0; }
 id_ CFURLCreateFilePathURL(void *alloc, id_ u, id_ *err) { (void)alloc; if (err) *err = 0; return u ? CFRetain(u) : 0; }
 id_ CFURLCreateFileReferenceURL(void *alloc, id_ u, id_ *err) { (void)alloc; if (err) *err = 0; return u ? CFRetain(u) : 0; }
