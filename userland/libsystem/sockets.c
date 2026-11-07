@@ -43,6 +43,8 @@ typedef struct {
     int used, family, type, listening; char path[108];
     /* AF_INET (TCP pelo kernel, SYS_NET): conexão do kernel (-1 = nenhuma), modo, estado do connect */
     int kc, nonblock, connecting, err; unsigned rip; unsigned short rport;
+    /* bytes já tirados do kernel por recv(MSG_PEEK) e ainda não entregues (o próximo recv os devolve primeiro) */
+    unsigned short peek_len; unsigned char peek[512];
 } sock_t;
 static sock_t socks[MAX_SOCK];
 
@@ -58,7 +60,7 @@ int socket(int domain, int type, int proto) {
     for (int i = 0; i < MAX_SOCK; i++)
         if (!__sync_lock_test_and_set(&socks[i].used, 1)) {
             socks[i].family = domain; socks[i].type = type; socks[i].listening = 0; socks[i].path[0] = 0;
-            socks[i].kc = -1; socks[i].nonblock = 0; socks[i].connecting = 0; socks[i].err = 0; socks[i].rip = 0; socks[i].rport = 0;
+            socks[i].kc = -1; socks[i].nonblock = 0; socks[i].connecting = 0; socks[i].err = 0; socks[i].rip = 0; socks[i].rport = 0; socks[i].peek_len = 0;
             return SOCK_FD_BASE + i;
         }
     cx_errno = CX_EMFILE;

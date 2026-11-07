@@ -66,16 +66,51 @@ static long in_send(sock_t *s, const void *b, size_t n) {
     return (long)done;
 }
 
-static long in_recv(sock_t *s, void *b, size_t n) {
+/* flags de recv do macOS */
+#define CX_MSG_PEEK 0x2
+#define CX_MSG_WAITALL 0x40
+#define CX_MSG_DONTWAIT 0x80
+/* entrega primeiro os bytes guardados por um MSG_PEEK anterior; com MSG_PEEK eles ficam guardados */
+static size_t peek_take(sock_t *s, void *b, size_t n, int keep) {
+    size_t k = n < s->peek_len ? n : s->peek_len;
+    memcpy(b, s->peek, k);
+    if (!keep) {
+        s->peek_len = (unsigned short)(s->peek_len - k);
+        for (size_t i = 0; i < s->peek_len; i++) s->peek[i] = s->peek[k + i];
+    }
+    return k;
+}
+/* O kernel não sabe "espiar": o MSG_PEEK tira os bytes do kernel para s->peek e devolve uma cópia. O Chromium usa
+ * recv(fd, &c, 1, MSG_PEEK) em SocketPosix::IsConnectedAndIdle ao reaproveitar um socket do pool; consumir esse byte
+ * desalinhava o fluxo TLS (record_overflow / bad_record_mac / wrong_version_number = ERR_SSL_PROTOCOL_ERROR). */
+static long in_recv(sock_t *s, void *b, size_t n, int fl) {
+    int peek = (fl & CX_MSG_PEEK) != 0, nb = s->nonblock || (fl & CX_MSG_DONTWAIT);
+    if (s->peek_len && n && (peek || !(fl & CX_MSG_WAITALL) || n <= s->peek_len))
+        return (long)peek_take(s, b, n, peek);
     int c = conn_check(s);
     if (c == 0) { cx_errno = CX_EAGAIN; return -1; }
-    if (c < 0) { cx_errno = s->err ? s->err : CX_ENOTCONN; return -1; }
+    if (c < 0 && !s->peek_len) { cx_errno = s->err ? s->err : CX_ENOTCONN; return -1; }
     if (!n) return 0;
+    size_t got = 0;
+    if (!peek && s->peek_len) got = peek_take(s, b, n, 0);       /* MSG_WAITALL: começa pelo guardado */
     for (;;) {
-        long k = net(MOS_NET_RECV, s->kc, (long)b, (long)n);
-        if (k > 0) return k;
-        if (k < 0) return 0;                                   /* fim do fluxo (FIN) */
-        if (s->nonblock) { cx_errno = CX_EAGAIN; return -1; }
+        long k;
+        if (peek) {
+            size_t room = sizeof s->peek - s->peek_len;
+            k = room ? net(MOS_NET_RECV, s->kc, (long)(s->peek + s->peek_len), (long)room) : 0;
+            if (k > 0) s->peek_len = (unsigned short)(s->peek_len + k);
+            if (s->peek_len) return (long)peek_take(s, b, n, 1);
+        } else {
+            k = net(MOS_NET_RECV, s->kc, (long)((u8 *)b + got), (long)(n - got));
+            if (k > 0) {
+                got += (size_t)k;
+                if (!(fl & CX_MSG_WAITALL) || got >= n) return (long)got;
+                continue;
+            }
+        }
+        if (k < 0) return (long)got;                           /* fim do fluxo (FIN) */
+        if (got && (nb || !(fl & CX_MSG_WAITALL))) return (long)got;
+        if (nb) { cx_errno = CX_EAGAIN; return -1; }
         SYS1(SYS_SLEEP, 2);
     }
 }
@@ -137,11 +172,11 @@ long send(int fd, const void *b, size_t n, int fl) {
     return in_send(s, b, n);
 }
 long recv(int fd, void *b, size_t n, int fl) {
-    (void)fl;                                                  /* MSG_PEEK/MSG_WAITALL: ainda não */
+    /* MSG_PEEK, MSG_WAITALL e MSG_DONTWAIT: in_recv */
     sock_t *s = sock_of(fd);
     if (!s) { cx_errno = CX_EBADF; return -1; }
     if (!is_inet(s)) { cx_errno = CX_ENOTCONN; return -1; }
-    return in_recv(s, b, n);
+    return in_recv(s, b, n, fl);
 }
 /* struct msghdr do macOS: name(8) namelen(4)+pad iov(8) iovlen(4)+pad control(8) controllen(4) flags(4) */
 typedef struct { void *base; size_t len; } cx_iovec_t;
@@ -193,6 +228,7 @@ int cx_sock_readable(int fd, long *avail, int *eof) {
     sock_t *s = sock_of(fd);
     *avail = 0; *eof = 0;
     if (!is_inet(s) || s->kc < 0) return 0;
+    if (s->peek_len) { *avail = s->peek_len + (conn_check(s) > 0 ? net(MOS_NET_AVAIL, s->kc, 0, 0) : 0); return 1; }
     int c = conn_check(s);
     if (c == 0) return 0;
     if (c < 0) { *eof = 1; return 1; }
