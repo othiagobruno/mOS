@@ -530,10 +530,12 @@ static void heap_probe(const char *what, process_t *p) {
 static void drop_pipe_waiters(process_t *p, thread_t *keep) {
     for (process_t *q = procs; q; q = q->next)
         for (int i = 0; i < PROC_MAX_FDS; i++) {
-            pipe_t *pp = q->fds[i].used ? q->fds[i].pipe : NULL;
-            if (!pp) continue;
-            if (pp->rwait && pp->rwait->proc == p && pp->rwait != keep) pp->rwait = NULL;
-            if (pp->wwait && pp->wwait->proc == p && pp->wwait != keep) pp->wwait = NULL;
+            for (int k = 0; k < 2; k++) {                  /* .pipe2: a ponta de escrita de um socketpair */
+                pipe_t *pp = !q->fds[i].used ? NULL : k ? q->fds[i].pipe2 : q->fds[i].pipe;
+                if (!pp) continue;
+                if (pp->rwait && pp->rwait->proc == p && pp->rwait != keep) pp->rwait = NULL;
+                if (pp->wwait && pp->wwait->proc == p && pp->wwait != keep) pp->wwait = NULL;
+            }
         }
 }
 
@@ -1013,9 +1015,11 @@ static void sig_interrupt(thread_t *t) {
     if (p->tty && p->tty->reader == t) p->tty->reader = NULL;
     if (t->wait_pid == -3 || t->wait_pid == -4)
         for (int i = 0; i < PROC_MAX_FDS; i++) {
-            pipe_t *pp = p->fds[i].used ? p->fds[i].pipe : NULL;
-            if (pp && pp->rwait == t) pp->rwait = NULL;
-            if (pp && pp->wwait == t) pp->wwait = NULL;
+            for (int k = 0; k < 2; k++) {
+                pipe_t *pp = !p->fds[i].used ? NULL : k ? p->fds[i].pipe2 : p->fds[i].pipe;
+                if (pp && pp->rwait == t) pp->rwait = NULL;
+                if (pp && pp->wwait == t) pp->wwait = NULL;
+            }
         }
     t->pty_wait = NULL;
     t->futex_va = 0;
@@ -1435,18 +1439,32 @@ static void pipe_service(pipe_t *pp) {
     }
 }
 
+/* referências de um descritor de pipe: FD_PIPE_R lê do .pipe, FD_PIPE_W escreve nele; FD_PIPE_RW (socketpair) lê
+ * do .pipe e escreve no .pipe2. Soltar a última referência das duas pontas libera o pipe. */
+static void pipe_end_drop(pipe_t *pp, bool reader) {
+    if (!pp) return;
+    if (reader) pp->readers--; else pp->writers--;
+    pipe_service(pp);
+    if (pp->readers <= 0 && pp->writers <= 0) kfree(pp);
+}
+static void pipe_refs(pipe_t *pp, pipe_t *pp2, u8 kind, int d) {
+    if (pp) { if (kind == FD_PIPE_R || kind == FD_PIPE_RW) pp->readers += d; else pp->writers += d; }
+    if (pp2) pp2->writers += d;
+}
+static void pipe_refs_drop(pipe_t *pp, pipe_t *pp2, u8 kind) {
+    pipe_end_drop(pp, kind == FD_PIPE_R || kind == FD_PIPE_RW);
+    pipe_end_drop(pp2, false);
+}
+
 static void fd_close(process_t *p, int fd) {
     if (!p->fds[fd].used) return;
-    pipe_t *pp = p->fds[fd].pipe;
+    pipe_t *pp = p->fds[fd].pipe, *pp2 = p->fds[fd].pipe2;
     struct pty *ty = p->fds[fd].pty;
     bool tm = p->fds[fd].kind == FD_PTY_M;
-    if (pp) {
-        if (p->fds[fd].kind == FD_PIPE_R) pp->readers--; else pp->writers--;
-        pipe_service(pp);
-        if (pp->readers <= 0 && pp->writers <= 0) kfree(pp);
-    }
+    if (pp || pp2) pipe_refs_drop(pp, pp2, p->fds[fd].kind);
     p->fds[fd].used = false;
     p->fds[fd].pipe = NULL;
+    p->fds[fd].pipe2 = NULL;
     p->fds[fd].pty = NULL;
     if (ty) pty_fd_ref(ty, tm, -1);                   /* depois de soltar o fd: o par pode ser liberado aqui */
 }
@@ -1455,7 +1473,7 @@ static void fd_copy(process_t *dst, int dfd, process_t *src, int sfd) {
     /* a referência nova entra antes de fechar o destino: se os dois são do mesmo pipe e o destino era a
      * última referência, fechar primeiro liberaria o pipe que a cópia ainda vai usar (kfree duplo depois) */
     __typeof__(src->fds[0]) e = src->fds[sfd];
-    if (e.pipe) { if (e.kind == FD_PIPE_R) e.pipe->readers++; else e.pipe->writers++; }
+    pipe_refs(e.pipe, e.pipe2, e.kind, +1);
     if (e.pty) pty_fd_ref(e.pty, e.kind == FD_PTY_M, +1);
     if (dst->fds[dfd].used) fd_close(dst, dfd);
     dst->fds[dfd] = e;
@@ -1472,7 +1490,7 @@ void *proc_fd_snapshot(process_t *p, int fd) {
     if (!s) return NULL;
     *s = p->fds[fd];
     s->flags &= ~MOS_O_CLOEXEC;
-    if (s->pipe) { if (s->kind == FD_PIPE_R) s->pipe->readers++; else s->pipe->writers++; }
+    pipe_refs(s->pipe, s->pipe2, s->kind, +1);
     if (s->pty) pty_fd_ref(s->pty, s->kind == FD_PTY_M, +1);
     return s;
 }
@@ -1482,7 +1500,7 @@ int proc_fd_from_snapshot(process_t *p, const void *snap) {
         if (p->fds[fd].used) continue;
         p->fds[fd] = *s;
         p->fds[fd].used = true;
-        if (s->pipe) { if (s->kind == FD_PIPE_R) s->pipe->readers++; else s->pipe->writers++; }
+        pipe_refs(s->pipe, s->pipe2, s->kind, +1);
         if (s->pty) pty_fd_ref(s->pty, s->kind == FD_PTY_M, +1);
         return fd;
     }
@@ -1491,12 +1509,7 @@ int proc_fd_from_snapshot(process_t *p, const void *snap) {
 void proc_fd_snapshot_free(void *snap) {
     fdent_t *s = snap;
     if (!s) return;
-    pipe_t *pp = s->pipe;
-    if (pp) {
-        if (s->kind == FD_PIPE_R) pp->readers--; else pp->writers--;
-        pipe_service(pp);
-        if (pp->readers <= 0 && pp->writers <= 0) kfree(pp);
-    }
+    if (s->pipe || s->pipe2) pipe_refs_drop(s->pipe, s->pipe2, s->kind);
     if (s->pty) pty_fd_ref(s->pty, s->kind == FD_PTY_M, -1);
     kfree(s);
 }
@@ -1860,6 +1873,7 @@ static u64 proc_syscall_(int_frame_t *f) {
         return sched_switch(f);
     case SYS_WRITE:
         if (fd_get(p, a) >= 0 && p->fds[a].pty) return pty_rw(f, t, p, (int)a, false, b, c);   /* terminal (pty.c) */
+        if (fd_get(p, a) >= 0 && p->fds[a].kind == FD_PIPE_RW) return pipe_op(f, t, p->fds[a].pipe2, false, b, c);   /* socketpair */
         if (fd_get(p, a) >= 0 && p->fds[a].pipe) {
             if (p->fds[a].kind != FD_PIPE_W) { r = -MOS_EBADF; break; }
             return pipe_op(f, t, p->fds[a].pipe, false, b, c);
@@ -2081,6 +2095,7 @@ static u64 proc_syscall_(int_frame_t *f) {
         p->fds[fd].used = true;
         p->fds[fd].kind = FD_FILE;
         p->fds[fd].pipe = NULL;
+        p->fds[fd].pipe2 = NULL;
         p->fds[fd].pty = NULL;
         p->fds[fd].flags = (int)b;
         p->fds[fd].off = 0;
@@ -2101,6 +2116,23 @@ static u64 proc_syscall_(int_frame_t *f) {
         if (!pp) { r = -MOS_ENOMEM; break; }
         pp->readers = pp->writers = 1;
         int both[2] = {rfd, wfd};
+        if (b == MOS_PIPE_SOCKPAIR) {
+            /* socketpair (b = MOS_PIPE_SOCKPAIR): dois pipes cruzados, e cada ponta lê de um e escreve no outro. O libuv do Node e do
+             * Electron liga o stdin/stdout dos filhos assim; com um pipe só (o de antes), o pai escrevia na ponta de
+             * leitura e o filho via EOF no stdin (o "codex app-server" do Codex desktop saía na hora com código 0) */
+            pipe_t *p2 = kcalloc(1, sizeof *p2);
+            if (!p2) { kfree(pp); r = -MOS_ENOMEM; break; }
+            p2->readers = p2->writers = 1;
+            if (!uvm_copy_out(p, a, both, sizeof both)) { kfree(pp); kfree(p2); r = -MOS_EFAULT; break; }
+            memset(&p->fds[rfd], 0, sizeof p->fds[rfd]);
+            memset(&p->fds[wfd], 0, sizeof p->fds[wfd]);
+            p->fds[rfd].used = p->fds[wfd].used = true;
+            p->fds[rfd].kind = p->fds[wfd].kind = FD_PIPE_RW;
+            p->fds[rfd].pipe = pp; p->fds[rfd].pipe2 = p2;   /* ponta 0: lê pp, escreve p2 */
+            p->fds[wfd].pipe = p2; p->fds[wfd].pipe2 = pp;   /* ponta 1: lê p2, escreve pp */
+            r = 0;
+            break;
+        }
         if (!uvm_copy_out(p, a, both, sizeof both)) { kfree(pp); r = -MOS_EFAULT; break; }
         memset(&p->fds[rfd], 0, sizeof p->fds[rfd]);
         memset(&p->fds[wfd], 0, sizeof p->fds[wfd]);
@@ -2185,7 +2217,7 @@ static u64 proc_syscall_(int_frame_t *f) {
     case SYS_READ: {
         if (fd_get(p, a) >= 0 && p->fds[a].pty) return pty_rw(f, t, p, (int)a, true, b, c);    /* terminal (pty.c) */
         if (fd_get(p, a) >= 0 && p->fds[a].pipe) {
-            if (p->fds[a].kind != FD_PIPE_R) { r = -MOS_EBADF; break; }
+            if (p->fds[a].kind != FD_PIPE_R && p->fds[a].kind != FD_PIPE_RW) { r = -MOS_EBADF; break; }
             return pipe_op(f, t, p->fds[a].pipe, true, b, c);
         }
         if (a == 0 && fd_get(p, 0) < 0) {                   /* stdin: entrada da sessão */
@@ -2264,7 +2296,7 @@ static u64 proc_syscall_(int_frame_t *f) {
         if (f->rax == SYS_FSTAT && fd_get(p, a) >= 0 && p->fds[a].pty) { r = pty_fstat(p, (int)a, b); break; }   /* is_dir 5 */
         if (f->rax == SYS_FSTAT && fd_get(p, a) >= 0 && p->fds[a].pipe) {
             pipe_t *pp = p->fds[a].pipe;
-            bool rd = p->fds[a].kind == FD_PIPE_R;
+            bool rd = p->fds[a].kind == FD_PIPE_R || p->fds[a].kind == FD_PIPE_RW;   /* socketpair: como a ponta de leitura */
             mos_stat_t st = {0};
             st.is_dir = rd ? 2 : 3;
             st.size = rd ? pp->count : sizeof pp->buf - pp->count;

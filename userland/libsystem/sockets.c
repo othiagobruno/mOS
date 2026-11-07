@@ -81,9 +81,9 @@ int socket(int domain, int type, int proto) {
 }
 int socketpair(int domain, int type, int proto, int sv[2]) {
     (void)domain; (void)type; (void)proto;
-    /* um pipe do kernel em cada sentido não cabe num par só; usa um pipe (meio-duplex) */
-    extern int pipe(int *fds);
-    return pipe(sv);
+    /* par bidirecional do kernel (dois pipes cruzados, kernel/proc/process.c): o libuv liga o stdin dos filhos assim */
+    extern int cx_socketpair_fds(int *fds);
+    return cx_socketpair_fds(sv);
 }
 
 /* sockaddr_un do macOS: {u8 len; u8 family; char path[104]} */

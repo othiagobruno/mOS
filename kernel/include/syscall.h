@@ -38,7 +38,7 @@ enum {
     SYS_CHDIR,         /* (path) -> 0 */
     SYS_GETCWD,        /* (buf, cap) -> tamanho */
     SYS_PROCLIST,      /* (index, mos_procinfo_t*) -> 1 = preenchido, 0 = fim */
-    SYS_PIPE,          /* (int fds[2]) -> 0                        fds[0] leitura, fds[1] escrita */
+    SYS_PIPE,          /* (int fds[2], modo) -> 0                  fds[0] leitura, fds[1] escrita; modo MOS_PIPE_SOCKPAIR: par bidirecional */
     SYS_SPAWNIO,       /* (path, arg, int io[3]) -> pid            io[i] = fd do pai para o fd i do filho, ou -1 */
     SYS_DUP2,          /* (fd, novo) -> novo */
     SYS_THREAD_CREATE, /* (entry, user_rsp, arg) -> tid             nova thread no mesmo processo (rdi = arg) */
@@ -230,6 +230,9 @@ enum {
 #define MOS_SIG_BLOCK   1        /* valores do macOS */
 #define MOS_SIG_UNBLOCK 2
 #define MOS_SIG_SETMASK 3
+/* SYS_PIPE: 2º argumento que pede um par bidirecional (socketpair) em vez de um pipe; mágico porque o SYS1 dos programas
+ * que chamam SYS_PIPE com um argumento só deixa lixo no rsi */
+#define MOS_PIPE_SOCKPAIR 0x534F434B50414952ULL   /* "SOCKPAIR" */
 #define MOS_SA_ONSTACK   0x0001  /* flags de sa_flags: valores do macOS */
 #define MOS_SA_RESTART   0x0002
 #define MOS_SA_RESETHAND 0x0004

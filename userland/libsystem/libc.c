@@ -1050,6 +1050,12 @@ int pipe(int *fds) {                                                   /* o kern
     if (r == 0) { nb_set(fds[0], 0); nb_set(fds[1], 0); acc_set(fds[0], 0); acc_set(fds[1], 1); }
     return r;
 }
+/* socketpair (sockets.c): par bidirecional do kernel (SYS_PIPE com MOS_PIPE_SOCKPAIR): cada ponta lê e escreve */
+int cx_socketpair_fds(int *fds) {
+    int r = (int)ret_errno(SYS2(SYS_PIPE, fds, MOS_PIPE_SOCKPAIR));
+    if (r == 0) { nb_set(fds[0], 0); nb_set(fds[1], 0); acc_set(fds[0], 2); acc_set(fds[1], 2); }
+    return r;
+}
 int fork(void) { return (int)ret_errno(SYS0(SYS_FORK)); }
 /* execve/execvp ficam em extra.c (precisam do posix_spawnp e do atalho do sandbox-exec) */
 int ioctl(int fd, unsigned long req, ...) {

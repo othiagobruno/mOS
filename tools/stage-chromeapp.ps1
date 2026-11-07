@@ -15,7 +15,9 @@
 # O FAT32 não tem links simbólicos: tudo fica em Versions/<versão>, onde o carregador do mOS procura.
 param([Parameter(Mandatory = $true)][string]$App, [string]$OutDir = 'build-codex', [int]$SizeMiB = 1536,
       [switch]$Autostart, [switch]$Diagnostico, [switch]$ComCLI, [int]$MaxModuloMiB = 16,
-      [string]$Argumentos = '--no-sandbox --in-process-gpu --disable-gpu --enable-logging')
+      [string]$Argumentos = '--no-sandbox --in-process-gpu --disable-gpu --enable-unsafe-swiftshader --enable-logging')
+# Argumentos: sem --disable-gpu o ANGLE tenta Metal/OpenGL e o Codex cai; só com ele, o Chromium 149 nega o "acesso à GPU"
+# sem o --enable-unsafe-swiftshader (SwiftShader por software). Memória: o Codex com o agente pede -Memory 3400.
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 $src = Join-Path (Resolve-Path $App).Path 'Contents'

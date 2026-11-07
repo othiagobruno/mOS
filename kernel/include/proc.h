@@ -32,7 +32,9 @@ typedef struct process process_t;
 
 /* pipe entre processos (SYS_PIPE): 4 KiB; leitura bloqueia se vazio, escrita se cheio.
  * FD_PTY_M/FD_PTY_S: ponta mestre/escrava de um pseudoterminal (proc/pty.c), com a referência em .pty */
-enum { FD_FILE, FD_PIPE_R, FD_PIPE_W, FD_PTY_M, FD_PTY_S };
+/* FD_PIPE_RW: ponta de um socketpair (SYS_PIPE com b = MOS_PIPE_SOCKPAIR, um valor mágico: o SYS1 dos programas antigos
+ * deixa lixo no 2º argumento): lê do .pipe e escreve no .pipe2 (o par tem os dois cruzados) */
+enum { FD_FILE, FD_PIPE_R, FD_PIPE_W, FD_PTY_M, FD_PTY_S, FD_PIPE_RW };
 struct pty;
 typedef struct pipe {
     char buf[4096];
@@ -104,7 +106,7 @@ struct process {
     u64 start_ms;
     thread_t *main;
     struct process *next;
-    struct { bool used; int flags; u64 off; char path[256]; u8 kind; struct pipe *pipe; struct pty *pty; } fds[PROC_MAX_FDS];   /* arquivos (VFS), pipes e terminais */
+    struct { bool used; int flags; u64 off; char path[256]; u8 kind; struct pipe *pipe, *pipe2; struct pty *pty; } fds[PROC_MAX_FDS];   /* arquivos (VFS), pipes e terminais */
     u64 mmap_next;          /* próxima região anônima (SYS_MMAP) */
     int nthreads;           /* threads vivas ou ainda não recolhidas (a memória sai com a última) */
     u64 sig_handler[32];    /* 0 = padrão, 1 = ignorar, senão endereço do tratador */
