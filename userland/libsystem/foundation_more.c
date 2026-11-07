@@ -1407,6 +1407,9 @@ static id req_with(id cls, SEL c, id url) { (void)c; box_t *o = (box_t *)cx_allo
 static id req_url(id s, SEL c) { (void)c; return BOX(s)->a; }
 static id req_method(id s, SEL c) { (void)c; return BOX(s)->b; }
 static void req_set_method(id s, SEL c, id m) { (void)c; rel(BOX(s)->b); BOX(s)->b = retain(m); }
+/* política de cache: o mOS não tem cache de URL; aceita e devolve a padrão (NSURLRequestUseProtocolCachePolicy = 0) */
+static void req_set_policy(id s, SEL c, u64 p) { (void)s; (void)c; (void)p; }
+static u64 req_policy(id s, SEL c) { (void)s; (void)c; return 0; }
 static id req_headers(id s, SEL c) { (void)c; return BOX(s)->c; }
 static void req_set_header(id s, SEL c, id v, id f) { (void)c; if (BOX(s)->c && v && f) MSG(void, BOX(s)->c, "setObject:forKey:", v, f); }
 static id req_body(id s, SEL c) { (void)c; return BOX(s)->e; }
@@ -2458,6 +2461,7 @@ void cx_foundation_more_init(void) {
     M(NSLock, "name", get_a); M(NSLock, "setName:", set_a);
     DEF(&NSRecursiveLock_c, &NSRecursiveLock_m, "NSRecursiveLock", ob, BEX);
     CM(NSRecursiveLock, "alloc", lock_alloc); M(NSRecursiveLock, "lock", lk_rec); M(NSRecursiveLock, "unlock", lk_unrec); M(NSRecursiveLock, "tryLock", lk_try);
+    M(NSRecursiveLock, "name", get_a); M(NSRecursiveLock, "setName:", set_a);
     DEF(&NSCondition_c, &NSCondition_m, "NSCondition", ob, BEX);
     CM(NSCondition, "alloc", lock_alloc); M(NSCondition, "lock", lk_lock); M(NSCondition, "unlock", lk_unlock);
     M(NSCondition, "wait", cond_wait); M(NSCondition, "signal", cond_signal); M(NSCondition, "broadcast", cond_bcast);
@@ -2562,6 +2566,7 @@ void cx_foundation_more_init(void) {
     DEF(&NSMutableURLRequest_c, &NSMutableURLRequest_m, "NSMutableURLRequest", &NSURLRequest_c, 0);
     M(NSMutableURLRequest, "setHTTPMethod:", req_set_method); M(NSMutableURLRequest, "setValue:forHTTPHeaderField:", req_set_header);
     M(NSMutableURLRequest, "setHTTPBody:", req_set_body); M(NSMutableURLRequest, "setURL:", set_a);
+    M(NSMutableURLRequest, "setCachePolicy:", req_set_policy); M(NSURLRequest, "cachePolicy", req_policy);
     DEF(&NSURLResponse_c, &NSURLResponse_m, "NSURLResponse", ob, BEX);
     M(NSURLResponse, "URL", resp_url); M(NSURLResponse, "expectedContentLength", resp_len);
     M(NSURLResponse, "MIMEType", get_c); M(NSURLResponse, "textEncodingName", get_e);

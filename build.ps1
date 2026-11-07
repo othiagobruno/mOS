@@ -61,6 +61,10 @@ if (Test-Path "$root\firmware") {
 if ($LASTEXITCODE -ne 0) { Write-Host 'libc++ build FAILED' -ForegroundColor Red; exit 1 }
 New-Item -ItemType Directory -Force "$esp\mOS\usr\lib" | Out-Null
 Copy-Item "$root\build\libcxx\libc++.1.dylib" "$esp\mOS\usr\lib\libc++.1.dylib" -Force
+# SQLite como /usr/lib/libsqlite3.dylib (WhatsApp, Core Data; tools\build-sqlite.ps1, se o amálgama estiver em .tools)
+& "$root\tools\build-sqlite.ps1"
+if ($LASTEXITCODE -ne 0) { Write-Host 'libsqlite3 build FAILED' -ForegroundColor Red; exit 1 }
+if (Test-Path "$root\build\sqlite\libsqlite3.dylib") { Copy-Item "$root\build\sqlite\libsqlite3.dylib" "$esp\mOS\usr\lib\libsqlite3.dylib" -Force }
 
 # user-mode programs (ring 3): userland\*.c -> \mOS\Sistema\Programas\<name> (static ELF64 at 0x400000000000)
 $progs = Get-ChildItem "$root\userland" -Filter *.c -ErrorAction SilentlyContinue

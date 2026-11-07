@@ -575,9 +575,12 @@ static void v_set_size(id self, SEL c, NSSize sz) {
     mark(self);
 }
 static void v_set_origin(id self, SEL c, NSPoint p) { (void)c; vs(self)->frame.o = p; mark(self); }
+static BOOL cr_view(id v);
 static void v_set_frame(id self, SEL c, NSRect f) {
     (void)c;
     vstate_t *s = vs(self);
+    if (cr_view(self) && (s->frame.o.x != f.o.x || s->frame.o.y != f.o.y || s->frame.s.w != f.s.w || s->frame.s.h != f.s.h))
+        cx_fdprintf(2, "[ca] setFrame: %s %p (%.0f,%.0f %.0fx%.0f)\n", cx_class_name(object_getClass(self)), (void *)self, f.o.x, f.o.y, f.s.w, f.s.h);
     if (s->frame.o.x != f.o.x || s->frame.o.y != f.o.y)
         ((void (*)(id, SEL, NSPoint))objc_msgSend)(self, sel_registerName("setFrameOrigin:"), f.o);
     if (s->frame.s.w != f.s.w || s->frame.s.h != f.s.h)
