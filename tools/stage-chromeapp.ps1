@@ -124,6 +124,7 @@ Remove-Item -LiteralPath "$esp\mOS\Sistema\Biblioteca\dyld-experimental" -ErrorA
 if ($Diagnostico) {
     Set-Content -Path "$esp\mOS\Sistema\Biblioteca\dyld-registrar" -Value '1' -Encoding ascii
     Set-Content -Path "$esp\mOS\Sistema\Biblioteca\stderr-serial" -Value '1' -Encoding ascii
+    Set-Content -Path "$esp\mOS\Sistema\Biblioteca\despejar-threads" -Value '1' -Encoding ascii   # threads de cada processo a cada 30 s
 }
 New-Item -ItemType Directory -Force "$esp\mOS\Sistema\Biblioteca\LaunchDaemons" | Out-Null
 $svc = "$esp\mOS\Sistema\Biblioteca\LaunchDaemons\com.mos.chromeapp-teste.servico"

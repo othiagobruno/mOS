@@ -662,6 +662,7 @@ void cx_appkit_input_init(void) {
         cx_add_method(view, "unregisterDraggedTypes", (void *)v_unregister_drag);
         cx_add_method(view, "registeredDraggedTypes", (void *)v_registered_drag);
     }
+    { extern void cx_compat_objc_extra_init(void); cx_compat_objc_extra_init(); }   /* compat_objc_extra.c: o que o Sparkle e o Codex pedem */
 }
 
 /* ---------------------------------------------------------------- hover e NSTrackingArea */

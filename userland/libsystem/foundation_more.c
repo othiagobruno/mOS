@@ -1649,6 +1649,56 @@ static id comp_host(id s, SEL c) { (void)c; return BOX(s)->b; }
 static id comp_path(id s, SEL c) { (void)c; return BOX(s)->c; }
 static long comp_port(id s, SEL c) { (void)c; return (long)BOX(s)->i; }
 static id comp_url(id s, SEL c) { (void)c; return BOX(s)->e ? MSG(id, (id)cx_class_named("NSURL"), "URLWithString:", BOX(s)->e) : 0; }
+/* queryItems / setQueryItems: a consulta (depois do '?', antes do '#') da URL guardada em e, com % decodificado nos
+ * itens lidos e codificado nos gravados (o Sparkle monta a URL do appcast com eles) */
+static id qitem_make(id cls, SEL c, id n, id v);
+static id comp_query_items(id s, SEL c) {
+    const char *u = BOX(s)->e ? cs(BOX(s)->e) : 0;
+    const char *q = u ? strchr(u, '?') : 0;
+    if (!q) return 0;
+    q++;
+    const char *end = strchr(q, '#');
+    u64 qn = end ? (u64)(end - q) : strlen(q);
+    id arr = MSG0(id, (id)cx_class_named("NSMutableArray"), "array");
+    for (u64 i = 0; i <= qn;) {
+        u64 j = i;
+        while (j < qn && q[j] != '&') j++;
+        if (j > i) {
+            u64 eq = i;
+            while (eq < j && q[eq] != '=') eq++;
+            id name = MSG0(id, cx_str_n(q + i, eq - i), "stringByRemovingPercentEncoding");
+            id val = eq < j ? MSG0(id, cx_str_n(q + eq + 1, j - eq - 1), "stringByRemovingPercentEncoding") : 0;
+            MSG(void, arr, "addObject:", qitem_make((id)&NSURLQueryItem_c, c, name ? name : cx_str_n(q + i, eq - i), val));
+        }
+        i = j + 1;
+    }
+    return arr;
+}
+static void comp_set_query_items(id s, SEL c, id items) {
+    (void)c;
+    const char *u = BOX(s)->e ? cs(BOX(s)->e) : "";
+    const char *q = strchr(u, '?'), *h = strchr(u, '#');
+    u64 base = q ? (u64)(q - u) : h ? (u64)(h - u) : strlen(u);
+    id out = MSG(id, (id)cx_class_named("NSMutableString"), "stringWithString:", cx_str_n(u, base));
+    id allowed = MSG0(id, (id)cx_class_named("NSCharacterSet"), "URLQueryAllowedCharacterSet");
+    u64 n = items ? MSG0(u64, items, "count") : 0;
+    for (u64 i = 0; i < n; i++) {
+        id it = MSG(id, items, "objectAtIndex:", i);
+        id nm = MSG0(id, it, "name"), v = MSG0(id, it, "value");
+        MSG(void, out, "appendString:", cx_str(i ? "&" : "?"));
+        id en = allowed ? MSG(id, nm, "stringByAddingPercentEncodingWithAllowedCharacters:", allowed) : nm;
+        MSG(void, out, "appendString:", en ? en : nm);
+        if (v) {
+            id ev = allowed ? MSG(id, v, "stringByAddingPercentEncodingWithAllowedCharacters:", allowed) : v;
+            MSG(void, out, "appendString:", cx_str("="));
+            MSG(void, out, "appendString:", ev ? ev : v);
+        }
+    }
+    if (h) MSG(void, out, "appendString:", cx_str(h));
+    id old = BOX(s)->e;
+    BOX(s)->e = retain(MSG0(id, out, "copy"));
+    if (old) objc_release(old);
+}
 static id qitem_make(id cls, SEL c, id n, id v) { (void)c; box_t *o = (box_t *)cx_alloc_instance((cx_class_t *)cls); o->a = retain(n); o->b = retain(v); return ar((id)o); }
 static id qitem_name(id s, SEL c) { (void)c; return BOX(s)->a; }
 static id qitem_value(id s, SEL c) { (void)c; return BOX(s)->b; }
@@ -2598,6 +2648,7 @@ void cx_foundation_more_init(void) {
     CM(NSURLComponents, "componentsWithString:", comp_make);
     M(NSURLComponents, "scheme", comp_scheme); M(NSURLComponents, "host", comp_host); M(NSURLComponents, "path", comp_path);
     M(NSURLComponents, "port", comp_port); M(NSURLComponents, "URL", comp_url); M(NSURLComponents, "string", get_e);
+    M(NSURLComponents, "queryItems", comp_query_items); M(NSURLComponents, "setQueryItems:", comp_set_query_items);
     DEF(&NSURLQueryItem_c, &NSURLQueryItem_m, "NSURLQueryItem", ob, BEX);
     CM(NSURLQueryItem, "queryItemWithName:value:", qitem_make);
     M(NSURLQueryItem, "name", qitem_name); M(NSURLQueryItem, "value", qitem_value);
