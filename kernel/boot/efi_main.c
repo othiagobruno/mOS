@@ -16,8 +16,11 @@ boot_info_t *g_boot = &s_boot;
 static EFI_GUID GOP_GUID   = {0x9042a9de, 0x23dc, 0x4a38, {0x96, 0xfb, 0x7a, 0xde, 0xd0, 0x80, 0x51, 0x6a}};
 static EFI_GUID ACPI2_GUID = {0x8868e871, 0xe4f1, 0x11d3, {0xbc, 0x22, 0x00, 0x80, 0xc7, 0x3c, 0x88, 0x81}};
 static EFI_GUID ACPI1_GUID = {0xeb9d2d30, 0x2d88, 0x11d3, {0x9a, 0x16, 0x00, 0x90, 0x27, 0x3f, 0xc1, 0x4d}};
-static EFI_GUID LIP_GUID   = {0x5b1b31a1, 0x9562, 0x11d2, {0x8e, 0x3f, 0x00, 0xa0, 0xc9, 0x3e, 0xc9, 0x3b}};
+/* EFI_LOADED_IMAGE_PROTOCOL_GUID: 5B1B31A1-9562-11D2-8E3F-00A0C969723B. (O valor antigo tinha os 3 últimos bytes errados, então o
+ * HandleProtocol do passo 1 de load_files() sempre falhava e \mOS\ vinha do primeiro volume que tivesse a pasta, não do dispositivo de boot.) */
+static EFI_GUID LIP_GUID   = {0x5b1b31a1, 0x9562, 0x11d2, {0x8e, 0x3f, 0x00, 0xa0, 0xc9, 0x69, 0x72, 0x3b}};
 static EFI_GUID SFS_GUID   = {0x964e5b22, 0x6459, 0x11d2, {0x8e, 0x39, 0x00, 0xa0, 0xc9, 0x69, 0x72, 0x3b}};
+static EFI_GUID DEVPATH_GUID = {0x09576e91, 0x6d3f, 0x11d2, {0x8e, 0x39, 0x00, 0xa0, 0xc9, 0x69, 0x72, 0x3b}};
 static EFI_GUID FINFO_GUID = {0x09576e92, 0x6d3f, 0x11d2, {0x8e, 0x39, 0x00, 0xa0, 0xc9, 0x69, 0x72, 0x3b}};
 
 extern void kmain(void);
@@ -116,7 +119,22 @@ static void load_dir(EFI_FILE *dir, const char *prefix, int depth) {
     }
 }
 
-static bool try_volume(EFI_SFS *sfs) {
+/* copia o caminho de dispositivo (nós até o End Node 0x7F/0xFF) de um handle; len 0 se não houver */
+static u16 copy_devpath(EFI_HANDLE h, u8 *dst, u16 cap) {
+    u8 *dp = NULL;
+    if (!h || EFI_ERROR(BS->HandleProtocol(h, &DEVPATH_GUID, (void **)&dp)) || !dp) return 0;
+    u32 n = 0;
+    for (int nodes = 0; nodes < 64; nodes++) {
+        u16 len = (u16)(dp[n + 2] | dp[n + 3] << 8);
+        if (len < 4 || n + len > cap) return 0;
+        bool end = dp[n] == 0x7F && dp[n + 1] == 0xFF;
+        n += len;
+        if (end) { memcpy(dst, dp, n); return (u16)n; }
+    }
+    return 0;
+}
+
+static bool try_volume(EFI_SFS *sfs, EFI_HANDLE h) {
     EFI_FILE *root, *dir;
     if (EFI_ERROR(sfs->OpenVolume(sfs, &root))) return false;
     EFI_STATUS st = root->Open(root, &dir, (CHAR16 *)L"\\mOS", 1, 0);
@@ -124,6 +142,7 @@ static bool try_volume(EFI_SFS *sfs) {
     if (ok) {
         load_dir(dir, "", 0);
         dir->Close(dir);
+        s_boot.files_dp_len = copy_devpath(h, s_boot.files_dp, sizeof s_boot.files_dp);
     }
     root->Close(root);
     return ok;
@@ -137,7 +156,8 @@ static void load_files(EFI_HANDLE image) {
     if (!EFI_ERROR(BS->HandleProtocol(image, &LIP_GUID, (void **)&li)) && li) {
         s_boot.kernel_base = (u64)li->ImageBase;
         s_boot.kernel_size = li->ImageSize;
-        if (!EFI_ERROR(BS->HandleProtocol(li->DeviceHandle, &SFS_GUID, (void **)&sfs))) ok = try_volume(sfs);
+        s_boot.boot_dp_len = copy_devpath(li->DeviceHandle, s_boot.boot_dp, sizeof s_boot.boot_dp);
+        if (!EFI_ERROR(BS->HandleProtocol(li->DeviceHandle, &SFS_GUID, (void **)&sfs))) ok = try_volume(sfs, li->DeviceHandle);
     }
     /* 2) qualquer volume FAT que contenha \mOS */
     if (!ok) {
@@ -145,11 +165,11 @@ static void load_files(EFI_HANDLE image) {
         EFI_HANDLE *hs = NULL;
         if (!EFI_ERROR(BS->LocateHandleBuffer(2 /* ByProtocol */, &SFS_GUID, NULL, &n, &hs))) {
             for (u64 i = 0; i < n && !ok; i++)
-                if (!EFI_ERROR(BS->HandleProtocol(hs[i], &SFS_GUID, (void **)&sfs))) ok = try_volume(sfs);
+                if (!EFI_ERROR(BS->HandleProtocol(hs[i], &SFS_GUID, (void **)&sfs))) ok = try_volume(sfs, hs[i]);
             BS->FreePool(hs);
         }
     }
-    if (!ok && !EFI_ERROR(BS->LocateProtocol(&SFS_GUID, NULL, (void **)&sfs))) ok = try_volume(sfs);
+    if (!ok && !EFI_ERROR(BS->LocateProtocol(&SFS_GUID, NULL, (void **)&sfs))) ok = try_volume(sfs, NULL);   /* sem handle: origem desconhecida */
     char msg[80];
     snprintf(msg, sizeof msg, "mOS: %s, %u entradas carregadas de \\mOS\n", ok ? "volume encontrado" : "volume NAO encontrado", s_boot.file_count);
     puts16(msg);

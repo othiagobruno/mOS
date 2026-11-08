@@ -47,6 +47,34 @@ Requisitos: [Zig](https://ziglang.org/download/) (usado como compilador C, extra
 Depois, no PC: entre no menu de boot do firmware (F12, F11, F9 ou Esc, conforme o fabricante), escolha
 o pendrive **em modo UEFI** e desative o *Secure Boot* (o mOS ainda não é assinado).
 
+### Primeiro boot: o assistente
+
+O pendrive abre o **Assistente de Configuração e Instalação** em tela cheia, antes do login: idioma (pt-BR/English) e
+teclado (ABNT2/US) valem antes de qualquer senha, e depois você escolhe:
+
+- **Live (padrão):** nada é gravado em nenhum disco; a conta que você cria existe só na RAM e some ao desligar.
+- **Live com persistência no pendrive (USB):** só depois de um consentimento explícito; grava contas, preferências e
+  arquivos no próprio pendrive (somente na partição dele; outros discos nunca são tocados). Não há criptografia.
+- **Instalar:** o assistente pergunta **onde** (disco, espaço livre ou partição), **como usar o disco** e se quer
+  **formatar antes**:
+  - **disco inteiro** (apaga o disco): uma partição mOS ocupando tudo, ou **particionado**: a partição do mOS com o tamanho
+    escolhido (− / +) e o restante numa partição FAT32 "DADOS", que aparece em `/Volumes`;
+  - **espaço livre** de um disco GPT: cria uma partição nova (tamanho escolhido) só com uma entrada a mais na tabela; as
+    partições existentes não são alteradas nem movidas;
+  - **partição dedicada já existente** (tipo ESP, vazia ou só com um mOS anterior; a tabela e as demais partições não são alteradas);
+  - **formatar antes**: a formatação rápida só cria o sistema de arquivos; a completa grava zeros em todo o destino (o disco
+    inteiro, ou só a partição do mOS) antes de instalar.
+
+  Antes da primeira gravação você digita o identificador do alvo (ex.: `sata0` ou `sata0p2`). A cópia vem de um payload
+  com manifesto de SHA-256 gerado no build, é verificada arquivo a arquivo, e o carregador EFI é o último a aparecer no
+  destino. Ao terminar, o computador reinicia sozinho (15 s) e o **primeiro boot do sistema instalado** abre direto em
+  **Criar usuário** (idioma e teclado escolhidos no pendrive já valem), depois **Boas-vindas**, e então o mOS. Não há
+  redimensionamento de partições nem ESP compartilhada; um alvo incompatível nunca vira "apagar o disco".
+
+Se o mOS não conseguir identificar **com certeza** de qual disco/partição foi iniciado (caminho de dispositivo UEFI +
+identidade física + identidade da partição), ele roda só na RAM e a persistência e a instalação ficam bloqueadas.
+O firmware precisa entregar o caminho do dispositivo de boot; o desempate por "melhor pontuação" foi removido.
+
 ## Atalhos
 
 | Atalho | Ação |
@@ -77,7 +105,21 @@ o pendrive **em modo UEFI** e desative o *Secure Boot* (o mOS ainda não é assi
   dividido entre todos os núcleos (`par_for`, em `kernel/arch/smp.c`) e usa SSE2. Não há driver de GPU: a
   aceleração é de CPU multinúcleo. Num QEMU com 4 núcleos, um quadro em tela cheia fica ~2,3x mais rápido
   (imagens `build.ps1 -Tests` imprimem a medição no log serial: `bench:`).
-- Volumes .dmg são somente leitura.
+- Volumes .dmg são somente leitura. Volumes FAT/HFS+ de outros discos aparecem em `/Volumes` **somente leitura por padrão,
+  inclusive no Live**. Para gravar, o usuário consente **por volume**: cadeado ao lado do volume no app Arquivos → alerta
+  (o botão padrão é "Cancelar"). O consentimento libera só a faixa daquele volume, vale até ejetá-lo, e é recusado para
+  partições EFI, para o disco do sistema, para HFS+ com journal pendente e sempre que a origem do sistema não foi identificada.
+- Sem gerador de números aleatórios de hardware (RDRAND/RDSEED) o mOS **não cria senhas** (o sal não viria de uma fonte
+  adequada): a persistência no pendrive é recusada, o primeiro boot de um sistema instalado fica bloqueado com aviso, e o
+  Live efêmero cria a sessão sem senha. Ter RDRAND/RDSEED **não** é uma validação de entropia; só indica que há uma fonte de hardware.
+- O payload de instalação é só o sistema: o `mkimg` **rejeita** (o build falha e nenhuma imagem é gerada) um staging com contas,
+  logs, preferências, estado, pastas pessoais ou resíduos de sessão. Os exemplos de fábrica (`root-live/mOS/Users`) entram na
+  imagem apenas como overlay do Live, fora do payload e do manifesto; um sistema instalado não os recebe.
+- A senha das contas controla a tela de início de sessão: **não há criptografia de disco nem permissões de arquivo**.
+  Quem tiver acesso ao disco/pendrive lê os dados, e programas em execução enxergam os arquivos de contas.
+- Instalação testada só no QEMU/OVMF (SATA, NVMe e USB); setor lógico diferente de 512 bytes (4Kn), Secure Boot e
+  hardware real não foram validados. A instalação não grava entrada de boot na NVRAM: o disco entra pelo caminho
+  `\EFI\BOOT\BOOTX64.EFI`, escolhido no menu de boot do firmware.
 
 ## Estrutura
 

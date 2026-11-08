@@ -4,6 +4,7 @@
 #include "proc.h"
 #include "wifi.h"
 #include "gpu.h"
+#include "origin.h"
 
 void kmain(void) {
     serial_init();
@@ -27,6 +28,7 @@ void kmain(void) {
     usb_init();          /* antes do vfs_init: pendrives USB precisam estar enumerados para a persistência */
     ahci_init();          /* antes do VFS: o disco do sistema pode fornecer a árvore de arquivos */
     nvme_init();
+    origin_resolve();     /* de qual disco/partição viemos? (confiável ou ambígua: ver fs/origin.c); antes do VFS */
     vfs_init();
     dfs_mount_all();
     storage_mount_all();
@@ -34,6 +36,12 @@ void kmain(void) {
     net_init();
     wifi_init();          /* placas Wi-Fi (ou o rádio simulado das imagens de teste) */
     bt_init();
+    {
+#ifdef MOS_UNIT_TESTS
+        extern void unit_tests_run(void);
+        unit_tests_run();         /* build de teste: só RAM (a política de escrita nos discos reais é idempotente) */
+#endif
+    }
     smp_init();           /* LAPIC, HPET e núcleos extras (operários de par_for: gráficos em paralelo) */
     proc_init();          /* escalonador + processos de usuário (rodam quando o desktop fica ocioso) */
     kprintf("Boot concluído em %llu ms, heap %llu KiB\n", timer_ticks(), (u64)heap_used() / 1024);

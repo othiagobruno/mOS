@@ -2,13 +2,20 @@
 #include "account.h"
 #include "vfs.h"
 #include "crypto.h"
+#include "sysstate.h"
 
 #define DIR        "/Sistema/Biblioteca/Usuarios"
-#define ITERATIONS 20000
+#define ITERATIONS 20000                 /* formato 1 (legado): SHA-256 iterado artesanal; só VERIFICA, nunca cria */
+/* Formato 2: PBKDF2-HMAC-SHA256 com sal de 16 bytes do CSPRNG e número de iterações CALIBRADO neste hardware
+ * (nunca pedido ao usuário), gravado em "Iteracoes". O piso vale para contas novas; contas já gravadas usam o que
+ * está no arquivo. Esses valores são decisão de engenharia, não uma garantia de segurança contra ataque offline. */
+#define MIN_ITERS  100000u
+#define MAX_ITERS  2000000u
+#define TARGET_NS  250000000ull
 
 static char cur_name[32] = ACCOUNT_DEFAULT, cur_full[64] = ACCOUNT_DEFAULT, cur_home[64] = "/Users/" ACCOUNT_DEFAULT;
 
-typedef struct { char full[64]; bool admin; char salt[33]; char hash[65]; } acct_t;
+typedef struct { char full[64]; bool admin; char salt[33]; char hash[65]; int fmt; u32 iters; } acct_t;
 
 static void hex(const u8 *b, int n, char *out) {
     static const char d[] = "0123456789abcdef";
@@ -17,7 +24,7 @@ static void hex(const u8 *b, int n, char *out) {
 }
 
 /* H0 = SHA256(sal || senha); Hi = SHA256(H(i-1) || sal || senha) — custo proposital contra força bruta */
-static void derive(const char *salt, const char *pw, char out[65]) {
+static void derive_v1(const char *salt, const char *pw, char out[65]) {
     u8 h[32];
     sha256_ctx c;
     sha256_init(&c);
@@ -34,9 +41,59 @@ static void derive(const char *salt, const char *pw, char out[65]) {
     hex(h, 32, out);
 }
 
+static int unhex(char c) { return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1; }
+static int hex2bin(const char *h, u8 *out, int max) {
+    int n = 0;
+    for (; h[0] && h[1] && n < max; h += 2, n++) {
+        int a = unhex(h[0]), b = unhex(h[1]);
+        if (a < 0 || b < 0) return -1;
+        out[n] = (u8)(a << 4 | b);
+    }
+    return n;
+}
+static void derive_v2(const char *salt_hex, const char *pw, u32 iters, char out[65]) {
+    u8 salt[16], dk[32];
+    int sl = hex2bin(salt_hex, salt, 16);
+    if (sl != 16) { memset(out, '0', 64); out[64] = 0; return; }       /* sal inválido: nunca casa com um hash real */
+    pbkdf2_hmac_sha256((const u8 *)pw, strlen(pw), salt, 16, iters, dk, 32);
+    hex(dk, 32, out);
+    secure_zero(dk, sizeof dk);
+}
+
+static u64 now_ns(void) {
+    u64 h = hpet_ns();
+    return h ? h : timer_ticks() * 1000000ull;
+}
+
+/* mede o hardware: iterações que cabem em ~TARGET_NS, entre MIN_ITERS e MAX_ITERS */
+u32 account_kdf_iterations(void) {
+    static u32 cached;
+    if (cached) return cached;
+    u8 salt[16] = {0}, dk[32];
+    u32 probe = 4000;
+    u64 t0 = now_ns();
+    pbkdf2_hmac_sha256((const u8 *)"calibracao", 10, salt, 16, probe, dk, 32);
+    u64 dt = now_ns() - t0;
+    u64 it = dt ? (u64)probe * TARGET_NS / dt : MIN_ITERS;
+    if (it < MIN_ITERS) it = MIN_ITERS;
+    if (it > MAX_ITERS) it = MAX_ITERS;
+    cached = (u32)(it / 1000 * 1000);
+    kprintf("contas: PBKDF2 calibrado: %u iterações (%llu us por 4000 iterações; alvo %llu ms, piso %u)\n", cached, dt / 1000,
+            TARGET_NS / 1000000, MIN_ITERS);
+    return cached;
+}
+
+bool account_password_ok(const char *pw, char *err, usize errlen) {
+    int n = 0;
+    for (const u8 *p = (const u8 *)pw; p && *p; p++) if ((*p & 0xC0) != 0x80) n++;   /* caracteres UTF-8 */
+    if (n < 8) { if (err) snprintf(err, errlen, "A senha precisa ter pelo menos 8 caracteres."); return false; }
+    if (n > 60) { if (err) snprintf(err, errlen, "A senha pode ter no máximo 60 caracteres."); return false; }
+    return true;
+}
+
 static bool valid_name(const char *n) {
     usize l = strlen(n);
-    if (!l || l > 31 || !strcasecmp(n, "Shared") || !strcasecmp(n, "root") || n[0] == '.' || n[0] == '-') return false;
+    if (!l || l > 31 || !strcasecmp(n, "Shared") || !strcasecmp(n, "root") || !strcasecmp(n, ACCOUNT_DEFAULT) || n[0] == '.' || n[0] == '-') return false;
     for (const char *p = n; *p; p++)
         if (!(isalnum((u8)*p) || *p == '.' || *p == '_' || *p == '-')) return false;
     return true;
@@ -62,6 +119,7 @@ static void field(const char *txt, const char *key, char *out, usize cap) {
 
 static bool load(const char *name, acct_t *a) {
     memset(a, 0, sizeof *a);
+    if (!strcmp(name, ACCOUNT_DEFAULT) && !sysstate_guest_allowed()) return false;   /* Visitante só no live efêmero */
     char p[96];
     path_of(name, p, sizeof p);
     vnode_t *v = vfs_lookup(p);
@@ -77,7 +135,12 @@ static bool load(const char *name, acct_t *a) {
     if (!txt) return false;
     memcpy(txt, v->data, v->size);
     txt[v->size] = 0;
-    char adm[8];
+    char adm[8], fm[8], it[16];
+    field(txt, "Formato", fm, sizeof fm);
+    field(txt, "Iteracoes", it, sizeof it);
+    a->fmt = fm[0] == '2' ? 2 : 1;
+    a->iters = a->fmt == 2 ? (u32)atoi(it) : ITERATIONS;
+    if (a->fmt == 2 && (a->iters < 1000 || a->iters > 50000000u)) a->iters = 0;   /* inválido: nunca verifica */
     field(txt, "NomeCompleto", a->full, sizeof a->full);
     field(txt, "Admin", adm, sizeof adm);
     field(txt, "Sal", a->salt, sizeof a->salt);
@@ -89,26 +152,37 @@ static bool load(const char *name, acct_t *a) {
 }
 
 static bool save(const char *name, const acct_t *a) {
-    char p[96], txt[320];
+    char p[96], txt[400];
     path_of(name, p, sizeof p);
     vfs_mkdir(DIR);
-    int n = snprintf(txt, sizeof txt, "NomeCompleto=%s\nAdmin=%d\nSal=%s\nHash=%s\nIteracoes=%d\n",
-                     a->full, a->admin ? 1 : 0, a->salt, a->hash, ITERATIONS);
+    int n = snprintf(txt, sizeof txt, "NomeCompleto=%s\nAdmin=%d\nFormato=%d\nAlgoritmo=%s\nSal=%s\nHash=%s\nIteracoes=%u\n",
+                     a->full, a->admin ? 1 : 0, a->hash[0] ? 2 : a->fmt, a->hash[0] ? "PBKDF2-HMAC-SHA256" : "nenhum", a->salt, a->hash,
+                     a->hash[0] ? a->iters : ITERATIONS);
     return vfs_write_file(p, txt, (usize)n) != NULL;
 }
 
-static void set_password(acct_t *a, const char *pw) {
-    if (!pw || !*pw) { a->salt[0] = a->hash[0] = 0; return; }
+#define ERR_NO_RNG "Este computador não tem gerador de números aleatórios de hardware (RDRAND/RDSEED): por segurança o mOS não cria senhas aqui."
+
+/* false = recusado: com senha, só se houver fonte de hardware adequada para o sal (nunca jitter/relógios para algo que será gravado) */
+static bool set_password(acct_t *a, const char *pw) {
+    if (!pw || !*pw) { a->salt[0] = a->hash[0] = 0; a->fmt = 2; a->iters = 0; return true; }
+    if (!crypto_rng_hw()) return false;
+    /* o digitar da senha já alimentou o RNG (assistente/login); aqui o sal vem do CSPRNG (net/crypto.c) */
     u8 s[16];
-    for (int i = 0; i < 16; i += 4) { u32 r = rand32() ^ (u32)rdtsc(); memcpy(s + i, &r, 4); }
+    crypto_rng_add_entropy(pw, strlen(pw));
+    crypto_random(s, 16);
     hex(s, 16, a->salt);
-    derive(a->salt, pw, a->hash);
+    a->fmt = 2;
+    a->iters = account_kdf_iterations();
+    derive_v2(a->salt, pw, a->iters, a->hash);
+    secure_zero(s, sizeof s);
+    return true;
 }
 
 /* ------------------------------------------------------------ consulta */
 static int list_names(char names[][32], int max) {
     int n = 0;
-    strcpy(names[n++], ACCOUNT_DEFAULT);
+    if (sysstate_guest_allowed()) strcpy(names[n++], ACCOUNT_DEFAULT);
     vnode_t *d = vfs_lookup(DIR);
     for (vnode_t *c = d && d->dir ? d->child : NULL; c && n < max; c = c->next) {
         usize l = strlen(c->name);
@@ -145,10 +219,17 @@ bool account_verify(const char *name, const char *pw) {
     if (!name || !load(name, &a)) return false;
     if (!a.hash[0]) return !pw || !*pw;
     char h[65];
-    derive(a.salt, pw ? pw : "", h);
+    if (a.fmt == 2) {
+        if (!a.iters) return false;
+        derive_v2(a.salt, pw ? pw : "", a.iters, h);
+    } else derive_v1(a.salt, pw ? pw : "", h);
     u8 diff = 0;                                     /* comparação em tempo constante */
     for (int i = 0; i < 64; i++) diff |= (u8)(h[i] ^ a.hash[i]);
-    return diff == 0;
+    bool ok = diff == 0;
+    if (ok && a.fmt == 1 && pw && *pw && strcmp(name, ACCOUNT_DEFAULT)) {      /* migra o formato legado ao entrar */
+        if (set_password(&a, pw) && save(name, &a)) kprintf("contas: \"%s\" migrada do formato 1 para PBKDF2 (%u iterações)\n", name, a.iters);
+    }
+    return ok;
 }
 
 /* ------------------------------------------------------------ alteração */
@@ -162,7 +243,7 @@ bool account_create(const char *name, const char *full, const char *pw, bool adm
     snprintf(a.full, sizeof a.full, "%s", full && *full ? full : name);
     for (char *p = a.full; *p; p++) if (*p == '\n' || *p == '\r') *p = ' ';
     a.admin = admin;
-    set_password(&a, pw);
+    if (!set_password(&a, pw)) ERR(ERR_NO_RNG);
     if (!save(name, &a)) ERR("Não foi possível gravar a conta.");
     static const char *sub[] = {"Mesa", "Documentos", "Downloads", "Imagens", "Música", ".Lixeira"};
     char p[96];
@@ -175,7 +256,7 @@ bool account_set_password(const char *name, const char *old, const char *pw, cha
     acct_t a;
     if (!name || !load(name, &a)) ERR("Conta inexistente.");
     if (!account_verify(name, old)) ERR("A senha atual está incorreta.");
-    set_password(&a, pw);
+    if (!set_password(&a, pw)) ERR(ERR_NO_RNG);
     if (!save(name, &a)) ERR("Não foi possível gravar a nova senha.");
     return true;
 }

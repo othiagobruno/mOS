@@ -5,6 +5,7 @@
  */
 #include "usb.h"
 #include "fs.h"
+#include "storage.h"
 
 #define MAX_MSC  8
 #define XFER_MAX 0x10000            /* 64 KiB por comando */
@@ -128,6 +129,8 @@ const char *usb_msc_name(int dev) { msc_t *m = get(dev); return m ? m->name : ""
 static int xfer(msc_t *m, u64 lba, u32 count, u8 *p, bool write) {
     if (!m || !m->ready) return USB_NODEV;
     if (lba + count > m->blocks) return USB_ERR;
+    /* contenção de escrita: único ponto onde este driver emite SCSI WRITE (storage.c) */
+    if (write && !storage_write_ok(&m->dev, lba * m->bsize, (u64)count * m->bsize)) return USB_ERR;
     u32 per = XFER_MAX / m->bsize;
     while (count) {
         u32 n = MIN(count, per);
@@ -237,8 +240,6 @@ static bool msc_probe(usb_dev_t *d, usb_iface_t *it) {
     return true;
 }
 
-static void selftest(msc_t *m);
-
 static void msc_start(usb_dev_t *d, usb_iface_t *it) {
     msc_t *m = it->priv;
     if (!m) return;
@@ -309,49 +310,29 @@ static void msc_start(usb_dev_t *d, usb_iface_t *it) {
     m->dev.release = NULL;              /* estático: nada a liberar */
     m->dev.ctx = m;
     kprintf("USB MSC: disco de bloco pronto (%s)\n", m->wp ? "somente leitura: protegido contra escrita" : "leitura e escrita");
-    /* autoteste só no disco virtual do QEMU e só se ele não tiver GPT (nunca num disco de boot/sistema) */
-    if (d->desc.idVendor == 0x46F4) {
-        bool has_gpt = rw(m, 1, 1, false) >= 512 && !memcmp(m->buf, "EFI PART", 8);
-        if (!has_gpt) selftest(m);
-        else kprintf("USB MSC: autoteste pulado (disco com GPT)\n");
-    }
     /* publica o pendrive no registro genérico de discos (storage.c da camada de persistência), se existir */
-    extern void storage_register(blkdev_t *dev, const char *name, const char *desc) __attribute__((weak));
-    if (storage_register) {
+    {
         static char names[MAX_MSC][16], descs[MAX_MSC][96];
         int slot = (int)(m - mscs);
         snprintf(names[slot], 16, "usb%d", slot);
         snprintf(descs[slot], 96, "%s (%llu MB)", m->name, m->blocks * m->bsize / 1000000);
+        m->dev.lbs = m->bsize;
         storage_register(&m->dev, names[slot], descs[slot]);
+        diskphys_t ph;
+        memset(&ph, 0, sizeof ph);
+        ph.kind = PHYS_USB;
+        pci_dev_t *hc = xhci_pci_of(d);
+        if (hc) pci_chain(hc, &ph);
+        for (const char *q = d->path; *q && ph.nusb < 8;) {
+            ph.usb_port[ph.nusb++] = (u8)atoi(q);
+            while (*q && *q != '.') q++;
+            if (*q == '.') q++;
+        }
+        storage_set_phys(&m->dev, &ph);
     }
 }
 
-/* autoteste não destrutivo (só QEMU): grava setor alinhado + trecho desalinhado no fim do disco,
- * relê, compara e restaura o conteúdo original */
-static void selftest(msc_t *m) {
-    if (m->wp || m->blocks < 16) return;
-    u32 ss = m->bsize;
-    u64 base = (m->blocks - 8) * ss;
-    u32 span = 4 * ss;
-    u8 *save = kmalloc(span), *a = kmalloc(span), *b = kmalloc(span);
-    bool ok = save && a && b && disk_read(&m->dev, base, save, span);
-    if (ok) {
-        for (u32 i = 0; i < span; i++) a[i] = (u8)(i * 7 + 0x5A);
-        /* 1) um setor inteiro alinhado */
-        bool s1 = disk_write(&m->dev, base, a, ss) && disk_flush(&m->dev) && disk_read(&m->dev, base, b, ss) && !memcmp(a, b, ss);
-        /* 2) trecho desalinhado (ler-modificar-gravar nas pontas) */
-        u32 off = 3, n = 2 * ss + 100;
-        bool s2 = disk_write(&m->dev, base + ss + off, a + 11, n) && disk_flush(&m->dev) &&
-                  disk_read(&m->dev, base + ss + off, b, n) && !memcmp(a + 11, b, n);
-        /* vizinhos do trecho desalinhado devem estar intactos */
-        bool s3 = disk_read(&m->dev, base + ss, b, off) && !memcmp(b, save + ss, off);
-        ok = s1 && s2 && s3;
-        bool restored = disk_write(&m->dev, base, save, span) && disk_flush(&m->dev);
-        kprintf("USB MSC: autoteste de escrita (LBA %llu): setor alinhado %s, desalinhado %s, vizinhos %s, restaurado %s\n",
-                base / ss, s1 ? "ok" : "FALHOU", s2 ? "ok" : "FALHOU", s3 ? "ok" : "FALHOU", restored ? "sim" : "NÃO");
-    } else kprintf("USB MSC: autoteste de escrita não executado\n");
-    kfree(save); kfree(a); kfree(b);
-}
+/* Não há autoteste de escrita: o antigo gravava no fim de qualquer disco QEMU sem GPT e foi removido. */
 
 static void msc_detach(usb_dev_t *d, usb_iface_t *it) {
     msc_t *m = it->priv;

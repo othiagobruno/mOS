@@ -11,8 +11,12 @@
  */
 #include "vfs.h"
 #include "storage.h"
+#include "origin.h"
+#include "sysstate.h"
+#include "crypto.h"
 
 #define SYS_DIR       "/mOS"
+#define STATE_FILE    "/Sistema/Biblioteca/estado-sistema"
 #define SYNC_DELAY_MS 1500
 #ifndef MAX_LOAD                       /* sobrescrevível em builds de teste (ex.: -DMAX_LOAD=...) */
 #define MAX_LOAD      (512ull << 20)  /* o Codex CLI (Rust, um binário só) tem 277 MB; antes 256 MB */
@@ -30,78 +34,65 @@ fatfs_t *persist_volume(void) { return sys; }
 static int sys_disk = -1;
 int persist_disk_index(void) { return sys_disk; }
 
-/* ------------------------------------------------------------ localizar o volume */
-/* Pode haver mais de um disco com \mOS\ (ex.: pendrive de instalação + disco interno). O volume
- * certo é aquele de onde o firmware carregou os arquivos: pontua cada candidato pelos arquivos
- * entregues pelo UEFI (g_boot->files) que existem nele com o mesmo tamanho. */
-static fatfs_t *best;
-static blkdev_t *best_part;
-static int best_score = -1;
-static const char *best_disk;
-static u64 best_size;
-static const char *cur_disk;
-static int cur_idx, best_idx = -1;
+/* ------------------------------------------------------------ localizar o volume
+ * O volume do sistema é SOMENTE aquele que a identificação confiável da origem (fs/origin.c: caminho de dispositivo
+ * UEFI + identidade física do disco + identidade da partição) aponta. Não há mais pontuação nem "o primeiro disco com
+ * \mOS\": origem ambígua => nenhum volume => o sistema roda só na RAM, com os arquivos entregues pelo firmware. */
+static int sys_state = SYS_EPHEMERAL;
+static bool authorized;                 /* a escrita no volume do sistema foi liberada (política + enable) */
 
-static int boot_score(fatfs_t *fs) {
-    int score = 0;
-    char path[160];
-    for (u32 i = 0; i < g_boot->file_count; i++) {
-        boot_file_t *bf = &g_boot->files[i];
-        snprintf(path, sizeof path, SYS_DIR "%s", bf->path);
-        bool dir;
-        u64 size;
-        if (!fat_stat(fs, path, &dir, &size)) continue;
-        if (bf->size == ~0ULL ? dir : (!dir && size == bf->size)) score++;
+int sysstate(void) { return sys_state; }
+const char *sysstate_name(void) {
+    switch (sys_state) {
+    case SYS_LIVE_PERSIST: return "LIVE_PERSISTENTE";
+    case SYS_FIRSTBOOT: return "PRIMEIRO_BOOT";
+    case SYS_INSTALLED: return "INSTALADO";
+    case SYS_INCOMPLETE: return "INSTALANDO";
     }
-    return score;
+    return "LIVE";
+}
+bool sysstate_guest_allowed(void) { return sys_state == SYS_EPHEMERAL; }
+bool persist_writable(void) { return authorized; }
+
+static int parse_state(const char *txt) {
+    if (!strncmp(txt, "LIVE_PERSISTENTE", 16)) return SYS_LIVE_PERSIST;
+    if (!strncmp(txt, "PRIMEIRO_BOOT", 13)) return SYS_FIRSTBOOT;
+    if (!strncmp(txt, "INSTALADO", 9)) return SYS_INSTALLED;
+    if (!strncmp(txt, "INSTALANDO", 10)) return SYS_INCOMPLETE;
+    return SYS_EPHEMERAL;
 }
 
-static bool try_part(blkdev_t *disk, u64 off, u64 size) {
-    blkdev_t *p = blk_slice(disk, off, size);
+static void read_state(void) {
+    u64 n = 0;
+    u8 *d = fat_read_file(sys, SYS_DIR STATE_FILE, &n);
+    sys_state = SYS_EPHEMERAL;
+    if (d && n) {
+        char buf[32];
+        usize k = MIN((usize)n, sizeof buf - 1);
+        memcpy(buf, d, k);
+        buf[k] = 0;
+        sys_state = parse_state(buf);
+    }
+    kfree(d);
+}
+
+static bool open_origin_volume(void) {
+    const origin_t *o = origin_get();
+    if (o->status != ORIGIN_TRUSTED) return false;
+    blkdev_t *disk = storage_disk(o->disk);
+    blkdev_t *p = disk ? blk_slice(disk, o->part_off, o->part_size) : NULL;
     if (!p) return false;
     fatfs_t *fs = fat_mount(p);
     bool dir = false;
-    if (fs && fat_stat(fs, SYS_DIR, &dir, NULL) && dir) {
-        int score = boot_score(fs);
-        kprintf("persist: candidato %s (\"%s\", %llu MB): %d de %u arquivos do boot conferem\n", cur_disk,
-                fat_label(fs)[0] ? fat_label(fs) : "sem nome", size >> 20, score, g_boot->file_count);
-        if (score > best_score) {
-            if (best) { fat_unmount(best); blk_release(best_part); }
-            best = fs; best_part = p; best_score = score; best_disk = cur_disk; best_size = size; best_idx = cur_idx;
-            return true;
-        }
+    if (!fs || !fat_stat(fs, SYS_DIR, &dir, NULL) || !dir) {
+        kprintf("persist: a partição de origem não é FAT com \\mOS\\: sistema só na RAM\n");
+        if (fs) fat_unmount(fs);
+        blk_release(p);
+        return false;
     }
-    fat_unmount(fs);
-    blk_release(p);
-    return false;
-}
-
-static bool scan_disk(blkdev_t *disk) {
-    u8 *s = kmalloc(1024);
-    if (!s || !blk_read(disk, 0, s, 1024)) { kfree(s); return false; }
-    bool found = false;
-    if (!memcmp(s + 512, "EFI PART", 8)) {
-        u64 lba = le64(s + 512 + 72);
-        u32 cnt = MIN(le32(s + 512 + 80), 128u), esz = le32(s + 512 + 84);
-        u8 *e = esz >= 56 && esz <= 4096 ? kmalloc(esz) : NULL;
-        for (u32 i = 0; e && i < cnt && !found; i++) {
-            if (!blk_read(disk, lba * 512 + (u64)i * esz, e, esz)) break;
-            static const u8 zero[16];
-            if (!memcmp(e, zero, 16)) continue;
-            u64 first = le64(e + 32), last = le64(e + 40);
-            if (last >= first) found = try_part(disk, first * 512, (last - first + 1) * 512);
-        }
-        kfree(e);
-    } else if (s[510] == 0x55 && s[511] == 0xAA) {
-        for (int i = 0; i < 4 && !found; i++) {
-            const u8 *e = s + 446 + i * 16;
-            if (e[4] == 0x0B || e[4] == 0x0C || e[4] == 0xEF)
-                found = try_part(disk, (u64)le32(e + 8) * 512, (u64)le32(e + 12) * 512);
-        }
-        if (!found) found = try_part(disk, 0, disk->size);   /* "superfloppy" sem partições */
-    }
-    kfree(s);
-    return found;
+    sys = fs;
+    sys_disk = o->disk;
+    return true;
 }
 
 /* ------------------------------------------------------------ carga inicial */
@@ -151,15 +142,13 @@ static void load_tree(const char *vpath, int depth) {
     kfree(w);
 }
 
-/* chamado por vfs_init(): devolve true se carregou a árvore do disco */
+/* chamado por vfs_init(): devolve true se carregou a árvore do disco (volume de origem confiável) */
 bool persist_load(void) {
-    for (int i = 0; i < storage_disk_count(); i++) { cur_disk = storage_disk_name(i); cur_idx = i; scan_disk(storage_disk(i)); }
-    if (!best) return false;
-    sys = best;
-    sys_disk = best_idx;
+    if (!open_origin_volume()) return false;
+    read_state();
     fat_set_system(sys);
-    kprintf("persist: volume do sistema \"%s\" (FAT32, %llu MB) em %s\n",
-            fat_label(sys)[0] ? fat_label(sys) : "sem nome", best_size >> 20, best_disk);
+    kprintf("persist: volume do sistema \"%s\" (FAT, %llu MB) em %s, estado %s\n",
+            fat_label(sys)[0] ? fat_label(sys) : "sem nome", origin_get()->part_size >> 20, storage_disk_name(sys_disk), sysstate_name());
     quiet++;
     u64 t0 = timer_ticks();
     load_tree("", 0);
@@ -168,7 +157,50 @@ bool persist_load(void) {
     return true;
 }
 
-void persist_enable(void) { enabled = sys != NULL; }
+/* Liga a escrita no volume do sistema: libera à política de armazenamento SOMENTE a faixa da partição de origem. */
+static bool authorize(void) {
+    const origin_t *o = origin_get();
+    if (!sys || o->status != ORIGIN_TRUSTED || authorized) return authorized;
+    if (!storage_grant_write(storage_disk(o->disk), o->part_off, o->part_size)) return false;
+    fat_enable_rw(sys);
+    authorized = true;
+    return true;
+}
+
+/* Chamado no fim do vfs_init. Padrão FECHADO: só liga a persistência quando o sistema está instalado (ou é um live
+ * em que o usuário já consentiu antes) E a origem é confiável. Live comum, RAM e origem ambígua: nada é gravado,
+ * nem logs, nem contas, nem metadados. */
+void persist_enable(void) {
+    enabled = false;
+    if (!sys) return;
+    if (sys_state == SYS_INSTALLED || sys_state == SYS_FIRSTBOOT || sys_state == SYS_LIVE_PERSIST) enabled = authorize();
+    kprintf("persist: gravação no disco do sistema %s (estado %s)\n", enabled ? "LIGADA" : "DESLIGADA", sysstate_name());
+}
+
+/* Consentimento explícito do usuário (assistente) para o live gravar no próprio pendrive USB. */
+bool persist_consent_live(void) {
+    const origin_t *o = origin_get();
+    if (!sys || o->status != ORIGIN_TRUSTED || o->bus != PHYS_USB || sys_state != SYS_EPHEMERAL) return false;
+    if (!crypto_rng_hw()) { kprintf("persist: persistência recusada: sem gerador de números aleatórios de hardware (senhas não podem ser criadas com segurança)\n"); return false; }
+    if (!authorize()) return false;
+    enabled = true;
+    sys_state = SYS_LIVE_PERSIST;
+    vfs_write_file(STATE_FILE, "LIVE_PERSISTENTE\n", 17);
+    persist_sync();
+    kprintf("persist: live PERSISTENTE ativado por consentimento: gravando em %s\n", storage_disk_name(sys_disk));
+    return true;
+}
+
+/* grava o estado do sistema (instalado, primeiro boot concluído...) no volume do sistema */
+bool persist_set_state(int st) {
+    if (!enabled) return false;
+    sys_state = st;
+    char line[32];
+    int n = snprintf(line, sizeof line, "%s\n", sysstate_name());
+    vfs_write_file(STATE_FILE, line, (usize)n);
+    persist_sync();
+    return true;
+}
 
 /* ------------------------------------------------------------ ganchos do VFS */
 static bool tracked_path(const char *p) {

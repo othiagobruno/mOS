@@ -9,6 +9,9 @@
  * graváveis eles aceitam escrita pelo VFS (vfs_bridge.c); partições EFI ficam só leitura.
  */
 #include "fs.h"
+#ifndef MOS_HOST_TEST
+#include "crypto.h"
+#endif
 
 #define FAT_EOC      0x0FFFFFF8u
 #define FAT_MASK     0x0FFFFFFFu
@@ -664,7 +667,12 @@ bool fat_format(blkdev_t *dev, const char *label) {
     bs[50] = 6;                                      /* cópia do setor de boot */
     bs[64] = 0x80;
     bs[66] = 0x29;
+#ifdef MOS_HOST_TEST
     u32 id = rand32();
+#else
+    u32 id;
+    crypto_random(&id, sizeof id);                   /* número de série do volume: CSPRNG */
+#endif
     bs[67] = (u8)id; bs[68] = (u8)(id >> 8); bs[69] = (u8)(id >> 16); bs[70] = (u8)(id >> 24);
     char lab[11];
     memset(lab, ' ', 11);
@@ -912,6 +920,7 @@ bool fat_rename(fatfs_t *fs, const char *from, const char *to) {
 /* ================================================================ dfs (volumes FAT em /Volumes) */
 static fatfs_t *s_system;               /* volume do sistema: não aparece em /Volumes */
 void fat_set_system(fatfs_t *fs) { s_system = fs; }
+void fat_enable_rw(fatfs_t *fs) { fs->rw = blk_writable(fs->dev); }
 
 static void root_of(blkdev_t *d, blkdev_t **root, u64 *base) {
     u64 b = 0;
@@ -962,8 +971,9 @@ static bool dfat_remove(dmount_t *m, const char *p) { return fat_remove(m->priv,
 static bool dfat_rename(dmount_t *m, const char *a, const char *b) { return fat_rename(m->priv, a, b); }
 static bool dfat_sync(dmount_t *m) { return fat_sync(m->priv); }
 
+static bool dfat_enable_write(dmount_t *m);
 static const dfs_ops_t FAT_OPS = {"FAT", dfat_readdir, dfat_read, dfat_unmount, NULL, NULL,
-                                  dfat_write, dfat_mkdir, dfat_remove, dfat_rename, dfat_sync};
+                                  dfat_write, dfat_mkdir, dfat_remove, dfat_rename, dfat_sync, dfat_enable_write};
 
 /* partição de sistema EFI (a do Windows/macOS/Linux de outro disco): fica só leitura para não
  * estragar o boot de outro sistema por engano. Critério: rótulo típico e pasta /EFI na raiz. */
@@ -972,6 +982,15 @@ static bool looks_like_esp(fatfs_t *fs) {
     if (!fat_stat(fs, "/EFI", &dir, NULL) || !dir) return false;
     return !fs->label[0] || !strcasecmp(fs->label, "EFI") || !strcasecmp(fs->label, "SYSTEM") ||
            !strcasecmp(fs->label, "ESP") || fat_stat(fs, "/EFI/Microsoft", NULL, NULL) || fat_stat(fs, "/EFI/APPLE", NULL, NULL);
+}
+
+/* consentimento do usuário (por volume): FAT montado só leitura passa a gravar; partição EFI continua só leitura */
+static bool dfat_enable_write(dmount_t *m) {
+    fatfs_t *fs = m->priv;
+    if (!fs || looks_like_esp(fs)) return false;
+    fat_enable_rw(fs);
+    m->writable = fs->rw;
+    return fs->rw;
 }
 
 int fat_probe(blkdev_t *dev, const char *source, const char *fmt) {

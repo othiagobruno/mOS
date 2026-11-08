@@ -120,12 +120,20 @@ No QEMU (`run.ps1`/`qemu-test.ps1` sem `-Persist` usam `-snapshot`: as escritas 
 
 ```
 volimg mkdisk build-vol\dados.img 200 fat32:MOSFAT:50 fat16:CARTAO:30 hfs:MacHD:50 hfsj:Jornal:50
-# /Sistema/Biblioteca/voltest com "ejetar" no ESP: autoteste pelo VFS em todos os volumes graváveis
 tools\qemu-test.ps1 -OutDir build-vol -Persist -NvmeDisk <caminho>\dados.img -Steps "wait:45000;shot:x"
 volimg check build-vol\dados.img
 ```
 
-O autoteste (`vol_selftest` em `vfs_bridge.c`) grava pelo VFS — o mesmo caminho do msh e dos apps —:
+> **Mudança posterior (assistente de instalação).** O kernel não tem mais o autoteste `vol_selftest` (nem o `install_selftest`
+> nem o autoteste de escrita do AHCI por "assinatura"): eles gravavam em qualquer volume/disco que os acionasse. Além disso,
+> **nenhum disco físico é gravável por padrão**: `kernel/dev/storage.c` só deixa os drivers (AHCI, NVMe, USB MSC) emitirem
+> comandos de escrita dentro de faixas liberadas explicitamente (`storage_grant_write`): a partição do sistema instalado, o
+> pendrive Live depois do consentimento do usuário, ou o alvo de uma instalação depois da confirmação digitada. Por isso, no
+> estado atual, volumes de OUTROS discos aparecem em `/Volumes` **somente leitura** até o usuário consentir **por volume** (cadeado
+> no app Arquivos; `vol_enable_write` em `vfs_bridge.c`): só a faixa daquele volume é liberada, até ejetá-lo; partições EFI, o disco do
+> sistema, HFS+ com journal pendente e qualquer caso com origem não identificada são recusados. O texto abaixo descreve o comportamento e os testes da época em que os volumes eram graváveis.
+
+O autoteste (`vol_selftest`, removido) gravava pelo VFS — o mesmo caminho do msh e dos apps —:
 pasta, nome com acentos, 60 arquivos, 1 MB truncado para 300 KB, append, renomear, mover pasta,
 apagar pasta com conteúdo, mover da pasta pessoal para o volume e de volta, e um arquivo pendente na
 hora de ejetar. Resultado em 7/nov/2026: 4 volumes OK, ejeção OK, `volimg check` com 0 erros, conteúdo

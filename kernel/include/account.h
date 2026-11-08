@@ -1,6 +1,7 @@
 /* mOS — contas de usuário (lib/account.c). Contas ficam em /Sistema/Biblioteca/Usuarios/<nome>.conta
- * (persistidas no disco do sistema) com a senha guardada como SHA-256 iterado com sal aleatório.
- * "Visitante" é a conta padrão: sempre existe e não tem senha, a menos que alguém defina uma.
+ * (persistidas no disco do sistema) com a senha guardada como PBKDF2-HMAC-SHA256 com sal do CSPRNG (formato 2; o formato 1,
+ * SHA-256 iterado, só é aceito para verificar e é migrado ao entrar). "Visitante" só existe no live EFÊMERO (nada é gravado);
+ * em sistema instalado ou live persistente ele não existe, para que ninguém entre sem senha.
  * Todas as funções usam o VFS: chame do laço do desktop. */
 #pragma once
 #include "kernel.h"
@@ -21,3 +22,5 @@ const char *account_current(void);                                         /* no
 const char *account_fullname(void);
 const char *account_home(void);                                            /* "/Users/<nome>" */
 bool        account_is_admin(const char *name);
+u32         account_kdf_iterations(void);                                  /* PBKDF2: iterações calibradas neste hardware */
+bool        account_password_ok(const char *pw, char *err, usize errlen);  /* regra do assistente: 8 a 60 caracteres */
