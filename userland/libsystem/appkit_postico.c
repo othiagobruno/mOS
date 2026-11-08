@@ -494,8 +494,42 @@ static id tcv_image_view(id self, SEL c) { (void)c; return pget(self, "imageView
 static void tcv_set_image_view(id self, SEL c, id v) { (void)c; pset(self, "imageView", v); }
 static void tv_drag_mask(id s, SEL c, u64 m, BOOL l) { (void)s; (void)c; (void)m; (void)l; }
 
+/* NSPageController: mostra a view do controller que o delegate dá para o objeto selecionado */
+static id pc_arranged(id self, SEL c) { (void)c; id a = pget(self, "arrangedObjects"); return a ? a : MSG0(id, (id)cl("NSArray"), "array"); }
+static void pc_show(id self) {
+    id objs = pget(self, "arrangedObjects");
+    i64 i = pget_i(self, "selectedIndex", 0);
+    if (!objs || i < 0 || (u64)i >= MSG0(u64, objs, "count")) return;
+    id obj = MSG(id, objs, "objectAtIndex:", (u64)i);
+    id d = MSG0(id, self, "delegate");
+    if (!d) return;
+    id ident = cx_responds(d->isa, sel_registerName("pageController:identifierForObject:")) ? MSG(id, d, "pageController:identifierForObject:", self, obj) : cx_str("");
+    id vc = cx_responds(d->isa, sel_registerName("pageController:viewControllerForIdentifier:")) ? MSG(id, d, "pageController:viewControllerForIdentifier:", self, ident) : 0;
+    if (!vc) return;
+    pset(self, "selectedViewController", vc);
+    if (cx_responds(d->isa, sel_registerName("pageController:prepareViewController:withObject:"))) MSG(void, d, "pageController:prepareViewController:withObject:", self, vc, obj);
+    id host = MSG0(id, self, "view"), v = MSG0(id, vc, "view");
+    if (!host || !v) return;
+    id subs = MSG0(id, host, "subviews");
+    for (u64 k = subs ? MSG0(u64, subs, "count") : 0; k > 0; k--) MSG0(void, MSG(id, subs, "objectAtIndex:", k - 1), "removeFromSuperview");
+    MSG(void, v, "setFrame:", MSG0(pr_rect_t, host, "bounds"));
+    MSG(void, host, "addSubview:", v);
+    if (cx_responds(d->isa, sel_registerName("pageControllerDidEndLiveTransition:"))) MSG(void, d, "pageControllerDidEndLiveTransition:", self);
+}
+static void pc_set_arranged(id self, SEL c, id a) { (void)c; pset(self, "arrangedObjects", a); pc_show(self); }
+static i64 pc_sel(id self, SEL c) { (void)c; return pget_i(self, "selectedIndex", 0); }
+static void pc_set_sel(id self, SEL c, i64 i) { (void)c; pset(self, "selectedIndex", cx_num_i(i)); pc_show(self); }
+static id pc_sel_vc(id self, SEL c) { (void)c; return pget(self, "selectedViewController"); }
+static void pc_noop_i(id s, SEL c, i64 v) { (void)s; (void)c; (void)v; }
+static void pc_nav_back(id self, SEL c, id s) { (void)c; (void)s; i64 i = pc_sel(self, 0); if (i > 0) pc_set_sel(self, 0, i - 1); }
+static void pc_nav_fwd(id self, SEL c, id s) { (void)c; (void)s; id a = pc_arranged(self, 0); i64 i = pc_sel(self, 0); if ((u64)(i + 1) < MSG0(u64, a, "count")) pc_set_sel(self, 0, i + 1); }
+static void pc_complete(id s, SEL c) { (void)s; (void)c; }
+static u64 gc_compositing(id s, SEL c) { (void)s; (void)c; return 2; }   /* NSCompositingOperationSourceOver */
+static void gc_set_compositing(id s, SEL c, u64 v) { (void)s; (void)c; (void)v; }
+
 /* ================================================================ registro */
 void cx_appkit_postico_init(void) {
+    { cx_class_t *k = cl("NSGraphicsContext"); if (k) { cx_add_method(k, "compositingOperation", (void *)gc_compositing); cx_add_method(k, "setCompositingOperation:", (void *)gc_set_compositing); } }
     { cx_class_t *v = cl("NSView"); if (v) { if (!cx_responds(v, sel_registerName("enclosingScrollView"))) cx_add_method(v, "enclosingScrollView", (void *)v_enclosing_scroll); if (!cx_responds(v, sel_registerName("menu"))) { cx_add_method(v, "menu", (void *)v_menu); cx_add_method(v, "setMenu:", (void *)v_set_menu); } } }
     { cx_class_t *k = cl("NSTableCellView"); if (k && !cx_responds(k, sel_registerName("imageView"))) { cx_add_method(k, "imageView", (void *)tcv_image_view); cx_add_method(k, "setImageView:", (void *)tcv_set_image_view); } }
     { cx_class_t *k = cl("NSTableView"); if (k) cx_add_method(k, "setDraggingSourceOperationMask:forLocal:", (void *)tv_drag_mask); }
@@ -579,6 +613,12 @@ void cx_appkit_postico_init(void) {
     REG(NSTokenField, tokenizingCharacterSet, setTokenizingCharacterSet);
 
     DEF(NSTabView, "NSView"); DEF(NSTabViewItem, "NSObject"); DEF(NSTabViewController, "NSViewController"); DEF(NSPageController, "NSViewController");
+    IM(NSPageController, "arrangedObjects", pc_arranged); IM(NSPageController, "setArrangedObjects:", pc_set_arranged);
+    IM(NSPageController, "selectedIndex", pc_sel); IM(NSPageController, "setSelectedIndex:", pc_set_sel);
+    IM(NSPageController, "selectedViewController", pc_sel_vc); IM(NSPageController, "setTransitionStyle:", pc_noop_i);
+    IM(NSPageController, "navigateBack:", pc_nav_back); IM(NSPageController, "navigateForward:", pc_nav_fwd);
+    IM(NSPageController, "completeTransition", pc_complete);
+    IM(NSPageController, "delegate", g_delegate); IM(NSPageController, "setDelegate:", s_delegate);
     IM(NSTabView, "tabViewItems", tab_items); IM(NSTabView, "numberOfTabViewItems", tab_count); IM(NSTabView, "addTabViewItem:", tab_add);
     IM(NSTabView, "insertTabViewItem:atIndex:", tab_insert); IM(NSTabView, "removeTabViewItem:", tab_remove);
     IM(NSTabView, "selectedTabViewItem", tab_selected); IM(NSTabView, "selectTabViewItem:", tab_select);

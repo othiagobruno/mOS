@@ -1564,6 +1564,8 @@ i64 ls_syscall(process_t *p, u64 op, u64 ureq) {
             a = (rq->flags & 1) ? ls_app_by_path(rq->key2) : ls_app_by_id(rq->key2);
             if (!a) { r = -MOS_ENOENT; break; }
         }
+        if (vfs_lookup("/Sistema/Biblioteca/abrir-url-completo"))   /* diagnóstico: a URL inteira (o log normal a resume) */
+            kprintf("ls: abrir (%s, %u bytes): %s\n", p->name, (unsigned)strlen(rq->key), rq->key);
         r = can_open(rq->key, a) && defer(0, rq->key, a) ? 0 : -1;
         break;
     }
