@@ -12,6 +12,7 @@ typedef int kern_return_t;
 typedef u32 mach_port_t;
 #define KERN_SUCCESS 0
 #define KERN_INVALID_ADDRESS 1
+#define KERN_INVALID_ARGUMENT 4
 #define KERN_FAILURE 5
 #define KERN_NOT_SUPPORTED 46
 #define E_NOSYS 78
@@ -481,11 +482,47 @@ kern_return_t thread_policy_get(mach_port_t t, u32 flavor, void *info, u32 *coun
     if (get_default) *get_default = 1;
     return KERN_SUCCESS;
 }
-/* inspeção de outras threads (profiler de amostragem, crashpad): o kernel do mOS não expõe */
-kern_return_t thread_get_state(mach_port_t t, int flavor, void *st, u32 *count) { (void)t; (void)flavor; (void)st; (void)count; return KERN_NOT_SUPPORTED; }
+/* outras threads do processo (kernel: SYS_THREADCTL). A porta de uma thread é 0x1000 + tid (THREAD_BASE, mach.c).
+ * O coletor do JavaScriptCore suspende cada thread que entrou na VM, lê os registradores (x86_THREAD_STATE64) e varre a
+ * pilha a partir do rsp. Quando o thread_suspend falhava, ele pulava a thread ("invalid thread") e liberava objetos que
+ * ela ainda usava: no Claude Code com 4 CPUs, listas livres do mimalloc com ponteiros 1 GiB abaixo e SIGSEGV. */
+#define CX_THREAD_PORT_BASE 0x1000u
+#define X86_THREAD_STATE64 4
+#define X86_THREAD_STATE64_COUNT 42u               /* 21 u64 em unidades de 32 bits */
+#define X86_THREAD_STATE 7                         /* genérico: {flavor, count} + o de 64 bits */
+static long port_tid(mach_port_t t) { return t >= CX_THREAD_PORT_BASE ? (long)(t - CX_THREAD_PORT_BASE) : -1; }
+kern_return_t thread_get_state(mach_port_t t, int flavor, void *st, u32 *count) {
+    long tid = port_tid(t);
+    if (tid < 0 || !st || !count) return KERN_INVALID_ARGUMENT;
+    u32 *out = st;
+    if (flavor == X86_THREAD_STATE) {
+        if (*count < X86_THREAD_STATE64_COUNT + 2) return KERN_INVALID_ARGUMENT;
+        out[0] = X86_THREAD_STATE64;
+        out[1] = X86_THREAD_STATE64_COUNT;
+        out += 2;
+    } else if (flavor != X86_THREAD_STATE64 || *count < X86_THREAD_STATE64_COUNT) return KERN_INVALID_ARGUMENT;
+    u64 regs[21];
+    long r = SYS3(SYS_THREADCTL, MOS_THR_GETSTATE, tid, regs);
+    if (r < 0) return KERN_FAILURE;            /* não existe mais, ou não está suspensa e parada */
+    memcpy(out, regs, sizeof regs);
+    *count = flavor == X86_THREAD_STATE ? X86_THREAD_STATE64_COUNT + 2 : X86_THREAD_STATE64_COUNT;
+    return KERN_SUCCESS;
+}
 kern_return_t thread_set_state(mach_port_t t, int flavor, const void *st, u32 count) { (void)t; (void)flavor; (void)st; (void)count; return KERN_NOT_SUPPORTED; }
-kern_return_t thread_suspend(mach_port_t t) { (void)t; return KERN_NOT_SUPPORTED; }
-kern_return_t thread_resume(mach_port_t t) { (void)t; return KERN_NOT_SUPPORTED; }
+/* como no XNU, só volta com a thread parada (fora de qualquer CPU): quem chama lê a pilha e os registradores em seguida */
+kern_return_t thread_suspend(mach_port_t t) {
+    long tid = port_tid(t);
+    if (tid < 0) return KERN_INVALID_ARGUMENT;
+    if (SYS3(SYS_THREADCTL, MOS_THR_SUSPEND, tid, 0) < 0) return KERN_FAILURE;   /* thread que já terminou */
+    if (tid != SYS0(SYS_GETTID))
+        while (SYS3(SYS_THREADCTL, MOS_THR_STOPPED, tid, 0) == 0) sched_yield();
+    return KERN_SUCCESS;
+}
+kern_return_t thread_resume(mach_port_t t) {
+    long tid = port_tid(t);
+    if (tid < 0) return KERN_INVALID_ARGUMENT;
+    return SYS3(SYS_THREADCTL, MOS_THR_RESUME, tid, 0) < 0 ? KERN_FAILURE : KERN_SUCCESS;
+}
 kern_return_t thread_abort_safely(mach_port_t t) { (void)t; return KERN_NOT_SUPPORTED; }
 kern_return_t thread_get_register_pointer_values(mach_port_t t, usize *sp, usize *len, usize *vals) {
     (void)t; (void)sp; (void)vals;
@@ -566,7 +603,8 @@ void *getsectdata(const char *seg, const char *sect, unsigned long *size) { (voi
 
 /* ================================================================ pthread */
 void pthread_exit(void *r) __attribute__((noreturn));
-void pthread_exit(void *r) { SYS1(SYS_THREAD_EXIT, (long)r); for (;;) {} }
+void cx_thread_run_dtors(void);                  /* extra.c: destrutores das chaves pthread */
+void pthread_exit(void *r) { cx_thread_run_dtors(); SYS1(SYS_THREAD_EXIT, (long)r); for (;;) {} }
 int kill(int pid, int s);
 /* pthread_t daqui é o tid (pthread_create) ou o bloco da thread (pthread_self, extra.c): cx_pthread_tid acha o tid */
 int cx_pthread_kill_tid(long tid, int s);
@@ -602,7 +640,13 @@ usize pthread_stack_frame_decode_np(usize frame, usize *ret) {
 #define ULF_WAKE_THREAD 0x00000200u
 int cx_futex_wait(volatile int *w, int expected, long ms);
 int cx_futex_wake(volatile int *w, int n);
-static int ulock_private32(u32 op, const void *addr) { u32 k = op & 0xff; return (k == 1 || k == 2) && !((u64)addr & 3); }
+/* CX_ULOCK_SPIN=1 no ambiente: todos os tipos voltam ao laço com sched_yield (diagnóstico, para comparar com o futex) */
+static int ulock_spin(void) {
+    static int on = -1;
+    if (on < 0) { char *getenv(const char *); on = getenv("CX_ULOCK_SPIN") != 0; }
+    return on;
+}
+static int ulock_private32(u32 op, const void *addr) { u32 k = op & 0xff; return (k == 1 || k == 2) && !((u64)addr & 3) && !ulock_spin(); }
 static int ulock_err(u32 op, int e) { if (op & ULF_NO_ERRNO) return -e; set_errno(e); return -1; }
 int __ulock_wait(u32 op, void *addr, u64 value, u32 timeout_us) {
     if (!addr) return ulock_err(op, 22 /* EINVAL */);
@@ -789,6 +833,24 @@ int __fpclassifyf(float x) {
     if (ex == 0) return m ? 5 /* FP_SUBNORMAL */ : 3 /* FP_ZERO */;
     return 4;   /* FP_NORMAL */
 }
+#if defined(__aarch64__)
+/* arm64 (fenv.h da Apple): FE_INVALID 1, DIVBYZERO 2, OVERFLOW 4, UNDERFLOW 8, INEXACT 16 e FE_FLUSHTOZERO 0x80 são os
+ * bits do FPSR (IOC DZC OFC UFC IXC, IDC no bit 7) */
+int feclearexcept(int e) {
+    u64 m;
+    __asm__ volatile("mrs %0, fpsr" : "=r"(m));
+    m &= ~(u64)(e & 0x9F);
+    __asm__ volatile("msr fpsr, %0" : : "r"(m));
+    return 0;
+}
+int feraiseexcept(int e) {
+    u64 m;
+    __asm__ volatile("mrs %0, fpsr" : "=r"(m));
+    m |= (u64)(e & 0x9F);
+    __asm__ volatile("msr fpsr, %0" : : "r"(m));
+    return 0;
+}
+#else
 int feclearexcept(int e) {
     u32 m;
     __asm__ volatile("stmxcsr %0" : "=m"(m));
@@ -803,12 +865,14 @@ int feraiseexcept(int e) {
     __asm__ volatile("ldmxcsr %0" : : "m"(m));
     return 0;
 }
+#endif
 
 /* ================================================================ sandbox (constantes de extensão) */
 const char *const APP_SANDBOX_READ = "com.apple.app-sandbox.read";
 const char *const APP_SANDBOX_READ_WRITE = "com.apple.app-sandbox.read-write";
 
 /* ================================================================ libunwind (só o crashpad/backtrace usa) */
+#if !defined(__aarch64__)   /* arm64: o libunwind de verdade (tools/build-libsystem-arm64.ps1) */
 #define UNW_EUNSPEC (-6540)
 int unw_getcontext(void *ctx) { (void)ctx; return 0; }
 int unw_init_local(void *cur, void *ctx) { (void)cur; (void)ctx; return UNW_EUNSPEC; }
@@ -816,6 +880,7 @@ int unw_step(void *cur) { (void)cur; return 0; }
 int unw_get_reg(void *cur, int reg, usize *val) { (void)cur; (void)reg; if (val) *val = 0; return UNW_EUNSPEC; }
 int unw_set_reg(void *cur, int reg, usize val) { (void)cur; (void)reg; (void)val; return UNW_EUNSPEC; }
 int unw_is_signal_frame(void *cur) { (void)cur; return 0; }
+#endif
 
 /* ================================================================ libc++: std::to_string(int) (kerberos.node) */
 /* std::string do libc++ x86_64: curto = byte 0 com tamanho << 1, texto a partir do byte 1 (até 22 chars) */

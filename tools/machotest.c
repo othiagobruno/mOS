@@ -15,6 +15,7 @@
 #undef SYS_OPEN
 #include "../kernel/include/syscall.h"
 #include "../kernel/include/compat_gui.h"
+#include "../userland/a64rt/a64rt_abi.h"
 
 long long g_live_allocs, g_live_bytes;
 extern const u8 *libsystem_mos, *libsystem_mos_end;
@@ -564,6 +565,124 @@ static long long do_syscall_locked(u64 n, u64 a, u64 b, u64 c, u64 d) {
     return -MOS_EINVAL;
 }
 
+/* ---- sinais (SYS_SIG), o bastante para o runtime do tradutor arm64 (userland/a64rt/sig.c) e para tratadores x86:
+ * ações por processo, máscara por thread, faltas do Windows (VEH) viram o quadro do kernel (siginfo + ucontext +
+ * mcontext x86 do Darwin) e desviam para o trampolim; MOS_SIGOP_RETURN restaura o CONTEXT. TKILL para outra thread
+ * fica pendente até a próxima syscall dela. Ação padrão de um sinal que mata: encerra com 128 + sinal. */
+static mos_sigaction_t sig_act[MOS_NSIG];
+static __thread u32 sig_mask_t;
+static volatile LONG sig_pend[256];
+static int sig_default_kills(int s) {
+    return !(s == MOS_SIGCHLD || s == MOS_SIGURG || s == MOS_SIGWINCH || s == MOS_SIGINFO || s == MOS_SIGCONT || s == MOS_SIGIO);
+}
+typedef struct { mos_siginfo_t info; mos_ucontext_t uc; u64 pad; mos_mcontext_t mc; } host_sigframe_t;
+static void ctx_to_ss(const CONTEXT *c, mos_thread_state_t *s) {
+    s->rax = c->Rax; s->rbx = c->Rbx; s->rcx = c->Rcx; s->rdx = c->Rdx; s->rdi = c->Rdi; s->rsi = c->Rsi; s->rbp = c->Rbp;
+    s->rsp = c->Rsp; s->r8 = c->R8; s->r9 = c->R9; s->r10 = c->R10; s->r11 = c->R11; s->r12 = c->R12; s->r13 = c->R13;
+    s->r14 = c->R14; s->r15 = c->R15; s->rip = c->Rip; s->rflags = c->EFlags; s->cs = 0x1B;
+}
+static void ss_to_ctx(const mos_thread_state_t *s, CONTEXT *c) {
+    c->Rax = s->rax; c->Rbx = s->rbx; c->Rcx = s->rcx; c->Rdx = s->rdx; c->Rdi = s->rdi; c->Rsi = s->rsi; c->Rbp = s->rbp;
+    c->Rsp = s->rsp; c->R8 = s->r8; c->R9 = s->r9; c->R10 = s->r10; c->R11 = s->r11; c->R12 = s->r12; c->R13 = s->r13;
+    c->R14 = s->r14; c->R15 = s->r15; c->Rip = s->rip; c->EFlags = (DWORD)((c->EFlags & ~0xDD5u) | (s->rflags & 0xDD5u));
+}
+static void sig_die(int s) {
+    fflush(stdout);
+    fprintf(stderr, "[machotest] encerrado pelo sinal %d (thread %lld)\n", s, my_tid);
+    ExitProcess(128 + s);
+}
+/* monta o quadro na pilha da thread e desvia para o trampolim; devolve 0 se a ação é a padrão/ignorar */
+static int sig_deliver_ctx(CONTEXT *c, int s, int code, u64 addr, u32 err) {
+    mos_sigaction_t a = sig_act[s];
+    if (a.handler == MOS_SIG_IGN) return 1;
+    if (a.handler == MOS_SIG_DFL || (sig_mask_t & (1u << s))) { if (sig_default_kills(s)) sig_die(s); return 1; }
+    /* o Windows despacha a exceção na mesma pilha, logo abaixo do rsp (CONTEXT, registro, quadros da VEH): o quadro vai
+     * abaixo da pilha desta VEH, senão a sobrescreve e o NtContinue falha com STATUS_INVALID_PARAMETER */
+    u64 below = ((u64)__builtin_frame_address(0) - 16384) & ~15ULL;
+    u64 top = c->Rsp - 128 < below ? c->Rsp - 128 : below;
+    u64 fa = (top - sizeof(host_sigframe_t)) & ~15ULL;
+    host_sigframe_t *f = (host_sigframe_t *)fa;
+    memset(f, 0, sizeof *f);
+    f->info.si_signo = s; f->info.si_code = code; f->info.si_addr = addr; f->info.si_pid = 42; f->info.si_uid = 501;
+    f->uc.uc_sigmask = sig_mask_t;
+    f->uc.uc_stack.flags = MOS_SS_DISABLE;
+    f->uc.uc_mcsize = sizeof(mos_mcontext_t);
+    f->uc.uc_mcontext = (u64)&f->mc;
+    f->mc.err = err; f->mc.faultvaddr = addr; f->mc.trapno = s == MOS_SIGSEGV ? 14 : 0;
+    ctx_to_ss(c, &f->mc.ss);
+    memcpy(f->mc.fx, &c->FltSave, 512);
+    sig_mask_t |= a.mask | ((a.flags & MOS_SA_NODEFER) ? 0 : (1u << s));
+    c->Rsp = fa - 8;
+    if (a.tramp) {
+        c->Rip = a.tramp; c->Rdi = a.handler; c->Rsi = (a.flags & MOS_SA_SIGINFO) ? 30 : 1; c->Rdx = (u64)s;
+        c->Rcx = (u64)&f->info; c->R8 = (u64)&f->uc;
+    } else {
+        c->Rip = a.handler; c->Rdi = (u64)s; c->Rsi = (u64)&f->info; c->Rdx = (u64)&f->uc;
+    }
+    *(u64 *)c->Rsp = 0;
+    return 1;
+}
+static void sig_check_pending(CONTEXT *c) {
+    if (my_tid >= 256) return;
+    u32 p = (u32)sig_pend[my_tid] & ~sig_mask_t;
+    if (!p) return;
+    int s = __builtin_ctz(p);
+    InterlockedAnd(&sig_pend[my_tid], ~(LONG)(1u << s));
+    sig_deliver_ctx(c, s, MOS_SI_USER, 0, 0);
+}
+/* SYS_SIG no CONTEXT da thread: devolve 1 se já tratou (rax e rip ajustados) */
+static int sig_syscall_ctx(CONTEXT *c) {
+    u64 op = c->Rdi, a = c->Rsi, b = c->Rdx, d = c->R10;
+    long long r = 0;
+    switch (op) {
+    case MOS_SIGOP_ACTION:
+        if (a == 0 || a >= MOS_NSIG) { r = -MOS_EINVAL; break; }
+        if (d) memcpy((void *)d, &sig_act[a], sizeof(mos_sigaction_t));
+        if (b) memcpy(&sig_act[a], (const void *)b, sizeof(mos_sigaction_t));
+        break;
+    case MOS_SIGOP_MASK: {
+        u32 old = sig_mask_t, set = b ? *(const u32 *)b : 0;
+        if (b) {
+            if (a == MOS_SIG_BLOCK) sig_mask_t |= set; else if (a == MOS_SIG_UNBLOCK) sig_mask_t &= ~set;
+            else if (a == MOS_SIG_SETMASK) sig_mask_t = set; else { r = -MOS_EINVAL; break; }
+            sig_mask_t &= ~((1u << MOS_SIGKILL) | (1u << MOS_SIGSTOP));
+        }
+        if (d) *(u32 *)d = old;
+        break;
+    }
+    case MOS_SIGOP_PENDING: *(u32 *)a = my_tid < 256 ? (u32)sig_pend[my_tid] : 0; break;
+    case MOS_SIGOP_ALTSTACK: if (b) memset((void *)b, 0, sizeof(mos_sigstack_t)), ((mos_sigstack_t *)b)->flags = MOS_SS_DISABLE; break;
+    case MOS_SIGOP_RETURN: {
+        const mos_ucontext_t *uc = (const mos_ucontext_t *)a;
+        const mos_mcontext_t *mc = (const mos_mcontext_t *)uc->uc_mcontext;
+        ss_to_ctx(&mc->ss, c);
+        memcpy(&c->FltSave, mc->fx, 512);
+        sig_mask_t = uc->uc_sigmask & ~((1u << MOS_SIGKILL) | (1u << MOS_SIGSTOP));
+        sig_check_pending(c);
+        return 1;
+    }
+    case MOS_SIGOP_TKILL:
+        if (b == 0) break;
+        if (b >= MOS_NSIG || a >= 256) { r = -MOS_EINVAL; break; }
+        if ((long long)a == my_tid) {
+            c->Rax = 0; c->Rip += 2;
+            if (sig_act[b].handler == MOS_SIG_DFL && sig_default_kills((int)b) && !(sig_mask_t & (1u << b))) sig_die((int)b);
+            InterlockedOr(&sig_pend[a], (LONG)(1u << b));
+            sig_check_pending(c);
+            return 1;
+        }
+        InterlockedOr(&sig_pend[a], (LONG)(1u << b));
+        break;
+    case MOS_SIGOP_SUSPEND: Sleep(1); r = -MOS_EINTR; break;
+    case MOS_SIGOP_WAIT: r = -MOS_EAGAIN; break;
+    default: r = -MOS_EINVAL;
+    }
+    c->Rax = (u64)r;
+    c->Rip += 2;
+    sig_check_pending(c);
+    return 1;
+}
+
 static LONG CALLBACK veh(EXCEPTION_POINTERS *ep) {
     CONTEXT *c = ep->ContextRecord;
     if (getenv("MACHOTEST_DEBUG")) fprintf(stderr, "[veh] code=%lx rip=%llx rax=%llx\n", ep->ExceptionRecord->ExceptionCode, c->Rip, c->Rax);
@@ -581,10 +700,33 @@ static LONG CALLBACK veh(EXCEPTION_POINTERS *ep) {
             c->Rsp = host_saved_rsp;
             return EXCEPTION_CONTINUE_EXECUTION;
         }
+        if (c->Rax == SYS_SIG && sig_syscall_ctx(c)) return EXCEPTION_CONTINUE_EXECUTION;
         g_r8 = c->R8;                               /* 5º argumento (GUI_DRAG/GUI_IME) */
         c->Rax = (DWORD64)do_syscall(c->Rax, c->Rdi, c->Rsi, c->Rdx, c->R10);
         c->Rip += 2;
+        sig_check_pending(c);
         return EXCEPTION_CONTINUE_EXECUTION;
+    }
+    /* falta com tratador instalado (SYS_SIG): vira sinal da thread, como no kernel */
+    if (c->Rip >= USER_BASE && c->Rip < USER_END) {
+        int s = 0, sc = 0;
+        u64 fa = 0;
+        u32 ferr = 0;
+        if (code == EXCEPTION_ACCESS_VIOLATION || code == EXCEPTION_IN_PAGE_ERROR) {
+            s = MOS_SIGSEGV; sc = MOS_SEGV_MAPERR;
+            fa = ep->ExceptionRecord->NumberParameters > 1 ? (u64)ep->ExceptionRecord->ExceptionInformation[1] : 0;
+            u64 kind = ep->ExceptionRecord->NumberParameters > 0 ? (u64)ep->ExceptionRecord->ExceptionInformation[0] : 0;
+            ferr = kind == 1 ? 2 : kind == 8 ? 0x10 : 0;   /* #PF: escrita / busca de instrução */
+        } else if (code == EXCEPTION_ILLEGAL_INSTRUCTION) { s = MOS_SIGILL; sc = MOS_ILL_ILLOPC; fa = c->Rip; }
+        else if (code == EXCEPTION_BREAKPOINT) { s = MOS_SIGTRAP; sc = MOS_TRAP_BRKPT; fa = c->Rip; }
+        else if (code == EXCEPTION_INT_DIVIDE_BY_ZERO) { s = MOS_SIGFPE; sc = MOS_FPE_INTDIV; fa = c->Rip; }
+        /* só para o runtime arm64 (ou com MACHOTEST_SIGNALS=1): apps x86 com crashpad sumiriam em silêncio */
+        bool rt = sig_act[s].handler >= A64RT_BASE && sig_act[s].handler < A64RT_BASE + A64RT_SPAN_MAX;
+        if (s && (rt || getenv("MACHOTEST_SIGNALS")) && sig_act[s].handler > MOS_SIG_IGN && !(sig_mask_t & (1u << s))) {
+            sig_deliver_ctx(c, s, sc, fa, ferr);
+            return EXCEPTION_CONTINUE_EXECUTION;
+        }
+        if (s && sig_act[s].handler == MOS_SIG_DFL && getenv("MACHOTEST_SIGDIE")) sig_die(s);
     }
     /* rdgsbase/wrgsbase (F3 REX.W 0F AE /1 e /3): o Windows nÃ£o deixa o cÃ³digo de usuÃ¡rio mudar o GS;
      * guarda um valor por processo (o harness tem uma thread sÃ³) */

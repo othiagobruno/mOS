@@ -57,7 +57,34 @@ cx_class_t *object_getClass(id o);
 id objc_msgSend(id self, SEL op, ...);
 
 /* atalho para mensagens a partir do C (sem stret) */
+#if defined(__aarch64__)
+/* arm64: no Darwin PCS os variádicos vão para a pilha e o IMP lê os registradores, então o objc_msgSend é chamado com o
+ * protótipo exato, montado dos tipos dos argumentos (até 10) */
+#define CX_MSG_N_(_0, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10, N, ...) N
+#define CX_MSG_N(...) CX_MSG_N_(0, ##__VA_ARGS__, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0)
+#define CX_MSG_CAT_(a, b) a##b
+#define CX_MSG_CAT(a, b) CX_MSG_CAT_(a, b)
+#ifdef CX_FLOAT_PROBE
+extern struct cx_float_probe_t { int x; } cx_float_probe_error;
+#define CX_TY(x) __typeof__(_Generic((x), float: cx_float_probe_error, default: (x)))
+#else
+#define CX_TY(x) __typeof__(x)
+#endif
+#define CX_MSG_0(T, o, s) MSG0(T, o, s)
+#define CX_MSG_1(T, o, s, a) ((T (*)(id, SEL, CX_TY(a)))objc_msgSend)((id)(o), sel_registerName(s), a)
+#define CX_MSG_2(T, o, s, a, b) ((T (*)(id, SEL, CX_TY(a), CX_TY(b)))objc_msgSend)((id)(o), sel_registerName(s), a, b)
+#define CX_MSG_3(T, o, s, a, b, c) ((T (*)(id, SEL, CX_TY(a), CX_TY(b), CX_TY(c)))objc_msgSend)((id)(o), sel_registerName(s), a, b, c)
+#define CX_MSG_4(T, o, s, a, b, c, d) ((T (*)(id, SEL, CX_TY(a), CX_TY(b), CX_TY(c), CX_TY(d)))objc_msgSend)((id)(o), sel_registerName(s), a, b, c, d)
+#define CX_MSG_5(T, o, s, a, b, c, d, e) ((T (*)(id, SEL, CX_TY(a), CX_TY(b), CX_TY(c), CX_TY(d), CX_TY(e)))objc_msgSend)((id)(o), sel_registerName(s), a, b, c, d, e)
+#define CX_MSG_6(T, o, s, a, b, c, d, e, f) ((T (*)(id, SEL, CX_TY(a), CX_TY(b), CX_TY(c), CX_TY(d), CX_TY(e), CX_TY(f)))objc_msgSend)((id)(o), sel_registerName(s), a, b, c, d, e, f)
+#define CX_MSG_7(T, o, s, a, b, c, d, e, f, g) ((T (*)(id, SEL, CX_TY(a), CX_TY(b), CX_TY(c), CX_TY(d), CX_TY(e), CX_TY(f), CX_TY(g)))objc_msgSend)((id)(o), sel_registerName(s), a, b, c, d, e, f, g)
+#define CX_MSG_8(T, o, s, a, b, c, d, e, f, g, h) ((T (*)(id, SEL, CX_TY(a), CX_TY(b), CX_TY(c), CX_TY(d), CX_TY(e), CX_TY(f), CX_TY(g), CX_TY(h)))objc_msgSend)((id)(o), sel_registerName(s), a, b, c, d, e, f, g, h)
+#define CX_MSG_9(T, o, s, a, b, c, d, e, f, g, h, i) ((T (*)(id, SEL, CX_TY(a), CX_TY(b), CX_TY(c), CX_TY(d), CX_TY(e), CX_TY(f), CX_TY(g), CX_TY(h), CX_TY(i)))objc_msgSend)((id)(o), sel_registerName(s), a, b, c, d, e, f, g, h, i)
+#define CX_MSG_10(T, o, s, a, b, c, d, e, f, g, h, i, j) ((T (*)(id, SEL, CX_TY(a), CX_TY(b), CX_TY(c), CX_TY(d), CX_TY(e), CX_TY(f), CX_TY(g), CX_TY(h), CX_TY(i), CX_TY(j)))objc_msgSend)((id)(o), sel_registerName(s), a, b, c, d, e, f, g, h, i, j)
+#define MSG(T, obj, sel, ...) CX_MSG_CAT(CX_MSG_, CX_MSG_N(__VA_ARGS__))(T, obj, sel, ##__VA_ARGS__)
+#else
 #define MSG(T, obj, sel, ...) ((T (*)(id, SEL, ...))objc_msgSend)((id)(obj), sel_registerName(sel), ##__VA_ARGS__)
+#endif
 #define MSG0(T, obj, sel) ((T (*)(id, SEL))objc_msgSend)((id)(obj), sel_registerName(sel))
 
 /* chamadas no fim da inicialização do runtime */

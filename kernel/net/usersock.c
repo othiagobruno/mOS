@@ -288,6 +288,7 @@ i64 net_user_syscall(process_t *p, u64 op, u64 a, u64 b, u64 c) {
     u64 fl;
     if (op >= MOS_NET_TLS_NEW && op <= MOS_NET_TLS_FREE) return tls_user_op(p, op, a, b, c);
     if (op >= MOS_NET_RESOLVE6 && op <= MOS_NET_ICMP_RECV) return net6_user_op(p, op, a, b, c);
+    if (op >= MOS_NET_UDP_OPEN && op <= MOS_NET_UDP_ADDRS) { extern i64 udp_user_op(process_t *p, u64 op, u64 a, u64 b, u64 c); return udp_user_op(p, op, a, b, c); }   /* userudp.c */
     if (op == MOS_NET_TLS_ROOTS) {             /* a mesma lista que o tls.c usa (kernel/arch/certs.S) */
         extern const char mos_cacert_pem[], mos_cacert_pem_end[];
         u64 len = (u64)(mos_cacert_pem_end - mos_cacert_pem);
@@ -385,6 +386,7 @@ void net_user_exit(process_t *p) {
     u64 fl = spin_lock_irqsave(&g_net_lock);
     for (int i = 0; i < USOCKS; i++)
         if (us[i].pid == p->pid) { tcp_close(us[i].tcp); us[i].pid = 0; }
+    { extern void udp_user_exit_locked(process_t *p); udp_user_exit_locked(p); }   /* sockets UDP (userudp.c) */
     spin_unlock_irqrestore(&g_net_lock, fl);
     fl = spin_lock_irqsave(&g_tls_lock);
     for (int i = 0; i < UTLS; i++)

@@ -269,24 +269,36 @@ static int in_accept(sock_t *s, void *addr, u32 *len) {
     return fd;
 }
 
-/* ---- funções públicas: AF_UNIX segue o caminho de antes (un_*) */
+/* ---- funções públicas: AF_UNIX segue o caminho de antes (un_*); UDP vai para sockets_udp.inc */
+#define CX_EMSGSIZE 40
+static int udp_bind(sock_t *s, const void *addr, u32 len);
+static int udp_connect(sock_t *s, const void *addr, u32 len);
+static int udp_setsockopt(sock_t *s, int level, int name, const void *v, u32 len);
+static void udp_refresh_local(sock_t *s);
+static long udp_sendto(sock_t *s, const void *b, size_t n, const void *a, u32 al);
+static long udp_recvfrom(sock_t *s, void *b, size_t n, int fl, void *a, u32 *al);
+static int udp_readable(sock_t *s, long *avail);
 int bind(int fd, const void *addr, u32 len) {
     sock_t *s = sock_of(fd);
+    if (is_inet(s) && s->udp) return udp_bind(s, addr, len);
     if (is_inet(s)) return in_bind(s, addr, len);
     return un_bind(fd, addr, len);
 }
 int listen(int fd, int backlog) {
     sock_t *s = sock_of(fd);
+    if (is_inet(s) && s->udp) { cx_errno = CX_EOPNOTSUPP; return -1; }
     if (is_inet(s)) return in_listen(s, backlog);
     return un_listen(fd, backlog);
 }
 int accept(int fd, void *addr, u32 *len) {
     sock_t *s = sock_of(fd);
+    if (is_inet(s) && s->udp) { cx_errno = CX_EOPNOTSUPP; return -1; }
     if (is_inet(s)) return in_accept(s, addr, len);
     return un_accept(fd, addr, len);
 }
 int connect(int fd, const void *addr, u32 len) {
     sock_t *s = sock_of(fd);
+    if (is_inet(s) && s->udp) return udp_connect(s, addr, len);
     if (is_inet(s)) return in_connect(s, addr, len);
     return un_connect(fd, addr, len);
 }
@@ -299,13 +311,19 @@ int setsockopt(int fd, int level, int name, const void *v, u32 len) {
     sock_t *s = sock_of(fd);
     if (s && s->family == 30 && level == CX_IPPROTO_IPV6 && name == CX_IPV6_V6ONLY && v && len >= 4) {
         if (s->kl >= 0) { cx_errno = CX_EINVAL_; return -1; }
+        if (s->udp && s->ku >= 0) { cx_errno = CX_EINVAL_; return -1; }   /* depois do primeiro uso a família já foi fixada */
         s->v6only = *(const int *)v != 0;
         return 0;
     }
+    if (is_inet(s) && s->udp) return udp_setsockopt(s, level, name, v, len);
     return s || fd_open(fd) ? 0 : (cx_errno = CX_EBADF, -1);   /* o resto vale como feito (veja fd_open) */
 }
 int getsockopt(int fd, int level, int name, void *v, u32 *len) {
     sock_t *s = sock_of(fd);
+    if (is_inet(s) && s->udp && level == SOL_SOCKET && v && len && *len >= 4) {
+        if (name == SO_ERROR) { *(int *)v = s->err; s->err = 0; *len = 4; return 0; }
+        if (name == SO_TYPE) { *(int *)v = 2; *len = 4; return 0; }
+    }
     if (is_inet(s) && level == SOL_SOCKET && v && len && *len >= 4) {
         if (name == SO_ERROR) { if (s->kc > 0 || !s->proto) conn_check(s); *(int *)v = s->connecting ? 0 : s->err; s->err = 0; *len = 4; return 0; }
         if (name == SO_TYPE) { *(int *)v = s->proto ? 2 : 1; *len = 4; return 0; }
@@ -317,6 +335,14 @@ int getsockopt(int fd, int level, int name, void *v, u32 *len) {
 }
 int getsockname(int fd, void *addr, u32 *len) {
     sock_t *s = sock_of(fd);
+    if (is_inet(s) && s->udp) {
+        if (!s->bound) udp_refresh_local(s);
+        u8 a16[16];
+        memset(a16, 0, 16);
+        if (s->family == 2) map4(0, a16);
+        put_sa(s, addr, len, s->bound ? s->laddr : a16, s->bound ? s->lport : 0);
+        return 0;
+    }
     if (is_inet(s)) {
         mos_net_addrs_t ad;
         int h = s->kl >= 0 ? s->kl : !s->proto ? s->kc : -1;
@@ -337,6 +363,11 @@ int getsockname(int fd, void *addr, u32 *len) {
 int getpeername(int fd, void *addr, u32 *len) {
     sock_t *s = sock_of(fd);
     if (!s) { cx_errno = CX_EBADF; return -1; }
+    if (is_inet(s) && s->udp) {
+        if (!s->uconn) { cx_errno = CX_ENOTCONN; return -1; }
+        put_sa(s, addr, len, s->raddr, s->rport);
+        return 0;
+    }
     if (!is_inet(s) || s->kc < 0 || (!s->proto && conn_check(s) <= 0)) { cx_errno = CX_ENOTCONN; return -1; }
     put_sa(s, addr, len, s->raddr, s->rport);
     return 0;
@@ -346,6 +377,7 @@ long send(int fd, const void *b, size_t n, int fl) {
     sock_t *s = sock_of(fd);
     if (!s) { cx_errno = CX_EBADF; return -1; }
     if (!is_inet(s)) { cx_errno = CX_ENOTCONN; return -1; }
+    if (s->udp) return udp_sendto(s, b, n, 0, 0);
     if (s->proto) return icmp_sendto(s, b, n, 0, 0);
     return in_send(s, b, n);
 }
@@ -354,14 +386,17 @@ long recv(int fd, void *b, size_t n, int fl) {
     sock_t *s = sock_of(fd);
     if (!s) { cx_errno = CX_EBADF; return -1; }
     if (!is_inet(s)) { cx_errno = CX_ENOTCONN; return -1; }
+    if (s->udp) return udp_recvfrom(s, b, n, fl, 0, 0);
     if (s->proto) return icmp_recvfrom(s, b, n, fl, 0, 0);
     return in_recv(s, b, n, fl);
 }
 /* struct msghdr do macOS: name(8) namelen(4)+pad iov(8) iovlen(4)+pad control(8) controllen(4) flags(4) */
 typedef struct { void *base; size_t len; } cx_iovec_t;
 typedef struct { void *name; u32 namelen; cx_iovec_t *iov; int iovlen; void *control; u32 controllen; int flags; } cx_msghdr_t;
+#include "sockets_udp.inc"
 long sendmsg(int fd, const void *m, int fl) {
     const cx_msghdr_t *h = m;
+    { sock_t *s = sock_of(fd); if (h && is_inet(s) && s->udp) return udp_sendmsg(s, h, fl); }
     long total = 0;
     for (int i = 0; h && i < h->iovlen; i++) {
         if (!h->iov[i].len) continue;
@@ -374,6 +409,7 @@ long sendmsg(int fd, const void *m, int fl) {
 }
 long recvmsg(int fd, void *m, int fl) {
     cx_msghdr_t *h = m;
+    { sock_t *s = sock_of(fd); if (h && is_inet(s) && s->udp) return udp_recvmsg(s, h, fl); }
     if (h) { h->controllen = 0; h->flags = 0; }
     for (int i = 0; h && i < h->iovlen; i++)
         if (h->iov[i].len) return recv(fd, h->iov[i].base, h->iov[i].len, fl);   /* o primeiro bloco com espaço */
@@ -386,11 +422,13 @@ long recvmsg(int fd, void *m, int fl) {
 typedef struct { long ret, rdx; } cx_sysret_t;
 cx_sysret_t sendto(int fd, const void *b, size_t n, int fl, const void *a, u32 al) {
     sock_t *s = sock_of(fd);
+    if (is_inet(s) && s->udp) return (cx_sysret_t){udp_sendto(s, b, n, a, al), 0};
     if (s && s->proto) return (cx_sysret_t){icmp_sendto(s, b, n, a, al), 0};
     return (cx_sysret_t){send(fd, b, n, fl), 0};
 }
 long recvfrom(int fd, void *b, size_t n, int fl, void *a, u32 *al) {
     sock_t *s = sock_of(fd);
+    if (is_inet(s) && s->udp) return udp_recvfrom(s, b, n, fl, a, al);
     if (s && s->proto) return icmp_recvfrom(s, b, n, fl, a, al);
     long r = recv(fd, b, n, fl);
     if (r >= 0 && a && al && is_inet(s)) put_sa(s, a, al, s->raddr, s->rport);
@@ -410,6 +448,7 @@ int cx_sock_readable(int fd, long *avail, int *eof) {
     sock_t *s = sock_of(fd);
     *avail = 0; *eof = 0;
     if (!is_inet(s)) return 0;
+    if (s->udp) return udp_readable(s, avail);
     if (s->proto) { if (icmp_fetch(s)) { *avail = s->peek_len - 16; return 1; } return 0; }
     if (s->kl >= 0) { long n = net(MOS_NET_AVAIL, s->kl, 0, 0); if (n > 0) { *avail = n; return 1; } return 0; }
     if (s->kc < 0) return 0;
@@ -428,7 +467,7 @@ int cx_sock_readable(int fd, long *avail, int *eof) {
 int cx_sock_writable(int fd) {
     sock_t *s = sock_of(fd);
     if (!is_inet(s)) return 1;
-    if (s->proto) return 1;
+    if (s->proto || s->udp) return 1;   /* datagramas: o envio nunca espera (o kernel descarta se a placa não der conta) */
     if (s->kc < 0) return 0;
     return conn_check(s) != 0;
 }
@@ -438,7 +477,9 @@ int cx_kqueue_close(int fd);
 int cx_fake_fd_close(int fd) {
     sock_t *s = sock_of(fd);
     if (s) {
-        if (is_inet(s) && !s->proto && s->kc >= 0) net(MOS_NET_CLOSE, s->kc, 0, 0);
+        if (is_inet(s) && s->udp && s->ku >= 0) net(MOS_NET_UDP_CLOSE, s->ku, 0, 0);
+        s->ku = -1;
+        if (is_inet(s) && !s->proto && !s->udp && s->kc >= 0) net(MOS_NET_CLOSE, s->kc, 0, 0);
         if (is_inet(s) && s->kl >= 0) net(MOS_NET_CLOSE, s->kl, 0, 0);
         s->kc = -1; s->kl = -1;
         s->used = 0;

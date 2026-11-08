@@ -40,7 +40,10 @@ if ($OutDir) {
     Plist "$esp\mOS\Library\LaunchDaemons\com.mos.teste.xpc.plist" "`t<key>Label</key><string>com.mos.teste.xpc</string>`n`t<key>ProgramArguments</key><array><string>/Library/mOS-teste/servidor</string></array>`n`t<key>MachServices</key><dict><key>com.mos.teste.xpc</key><true/></dict>`n"
     Plist "$esp\mOS\Library\LaunchDaemons\com.mos.teste.cliente.plist" "`t<key>Label</key><string>com.mos.teste.cliente</string>`n`t<key>Program</key><string>/Aplicativos/LaunchdTeste.app/Contents/MacOS/LaunchdTeste</string>`n`t<key>RunAtLoad</key><true/>`n"
     Set-Content -Path "$esp\mOS\Sistema\Biblioteca\stderr-serial" -Value '1' -Encoding ascii
-    & (Join-Path $root "$OutDir\mkimg.exe") (Join-Path $root "$OutDir\mOS.img") $esp $SizeMiB
+    # imagem de teste: overlay de teste com o marcador que pula o assistente do Live (tools\overlay-teste.ps1)
+    . "$PSScriptRoot\overlay-teste.ps1"
+    $ovt = New-OverlayTeste $root $OutDir
+    & (Join-Path $root "$OutDir\mkimg.exe") (Join-Path $root "$OutDir\mOS.img") $esp $SizeMiB --test-overlay $ovt
     if ($LASTEXITCODE -ne 0) { Write-Host 'mkimg FAILED' -ForegroundColor Red; exit 1 }
     Write-Host "OK: $OutDir\mOS.img com o teste do launchd no boot" -ForegroundColor Green
 }

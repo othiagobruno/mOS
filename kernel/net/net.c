@@ -274,6 +274,13 @@ bool ipv4_send_from(u32 src, u32 dst, u8 proto, const void *payload, u16 len) {
 
     if (self) return net_loop_enqueue(false, pkt, total);
     if (ip_is_local_bcast(dst) || !g_net.configured) return net_eth_send(MAC_BCAST, ETH_P_IP, pkt, total);
+    if ((dst >> 28) == 0xE) {   /* multicast 224.0.0.0/4: MAC de grupo 01:00:5e + 23 bits baixos (RFC 1112), sem ARP */
+        u8 mm[6] = {0x01, 0x00, 0x5E, (u8)((dst >> 16) & 0x7F), (u8)(dst >> 8), (u8)dst};
+        h[8] = 1;               /* TTL 1: o grupo local (o padrão do IP_MULTICAST_TTL no BSD) */
+        wr16(h + 10, 0);
+        wr16(h + 10, inet_csum_fold(inet_csum_add(0, h, IP_HLEN)));
+        return net_eth_send(mm, ETH_P_IP, pkt, total);
+    }
 
     u32 hop = (g_net.mask && (dst & g_net.mask) == (g_net.ip & g_net.mask)) ? dst : g_net.gw;
     if (!hop) return false;
@@ -410,13 +417,25 @@ void udp_input(u32 src, u32 dst, const u8 *p, u16 len) {
         u32 s = inet_pseudo_sum(src, dst, IPPROTO_UDP, ulen);
         if (inet_csum_fold(inet_csum_add(s, p, ulen)) != 0) return;
     }
-    udp_deliver(src, rd16(p), rd16(p + 2), p + 8, (u16)(ulen - 8));
+    if (udp_deliver(src, rd16(p), rd16(p + 2), p + 8, (u16)(ulen - 8))) return;
+    /* nenhum serviço do kernel na porta: os sockets UDP dos apps (userudp.c) */
+    u8 s16[16], d16[16];
+    ip6_from_v4(src, s16);
+    ip6_from_v4(dst, d16);
+    udp_user_deliver(s16, d16, rd16(p), rd16(p + 2), p + 8, (u16)(ulen - 8));
 }
 
-/* entrega ao dono da porta (IPv4 e IPv6: no IPv6 src = 0) */
-void udp_deliver(u32 src, u16 sport, u16 dport, const u8 *data, u16 len) {
+/* entrega ao serviço do kernel dono da porta (IPv4 e IPv6: no IPv6 src = 0); false se nenhum é */
+bool udp_deliver(u32 src, u16 sport, u16 dport, const u8 *data, u16 len) {
     for (int i = 0; i < UDP_BINDS; i++)
-        if (udp_binds[i].h && udp_binds[i].port == dport) { udp_binds[i].h(src, sport, data, len); return; }
+        if (udp_binds[i].h && udp_binds[i].port == dport) { udp_binds[i].h(src, sport, data, len); return true; }
+    return false;
+}
+
+/* a porta é de um serviço do kernel (DHCP, DNS)? Os apps não podem fazer bind nela (userudp.c) */
+bool udp_port_kernel(u16 port) {
+    for (int i = 0; i < UDP_BINDS; i++) if (udp_binds[i].h && udp_binds[i].port == port) return true;
+    return false;
 }
 
 /* =================================================================== laço */

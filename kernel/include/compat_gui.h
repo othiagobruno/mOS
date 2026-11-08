@@ -48,6 +48,20 @@ enum {
                                * na fila de entrada global (CGEventPost); tipos EV_KEY_DOWN/UP e EV_MOUSE_ABS */
 #define DEV_SCREEN_CAPTURE 4  /* (x | y << 32, w | h << 32, buf) retângulo da tela em ARGB; w = 0: a tela toda; buf = 0: só
                                * o tamanho. Devolve w | h << 32 (já recortado), < 0 erro */
+/* streams de áudio por processo (CoreAudio/AudioUnit/AudioQueue/AVFoundation, userland/libsystem/coreaudio.c), somados
+ * no mixer do sistema: 48 kHz, estéreo, i16 intercalado. O app escreve à frente (até 0,5 s) e se ritma por queued. */
+#define DEV_AUDIO_OPEN 5      /* () -> stream | -errno */
+#define DEV_AUDIO_WRITE 6     /* (stream, amostras, quadros) -> quadros aceitos (0 = anel cheio) */
+#define DEV_AUDIO_CLOSE 7     /* (stream) -> 0 */
+#define DEV_AUDIO_STATE 17    /* (stream, gui_audio_state_t *) -> 0 */
+#define DEV_AUDIO_CTL 18      /* (stream, ganho 0..65536 (-1 = mantém) | pausa (-1/0/1) << 32, descartar) -> 0 */
+#define DEV_AUDIO_INFO 19     /* (gui_audio_state_t *) -> 1 se há saída de som de verdade (senão os streams andam no relógio) */
+typedef struct {
+    unsigned int queued, capacity, rate, channels;
+    unsigned long long played, underruns;
+    int available, volume;      /* volume mestre do sistema 0..100 */
+    char name[64];
+} gui_audio_state_t;
 #define DEV_BT_STATE 8
 #define DEV_BT_SCAN 9
 #define DEV_BT_DEVICE 10

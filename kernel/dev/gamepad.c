@@ -102,6 +102,46 @@ i64 gamepad_syscall(process_t *pr, u64 op, u64 b, u64 c, u64 d) {
         kfree(buf);
         return (i64)frames;
     }
+    case DEV_AUDIO_OPEN: {
+        extern int audio_stream_open(int pid);
+        int s = audio_stream_open(pr->pid);
+        return s < 0 ? -MOS_EMFILE : s;
+    }
+    case DEV_AUDIO_WRITE: {
+        extern u32 audio_stream_write(int pid, int id, const i16 *frames, u32 nfr);
+        u64 frames = d > 12000 ? 12000 : d;
+        if (!frames) return 0;
+        i16 *buf = kmalloc((usize)frames * 4);
+        if (!buf) return -MOS_ENOMEM;
+        if (!uvm_copy_in(pr, buf, c, (usize)frames * 4)) { kfree(buf); return -MOS_EFAULT; }
+        u32 k = audio_stream_write(pr->pid, (int)b, buf, (u32)frames);
+        kfree(buf);
+        return k;
+    }
+    case DEV_AUDIO_CLOSE: { extern void audio_stream_close(int pid, int id); audio_stream_close(pr->pid, (int)b); return 0; }
+    case DEV_AUDIO_STATE:
+    case DEV_AUDIO_INFO: {
+        extern bool audio_stream_state(int pid, int id, u32 *queued, u64 *played, u64 *underruns);
+        gui_audio_state_t st;
+        memset(&st, 0, sizeof st);
+        st.capacity = 24000;
+        st.rate = 48000;
+        st.channels = 2;
+        st.available = audio_available();
+        st.volume = audio_get_volume();
+        const char *nm = audio_device_name();
+        strncpy(st.name, nm && *nm ? nm : "Saída do mOS", sizeof st.name - 1);
+        u64 out = op == DEV_AUDIO_INFO ? b : c;
+        if (op == DEV_AUDIO_STATE && !audio_stream_state(pr->pid, (int)b, &st.queued, &st.played, &st.underruns)) return -MOS_EBADF;
+        if (!uvm_copy_out(pr, out, &st, sizeof st)) return -MOS_EFAULT;
+        return op == DEV_AUDIO_INFO ? st.available : 0;
+    }
+    case DEV_AUDIO_CTL: {
+        extern bool audio_stream_ctl(int pid, int id, i32 gain, int pause, bool flush);
+        i32 gain = (i32)(u32)c;
+        int pause = (int)(i32)(c >> 32);
+        return audio_stream_ctl(pr->pid, (int)b, gain, pause, d != 0) ? 0 : -MOS_EBADF;
+    }
     case DEV_INPUT_POST: {
         /* CGEventPost / CGEventPostToPid: o evento sintético entra na mesma fila do teclado e do mouse do hardware,
          * então vale para o sistema todo (a janela em foco recebe a tecla; o clique vai para o que está sob o cursor) */

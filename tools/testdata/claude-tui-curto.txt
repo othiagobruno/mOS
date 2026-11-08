@@ -1,0 +1,12 @@
+# Roteiro curto do PtyRun: só abre o Claude Code no modo interativo e espera a primeira tela (caça ao SIGSEGV
+# intermitente do mimalloc na primeira renderização; use com stage-claude-code.ps1 -Tui -Roteiro ... -RastrearMunmap).
+tamanho 30 100
+ambiente TERM=xterm-256color
+ambiente COLORTERM=truecolor
+ambiente SHELL=/bin/sh
+ambiente LANG=en_US.UTF-8
+comando /Aplicativos/ClaudeCode.app/Contents/MacOS/claude
+esperar Claude 600000
+quieto 10000 240000
+tela primeira
+fim 5000

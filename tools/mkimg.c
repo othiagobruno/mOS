@@ -344,7 +344,7 @@ static void add_file(node *dir, const char *name, const void *data, size_t size)
  * O payload (o que o instalador copia) é só o SISTEMA. O staging (a árvore passada ao mkimg) é REJEITADO — o build falha e
  * nenhuma imagem é gerada — se contiver contas, hashes de senha, logs, preferências, estado, pastas pessoais ou qualquer
  * resíduo de sessão. Dados de exemplo "de fábrica" ficam em um overlay Live separado (--live-overlay), que só pode conter
- * /mOS/Users/ e NUNCA entra no manifesto. Imagens de TESTE (tools/stage-electron.ps1) podem levar ainda um overlay de teste
+ * /mOS/Users/ e NUNCA entra no manifesto. Imagens de TESTE (tools/overlay-teste.ps1) podem levar ainda um overlay de teste
  * (--test-overlay) com preferências do usuário e do sistema (/mOS/Users/ e /mOS/Sistema/Biblioteca/Preferencias/: navegador
  * padrão, argumentos de app), também fora do payload e do manifesto. O build de release (build.ps1) não o passa. */
 static const char *const DENY_PREFIX[] = {

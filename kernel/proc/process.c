@@ -556,6 +556,7 @@ static void finish(process_t *p, int code) {
     machipc_exit(p);                                  /* portas Mach: receptores morrem, envios viram nomes mortos */
     { extern void net_user_exit(process_t *p); net_user_exit(p); }   /* conexões TCP do processo (kernel/net/usersock.c) */
     { extern void webview_user_exit(process_t *p); webview_user_exit(p); }   /* vistas do WKWebView (kernel/web/webview.c) */
+    { extern void audio_stream_proc_exit(int pid); audio_stream_proc_exit(p->pid); }   /* streams de áudio (kernel/dev/sound.c) */
     { extern void lazy_exit(process_t *p); lazy_exit(p); }           /* faixas de memória sob demanda (kernel/mm/lazy.c) */
     for (process_t *c = procs; c; c = c->next) if (c->ppid == p->pid) c->ppid = 0;   /* órfãos */
     int parent = p->ppid;
@@ -971,7 +972,12 @@ typedef struct {
     mos_ucontext_t uc;
     mos_mcontext_t mc;
     u64 pad;
+    /* com XSAVE (AVX ligado, arch/cpu.c): os bytes 512..831 da área de FPU, o cabeçalho XSAVE e as metades altas dos YMM.
+     * A imagem FXSAVE do mc só leva os 128 bits de baixo; sem isto o tratador devolvia ao código interrompido os YMM dele.
+     * Fica depois do mcontext, que mantém o layout do Darwin. */
+    u8 xext[320];
 } usigframe_t;
+extern u8 g_use_xsave;
 _Static_assert(sizeof(mos_siginfo_t) == 104 && sizeof(mos_ucontext_t) == 56 && sizeof(mos_mcontext_t) == 712,
                "layout do Darwin x86-64");
 _Static_assert(sizeof(usigframe_t) % 16 == 0, "quadro alinhado");
@@ -1141,6 +1147,7 @@ static u64 sig_deliver(int_frame_t *f, thread_t *t, process_t *p, int sig, const
     s->r12 = f->r12; s->r13 = f->r13; s->r14 = f->r14; s->r15 = f->r15; s->rip = f->rip; s->rflags = f->rflags;
     s->cs = f->cs;
     memcpy(mc->fx, fx_area(f), 512);
+    if (g_use_xsave) memcpy(sf->xext, fx_area(f) + 512, sizeof sf->xext);
     u64 retv = tramp ? 0 : p->sig_restorer;
     bool ok = uvm_copy_out(p, fa, sf, sizeof *sf) && uvm_copy_out(p, ret, &retv, 8);
     kfree(sf);
@@ -1227,6 +1234,16 @@ static u64 sig_restore(int_frame_t *f, u64 fa) {
     f->rflags = (s->rflags & 0xDD5) | 0x202;                         /* flags aritméticas, DF e TF + IF */
     u8 *fx = fx_area(f);
     memcpy(fx, sf->mc.fx, 512);
+    if (g_use_xsave) {
+        /* o cabeçalho vem da pilha do usuário: só os bits x87|SSE|AVX no XSTATE_BV e o resto zerado, senão o XRSTOR do
+         * isr_common dá #GP no kernel */
+        u64 bv;
+        memcpy(&bv, sf->xext, 8);
+        bv &= 7;
+        memset(sf->xext, 0, 64);
+        memcpy(sf->xext, &bv, 8);
+        memcpy(fx + 512, sf->xext, sizeof sf->xext);
+    }
     u32 mxcsr, mmask;
     memcpy(&mxcsr, fx + 24, 4); memcpy(&mmask, fx + 28, 4);
     mxcsr &= mmask ? mmask : 0xFFBF;                                 /* bit reservado ligado: fxrstor daria #GP */
@@ -2499,6 +2516,8 @@ static u64 proc_syscall_(int_frame_t *f) {
             if (!lazy_add_file(p, at, len, p->fds[c].path, foff)) { r = -MOS_ENOMEM; MMAP_NOMEM_LOG(); break; }
             p->mmap_next += len + 4096;                     /* página de guarda entre regiões */
             r = (i64)at;
+            if (rastrear_mm()) kprintf("mm: %s pid %d tid %d mmap 0x%llx + 0x%llx arquivo %s @0x%llx\n", p->name, p->pid, t->id,
+                                       (unsigned long long)at, (unsigned long long)len, p->fds[c].path, (unsigned long long)foff);
             break;
         }
         if (b == 2) {
@@ -2710,6 +2729,42 @@ static u64 proc_syscall_(int_frame_t *f) {
     case SYS_SIGRETURN: return sig_return(f);
     case SYS_SIG: return sig_syscall(f, t, p);           /* ações, máscaras, sigsuspend, sigaltstack, sigwait */
     case SYS_WEB: { extern i64 web_user_syscall(process_t *p, u64 op, u64 id, u64 a, u64 b); r = web_user_syscall(p, a, b, c, f->r10); break; }   /* WKWebView (kernel/web/webview.c) */
+    case SYS_THREADCTL: {   /* thread_suspend/resume/get_state do Mach (MOS_THR_*, syscall.h): o coletor do JavaScriptCore */
+        extern void sched_kick_thread(thread_t *t);
+        extern bool sched_thread_stopped(const thread_t *t);
+        thread_t *q = NULL;
+        for (thread_t *w = sched_threads(); w; w = w->next)
+            if (w->proc == p && w->id == (int)b && w->state != TH_DEAD) { q = w; break; }
+        if (!q) { r = -MOS_ESRCH; break; }
+        {   /* diagnóstico: as primeiras chamadas (quem suspende quem), para ver no log que o coletor do JSC usa isto */
+            static int vistos;
+            if (a == MOS_THR_SUSPEND && vistos < 10) {
+                vistos++;
+                kprintf("threadctl: %s pid %d: thread %d suspende a %d (rodando: %s)\n", p->name, p->pid, t->id, q->id,
+                        q->state == TH_RUNNING ? "sim" : "não");
+            }
+        }
+        if (a == MOS_THR_SUSPEND) {
+            if (q->suspend < 0xFFFF) q->suspend++;
+            if (q == t) { f->rax = 0; return sched_switch(f); }   /* a própria thread: dorme até alguém dar resume */
+            sched_kick_thread(q);                     /* rodando em outro núcleo: o IPI a tira de lá */
+            r = 0;
+        } else if (a == MOS_THR_RESUME) {
+            if (!q->suspend) { r = -MOS_EINVAL; break; }
+            q->suspend--;
+            r = 0;
+        } else if (a == MOS_THR_STOPPED) {
+            r = sched_thread_stopped(q) ? 1 : 0;
+            if (!r && q->suspend) sched_kick_thread(q);
+        } else if (a == MOS_THR_GETSTATE) {
+            if (q == t || !sched_thread_stopped(q) || !q->frame) { r = -MOS_EBUSY; break; }
+            const int_frame_t *g = (const int_frame_t *)q->frame;
+            u64 regs[21] = { g->rax, g->rbx, g->rcx, g->rdx, g->rdi, g->rsi, g->rbp, g->rsp, g->r8, g->r9, g->r10, g->r11,
+                             g->r12, g->r13, g->r14, g->r15, g->rip, g->rflags, g->cs, 0, 0 };
+            r = uvm_copy_out(p, c, regs, sizeof regs) ? 0 : -MOS_EFAULT;
+        } else r = -MOS_EINVAL;
+        break;
+    }
     case SYS_SIGKILL: r = proc_signal((int)a, (int)b) ? 0 : -MOS_ESRCH; break;
     case SYS_TTY:                                         /* terminais, sessões e grupos (proc/pty.c) */
         r = pty_syscall(p, a, b, c, f->r10);

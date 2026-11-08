@@ -401,7 +401,7 @@ void NSEraseRect(NSRect r) { double x, y, w, h; px_rect(r, &x, &y, &w, &h); g_fi
 void NSFrameRectWithWidth(NSRect r, double t) { double x, y, w, h; px_rect(r, &x, &y, &w, &h); g_rstroke(x + t / 2, y + t / 2, w - t, h - t, 0, t, ctx.fill); }
 void NSFrameRect(NSRect r) { NSFrameRectWithWidth(r, 1); }
 void NSRectFillList(const NSRect *r, i64 n) { for (i64 i = 0; i < n; i++) NSRectFill(r[i]); }
-void NSBeep(void) {}
+void NSBeep(void) { extern void cx_beep(void); cx_beep(); }   /* coreaudio.c: o alerta do sistema no mixer */
 
 /* ================================================================ texto */
 static void font_attrs(id attrs, double *size, int *weight, u32 *color) {

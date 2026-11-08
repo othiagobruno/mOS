@@ -30,7 +30,14 @@ bool uvm_copy_out(process_t *p, u64 va, const void *src, usize len);
 #define WV_MAXDIM   8192
 #define WV_IDBASE   0x5700       /* ids dos controles no ui_t da vista */
 
-typedef struct { char url[1024]; char title[256]; int scroll; } wv_hent_t;
+typedef struct {
+    char url[1024];
+    char title[256];
+    int scroll;
+    char *html;                  /* conteúdo de loadHTMLString/loadData (kmalloc), para voltar a ele */
+    usize html_len;
+    char mime[64];
+} wv_hent_t;
 typedef struct wmsg { struct wmsg *next; char name[64]; char *body; int len; int type; char url[1024]; } wmsg_t;
 typedef struct wscript { struct wscript *next; char *src; int len; int at_end; } wscript_t;
 
@@ -436,13 +443,34 @@ static void set_doc(webview_t *w, doc_t *d) {
     w->dirty = true;
 }
 
+static void hent_clear(wv_hent_t *e) {
+    kfree(e->html);
+    e->html = NULL;
+    e->html_len = 0;
+    e->mime[0] = 0;
+}
+
+static void push_history_new(webview_t *w, const char *url);
 static void push_history(webview_t *w, const char *url) {
-    if (w->nhist && w->hpos >= 0 && !strcmp(w->hist[w->hpos].url, url)) return;
-    if (w->hpos < w->nhist - 1) w->nhist = w->hpos + 1;
-    if (w->nhist == WV_HIST) { memmove(w->hist, w->hist + 1, sizeof(wv_hent_t) * (WV_HIST - 1)); w->nhist--; }
-    wv_strcpy(w->hist[w->nhist].url, url, sizeof w->hist[0].url);
-    w->hist[w->nhist].title[0] = 0;
-    w->hist[w->nhist].scroll = 0;
+    if (w->nhist && w->hpos >= 0 && !strcmp(w->hist[w->hpos].url, url)) { hent_clear(&w->hist[w->hpos]); return; }
+    push_history_new(w, url);
+}
+
+/* sempre uma entrada nova (loadHTMLString duas vezes com a mesma URL base são duas páginas no histórico) */
+static void push_history_new(webview_t *w, const char *url) {
+    if (w->hpos < w->nhist - 1) {   /* navegar depois de voltar descarta as entradas à frente */
+        for (int i = w->hpos + 1; i < w->nhist; i++) hent_clear(&w->hist[i]);
+        w->nhist = w->hpos + 1;
+    }
+    if (w->nhist == WV_HIST) {
+        hent_clear(&w->hist[0]);
+        memmove(w->hist, w->hist + 1, sizeof(wv_hent_t) * (WV_HIST - 1));
+        w->nhist--;
+        if (w->hpos > 0) w->hpos--;
+    }
+    wv_hent_t *e = &w->hist[w->nhist];
+    memset(e, 0, sizeof *e);
+    wv_strcpy(e->url, url, sizeof e->url);
     w->hpos = w->nhist++;
 }
 
@@ -540,6 +568,20 @@ static void begin(webview_t *w) {
     w->events |= MOS_WEB_EV_START | MOS_WEB_EV_PROGRESS;
 }
 
+/* a parte local (about:, file:, data:) ou de rede de uma navegação já começada (begin) */
+static void fetch(webview_t *w, const char *url, bool record, int scroll, const char *post, int post_len, const char *ctype) {
+    if (load_local(w, url, record, scroll)) return;
+    if (strncmp(url, "http://", 7) && strncmp(url, "https://", 8)) {
+        fail(w, "Este tipo de endereço não é suportado.", -1002);   /* NSURLErrorUnsupportedURL */
+        return;
+    }
+    w->req = post ? http_post(url, ctype && *ctype ? ctype : "application/x-www-form-urlencoded", post, (u32)post_len) : http_get(url);
+    wv_strcpy(w->req_url, url, sizeof w->req_url);
+    w->req_record = record;
+    w->req_scroll = scroll;
+    if (!w->req) fail(w, "Não foi possível iniciar a conexão.", -1004);
+}
+
 /* navegação já permitida */
 static void start(webview_t *w, const char *url, bool record, int scroll, const char *post, int post_len, const char *ctype) {
     /* mesma página, só muda o fragmento: rola até a âncora, sem carregar */
@@ -555,16 +597,28 @@ static void start(webview_t *w, const char *url, bool record, int scroll, const 
     if (record && w->nhist) w->hist[w->hpos].scroll = w->scroll;
     cancel_load(w);
     begin(w);
-    if (load_local(w, url, record, scroll)) return;
-    if (strncmp(url, "http://", 7) && strncmp(url, "https://", 8)) {
-        fail(w, "Este tipo de endereço não é suportado.", -1002);   /* NSURLErrorUnsupportedURL */
+    fetch(w, url, record, scroll, post, post_len, ctype);
+}
+
+/* abre a entrada idx do histórico (voltar, avançar, recarregar): o HTML guardado de um loadHTMLString/loadData, que
+ * a URL base sozinha não traz de volta, ou a URL */
+static void open_entry(webview_t *w, int idx) {
+    if (idx < 0 || idx >= w->nhist) return;
+    if (w->hpos >= 0 && w->hpos < w->nhist) w->hist[w->hpos].scroll = w->scroll;
+    w->hpos = idx;
+    wv_hent_t *e = &w->hist[idx];
+    char url[1024];
+    wv_strcpy(url, e->url, sizeof url);
+    int sc = e->scroll;
+    cancel_load(w);
+    begin(w);
+    if (e->html) {
+        doc_t *d = doc_by_mime((const u8 *)e->html, e->html_len, url, e->mime[0] ? e->mime : "text/html;charset=utf-8");
+        if (!d) { fail(w, "Memória insuficiente para exibir a página.", -1); return; }
+        commit(w, d, url, false, sc, e->mime[0] ? e->mime : "text/html", 200);
         return;
     }
-    w->req = post ? http_post(url, ctype && *ctype ? ctype : "application/x-www-form-urlencoded", post, (u32)post_len) : http_get(url);
-    wv_strcpy(w->req_url, url, sizeof w->req_url);
-    w->req_record = record;
-    w->req_scroll = scroll;
-    if (!w->req) fail(w, "Não foi possível iniciar a conexão.", -1004);
+    fetch(w, url, false, sc, NULL, 0, NULL);
 }
 
 /* toda navegação passa por aqui: com a política ligada, espera o MOS_WEB_DECIDE do app */
@@ -586,12 +640,7 @@ static void navigate(webview_t *w, const char *url, bool record, int kind, const
         w->events |= MOS_WEB_EV_NAVREQ;
         return;
     }
-    if (hist_target >= 0) {
-        w->hist[w->hpos].scroll = w->scroll;
-        w->hpos = hist_target;
-        start(w, w->hist[hist_target].url, false, w->hist[hist_target].scroll, NULL, 0, NULL);
-        return;
-    }
+    if (hist_target >= 0) { open_entry(w, hist_target); return; }
     start(w, url, record, 0, post, post_len, ctype);
 }
 
@@ -1105,6 +1154,7 @@ static void wv_free(webview_t *w) {
     for (wscript_t *s = w->scripts, *n; s; s = n) { n = s->next; kfree(s->src); kfree(s); }
     kfree(w->pend_post);
     sb_free(&w->result);
+    for (int i = 0; i < w->nhist; i++) hent_clear(&w->hist[i]);
     kfree(w);
 }
 
@@ -1239,12 +1289,20 @@ static i64 wv_dispatch(void *arg) {
             cancel_load(w);
             w->pend = false;
             begin(w);
-            doc_t *d = L.mime[0] && strcasecmp(L.mime, "text/html") ? doc_by_mime((u8 *)html, (usize)L.html_len, base, L.mime)
-                                                                     : doc_from_html((u8 *)html, (usize)L.html_len, base, "text/html;charset=utf-8");
-            kfree(html);
-            if (!d) { fail(w, "Memória insuficiente para exibir a página.", -1); return 0; }
+            const char *mime = L.mime[0] ? L.mime : "text/html;charset=utf-8";
+            doc_t *d = doc_by_mime((u8 *)html, (usize)L.html_len, base, mime);
+            if (!d) { kfree(html); fail(w, "Memória insuficiente para exibir a página.", -1); return 0; }
             if (w->nhist && w->hpos >= 0) w->hist[w->hpos].scroll = w->scroll;
-            commit(w, d, base, true, 0, L.mime[0] ? L.mime : "text/html", 200);
+            push_history_new(w, base);
+            commit(w, d, base, false, 0, L.mime[0] ? L.mime : "text/html", 200);
+            /* a entrada guarda o conteúdo: voltar a ela não pode depender da URL base (about:blank) */
+            if (w->hpos >= 0 && w->hpos < w->nhist) {
+                wv_hent_t *e = &w->hist[w->hpos];
+                hent_clear(e);
+                e->html = html;
+                e->html_len = (usize)L.html_len;
+                wv_strcpy(e->mime, mime, sizeof e->mime);
+            } else kfree(html);
             return 0;
         }
         char url[1024];
@@ -1305,7 +1363,8 @@ static i64 wv_dispatch(void *arg) {
         wv_strcpy(I->url, w->url, sizeof I->url);
         wv_strcpy(I->title, w->title, sizeof I->title);
         if (w->pend) { wv_strcpy(I->req_url, w->pend_url, sizeof I->req_url); I->req_kind = w->pend_kind; }
-        else if (w->newwin_url[0]) { wv_strcpy(I->req_url, w->newwin_url, sizeof I->req_url); I->req_kind = 0; }
+        wv_strcpy(I->newwin, w->newwin_url, sizeof I->newwin);
+        w->newwin_url[0] = 0;
         I->nav_seq = w->nav_seq;
         wv_strcpy(I->error, w->error, sizeof I->error);
         I->error_code = w->error_code;
@@ -1410,11 +1469,7 @@ static i64 wv_dispatch(void *arg) {
             if (w->hpos >= 0 && w->hpos < w->nhist - 1) navigate(w, w->hist[w->hpos + 1].url, false, 2, NULL, 0, NULL, w->hpos + 1);
             return 0;
         case MOS_WEB_GO_RELOAD:
-            if (w->url[0]) {
-                int sc = w->scroll;
-                if (w->policy) navigate(w, w->url, false, 3, NULL, 0, NULL, -1);
-                else { cancel_load(w); begin(w); if (!load_local(w, w->url, false, sc)) start(w, w->url, false, sc, NULL, 0, NULL); }
-            }
+            if (w->hpos >= 0 && w->hpos < w->nhist) navigate(w, w->hist[w->hpos].url, false, 3, NULL, 0, NULL, w->hpos);
             return 0;
         case MOS_WEB_GO_STOP:
             if (w->req) { cancel_load(w); fail(w, "cancelado", -999); }   /* NSURLErrorCancelled */
@@ -1489,7 +1544,6 @@ static i64 wv_dispatch(void *arg) {
         w->policy = a != 0;
         return 0;
     case MOS_WEB_DECIDE: {
-        if (w->newwin_url[0] && !w->pend) { w->newwin_url[0] = 0; return 0; }
         if (!w->pend) return -MOS_EINVAL;
         w->pend = false;
         if (!a) { kfree(w->pend_post); w->pend_post = NULL; return 0; }
@@ -1499,16 +1553,8 @@ static i64 wv_dispatch(void *arg) {
         char url[1024], ct[64];
         wv_strcpy(url, w->pend_url, sizeof url);
         wv_strcpy(ct, w->pend_ctype, sizeof ct);
-        if (w->pend_hist >= 0 && w->pend_hist < w->nhist) {
-            int t = w->pend_hist;
-            if (w->hpos >= 0) w->hist[w->hpos].scroll = w->scroll;
-            w->hpos = t;
-            start(w, w->hist[t].url, false, w->hist[t].scroll, NULL, 0, NULL);
-        } else if (w->pend_kind == 3) {
-            cancel_load(w);
-            begin(w);
-            if (!load_local(w, url, false, w->scroll)) start(w, url, false, w->scroll, NULL, 0, NULL);
-        } else start(w, url, w->pend_record, 0, post, plen, ct);
+        if (w->pend_hist >= 0 && w->pend_hist < w->nhist) open_entry(w, w->pend_hist);
+        else start(w, url, w->pend_record, 0, post, plen, ct);
         kfree(post);
         return 0;
     }

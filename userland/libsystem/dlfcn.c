@@ -191,3 +191,40 @@ _Bool _dyld_shared_cache_contains_path(const char *path) {
     while (b[i] && path[i] == b[i]) i++;
     return !b[i];
 }
+
+/* O libunwind do LLVM (estático nos binários do zig e de outros toolchains, x86_64 e arm64) acha as tabelas de
+ * desenrolar da imagem que contém um pc por aqui: sem isto toda exceção C++ virava std::terminate. Os endereços são
+ * os finais (seção + slide da imagem). Frente RUNTIME do tradutor arm64 (docs/tradutor-arm64.md). */
+struct dyld_unwind_sections {
+    const void *mh;
+    const void *dwarf_section;
+    unsigned long dwarf_section_length;
+    const void *compact_unwind_section;
+    unsigned long compact_unwind_section_length;
+};
+_Bool _dyld_find_unwind_sections(void *addr, struct dyld_unwind_sections *info) {
+    const u8 *h = _dyld_get_image_header_containing_address(addr);
+#if defined(__aarch64__)   /* pc dentro do próprio libSystem arm64 (ELF): o .eh_frame dele (darwin_arm64.c, frente LIBSYS) */
+    { extern _Bool cx_ls_unwind_sections(const void *, void *); if (!h && info && cx_ls_unwind_sections(addr, info)) return 1; }
+#endif
+    if (!h || !info || *(const u32 *)h != 0xFEEDFACF) return 0;
+    long slide = slide_of(h);
+    u32 ncmds = *(const u32 *)(h + 16);
+    const u8 *p = h + 32;
+    memset(info, 0, sizeof *info);
+    info->mh = h;
+    for (u32 i = 0; i < ncmds; i++) {
+        u32 cmd = *(const u32 *)p, sz = *(const u32 *)(p + 4);
+        if (cmd == 0x19) {                                   /* LC_SEGMENT_64: seções de 80 bytes depois de 72 */
+            u32 nsects = *(const u32 *)(p + 64);
+            for (u32 k = 0; k < nsects; k++) {
+                const u8 *s = p + 72 + k * 80;
+                u64 a = *(const u64 *)(s + 32) + (u64)slide, n = *(const u64 *)(s + 40);
+                if (!strncmp((const char *)s, "__eh_frame", 16)) { info->dwarf_section = (const void *)a; info->dwarf_section_length = n; }
+                if (!strncmp((const char *)s, "__unwind_info", 16)) { info->compact_unwind_section = (const void *)a; info->compact_unwind_section_length = n; }
+            }
+        }
+        p += sz;
+    }
+    return info->dwarf_section || info->compact_unwind_section;
+}

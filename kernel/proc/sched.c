@@ -159,6 +159,17 @@ void sched_make_ready(thread_t *t) {
     t->state = TH_READY;
 }
 
+/* thread_suspend (SYS_THREADCTL, process.c): t já tem suspend > 0. Se estiver rodando em outro núcleo, o IPI de
+ * reescalonamento a tira de lá (sched_dead_check); quem chamou espera com sched_thread_stopped antes de ler o frame */
+static void kick_wait(int cpu, u32 bit);
+void sched_kick_thread(thread_t *t) {
+    int me = this_cpu();
+    for (int i = 0; i < ncpu; i++)
+        if (i != me && pc[i].online && pc[i].cur == t) kick_wait(i, PEND_RESCHED);
+}
+/* suspensa e fora de qualquer núcleo: o frame salvo (t->frame) tem os registradores de usuário dela */
+bool sched_thread_stopped(const thread_t *t) { return t->suspend && !on_cpu(t); }
+
 /* frame inicial: o iretq "volta" para rip com os registradores dados; FXSAVE padrão logo abaixo */
 static u64 build_frame(thread_t *t, u64 rip, u64 rsp, bool user, u64 rcx, u64 rdx) {
     u64 top = t->kstack_top;
@@ -289,7 +300,7 @@ static thread_t *next_ready(int me, thread_t *from) {
     thread_t *t = from;
     for (int guard = 0; guard < 100000; guard++) {
         t = t->next ? t->next : threads;
-        if (t != &thread0 && t->state == TH_READY && (me == 0 || t->proc) && !on_cpu(t)) return t;
+        if (t != &thread0 && t->state == TH_READY && !t->suspend && (me == 0 || t->proc) && !on_cpu(t)) return t;
         if (t == from) break;
     }
     return NULL;
@@ -341,11 +352,11 @@ static u64 irq_exit(int_frame_t *f, bool timer) {
         thread_t *t = next_ready(me, c->last_user);
         return t ? switch_to(c, f, t) : (u64)f;
     }
-    if (cur->state == TH_RUNNING && timer_ticks() - c->slice_start < SCHED_SLICE_MS) return (u64)f;
+    if (cur->state == TH_RUNNING && !cur->suspend && timer_ticks() - c->slice_start < SCHED_SLICE_MS) return (u64)f;
     reap();
     if (me == 0) return switch_to(c, f, &thread0);   /* fim da fatia: o desktop roda */
     thread_t *t = next_ready(me, cur);
-    if (!t) t = cur->state == TH_RUNNING ? cur : c->idle;
+    if (!t) t = cur->state == TH_RUNNING && !cur->suspend ? cur : c->idle;
     return switch_to(c, f, t);
 }
 
@@ -355,7 +366,7 @@ u64 sched_switch(int_frame_t *f) {
     pcpu_t *c = &pc[me];
     wake_sleepers();
     thread_t *t = next_ready(me, c->cur);
-    if (!t || t == c->cur) t = c->cur->state == TH_RUNNING ? c->cur : c->idle;
+    if (!t || t == c->cur) t = c->cur->state == TH_RUNNING && !c->cur->suspend ? c->cur : c->idle;
     return switch_to(c, f, t);
 }
 
@@ -382,7 +393,7 @@ void sched_kentry(int_frame_t *f) {
 u64 sched_dead_check(int_frame_t *f) {
     pcpu_t *c = me_pc();
     __atomic_and_fetch(&c->pending, ~PEND_RESCHED, __ATOMIC_SEQ_CST);
-    return c->cur->state == TH_DEAD ? sched_switch(f) : 0;
+    return c->cur->state == TH_DEAD || c->cur->suspend ? sched_switch(f) : 0;   /* morta, ou suspensa (thread_suspend) */
 }
 
 /* decide o que fazer com a trava antes de voltar para o frame r */

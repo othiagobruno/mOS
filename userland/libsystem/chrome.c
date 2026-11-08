@@ -454,15 +454,9 @@ void *MIDIEventListInit(void *list, int proto) { (void)list; (void)proto; return
 void *MIDIEventListAdd(void *list, size_t size, void *cur, u64 time, size_t words, const unsigned *data) { (void)list; (void)size; (void)cur; (void)time; (void)words; (void)data; return 0; }
 OSStatus MIDISendEventList(unsigned port, unsigned dest, const void *list) { (void)port; (void)dest; (void)list; return kMIDINotPermitted; }
 #define kAudioFileUnspecifiedError 0x7768743F   /* 'wht?' */
+/* AudioFileSetProperty/WritePackets/Close e o resto do AudioFile: coreaudio.c */
 OSStatus AudioFileInitializeWithCallbacks(void *ctx, void *rd, void *wr, void *gs, void *ss, unsigned type, const void *fmt, unsigned flags, void **id) {
     (void)ctx; (void)rd; (void)wr; (void)gs; (void)ss; (void)type; (void)fmt; (void)flags;
     if (id) *id = 0;
     return kAudioFileUnspecifiedError;
 }
-OSStatus AudioFileSetProperty(void *f, unsigned prop, unsigned size, const void *data) { (void)f; (void)prop; (void)size; (void)data; return kAudioFileUnspecifiedError; }
-OSStatus AudioFileWritePackets(void *f, Boolean cache, unsigned nbytes, const void *descs, long long start, unsigned *npackets, const void *buf) {
-    (void)f; (void)cache; (void)nbytes; (void)descs; (void)start; (void)buf;
-    if (npackets) *npackets = 0;
-    return kAudioFileUnspecifiedError;
-}
-OSStatus AudioFileClose(void *f) { (void)f; return 0; }

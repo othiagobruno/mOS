@@ -92,6 +92,28 @@ if ($zl) {
     New-Item -ItemType Directory -Force "$esp\mOS\usr\local\opt\zlib\lib" | Out-Null
     Copy-Item $zl.FullName "$esp\mOS\usr\local\opt\zlib\lib\libz.1.dylib" -Force
 }
+# WebKit.framework do mOS (userland\frameworks\WebKit): WKWebView sobre o motor web do sistema (SYS_WEB, kernel/web/webview.c)
+$wkdir = "$esp\mOS\System\Library\Frameworks\WebKit.framework\Versions\A"
+New-Item -ItemType Directory -Force $wkdir | Out-Null
+& $zig cc -target x86_64-macos -O2 -shared -x objective-c "-I$root\userland\sdk\include" -Wno-objc-root-class -Wno-objc-method-access `
+    "$root\userland\frameworks\WebKit\WebKit.m" -o "$wkdir\WebKit" '-Wl,-install_name,/System/Library/Frameworks/WebKit.framework/Versions/A/WebKit' `
+    '-Wl,-undefined,dynamic_lookup' 2>&1 | Select-String ' error' | ForEach-Object { "  $($_.Line)" }
+if (-not (Test-Path "$wkdir\WebKit")) { Write-Host 'WebKit.framework build FAILED' -ForegroundColor Red; exit 1 }
+# tradutor arm64 (docs/tradutor-arm64.md): o runtime a64rt.mos (tools\build-a64rt.ps1) e o libSystem arm64
+# (tools\build-libsystem-arm64.ps1) em /Sistema/Biblioteca/a64; sem eles os apps só arm64 dizem o que falta
+$a64 = "$esp\mOS\Sistema\Biblioteca\a64"
+& "$root\tools\build-a64rt.ps1" -Parcial
+if ($LASTEXITCODE -ne 0) { Write-Host 'aviso: a64rt.mos não compilou; apps arm64 ficam sem o tradutor' -ForegroundColor Yellow }
+if ((Test-Path "$root\build\a64rt.mos") -and (Test-Path "$root\build\libSystem-arm64.mos")) {
+    New-Item -ItemType Directory -Force $a64 | Out-Null
+    Copy-Item "$root\build\a64rt.mos" "$a64\a64rt.mos" -Force
+    Copy-Item "$root\build\libSystem-arm64.mos" "$a64\libSystem.mos" -Force
+}
+# bibliotecas Mach-O universais (x86_64 + arm64) por cima das só x86_64: o carregador escolhe o slice do processo
+# (tools\build-libs-arm64.ps1: libc++, sqlite, ICU, WebKit.framework)
+& "$root\tools\build-libs-arm64.ps1"
+if ($LASTEXITCODE -ne 0) { Write-Host 'aviso: slices arm64 das bibliotecas incompletos; apps arm64 ficam sem elas' -ForegroundColor Yellow }
+if (Test-Path "$root\build\universal") { Copy-Item "$root\build\universal\*" "$esp\mOS\" -Recurse -Force }
 # ferramentas de linha de comando do macOS em Mach-O (userland\cli-macos\<nome>.c -> /usr/bin/<nome>): open(1)
 New-Item -ItemType Directory -Force "$esp\mOS\usr\bin" | Out-Null
 foreach ($c in Get-ChildItem "$root\userland\cli-macos" -Filter *.c -ErrorAction SilentlyContinue) {

@@ -35,6 +35,9 @@ if ($Imagem) {
     New-Item -ItemType Directory -Force "$esp\mOS\Sistema\Biblioteca\LaunchDaemons" | Out-Null
     "Programa=/Aplicativos/$name.app/Contents/MacOS/$name`nAtrasoMs=3000" | Set-Content -Encoding ascii "$esp\mOS\Sistema\Biblioteca\LaunchDaemons\com.mos.camadaiosurface.servico"
     Set-Content -Path "$esp\mOS\Sistema\Biblioteca\stderr-serial" -Value '1' -Encoding ascii
-    & (Join-Path $root "$Imagem\mkimg.exe") (Join-Path $root "$Imagem\mOS.img") $esp 128
+    # imagem de teste: overlay de teste com o marcador que pula o assistente do Live (tools\overlay-teste.ps1)
+    . "$PSScriptRoot\overlay-teste.ps1"
+    $ovt = New-OverlayTeste $root $Imagem
+    & (Join-Path $root "$Imagem\mkimg.exe") (Join-Path $root "$Imagem\mOS.img") $esp 128 --test-overlay $ovt
     if ($LASTEXITCODE -ne 0) { Write-Host 'mkimg FAILED' -ForegroundColor Red; exit 1 }
 }

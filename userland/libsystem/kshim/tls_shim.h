@@ -22,7 +22,11 @@ int snprintf(char *b, size_t n, const char *f, ...);
 #define kmalloc(n) malloc(n)
 #define kfree(p) free(p)
 #define kprintf(...) ((void)0)
+#if defined(__aarch64__)
+static inline u64 rdtsc(void) { u64 v; __asm__ volatile("mrs %0, cntvct_el0" : "=r"(v)); return v; }
+#else
 static inline u64 rdtsc(void) { u32 lo, hi; __asm__ volatile("rdtsc" : "=a"(lo), "=d"(hi)); return (u64)hi << 32 | lo; }
+#endif
 static inline u64 timer_ticks(void) { return (u64)SYS0(SYS_TIME); }
 #ifndef NULL
 #define NULL ((void *)0)

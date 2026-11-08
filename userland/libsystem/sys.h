@@ -27,6 +27,20 @@ typedef unsigned long usize;
 int *__error(void);
 #define cx_errno (*__error())
 
+#if defined(__aarch64__)
+/* libSystem arm64 (docs/tradutor-arm64.md): svc #0x4d4f, número em x8, argumentos x0..x4, resultado em x0; o runtime
+ * do tradutor repassa 1:1 para o int 0x80 do kernel */
+static inline long cx_syscall(long n, long a, long b, long c, long d, long e) {
+    register long x8 __asm__("x8") = n;
+    register long x0 __asm__("x0") = a;
+    register long x1 __asm__("x1") = b;
+    register long x2 __asm__("x2") = c;
+    register long x3 __asm__("x3") = d;
+    register long x4 __asm__("x4") = e;
+    __asm__ volatile("svc #0x4d4f" : "+r"(x0) : "r"(x8), "r"(x1), "r"(x2), "r"(x3), "r"(x4) : "memory");
+    return x0;
+}
+#else
 static inline long cx_syscall(long n, long a, long b, long c, long d, long e) {
     long r;
     register long r10 __asm__("r10") = d;
@@ -34,6 +48,7 @@ static inline long cx_syscall(long n, long a, long b, long c, long d, long e) {
     __asm__ volatile("int $0x80" : "=a"(r) : "a"(n), "D"(a), "S"(b), "d"(c), "r"(r10), "r"(r8) : "rcx", "r11", "memory");
     return r;
 }
+#endif
 #define SYS0(n) cx_syscall(n, 0, 0, 0, 0, 0)
 #define SYS1(n, a) cx_syscall(n, (long)(a), 0, 0, 0, 0)
 #define SYS2(n, a, b) cx_syscall(n, (long)(a), (long)(b), 0, 0, 0)

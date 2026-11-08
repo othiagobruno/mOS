@@ -310,6 +310,9 @@ void *aligned_alloc(size_t align, size_t n) { void *p; return posix_memalign(&p,
 void *memalign(size_t align, size_t n) { return aligned_alloc(align, n); }
 
 /* ================================================================ memória e strings */
+#if defined(__aarch64__)
+/* arm64: memcpy/memmove/memset/bzero em libc_arm64.S (laços de 64 bytes com ldp/stp de q, como os da Apple) */
+#else
 void *memcpy(void *d, const void *s, size_t n) {
     void *r = d;
     __asm__ volatile("rep movsb" : "+D"(d), "+S"(s), "+c"(n) :: "memory");
@@ -332,6 +335,7 @@ void *memset(void *d, int c, size_t n) {
     __asm__ volatile("rep stosb" : "+D"(d), "+c"(n) : "a"(c) : "memory");
     return r;
 }
+#endif
 
 /* o clang da Apple troca memset(p, 0, n) por __bzero(p, n) e usa o retorno como o do memset: no macOS o
  * __bzero deixa o destino em rax. Como void, o rep stosb inlinado deixava rax = 0 (o git recebia NULL). */
@@ -1132,12 +1136,12 @@ int fcntl(int fd, int cmd, ...) {
 }
 long sysconf(int name) {
     switch (name) {
-    case 29: return 4096;   /* _SC_PAGESIZE */
+    case 29: { extern u64 vm_page_size; return (long)vm_page_size; }   /* _SC_PAGESIZE (16 KiB no arm64) */
     case 57: case 58: return 1; /* _SC_NPROCESSORS_* */
     }
     return -1;
 }
-int getpagesize(void) { return 4096; }
+int getpagesize(void) { extern u64 vm_page_size; return (int)vm_page_size; }
 /* sinais sobre SYS_SIGACTION/SYS_SIGKILL/SYS_SIGRETURN. O kernel numera como o Linux (USR1 10, USR2 12,
  * CHLD 17); o macOS usa BUS 10, SYS 12, STOP 17, CHLD 20, USR1 30, USR2 31. As trocas são uma bijeção. */
 static int sig_to_mos(int s) {
@@ -1174,7 +1178,7 @@ static __attribute__((used, noreturn)) void cx_sigtramp(void *h, int style, int 
     uc->uc_sigmask = cx_sigmask_to_mos(uc->uc_sigmask);
     cx_errno = saved_errno;
     SYS2(SYS_SIG, MOS_SIGOP_RETURN, uc);
-    for (;;) __asm__ volatile("ud2");
+    for (;;) __builtin_trap();
 }
 int sigaction(int s, const mac_sigaction_t *a, mac_sigaction_t *o) {
     if (s <= 0 || s >= 32 || ((s == 9 || s == 17) && a)) { cx_errno = CX_EINVAL; return -1; }   /* KILL e STOP fixos */
@@ -1603,33 +1607,53 @@ char *tzname[2] = {"UTC", "UTC"};
 /* ================================================================ matemática (x87/SSE) */
 double fabs(double x) { return __builtin_fabs(x); }
 float fabsf(float x) { return __builtin_fabsf(x); }
+#if defined(__aarch64__)
+/* arm64: instruções diretas (fsqrt, frintm/p/z/x); sin/cos/tan/fmod/log2/exp2 vêm do compiler-rt do zig e atan2 de
+ * libm_arm64.c (tools/build-libsystem-arm64.ps1) */
+double sqrt(double x) { return __builtin_sqrt(x); }
+float sqrtf(float x) { return __builtin_sqrtf(x); }
+double floor(double x) { return __builtin_floor(x); }
+double ceil(double x) { return __builtin_ceil(x); }
+double trunc(double x) { return __builtin_trunc(x); }
+double sin(double), cos(double), tan(double), fmod(double, double), log2(double), exp2(double), atan2(double, double);
+#else
 double sqrt(double x) { double r; __asm__("sqrtsd %1, %0" : "=x"(r) : "x"(x)); return r; }
 float sqrtf(float x) { float r; __asm__("sqrtss %1, %0" : "=x"(r) : "x"(x)); return r; }
 double floor(double x) { double r; __asm__("roundsd $9, %1, %0" : "=x"(r) : "x"(x)); return r; }
 double ceil(double x) { double r; __asm__("roundsd $10, %1, %0" : "=x"(r) : "x"(x)); return r; }
 double trunc(double x) { double r; __asm__("roundsd $11, %1, %0" : "=x"(r) : "x"(x)); return r; }
+#endif
 double round(double x) { return x < 0 ? -floor(-x + 0.5) : floor(x + 0.5); }
 long lround(double x) { return (long)round(x); }
+#if defined(__aarch64__)
+double rint(double x) { return __builtin_rint(x); }
+#else
 double rint(double x) { double r; __asm__("roundsd $4, %1, %0" : "=x"(r) : "x"(x)); return r; }
+#endif
 double nearbyint(double x) { return rint(x); }
 float floorf(float x) { return (float)floor(x); }
 float ceilf(float x) { return (float)ceil(x); }
 float roundf(float x) { return (float)round(x); }
+#if !defined(__aarch64__)
 double fmod(double a, double b) { double r; __asm__("1: fprem; fnstsw %%ax; sahf; jp 1b" : "=t"(r) : "0"(a), "u"(b) : "ax", "cc"); return r; }
 double sin(double x) { double r; __asm__("fsin" : "=t"(r) : "0"(x)); return r; }
 double cos(double x) { double r; __asm__("fcos" : "=t"(r) : "0"(x)); return r; }
 double tan(double x) { double r, one; __asm__("fptan" : "=t"(one), "=u"(r) : "0"(x)); return r; }
 double atan2(double y, double x) { double r; __asm__("fpatan" : "=t"(r) : "0"(x), "u"(y) : "st(1)"); return r; }
+#endif
 double atan(double x) { return atan2(x, 1.0); }
 double asin(double x) { return atan2(x, sqrt(1 - x * x)); }
 double acos(double x) { return atan2(sqrt(1 - x * x), x); }
+#if !defined(__aarch64__)
 double log2(double x) { double r; __asm__("fld1; fxch; fyl2x" : "=t"(r) : "0"(x)); return r; }
+#endif
 double log(double x) { return log2(x) * 0.69314718055994530942; }
 double log10(double x) { return log2(x) * 0.30102999566398119521; }
 double log1p(double x) { return log(1 + x); }
 /* 2^x = 2^n * 2^f, n = rint(x), f em [-0.5, 0.5] (domínio do f2xm1). A versão antiga, toda em x87, fazia
  * "fsub %st, %st(1)", que na sintaxe AT&T dá n - x: a fração saía com o sinal trocado (exp2(-0.5) = 1.414,
  * exp2(0.7) = 2.46) e com ela exp/pow/powf de todo app; o skcms do Chrome caía no CHECK de cor finita. */
+#if !defined(__aarch64__)
 double exp2(double x) {
     if (x != x) return x;
     if (x >= 1024) return __builtin_inf();
@@ -1639,6 +1663,7 @@ double exp2(double x) {
     __asm__("fscale" : "=t"(r) : "0"(r), "u"(n));
     return r;
 }
+#endif
 double exp(double x) { return exp2(x * 1.44269504088896340736); }
 double expm1(double x) { return exp(x) - 1; }
 double pow(double b, double e) {

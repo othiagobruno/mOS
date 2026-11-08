@@ -3446,11 +3446,10 @@ void js_page_wk_handler(js_page_t *p, const char *name, bool on) {
     js_leave();
 }
 
-/* o valor do console mais recente com nível >= 3 (erros) e a contagem já existem; o WKWebView também precisa saber
- * se a página ainda tem trabalho (scripts externos ou fetch/XHR em andamento) para o didFinishNavigation */
+/* o WKWebView precisa saber se o documento ainda não chegou ao evento load (scripts externos baixando) para o
+ * didFinishNavigation; fetch/XHR em andamento não contam, como no WebKit (uma página com long-polling termina) */
 bool js_page_busy(js_page_t *p) {
     if (!p) return false;
     if (p->spos < p->nscripts) return true;
-    for (int i = 0; i < p->nnets; i++) if (p->nets[i].req) return true;
     return !p->loaded;
 }

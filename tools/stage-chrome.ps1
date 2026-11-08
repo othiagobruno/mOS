@@ -99,9 +99,13 @@ if ($AutoAbrir) {
     [IO.File]::WriteAllText($svc, $t, [Text.Encoding]::ASCII)
 }
 elseif (Test-Path -LiteralPath $svc) { Remove-Item -LiteralPath $svc }
+# imagem de teste: overlay de teste com o marcador que pula o assistente do Live (tools\overlay-teste.ps1); o .dmg do
+# -ComDmg vai nele, porque o mkimg recusa /mOS/Users na esp
+. "$PSScriptRoot\overlay-teste.ps1"
+$ovt = New-OverlayTeste $root $OutDir
 if ($ComDmg) {
-    New-Item -ItemType Directory -Force "$esp\mOS\Users\Visitante\Downloads" | Out-Null
-    Copy-Item -LiteralPath $ComDmg "$esp\mOS\Users\Visitante\Downloads\"
+    New-Item -ItemType Directory -Force "$ovt\mOS\Users\Visitante\Downloads" | Out-Null
+    Copy-Item -LiteralPath $ComDmg "$ovt\mOS\Users\Visitante\Downloads\"
 }
 $mb = (Get-ChildItem -LiteralPath (Get-LongPath $app) -Recurse -File | Measure-Object Length -Sum).Sum / 1MB
 Write-Host ("Google Chrome.app: {0:N1} MiB" -f $mb) -ForegroundColor Cyan
@@ -125,6 +129,6 @@ if ($KernelTeste) {
     if (-not $ok) { Write-Host 'kernel de teste FAILED' -ForegroundColor Red; exit 1 }
     Copy-Item "$root\$OutDir\BOOTX64-teste.EFI" "$esp\EFI\BOOT\BOOTX64.EFI" -Force
 }
-& (Join-Path $root "$OutDir\mkimg.exe") (Join-Path $root "$OutDir\mOS.img") $esp $SizeMiB
+& (Join-Path $root "$OutDir\mkimg.exe") (Join-Path $root "$OutDir\mOS.img") $esp $SizeMiB --test-overlay $ovt
 if ($LASTEXITCODE -ne 0) { Write-Host 'mkimg FAILED' -ForegroundColor Red; exit 1 }
 Write-Host "OK: $OutDir\mOS.img (boote com -Memory 3072: os arquivos do app ficam na RAM)" -ForegroundColor Green

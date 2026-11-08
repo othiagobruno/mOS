@@ -34,7 +34,10 @@ if ($OutDir) {
     # o init abre o teste 8 s depois do boot (tempo do DHCP); a saída dos apps vai ao log serial
     "Programa=/Aplicativos/Net6Test.app/Contents/MacOS/Net6Test`nArgumentos=$Nome $Alvo $Porta`nAtrasoMs=8000" | Set-Content -Encoding ascii "$esp\mOS\Sistema\Biblioteca\LaunchDaemons\com.mos.net6test.servico"
     Set-Content -Path "$esp\mOS\Sistema\Biblioteca\stderr-serial" -Value '1' -Encoding ascii
-    & (Join-Path $root "$OutDir\mkimg.exe") (Join-Path $root "$OutDir\mOS.img") $esp $SizeMiB
+    # imagem de teste: overlay de teste com o marcador que pula o assistente do Live (tools\overlay-teste.ps1)
+    . "$PSScriptRoot\overlay-teste.ps1"
+    $ovt = New-OverlayTeste $root $OutDir
+    & (Join-Path $root "$OutDir\mkimg.exe") (Join-Path $root "$OutDir\mOS.img") $esp $SizeMiB --test-overlay $ovt
     if ($LASTEXITCODE -ne 0) { Write-Host 'mkimg FAILED' -ForegroundColor Red; exit 1 }
     Write-Host "OK: $OutDir\mOS.img com Net6Test no boot" -ForegroundColor Green
 }

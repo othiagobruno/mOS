@@ -823,6 +823,13 @@ static u64 rng_ctr;
 static bool rng_seeded;
 static rng_status_t rng_st;
 
+#if defined(__aarch64__)
+/* libSystem arm64 (tools/build-libsystem-arm64.ps1): o M1 não tem RNDR; sem cpuid, as folhas dão 0 e o rdrand/rdseed
+ * nunca é tentado (a semente vem do relógio, do jitter e do resto abaixo) */
+static inline void cpuid_(u32 leaf, u32 sub, u32 *a, u32 *b, u32 *c, u32 *d) { (void)leaf; (void)sub; *a = *b = *c = *d = 0; }
+static inline int rdrand64(u64 *v) { *v = 0; return 0; }
+static inline int rdseed64(u64 *v) { *v = 0; return 0; }
+#else
 static inline void cpuid_(u32 leaf, u32 sub, u32 *a, u32 *b, u32 *c, u32 *d) {
     __asm__ volatile("cpuid" : "=a"(*a), "=b"(*b), "=c"(*c), "=d"(*d) : "a"(leaf), "c"(sub));
 }
@@ -836,6 +843,7 @@ static inline int rdseed64(u64 *v) {
     __asm__ volatile("rdseed %0; setc %1" : "=r"(*v), "=qm"(ok) :: "cc");
     return ok;
 }
+#endif
 
 static void rng_seed(void) {
     sha256_ctx h;

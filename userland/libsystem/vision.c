@@ -877,7 +877,7 @@ static id req_init_kind(id s, int kind, void *completion) {
     r->revision = 1;
     if (completion) r->completion = _Block_copy(completion);
     if (kind == RQ_BARCODE) {
-        r->symbologies = ret(MSG(id, cls("NSArray"), "arrayWithObjects:count:", (id[]){VNBarcodeSymbologyQR, VNBarcodeSymbologyEAN13, VNBarcodeSymbologyEAN8, VNBarcodeSymbologyCode128}, 4ull));
+        r->symbologies = ret(MSG(id, cls("NSArray"), "arrayWithObjects:count:", ((id[]){VNBarcodeSymbologyQR, VNBarcodeSymbologyEAN13, VNBarcodeSymbologyEAN8, VNBarcodeSymbologyCode128}), 4ull));
     }
     r->level = 0;
     r->rmin_ar = 0.5f; r->rmax_ar = 1.0f; r->rtol = 30; r->rmin_size = 0.2f; r->rmin_conf = 0; r->rmax_obs = 1;   /* padrões da Apple */
@@ -909,7 +909,7 @@ static rc_t req_roi(id s, SEL c) { (void)c; return RQ(s)->roi; }
 static void req_set_roi(id s, SEL c, rc_t r) { (void)c; RQ(s)->roi = r; }
 static id req_symbologies(id s, SEL c) { (void)c; return RQ(s)->symbologies; }
 static void req_set_symbologies(id s, SEL c, id a) { (void)c; setobj(&RQ(s)->symbologies, a); }
-static id supported_symbologies(void) { return MSG(id, cls("NSArray"), "arrayWithObjects:count:", (id[]){VNBarcodeSymbologyQR, VNBarcodeSymbologyEAN13, VNBarcodeSymbologyEAN8, VNBarcodeSymbologyCode128}, 4ull); }
+static id supported_symbologies(void) { return MSG(id, cls("NSArray"), "arrayWithObjects:count:", ((id[]){VNBarcodeSymbologyQR, VNBarcodeSymbologyEAN13, VNBarcodeSymbologyEAN8, VNBarcodeSymbologyCode128}), 4ull); }
 static id req_supported_sym_c(id k, SEL c) { (void)k; (void)c; return supported_symbologies(); }
 static id req_supported_sym_err(id s, SEL c, id *err) { (void)s; (void)c; if (err) *err = 0; return supported_symbologies(); }
 static id req_langs(id s, SEL c) { (void)c; return RQ(s)->languages ? RQ(s)->languages : MSG(id, cls("NSArray"), "arrayWithObject:", cx_str("en-US")); }

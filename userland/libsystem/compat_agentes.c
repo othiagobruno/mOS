@@ -78,6 +78,9 @@ char *ctime_r(const long *t, char *buf) {
 /* int128 -> double, com arredondamento certo: os 64 bits de cima com um bit "pegajoso" para o que sobrou,
  * convertidos pelo hardware (um só arredondamento), depois escalados. Escrito à mão porque um cast de __int128
  * aqui chamaria a própria função. */
+#if defined(__aarch64__)
+static double u64_to_d(u64 v) { return (double)v; }   /* ucvtf: um arredondamento só */
+#else
 static double u64_to_d(u64 v) {
     double r;
     __asm__("cvtsi2sdq %1, %0" : "=x"(r) : "r"((long long)(v >> 1 | (v & 1))));
@@ -85,6 +88,7 @@ static double u64_to_d(u64 v) {
     __asm__("cvtsi2sdq %1, %0" : "=x"(r) : "r"((long long)v));
     return r;
 }
+#endif
 static double scale2(double x, int e) { while (e >= 60) { x *= 1152921504606846976.0; e -= 60; } while (e-- > 0) x *= 2.0; return x; }
 double __floatuntidf(unsigned __int128 a) {
     u64 hi = (u64)(a >> 64), lo = (u64)a;
@@ -397,6 +401,22 @@ void CGContextEOFillPath(void *c) { CGContextFillPath(c); }
 /* ---- AppKit (extensão Swift do NSScreen, macOS 12): as áreas ao lado do entalhe da câmera. O mOS não tem entalhe:
  * nil. Getters swiftcc: self em r13, Optional<CGRect> (33 bytes) pelo resultado indireto em rax: carga zero e o byte de
  * tag do caso vazio = 1. */
+#if defined(__aarch64__)
+/* swiftcc arm64: self em x20, resultado indireto em x8, Optional<Float> (payload + tag no mesmo pedaço de 64 bits) em
+ * x0, Float em s0..s3 */
+#define MOS_NIL_CGRECT_GETTER(sym) \
+    __asm__(".text\n.globl \"" sym "\"\n.p2align 2\n\"" sym "\":\n" \
+            "  stp xzr, xzr, [x8]\n  stp xzr, xzr, [x8, #16]\n  mov w9, #1\n  strb w9, [x8, #32]\n  ret\n");
+MOS_NIL_CGRECT_GETTER("$sSo8NSScreenC6AppKitE20auxiliaryTopLeftAreaSo6CGRectVSgvg")
+MOS_NIL_CGRECT_GETTER("$sSo8NSScreenC6AppKitE21auxiliaryTopRightAreaSo6CGRectVSgvg")
+__asm__(".text\n.globl \"$sSo16CAFrameRateRangeV10QuartzCoreE7minimum7maximum9preferredABSf_S2fSgtcfC\"\n.p2align 2\n"
+        "\"$sSo16CAFrameRateRangeV10QuartzCoreE7minimum7maximum9preferredABSf_S2fSgtcfC\":\n"
+        "  movi d2, #0\n  tbnz x0, #32, 1f\n  fmov s2, w0\n1:\n  ret\n");
+__asm__(".text\n.globl \"$sSo17CMSampleBufferRefa9CoreMediaE05imageB0So08CVBufferC0aSgvg\"\n.p2align 2\n"
+        "\"$sSo17CMSampleBufferRefa9CoreMediaE05imageB0So08CVBufferC0aSgvg\":\n"
+        "  stp x29, x30, [sp, #-16]!\n  mov x29, sp\n  mov x0, x20\n  bl CMSampleBufferGetImageBuffer\n"
+        "  cbz x0, 1f\n  bl CFRetain\n1:\n  ldp x29, x30, [sp], #16\n  ret\n");
+#else
 #define MOS_NIL_CGRECT_GETTER(sym) \
     __asm__(".text\n.globl \"" sym "\"\n\"" sym "\":\n" \
             "  movq $0, (%rax)\n  movq $0, 8(%rax)\n  movq $0, 16(%rax)\n  movq $0, 24(%rax)\n  movb $1, 32(%rax)\n  ret\n");
@@ -414,3 +434,4 @@ __asm__(".text\n.globl \"$sSo17CMSampleBufferRefa9CoreMediaE05imageB0So08CVBuffe
         "\"$sSo17CMSampleBufferRefa9CoreMediaE05imageB0So08CVBufferC0aSgvg\":\n"
         "  pushq %rbp\n  movq %rsp, %rbp\n  movq %r13, %rdi\n  call CMSampleBufferGetImageBuffer\n"
         "  testq %rax, %rax\n  jz 1f\n  movq %rax, %rdi\n  call CFRetain\n1:\n  popq %rbp\n  ret\n");
+#endif

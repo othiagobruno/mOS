@@ -88,6 +88,9 @@ typedef struct thread {
     u64 ss_sp, ss_size;     /* sigaltstack (ss_size 0 = desligada) */
     struct { int code, pid, status; u64 addr; } sig_info[32];   /* siginfo dos pendentes desta thread */
     u16 sig_trapno; u32 sig_err;                                 /* __es da última falta entregue */
+    /* thread_suspend do Mach (SYS_THREADCTL): > 0 = suspensa. O escalonador não a escolhe e tira da CPU a que estiver
+     * rodando; o coletor do JavaScriptCore suspende as outras threads para ler pilha e registradores */
+    u16 suspend;
 } thread_t;
 
 /* sessão de terminal: entrada (stdin) e saída (stdout/stderr) de um grupo de processos */

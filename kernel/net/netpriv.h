@@ -46,7 +46,8 @@ bool ipv4_send(u32 dst, u8 proto, const void *payload, u16 len);
 bool ipv4_send_from(u32 src, u32 dst, u8 proto, const void *payload, u16 len);   /* src 0 = o da interface */
 void ipv4_input(const u8 *p, u16 len);
 bool net_eth_send(const u8 *dst_mac, u16 type, const void *payload, u16 len);
-void udp_deliver(u32 src, u16 sport, u16 dport, const u8 *data, u16 len);
+bool udp_deliver(u32 src, u16 sport, u16 dport, const u8 *data, u16 len);   /* true se um serviço do kernel é dono da porta */
+bool udp_user_deliver(const u8 *src16, const u8 *dst16, u16 sport, u16 dport, const u8 *data, u16 len);   /* userudp.c */
 
 /* IPv6 e laço local (ipv6.c) */
 extern net6_info_t g6;

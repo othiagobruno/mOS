@@ -12,16 +12,19 @@
 #
 #   .\tools\build-icu.ps1             (só recompila se faltar o dylib; sem o código-fonte em .tools\icu-dl, só avisa)
 #   .\tools\build-icu.ps1 -Force
-param([switch]$Force, [int]$Jobs = 8)
+#   .\tools\build-icu.ps1 -Arch arm64 (build\icu-arm64, contra build\libcxx-arm64: slice arm64 do tradutor, tools\build-libs-arm64.ps1)
+param([switch]$Force, [int]$Jobs = 8, [ValidateSet('x86_64', 'arm64')][string]$Arch = 'x86_64')
+$tgt = if ($Arch -eq 'arm64') { 'aarch64-macos.12.0' } else { 'x86_64-macos.12.0' }
+$sfx = if ($Arch -eq 'arm64') { '-arm64' } else { '' }
 $root = Split-Path $PSScriptRoot -Parent
 $zig = Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*' -ErrorAction SilentlyContinue | Select-Object -First 1
 if (-not $zig) { Write-Host 'zig nao encontrado em .tools' -ForegroundColor Red; exit 1 }
 $zig = Join-Path $zig.FullName 'zig.exe'
 $src = "$root\.tools\icu-dl\icu\source"
 if (-not (Test-Path "$src\common\uloc.cpp")) { Write-Host 'falta o ICU4C em .tools\icu-dl\icu (icu4c-74_2-src.tgz)' -ForegroundColor Yellow; exit 0 }
-$cxx = "$root\build\libcxx\libc++.1.dylib"
-if (-not (Test-Path $cxx)) { Write-Host 'falta build\libcxx\libc++.1.dylib (tools\build-libcxx.ps1)' -ForegroundColor Red; exit 1 }
-$out = "$root\build\icu"
+$cxx = "$root\build\libcxx$sfx\libc++.1.dylib"
+if (-not (Test-Path $cxx)) { Write-Host "falta $cxx (tools\build-libcxx.ps1 -Arch $Arch)" -ForegroundColor Red; exit 1 }
+$out = "$root\build\icu$sfx"
 $dylib = "$out\libicucore.A.dylib"
 $dat = "$out\icudt74l.dat"
 if ((Test-Path $dylib) -and (Test-Path $dat) -and -not $Force) { exit 0 }
@@ -43,7 +46,7 @@ $cfg = "$out\icu_mos_config.h"
 New-Item -ItemType Directory -Force "$out\inc" | Out-Null
 "#define TZDIR `"/usr/share/zoneinfo`"`n#define TZDEFAULT `"/etc/localtime`"`n" | Set-Content -Encoding ascii "$out\inc\tzfile.h"
 
-$common = @('-target', 'x86_64-macos.12.0', '-std=c++17', '-O2', '-g0', '-fPIC', '-fvisibility=default',
+$common = @('-target', $tgt, '-std=c++17', '-O2', '-g0', '-fPIC', '-fvisibility=default',
             '-Wno-deprecated-declarations', '-include', $cfg, "-I$out\inc", "-I$src\common", "-I$src\i18n")
 $srcs = @(Get-ChildItem "$src\common\*.cpp", "$src\i18n\*.cpp") + @(Get-Item "$src\stubdata\stubdata.cpp")
 
@@ -70,7 +73,9 @@ if ($bad) {
     exit 1
 }
 # a libc++ do disco (o mesmo arquivo que vai para /usr/lib/libc++.1.dylib), não a estática do zig
-& $zig c++ -target x86_64-macos.12.0 -shared -nostdlib++ -o $dylib @objs $cxx '-Wl,-install_name,/usr/lib/libicucore.A.dylib' `
+# objetos por arquivo de resposta: com os caminhos de build\icu-arm64 a linha de comando passava do limite do Windows
+[IO.File]::WriteAllLines("$out\link.rsp", ($objs | ForEach-Object { '"' + ($_ -replace '\\', '/') + '"' }))
+& $zig c++ -target $tgt -shared -nostdlib++ -o $dylib "@$out\link.rsp" $cxx '-Wl,-install_name,/usr/lib/libicucore.A.dylib' `
     '-Wl,-compatibility_version,1.0.0' '-Wl,-current_version,74.2.0' 2>&1 | ForEach-Object { "$_" }
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path $dylib) -or (Get-Item $dylib).Length -eq 0) { Write-Host 'libicucore.A.dylib link FALHOU' -ForegroundColor Red; exit 1 }
 Copy-Item "$src\data\in\icudt74l.dat" $dat -Force

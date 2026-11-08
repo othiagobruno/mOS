@@ -632,7 +632,9 @@ i64 compat_gui_syscall(process_t *p, u64 n, u64 a, u64 b, u64 c, u64 d, u64 e) {
     case GUI_DEVICE: {
         extern i64 gamepad_syscall(process_t *p, u64 op, u64 b, u64 c, u64 d);
         extern i64 bt_user_syscall(process_t *p, u64 op, u64 b, u64 c, u64 d);
-        return a < DEV_BT_STATE ? gamepad_syscall(p, a, b, c, d) : bt_user_syscall(p, a, b, c, d);
+        /* os streams de áudio (DEV_AUDIO_STATE/CTL/INFO) têm números acima dos do Bluetooth, mas são do gamepad.c */
+        bool pad = a < DEV_BT_STATE || a == DEV_AUDIO_STATE || a == DEV_AUDIO_CTL || a == DEV_AUDIO_INFO;
+        return pad ? gamepad_syscall(p, a, b, c, d) : bt_user_syscall(p, a, b, c, d);
     }
     case GUI_WIN_FOCUS: {
         gwin_t *g = win_get(p, a);

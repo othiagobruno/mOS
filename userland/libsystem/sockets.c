@@ -49,6 +49,9 @@ typedef struct {
     unsigned char raddr[16], laddr[16];
     /* bytes já tirados do kernel por recv(MSG_PEEK) e ainda não entregues (o próximo recv os devolve primeiro) */
     unsigned short peek_len; unsigned char peek[512];
+    /* UDP (SOCK_DGRAM, sockets_udp.inc): socket do kernel (-1 = ainda não aberto), connect() guardou um par,
+     * prazo de recv (SO_RCVTIMEO, ms; 0 = sem) */
+    int udp, ku, uconn, rcvtimeo;
 } sock_t;
 static sock_t socks[MAX_SOCK];
 
@@ -59,11 +62,12 @@ static sock_t *sock_of(int fd) {
 
 int socket(int domain, int type, int proto) {
     if (domain != 1 && domain != 2 && domain != 30) { cx_errno = CX_EAFNOSUPPORT; return -1; }   /* AF_UNIX, AF_INET, AF_INET6 */
-    int icmp = 0;
+    int icmp = 0, udp = 0;
     if (domain != 1 && (type & 0xF) != 1) {
-        /* fora o TCP, só o "socket de ping" do Darwin (SOCK_DGRAM + ICMP/ICMPv6). UDP ainda não: o teste de IPv6 do
-         * Chromium (socket UDP para 2001:4860:4860::8888) falha e ele pede só registros A, como antes */
+        /* fora o TCP: UDP (SOCK_DGRAM com protocolo 0 ou 17, sockets_udp.inc) e o "socket de ping" do Darwin
+         * (SOCK_DGRAM + ICMP/ICMPv6) */
         if ((type & 0xF) == 2 && ((domain == 2 && proto == 1) || (domain == 30 && proto == 58))) icmp = proto;
+        else if ((type & 0xF) == 2 && (proto == 0 || proto == 17)) udp = 1;
         else { cx_errno = CX_EPROTONOSUPPORT; return -1; }
     }
     for (int i = 0; i < MAX_SOCK; i++)
@@ -74,6 +78,7 @@ int socket(int domain, int type, int proto) {
             s->used = used;
             s->family = domain; s->type = type;
             s->kc = -1; s->kl = -1; s->proto = icmp;
+            s->udp = udp; s->ku = -1;
             return SOCK_FD_BASE + i;
         }
     cx_errno = CX_EMFILE;

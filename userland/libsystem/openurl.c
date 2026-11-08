@@ -218,6 +218,32 @@ static id app_url(const ls_line_t *l) {
     snprintf(p, sizeof p, "/System/Applications/%s.app", l->name);
     return file_url(p);
 }
+/* Info.plist sintético de um app do sistema (vive no kernel, sem pasta .app): para o NSBundle de
+ * "/System/Applications/<Nome>.app", o caminho que o URLForApplicationToOpenURL: e afins devolvem para eles. O Chromium
+ * (Codex, Electron) abre o bundle do navegador padrão antes do openURL; sem ele, o login pelo navegador parava. */
+id cx_system_app_info(const char *path) {
+    static const char pre[] = "/System/Applications/";
+    if (!path || strncmp(path, pre, sizeof pre - 1)) return 0;
+    char nm[160];
+    snprintf(nm, sizeof nm, "%s", path + sizeof pre - 1);
+    u64 n = strlen(nm);
+    while (n && nm[n - 1] == '/') nm[--n] = 0;
+    if (n < 5 || strcmp(nm + n - 4, ".app") || strchr(nm, '/')) return 0;
+    nm[n - 4] = 0;                                              /* o banco guarda o nome sem ".app" */
+    ls_line_t a;
+    int got = ls_one(MOS_LS_APP_BY_NAME, nm, 0, &a);
+    if (got <= 0 || a.path[0]) {                                 /* só os do sistema (sem caminho real) */
+        cx_fdprintf(2, "[abrir-url] app do sistema %s: %s\n", nm, got <= 0 ? "não achado" : a.path);
+        return 0;
+    }
+    id d = MSG0(id, cls("NSMutableDictionary"), "dictionary");
+    MSG(void, d, "setObject:forKey:", cx_str(a.id), cx_str("CFBundleIdentifier"));
+    MSG(void, d, "setObject:forKey:", cx_str(a.name), cx_str("CFBundleName"));
+    MSG(void, d, "setObject:forKey:", cx_str(a.name), cx_str("CFBundleDisplayName"));
+    MSG(void, d, "setObject:forKey:", cx_str(a.name), cx_str("CFBundleExecutable"));
+    MSG(void, d, "setObject:forKey:", cx_str("APPL"), cx_str("CFBundlePackageType"));
+    return objc_retain(d);
+}
 static id ls_error(void) {
     return MSG(id, cls("NSError"), "errorWithDomain:code:userInfo:", cx_str("NSOSStatusErrorDomain"), (i64)kLSApplicationNotFoundErr, (id)0);
 }

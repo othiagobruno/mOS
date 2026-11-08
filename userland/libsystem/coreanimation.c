@@ -309,8 +309,8 @@ static char *setter_of(const char *k, char *buf, u64 n) {
     buf[3] = (char)toupper(buf[3]);
     return buf;
 }
-static void get_rect(id l, const char *k, CGR *r) { ((void (*)(CGR *, id, SEL))objc_msgSend_stret)(r, l, S(k)); }
-static void get_t3(id l, const char *k, T3 *t) { ((void (*)(T3 *, id, SEL))objc_msgSend_stret)(t, l, S(k)); }
+static void get_rect(id l, const char *k, CGR *r) { *r = ((CGR (*)(id, SEL))objc_msgSend_stret)(l, S(k)); }   /* forma de retorno de struct: certa no x86 (sret) e no arm64 (d0..d3) */
+static void get_t3(id l, const char *k, T3 *t) { *t = ((T3 (*)(id, SEL))objc_msgSend_stret)(l, S(k)); }
 static int obj_to_val(id o, int kind, val_t *v);
 /* lê o valor atual (modelo) de key path */
 static int read_kp(id l, const char *kp, val_t *v) {

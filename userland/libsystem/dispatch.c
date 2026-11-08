@@ -128,10 +128,7 @@ static void mq_push(void *ctx, dispatch_function_t fn, void *block, u64 when_ms,
     cx_dispatch_main_used = 1;
     mq_item_t *it = malloc(sizeof *it);
     if (!it) return;
-    it->ctx = ctx; it->fn = fn; /* síncrono (done != 0): quem chama espera o fim, o bloco da pilha continua válido; copiar reteria as capturas
-     * para sempre (o _Block_release do mOS não libera), e o Swift acusa "closure argument passed as @noescape
-     * to Objective-C has escaped" no dispatch_sync de outra thread para a fila principal */
-    it->block = block ? (done ? block : _Block_copy(block)) : 0; it->when_ms = when_ms; it->done = done; it->next = 0;
+    it->ctx = ctx; it->fn = fn; it->block = block ? _Block_copy(block) : 0; it->when_ms = when_ms; it->done = done; it->next = 0;
     mql();
     if (mq_tail) mq_tail->next = it; else mq_head = it;
     mq_tail = it;
@@ -150,7 +147,7 @@ int cx_dispatch_drain_main(void) {
         if (prev) prev->next = it->next; else mq_head = it->next;
         if (mq_tail == it) mq_tail = prev;
         mqu();
-        RUN_ON(&_dispatch_main_q, if (it->block) { RUN_BLOCK(it->block); if (!it->done) _Block_release(it->block); } else it->fn(it->ctx));
+        RUN_ON(&_dispatch_main_q, if (it->block) { RUN_BLOCK(it->block); _Block_release(it->block); } else it->fn(it->ctx));
         if (it->done) *it->done = 1;
         free(it);
         ran++;

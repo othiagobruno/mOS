@@ -57,11 +57,26 @@ static int objc_ready;
 void cx_objc_boot(u64 sects, u64 n);
 static cx_class_t *lazy_class_named(const char *name);
 static int nswift_lazy_any(void);
+/* classes de fachada do libSystem para frameworks que o mOS não tinha (vscode_fwclasses.c): quando um framework de
+ * verdade com o mesmo nome carrega depois (o WebKit.framework do mOS e o WKWebView), a busca por nome
+ * (NSClassFromString, nibs, objc_getClass) fica com a de verdade; a fachada só vale se não houver outra */
+static cx_class_t *stub_classes[256];
+static u32 nstub_classes;
+void cx_mark_stub_class(cx_class_t *c) { if (c && nstub_classes < 256) stub_classes[nstub_classes++] = c; }
+static int is_stub_class(cx_class_t *c) {
+    for (u32 i = 0; i < nstub_classes; i++) if (stub_classes[i] == c) return 1;
+    return 0;
+}
 cx_class_t *cx_class_named(const char *name) {
+    cx_class_t *stub = 0;
     for (u32 i = 0; i < nclasses; i++) {
         cx_rw_t *rw = rw_of(all_classes[i]);
-        if (rw && rw->name && name && !strcmp(rw->name, name)) return all_classes[i];   /* classe ainda sem nome (Swift genérica em realização) */
+        if (rw && rw->name && name && !strcmp(rw->name, name)) {   /* classe ainda sem nome (Swift genérica em realização) */
+            if (nstub_classes && is_stub_class(all_classes[i])) { if (!stub) stub = all_classes[i]; continue; }
+            return all_classes[i];
+        }
     }
+    if (stub) return stub;
     /* programa sem seções ObjC (C/Rust que só usa CoreFoundation/Security, ex.: o Codex CLI): o runtime e as
      * classes do Foundation ainda não subiram — sobe agora, como o swiftbridge.c faz, e procura de novo */
     if (!objc_ready) { cx_objc_boot(0, 0); return cx_class_named(name); }
@@ -749,7 +764,15 @@ int cx_is_dispatch_object(id o) {
            c == &OS_dispatch_source_dqc || c == &OS_dispatch_queue_dqc || c == &OS_dispatch_queue_attr_dqc ||
            c == &OS_dispatch_io_dqc || c == &OS_dispatch_workloop_dqc || c == &OS_dispatch_object_dqc;
 }
+/* blocos no heap não têm objhdr_t: a contagem é a do próprio bloco (flags), a mesma do _Block_copy/_Block_release.
+ * Como no runtime da Apple, objc_retain/objc_release de um bloco passam por ela; senão o par do ARC
+ * objc_retain + Block_release (o Chromium faz isso) soltava o bloco ainda em uso. */
+extern cx_class_t _NSConcreteMallocBlock_c __asm__("_NSConcreteMallocBlock");
+void *_Block_copy(const void *arg);
+void _Block_release(const void *arg);
+#define IS_HEAP_BLOCK(o) ((o) && !((u64)(o) & 7) && (o)->isa == &_NSConcreteMallocBlock_c)
 id objc_retain(id o) {
+    if (IS_HEAP_BLOCK(o)) return (id)_Block_copy(o);
     if (cx_is_dispatch_object(o)) { cx_dispatch_retain(o); return o; }
     objhdr_t *h = hdr(o);
     if (h) __sync_fetch_and_add(&h->rc, 1);
@@ -757,6 +780,7 @@ id objc_retain(id o) {
     return o;
 }
 void objc_release(id o) {
+    if (IS_HEAP_BLOCK(o)) { _Block_release(o); return; }
     if (cx_is_dispatch_object(o)) { cx_dispatch_release(o); return; }
     objhdr_t *h = hdr(o);
     if (!h) { if (is_crr(o)) crr_send(o, "release"); return; }
@@ -963,6 +987,8 @@ void _Block_object_dispose(const void *obj, int flags) {
 }
 static id block_copy_m(id self, SEL s) { (void)s; return _Block_copy(self); }
 static id block_self_m(id self, SEL s) { (void)s; return self; }
+static id block_retain_m(id self, SEL s) { (void)s; return IS_HEAP_BLOCK(self) ? (id)_Block_copy(self) : self; }   /* heap: +1 */
+static void block_release_m(id self, SEL s) { (void)s; _Block_release(self); }   /* pilha/global: nada */
 
 /* ================================================================ imagem compilada */
 static void fix_cfstrings(u8 *a, u64 size) {
@@ -1065,7 +1091,8 @@ void cx_objc_boot(u64 sects, u64 n) {
         for (int i = 0; i < 3; i++) {
             cx_define_class(bl[i], &block_meta[i], names[i], nsobj, 0);
             cx_add_method(bl[i], "copy", block_copy_m);
-            cx_add_method(bl[i], "retain", block_self_m);
+            cx_add_method(bl[i], "retain", block_retain_m);
+            cx_add_method(bl[i], "release", block_release_m);
             cx_add_method(bl[i], "autorelease", block_self_m);
         }
         cx_appkit_init();

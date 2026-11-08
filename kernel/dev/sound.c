@@ -85,6 +85,132 @@ static pcmbuf_t pq[PCMQ];
 static int pq_head, pq_tail;
 static u32 pq_frames;
 
+/* streams de áudio dos apps (CoreAudio/AudioUnit/AudioQueue/AVFoundation do libSystem, DEV_AUDIO_*): cada um é um
+ * anel de PCM 48 kHz estéreo i16 do processo dono, somado às vozes e à fila acima a cada bloco. O app escreve o
+ * quanto couber e pergunta quanto ainda falta tocar (queued) e quanto já tocou (played) para se ritmar e marcar o
+ * tempo, como o IOProc do HAL faria. Um anel vazio toca silêncio (underrun) sem travar o mixer. */
+#define NSTREAMS   32
+#define STREAM_CAP (RATE / 2)   /* até 0,5 s escritos à frente */
+typedef struct { int pid; i16 *ring; u32 r, w, n; u64 played, underruns; i32 gain; bool paused; } astream_t;
+static astream_t streams[NSTREAMS];
+static spinlock_t st_lock;
+
+/* soma os streams em acc (n quadros) */
+static void streams_mix(i32 *acc, int n) {
+    u64 fl = spin_lock_irqsave(&st_lock);
+    for (int s = 0; s < NSTREAMS; s++) {
+        astream_t *a = &streams[s];
+        if (!a->pid || a->paused || !a->ring) continue;
+        int k = 0;
+        for (; k < n && a->n; k++) {
+            i32 g = a->gain;
+            acc[k * 2] += (a->ring[a->r * 2] * g) >> 16;
+            acc[k * 2 + 1] += (a->ring[a->r * 2 + 1] * g) >> 16;
+            a->r = (a->r + 1) % STREAM_CAP;
+            a->n--;
+        }
+        a->played += (u64)k;
+        if (k < n) a->underruns++;
+    }
+    spin_unlock_irqrestore(&st_lock, fl);
+}
+
+/* sem placa de som nem fone: os streams andam no relógio do timer (o áudio some, os apps não travam esperando) */
+static void streams_drain_clock(void) {
+    static u64 last;
+    u64 now = timer_ticks();
+    if (!last || now - last > 200) last = now;
+    u32 due = (u32)(now - last) * (RATE / 1000);
+    if (!due) return;
+    last = now;
+    u64 fl = spin_lock_irqsave(&st_lock);
+    for (int s = 0; s < NSTREAMS; s++) {
+        astream_t *a = &streams[s];
+        if (!a->pid || a->paused) continue;
+        u32 k = MIN(due, a->n);
+        a->r = (a->r + k) % STREAM_CAP;
+        a->n -= k;
+        a->played += k;
+    }
+    spin_unlock_irqrestore(&st_lock, fl);
+}
+
+int audio_stream_open(int pid) {
+    i16 *ring = kmalloc((usize)STREAM_CAP * 4);
+    if (!ring) return -1;
+    u64 fl = spin_lock_irqsave(&st_lock);
+    for (int s = 0; s < NSTREAMS; s++)
+        if (!streams[s].pid) {
+            memset(&streams[s], 0, sizeof streams[s]);
+            streams[s].pid = pid;
+            streams[s].ring = ring;
+            streams[s].gain = 65536;
+            spin_unlock_irqrestore(&st_lock, fl);
+            return s;
+        }
+    spin_unlock_irqrestore(&st_lock, fl);
+    kfree(ring);
+    return -1;
+}
+
+static astream_t *st_of(int pid, int id) {
+    return id >= 0 && id < NSTREAMS && streams[id].pid == pid ? &streams[id] : NULL;
+}
+
+/* escreve até o anel encher; devolve os quadros aceitos */
+u32 audio_stream_write(int pid, int id, const i16 *frames, u32 nfr) {
+    u64 fl = spin_lock_irqsave(&st_lock);
+    astream_t *a = st_of(pid, id);
+    u32 k = 0;
+    if (a) {
+        u32 room = STREAM_CAP - a->n;
+        k = MIN(room, nfr);
+        for (u32 i = 0; i < k; i++) {
+            a->ring[a->w * 2] = frames[i * 2];
+            a->ring[a->w * 2 + 1] = frames[i * 2 + 1];
+            a->w = (a->w + 1) % STREAM_CAP;
+        }
+        a->n += k;
+    }
+    spin_unlock_irqrestore(&st_lock, fl);
+    return k;
+}
+
+bool audio_stream_state(int pid, int id, u32 *queued, u64 *played, u64 *underruns) {
+    u64 fl = spin_lock_irqsave(&st_lock);
+    astream_t *a = st_of(pid, id);
+    if (a) { *queued = a->n; *played = a->played; *underruns = a->underruns; }
+    spin_unlock_irqrestore(&st_lock, fl);
+    return a != NULL;
+}
+
+/* gain: 0..65536 (1.0); pause: o anel para de andar; flush: descarta o que não tocou */
+bool audio_stream_ctl(int pid, int id, i32 gain, int pause, bool flush) {
+    u64 fl = spin_lock_irqsave(&st_lock);
+    astream_t *a = st_of(pid, id);
+    if (a) {
+        if (gain >= 0) a->gain = MIN(gain, 4 * 65536);
+        if (pause >= 0) a->paused = pause != 0;
+        if (flush) { a->r = a->w; a->n = 0; }
+    }
+    spin_unlock_irqrestore(&st_lock, fl);
+    return a != NULL;
+}
+
+void audio_stream_close(int pid, int id) {
+    i16 *ring = NULL;
+    u64 fl = spin_lock_irqsave(&st_lock);
+    astream_t *a = st_of(pid, id);
+    if (a) { ring = a->ring; memset(a, 0, sizeof *a); }
+    spin_unlock_irqrestore(&st_lock, fl);
+    kfree(ring);
+}
+
+/* o processo saiu: fecha os streams dele */
+void audio_stream_proc_exit(int pid) {
+    for (int s = 0; s < NSTREAMS; s++) if (streams[s].pid == pid) audio_stream_close(pid, s);
+}
+
 /* ---------------------------------------------------------------- tabelas */
 static inline i32 lk(const i16 *t, u32 ph) {
     u32 i = ph >> (32 - TBITS);
@@ -461,6 +587,7 @@ static void mix_block(i16 *dst, int n, bool late) {
         if (V[k].on && V[k].late == late) voice_block(&V[k], acc, n);
     i32 g0 = gm_cur, g1 = gm_cur;
     if (!late) {
+        streams_mix(acc, n);
         for (int i = 0; i < n && pq_head != pq_tail; i++) {
             pcmbuf_t *b = &pq[pq_head];
             acc[i * 2] += b->data[b->pos * 2];
@@ -618,7 +745,7 @@ void audio_poll(void) {
         u32 due = (u32)(now - last) * (RATE / 1000);
         last = now;
         while (due) { u32 n = MIN(due, (u32)BLOCK); snd_render(buf, n); due -= n; }
-    }
+    } else streams_drain_clock();
 }
 
 void audio_set_volume(int pct) {

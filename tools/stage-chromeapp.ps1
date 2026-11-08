@@ -134,6 +134,9 @@ if ($Autostart) {
 } elseif (Test-Path -LiteralPath $svc) { Remove-Item -LiteralPath $svc }
 $mb = (Get-ChildItem -LiteralPath (Get-LongPath $app) -Recurse -File | Measure-Object Length -Sum).Sum / 1MB
 Write-Host ("$name.app: {0:N1} MiB" -f $mb) -ForegroundColor Cyan
-& (Join-Path $root "$OutDir\mkimg.exe") (Join-Path $root "$OutDir\mOS.img") $esp $SizeMiB
+# imagem de teste: overlay de teste com o marcador que pula o assistente do Live (tools\overlay-teste.ps1)
+. "$PSScriptRoot\overlay-teste.ps1"
+$ovt = New-OverlayTeste $root $OutDir
+& (Join-Path $root "$OutDir\mkimg.exe") (Join-Path $root "$OutDir\mOS.img") $esp $SizeMiB --test-overlay $ovt
 if ($LASTEXITCODE -ne 0) { Write-Host 'mkimg FAILED' -ForegroundColor Red; exit 1 }
 Write-Host "OK: $OutDir\mOS.img (boote com -Memory 3072 ou mais: os arquivos do app ficam na RAM)" -ForegroundColor Green

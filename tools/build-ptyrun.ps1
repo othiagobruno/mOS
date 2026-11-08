@@ -38,6 +38,9 @@ Copy-Item -Force $Roteiro "$esp\mOS\Aplicativos\PtyRun.app\Contents\Resources\ro
 "Programa=/Aplicativos/PtyRun.app/Contents/MacOS/PtyRun`nArgumentos=/Aplicativos/PtyRun.app/Contents/Resources/roteiro.txt`nAtrasoMs=$AtrasoMs`nEntrada=/dev/null" |
     Set-Content -Encoding ascii "$esp\mOS\Sistema\Biblioteca\LaunchDaemons\com.mos.ptyrun.servico"
 if ($SemImagem) { exit 0 }
-& (Join-Path $root "$OutDir\mkimg.exe") (Join-Path $root "$OutDir\mOS.img") $esp $SizeMiB
+# imagem de teste: overlay de teste com o marcador que pula o assistente do Live (tools\overlay-teste.ps1)
+. "$PSScriptRoot\overlay-teste.ps1"
+$ovt = New-OverlayTeste $root $OutDir
+& (Join-Path $root "$OutDir\mkimg.exe") (Join-Path $root "$OutDir\mOS.img") $esp $SizeMiB --test-overlay $ovt
 if ($LASTEXITCODE -ne 0) { Write-Host 'mkimg FAILED' -ForegroundColor Red; exit 1 }
 Write-Host "OK: $OutDir\mOS.img com o PtyRun ($(Split-Path $Roteiro -Leaf)) no boot" -ForegroundColor Green

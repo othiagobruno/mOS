@@ -1288,6 +1288,28 @@ void msl_run(msl_fn_t *f, msl_ctx_t *c, void *out) {
 }
 
 /* ================================================================ fibras (threadgroup_barrier) */
+#if defined(__aarch64__)
+/* arm64: quadro de 160 bytes com os preservados (x19..x30, d8..d15); a fibra nova começa em msl_fiber_start (x30) com
+ * x19 = fiber_t */
+__asm__(".text\n"
+        ".globl msl_ctx_switch\n.p2align 2\n"
+        "msl_ctx_switch:\n"
+        "  sub sp, sp, #160\n"
+        "  stp x19, x20, [sp]\n  stp x21, x22, [sp, #16]\n  stp x23, x24, [sp, #32]\n  stp x25, x26, [sp, #48]\n"
+        "  stp x27, x28, [sp, #64]\n  stp x29, x30, [sp, #80]\n  stp d8, d9, [sp, #96]\n  stp d10, d11, [sp, #112]\n"
+        "  stp d12, d13, [sp, #128]\n  stp d14, d15, [sp, #144]\n"
+        "  mov x9, sp\n  str x9, [x0]\n  mov sp, x1\n"
+        "  ldp x19, x20, [sp]\n  ldp x21, x22, [sp, #16]\n  ldp x23, x24, [sp, #32]\n  ldp x25, x26, [sp, #48]\n"
+        "  ldp x27, x28, [sp, #64]\n  ldp x29, x30, [sp, #80]\n  ldp d8, d9, [sp, #96]\n  ldp d10, d11, [sp, #112]\n"
+        "  ldp d12, d13, [sp, #128]\n  ldp d14, d15, [sp, #144]\n"
+        "  add sp, sp, #160\n"
+        "  ret\n"
+        ".globl msl_fiber_start\n.p2align 2\n"
+        "msl_fiber_start:\n"
+        "  mov x0, x19\n"
+        "  bl msl_fiber_main\n"
+        "  brk #1\n");
+#else
 __asm__(".text\n"
         ".globl msl_ctx_switch\n"
         "msl_ctx_switch:\n"
@@ -1302,6 +1324,7 @@ __asm__(".text\n"
         "  andq $-16, %rsp\n"
         "  call msl_fiber_main\n"
         "  ud2\n");
+#endif
 void msl_ctx_switch(void **save, void *to);
 void msl_fiber_start(void);
 #define FIBER_STACK (96 * 1024)
@@ -1329,11 +1352,18 @@ void msl_fiber_main(fiber_t *f) {
 }
 static void fiber_init(fiber_t *f, u8 *stack) {
     u64 *sp = (u64 *)((u64)(stack + FIBER_STACK) & ~15ull);
+#if defined(__aarch64__)
+    sp -= 20;                          /* quadro do msl_ctx_switch: x19..x30, d8..d15 */
+    for (int i = 0; i < 20; i++) sp[i] = 0;
+    sp[0] = (u64)f;                    /* x19 */
+    sp[11] = (u64)msl_fiber_start;     /* x30 */
+#else
     *--sp = 0;                         /* alinhamento */
     *--sp = (u64)msl_fiber_start;      /* ret */
     *--sp = 0;                         /* rbp */
     *--sp = (u64)f;                    /* rbx */
     *--sp = 0; *--sp = 0; *--sp = 0; *--sp = 0;   /* r12..r15 */
+#endif
     f->sp = sp;
     f->done = 0;
 }

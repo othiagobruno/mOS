@@ -31,7 +31,8 @@ $rsrc = Join-Path $root "$Ruby\$ver"
 if (-not (Test-Path $rsrc)) { Write-Host "falta o portable-ruby $ver em $Ruby" -ForegroundColor Red; exit 1 }
 $vr = "$hb\Library\Homebrew\vendor\portable-ruby"
 New-Item -ItemType Directory -Force $vr | Out-Null
-robocopy $rsrc "$vr\$ver" /E /XD '*.dSYM' /NFL /NDL /NJH /NJS /NP | Out-Null
+# sem os mkmf.log (logs de compilação das gems nativas): o mkimg recusa *.log no staging
+robocopy $rsrc "$vr\$ver" /E /XD '*.dSYM' /XF mkmf.log /NFL /NDL /NJH /NJS /NP | Out-Null
 New-MosLink "$vr\current" $ver                       # pasta-link: o kernel segue no meio do caminho (lib/vfs.c)
 New-MosLink "$mos\usr\local\bin\brew" '/usr/local/Homebrew/bin/brew'
 
@@ -62,6 +63,9 @@ $usrbin = 'curl', 'git', 'env', 'tar', 'gzip', 'xz', 'sed', 'grep', 'egrep', 'un
 $bin = 'ls', 'cat', 'mkdir', 'rm', 'rmdir', 'cp', 'mv', 'ln', 'chmod', 'date', 'echo', 'pwd', 'sleep', 'test', 'expr', 'hostname', 'ps'
 foreach ($t in $usrbin) { if (Test-Path "$mos\usr\local\bin\$t") { New-MosLink "$mos\usr\bin\$t" "/usr/local/bin/$t" } }
 foreach ($t in $bin) { if (Test-Path "$mos\usr\local\bin\$t") { New-MosLink "$mos\bin\$t" "/usr/local/bin/$t" } }
-& (Join-Path $root "$OutDir\mkimg.exe") (Join-Path $root "$OutDir\mOS.img") $esp $SizeMiB
+# imagem de teste: overlay de teste com o marcador que pula o assistente do Live (tools\overlay-teste.ps1)
+. "$PSScriptRoot\overlay-teste.ps1"
+$ovt = New-OverlayTeste $root $OutDir
+& (Join-Path $root "$OutDir\mkimg.exe") (Join-Path $root "$OutDir\mOS.img") $esp $SizeMiB --test-overlay $ovt
 if ($LASTEXITCODE -ne 0) { Write-Host 'mkimg FAILED' -ForegroundColor Red; exit 1 }
 Write-Host "OK: $OutDir\mOS.img com o Homebrew ($ver) em /usr/local/Homebrew" -ForegroundColor Green

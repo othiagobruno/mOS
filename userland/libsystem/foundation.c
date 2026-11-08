@@ -1299,7 +1299,18 @@ static id b_path(id self, SEL c) { (void)c; char p[1024]; b_root(self, p, sizeof
 static id b_resources(id self, SEL c) { (void)c; char p[1100]; b_res_dir(self, p, sizeof p); return cx_str(p); }
 static id b_with_path(id cls, SEL c, id path) {
     (void)c;
-    if (path && N(path) && access(S(path), 0) != 0) cx_fdprintf(2, "NSBundle[mOS]: bundleWithPath: caminho inexistente: %s\n", S(path));
+    if (path && N(path) && access(S(path), 0) != 0) {
+        /* app do sistema (openurl.c): bundle sem pasta, com o Info.plist do banco do Launch Services */
+        extern id cx_system_app_info(const char *path);
+        id info = cx_system_app_info(S(path));
+        if (info) {
+            nsbundle_t *b = (nsbundle_t *)cx_alloc_instance((cx_class_t *)cls);
+            b->path = strdup(S(path));
+            b->info = info;
+            return cx_autorelease((id)b);
+        }
+        cx_fdprintf(2, "NSBundle[mOS]: bundleWithPath: caminho inexistente: %s\n", S(path));
+    }
     if (!path || !N(path) || access(S(path), 0) != 0) return 0;
     nsbundle_t *b = (nsbundle_t *)cx_alloc_instance((cx_class_t *)cls);
     b->path = strdup(S(path));
@@ -1309,6 +1320,11 @@ static id b_with_path(id cls, SEL c, id path) {
 }
 static id b_init_path(id self, SEL c, id path) {
     (void)c;
+    if (path && N(path) && access(S(path), 0) != 0) {
+        extern id cx_system_app_info(const char *path);
+        id info = cx_system_app_info(S(path));                   /* app do sistema (ver b_with_path) */
+        if (info) { BUNDLE(self)->path = strdup(S(path)); BUNDLE(self)->info = info; return self; }
+    }
     if (!path || !N(path) || access(S(path), 0) != 0) { objc_release(self); return 0; }
     BUNDLE(self)->path = strdup(S(path));
     return self;
@@ -1495,9 +1511,15 @@ typedef struct { cx_pt_t o; cx_sz_t s; } cx_rc_t;
 id NSStringFromRect(cx_rc_t r) { char b[128]; snprintf(b, sizeof b, "{{%g, %g}, {%g, %g}}", r.o.x, r.o.y, r.s.w, r.s.h); return cx_autorelease(cx_str(b)); }
 id NSStringFromSize(cx_sz_t s) { char b[64]; snprintf(b, sizeof b, "{%g, %g}", s.w, s.h); return cx_autorelease(cx_str(b)); }
 id NSStringFromPoint(cx_pt_t p) { char b[64]; snprintf(b, sizeof b, "{%g, %g}", p.x, p.y); return cx_autorelease(cx_str(b)); }
+#if defined(__aarch64__)   /* o triplo Darwin do libSystem arm64 não aceita alias */
+id NSStringFromCGRect(cx_rc_t r) { return NSStringFromRect(r); }
+id NSStringFromCGSize(cx_sz_t s) { return NSStringFromSize(s); }
+id NSStringFromCGPoint(cx_pt_t p) { return NSStringFromPoint(p); }
+#else
 id NSStringFromCGRect(cx_rc_t r) __attribute__((alias("NSStringFromRect")));
 id NSStringFromCGSize(cx_sz_t s) __attribute__((alias("NSStringFromSize")));
 id NSStringFromCGPoint(cx_pt_t p) __attribute__((alias("NSStringFromPoint")));
+#endif
 
 /* ---- construtores de conveniência: no Cocoa devolvem +0 (autorelease); as funções internas acima devolvem +1 */
 #define AR0(f) static id f##_ar(id k, SEL c) { return cx_autorelease(f(k, c)); }

@@ -535,7 +535,8 @@ static void udp6_input(const u8 *src, const u8 *dst, const u8 *p, u16 len) {
     u16 ulen = rd16(p + 4);
     if (ulen < 8 || ulen > len || !rd16(p + 6)) return;   /* no IPv6 a soma é obrigatória */
     if (inet_csum_fold(inet_csum_add(l4_pseudo_sum(src, dst, IPPROTO_UDP, ulen), p, ulen)) != 0) return;
-    udp_deliver(0, rd16(p), rd16(p + 2), p + 8, (u16)(ulen - 8));
+    if (udp_deliver(0, rd16(p), rd16(p + 2), p + 8, (u16)(ulen - 8))) return;
+    udp_user_deliver(src, dst, rd16(p), rd16(p + 2), p + 8, (u16)(ulen - 8));   /* sockets UDP dos apps (userudp.c) */
 }
 
 /* =================================================================== entrada */

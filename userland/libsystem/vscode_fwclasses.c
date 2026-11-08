@@ -106,10 +106,12 @@ cx_class_t UNUserNotificationCenter_c __asm__("OBJC_CLASS_$_UNUserNotificationCe
 cx_class_t WKWebView_c __asm__("OBJC_CLASS_$_WKWebView"); cx_class_t WKWebView_m __asm__("OBJC_METACLASS_$_WKWebView");
 cx_class_t WKWebViewConfiguration_c __asm__("OBJC_CLASS_$_WKWebViewConfiguration"); cx_class_t WKWebViewConfiguration_m __asm__("OBJC_METACLASS_$_WKWebViewConfiguration");
 cx_class_t WKWebsiteDataStore_c __asm__("OBJC_CLASS_$_WKWebsiteDataStore"); cx_class_t WKWebsiteDataStore_m __asm__("OBJC_METACLASS_$_WKWebsiteDataStore");
+void cx_mark_stub_class(cx_class_t *c);   /* objc.c: um framework de verdade com o mesmo nome tem prioridade */
 static void d(cx_class_t *k, cx_class_t *m, const char *n, const char *s) {
     if (cx_class_named(n)) return;
     cx_class_t *sc = cx_class_named(s);
     cx_define_class(k, m, n, sc ? sc : cx_class_named("NSObject"), 32);
+    cx_mark_stub_class(k);
 }
 void cx_framework_classes_init(void) {
     d(&ASAuthorizationController_c, &ASAuthorizationController_m, "ASAuthorizationController", "NSObject");

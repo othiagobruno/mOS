@@ -57,8 +57,9 @@ if ($pr) {
     $dst = "$usr\opt\portable-ruby"
     if (Test-Path $dst) { Remove-Item -Recurse -Force $dst }
     New-Item -ItemType Directory -Force $dst | Out-Null
+    # sem os mkmf.log (logs de compilação das gems nativas): o mkimg recusa *.log no staging
     foreach ($d in 'bin', 'lib') {
-        robocopy "$($pr.FullName)\$d" "$dst\$d" /E /XD '*.dSYM' /NFL /NDL /NJH /NJS /NP | Out-Null
+        robocopy "$($pr.FullName)\$d" "$dst\$d" /E /XD '*.dSYM' /XF mkmf.log /NFL /NDL /NJH /NJS /NP | Out-Null
     }
     New-MosLink "$usr\bin\ruby" '/usr/local/opt/portable-ruby/bin/ruby'
 }
@@ -113,6 +114,9 @@ if (Test-Path "$usr\bin\genv") { New-MosLink "$esp\mOS\usr\bin\env" '/usr/local/
 Copy-Item -Force (Join-Path $root $Script) "$usr\bash-teste.sh"
 "Programa=/usr/local/bin/bash`nArgumentos=/usr/local/bash-teste.sh`nAtrasoMs=$AtrasoMs" | Set-Content -Encoding ascii "$esp\mOS\Sistema\Biblioteca\LaunchDaemons\sh.brew.bash.servico"
 Set-Content -Path "$esp\mOS\Sistema\Biblioteca\stderr-serial" -Value '1' -Encoding ascii
-& (Join-Path $root "$OutDir\mkimg.exe") (Join-Path $root "$OutDir\mOS.img") $esp $SizeMiB
+# imagem de teste: overlay de teste com o marcador que pula o assistente do Live (tools\overlay-teste.ps1)
+. "$PSScriptRoot\overlay-teste.ps1"
+$ovt = New-OverlayTeste $root $OutDir
+& (Join-Path $root "$OutDir\mkimg.exe") (Join-Path $root "$OutDir\mOS.img") $esp $SizeMiB --test-overlay $ovt
 if ($LASTEXITCODE -ne 0) { Write-Host 'mkimg FAILED' -ForegroundColor Red; exit 1 }
 Write-Host "OK: $OutDir\mOS.img com o bash do Homebrew rodando $Script no boot" -ForegroundColor Green

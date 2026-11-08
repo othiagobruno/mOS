@@ -28,19 +28,27 @@ typedef int kern_return_t;
 static long mach_port(u32 op, u64 *a) { return cx_syscall(SYS_MACH_PORT, (long)op, (long)a, 0, 0, 0); }
 
 /* tamanho de página: são VARIÁVEIS no macOS (o Chromium faz CHECK(vm_page_size == 4096 || 16384)) */
+#if defined(__aarch64__)   /* processo arm64: 16 KiB, como no Apple Silicon (hw.pagesize do a64rt_abi.h; mmap alinha em extra.c) */
+u64 vm_page_size = 16384, vm_page_mask = 16383;
+int vm_page_shift = 14;
+u64 vm_kernel_page_size = 16384, vm_kernel_page_mask = 16383;
+int vm_kernel_page_shift = 14;
+#else
 u64 vm_page_size = 4096, vm_page_mask = 4095;
 int vm_page_shift = 12;
 u64 vm_kernel_page_size = 4096, vm_kernel_page_mask = 4095;
 int vm_kernel_page_shift = 12;
+#endif
 
 /* a variável mach_task_self_ (lida pela macro mach_task_self() do SDK) fica em libc.c, com TASK_PORT */
 mach_port_t mach_task_self(void) { return TASK_PORT; }
 mach_port_t mach_host_self(void) { return HOST_PORT; }
 mach_port_t mach_thread_self(void) { return THREAD_BASE + (u32)SYS0(SYS_GETTID); }
 
-/* pthread_t do libSystem do mOS ainda não guarda o tid; a thread atual é a única que o chamador
- * consegue consultar com segurança, e é o uso comum (pthread_mach_thread_np(pthread_self())) */
-mach_port_t pthread_mach_thread_np(void *t) { (void)t; return mach_thread_self(); }
+/* a porta de qualquer pthread_t: o bloco no formato do macOS guarda o tid do kernel (cx_pthread_tid, extra.c); o
+ * pthread_t que o pthread_create devolve também. thread_suspend/thread_get_state usam essa porta (vscode_libc.c) */
+long cx_pthread_tid(void *t);
+mach_port_t pthread_mach_thread_np(void *t) { return THREAD_BASE + (u32)cx_pthread_tid(t); }
 
 /* ---- direitos de porta: delegados ao kernel (machipc.c) */
 kern_return_t mach_port_allocate(mach_port_t task, int right, mach_port_t *name) {
@@ -290,7 +298,7 @@ kern_return_t task_info(mach_port_t task, int flavor, void *info, u32 *count) {
         memset(info, 0, n * 4);
         *count = n;
         if (n >= 2) ((u64 *)info)[0] = 64ull << 20;                                 /* virtual_size */
-        if (n >= 4) ((u32 *)info)[3] = 4096;                                        /* page_size */
+        if (n >= 4) ((u32 *)info)[3] = (u32)vm_page_size;                                      /* page_size */
         if (n >= 6) ((u64 *)info)[2] = 32ull << 20;                                 /* resident_size */
         if (n >= 38) *(u64 *)((u8 *)info + 144) = 32ull << 20;                      /* phys_footprint */
         return KERN_SUCCESS;

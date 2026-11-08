@@ -882,7 +882,7 @@ bool setup_boot(void) {
         if (account_count() == 0) { open_common(FL_FIRSTBOOT, sysprefs_present() ? SC_USER : SC_LANG); return true; }   /* nunca entra sem conta */
         return false;
     }
-    /* Imagem de TESTE de apps (tools/stage-electron.ps1): o marcador vem do overlay de teste do mkimg (--test-overlay). A
+    /* Imagem de TESTE (tools/overlay-teste.ps1, nos stage-*.ps1): o marcador vem do overlay de teste do mkimg (--test-overlay). A
      * imagem de release não pode tê-lo (o mkimg recusa Preferencias no staging e no overlay Live) e o instalador não o copia
      * (fora do manifesto). Só no live efêmero: a sessão é a do Visitante, sem senha, como antes do assistente; os testes
      * clicam nos apps, e as preferências de teste (navegador padrão) estão no home dele. */

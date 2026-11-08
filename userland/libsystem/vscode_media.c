@@ -205,58 +205,7 @@ OSStatus VTPixelTransferSessionCreate(void *a, void **out) { (void)a; if (out) *
 OSStatus VTPixelTransferSessionTransferImage(void *s, void *src, void *dst) { (void)s; (void)src; (void)dst; return kVTCouldNotFindVideoEncoderErr; }
 void VTPixelTransferSessionInvalidate(void *s) { (void)s; }
 
-/* ================================================================ CoreAudio / AudioToolbox */
-#define kAudioHardwareUnknownPropertyError 0x77686F3F   /* 'who?' */
-#define kAudioHardwareBadObjectError 0x216F626A          /* '!obj' */
-#define kAudioUnitErr_InvalidProperty (-10879)
-#define kAudioConverterErr_FormatNotSupported 0x666D743F /* 'fmt?' */
-/* o objeto de sistema (1) não tem dispositivos: tamanho 0 para as listas, erro para o resto */
-u8 AudioObjectHasProperty(u32 obj, const void *addr) { (void)obj; (void)addr; return 0; }
-OSStatus AudioObjectIsPropertySettable(u32 obj, const void *addr, u8 *out) { (void)obj; (void)addr; if (out) *out = 0; return kAudioHardwareUnknownPropertyError; }
-OSStatus AudioObjectGetPropertyDataSize(u32 obj, const void *addr, u32 qs, const void *q, u32 *size) { (void)addr; (void)qs; (void)q; if (size) *size = 0; return obj == 1 ? 0 : kAudioHardwareBadObjectError; }
-OSStatus AudioObjectGetPropertyData(u32 obj, const void *addr, u32 qs, const void *q, u32 *size, void *data) {
-    (void)addr; (void)qs; (void)q; (void)data;
-    if (obj == 1 && size) {
-        /* kAudioHardwarePropertyDefault*Device: kAudioObjectUnknown (0) */
-        if (*size >= 4) { *(u32 *)data = 0; *size = 4; return 0; }
-        *size = 0;
-        return 0;
-    }
-    if (size) *size = 0;
-    return kAudioHardwareBadObjectError;
-}
-OSStatus AudioObjectSetPropertyData(u32 obj, const void *addr, u32 qs, const void *q, u32 size, const void *data) { (void)obj; (void)addr; (void)qs; (void)q; (void)size; (void)data; return kAudioHardwareUnknownPropertyError; }
-OSStatus AudioObjectAddPropertyListener(u32 obj, const void *addr, void *cb, void *ctx) { (void)obj; (void)addr; (void)cb; (void)ctx; return 0; }
-OSStatus AudioObjectRemovePropertyListener(u32 obj, const void *addr, void *cb, void *ctx) { (void)obj; (void)addr; (void)cb; (void)ctx; return 0; }
-OSStatus AudioObjectAddPropertyListenerBlock(u32 obj, const void *addr, void *q, void *blk) { (void)obj; (void)addr; (void)q; (void)blk; return 0; }
-OSStatus AudioObjectRemovePropertyListenerBlock(u32 obj, const void *addr, void *q, void *blk) { (void)obj; (void)addr; (void)q; (void)blk; return 0; }
-OSStatus AudioHardwareCreateAggregateDevice(id desc, u32 *out) { (void)desc; if (out) *out = 0; return kAudioHardwareBadObjectError; }
-OSStatus AudioHardwareDestroyAggregateDevice(u32 d) { (void)d; return kAudioHardwareBadObjectError; }
-OSStatus AudioDeviceCreateIOProcID(u32 d, void *proc, void *ctx, void **out) { (void)d; (void)proc; (void)ctx; if (out) *out = 0; return kAudioHardwareBadObjectError; }
-OSStatus AudioDeviceDestroyIOProcID(u32 d, void *pid) { (void)d; (void)pid; return 0; }
-OSStatus AudioDeviceStart(u32 d, void *pid) { (void)d; (void)pid; return kAudioHardwareBadObjectError; }
-OSStatus AudioDeviceStop(u32 d, void *pid) { (void)d; (void)pid; return 0; }
-void *AudioComponentFindNext(void *after, const void *desc) { (void)after; (void)desc; return 0; }
-OSStatus AudioComponentInstanceNew(void *c, void **out) { (void)c; if (out) *out = 0; return -50; }
-OSStatus AudioComponentInstanceDispose(void *u) { (void)u; return 0; }
-OSStatus AudioUnitInitialize(void *u) { (void)u; return -50; }
-OSStatus AudioUnitUninitialize(void *u) { (void)u; return 0; }
-OSStatus AudioUnitSetProperty(void *u, u32 id_, u32 sc, u32 el, const void *d, u32 sz) { (void)u; (void)id_; (void)sc; (void)el; (void)d; (void)sz; return kAudioUnitErr_InvalidProperty; }
-OSStatus AudioUnitGetProperty(void *u, u32 id_, u32 sc, u32 el, void *d, u32 *sz) { (void)u; (void)id_; (void)sc; (void)el; (void)d; if (sz) *sz = 0; return kAudioUnitErr_InvalidProperty; }
-OSStatus AudioUnitGetPropertyInfo(void *u, u32 id_, u32 sc, u32 el, u32 *sz, u8 *w) { (void)u; (void)id_; (void)sc; (void)el; if (sz) *sz = 0; if (w) *w = 0; return kAudioUnitErr_InvalidProperty; }
-OSStatus AudioUnitReset(void *u, u32 sc, u32 el) { (void)u; (void)sc; (void)el; return 0; }
-OSStatus AudioUnitRender(void *u, u32 *flags, const void *ts, u32 bus, u32 n, void *list) { (void)u; (void)flags; (void)ts; (void)bus; (void)n; (void)list; return -50; }
-OSStatus AudioOutputUnitStart(void *u) { (void)u; return -50; }
-OSStatus AudioOutputUnitStop(void *u) { (void)u; return 0; }
-OSStatus AudioFormatGetPropertyInfo(u32 id_, u32 sz, const void *spec, u32 *out) { (void)id_; (void)sz; (void)spec; if (out) *out = 0; return kAudioConverterErr_FormatNotSupported; }
-OSStatus AudioFormatGetProperty(u32 id_, u32 sz, const void *spec, u32 *osz, void *out) { (void)id_; (void)sz; (void)spec; (void)out; if (osz) *osz = 0; return kAudioConverterErr_FormatNotSupported; }
-OSStatus AudioConverterNew(const void *src, const void *dst, void **out) { (void)src; (void)dst; if (out) *out = 0; return kAudioConverterErr_FormatNotSupported; }
-OSStatus AudioConverterDispose(void *c) { (void)c; return 0; }
-OSStatus AudioConverterReset(void *c) { (void)c; return 0; }
-OSStatus AudioConverterSetProperty(void *c, u32 id_, u32 sz, const void *d) { (void)c; (void)id_; (void)sz; (void)d; return kAudioConverterErr_FormatNotSupported; }
-OSStatus AudioConverterGetProperty(void *c, u32 id_, u32 *sz, void *d) { (void)c; (void)id_; (void)d; if (sz) *sz = 0; return kAudioConverterErr_FormatNotSupported; }
-OSStatus AudioConverterGetPropertyInfo(void *c, u32 id_, u32 *sz, u8 *w) { (void)c; (void)id_; if (sz) *sz = 0; if (w) *w = 0; return kAudioConverterErr_FormatNotSupported; }
-OSStatus AudioConverterFillComplexBuffer(void *c, void *proc, void *ud, u32 *n, void *list, void *desc) { (void)c; (void)proc; (void)ud; (void)list; (void)desc; if (n) *n = 0; return kAudioConverterErr_FormatNotSupported; }
+/* CoreAudio, AudioUnit, AudioQueue, AudioConverter, AudioFile e AudioServices: coreaudio.c */
 
 /* ================================================================ CoreMIDI: nenhuma porta */
 OSStatus MIDIClientCreate(id name, void *cb, void *ref, u32 *out) { (void)name; (void)cb; (void)ref; if (out) *out = 1; return 0; }

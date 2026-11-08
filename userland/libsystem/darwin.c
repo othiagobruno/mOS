@@ -732,6 +732,11 @@ static const sysctl_ent_t sysctl_tab[] = {
 int sysctlbyname(const char *name, void *old, size_t *oldlen, const void *newp, size_t newlen) {
     (void)newp; (void)newlen;
     if (!name) { cx_errno = CX_EINVAL; return -1; }
+#if defined(__aarch64__)   /* processo arm64: as chaves do Apple Silicon (darwin_arm64.c) antes das do x86 */
+    { extern int cx_sysctl_arm64(const char *, void *, unsigned long *);
+      int r = cx_sysctl_arm64(name, old, (unsigned long *)oldlen);
+      if (r <= 0) { if (r < 0) { cx_errno = CX_ENOMEM; return -1; } return 0; } }
+#endif
     for (u32 i = 0; i < sizeof sysctl_tab / sizeof sysctl_tab[0]; i++)
         if (!strcmp(sysctl_tab[i].name, name)) return sysctl_put(&sysctl_tab[i], old, oldlen);
     cx_fdprintf(2, "[sysctl] chave desconhecida no mOS: %s\n", name);

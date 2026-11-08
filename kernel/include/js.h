@@ -54,4 +54,4 @@ enum { JS_WK_UNDEFINED = 0, JS_WK_NULL, JS_WK_BOOL, JS_WK_NUMBER, JS_WK_STRING, 
 int  js_page_eval_value(js_page_t *p, const char *code, int len, sbuf_t *out);   /* valor da última expressão */
 void js_page_wk_bridge(js_page_t *p, void (*post)(void *ctx, const char *name, const char *body, int len, int type), void *ctx);
 void js_page_wk_handler(js_page_t *p, const char *name, bool on);              /* window.webkit.messageHandlers.<nome> */
-bool js_page_busy(js_page_t *p);                     /* scripts externos, fetch/XHR ou load ainda pendentes */
+bool js_page_busy(js_page_t *p);                     /* scripts externos ou o evento load ainda pendentes */

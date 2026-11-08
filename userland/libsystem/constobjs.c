@@ -59,6 +59,24 @@ id cx_const_real(id self) {
 /* trampolim: guarda os registradores de argumento (inteiros, xmm0-7 e al dos variádicos), troca rdi
  * pelo objeto real e salta para objc_msgSend com o mesmo seletor (rsi) e argumentos */
 void cx_const_fwd(void);
+#if defined(__aarch64__)
+/* arm64: x0..x8 (x8 = resultado indireto) e q0..q7; os variádicos do Darwin estão na pilha do chamador, intacta */
+__asm__(
+    ".text\n"
+    ".globl cx_const_fwd\n"
+    ".p2align 2\n"
+    "cx_const_fwd:\n"
+    "  stp x29, x30, [sp, #-16]!\n  mov x29, sp\n  sub sp, sp, #208\n"
+    "  stp x0, x1, [sp]\n  stp x2, x3, [sp, #16]\n  stp x4, x5, [sp, #32]\n  stp x6, x7, [sp, #48]\n  str x8, [sp, #64]\n"
+    "  stp q0, q1, [sp, #80]\n  stp q2, q3, [sp, #112]\n  stp q4, q5, [sp, #144]\n  stp q6, q7, [sp, #176]\n"
+    "  bl cx_const_real\n"
+    "  mov x9, x0\n"
+    "  ldp q0, q1, [sp, #80]\n  ldp q2, q3, [sp, #112]\n  ldp q4, q5, [sp, #144]\n  ldp q6, q7, [sp, #176]\n"
+    "  ldp x0, x1, [sp]\n  ldp x2, x3, [sp, #16]\n  ldp x4, x5, [sp, #32]\n  ldp x6, x7, [sp, #48]\n  ldr x8, [sp, #64]\n"
+    "  mov x0, x9\n"
+    "  mov sp, x29\n  ldp x29, x30, [sp], #16\n"
+    "  b objc_msgSend\n");
+#else
 __asm__(
     ".text\n"
     ".globl cx_const_fwd\n"
@@ -75,6 +93,7 @@ __asm__(
     "  mov %rax, %rdi\n"
     "  pop %rax\n"
     "  jmp objc_msgSend\n");
+#endif
 
 /* métodos que não vão para a cópia: ciclo de vida e identidade do próprio constante */
 static int keep_local(const char *s) {

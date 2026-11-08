@@ -1775,7 +1775,7 @@ static id ml_cs(id s, SEL c) { (void)c; return ml(s)->colorspace; }
 static void ml_set_cs(id s, SEL c, id cs) { (void)c; mlayer_t *m = ml(s); if (cs) objc_retain(cs); if (m->colorspace) objc_release(m->colorspace); m->colorspace = cs; }
 static CGS ml_auto_size(id s) {
     CGR b;
-    ((void (*)(CGR *, id, SEL))objc_msgSend_stret)(&b, s, sel_registerName("bounds"));
+    b = ((CGR (*)(id, SEL))objc_msgSend_stret)(s, sel_registerName("bounds"));
     double sc = MSG0(double, s, "contentsScale");
     if (sc <= 0) sc = 1;
     CGS r = {b.s.w * sc, b.s.h * sc};
@@ -1948,7 +1948,7 @@ static id mtk_delegate(id s, SEL c) { (void)c; return mk(s)->delegate; }
 static void mtk_set_delegate(id s, SEL c, id d) { (void)c; mk(s)->delegate = d; }
 static CGS mtk_backing_size(id s) {
     CGR b;
-    ((void (*)(CGR *, id, SEL))objc_msgSend_stret)(&b, s, sel_registerName("bounds"));
+    b = ((CGR (*)(id, SEL))objc_msgSend_stret)(s, sel_registerName("bounds"));
     id w = MSG0(id, s, "window");
     double sc = w && cx_responds(w->isa, sel_registerName("backingScaleFactor")) ? MSG0(double, w, "backingScaleFactor") : 1;
     if (sc <= 0) sc = 1;
@@ -2042,7 +2042,7 @@ static void mtk_draw(id s, SEL c) {
     if (dl && cx_responds(dl->isa, sel_registerName("drawInMTKView:"))) MSG(void, dl, "drawInMTKView:", s);
     else {
         CGR b;
-        ((void (*)(CGR *, id, SEL))objc_msgSend_stret)(&b, s, sel_registerName("bounds"));
+        b = ((CGR (*)(id, SEL))objc_msgSend_stret)(s, sel_registerName("bounds"));
         ((void (*)(id, SEL, CGR))objc_msgSend)(s, sel_registerName("drawRect:"), b);
     }
     if (m->drawable) { objc_release(m->drawable); m->drawable = 0; }

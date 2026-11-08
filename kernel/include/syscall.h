@@ -68,6 +68,7 @@ enum {
     SYS_LS,            /* 57: (op, mos_ls_req_t*) -> resultado      Launch Services: tipos, apps padrão, abrir (MOS_LS_* abaixo, kernel/compat/launchsvc.c) */
     SYS_SIG,           /* 58: (op, a, b, c) -> ...                  sinais POSIX completos: ações, máscaras, sigsuspend, sigaltstack (MOS_SIGOP_* abaixo) */
     SYS_WEB,           /* 59: (op, id, a, b) -> ...                 motor web do sistema para o WKWebView (MOS_WEB_* abaixo, kernel/web/webview.c) */
+    SYS_THREADCTL,     /* 60: (op, tid, a) -> ...                   outra thread do processo: suspender, retomar, registradores (MOS_THR_* abaixo) */
     SYS_COUNT,
     SYS_GUI_FIRST = 64,/* 64..79: interface gráfica dos apps do macOS (kernel/compat/guisys.c) */
     SYS_GUI_LAST = 79,
@@ -90,6 +91,17 @@ enum {
  * (mprotect), herdava as páginas do outro (o Claude Code faz MAP_FIXED no topo logo na partida).
  * c = MOS_MUNMAP_DISCARD: o madvise(MADV_DONTNEED/FREE/FREE_REUSABLE) do libSystem. Só saem as páginas privadas de
  * faixas anônimas sob demanda, que voltam zeradas no próximo toque; nada é desmapeado de fato (proc/process.c) */
+/* SYS_THREADCTL: thread_suspend/thread_resume/thread_get_state do Mach (libSystem, vscode_libc.c). O coletor do
+ * JavaScriptCore suspende cada thread que entrou na VM e varre a pilha e os registradores dela; sem isso ele pulava a
+ * thread ("invalid thread"), liberava objetos ainda em uso e o mimalloc do Bun acabava com listas livres corrompidas.
+ * O contador é o do Mach: cada SUSPEND pede um RESUME. GETSTATE só vale com a thread suspensa e fora da CPU (STOPPED). */
+enum {
+    MOS_THR_SUSPEND = 1,   /* (tid) -> 0 | -MOS_ESRCH       conta mais uma suspensão; tira a thread da CPU (IPI) */
+    MOS_THR_RESUME,        /* (tid) -> 0 | -MOS_EINVAL      tira uma; com 0 ela volta a ser escalonada */
+    MOS_THR_STOPPED,       /* (tid) -> 1 parada fora da CPU, 0 ainda rodando */
+    MOS_THR_GETSTATE,      /* (tid, u64 regs[21]) -> 0 | -MOS_EBUSY   x86_thread_state64_t: rax rbx rcx rdx rdi rsi rbp
+                            * rsp r8..r15 rip rflags cs fs gs, do frame salvo da thread */
+};
 #define MOS_MUNMAP_KEEP    0x4B454550u   /* 'KEEP' */
 #define MOS_MUNMAP_DISCARD 0x44495343u   /* 'DISC' */
 #define MOS_SPAWN_FA_MAX 48
@@ -349,7 +361,27 @@ enum {
     MOS_NET_INFO6,         /* (mos_net6_info_t *) -> 1 se há IPv6 global com roteador padrão */
     MOS_NET_ICMP_SEND,     /* (u8 *end16, msg, n) -> n | -errno   eco (tipo 8/128) montado pelo app; o kernel soma */
     MOS_NET_ICMP_RECV,     /* (id, buf, max) -> bytes: 16 de origem + a resposta de eco; 0 = nada */
+    /* UDP para os apps (kernel/net/userudp.c): sockets SOCK_DGRAM do libSystem (sockets_udp.inc). IPv4 e IPv6,
+     * unicast, broadcast, multicast de saída e laço local. Datagramas de até 1472 bytes (IPv4) / 1452 (IPv6), sem
+     * fragmentação; maiores dão -MOS_EMSGSIZE. */
+    MOS_NET_UDP_OPEN,      /* (famílias MOS_NET_L_*) -> socket | -errno */
+    MOS_NET_UDP_BIND,      /* (socket, u8 *end16 ou 0, porta (0 = efêmera)) -> porta local | -MOS_EADDRINUSE */
+    MOS_NET_UDP_SENDTO,    /* (socket, mos_net_dgram_t *) -> bytes | -errno           sem bind: porta efêmera */
+    MOS_NET_UDP_RECVFROM,  /* (socket, mos_net_dgram_t *) -> bytes copiados (len = tamanho real) | -MOS_EAGAIN fila vazia */
+    MOS_NET_UDP_AVAIL,     /* (socket) -> tamanho do próximo datagrama | -1 fila vazia */
+    MOS_NET_UDP_CLOSE,     /* (socket) -> 0 */
+    MOS_NET_UDP_ADDRS,     /* (socket, mos_net_addrs_t *) -> 0          endereço e porta locais */
 };
+#define MOS_EMSGSIZE 40
+#define MOS_NET_DG_PEEK  1     /* mos_net_dgram_t.flags na entrada: não tira da fila */
+#define MOS_NET_DG_TRUNC 2     /* na saída: o datagrama era maior que cap (o resto foi descartado, como no BSD) */
+typedef struct {
+    unsigned char addr[16];      /* destino (SENDTO) ou origem (RECVFROM); IPv4 mapeado */
+    unsigned short port, pad;
+    unsigned int len, cap;       /* SENDTO: len = bytes; RECVFROM: cap = espaço, len = tamanho real */
+    unsigned long long buf;
+    int flags, pad2;
+} mos_net_dgram_t;
 enum { MOS_NET_ST_CLOSED, MOS_NET_ST_CONNECTING, MOS_NET_ST_OPEN, MOS_NET_ST_PEER_CLOSED, MOS_NET_ST_ERROR };
 #define MOS_NET_L_V4 1     /* MOS_NET_LISTEN: aceita IPv4 */
 #define MOS_NET_L_V6 2     /* aceita IPv6 */
@@ -414,6 +446,7 @@ enum {
 #define MOS_ESPIPE 29            /* pread/pwrite num pipe */
 #define MOS_EAGAIN 35            /* valores do macOS */
 #define MOS_ETIMEDOUT 60
+#define MOS_EBUSY  16            /* SYS_THREADCTL GETSTATE: a thread ainda não parou */
 
 typedef struct {
     int pid, ppid, state;     /* state: 0 pronto, 1 rodando, 2 dormindo, 3 esperando */
@@ -532,7 +565,7 @@ typedef struct {
 typedef struct {
     char url[1024];
     char title[256];
-    char req_url[1024];          /* navegação pendente (MOS_WEB_EV_NAVREQ / NEWWIN) */
+    char req_url[1024];          /* navegação pendente (MOS_WEB_EV_NAVREQ) */
     int req_kind;                /* WKNavigationType: 0 link, 1 formulário, 2 voltar/avançar, 3 recarregar, -1 outro */
     int nav_seq;                 /* sobe a cada navegação começada (identifica o WKNavigation) */
     char error[256];
@@ -545,6 +578,7 @@ typedef struct {
     int secure;                  /* https (hasOnlySecureContent) */
     unsigned int bg;             /* cor de fundo da página (0xAARRGGBB) */
     char mime[64];
+    char newwin[1024];           /* MOS_WEB_EV_NEWWIN: o link target=_blank (entregue uma vez, depois some) */
 } mos_web_info_t;
 typedef struct {
     unsigned long long src;      /* const char* */

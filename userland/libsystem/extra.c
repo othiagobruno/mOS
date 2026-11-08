@@ -128,11 +128,22 @@ static void *tsd_global[TSD_SLOTS];
 static int key_used[TSD_SLOTS];
 static int gs_ok = -1;
 void *pthread_self(void);
+#if defined(__aarch64__)
+/* arm64: o TSD fica no TPIDRRO_EL0, como no macOS arm64 (o código da Apple lê com mrs e faz & ~7); quem o grava é o
+ * runtime do tradutor (chamada privada A64RT_SET_TSD, x8 = 0x4d00). Sem o runtime (harness), a tabela global. */
+#define A64RT_SET_TSD 0x4d00
+static int cpu_has_fsgsbase(void) { return 1; }
+static inline u64 rd_tsd_base(void) { u64 v; __asm__ volatile("mrs %0, tpidrro_el0" : "=r"(v)); return v & ~7ULL; }
+static inline int wr_tsd_base(u64 v) { SYS1(A64RT_SET_TSD, v); return rd_tsd_base() == v; }
+#else
 static int cpu_has_fsgsbase(void) {
     u32 a = 7, b = 0, c = 0, d = 0;
     __asm__ volatile("cpuid" : "+a"(a), "=b"(b), "+c"(c), "=d"(d));
     return b & 1;
 }
+static inline u64 rd_tsd_base(void) { u64 v; __asm__ volatile("rdgsbase %0" : "=r"(v)); return v; }
+static inline int wr_tsd_base(u64 v) { __asm__ volatile("wrgsbase %0" :: "r"(v) : "memory"); return 1; }
+#endif
 /* pthread_t no formato do macOS (struct _pthread do x86_64): cada thread tem o seu bloco, o TSD começa em +0xe0 (768 slots:
  * 512 externos + 256 internos), o GS aponta para o TSD e tsd[0] é o próprio bloco, que é o pthread_self(). Código compilado
  * para o macOS lê dados da thread a partir do pthread_self() (o mimalloc do Bun no Claude Code guarda o heap da thread em
@@ -154,7 +165,7 @@ void **cx_tsd(void) {
     if (gs_ok < 0) gs_ok = cpu_has_fsgsbase();
     if (!gs_ok) return tsd_global;
     u64 base;
-    __asm__ volatile("rdgsbase %0" : "=r"(base));
+    base = rd_tsd_base();
     if (!base) {
         cx_pthread_t *b = calloc(1, sizeof *b);
         if (!b) return tsd_global;
@@ -162,17 +173,37 @@ void **cx_tsd(void) {
         b->tid = SYS0(SYS_GETTID);
         b->tsd[0] = b;
         base = (u64)b->tsd;
-        __asm__ volatile("wrgsbase %0" :: "r"(base) : "memory");
+        if (!wr_tsd_base(base)) { free(b); gs_ok = 0; return tsd_global; }
     }
     return (void **)base;
 }
+static void (*key_dtor[TSD_SLOTS])(void *);
 int pthread_key_create(pthread_key_t *k, void (*dtor)(void *)) {
-    (void)dtor;
     for (int i = KEY_FIRST; i < TSD_SLOTS; i++)
-        if (!__sync_lock_test_and_set(&key_used[i], 1)) { cx_tsd()[i] = 0; *k = (pthread_key_t)i; return 0; }
+        if (!__sync_lock_test_and_set(&key_used[i], 1)) { key_dtor[i] = dtor; cx_tsd()[i] = 0; *k = (pthread_key_t)i; return 0; }
     return 35; /* EAGAIN */
 }
-int pthread_key_delete(pthread_key_t k) { if (k < TSD_SLOTS) key_used[k] = 0; return 0; }
+int pthread_key_delete(pthread_key_t k) { if (k < TSD_SLOTS) { key_dtor[k] = 0; key_used[k] = 0; } return 0; }
+/* fim de uma thread (cx_thread_entry, pthread_exit): os destrutores das chaves que têm valor, como o libpthread do macOS,
+ * em até 4 voltas (PTHREAD_DESTRUCTOR_ITERATIONS: um destrutor pode gravar outra chave). O mimalloc abandona aqui o heap
+ * da thread que acaba (sem isso as páginas dela ficavam presas a uma thread morta); o TLS do Chromium e o
+ * __thread_struct da libc++ também liberam o que é da thread. Sem FSGSBASE a tabela é global e nada roda. */
+void cx_thread_run_dtors(void) {
+    void **tsd = cx_tsd();
+    if (tsd == tsd_global) return;
+    for (int round = 0; round < 4; round++) {
+        int any = 0;
+        for (int i = KEY_FIRST; i < TSD_SLOTS; i++) {
+            void (*d)(void *) = key_dtor[i];
+            void *v = tsd[i];
+            if (!d || !v || !key_used[i]) continue;
+            tsd[i] = 0;
+            d(v);
+            any = 1;
+        }
+        if (!any) break;
+    }
+}
 void *pthread_getspecific(pthread_key_t k) { return k < TSD_SLOTS ? cx_tsd()[k] : 0; }
 int pthread_setspecific(pthread_key_t k, const void *v) { if (k >= TSD_SLOTS) return CX_EINVAL; cx_tsd()[k] = (void *)v; return 0; }
 typedef struct { long sig; char opaque[8]; } pthread_once_t;
@@ -210,6 +241,7 @@ static __attribute__((noreturn)) void cx_thread_entry(cx_tstart_t *ts) {
     free(ts);
     cx_tsd();                                   /* tabela TSD própria desta thread (GS) */
     void *r = fn(arg);
+    cx_thread_run_dtors();                      /* destrutores das chaves (pthread_key_create), como no macOS */
     SYS1(SYS_THREAD_EXIT, (long)r);
     for (;;) {}
 }
@@ -235,8 +267,10 @@ int pthread_create(unsigned long *t, const void *attr, void *(*fn)(void *), void
     ts->stack_top = (u64)stack + sz;
     ts->stack_size = sz;
     u64 top = ((u64)stack + sz) & ~15ULL;
+#if !defined(__aarch64__)   /* arm64: sp alinhado a 16, sem endereço de volta na pilha (lr = 0) */
     top -= 8;                                   /* rsp = 16n - 8, como logo após um call */
     *(u64 *)top = 0;
+#endif
     long tid = SYS3(SYS_THREAD_CREATE, cx_thread_entry, top, ts);
     if (tid < 0) { free(ts); cx_fdprintf(2, "[thread] pthread_create: o kernel recusou a thread (%ld)\n", tid); return 35; }
     { char *getenv(const char *); if (getenv("CX_TRACE_THREADS")) cx_fdprintf(2, "[thread] %ld: entrada %p, arg %p\n", tid, (void *)fn, arg); }   /* diagnóstico (porte do VS Code): CX_TRACE_THREADS=1 */
@@ -680,6 +714,19 @@ void *mmap(void *addr, size_t len, int prot, int flags, int fd, off_t off) {
         if (k >= 0) return (void *)k;
         if (k == -9 || k == -13) { cx_errno = (int)-k; return (void *)-1; }   /* EBADF, EACCES */
     }
+#if defined(__aarch64__)
+    /* processo arm64: páginas de 16 KiB como no Apple Silicon (hw.pagesize, vm_page_size; o jemalloc/mimalloc/Go do
+     * arm64 contam com o alinhamento). O kernel aloca em 4 KiB: pede 12 KiB a mais e devolve as pontas. */
+    if (anon) {
+        u64 L = ((u64)len + 0x3FFF) & ~0x3FFFULL;
+        long b = SYS2(SYS_MMAP, L + 0x3000, prot ? 3 : 1);
+        if (b < 0) { cx_errno = (int)-b; return (void *)-1; }
+        u64 a = ((u64)b + 0x3FFF) & ~0x3FFFULL;
+        if (a > (u64)b) SYS2(SYS_MUNMAP, b, a - (u64)b);
+        if ((u64)b + L + 0x3000 > a + L) SYS2(SYS_MUNMAP, a + L, (u64)b + L + 0x3000 - (a + L));
+        return (void *)a;
+    }
+#endif
     long r = SYS2(SYS_MMAP, len, anon ? (prot ? 3 : 1) : 0);
     if (r < 0) { cx_errno = (int)-r; return (void *)-1; }
     if (!(flags & 0x1000) && fd >= 0) {           /* MAP_ANON = 0x1000; senão: copia o arquivo */
@@ -708,7 +755,10 @@ int mprotect(void *a, size_t len, int prot) {
 void pthread_jit_write_protect_np(int enabled) { (void)enabled; }
 int pthread_jit_write_protect_supported_np(void) { return 1; }
 void pthread_jit_write_with_callback_np(void (*cb)(void *), void *ctx) { if (cb) cb(ctx); }
+#if !defined(__aarch64__)   /* arm64: libc_arm64.S (DC CVAU + IC IVAU + DSB/ISB) */
 void sys_icache_invalidate(void *start, size_t len) { (void)start; (void)len; }
+void sys_dcache_flush(void *start, size_t len) { (void)start; (void)len; }
+#endif
 /* MADV_DONTNEED (4), MADV_FREE (5) e MADV_FREE_REUSABLE (7): o conteúdo não importa mais. As páginas privadas da faixa
  * anônima sob demanda saem e voltam zeradas no próximo toque (kernel: SYS_MUNMAP com MOS_MUNMAP_DISCARD), como o XNU faz
  * com MADV_FREE (VM_SYNC_KILLPAGES). O mimalloc 3 do Bun (Claude Code) devolve memória assim e depois a trata como
@@ -777,6 +827,7 @@ void dispatch_release(void *o) { cx_dispatch_release(o); }
 void dispatch_retain(void *o) { cx_dispatch_retain(o); }
 
 /* unwinder: só usado em panics; sem tabelas, informa "fim da pilha" */
+#if !defined(__aarch64__)   /* arm64: o libunwind do LLVM (tools/build-libsystem-arm64.ps1), tabelas do Mach-O e do .eh_frame do libSystem */
 int _Unwind_Backtrace(void *fn, void *arg) { (void)fn; (void)arg; return 5; }
 u64 _Unwind_GetIP(void *c) { (void)c; return 0; }
 u64 _Unwind_GetIPInfo(void *c, int *before) { (void)c; if (before) *before = 0; return 0; }
@@ -790,6 +841,7 @@ void _Unwind_SetIP(void *c, u64 v) { (void)c; (void)v; }
 int _Unwind_RaiseException(void *e) { (void)e; return 5; }
 void _Unwind_DeleteException(void *e) { (void)e; }
 __attribute__((noreturn)) void _Unwind_Resume(void *e) { (void)e; cx_puts_fd(2, "panic sem tabela de unwind: abortando\n"); abort(); }
+#endif
 
 /* processos, usuários e sistema */
 int sched_yield(void) { SYS0(SYS_YIELD); return 0; }
@@ -995,7 +1047,11 @@ int uname(mac_utsname_t *u) {
     strcpy(u->nodename, "mos");
     strcpy(u->release, "24.0.0");
     strcpy(u->version, "mOS Nucleo (compatibilidade Darwin)");
+#if defined(__aarch64__)
+    strcpy(u->machine, "arm64");               /* A64RT_UNAME_MACHINE */
+#else
     strcpy(u->machine, "x86_64");
+#endif
     return 0;
 }
 int gethostname(char *b, size_t n) { strlcpy(b, "mos", n); return 0; }

@@ -429,6 +429,139 @@ typedef ret2_t (*int_fn_t)(u64, u64, u64, u64, u64, u64, double, double, double,
 typedef double (*dbl_fn_t)(u64, u64, u64, u64, u64, u64, double, double, double, double, double, double, double, double);
 typedef float (*flt_fn_t)(u64, u64, u64, u64, u64, u64, double, double, double, double, double, double, double, double);
 static int is_float_type(const char *t) { return *t == 'f' || *t == 'd'; }
+#if defined(__aarch64__)
+/* arm64: o PCS da Apple (Darwin): x0..x7 e v0..v7, HFA (até 4 float/double iguais) em registradores FP consecutivos,
+ * struct de até 16 bytes em 1-2 registradores x, maior por cópia (ponteiro), retorno indireto em x8, inteiros pequenos
+ * estendidos pelo chamador, e na pilha cada argumento com o próprio tamanho/alinhamento (sem as casas de 8 bytes do
+ * AAPCS). cx_a64_call (ffi_arm64.S) carrega o quadro, chama e guarda x0/x1 e q0..q3. */
+typedef struct {
+    u64 x[8], x8, nstack;
+    u8 *stack;
+    u64 pad;
+    u8 v[8][16];
+    u64 rx[2];
+    u8 rv[4][16];
+} cx_a64_frame_t;
+_Static_assert(__builtin_offsetof(cx_a64_frame_t, v) == 96 && __builtin_offsetof(cx_a64_frame_t, rx) == 224 &&
+               __builtin_offsetof(cx_a64_frame_t, rv) == 240, "quadro de ffi_arm64.S");
+void cx_a64_call(void *fn, cx_a64_frame_t *f);
+/* HFA: devolve o número de membros (1..4) e o tipo base ('f' ou 'd'), ou 0 */
+static int hfa_walk(const char *t, char *base, int *n, const char **end) {
+    t = skip_quals(t);
+    if (*t == 'f' || *t == 'd' || *t == 'D') {
+        char b = *t == 'f' ? 'f' : 'd';
+        if (*base && *base != b) return 0;
+        *base = b; (*n)++;
+        *end = t + 1;
+        return *n <= 4;
+    }
+    if (*t == '[') {
+        long cnt = 0; t++;
+        while (*t >= '0' && *t <= '9') cnt = cnt * 10 + (*t++ - '0');
+        const char *e = t;
+        for (long k = 0; k < cnt; k++) if (!hfa_walk(t, base, n, &e)) return 0;
+        if (!cnt) { u64 s, a; e = NSGetSizeAndAlignment(t, &s, &a); }
+        *end = *e == ']' ? e + 1 : e;
+        return 1;
+    }
+    if (*t == '{') {
+        t++;
+        while (*t && *t != '=' && *t != '}') t++;
+        if (*t != '=') return 0;
+        t++;
+        while (*t && *t != '}') {
+            if (*t == '"') { t++; while (*t && *t != '"') t++; if (*t) t++; continue; }
+            const char *e;
+            if (!hfa_walk(t, base, n, &e)) return 0;
+            t = e;
+        }
+        *end = *t ? t + 1 : t;
+        return 1;
+    }
+    return 0;
+}
+static int hfa_of(const char *t, char *base) {
+    int n = 0; const char *e; *base = 0;
+    return hfa_walk(t, base, &n, &e) && n >= 1 && n <= 4 ? n : 0;
+}
+static void a64_stack_put(cx_a64_frame_t *f, u64 *sp, const void *p, u64 s, u64 a) {
+    if (a < 1) a = 1;
+    *sp = (*sp + a - 1) / a * a;
+    if (*sp + s <= 1024) memcpy(f->stack + *sp, p, s);
+    *sp += s;
+}
+static void inv_invoke_imp(inv_t *v, IMP imp) {
+    msig_t *m = (msig_t *)v->sig;
+    cx_a64_frame_t f;
+    u8 stk[1024] __attribute__((aligned(16)));
+    u8 copies[SIG_MAX][32] __attribute__((aligned(16)));
+    u8 bigret[256] __attribute__((aligned(16)));
+    memset(&f, 0, sizeof f);
+    memset(stk, 0, sizeof stk);
+    f.stack = stk;
+    u32 ngrn = 0, nsrn = 0;
+    u64 sp = 0;
+    const char *rt = skip_quals(m->ret);
+    char rb = 0;
+    int rh = (*rt == '{' || *rt == '(' || *rt == '[') ? hfa_of(rt, &rb) : 0;
+    int sret = (*rt == '{' || *rt == '(') && !rh && m->retlen > 16;
+    if (sret) f.x8 = (u64)(usize)(m->retlen > sizeof v->ret ? bigret : v->ret);
+    for (u32 i = 0; i < m->nargs; i++) {
+        const char *t = skip_quals(m->arg[i]);
+        u64 s = 8, a = 8;
+        NSGetSizeAndAlignment(t, &s, &a);
+        if (*t == 'D') s = a = 8;
+        const u8 *p = v->args[i];
+        if (*t == 'f' || *t == 'd' || *t == 'D') {
+            u64 fs = *t == 'f' ? 4 : 8;
+            if (nsrn < 8) memcpy(f.v[nsrn++], p, fs);
+            else a64_stack_put(&f, &sp, p, fs, fs);
+            continue;
+        }
+        if (*t == '{' || *t == '(' || *t == '[') {
+            char b;
+            int h = hfa_of(t, &b);
+            if (h) {
+                u64 es = b == 'f' ? 4 : 8;
+                if (nsrn + (u32)h <= 8) { for (int k = 0; k < h; k++) memcpy(f.v[nsrn++], p + (u64)k * es, es); }
+                else { nsrn = 8; a64_stack_put(&f, &sp, p, s, es); }
+                continue;
+            }
+            if (s > 16) {                                    /* por cópia: o chamador passa o ponteiro */
+                memcpy(copies[i], p, s > 32 ? 32 : s);
+                u64 ptr = (u64)(usize)copies[i];
+                if (ngrn < 8) f.x[ngrn++] = ptr; else a64_stack_put(&f, &sp, &ptr, 8, 8);
+                continue;
+            }
+            u32 words = (u32)((s + 7) / 8);
+            if (a == 16 && (ngrn & 1)) ngrn++;
+            if (ngrn + words <= 8) { u64 w[2] = {0, 0}; memcpy(w, p, s); for (u32 k = 0; k < words; k++) f.x[ngrn++] = w[k]; }
+            else { ngrn = 8; u64 w[2] = {0, 0}; memcpy(w, p, s); a64_stack_put(&f, &sp, w, words * 8, a > 8 ? a : 8); }
+            continue;
+        }
+        /* inteiros e ponteiros: menores que 32 bits estendidos pelo chamador (com sinal para c e s) */
+        u64 val = 0;
+        switch (s) {
+        case 1: val = (*t == 'c') ? (u64)(u32)(int)*(const signed char *)p : (u64)*p; break;
+        case 2: { u16 h; memcpy(&h, p, 2); val = (*t == 's') ? (u64)(u32)(int)(short)h : h; break; }
+        case 4: { u32 w; memcpy(&w, p, 4); val = w; break; }
+        default: memcpy(&val, p, 8); s = 8; break;
+        }
+        if (ngrn < 8) f.x[ngrn++] = val;
+        else a64_stack_put(&f, &sp, p, s, s);
+    }
+    f.nstack = (sp + 15) & ~15ULL;
+    cx_a64_call((void *)imp, &f);
+    if (*rt == 'v' || sret) {
+        if (sret && m->retlen > sizeof v->ret) memcpy(v->ret, bigret, sizeof v->ret);
+        return;
+    }
+    if (*rt == 'f') memcpy(v->ret, f.rv[0], 4);
+    else if (*rt == 'd' || *rt == 'D') memcpy(v->ret, f.rv[0], 8);
+    else if (rh) { u64 es = rb == 'f' ? 4 : 8; for (int k = 0; k < rh && (u64)(k + 1) * es <= sizeof v->ret; k++) memcpy(v->ret + (u64)k * es, f.rv[k], es); }
+    else memcpy(v->ret, f.rx, m->retlen < 16 ? m->retlen : 16);
+}
+#else
 static void inv_invoke_imp(inv_t *v, IMP imp) {
     msig_t *m = (msig_t *)v->sig;
     u64 ig[6] = {0, 0, 0, 0, 0, 0};
@@ -452,6 +585,7 @@ static void inv_invoke_imp(inv_t *v, IMP imp) {
     else if (*m->ret == 'f') { float r = ((flt_fn_t)(void *)imp)(ig[0], ig[1], ig[2], ig[3], ig[4], ig[5], fx[0], fx[1], fx[2], fx[3], fx[4], fx[5], fx[6], fx[7]); memcpy(v->ret, &r, 4); }
     else { ret2_t r = ((int_fn_t)(void *)imp)(ig[0], ig[1], ig[2], ig[3], ig[4], ig[5], fx[0], fx[1], fx[2], fx[3], fx[4], fx[5], fx[6], fx[7]); if (!sret) { memcpy(v->ret, &r.a, 8); memcpy(v->ret + 8, &r.b, 8); } }
 }
+#endif
 static void inv_invoke(id self, SEL c) {
     (void)c;
     inv_t *v = (inv_t *)self;

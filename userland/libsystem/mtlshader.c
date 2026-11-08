@@ -228,7 +228,11 @@ typedef struct {
     macro_t *macros;
     char *err;
     int errn, failed, depth;
+#if defined(__aarch64__)   /* arm64: o __builtin_setjmp não existe; _setjmp/_longjmp do libSystem (sigjmp_arm64.S, jmp_buf de 192 bytes) */
+    long jb[25];
+#else
     void *jb[5];
+#endif
     tvec_t keep;              /* fontes incluídas (mantidas vivas) */
     char *bufs[32];
     int nbufs;
@@ -236,7 +240,11 @@ typedef struct {
 static void pp_err(pp_t *P, int line, const char *msg, const char *a, int an) {
     if (!P->failed && P->err) snprintf(P->err, P->errn, "linha %d: %s%s%.*s", line, msg, an ? " " : "", an, a ? a : "");
     P->failed = 1;
+#if defined(__aarch64__)
+    { void _longjmp(void *, int) __attribute__((noreturn)); _longjmp(P->jb, 1); }
+#else
     __builtin_longjmp(P->jb, 1);
+#endif
 }
 static macro_t *mfind(pp_t *P, const char *s, int n) {
     for (macro_t *m = P->macros; m; m = m->next) if (m->nn == n && !memcmp(m->name, s, n)) return m;
@@ -1984,7 +1992,12 @@ msl_lib_t *msl_compile(const char *src, u64 n, const char *defines, char *err, i
     if (err && errn) err[0] = 0;
     tvec_t raw = {0}, toks = {0};
     P_t P = {0};
+#if defined(__aarch64__)
+    int _setjmp(void *) __attribute__((returns_twice));
+    if (_setjmp(pp.jb)) {
+#else
     if (__builtin_setjmp(pp.jb)) {
+#endif
         free(raw.v);
         free(toks.v);
         for (int i = 0; i < pp.nbufs; i++) free(pp.bufs[i]);

@@ -24,9 +24,10 @@ param([Parameter(Mandatory = $true)][string]$App, [string]$OutDir = 'build-elect
 # -ArgumentosApp '<id>=<args>' (um ou mais): linhas de /Sistema/Biblioteca/Preferencias/com.mos.argumentos.cfg, os
 #   argumentos que o sistema acrescenta ao abrir o app (o Chrome no mOS precisa de --no-sandbox --in-process-gpu --disable-gpu).
 # Essas duas preferências não vão para a esp: o mkimg recusa /mOS/Users e /mOS/Sistema/Biblioteca/Preferencias no staging
-#   (o payload que o instalador copia é só o sistema). Ficam em $OutDir\overlay-teste, passado com --test-overlay: entram
-#   na imagem de teste, fora do payload e do manifesto. O overlay leva sempre o marcador com.mos.teste.sem-assistente: o
-#   live abre direto na sessão do Visitante, sem o assistente de configuração (kernel/ui/setup.c), para os passos clicarem no app.
+#   (o payload que o instalador copia é só o sistema). Ficam no overlay de teste ($OutDir\overlay-teste, montado pelo
+#   tools\overlay-teste.ps1), passado com --test-overlay: entram na imagem de teste, fora do payload e do manifesto. O
+#   overlay leva sempre o marcador com.mos.teste.sem-assistente: o live abre direto na sessão do Visitante, sem o
+#   assistente de configuração (kernel/ui/setup.c), para os passos clicarem no app.
 # -AbrirURL <url> [-AbrirAposMs N]: N ms depois de iniciar o app, o init roda /usr/bin/open <url> (ex.: slack://open),
 #   para testar a entrega de URLs ao app (openurl.c no libSystem). Argumentos do init: até 128 caracteres.
 # -AbrirURL2 <url> [-AbrirApos2Ms N]: um segundo open(1), ex.: o slack:// no Chrome que o primeiro já abriu.
@@ -174,13 +175,9 @@ if ($MotorHorizonte) {
     $emb = (Get-ChildItem -LiteralPath $to -Recurse -File | Measure-Object Length -Sum).Sum / 1MB
     Write-Host ("+ motor do Horizonte (Chromium): {0:N1} MiB" -f $emb) -ForegroundColor Cyan
 }
-# overlay de teste refeito a cada rodada: preferência de uma rodada anterior nunca sobra na imagem
-$ovt = Join-Path $root "$OutDir\overlay-teste"
-if (Test-Path -LiteralPath $ovt) { Remove-Item -Recurse -Force -LiteralPath $ovt -ErrorAction SilentlyContinue }
-if (Test-Path -LiteralPath $ovt) { Write-Host "overlay de teste: $ovt não pôde ser apagado (arquivo em uso?) - mkimg FAILED" -ForegroundColor Red; exit 1 }
-New-Item -ItemType Directory -Force "$ovt\mOS\Sistema\Biblioteca\Preferencias" | Out-Null
-'imagem de teste (tools/stage-electron.ps1): o live abre na sessao do Visitante, sem o assistente' |
-    Set-Content -Encoding ascii "$ovt\mOS\Sistema\Biblioteca\Preferencias\com.mos.teste.sem-assistente"
+# overlay de teste (tools\overlay-teste.ps1): refeito a cada rodada, com o marcador que pula o assistente do Live
+. "$PSScriptRoot\overlay-teste.ps1"
+$ovt = New-OverlayTeste $root $OutDir
 if ($NavegadorPadrao) {
     $pref = "$ovt\mOS\Users\Visitante\Library\Preferences\com.apple.LaunchServices"
     New-Item -ItemType Directory -Force $pref | Out-Null
@@ -208,8 +205,6 @@ if ($Tracepoints) { ($Tracepoints -split ';') -join "`n" | Set-Content -Path $tp
 else { Remove-Item $tpFile -ErrorAction SilentlyContinue }
 $mb = (Get-ChildItem -LiteralPath $dstApp -Recurse -File | Measure-Object Length -Sum).Sum / 1MB
 Write-Host ("{0}.app ({1}): {2:N1} MiB" -f $name, $exe, $mb) -ForegroundColor Cyan
-$mk = @((Join-Path $root "$OutDir\mOS.img"), $esp, $SizeMiB)
-if (Test-Path -LiteralPath "$ovt\mOS") { $mk += '--test-overlay', $ovt }
-& (Join-Path $root "$OutDir\mkimg.exe") @mk
+& (Join-Path $root "$OutDir\mkimg.exe") (Join-Path $root "$OutDir\mOS.img") $esp $SizeMiB --test-overlay $ovt
 if ($LASTEXITCODE -ne 0) { Write-Host 'mkimg FAILED' -ForegroundColor Red; exit 1 }
 Write-Host "OK: $OutDir\mOS.img" -ForegroundColor Green

@@ -12,12 +12,14 @@
 #
 #   .\tools\build-libcxx.ps1            (só recompila se faltar o dylib)
 #   .\tools\build-libcxx.ps1 -Force
-param([switch]$Force, [int]$Jobs = 8)
+#   .\tools\build-libcxx.ps1 -Arch arm64  (build\libcxx-arm64: slice arm64 do tradutor, tools\build-libs-arm64.ps1)
+param([switch]$Force, [int]$Jobs = 8, [ValidateSet('x86_64', 'arm64')][string]$Arch = 'x86_64')
+$tgt = if ($Arch -eq 'arm64') { 'aarch64-macos.12.0' } else { 'x86_64-macos.12.0' }
 $root = Split-Path $PSScriptRoot -Parent
 $zig = Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*' -ErrorAction SilentlyContinue | Select-Object -First 1
 if ($zig) { $zigdir = $zig.FullName; $zig = Join-Path $zigdir 'zig.exe' } elseif ($env:MOS_ZIG) { $zig = $env:MOS_ZIG; $zigdir = Split-Path $zig } else { $zig = (Get-Command zig -ErrorAction SilentlyContinue).Source; $zigdir = Split-Path $zig }
 if (-not $zig) { Write-Host 'zig nao encontrado (.tools\, MOS_ZIG ou PATH)' -ForegroundColor Red; exit 1 }
-$out = "$root\build\libcxx"
+$out = "$root\build\libcxx" + $(if ($Arch -eq 'arm64') { '-arm64' } else { '' })
 $dylib = "$out\libc++.1.dylib"
 if ((Test-Path $dylib) -and -not $Force) { exit 0 }
 New-Item -ItemType Directory -Force $out | Out-Null
@@ -35,7 +37,7 @@ $defs = @(
     '-D_LIBCPP_HARDENING_MODE_DEFAULT=_LIBCPP_HARDENING_MODE_NONE', '-D_LIBCPP_ASSERTION_SEMANTIC_DEFAULT=_LIBCPP_ASSERTION_SEMANTIC_IGNORE',
     '-D_LIBCPP_ENABLE_CXX17_REMOVED_UNEXPECTED_FUNCTIONS', '-D_LIBCPP_BUILDING_LIBRARY', '-DLIBCXX_BUILDING_LIBCXXABI',
     '-D_LIBCXXABI_BUILDING_LIBRARY', '-D_LIBCPP_DISABLE_NEW_DELETE_DEFINITIONS')
-$common = @('-target', 'x86_64-macos.12.0', '-std=c++23', '-O2', '-fPIC', '-fvisibility=default', '-nostdinc++',
+$common = @('-target', $tgt, '-std=c++23', '-O2', '-fPIC', '-fvisibility=default', '-nostdinc++',
             "-I$L\include", "-I$A\include", "-I$L\src", "-I$L\libc") + $defs
 
 # new/delete vêm da libc++abi (stdlib_new_delete.cpp é a cópia da libc++abi, cxa_noexception é a variante sem exceções)
@@ -59,7 +61,7 @@ if ($bad) {
     foreach ($b in $bad) { Write-Host "falhou: $b" -ForegroundColor Red; Get-Content "$b.err" -TotalCount 5 }
     exit 1
 }
-& $zig c++ -target x86_64-macos.12.0 -shared -nostdlib++ -o $dylib @objs '-Wl,-install_name,/usr/lib/libc++.1.dylib' 2>&1 | ForEach-Object { "$_" }
+& $zig c++ -target $tgt -shared -nostdlib++ -o $dylib @objs '-Wl,-install_name,/usr/lib/libc++.1.dylib' 2>&1 | ForEach-Object { "$_" }
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path $dylib) -or (Get-Item $dylib).Length -eq 0) { Write-Host 'libc++.1.dylib link FAILED' -ForegroundColor Red; exit 1 }
 Remove-Item "$out\*.err" -ErrorAction SilentlyContinue
 Write-Host ("OK: build\libcxx\libc++.1.dylib ({0:N0} KiB)" -f ((Get-Item $dylib).Length / 1KB))

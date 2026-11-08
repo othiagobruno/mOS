@@ -37,7 +37,11 @@ static cx_rw_t *rw_of(cx_class_t *c) {
     return rw && rw->magic == RW_MAGIC ? rw : 0;
 }
 static volatile int g_lock;
+#if defined(__aarch64__)
+static void lk(void) { while (__sync_lock_test_and_set(&g_lock, 1)) __asm__ volatile("yield"); }
+#else
 static void lk(void) { while (__sync_lock_test_and_set(&g_lock, 1)) __builtin_ia32_pause(); }
+#endif
 static void ul(void) { __sync_lock_release(&g_lock); }
 
 /* ================================================================ protocolos */
@@ -454,6 +458,11 @@ void method_getArgumentType(cx_meth_t *m, u32 i, char *dst, size_t len) { copy_o
 
 /* ================================================================ imp_implementationWithBlock */
 #define CX_TRAMP_N 4096
+#if defined(__aarch64__)
+#define CX_TRAMP_SZ 32                 /* objc_tramp_arm64.S: 5 instruções por entrada */
+#else
+#define CX_TRAMP_SZ 16
+#endif
 extern void *cx_imp_blocks[CX_TRAMP_N];
 extern u8 cx_imp_tramps[], cx_imp_tramps_end[];
 IMP imp_implementationWithBlock(id block) {
@@ -461,7 +470,7 @@ IMP imp_implementationWithBlock(id block) {
     void *b = _Block_copy(block);
     lk();
     for (u32 i = 0; i < CX_TRAMP_N; i++)
-        if (!cx_imp_blocks[i]) { cx_imp_blocks[i] = b; ul(); return (IMP)(cx_imp_tramps + 16 * i); }
+        if (!cx_imp_blocks[i]) { cx_imp_blocks[i] = b; ul(); return (IMP)(cx_imp_tramps + CX_TRAMP_SZ * i); }
     ul();
     cx_fdprintf(2, "objc: imp_implementationWithBlock: os %d trampolins acabaram\n", CX_TRAMP_N);
     _Block_release(b);
@@ -469,8 +478,8 @@ IMP imp_implementationWithBlock(id block) {
 }
 static long tramp_index(IMP imp) {
     u8 *p = (u8 *)imp;
-    if (p < cx_imp_tramps || p >= cx_imp_tramps_end || (p - cx_imp_tramps) % 16) return -1;
-    return (p - cx_imp_tramps) / 16;
+    if (p < cx_imp_tramps || p >= cx_imp_tramps_end || (p - cx_imp_tramps) % CX_TRAMP_SZ) return -1;
+    return (p - cx_imp_tramps) / CX_TRAMP_SZ;
 }
 id imp_getBlock(IMP imp) { long i = tramp_index(imp); return i < 0 ? 0 : (id)cx_imp_blocks[i]; }
 BOOL imp_removeBlock(IMP imp) {

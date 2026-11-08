@@ -21,6 +21,7 @@
 #undef SYS_OPEN
 #endif
 #include "syscall.h"           /* SYS_DYLD / MOS_DYLD_* (dlopen em tempo de execução) e errno */
+#include "../../userland/a64rt/a64rt_abi.h"   /* processos arm64: runtime do tradutor (docs/tradutor-arm64.md) */
 
 #define LIBSYSTEM_BASE (USER_BASE + 0x00100000ULL)
 #define IMAGE_BASE   (USER_BASE + 0x01000000ULL)
@@ -45,15 +46,42 @@ static u64 be64_(const u8 *p) { return (u64)be32_(p) << 32 | be32_(p + 4); }
 
 /* ================================================================ libSystem.mos (ELF) */
 typedef struct { const char *name; u64 addr; } lsym_t;
-static lsym_t *lsyms;
-static u32 nlsyms;
-static u64 ls_entry;
+/* Um libSystem por arquitetura do processo: 0 = x86_64 (embutido no kernel), 1 = arm64 (tradutor arm64,
+ * docs/tradutor-arm64.md: o libSystem arm64 do disco em A64RT_LIBSYSTEM; o runtime a64rt.mos roda o código).
+ * ls_cur é a arquitetura do link em andamento (um por vez, sob a trava grande do kernel). */
+typedef struct { const u8 *e, *end; lsym_t *syms; u32 n; u64 entry; u8 *img; u64 span; } lsdb_t;
+static lsdb_t ls_db[2];
+static int ls_cur;
+#define lsyms    (ls_db[ls_cur].syms)
+#define nlsyms   (ls_db[ls_cur].n)
+#define ls_entry (ls_db[ls_cur].entry)
+#define LS_E     (ls_db[ls_cur].e)
+#define LS_END   (ls_db[ls_cur].end)
+#define LS_CPU   (ls_cur ? 0x0100000Cu : 0x01000007u)       /* CPU_TYPE_ARM64 : CPU_TYPE_X86_64 */
+static const u8 *dep_read(const char *path, usize *len);
+
+/* o ELF do libSystem da arquitetura atual (o arm64 vem do disco: copiado uma vez, os nomes apontam para ele) */
+static bool ls_blob(char *err, usize errlen) {
+    lsdb_t *d = &ls_db[ls_cur];
+    if (d->e) return true;
+    if (!ls_cur) { d->e = libsystem_mos; d->end = libsystem_mos_end; return true; }
+    usize n = 0;
+    const u8 *f = dep_read(A64RT_LIBSYSTEM, &n);
+    if (!f || n < 64) { snprintf(err, errlen, "app só para Apple Silicon (arm64) e o libSystem arm64 do tradutor (%s) não está instalado", A64RT_LIBSYSTEM); return false; }
+    u8 *c = kmalloc_pages(n);
+    if (!c) { snprintf(err, errlen, "sem memória para o libSystem arm64"); return false; }
+    memcpy(c, f, n);
+    d->e = c; d->end = c + n;
+    return true;
+}
 
 static bool libsystem_index(char *err, usize errlen) {
     if (lsyms) return true;
-    const u8 *e = libsystem_mos;
-    usize len = (usize)(libsystem_mos_end - libsystem_mos);
+    if (!ls_blob(err, errlen)) return false;
+    const u8 *e = LS_E;
+    usize len = (usize)(LS_END - LS_E);
     if (!e || len < 64 || memcmp(e, "\x7F" "ELF", 4)) { snprintf(err, errlen, "libSystem.mos ausente do kernel"); return false; }
+    if (rd16(e + 18) != (ls_cur ? 183 : 62)) { snprintf(err, errlen, "libSystem%s.mos com arquitetura errada", ls_cur ? " arm64" : ""); return false; }
     ls_entry = rd64(e + 24) + (rd16(e + 16) == 3 ? LIBSYSTEM_BASE : 0);
     u64 shoff = rd64(e + 40);
     u16 shentsize = rd16(e + 58), shnum = rd16(e + 60);
@@ -104,9 +132,9 @@ static u64 ls_lookup(const char *mname) {
  * R_X86_64_RELATIVE do PT_DYNAMIC são aplicadas aqui. */
 
 /* monta em buf (span bytes, zerados) os segmentos do libSystem com as relocações aplicadas */
-static bool ls_build(u8 *buf, u64 span, u64 dyn_va, u64 dyn_sz) {
-    const u8 *e = libsystem_mos;
-    usize elen = (usize)(libsystem_mos_end - libsystem_mos);
+/* ELF static-pie ligado em 0 (libSystem x86_64/arm64, a64rt.mos): segmentos em buf (span bytes, zerados) e relocações
+ * RELATIVE do PT_DYNAMIC aplicadas para a base final 'base' */
+static bool elf_build(const u8 *e, usize elen, u8 *buf, u64 span, u64 base, u32 relative, u64 dyn_va, u64 dyn_sz) {
     u64 phoff = rd64(e + 32);
     u16 phentsize = rd16(e + 54), phnum = rd16(e + 56);
     for (u16 i = 0; i < phnum; i++) {
@@ -126,11 +154,23 @@ static bool ls_build(u8 *buf, u64 span, u64 dyn_va, u64 dyn_sz) {
     }
     for (u64 o = 0; rela && relaent && o + relaent <= relasz && rela + o + 24 <= span; o += relaent) {
         u64 r_off = rd64(buf + rela + o), r_info = rd64(buf + rela + o + 8), r_add = rd64(buf + rela + o + 16);
-        if ((r_info & 0xFFFFFFFF) != 8 || r_off + 8 > span) continue;   /* R_X86_64_RELATIVE */
-        u64 v = LIBSYSTEM_BASE + r_add;
+        if ((r_info & 0xFFFFFFFF) != relative || r_off + 8 > span) continue;
+        u64 v = base + r_add;
         memcpy(buf + r_off, &v, 8);
     }
     return true;
+}
+/* extensão dos PT_LOAD (span) e o PT_DYNAMIC */
+static u64 elf_span(const u8 *e, u64 *dyn_va, u64 *dyn_sz) {
+    u64 phoff = rd64(e + 32), span = 0;
+    u16 phentsize = rd16(e + 54), phnum = rd16(e + 56);
+    *dyn_va = *dyn_sz = 0;
+    for (u16 i = 0; i < phnum; i++) {
+        const u8 *ph = e + phoff + (u64)i * phentsize;
+        if (rd32(ph) == 1 && rd64(ph + 16) + rd64(ph + 40) > span) span = rd64(ph + 16) + rd64(ph + 40);
+        if (rd32(ph) == 2) { *dyn_va = rd64(ph + 16); *dyn_sz = rd64(ph + 40); }
+    }
+    return (span + 0xFFF) & ~0xFFFULL;
 }
 
 #ifndef MOS_HOST_TEST
@@ -139,53 +179,53 @@ static bool ls_build(u8 *buf, u64 span, u64 dyn_va, u64 dyn_sz) {
  * novo pedia 3,2 MiB contíguos (kcalloc) e ficava com uma cópia própria: com o Claude e o Chrome numa VM de 2816 MB e a
  * memória fragmentada, um renderer do Chrome não subiu ("kmalloc: sem memória para 3387392 bytes", "sem memória para o
  * libSystem"). Os 2,2 MiB só de leitura (r e rx) ficam compartilhados; as páginas de dados e bss que um processo escreve
- * viram dele na primeira escrita. A imagem nunca é liberada. */
-static u8 *ls_img;
-static u64 ls_span;
+ * viram dele na primeira escrita. A imagem nunca é liberada. Vale para o libSystem de cada arquitetura e para o runtime
+ * do tradutor arm64 (a64rt.mos). */
 bool uvm_map_cow(process_t *p, u64 va, u64 phys);
 #endif
 
-static bool map_libsystem(process_t *p, char *err, usize errlen) {
-    const u8 *e = libsystem_mos;
-    u64 phoff = rd64(e + 32);
-    u16 phentsize = rd16(e + 54), phnum = rd16(e + 56);
-    u64 span = 0, dyn_va = 0, dyn_sz = 0;
-    for (u16 i = 0; i < phnum; i++) {
-        const u8 *ph = e + phoff + (u64)i * phentsize;
-        if (rd32(ph) == 1 && rd64(ph + 16) + rd64(ph + 40) > span) span = rd64(ph + 16) + rd64(ph + 40);
-        if (rd32(ph) == 2) { dyn_va = rd64(ph + 16); dyn_sz = rd64(ph + 40); }
-    }
-    span = (span + 0xFFF) & ~0xFFFULL;
-    if (!span || span > 0x00F00000) { snprintf(err, errlen, "libSystem.mos com tamanho inválido"); return false; }
+/* ELF static-pie em 'base' no processo; img_ e ispan_ guardam a montagem compartilhada; devolve o span (0 = erro) */
+static u64 map_elf(process_t *p, const u8 *e, usize elen, u64 base, u32 relative, u64 maxspan, u8 **img_, u64 *ispan_,
+                   const char *what, char *err, usize errlen) {
+    u64 dyn_va, dyn_sz, span = elf_span(e, &dyn_va, &dyn_sz);
+    if (!span || span > maxspan) { snprintf(err, errlen, "%s com tamanho inválido", what); return 0; }
 #ifndef MOS_HOST_TEST
-    if (!ls_img) {
+    if (!*img_) {
         u8 *img = kmalloc_pages(span);
         if (img) {
             memset(img, 0, span);
-            if (ls_build(img, span, dyn_va, dyn_sz)) {
-                ls_img = img; ls_span = span;
-                kprintf("macho: libSystem (%llu KiB) montado uma vez e compartilhado entre os processos (cópia na escrita)\n",
-                        (unsigned long long)(span >> 10));
+            if (elf_build(e, elen, img, span, base, relative, dyn_va, dyn_sz)) {
+                *img_ = img; *ispan_ = span;
+                kprintf("macho: %s (%llu KiB) montado uma vez e compartilhado entre os processos (cópia na escrita)\n",
+                        what, (unsigned long long)(span >> 10));
             } else kfree(img);
         }
     }
-    if (ls_img && ls_span == span) {
+    if (*img_ && *ispan_ == span) {
         for (u64 j = 0; j < span / 4096; j++)
-            if (!uvm_map_cow(p, LIBSYSTEM_BASE + j * 4096, (u64)ls_img + j * 4096)) {
-                snprintf(err, errlen, "sem memória para o libSystem");
-                return false;
+            if (!uvm_map_cow(p, base + j * 4096, (u64)*img_ + j * 4096)) {
+                snprintf(err, errlen, "sem memória para o %s", what);
+                return 0;
             }
-        return true;
+        return span;
     }
+#else
+    (void)img_; (void)ispan_;
 #endif
     /* sem a imagem compartilhada (e no machotest): uma cópia própria, como antes */
     u8 *buf = kcalloc(1, span);
-    if (!buf) { snprintf(err, errlen, "sem memória para o libSystem"); return false; }
-    if (!ls_build(buf, span, dyn_va, dyn_sz)) { kfree(buf); snprintf(err, errlen, "libSystem.mos corrompido"); return false; }
-    bool ok = uvm_map(p, LIBSYSTEM_BASE, span) && uvm_copy_out(p, LIBSYSTEM_BASE, buf, span);
+    if (!buf) { snprintf(err, errlen, "sem memória para o %s", what); return 0; }
+    if (!elf_build(e, elen, buf, span, base, relative, dyn_va, dyn_sz)) { kfree(buf); snprintf(err, errlen, "%s corrompido", what); return 0; }
+    bool ok = uvm_map(p, base, span) && uvm_copy_out(p, base, buf, span);
     kfree(buf);
-    if (!ok) snprintf(err, errlen, "sem memória para o libSystem");
-    return ok;
+    if (!ok) { snprintf(err, errlen, "sem memória para o %s", what); return 0; }
+    return span;
+}
+
+static bool map_libsystem(process_t *p, char *err, usize errlen) {
+    lsdb_t *d = &ls_db[ls_cur];
+    return map_elf(p, d->e, (usize)(d->end - d->e), LIBSYSTEM_BASE, ls_cur ? 1027 : 8, 0x00F00000, &d->img, &d->span,
+                   ls_cur ? "libSystem arm64" : "libSystem", err, errlen) != 0;
 }
 /* ================================================================ Mach-O */
 #define LC_SEGMENT_64          0x19
@@ -365,7 +405,8 @@ static const char *arch_name(u32 cpu) {
     return "desconhecida";
 }
 
-/* escolhe o slice x86_64 de um binário universal; lista as arquiteturas em archs */
+/* escolhe o slice da arquitetura do processo (LS_CPU: x86_64, ou arm64 no tradutor) de um binário universal; lista as
+ * arquiteturas em archs */
 static bool pick_slice(const u8 *img, usize len, const u8 **out, usize *olen, char *archs, usize acap, char *err, usize errlen) {
     archs[0] = 0;
     u32 magic = be32_(img);
@@ -382,9 +423,9 @@ static bool pick_slice(const u8 *img, usize len, const u8 **out, usize *olen, ch
             u64 off = b64 ? be64_(a + 8) : be32_(a + 8), sz = b64 ? be64_(a + 16) : be32_(a + 12);
             usize al = strlen(archs);
             snprintf(archs + al, acap - al, "%s%s", al ? ", " : "", arch_name(cpu));
-            if (cpu == 0x01000007 && off < len && sz <= len - off) { found = img + off; flen = (usize)sz; }
+            if (cpu == LS_CPU && off < len && sz <= len - off) { found = img + off; flen = (usize)sz; }
         }
-        if (!found) { snprintf(err, errlen, "sem versão x86_64 (só %s)", archs); return false; }
+        if (!found) { snprintf(err, errlen, "sem versão %s (só %s)", arch_name(LS_CPU), archs); return false; }
         *out = found;
         *olen = flen;
         return true;
@@ -399,12 +440,32 @@ static bool pick_slice(const u8 *img, usize len, const u8 **out, usize *olen, ch
     return false;
 }
 
+/* arquitetura de um processo novo pelo executável: x86_64 sempre que houver; arm64 (tradutor, docs/tradutor-arm64.md)
+ * quando só há arm64/arm64e, ou quando pedem (MOS_ARCH=arm64 no ambiente, ou o arquivo A64RT_DIR/preferir-arm64) */
+static int choose_arch(const u8 *img, usize len, bool force_arm64) {
+    if (len < 8) return 0;
+    u32 magic = be32_(img);
+    if (magic == 0xCAFEBABE || magic == 0xCAFEBABF) {
+        bool b64 = magic == 0xCAFEBABF, x86 = false, arm = false;
+        u32 n = be32_(img + 4);
+        for (u32 i = 0; i < n && i < 32; i++) {
+            const u8 *a = img + 8 + i * (b64 ? 32 : 20);
+            if ((usize)(a - img) + (b64 ? 32 : 20) > len) break;
+            u32 cpu = be32_(a);
+            if (cpu == 0x01000007) x86 = true;
+            if (cpu == 0x0100000C) arm = true;
+        }
+        return arm && (force_arm64 || !x86) ? 1 : 0;
+    }
+    return rd32(img) == 0xFEEDFACF && rd32(img + 4) == 0x0100000C ? 1 : 0;
+}
+
 static bool parse(mach_t *mo, const u8 *m, usize len, bool dylib, char *err, usize errlen) {
     memset(mo, 0, sizeof *mo);
     mo->m = m;
     mo->len = len;
     if (len < 32 || rd32(m) != 0xFEEDFACF) { snprintf(err, errlen, "cabeçalho Mach-O inválido"); return false; }
-    if (rd32(m + 4) != 0x01000007) { snprintf(err, errlen, "arquitetura %s não suportada (o mOS roda x86_64)", arch_name(rd32(m + 4))); return false; }
+    if (rd32(m + 4) != LS_CPU) { snprintf(err, errlen, "arquitetura %s não suportada (o processo é %s)", arch_name(rd32(m + 4)), arch_name(LS_CPU)); return false; }
     u32 ftype = rd32(m + 12), ncmds = rd32(m + 16), sizeofcmds = rd32(m + 20);
     mo->flags = rd32(m + 24);
     mo->ftype = ftype;
@@ -518,7 +579,7 @@ static bool parse(mach_t *mo, const u8 *m, usize len, bool dylib, char *err, usi
             break;
         }
         case LC_MAIN: mo->entryoff = rd64(c + 8); mo->has_main = true; break;
-        case LC_UNIXTHREAD: if (csz >= 16 && rd32(c + 8) == 4) mo->has_thread = true; break;   /* x86_THREAD_STATE64 */
+        case LC_UNIXTHREAD: if (csz >= 16 && rd32(c + 8) == (ls_cur ? 6u : 4u)) mo->has_thread = true; break;   /* x86_THREAD_STATE64 / ARM_THREAD_STATE64 */
         case LC_VERSION_MIN_MACOSX: mo->minos = rd32(c + 8); break;
         case LC_BUILD_VERSION: mo->minos = rd32(c + 12); break;
         }
@@ -629,6 +690,7 @@ typedef struct {
     /* carga em tempo de execução (dlopen): o grafo fica vivo em process_t.dyld depois do macho_load */
     int first_new;          /* primeira imagem da carga atual (registros TLS da área de stubs dela) */
     char lasterr[240];      /* último erro do dlopen (dlerror) */
+    int arch;               /* 0 = x86_64, 1 = arm64 (tradutor): libSystem, slices e stubs desta arquitetura */
 } link_t;
 
 typedef struct {
@@ -818,6 +880,9 @@ static bool run_rebase(load_t *L, const u8 *p, const u8 *end) {
             if (!s) { snprintf(L->err, L->errlen, "rebase fora da imagem"); return false; }
             /* valor fora da imagem = símbolo absoluto codificado como rebase: não recebe slide (ver run_chained) */
             if (*s >= mo->vmin && *s <= mo->vmax) *s += (u64)L->slide;
+            /* arm64: o byte alto é ignorado pelo hardware (TBI) e carrega marcas, como o bit 63 do nome do RTTI não único
+             * da libc++ da Apple: o slide vai nos 56 bits baixos e a marca fica */
+            else if (L->K->arch && (*s & 0x00FFFFFFFFFFFFFFULL) >= mo->vmin && (*s & 0x00FFFFFFFFFFFFFFULL) <= mo->vmax) *s += (u64)L->slide;
             off += 8 + skip;
         }
     }
@@ -917,7 +982,11 @@ static bool run_chained(load_t *L) {
         if (ss + 22 > hend) { ok = false; break; }
         u16 page_size = rd16(ss + 4), fmt = rd16(ss + 6), page_count = rd16(ss + 20);
         u64 seg_off = rd64(ss + 8);
-        if (fmt != 2 && fmt != 6) { snprintf(L->err, L->errlen, "formato de ponteiro encadeado %u não suportado", fmt); ok = false; break; }
+        /* 2 = DYLD_CHAINED_PTR_64, 6 = _64_OFFSET (passo de 4 bytes); arm64e (passo de 8): 1 = ARM64E (rebase por vmaddr),
+         * 12 = ARM64E_USERLAND, 13 = ARM64E_USERLAND24 (rebase por deslocamento, bind com ordinal de 24 bits). Os
+         * ponteiros autenticados viram ponteiros puros: o PAC do tradutor é a identidade (docs/tradutor-arm64.md). */
+        bool e64 = fmt == 1 || fmt == 12 || fmt == 13;
+        if (fmt != 2 && fmt != 6 && !e64) { snprintf(L->err, L->errlen, "formato de ponteiro encadeado %u não suportado", fmt); ok = false; break; }
         if (L->report_only) continue;
         for (u16 pg = 0; ok && pg < page_count; pg++) {
             u16 start = rd16(ss + 22 + pg * 2);
@@ -926,7 +995,26 @@ static bool run_chained(load_t *L) {
             for (int guard = 0; guard < 100000; guard++) {
                 u64 *slot = slot_at(L, va);
                 if (!slot) { snprintf(L->err, L->errlen, "fixup fora da imagem"); ok = false; break; }
-                u64 v = *slot, next = (v >> 51) & 0xFFF;
+                u64 v = *slot, next;
+                if (e64) {
+                    bool auth = v >> 63, bind = (v >> 62) & 1;
+                    next = (v >> 51) & 0x7FF;
+                    if (bind) {
+                        u32 ord = (u32)(fmt == 13 ? (v & 0xFFFFFF) : (v & 0xFFFF));
+                        i64 add = auth ? 0 : ((i64)(((v >> 32) & 0x7FFFF) << 45) >> 45);   /* addend de 19 bits com sinal */
+                        if (ord >= imports_count) { snprintf(L->err, L->errlen, "ordinal de import inválido"); ok = false; break; }
+                        *slot = targets[ord] ? targets[ord] + (u64)add : 0;
+                    } else if (auth) {
+                        *slot = L->I->hdr + (v & 0xFFFFFFFFULL);                         /* runtimeOffset */
+                    } else {
+                        u64 target = v & 0x7FFFFFFFFFFULL, high8 = (v >> 43) & 0xFF;
+                        *slot = (fmt == 1 ? target + (u64)L->slide : L->I->hdr + target) | (high8 << 56);
+                    }
+                    if (!next) break;
+                    va += next * 8;
+                    continue;
+                }
+                next = (v >> 51) & 0xFFF;
                 if (v >> 63) {
                     u32 ord = (u32)(v & 0xFFFFFF);
                     i64 add = (i64)((v >> 24) & 0xFF);
@@ -1442,6 +1530,7 @@ static link_t *link_new(char *err, usize errlen, bool report_only) {
     K->err = err;
     K->errlen = errlen;
     K->report_only = report_only;
+    K->arch = ls_cur;
     K->tolerant = dyld_tolerant();
     K->unresolved_fn = ls_lookup("_cx_unresolved");
     K->tlv_per_thread = ls_lookup("_cx_tlv_bootstrap") != 0;
@@ -1488,7 +1577,7 @@ static u8 *stub_area(link_t *K, usize *area_out, usize *inits_off, usize *objc_o
     usize area = (*objc_off + (usize)K->nobjc * 24 + 0xFFF) & ~(usize)0xFFF;
     u8 *stubs = kcalloc(1, area);
     if (!stubs) return NULL;
-    memset(stubs + 64, 0xCC, ZERO_AREA - 64);
+    memset(stubs + 64, K->arch ? 0x00 : 0xCC, ZERO_AREA - 64);   /* int3 / udf #0 */
     for (int i = K->first_new; i < K->n; i++) {            /* registros de TLS por imagem */
         u64 *r = (u64 *)(stubs + TLV_RECORD(i - K->first_new));
         mach_t *m = &K->im[i]->mo;
@@ -1504,6 +1593,24 @@ static u8 *stub_area(link_t *K, usize *area_out, usize *inits_off, usize *objc_o
         usize nl = strlen(K->missing[i]) + 1;
         memcpy(stubs + no, K->missing[i], nl);
         no += nl;
+        if (K->arch) {   /* arm64: ldr x0, nome; ldr x16, cx_unresolved; br x16 (literais em +16/+24) */
+            u32 w[4] = {0x58000080u, 0x580000B0u, 0xD61F0200u, 0xD4200000u};   /* ldr x0,#16; ldr x16,#20; br x16; brk #0 */
+            u64 fn = K->unresolved_fn;
+#ifdef MOS_HOST_TEST
+            if (getenv("MACHOTEST_STUB_LOG")) {   /* ldr x0,#24; mov x8,#0x7FFF; svc #0x4d4f; mov x0,#0 | ret em +16 */
+                w[0] = 0x580000C0u; w[1] = 0xD28FFFE8u; w[2] = 0xD409A9E1u; w[3] = 0xD2800000u;
+                u32 ret = 0xD65F03C0u;
+                memcpy(s + 16, &ret, 4);
+                memcpy(s + 24, &name_va, 8);
+                memcpy(s, w, 16);
+                continue;
+            }
+#endif
+            memcpy(s, w, 16);
+            memcpy(s + 16, &name_va, 8);
+            memcpy(s + 24, &fn, 8);
+            continue;
+        }
         s[0] = 0x48; s[1] = 0xBF; memcpy(s + 2, &name_va, 8);              /* movabs rdi, imm64 */
 #ifdef MOS_HOST_TEST
         /* machotest com MACHOTEST_STUB_LOG: registra a chamada e devolve 0 (mapeia o que o app usa) */
@@ -1833,6 +1940,7 @@ static bool ustr(process_t *p, u64 va, char *out, usize cap) {
 i64 macho_dyld_syscall(process_t *p, u64 op, u64 a, u64 b, u64 c) {
     link_t *K = p->dyld;
     if (!K) return -MOS_EINVAL;                           /* processo que não é Mach-O */
+    ls_cur = K->arch;                                     /* libSystem e slices da arquitetura do processo */
     K->err = K->lasterr;
     K->errlen = sizeof K->lasterr;
     switch (op) {
@@ -1952,6 +2060,7 @@ static u64 icache_key(link_t *K, image_t *I) {
     u64 h = 1469598103934665603ull;
     h = fnv64(h, (u64)K->n); h = fnv64(h, K->stub_base); h = fnv64(h, K->end); h = fnv64(h, (u64)K->first_new);
     h = fnv64(h, (u64)K->tolerant); h = fnv64(h, (u64)K->tlv_per_thread); h = fnv64(h, (u64)K->norder);
+    h = fnv64(h, (u64)K->arch);
     for (int k = 0; k < K->norder; k++) h = fnv64(h, (u64)K->order[k]);
     for (int i = 0; i < K->n; i++) {
         image_t *J = K->im[i];
@@ -2193,8 +2302,74 @@ static void tcache_after_mount(process_t *p, image_t *I) {
 #endif
 
 /* ================================================================ entrada principal */
+/* ================================================================ processos arm64 (tradutor, docs/tradutor-arm64.md)
+ * O executável e as dylibs são arm64 e ligados ao libSystem arm64; a thread começa no runtime a64rt.mos (x86_64), mapeado
+ * em A64RT_BASE com uma pilha do host de A64RT_HSTACK alinhada ao próprio tamanho, e recebe em rdi o a64rt_boot_t. */
+static bool arm64_forced(process_t *p) {
+#ifdef MOS_HOST_TEST
+    (void)p;
+    const char *v = getenv("MOS_ARCH");
+    return v && !strcmp(v, "arm64");
+#else
+    if (vfs_lookup(A64RT_DIR "/preferir-arm64")) return true;
+    for (int i = 0; p->spawn_env && i < p->spawn_envc; i++)
+        if (p->spawn_env[i] && !strcmp(p->spawn_env[i], "MOS_ARCH=arm64")) return true;
+    return false;
+#endif
+}
+
+static struct { const u8 *e; usize len; u8 *img; u64 span; } rt_db;
+
+static bool map_a64rt(process_t *p, u64 gentry, u64 gsp, u64 gx0, u64 hdr, bool forced,
+                      u64 *entry, u64 *rsp, u64 *rdi, char *err, usize errlen) {
+    if (!rt_db.e) {
+        usize n = 0;
+        const u8 *f = dep_read(A64RT_PATH, &n);
+        if (!f || n < 64 || memcmp(f, "\x7F" "ELF", 4) || rd16(f + 18) != 62 || rd16(f + 16) != 3) {
+            snprintf(err, errlen, "app arm64: o runtime do tradutor (%s) não está instalado", A64RT_PATH);
+            return false;
+        }
+        u8 *c = kmalloc_pages(n);
+        if (!c) { snprintf(err, errlen, "sem memória para o runtime arm64"); return false; }
+        memcpy(c, f, n);
+        rt_db.e = c; rt_db.len = n;
+    }
+    u64 span = map_elf(p, rt_db.e, rt_db.len, A64RT_BASE, 8, A64RT_SPAN_MAX - 2 * A64RT_HSTACK, &rt_db.img, &rt_db.span,
+                       "runtime arm64 (a64rt.mos)", err, errlen);
+    if (!span) return false;
+    u64 hs = (A64RT_BASE + span + A64RT_HSTACK - 1) & ~(A64RT_HSTACK - 1);
+    if (!uvm_map(p, hs, A64RT_HSTACK)) { snprintf(err, errlen, "sem memória para a pilha do runtime arm64"); return false; }
+    a64rt_boot_t b;
+    memset(&b, 0, sizeof b);
+    b.magic = A64RT_BOOT_MAGIC; b.version = 1;
+    b.guest_entry = gentry; b.guest_sp = gsp; b.guest_x0 = gx0;
+    b.ls_base = LIBSYSTEM_BASE; b.ls_size = ls_db[1].span ? ls_db[1].span : 0;
+    b.rt_base = A64RT_BASE; b.rt_size = span;
+    b.hstack_lo = hs;
+    b.flags = forced ? A64RT_BOOT_FORCED : 0;
+#ifdef MOS_HOST_TEST
+    if (getenv("MOS_A64_DEBUG")) b.flags |= A64RT_BOOT_DEBUG | (!strcmp(getenv("MOS_A64_DEBUG"), "2") ? A64RT_BOOT_TRACE : 0);
+    const char *eng = getenv("MOS_A64_ENGINE");
+    if (eng && !strcmp(eng, "interp")) b.flags |= A64RT_BOOT_INTERP;
+    if (eng && !strcmp(eng, "jit")) b.flags |= A64RT_BOOT_JIT;
+#else
+    if (vfs_lookup(A64RT_DIR "/depurar")) b.flags |= A64RT_BOOT_DEBUG;
+    if (vfs_lookup(A64RT_DIR "/interpretador")) b.flags |= A64RT_BOOT_INTERP;
+#endif
+    b.exe_hdr = hdr;
+    u64 bva = (hs + A64RT_HSTACK - sizeof b) & ~15ULL;
+    if (!uvm_copy_out(p, bva, &b, sizeof b)) { snprintf(err, errlen, "falha ao montar o runtime arm64"); return false; }
+    *entry = A64RT_BASE + rd64(rt_db.e + 24);
+    *rsp = bva - 8;                                     /* 16n - 8, como logo após um call */
+    *rdi = bva;
+    kprintf("macho: processo arm64 pelo tradutor (runtime %llu KiB%s)\n", (unsigned long long)(span >> 10), forced ? ", arm64 pedido" : "");
+    return true;
+}
+
 bool macho_load(process_t *p, const u8 *img, usize len, const char *arg, u64 *entry,
                 u64 *user_rsp, u64 *rdi, char *err, usize errlen) {
+    bool force_arm64 = arm64_forced(p);
+    ls_cur = choose_arch(img, len, force_arm64);           /* arm64 só com o tradutor (a64rt.mos + libSystem arm64) */
     if (!libsystem_index(err, errlen)) return false;
     link_t *K = link_new(err, errlen, false);
     if (!K) return false;
@@ -2442,6 +2617,17 @@ bool macho_load(process_t *p, const u8 *img, usize len, const char *arg, u64 *en
     kfree(tmp);
     (void)objc_off;                                     /* na partida as seções ObjC vão pela pilha */
     if (!ok) { link_free(K); snprintf(err, errlen, "falha ao montar a pilha"); return false; }
+    if (K->arch) {   /* arm64: a thread começa no runtime do tradutor, que entra no cx_start arm64 com x0 = bloco */
+        u64 e0 = *entry;
+        if (!map_a64rt(p, ls_entry, rsp + 8, blk_va, I0->hdr, force_arm64 && choose_arch(img, len, false) == 0,
+                       &e0, &rsp, &blk_va, err, errlen)) { link_free(K); return false; }
+        segs_prot(p, K, 0);
+        link_keep(p, K);
+        *entry = e0;
+        *user_rsp = rsp;
+        *rdi = blk_va;
+        return true;
+    }
     segs_prot(p, K, 0);
     /* o grafo de imagens fica vivo para o dlopen em tempo de execução (SYS_DYLD) */
     link_keep(p, K);
@@ -2486,6 +2672,7 @@ bool macho_report_image(const u8 *img, usize len, const char *name, char *out, u
     bool runs = false;
     body[0] = 0;
     link_t *K = NULL;
+    ls_cur = choose_arch(img, len, false);              /* só arm64: relatório pelo tradutor */
     if (!libsystem_index(err, sizeof err)) snprintf(verdict, sizeof verdict, "Veredito: %s", err);
     else if (!(K = link_new(err, sizeof err, true))) snprintf(verdict, sizeof verdict, "Veredito: %s", err);
     else if (!link_open(K, name, img, len)) {

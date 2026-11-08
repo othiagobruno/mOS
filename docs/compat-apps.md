@@ -252,12 +252,25 @@ durante a inicialização, ele sai com 130. O que foi preciso:
 - **PtyRun** (`userland/tests-pty/ptyrun.c`, `tools/build-ptyrun.ps1`). Roda um programa num pseudoterminal, como o
   node-pty, segue um roteiro (`esperar`, `quieto`, `tecla`, `se`, `redimensionar`, `tela`, `eco`, `fim`) e imprime a
   tela num emulador VT100 mínimo no log serial (`tela|`). Ele responde às perguntas de terminal (DA, DSR, XTVERSION,
-  OSC 10/11). Roteiros: `tools/testdata/claude-tui.txt` e `claude-p-mimalloc.txt`.
+  OSC 10/11). Roteiros: `tools/testdata/claude-tui.txt`, `claude-tui-curto.txt` e `claude-p-mimalloc.txt`.
+- **Regressão (WHPX, 8 nov.):** o VS Code abre com essas mudanças (`tools/vscode-teste.ps1 -OutDir build-vscreg`). O
+  workbench e o diálogo "Welcome to VS Code" ficam desenhados por 7 minutos, sem queda.
 
 Em aberto:
-- Em uma de quatro rodadas interativas, o Bun caiu com SIGSEGV ao desenhar a primeira tela. A falta foi em
-  `0x400103360AF0`, percorrendo a lista de `free` de outras threads de uma página do mimalloc (`movq (%rsi),%rsi`). O
-  kernel agora imprime as faltas na área de mmap abaixo do topo (`proc: ... falta em ...`) para achar a faixa.
+- **SIGSEGV intermitente no modo interativo**, durante a primeira tela, com 4 CPUs: 3 quedas em cerca de 12 rodadas. Com
+  `-Cpus 1` não houve queda em 5 rodadas, o que aponta para SMP, mas a amostra é pequena. Os detalhes:
+  - Sempre é uma lista livre do mimalloc com um ponteiro inválido. A falta veio uma vez no `malloc` rápido (o
+    `page->free`) e duas ao juntar os `free` de outras threads.
+  - Os ponteiros (`0x400103340a10`, `0x400103360AF0`, `0x400103700bd0`) são blocos da arena de 1 GiB do mimalloc
+    (`0x400140000000`) com o bit 30 apagado, ou seja, 1 GiB abaixo.
+  - O rastreamento (`stage-claude-code.ps1 -RastrearMunmap`, com as linhas `mm:` no log) mostra que nada foi mapeado
+    nessa faixa: o ponteiro já nasceu errado, não é memória desmapeada.
+  - Os travamentos do libSystem (`os_unfair_lock`, `pthread_mutex`) e a troca da base do GS por thread estão certos.
+  - Próximo passo: congelar a thread na falta e ler a página do mimalloc pelo QMP.
+- O `pthread_key_create` ignora o destrutor, e a saída de thread não chama destrutores de TSD. O mimalloc não abandona o
+  heap de uma thread que termina, o que dá vazamento, não queda.
+- Para sair com dois ^C, o segundo precisa chegar logo. No TCG, até 300 ms entre teclas viram segundos, e ele só mostra
+  "Press Ctrl-C again to exit".
 - O AVX continua obrigatório: sob WHPX só passa o `--version`. O login (`/login`) é do usuário.
 
 Para repetir (TCG, `run.ps1` sem `-Accel`): `.\build.ps1 -OutDir build-cc`. Para o `-p`, rode
