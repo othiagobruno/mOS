@@ -9,14 +9,18 @@ O init (pid do primeiro processo de usuário) faz o papel do launchd. Lê os job
 
 | Pasta | Formato |
 |---|---|
-| `/Sistema/Biblioteca/LaunchDaemons` | `.servico` do mOS (`Programa=`, `Argumentos=`, `ManterVivo=sim`, `AtrasoMs=`) e `.plist` |
+| `/Sistema/Biblioteca/LaunchDaemons` | `.servico` do mOS (`Programa=`, `Argumentos=`, `ManterVivo=sim`, `AtrasoMs=`, `Entrada=`) e `.plist` |
 | `/System/Library/LaunchDaemons`, `/Library/LaunchDaemons`, `/Library/LaunchAgents` | `.plist` do launchd |
 | `/Users/<nome>/Library/LaunchAgents` | `.plist` do launchd |
 
 Chaves de plist entendidas: `Label`, `Program`, `ProgramArguments`, `BundleProgram` (relativo ao `.app` que contém o
 plist, para o `SMAppService`), `MachServices`, `RunAtLoad`, `KeepAlive` (bool; um dicionário de condições conta como
-ligado), `EnvironmentVariables`, `WorkingDirectory`, `StandardOutPath`, `StandardErrorPath`, `Disabled`. Só plist XML
-(o leitor nativo é `userland/plistmini.h`); um `bplist` é recusado com aviso no log.
+ligado), `EnvironmentVariables`, `WorkingDirectory`, `StandardInPath`, `StandardOutPath`, `StandardErrorPath`, `Disabled`.
+Só plist XML (o leitor nativo é `userland/plistmini.h`); um `bplist` é recusado com aviso no log.
+
+Entrada padrão: como no launchd do macOS, um job de plist (e um serviço sob demanda do `LC_SUBMIT`) lê de `/dev/null`
+quando não há `StandardInPath`. Um `.servico` continua com o terminal do console, a menos que tenha `Entrada=<arquivo>`.
+Sem fim de arquivo, quem lê o stdin inteiro antes de começar (o `claude -p` do Claude Code) ficava parado para sempre.
 
 Ambiente dos jobs: `HOME`, `USER`, `PATH`, `LANG`… (o mesmo padrão dos apps), as `EnvironmentVariables` e
 `XPC_SERVICE_NAME=<Label>`.

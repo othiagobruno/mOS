@@ -305,6 +305,9 @@ typedef uint16_t CGGlyph;
  * do Swift; implementadas em userland/libsystem/coregraphics.c e compat_agentes.c */
 CG_EXTERN void CGContextDrawImage(CGContextRef _Nullable c, CGRect rect, CGImageRef _Nullable image) __attribute__((swift_private));
 CG_EXTERN void CGContextDrawTiledImage(CGContextRef _Nullable c, CGRect rect, CGImageRef _Nullable image) __attribute__((swift_private));
+/* CGContext.fillPath(using:) */
+CG_EXTERN void CGContextFillPath(CGContextRef _Nullable c) __attribute__((swift_private));
+CG_EXTERN void CGContextEOFillPath(CGContextRef _Nullable c) __attribute__((swift_private));
 #endif
 
 CF_ASSUME_NONNULL_END

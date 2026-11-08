@@ -45,6 +45,7 @@ static app_t *all_apps[] = {
 static app_t *mac_apps[MAX_MAC_APPS];
 static int nmac;
 static void macos_run(const char *path, const char *name, const char *args);
+static void macos_run_args(const char *path, const char *name, const char *args);
 static int last_spawn_pid = -1;      /* pid do último macos_run bem-sucedido */
 static int mac_pid[MAX_MAC_APPS];
 
@@ -165,13 +166,16 @@ void apps_sync_mac(void) { scan_mac_apps(); wm_damage_all(); }
 int apps_run_mac(const char *bundle, const char *args) {
     const char *b = strrchr(bundle, '/');
     last_spawn_pid = -1;
-    macos_run(bundle, b ? b + 1 : bundle, args ? args : "");
+    /* o motor do Horizonte aparece com o nome do Horizonte (ex.: "“Horizonte” fechou inesperadamente") */
+    macos_run(bundle, horizonte_motor_bundle(bundle) ? "Horizonte" : b ? b + 1 : bundle, args ? args : "");
     for (int i = 0; i < nmac; i++) if (!strcmp(mac_apps[i]->exec + 4, bundle) && last_spawn_pid > 0) mac_pid[i] = last_spawn_pid;
     return last_spawn_pid;
 }
 
-/* atalho de /Aplicativos que representa um app proxy (janelas de um processo do macOS); NULL se nenhum */
+/* atalho de /Aplicativos que representa um app proxy (janelas de um processo do macOS); NULL se nenhum.
+ * As janelas do motor Chromium do Horizonte (launchsvc.h) são do Horizonte: um ícone só no Dock. */
 app_t *apps_shortcut_for(app_t *proxy) {
+    if (horizonte_motor_bundle(compat_app_bundle(proxy))) return &app_horizonte;
     int pid = compat_gui_pid_of(proxy);
     if (pid <= 0) return NULL;
     for (int i = 0; i < nmac; i++) if (mac_pid[i] == pid) return mac_apps[i];
@@ -207,7 +211,60 @@ void app_quit(app_t *a) {
     if (strcmp(a->exec, "arquivos")) a->running = false;
 }
 
+/* Argumentos que o sistema acrescenta ao abrir um .app pela interface ou pelo Launch Services (Launchpad, Dock,
+ * Arquivos, openURL:, open). O Chromium no mOS roda sem processo de GPU (não há GPU: o compositor desenha por software
+ * numa thread do navegador), sem a janela de primeira execução (um diálogo Cocoa que o AppKit do mOS ainda não
+ * desenha), sem o atualizador de componentes (cada pacote baixado subia um processo de descompactação na partida, e o
+ * CRLSet chegando no meio da 1ª navegação a derrubava com ERR_CERT_VERIFIER_CHANGED) e sem o renderer reserva (um processo
+ * a mais, parado, numa VM de 2 GiB em que o Slack e o Chromium juntos chegavam a 30 MiB livres). O arquivo
+ * /Sistema/Biblioteca/Preferencias/com.mos.argumentos.cfg, uma linha "<CFBundleIdentifier>=<args>" por app, troca estes
+ * ou acrescenta outros apps ("<id>=" sem nada desliga). docs/navegador-chromium.md */
+#define ARGS_CFG "/Sistema/Biblioteca/Preferencias/com.mos.argumentos.cfg"
+static const struct { const char *id, *args; } default_args[] = {
+    {"org.chromium.Chromium", "--no-sandbox --in-process-gpu --disable-gpu --no-first-run --no-default-browser-check --disable-component-update "
+                              "--disable-features=SpareRendererForSitePerProcess"},
+};
+static void app_default_args(const char *bundle, char *out, usize cap) {
+    out[0] = 0;
+    bundle_info_t bi;
+    memset(&bi, 0, sizeof bi);
+    if (!macho_bundle_info(bundle, &bi) || !bi.identifier[0]) return;
+    for (u32 i = 0; i < ARRAY_LEN(default_args); i++)
+        if (!strcasecmp(bi.identifier, default_args[i].id)) snprintf(out, cap, "%s", default_args[i].args);
+    vnode_t *f = vfs_lookup(ARGS_CFG);
+    usize idl = strlen(bi.identifier);
+    for (usize i = 0; f && !f->dir && f->data && i < f->size;) {
+        const char *l = (const char *)f->data + i;
+        usize n = 0;
+        while (i + n < f->size && l[n] != '\n') n++;
+        i += n + 1;
+        while (n && (l[n - 1] == '\r' || l[n - 1] == ' ')) n--;
+        if (n > idl && l[idl] == '=' && !strncasecmp(l, bi.identifier, idl)) {
+            usize k = MIN(n - idl - 1, cap - 1);
+            memcpy(out, l + idl + 1, k);
+            out[k] = 0;
+        }
+    }
+}
+
 static void macos_run(const char *path, const char *name, const char *args) {
+    usize pl = strlen(path);
+    bool gui = pl > 4 && !strcasecmp(path + pl - 4, ".app");   /* bundle: o app abre as próprias janelas */
+    char *all = gui ? kmalloc(4096) : NULL;
+    if (all) {
+        app_default_args(path, all, 1024);
+        if (all[0]) {
+            kprintf("apps: %s com os argumentos do sistema: %s\n", name, all);   /* antes da URL, que não vai ao log */
+            usize k = strlen(all);
+            snprintf(all + k, 4096 - k, "%s%s", args && args[0] ? " " : "", args ? args : "");
+            args = all;
+        }
+    }
+    macos_run_args(path, name, args);
+    kfree(all);
+}
+
+static void macos_run_args(const char *path, const char *name, const char *args) {
     usize pl = strlen(path);
     bool gui = pl > 4 && !strcasecmp(path + pl - 4, ".app");   /* bundle: o app abre as próprias janelas */
     char *rep = kmalloc(8192);

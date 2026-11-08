@@ -51,3 +51,38 @@ extension CGContext {
         if byTiling { __CGContextDrawTiledImage(self, rect, image) } else { __CGContextDrawImage(self, rect, image) }
     }
 }
+
+// MARK: - caminhos (o helper "Computer Use" do Grok Bot desenha o realce do cursor com eles)
+
+public enum CGPathFillRule: Int, Sendable {
+    case winding
+    case evenOdd
+}
+
+extension CGContext {
+    public func fillPath(using rule: CGPathFillRule = .winding) {
+        if rule == .evenOdd { __CGContextEOFillPath(self) } else { __CGContextFillPath(self) }
+    }
+}
+
+extension CGMutablePath {
+    public func move(to point: CGPoint, transform: CGAffineTransform = .identity) {
+        var t = transform
+        CGPathMoveToPoint(self, &t, point.x, point.y)
+    }
+    public func addArc(tangent1End: CGPoint, tangent2End: CGPoint, radius: CGFloat, transform: CGAffineTransform = .identity) {
+        var t = transform
+        CGPathAddArcToPoint(self, &t, tangent1End.x, tangent1End.y, tangent2End.x, tangent2End.y, radius)
+    }
+}
+
+extension CGPath {
+    public func contains(_ point: CGPoint, using rule: CGPathFillRule = .winding, transform: CGAffineTransform = .identity) -> Bool {
+        var t = transform
+        return CGPathContainsPoint(self, &t, point, rule == .evenOdd)
+    }
+}
+
+extension CGAffineTransform {
+    public static var identity: CGAffineTransform { CGAffineTransform(a: 1, b: 0, c: 0, d: 1, tx: 0, ty: 0) }
+}

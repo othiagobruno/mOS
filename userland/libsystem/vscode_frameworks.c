@@ -201,19 +201,12 @@ int CGWindowLevelForKey(int key) {
     }
     return 0;
 }
-i64 CGEventGetIntegerValueField(void *e, int field) { (void)e; (void)field; return 0; }
-cg_pt_t CGEventGetLocation(void *e) { (void)e; cg_pt_t p = {0, 0}; return p; }
-void *CGEventCreate(void *src) { (void)src; return token(); }
 void *CGEventCreateFromData(void *alloc, id data) { (void)alloc; (void)data; return 0; }
 int CGAssociateMouseAndMouseCursorPosition(u8 connected) { (void)connected; return 0; }
 double CGEventSourceSecondsSinceLastEventType(int state, u32 type) { (void)state; (void)type; return 0.0; }
 void *CGEventTapCreate(int tap, int place, int opts, u64 mask, void *cb, void *info) { (void)tap; (void)place; (void)opts; (void)mask; (void)cb; (void)info; return 0; }
 void CGEventTapEnable(void *tap, u8 enable) { (void)tap; (void)enable; }
 /* captura de tela: sem permissão (o macOS devolve NULL nesse caso) */
-u8 CGPreflightScreenCaptureAccess(void) { return 0; }
-u8 CGRequestScreenCaptureAccess(void) { return 0; }
-void *CGDisplayCreateImage(u32 d) { (void)d; return 0; }
-void *CGWindowListCreateImage(cg_rect_t r, u32 opt, u32 win, u32 img) { (void)r; (void)opt; (void)win; (void)img; return 0; }
 void *CGWindowListCreateImageFromArray(cg_rect_t r, id arr, u32 img) { (void)r; (void)arr; (void)img; return 0; }
 void *CGDisplayStreamCreate(u32 d, size_t w, size_t h, int fmt, id props, void *handler) { (void)d; (void)w; (void)h; (void)fmt; (void)props; (void)handler; return 0; }
 void *CGDisplayStreamGetRunLoopSource(void *s) { (void)s; return 0; }

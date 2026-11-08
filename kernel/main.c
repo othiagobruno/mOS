@@ -13,6 +13,7 @@ void kmain(void) {
             g_boot->fb.bgr ? "BGR" : "RGB");
     gdt_init();
     idt_init();
+    fpu_init();           /* AVX (XSAVE): antes do smp_init, que copia o CR4/XCR0 do BSP para os APs */
     pic_init();
     pmm_init();
     paging_init();

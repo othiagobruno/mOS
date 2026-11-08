@@ -203,10 +203,14 @@ static void cl_set(id self, SEL c) { (void)c; ctx.fill = ctx.stroke = argb(self)
 static void cl_set_fill(id self, SEL c) { (void)c; ctx.fill = argb(self); }
 static void cl_set_stroke(id self, SEL c) { (void)c; ctx.stroke = argb(self); }
 
+int cx_mono_face(void);   /* fontmono.c: a JetBrains Mono registrada no kernel (o "Menlo" do mOS), ou -1 */
 static id ft_make(double size, int weight, int mono) {
     id f = cx_alloc_instance(&NSFont_c);
     fnt(f)->size = size > 0 ? size : 13;
-    fnt(f)->weight = weight;
+    /* monoespaçada: a face da JetBrains Mono quando ela existe (antes era a Inter só marcada "mono", e o terminal do
+     * VS Code espalhava as letras pela grade medida no "W") */
+    int m = mono ? cx_mono_face() : -1;
+    fnt(f)->weight = m > 0 ? m : weight;
     fnt(f)->mono = mono;
     return f;
 }
@@ -215,11 +219,16 @@ static id ft_system(id cls, SEL c, double s) { (void)cls; (void)c; return ft_mak
 static id ft_bold(id cls, SEL c, double s) { (void)cls; (void)c; return ft_make(s, 3, 0); }
 static id ft_system_w(id cls, SEL c, double s, double w) { (void)cls; (void)c; return ft_make(s, weight_of(w), 0); }
 static id ft_mono(id cls, SEL c, double s, double w) { (void)cls; (void)c; return ft_make(s, weight_of(w), 1); }
-static id ft_named(id cls, SEL c, id name, double s) { (void)cls; (void)c; const char *n = cx_cstr(name); return ft_make(s, strstr(n, "Bold") ? 3 : strstr(n, "Semibold") ? 2 : strstr(n, "Medium") ? 1 : 0, !!strstr(n, "Mono") || !!strstr(n, "Courier") || !!strstr(n, "Menlo")); }
+static id ft_named(id cls, SEL c, id name, double s) { (void)cls; (void)c; const char *n = cx_cstr(name); return ft_make(s, strstr(n, "Bold") ? 3 : strstr(n, "Semibold") ? 2 : strstr(n, "Medium") ? 1 : 0, !!strstr(n, "Mono") || !!strstr(n, "Courier") || !!strstr(n, "Menlo") || !!strstr(n, "Monaco") || !!strstr(n, "Consolas")); }
 static double ft_size(id self, SEL c) { (void)c; return fnt(self)->size; }
 static double ft_sys_size(id cls, SEL c) { (void)cls; (void)c; return 13; }
 static double ft_small_size(id cls, SEL c) { (void)cls; (void)c; return 11; }
-static id ft_name(id self, SEL c) { (void)c; return cx_str(fnt(self)->weight >= 3 ? ".AppleSystemUIFontBold" : ".AppleSystemUIFont"); }
+static id ft_name(id self, SEL c) {
+    (void)c;
+    int w = fnt(self)->weight;
+    if (w >= 32) return cx_str(fnt(self)->mono ? "JetBrainsMono-Regular" : ".AppleSystemUIFont");   /* face registrada (mono ou fonte web) */
+    return cx_str(w >= 3 ? ".AppleSystemUIFontBold" : ".AppleSystemUIFont");
+}
 
 /* ================================================================ lote de comandos */
 static u8 *cmd;
@@ -1217,9 +1226,16 @@ static id w_delegate(id self, SEL c) { (void)c; return ws(self)->delegate; }
 static double w_alpha(id self, SEL c) { (void)c; double a = ws(self)->alpha; return a > 0 ? a : (a < 0 ? 0 : 1.0); }
 static void w_set_alpha(id self, SEL c, double a) { (void)c; ws(self)->alpha = a <= 0 ? -1 : a; }
 static id w_parent(id self, SEL c) { (void)c; return ws(self)->parent; }
-static void w_set_parent(id self, SEL c, id p) { (void)c; ws(self)->parent = p; }
-static void w_add_child(id self, SEL c, id child, i64 ord) { (void)c; (void)ord; if (child) ws(child)->parent = self; }
-static void w_remove_child(id self, SEL c, id child) { (void)c; if (child && ws(child)->parent == self) ws(child)->parent = 0; }
+/* a dona no window server (GUI_FOCUS_OWNER): a filha fica acima dela mesmo quando o usuário clica na dona ou o Dock a traz */
+static void w_sync_owner(id child) {
+    wstate_t *cs = ws(child);
+    if (cs->gid <= 0) return;
+    int pg = cs->parent ? ws(cs->parent)->gid : 0;
+    SYS3(GUI_WIN_FOCUS, cs->gid, GUI_FOCUS_OWNER, pg > 0 ? pg : 0);
+}
+static void w_set_parent(id self, SEL c, id p) { (void)c; ws(self)->parent = p; w_sync_owner(self); }
+static void w_add_child(id self, SEL c, id child, i64 ord) { (void)c; (void)ord; if (child) { ws(child)->parent = self; w_sync_owner(child); } }
+static void w_remove_child(id self, SEL c, id child) { (void)c; if (child && ws(child)->parent == self) { ws(child)->parent = 0; w_sync_owner(child); } }
 /* NSWindowStyleMaskFullSizeContentView (1 << 15), como o Electron usa com titleBarStyle "hidden" (o VS Code
  * desenha a própria barra de título): o conteúdo é a janela inteira, moldura = conteúdo, e o window server
  * só põe os semáforos por cima (GUI_WF_FULLSIZE). Nas outras janelas a moldura tem 22 pt a mais. */
@@ -1245,7 +1261,10 @@ static BOOL w_frameless(id self, wstate_t *s) {
     s->frameless = (o.s.w == t.s.w && o.s.h == t.s.h) ? 2 : 1;
     return s->frameless == 2;
 }
-static int w_title_h(id self) { wstate_t *s = ws(self); return ((s->style & WS_FULLSIZE) || w_frameless(self, s)) ? 0 : 22; }
+/* altura da barra de título que o mOS põe: nenhuma em FullSizeContentView, na janela sem moldura do Electron e na
+ * borderless (sem NSWindowStyleMaskTitled, bit 0), como no Cocoa: os diálogos e popups do Chromium (views::Widget)
+ * desenham a própria moldura e o título dentro do conteúdo */
+static int w_title_h(id self) { wstate_t *s = ws(self); return ((s->style & WS_FULLSIZE) || !(s->style & 1) || w_frameless(self, s)) ? 0 : 22; }
 /* -setFrame:display: e -setContentSize: que mudam o tamanho avisam como no Cocoa: o NativeWidgetNSWindowBridge
  * do Chromium só refaz as contas de conteúdo (views e compositor) no windowDidResize: */
 static void w_did_resize(id self) {
@@ -1360,7 +1379,14 @@ static id app_windows;
 static id g_key_window;
 static void w_become_key(id self) {
     if (g_key_window == self) return;
-    if (cx_responds(self->isa, sel_registerName("canBecomeKeyWindow")) && !MSG0(BOOL, self, "canBecomeKeyWindow")) return;
+    extern int cx_ca_diag(void);
+    if (cx_responds(self->isa, sel_registerName("canBecomeKeyWindow")) && !MSG0(BOOL, self, "canBecomeKeyWindow")) {
+        static int nr;
+        if (cx_ca_diag() && nr < 20) { nr++; cx_fdprintf(2, "[ca] janela %d (%s) recusou ser chave\n", ws(self)->gid, cx_class_name(self->isa)); }
+        return;
+    }
+    {   static int nk;   /* diagnóstico (ca-log): quem vira janela-chave (o teclado vai para ela) */
+        if (cx_ca_diag() && nk < 30) { nk++; cx_fdprintf(2, "[ca] janela-chave: %d (%s), antes %d\n", ws(self)->gid, cx_class_name(self->isa), g_key_window ? ws(g_key_window)->gid : 0); } }
     static id main_note_name, resign_note_name;
     if (!main_note_name) { main_note_name = cx_str("NSWindowDidBecomeMainNotification"); resign_note_name = cx_str("NSWindowDidResignKeyNotification"); }
     id old = g_key_window;
@@ -1378,14 +1404,35 @@ static void w_become_key(id self) {
     if (d && cx_responds(d->isa, sel_registerName("windowDidBecomeKey:"))) MSG(void, d, "windowDidBecomeKey:", nk);
     cx_post(nk);
 }
+/* Como no Cocoa, a janela filha (addChildWindow:ordered:, ex.: o diálogo "Abrir o Slack?" do Chrome, que é outra
+ * NSWindow) fica acima da mãe: quando a mãe volta à frente, as filhas visíveis voltam por cima dela. O window server
+ * não conhece filhas; a ordem é refeita aqui. */
+static BOOL w_descends(id w, id anc) {   /* w é filha (ou neta...) de anc? */
+    for (int d = 0; w && d < 6; d++) { w = ws(w)->parent; if (w && w == anc) return YES; }
+    return NO;
+}
+static void w_raise_children(id self, int depth) {
+    nsarr_t *a = (nsarr_t *)app_windows;
+    for (u64 i = 0; a && depth < 4 && i < a->n; i++) {
+        id ch = a->items[i];
+        wstate_t *cs = ws(ch);
+        if (ch == self || cs->parent != self || !cs->visible || cs->gid <= 0) continue;
+        SYS1(GUI_WIN_FOCUS, cs->gid);
+        w_raise_children(ch, depth + 1);
+    }
+}
 static void w_order_in(id self) {
     wstate_t *s = ws(self);
     if (s->gid <= 0) {
         u32 fl = (s->style & 8) ? GUI_WF_RESIZABLE : 0;
         if (w_title_h(self) == 0 && (s->style & 1)) fl |= GUI_WF_FULLSIZE;   /* FullSizeContentView ou sem moldura */
+        if (!(s->style & 1)) fl |= GUI_WF_NO_TITLE;                          /* borderless: sem barra nem semáforos */
         long id_ = SYS4(GUI_WIN_CREATE, cx_cstr(s->title), (long)s->frame.s.w, (long)s->frame.s.h, fl);
         if (id_ <= 0) { cx_fdprintf(2, "AppKit[mOS]: não foi possível criar a janela (%ld)\n", id_); return; }
         s->gid = (int)id_;
+        w_sync_owner(self);   /* filha registrada (addChildWindow:) antes de ter janela no window server */
+        { nsarr_t *aw = (nsarr_t *)app_windows;
+          for (u64 i = 0; aw && i < aw->n; i++) if (ws(aw->items[i])->parent == self) w_sync_owner(aw->items[i]); }
         {   /* diagnóstico (ca-log): tamanho pedido ao window server x o que o compositor do app desenha */
             extern int cx_ca_diag(void);
             if (cx_ca_diag()) cx_fdprintf(2, "[ca] janela %d: conteúdo %dx%d estilo 0x%llx%s\n", s->gid, (int)s->frame.s.w,
@@ -1400,8 +1447,11 @@ static void w_order_in(id self) {
         }
         if (!app_windows) app_windows = cx_arr_new(&NSMutableArray_c);
         cx_arr_add(app_windows, self);
-    } else if (!s->visible) SYS2(GUI_WIN_FOCUS, s->gid, GUI_FOCUS_SHOW);   /* escondida por orderOut: volta na frente */
-    else SYS1(GUI_WIN_FOCUS, s->gid);
+    } else {
+        if (!s->visible) SYS2(GUI_WIN_FOCUS, s->gid, GUI_FOCUS_SHOW);   /* escondida por orderOut: volta na frente */
+        else SYS1(GUI_WIN_FOCUS, s->gid);
+        w_raise_children(self, 0);
+    }
     s->visible = YES;
     s->closed = NO;
     s->needs = YES;
@@ -1516,12 +1566,15 @@ static void dump_view_tree(id v, int depth) {
 }
 static void maybe_dump_tree(id w) {
     extern int cx_ca_diag(void);
-    static u64 last; static int n;
-    if (!cx_ca_diag() || n >= 8) return;
+    /* por janela (gid): o 1º desenho de cada uma (diálogos e popups do Chrome) e depois 1 a cada 15 s, até 4 */
+    static u64 last[16]; static int n[16];
+    int g = ws(w)->gid > 0 && ws(w)->gid < 16 ? ws(w)->gid : 0;
+    if (!cx_ca_diag() || n[g] >= 4) return;
     u64 now = (u64)SYS0(SYS_TIME);
-    if (last && now - last < 15000) return;
-    last = now; n++;
-    cx_fdprintf(2, "[ca] árvore de views da janela %d (%.0fx%.0f):\n", ws(w)->gid, ws(w)->frame.s.w, ws(w)->frame.s.h);
+    if (last[g] && now - last[g] < 15000) return;
+    last[g] = now; n[g]++;
+    cx_fdprintf(2, "[ca] árvore de views da janela %d (%.0fx%.0f, estilo 0x%llx, %s):\n", ws(w)->gid, ws(w)->frame.s.w, ws(w)->frame.s.h,
+                (unsigned long long)ws(w)->style, cx_class_name(object_getClass(w)));
     dump_view_tree(ws(w)->content, 1);
 }
 static void render_window(id w) {
@@ -2510,6 +2563,15 @@ static void dispatch(gui_event_t *g) {
         return;
     }
     if (!w) return;
+    /* Teclas vão à janela-chave, como no Cocoa. O window server manda o teclado à janela do topo, e as popups do
+     * Chromium (sugestões da barra de endereço, bolha de status, balões) são janelas filhas por cima da mãe que não
+     * aceitam ser chave: sem isto as teclas iam para elas e se perdiam. Uma filha que aceita ser chave (o diálogo
+     * "Abrir o X?") também fica por cima da mãe quando o clique tornou a mãe chave; aí as teclas são da mãe. */
+    if ((g->type == GEV_KEY_DOWN || g->type == GEV_KEY_UP) && w != g_key_window && g_key_window &&
+        ws(g_key_window)->visible && ws(g_key_window)->gid > 0 &&
+        ((cx_responds(w->isa, sel_registerName("canBecomeKeyWindow")) && !MSG0(BOOL, w, "canBecomeKeyWindow")) ||
+         w_descends(w, g_key_window)))
+        w = g_key_window;
     wstate_t *s = ws(w);
     g_mods = mac_mods(g->mods);
     { extern void cx_gc_mouse_event(int type, int x, int y, int buttons, int scroll);   /* GCMouse */
@@ -2539,6 +2601,7 @@ static void dispatch(gui_event_t *g) {
         id v = hit(s->content, &a, g->x, g->y);
         if (!v) v = s->content;
         if (g->type == GEV_MOUSE_DOWN) {
+            if (w != g_key_window) w_become_key(w);   /* o clique torna chave a janela que aceita (Cocoa); popups não */
             if (MSG0(BOOL, v, "acceptsFirstResponder")) w_make_first(w, 0, v);
             else if (s->first && vs(s->first)->kind == K_TEXT) w_make_first(w, 0, 0);
             s->mouse_view = v;
@@ -2605,7 +2668,7 @@ static void dispatch(gui_event_t *g) {
             {   /* diagnóstico (ca-log): para onde vão as teclas */
                 extern int cx_ca_diag(void);
                 static int nlog;
-                if (nlog < 40 && cx_ca_diag()) { nlog++; cx_fdprintf(2, "[ca] keyDown tecla %d mods 0x%x -> %s\n", g->key, g->mods, cx_class_name(target->isa)); }
+                if (nlog < 40 && cx_ca_diag()) { nlog++; cx_fdprintf(2, "[ca] keyDown tecla %d mods 0x%x -> %s (janela %u -> %d, chave %d)\n", g->key, g->mods, cx_class_name(target->isa), g->win, s->gid, g_key_window ? ws(g_key_window)->gid : 0); }
             }
             MSG(void, target, "keyDown:", e);
         }

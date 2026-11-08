@@ -90,21 +90,46 @@ isr_common:
     cld
     mov %rsp, %rcx              /* int_frame_t* */
     mov %rsp, %rbx
-    sub $512, %rsp
-    and $-16, %rsp
-    fxsave (%rsp)
+    sub $1024, %rsp             /* FPU_AREA (proc.h): XSAVE (x87|SSE|AVX) ou FXSAVE, alinhada a 64 */
+    and $-64, %rsp
+    cmpb $0, g_use_xsave(%rip)
+    je 81f
+    /* cabeçalho XSAVE (bytes 512..575) zerado: o XSAVE só escreve os bits do XSTATE_BV que estão na máscara (o resto
+     * fica como estava) e não toca no XCOMP_BV nem nos reservados; o XRSTOR dá #GP com qualquer um deles sujo, e a área
+     * fica na pilha do kernel, com lixo de antes */
+    movq $0, 512(%rsp)
+    movq $0, 520(%rsp)
+    movq $0, 528(%rsp)
+    movq $0, 536(%rsp)
+    movq $0, 544(%rsp)
+    movq $0, 552(%rsp)
+    movq $0, 560(%rsp)
+    movq $0, 568(%rsp)
+    mov $-1, %eax               /* rax/rdx já estão no quadro */
+    mov $-1, %edx
+    xsave (%rsp)
+    jmp 82f
+81: fxsave (%rsp)
+82:
     sub $32, %rsp
     call isr_dispatch           /* devolve o frame a restaurar (troca de contexto se for outro) */
     mov %rax, %rbx
     mov %rbx, %rsp
-    sub $512, %rsp              /* a área FXSAVE de cada thread fica logo abaixo do seu frame */
-    and $-16, %rsp
+    sub $1024, %rsp             /* a área de FPU de cada thread fica logo abaixo do seu frame (FPU_AREA) */
+    and $-64, %rsp
     /* já na pilha da thread que vai rodar (abaixo da área FXSAVE): só agora a trava grande pode ser
      * solta (proc/sched.c, sched_post) — outro núcleo pode pegar a thread anterior e usar a pilha dela */
     sub $32, %rsp
     call sched_post
     add $32, %rsp
-    fxrstor (%rsp)
+    cmpb $0, g_use_xsave(%rip)
+    je 83f
+    mov $-1, %eax               /* rax/rdx voltam do quadro logo abaixo */
+    mov $-1, %edx
+    xrstor (%rsp)
+    jmp 84f
+83: fxrstor (%rsp)
+84:
     mov %rbx, %rsp
     pop %r15
     pop %r14

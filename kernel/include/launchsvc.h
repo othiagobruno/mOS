@@ -76,6 +76,16 @@ void        ls_request_default_for_scheme(const char *scheme, ls_app_t *a);
 /* ---------------- abrir */
 /* target: caminho, file://..., ou URL de qualquer esquema. with = NULL: o padrão. false se ninguém abre */
 bool        ls_open(const char *target, ls_app_t *with);
+
+/* ---------------- o motor Chromium do Horizonte (docs/navegador-chromium.md)
+ * O Horizonte é o navegador do sistema; o motor dele é o Chromium de código aberto neste caminho, fora de /Aplicativos
+ * (um app só para o usuário). Sem ele, o Horizonte usa o motor próprio (kernel/apps/horizonte.c). */
+#define HORIZONTE_MOTOR "/Sistema/Biblioteca/Horizonte/Chromium.app"
+bool        horizonte_motor_disponivel(void);
+bool        horizonte_motor_abrir(const char *url);      /* url NULL: abre ou traz o Horizonte; false: sem motor ou não iniciou */
+bool        horizonte_motor_bundle(const char *bundle);  /* o .app é o motor? (Dock, barra de menus, alertas) */
+void        horizonte_motor_encerrar(void);              /* "Encerrar" do Horizonte: pede ao motor que encerre */
+void        horizonte_legado_abrir(const char *url);     /* kernel/apps/horizonte.c: a URL no motor próprio do Horizonte */
 /* Ninguém abre o documento: alerta "Não há um aplicativo definido..." com "Escolher Aplicativo…" (Arquivos) */
 extern void (*ls_choose_app_hook)(const char *path);
 

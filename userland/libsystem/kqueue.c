@@ -91,25 +91,27 @@ static void kl(kq_t *q) { while (__sync_lock_test_and_set(&q->lock, 1)) SYS0(SYS
 static void ku(kq_t *q) { __sync_lock_release(&q->lock); }
 static u64 now_ms(void) { return (u64)SYS0(SYS_TIME); }
 
+/* as vagas de kqs[] são tomadas com CAS e soltas com troca atômica: duas threads chamando kqueue() juntas (o
+ * EnsureProcessTerminated do Chromium cria um por filho encerrado) achavam a mesma vaga livre e recebiam o mesmo
+ * descritor, e o close de uma deixava a outra com uma fila solta */
 int kqueue(void) {
+    kq_t *q = calloc(1, sizeof *q);
+    if (!q) { cx_errno = CX_ENOMEM; return -1; }
+    q->used = 1;
+    q->refs = 1;
     for (int i = 0; i < MAX_KQ; i++)
-        if (!kqs[i]) {
-            kq_t *q = calloc(1, sizeof *q);
-            if (!q) { cx_errno = CX_ENOMEM; return -1; }
-            q->used = 1;
-            q->refs = 1;
-            kqs[i] = q;
-            return KQ_FD_BASE + i;
-        }
+        if (!kqs[i] && __sync_bool_compare_and_swap(&kqs[i], (kq_t *)0, q)) return KQ_FD_BASE + i;
+    free(q);
     cx_errno = CX_EMFILE;
     return -1;
 }
 /* close() de um kqueue (chamado por close em libc quando o fd é deste intervalo) */
 int cx_kqueue_close(int fd) {
     int i = fd - KQ_FD_BASE;
-    if (i < 0 || i >= MAX_KQ || !kqs[i]) return -1;
-    if (__sync_sub_and_fetch(&kqs[i]->refs, 1) <= 0) free(kqs[i]);
-    kqs[i] = 0;
+    if (i < 0 || i >= MAX_KQ) return -1;
+    kq_t *q = __sync_lock_test_and_set(&kqs[i], (kq_t *)0);
+    if (!q) return -1;
+    if (__sync_sub_and_fetch(&q->refs, 1) <= 0) free(q);
     return 0;
 }
 /* dup/F_DUPFD de um kqueue: outro descritor para a MESMA fila (o mio do tokio clona o Registry assim; sem isto o
@@ -117,9 +119,12 @@ int cx_kqueue_close(int fd) {
  * do Cursor entrava em pânico e derrubava o Extension Host). -1 se fd não é um kqueue; EMFILE sem vaga. */
 int cx_kqueue_dup(int fd) {
     int i = fd - KQ_FD_BASE;
-    if (i < 0 || i >= MAX_KQ || !kqs[i]) return -1;
+    kq_t *q = i >= 0 && i < MAX_KQ ? kqs[i] : 0;
+    if (!q) return -1;
+    __sync_add_and_fetch(&q->refs, 1);
     for (int j = 0; j < MAX_KQ; j++)
-        if (!kqs[j]) { __sync_add_and_fetch(&kqs[i]->refs, 1); kqs[j] = kqs[i]; return KQ_FD_BASE + j; }
+        if (!kqs[j] && __sync_bool_compare_and_swap(&kqs[j], (kq_t *)0, q)) return KQ_FD_BASE + j;
+    if (__sync_sub_and_fetch(&q->refs, 1) <= 0) free(q);
     cx_errno = CX_EMFILE;
     return -2;
 }

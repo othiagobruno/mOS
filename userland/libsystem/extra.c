@@ -133,18 +133,36 @@ static int cpu_has_fsgsbase(void) {
     __asm__ volatile("cpuid" : "+a"(a), "=b"(b), "+c"(c), "=d"(d));
     return b & 1;
 }
-/* tabela da thread atual (cria e liga ao GS na primeira vez) */
+/* pthread_t no formato do macOS (struct _pthread do x86_64): cada thread tem o seu bloco, o TSD começa em +0xe0 (768 slots:
+ * 512 externos + 256 internos), o GS aponta para o TSD e tsd[0] é o próprio bloco, que é o pthread_self(). Código compilado
+ * para o macOS lê dados da thread a partir do pthread_self() (o mimalloc do Bun no Claude Code guarda o heap da thread em
+ * pthread_self()+0x300, o tsd[68]). Antes o pthread_self() era main_thread + tid, endereços a um byte uns dos outros: a
+ * escrita de uma thread aparecia deslocada na leitura de outra, e o Bun caía num ponteiro de heap pela metade. */
+#define PT_SIG 0x54485244L                      /* "THRD", o _PTHREAD_SIG do macOS */
+#define PT_TSD_OFS 0xe0
+#define PT_TSD_N 768
+typedef struct {
+    long sig;                                   /* 0x00 */
+    void *cleanup;                              /* 0x08: __cleanup_stack */
+    long tid;                                   /* 0x10: o tid do kernel (mOS) */
+    char pad[PT_TSD_OFS - 0x18];
+    void *tsd[PT_TSD_N];                        /* 0xe0 */
+} cx_pthread_t;
+_Static_assert(__builtin_offsetof(cx_pthread_t, tsd) == PT_TSD_OFS, "tsd em +0xe0, como no macOS");
+/* tabela da thread atual (cria o bloco e liga ao GS na primeira vez) */
 void **cx_tsd(void) {
     if (gs_ok < 0) gs_ok = cpu_has_fsgsbase();
     if (!gs_ok) return tsd_global;
     u64 base;
     __asm__ volatile("rdgsbase %0" : "=r"(base));
     if (!base) {
-        void **t = calloc(TSD_SLOTS, sizeof(void *));
-        if (!t) return tsd_global;
-        base = (u64)t;
+        cx_pthread_t *b = calloc(1, sizeof *b);
+        if (!b) return tsd_global;
+        b->sig = PT_SIG;
+        b->tid = SYS0(SYS_GETTID);
+        b->tsd[0] = b;
+        base = (u64)b->tsd;
         __asm__ volatile("wrgsbase %0" :: "r"(base) : "memory");
-        t[0] = pthread_self();
     }
     return (void **)base;
 }
@@ -231,7 +249,22 @@ int pthread_join(unsigned long t, void **ret) {
     return 0;
 }
 int pthread_detach(unsigned long t) { (void)t; return 0; }
-void *pthread_self(void) { long tid = SYS0(SYS_GETTID); return tid > 1 ? (void *)(main_thread + (tid & 0xFFF)) : main_thread; }
+/* o bloco da thread (tsd[0]); sem FSGSBASE, como antes: main_thread + (tid & 0xFFF) */
+void *pthread_self(void) {
+    void **t = cx_tsd();
+    if (t != tsd_global) return t[0];
+    long tid = SYS0(SYS_GETTID);
+    return tid > 1 ? (void *)(main_thread + (tid & 0xFFF)) : main_thread;
+}
+/* tid do kernel de um pthread_t: o bloco do pthread_self, o tid que o pthread_create devolve, ou main_thread + tid */
+long cx_pthread_tid(void *t) {
+    u64 v = (u64)t;
+    if (!t) return SYS0(SYS_GETTID);
+    if (v < 0x100000ULL) return (long)v;
+    if ((char *)t >= main_thread && (char *)t < main_thread + sizeof main_thread) return (long)((char *)t - main_thread);
+    const cx_pthread_t *b = t;
+    return b->sig == PT_SIG ? b->tid : SYS0(SYS_GETTID);
+}
 int pthread_equal(void *a, void *b) { return a == b; }
 /* thread principal = a que rodou cx_darwin_init (cx_main_tid, dispatch.c); antes disso, ou em apps que
  * não passam por ele, toda thread responde 1 como antes (feito pela sessão do VS Code, com o ok da DMG) */
@@ -423,7 +456,7 @@ int pthread_attr_setstacksize(void *a, size_t s) {
 }
 /* pilha da thread t (pthread_self() = main_thread + (tid & 0xFFF)): a de uma thread do pthread_create, ou a da thread
  * principal do processo (USER_STACK_TOP, 2 MiB: kernel/include/proc.h) */
-static u64 stack_index(void *t) { return (u64)((char *)t - main_thread); }
+static u64 stack_index(void *t) { return (u64)cx_pthread_tid(t) & 0xFFF; }
 size_t pthread_get_stacksize_np(void *t) {
     u64 i = stack_index(t);
     return i < 4096 && thread_stacks[i].top ? (size_t)thread_stacks[i].size : (size_t)(2048 << 10);
@@ -435,7 +468,7 @@ void *pthread_get_stackaddr_np(void *t) {
 int pthread_setname_np(const char *n) { char *getenv(const char *); if (getenv("CX_TRACE_THREADS")) cx_fdprintf(2, "[thread] %ld chama-se \"%s\"\n", SYS0(SYS_GETTID), n ? n : ""); return 0; }   /* diagnóstico temporário */
 /* id da thread: o tid do kernel (o Chromium usa como PlatformThread::CurrentId; antes era sempre 1).
  * Para t != a atual ainda devolve o tid de quem chamou (pthread_t do mOS não guarda o tid). */
-int pthread_threadid_np(void *t, u64 *id) { (void)t; if (id) *id = (u64)SYS0(SYS_GETTID); return 0; }
+int pthread_threadid_np(void *t, u64 *id) { if (id) *id = (u64)cx_pthread_tid(t); return 0; }
 /* os_unfair_lock (u32): 0 = livre, senão o tid do dono. O PartitionAlloc do Chromium protege o heap com
  * ele; como no-op (época de uma thread por processo), a freelist corrompia com várias threads
  * (CHECK "slotsize"/"entrypos"). Feito pela sessão do VS Code. */
@@ -629,9 +662,10 @@ void *mmap(void *addr, size_t len, int prot, int flags, int fd, off_t off) {
     /* MAP_FIXED sobre a pilha (página de guarda do Rust, por exemplo): a região já existe */
     if ((flags & 0x10) && addr && (u64)addr >= 0x400000000000ULL && (u64)addr < 0x400040000000ULL) return addr;
     /* MAP_FIXED|MAP_ANON dentro da área de mmap (ex.: trecho de uma reserva do PartitionAlloc):
-     * troca o trecho por páginas zeradas, ou só devolve as páginas se for PROT_NONE */
+     * troca o trecho por páginas zeradas, ou só devolve as páginas se for PROT_NONE. O trecho continua do processo
+     * (MOS_MUNMAP_KEEP): solto, o topo voltava ao alocador de endereços e o próximo mmap de outro componente caía nele */
     if ((flags & 0x1010) == 0x1010 && addr && (u64)addr >= CX_MMAP_BASE) {
-        SYS2(SYS_MUNMAP, addr, len);
+        SYS3(SYS_MUNMAP, addr, len, MOS_MUNMAP_KEEP);
         /* b = 3: o trecho vira memória sob demanda (páginas zeradas ao tocar; kernel/mm/lazy.c) */
         if (prot) { long c = SYS3(SYS_MMAP, len, 3, addr); if (c < 0) { cx_errno = (int)-c; return (void *)-1; } }
         return addr;
@@ -675,7 +709,16 @@ void pthread_jit_write_protect_np(int enabled) { (void)enabled; }
 int pthread_jit_write_protect_supported_np(void) { return 1; }
 void pthread_jit_write_with_callback_np(void (*cb)(void *), void *ctx) { if (cb) cb(ctx); }
 void sys_icache_invalidate(void *start, size_t len) { (void)start; (void)len; }
-int madvise(void *a, size_t len, int adv) { (void)a; (void)len; (void)adv; return 0; }
+/* MADV_DONTNEED (4), MADV_FREE (5) e MADV_FREE_REUSABLE (7): o conteúdo não importa mais. As páginas privadas da faixa
+ * anônima sob demanda saem e voltam zeradas no próximo toque (kernel: SYS_MUNMAP com MOS_MUNMAP_DISCARD), como o XNU faz
+ * com MADV_FREE (VM_SYNC_KILLPAGES). O mimalloc 3 do Bun (Claude Code) devolve memória assim e depois a trata como
+ * zerada; sem efeito, um bloco "zerado" vinha com dados velhos e o rehash de uma PropertyTable do JSC não terminava.
+ * O resto (WILLNEED, RANDOM, FREE_REUSE...) segue sem efeito. O posix_madvise não descarta nada, como no POSIX. */
+int madvise(void *a, size_t len, int adv) {
+    if ((adv == 4 || adv == 5 || adv == 7) && len && !((u64)a & 0xFFF) && (u64)a >= CX_MMAP_BASE)
+        SYS3(SYS_MUNMAP, a, (len + 0xFFF) & ~(size_t)0xFFF, MOS_MUNMAP_DISCARD);
+    return 0;
+}
 int posix_madvise(void *a, size_t len, int adv) { (void)a; (void)len; (void)adv; return 0; }
 int mlock(const void *a, size_t len) { (void)a; (void)len; return 0; }
 

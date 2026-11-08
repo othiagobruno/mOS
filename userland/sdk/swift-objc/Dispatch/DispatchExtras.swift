@@ -182,3 +182,32 @@ extension DispatchData: _ObjectiveCBridgeable {
 // MARK: - dispatchPrecondition: o mOS não acompanha a fila de cada thread com segurança suficiente para recusar
 
 public func _dispatchPreconditionTest(_ condition: DispatchPredicate) -> Bool { true }
+
+// MARK: - fontes de sinal e de processo (o helper "Computer Use" do Grok Bot observa SIGTERM e o fim do app pai)
+
+extension DispatchSource {
+    public struct ProcessEvent: OptionSet, RawRepresentable {
+        public let rawValue: UInt
+        public init(rawValue: UInt) { self.rawValue = rawValue }
+        public static let exit = ProcessEvent(rawValue: 0x80000000)
+        public static let fork = ProcessEvent(rawValue: 0x40000000)
+        public static let exec = ProcessEvent(rawValue: 0x20000000)
+        public static let signal = ProcessEvent(rawValue: 0x08000000)
+        public static let all: ProcessEvent = [.exit, .fork, .exec, .signal]
+    }
+
+    public static func makeSignalSource(signal: Int32, queue: DispatchQueue? = nil) -> DispatchSourceSignal {
+        _mos_as(_mos_source_create(_mos_source_type("_dispatch_source_type_signal"), UInt(signal), 0, queue), DispatchSourceSignal.self)
+    }
+
+    public static func makeProcessSource(identifier: pid_t, eventMask: ProcessEvent, queue: DispatchQueue? = nil) -> DispatchSourceProcess {
+        _mos_as(_mos_source_create(_mos_source_type("_dispatch_source_type_proc"), UInt(identifier), eventMask.rawValue, queue),
+                DispatchSourceProcess.self)
+    }
+}
+
+extension DispatchSourceProcess {
+    public var handle: pid_t { pid_t(truncatingIfNeeded: _mos_source_handle(_mos_src(self))) }
+    public var data: DispatchSource.ProcessEvent { DispatchSource.ProcessEvent(rawValue: _mos_source_data(_mos_src(self))) }
+    public var mask: DispatchSource.ProcessEvent { DispatchSource.ProcessEvent(rawValue: _mos_source_mask(_mos_src(self))) }
+}

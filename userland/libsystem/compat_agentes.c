@@ -297,3 +297,120 @@ const char *xar_subdoc_name(void *s) { (void)s; return 0; }
 void *xar_subdoc_new(void *x, const char *name) { (void)x; (void)name; return 0; }
 int xar_subdoc_prop_get(void *s, const char *key, const char **value) { (void)s; (void)key; if (value) *value = 0; return -1; }
 int xar_subdoc_prop_set(void *s, const char *key, const char *value) { (void)s; (void)key; (void)value; return -1; }
+
+/* ---- helper "Computer Use" do Grok Bot (CUGrokBotService): constantes de string das chaves que ele consulta */
+#define CFK(sym, str) static cfk_t sym##_s = {cx_cfconst_isa2, 0x7c8, str, sizeof(str) - 1}; const void *sym = &sym##_s;
+CFK(CNContactBirthdayKey, "birthday")
+CFK(CNContactDepartmentNameKey, "departmentName")
+CFK(CNContactEmailAddressesKey, "emailAddresses")
+CFK(CNContactFamilyNameKey, "familyName")
+CFK(CNContactGivenNameKey, "givenName")
+CFK(CNContactIdentifierKey, "identifier")
+CFK(CNContactJobTitleKey, "jobTitle")
+CFK(CNContactMiddleNameKey, "middleName")
+CFK(CNContactNicknameKey, "nickname")
+CFK(CNContactOrganizationNameKey, "organizationName")
+CFK(CNContactPhoneNumbersKey, "phoneNumbers")
+CFK(CNContactPostalAddressesKey, "postalAddresses")
+CFK(NSWorkspaceApplicationKey, "NSWorkspaceApplicationKey")
+CFK(NSWorkspaceDidTerminateApplicationNotification, "NSWorkspaceDidTerminateApplicationNotification")
+CFK(NSURLContentModificationDateKey, "NSURLContentModificationDateKey")
+CFK(kCLErrorDomain, "kCLErrorDomain")
+
+/* ---- ApplicationServices: sem permissão de acessibilidade (AXIsProcessTrusted = 0), as consultas falham com
+ * kAXErrorAPIDisabled, como num Mac antes de autorizar o app */
+#define AX_DISABLED (-25211)
+int AXUIElementCopyElementAtPosition(void *app, float x, float y, void **out) { (void)app; (void)x; (void)y; if (out) *out = 0; return AX_DISABLED; }
+int AXUIElementGetPid(void *e, int *pid) { (void)e; if (pid) *pid = 0; return AX_DISABLED; }
+int AXUIElementIsAttributeSettable(void *e, void *attr, u8 *settable) { (void)e; (void)attr; if (settable) *settable = 0; return AX_DISABLED; }
+int AXUIElementSetMessagingTimeout(void *e, float s) { (void)e; (void)s; return 0; }
+int _AXUIElementGetWindow(void *e, u32 *wid) { (void)e; if (wid) *wid = 0; return AX_DISABLED; }
+
+/* ---- CoreGraphics: CGContextAddPath copia os elementos do CGPath para o caminho atual do contexto */
+typedef struct { double x, y; } cu_pt_t;
+typedef struct { i32 type; cu_pt_t *pts; } cu_elem_t;
+void CGPathApply(const void *path, void *info, void (*fn)(void *, const cu_elem_t *));
+void CGContextMoveToPoint(void *c, double x, double y);
+void CGContextAddLineToPoint(void *c, double x, double y);
+void CGContextAddCurveToPoint(void *c, double c1x, double c1y, double c2x, double c2y, double x, double y);
+void CGContextClosePath(void *c);
+typedef struct { void *ctx; cu_pt_t cur, start; } addpath_t;
+static void addpath_el(void *info, const cu_elem_t *e) {
+    addpath_t *a = info;
+    cu_pt_t *p = e->pts;
+    switch (e->type) {
+    case 0: CGContextMoveToPoint(a->ctx, p[0].x, p[0].y); a->cur = a->start = p[0]; break;
+    case 1: CGContextAddLineToPoint(a->ctx, p[0].x, p[0].y); a->cur = p[0]; break;
+    case 2: {                                       /* quadrática -> cúbica: c1 = p0 + 2/3 (q - p0), c2 = p + 2/3 (q - p) */
+        cu_pt_t q = p[0], e2 = p[1], c0 = a->cur;
+        CGContextAddCurveToPoint(a->ctx, c0.x + 2.0 / 3 * (q.x - c0.x), c0.y + 2.0 / 3 * (q.y - c0.y),
+                                 e2.x + 2.0 / 3 * (q.x - e2.x), e2.y + 2.0 / 3 * (q.y - e2.y), e2.x, e2.y);
+        a->cur = e2;
+        break;
+    }
+    case 3: CGContextAddCurveToPoint(a->ctx, p[0].x, p[0].y, p[1].x, p[1].y, p[2].x, p[2].y); a->cur = p[2]; break;
+    case 4: CGContextClosePath(a->ctx); a->cur = a->start; break;
+    }
+}
+void CGContextAddPath(void *ctx, const void *path) { addpath_t a = {ctx, {0, 0}, {0, 0}}; if (ctx && path) CGPathApply(path, &a, addpath_el); }
+
+/* ---- Accelerate: vImageBoxConvolve_Planar8 (média numa janela kh x kw; borda: copia a borda (kvImageEdgeExtend) ou
+ * usa o fundo (kvImageBackgroundColorFill, 4)). kvImageGetTempBufferSize (128): não precisa de buffer, devolve 0. */
+typedef struct { void *data; u64 height, width, rowBytes; } vimg_t;
+long vImageBoxConvolve_Planar8(const vimg_t *src, const vimg_t *dst, void *tmp, u64 rx, u64 ry, u32 kh, u32 kw, u8 bg, u32 flags) {
+    (void)tmp;
+    if (flags & 128) return 0;
+    if (!src || !dst || !(kh & 1) || !(kw & 1)) return -21767;            /* kvImageInvalidKernelSize */
+    int hh = (int)kh / 2, hw = (int)kw / 2;
+    for (u64 y = 0; y < dst->height; y++) {
+        u8 *out = (u8 *)dst->data + y * dst->rowBytes;
+        for (u64 x = 0; x < dst->width; x++) {
+            u32 sum = 0;
+            for (int dy = -hh; dy <= hh; dy++) for (int dx = -hw; dx <= hw; dx++) {
+                i64 sy = (i64)(y + ry) + dy, sx = (i64)(x + rx) + dx;
+                if (sy < 0 || sx < 0 || sy >= (i64)src->height || sx >= (i64)src->width) {
+                    if (flags & 4) { sum += bg; continue; }
+                    sy = sy < 0 ? 0 : sy >= (i64)src->height ? (i64)src->height - 1 : sy;
+                    sx = sx < 0 ? 0 : sx >= (i64)src->width ? (i64)src->width - 1 : sx;
+                }
+                sum += ((const u8 *)src->data)[(u64)sy * src->rowBytes + (u64)sx];
+            }
+            out[x] = (u8)((sum + kh * kw / 2) / (kh * kw));
+        }
+    }
+    return 0;
+}
+
+/* ---- AppleEvents: automação de outro app não autorizada (errAEEventNotPermitted), como sem a permissão no Mac */
+int AEDeterminePermissionToAutomateTarget(const void *target, u32 cls, u32 id_, u8 ask) { (void)target; (void)cls; (void)id_; (void)ask; return -1743; }
+/* ---- VideoToolbox: sem conversão de CVPixelBuffer para CGImage (kVTParameterErr) */
+int VTCreateCGImageFromCVPixelBuffer(void *pb, void *opts, void **out) { (void)pb; (void)opts; if (out) *out = 0; return -12902; }
+/* ---- libsqlite3: o mOS não tem SQLite; abrir falha com SQLITE_CANTOPEN e o chamador segue sem o banco */
+int sqlite3_open_v2(const char *name, void **db, int flags, const char *vfs) { (void)name; (void)flags; (void)vfs; if (db) *db = 0; return 14; }
+int sqlite3_exec(void *db, const char *sql, void *cb, void *arg, char **err) { (void)db; (void)sql; (void)cb; (void)arg; if (err) *err = 0; return 21; }   /* SQLITE_MISUSE */
+int sqlite3_close(void *db) { (void)db; return 0; }
+/* par-ímpar: o rasterizador de caminhos do AppKit do mOS só preenche com a regra do enrolamento (diferente só em
+ * caminhos que se cruzam) */
+void CGContextFillPath(void *c);
+void CGContextEOFillPath(void *c) { CGContextFillPath(c); }
+
+/* ---- AppKit (extensão Swift do NSScreen, macOS 12): as áreas ao lado do entalhe da câmera. O mOS não tem entalhe:
+ * nil. Getters swiftcc: self em r13, Optional<CGRect> (33 bytes) pelo resultado indireto em rax: carga zero e o byte de
+ * tag do caso vazio = 1. */
+#define MOS_NIL_CGRECT_GETTER(sym) \
+    __asm__(".text\n.globl \"" sym "\"\n\"" sym "\":\n" \
+            "  movq $0, (%rax)\n  movq $0, 8(%rax)\n  movq $0, 16(%rax)\n  movq $0, 24(%rax)\n  movb $1, 32(%rax)\n  ret\n");
+MOS_NIL_CGRECT_GETTER("$sSo8NSScreenC6AppKitE20auxiliaryTopLeftAreaSo6CGRectVSgvg")
+MOS_NIL_CGRECT_GETTER("$sSo8NSScreenC6AppKitE21auxiliaryTopRightAreaSo6CGRectVSgvg")
+/* ---- QuartzCore (overlay Swift, macOS 12): CAFrameRateRange(minimum:maximum:preferred:). swiftcc: minimum em xmm0,
+ * maximum em xmm1, preferred (Float?) em rdi (bits 0-31 o valor, byte 32 a tag: 1 = nil); o struct de 3 Float volta em
+ * xmm0/xmm1/xmm2 (preferred nil = 0). Conferido com o swift-frontend do toolchain. */
+__asm__(".text\n.globl \"$sSo16CAFrameRateRangeV10QuartzCoreE7minimum7maximum9preferredABSf_S2fSgtcfC\"\n"
+        "\"$sSo16CAFrameRateRangeV10QuartzCoreE7minimum7maximum9preferredABSf_S2fSgtcfC\":\n"
+        "  pxor %xmm2, %xmm2\n  movq %rdi, %rax\n  shrq $32, %rax\n  testb $1, %al\n  jnz 1f\n  movd %edi, %xmm2\n1:\n  ret\n");
+/* ---- CoreMedia (overlay Swift): CMSampleBuffer.imageBuffer. swiftcc: self em r13; devolve CVImageBuffer? em rax com
+ * +1 (o Swift libera o que recebe de um getter), então retém o resultado do CMSampleBufferGetImageBuffer (regra Get) */
+__asm__(".text\n.globl \"$sSo17CMSampleBufferRefa9CoreMediaE05imageB0So08CVBufferC0aSgvg\"\n"
+        "\"$sSo17CMSampleBufferRefa9CoreMediaE05imageB0So08CVBufferC0aSgvg\":\n"
+        "  pushq %rbp\n  movq %rsp, %rbp\n  movq %r13, %rdi\n  call CMSampleBufferGetImageBuffer\n"
+        "  testq %rax, %rax\n  jz 1f\n  movq %rax, %rdi\n  call CFRetain\n1:\n  popq %rbp\n  ret\n");

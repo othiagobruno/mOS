@@ -244,6 +244,29 @@ FOUNDATION_EXPORT NSErrorUserInfoKey const NSURLErrorFailingURLStringErrorKey;
 @property (readonly) NSInteger secondsFromGMT;
 @end
 
+/* NSDateComponents (bridging de DateComponents) e NSFileHandle (FileHandle.write(contentsOf:)): o helper "Computer Use"
+ * do Grok Bot; implementados em userland/libsystem/foundation_extra.c e foundation_more.c */
+@interface NSDateComponents : NSObject <NSCopying>
+@property NSInteger era;
+@property NSInteger year;
+@property NSInteger month;
+@property NSInteger day;
+@property NSInteger hour;
+@property NSInteger minute;
+@property NSInteger second;
+@property NSInteger nanosecond;
+@property NSInteger weekday;
+@property NSInteger weekOfYear;
+@property NSInteger yearForWeekOfYear;
+@property (nullable, copy) NSTimeZone *timeZone;
+@end
+
+__attribute__((swift_name("FileHandle")))
+@interface NSFileHandle : NSObject <NSSecureCoding>
+- (void)writeData:(NSData *)data;
+@property (readonly) int fileDescriptor;
+@end
+
 /* ---- tipos do marco B: IndexSet, Notification, URLRequest, URLResourceValues, KVO, URLSession */
 typedef NSString *NSURLResourceKey NS_TYPED_EXTENSIBLE_ENUM NS_SWIFT_NAME(URLResourceKey);
 typedef NSString *NSNotificationName NS_TYPED_EXTENSIBLE_ENUM;

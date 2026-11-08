@@ -13,9 +13,19 @@
 param([Parameter(Mandatory = $true)][string]$App, [string]$OutDir = 'build-electron', [int]$SizeMiB = 768,
       [switch]$Autostart, [switch]$Diagnostico, [switch]$CaLog, [int]$MaxModuloMiB = 16,
       [string]$Args0 = '--in-process-gpu --disable-gpu --no-sandbox --enable-logging --v=0', [string]$Tracepoints = '',
-      [string]$SubstituirApp = '', [switch]$ComSwift, [string]$AbrirURL = '', [int]$AbrirAposMs = 120000, [string]$ComApp = '')
+      [string]$SubstituirApp = '', [switch]$ComSwift, [string]$AbrirURL = '', [int]$AbrirAposMs = 120000, [string]$ComApp = '',
+      [string]$NavegadorPadrao = '', [string[]]$ArgumentosApp = @(), [string]$MotorHorizonte = '',
+      [string]$AbrirURL2 = '', [int]$AbrirApos2Ms = 180000)
+# -MotorHorizonte <Chromium.app preparado pelo tools\stage-chromium.ps1>: o motor do Horizonte, em
+#   /Sistema/Biblioteca/Horizonte/Chromium.app (fora de /Aplicativos: um app só, o Horizonte). docs/navegador-chromium.md
+# -NavegadorPadrao <CFBundleIdentifier>: a escolha do usuário em Ajustes > Navegador padrão (LSHandlers de http/https em
+#   ~/Library/Preferences/com.apple.LaunchServices/com.apple.launchservices.secure.plist, que o launchsvc.c lê), ex.:
+#   com.google.Chrome para testar o login pelo navegador com o Chrome do -ComApp no lugar do Horizonte/Chromium.
+# -ArgumentosApp '<id>=<args>' (um ou mais): linhas de /Sistema/Biblioteca/Preferencias/com.mos.argumentos.cfg, os
+#   argumentos que o sistema acrescenta ao abrir o app (o Chrome no mOS precisa de --no-sandbox --in-process-gpu --disable-gpu).
 # -AbrirURL <url> [-AbrirAposMs N]: N ms depois de iniciar o app, o init roda /usr/bin/open <url> (ex.: slack://open),
 #   para testar a entrega de URLs ao app (openurl.c no libSystem). Argumentos do init: até 128 caracteres.
+# -AbrirURL2 <url> [-AbrirApos2Ms N]: um segundo open(1), ex.: o slack:// no Chrome que o primeiro já abriu.
 # -ComApp <pasta .app já preparada>: copia mais um app para /Aplicativos (ex.: o Google Chrome de build-chrome\esp,
 #   que o stage-chrome.ps1 já reduziu à fatia x86_64), para o app testado abrir https://... nele.
 $root = Split-Path $PSScriptRoot -Parent
@@ -134,6 +144,11 @@ if ($AbrirURL) {
     if ($AbrirURL.Length -gt 127) { Write-Host 'AbrirURL: o init aceita até 127 caracteres de argumentos' -ForegroundColor Red; exit 1 }
     "Programa=/usr/bin/open`nArgumentos=$AbrirURL`nAtrasoMs=$AbrirAposMs" | Set-Content -Encoding ascii $svcUrl
 } else { Remove-Item $svcUrl -ErrorAction SilentlyContinue }
+$svcUrl2 = "$esp\mOS\Sistema\Biblioteca\LaunchDaemons\com.mos.zz-abrir-url2.servico"
+if ($AbrirURL2) {
+    if ($AbrirURL2.Length -gt 127) { Write-Host 'AbrirURL2: o init aceita até 127 caracteres de argumentos' -ForegroundColor Red; exit 1 }
+    "Programa=/usr/bin/open`nArgumentos=$AbrirURL2`nAtrasoMs=$AbrirApos2Ms" | Set-Content -Encoding ascii $svcUrl2
+} else { Remove-Item $svcUrl2 -ErrorAction SilentlyContinue }
 if ($ComApp) {
     $extra = (Resolve-Path -LiteralPath $ComApp).Path
     $to = "$esp\mOS\Aplicativos\" + (Split-Path $extra -Leaf)
@@ -144,6 +159,31 @@ if ($ComApp) {
     $global:LASTEXITCODE = 0
     $emb = (Get-ChildItem -LiteralPath $to -Recurse -File | Measure-Object Length -Sum).Sum / 1MB
     Write-Host ("+ {0}: {1:N1} MiB" -f (Split-Path $extra -Leaf), $emb) -ForegroundColor Cyan
+}
+if ($MotorHorizonte) {
+    $motor = (Resolve-Path -LiteralPath $MotorHorizonte).Path
+    $to = "$esp\mOS\Sistema\Biblioteca\Horizonte\Chromium.app"
+    if (Test-Path -LiteralPath $to) { [IO.Directory]::Delete('\\?\' + $to, $true) }
+    robocopy $motor $to /E /NFL /NDL /NJH /NJS /NP /R:1 /W:1 | Out-Null
+    if ($LASTEXITCODE -ge 8) { Write-Host "MotorHorizonte: falhou a cópia de $motor" -ForegroundColor Red; exit 1 }
+    $global:LASTEXITCODE = 0
+    $emb = (Get-ChildItem -LiteralPath $to -Recurse -File | Measure-Object Length -Sum).Sum / 1MB
+    Write-Host ("+ motor do Horizonte (Chromium): {0:N1} MiB" -f $emb) -ForegroundColor Cyan
+}
+if ($NavegadorPadrao) {
+    $pref = "$esp\mOS\Users\Visitante\Library\Preferences\com.apple.LaunchServices"
+    New-Item -ItemType Directory -Force $pref | Out-Null
+    $h = foreach ($s in 'http', 'https') {
+        "`t`t<dict>`n`t`t`t<key>LSHandlerURLScheme</key>`n`t`t`t<string>$s</string>`n`t`t`t<key>LSHandlerRoleAll</key>`n`t`t`t<string>$NavegadorPadrao</string>`n`t`t</dict>"
+    }
+    ("<?xml version=`"1.0`" encoding=`"UTF-8`"?>`n<!DOCTYPE plist PUBLIC `"-//Apple//DTD PLIST 1.0//EN`" `"http://www.apple.com/DTDs/PropertyList-1.0.dtd`">`n" +
+     "<plist version=`"1.0`">`n<dict>`n`t<key>LSHandlers</key>`n`t<array>`n" + ($h -join "`n") + "`n`t</array>`n</dict>`n</plist>") |
+        Set-Content -Encoding ascii "$pref\com.apple.launchservices.secure.plist"
+    Write-Host "navegador padrão: $NavegadorPadrao" -ForegroundColor Cyan
+}
+if ($ArgumentosApp.Count) {
+    New-Item -ItemType Directory -Force "$esp\mOS\Sistema\Biblioteca\Preferencias" | Out-Null
+    ($ArgumentosApp -join "`n") | Set-Content -Encoding ascii "$esp\mOS\Sistema\Biblioteca\Preferencias\com.mos.argumentos.cfg"
 }
 if ($Diagnostico) {
     foreach ($f in 'dyld-registrar', 'stderr-serial', 'despejar-threads') { Set-Content -Path "$esp\mOS\Sistema\Biblioteca\$f" -Value '1' -Encoding ascii }

@@ -6,10 +6,11 @@
  *         Argumentos=10              (opcional)
  *         ManterVivo=sim             (reinicia se terminar; com limite para não entrar em laço)
  *         AtrasoMs=3000              (opcional: espera antes de iniciar, ex.: apps que precisam do desktop)
+ *         Entrada=/dev/null          (opcional: arquivo da entrada padrão; sem ela, o terminal do console)
  *  2. plists do launchd (XML) em /System/Library/LaunchDaemons, /Library/LaunchDaemons, /Library/LaunchAgents,
  *     /Users/<nome>/Library/LaunchAgents e /Sistema/Biblioteca/LaunchDaemons: Label, Program, ProgramArguments,
- *     MachServices, RunAtLoad, KeepAlive, EnvironmentVariables, WorkingDirectory, StandardOutPath,
- *     StandardErrorPath, Disabled.
+ *     MachServices, RunAtLoad, KeepAlive, EnvironmentVariables, WorkingDirectory, StandardInPath (padrão
+ *     /dev/null, como no launchd), StandardOutPath, StandardErrorPath, Disabled.
  *
  * MachServices: cada nome é reservado no bootstrap do kernel (MACH_BS_RESERVE): o launchd guarda o direito de
  * receber num conjunto de portas e, quando chega a primeira mensagem, inicia o job (ativação sob demanda). O
@@ -35,7 +36,7 @@ typedef struct {
     char argv[MAX_ARGS][160]; int argc;
     char env[MAX_ENV][192]; int envc;
     char svc[MAX_SVC][128]; unsigned port[MAX_SVC]; int nsvc;
-    char out[192], err[192], wd[192];
+    char in[192], out[192], err[192], wd[192];   /* in: StandardInPath / Entrada= */
     int keep, runatload, delay_ms;
     volatile int pid;
     int restarts, last_status, crashes;
@@ -82,11 +83,55 @@ static const char *base_env[] = { "HOME=/Users/Visitante", "USER=visitante", "LO
                                   "PATH=/usr/local/bin:/Sistema/Programas:/usr/bin:/bin:/usr/sbin:/sbin", "TERM=dumb",
                                   "LANG=pt_BR.UTF-8", "SHELL=/bin/msh", "TMPDIR=/tmp/" };
 
+/* Argumentos= em argv com as regras do split_args do kernel (compat/macho.c): aspas simples/duplas e barra invertida */
+static int split_args(const char *s, const char **out, int max, char *store, usize cap) {
+    int n = 0;
+    usize o = 0;
+    while (s && *s && n < max) {
+        while (*s == ' ' || *s == '\t') s++;
+        if (!*s) break;
+        out[n++] = store + o;
+        char q = 0;
+        while (*s && (q || (*s != ' ' && *s != '\t'))) {
+            if (!q && (*s == '"' || *s == '\'')) { q = *s++; continue; }
+            if (q && *s == q) { q = 0; s++; continue; }
+            if (*s == '\\' && s[1]) s++;
+            if (o + 1 < cap) store[o++] = *s;
+            s++;
+        }
+        if (o < cap) store[o++] = 0;
+    }
+    return n;
+}
+
+/* entrada padrão do filho: sem uma ação para o fd 0 ele lê o terminal do console, que nunca chega ao fim (quem lê o
+ * stdin inteiro antes de começar, como o "claude -p", ficava parado para sempre) */
+static void fa_stdin(mos_spawn_fa_t *a, const char *path) {
+    memset(a, 0, sizeof *a);
+    a->kind = MOS_SPAWN_FA_OPEN;
+    a->a = 0;
+    a->flags = MOS_O_RDONLY;
+    scopy(a->path, path, sizeof a->path);
+}
+
 static void start(job_t *j) {
     j->last_start = time_ms();
     j->restart_at = 0;
-    if (j->legacy) {
+    if (j->legacy && !j->in[0]) {
         j->pid = spawn(j->prog, j->args[0] ? j->args : 0);
+    } else if (j->legacy) {
+        /* Entrada=: mesmo argv e ambiente curto padrão (envp 0) do caminho acima, com o fd 0 aberto no arquivo */
+        static char prog[256], store[320];
+        const char *argv[MAX_ARGS + 2];
+        if (j->prog[0] == '/') scopy(prog, j->prog, sizeof prog);
+        else cat2(prog, sizeof prog, "/Sistema/Programas/", j->prog);
+        argv[0] = prog;
+        int n = 1 + split_args(j->args, argv + 1, MAX_ARGS, store, sizeof store);
+        argv[n] = 0;
+        mos_spawn_fa_t in;
+        fa_stdin(&in, j->in);
+        mos_spawn_vec_t v = { (u64)argv, 0, (u64)&in, 1, 0 };
+        j->pid = (int)sys3(SYS_SPAWNVEC, (u64)prog, (u64)&v, 0);
     } else {
         const char *argv[MAX_ARGS + 1], *envp[MAX_ENV + 16];
         int n = 0, e = 0;
@@ -106,8 +151,9 @@ static void start(job_t *j) {
         for (int k = 0; k < j->envc; k++) envp[e++] = j->env[k];
         envp[e++] = xsn;
         envp[e] = 0;
-        mos_spawn_fa_t acts[3];
+        mos_spawn_fa_t acts[4];
         int na = 0;
+        fa_stdin(&acts[na++], j->in[0] ? j->in : "/dev/null");   /* o launchd do macOS também usa /dev/null */
         const char *paths[2] = { j->out, j->err };
         for (int s = 0; s < 2; s++) {
             if (!paths[s][0]) continue;
@@ -179,6 +225,7 @@ static void load_legacy(const char *path, const char *fname) {
             else if (kl == 10 && !strncmp(l, "Argumentos", 10)) scopy(j->args, v, sizeof j->args);
             else if (kl == 10 && !strncmp(l, "ManterVivo", 10)) j->keep = !strcmp(v, "sim");
             else if (kl == 8 && !strncmp(l, "AtrasoMs", 8)) j->delay_ms = atoi(v);
+            else if (kl == 7 && !strncmp(l, "Entrada", 7)) scopy(j->in, v, sizeof j->in);
         }
         while (*l && *l != '\n') l++;
         if (*l) l++;
@@ -228,6 +275,7 @@ static job_t *load_plist(const char *path, const char **why) {
         for (pnode_t *c = ev->child; c && j->envc < MAX_ENV; c = c->next)
             if (c->key && c->type == PN_STRING) { cat2(j->env[j->envc], sizeof j->env[0], c->key, "="); cat2(j->env[j->envc], sizeof j->env[0], j->env[j->envc], c->str); j->envc++; }
     scopy(j->wd, plist_str(root, "WorkingDirectory"), sizeof j->wd);
+    scopy(j->in, plist_str(root, "StandardInPath"), sizeof j->in);
     scopy(j->out, plist_str(root, "StandardOutPath"), sizeof j->out);
     scopy(j->err, plist_str(root, "StandardErrorPath"), sizeof j->err);
     j->keep = plist_bool(root, "KeepAlive", 0);

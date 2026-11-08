@@ -26,10 +26,10 @@ O DMG do Antigravity abre com o leitor do próprio mOS: `build\dmgtest.exe antig
 
 | Codex desktop: `Resources/codex` (o agente, Rust) e `rg` | 1 (`CFURLCreateWithBytes`) | **0** |
 | Codex desktop: `native/*.node` e `app.asar.unpacked` (com as dylibs Swift de `build\swift\objc\dylib`) | ~980 | só `napi_*`, Sparkle (vem no bundle) e partes Swift/ScreenCaptureKit dos módulos opcionais |
-| Grok Bot: helper "Computer Use" (`CUGrokBotService`, Swift) com as dylibs Swift do mOS | 873 | 84: `CGEvent*` (injetar entrada), `AXUIElement*`, Contacts/EventKit, CryptoKit em Swift, ScreenCaptureKit |
+| Grok Bot: helper "Computer Use" (`CUGrokBotService`, Swift) com as dylibs Swift do mOS | 7936 | **0** (eram 79; ver "Computer Use do Grok Bot") |
 
-Sobram, de propósito: o helper "Computer Use" do Grok Bot (Swift, 873) e o `cable_ble_scanner` do Antigravity (Swift),
-que são recursos opcionais e esperam o runtime Swift ([swift-objc-runtime.md](swift-objc-runtime.md)).
+Sobra, de propósito, o `cable_ble_scanner` do Antigravity (Swift),
+um recurso opcional que espera o runtime Swift ([swift-objc-runtime.md](swift-objc-runtime.md)).
 
 ## O que entrou
 
@@ -148,7 +148,7 @@ Pendentes: o login (do usuário), o git (o bottle tem 619 MiB, grande demais par
 - `NSSearchPathForDirectoriesInDomains(NSApplicationDirectory)`: devolvia `~/Library`, o `isInApplicationsFolder()`
   do Electron dizia não e o app ficava no diálogo modal "Mover o Grok Bot para a pasta Aplicativos?" (o thread
   principal aparece em `modal_loop` no despejo de threads).
-Pendentes: o login (do usuário) e o helper "Computer Use" (Swift, 84 símbolos de entrada sintética e acessibilidade).
+Pendente: o login (do usuário). O helper "Computer Use" já liga todos os símbolos (seção abaixo).
 
 ## Codex desktop na VM (7 nov., noite)
 
@@ -181,7 +181,45 @@ Pendentes: o login (do usuário) e o helper "Computer Use" (Swift, 84 símbolos 
   `NSCharacterSet characterSetWithCharactersInString:`, `NSURLSession` com delegate), agora em
   `userland/libsystem/compat_objc_extra.c` (registrado no fim do `cx_objc_boot`). Os callbacks de delegate do
   `NSURLSession` ainda não existem, então o Sparkle informa "error in retrieving update information".
+- `NSURLSession` com delegate agora entrega os callbacks (`didReceiveData:`, `didFinishDownloadingToURL:`,
+  `didCompleteWithError:`) em `foundation_more.c`; o Sparkle baixa o appcast. O `NSURLRequest` ganhou init de
+  instância, `timeoutInterval` e cópias que retêm os campos (antes uma cópia liberada deixava o corpo da requisição
+  pendurado e o `http_do` caía com #GP).
+- O appcast é lido com `NSXMLDocument` (`initWithData:options:error:` + `nodesForXPath:`), que era só um esboço.
+  `userland/libsystem/xmldom.c` traz a árvore: `NSXMLNode`/`NSXMLElement`/`NSXMLDocument` com filhos, atributos,
+  `stringValue`, `elementsForName:`, `attributeForName:`, `XMLString` e XPath sem predicados (`/`, `//`, `*`, `@`,
+  `text()`). Nomes com prefixo (`sparkle:version`) ficam qualificados, como na Apple.
+- Com o working tree inteiro (que já dá boot), o Codex fica estável na tela "Get started" por mais de 4 min, sem #GP.
 - **Pendente:** num worktree limpo (kernel e libSystem só do que está commitado), a janela do Codex deixou de
   aparecer, com ou sem Sparkle e runtime Swift; a rodada boa usava o working tree inteiro, que tem correções de
-  AppKit/QuartzCore ainda não commitadas de outra sessão. O kernel desse working tree hoje cai no boot (trabalho em
-  andamento da outra sessão), então o teste junto espera ela estabilizar.
+  AppKit/QuartzCore ainda não commitadas de outra sessão (o boot desse working tree, que caía por causa do XSAVE em
+  andamento, voltou com o recuo para FXSAVE). Quando essas correções entrarem, a janela vale também no tree limpo.
+
+## Computer Use do Grok Bot (7 nov., noite)
+
+O helper `Grok Bot Computer Use.app/Contents/MacOS/CUGrokBotService` (Swift) ia de 79 símbolos ausentes a **0**:
+- **Entrada sintética para o sistema todo:** `GUI_DEVICE`/`DEV_INPUT_POST` (op 3, `kernel/dev/gamepad.c`) empurra um
+  `input_event_t` na fila global de entrada, a mesma do teclado e do mouse de verdade. `userland/libsystem/cgevent.c`
+  (novo) monta os `CGEvent` de mouse (cliques, arrastos, botão do meio), rolagem (`CGEventCreateScrollWheelEvent2`,
+  pixels → linhas), teclado (código virtual do Mac → tecla do mOS) e texto (`CGEventKeyboardSetUnicodeString`, até
+  Latin-1), e `CGEventPost`/`CGEventPostToPid`/`CGWarpMouseCursorPosition` os injetam. Num kernel sem a operação, a
+  tecla volta ao caminho antigo (só a janela-chave do próprio app). As versões antigas saíram de `slack_frameworks.c`,
+  `vscode_frameworks.c` e `chrome.c`.
+- **Acessibilidade e automação:** `AXIsProcessTrusted` continua 0, e os `AXUIElement*` novos respondem
+  `kAXErrorAPIDisabled`; `AEDeterminePermissionToAutomateTarget` dá `errAEEventNotPermitted`. O helper segue pelo
+  caminho "sem permissão", como num Mac antes de autorizar.
+- **C e ObjC** (`compat_agentes.c`, `vscode_fwclasses.c`): constantes do Contacts/AppKit/CoreLocation, classes vazias do
+  ScreenCaptureKit/Contacts/EventKit/CoreLocation, `CGContextAddPath` (quadráticas viram cúbicas),
+  `CGContextEOFillPath`, `vImageBoxConvolve_Planar8`, e falhas limpas de `sqlite3_open_v2` (o mOS não tem SQLite) e
+  `VTCreateCGImageFromCVPixelBuffer`.
+- **Swift:** `CryptoKit.framework` novo (`userland/frameworks/CryptoKit`: `HashFunction`, `Digest`, `SHA256` sobre o
+  `CC_SHA256_*`); overlay `CoreGraphics` com `CGPathFillRule`, `fillPath(using:)`, `move(to:transform:)`,
+  `addArc(tangent1End:…)`, `contains(_:using:transform:)` e `CGAffineTransform.identity` (no ramo com interop ObjC o
+  `CFCGTypes.h` não renomeia mais `CGAffineTransform`/`CGVector` para `MOSCG…`, para o mangling ser o da Apple);
+  `Dispatch` com `ProcessEvent`, `makeSignalSource`, `makeProcessSource`; `os` com `Logger.logObject` e
+  `OSAllocatedUnfairLock` (`@frozen`, um `ManagedBuffer`: os apps inlinam os métodos); `Foundation` com a ponte
+  `DateComponents` ↔ `NSDateComponents`, `FileHandle.write(contentsOf:)` e `init?(_bridgedNSError:)` sem `__shared`
+  (o mangling da Apple). Três getters/inits Swift de frameworks que no mOS são o libSystem estão em assembly no
+  `compat_agentes.c` (`NSScreen.auxiliaryTopLeftArea/RightArea` = nil, `CAFrameRateRange.init(minimum:maximum:preferred:)`,
+  `CMSampleBuffer.imageBuffer`), com a convenção swiftcc conferida no `swift-frontend`.
+- Captura de tela (`SCScreenshotManager`) ainda não existe: as classes estão vazias e o helper recebe nil.

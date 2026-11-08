@@ -11,11 +11,16 @@
  *   NSAnimation: termina na hora (progresso 1, animationDidEnd:). NSAnimationContext: grupos imediatos.
  *   NSParagraphStyle/NSMutableParagraphStyle, NSFontManager, NSPrintInfo, NSSpellChecker (sem erros),
  *   NSDocumentController (documentos recentes em memória), NSWorkspaceOpenConfiguration, NSToolbar,
- *   NSBitmapImageRep (buffer RGBA), Touch Bar (objetos sem barra).
+ *   NSBitmapImageRep (buffer RGBA; initWithData: pelo decodificador do kernel), Touch Bar (objetos sem barra).
+ *   +[NSImage imageWithSize:flipped:drawingHandler:]: imagem do tamanho pedido, sem desenhar.
  */
 #include "foundation.h"
+#include "sys.h"
+#include "../../kernel/include/compat_gui.h"
 
 void *calloc(size_t n, size_t s);
+void *malloc(size_t n);
+void free(void *p);
 void *memset(void *d, int c, size_t n);
 int strcmp(const char *a, const char *b);
 id objc_retain(id o);
@@ -125,23 +130,48 @@ static double sb_thickness(id self, SEL c) { (void)self; (void)c; return 24; }
 static id si_button(id self, SEL c) { (void)c; return pget(self, "button"); }
 static id si_bar(id self, SEL c) { (void)self; (void)c; return sb_system((id)&NSStatusBar_c, 0); }
 
-/* ---- animações: terminam na hora */
+/* ---- animações: não desenham passos, só terminam. Modo bloqueante (NSAnimationBlocking = 0, o padrão): termina antes de
+ * startAnimation voltar, como no AppKit. Modos não bloqueantes (1, 2): no AppKit a animação corre no run loop e o
+ * animationDidEnd: vem depois. Terminar dentro do startAnimation fechava janelas no meio de quem chamou: o diálogo
+ * "Abrir Slack?" do Chromium fecha com ViewsNSWindowCloseAnimator (NSAnimationNonblocking), e o -close dentro do clique
+ * derrubava o navegador em CHECK(!on_call_stack_) (ui/views/widget/widget.cc) logo depois de entregar o slack://.
+ * Agora o fim vai para a fila principal depois da duração (no máximo 1 s); stopAnimation cancela o fim pendente. */
+void *dispatch_get_main_queue(void);
+void dispatch_after_f(u64 when, void *q, void *ctx, void (*fn)(void *));
+u64 dispatch_time(u64 when, long delta);
 static id an_init(id self, SEL c, double dur, i64 curve) { (void)c; s_duration(self, 0, dur); s_animationCurve(self, 0, curve); return self; }
 static double an_progress(id self, SEL c) { (void)c; return pget_d(self, "progress", 0); }
 static void an_set_progress(id self, SEL c, double p) { (void)c; pset(self, "progress", cx_num_d(p)); }
+static void an_end(id self) {
+    MSG(void, self, "setCurrentProgress:", 1.0);
+    id d = pget(self, "delegate");
+    if (d && cx_responds(object_getClass(d), sel_registerName("animationDidEnd:"))) MSG(void, d, "animationDidEnd:", self);
+}
+static void an_fire(void *ctx) {
+    id self = ctx;
+    if (pget_i(self, "running", 0)) { pset(self, "running", cx_num_i(0)); an_end(self); }
+    objc_release(self);                                   /* a referência do fim pendente (an_start) */
+}
 static void an_start(id self, SEL c) {
     (void)c;
     id d = pget(self, "delegate");
     if (d && cx_responds(object_getClass(d), sel_registerName("animationShouldStart:")) && !MSG(BOOL, d, "animationShouldStart:", self)) return;
-    MSG(void, self, "setCurrentProgress:", 1.0);
-    if (d && cx_responds(object_getClass(d), sel_registerName("animationDidEnd:"))) MSG(void, d, "animationDidEnd:", self);
+    if (pget_i(self, "animationBlockingMode", 0) == 0) { an_end(self); return; }
+    if (pget_i(self, "running", 0)) return;
+    pset(self, "running", cx_num_i(1));
+    double dur = pget_d(self, "duration", 0);
+    if (!(dur > 0)) dur = 0;
+    if (dur > 1) dur = 1;
+    objc_retain(self);
+    dispatch_after_f(dispatch_time(0, (long)(dur * 1e9)), dispatch_get_main_queue(), self, an_fire);
 }
 static void an_stop(id self, SEL c) {
     (void)c;
+    pset(self, "running", cx_num_i(0));                   /* um fim pendente não chama mais animationDidEnd: */
     id d = pget(self, "delegate");
     if (d && cx_responds(object_getClass(d), sel_registerName("animationDidStop:"))) MSG(void, d, "animationDidStop:", self);
 }
-static BOOL an_animating(id self, SEL c) { (void)self; (void)c; return NO; }
+static BOOL an_animating(id self, SEL c) { (void)c; return pget_i(self, "running", 0) != 0; }
 static id ac_current(id k, SEL c) { (void)c; static id s; if (!s) s = new_inst(k); return s; }
 static void ac_run(id k, SEL c, void *changes, void *done) {
     (void)c;
@@ -160,7 +190,11 @@ static id fm_families(id self, SEL c) {
     return objc_autorelease(a);
 }
 static id fm_font_family(id self, SEL c, id fam, u64 traits, i64 weight, double size) {
-    (void)self; (void)c; (void)fam; (void)traits; (void)weight;
+    (void)self; (void)c; (void)traits; (void)weight;
+    /* famílias monoespaçadas (o Blink pede "Menlo" assim): pelo nome, que no appkit.c vira a face mono (fontmono.c) */
+    const char *f = fam && cx_is_str(fam) ? cx_cstr(fam) : "";
+    if (strstr(f, "Mono") || strstr(f, "Menlo") || strstr(f, "Monaco") || strstr(f, "Courier") || strstr(f, "Consolas"))
+        return MSG(id, cls("NSFont"), "fontWithName:size:", fam, size);
     return MSG(id, cls("NSFont"), "systemFontOfSize:", size);
 }
 static id fm_convert(id self, SEL c, id font, u64 trait) { (void)self; (void)c; (void)trait; return font; }
@@ -210,6 +244,38 @@ static i64 bir_h(id self, SEL c) { (void)c; return ((bir_t *)self)->h; }
 static i64 bir_bpr(id self, SEL c) { (void)c; return ((bir_t *)self)->bpr; }
 static ax_size_t bir_size(id self, SEL c) { (void)c; ax_size_t s = {(double)((bir_t *)self)->w, (double)((bir_t *)self)->h}; return s; }
 static id bir_repr(id self, SEL c, u64 type, id props_) { (void)self; (void)c; (void)type; (void)props_; return 0; }   /* sem codificador PNG/JPEG aqui */
+/* -[NSBitmapImageRep initWithData:]: PNG/JPEG/GIF/BMP pelo GUI_DECODE_IMAGE (ARGB comum) para RGBA pré-multiplicado,
+ * o formato padrão do NSBitmapImageRep. O gfx::Image do Chromium monta assim o NSImage dos favicons (menus Janela e
+ * Histórico); com nil ele cai no CHECK(image_) do ImageRepCocoa, e o motor do Horizonte morria ao abrir a 2ª aba. */
+static id bir_init_data(id self, SEL c, id data) {
+    (void)c;
+    const u8 *src = data ? MSG0(const u8 *, data, "bytes") : 0;
+    u64 n = data ? MSG0(u64, data, "length") : 0;
+    long need = src && n ? SYS4(GUI_DECODE_IMAGE, src, n, 0, 0) : 0;
+    if (need <= 8) return 0;
+    u32 *out = malloc((size_t)need);
+    if (!out || SYS4(GUI_DECODE_IMAGE, src, n, out, need) != need) { free(out); return 0; }
+    bir_t *b = (bir_t *)self;
+    b->w = out[0]; b->h = out[1]; b->bpr = b->w * 4;
+    b->data = malloc((size_t)(b->bpr * b->h) + 4);
+    if (!b->data) { free(out); return 0; }
+    for (i64 i = 0; i < b->w * b->h; i++) {
+        u32 p = out[2 + i], a = p >> 24;
+        u8 *d = b->data + i * 4;
+        d[0] = (u8)(((p >> 16) & 255) * a / 255); d[1] = (u8)(((p >> 8) & 255) * a / 255); d[2] = (u8)((p & 255) * a / 255); d[3] = (u8)a;
+    }
+    free(out);
+    return self;
+}
+static id bir_with_data(id k, SEL c, id data) { (void)c; id o = bir_init_data(new_inst(k), 0, data); return o ? objc_autorelease(o) : 0; }
+static id bir_retag(id self, SEL c, id space) { (void)c; (void)space; return self; }   /* um espaço de cor só (sRGB) */
+/* +[NSImage imageWithSize:flipped:drawingHandler:]: o mOS não tem lockFocus em bitmap, então a imagem fica do tamanho
+ * pedido e sem desenho. O Chromium a usa como imagem de erro (GetErrorNSImage) quando o PNG não decodifica. */
+static id img_with_size_handler(id k, SEL c, ax_size_t z, BOOL flipped, id handler) {
+    (void)c; (void)flipped; (void)handler;
+    id o = ((id (*)(id, SEL, ax_size_t))objc_msgSend)(MSG0(id, k, "alloc"), sel_registerName("initWithSize:"), z);
+    return o ? objc_autorelease(o) : 0;
+}
 
 /* ---- toolbar e Touch Bar */
 static id tb_init_ident(id self, SEL c, id ident) { (void)c; pset(self, "identifier", ident); return self; }
@@ -325,6 +391,9 @@ void cx_appkit_extra_init(void) {
     IM(NSBitmapImageRep, "bitmapData", bir_data); IM(NSBitmapImageRep, "pixelsWide", bir_w); IM(NSBitmapImageRep, "pixelsHigh", bir_h);
     IM(NSBitmapImageRep, "bytesPerRow", bir_bpr); IM(NSBitmapImageRep, "size", bir_size);
     IM(NSBitmapImageRep, "representationUsingType:properties:", bir_repr);
+    IM(NSBitmapImageRep, "initWithData:", bir_init_data); CM(NSBitmapImageRep, "imageRepWithData:", bir_with_data);
+    IM(NSBitmapImageRep, "bitmapImageRepByRetaggingWithColorSpace:", bir_retag);
+    { cx_class_t *ni = cx_class_named("NSImage"); if (ni) cx_add_cmethod(ni, "imageWithSize:flipped:drawingHandler:", (void *)img_with_size_handler); }
     DEF(NSImageSymbolConfiguration, "NSObject"); DEF(NSColorList, "NSObject"); DEF(NSTextAttachment, "NSObject");
     DEF(NSColorSampler, "NSObject"); DEF(NSSpeechSynthesizer, "NSObject");
     REG_PROP(NSTextAttachment, image, setImage);

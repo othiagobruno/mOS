@@ -452,8 +452,13 @@ static void scheme_add(ls_app_t *a, const char *s) {
 static void open_in_browser(const char *target) {
     char url[1100];
     if (target[0] == '/') snprintf(url, sizeof url, "file://%s", target); else snprintf(url, sizeof url, "%s", target);
-    app_launch(&app_horizonte);
-    browser_open_url(url);
+    if (horizonte_motor_abrir(url)) return;     /* o motor Chromium do Horizonte (mais abaixo) */
+    horizonte_legado_abrir(url);                /* sem o motor: o motor próprio do Horizonte */
+}
+
+/* tipos que seguem o navegador (os mesmos que ls_set_default_browser grava) */
+static bool web_type(const char *uti) {
+    return !strcasecmp(uti, "public.html") || !strcasecmp(uti, "public.xhtml") || !strcasecmp(uti, "com.apple.web-internet-location");
 }
 
 static ls_app_t *builtin(app_t *app, const char *id, void (*open_file)(const char *), void (*open_url)(const char *)) {
@@ -698,6 +703,7 @@ ls_app_t *ls_app_by_path(const char *path) {
     usize l = strlen(p);
     while (l > 1 && p[l - 1] == '/') p[--l] = 0;
     for (int i = 0; i < napps; i++) if (!apps[i]->gone && !strcmp(apps[i]->path, p)) return apps[i];
+    if (horizonte_motor_bundle(p)) return NULL;   /* o motor do Horizonte não é um app à parte (o Horizonte responde por ele) */
     return register_bundle(p);
 }
 
@@ -1158,6 +1164,50 @@ static void redacted(const char *url, char *out, usize cap) {
     out[o] = 0;
 }
 
+/* Navegador iniciado com a URL na linha de comando: se ele terminar de forma anormal nos primeiros 90 s (ex.: o
+ * Chromium sem memória para montar o framework), a URL abre no Horizonte em vez de sumir com ele. Saída normal (0),
+ * encerrado pelo usuário (-9) ou já recolhido (-1000) não contam. */
+static struct { int pid; char *url; u64 deadline; } bwatch[4];
+static void browser_watch(int pid, const char *url) {
+    for (u32 i = 0; i < ARRAY_LEN(bwatch); i++) {
+        if (bwatch[i].url) continue;
+        usize n = strlen(url);
+        if (!(bwatch[i].url = kmalloc(n + 1))) return;
+        memcpy(bwatch[i].url, url, n + 1);
+        bwatch[i].pid = pid;
+        bwatch[i].deadline = timer_ticks() + 90000;
+        return;
+    }
+}
+/* URL (ou documento) para um app que ainda está abrindo: vai quando o serviço dele aparecer (pend_tick) */
+static bool pend_add(const char *svc, const char *url, int pid) {
+    for (u32 i = 0; i < ARRAY_LEN(pend); i++) {
+        if (pend[i].url) continue;
+        usize n = strlen(url);
+        if (!(pend[i].url = kmalloc(n + 1))) return false;
+        memcpy(pend[i].url, url, n + 1);
+        snprintf(pend[i].svc, sizeof pend[i].svc, "%s", svc);
+        pend[i].deadline = timer_ticks() + 120000;
+        pend[i].pid = pid;
+        return true;
+    }
+    return false;
+}
+static void bwatch_tick(void) {
+    for (u32 i = 0; i < ARRAY_LEN(bwatch); i++) {
+        if (!bwatch[i].url) continue;
+        bool alive = proc_alive(bwatch[i].pid);
+        if (alive && timer_ticks() < bwatch[i].deadline) continue;
+        int code = alive ? 0 : proc_exit_code(bwatch[i].pid);
+        if (code != 0 && code != -9 && code != -1000) {
+            kprintf("ls: o navegador (pid %d) caiu ao abrir (código %d); a URL vai para o motor próprio do Horizonte\n", bwatch[i].pid, code);
+            horizonte_legado_abrir(bwatch[i].url);
+        }
+        kfree(bwatch[i].url);
+        bwatch[i].url = NULL;
+    }
+}
+
 static bool deliver(ls_app_t *a, const char *url, bool web) {
     char svc[200], shown[200];
     snprintf(svc, sizeof svc, OU_PREFIX "%s", a->id);
@@ -1176,21 +1226,70 @@ static bool deliver(ls_app_t *a, const char *url, bool web) {
         if (argv) snprintf(args, sizeof args, "\"%s\"", url);
         pid = apps_run_mac(a->path, args);
         if (pid < 0) return false;
-        if (argv) return true;
+        if (argv) {
+            kprintf("ls: %s abre no %s (iniciado com a URL)\n", shown, a->name);
+            browser_watch(pid, url);
+            return true;
+        }
     }
-    for (u32 i = 0; i < ARRAY_LEN(pend); i++) {
-        if (pend[i].url) continue;
-        usize n = strlen(url);
-        pend[i].url = kmalloc(n + 1);
-        if (!pend[i].url) return false;
-        memcpy(pend[i].url, url, n + 1);
-        snprintf(pend[i].svc, sizeof pend[i].svc, "%s", svc);
-        pend[i].deadline = timer_ticks() + 120000;
-        pend[i].pid = pid;
-        kprintf("ls: %s espera %s abrir\n", shown, a->name);
+    if (!pend_add(svc, url, pid)) return false;
+    kprintf("ls: %s espera %s abrir\n", shown, a->name);
+    return true;
+}
+
+/* ================================================================ o motor Chromium do Horizonte
+ * O Horizonte (kernel/apps/horizonte.c) é o navegador do sistema, e o motor dele é o Chromium de código aberto em
+ * HORIZONTE_MOTOR (tools/stage-chromium.ps1), fora de /Aplicativos: o Launch Services, o Launchpad, o Dock e o "Abrir
+ * com" continuam vendo um app só, o Horizonte. Abrir o Horizonte, ou uma URL nele, executa o motor (com os argumentos do
+ * sistema de registry.c); as janelas do processo aparecem como do Horizonte no Dock e na barra de menus (registry.c,
+ * guisys.c). Sem o motor, ou se ele não iniciar ou cair na partida, vale o motor próprio do Horizonte.
+ * docs/navegador-chromium.md */
+#define MOTOR_EXE HORIZONTE_MOTOR "/Contents/MacOS/Chromium"
+#define MOTOR_SVC OU_PREFIX "org.chromium.Chromium"      /* registrado pelo processo principal ao terminar de abrir */
+bool horizonte_motor_disponivel(void) { vnode_t *v = vfs_lookup(MOTOR_EXE); return v && !v->dir; }
+bool horizonte_motor_bundle(const char *bundle) { return bundle && !strcmp(bundle, HORIZONTE_MOTOR); }
+static int motor_pid(void) {
+    for (int i = 0; i < proc_count(); i++) {
+        int pid, st;
+        u64 mem, cpu;
+        char nm[64];
+        if (proc_info(i, &pid, nm, sizeof nm, &st, &mem, &cpu) && !strcmp(nm, "Chromium") && proc_alive(pid)) return pid;
+    }
+    return 0;
+}
+/* "Encerrar" do Horizonte (Dock, ⌘Q no motor próprio): o motor recebe o pedido de encerrar, como um app do macOS */
+void horizonte_motor_encerrar(void) {
+    int pid = motor_pid();
+    app_t *proxy = pid > 0 ? compat_gui_app_for_pid(pid) : NULL;
+    if (proxy && proxy->on_quit) proxy->on_quit(proxy);
+}
+bool horizonte_motor_abrir(const char *url) {
+    if (!horizonte_motor_disponivel()) return false;
+    int pid = motor_pid();
+    app_horizonte.running = true;
+    if (!url || !url[0]) {                          /* abrir o Horizonte: traz as janelas, ou inicia o motor */
+        app_t *proxy = pid > 0 ? compat_gui_app_for_pid(pid) : NULL;
+        if (proxy) { wm_bring_app(proxy); return true; }
+        /* aberto sem janelas (o app do macOS continua vivo): uma aba nova, como o "reabrir" do Dock no macOS */
+        if (pid > 0) { post_url(MOTOR_SVC, "chrome://newtab/"); return true; }
+        return apps_run_mac(HORIZONTE_MOTOR, "") > 0;
+    }
+    char shown[200];
+    redacted(url, shown, sizeof shown);
+    if (post_url(MOTOR_SVC, url)) {                 /* aberto: a URL vira uma aba nova (application:openURLs:) */
+        kprintf("ls: %s entregue ao Horizonte (motor Chromium)\n", shown);
+        app_t *proxy = pid > 0 ? compat_gui_app_for_pid(pid) : NULL;
+        if (proxy) wm_bring_app(proxy);
         return true;
     }
-    return false;
+    if (pid > 0) return pend_add(MOTOR_SVC, url, pid);   /* ainda abrindo: espera o serviço */
+    char args[1200];
+    snprintf(args, sizeof args, "\"%s\"", url);
+    pid = apps_run_mac(HORIZONTE_MOTOR, args);
+    if (pid < 0) return false;
+    kprintf("ls: %s abre no Horizonte (motor Chromium iniciado com a URL)\n", shown);
+    browser_watch(pid, url);
+    return true;
 }
 
 static void pend_tick(void) {
@@ -1264,7 +1363,22 @@ static bool open_doc(ls_app_t *a, const char *path) {
     }
     char u[1200];
     path_to_url(path, u, sizeof u);
-    return deliver(a, u, true);
+    if (deliver(a, u, true)) return true;
+    /* o navegador do macOS não iniciou: a página abre no Horizonte, que é do kernel */
+    if (ls_app_is_browser(a) && web_type(ls_type_of_path(path))) { open_in_browser(path); return true; }
+    return false;
+}
+
+/* .webloc (Local da Internet, plist com a chave URL): como no Finder, abre a URL de dentro com o app do esquema */
+static bool open_webloc(const char *path) {
+    vnode_t *v = vfs_lookup(path);
+    pl_t *root = v && !v->dir && v->data ? pl_parse(v->data, v->size) : NULL;
+    const char *u = pl_str(root, "URL");
+    char url[1100] = "", sch[48];
+    if (u) snprintf(url, sizeof url, "%s", u);
+    pl_free(root);
+    if (!ls_url_scheme(url, sch, sizeof sch) || !strcmp(sch, "file")) return false;
+    return ls_open(url, NULL);
 }
 
 bool ls_open(const char *target, ls_app_t *with) {
@@ -1278,7 +1392,11 @@ bool ls_open(const char *target, ls_app_t *with) {
             else app_launch(a->builtin);
             return true;
         }
-        return deliver(a, target, !strcmp(sch, "http") || !strcmp(sch, "https"));
+        bool web = !strcmp(sch, "http") || !strcmp(sch, "https");
+        if (deliver(a, target, web)) return true;
+        /* o navegador escolhido (o Chromium, por padrão) não iniciou: a URL abre no Horizonte, que é do kernel */
+        if (web && ls_app_is_browser(a)) { kprintf("ls: %s não abriu; a URL vai para o Horizonte\n", a->name); open_in_browser(target); return true; }
+        return false;
     }
     if (target[0] == '/') snprintf(path, sizeof path, "%s", target);
     else if (!url_to_path(target, path, sizeof path)) return false;
@@ -1287,6 +1405,10 @@ bool ls_open(const char *target, ls_app_t *with) {
     const char *uti = ls_type_of_path(path);
     if (!with && !strcmp(uti, "com.apple.application-bundle")) { ls_app_t *a = ls_app_by_path(path); return a && launch_app(a); }
     if (!with && n->dir) { finder_open_path(path); return true; }
+    if (!with && !file_pref(path) && !strcmp(uti, "com.apple.web-internet-location")) {
+        ls_app_t *tp = pref_lookup(0, uti, LS_ROLE_ALL);   /* escolhido para .webloc: o navegador (Ajustes) ou outro app */
+        if ((!tp || ls_app_is_browser(tp)) && open_webloc(path)) return true;
+    }
     ls_app_t *a = with ? with : ls_default_for_path(path, LS_ROLE_ALL);
     if (!a) return false;
     return open_doc(a, path);
@@ -1384,6 +1506,7 @@ void ls_init(void) {
     ls_rescan();
     prefs_load();
     kprintf("ls: %d apps, %d tipos de apps, navegador padrão %s\n", ls_app_count(), ndyn, ls_default_browser() ? ls_default_browser()->name : "-");
+    kprintf("ls: motor do Horizonte: %s\n", horizonte_motor_disponivel() ? "Chromium (" HORIZONTE_MOTOR ")" : "o próprio (sem o Chromium)");
 }
 
 void ls_tick(void) {
@@ -1392,6 +1515,7 @@ void ls_tick(void) {
     if (now - last_check < 1500) { return; }
     last_check = now;
     pend_tick();
+    bwatch_tick();
     if (dir_signature() != last_sig) ls_rescan();
 }
 

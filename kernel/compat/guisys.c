@@ -263,6 +263,9 @@ static gapp_t *gapp_for(process_t *p) {
     strncpy(ga->name, p->name, sizeof ga->name - 1);
     const char *mo = strstr(p->path, ".app/Contents/MacOS/");
     if (mo && (usize)(mo + 4 - p->path) < sizeof ga->bundle) memcpy(ga->bundle, p->path, (usize)(mo + 4 - p->path));
+    /* o motor Chromium do Horizonte (launchsvc.h): na barra de menus e no Dock é o Horizonte */
+    extern bool horizonte_motor_bundle(const char *bundle);
+    if (horizonte_motor_bundle(ga->bundle)) snprintf(ga->name, sizeof ga->name, "Horizonte");
     ga->app.name = ga->name;
     ga->app.exec = "macapp";
     ga->app.on_quit = gapp_quit;
@@ -636,6 +639,12 @@ i64 compat_gui_syscall(process_t *p, u64 n, u64 a, u64 b, u64 c, u64 d, u64 e) {
         if (!g) return -MOS_EBADF;
         if (b == GUI_FOCUS_MOVE) return g->w && wm_begin_move(g->w) ? 0 : -MOS_EAGAIN;
         if (b == GUI_FOCUS_HIDE || b == GUI_FOCUS_SHOW) { if (g->w) wm_set_hidden(g->w, b == GUI_FOCUS_HIDE); return 0; }
+        if (b == GUI_FOCUS_OWNER) {   /* janela filha do Cocoa: só uma dona do mesmo processo, e nunca ela mesma */
+            gwin_t *o = c ? win_get(p, c) : NULL;
+            if (c && !o) return -MOS_EBADF;
+            if (g->w) g->w->owner = o && o->w && o->w != g->w ? o->w : NULL;
+            return 0;
+        }
         if (g->w) wm_focus(g->w);
         return 0;
     }

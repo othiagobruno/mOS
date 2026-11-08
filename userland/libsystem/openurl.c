@@ -373,7 +373,16 @@ static id lines_to_urls(ls_line_t *v, int n) {
 static id ws_app_for_url(id self, SEL c, id u) {
     (void)self; (void)c;
     ls_line_t a;
-    return handlers_for_url(url_c(u), &a, 1, 1) ? app_url(&a) : 0;
+    const char *s = url_c(u);
+    int ok = handlers_for_url(s, &a, 1, 1) > 0;
+    static int n;   /* diagnóstico (só o esquema e o app, 40 vezes): o navegador pergunta o app antes do diálogo "Abrir o X?" */
+    if (n < 40) {
+        n++;
+        char sch[48];
+        cx_fdprintf(2, "[abrir-url] app para %s: %s\n", s && url_scheme(s, sch, sizeof sch) ? sch : (s ? "(sem esquema)" : "(nil)"),
+                    ok ? (a.path[0] ? a.path : a.name) : "nenhum");
+    }
+    return ok ? app_url(&a) : 0;
 }
 static id ws_apps_for_url(id self, SEL c, id u) {
     (void)self; (void)c;
@@ -505,6 +514,7 @@ static id fm_display_name(id self, SEL c, id path) {
     while (b > 0 && p[b - 1] != '/') b--;
     size_t n = l - b;
     if (n > 4 && !strncasecmp(p + l - 4, ".app", 4)) n -= 4;
+    { static int k; if (k < 10) { k++; cx_fdprintf(2, "[abrir-url] nome de exibição de %s: %.*s\n", p, (int)n, p + b); } }   /* diagnóstico (10 vezes) */
     return cx_str_n(p + b, n);
 }
 

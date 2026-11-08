@@ -1,0 +1,6 @@
+// mOS — módulo clang CryptoKit vazio: o CryptoKit da Apple é só Swift; o overlay (CryptoKit.swift) precisa de um módulo
+// subjacente para o tools/build-frameworks-objc.ps1 (-import-underlying-module)
+module CryptoKit [system] {
+    header "CryptoKit_mos.h"
+    export *
+}

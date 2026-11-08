@@ -187,10 +187,49 @@ BoringSSL do próprio Bun, sem SecureTransport. Preparação: `tools/stage-claud
     O JavaScriptCore reserva 1–4 GB assim; antes, todas essas chamadas falhavam.
   - **Faixas grandes alinhadas ao próprio tamanho** (potência de 2, até 4 GB). O alocador do JSC exige o endereço alinhado
     a N (`test rax, N-1` → `int3`).
-- **Onde parou** (`claude --version`): o JSC inicializa e o grafo de módulos embutido é encontrado. O laço de eventos do Bun
-  registra a porta Mach do "waker" (`EVFILT_MACHPORT` + `MACH_RCV_MSG`) e espera sem prazo, na primeira e única chamada ao
-  kqueue, sem ter criado nenhuma thread e antes de o JavaScript fazer qualquer E/S. Próximo passo: descobrir o que o laço
-  espera (uma tarefa enviada a uma thread que não foi criada, ou um envio à porta do waker que o kqueue não vê).
+- ~~Onde parou (`claude --version`): o laço de eventos do Bun esperava sem prazo no kqueue.~~ Isso já não acontece.
+
+**Estado em 7 nov. 2026 (noite):** `claude --version` responde "2.1.311 (Claude Code)" e sai com 0, sob WHPX e TCG.
+`claude --help` imprime o uso completo e sai com 0 no TCG. O modo interativo e o login ainda não foram testados. O que
+mudou, na ordem em que cada passo apareceu:
+- **ICU de verdade.** O `--version` terminava em "símbolo não implementado no libSystem do mOS: _uloc_setDefault". O
+  binário importa 184 funções da `libicucore` (`uloc_*`, `ucol_*`, `ubrk_*`, `udat_*`, `unumf_*`...), e o libSystem só
+  tinha o `uidna_*` do curl. Agora `tools/build-icu.ps1` compila o ICU4C 74.2 (Unicode License; fonte em
+  `.tools\icu-dl`) com o zig, como `/usr/lib/libicucore.A.dylib`. Os nomes ficam sem versão, como na da Apple
+  (`U_DISABLE_RENAMING`), e os dados vão para `/usr/share/icu/icudt74l.dat`. O `build.ps1` põe os dois na imagem. O
+  carregador prefere essa dylib à parte de IDN do libSystem (`LIBICU_DISK` no `macho.c`, como a libc++). O `machocheck`
+  dela dá 721 importações e 0 ausentes.
+- **20 funções do libSystem** em `userland/libsystem/bunsys.c`: `__getdirentries64` (o readdir do Bun lê a pasta direto
+  do descritor), `__pthread_fchdir`, `__ulock_wait2`, `memset_pattern4/8`, `inet_aton`, `DNSService*` (respondem "serviço
+  não está rodando", e o Bun usa o `getaddrinfo`), entre outras.
+- **`pthread_self()` no formato do macOS** (`extra.c`). Cada thread ganhou um bloco com o layout da `struct _pthread`, com
+  o TSD em +0xe0, e o GS aponta para o TSD. O mimalloc do Bun guarda o heap da thread em `pthread_self()+0x300`. Antes,
+  o `pthread_self()` era `main_thread + tid`, endereços a um byte uns dos outros: a escrita de uma thread aparecia
+  deslocada na leitura de outra, e o `--help` caía lendo `0x40000727`, metade de um ponteiro.
+- **AVX no kernel** (`arch/cpu.c`, `fpu_init`; `arch/x86.S`). Com XSAVE e AVX na CPU, o kernel liga CR4.OSXSAVE e
+  XCR0 = x87 | SSE | AVX. A troca de contexto passa a salvar o estado com XSAVE numa área de 1024 bytes alinhada a 64
+  abaixo de cada quadro (`FPU_AREA` em `proc.h`; os 512 primeiros bytes continuam a imagem FXSAVE dos sinais). O
+  cabeçalho XSAVE é zerado antes de cada XSAVE: ele só escreve os bits do `XSTATE_BV` que estão na máscara, e o XRSTOR
+  dava #GP com o lixo da pilha. Sem XSAVE/AVX na CPU, segue o FXSAVE.
+- **AVX é obrigatório para este binário.** O darwin-x64 do Claude Code é o Bun comum, não o "baseline": ele gera AVX
+  sem consultar a CPU (`vmovq`, `c4 c1 f9 6e c3`) e avisa "CPU lacks AVX support". Sob o WHPX o hipervisor aceita ligar
+  o AVX no XCR0, mas o estado não vem (o CPUID 0Dh continua dizendo 576 bytes, e o XRSTOR dá #GP). Por isso o
+  `fpu_init` confere a área e fica no FXSAVE, e o `run.ps1` tira o AVX do CPUID do convidado no WHPX
+  (`-avx,-avx2,-fma,-f16c,-avx512f`). Resultado: no WHPX o `--version` funciona, mas o `--help` cai com #UD no AVX. No
+  TCG (`run.ps1` sem `-Accel`, mais lento) e em hardware real com AVX, ele roda.
+
+- **`claude -p oi` (TCG):** a CPU aparece com "avx avx2". Ele parava em "Unexpected __ulock_wait() return code": o Futex
+  do Zig chama o `__ulock_wait2` com `ULF_NO_ERRNO`, e com essa flag o macOS devolve `-errno` no retorno, mas o mOS
+  devolvia -1. Corrigido no `vscode_libc.c`. Depois disso o CLI grava a configuração em `~/.claude*` e fica esperando o
+  fim do stdin, que o serviço do init não fecha. O passo seguinte seria a recusa por falta de login, e o login é do
+  usuário.
+- **Regressão das mudanças acima (WHPX):** o VS Code abre e o terminal integrado roda bash. O fluxo do Claude + Chrome
+  em 2816 MB chega à página do Google, com 538 a 780 MiB livres e nenhuma queda.
+
+Para repetir: `.\build.ps1 -OutDir build-cc`, depois `.\tools\stage-claude-code.ps1 -Binario
+"build\apps\x\claude-code\claude" -OutDir build-cc -Argumentos "--help" -SizeMiB 700`, depois
+`.\run.ps1 -Headless -Memory 1536 -Image build-cc/mOS.img -Serial build-cc/serial.log -Port <livre>`. Sem `-Accel`, é
+TCG; com `-Accel whpx`, só o `--version` passa.
 
 ## WhatsApp: primeira partida no harness (7 nov. 2026)
 
@@ -362,9 +401,99 @@ subrotinizados: 1052 glifos sem erro). Um fuzz com a tabela colada a uma página
   URL chega como o Apple Event GURL (o Electron emite `open-url`) ou por `application:openURLs:` (o Chrome);
 - `/usr/bin/open` (`userland/cli-macos/open.c`) faz o mesmo da linha de comando.
 
-Conferido na VM: o `shell.openExternal('https://…')` de um app Electron abre o navegador de teste
-(`tools/testdata/navegador-teste`, que declara http/https e mostra as URLs) com a URL na linha de comando. Para repetir:
-`vscode-teste.ps1 -Electron ... -Accel whpx -ComApp "build\navegador-teste\Navegador de Teste.app" -AbrirURL slack://open
--AbrirAposMs 30000`.
+Conferido na VM (7 nov., 1 e 4 núcleos):
+- **Slack:** mostra a tela de boas-vindas, com o título na fonte web CFF dele ("fonte de app registrada (id 35, 1123
+  glifos, ..., CFF)"). O "Sign In to Slack" abre `https://app.slack.com/...` no navegador padrão, e `open slack://open`
+  chega ao app (`[abrir-url] recebida`).
+- **Claude:** chega ao "Sign In". O "Continue with Google" abre `https://claude.com/...` no navegador, e `open claude://...`
+  chega ao app.
+- **Navegador de teste:** `shell.openExternal('https://...')` de um app Electron abre o `tools/testdata/navegador-teste`,
+  que declara http/https e mostra as URLs.
+
+O que falta para o login de ponta a ponta é o navegador. O padrão do Launch Services é o Horizonte, e o app.slack.com
+responde "This browser is no longer supported" (o claude.ai fica em branco). A troca do motor do navegador do sistema
+pelo Chromium tem sessão própria. O login em si é do usuário.
+Atualização (7 nov., tarde): o motor do Horizonte agora é o Chromium de código aberto, em
+`/Sistema/Biblioteca/Horizonte/Chromium.app` (`tools/stage-chromium.ps1`; `-MotorHorizonte build\chromium\Chromium.app` no
+vscode-teste). O "Sign In to Slack" abre a página real de login, e a volta `slack://` chega ao Slack. O motor próprio do
+Horizonte fica de reserva. Com o motor, o Slack precisa de `-Memory 2304`: em 2048 MB os dois não cabem. Desenho,
+argumentos e correções em [navegador-chromium.md](navegador-chromium.md).
+
+Google Chrome como navegador escolhido pelo usuário (7 nov., noite; LSHandlers com `com.google.Chrome`, Slack + Chrome em
+2560 MB, 4 núcleos):
+- O diálogo "Abrir Slack?" do Chrome agora desenha inteiro: título, "Um site quer abrir esse aplicativo.", "Cancelar" e
+  "Abrir Slack". O clique em "Abrir Slack" leva a URL ao Slack: "[abrir-url] aberta slack://open" no Chrome, "ls:
+  slack://open entregue a Slack" e "[abrir-url] recebida slack://open" no Slack, que vem para a frente. O Chrome segue
+  aberto.
+- O que mudou no AppKit (`appkit.c`): uma janela sem moldura (style sem `NSWindowStyleMaskTitled`, como os diálogos e
+  balões do views) não ganha a barra do window server (`GUI_WF_NO_TITLE`). As teclas vão à janela-chave quando a do
+  topo não aceita ser chave (as popups do views ficam por cima e roubavam o teclado). O clique numa janela que aceita
+  torna-a chave. As janelas filhas (`addChildWindow:ordered:`) voltam por cima da mãe quando ela vem à frente.
+- O `NSURL` ganhou `scheme`, `host`, `port`, `user`, `password`, `query`, `fragment`, `resourceSpecifier` e
+  `relativeString` (o `net::GURLWithNSURL` do Chromium lê `scheme` em toda conversão).
+- Teclado no diálogo: o Tab e o Espaço chegam a ele (é a janela-chave), mas os botões não ganham foco pelo Tab sem o
+  "Acesso total pelo teclado", como no macOS. Use o clique.
+- Como testar a volta: o Chrome pula de propósito URLs de protocolo externo que chegam do sistema
+  (`StartupBrowserCreatorImpl::OpenTabsInBrowser`, contra laço), então `open -b com.google.Chrome slack://open` não mostra
+  diálogo nenhum, como no macOS. Use uma página que navega, como faz a página de login: `-AbrirURL "-b com.google.Chrome
+  data:text/html,<a%20href=slack://open%20id=a>Abrir</a><script>a.click()</script>"` e um clique em "Abrir Slack"
+  (`move:873,450` duas vezes e `click`). Sem aspas nem espaços na URL: o init divide os argumentos nos espaços e tira as
+  aspas. Há também `-AbrirURL2`/`-AbrirApos2Ms` para um segundo `open`, mas com WHPX o atraso do init não é
+  confiável (o relógio do kernel corre ou atrasa; um `open` marcado para 170 s não saiu em 8 min).
+- **Claude + Chrome, 3584 MB:** a página `data:` com `claude://claude.ai/new` mostra "Abrir Claude?", e o clique leva a URL
+  ao Claude ("ls: claude://claude.ai entregue a Claude", "[abrir-url] recebida"). No Claude, "Reject" nos cookies, "Get
+  started" e "Continue with Google" abrem `claude.ai/login/app-google-auth…` no Chrome, que segue para a página real do
+  Google ("Fazer Login com o Google", "Prosseguir para Claude", "E-mail ou telefone"). Dali em diante o login é do
+  usuário. A VM ficou com uns 800 MiB livres.
+- **Slack + Chrome, 3584 MB:** o "Sign In to Slack" abre `app.slack.com/ssb/signin…` no Chrome, e a página renderiza
+  inteira ("Insira seu e-mail para entrar", Google, Apple, banner de cookies). A VM ficou com uns 1,6 GB livres.
+- **Memória:** antes, com 2816 MB, o Claude e o Chrome juntos esgotavam a VM. O log mostrava "kmalloc: sem memória", e
+  o `mach_make_memory_entry_64` devolvia 6 (`KERN_RESOURCE_SHORTAGE`). O serviço de rede do Chrome caía no `CHECK` de
+  `platform_shared_memory_region_apple.cc` e ficava reiniciando, e o claude.ai mostrava "Can't reach Claude. Check your
+  connection." Os arquivos dos apps moram na RAM da VM (Claude.app 538 MiB e Chrome 310 MiB na imagem), e o `__TEXT` de
+  cada framework existia duas vezes: no arquivo e nas páginas montadas.
+  Agora o kernel mapeia o `__TEXT` direto das páginas do arquivo:
+  - os arquivos grandes vêm do disco em buffers de `kmalloc_pages` (`fat.c`, `mm/memory.c`), alinhados à página e
+    liberados página a página pelas contagens de `pref[]`;
+  - o `tcache` do `macho.c` usa essas páginas sem copiar (`tcache_borrow`);
+  - o `vfs_append` nunca escreve num buffer desses no lugar;
+  - `write`, `pwrite` e `ftruncate` gravam no buffer do próprio arquivo (`file_write_at`/`file_room` em
+    `proc/process.c`). Antes, cada escrita copiava o arquivo inteiro para um bloco contíguo novo e regravava tudo, e
+    eram esses os pedidos de `kmalloc` de vários MB que falhavam com o SQLite do Chrome e o LevelDB do Claude. O buffer
+    cresce em dobras de até 16 MiB, e um buffer de `kmalloc_pages` é copiado antes da primeira escrita;
+  - no mmap de arquivo (`mm/lazy.c`), uma página inteira de um buffer desses entra no processo em cópia na escrita, sem
+    página nova.
+
+  O log mostra "Electron Framework: __TEXT (198 MiB) mapeado das páginas do arquivo, sem cópia" e o mesmo para o Google
+  Chrome Framework (248 MiB). Com 2816 MB, o fluxo do Claude chegou à página do Google com 543 a 773 MiB livres, sem
+  falha de alocação.
+  Outra medição do mesmo fluxo em 2816 MB, linhas `despejo: threads … (memória livre X de 2809 MiB)`, antes e depois
+  das mudanças acima:
+
+  | Momento | Antes | Depois |
+  |---|---|---|
+  | Claude subindo (30 s) | 1016 MiB | 1178 MiB |
+  | Só o Claude, parado no login (60–120 s) | 877–884 MiB | 1079–1081 MiB |
+  | Chrome abrindo o login (150–180 s) | 408 → 236 MiB | 444 → 479 MiB |
+  | Chrome no login do Google (210–270 s) | 321–343 MiB | 567–596 MiB |
+
+  Antes, 316 pedidos de `kmalloc` de 2,9 a 6,8 MB falhavam, o `vm_map` do `platform_shared_memory_region_apple.cc`
+  errava e um renderer do Chrome não subia ("sem memória para o libSystem"). Dois helpers caíam, e a aba ficava em
+  "Ah, não! … Código de erro: 11". Depois, nenhuma falha de `kmalloc`, nenhum `KERN_RESOURCE_SHORTAGE`, o serviço de
+  rede do Chrome sobe uma vez só, nenhum processo cai e a aba mostra "Fazer Login com o Google".
+  O Slack + Chrome também cabe em 2816 MB (antes pedia 3584): o "Sign In to Slack" abre `app.slack.com/ssb/signin…` e
+  a página renderiza inteira, com 1,3 a 1,8 GB livres.
+  Depois, o `fat.c` passou a pôr em páginas alinhadas os arquivos a partir de 256 KiB (antes 16 MiB), para o `lazy.c`
+  pegar o `icudtl.dat`, os `.pak` e o snapshot do V8, e o libSystem passou a ser montado uma vez e compartilhado entre os
+  processos ("libSystem (3312 KiB) montado uma vez e compartilhado"). Com isso, o fluxo do Claude em 2816 MB ficou com
+  767 a 814 MiB livres antes do login e 599 a 630 MiB na página do Google, sem falha de `kmalloc`.
+- **Diálogo atrás do navegador:** um clique na janela do Chrome fora do diálogo trazia o navegador para cima dele, e o
+  diálogo sumia com a página ainda escurecida. Agora o window server conhece a dona de cada janela
+  (`GUI_FOCUS_OWNER`, chamado pelo `addChildWindow:` do AppKit), e o `wm_focus` sobe as filhas visíveis acima dela,
+  como no Cocoa. As teclas vão à janela-chave mesmo quando a filha está no topo.
+
+Para repetir: `vscode-teste.ps1 -Electron ... -Accel whpx -Port <livre> -Memory 2048 -AbrirURL slack://open
+-AbrirAposMs 30000`, com `-Passos "move:380,499;wait:2000;move:380,499;wait:2000;click"` para o "Sign In to Slack" (o
+`move` do QMP às vezes perde os passos em x; repita o `move`). `-Cpus 1` separa problemas de SMP.
 5. **Codex desktop**: o porte do Chrome (`ChromeMain`) mais CoreText.
 6. **WhatsApp**: runtime Swift, Foundation do Swift, Combine, SwiftUI (OpenSwiftUI) e UIKit/Catalyst. É o mais longe.

@@ -1,5 +1,6 @@
 /* mOS — GDT, TSS, IDT, PIC 8259, PIT 8254 e tratamento de exceções */
 #include "kernel.h"
+#include "proc.h"              /* FPU_AREA (fpu_init) */
 
 /* ------------------------------------------------------------------ GDT */
 typedef struct PACKED { u16 limit; u64 base; } dtr_t;
@@ -120,6 +121,9 @@ static void exc_panic(int_frame_t *f) {
         kprintf("*** kernel em 0x%llx (RIP-base = 0x%llx) rax=%llx rbx=%llx rcx=%llx rdx=%llx rsi=%llx rdi=%llx\n",
                 kb, f->rip - kb, f->rax, f->rbx, f->rcx, f->rdx, f->rsi, f->rdi);
         const u64 *sp = (const u64 *)(f->rsp & ~7ULL);
+        if (f->vector == 13 && (f->rsp & 63) == 0)   /* XRSTOR com #GP: o cabeçalho XSAVE (rsp+512..575) e o MXCSR */
+            kprintf("*** XSAVE em rsp: XSTATE_BV %llx XCOMP_BV %llx [528] %llx [536] %llx MXCSR %x máscara %x\n",
+                    sp[64], sp[65], sp[66], sp[67], ((const u32 *)sp)[6], ((const u32 *)sp)[7]);
         int shown = 0;
         for (int i = 0; i < 512 && shown < 16; i++) {
             u64 v = sp[i];
@@ -241,4 +245,42 @@ void cpu_info(char *vendor, char *brand) {
     } else {
         strcpy(brand, "Processador x86_64");
     }
+}
+
+/* AVX como no macOS. Com XSAVE e AVX na CPU, liga CR4.OSXSAVE e XCR0 = x87 | SSE | AVX, e a troca de contexto
+ * (arch/x86.S) passa a salvar o estado com XSAVE na área de FPU_AREA bytes abaixo de cada quadro (os 512 primeiros
+ * continuam a imagem FXSAVE). O JavaScriptCore do Claude Code (Bun) decide usar AVX só pelo bit do CPUID, sem olhar o
+ * OSXSAVE: com o AVX desligado, o JIT gerava vmovq e dava #UD. Quem confere o XGETBV (Chromium, Skia) passa a usar AVX
+ * também, com os registradores YMM salvos na troca. Sem XSAVE ou sem AVX, nada muda (FXSAVE). Roda antes do smp_init:
+ * os APs copiam o CR4 e o XCR0 do BSP (arch/smp.c). */
+u8 g_use_xsave;
+void fpu_init(void) {
+    u32 a, b, c, d;
+    cpuid(1, &a, &b, &c, &d);
+    if (!((c >> 26) & 1) || !((c >> 28) & 1)) { kprintf("fpu: sem XSAVE/AVX na CPU, FXSAVE\n"); return; }
+    u64 cr4;
+    __asm__ volatile("mov %%cr4, %0" : "=r"(cr4));
+    __asm__ volatile("mov %0, %%cr4" :: "r"(cr4 | (1ULL << 18)));                    /* OSXSAVE */
+    cpuid(0xD, &a, &b, &c, &d);                                                       /* EAX: bits do XCR0 suportados */
+    u32 supported = a;
+    u64 xcr0 = 0x7;                                                                   /* x87 | SSE | AVX */
+    if ((supported & 7) != 7) {
+        __asm__ volatile("mov %0, %%cr4" :: "r"(cr4));
+        kprintf("fpu: XCR0 sem AVX (suportados 0x%x), FXSAVE\n", supported);
+        return;
+    }
+    __asm__ volatile("xsetbv" :: "c"(0), "a"((u32)xcr0), "d"((u32)(xcr0 >> 32)));
+    u32 lo, hi;
+    __asm__ volatile("xgetbv" : "=a"(lo), "=d"(hi) : "c"(0));
+    u64 got = (u64)hi << 32 | lo;
+    cpuid(0xD, &a, &b, &c, &d);                                                       /* EBX: área para o XCR0 ligado */
+    /* sob alguns hipervisores (WHPX) o XSETBV volta sem erro e o AVX não fica ligado: o CPUID 0Dh mostra a área sem ele */
+    if (got != xcr0 || b < 832 || b > (u32)FPU_AREA) {
+        __asm__ volatile("xsetbv" :: "c"(0), "a"(3u), "d"(0u));
+        __asm__ volatile("mov %0, %%cr4" :: "r"(cr4));
+        kprintf("fpu: o AVX não ficou ligado (XCR0 lido 0x%llx, área de %u bytes), FXSAVE\n", (unsigned long long)got, b);
+        return;
+    }
+    g_use_xsave = 1;
+    kprintf("fpu: XSAVE com AVX (XCR0 0x%llx, área de %u bytes)\n", (unsigned long long)got, b);
 }

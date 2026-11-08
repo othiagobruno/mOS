@@ -1028,7 +1028,12 @@ int dup2(int a, int b) {
     if (r >= 0 && a >= 0 && a < CX_NBMAX && b >= 0 && b < CX_NBMAX) cx_acc[b] = cx_acc[a];   /* o duplicado herda o modo de acesso */
     return (int)ret_errno(r);
 }
-int dup(int fd) {
+/* dup/F_DUPFD: o kernel escolhe o número (o menor livre >= min, até os 256 da tabela) e copia na mesma syscall
+ * (SYS_DUP2 com MOS_DUP_ANY). Antes o libSystem procurava um número livre e chamava dup2 em seguida: no meio, outra
+ * thread podia abrir um arquivo e receber aquele número, e o dup2 o trocava em silêncio. Os dois donos fechavam o mesmo
+ * fd, e o processo principal do Chrome caía no CHECK do ScopedFD depois de o fileport_makeport do Mojo achar o fd
+ * fechado (base::File::Duplicate usa dup). */
+static int cx_dup_min(int fd, long min) {
     mos_stat_t st;
     if (fd >= 0 && fd <= 2 && SYS2(SYS_FSTAT, fd, &st) < 0) return fd;   /* console: igual a antes */
     if (fd >= 0x4000) {                                  /* kqueue do libSystem (kqueue.c): o kernel não o conhece */
@@ -1037,14 +1042,11 @@ int dup(int fd) {
         if (k >= 0) return k;
         if (k == -2) return -1;                          /* EMFILE já posto */
     }
-    /* até PROC_MAX_FDS (256): procurar só até 32 dava EMFILE no processo principal do VS Code, que passa de 32 fds
-     * abertos, e o AsarURLLoader do Electron (base::File::Duplicate) não lia nada de dentro do node_modules.asar */
-    /* livre = SYS_FDFLAGS dá EBADF (o fstat também falha num arquivo apagado ainda aberto, e o dup2 o sobrescreveria) */
-    for (int i = 3; i < 256; i++)
-        if (SYS3(SYS_FDFLAGS, i, 0, 0) == -9) return dup2(fd, i);
-    cx_errno = 24;   /* EMFILE */
-    return -1;
+    long r = SYS3(SYS_DUP2, fd, MOS_DUP_ANY, min < 3 ? 3 : min);
+    if (r >= 0 && fd >= 0 && fd < CX_NBMAX && r < CX_NBMAX) cx_acc[r] = cx_acc[fd];   /* o duplicado herda o modo de acesso */
+    return (int)ret_errno(r);
 }
+int dup(int fd) { return cx_dup_min(fd, 3); }
 int pipe(int *fds) {                                                   /* o kernel tem pipes (SYS_PIPE) */
     int r = (int)ret_errno(SYS1(SYS_PIPE, fds));
     if (r == 0) { nb_set(fds[0], 0); nb_set(fds[1], 0); acc_set(fds[0], 0); acc_set(fds[1], 1); }
@@ -1086,7 +1088,8 @@ int fcntl(int fd, int cmd, ...) {
     /* F_DUPFD (0) / F_DUPFD_CLOEXEC (67): como dup() acima, o mesmo descritor. Antes devolvia 0 (= stdin), e o
      * tokio/mio, que clona o kqueue assim (Registry::try_clone), passava a fazer kevent no fd 0 -> EBADF */
     if (cmd == 0 || cmd == 67) {
-        int nfd = dup(fd);
+        __builtin_va_list ap; __builtin_va_start(ap, cmd); long min = __builtin_va_arg(ap, long); __builtin_va_end(ap);
+        int nfd = cx_dup_min(fd, min);
         if (cmd == 67 && nfd >= 0 && !IS_SOCK(nfd)) SYS3(SYS_FDFLAGS, nfd, 1, 1);   /* F_DUPFD_CLOEXEC */
         return nfd;
     }

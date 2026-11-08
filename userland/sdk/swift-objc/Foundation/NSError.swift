@@ -60,7 +60,7 @@ extension _BridgedStoredNSError {
     /// o userInfo do NSError
     public var userInfo: [String: Any] { _mosSwiftDict(_nsError.userInfo) }
 
-    public init?(_bridgedNSError error: __shared NSError) {
+    public init?(_bridgedNSError error: NSError) {
         guard _mosString(error.domain) == Self.errorDomain else { return nil }
         self.init(_nsError: error)
     }

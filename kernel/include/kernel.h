@@ -107,6 +107,10 @@ void  *kmalloc(usize n);
 void  *kcalloc(usize n, usize sz);
 void  *krealloc(void *p, usize n);
 void   kfree(void *p);
+/* dados alinhados à página e liberados página a página (pref[] do process.c): buffers de arquivo grandes, cujas páginas
+ * o carregador Mach-O mapeia direto nos processos (__TEXT dos frameworks, macho.c) */
+void  *kmalloc_pages(usize n);
+bool   kmalloc_is_pages(const void *p);
 void   heap_init(void);
 usize  heap_used(void);
 void  *dma_alloc(usize bytes, u64 *phys); /* memória alinhada a página, zerada */
@@ -114,6 +118,7 @@ void  *dma_alloc(usize bytes, u64 *phys); /* memória alinhada a página, zerada
 /* ---------- arch ---------- */
 void   gdt_init(void);
 void   idt_init(void);
+void   fpu_init(void);                    /* AVX: CR4.OSXSAVE e XCR0 antes do smp_init (os APs copiam do BSP) */
 typedef struct {
     u64 r15, r14, r13, r12, r11, r10, r9, r8, rbp, rdi, rsi, rdx, rcx, rbx, rax;
     u64 vector, error;

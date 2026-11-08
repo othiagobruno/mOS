@@ -568,12 +568,11 @@ void *getsectdata(const char *seg, const char *sect, unsigned long *size) { (voi
 void pthread_exit(void *r) __attribute__((noreturn));
 void pthread_exit(void *r) { SYS1(SYS_THREAD_EXIT, (long)r); for (;;) {} }
 int kill(int pid, int s);
-/* pthread_t daqui é o tid (pthread_create) ou main_thread + (tid & 0xFFF) (pthread_self, extra.c) */
+/* pthread_t daqui é o tid (pthread_create) ou o bloco da thread (pthread_self, extra.c): cx_pthread_tid acha o tid */
 int cx_pthread_kill_tid(long tid, int s);
-void *pthread_self(void);
+long cx_pthread_tid(void *t);
 int pthread_kill(unsigned long t, int sig) {
-    unsigned long self = (unsigned long)pthread_self();
-    long tid = t == self ? (long)cx_syscall(SYS_GETTID, 0, 0, 0, 0, 0) : t < 0x100000UL ? (long)t : (long)(t & 0xFFF);
+    long tid = cx_pthread_tid((void *)t);
     int e = cx_pthread_kill_tid(tid, sig);
     if (e == 3 && sig) return kill(getpid(), sig) ? 3 : 0;   /* tid desconhecido: manda ao processo, como antes */
     return e;
@@ -590,23 +589,51 @@ usize pthread_stack_frame_decode_np(usize frame, usize *ret) {
 }
 
 /* ================================================================ ulock (futex do macOS) e semáforos */
-/* __ulock_wait(op, addr, valor, timeout_us): dorme enquanto *addr == valor. Sem futex no kernel,
- * cede a CPU em laço; o __ulock_wake não precisa fazer nada (quem espera vê o valor mudar). */
+/* __ulock_wait(op, addr, valor, timeout_us): dorme enquanto *addr == valor (timeout 0 = sem prazo). Os tipos privados de
+ * 32 bits (UL_COMPARE_AND_WAIT 1, UL_UNFAIR_LOCK 2) esperam no futex do kernel (cx_futex_wait, extra.c) e o __ulock_wake
+ * os acorda: girando com sched_yield, as threads ociosas do Bun (pool, GC do JavaScriptCore) disputavam a trava grande do
+ * kernel com a thread principal. Os de 64 bits (4, 5, 6) e o compartilhado entre processos (3; o futex do kernel é por
+ * processo) ainda cedem a CPU em laço, e para eles o __ulock_wake não precisa fazer nada (quem espera vê o valor mudar).
+ * ULF_NO_ERRNO (0x01000000): o erro volta como -errno no retorno, sem mexer no errno (o Futex do Zig no Bun do Claude Code
+ * usa assim e lia o -1 de antes como -EPERM: "Unexpected __ulock_wait() return code"). Valor já diferente devolve 0, como
+ * no XNU: o Zig trata como inalcançável qualquer erro fora EINTR e ETIMEDOUT. */
+#define ULF_NO_ERRNO    0x01000000u
+#define ULF_WAKE_ALL    0x00000100u
+#define ULF_WAKE_THREAD 0x00000200u
+int cx_futex_wait(volatile int *w, int expected, long ms);
+int cx_futex_wake(volatile int *w, int n);
+static int ulock_private32(u32 op, const void *addr) { u32 k = op & 0xff; return (k == 1 || k == 2) && !((u64)addr & 3); }
+static int ulock_err(u32 op, int e) { if (op & ULF_NO_ERRNO) return -e; set_errno(e); return -1; }
 int __ulock_wait(u32 op, void *addr, u64 value, u32 timeout_us) {
-    (void)op;
+    if (!addr) return ulock_err(op, 22 /* EINVAL */);
+    if (ulock_private32(op, addr)) {
+        int r = cx_futex_wait((volatile int *)addr, (int)(u32)value, timeout_us ? (long)((timeout_us + 999u) / 1000u) : -1);
+        if (r == -60) return ulock_err(op, 60 /* ETIMEDOUT */);
+        if (r == -4) return ulock_err(op, 4 /* EINTR: o chamador confere o valor e espera de novo */);
+        return 0;                                   /* acordada, ou o valor já tinha mudado (-35) */
+    }
+    u32 k = op & 0xff;
+    int wide = k == 4 || k == 5 || k == 6;
     vs_timespec_t t0, t1;
     clock_gettime(6, &t0);
-    while (__atomic_load_n((volatile u32 *)addr, __ATOMIC_ACQUIRE) == (u32)value) {
+    while (wide ? __atomic_load_n((volatile u64 *)addr, __ATOMIC_ACQUIRE) == value
+                : __atomic_load_n((volatile u32 *)addr, __ATOMIC_ACQUIRE) == (u32)value) {
         if (timeout_us) {
             clock_gettime(6, &t1);
             long us = (t1.tv_sec - t0.tv_sec) * 1000000 + (t1.tv_nsec - t0.tv_nsec) / 1000;
-            if (us >= (long)timeout_us) { set_errno(60 /* ETIMEDOUT */); return -1; }
+            if (us >= (long)timeout_us) return ulock_err(op, 60 /* ETIMEDOUT */);
         }
         sched_yield();
     }
     return 0;
 }
-int __ulock_wake(u32 op, void *addr, u64 wake_value) { (void)op; (void)addr; (void)wake_value; return 0; }
+/* acorda uma (ou todas, com ULF_WAKE_ALL) das threads no futex; ULF_WAKE_THREAD (uma thread certa, pela porta) acorda
+ * todas, e as outras voltam a esperar. Sempre 0: o -ENOENT do XNU (ninguém esperando) não muda nada para quem chama */
+int __ulock_wake(u32 op, void *addr, u64 wake_value) {
+    (void)wake_value;
+    if (addr && ulock_private32(op, addr)) cx_futex_wake((volatile int *)addr, (op & (ULF_WAKE_ALL | ULF_WAKE_THREAD)) ? 0x7FFFFFFF : 1);
+    return 0;
+}
 typedef struct vs_sem { char name[64]; volatile int value; struct vs_sem *next; } vs_sem_t;
 static vs_sem_t *sems;
 static volatile int sem_lock;

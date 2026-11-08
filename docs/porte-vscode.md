@@ -53,6 +53,16 @@ cheio). Na primeira partida o diálogo de boas-vindas do Copilot fica na frente 
 without Signing In", em 1070,673 na captura de 1440x900) antes de abrir o terminal. Capturas em `build-vscode\shots\`
 (`vs-bash.png`, `vs-cmds3.png`, `vs-ctrlc3.png`, `vs3-cmds.png`).
 
+**Fonte monoespaçada (7 nov.)**: as letras do terminal saíam espaçadas ("b a s h - 5 . 3 $"). O "Menlo" do mOS era a
+Inter, proporcional, só marcada "mono", e o xterm.js mede a célula pelo "W". Agora a JetBrains Mono (SIL OFL 1.1,
+`root/mOS/Sistema/Biblioteca/Fontes/JetBrainsMono-Regular.ttf` + `JetBrainsMono-OFL.txt`) faz o papel do Menlo:
+- `userland/libsystem/fontmono.c` a registra no kernel na primeira vez que um `NSFont` monoespaçado é criado;
+- o `ft_make` do `appkit.c` usa essa face para Menlo, Monaco, Courier, Consolas, SF Mono e
+  `monospacedSystemFontOfSize:`, inclusive pelo `-[NSFontManager fontWithFamily:...]`.
+
+O terminal fica numa grade alinhada (`build-vsmono\shots\vs-mono2.png`). Para os passos, prefira ⌘P com
+`>Terminal: Create New Terminal`, porque o ⌘⇧P pelo QMP às vezes abre a busca de arquivos.
+
 O terminal integrado do VS Code (e do Cursor e do Claude, que usam o mesmo `node-pty`) precisa de PTY. O
 `node-pty` 1.2.0-beta.18 do VS Code 1.145 faz, no *pty host* (um utility process do Electron): `posix_openpt` +
 `grantpt` + `unlockpt` + `ioctl(TIOCPTYGNAME)`, `open(escravo, O_RDWR | O_NOCTTY)`, `tcsetattr` e `TIOCSWINSZ` no

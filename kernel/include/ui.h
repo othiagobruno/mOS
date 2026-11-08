@@ -178,6 +178,7 @@ typedef struct window {
     int tab_group;              /* abas: janelas com o mesmo grupo (≠ 0) dividem um quadro; só uma aparece */
     bool tab_hidden;            /* aba que não é a da frente */
     u32 title_bg;               /* cor própria da barra de título (0 = do tema; ex.: Notas Autoadesivas) */
+    struct window *owner;       /* janela dona (apps do macOS: addChildWindow:): esta fica sempre acima dela */
 } window_t;
 
 typedef struct app {

@@ -896,7 +896,8 @@ static void dump_threads_maybe(int_frame_t *cur) {
     if (!on || timer_ticks() - last < 30000) return;
     last = timer_ticks();
     static const char *st[] = {"pronta", "rodando", "dormindo", "esperando", "morta"};
-    kprintf("despejo: threads em %llu ms\n", (unsigned long long)last);
+    kprintf("despejo: threads em %llu ms (memória livre %llu de %llu MiB)\n", (unsigned long long)last,
+            (unsigned long long)(pmm_free_pages() / 256), (unsigned long long)(pmm_total_pages() / 256));
     for (thread_t *t = sched_threads(); t; t = t->next) {
         if (!t->proc || t->state == TH_DEAD || (!t->frame && t != thread_current())) continue;
         int_frame_t *f = t == thread_current() ? cur : (int_frame_t *)t->frame;   /* a atual: o frame desta syscall */
@@ -991,7 +992,7 @@ static bool sig_ignored(process_t *p, int sig) {
     u64 h = p->sig_handler[sig];
     return h == MOS_SIG_IGN || (h == MOS_SIG_DFL && default_ignored(sig));
 }
-static u8 *fx_area(int_frame_t *f) { return (u8 *)(((u64)f - 512) & ~15ULL); }
+static u8 *fx_area(int_frame_t *f) { return FPU_AREA_OF(f); }   /* os 512 primeiros: a imagem FXSAVE (proc.h) */
 
 /* a espera desta thread pode ser interrompida por um sinal? */
 static bool sig_interruptible(thread_t *t) {
@@ -1373,8 +1374,17 @@ static bool sig_fault(int_frame_t *f, thread_t *t, process_t *p, u64 cr2) {
     }
     /* CHECK do Chromium é ud2. O crashpad instala tratador e sai em silêncio; sem esta linha
      * o renderer do VS Code desaparece do dump sem "processo encerrado". */
-    if (f->vector == 6)
-        kprintf("proc: %s (pid %d): instrução inválida em 0x%llx (entregue ao tratador)\n", p->name, p->pid, f->rip);
+    if (f->vector == 6) {
+        /* os bytes da instrução e o estado do AVX (CR4.OSXSAVE, XCR0): c4/c5 é um prefixo VEX */
+        u8 ib[6] = {0};
+        bool got = uvm_copy_in(p, ib, f->rip, sizeof ib);
+        u64 cr4, xcr0 = 0;
+        __asm__ volatile("mov %%cr4, %0" : "=r"(cr4));
+        if (cr4 & (1ULL << 18)) { u32 lo, hi; __asm__ volatile("xgetbv" : "=a"(lo), "=d"(hi) : "c"(0)); xcr0 = (u64)hi << 32 | lo; }
+        kprintf("proc: %s (pid %d): instrução inválida em 0x%llx (entregue ao tratador)%s%02x %02x %02x %02x %02x %02x; OSXSAVE %d, XCR0 0x%llx\n",
+                p->name, p->pid, f->rip, got ? ": " : " (sem bytes) ", ib[0], ib[1], ib[2], ib[3], ib[4], ib[5],
+                (int)((cr4 >> 18) & 1), (unsigned long long)xcr0);
+    }
     t->sig_pending |= SIG_BIT(sig);
     t->sig_info[sig].code = code; t->sig_info[sig].pid = 0; t->sig_info[sig].status = 0; t->sig_info[sig].addr = addr;
     t->sig_trapno = (u16)f->vector; t->sig_err = (u32)f->error;
@@ -1532,7 +1542,35 @@ static u64 pipe_op(int_frame_t *f, thread_t *t, pipe_t *pp, bool rd, u64 buf, u6
     return sched_switch(f);
 }
 
-/* grava len bytes na posição off (o VFS guarda arquivos inteiros: reconstrói o conteúdo) */
+/* Escrita em arquivo no lugar, no buffer do próprio vnode. Antes cada write/pwrite montava um buffer do tamanho do arquivo
+ * inteiro (kcalloc), copiava o arquivo, aplicava a escrita e regravava tudo com vfs_write_file (mais uma cópia, e o cap
+ * dobrava): o SQLite do perfil do Chrome e o LevelDB do Claude gravam uma página por vez, e cada uma pedia blocos
+ * contíguos de vários MB ("kmalloc: sem memória para 14893184 bytes" com a VM cheia e fragmentada) e copiava o arquivo
+ * duas vezes. Agora só se aloca quando o arquivo cresce além do buffer (geométrico, como o vfs_append) ou quando o buffer
+ * não pode ser escrito no lugar. */
+
+/* Espaço para nsz bytes (mais o 0 final) num buffer do vnode gravável no lugar; guarda os primeiros MIN(size, nsz) bytes
+ * (quem chama acerta o size). Troca de buffer quando não cabe ou quando ele não é só do VFS: cap 0 = dados do pendrive;
+ * kmalloc_pages = páginas que o macho.c (__TEXT) e o lazy.c (mmap) mapeiam direto nos processos, onde nada se escreve no
+ * lugar (o vfs_append faz o mesmo). Folga de até 16 MiB por crescimento; encolher muito devolve a memória. */
+static bool file_room(vnode_t *v, u64 nsz) {
+    bool lent = v->cap && kmalloc_is_pages(v->data);
+    bool shrink = v->cap > (1u << 20) && nsz + 1 < v->cap / 4;     /* journal do SQLite zerado, log reescrito... */
+    if (v->cap && !lent && !shrink && nsz + 1 <= v->cap) return true;
+    u64 nc = nsz + 256;
+    if (v->cap && !lent && !shrink) nc = MAX(nc, MIN((u64)v->cap * 2, nsz + (16ull << 20)));
+    u8 *nd = kmalloc(nc);
+    if (!nd) return false;
+    u64 keep = MIN((u64)v->size, nsz);
+    if (keep && v->data) memcpy(nd, v->data, keep);
+    else if (keep) memset(nd, 0, keep);
+    nd[keep] = 0;
+    if (v->cap) kfree(v->data);
+    v->data = nd;
+    v->cap = nc;
+    return true;
+}
+
 /* ftruncate: o SQLite (journal TRUNCATE, encolher o banco) precisa; sem isso o commit do perfil do Chrome falhava */
 static i64 file_truncate(const char *path, u64 nsz) {
     vnode_t *v = vfs_lookup(path);
@@ -1540,25 +1578,35 @@ static i64 file_truncate(const char *path, u64 nsz) {
     if (v->dir) return -MOS_EISDIR;
     if (nsz == v->size) return 0;
     if (nsz > (256ull << 20)) return -MOS_ENOSPC;
-    u8 *buf = kcalloc(1, nsz ? nsz : 1);
-    if (!buf) return -MOS_ENOMEM;
-    if (v->data) memcpy(buf, v->data, MIN(nsz, (u64)v->size));
-    vnode_t *w = vfs_write_file(path, buf, nsz);
-    kfree(buf);
-    return w ? 0 : -MOS_ENOENT;
+    if (vfs_is_read_only(v)) return -MOS_ENOENT;
+    u64 old = v->size;
+    if (!file_room(v, nsz)) return -MOS_ENOMEM;
+    if (nsz > old) memset(v->data + old, 0, nsz - old);
+    v->size = nsz;
+    v->data[nsz] = 0;
+    v->mtime = timer_ticks();
+    persist_mark(v);
+    return 0;
 }
-static i64 file_pwrite(const char *path, u64 off, const u8 *data, u64 len) {
+
+/* grava len bytes do processo (ubuf) na posição off, direto no buffer do arquivo (sem cópia intermediária) */
+static i64 file_write_at(process_t *p, const char *path, u64 off, u64 ubuf, u64 len) {
     vnode_t *v = vfs_lookup(path);
     if (v && v->dir) return -MOS_EISDIR;
-    u64 old = v ? v->size : 0, nsz = MAX(old, off + len);
+    if (!v && !(v = vfs_create(path))) return -MOS_ENOENT;     /* arquivo novo: cria as pastas que faltam, como antes */
+    if (vfs_is_read_only(v)) return -MOS_ENOENT;
+    u64 old = v->size, end = off + len;
+    if (end < off) return -MOS_EINVAL;
+    u64 nsz = MAX(old, end);
     if (nsz > (256ull << 20)) return -MOS_ENOSPC;
-    u8 *buf = kcalloc(1, nsz ? nsz : 1);
-    if (!buf) return -MOS_ENOMEM;
-    if (v && old && v->data) memcpy(buf, v->data, old);
-    memcpy(buf + off, data, len);
-    vnode_t *w = vfs_write_file(path, buf, nsz);
-    kfree(buf);
-    return w ? (i64)len : -MOS_ENOENT;
+    if (!file_room(v, nsz)) return -MOS_ENOMEM;
+    if (off > old) memset(v->data + old, 0, off - old);        /* buraco depois do fim lê como zeros */
+    if (len && !uvm_copy_in(p, v->data + off, ubuf, len)) { v->data[v->size] = 0; return -MOS_EFAULT; }
+    v->size = nsz;
+    v->data[nsz] = 0;
+    v->mtime = timer_ticks();
+    persist_mark(v);
+    return (i64)len;
 }
 
 static void fill_stat(vnode_t *v, mos_stat_t *st) {
@@ -1577,13 +1625,9 @@ static i64 sys_write(process_t *p, int fd, u64 buf, u64 len) {
     if (fd_get(p, fd) >= 0) {
         if (!(p->fds[fd].flags & (MOS_O_WRONLY | MOS_O_RDWR))) return -MOS_EBADF;
         if (is_devnull(p->fds[fd].path)) return (i64)len;
-        u8 *tmp = len ? kmalloc(len) : NULL;
-        if (len && !tmp) return -MOS_ENOMEM;
-        if (len && !uvm_copy_in(p, tmp, buf, len)) { kfree(tmp); return -MOS_EFAULT; }
         if (p->fds[fd].flags & MOS_O_APPEND) { vnode_t *v = vfs_lookup(p->fds[fd].path); p->fds[fd].off = v ? v->size : 0; }
-        i64 r = file_pwrite(p->fds[fd].path, p->fds[fd].off, tmp, len);
+        i64 r = file_write_at(p, p->fds[fd].path, p->fds[fd].off, buf, len);
         if (r > 0) p->fds[fd].off += (u64)r;
-        kfree(tmp);
         return r;
     }
     if (fd != 1 && fd != 2) return -MOS_EBADF;
@@ -1831,8 +1875,8 @@ static i64 proc_exec(int_frame_t *f, thread_t *t, process_t *p, char *path, char
     f->rip = entry;
     f->rsp = usp;
     f->rdi = rdi;
-    u8 *fx = (u8 *)(((u64)f - 512) & ~15ULL);          /* FPU/SSE limpos, como numa thread nova */
-    memset(fx, 0, 512);
+    u8 *fx = FPU_AREA_OF(f);                           /* FPU/SSE/AVX limpos, como numa thread nova */
+    memset(fx, 0, FPU_AREA);
     fx[0] = 0x7F; fx[1] = 0x03;
     fx[24] = 0x80; fx[25] = 0x1F;
     kprintf("proc: execve pid %d -> %s (%llu KiB)\n", p->pid, p->name, p->mem_pages * 4);
@@ -2143,6 +2187,16 @@ static u64 proc_syscall_(int_frame_t *f) {
         break;
     }
     case SYS_DUP2:
+        if (fd_get(p, a) >= 0 && b == MOS_DUP_ANY) {        /* dup()/F_DUPFD: o número sai daqui, junto com a cópia */
+            if (c >= PROC_MAX_FDS) { r = -MOS_EINVAL; break; }
+            int nfd = -1;
+            for (int i = c > 3 ? (int)c : 3; i < PROC_MAX_FDS; i++) if (!p->fds[i].used) { nfd = i; break; }
+            if (nfd < 0) { r = -MOS_EMFILE; break; }
+            fd_copy(p, nfd, p, (int)a);
+            p->fds[nfd].flags &= ~MOS_O_CLOEXEC;
+            r = nfd;
+            break;
+        }
         if (fd_get(p, a) < 0 || b >= PROC_MAX_FDS) { r = -MOS_EBADF; break; }
         if (a != b) { fd_copy(p, (int)b, p, (int)a); p->fds[b].flags &= ~MOS_O_CLOEXEC; }   /* POSIX: a cópia nasce sem FD_CLOEXEC */
         r = (i64)b;
@@ -2263,11 +2317,7 @@ static u64 proc_syscall_(int_frame_t *f) {
         if (fd_get(p, a) < 0 || p->fds[a].pipe || p->fds[a].pty) { r = fd_get(p, a) < 0 ? -MOS_EBADF : -MOS_ESPIPE; break; }
         if (!(p->fds[a].flags & (MOS_O_WRONLY | MOS_O_RDWR))) { r = -MOS_EBADF; break; }
         if (is_devnull(p->fds[a].path)) { r = (i64)c; break; }
-        u8 *tmp = c ? kmalloc(c) : NULL;
-        if (c && !tmp) { r = -MOS_ENOMEM; break; }
-        if (c && !uvm_copy_in(p, tmp, b, c)) { kfree(tmp); r = -MOS_EFAULT; break; }
-        r = file_pwrite(p->fds[a].path, f->r10, tmp, c);
-        kfree(tmp);
+        r = file_write_at(p, p->fds[a].path, f->r10, b, c);
         break;
     }
     case SYS_FTRUNCATE: {
@@ -2447,6 +2497,35 @@ static u64 proc_syscall_(int_frame_t *f) {
     }
     case SYS_MUNMAP: {
         if (a < USER_MMAP_BASE || a & 0xFFF || a + b > USER_END) { r = -MOS_EINVAL; break; }
+        /* MOS_MUNMAP_DISCARD (madvise MADV_DONTNEED/FREE/FREE_REUSABLE do libSystem): o conteúdo não importa mais.
+         * Saem só as páginas privadas de faixas anônimas sob demanda; a faixa e a reserva ficam, e a página volta
+         * zerada no próximo toque (lazy_fault), como o VM_SYNC_KILLPAGES do XNU. Compartilhadas (COW, memória Mach) e
+         * de arquivo ficam. O mimalloc 3 do Bun conta com os zeros depois do purge: sem isto o vetor de índices de uma
+         * PropertyTable do JavaScriptCore vinha sujo e o rehash procurava um vazio para sempre (claude -p). */
+        if (c == MOS_MUNMAP_DISCARD) {
+            extern bool lazy_is_anon(process_t *p, u64 va);
+            u64 gone[64];
+            int ng = 0;
+            for (u64 va = a; va < a + b; ) {
+                u64 *e = walk(p, va, false);
+                if (!e) { va = (va + 0x200000) & ~0x1FFFFFULL; continue; }
+                u64 ph = *e & PTE_ADDR;
+                if ((*e & PTE_P) && !(*e & PTE_COW) && page_refs(ph) <= 1 && lazy_is_anon(p, va)) {
+                    *e = 0;
+                    p->mem_pages--;
+                    gone[ng++] = ph;
+                    __asm__ volatile("invlpg (%0)" :: "r"(va) : "memory");
+                }
+                va += 4096;
+                if (ng == 64 || (ng && va >= a + b)) {
+                    smp_tlb_shootdown((u64)p->pml4);
+                    for (int k = 0; k < ng; k++) page_put(gone[k]);
+                    ng = 0;
+                }
+            }
+            r = 0;
+            break;
+        }
         { extern void lazy_remove(process_t *p, u64 va, u64 len); lazy_remove(p, a, b); }
         /* as páginas só voltam ao pmm depois que nenhuma CPU as enxerga mais: em lotes de 64, um
          * smp_tlb_shootdown por lote (com threads do processo em outros núcleos) */
@@ -2474,7 +2553,17 @@ static u64 proc_syscall_(int_frame_t *f) {
          * de gigabytes em laço, e sem isso o espaço de usuário se esgotava em poucos segundos */
         {
             u64 end = (a + b + 0xFFF) & ~0xFFFULL;
-            if (b && a < p->mmap_next && end + 4096 >= p->mmap_next) p->mmap_next = a;
+            if (b && a < p->mmap_next && end + 4096 >= p->mmap_next) {
+                /* MOS_MUNMAP_KEEP (mmap MAP_FIXED do libSystem): o trecho ainda é de quem chamou; o topo fica */
+                if (c == MOS_MUNMAP_KEEP) {
+                    static int avisos;
+                    if (avisos < 20) {
+                        avisos++;
+                        kprintf("mmap: MAP_FIXED no topo (pid %d, 0x%llx + 0x%llx): a reserva continua do processo\n", p->pid,
+                                (unsigned long long)a, (unsigned long long)b);
+                    }
+                } else p->mmap_next = a;
+            }
         }
         r = 0;
         break;

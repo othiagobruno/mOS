@@ -175,6 +175,27 @@ void wm_set_hidden(window_t *w, bool hidden) {
     if (!hidden) wm_focus(w);
 }
 
+/* Janelas filhas (owner, de -[NSWindow addChildWindow:ordered:] pelo GUI_FOCUS_OWNER) ficam acima da dona, como no Cocoa:
+ * o diálogo "Abrir o Slack?" do Chrome é outra NSWindow, e um clique na janela do navegador a trazia para cima dele,
+ * escondendo-o. Sobe as filhas visíveis na ordem em que estavam, e as filhas delas. */
+static void raise_owned(window_t *w, int depth) {
+    window_t *list[MAX_WIN];
+    int n = 0;
+    for (int i = 0; i < nwins; i++) {
+        window_t *c = wins[i];
+        if (c != w && c->owner == w && c->visible && !c->minimized && !c->closing) list[n++] = c;
+    }
+    for (int j = 0; j < n; j++) {
+        int k = index_of(list[j]);
+        if (k < 0) continue;
+        for (; k < nwins - 1; k++) wins[k] = wins[k + 1];
+        wins[nwins - 1] = list[j];
+        list[j]->needs_paint = true;
+        wm_damage(win_bounds(list[j]));
+        if (depth < 4) raise_owned(list[j], depth + 1);
+    }
+}
+
 void wm_focus(window_t *w) {
     int i = index_of(w);
     if (i < 0) return;
@@ -183,14 +204,16 @@ void wm_focus(window_t *w) {
     if (g_stage_manager && w->app != stage_app) { stage_app = w->app; wm_damage_all(); }
     i = index_of(w);
     window_t *old = wm_focused();
-    if (old == w) return;
-    for (int k = i; k < nwins - 1; k++) wins[k] = wins[k + 1];
-    wins[nwins - 1] = w;
-    if (old) { old->needs_paint = true; old->ui.focus = 0; }
-    w->needs_paint = true;
-    wm_damage(win_bounds(w));
-    if (old) wm_damage(win_bounds(old));
-    wm_damage(menubar_rect()); /* nome do app no menu */
+    if (old != w) {
+        for (int k = i; k < nwins - 1; k++) wins[k] = wins[k + 1];
+        wins[nwins - 1] = w;
+        if (old) { old->needs_paint = true; old->ui.focus = 0; }
+        w->needs_paint = true;
+        wm_damage(win_bounds(w));
+        if (old) wm_damage(win_bounds(old));
+        wm_damage(menubar_rect()); /* nome do app no menu */
+    }
+    raise_owned(w, 0);
 }
 
 int wm_count_for(app_t *a) {
@@ -269,6 +292,7 @@ static void destroy(window_t *w) {
     wm_damage(win_bounds(w));
     for (int k = i; k < nwins - 1; k++) wins[k] = wins[k + 1];
     nwins--;
+    for (int k = 0; k < nwins; k++) if (wins[k]->owner == w) wins[k]->owner = NULL;   /* filhas perdem a dona */
     if (drag_win == w) { drag_win = NULL; drag_mode = DRAG_NONE; }
     if (w->app) w->app->windows--;
     for (int k = 0; k < nspaces; k++) if (spaces[k] == w) { memmove(spaces + k, spaces + k + 1, (nspaces - k - 1) * sizeof(window_t *)); nspaces--; k--; }

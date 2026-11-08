@@ -414,10 +414,12 @@ surface_t *icon_for(app_t *a, int size) {
     surface_t *s = surface_new(size, size);
     memset(s->px, 0, (usize)size * size * 4);
     /* apps do macOS: o ícone do próprio bundle (.icns), se o mOS conseguir ler */
-    const char *bundle = compat_app_bundle(a);
+    const char *bundle = compat_app_bundle(a), *ex = a->exec;
+    extern bool horizonte_motor_bundle(const char *bundle);
+    if (horizonte_motor_bundle(bundle)) { bundle = NULL; ex = "horizonte"; }   /* o motor Chromium do Horizonte: ícone do Horizonte */
     surface_t *bic = bundle ? macho_bundle_icon(bundle, size) : NULL;
     if (bic) gfx_blend(s, bic, 0, 0, 255);
-    else if (tahoe_icon(a->exec, s, 0, 0, size)) {}   /* ícones do sistema no estilo Tahoe (icons_tahoe.c) */
+    else if (tahoe_icon(ex, s, 0, 0, size)) {}   /* ícones do sistema no estilo Tahoe (icons_tahoe.c) */
     else if (a->draw_icon) a->draw_icon(s, 0, 0, size);
     /* Padrão do sistema: todo ícone de app é um quadrado arredondado. Ícones de outro formato
      * (redondos, recortados) são colocados, reduzidos, sobre uma placa clara (ou escura). */

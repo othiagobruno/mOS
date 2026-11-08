@@ -134,8 +134,12 @@ vnode_t *vfs_create(const char *path) {
 
 bool vfs_append(vnode_t *f, const void *data, usize len) {
     if (!f || f->dir || read_only(f)) return false;
-    if (f->size + len + 1 > f->cap) {
-        usize nc = MAX(f->cap * 2, f->size + len + 256);
+    /* buffer de kmalloc_pages (arquivo grande lido do disco): o macho.c pode ter mapeado páginas dele nos processos (o
+     * __TEXT dos frameworks), então nada se escreve nele no lugar; o conteúdo vai para um buffer novo, e o kfree do velho
+     * só devolve as páginas que nenhum processo usa mais */
+    bool lent = f->cap && kmalloc_is_pages(f->data);
+    if (lent || f->size + len + 1 > f->cap) {
+        usize nc = lent ? f->size + len + 256 : MAX(f->cap * 2, f->size + len + 256);
         u8 *nd = kmalloc(nc);
         if (!nd) return false;
         if (f->data) memcpy(nd, f->data, f->size);

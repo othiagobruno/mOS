@@ -1,7 +1,10 @@
-/* mOS — Horizonte: navegador web (interface estilo Safari/Mojave, abas, histórico, formulários) */
+/* mOS — Horizonte: navegador web (interface estilo Safari/Mojave, abas, histórico, formulários).
+ * Com o Chromium instalado como motor (launchsvc.h, HORIZONTE_MOTOR), o Horizonte abre as páginas nele; o motor deste
+ * arquivo fica de reserva. docs/navegador-chromium.md */
 #include "apps.h"
 #include "web.h"
 #include "js.h"
+#include "launchsvc.h"
 
 #define MAX_TABS 12
 #define HIST     48
@@ -1511,7 +1514,15 @@ void browser_open_url(const char *url) {
     wm_invalidate(b->w);
 }
 
+/* O motor próprio do Horizonte, de reserva: o principal é o Chromium (launchsvc.c, horizonte_motor_abrir), que abre as
+ * janelas dele; este vale quando o Chromium não está instalado, não inicia ou cai ao abrir, e para as páginas about:. */
+void horizonte_legado_abrir(const char *url) {
+    app_horizonte.running = true;
+    browser_open_url(url);
+}
+
 static void launch(app_t *a) {
+    if (horizonte_motor_abrir(NULL)) return;   /* o motor Chromium: abre ou traz as janelas dele */
     bwin_t *b = front_bwin();
     if (b) {
         /* já aberto: nova aba na janela da frente */
@@ -1588,7 +1599,9 @@ static void on_menu(app_t *a, int act) {
     if (b->w) wm_invalidate(b->w);
 }
 
+static void on_quit(app_t *a) { (void)a; horizonte_motor_encerrar(); }   /* o motor Chromium encerra junto */
+
 app_t app_horizonte = {
     .name = "Horizonte", .exec = "horizonte", .draw_icon = icon_horizonte, .launch = launch, .tick = tick, .on_menu = on_menu,
-    .menus = menus, .nmenus = ARRAY_LEN(menus), .pinned = true,
+    .on_quit = on_quit, .menus = menus, .nmenus = ARRAY_LEN(menus), .pinned = true,
 };

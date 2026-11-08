@@ -1313,7 +1313,14 @@ static void layer_draw_hook(id view, int phase, double tlx, double tly, double w
     memset(cv, 0, need * 4);
     touched = NO;
     render(l, m, k, 1, 0, YES);
-    { static int n; if (cx_ca_diag() && log_now(&n)) QLOG("quadro #%d na janela %d: view %s %dx%d em (%d,%d), ~%u pixels de layer visíveis", n, cx_gui_cur_gid, cx_class_name(object_getClass(view)), cvw, cvh, cvx, cvy, touched ? count_visible(cv, need) : 0); }
+    {   /* contagem por janela: as primeiras 5 de cada uma (a janela principal não gasta a cota das outras, como os
+         * diálogos do Chrome) e 1 a cada 120 */
+        static int n, per[16];
+        int g = cx_gui_cur_gid > 0 && cx_gui_cur_gid < 16 ? cx_gui_cur_gid : 0;
+        ++n;
+        if (cx_ca_diag() && (++per[g] <= 5 || n % 120 == 0))
+            QLOG("quadro #%d na janela %d: view %s %dx%d em (%d,%d), ~%u pixels de layer visíveis", n, cx_gui_cur_gid, cx_class_name(object_getClass(view)), cvw, cvh, cvx, cvy, touched ? count_visible(cv, need) : 0);
+    }
     {   /* diagnóstico (ca-log): a árvore de layers de uma view que tem um IOSurface embaixo, nas 2 primeiras vezes
          * (o IOSurface do display do Chromium nunca chegava a ser lido no desenho) */
         static int ndump;

@@ -27,7 +27,7 @@ enum {
     SYS_LSEEK,         /* (fd, off, whence) -> nova posição        SEEK_SET/CUR/END */
     SYS_FSTAT,         /* (fd, mos_stat_t*) -> 0 */
     SYS_MMAP,          /* (len) -> endereço                        memória anônima zerada, RW */
-    SYS_MUNMAP,        /* (addr, len) -> 0 */
+    SYS_MUNMAP,        /* (addr, len[, MOS_MUNMAP_KEEP]) -> 0       KEEP: só descarta as páginas, a faixa segue reservada */
     SYS_UNIXTIME,      /* () -> segundos desde 1970 (relógio do sistema) */
     SYS_STAT,          /* (path, mos_stat_t*) -> 0 */
     SYS_READDIR,       /* (path, index, namebuf, cap) -> 1 = nome copiado, 0 = fim */
@@ -83,6 +83,14 @@ enum {
  * envp 0 = o ambiente curto padrão (HOME, PATH, …). O Electron passa os dois completos:
  * a linha de comando leva a chave do rendezvous Mach e o ambiente leva a política de validação.
  * acts são as posix_spawn_file_actions (dup2/close/open/chdir), na ordem. */
+/* SYS_MUNMAP com c = MOS_MUNMAP_KEEP: o mmap(MAP_FIXED|MAP_ANON) do libSystem troca um trecho que ainda é do chamador
+ * por páginas zeradas. As páginas saem, mas a faixa não volta ao alocador de endereços (mmap_next): sem isto, um trecho
+ * no topo virava espaço livre, o próximo mmap de outro componente caía nele, e o dono, ao ligar o trecho de novo
+ * (mprotect), herdava as páginas do outro (o Claude Code faz MAP_FIXED no topo logo na partida).
+ * c = MOS_MUNMAP_DISCARD: o madvise(MADV_DONTNEED/FREE/FREE_REUSABLE) do libSystem. Só saem as páginas privadas de
+ * faixas anônimas sob demanda, que voltam zeradas no próximo toque; nada é desmapeado de fato (proc/process.c) */
+#define MOS_MUNMAP_KEEP    0x4B454550u   /* 'KEEP' */
+#define MOS_MUNMAP_DISCARD 0x44495343u   /* 'DISC' */
 #define MOS_SPAWN_FA_MAX 48
 #define MOS_SPAWN_FA_DUP2  1
 #define MOS_SPAWN_FA_CLOSE 2
@@ -233,6 +241,10 @@ enum {
 /* SYS_PIPE: 2º argumento que pede um par bidirecional (socketpair) em vez de um pipe; mágico porque o SYS1 dos programas
  * que chamam SYS_PIPE com um argumento só deixa lixo no rsi */
 #define MOS_PIPE_SOCKPAIR 0x534F434B50414952ULL   /* "SOCKPAIR" */
+/* SYS_DUP2(fd, MOS_DUP_ANY, mínimo): dup()/F_DUPFD. O kernel escolhe o menor fd livre >= mínimo (>= 3) e copia na mesma
+ * syscall; escolher no libSystem e chamar dup2 depois deixava outra thread abrir aquele número no meio, e o dup2 o
+ * substituía em silêncio */
+#define MOS_DUP_ANY 0x7FFFFFFF
 #define MOS_SA_ONSTACK   0x0001  /* flags de sa_flags: valores do macOS */
 #define MOS_SA_RESTART   0x0002
 #define MOS_SA_RESETHAND 0x0004

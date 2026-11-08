@@ -337,6 +337,7 @@ typedef struct cx_source {
     int tid;
     volatile u64 start, interval;   /* TIMER: dispatch_source_set_timer (start absoluto em ns; ~0 = sem repetição) */
     volatile int armed;             /* TIMER: há um disparo programado */
+    volatile unsigned long data;    /* PROC: DISPATCH_PROC_EXIT depois do disparo (dispatch_source_get_data) */
 } cx_source_t;
 #define SMAGIC 0x6D4F53737263ull
 
@@ -389,9 +390,30 @@ static void source_thread(void *arg) {
     else if (s->cancel_fn) s->cancel_fn(s->ctx);
 }
 
+/* thread da fonte PROC com DISPATCH_PROC_EXIT: o servidor do MachPortRendezvous do Chromium vigia cada filho assim e,
+ * se ele morre antes de buscar as portas, as solta (OnClientExited); o canal Mojo do filho acusa o erro e a aba mostra a
+ * página de erro. Sem a fonte, um renderer que caía na partida deixava a aba "sem resposta" para sempre. O processo
+ * terminou quando kill(pid, 0) falha (zumbi ou já colhido), como no EVFILT_PROC do kqueue.c. Dispara uma vez. */
+extern char _dispatch_source_type_proc[];      /* vscode_libc.c */
+#define CX_DISPATCH_PROC_EXIT 0x80000000ul
+static void proc_thread(void *arg) {
+    cx_source_t *s = arg;
+    int fired = 0;
+    while (!s->canceled) {
+        if (fired || !s->active || SYS2(SYS_SIGKILL, (long)s->port, 0) >= 0) { SYS1(SYS_SLEEP, 50); continue; }
+        fired = 1;
+        s->data = CX_DISPATCH_PROC_EXIT;
+        if (is_main_q(s->queue)) source_fire_main(s);
+        else source_fire(s);
+    }
+    if (s->cancel_block) RUN_BLOCK(s->cancel_block);
+    else if (s->cancel_fn) s->cancel_fn(s->ctx ? s->ctx : dispatch_get_context(s));
+}
+
 void *dispatch_source_create(const void *type, unsigned long handle, unsigned long mask, void *queue) {
-    (void)mask;
-    if (type != _dispatch_source_type_mach_recv && type != _dispatch_source_type_timer) return 0;   /* MACH_RECV e TIMER */
+    if (type == _dispatch_source_type_proc && !(mask & CX_DISPATCH_PROC_EXIT)) return 0;   /* PROC: só a saída */
+    if (type != _dispatch_source_type_mach_recv && type != _dispatch_source_type_timer && type != _dispatch_source_type_proc)
+        return 0;                                                                         /* MACH_RECV, TIMER e PROC */
     cx_source_t *s = malloc(sizeof *s);
     if (!s) return 0;
     for (unsigned i = 0; i < sizeof *s; i++) ((char *)s)[i] = 0;
@@ -429,8 +451,8 @@ void dispatch_source_set_timer(void *s, u64 start, u64 interval, u64 leeway) {
 void dispatch_source_cancel(void *s) { if (is_source(s)) ((cx_source_t *)s)->canceled = 1; }
 long dispatch_source_testcancel(void *s) { return is_source(s) ? ((cx_source_t *)s)->canceled : (s == 0); }
 unsigned long dispatch_source_get_handle(void *s) { return is_source(s) ? ((cx_source_t *)s)->port : 0; }
-unsigned long dispatch_source_get_data(void *s) { (void)s; return 0; }
-unsigned long dispatch_source_get_mask(void *s) { (void)s; return 0; }
+unsigned long dispatch_source_get_data(void *s) { return is_source(s) ? ((cx_source_t *)s)->data : 0; }
+unsigned long dispatch_source_get_mask(void *s) { return is_source(s) && ((cx_source_t *)s)->type == _dispatch_source_type_proc ? CX_DISPATCH_PROC_EXIT : 0; }
 void dispatch_source_merge_data(void *s, unsigned long v) { (void)s; (void)v; }
 
 /* A thread da fonte segura uma referência até o fim (handler de cancelamento incluído), como o GCD, que só libera
@@ -438,7 +460,10 @@ void dispatch_source_merge_data(void *s, unsigned long v) { (void)s; (void)v; }
  * faz dispatch_source_cancel + dispatch_release em seguida. Sem a referência, a fonte era liberada antes e a thread
  * chamava o cancel_block lido de memória livre (proteção geral em source_pthread). */
 static void *source_pthread(void *a) {
-    if (((cx_source_t *)a)->type == _dispatch_source_type_timer) timer_thread(a); else source_thread(a);
+    const void *ty = ((cx_source_t *)a)->type;
+    if (ty == _dispatch_source_type_timer) timer_thread(a);
+    else if (ty == _dispatch_source_type_proc) proc_thread(a);
+    else source_thread(a);
     cx_dispatch_release(a);
     return 0;
 }

@@ -44,6 +44,10 @@ enum {
 #define DEV_PAD_GET 0
 #define DEV_PAD_RUMBLE 1
 #define DEV_AUDIO_PLAY 2      /* (amostras i16 estéreo 48 kHz, quadros) -> quadros aceitos; mixer do sistema */
+#define DEV_INPUT_POST 3      /* (tipo EV_* | botões << 8 | mods << 16 | roda << 32, tecla, x | y << 32) evento sintético
+                               * na fila de entrada global (CGEventPost); tipos EV_KEY_DOWN/UP e EV_MOUSE_ABS */
+#define DEV_SCREEN_CAPTURE 4  /* (x | y << 32, w | h << 32, buf) retângulo da tela em ARGB; w = 0: a tela toda; buf = 0: só
+                               * o tamanho. Devolve w | h << 32 (já recortado), < 0 erro */
 #define DEV_BT_STATE 8
 #define DEV_BT_SCAN 9
 #define DEV_BT_DEVICE 10
@@ -145,6 +149,9 @@ typedef struct {
  * posição e o ícone do app no Dock ficam) e orderFront: a mostra de novo, na frente. */
 #define GUI_FOCUS_HIDE 0x48494445
 #define GUI_FOCUS_SHOW 0x53484F57
+/* GUI_WIN_FOCUS (id, GUI_FOCUS_OWNER, dona): a janela passa a ficar sempre acima da dona (outra janela do mesmo processo;
+ * 0 desfaz), como as filhas do Cocoa (-[NSWindow addChildWindow:ordered:]). Não muda o foco agora. */
+#define GUI_FOCUS_OWNER 0x4F574E52
 
 /* eventos */
 enum { GEV_NONE, GEV_MOUSE_DOWN, GEV_MOUSE_UP, GEV_MOUSE_MOVE, GEV_RIGHT_DOWN, GEV_SCROLL,

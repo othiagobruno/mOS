@@ -68,6 +68,16 @@ Copy-Item "$root\build\libcxx\libc++.1.dylib" "$esp\mOS\usr\lib\libc++.1.dylib" 
 & "$root\tools\build-sqlite.ps1"
 if ($LASTEXITCODE -ne 0) { Write-Host 'libsqlite3 build FAILED' -ForegroundColor Red; exit 1 }
 if (Test-Path "$root\build\sqlite\libsqlite3.dylib") { Copy-Item "$root\build\sqlite\libsqlite3.dylib" "$esp\mOS\usr\lib\libsqlite3.dylib" -Force }
+# ICU4C como /usr/lib/libicucore.A.dylib, com os dados em /usr/share/icu (Intl do Claude Code; tools\build-icu.ps1, se o
+# código-fonte estiver em .tools\icu-dl). O carregador prefere esta à parte de IDN do libSystem (kernel/compat/macho.c).
+& "$root\tools\build-icu.ps1"
+if ($LASTEXITCODE -ne 0) { Write-Host 'libicucore build FAILED' -ForegroundColor Red; exit 1 }
+if (Test-Path "$root\build\icu\libicucore.A.dylib") {
+    Copy-Item "$root\build\icu\libicucore.A.dylib" "$esp\mOS\usr\lib\libicucore.A.dylib" -Force
+    New-Item -ItemType Directory -Force "$esp\mOS\usr\share\icu" | Out-Null
+    Copy-Item "$root\build\icu\icudt74l.dat" "$esp\mOS\usr\share\icu\icudt74l.dat" -Force
+    Copy-Item "$root\build\icu\LICENSE" "$esp\mOS\usr\share\icu\LICENSE" -Force -ErrorAction SilentlyContinue
+}
 # zlib (licença zlib) do bottle do Homebrew em /usr/local/opt/zlib/lib, para onde o carregador manda /usr/lib/libz.1.dylib
 # (kernel/compat/macho.c). Módulos nativos a ligam: o file_service.node do Cursor (busca de arquivos) caía sem crc32/inflate.
 $zl = Get-ChildItem "$root\build\brew\x\zlib\*\lib\libz.1.*.dylib" -ErrorAction SilentlyContinue | Select-Object -First 1

@@ -12,7 +12,7 @@
 #include <float.h>
 #include <stdint.h>
 
-#if defined(__swift__)
+#if defined(__swift__) && !defined(MOS_SWIFT_OBJC)   /* com interop ObjC (MOS_SWIFT_OBJC) os nomes são os da Apple */
 /* Para o Swift, CGVector/CGAffineTransform em C têm outro nome: o OpenCoreGraphics define os seus em Swift (o C só
  * aparece nas assinaturas das APIs C, como MOSCGAffineTransform, com o mesmo layout). */
 #define CGVector MOSCGVector

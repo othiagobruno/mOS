@@ -1,0 +1,26 @@
+# Roteiro do PtyRun (tools/build-ptyrun.ps1): o Claude Code no modo interativo, sem login.
+# Mostra a primeira tela (escolha do tema), mexe a seleção com a seta, confirma o tema e para na tela de login,
+# sem escolher nada nela. Redimensiona (SIGWINCH) e sai com dois ^C.
+tamanho 30 100
+ambiente TERM=xterm-256color
+ambiente COLORTERM=truecolor
+ambiente SHELL=/bin/sh
+ambiente LANG=en_US.UTF-8
+comando /Aplicativos/ClaudeCode.app/Contents/MacOS/claude
+quieto 15000 1200000
+tela inicial
+tecla \e[B
+quieto 6000 240000
+tela depois da seta para baixo
+se Dark mode
+tecla \r
+quieto 10000 300000
+tela depois do Enter
+redimensionar 36 120
+quieto 6000 240000
+tela depois de redimensionar
+tecla ^C
+quieto 4000 60000
+tela depois do primeiro ^C
+tecla ^C
+fim 120000

@@ -48,7 +48,7 @@ CLASS(NSURLProtocol) CLASS(NSURLQueryItem) CLASS(NSURLRequest) CLASS(NSURLRespon
 CLASS(NSURLSession) CLASS(NSURLSessionConfiguration) CLASS(NSURLSessionDataTask) CLASS(NSURLSessionDownloadTask)
 CLASS(NSURLSessionTask) CLASS(NSURLSessionTaskMetrics) CLASS(NSURLSessionTaskTransactionMetrics)
 CLASS(NSURLSessionUploadTask) CLASS(NSUserActivity) CLASS(NSUserNotification) CLASS(NSUserNotificationCenter)
-CLASS(NSUUID) CLASS(NSValueTransformer) CLASS(NSXMLDocument) CLASS(NSXMLParser) CLASS(NSXPCConnection)
+CLASS(NSUUID) CLASS(NSValueTransformer) CLASS(NSXMLParser) CLASS(NSXPCConnection)
 CLASS(NSXPCInterface) CLASS(NSXPCListener) CLASS(NSXPCListenerEndpoint)
 
 /* estado genérico: a maioria das classes guarda poucos campos */
@@ -1701,6 +1701,16 @@ static void dlg_run(void *arg) {
     } else if (n && dlg_has(dlg, "URLSession:dataTask:didReceiveData:")) {
         MSG(void, dlg, "URLSession:dataTask:didReceiveData:", sess, task, data);
     }
+    {   /* uma linha no stderr por tarefa com delegate (com stderr-serial vai para o log serial): URL, status, bytes, erro */
+        id req = BOX(task)->a, url = req ? MSG0(id, req, "URL") : 0, us = url ? MSG0(id, url, "absoluteString") : 0;
+        id resp = BOX(task)->b, er = BOX(task)->e;
+        long st = resp && MSG(BOOL, resp, "respondsToSelector:", sel_registerName("statusCode")) ? MSG0(long, resp, "statusCode") : -1;
+        id ed = er ? MSG0(id, er, "description") : 0;
+        char line[600];
+        int len = cx_snprintf(line, sizeof line, "NSURLSession[delegate]: %s %.200s -> status %ld, %ld bytes%s%.200s\n",
+                              BOX(task)->j ? "download" : "dados", us ? cs(us) : "?", st, (long)n, ed ? ", erro " : "", ed ? cs(ed) : "");
+        if (len > 0) { extern long write(int, const void *, unsigned long); write(2, line, (unsigned long)(len < (int)sizeof line ? len : (int)sizeof line - 1)); }
+    }
     if (dlg_has(dlg, "URLSession:task:didCompleteWithError:"))
         MSG(void, dlg, "URLSession:task:didCompleteWithError:", sess, task, BOX(task)->e);
     rel(data); rel(task);
@@ -2416,9 +2426,6 @@ static BOOL xml_parse(id s, SEL c) {
 static id xml_init_str(id s, SEL c, id str) { (void)c; BOX(s)->a = retain(str); return s; }
 static void xml_set_del(id s, SEL c, id d) { (void)c; rel(BOX(s)->b); BOX(s)->b = retain(d); }
 static id xml_del(id s, SEL c) { (void)c; return BOX(s)->b; }
-static id xmldoc_init(id s, SEL c, id str, u64 opt, id *err) { (void)c; (void)opt; if (err) *err = 0; BOX(s)->a = retain(str); return s; }
-static id xmldoc_xml(id s, SEL c) { (void)c; return BOX(s)->a; }
-static id xmldoc_root(id s, SEL c) { (void)c; return BOX(s)->a; }
 
 static id xpc_init_name(id s, SEL c, id name) { (void)c; BOX(s)->a = retain(name); return s; }
 static id xpc_with(id cls, SEL c, id name) { return ar(xpc_init_name(cx_alloc_instance((cx_class_t *)cls), c, name)); }
@@ -2948,11 +2955,7 @@ void cx_foundation_more_init(void) {
     CM(NSXMLParser, "alloc", lock_alloc);
     M(NSXMLParser, "initWithData:", xml_init_str); M(NSXMLParser, "initWithContentsOfURL:", xml_init_str);
     M(NSXMLParser, "setDelegate:", xml_set_del); M(NSXMLParser, "delegate", xml_del); M(NSXMLParser, "parse", xml_parse);
-    DEF(&NSXMLDocument_c, &NSXMLDocument_m, "NSXMLDocument", ob, BEX);
-    CM(NSXMLDocument, "alloc", lock_alloc);
-    M(NSXMLDocument, "initWithXMLString:options:error:", xmldoc_init);
-    M(NSXMLDocument, "XMLString", xmldoc_xml); M(NSXMLDocument, "rootElement", xmldoc_root);
-    M(NSXMLDocument, "setRootElement:", set_b);
+    { extern void cx_xmldom_init(void); cx_xmldom_init(); }   /* NSXMLDocument/NSXMLElement/NSXMLNode: xmldom.c */
 
     DEF(&NSXPCInterface_c, &NSXPCInterface_m, "NSXPCInterface", ob, BEX);
     CM(NSXPCInterface, "interfaceWithProtocol:", xpc_iface);

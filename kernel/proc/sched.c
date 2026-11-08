@@ -171,8 +171,8 @@ static u64 build_frame(thread_t *t, u64 rip, u64 rsp, bool user, u64 rcx, u64 rd
     f->ss = user ? 0x23 : 0x10;
     f->rcx = rcx;
     f->rdx = rdx;
-    u8 *fx = (u8 *)(((u64)f - 512) & ~15ULL);
-    memset(fx, 0, 512);
+    u8 *fx = FPU_AREA_OF(f);                    /* XSAVE/FXSAVE (proc.h); o cabeçalho do XSAVE zerado = estado inicial */
+    memset(fx, 0, FPU_AREA);
     fx[0] = 0x7F; fx[1] = 0x03;                 /* FCW = 0x037F */
     fx[24] = 0x80; fx[25] = 0x1F;               /* MXCSR = 0x1F80 */
     return (u64)f;
@@ -208,7 +208,7 @@ thread_t *kthread_create(const char *name, void (*fn)(void *), void *arg) {
     if (!t) return NULL;
     /* O frame inicial e a área FXSAVE ocupam o topo da pilha; a thread começa abaixo deles com
      * rsp = 16n+8 (como logo após um call) e 32 bytes de "shadow space" (ABI x64 da Microsoft). */
-    u64 *sp = (u64 *)(((t->kstack_top - 1024) & ~15ULL) - 40);
+    u64 *sp = (u64 *)(((t->kstack_top - 2048) & ~15ULL) - 40);   /* acima: o frame e a FPU_AREA (até ~1,3 KiB) */
     sp[0] = 0;                                  /* endereço de retorno falso: kthread_start nunca volta */
     t->frame = build_frame(t, (u64)kthread_start, (u64)sp, false, (u64)arg, (u64)fn);
     link_thread(t);
@@ -232,7 +232,7 @@ thread_t *uthread_clone(process_t *p, const int_frame_t *src) {
     if (!t) return NULL;
     t->frame = build_frame(t, src->rip, src->rsp, true, 0, 0);
     memcpy((void *)t->frame, src, sizeof *src);
-    memcpy((void *)((t->frame - 512) & ~15ULL), (const void *)(((u64)src - 512) & ~15ULL), 512);
+    memcpy(FPU_AREA_OF(t->frame), FPU_AREA_OF(src), FPU_AREA);
     link_thread(t);
     return t;
 }

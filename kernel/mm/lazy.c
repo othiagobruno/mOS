@@ -23,6 +23,7 @@
 bool uvm_map(process_t *p, u64 va, u64 len);
 u64 *uvm_pte(process_t *p, u64 va);
 bool uvm_install(process_t *p, u64 va, u64 phys);
+bool uvm_map_cow(process_t *p, u64 va, u64 phys);
 
 /* path = NULL: anônima (zeros); senão a página va vem do arquivo, no deslocamento foff + (va - start) */
 typedef struct { int pid; u64 start, end; char *path; u64 foff; } lazy_t;
@@ -100,6 +101,14 @@ static int lazy_find(process_t *p, u64 va, char *path, usize cap, u64 *off) {
     return r;
 }
 
+/* va está numa faixa anônima sob demanda (e em nenhuma de arquivo)? Uma página dessas pode sair e voltar zerada no
+ * próximo toque: o madvise(MADV_DONTNEED/FREE) do libSystem (SYS_MUNMAP com MOS_MUNMAP_DISCARD, proc/process.c) */
+bool lazy_is_anon(process_t *p, u64 va) {
+    char path[8];
+    u64 off = 0;
+    return p && lazy_find(p, va, path, sizeof path, &off) == 1;
+}
+
 /* a página de va falta: se estiver numa faixa sob demanda de p, mapeia a página (true = repetir) */
 bool lazy_fault(process_t *p, u64 va) {
     if (!p) return false;
@@ -109,10 +118,18 @@ bool lazy_fault(process_t *p, u64 va) {
     if (!kind) return false;
     if (uvm_pte(p, va)) return true;                       /* outra thread do processo já mapeou */
     if (kind == 1) return uvm_map(p, va & ~0xFFFULL, 4096);
+    vnode_t *v = vfs_lookup(path);
+    /* página inteira de um arquivo em páginas alinhadas (kmalloc_pages: os grandes lidos do disco, fat.c): entra a própria
+     * página do arquivo, em cópia na escrita, como o __TEXT dos frameworks (macho.c), em vez de uma cópia por processo.
+     * Cada processo do Chromium mapeia o icudtl.dat, os .pak e o snapshot do V8. O VFS nunca escreve no lugar num buffer
+     * desses (vfs_append; file_room em process.c), e o kfree dele só devolve as páginas que nenhum processo mapeia mais.
+     * A última página, parcial, continua copiada: depois do fim do arquivo ela tem de ler zeros. */
+    if (v && !v->dir && v->cap && !(off & 0xFFF) && off + 4096 <= v->size && kmalloc_is_pages(v->data) &&
+        uvm_map_cow(p, va & ~0xFFFULL, (u64)v->data + off))
+        return true;
     u64 pg = pmm_alloc(1);
     if (!pg) return false;
     memset((void *)pg, 0, 4096);
-    vnode_t *v = vfs_lookup(path);
     if (v && !v->dir && v->data && off < v->size) {
         u64 n = v->size - off;
         memcpy((void *)pg, v->data + off, n < 4096 ? n : 4096);

@@ -169,3 +169,44 @@ extension IndexPath: _ObjectiveCBridgeable {
         return r ?? IndexPath()
     }
 }
+
+// MARK: - DateComponents <-> NSDateComponents (os campos que o NSDateComponents do libSystem guarda; NSDateComponentUndefined
+// = Int.max = nil)
+
+extension DateComponents: _ObjectiveCBridgeable {
+    @_semantics("convertToObjectiveC")
+    public func _bridgeToObjectiveC() -> NSDateComponents {
+        let n = NSDateComponents()!
+        func v(_ x: Int?) -> Int { x ?? Int.max }
+        n.era = v(era); n.year = v(year); n.month = v(month); n.day = v(day)
+        n.hour = v(hour); n.minute = v(minute); n.second = v(second); n.nanosecond = v(nanosecond)
+        n.weekday = v(weekday); n.weekOfYear = v(weekOfYear); n.yearForWeekOfYear = v(yearForWeekOfYear)
+        if let tz = timeZone { n.timeZone = tz._bridgeToObjectiveC() }
+        return n
+    }
+    public static func _forceBridgeFromObjectiveC(_ x: NSDateComponents, result: inout DateComponents?) {
+        result = _unconditionallyBridgeFromObjectiveC(x)
+    }
+    public static func _conditionallyBridgeFromObjectiveC(_ x: NSDateComponents, result: inout DateComponents?) -> Bool {
+        result = _unconditionallyBridgeFromObjectiveC(x); return true
+    }
+    @_effects(readonly)
+    public static func _unconditionallyBridgeFromObjectiveC(_ source: NSDateComponents?) -> DateComponents {
+        guard let s = source else { return DateComponents() }
+        func o(_ x: Int) -> Int? { x == Int.max ? nil : x }
+        var d = DateComponents()
+        d.era = o(s.era); d.year = o(s.year); d.month = o(s.month); d.day = o(s.day)
+        d.hour = o(s.hour); d.minute = o(s.minute); d.second = o(s.second); d.nanosecond = o(s.nanosecond)
+        d.weekday = o(s.weekday); d.weekOfYear = o(s.weekOfYear); d.yearForWeekOfYear = o(s.yearForWeekOfYear)
+        if let tz = s.timeZone { d.timeZone = TimeZone._unconditionallyBridgeFromObjectiveC(tz) }
+        return d
+    }
+}
+
+// MARK: - FileHandle.write(contentsOf:) (macOS 10.15)
+
+extension FileHandle {
+    public func write<T: DataProtocol>(contentsOf data: T) throws {
+        write(Data(data)._bridgeToObjectiveC())
+    }
+}

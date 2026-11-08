@@ -118,3 +118,60 @@ public struct Logger: @unchecked Sendable {
     public func critical(_ message: OSLogMessage) { _mosLogLine("critical", _category, message._text) }
     public func fault(_ message: OSLogMessage) { _mosLogLine("fault", _category, message._text) }
 }
+
+extension Logger {
+    /// o OSLog por trás do Logger (o mOS não guarda subsistema/categoria num objeto de log: devolve o padrão)
+    public var logObject: OSLog { .default }
+}
+
+// MARK: - OSAllocatedUnfairLock (macOS 13): o estado e o os_unfair_lock num ManagedBuffer, com o layout da Apple
+// (@frozen, um campo de referência), porque os apps inlinam lock/unlock/withLock e só pedem o descritor do tipo
+
+@_silgen_name("os_unfair_lock_lock") @usableFromInline internal func _mos_unfair_lock(_ l: UnsafeMutablePointer<UInt32>)
+@_silgen_name("os_unfair_lock_unlock") @usableFromInline internal func _mos_unfair_unlock(_ l: UnsafeMutablePointer<UInt32>)
+@_silgen_name("os_unfair_lock_trylock") @usableFromInline internal func _mos_unfair_trylock(_ l: UnsafeMutablePointer<UInt32>) -> Bool
+
+@frozen
+public struct OSAllocatedUnfairLock<State>: @unchecked Sendable {
+    @usableFromInline let __lock: ManagedBuffer<State, UInt32>
+
+    public init(uncheckedState initialState: State) {
+        __lock = ManagedBuffer<State, UInt32>.create(minimumCapacity: 1) { b in
+            b.withUnsafeMutablePointerToElements { $0.initialize(to: 0) }
+            return initialState
+        }
+    }
+    public init(initialState: State) where State: Sendable { self.init(uncheckedState: initialState) }
+
+    @inlinable
+    public func withLockUnchecked<R>(_ body: (inout State) throws -> R) rethrows -> R {
+        try __lock.withUnsafeMutablePointers { st, l in
+            _mos_unfair_lock(l)
+            defer { _mos_unfair_unlock(l) }
+            return try body(&st.pointee)
+        }
+    }
+    @inlinable
+    public func withLock<R: Sendable>(_ body: @Sendable (inout State) throws -> R) rethrows -> R { try withLockUnchecked(body) }
+    @inlinable
+    public func withLockIfAvailableUnchecked<R>(_ body: (inout State) throws -> R) rethrows -> R? {
+        try __lock.withUnsafeMutablePointers { st, l in
+            guard _mos_unfair_trylock(l) else { return nil }
+            defer { _mos_unfair_unlock(l) }
+            return try body(&st.pointee)
+        }
+    }
+    @inlinable
+    public func withLockIfAvailable<R: Sendable>(_ body: @Sendable (inout State) throws -> R) rethrows -> R? { try withLockIfAvailableUnchecked(body) }
+    @inlinable public func lock() { __lock.withUnsafeMutablePointerToElements { _mos_unfair_lock($0) } }
+    @inlinable public func unlock() { __lock.withUnsafeMutablePointerToElements { _mos_unfair_unlock($0) } }
+    @inlinable public func lockIfAvailable() -> Bool { __lock.withUnsafeMutablePointerToElements { _mos_unfair_trylock($0) } }
+}
+
+extension OSAllocatedUnfairLock where State == () {
+    public init() { self.init(uncheckedState: ()) }
+    @inlinable
+    public func withLockUnchecked<R>(_ body: () throws -> R) rethrows -> R { try withLockUnchecked { (_: inout ()) in try body() } }
+    @inlinable
+    public func withLock<R: Sendable>(_ body: @Sendable () throws -> R) rethrows -> R { try withLockUnchecked(body) }
+}

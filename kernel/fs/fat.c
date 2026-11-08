@@ -740,7 +740,10 @@ int fat_list(fatfs_t *fs, const char *path, fat_list_cb cb, void *ctx) {
 u8 *fat_read_file(fatfs_t *fs, const char *path, u64 *len) {
     fent_t f;
     if (!resolve(fs, path, &f) || (f.attr & ATTR_DIR)) return NULL;
-    u8 *buf = kmalloc((usize)f.size + 1);
+    /* arquivos a partir de 256 KiB em páginas alinhadas: o macho.c mapeia o __TEXT dos frameworks direto nos processos, e o
+     * lazy.c as páginas de mmap (icudtl.dat, .pak e o snapshot do V8 que cada processo do Chromium mapeia). Custa uma
+     * página a mais por arquivo; abaixo de 256 KiB o kmalloc nem usa páginas próprias. */
+    u8 *buf = f.size >= (256u << 10) ? kmalloc_pages((usize)f.size + 1) : kmalloc((usize)f.size + 1);
     if (!buf) return NULL;
     if (f.size && !chain_read(fs, f.clus, 0, buf, f.size)) { kfree(buf); return NULL; }
     buf[f.size] = 0;

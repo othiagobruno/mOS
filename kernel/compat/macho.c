@@ -103,9 +103,50 @@ static u64 ls_lookup(const char *mname) {
 /* O libSystem.mos é um ELF "static-pie": é carregado em LIBSYSTEM_BASE e as relocações
  * R_X86_64_RELATIVE do PT_DYNAMIC são aplicadas aqui. */
 
-static bool map_libsystem(process_t *p, char *err, usize errlen) {
+/* monta em buf (span bytes, zerados) os segmentos do libSystem com as relocações aplicadas */
+static bool ls_build(u8 *buf, u64 span, u64 dyn_va, u64 dyn_sz) {
     const u8 *e = libsystem_mos;
     usize elen = (usize)(libsystem_mos_end - libsystem_mos);
+    u64 phoff = rd64(e + 32);
+    u16 phentsize = rd16(e + 54), phnum = rd16(e + 56);
+    for (u16 i = 0; i < phnum; i++) {
+        const u8 *ph = e + phoff + (u64)i * phentsize;
+        if (rd32(ph) != 1) continue;
+        u64 off = rd64(ph + 8), va = rd64(ph + 16), fsz = rd64(ph + 32);
+        if (off + fsz > elen || va + fsz > span) return false;
+        memcpy(buf + va, e + off, fsz);
+    }
+    u64 rela = 0, relasz = 0, relaent = 24;
+    for (u64 o = 0; dyn_va && o + 16 <= dyn_sz && dyn_va + o + 16 <= span; o += 16) {
+        u64 tag = rd64(buf + dyn_va + o), val = rd64(buf + dyn_va + o + 8);
+        if (tag == 0) break;
+        if (tag == 7) rela = val;           /* DT_RELA */
+        if (tag == 8) relasz = val;         /* DT_RELASZ */
+        if (tag == 9) relaent = val;        /* DT_RELAENT */
+    }
+    for (u64 o = 0; rela && relaent && o + relaent <= relasz && rela + o + 24 <= span; o += relaent) {
+        u64 r_off = rd64(buf + rela + o), r_info = rd64(buf + rela + o + 8), r_add = rd64(buf + rela + o + 16);
+        if ((r_info & 0xFFFFFFFF) != 8 || r_off + 8 > span) continue;   /* R_X86_64_RELATIVE */
+        u64 v = LIBSYSTEM_BASE + r_add;
+        memcpy(buf + r_off, &v, 8);
+    }
+    return true;
+}
+
+#ifndef MOS_HOST_TEST
+/* A imagem relocada é a mesma em todo processo (endereço fixo, só relocações RELATIVE): é montada uma vez, em páginas
+ * alinhadas (kmalloc_pages), e entra em cada processo em cópia na escrita, como as imagens do icache. Antes cada processo
+ * novo pedia 3,2 MiB contíguos (kcalloc) e ficava com uma cópia própria: com o Claude e o Chrome numa VM de 2816 MB e a
+ * memória fragmentada, um renderer do Chrome não subiu ("kmalloc: sem memória para 3387392 bytes", "sem memória para o
+ * libSystem"). Os 2,2 MiB só de leitura (r e rx) ficam compartilhados; as páginas de dados e bss que um processo escreve
+ * viram dele na primeira escrita. A imagem nunca é liberada. */
+static u8 *ls_img;
+static u64 ls_span;
+bool uvm_map_cow(process_t *p, u64 va, u64 phys);
+#endif
+
+static bool map_libsystem(process_t *p, char *err, usize errlen) {
+    const u8 *e = libsystem_mos;
     u64 phoff = rd64(e + 32);
     u16 phentsize = rd16(e + 54), phnum = rd16(e + 56);
     u64 span = 0, dyn_va = 0, dyn_sz = 0;
@@ -116,29 +157,31 @@ static bool map_libsystem(process_t *p, char *err, usize errlen) {
     }
     span = (span + 0xFFF) & ~0xFFFULL;
     if (!span || span > 0x00F00000) { snprintf(err, errlen, "libSystem.mos com tamanho inválido"); return false; }
+#ifndef MOS_HOST_TEST
+    if (!ls_img) {
+        u8 *img = kmalloc_pages(span);
+        if (img) {
+            memset(img, 0, span);
+            if (ls_build(img, span, dyn_va, dyn_sz)) {
+                ls_img = img; ls_span = span;
+                kprintf("macho: libSystem (%llu KiB) montado uma vez e compartilhado entre os processos (cópia na escrita)\n",
+                        (unsigned long long)(span >> 10));
+            } else kfree(img);
+        }
+    }
+    if (ls_img && ls_span == span) {
+        for (u64 j = 0; j < span / 4096; j++)
+            if (!uvm_map_cow(p, LIBSYSTEM_BASE + j * 4096, (u64)ls_img + j * 4096)) {
+                snprintf(err, errlen, "sem memória para o libSystem");
+                return false;
+            }
+        return true;
+    }
+#endif
+    /* sem a imagem compartilhada (e no machotest): uma cópia própria, como antes */
     u8 *buf = kcalloc(1, span);
     if (!buf) { snprintf(err, errlen, "sem memória para o libSystem"); return false; }
-    for (u16 i = 0; i < phnum; i++) {
-        const u8 *ph = e + phoff + (u64)i * phentsize;
-        if (rd32(ph) != 1) continue;
-        u64 off = rd64(ph + 8), va = rd64(ph + 16), fsz = rd64(ph + 32);
-        if (off + fsz > elen || va + fsz > span) { kfree(buf); snprintf(err, errlen, "libSystem.mos corrompido"); return false; }
-        memcpy(buf + va, e + off, fsz);
-    }
-    u64 rela = 0, relasz = 0, relaent = 24;
-    for (u64 o = 0; dyn_va && o + 16 <= dyn_sz; o += 16) {
-        u64 tag = rd64(buf + dyn_va + o), val = rd64(buf + dyn_va + o + 8);
-        if (tag == 0) break;
-        if (tag == 7) rela = val;           /* DT_RELA */
-        if (tag == 8) relasz = val;         /* DT_RELASZ */
-        if (tag == 9) relaent = val;        /* DT_RELAENT */
-    }
-    for (u64 o = 0; rela && relaent && o + relaent <= relasz; o += relaent) {
-        u64 r_off = rd64(buf + rela + o), r_info = rd64(buf + rela + o + 8), r_add = rd64(buf + rela + o + 16);
-        if ((r_info & 0xFFFFFFFF) != 8 || r_off + 8 > span) continue;   /* R_X86_64_RELATIVE */
-        u64 v = LIBSYSTEM_BASE + r_add;
-        memcpy(buf + r_off, &v, 8);
-    }
+    if (!ls_build(buf, span, dyn_va, dyn_sz)) { kfree(buf); snprintf(err, errlen, "libSystem.mos corrompido"); return false; }
     bool ok = uvm_map(p, LIBSYSTEM_BASE, span) && uvm_copy_out(p, LIBSYSTEM_BASE, buf, span);
     kfree(buf);
     if (!ok) snprintf(err, errlen, "sem memória para o libSystem");
@@ -305,6 +348,10 @@ bool libsystem_dylib_ok(const char *n) {
  * substitui quando ela falta */
 #define LIBCXX_DISK "/usr/lib/libc++.1.dylib"
 static bool libcxx_name(const char *n) { return !strcmp(n, LIBCXX_DISK) || !strcmp(n, "/usr/lib/libc++abi.dylib"); }
+/* libicucore: o ICU4C no disco (/usr/lib/libicucore.A.dylib, tools/build-icu.ps1, nomes sem versão como a da Apple) quando
+ * ele existe; o Intl do JavaScriptCore no Claude Code (Bun) importa 184 funções dela. Sem o arquivo, o libSystem cobre só o
+ * uidna_* (IDN do curl, posixmore.c), como antes. */
+#define LIBICU_DISK "/usr/lib/libicucore.A.dylib"
 
 static const char *arch_name(u32 cpu) {
     switch (cpu) {
@@ -551,6 +598,10 @@ typedef struct {
     bool visited;
     int refs;               /* dlopen/dlclose (o mOS nunca descarrega a imagem) */
     u8 *own;                /* cópia própria dos comandos de carga + export trie (image_persist) */
+    /* __TEXT compartilhado entre links diferentes (tcache, mais abaixo): só durante a montagem */
+    bool text_shared;       /* o __TEXT já está mapeado do tcache: image_fix não o copia */
+    void *tc;               /* a entrada do tcache usada */
+    u64 tlo, tnp, tfileoff; /* endereço final do __TEXT, páginas e deslocamento no arquivo (tnp = 0: não compartilha) */
 } image_t;
 
 typedef struct {
@@ -1048,6 +1099,7 @@ static bool image_fix(link_t *K, image_t *I, u8 *buf) {
     if (buf)
         for (int i = 0; i < mo->nsegs; i++) {
             seg_t *s = &mo->segs[i];
+            if (I->text_shared && !strcmp(s->name, "__TEXT")) continue;   /* páginas do tcache, já com o conteúdo do arquivo */
             if (!s->zero && s->filesize) memcpy(buf + (s->vmaddr - mo->vmin), mo->m + s->fileoff, s->filesize);
         }
     bool ok = mo->chained ? run_chained(&L) : apply_dyld_info(&L);
@@ -1301,6 +1353,11 @@ static int link_add(link_t *K, const char *path, const u8 *file, usize flen, boo
              * vtables de stringstream, facetas de locale, chrono). Sem ela no disco (imagem antiga, machotest sem
              * /usr/lib), o desvio para o libSystem (cxxabi.c e libcxx.c), como antes. */
             int d = link_abs_dep(K, LIBCXX_DISK);
+            if (d == -2) return -1;
+            if (d >= 0) { I->dep[i] = (i16)d; continue; }
+        }
+        if (!strcmp(dn, LIBICU_DISK)) {   /* o ICU do disco; sem ele, o uidna_* do libSystem (abaixo) */
+            int d = link_abs_dep(K, LIBICU_DISK);
             if (d == -2) return -1;
             if (d >= 0) { I->dep[i] = (i16)d; continue; }
         }
@@ -1583,6 +1640,13 @@ static int dyld_find_loaded(link_t *K, image_t *C, const char *req, const char *
 
 #define DYLD_H_LIBSYSTEM 0x10000            /* handle de dlopen("/usr/lib/libSystem.B.dylib") e afins */
 
+#ifndef MOS_HOST_TEST
+/* __TEXT compartilhado entre links (tcache, junto do icache mais abaixo) */
+static void tcache_plan(link_t *K, int from, void *const *hit);
+static bool map_fresh(process_t *p, link_t *K, int from, u64 a, u64 b);
+static void tcache_after_mount(process_t *p, image_t *I);
+#endif
+
 static i64 dyld_open(process_t *p, link_t *K, const char *req, u64 out_va, u64 caller, const char *cwd) {
     mos_dyld_open_t o;
     if (!uvm_copy_in(p, &o, out_va, sizeof o)) return -MOS_EFAULT;
@@ -1591,6 +1655,7 @@ static i64 dyld_open(process_t *p, link_t *K, const char *req, u64 out_va, u64 c
     K->lasterr[0] = 0;
     usize cxx_len;
     if (libcxx_name(req) && dep_read(LIBCXX_DISK, &cxx_len)) req = LIBCXX_DISK;   /* a libc++ do disco, como no link_image */
+    else if (!strcmp(req, LIBICU_DISK) && dep_read(LIBICU_DISK, &cxx_len)) { /* o ICU do disco, como no link_image */ }
     else if (libsystem_dylib_ok(req)) return DYLD_H_LIBSYSTEM;
     int ci = image_at(K, caller);
     image_t *C = K->im[ci >= 0 ? ci : 0];
@@ -1638,18 +1703,40 @@ static i64 dyld_open(process_t *p, link_t *K, const char *req, u64 out_va, u64 c
         u64 base0 = (p->mmap_next + 0xFFFF) & ~0xFFFFULL, at = base0;
         for (int i = n0; i < K->n; i++) at = place_image(K->im[i], at);
         K->stub_base = K->end = at;
-        if (at + 0x200000 > USER_END || !uvm_map(p, base0, at - base0)) {
+#ifndef MOS_HOST_TEST
+        tcache_plan(K, n0, NULL);            /* __TEXT já montado por outro processo, em outro endereço (ex.: helpers) */
+        bool mapped = at + 0x200000 <= USER_END && map_fresh(p, K, n0, base0, at);
+#else
+        bool mapped = at + 0x200000 <= USER_END && uvm_map(p, base0, at - base0);
+#endif
+        if (!mapped) {
             snprintf(K->lasterr, sizeof K->lasterr, "%s: sem memória para a imagem", req);
             r = -MOS_ENOMEM;
         } else p->mmap_next = at;
         for (int k = 0; r >= 0 && k < K->norder; k++) {
             image_t *I = K->im[K->order[k]];
             u64 size = I->mo.vmax - I->mo.vmin;
-            u8 *buf = kcalloc(1, size);
-            if (!buf) { snprintf(K->lasterr, sizeof K->lasterr, "sem memória para a imagem (%llu KiB)", (unsigned long long)(size >> 10)); r = -MOS_ENOMEM; break; }
-            if (!image_fix(K, I, buf)) r = -MOS_EINVAL;
-            else if (!uvm_copy_out(p, I->base, buf, size)) { snprintf(K->lasterr, sizeof K->lasterr, "falha ao copiar a imagem"); r = -MOS_EFAULT; }
-            kfree(buf);
+#ifndef MOS_HOST_TEST
+            if (size >= (16ull << 20)) {          /* o ICACHE_MIN do spawn, definido mais abaixo */
+                /* grande (o Chromium Framework tem 307 MiB): montada direto nas páginas do processo, mapeadas e zeradas
+                 * acima, como no spawn. O buffer contíguo do kernel do mesmo tamanho falhava com outro app grande aberto
+                 * ("kmalloc: sem memória para 322191360 bytes" com o Slack rodando) e dobrava a memória durante a montagem */
+                u64 fl = irq_save(), old_cr3 = read_cr3();          /* sem troca de tarefa com o CR3 emprestado */
+                __asm__ volatile("mov %0, %%cr3" :: "r"((u64)p->pml4) : "memory");
+                bool fixed = image_fix(K, I, (u8 *)I->base);
+                __asm__ volatile("mov %0, %%cr3" :: "r"(old_cr3) : "memory");
+                irq_restore(fl);
+                if (!fixed) r = -MOS_EINVAL;
+                else tcache_after_mount(p, I);
+            } else
+#endif
+            {
+                u8 *buf = kcalloc(1, size);
+                if (!buf) { snprintf(K->lasterr, sizeof K->lasterr, "sem memória para a imagem (%llu KiB)", (unsigned long long)(size >> 10)); r = -MOS_ENOMEM; break; }
+                if (!image_fix(K, I, buf)) r = -MOS_EINVAL;
+                else if (!uvm_copy_out(p, I->base, buf, size)) { snprintf(K->lasterr, sizeof K->lasterr, "falha ao copiar a imagem"); r = -MOS_EFAULT; }
+                kfree(buf);
+            }
 #ifndef MOS_HOST_TEST
             /* diagnóstico: os tracepoints valem também para imagens do dlopen (ex.: Google Chrome Framework) */
             if (r >= 0) { extern void tp_arm(process_t *p, const char *path, u64 base, u64 vmin); tp_arm(p, I->path, I->base, I->mo.vmin); }
@@ -1855,6 +1942,7 @@ bool uvm_share_cow(process_t *p, u64 va, u64 *phys);
 bool uvm_map_cow(process_t *p, u64 va, u64 phys);
 u16 uvm_page_refs(u64 phys);
 void uvm_page_put(u64 phys);
+void uvm_page_get(u64 phys);
 
 static u64 fnv(u64 h, const void *d, usize n) { const u8 *b = d; for (usize i = 0; i < n; i++) { h ^= b[i]; h *= 1099511628211ull; } return h; }
 static u64 fnv64(u64 h, u64 v) { return fnv(h, &v, 8); }
@@ -1887,12 +1975,16 @@ static void icache_drop(icache_t *c) {
     memset(c, 0, sizeof *c);
 }
 /* sem processo usando: só o cache segura a página do cabeçalho (ninguém escreve nela) */
+static void tcache_trim(void);
 void macho_icache_trim(void) {
+    /* a amostra é a última página (o __LINKEDIT, só leitura): a primeira é do __TEXT, que pode vir emprestado do arquivo
+     * (tcache_borrow) e então tem o VFS e o tcache como donos a mais, e a entrada nunca seria liberada */
     for (int i = 0; i < ICACHE_MAX; i++)
-        if (icache[i].used && icache[i].npages && uvm_page_refs(icache[i].phys[0]) <= 1) {
+        if (icache[i].used && icache[i].npages && uvm_page_refs(icache[i].phys[icache[i].npages - 1]) <= 1) {
             kprintf("macho: imagem compartilhada liberada (%llu MiB)\n", (unsigned long long)(icache[i].size >> 20));
             icache_drop(&icache[i]);
         }
+    tcache_trim();                          /* depois do icache: ele também segura páginas do __TEXT */
 }
 /* acerto no cache: repete os efeitos da montagem no link e mapeia as páginas em COW.
  * 1 = mapeada; 0 = falta memória; -1 = o link divergiu (quem chama monta a imagem do jeito normal) */
@@ -1934,6 +2026,169 @@ static void icache_add(process_t *p, link_t *K, image_t *I, u64 key, u32 m0, u32
     const char *s = strrchr(I->path, '/');
     kprintf("macho: %s (%llu MiB) compartilhada entre processos (cópia na escrita)\n", s ? s + 1 : I->path,
             (unsigned long long)(size >> 20));
+}
+
+/* ================================================================ __TEXT compartilhado entre links diferentes (tcache)
+ * O icache só serve processos com o mesmo link (mesmos endereços). Mas o __TEXT de uma imagem (código e constantes, 290
+ * dos 307 MiB do Chromium Framework e 203 dos 215 MiB do Electron Framework) não depende do endereço de carga quando nenhum
+ * fixup cai nele: os chained fixups ficam nos segmentos de dados. O Chromium carrega o framework por dlopen no processo
+ * principal e linkado nos helpers, em endereços diferentes, e o principal de um app Electron tem outro executável que os
+ * helpers: eram duas cópias de cada framework, e com o Slack aberto numa VM de 2 GiB os helpers do Chromium não subiam
+ * ("sem memória para o processo"). A primeira montagem direta de uma imagem grande guarda aqui as páginas do __TEXT
+ * (cópia na escrita, como o icache); as montagens seguintes do mesmo arquivo, em qualquer endereço, mapeiam essas páginas
+ * em vez de alocar e copiar, e o image_fix só monta o resto. */
+#define TCACHE_MAX 6
+/* borrowed: as páginas são as do próprio arquivo no VFS (tcache_borrow), e o VFS continua dono implícito delas */
+typedef struct { bool used, borrowed; const u8 *file; usize flen; u64 npages, fileoff; u64 *phys; } tcache_t;
+static tcache_t tcache[TCACHE_MAX];
+
+/* o __TEXT de I pode ser compartilhado? Só com chained fixups, inteiro vindo do arquivo e sem nenhum fixup dentro dele */
+static bool text_range(image_t *I, u64 *lo, u64 *np, u64 *fileoff) {
+    mach_t *mo = &I->mo;
+    if (!mo->chained) return false;
+    const seg_t *t = NULL;
+    for (int i = 0; i < mo->nsegs && !t; i++) if (!strcmp(mo->segs[i].name, "__TEXT")) t = &mo->segs[i];
+    if (!t || t->zero || (t->vmaddr & 0xFFF) || (t->vmsize & 0xFFF) || t->vmsize < ICACHE_MIN || t->filesize < t->vmsize ||
+        t->fileoff + t->vmsize > mo->len)
+        return false;
+    u32 dataoff = rd32(mo->chained + 8), datasize = rd32(mo->chained + 12);
+    if ((u64)dataoff + datasize > mo->len || datasize < 28) return false;
+    const u8 *h = mo->m + dataoff, *hend = h + datasize;
+    u32 starts_off = rd32(h + 4);
+    if ((u64)starts_off + 4 > datasize) return false;
+    const u8 *si = h + starts_off;
+    u32 seg_count = rd32(si);
+    u64 tl = t->vmaddr, th = t->vmaddr + t->vmsize;
+    for (u32 s = 0; s < seg_count; s++) {
+        if (si + 8 + (u64)s * 4 > hend) return false;
+        u32 so = rd32(si + 4 + s * 4);
+        if (!so) continue;
+        const u8 *ss = si + so;
+        if (ss + 22 > hend) return false;
+        u16 page_size = rd16(ss + 4), page_count = rd16(ss + 20);
+        u64 a = mo->vmin + rd64(ss + 8);
+        if (a + (u64)page_count * page_size <= tl || a >= th) continue;     /* fixups de outro segmento */
+        for (u16 pg = 0; pg < page_count; pg++) {
+            if (ss + 24 + (u64)pg * 2 > hend) return false;
+            u64 pa = a + (u64)pg * page_size;
+            if (pa + page_size > tl && pa < th && rd16(ss + 22 + pg * 2) != 0xFFFF) return false;   /* fixup no __TEXT */
+        }
+    }
+    *lo = tl; *np = t->vmsize / 4096; *fileoff = t->fileoff;
+    return true;
+}
+static void tcache_drop(tcache_t *c) {
+    for (u64 j = 0; j < c->npages; j++) if (c->phys[j]) uvm_page_put(c->phys[j]);
+    kfree(c->phys);
+    memset(c, 0, sizeof *c);
+}
+/* entradas que nenhum processo usa mais (o cache é o único dono das páginas conferidas) */
+static void tcache_trim(void) {
+    for (int i = 0; i < TCACHE_MAX; i++) {
+        tcache_t *c = &tcache[i];
+        if (!c->used || !c->npages) continue;
+        u64 n = c->npages;
+        u16 lim = c->borrowed ? 2 : 1;      /* emprestada: o arquivo também é dono (se o VFS já largou, sobra 1) */
+        if (uvm_page_refs(c->phys[0]) <= lim && uvm_page_refs(c->phys[n / 2]) <= lim && uvm_page_refs(c->phys[n - 1]) <= lim) {
+            kprintf("macho: __TEXT compartilhado liberado (%llu MiB)\n", (unsigned long long)(n >> 8));
+            tcache_drop(c);
+        }
+    }
+}
+/* entrada do mesmo arquivo; as páginas guardadas são conferidas por amostragem com o arquivo (o VFS pode ter regravado o
+ * arquivo no mesmo endereço) */
+static tcache_t *tcache_find(image_t *I) {
+    for (int i = 0; i < TCACHE_MAX; i++) {
+        tcache_t *c = &tcache[i];
+        if (!c->used || c->file != I->mo.m || c->flen != I->mo.len || c->npages != I->tnp || c->fileoff != I->tfileoff) continue;
+        for (u64 k = 0; k <= 16; k++) {
+            u64 j = k * (c->npages - 1) / 16;
+            if (memcmp((const void *)c->phys[j], I->mo.m + c->fileoff + j * 4096, 4096)) {
+                kprintf("macho: __TEXT guardado não confere com o arquivo; descartado\n");
+                tcache_drop(c);
+                return NULL;
+            }
+        }
+        return c;
+    }
+    return NULL;
+}
+/* Sem entrada ainda: se o arquivo está num buffer de kmalloc_pages (os grandes lidos do disco, fat.c) e o __TEXT começa
+ * numa página dele, a entrada usa as próprias páginas do arquivo, sem cópia. Cada página ganha a referência do cache
+ * (pref[], process.c); o VFS segue dono implícito, o vfs_append nunca escreve num buffer desses no lugar, e o kfree dele
+ * larga só a sua parte. Antes eram duas cópias do __TEXT na RAM, o arquivo e as páginas montadas: 203 MiB a mais com o
+ * Electron Framework e 248 MiB com o Google Chrome Framework, e o Claude com o Chrome não cabiam em 2816 MB. */
+static tcache_t *tcache_borrow(image_t *I) {
+    const u8 *src = I->mo.m + I->tfileoff;
+    if (!I->tnp || !kmalloc_is_pages(I->mo.m) || ((u64)src & 0xFFF) || I->tfileoff + I->tnp * 4096 > I->mo.len) return NULL;
+    tcache_t *c = NULL;
+    for (int pass = 0; pass < 2 && !c; pass++) {
+        if (pass) tcache_trim();
+        for (int i = 0; i < TCACHE_MAX && !c; i++) if (!tcache[i].used) c = &tcache[i];
+    }
+    u64 *phys = c ? kcalloc(I->tnp, sizeof *phys) : NULL;
+    if (!phys) return NULL;
+    c->used = true; c->borrowed = true; c->file = I->mo.m; c->flen = I->mo.len; c->fileoff = I->tfileoff; c->phys = phys;
+    for (u64 j = 0; j < I->tnp; j++) { phys[j] = (u64)src + j * 4096; uvm_page_get(phys[j]); }
+    c->npages = I->tnp;
+    const char *s = strrchr(I->path, '/');
+    kprintf("macho: %s: __TEXT (%llu MiB) mapeado das páginas do arquivo, sem cópia\n", s ? s + 1 : I->path,
+            (unsigned long long)(I->tnp >> 8));
+    return c;
+}
+/* antes de mapear: para cada imagem grande nova (sem acerto no icache: hit[i] nulo), se o __TEXT vem do tcache */
+static void tcache_plan(link_t *K, int from, void *const *hit) {
+    for (int i = from; i < K->n; i++) {
+        image_t *I = K->im[i];
+        I->text_shared = false; I->tc = NULL; I->tnp = 0;
+        u64 lo, np, fo;
+        if ((hit && hit[i]) || I->mo.vmax - I->mo.vmin < ICACHE_MIN || !text_range(I, &lo, &np, &fo)) continue;
+        I->tlo = lo + (u64)I->slide; I->tnp = np; I->tfileoff = fo;
+        if ((I->tc = tcache_find(I)) || (I->tc = tcache_borrow(I))) I->text_shared = true;
+    }
+}
+/* páginas de [a, b): as do __TEXT de uma imagem com text_shared vêm do tcache (cópia na escrita), o resto é memória nova */
+static bool map_fresh(process_t *p, link_t *K, int from, u64 a, u64 b) {
+    while (a < b) {
+        u64 next = b;
+        image_t *T = NULL;
+        for (int i = from; i < K->n; i++) {
+            image_t *I = K->im[i];
+            if (!I->text_shared) continue;
+            u64 lo = I->tlo, hi = lo + I->tnp * 4096;
+            if (a >= lo && a < hi) { T = I; next = MIN(hi, b); break; }
+            if (lo > a && lo < next) next = lo;
+        }
+        if (T) {
+            tcache_t *c = T->tc;
+            for (u64 v = a; v < next; v += 4096) if (!uvm_map_cow(p, v, c->phys[(v - T->tlo) / 4096])) return false;
+        } else if (!uvm_map(p, a, next - a)) return false;
+        a = next;
+    }
+    return true;
+}
+/* depois da montagem direta: o __TEXT novo (ainda sem entrada) fica guardado para os próximos processos */
+static void tcache_after_mount(process_t *p, image_t *I) {
+    if (I->text_shared) {
+        const char *s = strrchr(I->path, '/');
+        tcache_t *c = I->tc;
+        kprintf("macho: %s: __TEXT (%llu MiB) compartilhado com %s\n", s ? s + 1 : I->path, (unsigned long long)(I->tnp >> 8),
+                c && c->borrowed ? "o arquivo" : "outro processo");
+    } else if (I->tnp) {
+        tcache_t *c = NULL;
+        for (int pass = 0; pass < 2 && !c; pass++) {
+            if (pass) tcache_trim();
+            for (int i = 0; i < TCACHE_MAX && !c; i++) if (!tcache[i].used) c = &tcache[i];
+        }
+        u64 *phys = c ? kcalloc(I->tnp, sizeof *phys) : NULL;
+        if (phys) {
+            c->used = true; c->file = I->mo.m; c->flen = I->mo.len; c->fileoff = I->tfileoff; c->phys = phys; c->npages = 0;
+            for (u64 j = 0; j < I->tnp; j++, c->npages++)
+                if (!uvm_share_cow(p, I->tlo + j * 4096, &phys[j])) { tcache_drop(c); c = NULL; break; }
+            if (c && c->npages != I->tnp) { tcache_drop(c); c = NULL; }
+        }
+    }
+    I->text_shared = false; I->tc = NULL; I->tnp = 0;
 }
 #endif
 
@@ -1979,6 +2234,7 @@ bool macho_load(process_t *p, const u8 *img, usize len, const char *arg, u64 *en
         ikey[i] = icache_key(K, I);
         hit[i] = icache_find(ikey[i], I);
     }
+    if (ok) tcache_plan(K, 0, (void *const *)hit);   /* __TEXT de outro link do mesmo arquivo (ex.: o dlopen do principal) */
     for (u64 a = IMAGE_BASE; ok && a < K->end;) {
         u64 next = K->end;
         bool shared = false;
@@ -1988,7 +2244,7 @@ bool macho_load(process_t *p, const u8 *img, usize len, const char *arg, u64 *en
             if (a >= b && a < e) { shared = true; next = e; break; }
             if (b > a && b < next) next = b;
         }
-        if (!shared && !uvm_map(p, a, next - a)) { snprintf(err, errlen, "sem memória para o processo"); ok = false; }
+        if (!shared && !map_fresh(p, K, 0, a, next)) { snprintf(err, errlen, "sem memória para o processo"); ok = false; }
         a = next;
     }
 #endif
@@ -2016,6 +2272,7 @@ bool macho_load(process_t *p, const u8 *img, usize len, const char *arg, u64 *en
             __asm__ volatile("mov %0, %%cr3" :: "r"(old_cr3) : "memory");
             irq_restore(fl);
             if (!ok) break;
+            tcache_after_mount(p, I);
             if (ikey[K->order[k]]) icache_add(p, K, I, ikey[K->order[k]], m0, i0);
         } else
 #endif

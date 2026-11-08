@@ -1,0 +1,9 @@
+# Roteiro do PtyRun: "claude -p oi" com o purge do mimalloc desligado. Teste do rehash sem fim do JSC no mOS: se com
+# MIMALLOC_PURGE_DELAY=-1 ele passa, a memória que o mimalloc devolve ao sistema volta suja (madvise do mOS).
+tamanho 40 160
+ambiente MIMALLOC_PURGE_DELAY=-1
+ambiente MIMALLOC_VERBOSE=1
+ambiente MIMALLOC_SHOW_ERRORS=1
+eco
+comando /Aplicativos/ClaudeCode.app/Contents/MacOS/claude -p oi --debug-to-stderr
+fim 1500000

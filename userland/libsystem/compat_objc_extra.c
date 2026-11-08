@@ -165,4 +165,5 @@ void cx_compat_objc_extra_init(void) {
     add("NSView", "setClipsToBounds:", (void *)noop_bool, 0);
     add("NSFileManager", "ubiquityIdentityToken", (void *)ret_nil, 0);   /* sem iCloud: nil, como sem conta */
     (void)ret_self;
+    { extern void cx_screencapturekit_init(void); cx_screencapturekit_init(); }   /* screencapturekit.c */
 }

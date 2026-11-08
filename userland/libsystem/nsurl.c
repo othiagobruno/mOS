@@ -6,6 +6,7 @@
 #include "foundation.h"
 
 size_t strlen(const char *s);
+void *memset(void *d, int c, size_t n);
 void *malloc(size_t n);
 void free(void *p);
 int strncmp(const char *a, const char *b, size_t n);
@@ -52,6 +53,96 @@ static id u_absolute(id self, SEL c) {
     return MSG(id, (id)cx_class_named("NSString"), "stringWithFormat:", ns_str("file://%@"), URL(self)->path);
 }
 static const char *u_fsrep(id self, SEL c) { (void)c; return c_str(URL(self)->path); }
+
+/* Partes de um URL (RFC 3986: esquema:[//autoridade]caminho[?consulta][#fragmento]), lidas do texto sob demanda:
+ * -scheme, -host, -port, -user, -password, -query, -fragment, -resourceSpecifier. O Chromium lê -scheme em cada
+ * NSURL que vira GURL (net::GURLWithNSURL); antes caíam no "ainda não implementado" e voltavam nil. O -path de
+ * URLs que não são de arquivo continua nil, como antes. */
+typedef struct { const char *t; size_t sch, rs, auth, an, q, qn, f, fn; int has_auth, has_q, has_f; } uparts_t;
+static void u_split(id self, uparts_t *p) {
+    memset(p, 0, sizeof *p);
+    const char *t = URL(self)->file ? 0 : c_str(URL(self)->string);
+    if (!t) return;
+    p->t = t;
+    size_t i = 0;
+    if ((t[0] >= 'a' && t[0] <= 'z') || (t[0] >= 'A' && t[0] <= 'Z')) {
+        while ((t[i] >= 'a' && t[i] <= 'z') || (t[i] >= 'A' && t[i] <= 'Z') || (t[i] >= '0' && t[i] <= '9') ||
+               t[i] == '+' || t[i] == '-' || t[i] == '.') i++;
+        if (t[i] == ':') { p->sch = i; p->rs = i + 1; }
+    }
+    size_t r = p->rs, n = strlen(t), end = n;
+    for (size_t k = r; k < n; k++) if (t[k] == '#') { p->has_f = 1; p->f = k + 1; p->fn = n - k - 1; end = k; break; }
+    for (size_t k = r; k < end; k++) if (t[k] == '?') { p->has_q = 1; p->q = k + 1; p->qn = end - k - 1; break; }
+    if (t[r] == '/' && t[r + 1] == '/') {
+        p->has_auth = 1; p->auth = r + 2;
+        size_t k = p->auth;
+        while (k < n && t[k] != '/' && t[k] != '?' && t[k] != '#') k++;
+        p->an = k - p->auth;
+    }
+}
+/* autoridade = [usuário[:senha]@]host[:porta]; host IPv6 entre colchetes */
+static void u_hostport(const uparts_t *p, size_t *h, size_t *hn, size_t *ui, size_t *uin, long *port) {
+    size_t a = p->auth, e = p->auth + p->an;
+    *ui = a; *uin = 0; *port = -1;
+    for (size_t k = e; k > a; k--) if (p->t[k - 1] == '@') { *uin = k - 1 - a; a = k; break; }
+    size_t he = e;
+    if (a < e && p->t[a] == '[') {
+        size_t k = a; while (k < e && p->t[k] != ']') k++;
+        *h = a + 1; *hn = k > a ? k - a - 1 : 0;
+        he = k < e ? k + 1 : e;
+    } else {
+        for (size_t k = e; k > a; k--) if (p->t[k - 1] == ':') { he = k - 1; break; }
+        *h = a; *hn = he - a;
+    }
+    if (he < e && p->t[he] == ':' && he + 1 < e) {
+        long v = 0; size_t k = he + 1;
+        for (; k < e && p->t[k] >= '0' && p->t[k] <= '9'; k++) v = v * 10 + (p->t[k] - '0');
+        if (k == e) *port = v;
+    }
+}
+static id u_scheme(id self, SEL c) {
+    (void)c;
+    if (URL(self)->file) return ns_str("file");
+    uparts_t p; u_split(self, &p);
+    return p.sch ? cx_str_n(p.t, p.sch) : 0;
+}
+static id u_resource_spec(id self, SEL c) {
+    (void)c;
+    if (URL(self)->file) return MSG(id, (id)cx_class_named("NSString"), "stringWithFormat:", ns_str("//%@"), URL(self)->path);
+    uparts_t p; u_split(self, &p);
+    return p.t ? ns_str(p.t + p.rs) : 0;
+}
+static id u_host(id self, SEL c) {
+    (void)c;
+    uparts_t p; u_split(self, &p);
+    if (!p.has_auth) return 0;
+    size_t h, hn, ui, uin; long port;
+    u_hostport(&p, &h, &hn, &ui, &uin, &port);
+    return hn ? cx_str_n(p.t + h, hn) : 0;
+}
+static id u_port(id self, SEL c) {
+    (void)c;
+    uparts_t p; u_split(self, &p);
+    if (!p.has_auth) return 0;
+    size_t h, hn, ui, uin; long port;
+    u_hostport(&p, &h, &hn, &ui, &uin, &port);
+    return port >= 0 ? MSG(id, (id)cx_class_named("NSNumber"), "numberWithLong:", port) : 0;
+}
+static id u_userinfo_part(id self, int want_pass) {
+    uparts_t p; u_split(self, &p);
+    if (!p.has_auth) return 0;
+    size_t h, hn, ui, uin; long port;
+    u_hostport(&p, &h, &hn, &ui, &uin, &port);
+    if (!uin) return 0;
+    size_t colon = uin;
+    for (size_t k = 0; k < uin; k++) if (p.t[ui + k] == ':') { colon = k; break; }
+    if (!want_pass) return cx_str_n(p.t + ui, colon);
+    return colon < uin ? cx_str_n(p.t + ui + colon + 1, uin - colon - 1) : 0;
+}
+static id u_user(id self, SEL c) { (void)c; return u_userinfo_part(self, 0); }
+static id u_password(id self, SEL c) { (void)c; return u_userinfo_part(self, 1); }
+static id u_query(id self, SEL c) { (void)c; uparts_t p; u_split(self, &p); return p.has_q ? cx_str_n(p.t + p.q, p.qn) : 0; }
+static id u_fragment(id self, SEL c) { (void)c; uparts_t p; u_split(self, &p); return p.has_f ? cx_str_n(p.t + p.f, p.fn) : 0; }
 static id u_append(id self, SEL c, id comp) {
     (void)c;
     id p = MSG(id, URL(self)->path, "stringByAppendingPathComponent:", comp);
@@ -562,6 +653,15 @@ void cx_darwin_init(void) {
     cx_add_method(&NSURL_c, "isFileURL", (void *)u_is_file);
     cx_add_method(&NSURL_c, "absoluteString", (void *)u_absolute);
     cx_add_method(&NSURL_c, "description", (void *)u_absolute);
+    cx_add_method(&NSURL_c, "relativeString", (void *)u_absolute);
+    cx_add_method(&NSURL_c, "scheme", (void *)u_scheme);
+    cx_add_method(&NSURL_c, "resourceSpecifier", (void *)u_resource_spec);
+    cx_add_method(&NSURL_c, "host", (void *)u_host);
+    cx_add_method(&NSURL_c, "port", (void *)u_port);
+    cx_add_method(&NSURL_c, "user", (void *)u_user);
+    cx_add_method(&NSURL_c, "password", (void *)u_password);
+    cx_add_method(&NSURL_c, "query", (void *)u_query);
+    cx_add_method(&NSURL_c, "fragment", (void *)u_fragment);
     cx_add_method(&NSURL_c, "fileSystemRepresentation", (void *)u_fsrep);
     cx_add_method(&NSURL_c, "URLByAppendingPathComponent:", (void *)u_append);
     cx_add_method(&NSURL_c, "URLByAppendingPathComponent:isDirectory:", (void *)u_append_dir);

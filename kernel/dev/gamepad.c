@@ -13,6 +13,7 @@
 #include "proc.h"
 #include "../include/compat_gui.h"
 #include "syscall.h"
+#include "gfx.h"
 
 #define MAX_PADS 4
 
@@ -100,6 +101,39 @@ i64 gamepad_syscall(process_t *pr, u64 op, u64 b, u64 c, u64 d) {
         if (audio_available()) audio_play(buf, (u32)frames);
         kfree(buf);
         return (i64)frames;
+    }
+    case DEV_INPUT_POST: {
+        /* CGEventPost / CGEventPostToPid: o evento sintético entra na mesma fila do teclado e do mouse do hardware,
+         * então vale para o sistema todo (a janela em foco recebe a tecla; o clique vai para o que está sob o cursor) */
+        input_event_t e;
+        memset(&e, 0, sizeof e);
+        e.type = (u8)(b & 0xFF);
+        if (e.type != EV_KEY_DOWN && e.type != EV_KEY_UP && e.type != EV_MOUSE_ABS) return -MOS_EINVAL;
+        e.buttons = (u8)((b >> 8) & 7);
+        e.mods = (u16)((b >> 16) & 0xFFFF);
+        e.dz = (i32)(b >> 32);
+        e.key = (i32)c;
+        e.dx = (i32)(u32)d;
+        e.dy = (i32)(d >> 32);
+        input_push(&e);
+        return 0;
+    }
+    case DEV_SCREEN_CAPTURE: {
+        /* CGDisplayCreateImage / CGWindowListCreateImage / SCScreenshotManager: um retângulo da tela composta (o
+         * backbuffer do compositor, com todos os monitores) em ARGB 32 bits, linha a linha; d = 0 só pergunta o tamanho */
+        i32 x = (i32)(u32)b, y = (i32)(b >> 32), w = (i32)(u32)c, h = (i32)(c >> 32);
+        if (!g_screen) return -MOS_EINVAL;
+        if (w <= 0 || h <= 0) { x = 0; y = 0; w = g_screen->w; h = g_screen->h; }
+        if (x < 0) { w += x; x = 0; }
+        if (y < 0) { h += y; y = 0; }
+        if (x + w > g_screen->w) w = g_screen->w - x;
+        if (y + h > g_screen->h) h = g_screen->h - y;
+        if (w <= 0 || h <= 0) return -MOS_EINVAL;
+        if (!d) return (i64)((u64)w | (u64)h << 32);
+        for (i32 r = 0; r < h; r++)
+            if (!uvm_copy_out(pr, d + (u64)r * (u64)w * 4, g_screen->px + (u64)(y + r) * (u64)g_screen->stride + x, (usize)w * 4))
+                return -MOS_EFAULT;
+        return (i64)((u64)w | (u64)h << 32);
     }
     case DEV_PAD_RUMBLE: {
         if (b >= MAX_PADS || !pads[b].used) return -MOS_EINVAL;

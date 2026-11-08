@@ -23,6 +23,20 @@ cx_class_t CNPostalAddressFormatter_c __asm__("OBJC_CLASS_$_CNPostalAddressForma
 cx_class_t MKLocalSearch_c __asm__("OBJC_CLASS_$_MKLocalSearch"); cx_class_t MKLocalSearch_m __asm__("OBJC_METACLASS_$_MKLocalSearch");
 cx_class_t MKLocalSearchCompleter_c __asm__("OBJC_CLASS_$_MKLocalSearchCompleter"); cx_class_t MKLocalSearchCompleter_m __asm__("OBJC_METACLASS_$_MKLocalSearchCompleter");
 cx_class_t MKLocalSearchRequest_c __asm__("OBJC_CLASS_$_MKLocalSearchRequest"); cx_class_t MKLocalSearchRequest_m __asm__("OBJC_METACLASS_$_MKLocalSearchRequest");
+/* helper "Computer Use" do Grok Bot: ScreenCaptureKit, Contacts, EventKit e CoreLocation (classes vazias; o helper
+ * consulta permissões e cai no caminho "sem acesso") */
+cx_class_t SCWindow_c __asm__("OBJC_CLASS_$_SCWindow"); cx_class_t SCWindow_m __asm__("OBJC_METACLASS_$_SCWindow");
+cx_class_t SCScreenshotManager_c __asm__("OBJC_CLASS_$_SCScreenshotManager"); cx_class_t SCScreenshotManager_m __asm__("OBJC_METACLASS_$_SCScreenshotManager");
+cx_class_t SCDisplay_c __asm__("OBJC_CLASS_$_SCDisplay"); cx_class_t SCDisplay_m __asm__("OBJC_METACLASS_$_SCDisplay");
+cx_class_t CNContactFetchRequest_c __asm__("OBJC_CLASS_$_CNContactFetchRequest"); cx_class_t CNContactFetchRequest_m __asm__("OBJC_METACLASS_$_CNContactFetchRequest");
+cx_class_t CNContactFormatter_c __asm__("OBJC_CLASS_$_CNContactFormatter"); cx_class_t CNContactFormatter_m __asm__("OBJC_METACLASS_$_CNContactFormatter");
+cx_class_t CNContact_c __asm__("OBJC_CLASS_$_CNContact"); cx_class_t CNContact_m __asm__("OBJC_METACLASS_$_CNContact");
+cx_class_t CNLabeledValue_c __asm__("OBJC_CLASS_$_CNLabeledValue"); cx_class_t CNLabeledValue_m __asm__("OBJC_METACLASS_$_CNLabeledValue");
+cx_class_t CNPhoneNumber_c __asm__("OBJC_CLASS_$_CNPhoneNumber"); cx_class_t CNPhoneNumber_m __asm__("OBJC_METACLASS_$_CNPhoneNumber");
+cx_class_t EKCalendar_c __asm__("OBJC_CLASS_$_EKCalendar"); cx_class_t EKCalendar_m __asm__("OBJC_METACLASS_$_EKCalendar");
+cx_class_t EKReminder_c __asm__("OBJC_CLASS_$_EKReminder"); cx_class_t EKReminder_m __asm__("OBJC_METACLASS_$_EKReminder");
+cx_class_t EKEvent_c __asm__("OBJC_CLASS_$_EKEvent"); cx_class_t EKEvent_m __asm__("OBJC_METACLASS_$_EKEvent");
+cx_class_t CLLocation_c __asm__("OBJC_CLASS_$_CLLocation"); cx_class_t CLLocation_m __asm__("OBJC_METACLASS_$_CLLocation");
 cx_class_t CIFilter_c __asm__("OBJC_CLASS_$_CIFilter"); cx_class_t CIFilter_m __asm__("OBJC_METACLASS_$_CIFilter");
 cx_class_t CIVector_c __asm__("OBJC_CLASS_$_CIVector"); cx_class_t CIVector_m __asm__("OBJC_METACLASS_$_CIVector");
 cx_class_t CNContactStore_c __asm__("OBJC_CLASS_$_CNContactStore"); cx_class_t CNContactStore_m __asm__("OBJC_METACLASS_$_CNContactStore");
@@ -114,6 +128,18 @@ void cx_framework_classes_init(void) {
     d(&MKLocalSearch_c, &MKLocalSearch_m, "MKLocalSearch", "NSObject");
     d(&MKLocalSearchCompleter_c, &MKLocalSearchCompleter_m, "MKLocalSearchCompleter", "NSObject");
     d(&MKLocalSearchRequest_c, &MKLocalSearchRequest_m, "MKLocalSearchRequest", "NSObject");
+    d(&SCWindow_c, &SCWindow_m, "SCWindow", "NSObject");
+    d(&SCScreenshotManager_c, &SCScreenshotManager_m, "SCScreenshotManager", "NSObject");
+    d(&SCDisplay_c, &SCDisplay_m, "SCDisplay", "NSObject");
+    d(&CNContactFetchRequest_c, &CNContactFetchRequest_m, "CNContactFetchRequest", "NSObject");
+    d(&CNContactFormatter_c, &CNContactFormatter_m, "CNContactFormatter", "NSFormatter");
+    d(&CNContact_c, &CNContact_m, "CNContact", "NSObject");
+    d(&CNLabeledValue_c, &CNLabeledValue_m, "CNLabeledValue", "NSObject");
+    d(&CNPhoneNumber_c, &CNPhoneNumber_m, "CNPhoneNumber", "NSObject");
+    d(&EKCalendar_c, &EKCalendar_m, "EKCalendar", "NSObject");
+    d(&EKReminder_c, &EKReminder_m, "EKReminder", "NSObject");
+    d(&EKEvent_c, &EKEvent_m, "EKEvent", "NSObject");
+    d(&CLLocation_c, &CLLocation_m, "CLLocation", "NSObject");
     d(&CIFilter_c, &CIFilter_m, "CIFilter", "NSObject");
     d(&CIVector_c, &CIVector_m, "CIVector", "NSObject");
     d(&CNContactStore_c, &CNContactStore_m, "CNContactStore", "NSObject");

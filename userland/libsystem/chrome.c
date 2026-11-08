@@ -322,7 +322,6 @@ nsrect_t NSIntegralRect(nsrect_t r) {          /* menor retângulo de coordenada
 /* ---- CoreGraphics / CoreText / Carbon */
 id_ CGEventCreateData(void *alloc, id_ ev) { (void)alloc; (void)ev; return 0; }
 Boolean CGEventSourceKeyState(int state, unsigned short key) { (void)state; (void)key; return 0; }
-int CGWarpMouseCursorPosition(double x, double y) { (void)x; (void)y; return 1000; }      /* kCGErrorFailure */
 id_ CTFontCopyVariationAxesInternal(id_ font) { (void)font; return 0; }
 OSStatus CallNextEventHandler(void *next, void *ev) { (void)next; (void)ev; return -9874; }   /* eventNotHandledErr */
 unsigned GetEventKind(void *ev) { (void)ev; return 0; }

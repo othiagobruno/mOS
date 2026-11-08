@@ -359,24 +359,6 @@ static void hf_perform(id s, SEL c, i64 pattern, u64 when) { (void)s; (void)c; (
 
 /* ================================================================ ApplicationServices / CoreGraphics */
 u8 AXIsProcessTrusted(void) { return 0; }      /* sem permissão de acessibilidade, como um Mac antes de autorizar */
-typedef struct { void *isa; u16 key; u8 down; u64 flags, ts; } cgev_t;
-cx_class_t CGEventMOS_c __asm__("OBJC_CLASS_$_CGEventMOS"), CGEventMOS_m __asm__("OBJC_METACLASS_$_CGEventMOS");
-void *CGEventSourceCreate(i32 state) { (void)state; return objc_retain(MSG0(id, cls("NSObject"), "new")); }
-void *CGEventCreateKeyboardEvent(void *src, u16 key, u8 down) {
-    (void)src;
-    cgev_t *e = (cgev_t *)cx_alloc_instance(&CGEventMOS_c);
-    e->key = key; e->down = down; e->ts = (u64)SYS0(SYS_TIME) * 1000000ull;
-    return e;
-}
-u64 CGEventGetFlags(void *e) { return e && cx_is_subclass(object_getClass((id)e), &CGEventMOS_c) ? ((cgev_t *)e)->flags : 0; }
-void CGEventSetFlags(void *e, u64 f) { if (e && cx_is_subclass(object_getClass((id)e), &CGEventMOS_c)) ((cgev_t *)e)->flags = f; }
-u64 CGEventGetTimestamp(void *e) { return e && cx_is_subclass(object_getClass((id)e), &CGEventMOS_c) ? ((cgev_t *)e)->ts : (u64)SYS0(SYS_TIME) * 1000000ull; }
-void CGEventPost(u32 tap, void *e) {
-    (void)tap;
-    if (!e || !cx_is_subclass(object_getClass((id)e), &CGEventMOS_c)) return;
-    cgev_t *x = (cgev_t *)e;
-    cx_post_key_event(x->key, x->flags, x->down);
-}
 id CGSessionCopyCurrentDictionary(void) {
     id d = mdict();
     id yes = MSG(id, cls("NSNumber"), "numberWithBool:", YES), uid = MSG(id, cls("NSNumber"), "numberWithInt:", 501);
@@ -467,5 +449,4 @@ void cx_slack_frameworks_init(void) {
     K(&NSHapticFeedbackManager_c, &NSHapticFeedbackManager_m, "NSHapticFeedbackManager", obj, 0);
     AC(&NSHapticFeedbackManager_c, "defaultPerformer", hf_default);
     A(&NSHapticFeedbackManager_c, "performFeedbackPattern:performanceTime:", hf_perform);
-    K(&CGEventMOS_c, &CGEventMOS_m, "CGEventMOS", obj, (u32)(sizeof(cgev_t) - 8));
 }

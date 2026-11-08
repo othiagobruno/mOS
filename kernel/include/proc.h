@@ -10,6 +10,11 @@
  *     VFS. Elas nunca podem esperar: quem precisa esperar (sleep, wait) bloqueia a thread.
  */
 #pragma once
+
+/* Estado de FPU/SSE/AVX de cada quadro de interrupção, logo abaixo dele (arch/x86.S): 1024 bytes alinhados a 64. Com XSAVE
+ * (arch/cpu.c, fpu_init: x87 | SSE | AVX, 832 bytes) ou FXSAVE; os 512 primeiros são sempre a imagem FXSAVE (sinais). */
+#define FPU_AREA 1024
+#define FPU_AREA_OF(frame) ((u8 *)(((u64)(frame) - FPU_AREA) & ~63ULL))
 #include "kernel.h"
 
 #define SCHED_SLICE_MS 4

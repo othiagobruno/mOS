@@ -1,4 +1,4 @@
-/* libSystem.mos sha256: EAB9A253C97166EF */
+/* libSystem.mos sha256: 446B1FF572D7C4CB */
 /* libSystem.mos sha256:  */
 /* mOS - libSystem.mos (userland/libsystem, compilado por tools/build-libsystem.ps1) embutido no kernel */
     .section .rdata, "dr"

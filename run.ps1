@@ -57,7 +57,10 @@ if ($Accel) {
     $qargs += @('-accel', $Accel)
     # sem VMX/SVM no convidado: com -cpu max o OVMF configura o MSR 0x3A (IA32_FEATURE_CONTROL) em cada núcleo e o
     # WHPX responde #GP ainda no PlatformPei, antes do mOS
-    if ($Accel -match 'whpx') { $i = [array]::IndexOf($qargs, '-cpu'); if ($i -ge 0) { $qargs[$i + 1] = 'max,-vmx,-svm' } }
+    # Sem AVX também: o WHPX deixa o XSETBV ligar o AVX no XCR0, mas o estado não vem (CPUID 0Dh com 576 bytes, XRSTOR
+    # com #GP), e o kernel fica no FXSAVE (arch/cpu.c, fpu_init). Quem decide pelo bit do CPUID sem olhar o XGETBV (o
+    # JavaScriptCore do Bun, no Claude Code) gerava AVX e caía com #UD.
+    if ($Accel -match 'whpx') { $i = [array]::IndexOf($qargs, '-cpu'); if ($i -ge 0) { $qargs[$i + 1] = 'max,-vmx,-svm,-avx,-avx2,-fma,-f16c,-avx512f' } }
 }
 # MOS_QEMU_LOG=<arquivo>: o QEMU registra resets da CPU (com os registradores) e erros do convidado. Com -no-reboot,
 # um triple fault do Nucleo fecha o QEMU sem deixar rastro no log serial; este arquivo diz onde foi.

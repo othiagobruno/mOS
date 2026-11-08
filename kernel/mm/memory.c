@@ -341,16 +341,52 @@ bool kheap_check(const char *where) {
     return !bad;
 }
 
+/* Bloco grande com os dados alinhados à página: o cabeçalho fica no fim de uma página só dele, logo antes dos dados, e o
+ * kfree devolve cada página de dados com uvm_page_put (process.c). Assim o carregador Mach-O pode mapear as páginas de um
+ * arquivo direto nos processos (o __TEXT dos frameworks, macho.c): uma página ainda mapeada (contada em pref[]) só volta
+ * ao PMM quando o último dono a larga, mesmo que o VFS libere o buffer antes. */
+#define MAGIC_PAGES 0x9A6E5B1Cull
+void *kmalloc_pages(usize n) {
+    if (!n) n = 1;
+    usize pages = ALIGN_UP(n, 4096) / 4096 + 1;
+    u64 p = pmm_alloc(pages);
+    if (!p) { kprintf("kmalloc: sem memória para %llu bytes (alinhados à página)\n", (u64)n); return NULL; }
+    blk_t *b = (blk_t *)(p + 4096) - 1;
+    b->size = pages * 4096;
+    b->magic = MAGIC_PAGES;
+    b->next = NULL;
+    u64 f = spin_lock_irqsave(&heap_lock);
+    used_bytes += b->size;
+    spin_unlock_irqrestore(&heap_lock, f);
+    return (void *)(p + 4096);
+}
+/* p é o começo de um bloco de kmalloc_pages? (os do kmalloc nunca começam numa página: o cabeçalho vem antes) */
+bool kmalloc_is_pages(const void *p) {
+    if (!p || ((u64)p & 0xFFF) || (u64)p < 0x2000) return false;
+    return ((const blk_t *)p - 1)->magic == MAGIC_PAGES;
+}
+
 /* diagnóstico: o bloco ainda está alocado? (pega kfree duplo antes de acontecer) */
 bool kheap_live(const void *p) {
     if (!p) return true;
     const blk_t *b = (const blk_t *)p - 1;
-    return b->magic == MAGIC_USED || b->magic == MAGIC_BIG;
+    return b->magic == MAGIC_USED || b->magic == MAGIC_BIG || b->magic == MAGIC_PAGES;
 }
 
 void kfree(void *p) {
     if (!p) return;
     blk_t *b = (blk_t *)p - 1;
+    if (b->magic == MAGIC_PAGES) {
+        u64 f = spin_lock_irqsave(&heap_lock);
+        used_bytes -= b->size;
+        spin_unlock_irqrestore(&heap_lock, f);
+        b->magic = 0;
+        u64 base = (u64)p - 4096, pages = b->size / 4096;
+        extern void uvm_page_put(u64 phys);
+        for (u64 i = 1; i < pages; i++) uvm_page_put(base + i * 4096);   /* dados: pode haver outro dono (um processo) */
+        pmm_free(base, 1);                                               /* a página do cabeçalho */
+        return;
+    }
     if (b->magic == MAGIC_BIG) {
         u64 f = spin_lock_irqsave(&heap_lock);
         used_bytes -= b->size;
@@ -391,7 +427,7 @@ void *kcalloc(usize n, usize sz) {
 void *krealloc(void *p, usize n) {
     if (!p) return kmalloc(n);
     blk_t *b = (blk_t *)p - 1;
-    usize have = b->size - sizeof(blk_t);
+    usize have = b->magic == MAGIC_PAGES ? b->size - 4096 : b->size - sizeof(blk_t);
     if (have >= n) return p;
     void *q = kmalloc(n);
     if (q) { memcpy(q, p, have); kfree(p); }

@@ -1029,8 +1029,8 @@ static void run_action(int act) {
     case ACT_TAB_PREV: wm_tab_step(-1); break;
     case ACT_ABOUT_MAC: desktop_show_about(); break;
     case ACT_HELP: {
-        app_t *h = apps_find("horizonte");
-        if (h) { extern void browser_open_url(const char *url); app_launch(h); browser_open_url("about:ajuda"); }
+        /* a Ajuda é uma página about: do motor próprio do Horizonte (o Chromium, motor principal, não a tem) */
+        if (apps_find("horizonte")) { extern void horizonte_legado_abrir(const char *url); horizonte_legado_abrir("about:ajuda"); }
         break;
     }
     case ACT_WIFI_TOGGLE: { wifi_status_t ws; wifi_status(&ws); wifi_set_enabled(ws.state == WIFI_OFF); break; }
@@ -1214,8 +1214,17 @@ static void dock_toggle_keep(app_t *a) {
     wm_damage(rect_make(0, SH - 220, SW, 220));
 }
 
+/* janelas de um processo do macOS que este app representa (o motor Chromium do Horizonte: apps_shortcut_for) */
+static bool dock_proxy_windows(app_t *a) {
+    extern window_t *wm_nth(int);
+    for (int i = 0;; i++) {
+        window_t *w = wm_nth(i);
+        if (!w) return false;
+        if (w->app && w->app != a && !w->closing && w->visible && apps_shortcut_for(w->app) == a) return true;
+    }
+}
 static bool dock_app_running(app_t *a) {
-    return a->running && (wm_count_for(a) || !strncmp(a->exec, "mac:", 4));
+    return a->running && (wm_count_for(a) || !strncmp(a->exec, "mac:", 4) || dock_proxy_windows(a));
 }
 
 static void dock_layout(void) {
@@ -1381,6 +1390,7 @@ static void dock_click(app_t *a) {
         else wm_bring_app(a);
     }
     else if (a->running && !strncmp(a->exec, "mac:", 4)) app_launch(a);   /* traz as janelas do processo */
+    else if (a->running && dock_proxy_windows(a)) app_launch(a);       /* o motor Chromium do Horizonte: traz as janelas dele */
     else { a->bounce = 1; app_launch(a); }
 }
 
@@ -1465,7 +1475,7 @@ static void draw_dock(surface_t *s) {
             ic = dock_icon(d->app, sz);
         }
         gfx_blit_scaled(s, ic, (int)d->x, y, sz, sz, dock_pressed == i ? 160 : 255);
-        bool running = d->app == &launch_app ? lp_open : (d->app != &trash_app && d->app != &downloads_app && d->app->running && (wm_count_for(d->app) > 0 || !strncmp(d->app->exec, "mac:", 4)));
+        bool running = d->app == &launch_app ? lp_open : (d->app != &trash_app && d->app != &downloads_app && dock_app_running(d->app));
         if (running) {
             /* ponto do macOS: centrado sob o ícone, no meio da margem inferior,
              * ~4,5% do ícone (≈2,2 px de raio a 48 px) e com contraste sobre o vidro */
