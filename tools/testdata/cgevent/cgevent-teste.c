@@ -25,13 +25,15 @@ static void ev(unsigned type, double x, double y) {
     CGEventPost(0, e);
     CFRelease(e);
 }
+static int want_r = -1, want_g, want_b;              /* 6º argumento RRGGBB: espera essa cor (± 50 por canal) */
+static int near(int a, int b) { return a > b - 50 && a < b + 50; }
 static int dark_at(double x, double y) {
     CGRect r = {x, y, 1, 1};
     void *img = CGDisplayCreateImageForRect(1, r);
     if (!img) return 0;
     void *d = CGDataProviderCopyData(CGImageGetDataProvider(img));
     const unsigned char *p = d ? CFDataGetBytePtr(d) : 0;
-    int dark = p && p[0] < 60 && p[1] < 60 && p[2] < 60;
+    int dark = p && (want_r >= 0 ? near(p[2], want_r) && near(p[1], want_g) && near(p[0], want_b) : p[0] + p[1] + p[2] < 450);
     if (d) CFRelease(d);
     CFRelease(img);
     return dark;
@@ -39,6 +41,7 @@ static int dark_at(double x, double y) {
 int main(int argc, char **argv) {
     double x = argc > 2 ? atof(argv[1]) : 720, y = argc > 2 ? atof(argv[2]) : 510;
     double fx = argc > 4 ? atof(argv[3]) : 300, fy = argc > 4 ? atof(argv[4]) : 650;
+    if (argc > 6) { unsigned c = (unsigned)strtoul(argv[6], 0, 16); want_r = (int)(c >> 16 & 255); want_g = (int)(c >> 8 & 255); want_b = (int)(c & 255); }
     if (argc > 5) {
         int i = 0;
         while (i < 900 && !dark_at(x, y)) { sleep(1); i++; }

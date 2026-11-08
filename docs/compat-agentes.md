@@ -254,3 +254,8 @@ O helper `Grok Bot Computer Use.app/Contents/MacOS/CUGrokBotService` (Swift) ia 
   Agora uma subview que sobrescreve `hitTest:` decide (com o ponto nas coordenadas da superview). Com isso o clique em
   "Sign in with ChatGPT" chega à `RenderWidgetHostViewCocoa`, o Codex manda `account/login/start` ao app-server e abre
   `https://auth.openai.com/…` no Horizonte (o motor próprio mostra a página em branco; o login é do usuário).
+- **Cursor sem regressão do hit-test:** o clique em "Log In" chega à `RenderWidgetHostViewCocoa` e abre
+  `https://cursor.com/…` no Horizonte (`cgevent-teste 610 540 300 650 espera 1a7cf5`: o 6º argumento espera essa cor no
+  alvo, ± 50 por canal).
+- **thread_suspend corrigido** (0ffff3c, da sessão do VS Code: a suspensão vale na volta ao ring 3, não na entrada da
+  syscall): Codex 3 de 3 rodadas estáveis com o threadctl exercitado.
