@@ -1412,6 +1412,44 @@ static void req_set_policy(id s, SEL c, u64 p) { (void)s; (void)c; (void)p; }
 static u64 req_policy(id s, SEL c) { (void)s; (void)c; return 0; }
 static id req_headers(id s, SEL c) { (void)c; return BOX(s)->c; }
 static void req_set_header(id s, SEL c, id v, id f) { (void)c; if (BOX(s)->c && v && f) MSG(void, BOX(s)->c, "setObject:forKey:", v, f); }
+/* inicializadores de instância (antes o initWithURL: reaproveitava o req_with, que trata o primeiro argumento como a
+ * classe: com uma instância ali, o objeto saía malformado), as variantes com política e prazo, e cópias que retêm os
+ * campos (o Sparkle copia a requisição antes de baixar; sem isto ela dividia URL e corpo com a original) */
+static id req_init_url(id s, SEL c, id url) {
+    (void)c;
+    rel(BOX(s)->a); BOX(s)->a = retain(url);
+    if (!BOX(s)->b) BOX(s)->b = ns("GET");
+    if (!BOX(s)->c) BOX(s)->c = mutdict();
+    BOX(s)->d = 60;
+    return s;
+}
+static id req_init_url_pt(id s, SEL c, id url, u64 policy, double timeout) {
+    (void)policy;
+    req_init_url(s, c, url);
+    BOX(s)->d = timeout > 0 ? timeout : 60;
+    return s;
+}
+static id req_with_pt(id cls, SEL c, id url, u64 policy, double timeout) {
+    id r = req_with(cls, c, url);
+    BOX(r)->d = timeout > 0 ? timeout : 60;
+    (void)policy;
+    return r;
+}
+static double req_timeout(id s, SEL c) { (void)c; return BOX(s)->d > 0 ? BOX(s)->d : 60; }
+static void req_set_timeout(id s, SEL c, double t) { (void)c; BOX(s)->d = t; }
+static id req_copy_as(id s, cx_class_t *cls) {
+    box_t *o = (box_t *)cx_alloc_instance(cls);
+    o->a = retain(BOX(s)->a);
+    o->b = retain(BOX(s)->b);
+    o->c = BOX(s)->c ? MSG0(id, BOX(s)->c, "mutableCopy") : mutdict();
+    o->e = retain(BOX(s)->e);
+    o->d = BOX(s)->d;
+    return (id)o;
+}
+static id req_copy(id s, SEL c) { (void)c; return req_copy_as(s, (cx_class_t *)object_getClass(s)); }
+static id req_copy_zone(id s, SEL c, void *z) { (void)z; return req_copy(s, c); }
+static id req_mcopy(id s, SEL c) { (void)c; return req_copy_as(s, &NSMutableURLRequest_c); }
+static id req_mcopy_zone(id s, SEL c, void *z) { (void)z; return req_mcopy(s, c); }
 static id req_body(id s, SEL c) { (void)c; return BOX(s)->e; }
 static void req_set_body(id s, SEL c, id d) { (void)c; rel(BOX(s)->e); BOX(s)->e = retain(d); }
 static id resp_make(id url, int status, id headers, long long len) {
@@ -2691,7 +2729,11 @@ void cx_foundation_more_init(void) {
 
     DEF(&NSURLRequest_c, &NSURLRequest_m, "NSURLRequest", ob, BEX);
     CM(NSURLRequest, "requestWithURL:", req_with); CM(NSURLRequest, "alloc", lock_alloc);
-    M(NSURLRequest, "initWithURL:", req_with); M(NSURLRequest, "URL", req_url); M(NSURLRequest, "HTTPMethod", req_method);
+    M(NSURLRequest, "initWithURL:", req_init_url); M(NSURLRequest, "URL", req_url); M(NSURLRequest, "HTTPMethod", req_method);
+    M(NSURLRequest, "initWithURL:cachePolicy:timeoutInterval:", req_init_url_pt); CM(NSURLRequest, "requestWithURL:cachePolicy:timeoutInterval:", req_with_pt);
+    M(NSURLRequest, "timeoutInterval", req_timeout); M(NSMutableURLRequest, "setTimeoutInterval:", req_set_timeout);
+    M(NSURLRequest, "copy", req_copy); M(NSURLRequest, "copyWithZone:", req_copy_zone);
+    M(NSURLRequest, "mutableCopy", req_mcopy); M(NSURLRequest, "mutableCopyWithZone:", req_mcopy_zone);
     M(NSURLRequest, "allHTTPHeaderFields", req_headers); M(NSURLRequest, "HTTPBody", req_body);
     DEF(&NSMutableURLRequest_c, &NSMutableURLRequest_m, "NSMutableURLRequest", &NSURLRequest_c, 0);
     M(NSMutableURLRequest, "setHTTPMethod:", req_set_method); M(NSMutableURLRequest, "setValue:forHTTPHeaderField:", req_set_header);
