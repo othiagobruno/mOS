@@ -1703,9 +1703,21 @@ static id make_event(u64 type, id win, double px, double py, gui_event_t *g) {
 static id hit(id v, absr_t *a, double x, double y) {
     vstate_t *s = vs(v);
     if (s->hidden || x < a->tlx || y < a->tly || x >= a->tlx + a->w || y >= a->tly + a->h) return 0;
+    static SEL ht;
+    if (!ht) ht = sel_registerName("hitTest:");
     for (u32 i = s->nsub; i-- > 0;) {
         id cv = s->sub[i];
         vstate_t *cs = vs(cv);
+        /* subview que sobrescreve -hitTest: (o Chromium: a ChromeNodeDragOverlayContainerView cobre a janela toda e
+         * devolve nil fora de um arrasto, para o clique chegar à RenderWidgetHostViewCocoa): ela decide, com o ponto
+         * nas coordenadas desta view (a superview dela), como no AppKit */
+        if (cx_lookup(cv->isa, ht) != (IMP)v_hit_test) {
+            if (vs(cv)->hidden) continue;
+            NSPoint p = {x - a->tlx, a->flipped ? y - a->tly : a->h - (y - a->tly)};
+            id r = ((id (*)(id, SEL, NSPoint))objc_msgSend)(cv, ht, p);
+            if (r) return r;
+            continue;
+        }
         absr_t ca = {a->tlx + cs->frame.o.x, a->flipped ? a->tly + cs->frame.o.y : a->tly + a->h - cs->frame.o.y - cs->frame.s.h,
                      cs->frame.s.w, cs->frame.s.h, is_flipped(cv)};
         id r = hit(cv, &ca, x, y);

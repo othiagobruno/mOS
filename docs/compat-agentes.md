@@ -249,3 +249,8 @@ O helper `Grok Bot Computer Use.app/Contents/MacOS/CUGrokBotService` (Swift) ia 
 - **Em aberto:** o clique (sintético ou do QMP) no conteúdo web do Codex não chega ao JavaScript — nenhum
   `account/login/start` vai ao app-server; no Dock o mesmo clique funciona. `cgevent-teste x y xf yf espera` espera o
   pixel do alvo escurecer (lê a tela) antes de clicar, sem depender do relógio do kernel (lento sob WHPX).
+- **Resolvido (clique no conteúdo web):** o `hit()` interno do AppKit do mOS descia pelas subviews sem perguntar o
+  `-hitTest:` sobrescrito; a `ChromeNodeDragOverlayContainerView` do Chromium cobre a janela e ficava com todo clique.
+  Agora uma subview que sobrescreve `hitTest:` decide (com o ponto nas coordenadas da superview). Com isso o clique em
+  "Sign in with ChatGPT" chega à `RenderWidgetHostViewCocoa`, o Codex manda `account/login/start` ao app-server e abre
+  `https://auth.openai.com/…` no Horizonte (o motor próprio mostra a página em branco; o login é do usuário).
