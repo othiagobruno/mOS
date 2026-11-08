@@ -230,3 +230,22 @@ O helper `Grok Bot Computer Use.app/Contents/MacOS/CUGrokBotService` (Swift) ia 
   `SCDisplay`, `SCContentFilter`, `SCStreamConfiguration`, `SCScreenshotManager`) dão ao helper o "ver" do computer use.
   `CGPreflightScreenCaptureAccess` responde 1: o mOS não tem permissão de gravação de tela. Em aberto: o mesmo clique
   sobre "Sign in another way" do Codex não mudou a tela (a ver se é o botão ou o hit-test do conteúdo web).
+
+## Codex depois do SwiftUI com ObjC e do thread_suspend (8 nov., tarde)
+
+- **Blocos:** com o `_Block_release` liberando de verdade (b16b648), o Codex caía na partida. Duas causas: (1) bloco no
+  heap não tem `objhdr_t`, então `objc_retain(bloco)` não contava e o par do ARC `objc_retain` + `Block_release` (o
+  Chromium faz) soltava o bloco em uso; agora `objc_retain`/`objc_release`/`-retain`/`-release` de
+  `_NSConcreteMallocBlock` passam por `_Block_copy`/`_Block_release`. (2) o `dispatch_sync` para a fila principal guardava
+  o bloco sem copiar; voltou a copiar e soltar depois de rodar (antes de acordar quem espera), o que agora fica
+  balanceado e passa a verificação de noescape do Swift. Bisseção: ce4cd28 bom; b16b648 só com as duas correções bom.
+- **Navegador padrão para login:** o `URLForApplicationToOpenURL:` devolve `/System/Applications/<Nome>.app` para apps do
+  sistema (vivem no kernel, sem pasta); o Chromium abre esse bundle antes do `openURL` e recebia nil. O
+  `NSBundle bundleWithPath:`/`initWithPath:` agora monta um Info.plist sintético pelo Launch Services
+  (`cx_system_app_info`, openurl.c).
+- **thread_suspend real** (`SYS_THREADCTL`, 7ae915c): com ele, 3 de 3 rodadas do Codex caíam (falta de página/#GP e VM
+  reiniciando); com o `thread_suspend` do libSystem negando para outra thread, 3 de 3 estáveis. Avisado a quem o fez.
+  Independente disso: um #GP no renderer em `Codex Framework+0x21bf566` (o renderer reinicia) e reinícios raros da VM.
+- **Em aberto:** o clique (sintético ou do QMP) no conteúdo web do Codex não chega ao JavaScript — nenhum
+  `account/login/start` vai ao app-server; no Dock o mesmo clique funciona. `cgevent-teste x y xf yf espera` espera o
+  pixel do alvo escurecer (lê a tela) antes de clicar, sem depender do relógio do kernel (lento sob WHPX).
