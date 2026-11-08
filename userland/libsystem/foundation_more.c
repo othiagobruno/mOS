@@ -1618,9 +1618,89 @@ static void *task_thread(void *arg) {
     if (BOX(task)->p) {
         void (*inv)(void *, id, id, id) = *(void **)((u8 *)BOX(task)->p + 16);
         inv(BOX(task)->p, data, resp, err);
+    } else if (BOX(task)->i) {
+        void sess_deliver_to_delegate(id task, id data);
+        sess_deliver_to_delegate(task, data);
     }
     rel(pair); rel(err);
     return 0;
+}
+
+/* ---- sessões com delegate (sessionWithConfiguration:delegate:delegateQueue:). A sessão guarda configuração (a),
+ * delegate (b) e fila (c); as tarefas criadas sem bloco de conclusão guardam a sessão (i) e, se forem de download,
+ * j = 1. Ao terminar o HTTP (task_thread), o delegate recebe, na ordem e numa função só (a ordem fica garantida):
+ *   dados:     URLSession:dataTask:didReceiveData:
+ *   download:  URLSession:downloadTask:didWriteData:totalBytesWritten:totalBytesExpectedToWrite:, depois
+ *              URLSession:downloadTask:didFinishDownloadingToURL: com o corpo num arquivo temporário (apagado depois,
+ *              como na Apple: quem quer o arquivo o move durante a chamada);
+ *   sempre:    URLSession:task:didCompleteWithError:
+ * Na fila principal quando o delegate pediu a mainQueue (callbacks de interface); senão numa fila global. Os
+ * pedidos de decisão (didReceiveResponse:completionHandler:, desafios de autenticação) ainda não são feitos: o
+ * mOS segue como se a resposta fosse "permitir". */
+void *dispatch_get_main_queue(void);
+void *dispatch_get_global_queue(long prio, unsigned long flags);
+void dispatch_async_f(void *q, void *ctx, void (*fn)(void *));
+static BOOL dlg_has(id d, const char *sel) { return d && MSG(BOOL, d, "respondsToSelector:", sel_registerName(sel)); }
+typedef struct { id task, data; } dlg_job_t;
+static void dlg_run(void *arg) {
+    dlg_job_t *j = arg;
+    id task = j->task, data = j->data, sess = (id)BOX(task)->i, dlg = BOX(sess)->b;
+    i64 n = data ? (i64)MSG0(u64, data, "length") : 0;
+    if (BOX(task)->j) {                                              /* download */
+        static int seq;
+        char path[64];
+        cx_snprintf(path, sizeof path, "/tmp/CFNetworkDownload_mOS_%d.tmp", ++seq);
+        id p = cx_str(path);
+        if (data) MSG(BOOL, data, "writeToFile:atomically:", p, (BOOL)1);
+        else MSG(BOOL, MSG0(id, (id)cx_class_named("NSData"), "data"), "writeToFile:atomically:", p, (BOOL)1);
+        if (dlg_has(dlg, "URLSession:downloadTask:didWriteData:totalBytesWritten:totalBytesExpectedToWrite:"))
+            MSG(void, dlg, "URLSession:downloadTask:didWriteData:totalBytesWritten:totalBytesExpectedToWrite:", sess, task, n, n, n);
+        if (dlg_has(dlg, "URLSession:downloadTask:didFinishDownloadingToURL:")) {
+            id u = MSG(id, (id)cx_class_named("NSURL"), "fileURLWithPath:", p);
+            MSG(void, dlg, "URLSession:downloadTask:didFinishDownloadingToURL:", sess, task, u);
+        }
+        MSG(BOOL, MSG0(id, (id)cx_class_named("NSFileManager"), "defaultManager"), "removeItemAtPath:error:", p, (id *)0);
+    } else if (n && dlg_has(dlg, "URLSession:dataTask:didReceiveData:")) {
+        MSG(void, dlg, "URLSession:dataTask:didReceiveData:", sess, task, data);
+    }
+    if (dlg_has(dlg, "URLSession:task:didCompleteWithError:"))
+        MSG(void, dlg, "URLSession:task:didCompleteWithError:", sess, task, BOX(task)->e);
+    rel(data); rel(task);
+    free(j);
+}
+void sess_deliver_to_delegate(id task, id data) {
+    id sess = (id)BOX(task)->i;
+    if (!sess || !BOX(sess)->b) return;
+    dlg_job_t *j = malloc(sizeof *j);
+    if (!j) return;
+    j->task = retain(task); j->data = retain(data);
+    id mainq = MSG0(id, (id)cx_class_named("NSOperationQueue"), "mainQueue");
+    dispatch_async_f(BOX(sess)->c && BOX(sess)->c == mainq ? dispatch_get_main_queue() : dispatch_get_global_queue(0, 0), j, dlg_run);
+}
+static id sess_with_delegate(id cls, SEL c, id cfg, id dlg, id queue) {
+    (void)c;
+    box_t *o = (box_t *)cx_alloc_instance((cx_class_t *)cls);
+    o->a = retain(cfg); o->b = retain(dlg); o->c = retain(queue);
+    return ar((id)o);
+}
+static id sess_get_delegate(id s, SEL c) { (void)c; return BOX(s)->b; }
+static id sess_get_queue(id s, SEL c) { (void)c; return BOX(s)->c; }
+static id sess_get_cfg(id s, SEL c) { (void)c; return BOX(s)->a; }
+static id sess_task_nocb(id s, cx_class_t *cls, id req, int dl) {
+    id t = task_make(cls, req, 0);
+    BOX(t)->i = (i64)s; BOX(t)->j = dl;
+    return ar(t);
+}
+static id sess_data_task_nb(id s, SEL c, id req) { (void)c; return sess_task_nocb(s, &NSURLSessionDataTask_c, req, 0); }
+static id sess_data_url_nb(id s, SEL c, id url) { return sess_task_nocb(s, &NSURLSessionDataTask_c, req_with((id)&NSURLRequest_c, c, url), 0); }
+static id sess_dl_task_nb(id s, SEL c, id req) { (void)c; return sess_task_nocb(s, &NSURLSessionDownloadTask_c, req, 1); }
+static id sess_dl_url_nb(id s, SEL c, id url) { return sess_task_nocb(s, &NSURLSessionDownloadTask_c, req_with((id)&NSURLRequest_c, c, url), 1); }
+/* getAllTasksWithCompletionHandler: as tarefas do mOS não ficam registradas na sessão: lista vazia */
+static void sess_all_tasks(id s, SEL c, void *block) {
+    (void)s; (void)c;
+    if (!block) return;
+    void (*inv)(void *, id) = *(void **)((u8 *)block + 16);
+    inv(block, MSG0(id, (id)cx_class_named("NSArray"), "array"));
 }
 static void task_resume(id s, SEL c) {
     (void)c;
@@ -2641,6 +2721,12 @@ void cx_foundation_more_init(void) {
     M(NSURLSession, "downloadTaskWithRequest:completionHandler:", sess_dl_task);
     M(NSURLSession, "uploadTaskWithRequest:fromData:completionHandler:", sess_up_task);
     M(NSURLSession, "invalidateAndCancel", noop); M(NSURLSession, "finishTasksAndInvalidate", noop);
+    CM(NSURLSession, "sessionWithConfiguration:delegate:delegateQueue:", sess_with_delegate);
+    M(NSURLSession, "delegate", sess_get_delegate); M(NSURLSession, "delegateQueue", sess_get_queue); M(NSURLSession, "configuration", sess_get_cfg);
+    M(NSURLSession, "dataTaskWithRequest:", sess_data_task_nb); M(NSURLSession, "dataTaskWithURL:", sess_data_url_nb);
+    M(NSURLSession, "downloadTaskWithRequest:", sess_dl_task_nb); M(NSURLSession, "downloadTaskWithURL:", sess_dl_url_nb);
+    M(NSURLSession, "getAllTasksWithCompletionHandler:", sess_all_tasks);
+    CM(NSURLSessionConfiguration, "backgroundSessionConfigurationWithIdentifier:", sess_cfg);
     DEF(&NSURLSessionTaskMetrics_c, &NSURLSessionTaskMetrics_m, "NSURLSessionTaskMetrics", ob, BEX);
     DEF(&NSURLSessionTaskTransactionMetrics_c, &NSURLSessionTaskTransactionMetrics_m, "NSURLSessionTaskTransactionMetrics", ob, BEX);
 
