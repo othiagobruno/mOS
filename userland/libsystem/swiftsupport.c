@@ -118,41 +118,6 @@ static u64 cx_uleb(const u8 **p, const u8 *end) {
     }
     return v;
 }
-/* percorre a export trie e fica com o símbolo de maior endereço de execução que ainda é <= alvo.
- * A trie nova guarda deslocamento a partir do cabeçalho; a antiga, vmaddr sem slide. */
-static void trie_near(const u8 *base, const u8 *end, const u8 *p, char *name, int nl, int depth,
-                      u64 hdr, u64 slide, u64 target, u64 *best, char *out) {
-    if (depth > 48 || p < base || p >= end || nl > 180) return;
-    u64 tsz = cx_uleb(&p, end);
-    if (tsz && p + tsz <= end && nl > 0) {
-        const u8 *t = p;
-        u64 flags = cx_uleb(&t, end);
-        if (!(flags & 0x18)) {                                                      /* reexport ou stub: sem endereço útil */
-            u64 raw = cx_uleb(&t, end);
-            u64 c1 = hdr + raw, c2 = raw + slide, cand = 0;
-            if (raw && c1 <= target && c1 >= hdr) cand = c1;
-            if (raw && c2 <= target && c2 >= hdr && (cand == 0 || target - c2 < target - cand)) cand = c2;
-            if (cand && cand >= *best) {
-                *best = cand;
-                memcpy(out, name, (size_t)nl);
-                out[nl] = 0;
-            }
-        }
-        p += tsz;
-    }
-    if (p >= end) return;
-    u8 nc = *p++;
-    for (u8 i = 0; i < nc && p < end; i++) {
-        char child[192];
-        int n2 = nl;
-        if (n2 > 180) n2 = 180;
-        memcpy(child, name, (size_t)n2);
-        while (p < end && *p && n2 < 180) child[n2++] = (char)*p++;
-        if (p < end && !*p) p++;
-        u64 off = cx_uleb(&p, end);
-        if (off && base + off < end) trie_near(base, end, base + off, child, n2, depth + 1, hdr, slide, target, best, out);
-    }
-}
 static const u8 *image_trie(const void *hdr, u32 *tsz, u64 *slide) {
     const u32 *mh = hdr;
     if (!mh || mh[0] != 0xFEEDFACFu) return 0;
@@ -189,6 +154,81 @@ static const u8 *image_trie(const void *hdr, u32 *tsz, u64 *slide) {
     }
     return 0;
 }
+/* ---- tabela de símbolos por imagem para o dladdr (endereço -> nome), a partir da export trie */
+typedef struct { u64 addr; u32 name; } dl_ent_t;
+typedef struct { const void *hdr; dl_ent_t *e; u32 n, cap; char *names; u32 nlen, ncap; } dl_tab_t;
+static dl_tab_t dl_tabs[96];
+static u32 dl_ntabs;
+static volatile int dl_lock;
+static void dl_add(dl_tab_t *t, u64 addr, const char *name, int nl) {
+    if (t->n == t->cap) { u32 c = t->cap ? t->cap * 2 : 1024; dl_ent_t *e = realloc(t->e, c * sizeof *e); if (!e) return; t->e = e; t->cap = c; }
+    if (t->nlen + (u32)nl + 1 > t->ncap) {
+        u32 c = t->ncap ? t->ncap * 2 : 65536;
+        while (c < t->nlen + (u32)nl + 1) c *= 2;
+        char *s = realloc(t->names, c); if (!s) return; t->names = s; t->ncap = c;
+    }
+    memcpy(t->names + t->nlen, name, (size_t)nl);
+    t->names[t->nlen + (u32)nl] = 0;
+    t->e[t->n].addr = addr; t->e[t->n].name = t->nlen; t->n++;
+    t->nlen += (u32)nl + 1;
+}
+/* como trie_near, mas guarda todos os símbolos com endereço (trie nova: deslocamento a partir do cabeçalho;
+ * antiga: vmaddr sem slide, reconhecida por ser >= o vmaddr do __TEXT) */
+static void trie_collect(const u8 *base, const u8 *end, const u8 *p, char *name, int nl, int depth,
+                         u64 hdr, u64 slide, u64 text_vm, dl_tab_t *t) {
+    if (depth > 64 || p < base || p >= end || nl > 180) return;
+    u64 tsz = cx_uleb(&p, end);
+    if (tsz && p + tsz <= end && nl > 0) {
+        const u8 *q = p;
+        u64 flags = cx_uleb(&q, end);
+        if (!(flags & 0x18)) {
+            u64 raw = cx_uleb(&q, end);
+            u64 addr = (text_vm && raw >= text_vm) ? raw + slide : hdr + raw;
+            if (raw && addr >= hdr) dl_add(t, addr, name, nl);
+        }
+        p += tsz;
+    }
+    if (p >= end) return;
+    u8 nc = *p++;
+    for (u8 i = 0; i < nc && p < end; i++) {
+        char child[192];
+        int n2 = nl;
+        memcpy(child, name, (size_t)n2);
+        while (p < end && *p && n2 < 180) child[n2++] = (char)*p++;
+        while (p < end && *p) p++;
+        if (p < end) p++;
+        u64 off = cx_uleb(&p, end);
+        if (off && base + off < end) trie_collect(base, end, base + off, child, n2, depth + 1, hdr, slide, text_vm, t);
+    }
+}
+void qsort(void *base, size_t n, size_t sz, int (*cmp)(const void *, const void *));
+static int dl_cmp(const void *x, const void *y) {
+    u64 a = ((const dl_ent_t *)x)->addr, b = ((const dl_ent_t *)y)->addr;
+    return a < b ? -1 : a > b;
+}
+static dl_tab_t *dl_table(const void *h) {
+    for (u32 i = 0; i < dl_ntabs; i++) if (dl_tabs[i].hdr == h) return &dl_tabs[i];
+    while (__sync_lock_test_and_set(&dl_lock, 1)) {}
+    dl_tab_t *t = 0;
+    for (u32 i = 0; i < dl_ntabs; i++) if (dl_tabs[i].hdr == h) t = &dl_tabs[i];
+    if (!t && dl_ntabs < sizeof dl_tabs / sizeof dl_tabs[0]) {
+        dl_tab_t nt = {0};
+        nt.hdr = h;
+        u32 tsz = 0; u64 slide = 0;
+        const u8 *trie = image_trie(h, &tsz, &slide);
+        if (trie && tsz) {
+            char name[192];
+            u64 text_vm = (u64)h - slide;
+            trie_collect(trie, trie + tsz, trie, name, 0, 0, (u64)h, slide, text_vm, &nt);
+            if (nt.n) qsort(nt.e, nt.n, sizeof *nt.e, dl_cmp);
+        }
+        dl_tabs[dl_ntabs] = nt;
+        __sync_synchronize();
+        t = &dl_tabs[dl_ntabs++];
+    }
+    __sync_lock_release(&dl_lock);
+    return t;
+}
 static char dl_sym[4][192];
 static unsigned dl_sym_i;
 int dladdr(const void *addr, Dl_info *info) {
@@ -205,18 +245,21 @@ int dladdr(const void *addr, Dl_info *info) {
     info->dli_fbase = (void *)h;
     u32 n = _dyld_image_count();
     for (u32 i = 0; i < n; i++) if (_dyld_get_image_header(i) == h) { info->dli_fname = _dyld_get_image_name(i); break; }
-    u32 tsz = 0; u64 slide = 0;
-    const u8 *trie = image_trie(h, &tsz, &slide);
-    if (!trie || !tsz) return 1;
-    char found[192];
-    found[0] = 0;
-    u64 best = 0;
-    char name[192];
-    trie_near(trie, trie + tsz, trie, name, 0, 0, (u64)h, slide, a, &best, found);
-    if (!found[0] || !best) return 1;
+    /* tabela ordenada da imagem, montada na primeira consulta: percorrer a trie inteira a cada chamada custava
+     * dezenas de milhares de nós por dladdr numa imagem grande (SwiftUI.framework: 41 mil símbolos), e o
+     * class_getImageName / NSBundle bundleForClass: chamam dladdr para cada classe */
+    dl_tab_t *t = dl_table(h);
+    if (!t || !t->n) return 1;
+    u32 lo = 0, hi = t->n;
+    while (hi - lo > 1) { u32 mid = (lo + hi) / 2; if (t->e[mid].addr <= a) lo = mid; else hi = mid; }
+    if (t->e[lo].addr > a) return 1;
+    u64 best = t->e[lo].addr;
+    const char *found = t->names + t->e[lo].name;
     unsigned slot = dl_sym_i++ & 3;
-    memcpy(dl_sym[slot], found, sizeof dl_sym[slot]);
-    dl_sym[slot][sizeof dl_sym[slot] - 1] = 0;
+    size_t fl = strlen(found);
+    if (fl > sizeof dl_sym[slot] - 1) fl = sizeof dl_sym[slot] - 1;
+    memcpy(dl_sym[slot], found, fl);
+    dl_sym[slot][fl] = 0;
     info->dli_sname = dl_sym[slot];
     info->dli_saddr = (void *)best;
     return 1;

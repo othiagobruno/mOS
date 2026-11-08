@@ -7,6 +7,19 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+@class NSTimer;
+
+@interface NSCoder (NSCoderSwiftUIMOS)
+- (void)encodeObject:(nullable id)object forKey:(NSString *)key;
+- (void)encodeInteger:(NSInteger)value forKey:(NSString *)key;
+- (void)encodeBool:(BOOL)value forKey:(NSString *)key;
+- (void)encodeDouble:(double)value forKey:(NSString *)key;
+- (NSInteger)decodeIntegerForKey:(NSString *)key;
+- (BOOL)decodeBoolForKey:(NSString *)key;
+- (double)decodeDoubleForKey:(NSString *)key;
+- (BOOL)containsValueForKey:(NSString *)key;
+@end
+
 NS_SWIFT_NAME(Bundle) @interface NSBundle : NSObject
 @property (class, readonly, strong) NSBundle *mainBundle;
 + (nullable instancetype)bundleWithPath:(NSString *)path;
@@ -35,10 +48,19 @@ NS_SWIFT_NAME(Formatter) @interface NSFormatter : NSObject <NSCopying, NSCoding>
 - (BOOL)getObjectValue:(out id _Nullable * _Nullable)obj forString:(NSString *)string errorDescription:(out NSString * _Nullable * _Nullable)error;
 @end
 
+typedef NS_ENUM(NSUInteger, NSNumberFormatterStyle) {
+    NSNumberFormatterNoStyle NS_SWIFT_NAME(none) = 0, NSNumberFormatterDecimalStyle NS_SWIFT_NAME(decimal) = 1,
+    NSNumberFormatterCurrencyStyle NS_SWIFT_NAME(currency) = 2, NSNumberFormatterPercentStyle NS_SWIFT_NAME(percent) = 3,
+    NSNumberFormatterScientificStyle NS_SWIFT_NAME(scientific) = 4, NSNumberFormatterSpellOutStyle NS_SWIFT_NAME(spellOut) = 5,
+    NSNumberFormatterOrdinalStyle NS_SWIFT_NAME(ordinal) = 6, NSNumberFormatterCurrencyISOCodeStyle NS_SWIFT_NAME(currencyISOCode) = 8,
+    NSNumberFormatterCurrencyPluralStyle NS_SWIFT_NAME(currencyPlural) = 9, NSNumberFormatterCurrencyAccountingStyle NS_SWIFT_NAME(currencyAccounting) = 10,
+} NS_SWIFT_NAME(NumberFormatter.Style);
 NS_SWIFT_NAME(NumberFormatter) @interface NSNumberFormatter : NSFormatter
++ (NSString *)localizedStringFromNumber:(NSNumber *)num numberStyle:(NSNumberFormatterStyle)nstyle;
+@property (null_resettable, copy) NSLocale *locale;
 - (nullable NSString *)stringFromNumber:(NSNumber *)number;
 - (nullable NSNumber *)numberFromString:(NSString *)string;
-@property NSUInteger numberStyle;
+@property NSNumberFormatterStyle numberStyle;
 @property NSUInteger maximumFractionDigits;
 @property NSUInteger minimumFractionDigits;
 @end
@@ -47,17 +69,31 @@ NS_SWIFT_NAME(DateFormatter) @interface NSDateFormatter : NSFormatter
 - (NSString *)stringFromDate:(NSDate *)date;
 - (nullable NSDate *)dateFromString:(NSString *)string;
 @property (null_resettable, copy) NSString *dateFormat;
+@property (null_resettable, copy) NSLocale *locale;
+@property (null_resettable, copy) NSTimeZone *timeZone;
+@property (null_resettable, copy) id calendar;
 @property NSUInteger dateStyle;
 @property NSUInteger timeStyle;
 @end
 
 NS_SWIFT_NAME(DateIntervalFormatter) @interface NSDateIntervalFormatter : NSFormatter
+@property (null_resettable, copy) NSLocale *locale;
+@property (null_resettable, copy) NSTimeZone *timeZone;
+@property (null_resettable, copy) id calendar;
 @end
 NS_SWIFT_NAME(MassFormatter) @interface NSMassFormatter : NSFormatter
+@property (copy) NSNumberFormatter *numberFormatter;
 @end
 NS_SWIFT_NAME(LengthFormatter) @interface NSLengthFormatter : NSFormatter
+@property (copy) NSNumberFormatter *numberFormatter;
 @end
 NS_SWIFT_NAME(EnergyFormatter) @interface NSEnergyFormatter : NSFormatter
+@property (copy) NSNumberFormatter *numberFormatter;
+@end
+NS_SWIFT_NAME(ISO8601DateFormatter) @interface NSISO8601DateFormatter : NSFormatter
+- (NSString *)stringFromDate:(NSDate *)date;
+- (nullable NSDate *)dateFromString:(NSString *)string;
+@property (null_resettable, copy) NSTimeZone *timeZone;
 @end
 
 typedef NS_OPTIONS(NSUInteger, NSCalendarUnit) {
@@ -83,10 +119,17 @@ typedef NS_OPTIONS(NSUInteger, NSCalendarUnit) {
 @property (class, readonly, copy) NSCalendar *currentCalendar;
 @end
 
+typedef NSString *NSRunLoopMode NS_SWIFT_NAME(RunLoop.Mode) __attribute__((swift_wrapper(struct)));
+FOUNDATION_EXPORT NSRunLoopMode const NSDefaultRunLoopMode NS_SWIFT_NAME(RunLoop.Mode.default);
+FOUNDATION_EXPORT NSRunLoopMode const NSRunLoopCommonModes NS_SWIFT_NAME(RunLoop.Mode.common);
 NS_SWIFT_NAME(RunLoop) @interface NSRunLoop : NSObject
+- (void)addTimer:(NSTimer *)timer forMode:(NSRunLoopMode)mode;
+- (void)performInModes:(NSArray<NSRunLoopMode> *)modes block:(void (^)(void))block;
+- (void)performBlock:(void (^)(void))block;
+@property (nullable, readonly, copy) NSRunLoopMode currentMode;
+- (BOOL)runMode:(NSRunLoopMode)mode beforeDate:(NSDate *)limitDate NS_SWIFT_NAME(run(mode:before:));
 @property (class, readonly, strong) NSRunLoop *currentRunLoop;
 @property (class, readonly, strong) NSRunLoop *mainRunLoop;
-- (CFRunLoopRef)getCFRunLoop CF_RETURNS_NOT_RETAINED;
 - (void)run;
 - (void)runUntilDate:(NSDate *)limitDate;
 @end
@@ -107,12 +150,18 @@ NS_SWIFT_NAME(UserDefaults) @interface NSUserDefaults : NSObject
 @end
 
 @interface NSKeyedArchiver : NSCoder
+- (instancetype)initRequiringSecureCoding:(BOOL)requiresSecureCoding;
+@property (readonly, strong) NSData *encodedData;
+- (void)finishEncoding;
 + (nullable NSData *)archivedDataWithRootObject:(id)object requiringSecureCoding:(BOOL)requiresSecureCoding error:(NSError **)error;
 @end
 @interface NSKeyedUnarchiver : NSCoder
+- (nullable instancetype)initForReadingFromData:(NSData *)data error:(NSError **)error;
+@property BOOL requiresSecureCoding;
+- (void)finishDecoding;
 + (nullable id)unarchivedObjectOfClass:(Class)cls fromData:(NSData *)data error:(NSError **)error NS_REFINED_FOR_SWIFT;
 + (nullable id)unarchivedObjectOfClasses:(NSSet<Class> *)classes fromData:(NSData *)data error:(NSError **)error NS_REFINED_FOR_SWIFT;
-+ (nullable id)unarchiveTopLevelObjectWithData:(NSData *)data error:(NSError **)error;
++ (nullable id)unarchiveTopLevelObjectWithData:(NSData *)data error:(NSError **)error NS_SWIFT_NAME(unarchiveTopLevelObjectWithData(_:));
 @end
 
 typedef NS_OPTIONS(NSUInteger, NSJSONReadingOptions) {
@@ -152,6 +201,28 @@ NS_SWIFT_NAME(Thread) @interface NSThread : NSObject
 @property (class, readonly) BOOL isMainThread;
 @property (readonly) BOOL isMainThread;
 @property (readonly, retain) NSMutableDictionary *threadDictionary;
++ (void)sleepForTimeInterval:(double)ti;
++ (void)sleepUntilDate:(NSDate *)date;
+@end
+
+NS_SWIFT_NAME(Progress) @interface NSProgress : NSObject
++ (nullable NSProgress *)currentProgress;
++ (NSProgress *)progressWithTotalUnitCount:(int64_t)unitCount;
+- (instancetype)initWithParent:(nullable NSProgress *)parentProgressOrNil userInfo:(nullable NSDictionary *)userInfoOrNil NS_DESIGNATED_INITIALIZER;
+@property int64_t totalUnitCount;
+@property int64_t completedUnitCount;
+@property (readonly) double fractionCompleted;
+@property (readonly, getter=isIndeterminate) BOOL indeterminate;
+@property (readonly, getter=isFinished) BOOL finished;
+@property (getter=isCancellable) BOOL cancellable;
+@property (getter=isPausable) BOOL pausable;
+@property (readonly, getter=isCancelled) BOOL cancelled;
+@property (readonly, getter=isPaused) BOOL paused;
+@property (null_resettable, copy) NSString *localizedDescription;
+@property (null_resettable, copy) NSString *localizedAdditionalDescription;
+- (void)cancel;
+- (void)pause;
+- (void)resume;
 @end
 
 NS_ASSUME_NONNULL_END

@@ -2541,6 +2541,11 @@ static void ap_finish_launching(id self, SEL c) {
     note = cx_note(NSApplicationDidFinishLaunchingNotification, self, 0);
     if (d && cx_responds(d->isa, sel_registerName("applicationDidFinishLaunching:"))) MSG(void, d, "applicationDidFinishLaunching:", note);
     cx_post(note);
+    /* como no Cocoa: sem arquivo para abrir na partida, o delegate pode abrir um "sem título" (o Postico abre a janela de
+     * conexões aqui); applicationShouldOpenUntitledFile: ausente vale SIM */
+    if (d && cx_responds(d->isa, sel_registerName("applicationOpenUntitledFile:")) &&
+        (!cx_responds(d->isa, sel_registerName("applicationShouldOpenUntitledFile:")) || MSG(BOOL, d, "applicationShouldOpenUntitledFile:", self)))
+        (void)MSG(BOOL, d, "applicationOpenUntitledFile:", self);
     { extern void cx_openurl_listen(void); cx_openurl_listen(); }   /* URLs de outros apps (slack://, claude://): openurl.c */
 }
 static id find_window(int gid) {

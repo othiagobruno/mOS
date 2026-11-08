@@ -4,6 +4,7 @@
  * build\swift\objc\sdk\include\AppKit. */
 #pragma once
 #import <Foundation/Foundation.h>
+#import <Foundation/NSFoundationSwiftUI.h>   /* NSBundle (módulo _MOSFoundationSwiftUI) */
 #include <CoreGraphics/CoreGraphics.h>
 
 NS_ASSUME_NONNULL_BEGIN

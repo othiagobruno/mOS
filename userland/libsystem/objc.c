@@ -899,19 +899,38 @@ cx_class_t _NSConcreteGlobalBlock_c __asm__("_NSConcreteGlobalBlock");
 cx_class_t _NSConcreteMallocBlock_c __asm__("_NSConcreteMallocBlock");
 static cx_class_t block_meta[3];
 
+/* contagem de referências dos blocos no heap como na ABI da Apple: bits 1..15 de flags (de 2 em 2), BLOCK_NEEDS_FREE
+ * (1 << 24). O _Block_release libera na última referência e chama o dispose (que solta as capturas): o Swift confere,
+ * depois de passar um closure noescape ao ObjC (dispatch_sync...), que o bloco copiado foi solto. */
 void *_Block_copy(const void *arg) {
     block_t *b = (block_t *)arg;
     if (!b) return 0;
     if (b->flags & (1 << 28)) return b;            /* global */
-    if (b->flags & (1 << 24)) return b;            /* já no heap */
+    if (b->flags & (1 << 24)) {                    /* já no heap: mais uma referência (satura em 0xfffe) */
+        int f;
+        do { f = b->flags; if ((f & 0xfffe) == 0xfffe) return b; } while (!__sync_bool_compare_and_swap(&b->flags, f, f + 2));
+        return b;
+    }
     block_t *n = malloc(b->desc->size);
     memcpy(n, b, b->desc->size);
     n->isa = &_NSConcreteMallocBlock_c;
-    n->flags |= 1 << 24;
+    n->flags = (n->flags & ~0xffff) | (1 << 24) | 2;
     if (b->flags & (1 << 25)) b->desc->copy(n, b);
     return n;
 }
-void _Block_release(const void *b) { (void)b; }
+void _Block_release(const void *arg) {
+    block_t *b = (block_t *)arg;
+    if (!b || (b->flags & (1 << 28)) || !(b->flags & (1 << 24))) return;   /* global ou na pilha */
+    int f;
+    do {
+        f = b->flags;
+        if ((f & 0xfffe) == 0xfffe || (f & 0xfffe) == 0) return;            /* saturado (imortal) ou já solto */
+    } while (!__sync_bool_compare_and_swap(&b->flags, f, f - 2));
+    if (((f - 2) & 0xfffe) == 0) {
+        if (b->flags & (1 << 25)) b->desc->dispose(b);
+        free(b);
+    }
+}
 id objc_retainBlock(id b) { return _Block_copy(b); }
 /* flags: 3 objeto, 7 block, 8 __block (byref), +16 __weak, +128 chamado de um helper de byref */
 void _Block_object_assign(void *dst, const void *obj, int flags) {
@@ -937,7 +956,11 @@ void _Block_object_assign(void *dst, const void *obj, int flags) {
     default: *(const void **)dst = obj; return;           /* __weak e afins */
     }
 }
-void _Block_object_dispose(const void *obj, int flags) { if (!(flags & 0x80) && (flags & 0x1F) == 3) objc_release((id)obj); }
+void _Block_object_dispose(const void *obj, int flags) {
+    if (flags & 0x80) return;
+    if ((flags & 0x1F) == 3) objc_release((id)obj);
+    else if ((flags & 0x1F) == 7) _Block_release(obj);   /* o assign fez _Block_copy */
+}
 static id block_copy_m(id self, SEL s) { (void)s; return _Block_copy(self); }
 static id block_self_m(id self, SEL s) { (void)s; return self; }
 

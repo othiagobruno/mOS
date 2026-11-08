@@ -45,10 +45,29 @@ $mm += "`n// AppKit do mOS (userland\libsystem\appkit.c): o subconjunto que o Sw
 [IO.File]::WriteAllText("$sinc\module.modulemap", $mm)
 $nso = [IO.File]::ReadAllText("$sinc\objc\NSObject.h")
 [IO.File]::WriteAllText("$sinc\objc\NSObject.h", $nso.Replace("- (instancetype)init`n", "- (instancetype _Nonnull)init /* mOS: não-nulo, como no SDK da Apple */`n"))
+# ponte automática NSString -> String, NSArray -> Array, NSData -> Data...: no SDK da Apple vem das API notes do Foundation
+# (SwiftBridge); sem o atributo o importador entrega os tipos ObjC. O nome tem de ser qualificado (Swift.String).
+$fh = [IO.File]::ReadAllText("$sinc\Foundation\Foundation.h")
+foreach ($b in @('NSString=Swift.String', 'NSArray=Swift.Array', 'NSDictionary=Swift.Dictionary', 'NSSet=Swift.Set', 'NSData=Foundation.Data',
+                 'NSURL=Foundation.URL', 'NSDate=Foundation.Date', 'NSUUID=Foundation.UUID', 'NSLocale=Foundation.Locale',
+                 'NSTimeZone=Foundation.TimeZone', 'NSDateComponents=Foundation.DateComponents', 'NSIndexSet=Foundation.IndexSet',
+                 'NSNotification=Foundation.Notification', 'NSURLRequest=Foundation.URLRequest', 'NSIndexPath=Foundation.IndexPath')) {
+    $k, $v = $b -split '='
+    $fh = [regex]::Replace($fh, "(?m)^@interface $k([ <])", "__attribute__((swift_bridge(`"$v`"))) @interface $k`$1")
+}
+[IO.File]::WriteAllText("$sinc\Foundation\Foundation.h", $fh)
 # classes do Foundation do libSystem que o SwiftUI usa (Bundle, Formatter, RunLoop...): módulo clang _MOSFoundationSwiftUI,
 # reexportado pelo MOSFoundationExtras (dentro do módulo Foundation, os decls ficariam no submódulo errado)
 Copy-Item "$mine\sdk\Foundation\NSFoundationSwiftUI.h" "$sinc\Foundation" -Force
 [IO.File]::AppendAllText("$sinc\module.modulemap", "`n// classes do Foundation do libSystem que o SwiftUI.framework usa (tools\build-swiftui-objc.ps1)`nmodule _MOSFoundationSwiftUI [system] [extern_c] {`n    header `"Foundation/NSFoundationSwiftUI.h`"`n    export *`n}`n")
+# tipos CG/IOSurface que o CoreGraphics.h do mOS não tem (CGBlendMode...) e o CommonCrypto (SHA1 do StrongHash)
+Copy-Item "$mine\sdk\CoreGraphics\CGSwiftUI.h" "$sinc\CoreGraphics" -Force
+$mm2 = "`n// SwiftUI.framework (tools\build-swiftui-objc.ps1)`nmodule _MOSCoreGraphicsSwiftUI [system] [extern_c] {`n    header `"CoreGraphics/CGSwiftUI.h`"`n    export *`n}`n"
+if (-not [IO.File]::ReadAllText("$sinc\module.modulemap").Contains('module CommonCrypto')) { $mm2 += "module CommonCrypto [system] [extern_c] {`n    header `"CommonCrypto/CommonDigest.h`"`n    export *`n}`n" }
+[IO.File]::AppendAllText("$sinc\module.modulemap", $mm2)
+# como na variante nativa: o destrutor do pthread_key_create recebe ponteiro anulável (o OpenSwiftUI faz guard let)
+$pth = [IO.File]::ReadAllText("$sinc\pthread.h")
+[IO.File]::WriteAllText("$sinc\pthread.h", $pth.Replace('int pthread_key_create(pthread_key_t *, void (* _Nullable)(void *));', 'int pthread_key_create(pthread_key_t *, void (* _Nullable)(void * _Nullable));'))
 # os módulos de sistema não são revalidados pelo clang: o cache começa vazio a cada execução
 $mcache = "$sui\modcache"
 if (Test-Path $mcache) { Remove-Item $mcache -Recurse -Force }
@@ -93,21 +112,33 @@ function Build-C($name, $src, [string[]]$flags = @()) {
 # que só existem nesta variante (Darwin, ObjectiveC, Combine, AppKit, UIKit, QuartzCore...) viram false; atributos de
 # ator saem (sem executor de atores no grafo de views). Depois as trocas desta variante.
 $noImport = 'Darwin|ObjectiveC|Combine|AppKit|UIKit|QuartzCore|CoreGraphics|os|OSLog|Observation|UniformTypeIdentifiers|Metal|simd|XPC|IOKit|CoreImage|CoreAudio|CoreMIDI|Spatial|QuickLookUI|CryptoKit|SwiftUI'
-function Convert-Swift([string]$txt, [bool]$stripPP = $true) {
+# modos: up = fontes do upstream (os(macOS) e os módulos acima viram false); ov = substituições do mOS e arquivos de
+# plataforma, escritos para a variante nativa, em que os(macOS) e canImport(CoreGraphics) eram verdadeiros
+function Convert-Swift([string]$txt, [string]$mode = 'up') {
     $lines = $txt -split "`r?`n", -1
     for ($i = 0; $i -lt $lines.Length; $i++) {
         $l = $lines[$i]
         if ($l -match '^\s*#\s*(if|elseif)\b') {
-            if ($stripPP) {
+            if ($mode -eq 'up') {
                 $l = [regex]::Replace($l, '\bos\(\s*macOS\s*\)', 'false')
                 $l = [regex]::Replace($l, "\bcanImport\(\s*($noImport)\s*\)", 'false')
-                if ($l -match 'canImport\(\s*_Concurrency\s*\)') { $l = ($l -replace '^(\s*#\s*(?:if|elseif)).*$', '$1 false // mOS: sem _Concurrency') }
+            } else {
+                $l = [regex]::Replace($l, "\bcanImport\(\s*($($noImport -replace 'CoreGraphics\|', ''))\s*\)", 'false')
             }
+            # sem _Concurrency (como na variante nativa): no upstream a condição inteira sai; nas substituições só o canImport
+            if ($mode -eq 'up' -and $l -match 'canImport\(\s*_Concurrency\s*\)') { $l = ($l -replace '^(\s*#\s*(?:if|elseif)).*$', '$1 false // mOS: sem _Concurrency') }
+            elseif ($mode -ne 'up') { $l = [regex]::Replace($l, '\bcanImport\(\s*_Concurrency\s*\)', 'false') }
         } elseif ($l -notmatch '^\s*#') {
             $l = $l -replace '@MainActor(\s*\(unsafe\))?\s?', '' -replace '@isolated\(any\)\s?', '' -replace '\{\s+in\b', '{'
             # Combine e Observation da variante (Combine.framework e o overlay Observation)
             $l = $l -replace '^(\s*)(@_spi\(OpenSwiftUI\)\s+)?((?:public|package|internal)\s+)?import OpenObservation\b', '$1@_spi(OpenSwiftUI) $3import Observation'
             $l = $l -replace '\bOpenObservation\.', 'Observation.'
+            # classes que aqui moram em outros módulos (NSAttributedString em Swift; Thread, RunLoop... no _MOSFoundationSwiftUI)
+            $l = $l -replace '\bimport class Foundation\.NSAttributedString\b', 'import class MOSFoundationExtras.NSAttributedString'
+            $l = $l -replace '\bimport class Foundation\.(Thread|RunLoop|Bundle|Timer|UserDefaults|NSLock|Formatter|NumberFormatter|DateFormatter)\b', 'import class _MOSFoundationSwiftUI.$1'
+            $l = $l -replace '\bFoundation\.(Progress|Thread|RunLoop|Bundle|Timer|UserDefaults)\b', '$1'
+            # os nomes C que a variante nativa dava ao CoreGraphics do libSystem (MOSCGPathRef...) são os da Apple aqui
+            $l = $l -replace '\bMOSCGMutablePathRef\b', 'CGMutablePath' -replace '\bMOSCGPathRef\b', 'CGPath' -replace '\bMOSCGPathElement\b', 'CGPathElement'
             # o que a variante nativa tinha no Foundation do mOS e o Foundation da variante não tem (MOSFoundationExtras)
             if ($script:extras -and $l -match '^(\s*)((?:@_spi\([^)]*\)\s*)*)((?:public|package|internal|@_exported)\s+)?import Foundation\s*$') {
                 $l = $l + "`n" + $Matches[1] + $Matches[3] + 'import MOSFoundationExtras'
@@ -117,7 +148,7 @@ function Convert-Swift([string]$txt, [bool]$stripPP = $true) {
     }
     return ($lines -join "`n")
 }
-function Prepare-Src($name, $srcDir, [string[]]$overlayDirs) {
+function Prepare-Src($name, $srcDir, [string[]]$overlayDirs, [string]$ovMode = 'ov') {
     $dst = "$sui\src\$name"
     if (Test-Path $dst) { Remove-Item $dst -Recurse -Force }
     New-Item -ItemType Directory -Force $dst | Out-Null
@@ -134,13 +165,44 @@ function Prepare-Src($name, $srcDir, [string[]]$overlayDirs) {
             $rel = $f.FullName.Substring((Resolve-Path $od).Path.Length + 1)
             $out = Join-Path $dst $rel
             New-Item -ItemType Directory -Force (Split-Path $out -Parent) | Out-Null
-            if ($f.Extension -eq '.swift') { [IO.File]::WriteAllText($out, (Convert-Swift ([IO.File]::ReadAllText($f.FullName, $utf8)) $false), $utf8) }
+            if ($f.Extension -eq '.swift') { [IO.File]::WriteAllText($out, (Convert-Swift ([IO.File]::ReadAllText($f.FullName, $utf8)) $ovMode), $utf8) }
             elseif ($f.Extension -eq '.remove') { Remove-Item ($out.Substring(0, $out.Length - 7)) -ErrorAction SilentlyContinue }
             else { Copy-Item $f.FullName $out -Force }
         }
     }
     return $dst
 }
+# remendos pontuais (arquivo relativo à cópia preparada, texto antigo, texto novo); um remendo que não casa é avisado
+function Apply-Patches($dir, $list) {
+    foreach ($pt in $list) {
+        $f = Join-Path $dir $pt[0]
+        if (-not (Test-Path $f)) { Write-Host "  remendo: falta $($pt[0])" -ForegroundColor Yellow; continue }
+        $x = [IO.File]::ReadAllText($f, $utf8)
+        if (-not $x.Contains($pt[1])) { Write-Host "  remendo não casou em $($pt[0]): $($pt[1])" -ForegroundColor Yellow; continue }
+        [IO.File]::WriteAllText($f, $x.Replace($pt[1], $pt[2]), $utf8)
+    }
+}
+$corePatches = @(
+    # CFRuntimeClass.equal devolve Boolean (DarwinBoolean no Swift com o SDK do macOS)
+    @('Shim\CoreFoundationNonDarwinShims.swift', 'equal: { lhs, rhs in (lhs as? NSObject)?.isEqual(rhs) ?? false },', 'equal: { lhs, rhs in DarwinBoolean((lhs as? NSObject)?.isEqual(rhs) ?? false) },'),
+    @('View\Text\Typesetting\TypesettingLanguage.swift', ').map(String.init) {', ').map({ $0 as String }) {'),
+    # o NSAttributedString do texto é uma classe Swift (MOSFoundationExtras), sem NSCoding
+    @('Util\AccessibilityShims.swift', 'coder.decodeObject(of: NSString.self, forKey: "label") as String?', 'coder.decodeObject(of: NSString.self, forKey: "label") as? String'),
+    @('Util\AccessibilityShims.swift', 'coder.decodeObject(of: NSString.self, forKey: "value") as String?', 'coder.decodeObject(of: NSString.self, forKey: "value") as? String'),
+    @('Util\AccessibilityShims.swift', 'coder.decodeObject(of: NSAttributedString.self, forKey: "attributedLabel")?.copy() as? NSAttributedString', 'nil'),
+    @('Util\AccessibilityShims.swift', 'coder.decodeObject(of: NSAttributedString.self, forKey: "attributedValue")?.copy() as? NSAttributedString', 'nil'),
+    @('Util\AccessibilityShims.swift', 'coder.encode(attributedLabel, forKey: "attributedLabel")', '_ = attributedLabel'),
+    @('Util\AccessibilityShims.swift', 'coder.encode(attributedValue, forKey: "attributedValue")', '_ = attributedValue'),
+    # Decimal -> NSNumber: sem NSDecimalNumber no mOS
+    @('Accessibility\AccessibilityValue.swift', ').map { $0 as NSNumber }', ').map { NSNumber(value: Double("\($0)") ?? 0) }'),
+    # IOSurfaceRef (tipo CF) é a classe IOSurface no Swift
+    @('View\Image\GraphicsImage.swift', 'case ioSurface(IOSurfaceRef)', 'case ioSurface(IOSurface)'),
+    # SwiftUI.Log é público na Apple (o código inlinável dos apps usa Log.runtimeIssues: Core\MOSAppKitCore.swift)
+    @('Log\Logging.swift', "@usableFromInline`npackage enum Log {", 'public enum Log {'),
+    # na Apple, Log.runtimeIssuesLog é o OS_os_log; o Logger do swift-log do OpenSwiftUI muda de nome
+    @('Log\Logging.swift', 'runtimeIssuesLog', '_mosRuntimeIssuesLogger'),
+    @('Data\Environment\Environment.swift', 'Log.runtimeIssuesLog', 'Log._mosRuntimeIssuesLogger')
+)
 function Swift-Files($dir) { @(Get-ChildItem $dir -Recurse -Filter *.swift | ForEach-Object FullName) }
 
 $cmp = "$deps\Compute-main\Sources"
@@ -196,8 +258,7 @@ if ($run -contains 'Deps') {
     # mangled da Apple: So6CGRectV, So10CGLineCapV...). OpenCoreGraphicsShims reexporta o CoreGraphics
     # (OPENCOREGRAPHICS_COREGRAPHICS); o OpenQuartzCore (CALayer/CATransform3D em Swift) vai sobre ele.
     $ocg = "$deps\OpenCoreGraphics-main\Sources"
-    $src = Prepare-Src 'OpenCoreGraphicsShims' "$ocg\OpenCoreGraphicsShims" @()
-    Build-Swift 'OpenCoreGraphicsShims' (Swift-Files $src) @('-D', 'OPENCOREGRAPHICS_COREGRAPHICS') '6' | Out-Null
+    Build-Swift 'OpenCoreGraphicsShims' (Swift-Files "$mine\OpenCoreGraphicsShims") @() '6' | Out-Null
     $src = Prepare-Src 'OpenQuartzCore' "$ocg\OpenQuartzCore" @()
     foreach ($pf in Get-ChildItem $src -Filter *.swift) {
         $t = [IO.File]::ReadAllText($pf.FullName, $utf8)
@@ -224,6 +285,7 @@ $script:extras = $true
 if ($run -contains 'Core') {
     $mos = "$sdkSwift\OpenSwiftUIMOS"
     $coreSrc = Prepare-Src 'OpenSwiftUICore' "$osui\OpenSwiftUICore" @("$mos\Replace\Sources\OpenSwiftUICore", "$nsdk\overlay\OpenSwiftUICore", "$mine\Replace\OpenSwiftUICore")
+    Apply-Patches $coreSrc $corePatches
     foreach ($pf in Get-ChildItem $coreSrc -Recurse -Filter *.swift) {
         $t = [IO.File]::ReadAllText($pf.FullName, $utf8)
         if ($t.Contains('#isolation')) { [IO.File]::WriteAllText($pf.FullName, $t.Replace('#isolation', 'nil'), $utf8) }
@@ -242,7 +304,7 @@ if ($run -contains 'Core') {
 
 if ($run -contains 'UI') {
     $mos = "$sdkSwift\OpenSwiftUIMOS"
-    $uiSrc = Prepare-Src 'OpenSwiftUI' "$osui\OpenSwiftUI" @("$mos\Replace\Sources\OpenSwiftUI", "$mine\Replace\OpenSwiftUI")
+    $uiSrc = Prepare-Src 'OpenSwiftUI' "$osui\OpenSwiftUI" @("$mos\Replace\Sources\OpenSwiftUI", "$mine\Replace\OpenSwiftUI") 'up'
     foreach ($pf in Get-ChildItem $uiSrc -Recurse -Filter *.swift) {
         $txt = [IO.File]::ReadAllText($pf.FullName, $utf8)
         $o = $txt.Replace('#isolation', 'nil')
@@ -267,12 +329,21 @@ if ($run -contains 'Link' -and -not $TypeCheck) {
     # um dylib só, como o SwiftUI.framework (+ SwiftUICore reexportado) da Apple
     $objs = @(Get-ChildItem $sui -Recurse -Filter *.o | Where-Object { $_.DirectoryName -notlike "$sui\src*" } | ForEach-Object FullName)
     foreach ($d in 'Compute', 'OpenRenderBox', 'OpenSwiftUI_SPI') {
-        $objs += @(Get-ChildItem "$nat\$d\*.o" | Where-Object { $_.Name -notlike '*_swift.o' } | ForEach-Object FullName)
+        $objs += @(Get-ChildItem "$nat\$d\*.o" | Where-Object { $_.Name -notlike '*_swift.o' -and $_.Length -gt 0 } | ForEach-Object FullName)
     }
     $objs += "$nat\CoreText\ctfont.o"
     $dir = "$objc\dylib\System\Library\Frameworks\SwiftUI.framework\Versions\A"
     New-Item -ItemType Directory -Force $dir | Out-Null
-    $log = & $zig c++ -target x86_64-macos -shared -o "$dir\SwiftUI" '-Wl,-install_name,/System/Library/Frameworks/SwiftUI.framework/Versions/A/SwiftUI' '-Wl,-undefined,dynamic_lookup' @objs 2>&1 | ForEach-Object { "$_" }
+    # as dependências Swift entram como dylibs (LC_LOAD_DYLIB): o carregador do mOS só carrega do disco o que alguém pede,
+    # e o Combine.framework não é pedido pelos apps; o resto (libSystem, AppKit, libobjc) fica para a busca plana
+    $dy = "$objc\dylib"
+    # o ld do zig só aceita dylib com extensão: uma cópia com nome .dylib (o LC_LOAD_DYLIB usa o install_name de dentro)
+    Copy-Item "$dy\System\Library\Frameworks\Combine.framework\Versions\A\Combine" "$sui\c\Combine.dylib" -Force
+    $libs = @("$sui\c\Combine.dylib")
+    foreach ($m in 'Core', 'Foundation', 'Dispatch', 'ObjectiveC', 'Darwin', 'CoreFoundation', 'CoreGraphics', 'os', 'Observation',
+                   '_Concurrency', '_StringProcessing') { $libs += "$dy\usr\lib\swift\libswift$m.dylib" }
+    $libs = @($libs | Where-Object { Test-Path $_ })
+    $log = & $zig c++ -target x86_64-macos -shared -o "$dir\SwiftUI" '-Wl,-install_name,/System/Library/Frameworks/SwiftUI.framework/Versions/A/SwiftUI' '-Wl,-undefined,dynamic_lookup' @objs @libs 2>&1 | ForEach-Object { "$_" }
     if ($LASTEXITCODE -ne 0) { $log | Select-Object -First 15 | ForEach-Object { "  $_" }; Write-Host 'SwiftUI.framework: link FALHOU' -ForegroundColor Red; exit 1 }
     Write-Host ("SwiftUI.framework: ok ({0:N0} KB, {1} objetos)" -f ((Get-Item "$dir\SwiftUI").Length / 1KB), $objs.Count) -ForegroundColor Green
 }

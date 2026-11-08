@@ -2,7 +2,9 @@
 
 Estado (2026-11-07): **fases 1 e 2 prontas; na fase 3, a stdlib e os overlays pequenos estão prontos** (testes Swift
 13/13, 18/18, Dispatch 14/14 e _Concurrency 9/9); da fase 3 só falta UniformTypeIdentifiers, que depende do Foundation.
-**Fase 4 pronta para as libswift** (22 dylibs com os nomes da Apple; os testes passam carregando do disco). O resto em plano. Ponto de partida: o Postico 2.3.5 (9817)
+**Fase 4 pronta para as libswift** (22 dylibs com os nomes da Apple; os testes passam carregando do disco). **Fase 6
+(2026-11-08): SwiftUI.framework pronto para o Postico** (0 símbolos de SwiftUI ausentes; o app chega à janela
+principal e para no AppKit). O resto em plano. Ponto de partida: o Postico 2.3.5 (9817)
 (`.tools/postico-x/`), o primeiro app Swift + SwiftUI da Apple que medimos símbolo a símbolo.
 
 ## Por que
@@ -344,15 +346,83 @@ Dispatch no fim. No libSystem:
   `set/get_specific`, isa) roda no boot de teste (`build.ps1 -Tests`, chamado pelo `teste` como o posixteste): **19/19** e
   "teste: TODOS OS TESTES OK". O VS Code subiu (Code, Renderer, Helpers, workbench) com um libSystem que já tinha o isa.
 
-### 6. SwiftUI.framework
+### 6. SwiftUI.framework (pronto para o Postico, 2026-11-08)
 
-- OpenSwiftUI e OpenSwiftUICore com `-enable-objc-interop`, nome ABI `SwiftUI` (já feito) e library evolution
-  (já feito).
-- `NSHostingView<Content>` e `NSHostingController<Content>` como subclasses Swift reais de `NSView` e
-  `NSViewController` do `appkit.c`. Para isso o importador precisa dos cabeçalhos ObjC do subconjunto do AppKit
-  (`userland/sdk/appkit/include`, novo), e as classes reaproveitam o host do `MOSApp.swift` (window server).
-- Os outros 31 símbolos que faltam: `ScrollView`, `TextEditor`, `List`, `TabView`/`tabItem`, `popover`,
-  `glassEffect`/`Glass`, `Color(nsColor:)`, `Image(_:bundle:)` etc.
+`tools/build-swiftui-objc.ps1` gera `/System/Library/Frameworks/SwiftUI.framework/Versions/A/SwiftUI` em
+`build/swift/objc/dylib` (26 MB, um dylib só, como SwiftUI + SwiftUICore da Apple): o OpenSwiftUI e as dependências
+compilados sobre a stdlib **com** interop ObjC, library evolution e `-module-abi-name SwiftUI`. Etapas (`-From`/`-Only`
+Deps, Core, UI, Link; `-TypeCheck` só confere tipos, ~30 s para o Core):
+
+- **Fontes preparados** (`build/swift/objc/swiftui/src`): o mesmo caminho não-Darwin da variante nativa. Nos fontes do
+  upstream, `os(macOS)` e `canImport` de módulos que só existem nesta variante (Darwin, ObjectiveC, Combine, AppKit,
+  UIKit, QuartzCore, CoreGraphics, os, Observation...) viram `false`; nas substituições do mOS (`OpenSwiftUIMOS/Replace`
+  e `Core`/`App`), escritas para a variante nativa, `canImport(CoreGraphics)` e `os(macOS)` continuam verdadeiros, como
+  lá. Os atributos de ator saem e o `async` do OpenSwiftUI vira síncrono, como na variante nativa.
+- **Trocas desta variante:** `Combine` em vez de `OpenCombine` (o Combine.framework da fase 5b, sem
+  `OPENSWIFTUI_OPENCOMBINE`); `Observation` (o overlay da variante, `@_spi(OpenSwiftUI)`) em vez de `OpenObservation`;
+  CoreGraphics de verdade (structs C e tipos CF do libSystem: `So6CGRectV`, `So10CGLineCapV`...) em vez do
+  OpenCoreGraphics; o `OpenCoreGraphicsShims` (`userland/sdk/swift-objc/SwiftUI/OpenCoreGraphicsShims`) reexporta
+  CoreGraphics, Foundation e o módulo auxiliar abaixo.
+- **Objetos C/C++:** os da variante nativa (Compute, OpenRenderBox, OpenSwiftUI_SPI, ctfont). O CFRuntime é outro
+  (`SwiftUI/c/cf_objc_runtime.c`): os tipos CF do grafo (Graph, Subgraph, CTFont) são objetos ObjC do libSystem (classe
+  `_MOSCFType`, `-dealloc` chama o finalize, `-_cfTypeID` responde ao `CFGetTypeID`), porque com interop o Swift os retém
+  com `objc_retain`.
+- **SDK próprio** (`build/swift/objc/swiftui/sdk-include`, cópia do da variante, com cache de módulos próprio, limpo a
+  cada execução — o clang não revalida módulos de sistema):
+  - `swift_bridge("Swift.String")` etc. no `@interface` de NSString/NSArray/NSDictionary/NSSet/NSData/NSURL/NSDate...
+    **Sem esse atributo o importador não faz ponte nenhuma** (`n.stringValue` chega como NSString): é o que no SDK da
+    Apple vem das API notes do Foundation. O nome tem de ser qualificado. Ainda só nesta cópia: levar ao `Foundation.h`
+    da variante muda a importação de todos os overlays.
+  - `-[NSObject init]` não-nulo (no SDK da Apple vem das API notes do ObjectiveC; sem isso `Classe()` de uma subclasse
+    de NSObject é opcional).
+  - Módulos clang novos: `AppKit` (`SwiftUI/sdk/AppKit/AppKit.h`: NSView, NSViewController, NSColor...),
+    `_MOSFoundationSwiftUI` (`NSFoundationSwiftUI.h`: Bundle, Formatter e afins, NSCalendar, RunLoop e RunLoop.Mode,
+    UserDefaults, NSKeyedArchiver, JSONSerialization, Timer, Thread, Progress, NSCoder — classes do libSystem com os
+    nomes Swift da Apple), `_MOSCoreGraphicsSwiftUI` (CGBlendMode, CGImageAlphaInfo, CGBitmapInfo, IOSurfaceRef) e
+    `CommonCrypto`.
+- **MOSFoundationExtras** (`SwiftUI/Extras`, nome ABI `Foundation`): o que o Foundation do mOS da variante nativa tinha e
+  o desta não — NSAttributedString com trechos (classe Swift; a do libSystem guarda um dicionário só), NSRange
+  Hashable/`intersection`, `ReferenceConvertible`, Scanner, `NSLocalizedString`, os FormatStyles sem ICU, `Timer.publish`.
+  Reexporta Dispatch, como o Foundation da Apple. O script junta `import MOSFoundationExtras` a cada `import Foundation`.
+- **Overlay CoreGraphics** (`userland/sdk/swift-objc/CoreGraphics/CGGeometryAPI.swift`, `CGTypesAPI.swift`): a API Swift
+  da Apple (`CGRect.minX`, `.zero`, `insetBy`, `CGAffineTransform(translationX:y:)`, `CGPath`/`CGMutablePath`,
+  `CGColor`, `CGColorSpace.sRGB`, `CGImage.width`, `CGContext.scaleBy`...) em Swift `@_alwaysEmitIntoClient` sobre as
+  funções C. **`swift_name`/API notes não funcionam aqui para membros de tipos de outro módulo** (CGRect é do
+  CoreFoundation, CFCGTypes.h): o importador ignora; por isso Swift.
+- **Hosting** (`SwiftUI/UI/NSHosting.swift`): `NSHostingView<Content>: NSView` e `NSHostingController<Content>:
+  NSViewController`, subclasses Swift genéricas das classes do appkit.c. O grafo roda num `StdoutRendererHost`, a
+  DisplayList chega por `_mosDisplayListSink` e é desenhada por `MOSDisplayListDrawing` num `mos_canvas` filho da view;
+  eventos por `MOSEvents.swift`; um timer de ~60 Hz para todos os hosts. Trocar o tamanho ou o `rootView` recria o grafo.
+- **O que o OpenSwiftUI não tem** (`SwiftUI/UI/MOSContainers.swift`): ScrollView, TextEditor, List, TabView/`tabItem`,
+  `popover`/PopoverAttachmentAnchor, em versões mínimas com as assinaturas da Apple (sem rolagem, abas nem popover).
+  `Color(nsColor:)` e `Log.runtimeIssuesLog` (`OS_os_log`) ficam no **Core** (`SwiftUI/Core/MOSAppKitCore.swift`):
+  membros de tipos do Core declarados no módulo OpenSwiftUI ganham contexto de extensão no nome mangled
+  (`$s7SwiftUI5ColorVAAE02nsC0...`), diferente do da Apple, mesmo com o mesmo `-module-abi-name`.
+- **Remendos pontuais** (tabela `$corePatches` no script): `SwiftUI.Log` público, `runtimeIssuesLog` do swift-log
+  renomeado, `IOSurfaceRef` → `IOSurface`, `Decimal` sem NSDecimalNumber etc.
+- **Ligação:** as dependências Swift entram como dylibs (LC_LOAD_DYLIB: Combine, libswiftCore, Foundation, Dispatch...);
+  sem isso o carregador não carrega o Combine.framework, que os apps não pedem.
+
+**Medidas (machocheck, antes → depois):** Postico **230 → 0** símbolos de SwiftUI ausentes (total do app 366 → 139
+distintos); WhatsApp **555 → 136** (total 2.772 → 2.259 distintos com a varredura de `build\wa-scan`). Os 136 do WhatsApp
+são API que o OpenSwiftUI ainda não tem.
+
+**Postico no harness** (`build/postico-root` com as dylibs novas copiadas; `MACHOTEST_EVENTS='f:1500;key:ret;...'`):
+passa do `macho_load: requer SwiftUI.framework`, carrega 33 imagens, monta os menus, sobe o Sparkle (alerta "Unable to
+Check For Updates", 420×176, fecha com Return) e cria o `PGEWindowController` da janela principal. Para em
+`-[NSObject initWithItemIdentifier:]`: faltam ~30 classes do AppKit no libSystem (NSToolbarItem, NSSplitView,
+NSOutlineView, NSTableHeaderView/Cell, NSTableRowView, NSTextFieldCell, NSTabViewItem, NSDocument, NSGradient...;
+`AppKit.framework` no machocheck, 73 símbolos). Para chegar aí, no libSystem:
+- `dladdr` (`swiftsupport.c`): tabela ordenada por imagem, montada uma vez; percorrer a export trie inteira a cada chamada
+  travava o app (41 mil símbolos no SwiftUI, uma chamada por classe via `class_getImageName`).
+- **Blocos com contagem de referências** (`objc.c`): `_Block_release` era vazio e o `_Block_copy` retinha as capturas
+  para sempre; o Swift confere, depois de passar um closure *noescape* ao ObjC (`dispatch_sync`), que a cópia foi solta
+  ("closure argument passed as @noescape to Objective-C has escaped"). Agora segue a ABI da Apple (refcount em `flags`,
+  dispose na última referência). `dispatch_sync` para a fila principal não copia mais o bloco.
+- `applicationOpenUntitledFile:` depois do `applicationDidFinishLaunching:` (`appkit.c`), como no Cocoa.
+- `postico_cf.c`: CFStringCreateMutable/AppendFormat/Lowercase/Trim, CFArraySortValues, CFBitVector,
+  CFAttributedStringCreate, CFRunLoopObserverCreateWithHandler, `mach_vm_read_overwrite` e constantes; e
+  `CFUUIDCreateFromUUIDBytes` (`vscode_cf.c`).
 
 ### 7. Postico de ponta a ponta
 

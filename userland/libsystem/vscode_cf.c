@@ -212,6 +212,7 @@ id CFUUIDCreate(void *alloc) {
     b.b[8] = (u8)((b.b[8] & 0x3F) | 0x80);
     return uuid_make(&b);
 }
+id CFUUIDCreateFromUUIDBytes(void *alloc, cf_uuid_bytes_t b) { (void)alloc; return uuid_make(&b); }   /* Postico */
 cf_uuid_bytes_t CFUUIDGetUUIDBytes(id u) {
     cf_uuid_bytes_t r;
     memset(&r, 0, sizeof r);
