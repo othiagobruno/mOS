@@ -168,3 +168,20 @@ Pendentes: o login (do usuário) e o helper "Computer Use" (Swift, 84 símbolos 
   vale para qualquer filho do Node/Electron que leia stdin (servidores de linguagem por stdio, ferramentas do agente).
 - Pendentes: o login (do usuário); os helpers em Swift (`native/bare-modifier-monitor`, `launch-services-helper`,
   `*.node`) pedem as `libswift*` de `build\swift\objc\dylib`, que o stage ainda não põe na imagem; o Sparkle.
+
+## Codex desktop: runtime Swift, Sparkle e uma falha tripla (7 nov., noite)
+
+- Com as `libswift*` do mOS na imagem (`stage-chromeapp.ps1` agora as copia, mais `libcompression` e o
+  `Sparkle.framework` do app), os helpers em Swift `native/bare-modifier-monitor` e `native/launch-services-helper`
+  sobem. O `machocheck` mostra os 9 binários de `native/` e os 5 do Sparkle só com `napi_*` ausentes.
+- **Falha tripla da VM uns 3 min depois da partida:** o `write_dirty` (`kernel/fs/persist.c`) é recursivo e reservava
+  2 KiB por nível, nas threads do kernel com 32 KiB de pilha; com o limite de profundidade em 64, o `node_modules`
+  do Codex estourava a pilha. A gravação saiu da recursão (`write_one`), e o `mkdirs_parent` ficou iterativo.
+- O Sparkle pedia várias APIs do Foundation (`NSURL scheme`, `NSURLComponents queryItems`, codificação percentual,
+  `NSCharacterSet characterSetWithCharactersInString:`, `NSURLSession` com delegate), agora em
+  `userland/libsystem/compat_objc_extra.c` (registrado no fim do `cx_objc_boot`). Os callbacks de delegate do
+  `NSURLSession` ainda não existem, então o Sparkle informa "error in retrieving update information".
+- **Pendente:** num worktree limpo (kernel e libSystem só do que está commitado), a janela do Codex deixou de
+  aparecer, com ou sem Sparkle e runtime Swift; a rodada boa usava o working tree inteiro, que tem correções de
+  AppKit/QuartzCore ainda não commitadas de outra sessão. O kernel desse working tree hoje cai no boot (trabalho em
+  andamento da outra sessão), então o teste junto espera ela estabilizar.
