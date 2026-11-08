@@ -435,17 +435,17 @@ const double NSViewNoIntrinsicMetric = -1;
  * como a chamada C abaixo; o self de um método estático (a metaclasse) vai em r13 e não é usado. */
 extern void NSRectFillUsingOperation(pr_rect_t r, u64 op);
 extern void NSBeep(void);
-void ak_rect_fill(double x, double y, double w, double h, u64 op) __asm__("_$sSo6CGRectV6AppKitE4fill5usingySo22NSCompositingOperationV_tF");
+void ak_rect_fill(double x, double y, double w, double h, u64 op) __asm__("$sSo6CGRectV6AppKitE4fill5usingySo22NSCompositingOperationV_tF");
 void ak_rect_fill(double x, double y, double w, double h, u64 op) { NSRectFillUsingOperation((pr_rect_t){x, y, w, h}, op); }
 void ak_rect_frame(double x, double y, double w, double h, double width, u64 op)
-    __asm__("_$sSo6CGRectV6AppKitE5frame9withWidth5usingy12CoreGraphics7CGFloatV_So22NSCompositingOperationVtF");
+    __asm__("$sSo6CGRectV6AppKitE5frame9withWidth5usingy12CoreGraphics7CGFloatV_So22NSCompositingOperationVtF");
 void ak_rect_frame(double x, double y, double w, double h, double width, u64 op) {
     (void)op;                                  /* as quatro bordas por dentro do retângulo */
     extern void NSRectFill(pr_rect_t r);
     NSRectFill((pr_rect_t){x, y, w, width}); NSRectFill((pr_rect_t){x, y + h - width, w, width});
     NSRectFill((pr_rect_t){x, y, width, h}); NSRectFill((pr_rect_t){x + w - width, y, width, h});
 }
-void ak_sound_beep(void) __asm__("_$sSo7NSSoundC6AppKitE4beepyyFZ");
+void ak_sound_beep(void) __asm__("$sSo7NSSoundC6AppKitE4beepyyFZ");
 void ak_sound_beep(void) { NSBeep(); }
 
 /* -[NSDictionary __swift_objectForKeyedSubscript:]: o subscript do overlay Foundation da Apple (código inlinável dos apps) */
@@ -485,8 +485,6 @@ static id bt_with_image(id cls, SEL c, id image, id target, SEL action) {
 static id v_enclosing_scroll(id self, SEL c) {
     (void)c;
     cx_class_t *sc = cl("NSScrollView");
-    for (id v = MSG0(id, self, "superview"); v; v = MSG0(id, v, "superview")) { extern const char *object_getClassName(id o); cx_fdprintf(2, "DBG esv %s\n", object_getClassName(v)); }
-    cx_fdprintf(2, "DBG esv fim (%p)\n", (void *)self);
     for (id v = MSG0(id, self, "superview"); v; v = MSG0(id, v, "superview")) if (sc && cx_is_subclass(v->isa, sc)) return v;
     return 0;
 }

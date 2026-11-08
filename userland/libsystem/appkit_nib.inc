@@ -221,7 +221,8 @@ static id v_init_coder(id self, SEL c, id coder) {
         for (int i = 0; i < ns; i++) {
             if (nis(x, subs[i], "NSScroller") || nis(x, subs[i], "NSTableHeaderView") || nis(x, subs[i], "_NSCornerView")) continue;
             id v = nib_decode(x, subs[i]);
-            if (is_view(v) && vs(v)->superview != self) v_add_sub(self, 0, v);
+            /* um NSClipView decodificado à parte (por um outlet) não tira do NSScrollView a view de documento */
+            if (is_view(v) && vs(v)->superview != self && !(nis(x, idx, "NSClipView") && vs(v)->superview)) v_add_sub(self, 0, v);
         }
     }
     static const char *gk[] = {"NSViewLayoutGuides", "IBNSSafeAreaLayoutGuide", "IBNSLayoutMarginsGuide"};
