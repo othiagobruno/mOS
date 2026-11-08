@@ -7,7 +7,7 @@
 # extraído em .tools\macos-zig-dl. Vai para /usr/local/zig sem as libcs de outros sistemas (só o Darwin fica).
 # O código do mOS que a escada compila (kernel, libSystem) vai para /mos-src.
 param([string]$OutDir = 'build-zig', [string]$Zig = '.tools\macos-zig-dl\zig-x86_64-macos-0.17.1',
-      [int]$Degrau = 5, [int]$SizeMiB = 1024, [string]$Bottles = 'build\brew\shell')
+      [int]$Degrau = 8, [int]$DegrauMin = 1, [switch]$RastrearZig, [int]$SizeMiB = 1024, [string]$Bottles = 'build\brew\shell')
 $root = Split-Path $PSScriptRoot -Parent
 $esp = Join-Path $root "$OutDir\esp"
 $z = Join-Path $root $Zig
@@ -40,8 +40,11 @@ robocopy "$root\userland" "$src\userland" '*.h' /NFL /NDL /NJH /NJS /NP | Out-Nu
 New-Item -ItemType Directory -Force "$src\build" | Out-Null
 Copy-Item -Force "$root\build\libSystem.mos" "$src\build\libSystem.mos"
 Copy-Item -Force "$root\build\libSystem.mos" "$src\libSystem-host.mos"
-Copy-Item -Force "$root\$OutDir\BOOTX64.EFI" "$src\BOOTX64-host.EFI" -ErrorAction SilentlyContinue
 [IO.File]::WriteAllText("$src\degrau-max", "$Degrau", [Text.Encoding]::ASCII)
+[IO.File]::WriteAllText("$src\degrau-min", "$DegrauMin", [Text.Encoding]::ASCII)
+# -RastrearZig: o kernel registra as syscalls de escrita em arquivo dos processos "zig" (proc_syscall, process.c)
+$mk = "$esp\mOS\Sistema\Biblioteca\rastrear-arquivos-zig"
+if ($RastrearZig) { [IO.File]::WriteAllText($mk, '1', [Text.Encoding]::ASCII) } else { Remove-Item $mk -ErrorAction SilentlyContinue }
 
 # listas de fontes na MESMA ordem do build do host (a ordem do link muda o binário; o glob do bash ordena diferente)
 $ls = Get-ChildItem "$root\userland\libsystem\*" -Include *.c, *.S | ForEach-Object { $_.FullName.Substring($root.Length + 1).Replace('\', '/') }
@@ -59,6 +62,30 @@ Push-Location $root
     @ls @uwo -o "$src\libSystem-ref.mos" 2>&1 | Select-Object -First 5 | ForEach-Object { "  ref: $_" }
 Pop-Location
 foreach ($o in $uwo) { Copy-Item -Force "$root\$o" "$src\$(Split-Path $o -Leaf).host" }
+# hashes de cada objeto do libSystem compilado no host (degrau 6 da escada compara um a um)
+$tmpo = Join-Path $env:TEMP "mos-zig-objs"
+New-Item -ItemType Directory -Force $tmpo | Out-Null
+$linhas = @()
+Push-Location $src
+foreach ($f in $ls) {
+    $o = Join-Path $tmpo ((Split-Path $f -Leaf) + '.o')
+    & "$($hz.FullName)\zig.exe" cc -target x86_64-freestanding-none -O2 -g0 -ffreestanding -fno-stack-protector -fno-builtin -nostdlib `
+        -fpie -mno-red-zone -w -Iuserland/libsystem/kshim -c $f -o $o 2>&1 | Out-Null
+    $h = if (Test-Path $o) { (Get-FileHash $o -Algorithm SHA256).Hash.ToLower() } else { 'falhou' }
+    $linhas += "$f $h"
+}
+Pop-Location
+[IO.File]::WriteAllText("$src\libsystem-objs.txt", ($linhas -join "`n") + "`n", [Text.Encoding]::ASCII)
+
+# referência do kernel: compilada aqui a partir da própria cópia em mos-src, com as flags do build.ps1 e o mesmo
+# build/libSystem.mos que a VM vai embutir (outra sessão pode ter recompilado o build\libSystem.mos do repositório)
+Write-Host "kernel de referência no host..." -ForegroundColor Cyan
+Push-Location $src
+& "$($hz.FullName)\zig.exe" cc -target x86_64-uefi-msvc -O2 -g0 -s '-Wl,/Brepro' -ffreestanding -fno-stack-protector -fno-stack-check -mno-stack-arg-probe `
+    -mno-red-zone -fshort-wchar -fno-sanitize=all -fno-strict-aliasing -nostdlib -Ikernel/include -I. -std=gnu11 -w `
+    @ks -o 'BOOTX64-host.EFI' 2>&1 | Select-Object -First 5 | ForEach-Object { "  ref: $_" }
+Remove-Item 'BOOTX64-host.lib', 'BOOTX64-host.pdb' -ErrorAction SilentlyContinue
+Pop-Location
 
 $n = (Get-ChildItem $dst -Recurse -File).Count
 Write-Host "zig na imagem: $n arquivos em /usr/local/zig" -ForegroundColor Cyan

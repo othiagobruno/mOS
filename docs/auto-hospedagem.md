@@ -43,6 +43,51 @@ binário que o mOS carrega. A maior parte do caminho é, portanto, fazer o zig r
 - **Pronto quando:** dentro da VM, o zig gera um `libSystem.mos` byte a byte igual ao do Windows, nas mesmas flags.
   O zig é determinístico, então dá para comparar por SHA-256.
 
+**Feito em 8 nov. 2026 (QEMU/WHPX, 3 GB, 4 CPUs).** Dentro do mOS, o zig 0.17.1 para macOS gera o libSystem (112
+fontes + libunwind) e o kernel (164 fontes) **byte a byte iguais** aos do Windows.
+
+Como repetir:
+
+```
+.\build.ps1 -OutDir build-zig
+.\tools\stage-zig.ps1 -OutDir build-zig [-DegrauMin N] [-Degrau N] [-RastrearZig]
+.\run.ps1 -Headless -Image build-zig/mOS.img -Serial build-zig/serial.log -Memory 3072 -Port 4471 -Accel whpx
+```
+
+O roteiro é `tools/testdata/zig-escada.sh`, e as linhas `zig:` vão para o log serial. O zig vem de
+ziglang.org (`zig-x86_64-macos-0.17.1.tar.xz`, SHA-256 conferido) e fica em `.tools\macos-zig-dl`. O nome não pode
+começar com `zig-`, porque os scripts pegam o primeiro `.tools\zig-*` como zig do Windows. Na imagem, ele ocupa
+1745 arquivos em `/usr/local/zig`: só as libcs do Darwin ficam.
+
+| Degrau | Tempo |
+|---|---|
+| 1. `zig version` | 2–7 s |
+| 2. hello para macOS, ligado e rodado | 150–250 s (inclui compiler_rt e ubsan_rt na 1ª vez) |
+| 3. `libc.c` | 3–11 s |
+| 4. libSystem inteiro (com libunwind) | 37–62 s |
+| 5. kernel | 47–70 s |
+| 6. 112 objetos do libSystem, um a um contra o host | 85–96 s, nenhum diferente |
+
+O que precisou ser consertado:
+- **Kernel, `copy_user_vec`:** o spawn aceitava só 384 argumentos, e o `zig clang -cc1` passa mais. O limite subiu
+  para 4096, e cada string agora é guardada no tamanho exato.
+- **Kernel, `rename`:** os fds guardam o caminho em texto, então um fd aberto dentro de uma pasta renomeada dava
+  ENOENT. O zig faz `ftruncate` em `cache/tmp/<n>/lib*.a` depois de renomear a pasta. Agora o `rename_fix_fds`
+  atualiza o caminho dos fds abertos, como no POSIX, onde o fd segue o arquivo.
+- **libSystem, `mmap` de arquivo `MAP_SHARED` com escrita:** era uma cópia sem volta, e o `msync` era um stub. O zig
+  copia a saída do cache assim: `ftruncate` do destino, `mmap` `MAP_SHARED`, `memcpy`, `munmap`. Os objetos saíam
+  com o tamanho certo e só zeros. Agora cada mapeamento é registrado com um `dup` do fd e gravado de volta com
+  `pwrite` no `msync` e no `munmap` (`shm_track`/`shm_flush` em `extra.c`).
+- **libSystem:** entraram `posix_spawn_file_actions_addfchdir_np`, `fetestexcept` e `malloc_zone_statistics`.
+- **Diagnósticos que ficaram:**
+  - um `ftruncate` que falha vai para o log serial, com o caminho e se a pasta ainda existe;
+  - o marcador `/Sistema/Biblioteca/rastrear-arquivos-zig` registra as escritas em arquivo dos processos `zig`
+    (`stage-zig.ps1 -RastrearZig`).
+- **Kernel reprodutível:** o link PE do kernel não é determinístico nem no Windows, porque leva um carimbo de data e
+  hora e o caminho e o GUID do PDB. Com `-s -Wl,/Brepro`, duas compilações dão o mesmo SHA-256, e é com essas flags
+  que a escada compara. O `build.ps1` ainda não as usa. Elas valem para a fase 2, para comparar `build.sh` com
+  `build.ps1`.
+
 ### 2. Build sem PowerShell
 
 - Recomendação: um `build.sh` (POSIX sh, que roda no bash do mOS e no Git Bash) com o núcleo do build:

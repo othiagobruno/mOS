@@ -689,6 +689,53 @@ void _tlv_atexit(void (*fn)(void *), void *obj) { __cxa_atexit(fn, obj, 0); }
 
 /* memória virtual */
 #define CX_MMAP_BASE 0x400100000000ULL   /* USER_MMAP_BASE do kernel */
+
+/* MAP_SHARED de arquivo com escrita: o mapeamento é uma cópia em memória (lida com read). Para o que se escreve nele
+ * chegar ao arquivo, cada mapeamento fica registrado com um dup do fd (no macOS o mapeamento sobrevive ao close) e
+ * volta ao arquivo com pwrite no msync e no munmap, até o tamanho atual do arquivo (além do fim seria SIGBUS no macOS).
+ * O Zig copia a saída do cache assim (ftruncate do destino, mmap MAP_SHARED, memcpy, munmap): sem isto, os objetos e
+ * executáveis do `zig cc` saíam com o tamanho certo e só zeros. */
+int dup(int fd);
+int fstat(int fd, void *st);
+int close(int fd);
+ssize_t pwrite(int fd, const void *b, size_t n, off_t off);
+typedef struct { u64 addr, len; int fd; off_t off; } cx_shm_t;
+static cx_shm_t shm_tab[64];
+static volatile int shm_lock;
+static void shm_take(void) { while (__atomic_exchange_n(&shm_lock, 1, __ATOMIC_ACQUIRE)) __builtin_ia32_pause(); }
+static void shm_give(void) { __atomic_store_n(&shm_lock, 0, __ATOMIC_RELEASE); }
+static void shm_track(u64 addr, size_t len, int fd, off_t off) {
+    int d = dup(fd);
+    if (d < 0) return;
+    shm_take();
+    for (int i = 0; i < 64; i++) if (!shm_tab[i].len) {
+        shm_tab[i] = (cx_shm_t){addr, len, d, off};
+        shm_give();
+        return;
+    }
+    shm_give();
+    close(d);   /* tabela cheia: fica como antes (cópia sem volta) */
+}
+/* grava de volta os mapeamentos que cruzam [a, a+n); drop = 1 (munmap) tira da tabela os que o trecho cobre inteiros */
+static void shm_flush(u64 a, size_t n, int drop) {
+    if (!n) return;
+    shm_take();
+    for (int i = 0; i < 64; i++) {
+        cx_shm_t *m = &shm_tab[i];
+        if (!m->len || a >= m->addr + m->len || a + n <= m->addr) continue;
+        u64 lo = a > m->addr ? a : m->addr, hi = a + n < m->addr + m->len ? a + n : m->addr + m->len;
+        u64 stb[18] = {0};                                      /* stat do macOS: st_size em +96 */
+        long size = fstat(m->fd, stb) == 0 ? (long)stb[12] : 0;
+        long fo = (long)m->off + (long)(lo - m->addr);
+        if (size > fo) {
+            u64 cnt = hi - lo;
+            if ((long)cnt > size - fo) cnt = (u64)(size - fo);
+            for (u64 w = 0; w < cnt;) { ssize_t k = pwrite(m->fd, (const char *)(lo + w), cnt - w, fo + (long)w); if (k <= 0) break; w += (u64)k; }
+        }
+        if (drop && a <= m->addr && a + n >= m->addr + m->len) { close(m->fd); m->len = 0; }
+    }
+    shm_give();
+}
 void *mmap(void *addr, size_t len, int prot, int flags, int fd, off_t off) {
     /* MAP_JIT (0x800): o V8 pede uma região anônima executável. O NX está desligado no mOS,
      * então a página de usuário já executa; aqui só garantimos o caminho anônimo. */
@@ -735,10 +782,16 @@ void *mmap(void *addr, size_t len, int prot, int flags, int fd, off_t off) {
         size_t got = 0;
         while (got < len) { ssize_t k = read(fd, (char *)r + got, len - got); if (k <= 0) break; got += (size_t)k; }
         lseek(fd, cur, 0);
+        if ((flags & 1) && (prot & 2)) shm_track((u64)r, len, fd, off);   /* MAP_SHARED com escrita: volta ao arquivo */
     }
     return (void *)r;
 }
-int munmap(void *a, size_t len) { return SYS2(SYS_MUNMAP, a, len) < 0 ? -1 : 0; }
+int munmap(void *a, size_t len) {
+    shm_flush((u64)a, len, 1);
+    return SYS2(SYS_MUNMAP, a, len) < 0 ? -1 : 0;
+}
+/* msync: grava no arquivo o que mudou nos mapeamentos MAP_SHARED do trecho */
+int msync(void *a, size_t n, int f) { (void)f; shm_flush((u64)a, n, 0); return 0; }
 void cx_mach_record_prot(u64 addr, u64 len, int prot);   /* mach.c: proteção registrada, lida pelo mach_vm_region */
 int mprotect(void *a, size_t len, int prot) {
     /* liberar acesso a um trecho reservado: as páginas que faltam passam a vir sob demanda (as existentes ficam).

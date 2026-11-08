@@ -237,7 +237,7 @@ int lchflags(const char *p, u32 flags) { (void)flags; char st[256]; return stat(
 int mknod(const char *p, unsigned short mode, int dev) { (void)p; (void)mode; (void)dev; set_errno(E_PERM); return -1; }
 /* o clonefile do APFS: sem CoW aqui; quem chama (VS Code, Chromium) copia o arquivo */
 int clonefile(const char *src, const char *dst, u32 flags) { (void)src; (void)dst; (void)flags; set_errno(E_NOTSUP); return -1; }
-int msync(void *a, size_t n, int f) { (void)a; (void)n; (void)f; return 0; }
+/* msync: extra.c (grava de volta os mapeamentos MAP_SHARED) */
 int munlock(const void *a, size_t n) { (void)a; (void)n; return 0; }
 int mincore(const void *a, size_t n, char *vec) {
     (void)a;

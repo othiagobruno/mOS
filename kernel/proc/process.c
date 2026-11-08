@@ -1992,8 +1992,28 @@ static u64 proc_syscall_(int_frame_t *f) {
         /* diagnóstico (despejar-threads): quem encerra um helper do VS Code, com código e pilha */
         if (!strncmp(p->name, "Code Helper", 11) && vfs_lookup("/Sistema/Biblioteca/despejar-threads")) {
             kprintf("proc: %s (pid %d) chamou exit(%d), thread %d\n", p->name, p->pid, (int)a, t ? t->id : -1);
+/* diagnóstico (marcador /Sistema/Biblioteca/rastrear-arquivos-zig): syscalls de escrita em arquivo dos processos "zig",
+ * com o caminho do fd e o resultado. Foi assim que se achou onde o `zig cc -c` perdia o conteúdo do objeto. */
+static void trace_zig_fs(process_t *p, u64 nr, u64 a, u64 b, u64 c, i64 res) {
+    if (nr == SYS_WRITE || nr == SYS_PWRITE || nr == SYS_FTRUNCATE || nr == SYS_CLOSE || nr == SYS_LSEEK) {
+        if (nr == SYS_WRITE && a <= 2) return;
+        const char *fp = a < PROC_MAX_FDS && p->fds[a].used ? p->fds[a].path : "?";
+        kprintf("zigfs %d: sys %llu fd %llu (%s) b=%llx c=%llx -> %lld\n", p->pid, nr, a, fp, b, c, res);
+    } else if (nr == SYS_OPEN || nr == SYS_RENAME) {
+        char s[160] = "?";
+        copy_str_in(p, s, a, sizeof s);
+        if (nr == SYS_OPEN && !(b & (MOS_O_WRONLY | MOS_O_RDWR | MOS_O_CREAT))) return;   /* leituras de headers: muitas */
+        kprintf("zigfs %d: sys %llu %s b=%llx -> %lld\n", p->pid, nr, s, b, res);
+    }
+}
             u64 w[64];
+    static int trace_zig = -1;
+    if (trace_zig < 0) trace_zig = vfs_lookup("/Sistema/Biblioteca/rastrear-arquivos-zig") != NULL;
+    process_t *tp = trace_zig && thread_current() ? thread_current()->proc : NULL;
+    bool tr = tp && !strcmp(tp->name, "zig") && (f->cs & 3) == 3;
+    u64 nr = f->rax, a = f->rdi, b = f->rsi, c = f->rdx;
             if (uvm_copy_in(p, w, f->rsp & ~7ULL, sizeof w)) {
+    if (tr) trace_zig_fs(tp, nr, a, b, c, (i64)f->rax);
                 char line[200]; usize o = 0; int shown = 0;
                 for (int i = 0; i < 64 && shown < 14; i++)
                     if (w[i] >= USER_BASE + 0x100000ULL && w[i] < USER_BASE + 0x0E000000ULL) { o += (usize)snprintf(line + o, sizeof line - o, " %llx", w[i]); shown++; }
