@@ -341,6 +341,30 @@ bool uvm_install(process_t *p, u64 va, u64 phys) {
     return true;
 }
 u16 uvm_page_refs(u64 phys) { return page_refs(phys); }
+
+/* Rede de segurança do JIT do tradutor arm64 (userland/a64rt, MACH_VM_JIT_WPROTECT): página com código traduzido
+ * perde a escrita na PTE e ganha o bit PTE_JWP (10, livre para o SO); a escrita do programa vira falta de proteção →
+ * SIGBUS no tratador do runtime, que devolve a escrita (op 0), invalida as traduções e repete a instrução. Páginas
+ * COW ficam de fora (op 1 devolve 0): devolver a escrita a uma página compartilhada a escreveria para todos. No fork
+ * uma página PTE_JWP vai para os dois lados como COW (cow_copy_level). */
+#define PTE_JWP (1ULL << 10)
+int uvm_jit_wprotect(process_t *p, u64 va, int op) {
+    va &= ~0xFFFULL;
+    u64 *e = uvm_pte(p, va);
+    if (!e || !(*e & PTE_U)) return 0;
+    if (op == 2) return (*e & PTE_RW) && !(*e & PTE_COW) ? 1 : 0;
+    if (op == 1) {
+        if (!(*e & PTE_RW) || (*e & PTE_COW)) return 0;
+        *e = (*e & ~PTE_RW) | PTE_JWP;
+        vm_flush(p, va);
+        return 1;
+    }
+    if (*e & PTE_JWP) {
+        *e = (*e | PTE_RW) & ~PTE_JWP;
+        vm_flush(p, va);
+    }
+    return 1;
+}
 /* página COW (fork, imagem compartilhada) vira privada antes de ir, com escrita, para outro processo
  * (mach_make_memory_entry de uma faixa existente): senão o outro escreveria na cópia de todos */
 bool uvm_make_private(process_t *p, u64 va) {
@@ -409,6 +433,7 @@ static bool cow_copy_level(process_t *dst, u64 *s, u64 *d, int level) {
         if (!(s[i] & PTE_P)) continue;
         if (level == 1) {
             if (s[i] & PTE_RW) s[i] = (s[i] & ~PTE_RW) | PTE_COW;
+            if (s[i] & (1ULL << 10)) s[i] = (s[i] & ~(1ULL << 10)) | PTE_COW;   /* PTE_JWP (JIT arm64): era gravável */
             page_ref_inc(s[i] & PTE_ADDR);
             d[i] = s[i];
             dst->mem_pages++;
@@ -1600,6 +1625,27 @@ static bool file_room(vnode_t *v, u64 nsz) {
     return true;
 }
 
+/* rename: os fds de arquivo guardam o caminho em texto. Como no POSIX (o fd segue o arquivo), quem tinha aberto o
+ * caminho renomeado, ou algo dentro da pasta renomeada, passa a apontar para o nome novo. O Zig escreve a saída em
+ * cache/tmp/<n>/, renomeia a pasta para cache/o/<hash>/ e ainda faz ftruncate no arquivo aberto: dava ENOENT. */
+static void rename_fix_fds(const char *from, const char *to) {
+    usize fl = strlen(from), tl = strlen(to);
+    u64 irq = irq_save();
+    for (process_t *q = procs; q; q = q->next) {
+        if (q->exited) continue;
+        for (int i = 0; i < PROC_MAX_FDS; i++) {
+            if (!q->fds[i].used || q->fds[i].kind != FD_FILE || q->fds[i].pipe || q->fds[i].pty) continue;
+            char *fp = q->fds[i].path;
+            if (strncmp(fp, from, fl) || (fp[fl] && fp[fl] != '/')) continue;
+            usize rest = strlen(fp + fl);
+            if (tl + rest >= sizeof q->fds[i].path) continue;   /* não cabe: fica com o nome antigo */
+            memmove(fp + tl, fp + fl, rest + 1);
+            memcpy(fp, to, tl);
+        }
+    }
+    irq_restore(irq);
+}
+
 /* ftruncate: o SQLite (journal TRUNCATE, encolher o banco) precisa; sem isso o commit do perfil do Chrome falhava */
 static i64 file_truncate(const char *path, u64 nsz) {
     vnode_t *v = vfs_lookup(path);
@@ -1689,31 +1735,35 @@ static void free_vec(char **v, int n) {
 }
 
 /* copia um vetor NULL-terminado de strings (argv ou envp) do processo pai.
- * Cada string cabe em 64 KiB; o conjunto, em 384 KiB. O Electron passa bem mais
- * que os 256 bytes do SYS_SPAWN antigo. */
+ * Cada string cabe em 64 KiB; o conjunto, em 384 KiB; até 4096 entradas. O Electron passa bem mais
+ * que os 256 bytes do SYS_SPAWN antigo, e o `zig cc` chama `zig clang -cc1` com mais de 384 argumentos.
+ * Cada string é lida num rascunho de 64 KiB e guardada no tamanho exato (4096 × 64 KiB não caberia). */
 static char **copy_user_vec(process_t *parent, u64 uvec, int *out_n) {
-    enum { MAXN = 384, STR = 65536, BUDGET = 384 << 10 };
+    enum { MAXN = 4096, STR = 65536, BUDGET = 384 << 10 };
     char **v = kcalloc(MAXN, sizeof(char *));
-    if (!v) return NULL;
+    char *tmp = kmalloc(STR);
+    if (!v || !tmp) { kfree(v); kfree(tmp); return NULL; }
     int n = 0;
     usize used = 0;
     for (;;) {
         u64 ptr = 0;
-        if (!uvm_copy_in(parent, &ptr, uvec + (u64)n * 8, 8)) { free_vec(v, n); return NULL; }
+        if (!uvm_copy_in(parent, &ptr, uvec + (u64)n * 8, 8)) { free_vec(v, n); v = NULL; break; }
         if (!ptr) break;
-        if (n >= MAXN - 1) { kprintf("proc: spawn: argumentos demais\n"); free_vec(v, n); return NULL; }
-        char *s = kmalloc(STR);
-        if (!s) { free_vec(v, n); return NULL; }
-        if (!copy_str_in(parent, s, ptr, STR) || strlen(s) == STR - 1) {
+        if (n >= MAXN - 1) { kprintf("proc: spawn: argumentos demais\n"); free_vec(v, n); v = NULL; break; }
+        if (!copy_str_in(parent, tmp, ptr, STR) || strlen(tmp) == STR - 1) {
             kprintf("proc: spawn: argumento longo demais\n");
-            kfree(s); free_vec(v, n); return NULL;
+            free_vec(v, n); v = NULL; break;
         }
-        usize len = strlen(s);
-        if (used + len + 1 > BUDGET) { kprintf("proc: spawn: linha de comando grande demais\n"); kfree(s); free_vec(v, n); return NULL; }
+        usize len = strlen(tmp);
+        if (used + len + 1 > BUDGET) { kprintf("proc: spawn: linha de comando grande demais\n"); free_vec(v, n); v = NULL; break; }
+        char *s = kmalloc(len + 1);
+        if (!s) { free_vec(v, n); v = NULL; break; }
+        memcpy(s, tmp, len + 1);
         used += len + 1;
         v[n++] = s;
     }
-    *out_n = n;
+    kfree(tmp);
+    if (v) *out_n = n;
     return v;
 }
 
@@ -2362,6 +2412,12 @@ static u64 proc_syscall_(int_frame_t *f) {
         if (!(p->fds[a].flags & (MOS_O_WRONLY | MOS_O_RDWR))) { r = -MOS_EBADF; break; }
         if (is_devnull(p->fds[a].path)) { r = 0; break; }
         r = file_truncate(p->fds[a].path, b);
+        if (r < 0) {
+            char dir[256]; strncpy(dir, p->fds[a].path, sizeof dir - 1); dir[sizeof dir - 1] = 0;
+            char *sl = strrchr(dir, '/'); if (sl) *sl = 0;
+            kprintf("ftruncate: %s (pid %d): %s -> %llu bytes: erro %lld (pasta %s)\n", p->name, p->pid, p->fds[a].path, b, r,
+                    vfs_lookup(dir[0] ? dir : "/") ? "existe" : "sumiu");
+        }
         break;
     }
     case SYS_LSEEK: {
@@ -2442,8 +2498,9 @@ static u64 proc_syscall_(int_frame_t *f) {
         break;
     }
     case SYS_RENAME: {
-        char to[256];
+        char to[256], to_full[256];
         if (!copy_path(p, path, a) || !copy_path(p, to, b)) { r = -MOS_EFAULT; break; }
+        memcpy(to_full, to, sizeof to_full);
         vnode_t *v = vfs_lookup(path);
         char *slash = strrchr(to, '/');
         if (!v) { r = -MOS_ENOENT; break; }
@@ -2460,6 +2517,7 @@ static u64 proc_syscall_(int_frame_t *f) {
             if (!vfs_delete(old)) { r = -MOS_EINVAL; break; }
         }
         r = vfs_move(v, np, slash + 1) ? 0 : -MOS_EINVAL;
+        if (r == 0) rename_fix_fds(path, to_full);
         break;
     }
 

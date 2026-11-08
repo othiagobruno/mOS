@@ -203,10 +203,10 @@ struct dyld_unwind_sections {
     unsigned long compact_unwind_section_length;
 };
 _Bool _dyld_find_unwind_sections(void *addr, struct dyld_unwind_sections *info) {
+    { extern int cx_unwind_disabled(void); if (cx_unwind_disabled()) return 0; }   /* MOS_DESENROLAR=0 (unwind_ls.c) */
     const u8 *h = _dyld_get_image_header_containing_address(addr);
-#if defined(__aarch64__)   /* pc dentro do próprio libSystem arm64 (ELF): o .eh_frame dele (darwin_arm64.c, frente LIBSYS) */
+    /* pc dentro do próprio libSystem (ELF, as duas arquiteturas): o .eh_frame dele (unwind_ls.c, frente LIBSYS) */
     { extern _Bool cx_ls_unwind_sections(const void *, void *); if (!h && info && cx_ls_unwind_sections(addr, info)) return 1; }
-#endif
     if (!h || !info || *(const u32 *)h != 0xFEEDFACF) return 0;
     long slide = slide_of(h);
     u32 ncmds = *(const u32 *)(h + 16);

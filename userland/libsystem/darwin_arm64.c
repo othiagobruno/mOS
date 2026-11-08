@@ -52,29 +52,4 @@ int cx_sysctl_arm64(const char *name, void *old, unsigned long *oldlen) {
     }
     return 1;
 }
-
-/* ---- desenrolar através do próprio libSystem (libunwind do LLVM, compilado no modo Apple pelo
- * tools/build-libsystem-arm64.ps1). As imagens Mach-O vêm de _dyld_find_unwind_sections (dlfcn.c); para um pc dentro
- * do libSystem (ELF) ela chama cx_ls_unwind_sections, que devolve o .eh_frame do blob. O deslocamento e o tamanho do
- * .eh_frame são gravados depois do link pelo script (procura o marcador abaixo): o blob não carrega cabeçalhos de seção. */
-extern const char __ehdr_start[], _end[];
-volatile unsigned long long cx_ls_ehframe[4] = {0x4d4f5345485f4652ULL /* "RF_HESOM" */, 0x4152344d34365f41ULL, 0, 0};
-struct cx_unwind_sections { const void *mh, *dwarf; unsigned long dwarf_len; const void *compact; unsigned long compact_len; };
-_Bool cx_ls_unwind_sections(const void *addr, struct cx_unwind_sections *info) {
-    if ((const char *)addr < __ehdr_start || (const char *)addr >= _end || !cx_ls_ehframe[3]) return 0;
-    info->mh = __ehdr_start;
-    info->dwarf = __ehdr_start + cx_ls_ehframe[2];
-    info->dwarf_len = (unsigned long)cx_ls_ehframe[3];
-    info->compact = 0;
-    info->compact_len = 0;
-    return 1;
-}
-/* o libunwind (RWMutex.hpp) chama estes com o nome Mach-O dos cabeçalhos do Darwin (__DARWIN_ALIAS: "_pthread_...") */
-int pthread_rwlock_rdlock(void *), pthread_rwlock_wrlock(void *), pthread_rwlock_unlock(void *);
-int cx_rw_rdlock(void *l) __asm__("_pthread_rwlock_rdlock");
-int cx_rw_wrlock(void *l) __asm__("_pthread_rwlock_wrlock");
-int cx_rw_unlock(void *l) __asm__("_pthread_rwlock_unlock");
-int cx_rw_rdlock(void *l) { return pthread_rwlock_rdlock(l); }
-int cx_rw_wrlock(void *l) { return pthread_rwlock_wrlock(l); }
-int cx_rw_unlock(void *l) { return pthread_rwlock_unlock(l); }
 #endif

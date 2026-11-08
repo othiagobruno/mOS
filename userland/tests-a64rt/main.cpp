@@ -203,6 +203,34 @@ static void teste_sistema(void) {
     CHECK("hw.cputype = arm64", sysctlbyname("hw.cputype", &ct, &n, 0, 0) == 0 && ct == 0x0100000C);
 }
 
+// ---- código gerado em tempo de execução (MAP_JIT): com sys_icache_invalidate e sem (rede de segurança do JIT)
+#include <sys/mman.h>
+#include <libkern/OSCacheControl.h>
+static void teste_smc(void) {
+#ifdef __aarch64__
+    unsigned *p = (unsigned *)mmap(0, 16384, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANON | MAP_JIT, -1, 0);
+    if (p == (unsigned *)MAP_FAILED) { CHECK("mmap MAP_JIT", 0); return; }
+    typedef int (*fn_t)(void);
+    fn_t f = (fn_t)p;
+    int soma = 0;
+    for (int i = 1; i <= 50; i++) {                    // reescreve o mesmo código 50 vezes, com invalidação
+        p[0] = 0x52800000u | ((unsigned)i << 5);       // mov w0, #i
+        p[1] = 0xd65f03c0u;                            // ret
+        sys_icache_invalidate(p, 8);
+        soma += f();
+    }
+    CHECK("código reescrito com sys_icache_invalidate", soma == 50 * 51 / 2);
+    int ok = 1;
+    for (int i = 1; i <= 20; i++) {                    // sem invalidação: só a rede de segurança do JIT (ou o interpretador)
+        for (int k = 0; k < 3; k++) if (f() != (k ? i : i - 1 ? i - 1 : 50)) {}
+        p[0] = 0x52800000u | ((unsigned)(100 + i) << 5);
+        if (f() != 100 + i) ok = 0;
+    }
+    CHECK("código reescrito sem invalidar (proteção de página)", ok);
+    munmap(p, 16384);
+#endif
+}
+
 // ---- posix_spawn de outro Mach-O (A64RT_TESTE_SPAWN="caminho:código esperado;..."): arm64 → x86_64 e arm64 → arm64
 #include <spawn.h>
 #include <sys/wait.h>
@@ -243,6 +271,7 @@ int main(int argc, char **argv) {
     RODA("mutex", teste_mutex);
     RODA("sinais", teste_sinais);
     RODA("sistema", teste_sistema);
+    RODA("smc", teste_smc);
     RODA("spawn", teste_spawn);
     RODA("cxx", teste_cxx);                     // por último: sem unwinder no libSystem vira std::terminate
     printf("%sa64rt-teste: %d falhas\n", motor, falhas);

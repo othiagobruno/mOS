@@ -25,7 +25,15 @@ typedef double CGFloat;
 typedef long NSInteger;
 typedef unsigned long NSUInteger;
 typedef double NSTimeInterval;
+#if defined(__OBJC_BOOL_IS_BOOL) && __OBJC_BOOL_IS_BOOL   /* ObjC no arm64 da Apple: BOOL é bool (como o objc/objc.h) */
+#ifdef __cplusplus
+typedef bool BOOL;
+#else
+typedef _Bool BOOL;
+#endif
+#else
 typedef signed char BOOL;
+#endif
 #ifndef YES
 #define YES ((BOOL)1)
 #define NO ((BOOL)0)

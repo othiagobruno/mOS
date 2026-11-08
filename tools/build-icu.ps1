@@ -17,7 +17,7 @@ param([switch]$Force, [int]$Jobs = 8, [ValidateSet('x86_64', 'arm64')][string]$A
 $tgt = if ($Arch -eq 'arm64') { 'aarch64-macos.12.0' } else { 'x86_64-macos.12.0' }
 $sfx = if ($Arch -eq 'arm64') { '-arm64' } else { '' }
 $root = Split-Path $PSScriptRoot -Parent
-$zig = Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*' -ErrorAction SilentlyContinue | Select-Object -First 1
+$zig = Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*' -ErrorAction SilentlyContinue | Where-Object { Test-Path "$($_.FullName)\zig.exe" } | Select-Object -First 1
 if (-not $zig) { Write-Host 'zig nao encontrado em .tools' -ForegroundColor Red; exit 1 }
 $zig = Join-Path $zig.FullName 'zig.exe'
 $src = "$root\.tools\icu-dl\icu\source"

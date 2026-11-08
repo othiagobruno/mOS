@@ -14,7 +14,7 @@
 param([switch]$AbiCheck, [int]$Jobs = 0)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
-$zigDir = Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*' -ErrorAction SilentlyContinue | Select-Object -First 1
+$zigDir = Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*' -ErrorAction SilentlyContinue | Where-Object { Test-Path "$($_.FullName)\zig.exe" } | Select-Object -First 1
 if (-not $zigDir) { Write-Host 'zig nao encontrado em .tools\' -ForegroundColor Red; exit 1 }
 $zig = Join-Path $zigDir.FullName 'zig.exe'
 $inc = Join-Path $zigDir.FullName 'lib\include'

@@ -1,3 +1,4 @@
+/* a64cmp: nao-comparavel (falha no meio: o ARM permite registradores UNKNOWN; o QEMU escreve v0) */
 /* frente JIT: LDP de Q cuja segunda leitura cruza para página não mapeada: v0/v1 inalterados;
  * depois LD1 de dois registradores cruzando (vai ao interpretador) não pode ser alcançado. */
     .text

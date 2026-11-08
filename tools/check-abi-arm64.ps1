@@ -12,7 +12,7 @@
 #   .\tools\check-abi-arm64.ps1 -Only plist.c   # um arquivo (mostra o diff)
 param([string]$Only, [switch]$Quiet)
 $root = Split-Path $PSScriptRoot -Parent
-$zigDir = Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*' | Select-Object -First 1
+$zigDir = Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*' | Where-Object { Test-Path "$($_.FullName)\zig.exe" } | Select-Object -First 1
 $zig = Join-Path $zigDir.FullName 'zig.exe'
 $inc = Join-Path $zigDir.FullName 'lib\include'
 $ls = "$root\userland\libsystem"

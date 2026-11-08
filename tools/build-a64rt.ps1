@@ -6,7 +6,7 @@
 #   No processo, MOS_A64_ENGINE=interp|jit escolhe o motor (padrão: JIT quando compilado).
 param([switch]$NoJit, [switch]$Parcial)
 $root = Split-Path $PSScriptRoot -Parent
-$zig = Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*' -ErrorAction SilentlyContinue | Select-Object -First 1
+$zig = Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*' -ErrorAction SilentlyContinue | Where-Object { Test-Path (Join-Path $_.FullName 'zig.exe') } | Select-Object -First 1
 if ($zig) { $zig = Join-Path $zig.FullName 'zig.exe' } elseif ($env:MOS_ZIG) { $zig = $env:MOS_ZIG } else { $zig = (Get-Command zig -ErrorAction SilentlyContinue).Source }
 if (-not $zig) { Write-Host 'zig nao encontrado' -ForegroundColor Red; exit 1 }
 New-Item -ItemType Directory -Force "$root\build" | Out-Null

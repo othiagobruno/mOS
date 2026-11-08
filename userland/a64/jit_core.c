@@ -19,6 +19,7 @@
 #endif
 
 jit_globals jit_g;
+static volatile int fbs_on;          /* estatística do interpretador ligada (a64_jit_fbstat) */
 
 /* ---------------------------------------------------------------------------------------------
  * Host: memória executável e proteção de páginas
@@ -78,7 +79,7 @@ static inline void ulk(jlock *l) { __atomic_store_n(l, 0, __ATOMIC_RELEASE); }
 #define MAX_BLKS    ((a64_u32)(CODE_SIZE / 128))
 #define HASH_BITS   16
 #define PGH_BITS    14
-#define VOLATILE_AFTER 4            /* invalidações por escrita até a página virar volátil */
+#define VOLATILE_AFTER 2            /* invalidações por escrita até a página virar volátil */
 
 typedef struct jpage {
     a64_u64 page;
@@ -100,6 +101,7 @@ static struct {
     volatile int flush_active, pending;
     int (*enter)(a64_cpu *, void *);
     a64_u64 nflush, ntrans, nwfault, nstale, ninval, nvol;
+    a64_u64 nret[128];               /* saídas do código gerado por motivo (estatística) */
 } J;
 
 void *jit_data_alloc(a64_u64 n) {
@@ -129,6 +131,28 @@ static jpage *page_find(a64_u64 pg) {
     for (jpage *p = J.pgh[hpg(pg)]; p; p = p->next) if (p->page == pg) return p;
     return NULL;
 }
+/* páginas voláteis (código e dados misturados, escritas sem parar): lembradas fora do arena,
+ * para sobreviver ao esvaziamento total. Conjunto aberto; cheio = esquece (só custa falhas). */
+#define VOLSET_N 4096
+static a64_u64 volset[VOLSET_N];
+static int volset_has(a64_u64 pg) {
+    a64_u32 h = (a64_u32)(pg >> 12) & (VOLSET_N - 1);
+    for (int k = 0; k < 16; k++) {
+        a64_u64 v = volset[(h + k) & (VOLSET_N - 1)];
+        if (v == pg + 1) return 1;
+        if (!v) return 0;
+    }
+    return 0;
+}
+static void volset_add(a64_u64 pg) {
+    a64_u32 h = (a64_u32)(pg >> 12) & (VOLSET_N - 1);
+    for (int k = 0; k < 16; k++) {
+        a64_u64 *v = &volset[(h + k) & (VOLSET_N - 1)];
+        if (*v == pg + 1) return;
+        if (!*v) { *v = pg + 1; return; }
+    }
+}
+
 static jpage *page_get(a64_u64 pg) {        /* wplock tomada */
     jpage *p = page_find(pg);
     if (p) return p;
@@ -136,8 +160,9 @@ static jpage *page_get(a64_u64 pg) {        /* wplock tomada */
     if (!p) return NULL;
     __builtin_memset(p, 0, sizeof *p);
     p->page = pg;
+    p->vol = volset_has(pg);                /* lembrado entre esvaziamentos */
     p->next = J.pgh[hpg(pg)];
-    J.pgh[hpg(pg)] = p;
+    __atomic_store_n(&J.pgh[hpg(pg)], p, __ATOMIC_RELEASE);   /* lido sem trava em a64_jit_has_code */
     return p;
 }
 
@@ -157,7 +182,10 @@ static jblk *block_by_host(const a64_u8 *a) {
 /* ---------------------------------------------------------------------------------------------
  * Threads
  * ------------------------------------------------------------------------------------------- */
-static void jc_clear(jthr *t) { for (unsigned i = 0; i < (1u << JIT_JC_BITS); i++) t->jc[i].pc = ~0ull; }
+static void jc_clear(jthr *t) {
+    for (unsigned i = 0; i < (1u << JIT_JC_BITS); i++) t->jc[i].pc = ~0ull;
+    for (unsigned i = 0; i < JIT_RAS_N; i++) t->ras.e[i].pc = ~0ull;
+}
 
 static jthr *thr_get(a64_cpu *c) {
     jthr *t = (jthr *)c->jit;
@@ -182,6 +210,7 @@ static jthr *thr_get(a64_cpu *c) {
     ulk(&J.lock);
     c->jit = t;
     c->reserved[13] = (a64_u64)(uintptr_t)&t->jc[0];
+    c->reserved[12] = (a64_u64)(uintptr_t)&t->ras;
     return t;
 }
 
@@ -222,9 +251,10 @@ static void kill_block(jblk *b) {           /* J.lock tomada */
     }
 }
 
+#define PGI(b, p) ((b)->npg > 1 && (b)->pg[1] == (p)->page ? 1 : 0)
 static void unprotect_if_empty(jpage *p) {  /* wplock tomada */
     if (!p->wp) return;
-    for (jblk *b = p->blocks; b; b = b->pgnext[0]) if (!b->dead) return;
+    for (jblk *b = p->blocks; b; b = b->pgnext[PGI(b, p)]) if (!b->dead) return;
     host_wprotect(p->page, 0);
     p->wp = 0;
 }
@@ -234,7 +264,7 @@ static void inval_page(jpage *p, a64_u64 lo, a64_u64 hi) {   /* J.lock e wplock 
     while (*pp) {
         jblk *b = *pp;
         if (!b->dead && b->pc < hi && b->end > lo) kill_block(b);
-        if (b->dead) *pp = b->pgnext[0]; else pp = &b->pgnext[0];
+        if (b->dead) *pp = b->pgnext[PGI(b, p)]; else pp = &b->pgnext[PGI(b, p)];
     }
 }
 
@@ -246,7 +276,7 @@ static void process_pending(void) {         /* J.lock tomada */
             if (p->pending) {
                 p->pending = 0;
                 inval_page(p, p->page, p->page + JIT_PAGE);
-                if (++p->ninval >= VOLATILE_AFTER && !p->vol) { p->vol = 1; J.nvol++; }
+                if (++p->ninval >= VOLATILE_AFTER && !p->vol) { p->vol = 1; J.nvol++; volset_add(p->page); }
             }
     ulk(&J.wplock);
 }
@@ -403,15 +433,20 @@ static LONG CALLBACK jit_veh(EXCEPTION_POINTERS *e) {
 #include <stdio.h>
 #include <stdlib.h>
 static void jit_atexit(void) {
+    for (int i = 0; i < 128; i++) if (J.nret[i]) fprintf(stderr, "[jit] saida %d: %llu\n", i, (unsigned long long)J.nret[i]);
     fprintf(stderr, "[jit] blocos=%llu esvaziamentos=%llu codigo=%llu bytes falhas_escrita=%llu invalidados=%llu volateis=%llu stale=%llu\n",
             (unsigned long long)J.ntrans, (unsigned long long)J.nflush, (unsigned long long)(J.code_ptr - J.code_start),
             (unsigned long long)J.nwfault, (unsigned long long)J.ninval, (unsigned long long)J.nvol, (unsigned long long)J.nstale);
 }
+static void fbs_line(a64_u32 key, a64_u64 n, void *arg) { (void)arg; fprintf(stderr, "[jit] interp %08x x %llu\n", key, (unsigned long long)n); }
+static void fbs_print(void) { a64_jit_fbstat_dump(fbs_line, NULL, 60); }
 static void jit_env(void) {
     const char *s;
     if ((s = getenv("A64JIT_NONATIVE")) && *s == '1') jit_g.nonative = 1;
     if ((s = getenv("A64JIT_MAXINSNS"))) jit_g.maxinsns = atoi(s);
     if ((s = getenv("A64JIT_NOWP")) && *s == '1') jit_g.nowp = 1;
+    if ((s = getenv("A64JIT_NORAS")) && *s == '1') jit_g.noras = 1;
+    if ((s = getenv("A64JIT_FBSTAT")) && *s == '1') { fbs_on = 1; atexit(fbs_print); }
     if ((s = getenv("A64JIT_FBLOG")) && *s == '1') jit_g.fblog = 1;
     if ((s = getenv("A64JIT_STATS")) && *s == '1') atexit(jit_atexit);
 }
@@ -425,6 +460,7 @@ static void jit_cpuid(void) {
     jit_g.ssse3 = (c >> 9) & 1;
     jit_g.sse41 = (c >> 19) & 1;
     jit_g.sse42 = (c >> 20) & 1;
+    jit_g.fma = (c >> 12) & 1;
     (void)a; (void)b; (void)d;
 }
 
@@ -462,7 +498,40 @@ static void jit_init(void) {
  * Helper do fallback: executa UMA instrução no interpretador com o estado sincronizado.
  * Devolve 0 = seguir, 1 = desviou (c->pc), >= 2 = saída A64_EXIT_* (já com o pc do contrato).
  * ------------------------------------------------------------------------------------------- */
+/* estatística das instruções que o código gerado manda ao interpretador (para priorizar emissão
+ * nativa). Chave = palavra sem os campos de registrador (bits 20:16 e 9:0); tabela aberta. */
+#define FBS_N 8192
+static struct { volatile a64_u32 key; volatile a64_u64 n; } fbs[FBS_N];
+static void fbs_count(a64_u32 insn) {
+    a64_u32 k = (insn & 0xFFE0FC00u) | 1u;             /* | 1: chave nunca é 0 */
+    a64_u32 h = (k ^ (k >> 13) ^ (k >> 21)) & (FBS_N - 1);
+    for (int i = 0; i < 64; i++, h = (h + 1) & (FBS_N - 1)) {
+        a64_u32 cur = fbs[h].key;
+        if (!cur) {
+            a64_u32 z = 0;
+            if (!__atomic_compare_exchange_n(&fbs[h].key, &z, k, 0, __ATOMIC_RELAXED, __ATOMIC_RELAXED) && z != k) continue;
+            cur = k;
+        }
+        if (cur == k) { __atomic_fetch_add(&fbs[h].n, 1, __ATOMIC_RELAXED); return; }
+    }
+}
+void a64_jit_fbstat(int on) { fbs_on = on; }
+/* chama out(chave, contagem) para as 'max' classes mais executadas, em ordem decrescente */
+void a64_jit_fbstat_dump(void (*out)(a64_u32 key, a64_u64 count, void *arg), void *arg, int max) {
+    static a64_u8 used[FBS_N];
+    __builtin_memset(used, 0, sizeof used);
+    for (int k = 0; k < max; k++) {
+        int best = -1;
+        for (int i = 0; i < FBS_N; i++)
+            if (fbs[i].key && !used[i] && (best < 0 || fbs[i].n > fbs[best].n)) best = i;
+        if (best < 0) break;
+        used[best] = 1;
+        out(fbs[best].key & ~1u, fbs[best].n, arg);
+    }
+}
+
 int jit_h_interp(a64_cpu *c, a64_u32 insn) {
+    if (__builtin_expect(fbs_on, 0)) fbs_count(insn);
     c->nzcv = jit_x86_to_nzcv(JIT_F(c));
     int r = a64_interp_exec(c, insn);
     JIT_F(c) = jit_nzcv_to_x86(c->nzcv);
@@ -509,6 +578,11 @@ static jblk *get_block(jthr *self, a64_u64 pc) {   /* J.lock tomada */
         p->wp = host_wprotect(pg, 1);
         if (p->wp) p->wp_ever = 1;
     }
+    a64_u64 pg2 = (b->end - 1) & ~(JIT_PAGE - 1);       /* última instrução atravessa a página */
+    if (pg2 != pg) {
+        jpage *p2 = page_get(pg2);
+        if (p2) { b->pg[1] = pg2; b->npg = 2; b->pgnext[1] = p2->blocks; p2->blocks = b; }
+    }
     ulk(&J.wplock);
     return b;
 }
@@ -516,6 +590,14 @@ static jblk *get_block(jthr *self, a64_u64 pc) {   /* J.lock tomada */
 /* ---------------------------------------------------------------------------------------------
  * Despachante
  * ------------------------------------------------------------------------------------------- */
+/* lê 4 bytes do código guest de verdade (o compilador não pode descartar): uma falha aqui é a
+ * falha de busca em pc, com o estado já consistente */
+static inline void jit_probe(a64_u64 pc) {
+    a64_u32 v;
+    __asm__ volatile("movl (%1), %0" : "=r"(v) : "r"((uintptr_t)pc) : "memory");
+    (void)v;
+}
+
 static int jit_loop(a64_cpu *c, jthr *t);
 int a64_jit_run(a64_cpu *c) {
     jit_init();
@@ -549,23 +631,29 @@ static int jit_loop(a64_cpu *c, jthr *t) {
         if (!code) {
             __atomic_store_n(&t->in_jit, 0, __ATOMIC_SEQ_CST);
             a64_u64 pc = c->pc;
-            (void)a64_ld32(pc);                 /* falha de busca aqui: estado já consistente (pc = alvo) */
+            jit_probe(pc);                      /* falha de busca aqui: estado já consistente (pc = alvo) */
             lk(&J.lock);
+            t->translating = 1;
             jblk *b = get_block(t, pc);
+            t->translating = 0;
             if (b) { e->code = b->code; __atomic_store_n(&e->pc, pc, __ATOMIC_RELEASE); }
             ulk(&J.lock);
             if (!b) { c->nzcv = jit_x86_to_nzcv(JIT_F(c)); return a64_interp_run(c, 0); }
             continue;                           /* volta ao topo: in_jit e pedidos conferidos de novo */
         }
         int r = J.enter(c, code);
+        J.nret[r & 127]++;
         __atomic_store_n(&t->in_jit, 0, __ATOMIC_SEQ_CST);
         switch (r) {
         case JX_LINK: {
+            jit_probe(c->pc);                   /* sonda fora da trava: falha aqui = busca em c->pc */
             lk(&J.lock);
             a64_u8 *site = (a64_u8 *)(uintptr_t)t->link_site;
             jblk *src = block_by_host(site);
             a64_u64 gen = J.nflush;
+            t->translating = 1;
             jblk *dst = get_block(t, c->pc);
+            t->translating = 0;
             if (dst && src && gen == J.nflush && !src->dead && !dst->dead) {
                 jlink *l = jit_data_alloc(sizeof *l);
                 if (l) {
@@ -606,10 +694,16 @@ static int jit_loop(a64_cpu *c, jthr *t) {
 /* ---------------------------------------------------------------------------------------------
  * Recuperação de estado numa falha dentro do código gerado
  * ------------------------------------------------------------------------------------------- */
+/* falha lendo código guest dentro do tradutor (ex.: munmap concorrente): nada foi publicado
+ * ainda (código não comitado, bloco fora das tabelas), então basta soltar a trava */
+static void drop_translate_lock(jthr *t) {
+    if (t && t->translating) { t->translating = 0; ulk(&J.lock); }
+}
 bool a64_jit_recover(a64_cpu *c, const a64_hostctx *h) {
     if (!J.inited) return false;
     jthr *t = (jthr *)c->jit;
     const a64_u8 *rip = (const a64_u8 *)(uintptr_t)h->rip;
+    drop_translate_lock(t);
     jblk *b = (rip >= J.code_start && rip < J.code_end) ? block_by_host(rip) : NULL;
     if (!b) {
         /* fora dos blocos: helper do interpretador (estado já sincronizado em c) ou despachante */
@@ -656,7 +750,52 @@ void a64_jit_stats(a64_u64 *ntrans, a64_u64 *nflush, a64_u64 *code_bytes) {
 void a64_jit_abort(a64_cpu *c) {
     jthr *t = (jthr *)c->jit;
     if (!t) return;
+    drop_translate_lock(t);
     __atomic_store_n(&t->in_jit, 0, __ATOMIC_SEQ_CST);
     t->in_run = 0;
     t->saved_rsp = 0;
+}
+
+/* filho de fork: só sobrou a thread que chamou fork. Travas que outra thread do pai segurava e
+ * marcas "dentro do JIT" dela não valem mais; as estruturas dessas threads viram livres (são
+ * reaproveitadas). Chamar antes de qualquer outra função do JIT no filho (e depois descartar as
+ * traduções com a64_invalidate(0, ~0ull), como o runtime faz). */
+void a64_jit_fork_child(a64_cpu *self) {
+    J.lock = 0;
+    J.wplock = 0;
+    init_lock = 0;
+    J.flush_active = 0;
+    for (jthr *t = J.threads; t; t = t->next) {
+        t->in_jit = 0;
+        t->in_run = 0;
+        t->translating = 0;
+        if (t->cpu != self || !t->live) {
+            if (t->cpu) { t->cpu->jit = NULL; __atomic_store_n(stop_hi(t->cpu), 0, __ATOMIC_RELAXED); }
+            t->cpu = NULL;
+            t->live = 0;
+        }
+    }
+}
+
+/* consulta sem trava, para o runtime decidir se precisa invalidar depois de uma escrita que não
+ * passa pela proteção de página (read() do kernel direto no buffer). true = pode haver tradução
+ * no intervalo (resposta conservadora em corrida com tradução/esvaziamento). */
+bool a64_jit_has_code(a64_u64 addr, a64_u64 len) {
+    if (!J.inited || !len) return false;
+    a64_u64 p0 = addr & ~(JIT_PAGE - 1), last = addr + len - 1;
+    if (last < addr) last = ~0ull;
+    a64_u64 p1 = last & ~(JIT_PAGE - 1);
+    if ((p1 - p0) / JIT_PAGE > 64) return true;
+    a64_u64 gen = __atomic_load_n(&J.nflush, __ATOMIC_ACQUIRE);
+    if (__atomic_load_n(&J.flush_active, __ATOMIC_ACQUIRE)) return true;
+    for (a64_u64 pg = p0;; pg += JIT_PAGE) {
+        int n = 0;
+        for (jpage *p = __atomic_load_n(&J.pgh[hpg(pg)], __ATOMIC_ACQUIRE); p; p = __atomic_load_n(&p->next, __ATOMIC_ACQUIRE)) {
+            if (++n > 64) return true;
+            if (p->page == pg && __atomic_load_n(&p->blocks, __ATOMIC_ACQUIRE)) return true;
+        }
+        if (pg == p1) break;
+    }
+    if (__atomic_load_n(&J.flush_active, __ATOMIC_ACQUIRE) || gen != __atomic_load_n(&J.nflush, __ATOMIC_ACQUIRE)) return true;
+    return false;
 }

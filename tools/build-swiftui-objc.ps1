@@ -12,15 +12,16 @@
 #   .\tools\build-swiftui-objc.ps1                 # tudo
 #   .\tools\build-swiftui-objc.ps1 -From Core       # a partir de uma etapa (Deps, Core, UI, Link)
 #   .\tools\build-swiftui-objc.ps1 -Only UI -TypeCheck   # só checa tipos (rápido, sem .o)
-param([string]$From = 'Deps', [string[]]$Only, [switch]$TypeCheck)
+param([string]$From = 'Deps', [string[]]$Only, [switch]$TypeCheck, [string]$Arch = 'x86_64')
 $root = Split-Path $PSScriptRoot -Parent
+. "$PSScriptRoot\swift-arch.ps1" $Arch
 $tc = Get-ChildItem "$root\.tools\swift\LocalApp\Programs\Swift\Toolchains" -Directory | Select-Object -First 1
-$zig = (Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*')[0].FullName + '\zig.exe'
-$objc = "$root\build\swift\objc"
+$zig = (Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*' | Where-Object { Test-Path "$($_.FullName)\zig.exe" })[0].FullName + '\zig.exe'
+$objc = "$SwiftBuild\objc"
 $ov = "$objc\overlays"
 $inc = "$objc\sdk\include"
 $sui = "$objc\swiftui"
-$nat = "$root\build\swift\openswiftui"          # variante nativa (objetos C/C++)
+$nat = "$SwiftBuild\openswiftui"          # variante nativa (objetos C/C++; no arm64: build-openswiftui-deps.ps1 -Arch arm64)
 $deps = "$root\.tools\openswiftui\deps"
 $osui = "$root\.tools\openswiftui\main\OpenSwiftUI-main\Sources"
 $nsdk = "$root\userland\sdk\openswiftui"         # SDK da variante nativa (fontes Swift do mOS)
@@ -77,7 +78,7 @@ $script:extras = $false   # Convert-Swift só junta o import MOSFoundationExtras
 # ---- módulo Swift sobre a stdlib com ObjC
 function Build-Swift($name, $files, $extra, $lang = '5', [bool]$evolution = $true) {
     $out = "$sui\$name"; New-Item -ItemType Directory -Force $out | Out-Null
-    $a = @('-target', 'x86_64-apple-macos26', '-module-name', $name, '-parse-as-library', '-swift-version', $lang, '-O',
+    $a = @('-target', $SwiftTriple, '-module-name', $name, '-parse-as-library', '-swift-version', $lang, '-O',
            '-I', $objc, '-I', $ov, '-module-cache-path', $mcache,
            '-I', "$root\.tools\swift-src\stdlib\public\SwiftShims\swift\shims",
            '-disable-implicit-concurrency-module-import',
@@ -104,7 +105,7 @@ function Build-Swift($name, $files, $extra, $lang = '5', [bool]$evolution = $tru
 function Build-C($name, $src, [string[]]$flags = @()) {
     $out = "$sui\$name"; New-Item -ItemType Directory -Force $out | Out-Null
     $o = "$out\" + [IO.Path]::GetFileNameWithoutExtension($src) + '.o'
-    & $zig cc -target x86_64-macos -O2 -c -w @flags $src -o $o 2>&1 | ForEach-Object { "  $_" }
+    & $zig cc -target $ZigTarget -O2 -c -w @flags $src -o $o 2>&1 | ForEach-Object { "  $_" }
     if ($LASTEXITCODE) { Write-Host "${name}: FALHOU" -ForegroundColor Red; $script:fails++ }
 }
 
@@ -343,7 +344,7 @@ if ($run -contains 'Link' -and -not $TypeCheck) {
     foreach ($m in 'Core', 'Foundation', 'Dispatch', 'ObjectiveC', 'Darwin', 'CoreFoundation', 'CoreGraphics', 'os', 'Observation',
                    '_Concurrency', '_StringProcessing') { $libs += "$dy\usr\lib\swift\libswift$m.dylib" }
     $libs = @($libs | Where-Object { Test-Path $_ })
-    $log = & $zig c++ -target x86_64-macos -shared -o "$dir\SwiftUI" '-Wl,-install_name,/System/Library/Frameworks/SwiftUI.framework/Versions/A/SwiftUI' '-Wl,-undefined,dynamic_lookup' @objs @libs 2>&1 | ForEach-Object { "$_" }
+    $log = & $zig c++ -target $ZigTarget -shared -o "$dir\SwiftUI" '-Wl,-install_name,/System/Library/Frameworks/SwiftUI.framework/Versions/A/SwiftUI' '-Wl,-undefined,dynamic_lookup' @objs @libs 2>&1 | ForEach-Object { "$_" }
     if ($LASTEXITCODE -ne 0) { $log | Select-Object -First 15 | ForEach-Object { "  $_" }; Write-Host 'SwiftUI.framework: link FALHOU' -ForegroundColor Red; exit 1 }
     Write-Host ("SwiftUI.framework: ok ({0:N0} KB, {1} objetos)" -f ((Get-Item "$dir\SwiftUI").Length / 1KB), $objs.Count) -ForegroundColor Green
 }

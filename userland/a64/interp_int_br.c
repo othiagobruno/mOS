@@ -77,6 +77,9 @@ static int b_reg(a64_cpu *c, a64_u32 i) {
     }
     if (link) c->x[30] = c->pc + 4;
     c->pc = target;
+    /* alvo desalinhado: o desvio se completa (link incluído) e a busca do alvo dá PC alignment
+     * fault (ELR = FAR = alvo) antes de executar qualquer coisa lá → SIGBUS no runtime */
+    if (target & 3) { c->exit_info = target; return A64_EXIT_FAULT; }
     return A64_BRANCH;
 }
 

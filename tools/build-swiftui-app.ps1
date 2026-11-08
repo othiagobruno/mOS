@@ -3,7 +3,7 @@
 param([string]$Name = 'Ola')
 $root = Split-Path $PSScriptRoot -Parent
 $tc = (Get-ChildItem "$root\.tools\swift\LocalApp\Programs\Swift\Toolchains" -Directory | Select-Object -First 1).FullName
-$zig = (Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*')[0].FullName + '\zig.exe'
+$zig = (Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*' | Where-Object { Test-Path "$($_.FullName)\zig.exe" })[0].FullName + '\zig.exe'
 $full = "$root\build\swift\full"
 $o = "$root\build\swift\openswiftui"
 $srcDir = "$root\userland\samples-swiftui\$Name"

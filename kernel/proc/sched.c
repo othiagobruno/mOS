@@ -393,7 +393,10 @@ void sched_kentry(int_frame_t *f) {
 u64 sched_dead_check(int_frame_t *f) {
     pcpu_t *c = me_pc();
     __atomic_and_fetch(&c->pending, ~PEND_RESCHED, __ATOMIC_SEQ_CST);
-    return c->cur->state == TH_DEAD || c->cur->suspend ? sched_switch(f) : 0;   /* morta, ou suspensa (thread_suspend) */
+    /* só a morta sai aqui. Uma suspensa (thread_suspend) não: isto roda na entrada da syscall, antes dela, e a thread
+     * voltaria depois com rax = o número da syscall no lugar do resultado (o sampler do Chromium derrubava o Codex). Ela
+     * sai da CPU em sched_kexit, na volta ao ring 3, ou no irq_exit. */
+    return c->cur->state == TH_DEAD ? sched_switch(f) : 0;
 }
 
 /* decide o que fazer com a trava antes de voltar para o frame r */
@@ -403,6 +406,13 @@ u64 sched_kexit(u64 r) {
     for (;;) {
         int_frame_t *f = (int_frame_t *)r;
         bool held = __atomic_load_n(&bkl_owner, __ATOMIC_RELAXED) == me;
+        if ((f->cs & 3) && c->cur->suspend && c->cur->proc) {
+            /* thread_suspend (SYS_THREADCTL): a syscall ou a falta já terminou (rax é o resultado); sai da CPU antes de
+             * voltar ao usuário, e o frame salvo é o que o thread_get_state lê */
+            if (!held) sched_klock();
+            r = sched_switch(f);
+            continue;
+        }
         if (f->cs & 3) {
             __atomic_store_n(&c->in_user, 1, __ATOMIC_SEQ_CST);
             u32 pend = __atomic_load_n(&c->pending, __ATOMIC_SEQ_CST);

@@ -3,11 +3,12 @@
 # nomes e layouts do SDK da Apple. Fontes em userland\sdk\swift-objc\<Módulo>; stdlib com ObjC em build\swift\objc
 # (tools\build-swift-full-objc.ps1). Saída: build\swift\objc\overlays\<Módulo>.swiftmodule e <Módulo>.o
 #   .\tools\build-swift-overlays-objc.ps1 [-Only ObjectiveC]
-param([string[]]$Only)
+param([string[]]$Only, [string]$Arch = 'x86_64')
 $root = Split-Path $PSScriptRoot -Parent
+. "$PSScriptRoot\swift-arch.ps1" $Arch
 $tc = Get-ChildItem "$root\.tools\swift\LocalApp\Programs\Swift\Toolchains" -Directory | Select-Object -First 1
-$zig = (Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*')[0].FullName
-$objc = "$root\build\swift\objc"
+$zig = (Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*' | Where-Object { Test-Path "$($_.FullName)\zig.exe" })[0].FullName
+$objc = "$SwiftBuild\objc"
 $out = "$objc\overlays"
 $sdkSrc = "$root\userland\sdk\swift-objc"
 if (-not (Test-Path "$objc\swiftCore.o")) { Write-Host 'falta a stdlib com ObjC (tools\build-swift-full-objc.ps1)' -ForegroundColor Red; exit 1 }
@@ -49,7 +50,7 @@ $fails = 0
 function Build-Overlay($name, [string[]]$files = @(), [bool]$underlying = $true, [string[]]$extra = @()) {
     if ($Only -and $Only -notcontains $name) { return }
     if (-not $files) { $files = @(Get-ChildItem "$sdkSrc\$name" -Filter *.swift | ForEach-Object FullName) }
-    $a = @('-c', '-target', 'x86_64-apple-macos26', '-module-name', $name, '-parse-as-library', '-swift-version', '5', '-O',
+    $a = @('-c', '-target', $SwiftTriple, '-module-name', $name, '-parse-as-library', '-swift-version', '5', '-O',
            '-enable-library-evolution', '-I', $objc, '-I', $out, '-module-cache-path', "$objc\modcache",
            '-I', "$root\.tools\swift-src\stdlib\public\SwiftShims\swift\shims",
            '-disable-implicit-concurrency-module-import', '-disable-implicit-string-processing-module-import',
@@ -104,7 +105,7 @@ if (Test-Path $spr) {
     Build-Overlay '_RegexParser' @(Get-ChildItem "$spr\_RegexParser" -Recurse -Filter *.swift | ForEach-Object FullName) $false $spAvail
     if (-not $Only -or $Only -contains '_StringProcessing') {
         foreach ($c in Get-ChildItem "$spr\_CUnicode" -Filter *.c) {
-            & "$zig\zig.exe" cc -target x86_64-macos -O2 -c "-I$spr\_CUnicode\include" -std=gnu11 $c.FullName -o "$out\_CUnicode_$($c.BaseName).o" 2>&1 | ForEach-Object { "  $_" }
+            & "$zig\zig.exe" cc -target $ZigTarget -O2 -c "-I$spr\_CUnicode\include" -std=gnu11 $c.FullName -o "$out\_CUnicode_$($c.BaseName).o" 2>&1 | ForEach-Object { "  $_" }
         }
     }
     Build-Overlay '_StringProcessing' @(Get-ChildItem "$spr\_StringProcessing" -Recurse -Filter *.swift | ForEach-Object FullName) $false ($spAvail + @('-Xcc', "-I$spr\_CUnicode\include"))

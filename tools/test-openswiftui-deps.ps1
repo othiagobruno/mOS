@@ -7,7 +7,7 @@ param([string]$Main,   # outro programa de teste no lugar de tests\main.swift (p
       [switch]$Essentials)   # tests\essentials.swift: FoundationEssentials (swift-foundation) + _StringProcessing
 $root = Split-Path $PSScriptRoot -Parent
 $tc = (Get-ChildItem "$root\.tools\swift\LocalApp\Programs\Swift\Toolchains" -Directory)[0].FullName
-$zig = (Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*')[0].FullName + '\zig.exe'
+$zig = (Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*' | Where-Object { Test-Path "$($_.FullName)\zig.exe" })[0].FullName + '\zig.exe'
 $o = "$root\build\swift\openswiftui"
 $full = "$root\build\swift\full"
 $deps = "$root\.tools\openswiftui\deps"

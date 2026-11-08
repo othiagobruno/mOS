@@ -2,6 +2,7 @@
 // /usr/lib/libsqlite3.dylib e /usr/lib/libicucore.A.dylib, com o slice arm64 escolhido pelo carregador.
 // tools/build-libsys-arm64-test.ps1 compila com -nostdlib++ contra os slices de build\libcxx-arm64 etc.
 #include <stdio.h>
+#include <string.h>
 #include <string>
 #include <sstream>
 #include <stdexcept>
@@ -15,6 +16,10 @@ const char *sqlite3_libversion(void);
 typedef unsigned short UChar;
 int u_strToUpper(UChar *dest, int cap, const UChar *src, int len, const char *locale, int *err);
 const char *u_errorName(int);
+int compress2(unsigned char *, unsigned long *, const unsigned char *, unsigned long, int);
+int uncompress(unsigned char *, unsigned long *, const unsigned char *, unsigned long);
+unsigned long crc32(unsigned long, const unsigned char *, unsigned);
+const char *zlibVersion(void);
 }
 static int falhas;
 #define CHECK(n, c) do { if (c) printf("[arm64] ok    %s\n", n); else { printf("[arm64] FALHA %s (linha %d)\n", n, __LINE__); falhas++; } fflush(stdout); } while (0)
@@ -39,6 +44,13 @@ int main() {
     UChar src[] = {'a', 'b', 0xE7, 0}, dst[8] = {0}; int err = 0;
     int n = u_strToUpper(dst, 8, src, 3, "pt_BR", &err);
     CHECK("libicucore do disco: u_strToUpper", err <= 0 && n == 3 && dst[0] == 'A' && dst[2] == 0xC7);
+    unsigned char z[256], back[256]; unsigned long zl = sizeof z, bl = sizeof back;
+    const char *txt = "mOS mOS mOS mOS mOS mOS mOS mOS arm64 arm64 arm64";
+    int zr = compress2(z, &zl, (const unsigned char *)txt, (unsigned long)strlen(txt), 9);
+    zr |= uncompress(back, &bl, z, zl);
+    CHECK("libz do disco: compress2/uncompress/crc32", zr == 0 && bl == strlen(txt) && !memcmp(back, txt, bl) && zl < bl &&
+          crc32(0, (const unsigned char *)"123456789", 9) == 0xCBF43926ul);
+    printf("  zlib %s\n", zlibVersion());
     printf("[arm64] dylibs: %d falhas\n", falhas);
     return falhas;
 }

@@ -20,21 +20,24 @@ void rt_thread_start(void);
 void rt_thread_exit_now(volatile int *state, long code) __attribute__((noreturn));
 
 /* ---------------------------------------------------------------- memória do host */
+/* memória do runtime (estado do JIT, cache de código, pilhas do host): sob demanda (SYS_MMAP modo 3, kernel/mm/lazy.c),
+ * cada página vira RAM só no primeiro toque; o kernel alinha faixas de 2 MiB ou mais à maior potência de 2. Sem o modo
+ * (harness antigo), cai para o mmap comum. */
 void *rt_alloc(u64 len) {
-    long r = RS1(SYS_MMAP, (len + 0xFFF) & ~0xFFFULL);
+    len = (len + 0xFFF) & ~0xFFFULL;
+    long r = RS3(SYS_MMAP, len, 3, 0);
+    if (r < 0 && r > -4096) r = RS1(SYS_MMAP, len);
     if (r < 0 && r > -4096) return 0;
     return (void *)r;
 }
 void rt_free(void *p, u64 len) { if (p) RS2(SYS_MUNMAP, p, (len + 0xFFF) & ~0xFFFULL); }
 
-/* pilha do host alinhada ao próprio tamanho (rt_self) */
+/* pilha do host alinhada ao próprio tamanho (rt_self): 2 MiB sob demanda já vêm alinhados a 2 MiB; usa a primeira
+ * metade e nunca devolve a sobra (sem munmap no meio das regiões: a faixa de cima não fica livre para outros mmap) */
 static void *alloc_hstack(void) {
     u64 a = (u64)rt_alloc(2 * A64RT_HSTACK);
     if (!a) return 0;
-    u64 lo = (a + A64RT_HSTACK - 1) & ~(A64RT_HSTACK - 1);
-    if (lo > a) RS2(SYS_MUNMAP, a, lo - a);
-    if (a + 2 * A64RT_HSTACK > lo + A64RT_HSTACK) RS2(SYS_MUNMAP, lo + A64RT_HSTACK, a + 2 * A64RT_HSTACK - (lo + A64RT_HSTACK));
-    return (void *)lo;
+    return (void *)((a + A64RT_HSTACK - 1) & ~(A64RT_HSTACK - 1));
 }
 
 /* ---------------------------------------------------------------- tabela de threads */
@@ -123,10 +126,18 @@ void a64_host_icache_inval(a64_cpu *c, a64_u64 addr, a64_u64 len) { (void)c; a64
 void a64_host_yield(a64_cpu *c) { (void)c; RS0(SYS_YIELD); }
 /* JIT: regiões RWX (todo mmap do mOS é leitura+escrita+execução) */
 void *a64_host_jit_alloc(a64_u64 len) { return rt_alloc(len); }
-/* O kernel do mOS ainda não aplica proteção por página (mprotect só registra, machipc.c): sem tirar a escrita das
- * páginas traduzidas, a rede de segurança do JIT fica desligada e vale o IC IVAU / sys_icache_invalidate, que é o que
- * a arquitetura exige de quem gera código. protect=2 (consulta): a página é gravável. */
-int a64_host_jit_wprotect(a64_u64 page, int protect) { (void)page; (void)protect; return 0; }
+/* Rede de segurança do JIT contra código que se reescreve sem IC IVAU: proteção de escrita de verdade na PTE
+ * (MACH_VM_JIT_WPROTECT, kernel/proc/process.c uvm_jit_wprotect). protect=1 tira a escrita (1 se a página era
+ * gravável e não COW), 0 devolve, 2 consulta. Sem o op no kernel (kernel antigo), devolve 0: a rede fica desligada e
+ * vale o IC IVAU / sys_icache_invalidate, que é o que a arquitetura exige de quem gera código. */
+static int wp_off;
+int a64_host_jit_wprotect(a64_u64 page, int protect) {
+    if (wp_off) return 0;
+    u64 a[8] = {page, (u64)protect, 0, 0, 0, 0, 0, 0};
+    long r = RS2(SYS_MACH_VM, MACH_VM_JIT_WPROTECT, a);
+    if (r != 0) { wp_off = 1; return 0; }
+    return (int)a[2];
+}
 
 /* ---------------------------------------------------------------- syscalls */
 static bool restartable(long n) {
@@ -194,13 +205,47 @@ static void fork_child(rt_thread_t *T) {
         if (g_threads[i] && g_threads[i] != T) g_threads[i]->state = 0;   /* as outras threads não existem no filho */
     T->tid = RS0(SYS_GETTID);
     rt_sig_fork_child();
+    /* no filho as páginas protegidas pelo JIT viraram COW (o kernel não avisa quando a cópia é quebrada): todas as
+     * traduções saem e voltam, já protegidas de novo, na próxima execução. Antes, o JIT solta travas e estado das
+     * threads que não existem no filho. */
+#ifdef A64_HAVE_JIT
+    a64_jit_fork_child(&T->cpu);
+#endif
+    a64_invalidate(0, ~0ULL);
 }
+
+/* diagnóstico para a frente JIT (com MOS_A64_DEBUG / A64RT_DIR/depurar): as instruções que o código gerado manda ao
+ * interpretador, por frequência (chave = palavra sem os campos de registrador), na saída e a cada 60 s */
+#ifdef A64_HAVE_JIT
+static int g_fb_n;
+static void fbstat_out(a64_u32 key, a64_u64 count, void *arg) {
+    (void)arg;
+    rt_log("a64rt: interp %08x x %lu\n", key, count);
+    g_fb_n++;
+}
+static void fbstat_dump(const char *quando) {
+    if (rt_engine != A64_ENGINE_JIT) return;
+    rt_log("a64rt: instruções no interpretador (%s, pid %d):\n", quando, (int)RS0(SYS_GETPID));
+    g_fb_n = 0;
+    a64_jit_fbstat_dump(fbstat_out, 0, 80);
+}
+static volatile u64 g_fb_next;
+static void fbstat_tick(void) {
+    u64 now = (u64)RS0(SYS_TIME), nx = g_fb_next;
+    if (!nx) { __atomic_compare_exchange_n(&g_fb_next, &nx, now + 60000, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE); return; }
+    if (now >= nx && __atomic_compare_exchange_n(&g_fb_next, &nx, now + 60000, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
+        fbstat_dump("periódico");
+}
+#endif
 
 static void mos_svc(rt_thread_t *T) {
     a64_cpu *c = &T->cpu;
     long n = (long)c->x[8];
     u64 a = c->x[0], b = c->x[1], d = c->x[2], e = c->x[3], f = c->x[4], g = c->x[5];
     long r;
+#ifdef A64_HAVE_JIT
+    if (rt_debug) fbstat_tick();
+#endif
     switch (n) {
     case A64RT_SYS_SET_TSD: c->tpidrro_el0 = a; c->x[0] = 0; return;
     case A64RT_SYS_GET_TSD: c->x[0] = c->tpidrro_el0; return;
@@ -211,6 +256,16 @@ static void mos_svc(rt_thread_t *T) {
         return;
     case SYS_THREAD_CREATE: c->x[0] = (u64)thread_create(a, b, d); return;
     case SYS_THREAD_EXIT: thread_exit(T, (long)a);
+    case SYS_EXIT:
+#ifdef A64_HAVE_JIT
+        if (rt_debug) {                                /* diagnóstico: traduções, esvaziamentos e cache em uso */
+            a64_u64 nt = 0, nf = 0, cb = 0;
+            a64_jit_stats(&nt, &nf, &cb);
+            rt_log("a64rt: saída %ld; JIT: %lu blocos traduzidos, %lu esvaziamentos, %lu KiB de código\n", (long)a, nt, nf, cb >> 10);
+            fbstat_dump("saída");
+        }
+#endif
+        break;
     case SYS_SIG: c->x[0] = (u64)rt_sig_syscall(T, (long)a, (long)b, (long)d, (long)e); return;
     case SYS_SIGACTION: c->x[0] = (u64)rt_sigaction_old(T, (long)a, (long)b, (long)d); return;
     case SYS_SIGRETURN: rt_sig_return_old(T); return;
@@ -230,6 +285,14 @@ static void mos_svc(rt_thread_t *T) {
     T->in_svc = 0;
     /* memória que deixou de ser o que era (munmap, MAP_FIXED por cima, mprotect): traduções dela não valem mais */
     if (n == SYS_MUNMAP && r == 0) a64_invalidate(a, b);
+    /* o kernel escreve na memória do usuário sem passar pela PTE (a proteção do JIT não vê): leitura direto num buffer
+     * que tem código traduzido */
+    if ((n == SYS_READ || n == SYS_PREAD) && r > 0) {
+#ifdef A64_HAVE_JIT
+        if (a64_jit_has_code(b, (u64)r))               /* consulta sem trava: o caso comum não toma a trava do JIT */
+#endif
+            a64_invalidate(b, (u64)r);
+    }
     if (n == SYS_MACH_VM && b && r == 0 && a == MACH_VM_PROTECT) a64_invalidate(((const u64 *)b)[0], ((const u64 *)b)[1]);
     if (r == -MOS_EINTR && T->pend && restartable(n)) {
         int sig = __builtin_ctz(T->pend);
@@ -346,6 +409,9 @@ void rt_main(const a64rt_boot_t *b) {
 #endif
     pick_engine(b->guest_x0);
     rt_sig_init();
+#ifdef A64_HAVE_JIT
+    if (rt_debug && rt_engine == A64_ENGINE_JIT) a64_jit_fbstat(1);
+#endif
     a64_cpu *c = &T->cpu;
     c->pc = b->guest_entry;
     c->x[0] = b->guest_x0;

@@ -283,8 +283,9 @@ void rt_host_signal(int sig, mos_siginfo_t *si, mos_ucontext_t *uc) {
         a64_cpu *c = &T->cpu;
         bool guest = T->in_guest && !T->in_svc && (sig == MOS_SIGSEGV || sig == MOS_SIGBUS);
 #ifdef A64_HAVE_JIT
-        /* escrita numa página que o JIT protegeu: só retomar (a escrita é refeita) */
-        if (guest && (mc->err & 2) && a64_jit_write_fault(si->si_addr)) return;
+        /* escrita numa página que o JIT protegeu: só retomar (a escrita é refeita). Vale também fora do guest: o próprio
+         * runtime escreve na memória do guest (quadros de sinal, structs de syscall emuladas) */
+        if ((sig == MOS_SIGSEGV || sig == MOS_SIGBUS) && (mc->err & 2) && a64_jit_write_fault(si->si_addr)) return;
 #endif
         if (!guest) {
             rt_log("a64rt: %s %d no próprio runtime: rip=%lx endereço=%lx (pc do guest %lx, tid %d%s)\n",

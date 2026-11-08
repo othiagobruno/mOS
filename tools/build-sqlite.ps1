@@ -8,7 +8,7 @@
 param([switch]$Force, [ValidateSet('x86_64', 'arm64')][string]$Arch = 'x86_64')
 $tgt = if ($Arch -eq 'arm64') { 'aarch64-macos.11.0' } else { 'x86_64-macos.11.0' }
 $root = Split-Path $PSScriptRoot -Parent
-$zig = (Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*' | Select-Object -First 1).FullName + '\zig.exe'
+$zig = (Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*' | Where-Object { Test-Path "$($_.FullName)\zig.exe" } | Select-Object -First 1).FullName + '\zig.exe'
 $src = Get-ChildItem "$root\.tools\sqlite-dl" -Directory -Filter 'sqlite-amalgamation-*' -ErrorAction SilentlyContinue | Sort-Object Name | Select-Object -Last 1
 if (-not $src) { Write-Host 'falta o amálgama do SQLite em .tools\sqlite-dl (sqlite.org/download.html)' -ForegroundColor Yellow; exit 0 }
 $out = "$root\build\sqlite" + $(if ($Arch -eq 'arm64') { '-arm64' } else { '' })

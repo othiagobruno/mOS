@@ -4,10 +4,12 @@
 # /System/iOSSupport/usr/lib/swift/libswiftUIKit.dylib na raiz das dylibs (build\swift\objc\dylib).
 # Antes: tools\build-swift-foundation-objc.ps1 (Foundation) e tools\build-frameworks-objc.ps1 -Only UIKit.
 #   .\tools\build-swift-uikit-objc.ps1
+param([string]$Arch = 'x86_64')   # -Arch arm64: build\swift-arm64 (tools\swift-arch.ps1)
 $root = Split-Path $PSScriptRoot -Parent
+. "$PSScriptRoot\swift-arch.ps1" $Arch
 $tc = Get-ChildItem "$root\.tools\swift\LocalApp\Programs\Swift\Toolchains" -Directory | Select-Object -First 1
-$zig = (Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*')[0].FullName + '\zig.exe'
-$objc = "$root\build\swift\objc"
+$zig = (Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*' | Where-Object { Test-Path "$($_.FullName)\zig.exe" })[0].FullName + '\zig.exe'
+$objc = "$SwiftBuild\objc"
 $out = "$objc\overlays"
 $inc = "$objc\sdk\include"
 $sdkSrc = "$root\userland\sdk\swift-objc"
@@ -18,7 +20,7 @@ Copy-Item "$sdkSrc\sdk\UIKit" $inc -Recurse -Force
 Copy-Item "$sdkSrc\sdk\Foundation" $inc -Recurse -Force
 
 $files = @(Get-ChildItem "$sdkSrc\UIKit" -Filter *.swift | ForEach-Object FullName)
-$a = @('-c', '-target', 'x86_64-apple-macos26', '-module-name', 'UIKit', '-parse-as-library', '-swift-version', '5', '-O',
+$a = @('-c', '-target', $SwiftTriple, '-module-name', 'UIKit', '-parse-as-library', '-swift-version', '5', '-O',
        '-enable-library-evolution', '-I', $objc, '-I', $out, '-module-cache-path', "$objc\modcache",
        '-I', "$root\.tools\swift-src\stdlib\public\SwiftShims\swift\shims",
        '-Xcc', "-isystem$inc", '-Xcc', '-Wno-nullability-completeness', '-Xcc', '-DMOS_SWIFT_OBJC=1',
@@ -35,6 +37,6 @@ Write-Host ("UIKit (Swift): ok ({0:N0} KB, {1} fontes)" -f ((Get-Item "$out\uiki
 
 $dir = "$objc\dylib\System\iOSSupport\usr\lib\swift"
 New-Item -ItemType Directory -Force $dir | Out-Null
-$log = & $zig c++ -target x86_64-macos -shared -o "$dir\libswiftUIKit.dylib" '-Wl,-install_name,/System/iOSSupport/usr/lib/swift/libswiftUIKit.dylib' '-Wl,-undefined,dynamic_lookup' "$out\uikit\UIKit.o" 2>&1 | ForEach-Object { "$_" }
+$log = & $zig c++ -target $ZigTarget -shared -o "$dir\libswiftUIKit.dylib" '-Wl,-install_name,/System/iOSSupport/usr/lib/swift/libswiftUIKit.dylib' '-Wl,-undefined,dynamic_lookup' "$out\uikit\UIKit.o" 2>&1 | ForEach-Object { "$_" }
 if ($LASTEXITCODE -ne 0) { $log | Select-Object -First 8 | ForEach-Object { "  $_" }; Write-Host 'libswiftUIKit: link FALHOU' -ForegroundColor Red; exit 1 }
 Write-Host ("libswiftUIKit: ok ({0:N0} KB) -> /System/iOSSupport/usr/lib/swift/libswiftUIKit.dylib" -f ((Get-Item "$dir\libswiftUIKit.dylib").Length / 1KB))

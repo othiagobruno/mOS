@@ -11,15 +11,19 @@
 #   .\tools\build-openswiftui-deps.ps1                         # tudo
 #   .\tools\build-openswiftui-deps.ps1 -Repo OpenRenderBox     # um repositório
 #   .\tools\build-openswiftui-deps.ps1 -Only Graph,Subgraph    # só alguns fontes (sem gerar a .a)
-param([string[]]$Repo = @('OpenAttributeGraph', 'Compute', 'OpenRenderBox', 'OpenObservation', 'Foundation', 'OpenCoreGraphics'), [string[]]$Only)
+param([string[]]$Repo = @('OpenAttributeGraph', 'Compute', 'OpenRenderBox', 'OpenObservation', 'Foundation', 'OpenCoreGraphics'), [string[]]$Only, [string]$Arch = 'x86_64')
 $root = Split-Path $PSScriptRoot -Parent
+# -Arch arm64 (tradutor arm64, tools\swift-arch.ps1): só os objetos C/C++ (Compute, OpenRenderBox, OpenSwiftUI_SPI, CoreText...)
+# em build\swift-arm64\openswiftui, para o SwiftUI.framework arm64 (tools\build-swiftui-objc.ps1 -Arch arm64); os módulos
+# Swift desta variante nativa ficam só no x86_64 (os apps SwiftUI do próprio mOS)
+. "$PSScriptRoot\swift-arch.ps1" $Arch
 # Foundation/OpenSwiftUICore precisam do FoundationEssentials: compila-o antes se ainda não existe (-Repo FoundationEssentials força)
 if (($Repo -contains 'Foundation' -or $Repo -contains 'OpenSwiftUICore') -and $Repo -notcontains 'FoundationEssentials' -and
     -not (Test-Path "$PSScriptRoot\..\build\swift\openswiftui\FoundationEssentials\FoundationEssentials.swiftmodule")) { $Repo = @('FoundationEssentials') + $Repo }
-$zig = Join-Path (Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*' | Select-Object -First 1).FullName 'zig.exe'
+$zig = Join-Path (Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*' | Where-Object { Test-Path "$($_.FullName)\zig.exe" } | Select-Object -First 1).FullName 'zig.exe'
 $deps = "$root\.tools\openswiftui\deps"
 $swsrc = "$root\.tools\swift-src"
-$outRoot = "$root\build\swift\openswiftui"
+$outRoot = "$SwiftBuild\openswiftui"
 $shim = "$root\userland\sdk\openswiftui\include"   # os/log.h e tipos de CF que faltam nos cabeçalhos do zig
 $full = "$root\build\swift\full"                   # stdlib Swift completa (sessão do runtime Swift)
 $importerInc = "$root\userland\sdk\openswiftui\importer"
@@ -60,7 +64,7 @@ foreach ($r in @('OpenAttributeGraph', 'OpenRenderBox', 'OpenObservation', 'Open
     Expand-Archive $zip -DestinationPath $deps -Force
 }
 
-$common = @('-target', 'x86_64-macos', '-O2', '-fno-sanitize=all', '-ffunction-sections', '-DNDEBUG', '-w', '-c',
+$common = @('-target', $ZigTarget, '-O2', '-fno-sanitize=all', '-ffunction-sections', '-DNDEBUG', '-w', '-c',
             "-isystem$swsrc\include", "-isystem$swsrc\stdlib\include", "-isystem$swsrc\stdlib\public\SwiftShims")
 $cxx = @('-std=c++20', '-fno-exceptions', '-fno-rtti')
 function Build-Files($name, $files, $cflags, $cxxflags) {
@@ -91,6 +95,7 @@ function Write-Archive($name, $objs) {
 }
 # módulo Swift contra a stdlib completa (sem ObjC, com library evolution, como build\swift\full)
 function Build-Swift($name, $files, $extra, $lang = '5', [bool]$evolution = $true) {
+    if ($Arch -ne 'x86_64') { return $null }   # só C/C++ no arm64
     if (-not (Test-Path "$full\Swift.swiftmodule")) { Write-Host "${name} (Swift): sem stdlib completa em build\swift\full; pulando" -ForegroundColor Yellow; return $null }
     $tc = Get-ChildItem "$root\.tools\swift\LocalApp\Programs\Swift\Toolchains" -Directory | Select-Object -First 1
     $out = "$outRoot\$name"

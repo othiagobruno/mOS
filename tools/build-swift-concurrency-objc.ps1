@@ -4,13 +4,14 @@
 # Precisa de tools\build-swift-full-objc.ps1, tools\build-swift-runtime-objc.ps1 e tools\build-swift-overlays-objc.ps1
 # (Darwin e Dispatch). Saída em build\swift\objc\overlays: _Concurrency.swiftmodule, _Concurrency.o e _Concurrency_*.o (C++).
 #   .\tools\build-swift-concurrency-objc.ps1 [-SoSwift] [-SoCxx]
-param([switch]$SoSwift, [switch]$SoCxx)
+param([switch]$SoSwift, [switch]$SoCxx, [string]$Arch = 'x86_64')
 $root = Split-Path $PSScriptRoot -Parent
+. "$PSScriptRoot\swift-arch.ps1" $Arch
 $tc = Get-ChildItem "$root\.tools\swift\LocalApp\Programs\Swift\Toolchains" -Directory | Select-Object -First 1
-$zig = (Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*')[0].FullName + '\zig.exe'
+$zig = (Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*' | Where-Object { Test-Path "$($_.FullName)\zig.exe" })[0].FullName + '\zig.exe'
 $src = "$root\.tools\swift-src"
 $cc = "$src\stdlib\public\Concurrency"
-$objc = "$root\build\swift\objc"
+$objc = "$SwiftBuild\objc"
 $out = "$objc\overlays"
 $inc = "$objc\sdk\include"
 if (-not (Test-Path "$out\Dispatch.swiftmodule")) { Write-Host 'falta o overlay Dispatch (tools\build-swift-overlays-objc.ps1)' -ForegroundColor Red; exit 1 }
@@ -31,7 +32,7 @@ if (-not $SoSwift) {
               '-DSWIFT_RUNTIME_OS_VERSIONING=0', '-DSWIFT_CONCURRENCY_USES_DISPATCH=1', '-D__STDC_WANT_LIB_EXT1__=1', '-DNDEBUG')
     $cinc = @("-I$src\include", "-I$src\stdlib\include", "-I$src\stdlib\public\SwiftShims", "-I$src\stdlib\public", "-I$cc",
               "-I$root\userland\sdk\objc\include")
-    $fl = @('-target', 'x86_64-macos', '-std=c++20', '-O2', '-fno-exceptions', '-fno-rtti', '-ffunction-sections', '-fno-sanitize=all',
+    $fl = @('-target', $ZigTarget, '-std=c++20', '-O2', '-fno-exceptions', '-fno-rtti', '-ffunction-sections', '-fno-sanitize=all',
             '-fswift-async-fp=always', '-w', '-c')
     $ok = 0; $bad = @()
     # ThreadingError.cpp (swift::threading::fatal) existe também no runtime: na Apple cada dylib tem a sua cópia; na
@@ -67,7 +68,7 @@ if (-not $SoCxx) {
     foreach ($l in Get-Content "$src\utils\availability-macros.def") { if ($l -and -not $l.StartsWith('#')) { $avail += '-define-availability', $l.Trim() } }
     $feat = 'IsolatedAny', 'AllowUnsafeAttribute', 'Extern', 'Macros', 'FreestandingMacros', 'BitwiseCopyable', 'Lifetimes', 'LifetimeDependence',
             'SuppressedAssociatedTypesWithDefaults', 'AddressableParameters', 'AddressableTypes', 'ValueGenerics'
-    $a = @('-c', '-target', 'x86_64-apple-macos26', '-module-name', '_Concurrency', '-D', 'SWIFT_CONCURRENCY_USES_DISPATCH', '-parse-stdlib', '-parse-as-library', '-swift-version', '5', '-O',
+    $a = @('-c', '-target', $SwiftTriple, '-module-name', '_Concurrency', '-D', 'SWIFT_CONCURRENCY_USES_DISPATCH', '-parse-stdlib', '-parse-as-library', '-swift-version', '5', '-O',
            '-enable-library-evolution', '-strict-memory-safety', '-enforce-exclusivity=unchecked', '-swift-async-frame-pointer=always',
            '-disable-implicit-concurrency-module-import', '-disable-implicit-string-processing-module-import',
            '-I', $objc, '-I', $out, '-I', "$src\stdlib\public\SwiftShims\swift\shims", '-I', "$cc\InternalShims",

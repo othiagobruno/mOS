@@ -6,7 +6,7 @@
 # Pré-requisitos: tools\build-openswiftui-deps.ps1 (Foundation, OpenCoreGraphics), build\swift\full e build\machotest.exe.
 $root = Split-Path $PSScriptRoot -Parent
 $tc = (Get-ChildItem "$root\.tools\swift\LocalApp\Programs\Swift\Toolchains" -Directory)[0].FullName
-$zig = (Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*')[0].FullName + '\zig.exe'
+$zig = (Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*' | Where-Object { Test-Path "$($_.FullName)\zig.exe" })[0].FullName + '\zig.exe'
 $o = "$root\build\swift\openswiftui"
 $full = "$root\build\swift\full"
 $tests = "$root\userland\sdk\openswiftui\tests\path"

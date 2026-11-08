@@ -6,9 +6,11 @@
 # Entrada: build\swift\objc (tools\build-swift-full-objc.ps1, build-swift-runtime-objc.ps1, build-swift-overlays-objc.ps1,
 # build-swift-concurrency-objc.ps1). Saída: build\swift\objc\dylib\usr\lib\swift\*.dylib
 #   .\tools\link-swift-dylibs-objc.ps1
+param([string]$Arch = 'x86_64')   # -Arch arm64: build\swift-arm64 (tools\swift-arch.ps1)
 $root = Split-Path $PSScriptRoot -Parent
-$zig = (Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*')[0].FullName + '\zig.exe'
-$objc = "$root\build\swift\objc"
+. "$PSScriptRoot\swift-arch.ps1" $Arch
+$zig = (Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*' | Where-Object { Test-Path "$($_.FullName)\zig.exe" })[0].FullName + '\zig.exe'
+$objc = "$SwiftBuild\objc"
 $ov = "$objc\overlays"
 $out = "$objc\dylib\usr\lib\swift"
 New-Item -ItemType Directory -Force $out | Out-Null
@@ -17,7 +19,7 @@ function Link-Dylib($name, [string[]]$objs) {
     $objs = @($objs | Where-Object { $_ -and (Test-Path $_) })
     if (-not $objs) { Write-Host "${name}: sem objetos" -ForegroundColor Yellow; $script:fails++; return }
     $dst = "$out\$name.dylib"
-    $log = & $zig c++ -target x86_64-macos -shared -o $dst "-Wl,-install_name,/usr/lib/swift/$name.dylib" '-Wl,-undefined,dynamic_lookup' @objs 2>&1 | ForEach-Object { "$_" }
+    $log = & $zig c++ -target $ZigTarget -shared -o $dst "-Wl,-install_name,/usr/lib/swift/$name.dylib" '-Wl,-undefined,dynamic_lookup' @objs 2>&1 | ForEach-Object { "$_" }
     if ($LASTEXITCODE -ne 0 -or -not (Test-Path $dst)) { $log | Select-Object -First 8 | ForEach-Object { "  $_" }; Write-Host "${name}: FALHOU" -ForegroundColor Red; $script:fails++; return }
     Write-Host ("{0}: ok ({1:N0} KB)" -f $name, ((Get-Item $dst).Length / 1KB))
 }

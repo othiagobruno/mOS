@@ -24,6 +24,17 @@ if (-not $SemBuild) {
     & powershell @a | Out-Host
     if ($LASTEXITCODE -ne 0) { Write-Host 'placar: build falhou' -ForegroundColor Red; exit 2 }
 }
+# cópia própria do a64test (outras sessões recompilam build\a64test.exe, às vezes sem -Jit, no meio
+# da rodada); com -Jit, confere que o JIT está mesmo compilado (A64JIT_STATS imprime "[jit] blocos=")
+$priv = "$out\a64test.exe"
+Copy-Item "$root\build\a64test.exe" $priv -Force
+if ($Jit) {
+    $env:A64JIT_STATS = '1'
+    $chk = Invoke-A64Capture $priv @('--jit', "$root\build\a64tests\hello.elf") 60
+    Remove-Item Env:\A64JIT_STATS
+    if ($chk.Err -notmatch '\[jit\] blocos=') { Write-Host 'placar: build\a64test.exe sem JIT (recompile com -Jit)' -ForegroundColor Red; exit 2 }
+}
+$env:MOS_A64TEST = $priv
 $fuzz = "$root\build\a64fuzz.exe"
 function Read-Tsv([string]$p) {
     $l = [IO.File]::ReadAllLines($p) | Where-Object { $_ -ne '' }

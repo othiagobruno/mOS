@@ -877,16 +877,7 @@ id objc_retainAutoreleaseReturnValue(id o) { return objc_autorelease(objc_retain
 void objc_storeStrong(id *loc, id v) { objc_retain(v); id old = *loc; *loc = v; objc_release(old); }int objc_sync_enter(id o) { (void)o; return 0; }
 int objc_sync_exit(id o) { (void)o; return 0; }
 void objc_enumerationMutation(id o) { cx_fdprintf(2, "coleção alterada durante a enumeração (%s)\n", object_getClassName(o)); abort(); }
-__attribute__((noreturn)) void objc_exception_throw(id e) {
-    const char *d = e ? MSG0(const char *, MSG0(id, e, "description"), "UTF8String") : "nil";
-    cx_fdprintf(2, "*** Exceção Objective-C não tratada: %s\n", d ? d : "?");
-    abort();
-}
-__attribute__((noreturn)) void objc_exception_rethrow(void) { abort(); }
-void *objc_begin_catch(void *e) { return e; }
-void objc_end_catch(void) {}
-void objc_terminate(void) { abort(); }
-int __objc_personality_v0(void) { return 8; /* _URC_CONTINUE_UNWIND */ }
+/* objc_exception_throw/rethrow, objc_begin/end_catch, objc_terminate e __objc_personality_v0: objc_exc.c */
 
 /* atalhos que o clang moderno emite no lugar de mensagens */
 id objc_alloc(cx_class_t *c) { return c ? MSG0(id, c, "alloc") : 0; }

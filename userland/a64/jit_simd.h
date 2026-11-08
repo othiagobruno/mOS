@@ -414,9 +414,210 @@ static int s_ldst_multi(T *t, a64_u32 w) {
     return 1;
 }
 
+/* ---------------------------------------------------------------------------------------------
+ * FP escalar nativo (S e D), só no caminho provadamente igual ao ARM; o resto pelo caminho lento
+ * (a instrução inteira no interpretador, que usa as primitivas a64_fp_* da frente FP):
+ *   - FPCR.RMode = RN e FZ = 0 (conferido em tempo de execução);
+ *   - nenhuma flag do x86 além de PE (IE, DE = entrada denormal, ZE, OE, UE → lento);
+ *   - resultado NaN/infinito ou minúsculo (expoente <= 1 e não zero) → lento (propagação de NaN e
+ *     detecção de tininess diferem entre x86 e ARM);
+ *   - PE → FPSR.IXC. Operações IEEE corretamente arredondadas: resultado idêntico.
+ * MXCSR do host fica em 0x1F80 durante o código gerado (restabelecido depois de código C);
+ * PE fica acumulado de propósito (IXC também é acumulado). [rsp] e [rsp+4] são rascunho (frame
+ * do trampolim).
+ * ------------------------------------------------------------------------------------------- */
+#define OFF_FPCR ((int32_t)offsetof(a64_cpu, fpcr))
+#define OFF_FPSR ((int32_t)offsetof(a64_cpu, fpsr))
+
+static void mx_clean(T *t) {
+    if (t->mxclean) return;
+    x_mov_mi(B, 0, XM(XSP, 4), 0x1F80);
+    xop2(B, 0, 0xAE, 2, XM(XSP, 4));                /* ldmxcsr [rsp+4] */
+    t->mxclean = 1;
+}
+static void s_wsc_es(T *t, int d, int dbl) {        /* rax (S: zero-estendido) → V[d] zerando o resto */
+    if (!dbl) x_mov_rr(B, 0, XAX, XAX);
+    s_wsc_rax(t, d);
+}
+
+/* FMA3 (VEX.66.0F38 op /r, W = dbl): x = op(x, v, [r15 + disp]) — só base RCPU e disp32 */
+static void vex_fma_m(T *t, unsigned op, int dbl, int x, int v, int32_t disp) {
+    xe8(B, 0xC4);
+    xe8(B, 0xC0 | 0x02);                            /* R̄=1 X̄=1 B̄=0 (r15), mapa 0F38 */
+    xe8(B, (dbl ? 0x80 : 0) | ((~v & 0xF) << 3) | 0x01);   /* W vvvv̄ L=0 pp=66 */
+    xe8(B, op);
+    xe8(B, 0x80 | ((x & 7) << 3) | (RCPU & 7));
+    xe32(B, (a64_u32)disp);
+}
+
+/* FCMP/FCMPE (S, D): sem NaN o ARM e o x86 não sinalizam nada (FZ = 0); NaN → interpretador.
+ * Depois de ucomis: CF = menor, ZF = igual. NZCV: menor 1000, igual 0110, maior 0010.
+ * Monta o formato x86 de reserved[14] direto: AH = N<<7 | Z<<6 | 2 | C, AL = V = 0. */
+static void fcmp_core(T *t, int dbl, int n, int m, int zero) {
+    if (dbl) x_movq_ld(B, 0, VO(n)); else x_movd_ld(B, 0, VO(n));
+    if (zero) s_zero(t, 1);
+    else if (dbl) x_movq_ld(B, 1, VO(m)); else x_movd_ld(B, 1, VO(m));
+    xop2(B, dbl ? XF_66 : 0, 0x2E, 0, XR(1));      /* ucomisd/ucomiss xmm0, xmm1 */
+    slow_if(t, CC_P);
+    x_setcc(B, CC_B, XAX);                          /* al = menor */
+    x_setcc(B, CC_E, XCX);                          /* cl = igual */
+    x_movzx8(B, XAX, XR(XAX));
+    x_movzx8(B, XCX, XR(XCX));
+    x_mov_rr(B, 0, XDX, XAX);
+    x_shift_ri(B, 0, S_SHL, XAX, 7);                /* N = menor */
+    x_alu_ri(B, 0, A_XOR, XR(XDX), 1);              /* C = !menor */
+    x_alu_rr(B, 0, A_OR, XAX, XDX);
+    x_shift_ri(B, 0, S_SHL, XCX, 6);                /* Z = igual */
+    x_alu_rr(B, 0, A_OR, XAX, XCX);
+    x_alu_ri(B, 0, A_OR, XR(XAX), 2);
+    x_shift_ri(B, 0, S_SHL, XAX, 8);
+    x_mov16_mr(B, XM(RCPU, OFF_FLAGS), XAX);
+}
+static int s_fcmp(T *t, a64_u32 w) {
+    int type = (int)BITS(w, 23, 22), n = (int)BITS(w, 9, 5), m = (int)BITS(w, 20, 16);
+    if (BITS(w, 31, 29) != 0) return 0;
+    if ((w & 0xFF200C00) == 0x1E200C00) {          /* FCSEL: seleção de bits, sem exceção */
+        if (type == 2) return 0;
+        int d = (int)(w & 31);
+        fl_need(t);
+        int cc = fl_cc(t, (int)BITS(w, 15, 12));
+        int sz = type == 1 ? 3 : type == 0 ? 2 : 1;
+        xo vn = VO(n), vm = VO(m);
+        if (sz == 1) { x_movzx16(B, XCX, vn); x_movzx16(B, XDX, vm); }
+        else { x_mov_rm(B, sz == 3, XCX, vn); x_mov_rm(B, sz == 3, XDX, vm); }
+        if (cc < 0) x_mov_rr(B, 1, XDX, XCX); else x_cmov(B, 1, cc, XDX, XR(XCX));
+        x_mov_rr(B, 1, XAX, XDX);
+        s_wsc_rax(t, d);
+        return 1;
+    }
+    if (type > 1) return 0;                         /* half: interpretador */
+    int dbl = type == 1;
+    if ((w & 0xFF203C00) == 0x1E202000) {          /* FCMP / FCMPE */
+        if (BITS(w, 15, 14) || (w & 7)) return 0;
+        fl_clobber(t);
+        x_test_ri(B, 0, XM(RCPU, OFF_FPCR), 1u << 24);   /* FZ: denormais viram zero → interp */
+        slow_if(t, CC_NE);
+        fcmp_core(t, dbl, n, m, (int)BIT(w, 3));
+        t->fe = 0; t->fm = 1;
+        return 1;
+    }
+    if ((w & 0xFF200C00) == 0x1E200400) {          /* FCCMP / FCCMPE */
+        int cond = (int)BITS(w, 15, 12);
+        fl_need(t);
+        int cc = fl_cc(t, cond);
+        a64_u8 *jt = NULL, *jd = NULL;
+        if (cc >= 0) {
+            jt = x_jcc32(B, cc);
+            x_mov16_mi(B, XM(RCPU, OFF_FLAGS), jit_nzcv_to_x86((w & 15) << 28));
+            jd = x_jmp32(B);
+            if (!t->b.ovf) x_patch32(jt, t->b.p);
+        }
+        /* condição verdadeira: estado do caminho lento = flags de antes, ainda no EFLAGS → salvar */
+        x_lahf(B); x_setcc(B, CC_O, XAX);
+        if (t->fe == 2) xe8(B, 0x80), xe8(B, 0xF4), xe8(B, 0x01);   /* xor ah, 1: modo SUB → C */
+        x_mov16_mr(B, XM(RCPU, OFF_FLAGS), XAX);
+        t->fe = 0; t->fm = 1;                       /* o test abaixo destrói o EFLAGS */
+        x_test_ri(B, 0, XM(RCPU, OFF_FPCR), 1u << 24);
+        slow_if(t, CC_NE);
+        fcmp_core(t, dbl, n, m, 0);
+        if (jd && !t->b.ovf) x_patch32(jd, t->b.p);
+        t->fe = 0; t->fm = 1;
+        return 1;
+    }
+    return 0;
+}
+
+static int s_fp(T *t, a64_u32 w) {
+    int type = (int)BITS(w, 23, 22), n = (int)BITS(w, 9, 5), d = (int)(w & 31);
+    if (BITS(w, 31, 29) != 0) return 0;             /* M = 0, S = 0 */
+    if ((w & 0xFF201FE0) == 0x1E201000) {           /* FMOV (imediato) */
+        int es = type == 0 ? 4 : type == 1 ? 8 : type == 3 ? 2 : 0;
+        if (!es) return 0;
+        x_mov_ri(B, XAX, a64_fp_expand_imm8((a64_u8)BITS(w, 20, 13), es));
+        s_wsc_rax(t, d);
+        return 1;
+    }
+    if (type > 1) return 0;                         /* half: interpretador */
+    int dbl = type == 1;
+    int sqrt = 0, neg = 0, fma = 0;
+    unsigned op;
+    if ((w & 0xFF207C00) == 0x1E204000) {           /* 1 fonte: FABS / FNEG / FSQRT */
+        unsigned opc = BITS(w, 20, 15);
+        if (opc == 1 || opc == 2) {                 /* FABS / FNEG: só o bit de sinal, sem exceção */
+            fl_clobber(t);
+            x_mov_rm(B, dbl, XAX, VO(n));
+            if (dbl) { x_mov_ri(B, XCX, opc == 1 ? 0x7FFFFFFFFFFFFFFFull : 0x8000000000000000ull); x_alu_rr(B, 1, opc == 1 ? A_AND : A_XOR, XAX, XCX); }
+            else x_alu_ri(B, 0, opc == 1 ? A_AND : A_XOR, XR(XAX), opc == 1 ? 0x7FFFFFFF : (int32_t)0x80000000);
+            s_wsc_es(t, d, dbl);
+            return 1;
+        }
+        if (opc != 3) return 0;
+        sqrt = 1; op = 0x51;
+    } else if ((w & 0xFF200C00) == 0x1E200800) {    /* 2 fontes */
+        switch (BITS(w, 15, 12)) {
+        case 0: op = 0x59; break;                   /* FMUL */
+        case 1: op = 0x5E; break;                   /* FDIV */
+        case 2: op = 0x58; break;                   /* FADD */
+        case 3: op = 0x5C; break;                   /* FSUB */
+        case 8: op = 0x59; neg = 1; break;          /* FNMUL = -(n*m) */
+        default: return 0;                          /* FMAX/FMIN/FMAXNM/FMINNM: interpretador */
+        }
+    } else if ((w & 0xFF000000) == 0x1F000000) {   /* FMADD FMSUB FNMADD FNMSUB (FMA3) */
+        if (!jit_g.fma) return 0;
+        /* vfmadd231 / vfnmadd231 / vfnmsub231 / vfmsub231: a+nm, a-nm, -a-nm, -a+nm (mesmo valor
+         * exato que negar os operandos antes, como o ARM faz) */
+        static const unsigned fop[4] = { 0xB9, 0xBD, 0xBF, 0xBB };
+        op = fop[(BIT(w, 21) << 1) | BIT(w, 15)];
+        fma = 1;
+    } else return 0;
+    int m = (int)BITS(w, 20, 16);
+    int pf = dbl ? XF_F2 : XF_F3;
+    fl_clobber(t);
+    mx_clean(t);
+    x_test_ri(B, 0, XM(RCPU, OFF_FPCR), 0x01C00000);           /* RMode != RN ou FZ */
+    slow_if(t, CC_NE);
+    if (fma) {
+        int ra = (int)BITS(w, 14, 10);
+        if (dbl) { x_movq_ld(B, 0, VO(ra)); x_movq_ld(B, 1, VO(n)); }
+        else { x_movd_ld(B, 0, VO(ra)); x_movd_ld(B, 1, VO(n)); }
+        vex_fma_m(t, op, dbl, 0, 1, OFF_V(m));
+    } else {
+        if (dbl) x_movq_ld(B, 0, VO(n)); else x_movd_ld(B, 0, VO(n));
+        if (sqrt) xop2(B, pf, op, 0, XR(0));
+        else xop2(B, pf, op, 0, VO(m));             /* operando de memória: 32/64 bits baixos */
+    }
+    xop2(B, 0, 0xAE, 3, XM(XSP, 0));                /* stmxcsr [rsp] */
+    x_test8_mi(B, XM(XSP, 0), 0x1F);                /* IE DE ZE OE UE */
+    slow_if(t, CC_NE);
+    if (dbl) xop2(B, XF_66 | XF_W, 0x7E, 0, XR(XAX)); else x_movd_st(B, XR(XAX), 0);
+    /* expoente: 0 (com mantissa) ou 1 → minúsculo; máximo → inf/NaN */
+    x_mov_rr(B, dbl, XCX, XAX);
+    x_shift_ri(B, dbl, S_SHL, XCX, 1);              /* tira o sinal; zero → rápido */
+    a64_u8 *jz = x_jcc32(B, CC_E);
+    x_shift_ri(B, dbl, S_SHR, XCX, dbl ? 53 : 24);
+    x_alu_ri(B, 0, A_CMP, XR(XCX), 1);
+    a64_u8 *jlo = x_jcc32(B, CC_BE);
+    x_alu_ri(B, 0, A_CMP, XR(XCX), dbl ? 0x7FF : 0xFF);
+    a64_u8 *jhi = x_jcc32(B, CC_E);
+    a64_u8 *jok = x_jmp32(B);
+    if (!t->b.ovf) { x_patch32(jlo, t->b.p); x_patch32(jhi, t->b.p); }
+    emit_slow_interp(t);
+    if (!t->b.ovf) { x_patch32(jz, t->b.p); x_patch32(jok, t->b.p); }
+    x_test8_mi(B, XM(XSP, 0), 0x20);                /* PE → IXC */
+    a64_u8 *jnp = x_jcc8(B, CC_E);
+    x_alu_ri(B, 0, A_OR, XM(RCPU, OFF_FPSR), 0x10);
+    x_patch8(jnp, t->b.p);
+    if (neg) {
+        if (dbl) { x_mov_ri(B, XCX, 0x8000000000000000ull); x_alu_rr(B, 1, A_XOR, XAX, XCX); }
+        else x_alu_ri(B, 0, A_XOR, XR(XAX), (int32_t)0x80000000);
+    }
+    s_wsc_es(t, d, dbl);
+    return 1;
+}
+
 /* despacho: op0 = x111 (dados FP/SIMD) */
 static int tr_simd(T *t, a64_u32 w) {
-    if (((w >> 28) & 1) && !((w >> 30) & 1)) return s_fmov(t, w);            /* grupo FP escalar */
+    if (((w >> 28) & 1) && !((w >> 30) & 1)) return s_fmov(t, w) || s_fcmp(t, w) || s_fp(t, w); /* grupo FP escalar */
     unsigned op0 = w >> 28;
     if ((op0 & 1) || (op0 & 8) || op0 == 0xC) return 0;                        /* escalares / cripto: interpretador */
     if (BIT(w, 24)) {

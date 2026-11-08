@@ -67,6 +67,7 @@ function Invoke-A64Oracle([string]$Blob, [int]$TimeoutSec = 60, [string]$Cwd = '
 }
 
 function Get-A64Test([switch]$Jit) {
+    if ($env:MOS_A64TEST) { return $env:MOS_A64TEST }   # o placar fixa uma cópia própria
     $exe = Join-Path $script:A64Root 'build\a64test.exe'
     if ($Jit) { $j = Join-Path $script:A64Root 'build\a64test-jit.exe'; if (Test-Path $j) { return $j } }
     if (-not (Test-Path $exe)) { throw 'build\a64test.exe nao existe (rode tools\build-a64test.ps1)' }

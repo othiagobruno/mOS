@@ -5,17 +5,17 @@
 #   .\tools\build-libsys-arm64-test.ps1 -NoRun
 param([switch]$NoRun, [int]$Timeout = 120)
 $root = Split-Path $PSScriptRoot -Parent
-$zig = Join-Path (Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*' | Select-Object -First 1).FullName 'zig.exe'
+$zig = Join-Path (Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*' | Where-Object { Test-Path "$($_.FullName)\zig.exe" } | Select-Object -First 1).FullName 'zig.exe'
 $out = "$root\build\a64libsys-test"
 New-Item -ItemType Directory -Force $out | Out-Null
 $src = "$root\userland\tests-a64libsys\abi.mm"
 $fail = 0
 foreach ($t in @(@('aarch64-macos.12.0', 'libsys-abi-arm64'), @('x86_64-macos.12.0', 'libsys-abi-x86'))) {
-    & $zig c++ -target $t[0] -O1 -fblocks -std=c++17 -x objective-c++ $src -o "$out\$($t[1])" '-Wl,-undefined,dynamic_lookup' 2>&1 | ForEach-Object { "$_" }
+    & $zig c++ -target $t[0] -O1 -fblocks -fobjc-exceptions -std=c++17 -x objective-c++ $src -o "$out\$($t[1])" '-Wl,-undefined,dynamic_lookup' 2>&1 | ForEach-Object { "$_" }
     if ($LASTEXITCODE -ne 0) { Write-Host "$($t[1]) FALHOU" -ForegroundColor Red; $fail++ }
 }
 # dylibs.cpp: ligado nas bibliotecas do disco (slices arm64 de tools\build-libs-arm64.ps1), carregadas dos universais
-$dl = @("$root\build\libcxx-arm64\libc++.1.dylib", "$root\build\sqlite-arm64\libsqlite3.dylib", "$root\build\icu-arm64\libicucore.A.dylib")
+$dl = @("$root\build\libcxx-arm64\libc++.1.dylib", "$root\build\sqlite-arm64\libsqlite3.dylib", "$root\build\icu-arm64\libicucore.A.dylib", "$root\build\zlib-arm64\libz.1.dylib")
 $haveDylibs = -not ($dl | Where-Object { -not (Test-Path $_) }) -and (Test-Path "$root\build\universal\usr\lib")
 if ($haveDylibs) {
     & $zig c++ -target aarch64-macos.12.0 -O1 -std=c++17 -c "$root\userland\tests-a64libsys\dylibs.cpp" -o "$out\dylibs.o" 2>&1 | ForEach-Object { "$_" }
@@ -35,7 +35,7 @@ Copy-Item "$root\build\libSystem-arm64.mos" "$a64\libSystem.mos" -Force
 if (-not (Test-Path "$root\build\machotest.exe")) { Write-Host 'falta build\machotest.exe (build\a64rt-test\run.sh compila)' -ForegroundColor Red; exit 1 }
 if ($haveDylibs) {
     New-Item -ItemType Directory -Force "$vfs\usr\lib", "$vfs\usr\share\icu" | Out-Null
-    Copy-Item "$root\build\universal\usr\lib\*.dylib" "$vfs\usr\lib\" -Force
+    Copy-Item "$root\build\universal\usr" "$vfs\" -Recurse -Force             # /usr/lib e /usr/local/opt/zlib
     Copy-Item "$root\build\icu\icudt74l.dat" "$vfs\usr\share\icu\" -Force -ErrorAction SilentlyContinue
 }
 $rc = 0

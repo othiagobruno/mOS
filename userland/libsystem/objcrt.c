@@ -511,6 +511,4 @@ id _objc_msgForward(id self, SEL sel, ...) {
 }
 void _objc_msgForward_stret(void *ret, id self, SEL sel, ...) { (void)self; (void)sel; if (ret) memset(ret, 0, 32); }
 
-/* typeinfo das exceções ObjC (@catch (id e)): o vtable é o de um std::type_info; o campo cls nil = "id" */
-void *objc_ehtype_vtable[] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
-struct { void **vtable; const char *name; cx_class_t *cls; } OBJC_EHTYPE_id = { objc_ehtype_vtable + 2, "id", 0 };
+/* typeinfo das exceções ObjC (objc_ehtype_vtable, OBJC_EHTYPE_id): objc_exc.c */

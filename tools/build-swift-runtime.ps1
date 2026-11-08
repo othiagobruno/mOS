@@ -3,7 +3,7 @@
 # (o libSystem do mOS fornece a libc/pthread/dyld). Saída: build\swift\full\runtime\*.o e libswiftRuntime.a
 param([string[]]$Only)
 $root = Split-Path $PSScriptRoot -Parent
-$zig = Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*' | Select-Object -First 1
+$zig = Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*' | Where-Object { Test-Path "$($_.FullName)\zig.exe" } | Select-Object -First 1
 $zig = Join-Path $zig.FullName 'zig.exe'
 $src = "$root\.tools\swift-src"
 $out = "$root\build\swift\full\runtime"

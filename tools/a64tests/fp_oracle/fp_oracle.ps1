@@ -6,7 +6,7 @@ param([int]$N = 4000, [string]$Semente = '1', [string]$Filtro = '', [int]$MaxFal
 $ErrorActionPreference = 'Stop'
 $here = $PSScriptRoot
 $root = (Resolve-Path "$here\..\..\..").Path
-$zig = Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*' -ErrorAction SilentlyContinue | Select-Object -First 1
+$zig = Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*' -ErrorAction SilentlyContinue | Where-Object { Test-Path "$($_.FullName)\zig.exe" } | Select-Object -First 1
 if ($zig) { $zig = Join-Path $zig.FullName 'zig.exe' } else { $zig = (Get-Command zig).Source }
 $qemu = 'C:\Program Files\qemu\qemu-system-aarch64.exe'
 $out = "$root\build\fp_oracle"

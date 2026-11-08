@@ -827,21 +827,7 @@ void dispatch_release(void *o) { cx_dispatch_release(o); }
 void dispatch_retain(void *o) { cx_dispatch_retain(o); }
 
 /* unwinder: só usado em panics; sem tabelas, informa "fim da pilha" */
-#if !defined(__aarch64__)   /* arm64: o libunwind do LLVM (tools/build-libsystem-arm64.ps1), tabelas do Mach-O e do .eh_frame do libSystem */
-int _Unwind_Backtrace(void *fn, void *arg) { (void)fn; (void)arg; return 5; }
-u64 _Unwind_GetIP(void *c) { (void)c; return 0; }
-u64 _Unwind_GetIPInfo(void *c, int *before) { (void)c; if (before) *before = 0; return 0; }
-u64 _Unwind_GetCFA(void *c) { (void)c; return 0; }
-u64 _Unwind_GetDataRelBase(void *c) { (void)c; return 0; }
-u64 _Unwind_GetTextRelBase(void *c) { (void)c; return 0; }
-u64 _Unwind_GetLanguageSpecificData(void *c) { (void)c; return 0; }
-u64 _Unwind_GetRegionStart(void *c) { (void)c; return 0; }
-void _Unwind_SetGR(void *c, int i, u64 v) { (void)c; (void)i; (void)v; }
-void _Unwind_SetIP(void *c, u64 v) { (void)c; (void)v; }
-int _Unwind_RaiseException(void *e) { (void)e; return 5; }
-void _Unwind_DeleteException(void *e) { (void)e; }
-__attribute__((noreturn)) void _Unwind_Resume(void *e) { (void)e; cx_puts_fd(2, "panic sem tabela de unwind: abortando\n"); abort(); }
-#endif
+/* _Unwind_*: o libunwind do LLVM (tools/build-libsystem*.ps1; tabelas do Mach-O e do .eh_frame do libSystem, unwind_ls.c) */
 
 /* processos, usuários e sistema */
 int sched_yield(void) { SYS0(SYS_YIELD); return 0; }
@@ -933,6 +919,12 @@ int posix_spawn_file_actions_addchdir_np(void *a, const char *p) {
         memcpy(op.path, buf, sizeof op.path - 1);
     }
     return fa_push(a, op);
+}
+/* addfchdir_np: o filho começa na pasta do fd (o std.process do Zig muda a pasta do filho assim) */
+int posix_spawn_file_actions_addfchdir_np(void *a, int fd) {
+    char d[1024];
+    if (cx_syscall(SYS_FDPATH, fd, (long)d, sizeof d, 0, 0) < 0) return 9;   /* EBADF */
+    return posix_spawn_file_actions_addchdir_np(a, d);
 }
 int posix_spawnattr_init(void *a) {
     cx_at *t = calloc(1, sizeof *t);

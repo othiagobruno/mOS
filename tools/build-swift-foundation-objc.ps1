@@ -5,11 +5,12 @@
 # JSONDecoder.decode). Também: Synchronization, swift-collections 1.7.3, _FoundationCShims (C) e _FoundationRefs.
 # Saída: build\swift\objc\overlays (junto dos outros overlays). Depois: tools\build-swift-overlays-objc.ps1 -Only Foundation.
 #   .\tools\build-swift-foundation-objc.ps1 [-Only FoundationEssentials]
-param([string[]]$Only)
+param([string[]]$Only, [string]$Arch = 'x86_64')
 $root = Split-Path $PSScriptRoot -Parent
+. "$PSScriptRoot\swift-arch.ps1" $Arch
 $tc = Get-ChildItem "$root\.tools\swift\LocalApp\Programs\Swift\Toolchains" -Directory | Select-Object -First 1
-$zig = (Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*')[0].FullName + '\zig.exe'
-$objc = "$root\build\swift\objc"
+$zig = (Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*' | Where-Object { Test-Path "$($_.FullName)\zig.exe" })[0].FullName + '\zig.exe'
+$objc = "$SwiftBuild\objc"
 $out = "$objc\overlays"
 $inc = "$objc\sdk\include"
 $deps = "$root\.tools\openswiftui\deps"
@@ -19,7 +20,7 @@ $fails = 0
 
 function Build-Mod($name, [string[]]$files, [string[]]$extra = @(), [string]$lang = '5', [bool]$evo = $true) {
     if ($Only -and $Only -notcontains $name) { return }
-    $a = @('-c', '-target', 'x86_64-apple-macos26', '-module-name', $name, '-parse-as-library', '-swift-version', $lang, '-O',
+    $a = @('-c', '-target', $SwiftTriple, '-module-name', $name, '-parse-as-library', '-swift-version', $lang, '-O',
            '-I', $objc, '-I', $out, '-I', "$root\.tools\swift-src\stdlib\public\SwiftShims\swift\shims",
            '-module-cache-path', "$objc\modcache", '-Xcc', "-isystem$inc", '-Xcc', '-DMOS_SWIFT_OBJC=1', '-Xcc', '-Wno-nullability-completeness',
            '-module-link-name', "swift$name", '-emit-module-path', "$out\$name.swiftmodule", '-o', "$out\$name.o") + $extra + $files
@@ -52,7 +53,7 @@ foreach ($m in @(@('InternalCollectionsUtilities', 'InternalCollectionsUtilities
 $sfs = "$deps\swift-foundation-main\Sources"
 $csh = "$sfs\_FoundationCShims"
 if (-not $Only -or $Only -contains '_FoundationCShims') {
-    & $zig cc -target x86_64-macos -O2 -c "-I$csh\include" -std=gnu11 "$csh\FoundationCShims.c" -o "$out\_FoundationCShims_c.o" 2>&1 | ForEach-Object { "  $_" }
+    & $zig cc -target $ZigTarget -O2 -c "-I$csh\include" -std=gnu11 "$csh\FoundationCShims.c" -o "$out\_FoundationCShims_c.o" 2>&1 | ForEach-Object { "  $_" }
     if ($LASTEXITCODE) { $fails++ } else { Write-Host '_FoundationCShims (C): ok' }
 }
 $sfAvail = @()

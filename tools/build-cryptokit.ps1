@@ -8,7 +8,7 @@ $root = Split-Path $PSScriptRoot -Parent
 $o = "$root\build\swift\openswiftui"
 if (-not (Test-Path "$o\Foundation\Foundation.rsp")) { Write-Host 'Foundation do mOS ausente (rode tools\build-openswiftui-deps.ps1)' -ForegroundColor Yellow; exit 1 }
 $tc = (Get-ChildItem "$root\.tools\swift\LocalApp\Programs\Swift\Toolchains" -Directory | Select-Object -First 1).FullName
-$zig = (Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*')[0].FullName + '\zig.exe'
+$zig = (Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*' | Where-Object { Test-Path "$($_.FullName)\zig.exe" })[0].FullName + '\zig.exe'
 $out = "$o\CryptoKit"
 New-Item -ItemType Directory -Force $out | Out-Null
 $base = Get-Content "$o\Foundation\Foundation.rsp"

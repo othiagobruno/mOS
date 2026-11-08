@@ -2,14 +2,16 @@
 # binários Swift da Apple. Mesmo fonte e lista de tools\build-swift-full.ps1, sem -disable-objc-interop e com
 # SWIFT_OBJC_INTEROP=1 (ponte de String/coleções com NSString/NSArray, AnyObject ObjC). Runtime C++ correspondente:
 # tools\build-swift-runtime-objc.ps1. Saída separada: build\swift\objc\Swift.swiftmodule + swiftCore.o.
-param([switch]$NoEvolution)
+# -Arch arm64: slice arm64 em build\swift-arm64\objc (tools\swift-arch.ps1); o padrão x86_64 não muda.
+param([switch]$NoEvolution, [string]$Arch = 'x86_64')
 $root = Split-Path $PSScriptRoot -Parent
+. "$PSScriptRoot\swift-arch.ps1" $Arch
 $tc = Get-ChildItem "$root\.tools\swift\LocalApp\Programs\Swift\Toolchains" -Directory | Select-Object -First 1
 $swiftc = "$($tc.FullName)\usr\bin\swiftc.exe"
 $src = "$root\.tools\swift-src"
 $core = "$src\stdlib\public\core"
 $shims = "$src\stdlib\public\SwiftShims\swift\shims"
-$out = "$root\build\swift\objc"
+$out = "$SwiftBuild\objc"
 New-Item -ItemType Directory -Force "$out\Swift.swiftmodule" | Out-Null
 $cm = Get-Content "$core\CMakeLists.txt"
 $files = @()
@@ -30,11 +32,11 @@ $feat = 'Macros', 'FreestandingMacros', 'Extern', 'BitwiseCopyable', 'ValueGener
         'AllowUnsafeAttribute', 'SuppressedAssociatedTypesWithDefaults', 'Reparenting', 'Lifetimes', 'BorrowAndMutateAccessors', 'BorrowInout', 'LifetimeDependence'
 $fl = @(); foreach ($x in $feat) { $fl += '-enable-experimental-feature', $x }
 $evo = if ($NoEvolution) { @() } else { @('-enable-library-evolution') }
-$args = @('-frontend', '-c', '-target', 'x86_64-apple-macos26', '-module-name', 'Swift', '-parse-stdlib', '-parse-as-library',
+$args = @('-frontend', '-c', '-target', $SwiftTriple, '-module-name', 'Swift', '-parse-stdlib', '-parse-as-library',
           '-nostdimport', '-swift-version', '5', '-O', '-enforce-exclusivity=unchecked', '-I', $shims,
           '-disable-objc-attr-requires-foundation-module', '-Xcc', "-I$root\userland\sdk\objc\include",   # como a stdlib da Apple
           '-strict-memory-safety', '-Xcc', '-Wno-nullability-completeness', '-Xcc', '-DSWIFT_OBJC_INTEROP=1', '-D', 'SWIFT_ENABLE_REFLECTION', '-D', 'SWIFT_RUNTIME_OS_VERSIONING', '-D', 'SWIFT_STDLIB_ENABLE_VECTOR_TYPES', '-D', 'SWIFT_STDLIB_HAS_COMMANDLINE', '-D', 'SWIFT_STDLIB_HAS_STDIN',
-          '-emit-module-path', "$out\Swift.swiftmodule\x86_64-apple-macos.swiftmodule", '-o', "$out\swiftCore.o") + $evo + $fl + $avail + $files
+          '-emit-module-path', "$out\Swift.swiftmodule\$SwiftModuleTriple.swiftmodule", '-o', "$out\swiftCore.o") + $evo + $fl + $avail + $files
 $t0 = Get-Date
 $log = & $swiftc @args 2>&1 | ForEach-Object { "$_" }
 $log | Set-Content "$out\build.log"

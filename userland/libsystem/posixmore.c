@@ -880,9 +880,6 @@ int vm_region_recurse_64(unsigned task, unsigned long long *addr, unsigned long 
     (void)task; (void)addr; (void)size; (void)depth; (void)info; (void)cnt;
     return 1;                                       /* KERN_INVALID_ADDRESS: o ruby para de varrer as regiões */
 }
-#if !defined(__aarch64__)
-int unw_get_proc_name(void *cur, char *buf, size_t len, unsigned long long *off) { (void)cur; if (buf && len) buf[0] = 0; if (off) *off = 0; return -6540; }   /* UNW_ENOINFO */
-#endif
 long __syscall(long n, ...) { (void)n; cx_errno = 78; return -1; }   /* ENOSYS */
 const void *_NSGetMachExecuteHeader(void) { return _dyld_get_image_header(0); }
 void CFStringNormalize(void *s, long form) { (void)s; (void)form; }   /* só NFC/ASCII no mOS: nada a fazer */

@@ -4,12 +4,12 @@
 #   .\build.ps1 -Clean   removes build\
 #   .\build.ps1 -Tests   also runs the user-mode self-test (/Sistema/Programas/teste) at boot
 #   .\build.ps1 -UnitTests  kernel unit tests at boot (-DMOS_UNIT_TESTS: RAM disks only; results on the serial log as "unit:")
-param([switch]$Run, [switch]$Clean, [switch]$Debug, [string]$OutDir = 'build', [switch]$Tests, [switch]$UnitTests, [string]$MonitorExtra = '')
+param([switch]$Run, [switch]$Clean, [switch]$Debug, [string]$OutDir = 'build', [switch]$Tests, [switch]$UnitTests, [string]$MonitorExtra = '', [switch]$ComSwift)
 $ErrorActionPreference = 'Continue'
 $root = $PSScriptRoot
 Set-Location $root
 
-$zig = Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*' -ErrorAction SilentlyContinue | Select-Object -First 1
+$zig = Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*' -ErrorAction SilentlyContinue | Where-Object { Test-Path "$($_.FullName)\zig.exe" } | Select-Object -First 1
 if ($zig) { $zig = Join-Path $zig.FullName 'zig.exe' } elseif ($env:MOS_ZIG) { $zig = $env:MOS_ZIG } else { $zig = (Get-Command zig -ErrorAction SilentlyContinue).Source }
 if (-not $zig) { Write-Error "Zig not found. Download from https://ziglang.org/download/ and extract into .tools\"; exit 1 }
 
@@ -114,6 +114,15 @@ if ((Test-Path "$root\build\a64rt.mos") -and (Test-Path "$root\build\libSystem-a
 & "$root\tools\build-libs-arm64.ps1"
 if ($LASTEXITCODE -ne 0) { Write-Host 'aviso: slices arm64 das bibliotecas incompletos; apps arm64 ficam sem elas' -ForegroundColor Yellow }
 if (Test-Path "$root\build\universal") { Copy-Item "$root\build\universal\*" "$esp\mOS\" -Recurse -Force }
+# cadeia Swift (/usr/lib/swift, Combine/SwiftUI/frameworks do mOS): junta build\swift\objc\dylib (x86_64) e
+# build\swift-arm64\objc\dylib (tools\build-swift-arm64.ps1) em build\universal-swift; não compila nada aqui. São ~110 MB e o
+# sistema de arquivos da VM mora na RAM: só entra na imagem com -ComSwift (ou MOS_COM_SWIFT=1), como antes a imagem base
+# não levava dylib Swift nenhuma (os testes de apps Swift montam a sua)
+if ($ComSwift -or $env:MOS_COM_SWIFT -eq '1') {
+    & "$root\tools\build-swift-arm64.ps1" -SoJuntar
+    if ($LASTEXITCODE -ne 0) { Write-Host 'aviso: Swift universal incompleto' -ForegroundColor Yellow }
+    if (Test-Path "$root\build\universal-swift") { Copy-Item "$root\build\universal-swift\*" "$esp\mOS\" -Recurse -Force }
+}
 # ferramentas de linha de comando do macOS em Mach-O (userland\cli-macos\<nome>.c -> /usr/bin/<nome>): open(1)
 New-Item -ItemType Directory -Force "$esp\mOS\usr\bin" | Out-Null
 foreach ($c in Get-ChildItem "$root\userland\cli-macos" -Filter *.c -ErrorAction SilentlyContinue) {
@@ -172,7 +181,11 @@ New-Item -ItemType Directory -Force (Split-Path $key) | Out-Null
 $rev = (& git -C $root rev-parse --short HEAD 2>$null)
 if (-not $rev) { $rev = 'local' }
 $versao = "0.1-$(Get-Date -Format 'yyyyMMdd.HHmm')-$rev"
-& $OutDir/mkimg.exe $OutDir/mOS.img $esp 128 --live-overlay "$root\root-live" --key $key --manifest-out "$OutDir/manifesto.txt" --versao $versao
+# tamanho: 128 MiB, ou o conteúdo + 25% (FAT, clusters) quando passa disso (as bibliotecas universais do tradutor arm64,
+# tools\build-libs-arm64.ps1, levaram o payload a ~135 MiB)
+$espBytes = (Get-ChildItem $esp -Recurse -File -Force | Measure-Object Length -Sum).Sum + (Get-ChildItem "$root\root-live" -Recurse -File -Force -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum
+$imgMiB = [math]::Max(128, [int][math]::Ceiling($espBytes * 1.25 / 1MB / 16) * 16)
+& $OutDir/mkimg.exe $OutDir/mOS.img $esp $imgMiB --live-overlay "$root\root-live" --key $key --manifest-out "$OutDir/manifesto.txt" --versao $versao
 if ($LASTEXITCODE -ne 0) { Write-Host "image creation FAILED" -ForegroundColor Red; exit 1 }
 $k = (Get-Item $OutDir/BOOTX64.EFI).Length / 1KB
 Write-Host ("OK: $OutDir\mOS.img (kernel {0:N0} KiB). Flash it to a USB stick with Rufus (DD mode) or balenaEtcher." -f $k) -ForegroundColor Green

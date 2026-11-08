@@ -112,7 +112,7 @@ Write-Host ("Google Chrome.app: {0:N1} MiB" -f $mb) -ForegroundColor Cyan
 
 if ($KernelTeste) {
     Write-Host '==> kernel de teste (MAX_LOAD 512 MiB)' -ForegroundColor Cyan
-    $zig = Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*' | Select-Object -First 1
+    $zig = Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*' | Where-Object { Test-Path "$($_.FullName)\zig.exe" } | Select-Object -First 1
     $zig = if ($zig) { Join-Path $zig.FullName 'zig.exe' } else { (Get-Command zig).Source }
     Push-Location $root
     $sources = Get-ChildItem kernel -Recurse -Include *.c, *.S | ForEach-Object { $_.FullName.Substring($root.Length + 1) }

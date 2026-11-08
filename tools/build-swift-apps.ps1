@@ -9,7 +9,7 @@ $swiftc = "$($tcd.FullName)\usr\bin\swiftc.exe"
 $sdk = (Get-ChildItem "$root\.tools\swift\LocalApp\Programs\Swift\Platforms" -Directory | Select-Object -First 1).FullName
 $shims = "$sdk\Windows.platform\Developer\SDKs\Windows.sdk\usr\lib\swift\shims"
 if (-not (Test-Path "$root\build\swift\embedded\Swift.swiftmodule")) { & "$PSScriptRoot\build-swift-stdlib.ps1"; if ($LASTEXITCODE) { exit 1 } }
-$zig = Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*' | Select-Object -First 1
+$zig = Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*' | Where-Object { Test-Path "$($_.FullName)\zig.exe" } | Select-Object -First 1
 $zig = if ($zig) { Join-Path $zig.FullName 'zig.exe' } elseif ($env:MOS_ZIG) { $env:MOS_ZIG } else { (Get-Command zig).Source }
 $obj = "$root\build\swift\obj"
 New-Item -ItemType Directory -Force $obj, $Dest | Out-Null

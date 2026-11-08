@@ -26,6 +26,20 @@
 @end
 @implementation LibsysAbiSonda
 @end
+@interface LibsysAbiErro : LibsysAbiSonda   // exceção ObjC do próprio app (OBJC_EHTYPE_$_LibsysAbiErro no binário)
+@end
+@implementation LibsysAbiErro
+@end
+@interface NSException : NSObject
++ (id)exceptionWithName:(id)name reason:(id)reason userInfo:(id)info;
+- (void)raise;
+- (id)name;
+- (id)reason;
+@end
+@interface NSArray : NSObject
++ (id)arrayWithObjects:(const id *)objs count:(unsigned long)n;
+- (void)enumerateObjectsUsingBlock:(void (^)(id obj, unsigned long idx, signed char *stop))b;
+@end
 
 static int falhas;
 // structs de mais de 16 bytes: no x86_64 da Apple vêm pelo objc_msgSend_stret; no arm64 o objc_msgSend comum (x8 ou d0..d3)
@@ -194,11 +208,7 @@ int main() {
     // 6. exceção C++ lançada dentro do comparador e pega aqui: atravessa os quadros do qsort do libSystem
     int v[8] = {5, 3, 13, 1, 8, 2, 7, 4};
     const char *msg = "";
-#if defined(__aarch64__)   // x86_64: o libSystem x86 ainda não desenrola (_Unwind_RaiseException é um stub): pendência fora do tradutor
     try { qsort(v, 8, sizeof v[0], cmp_lanca); } catch (const std::exception &e) { msg = e.what(); }
-#else
-    (void)cmp_lanca; msg = "13 no qsort";
-#endif
     CHECK("exceção C++ atravessando o qsort do libSystem", !strcmp(msg, "13 no qsort"));
     int w[6] = {9, 1, 8, 2, 7, 3};
     qsort(w, 6, sizeof w[0], [](const void *a, const void *b) { return *(const int *)a - *(const int *)b; });
@@ -248,6 +258,35 @@ int main() {
           fabs(asin(0.5) - 0.5235987755982989) < 1e-15 && fabs(acos(0.5) - 1.0471975511965979) < 1e-15 && fabs(atan(10.0) - 1.4711276743037347) < 1e-15);
     CHECK("exp/log/pow/fmod/sqrt/floor", fabs(exp(1.0) - 2.718281828459045) < 1e-14 && fabs(log(10.0) - 2.302585092994046) < 1e-14 &&
           fabs(pow(2.0, 0.5) - 1.4142135623730951) < 1e-14 && fmod(7.5, 2.0) == 1.5 && sqrt(16.0) == 4.0 && floor(-1.5) == -2.0 && ceil(1.2) == 2.0 && trunc(-2.7) == -2.0);
+
+    // 11. exceções Objective-C (objc_exc.c: __cxa_throw da libc++abi do disco + libunwind do libSystem)
+    {
+        const char *nm = "";
+        @try {
+            [[NSException exceptionWithName:(id)S("MeuErro") reason:(id)S("motivo") userInfo:nil] raise];
+        } @catch (NSException *e) { nm = U([e name]); }
+        CHECK("@throw (-[NSException raise]) e @catch (NSException *)", !strcmp(nm, "MeuErro"));
+        int fim = 0, pegou = 0;
+        @try {
+            @try { @throw [[LibsysAbiErro alloc] init]; }
+            @catch (NSException *e) { pegou = 1; }          // não casa: a classe é outra
+            @finally { fim = 1; }
+        } @catch (LibsysAbiSonda *e) { pegou = pegou ? -1 : 2; }   // casa pela superclasse
+        CHECK("@catch pela superclasse, @finally e @catch que não casa", fim == 1 && pegou == 2);
+        id quem = nil;
+        id objs[3] = {(id)S("a"), (id)S("b"), (id)S("c")};
+        id arr = [NSArray arrayWithObjects:objs count:3];
+        @try {
+            [arr enumerateObjectsUsingBlock:^(id obj, unsigned long idx, signed char *stop) { (void)stop; if (idx == 1) @throw obj; }];
+        } @catch (id e) { quem = e; }
+        CHECK("@throw dentro de bloco do libSystem (enumerateObjectsUsingBlock) e @catch (id)", quem && !strcmp(U(quem), "b"));
+        int cxx = 0;
+        try { @throw [[LibsysAbiErro alloc] init]; } catch (...) { cxx = 1; }
+        CHECK("exceção ObjC pega por catch(...) do C++", cxx == 1);
+        int objc = 0;
+        @try { try { throw std::runtime_error("c++"); } catch (const std::exception &) { objc = 1; } } @catch (id e) { objc = -1; }
+        CHECK("exceção C++ não casa com @catch (id)", objc == 1);
+    }
 
     // 10. AppKit do mOS: NSWindow com o retângulo HFA de ida (initWithContentRect:) e de volta (frame), NSView
     {

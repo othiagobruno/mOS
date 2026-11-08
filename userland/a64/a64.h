@@ -307,3 +307,13 @@ void a64_jit_stats(a64_u64 *ntrans, a64_u64 *nflush, a64_u64 *code_bytes);
 /* depois de a64_jit_recover, se o runtime abandonar a64_run por longjmp (em vez de
  * a64_jit_unwind): limpa o estado por thread do JIT */
 void a64_jit_abort(a64_cpu *c);
+/* filho de fork (só a thread que chamou fork sobrevive): zera as travas e o estado das outras
+ * threads do JIT. Chamar logo depois que o fork devolve 0, antes de a64_invalidate(0, ~0ull). */
+void a64_jit_fork_child(a64_cpu *self);
+/* sem trava: true se pode haver código traduzido em [addr, addr+len) (conservador). O runtime usa
+ * para só chamar a64_invalidate depois de read()/pread() quando precisa. */
+bool a64_jit_has_code(a64_u64 addr, a64_u64 len);
+/* estatística das instruções que o JIT executa pelo interpretador: liga/desliga e lista as 'max'
+ * classes mais frequentes (chave = palavra sem os campos de registrador 20:16 e 9:0) */
+void a64_jit_fbstat(int on);
+void a64_jit_fbstat_dump(void (*out)(a64_u32 key, a64_u64 count, void *arg), void *arg, int max);

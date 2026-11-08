@@ -102,6 +102,13 @@ malloc_zone_t *malloc_zone_from_ptr(const void *p) {
     return zone_owner(p, 0);
 }
 
+/* malloc_zone_statistics(zone, malloc_statistics_t *): {blocks_in_use, size_in_use, max_size_in_use, size_allocated}
+ * (4 × unsigned/size_t). Sem contabilidade por zona: zeros, como uma zona vazia. O Zig pergunta isso no fim. */
+void malloc_zone_statistics(malloc_zone_t *z, void *stats) {
+    (void)z;
+    if (stats) __builtin_memset(stats, 0, 32);
+}
+
 /* kern_return_t malloc_get_all_zones(task, reader, vm_address_t **addresses, unsigned *count) */
 int malloc_get_all_zones(unsigned task, void *reader, u64 **addresses, unsigned *count) {
     (void)task; (void)reader;

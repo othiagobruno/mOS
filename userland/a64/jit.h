@@ -27,6 +27,7 @@ enum {
 #define OFF_FLAGS   ((int32_t)offsetof(a64_cpu, reserved[14]))   /* NZCV em formato x86: AH=lahf, AL=OF */
 #define OFF_JC      ((int32_t)offsetof(a64_cpu, reserved[13]))
 #define OFF_JIT     ((int32_t)offsetof(a64_cpu, jit))
+#define OFF_RAS     ((int32_t)offsetof(a64_cpu, reserved[12]))   /* pilha de retorno da thread */
 #define RCPU X15                    /* registrador fixo do host com o a64_cpu* */
 
 /* conversões NZCV (ARM) ↔ formato x86 guardado em reserved[14] */
@@ -68,9 +69,13 @@ typedef struct jblk {
 } jblk;
 
 typedef struct jc_ent { a64_u64 pc; void *code; } jc_ent;
+#define JIT_RAS_N 16
+/* top em +0; entrada k em +8+16k: { pc de retorno, código que continua nele } */
+typedef struct jras { a64_u64 top; jc_ent e[JIT_RAS_N]; } jras;
 
 typedef struct jthr {
     jc_ent jc[1 << JIT_JC_BITS];
+    jras ras;                       /* pilha de retorno (BL empilha, RET confere) */
     a64_u64 saved_rsp;              /* rsp do código gerado (para a64_jit_unwind) */
     a64_u64 link_site;
     a64_cpu *cpu;
@@ -79,6 +84,7 @@ typedef struct jthr {
     int unwind_code;
     int live;
     int in_run;                     /* dentro de a64_jit_run: flags vivas em reserved[14] */
+    int translating;                /* traduzindo com J.lock tomada (lendo código guest) */
 } jthr;
 #define OFF_THR_SAVED_RSP ((int32_t)offsetof(jthr, saved_rsp))
 #define OFF_THR_LINK      ((int32_t)offsetof(jthr, link_site))
@@ -91,7 +97,8 @@ typedef struct jit_globals {
     int maxinsns;                   /* depuração: instruções por bloco (0 = JIT_MAX_INSNS) */
     int nowp;                       /* depuração: sem proteção de escrita */
     int fblog;                      /* depuração: lista instruções que vão ao interpretador */
-    int ssse3, sse41, sse42;        /* recursos do host (CPUID) */
+    int ssse3, sse41, sse42, fma;   /* recursos do host (CPUID) */
+    int noras;                      /* depuração: sem pilha de retorno nem busca por ponto */
 } jit_globals;
 extern jit_globals jit_g;
 enum { JH_INTERP = 0, JH_COUNT = 16 };

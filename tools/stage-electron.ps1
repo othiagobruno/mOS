@@ -15,7 +15,7 @@ param([Parameter(Mandatory = $true)][string]$App, [string]$OutDir = 'build-elect
       [string]$Args0 = '--in-process-gpu --disable-gpu --no-sandbox --enable-logging --v=0', [string]$Tracepoints = '',
       [string]$SubstituirApp = '', [switch]$ComSwift, [string]$AbrirURL = '', [int]$AbrirAposMs = 120000, [string]$ComApp = '',
       [string]$NavegadorPadrao = '', [string[]]$ArgumentosApp = @(), [string]$MotorHorizonte = '',
-      [string]$AbrirURL2 = '', [int]$AbrirApos2Ms = 180000)
+      [string]$AbrirURL2 = '', [int]$AbrirApos2Ms = 180000, [string]$Fatia = 'x86_64')
 # -MotorHorizonte <Chromium.app preparado pelo tools\stage-chromium.ps1>: o motor do Horizonte, em
 #   /Sistema/Biblioteca/Horizonte/Chromium.app (fora de /Aplicativos: um app só, o Horizonte). docs/navegador-chromium.md
 # -NavegadorPadrao <CFBundleIdentifier>: a escolha do usuário em Ajustes > Navegador padrão (LSHandlers de http/https em
@@ -36,14 +36,14 @@ param([Parameter(Mandatory = $true)][string]$App, [string]$OutDir = 'build-elect
 $root = Split-Path $PSScriptRoot -Parent
 # Mach-O universal (x86_64 + arm64): só a fatia x86_64 vai para a imagem, porque o sistema de arquivos da VM mora na RAM
 # (o Electron Framework do Claude tem 404 MB universal). Sem o llvm-lipo do toolchain Swift, copia inteiro (o kernel
-# escolhe a fatia sozinho).
+# escolhe a fatia sozinho). -Fatia arm64: a fatia arm64 (o processo roda pelo tradutor arm64, docs/tradutor-arm64.md).
 $lipo = Get-Item "$root\.tools\swift\LocalApp\Programs\Swift\Toolchains\*\usr\bin\llvm-lipo.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
 function Copy-Bin([string]$From, [string]$To) {
     if ($lipo) {
         $h = New-Object byte[] 4
         $fs = [IO.File]::OpenRead('\\?\' + $From); $k = $fs.Read($h, 0, 4); $fs.Close()
         if ($k -eq 4 -and $h[0] -eq 0xCA -and $h[1] -eq 0xFE -and $h[2] -eq 0xBA -and $h[3] -eq 0xBE) {
-            & $lipo.FullName $From -thin x86_64 -output $To 2>$null
+            & $lipo.FullName $From -thin $Fatia -output $To 2>$null
             if ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $To)) { return }
         }
     }

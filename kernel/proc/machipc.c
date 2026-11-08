@@ -1495,6 +1495,12 @@ static u32 vm_op(mspace_t *sp, u32 op, u64 *a) {
         prot_set(sp, a[0], a[0] + a[1], (u32)a[2]);
         return KERN_SUCCESS;
     }
+    if (op == MACH_VM_JIT_WPROTECT) {   /* tradutor arm64 (userland/a64rt): proteção de escrita de verdade na PTE */
+        extern int uvm_jit_wprotect(process_t *p, u64 va, int op);
+        if (a[0] < USER_BASE || a[0] >= USER_END) return KERN_INVALID_ADDRESS;
+        a[2] = (u64)uvm_jit_wprotect(sp->proc, a[0], (int)a[1]);
+        return KERN_SUCCESS;
+    }
     if (op == MACH_VM_REGION) {
         u64 addr = a[0];
         if (addr < USER_BASE || addr >= USER_END) return KERN_INVALID_ADDRESS;

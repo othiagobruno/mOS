@@ -1,3 +1,4 @@
+/* a64cmp: nao-comparavel (o QEMU não implementa SCTLR.SA0) */
 /* frente JIT: SA0 = 1 — load com base SP desalinhado falha ANTES do acesso (FAULT com o SP);
  * o JIT tem que dar o mesmo estado (flags do cmp vivas, x1 sujo no cache). */
     .text

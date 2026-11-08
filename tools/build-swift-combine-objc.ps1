@@ -7,10 +7,12 @@
 # Cópia preparada do fonte (build\swift\objc\combine-src): "OpenCombine." -> "Combine."
 # e os atributos de layout fixo do Combine da Apple (library evolution).
 #   .\tools\build-swift-combine-objc.ps1
+param([string]$Arch = 'x86_64')   # -Arch arm64: build\swift-arm64 (tools\swift-arch.ps1)
 $root = Split-Path $PSScriptRoot -Parent
+. "$PSScriptRoot\swift-arch.ps1" $Arch
 $tc = Get-ChildItem "$root\.tools\swift\LocalApp\Programs\Swift\Toolchains" -Directory | Select-Object -First 1
-$zig = (Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*')[0].FullName + '\zig.exe'
-$objc = "$root\build\swift\objc"
+$zig = (Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*' | Where-Object { Test-Path "$($_.FullName)\zig.exe" })[0].FullName + '\zig.exe'
+$objc = "$SwiftBuild\objc"
 $ov = "$objc\overlays"
 $inc = "$objc\sdk\include"
 $src = "$root\.tools\openswiftui\deps\OpenCombine-master\Sources"
@@ -25,7 +27,7 @@ $utf8 = New-Object Text.UTF8Encoding $false
 # onde o link estático (tools\link-swift-objc.ps1) pega todos os .o
 $cpp = [IO.File]::ReadAllText("$src\COpenCombineHelpers\COpenCombineHelpers.cpp").Replace('#ifdef __APPLE__', '#if 0 /* mOS: os_unfair_lock é no-op no libSystem; usa pthread */')
 [IO.File]::WriteAllText("$tmp\COpenCombineHelpers.cpp", $cpp, $utf8)
-& $zig c++ -target x86_64-macos -O2 -c -std=c++17 -fno-rtti "-I$src\COpenCombineHelpers\include" "$tmp\COpenCombineHelpers.cpp" -o "$ov\Combine_COpenCombineHelpers.o" 2>&1 | ForEach-Object { "  $_" }
+& $zig c++ -target $ZigTarget -O2 -c -std=c++17 -fno-rtti "-I$src\COpenCombineHelpers\include" "$tmp\COpenCombineHelpers.cpp" -o "$ov\Combine_COpenCombineHelpers.o" 2>&1 | ForEach-Object { "  $_" }
 if ($LASTEXITCODE) { Write-Host 'COpenCombineHelpers: FALHOU' -ForegroundColor Red; exit 1 }
 
 # ---- fonte Swift preparado
@@ -70,7 +72,7 @@ foreach ($f in Get-ChildItem "$src\OpenCombine" -Recurse -Filter *.swift) {
 $files += @(Get-ChildItem "$root\userland\sdk\swift-objc\Combine" -Filter *.swift | ForEach-Object FullName)
 
 # ---- módulo Combine
-$a = @('-c', '-target', 'x86_64-apple-macos26', '-module-name', 'Combine', '-parse-as-library', '-swift-version', '5', '-O',
+$a = @('-c', '-target', $SwiftTriple, '-module-name', 'Combine', '-parse-as-library', '-swift-version', '5', '-O',
        '-enable-library-evolution', '-I', $objc, '-I', $ov, '-I', "$src\COpenCombineHelpers\include",
        '-I', "$root\.tools\swift-src\stdlib\public\SwiftShims\swift\shims", '-module-cache-path', "$objc\modcache",
        '-Xcc', "-isystem$inc", '-Xcc', '-DMOS_SWIFT_OBJC=1', '-Xcc', '-Wno-nullability-completeness', '-Xcc', "-I$src\COpenCombineHelpers\include",
@@ -86,10 +88,10 @@ Write-Host ("Combine: ok ({0:N0} KB, {1} fontes)" -f ((Get-Item "$ov\Combine.o")
 # ---- Combine.framework
 $dir = "$objc\dylib\System\Library\Frameworks\Combine.framework\Versions\A"
 New-Item -ItemType Directory -Force $dir | Out-Null
-$log = & $zig c++ -target x86_64-macos -shared -o "$dir\Combine" '-Wl,-install_name,/System/Library/Frameworks/Combine.framework/Versions/A/Combine' '-Wl,-undefined,dynamic_lookup' "$ov\Combine.o" "$ov\Combine_COpenCombineHelpers.o" 2>&1 | ForEach-Object { "$_" }
+$log = & $zig c++ -target $ZigTarget -shared -o "$dir\Combine" '-Wl,-install_name,/System/Library/Frameworks/Combine.framework/Versions/A/Combine' '-Wl,-undefined,dynamic_lookup' "$ov\Combine.o" "$ov\Combine_COpenCombineHelpers.o" 2>&1 | ForEach-Object { "$_" }
 if ($LASTEXITCODE -ne 0) { $log | Select-Object -First 8 | ForEach-Object { "  $_" }; Write-Host 'Combine.framework: link FALHOU' -ForegroundColor Red; exit 1 }
 Write-Host ("Combine.framework: ok ({0:N0} KB)" -f ((Get-Item "$dir\Combine").Length / 1KB))
 
 # ---- o Dispatch ganha DispatchQueue: Scheduler (userland\sdk\swift-objc\Dispatch\Combine): recompila e religa
-& "$PSScriptRoot\build-swift-overlays-objc.ps1" -Only Dispatch
-& "$PSScriptRoot\link-swift-dylibs-objc.ps1" | Select-String 'libswiftDispatch|FALHOU'
+& "$PSScriptRoot\build-swift-overlays-objc.ps1" -Only Dispatch -Arch $Arch
+& "$PSScriptRoot\link-swift-dylibs-objc.ps1" -Arch $Arch | Select-String 'libswiftDispatch|FALHOU'

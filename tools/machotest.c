@@ -701,6 +701,20 @@ static LONG CALLBACK veh(EXCEPTION_POINTERS *ep) {
             return EXCEPTION_CONTINUE_EXECUTION;
         }
         if (c->Rax == SYS_SIG && sig_syscall_ctx(c)) return EXCEPTION_CONTINUE_EXECUTION;
+        if (c->Rax == SYS_MACH_VM && c->Rdi == MACH_VM_JIT_WPROTECT && !getenv("MACHOTEST_NO_WP")) {   /* rede de SMC do JIT arm64: VirtualProtect */
+            u64 *a = (u64 *)c->Rsi, pg = a[0] & ~0xFFFULL;
+            MEMORY_BASIC_INFORMATION mbi;
+            a[2] = 0;
+            if (VirtualQuery((void *)pg, &mbi, sizeof mbi) && mbi.State == MEM_COMMIT) {
+                DWORD p = mbi.Protect & 0xFF, np = 0, old;
+                bool w = p == PAGE_READWRITE || p == PAGE_EXECUTE_READWRITE;
+                if (a[1] == 2) a[2] = w;
+                else if (a[1] == 1) { if (w) { np = p == PAGE_READWRITE ? PAGE_READONLY : PAGE_EXECUTE_READ; a[2] = VirtualProtect((void *)pg, 4096, np, &old) != 0; } }
+                else { a[2] = 1; if (p == PAGE_READONLY || p == PAGE_EXECUTE_READ) VirtualProtect((void *)pg, 4096, p == PAGE_READONLY ? PAGE_READWRITE : PAGE_EXECUTE_READWRITE, &old); }
+            }
+            c->Rax = 0; c->Rip += 2;
+            return EXCEPTION_CONTINUE_EXECUTION;
+        }
         g_r8 = c->R8;                               /* 5º argumento (GUI_DRAG/GUI_IME) */
         c->Rax = (DWORD64)do_syscall(c->Rax, c->Rdi, c->Rsi, c->Rdx, c->R10);
         c->Rip += 2;

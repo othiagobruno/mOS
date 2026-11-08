@@ -44,6 +44,7 @@ typedef struct T {
     a64_u32 dirty, lock, pend, pnew, tmp;
     a64_u32 age[16], tick;
     int fe, fm;                         /* fe: 0 / 1 ADD / 2 SUB; fm: reserved[14] válido */
+    int mxclean;                        /* MXCSR do host = 0x1F80 (RN, mascarado, sem flags) garantido */
     int nfp;
     jfp fp[JIT_MAX_INSNS * 4];
 } T;
@@ -222,6 +223,7 @@ static void fb_log(T *t, a64_u32 w) { if (jit_g.fblog) fprintf(stderr, "[jit] in
 static void fb_log(T *t, a64_u32 w) { (void)t; (void)w; }
 #endif
 static void emit_fallback(T *t, a64_u32 w) {
+    t->mxclean = 0;                     /* código C pode deixar flags no MXCSR */
     insn_end(t);
     fl_spill(t);
     rc_flush(t);
@@ -485,6 +487,58 @@ static int tr_dpimm(T *t, a64_u32 w) {
 /* ---------------------------------------------------------------------------------------------
  * Desvios e sistema
  * ------------------------------------------------------------------------------------------- */
+/* desvio indireto com alvo em rax, no fim do bloco (registradores gravados, flags em memória):
+ * busca no cache de saltos da thread copiada em cada ponto (previsão por ponto no x86) */
+static void emit_ind(T *t) {
+    if (jit_g.noras) { x_jmp_to(B, jit_g.g_ind); return; }
+    x_alu_ri(B, 1, A_CMP, XM(RCPU, OFF_STOP), 0);
+    a64_u8 *j1 = x_jcc32(B, CC_NE);
+    x_mov_rm(B, 1, XCX, XM(RCPU, OFF_JC));
+    x_mov_rr(B, 0, XDX, XAX);
+    x_shift_ri(B, 0, S_SHR, XDX, 2);
+    x_alu_ri(B, 0, A_AND, XR(XDX), (1 << JIT_JC_BITS) - 1);
+    x_shift_ri(B, 0, S_SHL, XDX, 4);
+    x_alu_rm(B, 1, A_CMP, XAX, XMI(XCX, XDX, 0, 0));
+    a64_u8 *j2 = x_jcc32(B, CC_NE);
+    x_jmp_m(B, XMI(XCX, XDX, 0, 8));
+    if (!t->b.ovf) { x_patch32(j1, t->b.p); x_patch32(j2, t->b.p); }
+    x_jmp_to(B, jit_g.g_ind);
+}
+/* BL/BLR: empilha (pc+4, continuação). Devolve o campo do lea a remendar com o endereço do stub
+ * de continuação (uma saída encadeável para pc+4 emitida depois). Destrói rax rcx rdx. */
+static a64_u8 *ras_push(T *t) {
+    x_mov_rm(B, 1, XCX, XM(RCPU, OFF_RAS));
+    x_mov_rm(B, 0, XDX, XM(XCX, 0));
+    x_alu_ri(B, 0, A_ADD, XR(XDX), 1);
+    x_alu_ri(B, 0, A_AND, XR(XDX), JIT_RAS_N - 1);
+    x_mov_mr(B, 0, XM(XCX, 0), XDX);
+    x_shift_ri(B, 0, S_SHL, XDX, 4);
+    x_mov_ri(B, XAX, t->pc + 4);
+    x_mov_mr(B, 1, XMI(XCX, XDX, 0, 8), XAX);
+    x_lea_rip(B, XAX, t->b.p);
+    a64_u8 *disp = t->b.p - 4;
+    x_mov_mr(B, 1, XMI(XCX, XDX, 0, 16), XAX);
+    return disp;
+}
+/* RET: alvo em rax; topo da pilha confere → salta para a continuação; senão busca indireta */
+static void emit_ret(T *t) {
+    if (jit_g.noras) { emit_ind(t); return; }
+    x_mov_rm(B, 1, XCX, XM(RCPU, OFF_RAS));
+    x_mov_rm(B, 0, XDX, XM(XCX, 0));
+    x_mov_rr(B, 0, X8, XDX);
+    x_shift_ri(B, 0, S_SHL, XDX, 4);
+    x_alu_rm(B, 1, A_CMP, XAX, XMI(XCX, XDX, 0, 8));
+    a64_u8 *j1 = x_jcc32(B, CC_NE);
+    x_alu_ri(B, 0, A_SUB, XR(X8), 1);
+    x_alu_ri(B, 0, A_AND, XR(X8), JIT_RAS_N - 1);
+    x_mov_mr(B, 0, XM(XCX, 0), X8);
+    x_alu_ri(B, 1, A_CMP, XM(RCPU, OFF_STOP), 0);
+    a64_u8 *j2 = x_jcc32(B, CC_NE);
+    x_jmp_m(B, XMI(XCX, XDX, 0, 16));
+    if (!t->b.ovf) { x_patch32(j1, t->b.p); x_patch32(j2, t->b.p); }
+    emit_ind(t);
+}
+
 static void cond_exits(T *t, int cc, a64_u64 taken) {
     a64_u8 *j = x_jcc32(B, cc);
     emit_exit(t, t->pc + 4);
@@ -498,7 +552,9 @@ static int tr_branch(T *t, a64_u32 w) {
         a64_u64 tg = t->pc + (a64_u64)(sext(w & 0x3FFFFFF, 26) << 2);
         if (BIT(w, 31)) x_mov_ri(B, rdef(t, 30), t->pc + 4);
         end_prep(t);
+        a64_u8 *cont = BIT(w, 31) ? ras_push(t) : NULL;
         emit_exit(t, tg);
+        if (cont) { if (!t->b.ovf) x_patch32(cont, t->b.p); emit_exit(t, t->pc + 4); }
         t->ended = 1;
         return 1;
     }
@@ -537,10 +593,18 @@ static int tr_branch(T *t, a64_u32 w) {
         insn_end(t);
         fl_spill(t);
         x_mov_rr(B, 1, XAX, h);
+        /* alvo desalinhado: o interpretador completa o desvio e dá FAULT (PC alignment) */
+        x_test_ri(B, 0, XR(XAX), 3);
+        t->fe = 0;                      /* flags já em reserved[14] (fl_spill acima) */
+        slow_if(t, CC_NE);
         if (opc == 1) x_mov_ri(B, rdef(t, 30), t->pc + 4);
         insn_end(t);
         rc_flush(t);
-        x_jmp_to(B, jit_g.g_ind);
+        if (opc == 2) { emit_ret(t); t->ended = 1; return 1; }
+        a64_u8 *cont = NULL;
+        if (opc == 1) { x_mov_rr(B, 1, X9, XAX); cont = ras_push(t); x_mov_rr(B, 1, XAX, X9); }
+        emit_ind(t);
+        if (cont) { if (!t->b.ovf) x_patch32(cont, t->b.p); emit_exit(t, t->pc + 4); }
         t->ended = 1;
         return 1;
     }
@@ -548,6 +612,10 @@ static int tr_branch(T *t, a64_u32 w) {
         unsigned imm = BITS(w, 11, 5);
         if (imm == 0 || imm == 0x20 || imm == 0x22 || imm == 0x24 || imm == 0x26) return 1;  /* NOP, BTI */
         return 0;
+    }
+    if ((w & 0xFFFFF0FF) == 0xD503305F) {                       /* CLREX */
+        x_mov_mi(B, 0, XM(RCPU, (int32_t)offsetof(a64_cpu, excl_valid)), 0);
+        return 1;
     }
     if ((w & 0xFFFFF09F) == 0xD503309F) {                       /* DSB/DMB/ISB */
         unsigned op2 = BITS(w, 7, 5), crm = BITS(w, 11, 8);
@@ -561,6 +629,16 @@ static int tr_branch(T *t, a64_u32 w) {
     if ((w & 0xFFF00000) == 0xD5300000 || (w & 0xFFF00000) == 0xD5100000) {   /* MRS / MSR (registrador) */
         unsigned sr = BITS(w, 19, 5), rt = w & 31;
         int off;
+        if (sr == 0x5A20 || sr == 0x5A21) {                                 /* FPCR / FPSR (32 bits) */
+            int fo = sr == 0x5A20 ? (int)offsetof(a64_cpu, fpcr) : (int)offsetof(a64_cpu, fpsr);
+            if (BIT(w, 21)) { if (rt != 31) x_mov_rm(B, 0, rdef(t, (int)rt), XM(RCPU, fo)); return 1; }
+            fl_clobber(t);
+            int h = rx(t, (int)rt);
+            x_mov_rr(B, 0, XAX, h);
+            x_alu_ri(B, 0, A_AND, XR(XAX), (int32_t)(sr == 0x5A20 ? A64_FPCR_MASK : A64_FPSR_MASK));
+            x_mov_mr(B, 0, XM(RCPU, fo), XAX);
+            return 1;
+        }
         if (sr == 0x5E82) off = (int)offsetof(a64_cpu, tpidr_el0);          /* S3_3_C13_C0_2 */
         else if (sr == 0x5E83) off = (int)offsetof(a64_cpu, tpidrro_el0);   /* S3_3_C13_C0_3 */
         else return 0;
@@ -618,6 +696,7 @@ static int tr_dpreg(T *t, a64_u32 w) {
         } else {                        /* ADD/SUB (registrador estendido) */
             int opt = (int)BITS(w, 15, 13), amt = (int)BITS(w, 12, 10);
             if (BITS(w, 23, 22) || amt > 4) return 0;
+            if (!S) fl_clobber(t);      /* antes de usar rax: salvar as flags destrói rax */
             hn = rget(t, rn);           /* Rn = SP */
             int hm = rx(t, rm);
             switch (opt) {
@@ -633,7 +712,6 @@ static int tr_dpreg(T *t, a64_u32 w) {
             else if (amt) x_lea(B, 1, XAX, XMI(-1, XAX, amt, 0));
             o = XAX;
             if (!S && !sub) { x_lea(B, sf, rdef(t, rd), XMI(hn, XAX, 0, 0)); return 1; }
-            if (!S) fl_clobber(t);
             if (!S) { binop(t, sf, A_SUB, rdef(t, rd), hn, o); return 1; }   /* Rd = SP */
         }
         if (S && rd == 31) {
@@ -886,6 +964,7 @@ static void wb_base(T *t, int rn, int64_t off) {
     x_lea(B, 1, h, XM(h, (int32_t)off));
 }
 
+#include "jit_atom.h"
 static int s_ldst_multi(T *t, a64_u32 w);
 static int tr_ldst(T *t, a64_u32 w) {
     if ((w & 0xBF800000) == 0x0C000000 && !BIT(w, 21)) return s_ldst_multi(t, w);
@@ -1013,6 +1092,7 @@ static int tr_ldst(T *t, a64_u32 w) {
     }
     if ((w & 0x3F000000) == 0x08000000) {                       /* exclusivos / ordenados */
         int size = (int)BITS(w, 31, 30), L = (int)BIT(w, 22), rt = (int)(w & 31), rn = (int)BITS(w, 9, 5);
+        if (!BIT(w, 23) || BIT(w, 21)) return tr_excl(t, w);
         if (!BIT(w, 23) || BIT(w, 21) || !BIT(w, 15) || BITS(w, 20, 16) != 31 || BITS(w, 14, 10) != 31) return 0;
         int hb = rget(t, rn);
         sa0_check(t, rn, hb);
@@ -1034,6 +1114,7 @@ static int tr_ldst(T *t, a64_u32 w) {
         return 1;
     }
     if ((w & 0x3A000000) != 0x38000000) return 0;               /* registrador único */
+    if (!BIT(w, 24) && BIT(w, 21) && BITS(w, 11, 10) == 0) return tr_lse(t, w);   /* atômicos LSE (A:R no lugar do opc) */
     int size = (int)BITS(w, 31, 30), V = (int)BIT(w, 26), opc = (int)BITS(w, 23, 22);
     int rt = (int)(w & 31), rn = (int)BITS(w, 9, 5);
     int kind, bytes = 0;
@@ -1053,6 +1134,7 @@ static int tr_ldst(T *t, a64_u32 w) {
     if (BIT(w, 24)) {                                           /* offset imediato sem sinal */
         if (kind == 4) return 1;
         int hb = rget(t, rn);
+        if (!V) sa0_check(t, rn, hb);
         m = XM(hb, (int32_t)(BITS(w, 21, 10) << sc));
     } else if (!BIT(w, 21)) {
         int mode = (int)BITS(w, 11, 10);
@@ -1061,14 +1143,17 @@ static int tr_ldst(T *t, a64_u32 w) {
         if (kind == 4) { if (mode == 0) return 1; return 0; }   /* PRFUM; pré/pós = não alocado */
         if (mode && !V && rn == rt && rn != 31) return 0;       /* CONSTRAINED UNPREDICTABLE */
         int hb = rget(t, rn);
+        if (!V) sa0_check(t, rn, hb);
         m = XM(hb, mode == 1 ? 0 : (int32_t)imm9);
         if (mode) { wback = 1; woff = imm9; }
     } else {
-        if (BITS(w, 11, 10) != 2) return 0;                     /* atômicos / PAC: interpretador */
+        if (BITS(w, 11, 10) == 0) return tr_lse(t, w);          /* atômicos LSE */
+        if (BITS(w, 11, 10) != 2) return 0;                     /* PAC: interpretador */
         int opt = (int)BITS(w, 15, 13), S = (int)BIT(w, 12), rm = (int)BITS(w, 20, 16);
         if (!(opt & 2)) return 0;
         if (kind == 4) return 1;
         int hb = rget(t, rn);
+        if (!V) sa0_check(t, rn, hb);    /* antes do índice em rax (o teste pode salvar as flags) */
         int amt = S ? sc : 0;
         int hi;
         if (rm == 31 && (opt & 3) == 3) hi = -1;
@@ -1086,7 +1171,6 @@ static int tr_ldst(T *t, a64_u32 w) {
         }
         m = hi >= 0 ? XMI(hb, hi, amt, 0) : XM(hb, 0);
     }
-    if (!V) sa0_check(t, rn, m.base);
     if (!V) {
         if (kind == 0) st_int(t, rt, m, size);
         else if (rt == 31) ld_int(t, XDX, m, size, kind);      /* destino XZR: o acesso ainda acontece */
@@ -1135,7 +1219,12 @@ static int classify(a64_u32 w) {
         if (op2 == 6 || (op2 & 8)) return 0;
         return C_RD;
     }
-    if ((op0 & 7) == 7) return 0;        /* SIMD/FP nativo: não toca NZCV */
+    if ((op0 & 7) == 7) {               /* SIMD/FP nativo: só FCMP/FCCMP/FCSEL tocam NZCV */
+        if ((w & 0xFF203C00) == 0x1E202000) return C_WR;          /* FCMP / FCMPE */
+        if ((w & 0xFF200C00) == 0x1E200400) return C_RD | C_WR;   /* FCCMP / FCCMPE */
+        if ((w & 0xFF200C00) == 0x1E200C00) return C_RD;          /* FCSEL */
+        return 0;
+    }
     return C_RD;                        /* memória (pode falhar) e o resto (interpretador) */
 }
 
@@ -1156,7 +1245,8 @@ static int tr_insn(T *t, a64_u32 w) {
     case 0xA: case 0xB: return tr_branch(t, w);
     case 0x4: case 0x6: case 0xC: case 0xE: return tr_ldst(t, w);
     case 0x5: case 0xD: return tr_dpreg(t, w);
-    default: return tr_simd(t, w);
+    case 0x7: case 0xF: return tr_simd(t, w);
+    default: return 0;                  /* 0..3: UDF/SVE/SME: o interpretador decide */
     }
 }
 
@@ -1170,6 +1260,7 @@ static void emit_block(T *t, a64_u8 *p, a64_u8 *lim, int selfcheck, a64_u8 *nati
     t->tick = 0;
     rc_drop(t);
     t->fe = 0; t->fm = 1;
+    t->mxclean = 0;
 
     if (selfcheck) {                    /* página volátil: confere o código guest na entrada */
         x_mov_ri(B, XCX, pc);
@@ -1215,9 +1306,13 @@ jblk *jit_translate(a64_u64 pc, int selfcheck) {
     T *t = &tt;
     __builtin_memset(t, 0, offsetof(T, fp));
     t->pc0 = pc;
-    a64_u64 lim = (pc | (JIT_PAGE - 1)) + 1;
+    /* até o fim da página (pc pode estar desalinhado: a palavra que atravessa a página vira um
+     * bloco de 1 instrução; sem estouro perto do topo do espaço de endereços) */
+    int room = (int)((JIT_PAGE - (pc & (JIT_PAGE - 1))) / 4);
+    if (room < 1) room = 1;
     int maxn = (jit_g.maxinsns > 0 && jit_g.maxinsns < JIT_MAX_INSNS) ? jit_g.maxinsns : JIT_MAX_INSNS;
-    for (a64_u64 a = pc; t->n < maxn && a < lim; a += 4) {
+    if (maxn > room) maxn = room;
+    for (a64_u64 a = pc; t->n < maxn; a += 4) {
         a64_u32 w = a64_ld32(a);
         t->insn[t->n++] = w;
         if (ends_block(w)) break;

@@ -4,12 +4,14 @@
 # libobjc do mOS (userland\libsystem\objc.c). Os cabeçalhos objc/*.h vêm do zig (any-darwin-any).
 # Saída separada: build\swift\objc\runtime\*.o (a variante sem ObjC em build\swift\full continua igual).
 #   .\tools\build-swift-runtime-objc.ps1 [-Only SwiftObject,Metadata]
-param([string[]]$Only)
+# -Arch arm64: slice arm64 em build\swift-arm64\objc\runtime (tools\swift-arch.ps1); o padrão x86_64 não muda.
+param([string[]]$Only, [string]$Arch = 'x86_64')
 $root = Split-Path $PSScriptRoot -Parent
-$zig = Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*' | Select-Object -First 1
+. "$PSScriptRoot\swift-arch.ps1" $Arch
+$zig = Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*' | Where-Object { Test-Path "$($_.FullName)\zig.exe" } | Select-Object -First 1
 $zig = Join-Path $zig.FullName 'zig.exe'
 $src = "$root\.tools\swift-src"
-$out = "$root\build\swift\objc\runtime"
+$out = "$SwiftBuild\objc\runtime"
 New-Item -ItemType Directory -Force $out | Out-Null
 $cfg = "$src\include\swift\Runtime\CMakeConfig.h"
 if (-not (Test-Path $cfg)) {
@@ -45,7 +47,7 @@ $defs = @('-DswiftCore_EXPORTS', '-DSWIFT_RUNTIME', '-DSWIFT_OBJC_INTEROP=1', '-
           '-DSWIFT_INLINE_NAMESPACE=__runtime', '-DSWIFT_RUNTIME_OS_VERSIONING=0', '-DNDEBUG')
 $inc = @("-I$src\include", "-I$src\stdlib\include", "-I$src\stdlib\public\SwiftShims", "-I$src\stdlib\public", "-I$rt",
          "-I$root\userland\sdk\objc\include")   # Foundation/CoreFoundation mínimos e o que falta dos cabeçalhos privados
-$fl = @('-target', 'x86_64-macos', '-std=c++20', '-O2', '-fno-exceptions', '-fno-rtti', '-ffunction-sections', '-fno-sanitize=all', '-w', '-c')
+$fl = @('-target', $ZigTarget, '-std=c++20', '-O2', '-fno-exceptions', '-fno-rtti', '-ffunction-sections', '-fno-sanitize=all', '-w', '-c')
 $ok = 0; $bad = @()
 foreach ($f in $files) {
     $o = "$out\" + (Split-Path (Split-Path $f) -Leaf) + '_' + [IO.Path]::GetFileNameWithoutExtension($f) + '.o'

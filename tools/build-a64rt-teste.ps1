@@ -8,7 +8,7 @@
 param([Parameter(Mandatory)][string]$OutDir, [string]$Motores = 'interp,jit', [string]$Real = '', [string]$RealArgs = '--version',
       [int]$SizeMiB = 400)
 $root = Split-Path $PSScriptRoot -Parent
-$zig = Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*' -ErrorAction SilentlyContinue | Select-Object -First 1
+$zig = Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*' -ErrorAction SilentlyContinue | Where-Object { Test-Path (Join-Path $_.FullName 'zig.exe') } | Select-Object -First 1
 if ($zig) { $zig = Join-Path $zig.FullName 'zig.exe' } elseif ($env:MOS_ZIG) { $zig = $env:MOS_ZIG } else { $zig = (Get-Command zig -ErrorAction SilentlyContinue).Source }
 $esp = Join-Path $root "$OutDir\esp"
 if (-not (Test-Path "$esp\mOS")) { Write-Host "rode antes: .\build.ps1 -OutDir $OutDir" -ForegroundColor Red; exit 1 }

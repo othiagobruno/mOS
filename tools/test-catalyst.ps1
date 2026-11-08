@@ -3,7 +3,7 @@
 # O NSApplication fica no laço; o watchdog do harness encerra depois de alguns segundos. A tela vai para tela.bmp.
 #   .\tools\test-catalyst.ps1   (antes: .\tools\build-frameworks-objc.ps1 -Only UIKit)
 $root = Split-Path $PSScriptRoot -Parent
-$zig = (Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*')[0].FullName + '\zig.exe'
+$zig = (Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*' | Where-Object { Test-Path "$($_.FullName)\zig.exe" })[0].FullName + '\zig.exe'
 $fwrel = 'System\iOSSupport\System\Library\Frameworks\UIKit.framework\Versions\A\UIKit'
 $fw = "$root\build\swift\objc\dylib\$fwrel"
 if (-not (Test-Path $fw)) { Write-Host 'falta o UIKit.framework (tools\build-frameworks-objc.ps1 -Only UIKit)' -ForegroundColor Red; exit 1 }

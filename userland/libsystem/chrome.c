@@ -261,6 +261,7 @@ void cx_chrome_init(void) {         /* chamado por cx_objc_boot (objc.c) */
 typedef id_ (*objc_exc_pre_t)(id_);
 static objc_exc_pre_t exc_pre;
 objc_exc_pre_t objc_setExceptionPreprocessor(objc_exc_pre_t fn) { objc_exc_pre_t o = exc_pre; exc_pre = fn; return o; }
+objc_exc_pre_t cx_objc_exception_preprocessor(void) { return exc_pre; }   /* objc_exc.c: aplicado no objc_exception_throw */
 
 /* ---- CoreFoundation */
 Boolean CFStringHasPrefix(id_ s, id_ p) {

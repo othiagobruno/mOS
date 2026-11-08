@@ -866,21 +866,25 @@ int feraiseexcept(int e) {
     return 0;
 }
 #endif
+/* fetestexcept: o Zig (compiler_rt) consulta as flags de exceção do ponto flutuante */
+int fetestexcept(int e) {
+#if defined(__aarch64__)
+    u64 m;
+    __asm__ volatile("mrs %0, fpsr" : "=r"(m));
+    return (int)(m & (u64)(e & 0x9F));
+#else
+    u32 m;
+    __asm__ volatile("stmxcsr %0" : "=m"(m));
+    return (int)(m & (u32)(e & 0x3F));
+#endif
+}
 
 /* ================================================================ sandbox (constantes de extensão) */
 const char *const APP_SANDBOX_READ = "com.apple.app-sandbox.read";
 const char *const APP_SANDBOX_READ_WRITE = "com.apple.app-sandbox.read-write";
 
 /* ================================================================ libunwind (só o crashpad/backtrace usa) */
-#if !defined(__aarch64__)   /* arm64: o libunwind de verdade (tools/build-libsystem-arm64.ps1) */
-#define UNW_EUNSPEC (-6540)
-int unw_getcontext(void *ctx) { (void)ctx; return 0; }
-int unw_init_local(void *cur, void *ctx) { (void)cur; (void)ctx; return UNW_EUNSPEC; }
-int unw_step(void *cur) { (void)cur; return 0; }
-int unw_get_reg(void *cur, int reg, usize *val) { (void)cur; (void)reg; if (val) *val = 0; return UNW_EUNSPEC; }
-int unw_set_reg(void *cur, int reg, usize val) { (void)cur; (void)reg; (void)val; return UNW_EUNSPEC; }
-int unw_is_signal_frame(void *cur) { (void)cur; return 0; }
-#endif
+/* unw_*: o libunwind do LLVM de verdade (tools/build-libsystem*.ps1) */
 
 /* ================================================================ libc++: std::to_string(int) (kerberos.node) */
 /* std::string do libc++ x86_64: curto = byte 0 com tamanho << 1, texto a partir do byte 1 (até 22 chars) */

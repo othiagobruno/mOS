@@ -4,7 +4,7 @@
 #   .\build\machotest.exe build\libSystem.mos build\swiftobjctest build\swiftobjctest\SwiftObjcTest.app\Contents\MacOS\SwiftObjcTest
 param([string]$Dest = "$PSScriptRoot\..\build\swiftobjctest")
 $root = Split-Path $PSScriptRoot -Parent
-$zig = Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*' -ErrorAction SilentlyContinue | Select-Object -First 1
+$zig = Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*' -ErrorAction SilentlyContinue | Where-Object { Test-Path "$($_.FullName)\zig.exe" } | Select-Object -First 1
 if ($zig) { $zig = Join-Path $zig.FullName 'zig.exe' } elseif ($env:MOS_ZIG) { $zig = $env:MOS_ZIG } else { $zig = (Get-Command zig -ErrorAction SilentlyContinue).Source }
 if (-not $zig) { Write-Host 'zig nao encontrado' -ForegroundColor Red; exit 1 }
 $out = Join-Path $Dest 'SwiftObjcTest.app\Contents\MacOS'

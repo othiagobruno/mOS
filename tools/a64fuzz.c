@@ -404,7 +404,8 @@ static int generic_sys(const char *s) {
 static int must_udf(const disinfo *d) {
     if (!strcmp(d->ours, "?")) return 0;
     if (!strncmp(d->ours, "udf", 3)) return 1;
-    if (!strcmp(d->ours, "<unknown>")) return strcmp(d->all, "<unknown>") != 0;
+    /* desconhecida para nós: UDF, mesmo se o LLVM +all também não conhece (FEAT_FPRCVT do QEMU 11, p. ex.) */
+    if (!strcmp(d->ours, "<unknown>")) return 1;
     if (generic_sys(d->ours) && !generic_sys(d->all) && strcmp(d->all, "<unknown>")) return 1;
     return 0;
 }
@@ -488,6 +489,50 @@ static int dc_tolerated(const fz_result *ours, const fz_result *q, u32 insn, u32
     return 1;
 }
 
+/* sequências: se nós falhamos num DC/IC sem sonda no QEMU, num STXR* (ver acima) ou por SA0, e o QEMU
+ * passou dali, o resto da sequência não é comparável — conta como tolerado */
+static u32 g_warn_seq;
+static int seq_tolerated(const fz_result *ours, const fz_result *q, const fz_case *k) {
+    u64 base = FZ_CODE_VA + FZ_CASE_OFF;
+    /* o QEMU usa -1 como exclusive_addr "vazio": STXR* com base 0xffff...ffff tenta o store e
+     * falha, onde o ARM (e nós) só devolvem status 1 — impl. definido também */
+    if (k->ninsn > 1 && q->kind == FZK_FAULT && q->info == ~0ull && q->pc >= base && q->pc < base + 4ull * k->ninsn &&
+        !(q->pc & 3) && store_excl(k->insn[(q->pc - base) / 4]) && !(ours->kind == FZK_FAULT && ours->pc == q->pc)) {
+        g_warn_seq++;
+        return 1;
+    }
+    if (k->ninsn <= 1 || ours->kind != FZK_FAULT) return 0;
+    if (ours->pc < base || ours->pc >= base + 4ull * k->ninsn || (ours->pc & 3)) return 0;
+    u32 w = k->insn[(ours->pc - base) / 4], m = w & 0xFFFFFFE0;
+    int dc = m == 0xD50B7A20 || m == 0xD50B7B20 || m == 0xD50B7E20 || m == 0xD50B7520;
+    /* SA0: uma instrução anterior desalinhou o sp (pré/pós-índice); nós falhamos como o XNU
+     * (exit_info = sp), o QEMU não implementa a checagem */
+    int sa0 = (ours->st.sp & 15) && ours->info == ours->st.sp;
+    if (!dc && !sa0 && !store_excl(w)) return 0;
+    if (q->kind == FZK_FAULT && q->pc == ours->pc) return 0;
+    g_warn_seq++;
+    return 1;
+}
+
+/* MSR FPCR com valor aleatório: o QEMU (-cpu max tem FEAT_AFP/EBF16) guarda AH/FIZ/NEP/EBF, que
+ * mudam a semântica de FP das instruções seguintes; nós não anunciamos isso (A64_FPCR_MASK). Se o
+ * QEMU terminou com bits fora da máscara, o caso não é comparável. */
+/* páginas que o Windows mapeia em todo processo (KUSER_SHARED_DATA e vizinhas, 0x7FFE0000..
+ * 0x7FFEFFFF): o a64test não consegue reservá-las, então um acesso ali não falha no harness */
+static u32 g_warn_win;
+static int win_tolerated(const fz_result *ours, const fz_result *q) {
+    if (q->kind != FZK_FAULT || q->info < 0x7FFE0000ull - 0x10000 || q->info >= 0x7FFF0000ull) return 0;
+    if (ours->kind == FZK_FAULT && ours->pc == q->pc) return 0;
+    g_warn_win++;
+    return 1;
+}
+static u32 g_warn_afp;
+static int afp_tolerated(const fz_result *q) {
+    if (!(q->st.fpcr & ~((1u << 19) | (3u << 22) | (1u << 24) | (1u << 25) | (1u << 26)))) return 0;
+    g_warn_afp++;
+    return 1;
+}
+
 static u32 cmp_res(const fz_result *a, const fz_result *b) {
     u32 d = 0;
     if (a->kind != b->kind) return D_KIND;
@@ -512,9 +557,9 @@ static const char *kind_name(u32 k) {
 }
 static void describe(FILE *f, const fz_result *a, const fz_result *b, const char *la, const char *lb) {
     u32 d = cmp_res(a, b);
-    if (d & D_KIND) { fprintf(f, "    saída: %s=%s(pc=%llx info=%llx) %s=%s(pc=%llx info=%llx)\n", la, kind_name(a->kind),
-                              (unsigned long long)a->pc, (unsigned long long)a->info, lb, kind_name(b->kind),
-                              (unsigned long long)b->pc, (unsigned long long)b->info); return; }
+    if (d & D_KIND) { fprintf(f, "    saída: %s=%s(pc=%llx info=%llx insn=%08x) %s=%s(pc=%llx info=%llx insn=%08x)\n", la, kind_name(a->kind),
+                              (unsigned long long)a->pc, (unsigned long long)a->info, a->insn, lb, kind_name(b->kind),
+                              (unsigned long long)b->pc, (unsigned long long)b->info, b->insn); return; }
     if (d & D_PC) fprintf(f, "    pc: %s=%llx %s=%llx\n", la, (unsigned long long)a->pc, lb, (unsigned long long)b->pc);
     if (d & D_INFO) fprintf(f, "    info: %s=%llx %s=%llx\n", la, (unsigned long long)a->info, lb, (unsigned long long)b->info);
     for (int i = 0; i < 31; i++) if (a->st.x[i] != b->st.x[i])
@@ -618,7 +663,13 @@ static int vec_lanes(const char *d, int *esize) {
     return 0;
 }
 static void fma_recheck(const fz_case *cs, u32 n, int K, const disinfo *dis, const fz_result *ri, fz_result *rq, u8 *susp) {
-    if (K != 1) return;
+    if (K != 1) {   /* sequências: FMA vetorial só pode estar na 1ª posição; sem recheque */
+        for (u32 i = 0; i < n; i++) {
+            int es;
+            if (fma_family(dis[i].ours) && vec_lanes(dis[i].ours, &es) && cmp_res(&ri[i], &rq[i])) susp[i] = 1;
+        }
+        return;
+    }
     u32 cap = 0, nv = 0; fz_case *var = NULL; u32 *from = NULL, *lane = NULL;
     for (u32 i = 0; i < n; i++) {
         if (ri[i].kind == FZK_UDF || rq[i].kind == FZK_UDF || !fma_family(dis[i].ours) || !cmp_res(&ri[i], &rq[i])) continue;
@@ -709,7 +760,7 @@ int main(int argc, char **argv) {
     /* um diretório por processo: várias sessões rodam o fuzzer ao mesmo tempo */
     snprintf(g_tmp, sizeof g_tmp, "%s\\a64fuzz", g_build); CreateDirectoryA(g_tmp, NULL);
     { size_t l = strlen(g_tmp); snprintf(g_tmp + l, sizeof g_tmp - l, "\\%lu", (unsigned long)GetCurrentProcessId()); CreateDirectoryA(g_tmp, NULL); }
-    snprintf(g_a64test, sizeof g_a64test, "%s\\a64test.exe", g_build);
+    { const char *t = getenv("MOS_A64TEST"); if (t) snprintf(g_a64test, sizeof g_a64test, "%s", t); else snprintf(g_a64test, sizeof g_a64test, "%s\\a64test.exe", g_build); }   /* o placar usa uma cópia própria */
     snprintf(g_mon, sizeof g_mon, "%s\\a64oracle\\mon.elf", g_build);
     const char *q = getenv("MOS_QEMU_A64"); strcpy(g_qemu, q ? q : "C:\\Program Files\\qemu\\qemu-system-aarch64.exe");
     const char *o = getenv("MOS_LLVM_OBJDUMP"); strcpy(g_objdump, o ? o : "C:\\Program Files\\LLVM\\bin\\llvm-objdump.exe");
@@ -734,20 +785,21 @@ int main(int argc, char **argv) {
     llvm_classify(cw, nc, cd);
     u32 *validpool = malloc((size_t)nc * 4), nvalid = 0;
     for (u32 i = 0; i < nc; i++)
-        if (!g_have_llvm || (strcmp(cd[i].ours, "<unknown>") && strncmp(cd[i].ours, "udf", 3))) validpool[nvalid++] = i;
+        if (!g_have_llvm || (!must_udf(&cd[i]) && !fma_family(cd[i].ours))) validpool[nvalid++] = i;   /* sem FMA no meio das sequências (ver fma_family) */
     for (int k = 0; k < nsel; k++) {
         u32 b = (u32)k * (u32)casos * CAND, e = b + (u32)casos * CAND;
         u32 *vi = malloc((size_t)casos * CAND * 4), nv = 0;
-        for (u32 i = b; i < e; i++) if (!g_have_llvm || (strcmp(cd[i].ours, "<unknown>") && strncmp(cd[i].ours, "udf", 3))) vi[nv++] = i;
+        for (u32 i = b; i < e; i++) if (!g_have_llvm || !must_udf(&cd[i])) vi[nv++] = i;
         for (int j = 0; j < casos; j++) {
             u32 i = (u32)k * (u32)casos + (u32)j;
-            u32 pick = (nv && rndn(100) < 85) ? vi[rndn(nv)] : b + rndn(e - b);
+            u32 pick = (nv && (K > 1 || rndn(100) < 85)) ? vi[rndn(nv)] : b + rndn(e - b);
+            if (K > 1 && !nv && nvalid) pick = validpool[rndn(nvalid)];   /* grupo só de UDF: sequência de válidas */
             rand_state(&cs[i].st);
             cs[i].scr_seed = rnd();
             cs[i].ninsn = (u32)K;
             cs[i].insn[0] = cw[pick];
             dis[i] = cd[pick];
-            if (K == 1 && fma_family(dis[i].ours)) cs[i].st.fpsr &= ~0x10u;   /* ver fma_family */
+            if (fma_family(dis[i].ours)) cs[i].st.fpsr &= ~0x10u;   /* ver fma_family */
             for (int q = 1; q < K; q++) cs[i].insn[q] = nvalid ? cw[validpool[rndn(nvalid)]] : gen_word(sel[rndn(nsel)]);
             cg[i] = sel[k];
         }
@@ -783,6 +835,21 @@ int main(int argc, char **argv) {
     DWORD t1 = GetTickCount();
 
     u8 *susp = calloc(n, 1);
+    /* UDF nosso numa palavra que não é a do caso (dado do rascunho executado depois de um desvio):
+     * se o LLVM com os nossos recursos não a conhece (MTE, HBC... que o -cpu max tem), o UDF está certo */
+    u8 *udf_alt = calloc(n, 1);
+    {
+        u32 na = 0, *idx = malloc((size_t)n * 4), *wa = malloc((size_t)n * 4);
+        for (u32 i = 0; i < n; i++)
+            if (ri[i].kind == FZK_UDF && rq[i].kind != FZK_UDF && ri[i].insn != cs[i].insn[0]) { idx[na] = i; wa[na++] = ri[i].insn; }
+        if (na) {
+            disinfo *da = calloc(na, sizeof *da);
+            llvm_classify(wa, na, da);
+            for (u32 t = 0; t < na; t++) if (must_udf(&da[t])) udf_alt[idx[t]] = 1;
+            free(da);
+        }
+        free(idx); free(wa);
+    }
     fma_recheck(cs, n, K, dis, ri, rq, susp);
 
     gstat st[NGROUPS]; memset(st, 0, sizeof st);
@@ -793,7 +860,7 @@ int main(int argc, char **argv) {
         int g = cg[i]; gstat *s = &st[g];
         s->gen++;
         int mu = (K == 1) && must_udf(&dis[i]);
-        int exp_udf = mu || rq[i].kind == FZK_UDF;
+        int exp_udf = mu || (K == 1 && rq[i].kind == FZK_UDF);   /* K>1: UDF do QEMU no meio da sequência compara como saída */
         if (mu) s->must_udf++;
         const char *verd;
         if (exp_udf) {
@@ -802,10 +869,11 @@ int main(int argc, char **argv) {
             else { s->should_udf++; verd = "deveria_udf"; }
         } else {
             s->exp_exec++;
-            if (ri[i].kind == FZK_UDF) { s->udf_bad++; verd = NULL; }
+            if (ri[i].kind == FZK_UDF && rq[i].kind != FZK_UDF && udf_alt[i]) { s->impl++; s->match++; verd = NULL; }   /* executou o caso; o UDF foi depois, e está certo */
+            else if (ri[i].kind == FZK_UDF && rq[i].kind != FZK_UDF && !(K > 1 && seq_tolerated(&ri[i], &rq[i], &cs[i]))) { s->udf_bad++; verd = "udf_indevido"; }
             else {
                 s->impl++;
-                if (cmp_res(&ri[i], &rq[i]) && !excl_tolerated(&ri[i], &rq[i], cs[i].insn[0], cs[i].ninsn) && !dc_tolerated(&ri[i], &rq[i], cs[i].insn[0], cs[i].ninsn)) {
+                if (cmp_res(&ri[i], &rq[i]) && !excl_tolerated(&ri[i], &rq[i], cs[i].insn[0], cs[i].ninsn) && !dc_tolerated(&ri[i], &rq[i], cs[i].insn[0], cs[i].ninsn) && !seq_tolerated(&ri[i], &rq[i], &cs[i]) && !afp_tolerated(&rq[i]) && !win_tolerated(&ri[i], &rq[i])) {
                     if (susp[i]) { s->fma_susp++; verd = "suspeito_fma"; } else { s->diverge++; verd = "diverge"; }
                 } else { s->match++; verd = NULL; }
             }
@@ -875,8 +943,8 @@ int main(int argc, char **argv) {
     if (!g_quiet) {
         printf("%-22s %-5s %7u %7u %7u %7u %7u %7u %7u %7u %7u", "TOTAL", "", tot.gen, tot.exp_exec, tot.impl, tot.match, tot.diverge, tot.udf_bad, tot.should_udf, tot.udf_ok, tot.fma_susp);
         if (jit) printf("  %7u", tot.jit_div);
-        printf("\n%u casos × %d instrução(ões) em %.1f s (avisos: %u endereço de falha, %u rascunho após falha, %u STXR impl. definido, %u DC/IC sondado só por nós, %u lanes de FMA do QEMU corrigidas)\n",
-               n, K, (t1 - t0) / 1000.0, g_warn_addr, g_warn_scr, g_warn_excl, g_warn_dc, g_fma_fixed);
+        printf("\n%u casos × %d instrução(ões) em %.1f s (avisos: %u endereço de falha, %u rascunho após falha, %u STXR impl. definido, %u DC/IC sondado só por nós, %u sequências cortadas em DC/STXR, %u com FPCR.AH/FIZ/NEP do QEMU, %u em página do Windows, %u lanes de FMA do QEMU corrigidas)\n",
+               n, K, (t1 - t0) / 1000.0, g_warn_addr, g_warn_scr, g_warn_excl, g_warn_dc, g_warn_seq, g_warn_afp, g_warn_win, g_fma_fixed);
     }
     cleanup_tmp();
     return (tot.diverge || tot.should_udf || tot.jit_div) ? 1 : 0;

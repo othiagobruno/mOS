@@ -119,6 +119,8 @@ if (Test-Path "$swd\usr\lib\swift") {
         New-Item -ItemType Directory -Force "$esp\mOS\System\Library\Frameworks" | Out-Null
         Copy-Item "$swd\System\Library\Frameworks\*" "$esp\mOS\System\Library\Frameworks\" -Recurse -Force
     }
+    # os universais (x86_64 + arm64, tools\build-swift-arm64.ps1) por cima dos só x86_64
+    if (Test-Path "$root\build\universal-swift\usr\lib\swift") { Copy-Item "$root\build\universal-swift\*" "$esp\mOS\" -Recurse -Force }
 }
 Remove-Item -LiteralPath "$esp\mOS\Sistema\Biblioteca\dyld-experimental" -ErrorAction SilentlyContinue
 if ($Diagnostico) {

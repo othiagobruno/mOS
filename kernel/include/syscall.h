@@ -174,6 +174,9 @@ enum {
     MACH_VM_PROTECT = 16,   /* (16+: longe das MACH_VM_CA_* da sessão CoreAnimation, 4..) */
                             /* a0 = endereço, a1 = tamanho, a2 = prot (VM_PROT_*): registra a proteção (mprotect) */
     MACH_VM_REGION = 17,    /* a0 = endereço -> a1 = início, a2 = tamanho, a3 = prot, a4 = prot máxima */
+    MACH_VM_JIT_WPROTECT = 18, /* a0 = página, a1 = 1 tira a escrita / 0 devolve / 2 consulta -> a2 = resultado
+                            * (rede de SMC do JIT do tradutor arm64, userland/a64rt: proteção de verdade na PTE; páginas
+                            * COW não entram; a escrita do programa vira SIGBUS para o runtime) */
     MACH_VM_CA_ALLOC = 4,   /* () -> a0 = id de CAContext, único no sistema */
     MACH_VM_CA_PUBLISH,     /* a0 = id, a1 = nome da entrada de memória -> a2 = geração */
     MACH_VM_CA_GEN,         /* a0 = id -> a1 = geração (0 = ninguém publicou) */

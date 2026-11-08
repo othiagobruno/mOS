@@ -148,12 +148,14 @@ escondida como "bate":
 | Limitação | Tratamento |
 |---|---|
 | FMA "hardfloat": com FPSR.IXC ligado, RN e entradas normais, o QEMU calcula muladd f32/f64 com o `fma()` estático do mingw, que arredonda duas vezes | casos de FMA começam com IXC = 0 (escalar e lane 0 exatos); FMLA/FMLS/FRECPS/FCMLA vetoriais divergentes são refeitos lane a lane com as lanes anteriores zeradas (exatas, IXC limpo); o que não dá para isolar vira a coluna **FMA?**; a suíte C compara a linha `fma` só com o x86_64 |
-| não implementa SCTLR.SA0 (sp desalinhado como base) | o fuzzer só gera sp alinhado; SA0 fica com os testes da INT |
+| não implementa SCTLR.SA0 (sp desalinhado como base) | o fuzzer só gera sp inicial alinhado; numa sequência em que um pré/pós-índice desalinha o sp, "nós FAULT com addr = sp" × "QEMU segue" corta a comparação ali; SA0 fica com os testes da INT |
 | STXR com monitor aberto não verifica alinhamento/tradução | aceita "abort" × "status 1 sem acesso" (IMPLEMENTATION DEFINED no ARM) |
 | DC CVAC/CVAU/CIVAC e IC IVAU não sondam o endereço | aceita "nós FAULT" × "QEMU segue" com o resto igual; DC CVAP/CVADP o QEMU sonda: estrito |
 | DCZID_EL0 = 512 B + DZP=1 (efeito do trap do DC ZVA), CNTFRQ 62,5 MHz, contadores de tempo, PACGA (QARMA) | fora do gerador; valores do M1 ficam nos testes próprios (`int_sys.S`) |
-| `-cpu max` tem recursos que não anunciamos (SVE, SME, MTE, MOPS, AFP, XS, SPECRES, FP8, LUT...) | validade pelo LLVM (abaixo): o que só existe com `+all` tem que ser UDF |
+| `-cpu max` tem recursos que não anunciamos (SVE, SME, MTE, MOPS, AFP, XS, SPECRES, FP8, LUT, FPRCVT...) | validade pelo LLVM (abaixo): o que o LLVM com os nossos recursos não conhece tem que ser UDF; um `MSR FPCR` que deixa AH/FIZ/NEP/EBF ligados no QEMU torna o caso não comparável |
 | console de semihosting troca LF por CRLF | desfeito em `common.ps1` (troca exata) |
+| (harness) o Windows mapeia 0x7FFE0000..0x7FFEFFFF (KUSER_SHARED_DATA) em todo processo e o a64test não consegue reservar | "QEMU FAULT ali" × "nós seguimos" é tolerado |
+| (harness) UDF nosso numa palavra executada fora do caso (desvio para o rascunho, que executa dados) | se o LLVM com os nossos recursos não conhece a palavra (MTE, HBC, SM3...), o UDF conta como correto |
 
 ### Fuzzing diferencial (`tools/a64fuzz.c` → `build/a64fuzz.exe`)
 
@@ -167,7 +169,9 @@ build/a64fuzz.exe [--grupo G|INT|FP|SIMD|prefixo*]... [--casos N] [--k K] [--sem
 - **Validade**: para cada grupo são geradas 6× mais palavras e o `llvm-objdump` (LLVM 23) classifica
   duas vezes — com `+v8a,+lor` + os recursos de `A64_FEATURES` e com `+all`; ~85% dos casos usam uma
   palavra válida, o resto é aleatório dentro do grupo (cobre o que tem que dar UDF). Esperado: UDF se
-  a palavra é `udf`, só existe com `+all`, ou o QEMU dá UDF; senão, o mesmo estado do QEMU.
+  a palavra é `udf`, o LLVM com os nossos recursos não a conhece, é sysreg genérico que só tem nome com
+  `+all`, ou (K=1) o QEMU dá UDF; senão, o mesmo estado do QEMU. Sequências usam só palavras válidas e
+  sem FMA fora da 1ª posição.
 - **Caso**: estado inicial aleatório (inteiros especiais, ponteiros para o rascunho, f16/f32/f64
   especiais por lane, FPCR com RMode/FZ/FZ16/DN/AHP, FPSR, NZCV, DIT/SSBS, TPIDR_EL0), K instruções
   em `0x2E0008000` numa página cheia de `brk #0xA64` (desvio para fora do caso para ali), rascunho
@@ -273,8 +277,16 @@ funções**.
   script (o carregador só indexa GLOBAL, e o lld aplicava hidden ao memcpy do libSystem).
 - Desenrolar: o **libunwind do LLVM** (o do zig) entra no blob: C/C++ no modo Apple (compact unwind + DWARF das
   imagens Mach-O por `_dyld_find_unwind_sections`), `.S` sem `__APPLE__`. Para um pc dentro do próprio libSystem,
-  `_dyld_find_unwind_sections` (dlfcn.c) devolve o `.eh_frame` do blob (`cx_ls_unwind_sections`, darwin_arm64.c; o
-  deslocamento é gravado depois do link). Exceções C++ atravessam quadros do libSystem (qsort, dispatch, NSInvocation).
+  `_dyld_find_unwind_sections` (dlfcn.c) devolve o `.eh_frame` do blob (`cx_ls_unwind_sections`, unwind_ls.c; o
+  deslocamento é gravado depois do link por `tools/patch-ehframe.ps1`). Exceções C++ atravessam quadros do libSystem
+  (qsort, dispatch, NSInvocation). O libSystem **x86_64 também** recebeu o mesmo libunwind (`tools/build-libsystem.ps1`,
+  triplo `x86_64-apple-macos11-elf`): antes o `_Unwind_RaiseException` era um stub e toda exceção virava terminate.
+- Exceções Objective-C (`objc_exc.c`, as duas arquiteturas), como o objc-exception.mm da Apple: `objc_exception_throw`
+  lança `{id, typeinfo ObjC}` pelo `__cxa_throw` da libc++abi do disco (achada por dlopen de `/usr/lib/libc++.1.dylib`),
+  `__objc_personality_v0` é o `__gxx_personality_v0`, o `can_catch` do `objc_ehtype_vtable` casa pela hierarquia
+  (`OBJC_EHTYPE_id`, `OBJC_EHTYPE_$_NSException` e os do app), `objc_begin/end_catch`/`rethrow` da libc++abi, o
+  preprocessador do `objc_setExceptionPreprocessor` e um terminate handler que chama o `NSSetUncaughtExceptionHandler` e
+  imprime nome e motivo. Sem a libc++ no disco, imprime e aborta como antes.
 - Hardware visto pelo processo: sysctl do Apple Silicon (`darwin_arm64.c`, de `A64RT_SYSCTL_INTS/STRS` e
   `A64_FEATURES`), `uname -m` = arm64, páginas de 16 KiB (`vm_page_size`, `getpagesize`, `sysconf`, `host_page_size`;
   o mmap anônimo alinha a 16 KiB).
@@ -285,20 +297,40 @@ com o x86_64 em binários **universais** nos caminhos da Apple (`build\universal
 `libsqlite3.dylib`, `libicucore.A.dylib`, `System\Library\Frameworks\WebKit.framework`; `tools/lipo-mos.ps1` é o
 `lipo -create`). O build.ps1 copia por cima das só x86_64; o carregador escolhe o slice do processo, sem caminho novo.
 
+**Cadeia Swift.** Todos os scripts da variante com interop ObjC (`build-swift-full-objc`, `-runtime-objc`,
+`-overlays-objc`, `-concurrency-objc`, `-foundation-objc`, `-combine-objc`, `-uikit-objc`, `build-swiftui-objc`,
+`build-frameworks-objc`, `link-swift-dylibs-objc`, `link-swift-objc`) aceitam `-Arch arm64` (`tools/swift-arch.ps1`:
+`arm64-apple-macos26` / `aarch64-macos`, módulo `arm64-apple-macos.swiftmodule`, saída em `build\swift-arm64\...`); sem o
+parâmetro o x86_64 é o de sempre. `build-openswiftui-deps.ps1 -Arch arm64` faz só os objetos C/C++ nativos que o
+SwiftUI.framework liga (Compute, OpenRenderBox, OpenSwiftUI_SPI, ctfont). `tools/build-swift-arm64.ps1` roda as etapas
+arm64 (~1 h; o OpenSwiftUICore sozinho ~22 min) e junta com `lipo-mos` todo Mach-O presente em `build\swift\objc\dylib` e
+`build\swift-arm64\objc\dylib` em `build\universal-swift` (38 binários, ~110 MB: `/usr/lib/swift/libswift*.dylib`, Combine,
+SwiftUI, UIKit do Catalyst e `libswiftUIKit`, CoreData, CryptoKit, WebKit, ImageIO...); só entram na imagem com
+`build.ps1 -ComSwift` (ou `MOS_COM_SWIFT=1`), e o `stage-chromeapp.ps1` copia os universais por cima. Não havia asm x86 nesses fontes além do `wk_sys`; o
+`Foundation.h` do SDK passou a ter `BOOL` = `bool` quando `__OBJC_BOOL_IS_BOOL` (ObjC arm64, como o `objc/objc.h`).
+Teste: `tools/build-swift-arm64-test.ps1` (os `userland/tests-swiftobjc/swift` e `foundation` ligados nas dylibs, como
+binário da Apple): **13/13 e 23/23 no arm64 pelo tradutor**, iguais ao x86_64. A variante nativa sem ObjC
+(`build-dispatch.ps1`, `build-cryptokit.ps1`, módulos de `build-openswiftui-deps.ps1`) só vai estática nos apps SwiftUI
+x86_64 do próprio mOS e fica só x86_64.
+
 **Testes** (`tools/build-libsys-arm64-test.ps1`, no machotest com o VFS do runtime): `userland/tests-a64libsys/abi.mm`
 (o mesmo fonte em arm64 e x86_64 de referência): printf com 13 variádicos e long double, va_list repassado, sscanf,
 NSStringFromRect (HFA), objc_msgSend com HFA/x8/float/16 argumentos/9º double na pilha/nil, NSInvocation com 16
 argumentos, HFA e x8, `imp_implementationWithBlock`, dispatch_sync/async, exceção C++ atravessando o qsort do
 libSystem, setjmp/siglongjmp, páginas de 16 KiB, MAP_JIT + `sys_icache_invalidate` com código trocado, sysctl, libm,
-NSApplication/NSWindow/NSView (retângulo HFA de ida e volta): **31/31 no arm64** (JIT e interpretador).
-`userland/tests-a64libsys/dylibs.cpp`: libc++/libc++abi, sqlite e ICU carregados dos universais do disco: **5/5**.
+NSApplication/NSWindow/NSView (retângulo HFA de ida e volta), @throw/@catch/@finally (por classe, `id`, superclasse,
+dentro de bloco do libSystem, com `catch(...)` do C++): **36/36 no arm64** (JIT e interpretador); no x86_64 de referência
+35/36 (só o NSInvocation x86 com argumentos na pilha).
+`userland/tests-a64libsys/dylibs.cpp`: libc++/libc++abi, sqlite, ICU e zlib carregados dos universais do disco: **6/6**.
 
-**Pendências.** (1) Swift (stdlib/runtime/overlays/Foundation/Combine/SwiftUI, `tools/build-swift-*-objc.ps1`,
-`build-frameworks-objc.ps1`, CryptoKit) ainda só x86_64: os scripts têm o alvo fixo em poucos lugares, mas a cadeia é
-longa. (2) zlib do Homebrew (`/usr/local/opt/zlib`) sem slice arm64 (bottle `arm64_*`). (3) Nas duas arquiteturas,
-`objc_exception_throw` aborta (sem @try/@catch de ObjC); o x86 também não desenrola C++ dentro do libSystem. (4) Achados
-no x86 pela referência: o printf do libSystem x86 lê `long double` (80 bits) como 8 bytes e desalinha os argumentos
-seguintes; o NSInvocation x86 não passa argumentos na pilha (mais de 6 inteiros ou 8 FP).
+**zlib.** `tools/build-zlib.ps1` compila o fonte oficial (zlib 1.3.2, `.tools\zlib-dl`) no slice arm64; o x86_64 continua o
+bottle do Homebrew da mesma versão; o universal vai para `/usr/local/opt/zlib/lib/libz.1.dylib` (para onde o carregador
+manda `/usr/lib/libz.1.dylib`).
+
+**Pendências.** (1) Cadeia Swift: só falta rodar um app SwiftUI/Combine/Concurrency arm64 de verdade (os testes cobrem
+stdlib, runtime e Foundation). (2) Achados no x86 pela referência, fora do tradutor:
+o printf do libSystem x86 lê `long double` (80 bits) como 8 bytes e desalinha os argumentos seguintes; o NSInvocation x86
+não passa argumentos na pilha (mais de 6 inteiros ou 8 FP).
 
 ## JIT (frente JIT)
 
@@ -312,6 +344,9 @@ Arquivos: `jit_core.c` (cache, despachante, threads, invalidação, recuperaçã
   formato x86 (lahf/seto), r15 = `a64_cpu*`. Dentro do bloco: X0..X30/SP em 11 registradores
   do host (LRU); flags no EFLAGS em modo ADD (CF = C) ou SUB (CF = !C). Acessos à memória e
   instruções do interpretador contam como leitura de flags (estado exato em falha/saída).
+- **Exclusivos e LSE** (`jit_atom.h`): monitor do contrato (endereço, tamanho, valor), STXR = `lock cmpxchg` contra o valor guardado; CAS = `lock cmpxchg`; LDADD = `lock xadd`; SWP = `xchg`; LDCLR/LDEOR/LDSET/LDSMAX..LDUMIN = laço de `cmpxchg`; LDAPR = load. Alinhamento (atravessar 16 bytes) e SA0 como no INT, pelo caminho lento.
+- **FP escalar** (`jit_simd.h`): S e D com SSE/FMA3 só quando FPCR = RN e FZ = 0, sem flag do x86 além de PE e com resultado normal, finito e não-NaN (senão a instrução inteira vai ao interpretador). PE → IXC. FABS/FNEG/FMOV são operações de bits. MXCSR do host fica em 0x1F80.
+- **Pilha de retorno**: BL/BLR empilham (pc+4, stub de continuação encadeável) em 16 entradas por thread (`reserved[12]`); RET confere o topo. Cada desvio indireto tem a própria busca no cache de saltos.
 - **Fallback**: o que não é nativo chama `a64_interp_exec` com estado sincronizado. Casos
   CONSTRAINED UNPREDICTABLE e escolhas da frente INT (SA0, nAA, padrão de acessos dos pares
   do FEAT_LSE2, LD1 elemento a elemento ao cruzar página) são espelhados: o caminho raro roda
@@ -336,7 +371,7 @@ Arquivos: `jit_core.c` (cache, despachante, threads, invalidação, recuperaçã
 
 Testes: `jit_fault_{mid,sub,pair,ldp,q,ld1}` (falha no meio do bloco, STP/LDP/LDP Q/ST1
 parciais), `jit_sa0`, `jit_ldar`, `jit_pairs`, `jit_smc` (IC IVAU e só rede de segurança),
-`jit_smc_wp`, `jit_bench_int`, `jit_bench_mem`.
+`jit_smc_wp`, `jit_badpc`, `jit_udf_first`, `jit_atomics`, `jit_fp`, `jit_bench_int`, `jit_bench_mem`, `jit_bench_call`.
 
 Desempenho (harness no Windows, instruções contadas pelo interpretador):
 
@@ -344,6 +379,9 @@ Desempenho (harness no Windows, instruções contadas pelo interpretador):
 |---|---|---|---|
 | `jit_bench_int` | 252 M | ~110 MIPS | ~1750 MIPS |
 | `jit_bench_mem` | 66 M | ~90 MIPS | ~610 MIPS |
+| `jit_bench_call` | 42 M | 87 MIPS | 346 MIPS |
+
+Medição de 8/11 (máquina carregada por outras sessões; interp ~75–87 MIPS): inteiros 1457 MIPS, memória 677, chamadas 346. Chamadas: blocos curtos (fib) dominados pela transição entre blocos; próximo passo seria superblocos.
 
 ## Estado
 
@@ -353,7 +391,132 @@ Desempenho (harness no Windows, instruções contadas pelo interpretador):
 | INT | **pronto** (interpretador). `interp_int.c` (dados imediato/registrador), `interp_int_br.c` (desvios, exceções, sistema), `interp_int_ls.c` (loads/stores, exclusivos, LSE/LSE2, RCpc/RCpc2, LOR, LDRAA/LDRAB), `interp_int.h`. Decodificação pelo ARM ARM, com as escolhas CONSTRAINED UNPREDICTABLE do QEMU (`a64.decode`) documentadas no topo de cada arquivo. EL0 como o XNU configura (`SCTLR_EL1_REQUIRED` em `osfmk/arm64/proc_reg.h`): SA0 = 1 (SP desalinhado num load/store → FAULT com `exit_info` = SP), nAA = 0 (com LSE2: exclusivos, atômicos e acquire/release só falham ao atravessar 16 B), DC CVA*/CIVAC/IC IVAU sondam a linha; PAC "identidade" (PACGA = 0); CTR_EL0 = 0x84448004, DCZID = 4, CNTFRQ = 24 MHz. Testes: `tools/a64tests/int_{dpimm,dpreg,branch,ldst,atomic}.S` com autoverificação, iguais byte a byte ao oráculo EL0 (ignorando `\r`); `int_sys.S` (valores do M1, PAC, contadores: não comparável). Fuzz (`a64fuzz`, 42 grupos INT, build com `-DA64I_ORACLE_COMPAT`, que só desliga as quatro diferenças do QEMU listadas em `interp_int.h`): K=1 210 mil casos e K=4 328 mil casos, **0 divergências atribuíveis ao INT**; nAA = 0 conferido com monitor de nAA = 0 (24 mil casos de excl/rcpc/atomic). Sobras conhecidas, que não são do INT: STXR com base `0xffff…ffff` (o QEMU usa −1 como `exclusive_addr` vazio), endereços que no Windows são do próprio harness, desvios para o rascunho que executam dados (FP/SIMD de outras frentes) e LDLAR/STLLR marcados "deveria_udf" porque o objdump do fuzzer roda sem `+lor` (LOR é obrigatório desde o v8.1). |
 | FP | **pronto** (interpretador). Todas as primitivas `a64_fp_*` de `a64.h` em software (`a64_fp.c`, escrito do zero a partir do pseudocódigo do ARM ARM; nenhuma instrução de FP do host) e todos os grupos de FP escalar (`interp_fp.c`: FP↔fixo, FP↔inteiro incl. FMOV D[1] e FJCVTZS, 1 fonte incl. FRINT32/64 e BFCVT, compare, imediato, compare condicional, 2 e 3 fontes, FCSEL; H/S/D). Placar contra QEMU 11.1 `-cpu max` (oráculo próprio `tools/a64tests/fp_oracle/fp_oracle.ps1`: 268 modelos, todas as combinações RMode/FZ/DN/FZ16/AHP, subnormais, NaN com payload, empates, limites de overflow/underflow/conversão, mais palavras aleatórias do grupo para UDF): **~10,8 milhões de vetores, 0 divergências** em resultado, FPSR, NZCV e UDF, incluindo as primitivas usadas só pelo AdvSIMD (FMULX, FRECPE/FRSQRTE/FRECPS/FRSQRTS/FRECPX, FABD, FCM*/FAC*, FCVTXN, half↔int16, URECPE/URSQRTE). Ponta a ponta: `tools/a64tests/fp_escalar.c` igual byte a byte ao oráculo EL0 (`a64cmp`). Diferenças esperadas e documentadas: FEAT_FPRCVT (o QEMU executa, nós UDF: não anunciado) e o FMA "hardfloat" do QEMU para Windows quando o IXC já está ligado (resultado do QEMU errado; zerar FPSR antes de cada instrução fundida nos testes). |
 | SIMD | **pronto** (interpretador). `interp_simd.c` (decodificação de C4.1.95/96 + todos os loads/stores com V=1: LDR/STR B/H/S/D/Q em todas as formas, literal, LDP/STP/LDNP/STNP, LDUR/STUR, LD1–LD4/ST1–ST4 múltiplos e de lane, LD1R–LD4R, pós-índice imediato e registrador, regra de reinício), `interp_simd_int.c` (three same/different, two-reg misc, across lanes, pairwise, shift por imediato incl. narrowing/saturação/arredondamento/SRI/SLI, por elemento, copy, modified immediate, ZIP/UZP/TRN, EXT, TBL/TBX 1–4, RDM, DotProd, I8MM), `interp_simd_fp.c` (lanes FP16/32/64 só via `a64_fp_*`, FCVTN/L/XN, BFCVTN, FMLAL/FMLSL e *2 com FPMulAddH exato, BFDOT/BFMMLA com a aritmética "BFloat16 computation behaviors", BFMLALB/T, FCMLA/FCADD), `interp_simd_crypto.c` (AES, SHA1, SHA256, SHA512, EOR3/RAX1/XAR/BCAX, PMULL 8/64). Placar contra QEMU 11.1 `-cpu max` (oráculo diferencial próprio: uma instrução por caso, estado inteiro aleatório com valores FP especiais e todas as combinações de FPCR, compara x0..x30, sp, NZCV, FPSR, v0..v31, UDF e hash da memória): **360 mil casos** cobrindo todas as classes de codificação + palavras aleatórias do espaço SIMD, **0 divergências reais**; as 7 restantes são FMLA/FMLS/FCMLA na lane ≥1 em RN, o bug de FMA "hardfloat" do QEMU para Windows (casos conferidos com `vfmadd` do x86 dão o nosso resultado; com uma lane só, batem). O QEMU executa e nós damos UDF, como esperado, para FEAT_FP8/FP8DOT/FP8FMA, LUT, FAMINMAX, SM3/SM4 e F8F16MM (não anunciados). Ponta a ponta no harness: `tools/a64tests/simd_crypto.c` (FIPS-197, SHA-1/SHA-256 de "abc", PMULL, SHA3), `simd_int.c`, `simd_fp.c` passam. |
-| JIT | núcleo pronto: toda instrução executa (nativa ou via interpretador), 30 testes + fuzzing INT sem divergência; bench inteiros ~1750 MIPS (15× interp), memória/strings ~610 MIPS (7×). Falta: exclusivos/LSE nativos, FP nativo, pilha de retorno (ver seção JIT) |
+| JIT | pronto: toda instrução executa (nativa ou via interpretador); fuzzing de todos os 93 grupos (INT, FP, SIMD; sementes 11, 23, 71 e 72 × 27 900 casos × 6 instruções, mais 3×1000 por grupo de atômicos e FP) e a suíte sem divergência interp × JIT. Nativos: inteiros, loads/stores, desvios, exclusivos/CAS/LSE com lock, SIMD inteiro exato, FP escalar S/D (add/sub/mul/div/sqrt/fused) com caminho rápido provado, pilha de retorno. Bench (máquina carregada): inteiros 1457 MIPS (19×), memória 677 (8,6×), chamadas 346 (4×). Ao interpretador: LDXP/STXP/CASP, FP half, FP vetorial, FCMP/conversões |
 | TESTES / oráculo | **pronto** (ver [Verificação](#verificação-frente-testes)): oráculo QEMU bare-metal em EL0 (`tools/a64oracle/`, `a64oracle.ps1`, `a64cmp.ps1`), fuzzing diferencial interp × JIT × QEMU por grupo de codificação com validade pelo LLVM, sequências com minimização e regressões (`tools/a64fuzz.c`), suíte diferencial C x86_64 × arm64 -O0/-O2/-O3 (`tools/a64oracle/csuite/`), placar (`tools/a64placar.ps1`, tabela abaixo). Limitações do QEMU para Windows tratadas e documentadas (FMA hardfloat, SA0, STXR, DC/IC sem sonda). |
 | RUNTIME | pronto (8 nov. 2026): no QEMU do mOS (WHPX, 4 CPUs) e no machotest, `tests-a64rt` passa 21/21 com o interpretador e com o JIT; binários arm64 reais (slices do Claude.app: `disclaimer` em C e `claude-ssh-askpass` em Go) rodam pelo tradutor; falta só a proteção de página no kernel para a rede de SMC do JIT |
-| LIBSYS | **pronto** para C/ObjC/C++ (8 nov. 2026, ver [seção](#libsystem-e-bibliotecas-do-sistema-em-arm64-frente-libsys)): `build/libSystem-arm64.mos` com o triplo `arm64-apple-macos11-elf` (ABI da Apple), IR idêntico ao de `-target aarch64-macos` em 99/99 arquivos; asm arm64 próprio, libunwind do LLVM, compiler-rt, sysctl/páginas do Apple Silicon; libc++/libc++abi, sqlite, ICU e WebKit universais. `tests-a64libsys` 31/31 (Foundation e AppKit pelo tradutor) e 5/5 com as dylibs do disco; `tests-a64rt` 0 falhas com este libSystem. Falta: cadeia Swift em arm64, zlib arm64, exceções ObjC (as duas arquiteturas) |
+| LIBSYS | **pronto** para C/ObjC/C++ (8 nov. 2026, ver [seção](#libsystem-e-bibliotecas-do-sistema-em-arm64-frente-libsys)): `build/libSystem-arm64.mos` com o triplo `arm64-apple-macos11-elf` (ABI da Apple), IR idêntico ao de `-target aarch64-macos` em 99/99 arquivos; asm arm64 próprio, libunwind do LLVM (também no x86), exceções ObjC de verdade (as duas arquiteturas), compiler-rt, sysctl/páginas do Apple Silicon; libc++/libc++abi, sqlite, ICU, zlib e WebKit universais. `tests-a64libsys` 36/36 (Foundation, AppKit, @try/@catch pelo tradutor) e 6/6 com as dylibs do disco; `tests-a64rt` 0 falhas com este libSystem. Cadeia Swift universal (stdlib, runtime, overlays, Concurrency, Foundation, Combine, SwiftUI, UIKit e frameworks do mOS, 38 binários; `tools/build-swift-arm64.ps1`): `tests-swiftobjc` swift 13/13 e foundation 23/23 no arm64 pelo tradutor. Falta: app SwiftUI arm64 de ponta a ponta |
+
+<!-- placar:inicio -->
+### Placar da verificação
+
+Gerado por `tools/a64placar.ps1` em 2026-11-08 15:48 (semente 20261113, 2000 casos por grupo, com JIT). Oráculo: QEMU 11.1 `-cpu max` em EL0 sob `tools/a64oracle/mon.c`. Colunas: **exec** = casos em que a instrução deveria executar (o LLVM com os recursos de `A64_FEATURES` a conhece e o QEMU executa); **impl.** = desses, quantos o interpretador executa; **batem** = estado final igual ao do QEMU; **div.** = executa e diverge; **UDF ind.** = QEMU executa e nós damos UDF; **dev. UDF** = deveria ser UDF (recurso não anunciado, ou o QEMU dá UDF) e executamos; **FMA?** = divergência só em lanes de FMA que o QEMU do Windows calcula errado e que não deu para isolar; **JIT≠** = JIT diferente do interpretador.
+
+| Frente | Grupos | Casos | Exec | Impl. | Batem | Div. | UDF ind. | Dev. UDF | FMA? | JIT≠ |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| INT | 43 | 86000 | 63986 | 63986 (100%) | 63986 (100%) | 0 | 0 | 0 | 0 | 0 |
+| FP | 9 | 18000 | 15562 | 15562 (100%) | 15562 (100%) | 0 | 0 | 0 | 0 | 0 |
+| SIMD | 41 | 82000 | 72529 | 72529 (100%) | 72527 (100%) | 0 | 0 | 0 | 2 | 0 |
+
+Sequências (K=8 instruções válidas misturadas por caso, divergências minimizadas): 27900 casos, **4 divergentes**, 0 com JIT≠interp.
+
+<details><summary>Por grupo de codificação</summary>
+
+| Grupo | Frente | Casos | Exec | Impl. | Batem | Div. | UDF ind. | Dev. UDF | FMA? | JIT≠ |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| dp.pcrel | INT | 2000 | 2000 | 2000 | 2000 | 0 | 0 | 0 | 0 | 0 |
+| dp.addsub_imm | INT | 2000 | 2000 | 2000 | 2000 | 0 | 0 | 0 | 0 | 0 |
+| dp.addsub_tags | INT | 2000 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| dp.logic_imm | INT | 2000 | 1895 | 1895 | 1895 | 0 | 0 | 0 | 0 | 0 |
+| dp.movewide | INT | 2000 | 1860 | 1860 | 1860 | 0 | 0 | 0 | 0 | 0 |
+| dp.bitfield | INT | 2000 | 1752 | 1752 | 1752 | 0 | 0 | 0 | 0 | 0 |
+| dp.extract | INT | 2000 | 1698 | 1698 | 1698 | 0 | 0 | 0 | 0 | 0 |
+| br.cond | INT | 2000 | 1785 | 1785 | 1785 | 0 | 0 | 0 | 0 | 0 |
+| br.exception | INT | 2000 | 1809 | 1809 | 1809 | 0 | 0 | 0 | 0 | 0 |
+| sys.hint | INT | 2000 | 2000 | 2000 | 2000 | 0 | 0 | 0 | 0 | 0 |
+| sys.barrier | INT | 2000 | 1025 | 1025 | 1025 | 0 | 0 | 0 | 0 | 0 |
+| sys.pstate | INT | 2000 | 957 | 957 | 957 | 0 | 0 | 0 | 0 | 0 |
+| sys.sysinstr | INT | 2000 | 1015 | 1015 | 1015 | 0 | 0 | 0 | 0 | 0 |
+| sys.sysreg | INT | 2000 | 825 | 825 | 825 | 0 | 0 | 0 | 0 | 0 |
+| sys.outros | INT | 2000 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| br.reg | INT | 2000 | 1608 | 1608 | 1608 | 0 | 0 | 0 | 0 | 0 |
+| br.imm | INT | 2000 | 2000 | 2000 | 2000 | 0 | 0 | 0 | 0 | 0 |
+| br.cmp | INT | 2000 | 1994 | 1994 | 1994 | 0 | 0 | 0 | 0 | 0 |
+| br.test | INT | 2000 | 2000 | 2000 | 2000 | 0 | 0 | 0 | 0 | 0 |
+| simd.ls_mult | SIMD | 2000 | 1825 | 1825 | 1825 | 0 | 0 | 0 | 0 | 0 |
+| simd.ls_mult_post | SIMD | 2000 | 1823 | 1823 | 1823 | 0 | 0 | 0 | 0 | 0 |
+| simd.ls_single | SIMD | 2000 | 1860 | 1860 | 1860 | 0 | 0 | 0 | 0 | 0 |
+| simd.ls_single_post | SIMD | 2000 | 1885 | 1885 | 1885 | 0 | 0 | 0 | 0 | 0 |
+| ls.excl | INT | 2000 | 1150 | 1150 | 1150 | 0 | 0 | 0 | 0 | 0 |
+| ls.rcpc_unscaled | INT | 2000 | 1939 | 1939 | 1939 | 0 | 0 | 0 | 0 | 0 |
+| ls.literal | INT | 2000 | 2000 | 2000 | 2000 | 0 | 0 | 0 | 0 | 0 |
+| simd.ls_literal | SIMD | 2000 | 1920 | 1920 | 1920 | 0 | 0 | 0 | 0 | 0 |
+| ls.pair | INT | 2000 | 1884 | 1884 | 1884 | 0 | 0 | 0 | 0 | 0 |
+| simd.ls_pair | SIMD | 2000 | 1928 | 1928 | 1928 | 0 | 0 | 0 | 0 | 0 |
+| ls.imm9 | INT | 2000 | 1951 | 1951 | 1951 | 0 | 0 | 0 | 0 | 0 |
+| simd.ls_imm9 | SIMD | 2000 | 1834 | 1834 | 1834 | 0 | 0 | 0 | 0 | 0 |
+| ls.atomic | INT | 2000 | 1824 | 1824 | 1824 | 0 | 0 | 0 | 0 | 0 |
+| ls.regoff | INT | 2000 | 1837 | 1837 | 1837 | 0 | 0 | 0 | 0 | 0 |
+| simd.ls_regoff | SIMD | 2000 | 1823 | 1823 | 1823 | 0 | 0 | 0 | 0 | 0 |
+| ls.pac | INT | 2000 | 1778 | 1778 | 1778 | 0 | 0 | 0 | 0 | 0 |
+| ls.uimm | INT | 2000 | 1963 | 1963 | 1963 | 0 | 0 | 0 | 0 | 0 |
+| simd.ls_uimm | SIMD | 2000 | 1907 | 1907 | 1907 | 0 | 0 | 0 | 0 | 0 |
+| ls.outros | INT | 2000 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| dp.2src | INT | 2000 | 1722 | 1722 | 1722 | 0 | 0 | 0 | 0 | 0 |
+| dp.1src | INT | 2000 | 1825 | 1825 | 1825 | 0 | 0 | 0 | 0 | 0 |
+| dp.logic_reg | INT | 2000 | 1917 | 1917 | 1917 | 0 | 0 | 0 | 0 | 0 |
+| dp.addsub_shift | INT | 2000 | 1873 | 1873 | 1873 | 0 | 0 | 0 | 0 | 0 |
+| dp.addsub_ext | INT | 2000 | 1755 | 1755 | 1755 | 0 | 0 | 0 | 0 | 0 |
+| dp.adc | INT | 2000 | 2000 | 2000 | 2000 | 0 | 0 | 0 | 0 | 0 |
+| dp.rmif | INT | 2000 | 1717 | 1717 | 1717 | 0 | 0 | 0 | 0 | 0 |
+| dp.setf | INT | 2000 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| dp.ccmp_reg | INT | 2000 | 1737 | 1737 | 1737 | 0 | 0 | 0 | 0 | 0 |
+| dp.ccmp_imm | INT | 2000 | 1727 | 1727 | 1727 | 0 | 0 | 0 | 0 | 0 |
+| dp.csel | INT | 2000 | 1773 | 1773 | 1773 | 0 | 0 | 0 | 0 | 0 |
+| dp.3src | INT | 2000 | 1391 | 1391 | 1391 | 0 | 0 | 0 | 0 | 0 |
+| dp.outros | INT | 2000 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| fp.fixed | FP | 2000 | 1726 | 1726 | 1726 | 0 | 0 | 0 | 0 | 0 |
+| fp.int | FP | 2000 | 1749 | 1749 | 1749 | 0 | 0 | 0 | 0 | 0 |
+| fp.1src | FP | 2000 | 1694 | 1694 | 1694 | 0 | 0 | 0 | 0 | 0 |
+| fp.cmp | FP | 2000 | 1706 | 1706 | 1706 | 0 | 0 | 0 | 0 | 0 |
+| fp.imm | FP | 2000 | 1692 | 1692 | 1692 | 0 | 0 | 0 | 0 | 0 |
+| fp.ccmp | FP | 2000 | 1765 | 1765 | 1765 | 0 | 0 | 0 | 0 | 0 |
+| fp.2src | FP | 2000 | 1745 | 1745 | 1745 | 0 | 0 | 0 | 0 | 0 |
+| fp.csel | FP | 2000 | 1731 | 1731 | 1731 | 0 | 0 | 0 | 0 | 0 |
+| fp.3src | FP | 2000 | 1754 | 1754 | 1754 | 0 | 0 | 0 | 0 | 0 |
+| crypto.aes | SIMD | 2000 | 1668 | 1668 | 1668 | 0 | 0 | 0 | 0 | 0 |
+| crypto.sha3reg | SIMD | 2000 | 1768 | 1768 | 1768 | 0 | 0 | 0 | 0 | 0 |
+| crypto.sha2reg | SIMD | 2000 | 1703 | 1703 | 1703 | 0 | 0 | 0 | 0 | 0 |
+| crypto.sha512_3 | SIMD | 2000 | 1851 | 1851 | 1851 | 0 | 0 | 0 | 0 | 0 |
+| crypto.4reg | SIMD | 2000 | 1853 | 1853 | 1853 | 0 | 0 | 0 | 0 | 0 |
+| crypto.xar | SIMD | 2000 | 2000 | 2000 | 2000 | 0 | 0 | 0 | 0 | 0 |
+| crypto.sha512_2 | SIMD | 2000 | 1806 | 1806 | 1806 | 0 | 0 | 0 | 0 | 0 |
+| simds.copy | SIMD | 2000 | 1697 | 1697 | 1697 | 0 | 0 | 0 | 0 | 0 |
+| simds.3same_fp16 | SIMD | 2000 | 1802 | 1802 | 1802 | 0 | 0 | 0 | 0 | 0 |
+| simds.2misc_fp16 | SIMD | 2000 | 1767 | 1767 | 1767 | 0 | 0 | 0 | 0 | 0 |
+| simds.3same_extra | SIMD | 2000 | 1702 | 1702 | 1702 | 0 | 0 | 0 | 0 | 0 |
+| simds.2misc | SIMD | 2000 | 1772 | 1772 | 1772 | 0 | 0 | 0 | 0 | 0 |
+| simds.pairwise | SIMD | 2000 | 1724 | 1724 | 1724 | 0 | 0 | 0 | 0 | 0 |
+| simds.3diff | SIMD | 2000 | 1737 | 1737 | 1737 | 0 | 0 | 0 | 0 | 0 |
+| simds.3same | SIMD | 2000 | 1807 | 1807 | 1807 | 0 | 0 | 0 | 0 | 0 |
+| simds.shift | SIMD | 2000 | 1762 | 1762 | 1762 | 0 | 0 | 0 | 0 | 0 |
+| simds.indexed | SIMD | 2000 | 1743 | 1743 | 1743 | 0 | 0 | 0 | 0 | 0 |
+| simdv.tbl | SIMD | 2000 | 1800 | 1800 | 1800 | 0 | 0 | 0 | 0 | 0 |
+| simdv.perm | SIMD | 2000 | 1900 | 1900 | 1900 | 0 | 0 | 0 | 0 | 0 |
+| simdv.ext | SIMD | 2000 | 1753 | 1753 | 1753 | 0 | 0 | 0 | 0 | 0 |
+| simdv.copy | SIMD | 2000 | 1809 | 1809 | 1809 | 0 | 0 | 0 | 0 | 0 |
+| simdv.3same_fp16 | SIMD | 2000 | 1926 | 1926 | 1926 | 0 | 0 | 0 | 0 | 0 |
+| simdv.2misc_fp16 | SIMD | 2000 | 1751 | 1751 | 1751 | 0 | 0 | 0 | 0 | 0 |
+| simdv.3same_extra | SIMD | 2000 | 1751 | 1751 | 1749 | 0 | 0 | 0 | 2 | 0 |
+| simdv.2misc | SIMD | 2000 | 1850 | 1850 | 1850 | 0 | 0 | 0 | 0 | 0 |
+| simdv.across | SIMD | 2000 | 1719 | 1719 | 1719 | 0 | 0 | 0 | 0 | 0 |
+| simdv.3diff | SIMD | 2000 | 1888 | 1888 | 1888 | 0 | 0 | 0 | 0 | 0 |
+| simdv.3same | SIMD | 2000 | 1921 | 1921 | 1921 | 0 | 0 | 0 | 0 | 0 |
+| simdv.modimm | SIMD | 2000 | 1858 | 1858 | 1858 | 0 | 0 | 0 | 0 | 0 |
+| simdv.shift | SIMD | 2000 | 1805 | 1805 | 1805 | 0 | 0 | 0 | 0 | 0 |
+| simdv.indexed | SIMD | 2000 | 1831 | 1831 | 1831 | 0 | 0 | 0 | 0 | 0 |
+| simd.outros | SIMD | 2000 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| naoalocado | INT | 2000 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+
+</details>
+
+Testes ELF (`build/a64tests`, a64test × oráculo): **26 de 29** passam.
+
+| Teste | Interp | JIT | Nota |
+|---|---|---|---|
+| jit_fault_q | saída 139 | saída 139 | não comparável (autoverificação) |
+| jit_fp | DIFERE | DIFERE | saída 0 × qemu 0 |
+| jit_sa0 | saída 139 | saída 139 | não comparável (autoverificação) |
+
+Suíte diferencial C (`tools/a64oracle/csuite`: x86_64 nativo × arm64 -O0/-O2/-O3 no a64test e no QEMU): **21 de 21** binários iguais.
+<!-- placar:fim -->
+

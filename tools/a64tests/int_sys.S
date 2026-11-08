@@ -1,4 +1,5 @@
-/* frente INT: comportamento específico do mOS/M1 em EL0 (NÃO comparável com o QEMU):
+/* frente INT: comportamento específico do mOS/M1 em EL0 — a64cmp: nao-comparavel (o QEMU tem
+ * outros valores):
  * CTR_EL0, DCZID_EL0, CNTFRQ_EL0, contadores, FPCR só com os bits graváveis do M1,
  * PAC com algoritmo "identidade" (PACGA = 0), WFE/WFI/YIELD. */
 #include "int_chk.h"
