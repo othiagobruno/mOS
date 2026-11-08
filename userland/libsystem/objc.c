@@ -1049,6 +1049,7 @@ void cx_objc_boot(u64 sects, u64 n) {
     { extern void cx_darwin_init(void) __attribute__((weak)); if (cx_darwin_init) cx_darwin_init(); }   /* gancho: NSURL/CF da sessão do VS Code */
     { extern void cx_swiftobjc_init(void); cx_swiftobjc_init(); }   /* classes OS_* para o Swift com interop (swiftobjc.c) */
     { extern void cx_chrome_init(void) __attribute__((weak)); if (cx_chrome_init) cx_chrome_init(); }   /* classes privadas que o Chrome pede (chrome.c) */
+    { extern void cx_compat_objc_extra_init(void); cx_compat_objc_extra_init(); }   /* compat_objc_extra.c: depois de todas as classes (o NSURL vem do cx_darwin_init) */
     }
     if (n) cx_objc_init_image(sects, n);
 }
