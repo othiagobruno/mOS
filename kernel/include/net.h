@@ -114,6 +114,7 @@ typedef struct http_req {
     char error[128];
     int state;                /* interno */
     void *priv;
+    u64 max_body;             /* 0 = padrão (128 MB); defina logo depois do http_get, antes do 1º http_poll */
 } http_req_t;
 http_req_t *http_get(const char *url);
 http_req_t *http_post(const char *url, const char *content_type, const void *body, u32 len);

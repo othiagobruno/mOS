@@ -67,6 +67,7 @@ enum {
     SYS_TTY,           /* 56: (op, a, b, c) -> ...                  pseudoterminais, sessões e grupos de processos (MOS_TTY_* abaixo, kernel/proc/pty.c) */
     SYS_LS,            /* 57: (op, mos_ls_req_t*) -> resultado      Launch Services: tipos, apps padrão, abrir (MOS_LS_* abaixo, kernel/compat/launchsvc.c) */
     SYS_SIG,           /* 58: (op, a, b, c) -> ...                  sinais POSIX completos: ações, máscaras, sigsuspend, sigaltstack (MOS_SIGOP_* abaixo) */
+    SYS_WEB,           /* 59: (op, id, a, b) -> ...                 motor web do sistema para o WKWebView (MOS_WEB_* abaixo, kernel/web/webview.c) */
     SYS_COUNT,
     SYS_GUI_FIRST = 64,/* 64..79: interface gráfica dos apps do macOS (kernel/compat/guisys.c) */
     SYS_GUI_LAST = 79,
@@ -455,3 +456,114 @@ typedef struct {
     char key[1024], key2[512], key3[256];
     char out[8192];
 } mos_ls_req_t;
+
+/* SYS_WEB: o motor web do sistema (o do Horizonte: kernel/web, HTML/CSS/JavaScript "Brisa") para o WebKit.framework
+ * do mOS (userland/frameworks/WebKit). Cada vista pertence ao processo que a criou e some quando ele sai. O kernel
+ * carrega, diagrama, roda o JavaScript e pinta num buffer BGRA (0xAARRGGBB por pixel) que o WKWebView desenha; os
+ * eventos de mouse e teclado entram por MOS_WEB_INPUT. Tudo é não-bloqueante: o framework chama MOS_WEB_PUMP num
+ * temporizador do run loop, e o resultado diz o que mudou (MOS_WEB_EV_*), para os delegates e o KVO. */
+enum {
+    MOS_WEB_NEW = 1,       /* () -> id */
+    MOS_WEB_FREE,          /* (id) -> 0 */
+    MOS_WEB_LOAD,          /* (id, mos_web_load_t*) -> 0                       URL, ou HTML com URL base */
+    MOS_WEB_SIZE,          /* (id, largura, altura) -> 0                         área visível em pontos */
+    MOS_WEB_PUMP,          /* (id) -> MOS_WEB_EV_* acumulados desde o último PUMP   rede, scripts, temporizadores */
+    MOS_WEB_PAINT,         /* (id, buf, cap) -> bytes                           largura*altura*4, de cima para baixo */
+    MOS_WEB_INFO,          /* (id, mos_web_info_t*) -> 0 */
+    MOS_WEB_INPUT,         /* (id, mos_web_input_t*) -> cursor (MOS_WEB_CURSOR_*) */
+    MOS_WEB_EVAL,          /* (id, mos_web_eval_t*) -> tamanho do resultado; tipo em ->type */
+    MOS_WEB_GO,            /* (id, MOS_WEB_GO_*) -> 0 */
+    MOS_WEB_HANDLER,       /* (id, nome, 1 = acrescenta / 0 = tira) -> 0          window.webkit.messageHandlers.<nome> */
+    MOS_WEB_TAKEMSG,       /* (id, mos_web_msg_t*) -> 1 mensagem copiada, 0 fila vazia, -MOS_EINVAL cabe não (len diz quanto) */
+    MOS_WEB_SCRIPT,        /* (id, mos_web_script_t*) -> 0                     WKUserScript (src 0: tira todos) */
+    MOS_WEB_POLICY,        /* (id, 1 = o app decide as navegações / 0 = todas permitidas) -> 0 */
+    MOS_WEB_DECIDE,        /* (id, 1 = permite / 0 = cancela) -> 0              responde à navegação pendente */
+    MOS_WEB_SCROLL,        /* (id, y) -> 0                                     rolagem vertical em pontos */
+    MOS_WEB_OPTS,          /* (id, MOS_WEB_OPT_*) -> 0 */
+    MOS_WEB_ZOOM,          /* (id, zoom * 1000) -> 0                           pageZoom / magnification */
+    MOS_WEB_HISTORY,       /* (id, índice relativo, mos_web_hist_t*) -> 1 existe, 0 não  (0 = atual, -1 = anterior) */
+    MOS_WEB_FIND,          /* (id, texto) -> 1 achou (rola até ele), 0 não */
+    MOS_WEB_TEXT,          /* (id, buf, cap) -> tamanho                         texto da página */
+    MOS_WEB_RESULT,        /* (id, buf, cap) -> tamanho                         resultado do último EVAL que não coube */
+};
+enum {   /* bits devolvidos por MOS_WEB_PUMP */
+    MOS_WEB_EV_DIRTY    = 1,      /* a imagem mudou: pinte de novo */
+    MOS_WEB_EV_START    = 2,      /* navegação começou (didStartProvisionalNavigation) */
+    MOS_WEB_EV_COMMIT   = 4,      /* primeiro conteúdo chegou (didCommitNavigation) */
+    MOS_WEB_EV_FINISH   = 8,      /* documento, folhas, scripts e imagens prontos (didFinishNavigation) */
+    MOS_WEB_EV_FAIL     = 16,     /* falhou; mensagem em info.error, código NSURLError em info.error_code */
+    MOS_WEB_EV_TITLE    = 32,
+    MOS_WEB_EV_URL      = 64,
+    MOS_WEB_EV_MSG      = 128,    /* mensagens de script na fila (MOS_WEB_TAKEMSG) */
+    MOS_WEB_EV_NAVREQ   = 256,    /* navegação esperando decisão (info.req_url; MOS_WEB_DECIDE) */
+    MOS_WEB_EV_PROGRESS = 512,
+    MOS_WEB_EV_REDIRECT = 1024,   /* didReceiveServerRedirectForProvisionalNavigation */
+    MOS_WEB_EV_NEWWIN   = 2048,   /* link com target=_blank: info.req_url (createWebViewWithConfiguration…) */
+};
+enum { MOS_WEB_GO_BACK = 1, MOS_WEB_GO_FORWARD, MOS_WEB_GO_RELOAD, MOS_WEB_GO_STOP };
+enum { MOS_WEB_OPT_NOJS = 1, MOS_WEB_OPT_TRANSPARENT = 2 };
+enum { MOS_WEB_CURSOR_ARROW = 0, MOS_WEB_CURSOR_IBEAM, MOS_WEB_CURSOR_HAND };
+/* tipos de valor (MOS_WEB_EVAL e mensagens): texto cru para string e número, JSON para objeto e array */
+enum { MOS_WEB_T_UNDEFINED = 0, MOS_WEB_T_NULL, MOS_WEB_T_BOOL, MOS_WEB_T_NUMBER, MOS_WEB_T_STRING, MOS_WEB_T_JSON,
+       MOS_WEB_T_DATE,              /* ms desde 1970, como número */
+       MOS_WEB_T_EXCEPTION = -1, MOS_WEB_T_UNSUPPORTED = -2 };
+enum { MOS_WEB_IN_DOWN = 1, MOS_WEB_IN_UP, MOS_WEB_IN_MOVE, MOS_WEB_IN_WHEEL, MOS_WEB_IN_KEY, MOS_WEB_IN_BLUR, MOS_WEB_IN_EXIT };
+/* teclas especiais em key (o resto chega como caractere em text[]) e modificadores */
+enum { MOS_WEB_K_ESC = 0x1b, MOS_WEB_K_BACKSPACE = 8, MOS_WEB_K_TAB = 9, MOS_WEB_K_ENTER = 10,
+       MOS_WEB_K_UP = 0x100, MOS_WEB_K_DOWN, MOS_WEB_K_LEFT, MOS_WEB_K_RIGHT, MOS_WEB_K_HOME, MOS_WEB_K_END,
+       MOS_WEB_K_PGUP, MOS_WEB_K_PGDN, MOS_WEB_K_DELETE };
+enum { MOS_WEB_M_SHIFT = 1, MOS_WEB_M_CTRL = 2, MOS_WEB_M_ALT = 4, MOS_WEB_M_CMD = 8 };
+typedef struct {
+    int kind, x, y;              /* pontos da vista, origem em cima à esquerda */
+    int key, mods, clicks;       /* clicks: 2 = duplo */
+    int wheel;                   /* pontos; positivo = rola para baixo */
+    char text[16];               /* UTF-8 */
+} mos_web_input_t;
+typedef struct {
+    unsigned long long url;      /* const char* (0 com html) */
+    unsigned long long html;     /* const char* (0 = carregar url) */
+    unsigned long long html_len;
+    unsigned long long base;     /* URL base do HTML (0 = about:blank) */
+    unsigned long long post;     /* corpo de POST (0 = GET) */
+    unsigned long long post_len;
+    char content_type[64];       /* do POST */
+    char mime[64];               /* loadData:MIMEType: (vazio = text/html) */
+} mos_web_load_t;
+typedef struct {
+    char url[1024];
+    char title[256];
+    char req_url[1024];          /* navegação pendente (MOS_WEB_EV_NAVREQ / NEWWIN) */
+    int req_kind;                /* WKNavigationType: 0 link, 1 formulário, 2 voltar/avançar, 3 recarregar, -1 outro */
+    int nav_seq;                 /* sobe a cada navegação começada (identifica o WKNavigation) */
+    char error[256];
+    int error_code;              /* NSURLError: -1003 servidor, -1009 sem rede, -1202 TLS, -1001 prazo, -1100 arquivo */
+    int loading, progress;       /* progress: 0..1000 */
+    int can_back, can_forward;
+    int content_h, scroll, vw, vh;
+    int http_status;
+    int js_errors;
+    int secure;                  /* https (hasOnlySecureContent) */
+    unsigned int bg;             /* cor de fundo da página (0xAARRGGBB) */
+    char mime[64];
+} mos_web_info_t;
+typedef struct {
+    unsigned long long src;      /* const char* */
+    unsigned long long out;      /* char* do resultado (UTF-8, sem 0 final) */
+    unsigned int len, cap;
+    int type;                    /* MOS_WEB_T_* */
+    int pad;
+} mos_web_eval_t;
+typedef struct {
+    char name[64];
+    unsigned long long body;     /* char* */
+    unsigned int cap, len;       /* len = tamanho real; maior que cap: nada copiado, a mensagem fica na fila */
+    int type;                    /* MOS_WEB_T_* */
+    int pad;
+    char url[1024];              /* página que mandou (WKFrameInfo.request) */
+} mos_web_msg_t;
+typedef struct {
+    unsigned long long src;      /* const char* (0 = tira todos os scripts) */
+    unsigned int len;
+    int at_end;                  /* 0 = AtDocumentStart, 1 = AtDocumentEnd */
+} mos_web_script_t;
+typedef struct { char url[1024]; char title[256]; } mos_web_hist_t;

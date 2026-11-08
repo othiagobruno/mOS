@@ -28,6 +28,7 @@ extern long long g_live_allocs, g_live_bytes;
 static inline void *kmalloc(size_t n) { void *p = malloc(n ? n : 1); if (p) { g_live_allocs++; g_live_bytes += _msize(p); } return p; }
 static inline void *kcalloc(size_t n, size_t s) { void *p = kmalloc(n * s); if (p) memset(p, 0, n * s); return p; }
 static inline void kfree(void *p) { if (!p) return; g_live_allocs--; g_live_bytes -= _msize(p); free(p); }
+static inline void *kmalloc_pages(size_t n) { return kmalloc(n); }   /* no kernel: páginas alinhadas (fat.c); no host tanto faz */
 static inline void *krealloc(void *p, size_t n) {
     if (!p) return kmalloc(n);
     size_t old = _msize(p);

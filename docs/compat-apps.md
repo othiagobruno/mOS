@@ -220,16 +220,51 @@ mudou, na ordem em que cada passo apareceu:
 
 - **`claude -p oi` (TCG):** a CPU aparece com "avx avx2". Ele parava em "Unexpected __ulock_wait() return code": o Futex
   do Zig chama o `__ulock_wait2` com `ULF_NO_ERRNO`, e com essa flag o macOS devolve `-errno` no retorno, mas o mOS
-  devolvia -1. Corrigido no `vscode_libc.c`. Depois disso o CLI grava a configuração em `~/.claude*` e fica esperando o
-  fim do stdin, que o serviço do init não fecha. O passo seguinte seria a recusa por falta de login, e o login é do
-  usuário.
+  devolvia -1. Corrigido no `vscode_libc.c`.
 - **Regressão das mudanças acima (WHPX):** o VS Code abre e o terminal integrado roda bash. O fluxo do Claude + Chrome
   em 2816 MB chega à página do Google, com 538 a 780 MiB livres e nenhuma queda.
 
-Para repetir: `.\build.ps1 -OutDir build-cc`, depois `.\tools\stage-claude-code.ps1 -Binario
-"build\apps\x\claude-code\claude" -OutDir build-cc -Argumentos "--help" -SizeMiB 700`, depois
-`.\run.ps1 -Headless -Memory 1536 -Image build-cc/mOS.img -Serial build-cc/serial.log -Port <livre>`. Sem `-Accel`, é
-TCG; com `-Accel whpx`, só o `--version` passa.
+**Estado em 8 nov. 2026:** no TCG, `claude -p oi` vai até a recusa por falta de login: "Not logged in · Please run
+/login", com código 1, cerca de 30 s depois de abrir. No modo interativo, num pseudoterminal, ele desenha a tela de boas-vindas e a
+escolha de tema ("Let's get started. Choose the text style..."). A seta para baixo move a seleção e troca a prévia de
+sintaxe. O Enter confirma o tema e abre "Welcome to Claude Code v2.1.311 / Select login method". O teste para aí, porque
+o login é do usuário. O redimensionamento chega como SIGWINCH, e ele redesenha na largura nova. O ^C chega como SIGINT:
+durante a inicialização, ele sai com 130. O que foi preciso:
+- **Entrada padrão dos serviços** (`userland/init.c`, `docs/servicos.md`). O `-p` lê o stdin inteiro antes de começar. Um
+  job do init lia o terminal do console, que nunca chega ao fim, e ficava parado. Agora um job de plist recebe
+  `/dev/null`, como no launchd do macOS, ou o `StandardInPath`. Um `.servico` pode pedir `Entrada=/dev/null`.
+- **`madvise` que descarta** (`extra.c`; kernel: `SYS_MUNMAP` com `MOS_MUNMAP_DISCARD`). Depois do stdin, o `-p` girava
+  para sempre numa thread só. O despejo de threads (`/Sistema/Biblioteca/despejar-threads`) mostrava sempre o mesmo RIP.
+  A memória do convidado foi lida pelo QMP (`human-monitor-command` com `cpu-index` da CPU que roda o processo:
+  `x/20i`, `x/64xb`, `info tlb`). Era a sondagem do `PropertyTable::rehash` do JavaScriptCore. O vetor de índices
+  (0 = vazio) veio do `mi_zalloc` do mimalloc 3.5.3 com ponteiros velhos dentro, então não havia vaga e o laço não
+  terminava. O mimalloc devolve memória ao sistema com `madvise` (purge) e depois a trata como zerada. O `madvise` do mOS
+  não fazia nada. Com `MIMALLOC_PURGE_DELAY=-1` ele já passava. Agora `MADV_DONTNEED`, `MADV_FREE` e
+  `MADV_FREE_REUSABLE` tiram as páginas privadas das faixas anônimas sob demanda, que voltam zeradas no próximo toque,
+  como o XNU faz com o `MADV_FREE`. Páginas compartilhadas, COW e de arquivo ficam.
+- **`MAP_FIXED|MAP_ANON` não solta a reserva** (`MOS_MUNMAP_KEEP`). O libSystem trocava o trecho por páginas zeradas com
+  um `munmap`, e o `munmap` de um trecho no topo devolvia os endereços ao `mmap_next`. O próximo `mmap` de outro
+  componente caía em memória que ainda era do chamador. O claude faz isso na partida (`MAP_FIXED no topo (pid 3,
+  0x400188001000 + 0x1000)` no log). O PartitionAlloc do Chromium descomita do mesmo jeito.
+- **`__ulock_wait` no futex do kernel** para os tipos privados de 32 bits (`UL_COMPARE_AND_WAIT`, `UL_UNFAIR_LOCK`).
+  Girando com `sched_yield`, as threads ociosas do Bun disputavam a trava grande do kernel com a thread principal. Os de
+  64 bits e o compartilhado entre processos ainda giram, agora comparando os 64 bits.
+- **PtyRun** (`userland/tests-pty/ptyrun.c`, `tools/build-ptyrun.ps1`). Roda um programa num pseudoterminal, como o
+  node-pty, segue um roteiro (`esperar`, `quieto`, `tecla`, `se`, `redimensionar`, `tela`, `eco`, `fim`) e imprime a
+  tela num emulador VT100 mínimo no log serial (`tela|`). Ele responde às perguntas de terminal (DA, DSR, XTVERSION,
+  OSC 10/11). Roteiros: `tools/testdata/claude-tui.txt` e `claude-p-mimalloc.txt`.
+
+Em aberto:
+- Em uma de quatro rodadas interativas, o Bun caiu com SIGSEGV ao desenhar a primeira tela. A falta foi em
+  `0x400103360AF0`, percorrendo a lista de `free` de outras threads de uma página do mimalloc (`movq (%rsi),%rsi`). O
+  kernel agora imprime as faltas na área de mmap abaixo do topo (`proc: ... falta em ...`) para achar a faixa.
+- O AVX continua obrigatório: sob WHPX só passa o `--version`. O login (`/login`) é do usuário.
+
+Para repetir (TCG, `run.ps1` sem `-Accel`): `.\build.ps1 -OutDir build-cc`. Para o `-p`, rode
+`.\tools\stage-claude-code.ps1 -Binario "build\apps\x\claude-code\claude" -OutDir build-cc -Argumentos "-p oi
+--debug-to-stderr" -SizeMiB 700 [-DespejarThreads]`. Para o modo interativo, rode o mesmo comando com `-Tui` no lugar de
+`-Argumentos`. Depois, `.\run.ps1 -Headless -Memory 2048 -Image build-cc/mOS.img -Serial build-cc/serial.log -Port
+<livre>`. O binário traz o `__TEXT` em 0x400001000000: o deslocamento no arquivo é o RIP menos esse valor.
 
 ## WhatsApp: primeira partida no harness (7 nov. 2026)
 

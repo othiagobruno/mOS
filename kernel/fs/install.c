@@ -25,6 +25,7 @@
 #define LOADER_TMP "/EFI/BOOT/MOSNEW.TMP"
 #define STATE      "/mOS/Sistema/Biblioteca/estado-sistema"
 #define PREFS      "/mOS/Sistema/Biblioteca/Preferencias/com.mos.sistema.cfg"
+#define INSTALLED_MANIFEST "/mOS/Sistema/Atualizacao/instalado.txt"
 #define MIB        (1ull << 20)
 
 /* ------------------------------------------------------------------ manifesto */
@@ -49,7 +50,7 @@ static bool hex32(const char *h, u8 *out) {
 bool install_path_allowed(const char *p) {
     static const char *const deny[] = {"/mOS/Users", "/mOS/Sistema/Biblioteca/Usuarios", "/mOS/Sistema/Biblioteca/Logs",
                                        "/mOS/Sistema/Biblioteca/Preferencias", "/mOS/Sistema/Instalacao", "/mOS/tmp", "/mOS/Volumes",
-                                       "/mOS/Sistema/Biblioteca/estado-sistema"};
+                                       "/mOS/Sistema/Biblioteca/estado-sistema", "/mOS/Sistema/Atualizacao"};
     usize n = strlen(p);
     if (n < 2 || n > 1000 || p[0] != '/') return false;     /* apps como o Chrome têm caminhos de 270+ caracteres */
     if (strstr(p, "..") || strchr(p, '\\') || strstr(p, "//") || p[n - 1] == '/') return false;
@@ -574,6 +575,12 @@ void install_poll(void) {
         bool ok = put(LOADER_TMP, data, len);
         kfree(data);
         if (!ok || !verify_dst(LOADER_TMP, m)) { fail("Não foi possível gravar e verificar o carregador EFI."); return; }
+        /* o manifesto do que foi instalado: o atualizador (fs/update.c) compara com ele e sabe o que saiu do payload */
+        u64 mlen = 0;
+        u8 *mtxt = fat_read_file(persist_volume(), MANIFEST, &mlen);
+        bool mok = mtxt && put(INSTALLED_MANIFEST, mtxt, mlen);
+        kfree(mtxt);
+        if (!mok) { fail("Não foi possível gravar o manifesto instalado."); return; }
         if (!put(STATE, "PRIMEIRO_BOOT\n", 14)) { fail("Não foi possível gravar o estado final."); return; }
         if (!fat_sync(dst) || !blk_flush(part)) { fail("Falha ao descarregar as gravações no disco."); return; }
         /* o ÚNICO passo que torna o destino inicializável */

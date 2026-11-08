@@ -874,7 +874,7 @@ static void paint_control_real(ui_t *u, doc_t *d, ctrl_t *c, rect_t r);
 
 void web_paint_control(ui_t *u, doc_t *d, ctrl_t *c, rect_t r) {
     bwin_t *b = g_paint_b;
-    if (!b) return;
+    if (!b) { if (web_paint_control_hook) web_paint_control_hook(u, d, c, r); return; }   /* WKWebView (webview.c) */
     if (g_record) {
         /* durante a renderização do cache só registramos o controle; ele é desenhado por cima a cada quadro */
         if (b->nrec < (int)ARRAY_LEN(b->rec)) { b->rec[b->nrec].c = c; b->rec[b->nrec].r = r; b->nrec++; }

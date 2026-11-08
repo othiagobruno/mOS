@@ -14,6 +14,7 @@
 #include "origin.h"
 #include "sysstate.h"
 #include "crypto.h"
+#include "update.h"
 
 #define SYS_DIR       "/mOS"
 #define STATE_FILE    "/Sistema/Biblioteca/estado-sistema"
@@ -101,11 +102,19 @@ typedef struct { char vpath[1024]; char fpath[1040]; int depth; } walk_t;
 
 static void load_tree(const char *vpath, int depth);
 
+static bool authorize(void);
+#define UPDATE_DIR "/Sistema/Atualizacao"      /* área do atualizador (fs/update.c): fica fora do VFS */
+static bool is_update_dir(const char *vp) {
+    usize n = strlen(UPDATE_DIR);
+    return !strncmp(vp, UPDATE_DIR, n) && (vp[n] == 0 || vp[n] == '/');
+}
+
 static void load_entry(void *ctx, const char *name, bool is_dir, u64 size) {
     walk_t *w = ctx;
     char vp[1024], fp[1040];
     snprintf(vp, sizeof vp, "%s/%s", w->vpath, name);
     snprintf(fp, sizeof fp, SYS_DIR "%s", vp);
+    if (is_update_dir(vp)) return;
     if (is_dir) {
         vfs_mkdir(vp);
         ndirs++;
@@ -149,6 +158,14 @@ bool persist_load(void) {
     fat_set_system(sys);
     kprintf("persist: volume do sistema \"%s\" (FAT, %llu MB) em %s, estado %s\n",
             fat_label(sys)[0] ? fat_label(sys) : "sem nome", origin_get()->part_size >> 20, storage_disk_name(sys_disk), sysstate_name());
+    /* atualização pronta (ou interrompida no meio): aplicar ANTES de carregar a árvore, para o VFS já nascer com a versão
+     * nova. Se o carregador EFI foi trocado agora, o kernel em execução é o antigo: reinicia para entrar no novo. */
+    if ((sys_state == SYS_INSTALLED || sys_state == SYS_LIVE_PERSIST) && update_boot_pending(sys) && authorize()) {
+        if (update_boot_apply(sys)) {
+            kprintf("persist: kernel atualizado: reiniciando\n");
+            acpi_reboot();
+        }
+    }
     quiet++;
     u64 t0 = timer_ticks();
     load_tree("", 0);
@@ -206,6 +223,7 @@ bool persist_set_state(int st) {
 static bool tracked_path(const char *p) {
     if (!strncmp(p, "/Volumes", 8) && (p[8] == 0 || p[8] == '/')) return false;
     if (!strncmp(p, "/tmp", 4) && (p[4] == 0 || p[4] == '/')) return false;
+    if (is_update_dir(p)) return false;
     return p[1] != 0;
 }
 
@@ -346,6 +364,7 @@ static void save_klog(void) {
 }
 
 void persist_tick(void) {
+    update_poll();                       /* atualização em andamento (fs/update.c), mesmo com Ajustes fechado */
     save_klog();
     vol_tick();
     if (pending && timer_ticks() - last_change >= SYNC_DELAY_MS) persist_sync();

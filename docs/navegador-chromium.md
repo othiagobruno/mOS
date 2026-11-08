@@ -214,10 +214,19 @@ Pendências:
     mudanças, a memória livre só com o Claude subiu de 1079–1081 para 1096–1098 MiB, e com o Chrome na página do Google
     ficou em 548–635 MiB, sem falha de `kmalloc`. Um diagnóstico temporário (já retirado) conferiu a imagem página a
     página a cada processo novo, e ela nunca mudou.
-  - Em aberto: numa das rodadas com o libSystem compartilhado, o processo principal do Chrome caiu no `CHECK` do
-    `ScopedFD` (`scoped_file.cc:45`, "Bad file descriptor") 8 s depois de abrir o login do Google. Logo antes, o
-    `fileport_makeport` falhou porque o kernel já não tinha o fd (`wrapped_platform_handle.cc:105`). Não se repetiu na
-    rodada seguinte, e a imagem compartilhada não mudou. Falta descobrir quem fecha o fd antes do envio pelo Mojo.
+  - Resolvido em 8 nov.: numa das rodadas com o libSystem compartilhado, o processo principal do Chrome caiu no
+    `CHECK` do `ScopedFD` (`scoped_file.cc:45`, "Bad file descriptor") 8 s depois de abrir o login do Google. Logo
+    antes, o `fileport_makeport` falhou porque o kernel já não tinha o fd (`wrapped_platform_handle.cc:105`). A causa
+    era o `dup()` do libSystem: ele procurava um número livre (`SYS_FDFLAGS` dando EBADF) e só depois chamava `dup2`.
+    Nesse intervalo, outra thread podia abrir um arquivo e receber o mesmo número, e o `dup2` trocava o fd dela em
+    silêncio. Os dois donos acabavam fechando o mesmo fd. O `base::File::Duplicate` do Chromium usa `dup`, e o processo
+    principal tem dezenas de threads. Agora o `SYS_DUP2` aceita `MOS_DUP_ANY`: o kernel escolhe o menor fd livre e
+    copia na mesma syscall (`dup()` e `fcntl(F_DUPFD)`, que agora respeita o mínimo pedido). O `kqueue()` e o
+    `cx_kqueue_dup` tinham a mesma corrida na tabela `kqs[]` e passaram a tomar a vaga com CAS.
+    Teste de estresse (`duptest`, Mach-O, uma thread com 20000 `dup` e três abrindo, lendo e fechando outro arquivo, numa
+    VM de 4 núcleos): o padrão antigo deu 1871 + 5382 leituras do arquivo errado e 2460 + 4432 `close` com EBADF; o
+    `dup()` novo, nenhuma. O `posixteste`, o `dispatchteste` (30/30), o `sinaisteste` e o `smpteste` continuam
+    passando.
   - Os buffers de arquivo continuam contíguos. Com a escrita no lugar, só o crescimento de um arquivo grande pede um
     bloco novo, e só a cada dobra. Trocar por listas de páginas exigiria uma área virtual do kernel com páginas de
     4 KiB, porque todo leitor de `vnode->data` supõe um buffer contínuo. Nas rodadas em 2816 MB nenhum crescimento

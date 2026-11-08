@@ -920,6 +920,57 @@ bool fat_rename(fatfs_t *fs, const char *from, const char *to) {
     return fat_sync(fs) && ok;
 }
 
+/* Substitui o arquivo "to" pelo arquivo "from" do mesmo volume (sem copiar dados). O passo que muda o que "to" é consiste
+ * numa única regravação da entrada de diretório dele (cadeia e tamanho de "from"): antes dele, "to" é a versão antiga; depois,
+ * a nova. Em seguida a entrada de "from" sai e a cadeia antiga de "to" é liberada. Uma queda entre os dois passos deixa as
+ * duas entradas na mesma cadeia: chamar de novo reconhece esse estado e só tira "from" (sem liberar a cadeia). Uma queda
+ * depois da troca e antes do sync da FAT deixa, no máximo, clusters perdidos da versão antiga. Sem "to": é um fat_rename. */
+bool fat_replace(fatfs_t *fs, const char *from, const char *to) {
+    if (!fs->rw) return false;
+    fent_t *x = kmalloc(sizeof *x);
+    if (!x) return false;
+    bool exists = resolve(fs, to, x);
+    kfree(x);
+    if (!exists) return fat_rename(fs, from, to);
+    char pfrom[1024], pto[1024];
+    const char *lfrom, *lto;
+    if (!split(from, pfrom, sizeof pfrom, &lfrom) || !split(to, pto, sizeof pto, &lto)) return false;
+    fent_t *f = kmalloc(sizeof *f), *g = kmalloc(sizeof *g), *t = kmalloc(sizeof *t);
+    dirbuf_t ds = {0}, dd = {0};
+    bool ok = f && g && t && resolve(fs, pfrom, g) && (g->attr & ATTR_DIR) && dir_load(fs, g->clus, &ds) &&
+              dir_find(&ds, lfrom, f) && !(f->attr & ATTR_DIR);
+    u32 src_parent = ds.clus;
+    if (ok) ok = resolve(fs, pto, g) && (g->attr & ATTR_DIR);
+    bool same = ok && g->clus == src_parent;
+    dirbuf_t *dst = same ? &ds : &dd;
+    if (ok && !same) ok = dir_load(fs, g->clus, &dd);
+    if (ok) ok = dir_find(dst, lto, t) && !(t->attr & ATTR_DIR) && !(same && t->sfn == f->sfn);
+    if (ok) {
+        u32 old = t->clus;
+        bool shared = old && old == f->clus;          /* retomada depois de uma queda entre a troca e a saída de "from" */
+        if (!shared) {
+            u8 *e = dst->buf + t->sfn * 32;
+            e[20] = (u8)(f->clus >> 16); e[21] = (u8)(f->clus >> 24);
+            e[26] = (u8)f->clus; e[27] = (u8)(f->clus >> 8);
+            e[28] = (u8)f->size; e[29] = (u8)(f->size >> 8); e[30] = (u8)(f->size >> 16); e[31] = (u8)(f->size >> 24);
+            e[11] |= ATTR_ARCHIVE;
+            stamp(e, false);
+            ok = dir_store(fs, dst);                  /* a troca */
+            if (ok && fs->dev) blk_flush(fs->dev);
+        }
+        if (ok) {
+            dir_del(&ds, f);
+            ok = dir_store(fs, &ds);
+            if (ok && !shared && old) free_chain(fs, old);
+        }
+    }
+    kfree(ds.buf); kfree(dd.buf); kfree(f); kfree(g); kfree(t);
+    return fat_sync(fs) && ok;
+}
+
+/* fat_sync + descarga do cache de escrita do dispositivo */
+bool fat_flush(fatfs_t *fs) { return fat_sync(fs) && blk_flush(fs->dev); }
+
 /* ================================================================ dfs (volumes FAT em /Volumes) */
 static fatfs_t *s_system;               /* volume do sistema: não aparece em /Volumes */
 void fat_set_system(fatfs_t *fs) { s_system = fs; }

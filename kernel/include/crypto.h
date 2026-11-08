@@ -114,3 +114,6 @@ bool crypto_rng_hw(void);               /* RDSEED/RDRAND entregaram valores na s
 #ifdef MOS_UNIT_TESTS
 void crypto_rng_test_force_hw(int v);   /* -1 = real, 0 = finge sem gerador de hardware, 1 = finge com */
 #endif
+
+/* ---------- Ed25519 (só verificação; net/ed25519.c) ---------- */
+bool ed25519_check(const u8 sig[64], const void *msg, usize len, const u8 pk[32]);

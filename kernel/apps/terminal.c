@@ -5,6 +5,7 @@
 #include "account.h"
 #include "compat.h"
 #include "launchsvc.h"
+#include "update.h"
 
 #define LINES_MAX 600
 #define COLS_MAX 200
@@ -178,6 +179,7 @@ static void run(term_t *t, char *line) {
         OUT("  bash [args]     bash do Homebrew (sem readline: a linha é editada pelo Terminal)");
         OUT("  ./prog args     macinfo <arq> (executáveis e .app do macOS, x86_64)");
         OUT("  tema claro|escuro             beep         reboot        shutdown");
+        OUT("  atualizar [procurar <origem> | baixar | cancelar]   (Atualização de Software)");
     } else if (!strcmp(c, "clear")) {
         for (int i = 0; i < t->nlines; i++) kfree(t->lines[i]);
         t->nlines = 0;
@@ -270,6 +272,28 @@ static void run(term_t *t, char *line) {
         rtc_now(&d);
         static const char *wd[7] = {"dom", "seg", "ter", "qua", "qui", "sex", "sáb"};
         OUT("%s %02d/%02d/%04d %02d:%02d:%02d -03", wd[d.weekday], d.day, d.month, d.year, d.hour, d.minute, d.second);
+    } else if (!strcmp(c, "atualizar")) {
+        /* atualizar [procurar <origem> | baixar | cancelar]: o mesmo que Ajustes > Geral > Atualização de Software */
+        static const char *nomes[] = {"parado", "procurando", "atualizado", "disponível", "baixando", "pronta (reinicie)", "erro"};
+        const char *sub = argc > 1 ? argv[1] : "";
+        if (!strcmp(sub, "procurar")) {
+            if (argc < 3) ERR("uso: atualizar procurar <http://servidor:porta | /Volumes/MOS>");
+            else if (!update_check(argv[2])) ERR("atualizar: %s", update_status()->error);
+        } else if (!strcmp(sub, "baixar")) {
+            if (!update_download()) ERR("atualizar: nada disponível para baixar (procure antes)");
+        } else if (!strcmp(sub, "cancelar")) {
+            update_cancel();
+        } else if (sub[0]) ERR("uso: atualizar [procurar <origem> | baixar | cancelar]");
+        const update_status_t *u = update_status();
+        int sti = u->state >= 0 && u->state <= UPD_ERROR ? u->state : 0;
+        OUT("versão instalada: %s   estado: %s%s", update_current_version(), nomes[sti],
+            u->state == UPD_IDLE && update_ready() ? " (pronta no disco: reinicie)" : "");
+        if (u->state == UPD_CHECKING || u->state == UPD_DOWNLOADING) OUT("  %d%% — %s", u->percent, u->step);
+        if (u->state == UPD_AVAILABLE || u->state == UPD_DOWNLOADING || u->state == UPD_READY)
+            OUT("  versão nova %s: %d de %d arquivos (%llu KB), %d a remover%s", u->new_version, u->files_changed, u->files_total,
+                u->bytes_changed >> 10, u->files_removed, u->loader_changed ? ", inclui o kernel" : "");
+        if (u->state == UPD_ERROR) ERR("  %s", u->error);
+        if (update_last_applied()[0]) OUT("  última aplicada: %s", update_last_applied());
     } else if (!strcmp(c, "uptime")) {
         u64 s = timer_ticks() / 1000;
         OUT("ligado há %llu min %llu s", s / 60, s % 60);

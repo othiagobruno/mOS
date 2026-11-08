@@ -3471,6 +3471,16 @@ void desktop_tick(void) {
         fb_flush(rect_make(0, 0, SW, SH));
         extern void persist_sync(void);
         persist_sync(); /* grava no disco o que ainda estiver pendente */
+        /* atualização baixada e conferida (fs/update.c): troca os arquivos do sistema agora, com o sistema parado */
+        extern bool update_ready(void);
+        extern void update_on_shutdown(void);
+        if (update_ready()) {
+            const char *msg = "Instalando a atualização do mOS…";
+            int tw = text_width(font_get(FONT_REGULAR), 15, msg);
+            text_draw(g_screen, font_get(FONT_REGULAR), 15, (SW - tw) / 2, SH / 2, RGB(236, 236, 236), msg);
+            fb_flush(rect_make(0, 0, SW, SH));
+            update_on_shutdown();
+        }
         sleep_ms(300);
         if (k) acpi_reboot(); else acpi_poweroff();
     }

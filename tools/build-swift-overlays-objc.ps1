@@ -45,7 +45,6 @@ Copy-Item "$sdkSrc\sdk\UniformTypeIdentifiers" $inc -Recurse -Force   # a classe
 # CoreFoundation e CoreGraphics em C: os mesmos cabeçalhos que o importador do OpenSwiftUI usa
 foreach ($fw in 'CoreFoundation') { Copy-Item "$root\userland\sdk\openswiftui\importer\$fw" $inc -Recurse -Force }
 Copy-Item "$root\userland\sdk\include\CoreGraphics" $inc -Recurse -Force   # o do SDK (com MOS_SWIFT_OBJC: nomes da Apple)
-
 $fails = 0
 function Build-Overlay($name, [string[]]$files = @(), [bool]$underlying = $true, [string[]]$extra = @()) {
     if ($Only -and $Only -notcontains $name) { return }
@@ -83,7 +82,7 @@ Build-Overlay 'CoreFoundation'
 # CoreGraphics: CGFloat do módulo CoreGraphics do OpenSwiftUI (userland\sdk\openswiftui\swift\CoreGraphics) + CGGeometry.swift
 $cg = [IO.File]::ReadAllText("$root\userland\sdk\openswiftui\swift\CoreGraphics\CGFloat.swift", $utf8)
 [IO.File]::WriteAllText("$gen\CGFloat.swift", "// GERADO por tools\build-swift-overlays-objc.ps1 a partir do CGFloat.swift do OpenSwiftUI`n" + $cg.Replace('@_exported import MOSLibm', "@_exported import CoreGraphics`nimport Darwin"), $utf8)
-Build-Overlay 'CoreGraphics' @("$gen\CGFloat.swift", "$sdkSrc\CoreGraphics\CGGeometry.swift")
+Build-Overlay 'CoreGraphics' (@("$gen\CGFloat.swift") + @(Get-ChildItem "$sdkSrc\CoreGraphics" -Filter *.swift | ForEach-Object FullName))
 Build-Overlay 'os'
 # DispatchQueue: Scheduler (Dispatch\Combine) só quando o Combine já existe (tools\build-swift-combine-objc.ps1, que
 # recompila o Dispatch no fim)

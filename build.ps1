@@ -35,9 +35,10 @@ Write-Host "==> Building the Nucleo kernel ($($sources.Count) files)" -Foregroun
 if ($LASTEXITCODE -ne 0) { Write-Host "kernel build FAILED" -ForegroundColor Red; exit 1 }
 Remove-Item $OutDir/BOOTX64.lib, $OutDir/BOOTX64.pdb -ErrorAction SilentlyContinue
 
-if (-not (Test-Path $OutDir/mkimg.exe) -or (Get-Item tools/mkimg.c).LastWriteTime -gt (Get-Item $OutDir/mkimg.exe).LastWriteTime) {
+if (-not (Test-Path $OutDir/mkimg.exe) -or (Get-Item tools/mkimg.c).LastWriteTime -gt (Get-Item $OutDir/mkimg.exe).LastWriteTime -or
+    (Get-Item kernel/include/ed25519_impl.h).LastWriteTime -gt (Get-Item $OutDir/mkimg.exe).LastWriteTime) {
     Write-Host "==> Building mkimg" -ForegroundColor Cyan
-    & $zig cc -O2 -target x86_64-windows-gnu tools/mkimg.c -o $OutDir/mkimg.exe 2>&1 | ForEach-Object { "$_" }
+    & $zig cc -O2 -target x86_64-windows-gnu tools/mkimg.c -o $OutDir/mkimg.exe -lbcrypt 2>&1 | ForEach-Object { "$_" }
     if ($LASTEXITCODE -ne 0) { Write-Host "mkimg build FAILED" -ForegroundColor Red; exit 1 }
 }
 
@@ -52,6 +53,12 @@ Copy-Item $OutDir/BOOTX64.EFI "$esp\EFI\BOOT\BOOTX64.EFI" -Force
 # o conteúdo de root\mOS para dentro de esp\mOS (com "root\mOS" sem \*, uma esp\mOS que sobrou viraria esp\mOS\mOS)
 Copy-Item -Recurse -Force "$root\root\mOS\*" "$esp\mOS\"
 Remove-Item -Recurse -Force "$esp\mOS\mOS" -ErrorAction SilentlyContinue   # resto de builds antigos
+# root\mOS\Users só com pastas vazias (sobra de quando os exemplos moravam ali; hoje estão em root-live\mOS\Users, e o git
+# não apaga pastas que ficaram presas): fica fora do staging. Com qualquer arquivo dentro ela vai, e o mkimg recusa a imagem.
+if ((Test-Path "$esp\mOS\Users") -and -not (Get-ChildItem "$esp\mOS\Users" -Recurse -File -Force -ErrorAction SilentlyContinue)) {
+    Write-Host "aviso: root\mOS\Users só tem pastas vazias; fora da imagem (os exemplos ficam em root-live\mOS\Users)" -ForegroundColor Yellow
+    Remove-Item -Recurse -Force "$esp\mOS\Users"
+}
 
 # device firmware (Intel Wi-Fi/Bluetooth from linux-firmware, redistributable; licenses alongside)
 if (Test-Path "$root\firmware") {
@@ -135,7 +142,15 @@ Write-Host "==> Creating GPT/FAT32 disk image" -ForegroundColor Cyan
 # mkimg REJEITA staging contaminado (contas, logs, preferências, pastas pessoais, estado) e gera o manifesto SHA-256 do payload;
 # os exemplos de fábrica (root-live\mOS\Users) entram só como overlay Live, fora do payload e do manifesto
 Remove-Item $OutDir/mOS.img -ErrorAction SilentlyContinue
-& $OutDir/mkimg.exe $OutDir/mOS.img $esp 128 --live-overlay "$root\root-live"
+# Atualização sem reinstalar (kernel/fs/update.c): o manifesto é assinado com Ed25519 pela chave do repositório,
+# tools\chave-atualizacao.semente (MOS_CHAVE_ATUALIZACAO aponta outra). Sistemas instalados com esta imagem só aceitam pacotes
+# desta chave. $OutDir\manifesto.txt + $OutDir\esp formam o pacote que tools\servir-atualizacao.ps1 entrega por HTTP.
+$key = if ($env:MOS_CHAVE_ATUALIZACAO) { $env:MOS_CHAVE_ATUALIZACAO } else { Join-Path $root 'tools\chave-atualizacao.semente' }
+New-Item -ItemType Directory -Force (Split-Path $key) | Out-Null
+$rev = (& git -C $root rev-parse --short HEAD 2>$null)
+if (-not $rev) { $rev = 'local' }
+$versao = "0.1-$(Get-Date -Format 'yyyyMMdd.HHmm')-$rev"
+& $OutDir/mkimg.exe $OutDir/mOS.img $esp 128 --live-overlay "$root\root-live" --key $key --manifest-out "$OutDir/manifesto.txt" --versao $versao
 if ($LASTEXITCODE -ne 0) { Write-Host "image creation FAILED" -ForegroundColor Red; exit 1 }
 $k = (Get-Item $OutDir/BOOTX64.EFI).Length / 1KB
 Write-Host ("OK: $OutDir\mOS.img (kernel {0:N0} KiB). Flash it to a USB stick with Rufus (DD mode) or balenaEtcher." -f $k) -ForegroundColor Green

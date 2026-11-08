@@ -168,6 +168,8 @@ bool     fat_mkdir(fatfs_t *fs, const char *path);   /* o pai precisa existir; t
 bool     fat_remove(fatfs_t *fs, const char *path);  /* arquivo ou pasta (recursivo) */
 bool     fat_rename(fatfs_t *fs, const char *from, const char *to);
 bool     fat_sync(fatfs_t *fs);
+bool     fat_replace(fatfs_t *fs, const char *from, const char *to); /* troca atômica de "to" por "from" (retomável); sem "to" = rename */
+bool     fat_flush(fatfs_t *fs);                     /* fat_sync + flush do dispositivo */
 void     fat_enable_rw(fatfs_t *fs);                 /* reavalia a política de escrita (depois de storage_grant_write) */
 void     fat_set_system(fatfs_t *fs);                /* este volume não é exposto em /Volumes */
 int      fat_probe(blkdev_t *dev, const char *source, const char *fmt);

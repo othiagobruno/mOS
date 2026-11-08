@@ -239,3 +239,5 @@ int    doc_anchor_y(doc_t *d, const char *name);
 
 /* chamado pela pintura para controles de formulário (implementado em horizonte.c) */
 void web_paint_control(ui_t *u, doc_t *d, ctrl_t *c, rect_t r);
+/* fora de uma janela do Horizonte, quem pinta os controles (kernel/web/webview.c, durante a pintura de um WKWebView) */
+extern void (*web_paint_control_hook)(ui_t *u, doc_t *d, ctrl_t *c, rect_t r);

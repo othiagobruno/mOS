@@ -11,6 +11,7 @@
 #include "proc.h"
 #include "crypto.h"
 #include "launchsvc.h"
+#include "update.h"
 
 extern int g_kbd_layout;
 #include "i18n.h"
@@ -653,14 +654,100 @@ static void paint_sobre(void) {
     footnote("mOS é open source (licença MIT), escrito do zero. A fonte Inter é distribuída sob a licença OFL.", 0);
 }
 
+/* Atualização de Software (fs/update.c): procura um pacote (servidor HTTP ou pendrive/imagem do mOS montado em /Volumes),
+ * baixa só o que mudou e instala ao reiniciar. A origem fica em Preferencias/com.mos.atualizacao.cfg ("origem=..."). */
+#define UPD_CFG "/Sistema/Biblioteca/Preferencias/com.mos.atualizacao.cfg"
+static char upd_src[200];
+
+static void upd_load_src(void) {
+    if (upd_src[0]) return;
+    snprintf(upd_src, sizeof upd_src, "http://10.0.2.2:8080");      /* o host visto de dentro do QEMU (rede de usuário) */
+    if (update_status()->source[0]) { snprintf(upd_src, sizeof upd_src, "%s", update_status()->source); return; }   /* a do Terminal */
+    vnode_t *v = vfs_lookup(UPD_CFG);
+    if (v && !v->dir && v->data && v->size > 7 && !strncmp((char *)v->data, "origem=", 7)) {
+        usize n = MIN(v->size - 7, sizeof upd_src - 1);
+        memcpy(upd_src, v->data + 7, n);
+        upd_src[n] = 0;
+        char *nl = strchr(upd_src, '\n');
+        if (nl) *nl = 0;
+    }
+}
+
+static void upd_save_src(void) {
+    char b[220];
+    int n = snprintf(b, sizeof b, "origem=%s\n", upd_src);
+    vfs_mkdir("/Sistema/Biblioteca/Preferencias");
+    vfs_write_file(UPD_CFG, b, (usize)n);
+}
+
 static void paint_update(void) {
+    upd_load_src();
+    const update_status_t *us = update_status();
+    char why[200];
+    bool can = update_supported(why, sizeof why);
+    bool ready = us->state == UPD_READY || (us->state == UPD_IDLE && can && update_ready());
+    const char *title = "Atualização de Software";
+    switch (us->state) {
+    case UPD_CHECKING: title = "Procurando atualizações…"; break;
+    case UPD_UPTODATE: title = "O mOS está atualizado"; break;
+    case UPD_AVAILABLE: title = "Atualização disponível"; break;
+    case UPD_DOWNLOADING: title = "Baixando a atualização…"; break;
+    case UPD_ERROR: title = "Não foi possível atualizar"; break;
+    }
+    if (ready) title = "Pronta para instalar";
     rect_t g = rect_make(X0, Y, W0, 120);
     ui_group_box(U, g);
     pane_icon(U->s, P_UPDATE, g.x + 20, g.y + 32, 56);
-    text_draw(U->s, F(FONT_BOLD), 16, g.x + 92, g.y + 52, T.text, "O mOS está atualizado");
-    text_draw(U->s, F(FONT_REGULAR), 12, g.x + 92, g.y + 72, T.text2, MOS_NAME " " MOS_VERSION);
+    text_draw(U->s, F(FONT_BOLD), 16, g.x + 92, g.y + 52, T.text, title);
+    char sub[160];
+    snprintf(sub, sizeof sub, "%s %s", MOS_NAME, update_current_version());
+    text_draw(U->s, F(FONT_REGULAR), 12, g.x + 92, g.y + 72, T.text2, sub);
+    if (can) {
+        rect_t b = rect_make(g.x + g.w - 170, g.y + 46, 150, 28);
+        bool busy = us->state == UPD_CHECKING || us->state == UPD_DOWNLOADING;
+        if (ready) {
+            if (ui_button(U, 7701, b, "Reiniciar Agora", true)) desktop_request_restart();
+        } else if (us->state == UPD_AVAILABLE) {
+            if (ui_button(U, 7702, b, "Atualizar Agora", true)) update_download();
+        } else if (busy) {
+            if (ui_button(U, 7703, b, "Cancelar", false)) update_cancel();
+        } else if (ui_button(U, 7704, b, "Procurar", false)) {
+            upd_save_src();
+            update_check(upd_src);
+        }
+        if (busy) {
+            ui_progress_bar(U, rect_make(g.x + 92, g.y + 88, g.w - 92 - 190, 6), us->percent / 100.0f, true);
+            text_draw_ellipsis(U->s, F(FONT_REGULAR), 11, g.x + 92, g.y + 108, g.w - 92 - 30, T.text2, us->step);
+        }
+    }
     Y += g.h + 20;
-    footnote("Novas versões são distribuídas como imagem de disco: grave a nova imagem no pendrive ou use Instalar mOS.", 0);
+    if (!can) { footnote(why, 0); return; }
+    const char *last = update_last_applied();
+    if (last[0] && us->state == UPD_IDLE && !ready) {
+        char m[160];
+        snprintf(m, sizeof m, "Atualizado para %s no último reinício.", last);
+        footnote(m, 0);
+    }
+    if (us->state == UPD_ERROR) footnote(us->error, RGB(255, 69, 58));
+    if (us->state == UPD_AVAILABLE || ready || us->state == UPD_DOWNLOADING) {
+        section("Esta atualização");
+        rect_t gi = group(3);
+        char a[48], line[96];
+        row_value(row(gi, 0, "Versão"), us->new_version[0] ? us->new_version : "pronta no disco");
+        fmt_bytes(us->bytes_changed, a, sizeof a);
+        if (us->files_total) snprintf(line, sizeof line, "%d de %d (%s)", us->files_changed, us->files_total, a);
+        else snprintf(line, sizeof line, "conferidos");
+        row_value(row(gi, 1, "Arquivos novos ou alterados"), line);
+        snprintf(line, sizeof line, "%d%s", us->files_removed, us->loader_changed ? " · inclui o kernel" : "");
+        row_value(row(gi, 2, "Arquivos removidos"), line);
+    }
+    section("Origem das atualizações");
+    rect_t gs = group(1);
+    rect_t r = row(gs, 0, NULL);
+    ui_textfield(U, 7710, rect_make(r.x, r.y + 7, r.w, 26), upd_src, sizeof upd_src, "http://servidor:8080 ou /Volumes/MOS");
+    footnote("Um servidor HTTP com o layout do pendrive (no host: tools\\servir-atualizacao.ps1) ou a pasta de um pendrive/imagem do "
+             "mOS montado em /Volumes. Só pacotes assinados pela chave deste sistema são aceitos; só os arquivos que mudaram são "
+             "baixados, e eles só substituem os atuais ao reiniciar. Contas, preferências e arquivos pessoais não são tocados.", 0);
 }
 
 static void paint_storage(void) {

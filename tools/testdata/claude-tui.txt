@@ -1,26 +1,26 @@
 # Roteiro do PtyRun (tools/build-ptyrun.ps1): o Claude Code no modo interativo, sem login.
-# Mostra a primeira tela (escolha do tema), mexe a seleção com a seta, confirma o tema e para na tela de login,
-# sem escolher nada nela. Redimensiona (SIGWINCH) e sai com dois ^C.
+# Espera a primeira tela (no TCG ele passa uns 20 s inicializando sem escrever nada), mexe a seleção com a seta,
+# confirma o tema se for a tela de tema e para na tela seguinte (login), sem escolher nada nela.
+# Redimensiona (SIGWINCH) e sai com dois ^C num write só (o Claude Code só sai se o segundo vier logo; no TCG, até uma pausa de
+# 300 ms vira segundos e o segundo ^C contava como primeiro de novo). O PtyRun não refaz a quebra das linhas no resize: a tela depois dele sai parcial.
 tamanho 30 100
 ambiente TERM=xterm-256color
 ambiente COLORTERM=truecolor
 ambiente SHELL=/bin/sh
 ambiente LANG=en_US.UTF-8
 comando /Aplicativos/ClaudeCode.app/Contents/MacOS/claude
-quieto 15000 1200000
+esperar Claude 600000
+quieto 8000 240000
 tela inicial
 tecla \e[B
-quieto 6000 240000
+quieto 5000 120000
 tela depois da seta para baixo
 se Dark mode
 tecla \r
-quieto 10000 300000
+quieto 8000 240000
 tela depois do Enter
 redimensionar 36 120
-quieto 6000 240000
+quieto 5000 120000
 tela depois de redimensionar
-tecla ^C
-quieto 4000 60000
-tela depois do primeiro ^C
-tecla ^C
-fim 120000
+tecla ^C^C
+fim 180000

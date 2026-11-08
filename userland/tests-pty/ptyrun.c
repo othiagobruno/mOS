@@ -534,10 +534,17 @@ int main(int argc, char **argv) {
             printf("ptyrun: [%.1f s] esperar \"%s\": %s\n", secs(), w[1], found ? "apareceu" : "não apareceu");
             if (!found) failures++;
         } else if (!strcmp(cmd, "quieto") && nw >= 2) {
+            /* o silêncio conta a partir do que vier por último: a última saída ou o começo deste passo (logo depois de
+             * uma tecla, a resposta ainda não veio e o silêncio de antes não vale) */
             int ms = atoi(w[1]), max = nw >= 3 ? atoi(w[2]) : 600000;
             long t0 = now_ms();
-            while (now_ms() - last_out < ms && now_ms() - t0 < max && !gone()) pump(100);
-            printf("ptyrun: [%.1f s] quieto %d ms%s\n", secs(), ms, now_ms() - last_out >= ms ? "" : " (prazo esgotado)");
+            for (;;) {
+                long since = last_out > t0 ? last_out : t0;
+                if (now_ms() - since >= ms || now_ms() - t0 >= max || gone()) break;
+                pump(100);
+            }
+            long since = last_out > t0 ? last_out : t0;
+            printf("ptyrun: [%.1f s] quieto %d ms%s\n", secs(), ms, now_ms() - since >= ms ? "" : " (prazo esgotado)");
         } else if (!strcmp(cmd, "pausa") && nw >= 2) {
             long t0 = now_ms();
             while (now_ms() - t0 < atoi(w[1])) pump(100);

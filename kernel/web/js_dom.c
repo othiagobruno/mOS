@@ -51,6 +51,9 @@ struct js_page {
     node_t *focus;
     u64 t0;
     char cookie[1024];
+    /* WKWebView (kernel/web/webview.c): window.webkit.messageHandlers.<nome>.postMessage(x) chama wk_post */
+    void (*wk_post)(void *ctx, const char *name, const char *body, int len, int type);
+    void *wk_ctx;
     struct js_page *next;
 };
 
@@ -3085,7 +3088,15 @@ static void page_origin(const char *url, char *out, int cap) {
 }
 
 js_page_t *js_page_new(doc_t *d, const char *url, int vw, int vh) {
-    if (!js_enabled || !d) return NULL;
+    if (!js_enabled) return NULL;
+    return js_page_new2(d, url, vw, vh, NULL, NULL);
+}
+
+/* como js_page_new, sem olhar o js_enabled do Horizonte (o WKWebView tem a preferência própria). init é chamado
+ * com fase 0 antes dos scripts da página (WKUserScriptInjectionTimeAtDocumentStart, messageHandlers) e com fase 1
+ * depois dos scripts inline, antes do load (AtDocumentEnd) */
+js_page_t *js_page_new2(doc_t *d, const char *url, int vw, int vh, void (*init)(js_page_t *p, int phase, void *ctx), void *ctx) {
+    if (!d) return NULL;
     js_page_t *p = kcalloc(1, sizeof(js_page_t));
     if (!p) return NULL;
     int frame;
@@ -3110,8 +3121,11 @@ js_page_t *js_page_new(doc_t *d, const char *url, int vw, int vh) {
     J.realm = r;
     js_lib_init(r);
     js_dom_init(r);
+    if (init) init(p, 0, ctx);
     collect_scripts(p, d->root);
-    if (pump_scripts(p)) maybe_load_events(p);
+    bool ready = pump_scripts(p);
+    if (init) init(p, 1, ctx);
+    if (ready) maybe_load_events(p);
     p->dirty = false;
     J.realm = saved ? saved : r;
     js_leave();
@@ -3302,3 +3316,141 @@ node_t *js_page_take_submit(js_page_t *p) {
 
 const char *js_page_console(js_page_t *p) { return p && p->console.p ? p->console.p : ""; }
 int js_page_errors(js_page_t *p) { return p ? p->errors : 0; }
+
+/* ============================================================ WKWebView (kernel/web/webview.c)
+ * Valores que saem do JavaScript para o app: o tipo (JS_WK_*) e um texto. String e número vão crus, objetos e arrays
+ * como JSON (o framework monta NSDictionary/NSArray). Funções, símbolos, nós do DOM e promessas não têm forma
+ * serializável: JS_WK_UNSUPPORTED, como o "unsupported type" do WebKit. */
+static int wk_value(jsv v, sbuf_t *out) {
+    if (v == JS_UNDEF) return JS_WK_UNDEFINED;
+    if (v == JS_NULL) return JS_WK_NULL;
+    if (jv_isbool(v)) { sb_puts(out, v == JS_TRUE ? "true" : "false"); return JS_WK_BOOL; }
+    if (jv_isnum(v) || jv_isbig(v)) {
+        jsstr *s = js_tostr(v);
+        if (!s) { js_catch(); return JS_WK_UNSUPPORTED; }
+        sb_putn(out, s->d, (int)s->len);
+        return JS_WK_NUMBER;
+    }
+    if (jv_isstr(v)) {
+        if (jv_s(v)->sym) return JS_WK_UNSUPPORTED;
+        sb_putn(out, jv_s(v)->d, (int)jv_s(v)->len);
+        return JS_WK_STRING;
+    }
+    if (!jv_isobj(v)) return JS_WK_UNSUPPORTED;
+    int cls = jv_o(v)->cls;
+    if (cls == CL_FUNCTION || cls == CL_NATIVE || cls == CL_BOUND || cls == CL_PROMISE || cls == CL_SYMBOL ||
+        (cls >= CL_NODE && cls <= CL_HOST))
+        return JS_WK_UNSUPPORTED;
+    if (cls == CL_STRING || cls == CL_NUMBER || cls == CL_BOOLEAN) {   /* new String(...) e afins: o valor primitivo */
+        jsv pv = js_toprim(v, 0);
+        if (pv == JS_EXC) { js_catch(); return JS_WK_UNSUPPORTED; }
+        return wk_value(pv, out);
+    }
+    if (cls == CL_DATE) {   /* o WebKit entrega NSDate; aqui vai o número de ms, que o framework converte */
+        jsv n = js_tonumv(v);
+        if (n == JS_EXC) { js_catch(); return JS_WK_UNSUPPORTED; }
+        wk_value(n, out);
+        return JS_WK_DATE;
+    }
+    jsv j = js_json_stringify(v, JS_UNDEF, JS_UNDEF);
+    if (j == JS_EXC) { js_catch(); return JS_WK_UNSUPPORTED; }   /* ciclo, BigInt dentro... */
+    if (!jv_isstr(j)) return JS_WK_UNSUPPORTED;
+    sb_putn(out, jv_s(j)->d, (int)jv_s(j)->len);
+    return JS_WK_JSON;
+}
+
+/* avalia um programa e devolve o valor da última expressão (evaluateJavaScript:). Exceção: JS_WK_EXCEPTION, com a
+ * mensagem ("TypeError: ...") em out. */
+int js_page_eval_value(js_page_t *p, const char *code, int len, sbuf_t *out) {
+    if (!p || !code) return JS_WK_EXCEPTION;
+    int frame;
+    js_enter(&frame);
+    jsrealm *saved = J.realm;
+    J.realm = p->realm;
+    jsstr *err = NULL;
+    J.interrupted = false;
+    int type;
+    jsscript *s = js_parse(code, len < 0 ? (int)strlen(code) : len, "evaluateJavaScript", 1, &err);
+    if (!s) {
+        sb_printf(out, "SyntaxError: %s", err ? err->d : "erro de sintaxe");
+        type = JS_WK_EXCEPTION;
+    } else {
+        p->in_script = true;
+        js_set_budget(5000);
+        jsv r = js_run_script(s);
+        p->in_script = false;
+        if (r == JS_EXC) {
+            jsv e = js_catch();
+            jsstr *m = js_exc_string(e);
+            sb_puts(out, m ? m->d : "Error");
+            type = JS_WK_EXCEPTION;
+        } else type = wk_value(r, out);
+        js_run_jobs();
+    }
+    J.realm = saved;
+    js_leave();
+    return type;
+}
+
+/* postMessage de window.webkit.messageHandlers.<nome>: o nome fica na propriedade escondida __mosName do objeto */
+static jsv wk_post_message(jsv thisv, int argc, jsv *argv, jsobj *self, int flags) {
+    (void)self; (void)flags;
+    js_page_t *p = cur_page();
+    if (!p || !p->wk_post) return JS_UNDEF;
+    jsv nm = jv_isobj(thisv) ? js_getn(thisv, "__mosName") : JS_UNDEF;
+    if (!jv_isstr(nm)) return js_throw_err(E_TYPE, "postMessage: o manipulador não existe mais");
+    sbuf_t out = {0};
+    int type = wk_value(ARG(0), &out);
+    if (type == JS_WK_UNSUPPORTED) { sb_free(&out); return js_throw_err(E_TYPE, "postMessage: o valor não pode ser serializado"); }
+    p->wk_post(p->wk_ctx, jv_s(nm)->d, out.p ? out.p : "", out.len, type);
+    sb_free(&out);
+    return JS_UNDEF;
+}
+
+void js_page_wk_bridge(js_page_t *p, void (*post)(void *ctx, const char *name, const char *body, int len, int type), void *ctx) {
+    if (!p) return;
+    p->wk_post = post;
+    p->wk_ctx = ctx;
+}
+
+/* acrescenta (on) ou tira window.webkit.messageHandlers.<nome> */
+void js_page_wk_handler(js_page_t *p, const char *name, bool on) {
+    if (!p || !name || !*name) return;
+    int frame;
+    js_enter(&frame);
+    jsrealm *saved = J.realm;
+    J.realm = p->realm;
+    jsobj *g = p->realm->global, *op = p->realm->p_object;
+    jsv wk = js_getn(jv_obj(g), "webkit");
+    if (!jv_isobj(wk)) {
+        jsobj *o = js_newobj(op);
+        js_defn(o, "messageHandlers", jv_obj(js_newobj(op)), 0);
+        js_defn(g, "webkit", jv_obj(o), PF_NOENUM);
+        wk = jv_obj(o);
+    }
+    jsv mh = js_getn(wk, "messageHandlers");
+    if (jv_isobj(mh)) {
+        if (on) {
+            jsobj *h = js_newobj(op);
+            js_defnative(h, "postMessage", wk_post_message, 1, 0);
+            js_defn(h, "__mosName", jv_str(js_strz(name)), PF_NOENUM);
+            js_setn(mh, name, jv_obj(h));
+        } else {
+            jsv h = js_getn(mh, name);
+            if (jv_isobj(h)) js_setn(h, "__mosName", JS_UNDEF);   /* referências guardadas pela página param de mandar */
+            js_delprop(jv_o(mh), js_strz(name));
+        }
+    }
+    if (js_pending()) js_catch();
+    J.realm = saved;
+    js_leave();
+}
+
+/* o valor do console mais recente com nível >= 3 (erros) e a contagem já existem; o WKWebView também precisa saber
+ * se a página ainda tem trabalho (scripts externos ou fetch/XHR em andamento) para o didFinishNavigation */
+bool js_page_busy(js_page_t *p) {
+    if (!p) return false;
+    if (p->spos < p->nscripts) return true;
+    for (int i = 0; i < p->nnets; i++) if (p->nets[i].req) return true;
+    return !p->loaded;
+}

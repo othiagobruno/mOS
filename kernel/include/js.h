@@ -43,3 +43,15 @@ int  js_page_errors(js_page_t *p);
 
 /* uso do heap do motor (para diagnóstico) */
 usize js_heap_bytes(void);
+
+/* ---------- WKWebView (kernel/web/webview.c, SYS_WEB) */
+/* js_page_new sem olhar js_enabled; init(p, 0, ctx) roda antes dos scripts da página e init(p, 1, ctx) depois dos
+ * inline, antes do evento load (WKUserScript AtDocumentStart/AtDocumentEnd, messageHandlers) */
+js_page_t *js_page_new2(doc_t *d, const char *url, int vw, int vh, void (*init)(js_page_t *p, int phase, void *ctx), void *ctx);
+/* tipos de valor (os mesmos números de MOS_WEB_T_* em syscall.h) */
+enum { JS_WK_UNDEFINED = 0, JS_WK_NULL, JS_WK_BOOL, JS_WK_NUMBER, JS_WK_STRING, JS_WK_JSON, JS_WK_DATE,
+       JS_WK_EXCEPTION = -1, JS_WK_UNSUPPORTED = -2 };
+int  js_page_eval_value(js_page_t *p, const char *code, int len, sbuf_t *out);   /* valor da última expressão */
+void js_page_wk_bridge(js_page_t *p, void (*post)(void *ctx, const char *name, const char *body, int len, int type), void *ctx);
+void js_page_wk_handler(js_page_t *p, const char *name, bool on);              /* window.webkit.messageHandlers.<nome> */
+bool js_page_busy(js_page_t *p);                     /* scripts externos, fetch/XHR ou load ainda pendentes */

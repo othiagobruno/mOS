@@ -11,6 +11,7 @@
 #include <dirent.h>
 #include <sys/stat.h>
 #include <time.h>
+#include "../kernel/include/ed25519_impl.h"
 
 #define SECTOR 512
 #define SPC 2 /* setores por cluster (1 KiB) */
@@ -343,10 +344,13 @@ static void add_file(node *dir, const char *name, const void *data, size_t size)
  * O payload (o que o instalador copia) é só o SISTEMA. O staging (a árvore passada ao mkimg) é REJEITADO — o build falha e
  * nenhuma imagem é gerada — se contiver contas, hashes de senha, logs, preferências, estado, pastas pessoais ou qualquer
  * resíduo de sessão. Dados de exemplo "de fábrica" ficam em um overlay Live separado (--live-overlay), que só pode conter
- * /mOS/Users/ e NUNCA entra no manifesto. */
+ * /mOS/Users/ e NUNCA entra no manifesto. Imagens de TESTE (tools/stage-electron.ps1) podem levar ainda um overlay de teste
+ * (--test-overlay) com preferências do usuário e do sistema (/mOS/Users/ e /mOS/Sistema/Biblioteca/Preferencias/: navegador
+ * padrão, argumentos de app), também fora do payload e do manifesto. O build de release (build.ps1) não o passa. */
 static const char *const DENY_PREFIX[] = {
     "/mOS/Users", "/mOS/Sistema/Biblioteca/Usuarios", "/mOS/Sistema/Biblioteca/Logs", "/mOS/Sistema/Biblioteca/Preferencias",
-    "/mOS/Sistema/Instalacao", "/mOS/tmp", "/mOS/Volumes", "/mOS/Sistema/Biblioteca/estado-sistema", NULL};
+    "/mOS/Sistema/Instalacao", "/mOS/tmp", "/mOS/Volumes", "/mOS/Sistema/Biblioteca/estado-sistema",
+    "/mOS/Sistema/Atualizacao", NULL};   /* Atualizacao: área de trabalho do atualizador (kernel/fs/update.c) */
 static const char *deny_reason(const char *path, const char *name) {
     for (int i = 0; DENY_PREFIX[i]; i++) {
         size_t n = strlen(DENY_PREFIX[i]);
@@ -367,18 +371,33 @@ static void validate_staging(node *n, const char *prefix) {
         if (c->is_dir) validate_staging(c, path);
     }
 }
-static void validate_overlay(node *n, const char *prefix) {
+/* overlays: só as áreas da lista (e as pastas acima delas); nunca contas, logs ou lixeira */
+typedef struct { const char *what, *areas; const char *const *allow; } overlay_rule;
+static const char *const LIVE_ALLOW[] = {"/mOS/Users", NULL};
+static const char *const TEST_ALLOW[] = {"/mOS/Users", "/mOS/Sistema/Biblioteca/Preferencias", NULL};
+static const overlay_rule LIVE_RULE = {"overlay Live", "/mOS/Users/", LIVE_ALLOW};
+static const overlay_rule TEST_RULE = {"overlay de teste", "/mOS/Users/ e /mOS/Sistema/Biblioteca/Preferencias/", TEST_ALLOW};
+static int overlay_allowed(const char *path, int is_dir, const char *const *allow) {
+    size_t l = strlen(path);
+    for (int i = 0; allow[i]; i++) {
+        size_t n = strlen(allow[i]);
+        if (!strncmp(path, allow[i], n) && (path[n] == 0 || path[n] == '/')) return 1;        /* dentro da área */
+        if (is_dir && l < n && !strncmp(allow[i], path, l) && allow[i][l] == '/') return 1;   /* pasta acima dela */
+    }
+    return 0;
+}
+static void validate_overlay(node *n, const char *prefix, const overlay_rule *r) {
     char path[1400];
     for (node *c = n->child; c; c = c->next) {
         snprintf(path, sizeof path, "%s/%s", prefix, c->name);
-        if (strcmp(path, "/mOS") && strcmp(path, "/mOS/Users") && strncmp(path, "/mOS/Users/", 11)) {
-            fprintf(stderr, "mkimg: o overlay Live só pode conter /mOS/Users/: %s\n", path); exit(1);
+        if (!overlay_allowed(path, c->is_dir, r->allow)) {
+            fprintf(stderr, "mkimg: o %s só pode conter %s: %s\n", r->what, r->areas, path); exit(1);
         }
         size_t l = strlen(c->name);
         if ((l > 6 && !strcmp(c->name + l - 6, ".conta")) || (l > 4 && !strcmp(c->name + l - 4, ".log")) || !strcmp(c->name, ".Lixeira")) {
-            fprintf(stderr, "mkimg: overlay Live com conta/log/resíduo de sessão: %s\n", path); exit(1);
+            fprintf(stderr, "mkimg: %s com conta/log/resíduo de sessão: %s\n", r->what, path); exit(1);
         }
-        if (c->is_dir) validate_overlay(c, path);
+        if (c->is_dir) validate_overlay(c, path, r);
     }
 }
 static int merge_overlay(node *dst, node *src) {
@@ -401,16 +420,57 @@ static int merge_overlay(node *dst, node *src) {
     return files;
 }
 
+/* chave de assinatura dos pacotes de atualização: semente Ed25519 de 32 bytes num arquivo FORA do repositório (criada na
+ * primeira vez). A chave pública entra no payload (/mOS/Sistema/Biblioteca/chave-atualizacao.pub): o sistema instalado só
+ * aceita atualizações cujo manifesto essa chave assinou, e uma atualização assinada pode trocar a chave (rotação). */
+static uint8_t sign_seed[32], sign_pk[32];
+static int have_key;
+#ifdef _WIN32
+#include <bcrypt.h>
+static int os_random(uint8_t *p, size_t n) { return BCryptGenRandom(NULL, p, (ULONG)n, BCRYPT_USE_SYSTEM_PREFERRED_RNG) == 0; }
+#else
+static int os_random(uint8_t *p, size_t n) { FILE *f = fopen("/dev/urandom", "rb"); int ok = f && fread(p, 1, n, f) == n; if (f) fclose(f); return ok; }
+#endif
+static void load_key(const char *file) {
+    FILE *f = fopen(file, "rb");
+    if (f) {
+        size_t n = fread(sign_seed, 1, 32, f);
+        fclose(f);
+        if (n != 32) { fprintf(stderr, "mkimg: chave de assinatura inválida (esperados 32 bytes): %s\n", file); exit(1); }
+    } else {
+        if (!os_random(sign_seed, 32)) { fprintf(stderr, "mkimg: sem gerador aleatório do sistema para criar a chave\n"); exit(1); }
+        f = fopen(file, "wb");
+        if (!f || fwrite(sign_seed, 1, 32, f) != 32) { fprintf(stderr, "mkimg: não foi possível gravar a chave nova em %s\n", file); exit(1); }
+        fclose(f);
+        printf("mkimg: chave de assinatura NOVA criada em %s (guarde-a: sem ela os sistemas instalados não aceitam atualizações)\n", file);
+    }
+    ed25519_pubkey(sign_pk, sign_seed);
+    have_key = 1;
+}
+
+static const char *manifest_out, *payload_version;
+
 static void make_manifest(node *root) {
+    if (have_key) {
+        char pub[80];
+        for (int i = 0; i < 32; i++) sprintf(pub + i * 2, "%02x", sign_pk[i]);
+        pub[64] = '\n'; pub[65] = 0;
+        node *b = sub_dir(sub_dir(sub_dir(root, "mOS"), "Sistema"), "Biblioteca");
+        for (node *c = b->child; c; c = c->next)
+            if (!strcmp(c->name, "chave-atualizacao.pub")) { fprintf(stderr, "mkimg: o staging já tem chave-atualizacao.pub\n"); exit(1); }
+        add_file(b, "chave-atualizacao.pub", pub, 65);
+    }
     collect(root, "");
     qsort(mitems, nmitems, sizeof *mitems, cmp_mitem);
     int has_loader = 0;
     uint64_t total = 0;
     for (size_t i = 0; i < nmitems; i++) { total += mitems[i].n->size; if (!strcmp(mitems[i].path, "/EFI/BOOT/BOOTX64.EFI")) has_loader = 1; }
     if (!has_loader) { fprintf(stderr, "mkimg: falta /EFI/BOOT/BOOTX64.EFI no payload\n"); exit(1); }
-    size_t cap = 128 + nmitems * 1100 + 128, len = 0;
+    size_t cap = 128 + nmitems * 1100 + 512, len = 0;
     char *m = malloc(cap);
-    len += (size_t)snprintf(m + len, cap - len, "mOS-MANIFESTO-1 %zu %llu\n", nmitems, (unsigned long long)total);
+    /* 4º campo opcional: a versão (o instalador lê só os dois primeiros; o atualizador mostra este) */
+    len += (size_t)snprintf(m + len, cap - len, "mOS-MANIFESTO-1 %zu %llu%s%s\n", nmitems, (unsigned long long)total,
+                            payload_version ? " " : "", payload_version ? payload_version : "");
     for (size_t i = 0; i < nmitems; i++) {
         char hx[65];
         sha_hex(mitems[i].n->data, mitems[i].n->size, hx);
@@ -419,20 +479,55 @@ static void make_manifest(node *root) {
     char sg[65];
     sha_hex(m, len, sg);
     len += (size_t)snprintf(m + len, cap - len, "ASSINATURA-SHA256 %s\n", sg);
+    if (have_key) {                       /* Ed25519 sobre tudo acima, inclusive a linha do SHA-256 (o instalador ignora esta linha) */
+        uint8_t sig[64];
+        ed25519_sign(sig, m, len, sign_seed, sign_pk);
+        if (!ed25519_verify(sig, m, len, sign_pk)) { fprintf(stderr, "mkimg: autoverificação da assinatura falhou\n"); exit(1); }
+        len += (size_t)snprintf(m + len, cap - len, "ASSINATURA-ED25519 ");
+        for (int i = 0; i < 64; i++) len += (size_t)snprintf(m + len, cap - len, "%02x", sig[i]);
+        len += (size_t)snprintf(m + len, cap - len, "\n");
+    }
+    if (manifest_out) {                   /* cópia no host: o servidor de atualizações (tools/servir-atualizacao.ps1) a entrega */
+        FILE *mo = fopen(manifest_out, "wb");
+        if (!mo || fwrite(m, 1, len, mo) != len) { fprintf(stderr, "mkimg: não foi possível gravar %s\n", manifest_out); exit(1); }
+        fclose(mo);
+        if (have_key) {                   /* a chave pública entra no payload mas não existe no staging: vai ao lado do manifesto */
+            char kp[1100];
+            snprintf(kp, sizeof kp, "%s", manifest_out);
+            char *sl = strrchr(kp, '/'), *bs = strrchr(kp, '\\');
+            if (bs > sl) sl = bs;
+            snprintf(sl ? sl + 1 : kp, sizeof kp - (size_t)(sl ? sl + 1 - kp : 0), "chave-atualizacao.pub");
+            FILE *kf = fopen(kp, "wb");
+            char pub[66];
+            for (int i = 0; i < 32; i++) sprintf(pub + i * 2, "%02x", sign_pk[i]);
+            pub[64] = '\n';
+            if (!kf || fwrite(pub, 1, 65, kf) != 65) { fprintf(stderr, "mkimg: não foi possível gravar %s\n", kp); exit(1); }
+            fclose(kf);
+        }
+    }
     node *mos = sub_dir(root, "mOS"), *sis = sub_dir(mos, "Sistema"), *bib = sub_dir(sis, "Biblioteca"), *ins = sub_dir(sis, "Instalacao");
     add_file(ins, "manifesto.txt", m, len);
     add_file(bib, "estado-sistema", "LIVE\n", 5);
-    printf("mkimg: manifesto do payload: %zu arquivos, %llu bytes (assinatura %.16s…)\n", nmitems, (unsigned long long)total, sg);
+    printf("mkimg: manifesto do payload: %zu arquivos, %llu bytes (assinatura %.16s…%s)\n", nmitems, (unsigned long long)total, sg, have_key ? ", Ed25519" : ", SEM Ed25519");
     free(m);
 }
 
 static void guid(uint8_t *g) { for (int i = 0; i < 16; i++) g[i] = rand() & 0xFF; g[7] = (g[7] & 0x0F) | 0x40; g[8] = (g[8] & 0x3F) | 0x80; }
 
 int main(int argc, char **argv) {
-    if (argc < 4) { fprintf(stderr, "uso: mkimg <saida.img> <dir> <MiB> [--live-overlay <dir>]\n"); return 1; }
-    const char *overlay_dir = NULL;
+    if (argc < 4) { fprintf(stderr, "uso: mkimg <saida.img> <dir> <MiB> [--live-overlay <dir>] [--test-overlay <dir>] [--key <semente>] [--manifest-out <arquivo>] [--versao <texto>]\n"); return 1; }
+    const char *overlay_dir = NULL, *test_dir = NULL;
     for (int i = 4; i < argc; i++) {
         if (!strcmp(argv[i], "--live-overlay") && i + 1 < argc) overlay_dir = argv[++i];
+        else if (!strcmp(argv[i], "--test-overlay") && i + 1 < argc) test_dir = argv[++i];
+        else if (!strcmp(argv[i], "--key") && i + 1 < argc) load_key(argv[++i]);
+        else if (!strcmp(argv[i], "--manifest-out") && i + 1 < argc) manifest_out = argv[++i];
+        else if (!strcmp(argv[i], "--versao") && i + 1 < argc) {
+            payload_version = argv[++i];
+            if (!*payload_version || strlen(payload_version) > 70 || strpbrk(payload_version, " \t\r\n")) {
+                fprintf(stderr, "mkimg: --versao precisa ser uma palavra só (até 70 caracteres)\n"); return 1;
+            }
+        }
         else { fprintf(stderr, "mkimg: argumento desconhecido: %s\n", argv[i]); return 1; }
     }
     remove(argv[1]);   /* fail-closed: se o build falhar, nunca sobra uma imagem antiga para ser gravada por engano */
@@ -505,8 +600,14 @@ int main(int argc, char **argv) {
     make_manifest(root);
     if (overlay_dir) {
         node *ov = load_tree(overlay_dir, "", NULL);
-        validate_overlay(ov, "");
+        validate_overlay(ov, "", &LIVE_RULE);
         printf("mkimg: overlay Live (fora do payload e do manifesto): %d arquivos\n", merge_overlay(root, ov));
+    }
+    if (test_dir) {
+        node *ov = load_tree(test_dir, "", NULL);
+        validate_overlay(ov, "", &TEST_RULE);
+        printf("mkimg: overlay de TESTE (preferências; fora do payload e do manifesto; imagem de teste, não de release): %d arquivos\n",
+               merge_overlay(root, ov));
     }
     alloc_clusters(root);
     write_node(root);

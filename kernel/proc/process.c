@@ -555,6 +555,7 @@ static void finish(process_t *p, int code) {
     compat_gui_proc_exit(p);
     machipc_exit(p);                                  /* portas Mach: receptores morrem, envios viram nomes mortos */
     { extern void net_user_exit(process_t *p); net_user_exit(p); }   /* conexões TCP do processo (kernel/net/usersock.c) */
+    { extern void webview_user_exit(process_t *p); webview_user_exit(p); }   /* vistas do WKWebView (kernel/web/webview.c) */
     { extern void lazy_exit(process_t *p); lazy_exit(p); }           /* faixas de memória sob demanda (kernel/mm/lazy.c) */
     for (process_t *c = procs; c; c = c->next) if (c->ppid == p->pid) c->ppid = 0;   /* órfãos */
     int parent = p->ppid;
@@ -1354,6 +1355,17 @@ static bool sig_fault(int_frame_t *f, thread_t *t, process_t *p, u64 cr2) {
     case 14:   /* como o macOS: ausente = SIGSEGV, proteção = SIGBUS. Fora da região de usuário a página pode estar
                 * presente (mapa de identidade do kernel, sem o bit U), mas para o programa ela não existe: SIGSEGV */
         if ((f->error & 1) && cr2 >= USER_BASE && cr2 < USER_END) { sig = MOS_SIGBUS; code = MOS_BUS_ADRERR; } else { sig = MOS_SIGSEGV; code = MOS_SEGV_MAPERR; }
+        /* diagnóstico: uma falta na área de mmap abaixo do topo é memória que já foi do processo (munmap, MAP_FIXED
+         * PROT_NONE) ou ponteiro velho; o tratador do programa (Bun, crashpad) às vezes não diz o endereço */
+        if (cr2 >= USER_MMAP_BASE && cr2 < p->mmap_next) {
+            static int avisos;
+            if (avisos < 10) {
+                avisos++;
+                kprintf("proc: %s (pid %d): falta em 0x%llx (rip 0x%llx, erro 0x%llx) na área de mmap, abaixo do topo 0x%llx\n",
+                        p->name, p->pid, (unsigned long long)cr2, (unsigned long long)f->rip, (unsigned long long)f->error,
+                        (unsigned long long)p->mmap_next);
+            }
+        }
         break;
     case 13:
         /* int3 (e int n) em ring 3 chega como #GP com erro = (vetor << 3) | 2, porque as portas têm DPL 0 */
@@ -1620,6 +1632,14 @@ static void fill_stat(vnode_t *v, mos_stat_t *st) {
 
 /* /dev/null: não existe no VFS; open aceita, write descarta, read dá fim de arquivo (o git exige) */
 static bool is_devnull(const char *path) { return !strcmp(path, "/dev/null"); }
+
+/* diagnóstico: com /Sistema/Biblioteca/rastrear-munmap na imagem, o SYS_MMAP e o SYS_MUNMAP registram cada faixa no log
+ * serial ("mm: ..."), para casar uma "falta em" na área de mmap com quem criou e quem tirou a faixa */
+static bool rastrear_mm(void) {
+    static int on = -1;
+    if (on < 0) on = vfs_lookup("/Sistema/Biblioteca/rastrear-munmap") != NULL;
+    return on > 0;
+}
 
 static i64 sys_write(process_t *p, int fd, u64 buf, u64 len) {
     if (fd_get(p, fd) >= 0) {
@@ -2458,6 +2478,7 @@ static u64 proc_syscall_(int_frame_t *f) {
             p->mmap_next = at;
             p->mmap_next += len + 4096;
             r = (i64)at;
+            if (rastrear_mm()) kprintf("mm: %s pid %d tid %d mmap 0x%llx + 0x%llx\n", p->name, p->pid, t->id, (unsigned long long)at, (unsigned long long)len);
             break;
         }
         /* b = 4: arquivo sob demanda (kernel/mm/lazy.c). c = fd, r10 = deslocamento no arquivo (múltiplo de 4096).
@@ -2493,10 +2514,17 @@ static u64 proc_syscall_(int_frame_t *f) {
         if (b != 1 && !uvm_map(p, at, len)) { r = -MOS_ENOMEM; MMAP_NOMEM_LOG(); break; }
         p->mmap_next += len + 4096;                         /* página de guarda entre regiões */
         r = (i64)at;
+        if (rastrear_mm()) kprintf("mm: %s pid %d tid %d mmap 0x%llx + 0x%llx%s\n", p->name, p->pid, t->id, (unsigned long long)at,
+                                   (unsigned long long)len, b == 1 ? " (só reserva)" : "");
         break;
     }
     case SYS_MUNMAP: {
         if (a < USER_MMAP_BASE || a & 0xFFF || a + b > USER_END) { r = -MOS_EINVAL; break; }
+        /* diagnóstico (rastrear_mm): cada faixa que sai, para casar com uma "falta em" depois */
+        if (rastrear_mm() && c != MOS_MUNMAP_DISCARD)
+            kprintf("mm: %s pid %d tid %d munmap 0x%llx + 0x%llx%s (topo 0x%llx)\n", p->name, p->pid, t->id,
+                    (unsigned long long)a, (unsigned long long)b, c == MOS_MUNMAP_KEEP ? " [MAP_FIXED]" : "",
+                    (unsigned long long)p->mmap_next);
         /* MOS_MUNMAP_DISCARD (madvise MADV_DONTNEED/FREE/FREE_REUSABLE do libSystem): o conteúdo não importa mais.
          * Saem só as páginas privadas de faixas anônimas sob demanda; a faixa e a reserva ficam, e a página volta
          * zerada no próximo toque (lazy_fault), como o VM_SYNC_KILLPAGES do XNU. Compartilhadas (COW, memória Mach) e
@@ -2681,6 +2709,7 @@ static u64 proc_syscall_(int_frame_t *f) {
         break;
     case SYS_SIGRETURN: return sig_return(f);
     case SYS_SIG: return sig_syscall(f, t, p);           /* ações, máscaras, sigsuspend, sigaltstack, sigwait */
+    case SYS_WEB: { extern i64 web_user_syscall(process_t *p, u64 op, u64 id, u64 a, u64 b); r = web_user_syscall(p, a, b, c, f->r10); break; }   /* WKWebView (kernel/web/webview.c) */
     case SYS_SIGKILL: r = proc_signal((int)a, (int)b) ? 0 : -MOS_ESRCH; break;
     case SYS_TTY:                                         /* terminais, sessões e grupos (proc/pty.c) */
         r = pty_syscall(p, a, b, c, f->r10);

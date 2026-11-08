@@ -270,9 +270,12 @@ float http_progress(http_req_t *r) {
 static bool body_append(http_req_t *r, const u8 *d, u32 n) {
     hp_t *p = r->priv;
     if (!n) return true;
-    if ((u64)r->body_len + n + 1 > HTTP_BODY_MAX) { fail(r, "resposta grande demais"); return false; }
+    u64 lim = r->max_body ? r->max_body : HTTP_BODY_MAX;
+    if ((u64)r->body_len + n + 1 > lim) { fail(r, "resposta grande demais"); return false; }
     if (r->body_len + n + 1 > p->cap) {
         u32 nc = p->cap ? p->cap : 16384;
+        /* tamanho conhecido (Content-Length): uma alocação só, sem dobrar até o dobro do necessário */
+        if (!p->cap && p->content_length > 0 && (u64)p->content_length + 1 <= lim) nc = (u32)p->content_length + 1;
         while (nc < r->body_len + n + 1) nc *= 2;
         u8 *nb = krealloc(r->body, nc);
         if (!nb) { fail(r, "sem memória para a resposta (%u bytes)", nc); return false; }
