@@ -223,3 +223,10 @@ O helper `Grok Bot Computer Use.app/Contents/MacOS/CUGrokBotService` (Swift) ia 
   `compat_agentes.c` (`NSScreen.auxiliaryTopLeftArea/RightArea` = nil, `CAFrameRateRange.init(minimum:maximum:preferred:)`,
   `CMSampleBuffer.imageBuffer`), com a convenção swiftcc conferida no `swift-frontend`.
 - Captura de tela (`SCScreenshotManager`) ainda não existe: as classes estão vazias e o helper recebe nil.
+- **Verificado na VM (8 nov.):** `tools/testdata/cgevent/cgevent-teste.c` como serviço do launchd (`Programa=/usr/bin/
+  cgevent-teste`, `Argumentos=492 856 300 650`) clica no ícone da Calculadora no Dock por `CGEventPost` — a Calculadora
+  abre — e deixa o cursor em (300, 650); `CGDisplayCreateImage` devolve 1440 x 900. A captura (`GUI_DEVICE`/
+  `DEV_SCREEN_CAPTURE`, op 4) e o ScreenCaptureKit mínimo (`screencapturekit.c`: `SCShareableContent` com um
+  `SCDisplay`, `SCContentFilter`, `SCStreamConfiguration`, `SCScreenshotManager`) dão ao helper o "ver" do computer use.
+  `CGPreflightScreenCaptureAccess` responde 1: o mOS não tem permissão de gravação de tela. Em aberto: o mesmo clique
+  sobre "Sign in another way" do Codex não mudou a tela (a ver se é o botão ou o hit-test do conteúdo web).
