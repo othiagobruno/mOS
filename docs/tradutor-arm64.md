@@ -134,7 +134,7 @@ powershell -File tools/a64cmp.ps1 build/a64tests/x.elf [-Jit]  # a64test (interp
 
 `a64cmp` roda o a64test com `--argv0 prog` (o monitor passa `argv = {"prog"}`). Um teste que por
 natureza não bate com o QEMU (valores do M1, contadores) marca no fonte `a64cmp: nao-comparavel`;
-o placar então só exige saída 0 (autoverificação).
+o placar então exige saída 0 (autoverificação); com `-Jit`, exige que o JIT dê exatamente a saída do interpretador (qualquer código: os testes de falha saem com 139).
 
 EL0 configurado como o XNU (`SCTLR_EL1_REQUIRED`): SA0 = 1, nAA = 0, UCI = 1, UMA = 0, EnRCTX = 0,
 TSCXT = 1, MOPS desligado; chaves de PAC desligadas (EnIA/IB/DA/DB = 0), que é exatamente a semântica
@@ -345,7 +345,9 @@ Arquivos: `jit_core.c` (cache, despachante, threads, invalidação, recuperaçã
   do host (LRU); flags no EFLAGS em modo ADD (CF = C) ou SUB (CF = !C). Acessos à memória e
   instruções do interpretador contam como leitura de flags (estado exato em falha/saída).
 - **Exclusivos e LSE** (`jit_atom.h`): monitor do contrato (endereço, tamanho, valor), STXR = `lock cmpxchg` contra o valor guardado; CAS = `lock cmpxchg`; LDADD = `lock xadd`; SWP = `xchg`; LDCLR/LDEOR/LDSET/LDSMAX..LDUMIN = laço de `cmpxchg`; LDAPR = load. Alinhamento (atravessar 16 bytes) e SA0 como no INT, pelo caminho lento.
-- **FP escalar** (`jit_simd.h`): S e D com SSE/FMA3 só quando FPCR = RN e FZ = 0, sem flag do x86 além de PE e com resultado normal, finito e não-NaN (senão a instrução inteira vai ao interpretador). PE → IXC. FABS/FNEG/FMOV são operações de bits. MXCSR do host fica em 0x1F80.
+- **FP** (`jit_simd.h`): escalar S/D e vetorial 4S/2S/2D com SSE/FMA3 só quando FPCR = RN e FZ = 0, sem flag do x86 além de PE e com resultado (cada lane) normal, finito e não-NaN; senão a instrução inteira vai ao interpretador. PE → IXC. FCMP/FCCMP: sem NaN (ucomis) e FZ = 0, NZCV montado direto em `reserved[14]`; FCSEL é seleção de bits. FCVTZS/ZU com faixa conferida nos bits (cvtt trunca como o ARM), SCVTF/UCVTF em RN, FCVT S↔D. FABS/FNEG/FMOV são operações de bits. MXCSR do host fica em 0x1F80.
+- **Chamada leve**: SIMD/FP sem emissão nativa que só toca registradores V e FPCR/FPSR chama `a64_interp_exec` direto (`jit_h_exec`), gravando os GPRs sujos e descartando só os voláteis da ABI; UDF vai ao caminho lento. Ficam fora as classes que escrevem GPR ou NZCV.
+- **Estatística do interpretador**: `a64_jit_fbstat(1)` + `a64_jit_fbstat_dump` (o runtime liga com `MOS_A64_DEBUG`; no harness `A64JIT_FBSTAT=1`) contam por classe de codificação o que ainda vai ao interpretador — é o guia para a próxima emissão nativa.
 - **Pilha de retorno**: BL/BLR empilham (pc+4, stub de continuação encadeável) em 16 entradas por thread (`reserved[12]`); RET confere o topo. Cada desvio indireto tem a própria busca no cache de saltos.
 - **Fallback**: o que não é nativo chama `a64_interp_exec` com estado sincronizado. Casos
   CONSTRAINED UNPREDICTABLE e escolhas da frente INT (SA0, nAA, padrão de acessos dos pares
@@ -371,7 +373,7 @@ Arquivos: `jit_core.c` (cache, despachante, threads, invalidação, recuperaçã
 
 Testes: `jit_fault_{mid,sub,pair,ldp,q,ld1}` (falha no meio do bloco, STP/LDP/LDP Q/ST1
 parciais), `jit_sa0`, `jit_ldar`, `jit_pairs`, `jit_smc` (IC IVAU e só rede de segurança),
-`jit_smc_wp`, `jit_badpc`, `jit_udf_first`, `jit_atomics`, `jit_fp`, `jit_bench_int`, `jit_bench_mem`, `jit_bench_call`.
+`jit_smc_wp`, `jit_badpc`, `jit_udf_first`, `jit_atomics`, `jit_xpair`, `jit_fp`, `jit_fcmp`, `jit_cvt`, `jit_fpv`, `jit_fpsr`, `jit_neon`, `jit_neon2`, `jit_neon3`, `jit_neon4`, `jit_ldn`, `jit_crypto`, `jit_sha`, `jit_f16`, `jit_fpv_fma`, `jit_xpair_tam`, `jit_bench_int`, `jit_bench_mem`, `jit_bench_call`.
 
 Desempenho (harness no Windows, instruções contadas pelo interpretador):
 
@@ -379,7 +381,7 @@ Desempenho (harness no Windows, instruções contadas pelo interpretador):
 |---|---|---|---|
 | `jit_bench_int` | 252 M | ~110 MIPS | ~1750 MIPS |
 | `jit_bench_mem` | 66 M | ~90 MIPS | ~610 MIPS |
-| `jit_bench_call` | 42 M | 87 MIPS | 346 MIPS |
+| `jit_bench_call` | 42 M | ~98 MIPS | ~430 MIPS |
 
 Medição de 8/11 (máquina carregada por outras sessões; interp ~75–87 MIPS): inteiros 1457 MIPS, memória 677, chamadas 346. Chamadas: blocos curtos (fib) dominados pela transição entre blocos; próximo passo seria superblocos.
 
@@ -391,7 +393,7 @@ Medição de 8/11 (máquina carregada por outras sessões; interp ~75–87 MIPS)
 | INT | **pronto** (interpretador). `interp_int.c` (dados imediato/registrador), `interp_int_br.c` (desvios, exceções, sistema), `interp_int_ls.c` (loads/stores, exclusivos, LSE/LSE2, RCpc/RCpc2, LOR, LDRAA/LDRAB), `interp_int.h`. Decodificação pelo ARM ARM, com as escolhas CONSTRAINED UNPREDICTABLE do QEMU (`a64.decode`) documentadas no topo de cada arquivo. EL0 como o XNU configura (`SCTLR_EL1_REQUIRED` em `osfmk/arm64/proc_reg.h`): SA0 = 1 (SP desalinhado num load/store → FAULT com `exit_info` = SP), nAA = 0 (com LSE2: exclusivos, atômicos e acquire/release só falham ao atravessar 16 B), DC CVA*/CIVAC/IC IVAU sondam a linha; PAC "identidade" (PACGA = 0); CTR_EL0 = 0x84448004, DCZID = 4, CNTFRQ = 24 MHz. Testes: `tools/a64tests/int_{dpimm,dpreg,branch,ldst,atomic}.S` com autoverificação, iguais byte a byte ao oráculo EL0 (ignorando `\r`); `int_sys.S` (valores do M1, PAC, contadores: não comparável). Fuzz (`a64fuzz`, 42 grupos INT, build com `-DA64I_ORACLE_COMPAT`, que só desliga as quatro diferenças do QEMU listadas em `interp_int.h`): K=1 210 mil casos e K=4 328 mil casos, **0 divergências atribuíveis ao INT**; nAA = 0 conferido com monitor de nAA = 0 (24 mil casos de excl/rcpc/atomic). Sobras conhecidas, que não são do INT: STXR com base `0xffff…ffff` (o QEMU usa −1 como `exclusive_addr` vazio), endereços que no Windows são do próprio harness, desvios para o rascunho que executam dados (FP/SIMD de outras frentes) e LDLAR/STLLR marcados "deveria_udf" porque o objdump do fuzzer roda sem `+lor` (LOR é obrigatório desde o v8.1). |
 | FP | **pronto** (interpretador). Todas as primitivas `a64_fp_*` de `a64.h` em software (`a64_fp.c`, escrito do zero a partir do pseudocódigo do ARM ARM; nenhuma instrução de FP do host) e todos os grupos de FP escalar (`interp_fp.c`: FP↔fixo, FP↔inteiro incl. FMOV D[1] e FJCVTZS, 1 fonte incl. FRINT32/64 e BFCVT, compare, imediato, compare condicional, 2 e 3 fontes, FCSEL; H/S/D). Placar contra QEMU 11.1 `-cpu max` (oráculo próprio `tools/a64tests/fp_oracle/fp_oracle.ps1`: 268 modelos, todas as combinações RMode/FZ/DN/FZ16/AHP, subnormais, NaN com payload, empates, limites de overflow/underflow/conversão, mais palavras aleatórias do grupo para UDF): **~10,8 milhões de vetores, 0 divergências** em resultado, FPSR, NZCV e UDF, incluindo as primitivas usadas só pelo AdvSIMD (FMULX, FRECPE/FRSQRTE/FRECPS/FRSQRTS/FRECPX, FABD, FCM*/FAC*, FCVTXN, half↔int16, URECPE/URSQRTE). Ponta a ponta: `tools/a64tests/fp_escalar.c` igual byte a byte ao oráculo EL0 (`a64cmp`). Diferenças esperadas e documentadas: FEAT_FPRCVT (o QEMU executa, nós UDF: não anunciado) e o FMA "hardfloat" do QEMU para Windows quando o IXC já está ligado (resultado do QEMU errado; zerar FPSR antes de cada instrução fundida nos testes). |
 | SIMD | **pronto** (interpretador). `interp_simd.c` (decodificação de C4.1.95/96 + todos os loads/stores com V=1: LDR/STR B/H/S/D/Q em todas as formas, literal, LDP/STP/LDNP/STNP, LDUR/STUR, LD1–LD4/ST1–ST4 múltiplos e de lane, LD1R–LD4R, pós-índice imediato e registrador, regra de reinício), `interp_simd_int.c` (three same/different, two-reg misc, across lanes, pairwise, shift por imediato incl. narrowing/saturação/arredondamento/SRI/SLI, por elemento, copy, modified immediate, ZIP/UZP/TRN, EXT, TBL/TBX 1–4, RDM, DotProd, I8MM), `interp_simd_fp.c` (lanes FP16/32/64 só via `a64_fp_*`, FCVTN/L/XN, BFCVTN, FMLAL/FMLSL e *2 com FPMulAddH exato, BFDOT/BFMMLA com a aritmética "BFloat16 computation behaviors", BFMLALB/T, FCMLA/FCADD), `interp_simd_crypto.c` (AES, SHA1, SHA256, SHA512, EOR3/RAX1/XAR/BCAX, PMULL 8/64). Placar contra QEMU 11.1 `-cpu max` (oráculo diferencial próprio: uma instrução por caso, estado inteiro aleatório com valores FP especiais e todas as combinações de FPCR, compara x0..x30, sp, NZCV, FPSR, v0..v31, UDF e hash da memória): **360 mil casos** cobrindo todas as classes de codificação + palavras aleatórias do espaço SIMD, **0 divergências reais**; as 7 restantes são FMLA/FMLS/FCMLA na lane ≥1 em RN, o bug de FMA "hardfloat" do QEMU para Windows (casos conferidos com `vfmadd` do x86 dão o nosso resultado; com uma lane só, batem). O QEMU executa e nós damos UDF, como esperado, para FEAT_FP8/FP8DOT/FP8FMA, LUT, FAMINMAX, SM3/SM4 e F8F16MM (não anunciados). Ponta a ponta no harness: `tools/a64tests/simd_crypto.c` (FIPS-197, SHA-1/SHA-256 de "abc", PMULL, SHA3), `simd_int.c`, `simd_fp.c` passam. |
-| JIT | pronto: toda instrução executa (nativa ou via interpretador); fuzzing de todos os 93 grupos (INT, FP, SIMD; sementes 11, 23, 71 e 72 × 27 900 casos × 6 instruções, mais 3×1000 por grupo de atômicos e FP) e a suíte sem divergência interp × JIT. Nativos: inteiros, loads/stores, desvios, exclusivos/CAS/LSE com lock, SIMD inteiro exato, FP escalar S/D (add/sub/mul/div/sqrt/fused) com caminho rápido provado, pilha de retorno. Bench (máquina carregada): inteiros 1457 MIPS (19×), memória 677 (8,6×), chamadas 346 (4×). Ao interpretador: LDXP/STXP/CASP, FP half, FP vetorial, FCMP/conversões |
+| JIT | pronto: toda instrução executa (nativa ou via interpretador); fuzzing de todos os 93 grupos (sementes 11, 23, 71, 72, 131, 132, 171, 201, 221 e 261 (K=8) × 27 900 casos × 6 instruções, mais 3–4 × 1000 por grupo de atômicos, FP e SIMD) e a suíte sem divergência interp × JIT. Nativos: inteiros, loads/stores, desvios, exclusivos/pares/CAS/CASP/LSE com lock e cmpxchg16b, FP escalar (aritmética, fused, FCMP/FCCMP/FCSEL, conversões FP↔int e S↔D) e FP vetorial 4S/2S/2D no caminho provado, Neon inteiro (lógicos, ADD/SUB, CMxx, MAX/MIN, MUL, deslocamentos, USHLL/SXTL, SHRN, XTN, TBL/TBX, ZIP/UZP/TRN/EXT, ADDV/UMAXV, ADDP, 3diff (ADDL/ADDW/SUBL/SUBW/MULL/MLAL/MLSL), por elemento (MUL/MLA/MLS e FMUL/FMLA/FMLS), FADDP, saturantes com QC (SQADD/UQADD/SQSUB/UQSUB em B/H/S/D, SQXTN/UQXTN/SQXTUN, SQDMULH/SQRDMULH em H), arredondados (SRSHR/URSHR/SRSRA/URSRA/RSHRN), ADDHN/SUBHN/RADDHN/RSUBHN, DUP/INS/UMOV, MOVI, LD1..LD4/ST1..ST4 múltiplos e de lane, LD1R..LD4R), cripto (AESE/AESD/AESMC/AESIMC com AES-NI, PMULL de 64 com PCLMULQDQ, EOR3/BCAX/RAX1/XAR), FP half FADD/FSUB/FMUL/FDIV/FSQRT escalar e 4H/8H, FCVT H↔S/D e FCMP H (F16C), pilha de retorno. Bench: inteiros 1595 MIPS (15×), memória 670 (6,8×), chamadas 432 (4,4×). Pela chamada leve ao interpretador (sem conversão de NZCV nem descarte do cache): SHA1/SHA256/SHA512, estimativas FP (FRECPE/FRSQRTE: tabelas do ARM), SQSHL/SQRSHL e afins, FCVT D→H (dois arredondamentos) e o resto do SIMD/FP sem forma nativa |
 | TESTES / oráculo | **pronto** (ver [Verificação](#verificação-frente-testes)): oráculo QEMU bare-metal em EL0 (`tools/a64oracle/`, `a64oracle.ps1`, `a64cmp.ps1`), fuzzing diferencial interp × JIT × QEMU por grupo de codificação com validade pelo LLVM, sequências com minimização e regressões (`tools/a64fuzz.c`), suíte diferencial C x86_64 × arm64 -O0/-O2/-O3 (`tools/a64oracle/csuite/`), placar (`tools/a64placar.ps1`, tabela abaixo). Limitações do QEMU para Windows tratadas e documentadas (FMA hardfloat, SA0, STXR, DC/IC sem sonda). |
 | RUNTIME | pronto (8 nov. 2026): no QEMU do mOS (WHPX, 4 CPUs) e no machotest, `tests-a64rt` passa 21/21 com o interpretador e com o JIT; binários arm64 reais (slices do Claude.app: `disclaimer` em C e `claude-ssh-askpass` em Go) rodam pelo tradutor; falta só a proteção de página no kernel para a rede de SMC do JIT |
 | LIBSYS | **pronto** para C/ObjC/C++ (8 nov. 2026, ver [seção](#libsystem-e-bibliotecas-do-sistema-em-arm64-frente-libsys)): `build/libSystem-arm64.mos` com o triplo `arm64-apple-macos11-elf` (ABI da Apple), IR idêntico ao de `-target aarch64-macos` em 99/99 arquivos; asm arm64 próprio, libunwind do LLVM (também no x86), exceções ObjC de verdade (as duas arquiteturas), compiler-rt, sysctl/páginas do Apple Silicon; libc++/libc++abi, sqlite, ICU, zlib e WebKit universais. `tests-a64libsys` 36/36 (Foundation, AppKit, @try/@catch pelo tradutor) e 6/6 com as dylibs do disco; `tests-a64rt` 0 falhas com este libSystem. Cadeia Swift universal (stdlib, runtime, overlays, Concurrency, Foundation, Combine, SwiftUI, UIKit e frameworks do mOS, 38 binários; `tools/build-swift-arm64.ps1`): `tests-swiftobjc` swift 13/13 e foundation 23/23 no arm64 pelo tradutor. Falta: app SwiftUI arm64 de ponta a ponta |
@@ -399,15 +401,15 @@ Medição de 8/11 (máquina carregada por outras sessões; interp ~75–87 MIPS)
 <!-- placar:inicio -->
 ### Placar da verificação
 
-Gerado por `tools/a64placar.ps1` em 2026-11-08 15:48 (semente 20261113, 2000 casos por grupo, com JIT). Oráculo: QEMU 11.1 `-cpu max` em EL0 sob `tools/a64oracle/mon.c`. Colunas: **exec** = casos em que a instrução deveria executar (o LLVM com os recursos de `A64_FEATURES` a conhece e o QEMU executa); **impl.** = desses, quantos o interpretador executa; **batem** = estado final igual ao do QEMU; **div.** = executa e diverge; **UDF ind.** = QEMU executa e nós damos UDF; **dev. UDF** = deveria ser UDF (recurso não anunciado, ou o QEMU dá UDF) e executamos; **FMA?** = divergência só em lanes de FMA que o QEMU do Windows calcula errado e que não deu para isolar; **JIT≠** = JIT diferente do interpretador.
+Gerado por `tools/a64placar.ps1` em 2026-11-08 16:22 (semente 20261115, 2000 casos por grupo, com JIT). Oráculo: QEMU 11.1 `-cpu max` em EL0 sob `tools/a64oracle/mon.c`. Colunas: **exec** = casos em que a instrução deveria executar (o LLVM com os recursos de `A64_FEATURES` a conhece e o QEMU executa); **impl.** = desses, quantos o interpretador executa; **batem** = estado final igual ao do QEMU; **div.** = executa e diverge; **UDF ind.** = QEMU executa e nós damos UDF; **dev. UDF** = deveria ser UDF (recurso não anunciado, ou o QEMU dá UDF) e executamos; **FMA?** = divergência só em lanes de FMA que o QEMU do Windows calcula errado e que não deu para isolar; **JIT≠** = JIT diferente do interpretador.
 
 | Frente | Grupos | Casos | Exec | Impl. | Batem | Div. | UDF ind. | Dev. UDF | FMA? | JIT≠ |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| INT | 43 | 86000 | 63986 | 63986 (100%) | 63986 (100%) | 0 | 0 | 0 | 0 | 0 |
-| FP | 9 | 18000 | 15562 | 15562 (100%) | 15562 (100%) | 0 | 0 | 0 | 0 | 0 |
-| SIMD | 41 | 82000 | 72529 | 72529 (100%) | 72527 (100%) | 0 | 0 | 0 | 2 | 0 |
+| INT | 43 | 86000 | 65764 | 65764 (100%) | 65764 (100%) | 0 | 0 | 1 | 0 | 0 |
+| FP | 9 | 18000 | 15545 | 15545 (100%) | 15545 (100%) | 0 | 0 | 0 | 0 | 0 |
+| SIMD | 41 | 82000 | 72359 | 72359 (100%) | 72357 (100%) | 0 | 0 | 0 | 2 | 0 |
 
-Sequências (K=8 instruções válidas misturadas por caso, divergências minimizadas): 27900 casos, **4 divergentes**, 0 com JIT≠interp.
+Sequências (K=8 instruções válidas misturadas por caso, divergências minimizadas): 27900 casos, **2 divergentes**, 0 com JIT≠interp.
 
 <details><summary>Por grupo de codificação</summary>
 
@@ -416,106 +418,100 @@ Sequências (K=8 instruções válidas misturadas por caso, divergências minimi
 | dp.pcrel | INT | 2000 | 2000 | 2000 | 2000 | 0 | 0 | 0 | 0 | 0 |
 | dp.addsub_imm | INT | 2000 | 2000 | 2000 | 2000 | 0 | 0 | 0 | 0 | 0 |
 | dp.addsub_tags | INT | 2000 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| dp.logic_imm | INT | 2000 | 1895 | 1895 | 1895 | 0 | 0 | 0 | 0 | 0 |
-| dp.movewide | INT | 2000 | 1860 | 1860 | 1860 | 0 | 0 | 0 | 0 | 0 |
-| dp.bitfield | INT | 2000 | 1752 | 1752 | 1752 | 0 | 0 | 0 | 0 | 0 |
-| dp.extract | INT | 2000 | 1698 | 1698 | 1698 | 0 | 0 | 0 | 0 | 0 |
-| br.cond | INT | 2000 | 1785 | 1785 | 1785 | 0 | 0 | 0 | 0 | 0 |
-| br.exception | INT | 2000 | 1809 | 1809 | 1809 | 0 | 0 | 0 | 0 | 0 |
+| dp.logic_imm | INT | 2000 | 1906 | 1906 | 1906 | 0 | 0 | 0 | 0 | 0 |
+| dp.movewide | INT | 2000 | 1877 | 1877 | 1877 | 0 | 0 | 0 | 0 | 0 |
+| dp.bitfield | INT | 2000 | 1775 | 1775 | 1775 | 0 | 0 | 0 | 0 | 0 |
+| dp.extract | INT | 2000 | 1717 | 1717 | 1717 | 0 | 0 | 0 | 0 | 0 |
+| br.cond | INT | 2000 | 1770 | 1770 | 1770 | 0 | 0 | 0 | 0 | 0 |
+| br.exception | INT | 2000 | 1824 | 1824 | 1824 | 0 | 0 | 0 | 0 | 0 |
 | sys.hint | INT | 2000 | 2000 | 2000 | 2000 | 0 | 0 | 0 | 0 | 0 |
-| sys.barrier | INT | 2000 | 1025 | 1025 | 1025 | 0 | 0 | 0 | 0 | 0 |
-| sys.pstate | INT | 2000 | 957 | 957 | 957 | 0 | 0 | 0 | 0 | 0 |
-| sys.sysinstr | INT | 2000 | 1015 | 1015 | 1015 | 0 | 0 | 0 | 0 | 0 |
-| sys.sysreg | INT | 2000 | 825 | 825 | 825 | 0 | 0 | 0 | 0 | 0 |
+| sys.barrier | INT | 2000 | 1075 | 1075 | 1075 | 0 | 0 | 0 | 0 | 0 |
+| sys.pstate | INT | 2000 | 933 | 933 | 933 | 0 | 0 | 0 | 0 | 0 |
+| sys.sysinstr | INT | 2000 | 966 | 966 | 966 | 0 | 0 | 0 | 0 | 0 |
+| sys.sysreg | INT | 2000 | 807 | 807 | 807 | 0 | 0 | 0 | 0 | 0 |
 | sys.outros | INT | 2000 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| br.reg | INT | 2000 | 1608 | 1608 | 1608 | 0 | 0 | 0 | 0 | 0 |
+| **br.reg** | INT | 2000 | 1613 | 1613 | 1613 | 0 | 0 | 1 | 0 | 0 |
 | br.imm | INT | 2000 | 2000 | 2000 | 2000 | 0 | 0 | 0 | 0 | 0 |
-| br.cmp | INT | 2000 | 1994 | 1994 | 1994 | 0 | 0 | 0 | 0 | 0 |
+| br.cmp | INT | 2000 | 1998 | 1998 | 1998 | 0 | 0 | 0 | 0 | 0 |
 | br.test | INT | 2000 | 2000 | 2000 | 2000 | 0 | 0 | 0 | 0 | 0 |
-| simd.ls_mult | SIMD | 2000 | 1825 | 1825 | 1825 | 0 | 0 | 0 | 0 | 0 |
-| simd.ls_mult_post | SIMD | 2000 | 1823 | 1823 | 1823 | 0 | 0 | 0 | 0 | 0 |
-| simd.ls_single | SIMD | 2000 | 1860 | 1860 | 1860 | 0 | 0 | 0 | 0 | 0 |
-| simd.ls_single_post | SIMD | 2000 | 1885 | 1885 | 1885 | 0 | 0 | 0 | 0 | 0 |
-| ls.excl | INT | 2000 | 1150 | 1150 | 1150 | 0 | 0 | 0 | 0 | 0 |
-| ls.rcpc_unscaled | INT | 2000 | 1939 | 1939 | 1939 | 0 | 0 | 0 | 0 | 0 |
+| simd.ls_mult | SIMD | 2000 | 1814 | 1814 | 1814 | 0 | 0 | 0 | 0 | 0 |
+| simd.ls_mult_post | SIMD | 2000 | 1839 | 1839 | 1839 | 0 | 0 | 0 | 0 | 0 |
+| simd.ls_single | SIMD | 2000 | 1832 | 1832 | 1832 | 0 | 0 | 0 | 0 | 0 |
+| simd.ls_single_post | SIMD | 2000 | 1868 | 1868 | 1868 | 0 | 0 | 0 | 0 | 0 |
+| ls.excl | INT | 2000 | 1155 | 1155 | 1155 | 0 | 0 | 0 | 0 | 0 |
+| ls.rcpc_unscaled | INT | 2000 | 1942 | 1942 | 1942 | 0 | 0 | 0 | 0 | 0 |
 | ls.literal | INT | 2000 | 2000 | 2000 | 2000 | 0 | 0 | 0 | 0 | 0 |
-| simd.ls_literal | SIMD | 2000 | 1920 | 1920 | 1920 | 0 | 0 | 0 | 0 | 0 |
-| ls.pair | INT | 2000 | 1884 | 1884 | 1884 | 0 | 0 | 0 | 0 | 0 |
-| simd.ls_pair | SIMD | 2000 | 1928 | 1928 | 1928 | 0 | 0 | 0 | 0 | 0 |
-| ls.imm9 | INT | 2000 | 1951 | 1951 | 1951 | 0 | 0 | 0 | 0 | 0 |
-| simd.ls_imm9 | SIMD | 2000 | 1834 | 1834 | 1834 | 0 | 0 | 0 | 0 | 0 |
-| ls.atomic | INT | 2000 | 1824 | 1824 | 1824 | 0 | 0 | 0 | 0 | 0 |
+| simd.ls_literal | SIMD | 2000 | 1927 | 1927 | 1927 | 0 | 0 | 0 | 0 | 0 |
+| ls.pair | INT | 2000 | 1890 | 1890 | 1890 | 0 | 0 | 0 | 0 | 0 |
+| simd.ls_pair | SIMD | 2000 | 1936 | 1936 | 1936 | 0 | 0 | 0 | 0 | 0 |
+| ls.imm9 | INT | 2000 | 1943 | 1943 | 1943 | 0 | 0 | 0 | 0 | 0 |
+| simd.ls_imm9 | SIMD | 2000 | 1837 | 1837 | 1837 | 0 | 0 | 0 | 0 | 0 |
+| ls.atomic | INT | 2000 | 1817 | 1817 | 1817 | 0 | 0 | 0 | 0 | 0 |
 | ls.regoff | INT | 2000 | 1837 | 1837 | 1837 | 0 | 0 | 0 | 0 | 0 |
-| simd.ls_regoff | SIMD | 2000 | 1823 | 1823 | 1823 | 0 | 0 | 0 | 0 | 0 |
-| ls.pac | INT | 2000 | 1778 | 1778 | 1778 | 0 | 0 | 0 | 0 | 0 |
-| ls.uimm | INT | 2000 | 1963 | 1963 | 1963 | 0 | 0 | 0 | 0 | 0 |
-| simd.ls_uimm | SIMD | 2000 | 1907 | 1907 | 1907 | 0 | 0 | 0 | 0 | 0 |
+| simd.ls_regoff | SIMD | 2000 | 1803 | 1803 | 1803 | 0 | 0 | 0 | 0 | 0 |
+| ls.pac | INT | 2000 | 1783 | 1783 | 1783 | 0 | 0 | 0 | 0 | 0 |
+| ls.uimm | INT | 2000 | 1967 | 1967 | 1967 | 0 | 0 | 0 | 0 | 0 |
+| simd.ls_uimm | SIMD | 2000 | 1898 | 1898 | 1898 | 0 | 0 | 0 | 0 | 0 |
 | ls.outros | INT | 2000 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| dp.2src | INT | 2000 | 1722 | 1722 | 1722 | 0 | 0 | 0 | 0 | 0 |
-| dp.1src | INT | 2000 | 1825 | 1825 | 1825 | 0 | 0 | 0 | 0 | 0 |
-| dp.logic_reg | INT | 2000 | 1917 | 1917 | 1917 | 0 | 0 | 0 | 0 | 0 |
-| dp.addsub_shift | INT | 2000 | 1873 | 1873 | 1873 | 0 | 0 | 0 | 0 | 0 |
-| dp.addsub_ext | INT | 2000 | 1755 | 1755 | 1755 | 0 | 0 | 0 | 0 | 0 |
+| dp.2src | INT | 2000 | 1748 | 1748 | 1748 | 0 | 0 | 0 | 0 | 0 |
+| dp.1src | INT | 2000 | 1799 | 1799 | 1799 | 0 | 0 | 0 | 0 | 0 |
+| dp.logic_reg | INT | 2000 | 1924 | 1924 | 1924 | 0 | 0 | 0 | 0 | 0 |
+| dp.addsub_shift | INT | 2000 | 1868 | 1868 | 1868 | 0 | 0 | 0 | 0 | 0 |
+| dp.addsub_ext | INT | 2000 | 1737 | 1737 | 1737 | 0 | 0 | 0 | 0 | 0 |
 | dp.adc | INT | 2000 | 2000 | 2000 | 2000 | 0 | 0 | 0 | 0 | 0 |
-| dp.rmif | INT | 2000 | 1717 | 1717 | 1717 | 0 | 0 | 0 | 0 | 0 |
-| dp.setf | INT | 2000 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| dp.ccmp_reg | INT | 2000 | 1737 | 1737 | 1737 | 0 | 0 | 0 | 0 | 0 |
-| dp.ccmp_imm | INT | 2000 | 1727 | 1727 | 1727 | 0 | 0 | 0 | 0 | 0 |
-| dp.csel | INT | 2000 | 1773 | 1773 | 1773 | 0 | 0 | 0 | 0 | 0 |
-| dp.3src | INT | 2000 | 1391 | 1391 | 1391 | 0 | 0 | 0 | 0 | 0 |
+| dp.rmif | INT | 2000 | 1722 | 1722 | 1722 | 0 | 0 | 0 | 0 | 0 |
+| dp.setf | INT | 2000 | 1691 | 1691 | 1691 | 0 | 0 | 0 | 0 | 0 |
+| dp.ccmp_reg | INT | 2000 | 1745 | 1745 | 1745 | 0 | 0 | 0 | 0 | 0 |
+| dp.ccmp_imm | INT | 2000 | 1757 | 1757 | 1757 | 0 | 0 | 0 | 0 | 0 |
+| dp.csel | INT | 2000 | 1770 | 1770 | 1770 | 0 | 0 | 0 | 0 | 0 |
+| dp.3src | INT | 2000 | 1408 | 1408 | 1408 | 0 | 0 | 0 | 0 | 0 |
 | dp.outros | INT | 2000 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| fp.fixed | FP | 2000 | 1726 | 1726 | 1726 | 0 | 0 | 0 | 0 | 0 |
-| fp.int | FP | 2000 | 1749 | 1749 | 1749 | 0 | 0 | 0 | 0 | 0 |
-| fp.1src | FP | 2000 | 1694 | 1694 | 1694 | 0 | 0 | 0 | 0 | 0 |
-| fp.cmp | FP | 2000 | 1706 | 1706 | 1706 | 0 | 0 | 0 | 0 | 0 |
-| fp.imm | FP | 2000 | 1692 | 1692 | 1692 | 0 | 0 | 0 | 0 | 0 |
-| fp.ccmp | FP | 2000 | 1765 | 1765 | 1765 | 0 | 0 | 0 | 0 | 0 |
-| fp.2src | FP | 2000 | 1745 | 1745 | 1745 | 0 | 0 | 0 | 0 | 0 |
-| fp.csel | FP | 2000 | 1731 | 1731 | 1731 | 0 | 0 | 0 | 0 | 0 |
-| fp.3src | FP | 2000 | 1754 | 1754 | 1754 | 0 | 0 | 0 | 0 | 0 |
-| crypto.aes | SIMD | 2000 | 1668 | 1668 | 1668 | 0 | 0 | 0 | 0 | 0 |
-| crypto.sha3reg | SIMD | 2000 | 1768 | 1768 | 1768 | 0 | 0 | 0 | 0 | 0 |
-| crypto.sha2reg | SIMD | 2000 | 1703 | 1703 | 1703 | 0 | 0 | 0 | 0 | 0 |
-| crypto.sha512_3 | SIMD | 2000 | 1851 | 1851 | 1851 | 0 | 0 | 0 | 0 | 0 |
-| crypto.4reg | SIMD | 2000 | 1853 | 1853 | 1853 | 0 | 0 | 0 | 0 | 0 |
+| fp.fixed | FP | 2000 | 1701 | 1701 | 1701 | 0 | 0 | 0 | 0 | 0 |
+| fp.int | FP | 2000 | 1775 | 1775 | 1775 | 0 | 0 | 0 | 0 | 0 |
+| fp.1src | FP | 2000 | 1696 | 1696 | 1696 | 0 | 0 | 0 | 0 | 0 |
+| fp.cmp | FP | 2000 | 1720 | 1720 | 1720 | 0 | 0 | 0 | 0 | 0 |
+| fp.imm | FP | 2000 | 1683 | 1683 | 1683 | 0 | 0 | 0 | 0 | 0 |
+| fp.ccmp | FP | 2000 | 1740 | 1740 | 1740 | 0 | 0 | 0 | 0 | 0 |
+| fp.2src | FP | 2000 | 1720 | 1720 | 1720 | 0 | 0 | 0 | 0 | 0 |
+| fp.csel | FP | 2000 | 1768 | 1768 | 1768 | 0 | 0 | 0 | 0 | 0 |
+| fp.3src | FP | 2000 | 1742 | 1742 | 1742 | 0 | 0 | 0 | 0 | 0 |
+| crypto.aes | SIMD | 2000 | 1710 | 1710 | 1710 | 0 | 0 | 0 | 0 | 0 |
+| crypto.sha3reg | SIMD | 2000 | 1762 | 1762 | 1762 | 0 | 0 | 0 | 0 | 0 |
+| crypto.sha2reg | SIMD | 2000 | 1699 | 1699 | 1699 | 0 | 0 | 0 | 0 | 0 |
+| crypto.sha512_3 | SIMD | 2000 | 1834 | 1834 | 1834 | 0 | 0 | 0 | 0 | 0 |
+| crypto.4reg | SIMD | 2000 | 1866 | 1866 | 1866 | 0 | 0 | 0 | 0 | 0 |
 | crypto.xar | SIMD | 2000 | 2000 | 2000 | 2000 | 0 | 0 | 0 | 0 | 0 |
-| crypto.sha512_2 | SIMD | 2000 | 1806 | 1806 | 1806 | 0 | 0 | 0 | 0 | 0 |
-| simds.copy | SIMD | 2000 | 1697 | 1697 | 1697 | 0 | 0 | 0 | 0 | 0 |
-| simds.3same_fp16 | SIMD | 2000 | 1802 | 1802 | 1802 | 0 | 0 | 0 | 0 | 0 |
-| simds.2misc_fp16 | SIMD | 2000 | 1767 | 1767 | 1767 | 0 | 0 | 0 | 0 | 0 |
-| simds.3same_extra | SIMD | 2000 | 1702 | 1702 | 1702 | 0 | 0 | 0 | 0 | 0 |
-| simds.2misc | SIMD | 2000 | 1772 | 1772 | 1772 | 0 | 0 | 0 | 0 | 0 |
-| simds.pairwise | SIMD | 2000 | 1724 | 1724 | 1724 | 0 | 0 | 0 | 0 | 0 |
-| simds.3diff | SIMD | 2000 | 1737 | 1737 | 1737 | 0 | 0 | 0 | 0 | 0 |
-| simds.3same | SIMD | 2000 | 1807 | 1807 | 1807 | 0 | 0 | 0 | 0 | 0 |
-| simds.shift | SIMD | 2000 | 1762 | 1762 | 1762 | 0 | 0 | 0 | 0 | 0 |
-| simds.indexed | SIMD | 2000 | 1743 | 1743 | 1743 | 0 | 0 | 0 | 0 | 0 |
-| simdv.tbl | SIMD | 2000 | 1800 | 1800 | 1800 | 0 | 0 | 0 | 0 | 0 |
-| simdv.perm | SIMD | 2000 | 1900 | 1900 | 1900 | 0 | 0 | 0 | 0 | 0 |
-| simdv.ext | SIMD | 2000 | 1753 | 1753 | 1753 | 0 | 0 | 0 | 0 | 0 |
-| simdv.copy | SIMD | 2000 | 1809 | 1809 | 1809 | 0 | 0 | 0 | 0 | 0 |
-| simdv.3same_fp16 | SIMD | 2000 | 1926 | 1926 | 1926 | 0 | 0 | 0 | 0 | 0 |
-| simdv.2misc_fp16 | SIMD | 2000 | 1751 | 1751 | 1751 | 0 | 0 | 0 | 0 | 0 |
-| simdv.3same_extra | SIMD | 2000 | 1751 | 1751 | 1749 | 0 | 0 | 0 | 2 | 0 |
-| simdv.2misc | SIMD | 2000 | 1850 | 1850 | 1850 | 0 | 0 | 0 | 0 | 0 |
-| simdv.across | SIMD | 2000 | 1719 | 1719 | 1719 | 0 | 0 | 0 | 0 | 0 |
-| simdv.3diff | SIMD | 2000 | 1888 | 1888 | 1888 | 0 | 0 | 0 | 0 | 0 |
-| simdv.3same | SIMD | 2000 | 1921 | 1921 | 1921 | 0 | 0 | 0 | 0 | 0 |
-| simdv.modimm | SIMD | 2000 | 1858 | 1858 | 1858 | 0 | 0 | 0 | 0 | 0 |
-| simdv.shift | SIMD | 2000 | 1805 | 1805 | 1805 | 0 | 0 | 0 | 0 | 0 |
-| simdv.indexed | SIMD | 2000 | 1831 | 1831 | 1831 | 0 | 0 | 0 | 0 | 0 |
+| crypto.sha512_2 | SIMD | 2000 | 1789 | 1789 | 1789 | 0 | 0 | 0 | 0 | 0 |
+| simds.copy | SIMD | 2000 | 1687 | 1687 | 1687 | 0 | 0 | 0 | 0 | 0 |
+| simds.3same_fp16 | SIMD | 2000 | 1768 | 1768 | 1768 | 0 | 0 | 0 | 0 | 0 |
+| simds.2misc_fp16 | SIMD | 2000 | 1754 | 1754 | 1754 | 0 | 0 | 0 | 0 | 0 |
+| simds.3same_extra | SIMD | 2000 | 1708 | 1708 | 1708 | 0 | 0 | 0 | 0 | 0 |
+| simds.2misc | SIMD | 2000 | 1786 | 1786 | 1786 | 0 | 0 | 0 | 0 | 0 |
+| simds.pairwise | SIMD | 2000 | 1743 | 1743 | 1743 | 0 | 0 | 0 | 0 | 0 |
+| simds.3diff | SIMD | 2000 | 1711 | 1711 | 1711 | 0 | 0 | 0 | 0 | 0 |
+| simds.3same | SIMD | 2000 | 1757 | 1757 | 1757 | 0 | 0 | 0 | 0 | 0 |
+| simds.shift | SIMD | 2000 | 1761 | 1761 | 1761 | 0 | 0 | 0 | 0 | 0 |
+| simds.indexed | SIMD | 2000 | 1744 | 1744 | 1744 | 0 | 0 | 0 | 0 | 0 |
+| simdv.tbl | SIMD | 2000 | 1762 | 1762 | 1762 | 0 | 0 | 0 | 0 | 0 |
+| simdv.perm | SIMD | 2000 | 1889 | 1889 | 1889 | 0 | 0 | 0 | 0 | 0 |
+| simdv.ext | SIMD | 2000 | 1771 | 1771 | 1771 | 0 | 0 | 0 | 0 | 0 |
+| simdv.copy | SIMD | 2000 | 1813 | 1813 | 1813 | 0 | 0 | 0 | 0 | 0 |
+| simdv.3same_fp16 | SIMD | 2000 | 1915 | 1915 | 1915 | 0 | 0 | 0 | 0 | 0 |
+| simdv.2misc_fp16 | SIMD | 2000 | 1784 | 1784 | 1784 | 0 | 0 | 0 | 0 | 0 |
+| simdv.3same_extra | SIMD | 2000 | 1746 | 1746 | 1746 | 0 | 0 | 0 | 0 | 0 |
+| simdv.2misc | SIMD | 2000 | 1858 | 1858 | 1858 | 0 | 0 | 0 | 0 | 0 |
+| simdv.across | SIMD | 2000 | 1722 | 1722 | 1722 | 0 | 0 | 0 | 0 | 0 |
+| simdv.3diff | SIMD | 2000 | 1862 | 1862 | 1862 | 0 | 0 | 0 | 0 | 0 |
+| simdv.3same | SIMD | 2000 | 1922 | 1922 | 1922 | 0 | 0 | 0 | 0 | 0 |
+| simdv.modimm | SIMD | 2000 | 1865 | 1865 | 1865 | 0 | 0 | 0 | 0 | 0 |
+| simdv.shift | SIMD | 2000 | 1778 | 1778 | 1778 | 0 | 0 | 0 | 0 | 0 |
+| simdv.indexed | SIMD | 2000 | 1839 | 1839 | 1837 | 0 | 0 | 0 | 2 | 0 |
 | simd.outros | SIMD | 2000 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | naoalocado | INT | 2000 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 
 </details>
 
-Testes ELF (`build/a64tests`, a64test × oráculo): **26 de 29** passam.
-
-| Teste | Interp | JIT | Nota |
-|---|---|---|---|
-| jit_fault_q | saída 139 | saída 139 | não comparável (autoverificação) |
-| jit_fp | DIFERE | DIFERE | saída 0 × qemu 0 |
-| jit_sa0 | saída 139 | saída 139 | não comparável (autoverificação) |
+Testes ELF (`build/a64tests`, a64test × oráculo): **39 de 39** passam.
 
 Suíte diferencial C (`tools/a64oracle/csuite`: x86_64 nativo × arm64 -O0/-O2/-O3 no a64test e no QEMU): **21 de 21** binários iguais.
 <!-- placar:fim -->

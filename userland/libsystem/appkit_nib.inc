@@ -529,6 +529,17 @@ static void vc_load_view(id self, SEL c) {
     id name = s->nib;
     if (!name) {   /* sem nib: tenta o nome da classe, como o Cocoa */
         const char *cn = object_getClassName(self);
+        /* classe Swift (_TtC7Postico27FavoritesListViewController): o Cocoa usa o nome sem o módulo */
+        if (cn && !strncmp(cn, "_TtC", 4)) {
+            const char *p = cn + 4;
+            while (*p >= '0' && *p <= '9') {
+                long n = 0;
+                while (*p >= '0' && *p <= '9') n = n * 10 + (*p++ - '0');
+                if ((long)strlen(p) < n) break;
+                if (!(p[n] >= '0' && p[n] <= '9')) { if (!p[n]) cn = p; break; }
+                p += n;
+            }
+        }
         if (nib_path_named(cx_str(cn), 0)) name = cx_str(cn);
     }
     id p = name ? nib_path_named(name, s->dir) : 0;

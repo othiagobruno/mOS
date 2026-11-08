@@ -1406,6 +1406,25 @@ static bool sig_fault(int_frame_t *f, thread_t *t, process_t *p, u64 cr2) {
                 kprintf("proc: %s (pid %d): falta em 0x%llx (rip 0x%llx, erro 0x%llx) na área de mmap, abaixo do topo 0x%llx\n",
                         p->name, p->pid, (unsigned long long)cr2, (unsigned long long)f->rip, (unsigned long long)f->error,
                         (unsigned long long)p->mmap_next);
+                /* /Sistema/Biblioteca/despejar-falta: os registradores e 128 bytes em cada um que aponta para memória do
+                 * processo (a estrutura da página do mimalloc, o bloco anterior da lista...), para ver de onde veio o ponteiro */
+                static int despejar = -1;
+                if (despejar < 0) despejar = vfs_lookup("/Sistema/Biblioteca/despejar-falta") != NULL;
+                if (despejar && avisos <= 2) {
+                    const char *nome[15] = {"rax", "rbx", "rcx", "rdx", "rsi", "rdi", "rbp", "r8", "r9", "r10", "r11", "r12",
+                                            "r13", "r14", "r15"};
+                    u64 val[15] = {f->rax, f->rbx, f->rcx, f->rdx, f->rsi, f->rdi, f->rbp, f->r8, f->r9, f->r10, f->r11,
+                                   f->r12, f->r13, f->r14, f->r15};
+                    kprintf("falta: rsp 0x%llx\n", (unsigned long long)f->rsp);
+                    for (int i = 0; i < 15; i++) {
+                        kprintf("falta: %s = 0x%llx\n", nome[i], (unsigned long long)val[i]);
+                        u64 a = val[i] & ~7ULL, q[16];
+                        if (a < USER_BASE || a >= USER_END || !uvm_pte(p, a) || !uvm_copy_in(p, q, a, sizeof q)) continue;
+                        for (int k = 0; k < 16; k += 4)
+                            kprintf("falta:   [%s+%02x] %016llx %016llx %016llx %016llx\n", nome[i], k * 8, (unsigned long long)q[k],
+                                    (unsigned long long)q[k + 1], (unsigned long long)q[k + 2], (unsigned long long)q[k + 3]);
+                    }
+                }
             }
         }
         break;
@@ -1973,8 +1992,28 @@ static i64 proc_exec(int_frame_t *f, thread_t *t, process_t *p, char *path, char
 static u64 proc_syscall_(int_frame_t *f);
 /* a syscall pode bloquear e trocar de thread: a thread que volta ao ring 3 (talvez acordada por um sinal, com
  * rax = -EINTR) passa pela entrega de sinais, que também decide se a syscall interrompida é refeita */
+/* diagnóstico (marcador /Sistema/Biblioteca/rastrear-arquivos-zig): syscalls de escrita em arquivo dos processos "zig",
+ * com o caminho do fd e o resultado. Foi assim que se achou onde o `zig cc -c` perdia o conteúdo do objeto. */
+static void trace_zig_fs(process_t *p, u64 nr, u64 a, u64 b, u64 c, i64 res) {
+    if (nr == SYS_WRITE || nr == SYS_PWRITE || nr == SYS_FTRUNCATE || nr == SYS_CLOSE || nr == SYS_LSEEK) {
+        if (nr == SYS_WRITE && a <= 2) return;
+        const char *fp = a < PROC_MAX_FDS && p->fds[a].used ? p->fds[a].path : "?";
+        kprintf("zigfs %d: sys %llu fd %llu (%s) b=%llx c=%llx -> %lld\n", p->pid, nr, a, fp, b, c, res);
+    } else if (nr == SYS_OPEN || nr == SYS_RENAME) {
+        char s[160] = "?";
+        copy_str_in(p, s, a, sizeof s);
+        if (nr == SYS_OPEN && !(b & (MOS_O_WRONLY | MOS_O_RDWR | MOS_O_CREAT))) return;   /* leituras de headers: muitas */
+        kprintf("zigfs %d: sys %llu %s b=%llx -> %lld\n", p->pid, nr, s, b, res);
+    }
+}
 u64 proc_syscall(int_frame_t *f) {
+    static int trace_zig = -1;
+    if (trace_zig < 0) trace_zig = vfs_lookup("/Sistema/Biblioteca/rastrear-arquivos-zig") != NULL;
+    process_t *tp = trace_zig && thread_current() ? thread_current()->proc : NULL;
+    bool tr = tp && !strcmp(tp->name, "zig") && (f->cs & 3) == 3;
+    u64 nr = f->rax, a = f->rdi, b = f->rsi, c = f->rdx;
     u64 r = proc_syscall_(f);
+    if (tr) trace_zig_fs(tp, nr, a, b, c, (i64)f->rax);
     return ((int_frame_t *)r)->cs & 3 ? proc_signal_check((int_frame_t *)r) : r;
 }
 static u64 proc_syscall_(int_frame_t *f) {
@@ -1992,28 +2031,8 @@ static u64 proc_syscall_(int_frame_t *f) {
         /* diagnóstico (despejar-threads): quem encerra um helper do VS Code, com código e pilha */
         if (!strncmp(p->name, "Code Helper", 11) && vfs_lookup("/Sistema/Biblioteca/despejar-threads")) {
             kprintf("proc: %s (pid %d) chamou exit(%d), thread %d\n", p->name, p->pid, (int)a, t ? t->id : -1);
-/* diagnóstico (marcador /Sistema/Biblioteca/rastrear-arquivos-zig): syscalls de escrita em arquivo dos processos "zig",
- * com o caminho do fd e o resultado. Foi assim que se achou onde o `zig cc -c` perdia o conteúdo do objeto. */
-static void trace_zig_fs(process_t *p, u64 nr, u64 a, u64 b, u64 c, i64 res) {
-    if (nr == SYS_WRITE || nr == SYS_PWRITE || nr == SYS_FTRUNCATE || nr == SYS_CLOSE || nr == SYS_LSEEK) {
-        if (nr == SYS_WRITE && a <= 2) return;
-        const char *fp = a < PROC_MAX_FDS && p->fds[a].used ? p->fds[a].path : "?";
-        kprintf("zigfs %d: sys %llu fd %llu (%s) b=%llx c=%llx -> %lld\n", p->pid, nr, a, fp, b, c, res);
-    } else if (nr == SYS_OPEN || nr == SYS_RENAME) {
-        char s[160] = "?";
-        copy_str_in(p, s, a, sizeof s);
-        if (nr == SYS_OPEN && !(b & (MOS_O_WRONLY | MOS_O_RDWR | MOS_O_CREAT))) return;   /* leituras de headers: muitas */
-        kprintf("zigfs %d: sys %llu %s b=%llx -> %lld\n", p->pid, nr, s, b, res);
-    }
-}
             u64 w[64];
-    static int trace_zig = -1;
-    if (trace_zig < 0) trace_zig = vfs_lookup("/Sistema/Biblioteca/rastrear-arquivos-zig") != NULL;
-    process_t *tp = trace_zig && thread_current() ? thread_current()->proc : NULL;
-    bool tr = tp && !strcmp(tp->name, "zig") && (f->cs & 3) == 3;
-    u64 nr = f->rax, a = f->rdi, b = f->rsi, c = f->rdx;
             if (uvm_copy_in(p, w, f->rsp & ~7ULL, sizeof w)) {
-    if (tr) trace_zig_fs(tp, nr, a, b, c, (i64)f->rax);
                 char line[200]; usize o = 0; int shown = 0;
                 for (int i = 0; i < 64 && shown < 14; i++)
                     if (w[i] >= USER_BASE + 0x100000ULL && w[i] < USER_BASE + 0x0E000000ULL) { o += (usize)snprintf(line + o, sizeof line - o, " %llx", w[i]); shown++; }

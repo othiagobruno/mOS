@@ -50,6 +50,7 @@ static void call_blk1(void *b, id a) { if (b) ((void (*)(void *, id))((blk_t *)b
 
 /* ================================================================ libSystem */
 int setiopolicy_np(int iotype, int scope, int policy) { (void)iotype; (void)scope; (void)policy; return 0; }   /* sem prioridade de E/S */
+int getiopolicy_np(int iotype, int scope) { (void)iotype; (void)scope; return 0; }   /* IOPOL_DEFAULT (claude-native do Claude desktop) */
 static void *g_exit_blocks[64];
 static int g_nexit;
 static void run_exit_blocks(void) { while (g_nexit) { void *b = g_exit_blocks[--g_nexit]; ((void (*)(void *))((blk_t *)b)->invoke)(b); } }

@@ -255,20 +255,37 @@ durante a inicialização, ele sai com 130. O que foi preciso:
   OSC 10/11). Roteiros: `tools/testdata/claude-tui.txt`, `claude-tui-curto.txt` e `claude-p-mimalloc.txt`.
 - **Regressão (WHPX, 8 nov.):** o VS Code abre com essas mudanças (`tools/vscode-teste.ps1 -OutDir build-vscreg`). O
   workbench e o diálogo "Welcome to VS Code" ficam desenhados por 7 minutos, sem queda.
+- **`thread_suspend` / `thread_resume` / `thread_get_state` de verdade** (kernel `SYS_THREADCTL`, libSystem
+  `vscode_libc.c`). O coletor do JavaScriptCore e o sampler do Chromium usam isso. A thread suspensa sai da CPU por IPI
+  e só deixa de rodar na volta ao ring 3 (`sched_kexit`), depois que a syscall terminou. A primeira versão tirava a
+  thread já na entrada da syscall, que então voltava com `rax` igual ao número dela: o Codex desktop caía 3 vezes em 3.
+  Com a correção, a sessão dos apps rodou o Codex 3 vezes em 3 sob WHPX, 150 s cada, com o `threadctl` exercitado e
+  nenhuma falta.
+- **AVX inteiro nos sinais.** A moldura do sinal agora leva o cabeçalho XSAVE e as metades altas dos YMM
+  (`usigframe_t.xext`). Antes, um tratador que usava AVX devolvia os YMM dele ao código interrompido.
+  `userland/tests-signals/avx.c`, via `tools/stage-teste-macho.ps1 -Flags '-mavx2'` no TCG: 121 tratadores sujaram
+  todos os YMM no meio do laço de conferência, e nenhuma volta achou o padrão alterado.
+- **Destrutores de TSD na saída de thread** (`cx_thread_run_dtors`, em até 4 voltas, como o libpthread). Com isso o
+  mimalloc abandona o heap da thread que termina.
 
 Em aberto:
-- **SIGSEGV intermitente no modo interativo**, durante a primeira tela, com 4 CPUs: 3 quedas em cerca de 12 rodadas. Com
-  `-Cpus 1` não houve queda em 5 rodadas, o que aponta para SMP, mas a amostra é pequena. Os detalhes:
-  - Sempre é uma lista livre do mimalloc com um ponteiro inválido. A falta veio uma vez no `malloc` rápido (o
-    `page->free`) e duas ao juntar os `free` de outras threads.
-  - Os ponteiros (`0x400103340a10`, `0x400103360AF0`, `0x400103700bd0`) são blocos da arena de 1 GiB do mimalloc
-    (`0x400140000000`) com o bit 30 apagado, ou seja, 1 GiB abaixo.
+- **SIGSEGV intermitente no modo interativo**, durante a primeira tela, com 4 CPUs: 3 quedas em cerca de 12 rodadas, e
+  outras depois. Com `-Cpus 1` não houve queda em 5 rodadas, o que aponta para SMP, mas a amostra é pequena. Os detalhes:
+  - Sempre é uma lista livre do mimalloc com um ponteiro inválido. A falta veio no `malloc` rápido (o `page->free`) e
+    ao juntar os `free` de outras threads.
+  - Os ponteiros (`0x400103340a10`, `0x400103360AF0`, `0x400103700bd0`, `0x400103401f10`) são blocos da arena de 1 GiB
+    do mimalloc (`0x400140000000`) com o bit 30 apagado, ou seja, 1 GiB abaixo.
   - O rastreamento (`stage-claude-code.ps1 -RastrearMunmap`, com as linhas `mm:` no log) mostra que nada foi mapeado
     nessa faixa: o ponteiro já nasceu errado, não é memória desmapeada.
-  - Os travamentos do libSystem (`os_unfair_lock`, `pthread_mutex`) e a troca da base do GS por thread estão certos.
+  - Descartados:
+    - o descarte do `madvise` (cai igual com `MIMALLOC_PURGE_DELAY=-1`);
+    - sinais (nenhum chega antes);
+    - o `thread_suspend` (o Bun não chama);
+    - os travamentos do libSystem;
+    - a troca da base do GS.
+  - O `__ulock_wait` em laço (`CX_ULOCK_SPIN=1`) e o JIT desligado (`BUN_JSC_useJIT=0`) ainda não têm rodadas
+    suficientes.
   - Próximo passo: congelar a thread na falta e ler a página do mimalloc pelo QMP.
-- O `pthread_key_create` ignora o destrutor, e a saída de thread não chama destrutores de TSD. O mimalloc não abandona o
-  heap de uma thread que termina, o que dá vazamento, não queda.
 - Para sair com dois ^C, o segundo precisa chegar logo. No TCG, até 300 ms entre teclas viram segundos, e ele só mostra
   "Press Ctrl-C again to exit".
 - O AVX continua obrigatório: sob WHPX só passa o `--version`. O login (`/login`) é do usuário.

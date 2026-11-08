@@ -82,6 +82,7 @@ void rt_sig_deliver_pending(rt_thread_t *T, int interrupted_restartable);
 bool rt_sig_restart_ok(int sig);
 void rt_host_signal(int sig, mos_siginfo_t *si, mos_ucontext_t *uc);
 void rt_sig_fork_child(void);
+void rt_fbstat_final(const char *quando);
 
 /* libc mínima */
 void *memset(void *d, int c, unsigned long n);

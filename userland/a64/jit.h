@@ -97,11 +97,11 @@ typedef struct jit_globals {
     int maxinsns;                   /* depuração: instruções por bloco (0 = JIT_MAX_INSNS) */
     int nowp;                       /* depuração: sem proteção de escrita */
     int fblog;                      /* depuração: lista instruções que vão ao interpretador */
-    int ssse3, sse41, sse42, fma;   /* recursos do host (CPUID) */
+    int ssse3, sse41, sse42, fma, aes, pclmul, f16c, avx2;   /* recursos do host (CPUID) */
     int noras;                      /* depuração: sem pilha de retorno nem busca por ponto */
 } jit_globals;
 extern jit_globals jit_g;
-enum { JH_INTERP = 0, JH_COUNT = 16 };
+enum { JH_INTERP = 0, JH_EXEC = 1, JH_COUNT = 16 };   /* JH_EXEC = a64_interp_exec direto (chamada leve) */
 
 /* aloca no arena de dados (bloqueio já tomado); NULL = cheio */
 void *jit_data_alloc(a64_u64 n);
@@ -112,3 +112,4 @@ void jit_code_space(a64_u8 **p, a64_u8 **lim);
 void jit_code_commit(a64_u8 *end);
 /* helper do fallback (chamado pelo código gerado) */
 int jit_h_interp(a64_cpu *c, a64_u32 insn);
+int jit_h_exec(a64_cpu *c, a64_u32 insn);

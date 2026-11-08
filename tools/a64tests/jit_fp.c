@@ -23,9 +23,13 @@ static const unsigned long long ds[] = { 0x3ff0000000000000, 0x400921fb54442d18,
     __asm__ volatile("fsqrt %" T "0, %" T "1" : "=w"(r) : "w"(a)); mix(rb(r)); \
     __asm__ volatile("fabs %" T "0, %" T "1" : "=w"(r) : "w"(a)); mix(rb(r)); \
     __asm__ volatile("fneg %" T "0, %" T "1" : "=w"(r) : "w"(a)); mix(rb(r)); \
+    mix(fpsr()); clrfpsr(); \
     __asm__ volatile("fmadd %" T "0, %" T "1, %" T "2, %" T "3" : "=w"(r) : "w"(a), "w"(b), "w"(a)); mix(rb(r)); \
+    mix(fpsr()); clrfpsr(); \
     __asm__ volatile("fmsub %" T "0, %" T "1, %" T "2, %" T "3" : "=w"(r) : "w"(a), "w"(b), "w"(b)); mix(rb(r)); \
+    mix(fpsr()); clrfpsr(); \
     __asm__ volatile("fnmadd %" T "0, %" T "1, %" T "2, %" T "3" : "=w"(r) : "w"(b), "w"(b), "w"(a)); mix(rb(r)); \
+    mix(fpsr()); clrfpsr(); \
     __asm__ volatile("fnmsub %" T "0, %" T "1, %" T "2, %" T "3" : "=w"(r) : "w"(a), "w"(a), "w"(b)); mix(rb(r)); \
     mix(fpsr());
 static unsigned long long rbf(float x) { unsigned int u; __builtin_memcpy(&u, &x, 4); return u; }
@@ -50,11 +54,15 @@ int main(void) {
             OPS("d", a, b, r)
 #undef rb
         }
-        /* laço quente: muitas operações inexatas seguidas (IXC acumulado) */
-        double x = 1.0, y = 3.0;
-        clrfpsr();
-        for (int i = 0; i < 20000; i++) { x = x * 1.0000001 + y / 7.0; y = y - x * 1e-9; }
-        mix(rbd(x)); mix(rbd(y)); mix(fpsr());
+        /* laço quente: muitas operações inexatas seguidas (IXC acumulado). Sem contração em FMADD:
+         * o QEMU do Windows erra o FMA em RN quando o IXC já está ligado (fma() do mingw) */
+        {
+            _Pragma("clang fp contract(off)")
+            double x = 1.0, y = 3.0;
+            clrfpsr();
+            for (int i = 0; i < 20000; i++) { x = x * 1.0000001 + y / 7.0; y = y - x * 1e-9; }
+            mix(rbd(x)); mix(rbd(y)); mix(fpsr());
+        }
     }
     setfpcr(0);
     a64t_puts("hash "); a64t_hex(h); a64t_puts("\n");

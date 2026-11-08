@@ -41,6 +41,7 @@ void free(void *p);
 void *memcpy(void *d, const void *s, size_t n);
 void *memset(void *d, int c, size_t n);
 char *strdup(const char *s);
+int access(const char *path, int mode);
 extern int NXArgc;
 extern char **NXArgv;
 int pthread_create(unsigned long *t, const void *attr, void *(*fn)(void *), void *arg);
@@ -127,6 +128,12 @@ static int ls_open_c(const char *target, const char *app, int app_is_path) {
     mos_ls_req_t *rq = rq_new(target ? target : "", app ? app : "", 0);
     if (!rq) return -1;
     rq->flags = app_is_path ? 1 : 0;
+    {   /* diagnóstico (arquivo /Sistema/Biblioteca/abrir-url-completo): a URL inteira, com a consulta. O log normal só
+         * mostra esquema e host, porque a URL de volta de um login leva um token */
+        static int full = -1;
+        if (full < 0) full = access("/Sistema/Biblioteca/abrir-url-completo", 0) == 0;
+        if (full && target) cx_fdprintf(2, "[abrir-url] completo (%u bytes): %s\n", (unsigned)strlen(target), target);
+    }
     long r = ls_call(MOS_LS_OPEN, rq);
     free(rq);
     return r == 0 ? 0 : -1;

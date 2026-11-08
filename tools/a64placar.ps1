@@ -6,7 +6,7 @@
 #   1. fuzzing diferencial por grupo de codificação (build\a64fuzz.exe, 1 instrução por caso)
 #   2. fuzzing de sequências (K instruções misturadas, minimização)
 #   3. testes ELF de build\a64tests (a64test × oráculo QEMU; com -Jit também o JIT). Um teste cujo
-#      fonte tem "a64cmp: nao-comparavel" (valores do M1, contadores...) só precisa sair com 0.
+#      fonte tem "a64cmp: nao-comparavel" (valores do M1, contadores...) só precisa sair com 0 (e, com -Jit, o JIT tem que dar a mesma saída do interpretador).
 #   4. suíte diferencial C (tools\a64oracle\csuite\run.ps1)
 # Arquivos de saída em build\a64placar\ (exemplos de divergência em exemplos.txt).
 param([switch]$Jit, [int]$Casos = 2000, [int]$CasosSeq = 300, [int]$K = 8, [string]$Semente = '',
@@ -74,7 +74,13 @@ if (-not $SemElf) {
         foreach ($en in $engines) {
             $r = Invoke-A64Capture $a64test $en.a $Timeout
             if ($r.TimedOut) { $row[$en.k] = 'tempo' }
-            elseif ($nc) { $row[$en.k] = if ($r.Code -eq 0) { 'ok' } else { "saída $($r.Code)" }; $row.nota = 'não comparável (autoverificação)' }
+            elseif ($nc) {
+                # sem oráculo: o interpretador tem que sair com 0 e o JIT tem que dar exatamente a saída do interpretador
+                # (com -Jit qualquer código de saída vale: os testes de falha terminam com 139 de propósito)
+                if ($en.k -eq 'interp') { $ri = $r; $row.interp = if ($r.Code -eq 0 -or $Jit) { 'ok' } else { "saída $($r.Code)" } }
+                else { $row.jit = if ($r.Out -eq $ri.Out -and $r.Err -eq $ri.Err -and $r.Code -eq $ri.Code) { 'ok' } else { 'DIFERE do interp' } }
+                $row.nota = 'não comparável com o QEMU (autoverificação; JIT × interp)'
+            }
             elseif ($q.TimedOut) { $row[$en.k] = '?'; $row.nota = 'oráculo estourou o tempo' }
             elseif ($r.Out -eq $q.Out -and $r.Err -eq $q.Err -and $r.Code -eq $q.Code) { $row[$en.k] = 'igual' }
             else { $row[$en.k] = 'DIFERE'; $row.nota = "saída $($r.Code) × qemu $($q.Code)" }

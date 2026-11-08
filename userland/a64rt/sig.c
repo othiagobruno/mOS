@@ -74,6 +74,7 @@ static void set_mask(u32 m) { sigop(MOS_SIGOP_MASK, MOS_SIG_SETMASK, (long)&m, 0
 
 /* morre (ou para) pelo sinal com a ação padrão do kernel: disposição DFL, desbloqueia e manda para si mesma */
 static __attribute__((noreturn)) void reraise_default(rt_thread_t *T, int sig) {
+    if (rt_debug && !(DFL_IGN_SET & BIT(sig))) rt_fbstat_final("morte por sinal");
     mos_sigaction_t d = {0, 0, 0, 0};
     sigop(MOS_SIGOP_ACTION, sig, (long)&d, 0);
     u32 m = BIT(sig);

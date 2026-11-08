@@ -277,6 +277,52 @@ static void slow_if(T *t, int cc) {
     emit_slow_interp(t);
     if (!t->b.ovf) x_patch32(j, t->b.p);
 }
+/* SIMD/FP que só lê/escreve registradores V e FPCR/FPSR (e no máximo LÊ GPRs): chamada leve a
+ * a64_interp_exec, sem converter NZCV nem descartar o cache inteiro. Grava os GPRs sujos (leitura
+ * correta), descarta só os que a ABI não preserva na chamada. Ficam de fora as classes que
+ * escrevem GPR ou NZCV: cópia (UMOV/SMOV/INS/DUP geral), conversões FP↔inteiro/fixo, FCMP/FCCMP/FCSEL. */
+static int light_ok(a64_u32 w) {
+    if (((w >> 25) & 0xF) != 0x7 && ((w >> 25) & 0xF) != 0xF) return 0;
+    if (((w >> 28) & 1) && !((w >> 30) & 1)) {      /* FP escalar */
+        if (BITS(w, 28, 24) == 0x1F) return 1;      /* 3 fontes */
+        if (BITS(w, 28, 24) != 0x1E || !BIT(w, 21)) return 0;   /* conversões de ponto fixo */
+        if (BITS(w, 15, 10) == 0) return 0;         /* FP ↔ inteiro */
+        if (BITS(w, 14, 10) == 0x10) return 1;      /* 1 fonte */
+        if (BITS(w, 11, 10) == 2) return 1;         /* 2 fontes */
+        if (BITS(w, 12, 10) == 4) return 1;         /* FMOV imediato */
+        return 0;                                   /* FCMP FCCMP FCSEL */
+    }
+    if (!BIT(w, 24) && !BIT(w, 21) && BIT(w, 10) && !BIT(w, 15) && BITS(w, 23, 21) == 0) return 0;   /* cópia */
+    return 1;
+}
+static void emit_light(T *t, a64_u32 w) {
+#ifdef _WIN32
+    static const int volat[] = { X8, X9, X10, X11 };
+#else
+    static const int volat[] = { XSI, XDI, X8, X9, X10, X11 };
+#endif
+    fl_clobber(t);
+    for (int k = 0; k < NHREGS; k++) {             /* sujos → memória (o helper pode ler GPRs) */
+        int h = HREGS[k], g = t->h2g[h];
+        if (g >= 0 && (t->dirty & (1u << h))) { x_mov_mr(B, 1, XM(RCPU, OFF_X(g)), h); t->dirty &= ~(1u << h); }
+    }
+    for (unsigned k = 0; k < sizeof volat / sizeof volat[0]; k++) {
+        int h = volat[k], g = t->h2g[h];
+        if (g >= 0) t->g2h[g] = -1;
+        t->h2g[h] = -1;
+    }
+#ifdef _WIN32
+    x_mov_rr(B, 1, XCX, RCPU);
+    x_mov_ri(B, XDX, w);
+#else
+    x_mov_rr(B, 1, XDI, RCPU);
+    x_mov_ri(B, XSI, w);
+#endif
+    x_call_mrip(B, &jit_g.helpers[JH_EXEC]);
+    t->mxclean = 0;
+    x_test_rr(B, 0, XAX, XAX);
+    slow_if(t, CC_NE);                              /* UDF etc.: o interpretador completo decide */
+}
 
 /* mesmas escolhas da frente INT (interp_int.h): SA0 = 1 (load/store com base SP desalinhado →
  * FAULT antes do acesso) e nAA = 0 (acquire/release que atravessa 16 bytes → FAULT), salvo
@@ -637,6 +683,7 @@ static int tr_branch(T *t, a64_u32 w) {
             x_mov_rr(B, 0, XAX, h);
             x_alu_ri(B, 0, A_AND, XR(XAX), (int32_t)(sr == 0x5A20 ? A64_FPCR_MASK : A64_FPSR_MASK));
             x_mov_mr(B, 0, XM(RCPU, fo), XAX);
+            t->mxclean = 0;             /* o PE acumulado no MXCSR não vale mais para o FPSR novo */
             return 1;
         }
         if (sr == 0x5E82) off = (int)offsetof(a64_cpu, tpidr_el0);          /* S3_3_C13_C0_2 */
@@ -810,6 +857,16 @@ static int tr_dpreg(T *t, a64_u32 w) {
                 x_mov_rr(B, sf, hd, XAX);
                 return 1;
             }
+            if (opc >= 20 && opc <= 23 && jit_g.sse42) {     /* CRC32C (Castagnoli = crc32 do SSE4.2) */
+                int sz = (int)(opc & 3);
+                if ((sz == 3) != (sf == 1)) return 0;
+                int hn = rx(t, rn), hm = rx(t, rm);
+                x_mov_rr(B, 0, XAX, hn);
+                if (sz == 0) xop3(B, XF_F2 | XF_BYTE, 0x38, 0xF0, XAX, XR(hm));
+                else xop3(B, XF_F2 | (sz == 1 ? XF_66 : 0) | (sz == 3 ? XF_W : 0), 0x38, 0xF1, XAX, XR(hm));
+                x_mov_rr(B, 0, wx(t, rd), XAX);
+                return 1;
+            }
             if (opc >= 8 && opc <= 11) {                        /* LSLV LSRV ASRV RORV */
                 static const int ops[4] = { S_SHL, S_SHR, S_SAR, S_ROR };
                 fl_clobber(t);
@@ -822,6 +879,13 @@ static int tr_dpreg(T *t, a64_u32 w) {
             }
             return 0;
         } else {                        /* 1 fonte */
+            if (BITS(w, 20, 16) == 1) {                         /* PAC/AUT/XPAC: identidade (como o interp) */
+                unsigned po = BITS(w, 15, 10);
+                if (!sf) return 0;
+                if (po < 8) return 1;
+                if (po < 18 && rn == 31) return 1;           /* *Z* e XPACI/XPACD */
+                return 0;
+            }
             if (BITS(w, 20, 16)) return 0;
             unsigned opc = BITS(w, 15, 10);
             if (opc == 2 && !sf) opc = 3;                       /* REV de 32 bits */
@@ -965,10 +1029,41 @@ static void wb_base(T *t, int rn, int64_t off) {
 }
 
 #include "jit_atom.h"
+/* LDAPUR/STLUR e variantes com sinal (FEAT_LRCPC2): como o interp — SA0, falha se atravessa 16
+ * bytes (nAA = 0), store + barreira completa (xchg) */
+static int tr_rcpc2(T *t, a64_u32 w) {
+    int size = (int)BITS(w, 31, 30), opc = (int)BITS(w, 23, 22), rn = (int)BITS(w, 9, 5), rt = (int)(w & 31);
+    int kind;
+    if (opc == 0) kind = 0; else if (opc == 1) kind = 1;
+    else if (opc == 2) { if (size == 3) return 0; kind = 2; }
+    else { if (size >= 2) return 0; kind = 3; }
+    int32_t off = (int32_t)sext(BITS(w, 20, 12), 9);
+    int hb = rget(t, rn);
+    sa0_check(t, rn, hb);
+    if (size && !JIT_NAA) {
+        fl_clobber_force(t);
+        x_lea(B, 0, XAX, XM(hb, off));
+        x_alu_ri(B, 0, A_AND, XR(XAX), 15);
+        x_alu_ri(B, 0, A_CMP, XR(XAX), 16 - (1 << size));
+        slow_if(t, CC_A);
+    }
+    xo m = XM(hb, off);
+    if (kind) { ld_int(t, rt == 31 ? XDX : rdef(t, rt), m, size, kind); return 1; }
+    if (rt == 31) x_mov_ri(B, XAX, 0); else x_mov_rr(B, 1, XAX, rget(t, rt));
+    fp_mark(t);
+    if (size == 0) x_xchg8_mr(B, m, XAX);
+    else if (size == 1) x_xchg16_mr(B, m, XAX);
+    else x_xchg_mr(B, size == 3, m, XAX);
+    return 1;
+}
+
 static int s_ldst_multi(T *t, a64_u32 w);
+static int s_ldst_single(T *t, a64_u32 w);
 static int tr_ldst(T *t, a64_u32 w) {
     if ((w & 0xBF800000) == 0x0C000000 && !BIT(w, 21)) return s_ldst_multi(t, w);
     if ((w & 0xBFA00000) == 0x0C800000) return s_ldst_multi(t, w);
+    if ((w & 0xBF9F0000) == 0x0D000000 || (w & 0xBF800000) == 0x0D800000) return s_ldst_single(t, w);
+    if ((w & 0x3F200C00) == 0x19000000) return tr_rcpc2(t, w);   /* LDAPUR/STLUR (FEAT_LRCPC2) */
     if ((w & 0x3B000000) == 0x18000000) {                       /* load literal */
         int opc = (int)BITS(w, 31, 30), V = (int)BIT(w, 26), rt = (int)(w & 31);
         a64_u64 a = t->pc + (a64_u64)(sext(BITS(w, 23, 5), 19) << 2);
@@ -1245,7 +1340,10 @@ static int tr_insn(T *t, a64_u32 w) {
     case 0xA: case 0xB: return tr_branch(t, w);
     case 0x4: case 0x6: case 0xC: case 0xE: return tr_ldst(t, w);
     case 0x5: case 0xD: return tr_dpreg(t, w);
-    case 0x7: case 0xF: return tr_simd(t, w);
+    case 0x7: case 0xF:
+        if (tr_simd(t, w)) return 1;
+        if (light_ok(w) && !jit_g.nonative) { emit_light(t, w); return 1; }
+        return 0;
     default: return 0;                  /* 0..3: UDF/SVE/SME: o interpretador decide */
     }
 }

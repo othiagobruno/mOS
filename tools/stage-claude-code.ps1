@@ -8,7 +8,8 @@
 # Baixe de https://downloads.claude.ai/claude-code-releases/<versão>/darwin-x64/claude. Ver docs/compat-apps.md.
 param([Parameter(Mandatory = $true)][string]$Binario, [string]$OutDir = 'build-net', [string]$Argumentos = '--version',
       [int]$SizeMiB = 512, [int]$AtrasoMs = 8000, [string]$Entrada = '/dev/null', [switch]$Tui,
-      [string]$Roteiro = "$PSScriptRoot\testdata\claude-tui.txt", [switch]$DespejarThreads, [switch]$RastrearMunmap)
+      [string]$Roteiro = "$PSScriptRoot\testdata\claude-tui.txt", [switch]$DespejarThreads, [switch]$RastrearMunmap, [switch]$DespejarFalta)
+# -DespejarFalta: numa falta na área de mmap, o kernel imprime os registradores e 128 bytes em cada ponteiro de usuário
 # -DespejarThreads: o kernel imprime as threads de cada processo (estado, rip, CPU) a cada 30 s no log serial
 # -RastrearMunmap: o kernel registra cada mmap/munmap ("mm: ...") para casar com uma "falta em" na área de mmap
 $root = Split-Path $PSScriptRoot -Parent
@@ -44,6 +45,8 @@ $despejo = "$esp\mOS\Sistema\Biblioteca\despejar-threads"
 if ($DespejarThreads) { Set-Content -Path $despejo -Value '1' -Encoding ascii } else { Remove-Item -Force -ErrorAction SilentlyContinue $despejo }
 $rastro = "$esp\mOS\Sistema\Biblioteca\rastrear-munmap"
 if ($RastrearMunmap) { Set-Content -Path $rastro -Value '1' -Encoding ascii } else { Remove-Item -Force -ErrorAction SilentlyContinue $rastro }
+$dfalta = "$esp\mOS\Sistema\Biblioteca\despejar-falta"
+if ($DespejarFalta) { Set-Content -Path $dfalta -Value '1' -Encoding ascii } else { Remove-Item -Force -ErrorAction SilentlyContinue $dfalta }
 # imagem de teste: overlay de teste com o marcador que pula o assistente do Live (tools\overlay-teste.ps1)
 . "$PSScriptRoot\overlay-teste.ps1"
 $ovt = New-OverlayTeste $root $OutDir

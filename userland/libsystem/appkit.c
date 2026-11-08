@@ -2550,6 +2550,8 @@ static void ap_finish_launching(id self, SEL c) {
     id note = cx_note(NSApplicationWillFinishLaunchingNotification, self, 0);
     if (d && cx_responds(d->isa, sel_registerName("applicationWillFinishLaunching:"))) MSG(void, d, "applicationWillFinishLaunching:", note);
     cx_post(note);
+    /* o Cocoa restaura as janelas da sessão anterior aqui e avisa (o Postico só abre a janela de conexões depois disto) */
+    cx_post(cx_note(cx_str("NSApplicationDidFinishRestoringWindowsNotification"), self, 0));
     note = cx_note(NSApplicationDidFinishLaunchingNotification, self, 0);
     if (d && cx_responds(d->isa, sel_registerName("applicationDidFinishLaunching:"))) MSG(void, d, "applicationDidFinishLaunching:", note);
     cx_post(note);

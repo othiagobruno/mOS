@@ -223,7 +223,7 @@ static void fbstat_out(a64_u32 key, a64_u64 count, void *arg) {
     rt_log("a64rt: interp %08x x %lu\n", key, count);
     g_fb_n++;
 }
-static void fbstat_dump(const char *quando) {
+void fbstat_dump(const char *quando) {
     if (rt_engine != A64_ENGINE_JIT) return;
     rt_log("a64rt: instruções no interpretador (%s, pid %d):\n", quando, (int)RS0(SYS_GETPID));
     g_fb_n = 0;
@@ -419,4 +419,13 @@ void rt_main(const a64rt_boot_t *b) {
     c->x[30] = 0;
     if (rt_debug) rt_log("a64rt: entrada %lx sp %lx x0 %lx motor %d\n", c->pc, c->x[31], c->x[0], rt_engine);
     rt_run_thread(T);
+}
+
+/* sig.c: o processo vai morrer por um sinal (sem SYS_EXIT): o diagnóstico do JIT sai antes */
+void rt_fbstat_final(const char *quando) {
+#ifdef A64_HAVE_JIT
+    fbstat_dump(quando);
+#else
+    (void)quando;
+#endif
 }

@@ -214,6 +214,19 @@ int main() {
     qsort(w, 6, sizeof w[0], [](const void *a, const void *b) { return *(const int *)a - *(const int *)b; });
     CHECK("qsort com callback do app", w[0] == 1 && w[5] == 9);
 
+    {   // variantes com bloco da libc da Apple (sortb.c)
+        typedef struct { int k, ord; } kv;
+        kv d[7] = {{3, 0}, {1, 1}, {3, 2}, {2, 3}, {1, 4}, {3, 5}, {0, 6}};
+        int (^porK)(const void *, const void *) = ^int(const void *a, const void *b) { return ((const kv *)a)->k - ((const kv *)b)->k; };
+        int ms = mergesort_b(d, 7, sizeof d[0], porK);
+        int estavel = ms == 0 && d[0].k == 0 && d[1].ord == 1 && d[2].ord == 4 && d[4].ord == 0 && d[5].ord == 2 && d[6].ord == 5;
+        int h[9] = {9, 4, 7, 1, 8, 2, 6, 3, 5};
+        heapsort_b(h, 9, sizeof h[0], ^int(const void *a, const void *b) { return *(const int *)a - *(const int *)b; });
+        int chave = 6;
+        int *achou = (int *)bsearch_b(&chave, h, 9, sizeof h[0], ^int(const void *a, const void *b) { return *(const int *)a - *(const int *)b; });
+        CHECK("mergesort_b estável, heapsort_b e bsearch_b", estavel && h[0] == 1 && h[8] == 9 && achou == &h[5]);
+    }
+
     // 7. setjmp/longjmp preservando registradores preservados (inclusive d8..d15 no arm64)
     static jmp_buf jb;
     volatile double keep = 1.25;

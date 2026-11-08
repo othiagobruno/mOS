@@ -76,7 +76,13 @@ u64 AXValueGetTypeID(void) { return 0x4156; }
 u64 AXTextMarkerGetTypeID(void) { return 0x4154; }
 u64 AXTextMarkerRangeGetTypeID(void) { return 0x4152; }
 id AXUIElementCreateApplication(int pid) { (void)pid; return token(); }
+id AXUIElementCreateSystemWide(void) { return token(); }   /* claude-native-binding.node do Claude desktop */
 OSStatus AXUIElementCopyAttributeValue(id e, id attr, id *v) { (void)e; (void)attr; if (v) *v = 0; return kAXErrorAPIDisabled; }
+OSStatus AXUIElementCopyAttributeValues(id e, id attr, long index, long maxValues, id *values) {
+    (void)e; (void)attr; (void)index; (void)maxValues;
+    if (values) *values = 0;
+    return kAXErrorAPIDisabled;
+}
 OSStatus AXUIElementCopyAttributeNames(id e, id *names) { (void)e; if (names) *names = 0; return kAXErrorAPIDisabled; }
 OSStatus AXUIElementCopyParameterizedAttributeNames(id e, id *names) { (void)e; if (names) *names = 0; return kAXErrorAPIDisabled; }
 OSStatus AXUIElementCopyParameterizedAttributeValue(id e, id attr, id p, id *v) { (void)e; (void)attr; (void)p; if (v) *v = 0; return kAXErrorAPIDisabled; }

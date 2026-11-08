@@ -56,7 +56,11 @@ BOOL cx_is_subclass(cx_class_t *cls, cx_class_t *of);
 cx_class_t *object_getClass(id o);
 id objc_msgSend(id self, SEL op, ...);
 
-/* atalho para mensagens a partir do C (sem stret) */
+/* atalho para mensagens a partir do C (sem stret).
+ * REGRA (as duas arquiteturas): compound literal como argumento vai ENTRE PARÊNTESES, MSG(id, v, "initWithFrame:",
+ * ((NSRect){0, 0, 10, 10})): as vírgulas dentro das chaves contam como argumentos no MSG do arm64, e o
+ * libSystem arm64 (tools/build-libsystem-arm64.ps1) deixa de compilar. Nenhum argumento passa de 10 nem é float sem
+ * querer (no x86 o float era promovido a double pelo cast variádico; no arm64 vai como float). */
 #if defined(__aarch64__)
 /* arm64: no Darwin PCS os variádicos vão para a pilha e o IMP lê os registradores, então o objc_msgSend é chamado com o
  * protótipo exato, montado dos tipos dos argumentos (até 10) */

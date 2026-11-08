@@ -9,7 +9,7 @@
  *  - acesso que atravessa um bloco de 16 bytes → FAULT de alinhamento (o STXR confere antes do
  *    monitor); SA0 para base SP. Esses casos vão ao interpretador pelo caminho lento.
  *  - instruções com lock no x86 já são barreira completa (acquire/release/RCsc de graça).
- * Pares (LDXP/STXP/CASP) vão ao interpretador.
+ * Pares: LDXP/STXP/CASP com movdqu/lock cmpxchg16b (X) ou 8 bytes (W).
  */
 
 #define OFF_EXA  ((int32_t)offsetof(a64_cpu, excl_addr))
@@ -37,6 +37,117 @@ static void cross16_check(T *t, int rn, int hb, int size) {
     x_alu_ri(B, 0, A_AND, XR(XAX), 15);
     x_alu_ri(B, 0, A_CMP, XR(XAX), 16 - (1 << size));
     slow_if(t, CC_A);
+}
+
+/* pares: LDXP/LDAXP/STXP/STLXP (W e X) e CASP (W e X), como interp_int_ls.c: par de X = 16 bytes
+ * com movdqu (atômico alinhado) / lock cmpxchg16b; par de W = 8 bytes com mov / lock cmpxchg */
+static void reserve_rbx(T *t) {                     /* cmpxchg16b usa rcx:rbx */
+    h_evict(t, XBX);
+    t->h2g[XBX] = -2;
+    t->tmp |= 1u << XBX;
+    t->lock |= 1u << XBX;
+}
+static void cross_check_n(T *t, int rn, int hb, int bytes) {   /* atravessa 16 bytes → lento */
+    if (JIT_SA0 && rn == 31 && bytes <= 16) return;
+    fl_clobber_force(t);
+    x_mov_rr(B, 0, XAX, hb);
+    x_alu_ri(B, 0, A_AND, XR(XAX), 15);
+    x_alu_ri(B, 0, A_CMP, XR(XAX), 16 - bytes);
+    slow_if(t, CC_A);
+}
+static int tr_xpair(T *t, a64_u32 w) {             /* o2 = 0, o1 = 1 */
+    int size = (int)BITS(w, 31, 30), L = (int)BIT(w, 22);
+    int rs = (int)BITS(w, 20, 16), rt2 = (int)BITS(w, 14, 10), rn = (int)BITS(w, 9, 5), rt = (int)(w & 31);
+    if (size < 2) {                                 /* CASP / CASPA / CASPL / CASPAL */
+        if (rt2 != 31 || (rs & 1) || (rt & 1)) return 0;
+        int x = size == 1;
+        if (x) reserve_rbx(t);
+        int hb = rget(t, rn);
+        int s0 = rx(t, rs), s1 = rx(t, rs + 1), n0 = rx(t, rt), n1 = rx(t, rt + 1);
+        sa0_check(t, rn, hb);
+        cross_check_n(t, rn, hb, x ? 16 : 8);
+        fl_clobber_force(t);
+        int d0 = wx(t, rs), d1 = wx(t, rs + 1);
+        if (x) {
+            x_mov_rr(B, 1, XAX, s0); x_mov_rr(B, 1, XDX, s1);
+            x_mov_rr(B, 1, XBX, n0); x_mov_rr(B, 1, XCX, n1);
+            fp_mark(t);
+            xe8(B, 0xF0); xop2(B, XF_W, 0xC7, 1, XM(hb, 0));            /* lock cmpxchg16b */
+            x_mov_rr(B, 1, d0, XAX); x_mov_rr(B, 1, d1, XDX);
+        } else {
+            x_mov_rr(B, 0, XAX, s1); x_shift_ri(B, 1, S_SHL, XAX, 32); x_mov_rr(B, 0, XDX, s0); x_alu_rr(B, 1, A_OR, XAX, XDX);
+            x_mov_rr(B, 0, XCX, n1); x_shift_ri(B, 1, S_SHL, XCX, 32); x_mov_rr(B, 0, XDX, n0); x_alu_rr(B, 1, A_OR, XCX, XDX);
+            fp_mark(t);
+            x_lock2(t, 3, 0xB0, 0xB1, XCX, XM(hb, 0));
+            x_mov_rr(B, 1, XDX, XAX); x_shift_ri(B, 1, S_SHR, XDX, 32);
+            x_mov_rr(B, 0, d0, XAX); x_mov_rr(B, 0, d1, XDX);
+        }
+        t->fe = 0;
+        return 1;
+    }
+    int x = size == 3, tot = x ? 16 : 8;
+    if (L) {                                        /* LDXP / LDAXP */
+        if (rt == rt2) return 0;
+        int hb = rget(t, rn);
+        sa0_check(t, rn, hb);
+        cross_check_n(t, rn, hb, tot);
+        fl_clobber_force(t);                        /* o shr do par de W destrói o EFLAGS */
+        int h1 = wx(t, rt), h2 = wx(t, rt2);
+        fp_mark(t);
+        if (x) {
+            x_movdqu_ld(B, 0, XM(hb, 0));
+            xop2(B, XF_66 | XF_W, 0x7E, 0, XR(XAX));
+            xop2(B, XF_66, 0x70, 0, XR(0)); xe8(B, 0xEE);
+            xop2(B, XF_66 | XF_W, 0x7E, 0, XR(XDX));
+            x_mov_mr(B, 1, XM(RCPU, OFF_EXV + 8), XDX);
+        } else {
+            x_mov_rm(B, 1, XAX, XM(hb, 0));
+            x_mov_rr(B, 1, XDX, XAX); x_shift_ri(B, 1, S_SHR, XDX, 32);
+            x_mov_mi(B, 1, XM(RCPU, OFF_EXV + 8), 0);
+        }
+        x_mov_mr(B, 1, XM(RCPU, OFF_EXA), hb);
+        x_mov_mi(B, 0, XM(RCPU, OFF_EXS), tot);
+        x_mov_mr(B, 1, XM(RCPU, OFF_EXV), XAX);
+        x_mov_mi(B, 0, XM(RCPU, OFF_EXOK), 1);
+        x_mov_rr(B, x, h1, XAX);
+        x_mov_rr(B, x, h2, XDX);
+        return 1;
+    }
+    /* STXP / STLXP */
+    if (rs == rt || rs == rt2 || (rs == rn && rn != 31)) return 0;
+    if (x) reserve_rbx(t);
+    int hb = rget(t, rn);
+    int ha = rx(t, rt), hc = rx(t, rt2);
+    int hst = wx(t, rs);
+    sa0_check(t, rn, hb);
+    cross_check_n(t, rn, hb, tot);                  /* confere o alinhamento antes do monitor */
+    fl_clobber_force(t);
+    x_alu_ri(B, 0, A_CMP, XM(RCPU, OFF_EXOK), 0);
+    a64_u8 *f1 = x_jcc32(B, CC_E);
+    x_alu_rm(B, 1, A_CMP, hb, XM(RCPU, OFF_EXA));
+    a64_u8 *f2 = x_jcc32(B, CC_NE);
+    x_alu_ri(B, 0, A_CMP, XM(RCPU, OFF_EXS), tot);
+    a64_u8 *f3 = x_jcc32(B, CC_NE);
+    x_mov_rm(B, 1, XAX, XM(RCPU, OFF_EXV));
+    if (x) {
+        x_mov_rm(B, 1, XDX, XM(RCPU, OFF_EXV + 8));
+        x_mov_rr(B, 1, XBX, ha); x_mov_rr(B, 1, XCX, hc);
+        fp_mark(t);
+        xe8(B, 0xF0); xop2(B, XF_W, 0xC7, 1, XM(hb, 0));
+    } else {
+        x_mov_rr(B, 0, XCX, hc); x_shift_ri(B, 1, S_SHL, XCX, 32); x_mov_rr(B, 0, XDX, ha); x_alu_rr(B, 1, A_OR, XCX, XDX);
+        fp_mark(t);
+        x_lock2(t, 3, 0xB0, 0xB1, XCX, XM(hb, 0));
+    }
+    x_setcc(B, CC_NE, XDX);
+    x_movzx8(B, XDX, XR(XDX));
+    a64_u8 *jd = x_jmp32(B);
+    if (!t->b.ovf) { x_patch32(f1, t->b.p); x_patch32(f2, t->b.p); x_patch32(f3, t->b.p); }
+    x_mov_ri(B, XDX, 1);
+    if (!t->b.ovf) x_patch32(jd, t->b.p);
+    x_mov_mi(B, 0, XM(RCPU, OFF_EXOK), 0);
+    x_mov_rr(B, 0, hst, XDX);
+    return 1;
 }
 
 static int tr_excl(T *t, a64_u32 w) {           /* grupo 001000 com o2 = 0 (LDXR/STXR) ou CAS */
@@ -85,6 +196,7 @@ static int tr_excl(T *t, a64_u32 w) {           /* grupo 001000 com o2 = 0 (LDXR
         x_mov_rr(B, 0, hst, XDX);
         return 1;
     }
+    if (!o2 && o1) return tr_xpair(t, w);
     if (o2 && o1) {                             /* CAS / CASA / CASL / CASAL */
         if (rt2 != 31) return 0;
         int hb = rget(t, rn);

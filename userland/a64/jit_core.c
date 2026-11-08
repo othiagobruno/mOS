@@ -461,7 +461,21 @@ static void jit_cpuid(void) {
     jit_g.sse41 = (c >> 19) & 1;
     jit_g.sse42 = (c >> 20) & 1;
     jit_g.fma = (c >> 12) & 1;
-    (void)a; (void)b; (void)d;
+    jit_g.aes = (c >> 25) & 1;
+    jit_g.pclmul = (c >> 1) & 1;
+    jit_g.f16c = (c >> 29) & 1;
+    /* VEX (AVX/FMA3/F16C/AVX2) só se o SO habilitou o estado AVX (OSXSAVE e XCR0 bits 1 e 2) */
+    int avx = 0;
+    if (((c >> 27) & 1) && ((c >> 28) & 1)) {
+        unsigned lo, hi;
+        __asm__ volatile("xgetbv" : "=a"(lo), "=d"(hi) : "c"(0));
+        avx = (lo & 6) == 6;
+        (void)hi;
+    }
+    if (!avx) { jit_g.fma = 0; jit_g.f16c = 0; }
+    __asm__ volatile("cpuid" : "=a"(a), "=b"(b), "=c"(c), "=d"(d) : "a"(7), "c"(0));
+    jit_g.avx2 = avx && ((b >> 5) & 1);
+    (void)a; (void)d;
 }
 
 static jlock init_lock;
@@ -480,6 +494,7 @@ static void jit_init(void) {
         J.code_end = J.code_base + CODE_SIZE;
         jit_g.helpers = (void **)J.code_base;
         jit_g.helpers[JH_INTERP] = (void *)jit_h_interp;
+        jit_g.helpers[JH_EXEC] = (void *)jit_h_exec;
         xb b = { J.code_base + 8 * JH_COUNT, J.code_end, 0 };
         jit_env();
         jit_cpuid();
@@ -503,7 +518,12 @@ static void jit_init(void) {
 #define FBS_N 8192
 static struct { volatile a64_u32 key; volatile a64_u64 n; } fbs[FBS_N];
 static void fbs_count(a64_u32 insn) {
-    a64_u32 k = (insn & 0xFFE0FC00u) | 1u;             /* | 1: chave nunca é 0 */
+    /* chave = palavra sem os registradores; nos grupos em que 20:16 é opcode (FP↔inteiro, FP de 1
+     * fonte, 2misc/across do AdvSIMD) esses bits ficam */
+    a64_u32 msk = 0xFFE0FC00u;
+    if (((insn >> 25) & 7) == 7 && (insn & (1u << 21)) && (((insn & 0x7F20FC00u) == 0x1E200000u) || ((insn & 0x5F207C00u) == 0x1E204000u) || ((insn & 0x0C00u) == 0x0800u)))
+        msk = 0xFFFFFC00u;
+    a64_u32 k = (insn & msk) | 1u;                  /* | 1: chave nunca é 0 */
     a64_u32 h = (k ^ (k >> 13) ^ (k >> 21)) & (FBS_N - 1);
     for (int i = 0; i < 64; i++, h = (h + 1) & (FBS_N - 1)) {
         a64_u32 cur = fbs[h].key;
@@ -530,6 +550,11 @@ void a64_jit_fbstat_dump(void (*out)(a64_u32 key, a64_u64 count, void *arg), voi
     }
 }
 
+/* chamada leve (SIMD/FP que não toca GPR escrito nem NZCV): conta na estatística e executa */
+int jit_h_exec(a64_cpu *c, a64_u32 insn) {
+    if (__builtin_expect(fbs_on, 0)) fbs_count(insn);
+    return a64_interp_exec(c, insn);
+}
 int jit_h_interp(a64_cpu *c, a64_u32 insn) {
     if (__builtin_expect(fbs_on, 0)) fbs_count(insn);
     c->nzcv = jit_x86_to_nzcv(JIT_F(c));
