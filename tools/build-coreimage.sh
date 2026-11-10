@@ -11,10 +11,7 @@ SRC="$ROOT/userland/frameworks/CoreImage"
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 "$ZIG" cc -target x86_64-macos -O2 -c -fvisibility=hidden \
-    -I"$ROOT/userland/frameworks/ImageIO" \
-    "$ROOT/userland/frameworks/ImageIO/imageio_decode.c" -o "$TMP/decode.o"
-"$ZIG" cc -target x86_64-macos -O2 -c -fvisibility=hidden \
-    -I"$SRC" -I"$ROOT/userland/frameworks/ImageIO" \
+    -I"$SRC" \
     "$SRC/coreimage_cpu.c" -o "$TMP/cpu.o"
 "$ZIG" cc -target x86_64-macos -O2 -c -x objective-c -fblocks \
     -I"$ROOT/userland/sdk/include" -I"$SRC" -Wno-objc-root-class \
@@ -24,5 +21,5 @@ dir="$DEST$install"
 mkdir -p "$(dirname "$dir")"
 "$ZIG" cc -target x86_64-macos -shared -o "$dir" \
     -Wl,-install_name,"$install" -Wl,-undefined,dynamic_lookup \
-    "$TMP/ci.o" "$TMP/cpu.o" "$TMP/decode.o"
+    "$TMP/ci.o" "$TMP/cpu.o"
 echo "CoreImage: $dir"
