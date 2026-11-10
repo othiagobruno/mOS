@@ -26,6 +26,40 @@ void ahci_tag_put(ahci_tags_t *t, int tag) {
     t->used &= ~(1u << tag);
 }
 
+void ahci_batch_init(ahci_batch_t *b, int ntags) {
+    if (!b) return;
+    b->posted = 0;
+    b->done = 0;
+    if (ntags < 1) ntags = 1;
+    if (ntags > AHCI_NCQ_TAGS) ntags = AHCI_NCQ_TAGS;
+    b->ntags = (u8)ntags;
+}
+
+int ahci_batch_post(ahci_batch_t *b, int tag) {
+    if (!b || tag < 0 || tag >= b->ntags) return -1;
+    u32 bit = 1u << tag;
+    if (b->posted & bit) return -1;
+    b->posted |= bit;
+    b->done &= ~bit;
+    return 0;
+}
+
+void ahci_batch_irq(ahci_batch_t *b, u32 ci) {
+    if (!b) return;
+    b->done |= b->posted & ~ci;
+}
+
+u32 ahci_batch_pending(const ahci_batch_t *b) {
+    return b ? (b->posted & ~b->done) : 0;
+}
+
+void ahci_batch_release(ahci_batch_t *b, int tag) {
+    if (!b || tag < 0 || tag >= b->ntags) return;
+    u32 bit = 1u << tag;
+    b->posted &= ~bit;
+    b->done &= ~bit;
+}
+
 void ahci_fpdma_fis(u8 *f, int write, u64 lba, u16 count, u8 tag) {
     for (int i = 0; i < 20; i++) f[i] = 0;
     f[0] = 0x27;
