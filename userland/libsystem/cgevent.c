@@ -14,6 +14,13 @@ void *malloc(size_t n);
 void free(void *p);
 void cx_post_key_event(u16 mac, u64 flags, int down);
 id objc_retain(id);
+int cx_tcc_preflight(const char *service);
+void *cx_cgtap_create(unsigned long long mask, void *cb, void *info);
+void cx_cgtap_enable(void *tap, int on);
+int cx_cgtap_is_on(void *tap);
+void *cx_cgtap_offer(unsigned type, void *event);
+void cx_cgtap_fanout(unsigned type, int x, int y, int key, int button, int down, int wheel, unsigned flags);
+void cx_cgtap_set_wire(void (*fn)(unsigned, int, int, int, int, int, int, unsigned));
 
 typedef struct { double x, y; } cgpt_t;
 typedef struct {
@@ -151,7 +158,27 @@ void CGEventKeyboardGetUnicodeString(void *e, u64 max, u64 *len, u16 *out) {
     for (u64 i = 0; i < n; i++) out[i] = x->uni[i];
     if (len) *len = n;
 }
-u8 CGEventTapIsEnabled(void *tap) { (void)tap; return 0; }
+static void cgtap_wire(unsigned type, int x, int y, int key, int button, int down, int wheel, unsigned flags) {
+    cgev_t *e = mk(type);
+    if (!e) return;
+    e->loc.x = x;
+    e->loc.y = y;
+    e->key = (u16)key;
+    e->button = (u8)button;
+    e->down = (u8)down;
+    e->wheel1 = wheel;
+    e->flags = flags;
+    cx_cgtap_offer(type, e);
+}
+static void cgtap_arm(void) { cx_cgtap_set_wire(cgtap_wire); }
+void *CGEventTapCreate(int tap, int place, int opts, u64 mask, void *cb, void *info) {
+    (void)tap; (void)place; (void)opts;
+    if (!cx_tcc_preflight("kTCCServiceAccessibility")) return 0;
+    cgtap_arm();
+    return cx_cgtap_create(mask, cb, info);
+}
+void CGEventTapEnable(void *tap, u8 enable) { cx_cgtap_enable(tap, enable ? 1 : 0); }
+u8 CGEventTapIsEnabled(void *tap) { return (u8)cx_cgtap_is_on(tap); }
 
 /* código de tecla virtual do Mac -> tecla do mOS (o inverso do mac_keycode do AppKit) */
 static int mos_key(u16 mac) {
@@ -197,8 +224,19 @@ static i32 wheel_lines(cgev_t *x) {
 }
 
 static u32 g_buttons;
+static void fan_of(cgev_t *x) {
+    cx_cgtap_fanout(x->type, (int)x->loc.x, (int)x->loc.y, x->key, x->button, x->down, x->wheel1, (unsigned)x->flags);
+}
 static void post(cgev_t *x) {
+    void *kept;
     if (!x) return;
+    if (!cx_tcc_preflight("kTCCServiceAccessibility")) return;
+    cgtap_arm();
+    kept = cx_cgtap_offer(x->type, x);
+    if (!kept) return;
+    x = ev(kept);
+    if (!x) return;
+    fan_of(x);
     u32 t = x->type, mods = mos_mods(x->flags);
     if (t == 10 || t == 11) {
         if (x->nuni) {                                           /* texto: cada caractere como uma tecla (Latin-1) */
@@ -237,7 +275,15 @@ static void post(cgev_t *x) {
 }
 /* Entrega ao pid. Não mexe em g_cursor, g_buttons nem na fila global. A roda já vai com o sinal do kernel. */
 static void post_pid(i32 pid, cgev_t *x) {
+    void *kept;
     if (!x || pid <= 0) return;
+    if (!cx_tcc_preflight("kTCCServiceAccessibility")) return;
+    cgtap_arm();
+    kept = cx_cgtap_offer(x->type, x);
+    if (!kept) return;
+    x = ev(kept);
+    if (!x) return;
+    fan_of(x);
     u32 t = x->type, mods = mos_mods(x->flags);
     if (t == 10 || t == 11) {
         if (x->nuni) {

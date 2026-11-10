@@ -26,6 +26,7 @@
  * publica in_user = 1 e só então relê pending antes de voltar ao usuário.
  */
 #include "proc.h"
+#include "smp_perf.h"
 
 #define KSTACK_SIZE (32u << 10)
 #define PEND_FLUSH   1u        /* recarregar o CR3 antes de voltar ao ring 3 */
@@ -41,6 +42,9 @@ typedef struct {
     volatile u8 release;       /* sched_post solta a trava */
     volatile u8 spinning;      /* esperando a trava com interrupções abertas (BSP) */
     bool online;
+    thread_t *rq_h[5], *rq_t[5];   /* filas por classe de QoS, maior prioridade no índice 0 */
+    int rq_n;
+    volatile u16 flush_pcid;       /* PCID a invalidar; 0xFFFF = o TLB inteiro */
 } pcpu_t;
 
 static thread_t thread0 = {.id = 0, .name = "desktop", .state = TH_RUNNING};
@@ -52,6 +56,7 @@ static u64 kernel_cr3;
 static volatile int bkl_owner = 0;      /* o BSP nasce com a trava */
 static volatile bool desk_idle;         /* a thread 0 está em cpu_idle (sem a trava) */
 
+static bool thread_parked(const thread_t *t);
 static inline pcpu_t *me_pc(void) { return &pc[this_cpu()]; }
 thread_t *thread_current(void) { thread_t *t = me_pc()->cur; return t ? t : &thread0; }
 thread_t *sched_threads(void) { return threads; }
@@ -65,10 +70,69 @@ static inline bool bkl_try_(int me) {
 static inline void bkl_drop(void) { __atomic_store_n(&bkl_owner, -1, __ATOMIC_RELEASE); }
 bool bkl_held(void) { return __atomic_load_n(&bkl_owner, __ATOMIC_RELAXED) == this_cpu(); }
 
+static int have_pcid, have_invpcid;
+static u8 pcid_cached[MAX_CPUS][512];   /* 4096 bits: este núcleo já carregou o PCID */
+
+static void pcid_note(int cpu, unsigned id) {
+    if (cpu < 0 || cpu >= MAX_CPUS || id >= 4096) return;
+    pcid_cached[cpu][id >> 3] |= (u8)(1u << (id & 7));
+}
+static int pcid_has(int cpu, unsigned id) {
+    if (cpu < 0 || cpu >= MAX_CPUS || id >= 4096) return 0;
+    return (pcid_cached[cpu][id >> 3] >> (id & 7)) & 1;
+}
+static void pcid_clear_all(int cpu) {
+    if (cpu >= 0 && cpu < MAX_CPUS) __builtin_memset(pcid_cached[cpu], 0, sizeof pcid_cached[cpu]);
+}
+static void pcid_clear_one(int cpu, unsigned id) {
+    if (cpu < 0 || cpu >= MAX_CPUS || id >= 4096) return;
+    pcid_cached[cpu][id >> 3] &= (u8)~(1u << (id & 7));
+}
+
+static void invpcid_ctx(unsigned id) {
+    struct { u64 pcid, addr; } d;
+    d.pcid = id;
+    d.addr = 0;
+    __asm__ volatile("invpcid %1, %0" :: "r"((u64)2), "m"(d) : "memory");
+}
+
 static inline void flush_if_pending(pcpu_t *c) {
+    u16 id;
+    int cpu;
     if (!(__atomic_load_n(&c->pending, __ATOMIC_SEQ_CST) & PEND_FLUSH)) return;
+    id = __atomic_exchange_n(&c->flush_pcid, 0, __ATOMIC_SEQ_CST);
     __atomic_and_fetch(&c->pending, ~PEND_FLUSH, __ATOMIC_SEQ_CST);
-    __asm__ volatile("mov %%cr3,%%rax; mov %%rax,%%cr3" ::: "rax", "memory");
+    cpu = (int)(c - pc);
+    if (!have_pcid || id == 0xFFFF || !have_invpcid) {
+        u64 cr3 = read_cr3() & ~(1ULL << 63);
+        __asm__ volatile("mov %0,%%cr3" :: "r"(cr3) : "memory");
+        pcid_clear_all(cpu);
+        if (have_pcid) pcid_note(cpu, (unsigned)(cr3 & 0xFFF));
+        return;
+    }
+    if (id) invpcid_ctx(id);
+    pcid_clear_one(cpu, id);
+    if (((read_cr3() & 0xFFF) == id)) pcid_note(cpu, id);
+}
+
+void cpu_pcid_init(void) {
+    u32 a = 1, b = 0, c = 0, d = 0;
+    u64 cr4;
+    __asm__ volatile("cpuid" : "+a"(a), "=b"(b), "+c"(c), "=d"(d));
+    if (!(c & (1u << 17))) return;
+    __asm__ volatile("mov %%cr4,%0" : "=r"(cr4));
+    if (!(cr4 & (1ULL << 17))) __asm__ volatile("mov %0,%%cr4" :: "r"(cr4 | (1ULL << 17)) : "memory");
+    have_pcid = 1;
+    a = 7; b = 0; c = 0; d = 0;
+    __asm__ volatile("cpuid" : "+a"(a), "=b"(b), "+c"(c), "=d"(d));
+    if (b & (1u << 10)) have_invpcid = 1;
+}
+
+u16 sched_alloc_pcid(void) {
+    static u16 n = 1;
+    u16 id = n;
+    if (n < 4095) n++;
+    return id;
 }
 
 /* espera a trava. No BSP abre as interrupções entre as tentativas: o PIT continua contando (código
@@ -118,6 +182,7 @@ static u64 rd_msr(u32 m) { u32 lo, hi; __asm__ volatile("rdmsr" : "=a"(lo), "=d"
 static void wr_msr(u32 m, u64 v) { __asm__ volatile("wrmsr" :: "c"(m), "a"((u32)v), "d"((u32)(v >> 32))); }
 
 void sched_init(void) {
+    cpu_pcid_init();
     kernel_cr3 = read_cr3();
     pc[0].slice_start = pc[0].last_account = timer_ticks();
     pc[0].cr3 = kernel_cr3;
@@ -154,9 +219,72 @@ static bool on_cpu(const thread_t *t) {
     return false;
 }
 
+static int admit(const thread_t *t, int cpu) {
+    u64 m;
+    if (!t || cpu < 0 || cpu >= 64) return 0;
+    if (!t->proc && cpu != 0) return 0;
+    m = t->affinity ? t->affinity : ~(u64)0;
+    return (m & (1ULL << cpu)) != 0;
+}
+static int pick_cpu(const thread_t *t) {
+    int best = 0, load = 0x7fffffff, i, n;
+    n = __atomic_load_n(&ncpu, __ATOMIC_RELAXED);
+    if (n < 1) n = 1;
+    if (n > MAX_CPUS) n = MAX_CPUS;
+    for (i = 0; i < n; i++) {
+        if (i && !pc[i].online) continue;
+        if (!admit(t, i)) continue;
+        if (pc[i].rq_n < load) { load = pc[i].rq_n; best = i; }
+    }
+    return best;
+}
+static void rq_unlink(thread_t *t) {
+    pcpu_t *c;
+    int q;
+    thread_t **pp, *prev = NULL;
+    if (!t || !t->on_rq) return;
+    q = t->qos < 5 ? t->qos : 2;
+    c = &pc[t->rq_cpu < MAX_CPUS ? t->rq_cpu : 0];
+    for (pp = &c->rq_h[q]; *pp && *pp != t; pp = &(*pp)->rq_next) prev = *pp;
+    if (!*pp) { t->on_rq = 0; return; }
+    *pp = t->rq_next;
+    if (c->rq_t[q] == t) c->rq_t[q] = prev;
+    t->rq_next = NULL;
+    t->on_rq = 0;
+    if (c->rq_n) c->rq_n--;
+}
+static void rq_put(thread_t *t) {
+    pcpu_t *c;
+    int q, cpu;
+    if (!t || t->on_rq || t == &thread0 || t->state != TH_READY || thread_parked(t)) return;
+    if (t->id < 0) return;                 /* ocioso do AP */
+    q = t->qos < 5 ? t->qos : 2;
+    cpu = pick_cpu(t);
+    c = &pc[cpu];
+    t->rq_next = NULL;
+    t->rq_cpu = (u8)cpu;
+    if (c->rq_t[q]) c->rq_t[q]->rq_next = t;
+    else c->rq_h[q] = t;
+    c->rq_t[q] = t;
+    t->on_rq = 1;
+    c->rq_n++;
+}
 void sched_make_ready(thread_t *t) {
     if (t->state == TH_DEAD || t->state == TH_RUNNING) return;
     t->state = TH_READY;
+    rq_put(t);
+}
+void sched_set_qos(thread_t *t, unsigned darwin_qos) {
+    if (!t) return;
+    rq_unlink(t);
+    t->qos = (u8)smp_qos_from_darwin(darwin_qos);
+    if (t->state == TH_READY) rq_put(t);
+}
+void sched_set_affinity(thread_t *t, u64 cpu_mask) {
+    if (!t) return;
+    t->affinity = cpu_mask;
+    rq_unlink(t);
+    if (t->state == TH_READY) rq_put(t);
 }
 
 /* thread_suspend (SYS_THREADCTL, process.c): t já tem suspend > 0. Se estiver rodando em outro núcleo, o IPI de
@@ -198,6 +326,7 @@ static thread_t *new_thread(const char *name, process_t *p) {
     t->id = next_tid++;
     strncpy(t->name, name, sizeof t->name - 1);
     t->proc = p;
+    t->qos = 2;                                 /* QOS_CLASS_DEFAULT */
     return t;
 }
 
@@ -206,6 +335,7 @@ static void link_thread(thread_t *t) {
     t->state = TH_READY;
     t->next = threads->next;                    /* depois da thread 0 */
     threads->next = t;
+    rq_put(t);
     irq_restore(fl);
 }
 
@@ -258,6 +388,7 @@ static void reap(void) {
                 kprintf("reap: thread %d \"%s\" (pid %d) já liberada: t=%p vivo=%d kstack=%p vivo=%d\n", t->id, t->name,
                         t->proc ? t->proc->pid : -1, t, kheap_live(t), t->kstack, kheap_live(t->kstack));
             *pp = t->next;
+            rq_unlink(t);
             for (int i = 0; i < ncpu; i++) if (pc[i].last_user == t) pc[i].last_user = NULL;
             if (t->proc) proc_thread_exited(t);
             kfree(t->kstack);
@@ -275,17 +406,26 @@ static void account(pcpu_t *c) {
 static void wake_sleepers(void) {
     u64 now = timer_ticks();
     for (thread_t *t = threads; t; t = t->next) {
-        if (t->state == TH_SLEEPING && now >= t->wake_at) t->state = TH_READY;
+        if (t->state == TH_SLEEPING && now >= t->wake_at) { t->state = TH_READY; rq_put(t); }
         /* recepção Mach com prazo (machipc.c): o rax de "tempo esgotado" já está no frame */
         else if (t->state == TH_WAITING && t->wait_pid == -7 && t->mach_deadline && now >= t->mach_deadline) {
             t->mach_deadline = 0;
             t->mach_wait = NULL;
             t->mach_peek = false;
             t->state = TH_READY;
+            rq_put(t);
         }
         /* SYS_FUTEX_WAIT com prazo (process.c): volta com -ETIMEDOUT */
         else if (t->state == TH_WAITING && t->wait_pid == -8 && t->wake_at && now >= t->wake_at) {
             ((int_frame_t *)t->frame)->rax = (u64)-60;      /* -MOS_ETIMEDOUT (syscall.h) */
+            t->wake_at = 0;
+            t->futex_va = 0;
+            t->state = TH_READY;
+            rq_put(t);
+        }
+        /* SYS_GPU MOS_GPU_FENCE_WAIT (wait_pid = -12): prazo em wake_at */
+        else if (t->state == TH_WAITING && t->wait_pid == -12 && t->wake_at && now >= t->wake_at) {
+            ((int_frame_t *)t->frame)->rax = (u64)-60;
             t->wake_at = 0;
             t->futex_va = 0;
             t->state = TH_READY;
@@ -298,17 +438,41 @@ static bool thread_parked(const thread_t *t) {
     return t->suspend || (t->proc && t->proc->stopped);
 }
 
-/* próxima thread pronta depois de `from` (round-robin), sem contar a thread 0, nenhuma que já esteja
- * em outro núcleo e, fora do BSP, nenhuma thread do kernel (elas supõem o modelo de um núcleo) */
-static thread_t *next_ready(int me, thread_t *from) {
-    if (!from || from == pc[me].idle) from = &thread0;
-    thread_t *t = from;
-    for (int guard = 0; guard < 100000; guard++) {
-        t = t->next ? t->next : threads;
-        if (t != &thread0 && t->state == TH_READY && !thread_parked(t) && (me == 0 || t->proc) && !on_cpu(t)) return t;
-        if (t == from) break;
+/* varre quem ficou READY fora da fila (acordado por outro subsistema) e o enfileira */
+static void sweep_ready(void) {
+    for (thread_t *t = threads; t; t = t->next)
+        if (t->state == TH_READY && !t->on_rq && !on_cpu(t)) rq_put(t);
+}
+static thread_t *take_q(pcpu_t *c, int me) {
+    for (int q = 0; q < 5; q++) {
+        thread_t *t = c->rq_h[q];
+        int guard = 0;
+        while (t && guard++ < 100000) {
+            thread_t *n = t->rq_next;
+            if (t->state != TH_READY || thread_parked(t) || on_cpu(t)) {
+                rq_unlink(t);
+                if (t->state == TH_READY && !thread_parked(t) && !on_cpu(t)) rq_put(t);
+                t = n;
+                continue;
+            }
+            if (!admit(t, me)) { t = n; continue; }
+            rq_unlink(t);
+            return t;
+        }
     }
     return NULL;
+}
+/* fila local, da classe mais urgente para a menos; se vazia, rouba da CPU mais carregada */
+static thread_t *next_ready(int me, thread_t *from) {
+    int best, bn, i, n;
+    thread_t *t;
+    (void)from;
+    sweep_ready();
+    t = take_q(&pc[me], me);
+    if (t) return t;
+    best = -1; bn = 0; n = ncpu;
+    for (i = 0; i < n; i++) if (i != me && pc[i].rq_n > bn) { bn = pc[i].rq_n; best = i; }
+    return best >= 0 ? take_q(&pc[best], me) : NULL;
 }
 
 /* Preempção de um processo arm64 traduzido: a reserva do LDXR não sobrevive à troca.
@@ -335,15 +499,28 @@ static u64 switch_to(pcpu_t *c, int_frame_t *f, thread_t *to) {
     if (to == from) { from->state = TH_RUNNING; return (u64)f; }
     account(c);
     from->frame = (u64)f;
-    if (from->state == TH_RUNNING) from->state = TH_READY;
+    if (from->state == TH_RUNNING) { from->state = TH_READY; rq_put(from); }
     if (from != &thread0 && from != c->idle) c->last_user = from;
     if (gs_switch) { from->gs_base = rd_msr(MSR_GS_BASE); wr_msr(MSR_GS_BASE, to->gs_base); }
     c->cur = to;
     to->state = TH_RUNNING;
     c->slice_start = timer_ticks();
-    u64 cr3 = to->proc ? (u64)to->proc->pml4 : kernel_cr3;
-    if (cr3 != read_cr3()) __asm__ volatile("mov %0,%%cr3" :: "r"(cr3) : "memory");
-    c->cr3 = cr3;
+    {
+        u64 phys = to->proc ? (u64)to->proc->pml4 : kernel_cr3;
+        unsigned id = 0;
+        u64 ncr3, cur;
+        phys &= ~0xFFFULL;
+        if (to->proc) {
+            if (!to->proc->pcid) to->proc->pcid = sched_alloc_pcid();
+            id = to->proc->pcid;
+        }
+        ncr3 = have_pcid ? (phys | id) : phys;
+        cur = read_cr3() & ~(1ULL << 63);
+        if ((cur & ~0xFFFULL) != phys || (have_pcid && (unsigned)(cur & 0xFFF) != id))
+            __asm__ volatile("mov %0,%%cr3" :: "r"(ncr3) : "memory");
+        c->cr3 = ncr3;
+        if (have_pcid) pcid_note((int)(c - pc), id);
+    }
     if (to->kstack) tss_set_rsp0(to->kstack_top);
     return to->frame;
 }
@@ -376,7 +553,9 @@ static u64 irq_exit(int_frame_t *f, bool timer) {
         thread_t *t = next_ready(me, c->last_user);
         return t ? switch_to(c, f, t) : (u64)f;
     }
-    if (cur->state == TH_RUNNING && !thread_parked(cur) && timer_ticks() - c->slice_start < SCHED_SLICE_MS) return (u64)f;
+    if (cur->state == TH_RUNNING && !thread_parked(cur) &&
+        timer_ticks() - c->slice_start < (u64)(cur->qos == 0 ? 8 : cur->qos == 1 ? 6 : cur->qos == 3 ? 2 : cur->qos == 4 ? 1 : SCHED_SLICE_MS))
+        return (u64)f;
     reap();
     if (me == 0) return switch_to(c, f, &thread0);   /* fim da fatia: o desktop roda */
     thread_t *t = next_ready(me, cur);
@@ -466,23 +645,54 @@ void sched_post(void) {
 }
 
 /* ------------------------------------------------------------ IPIs para outros núcleos */
-static void kick_wait(int cpu, u32 bit) {
+static void kick_mark(int cpu, u32 bit, u16 pcid) {
     pcpu_t *c = &pc[cpu];
+    if (bit & PEND_FLUSH) {
+        u16 old = __atomic_load_n(&c->flush_pcid, __ATOMIC_SEQ_CST);
+        u16 neu = (!old || old == pcid) ? pcid : (u16)0xFFFF;
+        __atomic_store_n(&c->flush_pcid, neu, __ATOMIC_SEQ_CST);
+    }
     __atomic_or_fetch(&c->pending, bit, __ATOMIC_SEQ_CST);
-    if (!__atomic_load_n(&c->in_user, __ATOMIC_SEQ_CST)) return;   /* vai ver a marca antes de voltar ao ring 3 */
-    smp_send_ipi(cpu, VEC_KICK);
+}
+static void kick_wait_marked(int cpu, u32 bit, int fire) {
+    pcpu_t *c = &pc[cpu];
+    if (fire && __atomic_load_n(&c->in_user, __ATOMIC_SEQ_CST)) smp_send_ipi(cpu, VEC_KICK);
+    if (!fire) return;
     for (u64 spins = 0; __atomic_load_n(&c->in_user, __ATOMIC_SEQ_CST) && (__atomic_load_n(&c->pending, __ATOMIC_SEQ_CST) & bit);
          spins++) {
         __asm__ volatile("pause");
         if (spins == 200000000ULL) { kprintf("smp: núcleo %d não respondeu ao IPI (pendente %u)\n", cpu, c->pending); break; }
     }
 }
+static void kick_wait(int cpu, u32 bit) {
+    kick_mark(cpu, bit, 0);
+    kick_wait_marked(cpu, bit, 1);
+}
 
 void smp_tlb_shootdown(u64 cr3) {
-    int me = this_cpu();
+    int me = this_cpu(), i, n;
+    unsigned char cached[64], cur[64], online[64];
+    unsigned long long mask;
+    u16 pcid = 0;
+    process_t *pr;
     cr3 &= ~0xFFFULL;
-    for (int i = 0; i < ncpu; i++)
-        if (i != me && pc[i].online && (pc[i].cr3 & ~0xFFFULL) == cr3) kick_wait(i, PEND_FLUSH);
+    for (pr = proc_list(); pr; pr = pr->next)
+        if (pr->pml4 && ((u64)pr->pml4 & ~0xFFFULL) == cr3) { pcid = pr->pcid; break; }
+    n = ncpu;
+    if (n > 64) n = 64;
+    for (i = 0; i < n; i++) {
+        online[i] = pc[i].online ? 1 : 0;
+        cur[i] = ((pc[i].cr3 & ~0xFFFULL) == cr3) ? 1 : 0;
+        cached[i] = (have_pcid && pcid && pcid_has(i, pcid)) ? 1 : 0;
+    }
+    mask = smp_shoot_mask((unsigned)n, me, cached, cur, online);
+    for (i = 0; i < n; i++) if (mask & (1ULL << i)) kick_mark(i, PEND_FLUSH, pcid ? pcid : (u16)0xFFFF);
+    __asm__ volatile("mfence" ::: "memory");
+    /* lote: marca todas, dispara os IPIs, só então espera. Quem está no kernel vê a marca na volta. */
+    for (i = 0; i < n; i++)
+        if ((mask & (1ULL << i)) && __atomic_load_n(&pc[i].in_user, __ATOMIC_SEQ_CST)) smp_send_ipi(i, VEC_KICK);
+    for (i = 0; i < n; i++)
+        if ((mask & (1ULL << i)) && __atomic_load_n(&pc[i].in_user, __ATOMIC_SEQ_CST)) kick_wait_marked(i, PEND_FLUSH, 1);
 }
 
 /* threads de p foram marcadas TH_DEAD (fim do processo, execve): tira dos outros núcleos as que estão rodando

@@ -45,7 +45,7 @@ Arquivo: `NSHomeDirectory()/Library/Application Support/com.mos.tcc/decisions.tx
 
 1. Antes de devolver pixels de tela ou de injetar a árvore de acessibilidade, ler `cx_tcc_preflight("kTCCServiceScreenCapture")` ou `cx_tcc_preflight("kTCCServiceAccessibility")`.
 2. Se o estado for pending (`cx_tcc_state` devolve 3), mostrar o prompt. A decisão é `cx_tcc_decide(bundle, serviço, granted)` com granted 1 ou 0. Bundle NULL usa o bundle do processo.
-3. A injeção de eventos (`CGEventPost`) não é bloqueada por este registro: o gate é a captura e a árvore.
+3. `CGEventPost` e `CGEventTapCreate` exigem `kTCCServiceAccessibility` granted. Sem isso o post não entra na fila e o tap é nulo. A captura continua no gate de gravação de tela.
 4. Quando a árvore existir, o ponto de entrada continua `AXUIElementCopyAttributeValue` e as irmãs. Hoje, com permissão, elas devolvem -25200 de propósito.
 
 Não há branch de Interface aberta no GitHub para alinhar este contrato (consulta em 2026-11-10: nenhum PR aberto).
@@ -97,9 +97,9 @@ O Electron desses três apps liga `QuickLookUI.framework` e `StoreKit.framework`
 
 **QuickLookUI — stub, sem janela.** `sharedPreviewPanel` devolve um painel. `makeKeyAndOrderFront:` e `orderFront:` só marcam visível e retornam; não chamam `NSWindow` e não entram em loop. `reloadData` pergunta a contagem uma vez e, no máximo, o item 0. `enterFullScreenMode:withOptions:` devolve NÃO. A prévia não é desenhada.
 
-**Core Data — SQLite no libSystem, memória na dylib de disco.** Slack e Claude não importam classe de Core Data. O libSystem (`coredata_fw.c` + `coredata_store.inc` + o amalgama em `sqlite3_mos.c`) grava um arquivo SQLite (`mos_object`, `mos_attr`) no caminho pedido, ou em `~/Library/Application Support/<nome>/store.moscd`. Um arquivo antigo `MOSCD1` é migrado na primeira abertura. `NSInMemoryStoreType` não toca disco. `sqlite3_open_v2` abre o banco. Predicado usa o `NSPredicate` já existente. A dylib `CoreData.framework` do disco, a do Postico, continua só em memória.
+**Core Data — a mesma loja SQLite no libSystem e na dylib de disco.** Slack e Claude não importam classe de Core Data. O libSystem (`coredata_fw.c` + `coredata_store.inc` + o amalgama em `sqlite3_mos.c`) grava um arquivo SQLite (`mos_object`, `mos_attr`) no caminho pedido, ou em `~/Library/Application Support/<nome>/store.moscd`. A dylib `CoreData.framework` (`CoreData.m`) chama `moscd_*` no libSystem quando o Postico carrega o Mach-O do disco: `addPersistentStoreWithType:NSSQLiteStoreType` abre o arquivo, `save` confirma, o fetch aceita predicado `chave == valor` (ou `evaluateWithObject:`). Um arquivo antigo `MOSCD1` é migrado na primeira abertura. `NSInMemoryStoreType` não toca disco. Binary e XML continuam só em memória. Não há `.momd`. `sqlite3_open_v2` abre o banco.
 
-`tools/cdtest.c` exercita a loja no host (inserir, gravar, reabrir, apagar, limite, migração de MOSCD1 e o arquivo aberto pelo `sqlite3` do host). `tools/sktest.c` confere a política e o texto do recibo. Isso não é o `build.ps1`, não é a VM e não é hardware.
+`tools/cdtest.c` exercita a loja do libSystem no host (inserir, gravar, reabrir, apagar, limite, migração de MOSCD1 e o arquivo aberto pelo `sqlite3` do host). `tools/cdfwtest.c` (com `tools/cdfw_host.c`) exercita os mesmos `moscd_*` que a dylib de disco chama: abrir, gravar, fechar, reabrir, predicado `chave == valor`, migração MOSCD1 e o `sqlite3` do host. `tools/sktest.c` confere a política e o texto do recibo. Isso não é o `build.ps1`, não é a VM e não é hardware.
 
 ## Foundation / formatação — 204 símbolos do WhatsApp
 
