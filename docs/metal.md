@@ -160,9 +160,7 @@ quadrado, com os delegates chamados e o `CADisplayLink` contando quadros.
 
 ## GPU do kernel (ABI r1)
 
-O desenho acima não mudou de lugar. `gpucall.c` é o cliente de `kernel/include/mos_gpu.h`
-(`SYS_GPU`, contexto, BO, submit, fence, IOSurface). Enquanto o header não está na árvore,
-ou a syscall falha, o mesmo cliente responde no CPU. O que o Metal ainda precisa do kernel,
-e o que o SPIR-V cobre, está em `docs/metal-gpu-needs.md`. O `CAMetalLayer` só publica o
-quadro nessa ABI quando o kernel anuncia `MOS_GPU_CAP_IOSURF`; a janela continua no
-compositor do QuartzCore.
+`gpucall.c` chama `SYS_GPU` (62, `syscall.h`) com os tipos de `kernel/include/mos_gpu.h`.
+`IOSurfaceCreate` BGRA, que é o drawable do `CAMetalLayer`, usa o BO e o id da ABI
+quando `MOS_GPU_INFO` traz `MOS_GPU_CAP_IOSURF`. O que falta para o submit 3D está
+em `docs/metal-gpu-needs.md`. A janela continua no compositor do QuartzCore.

@@ -9,10 +9,12 @@
 #include <stdlib.h>
 #else
 void *malloc(unsigned long n);
+void *calloc(unsigned long n, unsigned long s);
 void *realloc(void *p, unsigned long n);
 void free(void *p);
 void *memcpy(void *d, const void *s, unsigned long n);
 void *memset(void *d, int c, unsigned long n);
+int memcmp(const void *a, const void *b, unsigned long n);
 unsigned long strlen(const char *s);
 int strcmp(const char *a, const char *b);
 int strncmp(const char *a, const char *b, unsigned long n);
@@ -488,6 +490,174 @@ static cf_u32 cf_version_bcd(const char *s) {
     if (m > 9) m = 9;
     if (b > 9) b = 9;
     return ((cf_u32)M << 24) | ((cf_u32)m << 20) | ((cf_u32)b << 16);
+}
+
+/* próxima virada de fuso, ou 0 se o nome não tem horário de verão */
+static double cf_tz_next_dst(const char *name, double at) {
+    int base = cf_tz_offset(name, at);
+    int i;
+    for (i = 1; i < 400; i++) {
+        double t = at + (double)i * 86400.0;
+        if (cf_tz_offset(name, t) != base) return t;
+    }
+    return 0;
+}
+
+/* ---- bplist00: o mesmo layout que plist.c lê (trailer de 32, offset e ref em big-endian) ---- */
+typedef struct {
+    unsigned char *body; int bn, bc;
+    int *off, n, cap;
+} cf_bpw;
+static void bpw_byte(cf_bpw *w, unsigned char c) {
+    if (w->bn + 1 > w->bc) {
+        int c2 = w->bc ? w->bc * 2 : 64;
+        unsigned char *n = (unsigned char *)realloc(w->body, (size_t)c2);
+        if (!n) return;
+        w->body = n; w->bc = c2;
+    }
+    w->body[w->bn++] = c;
+}
+static void bpw_bytes(cf_bpw *w, const void *p, int n) {
+    int i; for (i = 0; i < n; i++) bpw_byte(w, ((const unsigned char *)p)[i]);
+}
+static int bpw_slot(cf_bpw *w) {
+    if (w->n == w->cap) {
+        int c = w->cap ? w->cap * 2 : 8;
+        int *n = (int *)realloc(w->off, (size_t)c * sizeof(int));
+        if (!n) return -1;
+        w->off = n; w->cap = c;
+    }
+    w->off[w->n] = w->bn;
+    return w->n++;
+}
+static cf_bpw *cf_bpw_new(void) { return (cf_bpw *)calloc(1, sizeof(cf_bpw)); }
+static void cf_bpw_free(cf_bpw *w) { if (!w) return; free(w->body); free(w->off); free(w); }
+static int cf_bpw_bool(cf_bpw *w, int v) { int i = bpw_slot(w); bpw_byte(w, v ? 0x09 : 0x08); return i; }
+static int cf_bpw_int(cf_bpw *w, long long v) {
+    int i = bpw_slot(w), k; unsigned long long u = (unsigned long long)v;
+    bpw_byte(w, 0x13);
+    for (k = 7; k >= 0; k--) bpw_byte(w, (unsigned char)(u >> (k * 8)));
+    return i;
+}
+static int cf_bpw_str(cf_bpw *w, const char *s) {
+    int i = bpw_slot(w), n = s ? (int)strlen(s) : 0, k;
+    if (n < 15) bpw_byte(w, (unsigned char)(0x50 + n));
+    else if (n < 256) { bpw_byte(w, 0x5F); bpw_byte(w, 0x10); bpw_byte(w, (unsigned char)n); }
+    else { bpw_byte(w, 0x5F); bpw_byte(w, 0x11); bpw_byte(w, (unsigned char)(n >> 8)); bpw_byte(w, (unsigned char)n); }
+    for (k = 0; k < n; k++) bpw_byte(w, (unsigned char)s[k]);
+    return i;
+}
+static int cf_bpw_data(cf_bpw *w, const void *p, int n) {
+    int i = bpw_slot(w);
+    if (n < 15) bpw_byte(w, (unsigned char)(0x40 + n));
+    else { bpw_byte(w, 0x4F); bpw_byte(w, 0x10); bpw_byte(w, (unsigned char)n); }
+    bpw_bytes(w, p, n);
+    return i;
+}
+static int cf_bpw_arr(cf_bpw *w, const int *idx, int n) {
+    int i = bpw_slot(w), k;
+    if (n < 15) bpw_byte(w, (unsigned char)(0xA0 + n));
+    else { bpw_byte(w, 0xAF); bpw_byte(w, 0x10); bpw_byte(w, (unsigned char)n); }
+    for (k = 0; k < n; k++) bpw_byte(w, (unsigned char)idx[k]);
+    return i;
+}
+static int cf_bpw_dict(cf_bpw *w, const int *keys, const int *vals, int n) {
+    int i = bpw_slot(w), k;
+    if (n < 15) bpw_byte(w, (unsigned char)(0xD0 + n));
+    else { bpw_byte(w, 0xDF); bpw_byte(w, 0x10); bpw_byte(w, (unsigned char)n); }
+    for (k = 0; k < n; k++) bpw_byte(w, (unsigned char)keys[k]);
+    for (k = 0; k < n; k++) bpw_byte(w, (unsigned char)vals[k]);
+    return i;
+}
+static int cf_bpw_finish(cf_bpw *w, int top, unsigned char **out, int *outn) {
+    int osz = 1, i, k, total;
+    for (i = 0; i < w->n; i++) if (w->off[i] + 8 >= 256) osz = 2;
+    total = 8 + w->bn + w->n * osz + 32;
+    if (osz == 1) for (i = 0; i < w->n; i++) if (w->off[i] + 8 >= 256) osz = 2;
+    if (total >= 256 && osz < 2) osz = 2;
+    {
+        unsigned char *b = (unsigned char *)calloc(1, (size_t)(8 + w->bn + w->n * 4 + 32));
+        int n = 0, ot;
+        if (!b) return -1;
+        memcpy(b, "bplist00", 8); n = 8;
+        memcpy(b + n, w->body, (size_t)w->bn); n += w->bn;
+        ot = n;
+        for (i = 0; i < w->n; i++) {
+            int off = w->off[i] + 8;
+            for (k = osz - 1; k >= 0; k--) b[n++] = (unsigned char)(off >> (k * 8));
+        }
+        while (n + 32 > 8 + w->bn + w->n * osz + 32) { /* tamanho fechado */ break; }
+        {
+            unsigned char *nb = (unsigned char *)realloc(b, (size_t)n + 32);
+            unsigned long long nobj = (unsigned long long)w->n, topu = (unsigned long long)top, otu = (unsigned long long)ot;
+            if (!nb) { free(b); return -1; }
+            b = nb;
+            memset(b + n, 0, 32);
+            b[n + 6] = (unsigned char)osz;
+            b[n + 7] = 1;
+            for (k = 0; k < 8; k++) b[n + 8 + k] = (unsigned char)(nobj >> (56 - 8 * k));
+            for (k = 0; k < 8; k++) b[n + 16 + k] = (unsigned char)(topu >> (56 - 8 * k));
+            for (k = 0; k < 8; k++) b[n + 24 + k] = (unsigned char)(otu >> (56 - 8 * k));
+            n += 32;
+            *out = b; if (outn) *outn = n;
+        }
+    }
+    return 0;
+}
+
+typedef struct { const unsigned char *b; int n, osz, rsz, nobj, top, otab; } cf_bpr;
+static unsigned long long bp_be(const unsigned char *p, int n) {
+    unsigned long long v = 0; int i; for (i = 0; i < n; i++) v = (v << 8) | p[i]; return v;
+}
+static int cf_bpr_open(cf_bpr *r, const unsigned char *b, int n) {
+    const unsigned char *t;
+    memset(r, 0, sizeof *r);
+    if (!b || n < 40 || memcmp(b, "bplist00", 8)) return -1;
+    t = b + n - 32;
+    r->b = b; r->n = n; r->osz = t[6]; r->rsz = t[7];
+    r->nobj = (int)bp_be(t + 8, 8); r->top = (int)bp_be(t + 16, 8); r->otab = (int)bp_be(t + 24, 8);
+    if (!r->osz || !r->rsz || r->otab >= n || r->nobj < 1) return -1;
+    return 0;
+}
+static const unsigned char *cf_bpr_obj(cf_bpr *r, int idx, int *kind, unsigned long long *ival, const unsigned char **bytes, int *len) {
+    int off; const unsigned char *p; int t, m, n;
+    if (idx < 0 || idx >= r->nobj) return 0;
+    off = (int)bp_be(r->b + r->otab + idx * r->osz, r->osz);
+    if (off < 0 || off >= r->n) return 0;
+    p = r->b + off; t = *p >> 4; m = *p & 15;
+    if (kind) *kind = t;
+    if (t == 0) { if (ival) *ival = (unsigned long long)(m == 9); return p; }
+    if (t == 1) { n = 1 << m; if (ival) *ival = bp_be(p + 1, n > 8 ? 8 : n); return p; }
+    p++;
+    if (m == 15) { int nb = 1 << (*p & 15); n = (int)bp_be(p + 1, nb); p += 1 + nb; }
+    else n = m;
+    if (len) *len = n;
+    if (bytes) *bytes = p;
+    return p;
+}
+
+/* um passo do CFSocket no run loop: se o descritor tem leitura, entrega os bytes */
+#ifdef CF_HOST
+#include <poll.h>
+#include <sys/socket.h>
+#define cf_pollfd struct pollfd
+#else
+typedef struct { int fd; short events, revents; } cf_pollfd;
+int poll(cf_pollfd *fds, unsigned n, int timeout);
+long recv(int fd, void *b, unsigned long n, int flags);
+#endif
+static int cf_sock_service(int fd, unsigned flags, void (*fn)(void *info, int kind, const void *data, int n), void *info) {
+    cf_pollfd p;
+    unsigned char buf[512];
+    long n;
+    if (fd < 0) return -1;
+    memset(&p, 0, sizeof p);
+    p.fd = fd; p.events = 1;
+    if (poll(&p, 1, 0) <= 0 || !(p.revents & 1)) return 0;
+    n = recv(fd, buf, sizeof buf, 0);
+    if (n < 0) return -1;
+    if (fn && (flags & 1)) fn(info, flags == 3 ? 3 : 1, flags == 3 ? buf : 0, (int)n);
+    return 1;
 }
 
 #endif

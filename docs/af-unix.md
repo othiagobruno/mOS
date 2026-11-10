@@ -18,4 +18,4 @@ AX (`axtransport.h`, não editado aqui): cada processo faz `bind` em `/tmp/mos-a
 
 Limites: 128 sockets, 64 nomes, backlog 32, stream 16 KiB, datagrama 8192 e fila de 32, 16 direitos, controle até 512 bytes, 8 iovecs. Uma espera bloqueada por sentido; a segunda recebe `EAGAIN`. Fila de `accept` cheia e não-bloqueante: `EAGAIN` (não há `EINPROGRESS`). `POLLOUT` aparece sempre pronto; buffer cheio bloqueia ou devolve `EAGAIN` na escrita.
 
-Stub: `SO_ERROR` fica 0. `SO_SNDBUF`/`SO_RCVBUF` só informam o teto. `setsockopt` não altera nada. `getpeereid` do libSystem continua 501/20 para qualquer fd. `MSG_WAITALL` não junta leituras. O tradutor ARM invalida um iovec, o endereço e o controle.
+Stub: `SO_ERROR` fica 0. `SO_SNDBUF`/`SO_RCVBUF` só informam o teto. `setsockopt` não altera nada. `getpeereid` do libSystem continua 501/20 para qualquer fd. `MSG_WAITALL` não junta leituras. O tradutor ARM invalida os iovecs que cabem no retorno (até 8), o endereço e o controle.

@@ -1,29 +1,25 @@
-/* Camada do Metal sobre a ABI de GPU.
+/* Cliente do Metal para a ABI de GPU.
  *
- * O contrato é kernel/include/mos_gpu.h e docs/gpu-abi.md (agente K-GPU).
- * Este arquivo não descreve ioctl nem estrutura de syscall: só o que o
- * libSystem chama. Enquanto o header do kernel não está na árvore, as
- * mesmas operações rodam no backend de CPU. Quando o header entra,
- * gpucall.c passa a usar SYS_GPU e cai no CPU se a syscall falhar.
+ * Os tipos e o número da syscall vêm de kernel/include/mos_gpu.h e de
+ * kernel/include/syscall.h (SYS_GPU). Este arquivo só declara o que o
+ * libSystem chama.
  */
 #pragma once
 #include "sys.h"
+#include "../../kernel/include/mos_gpu.h"
 
-/* 0 = backend de CPU; senão bits MOS_GPU_CAP_* do kernel. */
+/* Bits MOS_GPU_CAP_* de MOS_GPU_INFO. 0 se a syscall falhou. */
 unsigned mos_gpu_caps(void);
 
-/* Consulta a syscall uma vez. Pode ser chamada de novo; não muda o resultado. */
+/* Consulta MOS_GPU_INFO uma vez. */
 void mos_gpu_boot(void);
 
-/* Uma operação da ABI. `op` é MOS_GPU_*; `st` é a estrutura correspondente;
- * `n` é o tamanho que o chamador preencheu. 0 ou -errno. */
+/* Uma operação. `op` é MOS_GPU_*; `st` é a estrutura; `n` é o tamanho
+ * preenchido. 0 ou -errno. */
 int mos_gpu_op(unsigned op, void *st, unsigned n);
 
-/* Cópia BGRA para uma IOSurface da ABI (BO + id). No CPU o BO é memória
- * alinhada deste processo. Devolve o id, ou 0 se não couber. Não troca o
- * modo de vídeo: KMS_SET é tela inteira e fica a cargo de quem compõe. */
-unsigned mos_gpu_present_bgra(const void *px, unsigned w, unsigned h, unsigned stride);
-
-/* Se o kernel anunciou IOSurface, publica o quadro BGRA na ABI.
- * Sem essa capacidade não faz nada: o QuartzCore segue com o IOSurface de software. */
-void mos_gpu_present_layer(const void *px, unsigned w, unsigned h, unsigned stride);
+/* Pixels BGRA de uma IOSurface passam a ser o BO da ABI.
+ * `*px` é o mapeamento, `*id` o id da superfície, `*bo` o handle.
+ * Sem MOS_GPU_CAP_IOSURF devolve -MOS_ENOENT. */
+int mos_gpu_bind_iosurface(unsigned w, unsigned h, unsigned stride, void **px, unsigned *id, unsigned *bo);
+void mos_gpu_unbind_iosurface(unsigned id, unsigned bo);
