@@ -468,6 +468,8 @@ static void test_launch_runtime(void) {
     CHECK(!ls_app_by_id("com.mos.lsregressC") && !ls_app_by_id("com.mos.okinstall"), "apps de teste saem do banco");
 }
 
+void ls_open_tests_run(int *ok, int *bad);
+
 void unit_tests_run(void) {
     kprintf("unit: ===== testes de unidade (build MOS_UNIT_TESTS) =====\n");
     test_crypto();
@@ -480,6 +482,7 @@ void unit_tests_run(void) {
     test_payload_policy();
     test_no_hw_rng();
     test_launch_runtime();
+    ls_open_tests_run(&n_ok, &n_bad);
     kprintf("unit: RESUMO: %d verificações ok, %d FALHA(S) — %s\n", n_ok, n_bad, n_bad ? "REPROVADO" : "APROVADO");
 }
 #endif

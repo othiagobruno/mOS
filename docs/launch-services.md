@@ -64,7 +64,7 @@ Testado com os `Info.plist` e `.icns` reais (o registro não precisa do executá
 
 Armadilha achada nos apps reais: o VS Code e o Cursor põem `CFBundleTypeOSTypes` = `****` em todas as entradas, ao lado da extensão e com `LSHandlerRank` Owner. `****` só vale como "qualquer tipo" numa entrada sem extensões nem MIME, e uma declaração genérica nunca passa na frente de uma que cita o tipo — senão o Cursor viraria o app de tudo.
 
-O `ls_rescan` periódico (`ls_tick`, cerca de 1,5 s) compara um carimbo do diretório que mistura o nome do `.app`, o mtime e uma amostra do `Info.plist` e dos arquivos em `Contents/MacOS`. Trocar o conteúdo do plist ou do executável no mesmo tamanho faz o bundle ser relido. O plist de escolhas em `~/Library/Preferences/com.apple.LaunchServices/com.apple.launchservices.secure.plist` é relido quando o carimbo desse arquivo muda, inclusive uma troca no lugar, sem mudar o tamanho. O teste está em `kernel/fs/unit_tests.c` (`test_launch_runtime`, só com `-DMOS_UNIT_TESTS`).
+O `ls_rescan` periódico (`ls_tick`, cerca de 1,5 s) compara um carimbo do diretório que mistura o nome do `.app`, o mtime e uma amostra do `Info.plist` e dos arquivos em `Contents/MacOS`. Trocar o conteúdo do plist ou do executável no mesmo tamanho faz o bundle ser relido. O plist de escolhas em `~/Library/Preferences/com.apple.LaunchServices/com.apple.launchservices.secure.plist` é relido quando o carimbo desse arquivo muda, inclusive uma troca no lugar, sem mudar o tamanho. Os testes estão em `kernel/fs/unit_tests.c` (`test_launch_runtime`) e em `kernel/fs/ls_open_tests.c` (`ls_open` dos caminhos que voltam sem abrir janela, mais um plist do mesmo tamanho), só com `-DMOS_UNIT_TESTS`.
 
 ## Arquivos compactados
 

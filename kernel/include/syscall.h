@@ -315,7 +315,7 @@ enum {
     MOS_DYLD_OPEN = 1, /* (path, mos_dyld_open_t*, endereço de quem chamou) -> índice | 0x10000 (libSystem) | -errno
                           carrega MH_DYLIB/MH_BUNDLE e dependências; @rpath/@loader_path relativos a quem chamou */
     MOS_DYLD_SYM,      /* (handle, nome C sem "_", endereço de quem chamou) -> endereço ou 0 */
-    MOS_DYLD_CLOSE,    /* (índice) -> 0                              nada é descarregado */
+    MOS_DYLD_CLOSE,    /* (índice) -> 1 se caiu a última referência (a imagem continua mapeada); 0 caso contrário */
     MOS_DYLD_COUNT,    /* () -> número de imagens */
     MOS_DYLD_IMAGE,    /* (índice, buf, cap) -> endereço do cabeçalho Mach-O (0 = não existe); buf recebe o caminho */
     MOS_DYLD_FIND,     /* (endereço) -> índice da imagem que o contém ou -ESRCH */
