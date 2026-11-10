@@ -32,3 +32,12 @@ jobs:
         run: python3 tools/corpus/harness.py hosttest --lib /tmp/mos-linux-build/libSystem.mos --disco /tmp/mos-linux-build/libunwind-x86
       - name: teste de host do Virtualization
         run: sh tools/test-vz.sh
+      - name: machotest (Linux)
+        run: |
+          zig cc -target x86_64-linux-gnu -O2 -std=gnu11 -DMOS_HOST_TEST -fno-strict-aliasing -Ikernel/include -Itools \
+            tools/machotest.c tools/host_unix.c tools/host_gpu.c tools/host_qos.c tools/host_id.c tools/host_bootstrap.c \
+            tools/host_enter.S kernel/compat/macho.c -o /tmp/machotest -pthread
+      - name: teste de host do /usr/bin/security
+        run: MOS_ZIG=zig bash tools/test-security-cli.sh /tmp/mos-linux-build/libSystem.mos /tmp/machotest
+      - name: teste de host do git da imagem
+        run: bash tools/test-git-image.sh /tmp/mos-linux-build/libSystem.mos /tmp/machotest /tmp/mos-linux-build/apps-dl/brew

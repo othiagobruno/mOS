@@ -139,7 +139,9 @@ PY
 APP=$(unzip_app "$DL/Claude.zip" claude)
 stage_one "$APP"
 APP=$(unzip_app "$DL/Cursor.zip" cursor)
-stage_one "$APP" --cursor-extras
+# git do Homebrew (bottle Intel, sha256 do manifesto do ghcr.io conferido pelo fetch-bottles.sh) com pcre2 e gettext
+bash "$ROOT/tools/fetch-bottles.sh" git gettext -d "$DL/brew"
+stage_one "$APP" --cursor-extras --bottles "$DL/brew"
 extrair_dmg "$DL/Grok.dmg" grok
 APP=$(find "$DL/x-grok" -name 'Grok Bot.app' -type d | head -1)
 if [ -z "$APP" ]; then echo "stage-apps: Grok Bot.app não saiu do dmg" >&2; exit 1; fi

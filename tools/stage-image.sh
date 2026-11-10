@@ -233,35 +233,21 @@ if [ -n "$TRACE" ]; then printf '%s\n' "${TRACE//;/$'\n'}" > "$MOS/Sistema/Bibli
 printf '%s\n' 'mos-stage-linux-ok' > "$MOS/Sistema/Biblioteca/mos-stage-linux.txt"
 
 if [ "$CURSOR" = 1 ]; then
+    # O Cursor (como o VS Code) chama /usr/bin/security find-certificate -a -p (@vscode/proxy-agent) e o git.
+    # /usr/bin/security é o Mach-O de userland/cli-macos/security.c, que o tools/build.sh já pôs no esp.
     BIN=$MOS/usr/bin
-    OPT=$MOS/usr/local/opt/git
-    mkdir -p "$BIN" "$MOS/usr/local/bin" "$OPT/bin"
+    mkdir -p "$BIN"
     cp -f "$ROOT/tools/brew-shims/which" "$BIN/which"
-    cp -f "$ROOT/tools/brew-shims/security" "$BIN/security"
-    chmod +x "$BIN/which" "$BIN/security"
-    if [ -n "$BOTTLES" ] && [ -f "$BOTTLES/git/bin/git" ]; then
-        cp -f "$BOTTLES/git/bin/git" "$OPT/bin/git"
-        chmod +x "$OPT/bin/git"
-        if [ -d "$BOTTLES/git/libexec/git-core" ]; then
-            mkdir -p "$OPT/libexec/git-core"
-            main=$(stat -c %s "$BOTTLES/git/bin/git")
-            for f in "$BOTTLES/git/libexec/git-core"/*; do
-                [ -f "$f" ] || continue
-                base=$(basename "$f")
-                sz=$(stat -c %s "$f")
-                if [ "$base" != git ] && [ "$sz" = "$main" ]; then
-                    printf '%s' '#mOS-link:/usr/local/opt/git/bin/git' > "$OPT/libexec/git-core/$base"
-                else
-                    cp -f "$f" "$OPT/libexec/git-core/$base"
-                fi
-            done
-        fi
-    else
-        cp -f "$ROOT/tools/brew-shims/git" "$OPT/bin/git"
-        chmod +x "$OPT/bin/git"
+    chmod +x "$BIN/which"
+    if [ ! -f "$BIN/security" ]; then
+        echo "stage-image: $BIN/security ausente (rode tools/build.sh, que compila userland/cli-macos/security.c)" >&2
+        exit 1
     fi
-    printf '%s' '#mOS-link:/usr/local/opt/git/bin/git' > "$MOS/usr/local/bin/git"
-    printf '%s' '#mOS-link:/usr/local/opt/git/bin/git' > "$BIN/git"
+    if [ -z "$BOTTLES" ]; then
+        echo "stage-image: --cursor-extras precisa de --bottles <dir> com o git (tools/fetch-bottles.sh git gettext -d <dir>)" >&2
+        exit 1
+    fi
+    bash "$ROOT/tools/stage-git.sh" "$BOTTLES" "$MOS"
 fi
 
 OVT=$OUTABS/overlay-teste

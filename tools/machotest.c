@@ -1505,6 +1505,7 @@ static long long do_syscall_locked(u64 n, u64 a, u64 b, u64 c, u64 d) {
         m->size = (unsigned long long)s.st_size;
         m->is_dir = S_ISDIR(s.st_mode) ? 1 : 0;
         m->mtime = (long long)s.st_mtime;
+        m->mode = (unsigned)(s.st_mode & 07777);   /* o SYS_CHMOD abaixo grava no arquivo do host */
 #endif
         return 0;
     }
@@ -1542,6 +1543,11 @@ static long long do_syscall_locked(u64 n, u64 a, u64 b, u64 c, u64 d) {
 #else
         return mkdir(hp, 0755) ? -MOS_EEXIST : 0;
 #endif
+#ifndef _WIN32
+    case SYS_CHMOD:            /* (path, mode): o stat devolve esse mode, como no kernel (process.c) */
+        host_path(a, hp, sizeof hp);
+        return chmod(hp, (mode_t)(b & 07777)) ? -MOS_ENOENT : 0;
+#endif
     case SYS_UNLINK: host_path(a, hp, sizeof hp); return remove(hp) ? -MOS_ENOENT : 0;
     case SYS_RENAME: {
         char hp2[4096];
@@ -1550,6 +1556,22 @@ static long long do_syscall_locked(u64 n, u64 a, u64 b, u64 c, u64 d) {
         return rename(hp, hp2) ? -MOS_ENOENT : 0;
     }
     case SYS_UNIX: return host_unix_op(a, b, c, d);
+    case SYS_NET:
+        /* as raízes da Mozilla que o kernel embute (kernel/arch/certs.S): o mesmo assets/certs/cacert.pem,
+         * lido de MACHOTEST_CACERT ou do diretório atual (a raiz do repositório) */
+        if (a == MOS_NET_TLS_ROOTS) {
+            const char *cp = getenv("MACHOTEST_CACERT");
+            FILE *cf = fopen(cp && *cp ? cp : "assets/certs/cacert.pem", "rb");
+            if (!cf) return -MOS_ENOENT;
+            fseek(cf, 0, SEEK_END);
+            long clen = ftell(cf);
+            fseek(cf, 0, SEEK_SET);
+            if (b && (long long)c < clen) { fclose(cf); return -MOS_EINVAL; }
+            if (b && fread((void *)(uintptr_t)b, 1, (size_t)clen, cf) != (size_t)clen) { fclose(cf); return -MOS_EFAULT; }
+            fclose(cf);
+            return clen;
+        }
+        break;
     case SYS_THREADCTL:
         if (a == MOS_THR_SETQOS) return host_thr_setqos((int)b, (int)my_tid, (unsigned)c);
         break;
