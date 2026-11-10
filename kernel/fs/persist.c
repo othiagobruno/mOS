@@ -395,6 +395,7 @@ static void save_klog(void) {
 }
 
 void persist_tick(void) {
+    pcache_tick(); /* writeback do page cache e um passo de aio */
     update_poll();                       /* atualização em andamento (fs/update.c), mesmo com Ajustes fechado */
     save_klog();
     vol_tick();

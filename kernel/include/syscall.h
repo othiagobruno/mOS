@@ -5,6 +5,7 @@
  *   exceto rax (rcx e r11 também podem mudar, como no `syscall` do Linux).
  */
 #pragma once
+#include "mos_gpu.h"
 
 enum {
     SYS_EXIT = 0,      /* (code)                                   não volta */
@@ -74,6 +75,7 @@ enum {
     SYS_WEB,           /* 59: (op, id, a, b) -> ...                 motor web do sistema para o WKWebView (MOS_WEB_* abaixo, kernel/web/webview.c) */
     SYS_THREADCTL,     /* 60: (op, tid, a) -> ...                   outra thread do processo: suspender, retomar, registradores (MOS_THR_* abaixo) */
     SYS_UNIX,          /* 61: (op, ...) -> ...                      AF_UNIX entre processos (MOS_UNIX_*, kernel/net/unix.c) */
+    SYS_GPU = 62,      /* 62: (op, struct*, tamanho) -> 0 | -errno   GPU: kernel/include/mos_gpu.h e docs/gpu-abi.md */
     SYS_COUNT,
     /* 63: banner de notificação do app e selo do Dock (kernel/ui/deskbridge.c).
      * rdi = MOS_DESK_BANNER (título, corpo, token) | MOS_DESK_TAKE (int *token) | MOS_DESK_BADGE (rótulo). */
@@ -86,7 +88,10 @@ enum {
     SYS_MACH_PORT = 81,     /* (op, u64 args[8]) -> kern_return_t           direitos e atributos (MACH_OP_* abaixo) */
     SYS_MACH_BOOTSTRAP = 82,/* (op, nome, u32 *porta) -> código do bootstrap  registro global de serviços */
     SYS_MACH_VM = 83,       /* (op, u64 args[8]) -> kern_return_t           entradas de memória compartilhada */
-    SYS_MACH_LAST = 95
+    SYS_MACH_LAST = 95,
+    /* 96: aio POSIX. op em rdi: 1 leitura, 2 escrita, 3 erro, 4 retorno, 5 fsync, 6 suspende (um passo).
+     * rsi = ponteiro do aiocb no processo. Não bloqueia: a conclusão sai em pcache_tick/aio_pump. */
+    SYS_AIO = 96
 };
 
 #define MOS_DESK_BANNER 1
@@ -113,6 +118,9 @@ enum {
     MOS_THR_STOPPED,       /* (tid) -> 1 parada fora da CPU, 0 ainda rodando */
     MOS_THR_GETSTATE,      /* (tid, u64 regs[21]) -> 0 | -MOS_EBUSY   x86_thread_state64_t: rax rbx rcx rdx rdi rsi rbp
                             * rsp r8..r15 rip rflags cs fs gs, do frame salvo da thread */
+    MOS_THR_SETQOS,        /* (tid, classe Darwin) -> 0 | -ESRCH     QOS_CLASS_* (0x21..0x09); fila e fatia */
+    MOS_THR_AFFINITY,      /* (tid, máscara de CPUs) -> 0            bit i = núcleo i; 0 = qualquer um */
+    MOS_THR_ROFILE,        /* (va, u64 id_off[2]) -> 1 se a página é código de arquivo sem escrita */
 };
 #define MOS_MUNMAP_KEEP    0x4B454550u   /* 'KEEP' */
 #define MOS_MUNMAP_DISCARD 0x44495343u   /* 'DISC' */

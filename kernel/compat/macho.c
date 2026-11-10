@@ -306,6 +306,12 @@ typedef struct {
 
 /* nomes de bibliotecas que o libSystem.mos substitui */
 bool libsystem_dylib_ok(const char *n) {
+    char iosbuf[384];
+    /* Catalyst (WhatsApp) grava o mesmo framework sob /System/iOSSupport. */
+    if (n && !strncmp(n, "/System/iOSSupport", 18)) {
+        snprintf(iosbuf, sizeof iosbuf, "%s", n + 18);
+        n = iosbuf;
+    }
     static const char *ok[] = {
         "/usr/lib/libSystem.B.dylib", "/usr/lib/libSystem.dylib", "/usr/lib/libc.dylib",
         "/usr/lib/libm.dylib", "/usr/lib/libdl.dylib", "/usr/lib/libpthread.dylib",
@@ -378,6 +384,69 @@ bool libsystem_dylib_ok(const char *n) {
                                "/System/Library/Frameworks/QuickLookUI.framework/",
                                "/System/Library/Frameworks/StoreKit.framework/",
                                "/System/Library/Frameworks/CoreData.framework/",
+                               /* medidos no host (machocheck, 10 nov. 2026): o LC_LOAD_DYLIB
+                                * absoluto recusava o processo. O arquivo no disco, se existir,
+                                * entra por framework_has_libsystem_fallback; senão o libSystem. */
+                               "/System/Library/Frameworks/WebKit.framework/",
+                               "/System/Library/Frameworks/ImageIO.framework/",
+                               "/System/Library/Frameworks/CryptoKit.framework/",
+                               "/System/Library/Frameworks/UIKit.framework/",
+                               "/System/Library/Frameworks/SwiftUI.framework/",
+                               "/System/Library/Frameworks/Combine.framework/",
+                               "/System/Library/Frameworks/Contacts.framework/",
+                               "/System/Library/Frameworks/Photos.framework/",
+                               "/System/Library/Frameworks/DeviceCheck.framework/",
+                               "/System/Library/Frameworks/Intents.framework/",
+                               "/System/Library/Frameworks/BackgroundTasks.framework/",
+                               "/System/Library/Frameworks/CoreMotion.framework/",
+                               "/System/Library/Frameworks/CoreTelephony.framework/",
+                               "/System/Library/Frameworks/EventKit.framework/",
+                               "/System/Library/Frameworks/MediaToolbox.framework/",
+                               "/System/Library/Frameworks/NaturalLanguage.framework/",
+                               "/System/Library/Frameworks/OSLog.framework/",
+                               "/System/Library/Frameworks/AVKit.framework/",
+                               "/System/Library/Frameworks/CoreAudioKit.framework/",
+                               "/System/Library/Frameworks/EventKitUI.framework/",
+                               "/System/Library/Frameworks/IntentsUI.framework/",
+                               "/System/Library/Frameworks/MapKit.framework/",
+                               "/System/Library/Frameworks/MessageUI.framework/",
+                               "/System/Library/Frameworks/MobileCoreServices.framework/",
+                               "/System/Library/Frameworks/PDFKit.framework/",
+                               "/System/Library/Frameworks/PassKit.framework/",
+                               "/System/Library/Frameworks/QuickLook.framework/",
+                               "/System/Library/Frameworks/Social.framework/",
+                               "/System/Library/Frameworks/VisionKit.framework/",
+                               "/System/Library/Frameworks/WidgetKit.framework/",
+                               "/System/Library/Frameworks/Virtualization.framework/",
+                               "/System/Library/Frameworks/CoreSpotlight.framework/",
+                               "/System/Library/Frameworks/vmnet.framework/",
+                               "/System/Library/Frameworks/ColorSync.framework/",
+                               "/System/Library/Frameworks/ScriptingBridge.framework/",
+                               "/System/Library/Frameworks/ExtensionKit.framework/",
+                               "/System/Library/Frameworks/Charts.framework/",
+                               "/System/Library/Frameworks/ARKit.framework/",
+                               "/System/Library/Frameworks/PushKit.framework/",
+                               "/System/Library/Frameworks/WatchConnectivity.framework/",
+                               "/System/Library/Frameworks/ReplayKit.framework/",
+                               "/System/Library/Frameworks/_Translation_SwiftUI.framework/",
+                               "/System/Library/Frameworks/AdServices.framework/",
+                               "/System/Library/Frameworks/NetworkExtension.framework/",
+                               "/System/Library/Frameworks/Symbols.framework/",
+                               "/System/Library/Frameworks/Speech.framework/",
+                               "/System/Library/Frameworks/LinkPresentation.framework/",
+                               "/System/Library/Frameworks/FoundationModels.framework/",
+                               "/System/Library/Frameworks/CallKit.framework/",
+                               "/System/Library/Frameworks/ContactsUI.framework/",
+                               "/System/Library/Frameworks/PhotosUI.framework/",
+                               "/System/Library/Frameworks/MetricKit.framework/",
+                               "/System/Library/Frameworks/CloudKit.framework/",
+                               "/System/Library/Frameworks/Translation.framework/",
+                               "/System/Library/Frameworks/SceneKit.framework/",
+                               "/System/Library/Frameworks/AppIntents.framework/",
+                               "/System/Library/Frameworks/ExtensionFoundation.framework/",
+                               "/System/Library/Frameworks/MetalPerformanceShaders.framework/",
+                               "/System/Library/PrivateFrameworks/AccessibilityPlatformTranslation.framework/",
+                               "/Library/Developer/PrivateFrameworks/CoreSimulator.framework/",
                                "/System/Library/Frameworks/SafariServices.framework/",
                                "/System/Library/Frameworks/ScreenCaptureKit.framework/",
                                "/System/Library/Frameworks/SecurityInterface.framework/",
@@ -395,10 +464,75 @@ bool libsystem_dylib_ok(const char *n) {
  * existir no disco, ele ganha: o Core Data de memória do Postico e o overlay Swift não
  * regridem. Sem o arquivo, o loader aceita e resolve no libSystem. */
 static bool framework_has_libsystem_fallback(const char *n) {
+    char iosbuf[384];
+    if (n && !strncmp(n, "/System/iOSSupport", 18)) {
+        snprintf(iosbuf, sizeof iosbuf, "%s", n + 18);
+        n = iosbuf;
+    }
     static const char *fw[] = {
         "/System/Library/Frameworks/QuickLookUI.framework/",
         "/System/Library/Frameworks/StoreKit.framework/",
         "/System/Library/Frameworks/CoreData.framework/",
+        "/System/Library/Frameworks/WebKit.framework/",
+        "/System/Library/Frameworks/ImageIO.framework/",
+        "/System/Library/Frameworks/CryptoKit.framework/",
+        "/System/Library/Frameworks/UIKit.framework/",
+        "/System/Library/Frameworks/SwiftUI.framework/",
+        "/System/Library/Frameworks/Combine.framework/",
+        "/System/Library/Frameworks/Contacts.framework/",
+        "/System/Library/Frameworks/Photos.framework/",
+        "/System/Library/Frameworks/DeviceCheck.framework/",
+        "/System/Library/Frameworks/Intents.framework/",
+        "/System/Library/Frameworks/BackgroundTasks.framework/",
+        "/System/Library/Frameworks/CoreMotion.framework/",
+        "/System/Library/Frameworks/CoreTelephony.framework/",
+        "/System/Library/Frameworks/EventKit.framework/",
+        "/System/Library/Frameworks/MediaToolbox.framework/",
+        "/System/Library/Frameworks/NaturalLanguage.framework/",
+        "/System/Library/Frameworks/OSLog.framework/",
+        "/System/Library/Frameworks/AVKit.framework/",
+        "/System/Library/Frameworks/CoreAudioKit.framework/",
+        "/System/Library/Frameworks/EventKitUI.framework/",
+        "/System/Library/Frameworks/IntentsUI.framework/",
+        "/System/Library/Frameworks/MapKit.framework/",
+        "/System/Library/Frameworks/MessageUI.framework/",
+        "/System/Library/Frameworks/MobileCoreServices.framework/",
+        "/System/Library/Frameworks/PDFKit.framework/",
+        "/System/Library/Frameworks/PassKit.framework/",
+        "/System/Library/Frameworks/QuickLook.framework/",
+        "/System/Library/Frameworks/Social.framework/",
+        "/System/Library/Frameworks/VisionKit.framework/",
+        "/System/Library/Frameworks/WidgetKit.framework/",
+        "/System/Library/Frameworks/Virtualization.framework/",
+        "/System/Library/Frameworks/CoreSpotlight.framework/",
+        "/System/Library/Frameworks/vmnet.framework/",
+        "/System/Library/Frameworks/ColorSync.framework/",
+        "/System/Library/Frameworks/ScriptingBridge.framework/",
+        "/System/Library/Frameworks/ExtensionKit.framework/",
+        "/System/Library/Frameworks/Charts.framework/",
+        "/System/Library/Frameworks/ARKit.framework/",
+        "/System/Library/Frameworks/PushKit.framework/",
+        "/System/Library/Frameworks/WatchConnectivity.framework/",
+        "/System/Library/Frameworks/ReplayKit.framework/",
+        "/System/Library/Frameworks/_Translation_SwiftUI.framework/",
+        "/System/Library/Frameworks/AdServices.framework/",
+        "/System/Library/Frameworks/NetworkExtension.framework/",
+        "/System/Library/Frameworks/Symbols.framework/",
+        "/System/Library/Frameworks/Speech.framework/",
+        "/System/Library/Frameworks/LinkPresentation.framework/",
+        "/System/Library/Frameworks/FoundationModels.framework/",
+        "/System/Library/Frameworks/CallKit.framework/",
+        "/System/Library/Frameworks/ContactsUI.framework/",
+        "/System/Library/Frameworks/PhotosUI.framework/",
+        "/System/Library/Frameworks/MetricKit.framework/",
+        "/System/Library/Frameworks/CloudKit.framework/",
+        "/System/Library/Frameworks/Translation.framework/",
+        "/System/Library/Frameworks/SceneKit.framework/",
+        "/System/Library/Frameworks/AppIntents.framework/",
+        "/System/Library/Frameworks/ExtensionFoundation.framework/",
+        "/System/Library/Frameworks/MetalPerformanceShaders.framework/",
+        "/System/Library/PrivateFrameworks/AccessibilityPlatformTranslation.framework/",
+        "/Library/Developer/PrivateFrameworks/CoreSimulator.framework/",
     };
     for (u32 i = 0; i < ARRAY_LEN(fw); i++) if (!strncmp(n, fw[i], strlen(fw[i]))) return true;
     return false;
@@ -1552,6 +1686,17 @@ static int link_add(link_t *K, const char *path, const u8 *file, usize flen, boo
             if (d >= 0) { I->dep[i] = (i16)d; continue; }
         }
         if (I->mo.dylib_weak[i]) continue;
+        /* libswift*: o basename vai para /usr/lib/swift (mos_libswift_resolve). Sem o
+         * arquivo, o processo abre e o símbolo cai no stub do libSystem. libz, libcurl,
+         * libcompression, libsqlite3 e libxml2 seguem o mesmo caminho: o disco ganha
+         * em link_abs_dep; sem o arquivo não recusam o LC_LOAD_DYLIB. */
+        {
+            char swift[96];
+            if (mos_libswift_resolve(dn, swift, sizeof swift)) continue;
+        }
+        if (!strcmp(dn, "/usr/lib/libz.1.dylib") || !strcmp(dn, "/usr/lib/libcurl.4.dylib") ||
+            !strcmp(dn, "/usr/lib/libcompression.dylib") || !strcmp(dn, "/usr/lib/libsqlite3.dylib") ||
+            !strcmp(dn, "/usr/lib/libxml2.2.dylib")) continue;
         note_absent(K, dn);
     }
     return I->idx;

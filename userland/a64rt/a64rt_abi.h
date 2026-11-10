@@ -15,6 +15,8 @@
 
 #define A64RT_BASE        0x0000400041000000ULL   /* USER_STACK_TOP + 16 MiB: faixa livre até o mmap (4 GiB) */
 #define A64RT_SPAN_MAX    0x0000000003000000ULL   /* runtime + pilha do host da thread principal (48 MiB) */
+/* logo depois do runtime: 64 KiB compartilhados, só dados (NX), cache de blocos do JIT. userland/a64/jit_share.h */
+#define A64RT_JIT_SHARE   (A64RT_BASE + A64RT_SPAN_MAX)
 #define A64RT_DIR         "/Sistema/Biblioteca/a64"
 #define A64RT_PATH        A64RT_DIR "/a64rt.mos"
 #define A64RT_LIBSYSTEM   A64RT_DIR "/libSystem.mos"

@@ -76,6 +76,22 @@ Na VM (`run.ps1` já usa `-smp 4`) a serial mostra `smpteste: OK`, e os autotest
 O paralelismo expôs uma corrida antiga: `SYS_WAIT` num filho que já tinha saído mas cuja thread ainda não
 fora recolhida não marcava o zumbi como informado, e um `waitpid(-1)` depois o devolvia de novo.
 
+## Filas, QoS, TLB e a trava da VM
+
+Cada núcleo tem cinco filas (interativo, iniciado, padrão, utilidade, fundo), os valores `QOS_CLASS_*`
+do Darwin. `MOS_THR_SETQOS` e `MOS_THR_AFFINITY` (em `SYS_THREADCTL`) mudam a classe e a máscara de CPUs.
+A CPU ociosa rouba da fila mais cheia. A fatia vai de 8 ms (interativo) a 1 ms (fundo).
+
+`smp_tlb_shootdown` marca só os núcleos com esse CR3 ou com o PCID desse espaço ainda no TLB, manda os
+IPIs juntos e só então espera. Com PCID (CPUID) o CR3 leva o identificador do processo; com INVPCID o
+alvo invalida só esse contexto.
+
+A tabela de páginas não usa uma trava global: são 16 faixas de 2 MiB por processo (`vmreg` em `process_t`).
+
+O cache de blocos do JIT para arquivo somente leitura está em `userland/a64/jit_share.c`, na página NX
+`A64RT_JIT_SHARE`. A cópia que executa fica na arena RX do processo. `a64_jit_invalidate` (chamada por
+`a64rt_invalidate_range`) tira a entrada.
+
 ## Próximos passos
 
 - Travas por subsistema no lugar da trava grande: VFS, Mach IPC, pipes/PTY, rede (já tem `g_net_lock`),

@@ -178,6 +178,18 @@ void CFRunLoopTimerSetTolerance(void *t, double tol) { (void)t; (void)tol; }
 double CFRunLoopTimerGetTolerance(void *t) { (void)t; return 0; }
 void CFRunLoopAddTimer(void *rl, void *t, void *mode) { (void)mode; add_item(rl, t); }
 void CFRunLoopRemoveTimer(void *rl, void *t, void *mode) { (void)mode; remove_item(rl, t); }
+u64 CFRunLoopTimerGetTypeID(void) { return 41; }
+u64 CFRunLoopGetTypeID(void) { return 40; }
+typedef struct { void *isa; int flags, reserved; void (*invoke)(void *block, void *timer); } cf_timer_blk_t;
+static void timer_from_block(void *t, void *info) {
+    cf_timer_blk_t *b = info;
+    if (b && b->invoke) b->invoke(b, t);
+}
+void *CFRunLoopTimerCreateWithHandler(void *alloc, double fire, double interval, unsigned long flags, long order, void *block) {
+    obj_ctx_t ctx = {0};
+    ctx.info = _Block_copy(block);
+    return CFRunLoopTimerCreate(alloc, fire, interval, flags, order, timer_from_block, &ctx);
+}
 unsigned char CFRunLoopContainsTimer(void *rl, void *t, void *mode) { (void)mode; return (unsigned char)contains(rl, t); }
 
 /* ---- observadores */
