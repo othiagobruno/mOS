@@ -23,4 +23,14 @@ unsigned avf_pull_seconds(void *dec, double *pos, float play_rate, float volume,
 unsigned avf_pull_frames(void *dec, double *pos_frames, float volume, float pan, float *stereo, unsigned frames, int *ended);
 /* Observador periódico no tempo do arquivo. 1 quando o intervalo de mídia passou. */
 int avf_obs_due(double *last, double interval, double pos, float play_rate);
+/* Transporte do AVPlayerViewController. controls 0 recusa play/pause/seek. */
+typedef struct { float *rate; double *pos; double duration; int controls; } avk_transport_t;
+int avk_play(avk_transport_t *t);
+int avk_pause(avk_transport_t *t);
+int avk_seek(avk_transport_t *t, double sec);
+int avk_pip_supported(void); /* 0: o mOS não tem janela flutuante de vídeo */
+int avk_pip_start(int *err); /* 0 e *err != 0: o start falha e o delegate recebe esse código */
+int avk_route_count(void);
+const char *avk_route_port(int index); /* "Speaker", a mesma porta da AVAudioSession */
+const char *avk_route_name(int index);
 #endif

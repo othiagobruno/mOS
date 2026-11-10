@@ -8,7 +8,7 @@
  *
  * No Linux, zig cc ou clang:
  *   zig cc -target x86_64-linux-gnu -O2 -std=gnu11 -DMOS_HOST_TEST -fno-strict-aliasing \
- *       -Ikernel/include -Itools tools/machotest.c tools/host_unix.c tools/host_gpu.c tools/host_qos.c \
+ *       -Ikernel/include -Itools tools/machotest.c tools/host_unix.c tools/host_gpu.c tools/host_qos.c tools/host_id.c \
  *       tools/host_enter.S kernel/compat/macho.c \
  *       -o build/machotest -pthread
  * No Windows o comando continua o de docs/porte-vscode.md (zig cc -target x86_64-windows-gnu).
@@ -41,6 +41,7 @@
 #endif
 #include "host_unix.h"
 #include "host_qos.h"
+#include "host_id.h"
 long host_gpu_op(unsigned long long op, unsigned long long user, unsigned long long len, int *blocked);
 #include <stdio.h>
 #include <stdlib.h>
@@ -602,6 +603,10 @@ static void *thread_main(void *p) {
     thread_start_t s = *(thread_start_t *)p;
     free(p);
     my_tid = s.tid;
+    /* O kernel zera gs_base na criação (process.c). O clone do Linux copia o GS do pai:
+     * sem isto a thread nova reusa a TSD/TLV da principal e um CHECK de "thread ainda
+     * não registrada" (cmp [rsi], 0; int3; ud2) dispara no Electron. */
+    __asm__ volatile("wrgsbase %0" :: "r"((unsigned long)0) : "memory");
     /* A thread nasce dentro do tratador de SIGSYS (a syscall SYS_THREAD_CREATE).
      * O pthread herda essa máscara: com SIGSYS bloqueado, o próximo int 0x80 do guest
      * mata o processo em vez de voltar para on_guest_signal. */
@@ -1267,7 +1272,38 @@ static long long do_syscall_locked(u64 n, u64 a, u64 b, u64 c, u64 d) {
         if (a == 0 && hfd[a].kind == HFD_NONE) return 0;
         if (a < MAXFD && hfd[a].kind == HFD_FILE && hfd[a].fp) return (long long)fread((void *)b, 1, (size_t)c, hfd[a].fp);
         return -MOS_EBADF;
+    case SYS_PREAD: {
+        /* kernel/proc/process.c: offset em r10, a posição do fd não muda. Pipe, pty e AF_UNIX são ESPIPE. */
+        if (a >= MAXFD || !hfd[a].kind) return -MOS_EBADF;
+        if (hfd[a].kind != HFD_FILE) return -MOS_ESPIPE;
+        if (hfd[a].acc == 1 || !hfd[a].fp) return -MOS_EBADF;
+        if (!strcmp(hfd[a].gpath, "/dev/null")) return 0;
+        return host_pread_fd(fileno(hfd[a].fp), (void *)b, (unsigned long)c, (unsigned long)d);
+    }
+    case SYS_GETUID:
+    case SYS_GETEUID:
+    case SYS_GETGID:
+    case SYS_GETEGID:
+        return host_getid((unsigned)n);
     case SYS_GETPID: return 42;
+    case SYS_PROCLIST: {
+        /* Um processo só, o deste harness (pid 42, sem pai), como proc_spawn_in sem processo corrente. */
+        if (a != 0) return 0;
+        mos_procinfo_t pi;
+        memset(&pi, 0, sizeof pi);
+        pi.pid = 42;
+        pi.state = 1; /* TH_RUNNING */
+        const char *nm = strrchr(g_proc.path, '/');
+        nm = nm ? nm + 1 : g_proc.path;
+        snprintf(pi.name, sizeof pi.name, "%s", nm);
+        memcpy((void *)b, &pi, sizeof pi);
+        return 1;
+    }
+    case SYS_DESKTOP:
+        /* MOS_DESK_TAKE com a fila vazia devolve 0 (deskbridge.c). Banner e selo não têm mesa neste harness. */
+        if (a == MOS_DESK_TAKE) return 0;
+        if (a == MOS_DESK_BANNER || a == MOS_DESK_BADGE) return 0;
+        return -MOS_EINVAL;
     case SYS_CPUS:
 #ifdef _WIN32
         { SYSTEM_INFO si; GetSystemInfo(&si); return (long long)si.dwNumberOfProcessors; }

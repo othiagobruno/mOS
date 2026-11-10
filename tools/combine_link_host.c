@@ -8,7 +8,7 @@ cx_set *cx_set_new(void);
 void cx_set_cancel(cx_set *s);
 void cx_send(cx_pub *p, long v);
 void cx_throttle_open(cx_pub *p);
-extern const char m_oo_mp[];
+int mos_combine_meta_check(void);
 
 void mos_any_cancel(cx_can *c);
 int mos_any_store(cx_can *c, cx_set *set);
@@ -138,7 +138,7 @@ int main(void) {
     mos_sink(ow, guarda, 0);
     mos_pass_send(ow, 6);
     espera("objectWillChange", ow && nb == 1 && buf[0] == 6);
-    espera("meta", m_oo_mp[0] == 'm');
+    espera("meta", mos_combine_meta_check() == 0);
     if (falhas) { printf("%d falhas\n", falhas); return 1; }
     printf("ok (0)\n");
     return 0;
