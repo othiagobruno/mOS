@@ -366,7 +366,7 @@ static void probe(void) {
 #if defined(MOS_GPU_FROM_KERNEL)
     mos_gpu_info_t info;
     memset(&info, 0, sizeof info);
-    long r = cx_syscall(SYS_GPU, MOS_GPU_INFO, (long)&info, (long)sizeof info, 0);
+    long r = cx_syscall(SYS_GPU, MOS_GPU_INFO, (long)&info, (long)sizeof info, 0, 0);
     if (r == 0) {
         g_kernel = 1;
         g_caps = info.caps;
@@ -387,7 +387,7 @@ int mos_gpu_op(unsigned op, void *st, unsigned n) {
     probe();
 #if defined(MOS_GPU_FROM_KERNEL)
     if (g_kernel) {
-        long r = cx_syscall(SYS_GPU, op, (long)st, (long)n, 0);
+        long r = cx_syscall(SYS_GPU, op, (long)st, (long)n, 0, 0);
         if (r == 0) return 0;
         /* Sem implementação no kernel: o CPU cobre contexto, BO, submit
          * (aceite sem executar virgl), fence e IOSurface. */

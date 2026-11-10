@@ -1,11 +1,11 @@
 # O que o Metal precisa da ABI de GPU
 
-Fonte do contrato: `docs/gpu-abi.md` e `kernel/include/mos_gpu.h`, do agente K-GPU
-(`kernel/gpu`, revisão `MOS_GPU_ABI` 1). O Metal não define outra ABI. O cliente
-está em `userland/libsystem/gpucall.c`. Se o header do kernel está na árvore, a
-camada chama `SYS_GPU` (61). Se a syscall não existe ou devolve `-MOS_EINVAL` /
-`-ENOSYS`, e também enquanto o header ainda não foi mergeado, as mesmas
-estruturas rodam num backend de CPU neste processo.
+Fonte do contrato: `docs/gpu-abi.md` e `kernel/include/mos_gpu.h` (revisão
+`MOS_GPU_ABI` 1). O Metal inclui esse header; não há outro. O cliente está em
+`userland/libsystem/gpucall.c` e chama `SYS_GPU` (61). Se a syscall não existe
+ou devolve `-MOS_EINVAL` / `-ENOSYS`, as mesmas estruturas rodam num backend de
+CPU neste processo. O espelho das estruturas dentro de `gpucall.c` só entra na
+compilação se o header do kernel faltar.
 
 O desenho do `MTLDevice` continua o que já está na main (`metal.c`, `metalexec.c`,
 `mtlshader.c`): buffers, texturas, fila, command buffer, encoders e o
