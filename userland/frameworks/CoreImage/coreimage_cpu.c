@@ -529,6 +529,20 @@ static mos_ci *flatten(mos_ci *im) {
     return 0;
 }
 
+mos_ci *mos_ci_apply(const char *name, mos_ci *input, mos_ci *background,
+                     double radius, double saturation, double brightness, double contrast,
+                     double scale, double aspect,
+                     double a, double b, double c, double d, double tx, double ty, int crop) {
+    if (!name || !input) return 0;
+    if (!strcmp(name, "CIGaussianBlur")) return mos_ci_blur(input, radius);
+    if (!strcmp(name, "CIColorControls")) return mos_ci_color(input, saturation, brightness, contrast);
+    if (!strcmp(name, "CISourceOverCompositing")) return background ? mos_ci_over(input, background) : 0;
+    if (!strcmp(name, "CILanczosScaleTransform")) return mos_ci_lanczos(input, scale, aspect);
+    if (!strcmp(name, "CIAffineTransform")) return mos_ci_affine(input, a, b, c, d, tx, ty);
+    if (!strcmp(name, "CICrop") && crop) return mos_ci_crop(input, tx, ty, a, b);
+    return 0;
+}
+
 int mos_ci_render(mos_ci *im, double x, double y, int w, int h, uint32_t *px) {
     if (!im || !px || too_big(w, h)) return -1;
     mos_ci *flat = flatten(im);
