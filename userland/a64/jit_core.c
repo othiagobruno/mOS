@@ -188,6 +188,7 @@ static void jc_clear(jthr *t) {
 }
 
 static jthr *thr_get(a64_cpu *c) {
+    a64_xmon_bind(c);
     jthr *t = (jthr *)c->jit;
     if (t) return t;
     for (t = J.threads; t; t = t->next)        /* a mesma CPU (quem chamou zerou o a64_cpu) */
