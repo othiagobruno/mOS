@@ -24,6 +24,10 @@ jobs:
         run: gcc -O2 -Wall -Wextra -Wno-incompatible-library-redeclaration -I kernel/include tools/btrtl_host.c kernel/bt/btrtl.c kernel/bt/vendor.c kernel/bt/btintel.c -o /tmp/btrtl_host && /tmp/btrtl_host firmware
       - name: teste de host do BLE (dois enlaces, passkey, reconexão)
         run: gcc -O1 -Wall -Wextra -Wno-unused-parameter -Wno-incompatible-library-redeclaration -I kernel/include tools/ble_host.c kernel/bt/ble.c kernel/bt/smp_crypto.c kernel/bt/p256.c kernel/bt/hid_parse.c kernel/wifi/wpa.c -o /tmp/ble_host && /tmp/ble_host
+      - name: teste de host do launchd (KeepAlive, StartInterval, bplist do Setapp)
+        run: gcc -std=c11 -O1 -Wall -Wextra -Iuserland -Ikernel/include tools/launchjobtest.c -o /tmp/launchjobtest && /tmp/launchjobtest
+      - name: teste de host do ServiceManagement (SMJob*, launchctl list RÓTULO)
+        run: gcc -std=c11 -O1 -Wall -Wextra -Wno-unused-function -Ikernel/include tools/smjobtest.c -o /tmp/smjobtest && /tmp/smjobtest
       - name: testes de unwind no host
         run: tools/cxx_unwind_host.sh
       - name: tools/build.sh

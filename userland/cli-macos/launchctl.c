@@ -1,5 +1,6 @@
 /* mOS — launchctl(1): fala com o launchd do mOS (userland/init.c) pelo serviço Mach LAUNCHD_SERVICE.
  *   launchctl list                    PID, último código de saída e rótulo de cada job
+ *   launchctl list RÓTULO             dicionário do job (formato do launchctl legado); 113 se não existe
  *   launchctl load [-w] ARQ.plist...  carrega (e inicia se RunAtLoad/KeepAlive; MachServices ficam sob demanda)
  *   launchctl unload [-w] ARQ.plist   para e descarrega
  *   launchctl start|stop RÓTULO
@@ -73,7 +74,7 @@ int main(int argc, char **argv) {
     const char *c = argv[1];
     char tmp[PATH_MAX];
     int r = 0;
-    if (!strcmp(c, "list")) return call(LC_LIST, 0, 0);
+    if (!strcmp(c, "list")) return call(LC_LIST, argc > 2 ? label_of(argv[2]) : 0, 0);
     if (!strcmp(c, "load") || !strcmp(c, "unload") || !strcmp(c, "bootstrap") || !strcmp(c, "bootout")) {
         int load = !strcmp(c, "load") || !strcmp(c, "bootstrap"), first = 2, any = 0;
         if (!strcmp(c, "bootstrap") || !strcmp(c, "bootout")) first = 3;

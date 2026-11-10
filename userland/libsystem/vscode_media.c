@@ -757,7 +757,4 @@ void cx_uttype_init(void) {
 }
 
 /* ================================================================ ServiceManagement */
-u8 SMLoginItemSetEnabled(id ident, u8 enabled) { (void)ident; (void)enabled; return 1; }
-id SMCopyAllJobDictionaries(id domain) { (void)domain; return CFArrayCreate(0, 0, 0, 0); }
-u8 SMJobSubmit(id domain, id job, void *auth, id *err) { (void)domain; (void)job; (void)auth; if (err) *err = 0; return 0; }
-u8 SMJobRemove(id domain, id label, void *auth, u8 wait, id *err) { (void)domain; (void)label; (void)auth; (void)wait; if (err) *err = 0; return 1; }
+/* SMLoginItemSetEnabled, SMJobSubmit, SMJobRemove, SMJobCopyDictionary e SMCopyAllJobDictionaries: smjob.c */
