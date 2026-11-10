@@ -5,16 +5,20 @@
  *   SCContentFilter (initWithDisplay:excludingWindows: e afins) e SCStreamConfiguration (largura/altura/sourceRect);
  *   +[SCScreenshotManager captureImageWithFilter:configuration:completionHandler:] e +captureImageInRect:completionHandler:
  *     -> CGDisplayCreateImage / CGDisplayCreateImageForRect (cgevent.c), entregues na fila global.
- * SCStream (vídeo contínuo) não existe: estes apps capturam por SCScreenshotManager. As classes vêm vazias de vscode_fwclasses.c; os métodos entram em
+ *   SCStream entrega quadros contínuos pelo mesmo DEV_SCREEN_CAPTURE, em CMSampleBuffer (screencap_prod.c).
+ *   Sem kTCCServiceScreenCapture o start não lê pixels. CGDisplayStream está em cgdisplaystream.c.
+ * As classes vêm de vscode_fwclasses.c; SCStream e SCRunningApplication são definidas aqui. Os métodos entram em
  * cx_screencapturekit_init (chamado no fim do cx_objc_boot, depois de todas as classes).
  */
 #include "foundation.h"
 #include "sys.h"
 #include "../../kernel/include/compat_gui.h"
 #include "computeruse_win.h"
+#include "screencap_run.h"
 
 void *memset(void *d, int c, size_t n);
 void *malloc(size_t n);
+void *calloc(size_t n, size_t s);
 void free(void *p);
 id objc_retain(id);
 void objc_release(id);
@@ -40,12 +44,15 @@ static screct_t screen_rect(void) {
 typedef struct { cx_class_t *isa; screct_t frame; } scdisplay_t;          /* SCDisplay */
 typedef struct { cx_class_t *isa; id displays, windows, apps; } sccontent_t;  /* SCShareableContent: cabe em 32 bytes */
 typedef struct { cx_class_t *isa; screct_t rect; } scfilter_t;            /* SCContentFilter: área da captura */
-typedef struct { cx_class_t *isa; i64 w, h; } sccfg_t;                   /* SCStreamConfiguration */
+typedef struct { cx_class_t *isa; i64 w, h, interval_us; } sccfg_t;       /* SCStreamConfiguration */
 typedef struct { cx_class_t *isa; u32 wid; i32 pid; float x, y, w, h; int on; } scwin_t; /* SCWindow: cabe nos 32 bytes extras */
 typedef struct { cx_class_t *isa; i32 pid; } scapp_t;                    /* SCRunningApplication */
 
 int cx_tcc_preflight(const char *service);
-static cx_class_t SCRunningApplication_c, SCRunningApplication_m;
+cx_class_t SCRunningApplication_c __asm__("OBJC_CLASS_$_SCRunningApplication");
+cx_class_t SCRunningApplication_m __asm__("OBJC_METACLASS_$_SCRunningApplication");
+cx_class_t SCStream_c __asm__("OBJC_CLASS_$_SCStream");
+cx_class_t SCStream_m __asm__("OBJC_METACLASS_$_SCStream");
 static void ensure_app_class(void) {
     if (cx_class_named("SCRunningApplication")) return;
     cx_define_class(&SCRunningApplication_c, &SCRunningApplication_m, "SCRunningApplication", cx_class_named("NSObject"), 16);
@@ -209,11 +216,25 @@ static long cfg_w(id s, SEL c) { (void)c; return ((sccfg_t *)s)->w; }
 static long cfg_h(id s, SEL c) { (void)c; return ((sccfg_t *)s)->h; }
 static void cfg_set_w(id s, SEL c, long v) { (void)c; ((sccfg_t *)s)->w = v; }
 static void cfg_set_h(id s, SEL c, long v) { (void)c; ((sccfg_t *)s)->h = v; }
+typedef struct { i64 value; i32 timescale; u32 flags; i64 epoch; } sc_time_t;
+static sc_time_t cfg_interval(id s, SEL c) {
+    (void)c;
+    long long us = ((sccfg_t *)s)->interval_us;
+    if (us <= 0) us = 16667;
+    sc_time_t t = {us, 1000000, 1, 0};
+    return t;
+}
+static void cfg_set_interval(id s, SEL c, sc_time_t t) {
+    (void)c;
+    long long us = 16667;
+    if ((t.flags & 1) && t.timescale) us = (long long)((double)t.value * 1000000.0 / (double)t.timescale);
+    if (us < 0) us = 0;
+    ((sccfg_t *)s)->interval_us = us;
+}
 static void noop_bool(id s, SEL c, u8 v) { (void)s; (void)c; (void)v; }
 static void noop_long(id s, SEL c, long v) { (void)s; (void)c; (void)v; }
 static void noop_obj(id s, SEL c, id v) { (void)s; (void)c; (void)v; }
 static void noop_rect(id s, SEL c, screct_t r) { (void)s; (void)c; (void)r; }
-
 /* SCScreenshotManager */
 static void shot_filter(id cls, SEL c, id filter, id cfg, void *blk) {
     (void)cls; (void)c; (void)cfg;
@@ -222,12 +243,119 @@ static void shot_filter(id cls, SEL c, id filter, id cfg, void *blk) {
 }
 static void shot_rect(id cls, SEL c, screct_t r, void *blk) { (void)cls; (void)c; later(blk, 1, 0, CGDisplayCreateImageForRect(1, r)); }
 
+/* SCStream: o estado fica no heap (não cabe nos 32 bytes de uma classe vazia). */
+typedef struct {
+    id delegate, output, self;
+} sc_out_t;
+typedef struct { cx_class_t *isa; cx_cap_run *run; } scstream_t;
+
+static void sc_on_frame(void *ctx, id surf, id pb, id sb) {
+    (void)surf; (void)pb;
+    sc_out_t *o = ctx;
+    if (!o || !sb) return;
+    if (o->delegate) MSG(void, o->delegate, "stream:didOutputSampleBuffer:ofType:", o->self, sb, (long)0);
+    if (o->output) MSG(void, o->output, "stream:didOutputSampleBuffer:ofType:", o->self, sb, (long)0);
+}
+static void stream_free(scstream_t *st) {
+    if (!st || !st->run) return;
+    cx_cap_stop(st->run);
+    sc_out_t *o = st->run->ctx;
+    if (o) {
+        if (o->delegate) objc_release(o->delegate);
+        if (o->output) objc_release(o->output);
+        free(o);
+    }
+    free(st->run->cap.px);
+    free(st->run);
+    st->run = 0;
+}
+static void stream_dealloc(id s, SEL c) {
+    stream_free((scstream_t *)s);
+    IMP sup = cx_lookup(cx_class_named("NSObject"), c);
+    if (sup) ((void (*)(id, SEL))sup)(s, c);
+}
+static void ensure_stream_class(void) {
+    if (cx_class_named("SCStream")) return;
+    cx_define_class(&SCStream_c, &SCStream_m, "SCStream", cx_class_named("NSObject"), (u32)(sizeof(scstream_t) - sizeof(void *)));
+    cx_add_method(&SCStream_c, "dealloc", (void *)stream_dealloc);
+}
+static id stream_init(id s, SEL c, id filter, id cfg, id delegate) {
+    (void)c;
+    ensure_stream_class();
+    scstream_t *st = (scstream_t *)s;
+    stream_free(st);
+    sc_out_t *o = calloc(1, sizeof *o);
+    cx_cap_run *r = calloc(1, sizeof *r);
+    int cap = 4096 * 2160;
+    unsigned *px = calloc((size_t)cap, sizeof(unsigned));
+    if (!o || !r || !px) { free(o); free(r); free(px); return 0; }
+    o->delegate = delegate ? objc_retain(delegate) : 0;
+    o->self = s;
+    r->cap.px = px;
+    r->cap.cap = cap;
+    r->on_frame = sc_on_frame;
+    r->ctx = o;
+    if (cfg) {
+        r->w = (int)((sccfg_t *)cfg)->w;
+        r->h = (int)((sccfg_t *)cfg)->h;
+        r->cap.interval_us = ((sccfg_t *)cfg)->interval_us;
+    }
+    if (filter) {
+        screct_t rc = ((scfilter_t *)filter)->rect;
+        r->x = (int)rc.x;
+        r->y = (int)rc.y;
+        if (!r->w && rc.w > 0 && rc.h > 0) { r->w = (int)rc.w; r->h = (int)rc.h; }
+    }
+    st->run = r;
+    return s;
+}
+static void call_errblk(void *blk, id err) {
+    if (!blk) return;
+    void *inv = *(void **)((u8 *)blk + 16);
+    if (inv) ((void (*)(void *, id))inv)(blk, err);
+}
+static id stream_err(void) {
+    id ui = MSG(id, (id)cx_class_named("NSDictionary"), "dictionaryWithObject:forKey:", cx_str("Falha ao iniciar SCStream"), cx_str("NSLocalizedDescription"));
+    return MSG(id, (id)cx_class_named("NSError"), "errorWithDomain:code:userInfo:", cx_str("com.apple.ScreenCaptureKit.SCStreamErrorDomain"), (long)-3801, ui);
+}
+static void stream_start(id s, SEL c, void *blk) {
+    (void)c;
+    scstream_t *st = (scstream_t *)s;
+    int rc = st->run ? cx_cap_start(st->run) : -1;
+    call_errblk(blk, rc ? stream_err() : 0);
+}
+static void stream_stop(id s, SEL c, void *blk) {
+    (void)c;
+    cx_cap_stop(((scstream_t *)s)->run);
+    call_errblk(blk, 0);
+}
+static u8 stream_add_out(id s, SEL c, id output, long type, void *queue, id *err) {
+    (void)c; (void)type; (void)queue;
+    if (err) *err = 0;
+    scstream_t *st = (scstream_t *)s;
+    sc_out_t *o = st->run ? st->run->ctx : 0;
+    if (!o || !output) return 0;
+    if (o->output) objc_release(o->output);
+    o->output = objc_retain(output);
+    return 1;
+}
+static u8 stream_remove_out(id s, SEL c, id output, long type) {
+    (void)c; (void)output; (void)type;
+    scstream_t *st = (scstream_t *)s;
+    sc_out_t *o = st->run ? st->run->ctx : 0;
+    if (!o || !o->output) return 0;
+    objc_release(o->output);
+    o->output = 0;
+    return 1;
+}
+
 static void add(const char *cls, const char *sel, void *fn, int meta) {
     cx_class_t *k = cx_class_named(cls);
     if (!k) return;
     if (meta) cx_add_cmethod(k, sel, fn); else cx_add_method(k, sel, fn);
 }
 void cx_screencapturekit_init(void) {
+    ensure_stream_class();
     add("SCDisplay", "displayID", (void *)d_id, 0);
     add("SCDisplay", "width", (void *)d_w, 0);
     add("SCDisplay", "height", (void *)d_h, 0);
@@ -259,6 +387,13 @@ void cx_screencapturekit_init(void) {
     add("SCStreamConfiguration", "height", (void *)cfg_h, 0);
     add("SCStreamConfiguration", "setWidth:", (void *)cfg_set_w, 0);
     add("SCStreamConfiguration", "setHeight:", (void *)cfg_set_h, 0);
+    add("SCStreamConfiguration", "minimumFrameInterval", (void *)cfg_interval, 0);
+    add("SCStreamConfiguration", "setMinimumFrameInterval:", (void *)cfg_set_interval, 0);
+    add("SCStream", "initWithFilter:configuration:delegate:", (void *)stream_init, 0);
+    add("SCStream", "startCaptureWithCompletionHandler:", (void *)stream_start, 0);
+    add("SCStream", "stopCaptureWithCompletionHandler:", (void *)stream_stop, 0);
+    add("SCStream", "addStreamOutput:type:sampleHandlerQueue:error:", (void *)stream_add_out, 0);
+    add("SCStream", "removeStreamOutput:type:", (void *)stream_remove_out, 0);
     add("SCStreamConfiguration", "setShowsCursor:", (void *)noop_bool, 0);
     add("SCStreamConfiguration", "setScalesToFit:", (void *)noop_bool, 0);
     add("SCStreamConfiguration", "setCapturesAudio:", (void *)noop_bool, 0);

@@ -52,11 +52,13 @@ $ks = Get-ChildItem "$root\kernel" -Recurse -Include *.c, *.S | ForEach-Object {
 [IO.File]::WriteAllText("$src\libsystem-fontes.txt", ($ls -join "`n") + "`n", [Text.Encoding]::ASCII)
 [IO.File]::WriteAllText("$src\kernel-fontes.txt", ($ks -join "`n") + "`n", [Text.Encoding]::ASCII)
 
-# referência do host: o libSystem ligado como a escada liga (caminhos relativos, sem o patch-ehframe.ps1 do build normal).
-# O _Unwind_* do x86_64 está em cxx_unwind.c; o arm64 continua com o libunwind do script próprio.
-$hz = Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*' | Select-Object -First 1
+# referência do host: o libSystem ligado como a escada liga. O _Unwind_* do x86_64 está em cxx_unwind.c.
+if (-not (Get-Command Resolve-MosZig -ErrorAction SilentlyContinue)) { foreach ($mosHost in @("$PSScriptRoot\stage-host.ps1","$PSScriptRoot\..\stage-host.ps1","$PSScriptRoot\..\..\stage-host.ps1","$PSScriptRoot\..\..\..\stage-host.ps1")) { if (Test-Path -LiteralPath $mosHost) { . $mosHost; break } } }
+$mosZigPick = Resolve-MosZig $root
+if (-not $mosZigPick) { exit 1 }
+$hzBin = $mosZigPick.Path
 Push-Location $root
-& "$($hz.FullName)\zig.exe" cc -target x86_64-freestanding-none -O2 -g0 -ffreestanding -fno-stack-protector -fno-builtin -nostdlib -static -no-pie `
+& $hzBin cc -target x86_64-freestanding-none -O2 -g0 -ffreestanding -fno-stack-protector -fno-builtin -nostdlib -static -no-pie `
     -fpie -mno-red-zone -w -Iuserland/libsystem/kshim '-Wl,--image-base=0x400000100000' '-Wl,-e,cx_start' '-Wl,--no-gc-sections' `
     @ls -o "$src\libSystem-ref.mos" 2>&1 | Select-Object -First 5 | ForEach-Object { "  ref: $_" }
 Pop-Location
@@ -67,7 +69,7 @@ $linhas = @()
 Push-Location $src
 foreach ($f in $ls) {
     $o = Join-Path $tmpo ((Split-Path $f -Leaf) + '.o')
-    & "$($hz.FullName)\zig.exe" cc -target x86_64-freestanding-none -O2 -g0 -ffreestanding -fno-stack-protector -fno-builtin -nostdlib `
+    & $hzBin cc -target x86_64-freestanding-none -O2 -g0 -ffreestanding -fno-stack-protector -fno-builtin -nostdlib `
         -fpie -mno-red-zone -w -Iuserland/libsystem/kshim -c $f -o $o 2>&1 | Out-Null
     $h = if (Test-Path $o) { (Get-FileHash $o -Algorithm SHA256).Hash.ToLower() } else { 'falhou' }
     $linhas += "$f $h"
@@ -79,7 +81,7 @@ Pop-Location
 # build/libSystem.mos que a VM vai embutir (outra sessão pode ter recompilado o build\libSystem.mos do repositório)
 Write-Host "kernel de referência no host..." -ForegroundColor Cyan
 Push-Location $src
-& "$($hz.FullName)\zig.exe" cc -target x86_64-uefi-msvc -O2 -g0 -s '-Wl,/Brepro' -ffreestanding -fno-stack-protector -fno-stack-check -mno-stack-arg-probe `
+& $hzBin cc -target x86_64-uefi-msvc -O2 -g0 -s '-Wl,/Brepro' -ffreestanding -fno-stack-protector -fno-stack-check -mno-stack-arg-probe `
     -mno-red-zone -fshort-wchar -fno-sanitize=all -fno-strict-aliasing -nostdlib -Ikernel/include -I. -std=gnu11 -w `
     @ks -o 'BOOTX64-host.EFI' 2>&1 | Select-Object -First 5 | ForEach-Object { "  ref: $_" }
 Remove-Item 'BOOTX64-host.lib', 'BOOTX64-host.pdb' -ErrorAction SilentlyContinue

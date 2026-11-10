@@ -176,6 +176,9 @@ func placeScroll(_ n: Node, _ x: Double, _ y: Double, _ w: Double, _ h: Double) 
     n.value = off
     n.upper = contentMain
     n.onDouble?(off)
+    if n.placeholder.hasPrefix("scroll:") {
+        _ScrollHits.all.append(_ScrollHit(x: x, y: y, w: w, h: h, content: contentMain, viewport: viewport, key: n.placeholder, vertical: v))
+    }
     var pos = (v ? y : x) - off
     for (i, c) in kids.enumerated() {
         if v {
@@ -218,6 +221,30 @@ func clipScrolls(_ n: Node) {
     for c in n.children { clipScrolls(c) }
 }
 
+struct _ScrollHit {
+    var x, y, w, h, content, viewport: Double
+    var key: String
+    var vertical: Bool
+}
+
+/// Rolagens vivas no último layout. A roda do _CXSwiftHost cai aqui.
+enum _ScrollHits {
+    static var all: [_ScrollHit] = []
+
+    static func wheel(_ x: Double, _ y: Double, _ dx: Double, _ dy: Double) {
+        let inside = all.filter { x >= $0.x && y >= $0.y && x < $0.x + $0.w && y < $0.y + $0.h }
+        let hit = inside.min { $0.w * $0.h < $1.w * $1.h } ?? (all.count == 1 ? all[0] : nil)
+        guard let hit else { return }
+        let box: _Box<Double> = _Runtime.shared.boxAt(hit.key, 0.0)
+        // scrollingDeltaY é o oposto do notch (positivo = para cima). Um notch anda 40 pt, como o NSScrollView.
+        let delta = (hit.vertical ? -dy : -dx) * 40
+        let next = mos_sui_clamp_offset(box.value, delta, hit.viewport, hit.content)
+        if next == box.value { return }
+        box.value = next
+        _Runtime.shared.invalidate()
+    }
+}
+
 // MARK: - Reconciliação: uma NSView por nó primitivo, reaproveitada pelo caminho
 
 final class _Handle {
@@ -248,6 +275,7 @@ final class _Renderer {
         repeat {
             rt.dirty = false
             rt.rendering = true
+            _ScrollHits.all.removeAll()
             let root = Node(.stack)
             root.axisVertical = true; root.spacing = 0
             let b = _Builder(root: root)
@@ -278,11 +306,19 @@ final class _Renderer {
                 hd.seen = true
                 mos_send_i(hd.view, "setHidden:", 1)
             }
+            if n.kind == .scroll, let thumb = handles[n.path + ":thumb"] {
+                thumb.seen = true
+                mos_send_i(thumb.view, "setHidden:", 1)
+            }
             for c in n.children { sync(c) }
             return
         }
         switch n.kind {
-        case .stack, .padding, .frame, .scroll, .spacer, .image, .zstack: for c in n.children { sync(c) }; return
+        case .stack, .padding, .frame, .spacer, .image, .zstack: for c in n.children { sync(c) }; return
+        case .scroll:
+            for c in n.children { sync(c) }
+            syncScrollIndicator(n)
+            return
         case .background:
             // fundo: uma caixa colorida criada antes (atrás) do conteúdo
             let hd = handle(n, "NSBox")
@@ -406,6 +442,49 @@ final class _Renderer {
         default: break
         }
         return hd
+    }
+
+    /// Polegar à direita (ou embaixo). Some quando o conteúdo cabe ou flag está desligada.
+    func syncScrollIndicator(_ n: Node) {
+        var x = 0.0, y = 0.0, w = 0.0, h = 0.0
+        let vertical = n.axisVertical
+        let viewport = vertical ? n.h : n.w
+        let on = mos_sui_indicator(n.value, viewport, n.upper, Int32(n.flag ? 1 : 0), n.x, n.y, n.w, n.h, Int32(vertical ? 1 : 0), &x, &y, &w, &h)
+        let key = n.path + ":thumb"
+        if on == 0 || w < 1 || h < 1 {
+            if let hd = handles[key] {
+                hd.seen = true
+                mos_send_i(hd.view, "setHidden:", 1)
+            }
+            return
+        }
+        let hd: _Handle
+        if let existing = handles[key] {
+            existing.seen = true
+            hd = existing
+        } else if let parent = content, let view = mos_new_view("NSBox", 0, 0, w, h) {
+            mos_send_i(view, "setBoxType:", 4)
+            mos_send_d(view, "setCornerRadius:", 2.5)
+            mos_send_p(view, "setFillColor:", mos_color(80.0 / 255.0, 80.0 / 255.0, 88.0 / 255.0, 1))
+            mos_add_subview(parent, view)
+            let node = Node(.background)
+            node.path = key
+            let created = _Handle(view: view, kind: .background, node: node)
+            created.key = key
+            handles[key] = created
+            hd = created
+        } else {
+            return
+        }
+        mos_send_i(hd.view, "setHidden:", 0)
+        if let parent = content { mos_add_subview(parent, hd.view) }
+        let thumb = hd.node
+        thumb.x = x
+        thumb.y = y
+        thumb.w = w
+        thumb.h = h
+        _animator.place(key, hd.view, thumb, height, isNew: hd.fresh)
+        hd.fresh = false
     }
 }
 

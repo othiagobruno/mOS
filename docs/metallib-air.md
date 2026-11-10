@@ -11,10 +11,10 @@ caminho para **ler e executar o `.metallib`**.
 2. **Módulo de bitcode LLVM** (`mtlair_bc.inc` + `mtlair_mod.inc`): o bitstream (abreviações, BLOCKINFO, VBR, char6,
    blob), a tabela de tipos, as funções (nomes via STRTAB), as constantes, os metadados (strings em lote, nós, nós
    nomeados `air.vertex`/`air.fragment`/`air.kernel`) e os corpos de função decodificados em SSA. **Pronto (estrutura).**
-3. **Lowering** (`mtlair_lower.inc`, em andamento): traduzir as instruções SSA e os intrínsecos do AIR (`air.sample`,
-   `air.convert`, acesso a `[[buffer]]`/`[[texture]]`...) para a árvore de nós do interpretador (`mtlint.h`), que
-   `mtlexec.c` já executa. O que o lowering não cobrir faz a função devolver NULL com a razão, e o Metal volta ao erro
-   de "AIR não suportado" — mas só nesse caso.
+3. **Lowering** (`mtlair_lower.inc` + `mtlair_emit.inc`): os 17 opcodes do `FUNCTION_BLOCK` e os intrínsecos
+   `air.*` / `llvm.*` conhecidos viram nós do interpretador (`mtlint.h`), que `mtlexec.c` executa. Uma função que
+   não baixa é omitida da biblioteca. Se nenhuma baixa, `newLibraryWithData:` devolve erro. `metal.c` chama
+   `mtlair_lower` no contêiner MTLB.
 
 ## Cabeçalho MTLB (little endian)
 
@@ -71,9 +71,29 @@ Ou seja, o lowering é finito e bem definido: a tabela de valores SSA (args, con
 tipos LLVM para os de `mtlint.h`, esses 17 opcodes (com controle de fluxo: `BR`/`PHI`) e a lista de intrínsecos `air.*`
 que as `CALL` usam (amostragem de textura, conversões, acesso a buffer).
 
+## O que o host executou
+
+`tools/airlower_test.c` compila C com `clang -emit-llvm`, baixa o bitcode e compara a saída com o mesmo cálculo
+compilado do fonte pelo `msl_compile`. Não é teste de VM e não usa os `.metallib` do WhatsApp (eles não estão
+neste checkout). O que passou, com 0 falhas:
+
+- kernel escalar com desvio, `llvm.fmuladd` e comparação sem sinal (`tid` 0 → 7, `tid` 2 → `out[2] = 7`, `tid` 1 → 4 e 8);
+- laço com PHI em `-O1` (n = 4 soma 10, n = 0 soma 0);
+- dois ponteiros sem bind explícito (caem em `[[buffer]]` pela ordem);
+- função irmã em `double` omitida, a função em float permanece (saída 5);
+- `shufflevector` + `extractelement` + `insertelement` → `[4, 4, 2, 1]`;
+- `extractvalue` / `insertvalue` de `{float, i32}` → 6.5;
+- `icmp` vetorial com sinal + `select` → `[10, 2, 30, 4]`.
+
 ## Limites atuais
 
-- O lowering das instruções ainda não está ligado: o parser extrai a estrutura, mas `newLibraryWithData:` com AIR
-  continua devolvendo o erro até o lowering cobrir os shaders.
+- Função que não baixa é omitida, não vira sucesso falso. `double`, `icmp` vetorial sem sinal, atômicos, `fcmp`
+  não ordenado e pack/unpack falham a função. `dfdx`/`dfdy`/`fwidth` emitem o nó que o interpretador já avalia como 0.
+  `air.convert` é um cast, sem saturação.
+- Sem metadado `air.kernel` nem bind explícito, `thread_position_in_grid` fica 0. Textura e sampler só entram se o
+  metadado disser. O teste de host passa os binds na chamada; o caminho de metadado está no emissor e não foi o
+  caso diferencial.
+- Não há execução conferida de um `.metallib` de app (WhatsApp, Chromium). O parser desses arquivos, quando existem
+  no ambiente de build, continua sendo o do `airdump`.
 - Um módulo por biblioteca (o layout normal do `.metallib`).
 - Mach-O x86_64 continua sendo a arquitetura; o AIR em si é independente de arquitetura.

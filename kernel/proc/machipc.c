@@ -1467,19 +1467,41 @@ static u32 vm_op(mspace_t *sp, u32 op, u64 *a) {
                     sp->pid, (u32)a[3], len, a[4], e->port->moff, e->port->msize, m->npages);   /* DIAGNÓSTICO TEMPORÁRIO */
             return KERN_INVALID_ARGUMENT;
         }
-        u64 at = a[0] & ~0xFFFULL;
-        if ((a[2] & 1) || !at) {                          /* VM_FLAGS_ANYWHERE: o kernel escolhe */
+        /* bit 0 = VM_FLAGS_ANYWHERE. Sem ele, e com endereço, o mapeamento é fixo: ocupa
+         * exatamente essa faixa. Endereço 0 continua "o kernel escolhe". VM_FLAGS_OVERWRITE
+         * (0x4000) substitui o que houver; sem ele, faixa ocupada devolve KERN_NO_SPACE e
+         * não mapeia nada. */
+        u64 bytes = npages * 4096;
+        u64 at;
+        int anywhere = (a[2] & 1) || !a[0];
+        if (anywhere) {
             if (!sp->proc->mmap_next) sp->proc->mmap_next = USER_MMAP_BASE;
             at = sp->proc->mmap_next;
-            if (at + npages * 4096 > USER_END) return KERN_NO_SPACE;
-            sp->proc->mmap_next += npages * 4096 + 4096;
+            if (at + bytes > USER_END) return KERN_NO_SPACE;
+            sp->proc->mmap_next += bytes + 4096;
+        } else {
+            if (a[0] & 0xFFF) return KERN_INVALID_ADDRESS;
+            at = a[0];
+            if (at < USER_BASE || at + bytes < at) return KERN_INVALID_ADDRESS;
+            if (at + bytes > USER_END) return KERN_NO_SPACE;
         }
         /* proteção pedida (cur | max, a[5] | a[6]) além da que a entrada permite: KERN_INVALID_RIGHT, como no
          * XNU. O Chromium depende disso para conferir que uma região só-leitura é mesmo só-leitura
-         * (PlatformSharedMemoryRegion::CheckPlatformHandlePermissionsCorrespondToMode). */
+         * (PlatformSharedMemoryRegion::CheckPlatformHandlePermissionsCorrespondToMode).
+         * Conferida antes de soltar a faixa antiga: um erro de direito não apaga o que já estava. */
         u8 want_prot = (u8)((a[5] | a[6]) & 7);
         if (want_prot & ~e->port->mprot) return KERN_INVALID_RIGHT;
         bool rw = (a[5] & 2) || (!a[5] && (e->port->mprot & 2));
+        if (!anywhere) {
+            extern int mm_span_taken(process_t *p, u64 a, u64 len);
+            extern void mm_release_span(process_t *p, u64 a, u64 len);
+            if (mm_span_taken(sp->proc, at, bytes)) {
+                if (!(a[2] & 0x4000)) return KERN_NO_SPACE;   /* VM_FLAGS_OVERWRITE */
+                mm_release_span(sp->proc, at, bytes);
+            }
+            if (at >= USER_MMAP_BASE && at + bytes + 4096 > sp->proc->mmap_next)
+                sp->proc->mmap_next = at + bytes + 4096;
+        }
         for (u64 i = 0; i < npages; i++)                  /* as MESMAS páginas físicas: memória compartilhada */
             if (!uvm_map_phys(sp->proc, at + i * 4096, m->pages[pfirst + i], rw)) return KERN_NO_SPACE;
         a[0] = at + (start & 0xFFF);
@@ -1512,7 +1534,8 @@ static u32 vm_op(mspace_t *sp, u32 op, u64 *a) {
     if (op == MACH_VM_REGION) {
         u64 addr = a[0];
         if (addr < USER_BASE || addr >= USER_END) return KERN_INVALID_ADDRESS;
-        /* faixa registrada que contém o endereço; sem registro: a página, RWX (o NX está desligado) */
+        /* faixa registrada que contém o endereço; sem registro a consulta devolve RWX.
+         * Isso é o prot registrado, não o bit da PTE: uma página pode estar NX (SYS_MMAP b = 7). */
         for (u32 i = 0; i < sp->npr; i++)
             if (addr >= sp->pr[i].lo && addr < sp->pr[i].hi) {
                 a[1] = sp->pr[i].lo;

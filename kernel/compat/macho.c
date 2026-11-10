@@ -22,6 +22,7 @@
 #endif
 #include "syscall.h"           /* SYS_DYLD / MOS_DYLD_* (dlopen em tempo de execução) e errno */
 #include "fwlink.h"            /* symlink de .framework gravado como texto */
+#include "libswift_image.h"    /* libswift* da imagem; revisão do Kernel no uso em link_abs_dep */
 #include "../../userland/a64rt/a64rt_abi.h"   /* processos arm64: runtime do tradutor (docs/tradutor-arm64.md) */
 
 #define LIBSYSTEM_BASE (USER_BASE + 0x00100000ULL)
@@ -372,6 +373,11 @@ bool libsystem_dylib_ok(const char *n) {
                                "/System/Library/Frameworks/Quartz.framework/",
                                /* Codex desktop (runtime OWL): liga o framework sem importar símbolos (pede QLThumbnail* pelo nome; sem a classe, sem miniatura) */
                                "/System/Library/Frameworks/QuickLookThumbnailing.framework/",
+                               /* Slack, Claude Desktop e Cursor: o Electron liga os três. Se a dylib estiver no disco,
+                                * link_image carrega ela; senão o libSystem (quicklook_fw.c, storekit_fw.c, coredata_fw.c). */
+                               "/System/Library/Frameworks/QuickLookUI.framework/",
+                               "/System/Library/Frameworks/StoreKit.framework/",
+                               "/System/Library/Frameworks/CoreData.framework/",
                                "/System/Library/Frameworks/SafariServices.framework/",
                                "/System/Library/Frameworks/ScreenCaptureKit.framework/",
                                "/System/Library/Frameworks/SecurityInterface.framework/",
@@ -383,6 +389,31 @@ bool libsystem_dylib_ok(const char *n) {
                                "/usr/lib/libbsm.0.dylib", "/usr/lib/libcups.2.dylib", "/usr/lib/libpmenergy.dylib", "/usr/lib/libpmsample.dylib"};
     for (u32 i = 0; i < ARRAY_LEN(fw); i++) if (!strncmp(n, fw[i], strlen(fw[i]))) return true;
     return !strncmp(n, "/usr/lib/system/", 16);
+}
+
+/* QuickLookUI, StoreKit e Core Data também estão no libSystem. Se o Mach-O do framework
+ * existir no disco, ele ganha: o Core Data de memória do Postico e o overlay Swift não
+ * regridem. Sem o arquivo, o loader aceita e resolve no libSystem. */
+static bool framework_has_libsystem_fallback(const char *n) {
+    static const char *fw[] = {
+        "/System/Library/Frameworks/QuickLookUI.framework/",
+        "/System/Library/Frameworks/StoreKit.framework/",
+        "/System/Library/Frameworks/CoreData.framework/",
+    };
+    for (u32 i = 0; i < ARRAY_LEN(fw); i++) if (!strncmp(n, fw[i], strlen(fw[i]))) return true;
+    return false;
+}
+static bool framework_disk_present(const char *n) {
+    usize len;
+    char alt[384];
+    const char *fw, *tail;
+    if (dep_read(n, &len)) return true;
+    fw = strstr(n, ".framework/");
+    if (!fw) return false;
+    tail = fw + 11;
+    if (strchr(tail, '/')) return false;
+    snprintf(alt, sizeof alt, "%.*sVersions/A/%s", (int)(tail - n), n, tail);
+    return dep_read(alt, &len) != NULL;
 }
 
 /* libc++ e libc++abi: vêm da dylib do LLVM no disco quando ela existe (link_image e dyld_open); o libSystem só as
@@ -1416,20 +1447,32 @@ static int link_abs_dep(link_t *K, const char *dn) {
             }
         }
         d = locate(K, cand, CAP, &data, &len);
-        /* /usr/lib que o mOS não tem: a fórmula equivalente do Homebrew (mesma API; uma cópia só, para o estado
-         * global — ex.: o terminal do ncurses — ser um só) */
+        /* ncurses, libffi e expat: a fórmula do Homebrew (uma cópia só). libz, libcurl e
+         * libcompression estão na imagem, em /usr/lib (build.ps1). O par é {nome pedido, caminho}.
+         * Outra linha, no mesmo formato, cabe aqui — inclusive uma libswift*. */
         static const char *const usrlib_alias[][2] = {
             {"/usr/lib/libncurses.5.4.dylib", "/usr/local/opt/ncurses/lib/libncursesw.6.dylib"},
-            {"/usr/lib/libz.1.dylib",         "/usr/local/opt/zlib/lib/libz.1.dylib"},
+            {"/usr/lib/libz.1.dylib",         "/usr/lib/libz.1.dylib"},
             {"/usr/lib/libffi.dylib",         "/usr/local/opt/libffi/lib/libffi.8.dylib"},
-            {"/usr/lib/libcurl.4.dylib",      "/usr/local/opt/curl/lib/libcurl.4.dylib"},   /* o git usa o curl do sistema */
+            {"/usr/lib/libcurl.4.dylib",      "/usr/lib/libcurl.4.dylib"},
             {"/usr/lib/libexpat.1.dylib",     "/usr/local/opt/expat/lib/libexpat.1.dylib"},
+            {"/usr/lib/libcompression.dylib", "/usr/lib/libcompression.dylib"},
         };
         for (usize k = 0; d < 0 && !data && k < sizeof usrlib_alias / sizeof usrlib_alias[0]; k++)
             if (!strcmp(cand, usrlib_alias[k][0])) {
                 snprintf(cand, CAP, "%s", usrlib_alias[k][1]);
                 d = locate(K, cand, CAP, &data, &len);
             }
+        /* L15: libswift* moram na imagem em /usr/lib/swift (mos_libswift_image).
+         * Não é alias Homebrew. STOR-SYSDYLIBS mexe só em usrlib_alias (libz, libcurl,
+         * libcompression). Revisão do Kernel: este ramo do carregador é novo. */
+        if (d < 0 && !data) {
+            char swift[96];
+            if (mos_libswift_resolve(cand, swift, sizeof swift) && strcmp(swift, cand) != 0) {
+                snprintf(cand, CAP, "%s", swift);
+                d = locate(K, cand, CAP, &data, &len);
+            }
+        }
         if (d < 0 && data) { d = link_add(K, cand, data, len, true); if (d < 0) d = -2; }   /* link_add copia o caminho */
     }
     kfree(cand);
@@ -1481,6 +1524,12 @@ static int link_add(link_t *K, const char *path, const u8 *file, usize flen, boo
         }
         if (!strcmp(dn, LIBICU_DISK)) {   /* o ICU do disco; sem ele, o uidna_* do libSystem (abaixo) */
             int d = link_abs_dep(K, LIBICU_DISK);
+            if (d == -2) return -1;
+            if (d >= 0) { I->dep[i] = (i16)d; continue; }
+        }
+        if (framework_has_libsystem_fallback(dn)) {
+            /* a dylib do disco (Postico / overlay Swift) ganha; sem arquivo, o libSystem abaixo */
+            int d = link_abs_dep(K, dn);
             if (d == -2) return -1;
             if (d >= 0) { I->dep[i] = (i16)d; continue; }
         }
@@ -1812,6 +1861,7 @@ static i64 dyld_open(process_t *p, link_t *K, const char *req, u64 out_va, u64 c
     usize cxx_len;
     if (libcxx_name(req) && dep_read(LIBCXX_DISK, &cxx_len)) req = LIBCXX_DISK;   /* a libc++ do disco, como no link_image */
     else if (!strcmp(req, LIBICU_DISK) && dep_read(LIBICU_DISK, &cxx_len)) { /* o ICU do disco, como no link_image */ }
+    else if (framework_has_libsystem_fallback(req) && framework_disk_present(req)) { /* o framework do disco, como no link_image */ }
     else if (libsystem_dylib_ok(req)) return DYLD_H_LIBSYSTEM;
     int ci = image_at(K, caller);
     image_t *C = K->im[ci >= 0 ? ci : 0];
@@ -2588,9 +2638,17 @@ bool macho_load(process_t *p, const u8 *img, usize len, const char *arg, u64 *en
      * shell que aceite -c: o caminho antigo continua e o spawn falha logo (ENOENT) em vez de esperar o prazo. */
     usize bash_len;                                      /* dep_read: vfs_lookup no kernel, arquivo no harness do host */
     const char *shell_env = dep_read("/usr/local/bin/bash", &bash_len) ? "SHELL=/usr/local/bin/bash" : "SHELL=/bin/msh";
+#ifndef MOS_HOST_TEST
+    extern int g_lang;   /* 0 = pt-BR, 1 = inglês; kernel/lib/i18n.c */
+#endif
     const char *envs[] = {"HOME=/Users/Visitante", "USER=visitante", "LOGNAME=visitante",
                           "PATH=/usr/local/bin:/Sistema/Programas:/usr/bin:/bin", p->tty ? "TERM=xterm-256color" : "TERM=dumb",   /* sessão do Terminal: isatty(0..2) verdadeiro */
+#ifndef MOS_HOST_TEST
+                          /* g_lang: 0 pt-BR, 1 inglês (kernel/include/i18n.h). O pak do Chromium segue este nome. */
+                          (g_lang == 1 ? "LANG=en_US.UTF-8" : "LANG=pt_BR.UTF-8"),
+#else
                           "LANG=pt_BR.UTF-8",
+#endif
                           pwd, shell_env};
     bool own_env = p->spawn_envc > 0 && p->spawn_env;
     int nenv = own_env ? envc : (int)ARRAY_LEN(envs);

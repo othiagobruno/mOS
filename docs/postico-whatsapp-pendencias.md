@@ -44,14 +44,14 @@ Na hora de commitar, o `appkit.c` e o `appkit_nib.inc` podem ter trechos de outr
 7. **No QEMU de verdade** (as imagens de teste precisam do `--test-overlay`, ver `tools/overlay-teste.ps1`):
    - pôr as dylibs Swift e o SwiftUI.framework na imagem (o `build.ps1` ainda não as copia);
    - lembrar que o `build.ps1` apaga o esp inteiro: tire os apps grandes de lá antes.
-8. **Pendências menores vistas no log:** `-[NSMenuItem keyEquivalentModifierMask]`/`userKeyEquivalent`, `-[NSWindow tab]`/`setSubtitle:`/`setRepresentedURL:`/`setRestorable:`, `-[NSToolbar setCenteredItemIdentifiers:]`, `-[NSProgressIndicator setControlSize:]`/`setDisplayedWhenStopped:`, `-[NSFileManager isReadableFileAtPath:]`, `+[NSData dataWithContentsOfURL:options:error:]`, `-[NSMutableArray indexOfObject:inSortedRange:options:usingComparator:]` e `-[NSApplication helpMenu]`.
+8. **Pendências menores vistas no log:** `-[NSMenuItem keyEquivalentModifierMask]`/`userKeyEquivalent` já existem. `-[NSWindow tab]`/`setSubtitle:`/`setRepresentedURL:`/`setRestorable:`, `-[NSToolbar setCenteredItemIdentifiers:]`, `-[NSProgressIndicator setDisplayedWhenStopped:]` e `-[NSApplication helpMenu]` guardam o valor (`setControlSize:` já está em `NSControl` e a subclasse herda). `-[NSFileManager isReadableFileAtPath:]`, `+[NSData dataWithContentsOfURL:options:error:]` e `-[NSMutableArray indexOfObject:inSortedRange:options:usingComparator:]` continuam na frente de Foundation, fora do AppKit.
 9. **Sparkle:** o alerta "Unable to Check For Updates" aparece em toda partida. Dá para desligar a verificação, por exemplo com `SUEnableAutomaticChecks` nos defaults, ou fazer o Sparkle iniciar.
 10. **Do machocheck** (139 símbolos distintos ausentes, nenhum do SwiftUI): o restante do AppKit, CFNetwork (CFHost*), CoreText (CTLine*/CTTypesetter*), `NSHost` e as constantes de URL e locale. As de URL e locale já entraram em `postico_cf.c`.
 
 ## O que falta no WhatsApp
 
 1. **136 símbolos de SwiftUI ausentes** (medidos com `build\wa-scan`): API que o OpenSwiftUI ainda não tem. Gere a lista com `machocheck` (`grep '^SwiftUI.framework'`) e implemente em `userland/sdk/swift-objc/SwiftUI/UI` (tipos do módulo OpenSwiftUI) ou em `Core`. Membros de tipos do Core precisam ficar no Core, senão o nome mangled ganha `AAE`.
-2. **Foundation Swift:** cerca de 278 símbolos, quase todos do FoundationInternationalization (ICU): FormatStyles de data, número e lista, Measurement, Decimal, AttributedString de Markdown.
+2. **Foundation Swift:** o machocheck do 2.26.45.13 mediu 204 símbolos de formatação (não há módulo `FoundationInternationalization`). Os 204 são exportados; 17 têm miolo em `fmt_core.inc` (data, ISO8601, NSDecimal, Measurement). Os outros 187 resolvem o dyld e devolvem vazio. Faltam metadata Swift de verdade, markdown, lista e nome de pessoa. Ver [userspace-sistemas.md](userspace-sistemas.md).
 3. **Partida no harness:** ver [compat-apps.md](compat-apps.md), seção "WhatsApp: primeira partida no harness". Refazer com as dylibs novas (SwiftUI.framework, CoreGraphics overlay).
 
 ## Riscos já conhecidos

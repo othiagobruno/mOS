@@ -36,6 +36,50 @@ void *mos_new_view(const char *klass, double x, double y, double w, double h) {
     rc_t r = {{x, y}, {w, h}};
     return MSG(id, MSG0(id, cls(klass), "alloc"), "initWithFrame:", r);
 }
+
+/* Vista do runtime embutido. O NSView comum só repassa scrollWheel:; esta subclasse entrega
+ * a roda ao Swift (origem no topo) para o ScrollView andar sem os botões Subir/Descer. */
+typedef void (*mos_scroll_fn)(void *ctx, double x, double y, double dx, double dy);
+typedef struct { id view; mos_scroll_fn fn; void *ctx; } scroll_slot_t;
+static scroll_slot_t scroll_slots[32];
+static int nscroll;
+static cx_class_t *host_cls;
+static scroll_slot_t *scroll_of(id v) {
+    int i;
+    for (i = 0; i < nscroll; i++) if (scroll_slots[i].view == v) return &scroll_slots[i];
+    return 0;
+}
+static void host_scroll(id self, SEL c, id e) {
+    scroll_slot_t *s = scroll_of(self);
+    pt_t p, local;
+    rc_t f;
+    SEL fs;
+    (void)c;
+    if (!s || !s->fn || !e) return;
+    p = MSG0(pt_t, e, "locationInWindow");
+    local = MSG(pt_t, self, "convertPoint:fromView:", p, (id)0);
+    fs = sel_registerName("frame");
+    f = ((rc_t (*)(id, SEL))cx_lookup(self->isa, fs))(self, fs);
+    s->fn(s->ctx, local.x, f.s.h - local.y, 0, MSG0(double, e, "scrollingDeltaY"));
+}
+void *mos_host_view(double x, double y, double w, double h) {
+    rc_t r = {{x, y}, {w, h}};
+    if (!host_cls) {
+        host_cls = cx_define_class(calloc(1, sizeof(cx_class_t)), calloc(1, sizeof(cx_class_t)), "_CXSwiftHost", (cx_class_t *)cls("NSView"), 0);
+        cx_add_method(host_cls, "scrollWheel:", (void *)host_scroll);
+    }
+    return MSG(id, MSG0(id, (id)host_cls, "alloc"), "initWithFrame:", r);
+}
+void mos_view_on_scroll(void *view, mos_scroll_fn fn, void *ctx) {
+    id v = (id)view;
+    scroll_slot_t *s;
+    if (!v) return;
+    s = scroll_of(v);
+    if (!s && nscroll < 32) { s = &scroll_slots[nscroll++]; s->view = v; }
+    if (!s) return;
+    s->fn = fn;
+    s->ctx = ctx;
+}
 void mos_set_frame(void *v, double x, double y, double w, double h) { rc_t r = {{x, y}, {w, h}}; if (v) MSG(void, v, "setFrame:", r); }
 void mos_add_subview(void *parent, void *child) { MSG(void, parent, "addSubview:", child); }
 void mos_remove_from_superview(void *v) { MSG0(void, v, "removeFromSuperview"); }
@@ -151,7 +195,7 @@ static int ncanvas;
 static void *canvas_of(id v) { for (int i = 0; i < ncanvas; i++) if (canvases[i].v == v) return canvases[i].k; return 0; }
 static void *mos_canvas_bind(id v, void *k) { if (ncanvas < 256) { canvases[ncanvas].v = v; canvases[ncanvas].k = k; ncanvas++; } return v; }
 /* ---- Canvas: NSView invertida (origem no topo) cujo drawRect: chama uma função C */
-typedef struct { void (*draw)(void *ctx, double w, double h); void *ctx; void (*mouse)(void *ctx, double x, double y); void (*key)(void *ctx, int ch); } canvas_t;
+typedef struct { void (*draw)(void *ctx, double w, double h); void *ctx; void (*mouse)(void *ctx, double x, double y); void (*key)(void *ctx, int ch); void (*scroll)(void *ctx, double x, double y, double dx, double dy); } canvas_t;
 static cx_class_t *canvas_cls;
 static void cv_draw(id self, SEL c, rc_t r) {
     (void)c; (void)r;
@@ -178,6 +222,18 @@ static void cv_key(id self, SEL c, id e) {
     const char *s = ch ? cx_cstr(ch) : "";
     if (k && k->key) k->key(k->ctx, (unsigned char)s[0]);
 }
+static void cv_scroll(id self, SEL c, id e) {
+    canvas_t *k = canvas_of(self);
+    pt_t p;
+    SEL fs;
+    rc_t f;
+    (void)c;
+    if (!k || !k->scroll || !e) return;
+    p = MSG0(pt_t, e, "locationInWindow");
+    fs = sel_registerName("frame");
+    f = ((rc_t (*)(id, SEL))cx_lookup(self->isa, fs))(self, fs);
+    k->scroll(k->ctx, p.x - f.o.x, f.s.h - (p.y - f.o.y), 0, MSG0(double, e, "scrollingDeltaY"));
+}
 void *mos_canvas(void (*draw)(void *, double, double), void *ctx) {
     if (!canvas_cls) {
         canvas_cls = cx_define_class(calloc(1, sizeof(cx_class_t)), calloc(1, sizeof(cx_class_t)), "_CXSwiftCanvas", (cx_class_t *)cls("NSView"), 0);
@@ -185,6 +241,7 @@ void *mos_canvas(void (*draw)(void *, double, double), void *ctx) {
         cx_add_method(canvas_cls, "isFlipped", (void *)cv_flipped);
         cx_add_method(canvas_cls, "mouseDown:", (void *)cv_mouse);
         cx_add_method(canvas_cls, "keyDown:", (void *)cv_key);
+        cx_add_method(canvas_cls, "scrollWheel:", (void *)cv_scroll);
         cx_add_method(canvas_cls, "acceptsFirstResponder", (void *)cv_accepts);
     }
     rc_t r = {{0, 0}, {10, 10}};
@@ -243,7 +300,12 @@ void *mos_timer(double interval, void (*fn)(void *), void *ctx) {
     ST(t) = b;
     return MSG(id, cls("NSTimer"), "scheduledTimerWithTimeInterval:target:selector:userInfo:repeats:", interval, t, sel_registerName("fire:"), (id)0, 1);
 }
-void mos_timer_stop(void *timer) { if (timer) MSG0(void, timer, "invalidate"); }void mos_canvas_input(void *v, void (*mouse)(void *, double, double), void (*key)(void *, int)) {
+void mos_timer_stop(void *timer) { if (timer) MSG0(void, timer, "invalidate"); }
+void mos_canvas_on_scroll(void *v, void (*scroll)(void *, double, double, double, double)) {
+    canvas_t *k = canvas_of((id)v);
+    if (k) k->scroll = scroll;
+}
+void mos_canvas_input(void *v, void (*mouse)(void *, double, double), void (*key)(void *, int)) {
     canvas_t *k = canvas_of((id)v);
     if (k) { k->mouse = mouse; k->key = key; }
     id w = MSG0(id, v, "window");

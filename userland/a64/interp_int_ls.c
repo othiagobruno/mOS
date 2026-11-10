@@ -22,8 +22,8 @@
  *  - atomicidade: acesso dentro de um bloco de 16 bytes vira um único acesso do x86 (atômico
  *    dentro da linha de cache); LDP/STP/LDXP/STXP de 2×64 bits alinhados a 16 usam movdqa
  *    (atômico em CPUs x86 com AVX) e cmpxchg16b, como o FEAT_LSE2 exige.
- *  - monitor exclusivo: LDXR guarda (endereço, tamanho, valor); STXR faz compare-exchange com o
- *    valor guardado; falha (status 1) se o monitor não bate. Falha espúria/ABA permitida (doc).
+ *  - monitor exclusivo: época por reserva (a64_xmon). Qualquer store que sobreponha os bytes
+ *    faz o STXR falhar, inclusive A→B→A e o STR do mesmo valor. Falha espúria continua permitida.
  */
 #include "interp_int.h"
 
@@ -42,6 +42,7 @@ static inline a64_u128 ld128_atomic(a64_u64 a) {
 }
 
 static inline void st128_atomic(a64_u64 a, a64_u128 val) {
+    a64_xmon_note(a, 16);
 #if defined(__x86_64__)
     a64i_v2di v;
     __builtin_memcpy(&v, &val, 16);
@@ -49,6 +50,7 @@ static inline void st128_atomic(a64_u64 a, a64_u128 val) {
 #else
     a64_st128(a, val);
 #endif
+    a64_xmon_note_end();
 }
 
 /* compare-exchange de 16 bytes; lo e hi recebem o valor antigo; devolve 1 se trocou */
@@ -183,6 +185,7 @@ static int a64i_atomic(a64_cpu *c, a64_u32 i) {
         if (opc != 0) return A64_EXIT_UDF;                          /* LD64B/ST64B* (LS64) etc. */
     }
     if (cross16(addr, n)) return align_fault(c, addr);
+    a64_xmon_note(addr, n);
     a64_u64 v = a64i_rd(c, rs) & a64i_ones(bits), old;
     if (o3) {                                                       /* SWP */
         void *p = (void *)(uintptr_t)addr;
@@ -210,6 +213,7 @@ static int a64i_atomic(a64_cpu *c, a64_u32 i) {
             if (casn(addr, n, &old, nv & a64i_ones(bits))) break;
         }
     }
+    a64_xmon_note_end();
     a64_xw(c, rt, old);
     return A64_NEXT;
 }
@@ -228,16 +232,19 @@ static int excl_group(a64_cpu *c, a64_u32 i) {
     if (o2 && !o1) {                                            /* LDAR/LDLAR/STLR/STLLR */
         if (rs != 31 || rt2 != 31) return A64_EXIT_UDF;
         if (!A64I_NAA && cross16(addr, n)) return align_fault(c, addr);
-        if (L) { a64_xw(c, rt, a64_ldn(addr, (int)n)); return A64_NEXT; }
+        if (L) { a64_xw(c, rt, a64_ldn(addr, (int)n)); return A64_NEXT; } /* LDAR e LDLAR: load já é acquire */
         a64_stn(addr, a64i_rd(c, rt), (int)n);
-        if (BIT(i, 15)) a64_fence_full();                       /* STLR: RCsc com LDAR seguinte */
+        /* sem LORegion, STLLR tem a mesma ordem RCsc que STLR */
+        a64_fence_full();
         return A64_NEXT;
     }
     if (o2 && o1) {                                             /* CAS/CASA/CASL/CASAL */
         if (rt2 != 31) return A64_EXIT_UDF;
         if (cross16(addr, n)) return align_fault(c, addr);
         a64_u64 old = a64i_rd(c, rs) & a64i_ones(8 * n);
+        a64_xmon_note(addr, n);
         casn(addr, n, &old, a64i_rd(c, rt));
+        a64_xmon_note_end();
         a64_xw(c, rs, old);
         return A64_NEXT;
     }
@@ -246,6 +253,7 @@ static int excl_group(a64_cpu *c, a64_u32 i) {
         unsigned tot = size ? 16 : 8;
         if (cross16(addr, tot)) return align_fault(c, addr);
         a64_u64 lo, hi;
+        a64_xmon_note(addr, tot);
         if (size) {
             lo = a64i_rd(c, rs); hi = a64i_rd(c, rs + 1);
             cas128(addr, &lo, &hi, a64i_rd(c, rt), a64i_rd(c, rt + 1));
@@ -254,6 +262,7 @@ static int excl_group(a64_cpu *c, a64_u32 i) {
             casn(addr, 8, &e, (a64_u32)a64i_rd(c, rt) | (a64i_rd(c, rt + 1) << 32));
             lo = (a64_u32)e; hi = e >> 32;
         }
+        a64_xmon_note_end();
         a64_xw(c, rs, lo);
         a64_xw(c, rs + 1, hi);
         return A64_NEXT;
@@ -262,44 +271,28 @@ static int excl_group(a64_cpu *c, a64_u32 i) {
         unsigned esz = size == 3 ? 8 : 4, tot = 2 * esz;
         if (cross16(addr, tot) && (L || A64I_STXR_ALIGN_FIRST || (c->excl_valid && c->excl_addr == addr && c->excl_size == tot))) return align_fault(c, addr);
         if (L) {
-            a64_u64 lo, hi, v0, v1;
-            if (esz == 8) { a64_u128 q = ld128_atomic(addr); lo = (a64_u64)q; hi = (a64_u64)(q >> 64); v0 = lo; v1 = hi; }
-            else { a64_u64 d = a64_ld64(addr); lo = (a64_u32)d; hi = d >> 32; v0 = d; v1 = 0; }
-            c->excl_addr = addr; c->excl_size = tot; c->excl_val[0] = v0; c->excl_val[1] = v1; c->excl_valid = 1;
+            a64_u64 lo, hi;
+            a64_xmon_load(c, addr, tot, &lo, &hi);
+            if (esz != 8) { hi = lo >> 32; lo = (a64_u32)lo; }
             a64_xw(c, rt, lo);
             a64_xw(c, rt2, hi);
             return A64_NEXT;
         }
         a64_u64 a = a64i_rd(c, rt), b = a64i_rd(c, rt2);
-        a64_u64 status = 1;
-        if (c->excl_valid && c->excl_addr == addr && c->excl_size == tot) {
-            if (esz == 8) {
-                a64_u64 lo = c->excl_val[0], hi = c->excl_val[1];
-                if (cas128(addr, &lo, &hi, a, b)) status = 0;
-            } else {
-                a64_u64 e = c->excl_val[0];
-                if (casn(addr, 8, &e, (a64_u32)a | (b << 32))) status = 0;
-            }
-        }
-        c->excl_valid = 0;
-        a64_ww(c, rs, (a64_u32)status);
+        a64_u64 lo = esz == 8 ? a : ((a64_u32)a | (b << 32));
+        a64_u64 hi = esz == 8 ? b : 0;
+        a64_ww(c, rs, (a64_u32)a64_xmon_store(c, addr, tot, lo, hi));
         return A64_NEXT;
     }
     /* LDXR/LDAXR/STXR/STLXR */
     if (cross16(addr, n) && (L || A64I_STXR_ALIGN_FIRST || (c->excl_valid && c->excl_addr == addr && c->excl_size == n))) return align_fault(c, addr);
     if (L) {
-        a64_u64 v = a64_ldn(addr, (int)n);
-        c->excl_addr = addr; c->excl_size = n; c->excl_val[0] = v; c->excl_val[1] = 0; c->excl_valid = 1;
-        a64_xw(c, rt, v);
+        a64_u64 lo, hi;
+        a64_xmon_load(c, addr, n, &lo, &hi);
+        a64_xw(c, rt, lo);
         return A64_NEXT;
     }
-    a64_u64 v = a64i_rd(c, rt), status = 1;
-    if (c->excl_valid && c->excl_addr == addr && c->excl_size == n) {
-        a64_u64 e = c->excl_val[0];
-        if (casn(addr, n, &e, v)) status = 0;
-    }
-    c->excl_valid = 0;
-    a64_ww(c, rs, (a64_u32)status);
+    a64_ww(c, rs, (a64_u32)a64_xmon_store(c, addr, n, a64i_rd(c, rt), 0));
     return A64_NEXT;
 }
 

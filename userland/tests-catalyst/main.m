@@ -62,7 +62,9 @@ static void clicar(UIWindow *w, CGPoint p) {
 + (id)actionWithTitle:(NSString *)t style:(NSInteger)s handler:(void (^)(id))h;
 - (void)addAction:(id)a;
 + (void)animateWithDuration:(double)d animations:(void (^)(void))a completion:(void (^)(BOOL))c;
++ (void)animateWithDuration:(double)d delay:(double)dl options:(NSUInteger)o animations:(void (^)(void))a completion:(void (^)(BOOL))c;
 + (void)animateWithDuration:(double)d delay:(double)dl usingSpringWithDamping:(CGFloat)z initialSpringVelocity:(CGFloat)v options:(NSUInteger)o animations:(void (^)(void))a completion:(void (^)(BOOL))c;
++ (void)transitionWithView:(id)v duration:(double)d options:(NSUInteger)o animations:(void (^)(void))a completion:(void (^)(BOOL))c;
 + (void)_mosAdvanceAnimationClock:(double)s;
 + (NSUInteger)_mosRunningAnimationCount;
 - (CGRect)_mosPresentationFrame;
@@ -76,6 +78,37 @@ static void clicar(UIWindow *w, CGPoint p) {
 - (NSInteger)state;
 @end
 const char *object_getClassName(id o);
+extern CGAffineTransform CGAffineTransformMakeRotation(CGFloat a);
+extern CGAffineTransform CGAffineTransformMakeScale(CGFloat sx, CGFloat sy);
+extern CGAffineTransform CGAffineTransformMakeTranslation(CGFloat tx, CGFloat ty);
+extern CATransform3D CATransform3DMakeScale(CGFloat x, CGFloat y, CGFloat z);
+extern CATransform3D CATransform3DMakeRotation(CGFloat a, CGFloat x, CGFloat y, CGFloat z);
+extern void UIGraphicsBeginImageContextWithOptions(CGSize size, BOOL opaque, CGFloat scale);
+extern void *UIGraphicsGetCurrentContext(void);
+extern void UIGraphicsEndImageContext(void);
+extern void *CGBitmapContextGetData(void *);
+extern size_t CGBitmapContextGetBytesPerRow(void *);
+@interface UIView (MOSRender)
+- (void)_mosRender:(void *)c;
+@end
+@interface CALayer : NSObject
+- (void)setTransform:(CATransform3D)t;
+- (CATransform3D)transform;
+@end
+static int px_at(UIView *v, int x, int y, unsigned char o[4]) {
+    o[0] = o[1] = o[2] = o[3] = 0;
+    CGSize s = v.frame.size;
+    if (s.width < 1 || s.height < 1 || x < 0 || y < 0 || x >= (int)s.width || y >= (int)s.height) return 0;
+    UIGraphicsBeginImageContextWithOptions(s, NO, 1);
+    void *c = UIGraphicsGetCurrentContext();
+    if (c) [v _mosRender:c];
+    unsigned char *d = c ? (unsigned char *)CGBitmapContextGetData(c) : 0;
+    size_t bpr = c ? CGBitmapContextGetBytesPerRow(c) : 0;
+    int okp = d && bpr;
+    if (okp) { unsigned char *p = d + (size_t)y * bpr + (size_t)x * 4; o[0] = p[0]; o[1] = p[1]; o[2] = p[2]; o[3] = p[3]; }
+    UIGraphicsEndImageContext();
+    return okp;
+}
 static int linhasPedidas, selecionou;
 @interface Fonte : NSObject
 @end
@@ -295,6 +328,108 @@ static Alvo *alvo;
     [an2 stopAnimation:YES];
     CHECK(fabs(bola.alpha - 0.5) < 0.05 && [an2 state] == 0 && [UIView _mosRunningAnimationCount] == 0,
           "stopAnimation deixa o modelo onde estava (alpha %g)", bola.alpha);
+    /* transform: rotação e escala em volta do centro; o frame vira a caixa alinhada; a identidade continua exata */
+    UIView *giro = [[UIView alloc] initWithFrame:CGRectMake(100, 100, 40, 20)];
+    giro.transform = CGAffineTransformMakeRotation(3.141592653589793 / 2);
+    CGRect gf = giro.frame;
+    CHECK(fabs(giro.center.x - 120) < 0.01 && fabs(giro.center.y - 110) < 0.01 && giro.bounds.size.width == 40 && giro.bounds.size.height == 20,
+          "rotação não mexe no centro nem nos bounds");
+    CHECK(fabs(gf.origin.x - 110) < 0.01 && fabs(gf.origin.y - 90) < 0.01 && fabs(gf.size.width - 20) < 0.01 && fabs(gf.size.height - 40) < 0.01,
+          "rotação de 90°: frame é a AABB (%g, %g, %g, %g)", gf.origin.x, gf.origin.y, gf.size.width, gf.size.height);
+    giro.transform = CGAffineTransformMakeScale(2, 2);
+    gf = giro.frame;
+    CHECK(fabs(giro.center.x - 120) < 0.01 && fabs(gf.origin.x - 80) < 0.01 && fabs(gf.origin.y - 90) < 0.01 && fabs(gf.size.width - 80) < 0.01 && fabs(gf.size.height - 40) < 0.01,
+          "escala 2: AABB 80x40 com o mesmo centro (%g, %g, %g, %g)", gf.origin.x, gf.origin.y, gf.size.width, gf.size.height);
+    giro.transform = CGAffineTransformMakeTranslation(0, 0);
+    CHECK(giro.frame.origin.x == 100 && giro.frame.size.width == 40, "transform identidade devolve o frame exato");
+    /* translação entra na matriz e não no center; o hit-test acompanha o retângulo visual */
+    UIView *host = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 400, 300)];
+    UIView *caixaT = [[UIView alloc] initWithFrame:CGRectMake(100, 100, 40, 20)];
+    [host addSubview:caixaT];
+    caixaT.transform = CGAffineTransformMakeTranslation(50, 0);
+    CGPoint qt = [caixaT convertPoint:CGPointMake(0, 0) toView:host];
+    CHECK(fabs(caixaT.center.x - 120) < 0.01 && fabs(qt.x - 150) < 0.01 && fabs(qt.y - 100) < 0.01,
+          "translação não muda o center; convertPoint aplica (%g, %g)", qt.x, qt.y);
+    CHECK([host hitTest:CGPointMake(170, 110) withEvent:nil] == caixaT, "hitTest acerta o centro visual da translação");
+    CHECK([host hitTest:CGPointMake(120, 110) withEvent:nil] == host, "hitTest erra o centro antigo depois da translação");
+    /* CATransform3D no layer espelha a view */
+    UIView *esc = [[UIView alloc] initWithFrame:CGRectMake(100, 100, 40, 20)];
+    CATransform3D t3 = CATransform3DMakeScale(2, 3, 1);
+    [(CALayer *)esc.layer setTransform:t3];
+    CATransform3D volta = [(CALayer *)esc.layer transform];
+    CATransform3D daView = esc.transform3D;
+    gf = esc.frame;
+    CHECK(fabs(gf.size.width - 80) < 0.01 && fabs(gf.size.height - 60) < 0.01 && fabs(esc.center.x - 120) < 0.01,
+          "CATransform3D de escala: frame %g x %g", gf.size.width, gf.size.height);
+    CHECK(fabs(volta.m11 - 2) < 0.01 && fabs(volta.m22 - 3) < 0.01 && fabs(daView.m11 - 2) < 0.01 && fabs(daView.m22 - 3) < 0.01,
+          "layer.transform e transform3D da view batem (m11 %g m22 %g)", volta.m11, volta.m22);
+    t3 = CATransform3DMakeRotation(3.141592653589793 / 2, 0, 0, 1);
+    [esc setTransform3D:t3];
+    volta = [(CALayer *)esc.layer transform];
+    CHECK(fabs(volta.m11) < 0.01 && fabs(volta.m12 - 1) < 0.01 && fabs(volta.m21 + 1) < 0.01 && fabs(volta.m22) < 0.01,
+          "rotação Z no layer (m11 %g m12 %g m21 %g m22 %g)", volta.m11, volta.m12, volta.m21, volta.m22);
+    /* bitmap: a translação desloca o preenchimento; o alfa do ancestral entra no pixel */
+    UIView *palco = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 80, 40)];
+    UIView *miolo = [[UIView alloc] initWithFrame:CGRectMake(10, 10, 20, 20)];
+    miolo.backgroundColor = [UIColor colorWithRed:1 green:0 blue:0 alpha:1];
+    [palco addSubview:miolo];
+    miolo.transform = CGAffineTransformMakeTranslation(30, 0);
+    unsigned char px[4];
+    int tem = px_at(palco, 15, 15, px);
+    unsigned char px2[4];
+    int tem2 = px_at(palco, 50, 20, px2);
+    CHECK(tem && px[3] == 0 && tem2 && px2[0] > 200 && px2[3] > 200, "bitmap: translação tira o pixel antigo e pinta o visual (A %u, R %u)", px[3], px2[0]);
+    UIView *pai = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 40, 40)];
+    pai.alpha = 0.5;
+    UIView *filhoA = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 40, 40)];
+    filhoA.backgroundColor = [UIColor colorWithRed:1 green:0 blue:0 alpha:1];
+    [pai addSubview:filhoA];
+    unsigned char pxa[4];
+    int tema = px_at(pai, 20, 20, pxa);
+    CHECK(tema && pxa[0] > 200 && pxa[3] > 100 && pxa[3] < 160, "alfa do ancestral multiplica o preenchimento (A %u)", pxa[3]);
+    /* animação do transform: o modelo já é a escala final; a apresentação anda */
+    UIView *cresce = [[UIView alloc] initWithFrame:CGRectMake(800, 20, 40, 20)];
+    [root addSubview:cresce];
+    [UIView animateWithDuration:1 delay:0 options:(3u << 16) animations:^{ cresce.transform = CGAffineTransformMakeScale(3, 1); } completion:nil];
+    CHECK(fabs(cresce.frame.size.width - 120) < 0.01 && fabs([cresce _mosPresentationFrame].size.width - 40) < 1,
+          "animate do transform: modelo na escala final, apresentação no início");
+    [UIView _mosAdvanceAnimationClock:0.5];
+    CHECK(fabs([cresce _mosPresentationFrame].size.width - 80) < 2, "animate do transform no meio (largura %g)", [cresce _mosPresentationFrame].size.width);
+    [UIView _mosAdvanceAnimationClock:0.6];
+    /* contentOffset animado: 0,25 s linear, com teto do conteúdo */
+    UIScrollView *sc = [[UIScrollView alloc] initWithFrame:CGRectMake(20, 400, 100, 100)];
+    sc->_contentSize = CGSizeMake(100, 500);
+    [root addSubview:sc];
+    [sc setContentOffset:CGPointMake(0, 200) animated:YES];
+    CHECK(sc.contentOffset.y == 200 && [sc _mosPresentationContentOffset].y == 0, "contentOffset animado: modelo no fim, apresentação no início");
+    [UIView _mosAdvanceAnimationClock:0.125];
+    CGFloat oy = [sc _mosPresentationContentOffset].y;
+    CHECK(fabs(oy - 100) < 8, "contentOffset animado no meio (%g)", oy);
+    [UIView _mosAdvanceAnimationClock:0.2];
+    CHECK(fabs([sc _mosPresentationContentOffset].y - 200) < 0.01 && [UIView _mosRunningAnimationCount] == 0, "contentOffset animado termina");
+    [sc setContentOffset:CGPointMake(0, 10000) animated:YES];
+    CHECK(sc.contentOffset.y == 400, "contentOffset animado respeita o teto do conteúdo (%g)", sc.contentOffset.y);
+    [UIView _mosAdvanceAnimationClock:0.3];
+    [UIView animateWithDuration:1 delay:0 options:(3u << 16) animations:^{ [sc setContentOffset:CGPointMake(0, 0)]; } completion:nil];
+    [UIView _mosAdvanceAnimationClock:0.5];
+    CHECK(fabs([sc _mosPresentationContentOffset].y - 200) < 8, "animateWithDuration do contentOffset no meio (%g)", [sc _mosPresentationContentOffset].y);
+    [UIView _mosAdvanceAnimationClock:0.6];
+    /* transitionWithView: o quadro 0 é o snapshot de antes, não o modelo que já está no fim */
+    UIView *troca = [[UIView alloc] initWithFrame:CGRectMake(20, 520, 40, 40)];
+    troca.backgroundColor = [UIColor colorWithRed:1 green:0 blue:0 alpha:1];
+    [root addSubview:troca];
+    __block int trocou = 0;
+    [UIView transitionWithView:troca duration:1 options:(3u << 16) | (5u << 20) animations:^{
+        troca.backgroundColor = [UIColor colorWithRed:0 green:0 blue:1 alpha:1];
+    } completion:^(BOOL f) { trocou = f ? 1 : -1; }];
+    unsigned char p0[4], p1[4];
+    int t0 = px_at(troca, 20, 20, p0);
+    [UIView _mosAdvanceAnimationClock:0.5];
+    int t1 = px_at(troca, 20, 20, p1);
+    CHECK(t0 && p0[0] > 200 && p0[2] < 40, "transitionWithView no início é o snapshot vermelho (R %u B %u)", p0[0], p0[2]);
+    CHECK(t1 && p1[0] > 80 && p1[0] < 180 && p1[2] > 80 && p1[2] < 180, "transitionWithView no meio cruza as cores (R %u B %u)", p1[0], p1[2]);
+    [UIView _mosAdvanceAnimationClock:0.6];
+    CHECK(trocou == 1 && [UIView _mosRunningAnimationCount] == 0, "transitionWithView chama o completion");
     [w->_nsWindow.contentView setNeedsDisplay:YES];
     printf("catalyst: %d/%d ok\n", ok, total);
     fflush(stdout);

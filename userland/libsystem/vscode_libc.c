@@ -633,6 +633,14 @@ int pthread_kill(unsigned long t, int sig) {
 void *pthread_override_qos_class_start_np(unsigned long t, unsigned qos, int prio) { (void)t; (void)qos; (void)prio; static int dummy; return &dummy; }
 int pthread_override_qos_class_end_np(void *o) { (void)o; return 0; }
 int pthread_condattr_init(void *a) { memset(a, 0, 16); return 0; }
+int pthread_condattr_destroy(void *a) { if (a) memset(a, 0, 16); return a ? 0 : 22; }
+/* O atributo é guardado. Cond_wait/signal deste processo não mudam; entre processos o futex não é compartilhado. */
+int pthread_condattr_setpshared(void *a, int p) {
+    if (!a || (p != 0 && p != 1)) return 22;
+    ((int *)a)[1] = p;
+    return 0;
+}
+int pthread_condattr_getpshared(const void *a, int *p) { if (!a) return 22; if (p) *p = ((const int *)a)[1]; return 0; }
 int pthread_setcancelstate(int st, int *old) { (void)st; if (old) *old = 0; return 0; }
 /* quadro de pilha: [rbp] = rbp anterior, [rbp+8] = endereço de retorno */
 usize pthread_stack_frame_decode_np(usize frame, usize *ret) {
@@ -789,19 +797,8 @@ u64 dispatch_walltime(const vs_timespec_t *when, i64 delta) {
     return (u64)(-(i64)ns);
 }
 
-/* ================================================================ qsort_b */
-typedef struct { void *isa; int flags, reserved; int (*invoke)(void *, const void *, const void *); } vs_block_t;
-static vs_block_t *qb_block;
-static volatile int qb_lock;
-static int qb_cmp(const void *a, const void *b) { return qb_block->invoke(qb_block, a, b); }
-void qsort_b(void *base, size_t n, size_t sz, void *block) {
-    while (__atomic_exchange_n(&qb_lock, 1, __ATOMIC_ACQUIRE)) sched_yield();
-    vs_block_t *prev = qb_block;
-    qb_block = block;
-    qsort(base, n, sz, qb_cmp);
-    qb_block = prev;
-    __atomic_store_n(&qb_lock, 0, __ATOMIC_RELEASE);
-}
+/* qsort_b está em sortb.c (heapsort via qsort_r, bloco no thunk). A trava global antiga
+ * ficava presa se o comparador saía por exceção ou longjmp, e um qsort_b aninhado girava. */
 
 /* ================================================================ números aleatórios */
 int rand_r(unsigned *seed) { *seed = *seed * 1103515245u + 12345u; return (int)((*seed >> 16) & 0x7FFF); }

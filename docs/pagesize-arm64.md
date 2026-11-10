@@ -26,7 +26,7 @@ A constante única é `A64_GUEST_PAGE` em `userland/a64rt/a64rt_abi.h`. O libSys
 
 - `mmap` com comprimento 0 devolve `EINVAL`. `MAP_FIXED` com endereço fora de 16 KiB devolve `EINVAL`. Arquivo com deslocamento fora de 16 KiB devolve `EINVAL` (`MAP_ANON` ignora o deslocamento). O comprimento sobe até fechar a página guest.
 - `munmap` / `mprotect` / `madvise` (`MADV_DONTNEED`, `MADV_FREE`, `MADV_FREE_REUSABLE`): endereço fora de 16 KiB é `EINVAL`; comprimento 0 é sucesso; o comprimento sobe até a página guest.
-- `PROT_NONE` na arena de `mmap` (`USER_MMAP_BASE` para cima) **desmapeia** as páginas de 4 KiB da página guest (`MOS_MUNMAP_KEEP` no `mprotect`, para a faixa continuar do processo). É o que faz uma guarda faltar de verdade. A PTE do mOS não distingue leitura de escrita de execução.
+- `PROT_NONE` na arena de `mmap` (`USER_MMAP_BASE` para cima) **desmapeia** as páginas de 4 KiB da página guest (`MOS_MUNMAP_KEEP` no `mprotect`, para a faixa continuar do processo). É o que faz uma guarda faltar de verdade. Com outro prot, `b = 7` grava a PTE do span inteiro: sem execução a página fica NX (`docs/mm-shared.md`). No x86 a página presente continua legível.
 - `MAP_FIXED|MAP_ANON` troca as páginas guest inteiras. Com `PROT_NONE`, o trecho fica sem páginas.
 - `mach_vm_deallocate` / `vm_deallocate` seguem o Mach, não o POSIX: o início desce até a página guest e o fim sobe. `mach_vm_protect` com endereço desalinhado devolve `KERN_INVALID_ADDRESS` e o tamanho sobe até a página guest.
 - `mach_vm_region` numa faixa que o kernel responde como uma página sintética de 4 KiB com proteção 7 (nada registrado) vira a página guest de 16 KiB que contém o endereço. Faixa registrada passa como está. Isto só é seguro porque o libSystem e o carregador arm64 registram múltiplos de 16 KiB.
@@ -44,10 +44,10 @@ Os segmentos arm64 da Apple já nascem alinhados a 16 KiB entre si. A base da im
 ## O que este contrato não faz
 
 - Não muda a página do kernel nem a de um processo x86_64.
-- Não cria commpage.
-- `MAP_FIXED` de **arquivo** e `mach_vm_map` sem `VM_FLAGS_ANYWHERE` continuam sem honrar o endereço pedido: o kernel não tem `mmap` de arquivo em endereço fixo. O endereço novo é 16 KiB alinhado.
+- Não cria commpage. O endereço do Darwin arm64 (`_COMM_PAGE64_BASE_ADDRESS`, `0xFFFFFC000`) fica no mapa de identidade do kernel, abaixo de `USER_BASE`. Mapear uma página de usuário ali colide com o kernel. O carregador é o `macho.c`, não o dyld da Apple, e nada neste contrato lê a commpage.
+- `MAP_FIXED` de arquivo (`SYS_MMAP` b = 8 privado, b = 9 compartilhado) e `mach_vm_map` sem `VM_FLAGS_ANYWHERE` devolvem o endereço pedido. O de arquivo traz o conteúdo e o deslocamento; o `mach_vm_map` devolve `KERN_NO_SPACE` se a faixa está ocupada e não veio `VM_FLAGS_OVERWRITE` (`0x4000`). Pelo libSystem o endereço e o comprimento continuam em 16 KiB. Um `svc` direto segue em 4 KiB.
 - A pilha principal não ganha guarda que falte. A das threads criadas por `pthread_create`, sim.
-- Proteção RW contra RX continua só registrada para `mach_vm_region`. Quem falta de verdade é `PROT_NONE` na arena de `mmap`.
+- `PROT_NONE` na arena de `mmap` é o que tira o acesso de verdade. RW contra RX, quando o prot pede, vai para a PTE (NX e o bit de escrita). `mach_vm_region` continua lendo a proteção registrada, não o bit da PTE.
 - Um `mmap` feito pelo binário com `svc` direto, sem o libSystem, continua em 4 KiB. Os apps passam pelo libSystem.
 - `pthread_attr_setstacksize` abaixo de 64 KiB ainda cai na pilha padrão de 512 KiB (regra antiga do libSystem, independente da página).
 

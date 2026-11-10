@@ -8,6 +8,14 @@
 extern char cx_cfconst_isa[] __asm__("__CFConstantStringClassReference");
 typedef struct { void *isa; u64 flags; const char *s; u64 n; } vk_const_t;
 #define VK(var, text) static vk_const_t var##_s = {cx_cfconst_isa, 0x7c8, text, sizeof(text) - 1}; const void *var = &var##_s;
+VK(kAXValueChangedNotification, "AXValueChanged")
+VK(kAXFocusedUIElementChangedNotification, "AXFocusedUIElementChanged")
+VK(kAXWindowCreatedNotification, "AXWindowCreated")
+VK(kAXUIElementDestroyedNotification, "AXUIElementDestroyed")
+VK(kAXFocusedWindowChangedNotification, "AXFocusedWindowChanged")
+VK(kAXBoundsForRangeParameterizedAttribute, "AXBoundsForRange")
+VK(kAXStringForRangeParameterizedAttribute, "AXStringForRange")
+VK(kAXRangeForPositionParameterizedAttribute, "AXRangeForPosition")
 VK(NSAccessibilityAnnouncementKey, "AXAnnouncementKey")
 VK(NSAccessibilityAnnouncementRequestedNotification, "AXAnnouncementRequested")
 VK(NSAccessibilityApplicationActivatedNotification, "AXApplicationActivated")

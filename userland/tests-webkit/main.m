@@ -107,6 +107,24 @@
 - (void)callAsyncJavaScript:(NSString *)b arguments:(NSDictionary *)a inFrame:(id)f inContentWorld:(id)w completionHandler:(void (^)(id, NSError *))h;
 - (void)findString:(NSString *)s withConfiguration:(WKFindConfiguration *)c completionHandler:(void (^)(WKFindResult *))h;
 - (int)_mosEngineID;
+- (WKNavigation *)goToBackForwardListItem:(id)item;
+@end
+@interface WKBackForwardList (MOSItemAt)
+- (id)itemAtIndex:(NSInteger)i;
+@end
+@interface WebResource : NSObject
+- (instancetype)initWithData:(NSData *)data URL:(NSURL *)url MIMEType:(NSString *)mime textEncodingName:(NSString *)enc frameName:(NSString *)frame;
+- (NSData *)data;
+- (NSURL *)URL;
+- (NSString *)MIMEType;
+@end
+@interface WebArchive : NSObject
+- (instancetype)initWithMainResource:(WebResource *)main subresources:(NSArray *)subs subframeArchives:(NSArray *)frames;
+- (instancetype)initWithData:(NSData *)data;
+- (NSData *)data;
+- (WebResource *)mainResource;
+- (NSArray *)subresources;
+- (NSArray *)subframeArchives;
 @end
 @interface WebView : WKWebView
 @property (weak) id frameLoadDelegate;
@@ -116,6 +134,7 @@
 @end
 @interface NSObject (WebFrameT)
 - (id)loadHTMLString:(NSString *)s baseURL:(NSURL *)u;
+- (void)loadData:(NSData *)d MIMEType:(NSString *)m textEncodingName:(NSString *)e baseURL:(NSURL *)u completionHandler:(void (^)(NSError *))h;
 @end
 
 static long wk_sys(long op, long id, long a, long b) {
@@ -123,6 +142,11 @@ static long wk_sys(long op, long id, long a, long b) {
     register long r10 __asm__("r10") = b;
     __asm__ volatile("int $0x80" : "=a"(r) : "a"((long)SYS_WEB), "D"(op), "S"(id), "d"(a), "r"(r10) : "rcx", "r11", "memory");
     return r;
+}
+
+static BOOL data_eq(NSData *a, NSData *b) {
+    if (!a || !b || [a length] != [b length]) return NO;
+    return memcmp([a bytes], [b bytes], [a length]) == 0;
 }
 
 static int g_ok, g_total;
@@ -148,12 +172,18 @@ static void check(BOOL c, const char *name, NSString *detail) {
 @property BOOL legacyDone;
 @property (strong) NSString *legacyTitle;
 @property int failProvisional;
+@property BOOL denyHistory;
+@property BOOL sawHistoryDecision;
 @end
 
 @implementation Teste
 - (double)now { return [[NSDate date] timeIntervalSince1970]; }
 
 /* ---- WKNavigationDelegate */
+- (void)webView:(WKWebView *)w shouldGoToBackForwardListItem:(id)item willUseInstantBack:(BOOL)instant completionHandler:(void (^)(BOOL))h {
+    self.sawHistoryDecision = !instant;
+    h(!self.denyHistory);
+}
 - (void)webView:(WKWebView *)w decidePolicyForNavigationAction:(WKNavigationAction *)a decisionHandler:(void (^)(NSInteger))h {
     NSString *u = [[a.request URL] absoluteString] ?: @"";
     [self.policies addObject:[NSString stringWithFormat:@"%ld %@", (long)a.navigationType, u]];
@@ -333,6 +363,21 @@ static void check(BOOL c, const char *name, NSString *detail) {
     v = [self eval:@"document.getElementById('lk') ? 'sim' : 'nao'" error:NULL];
     check([v isEqualToString:@"sim"], "o DOM da página voltou", [v description]);
 
+    /* 8b. o delegate pode recusar um item do histórico (WhatsApp, Setapp, MSAL) */
+    id ahead = [[self.wv backForwardList] itemAtIndex:1];
+    self.denyHistory = YES;
+    self.sawHistoryDecision = NO;
+    [self.wv goToBackForwardListItem:ahead];
+    [self waitFor:^{ return NO; } seconds:0.4];
+    check(self.sawHistoryDecision, "shouldGoToBackForwardListItem foi chamado (instant back = NO)", nil);
+    check([self.wv.title isEqualToString:@"Pagina 1"], "o delegate recusou o item do histórico", self.wv.title);
+    self.denyHistory = NO;
+    [self.wv goToBackForwardListItem:ahead];
+    fin = [self waitFor:^{ return [self.wv.title isEqualToString:@"Linkado"]; } seconds:5];
+    check(fin, "o delegate permitiu o item do histórico", self.wv.title);
+    [self.wv goBack];
+    [self waitFor:^{ return [self.wv.title isEqualToString:@"Pagina 1"]; } seconds:5];
+
     /* 9. política: o app cancela a navegação */
     [self eval:@"location.href='data:text/html,<title>bloqueado</title>x'" error:NULL];
     [self waitFor:^{ return NO; } seconds:1];
@@ -366,7 +411,27 @@ static void check(BOOL c, const char *name, NSString *detail) {
     check([self.legacyTitle isEqualToString:@"Antiga"], "WebView: didReceiveTitle", self.legacyTitle);
     check([[self.legacy stringByEvaluatingJavaScriptFromString:@"2*3"] isEqualToString:@"6"], "WebView: stringByEvaluatingJavaScriptFromString", nil);
 
-    /* 14. NSClassFromString acha o WKWebView do framework, não a fachada do libSystem */
+    /* 14. WebArchive / WebResource: o plist que o CUALockScreenGuardian liga forte */
+    NSData *html = [@"<title>Arquivo</title><p>guarda</p>" dataUsingEncoding:NSUTF8StringEncoding];
+    WebResource *mainRes = [[WebResource alloc] initWithData:html URL:[NSURL URLWithString:@"https://mos.test/lock.html"] MIMEType:@"text/html" textEncodingName:@"utf-8" frameName:nil];
+    WebResource *css = [[WebResource alloc] initWithData:[@"p{}" dataUsingEncoding:NSUTF8StringEncoding] URL:[NSURL URLWithString:@"https://mos.test/a.css"] MIMEType:@"text/css" textEncodingName:@"utf-8" frameName:@""];
+    WebArchive *child = [[WebArchive alloc] initWithMainResource:mainRes subresources:nil subframeArchives:nil];
+    WebArchive *arc = [[WebArchive alloc] initWithMainResource:mainRes subresources:[NSArray arrayWithObject:css] subframeArchives:[NSArray arrayWithObject:child]];
+    NSData *raw = [arc data];
+    WebArchive *back = [[WebArchive alloc] initWithData:raw];
+    check(back && data_eq([[back mainResource] data], html), "WebArchive data/initWithData preserva o recurso principal", nil);
+    check([[[back mainResource] URL] isEqual:[mainRes URL]], "WebArchive preserva a URL", [[[back mainResource] URL] absoluteString]);
+    check([[[back mainResource] MIMEType] isEqualToString:@"text/html"], "WebArchive preserva o MIME", [[back mainResource] MIMEType]);
+    check([[back subresources] count] == 1, "WebArchive preserva subrecursos", nil);
+    check([[back subframeArchives] count] == 1, "WebArchive preserva subframeArchives", nil);
+    WebArchive *nested = [[back subframeArchives] objectAtIndex:0];
+    check(data_eq([[nested mainResource] data], html), "WebArchive aninhado preserva o HTML", nil);
+    check([[WebArchive alloc] initWithData:[@"não é plist" dataUsingEncoding:NSUTF8StringEncoding]] == nil, "WebArchive initWithData rejeita lixo", nil);
+    __block int loadDone = 0;
+    [[self.legacy mainFrame] loadData:html MIMEType:@"text/html" textEncodingName:@"utf-8" baseURL:[NSURL URLWithString:@"https://mos.test/lock.html"] completionHandler:^(NSError *e) { loadDone = e ? 2 : 1; }];
+    check(loadDone == 1, "WebFrame loadData:completionHandler: (Sparkle)", nil);
+
+    /* 15. NSClassFromString acha o WKWebView do framework, não a fachada do libSystem */
     check(NSClassFromString(@"WKWebView") == [WKWebView class], "NSClassFromString(WKWebView) é o do framework", nil);
 
     fprintf(stderr, "webkit: %d/%d ok\n", g_ok, g_total);

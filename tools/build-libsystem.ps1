@@ -2,35 +2,16 @@
 # ELF estatico x86-64 System V, ligado em 0x400000100000 (USER_BASE + 1 MiB). O kernel o embute
 # (kernel\compat\libsystem_blob.S) e o mapeia em cada processo Mach-O.
 $root = Split-Path $PSScriptRoot -Parent
-function Test-MosZigPe([string]$Path) {
-    if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { return $false }
-    $full = (Resolve-Path -LiteralPath $Path).Path
-    $fs = [IO.File]::OpenRead('\\?\' + $full)
-    $b = New-Object byte[] 2
-    $n = $fs.Read($b, 0, 2)
-    $fs.Close()
-    return ($n -eq 2 -and $b[0] -eq 0x4D -and $b[1] -eq 0x5A)
-}
-$zig = $null
-$zigdir = $null
-Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*' -ErrorAction SilentlyContinue | ForEach-Object {
-    $cand = Join-Path $_.FullName 'zig.exe'
-    if (-not (Test-Path -LiteralPath $cand)) { return }
-    if (Test-MosZigPe $cand) { if (-not $zig) { $zig = $cand; $zigdir = $_.FullName } }
-    else { Write-Host "aviso: $cand nao e PE/MZ; ignorado (um zig de macOS em .tools\zig-macos-dl faz esta compilacao falhar)" -ForegroundColor Yellow }
-}
-if (-not $zig -and $env:MOS_ZIG -and (Test-MosZigPe $env:MOS_ZIG)) { $zig = $env:MOS_ZIG; $zigdir = Split-Path $zig }
-if (-not $zig) {
-    $onPath = (Get-Command zig -ErrorAction SilentlyContinue).Source
-    if ($onPath -and (Test-MosZigPe $onPath)) { $zig = $onPath; $zigdir = Split-Path $zig }
-}
-if (-not $zig) { Write-Host 'zig nao encontrado, ou o zig.exe de .tools nao e um executavel Windows (MZ). Extraia o zig de Windows em .tools\zig-* .' -ForegroundColor Red; exit 1 }
+. "$PSScriptRoot\stage-host.ps1"
+$mosZigPick = Resolve-MosZig $root
+if (-not $mosZigPick) { exit 1 }
+$zig = $mosZigPick.Path
+$zigdir = $mosZigPick.Dir
 New-Item -ItemType Directory -Force "$root\build" | Out-Null
 $src = Get-ChildItem "$root\userland\libsystem\*" -Include *.c, *.S | ForEach-Object FullName
 
-# x86_64: _Unwind_* e a personality C++ estão em userland/libsystem/cxx_unwind.c (mesmo papel do
-# libunwind do LLVM, Apache-2.0 com exceção LLVM). Não ligar os .o do zig aqui: os nomes batem.
-# arm64 continua em tools/build-libsystem-arm64.ps1, sem mexer no ABI do kernel.
+# x86_64: _Unwind_* e a personality C++ estão em userland/libsystem/cxx_unwind.c.
+# Não ligar os .o do libunwind do zig: os nomes _Unwind_* batem. arm64 segue em build-libsystem-arm64.ps1.
 
 & $zig cc -target x86_64-freestanding-none -O2 -g0 -ffreestanding -fno-stack-protector -fno-builtin -nostdlib -static -no-pie `
     -fpie -mno-red-zone -Wall -Wno-unused-parameter -Wno-incompatible-library-redeclaration -Wno-builtin-requires-header `

@@ -586,13 +586,18 @@ void cx_appkit_input_init(void) {
     if (cx_corebluetooth_init) cx_corebluetooth_init();   /* corebluetooth.c */
     cx_framework_classes_init(); /* vscode_fwclasses.c: classes de frameworks ausentes */
     { extern void cx_userspace_services_init(void); cx_userspace_services_init(); }
+    { extern void cx_usernotifications_init(void); cx_usernotifications_init(); }   /* usernotifications.c: addNotificationRequest, delegate, banner */
+    { extern void cx_appkit_docktile_init(void); cx_appkit_docktile_init(); }       /* appkit_docktile.c: NSDockTile */
     cx_appkit_extra_init();     /* appkit_extra.c: painéis, barra de status, NSAnimation, NSParagraphStyle... */
+    { extern void cx_nsrunning_init(void); cx_nsrunning_init(); }   /* nsrunningapp.c */
+    { extern void cx_ax_server_start(void); cx_ax_server_start(); } /* axserver.c: árvore AX pronta para o transporte */
     cx_tracking_init();         /* hover: NSTrackingArea e mouseEntered/Exited/Moved */
     cx_foundation_extra_init(); /* foundation_extra.c: NSMutableData, NSTimeZone, NSCalendar, NSInvocation... */
     cx_uttype_init();           /* vscode_media.c: classe UTType */
     cx_const_objs_init();       /* constobjs.c: NSConstantArray/NSConstantDictionary dos literais do clang */
     cx_vscode_cf_classes();     /* vscode_cf.c: classes internas de CF (locale, UUID, CharacterSet, BinaryHeap) e kCFNull */
     { extern void cx_appkit_postico_init(void); cx_appkit_postico_init(); }   /* appkit_postico.c: NSOutlineView, NSSplitView, NSToolbarItem... (Postico) */
+    { extern void cx_appkit_electron_init(void); cx_appkit_electron_init(); } /* appkit_electron.c: AppKit que o Claude e o ChatGPT importam */
     cx_class_t *resp = cx_class_named("NSResponder");
     cx_class_t *view = cx_class_named("NSView");
     cx_class_t *obj = cx_class_named("NSObject");

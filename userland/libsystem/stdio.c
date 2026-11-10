@@ -5,6 +5,12 @@
 #include "sys.h"
 #include "libc.h"
 
+#if defined(__x86_64__)
+_Static_assert(sizeof(long double) == 16, "x86_64 SysV: long double ocupa 16 bytes no va_arg");
+#elif defined(__aarch64__)
+_Static_assert(sizeof(long double) == 8, "arm64 Darwin: long double tem o tamanho de double");
+#endif
+
 typedef struct { unsigned char *_base; int _size; } sbuf_t;
 
 typedef struct cx_file {
@@ -360,7 +366,7 @@ static void format_core(sink_t *k, const char *f, va_list ap) {
             continue;
         }
         f++;
-        int left = 0, plus = 0, space = 0, alt = 0, zero = 0, width = -1, prec = -1, lng = 0;
+        int left = 0, plus = 0, space = 0, alt = 0, zero = 0, width = -1, prec = -1, lng = 0, ldbl = 0;
         for (;; f++) {
             if (*f == '-') left = 1;
             else if (*f == '+') plus = 1;
@@ -380,7 +386,8 @@ static void format_core(sink_t *k, const char *f, va_list ap) {
         for (;; f++) {
             if (*f == 'h') lng--;
             else if (*f == 'l') lng++;
-            else if (*f == 'q' || *f == 'j' || *f == 'L') lng = 2;
+            else if (*f == 'L') { ldbl = 1; lng = 2; }   /* %Lf: long double, não long long */
+            else if (*f == 'q' || *f == 'j') lng = 2;
             else if (*f == 'z' || *f == 't') lng = 1;
             else break;
         }
@@ -445,7 +452,12 @@ static void format_core(sink_t *k, const char *f, va_list ap) {
             zero = 0;
             break;
         case 'f': case 'F': case 'e': case 'E': case 'g': case 'G': case 'a': case 'A': {
-            double v = va_arg(ap, double);
+            /* %Lf consome long double (16 bytes alinhados a 16 no x86_64; 8 no arm64).
+             * A formatação usa double: a mantissa extra de 80 bits e valores fora do alcance
+             * finito de double não são preservados. O argumento seguinte permanece alinhado. */
+            double v;
+            if (ldbl) { long double ld = va_arg(ap, long double); v = (double)ld; }
+            else v = va_arg(ap, double);
             if (prec < 0) prec = 6;
             if (prec > 40) prec = 40;
             u64 bits;
@@ -650,13 +662,14 @@ static int vscan(scan_src_t *r, const char *f, va_list ap) {
             continue;
         }
         f++;
-        int skip = 0, width = 0, lng = 0;
+        int skip = 0, width = 0, lng = 0, ldbl = 0;
         if (*f == '*') { skip = 1; f++; }
         while (isdigit((u8)*f)) width = width * 10 + (*f++ - '0');
         for (;; f++) {
             if (*f == 'l') lng++;
             else if (*f == 'h') lng--;
-            else if (*f == 'z' || *f == 'j' || *f == 'q' || *f == 'L') lng = 2;
+            else if (*f == 'L') { ldbl = 1; lng = 2; }
+            else if (*f == 'z' || *f == 'j' || *f == 'q') lng = 2;
             else break;
         }
         char conv = *f;
@@ -710,8 +723,12 @@ static int vscan(scan_src_t *r, const char *f, va_list ap) {
         if (!n) return assigned ? assigned : (c < 0 ? -1 : 0);
         if (skip) continue;
         if (isfloat) {
-            double v = strtod(tok, 0);
-            if (lng >= 1) *va_arg(ap, double *) = v; else *va_arg(ap, float *) = (float)v;
+            /* %Lf grava long double. strtold do mOS ainda reduz a double (limitação da libm). */
+            if (ldbl) *va_arg(ap, long double *) = strtold(tok, 0);
+            else {
+                double v = strtod(tok, 0);
+                if (lng >= 1) *va_arg(ap, double *) = v; else *va_arg(ap, float *) = (float)v;
+            }
         } else {
             int base = conv == 'x' || conv == 'X' || conv == 'p' ? 16 : conv == 'o' ? 8 : conv == 'i' ? 0 : 10;
             long long v = (conv == 'u' || base != 10) ? (long long)strtoul(tok, 0, base) : strtol(tok, 0, base);

@@ -64,17 +64,24 @@ colhida no Electron arm64 rodando de verdade na VM. As listas do machotest já e
 
 ### 6. Limites conhecidos (documentar ou resolver)
 - Escritas do kernel em memória do usuário não passam pela PTE. `userland/a64rt/writes.c` lista o que
-  `mos_svc` (e o `read` cru do `svc #0x80`) invalida: read/pread/readfile, fstat/stat, readdir, pipe, getcwd,
-  fdpath, waitpid/waitany, proclist, imgattach, rede (recv, udp, resolve, info), sinais (action, mask, pending,
-  altstack, wait), tty (nome, procinfo, ioctl de saída), dyld (imagem, erro, open), launchd (`SYS_LS`),
-  mach port/bootstrap/vm/msg e `GETSTATE`. Continuam de fora, porque o ponteiro do buffer mora dentro do
-  pedido e não num registrador: GUI, web, BLE, gamepad e descritores OOL do mach. O corpo da imagem do
-  `DYLD_OPEN` é um VA novo (não há tradução velha). `mmap` com modo 2 ou 3 em endereço já reservado não
-  cobre página existente. Uma thread que já está dentro do bloco não vê o `a64_invalidate` até a próxima
-  fronteira (o kick e o safepoint do desvio para a frente ficam com outra frente).
+  `mos_svc` (e o `read` cru do `svc #0x80`) invalida, e `a64rt_invalidate_range` é o único ponto que
+  descarta a tradução. Além de read/pread/readfile, fstat/stat, readdir, pipe, getcwd, fdpath,
+  waitpid/waitany, proclist, imgattach, rede, sinais, tty, dyld, launchd (`SYS_LS`), mach port/bootstrap/vm/msg
+  e `GETSTATE`, entram também GUI (evento, métricas, janela, tela, imagem, fonte), web (paint, info, eval,
+  takemsg, texto, result, history), BLE, gamepad/áudio/captura/lista de janelas e o payload OOL do mach
+  (página inteira, porque o kernel zera o resto). Se a lista de faixas não cabe, a syscall invalida tudo.
+  O corpo da imagem do `DYLD_OPEN` é um VA novo (não há tradução velha). `mmap` com modo 2 ou 3 em endereço
+  já reservado não cobre página existente. `GUI_DRAG` e `GUI_IME` chamam funções que não estão neste
+  repositório, então não há copy-out para registrar. Uma thread que já está dentro do bloco vê a
+  invalidação no próximo desvio para trás: o elo remendado é zerado e, na aresta interna do laço sem
+  memória e no retorno ao início do traço, o código confere o bit alto de `reserved[15]` antes de saltar
+  direto. Salto indireto e RET conferem o mesmo registrador. Um desvio para a frente já encadeado não
+  confere; essa cadeia pode acabar o bloco corrente (até 64 instruções, sem cruzar página) e os blocos
+  seguintes até um desvio para trás. O host Linux (`tools/a64hostcheck`) cobre a reexecução por GUI e por
+  OOL e o laço. Falta a mesma prova no QEMU.
 - Não há commpage arm64: a região baixa não é memória do usuário no mOS. O tamanho de página do processo arm64 não depende dela (`docs/pagesize-arm64.md`).
-- Hoje o build usa `tools\build-a64rt.ps1 -Parcial`, que troca por stub os símbolos do motor que as outras frentes
-  ainda não escreveram. Tirar o `-Parcial` do `build.ps1` quando o motor estiver completo.
+- O `build.ps1` liga o a64rt sem `-Parcial`. O interruptor continua em `tools/build-a64rt.ps1` só para
+  iterar uma frente com símbolo ainda ausente; a imagem oficial não pode cair num stub.
 - O harness (machotest) não emula portas Mach, `socketpair` nem `futex`. No Electron ele sempre para no mesmo ponto
   nas duas arquiteturas; a comparação real é na VM.
 

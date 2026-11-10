@@ -112,8 +112,10 @@ Write-Host ("Google Chrome.app: {0:N1} MiB" -f $mb) -ForegroundColor Cyan
 
 if ($KernelTeste) {
     Write-Host '==> kernel de teste (MAX_LOAD 512 MiB)' -ForegroundColor Cyan
-    $zig = Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*' | Where-Object { Test-Path "$($_.FullName)\zig.exe" } | Select-Object -First 1
-    $zig = if ($zig) { Join-Path $zig.FullName 'zig.exe' } else { (Get-Command zig).Source }
+    if (-not (Get-Command Resolve-MosZig -ErrorAction SilentlyContinue)) { foreach ($mosHost in @("$PSScriptRoot\stage-host.ps1","$PSScriptRoot\..\stage-host.ps1","$PSScriptRoot\..\..\stage-host.ps1","$PSScriptRoot\..\..\..\stage-host.ps1")) { if (Test-Path -LiteralPath $mosHost) { . $mosHost; break } } }
+    $mosZigPick = Resolve-MosZig $root
+    if (-not $mosZigPick) { exit 1 }
+    $zig = $mosZigPick.Path
     Push-Location $root
     $sources = Get-ChildItem kernel -Recurse -Include *.c, *.S | ForEach-Object { $_.FullName.Substring($root.Length + 1) }
     $cflags = @('-target', 'x86_64-uefi-msvc', '-O2', '-g0', '-ffreestanding', '-fno-stack-protector', '-fno-stack-check', '-mno-stack-arg-probe',
@@ -129,6 +131,8 @@ if ($KernelTeste) {
     if (-not $ok) { Write-Host 'kernel de teste FAILED' -ForegroundColor Red; exit 1 }
     Copy-Item "$root\$OutDir\BOOTX64-teste.EFI" "$esp\EFI\BOOT\BOOTX64.EFI" -Force
 }
+. (Join-Path $PSScriptRoot 'stage-xpc.ps1')
+Copy-MosBundleServices $src $dst
 & (Join-Path $root "$OutDir\mkimg.exe") (Join-Path $root "$OutDir\mOS.img") $esp $SizeMiB --test-overlay $ovt
 if ($LASTEXITCODE -ne 0) { Write-Host 'mkimg FAILED' -ForegroundColor Red; exit 1 }
 Write-Host "OK: $OutDir\mOS.img (boote com -Memory 3072: os arquivos do app ficam na RAM)" -ForegroundColor Green

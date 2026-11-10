@@ -4,11 +4,14 @@
  * caía no vazio:
  *   NSMutableData (subclasse do NSData do mOS {isa, bytes, len} + capacidade), NSTimeZone (UTC, como o
  *   resto do mOS), NSCalendar/NSDateComponents (gregoriano), NSEnumerator, NSOrderedSet/NSMutableOrderedSet
- *   (sobre um NSMutableArray, com encaminhamento do resto), NSMethodSignature/NSInvocation (invoke pela
- *   ABI SysV: inteiros e ponteiros nos registradores de inteiros, float/double nos XMM, até 6 + 8) e o
+ *   (sobre um NSMutableArray, com encaminhamento do resto), NSMethodSignature/NSInvocation (no x86 o
+ *   SysV com o que passa de 6 inteiros e 8 XMM na pilha, ffi_x64.S; no arm64 o PCS da Apple) e o
  *   typeinfo OBJC_EHTYPE_$_NSException para @catch (NSException *).
  */
 #include "foundation.h"
+#if !defined(__aarch64__)
+#include "ffi_x64.h"
+#endif
 
 void *malloc(size_t n);
 void *calloc(size_t n, size_t s);
@@ -424,11 +427,6 @@ static SEL inv_sel(id self, SEL c) { (void)c; SEL s; memcpy(&s, ((inv_t *)self)-
 static void inv_get_ret(id self, SEL c, void *p) { (void)c; inv_t *v = (inv_t *)self; if (p) memcpy(p, v->ret, ((msig_t *)v->sig)->retlen > 32 ? 32 : ((msig_t *)v->sig)->retlen); }
 static void inv_set_ret(id self, SEL c, const void *p) { (void)c; inv_t *v = (inv_t *)self; if (p) memcpy(v->ret, p, ((msig_t *)v->sig)->retlen > 32 ? 32 : ((msig_t *)v->sig)->retlen); }
 static void inv_retain_args(id self, SEL c) { (void)c; ((inv_t *)self)->retained = YES; }
-typedef struct { u64 a, b; } ret2_t;
-typedef ret2_t (*int_fn_t)(u64, u64, u64, u64, u64, u64, double, double, double, double, double, double, double, double);
-typedef double (*dbl_fn_t)(u64, u64, u64, u64, u64, u64, double, double, double, double, double, double, double, double);
-typedef float (*flt_fn_t)(u64, u64, u64, u64, u64, u64, double, double, double, double, double, double, double, double);
-static int is_float_type(const char *t) { return *t == 'f' || *t == 'd'; }
 #if defined(__aarch64__)
 /* arm64: o PCS da Apple (Darwin): x0..x7 e v0..v7, HFA (até 4 float/double iguais) em registradores FP consecutivos,
  * struct de até 16 bytes em 1-2 registradores x, maior por cópia (ponteiro), retorno indireto em x8, inteiros pequenos
@@ -564,26 +562,15 @@ static void inv_invoke_imp(inv_t *v, IMP imp) {
 #else
 static void inv_invoke_imp(inv_t *v, IMP imp) {
     msig_t *m = (msig_t *)v->sig;
-    u64 ig[6] = {0, 0, 0, 0, 0, 0};
-    double fx[8] = {0, 0, 0, 0, 0, 0, 0, 0};
-    int ni = 0, nf = 0;
-    int sret = m->retlen > 16 && (*m->ret == '{' || *m->ret == '(');
-    if (sret) ig[ni++] = (u64)(usize)v->ret;
-    for (u32 i = 0; i < m->nargs; i++) {
-        const char *t = m->arg[i];
-        if (is_float_type(t)) {
-            double d;
-            if (*t == 'f') { float f; memcpy(&f, v->args[i], 4); u64 bits = 0; memcpy(&bits, &f, 4); memcpy(&d, &bits, 8); }
-            else memcpy(&d, v->args[i], 8);
-            if (nf < 8) fx[nf++] = d;
-        } else {
-            u64 s = arg_size(v, i);
-            for (u64 off = 0; off < s && ni < 6; off += 8) { u64 w = 0; memcpy(&w, v->args[i] + off, s - off < 8 ? s - off : 8); ig[ni++] = w; }
-        }
-    }
-    if (*m->ret == 'd') { double r = ((dbl_fn_t)(void *)imp)(ig[0], ig[1], ig[2], ig[3], ig[4], ig[5], fx[0], fx[1], fx[2], fx[3], fx[4], fx[5], fx[6], fx[7]); memcpy(v->ret, &r, 8); }
-    else if (*m->ret == 'f') { float r = ((flt_fn_t)(void *)imp)(ig[0], ig[1], ig[2], ig[3], ig[4], ig[5], fx[0], fx[1], fx[2], fx[3], fx[4], fx[5], fx[6], fx[7]); memcpy(v->ret, &r, 4); }
-    else { ret2_t r = ((int_fn_t)(void *)imp)(ig[0], ig[1], ig[2], ig[3], ig[4], ig[5], fx[0], fx[1], fx[2], fx[3], fx[4], fx[5], fx[6], fx[7]); if (!sret) { memcpy(v->ret, &r.a, 8); memcpy(v->ret + 8, &r.b, 8); } }
+    const void *vals[SIG_MAX];
+    u8 big[256];
+    void *dst = v->ret;
+    int spill = m->retlen > sizeof v->ret;
+    u32 i;
+    if (spill) { memset(big, 0, sizeof big); dst = big; }
+    for (i = 0; i < m->nargs && i < SIG_MAX; i++) vals[i] = v->args[i];
+    cx_sysv_invoke((void *)imp, m->ret, m->retlen, m->arg, vals, m->nargs, dst);
+    if (spill) memcpy(v->ret, big, sizeof v->ret);
 }
 #endif
 static void inv_invoke(id self, SEL c) {

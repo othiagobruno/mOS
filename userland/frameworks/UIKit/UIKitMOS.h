@@ -37,6 +37,19 @@ typedef NS_ENUM(NSInteger, NSComparisonResult) { NSOrderedAscending = -1L, NSOrd
 
 typedef struct { CGFloat top, left, bottom, right; } UIEdgeInsets;
 
+/* Geometria do UIKit. Os layouts batem com CoreGraphics/QuartzCore; o typedef fica aqui para o framework não
+ * incluir CoreGraphics.h (que redefiniria CGPoint/CGRect já vindos do Foundation). */
+#ifndef MOS_CGAFFINE_DEFINED
+#define MOS_CGAFFINE_DEFINED
+typedef struct CGAffineTransform { CGFloat a, b, c, d, tx, ty; } CGAffineTransform;
+#endif
+#ifndef MOS_CAT3D_DEFINED
+#define MOS_CAT3D_DEFINED
+typedef struct CATransform3D {
+    CGFloat m11, m12, m13, m14, m21, m22, m23, m24, m31, m32, m33, m34, m41, m42, m43, m44;
+} CATransform3D;
+#endif
+
 /* ---- raiz da cadeia de resposta */
 @interface UIResponder : NSObject
 - (UIResponder *)nextResponder;
@@ -135,6 +148,7 @@ typedef struct { CGFloat top, left, bottom, right; } UIEdgeInsets;
     NSUInteger _autoresizingMask;
     NSMutableArray *_gestures;      /* UIGestureRecognizer */
     id _viewController;             /* o UIViewController dono (não retido): próximo na cadeia de resposta */
+    CATransform3D _t3;              /* transform em volta do centro; identidade no init. O layer espelha. */
 }
 - (instancetype)initWithFrame:(CGRect)frame;
 - (CGRect)frame;
@@ -174,6 +188,16 @@ typedef struct { CGFloat top, left, bottom, right; } UIEdgeInsets;
 - (CGRect)convertRect:(CGRect)r toView:(UIView *)v;
 - (CGRect)convertRect:(CGRect)r fromView:(UIView *)v;
 - (UIColor *)tintColor;
+- (id)layer;
+- (CGAffineTransform)transform;
+- (void)setTransform:(CGAffineTransform)t;
+- (CATransform3D)transform3D;
+- (void)setTransform3D:(CATransform3D)t;
+- (UIImage *)_mosSnapshotImage;
+@end
+@interface UIView (MOSAnimation)
++ (BOOL)areAnimationsEnabled;
++ (void)animateWithDuration:(NSTimeInterval)d delay:(NSTimeInterval)dl options:(NSUInteger)o animations:(void (^)(void))a completion:(void (^)(BOOL))c;
 @end
 
 @interface UIWindow : UIView {
@@ -419,7 +443,11 @@ typedef struct { CGFloat top, left, bottom, right; } UIEdgeInsets;
 }
 - (CGPoint)contentOffset;
 - (void)setContentOffset:(CGPoint)p;
+- (void)setContentOffset:(CGPoint)p animated:(BOOL)a;
 - (void)_mosScrollBy:(CGFloat)dy dx:(CGFloat)dx;
+@end
+@interface UIScrollView (MOSAnimOffset)
+- (CGPoint)_mosPresentationContentOffset;
 @end
 @interface UITableViewCell : UIView {
 @public

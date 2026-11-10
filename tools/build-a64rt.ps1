@@ -2,12 +2,15 @@
 #   ELF x86_64 freestanding ligado em A64RT_BASE (userland\a64rt\a64rt_abi.h), com o motor (userland\a64\*.c) e
 #   o runtime (userland\a64rt\*). Vai para a imagem em /Sistema/Biblioteca/a64/a64rt.mos (build.ps1).
 #   -NoJit : sem o JIT mesmo que userland\a64\jit*.c exista (o motor fica só com o interpretador)
-#   -Parcial : aceita símbolos do motor ainda não escritos pelas outras frentes (viram 0; só para iterar)
+#   -Parcial : se o link falhar, troca o símbolo ausente por um stub que para (ud2). O build.ps1 não passa
+#              este interruptor: um símbolo faltando tem que aparecer no link, não em silêncio no app.
 #   No processo, MOS_A64_ENGINE=interp|jit escolhe o motor (padrão: JIT quando compilado).
 param([switch]$NoJit, [switch]$Parcial)
 $root = Split-Path $PSScriptRoot -Parent
-$zig = Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*' -ErrorAction SilentlyContinue | Where-Object { Test-Path (Join-Path $_.FullName 'zig.exe') } | Select-Object -First 1
-if ($zig) { $zig = Join-Path $zig.FullName 'zig.exe' } elseif ($env:MOS_ZIG) { $zig = $env:MOS_ZIG } else { $zig = (Get-Command zig -ErrorAction SilentlyContinue).Source }
+if (-not (Get-Command Resolve-MosZig -ErrorAction SilentlyContinue)) { foreach ($mosHost in @("$PSScriptRoot\stage-host.ps1","$PSScriptRoot\..\stage-host.ps1","$PSScriptRoot\..\..\stage-host.ps1","$PSScriptRoot\..\..\..\stage-host.ps1")) { if (Test-Path -LiteralPath $mosHost) { . $mosHost; break } } }
+$mosZigPick = Resolve-MosZig $root
+if (-not $mosZigPick) { exit 1 }
+$zig = $mosZigPick.Path
 if (-not $zig) { Write-Host 'zig nao encontrado' -ForegroundColor Red; exit 1 }
 New-Item -ItemType Directory -Force "$root\build" | Out-Null
 $jit = (-not $NoJit) -and (Get-ChildItem "$root\userland\a64\jit*.c" -ErrorAction SilentlyContinue)

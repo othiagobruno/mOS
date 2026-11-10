@@ -1,14 +1,15 @@
 /*
  * mOS libSystem — a parte de áudio do AVFoundation (AVFAudio), sobre o CoreAudio do coreaudio.c:
  *  - AVAudioFormat, AVAudioPCMBuffer, AVAudioTime, AVAudioFile (leitura de WAV/AIFF/CAF, escrita de WAV);
- *  - AVAudioEngine com AVAudioMixerNode (mainMixerNode), AVAudioOutputNode, AVAudioInputNode (silêncio),
+ *  - AVAudioEngine com AVAudioMixerNode (mainMixerNode), AVAudioOutputNode, AVAudioInputNode,
  *    AVAudioPlayerNode (buffers e arquivos agendados, laço, conclusão), AVAudioSourceNode (bloco de render), efeitos
  *    (AVAudioUnitEQ/Reverb/Delay/Distortion/TimePitch/Varispeed: passam o som adiante) e taps (installTapOnBus:);
  *  - AVAudioPlayer (arquivo ou NSData; play/pause/stop, volume, pan, rate, laços, currentTime, medidores, delegate);
  *  - AVAudioSession (Catalyst/iOS: categoria, modo, ativação, rota, latência);
  *  - NSSound (AppKit) e AVPlayer/AVPlayerItem/AVURLAsset/AVAsset para arquivos de áudio locais.
- * O motor renderiza a 48 kHz (a taxa do mixer do sistema). Os formatos comprimidos ainda não decodificam: o erro é o
- * da Apple (kAudioFileUnsupportedDataFormatError / AVErrorFileFormatNotRecognized). Sem vídeo.
+ * O motor renderiza a 48 kHz (a taxa do mixer do sistema). MP3 e ALAC de 16 bits passam pelo CoreAudio
+ * (audiodec.c) e tocam como áudio. AAC e Opus continuam AVErrorFileFormatNotRecognized. O AVPlayer não
+ * produz quadro de vídeo. A permissão de gravação consulta cx_tcc_request("kTCCServiceMicrophone").
  */
 #include "foundation.h"
 #include "sys.h"
@@ -36,6 +37,7 @@ int pthread_mutex_lock(void *m);
 int pthread_mutex_unlock(void *m);
 int pthread_create(unsigned long *t, const void *attr, void *(*fn)(void *), void *arg);
 int pthread_detach(unsigned long t);
+int cx_media_tcc(const char *service);
 int usleep(unsigned us);
 unsigned long long mach_absolute_time(void);
 void *_Block_copy(const void *b);
@@ -1213,13 +1215,22 @@ static double ses_io(id s, SEL c) { (void)c; return SES(s)->pref_io; }
 static BOOL ses_set_pref_io(id s, SEL c, double d, id *err) { (void)c; (void)err; SES(s)->pref_io = d < 0.002 ? 0.002 : d > 0.1 ? 0.1 : d; return YES; }
 static float ses_out_volume(id s, SEL c) { (void)s; (void)c; return 1.0f; }
 static double ses_out_latency(id s, SEL c) { (void)s; (void)c; return 2048.0 / RATE; }
-static double ses_in_latency(id s, SEL c) { (void)s; (void)c; return 0; }
+static double ses_in_latency(id s, SEL c) { (void)s; (void)c; return cx_media_tcc("kTCCServiceMicrophone") == 1 ? 2048.0 / RATE : 0; }
 static i64 ses_out_channels(id s, SEL c) { (void)s; (void)c; return 2; }
-static i64 ses_in_channels(id s, SEL c) { (void)s; (void)c; return 0; }
+static i64 ses_in_channels(id s, SEL c) { (void)s; (void)c; return cx_media_tcc("kTCCServiceMicrophone") == 1 ? 2 : 0; }
 static BOOL ses_no(id s, SEL c) { (void)s; (void)c; return NO; }
 static BOOL ses_yes_err(id s, SEL c, i64 v, id *err) { (void)s; (void)c; (void)v; (void)err; return YES; }
-static u64 ses_record_perm(id s, SEL c) { (void)s; (void)c; return FCC('d', 'e', 'n', 'y'); }   /* sem microfone */
-static void ses_request_record(id s, SEL c, void *blk) { (void)s; (void)c; if (blk) ((void (*)(void *, BOOL))BLK_FN(blk))(blk, NO); }
+/* AVAudioSessionRecordPermission: 'undt' sem a frente de TCC, 'grnt' concedido, 'deny' negado. */
+static u64 ses_record_perm(id s, SEL c) {
+    (void)s; (void)c;
+    int p = cx_media_tcc("kTCCServiceMicrophone");
+    if (p < 0) return FCC('u', 'n', 'd', 't');
+    return p == 1 ? FCC('g', 'r', 'n', 't') : FCC('d', 'e', 'n', 'y');
+}
+static void ses_request_record(id s, SEL c, void *blk) {
+    (void)s; (void)c;
+    if (blk) ((void (*)(void *, BOOL))BLK_FN(blk))(blk, cx_media_tcc("kTCCServiceMicrophone") == 1);
+}
 static id ses_empty(id s, SEL c) { (void)s; (void)c; return MSG0(id, cls("NSArray"), "array"); }
 static id port_new(id type, const char *name) {
     id p = cx_alloc_instance(&AVAudioSessionPortDescription_c);
@@ -1279,6 +1290,7 @@ static id asset_with_url_opts(id k, SEL c, id url, id opts) { (void)k; return ob
 static id asset_url(id s, SEL c) { (void)c; return AST(s)->url; }
 static cmtime_t asset_duration(id s, SEL c) { (void)c; void *d = AST(s)->dec; return d ? cm_seconds((double)cx_audio_frames(d) / cx_audio_rate(d)) : cm_invalid(); }
 static BOOL asset_playable(id s, SEL c) { (void)c; return AST(s)->dec != 0; }
+/* Áudio toca se o CoreAudio abriu o arquivo. Não há faixa de vídeo nem quadro decodificado. */
 static id asset_tracks(id s, SEL c) { (void)s; (void)c; return MSG0(id, cls("NSArray"), "array"); }
 static id asset_tracks_media(id s, SEL c, id m) { (void)m; return asset_tracks(s, c); }
 static void asset_load(id s, SEL c, id keys, void *blk) { (void)s; (void)c; (void)keys; if (blk) CALL_BLOCK0(blk); }

@@ -8,6 +8,10 @@
  * As tabelas sfnt (cmap, glyf, loca, hmtx...) e o raster dos glifos vêm da fonte Inter do kernel
  * (GUI_FONT). CTFontDrawGlyphs pinta num CGBitmapContext. Sem o kernel (harness no Windows) continua
  * o modelo antigo: glifo = código do caractere, sem tabela e sem desenho.
+ *
+ * Postico 2.3.5 importa oito símbolos de linha (CTLine* e CTTypesetter*). O layout usa as métricas
+ * do CTFont. Sem a fonte do kernel o avanço é 0,55 em e CTLineDraw carimba um retângulo no
+ * CGBitmapContext; CTFontDrawGlyphs em si não muda e segue sem tinta.
  */
 #include "foundation.h"
 #include "../../kernel/include/compat_gui.h"
@@ -19,6 +23,7 @@ void *memset(void *d, int c, size_t n);
 void *memcpy(void *d, const void *s, size_t n);
 
 id objc_retain(id o);
+void objc_release(id o);
 id cx_num_i(i64 v);
 id cx_num_d(double v);
 int strncmp(const char *a, const char *b, size_t n);
@@ -673,6 +678,558 @@ static id dict_postscript(id self, SEL c) { (void)c; return MSG(id, self, "objec
 static double dict_point(id self, SEL c) { (void)c; id s = MSG(id, self, "objectForKey:", (id)kCTFontSizeAttribute); return s ? MSG0(double, s, "doubleValue") : 0; }
 static id dict_attrs(id self, SEL c) { (void)c; return self; }
 
+/* ---- CTLine / CTTypesetter (Postico 2.3.5)
+ * Funcional: uma linha, um cluster por ponto de código, avanços do CTFont, truncamento e desenho
+ * no CGBitmapContext na posição da text matrix (tx, ty), que anda a largura da linha.
+ * Limitação: sem quebra de grafema (isso é ICU, outro agente). Tabulação = 4 avanços, sem paradas
+ * de tab. Acima de 100000 unidades UTF-16 o resto da string não vira glifo. Pontuação pendurada,
+ * optical bounds e language extents não mudam a caixa. Sem a fonte do kernel, CTLineDraw carimba
+ * um retângulo; CTFontDrawGlyphs continua sem tinta. O NSString do mOS devolve U+FFFD para escalares
+ * acima de U+FFFF (uma unidade), então o par substituto não aparece.
+ * CT_HOST só existe no harness Linux (tools/ctline_host_stubs.c): o binário do libSystem não define
+ * a macro e compila o caminho da fonte do kernel. O harness não pode executar int 0x80. */
+extern id NSFontAttributeName, NSForegroundColorAttributeName;
+void cx_object_free(id o);
+void *calloc(size_t n, size_t s);
+void cx_bm_set_fill(const void *c, u32 argb);
+typedef struct { double a, b, c, d, tx, ty; } ct_tm;
+ct_tm CGContextGetTextMatrix(void *c);
+void CGContextSetTextMatrix(void *c, ct_tm t);
+extern void cx_cfhost_init(void);
+
+typedef struct {
+    u32 cp;
+    u16 glyph;
+    long idx;
+    int units;
+    double adv;
+    id font;
+} ct_clus;
+typedef struct {
+    id astr;
+    ct_range_t range;
+    double width, ascent, descent, leading;
+    ct_clus *g;
+    long n;
+} ct_line_t;
+typedef struct {
+    id astr;
+    ct_clus *g;
+    long n, utf16, seen;
+} ct_ts_t;
+
+static cx_class_t CTLine_c, CTLine_m, CTTypesetter_c, CTTypesetter_m;
+static int ct_lines_ready;
+
+static void *ct_state(id o) { return o ? *(void **)((u8 *)o + 8) : 0; }
+static id ct_key(const char *s, id *slot) { if (!*slot) *slot = cx_str(s); return *slot; }
+
+static id ct_dict_get(id attrs, id key) {
+    if (!attrs || !key) return 0;
+    if (!cx_responds(object_getClass(attrs), sel_registerName("objectForKey:"))) return 0;
+    return MSG(id, attrs, "objectForKey:", key);
+}
+static id ct_attrs(id astr, long idx) {
+    if (!astr) return 0;
+    if (cx_responds(object_getClass(astr), sel_registerName("attributesAtIndex:effectiveRange:")))
+        return MSG(id, astr, "attributesAtIndex:effectiveRange:", (u64)idx, (void *)0);
+    void *st = *(void **)((u8 *)astr + 8);
+    return st ? ((id *)st)[1] : 0;
+}
+static id ct_string(id astr) {
+    if (!astr) return 0;
+    if (cx_responds(object_getClass(astr), sel_registerName("string"))) return MSG0(id, astr, "string");
+    void *st = *(void **)((u8 *)astr + 8);
+    return st ? ((id *)st)[0] : 0;
+}
+static id ct_font_at(id astr, long idx) {
+    id attrs = ct_attrs(astr, idx);
+    id f = NSFontAttributeName ? ct_dict_get(attrs, NSFontAttributeName) : 0;
+    if (!f) { static id k; f = ct_dict_get(attrs, ct_key("NSFont", &k)); }
+    return f;
+}
+static id ct_color_at(id astr, long idx) {
+    id attrs = ct_attrs(astr, idx);
+    id c = NSForegroundColorAttributeName ? ct_dict_get(attrs, NSForegroundColorAttributeName) : 0;
+    if (!c) { static id k; c = ct_dict_get(attrs, ct_key("NSColor", &k)); }
+    if (!c) { static id k; c = ct_dict_get(attrs, ct_key("CTForegroundColor", &k)); }
+    return c;
+}
+static double ct_kern_at(id astr, long idx) {
+    id attrs = ct_attrs(astr, idx);
+    static id k1, k2;
+    id k = ct_dict_get(attrs, ct_key("NSKern", &k1));
+    if (!k) k = ct_dict_get(attrs, ct_key("kCTKernAttributeName", &k2));
+    if (!k || !cx_responds(object_getClass(k), sel_registerName("doubleValue"))) return 0;
+    return MSG0(double, k, "doubleValue");
+}
+static int ct_is_color(id c) {
+    if (!c) return 0;
+    const char *n = cx_class_name(object_getClass(c));
+    return n && strstr(n, "Color");
+}
+static u32 ct_argb(id c) {
+    double *p = (double *)((u8 *)c + 8);
+    u32 o[4];
+    for (int i = 0; i < 4; i++) {
+        double x = p[i] < 0 ? 0 : p[i] > 1 ? 1 : p[i];
+        o[i] = (u32)(x * 255.0 + 0.5);
+    }
+    return o[3] << 24 | o[0] << 16 | o[1] << 8 | o[2];
+}
+static u32 ct_cp_at(id str, long idx, int *units) {
+    u32 c = (u16)MSG(u16, str, "characterAtIndex:", (u64)idx);
+    long len = (long)MSG0(u64, str, "length");
+    *units = 1;
+    if (c >= 0xD800 && c < 0xDC00 && idx + 1 < len) {
+        u32 d = (u16)MSG(u16, str, "characterAtIndex:", (u64)(idx + 1));
+        if (d >= 0xDC00 && d < 0xE000) {
+            *units = 2;
+            return 0x10000u + ((c - 0xD800u) << 10) + (d - 0xDC00u);
+        }
+    }
+    return c;
+}
+static u16 ct_glyph(id font, u32 cp) {
+    u16 g = (u16)(cp > 0xFFFF ? 0xFFFD : cp);
+#if !defined(CT_HOST)
+    if (font && font_live()) {
+        u16 out = g;
+        CTFontGetGlyphsForCharacters(font, &g, &out, 1);
+        return out;
+    }
+#else
+    (void)font;
+#endif
+    return g;
+}
+static double ct_adv(id font, u32 cp, u16 glyph) {
+    if (cp == '\n' || cp == '\r' || cp == 0) return 0;
+    double a = advance_fake(font);
+#if !defined(CT_HOST)
+    if (font && font_live() && cp >= 0x20) {
+        ct_sz_t sz;
+        CTFontGetAdvancesForGlyphs(font, 0, &glyph, &sz, 1);
+        a = sz.w;
+    }
+#else
+    (void)glyph;
+#endif
+    if (cp == '\t') a *= 4;
+    return a;
+}
+static void ct_font_metrics(id font, double *as, double *de, double *ld) {
+    double s = fsize(font);
+#if !defined(CT_HOST)
+    if (font && font_live()) {
+        *as = CTFontGetAscent(font);
+        *de = CTFontGetDescent(font);
+        *ld = CTFontGetLeading(font);
+        return;
+    }
+#endif
+    *as = s * 0.952;
+    *de = s * 0.241;
+    *ld = 0;
+}
+static void ct_recompute(ct_line_t *b) {
+    b->width = b->ascent = b->descent = b->leading = 0;
+    for (long i = 0; i < b->n; i++) {
+        double as, de, ld;
+        ct_font_metrics(b->g[i].font, &as, &de, &ld);
+        if (as > b->ascent) b->ascent = as;
+        if (de > b->descent) b->descent = de;
+        if (ld > b->leading) b->leading = ld;
+        b->width += b->g[i].adv;
+    }
+    if (!b->n) {
+        double as, de, ld;
+        ct_font_metrics(0, &as, &de, &ld);
+        b->ascent = as;
+        b->descent = de;
+        b->leading = ld;
+    }
+}
+static void ct_free_line(ct_line_t *b) {
+    if (!b) return;
+    for (long i = 0; i < b->n; i++) objc_release(b->g[i].font);
+    free(b->g);
+    objc_release(b->astr);
+    free(b);
+}
+static void ct_free_ts(ct_ts_t *t) {
+    if (!t) return;
+    for (long i = 0; i < t->n; i++) objc_release(t->g[i].font);
+    free(t->g);
+    objc_release(t->astr);
+    free(t);
+}
+static int ct_build(id astr, id str, ct_clus **out, long *nout, long *seen) {
+    long len = str ? (long)MSG0(u64, str, "length") : 0;
+    if (len < 0) len = 0;
+    long cap = len > 100000 ? 100000 : len;
+    ct_clus *g = cap ? calloc((size_t)cap, sizeof *g) : 0;
+    if (cap && !g) return 0;
+    id fallback = 0;
+    long n = 0;
+    for (long i = 0; i < cap;) {
+        int units = 1;
+        u32 cp = str ? ct_cp_at(str, i, &units) : 0;
+        if (units < 1) units = 1;
+        if (i + units > cap) break;
+        id font = ct_font_at(astr, i);
+        if (!font) {
+            if (!fallback) fallback = font_of_size(13.0, 0);
+            font = fallback;
+        }
+        u16 gl = ct_glyph(font, cp);
+        double adv = ct_adv(font, cp, gl) + ct_kern_at(astr, i);
+        if (adv < 0) adv = 0;
+        g[n].cp = cp;
+        g[n].glyph = gl;
+        g[n].idx = i;
+        g[n].units = units;
+        g[n].adv = adv;
+        g[n].font = objc_retain(font);
+        n++;
+        i += units;
+    }
+    if (fallback) objc_release(fallback);
+    *out = g;
+    *nout = n;
+    *seen = cap;
+    return 1;
+}
+static void ct_line_dealloc(id self, SEL c) {
+    (void)c;
+    ct_free_line(ct_state(self));
+    *(void **)((u8 *)self + 8) = 0;
+    cx_object_free(self);
+}
+static void ct_ts_dealloc(id self, SEL c) {
+    (void)c;
+    ct_free_ts(ct_state(self));
+    *(void **)((u8 *)self + 8) = 0;
+    cx_object_free(self);
+}
+static void ct_lines_init(void) {
+    if (ct_lines_ready) return;
+    cx_class_t *ns = cx_class_named("NSObject");
+    if (!ns) return;
+    cx_define_class(&CTLine_c, &CTLine_m, "CTLine", ns, 8);
+    cx_define_class(&CTTypesetter_c, &CTTypesetter_m, "CTTypesetter", ns, 8);
+    cx_add_method(&CTLine_c, "dealloc", (void *)ct_line_dealloc);
+    cx_add_method(&CTTypesetter_c, "dealloc", (void *)ct_ts_dealloc);
+    ct_lines_ready = 1;
+}
+static id ct_line_wrap(ct_line_t *b) {
+    ct_lines_init();
+    if (!ct_lines_ready || !b) { ct_free_line(b); return 0; }
+    id o = cx_alloc_instance(&CTLine_c);
+    if (!o) { ct_free_line(b); return 0; }
+    *(void **)((u8 *)o + 8) = b;
+    return o;
+}
+
+id CTLineCreateWithAttributedString(id astr) {
+    if (!astr) return 0;
+    ct_lines_init();
+    if (!ct_lines_ready) return 0;
+    id str = ct_string(astr);
+    long len = str ? (long)MSG0(u64, str, "length") : 0;
+    ct_clus *g = 0;
+    long n = 0, seen = 0;
+    if (!ct_build(astr, str, &g, &n, &seen)) return 0;
+    ct_line_t *b = calloc(1, sizeof *b);
+    if (!b) { free(g); return 0; }
+    b->astr = objc_retain(astr);
+    b->range.loc = 0;
+    b->range.len = len;
+    b->g = g;
+    b->n = n;
+    ct_recompute(b);
+    return ct_line_wrap(b);
+}
+id CTTypesetterCreateWithAttributedString(id astr) {
+    if (!astr) return 0;
+    ct_lines_init();
+    if (!ct_lines_ready) return 0;
+    id str = ct_string(astr);
+    ct_ts_t *t = calloc(1, sizeof *t);
+    if (!t) return 0;
+    t->astr = objc_retain(astr);
+    t->utf16 = str ? (long)MSG0(u64, str, "length") : 0;
+    if (!ct_build(astr, str, &t->g, &t->n, &t->seen)) { ct_free_ts(t); return 0; }
+    id o = cx_alloc_instance(&CTTypesetter_c);
+    if (!o) { ct_free_ts(t); return 0; }
+    *(void **)((u8 *)o + 8) = t;
+    return o;
+}
+static long ct_suggest(ct_ts_t *t, long start, double width, int word) {
+    if (!t || start < 0 || start >= t->utf16) return 0;
+    if (start >= t->seen) return t->utf16 - start;
+    long i = 0;
+    while (i < t->n && t->g[i].idx + t->g[i].units <= start) i++;
+    if (i >= t->n) return start < t->utf16 ? t->utf16 - start : 0;
+    double x = 0;
+    long last_brk = -1, count = 0;
+    int any = 0;
+    for (; i < t->n; i++) {
+        ct_clus *g = &t->g[i];
+        int nl = g->cp == '\n' || g->cp == '\r';
+        if (!nl && any && x + g->adv > width + 1e-6) {
+            if (word && last_brk > start) return last_brk - start;
+            return count;
+        }
+        x += g->adv;
+        count = (g->idx + g->units) - start;
+        any = 1;
+        if (g->cp == ' ' || g->cp == '\t') last_brk = g->idx + g->units;
+        if (nl) return count;
+    }
+    return count ? count : (start < t->utf16 ? t->utf16 - start : 0);
+}
+long CTTypesetterSuggestLineBreak(id ts, long start, double width) { return ct_suggest(ct_state(ts), start, width, 1); }
+long CTTypesetterSuggestClusterBreak(id ts, long start, double width) { return ct_suggest(ct_state(ts), start, width, 0); }
+id CTTypesetterCreateLine(id ts, ct_range_t range) {
+    ct_ts_t *t = ct_state(ts);
+    if (!t) return 0;
+    if (range.loc < 0) range.loc = 0;
+    if (range.len < 0) range.len = 0;
+    long end = range.loc + range.len;
+    long n = 0;
+    for (long i = 0; i < t->n; i++)
+        if (t->g[i].idx >= range.loc && t->g[i].idx < end) n++;
+    ct_line_t *b = calloc(1, sizeof *b);
+    if (!b) return 0;
+    b->astr = objc_retain(t->astr);
+    b->range = range;
+    b->n = n;
+    b->g = n ? calloc((size_t)n, sizeof(ct_clus)) : 0;
+    if (n && !b->g) { ct_free_line(b); return 0; }
+    long k = 0;
+    for (long i = 0; i < t->n && k < n; i++) {
+        if (t->g[i].idx < range.loc || t->g[i].idx >= end) continue;
+        b->g[k] = t->g[i];
+        b->g[k].font = objc_retain(t->g[i].font);
+        k++;
+    }
+    ct_recompute(b);
+    return ct_line_wrap(b);
+}
+
+static void ct_paint(void *ctx, double x, double y, ct_clus *g) {
+#if !defined(CT_HOST)
+    if (g->font && font_live()) {
+        ct_pt_t p;
+        p.x = x;
+        p.y = y;
+        u16 gl = g->glyph;
+        CTFontDrawGlyphs(g->font, &gl, &p, 1, ctx);
+        return;
+    }
+#endif
+    double s = fsize(g->font);
+    int gh = (int)(s * 0.70);
+    int gw = (int)(s * 0.45);
+    if (gh < 2) gh = 2;
+    if (gw < 2) gw = 2;
+    if (gh > 16) gh = 16;
+    if (gw > 16) gw = 16;
+    u8 pix[16 * 16];
+    memset(pix, 200, (size_t)gw * (size_t)gh);
+    cx_bitmap_draw_glyph(ctx, x, y, pix, gw, gh, 0, 1 - gh);
+}
+void CTLineDraw(id line, void *ctx) {
+    ct_line_t *b = ct_state(line);
+    if (!b || !ctx) return;
+    ct_tm m = CGContextGetTextMatrix(ctx);
+    for (long i = 0; i < b->n; i++) {
+        if (b->g[i].idx < 0) continue;
+        id col = ct_color_at(b->astr, b->g[i].idx);
+        if (ct_is_color(col)) cx_bm_set_fill(ctx, ct_argb(col));
+        break;
+    }
+    double x = m.tx, y = m.ty;
+    for (long i = 0; i < b->n; i++) {
+        ct_clus *g = &b->g[i];
+        if (g->idx >= 0) {
+            id col = ct_color_at(b->astr, g->idx);
+            if (ct_is_color(col)) cx_bm_set_fill(ctx, ct_argb(col));
+        }
+        if (g->cp > 0x20 && g->cp != 0x7F && g->adv > 0) ct_paint(ctx, x, y, g);
+        x += g->adv;
+    }
+    m.tx += b->width;
+    CGContextSetTextMatrix(ctx, m);
+}
+static ct_rect_t ct_path_bounds(ct_line_t *b) {
+    ct_rect_t u = {0, 0, 0, 0};
+    int any = 0;
+    double x = 0;
+    for (long i = 0; i < b->n; i++) {
+        ct_clus *g = &b->g[i];
+        ct_rect_t r;
+#if !defined(CT_HOST)
+        if (g->font && font_live()) {
+            u16 gl = g->glyph;
+            r = CTFontGetBoundingRectsForGlyphs(g->font, 0, &gl, 0, 1);
+        } else
+#endif
+        {
+            double s = fsize(g->font);
+            r.x = 0;
+            r.y = -0.241 * s;
+            r.w = g->adv;
+            r.h = 1.193 * s;
+        }
+        r.x += x;
+        if (!any) u = r;
+        else {
+            double x1 = u.x < r.x ? u.x : r.x, y1 = u.y < r.y ? u.y : r.y;
+            double x2 = u.x + u.w > r.x + r.w ? u.x + u.w : r.x + r.w;
+            double y2 = u.y + u.h > r.y + r.h ? u.y + u.h : r.y + r.h;
+            u.x = x1;
+            u.y = y1;
+            u.w = x2 - x1;
+            u.h = y2 - y1;
+        }
+        any = 1;
+        x += g->adv;
+    }
+    return u;
+}
+ct_rect_t CTLineGetBoundsWithOptions(id line, unsigned long options) {
+    ct_rect_t z = {0, 0, 0, 0};
+    ct_line_t *b = ct_state(line);
+    if (!b) return z;
+    if ((options & 8) && b->n) return ct_path_bounds(b);
+    z.y = -b->descent;
+    z.w = b->width;
+    z.h = b->ascent + b->descent + ((options & 1) ? 0 : b->leading);
+    return z;
+}
+
+static ct_line_t *ct_clone(ct_line_t *src) {
+    ct_line_t *b = calloc(1, sizeof *b);
+    if (!b) return 0;
+    b->astr = objc_retain(src->astr);
+    b->range = src->range;
+    b->n = src->n;
+    b->g = src->n ? calloc((size_t)src->n, sizeof(ct_clus)) : 0;
+    if (src->n && !b->g) { ct_free_line(b); return 0; }
+    for (long i = 0; i < src->n; i++) {
+        b->g[i] = src->g[i];
+        b->g[i].font = objc_retain(src->g[i].font);
+    }
+    ct_recompute(b);
+    return b;
+}
+static ct_clus *ct_ellipsis(id font, long *n, double *w) {
+    ct_clus *g = calloc(3, sizeof *g);
+    if (!g) { *n = 0; *w = 0; return 0; }
+    u16 gl = ct_glyph(font, '.');
+    double a = ct_adv(font, '.', gl);
+    for (int i = 0; i < 3; i++) {
+        g[i].cp = '.';
+        g[i].glyph = gl;
+        g[i].idx = -1;
+        g[i].units = 1;
+        g[i].adv = a;
+        g[i].font = objc_retain(font);
+    }
+    *n = 3;
+    *w = a * 3;
+    return g;
+}
+static long ct_fit_prefix(ct_clus *g, long n, double budget) {
+    double acc = 0;
+    long k = 0;
+    for (long i = 0; i < n; i++) {
+        if (acc + g[i].adv > budget + 1e-6) break;
+        acc += g[i].adv;
+        k++;
+    }
+    return k;
+}
+static long ct_fit_suffix(ct_clus *g, long n, double budget) {
+    double acc = 0;
+    long k = n;
+    for (long i = n; i-- > 0;) {
+        if (acc + g[i].adv > budget + 1e-6) break;
+        acc += g[i].adv;
+        k = i;
+    }
+    return k;
+}
+id CTLineCreateTruncatedLine(id line, double width, unsigned type, id token) {
+    ct_line_t *src = ct_state(line);
+    if (!src) return 0;
+    if (width < 0) width = 0;
+    if (src->width <= width + 1e-6) {
+        ct_line_t *b = ct_clone(src);
+        return b ? ct_line_wrap(b) : 0;
+    }
+    long tn = 0;
+    double tw = 0;
+    ct_clus *tg = 0;
+    if (token && object_getClass(token) == &CTLine_c) {
+        ct_line_t *tok = ct_state(token);
+        if (tok && tok->n) {
+            tg = calloc((size_t)tok->n, sizeof *tg);
+            if (!tg) return 0;
+            tn = tok->n;
+            for (long i = 0; i < tn; i++) {
+                tg[i] = tok->g[i];
+                tg[i].idx = -1;
+                tg[i].font = objc_retain(tok->g[i].font);
+                tw += tg[i].adv;
+            }
+        }
+    }
+    if (!tg) tg = ct_ellipsis(src->n ? src->g[0].font : 0, &tn, &tw);
+    double budget = width > tw ? width - tw : 0;
+    long pre = 0, suf = src->n;
+    if (type == 0) suf = ct_fit_suffix(src->g, src->n, budget);
+    else if (type == 2) {
+        pre = ct_fit_prefix(src->g, src->n, budget * 0.5);
+        suf = ct_fit_suffix(src->g, src->n, budget * 0.5);
+        if (suf < pre) suf = pre;
+    } else pre = ct_fit_prefix(src->g, src->n, budget);
+    long n = pre + tn + (src->n - suf);
+    ct_line_t *b = calloc(1, sizeof *b);
+    if (!b) {
+        for (long i = 0; i < tn; i++) objc_release(tg[i].font);
+        free(tg);
+        return 0;
+    }
+    b->astr = objc_retain(src->astr);
+    b->range = src->range;
+    b->n = n;
+    b->g = n ? calloc((size_t)n, sizeof(ct_clus)) : 0;
+    if (n && !b->g) {
+        for (long i = 0; i < tn; i++) objc_release(tg[i].font);
+        free(tg);
+        ct_free_line(b);
+        return 0;
+    }
+    long k = 0;
+    for (long i = 0; i < pre; i++) {
+        b->g[k] = src->g[i];
+        b->g[k].font = objc_retain(src->g[i].font);
+        k++;
+    }
+    for (long i = 0; i < tn; i++) b->g[k++] = tg[i];
+    free(tg);
+    for (long i = suf; i < src->n; i++) {
+        b->g[k] = src->g[i];
+        b->g[k].font = objc_retain(src->g[i].font);
+        k++;
+    }
+    ct_recompute(b);
+    return ct_line_wrap(b);
+}
+
 void cx_coretext_init(void) {
     cx_class_t *f = cx_class_named("NSFont");
     if (f) {
@@ -698,4 +1255,6 @@ void cx_coretext_init(void) {
     cx_class_t *fd = cx_class_named("NSFontDescriptor");
     if (fd && !cx_responds(*(cx_class_t **)fd, sel_registerName("fontDescriptorWithFontAttributes:")))
         cx_add_cmethod(fd, "fontDescriptorWithFontAttributes:", (void *)fd_with_attrs);
+    ct_lines_init();
+    cx_cfhost_init();
 }

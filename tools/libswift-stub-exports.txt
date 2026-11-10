@@ -1,0 +1,81 @@
+# Símbolos que os stubs exportam. Cada um aponta para um ret e o arquivo traz a
+# cadeia "STUB mOS libswift": não é o runtime. A cadeia compilada (build/swift ou
+# build/universal-swift) substitui o arquivo quando existe.
+#
+# VS Code 1.145.2 (zip sha256 b6c60d84a8ffb85c5bb4106d6ff74773fec07e6c1a4bb944f8af68e3bfe5abbe).
+# machocheck contra libSystem vazio: 53 símbolos distintos, 34 em libswiftCore e
+# 19 em libswiftFoundation (vsce-sign e as duas libmsalruntime).
+libswiftCore.dylib
+_$sBOWV
+_$sSqMa
+_$ss5ErrorMp
+_$ss5ErrorP19_getEmbeddedNSErroryXlSgyFTq
+_$ss5ErrorP5_codeSivgTq
+_$ss5ErrorP7_domainSSvgTq
+_$ss5ErrorP9_userInfoyXlSgvgTq
+_$ss5ErrorPsE19_getEmbeddedNSErroryXlSgyF
+_$ss5ErrorPsE5_codeSivg
+_$ss5ErrorPsE7_domainSSvg
+_$ss5ErrorPsE9_userInfoyXlSgvg
+_$ss5UInt8VMn
+_$ss5UInt8VN
+_$sytN
+__swift_stdlib_operatingSystemVersion
+_swift_allocBox
+_swift_allocError
+_swift_allocObject
+_swift_bridgeObjectRelease
+_swift_bridgeObjectRetain
+_swift_checkMetadataState
+_swift_deletedMethodError
+_swift_dynamicCast
+_swift_errorRelease
+_swift_errorRetain
+_swift_getAssociatedConformanceWitness
+_swift_getAssociatedTypeWitness
+_swift_getTypeByMangledNameInContext
+_swift_getTypeByMangledNameInContextInMetadataState
+_swift_getWitnessTable
+_swift_once
+_swift_release
+_swift_retain
+_swift_willThrow
+
+libswiftFoundation.dylib
+_$s10Foundation13__DataStorageC5bytes6lengthACSVSg_Sitcfc
+_$s10Foundation13__DataStorageC6_bytesSvSgvg
+_$s10Foundation13__DataStorageC7_lengthSivg
+_$s10Foundation13__DataStorageC7_offsetSivg
+_$s10Foundation13__DataStorageCMa
+_$s10Foundation15ContiguousBytesP010withUnsafeC0yqd__qd__SWKXEKlFTj
+_$s10Foundation22_convertErrorToNSErrorySo0E0Cs0C0_pF
+_$s10Foundation4DataV14RangeReferenceCMa
+_$s10Foundation4DataV15_RepresentationO6append10contentsOfySW_tF
+_$s10Foundation4DataV19_bridgeToObjectiveCSo6NSDataCyF
+_$s10Foundation4DataV36_unconditionallyBridgeFromObjectiveCyACSo6NSDataCSgFZ
+_$s10Foundation4DataV9copyBytes2to4fromSiSryxG_SnySiGSgtlF
+_$s10Foundation4DataVAA0B8ProtocolAAMc
+_$s10Foundation4DataVAA15ContiguousBytesAAWP
+_$s10Foundation4DataVN
+_$s10Foundation4DataVSTAAMc
+_$s10Foundation4DataVyACxcSTRzs5UInt8V7ElementRtzlufC
+_$sSRyxG10Foundation12DataProtocolABs5UInt8VRszlMc
+_$sSRyxG10Foundation15ContiguousBytesABs5UInt8VRszlMc
+
+# OpenBot: docs/compat-open-usage.md só publica estes dois nomes.
+libswiftMetal.dylib
+_$sSo9MTLBufferP5MetalE14didModifyRangeyySnySiGF
+
+libswiftObjectiveC.dylib
+_$sSo8NSObjectC10ObjectiveCE9hashValueSivg
+
+# Pedidas pelo VS Code ou pelo inventário do OpenBot, sem nome de símbolo
+# publicado além dos de cima. O arquivo existe para o carregador achar a dylib.
+libswiftCoreFoundation.dylib
+libswiftDarwin.dylib
+libswiftDispatch.dylib
+libswiftIOKit.dylib
+libswiftXPC.dylib
+libswift_Concurrency.dylib
+libswiftUniformTypeIdentifiers.dylib
+libswiftCoreGraphics.dylib

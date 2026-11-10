@@ -4,12 +4,18 @@
 #   build\universal\usr\lib\libc++.1.dylib       (tools\build-libcxx.ps1 -Arch arm64)
 #   build\universal\usr\lib\libsqlite3.dylib     (tools\build-sqlite.ps1 -Arch arm64)
 #   build\universal\usr\lib\libicucore.A.dylib   (tools\build-icu.ps1 -Arch arm64; os dados icudt74l.dat são os mesmos)
+#   build\universal\usr\lib\libz.1.dylib             (tools\build-zlib.ps1, os dois slices)
+#   build\universal\usr\lib\libcurl.4.dylib          (tools\build-libcurl.ps1)
+#   build\universal\usr\lib\libcompression.dylib     (tools\build-libcompression.ps1)
 #   build\universal\System\Library\Frameworks\WebKit.framework\Versions\A\WebKit
 # O build.ps1 copia o que existir aqui por cima das versões só x86_64.
 #   .\tools\build-libs-arm64.ps1 [-Force]
 param([switch]$Force)
 $root = Split-Path $PSScriptRoot -Parent
-$zig = Join-Path (Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*' | Where-Object { Test-Path "$($_.FullName)\zig.exe" } | Select-Object -First 1).FullName 'zig.exe'
+if (-not (Get-Command Resolve-MosZig -ErrorAction SilentlyContinue)) { foreach ($mosHost in @("$PSScriptRoot\stage-host.ps1","$PSScriptRoot\..\stage-host.ps1","$PSScriptRoot\..\..\stage-host.ps1","$PSScriptRoot\..\..\..\stage-host.ps1")) { if (Test-Path -LiteralPath $mosHost) { . $mosHost; break } } }
+$mosZigPick = Resolve-MosZig $root
+if (-not $mosZigPick) { exit 1 }
+$zig = $mosZigPick.Path
 $u = "$root\build\universal"
 $fail = 0
 function Step($name, [scriptblock]$b) { & $b; if ($LASTEXITCODE -ne 0) { Write-Host "$name FALHOU" -ForegroundColor Red; $script:fail++ } }
@@ -31,11 +37,16 @@ Step 'ICU x86_64' { & "$PSScriptRoot\build-icu.ps1" -Arch x86_64 @f }
 Step 'ICU arm64' { & "$PSScriptRoot\build-icu.ps1" -Arch arm64 @f }
 Lipo "$u\usr\lib\libicucore.A.dylib" "$root\build\icu\libicucore.A.dylib" "$root\build\icu-arm64\libicucore.A.dylib"
 
-# zlib: x86_64 = o bottle do Homebrew de sempre; arm64 = o mesmo fonte (1.3.2) compilado aqui (tools\build-zlib.ps1)
+# libz, libcurl e libcompression: os dois slices saem do fonte (sem bottle). O universal fica em /usr/lib.
+Step 'zlib x86_64' { & "$PSScriptRoot\build-zlib.ps1" -Arch x86_64 @f }
 Step 'zlib arm64' { & "$PSScriptRoot\build-zlib.ps1" -Arch arm64 @f }
-$zx = Get-ChildItem "$root\build\brew\x\zlib\*\lib\libz.1.*.dylib" -ErrorAction SilentlyContinue | Select-Object -First 1
-if ($zx) { Lipo "$u\usr\local\opt\zlib\lib\libz.1.dylib" $zx.FullName "$root\build\zlib-arm64\libz.1.dylib" }
-else { Write-Host '  (sem o bottle x86_64 da zlib em build\brew\x\zlib: /usr/local/opt/zlib fica de fora)' -ForegroundColor DarkGray }
+Lipo "$u\usr\lib\libz.1.dylib" "$root\build\zlib-x86_64\libz.1.dylib" "$root\build\zlib-arm64\libz.1.dylib"
+Step 'libcurl x86_64' { & "$PSScriptRoot\build-libcurl.ps1" -Arch x86_64 @f }
+Step 'libcurl arm64' { & "$PSScriptRoot\build-libcurl.ps1" -Arch arm64 @f }
+Lipo "$u\usr\lib\libcurl.4.dylib" "$root\build\curl-x86_64\libcurl.4.dylib" "$root\build\curl-arm64\libcurl.4.dylib"
+Step 'libcompression x86_64' { & "$PSScriptRoot\build-libcompression.ps1" -Arch x86_64 @f }
+Step 'libcompression arm64' { & "$PSScriptRoot\build-libcompression.ps1" -Arch arm64 @f }
+Lipo "$u\usr\lib\libcompression.dylib" "$root\build\libcompression-x86_64\libcompression.dylib" "$root\build\libcompression-arm64\libcompression.dylib"
 
 # WebKit.framework do mOS (o build.ps1 compila o x86_64 direto na imagem; aqui os dois slices)
 $wk = "$root\userland\frameworks\WebKit\WebKit.m"

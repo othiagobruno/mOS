@@ -24,7 +24,7 @@ Legenda: ✅ o mOS já tem · 🟡 parcial ou stub · ❌ não tem
 | Processos / espaço de usuário (ring 3) | ✅ `proc/process.c`: PML4 por processo, falhas isoladas, `kill` | `xnu/bsd/kern` (proc, fork, exec), `xnu/osfmk/x86_64` | `fork` com COW (`SYS_FORK`), `execve`, `posix_spawn`, `waitpid`. |
 | Threads + escalonador preemptivo | ✅ `proc/sched.c`: threads do kernel e de usuário, fatias de 4 ms | `xnu/osfmk/kern/sched_*.c` | O desktop é a thread 0 cooperativa (cede só em `hlt`). |
 | Syscalls | ✅ `int 0x80`, 31 chamadas (`include/syscall.h`, `-errno`) | `xnu/bsd/kern/syscalls.master`, `Libraries/Libsystem/libsystem_kernel` | Tabela própria; o Mach-O entra por cima (sessão de compatibilidade). |
-| VM com espaços por processo, *page fault*, COW | ✅ espaços por processo, `brk`, `mmap`/`munmap`; paginação sob demanda (anônima e de arquivo, `mm/lazy.c`); COW no `fork` e nas imagens Mach-O compartilhadas, com contagem atômica de donos por página (`proc/process.c`) | `xnu/osfmk/vm/` | Falta `MAP_SHARED` gravável de arquivo, proteção no PTE (NX desligado) e paginação para disco. |
+| VM com espaços por processo, *page fault*, COW | ✅ espaços por processo, `brk`, `mmap`/`munmap`; paginação sob demanda; `MAP_SHARED` de arquivo e anônimo; NX na PTE (`EFER.NXE`); COW no `fork` (`PTE_SHARED` fica compartilhado) | `xnu/osfmk/vm/` | Falta paginação para disco (`docs/mm-shared.md`). |
 | IPC (portas Mach / pipes) | 🟡 pipes (`pipe`, `spawnio`, `dup2`, `a \| b` no msh), sessões de terminal, `wait`/`waitany` | `xnu/osfmk/ipc/`, `xnu/bsd/kern` (pipes, kqueue) | Sem portas Mach nem kqueue. |
 | SMP / APIC / HPET | ✅ `arch/smp.c`: MADT, LAPIC calibrado, HPET, APs acordados (INIT-SIPI), TSS e temporizador por núcleo; `proc/sched.c`: threads de usuário em todos os núcleos com trava grande do kernel, IPI de TLB shootdown e de encerramento (`docs/smp.md`) | `Kernel/Extensions/AppleAPIC`, `xnu/osfmk/i386` | Trava grande (uma syscall por vez); UI, rede, USB, áudio e threads do kernel seguem no BSP. Próximo passo: travas por subsistema (VFS, Mach IPC, heap de páginas). |
 | Loader ELF64 | ✅ `proc/elf.c`: estático, em 0x400000000000 | — | Programas em `userland/`, compilados pelo `build.ps1`. |
@@ -131,7 +131,7 @@ Os itens 1 a 5 da ordem original estão feitos: AHCI + NVMe + FAT gravável e pe
 O que ainda falta:
 - **Mach-O**: o carregador está sendo feito pela sessão "Compatibilidade DMG", sobre o gancho `macho_load()`.
 - **SMP fino**: os APs já rodam processos e threads de usuário em paralelo (`docs/smp.md`), mas o kernel inteiro está sob uma trava grande e o desktop só a solta nos `hlt`. Falta trocar por travas por subsistema (VFS, Mach IPC, rede, heap de páginas) e tirar a UI/drivers do BSP.
-- **Memória virtual**: `MAP_SHARED` gravável de arquivo (gravar de volta), bits de proteção no PTE e paginação para disco. COW, `fork` e paginação sob demanda (anônima e de arquivo) estão feitos.
-- **Processos**: parar/continuar processos (SIGSTOP/SIGTSTP/SIGCONT) e sinais de tempo real. Os tratadores de sinal no usuário estão feitos (`docs/sinais.md`).
+- **Memória virtual**: paginação para disco. `MAP_SHARED` gravável (arquivo e anônimo), `msync`/`munmap` e o bit NX da PTE estão feitos (`docs/mm-shared.md`). COW e `fork` também.
+- **Processos**: sinais de tempo real (`sigqueue`). Parar/continuar (`SIGSTOP`/`SIGTSTP`/`SIGTTIN`/`SIGTTOU`/`SIGCONT`, `waitpid` com `WUNTRACED`/`WCONTINUED`) está feito (`docs/sinais.md`).
 - **Interface**: tela de login (sessão principal, com o backend de contas já pronto), atalho de captura de tela (sessão de UI).
 - **Grandes portes**: objc4/Foundation/AppKit e toolchain nativa. O IPv6 está feito ([ipv6.md](ipv6.md)); falta UDP para os apps.

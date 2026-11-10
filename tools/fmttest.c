@@ -70,6 +70,12 @@ int main(void) {
     CHECK(mf_dec_add("-1.5", "1.5", b, sizeof b) == 0); eq(b, "0");
     CHECK(mf_dec_add("-1.5", "0.5", b, sizeof b) == 0); eq(b, "-1");
     CHECK(mf_dec_add("999", "1", b, sizeof b) == 0); eq(b, "1000");
+    int Y = 0, M = 0, D = 0, hh = 0, mm = 0, ss = 0;
+    mf_civil_from_unix(1709596800LL, &Y, &M, &D, &hh, &mm, &ss);
+    CHECK(Y == 2024 && M == 3 && D == 5 && hh == 0 && mm == 0 && ss == 0);
+    CHECK(mf_datetime("en", 2024, 3, 5, 0, 0, 0, MF_DATE_NUMERIC, 1, b, sizeof b) >= 0); eq(b, "3/5/2024, 12:00 AM");
+    CHECK(mf_datetime("en", 2024, 3, 5, 15, 4, 5, MF_DATE_ABBREV, 0, b, sizeof b) >= 0); eq(b, "Mar 5, 2024");
+    CHECK(mf_datetime("pt", 2024, 3, 5, 15, 4, 5, -1, 1, b, sizeof b) >= 0); eq(b, "15:04");
     mf_span sp[8];
     char plain[64], hrefs[64];
     int ns = mf_markdown("**oi** e `x` e [a](https://mos)", plain, sizeof plain, sp, 8, hrefs, sizeof hrefs);

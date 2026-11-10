@@ -1,0 +1,20 @@
+#!/bin/bash
+# mOS: which mínimo para a imagem de teste do Cursor (docs/staging-linux.md).
+# Procura em PATH. No mOS, /usr/bin/git e /usr/local/bin/git são #mOS-link: e o VFS segue o alvo.
+if [ -z "${1:-}" ]; then
+    echo "usage: which name" >&2
+    exit 1
+fi
+oldifs=$IFS
+IFS=:
+for d in $PATH; do
+    [ -n "$d" ] || continue
+    if [ -e "$d/$1" ]; then
+        printf '%s\n' "$d/$1"
+        IFS=$oldifs
+        exit 0
+    fi
+done
+IFS=$oldifs
+echo "which: $1 not found" >&2
+exit 1
