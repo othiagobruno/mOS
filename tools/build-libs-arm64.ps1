@@ -60,4 +60,15 @@ if (Test-Path $wk) {
     }
     Lipo "$u\System\Library\Frameworks\WebKit.framework\Versions\A\WebKit" "$root\build\webkit-x86\WebKit" "$root\build\webkit-arm64\WebKit"
 }
+$vz = "$root\userland\frameworks\Virtualization\Virtualization.m"
+if (Test-Path $vz) {
+    New-Item -ItemType Directory -Force "$root\build\vz-arm64", "$root\build\vz-x86" | Out-Null
+    foreach ($a in @(@('x86_64-macos', "$root\build\vz-x86\Virtualization"), @('aarch64-macos', "$root\build\vz-arm64\Virtualization"))) {
+        & $zig cc -target $a[0] -O2 -shared -x objective-c "-I$root\userland\sdk\include" -I"$root\userland\frameworks\Virtualization" -Wno-objc-root-class -Wno-objc-method-access `
+            $vz -o $a[1] '-Wl,-install_name,/System/Library/Frameworks/Virtualization.framework/Versions/A/Virtualization' '-Wl,-undefined,dynamic_lookup' 2>&1 |
+            Select-String ' error' | ForEach-Object { "  $($_.Line)" }
+        if ($LASTEXITCODE -ne 0) { Write-Host "Virtualization $($a[0]) FALHOU" -ForegroundColor Red; $fail++ }
+    }
+    Lipo "$u\System\Library\Frameworks\Virtualization.framework\Versions\A\Virtualization" "$root\build\vz-x86\Virtualization" "$root\build\vz-arm64\Virtualization"
+}
 if ($fail) { exit 1 }

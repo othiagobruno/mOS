@@ -8,6 +8,7 @@
 #include "foundation.h"
 #include "libc.h"
 #include "urlsession_auth.inc"
+#include "urlrequest_fields.h"
 
 id objc_retain(id o);
 void objc_release(id o);
@@ -1408,9 +1409,28 @@ static id req_with(id cls, SEL c, id url) { (void)c; box_t *o = (box_t *)cx_allo
 static id req_url(id s, SEL c) { (void)c; return BOX(s)->a; }
 static id req_method(id s, SEL c) { (void)c; return BOX(s)->b; }
 static void req_set_method(id s, SEL c, id m) { (void)c; rel(BOX(s)->b); BOX(s)->b = retain(m); }
-/* política de cache: o mOS não tem cache de URL; aceita e devolve a padrão (NSURLRequestUseProtocolCachePolicy = 0) */
-static void req_set_policy(id s, SEL c, u64 p) { (void)s; (void)c; (void)p; }
-static u64 req_policy(id s, SEL c) { (void)s; (void)c; return 0; }
+static urlreq_opts_t req_opts(id s) {
+    urlreq_opts_t o;
+    o.timeout = BOX(s)->d;
+    o.policy = (unsigned long)BOX(s)->fl;
+    return o;
+}
+static void req_put_opts(id s, urlreq_opts_t o) {
+    BOX(s)->d = o.timeout;
+    BOX(s)->fl = (int)o.policy;
+}
+static void req_set_policy(id s, SEL c, u64 p) {
+    urlreq_opts_t o;
+    (void)c;
+    o = req_opts(s);
+    urlreq_set_policy(&o, (unsigned long)p);
+    req_put_opts(s, o);
+}
+static u64 req_policy(id s, SEL c) {
+    urlreq_opts_t o = req_opts(s);
+    (void)c;
+    return urlreq_policy(&o);
+}
 static id req_headers(id s, SEL c) { (void)c; return BOX(s)->c; }
 static void req_set_header(id s, SEL c, id v, id f) { (void)c; if (BOX(s)->c && v && f) MSG(void, BOX(s)->c, "setObject:forKey:", v, f); }
 /* inicializadores de instância (antes o initWithURL: reaproveitava o req_with, que trata o primeiro argumento como a
@@ -1436,8 +1456,19 @@ static id req_with_pt(id cls, SEL c, id url, u64 policy, double timeout) {
     (void)policy;
     return r;
 }
-static double req_timeout(id s, SEL c) { (void)c; return BOX(s)->d > 0 ? BOX(s)->d : 60; }
-static void req_set_timeout(id s, SEL c, double t) { (void)c; BOX(s)->d = t; }
+static double req_timeout(id s, SEL c) {
+    urlreq_opts_t o;
+    (void)c;
+    o = req_opts(s);
+    return urlreq_timeout(&o);
+}
+static void req_set_timeout(id s, SEL c, double t) {
+    urlreq_opts_t o;
+    (void)c;
+    o = req_opts(s);
+    urlreq_set_timeout(&o, t);
+    req_put_opts(s, o);
+}
 static id req_copy_as(id s, cx_class_t *cls) {
     box_t *o = (box_t *)cx_alloc_instance(cls);
     o->a = retain(BOX(s)->a);
@@ -1445,6 +1476,7 @@ static id req_copy_as(id s, cx_class_t *cls) {
     o->c = BOX(s)->c ? MSG0(id, BOX(s)->c, "mutableCopy") : mutdict();
     o->e = retain(BOX(s)->e);
     o->d = BOX(s)->d;
+    o->fl = BOX(s)->fl;
     return (id)o;
 }
 static id req_copy(id s, SEL c) { (void)c; return req_copy_as(s, (cx_class_t *)object_getClass(s)); }
@@ -1467,6 +1499,7 @@ typedef struct { int flags, family, socktype, protocol; unsigned addrlen; char *
 int getaddrinfo(const char *, const char *, const ai_t *, ai_t **);
 void freeaddrinfo(ai_t *);
 int socket(int, int, int);
+int clock_gettime(int, void *);
 int connect(int, const void *, unsigned);
 long send(int, const void *, size_t, int);
 long recv(int, void *, size_t, int);
@@ -1524,6 +1557,13 @@ static id http_do(id req, id *err, int (*after_tls)(void *ctx, id trust), void *
     int fd = socket(2, 1, 6);
     if (fd < 0 || connect(fd, res->addr, res->addrlen)) { freeaddrinfo(res); if (fd >= 0) close(fd); if (err) *err = make_err("NSURLErrorDomain", -1004, "conexão recusada"); return 0; }
     freeaddrinfo(res);
+    long long deadline = 0;
+    {
+        struct { long long sec, nsec; } ts;
+        double tmo = req_timeout(req, 0);
+        if (clock_gettime(6, &ts) == 0 && tmo > 0)
+            deadline = ts.sec * 1000 + ts.nsec / 1000000 + (long long)(tmo * 1000);
+    }
     void *tls = 0;
     if (!strcmp(scheme, "https")) {
         if (SSLNewContext(0, &tls) || !tls) { close(fd); if (err) *err = make_err("NSURLErrorDomain", -1200, "TLS indisponível"); return 0; }
@@ -1569,7 +1609,18 @@ static id http_do(id req, id *err, int (*after_tls)(void *ctx, id trust), void *
     u8 *buf = 0; u64 n = 0, cap = 0;
     for (;;) {
         u8 tmp[4096];
-        long k = io_read(tls, fd, tmp, sizeof tmp);
+        long k;
+        if (deadline) {
+            struct { long long sec, nsec; } ts;
+            if (clock_gettime(6, &ts) == 0 && ts.sec * 1000 + ts.nsec / 1000000 > deadline) {
+                free(buf);
+                if (tls) SSLDisposeContext(tls);
+                close(fd);
+                if (err) *err = make_err("NSURLErrorDomain", -1001, "tempo esgotado");
+                return 0;
+            }
+        }
+        k = io_read(tls, fd, tmp, sizeof tmp);
         if (k < 0) break;
         if (k == 0) break;
         if (n + (u64)k > cap) { cap = (n + (u64)k) * 2 + 64; buf = realloc(buf, cap); }
@@ -2936,11 +2987,13 @@ void cx_foundation_more_init(void) {
     CM(NSURLRequest, "requestWithURL:", req_with); CM(NSURLRequest, "alloc", lock_alloc);
     M(NSURLRequest, "initWithURL:", req_init_url); M(NSURLRequest, "URL", req_url); M(NSURLRequest, "HTTPMethod", req_method);
     M(NSURLRequest, "initWithURL:cachePolicy:timeoutInterval:", req_init_url_pt); CM(NSURLRequest, "requestWithURL:cachePolicy:timeoutInterval:", req_with_pt);
-    M(NSURLRequest, "timeoutInterval", req_timeout); M(NSMutableURLRequest, "setTimeoutInterval:", req_set_timeout);
+    M(NSURLRequest, "timeoutInterval", req_timeout);
     M(NSURLRequest, "copy", req_copy); M(NSURLRequest, "copyWithZone:", req_copy_zone);
     M(NSURLRequest, "mutableCopy", req_mcopy); M(NSURLRequest, "mutableCopyWithZone:", req_mcopy_zone);
     M(NSURLRequest, "allHTTPHeaderFields", req_headers); M(NSURLRequest, "HTTPBody", req_body);
     DEF(&NSMutableURLRequest_c, &NSMutableURLRequest_m, "NSMutableURLRequest", &NSURLRequest_c, 0);
+    M(NSURLRequest, "setTimeoutInterval:", req_set_timeout);
+    M(NSMutableURLRequest, "setTimeoutInterval:", req_set_timeout);
     M(NSMutableURLRequest, "setHTTPMethod:", req_set_method); M(NSMutableURLRequest, "setValue:forHTTPHeaderField:", req_set_header);
     M(NSMutableURLRequest, "setHTTPBody:", req_set_body); M(NSMutableURLRequest, "setURL:", set_a);
     M(NSMutableURLRequest, "setCachePolicy:", req_set_policy); M(NSURLRequest, "cachePolicy", req_policy);

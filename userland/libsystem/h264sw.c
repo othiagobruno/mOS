@@ -1,5 +1,6 @@
 /*
- * H.264 Constrained Baseline, intra I_PCM, 4:2:0, 8 bits. Sem loop filter.
+ * Codificador H.264 intra I_PCM, 4:2:0, 8 bits. O decodificador Baseline
+ * (CAVLC, intra 4x4/16x16, P-slice, deblocking) está em h264bsd_glue.c.
  * Entrada e saída em I420. O access unit sai em AVCC (sample) e Annex B.
  *
  * As tabelas g_kuiVlc* vêm do OpenH264 (Cisco), BSD-2-Clause. O código em volta
@@ -526,7 +527,8 @@ static int code_mb_unused(bw *w, pic *p, const uint8_t *sy, int ystride, const u
     if (write) {
         /* mb_type: 0 DC, 1 horizontal, 2 vertical, 3 plane. DC é 2. */
         int mb_type = 1 + 2 + (cbp_c << 2) + (any_ac ? 12 : 0);
-        if (bw_ue(w, (unsigned)mb_type) || bw_ue(w, 0) || bw_se(w, 0)) return -1;
+        /* I_16x16: só intra_chroma_pred_mode. O modo 16x16 já está no mb_type. */
+        if (bw_ue(w, (unsigned)mb_type) || bw_ue(w, 0)) return -1;
         int crv;
         if ((crv = cavlc_write(w, scan_dc, 16, 0, 0))) return crv;
         if (any_ac) {
@@ -860,34 +862,35 @@ static int decode_slice_rbsp(const uint8_t *rb, int n, pic *p) {
     return r.err ? -1 : 0;
 }
 
+int h264_bsd_open(void **out);
+void h264_bsd_close(void *p);
+int h264_bsd_feed(void *p, const uint8_t *bytes, int n,
+                  uint8_t *y, uint8_t *u, uint8_t *v, int sy, int su, int sv,
+                  int *ow, int *oh);
+
+static int annex_put(uint8_t *d, const uint8_t *nal, int n) {
+    d[0] = 0; d[1] = 0; d[2] = 0; d[3] = 1;
+    memcpy(d + 4, nal, (size_t)n);
+    return n + 4;
+}
+
 int h264_decode_nals(const uint8_t *sps, int sps_n, const uint8_t *pps, int pps_n,
                      const uint8_t *slice, int slice_n,
                      uint8_t *y, uint8_t *u, uint8_t *v, int sy, int su, int sv,
                      int *ow, int *oh) {
-    (void)pps; (void)pps_n;
-    if (!sps || !slice || !y || !u || !v) return -1;
-    int sr = 0, lr = 0;
-    uint8_t *srb = rbsp_unescape(sps, sps_n, &sr);
-    uint8_t *lrb = rbsp_unescape(slice, slice_n, &lr);
-    if (!srb || !lrb) { free(srb); free(lrb); return -1; }
-    br rs = {srb + 1, sr - 1, 0, 0};
-    int w = 0, h = 0, mbw = 0, mbh = 0;
-    if (parse_sps(&rs, &w, &h, &mbw, &mbh)) { free(srb); free(lrb); return -1; }
-    pic p;
-    if (pic_alloc(&p, w, h, 26)) { pic_free(&p); free(srb); free(lrb); return -1; }
-    int nal_type = lrb[0] & 31;
-    if (nal_type != 5 && nal_type != 1) { pic_free(&p); free(srb); free(lrb); return -1; }
-    int rc = decode_slice_rbsp(lrb + 1, lr - 1, &p);
-    if (!rc) {
-        for (int row = 0; row < h; row++) memcpy(y + row * sy, p.y + row * p.w, (size_t)w);
-        for (int row = 0; row < h / 2; row++) {
-            memcpy(u + row * su, p.u + row * p.cw, (size_t)(w / 2));
-            memcpy(v + row * sv, p.v + row * p.cw, (size_t)(w / 2));
-        }
-        if (ow) *ow = w;
-        if (oh) *oh = h;
-    }
-    pic_free(&p); free(srb); free(lrb);
+    void *st = 0;
+    int rc;
+    if (!sps || sps_n < 1 || !pps || pps_n < 1 || !slice || slice_n < 1 || !y) return -1;
+    uint8_t *b = malloc((size_t)(12 + sps_n + pps_n + slice_n));
+    if (!b) return -1;
+    int n = 0;
+    n += annex_put(b + n, sps, sps_n);
+    n += annex_put(b + n, pps, pps_n);
+    n += annex_put(b + n, slice, slice_n);
+    if (h264_bsd_open(&st)) { free(b); return -1; }
+    rc = h264_bsd_feed(st, b, n, y, u, v, sy, su, sv, ow, oh);
+    h264_bsd_close(st);
+    free(b);
     return rc;
 }
 
@@ -895,17 +898,24 @@ int h264_decode_avcc(const uint8_t *sps, int sps_n, const uint8_t *pps, int pps_
                      const uint8_t *sample, int sample_n,
                      uint8_t *y, uint8_t *u, uint8_t *v, int sy, int su, int sv,
                      int *ow, int *oh) {
-    if (!sample || sample_n < 5) return -1;
-    int off = 0, rc = -1;
+    void *st = 0;
+    int rc, off = 0, n = 0;
+    if (!sps || !pps || !sample || sample_n < 5) return -1;
+    uint8_t *b = malloc((size_t)sample_n + (size_t)sps_n + (size_t)pps_n + 64);
+    if (!b) return -1;
+    n += annex_put(b + n, sps, sps_n);
+    n += annex_put(b + n, pps, pps_n);
     while (off + 4 <= sample_n) {
         int len = (sample[off] << 24) | (sample[off+1] << 16) | (sample[off+2] << 8) | sample[off+3];
         off += 4;
-        if (len <= 0 || off + len > sample_n) return -1;
-        int typ = sample[off] & 31;
-        if (typ == 5 || typ == 1)
-            rc = h264_decode_nals(sps, sps_n, pps, pps_n, sample + off, len, y, u, v, sy, su, sv, ow, oh);
+        if (len <= 0 || off + len > sample_n) { free(b); return -1; }
+        n += annex_put(b + n, sample + off, len);
         off += len;
     }
+    if (h264_bsd_open(&st)) { free(b); return -1; }
+    rc = h264_bsd_feed(st, b, n, y, u, v, sy, su, sv, ow, oh);
+    h264_bsd_close(st);
+    free(b);
     return rc;
 }
 
