@@ -290,6 +290,13 @@ static void wake_sleepers(void) {
             t->futex_va = 0;
             t->state = TH_READY;
         }
+        /* SYS_GPU MOS_GPU_FENCE_WAIT (wait_pid = -12): prazo em wake_at */
+        else if (t->state == TH_WAITING && t->wait_pid == -12 && t->wake_at && now >= t->wake_at) {
+            ((int_frame_t *)t->frame)->rax = (u64)-60;
+            t->wake_at = 0;
+            t->futex_va = 0;
+            t->state = TH_READY;
+        }
     }
 }
 

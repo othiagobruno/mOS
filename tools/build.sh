@@ -159,8 +159,9 @@ for f in "$ROOT"/userland/libsystem/*.c "$ROOT"/userland/libsystem/*.S; do
     esac
     LS_SRC+=("$f")
 done
-# audiodec.c inclui stdlib/math do decodificador de terceiros. Fica fora do glob
-# e entra com cabeçalhos mínimos, para o -I não trocar o stdint do resto do libSystem.
+# audiodec.c e o SQLite usam o shim de host-audio, fora do -I do resto.
+# Raise/Resume/GetIP, os seis _Unwind extras e __unw_getcontext ficam em cxx_unwind.c.
+# Sem UnwindLevel1.c, sem UnwindLevel1-gcc-ext.c e sem UnwindRegistersSave.S.
 "$ZIG" cc -target x86_64-freestanding-none -O2 -g0 -ffreestanding -fno-stack-protector -fno-builtin -nostdlib \
     -fpie -mno-red-zone -Wall -Wno-unused-parameter -Wno-incompatible-library-redeclaration -Wno-builtin-requires-header \
     -I"$ROOT/userland/host-audio/shim" -I"$ROOT/userland/libsystem" \
