@@ -99,7 +99,12 @@ int chmod(const char *p, unsigned short m) {
     if (r == 0) { cx_perm_set(p, m); SYS2(SYS_CHMOD, p, m); }
     return r;
 }
-int fchmod(int fd, unsigned short m) { (void)fd; (void)m; return 0; }
+int fchmod(int fd, unsigned short m) {
+    char pth[1024];
+    if (SYS3(SYS_FDPATH, fd, pth, sizeof pth) < 0) { SET(9); return -1; }
+    cx_perm_set(pth, m);
+    return SYS2(SYS_FCHMOD, fd, m) < 0 ? -1 : 0;
+}
 int lstat(const char *p, void *st);
 /* lchmod: o modo do próprio link (não segue). Links do mOS não têm modo: basta o link existir. Seguir o link
  * falhava em links relativos de dentro de .app (Versions/Current) e o brew caía no "sudo chmod -R". */

@@ -830,7 +830,7 @@ void strmode(unsigned short mode, char *p) {
     p[10] = 0;
 }
 /* vfork: o pai fica suspenso e o filho usa o mesmo pml4 até exec ou _exit.
- * A tabela de descritores é uma cópia. Com outras threads o kernel devolve EINVAL. */
+ * A tabela de descritores é a do pai até exec ou _exit. Com outras threads o kernel devolve EINVAL. */
 int vfork(void) {
     long r = SYS0(SYS_VFORK);
     if (r < 0) { cx_errno = (int)-r; return -1; }

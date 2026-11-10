@@ -19,6 +19,10 @@ mkdir -p "$OUT"
 cd "$ROOT"
 gcc -O2 -Wall -Wextra -I kernel/include tools/cred_host.c kernel/proc/cred.c -o /tmp/cred_host
 /tmp/cred_host
+gcc -O2 -Wall -Wextra -DMOS_HOST_TEST -I kernel/include -I tools tools/resto_host.c \
+    kernel/proc/cred.c kernel/proc/fdshare.c kernel/proc/fileport.c kernel/mm/commpage.c kernel/mm/swap.c \
+    -o /tmp/resto_host
+/tmp/resto_host
 
 kind_of() {
     local b
