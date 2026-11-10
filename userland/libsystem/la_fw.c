@@ -3,6 +3,8 @@
 #include "foundation.h"
 #include "la_eval.h"
 
+id objc_autorelease(id o);
+
 extern cx_class_t LAContext_c __asm__("OBJC_CLASS_$_LAContext");
 
 typedef struct { void *isa; u64 flags; const char *s; u64 n; } la_cfk_t;

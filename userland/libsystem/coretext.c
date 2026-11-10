@@ -108,6 +108,9 @@ static ft_t *ftf(id f) { return (ft_t *)((u8 *)f + 8); }
 static int is_user(int w) { return w >= USER_BASE && w < USER_BASE + USER_MAX; }
 /* nomes das fontes registradas, lidos da tabela 'name' (por processo; o id vem do kernel) */
 static struct { char ps[96], family[96], full[96]; } unames[USER_MAX];
+static u8 *user_bytes[USER_MAX];
+static long user_nbytes[USER_MAX];
+static int ct_store_user_bytes(int fid, const u8 *b, long n);
 /* peso gravado no NSFont, ou -1 se o objeto não parece um NSFont do appkit.c */
 static int fweight_raw(id f) {
     if (!f) return -1;
@@ -651,6 +654,7 @@ id CTFontManagerCreateFontDescriptorFromData(id data) {
     long r = SYS5(GUI_FONT, GF_REGISTER, 0, n, b, 0);
     if (!is_user((int)r)) return 0;
     int fid = (int)r, i = fid - USER_BASE;
+    ct_store_user_bytes(fid, b, n);
     user_names_load(fid);
     id d = MSG0(id, cls("NSMutableDictionary"), "dictionary");
     MSG(void, d, "setObject:forKey:", cx_str(unames[i].ps), (id)kCTFontNameAttribute);
@@ -659,12 +663,141 @@ id CTFontManagerCreateFontDescriptorFromData(id data) {
     MSG(void, d, "setObject:forKey:", cx_num_i(fid), cx_str(USER_ID_KEY));
     return objc_retain(d);
 }
-/* CGFont do mOS não carrega os bytes da fonte (CGFontCreateWithDataProvider devolve nulo).
- * Sem os bytes o kernel não registra a face; o app recebe falso e segue a lista de fallback. */
-int CTFontManagerRegisterGraphicsFont(void *font, id *error) {
-    (void)font;
-    if (error) *error = 0;
+static const u8 *sfnt_find(const u8 *b, long n, u32 tag, long *len) {
+    u32 nt, i, off, ln;
+    if (len) *len = 0;
+    if (!b || n < 12) return 0;
+    nt = rd16(b + 4);
+    if (12 + (long)nt * 16 > n) return 0;
+    for (i = 0; i < nt; i++) {
+        const u8 *r = b + 12 + i * 16;
+        u32 tg = ((u32)r[0] << 24) | ((u32)r[1] << 16) | ((u32)r[2] << 8) | r[3];
+        off = ((u32)r[8] << 24) | ((u32)r[9] << 16) | ((u32)r[10] << 8) | r[11];
+        ln = ((u32)r[12] << 24) | ((u32)r[13] << 16) | ((u32)r[14] << 8) | r[15];
+        if (tg == tag && (long)off + (long)ln <= n) {
+            if (len) *len = (long)ln;
+            return b + off;
+        }
+    }
     return 0;
+}
+static int ct_store_user_bytes(int fid, const u8 *b, long n) {
+    int i = fid - USER_BASE;
+    u8 *c;
+    if (!is_user(fid) || !b || n < 12) return 0;
+    c = malloc((size_t)n);
+    if (!c) return 0;
+    memcpy(c, b, (size_t)n);
+    free(user_bytes[i]);
+    user_bytes[i] = c;
+    user_nbytes[i] = n;
+    {
+        long nl = 0;
+        const u8 *nm = sfnt_find(c, n, 0x6E616D65u, &nl);
+        if (nm) {
+            name_entry(nm, nl, 6, unames[i].ps, sizeof unames[i].ps);
+            name_entry(nm, nl, 1, unames[i].family, sizeof unames[i].family);
+            name_entry(nm, nl, 4, unames[i].full, sizeof unames[i].full);
+        }
+    }
+    if (!unames[i].ps[0]) {
+        unames[i].ps[0] = 'F';
+        unames[i].ps[1] = (char)('0' + i % 10);
+        unames[i].ps[2] = 0;
+    }
+    if (!unames[i].family[0]) memcpy(unames[i].family, unames[i].ps, sizeof unames[i].ps);
+    if (!unames[i].full[0]) memcpy(unames[i].full, unames[i].family, sizeof unames[i].family);
+    return 1;
+}
+static int ct_register_local(const u8 *b, long n) {
+    int i;
+    for (i = 0; i < USER_MAX; i++) if (!user_bytes[i]) break;
+    if (i == USER_MAX) return -1;
+    if (!ct_store_user_bytes(USER_BASE + i, b, n)) return -1;
+    return USER_BASE + i;
+}
+static id ct_desc_for_fid(int fid) {
+    int i = fid - USER_BASE;
+    id d = MSG0(id, cls("NSMutableDictionary"), "dictionary");
+    if (!d) d = MSG0(id, cls("NSDictionary"), "dictionary");
+    if (!d) return 0;
+    MSG(void, d, "setObject:forKey:", cx_str(unames[i].ps), (id)kCTFontNameAttribute);
+    MSG(void, d, "setObject:forKey:", cx_str(unames[i].family), (id)kCTFontFamilyNameAttribute);
+    MSG(void, d, "setObject:forKey:", cx_str(unames[i].full), (id)kCTFontDisplayNameAttribute);
+    MSG(void, d, "setObject:forKey:", cx_num_i(fid), cx_str(USER_ID_KEY));
+    return objc_retain(d);
+}
+static void *ct_state(id o);
+void cx_object_free(id o);
+void *calloc(size_t n, size_t s);
+static cx_class_t CGFont_c, CGFont_m;
+static int cgfont_ready;
+typedef struct { u8 *b; long n; int fid; } cgf_t;
+static void cgfont_dealloc(id self, SEL c) {
+    cgf_t *g = ct_state(self);
+    (void)c;
+    if (g) { free(g->b); free(g); }
+    *(void **)((u8 *)self + 8) = 0;
+    cx_object_free(self);
+}
+static void cgfont_init_cls(void) {
+    cx_class_t *ns;
+    if (cgfont_ready) return;
+    ns = cx_class_named("NSObject");
+    if (!ns) return;
+    cx_define_class(&CGFont_c, &CGFont_m, "CGFont", ns, 8);
+    cx_add_method(&CGFont_c, "dealloc", (void *)cgfont_dealloc);
+    cgfont_ready = 1;
+}
+void *CGDataProviderCopyData(void *p);
+void *CGFontCreateWithDataProvider(void *prov) {
+    id data;
+    const u8 *b;
+    long n;
+    cgf_t *g;
+    id o;
+    cgfont_init_cls();
+    if (!cgfont_ready || !prov) return 0;
+    data = (id)CGDataProviderCopyData(prov);
+    b = data ? CFDataGetBytePtr(data) : 0;
+    n = data ? CFDataGetLength(data) : 0;
+    if (!b || n < 12 || n > (8 << 20)) { objc_release(data); return 0; }
+    g = calloc(1, sizeof *g);
+    if (!g) { objc_release(data); return 0; }
+    g->b = malloc((size_t)n);
+    if (!g->b) { free(g); objc_release(data); return 0; }
+    memcpy(g->b, b, (size_t)n);
+    g->n = n;
+    g->fid = -1;
+    objc_release(data);
+    o = cx_alloc_instance(&CGFont_c);
+    if (!o) { free(g->b); free(g); return 0; }
+    *(void **)((u8 *)o + 8) = g;
+    return o;
+}
+int CTFontManagerRegisterGraphicsFont(void *font, id *error) {
+    cgf_t *g;
+    int fid = -1;
+    if (error) *error = 0;
+    if (!font || object_getClass((id)font) != &CGFont_c) return 0;
+    g = ct_state((id)font);
+    if (!g || !g->b) return 0;
+#if !defined(CT_HOST)
+    if (font_live()) {
+        id data = CFDataCreate(0, g->b, g->n);
+        id d = data ? CTFontManagerCreateFontDescriptorFromData(data) : 0;
+        objc_release(data);
+        if (d) {
+            id num = MSG(id, d, "objectForKey:", cx_str(USER_ID_KEY));
+            if (num) fid = (int)MSG0(i64, num, "longLongValue");
+            objc_release(d);
+        }
+    }
+#endif
+    if (!is_user(fid)) fid = ct_register_local(g->b, g->n);
+    if (!is_user(fid)) return 0;
+    g->fid = fid;
+    return 1;
 }
 static const char *ct_url_path(id url) {
     if (!url) return 0;
@@ -750,12 +883,110 @@ void CTFontGetVerticalTranslationsForGlyphs(id f, int orientation, const u16 *gl
     if (!trans || n <= 0) return;
     memset(trans, 0, (size_t)n * sizeof *trans);
 }
+static id ct_feat_dict(u32 ident, const char *name) {
+    id d = MSG0(id, cls("NSMutableDictionary"), "dictionary");
+    if (!d) d = MSG0(id, cls("NSDictionary"), "dictionary");
+    if (!d) return 0;
+    MSG(void, d, "setObject:forKey:", cx_num_i((i64)ident), (id)kCTFontFeatureTypeIdentifierKey);
+    if (name && name[0]) MSG(void, d, "setObject:forKey:", cx_str(name), (id)kCTFontFeatureTypeNameKey);
+    return d;
+}
+static void ct_feat_add_sel(id typeDict, u32 ident, const char *name) {
+    id arr, sel;
+    if (!typeDict) return;
+    arr = MSG(id, typeDict, "objectForKey:", (id)kCTFontFeatureTypeSelectorsKey);
+    if (!arr) {
+        arr = MSG0(id, cls("NSMutableArray"), "array");
+        if (arr) MSG(void, typeDict, "setObject:forKey:", arr, (id)kCTFontFeatureTypeSelectorsKey);
+    }
+    sel = ct_feat_dict(ident, name);
+    if (arr && sel) MSG(void, arr, "addObject:", sel);
+    objc_release(sel);
+}
+static void ct_name_by_id(const u8 *name, long nn, u32 idn, char *out, int cap) {
+    name_entry(name, nn, idn, out, cap);
+}
+static id ct_features_from_bytes(const u8 *b, long n) {
+    id a = MSG0(id, cls("NSMutableArray"), "array");
+    long fl = 0, nl = 0;
+    const u8 *feat, *name, *gsub;
+    char nm[96];
+    if (!a) a = MSG0(id, cls("NSArray"), "array");
+    if (!a || !b) return a ? objc_retain(a) : 0;
+    name = sfnt_find(b, n, 0x6E616D65u, &nl);
+    feat = sfnt_find(b, n, 0x66656174u, &fl);
+    if (feat && fl >= 12) {
+        u32 count = rd16(feat + 4);
+        u32 i;
+        if (count > 256) count = 256;
+        for (i = 0; i < count; i++) {
+            const u8 *rec;
+            u32 feature, nset, nameIndex, off;
+            id td;
+            long recAt = 12 + (long)i * 12;
+            if (recAt + 12 > fl) break;
+            rec = feat + recAt;
+            feature = rd16(rec);
+            nset = rd16(rec + 2);
+            off = ((u32)rec[4] << 24) | ((u32)rec[5] << 16) | ((u32)rec[6] << 8) | rec[7];
+            nameIndex = rd16(rec + 10);
+            nm[0] = 0;
+            if (name) ct_name_by_id(name, nl, nameIndex, nm, sizeof nm);
+            td = ct_feat_dict(feature, nm[0] ? nm : 0);
+            if (nset && off + 4 <= (u32)fl) {
+                u32 s;
+                if (nset > 64) nset = 64;
+                for (s = 0; s < nset; s++) {
+                    const u8 *st;
+                    u32 sid, sname;
+                    char sn[96];
+                    if (off + (s + 1) * 4 > (u32)fl) break;
+                    st = feat + off + s * 4;
+                    sid = rd16(st);
+                    sname = rd16(st + 2);
+                    sn[0] = 0;
+                    if (name) ct_name_by_id(name, nl, sname, sn, sizeof sn);
+                    ct_feat_add_sel(td, sid, sn);
+                }
+            }
+            if (td) MSG(void, a, "addObject:", td);
+            objc_release(td);
+        }
+    }
+    gsub = sfnt_find(b, n, 0x47535542u, &fl);
+    if (gsub && fl >= 8 && MSG0(u64, a, "count") == 0) {
+        u32 foff = rd16(gsub + 6);
+        u32 fc, i;
+        if (foff + 2 <= (u32)fl) {
+            fc = rd16(gsub + foff);
+            if (fc > 64) fc = 64;
+            for (i = 0; i < fc; i++) {
+                const u8 *rec = gsub + foff + 2 + i * 6;
+                char tag[5];
+                id td;
+                if (foff + 2 + (i + 1) * 6 > (u32)fl) break;
+                tag[0] = (char)rec[0]; tag[1] = (char)rec[1]; tag[2] = (char)rec[2]; tag[3] = (char)rec[3]; tag[4] = 0;
+                td = ct_feat_dict(((u32)rec[0] << 24) | ((u32)rec[1] << 16) | ((u32)rec[2] << 8) | rec[3], tag);
+                if (td) MSG(void, a, "addObject:", td);
+                objc_release(td);
+            }
+        }
+    }
+    return objc_retain(a);
+}
 id CTFontCopyFeatures(id f) {
-    (void)f;
+    int w = fweight_raw(f);
+    if (is_user(w) && user_bytes[w - USER_BASE])
+        return ct_features_from_bytes(user_bytes[w - USER_BASE], user_nbytes[w - USER_BASE]);
     return objc_retain(MSG0(id, cls("NSMutableArray"), "array"));
 }
 id CTFontCreateWithGraphicsFont(void *font, double size, const void *matrix, id attrs) {
-    (void)font; (void)matrix;
+    cgf_t *g;
+    (void)matrix;
+    if (font && object_getClass((id)font) == &CGFont_c) {
+        g = ct_state((id)font);
+        if (g && is_user(g->fid)) return objc_retain(font_with_face(size > 0 ? size : 13, g->fid, 0));
+    }
     if (attrs) return CTFontCreateWithFontDescriptor(attrs, size, 0);
     return objc_retain(font_of_size(size > 0 ? size : 13, 0));
 }
@@ -1387,6 +1618,9 @@ typedef struct {
     ct_line_t *line;
     long begin, count;
     id font, attrs;
+    u16 *glyphs;
+    ct_pt_t *pos;
+    long *idxs;
 } ct_run_t;
 typedef struct {
     id lines, path, astr;
@@ -1399,7 +1633,14 @@ typedef struct { id ts; } ct_fs_t;
 static void ct_run_dealloc(id self, SEL c) {
     ct_run_t *r = ct_state(self);
     (void)c;
-    if (r) { objc_release(r->font); objc_release(r->attrs); free(r); }
+    if (r) {
+        objc_release(r->font);
+        objc_release(r->attrs);
+        free(r->glyphs);
+        free(r->pos);
+        free(r->idxs);
+        free(r);
+    }
     *(void **)((u8 *)self + 8) = 0;
     cx_object_free(self);
 }
@@ -1552,7 +1793,33 @@ void CTRunGetGlyphs(id run, ct_range_t range, u16 *buf) {
     if (!buf) return;
     for (long i = a; i < b; i++) buf[i - a] = r->line->g[r->begin + i].glyph;
 }
-const u16 *CTRunGetGlyphsPtr(id run) { (void)run; return 0; }
+static void ct_run_cache(ct_run_t *r) {
+    double x;
+    long i;
+    if (!r || r->glyphs || r->count < 1 || !r->line) return;
+    r->glyphs = calloc((size_t)r->count, sizeof(u16));
+    r->pos = calloc((size_t)r->count, sizeof(ct_pt_t));
+    r->idxs = calloc((size_t)r->count, sizeof(long));
+    if (!r->glyphs || !r->pos || !r->idxs) {
+        free(r->glyphs); free(r->pos); free(r->idxs);
+        r->glyphs = 0; r->pos = 0; r->idxs = 0;
+        return;
+    }
+    x = 0;
+    for (i = 0; i < r->count; i++) {
+        ct_clus *g = &r->line->g[r->begin + i];
+        r->glyphs[i] = g->glyph;
+        r->pos[i].x = x;
+        r->pos[i].y = 0;
+        r->idxs[i] = g->idx < 0 ? 0 : g->idx;
+        x += g->adv;
+    }
+}
+const u16 *CTRunGetGlyphsPtr(id run) {
+    ct_run_t *r = ct_state(run);
+    ct_run_cache(r);
+    return r ? r->glyphs : 0;
+}
 void CTRunGetAdvances(id run, ct_range_t range, ct_sz_t *buf) {
     ct_run_t *r = ct_state(run);
     long a, b;
@@ -1571,7 +1838,11 @@ void CTRunGetPositions(id run, ct_range_t range, ct_pt_t *buf) {
         x += r->line->g[r->begin + i].adv;
     }
 }
-const ct_pt_t *CTRunGetPositionsPtr(id run) { (void)run; return 0; }
+const ct_pt_t *CTRunGetPositionsPtr(id run) {
+    ct_run_t *r = ct_state(run);
+    ct_run_cache(r);
+    return r ? r->pos : 0;
+}
 void CTRunGetStringIndices(id run, ct_range_t range, long *buf) {
     ct_run_t *r = ct_state(run);
     long a, b;
@@ -1582,7 +1853,11 @@ void CTRunGetStringIndices(id run, ct_range_t range, long *buf) {
         buf[i - a] = idx < 0 ? 0 : idx;
     }
 }
-const long *CTRunGetStringIndicesPtr(id run) { (void)run; return 0; }
+const long *CTRunGetStringIndicesPtr(id run) {
+    ct_run_t *r = ct_state(run);
+    ct_run_cache(r);
+    return r ? r->idxs : 0;
+}
 double CTRunGetTypographicBounds(id run, ct_range_t range, double *ascent, double *descent, double *leading) {
     ct_run_t *r = ct_state(run);
     long a, b;
