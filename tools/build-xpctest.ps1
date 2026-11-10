@@ -4,8 +4,10 @@
 #   .\build\machotest.exe build\libSystem.mos build\xpctest build\xpctest\XpcTest.app\Contents\MacOS\XpcTest
 param([string]$Dest = "$PSScriptRoot\..\build\xpctest")
 $root = Split-Path $PSScriptRoot -Parent
-$zig = Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*' -ErrorAction SilentlyContinue | Where-Object { Test-Path "$($_.FullName)\zig.exe" } | Select-Object -First 1
-if ($zig) { $zig = Join-Path $zig.FullName 'zig.exe' } elseif ($env:MOS_ZIG) { $zig = $env:MOS_ZIG } else { $zig = (Get-Command zig -ErrorAction SilentlyContinue).Source }
+if (-not (Get-Command Resolve-MosZig -ErrorAction SilentlyContinue)) { foreach ($mosHost in @("$PSScriptRoot\stage-host.ps1","$PSScriptRoot\..\stage-host.ps1","$PSScriptRoot\..\..\stage-host.ps1","$PSScriptRoot\..\..\..\stage-host.ps1")) { if (Test-Path -LiteralPath $mosHost) { . $mosHost; break } } }
+$mosZigPick = Resolve-MosZig $root
+if (-not $mosZigPick) { exit 1 }
+$zig = $mosZigPick.Path
 if (-not $zig) { Write-Host 'zig nao encontrado' -ForegroundColor Red; exit 1 }
 $out = Join-Path $Dest 'XpcTest.app\Contents\MacOS'
 New-Item -ItemType Directory -Force $out | Out-Null

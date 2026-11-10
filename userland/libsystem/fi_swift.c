@@ -19,11 +19,6 @@
 void *dlsym(void *h, const char *name);
 char *strcat(char *d, const char *s);
 int sscanf(const char *s, const char *fmt, ...);
-#ifndef FI_HOST
-void *objc_msgSend(void *, void *, ...);
-void *sel_registerName(const char *);
-const char *cx_cstr(void *);
-#endif
 #endif
 #include "fi_abi.inc"
 

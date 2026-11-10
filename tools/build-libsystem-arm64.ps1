@@ -14,9 +14,11 @@
 param([switch]$AbiCheck, [int]$Jobs = 0)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
-$zigDir = Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*' -ErrorAction SilentlyContinue | Where-Object { Test-Path "$($_.FullName)\zig.exe" } | Select-Object -First 1
-if (-not $zigDir) { Write-Host 'zig nao encontrado em .tools\' -ForegroundColor Red; exit 1 }
-$zig = Join-Path $zigDir.FullName 'zig.exe'
+if (-not (Get-Command Resolve-MosZig -ErrorAction SilentlyContinue)) { foreach ($mosHost in @("$PSScriptRoot\stage-host.ps1","$PSScriptRoot\..\stage-host.ps1","$PSScriptRoot\..\..\stage-host.ps1","$PSScriptRoot\..\..\..\stage-host.ps1")) { if (Test-Path -LiteralPath $mosHost) { . $mosHost; break } } }
+$mosZigPick = Resolve-MosZig $root
+if (-not $mosZigPick) { exit 1 }
+$zigDir = Get-Item -LiteralPath $mosZigPick.Dir
+$zig = $mosZigPick.Path
 $inc = Join-Path $zigDir.FullName 'lib\include'
 $ls = "$root\userland\libsystem"
 $obj = "$root\build\libsystem-arm64"

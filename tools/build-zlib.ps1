@@ -5,7 +5,10 @@
 #   .\tools\build-zlib.ps1 -Arch arm64 [-Force]
 param([switch]$Force, [ValidateSet('x86_64', 'arm64')][string]$Arch = 'arm64')
 $root = Split-Path $PSScriptRoot -Parent
-$zig = Join-Path (Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*' | Where-Object { Test-Path "$($_.FullName)\zig.exe" } | Select-Object -First 1).FullName 'zig.exe'
+if (-not (Get-Command Resolve-MosZig -ErrorAction SilentlyContinue)) { foreach ($mosHost in @("$PSScriptRoot\stage-host.ps1","$PSScriptRoot\..\stage-host.ps1","$PSScriptRoot\..\..\stage-host.ps1","$PSScriptRoot\..\..\..\stage-host.ps1")) { if (Test-Path -LiteralPath $mosHost) { . $mosHost; break } } }
+$mosZigPick = Resolve-MosZig $root
+if (-not $mosZigPick) { exit 1 }
+$zig = $mosZigPick.Path
 $src = Get-ChildItem "$root\.tools\zlib-dl" -Directory -Filter 'zlib-*' -ErrorAction SilentlyContinue | Sort-Object Name | Select-Object -Last 1
 if (-not $src) { Write-Host 'falta o fonte da zlib em .tools\zlib-dl (zlib-1.3.2.tar.gz de github.com/madler/zlib/releases)' -ForegroundColor Yellow; exit 0 }
 $tgt = if ($Arch -eq 'arm64') { 'aarch64-macos.11.0' } else { 'x86_64-macos.11.0' }

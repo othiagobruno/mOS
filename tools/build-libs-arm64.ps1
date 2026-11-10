@@ -9,7 +9,10 @@
 #   .\tools\build-libs-arm64.ps1 [-Force]
 param([switch]$Force)
 $root = Split-Path $PSScriptRoot -Parent
-$zig = Join-Path (Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*' | Where-Object { Test-Path "$($_.FullName)\zig.exe" } | Select-Object -First 1).FullName 'zig.exe'
+if (-not (Get-Command Resolve-MosZig -ErrorAction SilentlyContinue)) { foreach ($mosHost in @("$PSScriptRoot\stage-host.ps1","$PSScriptRoot\..\stage-host.ps1","$PSScriptRoot\..\..\stage-host.ps1","$PSScriptRoot\..\..\..\stage-host.ps1")) { if (Test-Path -LiteralPath $mosHost) { . $mosHost; break } } }
+$mosZigPick = Resolve-MosZig $root
+if (-not $mosZigPick) { exit 1 }
+$zig = $mosZigPick.Path
 $u = "$root\build\universal"
 $fail = 0
 function Step($name, [scriptblock]$b) { & $b; if ($LASTEXITCODE -ne 0) { Write-Host "$name FALHOU" -ForegroundColor Red; $script:fail++ } }

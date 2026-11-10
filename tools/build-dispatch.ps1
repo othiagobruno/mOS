@@ -3,7 +3,10 @@
 $root = Split-Path $PSScriptRoot -Parent
 $tc = Get-ChildItem "$root\.tools\swift\LocalApp\Programs\Swift\Toolchains" -Directory | Select-Object -First 1
 $swiftc = "$($tc.FullName)\usr\bin\swiftc.exe"
-$zig = (Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*' | Where-Object { Test-Path "$($_.FullName)\zig.exe" })[0].FullName + '\zig.exe'
+if (-not (Get-Command Resolve-MosZig -ErrorAction SilentlyContinue)) { foreach ($mosHost in @("$PSScriptRoot\stage-host.ps1","$PSScriptRoot\..\stage-host.ps1","$PSScriptRoot\..\..\stage-host.ps1","$PSScriptRoot\..\..\..\stage-host.ps1")) { if (Test-Path -LiteralPath $mosHost) { . $mosHost; break } } }
+$mosZigPick = Resolve-MosZig $root
+if (-not $mosZigPick) { exit 1 }
+$zig = $mosZigPick.Path
 $out = "$root\build\swift\openswiftui\Dispatch"
 New-Item -ItemType Directory -Force $out | Out-Null
 $src = @(Get-ChildItem "$root\userland\sdk\openswiftui\swift\Dispatch\*.swift" | ForEach-Object FullName)
