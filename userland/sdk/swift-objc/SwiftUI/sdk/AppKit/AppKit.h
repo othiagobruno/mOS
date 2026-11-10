@@ -81,4 +81,20 @@ typedef CGPoint NSPoint;
 @property (readonly) CGFloat pointSize;
 @end
 
+/* NSPopover do libSystem (appkit_extra.c / appkit_status.c). showRelativeToRect: só registra o modelo;
+ * não abre NSWindow. O cartão visível continua na árvore do SwiftUI. */
+typedef NS_ENUM(NSUInteger, NSRectEdge) {
+    NSRectEdgeMinX = 0, NSRectEdgeMinY = 1, NSRectEdgeMaxX = 2, NSRectEdgeMaxY = 3
+};
+typedef NS_ENUM(NSInteger, NSPopoverBehavior) {
+    NSPopoverBehaviorApplicationDefined = 0, NSPopoverBehaviorTransient = 1, NSPopoverBehaviorSemitransient = 2
+};
+@interface NSPopover : NSResponder
+@property NSPopoverBehavior behavior;
+@property (strong) NSView *contentView;
+@property (readonly, getter=isShown) BOOL shown;
+- (void)showRelativeToRect:(NSRect)positioningRect ofView:(NSView *)positioningView preferredEdge:(NSRectEdge)preferredEdge;
+- (void)close;
+@end
+
 NS_ASSUME_NONNULL_END

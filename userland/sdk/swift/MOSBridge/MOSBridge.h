@@ -37,6 +37,23 @@ void mos_sui_popover_frame(double ax, double ay, double aw, double ah, double pw
 void mos_sui_glass_fallback(double *r, double *g, double *b, double *a, double *radius, int *fallback,
                             int *samples_backdrop);
 int mos_sui_selftest(char *err, int errlen);
+/* Polegar da barra de rolagem. Devolve 0 se o conteúdo cabe ou se o indicador está oculto. */
+int mos_sui_indicator(double offset, double viewport, double content, int shows,
+                      double vx, double vy, double vw, double vh, int vertical,
+                      double *x, double *y, double *w, double *h);
+/* TextEditor: offsets em bytes UTF-8. O clique usa floor(x / char_w). */
+int mos_sui_ed_index(double x, double char_w, int len);
+int mos_sui_ed_selection(int caret, int anchor, int *a, int *b);
+void mos_sui_ed_place(int len, int *caret, int *anchor, int index, int extend);
+void mos_sui_ed_replace(char *text, int cap, int *len, int *caret, int *anchor, const char *ins);
+void mos_sui_ed_backspace(char *text, int cap, int *len, int *caret, int *anchor);
+void mos_sui_ed_arrow(const char *text, int len, int *caret, int *anchor, int dir, int shift);
+void mos_sui_ed_vertical(const char *text, int len, int *caret, int *anchor, int dir, int shift);
+/* Vista do runtime embutido que recebe scrollWheel: (x, y origem no topo, dx, dy = scrollingDeltaY). */
+typedef void (*mos_scroll_fn)(void *ctx, double x, double y, double dx, double dy);
+void *mos_host_view(double x, double y, double w, double h);
+void mos_view_on_scroll(void *view, mos_scroll_fn fn, void *ctx);
+void mos_canvas_on_scroll(void *view, mos_scroll_fn fn);
 /* NSAlert modal: devolve o índice do botão (0 = primeiro) */
 int mos_alert(const char *title, const char *message, const char *b1, const char *b2);
 /* Canvas e desenho (dentro do callback do canvas; coordenadas com origem no topo) */
