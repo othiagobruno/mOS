@@ -18,7 +18,7 @@ typedef long long i64;
 typedef unsigned long long usize;
 #include "../../kernel/include/compat_gui.h"
 
-_Static_assert(sizeof(mos_stat_t) == 24, "stat");
+_Static_assert(sizeof(mos_stat_t) == 32, "stat");
 _Static_assert(sizeof(mos_procinfo_t) == 64, "procinfo");
 _Static_assert(sizeof(mos_sigaction_t) == 24, "sigaction");
 _Static_assert(sizeof(mos_sigstack_t) == 24, "sigstack");
