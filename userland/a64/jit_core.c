@@ -13,6 +13,7 @@
  */
 #include "jit.h"
 #include "a64_mem.h"
+#include "jit_share.h"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -86,6 +87,8 @@ typedef struct jpage {
     jblk *blocks;
     struct jpage *next;
     int wp, wp_ever, ninval, vol, pending;
+    int ro_state;                   /* 0 desconhecido, 1 arquivo RO, 2 não */
+    a64_u64 file_id, file_off;
 } jpage;
 
 static struct {
@@ -309,6 +312,7 @@ void a64_jit_invalidate(a64_u64 addr, a64_u64 len) {
         }
     }
     ulk(&J.wplock);
+    jit_share_invalidate(lo, hi);
     /* os blocos já estão mortos e os pc do cache em ~0. A barreira e o chute acontecem antes de
      * soltar J.lock: a thread que acordar não traduz o intervalo velho. */
     __atomic_thread_fence(__ATOMIC_SEQ_CST);
@@ -588,6 +592,44 @@ int jit_h_interp(a64_cpu *c, a64_u32 insn) {
 /* ---------------------------------------------------------------------------------------------
  * Tradução sob a trava
  * ------------------------------------------------------------------------------------------- */
+static void page_ro(jpage *p, a64_u64 pg) {
+    a64_u64 id = 0, off = 0;
+    if (!p || p->ro_state) return;
+    if (a64_host_ro_file(pg, &id, &off) && id) {
+        p->ro_state = 1;
+        p->file_id = id;
+        p->file_off = off;
+    } else p->ro_state = 2;
+}
+
+/* bloco vindo do cache compartilhado: cópia na arena local (RX). A tabela compartilhada fica só dados. */
+static jblk *install_shared(jpage *p, a64_u64 pc, a64_u64 pg, const a64_u8 *code, a64_u32 len, a64_u32 glen) {
+    a64_u8 *dst, *lim;
+    jblk *b;
+    if (!p || J.nblk >= MAX_BLKS || !len || !glen) return NULL;
+    b = jit_data_alloc(sizeof *b);
+    jit_code_space(&dst, &lim);
+    if (!b || !dst || (a64_u64)(lim - dst) < len) return NULL;
+    __builtin_memcpy(dst, code, len);
+    jit_code_commit(dst + len);
+    __builtin_memset(b, 0, sizeof *b);
+    b->pc = pc;
+    b->end = pc + glen;
+    b->lo = pc;
+    b->hi = pc + glen;
+    b->code = dst;
+    b->len = len;
+    b->hnext = J.hash[hpc(pc)];
+    J.hash[hpc(pc)] = b;
+    J.order[J.nblk] = b;
+    __atomic_store_n(&J.nblk, J.nblk + 1, __ATOMIC_RELEASE);
+    b->npg = 1;
+    b->pg[0] = pg;
+    b->pgnext[0] = p->blocks;
+    p->blocks = b;
+    return b;
+}
+
 static jblk *get_block(jthr *self, a64_u64 pc) {   /* J.lock tomada */
     jblk *b = hash_find(pc);
     if (b) return b;
@@ -596,6 +638,24 @@ static jblk *get_block(jthr *self, a64_u64 pc) {   /* J.lock tomada */
     jpage *p = page_get(pg);
     int vol = p ? p->vol : 0;
     ulk(&J.wplock);
+    page_ro(p, pg);
+    if (p && p->ro_state == 1 && !vol) {
+        a64_u8 tmp[JIT_SHARE_HOST];
+        a64_u32 glen = 0, hlen = 0;
+        a64_u64 eh = 0;
+        a64_u64 off = p->file_off + (pc - pg);
+        if (jit_share_peek(p->file_id, off, pc, &glen, &eh, tmp, sizeof tmp, &hlen) && glen && glen <= 4096 &&
+            eh == jit_share_hash((const void *)(uintptr_t)pc, glen)) {
+            lk(&J.wplock);
+            b = install_shared(p, pc, pg, tmp, hlen, glen);
+            if (b && !p->wp && !jit_g.nowp) {
+                p->wp = host_wprotect(pg, 1);
+                if (p->wp) p->wp_ever = 1;
+            }
+            ulk(&J.wplock);
+            if (b) { J.ntrans++; return b; }
+        }
+    }
     b = (p && J.nblk < MAX_BLKS) ? jit_translate(pc, vol) : NULL;
     if (!b) {
         flush_all(self);
@@ -626,6 +686,10 @@ static jblk *get_block(jthr *self, a64_u64 pc) {   /* J.lock tomada */
         if (p2) { b->pg[1] = pg2; b->npg = 2; b->pgnext[1] = p2->blocks; p2->blocks = b; }
     }
     ulk(&J.wplock);
+    if (b && p && p->ro_state == 1 && b->len && b->len <= JIT_SHARE_HOST && b->end > b->pc && b->end - b->pc <= 4096)
+        jit_share_publish(p->file_id, p->file_off + (b->pc - pg), b->pc,
+                          jit_share_hash((const void *)(uintptr_t)b->pc, (a64_u32)(b->end - b->pc)),
+                          b->code, b->len, (a64_u32)(b->end - b->pc));
     return b;
 }
 

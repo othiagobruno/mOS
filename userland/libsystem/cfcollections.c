@@ -17,6 +17,8 @@ typedef struct { long version; void *retain, *release, *desc, *equal, *hash; } c
 const cf_cb_t kCFTypeDictionaryKeyCallBacks = {0}, kCFTypeDictionaryValueCallBacks = {0};
 const cf_cb_t kCFCopyStringDictionaryKeyCallBacks = {0};
 const cf_cb_t kCFTypeArrayCallBacks = {0}, kCFTypeSetCallBacks = {0};
+const cf_cb_t kCFCopyStringSetCallBacks = {0};
+const cf_cb_t kCFTypeBagCallBacks = {0};
 
 /* ---- identificadores de tipo (os mesmos números do CF da Apple) */
 enum { TID_STRING = 7, TID_NULL = 16, TID_DICT = 18, TID_ARRAY = 19, TID_DATA = 20, TID_BOOL = 21, TID_NUMBER = 22,
@@ -51,6 +53,10 @@ u64 CFGetTypeID(id o) {
     if (cx_is_str(o)) return TID_STRING;
     if (kind_of(o, "NSNumber")) return ((cfnum_t *)o)->kind == 2 ? TID_BOOL : TID_NUMBER;
     if (kind_of(o, "NSDictionary")) return TID_DICT;
+    if (kind_of(o, "NSSet") || kind_of(o, "NSMutableSet")) return 17;
+    if (kind_of(o, "NSAttributedString") || kind_of(o, "NSMutableAttributedString")) return 31;
+    if (kind_of(o, "__mOSCFLocale")) return 25;
+    if (kind_of(o, "__mOSCFCharacterSet")) return 45;
     if (kind_of(o, "NSArray")) return TID_ARRAY;
     if (kind_of(o, "NSData")) return TID_DATA;
     if (kind_of(o, "NSDate")) return TID_DATE;

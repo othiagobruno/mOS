@@ -605,6 +605,9 @@ static int resolve_host(const char *host, int want4, int want6, unsigned *ip, in
         if (want6) { memset(ip6, 0, 16); ip6[15] = 1; *got6 = 1; }
         return 0;
     }
+    extern int mos_resolv_host(const char *host, int want4, int want6, unsigned *ip, int *got4, u8 *ip6, int *got6);
+    int ur = mos_resolv_host(host, want4, want6, ip, got4, ip6, got6);
+    if (ur == 0 || ur == EAI_NONAME) return ur;
     int done4 = !want4, done6 = !want6;
     u64 end = (u64)SYS0(SYS_TIME) + 10000;                      /* o DNS do kernel tenta 4 vezes a cada 1,5 s */
     for (;;) {
@@ -688,58 +691,7 @@ int getaddrinfo(const char *host, const char *svc, const cx_addrinfo_t *hints, c
     *res = head;
     return 0;
 }
-/* res_9_nsearch / res_9_search (libresolv): o mOS não tem cliente DNS em espaço de usuário, só o A/AAAA do kernel.
- * Para classe IN e tipo A ou AAAA monta a mensagem de resposta (cabeçalho, pergunta, respostas comprimidas com
- * ponteiro para a pergunta, TTL 60); outros tipos recebem NOERROR sem respostas (NODATA). Devolve o tamanho ou -1
- * (h_errno: HOST_NOT_FOUND 1, TRY_AGAIN 2, NO_RECOVERY 3). O language_server do Antigravity (Go) importa. */
 int h_errno;
-static int dns_put_name(u8 *b, int cap, int o, const char *name) {
-    const char *p = name;
-    while (*p) {
-        const char *d = p;
-        while (*d && *d != '.') d++;
-        int l = (int)(d - p);
-        if (l <= 0 || l > 63 || o + 1 + l >= cap) return -1;
-        b[o++] = (u8)l;
-        memcpy(b + o, p, (size_t)l); o += l;
-        p = *d ? d + 1 : d;
-    }
-    if (o >= cap) return -1;
-    b[o++] = 0;
-    return o;
-}
-int res_9_nsearch(void *state, const char *dname, int cls, int type, u8 *ans, int anslen) {
-    (void)state;
-    if (!dname || !ans || anslen < 12) { h_errno = 3; return -1; }
-    int o = 12;
-    o = dns_put_name(ans, anslen, o, dname);
-    if (o < 0 || o + 4 > anslen) { h_errno = 3; return -1; }
-    ans[o++] = (u8)(type >> 8); ans[o++] = (u8)type; ans[o++] = (u8)(cls >> 8); ans[o++] = (u8)cls;
-    int nans = 0;
-    if (cls == 1 && (type == 1 || type == 28)) {
-        unsigned ip = 0; u8 ip6[16]; int g4 = 0, g6 = 0;
-        int e = resolve_host(dname, type == 1, type == 28, &ip, &g4, ip6, &g6);
-        if (e) { h_errno = e == EAI_AGAIN ? 2 : 1; return -1; }
-        int rl = type == 1 ? 4 : 16;
-        if ((type == 1 && g4) || (type == 28 && g6)) {
-            if (o + 12 + rl > anslen) { h_errno = 3; return -1; }
-            u8 *r = ans + o;
-            r[0] = 0xC0; r[1] = 12;                                   /* nome = ponteiro para a pergunta */
-            r[2] = (u8)(type >> 8); r[3] = (u8)type; r[4] = 0; r[5] = 1;
-            r[6] = 0; r[7] = 0; r[8] = 0; r[9] = 60;                  /* TTL */
-            r[10] = 0; r[11] = (u8)rl;
-            if (type == 1) { r[12] = (u8)(ip >> 24); r[13] = (u8)(ip >> 16); r[14] = (u8)(ip >> 8); r[15] = (u8)ip; }
-            else memcpy(r + 12, ip6, 16);
-            o += 12 + rl; nans = 1;
-        }
-    }
-    memset(ans, 0, 12);
-    ans[0] = 0x6d; ans[1] = 0x4f;                                     /* id */
-    ans[2] = 0x81; ans[3] = 0x80;                                     /* QR, RD, RA, NOERROR */
-    ans[5] = 1; ans[7] = (u8)nans;
-    return o;
-}
-int res_9_search(const char *dname, int cls, int type, u8 *ans, int anslen) { return res_9_nsearch(0, dname, cls, type, ans, anslen); }
 void freeaddrinfo(cx_addrinfo_t *ai) {
     while (ai) { cx_addrinfo_t *n = ai->next; free(ai->canonname); free(ai); ai = n; }
 }

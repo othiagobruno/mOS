@@ -1012,7 +1012,21 @@ int chdir(const char *path) {
     return 0;
 }
 int access(const char *path, int mode) { mos_stat_t st; (void)mode; PATH(p, path); return ret_errno(SYS2(SYS_STAT, p, &st)) < 0 ? -1 : 0; }
-int fsync(int fd) { (void)fd; return 0; }
+int fsync(int fd) {
+    struct { int aio_fildes; int aio_pad; long long aio_offset; volatile void *aio_buf;
+             unsigned long long aio_nbytes; int aio_reqprio; int aio_lio_opcode; } cb;
+    memset(&cb, 0, sizeof cb);
+    cb.aio_fildes = fd;
+    long r = SYS2(96, 5, &cb);
+    if (r < 0) return (int)ret_errno(r);
+    for (int i = 0; i < 64; i++) {
+        long e = SYS2(96, 3, &cb);
+        if (e == 0) { SYS2(96, 4, &cb); return 0; }
+        if (e != 36) return e < 0 ? (int)ret_errno(e) : -1;
+        SYS1(96, 6);
+    }
+    return 0;
+}
 /* dup/dup2 de verdade (SYS_DUP2): o bash redireciona com eles. Os fds 0-2 do console não existem
  * na tabela do kernel; duplicá-los continua sendo aceito sem efeito, como antes. */
 int dup2(int a, int b) {
