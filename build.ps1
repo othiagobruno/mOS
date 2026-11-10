@@ -138,6 +138,23 @@ Copy-Item "$root\build\libcompression-x86_64\libcompression.dylib" "$esp\mOS\usr
 New-Item -ItemType Directory -Force "$esp\mOS\usr\share\zlib", "$esp\mOS\usr\share\curl" | Out-Null
 Copy-Item "$root\build\zlib-x86_64\LICENSE" "$esp\mOS\usr\share\zlib\LICENSE" -Force
 Copy-Item "$root\build\curl-x86_64\COPYING" "$esp\mOS\usr\share\curl\COPYING" -Force
+Copy-Item "$root\build\curl-x86_64\LICENSE.mbedtls" "$esp\mOS\usr\share\curl\LICENSE.mbedtls" -Force -ErrorAction SilentlyContinue
+Copy-Item "$root\assets\certs\cacert.pem" "$esp\mOS\usr\share\curl\cacert.pem" -Force
+# CryptoKit.framework: o Swift de userland\frameworks\CryptoKit (PRs #26 e #29), ligado por
+# tools\build-frameworks-objc.ps1. O carregador abre o caminho absoluto; não vai para o libSystem
+# e a trie de tools\ckhost\mkexports.py não é copiada.
+$tcCk = Get-ChildItem "$root\.tools\swift\LocalApp\Programs\Swift\Toolchains" -Directory -ErrorAction SilentlyContinue | Select-Object -First 1
+if ($tcCk) {
+    & "$root\tools\build-frameworks-objc.ps1" -Only CryptoKit
+    if ($LASTEXITCODE -ne 0) { Write-Host 'aviso: CryptoKit.framework não compilou' -ForegroundColor Yellow }
+} else { Write-Host 'aviso: sem toolchain Swift; CryptoKit.framework fica de fora desta imagem' -ForegroundColor Yellow }
+$ck = "$root\build\swift\objc\dylib\System\Library\Frameworks\CryptoKit.framework\Versions\A\CryptoKit"
+if (Test-Path $ck) {
+    $ckdir = "$esp\mOS\System\Library\Frameworks\CryptoKit.framework\Versions\A"
+    New-Item -ItemType Directory -Force $ckdir | Out-Null
+    Copy-Item $ck "$ckdir\CryptoKit" -Force
+    Write-Host 'CryptoKit.framework na imagem'
+}
 # WebKit.framework do mOS (userland\frameworks\WebKit): WKWebView sobre o motor web do sistema (SYS_WEB, kernel/web/webview.c)
 $wkdir = "$esp\mOS\System\Library\Frameworks\WebKit.framework\Versions\A"
 New-Item -ItemType Directory -Force $wkdir | Out-Null
@@ -169,6 +186,12 @@ if (Test-Path "$root\build\universal") { Copy-Item "$root\build\universal\*" "$e
 if ($ComSwift -or $env:MOS_COM_SWIFT -eq '1') {
     & "$root\tools\build-swift-arm64.ps1" -SoJuntar
     if ($LASTEXITCODE -ne 0) { Write-Host 'aviso: Swift universal incompleto' -ForegroundColor Yellow }
+}
+# Linux: tools/build-libswift-real.sh compila libswiftCore e as overlays a partir de swift-6.4.2.
+# No Windows a cadeia continua tools\build-swift-full-objc.ps1 + link-swift-dylibs-objc.ps1.
+if ($IsLinux -and (Test-Path "$root\tools\build-libswift-real.sh")) {
+    & bash "$root/tools/build-libswift-real.sh"
+    if ($LASTEXITCODE -ne 0) { Write-Host 'aviso: build-libswift-real.sh falhou; o que faltar continua stub' -ForegroundColor Yellow; $global:LASTEXITCODE = 0 }
 }
 $swiftSrc = $null
 if (Test-Path "$root\build\universal-swift\usr\lib\swift\libswiftCore.dylib") { $swiftSrc = "$root\build\universal-swift" }

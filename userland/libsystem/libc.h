@@ -2,6 +2,16 @@
 #pragma once
 #include "sys.h"
 #include <stdarg.h>
+#include <stddef.h>
+#include <stdint.h>
+#ifndef MOS_SSIZE_T_DEFINED
+#define MOS_SSIZE_T_DEFINED
+typedef long ssize_t;
+#endif
+#ifndef MOS_OFF_T_DEFINED
+#define MOS_OFF_T_DEFINED
+typedef long off_t;
+#endif
 
 extern int cx_errno;
 extern char **environ;
@@ -45,6 +55,8 @@ long double strtold(const char *s, char **end);
 long strtol(const char *s, char **end, int base);
 unsigned long strtoul(const char *s, char **end, int base);
 const char *cx_path(const char *in, char *out, size_t cap);
+/* "pt_BR" ou "en_US": LANG, senão idioma= em com.mos.sistema.cfg, senão pt_BR */
+const char *cx_locale_id(void);
 
 /* stdio.c */
 void cx_stdio_init(void);

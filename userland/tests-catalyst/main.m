@@ -13,7 +13,12 @@ extern NSString *const UIWindowSceneSessionRoleApplication;
 static int ok, total;
 #define CHECK(c, ...) do { total++; if (c) { ok++; printf("  ok   "); } else printf("  FALHA "); printf(__VA_ARGS__); printf("\n"); fflush(stdout); } while (0)
 static int launched, connected;
-static int toques, cliques, gestos, mudou;
+static int toques, cliques, gestos, mudou, hovers;
+@interface HoverAlvo : NSObject
+@end
+@implementation HoverAlvo
+- (void)mosHover:(id)g { (void)g; hovers++; }
+@end
 
 /* toques e teclado como o AppKit os entrega à NSView hospedeira (UIKitEvents.m) */
 @interface _UIHostingView (MOSEvents)
@@ -21,6 +26,7 @@ static int toques, cliques, gestos, mudou;
 - (void)_mosTouchUpAt:(CGPoint)p;
 - (void)_mosTypeText:(NSString *)s;
 - (void)_mosScrollAt:(CGPoint)p dy:(CGFloat)dy;
+- (void)_mosPointerMovedTo:(CGPoint)p;
 @end
 static void clicar(UIWindow *w, CGPoint p) {
     _UIHostingView *h = (_UIHostingView *)w->_nsWindow.contentView;
@@ -431,6 +437,38 @@ static Alvo *alvo;
     [UIView _mosAdvanceAnimationClock:0.6];
     CHECK(trocou == 1 && [UIView _mosRunningAnimationCount] == 0, "transitionWithView chama o completion");
     [w->_nsWindow.contentView setNeedsDisplay:YES];
+    extern const NSInteger UIUserInterfaceIdiomMac;
+    CHECK(UIUserInterfaceIdiomMac == 5 && [[UIDevice currentDevice] userInterfaceIdiom] == UIUserInterfaceIdiomMac,
+          "UIUserInterfaceIdiomMac");
+    UIViewController *abaA = [[UIViewController alloc] init];
+    [abaA setTitle:@"Um"];
+    UIViewController *abaB = [[UIViewController alloc] init];
+    [abaB setTitle:@"Dois"];
+    id tabs = [[NSClassFromString(@"UITabBarController") alloc] init];
+    [tabs setViewControllers:@[abaA, abaB] animated:NO];
+    [[tabs view] setFrame:CGRectMake(0, 0, 400, 300)];
+    [tabs viewDidLayoutSubviews];
+    CHECK([tabs selectedIndex] == 0 && [tabs selectedViewController] == abaA && abaA.view.superview != nil,
+          "UITabBarController mostra a primeira aba");
+    [tabs setSelectedIndex:1];
+    CHECK([tabs selectedViewController] == abaB && abaB.view.superview != nil && abaA.view.superview == nil, "troca de aba");
+    UIViewController *pri = [[UIViewController alloc] init];
+    UIViewController *sec = [[UIViewController alloc] init];
+    id split = [[NSClassFromString(@"UISplitViewController") alloc] init];
+    [split setViewControllers:@[pri, sec]];
+    [[split view] setFrame:CGRectMake(0, 0, 900, 500)];
+    [split viewDidLayoutSubviews];
+    CHECK(![split isCollapsed] && pri.view.frame.size.width > 0 && sec.view.frame.origin.x + 1 >= pri.view.frame.size.width,
+          "UISplitViewController lado a lado");
+    [[split view] setFrame:CGRectMake(0, 0, 400, 500)];
+    [split viewDidLayoutSubviews];
+    CHECK([split isCollapsed] && fabs(sec.view.frame.size.width - 400) < 1, "split estreito fica collapsed no detalhe");
+    hovers = 0;
+    id hg = [[NSClassFromString(@"UIHoverGestureRecognizer") alloc] initWithTarget:[[HoverAlvo alloc] init] action:@selector(mosHover:)];
+    [faixa addGestureRecognizer:hg];
+    CGPoint hp = [faixa convertPoint:CGPointMake(10, 10) toView:nil];
+    [(_UIHostingView *)w->_nsWindow.contentView _mosPointerMovedTo:hp];
+    CHECK(hovers >= 1, "ponteiro vira UIHoverGestureRecognizer (%d)", hovers);
     printf("catalyst: %d/%d ok\n", ok, total);
     fflush(stdout);
 }

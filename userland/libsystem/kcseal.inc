@@ -1,8 +1,14 @@
 /* Selo do Keychain em disco.
- * A chave NÃO é senha nem credencial: é HMAC-SHA256 do nome de login (USER, LOGNAME
- * ou o último componente de HOME), com sal fixo do domínio "mOS-keychain-v2".
- * Quem lê o arquivo sem passar por SecItem* não vê o segredo. Quem conhece o nome
- * de login deste usuário consegue abrir: é de propósito, não há senha de sessão.
+ * A chave do arquivo são 32 bytes lidos de getentropy() (libSystem; no mOS,
+ * extra.c encaminha getentropy para arc4random_buf). Não há gerador neste
+ * arquivo. A chave fica em <home>/Library/Keychains/mos-keychain.key, modo
+ * 0600, dono = o usuário, pasta 0700. Leitura recusa symlink, modo diferente
+ * de 0600, dono diferente, tamanho diferente de 32 e pasta que não seja 0700.
+ * A chave não é impressa.
+ *
+ * kc_key_from() permanece só para abrir um arquivo versão 2 antigo (chave
+ * derivada do nome de login) durante a migração. A migração regrava o selo
+ * com a chave nova. Se a regravação falha, o arquivo original não é apagado.
  *
  * Arquivo versão 2: "mOS-keychain 2\n" + nonce de 16 bytes + ciphertext + MAC de 32.
  * O miolo cifrado é o texto da versão 1. Quem inclui este arquivo já declarou
@@ -10,8 +16,46 @@
  */
 void *memset(void *s, int c, size_t n);
 
+#ifdef KC_HOST
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#else
+int getentropy(void *buf, size_t n);
+int lstat(const char *path, void *st);
+int chmod(const char *path, unsigned short mode);
+unsigned geteuid(void);
+typedef struct {
+    unsigned st_dev;
+    unsigned short st_mode, st_nlink;
+    unsigned long long st_ino;
+    unsigned st_uid, st_gid, st_rdev;
+    long long atime, atime_ns, mtime, mtime_ns, ctime, ctime_ns, btime, btime_ns;
+    long long st_size, st_blocks;
+    int st_blksize;
+    unsigned st_flags, st_gen;
+    int lspare;
+    long long qspare[2];
+} kc_mac_stat;
+#endif
+
 #ifndef MAC_O_RDONLY
 #define MAC_O_RDONLY 0
+#endif
+#ifdef KC_HOST
+#define KC_O_RDONLY O_RDONLY
+#define KC_O_WRONLY O_WRONLY
+#define KC_O_CREAT O_CREAT
+#define KC_O_EXCL O_EXCL
+#define KC_O_TRUNC O_TRUNC
+#define KC_O_NOFOLLOW O_NOFOLLOW
+#else
+#define KC_O_RDONLY 0
+#define KC_O_WRONLY 1
+#define KC_O_CREAT 0x200
+#define KC_O_EXCL 0x800
+#define KC_O_TRUNC 0x400
+#define KC_O_NOFOLLOW 0
 #endif
 
 static u32 kc_rotr(u32 x, int n) { return (x >> n) | (x << (32 - n)); }
@@ -113,7 +157,183 @@ static void kc_login(char *out, size_t n) {
     out[i] = 0;
 }
 
-/* HKDF enxuto: extract(sal fixo, nome de login) e um expand com info "file". */
+static int kc_parent_dir(const char *path, char *dir, size_t n) {
+    size_t L = strlen(path);
+    if (!L || L + 1 > n) return -1;
+    memcpy(dir, path, L + 1);
+    char *slash = 0;
+    for (char *p = dir; *p; p++) if (*p == '/') slash = p;
+    if (!slash || slash == dir) return -1;
+    *slash = 0;
+    return 0;
+}
+
+static void kc_mkdir_p(char *dir) {
+    for (char *p = dir + 1; *p; p++) {
+        if (*p == '/') { *p = 0; mkdir(dir, 0700); *p = '/'; }
+    }
+    mkdir(dir, 0700);
+    chmod(dir, 0700);
+}
+
+#ifdef KC_HOST
+static int kc_stat_ok_file(const struct stat *st) {
+    if (!S_ISREG(st->st_mode)) return 0;
+    if (S_ISLNK(st->st_mode)) return 0;
+    if ((st->st_mode & 0777) != 0600) return 0;
+    if (st->st_uid != geteuid()) return 0;
+    if (st->st_size != 32) return 0;
+    return 1;
+}
+static int kc_stat_ok_dir(const struct stat *st) {
+    if (!S_ISDIR(st->st_mode)) return 0;
+    if ((st->st_mode & 0777) != 0700) return 0;
+    if (st->st_uid != geteuid()) return 0;
+    return 1;
+}
+#else
+static int kc_stat_ok_file(const kc_mac_stat *st) {
+    unsigned short kind = (unsigned short)(st->st_mode & 0170000);
+    if (kind == 0120000) return 0;
+    if (kind != 0100000) return 0;
+    if ((st->st_mode & 0777) != 0600) return 0;
+    if (st->st_uid != geteuid()) return 0;
+    if (st->st_size != 32) return 0;
+    return 1;
+}
+static int kc_stat_ok_dir(const kc_mac_stat *st) {
+    if ((st->st_mode & 0170000) != 0040000) return 0;
+    if ((st->st_mode & 0777) != 0700) return 0;
+    if (st->st_uid != geteuid()) return 0;
+    return 1;
+}
+#endif
+
+/* 0 = 32 bytes válidos. -2 = arquivo ausente. -1 = recusado (symlink, modo, dono, tamanho, pasta). */
+static int kc_key_read(const char *path, u8 out[32]) {
+    if (out) memset(out, 0, 32);
+    if (!path || !out) return -1;
+    char dir[512];
+    if (kc_parent_dir(path, dir, sizeof dir)) return -1;
+#ifdef KC_HOST
+    struct stat ds, fs;
+    if (lstat(dir, &ds) != 0) return -2;
+    if (!kc_stat_ok_dir(&ds)) return -1;
+    if (lstat(path, &fs) != 0) return -2;
+    if (S_ISLNK(fs.st_mode)) return -1;
+    if (!kc_stat_ok_file(&fs)) return -1;
+#else
+    kc_mac_stat ds, fs;
+    if (lstat(dir, &ds) != 0) return -2;
+    if (!kc_stat_ok_dir(&ds)) return -1;
+    if (lstat(path, &fs) != 0) return -2;
+    if ((fs.st_mode & 0170000) == 0120000) return -1;
+    if (!kc_stat_ok_file(&fs)) return -1;
+#endif
+    int fd = open(path, KC_O_RDONLY | KC_O_NOFOLLOW);
+    if (fd < 0) return -1;
+    u8 buf[32];
+    u32 got = 0;
+    while (got < 32) {
+        ssize_t k = read(fd, buf + got, 32 - got);
+        if (k <= 0) break;
+        got += (u32)k;
+    }
+    close(fd);
+    if (got != 32) { memset(buf, 0, 32); return -1; }
+    memcpy(out, buf, 32);
+    memset(buf, 0, 32);
+    return 0;
+}
+
+/* Cria a pasta 0700 e o arquivo 0600. Não substitui um arquivo que já existe. */
+static int kc_key_create(const char *path, u8 out[32]) {
+    if (out) memset(out, 0, 32);
+    if (!path || !out) return -1;
+    char dir[512];
+    if (kc_parent_dir(path, dir, sizeof dir)) return -1;
+    kc_mkdir_p(dir);
+    u8 buf[32];
+    if (getentropy(buf, 32) != 0) { memset(buf, 0, 32); return -1; }
+    int fd = open(path, KC_O_WRONLY | KC_O_CREAT | KC_O_EXCL | KC_O_NOFOLLOW, 0600);
+    if (fd < 0) { memset(buf, 0, 32); return -1; }
+    if (chmod(path, 0600) != 0) { close(fd); unlink(path); memset(buf, 0, 32); return -1; }
+    u32 done = 0;
+    while (done < 32) {
+        ssize_t k = write(fd, buf + done, 32 - done);
+        if (k <= 0) { close(fd); unlink(path); memset(buf, 0, 32); return -1; }
+        done += (u32)k;
+    }
+    close(fd);
+    u8 check[32];
+    int r = kc_key_read(path, check);
+    if (r != 0 || memcmp(check, buf, 32) != 0) {
+        memset(buf, 0, 32);
+        memset(check, 0, 32);
+        return -1;
+    }
+    memcpy(out, buf, 32);
+    memset(buf, 0, 32);
+    memset(check, 0, 32);
+    return 0;
+}
+
+/* Lê a chave. Se o arquivo não existe, gera. Arquivo recusado não é substituído. */
+static int kc_key_ensure(const char *path, u8 out[32]) {
+    int r = kc_key_read(path, out);
+    if (r == 0) return 0;
+    if (r == -2) return kc_key_create(path, out);
+    return -1;
+}
+
+static int kc_read_all(const char *path, u8 **out, u32 *n) {
+    if (out) *out = 0;
+    if (n) *n = 0;
+    int fd = open(path, KC_O_RDONLY);
+    if (fd < 0) return -1;
+    u8 *buf = 0;
+    u32 len = 0, cap = 0;
+    for (;;) {
+        if (len + 4096 > cap) {
+            cap = (len + 4096) * 2;
+            u8 *nb = (u8 *)realloc(buf, cap ? cap : 1);
+            if (!nb) { free(buf); close(fd); return -1; }
+            buf = nb;
+        }
+        ssize_t k = read(fd, buf + len, cap - len);
+        if (k < 0) { free(buf); close(fd); return -1; }
+        if (k == 0) break;
+        len += (u32)k;
+    }
+    close(fd);
+    if (!buf) { buf = (u8 *)malloc(1); if (!buf) return -1; }
+    *out = buf;
+    if (n) *n = len;
+    return 0;
+}
+
+/* Troca o arquivo só depois de escrever o temporário inteiro. Nunca apaga path. */
+static int kc_replace_file(const char *path, const u8 *data, u32 n) {
+    size_t L = strlen(path);
+    if (L + 5 >= 512) return -1;
+    char tmp[512];
+    memcpy(tmp, path, L);
+    memcpy(tmp + L, ".tmp", 5);
+    int fd = open(tmp, KC_O_WRONLY | KC_O_CREAT | KC_O_TRUNC, 0600);
+    if (fd < 0) return -1;
+    chmod(tmp, 0600);
+    u32 done = 0;
+    while (done < n) {
+        ssize_t k = write(fd, data + done, n - done);
+        if (k <= 0) { close(fd); unlink(tmp); return -1; }
+        done += (u32)k;
+    }
+    close(fd);
+    if (rename(tmp, path) != 0) { unlink(tmp); return -1; }
+    return 0;
+}
+
+/* HKDF enxuto, só para a chave antiga da migração: extract(sal fixo, nome de login). */
 static void kc_key_from(const char *login, u8 out[32]) {
     static const u8 salt[] = "mOS-keychain-v2";
     u8 prk[32];
@@ -226,4 +446,25 @@ static int kc_open(const u8 filekey[32], const u8 *file, u32 n, u8 **plain, u32 
     *plain = p;
     if (pn) *pn = body;
     return 0;
+}
+
+/* 0 = o arquivo passou a abrir com newkey. -1 = nada foi apagado em path. */
+static int kc_migrate_file(const char *path, const u8 oldkey[32], const u8 newkey[32]) {
+    u8 *file = 0;
+    u32 fn = 0;
+    if (kc_read_all(path, &file, &fn) != 0) return -1;
+    u8 *plain = 0;
+    u32 pn = 0;
+    if (kc_open(oldkey, file, fn, &plain, &pn) != 0) { free(file); return -1; }
+    u8 *sealed = 0;
+    u32 sn = 0;
+    int sr = kc_seal(newkey, plain, pn, &sealed, &sn);
+    memset(plain, 0, pn);
+    free(plain);
+    free(file);
+    if (sr != 0 || !sealed) return -1;
+    int wr = kc_replace_file(path, sealed, sn);
+    memset(sealed, 0, sn);
+    free(sealed);
+    return wr;
 }

@@ -11,7 +11,7 @@
 /* ---- views */
 K(UIImageView, UIView) 
 K(UITextView, UIScrollView) K(UISearchTextField, UITextField)
-K(UISearchBar, UIView) K(UIToolbar, UIView) K(UITabBar, UIView) K(UIStackView, UIView)
+K(UISearchBar, UIView) K(UIToolbar, UIView) K(UIStackView, UIView)
 K(UIVisualEffectView, UIView) K(UIActivityIndicatorView, UIView) K(UIProgressView, UIView) K(UIPickerView, UIView)
 K(UIDatePicker, UIControl) K(UISlider, UIControl) K(UIStepper, UIControl)
 K(UISegmentedControl, UIControl) K(UIPageControl, UIControl) K(UIRefreshControl, UIControl) K(UIInputView, UIView)
@@ -20,8 +20,8 @@ K(UITableViewHeaderFooterView, UIView)
 K(UIListContentView, UIView)
 
 /* ---- view controllers */
-K(UITabBarController, UIViewController)
-K(UISplitViewController, UIViewController) K(UITableViewController, UIViewController)
+/* UITabBar, UITabBarItem, UITabBarController, UISplitViewController: UIKitContainers.m */
+K(UITableViewController, UIViewController)
 K(UICollectionViewController, UIViewController)
 K(UISearchController, UIViewController) K(UIPageViewController, UIViewController)
 K(UIActivityViewController, UIViewController) K(UIDocumentPickerViewController, UIViewController)
@@ -31,10 +31,11 @@ K(UIImagePickerController, UINavigationController)
 /* UIGestureRecognizer, UITapGestureRecognizer, UIPanGestureRecognizer, UILongPressGestureRecognizer, UITouch, UIEvent: UIKitEvents.m */
 K(UISwipeGestureRecognizer, UIGestureRecognizer)
 K(UIPinchGestureRecognizer, UIGestureRecognizer) K(UIRotationGestureRecognizer, UIGestureRecognizer)
-K(UIHoverGestureRecognizer, UIGestureRecognizer) K(UIScreenEdgePanGestureRecognizer, UIPanGestureRecognizer)
+/* UIHoverGestureRecognizer: UIKitEvents.m */
+K(UIScreenEdgePanGestureRecognizer, UIPanGestureRecognizer)
 
 /* ---- barras, menus, ações */
-K(UITabBarItem, UIBarItem) K(UIBarButtonItemGroup, NSObject)
+K(UIBarButtonItemGroup, NSObject)
 K(UIBarAppearance, NSObject) K(UINavigationBarAppearance, UIBarAppearance)
 K(UIToolbarAppearance, UIBarAppearance) K(UITabBarAppearance, UIBarAppearance)
 /* UIMenuElement, UIMenu, UIAction, UICommand, UIKeyCommand, UIBarItem, UIBarButtonItem, UIButton: UIKitMenus.m */

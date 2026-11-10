@@ -2,9 +2,11 @@
 #define HEADER_CURL_CONFIG_MOS_H
 /*
  * mOS — curl 8.23.0 como /usr/lib/libcurl.4.dylib (tools/build-libcurl.ps1).
- * Alvo Apple LP64 (x86_64-macos / aarch64-macos). Sem TLS, LDAP, HTTP/2, HTTP/3,
- * SSH, brotli, zstd, libidn e libpsl: esses símbolos de backend não entram.
- * HTTP, ficheiro local e zlib (HAVE_LIBZ) entram. A licença é a do curl (COPYING).
+ * Alvo Apple LP64 (x86_64-macos / aarch64-macos). TLS via mbed TLS (USE_MBEDTLS,
+ * Apache-2.0), com verificação de certificado ligada. O bundle padrão é
+ * /usr/share/curl/cacert.pem (a lista da Mozilla já em assets/certs/cacert.pem).
+ * Sem LDAP, HTTP/2, HTTP/3, SSH, brotli, zstd, libidn e libpsl.
+ * HTTP, ficheiro local e zlib (HAVE_LIBZ) entram. A licença do curl é a do COPYING.
  */
 #define OS "apple-darwin"
 #define CURL_OS "apple-darwin"
@@ -28,6 +30,9 @@
 
 #define HAVE_LIBZ 1
 #define HAVE_ZLIB_H 1
+
+#define USE_MBEDTLS 1
+#define CURL_CA_BUNDLE "/usr/share/curl/cacert.pem"
 
 #define STDC_HEADERS 1
 #define HAVE_STDBOOL_H 1

@@ -9,9 +9,11 @@
  * Ver userland/mos.h.
  */
 #include "proc.h"
+#include "smp_perf.h"
 #include "vfs.h"
 #include "syscall.h"
 #include "account.h"
+#include "fs.h"
 
 #define PTE_P  1ULL
 #define PTE_RW 2ULL
@@ -173,6 +175,26 @@ static u64 *table(process_t *p, u64 *t, int i, bool create) {
     return (u64 *)(t[i] & PTE_ADDR);
 }
 
+static void vm_lock_mask(process_t *p, unsigned m) {
+    int me = this_cpu(), i;
+    for (i = 0; i < 16; i++) if (m & (1u << i)) {
+        if (p->vmreg[i].depth && p->vmreg[i].owner == me) { p->vmreg[i].depth++; continue; }
+        p->vmreg[i].fl = spin_lock_irqsave((spinlock_t *)&p->vmreg[i].lk);
+        p->vmreg[i].owner = me;
+        p->vmreg[i].depth = 1;
+    }
+}
+static void vm_unlock_mask(process_t *p, unsigned m) {
+    int i;
+    for (i = 15; i >= 0; i--) if (m & (1u << i)) {
+        if (--p->vmreg[i].depth) continue;
+        p->vmreg[i].owner = 0;
+        spin_unlock_irqrestore((spinlock_t *)&p->vmreg[i].lk, p->vmreg[i].fl);
+    }
+}
+static void vm_lock_range(process_t *p, u64 a, u64 len) { if (p && len) vm_lock_mask(p, smp_stripes(a, len)); }
+static void vm_unlock_range(process_t *p, u64 a, u64 len) { if (p && len) vm_unlock_mask(p, smp_stripes(a, len)); }
+
 static u64 *walk(process_t *p, u64 va, bool create) {
     if (va < USER_BASE || va >= USER_END) return NULL;
     u64 *pdpt = table(p, p->pml4, (va >> 39) & 511, create);
@@ -188,18 +210,21 @@ u64 *uvm_pte(process_t *p, u64 va) {
 
 bool uvm_map(process_t *p, u64 va, u64 len) {
     u64 end = va + len;
+    bool ok = true;
     if (end < va || va < USER_BASE || end > USER_END) return false;
+    vm_lock_range(p, va, len);
     for (u64 a = va & ~0xFFFULL; a < end; a += 4096) {
         u64 *e = walk(p, a, true);
-        if (!e) return false;
+        if (!e) { ok = false; break; }
         if (*e & PTE_P) continue;
         u64 pg = pmm_alloc(1);
-        if (!pg) return false;
+        if (!pg) { ok = false; break; }
         memset((void *)pg, 0, 4096);
         *e = pg | PTE_P | PTE_RW | PTE_U;
         p->mem_pages++;
     }
-    return true;
+    vm_unlock_range(p, va, len);
+    return ok;
 }
 
 /* ------------------------------------------------------------ cópia na escrita (fork)
@@ -268,27 +293,33 @@ static void page_put(u64 phys) {
  * kernel/proc/sched.c (sessão SMP); esta definição fraca vale enquanto só o BSP roda threads de usuário. */
 __attribute__((weak)) void smp_tlb_shootdown(u64 cr3) { (void)cr3; }
 static void vm_flush(process_t *p, u64 va) {
-    if ((u64)p->pml4 == read_cr3()) __asm__ volatile("invlpg (%0)" :: "r"(va & ~0xFFFULL) : "memory");
+    u64 cur = read_cr3() & ~0xFFFULL & ~(1ULL << 63);
+    if (cur == ((u64)p->pml4 & ~0xFFFULL)) __asm__ volatile("invlpg (%0)" :: "r"(va & ~0xFFFULL) : "memory");
     smp_tlb_shootdown((u64)p->pml4);
 }
 
 static bool cow_break(process_t *p, u64 *e, u64 va) {
-    u64 phys = *e & PTE_ADDR;
-    u64 nx = *e & PTE_NX;
+    bool ok = false;
+    u64 phys, nx, np;
+    vm_lock_range(p, va, 4096);
+    phys = *e & PTE_ADDR;
+    nx = *e & PTE_NX;
     if (page_refs(phys) > 1) {
-        u64 np = pmm_alloc(1);
-        if (!np) return false;
-        memcpy((void *)np, (void *)phys, 4096);
-        *e = np | PTE_P | PTE_RW | PTE_U | nx;
-        vm_flush(p, va);                                /* nenhuma CPU pode continuar lendo a original... */
-        /* ...antes de largar a referência a ela: se o outro dono a largou enquanto copiávamos, esta era a última
-         * e a página é liberada (antes, pref[]-- deixava a página órfã nesse caso) */
-        page_put(phys);
-        return true;
+        np = pmm_alloc(1);
+        if (np) {
+            memcpy((void *)np, (void *)phys, 4096);
+            *e = np | PTE_P | PTE_RW | PTE_U | nx;
+            vm_flush(p, va);
+            page_put(phys);
+            ok = true;
+        }
+    } else {
+        *e = (*e | PTE_RW) & ~PTE_COW;
+        vm_flush(p, va);
+        ok = true;
     }
-    *e = (*e | PTE_RW) & ~PTE_COW;
-    vm_flush(p, va);
-    return true;
+    vm_unlock_range(p, va, 4096);
+    return ok;
 }
 
 /* fork de página PTE_JWP: a cópia fica privada, ainda sem escrita e com JWP. A falta segue para o
@@ -388,36 +419,71 @@ bool uvm_share_cow(process_t *p, u64 va, u64 *phys) {
     return true;
 }
 bool uvm_map_cow(process_t *p, u64 va, u64 phys) {
+    bool ok = false;
     if (!pref_ready()) return false;
+    vm_lock_range(p, va, 4096);
     u64 *e = walk(p, va & ~0xFFFULL, true);
-    if (!e) return false;
-    if (*e & PTE_P) { page_put(*e & PTE_ADDR); p->mem_pages--; }
-    uvm_page_get(phys);
-    *e = (phys & PTE_ADDR) | PTE_P | PTE_U | PTE_COW;
-    p->mem_pages++;
-    vm_flush(p, va);
-    return true;
+    if (e) {
+        if (*e & PTE_P) { page_put(*e & PTE_ADDR); p->mem_pages--; }
+        uvm_page_get(phys);
+        *e = (phys & PTE_ADDR) | PTE_P | PTE_U | PTE_COW;
+        p->mem_pages++;
+        vm_flush(p, va);
+        ok = true;
+    }
+    vm_unlock_range(p, va, 4096);
+    return ok;
 }
 /* página nova (um dono só, já preenchida) em va, se lá ainda não houver página: false = já havia (outra thread
  * resolveu a mesma falta) ou faltou memória para as tabelas; o chamador então devolve a página. kernel/mm/lazy.c */
 bool uvm_install(process_t *p, u64 va, u64 phys) {
+    bool ok = false;
+    vm_lock_range(p, va, 4096);
     u64 *e = walk(p, va & ~0xFFFULL, true);
-    if (!e || (*e & PTE_P)) return false;
-    *e = (phys & PTE_ADDR) | PTE_P | PTE_RW | PTE_U;
-    p->mem_pages++;
-    vm_flush(p, va);
-    return true;
+    if (e && !(*e & PTE_P)) {
+        *e = (phys & PTE_ADDR) | PTE_P | PTE_RW | PTE_U;
+        p->mem_pages++;
+        vm_flush(p, va);
+        ok = true;
+    }
+    vm_unlock_range(p, va, 4096);
+    return ok;
 }
 u16 uvm_page_refs(u64 phys) { return page_refs(phys); }
 
 /* MAP_SHARED: a página do cache ganha mais um dono e entra com PTE_SHARED (o fork não a transforma em COW).
  * prot: bit 1 leitura, bit 2 escrita, bit 4 execução. Sem execução, bit 63 (NX). No x86 a página presente
  * continua legível: não há bit de "só escrita" nem de PROT_NONE. */
+bool uvm_map_shared(process_t *p, u64 va, u64 phys, u8 prot);
+bool gpu_user_map(process_t *p, u64 va, u64 phys, u64 len, int rw) {
+    if (!p || (va & 0xFFF) || (phys & 0xFFF) || !len || (len & 0xFFF)) return false;
+    u8 prot = rw ? 3 : 1;
+    for (u64 i = 0; i < len; i += 4096)
+        if (!uvm_map_shared(p, va + i, phys + i, prot)) return false;
+    return true;
+}
+
+bool gpu_user_unmap(process_t *p, u64 va, u64 len) {
+    if (!p || (va & 0xFFF) || !len) return false;
+    for (u64 a = va; a < va + len; a += 4096) {
+        u64 *e = walk(p, a, false);
+        if (!e || !(*e & PTE_P)) continue;
+        u64 ph = *e & PTE_ADDR;
+        *e = 0;
+        p->mem_pages--;
+        __asm__ volatile("invlpg (%0)" :: "r"(a) : "memory");
+        page_put(ph);
+    }
+    return true;
+}
+
 bool uvm_map_shared(process_t *p, u64 va, u64 phys, u8 prot) {
+    bool ok = false;
     if (!pref_ready()) return false;
+    vm_lock_range(p, va, 4096);
     u64 *e = walk(p, va & ~0xFFFULL, true);
-    if (!e) return false;
-    if (*e & PTE_P) return true;
+    if (!e) { vm_unlock_range(p, va, 4096); return false; }
+    if (*e & PTE_P) { vm_unlock_range(p, va, 4096); return true; }
     page_ref_inc(phys);
     u64 bits = PTE_P | PTE_U | PTE_SHARED;
     if (prot & 2) bits |= PTE_RW;
@@ -425,21 +491,56 @@ bool uvm_map_shared(process_t *p, u64 va, u64 phys, u8 prot) {
     *e = (phys & PTE_ADDR) | bits;
     p->mem_pages++;
     vm_flush(p, va);
-    return true;
+    ok = true;
+    vm_unlock_range(p, va, 4096);
+    return ok;
+}
+
+/* 64 KiB NX compartilhados (A64RT_JIT_SHARE): cache de blocos do JIT entre processos. */
+#define JIT_SHARE_VA 0x0000400044000000ULL
+#define JIT_SHARE_NP 16
+#define JIT_SHARE_MAGIC 0x4A49545348415245ULL
+static u64 jit_share_phys;
+static void jitshare_map(process_t *p) {
+    int i;
+    if (!p || !p->pml4 || !pref_ready()) return;
+    if (!jit_share_phys) {
+        u64 ph = pmm_alloc(JIT_SHARE_NP);
+        if (!ph) return;
+        memset((void *)ph, 0, JIT_SHARE_NP * 4096);
+        *(u64 *)ph = JIT_SHARE_MAGIC;
+        jit_share_phys = ph;
+    }
+    for (i = 0; i < JIT_SHARE_NP; i++) {
+        u64 va = JIT_SHARE_VA + (u64)i * 4096, old, phys = jit_share_phys + (u64)i * 4096;
+        u64 *e = walk(p, va, true);
+        if (!e) return;
+        if ((*e & PTE_P) && (*e & PTE_SHARED) && (*e & PTE_ADDR) == phys) continue;
+        if (*e & PTE_P) {
+            old = *e & PTE_ADDR;
+            *e = 0;
+            if (p->mem_pages) p->mem_pages--;
+            if (old != phys) page_put(old);
+            vm_flush(p, va);
+        }
+        uvm_map_shared(p, va, phys, 3);
+    }
 }
 
 /* mprotect de verdade. Página COW não ganha RW (a escrita ainda copia). Página JWP sem escrita fica JWP;
  * mprotect com escrita desfaz o JWP. O bit de execução liga ou tira o NX. Página ausente fica para a falta. */
 bool uvm_protect(process_t *p, u64 va, u64 len, u8 prot) {
     u64 end = va + len;
+    bool ok = true;
     if (end < va) return false;
+    vm_lock_range(p, va, len);
     for (u64 a = va & ~0xFFFULL; a < end; ) {
         u64 *e = walk(p, a, false);
         if (!e) { a = (a + 0x200000) & ~0x1FFFFFULL; continue; }
         if ((*e & PTE_P) && (*e & PTE_U)) {
             if (*e & PTE_JWP) {
                 if (prot & 2) {
-                    if ((*e & PTE_COW) && !cow_break(p, e, a)) return false;
+                    if ((*e & PTE_COW) && !cow_break(p, e, a)) { ok = false; break; }
                     *e = (*e | PTE_RW) & ~PTE_JWP;
                 }
             } else if (!(*e & PTE_COW)) {
@@ -452,7 +553,8 @@ bool uvm_protect(process_t *p, u64 va, u64 len, u8 prot) {
         }
         a += 4096;
     }
-    return true;
+    vm_unlock_range(p, va, len);
+    return ok;
 }
 
 /* Rede de segurança do JIT do tradutor arm64 (userland/a64rt, MACH_VM_JIT_WPROTECT): página com código traduzido
@@ -738,6 +840,32 @@ static void drop_pipe_waiters(process_t *p, thread_t *keep) {
         }
 }
 
+/* /Sistema/Biblioteca/log-saida: cada término e cada syscall que o kernel não conhece.
+ * O serviço de rede do Chromium sai por exit() sem sinal; sem esta linha o serial não diz o código. */
+static int saida_log_on(void) {
+    static int on = -1;
+    if (on < 0) on = vfs_lookup("/Sistema/Biblioteca/log-saida") != NULL;
+    return on;
+}
+static void log_exit_stack(process_t *p, int_frame_t *f, int code) {
+    if (!saida_log_on() || !f) return;
+    thread_t *t = thread_current();
+    kprintf("proc: %s (pid %d) exit(%d) thread %d rip 0x%llx rsp 0x%llx\n", p->name, p->pid, code,
+            t ? t->id : -1, (unsigned long long)f->rip, (unsigned long long)f->rsp);
+    u64 fp = f->rbp;
+    char line[200];
+    usize o = 0;
+    for (int k = 0; k < 12 && fp; k++) {
+        u64 fr[2];
+        if ((fp & 7) || !uvm_copy_in(p, fr, fp, sizeof fr)) break;
+        if (fr[1] >= USER_BASE && fr[1] < USER_END)
+            o += (usize)snprintf(line + o, sizeof line - o, " %llx", (unsigned long long)fr[1]);
+        if (o > 150) { kprintf("proc:   chamadas:%s\n", line); o = 0; }
+        if (fr[0] <= fp) break;
+        fp = fr[0];
+    }
+    if (o) kprintf("proc:   chamadas:%s\n", line);
+}
 static void finish(process_t *p, int code) {
     if (p->exited) return;
     p->exited = true;
@@ -745,6 +873,8 @@ static void finish(process_t *p, int code) {
     p->stopped = 0;
     p->stop_unreported = 0;
     p->cont_unreported = 0;
+    if (saida_log_on())
+        kprintf("proc: %s (pid %d, pai %d) terminou com código %d\n", p->name, p->pid, p->ppid, code);
     drop_pipe_waiters(p, NULL);
     for (thread_t *t = sched_threads(); t; t = t->next)   /* todas as threads do processo */
         if (t->proc == p) {
@@ -884,6 +1014,7 @@ int proc_spawn_in(const char *path, const char *arg, tty_t *tty,
     memcpy(p->pml4, kernel_pml4, 4096);
     for (int k = 0; k < USER_PML4_SLOTS; k++) p->pml4[USER_PML4_FIRST + k] = 0;
     p->mem_pages = 1;
+    jitshare_map(p);
 
     char err[128];
     u64 entry = 0;
@@ -915,6 +1046,7 @@ int proc_spawn_in(const char *path, const char *arg, tty_t *tty,
             finish(p, -1); return -1;
         }
         p->spawn_argv = NULL; p->spawn_argc = 0; p->spawn_env = NULL; p->spawn_envc = 0;
+        if (spawn_flags & MOS_SPAWN_START_SUSPENDED) proc_hold(p);
         kprintf("proc: iniciado %s (Mach-O, pid %d, %llu KiB)\n", p->name, p->pid, p->mem_pages * 4);
         if (xargc || xenvc) kprintf("proc: %s pid %d recebeu %d argumentos e %d variáveis de ambiente\n", p->name, p->pid, xargc, xenvc);
         /* processos do Chromium/Electron: o tipo vem em --type= (e --utility-sub-type=), não no nome do helper */
@@ -955,6 +1087,7 @@ int proc_spawn_in(const char *path, const char *arg, tty_t *tty,
     p->nthreads = p->main ? 1 : 0;
     irq_restore(fl);
     if (!p->main) { finish(p, -1); return -1; }
+    if (spawn_flags & MOS_SPAWN_START_SUSPENDED) proc_hold(p);
     kprintf("proc: iniciado %s (pid %d, %llu KiB)\n", p->name, p->pid, p->mem_pages * 4);
     return p->pid;
 }
@@ -1234,7 +1367,7 @@ static void sig_interrupt(thread_t *t) {
     if (sig_diag()) kprintf("sinal: %s pid %d thread %d acordada com EINTR (espera %d, syscall %llu)\n", p->name, p->pid, t->id,
                             t->state == TH_SLEEPING ? -100 : t->wait_pid, (unsigned long long)t->sys_nr);
     if (p->tty && p->tty->reader == t) p->tty->reader = NULL;
-    if (t->wait_pid == -3 || t->wait_pid == -4)
+    if (t->wait_pid == -3 || t->wait_pid == -4) {
         for (int i = 0; i < PROC_MAX_FDS; i++) {
             for (int k = 0; k < 2; k++) {
                 pipe_t *pp = !p->fds[i].used ? NULL : k ? p->fds[i].pipe2 : p->fds[i].pipe;
@@ -1242,6 +1375,8 @@ static void sig_interrupt(thread_t *t) {
                 if (pp && pp->wwait == t) pp->wwait = NULL;
             }
         }
+        unix_clear_waiter(t);
+    }
     t->pty_wait = NULL;
     t->futex_va = 0;
     t->wake_at = 0;
@@ -1330,6 +1465,12 @@ static void proc_stop(process_t *p, int sig) {
     { extern void smp_kick_proc(process_t *p); smp_kick_proc(p); }
 }
 
+/* POSIX_SPAWN_START_SUSPENDED. O processo já está na lista, com a thread principal criada;
+ * o chamador (proc_spawn_in) ainda segura a trava da syscall, então ela não chega a rodar. */
+void proc_hold(process_t *p) {
+    proc_stop(p, MOS_SIGSTOP);
+}
+
 static void proc_continue(process_t *p) {
     if (!p || !p->stopped) return;
     p->stopped = 0;
@@ -1416,7 +1557,7 @@ int proc_job_signal(process_t *p, thread_t *th, int sig) {
 
 /* syscalls que o SA_RESTART refaz (as demais bloqueantes devolvem EINTR, como no macOS: sleep, poll, sigsuspend) */
 static bool sys_restartable(u64 nr) {
-    return nr == SYS_READ || nr == SYS_WRITE || nr == SYS_WAITPID || nr == SYS_WAIT || nr == SYS_WAITANY || nr == SYS_FUTEX_WAIT;
+    return nr == SYS_READ || nr == SYS_WRITE || nr == SYS_WAITPID || nr == SYS_WAIT || nr == SYS_WAITANY || nr == SYS_FUTEX_WAIT || nr == SYS_UNIX;
 }
 static void sys_restart(int_frame_t *f, thread_t *t) { f->rip -= 2; f->rax = t->sys_nr; }   /* int 0x80 e syscall: 2 bytes */
 
@@ -1837,6 +1978,7 @@ static void pipe_refs_drop(pipe_t *pp, pipe_t *pp2, u8 kind) {
 
 static void fd_close(process_t *p, int fd) {
     if (!p->fds[fd].used) return;
+    if (p->fds[fd].kind == FD_UNIX) unix_put((int)p->fds[fd].off);
     pipe_t *pp = p->fds[fd].pipe, *pp2 = p->fds[fd].pipe2;
     struct pty *ty = p->fds[fd].pty;
     bool tm = p->fds[fd].kind == FD_PTY_M;
@@ -1852,6 +1994,7 @@ static void fd_copy(process_t *dst, int dfd, process_t *src, int sfd) {
     /* a referência nova entra antes de fechar o destino: se os dois são do mesmo pipe e o destino era a
      * última referência, fechar primeiro liberaria o pipe que a cópia ainda vai usar (kfree duplo depois) */
     __typeof__(src->fds[0]) e = src->fds[sfd];
+    if (e.kind == FD_UNIX) unix_hold((int)e.off);
     pipe_refs(e.pipe, e.pipe2, e.kind, +1);
     if (e.pty) pty_fd_ref(e.pty, e.kind == FD_PTY_M, +1);
     if (dst->fds[dfd].used) fd_close(dst, dfd);
@@ -1869,6 +2012,7 @@ void *proc_fd_snapshot(process_t *p, int fd) {
     if (!s) return NULL;
     *s = p->fds[fd];
     s->flags &= ~MOS_O_CLOEXEC;
+    if (s->kind == FD_UNIX) unix_hold((int)s->off);
     pipe_refs(s->pipe, s->pipe2, s->kind, +1);
     if (s->pty) pty_fd_ref(s->pty, s->kind == FD_PTY_M, +1);
     return s;
@@ -1879,6 +2023,7 @@ int proc_fd_from_snapshot(process_t *p, const void *snap) {
         if (p->fds[fd].used) continue;
         p->fds[fd] = *s;
         p->fds[fd].used = true;
+        if (s->kind == FD_UNIX) unix_hold((int)s->off);
         pipe_refs(s->pipe, s->pipe2, s->kind, +1);
         if (s->pty) pty_fd_ref(s->pty, s->kind == FD_PTY_M, +1);
         return fd;
@@ -1888,6 +2033,7 @@ int proc_fd_from_snapshot(process_t *p, const void *snap) {
 void proc_fd_snapshot_free(void *snap) {
     fdent_t *s = snap;
     if (!s) return;
+    if (s->kind == FD_UNIX) unix_put((int)s->off);
     if (s->pipe || s->pipe2) pipe_refs_drop(s->pipe, s->pipe2, s->kind);
     if (s->pty) pty_fd_ref(s->pty, s->kind == FD_PTY_M, -1);
     kfree(s);
@@ -2206,6 +2352,7 @@ static i64 proc_exec(int_frame_t *f, thread_t *t, process_t *p, char *path, char
     memcpy(np->pml4, kernel_pml4, 4096);
     for (int k = 0; k < USER_PML4_SLOTS; k++) np->pml4[USER_PML4_FIRST + k] = 0;
     np->mem_pages = 1;
+    jitshare_map(np);
 
     char err[128];
     u64 entry = 0, usp = 0, rdi = 0;
@@ -2345,6 +2492,7 @@ static u64 proc_syscall_(int_frame_t *f) {
     switch (f->rax) {
     case SYS_EXIT:
         /* diagnóstico (despejar-threads): quem encerra um helper do VS Code, com código e pilha */
+        log_exit_stack(p, f, (int)a);
         if (!strncmp(p->name, "Code Helper", 11) && vfs_lookup("/Sistema/Biblioteca/despejar-threads")) {
             kprintf("proc: %s (pid %d) chamou exit(%d), thread %d\n", p->name, p->pid, (int)a, t ? t->id : -1);
             u64 w[64];
@@ -2358,6 +2506,7 @@ static u64 proc_syscall_(int_frame_t *f) {
         finish(p, (int)a);
         return sched_switch(f);
     case SYS_WRITE:
+        if (fd_get(p, a) >= 0 && p->fds[a].kind == FD_UNIX) return unix_rw(f, t, p, (int)a, 0, b, c);
         if (fd_get(p, a) >= 0 && p->fds[a].pty) return pty_rw(f, t, p, (int)a, false, b, c);   /* terminal (pty.c) */
         if (fd_get(p, a) >= 0 && p->fds[a].kind == FD_PIPE_RW) return pipe_op(f, t, p->fds[a].pipe2, false, b, c);   /* socketpair */
         if (fd_get(p, a) >= 0 && p->fds[a].pipe) {
@@ -2543,6 +2692,7 @@ static u64 proc_syscall_(int_frame_t *f) {
     /* ---- arquivos por descritor */
     case SYS_OPEN: {
         if (!copy_path(p, path, a)) { r = -MOS_EFAULT; break; }
+        if (unix_path_is_sock(path)) { r = -MOS_ENXIO; break; }   /* o arquivo do socket não é um fd comum */
         int fd = -1;
         for (int i = 3; i < PROC_MAX_FDS; i++) if (!p->fds[i].used) { fd = i; break; }
         {   /* /dev/fd/N e /dev/std{in,out,err}: um dup do descritor (o bash usa /dev/fd/63 em "< <(comando)") */
@@ -2726,6 +2876,7 @@ static u64 proc_syscall_(int_frame_t *f) {
         break;
     }
     case SYS_READ: {
+        if (fd_get(p, a) >= 0 && p->fds[a].kind == FD_UNIX) return unix_rw(f, t, p, (int)a, 1, b, c);
         if (fd_get(p, a) >= 0 && p->fds[a].pty) return pty_rw(f, t, p, (int)a, true, b, c);    /* terminal (pty.c) */
         if (fd_get(p, a) >= 0 && p->fds[a].pipe) {
             if (p->fds[a].kind != FD_PIPE_R && p->fds[a].kind != FD_PIPE_RW) { r = -MOS_EBADF; break; }
@@ -2759,7 +2910,7 @@ static u64 proc_syscall_(int_frame_t *f) {
     /* pread/pwrite: deslocamento explícito, posição do fd intocada. No libSystem eram lseek+read+lseek, o que quebrava
      * com threads lendo o mesmo fd (o pool do libuv lendo o node_modules.asar enquanto o AsarURLLoader lia também) */
     case SYS_PREAD: {
-        if (fd_get(p, a) < 0 || p->fds[a].pipe || p->fds[a].pty) { r = fd_get(p, a) < 0 ? -MOS_EBADF : -MOS_ESPIPE; break; }
+        if (fd_get(p, a) < 0 || p->fds[a].pipe || p->fds[a].pty || p->fds[a].kind == FD_UNIX) { r = fd_get(p, a) < 0 ? -MOS_EBADF : -MOS_ESPIPE; break; }
         if (p->fds[a].flags & MOS_O_WRONLY) { r = -MOS_EBADF; break; }
         if (is_devnull(p->fds[a].path)) { r = 0; break; }
         vnode_t *v = vfs_lookup(p->fds[a].path);
@@ -2771,14 +2922,14 @@ static u64 proc_syscall_(int_frame_t *f) {
         break;
     }
     case SYS_PWRITE: {
-        if (fd_get(p, a) < 0 || p->fds[a].pipe || p->fds[a].pty) { r = fd_get(p, a) < 0 ? -MOS_EBADF : -MOS_ESPIPE; break; }
+        if (fd_get(p, a) < 0 || p->fds[a].pipe || p->fds[a].pty || p->fds[a].kind == FD_UNIX) { r = fd_get(p, a) < 0 ? -MOS_EBADF : -MOS_ESPIPE; break; }
         if (!(p->fds[a].flags & (MOS_O_WRONLY | MOS_O_RDWR))) { r = -MOS_EBADF; break; }
         if (is_devnull(p->fds[a].path)) { r = (i64)c; break; }
         r = file_write_at(p, p->fds[a].path, f->r10, b, c);
         break;
     }
     case SYS_FTRUNCATE: {
-        if (fd_get(p, a) < 0 || p->fds[a].pipe || p->fds[a].pty) { r = fd_get(p, a) < 0 ? -MOS_EBADF : -MOS_EINVAL; break; }
+        if (fd_get(p, a) < 0 || p->fds[a].pipe || p->fds[a].pty || p->fds[a].kind == FD_UNIX) { r = fd_get(p, a) < 0 ? -MOS_EBADF : -MOS_EINVAL; break; }
         if (!(p->fds[a].flags & (MOS_O_WRONLY | MOS_O_RDWR))) { r = -MOS_EBADF; break; }
         if (is_devnull(p->fds[a].path)) { r = 0; break; }
         r = file_truncate(p->fds[a].path, b);
@@ -2792,7 +2943,7 @@ static u64 proc_syscall_(int_frame_t *f) {
     }
     case SYS_LSEEK: {
         if (fd_get(p, a) < 0) { r = -MOS_EBADF; break; }
-        if (p->fds[a].pty) { r = -MOS_ESPIPE; break; }      /* terminal: sem posição */
+        if (p->fds[a].pty || p->fds[a].kind == FD_UNIX) { r = -MOS_ESPIPE; break; }
         vnode_t *v = vfs_lookup(p->fds[a].path);
         i64 base = c == MOS_SEEK_SET ? 0 : c == MOS_SEEK_CUR ? (i64)p->fds[a].off : c == MOS_SEEK_END ? (i64)(v ? v->size : 0) : -1;
         i64 pos = base + (i64)b;
@@ -2806,6 +2957,12 @@ static u64 proc_syscall_(int_frame_t *f) {
         vnode_t *v;
         /* pipe: is_dir = 2 (ponta de leitura) ou 3 (escrita); size = bytes para ler (ou espaço livre);
          * mtime = 1 se a outra ponta já fechou. É o que kqueue/poll do libSystem usam para saber se há dados. */
+        if (f->rax == SYS_FSTAT && fd_get(p, a) >= 0 && p->fds[a].kind == FD_UNIX) {
+            mos_stat_t st;
+            r = unix_fstat(p, (int)a, &st);
+            if (r == 0) r = uvm_copy_out(p, b, &st, sizeof st) ? 0 : -MOS_EFAULT;
+            break;
+        }
         if (f->rax == SYS_FSTAT && fd_get(p, a) >= 0 && p->fds[a].pty) { r = pty_fstat(p, (int)a, b); break; }   /* is_dir 5 */
         if (f->rax == SYS_FSTAT && fd_get(p, a) >= 0 && p->fds[a].pipe) {
             pipe_t *pp = p->fds[a].pipe;
@@ -2865,6 +3022,7 @@ static u64 proc_syscall_(int_frame_t *f) {
         if (!copy_path(p, path, a)) { r = -MOS_EFAULT; break; }
         vnode_t *v = vfs_lookup(path);
         r = !v ? -MOS_ENOENT : vfs_delete(v) ? 0 : -MOS_EINVAL;
+        if (r == 0) unix_unbind(path);
         break;
     }
     case SYS_RENAME: {
@@ -2885,9 +3043,10 @@ static u64 proc_syscall_(int_frame_t *f) {
             if (!old->dir && v->dir) { r = -MOS_ENOTDIR; break; }
             if (old->dir && old->child) { r = -MOS_ENOTEMPTY; break; }
             if (!vfs_delete(old)) { r = -MOS_EINVAL; break; }
+            unix_unbind(to_full);
         }
         r = vfs_move(v, np, slash + 1) ? 0 : -MOS_EINVAL;
-        if (r == 0) rename_fix_fds(path, to_full);
+        if (r == 0) { rename_fix_fds(path, to_full); unix_rename(path, to_full); }
         break;
     }
 
@@ -3182,6 +3341,7 @@ static u64 proc_syscall_(int_frame_t *f) {
             fork_ok = cow_copy_level(q, (u64 *)(p->pml4[ui] & PTE_ADDR), (u64 *)nt, 3);
         }
         if (!fork_ok) { free_address_space(q); kfree(q); r = -MOS_ENOMEM; break; }
+        jitshare_map(q);
         __asm__ volatile("mov %%cr3, %%rax; mov %%rax, %%cr3" ::: "rax", "memory");   /* o pai agora é só leitura */
         smp_tlb_shootdown((u64)p->pml4);                /* também nas outras CPUs com threads do pai */
         q->pid = next_pid++;
@@ -3238,8 +3398,17 @@ static u64 proc_syscall_(int_frame_t *f) {
         extern void sched_kick_thread(thread_t *t);
         extern bool sched_thread_stopped(const thread_t *t);
         thread_t *q = NULL;
+        if (a == MOS_THR_ROFILE) {
+            extern int lazy_ro_file_at(process_t *p, u64 va, u64 *id, u64 *off);
+            u64 id = 0, off = 0, pair[2];
+            if (!lazy_ro_file_at(p, b, &id, &off)) { r = 0; break; }
+            pair[0] = id; pair[1] = off;
+            r = c && uvm_copy_out(p, c, pair, sizeof pair) ? 1 : -MOS_EFAULT;
+            break;
+        }
         for (thread_t *w = sched_threads(); w; w = w->next)
             if (w->proc == p && w->id == (int)b && w->state != TH_DEAD) { q = w; break; }
+        if (!q && b == 0 && (a == MOS_THR_SETQOS || a == MOS_THR_AFFINITY)) q = t;
         if (!q) { r = -MOS_ESRCH; break; }
         {   /* diagnóstico: as primeiras chamadas (quem suspende quem), para ver no log que o coletor do JSC usa isto */
             static int vistos;
@@ -3267,6 +3436,12 @@ static u64 proc_syscall_(int_frame_t *f) {
             u64 regs[21] = { g->rax, g->rbx, g->rcx, g->rdx, g->rdi, g->rsi, g->rbp, g->rsp, g->r8, g->r9, g->r10, g->r11,
                              g->r12, g->r13, g->r14, g->r15, g->rip, g->rflags, g->cs, 0, 0 };
             r = uvm_copy_out(p, c, regs, sizeof regs) ? 0 : -MOS_EFAULT;
+        } else if (a == MOS_THR_SETQOS) {
+            sched_set_qos(q, (unsigned)c);
+            r = 0;
+        } else if (a == MOS_THR_AFFINITY) {
+            sched_set_affinity(q, c);
+            r = 0;
         } else r = -MOS_EINVAL;
         break;
     }
@@ -3278,6 +3453,7 @@ static u64 proc_syscall_(int_frame_t *f) {
     case SYS_DYLD: r = macho_dyld_syscall(p, a, b, c, f->r10); break;   /* dlopen/dlsym (kernel/compat/macho.c) */
     case SYS_LS: { extern i64 ls_syscall(process_t *p, u64 op, u64 ureq); r = ls_syscall(p, a, b); break; }   /* Launch Services (kernel/compat/launchsvc.c) */
     case SYS_NET: { extern i64 net_user_syscall(process_t *p, u64 op, u64 a, u64 b, u64 c); r = net_user_syscall(p, a, b, c, f->r10); break; }   /* TCP/DNS (kernel/net/usersock.c) */
+    case SYS_UNIX: return unix_syscall(f, t, p);   /* AF_UNIX (kernel/net/unix.c) */
 
     /* ---- processos e pasta atual */
     case SYS_WAITANY: {
@@ -3316,6 +3492,14 @@ static u64 proc_syscall_(int_frame_t *f) {
         break;
     }
     case SYS_FDPATH: {                                      /* fcntl(F_GETPATH) e fchdir no libSystem */
+        if (fd_get(p, a) >= 0 && p->fds[a].kind == FD_UNIX) {
+            char nm[104];
+            int n = unix_fd_path(p, (int)a, nm, (int)sizeof nm);
+            if (n < 0) { r = n; break; }
+            if ((u64)n + 1 > c) { r = -MOS_EINVAL; break; }
+            r = uvm_copy_out(p, b, nm, (usize)n + 1) ? n : -MOS_EFAULT;
+            break;
+        }
         if (fd_get(p, a) < 0 || p->fds[a].kind != FD_FILE) { r = -MOS_EBADF; break; }
         usize n = strlen(p->fds[a].path) + 1;
         if (n > c) { r = -MOS_EINVAL; break; }
@@ -3336,15 +3520,67 @@ static u64 proc_syscall_(int_frame_t *f) {
         r = uvm_copy_out(p, b, &pi, sizeof pi) ? 1 : -MOS_EFAULT;
         break;
     }
+    case SYS_GPU: {
+        extern i64 gpu_syscall(process_t *p, u64 op, u64 user, u64 len, thread_t *self, int *blocked);
+        int blocked = 0;
+        r = gpu_syscall(p, a, b, c, t, &blocked);
+        if (blocked) return sched_switch(f);
+        break;
+    }
     case SYS_DESKTOP: {
         extern i64 deskbridge_syscall(process_t *p, u64 op, u64 b, u64 c, u64 d);
         r = deskbridge_syscall(p, a, b, c, f->r10);
         break;
     }
+    case SYS_AIO: {
+        /* op em a, aiocb* do usuário em b. Submete e consulta sem bloquear. */
+        int op = (int)a;
+        if (op == 3) { i64 ret; r = aio_mem_poll(b, &ret); break; }
+        if (op == 6) { aio_pump(); r = 0; break; }
+        if (op == 4) {
+            i64 ret; int st = aio_mem_poll(b, &ret);
+            if (st == MOS_EINPROGRESS) { r = -MOS_EINVAL; break; }
+            u8 *bounce = NULL; void *ubuf = NULL; u64 n = 0;
+            aio_mem_take(b, &bounce, &n, &ubuf, &ret);
+            if (st != 0) { kfree(bounce); r = -st; break; }
+            if (bounce && ubuf && n && !uvm_copy_out(p, (u64)ubuf, bounce, n)) r = -MOS_EFAULT;
+            else r = ret;
+            kfree(bounce);
+            break;
+        }
+        if (op == 5) { r = aio_mem_fsync(b) ? 0 : -MOS_EIO; break; }
+        struct aiocb cb;
+        if (op != 1 && op != 2) { r = -MOS_EINVAL; break; }
+        if (!uvm_copy_in(p, &cb, b, sizeof cb)) { r = -MOS_EFAULT; break; }
+        if (fd_get(p, (u64)cb.aio_fildes) < 0 || p->fds[cb.aio_fildes].kind != FD_FILE) { r = -MOS_EBADF; break; }
+        vnode_t *v = vfs_lookup(p->fds[cb.aio_fildes].path);
+        if (!v || v->dir || !v->data) { r = -MOS_EBADF; break; }
+        u8 *bounce = kmalloc(cb.aio_nbytes ? cb.aio_nbytes : 1);
+        if (!bounce) { r = -MOS_ENOMEM; break; }
+        if (op == 2) {
+            if (!(p->fds[cb.aio_fildes].flags & (MOS_O_WRONLY | MOS_O_RDWR))) { kfree(bounce); r = -MOS_EBADF; break; }
+            if (!uvm_copy_in(p, bounce, (u64)cb.aio_buf, cb.aio_nbytes)) { kfree(bounce); r = -MOS_EFAULT; break; }
+        }
+        if (aio_mem_submit(b, op == 2, v->data, v->size, (u64)cb.aio_offset, cb.aio_nbytes, bounce, (void *)cb.aio_buf) != 0) {
+            kfree(bounce); r = -MOS_EAGAIN; break;
+        }
+        r = 0;
+        break;
+    }
     default:
         if (f->rax >= SYS_MACH_FIRST && f->rax <= SYS_MACH_LAST) return machipc_syscall(f);   /* pode bloquear */
         if (f->rax >= SYS_GUI_FIRST && f->rax <= SYS_GUI_LAST) r = compat_gui_syscall(p, f->rax, a, b, c, f->r10, f->r8);
-        else r = -MOS_EINVAL;
+        else {
+            r = -MOS_EINVAL;
+            if (saida_log_on() && f->rax < 512) {
+                static u8 vista[512];
+                if (!vista[f->rax]) {
+                    vista[f->rax] = 1;
+                    kprintf("proc: %s pid %d syscall %llu desconhecida -> EINVAL\n", p->name, p->pid,
+                            (unsigned long long)f->rax);
+                }
+            }
+        }
         break;
     }
     f->rax = (u64)r;
@@ -3430,5 +3666,7 @@ void proc_init(void) {
         sh_test_pid = proc_spawn_tty("/Sistema/Programas/sh", NULL);
         if (sh_test_pid > 0) kthread_create("teste-sh", sh_test, NULL);
         if (vfs_lookup("/Sistema/Programas/smpteste")) proc_spawn("/Sistema/Programas/smpteste", NULL);   /* SMP: carga paralela */
+    } else if (vfs_lookup("/Sistema/Programas/.autoteste") && vfs_lookup("/Sistema/Programas/unixipc")) {
+        proc_spawn("/Sistema/Programas/unixipc", NULL);   /* AF_UNIX sem o teste geral na imagem */
     }
 }
