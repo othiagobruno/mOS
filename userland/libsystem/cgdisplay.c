@@ -51,9 +51,12 @@ u32 CGDisplayUnitNumber(u32 d) { (void)d; return 0; }
 int CGDisplayRegisterReconfigurationCallback(void *cb, void *info) { (void)cb; (void)info; return 0; }
 int CGDisplayRemoveReconfigurationCallback(void *cb, void *info) { (void)cb; (void)info; return 0; }
 void *CGDisplayCopyColorSpace(u32 d) { (void)d; return 0; }
-void *CGDisplayCopyDisplayMode(u32 d) { (void)d; return 0; }
+static const int cg_display_mode = 1;
+void *CGDisplayCopyDisplayMode(u32 d) { (void)d; return (void *)&cg_display_mode; }
 double CGDisplayModeGetRefreshRate(void *mode) { (void)mode; return 60.0; }
 void CGDisplayModeRelease(void *mode) { (void)mode; }
+size_t CGDisplayModeGetPixelWidth(void *mode) { (void)mode; return CGDisplayPixelsWide(MAIN_DISPLAY); }
+size_t CGDisplayModeGetPixelHeight(void *mode) { (void)mode; return CGDisplayPixelsHigh(MAIN_DISPLAY); }
 void *CGDisplayCreateUUIDFromDisplayID(u32 d) { (void)d; return 0; }
 u32 CGDisplayGetDisplayIDFromUUID(void *uuid) { (void)uuid; return MAIN_DISPLAY; }
 

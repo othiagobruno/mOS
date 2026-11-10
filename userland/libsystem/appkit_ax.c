@@ -4,14 +4,19 @@
  * position, size, children, focused), PerformAction (AXPress) e SetAttributeValue
  * leem as views de verdade. A permissão é o TCC do Sistemas (cx_tcc_preflight de
  * kTCCServiceAccessibility): sem ela a resposta é -25211. Com ela, outro pid devolve
- * -25204. Levar a árvore entre processos é IPC, e o Sistemas ainda não expõe esse
- * canal. Não há um segundo TCC nem um XPC paralelo aqui.
+ * -25204 para a árvore de views. _AXUIElementCreateWithRemoteToken aceita o token
+ * mAX1 (ax_token.h): com número de janela, título e geometria saem de DEV_WINDOW_LIST.
+ * A árvore de views de outro processo continua -25204. Não há um segundo TCC nem um
+ * XPC paralelo aqui.
  */
 #include "foundation.h"
+#include "computeruse_win.h"
+#include "ax_token.h"
 
 int cx_tcc_preflight(const char *service);
 int getpid(void);
 int strcmp(const char *a, const char *b);
+void *memset(void *d, int c, size_t n);
 int cx_appkit_window_frame(id w, double *x, double *y, double *wd, double *ht);
 int cx_appkit_window_number(id w);
 int cx_appkit_view_frame(id v, double *x, double *y, double *wd, double *ht);
@@ -46,13 +51,14 @@ typedef struct {
     int kind;
     int pid;
     id obj;
+    unsigned wid;
 } axel_t;
 
 static cx_class_t ax_c, ax_m;
 
 static void ax_boot(void) {
     if (ax_c.vtable) return;
-    cx_define_class(&ax_c, &ax_m, "__mOSAXElement", cx_class_named("NSObject"), 24);
+    cx_define_class(&ax_c, &ax_m, "__mOSAXElement", cx_class_named("NSObject"), (u32)(sizeof(axel_t) - sizeof(void *)));
 }
 
 static id ax_new(int kind, int pid, id obj) {
@@ -62,6 +68,7 @@ static id ax_new(int kind, int pid, id obj) {
     e->kind = kind;
     e->pid = pid;
     e->obj = obj;
+    e->wid = 0;
     return (id)e;
 }
 
@@ -139,8 +146,32 @@ static id str_attr(id obj, const char *sel) {
     return cx_is_str(d) ? objc_retain(d) : cx_str("");
 }
 
+static int listed_win(axel_t *e, gui_cgwindow_t *info) {
+    if (!e || e->kind != AXK_WIN || e->obj || !e->wid) return 0;
+    for (int i = 0; i < 64; i++) {
+        if (!cx_cg_window_at(i, info)) return 0;
+        if (info->number == e->wid) return 1;
+    }
+    return 0;
+}
+static int screen_h(void) {
+    gui_wininfo_t i;
+    memset(&i, 0, sizeof i);
+    i.w = 1440;
+    i.h = 876;
+    SYS1(GUI_SCREEN, &i);
+    return i.h > 0 ? i.h + 24 : 900;
+}
 static int frame_of(axel_t *e, double *x, double *y, double *w, double *h) {
-    if (e->kind == AXK_WIN) return cx_appkit_window_frame(e->obj, x, y, w, h);
+    gui_cgwindow_t info;
+    if (listed_win(e, &info)) {
+        *x = info.x;
+        *y = (double)screen_h() - info.y - info.h;
+        *w = info.w;
+        *h = info.h;
+        return 1;
+    }
+    if (e->kind == AXK_WIN) return e->obj && cx_appkit_window_frame(e->obj, x, y, w, h);
     if (e->kind == AXK_VIEW) return cx_appkit_view_frame(e->obj, x, y, w, h);
     *x = *y = *w = *h = 0;
     return 0;
@@ -226,6 +257,11 @@ int cx_ax_copy(id elem, id attr, id *v) {
     if (!strcmp(name, "AXRole")) { if (v) *v = cx_str(role_of(e)); return AX_OK; }
     if (!strcmp(name, "AXRoleDescription")) { if (v) *v = cx_str(role_desc(role_of(e))); return AX_OK; }
     if (!strcmp(name, "AXTitle")) {
+        if (e->kind == AXK_WIN && !e->obj) {
+            gui_cgwindow_t info;
+            if (v) *v = listed_win(e, &info) ? cx_str(info.name) : cx_str("");
+            return AX_OK;
+        }
         if (e->kind == AXK_WIN) { if (v) *v = str_attr(e->obj, "title"); return AX_OK; }
         if (e->kind == AXK_APP) {
             id pi = MSG0(id, (id)cx_class_named("NSProcessInfo"), "processInfo");
@@ -440,6 +476,20 @@ static id deepest(id view, double x, double y) {
         return d ? d : wrap_obj(s);
     }
     return 0;
+}
+
+long CFDataGetLength(id d);
+const unsigned char *CFDataGetBytePtr(id d);
+id _AXUIElementCreateWithRemoteToken(id data) {
+    int pid = 0;
+    unsigned wid = 0;
+    const unsigned char *b = data ? CFDataGetBytePtr(data) : 0;
+    long n = data ? CFDataGetLength(data) : 0;
+    if (!cx_ax_token_read(b, n, &pid, &wid)) return 0;
+    if (!wid) return cx_ax_application(pid ? pid : getpid());
+    id e = ax_new(AXK_WIN, pid, 0);
+    if (e) ((axel_t *)e)->wid = wid;
+    return e;
 }
 
 int cx_ax_at(id app, float x, float y, id *out) {
