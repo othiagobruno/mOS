@@ -3,7 +3,10 @@ Formato: arquivo:linha simbolo
 Donos combinados: Sistemas = CF*/CoreFoundation, Foundation, Security, CoreMedia, Compression, libcurl, ImageIO, VideoToolbox, Metal, libcompression, libz.
 Runtime = libc++, libc++abi, libunwind/_Unwind_*/unw_*, stdlib e runtime Swift (swift_* e modulos Swift/Dispatch/Darwin/os/System/ObjectiveC neste arquivo).
 ImageIO, VideoToolbox, Metal, libcurl e libz: 0 funcoes void nome(void) {} aqui. CryptoKit: 0.
-a definir: grupo fora da lista fechada e sem area unica.
+a definir que sobrou: ObjC sem modulo reconhecido. posixmore.c e compat_agentes.c tambem, no stubs.md.
+Network/nw_*, libc/libm, CommonCrypto e Accelerate: Runtime C/C++ e Swift.
+AVFoundation, CoreAudio, UniformTypeIdentifiers e CloudKit: Frameworks Apple.
+Combine: Interface.
 swiftui_imports.c (976 corpos vazios) entra na secao seguinte, dono Runtime.
 
 ## Swift (stdlib) | 2907 | Runtime C/C++ e Swift
@@ -4413,7 +4416,7 @@ userland/libsystem/sys_zerados.c:5369 swift_weakTakeInit
 userland/libsystem/sys_zerados.c:5370 swift_willThrow
 userland/libsystem/sys_zerados.c:5371 swift_willThrowTypedImpl
 
-## Network | 154 | a definir
+## Network | 154 | Runtime C/C++ e Swift
 userland/libsystem/sys_zerados.c:1447 $s7Network10NWEndpointO4HostO13stringLiteralAESS_tcfC
 userland/libsystem/sys_zerados.c:1448 $s7Network10NWEndpointO4HostO4ipv4yAeA11IPv4AddressVcAEmFWC
 userland/libsystem/sys_zerados.c:1449 $s7Network10NWEndpointO4HostOMa
@@ -4825,7 +4828,7 @@ userland/libsystem/sys_zerados.c:3114 $sSo6CMTimea9CoreMediaE7secondsSdvg
 userland/libsystem/sys_zerados.c:3115 $sSo6CMTimea9CoreMediaE9isNumericSbvg
 userland/libsystem/sys_zerados.c:3116 $sSo6CMTimeaSL9CoreMediaMc
 
-## libc/libm (C) | 62 | a definir
+## libc/libm (C) | 62 | Runtime C/C++ e Swift
 userland/libsystem/sys_zerados.c:5064 NXGetArchInfoFromCpuType
 userland/libsystem/sys_zerados.c:5065 NXGetLocalArchInfo
 userland/libsystem/sys_zerados.c:5074 __CFStringMakeConstantString
@@ -4951,7 +4954,7 @@ userland/libsystem/sys_zerados.c:3123 $sSo7CGPointVSe12CoreGraphicsMc
 userland/libsystem/sys_zerados.c:3174 $sSo8UIButtonC5UIKitE13ConfigurationV12imagePadding12CoreGraphics7CGFloatVvs
 userland/libsystem/sys_zerados.c:3212 $sSo9CGPathRefa12CoreGraphicsE8contains_5using9transformSbSo7CGPointV_AC0A8FillRuleOSo17CGAffineTransformVtF
 
-## UniformTypeIdentifiers | 47 | a definir
+## UniformTypeIdentifiers | 47 | Frameworks Apple
 userland/libsystem/sys_zerados.c:1101 $s22UniformTypeIdentifiers10UTTagClassV04mimeB0ACvgZ
 userland/libsystem/sys_zerados.c:1102 $s22UniformTypeIdentifiers10UTTagClassVMa
 userland/libsystem/sys_zerados.c:1103 $s22UniformTypeIdentifiers6UTTypeV04mimeB012conformingToACSgSS_ACtcfC
@@ -5000,7 +5003,7 @@ userland/libsystem/sys_zerados.c:1145 $s22UniformTypeIdentifiers6UTTypeVSEAAMc
 userland/libsystem/sys_zerados.c:1146 $s22UniformTypeIdentifiers6UTTypeVSeAAMc
 userland/libsystem/sys_zerados.c:1147 $s22UniformTypeIdentifiers6UTTypeVyACSgSScfC
 
-## AVFoundation | 34 | a definir
+## AVFoundation | 34 | Frameworks Apple
 userland/libsystem/sys_zerados.c:978 $s12AVFoundation15AVAsyncPropertyC6StatusO11descriptionSSvg
 userland/libsystem/sys_zerados.c:979 $s12AVFoundation15AVAsyncPropertyC6StatusOMa
 userland/libsystem/sys_zerados.c:980 $s12AVFoundation15AVAsyncPropertyC6StatusOMn
@@ -5188,7 +5191,7 @@ userland/libsystem/sys_zerados.c:1174 $s2os6LoggerVMa
 userland/libsystem/sys_zerados.c:1175 $s2os6LoggerVMn
 userland/libsystem/sys_zerados.c:1176 $s2os6LoggerVyACSo03OS_A4_logCcfC
 
-## Network (C, nw_*) | 25 | a definir
+## Network (C, nw_*) | 25 | Runtime C/C++ e Swift
 userland/libsystem/sys_zerados.c:5157 nw_connection_cancel
 userland/libsystem/sys_zerados.c:5158 nw_connection_copy_endpoint
 userland/libsystem/sys_zerados.c:5159 nw_connection_create
@@ -5298,7 +5301,7 @@ userland/libsystem/sys_zerados.c:1193 $s3XPC0A25_ERROR_CONNECTION_INVALIDSo13OS_
 userland/libsystem/sys_zerados.c:1194 $s3XPC0A29_ERROR_CONNECTION_INTERRUPTEDSo13OS_xpc_object_pvg
 userland/libsystem/sys_zerados.c:1195 $s3XPC0A8_TYPE_FDs13OpaquePointerVvg
 
-## CoreAudio | 13 | a definir
+## CoreAudio | 13 | Frameworks Apple
 userland/libsystem/sys_zerados.c:1685 $s9CoreAudio013UnsafeMutableB17BufferListPointerV06unsafeG0SPySo0beF0VGvg
 userland/libsystem/sys_zerados.c:1686 $s9CoreAudio013UnsafeMutableB17BufferListPointerV06unsafedG0SpySo0beF0VGvg
 userland/libsystem/sys_zerados.c:1687 $s9CoreAudio013UnsafeMutableB17BufferListPointerV5countSivg
@@ -5313,7 +5316,7 @@ userland/libsystem/sys_zerados.c:1695 $s9CoreAudio013UnsafeMutableB17BufferListP
 userland/libsystem/sys_zerados.c:1696 $s9CoreAudio013UnsafeMutableB17BufferListPointerVySo0bE0VSicis
 userland/libsystem/sys_zerados.c:2899 $sSo16CATapDescriptionC9CoreAudioE34stereoGlobalTapButExcludeProcessesABSays6UInt32VG_tcfC
 
-## CommonCrypto (C) | 11 | a definir
+## CommonCrypto (C) | 11 | Runtime C/C++ e Swift
 userland/libsystem/sys_zerados.c:5026 CCCalibratePBKDF
 userland/libsystem/sys_zerados.c:5027 CC_MD2_Final
 userland/libsystem/sys_zerados.c:5028 CC_MD2_Init
@@ -5360,7 +5363,7 @@ userland/libsystem/sys_zerados.c:974 $s11Observation0A9RegistrarVMa
 userland/libsystem/sys_zerados.c:975 $s11Observation0A9RegistrarVMn
 userland/libsystem/sys_zerados.c:976 $s11Observation10ObservableMp
 
-## Accelerate | 7 | a definir
+## Accelerate | 7 | Runtime C/C++ e Swift
 userland/libsystem/sys_zerados.c:8 $s10Accelerate6vImageO7OptionsV7noFlagsAEvgZ
 userland/libsystem/sys_zerados.c:9 $s10Accelerate6vImageO7OptionsVMa
 userland/libsystem/sys_zerados.c:2868 $sSo13vImage_BufferV10AccelerateE02cgA06format5flagsABSo10CGImageRefa_So01va1_G6FormatVAC01vA0O7OptionsVtKcfC
@@ -5386,7 +5389,7 @@ userland/libsystem/sys_zerados.c:5182 open_dprotected_np
 userland/libsystem/sys_zerados.c:5193 setfsent
 userland/libsystem/sys_zerados.c:5380 xattr_name_with_flags
 
-## Combine | 5 | a definir
+## Combine | 5 | Interface
 userland/libsystem/sys_zerados.c:2837 $sSo12NSURLSessionC10FoundationE17DataTaskPublisherV7Combine0E0ACMc
 userland/libsystem/sys_zerados.c:2998 $sSo20NSNotificationCenterC10FoundationE9PublisherV7CombineAdCMc
 userland/libsystem/sys_zerados.c:3137 $sSo7NSTimerC10FoundationE14TimerPublisherC7Combine011ConnectableD0ACMc

@@ -28,9 +28,11 @@ ImageIO, VideoToolbox, Metal, libcurl e libz não têm `void nome(void) {}` nest
 Combinado com a Sistemas:
 
 - **Sistemas:** tudo de `CF*` / CoreFoundation, Foundation (libswift e os `NS*`), Security, libcurl, ImageIO, CoreMedia, VideoToolbox, Metal, libcompression (o módulo Swift `Compression` incluso) e libz.
-- **Runtime C/C++ e Swift:** libc++, libc++abi, libunwind / `_Unwind_*` / `unw_*`, runtime e stdlib do Swift. Entram os `swift_*` e os módulos Swift, Dispatch, Darwin, `os`, System e ObjectiveC de `sys_zerados.c`.
-- **Kernel, Interface, Storage:** pelo que a área faz.
-- **a definir:** o grupo não está na lista fechada e não cabe numa área só. A nota está na tabela.
+- **Runtime C/C++ e Swift:** libc++, libc++abi, libunwind / `_Unwind_*` / `unw_*`, runtime e stdlib do Swift. Entram os `swift_*` e os módulos Swift, Dispatch, Darwin, `os`, System e ObjectiveC de `sys_zerados.c`. Também Network / `nw_*`, libc/libm, CommonCrypto e Accelerate.
+- **Frameworks Apple:** AVFoundation, CoreAudio, UniformTypeIdentifiers e CloudKit.
+- **Interface:** UIKit, PhotosUI, CoreGraphics, SwiftUI e Combine.
+- **Kernel, Storage:** pelo que a área faz.
+- **a definir:** o bloco ObjC sem módulo, `posixmore.c` e `compat_agentes.c`.
 
 ## Em andamento (outro agente)
 Não implementar neste ciclo:
@@ -50,33 +52,33 @@ A libswift de stdlib e de runtime deste arquivo é nossa. Foundation, CoreFounda
 | 1070 | Foundation | Sistemas | `$s10Foundation10CocoaErrorV03_nsC0So7NSErrorCvg` |
 | 248 | UIKit | Interface | `$s5UIKit01_A23NumericRawRepresentablePAAE1poiyxx_0C5ValueQztFZ` |
 | 174 | swift_* (runtime C) | Runtime C/C++ e Swift | `swift_allocBox` |
-| 154 | Network | a definir | `$s7Network10NWEndpointO4HostO13stringLiteralAESS_tcfC` |
+| 154 | Network | Runtime C/C++ e Swift | `$s7Network10NWEndpointO4HostO13stringLiteralAESS_tcfC` |
 | 116 | Dispatch | Runtime C/C++ e Swift | `$s8Dispatch0A11SpecificKeyCACyxGycfC` |
 | 69 | ObjC (sem módulo reconhecido) | a definir | `$sSo10CKDatabaseC8CloudKitE17modifyRecordZones6saving8deletingSDySo14CKRecordZoneIDCs6ResultOySo0iJ0Cs5Error_pGG11saveResults_SDyAhJyytsAM_pGG06deleteO0tSayALG_SayAHGtYaKF` |
 | 65 | CoreMedia | Sistemas | `$s9CoreMedia15CMTIME_IS_VALIDySbSo6CMTimeaF` |
-| 62 | libc/libm (C) | a definir | `NXGetArchInfoFromCpuType` |
+| 62 | libc/libm (C) | Runtime C/C++ e Swift | `NXGetArchInfoFromCpuType` |
 | 60 | CoreGraphics | Interface | `$s12CoreGraphics14CGPathFillRuleO7evenOddyA2CmFWC` |
-| 47 | UniformTypeIdentifiers | a definir | `$s22UniformTypeIdentifiers10UTTagClassV04mimeB0ACvgZ` |
-| 34 | AVFoundation | a definir | `$s12AVFoundation15AVAsyncPropertyC6StatusO11descriptionSSvg` |
+| 47 | UniformTypeIdentifiers | Frameworks Apple | `$s22UniformTypeIdentifiers10UTTagClassV04mimeB0ACvgZ` |
+| 34 | AVFoundation | Frameworks Apple | `$s12AVFoundation15AVAsyncPropertyC6StatusO11descriptionSSvg` |
 | 32 | System | Runtime C/C++ e Swift | `$s6System14FileDescriptorV11OpenOptionsVMn` |
 | 29 | Darwin | Runtime C/C++ e Swift | `$s6Darwin0A7BooleanVMn` |
 | 27 | Foundation (C, NS*) | Sistemas | `NSLocaleCalendar` |
 | 27 | PhotosUI | Interface | `$s8PhotosUI14PHPickerFilterV6imagesACvgZ` |
 | 27 | os | Runtime C/C++ e Swift | `$s2os0A4_log_3dso0B04type_ys12StaticStringV_SVSgSo03OS_a1_B0CSo0a1_b1_D2_tas7CVarArg_pdtF` |
-| 25 | Network (C, nw_*) | a definir | `nw_connection_cancel` |
+| 25 | Network (C, nw_*) | Runtime C/C++ e Swift | `nw_connection_cancel` |
 | 21 | ObjectiveC | Runtime C/C++ e Swift | `$s10ObjectiveC8ObjCBoolVMn` |
 | 21 | _StringProcessing | Runtime C/C++ e Swift | `$s17_StringProcessing13_RegexFactoryV10accumulateyAA0C0VyxGq__q0_tAA0C9ComponentR_AaHR0_r1_lF` |
 | 18 | RegexBuilder | Runtime C/C++ e Swift | `$s12RegexBuilder0a9ComponentB0O15buildExpressionyxx17_StringProcessing0aC0RzlFZ` |
 | 15 | XPC | Kernel | `$s3XPC0A10_TYPE_BOOLs13OpaquePointerVvg` |
-| 13 | CoreAudio | a definir | `$s9CoreAudio013UnsafeMutableB17BufferListPointerV06unsafeG0SPySo0beF0VGvg` |
-| 11 | CommonCrypto (C) | a definir | `CCCalibratePBKDF` |
+| 13 | CoreAudio | Frameworks Apple | `$s9CoreAudio013UnsafeMutableB17BufferListPointerV06unsafeG0SPySo0beF0VGvg` |
+| 11 | CommonCrypto (C) | Runtime C/C++ e Swift | `CCCalibratePBKDF` |
 | 10 | AppleArchive | Storage | `$s12AppleArchive0B10ByteStreamC015withCompressionD05using9writingTo9blockSize5flags11threadCount_xAA0bF0V_ACSiAA0B5FlagsVSixACKXEtKlFZ` |
 | 9 | Compression | Sistemas | `$s11Compression12OutputFilterC5writeyyxSgK10Foundation12DataProtocolRzlFTj` |
 | 9 | Observation | Runtime C/C++ e Swift | `$s11Observation04withA8Tracking_8onChangexxyXE_yyYbcyXKtlF` |
-| 7 | Accelerate | a definir | `$s10Accelerate6vImageO7OptionsV7noFlagsAEvgZ` |
+| 7 | Accelerate | Runtime C/C++ e Swift | `$s10Accelerate6vImageO7OptionsV7noFlagsAEvgZ` |
 | 7 | libdispatch (C) | Runtime C/C++ e Swift | `dispatch_apply` |
 | 6 | filesystem (C) | Storage | `endfsent` |
-| 5 | Combine | a definir | `$sSo12NSURLSessionC10FoundationE17DataTaskPublisherV7Combine0E0ACMc` |
+| 5 | Combine | Interface | `$sSo12NSURLSessionC10FoundationE17DataTaskPublisherV7Combine0E0ACMc` |
 | 5 | CoreFoundation | Sistemas | `$s14CoreFoundation9_CFObjectMp` |
 | 5 | mach (C) | Kernel | `mach_port_get_attributes` |
 | 4 | pthread (C) | Runtime C/C++ e Swift | `pthread_fchdir_np` |
@@ -96,7 +98,10 @@ Soma: **5346**. Há ainda 29 `void *kCF…` / `kCFURL…` sem inicializador (pon
 - **UIKit 248, PhotosUI 27, CoreGraphics 60. Interface.** SwiftUI dos 976 de `swiftui_imports.c` também.
 - **mach, exception, xpc e o módulo XPC. Kernel.**
 - **filesystem 6 e AppleArchive 10. Storage.**
-- **a definir:** Network e `nw_*` (rede, fora da lista fechada), libc/libm, UniformTypeIdentifiers, AVFoundation (encosta em CoreMedia/VideoToolbox, que são da Sistemas), CoreAudio, CommonCrypto (encosta em Security), Accelerate, Combine, e os 69 ObjC sem módulo (há CloudKit no meio).
+- **Network 154, `nw_*` 25, libc/libm 62, CommonCrypto 11, Accelerate 7. Runtime C/C++ e Swift.**
+- **AVFoundation 34, CoreAudio 13, UniformTypeIdentifiers 47. Frameworks Apple.** CloudKit (`CloudKit.c`) também.
+- **Combine, 5. Interface.**
+- **a definir:** 69 símbolos ObjC sem módulo reconhecido (há CloudKit mangled no meio; o arquivo `CloudKit.c` já tem dono). `posixmore.c` e `compat_agentes.c` também ficam assim: não entraram nesta leva.
 
 ## Outros corpos vazios ou que só devolvem 0/NULL
 Uma linha, fora de `third_party` e fora de `sys_zerados.c`. Métodos de amostra em `userland/samples` não entram.
@@ -115,7 +120,7 @@ Uma linha, fora de `third_party` e fora de `sys_zerados.c`. Métodos de amostra 
 | 2 | `userland/libsystem/openbot_swift.c` | Runtime C/C++ e Swift | Símbolo Swift do OpenBot vazio. |
 | 2 | `userland/libsystem/compat_agentes.c` | a definir | Compat de agentes. |
 | 1 | `userland/libsystem/security.c:946` `SecTransformCreateGroupTransform` | Sistemas | Devolve NULL. O resto de Security no mesmo arquivo não é este caso. |
-| 1 | `userland/frameworks/CloudKit/CloudKit.c` | a definir | Uma entrada vazia. |
+| 1 | `userland/frameworks/CloudKit/CloudKit.c` | Frameworks Apple | Uma entrada vazia. |
 | 1 | `kernel/bt/btintel.c` | Kernel | Bluetooth Intel. |
 | 1 | `kernel/lib/vfs.c` | Storage | Uma entrada do VFS que devolve 0. |
 
@@ -148,7 +153,8 @@ Base dos `swift_*`: `tools/vscode-macho-stubs/libswift-runtime.c` dos PRs #82 e 
 - **Kernel:** `kernel/stubs.c`, `mach_*`, `exception_*`, XPC, `kernel/arch/cpu.c`, `xpc.c`, `kernel/bt/btintel.c`.
 - **Interface:** UIKit, PhotosUI, CoreGraphics, `swiftui_imports.c`, `chrome.c`, `vscode_media.c`, `cgdisplay.c`, `vscode_frameworks.c`.
 - **Storage:** `getfsent` e xattr, AppleArchive, `kernel/lib/vfs.c`.
-- **a definir:** Network/`nw_*`, libc/libm, UniformTypeIdentifiers, AVFoundation, CoreAudio, CommonCrypto, Accelerate, Combine, CloudKit, `posixmore.c`, `compat_agentes.c`, ObjC sem módulo.
+- **Frameworks Apple:** AVFoundation, CoreAudio, UniformTypeIdentifiers, CloudKit.
+- **a definir:** ObjC sem módulo (69), `posixmore.c`, `compat_agentes.c`.
 
 ## Build e testes de host
 Nesta rodada não rodei `tools/build.sh`, QEMU nem a suíte de host. O estado abaixo é leitura do fonte na main `0c9c75e`.
