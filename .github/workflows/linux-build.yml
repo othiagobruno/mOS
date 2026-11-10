@@ -18,3 +18,5 @@ jobs:
           echo /opt/zig-x86_64-linux-0.17.1 >> "$GITHUB_PATH"
       - name: tools/build.sh
         run: tools/build.sh --out /tmp/mos-linux-build
+      - name: teste de host do Virtualization
+        run: sh tools/test-vz.sh
