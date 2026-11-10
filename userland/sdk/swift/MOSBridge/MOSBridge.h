@@ -28,6 +28,15 @@ void mos_request_render(void);
 void *mos_main_window(void);
 void mos_run_app(const char *title, double w, double h, void (*render)(void *, void *, double, double), void *ctx);
 void mos_log(const char *s);
+/* Geometria do hosting SwiftUI (userland/libsystem/swiftui_geom.c). O vidro é fallback: não amostra o fundo. */
+double mos_sui_clamp_offset(double offset, double delta, double viewport, double content);
+int mos_sui_intersect(double ax, double ay, double aw, double ah, double bx, double by, double bw, double bh,
+                      double *x, double *y, double *w, double *h);
+void mos_sui_popover_frame(double ax, double ay, double aw, double ah, double pw, double ph, double bx, double by,
+                           double bw, double bh, double *x, double *y, double *w, double *h);
+void mos_sui_glass_fallback(double *r, double *g, double *b, double *a, double *radius, int *fallback,
+                            int *samples_backdrop);
+int mos_sui_selftest(char *err, int errlen);
 /* NSAlert modal: devolve o índice do botão (0 = primeiro) */
 int mos_alert(const char *title, const char *message, const char *b1, const char *b2);
 /* Canvas e desenho (dentro do callback do canvas; coordenadas com origem no topo) */

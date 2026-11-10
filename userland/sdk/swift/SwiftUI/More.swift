@@ -73,6 +73,34 @@ extension View {
             c._build(b)
         }
     }
+    /// Popover desenhado por cima da view (não é uma NSPopover). O clique fora ou em "Fechar" dispensa.
+    public func popover<S: View>(isPresented: Binding<Bool>, @ViewBuilder content: @escaping () -> S) -> _Modified<Self> {
+        _Modified(content: self) { b, c in
+            let z = Node(.zstack)
+            b.container(z) { bb in
+                c._build(bb)
+                if isPresented.wrappedValue {
+                    let t = bb.add(Node(.tap))
+                    let flag = isPresented
+                    t.action = { flag.wrappedValue = false }
+                    let panel = Node(.background)
+                    panel.color = Color(red: 0.98, green: 0.98, blue: 0.99)
+                    panel.radius = 10
+                    panel.insets = EdgeInsets(top: 12, leading: 12, bottom: 12, trailing: 12)
+                    bb.container(panel) { b2 in
+                        let col = Node(.stack)
+                        col.axisVertical = true
+                        col.spacing = 8
+                        col.align = -1
+                        b2.container(col) { b3 in
+                            content()._build(b3)
+                            Button("Fechar") { flag.wrappedValue = false }._build(b3)
+                        }
+                    }
+                }
+            }
+        }
+    }
     public func tabItem<L: View>(@ViewBuilder _ label: () -> L) -> _Modified<Self> {
         let lbl = label()
         return _Modified(content: self) { b, c in
@@ -184,9 +212,7 @@ public struct List<Content: View>: _PrimitiveView {
     let select: ((_Builder, Node) -> Void)?
     public init(@ViewBuilder content: () -> Content) { self.content = content(); select = nil }
     public func _build(_ b: _Builder) {
-        let n = Node(.stack)
-        n.axisVertical = true; n.spacing = 2; n.align = -1; n.maxW = true
-        b.container(n) { content._build($0) }
+        ScrollView { content }._build(b)
     }
 }
 /// List(itens, selection:) { item in ... } — linha clicável, a selecionada fica destacada.
@@ -331,4 +357,49 @@ public struct NavigationSplitView<Sidebar: View, Detail: View>: _PrimitiveView {
             bb.container(pad) { b2 in b2.container(d) { detail._build($0); Spacer()._build($0) } }
         }
     }
+}
+
+// MARK: - glassEffect
+//
+// macOS 26 pede um material que amostra o fundo. Aqui o fundo não é amostrado:
+// o preenchimento é o branco translúcido de mos_sui_glass_fallback (fallback=1, samples_backdrop=0).
+
+public struct Glass {
+    public enum Style { case regular, clear, identity }
+    public var style: Style
+    public var tint: Color?
+    public var interactive: Bool
+    public init(_ style: Style = .regular) { self.style = style; tint = nil; interactive = true }
+    public func tint(_ color: Color) -> Glass { var g = self; g.tint = color; return g }
+    public func interactive(_ on: Bool = true) -> Glass { var g = self; g.interactive = on; return g }
+    public static var regular: Glass { Glass(.regular) }
+    public static var clear: Glass { Glass(.clear) }
+    public static var identity: Glass { Glass(.identity) }
+}
+
+extension View {
+    public func glassEffect(_ glass: Glass = .regular) -> _Modified<Self> {
+        _Modified(content: self) { b, c in
+            if glass.style == .identity { c._build(b); return }
+            var r = 0.0, g = 0.0, bl = 0.0, a = 0.0, rad = 0.0
+            var fb: Int32 = 0, samp: Int32 = 0
+            mos_sui_glass_fallback(&r, &g, &bl, &a, &rad, &fb, &samp)
+            let bg = Node(.background)
+            if glass.style == .clear { bg.color = Color(white: 1, opacity: 0.28) }
+            else if let tint = glass.tint { bg.color = tint.opacity(0.55) }
+            else { bg.color = Color(red: r, green: g, blue: bl, opacity: a) }
+            bg.radius = rad
+            bg.placeholder = "glass-fallback"
+            b.container(bg) { c._build($0) }
+        }
+    }
+    public func glassEffect<S>(_ glass: Glass = .regular, in shape: S) -> _Modified<Self> { glassEffect(glass) }
+}
+
+/// O espaçamento é guardado. Não há amostragem compartilhada entre os filhos.
+public struct GlassEffectContainer<Content: View>: _PrimitiveView {
+    let content: Content
+    let spacing: Double
+    public init(spacing: Double = 0, @ViewBuilder content: () -> Content) { self.spacing = spacing; self.content = content() }
+    public func _build(_ b: _Builder) { content._build(b) }
 }

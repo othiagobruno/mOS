@@ -304,6 +304,30 @@ extension AnyResolvedPaint {
     }
 }
 
+/// União dos retângulos da lista, para o NSHostingController dimensionar a raiz.
+package enum MOSDisplayListMetrics {
+    package static func extent(_ list: DisplayList) -> CGSize {
+        var maxX: CGFloat = 0
+        var maxY: CGFloat = 0
+        func walk(_ list: DisplayList) {
+            for item in list.items {
+                maxX = max(maxX, item.frame.maxX)
+                maxY = max(maxY, item.frame.maxY)
+                switch item.value {
+                case let .effect(_, child):
+                    walk(child)
+                case let .states(states):
+                    if let first = states.first { walk(first.1) }
+                default:
+                    break
+                }
+            }
+        }
+        walk(list)
+        return CGSize(width: maxX, height: maxY)
+    }
+}
+
 extension StyledTextContentView {
     /// Texto puro do conteúdo.
     var mosString: String { text.storage?.string ?? "" }

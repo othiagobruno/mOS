@@ -237,10 +237,40 @@ public struct HStack<Content: View>: _PrimitiveView {
 public struct ScrollView<Content: View>: _PrimitiveView {
     let content: Content
     public init(@ViewBuilder content: () -> Content) { self.content = content() }
+    /// O conteúdo anda no eixo e é recortado no viewport. Subir/Descer existem porque o
+    /// renderer embutido não recebe scrollWheel (isso fica no canvas do SwiftUI.framework).
     public func _build(_ b: _Builder) {
-        let n = Node(.stack)
-        n.axisVertical = true; n.spacing = 8; n.align = -1; n.maxW = true; n.maxH = true
-        b.container(n) { content._build($0) }
+        let box = _Runtime.shared.boxAt("scroll:" + b.path, 0.0)
+        let outer = Node(.stack)
+        outer.axisVertical = true
+        outer.spacing = 0
+        outer.align = -1
+        outer.maxW = true
+        outer.maxH = true
+        b.container(outer) { bb in
+            let sc = Node(.scroll)
+            sc.axisVertical = true
+            sc.spacing = 4
+            sc.align = -1
+            sc.maxW = true
+            sc.maxH = true
+            sc.value = box.value
+            sc.onDouble = { box.value = $0 }
+            bb.container(sc) { content._build($0) }
+            let bar = Node(.stack)
+            bar.axisVertical = false
+            bar.spacing = 8
+            bb.container(bar) { b2 in
+                Button("Subir") {
+                    box.value = mos_sui_clamp_offset(box.value, -36, 0, 1.0e9)
+                    _Runtime.shared.invalidate()
+                }._build(b2)
+                Button("Descer") {
+                    box.value = mos_sui_clamp_offset(box.value, 36, 0, 1.0e9)
+                    _Runtime.shared.invalidate()
+                }._build(b2)
+            }
+        }
     }
 }
 public struct ForEach<Element, Content: View>: _PrimitiveView {
