@@ -550,7 +550,7 @@ OSStatus LSOpenFromURLSpec(const ls_spec_t *spec, id *launched) {
 }
 /* LSCopyDefaultApplicationURLForURL e as outras consultas de quem abre o quê: openurl.c */
 /* LSSetDefaultHandlerForURLScheme: openurl.c (banco do Launch Services no kernel) */
-u8 FSEventStreamSetExclusionPaths(void *s, id paths) { (void)s; (void)paths; return 1; }
+/* FSEventStreamSetExclusionPaths: fsevents.c */
 /* Apple Events: registro aceito; não há outro app para conversar */
 typedef struct { u32 type; void *data; } ae_desc_t;
 OSStatus AEInstallEventHandler(u32 cls_, u32 id_, void *handler, i64 refcon, u8 sys) { (void)cls_; (void)id_; (void)handler; (void)refcon; (void)sys; return 0; }

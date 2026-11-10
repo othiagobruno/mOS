@@ -181,7 +181,8 @@ O que cada grupo faz, separado:
   sem ele, devolve o dicionário do macOS sem proxy; `CFNetworkCopyProxiesForURL` devolve a lista "sem proxy".
   `proc_*`, `waitid`, o pty e o `sandbox-exec` (o `execve` ignora a política e roda o comando). O ObjC que o CoreFoundation
   usa (`objc_msgSend`, `objc_getClass`, pools).
-- **Stub.** `FSEventStream*`: o fluxo sobe e não entrega evento. `CFNetworkExecuteProxyAutoConfiguration*` devolve nulo
+- **Funcional, com limite.** `FSEventStream*`: entrega criar, editar e apagar por varredura (`fsevents.c`, [fsevents.md](fsevents.md)). O kernel não avisa.
+- **Stub.** `CFNetworkExecuteProxyAutoConfiguration*` devolve nulo
   (não há PAC). `IOPMAssertion*` aceita, porque o mOS não dorme sozinho. `copyfile_state_get` e `acl_get_*` devolvem o
   erro de "não há o quê". `fclonefileat`, `fsctl`, `fsetattrlist` e `proc_pid_rusage` devolvem `ENOTSUP`.
   LocalAuthentication está ligada e não importa símbolo nenhum.
@@ -448,7 +449,7 @@ O que se sabe do laço (quarta rodada):
    - ~~`getaddrinfo` e TLS~~: feitos (SecureTransport real; o login por código de dispositivo chega à OpenAI). Concluir
      o login com a conta e o polling do token fica para quem tem a conta;
    - ~~CFURL, CFError, CFTimeZone~~ e ~~CFPreferences~~ (`prefs.c`, valor gravado);
-   - FSEvents é stub (sobe e não entrega) e os proxies são funcionais ("sem proxy" quando o configd não responde);
+   - FSEvents entrega criar/editar/apagar por varredura (`fsevents.c`); os proxies são funcionais ("sem proxy" quando o configd não responde);
    - ~~`proc_pidinfo/proc_pidpath/proc_listchildpids`, `flock/lockf`~~; `copyfile_state_get` e `acl_get_*` devolvem erro
      (não há ACL nem estado de cópia);
    - ~~`/usr/bin/sandbox-exec`~~: o `execve` ignora a política e roda o comando.
