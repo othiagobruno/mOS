@@ -24,10 +24,12 @@ id CFDictionaryCreateMutable(void *alloc, long cap, const void *kcb, const void 
 void CFDictionarySetValue(id d, id key, id val);
 id CFDictionaryGetValue(id d, id key);
 u8 CFNumberGetValue(id n, long type, void *out);
-char *getenv(const char *n);
 int strncmp(const char *a, const char *b, size_t n);
-int fputs(const char *s, FILE_ *f);
-int fputc(int c, FILE_ *f);
+/* Frente Sistemas: só estas quatro LSSharedFileList* chamam o armazenamento
+ * de Instalação (loginitems.c). O restante deste arquivo não muda. */
+int cx_login_add(const char *path);
+int cx_login_remove(const char *path);
+id cx_login_snapshot(unsigned *seed);
 id CFNumberCreate(void *alloc, long type, const void *p);
 size_t CGDisplayPixelsWide(u32 d);
 size_t CGDisplayPixelsHigh(u32 d);
@@ -498,8 +500,8 @@ OSStatus UCKeyTranslate(const void *layout, u16 code, u16 action, u32 mods, u32 
     return -50;   /* paramErr: sem layout uchr */
 }
 /* Itens de login: uma linha (caminho absoluto) em ~/Library/Preferences/com.mos.loginitems.
- * O init (launchd) lê esse arquivo e inicia o programa. O snapshot continua vazio: a lista
- * viva é o arquivo, não um objeto CF. Remover um item ainda não reescreve o arquivo. */
+ * Quem reescreve o arquivo é loginitems.c. O init deixa de subir o caminho que saiu.
+ * openSystemSettingsLoginItems continua em slack_frameworks.c, sem janela (Interface). */
 static const char *login_url_path(id url) {
     const char *s;
     if (!url) return 0;
@@ -512,28 +514,33 @@ static const char *login_url_path(id url) {
     if (s && !strncmp(s, "file://", 7)) return s + 7;
     return 0;
 }
-static void login_item_remember(const char *path) {
-    char file[400];
-    const char *home = getenv("HOME");
-    FILE_ *f;
-    if (!path || path[0] != '/') return;
-    if (!home || !home[0]) home = "/Users/Visitante";
-    snprintf(file, sizeof file, "%s/Library/Preferences/com.mos.loginitems", home);
-    f = fopen(file, "a");
-    if (!f) return;
-    fputs(path, f);
-    fputc('\n', f);
-    fclose(f);
+static id login_file_url(const char *path) {
+    id u;
+    if (!path) return 0;
+    u = MSG(id, cls("NSURL"), "fileURLWithPath:", cx_str(path));
+    return u ? objc_retain(u) : 0;
 }
 id LSSharedFileListCreate(void *alloc, id type, id opts) { (void)alloc; (void)type; (void)opts; return token(); }
-id LSSharedFileListCopySnapshot(id list, u32 *seed) { (void)list; if (seed) *seed = 1; return empty_array(); }
-id LSSharedFileListInsertItemURL(id list, id after, id name, void *icon, id url, id props, id remove) {
-    (void)list; (void)after; (void)name; (void)icon; (void)props; (void)remove;
-    login_item_remember(login_url_path(url));
-    return token();
+id LSSharedFileListCopySnapshot(id list, u32 *seed) {
+    (void)list;
+    return cx_login_snapshot(seed);
 }
-OSStatus LSSharedFileListItemRemove(id list, id item) { (void)list; (void)item; return 0; }
-id LSSharedFileListItemCopyResolvedURL(id item, u32 flags, id *err) { (void)item; (void)flags; if (err) *err = 0; return 0; }
+id LSSharedFileListInsertItemURL(id list, id after, id name, void *icon, id url, id props, id remove) {
+    const char *path = login_url_path(url);
+    (void)list; (void)after; (void)name; (void)icon; (void)props; (void)remove;
+    if (cx_login_add(path) != 0) return 0;
+    return login_file_url(path);
+}
+OSStatus LSSharedFileListItemRemove(id list, id item) {
+    const char *path = login_url_path(item);
+    (void)list;
+    return cx_login_remove(path) == 0 ? 0 : -50;
+}
+id LSSharedFileListItemCopyResolvedURL(id item, u32 flags, id *err) {
+    (void)flags;
+    if (err) *err = 0;
+    return login_file_url(login_url_path(item));
+}
 id LSSharedFileListItemCopyProperty(id item, id name) { (void)item; (void)name; return 0; }
 static OSStatus ls_open(id url) {
     id ws = MSG0(id, cls("NSWorkspace"), "sharedWorkspace");

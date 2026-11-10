@@ -136,5 +136,5 @@ O `machocheck` (`tools/machocheck.c`) rodou no WhatsApp 2.26.45.13. Antes, com l
 Consulta em 2026-11-10, PRs abertos:
 
 - AppKit (tabelas, teclado, barra de menus) não toca estes arquivos.
-- Instalação/runtime edita `vscode_frameworks.c` em `LSSharedFileList*` (itens de login em `Library/Preferences/com.mos.loginitems`, sem sufixo `.plist`). Esta frente edita o mesmo arquivo só nas funções AX. O launchd dessa branch continua varrendo `LaunchAgents` e `LaunchDaemons`, que é onde o SMAppService publica o plist.
+- Instalação/runtime edita `vscode_frameworks.c` só em `LSSharedFileList*` (itens de login em `Library/Preferences/com.mos.loginitems`, sem sufixo `.plist`). Incluir, listar e remover reescrevem o arquivo. A janela de Ajustes não está nesta frente: `-[SMAppService openSystemSettingsLoginItems]` em `slack_frameworks.c` (`sm_open_settings`) segue sem UI. Esta frente edita o mesmo arquivo só nas funções AX. O launchd continua varrendo `LaunchAgents` e `LaunchDaemons`, que é onde o SMAppService publica o plist.
 - JIT não toca libSystem desta frente.
