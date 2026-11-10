@@ -12,7 +12,9 @@
  *    Delete (kSecReturnData/Attributes/Ref, kSecMatchLimitOne/All) e a API antiga SecKeychainFindGenericPassword/
  *    AddGenericPassword/ItemModifyAttributesAndData/ItemDelete/ItemFreeContent. Os itens ficam em
  *    $HOME/Library/Keychains/mos-keychain.txt. A versão 2 do arquivo é ciphertext (HMAC em modo
- *    contador + MAC). A chave sai do nome de login, não de uma senha: ver kcseal.inc.
+ *    contador + MAC). A chave são 32 bytes de getentropy(), em mos-keychain.key (0600, pasta
+ *    0700). Um arquivo versão 2 antigo, cifrado com a chave derivada do login, é aberto uma vez
+ *    e regravado com a chave nova; se essa regravação falha, o arquivo original fica no lugar.
  *    A versão 1 (texto) ainda é lida e, na gravação seguinte, vira versão 2.
  *  - SecCertificateCreateWithData/CopyData (o certificado é o DER num CFData), SecCopyErrorMessageString.
  * O que responde "indisponível" com o erro que a API documenta (regra de chrome.c: nunca 0/sucesso sem preencher):
@@ -175,6 +177,13 @@ static int keychain_path(char *buf, size_t n, int mk) {
     return 1;
 }
 
+static int keyfile_path(char *buf, size_t n) {
+    const char *home = getenv("HOME");
+    if (!home || !*home) home = "/Usuarios/visitante";
+    cx_snprintf(buf, n, "%s/Library/Keychains/mos-keychain.key", home);
+    return 1;
+}
+
 /* formato do arquivo: "mOS-keychain 1\n" e uma linha por item:
  *   classe id cdat mdat dados f0 f1 ... f6\n   (campos binários em hex; "-" = ausente) */
 static const char HEX[] = "0123456789abcdef";
@@ -251,12 +260,32 @@ static void load(void) {
     if (!buf) return;
     if (len >= 15 && !memcmp(buf, "mOS-keychain 2\n", 15)) {
         u8 key[32];
-        char login[96];
+        char kpath[512];
         u8 *plain = 0;
         u32 pn = 0;
-        kc_login(login, sizeof login);
-        kc_key_from(login, key);
-        int r = kc_open(key, (const u8 *)buf, (u32)len, &plain, &pn);
+        keyfile_path(kpath, sizeof kpath);
+        int kr = kc_key_read(kpath, key);
+        int r = kr == 0 ? kc_open(key, (const u8 *)buf, (u32)len, &plain, &pn) : -1;
+        if (r != 0) {
+            u8 old[32];
+            char login[96];
+            kc_login(login, sizeof login);
+            kc_key_from(login, old);
+            r = kc_open(old, (const u8 *)buf, (u32)len, &plain, &pn);
+            memset(old, 0, sizeof old);
+            if (r == 0 && plain) {
+                if (kr != 0) kr = kc_key_create(kpath, key);
+                if (kr == 0) {
+                    u8 *sealed = 0;
+                    u32 sn = 0;
+                    if (kc_seal(key, plain, pn, &sealed, &sn) == 0 && sealed) {
+                        if (kc_replace_file(path, sealed, sn) != 0) { /* original conservado */ }
+                        memset(sealed, 0, sn);
+                        free(sealed);
+                    }
+                }
+            }
+        }
         memset(key, 0, sizeof key);
         free(buf);
         if (r != 0 || !plain) { kc_blocked = 1; return; }
@@ -312,12 +341,13 @@ static OSStatus save(void) {
     }
     size_t plain_n = (size_t)(o - out);
     u8 key[32];
-    char login[96];
+    char kpath[512];
     u8 *sealed = 0;
     u32 sn = 0;
-    kc_login(login, sizeof login);
-    kc_key_from(login, key);
-    int sealed_ok = kc_seal(key, (const u8 *)out, (u32)plain_n, &sealed, &sn);
+    keyfile_path(kpath, sizeof kpath);
+    int sealed_ok = kc_key_ensure(kpath, key);
+    if (sealed_ok == 0) sealed_ok = kc_seal(key, (const u8 *)out, (u32)plain_n, &sealed, &sn);
+    else sealed_ok = -1;
     memset(key, 0, sizeof key);
     memset(out, 0, plain_n);
     free(out);
@@ -334,7 +364,7 @@ static OSStatus save(void) {
     memset(sealed, 0, sn);
     free(sealed);
     if (done != total) { unlink(tmp); return errSecNotAvailable; }
-    if (rename(tmp, path) != 0) { unlink(path); if (rename(tmp, path) != 0) return errSecNotAvailable; }
+    if (rename(tmp, path) != 0) { unlink(tmp); return errSecNotAvailable; }
     return errSecSuccess;
 }
 
