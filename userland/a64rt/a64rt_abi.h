@@ -105,7 +105,9 @@ _Static_assert(sizeof(a64_darwin_ucontext_t) == 56, "ucontext");
 #define A64_ESR_IL          (1u << 25)
 #define A64_ESR_WNR         (1u << 6)
 #define A64_ESR_DFSC_TRANS  0x07     /* falta de tradução, nível 3 */
+#define A64_ESR_DFSC_ALIGN  0x21     /* falta de alinhamento (DFSC) */
 #define A64_ESR_DFSC_PERM   0x0F     /* falta de permissão, nível 3 */
+#define A64_ESR_EC_FP       0x2C     /* exceção de ponto flutuante com armadilha → SIGFPE */
 
 /* ---- sysctl coerente com A64_FEATURES (userland/a64/a64.h) para o libSystem arm64 ------------------
  * Uso no libSystem arm64: A64RT_SYSCTL_INTS(X) com X(nome, valor) e A64RT_SYSCTL_STRS(X). Os FEAT_* vêm

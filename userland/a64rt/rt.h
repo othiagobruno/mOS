@@ -52,6 +52,7 @@ typedef struct rt_thread {
     u64 ss_sp, ss_size;
     u64 hstack_lo;                  /* base da pilha do host (= este bloco) */
     long syscall_nr;                /* syscall em andamento (SA_RESTART) */
+    int intr_sig;                   /* sinal que interrompeu a syscall do guest (0 = nenhum); o primeiro, não o último */
     int sig_depth;
     volatile u64 freed_ms;          /* SYS_TIME de quando a thread saiu (reuso só depois de uma carência) */
 } rt_thread_t;
@@ -80,6 +81,15 @@ void rt_sig_return_old(rt_thread_t *T);
 void rt_sig_raise_sync(rt_thread_t *T, int sig, int code, u64 addr, u32 esr);  /* UDF/BRK/FAULT/SIGSYS */
 void rt_sig_deliver_pending(rt_thread_t *T, int interrupted_restartable);
 bool rt_sig_restart_ok(int sig);
+/* saída do motor (BRK/UDF/HLT/FAULT) → sinal síncrono com si_addr, pc e ESR do guest */
+void rt_sig_from_motor(rt_thread_t *T, int reason);
+/* A64_EXIT_FAULT: SIGBUS (alinhamento de PC, de SP ou de dado). sig/code/esr de saída. */
+void rt_sig_classify_fault(const a64_cpu *c, int *sig, int *code, u32 *esr);
+/* ESR de uma falta do host já com o pc guest reconstruído (SEGV/BUS/ILL/FPE/TRAP). */
+u32 rt_sig_esr_host(int sig, u32 err, u64 addr, u64 guest_pc);
+/* EINTR na syscall nr: 1 se o sinal que a interrompeu tem SA_RESTART e a chamada é refazível.
+ * Consome intr_sig. O pendente continua, para o tratador rodar antes da syscall refeita. */
+bool rt_sig_should_restart(rt_thread_t *T, long nr);
 void rt_host_signal(int sig, mos_siginfo_t *si, mos_ucontext_t *uc);
 void rt_sig_fork_child(void);
 void rt_fbstat_final(const char *quando);
