@@ -2,7 +2,7 @@
 #pragma once
 #import <Foundation/Foundation.h>
 
-@class NSWindow, NSView, NSEvent, NSColor, NSFont, NSMenu, NSScreen, NSImage, NSTableView, NSTableColumn;
+@class NSURL, NSWindow, NSView, NSEvent, NSColor, NSFont, NSMenu, NSScreen, NSImage, NSTableView, NSTableColumn;
 
 typedef NS_ENUM(NSInteger, NSApplicationActivationPolicy) {
     NSApplicationActivationPolicyRegular = 0, NSApplicationActivationPolicyAccessory = 1,
