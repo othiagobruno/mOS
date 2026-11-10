@@ -84,12 +84,39 @@ entregas, envios e interrupções saem na serial como linhas `sinal: ...`.
   enviado depois vai direto para quem espera, mesmo bloqueado.
 - `sigaltstack` (`MOS_SIGOP_ALTSTACK`): por thread, mínimo de 32 KiB (`MINSIGSTKSZ`), `EPERM` se está nela.
 - `pthread_kill`/`raise` (`MOS_SIGOP_TKILL`); `kill`/`killpg` de grupo vão pelo `SYS_TTY` (`pty.c`).
-- **SIGCHLD**: todo filho que termina manda SIGCHLD ao pai com `CLD_EXITED`/`CLD_KILLED`, `si_pid` e
-  `si_status`; com a ação padrão (ignorar) ele some sem acordar ninguém, salvo um `sigwait` por ele.
 - `alarm`/`setitimer(ITIMER_REAL)` continuam numa thread auxiliar do libSystem, que bloqueia todos os sinais
   para o SIGALRM cair numa thread do programa.
+- **SIGCHLD**: todo filho que termina manda SIGCHLD ao pai com `CLD_EXITED`/`CLD_KILLED`, `si_pid` e
+  `si_status`; com a ação padrão (ignorar) ele some sem acordar ninguém, salvo um `sigwait` por ele.
+  Parar e continuar também mandam SIGCHLD (`CLD_STOPPED`/`CLD_CONTINUED`), salvo `SA_NOCLDSTOP` no pai.
+
+## Parar e continuar
+
+`SIGSTOP`, e `SIGTSTP`/`SIGTTIN`/`SIGTTOU` com a ação padrão, param o processo inteiro: o escalonador
+não escolhe nenhuma thread dele, inclusive as do tradutor ARM64 (são threads do mesmo processo).
+`SIGCONT` descarta paradas pendentes e, se estava parado, volta a rodar. `SIGSTOP` não se pega nem se
+ignora. Os outros três, com tratador, são entregues em vez de parar; ignorados ou bloqueados, não param.
+Um segundo sinal de parada com o processo já parado é descartado (não gera outro `SIGCHLD`).
+
+`waitpid` com `WUNTRACED` informa a parada (`(sinal << 8) | 0x7f`, número do kernel; o libSystem traduz
+o byte alto, então `SIGSTOP` chega ao macOS como 17 e `WIFSTOPPED`/`WSTOPSIG` fecham). `WCONTINUED`
+informa a volta (`SIGCONT`, 19 nos dois lados, então `WIFCONTINUED`). A saída do processo continua
+tendo prioridade. O `^Z` do terminal (`SIGTSTP`) e o job control (`SIGTTIN` na leitura do escravo fora
+do grupo em primeiro plano, `SIGTTOU` na escrita se `TOSTOP`) usam o mesmo caminho. Grupo órfão não
+para: a chamada devolve `EIO`. `waitid` (`cli.c`) continua só com saída e morte; o job control dos shells passa por `waitpid`.
+
+## Decisões
+
+- **Armadilhas do FPCR.** No Apple Silicon os bits IDE, IXE, UFE, OFE, DZE e IOE são RES0. O mOS faz o
+  mesmo: `A64_FPCR_MASK` (e o sigreturn do tradutor) os zera, e não há `SIGFPE` por `IOE`. Os apps
+  (V8 inclusive) observam os sticky flags do FPSR, não essas armadilhas. Ligar `IXE` geraria sinal em
+  quase toda operação inexata e divergiria do hardware que os binários esperam. O `a64sig` confere que
+  o bit volta 0.
+- **Sinais padrão iguais.** Ficam coalescidos: um bit por sinal, e o `siginfo` mais recente substitui o
+  anterior. É o que o POSIX permite para sinais não tempo-real, e é o que o `SIGCHLD` precisa (o último
+  estado do filho). A fila do `sigqueue` (sinais de tempo real) continua ausente.
 
 ## Falta
 
-Parar/continuar processos (STOP/TSTP/CONT são ignorados), fila de sinais de tempo real (`sigqueue`),
+Fila de sinais de tempo real (`sigqueue`),
 temporizadores no kernel (`ITIMER_VIRTUAL`/`PROF`) e `SA_NOCLDWAIT`/`SIG_IGN` no SIGCHLD colhendo filhos sozinho.

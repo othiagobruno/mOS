@@ -697,6 +697,9 @@ static void finish(process_t *p, int code) {
     if (p->exited) return;
     p->exited = true;
     p->exit_code = code;
+    p->stopped = 0;
+    p->stop_unreported = 0;
+    p->cont_unreported = 0;
     drop_pipe_waiters(p, NULL);
     for (thread_t *t = sched_threads(); t; t = t->next)   /* todas as threads do processo */
         if (t->proc == p) {
@@ -1122,6 +1125,7 @@ static void dump_threads_maybe(int_frame_t *cur) {
  * pendente para a próxima thread que voltar ao ring 3. */
 #define SIG_BIT(s) (1u << (s))
 #define SIG_UNBLOCKABLE (SIG_BIT(MOS_SIGKILL) | SIG_BIT(MOS_SIGSTOP))
+#define STOP_BITS (SIG_BIT(MOS_SIGSTOP) | SIG_BIT(MOS_SIGTSTP) | SIG_BIT(MOS_SIGTTIN) | SIG_BIT(MOS_SIGTTOU))
 #define SIGFRAME_MAGIC 0x6D4F535349474E4CULL   /* "mOSSIGNL" */
 #define SIG_MINSTKSZ 32768                     /* MINSIGSTKSZ do macOS */
 #define WAIT_SIGSUSPEND -10
@@ -1147,16 +1151,17 @@ _Static_assert(sizeof(usigframe_t) % 16 == 0, "quadro alinhado");
 
 typedef struct { int code, pid, status; u64 addr; } siginfo_k;
 
-/* ação padrão "ignorar" (macOS: CHLD, URG, CONT, WINCH, INFO, IO). O mOS não para processos, então os de parada
- * (STOP, TSTP, TTIN, TTOU) também são ignorados: antes o ^Z do terminal ou o SIGWINCH de um redimensionamento
- * encerravam o programa em primeiro plano */
+/* ação padrão "ignorar" (macOS: CHLD, URG, CONT, WINCH, INFO, IO). CONT continua o processo antes deste
+ * teste. STOP/TSTP/TTIN/TTOU não entram: a ação padrão para o processo (proc_stop), não o encerra. */
 static bool default_ignored(int sig) {
     switch (sig) {
     case MOS_SIGCHLD: case MOS_SIGURG: case MOS_SIGCONT: case MOS_SIGWINCH: case MOS_SIGINFO: case MOS_SIGIO:
-    case MOS_SIGSTOP: case MOS_SIGTSTP: case MOS_SIGTTIN: case MOS_SIGTTOU:
         return true;
     }
     return false;
+}
+static bool is_stop_sig(int sig) {
+    return sig == MOS_SIGSTOP || sig == MOS_SIGTSTP || sig == MOS_SIGTTIN || sig == MOS_SIGTTOU;
 }
 static bool sig_ignored(process_t *p, int sig) {
     u64 h = p->sig_handler[sig];
@@ -1229,12 +1234,98 @@ static void sig_kill_default(process_t *p, int sig) {
     finish(p, -sig);
 }
 
+static void sig_clear_pending(process_t *p, u32 bits) {
+    p->sig_pending &= ~bits;
+    for (thread_t *w = sched_threads(); w; w = w->next)
+        if (w->proc == p) w->sig_pending &= ~bits;
+}
+
+/* status de parada/continuação no formato do Darwin: (sinal << 8) | 0x7f. O número é o do kernel;
+ * o libSystem traduz o byte alto (STOP 20 → 17) para WSTOPSIG/WIFCONTINUED. */
+static int stop_status(int sig) { return (sig << 8) | 0x7F; }
+
+/* acorda no máximo um waitpid do pai que pediu este evento. Antes do SIGCHLD, para o tratador do pai
+ * não consumir o status com waitpid(WNOHANG) e deixar o waitpid bloqueado sem resposta. */
+static void report_child_event(process_t *p, int st, bool cont) {
+    if (p->ppid <= 0) return;
+    for (thread_t *w = sched_threads(); w; w = w->next) {
+        if (!w->wait_posix || w->state != TH_WAITING || !w->proc || w->proc->pid != p->ppid) continue;
+        if (w->wait_pid != p->pid && w->wait_pid != -1) continue;
+        if (cont ? !(w->wait_opt & MOS_WCONTINUED) : !(w->wait_opt & MOS_WUNTRACED)) continue;
+        if (w->wait_status) uvm_copy_out(w->proc, w->wait_status, &st, sizeof st);
+        ((int_frame_t *)w->frame)->rax = (u64)p->pid;
+        w->wait_posix = false;
+        w->wait_pid = 0;
+        w->state = TH_READY;
+        if (cont) p->cont_unreported = 0;
+        else p->stop_unreported = 0;
+        return;
+    }
+}
+
+static bool sig_post(process_t *p, thread_t *th, int sig, const siginfo_k *k);
+static void notify_parent_cld(process_t *p, int code, int status) {
+    if (p->ppid <= 0) return;
+    process_t *par = find(p->ppid);
+    if (!par || par->exited) return;
+    if (par->sig_flags[MOS_SIGCHLD] & MOS_SA_NOCLDSTOP) return;
+    siginfo_k ck = { code, p->pid, status, 0 };
+    sig_post(par, NULL, MOS_SIGCHLD, &ck);
+}
+
+/* para todas as threads (nativas e as do tradutor ARM64: são threads deste processo). Já parado: o POSIX
+ * descarta o sinal novo e não manda outro SIGCHLD. */
+static void proc_stop(process_t *p, int sig) {
+    if (!p || p->exited || p->stopped) return;
+    p->stopped = sig;
+    p->cont_unreported = 0;
+    p->stop_unreported = 1;
+    report_child_event(p, stop_status(sig), false);
+    notify_parent_cld(p, MOS_CLD_STOPPED, sig);
+    { extern void smp_kick_proc(process_t *p); smp_kick_proc(p); }
+}
+
+static void proc_continue(process_t *p) {
+    if (!p || !p->stopped) return;
+    p->stopped = 0;
+    p->stop_unreported = 0;
+    p->cont_unreported = 1;
+    report_child_event(p, stop_status(MOS_SIGCONT), true);
+    notify_parent_cld(p, MOS_CLD_CONTINUED, MOS_SIGCONT);
+}
+
+/* todas as threads vivas bloqueiam sig? (SIGSTOP não conta: é unblockable) */
+static bool sig_blocked_everywhere(process_t *p, thread_t *only, int sig) {
+    if (SIG_BIT(sig) & SIG_UNBLOCKABLE) return false;
+    bool any = false;
+    for (thread_t *w = sched_threads(); w; w = w->next) {
+        if (w->proc != p || w->state == TH_DEAD) continue;
+        if (only && w != only) continue;
+        any = true;
+        if (!(w->sig_mask & SIG_BIT(sig))) return false;
+    }
+    return any;
+}
+
 /* sinal para o processo (kill) ou para uma thread (pthread_kill, faltas) */
 static bool sig_post(process_t *p, thread_t *th, int sig, const siginfo_k *k) {
     if (!p || p->exited) return false;
     if (sig == MOS_SIGKILL) { finish(p, -MOS_SIGKILL); return true; }
+    if (sig == MOS_SIGCONT) {
+        sig_clear_pending(p, STOP_BITS);             /* POSIX: CONT descarta paradas pendentes */
+        if (p->stopped) proc_continue(p);
+    } else if (is_stop_sig(sig))
+        sig_clear_pending(p, SIG_BIT(MOS_SIGCONT));
     if (sig_to_waiter(p, th, sig, k)) return true;      /* sigwait pega mesmo bloqueado (é o uso normal) */
-    if (sig_ignored(p, sig)) return true;               /* some aqui, sem acordar ninguém com EINTR (SIGWINCH...) */
+    if (is_stop_sig(sig)) {
+        bool caught = sig != MOS_SIGSTOP && p->sig_handler[sig] > MOS_SIG_IGN;
+        bool held = sig_blocked_everywhere(p, th, sig);
+        if (!caught) {
+            if (sig != MOS_SIGSTOP && sig_ignored(p, sig)) return true;   /* TSTP/TTIN/TTOU ignorados não param */
+            if (!held) { proc_stop(p, sig); return true; }                /* ação padrão: para já, sem EINTR */
+        }
+        /* bloqueado, ou com tratador: fica pendente e sai quando desbloquear / na volta ao ring 3 */
+    } else if (sig_ignored(p, sig)) return true;        /* some aqui, sem acordar ninguém com EINTR (SIGWINCH...) */
     if (th) { th->sig_pending |= SIG_BIT(sig); th->sig_info[sig].code = k->code; th->sig_info[sig].pid = k->pid;
               th->sig_info[sig].status = k->status; th->sig_info[sig].addr = k->addr; }
     else    { p->sig_pending |= SIG_BIT(sig); p->sig_info[sig].code = k->code; p->sig_info[sig].pid = k->pid;
@@ -1266,6 +1357,16 @@ bool proc_signal_info(int pid, int sig, int code, int spid, int status) {
 bool proc_signal(int pid, int sig) {
     thread_t *c = thread_current();
     return proc_signal_info(pid, sig, MOS_SI_USER, c && c->proc ? c->proc->pid : 0, 0);
+}
+
+/* pty.c, com a trava já segurada. Não gera o sinal se ele for ignorado ou se esta thread o bloqueia. */
+int proc_job_signal(process_t *p, thread_t *th, int sig) {
+    if (!p || p->exited || !is_stop_sig(sig)) return 0;
+    if (sig != MOS_SIGSTOP && (p->sig_handler[sig] == MOS_SIG_IGN || (th && (th->sig_mask & SIG_BIT(sig)))))
+        return 0;
+    siginfo_k k = { MOS_SI_KERNEL, p ? p->pid : 0, 0, 0 };
+    sig_post(p, NULL, sig, &k);
+    return p->stopped ? 1 : 2;
 }
 
 /* syscalls que o SA_RESTART refaz (as demais bloqueantes devolvem EINTR, como no macOS: sleep, poll, sigsuspend) */
@@ -1347,6 +1448,10 @@ u64 proc_signal_check(int_frame_t *f) {
     process_t *p = t ? t->proc : NULL;
     if (!p || (f->cs & 3) != 3) return (u64)f;
     if (p->exited) return t->state == TH_DEAD ? sched_switch(f) : (u64)f;   /* morto agora (kill -9 em si mesmo): não volta */
+    if (p->stopped) {                                    /* SIGSTOP em si mesmo, ou o kick de outro núcleo */
+        if (t->state == TH_RUNNING) t->state = TH_READY;
+        return sched_switch(f);
+    }
     for (;;) {
         u32 ready = (t->sig_pending | p->sig_pending) & ~(t->sig_mask & ~SIG_UNBLOCKABLE);
         if (!ready) break;
@@ -1361,6 +1466,14 @@ u64 proc_signal_check(int_frame_t *f) {
             k.code = p->sig_info[sig].code; k.pid = p->sig_info[sig].pid; k.status = p->sig_info[sig].status; k.addr = p->sig_info[sig].addr;
         }
         if (sig_ignored(p, sig)) continue;
+        if (is_stop_sig(sig)) {
+            /* desbloqueou uma parada que estava pendente. Com tratador, entrega; senão para (não mata). */
+            if (sig != MOS_SIGSTOP && p->sig_handler[sig] > MOS_SIG_IGN && (p->sig_tramp[sig] || p->sig_restorer))
+                return sig_deliver(f, t, p, sig, &k);
+            proc_stop(p, sig);
+            if (t->state == TH_RUNNING) t->state = TH_READY;
+            return sched_switch(f);
+        }
         u64 h = p->sig_handler[sig];
         if (h == MOS_SIG_DFL || (!p->sig_tramp[sig] && !p->sig_restorer)) {   /* ação padrão: encerra */
             sig_kill_default(p, sig);
@@ -2329,25 +2442,40 @@ static u64 proc_syscall_(int_frame_t *f) {
     }
     case SYS_WAITPID: {
         int want = (int)(i64)a;
+        int opt = (int)c;
         bool any = false;
+        process_t *hit = NULL;
+        int st = 0, kind = 0;                          /* 1 saída, 2 parada, 3 continuação */
         r = 0;
         for (process_t *q = procs; q; q = q->next) {
             if (q->ppid != p->pid || (want > 0 && q->pid != want)) continue;
             any = true;
-            if (q->exited) {
-                int st = posix_status(q->exit_code);
-                if (b) uvm_copy_out(p, b, &st, sizeof st);
-                q->ppid = -1;                              /* recolhido: trim_zombies libera depois */
-                r = q->pid;
-                break;
-            }
+            if (q->exited) { hit = q; kind = 1; st = posix_status(q->exit_code); break; }
         }
-        if (r > 0) break;
+        if (!hit && (opt & MOS_WUNTRACED))
+            for (process_t *q = procs; q; q = q->next) {
+                if (q->ppid != p->pid || (want > 0 && q->pid != want) || !q->stopped || !q->stop_unreported) continue;
+                hit = q; kind = 2; st = stop_status(q->stopped); break;
+            }
+        if (!hit && (opt & MOS_WCONTINUED))
+            for (process_t *q = procs; q; q = q->next) {
+                if (q->ppid != p->pid || (want > 0 && q->pid != want) || q->exited || q->stopped || !q->cont_unreported) continue;
+                hit = q; kind = 3; st = stop_status(MOS_SIGCONT); break;
+            }
+        if (hit) {
+            if (b) uvm_copy_out(p, b, &st, sizeof st);
+            if (kind == 1) hit->ppid = -1;             /* recolhido: trim_zombies libera depois */
+            else if (kind == 2) hit->stop_unreported = 0;
+            else hit->cont_unreported = 0;
+            r = hit->pid;
+            break;
+        }
         if (!any) { r = -MOS_ECHILD; break; }
-        if (c & MOS_WNOHANG) { r = 0; break; }
+        if (opt & MOS_WNOHANG) { r = 0; break; }
         t->wait_pid = want > 0 ? want : -1;
         t->wait_status = b;
         t->wait_posix = true;
+        t->wait_opt = opt;
         t->state = TH_WAITING;
         return sched_switch(f);
     }
@@ -3019,7 +3147,7 @@ static u64 proc_syscall_(int_frame_t *f) {
 
     /* ---- sinais */
     case SYS_SIGACTION:
-        if (a == 0 || a >= MOS_NSIG || a == MOS_SIGKILL) { r = -MOS_EINVAL; break; }
+        if (a == 0 || a >= MOS_NSIG || a == MOS_SIGKILL || a == MOS_SIGSTOP) { r = -MOS_EINVAL; break; }
         if (b > MOS_SIG_IGN && (b < USER_BASE || b >= USER_END)) { r = -MOS_EFAULT; break; }
         r = (i64)p->sig_handler[a];
         p->sig_handler[a] = b;

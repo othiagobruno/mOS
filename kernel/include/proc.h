@@ -66,6 +66,7 @@ typedef struct thread {
     int join_tid;           /* TH_WAITING em SYS_THREAD_JOIN */
     u64 gs_base;            /* base do GS em ring 3 (TLS das threads do macOS: gs:[chave*8]) */
     bool wait_posix;        /* SYS_WAITPID: rax = pid e status POSIX gravado em wait_status */
+    int wait_opt;           /* opções desse waitpid (MOS_WUNTRACED / MOS_WCONTINUED) */
     /* espera numa porta Mach (kernel/proc/machipc.c), com wait_pid = -7 e TH_WAITING */
     void *mach_wait;        /* porta ou conjunto esperado */
     u64 mach_deadline;      /* 0 = sem prazo; o escalonador acorda no prazo (rax já tem o erro de tempo) */
@@ -124,6 +125,11 @@ struct process {
     u32 sig_flags[32];      /* sa_flags (MOS_SA_*) */
     u64 sig_tramp[32];      /* trampolim do libSystem (0 = chamada direta com sig_restorer) */
     struct { int code, pid, status; u64 addr; } sig_info[32];   /* siginfo dos pendentes do processo */
+    /* parada do processo inteiro (SIGSTOP/TSTP/TTIN/TTOU). stopped = 0 rodando, senão o sinal do kernel
+     * que parou. Não é o thread_suspend do Mach (thread.suspend): o escalonador pula todas as threads. */
+    int stopped;
+    int stop_unreported;    /* 1 até um waitpid com WUNTRACED consumir */
+    int cont_unreported;    /* 1 até um waitpid com WCONTINUED consumir */
     struct { int tid, code; } texit[16];   /* códigos de threads já encerradas (para join) */
     tty_t *tty;             /* NULL = console global do sistema */
     char cwd[128];          /* pasta atual (caminhos relativos nas syscalls) */
@@ -157,6 +163,9 @@ void      pty_proc_init(process_t *child, process_t *parent, unsigned spawn_flag
 void      pty_proc_exit(process_t *p);                                      /* líder de sessão saindo: SIGHUP e desliga o terminal */
 process_t *proc_list(void);                                                 /* lista de processos (proc/process.c) */
 process_t *proc_find(int pid);
+/* job control (pty.c): 0 = ignorado ou bloqueado (o chamador devolve EIO na leitura e segue na escrita);
+ * 1 = o processo parou (refazer a syscall quando continuar); 2 = há tratador (EINTR, SA_RESTART na volta) */
+int       proc_job_signal(process_t *p, thread_t *th, int sig);
 
 /* páginas físicas compartilhadas entre espaços (memória Mach, proc/process.c) */
 bool      uvm_map_phys(process_t *p, u64 va, u64 phys, bool rw);  /* mais uma referência à página */

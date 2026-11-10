@@ -206,7 +206,9 @@ enum {
 #define MOS_O_NONBLOCK 0x0800    /* leitura/escrita que esperaria devolve -EAGAIN (o kernel só consulta em terminais;
                                     nos pipes o libSystem decide pelo SYS_FSTAT) */
 #define MOS_O_CLOEXEC 0x1000000  /* valor do macOS: o fd fecha no execve */
-#define MOS_WNOHANG  1           /* SYS_WAITPID: não bloqueia (devolve 0) */
+#define MOS_WNOHANG    1         /* SYS_WAITPID: não bloqueia (devolve 0) */
+#define MOS_WUNTRACED  2         /* também informa filho parado (status (sinal << 8) | 0x7f) */
+#define MOS_WCONTINUED 0x10      /* também informa filho que voltou a rodar (WIFCONTINUED: sinal 19) */
 
 /* sinais (números do Linux/BSD para os comuns) */
 #define MOS_SIGHUP   1
@@ -308,6 +310,7 @@ typedef struct {
 #define MOS_SI_USER     0x10001  /* si_code (valores do macOS) */
 #define MOS_SI_QUEUE    0x10002
 #define MOS_SI_TIMER    0x10003
+#define MOS_SI_KERNEL   0x80     /* gerado pelo kernel (job control do terminal) */
 #define MOS_SEGV_MAPERR 1
 #define MOS_SEGV_ACCERR 2
 #define MOS_BUS_ADRALN  1
@@ -316,8 +319,10 @@ typedef struct {
 #define MOS_FPE_FLTINV  5
 #define MOS_ILL_ILLOPC  1
 #define MOS_TRAP_BRKPT  1
-#define MOS_CLD_EXITED  1
-#define MOS_CLD_KILLED  2
+#define MOS_CLD_EXITED    1
+#define MOS_CLD_KILLED    2
+#define MOS_CLD_STOPPED   5      /* SIGCHLD: filho parou (si_status = sinal, número do kernel) */
+#define MOS_CLD_CONTINUED 6      /* SIGCHLD: filho voltou (si_status = SIGCONT) */
 
 /* SYS_DYLD: carregador Mach-O em tempo de execução (kernel/compat/macho.c, userland/libsystem/dlfcn.c).
  * Imagens são índices (0 = executável, na ordem de carga). Só processos Mach-O; senão -EINVAL. */
