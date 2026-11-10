@@ -11,6 +11,7 @@
 #include "proc.h"
 #include "smp_perf.h"
 #include "vfs.h"
+#include "cred.h"
 #include "syscall.h"
 #include "account.h"
 #include "fs.h"
@@ -854,6 +855,7 @@ __attribute__((weak)) i64 compat_gui_syscall(process_t *p, u64 n, u64 a, u64 b, 
 void proc_reap(process_t *p) { (void)p; }
 
 static void fd_close(process_t *p, int fd);
+static void spawn_finish_cred(process_t *child, thread_t *cur);
 
 /* código de saída do mOS -> status do wait(2): sinal em 0x7F, saída normal em 0xFF00.
  * finish() recebe -sinal quando o processo morre por sinal (proc_kill usa -9). */
@@ -1066,7 +1068,8 @@ int proc_spawn_in(const char *path, const char *arg, tty_t *tty,
     process_t *p = kcalloc(1, sizeof *p);
     if (!p) return -1;
     p->pid = next_pid++;
-    p->uid = p->euid = 501;
+    p->uid = p->euid = p->suid = 501;
+    p->gid = p->egid = p->sgid = 20;
     thread_t *cur = thread_current();
     p->ppid = cur && cur->proc ? cur->proc->pid : 0;
     pty_proc_init(p, cur ? cur->proc : NULL, spawn_flags);   /* sessão e grupo (POSIX_SPAWN_SETSID do node-pty) */
@@ -1114,11 +1117,7 @@ int proc_spawn_in(const char *path, const char *arg, tty_t *tty,
             finish(p, -1); return -1;
         }
         p->spawn_argv = NULL; p->spawn_argc = 0; p->spawn_env = NULL; p->spawn_envc = 0;
-        if (cur && cur->proc && (cur->proc->spawn_extra & 1))
-            for (int s = 1; s < 32; s++) if ((cur->proc->spawn_sigdef & (1u << s)) && p->sig_handler[s] == 1) p->sig_handler[s] = 0;
-        if (cur && cur->proc && (cur->proc->spawn_extra & 2) && p->main)
-            p->main->sig_mask = cur->proc->spawn_sigmask & ~((1u << MOS_SIGKILL) | (1u << MOS_SIGSTOP));
-        if (cur && cur->proc && (cur->proc->spawn_extra & 4)) p->euid = p->uid;
+        spawn_finish_cred(p, cur);
         if (spawn_flags & MOS_SPAWN_START_SUSPENDED) proc_hold(p);
         kprintf("proc: iniciado %s (Mach-O, pid %d, %llu KiB)\n", p->name, p->pid, p->mem_pages * 4);
         if (xargc || xenvc) kprintf("proc: %s pid %d recebeu %d argumentos e %d variáveis de ambiente\n", p->name, p->pid, xargc, xenvc);
@@ -1160,11 +1159,7 @@ int proc_spawn_in(const char *path, const char *arg, tty_t *tty,
     p->nthreads = p->main ? 1 : 0;
     irq_restore(fl);
     if (!p->main) { finish(p, -1); return -1; }
-    if (cur && cur->proc && (cur->proc->spawn_extra & 1))
-        for (int s = 1; s < 32; s++) if ((cur->proc->spawn_sigdef & (1u << s)) && p->sig_handler[s] == 1) p->sig_handler[s] = 0;
-    if (cur && cur->proc && (cur->proc->spawn_extra & 2) && p->main)
-        p->main->sig_mask = cur->proc->spawn_sigmask & ~((1u << MOS_SIGKILL) | (1u << MOS_SIGSTOP));
-    if (cur && cur->proc && (cur->proc->spawn_extra & 4)) p->euid = p->uid;
+    spawn_finish_cred(p, cur);
     if (spawn_flags & MOS_SPAWN_START_SUSPENDED) proc_hold(p);
     kprintf("proc: iniciado %s (pid %d, %llu KiB)\n", p->name, p->pid, p->mem_pages * 4);
     return p->pid;
@@ -2255,9 +2250,29 @@ i64 file_store_at(const char *path, u64 off, const void *src, u64 len) {
     return (i64)len;
 }
 
+static void spawn_finish_cred(process_t *child, thread_t *cur) {
+    process_t *par = cur && cur->proc ? cur->proc : NULL;
+    if (par) {
+        memcpy(child->sig_handler, par->sig_handler, sizeof child->sig_handler);
+        memcpy(child->sig_amask, par->sig_amask, sizeof child->sig_amask);
+        memcpy(child->sig_flags, par->sig_flags, sizeof child->sig_flags);
+        memcpy(child->sig_tramp, par->sig_tramp, sizeof child->sig_tramp);
+        child->sig_restorer = par->sig_restorer;
+        child->uid = par->uid; child->euid = par->euid; child->suid = par->suid;
+        child->gid = par->gid; child->egid = par->egid; child->sgid = par->sgid;
+        if (child->main && par->main) child->main->sig_mask = par->main->sig_mask;
+    }
+    unsigned mask = child->main ? child->main->sig_mask : 0;
+    cred_spawn_apply(child->sig_handler, &mask, &child->uid, &child->euid, &child->suid,
+                     &child->gid, &child->egid, &child->sgid,
+                     par ? par->spawn_sigdef : 0, par ? par->spawn_sigmask : 0, par ? par->spawn_extra : 0);
+    if (child->main) child->main->sig_mask = mask;
+}
+
 static void fill_stat(vnode_t *v, mos_stat_t *st) {
     st->size = v->dir ? 0 : v->size;
     st->is_dir = v->dir;
+    st->mode = mode_stat(v->mode, v->dir);
     /* vnode->mtime: ms desde o boot (0 = veio no disco de boot); sem data real, vale a hora do boot.
      * Com 0 (1970) o gzip e o tar reclamam de "timestamp out of range". */
     i64 boot = unix_now() - (i64)(timer_ticks() / 1000);
@@ -2824,6 +2839,7 @@ static u64 proc_syscall_(int_frame_t *f) {
             if (pr <= 0) { r = pr < 0 ? pr : fd; break; }
         }
         vnode_t *v = is_devnull(path) ? NULL : vfs_lookup(path);
+        int criado = 0;
         bool wr = b & (MOS_O_WRONLY | MOS_O_RDWR);
         if (is_devnull(path)) { /* sem vnode: read/write tratam pelo caminho */ }
         else if (!v) {
@@ -2837,6 +2853,7 @@ static u64 proc_syscall_(int_frame_t *f) {
                 r = -MOS_ENOENT;
                 break;
             }
+            criado = 1;
         } else if (v->dir && wr) { if (cdiag) kprintf("open[diag]: %s (pid %d): EISDIR %s\n", p->name, p->pid, path); r = -MOS_EISDIR; break; }
         else if (wr && (b & MOS_O_TRUNC)) vfs_write_file(path, "", 0);
         if (cdiag) kprintf("open[diag]: %s (pid %d): ok %s flags %llx%s\n", p->name, p->pid, path, b, v && v->dir ? " (pasta)" : v ? "" : " (criado)");
@@ -2849,7 +2866,11 @@ static u64 proc_syscall_(int_frame_t *f) {
         p->fds[fd].pipe2 = NULL;
         p->fds[fd].pty = NULL;
         p->fds[fd].flags = (int)b;
-        p->fds[fd].mode = (b & MOS_O_CREAT) ? (unsigned)(c ? c : 0644) : 0;
+        if (criado) {
+            v = vfs_lookup(path);
+            if (v && !v->dir) v->mode = mode_for_creat((unsigned)c);
+        }
+        p->fds[fd].mode = v ? mode_stat(v->mode, v->dir) : 0;
         p->fds[fd].off = 0;
         strncpy(p->fds[fd].path, path, sizeof p->fds[fd].path - 1);
         r = fd;
@@ -3095,6 +3116,21 @@ static u64 proc_syscall_(int_frame_t *f) {
         r = uvm_copy_out(p, b, &st, sizeof st) ? 0 : -MOS_EFAULT;
         break;
     }
+    case SYS_CHMOD: {
+        if (!copy_path(p, path, a)) { r = -MOS_EFAULT; break; }
+        vnode_t *cv = vfs_lookup(path);
+        if (!cv) { r = -MOS_ENOENT; break; }
+        mode_apply(&cv->mode, (unsigned)b);
+        persist_mark(cv);
+        r = 0;
+        break;
+    }
+    case SYS_GETUID: r = p->uid; break;
+    case SYS_GETEUID: r = p->euid; break;
+    case SYS_GETGID: r = p->gid; break;
+    case SYS_GETEGID: r = p->egid; break;
+    case SYS_SETEUID: r = cred_seteid(p->uid, p->suid, &p->euid, (int)a) < 0 ? -MOS_EPERM : 0; break;
+    case SYS_SETEGID: r = cred_seteid(p->gid, p->sgid, &p->egid, (int)a) < 0 ? -MOS_EPERM : 0; break;
     case SYS_READDIR: {
         if (!copy_path(p, path, a)) { r = -MOS_EFAULT; break; }
         vnode_t *d = vfs_lookup(path);
@@ -3431,8 +3467,8 @@ static u64 proc_syscall_(int_frame_t *f) {
         q->dyld = NULL;
         q->pid = next_pid++;
         q->ppid = p->pid;
-        q->uid = p->uid ? p->uid : 501;
-        q->euid = p->euid ? p->euid : q->uid;
+        q->uid = p->uid; q->euid = p->euid; q->suid = p->suid;
+        q->gid = p->gid; q->egid = p->egid; q->sgid = p->sgid;
         memcpy(q->name, p->name, sizeof q->name);
         memcpy(q->path, p->path, sizeof q->path);
         memcpy(q->cwd, p->cwd, sizeof q->cwd);
@@ -3498,7 +3534,8 @@ static u64 proc_syscall_(int_frame_t *f) {
         q->start_ms = timer_ticks();
         q->tty = p->tty;
         if (q->tty) q->tty->refs++;
-        q->uid = p->uid ? p->uid : 501; q->euid = p->euid ? p->euid : q->uid;
+        q->uid = p->uid; q->euid = p->euid; q->suid = p->suid;
+        q->gid = p->gid; q->egid = p->egid; q->sgid = p->sgid;
         q->pgid = p->pgid; q->sid = p->sid; q->ctty = p->ctty;   /* mesmo grupo, sessão e terminal de controle */
         machipc_spawn(p, q);                            /* como no macOS: o filho só herda as portas especiais */
         { extern void lazy_fork(process_t *from, process_t *to); lazy_fork(p, q); }   /* faixas sob demanda (mm/lazy.c) */
