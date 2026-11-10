@@ -77,7 +77,8 @@ static void test_chacha(void) {
     unhex(key, "808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9f");
     unhex(nonce, "070000004041424344454647");
     unhex(aad, "50515253c0c1c2c3c4c5c6c7");
-    unhex(pt, "4c616469657320616e642047656e746c656d656e206f662074686520636c617373206f66202739393a204966204920636f756c64206f6666657220796f75206f6e6c79206f6e652074697020666f7220746865206675747572652c2073756e73637265656e20776f756c642069742062653f");
+    /* "Ladies and Gentlemen ... sunscreen would be it." — RFC 8439 §2.8.2, 114 bytes. */
+    unhex(pt, "4c616469657320616e642047656e746c656d656e206f662074686520636c617373206f66202739393a204966204920636f756c64206f6666657220796f75206f6e6c79206f6e652074697020666f7220746865206675747572652c2073756e73637265656e20776f756c642062652069742e");
     /* RFC 8439 §2.3.2: bloco com contador 1 */
     u8 zkey[32], znonce[12], blk[64];
     for (int i = 0; i < 32; i++) zkey[i] = (u8)i;
@@ -85,10 +86,9 @@ static void test_chacha(void) {
     chacha20_block(zkey, 1, znonce, blk);
     check("ChaCha20 bloco RFC 8439", hexeq(blk, 64, "10f1e7e4d13b5915500fdd1fa32071c4c7d1f4c733c068030422aa9ac3d46c4ed2826446079faa0914c2d705d98b02a2b5129cd1de164eb9cbd083e8a2503c4e"));
     mos_ck_chachapoly_seal(key, nonce, aad, 12, pt, 114, ct, tag);
-    /* RFC 8439 §2.8.2. Os últimos 6 bytes do texto e a tag são os da cifra (conferidos também com a
-     * biblioteca cryptography), não uma transcrição truncada do quadro do RFC. */
-    check("ChaChaPoly RFC 8439 texto", hexeq(ct, 114, "d31a8d34648e60db7b86afbc53ef7ec2a4aded51296e08fea9e2b5a736ee62d63dbea45e8ca9671282fafb69da92728b1a71de0a9e060b2905d6a5b67ecd3b3692ddbd7f2d778b8c9803aee328091b58fab324e4fad675945585808b4831d7bc3ff4def08e4b7a9de576d2658ddfc6407007"));
-    check("ChaChaPoly RFC 8439 tag", hexeq(tag, 16, "045a97c8077b2505b9aaa3b1c14df55f"));
+    /* RFC 8439 §2.8.2, texto e tag publicados (keystream termina em e4 ab e6 22 15 38). */
+    check("ChaChaPoly RFC 8439 texto", hexeq(ct, 114, "d31a8d34648e60db7b86afbc53ef7ec2a4aded51296e08fea9e2b5a736ee62d63dbea45e8ca9671282fafb69da92728b1a71de0a9e060b2905d6a5b67ecd3b3692ddbd7f2d778b8c9803aee328091b58fab324e4fad675945585808b4831d7bc3ff4def08e4b7a9de576d26586cec64b6116"));
+    check("ChaChaPoly RFC 8439 tag", hexeq(tag, 16, "1ae10b594f09e26a7e902ecbd0600691"));
     int ok = mos_ck_chachapoly_open(key, nonce, aad, 12, ct, 114, tag, back) == 0 && memcmp(back, pt, 114) == 0;
     ct[0] ^= 1;
     ok = ok && mos_ck_chachapoly_open(key, nonce, aad, 12, ct, 114, tag, back) != 0;

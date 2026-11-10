@@ -39,6 +39,9 @@ static void library_path(char *out, size_t cap) {
     NSUInteger n;
 }
 @end
+@interface PHAsset (Fetch)
++ (PHFetchResult *)fetchAssetsWithOptions:(PHFetchOptions *)opts;
+@end
 @interface NSObject (MOSPhotos)
 - (BOOL)evaluateWithObject:(id)obj;
 - (NSString *)key;
@@ -64,7 +67,6 @@ static void library_path(char *out, size_t cap) {
     if (!strcmp(k, "hidden") || !strcmp(k, "isHidden")) return [NSNumber numberWithBool:a.hidden ? YES : NO];
     return nil;
 }
-+ (PHFetchResult *)fetchAssetsWithOptions:(PHFetchOptions *)opts;
 @end
 
 @implementation PHFetchResult

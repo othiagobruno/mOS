@@ -3,6 +3,7 @@
  * contendo uma árvore de diretórios. Uso: mkimg <saida.img> <diretorio> <tamanho_MiB>
  * A imagem pode ser gravada diretamente num pendrive (Rufus modo DD, balenaEtcher, dd).
  */
+#define _FILE_OFFSET_BITS 64
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -11,6 +12,11 @@
 #include <dirent.h>
 #include <sys/stat.h>
 #include <time.h>
+#ifdef _WIN32
+#include <io.h>
+#else
+#include <unistd.h>
+#endif
 #include "../kernel/include/ed25519_impl.h"
 #include "../kernel/include/fwlink.h"
 
@@ -28,8 +34,37 @@ typedef struct node {
     char sfn[11];
 } node;
 
-static uint8_t *img;
+/* A imagem não fica na RAM: cada região é gravada no arquivo (ftruncate esparso + escrita por offset).
+ * O que não é escrito permanece zero, como o calloc antigo da imagem inteira. */
+static FILE *imgf;
+static const char *img_path;
+static int img_committed;
 static uint64_t img_size;
+
+static void img_abort(void) {
+    if (imgf) { fclose(imgf); imgf = NULL; }
+    if (img_path && !img_committed) remove(img_path);
+}
+
+static void img_at(uint64_t off, const void *buf, size_t n) {
+    if (!n) return;
+#ifdef _WIN32
+    if (_fseeki64(imgf, (__int64)off, SEEK_SET) != 0 || fwrite(buf, 1, n, imgf) != n) {
+#else
+    if (fseeko(imgf, (off_t)off, SEEK_SET) != 0 || fwrite(buf, 1, n, imgf) != n) {
+#endif
+        perror("mkimg");
+        exit(1);
+    }
+}
+
+static int img_truncate(uint64_t n) {
+#ifdef _WIN32
+    return _chsize_s(_fileno(imgf), (__int64)n);
+#else
+    return ftruncate(fileno(imgf), (off_t)n);
+#endif
+}
 static uint32_t part_lba, part_sectors, fat_sectors, data_lba, total_clusters, next_cluster = 2;
 static uint32_t *fat;
 
@@ -211,7 +246,7 @@ static void alloc_clusters(node *n) {
     for (node *c = n->child; c; c = c->next) { make_sfn(c, idx++); alloc_clusters(c); }
 }
 
-static uint8_t *cluster_ptr(uint32_t c) { return img + (uint64_t)(part_lba + data_lba + (c - 2) * SPC) * SECTOR; }
+static uint64_t cluster_off(uint32_t c) { return (uint64_t)(part_lba + data_lba + (c - 2) * SPC) * SECTOR; }
 
 static uint8_t sfn_checksum(const char *s) {
     uint8_t sum = 0;
@@ -232,10 +267,13 @@ static void put_entry(uint8_t *e, const char *sfn, uint8_t attr, uint32_t cl, ui
 
 static void write_node(node *n) {
     if (!n->is_dir) {
-        if (n->size) memcpy(cluster_ptr(n->cluster), n->data, n->size);
+        if (n->size) img_at(cluster_off(n->cluster), n->data, n->size);
         return;
     }
-    uint8_t *e = cluster_ptr(n->cluster);
+    size_t bytes = (size_t)n->nclusters * CLUSTER;
+    uint8_t *buf = calloc(1, bytes ? bytes : 1);
+    if (!buf) { fprintf(stderr, "mkimg: sem memória para o diretório %s\n", n->name); exit(1); }
+    uint8_t *e = buf;
     if (n->parent) {
         put_entry(e, ".          ", 0x10, n->cluster, 0); e += 32;
         uint32_t pc = n->parent->parent ? n->parent->cluster : 0;
@@ -263,6 +301,8 @@ static void write_node(node *n) {
         e += 32;
         write_node(c);
     }
+    img_at(cluster_off(n->cluster), buf, bytes);
+    free(buf);
 }
 
 
@@ -556,20 +596,25 @@ int main(int argc, char **argv) {
         else { fprintf(stderr, "mkimg: argumento desconhecido: %s\n", argv[i]); return 1; }
     }
     remove(argv[1]);   /* fail-closed: se o build falhar, nunca sobra uma imagem antiga para ser gravada por engano */
+    img_path = argv[1];
+    atexit(img_abort);
+    imgf = fopen(argv[1], "w+b");
+    if (!imgf) { perror(argv[1]); return 1; }
     srand((unsigned)time(NULL));
     img_size = (uint64_t)atoi(argv[3]) << 20;
+    if (img_truncate(img_size)) { perror(argv[1]); return 1; }
     uint64_t total_lba = img_size / SECTOR;
-    img = calloc(1, img_size);
     part_lba = 2048;
     part_sectors = (uint32_t)(total_lba - 34 - part_lba);
 
     /* ---- MBR protetor ---- */
-    uint8_t *mbr = img;
+    uint8_t mbr[SECTOR] = {0};
     mbr[446 + 4] = 0xEE;
     wr32(mbr + 446 + 8, 1);
     wr32(mbr + 446 + 12, (uint32_t)(total_lba - 1 > 0xFFFFFFFF ? 0xFFFFFFFF : total_lba - 1));
     mbr[446 + 1] = 0; mbr[446 + 2] = 2; mbr[446 + 5] = 0xFF; mbr[446 + 6] = 0xFF; mbr[446 + 7] = 0xFF;
     mbr[510] = 0x55; mbr[511] = 0xAA;
+    img_at(0, mbr, SECTOR);
 
     /* ---- GPT ---- */
     uint8_t entries[128 * 128] = {0};
@@ -586,7 +631,7 @@ int main(int argc, char **argv) {
     for (int backup = 0; backup < 2; backup++) {
         uint64_t my = backup ? total_lba - 1 : 1, alt = backup ? 1 : total_lba - 1;
         uint64_t elba = backup ? total_lba - 33 : 2;
-        uint8_t *h = img + my * SECTOR;
+        uint8_t h[SECTOR] = {0};
         memcpy(h, "EFI PART", 8);
         wr32(h + 8, 0x00010000);
         wr32(h + 12, 92);
@@ -597,7 +642,8 @@ int main(int argc, char **argv) {
         wr32(h + 80, 128); wr32(h + 84, 128);
         wr32(h + 88, ecrc);
         wr32(h + 16, crc32(h, 92));
-        memcpy(img + elba * SECTOR, entries, sizeof entries);
+        img_at(my * SECTOR, h, SECTOR);
+        img_at(elba * SECTOR, entries, sizeof entries);
     }
 
     /* ---- FAT32 ---- */
@@ -609,7 +655,7 @@ int main(int argc, char **argv) {
     fat = calloc(fat_sectors * SECTOR / 4, 4);
     fat[0] = 0x0FFFFFF8; fat[1] = 0x0FFFFFFF;
 
-    uint8_t *bs = img + (uint64_t)part_lba * SECTOR;
+    uint8_t bs[SECTOR] = {0};
     bs[0] = 0xEB; bs[1] = 0x58; bs[2] = 0x90;
     memcpy(bs + 3, "MOS 0.1 ", 8);
     wr16(bs + 11, SECTOR); bs[13] = SPC; wr16(bs + 14, reserved); bs[16] = 2;
@@ -640,17 +686,22 @@ int main(int argc, char **argv) {
     alloc_clusters(root);
     write_node(root);
 
-    uint8_t *fsi = bs + SECTOR;
+    uint8_t fsi[SECTOR] = {0};
     wr32(fsi, 0x41615252); wr32(fsi + 484, 0x61417272);
     wr32(fsi + 488, total_clusters + 2 - next_cluster); wr32(fsi + 492, next_cluster);
     wr32(fsi + 508, 0xAA550000);
-    memcpy(bs + 6 * SECTOR, bs, 2 * SECTOR);
-    for (int i = 0; i < 2; i++) memcpy(bs + (uint64_t)(reserved + i * fat_sectors) * SECTOR, fat, (size_t)fat_sectors * SECTOR);
+    uint64_t part_off = (uint64_t)part_lba * SECTOR;
+    img_at(part_off, bs, SECTOR);
+    img_at(part_off + SECTOR, fsi, SECTOR);
+    img_at(part_off + 6 * SECTOR, bs, SECTOR);
+    img_at(part_off + 7 * SECTOR, fsi, SECTOR);
+    for (int i = 0; i < 2; i++)
+        img_at(part_off + (uint64_t)(reserved + i * fat_sectors) * SECTOR, fat, (size_t)fat_sectors * SECTOR);
 
-    FILE *o = fopen(argv[1], "wb");
-    if (!o) { perror(argv[1]); return 1; }
-    fwrite(img, 1, img_size, o);
-    fclose(o);
+    if (fflush(imgf) != 0) { perror(argv[1]); return 1; }
+    img_committed = 1;
+    fclose(imgf);
+    imgf = NULL;
     printf("mkimg: %s — %u MiB, %u clusters usados de %u\n", argv[1], (unsigned)(img_size >> 20), next_cluster - 2, total_clusters);
     return 0;
 }

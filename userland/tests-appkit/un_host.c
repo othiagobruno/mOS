@@ -10,6 +10,13 @@
 static int ok, total;
 static int present_opts = CX_UN_PRESENT_BANNER | CX_UN_PRESENT_LIST;
 static int got_click;
+static const char *g_fail_dom;
+
+static void remote_fail(int code, const char *domain, void *ctx) {
+    int *out = ctx;
+    if (out) *out = code;
+    g_fail_dom = domain;
+}
 static char click_id[64];
 static char click_action[80];
 static char sink_title[96];
@@ -125,6 +132,60 @@ int main(void) {
     present_opts = CX_UN_PRESENT_LIST;
     check(cx_un_add("lista", "Lista", 0, "só lista", 0, 0) == CX_UN_OK, "só a lista não abre banner");
     check(cx_un_banner_visible() == 0 && cx_un_delivered_has("lista") == 1, "a entrega na lista não é um banner");
+
+    cx_un_set_auth(CX_UN_AUTHORIZED);
+    {
+        cx_un_settings_t st;
+        void *token = (void *)1;
+        int fail_code = 0;
+        char kept[32];
+        cx_un_settings(&st);
+        check(st.authorization == CX_UN_AUTHORIZED && st.alert == 2 && st.sound == 2 && st.badge == 2
+              && st.notification_center == 2 && st.lock_screen == 2 && st.alert_style == 1,
+              "autorizado liga alerta, som, badge, central e tela bloqueada");
+        cx_un_set_auth(CX_UN_DENIED);
+        cx_un_settings(&st);
+        check(st.authorization == CX_UN_DENIED && st.alert == 1 && st.alert_style == 0,
+              "negado desliga o alerta e não escolhe estilo");
+        check(cx_un_register_remote(&token, remote_fail, &fail_code) == CX_UN_ERR_DENIED && token == 0
+              && fail_code == 1 && g_fail_dom && strcmp(g_fail_dom, "UNErrorDomain") == 0,
+              "registro remoto falha sem token");
+        strcpy(kept, "original");
+        check(cx_un_service_receive("original", kept, (int)sizeof kept) == CX_UN_ERR_DENIED
+              && strcmp(kept, "original") == 0,
+              "a extensão não inventa payload remoto");
+    }
+
+    {
+        cx_un_cal_t once, daily;
+        double next;
+        memset(&once, 0xff, sizeof once);
+        once.year = 2026; once.month = 1; once.day = 2; once.hour = 3; once.minute = 4; once.second = 5;
+        cx_un_set_clock(1767323045 - 30);
+        cx_un_set_auth(CX_UN_AUTHORIZED);
+        next = cx_un_calendar_next(&once, 1767323045 - 30, 0);
+        check(next == 1767323045, "a data cheia cai em 2026-01-02 03:04:05 UTC");
+        check(cx_un_calendar_next(&once, 1767323045, 0) < 0, "sem repetição não há próxima depois da data");
+        check(cx_un_calendar_next(&once, 1767323045, 1) == 1767323045.0 + 366 * 86400 ||
+              cx_un_calendar_next(&once, 1767323045, 1) > 1767323045,
+              "com repetição a próxima data cheia é um ano depois");
+        check(cx_un_add_calendar("cal", "Calendário", 0, "na data", &once, 0) == CX_UN_OK, "o centro aceita o gatilho de calendário");
+        cx_un_advance(30);
+        check(cx_un_delivered_has("cal") == 1 && cx_un_pending_has("cal") == 0, "na hora certa entrega uma vez");
+        memset(&daily, 0xff, sizeof daily);
+        daily.hour = 8; daily.minute = 0;
+        cx_un_set_clock(1767340800 - 120);
+        next = cx_un_calendar_next(&daily, 1767340800 - 120, 1);
+        check(next == 1767340800, "hora e minuto sem ano caem no mesmo dia");
+        check(cx_un_add_calendar("dia", "Todo dia", 0, "8h", &daily, 1) == CX_UN_OK, "repetição diária entra na fila");
+        cx_un_advance(120);
+        check(cx_un_delivered_has("dia") == 1 && cx_un_pending_has("dia") == 1, "a repetição entrega e continua pendente");
+        {
+            int before = cx_un_present_count();
+            cx_un_advance(86400);
+            check(cx_un_present_count() > before, "no dia seguinte apresenta de novo");
+        }
+    }
 
     printf("un-host: %d/%d ok\n", ok, total);
     return ok == total ? 0 : 1;

@@ -36,10 +36,10 @@ Na hora de commitar, o `appkit.c` e o `appkit_nib.inc` podem ter trechos de outr
 ## O que falta no Postico (até a janela de conexões aceitar entrada)
 
 1. **Rodar de novo** com o nome do símbolo corrigido e seguir queda por queda. As próximas prováveis são métodos que devolvem nil e o Swift desembrulha à força.
-2. **`makeViewWithIdentifier:owner:` do NSTableView**, que hoje devolve nil. As células da lista de favoritos são views protótipo guardadas no nib, em `NSTableViewArchivedReusableViewsKey`, como nibs embutidos. É preciso decodificá-las e instanciar uma por linha.
-3. **A tabela do mOS só desenha o texto das células**, não as views. Para a lista de favoritos aparecer como no macOS, o NSTableView/NSOutlineView precisa posicionar e desenhar as views de célula, com indentação e expansão no outline.
-4. **NSToolbar**: os itens (NSToolbarItem) existem, mas a barra não os desenha nem encaminha cliques.
-5. **NSSplitView**: hoje só dispõe as subviews; falta arrastar as divisórias e respeitar `holdingPriority`, colapso e as restrições do delegate.
+2. **`makeViewWithIdentifier:owner:` do NSTableView**: feito. As views de `NSTableViewArchivedReusableViewsKey` (protótipo, NSNib ou dados de nib) entram no registro da tabela; cada linha recebe uma cópia, e a view que sai da área visível volta para a fila do identificador.
+3. **Views de célula**: a NSTableView/NSOutlineView posiciona e desenha as views (indentação, triângulo e clique de expansão no outline), dá `objectValue` à célula, respeita `tableView:isGroupRow:`/`outlineView:isGroupItem:` e `shouldSelect…`, e responde `rowForView:`, `columnForView:`, `viewAtColumn:row:makeIfNecessary:`. Falta altura variável de linha (`heightOfRow…`).
+4. **NSToolbar**: desenha os itens (imagem ou rótulo) numa view hospedeira no topo da janela, com o conteúdo embaixo; itens com view (busca, segmentado) são subviews de verdade. Os itens padrão vêm de `toolbarDefaultItemIdentifiers:`. Sem personalização nem menu de excesso.
+5. **NSSplitView**: holdingPriority no redimensionamento, arraste com os limites do delegate, colapso (`canCollapseSubview:`, duplo clique) e espessura pelo `dividerStyle`. Sem autosave das posições.
 6. **Entrada:** confirmar cliques e digitação nos campos da tela de conexão. O hit-test respeita `-hitTest:` sobrescrito desde o commit `7653c60`; conferir também as views SwiftUI do NSHostingView. Para cliques na VM: `tools/testdata/cgevent/cgevent-teste.c` (serviço do launchd, `Argumentos=x y xf yf espera RRGGBB`).
 7. **No QEMU de verdade** (as imagens de teste precisam do `--test-overlay`, ver `tools/overlay-teste.ps1`):
    - pôr as dylibs Swift e o SwiftUI.framework na imagem (o `build.ps1` ainda não as copia);

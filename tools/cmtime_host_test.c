@@ -1,0 +1,166 @@
+/* gcc -std=c11 -O1 -I userland/libsystem -o /tmp/cmtime_host_test tools/cmtime_host_test.c userland/libsystem/cmtime.c -lm */
+#include <stdio.h>
+#include <math.h>
+#include <string.h>
+#include <stdint.h>
+typedef long long i64;
+typedef int i32;
+typedef unsigned u32;
+typedef struct { i64 value; i32 timescale; u32 flags; i64 epoch; } cm_time_t;
+typedef struct { cm_time_t start, duration; } cm_range_t;
+typedef struct { cm_time_t duration, presentationTimeStamp, decodeTimeStamp; } cm_timing_t;
+typedef struct { i32 width, height; } cm_dim_t;
+cm_time_t CMTimeMake(i64, i32);
+cm_time_t CMTimeMakeWithSeconds(double, i32);
+double CMTimeGetSeconds(cm_time_t);
+cm_time_t CMTimeConvertScale(cm_time_t, i32, u32);
+i32 CMTimeCompare(cm_time_t, cm_time_t);
+cm_time_t CMTimeAdd(cm_time_t, cm_time_t);
+cm_time_t CMTimeSubtract(cm_time_t, cm_time_t);
+cm_time_t CMTimeMultiply(cm_time_t, i32);
+cm_time_t CMTimeMultiplyByFloat64(cm_time_t, double);
+cm_time_t CMTimeMultiplyByRatio(cm_time_t, i32, i32);
+cm_time_t CMTimeAbsoluteValue(cm_time_t);
+cm_time_t CMTimeMinimum(cm_time_t, cm_time_t);
+cm_time_t CMTimeMaximum(cm_time_t, cm_time_t);
+cm_range_t CMTimeRangeMake(cm_time_t, cm_time_t);
+cm_time_t CMTimeRangeGetEnd(cm_range_t);
+int CMTimeRangeContainsTime(cm_range_t, cm_time_t);
+int CMTimeRangeContainsTimeRange(cm_range_t, cm_range_t);
+cm_range_t CMTimeRangeGetIntersection(cm_range_t, cm_range_t);
+cm_time_t CMTimeClampToRange(cm_time_t, cm_range_t);
+extern const cm_time_t kCMTimePositiveInfinity, kCMTimeNegativeInfinity;
+extern const cm_range_t kCMTimeRangeInvalid;
+extern const cm_timing_t kCMTimingInfoInvalid;
+void cm_set_now(double (*fn)(void));
+void *CMClockGetHostTimeClock(void);
+cm_time_t CMClockGetTime(void *);
+int CMAudioClockCreate(void *, void **);
+int CMTimebaseCreateWithSourceClock(void *, void *, void **);
+double CMTimebaseGetRate(void *);
+cm_time_t CMTimebaseGetTime(void *);
+int CMTimebaseSetRate(void *, double);
+int CMTimebaseSetTime(void *, cm_time_t);
+int CMTimebaseAddTimerDispatchSource(void *, void *);
+int CMTimebaseRemoveTimerDispatchSource(void *, void *);
+int CMTimebaseSetTimerDispatchSourceNextFireTime(void *, void *, cm_time_t, u32);
+double cm_timebase_timer_seconds(void *, void *);
+cm_time_t CMSyncConvertTime(cm_time_t, void *, void *);
+double CMSyncGetRelativeRate(void *, void *);
+int CMBufferQueueCreate(void *, int, const void *, void **);
+int CMBufferQueueEnqueue(void *, void *);
+void *CMBufferQueueDequeueAndRetain(void *);
+int CMBufferQueueReset(void *);
+const void *CMBufferQueueGetCallbacksForUnsortedSampleBuffers(void);
+cm_dim_t cm_presentation_dimensions(i32, i32, int, int, int, int, int, int);
+int cm_copy_asbd(const void *, int, void *, unsigned);
+int cm_timing_copy(const cm_timing_t *, long, cm_timing_t *, long, long *);
+static int fail;
+static void expect(int ok, const char *m) { if (!ok) { fprintf(stderr, "FALHOU %s\n", m); fail++; } }
+static int num(cm_time_t t, i64 v, i32 s) { return (t.flags & 1) && t.value == v && t.timescale == s; }
+static double gnow;
+static double nowfn(void) { return gnow; }
+int main(void) {
+    cm_time_t bad = CMTimeMake(1, 0);
+    expect(!(bad.flags & 1), "timescale 0 invalido");
+    cm_time_t nan_t = CMTimeMakeWithSeconds(nan(""), 600);
+    expect(!(nan_t.flags & 1), "NaN invalido");
+    cm_time_t pinf = CMTimeMakeWithSeconds(INFINITY, 600);
+    cm_time_t ninf = CMTimeMakeWithSeconds(-INFINITY, 600);
+    expect((pinf.flags & 4) && (ninf.flags & 8), "infinito");
+    expect(isinf(CMTimeGetSeconds(pinf)) && CMTimeGetSeconds(pinf) > 0, "segundos +inf");
+    expect(isnan(CMTimeGetSeconds(bad)), "segundos do invalido");
+    cm_time_t indef = {0, 0, 1u | 16u, 0};
+    expect(isnan(CMTimeGetSeconds(indef)), "indefinido");
+    expect(!(CMTimeAdd(bad, CMTimeMake(1, 1)).flags & 1), "soma com invalido");
+    expect(!(CMTimeAdd(pinf, ninf).flags & 1), "+inf + -inf");
+    expect(CMTimeAdd(pinf, CMTimeMake(1, 1)).flags & 4, "+inf + numero");
+    expect(CMTimeAdd(indef, CMTimeMake(1, 1)).flags & 16, "indefinido na soma");
+    cm_time_t big = CMTimeMake(INT64_MAX, 1);
+    expect(!(CMTimeAdd(big, CMTimeMake(1, 1)).flags & 1), "overflow da soma");
+    expect(!(CMTimeMultiply(big, 2).flags & 1), "overflow da multiplicacao");
+    expect(!(CMTimeMultiply(pinf, 0).flags & 1), "inf * 0");
+    expect(CMTimeMultiply(pinf, -2).flags & 8, "inf * negativo");
+    cm_time_t a = CMTimeMake(3, 2), b = CMTimeMake(1, 2);
+    expect(num(CMTimeAdd(a, b), 2, 1) || num(CMTimeAdd(a, b), 4, 2), "3/2+1/2");
+    expect(CMTimeCompare(a, b) > 0 && CMTimeCompare(b, a) < 0 && CMTimeCompare(a, a) == 0, "compare");
+    expect(CMTimeCompare(pinf, a) > 0 && CMTimeCompare(ninf, a) < 0 && CMTimeCompare(indef, a) == 0, "compare borda");
+    expect(!(CMTimeMinimum(bad, a).flags & 1), "min invalido");
+    expect(CMTimeMaximum(ninf, a).value == a.value, "max com -inf");
+    cm_time_t half = CMTimeMakeWithSeconds(0.5, 1);
+    expect(half.value == 1 && (half.flags & 2), "meio para longe de zero");
+    cm_time_t neg = CMTimeMakeWithSeconds(-1.5, 1);
+    expect(neg.value == -2, "meio negativo para longe de zero");
+    cm_time_t sc = CMTimeConvertScale(CMTimeMake(1, 2), 4, 1);
+    expect(num(sc, 2, 4), "converte escala");
+    cm_time_t ratio = CMTimeMultiplyByRatio(CMTimeMake(5, 1), 1, 2);
+    expect(ratio.value == 3 && (ratio.flags & 2), "5/2 arredonda para 3");
+    expect(CMTimeAbsoluteValue(CMTimeMake(-4, 1)).value == 4, "absoluto");
+    expect(!(CMTimeAbsoluteValue(CMTimeMake(INT64_MIN, 1)).flags & 1), "absoluto overflow");
+
+    cm_range_t rg = CMTimeRangeMake(CMTimeMake(0, 1), CMTimeMake(2, 1));
+    expect(CMTimeRangeContainsTime(rg, CMTimeMake(0, 1)) && !CMTimeRangeContainsTime(rg, CMTimeMake(2, 1)), "faixa meia-aberta");
+    expect(!CMTimeRangeContainsTime(rg, bad), "faixa nao contem invalido");
+    expect(!(CMTimeRangeMake(bad, CMTimeMake(1, 1)).start.flags & 1), "faixa invalida");
+    expect(!(CMTimeRangeMake(CMTimeMake(0, 1), CMTimeMake(-1, 1)).start.flags & 1), "duracao negativa");
+    cm_range_t o = CMTimeRangeMake(CMTimeMake(1, 1), CMTimeMake(2, 1));
+    cm_range_t ix = CMTimeRangeGetIntersection(rg, o);
+    expect(CMTimeCompare(ix.start, CMTimeMake(1, 1)) == 0 && ix.duration.value == 1, "intersecao");
+    cm_range_t far = CMTimeRangeMake(CMTimeMake(5, 1), CMTimeMake(1, 1));
+    expect(!(CMTimeRangeGetIntersection(rg, far).start.flags & 1), "sem intersecao");
+    expect(CMTimeRangeContainsTimeRange(rg, CMTimeRangeMake(CMTimeMake(0, 1), CMTimeMake(2, 1))), "contem a si");
+    expect(CMTimeCompare(CMTimeClampToRange(CMTimeMake(9, 1), rg), CMTimeMake(2, 1)) == 0, "clamp");
+    expect(!(kCMTimeRangeInvalid.start.flags & 1) && !(kCMTimingInfoInvalid.duration.flags & 1), "constantes invalidas");
+
+    gnow = 1.5;
+    cm_set_now(nowfn);
+    void *clk = CMClockGetHostTimeClock();
+    cm_time_t ct = CMClockGetTime(clk);
+    expect(fabs(CMTimeGetSeconds(ct) - 1.5) < 1e-6, "relogio");
+    void *ac = 0;
+    expect(CMAudioClockCreate(0, &ac) == 0, "audio clock");
+    void *tb = 0;
+    expect(CMTimebaseCreateWithSourceClock(0, clk, &tb) == 0, "timebase");
+    expect(CMTimebaseSetRate(tb, 2) == 0 && CMTimebaseGetRate(tb) == 2, "rate");
+    gnow = 2.5;
+    expect(fabs(CMTimeGetSeconds(CMTimebaseGetTime(tb)) - 2.0) < 1e-4, "tempo com rate 2");
+    expect(CMTimebaseSetTime(tb, CMTimeMake(5, 1)) == 0, "set time");
+    expect(fabs(CMTimeGetSeconds(CMTimebaseGetTime(tb)) - 5) < 1e-4, "tempo ancorado");
+    int src = 1;
+    expect(CMTimebaseAddTimerDispatchSource(tb, &src) == 0, "timer");
+    expect(CMTimebaseSetTimerDispatchSourceNextFireTime(tb, &src, CMTimeMake(7, 1), 0) == 0, "proximo disparo");
+    expect(fabs(cm_timebase_timer_seconds(tb, &src) - 7) < 1e-6, "disparo gravado");
+    expect(CMTimebaseRemoveTimerDispatchSource(tb, &src) == 0, "remove timer");
+    expect(isnan(cm_timebase_timer_seconds(tb, &src)), "timer saiu");
+    expect(fabs(CMSyncGetRelativeRate(tb, clk) - 2) < 1e-9, "rate relativo");
+    cm_time_t conv = CMSyncConvertTime(CMTimeMake(1, 1), clk, clk);
+    expect(CMTimeCompare(conv, CMTimeMake(1, 1)) == 0, "sync mesmo relogio");
+
+    int seq[4] = {1, 2, 3, 4};
+    void *q = 0;
+    expect(CMBufferQueueCreate(0, 0, 0, &q) == 0, "fila");
+    expect(CMBufferQueueEnqueue(q, &seq[0]) == 0 && CMBufferQueueEnqueue(q, &seq[1]) == 0, "enfileira");
+    expect(CMBufferQueueDequeueAndRetain(q) == &seq[0], "fifo");
+    expect(CMBufferQueueReset(q) == 0 && CMBufferQueueDequeueAndRetain(q) == 0, "reset");
+    expect(CMBufferQueueGetCallbacksForUnsortedSampleBuffers() != 0, "callbacks");
+
+    cm_dim_t dim = cm_presentation_dimensions(100, 50, 2, 1, 80, 40, 1, 1);
+    expect(dim.width == 160 && dim.height == 40, "apresentacao");
+    unsigned char as[40];
+    memset(as, 7, 40);
+    unsigned char outb[40];
+    expect(cm_copy_asbd(as, 1, outb, 40) == 0 && outb[0] == 7, "asbd");
+    expect(cm_copy_asbd(as, 0, outb, 40) != 0, "sem asbd");
+    cm_timing_t src_t[2];
+    memset(src_t, 0, sizeof src_t);
+    src_t[0].duration = CMTimeMake(1, 10);
+    src_t[1].duration = CMTimeMake(2, 10);
+    cm_timing_t dst[2];
+    long need = 0;
+    expect(cm_timing_copy(src_t, 2, 0, 0, &need) == 0 && need == 2, "timing precisa");
+    expect(cm_timing_copy(src_t, 2, dst, 1, &need) != 0, "timing curto");
+    expect(cm_timing_copy(src_t, 2, dst, 2, &need) == 0 && dst[1].duration.value == 2, "timing copia");
+    if (fail) { fprintf(stderr, "%d falhas\n", fail); return 1; }
+    printf("PASSOU\n");
+    return 0;
+}

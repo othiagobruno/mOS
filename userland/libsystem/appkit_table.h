@@ -43,6 +43,12 @@ int cx_tv_engine_pool_count(const cx_tv_engine_t *e, const char *ident);
 
 void cx_tv_engine_placed_clear(cx_tv_engine_t *e);
 void cx_tv_engine_placed_add(cx_tv_engine_t *e, void *view);
+/* view posta na linha/coluna (rowForView:, columnForView:, viewAtColumn:row:makeIfNecessary:) */
+void cx_tv_engine_placed_add_at(cx_tv_engine_t *e, void *view, int row, int col);
+/* índice em placed, ou -1; row/col recebem a posição */
+int cx_tv_engine_placed_find(const cx_tv_engine_t *e, const void *view, int *row, int *col);
+/* col < 0 = qualquer coluna da linha */
+void *cx_tv_engine_placed_view(const cx_tv_engine_t *e, int row, int col);
 int cx_tv_engine_placed_count(const cx_tv_engine_t *e);
 void *cx_tv_engine_placed_at(const cx_tv_engine_t *e, int i);
 
@@ -104,3 +110,8 @@ typedef struct {
 /* 1 se o mouse está na divisória ou na faixa de 4 pt de cada lado. */
 int cx_sv_divider_hit(double mouse, double divider_pos, double thickness);
 double cx_sv_drag(double pos, double delta, double min_pos, double max_pos, const cx_sv_lim *lim, void *ctx, int index);
+double cx_sv_thickness(int style);
+/* holdingPriority: hold[i] (NULL = 250 para todas); collapsed[i] != 0 fica com 0 */
+void cx_sv_resize(double *sz, const float *hold, const int *collapsed, int n, double total, double div);
+void cx_sv_set_position(double *sz, int n, int idx, double pos, double div);
+int cx_sv_collapse(double proposed, double lo, double hi, double min_pos, double max_pos, int can_before, int can_after);

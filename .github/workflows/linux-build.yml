@@ -16,6 +16,14 @@ jobs:
           curl -fsSL -o /tmp/zig.tar.xz https://ziglang.org/download/0.17.1/zig-x86_64-linux-0.17.1.tar.xz
           sudo tar -xJf /tmp/zig.tar.xz -C /opt
           echo /opt/zig-x86_64-linux-0.17.1 >> "$GITHUB_PATH"
+      - name: mkimg esparso e Launch Services na imagem
+        run: bash tools/test-mkimg-ls.sh
+      - name: teste de host da contagem Swift
+        run: gcc -O2 -Wall -Wextra -pthread -o /tmp/swift_refcount_host tools/swift_refcount_host.c userland/libsystem/swift_refcount.c && /tmp/swift_refcount_host
+      - name: teste de host do firmware Bluetooth Realtek
+        run: gcc -O2 -Wall -Wextra -Wno-incompatible-library-redeclaration -I kernel/include tools/btrtl_host.c kernel/bt/btrtl.c kernel/bt/vendor.c kernel/bt/btintel.c -o /tmp/btrtl_host && /tmp/btrtl_host firmware
+      - name: teste de host do BLE (dois enlaces, passkey, reconexão)
+        run: gcc -O1 -Wall -Wextra -Wno-unused-parameter -Wno-incompatible-library-redeclaration -I kernel/include tools/ble_host.c kernel/bt/ble.c kernel/bt/smp_crypto.c kernel/bt/p256.c kernel/bt/hid_parse.c kernel/wifi/wpa.c -o /tmp/ble_host && /tmp/ble_host
       - name: testes de unwind no host
         run: tools/cxx_unwind_host.sh
       - name: tools/build.sh

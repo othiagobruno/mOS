@@ -450,9 +450,8 @@ u8 CVIsCompressedPixelFormatAvailable(u32 fmt) { (void)fmt; return 0; }
 id CVPixelFormatDescriptionCreateWithPixelFormatType(void *alloc, u32 fmt) { (void)alloc; (void)fmt; return 0; }
 
 /* ================================================================ sem OpenGL */
-/* Metal: metal.c (por software). OpenGL não existe: o Chromium cai para o SwiftShader */
-int CGLChoosePixelFormat(const int *attrs, void **pix, int *npix) { (void)attrs; if (pix) *pix = 0; if (npix) *npix = 0; return 10002; /* kCGLBadPixelFormat */ }
-int CGLReleasePixelFormat(void *pix) { (void)pix; return 0; }
+/* Metal: metal.c (por software). A CGL (CGLChoosePixelFormat continua recusando, para o Chromium cair no
+ * SwiftShader) e o NSOpenGL estão em appkit_nsopengl.c */
 
 void cx_metal_init(void);
 void cx_corevideo_init(void) {

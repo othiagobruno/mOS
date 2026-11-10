@@ -439,7 +439,7 @@ static void paint_bt(void) {
     text_draw_ellipsis(U->s, F(FONT_REGULAR), 12, r.x - 80, r.y + RH / 2 + 4, r.w + 80, T.text2, st);
     bool present = strncmp(st, "Nenhum", 6) != 0;
     if (!present) {
-        footnote("Conecte um adaptador Bluetooth USB. Adaptadores Intel carregam o firmware de /Sistema/Firmware.", 0);
+        footnote("Conecte um adaptador Bluetooth USB. Adaptadores Intel e Realtek carregam o firmware de /Sistema/Firmware.", 0);
         return;
     }
     const char *le = bt_le_status();

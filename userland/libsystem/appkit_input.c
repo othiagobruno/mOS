@@ -599,6 +599,7 @@ void cx_appkit_input_init(void) {
     cx_const_objs_init();       /* constobjs.c: NSConstantArray/NSConstantDictionary dos literais do clang */
     cx_vscode_cf_classes();     /* vscode_cf.c: classes internas de CF (locale, UUID, CharacterSet, BinaryHeap) e kCFNull */
     { extern void cx_appkit_postico_init(void); cx_appkit_postico_init(); }   /* appkit_postico.c: NSOutlineView, NSSplitView, NSToolbarItem... (Postico) */
+    { extern void cx_appkit_nsopengl_init(void); cx_appkit_nsopengl_init(); } /* appkit_nsopengl.c: NSOpenGLPixelFormat/Context/View */
     { extern void cx_appkit_public_init(void); cx_appkit_public_init(); }     /* appkit_public.c: stepper, combo, level, path, AX, cadeia */
     { extern void cx_appkit_electron_init(void); cx_appkit_electron_init(); } /* appkit_electron.c: AppKit que o Claude e o ChatGPT importam */
     { extern void cx_appkit_apps_ui_init(void); cx_appkit_apps_ui_init(); }   /* appkit_apps_ui.c: texto, grade, folha (Postico e Setapp) */

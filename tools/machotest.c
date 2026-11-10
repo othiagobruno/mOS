@@ -8,7 +8,8 @@
  *
  * No Linux, zig cc ou clang:
  *   zig cc -target x86_64-linux-gnu -O2 -std=gnu11 -DMOS_HOST_TEST -fno-strict-aliasing \
- *       -Ikernel/include -Itools tools/machotest.c tools/host_enter.S kernel/compat/macho.c \
+ *       -Ikernel/include -Itools tools/machotest.c tools/host_unix.c tools/host_gpu.c tools/host_qos.c tools/host_id.c tools/host_bootstrap.c \
+ *       tools/host_enter.S kernel/compat/macho.c \
  *       -o build/machotest -pthread
  * No Windows o comando continua o de docs/porte-vscode.md (zig cc -target x86_64-windows-gnu).
  */
@@ -38,6 +39,11 @@
 #include <linux/audit.h>
 #include <stddef.h>
 #endif
+#include "host_unix.h"
+#include "host_qos.h"
+#include "host_id.h"
+#include "host_bootstrap.h"
+long host_gpu_op(unsigned long long op, unsigned long long user, unsigned long long len, int *blocked);
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -532,6 +538,8 @@ static long long gui_syscall(u64 n, u64 a, u64 b, u64 c, u64 d) {
 static CRITICAL_SECTION sys_lock;
 static CONDITION_VARIABLE sys_cv = CONDITION_VARIABLE_INIT;
 static void host_broadcast(void) { WakeAllConditionVariable(&sys_cv); }
+static void host_lock_fn(void) { HOST_LOCK(); }
+static void host_unlock_fn(void) { HOST_UNLOCK(); }
 /* devolve 1 se o prazo venceu. O chamador já entrou em sys_lock exatamente uma vez. */
 static int host_wait_ms(u64 ms) {
     if (ms == ~(u64)0) { SleepConditionVariableCS(&sys_cv, &sys_lock, INFINITE); return 0; }
@@ -553,6 +561,8 @@ static void host_cv_init(void) {
     sys_cv_ready = 1;
 }
 static void host_broadcast(void) { if (sys_cv_ready) pthread_cond_broadcast(&sys_cv); }
+static void host_lock_fn(void) { HOST_LOCK(); }
+static void host_unlock_fn(void) { HOST_UNLOCK(); }
 static int host_wait_ms(u64 ms) {
     if (ms == ~(u64)0) { pthread_cond_wait(&sys_cv, &sys_lock); return 0; }
     struct timespec ts;
@@ -598,6 +608,10 @@ static void *thread_main(void *p) {
     thread_start_t s = *(thread_start_t *)p;
     free(p);
     my_tid = s.tid;
+    /* O kernel zera gs_base na criação (process.c). O clone do Linux copia o GS do pai:
+     * sem isto a thread nova reusa a TSD/TLV da principal e um CHECK de "thread ainda
+     * não registrada" (cmp [rsi], 0; int3; ud2) dispara no Electron. */
+    __asm__ volatile("wrgsbase %0" :: "r"((unsigned long)0) : "memory");
     /* A thread nasce dentro do tratador de SIGSYS (a syscall SYS_THREAD_CREATE).
      * O pthread herda essa máscara: com SIGSYS bloqueado, o próximo int 0x80 do guest
      * mata o processo em vez de voltar para on_guest_signal. */
@@ -618,7 +632,7 @@ static void *thread_main(void *p) {
 
 /* ---- descritores: arquivo do host ou pipe/socketpair (o mesmo modelo do kernel) */
 #define MAXFD 256
-enum { HFD_NONE = 0, HFD_FILE, HFD_PR, HFD_PW, HFD_RW };
+enum { HFD_NONE = 0, HFD_FILE, HFD_PR, HFD_PW, HFD_RW, HFD_UNIX };
 typedef struct hpipe {
     u8 buf[4096];
     unsigned head, tail, count;
@@ -630,7 +644,7 @@ typedef struct {
     char mode[4];
     char gpath[1024];   /* caminho do guest (SYS_FDPATH / fcntl F_GETPATH) */
     hpipe *a, *b;
-    int nb, cloexec, acc;
+    int nb, cloexec, acc, aux;
 } hfd_t;
 static hfd_t hfd[MAXFD];
 
@@ -657,6 +671,7 @@ static void pipe_drop(hfd_t *e) {
 static void fd_clear(int fd) {
     hfd_t *e = &hfd[fd];
     if (e->kind == HFD_FILE && e->fp) fclose(e->fp);
+    else if (e->kind == HFD_UNIX) host_unix_close(fd);
     else if (e->kind) pipe_drop(e);
     memset(e, 0, sizeof *e);
 }
@@ -814,6 +829,10 @@ static hport_t *hport_new(u32 name, u32 type) {
         return &hports[i];
     }
     return NULL;
+}
+static unsigned bs_new_recv(void) {
+    hport_t *p = hport_new(0, HT_RECV);
+    return p ? p->name : 0;
 }
 static void hport_free_slot(hport_t *p) {
     for (int i = 0; i < p->qn; i++) free(p->qdata[(p->qh + i) % HMSG_N]);
@@ -1109,9 +1128,11 @@ static long long do_syscall(u64 n, u64 a, u64 b, u64 c, u64 d) {
 #else
         if (pthread_create(&thread_handles[tid], NULL, thread_main, s) != 0) { free(s); return -MOS_ENOMEM; }
 #endif
+        host_thr_add((int)tid);
         return tid;
     }
     case SYS_THREAD_EXIT:
+        host_thr_dead((int)my_tid);
 #ifdef _WIN32
         ExitThread((DWORD)a);
 #else
@@ -1139,7 +1160,76 @@ static long long do_syscall(u64 n, u64 a, u64 b, u64 c, u64 d) {
     return r;
 }
 
+static int ux_alloc(int slot, int nb, int clo) {
+    int fd = fd_alloc();
+    if (fd < 0) return -MOS_EMFILE;
+    hfd[fd].kind = HFD_UNIX;
+    hfd[fd].aux = slot;
+    hfd[fd].nb = nb;
+    hfd[fd].cloexec = clo;
+    return fd;
+}
+static int ux_slot(int fd) {
+    if (fd < 0 || fd >= MAXFD || hfd[fd].kind != HFD_UNIX) return -1;
+    return hfd[fd].aux;
+}
+static void ux_set_slot(int fd, int slot) {
+    if (fd >= 0 && fd < MAXFD) hfd[fd].aux = slot;
+}
+static int ux_dup(int fd) {
+    if (fd < 0 || fd >= MAXFD || !hfd[fd].kind) return -MOS_EBADF;
+    int nfd = fd_alloc();
+    if (nfd < 0) return -MOS_EMFILE;
+    if (hfd[fd].kind == HFD_UNIX) host_unix_hold(fd);
+    else if (hfd[fd].kind == HFD_FILE) {
+        int dfd = dup(fileno(hfd[fd].fp));
+        if (dfd < 0) return -MOS_EMFILE;
+        FILE *nf = fdopen(dfd, hfd[fd].mode[0] ? hfd[fd].mode : "rb");
+        if (!nf) { close(dfd); return -MOS_EMFILE; }
+        hfd[nfd] = hfd[fd];
+        hfd[nfd].fp = nf;
+        return nfd;
+    } else pipe_addref(&hfd[fd]);
+    hfd[nfd] = hfd[fd];
+    return nfd;
+}
+static int ux_parent(const char *path) {
+    char tmp[1024], hp[4096];
+    snprintf(tmp, sizeof tmp, "%s", path);
+    char *sl = strrchr(tmp, '/');
+    if (!sl || sl == tmp) return 1;
+    *sl = 0;
+    host_path((u64)tmp, hp, sizeof hp);
+    struct stat st;
+    return stat(hp, &st) == 0 && S_ISDIR(st.st_mode);
+}
+static int ux_touch(const char *path) {
+    char hp[4096];
+    host_path((u64)path, hp, sizeof hp);
+    if (access(hp, F_OK) == 0) return -MOS_EADDRINUSE;
+    FILE *f = fopen(hp, "wb");
+    if (!f) return -MOS_ENOENT;
+    fclose(f);
+    return 0;
+}
+static int ux_unlink(const char *path) {
+    char hp[4096];
+    host_path((u64)path, hp, sizeof hp);
+    unlink(hp);
+    return 0;
+}
+static void ux_hooks(void) {
+    static int once;
+    if (once) return;
+    once = 1;
+    host_thr_boot();
+    host_unix_hooks hk = { ux_alloc, ux_slot, ux_set_slot, ux_dup, ux_parent, ux_touch, ux_unlink,
+                           host_unlock_fn, host_lock_fn };
+    host_unix_set_hooks(&hk);
+}
+
 static long long do_syscall_locked(u64 n, u64 a, u64 b, u64 c, u64 d) {
+    ux_hooks();
     if (n >= 64 && n <= 79) return gui_syscall(n, a, b, c, d);
     if (n == SYS_FUTEX_WAIT) return futex_wait(a, (u32)b, c);
     if (n == SYS_FUTEX_WAKE) return futex_wake(a, b);
@@ -1147,34 +1237,27 @@ static long long do_syscall_locked(u64 n, u64 a, u64 b, u64 c, u64 d) {
     if (n == SYS_MACH_MSG) return mach_msg_call(a);
     if (n == SYS_MACH_VM) return mach_vm_op(a, b);
     if (n == SYS_MACH_BOOTSTRAP) {
-        /* op, nome, u32 *porta. Registro local: o Electron procura serviços cedo. */
-        static struct { char name[96]; u32 port; int on; } bs[64];
+        /* Igual a bootstrap_op: check_in de nome novo cria o direito de receber.
+         * look_up devolve esse porto e marca o direito de enviar. */
         const char *nm = (const char *)b;
         u32 *pp = (u32 *)c;
-        if (!nm) return 1102;
-        if (a == 3 || a == 4) { /* REGISTER / RESERVE */
-            for (int i = 0; i < 64; i++) if (!bs[i].on || !strcmp(bs[i].name, nm)) {
-                snprintf(bs[i].name, sizeof bs[i].name, "%s", nm);
-                bs[i].port = pp ? *pp : 0;
-                bs[i].on = 1;
-                return 0;
-            }
-            return 1105;
+        unsigned port = pp ? *pp : 0;
+        unsigned (*mk)(void) = NULL;
+        if (a == MACH_BS_CHECK_IN || a == MACH_BS_RESERVE) mk = bs_new_recv;
+        long r = host_bootstrap((unsigned)a, nm, &port, mk);
+        if (r == 0 && pp) *pp = port;
+        if (r == 0 && a == MACH_BS_LOOK_UP) {
+            hport_t *hp = hport_get(port);
+            if (hp) { hp->type |= HT_SEND; hp->srefs++; }
         }
-        if (a == 2 || a == 1) { /* LOOK_UP / CHECK_IN */
-            for (int i = 0; i < 64; i++) if (bs[i].on && !strcmp(bs[i].name, nm)) {
-                if (pp) *pp = bs[i].port;
-                return 0;
-            }
-            return a == 1 ? 1102 : 1102;
-        }
-        return 1102;
+        return r;
     }
     if (n == SYS_PIPE) return pipe_make(a, b == MOS_PIPE_SOCKPAIR);
     char hp[4096];
     (void)d;
     switch (n) {
     case SYS_WRITE:
+        if (a < MAXFD && hfd[a].kind == HFD_UNIX) return host_unix_write((int)a, (void *)b, c);
         if (a < MAXFD && (hfd[a].kind == HFD_PR || hfd[a].kind == HFD_PW || hfd[a].kind == HFD_RW))
             return pipe_io(0, (int)a, b, c);
         if ((a == 1 || a == 2) && hfd[a].kind == HFD_NONE) {
@@ -1185,12 +1268,44 @@ static long long do_syscall_locked(u64 n, u64 a, u64 b, u64 c, u64 d) {
         if (a < MAXFD && hfd[a].kind == HFD_FILE && hfd[a].fp) return (long long)fwrite((void *)b, 1, (size_t)c, hfd[a].fp);
         return -MOS_EBADF;
     case SYS_READ:
+        if (a < MAXFD && hfd[a].kind == HFD_UNIX) return host_unix_read((int)a, (void *)b, c);
         if (a < MAXFD && (hfd[a].kind == HFD_PR || hfd[a].kind == HFD_PW || hfd[a].kind == HFD_RW))
             return pipe_io(1, (int)a, b, c);
         if (a == 0 && hfd[a].kind == HFD_NONE) return 0;
         if (a < MAXFD && hfd[a].kind == HFD_FILE && hfd[a].fp) return (long long)fread((void *)b, 1, (size_t)c, hfd[a].fp);
         return -MOS_EBADF;
+    case SYS_PREAD: {
+        /* kernel/proc/process.c: offset em r10, a posição do fd não muda. Pipe, pty e AF_UNIX são ESPIPE. */
+        if (a >= MAXFD || !hfd[a].kind) return -MOS_EBADF;
+        if (hfd[a].kind != HFD_FILE) return -MOS_ESPIPE;
+        if (hfd[a].acc == 1 || !hfd[a].fp) return -MOS_EBADF;
+        if (!strcmp(hfd[a].gpath, "/dev/null")) return 0;
+        return host_pread_fd(fileno(hfd[a].fp), (void *)b, (unsigned long)c, (unsigned long)d);
+    }
+    case SYS_GETUID:
+    case SYS_GETEUID:
+    case SYS_GETGID:
+    case SYS_GETEGID:
+        return host_getid((unsigned)n);
     case SYS_GETPID: return 42;
+    case SYS_PROCLIST: {
+        /* Um processo só, o deste harness (pid 42, sem pai), como proc_spawn_in sem processo corrente. */
+        if (a != 0) return 0;
+        mos_procinfo_t pi;
+        memset(&pi, 0, sizeof pi);
+        pi.pid = 42;
+        pi.state = 1; /* TH_RUNNING */
+        const char *nm = strrchr(g_proc.path, '/');
+        nm = nm ? nm + 1 : g_proc.path;
+        snprintf(pi.name, sizeof pi.name, "%s", nm);
+        memcpy((void *)b, &pi, sizeof pi);
+        return 1;
+    }
+    case SYS_DESKTOP:
+        /* MOS_DESK_TAKE com a fila vazia devolve 0 (deskbridge.c). Banner e selo não têm mesa neste harness. */
+        if (a == MOS_DESK_TAKE) return 0;
+        if (a == MOS_DESK_BANNER || a == MOS_DESK_BADGE) return 0;
+        return -MOS_EINVAL;
     case SYS_CPUS:
 #ifdef _WIN32
         { SYSTEM_INFO si; GetSystemInfo(&si); return (long long)si.dwNumberOfProcessors; }
@@ -1228,22 +1343,28 @@ static long long do_syscall_locked(u64 n, u64 a, u64 b, u64 c, u64 d) {
         /* b = 4: mmap de arquivo (MAP_PRIVATE). Sem isto o icudtl.dat do Electron vira página zerada
          * e o ICU aborta com U_INVALID_FORMAT_ERROR. Pipe devolve EINVAL, como o kernel, e o libSystem
          * copia com read(). */
-        if (b == 4) {
-            if (!a || (d & 0xFFF)) return -MOS_EINVAL;
-            if (c >= MAXFD || !hfd[c].kind) return -MOS_EBADF;
-            if (hfd[c].kind != HFD_FILE || !hfd[c].fp) return -MOS_EINVAL;
-            if (hfd[c].acc == 1) return -MOS_EACCES;
-            u64 len = (a + 0xFFFF) & ~0xFFFFULL, at = (g_proc.mmap_next + 0xFFFF) & ~0xFFFFULL;
+        /* b=4 privado, b=5 compartilhado, b=8/9 MAP_FIXED. Sem o conteúdo do arquivo o
+         * icudtl.dat chega zerado e o ICU do Electron devolve U_INVALID_FORMAT_ERROR. */
+        if (b == 4 || b == 5 || b == 8 || b == 9) {
+            u64 off = d, addr = 0;
+            unsigned long long fdi = c;
+            if (b == 8 || b == 9) { addr = c; fdi = g_r8 & 0xffffffffull; }
+            if (!a || (off & 0xFFF)) return -MOS_EINVAL;
+            if (fdi >= MAXFD || !hfd[fdi].kind) return -MOS_EBADF;
+            if (hfd[fdi].kind != HFD_FILE || !hfd[fdi].fp) return -MOS_EINVAL;
+            if (hfd[fdi].acc == 1) return -MOS_EACCES;
+            u64 len = (a + 0xFFFF) & ~0xFFFFULL;
+            u64 at = addr ? addr : (g_proc.mmap_next + 0xFFFF) & ~0xFFFFULL;
             if (!uvm_map(&g_proc, at, len)) return -MOS_ENOMEM;
-            g_proc.mmap_next = at + len;
+            if (!addr) g_proc.mmap_next = at + len;
 #ifndef _WIN32
-            ssize_t got = pread(fileno(hfd[c].fp), (void *)at, (size_t)a, (off_t)d);
+            ssize_t got = pread(fileno(hfd[fdi].fp), (void *)at, (size_t)a, (off_t)off);
             if (got < 0) got = 0;
 #else
-            long long cur = _ftelli64(hfd[c].fp);
-            _fseeki64(hfd[c].fp, (long long)d, SEEK_SET);
-            size_t got = fread((void *)at, 1, (size_t)a, hfd[c].fp);
-            if (cur >= 0) _fseeki64(hfd[c].fp, cur, SEEK_SET);
+            long long cur = _ftelli64(hfd[fdi].fp);
+            _fseeki64(hfd[fdi].fp, (long long)off, SEEK_SET);
+            size_t got = fread((void *)at, 1, (size_t)a, hfd[fdi].fp);
+            if (cur >= 0) _fseeki64(hfd[fdi].fp, cur, SEEK_SET);
             (void)got;
 #endif
             return (long long)at;
@@ -1314,6 +1435,12 @@ static long long do_syscall_locked(u64 n, u64 a, u64 b, u64 c, u64 d) {
             if (a == b) return (long long)a;
             nfd = (int)b;
         }
+        if (hfd[a].kind == HFD_UNIX) {
+            host_unix_hold((int)a);
+            if (hfd[nfd].kind) fd_clear(nfd);
+            hfd[nfd] = hfd[a];
+            return nfd;
+        }
         if (hfd[a].kind == HFD_FILE) {
             int dfd = dup(fileno(hfd[a].fp));
             if (dfd < 0) return -MOS_EMFILE;
@@ -1338,10 +1465,19 @@ static long long do_syscall_locked(u64 n, u64 a, u64 b, u64 c, u64 d) {
         if (a == MOS_TTY_SETFL) {
             if (b >= MAXFD || !hfd[b].kind) return -MOS_EBADF;
             hfd[b].nb = c ? 1 : 0;
+            if (hfd[b].kind == HFD_UNIX) host_unix_set_nb((int)b, hfd[b].nb);
             return 0;
         }
         return -MOS_ENOTTY;
     case SYS_FSTAT: case SYS_STAT: {
+        if (n == SYS_FSTAT && a < MAXFD && hfd[a].kind == HFD_UNIX) {
+            mos_stat_t *m = (mos_stat_t *)b;
+            memset(m, 0, sizeof *m);
+            unsigned long long sz = 0; int dir = 6; long long mt = 0;
+            host_unix_fstat((int)a, &sz, &dir, &mt);
+            m->size = sz; m->is_dir = (unsigned long long)dir; m->mtime = mt;
+            return 0;
+        }
         if (n == SYS_FSTAT && a < MAXFD && (hfd[a].kind == HFD_PR || hfd[a].kind == HFD_PW || hfd[a].kind == HFD_RW)) {
             pipe_stat((int)a, (mos_stat_t *)b);
             return 0;
@@ -1412,6 +1548,16 @@ static long long do_syscall_locked(u64 n, u64 a, u64 b, u64 c, u64 d) {
         host_path(a, hp, sizeof hp);
         host_path(b, hp2, sizeof hp2);
         return rename(hp, hp2) ? -MOS_ENOENT : 0;
+    }
+    case SYS_UNIX: return host_unix_op(a, b, c, d);
+    case SYS_THREADCTL:
+        if (a == MOS_THR_SETQOS) return host_thr_setqos((int)b, (int)my_tid, (unsigned)c);
+        break;
+    case SYS_GPU: {
+        int blocked = 0;
+        long gr = host_gpu_op(a, b, c, &blocked);
+        if (blocked) return -MOS_EAGAIN;
+        return gr;
     }
     }
     {

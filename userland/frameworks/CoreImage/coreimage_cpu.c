@@ -4,7 +4,6 @@
  * MIT.
  */
 #include "coreimage_cpu.h"
-#include "../ImageIO/imageio_codec.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -25,6 +24,16 @@ struct mos_ci {
     double ax, ay, bx, by, tx, ty;
     double cx, cy, cw, ch;
 };
+
+/* A definição única fica no grok_imageio.c do libSystem. Aqui só o extern. */
+typedef struct {
+    int w, h;
+    int has_alpha;
+    uint32_t *px;
+} mos_img_t;
+extern const char *mos_img_uti(const uint8_t *data, size_t n);
+extern int mos_img_decode(const uint8_t *data, size_t n, mos_img_t *out);
+extern void mos_img_free(mos_img_t *img);
 
 static int too_big(int w, int h) {
     if (w <= 0 || h <= 0) return 1;
@@ -529,6 +538,20 @@ static mos_ci *flatten(mos_ci *im) {
     return 0;
 }
 
+mos_ci *mos_ci_apply(const char *name, mos_ci *input, mos_ci *background,
+                     double radius, double saturation, double brightness, double contrast,
+                     double scale, double aspect,
+                     double a, double b, double c, double d, double tx, double ty, int crop) {
+    if (!name || !input) return 0;
+    if (!strcmp(name, "CIGaussianBlur")) return mos_ci_blur(input, radius);
+    if (!strcmp(name, "CIColorControls")) return mos_ci_color(input, saturation, brightness, contrast);
+    if (!strcmp(name, "CISourceOverCompositing")) return background ? mos_ci_over(input, background) : 0;
+    if (!strcmp(name, "CILanczosScaleTransform")) return mos_ci_lanczos(input, scale, aspect);
+    if (!strcmp(name, "CIAffineTransform")) return mos_ci_affine(input, a, b, c, d, tx, ty);
+    if (!strcmp(name, "CICrop") && crop) return mos_ci_crop(input, tx, ty, a, b);
+    return 0;
+}
+
 int mos_ci_render(mos_ci *im, double x, double y, int w, int h, uint32_t *px) {
     if (!im || !px || too_big(w, h)) return -1;
     mos_ci *flat = flatten(im);
@@ -564,5 +587,41 @@ int mos_ci_render_format(mos_ci *im, double x, double y, int w, int h, int forma
         }
     }
     free(tmp);
+    return 0;
+}
+
+void mos_ci_ctx_init(mos_ci_ctx *c, int cache) {
+    if (!c) return;
+    memset(c, 0, sizeof *c);
+    c->cache = cache ? 1 : 0;
+}
+int mos_ci_ctx_renders(const mos_ci_ctx *c) { return c ? c->renders : 0; }
+void mos_ci_ctx_free(mos_ci_ctx *c) {
+    if (!c) return;
+    free(c->px);
+    c->px = 0;
+    c->im = 0;
+}
+int mos_ci_colorspace_ok(int foreign_space) { return foreign_space ? 0 : 1; }
+int mos_ci_ctx_render(mos_ci_ctx *c, mos_ci *im, double x, double y, int w, int h, uint32_t *px) {
+    if (!c || !px) return -1;
+    size_t n = (size_t)w * (size_t)h;
+    if (c->cache && c->px && c->im == im && c->x == x && c->y == y && c->w == w && c->h == h) {
+        memcpy(px, c->px, n * 4u);
+        return 0;
+    }
+    if (mos_ci_render(im, x, y, w, h, px) != 0) return -1;
+    c->renders++;
+    if (!c->cache) return 0;
+    uint32_t *copy = malloc(n * 4u);
+    if (!copy) return 0;
+    memcpy(copy, px, n * 4u);
+    free(c->px);
+    c->px = copy;
+    c->im = im;
+    c->x = x;
+    c->y = y;
+    c->w = w;
+    c->h = h;
     return 0;
 }

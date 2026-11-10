@@ -306,6 +306,7 @@ CG_EXTERN CGColorSpaceRef _Nullable CGColorGetColorSpace(CGColorRef _Nullable co
 /* ---- tipos opacos citados por outras APIs (contexto, imagem, fonte): ainda sem API pública aqui */
 typedef struct MOS_CG_BRIDGED CGContext *CGContextRef;
 typedef struct MOS_CG_BRIDGED CGImage *CGImageRef;
+CG_EXTERN CGImageRef _Nullable CGImageCreateWithImageInRect(CGImageRef _Nullable image, CGRect rect);
 typedef struct MOS_CG_BRIDGED CGFont *CGFontRef;
 typedef uint16_t CGGlyph;
 

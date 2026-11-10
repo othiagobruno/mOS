@@ -27,6 +27,8 @@ static int g_seq;
 static int g_auth_over;
 static int g_auth_force;
 static char g_path[512];
+static int g_name_order = 1;
+static int g_sort_order = 2;
 
 static void scopy(char *d, int cap, const char *s) {
     int i = 0;
@@ -74,21 +76,24 @@ static int write_all(void *f, const char *s) {
 
 static int load_file(void) {
     void *f;
-    char line[1024];
+    char line[2048];
+    int wide;
     default_path();
     g_n = 0;
     f = fopen(g_path, "r");
     if (!f) return CX_CN_OK;
-    if (!fgets(line, (int)sizeof line, f) || strncmp(line, "MOSCN1", 6) != 0) {
+    if (!fgets(line, (int)sizeof line, f)) { fclose(f); return CX_CN_ERR_IO; }
+    wide = strncmp(line, "MOSCN2", 6) == 0;
+    if (!wide && strncmp(line, "MOSCN1", 6) != 0) {
         fclose(f);
         return CX_CN_ERR_IO;
     }
     while (fgets(line, (int)sizeof line, f) && g_n < CN_MAX) {
         char *p = line;
-        char *fields[12];
-        int i;
+        char *fields[28];
+        int i, nfields = wide ? 28 : 12;
         cx_cn_contact *c;
-        for (i = 0; i < 12; i++) {
+        for (i = 0; i < nfields; i++) {
             fields[i] = p;
             while (*p && *p != '\t' && *p != '\n' && *p != '\r') p++;
             if (*p == '\t') { *p++ = 0; }
@@ -108,6 +113,23 @@ static int load_file(void) {
         scopy(c->zip, 16, fields[9]);
         scopy(c->country, 48, fields[10]);
         scopy(c->iso, 8, fields[11]);
+        if (!wide) continue;
+        scopy(c->prefix, 32, fields[12]);
+        scopy(c->suffix, 32, fields[13]);
+        scopy(c->previous, 64, fields[14]);
+        scopy(c->phonetic_given, 64, fields[15]);
+        scopy(c->phonetic_middle, 64, fields[16]);
+        scopy(c->phonetic_family, 64, fields[17]);
+        scopy(c->phonetic_org, 80, fields[18]);
+        scopy(c->url, 96, fields[19]);
+        scopy(c->relation, 48, fields[20]);
+        scopy(c->im_user, 64, fields[21]);
+        scopy(c->im_service, 32, fields[22]);
+        scopy(c->social_user, 64, fields[23]);
+        scopy(c->social_service, 32, fields[24]);
+        scopy(c->social_url, 96, fields[25]);
+        scopy(c->social_id, 64, fields[26]);
+        scopy(c->image, 68, fields[27]);
     }
     fclose(f);
     return CX_CN_OK;
@@ -140,19 +162,24 @@ static int ensure_dir(void) {
 static int save_file(void) {
     void *f;
     char tmp[540];
-    char line[1024];
+    char line[2048];
     int i;
     default_path();
     ensure_dir();
     snprintf(tmp, sizeof tmp, "%s.tmp", g_path);
     f = fopen(tmp, "w");
     if (!f) return CX_CN_ERR_IO;
-    if (!write_all(f, "MOSCN1\n")) { fclose(f); return CX_CN_ERR_IO; }
+    if (!write_all(f, "MOSCN2\n")) { fclose(f); return CX_CN_ERR_IO; }
     for (i = 0; i < g_n; i++) {
         cx_cn_contact *c = &g_db[i];
-        snprintf(line, sizeof line, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+        snprintf(line, sizeof line,
+                 "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
                  c->id, c->given, c->family, c->org, c->phone, c->email,
-                 c->street, c->city, c->state, c->zip, c->country, c->iso);
+                 c->street, c->city, c->state, c->zip, c->country, c->iso,
+                 c->prefix, c->suffix, c->previous, c->phonetic_given, c->phonetic_middle,
+                 c->phonetic_family, c->phonetic_org, c->url, c->relation,
+                 c->im_user, c->im_service, c->social_user, c->social_service,
+                 c->social_url, c->social_id, c->image);
         if (!write_all(f, line)) {
             fclose(f);
             return CX_CN_ERR_IO;
@@ -172,6 +199,8 @@ void cx_cn_reset(void) {
     g_auth_over = 0;
     g_auth_force = 0;
     g_path[0] = 0;
+    g_name_order = 1;
+    g_sort_order = 2;
 }
 
 void cx_cn_set_path(const char *path) {
@@ -297,4 +326,72 @@ int cx_cn_format_postal(const cx_cn_contact *c, char *out, int cap) {
     if (br) add_line(out, cap, &n, c->zip);
     add_line(out, cap, &n, c->country);
     return n;
+}
+
+void cx_cn_set_name_order(int order) { g_name_order = order == 2 ? 2 : 1; }
+int cx_cn_name_order(void) { return g_name_order; }
+void cx_cn_set_sort_order(int order) { g_sort_order = order == 3 ? 3 : 2; }
+int cx_cn_sort_order(void) { return g_sort_order; }
+
+int cx_cn_display_name(const cx_cn_contact *c, char *out, int cap) {
+    int n = 0;
+    if (!out || cap < 1) return 0;
+    out[0] = 0;
+    if (!c) return 0;
+    if (g_name_order == 2) {
+        if (c->family[0]) { scopy(out, cap, c->family); n = (int)strlen(out); }
+        if (c->given[0] && n < cap - 2) {
+            if (n) out[n++] = ' ';
+            scopy(out + n, cap - n, c->given);
+        }
+    } else {
+        if (c->prefix[0]) { scopy(out, cap, c->prefix); n = (int)strlen(out); }
+        if (c->given[0] && n < cap - 2) {
+            if (n) out[n++] = ' ';
+            scopy(out + n, cap - n, c->given);
+            n = (int)strlen(out);
+        }
+        if (c->family[0] && n < cap - 2) {
+            if (n) out[n++] = ' ';
+            scopy(out + n, cap - n, c->family);
+        }
+    }
+    return (int)strlen(out);
+}
+
+static int hex_nibble(char ch) {
+    if (ch >= '0' && ch <= '9') return ch - '0';
+    if (ch >= 'a' && ch <= 'f') return ch - 'a' + 10;
+    if (ch >= 'A' && ch <= 'F') return ch - 'A' + 10;
+    return -1;
+}
+
+int cx_cn_image_bytes(const char *hex, unsigned char *out, int cap) {
+    int n = 0, i = 0;
+    if (!hex || !out || cap < 1) return -1;
+    while (hex[i] && hex[i + 1]) {
+        int hi = hex_nibble(hex[i]);
+        int lo = hex_nibble(hex[i + 1]);
+        if (hi < 0 || lo < 0) return -1;
+        if (n >= cap) return -1;
+        out[n++] = (unsigned char)((hi << 4) | lo);
+        i += 2;
+    }
+    if (hex[i]) return -1;
+    return n;
+}
+
+const char *cx_cn_container_id(void) { return "local"; }
+const char *cx_cn_container_name(void) { return "Contatos"; }
+
+int cx_cn_picker_select(int index, cx_cn_pick_fn fn, void *ctx) {
+    cx_cn_contact c;
+    int rc = cx_cn_get(index, &c);
+    if (rc != CX_CN_OK) return rc;
+    if (fn) fn(c.id, ctx);
+    return CX_CN_OK;
+}
+
+void cx_cn_picker_cancel(cx_cn_cancel_fn fn, void *ctx) {
+    if (fn) fn(ctx);
 }

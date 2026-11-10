@@ -35,6 +35,9 @@ typedef struct { void *isa; u64 flags; const char *s; u64 n; } cm_cf_t;
     const void *var = &var##_s;
 
 CFCONST(kCMFormatDescriptionExtensionKey_MetadataKeyTable, "MetadataKeyTable")
+CFCONST(kCMFormatDescriptionExtension_AmbientViewingEnvironment, "AmbientViewingEnvironment")
+CFCONST(kCMSampleAttachmentKey_DoNotDisplay, "DoNotDisplay")
+CFCONST(kCMSampleBufferAttachmentKey_EmptyMedia, "EmptyMedia")
 CFCONST(kCMFormatDescriptionExtension_VerbatimSampleDescription, "VerbatimSampleDescription")
 CFCONST(kCMMetadataFormatDescriptionKey_Namespace, "Namespace")
 CFCONST(kCMMetadataFormatDescriptionKey_Value, "Value")
@@ -87,6 +90,8 @@ typedef struct {
     id attach;
     cm_time_t opt;
     int has_opt;
+    void *pkts;
+    long npkts;
 } sb_t;
 
 static cx_class_t BB_c, BB_m, FD_c, FD_m, SB_c, SB_m;
@@ -117,6 +122,7 @@ static void sb_dealloc(id s, SEL c) {
     if (b->attach) objc_release(b->attach);
     free(b->times);
     free(b->sizes);
+    free(b->pkts);
     IMP sup = cx_lookup(cx_class_named("NSObject"), c);
     if (sup) ((void (*)(id, SEL))sup)(s, c);
 }
@@ -341,6 +347,17 @@ cm_dim_t CMVideoFormatDescriptionGetDimensions(void *d) {
     fd_t *f = as_fd(d);
     cm_dim_t r = {f ? f->w : 0, f ? f->h : 0};
     return r;
+}
+cm_dim_t cm_presentation_dimensions(i32 w, i32 h, int par_n, int par_d, int clean_w, int clean_h, int use_par, int use_clean);
+cm_dim_t CMVideoFormatDescriptionGetPresentationDimensions(void *d, u8 use_par, u8 use_clean) {
+    fd_t *f = as_fd(d);
+    if (!f) { cm_dim_t z = {0, 0}; return z; }
+    return cm_presentation_dimensions(f->w, f->h, 1, 1, 0, 0, use_par, use_clean);
+}
+int cm_copy_asbd(const void *src, int has, void *dst, unsigned n);
+int CMAudioFormatDescriptionGetRichestDecodableFormat(void *d, void *asbd) {
+    fd_t *f = as_fd(d);
+    return cm_copy_asbd(f ? f->asbd : 0, f && f->has_asbd, asbd, 40);
 }
 int CMAudioFormatDescriptionCreate(void *a, const void *asbd, size_t ls, const void *l, size_t cs, const void *c, id ext, void **out) {
     (void)a; (void)ls; (void)l; (void)cs; (void)c;
@@ -592,6 +609,33 @@ int CMSampleBufferGetSampleTimingInfo(void *s, long i, cm_timing_t *out) {
     if (!b || !out || i < 0 || i >= b->ns || !b->times) return CM_BAD_SAMPLE;
     *out = b->times[i];
     return 0;
+}
+int cm_timing_copy(const cm_timing_t *src, long nsrc, cm_timing_t *dst, long ndst, long *need);
+int CMSampleBufferGetSampleTimingInfoArray(void *s, long entries, cm_timing_t *out, long *need) {
+    sb_t *b = as_sb(s);
+    if (!b) return CM_BAD_SAMPLE;
+    return cm_timing_copy(b->times, b->ns, out, entries, need);
+}
+int CMAudioSampleBufferCreateReadyWithPacketDescriptions(void *a, void *db, void *fd, long ns, cm_time_t pts, const void *pkts, void **out) {
+    cm_timing_t t;
+    memset(&t, 0, sizeof t);
+    t.presentationTimeStamp = pts;
+    t.decodeTimeStamp = pts;
+    t.duration.flags = 1;
+    t.duration.timescale = pts.timescale > 0 ? pts.timescale : 1;
+    int rc = CMSampleBufferCreate(a, db, 1, 0, 0, fd, ns, 1, &t, 0, 0, out);
+    if (rc || !out || !*out || !pkts || ns <= 0) return rc;
+    sb_t *s = as_sb(*out);
+    if (!s) return rc;
+    s->pkts = malloc((size_t)ns * 16);
+    if (!s->pkts) return CM_BAD_SAMPLE;
+    memcpy(s->pkts, pkts, (size_t)ns * 16);
+    s->npkts = ns;
+    return 0;
+}
+const void *CMSampleBufferGetAudioStreamPacketDescriptionsPtr(void *s) {
+    sb_t *b = as_sb(s);
+    return b ? b->pkts : 0;
 }
 size_t CMSampleBufferGetSampleSize(void *s, long i) {
     sb_t *b = as_sb(s);

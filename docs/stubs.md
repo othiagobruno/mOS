@@ -1,5 +1,5 @@
 # Stubs exportados do mOS
-Auditoria somente de leitura do que ainda liga e não faz o trabalho. Contagem conferida em `userland/libsystem/sys_zerados.c`: <!--n:total-sys-->**5293**<!--/n--> funções no formato `void nome(void) {}`. O recado de «cerca de 5404» não bate com o arquivo nesta main (`0c9c75e`). A lista símbolo a símbolo está em [stubs-full.txt](stubs-full.txt).
+Auditoria somente de leitura do que ainda liga e não faz o trabalho. Contagem conferida em `userland/libsystem/sys_zerados.c`: <!--n:total-sys-->**5243**<!--/n--> funções no formato `void nome(void) {}`. O recado de «cerca de 5404» não bate com o arquivo nesta main (`0c9c75e`). A lista símbolo a símbolo está em [stubs-full.txt](stubs-full.txt).
 ## Onde vive cada parte
 | Componente | Caminho |
 |---|---|
@@ -52,8 +52,8 @@ A libswift de stdlib e de runtime deste arquivo é nossa. Foundation, CoreFounda
 | 2888 | Swift (stdlib) | Runtime C/C++ e Swift | `$s10_ErrorType10Foundation01_A12CodeProtocolPTl` |
 | 1070 | Foundation | Sistemas | `$s10Foundation10CocoaErrorV03_nsC0So7NSErrorCvg` |
 | 248 | UIKit | Interface | `$s5UIKit01_A23NumericRawRepresentablePAAE1poiyxx_0C5ValueQztFZ` |
-| 159 | swift_* (runtime C) | Runtime C/C++ e Swift | `swift_allocEmptyBox` |
 | 154 | Network | Runtime C/C++ e Swift | `$s7Network10NWEndpointO4HostO13stringLiteralAESS_tcfC` |
+| 117 | swift_* (runtime C) | Runtime C/C++ e Swift | `swift_allocEmptyBox` |
 | 116 | Dispatch | Runtime C/C++ e Swift | `$s8Dispatch0A11SpecificKeyCACyxGycfC` |
 | 69 | ObjC (sem módulo reconhecido) | a definir | `$sSo10CKDatabaseC8CloudKitE17modifyRecordZones6saving8deletingSDySo14CKRecordZoneIDCs6ResultOySo0iJ0Cs5Error_pGG11saveResults_SDyAhJyytsAM_pGG06deleteO0tSayALG_SayAHGtYaKF` |
 | 65 | CoreMedia | Sistemas | `$s9CoreMedia15CMTIME_IS_VALIDySbSo6CMTimeaF` |
@@ -72,22 +72,22 @@ A libswift de stdlib e de runtime deste arquivo é nossa. Foundation, CoreFounda
 | 15 | XPC | Kernel | `$s3XPC0A10_TYPE_BOOLs13OpaquePointerVvg` |
 | 13 | CoreAudio | Frameworks Apple | `$s9CoreAudio013UnsafeMutableB17BufferListPointerV06unsafeG0SPySo0beF0VGvg` |
 | 11 | CommonCrypto (C) | Runtime C/C++ e Swift | `CCCalibratePBKDF` |
-| 11 | Darwin | Runtime C/C++ e Swift | `$s6Darwin0A7BooleanVMn` |
 | 10 | AppleArchive | Storage | `$s12AppleArchive0B10ByteStreamC015withCompressionD05using9writingTo9blockSize5flags11threadCount_xAA0bF0V_ACSiAA0B5FlagsVSixACKXEtKlFZ` |
 | 9 | Compression | Sistemas | `$s11Compression12OutputFilterC5writeyyxSgK10Foundation12DataProtocolRzlFTj` |
 | 9 | Observation | Runtime C/C++ e Swift | `$s11Observation04withA8Tracking_8onChangexxyXE_yyYbcyXKtlF` |
 | 7 | Accelerate | Runtime C/C++ e Swift | `$s10Accelerate6vImageO7OptionsV7noFlagsAEvgZ` |
-| 7 | libdispatch (C) | Runtime C/C++ e Swift | `dispatch_apply` |
+| 7 | Darwin | Runtime C/C++ e Swift | `$s6Darwin0A7BooleanVMn` |
 | 6 | filesystem (C) | Storage | `endfsent` |
 | 5 | Combine | Interface | `$sSo12NSURLSessionC10FoundationE17DataTaskPublisherV7Combine0E0ACMc` |
 | 5 | CoreFoundation | Sistemas | `$s14CoreFoundation9_CFObjectMp` |
 | 5 | mach (C) | Kernel | `mach_port_get_attributes` |
 | 4 | pthread (C) | Runtime C/C++ e Swift | `pthread_fchdir_np` |
+| 3 | libdispatch (C) | Runtime C/C++ e Swift | `dispatch_apply` |
 | 3 | mach exception (C) | Kernel | `exception_raise` |
 | 2 | Security (C) | Sistemas | `SecTaskCopyTeamIdentifier` |
 | 2 | xpc (C) | Kernel | `xpc_dictionary_get_audit_token` |
 
-Soma: **5293**. Há ainda 29 `void *kCF…` / `kCFURL…` sem inicializador (ponteiro nulo), listados no anexo. Não são função.
+Soma: **5243**. Há ainda 29 `void *kCF…` / `kCFURL…` sem inicializador (ponteiro nulo), listados no anexo. Não são função.
 <!-- gerado:tabela-grupos fim -->
 
 ### O que o grupo deveria fazer
@@ -96,8 +96,8 @@ Soma: **5293**. Há ainda 29 `void *kCF…` / `kCFURL…` sem inicializador (pon
 - **CoreFoundation, <!--n:CoreFoundation-->5<!--/n-->, e os <!--n:ponteiros-->29<!--/n--> ponteiros `kCF*`. Sistemas.** O mesmo vale para qualquer `CF*` que aparecer fora deste arquivo.
 - **CoreMedia, <!--n:CoreMedia-->65<!--/n-->, e Compression, <!--n:Compression-->9<!--/n-->. Sistemas.** Junto com VideoToolbox, Metal, ImageIO, libcurl e libz (zero stubs `void nome(void) {}` aqui).
 - **Security, <!--n:Security (C)-->2<!--/n-->. Sistemas.** `SecTaskCopyTeamIdentifier` e o vizinho. `SecTransformCreateGroupTransform` em `security.c` também.
-- **swift_*, <!--n:swift_* (runtime C)-->159<!--/n-->, Dispatch <!--n:Dispatch-->116<!--/n-->, libdispatch <!--n:libdispatch (C)-->7<!--/n-->, pthread <!--n:pthread (C)-->4<!--/n-->, Darwin, os, System, ObjectiveC, _StringProcessing, RegexBuilder, Observation. Runtime.** `swift_retain` / `allocObject` / cast / task. Referência: `tools/vscode-macho-stubs/libswift-runtime.c` (#82/#94).
-- **UIKit <!--n:UIKit-->248<!--/n-->, PhotosUI <!--n:PhotosUI-->27<!--/n-->, CoreGraphics <!--n:CoreGraphics-->60<!--/n-->. Interface.** SwiftUI dos <!--n:total-swiftui-->918<!--/n--> de `swiftui_imports.c` também.
+- **swift_*, <!--n:swift_* (runtime C)-->117<!--/n-->, Dispatch <!--n:Dispatch-->116<!--/n-->, libdispatch <!--n:libdispatch (C)-->3<!--/n-->, pthread <!--n:pthread (C)-->4<!--/n-->, Darwin, os, System, ObjectiveC, _StringProcessing, RegexBuilder, Observation. Runtime.** `swift_retain` / `allocObject` / cast / task. Referência: `tools/vscode-macho-stubs/libswift-runtime.c` (#82/#94).
+- **UIKit <!--n:UIKit-->248<!--/n-->, PhotosUI <!--n:PhotosUI-->27<!--/n-->, CoreGraphics <!--n:CoreGraphics-->60<!--/n-->. Interface.** SwiftUI dos <!--n:total-swiftui-->46<!--/n--> de `swiftui_imports.c` também.
 - **mach, exception, xpc e o módulo XPC. Kernel.**
 - **filesystem <!--n:filesystem (C)-->6<!--/n--> e AppleArchive <!--n:AppleArchive-->10<!--/n-->. Storage.**
 - **Network <!--n:Network-->154<!--/n-->, `nw_*` <!--n:Network (C, nw_*)-->25<!--/n-->, libc/libm <!--n:libc/libm (C)-->61<!--/n-->, CommonCrypto <!--n:CommonCrypto (C)-->11<!--/n-->, Accelerate <!--n:Accelerate-->7<!--/n-->. Runtime C/C++ e Swift.**
@@ -110,7 +110,7 @@ Uma linha, fora de `third_party` e fora de `sys_zerados.c`. Métodos de amostra 
 
 | Quantidade | Arquivo | Dono | Impacto |
 |---:|---|---|---|
-| <!--n:total-swiftui-->918<!--/n--> | `userland/libsystem/swiftui_imports.c` | Interface | SwiftUI importado por Claude, ChatGPT e WhatsApp liga e não desenha. Lista no anexo. |
+| <!--n:total-swiftui-->46<!--/n--> | `userland/libsystem/swiftui_imports.c` | Interface | SwiftUI importado por Claude, ChatGPT e WhatsApp liga e não desenha. Lista no anexo. |
 | 31 | `kernel/stubs.c` | Kernel | Áudio, rede, ping e DHCP fracos (`weak`): o subsistema real, se existir, substitui. |
 | 6 | `userland/libsystem/vscode_frameworks.c` | Interface | Símbolos de framework do VS Code que só retornam vazio. |
 | 5 | `userland/libsystem/posixmore.c` | a definir | `endservent`, `getservent` (NULL), `sync`, `gethostid` (0), utmpx. |
@@ -166,7 +166,7 @@ Nesta rodada não rodei `tools/build.sh`, QEMU nem a suíte de host. O estado ab
 | `operator new`, `__cxa_guard_*`, `std::string` em `libcxx.c` / `cxxabi.c` | Código com comportamento. Não reexecutado aqui. |
 | `_Unwind_RaiseException` e `_Unwind_DeleteException` | Código em `cxx_unwind.c`. Não reexecutado aqui. |
 | `compression_stream_*` e `crc32` | Código da zlib no #83. Não reexecutado aqui. |
-| <!--n:total-sys-->5293<!--/n--> de `sys_zerados.c` e <!--n:total-swiftui-->918<!--/n--> de `swiftui_imports.c` | Stub. |
+| <!--n:total-sys-->5243<!--/n--> de `sys_zerados.c` e <!--n:total-swiftui-->46<!--/n--> de `swiftui_imports.c` | Stub. |
 | `__cxa_throw` de `libcxx.c` | Stub que aborta. |
 | Unicode em `swiftrt.c` | Stub (ASCII/Latin-1 de caixa é real; normalização não). |
 | Exceção ObjC com libc++ no disco | Código em `objc_exc.c`. O harness citado é `tools/objc_eh_hosttest.c`. Não rodei. |

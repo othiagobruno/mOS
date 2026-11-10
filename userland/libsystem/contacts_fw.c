@@ -4,6 +4,7 @@
 #include "foundation.h"
 #include "cn_store.h"
 
+void cx_contacts_ui_init(void);
 int cx_tcc_request(const char *service);
 int cx_tcc_state(const char *service);
 id objc_autorelease(id o);
@@ -88,6 +89,22 @@ static cn_req_t *req_of(id o, int make) {
     static void set_##name(id self, SEL c, id v) { cn_slot_t *s = slot_of(self, 1); (void)c; if (s) field_copy(s->c.field, cap, v); }
 
 GETF(given, given, 64)
+GETF(prefix, prefix, 32)
+GETF(suffix, suffix, 32)
+GETF(previous, previous, 64)
+GETF(phonetic_given, phonetic_given, 64)
+GETF(phonetic_middle, phonetic_middle, 64)
+GETF(phonetic_family, phonetic_family, 64)
+GETF(phonetic_org, phonetic_org, 80)
+GETF(url, url, 96)
+GETF(relation, relation, 48)
+GETF(im_user, im_user, 64)
+GETF(im_service, im_service, 32)
+GETF(social_user, social_user, 64)
+GETF(social_service, social_service, 32)
+GETF(social_url, social_url, 96)
+GETF(social_id, social_id, 64)
+GETF(image, image, 68)
 GETF(family, family, 64)
 GETF(org, org, 80)
 GETF(phone, phone, 64)
@@ -227,6 +244,17 @@ static id store_enumerate(id self, SEL c, id request, id *error, void *block) {
     return 0;
 }
 
+static id get_image_data(id self, SEL c) {
+    cn_slot_t *s = slot_of(self, 0);
+    unsigned char buf[32];
+    int n;
+    (void)c;
+    if (!s || !s->c.image[0]) return 0;
+    n = cx_cn_image_bytes(s->c.image, buf, (int)sizeof buf);
+    if (n < 0) return 0;
+    return objc_autorelease(MSG(id, (id)cx_class_named("NSData"), "dataWithBytes:length:", buf, (unsigned long)n));
+}
+
 static id fmt_string(id self, SEL c, id obj) {
     cn_slot_t *s = slot_of(obj, 0);
     char buf[400];
@@ -275,6 +303,39 @@ void cx_contacts_init(void) {
     add_m(&CNMutableContact_c, "setEmailAddressString:", (void *)set_email);
     add_m(&CNContact_c, "postalAddress", (void *)get_postal);
     add_m(&CNMutableContact_c, "setPostalAddress:", (void *)set_postal);
+    add_m(&CNContact_c, "namePrefix", (void *)get_prefix);
+    add_m(&CNMutableContact_c, "setNamePrefix:", (void *)set_prefix);
+    add_m(&CNContact_c, "nameSuffix", (void *)get_suffix);
+    add_m(&CNMutableContact_c, "setNameSuffix:", (void *)set_suffix);
+    add_m(&CNContact_c, "previousFamilyName", (void *)get_previous);
+    add_m(&CNMutableContact_c, "setPreviousFamilyName:", (void *)set_previous);
+    add_m(&CNContact_c, "phoneticGivenName", (void *)get_phonetic_given);
+    add_m(&CNMutableContact_c, "setPhoneticGivenName:", (void *)set_phonetic_given);
+    add_m(&CNContact_c, "phoneticMiddleName", (void *)get_phonetic_middle);
+    add_m(&CNMutableContact_c, "setPhoneticMiddleName:", (void *)set_phonetic_middle);
+    add_m(&CNContact_c, "phoneticFamilyName", (void *)get_phonetic_family);
+    add_m(&CNMutableContact_c, "setPhoneticFamilyName:", (void *)set_phonetic_family);
+    add_m(&CNContact_c, "phoneticOrganizationName", (void *)get_phonetic_org);
+    add_m(&CNMutableContact_c, "setPhoneticOrganizationName:", (void *)set_phonetic_org);
+    add_m(&CNContact_c, "urlAddressString", (void *)get_url);
+    add_m(&CNMutableContact_c, "setUrlAddressString:", (void *)set_url);
+    add_m(&CNContact_c, "relationLabel", (void *)get_relation);
+    add_m(&CNMutableContact_c, "setRelationLabel:", (void *)set_relation);
+    add_m(&CNContact_c, "instantMessageUsername", (void *)get_im_user);
+    add_m(&CNMutableContact_c, "setInstantMessageUsername:", (void *)set_im_user);
+    add_m(&CNContact_c, "instantMessageService", (void *)get_im_service);
+    add_m(&CNMutableContact_c, "setInstantMessageService:", (void *)set_im_service);
+    add_m(&CNContact_c, "socialProfileUsername", (void *)get_social_user);
+    add_m(&CNMutableContact_c, "setSocialProfileUsername:", (void *)set_social_user);
+    add_m(&CNContact_c, "socialProfileService", (void *)get_social_service);
+    add_m(&CNMutableContact_c, "setSocialProfileService:", (void *)set_social_service);
+    add_m(&CNContact_c, "socialProfileURLString", (void *)get_social_url);
+    add_m(&CNMutableContact_c, "setSocialProfileURLString:", (void *)set_social_url);
+    add_m(&CNContact_c, "socialProfileUserIdentifier", (void *)get_social_id);
+    add_m(&CNMutableContact_c, "setSocialProfileUserIdentifier:", (void *)set_social_id);
+    add_m(&CNContact_c, "imageDataHex", (void *)get_image);
+    add_m(&CNMutableContact_c, "setImageDataHex:", (void *)set_image);
+    add_m(&CNContact_c, "imageData", (void *)get_image_data);
 
     add_m(&CNSaveRequest_c, "addContact:toContainerWithIdentifier:", (void *)req_add);
     add_m(&CNSaveRequest_c, "updateContact:", (void *)req_update);
@@ -284,4 +345,5 @@ void cx_contacts_init(void) {
     add_m(&CNContactStore_c, "requestAccessForEntityType:completionHandler:", (void *)store_request_access);
     add_m(&CNContactStore_c, "enumerateContactsWithFetchRequest:error:usingBlock:", (void *)store_enumerate);
     add_m(&CNPostalAddressFormatter_c, "stringForObjectValue:", (void *)fmt_string);
+    cx_contacts_ui_init();
 }

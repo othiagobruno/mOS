@@ -1,4 +1,5 @@
 /* Host: pixels do CoreImage contra valores calculados à parte.
+ * O teste liga o imageio_decode.c só para fornecer mos_img_decode. O framework não o define.
  * cc -O2 tools/test-coreimage.c userland/frameworks/CoreImage/coreimage_cpu.c \
  *    userland/frameworks/ImageIO/imageio_decode.c -lm -I userland/frameworks/CoreImage -o /tmp/test-coreimage
  */
@@ -133,6 +134,26 @@ int main(void) {
     uint32_t want[4] = { 0xFFFF0000u, 0x8000FF00u, 0xFF0000FFu, 0xFFFFFFFFu };
     expect(dec && mos_ci_render(dec, 0, 0, 2, 2, decpx) == 0 && !memcmp(decpx, want, sizeof want), "PNG do ImageIO vira CIImage");
     expect(mos_ci_from_encoded((const uint8_t *)"GIF89a", 6) == 0, "GIF não decodifica");
+
+    mos_ci *byname = mos_ci_apply("CIGaussianBlur", dot, 0, 1, 1, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0);
+    uint32_t bypx[49];
+    expect(byname && mos_ci_render(byname, -3, -3, 7, 7, bypx) == 0 && !memcmp(bypx, tile, sizeof tile),
+           "CIFilter CIGaussianBlur pelo nome");
+    expect(mos_ci_apply("CIComicEffect", im, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0) == 0, "filtro desconhecido é nil");
+    expect(mos_ci_colorspace_ok(0) == 1 && mos_ci_colorspace_ok(1) == 0, "espaço de cor estrangeiro é recusado");
+    mos_ci_ctx cache;
+    mos_ci_ctx_init(&cache, 1);
+    uint32_t once = 0, twice = 0;
+    expect(mos_ci_ctx_render(&cache, im, 0, 0, 1, 1, &once) == 0, "contexto desenha");
+    expect(mos_ci_ctx_render(&cache, im, 0, 0, 1, 1, &twice) == 0 && twice == once && mos_ci_ctx_renders(&cache) == 1,
+           "kCIContextCacheIntermediates reaproveita o raster");
+    mos_ci_ctx_free(&cache);
+    mos_ci_ctx fresh;
+    mos_ci_ctx_init(&fresh, 0);
+    expect(mos_ci_ctx_render(&fresh, im, 0, 0, 1, 1, &once) == 0 && mos_ci_ctx_render(&fresh, im, 0, 0, 1, 1, &twice) == 0
+           && mos_ci_ctx_renders(&fresh) == 2, "cache desligado recalcula");
+    mos_ci_ctx_free(&fresh);
+    mos_ci_release(byname);
 
     mos_ci_release(im); mos_ci_release(crop); mos_ci_release(gray); mos_ci_release(blk);
     mos_ci_release(bright); mos_ci_release(fgi); mos_ci_release(bgi); mos_ci_release(over);

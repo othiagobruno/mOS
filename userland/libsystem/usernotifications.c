@@ -29,6 +29,16 @@ cx_class_t UNNotification_c __asm__("OBJC_CLASS_$_UNNotification");
 cx_class_t UNNotification_m __asm__("OBJC_METACLASS_$_UNNotification");
 cx_class_t UNNotificationResponse_c __asm__("OBJC_CLASS_$_UNNotificationResponse");
 cx_class_t UNNotificationResponse_m __asm__("OBJC_METACLASS_$_UNNotificationResponse");
+cx_class_t UNNotificationSettings_c __asm__("OBJC_CLASS_$_UNNotificationSettings");
+cx_class_t UNNotificationSettings_m __asm__("OBJC_METACLASS_$_UNNotificationSettings");
+cx_class_t UNNotificationActionIcon_c __asm__("OBJC_CLASS_$_UNNotificationActionIcon");
+cx_class_t UNNotificationActionIcon_m __asm__("OBJC_METACLASS_$_UNNotificationActionIcon");
+cx_class_t UNPushNotificationTrigger_c __asm__("OBJC_CLASS_$_UNPushNotificationTrigger");
+cx_class_t UNPushNotificationTrigger_m __asm__("OBJC_METACLASS_$_UNPushNotificationTrigger");
+cx_class_t UNCalendarNotificationTrigger_c __asm__("OBJC_CLASS_$_UNCalendarNotificationTrigger");
+cx_class_t UNCalendarNotificationTrigger_m __asm__("OBJC_METACLASS_$_UNCalendarNotificationTrigger");
+cx_class_t UNNotificationServiceExtension_c __asm__("OBJC_CLASS_$_UNNotificationServiceExtension");
+cx_class_t UNNotificationServiceExtension_m __asm__("OBJC_METACLASS_$_UNNotificationServiceExtension");
 
 enum { UN_SLOTS = 48 };
 
@@ -36,7 +46,9 @@ typedef struct {
     id obj;
     char title[96], subtitle[96], body[160], ident[64], action[80];
     double interval;
-    int repeats, used;
+    int repeats, used, push, calendar;
+    cx_un_cal_t cal;
+    int auth, sound, badge, alert, center, lockscreen, style;
     id content, trigger, ident_obj, note, userinfo;
 } un_slot_t;
 
@@ -363,6 +375,7 @@ static void un_add(id self, SEL c, id req, void *block) {
     rs = slot_get(req, 0);
     cs = rs && rs->content ? slot_get(rs->content, 0) : 0;
     ts = rs && rs->trigger ? slot_get(rs->trigger, 0) : 0;
+    if (ts && ts->push) { call_err(block, un_error()); return; }
     if (cs && cs->userinfo) {
         id desc = MSG0(id, cs->userinfo, "description");
         cx_un_stage_info(desc ? cx_cstr(desc) : "");
@@ -370,12 +383,19 @@ static void un_add(id self, SEL c, id req, void *block) {
     } else {
         cx_un_stage_info("");
     }
-    rc = cx_un_add(rs ? rs->ident : "",
-                   cs ? cs->title : "",
-                   cs ? cs->subtitle : "",
-                   cs ? cs->body : "",
-                   ts ? ts->interval : 0,
-                   ts ? ts->repeats : 0);
+    if (ts && ts->calendar)
+        rc = cx_un_add_calendar(rs ? rs->ident : "",
+                                cs ? cs->title : "",
+                                cs ? cs->subtitle : "",
+                                cs ? cs->body : "",
+                                &ts->cal, ts->repeats);
+    else
+        rc = cx_un_add(rs ? rs->ident : "",
+                       cs ? cs->title : "",
+                       cs ? cs->subtitle : "",
+                       cs ? cs->body : "",
+                       ts ? ts->interval : 0,
+                       ts ? ts->repeats : 0);
     call_err(block, rc == CX_UN_OK ? 0 : un_error());
     poll_clicks();
 }
@@ -406,6 +426,142 @@ static void un_rm_delivered_ids(id self, SEL c, id ids) {
     }
 }
 static void un_rm_all_delivered(id self, SEL c) { (void)self; (void)c; cx_un_remove_delivered(0); }
+
+static long set_long(id self, SEL c, int which) {
+    un_slot_t *s = slot_get(self, 0);
+    (void)c;
+    if (!s) return 0;
+    if (which == 0) return s->auth;
+    if (which == 1) return s->sound;
+    if (which == 2) return s->badge;
+    if (which == 3) return s->alert;
+    if (which == 4) return s->center;
+    if (which == 5) return s->lockscreen;
+    return s->style;
+}
+static long settings_auth(id self, SEL c) { return set_long(self, c, 0); }
+static long settings_sound(id self, SEL c) { return set_long(self, c, 1); }
+static long settings_badge(id self, SEL c) { return set_long(self, c, 2); }
+static long settings_alert(id self, SEL c) { return set_long(self, c, 3); }
+static long settings_center(id self, SEL c) { return set_long(self, c, 4); }
+static long settings_lock(id self, SEL c) { return set_long(self, c, 5); }
+static long settings_style(id self, SEL c) { return set_long(self, c, 6); }
+
+typedef struct { void *isa; int flags, reserved; void (*invoke)(void *, id); } un_one_block;
+
+static void un_get_settings(id self, SEL c, void *block) {
+    un_one_block *b = block;
+    cx_un_settings_t st;
+    id o;
+    un_slot_t *s;
+    (void)self; (void)c;
+    cx_un_settings(&st);
+    o = cx_alloc_instance(&UNNotificationSettings_c);
+    s = slot_get(o, 1);
+    if (s) {
+        s->auth = st.authorization;
+        s->sound = st.sound;
+        s->badge = st.badge;
+        s->alert = st.alert;
+        s->center = st.notification_center;
+        s->lockscreen = st.lock_screen;
+        s->style = st.alert_style;
+    }
+    if (b && b->invoke) b->invoke(b, objc_autorelease(o));
+}
+
+static id remote_error(int code, const char *domain) {
+    id ui = MSG(id, (id)cx_class_named("NSDictionary"), "dictionaryWithObject:forKey:",
+                cx_str("o mOS não tem APNs; nenhum token foi emitido"), cx_str("NSLocalizedDescription"));
+    return objc_autorelease(MSG(id, (id)cx_class_named("NSError"), "errorWithDomain:code:userInfo:",
+                                 cx_str(domain ? domain : "UNErrorDomain"), (long)code, ui));
+}
+
+static void remote_fail_bridge(int code, const char *domain, void *ctx) {
+    id err = remote_error(code, domain);
+    cx_class_t *k;
+    (void)ctx;
+    if (!g_delegate) return;
+    k = object_getClass(g_delegate);
+    if (k && cx_responds(k, sel_registerName("didFailToRegisterForRemoteNotificationsWithError:")))
+        MSG(void, g_delegate, "didFailToRegisterForRemoteNotificationsWithError:", err);
+}
+
+static void un_register_remote(id self, SEL c) {
+    void *token = (void *)1;
+    (void)self; (void)c;
+    cx_un_register_remote(&token, remote_fail_bridge, 0);
+}
+
+static id icon_with(id self, SEL c, id name) {
+    id o = cx_alloc_instance(&UNNotificationActionIcon_c);
+    un_slot_t *s = slot_get(o, 1);
+    (void)self; (void)c;
+    if (s) copy_field(s->ident, (int)sizeof s->ident, name);
+    return objc_autorelease(o);
+}
+static id icon_name(id self, SEL c) {
+    un_slot_t *s = slot_get(self, 0);
+    (void)c;
+    return objc_autorelease(cx_str(s ? s->ident : ""));
+}
+
+static int comp_or_any(id comps, const char *sel) {
+    long long v;
+    if (!comps) return -1;
+    v = MSG0(long long, comps, sel);
+    if (v == 0x7fffffffffffffffLL) return -1;
+    return (int)v;
+}
+
+static id cal_with(id cls, SEL c, id comps, BOOL repeats) {
+    id o = cx_alloc_instance((cx_class_t *)cls);
+    un_slot_t *s = slot_get(o, 1);
+    (void)c;
+    if (s) {
+        s->calendar = 1;
+        s->repeats = repeats ? 1 : 0;
+        s->cal.year = comp_or_any(comps, "year");
+        s->cal.month = comp_or_any(comps, "month");
+        s->cal.day = comp_or_any(comps, "day");
+        s->cal.hour = comp_or_any(comps, "hour");
+        s->cal.minute = comp_or_any(comps, "minute");
+        s->cal.second = comp_or_any(comps, "second");
+        s->content = comps ? objc_retain(comps) : 0;
+    }
+    return objc_autorelease(o);
+}
+
+static id cal_next(id self, SEL c) {
+    un_slot_t *s = slot_get(self, 0);
+    double t;
+    (void)c;
+    if (!s || !s->calendar) return 0;
+    t = cx_un_calendar_next(&s->cal, cx_now(), s->repeats);
+    if (t < 0) return 0;
+    return MSG(id, (id)cx_class_named("NSDate"), "dateWithTimeIntervalSince1970:", t);
+}
+
+static id cal_comps(id self, SEL c) {
+    un_slot_t *s = slot_get(self, 0);
+    (void)c;
+    return s ? s->content : 0;
+}
+
+static id push_new(id self, SEL c) {
+    id o = cx_alloc_instance(&UNPushNotificationTrigger_c);
+    un_slot_t *s = slot_get(o, 1);
+    (void)self; (void)c;
+    if (s) s->push = 1;
+    return objc_autorelease(o);
+}
+
+static void ext_receive(id self, SEL c, id req, void *block) {
+    un_one_block *b = block;
+    un_slot_t *rs = slot_get(req, 0);
+    (void)self; (void)c;
+    if (b && b->invoke) b->invoke(b, rs ? rs->content : 0);
+}
 
 static void add_if_missing(cx_class_t *k, const char *sel, void *imp) {
     if (k && !cx_responds(k, sel_registerName(sel))) cx_add_method(k, sel, imp);
@@ -450,6 +606,30 @@ void cx_usernotifications_init(void) {
     add_if_missing(&UNUserNotificationCenter_c, "removeAllPendingNotificationRequests", (void *)un_rm_all_pending);
     add_if_missing(&UNUserNotificationCenter_c, "removeDeliveredNotificationsWithIdentifiers:", (void *)un_rm_delivered_ids);
     add_if_missing(&UNUserNotificationCenter_c, "removeAllDeliveredNotifications", (void *)un_rm_all_delivered);
+    add_if_missing(&UNUserNotificationCenter_c, "getNotificationSettingsWithCompletionHandler:", (void *)un_get_settings);
+    add_if_missing(&UNUserNotificationCenter_c, "registerForRemoteNotifications", (void *)un_register_remote);
+
+    cx_define_class(&UNNotificationSettings_c, &UNNotificationSettings_m, "UNNotificationSettings", obj, 0);
+    cx_define_class(&UNNotificationActionIcon_c, &UNNotificationActionIcon_m, "UNNotificationActionIcon", obj, 0);
+    cx_define_class(&UNPushNotificationTrigger_c, &UNPushNotificationTrigger_m, "UNPushNotificationTrigger", &UNNotificationTrigger_c, 0);
+    cx_define_class(&UNCalendarNotificationTrigger_c, &UNCalendarNotificationTrigger_m,
+                    "UNCalendarNotificationTrigger", &UNNotificationTrigger_c, 0);
+    cx_add_cmethod(&UNCalendarNotificationTrigger_c, "triggerWithDateMatchingComponents:repeats:", (void *)cal_with);
+    cx_add_method(&UNCalendarNotificationTrigger_c, "nextTriggerDate", (void *)cal_next);
+    cx_add_method(&UNCalendarNotificationTrigger_c, "dateComponents", (void *)cal_comps);
+    cx_add_method(&UNCalendarNotificationTrigger_c, "repeats", (void *)trig_repeats);
+    cx_define_class(&UNNotificationServiceExtension_c, &UNNotificationServiceExtension_m, "UNNotificationServiceExtension", obj, 0);
+    cx_add_method(&UNNotificationSettings_c, "authorizationStatus", (void *)settings_auth);
+    cx_add_method(&UNNotificationSettings_c, "soundSetting", (void *)settings_sound);
+    cx_add_method(&UNNotificationSettings_c, "badgeSetting", (void *)settings_badge);
+    cx_add_method(&UNNotificationSettings_c, "alertSetting", (void *)settings_alert);
+    cx_add_method(&UNNotificationSettings_c, "notificationCenterSetting", (void *)settings_center);
+    cx_add_method(&UNNotificationSettings_c, "lockScreenSetting", (void *)settings_lock);
+    cx_add_method(&UNNotificationSettings_c, "alertStyle", (void *)settings_style);
+    cx_add_cmethod(&UNNotificationActionIcon_c, "iconWithTemplateImageName:", (void *)icon_with);
+    cx_add_method(&UNNotificationActionIcon_c, "imageName", (void *)icon_name);
+    cx_add_cmethod(&UNPushNotificationTrigger_c, "trigger", (void *)push_new);
+    cx_add_method(&UNNotificationServiceExtension_c, "didReceiveNotificationRequest:withContentHandler:", (void *)ext_receive);
 
     cx_un_set_delegate(objc_present, objc_receive, 0);
     cx_un_set_banner_sink(kernel_banner, 0);

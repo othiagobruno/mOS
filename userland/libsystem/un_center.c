@@ -11,8 +11,9 @@
 enum { UN_CAP = 24, UN_ID = 64, UN_TITLE = 96, UN_BODY = 160, UN_INFO = 192 };
 
 typedef struct {
-    int used, pending, delivered, repeats, token;
+    int used, pending, delivered, repeats, token, calendar;
     double interval, fire_at;
+    cx_un_cal_t cal;
     char ident[UN_ID];
     char title[UN_TITLE];
     char body[UN_BODY];
@@ -55,6 +56,56 @@ static int same(const char *a, const char *b) {
     return strcmp(a, b) == 0;
 }
 
+static void civil_from_unix(long long z, int *Y, int *M, int *D, int *h, int *mi, int *s);
+static long long unix_from_civil(int y, int m, int d, int h, int mi, int s);
+
+static int cal_set(int v) { return v >= 0; }
+
+static int cal_match(int Y, int M, int D, int h, int mi, int s, const cx_un_cal_t *c) {
+    if (cal_set(c->year) && Y != c->year) return 0;
+    if (cal_set(c->month) && M != c->month) return 0;
+    if (cal_set(c->day) && D != c->day) return 0;
+    if (cal_set(c->hour) && h != c->hour) return 0;
+    if (cal_set(c->minute) && mi != c->minute) return 0;
+    if (cal_set(c->second) && s != c->second) return 0;
+    return 1;
+}
+
+double cx_un_calendar_next(const cx_un_cal_t *c, double from, int repeats) {
+    long long step, t, i;
+    int Y, M, D, h, mi, s;
+    if (!c) return -1;
+    if (cal_set(c->year) && cal_set(c->month) && cal_set(c->day)) {
+        int yy = c->year;
+        h = cal_set(c->hour) ? c->hour : 0;
+        mi = cal_set(c->minute) ? c->minute : 0;
+        s = cal_set(c->second) ? c->second : 0;
+        for (i = 0; i < 8; i++) {
+            long long u = unix_from_civil(yy, c->month, c->day, h, mi, s);
+            if ((double)u > from) return (double)u;
+            if (!repeats) return -1;
+            yy++;
+        }
+        return -1;
+    }
+    step = 1;
+    if (!cal_set(c->second)) step = 60;
+    if (!cal_set(c->second) && !cal_set(c->minute)) step = 3600;
+    if (!cal_set(c->second) && !cal_set(c->minute) && !cal_set(c->hour)) step = 86400;
+    t = (long long)from + 1;
+    if (step > 1) {
+        long long aligned = t - (t % step);
+        t = aligned > (long long)from ? aligned : aligned + step;
+    }
+    for (i = 0; i < 2000000; i++) {
+        civil_from_unix(t, &Y, &M, &D, &h, &mi, &s);
+        if (cal_match(Y, M, D, h, mi, s, c)) return (double)t;
+        t += step;
+    }
+    (void)repeats;
+    return -1;
+}
+
 static double un_now(void) {
 #ifdef CX_UN_HOST
     return g_clock;
@@ -70,7 +121,11 @@ static void deliver(un_req_t *r) {
     r->delivered = 1;
     r->token = g_tok++;
     if (g_tok < 1) g_tok = 1;
-    if (r->repeats && r->interval > 0) {
+    if (r->repeats && r->calendar) {
+        double nxt = cx_un_calendar_next(&r->cal, un_now(), 1);
+        if (nxt < 0) r->pending = 0;
+        else { r->pending = 1; r->fire_at = nxt; }
+    } else if (r->repeats && r->interval > 0) {
         r->pending = 1;
         r->fire_at = un_now() + r->interval;
     } else {
@@ -185,6 +240,61 @@ int cx_un_add(const char *ident, const char *title, const char *subtitle, const 
     return CX_UN_OK;
 }
 
+static void civil_from_unix(long long z, int *Y, int *M, int *D, int *h, int *mi, int *s) {
+    long long days, rem;
+    long long era, doe, yoe, yy, doy, mp;
+    if (z < 0) z = 0;
+    days = z / 86400;
+    rem = z - days * 86400;
+    days += 719468;
+    era = days / 146097;
+    doe = days - era * 146097;
+    yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    yy = yoe + era * 400;
+    doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    mp = (5 * doy + 2) / 153;
+    *D = (int)(doy - (153 * mp + 2) / 5 + 1);
+    *M = (int)(mp < 10 ? mp + 3 : mp - 9);
+    *Y = (int)(yy + (*M <= 2));
+    *h = (int)(rem / 3600);
+    *mi = (int)((rem % 3600) / 60);
+    *s = (int)(rem % 60);
+}
+
+static long long unix_from_civil(int y, int m, int d, int h, int mi, int s) {
+    long long yy = y;
+    long long era, yoe, doy, doe;
+    yy -= m <= 2;
+    era = (yy >= 0 ? yy : yy - 399) / 400;
+    yoe = yy - era * 400;
+    doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+    doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    return (era * 146097 + doe - 719468) * 86400 + h * 3600 + mi * 60 + s;
+}
+
+int cx_un_add_calendar(const char *ident, const char *title, const char *subtitle, const char *body,
+                       const cx_un_cal_t *c, int repeats) {
+    double when;
+    int rc;
+    if (!c) return CX_UN_ERR_BAD;
+    when = cx_un_calendar_next(c, un_now(), repeats);
+    if (when < 0) return CX_UN_ERR_BAD;
+    rc = cx_un_add(ident, title, subtitle, body, when - un_now(), repeats);
+    if (rc != CX_UN_OK) return rc;
+    {
+        un_req_t *r = find_ident(ident, 1);
+        if (!r) r = find_ident(ident, 0);
+        if (r) {
+            r->calendar = 1;
+            r->cal = *c;
+            r->fire_at = when;
+            r->pending = 1;
+            if (!repeats) r->repeats = 0;
+        }
+    }
+    return CX_UN_OK;
+}
+
 int cx_un_remove_pending(const char *ident) {
     int n = 0;
     for (int i = 0; i < UN_CAP; i++) {
@@ -272,6 +382,36 @@ int cx_un_banner_click(void) {
 int cx_un_click_token(int token) {
     if (!g_ban.live || token <= 0 || g_ban.token != token) return 0;
     return cx_un_banner_click();
+}
+
+void cx_un_settings(cx_un_settings_t *out) {
+    int auth;
+    int on;
+    if (!out) return;
+    auth = cx_un_auth();
+    on = auth == CX_UN_AUTHORIZED ? 2 : 1;
+    out->authorization = auth;
+    out->sound = on;
+    out->badge = on;
+    out->alert = on;
+    out->notification_center = on;
+    out->lock_screen = on;
+    out->alert_style = auth == CX_UN_AUTHORIZED ? 1 : 0;
+}
+
+int cx_un_register_remote(void **token_out, cx_un_remote_fail_fn fail, void *ctx) {
+    if (token_out) *token_out = 0;
+    if (fail) fail(1, "UNErrorDomain", ctx);
+    return CX_UN_ERR_DENIED;
+}
+
+int cx_un_service_receive(const char *title, char *out_title, int cap) {
+    int i = 0;
+    if (!out_title || cap < 1) return CX_UN_ERR_BAD;
+    if (!title) title = "";
+    for (; i < cap - 1 && title[i]; i++) out_title[i] = title[i];
+    out_title[i] = 0;
+    return CX_UN_ERR_DENIED;
 }
 
 int cx_un_present_count(void) { return g_present_n; }

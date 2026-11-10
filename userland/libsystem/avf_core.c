@@ -1,4 +1,5 @@
 #include "avf_core.h"
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 /* cx_media_tcc está em audiodec.c. A leitura do anel é do CoreAudio (kernel DEV_AUDIO_READ).
@@ -114,3 +115,187 @@ unsigned avf_cap_pull(int running, short *dst, unsigned frames, int *err) {
     if (!running) { if (err) *err = 2; if (dst && frames) memset(dst, 0, (size_t)frames * 4); return 0; }
     return avf_copy_capture(dst, frames, err);
 }
+extern void *cx_audio_open_path(const char *path, int *err);
+extern double cx_audio_rate(void *dec);
+extern unsigned long long cx_audio_frames(void *dec);
+extern unsigned cx_audio_read_stereo(void *dec, unsigned long long at, unsigned n, float *out);
+static unsigned pull_read(void *ctx, unsigned long long at, unsigned n, float *out) {
+    return cx_audio_read_stereo(ctx, at, n, out);
+}
+unsigned avf_pull_seconds(void *dec, double *pos, float play_rate, float volume, float *stereo, unsigned frames, int *ended) {
+    if (!dec) { if (ended) *ended = 0; return 0; }
+    avf_clock_t ck = {pos, cx_audio_rate(dec), cx_audio_frames(dec), play_rate, volume};
+    return avf_clock_render(&ck, pull_read, dec, stereo, frames, ended);
+}
+unsigned avf_pull_frames(void *dec, double *pos_frames, float volume, float pan, float *stereo, unsigned frames, int *ended) {
+    if (ended) *ended = 0;
+    if (!dec || !pos_frames || !stereo || !frames) return 0;
+    unsigned long long total = cx_audio_frames(dec);
+    unsigned o = 0;
+    while (o < frames) {
+        unsigned long long at = (unsigned long long)*pos_frames;
+        if (at >= total) { if (ended) *ended = 1; break; }
+        unsigned k = cx_audio_read_stereo(dec, at, frames - o, stereo + o * 2);
+        if (!k) break;
+        o += k;
+        *pos_frames += k;
+    }
+    avf_mix_scale(stereo, o, volume, pan);
+    for (unsigned i = o; i < frames; i++) stereo[i * 2] = stereo[i * 2 + 1] = 0;
+    return o;
+}
+int avf_obs_due(double *last, double interval, double pos, float play_rate) {
+    if (!last || play_rate == 0 || interval <= 0) return 0;
+    if (pos + 1e-12 < *last) *last = pos;
+    if (pos - *last + 1e-12 < interval) return 0;
+    *last = pos;
+    return 1;
+}
+int avk_play(avk_transport_t *t) {
+    if (!t || !t->controls || !t->rate) return 0;
+    *t->rate = 1;
+    return 1;
+}
+int avk_pause(avk_transport_t *t) {
+    if (!t || !t->controls || !t->rate) return 0;
+    *t->rate = 0;
+    return 1;
+}
+int avk_seek(avk_transport_t *t, double sec) {
+    if (!t || !t->controls || !t->pos) return 0;
+    if (sec < 0) sec = 0;
+    if (t->duration > 0 && sec > t->duration) sec = t->duration;
+    *t->pos = sec;
+    return 1;
+}
+int avk_pip_supported(void) { return 0; }
+int avk_pip_start(int *err) {
+    if (err) *err = -11800; /* AVErrorUnknown: não há superfície de picture-in-picture */
+    return 0;
+}
+int avf_read_begin(avf_read_t *r, int media, const float *pcm, unsigned ch, unsigned long long frames) {
+    if (!r) return 0;
+    memset(r, 0, sizeof *r);
+    r->media = media;
+    if (media != 1) {
+        r->status = AVF_READ_FAILED;
+        r->err = -11821; /* não há decodificador de vídeo, texto ou capítulo */
+        return 0;
+    }
+    if (!pcm || ch == 0 || ch > 8 || frames == 0) {
+        r->status = AVF_READ_FAILED;
+        r->err = -11828;
+        return 0;
+    }
+    r->pcm = pcm;
+    r->ch = ch;
+    r->frames = frames;
+    r->status = AVF_READ_READING;
+    return 1;
+}
+unsigned avf_read_copy(avf_read_t *r, float *dst, unsigned frames) {
+    if (!r || r->status != AVF_READ_READING || r->at >= r->frames) return 0;
+    unsigned long long left = r->frames - r->at;
+    unsigned k = frames < left ? frames : (unsigned)left;
+    if (dst && k) memcpy(dst, r->pcm + r->at * r->ch, (size_t)k * r->ch * sizeof(float));
+    r->at += k;
+    if (r->at >= r->frames) r->status = AVF_READ_COMPLETED;
+    return k;
+}
+void avf_read_cancel(avf_read_t *r) {
+    if (r && r->status == AVF_READ_READING) r->status = AVF_READ_CANCELLED;
+}
+static int wav_type(const char *t) {
+    return t && (!strcmp(t, "public.wav") || !strcmp(t, "com.microsoft.waveform-audio") || !strcmp(t, "wav"));
+}
+static void wr16(unsigned char *p, unsigned v) { p[0] = (unsigned char)v; p[1] = (unsigned char)(v >> 8); }
+static void wr32(unsigned char *p, unsigned v) {
+    p[0] = (unsigned char)v; p[1] = (unsigned char)(v >> 8); p[2] = (unsigned char)(v >> 16); p[3] = (unsigned char)(v >> 24);
+}
+int avf_write_begin(avf_write_t *w, const char *filetype, unsigned rate, unsigned ch) {
+    if (!w) return 0;
+    memset(w, 0, sizeof *w);
+    if (!wav_type(filetype) || rate == 0 || rate > 384000 || ch == 0 || ch > 8) {
+        w->status = AVF_WRITE_FAILED;
+        w->err = -11822; /* não há codificador para este tipo */
+        return 0;
+    }
+    w->rate = rate;
+    w->ch = ch;
+    w->status = AVF_WRITE_WRITING;
+    return 1;
+}
+unsigned avf_write_append(avf_write_t *w, const short *pcm, unsigned frames) {
+    if (!w || w->status != AVF_WRITE_WRITING || !pcm || !frames) return 0;
+    size_t add = (size_t)frames * w->ch * 2u;
+    if (w->n + add < w->n) return 0;
+    if (w->n + add > w->cap) {
+        size_t cap = w->cap ? w->cap : 4096;
+        while (cap < w->n + add) {
+            if (cap > (size_t)-1 / 2) return 0;
+            cap *= 2;
+        }
+        unsigned char *p = realloc(w->pcm, cap);
+        if (!p) return 0;
+        w->pcm = p;
+        w->cap = cap;
+    }
+    for (unsigned i = 0; i < frames * w->ch; i++) {
+        short s = pcm[i];
+        w->pcm[w->n++] = (unsigned char)s;
+        w->pcm[w->n++] = (unsigned char)((unsigned short)s >> 8);
+    }
+    return frames;
+}
+int avf_write_finish(avf_write_t *w, const char *path) {
+    if (!w || w->status != AVF_WRITE_WRITING) return 0;
+    if (!path || !path[0]) {
+        w->status = AVF_WRITE_FAILED;
+        w->err = -11822;
+        free(w->pcm);
+        w->pcm = 0;
+        return 0;
+    }
+    unsigned char hdr[44];
+    memset(hdr, 0, sizeof hdr);
+    memcpy(hdr, "RIFF", 4);
+    wr32(hdr + 4, (unsigned)(36u + w->n));
+    memcpy(hdr + 8, "WAVEfmt ", 8);
+    wr32(hdr + 16, 16);
+    wr16(hdr + 20, 1);
+    wr16(hdr + 22, w->ch);
+    wr32(hdr + 24, w->rate);
+    wr32(hdr + 28, w->rate * w->ch * 2u);
+    wr16(hdr + 32, (unsigned)(w->ch * 2u));
+    wr16(hdr + 34, 16);
+    memcpy(hdr + 36, "data", 4);
+    wr32(hdr + 40, (unsigned)w->n);
+    FILE *f = fopen(path, "wb");
+    if (!f) {
+        w->status = AVF_WRITE_FAILED;
+        w->err = -11822;
+        free(w->pcm);
+        w->pcm = 0;
+        return 0;
+    }
+    int ok = fwrite(hdr, 1, 44, f) == 44 && (w->n == 0 || fwrite(w->pcm, 1, w->n, f) == w->n);
+    fclose(f);
+    free(w->pcm);
+    w->pcm = 0;
+    if (!ok) {
+        w->status = AVF_WRITE_FAILED;
+        w->err = -11822;
+        return 0;
+    }
+    w->status = AVF_WRITE_COMPLETED;
+    return 1;
+}
+void avf_write_cancel(avf_write_t *w) {
+    if (!w || w->status != AVF_WRITE_WRITING) return;
+    free(w->pcm);
+    w->pcm = 0;
+    w->status = AVF_WRITE_CANCELLED;
+}
+int avk_route_count(void) { return 1; }
+const char *avk_route_port(int index) { return index == 0 ? "Speaker" : 0; }
+const char *avk_route_name(int index) { return index == 0 ? "Alto-falantes" : 0; }

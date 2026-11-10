@@ -83,6 +83,7 @@ struct cx_tv_engine {
     struct { char *ident; void *token; int kind; } *reg;
     int nr, cr;
     void **placed;
+    int *placed_rc;                /* linha e coluna de cada view posta (2 por view; -1 = não sei) */
     int nplaced, cplaced;
     int last_first, last_last;
     double last_scroll;
@@ -185,16 +186,39 @@ int cx_tv_engine_pool_count(const cx_tv_engine_t *e, const char *ident) {
 
 void cx_tv_engine_placed_clear(cx_tv_engine_t *e) { if (e) e->nplaced = 0; }
 
-void cx_tv_engine_placed_add(cx_tv_engine_t *e, void *view) {
+void cx_tv_engine_placed_add_at(cx_tv_engine_t *e, void *view, int row, int col) {
     if (!e || !view) return;
     if (e->nplaced == e->cplaced) {
         int nc = e->cplaced ? e->cplaced * 2 : 8;
         void *p = realloc(e->placed, (size_t)nc * sizeof(void *));
         if (!p) return;
         e->placed = p;
+        p = realloc(e->placed_rc, (size_t)nc * 2 * sizeof(int));
+        if (!p) return;
+        e->placed_rc = p;
         e->cplaced = nc;
     }
+    e->placed_rc[e->nplaced * 2] = row;
+    e->placed_rc[e->nplaced * 2 + 1] = col;
     e->placed[e->nplaced++] = view;
+}
+void cx_tv_engine_placed_add(cx_tv_engine_t *e, void *view) { cx_tv_engine_placed_add_at(e, view, -1, -1); }
+int cx_tv_engine_placed_find(const cx_tv_engine_t *e, const void *view, int *row, int *col) {
+    if (row) *row = -1;
+    if (col) *col = -1;
+    if (!e || !view) return -1;
+    for (int i = 0; i < e->nplaced; i++) if (e->placed[i] == view) {
+        if (row) *row = e->placed_rc[i * 2];
+        if (col) *col = e->placed_rc[i * 2 + 1];
+        return i;
+    }
+    return -1;
+}
+void *cx_tv_engine_placed_view(const cx_tv_engine_t *e, int row, int col) {
+    if (!e || row < 0) return 0;
+    for (int i = 0; i < e->nplaced; i++)
+        if (e->placed_rc[i * 2] == row && (col < 0 || e->placed_rc[i * 2 + 1] == col)) return e->placed[i];
+    return 0;
 }
 
 int cx_tv_engine_placed_count(const cx_tv_engine_t *e) { return e ? e->nplaced : 0; }
@@ -353,4 +377,86 @@ double cx_sv_drag(double pos, double delta, double min_pos, double max_pos, cons
         if (p > max_pos) p = max_pos;
     }
     return p;
+}
+
+/* espessura por NSSplitViewDividerStyle: 1 grossa (9), 2 fina (1), 3 pane splitter (10) */
+double cx_sv_thickness(int style) {
+    if (style == 1) return 9;
+    if (style == 3) return 10;
+    return 1;
+}
+
+/* Redistribui o espaço que mudou (total - divisórias - soma atual) pela holdingPriority, como o
+ * -adjustSubviews do Cocoa: cresce ou encolhe primeiro o grupo de menor prioridade (empate divide
+ * por igual); ao encolher, a view que chega a 0 sai e o resto vai para a próxima prioridade.
+ * Colapsadas ficam com 0 e não entram. */
+void cx_sv_resize(double *sz, const float *hold, const int *collapsed, int n, double total, double div) {
+    if (!sz || n <= 0) return;
+    double avail = total - div * (double)(n - 1), cur = 0;
+    if (avail < 0) avail = 0;
+    for (int i = 0; i < n; i++) {
+        if (collapsed && collapsed[i]) sz[i] = 0;
+        if (sz[i] < 0) sz[i] = 0;
+        cur += sz[i];
+    }
+    double delta = avail - cur;
+    for (int guard = 0; guard < 4 * n + 4 && (delta > 1e-9 || delta < -1e-9); guard++) {
+        float best = 0;
+        int any = 0, k = 0;
+        for (int i = 0; i < n; i++) {
+            if (collapsed && collapsed[i]) continue;
+            if (delta < 0 && sz[i] <= 1e-9) continue;
+            float h = hold ? hold[i] : 250;
+            if (!any || h < best) { best = h; any = 1; }
+        }
+        if (!any) break;
+        for (int i = 0; i < n; i++) {
+            if (collapsed && collapsed[i]) continue;
+            if (delta < 0 && sz[i] <= 1e-9) continue;
+            if ((hold ? hold[i] : 250) == best) k++;
+        }
+        double share = delta / (double)k;
+        if (delta > 0) {
+            for (int i = 0; i < n; i++)
+                if (!(collapsed && collapsed[i]) && (hold ? hold[i] : 250) == best) sz[i] += share;
+            delta = 0;
+        } else {
+            double used = 0;
+            for (int i = 0; i < n; i++) {
+                if ((collapsed && collapsed[i]) || sz[i] <= 1e-9 || (hold ? hold[i] : 250) != best) continue;
+                double take = -share < sz[i] ? -share : sz[i];
+                sz[i] -= take;
+                used += take;
+            }
+            delta += used;
+        }
+    }
+}
+
+/* -setPosition:ofDividerAtIndex:: a divisória idx anda entre as views idx e idx+1 e só essas duas
+ * mudam (a soma fica). */
+void cx_sv_set_position(double *sz, int n, int idx, double pos, double div) {
+    if (!sz || idx < 0 || idx + 1 >= n) return;
+    double lo = 0;
+    for (int i = 0; i < idx; i++) lo += sz[i] + div;
+    double pair = sz[idx] + sz[idx + 1], a = pos - lo;
+    if (a < 0) a = 0;
+    if (a > pair) a = pair;
+    sz[idx] = a;
+    sz[idx + 1] = pair - a;
+}
+
+/* Colapso no arraste: lo/hi são as pontas possíveis da divisória (view idx com 0, view idx+1 com 0) e
+ * min_pos/max_pos os limites do delegate. Passou da metade do mínimo da view (ou chegou na ponta, sem
+ * mínimo) e ela pode colapsar: -1 colapsa a de antes, +1 a de depois, 0 não. */
+int cx_sv_collapse(double proposed, double lo, double hi, double min_pos, double max_pos, int can_before, int can_after) {
+    if (can_before) {
+        double th = min_pos > lo ? lo + (min_pos - lo) / 2 : lo;
+        if (min_pos > lo ? proposed < th : proposed <= lo) return -1;
+    }
+    if (can_after) {
+        double th = max_pos < hi ? hi - (hi - max_pos) / 2 : hi;
+        if (max_pos < hi ? proposed > th : proposed >= hi) return 1;
+    }
+    return 0;
 }

@@ -1,4 +1,5 @@
 #pragma once
+#define HUGE_VAL (__builtin_huge_val())
 #define INFINITY (__builtin_huge_val())
 #define NAN (__builtin_nan(""))
 double sqrt(double x);
