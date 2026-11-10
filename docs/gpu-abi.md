@@ -97,13 +97,25 @@ Os números virgl são os de `SET_SHADER_BUFFERS`, `BIND_SHADER` e
 `LAUNCH_GRID` do protocolo virgl. O venus desta revisão é o subconjunto da
 tabela, não o fluxo `vn_cs` completo.
 
-`fence` 0 não sinaliza. Com a fila virtio em polling, se o cap do `kind`
-estiver ligado, o lote já validado é o que segue para o dispositivo e a
-fence incrementa quando a resposta chega, antes do retorno. Sem o cap, o
-lote válido só sinaliza a fence (o dispositivo não executa). `FENCE_WAIT`
-com `seq` ainda em 0 e `timeout_ms` diferente de 0 bloqueia a thread
-(`wait_pid` -12) até o sinal, a destruição (`-MOS_ENOENT`) ou o prazo
-(`-MOS_ETIMEDOUT`). `timeout_ms` 0 devolve `-MOS_EAGAIN` na hora.
+Sem o cap virgl ou venus, o lote válido só sinaliza a fence. Com o cap, o que
+vai para o `SUBMIT_3D` do virtio-gpu é a tradução, não o lote cru. Virgl sai
+como `VIRGL_CMD0`: `SET_SHADER_BUFFERS` (tipo compute, slot, um recurso, handle
+do BO, offset, range), `BIND_SHADER` (handle, tipo compute) e `LAUNCH_GRID`
+(tamanho local do último shader, ou 1,1,1, e a grade do dispatch). Venus sai
+como um comando por vez: um `u32` com a quantidade de palavras seguintes, o
+opcode `MOS_GPU_VENUS_*` e os campos, com o handle do BO no lugar do índice.
+`BIND` tem 5 palavras depois da conta (opcode, slot, handle, offset, range),
+`SHADER` tem 7 (opcode, handle, offset, tamanho, local x/y/z) e `DISPATCH`
+tem 4 (opcode e a grade). É o compute que o Metal grava: bind, shader e
+dispatch. O shader em si não é executado.
+`fence` 0 não sinaliza. Com o cap do `kind` ligado, o `SUBMIT_3D` entra na fila
+e a syscall volta sem mexer na fence. O IRQ (MSI-X, MSI ou INTx) é que
+incrementa `seq` e acorda todo mundo que espera essa fence. Sem o cap, o
+lote válido sinaliza a fence na hora, porque não há dispositivo. Vários
+waiters na mesma fence acordam juntos. `FENCE_WAIT` com `seq` ainda em 0 e
+`timeout_ms` diferente de 0 bloqueia a thread (`wait_pid` -12) até o sinal,
+a destruição (`-MOS_ENOENT`) ou o prazo (`-MOS_ETIMEDOUT`). `timeout_ms` 0
+devolve `-MOS_EAGAIN` na hora.
 
 ## IOSurface na memória da GPU
 
