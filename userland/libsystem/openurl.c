@@ -824,6 +824,7 @@ static void deliver_main(void *ctx) {
         done = deliver_odoc(url);
         if (!done) done = deliver_docs(u, path_c(u));
     } else {
+        { extern int cx_webauth_offer_url(const char *url); cx_webauth_offer_url(url); }
         done = deliver_event(K_GURL, K_GURL, cx_str(url));
         if (!done) {
             id app = MSG0(id, cls("NSApplication"), "sharedApplication");
