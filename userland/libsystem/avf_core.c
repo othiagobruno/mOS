@@ -114,3 +114,39 @@ unsigned avf_cap_pull(int running, short *dst, unsigned frames, int *err) {
     if (!running) { if (err) *err = 2; if (dst && frames) memset(dst, 0, (size_t)frames * 4); return 0; }
     return avf_copy_capture(dst, frames, err);
 }
+extern void *cx_audio_open_path(const char *path, int *err);
+extern double cx_audio_rate(void *dec);
+extern unsigned long long cx_audio_frames(void *dec);
+extern unsigned cx_audio_read_stereo(void *dec, unsigned long long at, unsigned n, float *out);
+static unsigned pull_read(void *ctx, unsigned long long at, unsigned n, float *out) {
+    return cx_audio_read_stereo(ctx, at, n, out);
+}
+unsigned avf_pull_seconds(void *dec, double *pos, float play_rate, float volume, float *stereo, unsigned frames, int *ended) {
+    if (!dec) { if (ended) *ended = 0; return 0; }
+    avf_clock_t ck = {pos, cx_audio_rate(dec), cx_audio_frames(dec), play_rate, volume};
+    return avf_clock_render(&ck, pull_read, dec, stereo, frames, ended);
+}
+unsigned avf_pull_frames(void *dec, double *pos_frames, float volume, float pan, float *stereo, unsigned frames, int *ended) {
+    if (ended) *ended = 0;
+    if (!dec || !pos_frames || !stereo || !frames) return 0;
+    unsigned long long total = cx_audio_frames(dec);
+    unsigned o = 0;
+    while (o < frames) {
+        unsigned long long at = (unsigned long long)*pos_frames;
+        if (at >= total) { if (ended) *ended = 1; break; }
+        unsigned k = cx_audio_read_stereo(dec, at, frames - o, stereo + o * 2);
+        if (!k) break;
+        o += k;
+        *pos_frames += k;
+    }
+    avf_mix_scale(stereo, o, volume, pan);
+    for (unsigned i = o; i < frames; i++) stereo[i * 2] = stereo[i * 2 + 1] = 0;
+    return o;
+}
+int avf_obs_due(double *last, double interval, double pos, float play_rate) {
+    if (!last || play_rate == 0 || interval <= 0) return 0;
+    if (pos + 1e-12 < *last) *last = pos;
+    if (pos - *last + 1e-12 < interval) return 0;
+    *last = pos;
+    return 1;
+}
