@@ -1,6 +1,6 @@
 # O que o Metal precisa da ABI de GPU
 
-Contrato: `docs/gpu-abi.md` e `kernel/include/mos_gpu.h` (`MOS_GPU_ABI` 1).
+Contrato: `docs/gpu-abi.md` e `kernel/include/mos_gpu.h` (`MOS_GPU_ABI` 2).
 `userland/libsystem/gpucall.c` inclui esses headers e chama `SYS_GPU` de
 `kernel/include/syscall.h`. O número é 62. 61 é `SYS_UNIX`. Não há espelho
 das estruturas nem outro número no userland.
