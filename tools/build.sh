@@ -237,6 +237,16 @@ if [ -d "$ROOT/userland/cli-macos" ]; then
     done
 fi
 
+echo "==> a64rt (tradutor dos binários darwin-arm64)"
+A64SRC=()
+while IFS= read -r f; do A64SRC+=("$f"); done < <(find "$ROOT/userland/a64" "$ROOT/userland/a64rt" -type f \( -name '*.c' -o -name '*.S' \) | sort)
+mkdir -p "$ESP/mOS/Sistema/Biblioteca/a64"
+"$ZIG" cc -target x86_64-freestanding-none -O2 -g0 -ffreestanding -fno-stack-protector -nostdlib -static -no-pie -fpie \
+    -mcx16 -Wall -Wno-unused-function -Wno-unused-parameter -fno-strict-aliasing \
+    -DA64_RUNTIME_MOS -DA64_HAVE_JIT -I"$ROOT/userland/a64" -I"$ROOT/userland/a64rt" \
+    -Wl,--image-base=0x400041000000 -Wl,-e,_start \
+    "${A64SRC[@]}" -o "$ESP/mOS/Sistema/Biblioteca/a64/a64rt.mos"
+
 echo "==> libswift"
 # Runtime real (swift-6.4.2) quando a toolchain e o fonte estão em .tools/. Sem isso, o stage completa com stub.
 if [ -f "$ROOT/tools/build-libswift-real.sh" ]; then
@@ -248,6 +258,9 @@ elif [ -f "$ROOT/build/swift/objc/dylib/usr/lib/swift/libswiftCore.dylib" ]; the
     cp -a "$ROOT/build/swift/objc/dylib/." "$ESP/mOS/"
 fi
 sh "$ROOT/tools/stage-libswift.sh" "$ESP/mOS/usr/lib/swift"
+
+echo "==> apps oficiais em /Aplicativos"
+bash "$ROOT/tools/stage-apps-oficiais.sh" "$OUT"
 
 KEY=${MOS_CHAVE_ATUALIZACAO:-$ROOT/tools/chave-atualizacao.semente}
 REV=$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo local)
