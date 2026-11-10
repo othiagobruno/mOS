@@ -94,8 +94,9 @@ lido pelo `build\fatcat.exe`). As causas, em ordem:
    resources/build/src/detectors/platform/node/machine-id` está no nível 17, e os 42 arquivos mais fundos da imagem
    nunca entravam no VFS (o diretório existia vazio). O `import` do OpenTelemetry falhava e o host saía com código 1.
    Agora o limite é 64 (o boot tem 1 MiB de pilha) e o que passar disso aparece no log.
-2. **zlib ausente**: o `file_service.darwin-x64.node` liga `/usr/lib/libz.1.dylib`; o carregador já a manda para
-   `/usr/local/opt/zlib/lib`, mas a imagem base não tinha o arquivo. O `build.ps1` passa a copiar o bottle do Homebrew.
+2. **zlib ausente**: o `file_service.darwin-x64.node` liga `/usr/lib/libz.1.dylib`. Naquele dia a imagem não
+   tinha o arquivo e o carregador caía no bottle do Homebrew em `/usr/local/opt/zlib/lib`. O `build.ps1` agora
+   compila o fonte oficial para `/usr/lib/libz.1.dylib` e o alias não aponta mais para o keg.
 3. **dup de kqueue**: o tokio (`file-service/src/init.rs`) falhava em criar o runtime com EBADF, porque o mio clona o
    kqueue com `F_DUPFD_CLOEXEC` e o `dup()` mandava ao kernel um descritor que só o libSystem conhece. O `kqueue.c`
    ganhou `cx_kqueue_dup`, com contagem de referências.
