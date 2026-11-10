@@ -22,5 +22,7 @@ void mos_img_free(mos_img_t *img);
 
 /* PNG RGBA sem filtro, deflate armazenado (válido, sem compressão). 0 = ok. */
 int mos_img_encode_png(const uint32_t *px, int w, int h, uint8_t **out, size_t *n);
+/* JPEG baseline 4:4:4. quality 1..100. 0 = ok. */
+int mos_img_encode_jpeg(const uint32_t *px, int w, int h, int quality, uint8_t **out, size_t *n);
 
 #endif
