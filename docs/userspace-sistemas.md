@@ -63,14 +63,14 @@ Não há branch de Interface aberta no GitHub para alinhar este contrato (consul
 - Centro distribuído: só neste processo. Não há `distnoted`; `userInfo` não atravessa processo. `NSDistributedNotificationCenter` segue sendo o centro local (limitação anterior).
 - Drop/Coalesce/Hold são aceitos; a entrega é síncrona. Snapshot de 128 observadores por post.
 
-## XPC — dicionário com porta, pipes ainda sem o launchd
+## XPC — Mach entre processos, sem o fio da Apple
 
-O fio `xpc.c` + launchd entre processos do mOS já existe (não é a libxpc da Apple). Não foi reescrito.
+O fio continua o de `xpc.c` (os dois lados são esta lib). Não usa AF_UNIX e não mexe em `sockets.c`. O número de uma porta não atravessa sozinho: no fio, o tipo 13 vai com um descritor `COPY_SEND`, e o kernel entrega um direito de envio com o nome do processo que recebe. No mesmo processo, `copy_mach_send` devolve o mesmo nome.
 
-- **Funcional neste fio:** `xpc_dictionary_set_mach_send` grava o nome da porta num valor `_xpc_type_mach_send`. `xpc_dictionary_copy_mach_send` lê esse nome. A cópia do dicionário e o `xpc_equal` preservam o valor. Na serialização própria do mOS o tipo é 13 (u32). O nome é copiado, não movido: ninguém dá `deallocate` nem cria um direito novo. O wrapper de `mach_port_*` ignora a tarefa, então o número continua válido no outro processo enquanto a porta existir.
-- **Limitação:** `xpc_pipe_create` devolve NULL. `xpc_pipe_create_from_port` devolve NULL. `xpc_pipe_routine`, `xpc_pipe_routine_reply` e `xpc_pipe_receive` devolvem EINVAL. Não há o protocolo privado do launchd.
-- **Limitação:** `xpc_set_event_stream_handler` aceita os argumentos e não chama o bloco. Não há stream de eventos do launchd.
-- `NSXPCConnection` continua um stub de processo (resume só marca a conexão). Helpers de computer use que esperam um daemon XPC da Apple não sobem sozinhos.
+- **Pipe:** `xpc_pipe_create` / `xpc_pipe_create_from_port` / `xpc_pipe_routine` / `xpc_pipe_receive` / `xpc_pipe_routine_reply` falam esse fio. Não é o protocolo privado do launchd.
+- **Eventos:** `xpc_set_event_stream_handler` guarda o bloco e o chama. `xpc_event_stream_post` entrega aqui e, se outro processo registrou o stream, manda em `com.mos.xpc.ev.<stream>`. Não há o launchd de eventos da Apple.
+- **NSXPC:** `NSXPCListener` faz check-in e `NSXPCConnection` faz o proxy. Seletor com até 4 argumentos objeto; o bloco de resposta é o último e é chamado na hora. Sem filtro de protocolo. `anonymousListener` não cria endpoint. Opções de `initWithMachServiceName:options:` ficam guardadas e o cliente não as repassa ao serviço.
+- **Transporte para o AX** (`xpctransport.h`, a Interface pluga em `axtransport.h`): `cx_xpc_peer_ready`, `cx_xpc_peer_listen`, `cx_xpc_peer_call`, `cx_xpc_peer_send`. Serviço `com.mos.xpc.peer.<pid>`. `call` espera o `send` de volta. Esta frente não editou os arquivos de AX.
 
 ## Keychain — funcional, sem criptografia
 

@@ -20,11 +20,18 @@
  *    sob demanda, e os XPC services do bundle (Contents/XPCServices) são registrados nele na hora (LC_SUBMIT).
  *    Se o serviço morre, o cliente recebe INTERRUPTED e o próximo envio reconecta; o par de um cliente morto, INVALID.
  *  - xpc_main, com XPC_SERVICE_NAME no ambiente (ou o CFBundleIdentifier), faz check_in desse nome e fica à espera.
- *    xpc_dictionary_set_mach_send guarda o nome da porta no dicionário e o fio do mOS o carrega
- *    (tipo 13). Não move o direito: o kernel desta lib ignora a tarefa, então o nome segue válido
- *    no outro processo só enquanto ninguém der deallocate. xpc_pipe_* continua EINVAL (não há o
- *    protocolo privado do launchd). xpc_set_event_stream_handler não guarda nem chama o bloco:
- *    não há stream de eventos do launchd.
+ *    xpc_dictionary_set_mach_send guarda o nome da porta. No mesmo processo, copy devolve esse nome
+ *    (não cria outro direito). No fio, o tipo 13 vai junto de um descritor COPY_SEND: o kernel
+ *    entrega um direito de envio com o nome do processo que recebe. Sem descritor, o número do outro
+ *    espaço de nomes não é uma porta.
+ *  - xpc_pipe_* fala o fio desta lib (não o binário da libxpc da Apple): routine manda o dicionário
+ *    e espera a resposta num send-once; receive + routine_reply fecham o lado do servidor.
+ *  - xpc_set_event_stream_handler guarda o bloco e o chama. xpc_event_stream_post entrega aqui e,
+ *    se outro processo fez check_in do stream, manda por Mach. Não há o launchd de eventos da Apple.
+ *  - NSXPCConnection (amarrado no construtor, por cima destas conexões Mach) faz proxy remoto:
+ *    o seletor e os argumentos atravessam o processo e o objeto exportado responde. Sem AF_UNIX.
+ *  - cx_xpc_peer_* (xpctransport.h) leva bytes entre pids pelo mesmo bootstrap. A Interface liga
+ *    ready/call/send/listen em axtransport.h. Este arquivo não chama cx_ax_transport_bind.
  * A entrega usa dispatch_async_f na fila da conexão (a libdispatch do mOS ainda roda na hora, na thread de quem
  * chama: dispatch.c).
  */
@@ -438,7 +445,44 @@ static xo_t *xpc_remote_conn(xo_t *dict) {
         if (xpc_remote[i].dict == dict) return xpc_remote[i].conn;
     return 0;
 }
+/* resposta de xpc_pipe_receive: o send-once que o kernel pôs no header fica associado ao dicionário
+ * (ou ao que create_reply devolve) até xpc_pipe_routine_reply. */
+static struct { xo_t *dict; unsigned port; } pipe_replies[8];
+static void pipe_note(xo_t *dict, unsigned port) {
+    if (!dict || !port) return;
+    for (int i = 0; i < 8; i++)
+        if (pipe_replies[i].dict == dict) { pipe_replies[i].port = port; return; }
+    for (int i = 0; i < 8; i++)
+        if (!pipe_replies[i].dict) { pipe_replies[i].dict = dict; pipe_replies[i].port = port; return; }
+    pipe_replies[0].dict = dict;
+    pipe_replies[0].port = port;
+}
+static unsigned pipe_peek(xo_t *dict) {
+    if (!dict) return 0;
+    for (int i = 0; i < 8; i++)
+        if (pipe_replies[i].dict == dict) return pipe_replies[i].port;
+    return 0;
+}
+static unsigned pipe_take(xo_t *dict) {
+    if (!dict) return 0;
+    for (int i = 0; i < 8; i++)
+        if (pipe_replies[i].dict == dict) {
+            unsigned p = pipe_replies[i].port;
+            pipe_replies[i].dict = 0;
+            pipe_replies[i].port = 0;
+            return p;
+        }
+    return 0;
+}
 xpc_object_t xpc_dictionary_create_reply(xpc_object_t original) {
+    unsigned p = pipe_peek(original);
+    if (p) {
+        xo_t *r = xpc_dictionary_create(0, 0, 0);
+        if (!r) return 0;
+        pipe_take(original);
+        pipe_note(r, p);
+        return r;
+    }
     if (!xpc_remote_conn(original)) return 0;
     return xpc_dictionary_create(0, 0, 0);
 }
@@ -851,26 +895,100 @@ static void *xp_pend_take(xconn_t *k, u32 id, void **queue) {
     xp_unlock(k);
     return b;
 }
-static int xp_send(xconn_t *k, xo_t *msg, u32 reply_id) {
-    if (!k->live || !k->send || k->canceled) return -1;
+#define XP_PIPE 4
+#define XP_PIPE_REPLY 5
+#define XP_MAX_PORTS 8
+/* percorre na mesma ordem do xp_enc: o descritor i corresponde ao mach_send i */
+static void xp_collect_ports(xo_t *o, unsigned *ports, int *n, int depth) {
+    if (!o || depth > 16 || *n >= XP_MAX_PORTS) return;
+    if (o->type == &_xpc_type_mach_send) { ports[(*n)++] = (unsigned)o->u.u; return; }
+    if (o->type == &_xpc_type_array)
+        for (size_t i = 0; i < o->u.arr.n; i++) xp_collect_ports(o->u.arr.v[i], ports, n, depth + 1);
+    else if (o->type == &_xpc_type_dictionary)
+        for (size_t i = 0; i < o->u.dict.n; i++) xp_collect_ports(o->u.dict.v[i], ports, n, depth + 1);
+}
+static void xp_apply_ports(xo_t *o, const unsigned *ports, int nports, int *i, int depth) {
+    if (!o || depth > 16 || *i >= nports) return;
+    if (o->type == &_xpc_type_mach_send) { o->u.u = ports[(*i)++]; return; }
+    if (o->type == &_xpc_type_array)
+        for (size_t k = 0; k < o->u.arr.n; k++) xp_apply_ports(o->u.arr.v[k], ports, nports, i, depth + 1);
+    else if (o->type == &_xpc_type_dictionary)
+        for (size_t k = 0; k < o->u.dict.n; k++) xp_apply_ports(o->u.dict.v[k], ports, nports, i, depth + 1);
+}
+/* corpo depois do header: sem portas, magic no byte 24 (o layout antigo). Com portas, COMPLEX,
+ * contagem no byte 24, descritores de 12 bytes (nome, disposição COPY_SEND, tipo porta) e o magic
+ * em seguida. O kernel reescreve o nome de cada descritor no espaço de quem recebe. */
+static int xp_unpack(const u8 *buf, u32 cap, u32 *meta, xo_t **out) {
+    if (out) *out = 0;
+    u32 bits = r32p(buf, 0);
+    u32 nports = 0, base;
+    if (bits & XP_COMPLEX) {
+        nports = r32p(buf, 24);
+        if (nports > XP_MAX_PORTS) return -1;
+        base = 28 + nports * 12;
+    } else base = 24;
+    if (base + 12 > cap) return -1;
+    if (r32p(buf, base) != XP_MAGIC) return -1;
+    u32 n = r32p(buf, base + 8);
+    if (base + 12 + n > cap) return -1;
+    xprd_t rd = { buf + base + 12, n, 0, 0 };
+    xo_t *obj = xp_dec(&rd, 0);
+    if (rd.err || !obj) {
+        if (obj && !is_static(obj)) objc_release((id)obj);
+        return -1;
+    }
+    if (nports) {
+        unsigned ports[XP_MAX_PORTS];
+        for (u32 i = 0; i < nports; i++) ports[i] = r32p(buf, 28 + i * 12);
+        int ix = 0;
+        xp_apply_ports(obj, ports, (int)nports, &ix, 0);
+    }
+    if (meta) *meta = r32p(buf, base + 4);
+    if (out) *out = obj;
+    return 0;
+}
+static int xp_msg_send(unsigned dest, int dest_disp, unsigned local, int local_disp, int msgid, u32 meta, xo_t *obj) {
+    if (!dest || !obj) return -1;
+    unsigned ports[XP_MAX_PORTS];
+    int np = 0;
+    xp_collect_ports(obj, ports, &np, 0);
     xpbuf_t b = { 0, 0, 0, 0 };
-    xp_enc(&b, msg, 0);
+    xp_enc(&b, obj, 0);
     if (b.err || !b.p) { free(b.p); return -1; }
-    u32 total = 36 + b.n;
+    u32 total = 24u + (np ? 4u + (u32)np * 12u : 0) + 12u + b.n;
     u8 *buf = calloc(1, total);
     if (!buf) { free(b.p); return -1; }
-    w32p(buf, 0, XP_COPY_SEND);
+    u32 bits = (u32)dest_disp;
+    if (local && local_disp) bits |= (u32)local_disp << 8;
+    if (np) bits |= XP_COMPLEX;
+    w32p(buf, 0, bits);
     w32p(buf, 4, total);
-    w32p(buf, 8, k->send);
-    w32p(buf, 20, XP_DATA);
-    w32p(buf, 24, XP_MAGIC);
-    w32p(buf, 28, reply_id);
-    w32p(buf, 32, b.n);
-    memcpy(buf + 36, b.p, b.n);
+    w32p(buf, 8, dest);
+    w32p(buf, 12, local);
+    w32p(buf, 20, (u32)msgid);
+    u32 base;
+    if (np) {
+        w32p(buf, 24, (u32)np);
+        for (int i = 0; i < np; i++) {
+            u32 off = 28u + (u32)i * 12u;
+            w32p(buf, off, ports[i]);
+            buf[off + 10] = (u8)XP_COPY_SEND;
+            buf[off + 11] = 0; /* D_PORT */
+        }
+        base = 28u + (u32)np * 12u;
+    } else base = 24;
+    w32p(buf, base, XP_MAGIC);
+    w32p(buf, base + 4, meta);
+    w32p(buf, base + 8, b.n);
+    memcpy(buf + base + 12, b.p, b.n);
     int kr = mach_msg(buf, 1 /* MACH_SEND_MSG */, total, 0, 0, 0, 0);
     free(buf);
     free(b.p);
     return kr;
+}
+static int xp_send(xconn_t *k, xo_t *msg, u32 reply_id) {
+    if (!k->live || !k->send || k->canceled) return -1;
+    return xp_msg_send(k->send, XP_COPY_SEND, 0, 0, XP_DATA, reply_id, msg);
 }
 static int xp_welcome(unsigned remote, unsigned right) {
     u8 msg[64];
@@ -953,15 +1071,13 @@ static void *xp_recv_main(void *arg) {
             if (k->handler) deliver(c, k->handler, XPC_ERROR_CONNECTION_INTERRUPTED, 1, 0, 0);
             break;
         }
-        if (r32p(buf, 20) != XP_DATA || r32p(buf, 24) != XP_MAGIC) continue;
-        u32 n = r32p(buf, 32);
-        if (36u + n > 48u * 1024u) continue;
+        if (r32p(buf, 20) != XP_DATA) continue;
         int pid = trailer_pid(buf);
         if (pid) k->peer_pid = pid;
-        xprd_t rd = { buf + 36, n, 0, 0 };
-        xo_t *obj = xp_dec(&rd, 0);
-        if (rd.err && obj && !is_static(obj)) { objc_release((id)obj); obj = 0; }
-        xp_give(c, obj, r32p(buf, 28));
+        u32 meta = 0;
+        xo_t *obj = 0;
+        if (xp_unpack(buf, 48u * 1024u, &meta, &obj) != 0) continue;
+        xp_give(c, obj, meta);
     }
     free(buf);
     if (!k->interrupted) {
@@ -1216,11 +1332,738 @@ void xpc_main(void (*handler)(xpc_connection_t)) {
 }
 void xpc_transaction_begin(void) {}
 void xpc_transaction_end(void) {}
-void xpc_set_event_stream_handler(const char *stream, void *queue, void *handler) { (void)stream; (void)queue; (void)handler; }
 const char *xpc_strerror(int e) { (void)e; return "XPC error"; }
+
+/* ---------------------------------------------------------------- xpc_pipe (fio desta lib, sobre mach_msg) */
 #define CX_EINVAL 22
-int xpc_pipe_receive(unsigned port, xpc_object_t *msg) { (void)port; if (msg) *msg = 0; return CX_EINVAL; }
-int xpc_pipe_routine_reply(xpc_object_t reply) { (void)reply; return CX_EINVAL; }
-int xpc_pipe_routine(void *pipe, xpc_object_t msg, xpc_object_t *reply) { (void)pipe; (void)msg; if (reply) *reply = 0; return CX_EINVAL; }
-void *xpc_pipe_create(const char *name, u64 flags) { (void)name; (void)flags; return 0; }
-void *xpc_pipe_create_from_port(unsigned port, u64 flags) { (void)port; (void)flags; return 0; }
+#define CX_ENOMEM 12
+#define CX_ETIMEDOUT 60
+#define CX_ECONNREFUSED 61
+#define CX_EIO 5
+#define XP_MOVE_SEND_ONCE 18
+#define XP_MAKE_SEND_ONCE 21
+typedef struct { unsigned port; u64 flags; } xpipe_t;
+
+static int pipe_errno(int kr) {
+    if (kr == 0) return 0;
+    if ((unsigned)kr == 0x10004003u || (unsigned)kr == 0x10000004u) return CX_ETIMEDOUT;
+    if ((unsigned)kr == 0x10000003u) return CX_ECONNREFUSED;
+    return CX_EIO;
+}
+void *xpc_pipe_create_from_port(unsigned port, u64 flags) {
+    if (!port) return 0;
+    xpipe_t *p = calloc(1, sizeof *p);
+    if (!p) return 0;
+    p->port = port;
+    p->flags = flags;
+    return p;
+}
+void *xpc_pipe_create(const char *name, u64 flags) {
+    unsigned port = 0;
+    if (!name || bootstrap_look_up(bootstrap_port, name, &port) != 0 || !port) return 0;
+    return xpc_pipe_create_from_port(port, flags);
+}
+int xpc_pipe_receive(unsigned port, xpc_object_t *msg) {
+    if (msg) *msg = 0;
+    if (!port || !msg) return CX_EINVAL;
+    u8 *buf = malloc(48 * 1024);
+    if (!buf) return CX_ENOMEM;
+    memset(buf, 0, 64);
+    w32p(buf, 4, 48 * 1024);
+    w32p(buf, 12, port);
+    int kr = mach_msg(buf, 2 | (3u << 24), 0, 48 * 1024, port, 0, 0);
+    if (kr != 0) { free(buf); return pipe_errno(kr); }
+    u32 id = r32p(buf, 20);
+    if (id != XP_PIPE && id != XP_PIPE_REPLY && id != XP_DATA) { free(buf); return CX_EINVAL; }
+    xo_t *obj = 0;
+    if (xp_unpack(buf, 48u * 1024u, 0, &obj) != 0) { free(buf); return CX_EINVAL; }
+    /* depois da entrega o kernel pôs o send-once da resposta em remote (byte 8) */
+    if (id == XP_PIPE) pipe_note(obj, r32p(buf, 8));
+    *msg = obj;
+    free(buf);
+    return 0;
+}
+int xpc_pipe_routine_reply(xpc_object_t reply) {
+    unsigned port = pipe_take(reply);
+    if (!port || !reply) return CX_EINVAL;
+    int kr = xp_msg_send(port, XP_MOVE_SEND_ONCE, 0, 0, XP_PIPE_REPLY, 0, reply);
+    return kr ? pipe_errno(kr) : 0;
+}
+int xpc_pipe_routine(void *pipe, xpc_object_t msg, xpc_object_t *reply) {
+    if (reply) *reply = 0;
+    xpipe_t *p = pipe;
+    if (!p || !p->port || !msg) return CX_EINVAL;
+    unsigned rp = 0;
+    if (port_alloc(&rp) != 0) return CX_ENOMEM;
+    int kr = xp_msg_send(p->port, XP_COPY_SEND, rp, XP_MAKE_SEND_ONCE, XP_PIPE, 0, msg);
+    if (kr) { mach_port_deallocate(0x103u, rp); return pipe_errno(kr); }
+    u8 *buf = malloc(48 * 1024);
+    if (!buf) { mach_port_deallocate(0x103u, rp); return CX_ENOMEM; }
+    memset(buf, 0, 64);
+    w32p(buf, 4, 48 * 1024);
+    w32p(buf, 12, rp);
+    kr = mach_msg(buf, 2 | 0x100 | (3u << 24), 0, 48 * 1024, rp, 10000, 0);
+    mach_port_deallocate(0x103u, rp);
+    if (kr != 0) { free(buf); return pipe_errno(kr); }
+    xo_t *obj = 0;
+    if (xp_unpack(buf, 48u * 1024u, 0, &obj) != 0) { free(buf); return CX_EINVAL; }
+    free(buf);
+    if (reply) *reply = obj;
+    else if (obj && !is_static(obj)) objc_release((id)obj);
+    return 0;
+}
+
+/* ---------------------------------------------------------------- stream de eventos */
+typedef struct {
+    char *name;
+    void *queue;
+    void *handler;
+    unsigned port;
+    int listening;
+    int pid;
+    volatile int stop;
+} evslot_t;
+static evslot_t evs[8];
+
+static evslot_t *ev_slot(const char *stream, int create) {
+    if (!stream || !stream[0]) return 0;
+    for (int i = 0; i < 8; i++)
+        if (evs[i].name && !strcmp(evs[i].name, stream)) return &evs[i];
+    if (!create) return 0;
+    for (int i = 0; i < 8; i++)
+        if (!evs[i].name) {
+            evs[i].name = strdup(stream);
+            return evs[i].name ? &evs[i] : 0;
+        }
+    return 0;
+}
+static void ev_job(void *p) {
+    typedef struct { void *block; xo_t *ev; } job_t;
+    job_t *j = p;
+    if (j->block) CALL_BLOCK1(j->block, j->ev);
+    if (j->block) _Block_release(j->block);
+    if (j->ev && !is_static(j->ev)) objc_release((id)j->ev);
+    free(j);
+}
+static void ev_deliver(evslot_t *s, xo_t *event) {
+    if (!s || !s->handler || !event) return;
+    void *q = s->queue;
+    void *gq = dispatch_get_global_queue(0, 0);
+    if (!q || q == gq) { CALL_BLOCK1(s->handler, event); return; }
+    typedef struct { void *block; xo_t *ev; } job_t;
+    job_t *j = malloc(sizeof *j);
+    if (!j) { CALL_BLOCK1(s->handler, event); return; }
+    j->block = _Block_copy(s->handler);
+    j->ev = (xo_t *)objc_retain((id)event);
+    dispatch_async_f(q, j, ev_job);
+}
+static void *ev_thread(void *arg) {
+    evslot_t *s = arg;
+    while (!s->stop && s->port) {
+        xo_t *msg = 0;
+        if (xpc_pipe_receive(s->port, (xpc_object_t *)&msg) != 0 || !msg) continue;
+        ev_deliver(s, msg);
+        if (!is_static(msg)) objc_release((id)msg);
+    }
+    return 0;
+}
+static void ev_listen(evslot_t *s) {
+    if (!s || s->listening || !s->name || strlen(s->name) > 90) return;
+    char svc[128];
+    snprintf(svc, sizeof svc, "com.mos.xpc.ev.%s", s->name);
+    unsigned port = 0;
+    if (bootstrap_check_in(bootstrap_port, svc, &port) != 0 || !port) return;
+    s->port = port;
+    s->pid = getpid();
+    unsigned long tid = 0;
+    if (pthread_create(&tid, 0, ev_thread, s) != 0) return;
+    s->listening = 1;
+}
+void xpc_set_event_stream_handler(const char *stream, void *queue, void *handler) {
+    evslot_t *s = ev_slot(stream, handler != 0);
+    if (!s) return;
+    if (s->handler) _Block_release(s->handler);
+    s->handler = handler ? _Block_copy(handler) : 0;
+    s->queue = queue;
+    s->pid = getpid();
+    if (s->handler) ev_listen(s);
+}
+void xpc_event_stream_post(const char *stream, xpc_object_t event) {
+    if (!stream || !event) return;
+    evslot_t *s = ev_slot(stream, 0);
+    if (s && s->handler && s->pid == getpid()) {
+        ev_deliver(s, event);
+        if (s->listening) return;
+    }
+    if (strlen(stream) > 90) return;
+    char svc[128];
+    snprintf(svc, sizeof svc, "com.mos.xpc.ev.%s", stream);
+    unsigned port = 0;
+    if (bootstrap_look_up(bootstrap_port, svc, &port) != 0 || !port) return;
+    xp_msg_send(port, XP_COPY_SEND, 0, 0, XP_PIPE, 0, event);
+    mach_port_deallocate(0x103u, port);
+}
+
+/* ---------------------------------------------------------------- NSXPCConnection em cima do XPC Mach
+ * O layout é o box_t de foundation_more.c (a instância nasce com esse tamanho). O construtor
+ * troca os IMP que o Foundation registrou: assim este arquivo não depende de editar foundation_more.c,
+ * que outras frentes também mexem. O proxy é MOSXPCProxy (NSObject): resolveInstanceMethod: instala
+ * o encaminhador. NSProxy.forwardInvocation: continua sendo da outra frente. */
+typedef struct {
+    cx_class_t *isa;
+    id a, b, c, e;
+    i64 i, j;
+    double d, f;
+    void *p;
+    int fl, fl2;
+} nxbox_t;
+typedef struct {
+    xo_t *xpc;
+    void *on_inv, *on_int, *on_err;
+    xo_t *pend[4];
+    u32 pend_rid[4];
+    int npend;
+    int kind; /* 0 cliente, 1 par do ouvinte, 2 ouvinte */
+    id exp_iface;
+} nxst_t;
+typedef struct {
+    u64 reserved, size;
+    void (*copy)(void *, const void *);
+    void (*dispose)(const void *);
+} nx_bdesc_t;
+typedef struct {
+    void *isa;
+    int flags, reserved;
+    void *invoke;
+    nx_bdesc_t *desc;
+    id obj;
+    int obj_is_block;
+    u32 rid;
+} nxblk_t;
+
+IMP class_replaceMethod(cx_class_t *c, SEL s, IMP imp, const char *types);
+id objc_autorelease(id o);
+const char *sel_getName(SEL s);
+extern id objc_msgSend(id self, SEL op, ...);
+
+static void nx_blk_dispose(const void *p) {
+    nxblk_t *b = (nxblk_t *)p;
+    if (!b->obj) return;
+    if (b->obj_is_block) _Block_release(b->obj);
+    else objc_release(b->obj);
+}
+static nx_bdesc_t nx_bdesc = { 0, sizeof(nxblk_t), 0, nx_blk_dispose };
+static void *nx_make_block(void *invoke, id obj, int obj_is_block, u32 rid) {
+    nxblk_t *b = calloc(1, sizeof *b);
+    if (!b) return 0;
+    b->isa = cx_class_named("__NSMallocBlock__");
+    b->flags = (1 << 24) | (1 << 25) | 2;
+    b->invoke = invoke;
+    b->desc = &nx_bdesc;
+    b->rid = rid;
+    b->obj_is_block = obj_is_block;
+    if (obj) b->obj = obj_is_block ? _Block_copy(obj) : objc_retain(obj);
+    return b;
+}
+static nxst_t *nx_ensure(id s) {
+    nxbox_t *b = (nxbox_t *)s;
+    if (!b->p) b->p = calloc(1, sizeof(nxst_t));
+    return b->p;
+}
+static int nx_is_block(void *p) {
+    if (!p || (u64)p < 0x1000u) return 0;
+    cx_class_t *isa = *(cx_class_t **)p;
+    if (!isa || (u64)isa < 0x1000u) return 0;
+    const char *n = cx_class_name(isa);
+    return n && n[0] == '_' && strstr(n, "Block") != 0;
+}
+static xo_t *nx_encode(id a) {
+    if (!a) return xpc_null_create();
+    if (cx_is_str(a)) return xpc_string_create(cx_cstr(a));
+    const char *cn = a->isa ? cx_class_name(a->isa) : 0;
+    if (cn && strstr(cn, "Number")) {
+        i64 v = ((i64 (*)(id, SEL))objc_msgSend)(a, sel_registerName("longLongValue"));
+        return xpc_int64_create(v);
+    }
+    return xpc_null_create();
+}
+static id nx_decode(xo_t *o) {
+    if (!o || o->type == &_xpc_type_null) return 0;
+    if (o->type == &_xpc_type_string) return cx_str(o->u.str.s);
+    if (o->type == &_xpc_type_int64) return cx_num_i(o->u.i);
+    if (o->type == &_xpc_type_uint64) return cx_num_i((i64)o->u.u);
+    if (o->type == &_xpc_type_bool) return cx_num_i(o->u.b ? 1 : 0);
+    return 0;
+}
+static void nx_srv_reply_invoke(void *blk, id result) {
+    nxblk_t *b = blk;
+    id conn = b ? b->obj : 0;
+    nxst_t *st = conn ? ((nxbox_t *)conn)->p : 0;
+    if (!st || !IS_CONN(st->xpc)) return;
+    xo_t *d = xpc_dictionary_create(0, 0, 0);
+    if (!d) return;
+    xpc_dictionary_set_int64(d, "_mos_nsxpc", 2);
+    if (result && cx_is_str(result)) xpc_dictionary_set_string(d, "r", cx_cstr(result));
+    else if (result) {
+        const char *u = ((const char *(*)(id, SEL))objc_msgSend)(result, sel_registerName("UTF8String"));
+        if (u && u[0] && strcmp(u, "(null)") && strcmp(u, "?")) xpc_dictionary_set_string(d, "r", u);
+    }
+    st->xpc->u.conn->inbound_reply = b->rid;
+    xpc_connection_send_message(st->xpc, d);
+    xpc_release(d);
+}
+static void nx_call_export(id conn, xo_t *msg, int have_rid, u32 rid_in) {
+    nxbox_t *b = (nxbox_t *)conn;
+    if (!b->e || !msg || msg->type != &_xpc_type_dictionary) return;
+    if (xpc_dictionary_get_int64(msg, "_mos_nsxpc") != 1) return;
+    const char *seln = xpc_dictionary_get_string(msg, "sel");
+    if (!seln) return;
+    xo_t *arr = xpc_dictionary_get_array(msg, "args");
+    int n = arr ? (int)xpc_array_get_count(arr) : 0;
+    if (n > 4) n = 4;
+    id args[5];
+    for (int i = 0; i < n; i++) args[i] = nx_decode(xpc_array_get_value(arr, (size_t)i));
+    nxst_t *st = b->p;
+    void *rblk = 0;
+    if (xpc_dictionary_get_int64(msg, "reply")) {
+        u32 rid = have_rid ? rid_in : ((st && IS_CONN(st->xpc)) ? st->xpc->u.conn->inbound_reply : 0);
+        rblk = nx_make_block(nx_srv_reply_invoke, conn, 0, rid);
+        args[n++] = (id)rblk;
+    }
+    SEL sel = sel_registerName(seln);
+    if (n == 0) ((void (*)(id, SEL))objc_msgSend)(b->e, sel);
+    else if (n == 1) ((void (*)(id, SEL, id))objc_msgSend)(b->e, sel, args[0]);
+    else if (n == 2) ((void (*)(id, SEL, id, id))objc_msgSend)(b->e, sel, args[0], args[1]);
+    else if (n == 3) ((void (*)(id, SEL, id, id, id))objc_msgSend)(b->e, sel, args[0], args[1], args[2]);
+    else ((void (*)(id, SEL, id, id, id, id))objc_msgSend)(b->e, sel, args[0], args[1], args[2], args[3]);
+    if (rblk) _Block_release(rblk);
+}
+static void nx_user_reply_invoke(void *blk, xo_t *reply) {
+    nxblk_t *b = blk;
+    void *user = b ? b->obj : 0;
+    id str = 0;
+    if (reply && (reply->type == &_xpc_type_dictionary || reply->type == &_xpc_type_error)) {
+        const char *s = xpc_dictionary_get_string(reply, "r");
+        if (s) str = cx_str(s);
+    }
+    if (user) ((void (*)(void *, id))((blk_t *)user)->invoke)(user, str);
+}
+static void nx_fire(void *handler) {
+    if (!handler) return;
+    ((void (*)(void *))((blk_t *)handler)->invoke)(handler);
+}
+static void nx_client_invoke(void *blk, xo_t *ev) {
+    id s = ((nxblk_t *)blk)->obj;
+    nxst_t *st = s ? ((nxbox_t *)s)->p : 0;
+    if (!ev || !st) return;
+    if (ev->type == &_xpc_type_error) {
+        const char *d = xpc_dictionary_get_string(ev, "XPCErrorDescription");
+        int interrupted = d && strstr(d, "interrupted") != 0;
+        nx_fire(interrupted ? st->on_int : st->on_inv);
+        if (!interrupted) nx_fire(st->on_err);
+    }
+}
+static void nx_server_invoke(void *blk, xo_t *ev) {
+    id conn = ((nxblk_t *)blk)->obj;
+    if (!conn || !ev || ev->type != &_xpc_type_dictionary) return;
+    nxbox_t *b = (nxbox_t *)conn;
+    if (!b->e) {
+        nxst_t *st = nx_ensure(conn);
+        if (st && st->npend < 4) {
+            u32 rid = (st->xpc && IS_CONN(st->xpc)) ? st->xpc->u.conn->inbound_reply : 0;
+            st->pend_rid[st->npend] = rid;
+            st->pend[st->npend++] = (xo_t *)objc_retain((id)ev);
+        }
+        return;
+    }
+    nx_call_export(conn, ev, 0, 0);
+}
+static void nx_drain(id conn) {
+    nxst_t *st = ((nxbox_t *)conn)->p;
+    if (!st) return;
+    int n = st->npend;
+    if (n > 4) n = 4;
+    xo_t *msgs[4];
+    u32 rids[4];
+    st->npend = 0;
+    for (int i = 0; i < n; i++) {
+        msgs[i] = st->pend[i];
+        rids[i] = st->pend_rid[i];
+        st->pend[i] = 0;
+    }
+    for (int i = 0; i < n; i++) {
+        nx_call_export(conn, msgs[i], 1, rids[i]);
+        if (msgs[i]) objc_release((id)msgs[i]);
+    }
+}
+static void nx_listener_invoke(void *blk, xo_t *ev) {
+    id listener = ((nxblk_t *)blk)->obj;
+    if (!listener || !ev || ev->type != &_xpc_type_connection) return;
+    cx_class_t *C = cx_class_named("NSXPCConnection");
+    if (!C) return;
+    id conn = cx_alloc_instance(C);
+    if (!conn) return;
+    nxst_t *st = nx_ensure(conn);
+    st->kind = 1;
+    st->xpc = (xo_t *)objc_retain((id)ev);
+    void *h = nx_make_block(nx_server_invoke, conn, 0, 0);
+    xpc_connection_set_event_handler(ev, h);
+    _Block_release(h);
+    id del = ((nxbox_t *)listener)->b;
+    BOOL ok = NO;
+    if (del) ok = ((BOOL (*)(id, SEL, id, id))objc_msgSend)(del, sel_registerName("listener:shouldAcceptNewConnection:"), listener, conn);
+    nx_drain(conn);
+    if (!ok) xpc_connection_cancel(ev);
+}
+static id nx_init_mach(id s, SEL c, id name, u64 options) {
+    (void)c;
+    nxbox_t *b = (nxbox_t *)s;
+    if (b->a) objc_release(b->a);
+    b->a = name ? objc_retain(name) : 0;
+    b->i = (i64)options;
+    return s;
+}
+static id nx_init_name(id s, SEL c, id name) { return nx_init_mach(s, c, name, 0); }
+static id nx_with(id cls, SEL c, id name) {
+    id o = cx_alloc_instance((cx_class_t *)cls);
+    return o ? objc_autorelease(nx_init_name(o, c, name)) : 0;
+}
+static void nx_conn_resume(id s, SEL c) {
+    (void)c;
+    nxbox_t *b = (nxbox_t *)s;
+    if (b->fl) return;
+    b->fl = 1;
+    nxst_t *st = nx_ensure(s);
+    if (!st) return;
+    if (st->kind == 1) return; /* o par já está no ar; o ouvinte pôs o handler */
+    const char *name = b->a ? cx_cstr(b->a) : 0;
+    if (!name || !name[0] || !strcmp(name, "(null)")) return;
+    xo_t *conn = xpc_connection_create_mach_service(name, 0, 0);
+    st->xpc = conn;
+    void *h = nx_make_block(nx_client_invoke, s, 0, 0);
+    xpc_connection_set_event_handler(conn, h);
+    _Block_release(h);
+    xpc_connection_resume(conn);
+}
+static void nx_listener_resume(id s, SEL c) {
+    (void)c;
+    nxbox_t *b = (nxbox_t *)s;
+    if (b->fl) return;
+    b->fl = 1;
+    const char *name = b->a ? cx_cstr(b->a) : getenv("XPC_SERVICE_NAME");
+    if (!name || !name[0]) return;
+    nxst_t *st = nx_ensure(s);
+    if (!st) return;
+    st->kind = 2;
+    xo_t *conn = xpc_connection_create_mach_service(name, 0, XPC_LISTENER);
+    st->xpc = conn;
+    void *h = nx_make_block(nx_listener_invoke, s, 0, 0);
+    xpc_connection_set_event_handler(conn, h);
+    _Block_release(h);
+    xpc_connection_resume(conn);
+}
+static void nx_inv(id s, SEL c) {
+    (void)c;
+    nxbox_t *b = (nxbox_t *)s;
+    b->fl = 0;
+    nxst_t *st = b->p;
+    if (st && st->xpc) xpc_connection_cancel(st->xpc);
+    if (st) nx_fire(st->on_inv);
+}
+static void nx_set_iface(id s, SEL c, id iface) {
+    (void)c;
+    nxbox_t *b = (nxbox_t *)s;
+    if (b->b) objc_release(b->b);
+    b->b = iface ? objc_retain(iface) : 0;
+}
+static void nx_set_exp_iface(id s, SEL c, id iface) {
+    (void)c;
+    nxst_t *st = nx_ensure(s);
+    if (!st) return;
+    if (st->exp_iface) objc_release(st->exp_iface);
+    st->exp_iface = iface ? objc_retain(iface) : 0;
+}
+static void nx_set_exp(id s, SEL c, id o) {
+    (void)c;
+    nxbox_t *b = (nxbox_t *)s;
+    if (b->e) objc_release(b->e);
+    b->e = o ? objc_retain(o) : 0;
+}
+static id nx_get_exp(id s, SEL c) { (void)c; return ((nxbox_t *)s)->e; }
+static void nx_set_block(void **slot, void *blk) {
+    if (*slot) _Block_release(*slot);
+    *slot = blk ? _Block_copy(blk) : 0;
+}
+static void nx_set_invh(id s, SEL c, void *blk) { (void)c; nxst_t *st = nx_ensure(s); if (st) nx_set_block(&st->on_inv, blk); }
+static void nx_set_inth(id s, SEL c, void *blk) { (void)c; nxst_t *st = nx_ensure(s); if (st) nx_set_block(&st->on_int, blk); }
+static void nx_set_del(id s, SEL c, id d) {
+    (void)c;
+    nxbox_t *b = (nxbox_t *)s;
+    if (b->b) objc_release(b->b);
+    b->b = d ? objc_retain(d) : 0;
+}
+static cx_class_t *nx_proxy_cls;
+static u32 nx_proxy_off;
+static void nx_send(id proxy, SEL sel, id *args, int n) {
+    id conn = *(id *)((u8 *)proxy + nx_proxy_off);
+    nxst_t *st = conn ? ((nxbox_t *)conn)->p : 0;
+    if (!st || !IS_CONN(st->xpc) || !st->xpc->u.conn->live) return;
+    int reply_at = (n > 0 && nx_is_block(args[n - 1])) ? n - 1 : -1;
+    xo_t *d = xpc_dictionary_create(0, 0, 0);
+    if (!d) return;
+    xpc_dictionary_set_int64(d, "_mos_nsxpc", 1);
+    xpc_dictionary_set_string(d, "sel", sel_getName(sel));
+    xo_t *arr = xpc_array_create(0, 0);
+    for (int i = 0; i < n; i++) if (i != reply_at) {
+        xo_t *v = nx_encode(args[i]);
+        xpc_array_append_value(arr, v);
+        if (v) xpc_release(v);
+    }
+    xpc_dictionary_set_value(d, "args", arr);
+    xpc_release(arr);
+    if (reply_at >= 0) {
+        xpc_dictionary_set_int64(d, "reply", 1);
+        void *h = nx_make_block(nx_user_reply_invoke, args[reply_at], 1, 0);
+        xpc_connection_send_message_with_reply(st->xpc, d, 0, h);
+        _Block_release(h);
+    } else xpc_connection_send_message(st->xpc, d);
+    xpc_release(d);
+}
+static void nx0(id s, SEL sel) { nx_send(s, sel, 0, 0); }
+static void nx1(id s, SEL sel, id a) { id args[1] = { a }; nx_send(s, sel, args, 1); }
+static void nx2(id s, SEL sel, id a, id b) { id args[2] = { a, b }; nx_send(s, sel, args, 2); }
+static void nx3(id s, SEL sel, id a, id b, id c) { id args[3] = { a, b, c }; nx_send(s, sel, args, 3); }
+static void nx4(id s, SEL sel, id a, id b, id c, id d) { id args[4] = { a, b, c, d }; nx_send(s, sel, args, 4); }
+static BOOL nx_resolve(id cls, SEL cmd, SEL sel) {
+    (void)cmd;
+    int n = 0;
+    for (const char *p = sel; p && *p; p++) if (*p == ':') n++;
+    if (n > 4) return NO;
+    IMP imps[5] = { (IMP)nx0, (IMP)nx1, (IMP)nx2, (IMP)nx3, (IMP)nx4 };
+    if (class_addMethod((cx_class_t *)cls, sel, imps[n], "v@:")) return YES;
+    return cx_responds((cx_class_t *)cls, sel);
+}
+static id nx_proxy(id s, SEL c) {
+    (void)c;
+    nxbox_t *b = (nxbox_t *)s;
+    if (b->c) return b->c;
+    if (!nx_proxy_cls) return 0;
+    id p = cx_alloc_instance(nx_proxy_cls);
+    if (!p) return 0;
+    *(id *)((u8 *)p + nx_proxy_off) = objc_retain(s);
+    b->c = p;
+    return p;
+}
+static id nx_proxy_err(id s, SEL c, void *blk) {
+    nxst_t *st = nx_ensure(s);
+    if (st) nx_set_block(&st->on_err, blk);
+    return nx_proxy(s, c);
+}
+static id nx_service_listener(id cls, SEL c) {
+    (void)c;
+    static id shared;
+    if (!shared) {
+        shared = cx_alloc_instance((cx_class_t *)cls);
+        const char *n = getenv("XPC_SERVICE_NAME");
+        if (shared && n) ((nxbox_t *)shared)->a = objc_retain(cx_str(n));
+    }
+    return shared;
+}
+static id nx_anon_listener(id cls, SEL c) { (void)c; return cx_alloc_instance((cx_class_t *)cls); }
+static id nx_listener_init(id s, SEL c, id name) { return nx_init_name(s, c, name); }
+static void nx_bind(void) {
+    cx_class_t *C = cx_class_named("NSXPCConnection");
+    cx_class_t *L = cx_class_named("NSXPCListener");
+    if (C) {
+        class_replaceMethod(C, sel_registerName("initWithServiceName:"), (IMP)nx_init_name, "@@:@");
+        class_replaceMethod(C, sel_registerName("initWithMachServiceName:options:"), (IMP)nx_init_mach, "@@:@Q");
+        class_replaceMethod(C->isa, sel_registerName("connectionWithServiceName:"), (IMP)nx_with, "@@:@");
+        class_replaceMethod(C, sel_registerName("resume"), (IMP)nx_conn_resume, "v@:");
+        class_replaceMethod(C, sel_registerName("invalidate"), (IMP)nx_inv, "v@:");
+        class_replaceMethod(C, sel_registerName("setRemoteObjectInterface:"), (IMP)nx_set_iface, "v@:@");
+        class_replaceMethod(C, sel_registerName("setExportedInterface:"), (IMP)nx_set_exp_iface, "v@:@");
+        class_replaceMethod(C, sel_registerName("setExportedObject:"), (IMP)nx_set_exp, "v@:@");
+        class_replaceMethod(C, sel_registerName("exportedObject"), (IMP)nx_get_exp, "@@:");
+        class_replaceMethod(C, sel_registerName("remoteObjectProxy"), (IMP)nx_proxy, "@@:");
+        class_replaceMethod(C, sel_registerName("remoteObjectProxyWithErrorHandler:"), (IMP)nx_proxy_err, "@@:@?");
+        class_replaceMethod(C, sel_registerName("setInvalidationHandler:"), (IMP)nx_set_invh, "v@:@?");
+        class_replaceMethod(C, sel_registerName("setInterruptionHandler:"), (IMP)nx_set_inth, "v@:@?");
+    }
+    if (L) {
+        class_replaceMethod(L->isa, sel_registerName("serviceListener"), (IMP)nx_service_listener, "@@:");
+        class_replaceMethod(L->isa, sel_registerName("anonymousListener"), (IMP)nx_anon_listener, "@@:");
+        class_replaceMethod(L, sel_registerName("initWithMachServiceName:"), (IMP)nx_listener_init, "@@:@");
+        class_replaceMethod(L, sel_registerName("setDelegate:"), (IMP)nx_set_del, "v@:@");
+        class_replaceMethod(L, sel_registerName("resume"), (IMP)nx_listener_resume, "v@:");
+        class_replaceMethod(L, sel_registerName("invalidate"), (IMP)nx_inv, "v@:");
+    }
+    cx_class_t *ns = cx_class_named("NSObject");
+    if (!nx_proxy_cls && ns) {
+        nx_proxy_cls = objc_allocateClassPair(ns, "MOSXPCProxy", 0);
+        if (nx_proxy_cls) {
+            u32 off = cx_instance_size(nx_proxy_cls);
+            off = (off + 7u) & ~7u;
+            nx_proxy_off = off;
+            class_addIvar(nx_proxy_cls, "_conn", 8, 3, "@");
+            class_addMethod(nx_proxy_cls->isa, sel_registerName("resolveInstanceMethod:"), (IMP)nx_resolve, "B@::");
+            objc_registerClassPair(nx_proxy_cls);
+        }
+    }
+}
+__attribute__((constructor)) static void nx_ctor(void) { nx_bind(); }
+
+/* ---------------------------------------------------------------- bytes entre pids (xpctransport.h)
+ * Serviço bootstrap "com.mos.xpc.peer.<pid>".
+ * call manda um xpc_pipe_routine. Dentro do listen, o send de volta para o pid de
+ * origem vira o routine_reply (é o que axserver faz: trata o pedido e dá send).
+ * send fora desse callback é datagrama, sem espera. Depois de fork o filho não
+ * herda a thread nem o direito de receber: peer_ensure refaz o check_in. */
+#define PEER_CAP 4096
+static void (*peer_fn)(int from_pid, const void *bytes, int n, void *ctx);
+static void *peer_ctx;
+static unsigned peer_port;
+static int peer_pid;
+static volatile int peer_stop;
+static int peer_thr_up;
+static int peer_cap_on, peer_cap_from, peer_cap_sent, peer_cap_n;
+static unsigned char *peer_cap_buf;
+
+static int peer_xmit(int pid, const void *bytes, int n) {
+    if (pid <= 0 || n < 0 || (n && !bytes)) return CX_EINVAL;
+    if (n > PEER_CAP) return CX_EINVAL;
+    char svc[64];
+    snprintf(svc, sizeof svc, "com.mos.xpc.peer.%d", pid);
+    unsigned port = 0;
+    if (bootstrap_look_up(bootstrap_port, svc, &port) != 0 || !port) return CX_ECONNREFUSED;
+    xo_t *d = xpc_dictionary_create(0, 0, 0);
+    if (!d) { mach_port_deallocate(0x103u, port); return CX_ENOMEM; }
+    xpc_dictionary_set_int64(d, "from", getpid());
+    if (n) xpc_dictionary_set_data(d, "b", bytes, (size_t)n);
+    int kr = xp_msg_send(port, XP_COPY_SEND, 0, 0, XP_PIPE, 0, d);
+    xpc_release(d);
+    mach_port_deallocate(0x103u, port);
+    return kr ? pipe_errno(kr) : 0;
+}
+static void *peer_thread(void *arg) {
+    (void)arg;
+    int mine = peer_pid;
+    while (!peer_stop && peer_port && getpid() == mine) {
+        xo_t *msg = 0;
+        if (xpc_pipe_receive(peer_port, (xpc_object_t *)&msg) != 0 || !msg) continue;
+        const void *b = 0;
+        size_t n = 0;
+        int from = 0;
+        unsigned reply_port = 0;
+        if (msg->type == &_xpc_type_dictionary) {
+            b = xpc_dictionary_get_data(msg, "b", &n);
+            from = (int)xpc_dictionary_get_int64(msg, "from");
+            reply_port = pipe_peek(msg);
+        }
+        void (*fn)(int, const void *, int, void *) = peer_fn;
+        void *ctx = peer_ctx;
+        if (reply_port) {
+            peer_cap_on = 1;
+            peer_cap_from = from;
+            peer_cap_sent = 0;
+            free(peer_cap_buf);
+            peer_cap_buf = 0;
+            peer_cap_n = 0;
+            if (fn) fn(from, b, (int)n, ctx);
+            if (peer_cap_sent) {
+                xo_t *rep = xpc_dictionary_create_reply(msg);
+                if (rep) {
+                    xpc_dictionary_set_int64(rep, "from", getpid());
+                    if (peer_cap_n && peer_cap_buf) xpc_dictionary_set_data(rep, "b", peer_cap_buf, (size_t)peer_cap_n);
+                    xpc_pipe_routine_reply(rep);
+                    xpc_release(rep);
+                }
+            } else {
+                unsigned p = pipe_take(msg);
+                if (p) mach_port_deallocate(0x103u, p);
+            }
+            free(peer_cap_buf);
+            peer_cap_buf = 0;
+            peer_cap_on = 0;
+        } else if (fn) fn(from, b, (int)n, ctx);
+        if (!is_static(msg)) objc_release((id)msg);
+    }
+    return 0;
+}
+static int peer_ensure(void) {
+    int pid = getpid();
+    if (peer_port && peer_thr_up && peer_pid == pid) return 0;
+    peer_fn = 0;
+    peer_ctx = 0;
+    peer_port = 0;
+    peer_thr_up = 0;
+    peer_pid = pid;
+    char svc[64];
+    snprintf(svc, sizeof svc, "com.mos.xpc.peer.%d", pid);
+    unsigned port = 0;
+    if (bootstrap_check_in(bootstrap_port, svc, &port) != 0 || !port) return -1;
+    peer_port = port;
+    unsigned long tid = 0;
+    if (pthread_create(&tid, 0, peer_thread, 0) != 0) {
+        peer_port = 0;
+        return -1;
+    }
+    peer_thr_up = 1;
+    return 0;
+}
+int cx_xpc_peer_ready(void) { return peer_ensure() == 0; }
+int cx_xpc_peer_listen(void (*fn)(int from_pid, const void *bytes, int n, void *ctx), void *ctx) {
+    if (peer_ensure() != 0) return CX_ECONNREFUSED;
+    peer_fn = fn;
+    peer_ctx = ctx;
+    return 0;
+}
+int cx_xpc_peer_send(int pid, const void *bytes, int n) {
+    if (peer_cap_on && pid == peer_cap_from && !peer_cap_sent) {
+        if (n < 0 || n > PEER_CAP || (n && !bytes)) return CX_EINVAL;
+        if (n) {
+            peer_cap_buf = malloc((size_t)n);
+            if (!peer_cap_buf) return CX_ENOMEM;
+            memcpy(peer_cap_buf, bytes, (size_t)n);
+        }
+        peer_cap_n = n;
+        peer_cap_sent = 1;
+        return 0;
+    }
+    return peer_xmit(pid, bytes, n);
+}
+int cx_xpc_peer_call(int pid, const void *req, int n, void *reply, int cap, int *out_n) {
+    unsigned port = 0;
+    char svc[64];
+    if (out_n) *out_n = 0;
+    if (pid <= 0 || cap < 0 || n < 0 || n > PEER_CAP || (n && !req)) return CX_EINVAL;
+    snprintf(svc, sizeof svc, "com.mos.xpc.peer.%d", pid);
+    for (int i = 0; i < 2000; i++) {
+        if (bootstrap_look_up(bootstrap_port, svc, &port) == 0 && port) break;
+        port = 0;
+        usleep(1000);
+    }
+    if (!port) return CX_ECONNREFUSED;
+    void *pipe = xpc_pipe_create_from_port(port, 0);
+    xo_t *d = xpc_dictionary_create(0, 0, 0);
+    xo_t *rep = 0;
+    int rc = CX_ENOMEM;
+    if (pipe && d) {
+        xpc_dictionary_set_int64(d, "from", getpid());
+        if (n) xpc_dictionary_set_data(d, "b", req, (size_t)n);
+        rc = xpc_pipe_routine(pipe, d, &rep);
+    }
+    if (d) xpc_release(d);
+    if (rc == 0 && rep && rep->type == &_xpc_type_dictionary) {
+        size_t ln = 0;
+        const void *b = xpc_dictionary_get_data(rep, "b", &ln);
+        int copy = (int)ln;
+        if (copy > cap) copy = cap;
+        if (copy < 0) copy = 0;
+        if (reply && copy && b) memcpy(reply, b, (size_t)copy);
+        if (out_n) *out_n = copy;
+    }
+    if (rep) xpc_release(rep);
+    mach_port_deallocate(0x103u, port);
+    free(pipe);
+    return rc;
+}
