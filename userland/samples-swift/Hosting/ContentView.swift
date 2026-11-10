@@ -6,6 +6,7 @@ struct ContentView: View {
     @State private var tab = 0
     @State private var sel: Int? = nil
     @State private var pop = false
+    @State private var note = "Nota"
 
     var body: some View {
         TabView(selection: $tab) {
@@ -27,6 +28,13 @@ struct ContentView: View {
                 Text("Vidro").padding().glassEffect()
             }
             .tabItem { Text("Mais") }
+
+            VStack(alignment: .leading, spacing: 8) {
+                TextEditor(text: $note)
+                    .frame(height: 140)
+                Text(note)
+            }
+            .tabItem { Text("Texto") }
         }
         .onAppear { _ = mosHostingSelfTest() }
     }

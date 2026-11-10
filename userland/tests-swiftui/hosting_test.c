@@ -1,5 +1,6 @@
 /* Prova do hosting SwiftUI no host (sem QEMU e sem o binário do WhatsApp).
- * Compila a mesma cena que o libSystem exporta: layout, pixels, clique e rolagem.
+ * Compila a mesma cena que o libSystem exporta: layout, pixels, clique, rolagem,
+ * indicador e edição do TextEditor (caret, seleção, backspace, UTF-8).
  *   clang -std=c11 -Wall -Wextra -Werror -I userland/sdk/swift/MOSBridge \
  *     userland/tests-swiftui/hosting_test.c -o /tmp/hosting_test && /tmp/hosting_test
  */

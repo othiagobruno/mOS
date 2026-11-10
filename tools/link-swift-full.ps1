@@ -5,7 +5,10 @@ param([Parameter(Mandatory)][string]$Out, [string]$Module = 'App', [string[]]$Li
 $root = Split-Path $PSScriptRoot -Parent
 $tc = Get-ChildItem "$root\.tools\swift\LocalApp\Programs\Swift\Toolchains" -Directory | Select-Object -First 1
 $swiftc = "$($tc.FullName)\usr\bin\swiftc.exe"
-$zig = (Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*' | Where-Object { Test-Path "$($_.FullName)\zig.exe" })[0].FullName + '\zig.exe'
+if (-not (Get-Command Resolve-MosZig -ErrorAction SilentlyContinue)) { foreach ($mosHost in @("$PSScriptRoot\stage-host.ps1","$PSScriptRoot\..\stage-host.ps1","$PSScriptRoot\..\..\stage-host.ps1","$PSScriptRoot\..\..\..\stage-host.ps1")) { if (Test-Path -LiteralPath $mosHost) { . $mosHost; break } } }
+$mosZigPick = Resolve-MosZig $root
+if (-not $mosZigPick) { exit 1 }
+$zig = $mosZigPick.Path
 $full = "$root\build\swift\full"
 $obj = [IO.Path]::ChangeExtension($Out, '.o')
 $extra = @(if (($Sources | ForEach-Object { Get-Content $_ -Raw }) -join "`n" -match '@main') { '-parse-as-library' })

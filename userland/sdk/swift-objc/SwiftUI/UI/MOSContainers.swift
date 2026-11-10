@@ -98,6 +98,48 @@ private struct MOSScrollNote: View {
     var body: some View { Color.clear }
 }
 
+/// Polegar parado no viewport (não acompanha o offset do conteúdo). A conta é a mesma do teste C.
+private func mosScrollThumbRect(_ slot: MOSScrollSlot, _ viewport: CGSize, _ vertical: Bool) -> CGRect? {
+    let span = vertical ? viewport.height : viewport.width
+    let content = vertical ? slot.content.height : slot.content.width
+    let offset = vertical ? slot.offset.y : slot.offset.x
+    var x = 0.0, y = 0.0, w = 0.0, h = 0.0
+    let on = mos_sui_indicator(
+        Double(offset), Double(span), Double(content), Int32(slot.showsIndicators ? 1 : 0),
+        0, 0, Double(viewport.width), Double(viewport.height), Int32(vertical ? 1 : 0),
+        &x, &y, &w, &h)
+    if on == 0 || w < 1 || h < 1 { return nil }
+    return CGRect(x: x, y: y, width: w, height: h)
+}
+
+private struct MOSScrollThumbBar: View {
+    var slot: MOSScrollSlot
+    var viewport: CGSize
+    var vertical: Bool
+
+    var body: some View {
+        let rect = mosScrollThumbRect(slot, viewport, vertical)
+        if let rect {
+            RoundedRectangle(cornerRadius: 2.5)
+                .fill(Color.gray.opacity(0.9))
+                .frame(width: rect.width, height: rect.height)
+                .offset(x: rect.minX, y: rect.minY)
+        }
+    }
+}
+
+private struct MOSScrollThumb: View {
+    var slot: MOSScrollSlot
+    var viewport: CGSize
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            if slot.vertical { MOSScrollThumbBar(slot: slot, viewport: viewport, vertical: true) }
+            if slot.horizontal { MOSScrollThumbBar(slot: slot, viewport: viewport, vertical: false) }
+        }
+    }
+}
+
 @available(macOS 10.15, *)
 public struct ScrollView<Content>: View where Content: View {
     public var content: Content
@@ -115,29 +157,23 @@ public struct ScrollView<Content>: View where Content: View {
         let vertical = axes.contains(.vertical)
         let horizontal = axes.contains(.horizontal)
         GeometryReader { proxy in
-            content
-                .fixedSize(horizontal: horizontal, vertical: vertical)
-                .background(
-                    MOSScrollMeasure(slot: slot, viewport: proxy.size, frame: proxy.frame(in: .global),
-                                     vertical: vertical, horizontal: horizontal, showsIndicators: showsIndicators)
-                )
-                .offset(x: horizontal ? -slot.offset.x : 0, y: vertical ? -slot.offset.y : 0)
+            ZStack(alignment: .topLeading) {
+                content
+                    .fixedSize(horizontal: horizontal, vertical: vertical)
+                    .background(
+                        MOSScrollMeasure(slot: slot, viewport: proxy.size, frame: proxy.frame(in: .global),
+                                         vertical: vertical, horizontal: horizontal, showsIndicators: showsIndicators)
+                    )
+                    .offset(x: horizontal ? -slot.offset.x : 0, y: vertical ? -slot.offset.y : 0)
+                MOSScrollThumb(slot: slot, viewport: proxy.size)
+            }
         }
         .clipped()
     }
 }
 
 // MARK: - TextEditor
-
-@available(macOS 11.0, *)
-public struct TextEditor: View {
-    var text: Binding<String>
-
-    public init(text: Binding<String>) { self.text = text }
-
-    /// Mostra o texto. Caret, seleção e edição ainda não existem.
-    public var body: some View { Text(verbatim: text.wrappedValue) }
-}
+// O corpo (caret, seleção, digitação) está em MOSTextEditor.swift.
 
 // MARK: - List
 
@@ -328,12 +364,17 @@ private struct MOSPopoverLayer<Base: View, Pop: View>: View {
     var pop: () -> Pop
 
     var body: some View {
-        ZStack(alignment: .topLeading) {
+        let native = MOSPopoverHook.presenter
+        let showCard = native?.replacesCard != true
+        return ZStack(alignment: .topLeading) {
             base
             if isPresented.wrappedValue {
-                if MOSPopoverHook.presenter != nil {
-                    Color.white.opacity(0).onAppear { presentNative() }
-                } else {
+                if native != nil {
+                    Color.white.opacity(0)
+                        .onAppear { presentNative() }
+                        .onDisappear { MOSPopoverHook.presenter?.dismiss() }
+                }
+                if showCard {
                     Color.white.opacity(0.001)
                         .contentShape(Rectangle())
                         .onTapGesture { isPresented = false }

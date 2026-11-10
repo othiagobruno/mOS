@@ -83,6 +83,7 @@ OBJ_PROP(title, setTitle) OBJ_PROP(message, setMessage) OBJ_PROP(prompt, setProm
 OBJ_PROP(directoryURL, setDirectoryURL) OBJ_PROP(allowedFileTypes, setAllowedFileTypes) OBJ_PROP(allowedContentTypes, setAllowedContentTypes)
 OBJ_PROP(accessoryView, setAccessoryView) OBJ_PROP(delegate, setDelegate) OBJ_PROP(menu, setMenu) OBJ_PROP(image, setImage)
 OBJ_PROP(toolTip, setToolTip) OBJ_PROP(identifier, setIdentifier) OBJ_PROP(view, setView) OBJ_PROP(items, setItems)
+OBJ_PROP(centeredItemIdentifiers, setCenteredItemIdentifiers)
 OBJ_PROP(defaultItemIdentifiers, setDefaultItemIdentifiers) OBJ_PROP(customizationLabel, setCustomizationLabel)
 OBJ_PROP(principalItemIdentifier, setPrincipalItemIdentifier) OBJ_PROP(representedObject, setRepresentedObject)
 OBJ_PROP(attributedTitle, setAttributedTitle) OBJ_PROP(tabStops, setTabStops) OBJ_PROP(accessibilityLabel, setAccessibilityLabel)
@@ -534,6 +535,7 @@ void cx_appkit_extra_init(void) {
     DEF(NSToolbar, "NSObject");
     IM(NSToolbar, "initWithIdentifier:", tb_init_ident); REG_PROP(NSToolbar, delegate, setDelegate);
     REG_PROP(NSToolbar, visible, setVisible); REG_PROP(NSToolbar, items, setItems);
+    REG_PROP(NSToolbar, centeredItemIdentifiers, setCenteredItemIdentifiers);
     DEF(NSTouchBar, "NSObject"); DEF(NSTouchBarItem, "NSObject");
     DEF(NSCustomTouchBarItem, "NSTouchBarItem"); DEF(NSColorPickerTouchBarItem, "NSTouchBarItem"); DEF(NSSliderTouchBarItem, "NSTouchBarItem");
     DEF(NSPopoverTouchBarItem, "NSTouchBarItem"); DEF(NSGroupTouchBarItem, "NSTouchBarItem"); DEF(NSCandidateListTouchBarItem, "NSTouchBarItem");

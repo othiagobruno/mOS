@@ -73,9 +73,6 @@ cg_size_t CTFramesetterSuggestFrameSizeWithConstraints(id fs, struct { long loc,
 }
 
 /* ================================================================ ApplicationServices: acessibilidade */
-#define kAXErrorAPIDisabled (-25211)
-#define kAXErrorFailure (-25200)
-#define kAXErrorNotImplemented (-25208)
 int cx_tcc_preflight(const char *service);
 int cx_tcc_request(const char *service);
 id cx_ax_application(int pid);
@@ -86,9 +83,8 @@ int cx_ax_names(id e, id *names);
 int cx_ax_set(id e, id attr, id value);
 int cx_ax_actions(id e, id *names);
 int cx_ax_perform(id e, id action);
-static OSStatus ax_not_impl(void) {
-    return cx_tcc_preflight("kTCCServiceAccessibility") ? kAXErrorNotImplemented : kAXErrorAPIDisabled;
-}
+int cx_ax_param(id e, id attr, id param, id *v);
+int cx_ax_param_names(id e, id *names);
 u8 AXIsProcessTrustedWithOptions(id opts) {
     int prompt = 0;
     if (opts) {
@@ -110,17 +106,11 @@ OSStatus AXUIElementCopyAttributeValues(id e, id attr, long index, long maxValue
     return cx_ax_copy_values(e, attr, index, maxValues, values);
 }
 OSStatus AXUIElementCopyAttributeNames(id e, id *names) { return cx_ax_names(e, names); }
-OSStatus AXUIElementCopyParameterizedAttributeNames(id e, id *names) { (void)e; if (names) *names = 0; return ax_not_impl(); }
-OSStatus AXUIElementCopyParameterizedAttributeValue(id e, id attr, id p, id *v) {
-    (void)e; (void)attr; (void)p; if (v) *v = 0; return ax_not_impl();
-}
+OSStatus AXUIElementCopyParameterizedAttributeNames(id e, id *names) { return cx_ax_param_names(e, names); }
+OSStatus AXUIElementCopyParameterizedAttributeValue(id e, id attr, id p, id *v) { return cx_ax_param(e, attr, p, v); }
 OSStatus AXUIElementSetAttributeValue(id e, id attr, id v) { return cx_ax_set(e, attr, v); }
 OSStatus AXUIElementCopyActionNames(id e, id *names) { return cx_ax_actions(e, names); }
 OSStatus AXUIElementPerformAction(id e, id action) { return cx_ax_perform(e, action); }
-/* Observador AX: o Sistemas não tem o canal para avisar outro processo. Stub explícito. */
-OSStatus AXObserverCreateWithInfoCallback(int pid, void *cb, id *out) { (void)pid; (void)cb; if (out) *out = 0; return ax_not_impl(); }
-OSStatus AXObserverAddNotification(id obs, id e, id note, void *ctx) { (void)obs; (void)e; (void)note; (void)ctx; return ax_not_impl(); }
-id AXObserverGetRunLoopSource(id obs) { (void)obs; return 0; }
 /* AXValue: caixa de CGPoint/CGSize/CGRect/CFRange (tipos 1..4) */
 typedef struct { void *isa; u32 type; u8 data[32]; } axval_t;
 static cx_class_t axv_c, axv_m;

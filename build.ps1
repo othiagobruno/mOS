@@ -9,28 +9,11 @@ $ErrorActionPreference = 'Continue'
 $root = $PSScriptRoot
 Set-Location $root
 
-function Test-MosZigPe([string]$Path) {
-    if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { return $false }
-    $full = (Resolve-Path -LiteralPath $Path).Path
-    $fs = [IO.File]::OpenRead('\\?\' + $full)
-    $b = New-Object byte[] 2
-    $n = $fs.Read($b, 0, 2)
-    $fs.Close()
-    return ($n -eq 2 -and $b[0] -eq 0x4D -and $b[1] -eq 0x5A)
-}
-$zig = $null
-Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*' -ErrorAction SilentlyContinue | ForEach-Object {
-    $cand = Join-Path $_.FullName 'zig.exe'
-    if (-not (Test-Path -LiteralPath $cand)) { return }
-    if (Test-MosZigPe $cand) { if (-not $zig) { $zig = $cand } }
-    else { Write-Host "aviso: $cand não é um executável Windows (MZ); ignorado. Um zig de macOS em .tools\zig-macos-dl faz o libSystem falhar na primeira compilação." -ForegroundColor Yellow }
-}
-if (-not $zig -and $env:MOS_ZIG -and (Test-MosZigPe $env:MOS_ZIG)) { $zig = $env:MOS_ZIG }
-if (-not $zig) {
-    $onPath = (Get-Command zig -ErrorAction SilentlyContinue).Source
-    if ($onPath -and (Test-Mos ZigPe $onPath)) { $zig = $onPath }
-}
-if (-not $zig) { Write-Error "Zig not found. Download from https://ziglang.org/download/ and extract into .tools\ (o zig.exe precisa ser PE/MZ, não um binário de macOS)."; exit 1 }
+. "$root\tools\stage-host.ps1"
+$mosZigPick = Resolve-MosZig $root
+if (-not $mosZigPick) { exit 1 }
+$zig = $mosZigPick.Path
+$script:MosZig = $zig
 
 if ($Clean) { Remove-Item -Recurse -Force "$root\$OutDir" -ErrorAction SilentlyContinue; exit 0 }
 New-Item -ItemType Directory -Force "$root\$OutDir" | Out-Null
@@ -54,12 +37,7 @@ Write-Host "==> Building the Nucleo kernel ($($sources.Count) files)" -Foregroun
 if ($LASTEXITCODE -ne 0) { Write-Host "kernel build FAILED" -ForegroundColor Red; exit 1 }
 Remove-Item $OutDir/BOOTX64.lib, $OutDir/BOOTX64.pdb -ErrorAction SilentlyContinue
 
-if (-not (Test-Path $OutDir/mkimg.exe) -or (Get-Item tools/mkimg.c).LastWriteTime -gt (Get-Item $OutDir/mkimg.exe).LastWriteTime -or
-    (Get-Item kernel/include/ed25519_impl.h).LastWriteTime -gt (Get-Item $OutDir/mkimg.exe).LastWriteTime) {
-    Write-Host "==> Building mkimg" -ForegroundColor Cyan
-    & $zig cc -O2 -target x86_64-windows-gnu tools/mkimg.c -o $OutDir/mkimg.exe -lbcrypt 2>&1 | ForEach-Object { "$_" }
-    if ($LASTEXITCODE -ne 0) { Write-Host "mkimg build FAILED" -ForegroundColor Red; exit 1 }
-}
+$mkimg = Resolve-MosMkimg $root $OutDir
 
 # ESP tree: EFI\BOOT\BOOTX64.EFI + \mOS\ (system and user files)
 $esp = "$root\$OutDir\esp"
@@ -83,7 +61,7 @@ foreach ($rel in $keepRel) {
 }
 Remove-Item -Recurse -Force $esp -ErrorAction SilentlyContinue
 if (Test-Path $esp) { Start-Sleep -Milliseconds 500; Remove-Item -Recurse -Force $esp -ErrorAction SilentlyContinue }
-if (Test-Path $esp) {
+if ((Test-Path $esp) -and (Test-MosWindows)) {
     $full = (Resolve-Path -LiteralPath $esp).Path
     & cmd.exe /c "rd /s /q `"\\?\$full`"" | Out-Null
 }
@@ -116,17 +94,29 @@ if (Test-Path "$root\firmware") {
 
 # libc++ do LLVM como /usr/lib/libc++.1.dylib (módulos nativos dos apps Electron; tools\build-libcxx.ps1)
 & "$root\tools\build-libcxx.ps1"
-if ($LASTEXITCODE -ne 0) { Write-Host 'libc++ build FAILED' -ForegroundColor Red; exit 1 }
+if ($LASTEXITCODE -ne 0) {
+    if (Test-MosWindows) { Write-Host 'libc++ build FAILED' -ForegroundColor Red; exit 1 }
+    Write-Host 'aviso: libc++ não compilou neste Linux; a imagem de boot segue sem /usr/lib/libc++.1.dylib' -ForegroundColor Yellow
+    $global:LASTEXITCODE = 0
+}
 New-Item -ItemType Directory -Force "$esp\mOS\usr\lib" | Out-Null
-Copy-Item "$root\build\libcxx\libc++.1.dylib" "$esp\mOS\usr\lib\libc++.1.dylib" -Force
+if (Test-Path "$root\build\libcxx\libc++.1.dylib") { Copy-Item "$root\build\libcxx\libc++.1.dylib" "$esp\mOS\usr\lib\libc++.1.dylib" -Force }
 # SQLite como /usr/lib/libsqlite3.dylib (WhatsApp, Core Data; tools\build-sqlite.ps1, se o amálgama estiver em .tools)
 & "$root\tools\build-sqlite.ps1"
-if ($LASTEXITCODE -ne 0) { Write-Host 'libsqlite3 build FAILED' -ForegroundColor Red; exit 1 }
+if ($LASTEXITCODE -ne 0) {
+    if (Test-MosWindows) { Write-Host 'libsqlite3 build FAILED' -ForegroundColor Red; exit 1 }
+    Write-Host 'aviso: libsqlite3 não compilou neste Linux' -ForegroundColor Yellow
+    $global:LASTEXITCODE = 0
+}
 if (Test-Path "$root\build\sqlite\libsqlite3.dylib") { Copy-Item "$root\build\sqlite\libsqlite3.dylib" "$esp\mOS\usr\lib\libsqlite3.dylib" -Force }
 # ICU4C como /usr/lib/libicucore.A.dylib, com os dados em /usr/share/icu (Intl do Claude Code; tools\build-icu.ps1, se o
 # código-fonte estiver em .tools\icu-dl). O carregador prefere esta à parte de IDN do libSystem (kernel/compat/macho.c).
 & "$root\tools\build-icu.ps1"
-if ($LASTEXITCODE -ne 0) { Write-Host 'libicucore build FAILED' -ForegroundColor Red; exit 1 }
+if ($LASTEXITCODE -ne 0) {
+    if (Test-MosWindows) { Write-Host 'libicucore build FAILED' -ForegroundColor Red; exit 1 }
+    Write-Host 'aviso: libicucore não compilou neste Linux' -ForegroundColor Yellow
+    $global:LASTEXITCODE = 0
+}
 if (Test-Path "$root\build\icu\libicucore.A.dylib") {
     Copy-Item "$root\build\icu\libicucore.A.dylib" "$esp\mOS\usr\lib\libicucore.A.dylib" -Force
     New-Item -ItemType Directory -Force "$esp\mOS\usr\share\icu" | Out-Null
@@ -154,7 +144,10 @@ New-Item -ItemType Directory -Force $wkdir | Out-Null
 & $zig cc -target x86_64-macos -O2 -shared -x objective-c "-I$root\userland\sdk\include" -Wno-objc-root-class -Wno-objc-method-access `
     "$root\userland\frameworks\WebKit\WebKit.m" -o "$wkdir\WebKit" '-Wl,-install_name,/System/Library/Frameworks/WebKit.framework/Versions/A/WebKit' `
     '-Wl,-undefined,dynamic_lookup' 2>&1 | Select-String ' error' | ForEach-Object { "  $($_.Line)" }
-if (-not (Test-Path "$wkdir\WebKit")) { Write-Host 'WebKit.framework build FAILED' -ForegroundColor Red; exit 1 }
+if (-not (Test-Path "$wkdir\WebKit")) {
+    if (Test-MosWindows) { Write-Host 'WebKit.framework build FAILED' -ForegroundColor Red; exit 1 }
+    Write-Host 'aviso: WebKit.framework não compilou neste Linux' -ForegroundColor Yellow
+}
 # tradutor arm64 (docs/tradutor-arm64.md): o runtime a64rt.mos (tools\build-a64rt.ps1) e o libSystem arm64
 # (tools\build-libsystem-arm64.ps1) em /Sistema/Biblioteca/a64; sem eles os apps só arm64 dizem o que falta
 $a64 = "$esp\mOS\Sistema\Biblioteca\a64"
@@ -190,7 +183,11 @@ if ($swiftSrc) {
 New-Item -ItemType Directory -Force "$esp\mOS\usr\bin" | Out-Null
 foreach ($c in Get-ChildItem "$root\userland\cli-macos" -Filter *.c -ErrorAction SilentlyContinue) {
     & $zig cc -target x86_64-macos -O2 $c.FullName -o "$esp\mOS\usr\bin\$($c.BaseName)" "-Wl,-undefined,dynamic_lookup" 2>&1 | ForEach-Object { "$_" }
-    if ($LASTEXITCODE -ne 0) { Write-Host "/usr/bin/$($c.BaseName) FAILED" -ForegroundColor Red; exit 1 }
+    if ($LASTEXITCODE -ne 0) {
+        if (Test-MosWindows) { Write-Host "/usr/bin/$($c.BaseName) FAILED" -ForegroundColor Red; exit 1 }
+        Write-Host "aviso: /usr/bin/$($c.BaseName) não compilou neste Linux" -ForegroundColor Yellow
+        $global:LASTEXITCODE = 0
+    }
 }
 
 # user-mode programs (ring 3): userland\*.c -> \mOS\Sistema\Programas\<name> (static ELF64 at 0x400000000000)
@@ -202,15 +199,27 @@ if ($progs) {
     foreach ($p in $progs) {
         & $zig cc -target x86_64-freestanding-none -O2 -g0 -ffreestanding -nostdlib -fno-stack-protector -fno-pic -mcmodel=large -static `
             '-Wl,--image-base=0x400000000000' '-Wl,-e,_start' -Wno-unused-function -Iuserland -Ikernel/include $p.FullName -o "$pdir\$($p.BaseName)" 2>&1 | ForEach-Object { "$_" }
-        if ($LASTEXITCODE -ne 0) { Write-Host "user program $($p.Name) FAILED" -ForegroundColor Red; exit 1 }
+        if ($LASTEXITCODE -ne 0) {
+            if (Test-MosWindows) { Write-Host "user program $($p.Name) FAILED" -ForegroundColor Red; exit 1 }
+            Write-Host "aviso: userland/$($p.Name) não compilou neste Linux" -ForegroundColor Yellow
+            $global:LASTEXITCODE = 0
+        }
     }
     # apps Cocoa de exemplo (userland\samples) -> \mOS\Aplicativos\<Nome>.app (Mach-O, rodam pelo AppKit do mOS)
 Write-Host "==> Building Cocoa sample apps" -ForegroundColor Cyan
 & "$root\tools\build-samples.ps1" -Dest "$esp\mOS\Aplicativos"
-if ($LASTEXITCODE -ne 0) { Write-Host "sample apps FAILED" -ForegroundColor Red; exit 1 }
+if ($LASTEXITCODE -ne 0) {
+    if (Test-MosWindows) { Write-Host "sample apps FAILED" -ForegroundColor Red; exit 1 }
+    Write-Host 'aviso: apps de exemplo não compilaram neste Linux' -ForegroundColor Yellow
+    $global:LASTEXITCODE = 0
+}
 Write-Host "==> Building Swift / SwiftUI apps" -ForegroundColor Cyan
 & "$root\tools\build-swift-apps.ps1" -Dest "$esp\mOS\Aplicativos"
-if ($LASTEXITCODE -ne 0) { Write-Host "Swift apps FAILED" -ForegroundColor Red; exit 1 }
+if ($LASTEXITCODE -ne 0) {
+    if (Test-MosWindows) { Write-Host "Swift apps FAILED" -ForegroundColor Red; exit 1 }
+    Write-Host 'aviso: apps Swift não compilaram neste Linux (falta o swiftc)' -ForegroundColor Yellow
+    $global:LASTEXITCODE = 0
+}
 # -Tests: the kernel runs /Sistema/Programas/teste at boot (output on the serial log)
     if ($Tests) {
         Set-Content -Path "$pdir\.autoteste" -Value 'teste' -Encoding ascii
@@ -248,7 +257,7 @@ $versao = "0.1-$(Get-Date -Format 'yyyyMMdd.HHmm')-$rev"
 # tools\build-libs-arm64.ps1, levaram o payload a ~135 MiB)
 $espBytes = (Get-ChildItem $esp -Recurse -File -Force | Measure-Object Length -Sum).Sum + (Get-ChildItem "$root\root-live" -Recurse -File -Force -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum
 $imgMiB = [math]::Max(128, [int][math]::Ceiling($espBytes * 1.25 / 1MB / 16) * 16)
-& $OutDir/mkimg.exe $OutDir/mOS.img $esp $imgMiB --live-overlay "$root\root-live" --key $key --manifest-out "$OutDir/manifesto.txt" --versao $versao
+& $mkimg $OutDir/mOS.img $esp $imgMiB --live-overlay "$root\root-live" --key $key --manifest-out "$OutDir/manifesto.txt" --versao $versao
 if ($LASTEXITCODE -ne 0) { Write-Host "image creation FAILED" -ForegroundColor Red; exit 1 }
 $k = (Get-Item $OutDir/BOOTX64.EFI).Length / 1KB
 Write-Host ("OK: $OutDir\mOS.img (kernel {0:N0} KiB). Flash it to a USB stick with Rufus (DD mode) or balenaEtcher." -f $k) -ForegroundColor Green

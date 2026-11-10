@@ -29,6 +29,10 @@ extern void login_tick(void);
 extern void login_logout(void);
 extern bool login_active(void);
 extern const char *account_fullname(void);
+extern void tcc_prompt_tick(void);
+extern void tcc_prompt_draw(surface_t *s, int sw, int sh);
+extern bool tcc_prompt_mouse(int x, int y, int sw, int sh, bool press, bool release);
+extern bool tcc_prompt_key(int key);
 
 
 int  g_wallpaper_style = 3;   /* 0 dunas dinâmicas, 1 dunas dia, 2 dunas noite, 3 seda (padrão) */
@@ -2967,6 +2971,7 @@ static void desktop_draw_overlay_main(surface_t *s, rect_t D) {
     login_draw(s);
     setup_draw(s);
     draw_alert(s);
+    tcc_prompt_draw(s, SW, SH);
 }
 
 /* ============================================================ eventos */
@@ -3030,6 +3035,7 @@ static bool desktop_handle_event_local(input_event_t *e) {
     if (login_active() && !A.open) return login_handle_event(e);
     if (e->type == EV_KEY_DOWN) {
         u16 m = e->mods;
+        if (tcc_prompt_key(e->key)) return true;
         if (A.open) {
             if (e->key == KEY_ENTER) alert_finish(A.nb - 1);
             else if (e->key == KEY_ESC) alert_finish(0);
@@ -3210,6 +3216,8 @@ static bool desktop_handle_event_local(input_event_t *e) {
         }
         return true;
     }
+    /* gravação de tela / acessibilidade: por cima de captura, alerta e janelas */
+    if (tcc_prompt_mouse(x, y, SW, SH, lp, lr)) return true;
     /* menu do botão verde (organizar janela) */
     if (tile_popover_mouse(x, y, lp, lr)) return true;
     /* captura de tela (⌘⇧5): toma conta do mouse */
@@ -3370,6 +3378,7 @@ static int last_minute = -1;
 void desktop_tick(void) {
     login_tick();
     setup_tick();
+    tcc_prompt_tick();
     { extern void apps_refresh_mac(void); apps_refresh_mac(); }   /* apps do macOS abertos: bolinha no Dock */
     datetime_t dt;
     static u64 last_rtc;

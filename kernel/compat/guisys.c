@@ -396,6 +396,8 @@ int compat_gui_pid_of(app_t *a) {
     return 0;
 }
 
+const char *compat_app_bundle(app_t *a);
+
 /* CGWindowListCopyWindowInfo: cada janela do compositor, da frente para o fundo. */
 int compat_gui_cgwindow(int index, gui_cgwindow_t *out) {
     if (!out || index < 0) return 0;
@@ -415,6 +417,10 @@ int compat_gui_cgwindow(int index, gui_cgwindow_t *out) {
         out->h = w->h;
         if (w->app && w->app->name) strncpy(out->owner, w->app->name, sizeof out->owner - 1);
         strncpy(out->name, w->title, sizeof out->name - 1);
+        {
+            const char *bundle = compat_app_bundle(w->app);
+            if (bundle) strncpy(out->bundle, bundle, sizeof out->bundle - 1);
+        }
         return 1;
     }
     return 0;
@@ -533,6 +539,89 @@ static void run_cmds(surface_t *s, const u8 *b, usize n) {
 
 #include "guisys_dragime.inc"
 static bool drag_is_source(gapp_t *ga) { return drag.active && (!ga || drag.src == ga); }
+
+/* janela de convidado mais à frente deste pid (wm_window_at: 0 é o fundo) */
+static gwin_t *gwin_front_pid(int pid) {
+    gwin_t *best = NULL;
+    int best_i = -1;
+    for (int i = 0; i < wm_window_count(); i++) {
+        window_t *w = wm_window_at(i);
+        gwin_t *g = gwin_of(w);
+        if (!g || !g->ga || g->ga->pid != pid || !w || w->closing) continue;
+        if (i >= best_i) { best_i = i; best = g; }
+    }
+    return best;
+}
+
+static gwin_t *gwin_pid_at(int pid, int x, int y) {
+    for (int i = wm_window_count() - 1; i >= 0; i--) {
+        window_t *w = wm_window_at(i);
+        gwin_t *g = gwin_of(w);
+        if (!g || !g->ga || g->ga->pid != pid || !w || w->closing || !w->visible) continue;
+        if (x >= w->x && y >= w->y && x < w->x + w->w && y < w->y + w->h) return g;
+    }
+    return gwin_front_pid(pid);
+}
+
+/* CGEventPostToPid. O tipo no byte baixo é o CGEventType, não o EV_* da fila global
+ * (os dois usam 1 para coisas diferentes). Não chama wm_focus e não mexe no cursor. */
+static i64 input_to_pid(u64 b, u64 c, u64 d) {
+    u32 cg = (u32)(b & 0xFF);
+    u32 buttons = (u32)((b >> 8) & 7);
+    u32 mods = (u32)((b >> 16) & 0xFFFF);
+    i32 wheel = (i32)(b >> 32);
+    i32 key = (i32)(u32)c;
+    int pid = (int)(c >> 32);
+    i32 x = (i32)(u32)d, y = (i32)(d >> 32);
+    int keyev = 0, down = 0, move = 0, scroll = 0;
+    if (pid <= 0) return -MOS_EINVAL;
+    switch (cg) {
+    case 10: keyev = 1; down = 1; break;
+    case 11: keyev = 1; break;
+    case 1: case 3: case 25: down = 1; break;
+    case 2: case 4: case 26: break;
+    case 5: case 6: case 7: case 27: move = 1; break;
+    case 22: scroll = 1; break;
+    default: return -MOS_EINVAL;
+    }
+    gwin_t *g = keyev ? gwin_front_pid(pid) : gwin_pid_at(pid, x, y);
+    if (!g || !g->ga || !g->w) return -MOS_ESRCH;
+    gui_event_t e;
+    memset(&e, 0, sizeof e);
+    e.win = (u32)g->id;
+    e.mods = mods;
+    e.buttons = (int)buttons;
+    if (keyev) {
+        e.type = down ? GEV_KEY_DOWN : GEV_KEY_UP;
+        e.key = key;
+        if (key >= 32 && key < 0x100 && key != 127 && !(mods & (MOD_CMD | MOD_CTRL))) utf8_encode((u32)key, e.text);
+    } else {
+        rect_t cr = wm_content_rect(g->w);
+        e.x = x - cr.x;
+        e.y = y - cr.y;
+        if (scroll) { e.type = GEV_SCROLL; e.w = wheel; }
+        else if (move) e.type = GEV_MOUSE_MOVE;
+        else if (down && cg == 3) { e.type = GEV_RIGHT_DOWN; e.clicks = 1; }
+        else if (down) { e.type = GEV_MOUSE_DOWN; e.clicks = 1; }
+        else { e.type = GEV_MOUSE_UP; e.clicks = 1; }
+    }
+    push(g->ga, &e);
+    return 0;
+}
+
+static i64 focus_pid(int pid) {
+    gwin_t *g = gwin_front_pid(pid);
+    if (!g || !g->w) return -MOS_ESRCH;
+    wm_focus(g->w);
+    return 0;
+}
+
+static i64 front_pid(void) {
+    window_t *w = wm_focused();
+    if (!w) return 0;
+    int pid = compat_gui_pid_of(w->app);
+    return pid > 0 ? pid : 0;
+}
 
 /* ------------------------------------------------------------ syscalls */
 i64 compat_gui_syscall(process_t *p, u64 n, u64 a, u64 b, u64 c, u64 d, u64 e) {
@@ -743,6 +832,9 @@ i64 compat_gui_syscall(process_t *p, u64 n, u64 a, u64 b, u64 c, u64 d, u64 e) {
     case GUI_DEVICE: {
         extern i64 gamepad_syscall(process_t *p, u64 op, u64 b, u64 c, u64 d);
         extern i64 bt_user_syscall(process_t *p, u64 op, u64 b, u64 c, u64 d);
+        if (a == DEV_INPUT_TO_PID) return input_to_pid(b, c, d);
+        if (a == DEV_FOCUS_PID) return focus_pid((int)b);
+        if (a == DEV_FRONT_PID) return front_pid();
         /* números acima dos do Bluetooth que mesmo assim são do gamepad.c: áudio e a lista de janelas */
         bool pad = a < DEV_BT_STATE || a == DEV_AUDIO_STATE || a == DEV_AUDIO_CTL || a == DEV_AUDIO_INFO || a == DEV_AUDIO_READ || a == DEV_WINDOW_LIST;
         return pad ? gamepad_syscall(p, a, b, c, d) : bt_user_syscall(p, a, b, c, d);

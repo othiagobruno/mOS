@@ -294,3 +294,42 @@ Mac App Store. Nada foi contornado.
 
 Repositórios com nome parecido (`betoxf/Usagebar`, `claude-usage-bar` e outros) são outros programas. Não foram
 medidos no lugar do app de usagebar.com.
+
+## cua-driver, recontagem
+
+O binário é o do zip oficial `OpenBot-0.66.0-x64.zip` (SHA-256
+`473091aac28ccab16be5921c9477f6deef8f2d9523d6c87962c99581821f817f`, igual ao
+`SHA256SUMS-macos-x64.txt` da release v0.66.0). O `machocheck` rodou só em
+`Contents/Resources/cua-driver/darwin/x64/cua-driver`, slice x86_64.
+
+Comando, nos dois momentos (o `libSystem.mos` é o ELF freestanding do zig 0.17.1, os
+mesmos flags de `tools/build-libsystem.ps1`, sem rodar o script e sem regravar
+`kernel/compat/libsystem_blob.S`):
+
+```
+gcc -O2 -o machocheck tools/machocheck.c
+./machocheck libSystem.mos diretorio-do-cua-driver relatorio.txt
+```
+
+| | imports | ausentes |
+|---|---:|---:|
+| Antes (libSystem de `main`) | 995 | 410 |
+| Depois | 995 | 399 |
+
+Os 11 que passaram a resolver, todos desta frente: `OBJC_CLASS_$_SCStream`,
+`OBJC_CLASS_$_SCRunningApplication`, `SCStreamFrameInfoStatus`,
+`SCStreamFrameInfoDisplayTime`, `SCStreamFrameInfoScaleFactor`,
+`SCStreamFrameInfoContentScale`, `SCStreamFrameInfoContentRect`,
+`SCStreamFrameInfoDirtyRects`, `CGContextSetBlendMode`, `CGDisplayModeGetPixelWidth`,
+`_AXUIElementCreateWithRemoteToken`. `CGWindowList*`, `CGEvent*` e AppKit já
+resolviam no antes (AppKit 9/9, CoreGraphics ficou 35/0, ScreenCaptureKit 36/0).
+
+Os 399 que continuam, por frente:
+
+| Frente | Ausentes |
+|---|---:|
+| AppKit / CoreGraphics / ScreenCaptureKit / AX | 0 |
+| Swift (`libswiftCore` 162, `libswiftDispatch` 38, `libswift_Concurrency` 11, `libswiftUniformTypeIdentifiers` 8, `libswiftCoreFoundation` 6, `libswiftCoreGraphics` 3, e mais 2 de Metal/ObjectiveC; overlay Foundation 20) | 250 |
+| Sistemas e mídia (CoreFoundation 78, CoreMedia 41, IOSurface 15, AVFoundation 5, ImageIO 4, CoreVideo 3, Security 2, `dispatch_async_and_wait` 1) | 149 |
+
+libc++ não importa nada neste binário. Nada de Swift nem de libc++ foi implementado aqui.

@@ -51,13 +51,15 @@ typedef struct jfp {
     a64_u8  fl;                     /* bits 1:0 = flags em EFLAGS (0 não, 1 modo ADD, 2 modo SUB); bit 2 = reserved[14] válido */
     a64_u8  pad;
     a64_u8  map[16];                /* registrador do host → registrador guest sujo nele (0xFF = nenhum) */
+    a64_u64 gpc;                    /* pc guest desta instrução (o bloco pode não ser contíguo) */
 } jfp;
 
 struct jblk;
 typedef struct jlink { a64_u8 *site; struct jlink *next; } jlink;
 
 typedef struct jblk {
-    a64_u64 pc, end;                /* intervalo guest [pc, end) */
+    a64_u64 pc, end;                /* pc = entrada; end = exclusivo do maior endereço coberto */
+    a64_u64 lo, hi;                 /* cobertura guest [lo, hi), pode ter buracos; a entrada é pc */
     a64_u8 *code;
     a64_u32 len, nfp;
     jfp *fp;
