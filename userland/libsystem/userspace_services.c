@@ -3,7 +3,7 @@
  * "userNotifications"). Não há APNs. O completion do request só roda quando a
  * Interface chama cx_un_decide.
  *
- * StoreKit, QuickLookUI, Core Data e Photos estão em storekit_fw.c,
+ * StoreKit, QuickLookUI, Core Data, Photos e os quatro frameworks do WhatsApp estão em storekit_fw.c,
  * quicklook_fw.c, coredata_fw.c e photos_fw.c. O init daqui só os registra,
  * depois que as classes de fachada já existem.
  */
@@ -18,6 +18,7 @@ void cx_quicklook_init(void);
 void cx_coredata_init(void);
 void cx_photos_init(void);
 void cx_virtualization_init(void);
+void cx_wa_frameworks_init(void);
 
 int cx_tcc_request(const char *service);
 int cx_tcc_state(const char *service);
@@ -61,6 +62,7 @@ void cx_userspace_services_init(void) {
     cx_coredata_init();
     cx_photos_init();
     cx_virtualization_init();
+    cx_wa_frameworks_init();
     cx_add_cmethod(&UNUserNotificationCenter_c, "currentNotificationCenter", (void *)un_current_real);
     cx_add_method(&UNUserNotificationCenter_c, "requestAuthorizationWithOptions:completionHandler:", (void *)un_request);
     cx_add_method(&UNUserNotificationCenter_c, "authorizationStatus", (void *)un_auth);
