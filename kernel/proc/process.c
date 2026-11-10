@@ -410,6 +410,44 @@ bool uvm_install(process_t *p, u64 va, u64 phys) {
 }
 u16 uvm_page_refs(u64 phys) { return page_refs(phys); }
 
+void mem_pressure(void) {
+    if (swap_busy() || !swap_floor()) return;
+    swap_set_busy(1);
+    int got = 0;
+    extern bool lazy_is_anon(process_t *p, u64 va);
+    for (process_t *p = procs; p && got < 32; p = p->next) {
+        if (p->exited || !p->pml4 || p->pml4_borrowed) continue;
+        for (int k = 0; k < USER_PML4_SLOTS && got < 32; k++) {
+            int ui = USER_PML4_FIRST + k;
+            if (!(p->pml4[ui] & PTE_P)) continue;
+            u64 *pdpt = (u64 *)(p->pml4[ui] & PTE_ADDR);
+            for (int i = 0; i < 512 && got < 32; i++) {
+                if (!(pdpt[i] & PTE_P)) continue;
+                u64 *pd = (u64 *)(pdpt[i] & PTE_ADDR);
+                for (int j = 0; j < 512 && got < 32; j++) {
+                    if (!(pd[j] & PTE_P)) continue;
+                    u64 *pt = (u64 *)(pd[j] & PTE_ADDR);
+                    for (int n = 0; n < 512 && got < 32; n++) {
+                        u64 e = pt[n];
+                        if (!(e & PTE_P) || (e & PTE_SHARED) || (e & PTE_COW)) continue;
+                        u64 phys = e & PTE_ADDR;
+                        u64 va = ((u64)ui << 39) | ((u64)i << 30) | ((u64)j << 21) | ((u64)n << 12);
+                        if (page_refs(phys) > 1 || !lazy_is_anon(p, va)) continue;
+                        u64 neu = swap_store(phys, (e & PTE_NX) != 0, (e & PTE_JWP) != 0);
+                        if (!neu) { swap_set_busy(0); return; }
+                        pt[n] = neu;
+                        page_put(phys);
+                        if (p->mem_pages) p->mem_pages--;
+                        got++;
+                    }
+                }
+            }
+        }
+    }
+    if (got) kprintf("swap: %d páginas anônimas foram para a partição\n", got);
+    swap_set_busy(0);
+}
+
 /* MAP_SHARED: a página do cache ganha mais um dono e entra com PTE_SHARED (o fork não a transforma em COW).
  * prot: bit 1 leitura, bit 2 escrita, bit 4 execução. Sem execução, bit 63 (NX). No x86 a página presente
  * continua legível: não há bit de "só escrita" nem de PROT_NONE. */
@@ -615,7 +653,10 @@ static bool copy_path(process_t *p, char *dst, u64 va) {
 
 static void free_level(u64 *t, int level) {
     for (int i = 0; i < 512; i++) {
-        if (!(t[i] & PTE_P)) continue;
+        if (!(t[i] & PTE_P)) {
+            if (level == 1 && swap_is(t[i])) swap_release(t[i]);
+            continue;
+        }
         u64 *child = (u64 *)(t[i] & PTE_ADDR);
         if (level > 1) { free_level(child, level - 1); pmm_free((u64)child, 1); }
         else page_put((u64)child);                  /* página de dados: pode estar compartilhada (COW) */
@@ -625,7 +666,10 @@ static void free_level(u64 *t, int level) {
 /* duplica a árvore de usuário de src em dst: tabelas novas, páginas compartilhadas como COW */
 static bool cow_copy_level(process_t *dst, u64 *s, u64 *d, int level) {
     for (int i = 0; i < 512; i++) {
-        if (!(s[i] & PTE_P)) continue;
+        if (!(s[i] & PTE_P)) {
+            if (level == 1 && swap_is(s[i])) { d[i] = s[i]; swap_hold(s[i]); dst->mem_pages++; }
+            continue;
+        }
         if (level == 1) {
             if (s[i] & PTE_SHARED) {
                 /* MAP_SHARED: os dois lados escrevem na mesma página. Não vira COW. */
@@ -656,6 +700,7 @@ __attribute__((weak)) i64 macho_dyld_syscall(process_t *p, u64 op, u64 a, u64 b,
 __attribute__((weak)) void macho_icache_trim(void) {}   /* imagens compartilhadas que ninguém mais usa */
 
 static void free_address_space(process_t *p) {
+    if (p->pml4_borrowed) { p->pml4 = NULL; p->dyld = NULL; p->pml4_borrowed = 0; return; }
     if (p->dyld) { macho_dyld_free(p->dyld); p->dyld = NULL; }
     if (!p->pml4) return;
     for (int k = 0; k < USER_PML4_SLOTS; k++) {
@@ -787,8 +832,17 @@ static void log_exit_stack(process_t *p, int_frame_t *f, int code) {
     }
     if (o) kprintf("proc:   chamadas:%s\n", line);
 }
+static void vfork_wake(process_t *child) {
+    int pp = child->vfork_of;
+    child->vfork_of = 0;
+    process_t *par = pp ? find(pp) : NULL;
+    if (!par) return;
+    for (thread_t *t = sched_threads(); t; t = t->next)
+        if (t->proc == par && t->state == TH_WAITING && t->wait_pid == -12) t->state = TH_READY;
+}
 static void finish(process_t *p, int code) {
     if (p->exited) return;
+    vfork_wake(p);
     p->exited = true;
     p->exit_code = code;
     p->stopped = 0;
@@ -875,6 +929,7 @@ int proc_spawn(const char *path, const char *arg) {
 
 static void fd_close(process_t *p, int fd);
 static void fd_copy(process_t *dst, int dfd, process_t *src, int sfd);
+int proc_fd_from_snapshot(process_t *p, const void *snap);
 
 /* fds do posix_spawn: sem CLOEXEC_DEFAULT o filho herda os do pai; as ações rodam em seguida.
  * dup2 lê o fd no filho se uma ação anterior o criou, senão no pai. */
@@ -899,9 +954,21 @@ static void spawn_apply_fds(process_t *child, process_t *parent, mos_spawn_fa_t 
             child->fds[a].used = true;
             child->fds[a].kind = FD_FILE;
             child->fds[a].flags = acts[i].flags;
+            child->fds[a].mode = acts[i].mode ? acts[i].mode : 0644;
             strncpy(child->fds[a].path, acts[i].path, sizeof child->fds[a].path - 1);
         } else if (k == MOS_SPAWN_FA_CHDIR && acts[i].path[0]) {
             strncpy(child->cwd, acts[i].path, sizeof child->cwd - 1);
+        } else if (k == MOS_SPAWN_FA_FILEPORT && parent && a >= 0 && a < PROC_MAX_FDS) {
+            extern void *mach_fileport_snap(process_t *src, unsigned name);
+            void *snap = mach_fileport_snap(parent, (unsigned)b);
+            if (!snap) continue;
+            int tmp = proc_fd_from_snapshot(child, snap);
+            if (tmp < 0) continue;
+            if (tmp != a) {
+                if (child->fds[a].used) fd_close(child, a);
+                fd_copy(child, a, child, tmp);
+                fd_close(child, tmp);
+            }
         }
     }
 }
@@ -920,6 +987,7 @@ int proc_spawn_in(const char *path, const char *arg, tty_t *tty,
     process_t *p = kcalloc(1, sizeof *p);
     if (!p) return -1;
     p->pid = next_pid++;
+    p->uid = p->euid = 501;
     thread_t *cur = thread_current();
     p->ppid = cur && cur->proc ? cur->proc->pid : 0;
     pty_proc_init(p, cur ? cur->proc : NULL, spawn_flags);   /* sessão e grupo (POSIX_SPAWN_SETSID do node-pty) */
@@ -966,6 +1034,11 @@ int proc_spawn_in(const char *path, const char *arg, tty_t *tty,
             finish(p, -1); return -1;
         }
         p->spawn_argv = NULL; p->spawn_argc = 0; p->spawn_env = NULL; p->spawn_envc = 0;
+        if (cur && cur->proc && (cur->proc->spawn_extra & 1))
+            for (int s = 1; s < 32; s++) if ((cur->proc->spawn_sigdef & (1u << s)) && p->sig_handler[s] == 1) p->sig_handler[s] = 0;
+        if (cur && cur->proc && (cur->proc->spawn_extra & 2) && p->main)
+            p->main->sig_mask = cur->proc->spawn_sigmask & ~((1u << MOS_SIGKILL) | (1u << MOS_SIGSTOP));
+        if (cur && cur->proc && (cur->proc->spawn_extra & 4)) p->euid = p->uid;
         if (spawn_flags & MOS_SPAWN_START_SUSPENDED) proc_hold(p);
         kprintf("proc: iniciado %s (Mach-O, pid %d, %llu KiB)\n", p->name, p->pid, p->mem_pages * 4);
         if (xargc || xenvc) kprintf("proc: %s pid %d recebeu %d argumentos e %d variáveis de ambiente\n", p->name, p->pid, xargc, xenvc);
@@ -1007,6 +1080,11 @@ int proc_spawn_in(const char *path, const char *arg, tty_t *tty,
     p->nthreads = p->main ? 1 : 0;
     irq_restore(fl);
     if (!p->main) { finish(p, -1); return -1; }
+    if (cur && cur->proc && (cur->proc->spawn_extra & 1))
+        for (int s = 1; s < 32; s++) if ((cur->proc->spawn_sigdef & (1u << s)) && p->sig_handler[s] == 1) p->sig_handler[s] = 0;
+    if (cur && cur->proc && (cur->proc->spawn_extra & 2) && p->main)
+        p->main->sig_mask = cur->proc->spawn_sigmask & ~((1u << MOS_SIGKILL) | (1u << MOS_SIGSTOP));
+    if (cur && cur->proc && (cur->proc->spawn_extra & 4)) p->euid = p->uid;
     if (spawn_flags & MOS_SPAWN_START_SUSPENDED) proc_hold(p);
     kprintf("proc: iniciado %s (pid %d, %llu KiB)\n", p->name, p->pid, p->mem_pages * 4);
     return p->pid;
@@ -1073,6 +1151,18 @@ static u64 proc_fault_(int_frame_t *f, u64 cr2) {
     }
     /* página ausente numa faixa de memória sob demanda (mmap anônimo, kernel/mm/lazy.c): página zerada e repete */
     if (f->vector == 14 && !(f->error & 1)) {
+        u64 *se = walk(p, cr2, false);
+        if (se && swap_is(*se)) {
+            u64 pg = pmm_alloc(1);
+            if (pg) {
+                swap_load(*se, pg);
+                int nx = (*se & PTE_NX) != 0, jwp = (*se & PTE_JWP) != 0;
+                *se = pg | PTE_P | PTE_U | (jwp ? PTE_JWP : PTE_RW) | (nx ? PTE_NX : 0);
+                p->mem_pages++;
+                __asm__ volatile("invlpg (%0)" :: "r"(cr2) : "memory");
+                return (u64)f;
+            }
+        }
         extern bool lazy_fault(process_t *p, u64 va);
         if (lazy_fault(p, cr2)) return (u64)f;
     }
@@ -2340,8 +2430,16 @@ static i64 proc_exec(int_frame_t *f, thread_t *t, process_t *p, char *path, char
     memcpy(p->name, np->name, sizeof p->name);
     memcpy(p->path, np->path, sizeof p->path);
     __asm__ volatile("mov %0, %%cr3" :: "r"((u64)p->pml4) : "memory");
-    np->pml4 = old_pml4;
-    np->dyld = old_dyld;
+    if (p->pml4_borrowed) {
+        vfork_wake(p);
+        p->pml4_borrowed = 0;
+        p->vfork_of = 0;
+        np->pml4 = NULL;
+        np->dyld = NULL;
+    } else {
+        np->pml4 = old_pml4;
+        np->dyld = old_dyld;
+    }
     free_address_space(np);
     kfree(np);
     for (int i = 0; i < PROC_MAX_FDS; i++)                       /* O_CLOEXEC fecha; o resto passa para a imagem nova */
@@ -2535,7 +2633,9 @@ static u64 proc_syscall_(int_frame_t *f) {
             }
         }
         if (!exec_resolve(path, sizeof path, &argv, &argc)) { free_vec(argv, argc); free_vec(env, envc); r = -MOS_ENOENT; break; }
+        p->spawn_sigdef = v.sigdef; p->spawn_sigmask = v.sigmask; p->spawn_extra = v.extra;
         r = proc_spawn_in(path, NULL, p->tty, argv, argc, env, envc, nacts ? acts : NULL, nacts, v.flags);
+        p->spawn_extra = 0;
         free_vec(argv, argc);
         free_vec(env, envc);
         if (r < 0) r = -MOS_ENOENT;
@@ -2668,6 +2768,7 @@ static u64 proc_syscall_(int_frame_t *f) {
         p->fds[fd].pipe2 = NULL;
         p->fds[fd].pty = NULL;
         p->fds[fd].flags = (int)b;
+        p->fds[fd].mode = (b & MOS_O_CREAT) ? (unsigned)(c ? c : 0644) : 0;
         p->fds[fd].off = 0;
         strncpy(p->fds[fd].path, path, sizeof p->fds[fd].path - 1);
         r = fd;
@@ -3239,6 +3340,44 @@ static u64 proc_syscall_(int_frame_t *f) {
     }
     case SYS_GETTID: r = t->id; break;
 
+    case SYS_VFORK: {
+        if (p->nthreads > 1) { r = -MOS_EINVAL; break; }
+        process_t *q = kcalloc(1, sizeof *q);
+        if (!q) { r = -MOS_ENOMEM; break; }
+        q->pml4 = p->pml4;
+        q->pml4_borrowed = 1;
+        q->vfork_of = p->pid;
+        q->dyld = NULL;
+        q->pid = next_pid++;
+        q->ppid = p->pid;
+        q->uid = p->uid ? p->uid : 501;
+        q->euid = p->euid ? p->euid : q->uid;
+        memcpy(q->name, p->name, sizeof q->name);
+        memcpy(q->path, p->path, sizeof q->path);
+        memcpy(q->cwd, p->cwd, sizeof q->cwd);
+        q->brk = p->brk; q->brk_start = p->brk_start; q->mmap_next = p->mmap_next;
+        memcpy(q->sig_handler, p->sig_handler, sizeof q->sig_handler);
+        q->sig_restorer = p->sig_restorer;
+        q->tty = p->tty; if (q->tty) q->tty->refs++;
+        q->pgid = p->pgid; q->sid = p->sid; q->ctty = p->ctty;
+        for (int i = 0; i < PROC_MAX_FDS; i++) if (p->fds[i].used) fd_copy(q, i, p, i);
+        f->rax = 0;
+        thread_t *ct = uthread_clone(q, f);
+        if (!ct) {
+            for (int i = 0; i < PROC_MAX_FDS; i++) fd_close(q, i);
+            q->pml4 = NULL; q->pml4_borrowed = 0;
+            if (q->tty) q->tty->refs--;
+            kfree(q); r = -MOS_ENOMEM; break;
+        }
+        ct->sig_mask = t->sig_mask;
+        q->main = ct; q->nthreads = 1; q->next = procs; procs = q;
+        { extern void lazy_fork(process_t *from, process_t *to); lazy_fork(p, q); }
+        f->rax = (u64)q->pid;
+        t->wait_pid = -12;
+        t->state = TH_WAITING;
+        kprintf("proc: vfork de %s (pid %d -> %d), pai suspenso\n", p->name, p->pid, q->pid);
+        return sched_switch(f);
+    }
     /* ---- fork: filho com cópia sob demanda da memória */
     case SYS_FORK: {
         if (!pref_ready()) { r = -MOS_ENOMEM; break; }
@@ -3277,6 +3416,7 @@ static u64 proc_syscall_(int_frame_t *f) {
         q->start_ms = timer_ticks();
         q->tty = p->tty;
         if (q->tty) q->tty->refs++;
+        q->uid = p->uid ? p->uid : 501; q->euid = p->euid ? p->euid : q->uid;
         q->pgid = p->pgid; q->sid = p->sid; q->ctty = p->ctty;   /* mesmo grupo, sessão e terminal de controle */
         machipc_spawn(p, q);                            /* como no macOS: o filho só herda as portas especiais */
         { extern void lazy_fork(process_t *from, process_t *to); lazy_fork(p, q); }   /* faixas sob demanda (mm/lazy.c) */

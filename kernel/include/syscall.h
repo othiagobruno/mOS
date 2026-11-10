@@ -22,7 +22,7 @@ enum {
     SYS_FILESIZE,      /* (path) -> tamanho */
     SYS_CPUS,          /* () -> núcleos ativos */
     SYS_KILL,          /* (pid) -> 0                               o processo sai com -9 */
-    SYS_OPEN,          /* (path, flags) -> fd                      flags O_* abaixo */
+    SYS_OPEN,          /* (path, flags, mode) -> fd               mode vale com O_CREAT (0 = 0644) */
     SYS_CLOSE,         /* (fd) -> 0 */
     SYS_READ,          /* (fd, buf, len) -> bytes                  fd 0 = sem entrada (0 = EOF) */
     SYS_LSEEK,         /* (fd, off, whence) -> nova posição        SEEK_SET/CUR/END */
@@ -88,7 +88,8 @@ enum {
     SYS_MACH_PORT = 81,     /* (op, u64 args[8]) -> kern_return_t           direitos e atributos (MACH_OP_* abaixo) */
     SYS_MACH_BOOTSTRAP = 82,/* (op, nome, u32 *porta) -> código do bootstrap  registro global de serviços */
     SYS_MACH_VM = 83,       /* (op, u64 args[8]) -> kern_return_t           entradas de memória compartilhada */
-    SYS_MACH_LAST = 95
+    SYS_MACH_LAST = 95,
+    SYS_VFORK = 96,    /* () -> pid no pai, 0 no filho. O pai dorme até exec ou _exit; o pml4 é o mesmo. */
 };
 
 #define MOS_DESK_BANNER 1
@@ -124,6 +125,7 @@ enum {
 #define MOS_SPAWN_FA_CLOSE 2
 #define MOS_SPAWN_FA_OPEN  3
 #define MOS_SPAWN_FA_CHDIR 4
+#define MOS_SPAWN_FA_FILEPORT 5             /* a = fd destino, b = nome da porta Mach no pai */
 #define MOS_SPAWN_CLOEXEC_DEFAULT 0x4000u   /* o filho começa sem os fds do pai; só as ações abrem */
 #define MOS_SPAWN_SETPGROUP 0x0002u          /* (valores do macOS) o filho vira líder de um grupo de processos novo */
 #define MOS_SPAWN_SETSID    0x0400u          /* o filho começa uma sessão nova, sem terminal de controle (node-pty) */
@@ -139,6 +141,9 @@ typedef struct {
     unsigned long long acts;     /* mos_spawn_fa_t[nacts] no pai */
     unsigned int nacts;
     unsigned int flags;
+    unsigned int sigdef;    /* bits no número do mOS; extra & 1 = POSIX_SPAWN_SETSIGDEF */
+    unsigned int sigmask;   /* extra & 2 = POSIX_SPAWN_SETSIGMASK */
+    unsigned int extra;     /* 1 sigdef, 2 sigmask, 4 RESETIDS */
 } mos_spawn_vec_t;
 
 /* SYS_MACH_MSG: os argumentos do mach_msg não cabem nos 5 registradores */
