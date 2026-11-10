@@ -164,3 +164,5 @@ O `machocheck` (`tools/machocheck.c`) rodou no WhatsApp 2.26.45.13 antes desta l
 ## Sobreposição com outras frentes
 
 Consulta em 2026-11-10, depois do rebase em `origin/main` (`b4130f1`). O único PR aberto era o #52 (`cursor/quicklook-storekit-coredata-19e0`): QuickLookUI, StoreKit e Core Data. Não edita `fi_swift.c`, `fi_thunks.c`, `fi_abi.inc`, `fi_exports.c` nem `tools/fitest.c`. Edita este documento na seção de StoreKit, acima da de Foundation. Esta leva não mexe nessa seção.
+
+Instalação/runtime edita `vscode_frameworks.c` só em `LSSharedFileList*` (itens de login em `Library/Preferences/com.mos.loginitems`, sem sufixo `.plist`). Incluir, listar e remover reescrevem o arquivo. A janela de Ajustes não está nesta frente: `-[SMAppService openSystemSettingsLoginItems]` em `slack_frameworks.c` (`sm_open_settings`) segue sem UI. Esta frente edita o mesmo arquivo só nas funções AX. O launchd continua varrendo `LaunchAgents` e `LaunchDaemons`, que é onde o SMAppService publica o plist.
