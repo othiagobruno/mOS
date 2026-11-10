@@ -229,8 +229,8 @@ int CGWindowLevelForKey(int key) {
 void *CGEventCreateFromData(void *alloc, id data) { (void)alloc; (void)data; return 0; }
 int CGAssociateMouseAndMouseCursorPosition(u8 connected) { (void)connected; return 0; }
 double CGEventSourceSecondsSinceLastEventType(int state, u32 type) { (void)state; (void)type; return 0.0; }
-void *CGEventTapCreate(int tap, int place, int opts, u64 mask, void *cb, void *info) { (void)tap; (void)place; (void)opts; (void)mask; (void)cb; (void)info; return 0; }
-void CGEventTapEnable(void *tap, u8 enable) { (void)tap; (void)enable; }
+/* CGEventTapCreate / CGEventTapEnable: cgevent.c. Sem kTCCServiceAccessibility o tap é NULL
+ * e CGEventPost não entra na fila. */
 /* captura de tela: sem permissão (o macOS devolve NULL nesse caso) */
 void *CGWindowListCreateImageFromArray(cg_rect_t r, id arr, u32 img) { (void)r; (void)arr; (void)img; return 0; }
 /* CGDisplayStream: cgdisplaystream.c, quadros reais via DEV_SCREEN_CAPTURE. */

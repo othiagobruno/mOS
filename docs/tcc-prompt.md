@@ -22,7 +22,7 @@ Negar (esquerda, Esc) grava `denied`. Permitir (direita, na cor de destaque, Ent
 
 ## O que muda para o aplicativo
 
-`CGPreflightScreenCaptureAccess` é `cx_tcc_preflight("kTCCServiceScreenCapture")`. `AXIsProcessTrusted` é `cx_tcc_preflight("kTCCServiceAccessibility")`. Os dois passam a 1 só quando a linha correspondente está `granted`. Sem isso, a captura não devolve pixels e a árvore de acessibilidade continua fechada. Este diálogo não altera `CGEventPost`.
+`CGPreflightScreenCaptureAccess` é `cx_tcc_preflight("kTCCServiceScreenCapture")`. `AXIsProcessTrusted` é `cx_tcc_preflight("kTCCServiceAccessibility")`. Os dois passam a 1 só quando a linha correspondente está `granted`. Sem gravação de tela a captura não devolve pixels. Sem acessibilidade a árvore continua fechada, `CGEventTapCreate` devolve nulo e `CGEventPost` não entra na fila.
 
 ## Arquivos
 

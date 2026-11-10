@@ -45,7 +45,7 @@ Arquivo: `NSHomeDirectory()/Library/Application Support/com.mos.tcc/decisions.tx
 
 1. Antes de devolver pixels de tela ou de injetar a árvore de acessibilidade, ler `cx_tcc_preflight("kTCCServiceScreenCapture")` ou `cx_tcc_preflight("kTCCServiceAccessibility")`.
 2. Se o estado for pending (`cx_tcc_state` devolve 3), mostrar o prompt. A decisão é `cx_tcc_decide(bundle, serviço, granted)` com granted 1 ou 0. Bundle NULL usa o bundle do processo.
-3. A injeção de eventos (`CGEventPost`) não é bloqueada por este registro: o gate é a captura e a árvore.
+3. `CGEventPost` e `CGEventTapCreate` exigem `kTCCServiceAccessibility` granted. Sem isso o post não entra na fila e o tap é nulo. A captura continua no gate de gravação de tela.
 4. Quando a árvore existir, o ponto de entrada continua `AXUIElementCopyAttributeValue` e as irmãs. Hoje, com permissão, elas devolvem -25200 de propósito.
 
 Não há branch de Interface aberta no GitHub para alinhar este contrato (consulta em 2026-11-10: nenhum PR aberto).
