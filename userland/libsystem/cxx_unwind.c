@@ -106,10 +106,10 @@ static u64 enc_read(u8 enc, const u8 **p, u64 base) {
 
 #if UW_NATIVE
 struct uw_ctx {
-    u64 r[17]; const u8 *lsda; u64 region, cfa, text_base, data_base;
+    u64 r[17]; const u8 *lsda; u64 region, func_end, cfa, text_base, data_base;
     int (*pers)(int, int, u64, void *, struct uw_ctx *);
-    u32 compact_enc; u64 compact_func; int have_compact; int fp_fallback;
-    const u8 *fde, *eh; u64 eh_len;
+    u32 compact_enc; u64 compact_func; int have_compact; int fp_fallback; int is_sig;
+    const u8 *fde, *eh; u64 eh_len; const u8 *fx;
 };
 
 __attribute__((naked)) static void cx_uw_capture(u64 *r) {
@@ -204,6 +204,7 @@ static int cfi_step(const u8 *cie, const u8 *cie_end, const u8 *fde_init, const 
     }
     if (pc < loc || pc >= loc + range) return 0;
     c->region = loc;
+    c->func_end = loc + range;
     enum { SAME, UNDEF, OFF, REG, VAL };
     u8 how[17], cfa_reg = 7; u64 offv[17]; int64_t cfa_off = 8;
     for (int i = 0; i < 17; i++) { how[i] = SAME; offv[i] = 0; }
@@ -494,11 +495,47 @@ static int lookup_compact(u64 pc, const u8 *base, const u8 *sec, struct uw_ctx *
     return 1;
 }
 
+/* Quadro que o kernel monta em sig_deliver (process.c): magic no início, mcontext logo depois. */
+#define MOS_SIGFRAME_MAGIC 0x6D4F535349474E4CULL
+extern void cx_sigtramp(void) __attribute__((weak));
+
+static int sig_magic(u64 a) {
+    if (a < 0x10000 || (a & 7)) return 0;
+    return *(volatile u64 *)a == MOS_SIGFRAME_MAGIC;
+}
+
+static int note_sig(struct uw_ctx *c) {
+    c->is_sig = 0;
+    if (cx_sigtramp && c->region == (u64)(uintptr_t)cx_sigtramp) c->is_sig = 1;
+    if (sig_magic(c->cfa) || sig_magic(c->r[7] + 8)) c->is_sig = 1;
+    return 1;
+}
+
+/* Restaura o contexto interrompido a partir do mcontext do Darwin (mos_thread_state_t). */
+static int step_sig(struct uw_ctx *c) {
+    u64 fa = 0;
+    if (sig_magic(c->cfa)) fa = c->cfa;
+    else if (sig_magic(c->r[7] + 8)) fa = c->r[7] + 8;
+    else return 0;
+    /* usigframe: magic+uctx (16) + siginfo (104) + ucontext (56) = 176; mcontext.__ss depois de 16. */
+    const u8 *ss = (const u8 *)(uintptr_t)fa + 176 + 16;
+    static const int to_dwarf[17] = {0, 3, 2, 1, 5, 4, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16};
+    u64 v[17];
+    for (int i = 0; i < 17; i++) v[i] = *(const u64 *)(ss + (u64)i * 8);
+    for (int i = 0; i < 17; i++) c->r[to_dwarf[i]] = v[i];
+    c->have_compact = 0;
+    c->fde = 0;
+    c->fp_fallback = 0;
+    c->is_sig = 0;
+    c->fx = ss + 21 * 8 + 8; /* fpu_reserved[2] + FXSAVE, xmm0 em +160 */
+    return 1;
+}
+
 static int load_frame(struct uw_ctx *c) {
     u64 pc = c->r[16];
     /* A linha do CIE vale para a instrução do call, não para o endereço de retorno. */
     u64 look = pc ? pc - 1 : 0;
-    c->lsda = 0; c->region = 0; c->pers = 0; c->have_compact = 0; c->fde = 0; c->fp_fallback = 0;
+    c->lsda = 0; c->region = 0; c->func_end = 0; c->pers = 0; c->have_compact = 0; c->fde = 0; c->fp_fallback = 0; c->is_sig = 0; c->fx = 0;
     if (cx_unwind_disabled && cx_unwind_disabled()) return 0;
     struct dyld_uw info;
     memset(&info, 0, sizeof info);
@@ -507,7 +544,7 @@ static int load_frame(struct uw_ctx *c) {
         const u8 *hint = 0;
         int k = 0;
         if (info.compact) k = lookup_compact(look, (const u8 *)info.mh, (const u8 *)info.compact, c, &hint, (const u8 *)info.dwarf);
-        if (c->have_compact) return 1;
+        if (c->have_compact) return note_sig(c);
         const u8 *fde = hint;
         if (!fde && info.dwarf) {
             const u8 *q = (const u8 *)info.dwarf;
@@ -518,17 +555,17 @@ static int load_frame(struct uw_ctx *c) {
                 const u8 *body = q;
                 if (fde_match(body - 4, (const u8 *)info.dwarf, info.dwarf_len, look, c, 0)) {
                     c->fde = body - 4; c->eh = (const u8 *)info.dwarf; c->eh_len = info.dwarf_len;
-                    return 1;
+                    return note_sig(c);
                 }
                 q = body + len;
             }
         } else if (fde && info.dwarf) {
             if (fde_match(fde, (const u8 *)info.dwarf, info.dwarf_len, look, c, 0)) {
                 c->fde = fde; c->eh = (const u8 *)info.dwarf; c->eh_len = info.dwarf_len;
-                return 1;
+                return note_sig(c);
             }
         }
-        return k;
+        return k ? note_sig(c) : 0;
     }
     const u8 *eh = 0, *gh = 0; u64 el = 0, gl = 0;
     if (elf_eh(look, &eh, &el, &gh, &gl)) {
@@ -536,17 +573,18 @@ static int load_frame(struct uw_ctx *c) {
     const u8 *fde = hdr_fde(gh, look);
     if (fde && fde_match(fde, (const u8 *)__ehdr_start, (u64)(_end - __ehdr_start), look, c, 0)) {
         c->fde = fde; c->eh = (const u8 *)__ehdr_start; c->eh_len = (u64)(_end - __ehdr_start);
-        return 1;
+        return note_sig(c);
     }
     }
     u64 rbp = c->r[6], rsp = c->r[7];
     if (!rbp || (rbp & 7) || rbp < rsp || rbp - rsp > 0x100000) return 0;
     c->fp_fallback = 1;
     c->cfa = rbp + 16;
-    return 1;
+    return note_sig(c);
 }
 
 static int step_frame(struct uw_ctx *c) {
+    if (c->is_sig && step_sig(c)) return 1;
     u64 pc = c->r[16] ? c->r[16] - 1 : 0;
     if (c->fp_fallback) {
         u64 rbp = c->r[6];
@@ -804,9 +842,227 @@ int uncaughtn(void) __asm__("_ZSt19uncaught_exceptionsv");
 int uncaughtn(void) { return g_uncaught; }
 
 #if defined(__x86_64__)
-/* unw_alias.S salta para este nome. O libunwind do zig não entra mais no link x86. */
-int __unw_getcontext(void *ctx) {
-    (void)ctx;
+/*
+ * API pública da libunwind (Apple SDK: unw_context_t = 128 qwords, unw_cursor_t = 140).
+ * O cursor guarda o uw_ctx do motor acima; não há um segundo interpretador de CFI.
+ * Registradores no contexto: DWARF / UNW_X86_64_* em data[0..16], XMM0..15 em seguida (16 bytes cada).
+ */
+enum {
+    UNW_ESUCCESS = 0, UNW_EUNSPEC = -6540, UNW_EBADREG = -6542, UNW_EINVAL = -6547, UNW_ENOINFO = -6549
+};
+enum { UNW_REG_IP = -1, UNW_REG_SP = -2, UNW_X86_64_XMM0 = 17 };
+
+struct unw_cur {
+    struct uw_ctx ctx;
+    u8 xmm[16][16];
+    int xmm_ok, inited, at_end;
+};
+_Static_assert(sizeof(struct unw_cur) <= 140 * 8, "cursor maior que o da Apple");
+
+struct cx_dl {
+    const char *fname; void *fbase; const char *sname; void *saddr;
+};
+__attribute__((weak)) int dladdr(const void *addr, void *info);
+
+static int addr_space_tag;
+void *unw_local_addr_space = &addr_space_tag;
+
+__attribute__((naked)) int __unw_getcontext(void *ctx) {
+    __asm__ volatile(
+        "movq %rax, 0(%rdi)\n\t"
+        "movq %rdx, 8(%rdi)\n\t"
+        "movq %rcx, 16(%rdi)\n\t"
+        "movq %rbx, 24(%rdi)\n\t"
+        "movq %rsi, 32(%rdi)\n\t"
+        "movq %rdi, 40(%rdi)\n\t"
+        "movq %rbp, 48(%rdi)\n\t"
+        "leaq 8(%rsp), %rax\n\t"
+        "movq %rax, 56(%rdi)\n\t"
+        "movq %r8, 64(%rdi)\n\t"
+        "movq %r9, 72(%rdi)\n\t"
+        "movq %r10, 80(%rdi)\n\t"
+        "movq %r11, 88(%rdi)\n\t"
+        "movq %r12, 96(%rdi)\n\t"
+        "movq %r13, 104(%rdi)\n\t"
+        "movq %r14, 112(%rdi)\n\t"
+        "movq %r15, 120(%rdi)\n\t"
+        "movq (%rsp), %rax\n\t"
+        "movq %rax, 128(%rdi)\n\t"
+        "movdqu %xmm0, 136(%rdi)\n\t"
+        "movdqu %xmm1, 152(%rdi)\n\t"
+        "movdqu %xmm2, 168(%rdi)\n\t"
+        "movdqu %xmm3, 184(%rdi)\n\t"
+        "movdqu %xmm4, 200(%rdi)\n\t"
+        "movdqu %xmm5, 216(%rdi)\n\t"
+        "movdqu %xmm6, 232(%rdi)\n\t"
+        "movdqu %xmm7, 248(%rdi)\n\t"
+        "movdqu %xmm8, 264(%rdi)\n\t"
+        "movdqu %xmm9, 280(%rdi)\n\t"
+        "movdqu %xmm10, 296(%rdi)\n\t"
+        "movdqu %xmm11, 312(%rdi)\n\t"
+        "movdqu %xmm12, 328(%rdi)\n\t"
+        "movdqu %xmm13, 344(%rdi)\n\t"
+        "movdqu %xmm14, 360(%rdi)\n\t"
+        "movdqu %xmm15, 376(%rdi)\n\t"
+        "xorl %eax, %eax\n\t"
+        "ret\n\t");
+}
+
+static int gpr_index(int reg) {
+    if (reg == UNW_REG_IP) return 16;
+    if (reg == UNW_REG_SP) return 7;
+    if (reg >= 0 && reg <= 16) return reg;
     return -1;
+}
+
+int unw_init_local(void *cursor, void *context) {
+    if (!cursor || !context) return UNW_EINVAL;
+    struct unw_cur *u = cursor;
+    memset(u, 0, sizeof *u);
+    memcpy(u->ctx.r, context, sizeof u->ctx.r);
+    memcpy(u->xmm, (u8 *)context + 17 * 8, sizeof u->xmm);
+    u->xmm_ok = 1;
+    u->inited = 1;
+    load_frame(&u->ctx);
+    return UNW_ESUCCESS;
+}
+
+int unw_init_local2(void *cursor, void *context, int flags) {
+    (void)flags;
+    return unw_init_local(cursor, context);
+}
+
+int unw_step(void *cursor) {
+    struct unw_cur *u = cursor;
+    if (!u || !u->inited) return UNW_EINVAL;
+    if (u->at_end) return 0;
+    u->xmm_ok = 0;
+    u->ctx.fx = 0;
+    u64 ip0 = u->ctx.r[16];
+    if (!step_frame(&u->ctx) || !u->ctx.r[16] || u->ctx.r[16] == ip0) {
+        u->at_end = 1;
+        return 0;
+    }
+    const u8 *fx = u->ctx.fx;
+    if (!load_frame(&u->ctx)) {
+        u->at_end = 1;
+        return 0;
+    }
+    if (fx) u->ctx.fx = fx;
+    return 1;
+}
+
+int unw_get_reg(void *cursor, int reg, u64 *val) {
+    struct unw_cur *u = cursor;
+    if (!u || !u->inited || !val) return UNW_EINVAL;
+    int i = gpr_index(reg);
+    if (i < 0) return UNW_EBADREG;
+    *val = u->ctx.r[i];
+    return UNW_ESUCCESS;
+}
+
+int unw_set_reg(void *cursor, int reg, u64 val) {
+    struct unw_cur *u = cursor;
+    if (!u || !u->inited) return UNW_EINVAL;
+    int i = gpr_index(reg);
+    if (i < 0) return UNW_EBADREG;
+    u->ctx.r[i] = val;
+    return UNW_ESUCCESS;
+}
+
+int unw_is_fpreg(void *cursor, int reg) {
+    (void)cursor;
+    return reg >= UNW_X86_64_XMM0 && reg < UNW_X86_64_XMM0 + 16;
+}
+
+int unw_get_fpreg(void *cursor, int reg, double *val) {
+    struct unw_cur *u = cursor;
+    if (!u || !u->inited || !val) return UNW_EINVAL;
+    if (!unw_is_fpreg(cursor, reg)) return UNW_EBADREG;
+    int n = reg - UNW_X86_64_XMM0;
+    if (u->xmm_ok) {
+        memcpy(val, u->xmm[n], sizeof *val);
+        return UNW_ESUCCESS;
+    }
+    if (u->ctx.fx) {
+        memcpy(val, u->ctx.fx + 160 + n * 16, sizeof *val);
+        return UNW_ESUCCESS;
+    }
+    return UNW_ENOINFO;
+}
+
+int unw_set_fpreg(void *cursor, int reg, double val) {
+    struct unw_cur *u = cursor;
+    if (!u || !u->inited) return UNW_EINVAL;
+    if (!unw_is_fpreg(cursor, reg)) return UNW_EBADREG;
+    int n = reg - UNW_X86_64_XMM0;
+    memset(u->xmm[n], 0, 16);
+    memcpy(u->xmm[n], &val, sizeof val);
+    u->xmm_ok = 1;
+    return UNW_ESUCCESS;
+}
+
+int unw_resume(void *cursor) {
+    struct unw_cur *u = cursor;
+    if (!u || !u->inited || !u->ctx.r[16]) return UNW_EUNSPEC;
+    cx_uw_install(u->ctx.r);
+    return UNW_EUNSPEC;
+}
+
+int unw_get_proc_info(void *cursor, void *info) {
+    struct unw_cur *u = cursor;
+    if (!u || !u->inited || !info) return UNW_EINVAL;
+    if (!u->ctx.r[16]) return UNW_ENOINFO;
+    u64 *w = info;
+    /* start, end, lsda, handler, gp, flags, depois format/size (uint32) e unwind_info/extra */
+    w[0] = u->ctx.region;
+    w[1] = u->ctx.func_end;
+    w[2] = (u64)u->ctx.lsda;
+    w[3] = (u64)(uintptr_t)u->ctx.pers;
+    w[4] = 0;
+    w[5] = 0;
+    u32 *fmt = (u32 *)(w + 6);
+    fmt[0] = u->ctx.have_compact ? u->ctx.compact_enc : 0;
+    fmt[1] = u->ctx.fde ? 1 : 0;
+    u64 *tail = (u64 *)(fmt + 2);
+    tail[0] = u->ctx.fde ? (u64)u->ctx.fde : 0;
+    tail[1] = u->ctx.text_base;
+    return u->ctx.region ? UNW_ESUCCESS : UNW_ENOINFO;
+}
+
+int unw_get_proc_name(void *cursor, char *buf, size_t len, u64 *off) {
+    struct unw_cur *u = cursor;
+    if (!u || !u->inited) return UNW_EINVAL;
+    if (buf && len) buf[0] = 0;
+    if (!dladdr || !u->ctx.r[16]) return UNW_ENOINFO;
+    struct cx_dl inf;
+    memset(&inf, 0, sizeof inf);
+    u64 ip = u->ctx.r[16] - 1;
+    if (!dladdr((void *)ip, &inf) || !inf.sname) return UNW_ENOINFO;
+    if (buf && len) {
+        size_t n = 0;
+        while (inf.sname[n] && n + 1 < len) { buf[n] = inf.sname[n]; n++; }
+        buf[n] = 0;
+    }
+    if (off) *off = inf.saddr ? ip - (u64)inf.saddr : 0;
+    return UNW_ESUCCESS;
+}
+
+int unw_is_signal_frame(void *cursor) {
+    struct unw_cur *u = cursor;
+    if (!u || !u->inited) return UNW_EINVAL;
+    return u->ctx.is_sig ? 1 : 0;
+}
+
+const char *unw_regname(void *cursor, int reg) {
+    (void)cursor;
+    static const char *gpr[] = {
+        "rax", "rdx", "rcx", "rbx", "rsi", "rdi", "rbp", "rsp",
+        "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15", "rip"
+    };
+    if (reg == UNW_REG_IP) return "ip";
+    if (reg == UNW_REG_SP) return "sp";
+    if (reg >= 0 && reg <= 16) return gpr[reg];
+    return "???";
 }
 #endif

@@ -1,5 +1,6 @@
 /* mOS — gerência de memória: alocador físico (bitmap), paginação e heap */
 #include "kernel.h"
+#include "commpage.h"
 
 /* =========================================================== PMM */
 static u64 *bitmap;     /* 1 = ocupado */
@@ -224,12 +225,7 @@ void paging_init(void) {
                     for (int i = 0; i < 512; i++)
                         pt[i] = (base + (u64)i * 4096) | PG_P | PG_RW | cache;
                 }
-                memset((void *)page, 0, 4096);
-                for (int i = 0; "commpage 64-bit"[i]; i++) ((u8 *)page)[i] = (u8)"commpage 64-bit"[i];
-                *(u16 *)(page + 0x01E) = 7;
-                *(u8 *)(page + 0x022) = 1;
-                *(u8 *)(page + 0x025) = 14;
-                *(u16 *)(page + 0x026) = 64;
+                commpage_fill((void *)page);
                 pt[(va >> 12) & 511] = page | PG_P | (1ULL << 2) | (1ULL << 63);
                 pd[pdi] = (u64)pt | PG_P | PG_RW | (1ULL << 2);
                 pml4[(va >> 39) & 511] |= 1ULL << 2;
