@@ -1,8 +1,6 @@
 /*
- * O decodificador do ImageIO (time Sistemas, userland/frameworks/ImageIO) entra no
- * libSystem só para o Photos medir PNG e JPEG. O fonte de lá não é editado.
- * Tradução separada: imageio_decode.c define typedef u8, que já existe em sys.h.
+ * Photos mede PNG e JPEG com o mesmo decodificador do ImageIO.
+ * grok_imageio.c já traduz imageio_decode.c para o libSystem e exporta
+ * mos_img_uti, mos_img_decode e mos_img_free. Incluir o fonte de novo
+ * repetiria esses símbolos.
  */
-/* O zig freestanding não declara cosf. O corpo está em libc.c. Não alteramos o ImageIO. */
-float cosf(float x);
-#include "../frameworks/ImageIO/imageio_decode.c"
