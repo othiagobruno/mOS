@@ -19,6 +19,7 @@ WAC(CXProviderConfiguration);
 WAC(CXCallController);
 WAC(CXCallObserver);
 WAC(CXCallUpdate);
+WAC(CXCall);
 WAC(CXHandle);
 WAC(CXStartCallAction);
 WAC(CXAnswerCallAction);
@@ -59,6 +60,8 @@ cl_coord_t kCLLocationCoordinate2DInvalid;
 
 int cx_tcc_state(const char *service);
 int cx_tcc_request(const char *service);
+void *dispatch_queue_create(const char *label, void *attr);
+void dispatch_async_f(void *q, void *ctx, void (*fn)(void *));
 
 static void call_block(void *blk, id err) {
     void (*inv)(void *, id);
@@ -75,7 +78,22 @@ static const char *cstr(id o) {
     return s ? s : "";
 }
 
-typedef struct { id key; int kind; int idx; char uuid[48]; char handle[80]; int flag; } slot_t;
+typedef struct {
+    id key;
+    int kind;
+    int idx;
+    char uuid[48];
+    char handle[80];
+    char name[80];
+    int flag;
+    int handle_type;
+    int video;
+    int cap_hold, cap_group, cap_ungroup, cap_dtmf;
+    int max_groups, max_per;
+    unsigned mask;
+    id href;
+    int outgoing, on_hold, connected, ended;
+} slot_t;
 static slot_t Slots[48];
 static slot_t *slot_of(id o) {
     int i;
@@ -126,36 +144,93 @@ static id action_obj(int kind, int idx) {
     return o;
 }
 
+static id Gq;
+static id Gobsq;
+static id Gobsdel;
+static id Gprivq;
+
+typedef struct { id del, a, b; const char *sel; } cx_job;
+static cx_job Jobs[16];
+static int Jobi;
+
+static id provider_queue(void) {
+    if (Gq) return Gq;
+    if (!Gprivq) Gprivq = (id)dispatch_queue_create("com.mos.callkit.provider", 0);
+    return Gprivq;
+}
+static void run_job(void *p) {
+    cx_job *j = p;
+    if (!j->del || !j->sel) return;
+    if (!cx_responds(j->del->isa, sel_registerName(j->sel))) return;
+    ((void (*)(id, SEL, id, id))objc_msgSend)(j->del, sel_registerName(j->sel), j->a, j->b);
+}
+static void post(id q, id del, id a, id b, const char *sel) {
+    cx_job *j;
+    if (!del || !sel) return;
+    j = &Jobs[Jobi++ & 15];
+    j->del = del;
+    j->a = a;
+    j->b = b;
+    j->sel = sel;
+    dispatch_async_f(q ? q : provider_queue(), j, run_job);
+}
 static void tell_delegate(int kind, id action) {
     const char *sel;
     if (!Gdel || !Gcx.delegate) return;
     sel = sel_for(kind);
-    if (sel && cx_responds(Gdel->isa, sel_registerName(sel)))
-        ((void (*)(id, SEL, id, id))objc_msgSend)(Gdel, sel_registerName(sel), Gprov, action);
+    post(provider_queue(), Gdel, Gprov, action, sel);
 }
 
 static id cx_cfg_init(id self, SEL c, id name) {
     slot_t *s = slot_new(self);
     (void)c;
-    if (s) memcpy(s->handle, cstr(name), sizeof s->handle - 1);
+    if (s) {
+        memcpy(s->name, cstr(name), sizeof s->name - 1);
+        s->max_groups = 2;
+        s->max_per = 5;
+        s->mask = 1u << CX_HANDLE_PHONE;
+        s->video = 0;
+    }
     return self;
 }
+static void push_cfg(id cfg) {
+    slot_t *s = slot_of(cfg);
+    cx_cfg c;
+    if (!s) return;
+    memset(&c, 0, sizeof c);
+    c.max_groups = s->max_groups;
+    c.max_per = s->max_per;
+    c.video = s->video;
+    c.handle_mask = s->mask;
+    wa_cx_set_config(&Gcx, &c);
+}
 static id cx_prov_init(id self, SEL c, id cfg) {
-    (void)c; (void)cfg;
+    (void)c;
     Gprov = self;
     wa_cx_set_provider(&Gcx, 1, Gdel ? 1 : 0);
+    push_cfg(cfg);
     return self;
 }
 static void cx_set_del(id self, SEL c, id del, id q) {
-    (void)c; (void)q; (void)self;
+    (void)c; (void)self;
     Gdel = del;
+    Gq = q;
     wa_cx_set_provider(&Gcx, 1, del ? 1 : 0);
+    wa_cx_set_delegate_queue(&Gcx, q ? 1 : 0);
 }
+static void upd_from(slot_t *s, cx_update *u);
+static void notify_call(const char *uuid);
 static void cx_incoming(id self, SEL c, id uuid, id update, void *done) {
+    cx_update u;
     int rc;
-    (void)c; (void)self; (void)update;
+    (void)c; (void)self;
     rc = wa_cx_report_incoming(&Gcx, cstr(uuid), 0);
-    call_block(done, rc == CX_OK ? 0 : make_err(CXErrorDomainIncomingCall, 1, "chamada de entrada não registrada"));
+    if (rc == CX_OK) {
+        upd_from(slot_of(update), &u);
+        wa_cx_apply_update(&Gcx, cstr(uuid), &u);
+        notify_call(cstr(uuid));
+    }
+    call_block(done, rc == CX_OK ? 0 : make_err(CXErrorDomainIncomingCall, rc, rc == CX_ERR_LIMIT ? "a transação passa do limite de chamadas" : "chamada de entrada não registrada"));
 }
 static id cx_ctl_init(id self, SEL c) { (void)c; Gctl = self; return self; }
 static void cx_request(id self, SEL c, id tx, void *done) {
@@ -171,7 +246,7 @@ static void cx_request(id self, SEL c, id tx, void *done) {
         slot_t *s = slot_of(tx);
         if (s && s->kind) {
             int idx = -1;
-            rc = wa_cx_submit(&Gcx, s->kind, s->uuid[0] ? s->uuid : "local", s->handle, s->flag, s->flag, &idx);
+            rc = wa_cx_submit_full(&Gcx, s->kind, s->uuid[0] ? s->uuid : "local", s->handle, s->handle_type, s->flag, s->flag, s->video, &idx);
             if (rc == CX_OK) { s->idx = idx; tell_delegate(s->kind, tx); any = 1; }
         }
     }
@@ -180,14 +255,19 @@ static void cx_request(id self, SEL c, id tx, void *done) {
         slot_t *s = slot_of(act);
         int idx = -1;
         if (!s) continue;
-        rc = wa_cx_submit(&Gcx, s->kind, s->uuid[0] ? s->uuid : "local", s->handle, s->flag, s->flag, &idx);
+        rc = wa_cx_submit_full(&Gcx, s->kind, s->uuid[0] ? s->uuid : "local", s->handle, s->handle_type, s->flag, s->flag, s->video, &idx);
         if (rc != CX_OK) break;
         s->idx = idx;
         tell_delegate(s->kind, act);
         any = 1;
     }
     if (!any && rc == CX_OK) rc = CX_ERR_BAD;
-    call_block(done, rc == CX_OK ? 0 : make_err(CXErrorDomainIncomingCall, rc, rc == CX_ERR_NO_PROVIDER ? "não há CXProvider" : "transação vazia ou inválida"));
+    call_block(done, rc == CX_OK ? 0 : make_err(CXErrorDomainIncomingCall, rc,
+        rc == CX_ERR_NO_PROVIDER ? "não há CXProvider" :
+        rc == CX_ERR_LIMIT ? "a transação passa do limite de chamadas" :
+        rc == CX_ERR_HANDLE ? "o tipo de CXHandle não está em supportedHandleTypes" :
+        rc == CX_ERR_VIDEO ? "a configuração não aceita vídeo" :
+        "transação vazia ou inválida"));
 }
 static id act_init(id self, SEL c, id uuid) {
     slot_t *s = slot_new(self);
@@ -304,6 +384,143 @@ static id bg_req_init(id self, SEL c, id ident) {
     return self;
 }
 
+static id h_init(id self, SEL c, long type, id value) {
+    slot_t *s = slot_new(self);
+    (void)c;
+    if (s) {
+        s->handle_type = (int)type;
+        memcpy(s->handle, cstr(value), sizeof s->handle - 1);
+    }
+    return self;
+}
+static long h_type(id self, SEL c) { slot_t *s = slot_of(self); (void)c; return s ? s->handle_type : 0; }
+static id h_value(id self, SEL c) { slot_t *s = slot_of(self); (void)c; return cx_str(s ? s->handle : ""); }
+static BOOL h_eq(id self, SEL c, id other) {
+    slot_t *a = slot_of(self), *b = slot_of(other);
+    (void)c;
+    if (!a || !b || !other || other->isa != &CXHandle_c) return NO;
+    return wa_cx_handle_equal(a->handle_type, a->handle, b->handle_type, b->handle) ? YES : NO;
+}
+static unsigned long h_hash(id self, SEL c) {
+    slot_t *s = slot_of(self);
+    (void)c;
+    return s ? wa_cx_handle_hash(s->handle_type, s->handle) : 0;
+}
+static void upd_from(slot_t *s, cx_update *u) {
+    memset(u, 0, sizeof *u);
+    u->has_video = -1;
+    u->hold = u->group = u->ungroup = u->dtmf = -1;
+    if (!s) return;
+    if (s->href) {
+        slot_t *h = slot_of(s->href);
+        u->has_handle = 1;
+        if (h) {
+            u->handle_type = h->handle_type;
+            memcpy(u->handle, h->handle, sizeof u->handle);
+        }
+    }
+    if (s->name[0]) { u->has_name = 1; memcpy(u->name, s->name, sizeof u->name); }
+    if (s->video >= 0) u->has_video = s->video;
+    u->hold = s->cap_hold;
+    u->group = s->cap_group;
+    u->ungroup = s->cap_ungroup;
+    u->dtmf = s->cap_dtmf;
+}
+static id call_obj(const cx_call *c) {
+    id o = cx_alloc_instance(&CXCall_c);
+    slot_t *s = o ? slot_new(o) : 0;
+    if (!s || !c) return o;
+    memcpy(s->uuid, c->uuid, sizeof s->uuid);
+    s->outgoing = c->outgoing;
+    s->on_hold = c->on_hold;
+    s->connected = c->has_connected;
+    s->ended = c->has_ended;
+    return o;
+}
+static void notify_call(const char *uuid) {
+    const cx_call *c = wa_cx_find_call(&Gcx, uuid);
+    id o;
+    if (!Gobsdel || !c) return;
+    o = call_obj(c);
+    post(Gobsq, Gobsdel, Gobs, o, "callObserver:callChanged:");
+}
+static id upd_init(id self, SEL c) {
+    slot_t *s = slot_new(self);
+    (void)c;
+    if (s) {
+        s->video = -1;
+        s->cap_hold = s->cap_group = s->cap_ungroup = s->cap_dtmf = -1;
+    }
+    return self;
+}
+static void upd_handle(id self, SEL c, id h) { slot_t *s = slot_of(self); (void)c; if (s) s->href = h; }
+static id upd_handle_get(id self, SEL c) { slot_t *s = slot_of(self); (void)c; return s ? s->href : 0; }
+static void upd_name(id self, SEL c, id n) { slot_t *s = slot_of(self); (void)c; if (s) memcpy(s->name, cstr(n), sizeof s->name - 1); }
+static id upd_name_get(id self, SEL c) { slot_t *s = slot_of(self); (void)c; return cx_str(s ? s->name : ""); }
+static void upd_video(id self, SEL c, BOOL v) { slot_t *s = slot_of(self); (void)c; if (s) s->video = v ? 1 : 0; }
+static BOOL upd_video_get(id self, SEL c) { slot_t *s = slot_of(self); (void)c; return s && s->video == 1; }
+static void upd_cap(id self, SEL c, BOOL v) {
+    slot_t *s = slot_of(self);
+    const char *n = (const char *)c;
+    int bit = v ? 1 : 0;
+    if (!s || !n) return;
+    if (!strcmp(n, "setSupportsHolding:")) s->cap_hold = bit;
+    else if (!strcmp(n, "setSupportsGrouping:")) s->cap_group = bit;
+    else if (!strcmp(n, "setSupportsUngrouping:")) s->cap_ungroup = bit;
+    else if (!strcmp(n, "setSupportsDTMF:")) s->cap_dtmf = bit;
+}
+static void cx_report_updated(id self, SEL c, id uuid, id update) {
+    cx_update u;
+    (void)self; (void)c;
+    upd_from(slot_of(update), &u);
+    if (wa_cx_apply_update(&Gcx, cstr(uuid), &u) == CX_OK) notify_call(cstr(uuid));
+}
+static id cx_call_uuid(id self, SEL c) { slot_t *s = slot_of(self); (void)c; return cx_str(s ? s->uuid : ""); }
+static BOOL cx_call_flag(id self, SEL c) {
+    slot_t *s = slot_of(self);
+    const char *n = (const char *)c;
+    if (!s || !n) return NO;
+    if (!strcmp(n, "isOutgoing")) return s->outgoing ? YES : NO;
+    if (!strcmp(n, "isOnHold")) return s->on_hold ? YES : NO;
+    if (!strcmp(n, "hasConnected")) return s->connected ? YES : NO;
+    if (!strcmp(n, "hasEnded")) return s->ended ? YES : NO;
+    return NO;
+}
+static id obs_init(id self, SEL c) { (void)c; Gobs = self; return self; }
+static void obs_set(id self, SEL c, id del, id q) { (void)self; (void)c; Gobsdel = del; Gobsq = q; wa_cx_set_observer(&Gcx, del ? 1 : 0, q ? 2 : 0); }
+static id obs_calls(id self, SEL c) {
+    id arr = MSG0(id, (id)cx_class_named("NSMutableArray"), "array");
+    int i, n = wa_cx_call_count(&Gcx);
+    (void)self; (void)c;
+    for (i = 0; i < n; i++) {
+        id o = call_obj(wa_cx_call_at(&Gcx, i));
+        if (arr && o) MSG(void, arr, "addObject:", o);
+    }
+    return arr;
+}
+static void cfg_groups(id self, SEL c, long v) { slot_t *s = slot_of(self); (void)c; if (s) s->max_groups = (int)v; push_cfg(self); }
+static long cfg_groups_get(id self, SEL c) { slot_t *s = slot_of(self); (void)c; return s ? s->max_groups : 0; }
+static void cfg_per(id self, SEL c, long v) { slot_t *s = slot_of(self); (void)c; if (s) s->max_per = (int)v; push_cfg(self); }
+static long cfg_per_get(id self, SEL c) { slot_t *s = slot_of(self); (void)c; return s ? s->max_per : 0; }
+static void cfg_video(id self, SEL c, BOOL v) { slot_t *s = slot_of(self); (void)c; if (s) s->video = v ? 1 : 0; push_cfg(self); }
+static BOOL cfg_video_get(id self, SEL c) { slot_t *s = slot_of(self); (void)c; return s && s->video ? YES : NO; }
+static id cfg_name(id self, SEL c) { slot_t *s = slot_of(self); (void)c; return cx_str(s ? s->name : ""); }
+static void cfg_types(id self, SEL c, id set) {
+    slot_t *s = slot_of(self);
+    id arr;
+    unsigned long i, n;
+    unsigned mask = 0;
+    (void)c;
+    arr = set ? MSG0(id, set, "allObjects") : 0;
+    n = arr ? MSG0(unsigned long, arr, "count") : 0;
+    for (i = 0; i < n; i++) {
+        id num = MSG(id, arr, "objectAtIndex:", i);
+        long t = num ? MSG0(long, num, "integerValue") : 0;
+        if (t > 0 && t < 31) mask |= 1u << t;
+    }
+    if (s) s->mask = mask;
+    push_cfg(self);
+}
 static void def(cx_class_t *c, cx_class_t *m, const char *name) {
     cx_define_class(c, m, name, cx_class_named("NSObject"), 0);
     cx_mark_stub_class(c);
@@ -322,6 +539,7 @@ void cx_wa_frameworks_init(void) {
     def(&CXCallController_c, &CXCallController_m, "CXCallController");
     def(&CXCallObserver_c, &CXCallObserver_m, "CXCallObserver");
     def(&CXCallUpdate_c, &CXCallUpdate_m, "CXCallUpdate");
+    def(&CXCall_c, &CXCall_m, "CXCall");
     def(&CXHandle_c, &CXHandle_m, "CXHandle");
     def(&CXStartCallAction_c, &CXStartCallAction_m, "CXStartCallAction");
     def(&CXAnswerCallAction_c, &CXAnswerCallAction_m, "CXAnswerCallAction");
@@ -339,6 +557,39 @@ void cx_wa_frameworks_init(void) {
     cx_add_method(&CXProvider_c, "initWithConfiguration:", (void *)cx_prov_init);
     cx_add_method(&CXProvider_c, "setDelegate:queue:", (void *)cx_set_del);
     cx_add_method(&CXProvider_c, "reportNewIncomingCallWithUUID:update:completion:", (void *)cx_incoming);
+    cx_add_method(&CXProvider_c, "reportCallWithUUID:updated:", (void *)cx_report_updated);
+    cx_add_method(&CXProviderConfiguration_c, "localizedName", (void *)cfg_name);
+    cx_add_method(&CXProviderConfiguration_c, "setMaximumCallGroups:", (void *)cfg_groups);
+    cx_add_method(&CXProviderConfiguration_c, "maximumCallGroups", (void *)cfg_groups_get);
+    cx_add_method(&CXProviderConfiguration_c, "setMaximumCallsPerCallGroup:", (void *)cfg_per);
+    cx_add_method(&CXProviderConfiguration_c, "maximumCallsPerCallGroup", (void *)cfg_per_get);
+    cx_add_method(&CXProviderConfiguration_c, "setSupportsVideo:", (void *)cfg_video);
+    cx_add_method(&CXProviderConfiguration_c, "supportsVideo", (void *)cfg_video_get);
+    cx_add_method(&CXProviderConfiguration_c, "setSupportedHandleTypes:", (void *)cfg_types);
+    cx_add_method(&CXHandle_c, "initWithType:value:", (void *)h_init);
+    cx_add_method(&CXHandle_c, "type", (void *)h_type);
+    cx_add_method(&CXHandle_c, "value", (void *)h_value);
+    cx_add_method(&CXHandle_c, "isEqual:", (void *)h_eq);
+    cx_add_method(&CXHandle_c, "hash", (void *)h_hash);
+    cx_add_method(&CXCallUpdate_c, "init", (void *)upd_init);
+    cx_add_method(&CXCallUpdate_c, "setRemoteHandle:", (void *)upd_handle);
+    cx_add_method(&CXCallUpdate_c, "remoteHandle", (void *)upd_handle_get);
+    cx_add_method(&CXCallUpdate_c, "setLocalizedCallerName:", (void *)upd_name);
+    cx_add_method(&CXCallUpdate_c, "localizedCallerName", (void *)upd_name_get);
+    cx_add_method(&CXCallUpdate_c, "setHasVideo:", (void *)upd_video);
+    cx_add_method(&CXCallUpdate_c, "hasVideo", (void *)upd_video_get);
+    cx_add_method(&CXCallUpdate_c, "setSupportsHolding:", (void *)upd_cap);
+    cx_add_method(&CXCallUpdate_c, "setSupportsGrouping:", (void *)upd_cap);
+    cx_add_method(&CXCallUpdate_c, "setSupportsUngrouping:", (void *)upd_cap);
+    cx_add_method(&CXCallUpdate_c, "setSupportsDTMF:", (void *)upd_cap);
+    cx_add_method(&CXCall_c, "UUID", (void *)cx_call_uuid);
+    cx_add_method(&CXCall_c, "isOutgoing", (void *)cx_call_flag);
+    cx_add_method(&CXCall_c, "isOnHold", (void *)cx_call_flag);
+    cx_add_method(&CXCall_c, "hasConnected", (void *)cx_call_flag);
+    cx_add_method(&CXCall_c, "hasEnded", (void *)cx_call_flag);
+    cx_add_method(&CXCallObserver_c, "init", (void *)obs_init);
+    cx_add_method(&CXCallObserver_c, "setDelegate:queue:", (void *)obs_set);
+    cx_add_method(&CXCallObserver_c, "calls", (void *)obs_calls);
     cx_add_method(&CXCallController_c, "init", (void *)cx_ctl_init);
     cx_add_method(&CXCallController_c, "requestTransaction:completion:", (void *)cx_request);
     cx_add_method(&CXStartCallAction_c, "initWithCallUUID:", (void *)act_init);
