@@ -91,7 +91,8 @@ public struct IntegerFormatStyle<Value: BinaryInteger>: FormatStyle, Codable, Ha
     public func format(_ value: Value) -> String {
         let neg = value < 0
         var digits = String(value.magnitude)
-        let sep: Character = locale.identifier.hasPrefix("en") ? "," : "."
+        let id = locale.identifier.lowercased()
+        let sep: Character = id.hasPrefix("fr") ? " " : id.hasPrefix("en") ? "," : "."
         var out = ""
         while digits.count > 3 { out = String(sep) + digits.suffix(3) + out; digits.removeLast(3) }
         return (neg ? "-" : "") + digits + out

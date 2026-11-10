@@ -328,17 +328,7 @@ long CFDictionaryGetCount(id_ d) { return d ? MSG0_(long, d, "count") : 0; }
 long CFArrayGetCount(id_ a) { return a ? MSG0_(long, a, "count") : 0; }
 id_ CFArrayGetValueAtIndex(id_ a, long i) { return a ? MSG1_(id_, a, "objectAtIndex:", (u64)i) : 0; }
 
-/* CFNotificationCenter: o centro local é o NSNotificationCenter padrão; observadores C ainda não são
- * chamados (registro aceito), e o centro "Darwin" (entre processos) não existe no mOS */
-id_ CFNotificationCenterGetLocalCenter(void) { return MSG0_(id_, cx_class_named("NSNotificationCenter"), "defaultCenter"); }
-id_ CFNotificationCenterGetDarwinNotifyCenter(void) { return CFNotificationCenterGetLocalCenter(); }
-id_ CFNotificationCenterGetDistributedCenter(void) { return CFNotificationCenterGetLocalCenter(); }
-void CFNotificationCenterAddObserver(id_ c, const void *obs, void *cb, id_ name, const void *obj, long behavior) {
-    (void)c; (void)obs; (void)cb; (void)name; (void)obj; (void)behavior;
-}
-void CFNotificationCenterRemoveObserver(id_ c, const void *obs, id_ name, const void *obj) { (void)c; (void)obs; (void)name; (void)obj; }
-void CFNotificationCenterRemoveEveryObserver(id_ c, const void *obs) { (void)c; (void)obs; }
-void CFNotificationCenterPostNotification(id_ c, id_ name, const void *obj, id_ info, u8 now) { (void)c; (void)name; (void)obj; (void)info; (void)now; }
+/* CFNotificationCenter: cfnotify.c (local, Darwin via notify_post, distributed só neste processo) */
 
 /* SystemConfiguration (SCDynamicStore, proxies, CFNetworkCopySystemProxySettings): sysconfig.c, sobre o configd */
 

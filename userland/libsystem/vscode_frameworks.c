@@ -74,27 +74,39 @@ cg_size_t CTFramesetterSuggestFrameSizeWithConstraints(id fs, struct { long loc,
 /* ================================================================ ApplicationServices: acessibilidade */
 #define kAXErrorAPIDisabled (-25211)
 #define kAXErrorFailure (-25200)
-u8 AXIsProcessTrustedWithOptions(id opts) { (void)opts; return 0; }
+int cx_tcc_preflight(const char *service);
+int cx_tcc_request(const char *service);
+int cx_ax_unavailable(void);
+u8 AXIsProcessTrustedWithOptions(id opts) {
+    int prompt = 0;
+    if (opts) {
+        id key = cx_str("AXTrustedCheckOptionPrompt");
+        id v = key ? MSG(id, opts, "objectForKey:", key) : 0;
+        if (v) prompt = MSG0(signed char, v, "boolValue") ? 1 : 0;
+        if (key) objc_release(key);
+    }
+    return prompt ? (u8)cx_tcc_request("kTCCServiceAccessibility") : (u8)cx_tcc_preflight("kTCCServiceAccessibility");
+}
 u64 AXUIElementGetTypeID(void) { return 0x4158; }
 u64 AXValueGetTypeID(void) { return 0x4156; }
 u64 AXTextMarkerGetTypeID(void) { return 0x4154; }
 u64 AXTextMarkerRangeGetTypeID(void) { return 0x4152; }
 id AXUIElementCreateApplication(int pid) { (void)pid; return token(); }
 id AXUIElementCreateSystemWide(void) { return token(); }   /* claude-native-binding.node do Claude desktop */
-OSStatus AXUIElementCopyAttributeValue(id e, id attr, id *v) { (void)e; (void)attr; if (v) *v = 0; return kAXErrorAPIDisabled; }
+OSStatus AXUIElementCopyAttributeValue(id e, id attr, id *v) { (void)e; (void)attr; if (v) *v = 0; return cx_ax_unavailable(); }
 OSStatus AXUIElementCopyAttributeValues(id e, id attr, long index, long maxValues, id *values) {
     (void)e; (void)attr; (void)index; (void)maxValues;
     if (values) *values = 0;
-    return kAXErrorAPIDisabled;
+    return cx_ax_unavailable();
 }
-OSStatus AXUIElementCopyAttributeNames(id e, id *names) { (void)e; if (names) *names = 0; return kAXErrorAPIDisabled; }
-OSStatus AXUIElementCopyParameterizedAttributeNames(id e, id *names) { (void)e; if (names) *names = 0; return kAXErrorAPIDisabled; }
-OSStatus AXUIElementCopyParameterizedAttributeValue(id e, id attr, id p, id *v) { (void)e; (void)attr; (void)p; if (v) *v = 0; return kAXErrorAPIDisabled; }
-OSStatus AXUIElementSetAttributeValue(id e, id attr, id v) { (void)e; (void)attr; (void)v; return kAXErrorAPIDisabled; }
-OSStatus AXUIElementCopyActionNames(id e, id *names) { (void)e; if (names) *names = 0; return kAXErrorAPIDisabled; }
-OSStatus AXUIElementPerformAction(id e, id action) { (void)e; (void)action; return kAXErrorAPIDisabled; }
-OSStatus AXObserverCreateWithInfoCallback(int pid, void *cb, id *out) { (void)pid; (void)cb; if (out) *out = 0; return kAXErrorAPIDisabled; }
-OSStatus AXObserverAddNotification(id obs, id e, id note, void *ctx) { (void)obs; (void)e; (void)note; (void)ctx; return kAXErrorAPIDisabled; }
+OSStatus AXUIElementCopyAttributeNames(id e, id *names) { (void)e; if (names) *names = 0; return cx_ax_unavailable(); }
+OSStatus AXUIElementCopyParameterizedAttributeNames(id e, id *names) { (void)e; if (names) *names = 0; return cx_ax_unavailable(); }
+OSStatus AXUIElementCopyParameterizedAttributeValue(id e, id attr, id p, id *v) { (void)e; (void)attr; (void)p; if (v) *v = 0; return cx_ax_unavailable(); }
+OSStatus AXUIElementSetAttributeValue(id e, id attr, id v) { (void)e; (void)attr; (void)v; return cx_ax_unavailable(); }
+OSStatus AXUIElementCopyActionNames(id e, id *names) { (void)e; if (names) *names = 0; return cx_ax_unavailable(); }
+OSStatus AXUIElementPerformAction(id e, id action) { (void)e; (void)action; return cx_ax_unavailable(); }
+OSStatus AXObserverCreateWithInfoCallback(int pid, void *cb, id *out) { (void)pid; (void)cb; if (out) *out = 0; return cx_ax_unavailable(); }
+OSStatus AXObserverAddNotification(id obs, id e, id note, void *ctx) { (void)obs; (void)e; (void)note; (void)ctx; return cx_ax_unavailable(); }
 id AXObserverGetRunLoopSource(id obs) { (void)obs; return 0; }
 /* AXValue: caixa de CGPoint/CGSize/CGRect/CFRange (tipos 1..4) */
 typedef struct { void *isa; u32 type; u8 data[32]; } axval_t;
