@@ -14,6 +14,7 @@ void *realloc(void *p, unsigned long n);
 void free(void *p);
 void *memcpy(void *d, const void *s, unsigned long n);
 void *memset(void *d, int c, unsigned long n);
+int memcmp(const void *a, const void *b, unsigned long n);
 unsigned long strlen(const char *s);
 int strcmp(const char *a, const char *b);
 int strncmp(const char *a, const char *b, unsigned long n);
@@ -610,6 +611,7 @@ static unsigned long long bp_be(const unsigned char *p, int n) {
 }
 static int cf_bpr_open(cf_bpr *r, const unsigned char *b, int n) {
     const unsigned char *t;
+    extern int memcmp(const void *a, const void *b, unsigned long n);
     memset(r, 0, sizeof *r);
     if (!b || n < 40 || memcmp(b, "bplist00", 8)) return -1;
     t = b + n - 32;
