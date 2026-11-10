@@ -321,7 +321,7 @@ extern int cx_main_tid;
 int pthread_main_np(void) { return !cx_main_tid || (int)SYS0(SYS_GETTID) == cx_main_tid; }
 /* futex do kernel (SYS_FUTEX_WAIT/WAKE, kernel/proc/process.c): a thread que espera fica parada no kernel em vez de
  * girar com SYS_YIELD. ms < 0 = sem prazo. Devolve 0 (acordada), -35 (o valor já tinha mudado), -60 (prazo) ou -4
- * (sinal). Sem o futex (o harness machotest não o emula: -EINVAL), cede a CPU como antes e o chamador confere de novo. */
+ * (sinal). O harness também emula estas duas syscalls. Se alguma devolver -EINVAL, cede a CPU e o chamador confere de novo. */
 static int futex_ok = 1;
 int cx_futex_wait(volatile int *w, int expected, long ms) {
     if (futex_ok) {
@@ -407,6 +407,13 @@ int pthread_mutexattr_init(void *a) { ((long *)a)[0] = 0x4D545841L; ((int *)a)[2
 int pthread_mutexattr_settype(void *a, int t) { if (t < 0 || t > 2) return 22; ((int *)a)[2] = t; return 0; }
 int pthread_mutexattr_gettype(const void *a, int *t) { if (t) *t = ((const int *)a)[2]; return 0; }
 int pthread_mutexattr_destroy(void *a) { (void)a; return 0; }
+/* PTHREAD_PROCESS_SHARED fica gravado. O mutex vale neste processo: o futex do kernel não atravessa processo. */
+int pthread_mutexattr_setpshared(void *a, int p) {
+    if (!a || (p != 0 && p != 1)) return 22;
+    ((int *)a)[3] = p;
+    return 0;
+}
+int pthread_mutexattr_getpshared(const void *a, int *p) { if (p && a) *p = ((const int *)a)[3]; return a ? 0 : 22; }
 int pthread_cond_init(void *c, const void *a) { (void)a; ((volatile int *)((char *)c + 8))[0] = 0; ((volatile int *)((char *)c + 8))[1] = 0; return 0; }
 int pthread_cond_destroy(void *c) { (void)c; return 0; }
 /* pthread_cond_t do macOS tem 48 bytes ({long sig; char opaque[40]}): int em +8 = sequência (cada signal/broadcast
@@ -1080,7 +1087,7 @@ void dispatch_release(void *o) { cx_dispatch_release(o); }
 void dispatch_retain(void *o) { cx_dispatch_retain(o); }
 
 /* unwinder: só usado em panics; sem tabelas, informa "fim da pilha" */
-/* _Unwind_*: o libunwind do LLVM (tools/build-libsystem*.ps1; tabelas do Mach-O e do .eh_frame do libSystem, unwind_ls.c) */
+/* _Unwind_* no x86_64: cxx_unwind.c (eh_frame e __unwind_info). arm64: libunwind do script arm64. */
 
 /* processos, usuários e sistema */
 int sched_yield(void) { SYS0(SYS_YIELD); return 0; }

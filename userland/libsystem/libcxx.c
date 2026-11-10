@@ -13,8 +13,7 @@
  *   __shared_weak_count {vptr; long owners-1; long weak_owners-1}; vtable: D1 D0 on_zero_shared
  *                get_deleter on_zero_shared_weak
  *   logic_error/runtime_error {vptr; const char *msg}, system_error + error_code {int; const category*}
- * Exceções: sem desenrolamento de pilha no mOS ainda; lançar uma exceção C++ informa o tipo/mensagem e
- * encerra o processo (o mesmo que um módulo compilado com -fno-exceptions faria).
+ * Exceções: __cxa_throw / __gxx_personality_v0 estão em cxx_unwind.c (x86_64 desenrola de verdade).
  * Nomes: símbolos Itanium sem o "_" extra do Mach-O (o carregador o tira).
  */
 #include "foundation.h"
@@ -303,31 +302,26 @@ void cxx_terminate(void) { cxx_fatal("std::terminate", 0); }
 #define EXC_HDR 128
 void *__cxa_allocate_exception(usz n) { u8 *p = malloc(EXC_HDR + n); if (!p) cxx_fatal("bad_alloc", "__cxa_allocate_exception"); memset(p, 0, EXC_HDR); return p + EXC_HDR; }
 void __cxa_free_exception(void *p) { if (p) free((u8 *)p - EXC_HDR); }
-void __cxa_throw(void *obj, void *tinfo, void (*dtor)(void *)) {
-    (void)dtor;
-    /* type_info {vptr; const char *nome mangled} */
-    const char *name = tinfo ? ((const char **)tinfo)[1] : "?";
-    const char *what = 0;
-    void **vt = obj ? *(void ***)obj : 0;
-    if (vt && (vt == (void **)&vt_logic_error[2] || vt == (void **)&vt_runtime_error[2] || vt == (void **)&vt_length_error[2] ||
-               vt == (void **)&vt_out_of_range[2])) what = ((cxx_err_t *)obj)->msg;
-    cx_puts_fd(2, "libc++[mOS]: exceção C++ lançada (o mOS ainda não desenrola a pilha): ");
-    cx_puts_fd(2, name ? name : "?");
-    if (what) { cx_puts_fd(2, ": "); cx_puts_fd(2, what); }
-    cx_puts_fd(2, "\n");
-    abort();
-}
-void *__cxa_begin_catch(void *e) { return e; }
-void __cxa_end_catch(void) {}
-void __cxa_rethrow(void) { cxx_fatal("__cxa_rethrow", "sem exceção ativa"); }
-/* referenciada pelos CIEs do __eh_frame; nunca chamada, porque nada desenrola */
-int __gxx_personality_v0(int version, int actions, u64 cls, void *exc, void *ctx) { (void)version; (void)actions; (void)cls; (void)exc; (void)ctx; return 8; }
+/* __cxa_throw, __cxa_begin_catch, __cxa_end_catch, __cxa_rethrow e __gxx_personality_v0: cxx_unwind.c */
 
 /* vtables de type_info do ABI (__class_type_info etc.): os typeinfo dos módulos apontam para elas.
  * Sem RTTI de verdade (dynamic_cast/catch); entradas nulas. */
 const void *vt_class_ti[16] __asm__("_ZTVN10__cxxabiv117__class_type_infoE");
 const void *vt_si_class_ti[16] __asm__("_ZTVN10__cxxabiv120__si_class_type_infoE");
 const void *vt_vmi_class_ti[16] __asm__("_ZTVN10__cxxabiv121__vmi_class_type_infoE");
+
+/* typeinfo Itanium { vptr no meio da vtable, nome mangled sem _Z, base }. As cinco bases
+ * std::logic_error / runtime_error / exception não são importadas; existem para o ponteiro base.
+ * As vtables continuam zeradas: dynamic_cast e catch C++ ainda não desenrolam. */
+typedef struct { const void *vptr; const char *name; const void *base; } cxx_si_ti;
+static const cxx_si_ti ti_exception = { &vt_class_ti[2], "St9exception", 0 };
+static const cxx_si_ti ti_logic = { &vt_si_class_ti[2], "St11logic_error", &ti_exception };
+static const cxx_si_ti ti_runtime = { &vt_si_class_ti[2], "St13runtime_error", &ti_exception };
+const cxx_si_ti ti_invalid_argument __asm__("_ZTISt16invalid_argument") = { &vt_si_class_ti[2], "St16invalid_argument", &ti_logic };
+const cxx_si_ti ti_domain_error __asm__("_ZTISt12domain_error") = { &vt_si_class_ti[2], "St12domain_error", &ti_logic };
+const cxx_si_ti ti_range_error __asm__("_ZTISt11range_error") = { &vt_si_class_ti[2], "St11range_error", &ti_runtime };
+const cxx_si_ti ti_overflow_error __asm__("_ZTISt14overflow_error") = { &vt_si_class_ti[2], "St14overflow_error", &ti_runtime };
+const cxx_si_ti ti_underflow_error __asm__("_ZTISt15underflow_error") = { &vt_si_class_ti[2], "St15underflow_error", &ti_runtime };
 
 /* ================================================================ std::locale e numpunct<char> (o fmt do spdlog) */
 /* locale::id {once_flag; int id}; numpunct<char> com a vtable {D1, D0, on_zero_shared, do_decimal_point,
@@ -343,17 +337,23 @@ static const void *vt_numpunct[10] = {0, 0, (void *)np_noop, (void *)np_noop, (v
                                       (void *)np_thousands, (void *)np_grouping, (void *)np_true, (void *)np_false};
 /* facet {vptr; long owners (shared_count)}: nunca é liberado */
 static struct { void **vt; long owners; char dp, ts; } numpunct_c = {(void **)&vt_numpunct[2], 0x3fffffff, '.', ','};
-static struct { long refs; } locale_imp = {1};
+struct { long refs; } cx_locale_imp = {1};
 
+void *cx_locale_classic_imp(void) { return &cx_locale_imp; }
 void locale_ctor(void **l) __asm__("_ZNSt3__16localeC1Ev");
-void locale_ctor(void **l) { *l = &locale_imp; }
+void locale_ctor(void **l) { *l = &cx_locale_imp; }
 void locale_copy(void **l, void *const *o) __asm__("_ZNSt3__16localeC1ERKS0_");
 void locale_copy(void **l, void *const *o) { *l = *o; }
 void locale_dtor(void **l) __asm__("_ZNSt3__16localeD1Ev");
 void locale_dtor(void **l) { (void)l; }
+extern const void *cx_locale_facet(void *id);
 const void *locale_use_facet(void *const *l, void *id) __asm__("_ZNKSt3__16locale9use_facetERNS0_2idE");
 const void *locale_use_facet(void *const *l, void *id) {
+    const void *f;
     (void)l;
-    if (id != (void *)numpunct_char_id) cxx_fatal("std::bad_cast", "locale::use_facet: só numpunct<char> existe no mOS");
-    return &numpunct_c;
+    if (id == (void *)numpunct_char_id) return &numpunct_c;
+    f = cx_locale_facet(id);
+    if (f) return f;
+    cxx_fatal("std::bad_cast", "locale::use_facet");
+    return 0;
 }

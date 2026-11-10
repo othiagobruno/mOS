@@ -411,11 +411,29 @@ static IMP resolve_and_lookup(cx_class_t *c, SEL sel) {
     return ok ? cx_lookup(c, sel) : 0;
 }
 
+/* _objc_msgForward (objc_forward.S) preserva os argumentos. Só entra quando a classe
+ * implementa forwardInvocation:, methodSignatureForSelector: ou forwardingTargetForSelector:.
+ * NSObject continua no missing_imp. O IMP não vai para o cache: não é um método da classe. */
+extern void _objc_msgForward(void);
+static int class_forwards(cx_class_t *c) {
+    if (!c) return 0;
+    static SEL fwd, sig, tgt;
+    if (!fwd) {
+        fwd = sel_registerName("forwardInvocation:");
+        sig = sel_registerName("methodSignatureForSelector:");
+        tgt = sel_registerName("forwardingTargetForSelector:");
+    }
+    IMP a = cx_lookup(c, fwd), b = cx_lookup(c, sig), d = cx_lookup(c, tgt);
+    return (a && a != (IMP)missing_imp) || (b && b != (IMP)missing_imp) || (d && d != (IMP)missing_imp);
+}
+
 /* chamados por objc_msgSend (objc_msg.S) */
 IMP cx_msg_lookup(cx_class_t *c, SEL sel) {
     IMP i = cx_lookup(c, sel);
     if (!i) i = resolve_and_lookup(c, sel);
-    return i ? i : (IMP)missing_imp;
+    if (i) return i;
+    if (class_forwards(c)) return (IMP)_objc_msgForward;
+    return (IMP)missing_imp;
 }
 IMP cx_msg_lookup_stret(cx_class_t *c, SEL sel) {
     IMP i = cx_lookup(c, sel);

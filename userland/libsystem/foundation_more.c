@@ -1480,6 +1480,7 @@ OSStatus SSLSetPeerDomainName(void *, const char *, size_t);
 OSStatus SSLHandshake(void *);
 OSStatus SSLWrite(void *, const void *, size_t, size_t *);
 OSStatus SSLRead(void *, void *, size_t, size_t *);
+OSStatus SSLCopyPeerTrust(void *, id *);
 
 static int tls_read(const void *conn, void *data, size_t *len) {
     long n = recv(*(const int *)conn, data, *len, 0);
@@ -1506,7 +1507,7 @@ static long io_read(void *tls, int fd, void *b, size_t n) {
     if (tls) { size_t d = 0; OSStatus st = SSLRead(tls, b, n, &d); if (st && st != -9805) return d ? (long)d : -1; return (long)d; }
     return recv(fd, b, n, 0);
 }
-static id http_do(id req, id *err) {
+static id http_do(id req, id *err, int (*after_tls)(void *ctx, id trust), void *actx) {
     if (err) *err = 0;
     char scheme[16], host[256];
     int port = 0;
@@ -1530,6 +1531,15 @@ static id http_do(id req, id *err) {
         SSLSetConnection(tls, &fd);
         SSLSetPeerDomainName(tls, host, strlen(host));
         if (SSLHandshake(tls)) { SSLDisposeContext(tls); close(fd); if (err) *err = make_err("NSURLErrorDomain", -1200, "handshake TLS falhou"); return 0; }
+        id trust = 0;
+        SSLCopyPeerTrust(tls, &trust);
+        if (after_tls && after_tls(actx, trust)) {
+            if (trust) rel(trust);
+            SSLDisposeContext(tls); close(fd);
+            if (err) *err = make_err("NSURLErrorDomain", -999, "desafio do servidor cancelado");
+            return 0;
+        }
+        if (trust) rel(trust);
     }
     id body = req_body(req, 0);
     u64 blen = body ? MSG0(u64, body, "length") : 0;
@@ -1610,7 +1620,7 @@ static id http_do(id req, id *err) {
 static id conn_send(id cls, SEL c, id req, id *resp, id *err) {
     (void)cls; (void)c;
     id e = 0;
-    id pair = http_do(req, &e);
+    id pair = http_do(req, &e, 0, 0);
     if (err) *err = e ? ar(e) : 0;
     else if (e) rel(e);
     if (!pair) { if (resp) *resp = 0; return 0; }
@@ -1670,13 +1680,14 @@ static void us_blk_init(us_blk_t *b, void *invoke, int *slot, id *cred) {
     b->slot = slot;
     b->cred = cred;
 }
-static id us_space(const char *host, int port, const char *proto, const char *realm, const char *method) {
+static id us_space(const char *host, int port, const char *proto, const char *realm, const char *method, id trust) {
     box_t *o = (box_t *)cx_alloc_instance(&NSURLProtectionSpace_c);
     o->a = ns(host ? host : "");
     o->b = ns(realm ? realm : "");
     o->c = ns(method);
     o->e = ns(proto ? proto : "");
     o->i = port;
+    if (trust) o->p = objc_retain(trust);
     return (id)o;
 }
 static id us_chal_obj(id space) {
@@ -1701,7 +1712,7 @@ static const char *field_get(id fields, const char *name) {
 }
 /* Basic prefere o método da tarefa; o desafio de servidor (TLS) prefere o da sessão.
  * Sem o método, a disposição fica a padrão. Devolve a disposição e, se houver, a credencial +1. */
-static int sess_challenge(id task, int basic, const char *host, int port, const char *proto, const char *realm, id *cred_out) {
+static int sess_challenge(id task, int basic, const char *host, int port, const char *proto, const char *realm, id *cred_out, id trust) {
     if (cred_out) *cred_out = 0;
     id sess = (id)BOX(task)->i;
     id dlg = sess ? BOX(sess)->b : 0;
@@ -1712,7 +1723,7 @@ static int sess_challenge(id task, int basic, const char *host, int port, const 
         if (dlg_has(dlg, sel_task)) use_task = 1;
         else return US_AUTH_DEFAULT;
     }
-    id space = us_space(host, port, proto, realm, basic ? US_METHOD_BASIC : US_METHOD_SERVER);
+    id space = us_space(host, port, proto, realm, basic ? US_METHOD_BASIC : US_METHOD_SERVER, basic ? 0 : trust);
     id chal = us_chal_obj(space);
     int slot = US_AUTH_DEFAULT;
     id cred = 0;
@@ -1759,6 +1770,11 @@ static int sess_apply_basic(id task, id cred) {
     rel(key);
     return 1;
 }
+static int tls_after(void *ctx, id trust) {
+    struct { id task; char *host; int port; const char *scheme; } *a = ctx;
+    int d = sess_challenge(a->task, 0, a->host, a->port, a->scheme, 0, 0, trust);
+    return d == US_AUTH_CANCEL || d == US_AUTH_REJECT;
+}
 static void *task_thread(void *arg) {
     task_job_t *j = arg;
     id task = j->task;
@@ -1771,14 +1787,8 @@ static void *task_thread(void *arg) {
     id abs = req ? url_abs(req_url(req, 0)) : 0;
     int split = abs && url_split(cs(abs), scheme, host, &port, &path);
     id dlg = BOX(task)->i ? BOX((id)BOX(task)->i)->b : 0;
-    if (dlg && split && !strcmp(scheme, "https")) {
-        int d = sess_challenge(task, 0, host, port, scheme, 0, 0);
-        if (d == US_AUTH_CANCEL || d == US_AUTH_REJECT) {
-            sess_fail(task, "desafio do servidor cancelado");
-            return 0;
-        }
-    }
-    pair = http_do(BOX(task)->a, &err);
+    struct { id task; char *host; int port; const char *scheme; } chal = { task, host, port, scheme };
+    pair = http_do(BOX(task)->a, &err, dlg && split && !strcmp(scheme, "https") ? tls_after : 0, &chal);
     if (dlg && pair && split) {
         id resp0 = MSG(id, pair, "objectAtIndex:", (u64)1);
         long status = resp0 ? (long)BOX(resp0)->i : 0;
@@ -1786,7 +1796,7 @@ static void *task_thread(void *arg) {
         char realm[128];
         if (status == 401 && us_is_basic(www, realm, sizeof realm)) {
             id cred = 0;
-            int d = sess_challenge(task, 1, host, port, scheme, realm, &cred);
+            int d = sess_challenge(task, 1, host, port, scheme, realm, &cred, 0);
             if (d == US_AUTH_CANCEL || d == US_AUTH_REJECT) {
                 rel(pair); rel(err); if (cred) objc_release(cred);
                 sess_fail(task, "desafio Basic cancelado");
@@ -1794,7 +1804,7 @@ static void *task_thread(void *arg) {
             }
             if (d == US_AUTH_USE && sess_apply_basic(task, cred)) {
                 rel(pair); rel(err); err = 0;
-                pair = http_do(BOX(task)->a, &err);
+                pair = http_do(BOX(task)->a, &err, 0, 0);
             }
             if (cred) objc_release(cred);
         }
@@ -2484,8 +2494,12 @@ static void set_b(id s, SEL c, id v) { (void)c; rel(BOX(s)->b); BOX(s)->b = reta
 static void set_c(id s, SEL c, id v) { (void)c; rel(BOX(s)->c); BOX(s)->c = retain(v); }
 static long space_port(id s, SEL c) { (void)c; return (long)BOX(s)->i; }
 static BOOL space_proxy(id s, SEL c) { (void)s; (void)c; return NO; }
-/* Sem objeto SecTrust: o delegate olha authenticationMethod, não o certificado. */
-static id space_trust(id s, SEL c) { (void)s; (void)c; return 0; }
+static void box_dealloc(id s, SEL c);
+static id space_trust(id s, SEL c) { (void)c; return (id)BOX(s)->p; }
+static void space_dealloc(id s, SEL c) {
+    if (BOX(s)->p) { rel((id)BOX(s)->p); BOX(s)->p = 0; }
+    box_dealloc(s, c);
+}
 static long chal_prev(id s, SEL c) { (void)c; return (long)BOX(s)->i; }
 static void box_dealloc(id s, SEL c) {
     rel(BOX(s)->a); rel(BOX(s)->b); rel(BOX(s)->c); rel(BOX(s)->e);
@@ -2674,7 +2688,10 @@ static void resreq_begin(id s, SEL c, void *block) {
     void (*inv)(void *, id) = *(void **)((u8 *)block + 16);
     inv(block, 0);
 }
-static void proxy_fwd(id s, SEL c) { (void)s; (void)c; }
+/* A base não encaminha. methodSignature nil faz o _objc_msgForward parar; a subclasse
+ * implementa os dois. Não é o doesNotRecognizeSelector: da Apple. */
+static id proxy_sig(id s, SEL c, SEL sel) { (void)s; (void)c; (void)sel; return nil; }
+static void proxy_fwd(id s, SEL c, id inv) { (void)s; (void)c; (void)inv; }
 static id proxy_desc(id s, SEL c) { (void)s; (void)c; return ar(ns("<NSProxy>")); }
 static BOOL proxy_kind(id s, SEL c, cx_class_t *k) { (void)c; return cx_is_subclass(s->isa, k); }
 
@@ -2789,7 +2806,7 @@ void cx_foundation_more_init(void) {
     CM(NSProxy, "alloc", lock_alloc);
     M(NSProxy, "init", box_init); M(NSProxy, "dealloc", noop); M(NSProxy, "description", proxy_desc);
     M(NSProxy, "isKindOfClass:", proxy_kind); M(NSProxy, "forwardInvocation:", proxy_fwd);
-    M(NSProxy, "methodSignatureForSelector:", proxy_fwd);
+    M(NSProxy, "methodSignatureForSelector:", proxy_sig);
 
     /* NSError já existe desde o Foundation; estes métodos ficam por cima dos antigos */
     CM(NSError, "errorWithDomain:code:userInfo:", err_with);
@@ -2992,7 +3009,7 @@ void cx_foundation_more_init(void) {
     M(NSURLProtectionSpace, "host", get_a); M(NSURLProtectionSpace, "realm", get_b); M(NSURLProtectionSpace, "authenticationMethod", get_c);
     M(NSURLProtectionSpace, "protocol", get_e); M(NSURLProtectionSpace, "port", space_port);
     M(NSURLProtectionSpace, "isProxy", space_proxy); M(NSURLProtectionSpace, "serverTrust", space_trust);
-    M(NSURLProtectionSpace, "dealloc", box_dealloc);
+    M(NSURLProtectionSpace, "dealloc", space_dealloc);
     DEF(&NSURLAuthenticationChallenge_c, &NSURLAuthenticationChallenge_m, "NSURLAuthenticationChallenge", ob, BEX);
     M(NSURLAuthenticationChallenge, "protectionSpace", get_a); M(NSURLAuthenticationChallenge, "proposedCredential", get_b);
     M(NSURLAuthenticationChallenge, "previousFailureCount", chal_prev); M(NSURLAuthenticationChallenge, "dealloc", box_dealloc);

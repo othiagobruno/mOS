@@ -21,7 +21,9 @@
  *    devolvida é marcada como válida (cx_trust_mark_verified, security.c).
  *  - SSLRead devolve o que tiver assim que tiver algo; fim do fluxo = errSSLClosedGraceful/NoNotify.
  * Limites: só cliente (lado servidor: SSLCreateContext = NULL), sem certificado de cliente, sem ALPN negociado
- * (SSLCopyALPNProtocols devolve vazio: o app cai para HTTP/1.1), sem retomada de sessão.
+ * (SSLCopyALPNProtocols devolve vazio: o app cai para HTTP/1.1). SSLSetSessionTicketsEnabled guarda o
+ * pedido; o motor (kernel/net/tls.c) não envia nem retoma ticket, então desligar coincide com o fio e
+ * ligar não cria retomada.
  */
 #include "foundation.h"
 #include "libc.h"
@@ -58,6 +60,7 @@ BOOL class_addMethod(cx_class_t *c, SEL s, IMP imp, const char *types);
 IMP class_getMethodImplementation(cx_class_t *c, SEL s);
 id class_createInstance(cx_class_t *c, u64 extra);
 void cx_trust_mark_verified(id trust);                 /* security.c */
+void cx_trust_set_host(id trust, const char *host);
 
 char *strstr(const char *h, const char *n);
 static long net(long op, long a, long b, long c) { return SYS4(SYS_NET, op, a, b, c); }
@@ -76,7 +79,7 @@ typedef struct {
     ssl_write_fn wr;
     const void *conn;
     char peer[256];
-    Boolean break_auth, auth_done, saw_eof;
+    Boolean break_auth, auth_done, saw_eof, tickets;
     OSStatus err;                        /* erro fatal guardado (as chamadas seguintes o repetem) */
     int vmin, vmax;
     u8 *rec, *out, *plain;
@@ -134,6 +137,7 @@ void *SSLCreateContext(void *alloc, int side, int type) {
     s->h = -1;
     s->vmin = kTLSProtocol12;
     s->vmax = kTLSProtocol13;
+    s->tickets = 1;
     s->rec = malloc(REC_MAX);
     s->out = malloc(OUT_CAP);
     s->plain = malloc(PLAIN_CAP);
@@ -233,6 +237,13 @@ OSStatus SSLGetSessionOption(void *ctx, int opt, Boolean *v) {
     *v = opt == kSSLSessionOptionBreakOnServerAuth ? s->break_auth : 0;
     return errSecSuccess;
 }
+/* O kernel ignora NewSessionTicket. O flag fica no contexto; não muda o handshake. */
+OSStatus SSLSetSessionTicketsEnabled(void *ctx, Boolean enabled) {
+    ssl_t *s = S(ctx);
+    if (!s) return errSecParam;
+    s->tickets = enabled ? 1 : 0;
+    return errSecSuccess;
+}
 
 /* as suítes do motor (kernel/net/tls.c) */
 static const u32 SUITES[] = { 0x1301, 0x1302, 0x1303, 0xC02B, 0xC02C, 0xC02F, 0xC030, 0xCCA9, 0xCCA8 };
@@ -281,9 +292,29 @@ OSStatus SSLCopyPeerTrust(void *ctx, id *trust) {
     ssl_t *s = S(ctx);
     if (!s || !trust) return errSecParam;
     *trust = 0;
-    if (s->state != kSSLConnected) return errSecSuccess;
-    id t = CFArrayCreateMutable(0, 0, 0);         /* SecTrust do mOS = CFArray dos certificados (security.c) */
-    cx_trust_mark_verified(t);                     /* o kernel validou cadeia, datas e nome */
+    if (s->state != kSSLConnected || s->h < 0) return errSecSuccess;
+    long need = net(MOS_NET_TLS_CERTS, s->h, 0, 0);
+    if (need < 8) return errSecSuccess;
+    u8 *buf = malloc((size_t)need);
+    if (!buf) return errSecAllocate;
+    if (net(MOS_NET_TLS_CERTS, s->h, (long)buf, need) != need) { free(buf); return errSSLInternal; }
+    u32 count = (u32)buf[0] | (u32)buf[1] << 8 | (u32)buf[2] << 16 | (u32)buf[3] << 24;
+    id t = CFArrayCreateMutable(0, 0, 0);
+    u32 o = 4;
+    for (u32 i = 0; t && i < count && o + 4 <= (u32)need; i++) {
+        u32 L = (u32)buf[o] | (u32)buf[o + 1] << 8 | (u32)buf[o + 2] << 16 | (u32)buf[o + 3] << 24;
+        o += 4;
+        if (o + L > (u32)need) break;
+        id data = CFDataCreate(0, buf + o, L);
+        id cert = data ? SecCertificateCreateWithData(0, data) : 0;
+        if (cert) { CFArrayAppendValue(t, cert); CFRelease(cert); }
+        if (data) CFRelease(data);
+        o += L;
+    }
+    free(buf);
+    if (!t || !CFArrayGetCount(t)) { if (t) CFRelease(t); return errSecSuccess; }
+    cx_trust_set_host(t, s->peer);
+    cx_trust_mark_verified(t);
     *trust = t;
     return errSecSuccess;
 }

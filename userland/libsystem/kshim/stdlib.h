@@ -2,7 +2,10 @@
  * As funções são as do próprio libSystem. */
 #pragma once
 #include <stddef.h>
-void *malloc(size_t);
-void *calloc(size_t, size_t);
-void *realloc(void *, size_t);
-void free(void *);
+void *malloc(size_t n);
+void *calloc(size_t n, size_t s);
+void *realloc(void *p, size_t n);
+void free(void *p);
+void abort(void);
+int abs(int x);
+#define NULL ((void *)0)

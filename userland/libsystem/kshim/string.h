@@ -1,12 +1,19 @@
 #pragma once
 #include <stddef.h>
-void *memcpy(void *, const void *, size_t);
-void *memset(void *, int, size_t);
-void *memmove(void *, const void *, size_t);
-int memcmp(const void *, const void *, size_t);
-size_t strlen(const char *);
-char *strcpy(char *, const char *);
-char *strncpy(char *, const char *, size_t);
-int strcmp(const char *, const char *);
-int strncmp(const char *, const char *, size_t);
-char *strchr(const char *, int);
+void *memcpy(void *d, const void *s, size_t n);
+void *memset(void *d, int c, size_t n);
+void *memmove(void *d, const void *s, size_t n);
+int memcmp(const void *a, const void *b, size_t n);
+void *memchr(const void *s, int c, size_t n);
+size_t strlen(const char *s);
+int strcmp(const char *a, const char *b);
+int strncmp(const char *a, const char *b, size_t n);
+char *strcpy(char *d, const char *s);
+char *strcat(char *d, const char *s);
+char *strstr(const char *s, const char *n);
+char *strrchr(const char *s, int c);
+char *strncpy(char *d, const char *s, size_t n);
+char *strchr(const char *s, int c);
+size_t strspn(const char *s, const char *accept);
+size_t strcspn(const char *s, const char *reject);
+#define NULL ((void *)0)

@@ -154,11 +154,12 @@ for f in "$ROOT"/userland/libsystem/*.c "$ROOT"/userland/libsystem/*.S; do
     [ -f "$f" ] || continue
     LS_SRC+=("$f")
 done
+# UnwindLevel1.c do zig repete _Unwind_* que já saem de cxx_unwind.c.
 "$ZIG" cc -target x86_64-freestanding-none -O2 -g0 -ffreestanding -fno-stack-protector -fno-builtin -nostdlib -static -no-pie \
     -fpie -mno-red-zone -Wall -Wno-unused-parameter -Wno-incompatible-library-redeclaration -Wno-builtin-requires-header \
-    -I"$ROOT/userland/libsystem/kshim" \
+    -I"$ROOT/userland/libsystem/kshim" -I"$ROOT/kernel/include" \
     -Wl,--image-base=0x400000100000 -Wl,-e,cx_start -Wl,--no-gc-sections \
-    "${LS_SRC[@]}" "$UWO"/libunwind.cpp.o "$UWO"/UnwindLevel1.c.o "$UWO"/UnwindLevel1-gcc-ext.c.o \
+    "${LS_SRC[@]}" "$UWO"/libunwind.cpp.o "$UWO"/UnwindLevel1-gcc-ext.c.o \
     "$UWO"/UnwindRegistersSave.S.o "$UWO"/UnwindRegistersRestore.S.o \
     -o "$OUT/libSystem.mos"
 python3 "$ROOT/tools/patch-ehframe.py" "$OUT/libSystem.mos"

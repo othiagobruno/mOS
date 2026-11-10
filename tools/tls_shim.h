@@ -38,6 +38,7 @@ u64 timer_ticks(void);
  * com possibilidade de forçar uma data para testes */
 typedef struct { int year, month, day, hour, minute, second, weekday; } datetime_t;
 void rtc_now(datetime_t *dt);
+void rtc_now_utc(datetime_t *dt);
 
 /* espelho de kernel/include/net.h (parte TCP/TLS) */
 enum { TCP_CLOSED, TCP_CONNECTING, TCP_OPEN, TCP_PEER_CLOSED, TCP_ERROR };

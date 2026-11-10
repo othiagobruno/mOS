@@ -248,6 +248,8 @@ else { Remove-Item $tpFile -ErrorAction SilentlyContinue }
 if ($CursorExtras) { Install-MosCursorExtras "$esp\mOS" (Join-Path $PSScriptRoot 'brew-shims') $Bottles }
 $mb = (Get-ChildItem -LiteralPath $dstApp -Recurse -File | Measure-Object Length -Sum).Sum / 1MB
 Write-Host ("{0}.app ({1}): {2:N1} MiB" -f $name, $exe, $mb) -ForegroundColor Cyan
+. (Join-Path $PSScriptRoot 'stage-xpc.ps1')
+Copy-MosBundleServices $src $dst
 $mkimg = Resolve-MosMkimg $root $OutDir
 & $mkimg (Join-Path $root "$OutDir\mOS.img") $esp $SizeMiB --test-overlay $ovt
 if ($LASTEXITCODE -ne 0) { Write-Host 'mkimg FAILED' -ForegroundColor Red; exit 1 }

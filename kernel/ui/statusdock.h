@@ -17,7 +17,8 @@ typedef int i32;
 #define SB_IMG_MAX 64
 #define SB_TITLE_MAX 96
 #define SB_LABEL_MAX 80
-#define SB_MENU_MAX 16
+#define SB_MENU_MAX 64
+#define SB_SUB_MAX 64
 
 typedef struct {
     int x, w, y, h;
@@ -29,12 +30,17 @@ typedef struct {
     char title[SB_TITLE_MAX];
 } sb_geom_t;
 
-/* Pacote que o AppKit manda em DEV_STATUS / SB_SET (little-endian):
+/* Pacote que o AppKit manda em DEV_STATUS / SB_SET (little-endian).
+ * Limite: SB_MENU_MAX (64) itens de primeiro nível e SB_SUB_MAX (64) filhos de submenu
+ * no total do status item (um nível, no máximo 16 por item).
  *   u32 id; i32 length; u32 flags (bit 0 = visível); u32 iw; u32 ih; u32 nitems;
  *   u32 tlen; char title[tlen];
- *   nitems vezes: u32 action, u32 mflags (bit 0 desabilitado, bit 1 separador), u32 llen, char label[llen];
+ *   nitems vezes: u32 action, u32 mflags, u32 llen, char label[llen];
+ *     mflags: bit 0 desabilitado, bit 1 separador, bit 2 marcado, bit 3 tem submenu.
+ *     Se o bit 3 estiver ligado: u32 nsub e nsub vezes action, mflags (bits 0 e 2), llen, label.
  *   u32 pixels[iw*ih] ARGB não pré-multiplicado, se iw e ih forem > 0 (teto 64x64).
  * length: -1 variável, -2 quadrado, >0 largura em pixels.
+ * O attributedTitle do AppKit entra aqui já como texto puro.
  * O primeiro item registrado fica mais à direita (encostado nos ícones do sistema). */
 int sb_upsert_wire(int pid, const void *buf, u32 len);
 void sb_remove(int pid, u32 id);
@@ -54,6 +60,9 @@ const u32 *sb_image(int pid, u32 id, int *w, int *h); /* pré-multiplicado; NULL
 int sb_menu_count(int pid, u32 id);
 /* devolve o rótulo (ponteiro estável até o próximo upsert) ou NULL */
 const char *sb_menu_label(int pid, u32 id, int index, u32 *action, int *disabled, int *separator);
+int sb_menu_checked(int pid, u32 id, int index);
+int sb_menu_sub_count(int pid, u32 id, int index);
+const char *sb_menu_sub(int pid, u32 id, int index, int sub, u32 *action, int *disabled, int *checked);
 
 /* Dock por processo. visible 0 esconde o ícone (LSUIElement / prohibited). O padrão é visível.
  * O selo: texto vazio tira; inteiro puro também vira o número antigo; "99+" e "•" ficam texto. */
