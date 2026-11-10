@@ -393,6 +393,8 @@ enum {
     MOS_NET_UDP_AVAIL,     /* (socket) -> tamanho do próximo datagrama | -1 fila vazia */
     MOS_NET_UDP_CLOSE,     /* (socket) -> 0 */
     MOS_NET_UDP_ADDRS,     /* (socket, mos_net_addrs_t *) -> 0          endereço e porta locais */
+    MOS_NET_TLS_CERTS,     /* (sessão, buf, max) -> tamanho da cadeia. buf 0: só o tamanho.
+                            * u32 quantidade, depois u32 tamanho + DER de cada certificado. */
 };
 #define MOS_EMSGSIZE 40
 #define MOS_NET_DG_PEEK  1     /* mos_net_dgram_t.flags na entrada: não tira da fila */
