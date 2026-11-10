@@ -12,7 +12,7 @@ static int ran;
 static void bump(void *ctx) { ran += *(int *)ctx; }
 
 int main(void) {
-    int meta = 7;
+    struct { void (*destroy)(void *); } meta = { 0 };
     void *o = swift_allocObject(&meta, 32, 15);
     if (!o) { fprintf(stderr, "alloc\n"); return 1; }
     if (*(const void **)o != &meta) { fprintf(stderr, "metadata\n"); return 1; }
