@@ -1,42 +1,15 @@
 /*
  * mOS libSystem — lowering do AIR (bitcode LLVM de um .metallib) para a árvore do interpretador de MSL (mtlint.h),
- * incluído por mtlair.c depois de mtlair_mod.inc. Primeira parte: o modelo de valores SSA e a tradução de tipos, e um
- * passo de cobertura que diz, por função, quantas instruções e quais intrínsecos air.* o lowering já sabe tratar. A
- * emissão dos nós vem a seguir sobre esta base.
+ * incluído por mtlair.c depois de mtlair_mod.inc.
  *
- * Numeração de valores do LLVM num corpo: primeiro os valores de módulo (globais + funções), depois os argumentos da
- * função, depois os resultados das instruções, na ordem. Os operandos vêm em IDs RELATIVOS (padrão pós-LLVM 3.2):
- * valor = (nº do valor atual) - idRelativo. Este arquivo resolve isso e mapeia o tipo de cada valor.
+ * A lista de valores (ids absolutos) já vem do parser: módulo, depois argumentos, constantes do corpo e resultados.
+ * Os 17 opcodes medidos nos .metallib (e SELECT) viram nós. CALL de air.* / llvm.* vira builtin; o que não tem
+ * tradução faz a função ser omitida (não entra na biblioteca), com o motivo na mensagem se nenhuma entrou.
+ *
+ * Ponteiros opacos são ponteiros de byte. O GEP soma o deslocamento em bytes (não usa a soma escalada de ponteiro
+ * do interpretador). O CFG vira um while com um inteiro de bloco, porque o interpretador só tem controle estruturado.
+ * PHI é cópia paralela no fim de cada predecessor.
  */
-
-/* um valor SSA: de onde veio e seu tipo (índice na tabela de tipos do módulo) */
-enum { V_MODULE = 0, V_ARG, V_INST, V_CONST };
-typedef struct { int kind; int type; int inst; } airval_t;
-
-/* o tipo LLVM traduzido para a visão do interpretador (escalar + nº de componentes), ou 0 se não mapeável */
-typedef struct { int scal; int n; int ok; } airscal_t;
-
-static airscal_t air_map_type(air_module_t *m, int ti) {
-    airscal_t r = {0, 0, 0};
-    if (ti < 0 || ti >= m->ntypes) return r;
-    airty_t *t = &m->types[ti];
-    switch (t->kind) {
-    case TYC_FLOAT: r.scal = MSL_FLOAT; r.n = 1; r.ok = 1; break;
-    case TYC_HALF: r.scal = MSL_HALF; r.n = 1; r.ok = 1; break;
-    case TYC_INTEGER:
-        r.n = 1; r.ok = 1;
-        r.scal = t->bits <= 1 ? MSL_BOOL : t->bits <= 8 ? MSL_CHAR : t->bits <= 16 ? MSL_SHORT : t->bits <= 32 ? MSL_INT : MSL_LONG;
-        break;
-    case TYC_VECTOR: {
-        airscal_t e = air_map_type(m, t->elem);
-        if (e.ok) { r.scal = e.scal; r.n = t->n; r.ok = 1; }
-        break;
-    }
-    case TYC_POINTER: case TYC_OPAQUE_POINTER: r.scal = MSL_UINT; r.n = 1; r.ok = 1; break;   /* ponteiro: tratado por acesso */
-    default: break;
-    }
-    return r;
-}
 
 /* ---- intrínsecos air.* que as CALL usam: reconhecidos pelo nome mangado da função-alvo */
 enum {
@@ -44,12 +17,21 @@ enum {
     AI_CONVERT, AI_FABS, AI_FMIN, AI_FMAX, AI_CLAMP, AI_FLOOR, AI_CEIL, AI_FRACT, AI_RINT, AI_TRUNC,
     AI_SQRT, AI_RSQRT, AI_SIN, AI_COS, AI_EXP2, AI_LOG2, AI_POW, AI_FMA, AI_DOT, AI_NORMALIZE, AI_LENGTH,
     AI_CROSS, AI_MIX, AI_STEP, AI_SMOOTHSTEP, AI_SATURATE, AI_SIGN, AI_DFDX, AI_DFDY, AI_FWIDTH, AI_DISCARD,
-    AI_UNPACK, AI_PACK, AI_ATOMIC, AI_BARRIER, AI_IGNORE,
+    AI_UNPACK, AI_PACK, AI_ATOMIC, AI_BARRIER, AI_IGNORE, AI_COPYSIGN,
 };
 /* tabela nome->intrínseco: casa por substring do nome mangado do AIR (air.sample.*, _Z... metal::...) */
 static int air_intrinsic(const char *name) {
     if (!name) return AI_UNKNOWN;
+    /* o específico vem antes do prefixo. llvm.* desconhecido NÃO é ignorado: a função falha. */
     struct { const char *s; int id; } tab[] = {
+        {"llvm.fmuladd", AI_FMA}, {"llvm.fma", AI_FMA}, {"llvm.fabs", AI_FABS},
+        {"llvm.sqrt", AI_SQRT}, {"llvm.maxnum", AI_FMAX}, {"llvm.minnum", AI_FMIN},
+        {"llvm.floor", AI_FLOOR}, {"llvm.ceil", AI_CEIL}, {"llvm.trunc", AI_TRUNC},
+        {"llvm.rint", AI_RINT}, {"llvm.round", AI_RINT}, {"llvm.sin", AI_SIN}, {"llvm.cos", AI_COS},
+        {"llvm.pow", AI_POW}, {"llvm.exp2", AI_EXP2}, {"llvm.log2", AI_LOG2}, {"llvm.copysign", AI_COPYSIGN},
+        {"air.copysign", AI_COPYSIGN},
+        {"llvm.lifetime", AI_IGNORE}, {"llvm.dbg", AI_IGNORE}, {"llvm.donothing", AI_IGNORE},
+        {"llvm.invariant", AI_IGNORE}, {"llvm.assume", AI_IGNORE}, {"llvm.expect", AI_CONVERT},
         {"air.sample_compare", AI_SAMPLE_CMP}, {"air.sample", AI_SAMPLE}, {"air.gather", AI_GATHER},
         {"air.read", AI_READ}, {"air.write", AI_WRITE},
         {"air.get_width", AI_GET_W}, {"air.get_height", AI_GET_H}, {"air.get_depth", AI_GET_D},
@@ -63,7 +45,7 @@ static int air_intrinsic(const char *name) {
         {"air.sign", AI_SIGN}, {"air.dfdx", AI_DFDX}, {"air.dfdy", AI_DFDY}, {"air.fwidth", AI_FWIDTH},
         {"air.discard_fragment", AI_DISCARD}, {"air.unpack", AI_UNPACK}, {"air.pack", AI_PACK},
         {"air.atomic", AI_ATOMIC}, {"air.wg.barrier", AI_BARRIER}, {"air.simdgroup", AI_IGNORE},
-        {"llvm.", AI_IGNORE}, {"air.lifetime", AI_IGNORE}, {"air.compile", AI_IGNORE},
+        {"air.lifetime", AI_IGNORE}, {"air.compile", AI_IGNORE},
     };
     for (unsigned i = 0; i < sizeof tab / sizeof tab[0]; i++)
         if (strstr(name, tab[i].s)) return tab[i].id;
@@ -88,20 +70,17 @@ typedef struct {
     char worst[128];                /* uma razão da função não-coberta */
 } air_coverage_t;
 
-/* nome da função alvo de uma CALL: o último operando é o callee (valor de módulo); resolve pelo índice de função */
+/* nome da função alvo de uma CALL já decodificada (args[0] = id absoluto do callee) */
 static const char *air_call_target(air_module_t *m, airinst_t *in, int base_module_vals, int val_at) {
-    /* CALL: [paramattrs, cc, fmf?, fnty, fnid, args...]; o fnid é relativo. Aproximação: procura entre os operandos
-     * um que caia na faixa dos valores de módulo (funções) e usa o nome. */
-    for (int k = 0; k < in->nops; k++) {
-        i64 rel = in->ops[k];
-        i64 v = val_at - rel;
-        if (v >= 0 && v < m->nglobals + m->nfns && v >= m->nglobals) {
-            int fi = (int)(v - m->nglobals);
-            if (fi >= 0 && fi < m->nfns && m->fns[fi].name) return m->fns[fi].name;
-        }
-        if (rel >= 0 && rel < m->nfns && m->fns[rel].name) { /* alguns encodings usam o índice absoluto da função */ }
-    }
     (void)base_module_vals;
+    (void)val_at;
+    if (in->dec_ok && in->narg >= 1) {
+        int id = in->args[0];
+        if (id >= 0 && id < m->nmvals && m->mvals[id].kind == AV_MOD_FN) {
+            int fi = m->mvals[id].aux;
+            if (fi >= 0 && fi < m->nfns) return m->fns[fi].name;
+        }
+    }
     return 0;
 }
 
@@ -136,6 +115,7 @@ static void air_coverage(air_module_t *m, air_coverage_t *cov) {
 
 /* exposto para o metal.c decidir se tenta o AIR (o host chama air_coverage direto; aqui depende do contêiner) */
 #ifndef MTLAIR_HOST
+#include "mtlair_emit.inc"
 int mtlair_coverage(const void *data, u64 len, int *ninsts, int *lowerable, int *ncalls, int *known_calls,
                     int *fns_body, int *fns_full, char *worst, int worstn) {
     air_container_t c;

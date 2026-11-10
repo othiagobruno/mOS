@@ -1,7 +1,10 @@
 /* mOS — ambiente de trabalho: papel de parede, barra de menus, Dock, menus, Busca, notificações e alertas */
 #include "ui.h"
+#include "statusdock.h"
+#include "kernel/dev/kbd_mod.h"
 #include "vfs.h"
 #include "gpu.h"
+#include "dockbadge.h"
 
 /* ---- coordenadas
  * O desktop (barra de menus, Dock, menus, Busca, notificações...) trabalha no sistema do monitor principal,
@@ -29,6 +32,10 @@ extern void login_tick(void);
 extern void login_logout(void);
 extern bool login_active(void);
 extern const char *account_fullname(void);
+extern void tcc_prompt_tick(void);
+extern void tcc_prompt_draw(surface_t *s, int sw, int sh);
+extern bool tcc_prompt_mouse(int x, int y, int sw, int sh, bool press, bool release);
+extern bool tcc_prompt_key(int key);
 
 
 int  g_wallpaper_style = 3;   /* 0 dunas dinâmicas, 1 dunas dia, 2 dunas noite, 3 seda (padrão) */
@@ -235,6 +242,11 @@ enum { ACT_ABOUT = 1001, ACT_PREFS, ACT_ACTIVITY, ACT_FORCEQUIT, ACT_RESTART, AC
 #define TITLE_CC     206
 #define TITLE_FOCUS  207
 #define TITLE_BATT   208
+#define TITLE_STATUS 220          /* menu aberto por um NSStatusItem */
+#define ACT_STATUS_PICK 73000     /* + índice do item no pacote publicado */
+static int status_pid;
+static u32 status_id;
+static u32 status_act[SB_MENU_MAX];
 void glyph_focus_moon(surface_t *s, int x, int y, int sz, u32 c);
 #include "power.h"
 /* bateria da barra: contorno arredondado, carga proporcional (vermelha abaixo de 20%, verde carregando),
@@ -324,7 +336,7 @@ enum { ACT_DOCK_KEEP = 6001, ACT_DOCK_LOGIN, ACT_DOCK_SHOW, ACT_DOCK_HIDE, ACT_D
        ACT_DOCK_RESTORE, ACT_DOCK_CLOSEWIN };
 
 /* ============================================================ notificações */
-typedef struct { char title[64], body[160]; u64 t0; app_t *app; } notif_t;
+typedef struct { char title[64], body[160]; u64 t0; app_t *app; int pid, token; } notif_t;
 static notif_t notifs[16]; /* histórico (a Central de Notificações mostra todas) */
 static void nc_toggle(void);
 static bool nc_visible(void);
@@ -409,8 +421,21 @@ static void measure_bar_luminance(void) {
 
 void desktop_measure_bar(void) { measure_bar_luminance(); }
 
+static int status_text_w(const char *t, int n, void *ctx) {
+    (void)ctx;
+    return text_width_n(font_get(FONT_MEDIUM), 13.5f, t, n);
+}
+
 #define BAR_PAD 20     /* margem esquerda/direita */
 #define BAR_GAP 9      /* metade do espaço entre títulos */
+
+/* a faixa dos apps usa a mesma borda esquerda dos ícones do sistema que o último desenho gravou */
+static void status_relayout(void) {
+    int left = SW, i;
+    if (nstatus <= 0) left = SW - (BAR_PAD - BAR_GAP);
+    else for (i = 0; i < nstatus; i++) if (status[i].x < left) left = status[i].x;
+    sb_layout(SW, MENUBAR_H, left, status_text_w, NULL);
+}
 
 static void draw_menubar(surface_t *s) {
     int h = MENUBAR_H;
@@ -508,6 +533,34 @@ static void draw_menubar(surface_t *s) {
         }
         status[nstatus++] = (bar_title_t){items[i].title, rx, w};
     }
+    /* itens de status dos apps, imediatamente à esquerda dos ícones do sistema */
+    {
+        int left = SW, i, ng;
+        const sb_geom_t *gs;
+        if (nstatus <= 0) left = SW - (BAR_PAD - BAR_GAP);
+        else for (i = 0; i < nstatus; i++) if (status[i].x < left) left = status[i].x;
+        sb_layout(SW, MENUBAR_H, left, status_text_w, NULL);
+        gs = sb_geoms(&ng);
+        for (i = 0; i < ng; i++) {
+            const sb_geom_t *g = &gs[i];
+            if (g->open) BAR_HL(g->x, g->w);
+            if (g->img_w > 0) {
+                int iw = 0, ih = 0;
+                const u32 *px = sb_image(g->pid, g->id, &iw, &ih);
+                if (px && iw > 0 && ih > 0) {
+                    surface_t im;
+                    memset(&im, 0, sizeof im);
+                    im.w = iw; im.h = ih; im.stride = iw;
+                    im.px = (u32 *)px; /* o slot é estático; o blit só lê */
+                    im.clip = rect_make(0, 0, iw, ih);
+                    gfx_blit_scaled(s, &im, g->img_x, g->img_y, g->img_w, g->img_h, 255);
+                }
+            }
+            if (g->title_x >= 0 && g->title[0])
+                text_draw(s, fr, fs, g->title_x, base, tc, g->title);
+        }
+    }
+#undef BAR_HL
 }
 
 /* ============================================================ menus suspensos */
@@ -534,6 +587,51 @@ static void add_item(const char *label, const char *sc, int action, bool disable
     it->label = label; it->shortcut = sc; it->action = action; it->disabled = disabled; it->checked = checked;
 }
 static void add_sep(void) { add_item(NULL, NULL, 0, false, false); }
+static void submenu_close(void);
+
+/* notify 1 avisa o app (menuWillOpen:). 0 só redesenha o menu já aberto, sem outro evento. */
+static void open_status_menu(int pid, u32 id, int notify) {
+    int n, i, gx = 0, ng;
+    const sb_geom_t *gs;
+    submenu_close();
+    status_relayout();
+    if (notify) compat_gui_status_open(pid, id);
+    n = sb_menu_count(pid, id);
+    status_pid = pid;
+    status_id = id;
+    if (n <= 0) {
+        if (M.kind != MK_NONE) M.kind = MK_NONE;
+        wm_damage(rect_make(0, 0, SW, MENUBAR_H));
+        return;
+    }
+    M.kind = MK_BAR;
+    M.title = TITLE_STATUS;
+    M.n = 0;
+    M.hover = -1;
+    M.opened_at = timer_ticks();
+    gs = sb_geoms(&ng);
+    for (i = 0; i < ng; i++) if (gs[i].pid == pid && gs[i].id == id) gx = gs[i].x;
+    M.x = gx;
+    M.y = MENUBAR_H + 4;
+    cc_open = false;
+    for (i = 0; i < n && i < SB_MENU_MAX; i++) {
+        u32 act = 0;
+        int dis = 0, sep = 0;
+        const char *lab = sb_menu_label(pid, id, i, &act, &dis, &sep);
+        status_act[i] = act;
+        if (sep || !lab || !lab[0]) add_sep();
+        else add_item(lab, NULL, ACT_STATUS_PICK + i, dis != 0, false);
+    }
+    menu_layout();
+    wm_damage_all();
+}
+
+void desktop_status_note(int pid, unsigned id) {
+    wm_damage(rect_make(0, 0, SW, MENUBAR_H));
+    /* o app pode republicar o menu depois do menuWillOpen:; se o item segue aberto, o dropdown acompanha */
+    if (sb_is_open(pid, id) && status_pid == pid && status_id == id)
+        open_status_menu(pid, id, 0);
+}
 
 static char about_label[64], quit_label[64], hide_label[64];
 static char win_labels[12][64];
@@ -744,6 +842,7 @@ static void open_bar_menu(int title) {
 
 void desktop_close_menus(void) {
     submenu_close();
+    sb_close_open();
     if (M.kind != MK_NONE) {
         if (M.kind == MK_POPUP) popup_res.ready = false;
         M.kind = MK_NONE;
@@ -963,6 +1062,10 @@ static void dock_empty_trash_cb(int button, void *ctx) {
 }
 
 static void run_action(int act) {
+    if (act >= ACT_STATUS_PICK && act < ACT_STATUS_PICK + SB_MENU_MAX) {
+        compat_gui_status_pick(status_pid, status_id, status_act[act - ACT_STATUS_PICK]);
+        return;
+    }
     app_t *a = active_app();
     window_t *f = wm_focused();
     switch (act) {
@@ -979,7 +1082,7 @@ static void run_action(int act) {
         break;
     }
     case ACT_ACTIVITY: app_launch(apps_find("atividade")); break;
-    case ACT_FORCEQUIT: if (a && strcmp(a->exec, "arquivos")) app_quit(a); break;
+    case ACT_FORCEQUIT: if (a && strcmp(a->exec, "arquivos")) app_force_quit(a); break;
     case ACT_RESTART: desktop_shutdown_dialog(1); break;
     case ACT_SHUTDOWN: desktop_shutdown_dialog(0); break;
     case ACT_LOCK: login_logout(); break;
@@ -1234,11 +1337,13 @@ static void dock_layout(void) {
     for (int i = 0; i < ndock_order && ndslots < cap; i++) {
         app_t *a = dock_order[i];
         if (DD.active && DD.remove && a == DD.app) continue;   /* puxado para fora: o espaço fecha */
+        if (a->dock_suppressed) continue;
         dslots[ndslots++] = (dock_slot_t){a, 0, 0, false, NULL};
     }
     for (int i = 0; i < apps_count() && ndslots < cap; i++) {
         app_t *a = apps_get(i);
         /* apps do macOS: as janelas são do processo (proxy), o atalho só marca "rodando" */
+        if (a->dock_suppressed) continue;
         if (!a->pinned && dock_app_running(a)) dslots[ndslots++] = (dock_slot_t){a, 0, 0, false, NULL};
     }
     /* toda janela aberta tem o seu app no Dock: apps fora do registro (processos do macOS abertos
@@ -1249,8 +1354,12 @@ static void dock_layout(void) {
         if (!w) break;
         app_t *a = w->app;
         if (!a || w->closing || !w->visible) continue;
+        if (a->dock_suppressed) continue;
         app_t *sc = apps_shortcut_for(a);          /* o atalho de /Aplicativos já representa o processo */
-        if (sc) a = sc;
+        if (sc) {
+            if (sc->dock_suppressed) continue;
+            a = sc;
+        }
         bool have = false;
         for (int k = 0; k < ndslots && !have; k++) have = dslots[k].app == a;
         if (have) continue;
@@ -1359,8 +1468,22 @@ static rect_t dock_window_rect_local(window_t *w) {
 }
 
 void dock_set_badge(app_t *a, int n) {
-    if (!a || a->badge == n) return;
-    a->badge = MAX(0, n);
+    if (!a) return;
+    n = MAX(0, n);
+    if (a->badge == n && !a->badge_label[0]) return;
+    a->badge_label[0] = 0;
+    a->badge = n;
+    wm_damage(rect_make(0, SH - 220, SW, 220));
+}
+
+void dock_set_badge_label(app_t *a, const char *label) {
+    int n = 0;
+    char text[8];
+    if (!a) return;
+    dock_badge_apply(&n, text, label);
+    if (a->badge == n && !strcmp(a->badge_label, text)) return;
+    memcpy(a->badge_label, text, sizeof a->badge_label);
+    a->badge = n;
     wm_damage(rect_make(0, SH - 220, SW, 220));
 }
 
@@ -1398,9 +1521,11 @@ static void dock_click(app_t *a) {
 static void draw_downloads_icon(surface_t *s, int x, int y, int size) { icon_folder(s, x, y, size, RGB(110, 190, 245)); }
 
 /* selo vermelho com número, no canto superior direito do ícone */
-static void draw_badge(surface_t *s, int ix, int iy, int sz, int n) {
+static void draw_badge(surface_t *s, int ix, int iy, int sz, app_t *a) {
     char t[8];
-    if (n > 999) snprintf(t, sizeof t, "999+"); else snprintf(t, sizeof t, "%d", n);
+    if (a->badge_label[0]) snprintf(t, sizeof t, "%s", a->badge_label);
+    else if (a->badge > 999) snprintf(t, sizeof t, "999+");
+    else snprintf(t, sizeof t, "%d", a->badge);
     font_t *f = font_get(FONT_SEMIBOLD);
     float fs = MAX(10.0f, sz * 0.25f);
     float h = MAX(16.0f, sz * 0.38f);
@@ -1486,7 +1611,7 @@ static void draw_dock(surface_t *s) {
             gfx_circle(s, dcx, dcy, dr + 0.9f, RGBA(0, 0, 0, 40));
             gfx_circle(s, dcx, dcy, dr, RGB(255, 255, 255));
         }
-        if (d->app->badge > 0) draw_badge(s, (int)d->x, y, sz, d->app->badge);
+        if (d->app->badge > 0 || d->app->badge_label[0]) draw_badge(s, (int)d->x, y, sz, d->app);
     }
     /* ícone sendo arrastado: segue o mouse; fora do Dock mostra "Remover" */
     if (DD.active) {
@@ -1694,17 +1819,47 @@ static void draw_desktop_icons(surface_t *s, rect_t D) {
 bool g_notify_dnd;          /* Ajustes > Notificações: Não Perturbe */
 bool g_notify_sound = true; /* tocar som ao chegar notificação */
 int  g_notify_count;        /* total recebido desde o boot (inclusive silenciadas) */
-void notify(const char *title, const char *body) {
+static void notify_put(const char *title, const char *body, int pid, int token) {
     g_notify_count++;
     if (g_notify_dnd) { kprintf("Notificação (silenciada): %s — %s\n", title, body ? body : ""); return; }
     if (nnotif == ARRAY_LEN(notifs)) { memmove(notifs, notifs + 1, sizeof(notif_t) * (ARRAY_LEN(notifs) - 1)); nnotif--; }
     notif_t *n = &notifs[nnotif++];
-    strncpy(n->title, title, sizeof n->title - 1);
+    memset(n, 0, sizeof *n);
+    strncpy(n->title, title ? title : "", sizeof n->title - 1);
     strncpy(n->body, body ? body : "", sizeof n->body - 1);
     n->t0 = timer_ticks();
+    n->pid = pid;
+    n->token = token;
     if (g_notify_sound) sound_alert();
     wm_damage(rect_make(SW - 380, MENUBAR_H, 380, 120));
-    kprintf("Notificação: %s — %s\n", title, body ? body : "");
+    kprintf("Notificação: %s — %s\n", title ? title : "", body ? body : "");
+}
+
+void notify(const char *title, const char *body) { notify_put(title, body, 0, 0); }
+
+void notify_tagged(const char *title, const char *body, int pid, int token) {
+    notify_put(title, body, pid, token > 0 ? token : 1);
+}
+
+/* O banner flutuante ocupa o canto superior direito por ~5,5 s. O clique só vale
+ * para um aviso marcado com token (veio de um app). */
+int notify_banner_hit(int x, int y, int *pid, int *token) {
+    u64 now;
+    int i, w, h, x0, y0;
+    if (nc_visible() || nnotif <= 0) return 0;
+    now = timer_ticks();
+    for (i = nnotif - 1; i >= 0; i--) if (now - notifs[i].t0 < 5500) break;
+    if (i < 0 || notifs[i].token <= 0) return 0;
+    w = MIN(350, SW - 24);
+    h = 72;
+    x0 = SW - w - 12;
+    y0 = MENUBAR_H + 10;
+    if (x < x0 || y < y0 || x >= x0 + w || y >= y0 + h) return 0;
+    if (pid) *pid = notifs[i].pid;
+    if (token) *token = notifs[i].token;
+    notifs[i].t0 = now - 6000;
+    wm_damage(rect_make(SW - 400, MENUBAR_H, 400, 120));
+    return 1;
 }
 
 static void draw_notifications(surface_t *s) {
@@ -2967,6 +3122,7 @@ static void desktop_draw_overlay_main(surface_t *s, rect_t D) {
     login_draw(s);
     setup_draw(s);
     draw_alert(s);
+    tcc_prompt_draw(s, SW, SH);
 }
 
 /* ============================================================ eventos */
@@ -3028,8 +3184,11 @@ bool desktop_handle_event(input_event_t *e) {
 static bool desktop_handle_event_local(input_event_t *e) {
     if (setup_active()) return setup_handle_event(e);            /* assistente de configuração/instalação (tela cheia) */
     if (login_active() && !A.open) return login_handle_event(e);
+    /* Shift, Command, Option e Control sozinhos vão para a janela em foco (flagsChanged:), sem atalho */
+    if (e->type == EV_KEY_DOWN && kbd_key_is_modifier(e->key)) return false;
     if (e->type == EV_KEY_DOWN) {
         u16 m = e->mods;
+        if (tcc_prompt_key(e->key)) return true;
         if (A.open) {
             if (e->key == KEY_ENTER) alert_finish(A.nb - 1);
             else if (e->key == KEY_ESC) alert_finish(0);
@@ -3173,6 +3332,16 @@ static bool desktop_handle_event_local(input_event_t *e) {
     bool rp = (e->buttons & 2) && !(last_buttons & 2);
     last_buttons = e->buttons;
 
+    /* banner de um app: o clique entrega o token para o delegate (deskbridge.c) */
+    if (lp) {
+        int bpid = 0, btok = 0;
+        if (notify_banner_hit(x, y, &bpid, &btok)) {
+            extern void desk_banner_enqueue(int pid, int token);
+            desk_banner_enqueue(bpid, btok);
+            return true;
+        }
+    }
+
     /* ícone do Dock sendo arrastado: reordena ao vivo; puxado para fora do Dock, remove */
     if (DD.active) {
         wm_damage(rect_make(0, MENUBAR_H, SW, SH - MENUBAR_H));
@@ -3210,6 +3379,8 @@ static bool desktop_handle_event_local(input_event_t *e) {
         }
         return true;
     }
+    /* gravação de tela / acessibilidade: por cima de captura, alerta e janelas */
+    if (tcc_prompt_mouse(x, y, SW, SH, lp, lr)) return true;
     /* menu do botão verde (organizar janela) */
     if (tile_popover_mouse(x, y, lp, lr)) return true;
     /* captura de tela (⌘⇧5): toma conta do mouse */
@@ -3273,7 +3444,16 @@ static bool desktop_handle_event_local(input_event_t *e) {
         }
         if (it != M.hover) { M.hover = it; wm_damage(rect_make(M.x - 30, M.y - 30, M.w + 60, M.h + 60)); }
         if (M.kind == MK_BAR && y < MENUBAR_H) {
-            /* deslizar entre títulos com o menu aberto */
+            /* deslizar entre títulos com o menu aberto, inclusive a faixa dos apps */
+            {
+                int spid; u32 sid;
+                status_relayout();
+                if (sb_hit(x, y, &spid, &sid) && !(M.title == TITLE_STATUS && status_pid == spid && status_id == sid)) {
+                    int st = sb_click(x, y, &spid, &sid);
+                    if (st == 1) { open_status_menu(spid, sid, 1); return true; }
+                    if (st == 2) { desktop_close_menus(); return true; }
+                }
+            }
             for (int i = 0; i < nbar; i++)
                 if (x >= bar[i].x && x < bar[i].x + bar[i].w && bar[i].title != M.title) { open_bar_menu(bar[i].title); return true; }
             for (int i = 0; i < nstatus; i++)
@@ -3302,8 +3482,16 @@ static bool desktop_handle_event_local(input_event_t *e) {
         return it >= 0 || y < MENUBAR_H || (e->buttons & 1);
     }
     /* barra de menus */
+    if (lp && y >= MENUBAR_H) sb_close_open();
     if (y < MENUBAR_H && bar_visible()) {
         if (lp) {
+            int spid; u32 sid;
+            int st;
+            status_relayout();
+            st = sb_click(x, y, &spid, &sid);
+            if (st == 2) { desktop_close_menus(); return true; }
+            if (st == 1) { open_status_menu(spid, sid, 1); return true; }
+            if (st == 0) sb_close_open();
             for (int i = 0; i < nbar; i++) if (x >= bar[i].x && x < bar[i].x + bar[i].w) { open_bar_menu(bar[i].title); return true; }
             for (int i = 0; i < nstatus; i++) if (x >= status[i].x && x < status[i].x + status[i].w) { open_bar_menu(status[i].title); return true; }
         }
@@ -3370,6 +3558,7 @@ static int last_minute = -1;
 void desktop_tick(void) {
     login_tick();
     setup_tick();
+    tcc_prompt_tick();
     { extern void apps_refresh_mac(void); apps_refresh_mac(); }   /* apps do macOS abertos: bolinha no Dock */
     datetime_t dt;
     static u64 last_rtc;

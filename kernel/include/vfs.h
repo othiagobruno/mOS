@@ -20,6 +20,7 @@ void persist_mark(vnode_t *n);            /* pasta criada (grava já) ou arquivo
 void persist_delete(vnode_t *n);          /* antes de remover n */
 void persist_move(const char *old_path, vnode_t *n); /* depois de mover/renomear */
 void persist_sync(void);                  /* grava tudo que estiver pendente */
+void persist_capture_existing(void);      /* nós criados na RAM (mtime != 0 ou dirty) entram no próximo sync */
 void persist_tick(void);                  /* chamado no loop principal */
 bool persist_available(void);
 
@@ -46,6 +47,7 @@ vnode_t *vfs_lookup_dir(const char *path);   /* segue link também no último co
 vnode_t *vfs_mkdir(const char *path);              /* cria toda a cadeia */
 vnode_t *vfs_create(const char *path);             /* arquivo vazio (sobrescreve) */
 vnode_t *vfs_write_file(const char *path, const void *data, usize n);
+bool     vfs_copy_tree(const char *src, const char *dst); /* pasta ou arquivo; destino existente fica como está */
 bool     vfs_append(vnode_t *f, const void *data, usize n);
 bool     vfs_delete(vnode_t *n);
 bool     vfs_move(vnode_t *n, vnode_t *newparent, const char *newname);

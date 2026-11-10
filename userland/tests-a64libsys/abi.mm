@@ -93,16 +93,9 @@ int main() {
     printf("[%s] libsys-abi: pid %d\n", arch, getpid());
     char b[512];
 
-    // 1. variádicos: 13 argumentos depois do formato (os do arm64 vão todos para a pilha), double, long double, char, short
-#if defined(__aarch64__)
+    // 1. variádicos: 13 argumentos depois do formato, double, long double (%Lf: 16 bytes no x86_64, 8 no arm64), char, short
     snprintf(b, sizeof b, "%d|%s|%.3f|%c|%hd|%lld|%.2Lf|%e|%x|%u|%5.1f|%ld|%s", -42, "abc", 3.14159, 'Z', (short)-7, 1234567890123LL,
              (long double)2.5, 1e-3, 0xbeef, 4000000000u, 9.26, -9L, "fim");
-#else
-    // x86_64: o printf do libSystem x86 lê o long double de 80 bits como 8 bytes e desalinha os argumentos seguintes
-    // (pendência da frente x86, não do tradutor); aqui o mesmo formato com double no lugar
-    snprintf(b, sizeof b, "%d|%s|%.3f|%c|%hd|%lld|%.2f|%e|%x|%u|%5.1f|%ld|%s", -42, "abc", 3.14159, 'Z', (short)-7, 1234567890123LL,
-             2.5, 1e-3, 0xbeef, 4000000000u, 9.26, -9L, "fim");
-#endif
     printf("  snprintf: %s\n", b);
     CHECK("snprintf com 13 variádicos (double, long double, short, char)", !strcmp(b, "-42|abc|3.142|Z|-7|1234567890123|2.50|1.000000e-03|beef|4000000000|  9.3|-9|fim"));
     fmt(b, sizeof b, "%s=%g/%d/%.1f", "va", 0.5, 77, -1.26);
@@ -110,6 +103,8 @@ int main() {
     CHECK("va_list do app repassado a vsnprintf", !strcmp(b, "va=0.5/77/-1.3"));
     int si = 0; double sd = 0; char ss[16] = "";
     CHECK("sscanf com ponteiros variádicos", sscanf("12 4.5 xyz", "%d %lf %15s", &si, &sd, ss) == 3 && si == 12 && sd == 4.5 && !strcmp(ss, "xyz"));
+    long double ldscan = 0; int ldnext = 0;
+    CHECK("sscanf %Lf e o inteiro seguinte", sscanf("2.5 42", "%Lf %d", &ldscan, &ldnext) == 2 && ldscan == 2.5L && ldnext == 42);
     long double ld = strtold("3.25", 0);
     CHECK("long double = double (strtold)", sizeof(long double) == (strcmp(arch, "arm64") ? 16 : 8) && ld == 3.25L);
 
@@ -213,6 +208,22 @@ int main() {
     int w[6] = {9, 1, 8, 2, 7, 3};
     qsort(w, 6, sizeof w[0], [](const void *a, const void *b) { return *(const int *)a - *(const int *)b; });
     CHECK("qsort com callback do app", w[0] == 1 && w[5] == 9);
+    {
+        int dir = -1;
+        int desc[6] = {1, 4, 2, 8, 3, 7};
+        qsort_r(desc, 6, sizeof desc[0], &dir, [](void *thunk, const void *x, const void *y) {
+            return *(int *)thunk * (*(const int *)x - *(const int *)y);
+        });
+        __block int aninhado = 1;
+        int asc[5] = {5, 1, 4, 2, 3};
+        qsort_b(asc, 5, sizeof asc[0], ^int(const void *x, const void *y) {
+            int z[3] = {3, 1, 2};
+            qsort_b(z, 3, sizeof z[0], ^int(const void *p, const void *q) { return *(const int *)p - *(const int *)q; });
+            if (z[0] != 1 || z[2] != 3) aninhado = 0;
+            return *(const int *)x - *(const int *)y;
+        });
+        CHECK("qsort_r com thunk e qsort_b reentrante", desc[0] == 8 && desc[5] == 1 && aninhado && asc[0] == 1 && asc[4] == 5);
+    }
 
     {   // variantes com bloco da libc da Apple (sortb.c)
         typedef struct { int k, ord; } kv;

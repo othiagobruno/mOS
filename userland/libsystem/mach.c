@@ -7,6 +7,9 @@
  */
 #include "sys.h"
 #include "libc.h"
+#if defined(__aarch64__)
+#include "a64page.h"
+#endif
 
 typedef u32 mach_port_t;
 typedef int kern_return_t;
@@ -28,11 +31,11 @@ typedef int kern_return_t;
 static long mach_port(u32 op, u64 *a) { return cx_syscall(SYS_MACH_PORT, (long)op, (long)a, 0, 0, 0); }
 
 /* tamanho de página: são VARIÁVEIS no macOS (o Chromium faz CHECK(vm_page_size == 4096 || 16384)) */
-#if defined(__aarch64__)   /* processo arm64: 16 KiB, como no Apple Silicon (hw.pagesize do a64rt_abi.h; mmap alinha em extra.c) */
-u64 vm_page_size = 16384, vm_page_mask = 16383;
-int vm_page_shift = 14;
-u64 vm_kernel_page_size = 16384, vm_kernel_page_mask = 16383;
-int vm_kernel_page_shift = 14;
+#if defined(__aarch64__)   /* processo arm64: 16 KiB (A64_GUEST_PAGE). O x86_64 abaixo continua em 4 KiB. */
+u64 vm_page_size = A64_GUEST_PAGE, vm_page_mask = A64_GUEST_PAGE - 1;
+int vm_page_shift = A64_GUEST_PAGE_SHIFT;
+u64 vm_kernel_page_size = A64_GUEST_PAGE, vm_kernel_page_mask = A64_GUEST_PAGE - 1;
+int vm_kernel_page_shift = A64_GUEST_PAGE_SHIFT;
 #else
 u64 vm_page_size = 4096, vm_page_mask = 4095;
 int vm_page_shift = 12;
@@ -171,6 +174,9 @@ kern_return_t mach_vm_region(mach_port_t task, u64 *addr, u64 *size, int flavor,
     if (cx_syscall(SYS_MACH_VM, (long)MACH_VM_REGION, (long)q, 0, 0, 0) != KERN_SUCCESS) return KERN_INVALID_ADDRESS;
     *addr = q[1];
     *size = q[2];
+#if defined(__aarch64__)
+    a64_region_guest(addr, size, (unsigned)q[3]);
+#endif
     if (flavor == VM_REGION_BASIC_INFO_64 && info && count && *count >= sizeof(vm_region_basic_info_64_t) / 4) {
         vm_region_basic_info_64_t *b = info;
         b->protection = (int)q[3];
@@ -188,10 +194,20 @@ int mprotect(void *a, size_t len, int prot);
 kern_return_t mach_vm_protect(mach_port_t task, u64 addr, u64 size, int set_max, int prot) {
     (void)task;
     if (!size) return KERN_SUCCESS;
+#if defined(__aarch64__)
+    a64_span_t sp = a64_span(addr, size);
+    if (sp.err) return sp.err == MOS_ENOMEM ? KERN_FAILURE : KERN_INVALID_ADDRESS;
+    addr = sp.addr;
+    size = sp.len;
+#endif
     if (!set_max) cx_mach_record_prot(addr, size, prot);  /* o mprotect abaixo também registra; aqui cobre prot = 0 */
-    /* o mesmo que mprotect: uma reserva PROT_NONE passa a ter páginas sob demanda.
-     * prot == 0 continua sucesso e não desmapeia. */
+    /* o mesmo que mprotect: uma reserva com acesso passa a ter páginas sob demanda.
+     * prot == 0 no x86_64 não desmapeia. No arm64, mprotect(PROT_NONE) tira as páginas
+     * da página guest (guarda); set_max não mexe no mapeamento. */
     if (prot && mprotect((void *)addr, (size_t)size, prot) != 0) return KERN_INVALID_ADDRESS;
+#if defined(__aarch64__)
+    if (!set_max && !prot && mprotect((void *)addr, (size_t)size, 0) != 0) return KERN_INVALID_ADDRESS;
+#endif
     return KERN_SUCCESS;
 }
 kern_return_t vm_protect(mach_port_t task, u64 addr, u64 size, int set_max, int prot) { return mach_vm_protect(task, addr, size, set_max, prot); }
@@ -334,7 +350,7 @@ kern_return_t host_info(mach_port_t host, int flavor, void *info, u32 *count) {
     }
     return KERN_INVALID_ARGUMENT;
 }
-/* host_page_size: a página do mOS é de 4 KiB (a mesma do vm_page_size acima) */
+/* host_page_size: a página que o processo vê (4 KiB no x86_64, 16 KiB no arm64) */
 kern_return_t host_page_size(mach_port_t host, u64 *size) {
     (void)host;
     if (!size) return KERN_INVALID_ARGUMENT;
@@ -530,7 +546,12 @@ kern_return_t mach_vm_map(mach_port_t task, u64 *addr, u64 size, u64 mask, int f
         if (r == KERN_SUCCESS) *addr = a[0];
         return (kern_return_t)r;
     }
-    void *p = mmap((flags & 1) ? 0 : (void *)*addr, size, 3, 0x1002, -1, 0);   /* anônima */
+    /* sem objeto: anônima. Sem VM_FLAGS_ANYWHERE o endereço pedido vai com MAP_FIXED.
+     * Esse caminho substitui a faixa (mmap); KERN_NO_SPACE de faixa ocupada sem
+     * VM_FLAGS_OVERWRITE vale para o caminho com objeto, no kernel. */
+    int mf = 0x1002;
+    if (!(flags & 1) && *addr) mf |= 0x10;
+    void *p = mmap((flags & 1) ? 0 : (void *)*addr, size, 3, mf, -1, 0);
     if (p == (void *)-1) return 3;                             /* KERN_NO_SPACE */
     *addr = (u64)p;
     return KERN_SUCCESS;
@@ -547,8 +568,16 @@ int munmap(void *addr, size_t len);
 kern_return_t mach_vm_deallocate(mach_port_t task, u64 addr, u64 size) {
     (void)task;
     if (!size) return KERN_SUCCESS;
-    u64 base = addr & ~0xFFFULL;
-    u64 end = (addr + size + 0xFFF) & ~0xFFFULL;
+    u64 base, end;
+#if defined(__aarch64__)
+    unsigned long long base_g, end_g;
+    a64_dealloc_span(addr, size, &base_g, &end_g);
+    base = base_g;
+    end = end_g;
+#else
+    base = addr & ~0xFFFULL;
+    end = (addr + size + 0xFFF) & ~0xFFFULL;
+#endif
     if (end < base) return KERN_INVALID_ARGUMENT;
     /* o V8 e o PartitionAlloc soltam regiões com isto. Na arena de mmap o intervalo sai de
      * verdade, senão o próximo mapeamento no mesmo endereço lia lixo. Fora dela (a imagem
@@ -702,7 +731,7 @@ kern_return_t mach_msg_receive(mach_msg_header_t *msg) { return msg ? mach_msg(m
 
 /* IOKit energia: sem informação (kIOReturnUnsupported) */
 int IOPMCopyCPUPowerStatus(void **status) { if (status) *status = 0; return (int)0xe00002c7; }
-int pthread_atfork(void (*pre)(void), void (*parent)(void), void (*child)(void)) { (void)pre; (void)parent; (void)child; return 0; }
+/* pthread_atfork fica em libc.c (junto do fork, para soltar a trava do heap no filho) */
 
 kern_return_t mach_port_destruct(mach_port_t task, mach_port_t name, int delta, u64 guard) {
     (void)task; (void)guard;

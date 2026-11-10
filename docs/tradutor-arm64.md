@@ -51,12 +51,15 @@ Rosetta, **todo** o código do processo é arm64 e a única fronteira é a das s
 - **Mapeamento de memória 1:1.** Endereço do guest = endereço do host. Loads/stores traduzidos acessam
   o ponteiro direto. Falhas viram exceção do host; o motor reconstrói o estado do guest e o runtime
   entrega SIGSEGV/SIGBUS ao handler arm64 com o `pc` exato (V8/wasm dependem disso).
-- **Modelo de memória.** O x86 (TSO) é mais forte que o ARM, então loads/stores comuns traduzem direto.
-  `LDAR/LDAPR` = load comum; `STLR` = store + `mfence` quando necessário para RCsc; `DMB/DSB` →
-  `mfence` (ou nada, quando o tipo só ordena o que o TSO já ordena). Exclusivos: `LDXR` guarda
-  (endereço, tamanho, valor); `STXR` faz `lock cmpxchg` (ou `cmpxchg16b` para 128 bits) contra o valor
-  guardado; falha devolve 1 (o ARM permite falhas espúrias; ABA é aceito, como no QEMU). LSE → `lock
-  xadd/cmpxchg` em laço.
+- **Modelo de memória.** O x86 (TSO) é mais forte que o ARM: load-load, store-store e load-store já
+  estão ordenados. `mfence` só entra onde o ARM exige store→load: `DMB`/`DSB` com `(CRm & 3) == 3`
+  (SY, ISH, NSH, OSH) e o store RCsc (`STLR` e `STLLR`; sem LORegion os dois são iguais). `DMB`/`DSB`
+  LD e ST não levam `mfence`. `SSBB`, `PSSBB` e `SB` viram `lfence`. `LDAR`/`LDAPR` são load comum.
+  Exclusivos: cada `LDXR`/`LDXP` arma uma época no intervalo exato dos bytes. Qualquer store que
+  sobreponha (inclusive o mesmo valor, na mesma thread ou em outra) faz o `STXR`/`STXP` falhar.
+  Falha espúria continua permitida. O grânulo não é a linha de cache, para dois endereços diferentes
+  não entrarem em livelock. Sinal, SVC, fork e a troca de contexto derrubam a reserva. LSE → `lock
+  xadd/cmpxchg` em laço, e o store também derruba exclusivos que cubram o endereço.
 - **PAC.** Anunciamos FEAT_PAuth com algoritmo "identidade": PAC* não alteram o ponteiro, AUT* sempre
   autenticam, XPAC* limpam nada. É uma implementação válida (o algoritmo é IMPLEMENTATION DEFINED) e
   roda arm64 e arm64e. `BLRAA/RETAA/LDRAA...` são implementados com essa semântica.
@@ -149,13 +152,13 @@ escondida como "bate":
 |---|---|
 | FMA "hardfloat": com FPSR.IXC ligado, RN e entradas normais, o QEMU calcula muladd f32/f64 com o `fma()` estático do mingw, que arredonda duas vezes | casos de FMA começam com IXC = 0 (escalar e lane 0 exatos); FMLA/FMLS/FRECPS/FCMLA vetoriais divergentes são refeitos lane a lane com as lanes anteriores zeradas (exatas, IXC limpo); o que não dá para isolar vira a coluna **FMA?**; a suíte C compara a linha `fma` só com o x86_64 |
 | não implementa SCTLR.SA0 (sp desalinhado como base) | o fuzzer só gera sp inicial alinhado; numa sequência em que um pré/pós-índice desalinha o sp, "nós FAULT com addr = sp" × "QEMU segue" corta a comparação ali; SA0 fica com os testes da INT |
-| STXR com monitor aberto não verifica alinhamento/tradução | aceita "abort" × "status 1 sem acesso" (IMPLEMENTATION DEFINED no ARM) |
+| STXR com monitor aberto não verifica alinhamento/tradução | aceita "abort" × "status 1 sem acesso" (IMPLEMENTATION DEFINED no ARM). Vale também quando o STXR* está no rascunho, depois de um BR/RET: o QEMU segue e pode dar UDF na palavra seguinte; o caso deixa de ser comparável (`regress_br_reg_d65f0160.S`) |
 | DC CVAC/CVAU/CIVAC e IC IVAU não sondam o endereço | aceita "nós FAULT" × "QEMU segue" com o resto igual; DC CVAP/CVADP o QEMU sonda: estrito |
 | DCZID_EL0 = 512 B + DZP=1 (efeito do trap do DC ZVA), CNTFRQ 62,5 MHz, contadores de tempo, PACGA (QARMA) | fora do gerador; valores do M1 ficam nos testes próprios (`int_sys.S`) |
 | `-cpu max` tem recursos que não anunciamos (SVE, SME, MTE, MOPS, AFP, XS, SPECRES, FP8, LUT, FPRCVT...) | validade pelo LLVM (abaixo): o que o LLVM com os nossos recursos não conhece tem que ser UDF; um `MSR FPCR` que deixa AH/FIZ/NEP/EBF ligados no QEMU torna o caso não comparável |
 | console de semihosting troca LF por CRLF | desfeito em `common.ps1` (troca exata) |
 | (harness) o Windows mapeia 0x7FFE0000..0x7FFEFFFF (KUSER_SHARED_DATA) em todo processo e o a64test não consegue reservar | "QEMU FAULT ali" × "nós seguimos" é tolerado |
-| (harness) UDF nosso numa palavra executada fora do caso (desvio para o rascunho, que executa dados) | se o LLVM com os nossos recursos não conhece a palavra (MTE, HBC, SM3...), o UDF conta como correto |
+| (harness) UDF nosso numa palavra executada fora do caso (desvio para o rascunho, que executa dados) | se o LLVM com os nossos recursos não conhece a palavra (MTE, HBC, SM3, CMPBR...), o UDF conta como correto, mesmo se o QEMU executa a palavra (o `-cpu max` tem o recurso) e só dá UDF mais adiante (`regress_br_reg_503c5df0.S`, `regress_dp_csel_33e9fc55.S`) |
 
 ### Fuzzing diferencial (`tools/a64fuzz.c` → `build/a64fuzz.exe`)
 
@@ -210,6 +213,16 @@ próprias `0x4D00..`, ucontext/mcontext64 do Darwin arm64, ESR, tabela de sysctl
   autenticados viram ponteiros puros), rebase com o byte alto preservado (TBI: RTTI não único da libc++),
   stubs de símbolo ausente em arm64. O runtime `/Sistema/Biblioteca/a64/a64rt.mos` entra em `A64RT_BASE` (montado
   uma vez, cópia na escrita) com uma pilha do host de 1 MiB alinhada; a thread começa nele com `rdi = a64rt_boot_t*`.
+
+  **Formatos de ponteiro encadeado.** `run_chained` aceita 2 (`DYLD_CHAINED_PTR_64`), 6 (`_64_OFFSET`), 1 (`ARM64E`,
+  rebase por vmaddr) e, no mesmo desenho de 8 bytes, 12 (ordinal de bind de 16 bits) e 13 (ordinal de 24 bits). O
+  comentário no código chama 12 de `ARM64E_USERLAND` e 13 de `ARM64E_USERLAND24`. A enum pública da Apple numera 9 como
+  `DYLD_CHAINED_PTR_ARM64E_USERLAND` e 12 como `DYLD_CHAINED_PTR_ARM64E_USERLAND24`; o formato 9 não é aceito. Não há
+  outro caso implementado: este repositório não contém os Mach-O de Codex, Cursor, Antigravity, Grok Bot, Postico,
+  WhatsApp, Chrome, Slack ou VS Code, e nenhum documento daqui registra falha de carga por um formato fora de
+  {2, 6, 1, 12, 13}. O zig 0.17.1, que gera os dylibs de teste, emite `LC_DYLD_INFO_ONLY` em `x86_64-macos` e
+  `aarch64-macos` (também com ponteiro global e import) e recusa `-Wl,-fixup_chains`. Isso não é compatibilidade com
+  todo binário da Apple.
 - **Runtime (`userland/a64rt`, `tools/build-a64rt.ps1`).** Laço `a64_run` por thread (o `rt_thread_t` mora na base
   da pilha do host: `rsp & ~(1 MiB-1)`); `svc #0x4d4f` → `int 0x80` 1:1; `svc #0x80` Darwin cru (exit/read/write/
   getpid/kill/thread_selfid/TSD; o resto SIGSYS); threads (`SYS_THREAD_CREATE` com estado guest, TPIDRRO pelo
@@ -218,9 +231,11 @@ próprias `0x4D00..`, ucontext/mcontext64 do Darwin arm64, ESR, tabela de sysctl
   interpretador: estado já no início da instrução + volta ao laço), UDF/HLT → SIGILL, BRK → SIGTRAP com o imediato
   no ESR; `THREADCTL GETSTATE` em formato arm64; `munmap`/`mach_vm_protect` invalidam traduções; fork/exec/
   posix_spawn passam pelo kernel (x86_64 ↔ arm64 nos dois sentidos). `MOS_A64_ENGINE=interp|jit` escolhe o motor.
-- **Limites conhecidos.** O kernel não aplica proteção por página, então a rede de segurança de SMC do JIT
-  (`a64_host_jit_wprotect`) fica desligada e vale o IC IVAU/`sys_icache_invalidate`; não há commpage arm64 (a
-  região baixa não é do usuário no mOS); hw.pagesize 16 KiB é o que o libSystem arm64 informa.
+- **Limites conhecidos.** A rede de SMC do JIT existe (`PTE_JWP`): página traduzida perde a escrita e a
+  falta vira invalidação. `MAP_JIT` + `pthread_jit_write_protect_np` valem por thread, só nessas faixas;
+  página MAP_JIT ainda não executada continua gravável. Não há commpage arm64 (a
+  região baixa não é do usuário no mOS). A página vista pelo processo arm64 é de 16 KiB de verdade
+  nas operações de memória (contrato em `docs/pagesize-arm64.md`); o kernel continua em 4 KiB.
 
 Testes:
 ```
@@ -230,7 +245,7 @@ build/a64rt-test/run.sh <mach-o arm64> [args]       # machotest (MOS_A64_ENGINE,
 ```
 `userland/tests-a64rt/main.cpp` (zig c++ -target aarch64-macos): threads, mutex, thread_local, sinais (raise,
 máscara, pendentes, pthread_kill, SIGSEGV com far/esr e mcontext alterado, brk, udf, sigaltstack), exceções C++
-(também dentro de thread), uname/sysctl, posix_spawn arm64→x86_64 e arm64→arm64.
+(também dentro de thread), uname/sysctl, página de 16 KiB (`pagina`), posix_spawn arm64→x86_64 e arm64→arm64.
 
 ## libSystem e bibliotecas do sistema em arm64 (frente LIBSYS)
 
@@ -288,8 +303,8 @@ funções**.
   preprocessador do `objc_setExceptionPreprocessor` e um terminate handler que chama o `NSSetUncaughtExceptionHandler` e
   imprime nome e motivo. Sem a libc++ no disco, imprime e aborta como antes.
 - Hardware visto pelo processo: sysctl do Apple Silicon (`darwin_arm64.c`, de `A64RT_SYSCTL_INTS/STRS` e
-  `A64_FEATURES`), `uname -m` = arm64, páginas de 16 KiB (`vm_page_size`, `getpagesize`, `sysconf`, `host_page_size`;
-  o mmap anônimo alinha a 16 KiB).
+  `A64_FEATURES`), `uname -m` = arm64, páginas de 16 KiB de verdade no guest (`docs/pagesize-arm64.md`:
+  `vm_page_size`, `getpagesize`, `sysconf`, `host_page_size`, mmap/mprotect/munmap e a guarda de pthread).
 
 **Demais bibliotecas.** `tools/build-libs-arm64.ps1` faz os slices arm64 (`build-libcxx.ps1`, `build-sqlite.ps1`,
 `build-icu.ps1` com `-Arch arm64` → `build\<lib>-arm64`; WebKit.framework, cujo `wk_sys` ganhou `svc #0x4d4f`) e junta
@@ -323,9 +338,8 @@ dentro de bloco do libSystem, com `catch(...)` do C++): **36/36 no arm64** (JIT 
 35/36 (só o NSInvocation x86 com argumentos na pilha).
 `userland/tests-a64libsys/dylibs.cpp`: libc++/libc++abi, sqlite, ICU e zlib carregados dos universais do disco: **6/6**.
 
-**zlib.** `tools/build-zlib.ps1` compila o fonte oficial (zlib 1.3.2, `.tools\zlib-dl`) no slice arm64; o x86_64 continua o
-bottle do Homebrew da mesma versão; o universal vai para `/usr/local/opt/zlib/lib/libz.1.dylib` (para onde o carregador
-manda `/usr/lib/libz.1.dylib`).
+**zlib.** `tools/build-zlib.ps1` compila o fonte oficial (zlib 1.3.2, `.tools\zlib-dl`) nos slices x86_64 e arm64. O
+universal fica em `/usr/lib/libz.1.dylib`. O carregador não manda mais esse nome para o bottle do Homebrew.
 
 **Pendências.** (1) Cadeia Swift: só falta rodar um app SwiftUI/Combine/Concurrency arm64 de verdade (os testes cobrem
 stdlib, runtime e Foundation). (2) Achados no x86 pela referência, fora do tradutor:
@@ -344,7 +358,7 @@ Arquivos: `jit_core.c` (cache, despachante, threads, invalidação, recuperaçã
   formato x86 (lahf/seto), r15 = `a64_cpu*`. Dentro do bloco: X0..X30/SP em 11 registradores
   do host (LRU); flags no EFLAGS em modo ADD (CF = C) ou SUB (CF = !C). Acessos à memória e
   instruções do interpretador contam como leitura de flags (estado exato em falha/saída).
-- **Exclusivos e LSE** (`jit_atom.h`): monitor do contrato (endereço, tamanho, valor), STXR = `lock cmpxchg` contra o valor guardado; CAS = `lock cmpxchg`; LDADD = `lock xadd`; SWP = `xchg`; LDCLR/LDEOR/LDSET/LDSMAX..LDUMIN = laço de `cmpxchg`; LDAPR = load. Alinhamento (atravessar 16 bytes) e SA0 como no INT, pelo caminho lento.
+- **Exclusivos e LSE** (`jit_atom.h`, `a64_xmon.c`): `LDXR`/`LDXP`/`STXR`/`STXP`/`CLREX` caem no interpretador, que arma uma época no intervalo exato (não um CAS do valor). `CAS`/`CASP`/`LDADD`/`SWP` e o restante do LSE continuam nativos (`lock cmpxchg`/`xadd`/`xchg`, laço de `cmpxchg`) e avisam o monitor em todo store. `LDAPR` é load. Alinhamento (atravessar 16 bytes) e SA0 como no INT, pelo caminho lento.
 - **FP** (`jit_simd.h`): escalar S/D e vetorial 4S/2S/2D com SSE/FMA3 só quando FPCR = RN e FZ = 0, sem flag do x86 além de PE e com resultado (cada lane) normal, finito e não-NaN; senão a instrução inteira vai ao interpretador. PE → IXC. FCMP/FCCMP: sem NaN (ucomis) e FZ = 0, NZCV montado direto em `reserved[14]`; FCSEL é seleção de bits. FCVTZS/ZU com faixa conferida nos bits (cvtt trunca como o ARM), SCVTF/UCVTF em RN, FCVT S↔D. FABS/FNEG/FMOV são operações de bits. MXCSR do host fica em 0x1F80.
 - **Chamada leve**: SIMD/FP sem emissão nativa que só toca registradores V e FPCR/FPSR chama `a64_interp_exec` direto (`jit_h_exec`), gravando os GPRs sujos e descartando só os voláteis da ABI; UDF vai ao caminho lento. Ficam fora as classes que escrevem GPR ou NZCV.
 - **Estatística do interpretador**: `a64_jit_fbstat(1)` + `a64_jit_fbstat_dump` (o runtime liga com `MOS_A64_DEBUG`; no harness `A64JIT_FBSTAT=1`) contam por classe de codificação o que ainda vai ao interpretador — é o guia para a próxima emissão nativa.
@@ -358,7 +372,9 @@ Arquivos: `jit_core.c` (cache, despachante, threads, invalidação, recuperaçã
   indiretas (u64 de `reserved[15]`: baixo = runtime, alto = JIT).
 - **Multithread**: cache compartilhado, trava global para tradução/encadeamento/invalidação;
   código só é reaproveitado no esvaziamento total, com todas as threads fora (quiescência).
-- **Invalidação**: `a64_invalidate`/IC IVAU por intervalo (índice por página). Rede de
+- **Invalidação**: `a64_invalidate`/IC IVAU por intervalo (índice por página). O cache de saltos
+  publica o ponteiro de código e só depois o pc; quem lê confere o pc de novo antes de saltar, e a
+  invalidação dá um chute nas threads antes de soltar a trava. Rede de
   segurança: páginas com código traduzido ficam sem escrita; a falha de escrita devolve a
   escrita, agenda a invalidação e expulsa as threads. Depois de 4 vezes a página vira
   "volátil" e seus blocos conferem o próprio código na entrada.
@@ -373,7 +389,7 @@ Arquivos: `jit_core.c` (cache, despachante, threads, invalidação, recuperaçã
 
 Testes: `jit_fault_{mid,sub,pair,ldp,q,ld1}` (falha no meio do bloco, STP/LDP/LDP Q/ST1
 parciais), `jit_sa0`, `jit_ldar`, `jit_pairs`, `jit_smc` (IC IVAU e só rede de segurança),
-`jit_smc_wp`, `jit_badpc`, `jit_udf_first`, `jit_atomics`, `jit_xpair`, `jit_fp`, `jit_fcmp`, `jit_cvt`, `jit_fpv`, `jit_fpsr`, `jit_neon`, `jit_neon2`, `jit_neon3`, `jit_neon4`, `jit_ldn`, `jit_crypto`, `jit_sha`, `jit_f16`, `jit_fpv_fma`, `jit_xpair_tam`, `jit_bench_int`, `jit_bench_mem`, `jit_bench_call`.
+`jit_smc_wp`, `jit_v8` (duas funções na mesma página; reescrita parcial), `jit_badpc`, `jit_udf_first`, `jit_atomics`, `jit_xpair`, `jit_fp`, `jit_fcmp`, `jit_cvt`, `jit_fpv`, `jit_fpsr`, `jit_neon`, `jit_neon2`, `jit_neon3`, `jit_neon4`, `jit_ldn`, `jit_crypto`, `jit_sha`, `jit_f16`, `jit_fpv_fma`, `jit_xpair_tam`, `jit_bench_int`, `jit_bench_mem`, `jit_bench_call`.
 
 Desempenho (harness no Windows, instruções contadas pelo interpretador):
 

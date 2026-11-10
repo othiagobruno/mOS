@@ -11,8 +11,9 @@
  *  - Keychain de senhas (kSecClassGenericPassword e kSecClassInternetPassword): SecItemAdd/CopyMatching/Update/
  *    Delete (kSecReturnData/Attributes/Ref, kSecMatchLimitOne/All) e a API antiga SecKeychainFindGenericPassword/
  *    AddGenericPassword/ItemModifyAttributesAndData/ItemDelete/ItemFreeContent. Os itens ficam em
- *    $HOME/Library/Keychains/mos-keychain.txt (uma linha por item, campos em hexadecimal) — SEM criptografia: o mOS
- *    ainda não tem senha de sessão nem chave do sistema para cifrar; o arquivo é do usuário, como o resto do $HOME.
+ *    $HOME/Library/Keychains/mos-keychain.txt. A versão 2 do arquivo é ciphertext (HMAC em modo
+ *    contador + MAC). A chave sai do nome de login, não de uma senha: ver kcseal.inc.
+ *    A versão 1 (texto) ainda é lida e, na gravação seguinte, vira versão 2.
  *  - SecCertificateCreateWithData/CopyData (o certificado é o DER num CFData), SecCopyErrorMessageString.
  * O que responde "indisponível" com o erro que a API documenta (regra de chrome.c: nunca 0/sucesso sem preencher):
  *  - assinatura de código: o mOS não verifica assinaturas; todo código é "não assinado" (errSecCSUnsigned). As
@@ -147,6 +148,8 @@ static kitem_t *items;
 static int nitems, capitems;
 static u32 next_id = 1;
 static int loaded;
+static int kc_blocked; /* versão 2 com MAC ruim: não sobrescreve o arquivo */
+#include "kcseal.inc"
 static volatile int klock;
 static void lock(void) { while (__sync_lock_test_and_set(&klock, 1)) ; }
 static void unlock(void) { __sync_lock_release(&klock); }
@@ -243,6 +246,20 @@ static void load(void) {
     }
     close(fd);
     if (!buf) return;
+    if (len >= 15 && !memcmp(buf, "mOS-keychain 2\n", 15)) {
+        u8 key[32];
+        char login[96];
+        u8 *plain = 0;
+        u32 pn = 0;
+        kc_login(login, sizeof login);
+        kc_key_from(login, key);
+        int r = kc_open(key, (const u8 *)buf, (u32)len, &plain, &pn);
+        memset(key, 0, sizeof key);
+        free(buf);
+        if (r != 0 || !plain) { kc_blocked = 1; return; }
+        buf = (char *)plain;
+        len = pn;
+    }
     const char *p = buf, *e = buf + len;
     if (len < 15 || memcmp(p, "mOS-keychain 1\n", 15)) { free(buf); return; }
     p += 15;
@@ -269,6 +286,7 @@ static void load(void) {
 
 /* grava num arquivo temporário e troca por rename (o arquivo nunca fica pela metade) */
 static OSStatus save(void) {
+    if (kc_blocked) return errSecNotAvailable;
     char path[512], tmp[520];
     keychain_path(path, sizeof path, 1);
     cx_snprintf(tmp, sizeof tmp, "%s.tmp", path);
@@ -289,16 +307,29 @@ static OSStatus save(void) {
         for (int j = 0; j < NFIELD; j++) { *o++ = ' '; put_hex(&o, it->f[j], it->fl[j], it->f[j] != 0); }
         *o++ = '\n';
     }
+    size_t plain_n = (size_t)(o - out);
+    u8 key[32];
+    char login[96];
+    u8 *sealed = 0;
+    u32 sn = 0;
+    kc_login(login, sizeof login);
+    kc_key_from(login, key);
+    int sealed_ok = kc_seal(key, (const u8 *)out, (u32)plain_n, &sealed, &sn);
+    memset(key, 0, sizeof key);
+    memset(out, 0, plain_n);
+    free(out);
+    if (sealed_ok != 0 || !sealed) return errSecAllocate;
     int fd = open(tmp, MAC_O_WRONLY | MAC_O_CREAT | MAC_O_TRUNC, 0600);
-    if (fd < 0) { free(out); return errSecNotAvailable; }
-    size_t total = (size_t)(o - out), done = 0;
+    if (fd < 0) { free(sealed); return errSecNotAvailable; }
+    size_t total = sn, done = 0;
     while (done < total) {
-        ssize_t k = write(fd, out + done, total - done);
+        ssize_t k = write(fd, sealed + done, total - done);
         if (k <= 0) break;
         done += (size_t)k;
     }
     close(fd);
-    free(out);
+    memset(sealed, 0, sn);
+    free(sealed);
     if (done != total) { unlink(tmp); return errSecNotAvailable; }
     if (rename(tmp, path) != 0) { unlink(path); if (rename(tmp, path) != 0) return errSecNotAvailable; }
     return errSecSuccess;

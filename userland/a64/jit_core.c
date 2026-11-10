@@ -188,6 +188,7 @@ static void jc_clear(jthr *t) {
 }
 
 static jthr *thr_get(a64_cpu *c) {
+    a64_xmon_bind(c);
     jthr *t = (jthr *)c->jit;
     if (t) return t;
     for (t = J.threads; t; t = t->next)        /* a mesma CPU (quem chamou zerou o a64_cpu) */
@@ -228,6 +229,12 @@ void a64_jit_thread_exit(a64_cpu *c) {
 static inline volatile a64_u32 *stop_lo(a64_cpu *c) { return (volatile a64_u32 *)&c->reserved[15]; }
 static inline volatile a64_u32 *stop_hi(a64_cpu *c) { return (volatile a64_u32 *)&c->reserved[15] + 1; }
 
+/* Chute para quem já está dentro de um bloco. O código gerado olha este pedido na fronteira:
+ * a aresta interna do laço sem memória (emit_backedge), o jmp remendado que volta ao início do
+ * traço (emit_exit com alvo <= pc0), o salto indireto e o RET. Todos conferem reserved[15] inteiro
+ * (este bit alto) antes de saltar direto. Um elo remendado que não volta ao início é zerado por
+ * kill_block e cai no despachante na próxima passagem. Um desvio para a frente já encadeado não
+ * confere: essa cadeia pode acabar o bloco corrente (até 64 instruções, sem cruzar página). */
 static void kick_all(void) {
     for (jthr *t = J.threads; t; t = t->next) {
         a64_cpu *c = t->cpu;
@@ -247,7 +254,9 @@ static void kill_block(jblk *b) {           /* J.lock tomada */
     b->in = NULL;
     for (jthr *t = J.threads; t; t = t->next) {
         jc_ent *e = &t->jc[hjc(b->pc)];
-        if (e->pc == b->pc) __atomic_store_n(&e->pc, ~0ull, __ATOMIC_RELEASE);
+        /* pc publicado por último: quem leu o ponteiro de código confere pc de novo antes de saltar */
+        if (__atomic_load_n(&e->pc, __ATOMIC_RELAXED) == b->pc)
+            __atomic_store_n(&e->pc, ~0ull, __ATOMIC_RELEASE);
     }
 }
 
@@ -263,7 +272,7 @@ static void inval_page(jpage *p, a64_u64 lo, a64_u64 hi) {   /* J.lock e wplock 
     jblk **pp = &p->blocks;
     while (*pp) {
         jblk *b = *pp;
-        if (!b->dead && b->pc < hi && b->end > lo) kill_block(b);
+        if (!b->dead && b->lo < hi && b->hi > lo) kill_block(b);
         if (b->dead) *pp = b->pgnext[PGI(b, p)]; else pp = &b->pgnext[PGI(b, p)];
     }
 }
@@ -300,6 +309,10 @@ void a64_jit_invalidate(a64_u64 addr, a64_u64 len) {
         }
     }
     ulk(&J.wplock);
+    /* os blocos já estão mortos e os pc do cache em ~0. A barreira e o chute acontecem antes de
+     * soltar J.lock: a thread que acordar não traduz o intervalo velho. */
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);
+    kick_all();
     ulk(&J.lock);
 }
 
@@ -403,9 +416,13 @@ static void gen_stubs(xb *b) {
     x_shift_ri(b, 0, S_SHL, XDX, 4);
     x_alu_rm(b, 1, A_CMP, XAX, XMI(XCX, XDX, 0, 0));
     a64_u8 *j2 = x_jcc32(b, CC_NE);
-    x_jmp_m(b, XMI(XCX, XDX, 0, 8));
+    x_mov_rm(b, 1, XSI, XMI(XCX, XDX, 0, 8));          /* lê o código e só então confere o pc de novo */
+    x_alu_rm(b, 1, A_CMP, XAX, XMI(XCX, XDX, 0, 0));
+    a64_u8 *j3 = x_jcc32(b, CC_NE);
+    x_jmp_r(b, XSI);
     x_patch32(j1, b->p);
     x_patch32(j2, b->p);
+    x_patch32(j3, b->p);
     x_mov_mr(b, 1, XM(RCPU, OFF_PC), XAX);
     x_mov_ri(b, XAX, JX_IND);
     x_jmp_to(b, jit_g.g_exit);
@@ -644,7 +661,9 @@ static int jit_loop(a64_cpu *c, jthr *t) {
             return A64_EXIT_STOP;
         }
         __atomic_store_n(&t->in_jit, 1, __ATOMIC_SEQ_CST);
-        if (__builtin_expect(J.flush_active || J.pending || *stop_hi(c), 0)) {
+        if (__builtin_expect(__atomic_load_n(&J.flush_active, __ATOMIC_ACQUIRE)
+                              || __atomic_load_n(&J.pending, __ATOMIC_ACQUIRE)
+                              || __atomic_load_n(stop_hi(c), __ATOMIC_ACQUIRE), 0)) {
             __atomic_store_n(&t->in_jit, 0, __ATOMIC_SEQ_CST);
             while (__atomic_load_n(&J.flush_active, __ATOMIC_SEQ_CST)) __builtin_ia32_pause();
             if (J.pending) { lk(&J.lock); process_pending(); ulk(&J.lock); }
@@ -652,7 +671,12 @@ static int jit_loop(a64_cpu *c, jthr *t) {
             continue;
         }
         jc_ent *e = &t->jc[hjc(c->pc)];
-        void *code = (e->pc == c->pc) ? e->code : NULL;
+        a64_u64 jpc = __atomic_load_n(&e->pc, __ATOMIC_ACQUIRE);
+        void *code = NULL;
+        if (jpc == c->pc) {
+            code = __atomic_load_n(&e->code, __ATOMIC_ACQUIRE);
+            if (__atomic_load_n(&e->pc, __ATOMIC_ACQUIRE) != c->pc) code = NULL;
+        }
         if (!code) {
             __atomic_store_n(&t->in_jit, 0, __ATOMIC_SEQ_CST);
             a64_u64 pc = c->pc;
@@ -661,7 +685,10 @@ static int jit_loop(a64_cpu *c, jthr *t) {
             t->translating = 1;
             jblk *b = get_block(t, pc);
             t->translating = 0;
-            if (b) { e->code = b->code; __atomic_store_n(&e->pc, pc, __ATOMIC_RELEASE); }
+            if (b) {
+                __atomic_store_n(&e->code, b->code, __ATOMIC_RELAXED);
+                __atomic_store_n(&e->pc, pc, __ATOMIC_RELEASE);
+            }
             ulk(&J.lock);
             if (!b) { c->nzcv = jit_x86_to_nzcv(JIT_F(c)); return a64_interp_run(c, 0); }
             continue;                           /* volta ao topo: in_jit e pedidos conferidos de novo */
@@ -688,7 +715,11 @@ static int jit_loop(a64_cpu *c, jthr *t) {
                     __atomic_store_n((int32_t *)site, (int32_t)(dst->code - (site + 4)), __ATOMIC_RELEASE);
                 }
             }
-            if (dst) { jc_ent *f = &t->jc[hjc(dst->pc)]; f->code = dst->code; __atomic_store_n(&f->pc, dst->pc, __ATOMIC_RELEASE); }
+            if (dst) {
+                jc_ent *f = &t->jc[hjc(dst->pc)];
+                __atomic_store_n(&f->code, dst->code, __ATOMIC_RELAXED);
+                __atomic_store_n(&f->pc, dst->pc, __ATOMIC_RELEASE);
+            }
             ulk(&J.lock);
             break;
         }
@@ -733,7 +764,7 @@ bool a64_jit_recover(a64_cpu *c, const a64_hostctx *h) {
     if (!b) {
         /* fora dos blocos: helper do interpretador (estado já sincronizado em c) ou despachante */
         if (t && t->in_run) c->nzcv = jit_x86_to_nzcv(JIT_F(c));
-        if (t) t->in_jit = 0;
+        if (t) __atomic_store_n(&t->in_jit, 0, __ATOMIC_SEQ_CST);
         return false;
     }
     a64_u32 off = (a64_u32)(rip - b->code);
@@ -743,14 +774,14 @@ bool a64_jit_recover(a64_cpu *c, const a64_hostctx *h) {
         c->pc = b->pc;
         c->nzcv = jit_x86_to_nzcv(JIT_F(c));
     } else {
-        c->pc = b->pc + 4ull * f->idx;
+        c->pc = f->gpc;
         for (int r = 0; r < 16; r++) if (f->map[r] != 0xFF) c->x[f->map[r]] = h->gpr[r];
         int fe = f->fl & 3;
         if (fe) c->nzcv = jit_rflags_to_nzcv(h->rflags, fe == 2);
         else c->nzcv = jit_x86_to_nzcv(JIT_F(c));
     }
     JIT_F(c) = jit_nzcv_to_x86(c->nzcv);
-    if (t) t->in_jit = 0;
+    if (t) __atomic_store_n(&t->in_jit, 0, __ATOMIC_SEQ_CST);
     return true;
 }
 
@@ -783,14 +814,16 @@ void a64_jit_abort(a64_cpu *c) {
 
 /* filho de fork: só sobrou a thread que chamou fork. Travas que outra thread do pai segurava e
  * marcas "dentro do JIT" dela não valem mais; as estruturas dessas threads viram livres (são
- * reaproveitadas). Chamar antes de qualquer outra função do JIT no filho (e depois descartar as
- * traduções com a64_invalidate(0, ~0ull), como o runtime faz). */
+ * reaproveitadas). O cache em si fica: as páginas de código guest continuam com PTE_JWP, e a
+ * primeira escrita em cada processo vira SIGBUS. Invalidações que o pai ainda não tinha aplicado
+ * são feitas agora, senão o filho executaria tradução de bytes que já mudaram. */
 void a64_jit_fork_child(a64_cpu *self) {
     J.lock = 0;
     J.wplock = 0;
     init_lock = 0;
     J.flush_active = 0;
     for (jthr *t = J.threads; t; t = t->next) {
+        t->saved_rsp = 0;
         t->in_jit = 0;
         t->in_run = 0;
         t->translating = 0;
@@ -799,6 +832,11 @@ void a64_jit_fork_child(a64_cpu *self) {
             t->cpu = NULL;
             t->live = 0;
         }
+    }
+    if (J.inited && __atomic_load_n(&J.pending, __ATOMIC_ACQUIRE)) {
+        lk(&J.lock);
+        process_pending();
+        ulk(&J.lock);
     }
 }
 

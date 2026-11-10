@@ -166,4 +166,5 @@ void cx_compat_objc_extra_init(void) {
     add("NSFileManager", "ubiquityIdentityToken", (void *)ret_nil, 0);   /* sem iCloud: nil, como sem conta */
     (void)ret_self;
     { extern void cx_screencapturekit_init(void); cx_screencapturekit_init(); }   /* screencapturekit.c */
+    { extern void cx_avcapture_init(void); cx_avcapture_init(); }                 /* avcapture.c */
 }

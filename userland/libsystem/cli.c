@@ -6,7 +6,7 @@
  * Regra (a mesma de chrome.c/security.c): quando o mOS não tem o recurso, devolve o erro que a API documenta,
  * nunca sucesso sem preencher a saída. O que funciona de verdade: termios guardado por processo (tcgetattr/
  * tcsetattr/cfmakeraw), proc_pidpath/proc_listchildpids pela lista de processos do kernel, waitid sobre waitpid,
- * killpg, strsignal, umask, CFError, CFURL (as que faltavam em nsurl.c), CFTimeZone, CFPreferences vazio,
+ * killpg, strsignal, umask, CFError, CFURL (as que faltavam em nsurl.c), CFTimeZone, CFPreferences (prefs.c),
  * proxies = "sem proxy", FSEvents = fluxo que nunca dispara (o mOS ainda não notifica mudanças no disco).
  */
 #include "sys.h"
@@ -362,8 +362,7 @@ id_ CFTimeZoneCopySystem(void) {
 }
 id_ CFTimeZoneGetName(id_ tz) { return tz; }
 void CFTimeZoneResetSystem(void) {}
-id_ CFPreferencesCopyAppValue(id_ key, id_ app) { (void)key; (void)app; return 0; }
-unsigned char CFPreferencesAppSynchronize(id_ app) { (void)app; return 1; }
+/* CFPreferencesCopyAppValue / CFPreferencesAppSynchronize: prefs.c */
 
 /* ================================================================ FSEvents: o fluxo existe e pode ser iniciado, mas
  * nunca entrega eventos (o mOS ainda não notifica mudanças no disco). Quem precisa de eventos verifica de novo

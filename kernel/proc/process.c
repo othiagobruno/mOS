@@ -207,6 +207,9 @@ bool uvm_map(process_t *p, u64 va, u64 len) {
  * SO). A primeira escrita (falta de página) copia a página se ela ainda tiver mais de um dono.
  * pref[] conta os donos de cada página física (0 = um dono só). */
 #define PTE_COW (1ULL << 9)
+#define PTE_JWP (1ULL << 10)   /* JIT arm64: página de código traduzido, sem escrita (uvm_jit_wprotect) */
+#define PTE_SHARED (1ULL << 11) /* MAP_SHARED: a mesma página física nos dois lados, sem COW */
+#define PTE_NX (1ULL << 63)     /* só vale com EFER.NXE (mm/memory.c); o mapa do kernel não usa este bit */
 static u16 *pref;
 static u64 pref_n;
 
@@ -271,11 +274,12 @@ static void vm_flush(process_t *p, u64 va) {
 
 static bool cow_break(process_t *p, u64 *e, u64 va) {
     u64 phys = *e & PTE_ADDR;
+    u64 nx = *e & PTE_NX;
     if (page_refs(phys) > 1) {
         u64 np = pmm_alloc(1);
         if (!np) return false;
         memcpy((void *)np, (void *)phys, 4096);
-        *e = np | PTE_P | PTE_RW | PTE_U;
+        *e = np | PTE_P | PTE_RW | PTE_U | nx;
         vm_flush(p, va);                                /* nenhuma CPU pode continuar lendo a original... */
         /* ...antes de largar a referência a ela: se o outro dono a largou enquanto copiávamos, esta era a última
          * e a página é liberada (antes, pref[]-- deixava a página órfã nesse caso) */
@@ -283,6 +287,25 @@ static bool cow_break(process_t *p, u64 *e, u64 va) {
         return true;
     }
     *e = (*e | PTE_RW) & ~PTE_COW;
+    vm_flush(p, va);
+    return true;
+}
+
+/* fork de página PTE_JWP: a cópia fica privada, ainda sem escrita e com JWP. A falta segue para o
+ * runtime (SIGBUS), que invalida só as traduções deste processo. O outro lado permanece protegido. */
+static bool cow_split_jwp(process_t *p, u64 *e, u64 va) {
+    u64 phys = *e & PTE_ADDR;
+    u64 nx = *e & PTE_NX;
+    if (page_refs(phys) > 1) {
+        u64 np = pmm_alloc(1);
+        if (!np) return false;
+        memcpy((void *)np, (void *)phys, 4096);
+        *e = np | PTE_P | PTE_U | PTE_JWP | nx;
+        vm_flush(p, va);
+        page_put(phys);
+        return true;
+    }
+    *e = (*e | PTE_JWP) & ~(PTE_RW | PTE_COW);
     vm_flush(p, va);
     return true;
 }
@@ -304,6 +327,51 @@ bool uvm_map_phys(process_t *p, u64 va, u64 phys, bool rw) {
     p->mem_pages++;
     vm_flush(p, va);
     return true;
+}
+
+/* Solta [a, a+len) sem devolver o endereço ao cursor (mmap_next). mmap MAP_FIXED e
+ * mach_vm_map com VM_FLAGS_OVERWRITE substituem a faixa: o MAP_SHARED grava de volta
+ * antes (lazy_sync), a faixa lazy é furada e as PTEs saem. A ordem é a do munmap,
+ * para o writeback ainda enxergar a página. */
+void mm_release_span(process_t *p, u64 a, u64 len) {
+    extern void lazy_sync(process_t *p, u64 va, u64 len, int only_last);
+    extern void lazy_remove(process_t *p, u64 va, u64 len);
+    if (!p || !len || a + len < a) return;
+    lazy_sync(p, a, len, 0);
+    lazy_remove(p, a, len);
+    u64 gone[64];
+    int ng = 0;
+    for (u64 va = a; va < a + len; ) {
+        u64 *e = walk(p, va, false);
+        if (!e) { va = (va + 0x200000) & ~0x1FFFFFULL; continue; }
+        if (*e & PTE_P) {
+            gone[ng++] = *e & 0x000FFFFFFFFFF000ULL;
+            p->mem_pages--;
+            __asm__ volatile("invlpg (%0)" :: "r"(va) : "memory");
+        }
+        *e = 0;
+        va += 4096;
+        if (ng == 64 || (ng && va >= a + len)) {
+            smp_tlb_shootdown((u64)p->pml4);
+            for (int k = 0; k < ng; k++) page_put(gone[k]);
+            ng = 0;
+        }
+    }
+    if (ng) { smp_tlb_shootdown((u64)p->pml4); for (int k = 0; k < ng; k++) page_put(gone[k]); }
+}
+
+/* 1 se alguma página de [a, a+len) tem PTE presente ou faixa lazy. */
+int mm_span_taken(process_t *p, u64 a, u64 len) {
+    extern bool lazy_overlaps(process_t *p, u64 va, u64 len);
+    if (!p || !len || a + len < a) return 0;
+    if (lazy_overlaps(p, a, len)) return 1;
+    for (u64 va = a; va < a + len; ) {
+        u64 *e = walk(p, va, false);
+        if (!e) { va = (va + 0x200000) & ~0x1FFFFFULL; continue; }
+        if (*e & PTE_P) return 1;
+        va += 4096;
+    }
+    return 0;
 }
 
 /* imagens Mach-O compartilhadas entre processos (macho.c, icache): as mesmas páginas físicas em cópia-na-escrita, como
@@ -342,12 +410,57 @@ bool uvm_install(process_t *p, u64 va, u64 phys) {
 }
 u16 uvm_page_refs(u64 phys) { return page_refs(phys); }
 
+/* MAP_SHARED: a página do cache ganha mais um dono e entra com PTE_SHARED (o fork não a transforma em COW).
+ * prot: bit 1 leitura, bit 2 escrita, bit 4 execução. Sem execução, bit 63 (NX). No x86 a página presente
+ * continua legível: não há bit de "só escrita" nem de PROT_NONE. */
+bool uvm_map_shared(process_t *p, u64 va, u64 phys, u8 prot) {
+    if (!pref_ready()) return false;
+    u64 *e = walk(p, va & ~0xFFFULL, true);
+    if (!e) return false;
+    if (*e & PTE_P) return true;
+    page_ref_inc(phys);
+    u64 bits = PTE_P | PTE_U | PTE_SHARED;
+    if (prot & 2) bits |= PTE_RW;
+    if (!(prot & 4)) bits |= PTE_NX;
+    *e = (phys & PTE_ADDR) | bits;
+    p->mem_pages++;
+    vm_flush(p, va);
+    return true;
+}
+
+/* mprotect de verdade. Página COW não ganha RW (a escrita ainda copia). Página JWP sem escrita fica JWP;
+ * mprotect com escrita desfaz o JWP. O bit de execução liga ou tira o NX. Página ausente fica para a falta. */
+bool uvm_protect(process_t *p, u64 va, u64 len, u8 prot) {
+    u64 end = va + len;
+    if (end < va) return false;
+    for (u64 a = va & ~0xFFFULL; a < end; ) {
+        u64 *e = walk(p, a, false);
+        if (!e) { a = (a + 0x200000) & ~0x1FFFFFULL; continue; }
+        if ((*e & PTE_P) && (*e & PTE_U)) {
+            if (*e & PTE_JWP) {
+                if (prot & 2) {
+                    if ((*e & PTE_COW) && !cow_break(p, e, a)) return false;
+                    *e = (*e | PTE_RW) & ~PTE_JWP;
+                }
+            } else if (!(*e & PTE_COW)) {
+                if (prot & 2) *e |= PTE_RW;
+                else *e &= ~PTE_RW;
+            }
+            if (prot & 4) *e &= ~PTE_NX;
+            else *e |= PTE_NX;
+            vm_flush(p, a);
+        }
+        a += 4096;
+    }
+    return true;
+}
+
 /* Rede de segurança do JIT do tradutor arm64 (userland/a64rt, MACH_VM_JIT_WPROTECT): página com código traduzido
  * perde a escrita na PTE e ganha o bit PTE_JWP (10, livre para o SO); a escrita do programa vira falta de proteção →
  * SIGBUS no tratador do runtime, que devolve a escrita (op 0), invalida as traduções e repete a instrução. Páginas
- * COW ficam de fora (op 1 devolve 0): devolver a escrita a uma página compartilhada a escreveria para todos. No fork
- * uma página PTE_JWP vai para os dois lados como COW (cow_copy_level). */
-#define PTE_JWP (1ULL << 10)
+ * COW ficam de fora de op 1 (devolver a escrita a uma página compartilhada a escreveria para todos). op 0 numa
+ * página COW primeiro a torna privada. No fork a página segue com JWP e COW (cow_copy_level); a escrita quebra
+ * a cópia sem devolver a escrita e o SIGBUS avisa o runtime daquele processo. */
 int uvm_jit_wprotect(process_t *p, u64 va, int op) {
     va &= ~0xFFFULL;
     u64 *e = uvm_pte(p, va);
@@ -360,10 +473,69 @@ int uvm_jit_wprotect(process_t *p, u64 va, int op) {
         return 1;
     }
     if (*e & PTE_JWP) {
+        if ((*e & PTE_COW) && !cow_break(p, e, va)) return 0;
         *e = (*e | PTE_RW) & ~PTE_JWP;
         vm_flush(p, va);
     }
     return 1;
+}
+
+/* MACH_VM_REMAP sem cópia: o mesmo físico em outro endereço virtual, os dois no mesmo processo.
+ * A vista nova nasce gravável. Se a origem era COW, vira privada antes: senão a escrita no apelido
+ * copiaria só uma das PTEs e as duas deixariam de ver os mesmos bytes. O fork (T4) ainda pode
+ * separar o par, porque cada PTE vira COW por conta própria. */
+bool lazy_fault(process_t *p, u64 va);
+static void alias_drop(process_t *p, u64 va, u64 n) {
+    for (u64 a = va; a < va + n; a += 4096) {
+        u64 *e = walk(p, a, false);
+        if (!e || !(*e & PTE_P)) continue;
+        u64 pg = *e & PTE_ADDR;
+        *e = 0;
+        if (p->mem_pages) p->mem_pages--;
+        uvm_page_put(pg);
+        vm_flush(p, a);
+    }
+}
+int uvm_alias_map(process_t *p, u64 *dst_io, u64 src, u64 len) {
+    if (!p || !dst_io || !len || (len & 0xFFF) || (src & 0xFFF) || len > (1ull << 30)) return -MOS_EINVAL;
+    if (src < USER_BASE || src + len > USER_END || src + len < src) return -MOS_EINVAL;
+    u64 dst = *dst_io;
+    if (dst & 0xFFF) return -MOS_EINVAL;
+    if (!dst) {
+        if (!p->mmap_next) p->mmap_next = USER_MMAP_BASE;
+        u64 at = p->mmap_next;
+        int found = 0;
+        for (int t = 0; t < 64; t++) {
+            if (at < USER_MMAP_BASE || at + len > USER_END || at + len < at) return -MOS_ENOMEM;
+            int free = 1;
+            for (u64 a = at; a < at + len; a += 4096) if (uvm_pte(p, a)) { free = 0; break; }
+            if (free) { dst = at; found = 1; break; }
+            at += len + 4096;
+        }
+        if (!found) return -MOS_ENOMEM;
+    } else if (dst < USER_BASE || dst + len > USER_END || dst + len < dst) {
+        return -MOS_EINVAL;
+    } else {
+        for (u64 a = dst; a < dst + len; a += 4096) if (uvm_pte(p, a)) return -MOS_EINVAL;
+    }
+    if (!(dst + len <= src || src + len <= dst)) return -MOS_EINVAL;
+    u64 done = 0;
+    for (u64 i = 0; i < len; i += 4096) {
+        u64 sva = src + i;
+        u64 *e = uvm_pte(p, sva);
+        if (!e && lazy_fault(p, sva)) e = uvm_pte(p, sva);
+        if (!e) { alias_drop(p, dst, done); return -MOS_ENOMEM; }
+        if ((*e & PTE_COW) && !cow_break(p, e, sva)) { alias_drop(p, dst, done); return -MOS_ENOMEM; }
+        e = uvm_pte(p, sva);
+        if (!e || !uvm_map_phys(p, dst + i, *e & PTE_ADDR, true)) {
+            alias_drop(p, dst, done);
+            return -MOS_ENOMEM;
+        }
+        done += 4096;
+    }
+    if (!*dst_io && dst + len + 4096 > p->mmap_next) p->mmap_next = dst + len + 4096;
+    *dst_io = dst;
+    return 0;
 }
 /* página COW (fork, imagem compartilhada) vira privada antes de ir, com escrita, para outro processo
  * (mach_make_memory_entry de uma faixa existente): senão o outro escreveria na cópia de todos */
@@ -432,8 +604,10 @@ static bool cow_copy_level(process_t *dst, u64 *s, u64 *d, int level) {
     for (int i = 0; i < 512; i++) {
         if (!(s[i] & PTE_P)) continue;
         if (level == 1) {
-            if (s[i] & PTE_RW) s[i] = (s[i] & ~PTE_RW) | PTE_COW;
-            if (s[i] & (1ULL << 10)) s[i] = (s[i] & ~(1ULL << 10)) | PTE_COW;   /* PTE_JWP (JIT arm64): era gravável */
+            if (s[i] & PTE_SHARED) {
+                /* MAP_SHARED: os dois lados escrevem na mesma página. Não vira COW. */
+            } else if (s[i] & PTE_JWP) s[i] = (s[i] & ~PTE_RW) | PTE_COW;   /* código traduzido: segue sem escrita e com JWP */
+            else if (s[i] & PTE_RW) s[i] = (s[i] & ~PTE_RW) | PTE_COW;
             page_ref_inc(s[i] & PTE_ADDR);
             d[i] = s[i];
             dst->mem_pages++;
@@ -568,6 +742,9 @@ static void finish(process_t *p, int code) {
     if (p->exited) return;
     p->exited = true;
     p->exit_code = code;
+    p->stopped = 0;
+    p->stop_unreported = 0;
+    p->cont_unreported = 0;
     drop_pipe_waiters(p, NULL);
     for (thread_t *t = sched_threads(); t; t = t->next)   /* todas as threads do processo */
         if (t->proc == p) {
@@ -832,10 +1009,14 @@ static u64 proc_fault_(int_frame_t *f, u64 cr2) {
     thread_t *t = thread_current();
     process_t *p = t->proc;
     if (!p) return (u64)f;
-    /* escrita numa página compartilhada depois do fork: copia e repete a instrução */
+    /* escrita numa página compartilhada depois do fork: copia e repete a instrução. Página de código
+     * traduzido (JWP) fica privada ainda sem escrita; o SIGBUS abaixo avisa o runtime deste processo. */
     if (f->vector == 14 && (f->error & 7) == 7) {
         u64 *e = uvm_pte(p, cr2);
-        if (e && (*e & PTE_COW) && cow_break(p, e, cr2)) return (u64)f;
+        if (e && (*e & PTE_COW)) {
+            if (*e & PTE_JWP) cow_split_jwp(p, e, cr2);
+            else if (cow_break(p, e, cr2)) return (u64)f;
+        }
     }
     /* página ausente numa faixa de memória sob demanda (mmap anônimo, kernel/mm/lazy.c): página zerada e repete */
     if (f->vector == 14 && !(f->error & 1)) {
@@ -844,10 +1025,15 @@ static u64 proc_fault_(int_frame_t *f, u64 cr2) {
     }
     /* falta espúria (SMP): outro núcleo mapeou a página ou quebrou o COW entre a falta e esta trava, ou a TLB deste
      * núcleo ainda tinha a entrada velha. Se a página agora permite o acesso, invalida a entrada local e repete.
-     * Sem isto o marcador concorrente do V8 (lock cmpxchg no bitmap de marcação) matava o Claude.app. */
+     * Sem isto o marcador concorrente do V8 (lock cmpxchg no bitmap de marcação) matava o Claude.app.
+     * Busca de instrução com NX não repete: senão a falta de uma página não executável não acaba nunca. */
     if (f->vector == 14 && cr2 >= USER_BASE && cr2 < USER_END) {
         u64 *e = uvm_pte(p, cr2);
-        if (e && (*e & PTE_P) && (*e & PTE_U) && (!(f->error & 2) || ((*e & PTE_RW) && !(*e & PTE_COW)))) {
+        bool write = (f->error & 2) != 0;
+        bool fetch = (f->error & 0x10) != 0;
+        bool can = e && (*e & PTE_P) && (*e & PTE_U) && (!write || ((*e & PTE_RW) && !(*e & PTE_COW)));
+        if (can && fetch && (*e & PTE_NX)) can = false;
+        if (can) {
             __asm__ volatile("invlpg (%0)" :: "r"(cr2) : "memory");
             return (u64)f;
         }
@@ -984,6 +1170,7 @@ static void dump_threads_maybe(int_frame_t *cur) {
  * pendente para a próxima thread que voltar ao ring 3. */
 #define SIG_BIT(s) (1u << (s))
 #define SIG_UNBLOCKABLE (SIG_BIT(MOS_SIGKILL) | SIG_BIT(MOS_SIGSTOP))
+#define STOP_BITS (SIG_BIT(MOS_SIGSTOP) | SIG_BIT(MOS_SIGTSTP) | SIG_BIT(MOS_SIGTTIN) | SIG_BIT(MOS_SIGTTOU))
 #define SIGFRAME_MAGIC 0x6D4F535349474E4CULL   /* "mOSSIGNL" */
 #define SIG_MINSTKSZ 32768                     /* MINSIGSTKSZ do macOS */
 #define WAIT_SIGSUSPEND -10
@@ -1009,16 +1196,17 @@ _Static_assert(sizeof(usigframe_t) % 16 == 0, "quadro alinhado");
 
 typedef struct { int code, pid, status; u64 addr; } siginfo_k;
 
-/* ação padrão "ignorar" (macOS: CHLD, URG, CONT, WINCH, INFO, IO). O mOS não para processos, então os de parada
- * (STOP, TSTP, TTIN, TTOU) também são ignorados: antes o ^Z do terminal ou o SIGWINCH de um redimensionamento
- * encerravam o programa em primeiro plano */
+/* ação padrão "ignorar" (macOS: CHLD, URG, CONT, WINCH, INFO, IO). CONT continua o processo antes deste
+ * teste. STOP/TSTP/TTIN/TTOU não entram: a ação padrão para o processo (proc_stop), não o encerra. */
 static bool default_ignored(int sig) {
     switch (sig) {
     case MOS_SIGCHLD: case MOS_SIGURG: case MOS_SIGCONT: case MOS_SIGWINCH: case MOS_SIGINFO: case MOS_SIGIO:
-    case MOS_SIGSTOP: case MOS_SIGTSTP: case MOS_SIGTTIN: case MOS_SIGTTOU:
         return true;
     }
     return false;
+}
+static bool is_stop_sig(int sig) {
+    return sig == MOS_SIGSTOP || sig == MOS_SIGTSTP || sig == MOS_SIGTTIN || sig == MOS_SIGTTOU;
 }
 static bool sig_ignored(process_t *p, int sig) {
     u64 h = p->sig_handler[sig];
@@ -1091,12 +1279,98 @@ static void sig_kill_default(process_t *p, int sig) {
     finish(p, -sig);
 }
 
+static void sig_clear_pending(process_t *p, u32 bits) {
+    p->sig_pending &= ~bits;
+    for (thread_t *w = sched_threads(); w; w = w->next)
+        if (w->proc == p) w->sig_pending &= ~bits;
+}
+
+/* status de parada/continuação no formato do Darwin: (sinal << 8) | 0x7f. O número é o do kernel;
+ * o libSystem traduz o byte alto (STOP 20 → 17) para WSTOPSIG/WIFCONTINUED. */
+static int stop_status(int sig) { return (sig << 8) | 0x7F; }
+
+/* acorda no máximo um waitpid do pai que pediu este evento. Antes do SIGCHLD, para o tratador do pai
+ * não consumir o status com waitpid(WNOHANG) e deixar o waitpid bloqueado sem resposta. */
+static void report_child_event(process_t *p, int st, bool cont) {
+    if (p->ppid <= 0) return;
+    for (thread_t *w = sched_threads(); w; w = w->next) {
+        if (!w->wait_posix || w->state != TH_WAITING || !w->proc || w->proc->pid != p->ppid) continue;
+        if (w->wait_pid != p->pid && w->wait_pid != -1) continue;
+        if (cont ? !(w->wait_opt & MOS_WCONTINUED) : !(w->wait_opt & MOS_WUNTRACED)) continue;
+        if (w->wait_status) uvm_copy_out(w->proc, w->wait_status, &st, sizeof st);
+        ((int_frame_t *)w->frame)->rax = (u64)p->pid;
+        w->wait_posix = false;
+        w->wait_pid = 0;
+        w->state = TH_READY;
+        if (cont) p->cont_unreported = 0;
+        else p->stop_unreported = 0;
+        return;
+    }
+}
+
+static bool sig_post(process_t *p, thread_t *th, int sig, const siginfo_k *k);
+static void notify_parent_cld(process_t *p, int code, int status) {
+    if (p->ppid <= 0) return;
+    process_t *par = find(p->ppid);
+    if (!par || par->exited) return;
+    if (par->sig_flags[MOS_SIGCHLD] & MOS_SA_NOCLDSTOP) return;
+    siginfo_k ck = { code, p->pid, status, 0 };
+    sig_post(par, NULL, MOS_SIGCHLD, &ck);
+}
+
+/* para todas as threads (nativas e as do tradutor ARM64: são threads deste processo). Já parado: o POSIX
+ * descarta o sinal novo e não manda outro SIGCHLD. */
+static void proc_stop(process_t *p, int sig) {
+    if (!p || p->exited || p->stopped) return;
+    p->stopped = sig;
+    p->cont_unreported = 0;
+    p->stop_unreported = 1;
+    report_child_event(p, stop_status(sig), false);
+    notify_parent_cld(p, MOS_CLD_STOPPED, sig);
+    { extern void smp_kick_proc(process_t *p); smp_kick_proc(p); }
+}
+
+static void proc_continue(process_t *p) {
+    if (!p || !p->stopped) return;
+    p->stopped = 0;
+    p->stop_unreported = 0;
+    p->cont_unreported = 1;
+    report_child_event(p, stop_status(MOS_SIGCONT), true);
+    notify_parent_cld(p, MOS_CLD_CONTINUED, MOS_SIGCONT);
+}
+
+/* todas as threads vivas bloqueiam sig? (SIGSTOP não conta: é unblockable) */
+static bool sig_blocked_everywhere(process_t *p, thread_t *only, int sig) {
+    if (SIG_BIT(sig) & SIG_UNBLOCKABLE) return false;
+    bool any = false;
+    for (thread_t *w = sched_threads(); w; w = w->next) {
+        if (w->proc != p || w->state == TH_DEAD) continue;
+        if (only && w != only) continue;
+        any = true;
+        if (!(w->sig_mask & SIG_BIT(sig))) return false;
+    }
+    return any;
+}
+
 /* sinal para o processo (kill) ou para uma thread (pthread_kill, faltas) */
 static bool sig_post(process_t *p, thread_t *th, int sig, const siginfo_k *k) {
     if (!p || p->exited) return false;
     if (sig == MOS_SIGKILL) { finish(p, -MOS_SIGKILL); return true; }
+    if (sig == MOS_SIGCONT) {
+        sig_clear_pending(p, STOP_BITS);             /* POSIX: CONT descarta paradas pendentes */
+        if (p->stopped) proc_continue(p);
+    } else if (is_stop_sig(sig))
+        sig_clear_pending(p, SIG_BIT(MOS_SIGCONT));
     if (sig_to_waiter(p, th, sig, k)) return true;      /* sigwait pega mesmo bloqueado (é o uso normal) */
-    if (sig_ignored(p, sig)) return true;               /* some aqui, sem acordar ninguém com EINTR (SIGWINCH...) */
+    if (is_stop_sig(sig)) {
+        bool caught = sig != MOS_SIGSTOP && p->sig_handler[sig] > MOS_SIG_IGN;
+        bool held = sig_blocked_everywhere(p, th, sig);
+        if (!caught) {
+            if (sig != MOS_SIGSTOP && sig_ignored(p, sig)) return true;   /* TSTP/TTIN/TTOU ignorados não param */
+            if (!held) { proc_stop(p, sig); return true; }                /* ação padrão: para já, sem EINTR */
+        }
+        /* bloqueado, ou com tratador: fica pendente e sai quando desbloquear / na volta ao ring 3 */
+    } else if (sig_ignored(p, sig)) return true;        /* some aqui, sem acordar ninguém com EINTR (SIGWINCH...) */
     if (th) { th->sig_pending |= SIG_BIT(sig); th->sig_info[sig].code = k->code; th->sig_info[sig].pid = k->pid;
               th->sig_info[sig].status = k->status; th->sig_info[sig].addr = k->addr; }
     else    { p->sig_pending |= SIG_BIT(sig); p->sig_info[sig].code = k->code; p->sig_info[sig].pid = k->pid;
@@ -1128,6 +1402,16 @@ bool proc_signal_info(int pid, int sig, int code, int spid, int status) {
 bool proc_signal(int pid, int sig) {
     thread_t *c = thread_current();
     return proc_signal_info(pid, sig, MOS_SI_USER, c && c->proc ? c->proc->pid : 0, 0);
+}
+
+/* pty.c, com a trava já segurada. Não gera o sinal se ele for ignorado ou se esta thread o bloqueia. */
+int proc_job_signal(process_t *p, thread_t *th, int sig) {
+    if (!p || p->exited || !is_stop_sig(sig)) return 0;
+    if (sig != MOS_SIGSTOP && (p->sig_handler[sig] == MOS_SIG_IGN || (th && (th->sig_mask & SIG_BIT(sig)))))
+        return 0;
+    siginfo_k k = { MOS_SI_KERNEL, p ? p->pid : 0, 0, 0 };
+    sig_post(p, NULL, sig, &k);
+    return p->stopped ? 1 : 2;
 }
 
 /* syscalls que o SA_RESTART refaz (as demais bloqueantes devolvem EINTR, como no macOS: sleep, poll, sigsuspend) */
@@ -1209,6 +1493,10 @@ u64 proc_signal_check(int_frame_t *f) {
     process_t *p = t ? t->proc : NULL;
     if (!p || (f->cs & 3) != 3) return (u64)f;
     if (p->exited) return t->state == TH_DEAD ? sched_switch(f) : (u64)f;   /* morto agora (kill -9 em si mesmo): não volta */
+    if (p->stopped) {                                    /* SIGSTOP em si mesmo, ou o kick de outro núcleo */
+        if (t->state == TH_RUNNING) t->state = TH_READY;
+        return sched_switch(f);
+    }
     for (;;) {
         u32 ready = (t->sig_pending | p->sig_pending) & ~(t->sig_mask & ~SIG_UNBLOCKABLE);
         if (!ready) break;
@@ -1223,6 +1511,14 @@ u64 proc_signal_check(int_frame_t *f) {
             k.code = p->sig_info[sig].code; k.pid = p->sig_info[sig].pid; k.status = p->sig_info[sig].status; k.addr = p->sig_info[sig].addr;
         }
         if (sig_ignored(p, sig)) continue;
+        if (is_stop_sig(sig)) {
+            /* desbloqueou uma parada que estava pendente. Com tratador, entrega; senão para (não mata). */
+            if (sig != MOS_SIGSTOP && p->sig_handler[sig] > MOS_SIG_IGN && (p->sig_tramp[sig] || p->sig_restorer))
+                return sig_deliver(f, t, p, sig, &k);
+            proc_stop(p, sig);
+            if (t->state == TH_RUNNING) t->state = TH_READY;
+            return sched_switch(f);
+        }
         u64 h = p->sig_handler[sig];
         if (h == MOS_SIG_DFL || (!p->sig_tramp[sig] && !p->sig_restorer)) {   /* ação padrão: encerra */
             sig_kill_default(p, sig);
@@ -1703,6 +1999,26 @@ static i64 file_write_at(process_t *p, const char *path, u64 off, u64 ubuf, u64 
     return (i64)len;
 }
 
+/* o mesmo que file_write_at, com a origem já no kernel (página física do MAP_SHARED). Não cria arquivo. */
+i64 file_store_at(const char *path, u64 off, const void *src, u64 len) {
+    if (!path || (!src && len)) return -MOS_EINVAL;
+    vnode_t *v = vfs_lookup(path);
+    if (!v || v->dir) return -MOS_ENOENT;
+    if (vfs_is_read_only(v)) return -MOS_ENOENT;
+    u64 end = off + len;
+    if (end < off) return -MOS_EINVAL;
+    u64 old = v->size, nsz = MAX(old, end);
+    if (nsz > (256ull << 20)) return -MOS_ENOSPC;
+    if (!file_room(v, nsz)) return -MOS_ENOMEM;
+    if (off > old) memset(v->data + old, 0, off - old);
+    if (len) memcpy(v->data + off, src, len);
+    v->size = nsz;
+    v->data[nsz] = 0;
+    v->mtime = timer_ticks();
+    persist_mark(v);
+    return (i64)len;
+}
+
 static void fill_stat(vnode_t *v, mos_stat_t *st) {
     st->size = v->dir ? 0 : v->size;
     st->is_dir = v->dir;
@@ -2171,25 +2487,40 @@ static u64 proc_syscall_(int_frame_t *f) {
     }
     case SYS_WAITPID: {
         int want = (int)(i64)a;
+        int opt = (int)c;
         bool any = false;
+        process_t *hit = NULL;
+        int st = 0, kind = 0;                          /* 1 saída, 2 parada, 3 continuação */
         r = 0;
         for (process_t *q = procs; q; q = q->next) {
             if (q->ppid != p->pid || (want > 0 && q->pid != want)) continue;
             any = true;
-            if (q->exited) {
-                int st = posix_status(q->exit_code);
-                if (b) uvm_copy_out(p, b, &st, sizeof st);
-                q->ppid = -1;                              /* recolhido: trim_zombies libera depois */
-                r = q->pid;
-                break;
-            }
+            if (q->exited) { hit = q; kind = 1; st = posix_status(q->exit_code); break; }
         }
-        if (r > 0) break;
+        if (!hit && (opt & MOS_WUNTRACED))
+            for (process_t *q = procs; q; q = q->next) {
+                if (q->ppid != p->pid || (want > 0 && q->pid != want) || !q->stopped || !q->stop_unreported) continue;
+                hit = q; kind = 2; st = stop_status(q->stopped); break;
+            }
+        if (!hit && (opt & MOS_WCONTINUED))
+            for (process_t *q = procs; q; q = q->next) {
+                if (q->ppid != p->pid || (want > 0 && q->pid != want) || q->exited || q->stopped || !q->cont_unreported) continue;
+                hit = q; kind = 3; st = stop_status(MOS_SIGCONT); break;
+            }
+        if (hit) {
+            if (b) uvm_copy_out(p, b, &st, sizeof st);
+            if (kind == 1) hit->ppid = -1;             /* recolhido: trim_zombies libera depois */
+            else if (kind == 2) hit->stop_unreported = 0;
+            else hit->cont_unreported = 0;
+            r = hit->pid;
+            break;
+        }
         if (!any) { r = -MOS_ECHILD; break; }
-        if (c & MOS_WNOHANG) { r = 0; break; }
+        if (opt & MOS_WNOHANG) { r = 0; break; }
         t->wait_pid = want > 0 ? want : -1;
         t->wait_status = b;
         t->wait_posix = true;
+        t->wait_opt = opt;
         t->state = TH_WAITING;
         return sched_switch(f);
     }
@@ -2617,6 +2948,75 @@ static u64 proc_syscall_(int_frame_t *f) {
                                        (unsigned long long)at, (unsigned long long)len, p->fds[c].path, (unsigned long long)foff);
             break;
         }
+        /* b = 5: arquivo MAP_SHARED. c = fd, r10 = deslocamento, r8 = prot (1 leitura, 2 escrita, 4 execução).
+         * b = 6: MAP_SHARED|MAP_ANON. A página física é a mesma para quem mapeou o objeto (kernel/mm/lazy.c).
+         * Pipe, terminal e /dev/null devolvem EINVAL para o libSystem cair na cópia. */
+        if (b == 5 || b == 6) {
+            extern bool lazy_add_shared_file(process_t *p, u64 va, u64 len, const char *path, u64 foff, u8 prot);
+            extern bool lazy_add_shared_anon(process_t *p, u64 va, u64 len, u8 prot);
+            u8 prot = (u8)(f->r8 & 7);
+            if (!prot) prot = 1;
+            if (!len || len > (64ull << 30)) { r = -MOS_EINVAL; break; }
+            u64 at = p->mmap_next;
+            if (at + len > USER_END) { r = -MOS_ENOMEM; MMAP_NOMEM_LOG(); break; }
+            if (b == 5) {
+                u64 foff = f->r10;
+                if (fd_get(p, c) < 0) { r = -MOS_EBADF; break; }
+                if (p->fds[c].pipe || p->fds[c].pty || is_devnull(p->fds[c].path)) { r = -MOS_EINVAL; break; }
+                if (p->fds[c].flags & MOS_O_WRONLY) { r = -MOS_EACCES; break; }
+                if ((prot & 2) && !(p->fds[c].flags & (MOS_O_WRONLY | MOS_O_RDWR))) { r = -MOS_EACCES; break; }
+                if (foff & 0xFFF) { r = -MOS_EINVAL; break; }
+                vnode_t *v = vfs_lookup(p->fds[c].path);
+                if (!v) { r = -MOS_ENOENT; break; }
+                if (v->dir) { r = -MOS_EINVAL; break; }
+                if (!lazy_add_shared_file(p, at, len, p->fds[c].path, foff, prot)) { r = -MOS_ENOMEM; MMAP_NOMEM_LOG(); break; }
+            } else if (!lazy_add_shared_anon(p, at, len, prot)) { r = -MOS_ENOMEM; MMAP_NOMEM_LOG(); break; }
+            p->mmap_next += len + 4096;
+            r = (i64)at;
+            break;
+        }
+        /* b = 8: MAP_FIXED de arquivo privado. b = 9: MAP_FIXED de arquivo compartilhado.
+         * c = endereço, r10 = deslocamento, r8 = fd | (prot << 32). Substitui o que houver
+         * em [c, c+len), como o mmap MAP_FIXED do Darwin (grava o MAP_SHARED antes).
+         * Não recua mmap_next. Se a faixa passa do cursor, o cursor anda para depois dela
+         * e da página de guarda, para o alocador sequencial não cair em cima. */
+        if (b == 8 || b == 9) {
+            extern bool lazy_add_file(process_t *p, u64 va, u64 len, const char *path, u64 foff);
+            extern bool lazy_add_shared_file(process_t *p, u64 va, u64 len, const char *path, u64 foff, u8 prot);
+            u64 at = c, foff = f->r10, end = at + len;
+            int fd = (int)(u32)f->r8;
+            u8 prot = (u8)((f->r8 >> 32) & 7);
+            if (!prot) prot = 1;
+            if (!len || len > (64ull << 30) || (at & 0xFFF) || (foff & 0xFFF) ||
+                at < USER_BASE || end > USER_END || end < at) { r = -MOS_EINVAL; break; }
+            if (fd_get(p, (u64)fd) < 0) { r = -MOS_EBADF; break; }
+            if (p->fds[fd].pipe || p->fds[fd].pty || is_devnull(p->fds[fd].path)) { r = -MOS_EINVAL; break; }
+            if (p->fds[fd].flags & MOS_O_WRONLY) { r = -MOS_EACCES; break; }
+            if (b == 9 && (prot & 2) && !(p->fds[fd].flags & (MOS_O_WRONLY | MOS_O_RDWR))) { r = -MOS_EACCES; break; }
+            vnode_t *v = vfs_lookup(p->fds[fd].path);
+            if (!v) { r = -MOS_ENOENT; break; }
+            if (v->dir) { r = -MOS_EINVAL; break; }
+            mm_release_span(p, at, len);
+            if (!(b == 8 ? lazy_add_file(p, at, len, p->fds[fd].path, foff)
+                         : lazy_add_shared_file(p, at, len, p->fds[fd].path, foff, prot))) {
+                r = -MOS_ENOMEM; MMAP_NOMEM_LOG(); break;
+            }
+            if (at >= USER_MMAP_BASE && end + 4096 > p->mmap_next) p->mmap_next = end + 4096;
+            r = (i64)at;
+            if (rastrear_mm()) kprintf("mm: %s pid %d tid %d mmap fixo 0x%llx + 0x%llx arquivo %s @0x%llx\n", p->name, p->pid, t->id,
+                                       (unsigned long long)at, (unsigned long long)len, p->fds[fd].path, (unsigned long long)foff);
+            break;
+        }
+        /* b = 7: prot (r8) nas PTEs de [c, c+len) e na faixa que a falta consulta. Sem o bit 4 a página fica NX.
+         * Página que ainda não existe só fica registrada; a falta aplica o prot. PROT_NONE (0) não desmapeia. */
+        if (b == 7) {
+            extern bool lazy_protect(process_t *p, u64 va, u64 len, u8 prot);
+            u64 at = c & ~0xFFFULL, end = (c + a + 0xFFF) & ~0xFFFULL;
+            if (!a) { r = 0; break; }
+            if (at < USER_BASE || end > USER_END || end < at) { r = -MOS_EINVAL; break; }
+            r = lazy_protect(p, at, end - at, (u8)(f->r8 & 7)) ? 0 : -MOS_ENOMEM;
+            break;
+        }
         if (b == 2) {
             u64 at = c & ~0xFFFULL, end = (c + a + 0xFFF) & ~0xFFFULL;
             if (!a || at < USER_MMAP_BASE || end > p->mmap_next || end < at) { r = -MOS_EINVAL; break; }
@@ -2646,6 +3046,13 @@ static u64 proc_syscall_(int_frame_t *f) {
          * zerada no próximo toque (lazy_fault), como o VM_SYNC_KILLPAGES do XNU. Compartilhadas (COW, memória Mach) e
          * de arquivo ficam. O mimalloc 3 do Bun conta com os zeros depois do purge: sem isto o vetor de índices de uma
          * PropertyTable do JavaScriptCore vinha sujo e o rehash procurava um vazio para sempre (claude -p). */
+        /* MOS_MUNMAP_SYNC: msync. Grava o MAP_SHARED de arquivo no vnode e não desmapeia. */
+        if (c == MOS_MUNMAP_SYNC) {
+            extern void lazy_sync(process_t *p, u64 va, u64 len, int only_last);
+            lazy_sync(p, a, b, 0);
+            r = 0;
+            break;
+        }
         if (c == MOS_MUNMAP_DISCARD) {
             extern bool lazy_is_anon(process_t *p, u64 va);
             u64 gone[64];
@@ -2670,6 +3077,7 @@ static u64 proc_syscall_(int_frame_t *f) {
             r = 0;
             break;
         }
+        { extern void lazy_sync(process_t *p, u64 va, u64 len, int only_last); lazy_sync(p, a, b, 0); }
         { extern void lazy_remove(process_t *p, u64 va, u64 len); lazy_remove(p, a, b); }
         /* as páginas só voltam ao pmm depois que nenhuma CPU as enxerga mais: em lotes de 64, um
          * smp_tlb_shootdown por lote (com threads do processo em outros núcleos) */
@@ -2816,7 +3224,7 @@ static u64 proc_syscall_(int_frame_t *f) {
 
     /* ---- sinais */
     case SYS_SIGACTION:
-        if (a == 0 || a >= MOS_NSIG || a == MOS_SIGKILL) { r = -MOS_EINVAL; break; }
+        if (a == 0 || a >= MOS_NSIG || a == MOS_SIGKILL || a == MOS_SIGSTOP) { r = -MOS_EINVAL; break; }
         if (b > MOS_SIG_IGN && (b < USER_BASE || b >= USER_END)) { r = -MOS_EFAULT; break; }
         r = (i64)p->sig_handler[a];
         p->sig_handler[a] = b;
@@ -2926,6 +3334,11 @@ static u64 proc_syscall_(int_frame_t *f) {
         pi.cpu_ms = q->main ? q->main->cpu_ms : 0;
         memcpy(pi.name, q->name, sizeof pi.name);
         r = uvm_copy_out(p, b, &pi, sizeof pi) ? 1 : -MOS_EFAULT;
+        break;
+    }
+    case SYS_DESKTOP: {
+        extern i64 deskbridge_syscall(process_t *p, u64 op, u64 b, u64 c, u64 d);
+        r = deskbridge_syscall(p, a, b, c, f->r10);
         break;
     }
     default:

@@ -8,11 +8,13 @@
 param([Parameter(Mandatory)][string]$OutDir, [string]$Motores = 'interp,jit', [string]$Real = '', [string]$RealArgs = '--version',
       [int]$SizeMiB = 400)
 $root = Split-Path $PSScriptRoot -Parent
-$zig = Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*' -ErrorAction SilentlyContinue | Where-Object { Test-Path (Join-Path $_.FullName 'zig.exe') } | Select-Object -First 1
-if ($zig) { $zig = Join-Path $zig.FullName 'zig.exe' } elseif ($env:MOS_ZIG) { $zig = $env:MOS_ZIG } else { $zig = (Get-Command zig -ErrorAction SilentlyContinue).Source }
+if (-not (Get-Command Resolve-MosZig -ErrorAction SilentlyContinue)) { foreach ($mosHost in @("$PSScriptRoot\stage-host.ps1","$PSScriptRoot\..\stage-host.ps1","$PSScriptRoot\..\..\stage-host.ps1","$PSScriptRoot\..\..\..\stage-host.ps1")) { if (Test-Path -LiteralPath $mosHost) { . $mosHost; break } } }
+$mosZigPick = Resolve-MosZig $root
+if (-not $mosZigPick) { exit 1 }
+$zig = $mosZigPick.Path
 $esp = Join-Path $root "$OutDir\esp"
 if (-not (Test-Path "$esp\mOS")) { Write-Host "rode antes: .\build.ps1 -OutDir $OutDir" -ForegroundColor Red; exit 1 }
-& "$PSScriptRoot\build-a64rt.ps1" -Parcial
+& "$PSScriptRoot\build-a64rt.ps1"
 if ($LASTEXITCODE -ne 0) { exit 1 }
 if (-not (Test-Path "$root\build\libSystem-arm64.mos")) { Write-Host 'falta build\libSystem-arm64.mos (tools\build-libsystem-arm64.ps1)' -ForegroundColor Red; exit 1 }
 $a64 = "$esp\mOS\Sistema\Biblioteca\a64"
@@ -26,6 +28,8 @@ $src = "$root\userland\tests-a64rt"
 "#include <stdio.h>`nint main(int c, char **v) { printf(""hello %s: argc=%d\n"", v[0], c); return 7; }" | Set-Content -Encoding ascii "$root\build\a64rt-hello.c"
 & $zig cc -target aarch64-macos -O1 "$root\build\a64rt-hello.c" -o "$t\hello-arm64" '-Wl,-undefined,dynamic_lookup' 2>&1 | ForEach-Object { "$_" }
 & $zig cc -target x86_64-macos -O1 "$root\build\a64rt-hello.c" -o "$t\hello-x86" '-Wl,-undefined,dynamic_lookup' 2>&1 | ForEach-Object { "$_" }
+& $zig cc -target x86_64-macos -O1 "$src\exec-from-x86.c" -o "$t\exec-from-x86" '-Wl,-undefined,dynamic_lookup' 2>&1 | ForEach-Object { "$_" }
+if ($LASTEXITCODE -ne 0) { Write-Host 'exec-from-x86: FAILED' -ForegroundColor Red; exit 1 }
 & $zig c++ -target aarch64-macos -O1 "$src\main.cpp" -o "$t\a64rt-teste" '-Wl,-undefined,dynamic_lookup' 2>&1 | ForEach-Object { "$_" }
 if ($LASTEXITCODE -ne 0) { Write-Host 'testes arm64: FAILED' -ForegroundColor Red; exit 1 }
 
@@ -46,7 +50,8 @@ function Write-Job([string]$label, [string[]]$argv, [hashtable]$envs) {
 </dict></plist>
 "@ | Set-Content -Encoding ascii "$ld\$label.plist"
 }
-$spawn = '/Sistema/Programas/a64teste/hello-x86:7;/Sistema/Programas/a64teste/hello-arm64:7'
+# hello-x86: posix_spawn arm64→x86. hello-arm64: arm64→arm64. exec-from-x86: x86 faz exec do hello-arm64.
+$spawn = '/Sistema/Programas/a64teste/hello-x86:7;/Sistema/Programas/a64teste/hello-arm64:7;/Sistema/Programas/a64teste/exec-from-x86:7'
 foreach ($m in $Motores.Split(',')) {
     Write-Job "com.mos.a64teste.$m" @('/Sistema/Programas/a64teste/a64rt-teste') @{ MOS_A64_ENGINE = $m; A64RT_TESTE_SPAWN = $spawn }
 }

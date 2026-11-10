@@ -5,7 +5,10 @@
 #   .\tools\build-libsys-arm64-test.ps1 -NoRun
 param([switch]$NoRun, [int]$Timeout = 120)
 $root = Split-Path $PSScriptRoot -Parent
-$zig = Join-Path (Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*' | Where-Object { Test-Path "$($_.FullName)\zig.exe" } | Select-Object -First 1).FullName 'zig.exe'
+if (-not (Get-Command Resolve-MosZig -ErrorAction SilentlyContinue)) { foreach ($mosHost in @("$PSScriptRoot\stage-host.ps1","$PSScriptRoot\..\stage-host.ps1","$PSScriptRoot\..\..\stage-host.ps1","$PSScriptRoot\..\..\..\stage-host.ps1")) { if (Test-Path -LiteralPath $mosHost) { . $mosHost; break } } }
+$mosZigPick = Resolve-MosZig $root
+if (-not $mosZigPick) { exit 1 }
+$zig = $mosZigPick.Path
 $out = "$root\build\a64libsys-test"
 New-Item -ItemType Directory -Force $out | Out-Null
 $src = "$root\userland\tests-a64libsys\abi.mm"
@@ -35,7 +38,7 @@ Copy-Item "$root\build\libSystem-arm64.mos" "$a64\libSystem.mos" -Force
 if (-not (Test-Path "$root\build\machotest.exe")) { Write-Host 'falta build\machotest.exe (build\a64rt-test\run.sh compila)' -ForegroundColor Red; exit 1 }
 if ($haveDylibs) {
     New-Item -ItemType Directory -Force "$vfs\usr\lib", "$vfs\usr\share\icu" | Out-Null
-    Copy-Item "$root\build\universal\usr" "$vfs\" -Recurse -Force             # /usr/lib e /usr/local/opt/zlib
+    Copy-Item "$root\build\universal\usr" "$vfs\" -Recurse -Force             # /usr/lib (libz, libcurl, libcompression quando o universal existe)
     Copy-Item "$root\build\icu\icudt74l.dat" "$vfs\usr\share\icu\" -Force -ErrorAction SilentlyContinue
 }
 $rc = 0
@@ -46,7 +49,7 @@ foreach ($b in $runs) {
     $null = $p.Handle
     if (-not $p.WaitForExit($Timeout * 1000)) { $p.Kill(); Write-Host "${b}: passou de $Timeout s" -ForegroundColor Red; $rc++ }
     Get-Content "$out\$b.log", "$out\$b.err" -ErrorAction SilentlyContinue | Where-Object { $_ -match 'ok |FALHA|falhas|macho|erro|panic|sinal' }
-    # o x86_64 é referência: falhas dele são do libSystem x86 (NSInvocation sem argumentos na pilha), não do tradutor
+    # o x86_64 é referência no mesmo libSystem: falha aqui é do userland, não do tradutor
     if ($p.ExitCode -ne 0) { if ($b -like "*arm64") { $rc++ } else { Write-Host "  (x86_64 de referência com $($p.ExitCode) falha(s): pendências do libSystem x86)" -ForegroundColor Yellow } }
 }
 exit $rc

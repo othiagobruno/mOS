@@ -83,19 +83,39 @@ u8 *getsegmentdata(const void *header, const char *seg, u64 *size) {
 
 /* callbacks chamados para as imagens já carregadas e guardados para as que o dlopen trouxer depois
  * (dlfcn.c chama cx_dyld_notify_add com a imagem já relocada, antes dos inicializadores dela) */
+extern void cx_swift_note(const void *mh, i64 slide);   /* swiftsect.c: __swift5_* */
+extern void cx_swift_forget(const void *mh);
 typedef void (*add_fn)(const void *mh, i64 slide);
 static add_fn add_cbs[32];
 static int nadd_cbs;
 void _dyld_register_func_for_add_image(void (*fn)(const void *mh, i64 slide)) {
     if (nadd_cbs < 32) add_cbs[nadd_cbs++] = fn;
     u32 n = _dyld_image_count();
-    for (u32 i = 0; i < n; i++) { const void *h = _dyld_get_image_header(i); if (h) fn(h, slide_of(h)); }
+    for (u32 i = 0; i < n; i++) {
+        const void *h = _dyld_get_image_header(i);
+        if (!h) continue;
+        cx_swift_note(h, slide_of(h));
+        fn(h, slide_of(h));
+    }
 }
 void cx_dyld_notify_add(u32 first, u32 n) {
     for (u32 i = first; i < first + n; i++) {
         const void *h = _dyld_get_image_header(i);
         if (!h) continue;
+        cx_swift_note(h, slide_of(h));
         for (int k = 0; k < nadd_cbs; k++) add_cbs[k](h, slide_of(h));
     }
 }
-void _dyld_register_func_for_remove_image(void (*fn)(const void *mh, i64 slide)) { (void)fn; }
+/* Último dlclose (MOS_DYLD_CLOSE devolve 1): dlfcn.c chama cx_dyld_notify_remove com o cabeçalho e o slide.
+ * O kernel não desmapeia. Dylib com seção __objc_ ou __swift não recebe o aviso. */
+typedef void (*rem_fn)(const void *mh, i64 slide);
+static rem_fn rem_cbs[32];
+static int nrem_cbs;
+void _dyld_register_func_for_remove_image(void (*fn)(const void *mh, i64 slide)) {
+    if (fn && nrem_cbs < 32) rem_cbs[nrem_cbs++] = fn;
+}
+void cx_dyld_notify_remove(const void *mh, i64 slide) {
+    if (!mh) return;
+    cx_swift_forget(mh);
+    for (int k = 0; k < nrem_cbs; k++) rem_cbs[k](mh, slide);
+}

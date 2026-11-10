@@ -302,10 +302,7 @@ id_ CFStringCreateArrayWithFindResults(void *alloc, id_ s, id_ find, CFRange r, 
 /* (CFDictionaryApplyFunction e as outras coleções ficam em cfcollections.c) */
 /* (os *GetTypeID e CFCopyTypeIDDescription precisam bater com o CFGetTypeID de cfcollections.c: ficam lá) */
 id_ CFUUIDCreateString(void *alloc, id_ uuid) { (void)alloc; (void)uuid; return 0; }
-Boolean CFPreferencesAppValueIsForced(id_ key, id_ app) { (void)key; (void)app; return 0; }     /* sem políticas gerenciadas */
-long CFPreferencesGetAppIntegerValue(id_ key, id_ app, Boolean *valid) { (void)key; (void)app; if (valid) *valid = 0; return 0; }
-void CFPreferencesSetAppValue(id_ key, id_ value, id_ app) { (void)key; (void)value; (void)app; }
-id_ CFPropertyListCreateWithData(void *alloc, id_ data, unsigned long opt, long *fmt, id_ *err) { (void)alloc; (void)data; (void)opt; (void)fmt; if (err) *err = 0; return 0; }
+/* CFPreferences* e CFPropertyListCreateWithData: prefs.c */
 id_ _CFURLCopyPropertyListRepresentation(id_ url) { (void)url; return 0; }
 id_ _CFURLCreateFromPropertyListRepresentation(void *alloc, id_ pl) { (void)alloc; (void)pl; return 0; }
 

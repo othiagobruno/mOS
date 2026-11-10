@@ -198,9 +198,11 @@ typedef struct app {
     void *state;
     /* Dock */
     int badge;                  /* número no selo vermelho do ícone (0 = sem selo) */
+    char badge_label[8];        /* texto do selo; vazio desenha o número */
     bool attention;             /* pula no Dock até o app ficar ativo */
     bool open_at_login;         /* Opções > Abrir ao Iniciar */
     bool always_tick;           /* tick roda mesmo com o app fechado (alarmes, lembretes) */
+    int dock_suppressed;        /* o processo pediu para sair do Dock (LSUIElement / prohibited) */
 } app_t;
 
 /* window server */
@@ -232,6 +234,8 @@ void      wm_damage(rect_t r);
 void      wm_damage_all(void);
 rect_t    wm_content_rect(window_t *w);   /* em coordenadas de tela */
 window_t *wm_window_list(void);
+int       wm_window_count(void);
+window_t *wm_window_at(int i);          /* 0 = fundo, count-1 = topo; NULL fora da faixa */
 void      wm_close_app(app_t *a);
 void      wm_bring_app(app_t *a);
 int       wm_count_for(app_t *a);
@@ -253,6 +257,8 @@ int  desktop_dock_top(void);
 rect_t desktop_dock_rect(void);
 void desktop_rebuild_wallpaper(void);
 void notify(const char *title, const char *body);
+void notify_tagged(const char *title, const char *body, int pid, int token);
+int notify_banner_hit(int x, int y, int *pid, int *token);
 void desktop_open_menu(int index);
 void desktop_close_menus(void);
 bool desktop_menu_open(void);
@@ -267,7 +273,11 @@ surface_t *desktop_wallpaper_blur(void);        /* papel de parede inteiro desfo
 rect_t dock_icon_rect(app_t *a);
 rect_t dock_window_rect(window_t *w);           /* destino do gênio: a miniatura da janela no Dock */
 void dock_set_badge(app_t *a, int n);           /* selo vermelho com número (0 remove) */
+void dock_set_badge_label(app_t *a, const char *label); /* texto; vazio ou "0" remove */
 void dock_request_attention(app_t *a);          /* o ícone pula até o app ficar ativo */
+void compat_gui_status_open(int pid, unsigned id);          /* GEV_STATUS: o clique abriu o item */
+void compat_gui_status_pick(int pid, unsigned id, unsigned action); /* GEV_MENU com a ação do item */
+void desktop_status_note(int pid, unsigned id);             /* o pacote do item mudou; redesenha a faixa */
 void desktop_tile_popover(window_t *w, int bx, int by); /* menu do botão verde (bx,by = centro do botão na tela) */
 bool desktop_tile_popover_open(void);
 extern int g_wallpaper_style;
@@ -283,6 +293,7 @@ app_t *apps_find(const char *exec);
 app_t *apps_shortcut_for(app_t *proxy);   /* atalho de /Aplicativos dono das janelas de um processo */
 void   app_launch(app_t *a);
 void   app_quit(app_t *a);
+void   app_force_quit(app_t *a);   /* SIGKILL no processo macOS; apps do kernel seguem o encerrar normal */
 
 /* ícones desenhados vetorialmente */
 surface_t *icon_for(app_t *a, int size);

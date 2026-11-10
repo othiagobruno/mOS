@@ -9,8 +9,10 @@ $swiftc = "$($tcd.FullName)\usr\bin\swiftc.exe"
 $sdk = (Get-ChildItem "$root\.tools\swift\LocalApp\Programs\Swift\Platforms" -Directory | Select-Object -First 1).FullName
 $shims = "$sdk\Windows.platform\Developer\SDKs\Windows.sdk\usr\lib\swift\shims"
 if (-not (Test-Path "$root\build\swift\embedded\Swift.swiftmodule")) { & "$PSScriptRoot\build-swift-stdlib.ps1"; if ($LASTEXITCODE) { exit 1 } }
-$zig = Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*' | Where-Object { Test-Path "$($_.FullName)\zig.exe" } | Select-Object -First 1
-$zig = if ($zig) { Join-Path $zig.FullName 'zig.exe' } elseif ($env:MOS_ZIG) { $env:MOS_ZIG } else { (Get-Command zig).Source }
+if (-not (Get-Command Resolve-MosZig -ErrorAction SilentlyContinue)) { foreach ($mosHost in @("$PSScriptRoot\stage-host.ps1","$PSScriptRoot\..\stage-host.ps1","$PSScriptRoot\..\..\stage-host.ps1","$PSScriptRoot\..\..\..\stage-host.ps1")) { if (Test-Path -LiteralPath $mosHost) { . $mosHost; break } } }
+$mosZigPick = Resolve-MosZig $root
+if (-not $mosZigPick) { exit 1 }
+$zig = $mosZigPick.Path
 $obj = "$root\build\swift\obj"
 New-Item -ItemType Directory -Force $obj, $Dest | Out-Null
 $common = @('-frontend', '-c', '-target', 'x86_64-apple-macos14', '-enable-experimental-feature', 'Embedded', '-Osize', '-swift-version', '5',

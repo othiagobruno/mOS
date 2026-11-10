@@ -8,6 +8,8 @@
  *    pela hierarquia de classes; uma exceção C++ nunca casa com um @catch ObjC e uma ObjC só casa com catch(...) no C++.
  *  - não pega por ninguém: o terminate handler imprime nome e motivo, chama o NSSetUncaughtExceptionHandler e aborta.
  * Sem a libc++ no disco (harness mínimo) volta ao comportamento antigo: imprime e aborta no próprio throw.
+ * O matcher (exc_can_catch) e esse caminho sem dylib são retestados no host por tools/objc_eh_hosttest.c.
+ * @try/@catch/@finally de ponta a ponta continuam no teste da VM userland/tests-a64libsys/abi.mm.
  */
 #include "objc.h"
 

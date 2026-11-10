@@ -21,6 +21,8 @@
 #undef SYS_OPEN
 #endif
 #include "syscall.h"           /* SYS_DYLD / MOS_DYLD_* (dlopen em tempo de execução) e errno */
+#include "fwlink.h"            /* symlink de .framework gravado como texto */
+#include "libswift_image.h"    /* libswift* da imagem; revisão do Kernel no uso em link_abs_dep */
 #include "../../userland/a64rt/a64rt_abi.h"   /* processos arm64: runtime do tradutor (docs/tradutor-arm64.md) */
 
 #define LIBSYSTEM_BASE (USER_BASE + 0x00100000ULL)
@@ -371,6 +373,11 @@ bool libsystem_dylib_ok(const char *n) {
                                "/System/Library/Frameworks/Quartz.framework/",
                                /* Codex desktop (runtime OWL): liga o framework sem importar símbolos (pede QLThumbnail* pelo nome; sem a classe, sem miniatura) */
                                "/System/Library/Frameworks/QuickLookThumbnailing.framework/",
+                               /* Slack, Claude Desktop e Cursor: o Electron liga os três. Se a dylib estiver no disco,
+                                * link_image carrega ela; senão o libSystem (quicklook_fw.c, storekit_fw.c, coredata_fw.c). */
+                               "/System/Library/Frameworks/QuickLookUI.framework/",
+                               "/System/Library/Frameworks/StoreKit.framework/",
+                               "/System/Library/Frameworks/CoreData.framework/",
                                "/System/Library/Frameworks/SafariServices.framework/",
                                "/System/Library/Frameworks/ScreenCaptureKit.framework/",
                                "/System/Library/Frameworks/SecurityInterface.framework/",
@@ -382,6 +389,31 @@ bool libsystem_dylib_ok(const char *n) {
                                "/usr/lib/libbsm.0.dylib", "/usr/lib/libcups.2.dylib", "/usr/lib/libpmenergy.dylib", "/usr/lib/libpmsample.dylib"};
     for (u32 i = 0; i < ARRAY_LEN(fw); i++) if (!strncmp(n, fw[i], strlen(fw[i]))) return true;
     return !strncmp(n, "/usr/lib/system/", 16);
+}
+
+/* QuickLookUI, StoreKit e Core Data também estão no libSystem. Se o Mach-O do framework
+ * existir no disco, ele ganha: o Core Data de memória do Postico e o overlay Swift não
+ * regridem. Sem o arquivo, o loader aceita e resolve no libSystem. */
+static bool framework_has_libsystem_fallback(const char *n) {
+    static const char *fw[] = {
+        "/System/Library/Frameworks/QuickLookUI.framework/",
+        "/System/Library/Frameworks/StoreKit.framework/",
+        "/System/Library/Frameworks/CoreData.framework/",
+    };
+    for (u32 i = 0; i < ARRAY_LEN(fw); i++) if (!strncmp(n, fw[i], strlen(fw[i]))) return true;
+    return false;
+}
+static bool framework_disk_present(const char *n) {
+    usize len;
+    char alt[384];
+    const char *fw, *tail;
+    if (dep_read(n, &len)) return true;
+    fw = strstr(n, ".framework/");
+    if (!fw) return false;
+    tail = fw + 11;
+    if (strchr(tail, '/')) return false;
+    snprintf(alt, sizeof alt, "%.*sVersions/A/%s", (int)(tail - n), n, tail);
+    return dep_read(alt, &len) != NULL;
 }
 
 /* libc++ e libc++abi: vêm da dylib do LLVM no disco quando ela existe (link_image e dyld_open); o libSystem só as
@@ -497,6 +529,13 @@ static bool parse(mach_t *mo, const u8 *m, usize len, bool dylib, char *err, usi
             if (zero) break;
             if (vmaddr < mo->vmin) mo->vmin = vmaddr;
             if (vmaddr + vmsize > mo->vmax) mo->vmax = vmaddr + vmsize;
+            /* Processo arm64: a imagem cobre a página guest de 16 KiB do último byte do segmento.
+             * O vmaddr dos binários da Apple já é múltiplo de 16 KiB; o slide preserva isso porque
+             * a base da imagem também é. Não muda o vmaddr usado nos fixups. x86_64 não entra aqui. */
+            if (ls_cur && vmsize) {
+                u64 page_hi = A64_GUEST_PAGE_END(vmaddr, vmsize);
+                if (page_hi > mo->vmax) mo->vmax = page_hi;
+            }
             for (u32 k = 0; k < nsects && 72 + (k + 1) * 80 <= csz; k++) {
                 const u8 *sc = c + 72 + k * 80;
                 u32 type = rd32(sc + 64) & 0xFF;
@@ -629,13 +668,16 @@ static i64 sleb(const u8 **p, const u8 *end) {
 }
 
 /* ================================================================ arquivos das dependências */
+static void path_dir(const char *p, char *out, usize cap);
+static void path_norm(char *p, usize cap);
+static const u8 *dep_follow(const char *path, usize *len, int depth);
 #ifdef MOS_HOST_TEST
 const u8 *host_read_file(const char *path, usize *len);   /* tools/machotest.c */
-static const u8 *dep_read(const char *path, usize *len) { return host_read_file(path, len); }
+static const u8 *dep_read_raw(const char *path, usize *len) { return host_read_file(path, len); }
 static bool dyld_tolerant(void) { return getenv("MACHOTEST_TOLERANT") != NULL; }
 #else
 #include "vfs.h"
-static const u8 *dep_read(const char *path, usize *len) {
+static const u8 *dep_read_raw(const char *path, usize *len) {
     vnode_t *v = vfs_lookup(path);
     if (!v || v->dir || !v->data || !v->size) return NULL;
     *len = v->size;
@@ -646,6 +688,7 @@ static const u8 *dep_read(const char *path, usize *len) {
 #define DYLD_TOLERANT_FLAG "/Sistema/Biblioteca/dyld-experimental"
 static bool dyld_tolerant(void) { return vfs_lookup(DYLD_TOLERANT_FLAG) != NULL; }
 #endif
+static const u8 *dep_read(const char *path, usize *len) { return dep_follow(path, len, 0); }
 
 /* ================================================================ estado do carregamento */
 typedef struct {
@@ -984,7 +1027,8 @@ static bool run_chained(load_t *L) {
         u64 seg_off = rd64(ss + 8);
         /* 2 = DYLD_CHAINED_PTR_64, 6 = _64_OFFSET (passo de 4 bytes); arm64e (passo de 8): 1 = ARM64E (rebase por vmaddr),
          * 12 = ARM64E_USERLAND, 13 = ARM64E_USERLAND24 (rebase por deslocamento, bind com ordinal de 24 bits). Os
-         * ponteiros autenticados viram ponteiros puros: o PAC do tradutor é a identidade (docs/tradutor-arm64.md). */
+         * ponteiros autenticados viram ponteiros puros: o PAC do tradutor é a identidade (docs/tradutor-arm64.md).
+         * Nenhum binário dos apps-alvo neste repositório pede um formato fora desta lista. */
         bool e64 = fmt == 1 || fmt == 12 || fmt == 13;
         if (fmt != 2 && fmt != 6 && !e64) { snprintf(L->err, L->errlen, "formato de ponteiro encadeado %u não suportado", fmt); ok = false; break; }
         if (L->report_only) continue;
@@ -1256,6 +1300,28 @@ static void path_norm(char *p, usize cap) {
     p[o] = 0;
 }
 
+/* Symlink de .framework gravado como texto ("A", "Versions/Current/Electron Framework").
+ * Link quebrado devolve NULL para o locate() ainda tentar Versions/A. */
+static const u8 *dep_follow(const char *path, usize *len, int depth) {
+    const u8 *d = dep_read_raw(path, len);
+    char tgt[512], dir[400], next[520];
+    usize n2 = 0;
+    const u8 *d2;
+    if (!d || !path || depth >= 8) return d;
+    if (!strstr(path, ".framework")) return d;
+    if (!fwlink_target(d, *len, tgt, sizeof tgt)) return d;
+    if (tgt[0] == '/') snprintf(next, sizeof next, "%s", tgt);
+    else {
+        path_dir(path, dir, sizeof dir);
+        snprintf(next, sizeof next, "%s/%s", dir, tgt);
+    }
+    path_norm(next, sizeof next);
+    d2 = dep_follow(next, &n2, depth + 1);
+    if (!d2) return NULL;
+    *len = n2;
+    return d2;
+}
+
 static void path_subst(const char *s, const char *loader, const char *exe, char *out, usize cap) {
     char d[320];
     if (!strncmp(s, "@executable_path", 16)) { path_dir(exe, d, sizeof d); snprintf(out, cap, "%s%s", d, s + 16); }
@@ -1381,20 +1447,32 @@ static int link_abs_dep(link_t *K, const char *dn) {
             }
         }
         d = locate(K, cand, CAP, &data, &len);
-        /* /usr/lib que o mOS não tem: a fórmula equivalente do Homebrew (mesma API; uma cópia só, para o estado
-         * global — ex.: o terminal do ncurses — ser um só) */
+        /* ncurses, libffi e expat: a fórmula do Homebrew (uma cópia só). libz, libcurl e
+         * libcompression estão na imagem, em /usr/lib (build.ps1). O par é {nome pedido, caminho}.
+         * Outra linha, no mesmo formato, cabe aqui — inclusive uma libswift*. */
         static const char *const usrlib_alias[][2] = {
             {"/usr/lib/libncurses.5.4.dylib", "/usr/local/opt/ncurses/lib/libncursesw.6.dylib"},
-            {"/usr/lib/libz.1.dylib",         "/usr/local/opt/zlib/lib/libz.1.dylib"},
+            {"/usr/lib/libz.1.dylib",         "/usr/lib/libz.1.dylib"},
             {"/usr/lib/libffi.dylib",         "/usr/local/opt/libffi/lib/libffi.8.dylib"},
-            {"/usr/lib/libcurl.4.dylib",      "/usr/local/opt/curl/lib/libcurl.4.dylib"},   /* o git usa o curl do sistema */
+            {"/usr/lib/libcurl.4.dylib",      "/usr/lib/libcurl.4.dylib"},
             {"/usr/lib/libexpat.1.dylib",     "/usr/local/opt/expat/lib/libexpat.1.dylib"},
+            {"/usr/lib/libcompression.dylib", "/usr/lib/libcompression.dylib"},
         };
         for (usize k = 0; d < 0 && !data && k < sizeof usrlib_alias / sizeof usrlib_alias[0]; k++)
             if (!strcmp(cand, usrlib_alias[k][0])) {
                 snprintf(cand, CAP, "%s", usrlib_alias[k][1]);
                 d = locate(K, cand, CAP, &data, &len);
             }
+        /* L15: libswift* moram na imagem em /usr/lib/swift (mos_libswift_image).
+         * Não é alias Homebrew. STOR-SYSDYLIBS mexe só em usrlib_alias (libz, libcurl,
+         * libcompression). Revisão do Kernel: este ramo do carregador é novo. */
+        if (d < 0 && !data) {
+            char swift[96];
+            if (mos_libswift_resolve(cand, swift, sizeof swift) && strcmp(swift, cand) != 0) {
+                snprintf(cand, CAP, "%s", swift);
+                d = locate(K, cand, CAP, &data, &len);
+            }
+        }
         if (d < 0 && data) { d = link_add(K, cand, data, len, true); if (d < 0) d = -2; }   /* link_add copia o caminho */
     }
     kfree(cand);
@@ -1449,6 +1527,12 @@ static int link_add(link_t *K, const char *path, const u8 *file, usize flen, boo
             if (d == -2) return -1;
             if (d >= 0) { I->dep[i] = (i16)d; continue; }
         }
+        if (framework_has_libsystem_fallback(dn)) {
+            /* a dylib do disco (Postico / overlay Swift) ganha; sem arquivo, o libSystem abaixo */
+            int d = link_abs_dep(K, dn);
+            if (d == -2) return -1;
+            if (d >= 0) { I->dep[i] = (i16)d; continue; }
+        }
         if (libsystem_dylib_ok(dn)) {
             /* Foundation.framework é do libSystem, mas a parte Swift dele (overlay + FoundationEssentials com o ABI da
              * Apple, docs/swift-objc-runtime.md, fase 5) é uma dylib Mach-O: no macOS 14+ ela mora dentro do framework,
@@ -1483,7 +1567,21 @@ static void link_order(link_t *K, int i) {
 
 /* registra a proteção inicial (initprot) de cada segmento das imagens [from, n) no kernel, para o
  * mach_vm_region do libSystem responder como o macOS (o base::ProtectedMemory do Chromium confere que o
- * segmento PROTECTED_MEMORY é só leitura). Não muda a PTE: ver machipc.c. */
+ * segmento PROTECTED_MEMORY é só leitura). Não muda a PTE: ver machipc.c.
+ * No arm64 o fim sobe até a página guest de 16 KiB, sem invadir o segmento seguinte. */
+#ifndef MOS_HOST_TEST
+static u64 seg_prot_hi(image_t *I, seg_t *g, u64 lo, u64 hi) {
+    if (!ls_cur || !g->vmsize) return hi;
+    u64 up = A64_GUEST_PAGE_END(lo, g->vmsize);
+    for (int t = 0; t < I->mo.nsegs; t++) {
+        seg_t *o = &I->mo.segs[t];
+        if (o == g || o->zero || !o->vmsize) continue;
+        u64 olo = o->vmaddr + (u64)I->slide;
+        if (olo > lo && olo < up) up = olo;
+    }
+    return up;
+}
+#endif
 static void segs_prot(process_t *p, link_t *K, int from) {
 #ifndef MOS_HOST_TEST
     for (int i = from; i < K->n; i++) {
@@ -1492,7 +1590,7 @@ static void segs_prot(process_t *p, link_t *K, int from) {
             seg_t *g = &I->mo.segs[s];
             if (g->zero || !g->vmsize) continue;
             u64 lo = g->vmaddr + (u64)I->slide;
-            machipc_set_prot(p, lo, lo + g->vmsize, g->prot);
+            machipc_set_prot(p, lo, seg_prot_hi(I, g, lo, lo + g->vmsize), g->prot);
         }
     }
 #else
@@ -1763,6 +1861,7 @@ static i64 dyld_open(process_t *p, link_t *K, const char *req, u64 out_va, u64 c
     usize cxx_len;
     if (libcxx_name(req) && dep_read(LIBCXX_DISK, &cxx_len)) req = LIBCXX_DISK;   /* a libc++ do disco, como no link_image */
     else if (!strcmp(req, LIBICU_DISK) && dep_read(LIBICU_DISK, &cxx_len)) { /* o ICU do disco, como no link_image */ }
+    else if (framework_has_libsystem_fallback(req) && framework_disk_present(req)) { /* o framework do disco, como no link_image */ }
     else if (libsystem_dylib_ok(req)) return DYLD_H_LIBSYSTEM;
     int ci = image_at(K, caller);
     image_t *C = K->im[ci >= 0 ? ci : 0];
@@ -1960,8 +2059,11 @@ i64 macho_dyld_syscall(process_t *p, u64 op, u64 a, u64 b, u64 c) {
         return (i64)dyld_sym(K, (i64)a, name, c);
     }
     case MOS_DYLD_CLOSE:
-        if (a < (u64)K->n && K->im[a]->refs > 0) K->im[a]->refs--;
-        return 0;
+        /* 1 = esta foi a última referência. A imagem continua mapeada: o mOS não descarrega.
+         * dlfcn.c usa o 1 para avisar remove_image num dylib sem seção __objc_/__swift. */
+        if (a >= (u64)K->n || !K->im[a] || K->im[a]->refs == 0) return 0;
+        K->im[a]->refs--;
+        return K->im[a]->refs == 0 ? 1 : 0;
     case MOS_DYLD_COUNT: return K->n;
     case MOS_DYLD_IMAGE: {
         if (a >= (u64)K->n) return 0;

@@ -4,8 +4,10 @@
  */
 #include "a64.h"
 #include "a64_mem.h"
+#include "a64_xmon.h"
 
 int a64_interp_exec(a64_cpu *c, a64_u32 insn) {
+    a64_xmon_bind(c);
     switch ((insn >> 25) & 0xF) {
     case 0x0: case 0x1: case 0x2: case 0x3:
         return A64_EXIT_UDF;                    /* UDF, SME, SVE, não alocado */

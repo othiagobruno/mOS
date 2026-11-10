@@ -50,7 +50,8 @@ typedef union a64_vreg {
 #define A64_FPCR_FZ    (1u << 24)
 #define A64_FPCR_DN    (1u << 25)
 #define A64_FPCR_AHP   (1u << 26)
-/* bits graváveis do FPCR no hardware da Apple (traps de exceção não implementados: ficam 0) */
+/* bits graváveis do FPCR no Apple Silicon. IDE/IXE/UFE/OFE/DZE/IOE são RES0 nesse hardware: o mOS
+ * também os descarta (sem SIGFPE). Os apps usam os sticky flags do FPSR. Decisão em docs/sinais.md. */
 #define A64_FPCR_MASK  (A64_FPCR_FZ16 | (3u << A64_FPCR_RMODE_SHIFT) | A64_FPCR_FZ | A64_FPCR_DN | A64_FPCR_AHP)
 
 /* FPSR (exceções acumuladas + QC) */
@@ -83,8 +84,8 @@ typedef struct a64_cpu {
     a64_u64 tpidr_el0;          /* TPIDR_EL0: livre para o guest */
     a64_u64 tpidrro_el0;        /* TPIDRRO_EL0: no Darwin aponta para o TSD da thread (o runtime põe) */
 
-    /* monitor exclusivo local (LDXR/STXR, LDAXP/STLXP...). Implementação: guardar endereço,
-     * tamanho e o valor lido; STXR faz compare-exchange atômico com esse valor (ver doc). */
+    /* monitor exclusivo (LDXR/STXR, LDAXP/STLXP). A época fica no gate (a64_xmon.h);
+     * estes campos espelham a reserva para depuração e para o caminho que ainda os lê. */
     a64_u64 excl_addr;
     a64_u64 excl_val[2];
     a64_u32 excl_size;          /* bytes acessados (1,2,4,8,16 ou 32 para pares de 128) */
@@ -97,7 +98,8 @@ typedef struct a64_cpu {
 
     void *host;                 /* privado do runtime/harness */
     void *jit;                  /* privado do JIT */
-    a64_u64 reserved[16];       /* crescimento sem quebrar layout usado pelo JIT; reserved[15] = pedido de parada (a64_request_stop) */
+    a64_u64 reserved[16];       /* [8] geração de preempção, [9] slot+1, [10] época do LDXR, [11] gate;
+                                 * [12..15] do JIT; [15] = pedido de parada (a64_request_stop) */
 } a64_cpu;
 
 /* offsets fixos (o JIT gera código com eles) */
@@ -284,6 +286,7 @@ bool a64_jit_recover(a64_cpu *c, const a64_hostctx *h);
  * interpretador; 32 bits altos = pedido interno do JIT), reserved[14] (NZCV em formato x86 enquanto
  * o JIT roda: c->nzcv só vale fora de a64_jit_run, dentro das chamadas ao interpretador e depois de
  * a64_jit_recover), reserved[13] (cache de saltos da thread), reserved[12] (reservado ao JIT), jit.
+ * reserved[8..11] são do monitor exclusivo (a64_xmon.h), não do cache de registradores.
  *
  * No Windows (harness) o JIT usa VirtualAlloc/VirtualProtect e um VEH próprio; no runtime do mOS o
  * hospedeiro fornece as duas funções abaixo.
@@ -307,8 +310,9 @@ void a64_jit_stats(a64_u64 *ntrans, a64_u64 *nflush, a64_u64 *code_bytes);
 /* depois de a64_jit_recover, se o runtime abandonar a64_run por longjmp (em vez de
  * a64_jit_unwind): limpa o estado por thread do JIT */
 void a64_jit_abort(a64_cpu *c);
-/* filho de fork (só a thread que chamou fork sobrevive): zera as travas e o estado das outras
- * threads do JIT. Chamar logo depois que o fork devolve 0, antes de a64_invalidate(0, ~0ull). */
+/* filho de fork (só a thread que chamou fork sobrevive): zera as travas, solta o estado das
+ * outras threads do JIT e aplica invalidações já pendentes. O cache copiado pelo COW permanece;
+ * o kernel mantém PTE_JWP e entrega SIGBUS na primeira escrita de cada processo. */
 void a64_jit_fork_child(a64_cpu *self);
 /* sem trava: true se pode haver código traduzido em [addr, addr+len) (conservador). O runtime usa
  * para só chamar a64_invalidate depois de read()/pread() quando precisa. */
@@ -317,3 +321,6 @@ bool a64_jit_has_code(a64_u64 addr, a64_u64 len);
  * classes mais frequentes (chave = palavra sem os campos de registrador 20:16 e 9:0) */
 void a64_jit_fbstat(int on);
 void a64_jit_fbstat_dump(void (*out)(a64_u32 key, a64_u64 count, void *arg), void *arg, int max);
+/* Se [addr, addr+len) é uma das duas vistas de um vm_remap (as mesmas páginas físicas), devolve a
+ * outra em [*lo, *hi). Sem apelido, 0. O motor tem uma definição fraca; o a64rt substitui. */
+int a64_jit_alias_span(a64_u64 addr, a64_u64 len, a64_u64 *lo, a64_u64 *hi);

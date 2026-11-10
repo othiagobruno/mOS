@@ -76,57 +76,7 @@ id dispatch_data_create(const void *buf, size_t n, void *queue, void *destructor
 }
 size_t dispatch_data_get_size(id d) { return d ? (size_t)MSG0(u64, d, "length") : 0; }
 
-/* ================================================================ CFPreferences por domínio */
-static id g_prefs;                 /* app → NSMutableDictionary */
-static id prefs_app(id app) {
-    if (!app) app = cx_str("kCFPreferencesCurrentApplication");
-    const char *a = cx_cstr(app);
-    if (!strcmp(a, "kCFPreferencesCurrentApplication")) {
-        id b = MSG0(id, cls("NSBundle"), "mainBundle");
-        id bid = b ? MSG0(id, b, "bundleIdentifier") : 0;
-        if (bid) app = bid;
-    }
-    return app;
-}
-static void prefs_path(id app, char *out, size_t cap) {
-    id h = NSHomeDirectory();
-    snprintf(out, cap, "%s/Library/Preferences/%s.plist", h ? cx_cstr(h) : "/tmp", cx_cstr(app));
-}
-static id prefs_dict(id app) {
-    app = prefs_app(app);
-    if (!g_prefs) g_prefs = ret(mdict());
-    id d = MSG(id, g_prefs, "objectForKey:", app);
-    if (!d) {
-        char p[600];
-        prefs_path(app, p, sizeof p);
-        id disk = MSG(id, cls("NSDictionary"), "dictionaryWithContentsOfFile:", cx_str(p));
-        d = disk ? MSG(id, cls("NSMutableDictionary"), "dictionaryWithDictionary:", disk) : mdict();
-        MSG(void, g_prefs, "setObject:forKey:", d, app);
-    }
-    return d;
-}
-id CFPreferencesCopyValue(id key, id app, id user, id host) {
-    (void)user; (void)host;
-    id v = key ? MSG(id, prefs_dict(app), "objectForKey:", key) : 0;
-    return v ? objc_retain(v) : 0;
-}
-void CFPreferencesSetValue(id key, id value, id app, id user, id host) {
-    (void)user; (void)host;
-    if (!key) return;
-    id d = prefs_dict(app);
-    if (value) MSG(void, d, "setObject:forKey:", value, key); else MSG(void, d, "removeObjectForKey:", key);
-}
-u8 CFPreferencesSynchronize(id app, id user, id host) {
-    (void)user; (void)host;
-    app = prefs_app(app);
-    id d = prefs_dict(app);
-    char p[600], dir[600];
-    prefs_path(app, p, sizeof p);
-    id h = NSHomeDirectory();
-    snprintf(dir, sizeof dir, "%s/Library/Preferences", h ? cx_cstr(h) : "/tmp");
-    SYS1(SYS_MKDIR, dir);
-    return MSG(BOOL, d, "writeToFile:atomically:", cx_str(p), YES) ? 1 : 0;
-}
+/* CFPreferences por domínio: prefs.c */
 
 /* ================================================================ NSInputStream */
 cx_class_t NSInputStream_c __asm__("OBJC_CLASS_$_NSInputStream"), NSInputStream_m __asm__("OBJC_METACLASS_$_NSInputStream");
@@ -209,7 +159,7 @@ u8 UTTypeConformsTo(id a, id b) {
 
 /* ================================================================ SMAppService */
 cx_class_t SMAppService_c __asm__("OBJC_CLASS_$_SMAppService"), SMAppService_m __asm__("OBJC_METACLASS_$_SMAppService");
-typedef struct { void *isa; id ident; i64 status; int kind; } smapp_t;     /* kind: 1 agente, 2 daemon (plist no bundle) */
+typedef struct { void *isa; id ident; i64 status; int kind; char cat[16]; } smapp_t;     /* kind: 1 agente, 2 daemon */
 static id g_services;
 static id sm_named(id k, const char *kind, id ident) {
     if (!g_services) g_services = ret(mdict());
@@ -219,6 +169,7 @@ static id sm_named(id k, const char *kind, id ident) {
     if (!s) {
         s = cx_alloc_instance((cx_class_t *)k);
         ((smapp_t *)s)->ident = ret(ident);
+        snprintf(((smapp_t *)s)->cat, sizeof ((smapp_t *)s)->cat, "%s", kind);
         MSG(void, g_services, "setObject:forKey:", s, ks);
         objc_release(s);
     }
@@ -228,8 +179,23 @@ static id sm_main(id k, SEL c) { (void)c; return sm_named(k, "main", 0); }
 static id sm_login(id k, SEL c, id i) { (void)c; return sm_named(k, "login", i); }
 static id sm_agent(id k, SEL c, id p) { (void)c; id s = sm_named(k, "agent", p); ((smapp_t *)s)->kind = 1; return s; }
 static id sm_daemon(id k, SEL c, id p) { (void)c; id s = sm_named(k, "daemon", p); ((smapp_t *)s)->kind = 2; return s; }
-static i64 sm_status(id s, SEL c) { (void)c; return ((smapp_t *)s)->status; }      /* 0 notRegistered, 1 enabled */
-/* agente/daemon: o plist em Contents/Library/LaunchAgents|LaunchDaemons do app vai ao launchd (launchctl load) */
+int cx_sm_remember(const char *key, int status);
+int cx_sm_recall(const char *key);
+int cx_sm_publish_file(int daemon, const char *plist_path);
+int cx_sm_unpublish_file(int daemon, const char *plist_path);
+static void sm_key(smapp_t *m, char *out, size_t cap) {
+    snprintf(out, cap, "%s:%s", m->cat[0] ? m->cat : "main", m->ident ? cx_cstr(m->ident) : "");
+}
+static i64 sm_status(id s, SEL c) {
+    (void)c;
+    char key[300];
+    sm_key((smapp_t *)s, key, sizeof key);
+    int disk = cx_sm_recall(key);
+    if (disk >= 0) ((smapp_t *)s)->status = disk;
+    return ((smapp_t *)s)->status;      /* 0 notRegistered, 1 enabled, 3 notFound */
+}
+/* agente/daemon: o plist em Contents/Library/LaunchAgents|LaunchDaemons do app vai ao launchd (launchctl load)
+ * e uma cópia fica em ~/Library/LaunchAgents ou /Library/LaunchDaemons para o próximo boot. */
 int cx_launchd_cmd(unsigned op, const char *arg, char *out, unsigned cap);
 static BOOL sm_plist_path(smapp_t *m, char *path, size_t cap) {
     id b = MSG0(id, (id)cx_class_named("NSBundle"), "mainBundle");
@@ -243,20 +209,29 @@ static BOOL sm_register(id s, SEL c, id *err) {
     smapp_t *m = (smapp_t *)s;
     if (err) *err = 0;
     char path[1024], out[256];
+    char key[300];
+    sm_key(m, key, sizeof key);
     if (m->kind && sm_plist_path(m, path, sizeof path)) {
         int r = cx_launchd_cmd(2 /* LC_LOAD */, path, out, sizeof out);
-        if (r != 0 && !strstr(out, "carregado")) { m->status = 3; return NO; }   /* notFound */
+        if (r != 0 && !strstr(out, "carregado")) { m->status = 3; cx_sm_remember(key, 3); return NO; }
+        cx_sm_publish_file(m->kind == 2, path);
     }
     m->status = 1;
+    cx_sm_remember(key, 1);
     return YES;
 }
 static BOOL sm_unregister(id s, SEL c, id *err) {
     (void)c;
     smapp_t *m = (smapp_t *)s;
     if (err) *err = 0;
-    char path[1024];
-    if (m->kind && sm_plist_path(m, path, sizeof path)) cx_launchd_cmd(3 /* LC_UNLOAD */, path, 0, 0);
+    char path[1024], key[300];
+    sm_key(m, key, sizeof key);
+    if (m->kind && sm_plist_path(m, path, sizeof path)) {
+        cx_launchd_cmd(3 /* LC_UNLOAD */, path, 0, 0);
+        cx_sm_unpublish_file(m->kind == 2, path);
+    }
     m->status = 0;
+    cx_sm_remember(key, 0);
     return YES;
 }
 static void sm_unregister_cb(id s, SEL c, void *done) { sm_unregister(s, c, 0); call_blk1(done, 0); }
@@ -359,7 +334,8 @@ static id hf_default(id k, SEL c) { (void)c; if (!g_performer) g_performer = cx_
 static void hf_perform(id s, SEL c, i64 pattern, u64 when) { (void)s; (void)c; (void)pattern; (void)when; }
 
 /* ================================================================ ApplicationServices / CoreGraphics */
-u8 AXIsProcessTrusted(void) { return 0; }      /* sem permissão de acessibilidade, como um Mac antes de autorizar */
+int cx_tcc_preflight(const char *service);
+u8 AXIsProcessTrusted(void) { return (u8)cx_tcc_preflight("kTCCServiceAccessibility"); }
 id CGSessionCopyCurrentDictionary(void) {
     id d = mdict();
     id yes = MSG(id, cls("NSNumber"), "numberWithBool:", YES), uid = MSG(id, cls("NSNumber"), "numberWithInt:", 501);

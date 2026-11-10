@@ -447,8 +447,8 @@ NSOutlineView, NSTableHeaderView/Cell, NSTableRowView, NSTextFieldCell, NSTabVie
   - **libcompression:** sem codecs.
 
   As constantes CFString usam a literal do clang (`__builtin___CFStringMakeConstantString`).
-- **libz:** o bottle do Homebrew (zlib 1.3.2) em `/usr/local/opt/zlib/lib`, para onde o carregador já redireciona
-  `/usr/lib/libz.1.dylib`.
+- **libz:** `/usr/lib/libz.1.dylib` na imagem, compilada do fonte zlib 1.3.2 (`tools/build-zlib.ps1`). O carregador
+  não aponta mais esse nome para o bottle do Homebrew.
 - Os 11 símbolos do CoreData e os do WebKit, SecurityInterface, QuickLookUI e AudioToolbox que o Postico importa
   batem. Os do Sparkle (ImageIO, ServiceManagement, UTType) também.
 - **Teste final:** a janela de conexão do Postico aparecer no harness (`MACHOTEST_DUMP`), depois das fases 5 e 6.

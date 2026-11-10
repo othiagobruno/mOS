@@ -1,5 +1,7 @@
 /* mOS — VFS em memória */
 #include "vfs.h"
+#include "fwlink.h"
+#include "account.h"
 
 extern const char *account_home(void) __attribute__((weak));
 const char *home_sub(const char *sub) {
@@ -66,17 +68,25 @@ static vnode_t *add_child(vnode_t *dir, const char *name, bool isdir) {
  * do kernel segue). Alvo relativo vale a partir da pasta do link. */
 #define VFS_LINK_MAGIC "#mOS-link:"
 static vnode_t *walk_at(vnode_t *start, const char *path, bool create_dirs, bool last_is_dir, int depth);
+
+static bool vnode_in_framework(vnode_t *n) {
+    for (; n; n = n->parent)
+        if (n->name[0] && strstr(n->name, ".framework")) return true;
+    return false;
+}
+
 static vnode_t *follow_dir_link(vnode_t *dirnode, vnode_t *c, int depth) {
-    usize ml = sizeof VFS_LINK_MAGIC - 1;
+    char tgt[512];
+    int magic;
     if (c->dir) return c;
     ensure(c);
-    if (!c->data || c->size <= ml || c->size >= ml + 512 || memcmp(c->data, VFS_LINK_MAGIC, ml)) return c;
+    if (!c->data || !c->size) return c;
+    magic = c->size >= 10 && !memcmp(c->data, VFS_LINK_MAGIC, 10);
+    /* #mOS-link: em qualquer pasta. Texto puro ("A", "Versions/Current/Electron Framework") só dentro de
+     * .framework: é o symlink que o Windows gravou como arquivo. Fora disso um arquivo pequeno continua arquivo. */
+    if (!magic && !vnode_in_framework(c)) return c;
+    if (!fwlink_target(c->data, c->size, tgt, sizeof tgt)) return c;
     if (depth >= 8) return NULL;                            /* ELOOP */
-    char tgt[512];
-    usize n = c->size - ml;
-    memcpy(tgt, c->data + ml, n);
-    tgt[n] = 0;
-    while (n && (tgt[n - 1] == '\n' || tgt[n - 1] == '\r')) tgt[--n] = 0;
     return walk_at(tgt[0] == '/' ? &root : dirnode, tgt, false, false, depth + 1);
 }
 
@@ -261,11 +271,39 @@ const char *vfs_kind(vnode_t *n) {
     return "Documento";
 }
 
+/* Copia um arquivo ou uma pasta (bundles .app saídos de um .dmg). O destino que já existe não é trocado. */
+static bool copy_rec(vnode_t *s, char *dst, usize len) {
+    if (!s) return false;
+    if (vfs_lookup(dst)) return true;
+    if (s->dir) {
+        if (!vfs_mkdir(dst)) return false;
+        for (vnode_t *c = s->child; c; c = c->next) {
+            usize n = strlen(c->name);
+            if (len + 1 + n + 1 > 1024) return false;
+            dst[len] = '/';
+            memcpy(dst + len + 1, c->name, n + 1);
+            if (!copy_rec(c, dst, len + 1 + n)) return false;
+            dst[len] = 0;
+        }
+        return true;
+    }
+    ensure(s);
+    return vfs_write_file(dst, s->data ? s->data : (const void *)"", s->data ? s->size : 0) != NULL;
+}
+bool vfs_copy_tree(const char *src, const char *dst) {
+    vnode_t *s = vfs_lookup(src);
+    char buf[1024];
+    if (!s || !dst || !dst[0]) return false;
+    snprintf(buf, sizeof buf, "%s", dst);
+    return copy_rec(s, buf, strlen(buf));
+}
+
 void vfs_init(void) {
     static const char *dirs[] = {
         "/Aplicativos", "/Sistema/Biblioteca", "/Users/Visitante/Mesa", "/Users/Visitante/Documentos",
         "/Users/Visitante/Downloads", "/Users/Visitante/Imagens", "/Users/Visitante/Música", TRASH, "/tmp"};
     for (u32 i = 0; i < ARRAY_LEN(dirs); i++) vfs_mkdir(dirs[i]);
+    account_ensure_dirs(HOME);
     int nf = 0;
     /* com disco do sistema (AHCI + FAT32), a árvore vem direto de \mOS\ no disco */
     if (!persist_load()) for (u32 i = 0; i < g_boot->file_count; i++) {

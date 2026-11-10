@@ -51,10 +51,17 @@ surface_t BGRA do tamanho da vista  ──PAINT──▶  buffer do app  ──c
 | KVO | `title`, `URL`, `loading`, `estimatedProgress`, `canGoBack`, `canGoForward`, `hasOnlySecureContent` |
 | Outros | `findString:withConfiguration:`, `takeSnapshotWithConfiguration:`, `pageZoom`, `magnification`, `drawsBackground`, `customUserAgent`, `WKWebsiteDataStore`, `WKHTTPCookieStore` (sobre o `NSHTTPCookieStorage`), `WKContentRuleListStore` (valida e guarda) |
 | WebKit1 | `WebView` (subclasse do `WKWebView`), `WebFrame`, `WebDataSource`, `WebPreferences`, `stringByEvaluatingJavaScriptFromString:`, `frameLoadDelegate` e `policyDelegate` |
+| Arquivo web | `WebArchive` e `WebResource`: plist `WebMainResource` / `WebSubresources` / `WebSubframeArchives`. `data` grava XML; `initWithData:` lê XML e bplist. Não é um `.webarchive` binário idêntico ao da Apple |
 
 As classes de fachada `WKWebView`/`WKWebViewConfiguration`/`WKWebsiteDataStore` do libSystem
 (`vscode_fwclasses.c`, para apps que só referenciam o WebKit) continuam existindo. Elas ficam marcadas como stub
 (`cx_mark_stub_class`), e a busca por nome (`NSClassFromString`, nibs) prefere a do framework quando ele carrega.
+
+## O que os apps-alvo pedem
+
+Medido com `tools/webkit_api_scan.py` (mesma leitura de binds e chained fixups que `tools/machocheck.c`)
+nos binários públicos. A tabela e o que foi implementado por causa dela estão em
+[webkit-apis-alvo.md](webkit-apis-alvo.md).
 
 ## Limites conhecidos
 
@@ -68,6 +75,11 @@ As classes de fachada `WKWebView`/`WKWebViewConfiguration`/`WKWebsiteDataStore` 
 - **Resposta depois do commit.** `decidePolicyForNavigationResponse` é chamado depois que o documento chegou. Um
   "cancelar" volta à página anterior.
 - **Bloqueio de conteúdo.** As regras de conteúdo são validadas e guardadas, mas não bloqueiam nada.
+- **Desafio de autenticação, download e painel de arquivo.** Vários apps implementam
+  `webView:didReceiveAuthenticationChallenge:completionHandler:`, `webView:navigationAction:didBecomeDownload:`
+  e `webView:runOpenPanelWithParameters:initiatedByFrame:completionHandler:`. O motor não produz esses eventos,
+  então o framework não chama o delegate (não inventa um desafio, um `WKDownload` nem um cancelamento de arquivo).
+- **Instant back.** `shouldGoToBackForwardListItem:willUseInstantBack:` é chamado com `willUseInstantBack = NO`.
 
 ## Teste
 

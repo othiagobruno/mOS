@@ -746,18 +746,8 @@ void qsort(void *base, size_t n, size_t sz, int (*cmp)(const void *, const void 
     }
 }
 
-void qsort_r(void *base, size_t n, size_t sz, void *thunk, int (*cmp)(void *, const void *, const void *)) {
-    /* inserção estável: suficiente para o uso típico */
-    u8 *a = base, *tmp = malloc(sz);
-    if (!tmp) return;
-    for (size_t i = 1; i < n; i++) {
-        memcpy(tmp, a + i * sz, sz);
-        size_t j = i;
-        while (j > 0 && cmp(thunk, a + (j - 1) * sz, tmp) > 0) { memcpy(a + j * sz, a + (j - 1) * sz, sz); j--; }
-        memcpy(a + j * sz, tmp, sz);
-    }
-    free(tmp);
-}
+/* qsort_r está em sortb.c: heapsort O(n log n), sem buffer e sem estado global.
+ * A versão anterior era inserção O(n²). Não é estável; o estável é mergesort. */
 
 void *bsearch(const void *key, const void *base, size_t n, size_t sz, int (*cmp)(const void *, const void *)) {
     size_t lo = 0, hi = n;
@@ -1062,7 +1052,54 @@ int cx_socketpair_fds(int *fds) {
     if (r == 0) { nb_set(fds[0], 0); nb_set(fds[1], 0); acc_set(fds[0], 2); acc_set(fds[1], 2); }
     return r;
 }
-int fork(void) { return (int)ret_errno(SYS0(SYS_FORK)); }
+/* pthread_atfork: prepare em LIFO, parent e child em FIFO (POSIX). A trava do heap entra no meio,
+ * depois dos prepare do usuário e antes dos parent/child, para o filho não herdar a trava presa
+ * por uma thread que não existe mais e para os handlers poderem chamar malloc. */
+#define ATFORK_MAX 256
+static struct { void (*pre)(void); void (*parent)(void); void (*child)(void); } atfork_tab[ATFORK_MAX];
+static int atfork_n;
+static volatile int atfork_lock;
+static int fork_depth;
+static void af_lock(void) {
+    while (__sync_lock_test_and_set(&atfork_lock, 1))
+        while (atfork_lock) __builtin_ia32_pause();
+}
+static void af_unlock(void) { __sync_lock_release(&atfork_lock); }
+static void atfork_run(int which) {
+    void (*fns[ATFORK_MAX])(void);
+    af_lock();
+    int n = atfork_n;
+    for (int i = 0; i < n; i++)
+        fns[i] = which == 0 ? atfork_tab[i].pre : which == 1 ? atfork_tab[i].parent : atfork_tab[i].child;
+    af_unlock();
+    if (which == 0) { for (int i = n - 1; i >= 0; i--) if (fns[i]) fns[i](); }
+    else { for (int i = 0; i < n; i++) if (fns[i]) fns[i](); }
+}
+int pthread_atfork(void (*pre)(void), void (*parent)(void), void (*child)(void)) {
+    af_lock();
+    if (atfork_n >= ATFORK_MAX) { af_unlock(); return 12; }   /* ENOMEM */
+    atfork_tab[atfork_n].pre = pre;
+    atfork_tab[atfork_n].parent = parent;
+    atfork_tab[atfork_n].child = child;
+    atfork_n++;
+    af_unlock();
+    return 0;
+}
+int fork(void) {
+    int top = fork_depth == 0;
+    fork_depth++;
+    if (top) { atfork_run(0); hl(); }
+    long r = SYS0(SYS_FORK);
+    if (r == 0) {
+        fork_depth = 0;
+        __atomic_store_n(&heap_lock, 0, __ATOMIC_RELEASE);
+        if (top) atfork_run(2);
+        return 0;
+    }
+    if (top) { hu(); atfork_run(1); }
+    fork_depth--;
+    return (int)ret_errno(r);
+}
 /* execve/execvp ficam em extra.c (precisam do posix_spawnp e do atalho do sandbox-exec) */
 int ioctl(int fd, unsigned long req, ...) {
     /* FIONBIO / FIOCLEX / FIONCLEX (libuv): o mOS ainda não distingue E/S não bloqueante nem
@@ -1172,7 +1209,9 @@ static __attribute__((used, noreturn)) void cx_sigtramp(void *h, int style, int 
     int s = sig_from_mos(mossig);
     int saved_errno = cx_errno;
     si->si_signo = s;
-    if (s == 20 && si->si_code == MOS_CLD_KILLED) si->si_status = sig_from_mos(si->si_status);   /* SIGCHLD de filho morto por sinal */
+    /* SIGCHLD: si_status é um sinal do kernel em CLD_KILLED, CLD_STOPPED (STOP 20 → 17) e CLD_CONTINUED */
+    if (s == 20 && (si->si_code == MOS_CLD_KILLED || si->si_code == MOS_CLD_STOPPED || si->si_code == MOS_CLD_CONTINUED))
+        si->si_status = sig_from_mos(si->si_status);
     uc->uc_sigmask = cx_sigmask_from_mos(uc->uc_sigmask);
     ((void (*)(int, void *, void *))h)(s, si, uc);     /* o macOS passa (sinal, siginfo, ucontext) nos dois estilos */
     uc->uc_sigmask = cx_sigmask_to_mos(uc->uc_sigmask);

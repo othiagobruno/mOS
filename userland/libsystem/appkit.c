@@ -7,8 +7,13 @@
  * entrega mouseDown:/mouseUp:/mouseDragged:/keyDown:/scrollWheel: como no macOS.
  */
 #include "foundation.h"
+#include "progress_draw.h"
 #include "libc.h"
+#include "appkit_table.h"
+#include "appkit_status.h"
 #include "../../kernel/include/compat_gui.h"
+
+void cx_ax_note_view(id obj, const char *note);
 
 double floor(double), cos(double), sin(double), strtod(const char *, char **);
 char *strcpy(char *, const char *);
@@ -25,6 +30,7 @@ CLASS(NSTextField) CLASS(NSSlider) CLASS(NSProgressIndicator) CLASS(NSBox) CLASS
 CLASS(NSColor) CLASS(NSFont) CLASS(NSBezierPath) CLASS(NSEvent) CLASS(NSMenu) CLASS(NSMenuItem) CLASS(NSAlert)
 CLASS(NSScreen) CLASS(NSGraphicsContext) CLASS(NSCursor) CLASS(NSWorkspace) CLASS(NSImage) CLASS(NSAttributedString)
 CLASS(NSRunningApplication) CLASS(NSSound) CLASS(NSPanel) CLASS(NSScrollView) CLASS(NSTextView) CLASS(NSClipView)
+CLASS(NSWindowTab)
 CLASS(NSVisualEffectView) CLASS(NSLayoutConstraint) CLASS(NSColorWell) CLASS(NSTableView) CLASS(NSTableColumn) CLASS(NSTableCellView) CLASS(NSIndexSet)
 
 extern cx_class_t NSObject_c __asm__("OBJC_CLASS_$_NSObject");
@@ -44,6 +50,9 @@ double NSAppKitVersionNumber = 2487.0;
 
 extern id objc_retain(id), objc_autorelease(id);
 extern void objc_release(id);
+void objc_setAssociatedObject(id obj, const void *key, id value, u64 policy);
+id objc_getAssociatedObject(id obj, const void *key);
+extern const char cx_tv_header_key;   /* NSTableHeaderView → a tabela (associação ASSIGN) */
 extern void *objc_autoreleasePoolPush(void);
 extern void objc_autoreleasePoolPop(void *);
 /* guarda um objeto num campo, retendo o novo e soltando o antigo */
@@ -51,6 +60,8 @@ static id keep(id *slot, id v) { objc_retain(v); id old = *slot; *slot = v; objc
 static BOOL menus_dirty;
 static void table_resize(id t, double width);
 static void layout_scroll(id v);
+static void tv_layout_views(id self);
+static void tv_install_archived(id table, id arch);
 static void set_clip(double x, double y, double w, double h);
 struct absr;
 static void draw_image_fit(id img, double x, double y, double w, double h);
@@ -92,6 +103,11 @@ typedef struct {
     BOOL has_anchor, last_typing;
     id undo, redo;
     BOOL no_tamic;                 /* translatesAutoresizingMaskIntoConstraints = NO */
+    id identifier;                 /* NSUserInterfaceItemIdentifier (retido) */
+    id next_responder;             /* nextResponder explícito; senão a superview (fraco) */
+    id header_view;                /* NSTableHeaderView real, quando o nib traz um (retido) */
+    int tv_dirty;                  /* NSTableView: o delegate precisa ser perguntado de novo */
+    BOOL show_idle;                /* NSProgressIndicator: displayedWhenStopped */
 } vstate_t;
 
 typedef struct {
@@ -107,6 +123,8 @@ typedef struct {
     double alpha;                   /* alphaValue (0 = nunca definido = 1,0) */
     id parent;                      /* parentWindow (fraco) */
     i64 number;                     /* windowNumber: único e estável pela vida da janela (0 = ainda não pedido) */
+    id subtitle, represented_url, tab;
+    BOOL restorable;
 } wstate_t;
 
 typedef struct { double r, g, b, a; } rgba_t;     /* NSColor: campos logo após o isa */
@@ -191,8 +209,10 @@ typedef struct {
     u32 fill, stroke;
     double line_width;
     double galpha;                  /* CGContextSetAlpha: multiplica o alfa das cores de preenchimento e traço */
+    int blend;                      /* CGContextSetBlendMode no contexto da janela; 16 = clear */
 } ctx_t;
-static ctx_t ctx = {0, 0, 0, 0, NO, 0xFF000000, 0xFF000000, 1, 1};
+static ctx_t ctx = {0, 0, 0, 0, NO, 0xFF000000, 0xFF000000, 1, 1, 0};
+void cx_cg_note_blend(int mode) { ctx.blend = mode; }
 /* aplica o alfa global (CGContextSetAlpha) a uma cor ARGB */
 static u32 ga(u32 argb) { if (ctx.galpha >= 1) return argb; u32 a = (u32)((argb >> 24) * (ctx.galpha > 0 ? ctx.galpha : 0) + 0.5); return (a << 24) | (argb & 0xFFFFFF); }
 u32 cx_cg_fill_argb(void) { return ctx.fill; }
@@ -396,7 +416,20 @@ static void bp_add_clip(id self, SEL c) { NSRect r = bp_bounds(self, c); double 
 
 /* funções C de desenho do AppKit */
 void NSRectFill(NSRect r) { double x, y, w, h; px_rect(r, &x, &y, &w, &h); g_fill(x, y, w, h, ctx.fill); }
-void NSRectFillUsingOperation(NSRect r, u64 op) { (void)op; NSRectFill(r); }
+static void g_comp_fill(double x, double y, double w, double h, u32 c, u32 op) {
+    float p[4] = {(float)x, (float)y, (float)w, (float)h};
+    u8 b[24];
+    if (op > 28) op = 2; /* NSCompositingOperationSourceOver */
+    memcpy(b, p, 16);
+    memcpy(b + 16, &c, 4);
+    memcpy(b + 20, &op, 4);
+    put(GC_COMP_FILL, b, 24);
+}
+void NSRectFillUsingOperation(NSRect r, u64 op) {
+    double x, y, w, h;
+    px_rect(r, &x, &y, &w, &h);
+    g_comp_fill(x, y, w, h, ctx.fill, (u32)op);
+}
 void NSEraseRect(NSRect r) { double x, y, w, h; px_rect(r, &x, &y, &w, &h); g_fill(x, y, w, h, 0xFFFFFFFF); }
 void NSFrameRectWithWidth(NSRect r, double t) { double x, y, w, h; px_rect(r, &x, &y, &w, &h); g_rstroke(x + t / 2, y + t / 2, w - t, h - t, 0, t, ctx.fill); }
 void NSFrameRect(NSRect r) { NSFrameRectWithWidth(r, 1); }
@@ -533,6 +566,7 @@ void CGContextSetStrokeColorWithColor(id c, id color) { (void)c; ctx.stroke = ga
 void CGContextSetLineWidth(id c, double w) { (void)c; ctx.line_width = w; pth(cgp())->lw = w; }
 void CGContextFillRect(id c, CGRect r) {
     if (cx_bm_fill_rect(c, r.o.x, r.o.y, r.s.w, r.s.h)) return;
+    if (ctx.blend == 16) { double x, y, w, h; px_rect(r, &x, &y, &w, &h); g_fill(x, y, w, h, 0); return; }
     NSRectFill(r);
 }
 void CGContextFillRects(id c, const CGRect *r, u64 n) { for (u64 i = 0; i < n; i++) CGContextFillRect(c, r[i]); }
@@ -704,6 +738,9 @@ static void v_dealloc(id self, SEL c) {
         s->sub = 0;
         s->capsub = 0;
         s->superview = 0;
+        if (s->header_view) objc_setAssociatedObject(s->header_view, &cx_tv_header_key, 0, 0);
+        objc_release(s->identifier);
+        objc_release(s->header_view);
     }
     ((void (*)(id, SEL))cx_lookup(&NSResponder_c, c))(self, c);
 }
@@ -803,6 +840,28 @@ static BOOL abs_rect(id v, absr_t *out) {
     out->flipped = is_flipped(v);
     return YES;
 }
+/* Geometria que a árvore de acessibilidade entrega. O frame da janela é o do AppKit
+ * (origem no canto inferior esquerdo da tela). A view sai no mesmo espaço. */
+int cx_appkit_window_frame(id w, double *x, double *y, double *wd, double *ht) {
+    if (!w || !x || !y || !wd || !ht) return 0;
+    wstate_t *s = ws(w);
+    *x = s->frame.o.x;
+    *y = s->frame.o.y;
+    *wd = s->frame.s.w;
+    *ht = s->frame.s.h;
+    return 1;
+}
+int cx_appkit_window_number(id w) { return w ? ws(w)->gid : 0; }
+int cx_appkit_view_frame(id v, double *x, double *y, double *wd, double *ht) {
+    absr_t a;
+    if (!v || !x || !y || !wd || !ht || !abs_rect(v, &a)) return 0;
+    wstate_t *s = ws(vs(v)->window);
+    *x = s->frame.o.x + a.tlx;
+    *y = s->frame.o.y + (s->frame.s.h - a.tly - a.h);
+    *wd = a.w;
+    *ht = a.h;
+    return 1;
+}
 static double win_h(id w) { wstate_t *s = ws(w); return s->frame.s.h; }
 /* conversões entre views passam pela base da janela (from/to nil = a janela, como no AppKit) */
 static NSPoint v_convert_to(id self, SEL c, NSPoint p, id to);
@@ -857,7 +916,7 @@ static BOOL ctl_enabled(id self, SEL c) { (void)c; return vs(self)->enabled; }
 static void ctl_set_font(id self, SEL c, id f) { (void)c; keep(&vs(self)->font, f); mark(self); }
 static id ctl_font(id self, SEL c) { (void)c; return vs(self)->font ? vs(self)->font : dflt_font(); }
 static void ctl_set_align(id self, SEL c, i64 a) { (void)c; vs(self)->alignment = (int)a; mark(self); }
-static void ctl_set_string(id self, SEL c, id s) { (void)c; vstate_t *v = vs(self); id nv = s ? MSG0(id, s, "copy") : cx_str(""); objc_release(v->value); v->value = nv; if (v->caret > (int)strlen(cx_cstr(v->value))) v->caret = (int)strlen(cx_cstr(v->value)); mark(self); }
+static void ctl_set_string(id self, SEL c, id s) { (void)c; vstate_t *v = vs(self); id nv = s ? MSG0(id, s, "copy") : cx_str(""); objc_release(v->value); v->value = nv; if (v->caret > (int)strlen(cx_cstr(v->value))) v->caret = (int)strlen(cx_cstr(v->value)); mark(self); cx_ax_note_view(self, "AXValueChanged"); }
 static id ctl_string(id self, SEL c) { (void)c; vstate_t *v = vs(self); return v->value ? v->value : cx_str(""); }
 static void ctl_set_int(id self, SEL c, int i) { char b[32]; snprintf(b, sizeof b, "%d", i); vs(self)->dval = i; ctl_set_string(self, c, cx_str(b)); }
 static void ctl_set_double(id self, SEL c, double d) {
@@ -958,7 +1017,17 @@ static void sl_set_min(id self, SEL c, double v) { (void)c; vs(self)->minv = v; 
 static void sl_set_max(id self, SEL c, double v) { (void)c; vs(self)->maxv = v; mark(self); }
 static double sl_min(id self, SEL c) { (void)c; return vs(self)->minv; }
 static double sl_max(id self, SEL c) { (void)c; return vs(self)->maxv; }
-static id pg_init_frame(id self, SEL c, NSRect f) { v_init_frame(self, c, f); vstate_t *s = vs(self); s->kind = K_PROGRESS; s->minv = 0; s->maxv = 100; return self; }
+static id pg_init_frame(id self, SEL c, NSRect f) {
+    v_init_frame(self, c, f);
+    vstate_t *s = vs(self);
+    s->kind = K_PROGRESS;
+    s->minv = 0;
+    s->maxv = 100;
+    s->show_idle = YES;
+    return self;
+}
+static void pg_set_idle(id self, SEL c, BOOL v) { (void)c; vs(self)->show_idle = v ? YES : NO; mark(self); }
+static BOOL pg_idle(id self, SEL c) { (void)c; return vs(self)->show_idle; }
 static void pg_inc(id self, SEL c, double d) { (void)c; vs(self)->dval += d; mark(self); }
 static id bx_init_frame(id self, SEL c, NSRect f) { v_init_frame(self, c, f); vstate_t *s = vs(self); s->kind = K_BOX; s->title = cx_str(""); return self; }
 static id st_init_frame(id self, SEL c, NSRect f) { v_init_frame(self, c, f); vstate_t *s = vs(self); s->kind = K_STACK; s->spacing = 8; s->orientation = 0; return self; }
@@ -1103,6 +1172,7 @@ static void draw_builtin(id v, absr_t *a) {
         break;
     }
     case K_PROGRESS: {
+        if (!cx_progress_draws(s->show_idle, s->dval, s->minv)) break;
         double range = s->maxv - s->minv, t = range > 0 ? (s->dval - s->minv) / range : 0;
         if (t < 0) t = 0; if (t > 1) t = 1;
         double cy = y + h / 2;
@@ -1188,6 +1258,7 @@ static id w_init(id self, SEL c, NSRect r, u64 style, u64 backing, BOOL defer) {
     s->style = style;
     s->title = cx_str("");
     s->released_when_closed = YES;
+    s->restorable = YES;
     s->bg = cx_color(0.93, 0.93, 0.93, 1);
     id cv = MSG(id, MSG0(id, &NSView_c, "alloc"), "initWithFrame:", r_make(0, 0, r.s.w, r.s.h));
     s->content = cv;
@@ -1204,6 +1275,38 @@ static void w_set_title(id self, SEL c, id t) {
     if (s->gid > 0) SYS2(GUI_WIN_TITLE, s->gid, cx_cstr(s->title));
 }
 static id w_title(id self, SEL c) { (void)c; return ws(self)->title; }
+static void w_set_subtitle(id self, SEL c, id t) {
+    (void)c;
+    wstate_t *s = ws(self);
+    id nt = t ? MSG0(id, t, "copy") : cx_str("");
+    objc_release(s->subtitle);
+    s->subtitle = nt;
+}
+static id w_subtitle(id self, SEL c) { (void)c; id t = ws(self)->subtitle; return t ? t : cx_str(""); }
+static void w_set_url(id self, SEL c, id u) { (void)c; keep(&ws(self)->represented_url, u); }
+static id w_url(id self, SEL c) { (void)c; return ws(self)->represented_url; }
+static void w_set_restorable(id self, SEL c, BOOL v) { (void)c; ws(self)->restorable = v ? YES : NO; }
+static BOOL w_restorable(id self, SEL c) { (void)c; return ws(self)->restorable; }
+static char tab_win_key;
+static id tab_window(id self, SEL c) { (void)c; return objc_getAssociatedObject(self, &tab_win_key); }
+static void tab_set_window(id self, SEL c, id w) { (void)c; objc_setAssociatedObject(self, &tab_win_key, w, 0); }
+static id w_tab(id self, SEL c) {
+    (void)c;
+    wstate_t *s = ws(self);
+    if (!s->tab) {
+        cx_class_t *k = cx_class_named("NSWindowTab");
+        if (k) {
+            s->tab = cx_alloc_instance(k);
+            if (s->tab) tab_set_window(s->tab, 0, self);
+        }
+    }
+    return s->tab;
+}
+static void w_set_tab(id self, SEL c, id t) {
+    (void)c;
+    keep(&ws(self)->tab, t);
+    if (t) tab_set_window(t, 0, self);
+}
 static id w_content(id self, SEL c) { (void)c; return ws(self)->content; }
 static void w_set_content(id self, SEL c, id v) {
     (void)c;
@@ -1347,6 +1450,7 @@ static BOOL w_make_first(id self, SEL c, id r) {
         if (!MSG0(BOOL, r, "becomeFirstResponder")) { s->first = 0; return NO; }
         mark(r);
     }
+    cx_ax_note_view(r ? r : self, "AXFocusedUIElementChanged");
     return YES;
 }
 /* windowNumber: como no macOS, cada janela tem o seu, único e fixo, mesmo antes de ir à tela e depois de fechada.
@@ -1403,6 +1507,7 @@ static void w_become_key(id self) {
     cx_post(nm);
     if (d && cx_responds(d->isa, sel_registerName("windowDidBecomeKey:"))) MSG(void, d, "windowDidBecomeKey:", nk);
     cx_post(nk);
+    cx_ax_note_view(self, "AXFocusedWindowChanged");
 }
 /* Como no Cocoa, a janela filha (addChildWindow:ordered:, ex.: o diálogo "Abrir o Slack?" do Chrome, que é outra
  * NSWindow) fica acima da mãe: quando a mãe volta à frente, as filhas visíveis voltam por cima dela. O window server
@@ -1447,6 +1552,7 @@ static void w_order_in(id self) {
         }
         if (!app_windows) app_windows = cx_arr_new(&NSMutableArray_c);
         cx_arr_add(app_windows, self);
+        cx_ax_note_view(self, "AXWindowCreated");
     } else {
         if (!s->visible) SYS2(GUI_WIN_FOCUS, s->gid, GUI_FOCUS_SHOW);   /* escondida por orderOut: volta na frente */
         else SYS1(GUI_WIN_FOCUS, s->gid);
@@ -1535,6 +1641,7 @@ static void close_window(id self, BOOL from_wm) {
     s->closed = YES;
     s->visible = NO;
     if (g_key_window == self) g_key_window = 0;
+    cx_ax_note_view(self, "AXUIElementDestroyed");
     id d = s->delegate;
     if (d && cx_responds(d->isa, sel_registerName("windowWillClose:"))) MSG(void, d, "windowWillClose:", cx_note(NSWindowWillCloseNotification, self, 0));
     cx_post(cx_note(NSWindowWillCloseNotification, self, 0));
@@ -1593,6 +1700,16 @@ static void render_window(id w) {
     vs(s->content)->frame = r_make(0, 0, s->frame.s.w, s->frame.s.h);
     cx_gui_cur_gid = s->gid;                     /* gancho QuartzCore */
     draw_view_tree(s->content, &a);
+    if (cx_responds(w->isa, sel_registerName("toolbar"))) {
+        id tb = MSG0(id, w, "toolbar");
+        if (tb && cx_responds(tb->isa, sel_registerName("isVisible")) && MSG0(BOOL, tb, "isVisible")
+            && cx_responds(tb->isa, sel_registerName("drawInRect:"))) {
+            ctx_t save = ctx;
+            ctx.tlx = 0; ctx.tly = 0; ctx.w = s->frame.s.w; ctx.h = s->frame.s.h; ctx.flipped = 0; ctx.fill = 0xFF000000;
+            ((void (*)(id, SEL, NSRect))objc_msgSend)(tb, sel_registerName("drawInRect:"), r_make(0, s->frame.s.h - 28, s->frame.s.w, 28));
+            ctx = save;
+        }
+    }
     flush_to(s->gid);
     SYS1(GUI_PRESENT, s->gid);
     s->needs = NO;
@@ -1648,6 +1765,7 @@ static id ev_window(id self, SEL c) { (void)c; return evs(self)->window; }
 static double ev_dy(id self, SEL c) { (void)c; return evs(self)->dy; }
 static double ev_zero(id self, SEL c) { (void)self; (void)c; return 0; }
 static u64 g_mods;
+static u64 g_last_flags;
 static u64 ev_cmods(id cls, SEL c) { (void)cls; (void)c; return g_mods; }
 /* +[NSEvent pressedMouseButtons] e +[NSEvent mouseLocation], do último evento de mouse: o Chromium marca
  * kLeftButtonDown nos modificadores do evento pelo primeiro (o Blink tira daí o "buttons" e o pointerdown) e usa
@@ -1669,6 +1787,21 @@ static u16 mac_keycode(int k) {
     }
     return 0x7F;
 }
+/* keyCode do flagsChanged: no macOS (Carbon / NSEvent). */
+static u16 mac_mod_keycode(int k) {
+    switch (k) {
+    case GUI_KEY_LSHIFT: return 56;
+    case GUI_KEY_RSHIFT: return 60;
+    case GUI_KEY_LCTRL: return 59;
+    case GUI_KEY_RCTRL: return 62;
+    case GUI_KEY_LALT: return 58;
+    case GUI_KEY_RALT: return 61;
+    case GUI_KEY_LCMD: return 55;
+    case GUI_KEY_RCMD: return 54;
+    case GUI_KEY_CAPS: return 57;
+    default: return 0x7F;
+    }
+}
 static id make_event(u64 type, id win, double px, double py, gui_event_t *g) {
     id e = objc_autorelease(cx_alloc_instance(&NSEvent_c));
     evstate_t *s = calloc(1, sizeof *s);
@@ -1682,8 +1815,9 @@ static id make_event(u64 type, id win, double px, double py, gui_event_t *g) {
     s->clicks = g->clicks;
     s->dy = -g->w;
     s->ts = (double)mach_absolute_time() / 1e9;
-    if (type == 10 || type == 11) {          /* keyDown / keyUp */
-        s->keycode = mac_keycode(g->key);
+    if (type == 10 || type == 11 || type == 12) {          /* keyDown / keyUp / flagsChanged */
+        s->keycode = type == 12 ? mac_mod_keycode(g->key) : mac_keycode(g->key);
+        if (type == 12) return e;
         u32 cp = 0;
         switch (g->key) {
         case 0x100: cp = 0xF700; break; case 0x101: cp = 0xF701; break; case 0x102: cp = 0xF702; break; case 0x103: cp = 0xF703; break;
@@ -1940,6 +2074,7 @@ static void tx_changed(id self) {
     bind_push(self);
     id d = s->delegate;
     if (d && cx_responds(d->isa, sel_registerName("textDidChange:"))) MSG(void, d, "textDidChange:", cx_note(cx_str("NSTextDidChangeNotification"), self, 0));
+    cx_ax_note_view(self, "AXValueChanged");
 }
 static void tx_insert(id self, const char *ins) {
     vstate_t *s = vs(self);
@@ -2024,6 +2159,7 @@ static void tx_set_string(id self, SEL c, id str) {
     s->has_anchor = NO;
     if (s->superview && vs(s->superview)->kind == K_SCROLL) tx_fit(self, vs(s->superview)->frame.s.w);
     mark(s->superview ? s->superview : self);
+    cx_ax_note_view(self, "AXValueChanged");
 }
 static void tx_insert_text(id self, SEL c, id str) { (void)c; if (str) tx_insert(self, cx_cstr(cx_is_str(str) ? str : MSG0(id, str, "string"))); }
 static void tx_append_astr(id self, SEL c, id astr) {
@@ -2442,9 +2578,28 @@ static void r_key_down(id self, SEL c, id e) {
         if (((s->kind == K_TEXT && s->editable) || s->kind == K_TV) && cx_ime_native_key(self, e)) return;
         if (s->kind == K_TEXT && s->editable) { tf_key(self, e); return; }
         if (s->kind == K_TV) { tx_key(self, e); return; }
-        if (s->superview) { MSG(void, s->superview, "keyDown:", e); return; }
+        id next = s->next_responder ? s->next_responder : s->superview;
+        if (next && next != self) { MSG(void, next, "keyDown:", e); return; }
     }
 }
+static void r_key_up(id self, SEL c, id e) {
+    (void)c;
+    if (!cx_is_subclass(self->isa, &NSView_c)) return;
+    vstate_t *s = vs(self);
+    id next = s->next_responder ? s->next_responder : s->superview;
+    if (next && next != self) MSG(void, next, "keyUp:", e);
+}
+static void r_flags_changed(id self, SEL c, id e) {
+    (void)c;
+    if (!cx_is_subclass(self->isa, &NSView_c)) return;
+    vstate_t *s = vs(self);
+    id next = s->next_responder ? s->next_responder : s->superview;
+    if (next && next != self) MSG(void, next, "flagsChanged:", e);
+}
+static void v_set_ident(id self, SEL c, id i) { (void)c; keep(&vs(self)->identifier, i); }
+static id v_ident(id self, SEL c) { (void)c; return vs(self)->identifier; }
+static void v_set_next(id self, SEL c, id n) { (void)c; vs(self)->next_responder = n; }
+static id v_next(id self, SEL c) { (void)c; vstate_t *s = vs(self); return s->next_responder ? s->next_responder : s->superview; }
 
 /* ---- para appkit_input.c (IME e arrastar/soltar), que não enxerga vstate_t/wstate_t */
 /* texto confirmado pelo método de entrada num campo/NSTextView nativo do mOS */
@@ -2483,7 +2638,7 @@ id cx_window_hit(id w, double x, double y) {
 }
 
 /* ================================================================ NSApplication */
-typedef struct { id delegate, menu; BOOL running, launched, terminating; int modal_result; BOOL in_modal; } appstate_t;
+typedef struct { id delegate, menu, help; BOOL running, launched, terminating; int modal_result; BOOL in_modal; } appstate_t;
 static appstate_t app;
 static id app_singleton;
 /* O renderer do Chromium (RendererMainPlatformDelegate::EnableSandbox) faz CHECK(NSApp == nil)
@@ -2513,9 +2668,18 @@ static id ap_shared(id cls, SEL c) {
 }
 static void ap_set_delegate(id self, SEL c, id d) { (void)self; (void)c; app.delegate = d; }
 static id ap_delegate(id self, SEL c) { (void)self; (void)c; return app.delegate; }
-static BOOL ap_set_policy(id self, SEL c, i64 p) { (void)self; (void)c; (void)p; return YES; }
+static BOOL ap_set_policy(id self, SEL c, i64 p) {
+    (void)self; (void)c;
+    if (!cx_act_set_policy((int)p)) return NO;
+    /* accessory e prohibited saem do Dock; regular volta. O selo do NSDockTile segue em MOS_DESK_BADGE. */
+    SYS3(GUI_DEVICE, DEV_DOCK, DK_VISIBLE, cx_act_hides_dock() ? 0 : 1);
+    return YES;
+}
+static i64 ap_policy(id self, SEL c) { (void)self; (void)c; return cx_act_policy(); }
 static void ap_set_menu(id self, SEL c, id m) { (void)self; (void)c; keep(&app.menu, m); menus_dirty = YES; }
 static id ap_menu(id self, SEL c) { (void)self; (void)c; return app.menu; }
+static void ap_set_help(id self, SEL c, id m) { (void)self; (void)c; keep(&app.help, m); }
+static id ap_help(id self, SEL c) { (void)self; (void)c; return app.help; }
 static id ap_windows(id self, SEL c) { (void)self; (void)c; return app_windows ? app_windows : cx_arr_new(&NSMutableArray_c); }
 /* -orderedWindows: as janelas visíveis da frente para trás (a última trazida à frente fica no fim de app_windows).
  * O WebContentsOcclusionCheckerMac do Chromium percorre esta lista para decidir se cada WebContents está visível. */
@@ -2574,6 +2738,12 @@ static void dispatch(gui_event_t *g) {
     if (g->type == GEV_QUIT) { MSG(void, NSApp, "terminate:", (id)0); return; }
     if (g->type == GEV_MENU) { perform_menu(g->key); return; }
     if (g->type == GEV_INPUT_SOURCE) { extern void cx_ime_source_changed(int src); cx_ime_source_changed(g->key); return; }
+    /* um agente (LSUIElement) pode não ter janela; o clique na faixa mesmo assim abre o menu */
+    if (g->type == GEV_STATUS) {
+        extern void cx_status_kernel_click(unsigned id);
+        cx_status_kernel_click((unsigned)g->key);
+        return;
+    }
     id w = find_window((int)g->win);
     if (g->type >= GEV_DRAG_ENTER && g->type <= GEV_DRAG_END) {
         /* arrastar e soltar (appkit_input.c); o fim de um arrasto chega mesmo se a janela da fonte já fechou */
@@ -2586,7 +2756,7 @@ static void dispatch(gui_event_t *g) {
      * Chromium (sugestões da barra de endereço, bolha de status, balões) são janelas filhas por cima da mãe que não
      * aceitam ser chave: sem isto as teclas iam para elas e se perdiam. Uma filha que aceita ser chave (o diálogo
      * "Abrir o X?") também fica por cima da mãe quando o clique tornou a mãe chave; aí as teclas são da mãe. */
-    if ((g->type == GEV_KEY_DOWN || g->type == GEV_KEY_UP) && w != g_key_window && g_key_window &&
+    if ((g->type == GEV_KEY_DOWN || g->type == GEV_KEY_UP || g->type == GEV_FLAGS) && w != g_key_window && g_key_window &&
         ws(g_key_window)->visible && ws(g_key_window)->gid > 0 &&
         ((cx_responds(w->isa, sel_registerName("canBecomeKeyWindow")) && !MSG0(BOOL, w, "canBecomeKeyWindow")) ||
          w_descends(w, g_key_window)))
@@ -2616,10 +2786,26 @@ static void dispatch(gui_event_t *g) {
         break;
     }
     case GEV_MOUSE_DOWN: case GEV_RIGHT_DOWN: case GEV_SCROLL: {
+        if (g->type == GEV_MOUSE_DOWN && g->y >= 0 && g->y < 28 && cx_responds(w->isa, sel_registerName("toolbar"))) {
+            id tb = MSG0(id, w, "toolbar");
+            if (tb && cx_responds(tb->isa, sel_registerName("isVisible")) && MSG0(BOOL, tb, "isVisible")
+                && cx_responds(tb->isa, sel_registerName("mouseDown:"))) {
+                MSG(void, tb, "mouseDown:", make_event(1, w, g->x, g->y, g));
+                break;
+            }
+        }
         absr_t a = {0, 0, s->frame.s.w, s->frame.s.h, is_flipped(s->content)};
         id v = hit(s->content, &a, g->x, g->y);
         if (!v) v = s->content;
         if (g->type == GEV_MOUSE_DOWN) {
+            id cur = v;
+            int inside = 0;
+            for (int i = 0; cur && i < 32; i++) {
+                if (cx_pop_is_content(cur)) { inside = 1; break; }
+                if (!cx_is_subclass(cur->isa, &NSView_c)) break;
+                cur = vs(cur)->superview;
+            }
+            if (!inside) cx_pop_close_transients(); /* NSPopoverBehaviorTransient */
             if (w != g_key_window) w_become_key(w);   /* o clique torna chave a janela que aceita (Cocoa); popups não */
             if (MSG0(BOOL, v, "acceptsFirstResponder")) w_make_first(w, 0, v);
             else if (s->first && vs(s->first)->kind == K_TEXT) w_make_first(w, 0, 0);
@@ -2657,8 +2843,21 @@ static void dispatch(gui_event_t *g) {
             MSG(void, v, "mouseMoved:", make_event(5, w, g->x, g->y, g));
         }
         break;
+    case GEV_FLAGS: {
+        g_last_flags = mac_mods(g->mods);
+        {
+            id target = s->first ? s->first : s->content;
+            if (target) MSG(void, target, "flagsChanged:", make_event(12, w, 0, 0, g));
+        }
+        break;
+    }
     case GEV_KEY_UP: {
         extern void cx_gc_keyboard_event(u16 mac_keycode, u64 mods, int down);
+        if (cx_mods_changed(g_last_flags, mac_mods(g->mods))) {
+            g_last_flags = mac_mods(g->mods);
+            id target = s->first ? s->first : s->content;
+            if (target) MSG(void, target, "flagsChanged:", make_event(12, w, 0, 0, g));
+        }
         id e = make_event(11, w, 0, 0, g);
         cx_gc_keyboard_event(mac_keycode(g->key), mac_mods(g->mods), 0);
         id target = s->first ? s->first : s->content;
@@ -2666,6 +2865,11 @@ static void dispatch(gui_event_t *g) {
         break;
     }
     case GEV_KEY_DOWN: {
+        if (cx_mods_changed(g_last_flags, mac_mods(g->mods))) {
+            g_last_flags = mac_mods(g->mods);
+            id target = s->first ? s->first : s->content;
+            if (target) MSG(void, target, "flagsChanged:", make_event(12, w, 0, 0, g));
+        }
         id e = make_event(10, w, 0, 0, g);
         { extern void cx_gc_keyboard_event(u16 mac_keycode, u64 mods, int down); cx_gc_keyboard_event(mac_keycode(g->key), mac_mods(g->mods), 1); }
         if (menu_shortcut(g)) break;
@@ -2797,7 +3001,8 @@ static void ap_run(id self, SEL c) {
         if (ms) SYS1(SYS_SLEEP, ms);
     }
 }
-static void ap_activate(id self, SEL c, BOOL b) { (void)self; (void)c; (void)b; }
+static void ap_activate(id self, SEL c, BOOL b) { (void)self; (void)c; (void)b; cx_act_activate(); }
+static void ap_activate_simple(id self, SEL c) { (void)self; (void)c; cx_act_activate(); }
 static BOOL ap_send_action(id self, SEL c, SEL a, id to, id from) {
     (void)self; (void)c;
     if (!to) to = app.delegate;
@@ -2946,7 +3151,7 @@ static void al_begin_sheet_delegate(id self, SEL c, id win, id delegate, SEL did
 }
 
 /* ================================================================ NSMenu (aceito, sem efeito visual) */
-typedef struct { id title, items, key, submenu; SEL action; id target; i64 tag; int state; BOOL sep, disabled; u64 mask;
+typedef struct { id title, items, key, submenu; SEL action; id target; i64 tag; int state; BOOL sep, disabled; u64 mask; BOOL mask_set;
                  BOOL hidden, alternate, header; id image, represented;
                  id owner, delegate; } menust_t;   /* owner: o NSMenu que contém o item (fraco); delegate: do NSMenu (fraco) */
 static menust_t *mn(id m) { if (!ST(m)) { menust_t *s = calloc(1, sizeof *s); s->items = cx_arr_new(&NSMutableArray_c); ST(m) = s; } return ST(m); }
@@ -2972,7 +3177,15 @@ static id mi_init(id self, SEL c, id t, SEL a, id k) { (void)c; menust_t *s = mn
 static id mi_sep(id cls, SEL c) { (void)c; id it = MSG0(id, MSG0(id, cls, "alloc"), "init"); mn(it)->sep = YES; return it; }
 static void mi_set_enabled(id self, SEL c, BOOL b) { (void)c; mn(self)->disabled = !b; menus_dirty = YES; }
 static void mi_set_state(id self, SEL c, i64 st) { (void)c; mn(self)->state = (int)st; menus_dirty = YES; }
-static void mi_set_mask(id self, SEL c, u64 m) { (void)c; mn(self)->mask = m; menus_dirty = YES; }
+static void mi_set_mask(id self, SEL c, u64 m) { (void)c; mn(self)->mask = m; mn(self)->mask_set = YES; menus_dirty = YES; }
+static u64 mi_mask_get(id self, SEL c) {
+    (void)c;
+    menust_t *m = mn(self);
+    int has = m->key && cx_is_str(m->key) && cx_cstr(m->key)[0];
+    return cx_menu_key_mask(m->mask_set, m->mask, has);
+}
+static id mi_user_key(id self, SEL c) { (void)c; id k = mn(self)->key; return (k && cx_is_str(k)) ? k : cx_str(""); }
+static u64 mi_user_mask(id self, SEL c) { return mi_mask_get(self, c); }
 static void mi_set_action(id self, SEL c, SEL a) { (void)c; mn(self)->action = a; }
 static void mi_set_title(id self, SEL c, id t) { (void)c; keep(&mn(self)->title, t); menus_dirty = YES; }
 static void mi_set_key(id self, SEL c, id k) { (void)c; keep(&mn(self)->key, k); menus_dirty = YES; }
@@ -3060,6 +3273,12 @@ static id *menu_tab;
 static u32 nmenu_tab, capmenu_tab;
 static BOOL menus_sent;
 
+static u32 menu_id(id item);
+u32 cx_menu_item_action(id item) {
+    if (!item) return 0;
+    if (mn(item)->sep) return 0;
+    return menu_id(item);
+}
 static u32 menu_id(id item) {
     for (u32 i = 0; i < nmenu_tab; i++) if (menu_tab[i] == item) return i + 1;
     if (nmenu_tab == capmenu_tab) { capmenu_tab = capmenu_tab ? capmenu_tab * 2 : 64; menu_tab = realloc(menu_tab, capmenu_tab * sizeof(id)); }
@@ -3101,7 +3320,7 @@ static void sync_menus(void) {
             menust_t *m = mn(its->items[k]);
             u32 act = m->sep ? 0 : menu_id(its->items[k]), fl = (m->disabled ? 1 : 0) | (m->state ? 2 : 0);
             char sc[32];
-            shortcut_text(m->key, m->mask ? m->mask : (1u << 20), sc, sizeof sc);
+            shortcut_text(m->key, mi_mask_get(its->items[k], 0), sc, sizeof sc);
             mb_put(&b, &n, &cap, &act, 4);
             mb_put(&b, &n, &cap, &fl, 4);
             mb_str(&b, &n, &cap, m->title ? cx_cstr(m->title) : "");
@@ -3243,11 +3462,12 @@ static NSSize im_size(id self, SEL c) { (void)c; imgst_t *s = im(self); NSSize z
 static void im_set_size(id self, SEL c, NSSize z) { (void)c; im(self)->dw = z.w; im(self)->dh = z.h; }
 static BOOL im_valid(id self, SEL c) { (void)c; return im(self)->px != 0; }
 /* desenha a imagem escalada para um retângulo em pixels */
-static void blit_image(imgst_t *s, double x, double y, double w, double h, double alpha) {
+static void blit_image(imgst_t *s, double x, double y, double w, double h, double alpha, u32 op) {
     if (!s->px || w < 1 || h < 1) return;
     int dw = (int)(w + 0.5), dh = (int)(h + 0.5);
     if (dw > 2048) dw = 2048;
     if (dh > 2048) dh = 2048;
+    if (op > 28) op = 2;
     u32 *buf = malloc((size_t)dw * dh * 4 + 16);
     if (!buf) return;
     u32 a8 = (u32)(alpha * 255 + 0.5);
@@ -3260,17 +3480,32 @@ static void blit_image(imgst_t *s, double x, double y, double w, double h, doubl
             buf[j * dw + i] = p;
         }
     }
-    u32 hdrsz = 16, bytes = (u32)dw * dh * 4;
-    u8 *b = malloc(hdrsz + bytes);
-    i32 r[4] = {(i32)x, (i32)y, dw, dh};
-    memcpy(b, r, 16);
-    memcpy(b + 16, buf, bytes);
-    put(GC_IMAGE, b, hdrsz + bytes);
-    free(b);
+    u32 bytes = (u32)dw * dh * 4;
+    /* op 2 continua no blit source-over do kernel (SSE). Os outros modos vão no caminho escalar. */
+    if (op == 2) {
+        u8 *b = malloc(16 + bytes);
+        i32 r[4] = {(i32)x, (i32)y, dw, dh};
+        if (b) {
+            memcpy(b, r, 16);
+            memcpy(b + 16, buf, bytes);
+            put(GC_IMAGE, b, 16 + bytes);
+            free(b);
+        }
+    } else {
+        u8 *b = malloc(20 + bytes);
+        i32 r[4] = {(i32)x, (i32)y, dw, dh};
+        if (b) {
+            memcpy(b, r, 16);
+            memcpy(b + 16, &op, 4);
+            memcpy(b + 20, buf, bytes);
+            put(GC_COMP_IMAGE, b, 20 + bytes);
+            free(b);
+        }
+    }
     free(buf);
 }
-static void im_draw_in(id self, SEL c, NSRect r) { (void)c; double x, y, w, h; px_rect(r, &x, &y, &w, &h); blit_image(im(self), x, y, w, h, 1); }
-static void im_draw_in_frac(id self, SEL c, NSRect r, NSRect from, u64 op, double f) { (void)c; (void)from; (void)op; double x, y, w, h; px_rect(r, &x, &y, &w, &h); blit_image(im(self), x, y, w, h, f); }
+static void im_draw_in(id self, SEL c, NSRect r) { (void)c; double x, y, w, h; px_rect(r, &x, &y, &w, &h); blit_image(im(self), x, y, w, h, 1, 2); }
+static void im_draw_in_frac(id self, SEL c, NSRect r, NSRect from, u64 op, double f) { (void)c; (void)from; double x, y, w, h; px_rect(r, &x, &y, &w, &h); blit_image(im(self), x, y, w, h, f, (u32)op); }
 static void im_draw_at(id self, SEL c, NSPoint p, NSRect from, u64 op, double f) { (void)from; imgst_t *s = im(self); NSRect r = {p, {s->dw, s->dh}}; im_draw_in_frac(self, c, r, r, op, f); }
 
 static void iv_set_image(id self, SEL c, id img) { (void)c; keep(&vs(self)->image, img); mark(self); }
@@ -3282,7 +3517,18 @@ static void draw_image_fit(id img, double x, double y, double w, double h) {
     double sc = 1;
     if (s->dw > w || s->dh > h) { double a = w / s->dw, b = h / s->dh; sc = a < b ? a : b; }
     double iw = s->dw * sc, ih = s->dh * sc;
-    blit_image(s, x + (w - iw) / 2, y + (h - ih) / 2, iw, ih, 1);
+    blit_image(s, x + (w - iw) / 2, y + (h - ih) / 2, iw, ih, 1, 2);
+}
+const u32 *cx_nsimage_pixels(id img, int *w, int *h) {
+    imgst_t *s;
+    if (w) *w = 0;
+    if (h) *h = 0;
+    if (!img) return 0;
+    s = im(img);
+    if (!s->px || s->w <= 0 || s->h <= 0) return 0;
+    if (w) *w = s->w;
+    if (h) *h = s->h;
+    return s->px;
 }
 
 /* ================================================================ NSScrollView */
@@ -3309,6 +3555,7 @@ static void layout_scroll(id v) {
     if (s->scroll_y < 0) s->scroll_y = 0;
     d->frame.o.x = 0;
     d->frame.o.y = s->frame.s.h - d->frame.s.h + s->scroll_y;   /* topo do documento alinhado ao topo visível */
+    if (d->kind == K_TABLE) tv_layout_views(s->doc);
 }
 static void sv_scroll(id self, SEL c, id e) {
     (void)c;
@@ -3331,13 +3578,13 @@ static double col_width(id self, SEL c) { (void)c; return cs_(self)->width; }
 static id tv_init_frame(id self, SEL c, NSRect f) {
     v_init_frame(self, c, f);
     vstate_t *s = vs(self);
-    s->kind = K_TABLE; s->row_h = 24; s->selected = -1; s->header = YES; s->alt_rows = NO;
+    s->kind = K_TABLE; s->row_h = 24; s->selected = -1; s->header = YES; s->alt_rows = NO; s->tv_dirty = 1;
     s->cols = objc_retain(cx_arr_new(&NSMutableArray_c));
     return self;
 }
-static void tv_add_col(id self, SEL c, id col) { (void)c; cx_arr_add(vs(self)->cols, col); mark(self); }
+static void tv_add_col(id self, SEL c, id col) { (void)c; cx_arr_add(vs(self)->cols, col); vs(self)->tv_dirty = 1; mark(self); }
 static id tv_cols(id self, SEL c) { (void)c; return vs(self)->cols; }
-static void tv_set_ds(id self, SEL c, id d) { (void)c; vs(self)->data_source = d; mark(self); }
+static void tv_set_ds(id self, SEL c, id d) { (void)c; vs(self)->data_source = d; vs(self)->tv_dirty = 1; mark(self); }
 static id tv_ds(id self, SEL c) { (void)c; return vs(self)->data_source; }
 static i64 tv_rows(id self) {
     vstate_t *s = vs(self);
@@ -3353,19 +3600,193 @@ static void table_resize(id t, double width) {
 static void tv_reload(id self, SEL c) {
     (void)c;
     vstate_t *s = vs(self);
+    s->tv_dirty = 1;
     if (s->selected >= tv_rows(self)) s->selected = -1;
     if (s->superview && vs(s->superview)->kind == K_SCROLL) layout_scroll(s->superview);
+    else tv_layout_views(self);
     mark(s->superview ? s->superview : self);
 }
 static i64 tv_selected(id self, SEL c) { (void)c; return vs(self)->selected; }
 static i64 tv_clicked(id self, SEL c) { (void)c; return vs(self)->clicked; }
-static void tv_set_row_h(id self, SEL c, double h) { (void)c; vs(self)->row_h = h; mark(self); }
-static void tv_set_header(id self, SEL c, id h) { (void)c; vs(self)->header = h != 0; mark(self); }
-static id tv_header(id self, SEL c) { (void)c; return vs(self)->header ? self : 0; }
+static void tv_set_row_h(id self, SEL c, double h) { (void)c; vs(self)->row_h = h > 0 ? h : 24; vs(self)->tv_dirty = 1; mark(self); }
+static double tv_row_h(id self, SEL c) { (void)c; return vs(self)->row_h > 0 ? vs(self)->row_h : 24; }
+static BOOL tv_is_flipped(id self, SEL c) { (void)self; (void)c; return YES; }
+const char cx_tv_header_key = 0;
+static void tv_set_header(id self, SEL c, id h) {
+    (void)c;
+    vstate_t *s = vs(self);
+    if (s->header_view && s->header_view != self) objc_setAssociatedObject(s->header_view, &cx_tv_header_key, 0, 0);
+    s->header = h != 0;
+    if (h && h != self && cx_is_subclass(h->isa, &NSView_c)) {
+        keep(&s->header_view, h);
+        objc_setAssociatedObject(h, &cx_tv_header_key, self, 0);   /* ASSIGN: o header não retém a tabela */
+    } else keep(&s->header_view, 0);
+    s->tv_dirty = 1;
+    mark(self);
+}
+static id tv_header(id self, SEL c) { (void)c; vstate_t *s = vs(self); if (s->header_view) return s->header_view; return s->header ? self : 0; }
+static void tv_set_delegate(id self, SEL c, id d) { ctl_set_delegate(self, c, d); vs(self)->tv_dirty = 1; mark(self); }
 static void tv_set_alt(id self, SEL c, BOOL b) { (void)c; vs(self)->alt_rows = b; mark(self); }
 static void tv_set_double(id self, SEL c, SEL a) { (void)c; vs(self)->double_action = a; }
-static id tv_make_view(id self, SEL c, id ident, id owner) { (void)self; (void)c; (void)ident; (void)owner; return 0; }
-static void tv_scroll_row(id self, SEL c, i64 r) { (void)self; (void)c; (void)r; }
+
+static const char *tv_ident_cstr(id ident) {
+    if (!ident || !cx_is_str(ident)) return 0;
+    const char *s = cx_cstr(ident);
+    return s && s[0] && strcmp(s, "(null)") ? s : 0;
+}
+static int tv_is_dict(id o) { return o && cx_responds(o->isa, sel_registerName("objectForKey:")) && cx_responds(o->isa, sel_registerName("allKeys")); }
+static int tv_is_array(id o) { return o && !tv_is_dict(o) && cx_responds(o->isa, sel_registerName("objectAtIndex:")) && cx_responds(o->isa, sel_registerName("count")); }
+static int tv_is_data(id o) { return o && !cx_is_str(o) && cx_responds(o->isa, sel_registerName("bytes")) && cx_responds(o->isa, sel_registerName("length")); }
+static int tv_is_nib(id o) { return o && cx_responds(o->isa, sel_registerName("instantiateWithOwner:topLevelObjects:")); }
+static int tv_is_outline(id self) {
+    cx_class_t *c = cx_class_named("NSOutlineView");
+    return c && self && cx_is_subclass(self->isa, c);
+}
+static void tv_register_token(id table, const char *ident, id token, int kind) {
+    if (!table || !ident || !ident[0] || !token) return;
+    cx_tv_engine_t *e = cx_tv_engine_get(table, 1);
+    if (!e) return;
+    if (cx_tv_engine_token(e, ident, 0) == (void *)token) return;
+    id held = objc_retain(token);
+    void *old = cx_tv_engine_register(e, ident, held, kind);
+    if (cx_tv_engine_token(e, ident, 0) != (void *)held) { objc_release(held); return; }
+    if (old) objc_release((id)old);
+}
+static void tv_install_one(id table, id key, id val) {
+    if (!val) return;
+    const char *ident = tv_ident_cstr(key);
+    if (!ident && cx_is_subclass(val->isa, &NSView_c)) ident = tv_ident_cstr(vs(val)->identifier);
+    int kind = tv_is_data(val) ? CX_TV_NIBDATA : tv_is_nib(val) ? CX_TV_NIB : cx_is_subclass(val->isa, &NSView_c) ? CX_TV_PROTO : 0;
+    if (kind) tv_register_token(table, ident, val, kind);
+}
+static void tv_install_archived(id table, id arch) {
+    if (!table || !arch) return;
+    if (tv_is_dict(arch)) {
+        id keys = MSG0(id, arch, "allKeys");
+        u64 n = keys ? MSG0(u64, keys, "count") : 0;
+        for (u64 i = 0; i < n; i++) {
+            id k = MSG(id, keys, "objectAtIndex:", i);
+            tv_install_one(table, k, MSG(id, arch, "objectForKey:", k));
+        }
+        return;
+    }
+    if (tv_is_array(arch)) {
+        u64 n = MSG0(u64, arch, "count");
+        for (u64 i = 0; i < n; i++) tv_install_one(table, 0, MSG(id, arch, "objectAtIndex:", i));
+        return;
+    }
+    tv_install_one(table, 0, arch);
+}
+static void tv_register_nib(id self, SEL c, id nib, id ident) { (void)c; tv_register_token(self, tv_ident_cstr(ident), nib, CX_TV_NIB); }
+
+/* cópia estrutural de um protótipo. Os outlets da subclasse do app (ivars que apontam para
+ * subviews) passam a apontar para os clones, sem reinstanciar o nib. */
+extern void **class_copyIvarList(cx_class_t *c, u32 *count);
+extern const char *ivar_getTypeEncoding(void *iv);
+extern id object_getIvar(id o, void *iv);
+extern void object_setIvar(id o, void *iv, id v);
+extern cx_class_t *class_getSuperclass(cx_class_t *c);
+static int tv_collect_pair(id src, id dst, id *ss, id *dd, int n, int cap) {
+    if (!src || !dst || n >= cap) return n;
+    ss[n] = src;
+    dd[n] = dst;
+    n++;
+    vstate_t *a = vs(src), *b = vs(dst);
+    u32 m = a->nsub < b->nsub ? a->nsub : b->nsub;
+    for (u32 i = 0; i < m; i++) n = tv_collect_pair(a->sub[i], b->sub[i], ss, dd, n, cap);
+    return n;
+}
+static void tv_remap_ivars(id src, id dst, id *ss, id *dd, int n) {
+    if (!src || !dst) return;
+    for (cx_class_t *k = src->isa; k; k = class_getSuperclass(k)) {
+        u32 ni = 0;
+        void **ivs = class_copyIvarList(k, &ni);
+        if (!ivs) continue;
+        for (u32 i = 0; i < ni; i++) {
+            const char *ty = ivar_getTypeEncoding(ivs[i]);
+            if (!ty || ty[0] != '@') continue;
+            id val = object_getIvar(src, ivs[i]);
+            void *mapped = cx_tv_remap_outlet(val, (void *const *)ss, (void *const *)dd, n);
+            if (mapped) object_setIvar(dst, ivs[i], (id)mapped);
+        }
+        free(ivs);
+    }
+}
+static id tv_clone_view(id src) {
+    if (!src || !cx_is_subclass(src->isa, &NSView_c)) return 0;
+    id dst = MSG(id, MSG0(id, (id)src->isa, "alloc"), "initWithFrame:", vs(src)->frame);
+    if (!dst || !cx_is_subclass(dst->isa, &NSView_c)) return dst;
+    vstate_t *a = vs(src), *b = vs(dst);
+    b->hidden = a->hidden; b->editable = a->editable; b->bezeled = a->bezeled; b->draws_bg = a->draws_bg; b->alignment = a->alignment;
+    if (a->identifier) keep(&b->identifier, a->identifier);
+    if (a->font && cx_responds(dst->isa, sel_registerName("setFont:"))) MSG(void, dst, "setFont:", a->font);
+    if (a->title && cx_responds(dst->isa, sel_registerName("setTitle:"))) MSG(void, dst, "setTitle:", a->title);
+    if (a->value && cx_responds(dst->isa, sel_registerName("setStringValue:"))) MSG(void, dst, "setStringValue:", a->value);
+    if (a->image && cx_responds(dst->isa, sel_registerName("setImage:"))) MSG(void, dst, "setImage:", a->image);
+    if (a->text_color && cx_responds(dst->isa, sel_registerName("setTextColor:"))) MSG(void, dst, "setTextColor:", a->text_color);
+    if (a->bg_color && cx_responds(dst->isa, sel_registerName("setBackgroundColor:"))) MSG(void, dst, "setBackgroundColor:", a->bg_color);
+    u32 n = a->nsub;
+    id *clones = n ? calloc(n, sizeof(id)) : 0;
+    for (u32 i = 0; i < n; i++) {
+        clones[i] = tv_clone_view(a->sub[i]);
+        if (clones[i]) { v_add_sub(dst, 0, clones[i]); objc_release(clones[i]); }
+    }
+    if (a->text_field && cx_responds(dst->isa, sel_registerName("setTextField:")))
+        for (u32 i = 0; i < n; i++) if (a->sub[i] == a->text_field && clones[i]) MSG(void, dst, "setTextField:", clones[i]);
+    if (cx_responds(src->isa, sel_registerName("imageView")) && cx_responds(dst->isa, sel_registerName("setImageView:"))) {
+        id iv = MSG0(id, src, "imageView");
+        for (u32 i = 0; iv && i < n; i++) if (a->sub[i] == iv && clones[i]) MSG(void, dst, "setImageView:", clones[i]);
+    }
+    free(clones);
+    id ss[128], dd[128];
+    int np = tv_collect_pair(src, dst, ss, dd, 0, 128);
+    tv_remap_ivars(src, dst, ss, dd, np);
+    return dst;
+}
+static id tv_materialize(id self, id ident, id owner, void *token, int kind);
+static id tv_make_view(id self, SEL c, id ident, id owner) {
+    (void)c;
+    const char *cs = tv_ident_cstr(ident);
+    if (!cs) return 0;
+    cx_tv_engine_t *e = cx_tv_engine_get(self, 1);
+    if (!e) return 0;
+    id v = cx_tv_engine_take(e, cs);
+    if (v) {
+        if (cx_responds(v->isa, sel_registerName("prepareForReuse"))) MSG0(void, v, "prepareForReuse");
+        return objc_autorelease(v);
+    }
+    int kind = 0;
+    void *tok = cx_tv_engine_token(e, cs, &kind);
+    if (!tok) return 0;
+    v = tv_materialize(self, ident, owner ? owner : self, tok, kind);
+    if (!v) return 0;
+    if (cx_is_subclass(v->isa, &NSView_c)) MSG(void, v, "setIdentifier:", ident);
+    return objc_autorelease(v);
+}
+static int tv_in_scroll(id self) {
+    id sv = vs(self)->superview;
+    return sv && vs(sv)->kind == K_SCROLL;
+}
+static void tv_scroll_row(id self, SEL c, i64 r) {
+    (void)c;
+    vstate_t *s = vs(self);
+    cx_tv_engine_t *e = cx_tv_engine_get(self, 1);
+    if (!e) return;
+    int in_sc = tv_in_scroll(self);
+    double header = s->header ? 24 : 0;
+    double row_h = s->row_h > 0 ? s->row_h : 24;
+    double cur = in_sc ? vs(s->superview)->scroll_y : cx_tv_engine_own_scroll(e);
+    double view_h = in_sc ? vs(s->superview)->frame.s.h : s->frame.s.h;
+    double next = cx_tv_reveal_row(e, in_sc, cur, view_h, row_h, header, (int)r, (int)tv_rows(self));
+    if (in_sc) {
+        vs(s->superview)->scroll_y = next;
+        layout_scroll(s->superview);
+        mark(s->superview);
+    } else {
+        s->tv_dirty = 1;
+        mark(self);
+    }
+}
 typedef struct { cx_class_t *isa; i64 first; } nsindexset_t;
 static id ixs_with_index(id cls, SEL c, u64 i) { (void)c; nsindexset_t *o = (nsindexset_t *)cx_alloc_instance((cx_class_t *)cls); o->first = (i64)i; return (id)o; }
 static i64 ixs_first(id self, SEL c) { (void)c; return ((nsindexset_t *)self)->first; }
@@ -3379,43 +3800,141 @@ static void select_row(id t, i64 r, BOOL notify) {
 }
 static void tv_select(id self, SEL c, id ixs, BOOL ext) { (void)c; (void)ext; select_row(self, ixs ? ((nsindexset_t *)ixs)->first : -1, NO); }
 static void tv_deselect_all(id self, SEL c, id s) { (void)c; (void)s; select_row(self, -1, NO); }
-/* texto da célula: cell-based (objectValue) ou view-based (textField do NSTableCellView) */
+/* texto da célula cell-based. A view-based não passa por aqui: o layout pergunta viewFor e as subviews se desenham. */
 static id cell_text(id t, id col, i64 row) {
     vstate_t *s = vs(t);
-    id ds = s->data_source, dl = s->delegate;
+    id ds = s->data_source;
     if (ds && cx_responds(ds->isa, sel_registerName("tableView:objectValueForTableColumn:row:"))) {
         id v = MSG(id, ds, "tableView:objectValueForTableColumn:row:", t, col, row);
         return v ? MSG0(id, v, "description") : 0;
     }
-    if (dl && cx_responds(dl->isa, sel_registerName("tableView:viewForTableColumn:row:"))) {
-        id v = MSG(id, dl, "tableView:viewForTableColumn:row:", t, col, row);
-        if (!v) return 0;
-        if (cx_responds(v->isa, sel_registerName("textField"))) { id tf = MSG0(id, v, "textField"); if (tf) return MSG0(id, tf, "stringValue"); }
-        if (cx_responds(v->isa, sel_registerName("stringValue"))) return MSG0(id, v, "stringValue");
-    }
     return 0;
 }
+static int tv_in_layout;
+static void tv_reclaim(id self) {
+    cx_tv_engine_t *e = cx_tv_engine_get(self, 0);
+    if (!e) return;
+    int n = cx_tv_engine_placed_count(e);
+    for (int i = 0; i < n; i++) {
+        id v = cx_tv_engine_placed_at(e, i);
+        if (!v || !cx_is_subclass(v->isa, &NSView_c)) continue;
+        const char *cs = tv_ident_cstr(vs(v)->identifier);
+        if (cs) { objc_retain(v); v_remove(v, 0); cx_tv_engine_put(e, cs, v); }
+        else v_remove(v, 0);
+    }
+    cx_tv_engine_placed_clear(e);
+}
+static void tv_outline_metrics(id self, i64 row, int *level, double *per, id *ocol) {
+    *level = -1; *per = 16; *ocol = 0;
+    if (!tv_is_outline(self)) return;
+    *level = 0;
+    if (cx_responds(self->isa, sel_registerName("indentationPerLevel"))) {
+        double p = MSG0(double, self, "indentationPerLevel");
+        if (p > 0) *per = p;
+    }
+    if (cx_responds(self->isa, sel_registerName("levelForRow:"))) *level = (int)MSG(i64, self, "levelForRow:", row);
+    if (*level < 0) *level = 0;
+    if (cx_responds(self->isa, sel_registerName("outlineTableColumn"))) *ocol = MSG0(id, self, "outlineTableColumn");
+}
+static void tv_layout_views(id self) {
+    if (!self || !ST(self) || tv_in_layout) return;
+    vstate_t *s = vs(self);
+    if (s->kind != K_TABLE) return;
+    int in_sc = tv_in_scroll(self);
+    cx_tv_engine_t *e = cx_tv_engine_get(self, 1);
+    if (!e) return;
+    double scroll_y = in_sc ? vs(s->superview)->scroll_y : cx_tv_engine_own_scroll(e);
+    double view_h = in_sc ? vs(s->superview)->frame.s.h : s->frame.s.h;
+    double header = s->header ? 24 : 0, row_h = s->row_h > 0 ? s->row_h : 24;
+    i64 nrows = tv_rows(self);
+    cx_tv_span_t sp = cx_tv_visible_rows(scroll_y, view_h, row_h, header, (int)nrows);
+    int want = s->delegate && cx_responds(s->delegate->isa, sel_registerName("tableView:viewForTableColumn:row:"));
+    if (!want) {
+        if (cx_tv_engine_placed_count(e)) { tv_in_layout = 1; tv_reclaim(self); tv_in_layout = 0; }
+        cx_tv_engine_cells_clear(e);
+        cx_tv_engine_note_span(e, -1, -1, scroll_y);
+        s->tv_dirty = 0;
+        return;
+    }
+    if (!s->tv_dirty && cx_tv_engine_same_span(e, sp.first, sp.last, scroll_y)) return;
+    tv_in_layout = 1;
+    tv_reclaim(self);
+    cx_tv_engine_cells_clear(e);
+    s->tv_dirty = 0;   /* um reload no meio do loop marca de novo e o próximo desenho refaz */
+    nsarr_t *cols = (nsarr_t *)s->cols;
+    u64 nc = cols ? cols->n : 0;
+    for (int r = sp.first; r >= 0 && r <= sp.last; r++) {
+        int level; double per; id ocol;
+        tv_outline_metrics(self, r, &level, &per, &ocol);
+        u64 passes = nc ? nc : 1;
+        double x = 0;
+        for (u64 k = 0; k < passes; k++) {
+            id col = nc ? cols->items[k] : 0;
+            double cw = col ? cs_(col)->width : s->frame.s.w;
+            id v = MSG(id, s->delegate, "tableView:viewForTableColumn:row:", self, col, (i64)r);
+            int got = v && cx_is_subclass(v->isa, &NSView_c);
+            cx_tv_engine_note_cell(e, r, (int)k, got);
+            if (got && !cx_tv_show_cell(got)) {
+                int ocol_here = level >= 0 && (ocol ? col == ocol : k == 0);
+                double cell_x = cx_tv_cell_x(x, level, per, ocol_here);
+                NSRect fr = r_make(cell_x, cx_tv_cell_y_scrolled(header, row_h, r, in_sc, scroll_y), cx_tv_cell_w(cw, x, cell_x), row_h);
+                ((void (*)(id, SEL, NSRect))objc_msgSend)(v, sel_registerName("setFrame:"), fr);
+                if (vs(v)->superview != self) v_add_sub(self, 0, v);
+                cx_tv_engine_placed_add(e, v);
+            }
+            x += cw;
+        }
+    }
+    cx_tv_engine_note_span(e, sp.first, sp.last, scroll_y);
+    tv_in_layout = 0;
+}
 static void draw_table(id t, absr_t *a) {
+    tv_layout_views(t);
     vstate_t *s = vs(t);
     nsarr_t *cols = (nsarr_t *)s->cols;
     i64 rows = tv_rows(t);
+    cx_tv_engine_t *eng = cx_tv_engine_get(t, 0);
+    int in_sc = s->superview && vs(s->superview)->kind == K_SCROLL;
+    double own = (!in_sc && eng) ? cx_tv_engine_own_scroll(eng) : 0;
     double y = a->tly + (s->header ? 24 : 0), x0 = a->tlx;
+    int outline = tv_is_outline(t);
     for (i64 r = 0; r < rows; r++) {
-        double ry = y + r * s->row_h;
+        double ry = y + r * s->row_h - own;
         if (ry + s->row_h < clip_y0 || ry > clip_y1) continue;   /* fora da área visível da rolagem */
         BOOL sel = r == s->selected;
         if (sel) g_rrect(x0 + 4, ry + 1, a->w - 8, s->row_h - 2, 5, accent);
         else if (s->alt_rows && (r & 1)) g_fill(x0, ry, a->w, s->row_h, 0x08000000);
+        int level = -1; double per = 16; id ocol = 0;
+        if (outline) tv_outline_metrics(t, r, &level, &per, &ocol);
         double x = x0;
-        for (u64 k = 0; k < cols->n; k++) {
+        for (u64 k = 0; cols && k < cols->n; k++) {
             colst_t *cs = cs_(cols->items[k]);
-            id txt = cell_text(t, cols->items[k], r);
-            if (txt) {
-                const char *tt = cx_cstr(txt);
-                gui_metrics_t m = measure(tt, (u32)strlen(tt), 13, 0);
-                set_clip(x, ry, cs->width - 4, s->row_h);
-                g_text(x + 8, ry + (s->row_h + m.ascent - m.descent) / 2, 13, 0, sel ? 0xFFFFFFFF : 0xE6000000, tt, (u32)strlen(tt));
-                set_clip(a->tlx, a->tly, a->w, a->h);
+            int ocol_here = level >= 0 && (ocol ? cols->items[k] == ocol : k == 0);
+            double local = x - x0;
+            if (ocol_here && cx_responds(t->isa, sel_registerName("isExpandable:"))) {
+                id item = cx_responds(t->isa, sel_registerName("itemAtRow:")) ? MSG(id, t, "itemAtRow:", r) : 0;
+                if (MSG(BOOL, t, "isExpandable:", item)) {
+                    double dx = x0 + cx_tv_disclosure_x(local, level, per, 1);
+                    double mid = ry + s->row_h / 2;
+                    int open = cx_responds(t->isa, sel_registerName("isItemExpanded:")) && MSG(BOOL, t, "isItemExpanded:", item);
+                    float tri[6];
+                    if (open) { tri[0] = (float)(dx + 2); tri[1] = (float)(mid - 3); tri[2] = (float)(dx + 10); tri[3] = (float)(mid - 3); tri[4] = (float)(dx + 6); tri[5] = (float)(mid + 3); }
+                    else { tri[0] = (float)(dx + 3); tri[1] = (float)(mid - 5); tri[2] = (float)(dx + 3); tri[3] = (float)(mid + 5); tri[4] = (float)(dx + 9); tri[5] = (float)mid; }
+                    g_poly(tri, 3, sel ? 0xFFFFFFFF : 0xFF666666, 1, 0);
+                }
+            }
+            int got = eng ? cx_tv_engine_cell_view(eng, (int)r, (int)k) : 0;
+            if (cx_tv_show_cell(got)) {
+                id txt = cell_text(t, cols->items[k], r);
+                if (txt) {
+                    const char *tt = cx_cstr(txt);
+                    gui_metrics_t m = measure(tt, (u32)strlen(tt), 13, 0);
+                    double tx = x0 + cx_tv_cell_x(local, level, per, ocol_here);
+                    double tw = cx_tv_cell_w(cs->width, local, tx - x0);
+                    set_clip(tx, ry, tw - 4 > 1 ? tw - 4 : 1, s->row_h);
+                    g_text(tx + 8, ry + (s->row_h + m.ascent - m.descent) / 2, 13, 0, sel ? 0xFFFFFFFF : 0xE6000000, tt, (u32)strlen(tt));
+                    set_clip(a->tlx, a->tly, a->w, a->h);
+                }
             }
             x += cs->width;
         }
@@ -3445,8 +3964,36 @@ static void tv_mouse_down(id self, SEL c, id e) {
     absr_t sa;
     if (s->header && s->superview && vs(s->superview)->kind == K_SCROLL && abs_rect(s->superview, &sa) && win_h(s->window) - evs(e)->y - sa.tly < 24) return;   /* clique no cabeçalho fixo */
     double py = win_h(s->window) - evs(e)->y - a.tly - (s->header ? 24 : 0);
+    if (!tv_in_scroll(self)) {
+        cx_tv_engine_t *eng = cx_tv_engine_get(self, 0);
+        if (eng) py += cx_tv_engine_own_scroll(eng);
+    }
     i64 r = py < 0 ? -1 : (i64)(py / s->row_h);
     if (r >= tv_rows(self)) r = -1;
+    if (r >= 0 && tv_is_outline(self)) {
+        int level; double per; id ocol;
+        tv_outline_metrics(self, r, &level, &per, &ocol);
+        nsarr_t *cols = (nsarr_t *)s->cols;
+        double x = 0, dx = 0;
+        int found = 0;
+        for (u64 k = 0; cols && k < cols->n; k++) {
+            int here = ocol ? cols->items[k] == ocol : k == 0;
+            if (here) { dx = cx_tv_disclosure_x(x, level, per, 1); found = 1; break; }
+            x += cs_(cols->items[k])->width;
+        }
+        if (!found && (!cols || !cols->n)) dx = cx_tv_disclosure_x(0, level, per, 1);
+        double lx = evs(e)->x - a.tlx;
+        if (found || !cols || !cols->n) {
+            if (lx >= dx && lx < dx + per && cx_responds(self->isa, sel_registerName("isExpandable:"))) {
+                id item = cx_responds(self->isa, sel_registerName("itemAtRow:")) ? MSG(id, self, "itemAtRow:", r) : 0;
+                if (MSG(BOOL, self, "isExpandable:", item)) {
+                    if (cx_responds(self->isa, sel_registerName("isItemExpanded:")) && MSG(BOOL, self, "isItemExpanded:", item))
+                        MSG(void, self, "collapseItem:", item);
+                    else MSG(void, self, "expandItem:", item);
+                }
+            }
+        }
+    }
     s->clicked = r;
     if (r >= 0) select_row(self, r, YES);
     if (evs(e)->clicks >= 2 && s->double_action && r >= 0) {
@@ -4102,6 +4649,50 @@ static void bindings_register(void) {
 }
 #include "appkit_nib.inc"
 
+static int tv_nibarchive(const void *b, u64 n) {
+    static const char mag[] = "NIBArchive";
+    if (!b || n < 10) return 0;
+    const char *p = b;
+    for (int i = 0; i < 10; i++) if (p[i] != mag[i]) return 0;
+    return 1;
+}
+static id tv_pick_view(id tops, id ident) {
+    if (!tops || !cx_responds(tops->isa, sel_registerName("count"))) return 0;
+    u64 n = MSG0(u64, tops, "count");
+    id first = 0;
+    const char *want = tv_ident_cstr(ident);
+    for (u64 i = 0; i < n; i++) {
+        id o = MSG(id, tops, "objectAtIndex:", i);
+        if (!o || !cx_is_subclass(o->isa, &NSView_c)) continue;
+        if (!first) first = o;
+        if (want && tv_ident_cstr(vs(o)->identifier) && !strcmp(tv_ident_cstr(vs(o)->identifier), want)) return o;
+    }
+    return first;
+}
+static id tv_materialize(id self, id ident, id owner, void *token, int kind) {
+    id tok = (id)token;
+    if (!tok) return 0;
+    if (!owner) owner = self;
+    if (kind == CX_TV_PROTO) return tv_clone_view(tok);
+    if (kind == CX_TV_NIB) {
+        id tops = 0;
+        BOOL (*inst)(id, SEL, id, id *) = (BOOL (*)(id, SEL, id, id *))objc_msgSend;
+        if (!inst(tok, sel_registerName("instantiateWithOwner:topLevelObjects:"), owner, &tops)) return 0;
+        id v = tv_pick_view(tops, ident);
+        return v ? objc_retain(v) : 0;
+    }
+    if (kind == CX_TV_NIBDATA && tv_is_data(tok)) {
+        const void *b = MSG0(const void *, tok, "bytes");
+        u64 n = MSG0(u64, tok, "length");
+        if (!tv_nibarchive(b, n)) return 0;
+        id tops = 0;
+        if (!nib_load_buf((u8 *)b, n, owner, 0, "", &tops)) return 0;
+        id v = tv_pick_view(tops, ident);
+        return v ? objc_retain(v) : 0;
+    }
+    return 0;
+}
+
 /* NSDictionaryOfVariableBindings(a, b): nomes vêm do texto das variáveis */
 id _NSDictionaryOfVariableBindings(id names, id first, ...) {
     id d = MSG0(id, (id)cx_class_named("NSMutableDictionary"), "dictionary");
@@ -4138,27 +4729,35 @@ void cx_appkit_init(void) {
     DEF(NSResponder, NSObject);
     M(NSResponder, "mouseDown:", r_mouse_down); M(NSResponder, "mouseUp:", r_mouse_up); M(NSResponder, "mouseDragged:", r_mouse_dragged);
     M(NSResponder, "rightMouseDown:", r_right_down); M(NSResponder, "scrollWheel:", r_scroll); M(NSResponder, "keyDown:", r_key_down);
-    M(NSResponder, "mouseMoved:", noop1_m); M(NSResponder, "keyUp:", noop1_m); M(NSResponder, "acceptsFirstResponder", no_m);
+    M(NSResponder, "mouseMoved:", noop1_m); M(NSResponder, "keyUp:", r_key_up); M(NSResponder, "flagsChanged:", r_flags_changed); M(NSResponder, "acceptsFirstResponder", no_m);
     M(NSResponder, "becomeFirstResponder", yes_m); M(NSResponder, "resignFirstResponder", yes_m);
 
     DEF(NSApplication, NSResponder);
     CM(NSApplication, "sharedApplication", ap_shared);
     M(NSApplication, "setDelegate:", ap_set_delegate); M(NSApplication, "delegate", ap_delegate); M(NSApplication, "run", ap_run);
-    M(NSApplication, "setActivationPolicy:", ap_set_policy); M(NSApplication, "activateIgnoringOtherApps:", ap_activate); M(NSApplication, "activate", noop_m);
+    M(NSApplication, "setActivationPolicy:", ap_set_policy); M(NSApplication, "activationPolicy", ap_policy);
+    M(NSApplication, "activateIgnoringOtherApps:", ap_activate); M(NSApplication, "activate", ap_activate_simple);
     M(NSApplication, "setMainMenu:", ap_set_menu); M(NSApplication, "mainMenu", ap_menu); M(NSApplication, "terminate:", ap_terminate);
     M(NSApplication, "stop:", ap_stop); M(NSApplication, "finishLaunching", ap_finish_launching); M(NSApplication, "windows", ap_windows);
     M(NSApplication, "orderedWindows", ap_ordered_windows);
     M(NSApplication, "keyWindow", ap_key_window); M(NSApplication, "mainWindow", ap_key_window); M(NSApplication, "sendAction:to:from:", ap_send_action);
     M(NSApplication, "runModalForWindow:", ap_run_modal); M(NSApplication, "stopModalWithCode:", ap_stop_modal_code); M(NSApplication, "stopModal", ap_stop_modal);
-    M(NSApplication, "setWindowsMenu:", noop1_m); M(NSApplication, "setServicesMenu:", noop1_m); M(NSApplication, "setHelpMenu:", noop1_m);
+    M(NSApplication, "setWindowsMenu:", noop1_m); M(NSApplication, "setServicesMenu:", noop1_m);
+    M(NSApplication, "setHelpMenu:", ap_set_help); M(NSApplication, "helpMenu", ap_help);
     M(NSApplication, "setApplicationIconImage:", noop1_m); M(NSApplication, "hide:", noop1_m); M(NSApplication, "orderFrontStandardAboutPanel:", ap_about_panel);
     M(NSApplication, "requestUserAttention:", noop1_m);
 
     DEF(NSWindow, NSResponder);
     DEF(NSPanel, NSWindow);
+    DEF(NSWindowTab, NSObject);
+    M(NSWindowTab, "window", tab_window); M(NSWindowTab, "setWindow:", tab_set_window);
     M(NSWindow, "initWithContentRect:styleMask:backing:defer:", w_init); M(NSWindow, "init", w_init_simple);
     CM(NSWindow, "windowWithContentViewController:", w_with_vc);
     M(NSWindow, "setTitle:", w_set_title); M(NSWindow, "title", w_title); M(NSWindow, "contentView", w_content); M(NSWindow, "setContentView:", w_set_content);
+    M(NSWindow, "setSubtitle:", w_set_subtitle); M(NSWindow, "subtitle", w_subtitle);
+    M(NSWindow, "setRepresentedURL:", w_set_url); M(NSWindow, "representedURL", w_url);
+    M(NSWindow, "setRestorable:", w_set_restorable); M(NSWindow, "isRestorable", w_restorable);
+    M(NSWindow, "tab", w_tab); M(NSWindow, "setTab:", w_set_tab);
     M(NSWindow, "isDocumentEdited", no_m); M(NSWindow, "representedFilename", noop_ret_nil);
     M(NSWindow, "setTouchBar:", noop1_m); M(NSWindow, "touchBar", noop_ret_nil);
     M(NSWindow, "setDelegate:", w_set_delegate); M(NSWindow, "delegate", w_delegate); M(NSWindow, "alphaValue", w_alpha); M(NSWindow, "setAlphaValue:", w_set_alpha);
@@ -4199,6 +4798,8 @@ void cx_appkit_init(void) {
     M(NSView, "setTranslatesAutoresizingMaskIntoConstraints:", v_set_tamic); M(NSView, "translatesAutoresizingMaskIntoConstraints", v_tamic); M(NSView, "viewDidMoveToWindow", noop_m);
     M(NSView, "setAlphaValue:", noop1_m); M(NSView, "updateTrackingAreas", noop_m); M(NSView, "addTrackingArea:", noop1_m);
     M(NSView, "acceptsFirstMouse:", yes_m);
+    M(NSView, "setIdentifier:", v_set_ident); M(NSView, "identifier", v_ident);
+    M(NSView, "setNextResponder:", v_set_next); M(NSView, "nextResponder", v_next);
 
     DEF(NSControl, NSView);
     M(NSControl, "setTarget:", ctl_set_target); M(NSControl, "target", ctl_target); M(NSControl, "setAction:", ctl_set_action); M(NSControl, "action", ctl_action);
@@ -4236,6 +4837,7 @@ void cx_appkit_init(void) {
     M(NSProgressIndicator, "setMinValue:", sl_set_min); M(NSProgressIndicator, "setMaxValue:", sl_set_max); M(NSProgressIndicator, "incrementBy:", pg_inc);
     M(NSProgressIndicator, "setIndeterminate:", noop1_m); M(NSProgressIndicator, "startAnimation:", noop1_m); M(NSProgressIndicator, "stopAnimation:", noop1_m);
     M(NSProgressIndicator, "setStyle:", noop1_m);
+    M(NSProgressIndicator, "setDisplayedWhenStopped:", pg_set_idle); M(NSProgressIndicator, "isDisplayedWhenStopped", pg_idle);
     DEF(NSBox, NSView);
     M(NSBox, "initWithFrame:", bx_init_frame); M(NSBox, "setTitle:", bt_set_title); M(NSBox, "setContentView:", v_add_sub); M(NSBox, "setBoxType:", bx_set_type); M(NSBox, "setFillColor:", tf_set_bg); M(NSBox, "setCornerRadius:", bx_set_radius);
     DEF(NSStackView, NSView);
@@ -4256,7 +4858,9 @@ void cx_appkit_init(void) {
     M(NSTableView, "initWithFrame:", tv_init_frame); M(NSTableView, "addTableColumn:", tv_add_col); M(NSTableView, "tableColumns", tv_cols);
     M(NSTableView, "setDataSource:", tv_set_ds); M(NSTableView, "dataSource", tv_ds); M(NSTableView, "reloadData", tv_reload);
     M(NSTableView, "numberOfRows", tv_num_rows); M(NSTableView, "selectedRow", tv_selected); M(NSTableView, "clickedRow", tv_clicked);
-    M(NSTableView, "setRowHeight:", tv_set_row_h); M(NSTableView, "setHeaderView:", tv_set_header); M(NSTableView, "headerView", tv_header);
+    M(NSTableView, "setRowHeight:", tv_set_row_h); M(NSTableView, "rowHeight", tv_row_h); M(NSTableView, "isFlipped", tv_is_flipped);
+    M(NSTableView, "setHeaderView:", tv_set_header); M(NSTableView, "headerView", tv_header); M(NSTableView, "setDelegate:", tv_set_delegate);
+    M(NSTableView, "registerNib:forIdentifier:", tv_register_nib);
     M(NSTableView, "setUsesAlternatingRowBackgroundColors:", tv_set_alt); M(NSTableView, "setDoubleAction:", tv_set_double);
     M(NSTableView, "makeViewWithIdentifier:owner:", tv_make_view); M(NSTableView, "scrollRowToVisible:", tv_scroll_row);
     M(NSTableView, "selectRowIndexes:byExtendingSelection:", tv_select); M(NSTableView, "deselectAll:", tv_deselect_all);
@@ -4392,6 +4996,8 @@ void cx_appkit_init(void) {
     CM(NSMenuItem, "separatorItem", mi_sep);
     M(NSMenuItem, "initWithTitle:action:keyEquivalent:", mi_init); M(NSMenuItem, "setSubmenu:", mi_set_submenu); M(NSMenuItem, "submenu", mi_submenu);
     M(NSMenuItem, "setTarget:", mi_set_target); M(NSMenuItem, "title", mi_title); M(NSMenuItem, "setKeyEquivalentModifierMask:", mi_set_mask);
+    M(NSMenuItem, "keyEquivalentModifierMask", mi_mask_get); M(NSMenuItem, "userKeyEquivalent", mi_user_key); M(NSMenuItem, "setUserKeyEquivalent:", mi_set_key);
+    M(NSMenuItem, "userKeyEquivalentModifierMask", mi_user_mask); M(NSMenuItem, "setUserKeyEquivalentModifierMask:", mi_set_mask);
     M(NSMenuItem, "setAction:", mi_set_action); M(NSMenuItem, "setTitle:", mi_set_title); M(NSMenuItem, "setKeyEquivalent:", mi_set_key); M(NSMenuItem, "tag", mi_tag); M(NSMenuItem, "state", mi_state);
     M(NSMenuItem, "setTag:", mi_set_tag); M(NSMenuItem, "setState:", mi_set_state); M(NSMenuItem, "setEnabled:", mi_set_enabled);
     M(NSMenuItem, "setToolTip:", mi_set_tooltip); M(NSMenuItem, "toolTip", mi_tooltip);
@@ -4477,6 +5083,7 @@ void cx_appkit_init(void) {
     cx_appkit_input_init();     /* appkit_input.c: interpretKeyEvents:, NSTextInputContext, arrastar e soltar */
     (void)run_loop_until;
     cx_runloop_hook = run_loop_until;
+    { extern void cx_un_install_runloop(void); cx_un_install_runloop(); }
 }
 
 /* ================================================================ primitivas da ponte de Path

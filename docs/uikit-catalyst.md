@@ -132,7 +132,21 @@ Apps Catalyst (o WhatsApp para Mac é um) ligam o UIKit pelo caminho do Catalyst
 - **Prioridades no Auto Layout:** as igualdades são resolvidas da maior para a menor prioridade (uma obrigatória fixa o
   atributo antes das opcionais), e os limites `>=`/`<=`, constantes ou relativos a outra view, ajustam bordas, centro,
   largura e altura sem vencer igualdades de prioridade maior.
-- Teste `catalyst` **33/33** (prioridades, folha modal, alerta com handler, `animate` no meio da curva e no fim, mola que
-  passa do alvo, `UIViewPropertyAnimator` com fração manual e parada no meio); `uikit` 28/28.
-- Ainda não: `transform`, animação de `contentOffset`, transições com imagem (`transitionWithView:` só anima as
-  propriedades), popovers, alfa dos ancestrais.
+- Teste `catalyst`: a suíte anterior (prioridades, folha modal, alerta com handler, `animate` no meio da curva e no fim,
+  mola que passa do alvo, `UIViewPropertyAnimator` com fração manual e parada no meio) mais `transform`, `contentOffset`
+  animado e `transitionWithView:` com imagem. O comando continua `tools/test-catalyst.ps1` (harness Windows).
+- **`transform`:** `UIView` guarda um `CATransform3D` (o `CGAffineTransform` é a parte afim) em volta do centro. `bounds`
+  e `center` ficam no modelo; `frame` com transform identidade é o retângulo exato, e com outra matriz é a caixa
+  alinhada aos eixos. `convertPoint:`/`hitTest:` aplicam a matriz. O layer (`CALayer` desta view) espelha `transform`.
+  No contexto bitmap o CTM recebe a parte afim, então escala, rotação no plano e translação saem no pixel. Perspectiva
+  e rotação em X/Y entram na caixa e no hit-test com divisão por w; a inversa e o CTM usam só a parte afim.
+- **`contentOffset` animado:** `setContentOffset:animated:` (e `scrollRectToVisible:animated:`) anda 0,25 s na curva
+  linear, com o mesmo teto de antes. O modelo vai ao fim na hora; `_mosPresentationContentOffset` é o valor desenhado.
+  `animateWithDuration:` também interpola o offset. `animated:NO` continua imediato.
+- **Transição com imagem:** `transitionWithView:` com opção de transição (cross dissolve, flip, curl) fotografa a view
+  antes e depois do bloco e, num contexto bitmap, cruza os dois bitmaps. Flip e curl são esse crossfade, sem malha 3D.
+  Sem o bit de transição, o comportamento antigo (só propriedades) permanece.
+- **Alfa dos ancestrais:** o preenchimento usa o produto do alfa da view com o dos ancestrais.
+- O contexto da janela do AppKit ainda ignora `CGContextConcatCTM` e `CGContextDrawImage` (isso está em `appkit.c` /
+  no caminho não-bitmap de `coregraphics.c`, fora deste trabalho). Na janela, transform e a imagem da transição não
+  movem pixel; hit-test, `frame` e o bitmap (`UIGraphics`) honram. `popoverPresentationController` continua vazio.

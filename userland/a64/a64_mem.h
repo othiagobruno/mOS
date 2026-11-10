@@ -7,10 +7,11 @@
  *    via __builtin_memcpy, que vira mov desalinhado;
  *  - acquire/release: no x86 (TSO) loads já são acquire e stores já são release; só o
  *    seq_cst de STLR seguido de LDAR exige barreira (ver a64_st_rel*).
- *  - acessos exclusivos e atômicos de LSE ficam em interp_int.c (precisam de cmpxchg).
+ *  - exclusivos e o store do LSE avisam o monitor (a64_xmon.h) antes de escrever.
  */
 #pragma once
 #include "a64.h"
+#include "a64_xmon.h"
 
 #define A64_LD(T, a) ({ T _v; __builtin_memcpy(&_v, (const void *)(uintptr_t)(a), sizeof(T)); _v; })
 #define A64_ST(T, a, v) do { T _v = (T)(v); __builtin_memcpy((void *)(uintptr_t)(a), &_v, sizeof(T)); } while (0)
@@ -21,11 +22,11 @@ static inline a64_u32 a64_ld32(a64_u64 a) { return (a & 3) ? A64_LD(a64_u32, a) 
 static inline a64_u64 a64_ld64(a64_u64 a) { return (a & 7) ? A64_LD(a64_u64, a) : __atomic_load_n((a64_u64 *)(uintptr_t)a, __ATOMIC_RELAXED); }
 static inline a64_u128 a64_ld128(a64_u64 a) { return A64_LD(a64_u128, a); }  /* LDR Q: atômico só por 64 bits */
 
-static inline void a64_st8 (a64_u64 a, a64_u8 v)  { *(volatile a64_u8 *)(uintptr_t)a = v; }
-static inline void a64_st16(a64_u64 a, a64_u16 v) { if (a & 1) A64_ST(a64_u16, a, v); else __atomic_store_n((a64_u16 *)(uintptr_t)a, v, __ATOMIC_RELAXED); }
-static inline void a64_st32(a64_u64 a, a64_u32 v) { if (a & 3) A64_ST(a64_u32, a, v); else __atomic_store_n((a64_u32 *)(uintptr_t)a, v, __ATOMIC_RELAXED); }
-static inline void a64_st64(a64_u64 a, a64_u64 v) { if (a & 7) A64_ST(a64_u64, a, v); else __atomic_store_n((a64_u64 *)(uintptr_t)a, v, __ATOMIC_RELAXED); }
-static inline void a64_st128(a64_u64 a, a64_u128 v) { A64_ST(a64_u128, a, v); }
+static inline void a64_st8 (a64_u64 a, a64_u8 v)  { a64_xmon_note(a, 1); *(volatile a64_u8 *)(uintptr_t)a = v; a64_xmon_note_end(); }
+static inline void a64_st16(a64_u64 a, a64_u16 v) { a64_xmon_note(a, 2); if (a & 1) A64_ST(a64_u16, a, v); else __atomic_store_n((a64_u16 *)(uintptr_t)a, v, __ATOMIC_RELAXED); a64_xmon_note_end(); }
+static inline void a64_st32(a64_u64 a, a64_u32 v) { a64_xmon_note(a, 4); if (a & 3) A64_ST(a64_u32, a, v); else __atomic_store_n((a64_u32 *)(uintptr_t)a, v, __ATOMIC_RELAXED); a64_xmon_note_end(); }
+static inline void a64_st64(a64_u64 a, a64_u64 v) { a64_xmon_note(a, 8); if (a & 7) A64_ST(a64_u64, a, v); else __atomic_store_n((a64_u64 *)(uintptr_t)a, v, __ATOMIC_RELAXED); a64_xmon_note_end(); }
+static inline void a64_st128(a64_u64 a, a64_u128 v) { a64_xmon_note(a, 16); A64_ST(a64_u128, a, v); a64_xmon_note_end(); }
 
 /* STLR*: release + ordem com LDAR posterior (RCsc). mfence depois do store dá seq_cst no x86. */
 static inline void a64_fence_full(void) { __atomic_thread_fence(__ATOMIC_SEQ_CST); }

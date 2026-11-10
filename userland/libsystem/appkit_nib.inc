@@ -133,6 +133,9 @@ static id v_init_coder(id self, SEL c, id coder) {
     if (!self) return 0;
     x->memo[idx] = self;
     vstate_t *s = vs(self);
+    id vid = nib_obj(x, idx, "NSUserInterfaceItemIdentifier");
+    if (!vid) vid = nib_obj(x, idx, "NSViewIdentifier");
+    if (vid && cx_is_str(vid)) MSG(void, self, "setIdentifier:", vid);
     u32 vf = (u32)nib_n(x, idx, "NSvFlags", 0);
     s->autoresize = vf & 0x3F;
     if (vf & 0x80000000u) s->hidden = YES;
@@ -206,7 +209,13 @@ static id v_init_coder(id self, SEL c, id coder) {
             MSG(void, self, "addTableColumn:", col);
         }
         if (nv(x, idx, "NSRowHeight")) MSG(void, self, "setRowHeight:", nib_n(x, idx, "NSRowHeight", 24) + 4);
-        if (!nv(x, idx, "NSHeaderView")) s->header = NO;
+        if (nv(x, idx, "NSHeaderView")) {
+            id hv = nib_obj(x, idx, "NSHeaderView");
+            if (hv) MSG(void, self, "setHeaderView:", hv);
+        } else s->header = NO;
+        id arch = nib_obj(x, idx, cx_tv_archived_views_key);
+        if (!arch) arch = nib_obj(x, idx, cx_tv_reusable_views_key);
+        if (arch) tv_install_archived(self, arch);
         break;
     }
     }

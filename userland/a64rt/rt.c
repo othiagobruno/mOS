@@ -3,6 +3,8 @@
  * Ver rt.h e a64rt_abi.h (contrato com o kernel e com o libSystem arm64).
  */
 #include "rt.h"
+#include "writes.h"
+#include "a64_xmon.h"
 
 _Static_assert(SYS_THREAD_EXIT == 35 && SYS_SIG == 58 && MOS_SIGOP_RETURN == 6, "números literais em start.S");
 _Static_assert(sizeof(rt_thread_t) < 64 * 1024, "rt_thread_t na base da pilha do host");
@@ -32,12 +34,21 @@ void *rt_alloc(u64 len) {
 }
 void rt_free(void *p, u64 len) { if (p) RS2(SYS_MUNMAP, p, (len + 0xFFF) & ~0xFFFULL); }
 
-/* pilha do host alinhada ao próprio tamanho (rt_self): 2 MiB sob demanda já vêm alinhados a 2 MiB; usa a primeira
- * metade e nunca devolve a sobra (sem munmap no meio das regiões: a faixa de cima não fica livre para outros mmap) */
-static void *alloc_hstack(void) {
-    u64 a = (u64)rt_alloc(2 * A64RT_HSTACK);
-    if (!a) return 0;
-    return (void *)((a + A64RT_HSTACK - 1) & ~(A64RT_HSTACK - 1));
+/* pilha do host alinhada ao próprio tamanho (rt_self). 2 MiB sob demanda já vêm alinhados a 2 MiB: usa a
+ * primeira metade e, no caminho feliz, não devolve a sobra (munmap no meio da faixa deixa um buraco e o
+ * mmap seguinte pode cair nele). Se a tabela de threads estiver cheia, solta o bloco inteiro a partir da
+ * base crua — no harness, sem o modo 3, o mmap vem alinhado a 4 KiB e o ponteiro usado não é essa base. */
+static void *alloc_hstack(u64 *free_base, u64 *free_len) {
+    u64 raw = (u64)rt_alloc(2 * A64RT_HSTACK);
+    a64rt_hstack plan;
+    if (!raw) return 0;
+    if (!a64rt_hstack_plan(raw, A64RT_HSTACK, &plan)) {
+        rt_free((void *)raw, 2 * A64RT_HSTACK);
+        return 0;
+    }
+    *free_base = plan.free_base;
+    *free_len = plan.free_len;
+    return (void *)plan.use;
 }
 
 /* ---------------------------------------------------------------- tabela de threads */
@@ -70,14 +81,15 @@ static rt_thread_t *thread_take(void) {
             return T;
         }
     tunlock();
-    rt_thread_t *T = alloc_hstack();
+    u64 free_base = 0, free_len = 0;
+    rt_thread_t *T = alloc_hstack(&free_base, &free_len);
     if (!T) return 0;
     T->state = 1;
     tlock();
     int ok = 0;
     for (int i = 0; i < RT_MAX_THREADS; i++) if (!g_threads[i]) { g_threads[i] = T; ok = 1; break; }
     tunlock();
-    if (!ok) { rt_free(T, A64RT_HSTACK); return 0; }
+    if (!ok) { rt_free((void *)free_base, free_len); return 0; }
     return T;
 }
 
@@ -89,6 +101,7 @@ static void thread_init(rt_thread_t *T) {
     T->hstack_lo = lo;
     T->state = 1;
     T->cpu.host = T;
+    T->jit_wp = 1;                     /* Apple: thread nova nasce sem poder escrever MAP_JIT */
 }
 
 /* ---------------------------------------------------------------- serviços do hospedeiro para o motor */
@@ -126,23 +139,185 @@ void a64_host_icache_inval(a64_cpu *c, a64_u64 addr, a64_u64 len) { (void)c; a64
 void a64_host_yield(a64_cpu *c) { (void)c; RS0(SYS_YIELD); }
 /* JIT: regiões RWX (todo mmap do mOS é leitura+escrita+execução) */
 void *a64_host_jit_alloc(a64_u64 len) { return rt_alloc(len); }
+/* MAP_JIT e apelidos (vm_remap das mesmas páginas). O JIT chama a64_host_jit_wprotect com J.lock tomado:
+ * a leitura é seqlock, sem a trava de escrita, para não inverter a ordem com J.lock. */
+#define RT_JIT_MAX   48
+#define RT_ALIAS_MAX 32
+typedef struct { u64 lo, hi; } rt_span_t;
+typedef struct { u64 a, b, len; } rt_alias_t;
+static rt_span_t g_jitmap[RT_JIT_MAX];
+static rt_alias_t g_alias[RT_ALIAS_MAX];
+static int g_jitmap_n, g_alias_n;
+static volatile u32 g_jseq;
+static volatile int g_jw;
+
+static void jitmap_wlock(void) {
+    while (__atomic_exchange_n(&g_jw, 1, __ATOMIC_ACQUIRE)) RS0(SYS_YIELD);
+    __atomic_fetch_add(&g_jseq, 1, __ATOMIC_ACQ_REL);       /* par → ímpar: o leitor tenta de novo */
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);
+}
+static void jitmap_wunlock(void) {
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);
+    __atomic_fetch_add(&g_jseq, 1, __ATOMIC_RELEASE);       /* ímpar → par */
+    __atomic_store_n(&g_jw, 0, __ATOMIC_RELEASE);
+}
+static u64 ld64(u64 *p) { return __atomic_load_n(p, __ATOMIC_RELAXED); }
+static int ldint(int *p) { return __atomic_load_n(p, __ATOMIC_RELAXED); }
+
+static void mirror_range(u64 addr, u64 end, u64 base, u64 other, u64 n, u64 *blo, u64 *bhi, int *any) {
+    if (!n || other + n < other) return;
+    u64 be = base + n;
+    u64 lo = addr > base ? addr : base;
+    u64 hi = end < be ? end : be;
+    if (lo >= hi) return;
+    u64 mlo = other + (lo - base), mhi = other + (hi - base);
+    if (!*any || mlo < *blo) *blo = mlo;
+    if (!*any || mhi > *bhi) *bhi = mhi;
+    *any = 1;
+}
+
+int a64_jit_alias_span(a64_u64 addr, a64_u64 len, a64_u64 *lo, a64_u64 *hi) {
+    if (!len || !lo || !hi) return 0;
+    a64_u64 end = addr + len;
+    if (end < addr) end = ~0ull;
+    for (;;) {
+        u32 s = __atomic_load_n(&g_jseq, __ATOMIC_ACQUIRE);
+        if (s & 1) { __builtin_ia32_pause(); continue; }
+        int n = ldint(&g_alias_n), any = 0;
+        u64 blo = ~0ull, bhi = 0;
+        if (n > RT_ALIAS_MAX) n = RT_ALIAS_MAX;
+        for (int i = 0; i < n; i++) {
+            u64 a = ld64(&g_alias[i].a), b = ld64(&g_alias[i].b), ln = ld64(&g_alias[i].len);
+            mirror_range(addr, end, a, b, ln, &blo, &bhi, &any);
+            mirror_range(addr, end, b, a, ln, &blo, &bhi, &any);
+        }
+        __atomic_thread_fence(__ATOMIC_ACQUIRE);
+        if (__atomic_load_n(&g_jseq, __ATOMIC_ACQUIRE) != s) continue;
+        if (!any || bhi <= blo) return 0;
+        *lo = blo;
+        *hi = bhi;
+        return 1;
+    }
+}
+
+u64 rt_jit_alias_page(u64 addr) {
+    a64_u64 lo, hi;
+    addr &= ~0xfffULL;
+    if (!a64_jit_alias_span(addr, 4096, &lo, &hi) || hi < lo + 4096) return 0;
+    return lo & ~0xfffULL;
+}
+
+int rt_jit_contains(u64 addr) {
+    for (;;) {
+        u32 s = __atomic_load_n(&g_jseq, __ATOMIC_ACQUIRE);
+        if (s & 1) { __builtin_ia32_pause(); continue; }
+        int yes = 0, n = ldint(&g_jitmap_n);
+        if (n > RT_JIT_MAX) n = RT_JIT_MAX;
+        for (int i = 0; i < n && !yes; i++) {
+            u64 lo = ld64(&g_jitmap[i].lo), hi = ld64(&g_jitmap[i].hi);
+            if (addr >= lo && addr < hi) yes = 1;
+        }
+        n = ldint(&g_alias_n);
+        if (n > RT_ALIAS_MAX) n = RT_ALIAS_MAX;
+        for (int i = 0; i < n && !yes; i++) {
+            u64 a = ld64(&g_alias[i].a), b = ld64(&g_alias[i].b), ln = ld64(&g_alias[i].len);
+            if ((addr >= a && addr < a + ln) || (addr >= b && addr < b + ln)) yes = 1;
+        }
+        __atomic_thread_fence(__ATOMIC_ACQUIRE);
+        if (__atomic_load_n(&g_jseq, __ATOMIC_ACQUIRE) == s) return yes;
+    }
+}
+
+void rt_jit_note_write(rt_thread_t *T, u64 addr) {
+    if (!T) return;
+    addr &= ~0xfffULL;
+    for (int i = 0; i < T->jit_dirty_n; i++) if (T->jit_dirty[i] == addr) return;
+    if (T->jit_dirty_n >= RT_JIT_DIRTY) { T->jit_dirty_all = 1; return; }
+    T->jit_dirty[T->jit_dirty_n++] = addr;
+}
+
+static void rt_jit_publish(rt_thread_t *T) {
+    if (T->jit_dirty_all) {
+        rt_span_t spans[RT_JIT_MAX];
+        rt_alias_t als[RT_ALIAS_MAX];
+        int ns, na;
+        jitmap_wlock();
+        ns = g_jitmap_n; if (ns > RT_JIT_MAX) ns = RT_JIT_MAX;
+        for (int i = 0; i < ns; i++) spans[i] = g_jitmap[i];
+        na = g_alias_n; if (na > RT_ALIAS_MAX) na = RT_ALIAS_MAX;
+        for (int i = 0; i < na; i++) als[i] = g_alias[i];
+        jitmap_wunlock();
+        for (int i = 0; i < ns; i++)
+            if (spans[i].hi > spans[i].lo) a64_invalidate(spans[i].lo, spans[i].hi - spans[i].lo);
+        for (int i = 0; i < na; i++) {
+            a64_invalidate(als[i].a, als[i].len);
+            a64_invalidate(als[i].b, als[i].len);
+        }
+    } else {
+        for (int i = 0; i < T->jit_dirty_n; i++) a64_invalidate(T->jit_dirty[i], 4096);
+    }
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);
+    T->jit_dirty_n = 0;
+    T->jit_dirty_all = 0;
+}
+
+static void rt_jit_add_region(u64 addr, u64 len) {
+    if (!addr || !len) return;
+    u64 lo = addr & ~0xfffULL;
+    u64 hi = addr + len;
+    if (hi < addr) return;
+    hi = (hi + 0xfffULL) & ~0xfffULL;
+    jitmap_wlock();
+    for (int i = 0; i < g_jitmap_n; i++) {
+        if (hi < g_jitmap[i].lo || lo > g_jitmap[i].hi) continue;
+        if (lo < g_jitmap[i].lo) g_jitmap[i].lo = lo;
+        if (hi > g_jitmap[i].hi) g_jitmap[i].hi = hi;
+        jitmap_wunlock();
+        return;
+    }
+    if (g_jitmap_n < RT_JIT_MAX) g_jitmap[g_jitmap_n++] = (rt_span_t){lo, hi};
+    /* cheia: a faixa nova fica só com a rede PTE_JWP (a escrita depois de executar invalida) */
+    jitmap_wunlock();
+}
+
 /* Rede de segurança do JIT contra código que se reescreve sem IC IVAU: proteção de escrita de verdade na PTE
  * (MACH_VM_JIT_WPROTECT, kernel/proc/process.c uvm_jit_wprotect). protect=1 tira a escrita (1 se a página era
  * gravável e não COW), 0 devolve, 2 consulta. Sem o op no kernel (kernel antigo), devolve 0: a rede fica desligada e
- * vale o IC IVAU / sys_icache_invalidate, que é o que a arquitetura exige de quem gera código. */
+ * vale o IC IVAU / sys_icache_invalidate, que é o que a arquitetura exige de quem gera código.
+ * A outra vista do mesmo físico recebe o mesmo op, senão a escrita pelo apelido não falta. */
 static int wp_off;
-int a64_host_jit_wprotect(a64_u64 page, int protect) {
+static int wp_call(u64 page, int protect) {
     if (wp_off) return 0;
     u64 a[8] = {page, (u64)protect, 0, 0, 0, 0, 0, 0};
     long r = RS2(SYS_MACH_VM, MACH_VM_JIT_WPROTECT, a);
     if (r != 0) { wp_off = 1; return 0; }
     return (int)a[2];
 }
+int a64_host_jit_wprotect(a64_u64 page, int protect) {
+    int r = wp_call(page, protect);
+    u64 o = rt_jit_alias_page(page);
+    if (o && o != (page & ~0xfffULL)) wp_call(o, protect);
+    return r;
+}
+
+static void rt_jit_add_alias(u64 dst, u64 src, u64 len) {
+    dst &= ~0xfffULL;
+    src &= ~0xfffULL;
+    if (len & 0xfff) len = (len + 0xfffULL) & ~0xfffULL;
+    if (!dst || !src || !len || len > (1ull << 30) || dst + len < dst || src + len < src) return;
+    jitmap_wlock();
+    if (g_alias_n < RT_ALIAS_MAX) g_alias[g_alias_n++] = (rt_alias_t){dst, src, len};
+    jitmap_wunlock();
+    a64_invalidate(src, len);
+    a64_invalidate(dst, len);
+    /* se a vista de origem já não é gravável, a nova também deixa de ser (senão a escrita fura o JWP) */
+    for (u64 p = 0; p < len; p += 4096)
+        if (!a64_host_jit_wprotect(src + p, 2)) a64_host_jit_wprotect(dst + p, 1);
+}
 
 /* ---------------------------------------------------------------- syscalls */
-static bool restartable(long n) {
-    return n == SYS_READ || n == SYS_WRITE || n == SYS_WAITPID || n == SYS_WAIT || n == SYS_WAITANY || n == SYS_FUTEX_WAIT;
-}
+/* a lista de syscalls refazíveis mora em rt_sig_should_restart (sig.c): o sinal que interrompeu
+ * (não o de menor número pendente) decide o SA_RESTART */
 
 static long thread_create(u64 entry, u64 sp, u64 arg) {
     rt_thread_t *T = thread_take();
@@ -165,6 +340,7 @@ void rt_thread_main(rt_thread_t *T) {
 static __attribute__((noreturn)) void thread_exit(rt_thread_t *T, long code) {
     u32 all = ~0u;
     RS4(SYS_SIG, MOS_SIGOP_MASK, MOS_SIG_SETMASK, &all, 0);   /* nada entra nesta pilha depois de liberada */
+    a64_xmon_invalidate(&T->cpu);                             /* solta a reserva e a vaga no contador global */
 #ifdef A64_HAVE_JIT
     if (T->cpu.jit) a64_jit_thread_exit(&T->cpu);
 #endif
@@ -201,17 +377,47 @@ static long threadctl_getstate(long tid, u64 out) {
 
 static void fork_child(rt_thread_t *T) {
     g_tlock = 0;
-    for (int i = 0; i < RT_MAX_THREADS; i++)
-        if (g_threads[i] && g_threads[i] != T) g_threads[i]->state = 0;   /* as outras threads não existem no filho */
+    g_jw = 0;
+    /* a cópia pode ter pego o seqlock no meio da escrita: ímpar faria o leitor girar para sempre */
+    if (__atomic_load_n(&g_jseq, __ATOMIC_RELAXED) & 1)
+        __atomic_fetch_add(&g_jseq, 1, __ATOMIC_RELAXED);
+    u64 now = (u64)RS0(SYS_TIME);
+    for (int i = 0; i < RT_MAX_THREADS; i++) {
+        rt_thread_t *O = g_threads[i];
+        if (!O || O == T || !O->state) continue;
+        /* só a thread que chamou fork existe no filho; a pilha do host das outras pode ser reusada depois da carência */
+        O->state = 0;
+        O->pend = 0;
+        O->fault_pending = 0;
+        O->cpu.excl_valid = 0;
+        O->freed_ms = now;
+    }
     T->tid = RS0(SYS_GETTID);
-    rt_sig_fork_child();
-    /* no filho as páginas protegidas pelo JIT viraram COW (o kernel não avisa quando a cópia é quebrada): todas as
-     * traduções saem e voltam, já protegidas de novo, na próxima execução. Antes, o JIT solta travas e estado das
-     * threads que não existem no filho. */
+    T->pend = 0;                       /* POSIX: o filho não herda sinal pendente */
+    T->fault_pending = 0;
+    T->in_guest = 0;
+    a64_xmon_fork_child(&T->cpu);      /* a cópia trouxe gates e travas das threads que morreram */
+    rt_sig_fork_child();               /* disposição e sigaltstack já vieram na cópia; solta a trava */
 #ifdef A64_HAVE_JIT
+    /* cache JIT copiado (COW). O kernel mantém PTE_JWP e entrega SIGBUS na primeira escrita de cada lado,
+     * então a rede de SMC continua sem esvaziar o código já traduzido. */
     a64_jit_fork_child(&T->cpu);
 #endif
-    a64_invalidate(0, ~0ULL);
+}
+
+/* fork e vfork. O vfork fica um fork com espaço próprio: um vfork de verdade teria de
+ * suspender o pai até o exec ou o _exit, compartilhar o pml4 (não COW) e o _exit do filho
+ * não pode soltar essa memória. O exec monta um espaço novo e libera o antigo — com o pml4
+ * compartilhado, levaria as páginas do pai. O a64rt, as pilhas do host e o JIT vivem nesse
+ * mesmo espaço; o acerto de fork_child (outras threads mortas, tid, travas) corromperia o pai
+ * se a memória fosse a mesma. POSIX deixa vfork com mais de uma thread indefinido. O monitor
+ * exclusivo sai antes da syscall, para o pai e a cópia do filho nascerem limpos. */
+static long rt_do_fork(rt_thread_t *T) {
+    a64_xmon_invalidate(&T->cpu);      /* a exceção do fork limpa o monitor dos dois lados */
+    long r = RS0(SYS_FORK);
+    if (r == 0) fork_child(T);
+    T->intr_sig = 0;                                   /* fork não é refazível; o filho não herda o sinal que acordou o pai */
+    return r;
 }
 
 /* diagnóstico para a frente JIT (com MOS_A64_DEBUG / A64RT_DIR/depurar): as instruções que o código gerado manda ao
@@ -238,6 +444,20 @@ static void fbstat_tick(void) {
 }
 #endif
 
+/* escrita do kernel (ou memcpy do runtime no lugar dele) na memória do guest: não passa pela PTE, então a
+ * proteção do JIT não vê. a64rt_invalidate_range é o único ponto; se a lista estourar, invalida tudo. */
+static int peek_guest(void *ctx, u64 addr, void *dst, u64 n) {
+    (void)ctx;
+    if (!addr || !dst || !n) return 0;
+    memcpy(dst, (const void *)addr, (size_t)n);
+    return 1;
+}
+static void touch_writes(long nr, u64 x0, u64 x1, u64 x2, u64 x3, u64 x4, long ret) {
+    a64rt_span sp[16];
+    int n = a64rt_guest_writes(nr, x0, x1, x2, x3, x4, ret, peek_guest, 0, sp, 16);
+    a64rt_invalidate_spans(sp, n);
+}
+
 static void mos_svc(rt_thread_t *T) {
     a64_cpu *c = &T->cpu;
     long n = (long)c->x[8];
@@ -250,7 +470,16 @@ static void mos_svc(rt_thread_t *T) {
     case A64RT_SYS_SET_TSD: c->tpidrro_el0 = a; c->x[0] = 0; return;
     case A64RT_SYS_GET_TSD: c->x[0] = c->tpidrro_el0; return;
     case A64RT_SYS_ICACHE_INVAL: a64_invalidate(a, b); c->x[0] = 0; return;
-    case A64RT_SYS_JIT_WP: c->x[0] = 0; return;
+    case A64RT_SYS_JIT_WP: {
+        int prev = T->jit_wp, en = a ? 1 : 0;
+        if (prev && !en) { T->jit_dirty_n = 0; T->jit_dirty_all = 0; }
+        if (!prev && en) rt_jit_publish(T);          /* a janela de escrita fechou: o que faltou sai do cache */
+        T->jit_wp = en;
+        c->x[0] = (u64)prev;
+        return;
+    }
+    case A64RT_SYS_MAP_JIT: rt_jit_add_region(a, b); c->x[0] = 0; return;
+    case A64RT_SYS_JIT_ALIAS: rt_jit_add_alias(a, b, d); c->x[0] = 0; return;
     case A64RT_SYS_INFO:
         c->x[0] = a == A64RT_INFO_ENGINE ? (u64)rt_engine : a == A64RT_INFO_VERSION ? 1 : (u64)-MOS_EINVAL;
         return;
@@ -266,16 +495,23 @@ static void mos_svc(rt_thread_t *T) {
         }
 #endif
         break;
-    case SYS_SIG: c->x[0] = (u64)rt_sig_syscall(T, (long)a, (long)b, (long)d, (long)e); return;
+    case SYS_SIG:
+        r = rt_sig_syscall(T, (long)a, (long)b, (long)d, (long)e);
+        c->x[0] = (u64)r;
+        touch_writes(SYS_SIG, a, b, d, e, f, r);
+        return;
     case SYS_SIGACTION: c->x[0] = (u64)rt_sigaction_old(T, (long)a, (long)b, (long)d); return;
     case SYS_SIGRETURN: rt_sig_return_old(T); return;
     case SYS_THREADCTL:
-        if (a == MOS_THR_GETSTATE) { c->x[0] = (u64)threadctl_getstate((long)b, d); return; }
+        if (a == MOS_THR_GETSTATE) {
+            r = threadctl_getstate((long)b, d);
+            c->x[0] = (u64)r;
+            touch_writes(SYS_THREADCTL, a, b, d, e, f, r);
+            return;
+        }
         break;
     case SYS_FORK:
-        r = RS0(SYS_FORK);
-        if (r == 0) fork_child(T);
-        c->x[0] = (u64)r;
+        c->x[0] = (u64)rt_do_fork(T);
         return;
     }
     if (rt_debug > 1) rt_log("a64rt[%d]: svc %ld (%lx, %lx, %lx, %lx) pc=%lx\n", (int)T->tid, n, a, b, d, e, c->pc - 4);
@@ -283,29 +519,159 @@ static void mos_svc(rt_thread_t *T) {
     T->in_svc = 1;
     r = rt_sys(n, (long)a, (long)b, (long)d, (long)e, (long)f, (long)g);
     T->in_svc = 0;
-    /* memória que deixou de ser o que era (munmap, MAP_FIXED por cima, mprotect): traduções dela não valem mais */
+    /* munmap (também KEEP e DISCARD) tira ou zera a faixa: a tradução dela não vale mais */
     if (n == SYS_MUNMAP && r == 0) a64_invalidate(a, b);
-    /* o kernel escreve na memória do usuário sem passar pela PTE (a proteção do JIT não vê): leitura direto num buffer
-     * que tem código traduzido */
-    if ((n == SYS_READ || n == SYS_PREAD) && r > 0) {
-#ifdef A64_HAVE_JIT
-        if (a64_jit_has_code(b, (u64)r))               /* consulta sem trava: o caso comum não toma a trava do JIT */
-#endif
-            a64_invalidate(b, (u64)r);
-    }
-    if (n == SYS_MACH_VM && b && r == 0 && a == MACH_VM_PROTECT) a64_invalidate(((const u64 *)b)[0], ((const u64 *)b)[1]);
-    if (r == -MOS_EINTR && T->pend && restartable(n)) {
-        int sig = __builtin_ctz(T->pend);
-        if (rt_sig_restart_ok(sig)) { c->pc -= 4; return; }   /* a syscall é refeita depois do tratador */
-    }
+    /* o kernel escreve na memória do usuário sem passar pela PTE. read/pread e o resto (rede, stat, mach, dyld, ...) */
+    touch_writes(n, a, b, d, e, f, r);
+    if (r == -MOS_EINTR && rt_sig_should_restart(T, n)) { c->pc -= 4; return; }   /* a syscall é refeita depois do tratador */
+    T->intr_sig = 0;
     c->x[0] = (u64)r;
 }
 
-/* svc #0x80 do Darwin: x16 = número; erro = bit C com x0 = errno */
+/* svc #0x80 do Darwin: x16 = número; erro = bit C com x0 = errno.
+ *
+ * 59 (execve) e 244 (posix_spawn) reusam SYS_EXECVE e SYS_SPAWNVEC. O layout é o do XNU
+ * (xnu-10002, LP64): _posix_spawn_args_desc começa com (attr_size, attrp, file_actions_size,
+ * file_actions). A attr começa com psa_flags (short). Cada file action tem 1040 bytes:
+ * tipo em +0, fd em +4, open (oflag +8, mode +12, path +14), dup2 (novo fd +8), chdir (path +8).
+ * O contêiner é { int alloc; int count; ações... }. FILEPORT_DUP2 não tem porta Mach aqui.
+ * SETSIGDEF, SETSIGMASK, RESETIDS e START_SUSPENDED são lidos e ignorados (START_SUSPENDED
+ * cruza a suspensão de processo, outra frente). Não há commpage: o endereço do Darwin arm64
+ * (0xFFFFFC000) cai no mapa de identidade do kernel, abaixo de USER_BASE. */
+#define PSFA_OPEN 0
+#define PSFA_CLOSE 1
+#define PSFA_DUP2 2
+#define PSFA_INHERIT 3
+#define PSFA_FILEPORT_DUP2 4
+#define PSFA_CHDIR 5
+#define PSFA_FCHDIR 6
+#define PSFA_BYTES 1040
+#define DARWIN_ENAMETOOLONG 63
+
 static int sig_darwin_to_mos(int s) {
     switch (s) { case 10: return 30; case 12: return 31; case 30: return 10; case 31: return 12; case 20: return 17; case 17: return 20; }
     return s;
 }
+static int darwin_oflags(int oflag) {
+    int k = 0, acc = oflag & 3;
+    if (acc == 1) k |= MOS_O_WRONLY;
+    if (acc == 2) k |= MOS_O_RDWR;
+    if (oflag & 0x0008) k |= MOS_O_APPEND;
+    if (oflag & 0x0200) k |= MOS_O_CREAT;
+    if (oflag & 0x0400) k |= MOS_O_TRUNC;
+    if (oflag & 0x1000000) k |= MOS_O_CLOEXEC;
+    return k;
+}
+
+static long copy_guest_path(char *dst, const char *src, int cap) {
+    int i;
+    if (!src || cap < 2) return -MOS_EINVAL;
+    for (i = 0; i < cap - 1; i++) {
+        dst[i] = src[i];
+        if (!src[i]) return dst[0] ? 0 : -MOS_EINVAL;
+    }
+    return -DARWIN_ENAMETOOLONG;
+}
+
+static long apply_setexec(const mos_spawn_fa_t *acts, unsigned n) {
+    unsigned i;
+    for (i = 0; i < n; i++) {
+        const mos_spawn_fa_t *a = &acts[i];
+        long r = 0;
+        if (a->kind == MOS_SPAWN_FA_CLOSE) r = rt_sys(SYS_CLOSE, a->a, 0, 0, 0, 0, 0);
+        else if (a->kind == MOS_SPAWN_FA_DUP2) r = rt_sys(SYS_DUP2, a->a, a->b, 0, 0, 0, 0);
+        else if (a->kind == MOS_SPAWN_FA_CHDIR) r = rt_sys(SYS_CHDIR, (long)a->path, 0, 0, 0, 0, 0);
+        else if (a->kind == MOS_SPAWN_FA_OPEN) {
+            r = rt_sys(SYS_OPEN, (long)a->path, a->flags, 0, 0, 0, 0);
+            if (r >= 0 && r != a->a) {
+                long got = r;
+                r = rt_sys(SYS_DUP2, got, a->a, 0, 0, 0, 0);
+                rt_sys(SYS_CLOSE, got, 0, 0, 0, 0, 0);
+            }
+        } else r = -MOS_EINVAL;
+        if (r < 0) return r;
+    }
+    return 0;
+}
+
+/* Monta o vetor do kernel a partir do args_desc. setexec: POSIX_SPAWN_SETEXEC (0x40),
+ * as ações valem neste processo e quem troca a imagem é o SYS_EXECVE. */
+static long spawn_fill(const void *adesc, u64 argv, u64 envp, mos_spawn_vec_t *v, mos_spawn_fa_t *acts, int *setexec) {
+    memset(v, 0, sizeof *v);
+    v->argv = argv;
+    v->envp = envp;
+    *setexec = 0;
+    if (!adesc) return 0;
+    unsigned long long hdr[4];
+    memcpy(hdr, adesc, sizeof hdr);
+    if (hdr[1] && hdr[0] >= 2) {
+        unsigned short ps = 0;
+        unsigned flags;
+        memcpy(&ps, (const void *)hdr[1], 2);
+        flags = ps;
+        if (flags & 0x0002) v->flags |= MOS_SPAWN_SETPGROUP;
+        if (flags & 0x0400) v->flags |= MOS_SPAWN_SETSID;
+        if (flags & 0x4000) v->flags |= MOS_SPAWN_CLOEXEC_DEFAULT;
+        if (flags & 0x0040) *setexec = 1;
+    }
+    if (!hdr[3] || hdr[2] < 8) return 0;
+    {
+        int count = 0;
+        const unsigned char *base;
+        int i, n = 0;
+        memcpy(&count, (const char *)hdr[3] + 4, 4);
+        if (count < 0 || count > MOS_SPAWN_FA_MAX) return -MOS_EINVAL;
+        if (hdr[2] < 8ull + (unsigned long long)count * PSFA_BYTES) return -MOS_EINVAL;
+        base = (const unsigned char *)hdr[3] + 8;
+        for (i = 0; i < count; i++) {
+            const unsigned char *a = base + (unsigned long long)i * PSFA_BYTES;
+            int type = 0, filedes = 0;
+            mos_spawn_fa_t *fa = &acts[n];
+            long rc;
+            memcpy(&type, a, 4);
+            memcpy(&filedes, a + 4, 4);
+            memset(fa, 0, sizeof *fa);
+            if (type == PSFA_OPEN) {
+                int oflag = 0;
+                unsigned short mode = 0;
+                memcpy(&oflag, a + 8, 4);
+                memcpy(&mode, a + 12, 2);
+                rc = copy_guest_path(fa->path, (const char *)(a + 14), (int)sizeof fa->path);
+                if (rc) return rc;
+                fa->kind = MOS_SPAWN_FA_OPEN;
+                fa->flags = darwin_oflags(oflag);
+                fa->mode = mode ? mode : 0644;
+                fa->a = filedes;
+            } else if (type == PSFA_CLOSE) {
+                fa->kind = MOS_SPAWN_FA_CLOSE;
+                fa->a = filedes;
+            } else if (type == PSFA_DUP2 || type == PSFA_INHERIT) {
+                int newfd = filedes;
+                if (type == PSFA_DUP2) memcpy(&newfd, a + 8, 4);
+                fa->kind = MOS_SPAWN_FA_DUP2;
+                fa->a = filedes;
+                fa->b = newfd;
+            } else if (type == PSFA_FILEPORT_DUP2) {
+                return -MOS_EINVAL;
+            } else if (type == PSFA_CHDIR) {
+                rc = copy_guest_path(fa->path, (const char *)(a + 8), (int)sizeof fa->path);
+                if (rc) return rc;
+                fa->kind = MOS_SPAWN_FA_CHDIR;
+            } else if (type == PSFA_FCHDIR) {
+                char pth[256];
+                rc = rt_sys(SYS_FDPATH, filedes, (long)pth, (int)sizeof pth, 0, 0, 0);
+                if (rc < 0) return rc;
+                memcpy(fa->path, pth, sizeof fa->path);
+                fa->kind = MOS_SPAWN_FA_CHDIR;
+            } else return -MOS_EINVAL;
+            n++;
+        }
+        v->acts = (unsigned long long)acts;
+        v->nacts = (unsigned)n;
+    }
+    return 0;
+}
+
 static void darwin_svc(rt_thread_t *T) {
     a64_cpu *c = &T->cpu;
     i64 n = (i64)c->x[16];
@@ -319,8 +685,51 @@ static void darwin_svc(rt_thread_t *T) {
     }
     switch (n) {
     case 1: RS1(SYS_EXIT, c->x[0]); for (;;) {}
-    case 3: r = RS3(SYS_READ, c->x[0], c->x[1], c->x[2]); break;
-    case 4: r = RS3(SYS_WRITE, c->x[0], c->x[1], c->x[2]); break;
+    case 3: case 4: {                                  /* read/write: EINTR e SA_RESTART iguais ao svc do mOS */
+        T->in_svc = 1;
+        r = n == 3 ? RS3(SYS_READ, c->x[0], c->x[1], c->x[2]) : RS3(SYS_WRITE, c->x[0], c->x[1], c->x[2]);
+        T->in_svc = 0;
+        if (r > 0 && n == 3) touch_writes(SYS_READ, c->x[0], c->x[1], c->x[2], 0, 0, r);
+        if (r == -MOS_EINTR && rt_sig_should_restart(T, n == 3 ? SYS_READ : SYS_WRITE)) { c->pc -= 4; return; }
+        T->intr_sig = 0;
+        break;
+    }
+    case 2: case 66: r = rt_do_fork(T); break;         /* fork; vfork continua fork (espaço próprio, ver rt_do_fork) */
+    case 59: {                                         /* execve(path, argv, envp) */
+        mos_spawn_vec_t v;
+        if (!c->x[0]) { r = -MOS_EINVAL; break; }
+        memset(&v, 0, sizeof v);
+        v.argv = c->x[1];
+        v.envp = c->x[2];
+        r = rt_sys(SYS_EXECVE, (long)c->x[0], (long)&v, 0, 0, 0, 0);
+        break;
+    }
+    case 244: {                                        /* posix_spawn(pid*, path, desc, argv, envp) */
+        mos_spawn_vec_t v;
+        mos_spawn_fa_t acts[MOS_SPAWN_FA_MAX];
+        int setexec = 0;
+        if (!c->x[1]) { r = -MOS_EINVAL; break; }
+        r = spawn_fill((const void *)c->x[2], c->x[3], c->x[4], &v, acts, &setexec);
+        if (r < 0) break;
+        if (setexec) {
+            r = apply_setexec(acts, v.nacts);
+            if (r < 0) break;
+            v.acts = 0;
+            v.nacts = 0;
+            r = rt_sys(SYS_EXECVE, (long)c->x[1], (long)&v, 0, 0, 0, 0);
+            break;
+        }
+        r = rt_sys(SYS_SPAWNVEC, (long)c->x[1], (long)&v, 0, 0, 0, 0);
+        if (r > 0) {
+            if (c->x[0]) {
+                int pid = (int)r;
+                memcpy((void *)c->x[0], &pid, 4);
+                touch_code(c->x[0], 4);
+            }
+            r = 0;
+        }
+        break;
+    }
     case 20: r = RS0(SYS_GETPID); break;
     case 37: r = RS2(SYS_SIGKILL, c->x[0], sig_darwin_to_mos((int)c->x[1])); break;
     case 372: r = RS0(SYS_GETTID); break;              /* thread_selfid */
@@ -341,6 +750,7 @@ void rt_run_thread(rt_thread_t *T) {
             T = rt_self();
             c = &T->cpu;
             T->in_guest = 0;
+            a64_xmon_invalidate(c);
             rt_sig_raise_sync(T, T->fault_sig, T->fault_code, T->fault_addr, T->fault_esr);
             continue;
         }
@@ -349,24 +759,24 @@ void rt_run_thread(rt_thread_t *T) {
         T->in_guest = 0;
         if (T->fault_pending) {                        /* falta dentro do JIT (rt_host_signal + a64_jit_unwind) */
             T->fault_pending = 0;
+            a64_xmon_invalidate(c);
             rt_sig_raise_sync(T, T->fault_sig, T->fault_code, T->fault_addr, T->fault_esr);
             continue;
         }
         switch (r) {
         case A64_EXIT_SVC: {
+            a64_xmon_invalidate(c);                    /* SVC é exceção: a reserva não sobrevive */
             u32 imm = (u32)(c->exit_info & 0xFFFF);
             if (imm == A64RT_SVC_MOS) mos_svc(T); else darwin_svc(T);
             break;
         }
         case A64_EXIT_BRK:
-            rt_sig_raise_sync(T, MOS_SIGTRAP, MOS_TRAP_BRKPT, c->pc, A64_ESR_IL | (A64_ESR_EC_BRK << 26) | (u32)(c->exit_info & 0xFFFF));
-            break;
         case A64_EXIT_UDF: case A64_EXIT_HLT: case A64_EXIT_HVC:
-            if (rt_debug) rt_log("a64rt[%d]: instrução %08x indefinida (saída %d) em pc=%lx\n", (int)T->tid, c->exit_insn, r, c->pc);
-            rt_sig_raise_sync(T, MOS_SIGILL, MOS_ILL_ILLOPC, c->pc, A64_ESR_IL | (A64_ESR_EC_UNKNOWN << 26));
-            break;
         case A64_EXIT_FAULT:
-            rt_sig_raise_sync(T, MOS_SIGSEGV, MOS_SEGV_MAPERR, c->exit_info, A64_ESR_IL | (A64_ESR_EC_DABT_LO << 26) | A64_ESR_DFSC_TRANS);
+            a64_xmon_invalidate(c);                /* BRK, indefinida e falta são exceção: a reserva não sobrevive */
+            if (rt_debug && r != A64_EXIT_BRK && r != A64_EXIT_FAULT)
+                rt_log("a64rt[%d]: instrução %08x indefinida (saída %d) em pc=%lx\n", (int)T->tid, c->exit_insn, r, c->pc);
+            rt_sig_from_motor(T, r);
             break;
         case A64_EXIT_ICACHE: a64_invalidate(c->exit_info & ~63ull, 64); break;
         case A64_EXIT_YIELD: RS0(SYS_YIELD); break;

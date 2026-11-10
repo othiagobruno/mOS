@@ -40,7 +40,7 @@ Cuidados:
 | Grok Bot | 27 | 2.562 → 2.393 | 974 | Swift 541 (só o helper "Computer Use"), Foundation 219 |
 | Claude | 27 | 4.279 → 4.040 | 2.700 | Swift 1.256 + SwiftUI 547 (`swift_addon.node`, `computer_use.node`, simulador iOS) |
 | WhatsApp | 9 | 8.922 → 8.675 → 7.783 → 4.730 (dylibs Swift do mOS) → 4.444 (Combine) → 4.415 (Dispatch) → 4.265 (Foundation, marco C) → 3.694 (UIKit.framework do Catalyst) → 3.622 → 3.413 (libswiftUIKit completa, 7 nov.; ver [uikit-catalyst.md](uikit-catalyst.md)) → **3.105** com a `libc++.1.dylib` do LLVM (`tools\build-libcxx.ps1`) no diretório de varredura; o kernel também a carrega do disco desde 7 nov. | 8.344 | SwiftUI 555, Swift Foundation 278 (quase tudo ICU) |
-| **Codex CLI** | 1 | **271 → 90** | 152 | Security zerado; sobram CF, termios, rede |
+| **Codex CLI** | 1 | **271 → 90 → 0** (10 nov., binário 0.167.0, 630 imports) | 152 | símbolos fechados; ver a medição abaixo |
 
 \* O número do VS Code subiu porque o bundle em `build-vscode` foi preparado de novo, agora com mais módulos nativos. Não é regressão.
 
@@ -108,8 +108,8 @@ rolagem, tabelas, coleções e navegação; ainda sem modais nem animações).
   - Keychain de senhas de verdade: `SecItemAdd/CopyMatching/Update/Delete` (classes `genp`/`inet`, `kSecReturnData/Attributes/Ref`,
     `kSecMatchLimitOne/All`, duplicata = `errSecDuplicateItem`) e a API antiga `SecKeychainFindGenericPassword/AddGenericPassword/
     ItemModifyAttributesAndData/ItemDelete/ItemFreeContent`, que é a do OSCrypt do Chromium. Os itens ficam em
-    `$HOME/Library/Keychains/mos-keychain.txt`, gravado por arquivo temporário + `rename`. **Sem criptografia**: o mOS ainda não
-    tem senha de sessão.
+    `$HOME/Library/Keychains/mos-keychain.txt`, gravado por arquivo temporário + `rename`. A versão 2 do arquivo é ciphertext
+    (HMAC em modo contador + MAC). A chave sai do nome de login, não de uma senha de sessão.
   - Assinatura de código: todo código é "não assinado" (`errSecCSUnsigned`). `SecCodeCopySelf`/`GuestWithAttributes`/
     `StaticCodeCreateWithPath` criam os objetos. `SecCodeCopySigningInformation` devolve um dicionário sem identidade, como o macOS faz.
   - SecTrust guarda a cadeia, mas avalia como "não confiável". `SecTrustSettingsCopy*` devolve `errSecNoTrustSettings`.
@@ -162,6 +162,35 @@ rolagem, tabelas, coleções e navegação; ainda sem modais nem animações).
 - **Codex CLI: `codex login --device-auth` funciona.** Ele negocia TLS 1.3 com `auth.openai.com` (cadeia até a ISRG Root X2),
   recebe o código de dispositivo e mostra a tela "Follow these steps to sign in with ChatGPT using device code
   authorization". Antes parava em "error sending request".
+
+### Machocheck refeito (10 nov. 2026, `codex-x86_64-apple-darwin` 0.167.0)
+
+O binário oficial tem 278 MiB, um único executável x86_64, binds do `LC_DYLD_INFO_ONLY` (não chained) e nenhum import fraco.
+No libSystem ligado a partir do `main` (6975 símbolos exportados): **630 imports, 0 símbolos distintos ausentes**.
+A conta antiga "faltam 90" era o buraco que `cli.c` e o resto do libSystem já tinham fechado; não havia sido medido de novo.
+
+O `machocheck` ainda dizia que seis bibliotecas "não existem" (Security 168, CFNetwork 14, SystemConfiguration 9,
+CoreServices 11, IOKit 2, LocalAuthentication 0 símbolos). O carregador já as aceita em `libsystem_dylib_ok`. A lista
+do `tools/machocheck.c` agora é a mesma: as 13 bibliotecas do CLI saem `[ok]`, e o total continua 630 / 0.
+
+O que cada grupo faz, separado:
+
+- **Funcional.** libc, libm e pthread, inclusive `stat$INODE64` (o carregador tira o `$` e acha o `stat` de 144 bytes).
+  Security de senha e de TLS (`SecItem*`, `SecKeychain*`, `SSL*`, `SecTrustSettings*`). `CFURL`, `CFError`, `CFTimeZone`
+  e `CFPreferences` (este último em `prefs.c`, gravado em disco). Proxies: `SCDynamicStoreCopyProxies` lê o configd e,
+  sem ele, devolve o dicionário do macOS sem proxy; `CFNetworkCopyProxiesForURL` devolve a lista "sem proxy".
+  `proc_*`, `waitid`, o pty e o `sandbox-exec` (o `execve` ignora a política e roda o comando). O ObjC que o CoreFoundation
+  usa (`objc_msgSend`, `objc_getClass`, pools).
+- **Stub.** `FSEventStream*`: o fluxo sobe e não entrega evento. `CFNetworkExecuteProxyAutoConfiguration*` devolve nulo
+  (não há PAC). `IOPMAssertion*` aceita, porque o mOS não dorme sozinho. `copyfile_state_get` e `acl_get_*` devolvem o
+  erro de "não há o quê". `fclonefileat`, `fsctl`, `fsetattrlist` e `proc_pid_rusage` devolvem `ENOTSUP`.
+  LocalAuthentication está ligada e não importa símbolo nenhum.
+- **Limitação.** A frase "Follow these steps…" só é impressa depois que o POST TLS em
+  `https://auth.openai.com/api/accounts/deviceauth/usercode` responde. `codex login` (sem `--device-auth`) sobe um
+  servidor em `localhost` e imprime o URL. Entrar com a conta e o polling até o token ficam para o Thiago: esta
+  medição não autentica. O `connect` de `AF_UNIX` dentro do processo ainda devolve `ECONNREFUSED` (`sockets.c`);
+  o `login` e o `login status` do fonte 0.167.0 não passam por aí. No harness, o processo para em
+  "failed to create UnixStream" porque o machotest não emula `socketpair`; na VM o par é um pipe do kernel.
 - **XPC** (`userland/libsystem/xpc.c`). O modelo de objetos inteiro: null, bool, int64, uint64, double, date, data, string,
   uuid, fd, array, dictionary e error, com `xpc_copy`, `xpc_equal`, `xpc_hash`, `xpc_copy_description` e os `apply` com blocos.
   São objetos ObjC da classe `OS_xpc_object`, então ARC/`objc_release` funcionam. `XPC_BOOL_*` e `XPC_ERROR_*` são estáticos e
@@ -412,16 +441,17 @@ O que se sabe do laço (quarta rodada):
 
 ## Roteiro (do mais perto para o mais longe)
 
-1. **Codex CLI** (faltam 90). É o primeiro app da lista que pode rodar inteiro:
+1. **Codex CLI** (0 símbolos ausentes em 10 nov.; ver a medição acima). O que resta para a conta real é o login, fora desta medição:
    - ~~termios (`tcgetattr/tcsetattr/cfmakeraw/openpty/ttyname_r/tcgetpgrp`)~~: feitos de verdade, com pseudoterminais
      no kernel (`kernel/proc/pty.c`, `userland/libsystem/pty.c`; ver "Terminal integrado" em [porte-vscode.md](porte-vscode.md));
      o mesmo caminho abre o shell no terminal integrado do VS Code, do Cursor e do Claude (node-pty);
-   - ~~`getaddrinfo` e TLS~~: feitos (SecureTransport real; o login por código de dispositivo chega à OpenAI). Falta concluir
-     um login de ponta a ponta e conferir o polling do token;
-   - CFURL, CFError, CFPreferences, CFTimeZone;
-   - FSEvents (pode começar sem eventos) e proxies (`CFNetworkCopyProxiesForURL`, `SCDynamicStore`: "sem proxy");
-   - `proc_pidinfo/proc_pidpath/proc_listchildpids`, `flock/lockf`, `copyfile_state_*`, `acl_*` (sem ACL);
-   - `/usr/bin/sandbox-exec`.
+   - ~~`getaddrinfo` e TLS~~: feitos (SecureTransport real; o login por código de dispositivo chega à OpenAI). Concluir
+     o login com a conta e o polling do token fica para quem tem a conta;
+   - ~~CFURL, CFError, CFTimeZone~~ e ~~CFPreferences~~ (`prefs.c`, valor gravado);
+   - FSEvents é stub (sobe e não entrega) e os proxies são funcionais ("sem proxy" quando o configd não responde);
+   - ~~`proc_pidinfo/proc_pidpath/proc_listchildpids`, `flock/lockf`~~; `copyfile_state_get` e `acl_get_*` devolvem erro
+     (não há ACL nem estado de cópia);
+   - ~~`/usr/bin/sandbox-exec`~~: o `execve` ignora a política e roda o comando.
 2. **Slack**: depois do VS Code chegar à janela, sobram só ~123 a mais: libc++ (em andamento), `CFPreferences*`, CoreSpotlight vazio,
    `AVFAudio` (constantes) e `SMAppService`. Ele exige a integridade do asar e o Safe Storage (este já está pronto).
 3. **Cursor**: o mesmo caminho do VS Code. Os ~760 a mais são libc++ dos módulos `.node` e Security (já coberto). O Swift fica só no
@@ -562,3 +592,79 @@ Para repetir: `vscode-teste.ps1 -Electron ... -Accel whpx -Port <livre> -Memory 
 `move` do QMP às vezes perde os passos em x; repita o `move`). `-Cpus 1` separa problemas de SMP.
 5. **Codex desktop**: o porte do Chrome (`ChromeMain`) mais CoreText.
 6. **WhatsApp**: runtime Swift, Foundation do Swift, Combine, SwiftUI (OpenSwiftUI) e UIKit/Catalyst. É o mais longe.
+
+## Apps de barra de menus (pedido de 10 nov. 2026)
+
+Nenhum destes apps está no repositório e nenhum foi executado: não há login, mensagem nem compra, e não há bundle gratuito legítimo aqui. A superfície AppKit que eles usam (item da barra, menu, popover, `LSUIElement`) está no modelo de `appkit_status.c`. O ícone desenhado na barra do sistema continua por conta do kernel, que não tem essa faixa.
+
+| App | Versão | Origem do bundle | Arquitetura (fonte) | Barra de menus | Helpers / login | Sparkle | FairPlay | AppKit | Kernel | Sistemas | Storage |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Open Bot | — | sem link no pedido; nenhum bundle | **não identificado** | — | — | — | — | bloqueado | — | — | — |
+| Setapp (cliente) | não publicada na página de download | [setapp.com/download](https://setapp.com/download), cerca de 300 MB, macOS 10.13+. Não baixado | cliente Mac da Setapp/MacPaw. O site não diz Electron, AppKit nem SwiftUI. A [integração Electron](https://docs.setapp.com/docs/integration-with-an-electron-app) é de app de fornecedor, não do cliente | não confirmado no site oficial | `SetappAgent`, `SetappLauncher`, `SetappUpdater` (`com.setapp.DesktopClient.*.plist`, Setapp Limited), em relatos EtreCheck de usuários: [discussions.apple.com/thread/251765308](https://discussions.apple.com/thread/251765308) e [macuser.de/threads/safari-crash.887161](https://www.macuser.de/threads/safari-crash.887161/) (5 out. 2021) | não confirmado. O processo visto é o `SetappUpdater`, não o Sparkle | não é app da Mac App Store | modelo funcional (item, menu, popover, política accessory); app bloqueado, sem bundle | bloqueado: sem barra de status desenhada e sem o binário | `SMAppService` / itens de login | launchd, XPC e o registro do helper |
+| Usagebar | não publicada | [usagebar.com](https://usagebar.com/), US$ 9 via [Stripe](https://buy.stripe.com/bJeaEY5kVbtZ1iG3zI8og09). Sem bundle gratuito | o site não nomeia Electron, AppKit, SwiftUI nem Catalyst | sim: "from Your Menu Bar". Some se a barra está cheia | não publicados. Lê o item de Keychain `Claude Code-credentials` | não publicado | não | modelo funcional; app bloqueado (pago, sem bundle) | desenho da barra | Keychain / Security | — |
+| Usage for Claude & ChatGPT | a ficha diz "NEW IN VERSION 4", sem `CFBundleShortVersionString` | Mac App Store [id 6755173244](https://apps.apple.com/us/app/usage-for-claude-chatgpt/id6755173244), amir hayek, grátis com compra no app, 31,4 MB. Não baixado | nativo Apple: iPhone, iPad, Mac, Apple Watch e visionOS; macOS 15+. Não é Electron (Watch, widgets e iCloud no mesmo binário de 31,4 MB). A ficha não escreve "SwiftUI" | sim no Mac: limites na barra de menus | não publicados. Histórico via iCloud da conta | não se aplica (loja) | sim. Apps da Mac App Store são assinados com uma variante de FairPlay ([FairPlay, seção Apps](https://en.wikipedia.org/wiki/FairPlay)) | bloqueado: sem contornar o DRM e sem bundle legítimo solto | tradutor, se um dia houver binário | iCloud, contas, widgets | loader e a criptografia FairPlay |
+| WhatsApp | 2.26.44.21 no inventário de 6 nov. 2026 | já descrito acima | Swift + SwiftUI + UIKit/Catalyst. Não é Electron e não é app de barra de menus | não | helpers do próprio app | não citado | não é o foco desta lista | stub: a barra de menus nova não desbloqueia o app | tradutor / JIT | runtime Swift, Combine, Catalyst | loader / dyld |
+
+### Open Bot
+
+O pedido escreveu "Open Bot" sem URL. Há mais de um produto com nome parecido (OpenBot de robótica, open.bot, OpenBot da Chazakah). O mais próximo de um app de Mac é o [OpenBot](https://openbot.run/) (uma palavra só): desktop para macOS 13+, Windows e Linux, versão 0.66.0 em 9 nov. 2026 ([changelog](https://openbot.run/changelog)). O 0.59.0 descreve um ícone na barra de menus e o Dock que some ao fechar a janela, no ajuste "Show OpenBot in the menu bar". A [página de download](https://openbot.run/download) não diz Electron, Tauri nem Swift. Isso não chega para cravar que "Open Bot" é esse app, nem para afirmar o framework. Fica **não identificado**. Nenhum instalador foi baixado.
+
+### O que cada frente ainda segura
+
+- **AppKit (esta frente).** Funcional no modelo: a `NSStatusBar` guarda até 32 itens, `removeStatusItem:` tira o item, o clique no botão (ou `popUpStatusItemMenu:`) abre o menu e avisa `menuWillOpen:`, item oculto não abre, o `NSPopover` respeita applicationDefined / transient / semitransient, e `setActivationPolicy:` grava regular, accessory (`LSUIElement`, sem Dock) e prohibited (recusa `activate`). O desenho do ícone na faixa do sistema continua stub: o kernel não tem a barra.
+- **Kernel.** Tradutor/JIT para o que for binário nativo, e o desenho da barra de menus. Sem comando de blend, como no marco anterior. Não há bundle para traduzir.
+- **Sistemas.** Keychain do Usagebar, iCloud e contas do app da loja, `SMAppService` (já existe em memória no libSystem; o `SMLoginItemSetEnabled` do ServiceManagement ainda é stub). Nada disso foi chamado contra um serviço real.
+- **Storage.** Loader, dyld, VFS, XPC e os launch agents `com.setapp.DesktopClient.SetappAgent`, `SetappLauncher` e `SetappUpdater`. O login do Setapp é no navegador com código por e-mail ([artigo de suporte](https://support.setapp.com/hc/en-us/articles/360013944440-Sign-in-and-out-of-Setapp-on-a-Mac)); não foi feito. FairPlay do app da loja não foi contornado.
+
+## Cursor, Grok Bot e o desktop do ChatGPT/Codex (10 nov. 2026)
+
+Estes três entram na lista prioritária junto dos apps de barra de menus. Cursor, Grok Bot e o Codex desktop de 6 nov. já estão na tabela de builds medidos. O desktop novo do ChatGPT não estava. Nenhum deles foi executado e ninguém fez login. O zip do ChatGPT x64 não foi instalado: só o diretório central e o `Info.plist` foram lidos por HTTP range no arquivo oficial, para ver a arquitetura sem rodar o app.
+
+Não são apps da Mac App Store. O pacote oficial sai de `persistent.oaistatic.com` e de `downloads.cursor.com`. FairPlay não é a trava deles. A criptografia FairPlay continua valendo só para o app da loja "Usage for Claude & ChatGPT" (id 6755173244), registrado acima, e não foi contornada.
+
+| App | Versão vista agora | Origem | Arquitetura | Barra de menus | Helpers | Sparkle | FairPlay | AppKit | Kernel | Sistemas | Storage |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| ChatGPT desktop (sucessor do Codex) | 26.1103.60933, build 25894. Zip de 8 nov. 2026 | cask `chatgpt`: `persistent.oaistatic.com/codex-app-prod/ChatGPT-darwin-x64-26.1103.60933.zip`, macOS 13+. Bundle `com.openai.codex` | casca Electron (`app.asar`, `ElectronAsarIntegrity`, `owl-electron-app.json` com `runtimeName` owl, empacotado de `codex-apps/electron`) em cima do `Codex Framework.framework` 157.0.8103.39. `NSPrincipalClass` é `BrowserCrApplication`. Não há `Electron Framework.framework` | não. O `Info.plist` não tem `LSUIElement`. Há `NSDockTilePlugIn` = `CodexDockTilePlugin.docktileplugin` | `Codex (GPU)`, `(Renderer)`, `(Service)`, `(Alerts)`, mais as variantes Aperitif; `Codex Computer Use.app` (com `SwiftProtobuf`); `launch-services-helper` | sim. `Sparkle.framework`, `Updater.app`, XPC `Downloader`/`Installer`, `SUPublicEDKey` no plist | não neste zip | `NSDockTile` existe no libSystem e publica o selo (`docs/interface-i19-i23.md`). O Mach-O `CodexDockTilePlugin` não foi carregado. A barra de menus nova não é o que este app pede | bloqueado: renderer, GPU e tradutor do Chromium 157. O selo chega ao Dock; a view do tile (K19) não é pintada no ícone | Keychain se a casca criptografa cookies; o helper de Computer Use é Swift | loader, dyld, XPC do Sparkle e o authorization plugin `CodexComputerUseAuthorizationPlugin` |
+| Codex desktop (medição de 6 nov.) | 26.623.141536 | a tabela acima. O [artigo da OpenAI](https://help.openai.com/en/articles/20001276-moving-to-the-new-chatgpt-desktop-app) diz que atualizar o app Codex o transforma no ChatGPT desktop novo | naquela medição, Chromium 149 com `Codex Framework.framework`, não Electron. O build 26.1103 acima é o mesmo produto, já com a casca Electron | não era o foco da medição | `Codex (GPU\|Renderer\|Service\|Alerts).app` | sim, na medição de 6 nov. | não | o mesmo `NSDockTile` do ChatGPT desktop (`docs/interface-i19-i23.md`) | porte do Chrome (`ChromeMain`) e CoreText | Swift nos helpers nativos (259 símbolos na medição) | loader do Framework e o runtime Node `cua_node` |
+| Cursor | cask 3.29.15; a tabela mediu 3.29.9 | `downloads.cursor.com`, bundle `com.todesktop.230313mzl4w4u92`, macOS 12+ | Electron 43.8.4, fork do VS Code, na medição de 6 nov. Fuses `101100011` (sem integridade de asar e sem criptografia de cookies) | não. É o app de janela do editor | helpers Electron `(GPU\|Renderer\|Plugin)` | não identificado. O cask marca `auto_updates`; o Swift medido está só no `cursor-update-supervisor` | não | stub no mesmo caminho do VS Code: janela, mouse, teclado e menu como dado. Abrir, operar e fechar o editor inteiro continua fora | renderer, IPC e memória (`docs/porte-vscode.md`) | libc++ dos módulos `.node` e Security. O Swift não está no processo principal | loader, dyld e o supervisor de update |
+| Grok Bot | cask 0.79.3; a tabela mediu 0.79.2 | `downloads.cursor.com/sand/stable/...`, homepage [x.ai/bot](https://x.ai/bot), bundle `com.anysphere.sand`, macOS 12+ | Electron 42.11.16 na medição de 6 nov. Fuses `010011011`: integridade do asar, cookies criptografados, só carrega de `app.asar` | não publicado no site oficial nem no cask. Um app Electron não oficial com ícone de barra não é este | helper nativo "Computer Use" | não identificado no cask nem na medição | não | stub, o mesmo caminho Electron. A integridade do asar já depende do `NSBundle` devolver `ElectronAsarIntegrity` (está em `foundation.c`) | o mesmo renderer Electron, mais a checagem do hash do asar | Keychain ("Safe Storage") e os 541 símbolos Swift do helper de Computer Use | loader e o asar |
+
+### De onde saiu cada conclusão
+
+- **ChatGPT desktop é o Codex atualizado.** A [ajuda da OpenAI](https://help.openai.com/en/articles/20001276-moving-to-the-new-chatgpt-desktop-app) (lida em 10 nov. 2026) diz: atualizar o app Codex o transforma no ChatGPT desktop, com Chat, Work e Codex. O app anterior passa a se chamar ChatGPT Classic. O cask `chatgpt` do Homebrew baixa o zip `ChatGPT-darwin-x64-26.1103.60933.zip` do mesmo bucket `codex-app-prod` e desinstala `com.openai.codex`.
+- **O que o zip contém.** O diretório central (5141 entradas) tem `Resources/app.asar`, `Frameworks/Sparkle.framework` e `Frameworks/Codex Framework.framework/Versions/157.0.8103.39/`, com helpers `Codex (GPU).app`, `(Renderer)`, `(Service)`, `(Alerts)` e as variantes Aperitif. Não há entrada `Electron Framework.framework`. O `Info.plist` confirma `CFBundleIdentifier` `com.openai.codex`, `CFBundleShortVersionString` 26.1103.60933, `LSMinimumSystemVersion` 13.0, `NSPrincipalClass` `BrowserCrApplication`, `ElectronAsarIntegrity` para `Resources/app.asar` e `NSDockTilePlugIn`. Não há chave `LSUIElement`. O `owl-electron-app.json` diz `runtimeName` `owl` e `packagedFrom` `.../codex-apps/electron/out/ChatGPT-darwin-x64/ChatGPT.app`.
+- **A imprensa chamou o app de Electron.** O [9to5Mac de 17 jul. 2026](https://9to5mac.com/2026/07/17/openai-fixes-chat-access-in-the-chatgpt-app-for-mac/) escreve que o redesenho trocou o cliente nativo por um app Electron bem maior. Isso bate com a casca (`app.asar` e o diretório `electron/` no owl). O runtime que o zip carrega é o Codex Framework 157, não o Electron Framework.
+- **ChatGPT Classic** fica de fora do x86_64. O cask `chatgpt-classic` é 1.2026.184, só arm64, macOS 14+, bundle `com.openai.chat`, com `launchctl` `com.openai.chat-helper`. As [notas de versão](https://help.openai.com/en/articles/9703738-chatgpt-macos-app-release-notes) de 19 dez. 2024 falam de um atalho aberto a partir da barra de menus e de personalizar a toolbar da janela. O 9to5Mac chama esse cliente de nativo. O dmg não foi aberto, então o framework (AppKit, SwiftUI ou outro) não foi lido no binário.
+- **Cursor e Grok Bot** não foram reabertos. A arquitetura é a da medição de 6 nov. O cask só move a versão: Cursor 3.29.9 → 3.29.15, Grok Bot 0.79.2 → 0.79.3, os dois com `auto_updates` e o mesmo tipo de URL.
+
+### O que falta para rodar, sem repetir a barra de menus
+
+A `NSStatusBar` implementada neste branch não é a trava destes três. O ChatGPT desktop é uma janela (e um plugin de Dock). Cursor e Grok Bot são Electron de janela. O que continua de fora:
+
+- **AppKit.** Janela, mouse, teclado e menu como dado já existem em parte. `NSDockTile` está no libSystem (`setBadgeLabel:`, `contentView`, `display`, `showsApplicationBadge`); o desenho da view dentro do ícone continua fora (K19, `docs/interface-i19-i23.md`). A casca do ChatGPT declara `ElectronAsarIntegrity`; o `NSBundle` que entrega esse dicionário ao helper já está em `foundation.c`, fora deste diff.
+- **Kernel.** Tradutor e o processo renderer. No ChatGPT o Framework é Chromium 157 (`BrowserCrApplication`), no caminho do porte do Chrome. No Cursor e no Grok Bot é o renderer Electron, no caminho do VS Code. O ícone do Dock também é desta frente.
+- **Sistemas.** Keychain do cookie criptografado (Grok Bot, e a casca do ChatGPT se o fuse de cookie estiver ligado; o fuse deste build não foi relido). Swift do Computer Use, do `cursor-update-supervisor` e dos helpers do Codex. Sparkle é framework próprio, com UI de atualização.
+- **Storage.** Loader, dyld, VFS, os helpers `(GPU|Renderer|Service|Alerts)`, o XPC do Sparkle e o authorization plugin do Computer Use. Sem isso o zip oficial não chega a `main`.
+
+## Computer use (Grok Bot, Claude Desktop, ChatGPT)
+
+O computer use destes três apps precisa de captura, lista de janelas, injeção de eventos e árvore de acessibilidade. A permissão continua a do Sistemas (`cx_tcc_preflight` / `cx_tcc_request` / `cx_tcc_decide` em `tcc.c`, serviços `kTCCServiceScreenCapture` e `kTCCServiceAccessibility`). Este lado não grava `decisions.txt` e não desenha o prompt.
+
+### O que funciona
+
+- **Captura.** `CGDisplayCreateImage`, `CGDisplayCreateImageForRect` e `CGWindowListCreateImage` devolvem pixels ARGB do compositor (`DEV_SCREEN_CAPTURE`). Com id de janela, o retângulo é o da janela nessa tela composta. `SCScreenshotManager` segue o mesmo caminho. Sem a concessão do TCC a imagem é nula.
+- **Lista.** `CGWindowListCopyWindowInfo` preenche `kCGWindowNumber`, `kCGWindowOwnerPID`, `kCGWindowOwnerName`, `kCGWindowName`, `kCGWindowBounds`, `kCGWindowLayer` e `kCGWindowIsOnscreen` a partir de `DEV_WINDOW_LIST` (janelas do window server, da frente para o fundo). `SCShareableContent` publica essas janelas (`SCWindow`) e os donos (`SCRunningApplication`). Sem a concessão, a lista de janelas vem vazia.
+- **Eventos.** `CGEventCreateMouseEvent`, `CGEventCreateKeyboardEvent`, `CGEventKeyboardSetUnicodeString`, `CGEventCreateScrollWheelEvent` (e a variante 2), `CGEventSetDoubleValueField` e `CGEventPost` entram na fila global (`DEV_INPUT_POST`). `kCGHIDEventTap` (0), `kCGSessionEventTap` (1) e o tap anotado (2) usam essa mesma fila: tecla para a janela em foco, clique para o que está sob o cursor. `CGEventPostToPid` usa `DEV_INPUT_TO_PID` e entrega na fila do processo, sem mudar o foco nem o cursor.
+- **Acessibilidade no próprio processo.** Com `kTCCServiceAccessibility`, `AXUIElementCreateApplication` / `CreateSystemWide`, `CopyAttributeValue` (role, title, value, position, size, children, focused), `PerformAction` (`AXPress`) e `SetAttributeValue` (`AXValue`, `AXFocused`) andam na árvore real de `NSView` / `NSWindow`. Texto (`NSTextView` / `NSTextField`) também responde `AXStringForRange`, `AXBoundsForRange` e `AXRangeForPosition`. Sem a concessão, `-25211`. Sem texto, o atributo parametrizado é `-25205`.
+- **AXObserver.** `AXObserverCreate`, `AddNotification`, `RemoveNotification` e `GetRunLoopSource` devolvem 0 com a permissão. As notificações `AXValueChanged`, `AXFocusedUIElementChanged`, `AXWindowCreated`, `AXUIElementDestroyed` e `AXFocusedWindowChanged` saem das mudanças reais do AppKit. A fonte é um `CFRunLoopSource` de versão 0.
+- **Processos.** `NSWorkspace.runningApplications` e `frontmostApplication`, e `NSRunningApplication` (`processIdentifier`, `bundleIdentifier`, `localizedName`, `isActive`, `activateWithOptions:`), saem de `SYS_PROCLIST`, do dono da janela e de `DEV_FRONT_PID` / `DEV_FOCUS_PID`.
+- **Bitmap e modo de tela.** `CGContextSetBlendMode` grava o modo e o bitmap usa `cg_blend.h`: 0 normal, 1 copy, 2 multiply, 3 screen, 16 clear; o resto desenha como normal. `CGDisplayCopyDisplayMode` devolve um modo. `CGDisplayModeGetPixelWidth` / `Height` devolvem 0 para ponteiro nulo e os pixels da tela para um modo.
+
+### O que é stub
+
+- **AX de outro processo.** `_AXUIElementCreateWithRemoteToken` aceita o token `mAX1` (12 bytes: marca, pid, número da janela) e, com a janela na lista do compositor, devolve título, posição e tamanho sem IPC. A árvore de views, os children, o `PerformAction` e a lista de ações (`AXActionNames`) atravessam `cx_xpc_peer_call` quando `cx_xpc_peer_ready` responde. O vínculo é `cx_ax_bind_xpc` (`xpc-mach`, `xpctransport.h` do PR #49). Se o ready falha, ou se o call devolve 60 ou 61, a resposta continua `-25204`. O servidor no processo alvo escuta `com.mos.xpc.peer.<pid>`. Este lado não abre socket nem porta Mach: quem faz isso é o `xpc.c` do #49.
+- **`SCStream`.** `startCaptureWithCompletionHandler:` entrega um quadro (`CMSampleBuffer` com `CVPixelBuffer` BGRA e as chaves `SCStreamFrameInfo*`) da área do filtro. Sem a concessão, o bloco recebe erro e não há pixel. Não há quadro seguinte nem áudio. `CGDisplayStream` continua ausente.
+- **`SCShareableContent` acima/abaixo de uma janela âncora.** Entra o recorte on-screen. A janela âncora não filtra a lista.
+- **Computer use real do Grok Bot, do Claude Desktop e do ChatGPT.** Exigiria login e um `libSystem.mos` medido de novo com `tools/machocheck.c`. Não foi feito.
+
+O teste de host (`userland/tests-appkit/computeruse_host.c`) cobre captura, lista, clique, rolagem e AX no mesmo modelo. `computeruse_remote.c` cobre dois processos: PostToPid no app de fundo sem mudar o foco, `AXValueChanged` observado do outro processo, role/title/children pelo `ax_msg`, e o mesmo trio por um `fork` com `call`/`listen`/`send` no vtable. O `cx_xpc_peer_call` de verdade fica marcado PENDENTE neste host: o link de `xpc.c` não fecha sem `bootstrap_check_in`, `mach_msg` e o runtime ObjC. O QEMU (`tools/qemu-test.ps1`) não rodou neste ambiente.

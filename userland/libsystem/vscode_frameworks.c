@@ -10,6 +10,7 @@
  * alcançável, teclado ABNT2. O Chromium tem caminho para todas essas respostas.
  */
 #include "foundation.h"
+#include "computeruse_win.h"
 
 void *malloc(size_t n);
 void *memset(void *d, int c, size_t n);
@@ -23,6 +24,10 @@ id CFDictionaryCreateMutable(void *alloc, long cap, const void *kcb, const void 
 void CFDictionarySetValue(id d, id key, id val);
 id CFDictionaryGetValue(id d, id key);
 u8 CFNumberGetValue(id n, long type, void *out);
+char *getenv(const char *n);
+int strncmp(const char *a, const char *b, size_t n);
+int fputs(const char *s, FILE_ *f);
+int fputc(int c, FILE_ *f);
 id CFNumberCreate(void *alloc, long type, const void *p);
 size_t CGDisplayPixelsWide(u32 d);
 size_t CGDisplayPixelsHigh(u32 d);
@@ -68,30 +73,44 @@ cg_size_t CTFramesetterSuggestFrameSizeWithConstraints(id fs, struct { long loc,
 }
 
 /* ================================================================ ApplicationServices: acessibilidade */
-#define kAXErrorAPIDisabled (-25211)
-#define kAXErrorFailure (-25200)
-u8 AXIsProcessTrustedWithOptions(id opts) { (void)opts; return 0; }
+int cx_tcc_preflight(const char *service);
+int cx_tcc_request(const char *service);
+id cx_ax_application(int pid);
+id cx_ax_system(void);
+int cx_ax_copy(id e, id attr, id *v);
+int cx_ax_copy_values(id e, id attr, long index, long maxValues, id *values);
+int cx_ax_names(id e, id *names);
+int cx_ax_set(id e, id attr, id value);
+int cx_ax_actions(id e, id *names);
+int cx_ax_perform(id e, id action);
+int cx_ax_param(id e, id attr, id param, id *v);
+int cx_ax_param_names(id e, id *names);
+u8 AXIsProcessTrustedWithOptions(id opts) {
+    int prompt = 0;
+    if (opts) {
+        id key = cx_str("AXTrustedCheckOptionPrompt");
+        id v = key ? MSG(id, opts, "objectForKey:", key) : 0;
+        if (v) prompt = MSG0(signed char, v, "boolValue") ? 1 : 0;
+        if (key) objc_release(key);
+    }
+    return prompt ? (u8)cx_tcc_request("kTCCServiceAccessibility") : (u8)cx_tcc_preflight("kTCCServiceAccessibility");
+}
 u64 AXUIElementGetTypeID(void) { return 0x4158; }
 u64 AXValueGetTypeID(void) { return 0x4156; }
 u64 AXTextMarkerGetTypeID(void) { return 0x4154; }
 u64 AXTextMarkerRangeGetTypeID(void) { return 0x4152; }
-id AXUIElementCreateApplication(int pid) { (void)pid; return token(); }
-id AXUIElementCreateSystemWide(void) { return token(); }   /* claude-native-binding.node do Claude desktop */
-OSStatus AXUIElementCopyAttributeValue(id e, id attr, id *v) { (void)e; (void)attr; if (v) *v = 0; return kAXErrorAPIDisabled; }
+id AXUIElementCreateApplication(int pid) { return cx_ax_application(pid); }
+id AXUIElementCreateSystemWide(void) { return cx_ax_system(); }   /* claude-native-binding.node do Claude desktop */
+OSStatus AXUIElementCopyAttributeValue(id e, id attr, id *v) { return cx_ax_copy(e, attr, v); }
 OSStatus AXUIElementCopyAttributeValues(id e, id attr, long index, long maxValues, id *values) {
-    (void)e; (void)attr; (void)index; (void)maxValues;
-    if (values) *values = 0;
-    return kAXErrorAPIDisabled;
+    return cx_ax_copy_values(e, attr, index, maxValues, values);
 }
-OSStatus AXUIElementCopyAttributeNames(id e, id *names) { (void)e; if (names) *names = 0; return kAXErrorAPIDisabled; }
-OSStatus AXUIElementCopyParameterizedAttributeNames(id e, id *names) { (void)e; if (names) *names = 0; return kAXErrorAPIDisabled; }
-OSStatus AXUIElementCopyParameterizedAttributeValue(id e, id attr, id p, id *v) { (void)e; (void)attr; (void)p; if (v) *v = 0; return kAXErrorAPIDisabled; }
-OSStatus AXUIElementSetAttributeValue(id e, id attr, id v) { (void)e; (void)attr; (void)v; return kAXErrorAPIDisabled; }
-OSStatus AXUIElementCopyActionNames(id e, id *names) { (void)e; if (names) *names = 0; return kAXErrorAPIDisabled; }
-OSStatus AXUIElementPerformAction(id e, id action) { (void)e; (void)action; return kAXErrorAPIDisabled; }
-OSStatus AXObserverCreateWithInfoCallback(int pid, void *cb, id *out) { (void)pid; (void)cb; if (out) *out = 0; return kAXErrorAPIDisabled; }
-OSStatus AXObserverAddNotification(id obs, id e, id note, void *ctx) { (void)obs; (void)e; (void)note; (void)ctx; return kAXErrorAPIDisabled; }
-id AXObserverGetRunLoopSource(id obs) { (void)obs; return 0; }
+OSStatus AXUIElementCopyAttributeNames(id e, id *names) { return cx_ax_names(e, names); }
+OSStatus AXUIElementCopyParameterizedAttributeNames(id e, id *names) { return cx_ax_param_names(e, names); }
+OSStatus AXUIElementCopyParameterizedAttributeValue(id e, id attr, id p, id *v) { return cx_ax_param(e, attr, p, v); }
+OSStatus AXUIElementSetAttributeValue(id e, id attr, id v) { return cx_ax_set(e, attr, v); }
+OSStatus AXUIElementCopyActionNames(id e, id *names) { return cx_ax_actions(e, names); }
+OSStatus AXUIElementPerformAction(id e, id action) { return cx_ax_perform(e, action); }
 /* AXValue: caixa de CGPoint/CGSize/CGRect/CFRange (tipos 1..4) */
 typedef struct { void *isa; u32 type; u8 data[32]; } axval_t;
 static cx_class_t axv_c, axv_m;
@@ -219,7 +238,63 @@ void *CGDisplayStreamGetRunLoopSource(void *s) { (void)s; return 0; }
 int CGDisplayStreamStart(void *s) { (void)s; return 1001; /* kCGErrorFailure */ }
 int CGDisplayStreamStop(void *s) { (void)s; return 0; }
 const cg_rect_t *CGDisplayStreamUpdateGetRects(void *u, int type, size_t *count) { (void)u; (void)type; if (count) *count = 0; return 0; }
-id CGWindowListCopyWindowInfo(u32 opt, u32 rel) { (void)opt; (void)rel; return empty_array(); }
+/* kCGWindowListOptionOnScreenOnly=1, AboveWindow=2, BelowWindow=4, IncludingWindow=8 */
+extern const void *kCGWindowNumber, *kCGWindowOwnerPID, *kCGWindowOwnerName, *kCGWindowName;
+extern const void *kCGWindowBounds, *kCGWindowLayer, *kCGWindowIsOnscreen;
+extern void *kCFBooleanTrue, *kCFBooleanFalse;
+id CGRectCreateDictionaryRepresentation(cg_rect_t r);
+static id cg_num(long long v) { return CFNumberCreate(0, 4 /* kCFNumberSInt64Type */, &v); }
+static void cg_put_num(id d, const void *key, long long v) {
+    id n = cg_num(v);
+    CFDictionarySetValue(d, (id)key, n);
+    if (n) objc_release(n);
+}
+id CGWindowListCopyWindowInfo(u32 opt, u32 rel) {
+    /* No macOS recente a lista das janelas dos outros apps exige gravação de tela. Sem a concessão do TCC, vazia. */
+    if (!cx_tcc_preflight("kTCCServiceScreenCapture")) return empty_array();
+    gui_cgwindow_t all[48];
+    int n = 0, rel_i = -1;
+    for (int i = 0; i < 48; i++) {
+        if (!cx_cg_window_at(i, &all[n])) break;
+        if (rel && all[n].number == rel) rel_i = n;
+        n++;
+    }
+    id tmp[48];
+    int got = 0;
+    for (int i = 0; i < n && got < 48; i++) {
+        gui_cgwindow_t *w = &all[i];
+        int on = opt & 1;
+        if ((opt & 6) && rel) on = 1;
+        if (on && !w->onscreen) continue;
+        if ((opt & 2) && rel) {
+            if (rel_i < 0 || i > rel_i) continue;
+            if (i == rel_i && !(opt & 8)) continue;
+        }
+        if ((opt & 4) && rel) {
+            if (rel_i < 0 || i < rel_i) continue;
+            if (i == rel_i && !(opt & 8)) continue;
+        }
+        id d = CFDictionaryCreateMutable(0, 8, 0, 0);
+        cg_put_num(d, kCGWindowNumber, (long long)w->number);
+        cg_put_num(d, kCGWindowOwnerPID, w->pid);
+        cg_put_num(d, kCGWindowLayer, w->layer);
+        CFDictionarySetValue(d, (id)kCGWindowIsOnscreen, (id)(w->onscreen ? kCFBooleanTrue : kCFBooleanFalse));
+        id owner = cx_str(w->owner);
+        id name = cx_str(w->name);
+        CFDictionarySetValue(d, (id)kCGWindowOwnerName, owner);
+        CFDictionarySetValue(d, (id)kCGWindowName, name);
+        objc_release(owner);
+        objc_release(name);
+        cg_rect_t b = {(double)w->x, (double)w->y, (double)w->w, (double)w->h};
+        id bounds = CGRectCreateDictionaryRepresentation(b);
+        CFDictionarySetValue(d, (id)kCGWindowBounds, bounds);
+        objc_release(bounds);
+        tmp[got++] = d;
+    }
+    id arr = CFArrayCreate(0, tmp, got, 0);
+    for (int i = 0; i < got; i++) objc_release(tmp[i]);
+    return arr;
+}
 id CGWindowListCreateDescriptionFromArray(id arr) { (void)arr; return empty_array(); }
 size_t CGDisplayModeGetWidth(void *m) { (void)m; return CGDisplayPixelsWide(CGMainDisplayID()); }
 size_t CGDisplayModeGetHeight(void *m) { (void)m; return CGDisplayPixelsHigh(CGMainDisplayID()); }
@@ -412,10 +487,41 @@ OSStatus UCKeyTranslate(const void *layout, u16 code, u16 action, u32 mods, u32 
     if (len) *len = 0;
     return -50;   /* paramErr: sem layout uchr */
 }
-/* itens de login: lista vazia, inserções aceitas sem efeito */
+/* Itens de login: uma linha (caminho absoluto) em ~/Library/Preferences/com.mos.loginitems.
+ * O init (launchd) lê esse arquivo e inicia o programa. O snapshot continua vazio: a lista
+ * viva é o arquivo, não um objeto CF. Remover um item ainda não reescreve o arquivo. */
+static const char *login_url_path(id url) {
+    const char *s;
+    if (!url) return 0;
+    if (cx_responds(object_getClass(url), sel_registerName("path"))) {
+        id p = MSG0(id, url, "path");
+        if (cx_is_str(p) && ((nsstr_t *)p)->s && ((nsstr_t *)p)->s[0] == '/') return ((nsstr_t *)p)->s;
+    }
+    s = cx_cstr(url);
+    if (s && s[0] == '/') return s;
+    if (s && !strncmp(s, "file://", 7)) return s + 7;
+    return 0;
+}
+static void login_item_remember(const char *path) {
+    char file[400];
+    const char *home = getenv("HOME");
+    FILE_ *f;
+    if (!path || path[0] != '/') return;
+    if (!home || !home[0]) home = "/Users/Visitante";
+    snprintf(file, sizeof file, "%s/Library/Preferences/com.mos.loginitems", home);
+    f = fopen(file, "a");
+    if (!f) return;
+    fputs(path, f);
+    fputc('\n', f);
+    fclose(f);
+}
 id LSSharedFileListCreate(void *alloc, id type, id opts) { (void)alloc; (void)type; (void)opts; return token(); }
 id LSSharedFileListCopySnapshot(id list, u32 *seed) { (void)list; if (seed) *seed = 1; return empty_array(); }
-id LSSharedFileListInsertItemURL(id list, id after, id name, void *icon, id url, id props, id remove) { (void)list; (void)after; (void)name; (void)icon; (void)url; (void)props; (void)remove; return 0; }
+id LSSharedFileListInsertItemURL(id list, id after, id name, void *icon, id url, id props, id remove) {
+    (void)list; (void)after; (void)name; (void)icon; (void)props; (void)remove;
+    login_item_remember(login_url_path(url));
+    return token();
+}
 OSStatus LSSharedFileListItemRemove(id list, id item) { (void)list; (void)item; return 0; }
 id LSSharedFileListItemCopyResolvedURL(id item, u32 flags, id *err) { (void)item; (void)flags; if (err) *err = 0; return 0; }
 id LSSharedFileListItemCopyProperty(id item, id name) { (void)item; (void)name; return 0; }

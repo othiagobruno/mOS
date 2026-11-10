@@ -11,7 +11,10 @@ param([string]$Arch = 'x86_64')   # -Arch arm64: build\swift-arm64 (tools\swift-
 $root = Split-Path $PSScriptRoot -Parent
 . "$PSScriptRoot\swift-arch.ps1" $Arch
 $tc = Get-ChildItem "$root\.tools\swift\LocalApp\Programs\Swift\Toolchains" -Directory | Select-Object -First 1
-$zig = (Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*' | Where-Object { Test-Path "$($_.FullName)\zig.exe" })[0].FullName + '\zig.exe'
+if (-not (Get-Command Resolve-MosZig -ErrorAction SilentlyContinue)) { foreach ($mosHost in @("$PSScriptRoot\stage-host.ps1","$PSScriptRoot\..\stage-host.ps1","$PSScriptRoot\..\..\stage-host.ps1","$PSScriptRoot\..\..\..\stage-host.ps1")) { if (Test-Path -LiteralPath $mosHost) { . $mosHost; break } } }
+$mosZigPick = Resolve-MosZig $root
+if (-not $mosZigPick) { exit 1 }
+$zig = $mosZigPick.Path
 $objc = "$SwiftBuild\objc"
 $ov = "$objc\overlays"
 $inc = "$objc\sdk\include"

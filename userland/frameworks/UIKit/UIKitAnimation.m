@@ -1,7 +1,7 @@
 /*
  * mOS — UIKit do Catalyst: animações de UIView e UIViewPropertyAnimator.
- *   Como no UIKit, o bloco de animações muda o modelo na hora (frame, alpha, backgroundColor lidos depois do bloco já
- *   são os finais) e só a apresentação anda no tempo. O mOS fotografa as views das janelas antes e depois do bloco
+ *   Como no UIKit, o bloco de animações muda o modelo na hora (frame, alpha, backgroundColor, contentOffset e
+ *   transform lidos depois do bloco já são os finais) e só a apresentação anda no tempo. O mOS fotografa as views das janelas antes e depois do bloco
  *   (resolvendo o Auto Layout dos dois lados, então animar constantes de restrição + layoutIfNeeded funciona), guarda
  *   as diferenças e, a cada quadro, a NSView hospedeira desenha com os valores interpolados (mos_anim_present) e
  *   devolve o modelo logo depois (mos_anim_restore).
@@ -11,6 +11,8 @@
 #import "UIKitMOS.h"
 #include <math.h>
 #include <string.h>
+#include <stdlib.h>
+#include <stdint.h>
 #include <objc/message.h>
 #ifndef CGVECTOR_DEFINED
 typedef struct CGVector { CGFloat dx; CGFloat dy; } CGVector;
@@ -18,18 +20,20 @@ typedef struct CGVector { CGFloat dx; CGFloat dy; } CGVector;
 
 static void rm_ident(NSMutableArray *a, id o) { for (NSUInteger i = a.count; i > 0; i--) if ([a objectAtIndex:i - 1] == o) { [a removeObjectAtIndex:i - 1]; return; } }
 
-typedef struct { CGRect frame; CGFloat alpha; CGFloat rgba[4]; BOOL color; } mos_vs_t;
+typedef struct { CGRect frame; CGPoint boundsOrigin; CATransform3D t3; CGFloat alpha; CGFloat rgba[4]; BOOL color; } mos_vs_t;
 
 @interface _MOSAnimRun : NSObject {
 @public
     UIView *_v;                      /* retida */
     mos_vs_t _from, _to, _saved;
-    int _mask;                       /* 1 frame, 2 alpha, 4 cor */
+    int _mask;                       /* 1 frame, 2 alpha, 4 cor, 8 contentOffset, 16 transform, 32 transição por imagem */
+    int _kind;                       /* UIViewAnimationOptionTransition* (>> 20); 0 = só propriedades */
     UIColor *_savedColor, *_tmpColor;
+    UIImage *_fromImg, *_toImg;      /* retidas: snapshots do transitionWithView: */
 }
 @end
 @implementation _MOSAnimRun
-- (void)dealloc { [_v release]; [_tmpColor release]; [super dealloc]; }
+- (void)dealloc { [_v release]; [_tmpColor release]; [_fromImg release]; [_toImg release]; [super dealloc]; }
 @end
 
 @interface _MOSAnimGroup : NSObject {
@@ -100,6 +104,8 @@ static void curve_named(_MOSAnimGroup *g, NSInteger curve) {
 /* ---- fotografia das views */
 static void vs_read(UIView *v, mos_vs_t *s) {
     s->frame = v->_frame;
+    s->boundsOrigin = v->_boundsOrigin;
+    s->t3 = v->_t3;
     s->alpha = v->_alpha;
     s->color = v->_backgroundColor != nil;
     if (s->color) { UIColor *c = v->_backgroundColor; s->rgba[0] = c->_r; s->rgba[1] = c->_g; s->rgba[2] = c->_b; s->rgba[3] = c->_a; }
@@ -139,6 +145,8 @@ static _MOSAnimGroup *capture(void (^block)(void)) {
         if (!rect_eq(now.frame, s.st[i].frame)) m |= 1;
         if (now.alpha != s.st[i].alpha) m |= 2;
         if (now.color != s.st[i].color || memcmp(now.rgba, s.st[i].rgba, sizeof now.rgba)) m |= 4;
+        if (now.boundsOrigin.x != s.st[i].boundsOrigin.x || now.boundsOrigin.y != s.st[i].boundsOrigin.y) m |= 8;
+        if (memcmp(&now.t3, &s.st[i].t3, sizeof now.t3)) m |= 16;
         if (!m) continue;
         _MOSAnimRun *r = [[[_MOSAnimRun alloc] init] autorelease];
         r->_v = [v retain]; r->_from = s.st[i]; r->_to = now; r->_mask = m;
@@ -173,6 +181,9 @@ static double lerp(double a, double b, double f) { return a + (b - a) * f; }
 static void run_value(_MOSAnimRun *r, double f, mos_vs_t *o) {
     o->frame = CGRectMake(lerp(r->_from.frame.origin.x, r->_to.frame.origin.x, f), lerp(r->_from.frame.origin.y, r->_to.frame.origin.y, f),
                           lerp(r->_from.frame.size.width, r->_to.frame.size.width, f), lerp(r->_from.frame.size.height, r->_to.frame.size.height, f));
+    o->boundsOrigin = CGPointMake(lerp(r->_from.boundsOrigin.x, r->_to.boundsOrigin.x, f), lerp(r->_from.boundsOrigin.y, r->_to.boundsOrigin.y, f));
+    CGFloat *a = (CGFloat *)&r->_from.t3, *b = (CGFloat *)&r->_to.t3, *d = (CGFloat *)&o->t3;
+    for (int i = 0; i < 16; i++) d[i] = lerp(a[i], b[i], f);
     o->alpha = lerp(r->_from.alpha, r->_to.alpha, f);
     for (int i = 0; i < 4; i++) o->rgba[i] = lerp(r->_from.rgba[i], r->_to.rgba[i], f);
 }
@@ -182,6 +193,11 @@ static void group_commit(_MOSAnimGroup *g, double f) {
     for (_MOSAnimRun *r in g->_runs) {
         mos_vs_t o; run_value(r, e, &o);
         if (r->_mask & 1) [r->_v setFrame:o.frame];
+        if (r->_mask & 8) {
+            CGSize sz = (r->_mask & 1) ? o.frame.size : [r->_v bounds].size;
+            [r->_v setBounds:CGRectMake(o.boundsOrigin.x, o.boundsOrigin.y, sz.width, sz.height)];
+        }
+        if (r->_mask & 16) [r->_v setTransform3D:o.t3];
         if (r->_mask & 2) [r->_v setAlpha:o.alpha];
         if (r->_mask & 4) [r->_v setBackgroundColor:(f >= 1 && !r->_to.color) ? nil : (f <= 0 && !r->_from.color) ? nil :
                               [UIColor colorWithRed:o.rgba[0] green:o.rgba[1] blue:o.rgba[2] alpha:o.rgba[3]]];
@@ -219,6 +235,8 @@ void mos_anim_present(void) {
             r->_savedColor = v->_backgroundColor;
             mos_vs_t o; run_value(r, e, &o);
             if (r->_mask & 1) v->_frame = o.frame;
+            if (r->_mask & 8) v->_boundsOrigin = o.boundsOrigin;
+            if (r->_mask & 16) v->_t3 = o.t3;
             if (r->_mask & 2) v->_alpha = o.alpha;
             if (r->_mask & 4) { [r->_tmpColor release]; r->_tmpColor = [[UIColor colorWithRed:o.rgba[0] green:o.rgba[1] blue:o.rgba[2] alpha:o.rgba[3]] retain]; v->_backgroundColor = r->_tmpColor; }
         }
@@ -232,6 +250,8 @@ void mos_anim_restore(void) {
             _MOSAnimRun *r = [g->_runs objectAtIndex:(NSUInteger)ri];
             UIView *v = r->_v;
             if (r->_mask & 1) v->_frame = r->_saved.frame;
+            if (r->_mask & 8) v->_boundsOrigin = r->_saved.boundsOrigin;
+            if (r->_mask & 16) v->_t3 = r->_saved.t3;
             if (r->_mask & 2) v->_alpha = r->_saved.alpha;
             if (r->_mask & 4) v->_backgroundColor = r->_savedColor;
         }
@@ -266,7 +286,24 @@ static _MOSAnimGroup *g_kf_last;
     if (g) { g->_type = 1; g->_z = z; }
 }
 + (void)transitionWithView:(UIView *)v duration:(NSTimeInterval)d options:(NSUInteger)o animations:(void (^)(void))a completion:(void (^)(BOOL))c {
-    (void)v; start(d, 0, o, a, c);
+    NSUInteger kind = (o >> 20) & 15;
+    UIImage *from = (kind && v && [self areAnimationsEnabled]) ? [[v _mosSnapshotImage] retain] : nil;
+    _MOSAnimGroup *g = start(d, 0, o, a, c);
+    if (!(g && kind && v && from)) { [from release]; return; }
+    UIImage *to = [v _mosSnapshotImage];
+    _MOSAnimRun *r = nil;
+    for (_MOSAnimRun *e in g->_runs) if (e->_v == v) { r = e; break; }
+    if (!r) {
+        r = [[[_MOSAnimRun alloc] init] autorelease];
+        r->_v = [v retain];
+        vs_read(v, &r->_from);
+        r->_to = r->_from;
+        [g->_runs addObject:r];
+    }
+    r->_fromImg = from;
+    r->_toImg = [to retain];
+    r->_mask |= 32;
+    r->_kind = (int)kind;
 }
 + (void)transitionFromView:(UIView *)from toView:(UIView *)to duration:(NSTimeInterval)d options:(NSUInteger)o completion:(void (^)(BOOL))c {
     (void)d; (void)o;
@@ -299,9 +336,94 @@ static _MOSAnimGroup *g_kf_last;
 + (void)_mosAdvanceAnimationClock:(double)s { g_skew += s; [g_driver tick:nil]; }
 + (NSUInteger)_mosRunningAnimationCount { NSUInteger n = 0; for (_MOSAnimGroup *g in g_groups) if (!g->_done) n++; return n; }
 /* a apresentação atual desta view (como layer.presentationLayer.frame) */
-- (CGRect)_mosPresentationFrame { mos_anim_present(); CGRect f = _frame; mos_anim_restore(); return f; }
+- (CGRect)_mosPresentationFrame { mos_anim_present(); CGRect f = [self frame]; mos_anim_restore(); return f; }
 - (CGFloat)_mosPresentationAlpha { mos_anim_present(); CGFloat a = _alpha; mos_anim_restore(); return a; }
 @end
+
+@implementation UIScrollView (MOSAnimOffset)
+- (CGPoint)_mosPresentationContentOffset { mos_anim_present(); CGPoint p = _boundsOrigin; mos_anim_restore(); return p; }
+@end
+
+/* transição por imagem: no contexto bitmap, cruza os dois snapshots (flip e curl também; não há malha 3D).
+ * Fora de bitmap devolve 0 e o desenho cai na interpolação de propriedades — CGContextDrawImage não pinta a janela. */
+extern void *CGBitmapContextGetData(void *);
+extern void *CGImageGetDataProvider(void *);
+extern void *CGDataProviderCopyData(void *);
+extern const unsigned char *CFDataGetBytePtr(void *);
+extern void CFRelease(void *);
+extern void *CGDataProviderCreateWithData(void *, const void *, size_t, void (*)(void *, const void *, size_t));
+extern void CGDataProviderRelease(void *);
+extern void *CGImageCreate(size_t, size_t, size_t, size_t, size_t, const void *, uint32_t, void *, const void *, int, int);
+extern void *CGImageRetain(void *);
+extern void CGImageRelease(void *);
+extern void CGContextDrawImage(void *, CGRect, void *);
+extern size_t CGImageGetWidth(void *), CGImageGetHeight(void *);
+
+static const uint32_t *mos_img_px(UIImage *im, int *w, int *h, id *rel) {
+    *rel = nil; *w = *h = 0;
+    void *cg = im ? [im CGImage] : 0;
+    if (!cg) return 0;
+    *w = (int)CGImageGetWidth(cg); *h = (int)CGImageGetHeight(cg);
+    if (*w < 1 || *h < 1) return 0;
+    void *prov = CGImageGetDataProvider(cg);
+    id data = prov ? (id)CGDataProviderCopyData(prov) : nil;
+    if (!data) return 0;
+    *rel = data;
+    return (const uint32_t *)CFDataGetBytePtr(data);
+}
+/* CGContextDrawImage amostra v de baixo para cima; o buffer sai invertido para o bitmap y-down ficar em pé. */
+static void *mos_crossfade(UIImage *a, UIImage *b, double f) {
+    id ra = nil, rb = nil;
+    int wa, ha, wb, hb;
+    const uint32_t *pa = mos_img_px(a, &wa, &ha, &ra), *pb = mos_img_px(b, &wb, &hb, &rb);
+    if (!pa || !pb || wa != wb || ha != hb) {
+        void *one = [((f >= 1 && b) ? b : a) CGImage];
+        if (one) CGImageRetain(one);
+        if (ra) CFRelease(ra);
+        if (rb) CFRelease(rb);
+        return one;
+    }
+    size_t n = (size_t)wa * (size_t)ha;
+    uint32_t *buf = malloc(n * 4);
+    if (!buf) { CFRelease(ra); CFRelease(rb); return 0; }
+    for (int y = 0; y < ha; y++) {
+        for (int x = 0; x < wa; x++) {
+            uint32_t A = pa[(size_t)y * wa + x], B = pb[(size_t)y * wa + x], o = 0;
+            for (int k = 0; k < 4; k++) {
+                int sa = (A >> (k * 8)) & 255, sb = (B >> (k * 8)) & 255;
+                int v = (int)(sa + (sb - sa) * f + 0.5);
+                if (v < 0) v = 0;
+                if (v > 255) v = 255;
+                o |= (uint32_t)v << (k * 8);
+            }
+            buf[(size_t)(ha - 1 - y) * wa + x] = o;
+        }
+    }
+    CFRelease(ra); CFRelease(rb);
+    void *prov = CGDataProviderCreateWithData(0, buf, n * 4, 0);
+    void *img = CGImageCreate((size_t)wa, (size_t)ha, 8, 32, (size_t)wa * 4, 0, 2, prov, 0, 0, 0);
+    CGDataProviderRelease(prov);
+    free(buf);
+    return img;
+}
+int mos_anim_draw_transition(UIView *v, void *c) {
+    if (!v || !g_groups || !CGBitmapContextGetData(c)) return 0;
+    for (_MOSAnimGroup *g in g_groups) {
+        if (!g || g->_done) continue;
+        double f = curve_eval(g, g->_fraction);
+        if (f < 0) f = 0;
+        if (f > 1) f = 1;
+        for (_MOSAnimRun *r in g->_runs) {
+            if (r->_v != v || !(r->_mask & 32) || !r->_fromImg || r->_kind == 0) continue;
+            void *img = mos_crossfade(r->_fromImg, r->_toImg ? r->_toImg : r->_fromImg, f);
+            if (!img) return 0;
+            CGContextDrawImage(c, CGRectMake(0, 0, v->_frame.size.width, v->_frame.size.height), img);
+            CGImageRelease(img);
+            return 1;
+        }
+    }
+    return 0;
+}
 
 /* ================================================================ parâmetros de tempo */
 @interface UICubicTimingParameters : NSObject <NSCopying> {

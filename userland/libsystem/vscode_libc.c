@@ -568,9 +568,24 @@ kern_return_t vm_read_overwrite(mach_port_t task, u64 addr, u64 size, u64 dst, u
 }
 kern_return_t mach_vm_remap(mach_port_t t, u64 *addr, u64 size, u64 mask, int flags, mach_port_t src, u64 saddr, int copy,
                             int *cur, int *max, int inh) {
-    (void)t; (void)mask; (void)flags; (void)inh;
-    /* só cópia (copy=TRUE) é possível sem compartilhar páginas */
-    if (src != mach_task_self() || !copy) return KERN_NOT_SUPPORTED;
+    (void)mask; (void)inh;
+    if (src != mach_task_self()) return KERN_NOT_SUPPORTED;
+    /* copy=0: as mesmas páginas físicas nos dois endereços (o caminho W^X do V8 no Linux/Windows;
+     * no arm64 o V8 usa MAP_JIT, mas mach_vm_remap sem cópia tem que existir). */
+    if (!copy) {
+        if (!addr || !size || (size & 0xfff) || (saddr & 0xfff) || (*addr & 0xfff)) return KERN_INVALID_ARGUMENT;
+        u64 q[8] = {*addr, size, saddr, (u64)flags, 0, 0, 0, 0};
+        long r = cx_syscall(SYS_MACH_VM, (long)MACH_VM_REMAP, (long)q, 0, 0, 0);
+        if (r) return (kern_return_t)r;
+        *addr = q[0];
+#if defined(__aarch64__)
+        { void a64rt_jit_alias(unsigned long long dst, unsigned long long src, unsigned long long len);
+          a64rt_jit_alias(q[0], saddr, size); }
+#endif
+        if (cur) *cur = 3;
+        if (max) *max = 7;
+        return KERN_SUCCESS;
+    }
     if (mach_vm_allocate(t, addr, size, 1) != KERN_SUCCESS) return KERN_FAILURE;
     memcpy((void *)(usize)*addr, (const void *)(usize)saddr, (size_t)size);
     if (cur) *cur = 3;
@@ -774,19 +789,8 @@ u64 dispatch_walltime(const vs_timespec_t *when, i64 delta) {
     return (u64)(-(i64)ns);
 }
 
-/* ================================================================ qsort_b */
-typedef struct { void *isa; int flags, reserved; int (*invoke)(void *, const void *, const void *); } vs_block_t;
-static vs_block_t *qb_block;
-static volatile int qb_lock;
-static int qb_cmp(const void *a, const void *b) { return qb_block->invoke(qb_block, a, b); }
-void qsort_b(void *base, size_t n, size_t sz, void *block) {
-    while (__atomic_exchange_n(&qb_lock, 1, __ATOMIC_ACQUIRE)) sched_yield();
-    vs_block_t *prev = qb_block;
-    qb_block = block;
-    qsort(base, n, sz, qb_cmp);
-    qb_block = prev;
-    __atomic_store_n(&qb_lock, 0, __ATOMIC_RELEASE);
-}
+/* qsort_b está em sortb.c (heapsort via qsort_r, bloco no thunk). A trava global antiga
+ * ficava presa se o comparador saía por exceção ou longjmp, e um qsort_b aninhado girava. */
 
 /* ================================================================ números aleatórios */
 int rand_r(unsigned *seed) { *seed = *seed * 1103515245u + 12345u; return (int)((*seed >> 16) & 0x7FFF); }

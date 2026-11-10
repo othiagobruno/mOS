@@ -56,9 +56,11 @@ typedef struct {
 
 #define A64RT_SYS_SET_TSD       0x4D00  /* (base) -> 0      TPIDRRO_EL0 da thread atual (o TSD do pthread) */
 #define A64RT_SYS_ICACHE_INVAL  0x4D01  /* (addr, len) -> 0 sys_icache_invalidate (IC IVAU também serve) */
-#define A64RT_SYS_JIT_WP        0x4D02  /* (habilita) -> 0  pthread_jit_write_protect_np (memória do mOS é RWX) */
+#define A64RT_SYS_JIT_WP        0x4D02  /* (habilita) -> estado anterior (1 = MAP_JIT sem escrita nesta thread) */
 #define A64RT_SYS_INFO          0x4D03  /* (A64RT_INFO_*) -> valor */
 #define A64RT_SYS_GET_TSD       0x4D04  /* () -> TPIDRRO_EL0 */
+#define A64RT_SYS_MAP_JIT       0x4D05  /* (addr, len) -> 0  registra a faixa do mmap(MAP_JIT) */
+#define A64RT_SYS_JIT_ALIAS     0x4D06  /* (dst, src, len) -> 0  duas vistas das mesmas páginas (vm_remap) */
 enum { A64RT_INFO_ENGINE = 1,           /* 0 interpretador, 1 JIT */
        A64RT_INFO_VERSION = 2 };
 
@@ -74,6 +76,10 @@ typedef struct {
     unsigned long long x[29], fp, lr, sp, pc;
     unsigned int cpsr, pad;                                                                        /* 272 */
 } a64_darwin_thread_state_t;
+/* __darwin_arm_neon_state64 do XNU: __uint128_t __v[32]; __fpsr; __fpcr. O __uint128_t alinha a 16,
+ * então o sizeof no clang -target aarch64-apple-macos é 528 (520 de registradores + 8 de pad de cauda).
+ * fpsr/fpcr ficam em 512/516 dentro do neon. Encolher para 520 mudaria o sizeof e o uc_mcsize para 808,
+ * e o sigreturn do XNU só aceita UC_FLAVOR_SIZE64, que é a soma dos sizeof (816). */
 typedef struct {
     unsigned long long v[32][2];
     unsigned int fpsr, fpcr;
@@ -89,10 +95,15 @@ typedef struct {
     unsigned long long ss_sp, ss_size; int ss_flags, ss_pad;
     unsigned long long uc_link, uc_mcsize, uc_mcontext;
 } a64_darwin_ucontext_t;                                                                           /* 56 */
+_Static_assert(sizeof(a64_darwin_exc_state_t) == 16, "arm_exception_state64");
 _Static_assert(sizeof(a64_darwin_thread_state_t) == 272, "arm_thread_state64");
 _Static_assert(sizeof(a64_darwin_neon_state_t) == 528, "arm_neon_state64");
 _Static_assert(sizeof(a64_darwin_mcontext_t) == 816, "mcontext64");
 _Static_assert(sizeof(a64_darwin_ucontext_t) == 56, "ucontext");
+_Static_assert(__builtin_offsetof(a64_darwin_mcontext_t, ns) == 288, "neon no mcontext");
+_Static_assert(__builtin_offsetof(a64_darwin_neon_state_t, fpsr) == 512, "fpsr");
+_Static_assert(__builtin_offsetof(a64_darwin_mcontext_t, ns.fpsr) == 800, "fpsr no mcontext");
+_Static_assert(__builtin_offsetof(a64_darwin_mcontext_t, ns.fpcr) == 804, "fpcr no mcontext");
 
 /* ESR_EL1 entregue em __es.esr (classes do ARM ARM D17.2.37) */
 #define A64_ESR_EC_UNKNOWN  0x00     /* UDF / não alocada → SIGILL */
@@ -105,7 +116,9 @@ _Static_assert(sizeof(a64_darwin_ucontext_t) == 56, "ucontext");
 #define A64_ESR_IL          (1u << 25)
 #define A64_ESR_WNR         (1u << 6)
 #define A64_ESR_DFSC_TRANS  0x07     /* falta de tradução, nível 3 */
+#define A64_ESR_DFSC_ALIGN  0x21     /* falta de alinhamento (DFSC) */
 #define A64_ESR_DFSC_PERM   0x0F     /* falta de permissão, nível 3 */
+#define A64_ESR_EC_FP       0x2C     /* exceção de ponto flutuante com armadilha → SIGFPE */
 
 /* ---- sysctl coerente com A64_FEATURES (userland/a64/a64.h) para o libSystem arm64 ------------------
  * Uso no libSystem arm64: A64RT_SYSCTL_INTS(X) com X(nome, valor) e A64RT_SYSCTL_STRS(X). Os FEAT_* vêm
@@ -133,12 +146,20 @@ _Static_assert(sizeof(a64_darwin_ucontext_t) == 56, "ucontext");
     X("hw.optional.arm.FEAT_PAuth2", 0) X("hw.optional.arm.FEAT_EPAC", 0) \
     X("hw.optional.arm.AdvSIMD_HPFPCvt", 1) X("hw.optional.arm.SME_F32F32", 0) \
     X("hw.cachelinesize", 128) X("hw.l1icachesize", 131072) X("hw.l1dcachesize", 65536) X("hw.l2cachesize", 4194304) \
-    X("hw.pagesize", 16384) X("hw.pagesize32", 16384) X("vm.pagesize", 16384) X("hw.tbfrequency", 24000000) \
+    X("hw.pagesize", A64_GUEST_PAGE) X("hw.pagesize32", A64_GUEST_PAGE) X("vm.pagesize", A64_GUEST_PAGE) \
+    X("hw.tbfrequency", 24000000) \
     X("hw.optional.arm.caps", 0)
 #define A64RT_SYSCTL_STRS(X) \
     X("hw.machine", "arm64") X("hw.model", "Mac14,2") X("machdep.cpu.brand_string", "Apple M2 (mOS)") \
     X("kern.version_arch", "ARM64")
 /* uname(3) do processo arm64: machine = "arm64"; arch(1) e NXGetLocalArchInfo: "arm64" */
 #define A64RT_UNAME_MACHINE "arm64"
-/* hw.pagesize = 16 KiB como no Apple Silicon: o mmap do libSystem arm64 alinha a 16 KiB (o kernel aloca
- * em 4 KiB; o Go/Swift/V8 do arm64 contam com páginas de 16 KiB). */
+/* Página que o processo arm64 traduzido vê. O kernel continua em 4 KiB (docs/pagesize-arm64.md).
+ * hw.pagesize / vm_page_size / getpagesize / sysconf(_SC_PAGESIZE) / host_page_size usam este valor.
+ * O processo x86_64 continua em 4096 e não lê esta constante. */
+#define A64_GUEST_PAGE       16384u
+#define A64_GUEST_PAGE_MASK  (A64_GUEST_PAGE - 1u)
+#define A64_GUEST_PAGE_SHIFT 14
+/* fim exclusivo, alinhado a 16 KiB, de [addr, addr+len) */
+#define A64_GUEST_PAGE_END(addr, len) \
+    (((unsigned long long)(addr) + (unsigned long long)(len) + A64_GUEST_PAGE_MASK) & ~(unsigned long long)A64_GUEST_PAGE_MASK)

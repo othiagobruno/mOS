@@ -189,6 +189,20 @@ void paging_init(void) {
     u64 pat = 0x0007010600070106ULL;
     __asm__ volatile("wrmsr" :: "c"(0x277), "a"((u32)pat), "d"((u32)(pat >> 32)));
     __asm__ volatile("wbinvd; mov %0,%%cr3" :: "r"((u64)pml4) : "memory");
+    /* NX antes do smp_init: os APs copiam EFER.NXE do BSP (arch/smp.c) e este mapa de identidade não tem o bit 63,
+     * então o kernel e o trampolim continuam executáveis. Página de usuário só fica NX quando o prot não pede execução. */
+    u32 maxe = 0, ebx = 0, ecx = 0, edx = 0;
+    __asm__ volatile("cpuid" : "=a"(maxe), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(0x80000000u));
+    if (maxe >= 0x80000001u) {
+        u32 eax = 0;
+        __asm__ volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(0x80000001u));
+        if (edx & (1u << 20)) {
+            u32 lo = 0, hi = 0;
+            __asm__ volatile("rdmsr" : "=a"(lo), "=d"(hi) : "c"(0xC0000080u));
+            __asm__ volatile("wrmsr" :: "c"(0xC0000080u), "a"(lo | (1u << 11)), "d"(hi));
+            kprintf("Paging: EFER.NXE ligado; o mapa de identidade segue sem o bit 63\n");
+        }
+    }
     kprintf("Paging: identidade até 0x%llx, framebuffer em WC\n", top);
 }
 

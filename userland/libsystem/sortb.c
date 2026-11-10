@@ -1,8 +1,10 @@
 /*
  * mOS libSystem — busca e ordenação da libc da Apple que faltavam: bsearch_b, heapsort(_b), mergesort(_b) e
- * psort(_b/_r). As variantes _b recebem um bloco: invoke(bloco, a, b) (o WhatsApp arm64 parava em _bsearch_b).
- * heapsort não usa memória extra; mergesort é estável (buffer de n elementos; -1/ENOMEM sem memória, -1/EINVAL com
- * largura menor que sizeof(void *) / 2, como o BSD); psort é o qsort (a Apple paraleliza, aqui é sequencial).
+ * psort(_b/_r) e qsort_r/qsort_b. As variantes _b recebem um bloco: invoke(bloco, a, b)
+ * (o WhatsApp arm64 parava em _bsearch_b).
+ * heapsort não usa memória extra; qsort_r e qsort_b são esse heapsort (O(n log n), sem buffer e sem
+ * variável global). Não são estáveis. mergesort é o estável (buffer de n elementos; -1/ENOMEM sem memória,
+ * -1/EINVAL com largura menor que sizeof(void *) / 2, como o BSD). psort é o qsort (a Apple paraleliza, aqui é sequencial).
  */
 #include "sys.h"
 
@@ -10,7 +12,6 @@ void *malloc(size_t);
 void free(void *);
 void *memcpy(void *, const void *, size_t);
 void qsort(void *, size_t, size_t, int (*)(const void *, const void *));
-void qsort_r(void *, size_t, size_t, void *, int (*)(void *, const void *, const void *));
 
 typedef struct { void *isa; int flags, reserved; int (*invoke)(void *, const void *, const void *); } sb_block_t;
 typedef int (*sb_cmp_t)(void *ctx, const void *, const void *);
@@ -51,6 +52,18 @@ static int heapsort_g(void *base, size_t n, size_t sz, sb_cmp_t cmp, void *ctx) 
 int heapsort(void *base, size_t n, size_t sz, int (*cmp)(const void *, const void *)) { return heapsort_g(base, n, sz, via_fn, (void *)cmp); }
 int heapsort_b(void *base, size_t n, size_t sz, void *block) { return heapsort_g(base, n, sz, via_block, block); }
 
+void qsort_r(void *base, size_t n, size_t sz, void *thunk, int (*cmp)(void *, const void *, const void *)) {
+    /* heapsort: O(n log n) no pior caso, sem malloc e sem estado global. Não é estável. */
+    if (n < 2 || !sz || !cmp) return;
+    u8 *a = base;
+    for (size_t i = n / 2; i-- > 0;) sift(a, i, n, sz, cmp, thunk);
+    for (size_t end = n; end > 1; end--) {
+        swap_(a, a + (end - 1) * sz, sz);
+        sift(a, 0, end - 1, sz, cmp, thunk);
+    }
+}
+void qsort_b(void *base, size_t n, size_t sz, void *block) { qsort_r(base, n, sz, block, via_block); }
+
 static void merge_rec(u8 *a, u8 *tmp, size_t n, size_t sz, sb_cmp_t cmp, void *ctx) {
     if (n < 2) return;
     size_t h = n / 2;
@@ -80,6 +93,6 @@ int mergesort_b(void *base, size_t n, size_t sz, void *block) { return mergesort
 void psort(void *base, size_t n, size_t sz, int (*cmp)(const void *, const void *)) { qsort(base, n, sz, cmp); }
 void psort_r(void *base, size_t n, size_t sz, void *thunk, int (*cmp)(void *, const void *, const void *)) { qsort_r(base, n, sz, thunk, cmp); }
 void psort_b(void *base, size_t n, size_t sz, void *block) {
-    /* mergesort: O(n log n) e sem estado global (o qsort_b do vscode_libc.c usa uma variável global com trava) */
+    /* estável. qsort_b é o heapsort (não estável) e não tem mais trava global. */
     if (mergesort_g(base, n, sz, via_block, block) < 0) heapsort_g(base, n, sz, via_block, block);
 }

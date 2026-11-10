@@ -47,6 +47,10 @@ final class _MOSHostingState {
 
     func detach() { _MOSHostingState.live[ObjectIdentifier(self)] = nil }
 
+    static func renderAll() {
+        for state in live.values { state.renderNow() }
+    }
+
     func resize(_ s: CGSize) {
         guard s.width > 0, s.height > 0 else { return }
         if let canvas { mos_set_frame(canvas, 0, 0, Double(s.width), Double(s.height)) }
@@ -135,6 +139,24 @@ open class NSHostingView<Content>: NSView where Content: View {
         _mosState.resize(newSize)
     }
 
+    open override func layout() {
+        super.layout()
+        let s = frame.size
+        if abs(s.width - _mosState.size.width) > 0.5 || abs(s.height - _mosState.size.height) > 0.5 {
+            _mosState.resize(s)
+        }
+    }
+
+    /// Mede a última DisplayList no tamanho proposto e devolve a união dos itens.
+    func mosSizeThatFits(_ size: CGSize) -> CGSize {
+        guard size.width > 0, size.height > 0 else { return size }
+        _mosState.resize(size)
+        guard let list = _mosState.lastList else { return size }
+        let ext = MOSDisplayListMetrics.extent(list)
+        if ext.width <= 1 || ext.height <= 1 { return size }
+        return CGSize(width: min(size.width, ext.width), height: min(size.height, ext.height))
+    }
+
     open override var intrinsicContentSize: NSSize { NSSize(width: -1, height: -1) }   // NSView.noIntrinsicMetric
 }
 
@@ -166,7 +188,7 @@ open class NSHostingController<Content>: NSViewController where Content: View {
 
     open override func loadView() { view = _mosHostingView }
 
-    public func sizeThatFits(in size: CGSize) -> CGSize { size }
+    public func sizeThatFits(in size: CGSize) -> CGSize { _mosHostingView.mosSizeThatFits(size) }
 }
 
 #endif

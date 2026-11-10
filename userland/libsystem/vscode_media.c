@@ -20,6 +20,7 @@ void *memcpy(void *d, const void *s, size_t n);
 int strcmp(const char *a, const char *b);
 double sin(double), cos(double), sqrt(double), fabs(double);
 id objc_retain(id o);
+void objc_release(id o);
 id CFArrayCreate(void *alloc, const id *vals, long n, const void *cb);
 id CFDictionaryCreateMutable(void *alloc, long cap, const void *kcb, const void *vcb);
 int clock_gettime(int clk, void *ts);
@@ -145,8 +146,7 @@ u64 CMClockConvertHostTimeToSystemUnits(cm_time_t t) {
 #define kCMFormatDescriptionError_InvalidParameter (-12710)
 #define kCMSampleBufferError_InvalidMediaFormat (-12743)
 #define CM_FAIL(err) { return err; }
-/* o vídeo/áudio por hardware não existe, então ninguém deveria chegar a montar estes buffers;
- * quem chegar recebe o erro de parâmetro do macOS */
+/* Áudio e formatos continuam sem hardware. O buffer de imagem existe: o SCStream entrega um quadro. */
 OSStatus CMBlockBufferCreateEmpty(void *a, u32 cap, u32 flags, void **out) { (void)a; (void)cap; (void)flags; if (out) *out = 0; CM_FAIL(kCMBlockBufferBadCustomBlockSourceErr) }
 OSStatus CMBlockBufferCreateWithMemoryBlock(void *a, void *mem, size_t len, void *ba, const void *cb, size_t off, size_t dlen, u32 flags, void **out) {
     (void)a; (void)mem; (void)len; (void)ba; (void)cb; (void)off; (void)dlen; (void)flags; if (out) *out = 0; CM_FAIL(kCMBlockBufferBadCustomBlockSourceErr)
@@ -173,18 +173,80 @@ id CMFormatDescriptionGetExtension(void *d, id key) { (void)d; (void)key; return
 OSStatus CMSampleBufferCreate(void *a, void *db, u8 ready, void *cb, void *ref, void *fd, long ns, long nt, const void *t, long nsz, const size_t *sz, void **out) {
     (void)a; (void)db; (void)ready; (void)cb; (void)ref; (void)fd; (void)ns; (void)nt; (void)t; (void)nsz; (void)sz; if (out) *out = 0; CM_FAIL(kCMSampleBufferError_InvalidMediaFormat)
 }
-OSStatus CMSampleBufferCreateForImageBuffer(void *a, void *img, u8 ready, void *cb, void *ref, void *fd, const void *t, void **out) { (void)a; (void)img; (void)ready; (void)cb; (void)ref; (void)fd; (void)t; if (out) *out = 0; CM_FAIL(kCMSampleBufferError_InvalidMediaFormat) }
-long CMSampleBufferGetNumSamples(void *s) { (void)s; return 0; }
+typedef struct { cx_class_t *isa; void *image; cm_time_t pts; id atts; } cmsb_t;
+static cx_class_t cmsb_c, cmsb_m;
+static int cmsb_ready;
+static void cmsb_free(id self, SEL c) {
+    cmsb_t *b = (cmsb_t *)self;
+    if (b->image) objc_release((id)b->image);
+    if (b->atts) objc_release(b->atts);
+    b->image = 0;
+    b->atts = 0;
+    IMP sup = cx_lookup(cx_class_named("NSObject"), c);
+    if (sup) ((void (*)(id, SEL))sup)(self, c);
+}
+static void cmsb_boot(void) {
+    if (cmsb_ready) return;
+    cx_class_t *ns = cx_class_named("NSObject");
+    if (!ns) return;
+    cx_define_class(&cmsb_c, &cmsb_m, "CMSampleBuffer", ns, (u32)(sizeof(cmsb_t) - sizeof(void *)));
+    cx_add_method(&cmsb_c, "dealloc", (void *)cmsb_free);
+    cmsb_ready = 1;
+}
+static cmsb_t *as_sb(void *s) {
+    cmsb_t *b = (cmsb_t *)s;
+    return (b && cmsb_ready && b->isa == &cmsb_c) ? b : 0;
+}
+OSStatus CMSampleBufferCreateForImageBuffer(void *a, void *img, u8 ready, void *cb, void *ref, void *fd, const void *t, void **out) {
+    (void)a; (void)ready; (void)cb; (void)ref; (void)fd;
+    if (!out) return kCMSampleBufferError_InvalidMediaFormat;
+    *out = 0;
+    if (!img) CM_FAIL(kCMSampleBufferError_InvalidMediaFormat)
+    cmsb_boot();
+    if (!cmsb_ready) CM_FAIL(kCMSampleBufferError_InvalidMediaFormat)
+    cmsb_t *s = (cmsb_t *)cx_alloc_instance(&cmsb_c);
+    if (!s) CM_FAIL(kCMSampleBufferError_InvalidMediaFormat)
+    s->image = objc_retain((id)img);
+    s->pts = (cm_time_t){0, 1, kCMTimeFlags_Valid, 0};
+    if (t) {
+        const cm_time_t *times = (const cm_time_t *)t;
+        s->pts = times[1].flags ? times[1] : times[0];
+    }
+    id dict = MSG0(id, (id)cx_class_named("NSMutableDictionary"), "dictionary");
+    id arr = MSG0(id, (id)cx_class_named("NSMutableArray"), "array");
+    if (arr && dict) MSG(void, arr, "addObject:", dict);
+    s->atts = arr ? objc_retain(arr) : 0;
+    *out = s;
+    return 0;
+}
+long CMSampleBufferGetNumSamples(void *s) { return as_sb(s) ? 1 : 0; }
 void *CMSampleBufferGetFormatDescription(void *s) { (void)s; return 0; }
 void *CMSampleBufferGetDataBuffer(void *s) { (void)s; return 0; }
-void *CMSampleBufferGetImageBuffer(void *s) { (void)s; return 0; }
-cm_time_t CMSampleBufferGetPresentationTimeStamp(void *s) { (void)s; cm_time_t t = {0, 0, 0, 0}; return t; }
-id CMSampleBufferGetSampleAttachmentsArray(void *s, u8 create) { (void)s; (void)create; return 0; }
-void CMSetAttachment(void *t, id key, id v, u32 mode) { (void)t; (void)key; (void)v; (void)mode; }
+void *CMSampleBufferGetImageBuffer(void *s) { cmsb_t *b = as_sb(s); return b ? b->image : 0; }
+cm_time_t CMSampleBufferGetPresentationTimeStamp(void *s) {
+    cmsb_t *b = as_sb(s);
+    if (!b) { cm_time_t z = {0, 0, 0, 0}; return z; }
+    return b->pts;
+}
+id CMSampleBufferGetSampleAttachmentsArray(void *s, u8 create) {
+    (void)create;
+    cmsb_t *b = as_sb(s);
+    return b ? b->atts : 0;
+}
+void CMSetAttachment(void *t, id key, id v, u32 mode) {
+    (void)mode;
+    cmsb_t *b = as_sb(t);
+    if (!b || !b->atts || !key || !v) return;
+    id d = MSG(id, b->atts, "objectAtIndex:", (u64)0);
+    if (d) MSG(void, d, "setObject:forKey:", v, key);
+}
 id CMCopyDictionaryOfAttachments(void *a, void *t, u32 mode) { (void)a; (void)t; (void)mode; return CFDictionaryCreateMutable(0, 0, 0, 0); }
 OSStatus CMIOObjectGetPropertyData(u32 obj, const void *addr, u32 qs, const void *q, u32 sz, u32 *used, void *data) { (void)obj; (void)addr; (void)qs; (void)q; (void)sz; (void)data; if (used) *used = 0; return 0x77686F3F; /* kCMIOHardwareUnknownPropertyError 'who?' */ }
 
-/* ================================================================ VideoToolbox: sem codec por hardware */
+/* ================================================================ VideoToolbox
+ * Limitação honesta: não há decodificador nem codificador de H.264/HEVC em software neste
+ * build, e não se contorna FairPlay. As chamadas devolvem o erro da Apple (decoder -12906,
+ * encoder -12908, propriedade -12900). VTIsHardwareDecodeSupported continua 0. */
 #define kVTCouldNotFindVideoDecoderErr (-12906)
 #define kVTCouldNotFindVideoEncoderErr (-12908)
 #define kVTPropertyNotSupportedErr (-12900)

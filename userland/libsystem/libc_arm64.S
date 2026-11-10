@@ -129,4 +129,58 @@ sys_dcache_flush:
     b.lo 1b
     dsb ish
 9:  ret
+
+/* pthread_jit_write_protect_np(enabled): x0 entra com 0 = pode escrever MAP_JIT, senão não.
+ * Volta o estado anterior (a função C é void e ignora). */
+    .globl pthread_jit_write_protect_np
+    .p2align 2
+pthread_jit_write_protect_np:
+    mov x8, #0x4D02
+    svc #0x4d4f
+    ret
+
+    .globl pthread_jit_write_protect_supported_np
+    .p2align 2
+pthread_jit_write_protect_supported_np:
+    mov x0, #1
+    ret
+
+/* pthread_jit_write_with_callback_np(cb, ctx): abre a escrita, chama cb(ctx), restaura.
+ * O callback não pode chamar de novo pthread_jit_write_protect_np (o macOS também não permite). */
+    .globl pthread_jit_write_with_callback_np
+    .p2align 2
+pthread_jit_write_with_callback_np:
+    stp x29, x30, [sp, #-64]!
+    stp x19, x20, [sp, #16]
+    stp x21, x22, [sp, #32]
+    mov x19, x0
+    mov x20, x1
+    mov x0, #0
+    mov x8, #0x4D02
+    svc #0x4d4f
+    mov x21, x0
+    mov x0, x20
+    cbz x19, 1f
+    blr x19
+1:  mov x0, x21
+    mov x8, #0x4D02
+    svc #0x4d4f
+    ldp x21, x22, [sp, #32]
+    ldp x19, x20, [sp, #16]
+    ldp x29, x30, [sp], #64
+    ret
+
+    .globl a64rt_map_jit_register
+    .p2align 2
+a64rt_map_jit_register:
+    mov x8, #0x4D05
+    svc #0x4d4f
+    ret
+
+    .globl a64rt_jit_alias
+    .p2align 2
+a64rt_jit_alias:
+    mov x8, #0x4D06
+    svc #0x4d4f
+    ret
 #endif

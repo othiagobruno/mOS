@@ -23,6 +23,30 @@
 #include "svcnative.h"
 #include "plistmini.h"
 
+/* zig 0.17 trata declaração implícita como erro. mos.h tem strchr, não strrchr nem snprintf.
+ * As três chamadas deste arquivo são literais com um único %s. */
+static char *strrchr(const char *s, int c) {
+    const char *r = 0;
+    for (; *s; s++) if (*s == (char)c) r = s;
+    return (char *)(c ? r : s);
+}
+static int snprintf(char *d, usize n, const char *fmt, const char *a) {
+    usize o = 0;
+    if (!n) return 0;
+    for (; *fmt && o + 1 < n; fmt++) {
+        if (*fmt == '%' && fmt[1] == 's') {
+            fmt++;
+            if (!a) a = "";
+            while (*a && o + 1 < n) d[o++] = *a++;
+        } else if (*fmt == '%' && fmt[1] == '%') {
+            fmt++;
+            d[o++] = '%';
+        } else d[o++] = *fmt;
+    }
+    d[o] = 0;
+    return (int)o;
+}
+
 #define LEGACY_DIR "/Sistema/Biblioteca/LaunchDaemons"
 #define MAX_JOBS 64
 #define MAX_ARGS 16
@@ -286,8 +310,93 @@ out:
     return j;
 }
 
+static void scan_dir(const char *dir);
+static void scan_app_agents(void) {
+    char app[160], dir[512];
+    for (int i = 0; readdir("/Aplicativos", i, app, sizeof app) == 1; i++) {
+        if (!ends(app, ".app")) continue;
+        snprintf(dir, sizeof dir, "/Aplicativos/%s/Contents/Library/LaunchAgents", app);
+        scan_dir(dir);
+        snprintf(dir, sizeof dir, "/Aplicativos/%s/Contents/Library/LaunchDaemons", app);
+        scan_dir(dir);
+    }
+}
+
+/* Uma linha por caminho absoluto. Quem grava: LSSharedFileListInsertItemURL (vscode_frameworks.c). */
+static void load_loginitems(const char *path) {
+    i64 len = read_file(path, filebuf, sizeof filebuf - 1);
+    char *p;
+    if (len <= 0) return;
+    filebuf[len] = 0;
+    for (p = filebuf; *p; ) {
+        char *nl = strchr(p, '\n');
+        char label[160];
+        const char *base;
+        job_t *j;
+        if (nl) *nl = 0;
+        while (*p == ' ' || *p == '\t') p++;
+        if (p[0] == '/') {
+            base = strrchr(p, '/');
+            base = base ? base + 1 : p;
+            snprintf(label, sizeof label, "mos.login.%s", base);
+            if (!job_find(label)) {
+                j = job_new(label);
+                if (j) {
+                    scopy(j->src, path, sizeof j->src);
+                    scopy(j->prog, p, sizeof j->prog);
+                    scopy(j->argv[0], p, sizeof j->argv[0]);
+                    j->argc = 1;
+                    j->runatload = 1;
+                }
+            }
+        }
+        if (!nl) break;
+        p = nl + 1;
+    }
+}
+
+static void scan_loginitems(void) {
+    char user[128], dir[320], path[400];
+    for (int i = 0; readdir("/Users", i, user, sizeof user) == 1; i++) {
+        if (user[0] == '.') continue;
+        join(dir, sizeof dir, "/Users", user);
+        join(path, sizeof path, dir, "Library/Preferences/com.mos.loginitems");
+        lock();
+        load_loginitems(path);
+        unlock();
+    }
+}
+
+static void scan_user_jobs(int autostart) {
+    char user[128], dir[320], la[400];
+    scan_dir("/Library/LaunchAgents");
+    scan_dir("/Library/LaunchDaemons");
+    for (int i = 0; readdir("/Users", i, user, sizeof user) == 1; i++) {
+        if (user[0] == '.') continue;
+        join(dir, sizeof dir, "/Users", user);
+        join(la, sizeof la, dir, "Library/LaunchAgents");
+        scan_dir(la);
+    }
+    scan_app_agents();
+    scan_loginitems();
+    if (!autostart) return;
+    lock();
+    u64 now = time_ms();
+    for (int i = 0; i < MAX_JOBS; i++) {
+        job_t *j = &jobs[i];
+        if (!j->used || j->pid || j->last_start || !(j->runatload || j->keep)) continue;
+        if (j->delay_ms) {
+            if (!j->restart_at) j->restart_at = now + (u64)j->delay_ms;
+            continue;   /* o laço principal inicia quando o atraso vence */
+        }
+        if (j->restart_at) continue;
+        start(j);
+    }
+    unlock();
+}
+
 static void scan_dir(const char *dir) {
-    char name[128], path[320];
+    char name[128], path[512];
     for (int i = 0; readdir(dir, i, name, sizeof name) == 1; i++) {
         join(path, sizeof path, dir, name);
         if (ends(name, ".servico")) { lock(); load_legacy(path, name); unlock(); continue; }
@@ -297,7 +406,7 @@ static void scan_dir(const char *dir) {
         job_t *j = load_plist(path, &why);
         if (j) reserve(j);
         unlock();
-        if (!j) print("launchd: %s ignorado (%s)\n", path, why);
+        if (!j && strcmp(why, "já carregado")) print("launchd: %s ignorado (%s)\n", path, why);
     }
 }
 
@@ -431,6 +540,7 @@ void _start(const char *arg) {
         join(la, sizeof la, dir, "Library/LaunchAgents");
         scan_dir(la);
     }
+    scan_user_jobs(0);   /* agentes dentro dos .app e itens de login; o laço abaixo os inicia */
     int n = 0;
     for (int i = 0; i < MAX_JOBS; i++) n += jobs[i].used;
     print("launchd: %d job(s)\n", (i64)n);
@@ -443,7 +553,9 @@ void _start(const char *arg) {
     thread_create(reaper, 0);
 
     static unsigned char msg[SVC_MAX_MSG + 128];
+    u64 next_scan = time_ms() + 5000;
     for (;;) {
+        if (time_ms() >= next_scan) { next_scan = time_ms() + 5000; scan_user_jobs(1); }
         port_wait(pset, 500);
         if (ctl) while (port_pending(ctl)) {
             memset(msg, 0, sizeof(mhdr_t));
