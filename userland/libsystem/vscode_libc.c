@@ -896,7 +896,7 @@ const char *const APP_SANDBOX_READ = "com.apple.app-sandbox.read";
 const char *const APP_SANDBOX_READ_WRITE = "com.apple.app-sandbox.read-write";
 
 /* ================================================================ libunwind (só o crashpad/backtrace usa) */
-/* unw_*: o libunwind do LLVM de verdade (tools/build-libsystem*.ps1) */
+/* unw_*: API pública em cxx_unwind.c, em cima do mesmo motor de CFI/compact unwind. */
 
 /* ================================================================ libc++: std::to_string(int) (kerberos.node) */
 /* std::string do libc++ x86_64: curto = byte 0 com tamanho << 1, texto a partir do byte 1 (até 22 chars) */
