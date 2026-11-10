@@ -405,8 +405,13 @@ static void fork_child(rt_thread_t *T) {
 #endif
 }
 
-/* fork e vfork (o vfork do mOS é um fork de verdade: o filho tem espaço próprio). O monitor exclusivo
- * sai antes da syscall, para o pai e a cópia do filho nascerem limpos. */
+/* fork e vfork. O vfork fica um fork com espaço próprio: um vfork de verdade teria de
+ * suspender o pai até o exec ou o _exit, compartilhar o pml4 (não COW) e o _exit do filho
+ * não pode soltar essa memória. O exec monta um espaço novo e libera o antigo — com o pml4
+ * compartilhado, levaria as páginas do pai. O a64rt, as pilhas do host e o JIT vivem nesse
+ * mesmo espaço; o acerto de fork_child (outras threads mortas, tid, travas) corromperia o pai
+ * se a memória fosse a mesma. POSIX deixa vfork com mais de uma thread indefinido. O monitor
+ * exclusivo sai antes da syscall, para o pai e a cópia do filho nascerem limpos. */
 static long rt_do_fork(rt_thread_t *T) {
     a64_xmon_invalidate(&T->cpu);      /* a exceção do fork limpa o monitor dos dois lados */
     long r = RS0(SYS_FORK);
@@ -530,11 +535,150 @@ static void mos_svc(rt_thread_t *T) {
     c->x[0] = (u64)r;
 }
 
-/* svc #0x80 do Darwin: x16 = número; erro = bit C com x0 = errno */
+/* svc #0x80 do Darwin: x16 = número; erro = bit C com x0 = errno.
+ *
+ * 59 (execve) e 244 (posix_spawn) reusam SYS_EXECVE e SYS_SPAWNVEC. O layout é o do XNU
+ * (xnu-10002, LP64): _posix_spawn_args_desc começa com (attr_size, attrp, file_actions_size,
+ * file_actions). A attr começa com psa_flags (short). Cada file action tem 1040 bytes:
+ * tipo em +0, fd em +4, open (oflag +8, mode +12, path +14), dup2 (novo fd +8), chdir (path +8).
+ * O contêiner é { int alloc; int count; ações... }. FILEPORT_DUP2 não tem porta Mach aqui.
+ * SETSIGDEF, SETSIGMASK, RESETIDS e START_SUSPENDED são lidos e ignorados (START_SUSPENDED
+ * cruza a suspensão de processo, outra frente). Não há commpage: o endereço do Darwin arm64
+ * (0xFFFFFC000) cai no mapa de identidade do kernel, abaixo de USER_BASE. */
+#define PSFA_OPEN 0
+#define PSFA_CLOSE 1
+#define PSFA_DUP2 2
+#define PSFA_INHERIT 3
+#define PSFA_FILEPORT_DUP2 4
+#define PSFA_CHDIR 5
+#define PSFA_FCHDIR 6
+#define PSFA_BYTES 1040
+#define DARWIN_ENAMETOOLONG 63
+
 static int sig_darwin_to_mos(int s) {
     switch (s) { case 10: return 30; case 12: return 31; case 30: return 10; case 31: return 12; case 20: return 17; case 17: return 20; }
     return s;
 }
+static int darwin_oflags(int oflag) {
+    int k = 0, acc = oflag & 3;
+    if (acc == 1) k |= MOS_O_WRONLY;
+    if (acc == 2) k |= MOS_O_RDWR;
+    if (oflag & 0x0008) k |= MOS_O_APPEND;
+    if (oflag & 0x0200) k |= MOS_O_CREAT;
+    if (oflag & 0x0400) k |= MOS_O_TRUNC;
+    if (oflag & 0x1000000) k |= MOS_O_CLOEXEC;
+    return k;
+}
+
+static long copy_guest_path(char *dst, const char *src, int cap) {
+    int i;
+    if (!src || cap < 2) return -MOS_EINVAL;
+    for (i = 0; i < cap - 1; i++) {
+        dst[i] = src[i];
+        if (!src[i]) return dst[0] ? 0 : -MOS_EINVAL;
+    }
+    return -DARWIN_ENAMETOOLONG;
+}
+
+static long apply_setexec(const mos_spawn_fa_t *acts, unsigned n) {
+    unsigned i;
+    for (i = 0; i < n; i++) {
+        const mos_spawn_fa_t *a = &acts[i];
+        long r = 0;
+        if (a->kind == MOS_SPAWN_FA_CLOSE) r = rt_sys(SYS_CLOSE, a->a, 0, 0, 0, 0, 0);
+        else if (a->kind == MOS_SPAWN_FA_DUP2) r = rt_sys(SYS_DUP2, a->a, a->b, 0, 0, 0, 0);
+        else if (a->kind == MOS_SPAWN_FA_CHDIR) r = rt_sys(SYS_CHDIR, (long)a->path, 0, 0, 0, 0, 0);
+        else if (a->kind == MOS_SPAWN_FA_OPEN) {
+            r = rt_sys(SYS_OPEN, (long)a->path, a->flags, 0, 0, 0, 0);
+            if (r >= 0 && r != a->a) {
+                long got = r;
+                r = rt_sys(SYS_DUP2, got, a->a, 0, 0, 0, 0);
+                rt_sys(SYS_CLOSE, got, 0, 0, 0, 0, 0);
+            }
+        } else r = -MOS_EINVAL;
+        if (r < 0) return r;
+    }
+    return 0;
+}
+
+/* Monta o vetor do kernel a partir do args_desc. setexec: POSIX_SPAWN_SETEXEC (0x40),
+ * as ações valem neste processo e quem troca a imagem é o SYS_EXECVE. */
+static long spawn_fill(const void *adesc, u64 argv, u64 envp, mos_spawn_vec_t *v, mos_spawn_fa_t *acts, int *setexec) {
+    memset(v, 0, sizeof *v);
+    v->argv = argv;
+    v->envp = envp;
+    *setexec = 0;
+    if (!adesc) return 0;
+    unsigned long long hdr[4];
+    memcpy(hdr, adesc, sizeof hdr);
+    if (hdr[1] && hdr[0] >= 2) {
+        unsigned short ps = 0;
+        unsigned flags;
+        memcpy(&ps, (const void *)hdr[1], 2);
+        flags = ps;
+        if (flags & 0x0002) v->flags |= MOS_SPAWN_SETPGROUP;
+        if (flags & 0x0400) v->flags |= MOS_SPAWN_SETSID;
+        if (flags & 0x4000) v->flags |= MOS_SPAWN_CLOEXEC_DEFAULT;
+        if (flags & 0x0040) *setexec = 1;
+    }
+    if (!hdr[3] || hdr[2] < 8) return 0;
+    {
+        int count = 0;
+        const unsigned char *base;
+        int i, n = 0;
+        memcpy(&count, (const char *)hdr[3] + 4, 4);
+        if (count < 0 || count > MOS_SPAWN_FA_MAX) return -MOS_EINVAL;
+        if (hdr[2] < 8ull + (unsigned long long)count * PSFA_BYTES) return -MOS_EINVAL;
+        base = (const unsigned char *)hdr[3] + 8;
+        for (i = 0; i < count; i++) {
+            const unsigned char *a = base + (unsigned long long)i * PSFA_BYTES;
+            int type = 0, filedes = 0;
+            mos_spawn_fa_t *fa = &acts[n];
+            long rc;
+            memcpy(&type, a, 4);
+            memcpy(&filedes, a + 4, 4);
+            memset(fa, 0, sizeof *fa);
+            if (type == PSFA_OPEN) {
+                int oflag = 0;
+                unsigned short mode = 0;
+                memcpy(&oflag, a + 8, 4);
+                memcpy(&mode, a + 12, 2);
+                rc = copy_guest_path(fa->path, (const char *)(a + 14), (int)sizeof fa->path);
+                if (rc) return rc;
+                fa->kind = MOS_SPAWN_FA_OPEN;
+                fa->flags = darwin_oflags(oflag);
+                fa->mode = mode ? mode : 0644;
+                fa->a = filedes;
+            } else if (type == PSFA_CLOSE) {
+                fa->kind = MOS_SPAWN_FA_CLOSE;
+                fa->a = filedes;
+            } else if (type == PSFA_DUP2 || type == PSFA_INHERIT) {
+                int newfd = filedes;
+                if (type == PSFA_DUP2) memcpy(&newfd, a + 8, 4);
+                fa->kind = MOS_SPAWN_FA_DUP2;
+                fa->a = filedes;
+                fa->b = newfd;
+            } else if (type == PSFA_FILEPORT_DUP2) {
+                return -MOS_EINVAL;
+            } else if (type == PSFA_CHDIR) {
+                rc = copy_guest_path(fa->path, (const char *)(a + 8), (int)sizeof fa->path);
+                if (rc) return rc;
+                fa->kind = MOS_SPAWN_FA_CHDIR;
+            } else if (type == PSFA_FCHDIR) {
+                char pth[256];
+                rc = rt_sys(SYS_FDPATH, filedes, (long)pth, (int)sizeof pth, 0, 0, 0);
+                if (rc < 0) return rc;
+                memcpy(fa->path, pth, sizeof fa->path);
+                fa->kind = MOS_SPAWN_FA_CHDIR;
+            } else return -MOS_EINVAL;
+            n++;
+        }
+        v->acts = (unsigned long long)acts;
+        v->nacts = (unsigned)n;
+    }
+    return 0;
+}
+
 static void darwin_svc(rt_thread_t *T) {
     a64_cpu *c = &T->cpu;
     i64 n = (i64)c->x[16];
@@ -557,7 +701,42 @@ static void darwin_svc(rt_thread_t *T) {
         T->intr_sig = 0;
         break;
     }
-    case 2: case 66: r = rt_do_fork(T); break;         /* fork e vfork (vfork = fork com espaço próprio) */
+    case 2: case 66: r = rt_do_fork(T); break;         /* fork; vfork continua fork (espaço próprio, ver rt_do_fork) */
+    case 59: {                                         /* execve(path, argv, envp) */
+        mos_spawn_vec_t v;
+        if (!c->x[0]) { r = -MOS_EINVAL; break; }
+        memset(&v, 0, sizeof v);
+        v.argv = c->x[1];
+        v.envp = c->x[2];
+        r = rt_sys(SYS_EXECVE, (long)c->x[0], (long)&v, 0, 0, 0, 0);
+        break;
+    }
+    case 244: {                                        /* posix_spawn(pid*, path, desc, argv, envp) */
+        mos_spawn_vec_t v;
+        mos_spawn_fa_t acts[MOS_SPAWN_FA_MAX];
+        int setexec = 0;
+        if (!c->x[1]) { r = -MOS_EINVAL; break; }
+        r = spawn_fill((const void *)c->x[2], c->x[3], c->x[4], &v, acts, &setexec);
+        if (r < 0) break;
+        if (setexec) {
+            r = apply_setexec(acts, v.nacts);
+            if (r < 0) break;
+            v.acts = 0;
+            v.nacts = 0;
+            r = rt_sys(SYS_EXECVE, (long)c->x[1], (long)&v, 0, 0, 0, 0);
+            break;
+        }
+        r = rt_sys(SYS_SPAWNVEC, (long)c->x[1], (long)&v, 0, 0, 0, 0);
+        if (r > 0) {
+            if (c->x[0]) {
+                int pid = (int)r;
+                memcpy((void *)c->x[0], &pid, 4);
+                touch_code(c->x[0], 4);
+            }
+            r = 0;
+        }
+        break;
+    }
     case 20: r = RS0(SYS_GETPID); break;
     case 37: r = RS2(SYS_SIGKILL, c->x[0], sig_darwin_to_mos((int)c->x[1])); break;
     case 372: r = RS0(SYS_GETTID); break;              /* thread_selfid */
