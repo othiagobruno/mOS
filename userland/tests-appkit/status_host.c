@@ -113,6 +113,34 @@ int main(void) {
           "voltar a regular mostra o Dock");
     check(cx_act_activate() == 1 && cx_act_active() == 1, "regular ativa de novo");
 
+    cx_status_reset();
+    {
+        int pop = 1;
+        cx_pop_chrome_t ch;
+        cx_pop_set_anchor(&pop, 200, 100, 40, 20, 3);
+        cx_pop_set_content_size(&pop, 160, 64);
+        cx_pop_set_screen(&pop, 800, 600);
+        check(cx_pop_layout(&pop) == 1 && cx_pop_chrome(&pop, &ch) == 1, "layout da janela do popover");
+        check(ch.edge == 3 && ch.win_y == 120 && ch.win_h == 76 && ch.win_w == 160, "acima: a janela inclui a seta");
+        check(ch.tip_y == 0 && ch.content_y == 12 && ch.content_h == 64, "a seta aponta para a base e o miolo fica acima");
+        check(ch.win_x + ch.tip_x == 220, "a ponta da seta fica no centro da âncora");
+        cx_pop_set_anchor(&pop, 100, 270, 40, 20, 3);
+        cx_pop_set_screen(&pop, 400, 300);
+        cx_pop_layout(&pop);
+        cx_pop_chrome(&pop, &ch);
+        check(ch.edge == 1 && ch.win_y + ch.win_h == 270, "sem espaço acima, a seta vira para baixo");
+        cx_pop_set_anchor(&pop, 300, 100, 40, 40, 0);
+        cx_pop_set_screen(&pop, 800, 600);
+        cx_pop_layout(&pop);
+        cx_pop_chrome(&pop, &ch);
+        check(ch.edge == 0 && ch.win_x + ch.win_w == 300 && ch.tip_x == ch.win_w, "à esquerda a seta aponta para a âncora");
+        cx_pop_set_behavior(&pop, CX_POP_TRANSIENT);
+        cx_pop_show(&pop);
+        check(cx_pop_shown(&pop) == 1, "o transient abre com a janela calculada");
+        cx_pop_close(&pop);
+        check(cx_pop_shown(&pop) == 0, "close fecha o popover desenhado");
+    }
+
     printf("appkit-status: %d/%d ok\n", ok, total);
     return ok == total ? 0 : 1;
 }
