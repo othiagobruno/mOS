@@ -1005,7 +1005,7 @@ void dispatch_release(void *o) { cx_dispatch_release(o); }
 void dispatch_retain(void *o) { cx_dispatch_retain(o); }
 
 /* unwinder: só usado em panics; sem tabelas, informa "fim da pilha" */
-/* _Unwind_*: o libunwind do LLVM (tools/build-libsystem*.ps1; tabelas do Mach-O e do .eh_frame do libSystem, unwind_ls.c) */
+/* _Unwind_* no x86_64: cxx_unwind.c (eh_frame e __unwind_info). arm64: libunwind do script arm64. */
 
 /* processos, usuários e sistema */
 int sched_yield(void) { SYS0(SYS_YIELD); return 0; }

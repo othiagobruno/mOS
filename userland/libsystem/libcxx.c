@@ -13,8 +13,7 @@
  *   __shared_weak_count {vptr; long owners-1; long weak_owners-1}; vtable: D1 D0 on_zero_shared
  *                get_deleter on_zero_shared_weak
  *   logic_error/runtime_error {vptr; const char *msg}, system_error + error_code {int; const category*}
- * Exceções: sem desenrolamento de pilha no mOS ainda; lançar uma exceção C++ informa o tipo/mensagem e
- * encerra o processo (o mesmo que um módulo compilado com -fno-exceptions faria).
+ * Exceções: __cxa_throw / __gxx_personality_v0 estão em cxx_unwind.c (x86_64 desenrola de verdade).
  * Nomes: símbolos Itanium sem o "_" extra do Mach-O (o carregador o tira).
  */
 #include "foundation.h"
@@ -303,25 +302,7 @@ void cxx_terminate(void) { cxx_fatal("std::terminate", 0); }
 #define EXC_HDR 128
 void *__cxa_allocate_exception(usz n) { u8 *p = malloc(EXC_HDR + n); if (!p) cxx_fatal("bad_alloc", "__cxa_allocate_exception"); memset(p, 0, EXC_HDR); return p + EXC_HDR; }
 void __cxa_free_exception(void *p) { if (p) free((u8 *)p - EXC_HDR); }
-void __cxa_throw(void *obj, void *tinfo, void (*dtor)(void *)) {
-    (void)dtor;
-    /* type_info {vptr; const char *nome mangled} */
-    const char *name = tinfo ? ((const char **)tinfo)[1] : "?";
-    const char *what = 0;
-    void **vt = obj ? *(void ***)obj : 0;
-    if (vt && (vt == (void **)&vt_logic_error[2] || vt == (void **)&vt_runtime_error[2] || vt == (void **)&vt_length_error[2] ||
-               vt == (void **)&vt_out_of_range[2])) what = ((cxx_err_t *)obj)->msg;
-    cx_puts_fd(2, "libc++[mOS]: exceção C++ lançada (o mOS ainda não desenrola a pilha): ");
-    cx_puts_fd(2, name ? name : "?");
-    if (what) { cx_puts_fd(2, ": "); cx_puts_fd(2, what); }
-    cx_puts_fd(2, "\n");
-    abort();
-}
-void *__cxa_begin_catch(void *e) { return e; }
-void __cxa_end_catch(void) {}
-void __cxa_rethrow(void) { cxx_fatal("__cxa_rethrow", "sem exceção ativa"); }
-/* referenciada pelos CIEs do __eh_frame; nunca chamada, porque nada desenrola */
-int __gxx_personality_v0(int version, int actions, u64 cls, void *exc, void *ctx) { (void)version; (void)actions; (void)cls; (void)exc; (void)ctx; return 8; }
+/* __cxa_throw, __cxa_begin_catch, __cxa_end_catch, __cxa_rethrow e __gxx_personality_v0: cxx_unwind.c */
 
 /* vtables de type_info do ABI (__class_type_info etc.): os typeinfo dos módulos apontam para elas.
  * Sem RTTI de verdade (dynamic_cast/catch); entradas nulas. */

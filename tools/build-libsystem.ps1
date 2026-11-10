@@ -28,22 +28,9 @@ if (-not $zig) { Write-Host 'zig nao encontrado, ou o zig.exe de .tools nao e um
 New-Item -ItemType Directory -Force "$root\build" | Out-Null
 $src = Get-ChildItem "$root\userland\libsystem\*" -Include *.c, *.S | ForEach-Object FullName
 
-# libunwind do LLVM (o do zig, Apache-2.0 com excecao LLVM): _Unwind_*/unw_* de verdade (excecoes C++ e ObjC, objc_exc.c).
-# C/C++ no modo Apple (x86_64-apple-macos11-elf: as tabelas das imagens Mach-O por _dyld_find_unwind_sections, dlfcn.c),
-# .S sem __APPLE__; o .eh_frame do proprio libSystem vem de unwind_ls.c (tools\patch-ehframe.ps1, depois do link).
-$uw = "$zigdir\lib\libunwind"
-$uwo = "$root\build\libunwind-x86"
-New-Item -ItemType Directory -Force $uwo | Out-Null
-$uwflags = @('--target=x86_64-apple-macos11-elf', '-O2', '-g0', '-fPIC', '-mno-red-zone', '-fno-stack-protector', '-funwind-tables',
-    '-D_LIBUNWIND_IS_NATIVE_ONLY', '-DNDEBUG', '-w', "-I$uw\include", '-isystem', "$zigdir\lib\include", '-isystem', "$zigdir\lib\libc\include\any-darwin-any")
-foreach ($f in 'libunwind.cpp', 'UnwindLevel1.c', 'UnwindLevel1-gcc-ext.c', 'UnwindRegistersSave.S', 'UnwindRegistersRestore.S') {
-    $o = "$uwo\$f.o"
-    if ((Test-Path $o) -and (Get-Item $o).LastWriteTime -gt (Get-Item $zig).LastWriteTime) { $src += $o; continue }
-    $x = switch -Wildcard ($f) { '*.cpp' { @('-std=c++17', '-fno-exceptions', '-fno-rtti', '-nostdinc++') } '*.S' { @('-U__APPLE__', '-U__MACH__') } default { @('-std=c11') } }
-    & $zig clang @uwflags @x -c "$uw\src\$f" -o $o 2>&1 | ForEach-Object { "$_" }
-    if ($LASTEXITCODE -ne 0) { Write-Host "libunwind ($f) FAILED" -ForegroundColor Red; exit 1 }
-    $src += $o
-}
+# x86_64: _Unwind_* e a personality C++ estão em userland/libsystem/cxx_unwind.c (mesmo papel do
+# libunwind do LLVM, Apache-2.0 com exceção LLVM). Não ligar os .o do zig aqui: os nomes batem.
+# arm64 continua em tools/build-libsystem-arm64.ps1, sem mexer no ABI do kernel.
 
 & $zig cc -target x86_64-freestanding-none -O2 -g0 -ffreestanding -fno-stack-protector -fno-builtin -nostdlib -static -no-pie `
     -fpie -mno-red-zone -Wall -Wno-unused-parameter -Wno-incompatible-library-redeclaration -Wno-builtin-requires-header `
