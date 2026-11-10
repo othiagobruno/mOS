@@ -165,6 +165,16 @@ if (-not (Test-Path "$wkdir\WebKit")) {
     if (Test-MosWindows) { Write-Host 'WebKit.framework build FAILED' -ForegroundColor Red; exit 1 }
     Write-Host 'aviso: WebKit.framework não compilou neste Linux' -ForegroundColor Yellow
 }
+# Virtualization.framework: classes VZ* que o Claude Desktop importa. Sem hipervisor (Virtualization.m).
+$vzdir = "$esp\mOS\System\Library\Frameworks\Virtualization.framework\Versions\A"
+New-Item -ItemType Directory -Force $vzdir | Out-Null
+& $zig cc -target x86_64-macos -O2 -shared -x objective-c "-I$root\userland\sdk\include" -I"$root\userland\frameworks\Virtualization" -Wno-objc-root-class -Wno-objc-method-access `
+    "$root\userland\frameworks\Virtualization\Virtualization.m" -o "$vzdir\Virtualization" '-Wl,-install_name,/System/Library/Frameworks/Virtualization.framework/Versions/A/Virtualization' `
+    '-Wl,-undefined,dynamic_lookup' 2>&1 | Select-String ' error' | ForEach-Object { "  $($_.Line)" }
+if (-not (Test-Path "$vzdir\Virtualization")) {
+    if (Test-MosWindows) { Write-Host 'Virtualization.framework build FAILED' -ForegroundColor Red; exit 1 }
+    Write-Host 'aviso: Virtualization.framework não compilou neste Linux' -ForegroundColor Yellow
+}
 # tradutor arm64 (docs/tradutor-arm64.md): o runtime a64rt.mos (tools\build-a64rt.ps1) e o libSystem arm64
 # (tools\build-libsystem-arm64.ps1) em /Sistema/Biblioteca/a64; sem eles os apps só arm64 dizem o que falta
 $a64 = "$esp\mOS\Sistema\Biblioteca\a64"

@@ -49,7 +49,8 @@ bool              virtio_gpu_probe(gpu_info_t *g);   /* dev/virtio_gpu.c */
 u32               virtio_gpu_caps(void);             /* MOS_GPU_CAP_VIRGL / VENUS */
 int               virtio_gpu_ctx(unsigned id, unsigned kind, int create);
 int               virtio_gpu_bo(unsigned ctx, unsigned id, unsigned long long size, int create);
-int               virtio_gpu_submit(unsigned ctx, const void *cmds, unsigned n, unsigned fence_id);
+int               virtio_gpu_submit(unsigned ctx, const void *cmds, unsigned n, int pid, unsigned fence_id);
+void              gpu_fence_from_irq(int pid, unsigned fence); /* dev/gpu_abi.c, chamado no IRQ */
 /* KMS: framebuffer e modo. Intel Gen9+ programa o pipe; AMD só troca o modo acompanhado. */
 int               gpu_kms_available(void);
 int               gpu_kms_set(unsigned connector, unsigned w, unsigned h, unsigned stride, unsigned format, unsigned long long surf_phys);
