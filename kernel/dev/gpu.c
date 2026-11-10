@@ -14,6 +14,7 @@
  * Config PCI: GGC 0x50 (memória roubada e GTT), BDSM 0x5C (Gen11+: 0xC0, 64 bits).
  */
 #include "gpu.h"
+#include "syscall.h"
 
 #define MAX_GPUS 4
 
@@ -288,6 +289,51 @@ void gpu_init(void) {
     snprintf(summary, sizeof summary, "%s %s (%s)%s", m->maker, m->family, m->arch,
              ngpus > 1 ? (owner ? " + outra GPU" : " + outras GPUs") : "");
     kprintf("gpu: %d GPU(s); a tela do UEFI está na %s %s\n", ngpus, owner ? owner->maker : "?", owner ? owner->family : "(não identificada)");
+}
+
+int gpu_kms_available(void) {
+    for (int i = 0; i < ngpus; i++) {
+        if (gpus[i].vendor == 0x8086 && gpus[i].gen >= 9 && gpus[i].pipe >= 0 && intel_regs) return 1;
+        if (gpus[i].vendor == 0x1002 && gpus[i].aperture) return 1;
+    }
+    return 0;
+}
+
+/* Intel Gen9+: o plano já está ligado pelo firmware. Troca a superfície (deslocamento na abertura)
+ * e o tamanho do pipe. AMD: o modo fica registrado; a superfície precisa cair na abertura da VRAM.
+ * Sem programar PLL nem treino de link. */
+int gpu_kms_set(unsigned connector, unsigned w, unsigned h, unsigned stride, unsigned format, unsigned long long surf_phys) {
+    if (!w || !h || stride < w * 4 || (format != MOS_GPU_FMT_BGRA8 && format != MOS_GPU_FMT_RGBA8)) return -MOS_EINVAL;
+    gpu_info_t *g = NULL;
+    for (int i = 0; i < ngpus; i++) if (gpus[i].display) { g = &gpus[i]; break; }
+    if (!g && ngpus) g = &gpus[0];
+    if (!g) return -MOS_ENOENT;
+    if (connector == MOS_GPU_CONN_EXTERNAL) return -MOS_ENOENT;
+    if (g->vendor == 0x8086 && g->gen >= 9 && intel_regs && g->pipe >= 0) {
+        u32 pipe = (u32)g->pipe;
+        u32 surf = 0;
+        if (surf_phys) {
+            if (!g->aperture || surf_phys < g->aperture) return -MOS_EINVAL;
+            surf = (u32)(surf_phys - g->aperture);
+        } else surf = ir(0x7019C + pipe * 0x1000) & ~0xFFFu;
+        mmio_w32(intel_regs, 0x6001C + pipe * 0x1000, ((w - 1) << 16) | (h - 1));
+        mmio_w32(intel_regs, 0x70188 + pipe * 0x1000, (stride / 64) & 0xFFF);
+        mmio_w32(intel_regs, 0x7019C + pipe * 0x1000, surf);
+        u32 ctl = ir(0x70180 + pipe * 0x1000);
+        mmio_w32(intel_regs, 0x70180 + pipe * 0x1000, ctl | 0x80000000u);
+        u32 conf = ir(0x70008 + pipe * 0x1000);
+        mmio_w32(intel_regs, 0x70008 + pipe * 0x1000, conf | 0x80000000u);
+        g->mode_w = w; g->mode_h = h; g->stride = stride;
+        kprintf("gpu: modo Intel pipe %c agora %ux%u stride %u\n", 'A' + (int)pipe, w, h, stride);
+        return 0;
+    }
+    if (g->vendor == 0x1002 && g->aperture) {
+        if (surf_phys && (surf_phys < g->aperture)) return -MOS_EINVAL;
+        g->mode_w = w; g->mode_h = h; g->stride = stride;
+        kprintf("gpu: modo AMD registrado %ux%u stride %u (sem PLL)\n", w, h, stride);
+        return 0;
+    }
+    return -MOS_ENOENT;
 }
 
 int gpu_count(void) { return ngpus; }

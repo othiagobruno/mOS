@@ -13,6 +13,7 @@
 
 const char *cx_cstr(id o);
 int cx_media_tcc(const char *service);
+int cx_tcc_preflight(const char *service);
 int strcmp(const char *a, const char *b);
 void *memcpy(void *d, const void *s, size_t n);
 void *calloc(size_t n, size_t m);
@@ -102,7 +103,12 @@ static u8 dev_has_media(id s, SEL c, id type) {
 }
 
 typedef struct { id obj; int is_input; int kind; } ioitem_t;
-typedef struct { cx_class_t *isa; int running; int err; ioitem_t *items; int n; int cap; } avsess_t;
+typedef struct { cx_class_t *isa; int running; int err; int screen; ioitem_t *items; int n; int cap; } avsess_t;
+
+cx_class_t AVCaptureScreenInput_c __asm__("OBJC_CLASS_$_AVCaptureScreenInput");
+cx_class_t AVCaptureScreenInput_m __asm__("OBJC_METACLASS_$_AVCaptureScreenInput");
+typedef struct { cx_class_t *isa; u32 display; } avscreen_t;
+int cx_tcc_preflight(const char *service);
 
 static void sess_deliver(avsess_t *s) {
     short pcm[1024];
@@ -124,6 +130,12 @@ static void sess_deliver(avsess_t *s) {
 static void sess_start(id s, SEL c) {
     (void)c;
     avsess_t *ss = (avsess_t *)s;
+    /* Entrada de tela exige gravação de tela e não fabrica quadro: isso é o SCStream. */
+    if (ss->screen) {
+        ss->running = cx_tcc_preflight("kTCCServiceScreenCapture") == 1;
+        ss->err = ss->running ? 0 : 1;
+        return;
+    }
     int mic = 0, cam = 0;
     for (int i = 0; i < ss->n; i++) if (ss->items[i].is_input) {
         if (ss->items[i].kind == 1) mic = 1;
@@ -147,6 +159,7 @@ static void sess_add(id s, SEL c, id io) {
     (void)c;
     if (!io) return;
     avsess_t *ss = (avsess_t *)s;
+    if (*(cx_class_t **)io == &AVCaptureScreenInput_c) ss->screen = 1;
     if (ss->n >= ss->cap) {
         int cap = ss->cap ? ss->cap * 2 : 4;
         ioitem_t *ni = calloc((size_t)cap, sizeof *ni);
@@ -156,7 +169,7 @@ static void sess_add(id s, SEL c, id io) {
         ss->items = ni;
         ss->cap = cap;
     }
-    int input = cx_responds(object_getClass(io), sel_registerName("device"));
+    int input = cx_responds(object_getClass(io), sel_registerName("device")) || *(cx_class_t **)io == &AVCaptureScreenInput_c;
     ss->items[ss->n].obj = objc_retain(io);
     ss->items[ss->n].is_input = input;
     ss->items[ss->n].kind = input ? kind_of_input(io) : 0;
@@ -166,6 +179,7 @@ static void sess_remove(id s, SEL c, id io) {
     (void)c;
     avsess_t *ss = (avsess_t *)s;
     for (int i = 0; i < ss->n; i++) if (ss->items[i].obj == io) {
+        if (*(cx_class_t **)io == &AVCaptureScreenInput_c) ss->screen = 0;
         objc_release(io);
         ss->items[i] = ss->items[ss->n - 1];
         ss->n--;
@@ -192,6 +206,11 @@ static id input_with_device(id cls, SEL c, id dev, id *err) {
     return (id)in;
 }
 static id input_device(id s, SEL c) { (void)c; return ((avin_t *)s)->device; }
+static id screen_init(id s, SEL c, u32 display) {
+    (void)c;
+    ((avscreen_t *)s)->display = display ? display : 1;
+    return s;
+}
 
 static void add(const char *cls, const char *sel, void *fn, int meta) {
     cx_class_t *k = cx_class_named(cls);
@@ -200,6 +219,10 @@ static void add(const char *cls, const char *sel, void *fn, int meta) {
 }
 
 void cx_avcapture_init(void) {
+    if (!cx_class_named("AVCaptureScreenInput")) {
+        cx_define_class(&AVCaptureScreenInput_c, &AVCaptureScreenInput_m, "AVCaptureScreenInput", cx_class_named("NSObject"), 16);
+        cx_add_method(&AVCaptureScreenInput_c, "initWithDisplayID:", (void *)screen_init);
+    }
     add("AVCaptureDevice", "authorizationStatusForMediaType:", (void *)auth_status, 1);
     add("AVCaptureDevice", "requestAccessForMediaType:completionHandler:", (void *)request_access, 1);
     add("AVCaptureDevice", "devices", (void *)dev_devices, 1);

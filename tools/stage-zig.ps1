@@ -52,19 +52,16 @@ $ks = Get-ChildItem "$root\kernel" -Recurse -Include *.c, *.S | ForEach-Object {
 [IO.File]::WriteAllText("$src\libsystem-fontes.txt", ($ls -join "`n") + "`n", [Text.Encoding]::ASCII)
 [IO.File]::WriteAllText("$src\kernel-fontes.txt", ($ks -join "`n") + "`n", [Text.Encoding]::ASCII)
 
-# referência do host: o libSystem ligado como a escada liga (caminhos relativos, sem o patch-ehframe.ps1 do build normal),
-# com os objetos do libunwind que o build-libsystem.ps1 deixou em build\libunwind-x86
+# referência do host: o libSystem ligado como a escada liga. O _Unwind_* do x86_64 está em cxx_unwind.c.
 if (-not (Get-Command Resolve-MosZig -ErrorAction SilentlyContinue)) { foreach ($mosHost in @("$PSScriptRoot\stage-host.ps1","$PSScriptRoot\..\stage-host.ps1","$PSScriptRoot\..\..\stage-host.ps1","$PSScriptRoot\..\..\..\stage-host.ps1")) { if (Test-Path -LiteralPath $mosHost) { . $mosHost; break } } }
 $mosZigPick = Resolve-MosZig $root
 if (-not $mosZigPick) { exit 1 }
 $hzBin = $mosZigPick.Path
-$uwo = @('libunwind.cpp', 'UnwindLevel1.c', 'UnwindLevel1-gcc-ext.c', 'UnwindRegistersSave.S', 'UnwindRegistersRestore.S') | ForEach-Object { "build/libunwind-x86/$_.o" }
 Push-Location $root
 & $hzBin cc -target x86_64-freestanding-none -O2 -g0 -ffreestanding -fno-stack-protector -fno-builtin -nostdlib -static -no-pie `
     -fpie -mno-red-zone -w -Iuserland/libsystem/kshim '-Wl,--image-base=0x400000100000' '-Wl,-e,cx_start' '-Wl,--no-gc-sections' `
-    @ls @uwo -o "$src\libSystem-ref.mos" 2>&1 | Select-Object -First 5 | ForEach-Object { "  ref: $_" }
+    @ls -o "$src\libSystem-ref.mos" 2>&1 | Select-Object -First 5 | ForEach-Object { "  ref: $_" }
 Pop-Location
-foreach ($o in $uwo) { Copy-Item -Force "$root\$o" "$src\$(Split-Path $o -Leaf).host" }
 # hashes de cada objeto do libSystem compilado no host (degrau 6 da escada compara um a um)
 $tmpo = Join-Path $env:TEMP "mos-zig-objs"
 New-Item -ItemType Directory -Force $tmpo | Out-Null

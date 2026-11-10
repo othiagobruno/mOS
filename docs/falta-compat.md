@@ -52,8 +52,11 @@ Sem o símbolo, ou com negação, a API devolve erro e não captura. 0 quadros d
 um sinal inventado. Não houve teste em VM nem em hardware: o anel de captura não foi exercitado.
 
 **Vídeo:** o AVPlayer não produz quadro. `AVCaptureSession` tem o portão de TCC (câmera/microfone) e lista de
-dispositivos vazia; `startRunning` com câmera concedida fica `isRunning` sem quadro. VideoToolbox continua
-devolvendo -12906/-12908. Sem FairPlay.
+dispositivos vazia; `startRunning` com câmera concedida fica `isRunning` sem quadro. Sem FairPlay.
+`AVCaptureScreenInput` só muda o portão para `kTCCServiceScreenCapture`; não fabrica quadro.
+A captura contínua (`SCStream`, `CGDisplayStream`) lê `DEV_SCREEN_CAPTURE` depois de `cx_tcc_preflight` e
+embrulha o ARGB em IOSurface, CVPixelBuffer e CMSampleBuffer. H.264 no VideoToolbox é software
+(I_PCM, BGRA ou NV12, sample AVCC). HEVC continua -12906/-12908. `VTPixelTransferSession` copia o buffer quando formato e tamanho coincidem.
 
 ## 4. `.metallib` (AIR) — opcodes emitidos e conferidos no host contra o fonte
 

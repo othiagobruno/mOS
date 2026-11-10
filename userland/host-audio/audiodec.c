@@ -20,9 +20,8 @@
  *   kTCCServiceMicrophone, kTCCServiceCamera, kTCCServiceScreenCapture.
  * Sem concessão, captura devolve erro de permissão. Não há captura silenciosa.
  */
-#include <stdlib.h>
-#include <string.h>
-#include <stdint.h>
+#include "sys.h"
+#include "libc.h"
 
 #define MINIMP3_IMPLEMENTATION
 #define MINIMP3_NO_SIMD

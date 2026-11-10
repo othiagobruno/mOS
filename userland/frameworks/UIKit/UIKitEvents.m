@@ -218,6 +218,22 @@ static CGFloat mos_dist(CGPoint a, CGPoint b) { CGFloat dx = a.x - b.x, dy = a.y
 - (void)_mosTouchUpInside { [self sendActionsForControlEvents:(1 << 6) | (1 << 13)]; }
 @end
 
+/* ponteiro (mouse sem botão): UIHoverGestureRecognizer. UIGestureRecognizerState began/changed/ended. */
+@interface UIHoverGestureRecognizer : UIGestureRecognizer
+- (void)_mosPointer:(CGPoint)p inside:(BOOL)inside;
+@end
+@implementation UIHoverGestureRecognizer
+- (void)_mosPointer:(CGPoint)p inside:(BOOL)inside {
+    _cur = p;
+    if (inside) {
+        if (_state == 0) { _state = 1; [self _mosFire]; }   /* began */
+        else { _state = 2; [self _mosFire]; }               /* changed */
+    } else if (_state == 1 || _state == 2) {
+        _state = 3; [self _mosFire]; _state = 0;            /* ended */
+    }
+}
+@end
+
 /* ================================================================ NSView hospedeira: mouse e teclado */
 @implementation _UIHostingView (MOSEvents)
 - (BOOL)acceptsFirstResponder { return YES; }
@@ -264,8 +280,31 @@ static CGFloat mos_dist(CGPoint a, CGPoint b) { CGFloat dx = a.x - b.x, dy = a.y
     [self setNeedsDisplay:YES];
 }
 - (void)mouseDown:(NSEvent *)e { [self _mosTouchDownAt:[self _mosPoint:e] clickCount:e.clickCount]; }
+- (void)rightMouseDown:(NSEvent *)e { [self _mosTouchDownAt:[self _mosPoint:e] clickCount:e.clickCount]; }
 - (void)mouseDragged:(NSEvent *)e { [self _mosTouchMoveTo:[self _mosPoint:e]]; }
 - (void)mouseUp:(NSEvent *)e { [self _mosTouchUpAt:[self _mosPoint:e]]; }
+- (void)rightMouseUp:(NSEvent *)e { [self _mosTouchUpAt:[self _mosPoint:e]]; }
+
+/* ponteiro sem botão (NSEvent mouseMoved/Entered) -> UIHoverGestureRecognizer na view do hitTest */
+- (void)_mosPointerMovedTo:(CGPoint)p {
+    UIView *hit = _uiWindow ? [_uiWindow hitTest:p withEvent:nil] : nil;
+    if (_hoverView != hit) _hoverView = hit;
+    for (UIView *v = hit; v; v = v->_superview)
+        for (UIGestureRecognizer *g in v->_gestures)
+            if ([g isKindOfClass:[UIHoverGestureRecognizer class]] && !g->_disabled)
+                [(UIHoverGestureRecognizer *)g _mosPointer:p inside:YES];
+    [self setNeedsDisplay:YES];
+}
+- (void)mouseMoved:(NSEvent *)e { [self _mosPointerMovedTo:[self _mosPoint:e]]; }
+- (void)mouseEntered:(NSEvent *)e { [self _mosPointerMovedTo:[self _mosPoint:e]]; }
+- (void)mouseExited:(NSEvent *)e {
+    (void)e;
+    for (UIView *v = _hoverView; v; v = v->_superview)
+        for (UIGestureRecognizer *g in v->_gestures)
+            if ([g isKindOfClass:[UIHoverGestureRecognizer class]])
+                [(UIHoverGestureRecognizer *)g _mosPointer:CGPointMake(-1e9, -1e9) inside:NO];
+    _hoverView = nil;
+}
 
 /* teclado: o primeiro respondedor da janela recebe o texto (UIKeyInput) */
 - (void)_mosTypeText:(NSString *)s {

@@ -1,7 +1,9 @@
 # mOS - libcurl 8.23.0 (licença curl, COPYING) como /usr/lib/libcurl.4.dylib.
 # Fonte: https://curl.se/download/curl-8.23.0.tar.gz em .tools\curl-dl.
-# tools\libcurl\curl_config.h liga HTTP, arquivo local e zlib, e deixa de fora TLS, LDAP,
-# HTTP/2, HTTP/3, SSH, brotli, zstd, libidn e libpsl. A libz é a de tools\build-zlib.ps1.
+# tools\libcurl\curl_config.h liga HTTP, arquivo local, zlib e mbed TLS (Apache-2.0).
+# A verificação de certificado fica ligada. O bundle é /usr/share/curl/cacert.pem.
+# Fora: LDAP, HTTP/2, HTTP/3, SSH, brotli, zstd, libidn e libpsl.
+# A libz é a de tools\build-zlib.ps1. O mbed TLS é baixado em .tools\mbedtls-dl.
 #   .\tools\build-libcurl.ps1 -Arch x86_64 [-Force]
 param([switch]$Force, [ValidateSet('x86_64', 'arm64')][string]$Arch = 'x86_64')
 $root = Split-Path $PSScriptRoot -Parent
@@ -39,9 +41,39 @@ $zsrc = Get-ChildItem "$root\.tools\zlib-dl" -Directory -Filter 'zlib-*' | Sort-
 if (-not (Test-Path $zlib) -or -not $zsrc) { Write-Host 'libcurl: falta a libz deste arch' -ForegroundColor Red; exit 1 }
 $obj = "$out\obj"
 New-Item -ItemType Directory -Force $obj | Out-Null
+$mver = '3.6.4'
+$msha = 'ec35b18a6c593cf98c3e30db8b98ff93e8940a8c4e690e66b41dfc011d678110'
+$mdl = "$root\.tools\mbedtls-dl"
+$mtgz = "$mdl\mbedtls-$mver.tar.bz2"
+$msrc = "$mdl\mbedtls-$mver"
+New-Item -ItemType Directory -Force $mdl | Out-Null
+$mhave = $false
+if (Test-Path $mtgz) {
+    $mgot = (Get-FileHash -Algorithm SHA256 $mtgz).Hash.ToLower()
+    if ($mgot -eq $msha) { $mhave = $true } else { Remove-Item $mtgz -Force }
+}
+if (-not $mhave) {
+    Invoke-WebRequest -Uri "https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-$mver/mbedtls-$mver.tar.bz2" -OutFile $mtgz -UseBasicParsing
+    $mgot = (Get-FileHash -Algorithm SHA256 $mtgz).Hash.ToLower()
+    if ($mgot -ne $msha) { Write-Host "mbedtls: hash $mgot != $msha" -ForegroundColor Red; exit 1 }
+}
+if (-not (Test-Path "$msrc\include\mbedtls\ssl.h")) {
+    & tar -xjf $mtgz -C $mdl
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path "$msrc\include\mbedtls\ssl.h")) { Write-Host 'mbedtls: extrair o fonte falhou' -ForegroundColor Red; exit 1 }
+}
+$mobj = "$out\mbed"
+New-Item -ItemType Directory -Force $mobj | Out-Null
+$ma = @()
+foreach ($mf in Get-ChildItem "$msrc\library" -Filter *.c) {
+    if ($mf.Name -match 'net_sockets') { continue }
+    $mo = "$mobj\$($mf.Name).o"
+    $ma += $mo
+    & $zig cc -target $tgt -O2 -g0 -fPIC -I "$msrc\include" -I "$msrc\library" -DMBEDTLS_CONFIG_FILE=\"mbedtls/mbedtls_config.h\" -c $mf.FullName -o $mo 2>&1 | Select-String 'error:' | Select-Object -First 6 | ForEach-Object { "  $($_.Line)" }
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path $mo)) { Write-Host "mbedtls: $($mf.Name) FALHOU" -ForegroundColor Red; exit 1 }
+}
 $cflags = @('-target', $tgt, '-O2', '-g0', '-fPIC', '-fvisibility=hidden',
-    '-DBUILDING_LIBCURL', '-DHAVE_CONFIG_H', '-DCURL_HIDDEN_SYMBOLS',
-    '-I', "$PSScriptRoot\libcurl", '-I', "$src\lib", '-I', "$src\include", '-I', $zsrc.FullName)
+    '-DBUILDING_LIBCURL', '-DHAVE_CONFIG_H', '-DCURL_HIDDEN_SYMBOLS', '-DUSE_MBEDTLS',
+    '-I', "$PSScriptRoot\libcurl", '-I', "$src\lib", '-I', "$src\include", '-I', $zsrc.FullName, '-I', "$msrc\include")
 $objs = @()
 foreach ($f in Get-ChildItem "$src\lib" -Recurse -Filter *.c) {
     $tag = $f.FullName.Substring(("$src\lib\").Length) -replace '[\\/]', '_'
@@ -52,11 +84,14 @@ foreach ($f in Get-ChildItem "$src\lib" -Recurse -Filter *.c) {
 }
 $utf8 = New-Object System.Text.UTF8Encoding $false
 $rsp = "$out\link.rsp"
-$lines = $objs | ForEach-Object { '"' + ($_ -replace '\\', '/') + '"' }
+$lines = @($objs + $ma) | ForEach-Object { '"' + ($_ -replace '\\', '/') + '"' }
 [IO.File]::WriteAllLines($rsp, [string[]]$lines, $utf8)
 & $zig cc -target $tgt -shared -fvisibility=hidden -o $dylib "@$rsp" $zlib `
     '-Wl,-install_name,/usr/lib/libcurl.4.dylib' '-Wl,-compatibility_version,7.0.0' '-Wl,-current_version,8.23.0' `
     '-Wl,-undefined,dynamic_lookup' 2>&1 | Select-String ' error' | ForEach-Object { "  $_" }
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path $dylib)) { Write-Host 'libcurl.4.dylib FALHOU' -ForegroundColor Red; exit 1 }
 Copy-Item "$src\COPYING" "$out\COPYING" -Force
-Write-Host ("OK: $dylib ({0:N0} KiB, curl {1}, sem TLS)" -f ((Get-Item $dylib).Length / 1KB), $ver)
+Copy-Item "$msrc\LICENSE" "$out\LICENSE.mbedtls" -Force
+New-Item -ItemType Directory -Force "$out\certs" | Out-Null
+Copy-Item "$root\assets\certs\cacert.pem" "$out\certs\cacert.pem" -Force
+Write-Host ("OK: $dylib ({0:N0} KiB, curl {1}, mbed TLS {2}, verificacao ligada)" -f ((Get-Item $dylib).Length / 1KB), $ver, $mver)

@@ -71,9 +71,9 @@ Anotar, com o log serial se houver, sem marcar como sucesso o que não aconteceu
 1. O pendrive entra pelo `\EFI\BOOT\BOOTX64.EFI` no menu UEFI, com Secure Boot desligado.
 2. O assistente aparece e o Live chega à mesa.
 3. Um `.dmg` com um `.app` no topo (não um app da App Store) monta e o app aparece em Aplicativos. Um `.app` com `Contents/SC_Info` não é copiado; o log deve ter `SC_Info` e `FairPlay`. Não contornar.
-4. Um `.pkg` mostra o aviso de que xar/bom não é extraído. O arquivo continua onde estava.
+4. Um `.pkg` flat (xar com Payload em cpio gzip ou pbzx e Bom) coloca o app em Aplicativos. O log diz quantos arquivos entraram e que os scripts não rodaram. Um pacote com `..` no caminho, ou com `SC_Info`, é recusado e não escreve fora de Aplicativos.
 5. Encerrar pelo ⌘Q espera e sai. ⌥⌘Esc força. Um app que ignore o evento deve receber SIGTERM e, cerca de 2 s depois, SIGKILL. Não há como ver o sinal sem o log do processo; a janela sumir e o Dock apagar a bolinha é o observável.
 6. Com persistência consentida, um arquivo em `~/Library/Preferences` continua lá depois de reiniciar o Live persistente. Sem consentimento, não continua.
 7. SwiftUI / um `.node` que liga `libswiftCore` só vale se o passo 1 copiou a cadeia. Sem o aviso "Swift na imagem" no build, o teste não diz nada sobre Swift.
 
-Apps da App Store (FairPlay) ficam de fora de propósito. Setapp, se instalar outro app por `.dmg` com o `.app` no topo, cai no passo 3. Se instalar por `.pkg`, cai no passo 4 e o app não entra.
+Apps da App Store (FairPlay) ficam de fora de propósito. Setapp, se instalar outro app por `.dmg` com o `.app` no topo, cai no passo 3. Se instalar por `.pkg` sem `SC_Info`, cai no passo 4 e o app entra em Aplicativos, sem rodar o script do instalador.

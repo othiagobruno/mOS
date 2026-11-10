@@ -24,6 +24,7 @@ static FILE *fopen_out(const char *p) { return _wfopen(wpath(p), L"wb"); }
 #include <sys/stat.h>
 #define mkdir_(p) mkdir(p, 0755)
 #define fopen_out(p) fopen(p, "wb")
+#define _ftelli64 ftello
 #endif
 
 static u32 crc_tab[256];
@@ -61,7 +62,7 @@ static void walk(dnode_t *n, const char *rel) {
         files++;
         bytes += len;
         printf("%c %s  %llu  %08x\n", c->type == DN_LINK ? 'L' : 'F', path, (unsigned long long)len, crc32(b, len));
-        if (outdir && c->type == DN_FILE) {
+        if (outdir && (c->type == DN_FILE || c->type == DN_LINK)) {
             char p[2300];
             snprintf(p, sizeof(p), "%s%s", outdir, path);
             FILE *o = fopen_out(p);
