@@ -23,6 +23,30 @@
 #include "svcnative.h"
 #include "plistmini.h"
 
+/* zig 0.17 trata declaração implícita como erro. mos.h tem strchr, não strrchr nem snprintf.
+ * As três chamadas deste arquivo são literais com um único %s. */
+static char *strrchr(const char *s, int c) {
+    const char *r = 0;
+    for (; *s; s++) if (*s == (char)c) r = s;
+    return (char *)(c ? r : s);
+}
+static int snprintf(char *d, usize n, const char *fmt, const char *a) {
+    usize o = 0;
+    if (!n) return 0;
+    for (; *fmt && o + 1 < n; fmt++) {
+        if (*fmt == '%' && fmt[1] == 's') {
+            fmt++;
+            if (!a) a = "";
+            while (*a && o + 1 < n) d[o++] = *a++;
+        } else if (*fmt == '%' && fmt[1] == '%') {
+            fmt++;
+            d[o++] = '%';
+        } else d[o++] = *fmt;
+    }
+    d[o] = 0;
+    return (int)o;
+}
+
 #define LEGACY_DIR "/Sistema/Biblioteca/LaunchDaemons"
 #define MAX_JOBS 64
 #define MAX_ARGS 16

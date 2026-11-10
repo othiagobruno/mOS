@@ -55,8 +55,10 @@ Como repetir:
 ```
 
 O roteiro é `tools/testdata/zig-escada.sh`, e as linhas `zig:` vão para o log serial. O zig vem de
-ziglang.org (`zig-x86_64-macos-0.17.1.tar.xz`, SHA-256 conferido) e fica em `.tools\macos-zig-dl`. O nome não pode
-começar com `zig-`, porque os scripts pegam o primeiro `.tools\zig-*` como zig do Windows. Na imagem, ele ocupa
+ziglang.org (`zig-x86_64-macos-0.17.1.tar.xz`, SHA-256 conferido) e fica em `.tools\macos-zig-dl`. O nome não começa
+com `zig-`: os scripts escolhem o zig do host pela magia do arquivo (PE/MZ no Windows, ELF no Linux) e, se houver
+mais de um, pela maior versão (`docs/staging-linux.md`). Um binário de macOS dentro de `zig-*` é ignorado, mas o
+tarball do macOS continua fora desse filtro para não disputar com o compilador do host. Na imagem, ele ocupa
 1745 arquivos em `/usr/local/zig`: só as libcs do Darwin ficam.
 
 | Degrau | Tempo |

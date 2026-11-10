@@ -16,7 +16,8 @@ param([Parameter(Mandatory = $true)][string]$App, [string]$OutDir = 'build-elect
       [string]$Args0 = '--in-process-gpu --disable-gpu --no-sandbox --enable-logging --v=0', [string]$Tracepoints = '',
       [string]$SubstituirApp = '', [switch]$ComSwift, [string]$AbrirURL = '', [int]$AbrirAposMs = 120000, [string]$ComApp = '',
       [string]$NavegadorPadrao = '', [string[]]$ArgumentosApp = @(), [string]$MotorHorizonte = '',
-      [string]$AbrirURL2 = '', [int]$AbrirApos2Ms = 180000, [string]$Fatia = 'x86_64')
+      [string]$AbrirURL2 = '', [int]$AbrirApos2Ms = 180000, [string]$Fatia = 'x86_64',
+      [switch]$CursorExtras, [string]$Bottles = '')
 # -MotorHorizonte <Chromium.app preparado pelo tools\stage-chromium.ps1>: o motor do Horizonte, em
 #   /Sistema/Biblioteca/Horizonte/Chromium.app (fora de /Aplicativos: um app só, o Horizonte). docs/navegador-chromium.md
 # -NavegadorPadrao <CFBundleIdentifier>: a escolha do usuário em Ajustes > Navegador padrão (LSHandlers de http/https em
@@ -35,25 +36,53 @@ param([Parameter(Mandatory = $true)][string]$App, [string]$OutDir = 'build-elect
 # -ComApp <pasta .app já preparada>: copia mais um app para /Aplicativos (ex.: o Google Chrome de build-chrome\esp,
 #   que o stage-chrome.ps1 já reduziu à fatia x86_64), para o app testado abrir https://... nele.
 $root = Split-Path $PSScriptRoot -Parent
+. "$PSScriptRoot\stage-host.ps1"
+if (-not (Test-MosWindows)) {
+    $sh = Join-Path $PSScriptRoot 'stage-image.sh'
+    $bash = Get-Command bash -ErrorAction SilentlyContinue
+    if ($bash -and (Test-Path -LiteralPath $sh)) {
+        $ba = @($sh, '--out', $OutDir, '--size', "$SizeMiB", '--app', $App, '--fatia', $Fatia, '--max-modulo-mib', "$MaxModuloMiB", '--args0', $Args0)
+        if ($Autostart) { $ba += '--autostart' }
+        if ($Diagnostico) { $ba += '--diagnostico' }
+        if ($CaLog) { $ba += '--ca-log' }
+        if ($Tracepoints) { $ba += @('--tracepoints', $Tracepoints) }
+        if ($SubstituirApp) { $ba += @('--substituir-app', $SubstituirApp) }
+        if ($ComSwift) { $ba += '--com-swift' }
+        if ($AbrirURL) { $ba += @('--abrir-url', $AbrirURL, '--abrir-apos-ms', "$AbrirAposMs") }
+        if ($AbrirURL2) { $ba += @('--abrir-url2', $AbrirURL2, '--abrir-apos2-ms', "$AbrirApos2Ms") }
+        if ($ComApp) { $ba += @('--com-app', $ComApp) }
+        if ($NavegadorPadrao) { $ba += @('--navegador-padrao', $NavegadorPadrao) }
+        foreach ($aa in $ArgumentosApp) { $ba += @('--argumentos-app', $aa) }
+        if ($MotorHorizonte) { $ba += @('--motor-horizonte', $MotorHorizonte) }
+        if ($CursorExtras) { $ba += '--cursor-extras' }
+        if ($Bottles) { $ba += @('--bottles', $Bottles) }
+        & $bash.Source @ba
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        exit 0
+    }
+}
 # Mach-O universal (x86_64 + arm64): só a fatia x86_64 vai para a imagem, porque o sistema de arquivos da VM mora na RAM
 # (o Electron Framework do Claude tem 404 MB universal). Sem o llvm-lipo do toolchain Swift, copia inteiro (o kernel
 # escolhe a fatia sozinho). -Fatia arm64: a fatia arm64 (o processo roda pelo tradutor arm64, docs/tradutor-arm64.md).
 $lipo = Get-Item "$root\.tools\swift\LocalApp\Programs\Swift\Toolchains\*\usr\bin\llvm-lipo.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
 function Copy-Bin([string]$From, [string]$To) {
+    $src = Resolve-MosLinkFile $From
+    if ((Test-Path -LiteralPath $src -PathType Container)) { $src = $From }
+    $dir = Split-Path -Parent $To
+    if ($dir) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
     if ($lipo) {
         $h = New-Object byte[] 4
-        $fs = [IO.File]::OpenRead('\\?\' + $From); $k = $fs.Read($h, 0, 4); $fs.Close()
+        $fs = [IO.File]::OpenRead((ConvertTo-MosLongPath $src)); $k = $fs.Read($h, 0, 4); $fs.Close()
         if ($k -eq 4 -and $h[0] -eq 0xCA -and $h[1] -eq 0xFE -and $h[2] -eq 0xBA -and $h[3] -eq 0xBE) {
-            & $lipo.FullName $From -thin $Fatia -output $To 2>$null
+            & $lipo.FullName $src -thin $Fatia -output $To 2>$null
             if ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $To)) { return }
         }
     }
-    [IO.File]::Copy('\\?\' + $From, '\\?\' + $To, $true)
+    [IO.File]::Copy((ConvertTo-MosLongPath $src), (ConvertTo-MosLongPath $To), $true)
 }
 $App = (Get-Item -LiteralPath $App).FullName
 $src = Join-Path $App 'Contents'
-$esp = Join-Path $root "$OutDir\esp"
-if (-not (Test-Path "$esp\mOS")) { Write-Host "rode antes: .\build.ps1 -OutDir $OutDir" -ForegroundColor Red; exit 1 }
+$esp = Ensure-MosEsp $root $OutDir
 $swiftCore = "$esp\mOS\usr\lib\swift\libswiftCore.dylib"
 if (-not (Test-Path -LiteralPath $swiftCore)) {
     $swiftSrc = $null
@@ -136,7 +165,7 @@ foreach ($d in $extra) {
         # Fora da imagem o require falha e o app segue sem o módulo, como já trata.
         if ($f.Extension -eq '.node' -and -not $temSwift) {
             $head = New-Object byte[] ([Math]::Min(262144, $f.Length))
-            $fs = [IO.File]::OpenRead('\\?\' + $f.FullName); [void]$fs.Read($head, 0, $head.Length); $fs.Close()
+            $fs = [IO.File]::OpenRead((ConvertTo-MosLongPath $f.FullName)); [void]$fs.Read($head, 0, $head.Length); $fs.Close()
             if ([Text.Encoding]::ASCII.GetString($head).Contains('/usr/lib/swift/libswiftCore.dylib')) { Write-Host "  sem $($f.Name) (Swift)" -ForegroundColor DarkYellow; continue }
         }
         $t = "$dst\Resources\$d" + $f.FullName.Substring($u.Length)
@@ -169,10 +198,10 @@ if ($AbrirURL2) {
 if ($ComApp) {
     $extra = (Resolve-Path -LiteralPath $ComApp).Path
     $to = "$esp\mOS\Aplicativos\" + (Split-Path $extra -Leaf)
-    if (Test-Path -LiteralPath $to) { [IO.Directory]::Delete('\\?\' + $to, $true) }
-    # robocopy: caminhos longos (helpers do Chrome) e cópia rápida de milhares de arquivos
-    robocopy $extra $to /E /NFL /NDL /NJH /NJS /NP /R:1 /W:1 | Out-Null
-    if ($LASTEXITCODE -ge 8) { Write-Host "ComApp: falhou a cópia de $extra" -ForegroundColor Red; exit 1 }
+    if (Test-Path -LiteralPath $to) {
+        if (Test-MosWindows) { [IO.Directory]::Delete((ConvertTo-MosLongPath $to), $true) } else { Remove-Item -Recurse -Force -LiteralPath $to }
+    }
+    if (-not (Copy-MosTree $extra $to)) { Write-Host "ComApp: falhou a cópia de $extra" -ForegroundColor Red; exit 1 }
     $global:LASTEXITCODE = 0
     $emb = (Get-ChildItem -LiteralPath $to -Recurse -File | Measure-Object Length -Sum).Sum / 1MB
     Write-Host ("+ {0}: {1:N1} MiB" -f (Split-Path $extra -Leaf), $emb) -ForegroundColor Cyan
@@ -180,9 +209,10 @@ if ($ComApp) {
 if ($MotorHorizonte) {
     $motor = (Resolve-Path -LiteralPath $MotorHorizonte).Path
     $to = "$esp\mOS\Sistema\Biblioteca\Horizonte\Chromium.app"
-    if (Test-Path -LiteralPath $to) { [IO.Directory]::Delete('\\?\' + $to, $true) }
-    robocopy $motor $to /E /NFL /NDL /NJH /NJS /NP /R:1 /W:1 | Out-Null
-    if ($LASTEXITCODE -ge 8) { Write-Host "MotorHorizonte: falhou a cópia de $motor" -ForegroundColor Red; exit 1 }
+    if (Test-Path -LiteralPath $to) {
+        if (Test-MosWindows) { [IO.Directory]::Delete((ConvertTo-MosLongPath $to), $true) } else { Remove-Item -Recurse -Force -LiteralPath $to }
+    }
+    if (-not (Copy-MosTree $motor $to)) { Write-Host "MotorHorizonte: falhou a cópia de $motor" -ForegroundColor Red; exit 1 }
     $global:LASTEXITCODE = 0
     $emb = (Get-ChildItem -LiteralPath $to -Recurse -File | Measure-Object Length -Sum).Sum / 1MB
     Write-Host ("+ motor do Horizonte (Chromium): {0:N1} MiB" -f $emb) -ForegroundColor Cyan
@@ -215,8 +245,10 @@ else { Remove-Item "$esp\mOS\Sistema\Biblioteca\ca-log" -ErrorAction SilentlyCon
 $tpFile = "$esp\mOS\Sistema\Biblioteca\diag-tracepoints"
 if ($Tracepoints) { ($Tracepoints -split ';') -join "`n" | Set-Content -Path $tpFile -Encoding ascii }
 else { Remove-Item $tpFile -ErrorAction SilentlyContinue }
+if ($CursorExtras) { Install-MosCursorExtras "$esp\mOS" (Join-Path $PSScriptRoot 'brew-shims') $Bottles }
 $mb = (Get-ChildItem -LiteralPath $dstApp -Recurse -File | Measure-Object Length -Sum).Sum / 1MB
 Write-Host ("{0}.app ({1}): {2:N1} MiB" -f $name, $exe, $mb) -ForegroundColor Cyan
-& (Join-Path $root "$OutDir\mkimg.exe") (Join-Path $root "$OutDir\mOS.img") $esp $SizeMiB --test-overlay $ovt
+$mkimg = Resolve-MosMkimg $root $OutDir
+& $mkimg (Join-Path $root "$OutDir\mOS.img") $esp $SizeMiB --test-overlay $ovt
 if ($LASTEXITCODE -ne 0) { Write-Host 'mkimg FAILED' -ForegroundColor Red; exit 1 }
 Write-Host "OK: $OutDir\mOS.img" -ForegroundColor Green

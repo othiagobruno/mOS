@@ -17,9 +17,10 @@ param([switch]$Force, [int]$Jobs = 8, [ValidateSet('x86_64', 'arm64')][string]$A
 $tgt = if ($Arch -eq 'arm64') { 'aarch64-macos.12.0' } else { 'x86_64-macos.12.0' }
 $sfx = if ($Arch -eq 'arm64') { '-arm64' } else { '' }
 $root = Split-Path $PSScriptRoot -Parent
-$zig = Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*' -ErrorAction SilentlyContinue | Where-Object { Test-Path "$($_.FullName)\zig.exe" } | Select-Object -First 1
-if (-not $zig) { Write-Host 'zig nao encontrado em .tools' -ForegroundColor Red; exit 1 }
-$zig = Join-Path $zig.FullName 'zig.exe'
+if (-not (Get-Command Resolve-MosZig -ErrorAction SilentlyContinue)) { foreach ($mosHost in @("$PSScriptRoot\stage-host.ps1","$PSScriptRoot\..\stage-host.ps1","$PSScriptRoot\..\..\stage-host.ps1","$PSScriptRoot\..\..\..\stage-host.ps1")) { if (Test-Path -LiteralPath $mosHost) { . $mosHost; break } } }
+$mosZigPick = Resolve-MosZig $root
+if (-not $mosZigPick) { exit 1 }
+$zig = $mosZigPick.Path
 $src = "$root\.tools\icu-dl\icu\source"
 if (-not (Test-Path "$src\common\uloc.cpp")) { Write-Host 'falta o ICU4C em .tools\icu-dl\icu (icu4c-74_2-src.tgz)' -ForegroundColor Yellow; exit 0 }
 $cxx = "$root\build\libcxx$sfx\libc++.1.dylib"

@@ -70,7 +70,7 @@ mtime 0 e dirty falso = veio da imagem ou do disco e não é regravado. `NSUserD
 
 Este ambiente é Linux, sem `zig` e sem PowerShell. O fluxo `build.ps1` não rodou. Não há log desta sessão com o erro do libSystem.
 
-O que o repositório já registra (`docs/libsys-pendencias.md`, §5): `.tools\zig-macos-dl` casa com `zig-*` antes do zig de Windows. O script checava se `zig.exe` existe, não se é um PE (MZ). Um binário de macOS com esse nome faz a primeira compilação, a do libSystem, falhar. `build.ps1` e `tools/build-libsystem.ps1` agora pulam `zig.exe` que não começa com `MZ` e avisam. Os outros scripts em `tools\` que ainda pegam a primeira pasta `zig-*` continuam com o mesmo buraco.
+O que o repositório já registra (`docs/libsys-pendencias.md`, §5): `.tools\zig-macos-dl` casa com `zig-*` antes do zig de Windows. Um `zig.exe` de macOS nesse nome fazia a primeira compilação, a do libSystem, falhar. `tools/stage-host.ps1` (`Resolve-MosZig`) e `tools/build.sh` leem os 4 primeiros bytes: no Windows só PE/MZ, no Linux só ELF, e entre os que servem fica a maior `zig version`, não a primeira pasta. `MOS_ZIG` com a magia certa vence. Os scripts de `tools/` que compilam chamam essa escolha. O procedimento no Linux está em `docs/staging-linux.md`.
 
 O mesmo documento cita staging do Cursor com caminho acima de 260 caracteres, que `Remove-Item` não apaga. O wipe do esp agora tenta `rd /s /q \\?\` depois de guardar Aplicativos e Swift.
 

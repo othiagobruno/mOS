@@ -8,8 +8,10 @@
 param([switch]$Jit, [switch]$SemQemu, [string]$Programa = '', [string]$Tsv = '', [int]$Timeout = 300)
 . "$PSScriptRoot\..\common.ps1"
 $root = $script:A64Root
-$zig = Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*' -ErrorAction SilentlyContinue | Where-Object { Test-Path "$($_.FullName)\zig.exe" } | Select-Object -First 1
-if ($zig) { $zig = Join-Path $zig.FullName 'zig.exe' } elseif ($env:MOS_ZIG) { $zig = $env:MOS_ZIG } else { $zig = (Get-Command zig).Source }
+if (-not (Get-Command Resolve-MosZig -ErrorAction SilentlyContinue)) { foreach ($mosHost in @("$PSScriptRoot\stage-host.ps1","$PSScriptRoot\..\stage-host.ps1","$PSScriptRoot\..\..\stage-host.ps1","$PSScriptRoot\..\..\..\stage-host.ps1")) { if (Test-Path -LiteralPath $mosHost) { . $mosHost; break } } }
+$mosZigPick = Resolve-MosZig $root
+if (-not $mosZigPick) { exit 1 }
+$zig = $mosZigPick.Path
 $out = "$root\build\a64csuite"
 New-Item -ItemType Directory -Force $out | Out-Null
 $common = @('-ffp-contract=off', '-fno-math-errno', '-fno-builtin', '-fno-sanitize=all', '-Wall', '-Wno-unused-function')
