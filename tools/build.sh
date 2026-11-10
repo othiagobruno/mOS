@@ -418,6 +418,9 @@ else
     exit 1
 fi
 
+echo "==> CoreImage.framework"
+bash "$ROOT/tools/build-coreimage.sh" "$ZIG" "$ESP/mOS"
+
 echo "==> apps oficiais em /Aplicativos"
 bash "$ROOT/tools/stage-apps-oficiais.sh" "$OUT"
 mkdir -p "$ESP/mOS/usr/lib"
