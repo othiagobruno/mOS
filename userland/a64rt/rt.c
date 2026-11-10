@@ -4,6 +4,7 @@
  */
 #include "rt.h"
 #include "writes.h"
+#include "a64_xmon.h"
 
 _Static_assert(SYS_THREAD_EXIT == 35 && SYS_SIG == 58 && MOS_SIGOP_RETURN == 6, "números literais em start.S");
 _Static_assert(sizeof(rt_thread_t) < 64 * 1024, "rt_thread_t na base da pilha do host");
@@ -339,6 +340,7 @@ void rt_thread_main(rt_thread_t *T) {
 static __attribute__((noreturn)) void thread_exit(rt_thread_t *T, long code) {
     u32 all = ~0u;
     RS4(SYS_SIG, MOS_SIGOP_MASK, MOS_SIG_SETMASK, &all, 0);   /* nada entra nesta pilha depois de liberada */
+    a64_xmon_invalidate(&T->cpu);                             /* solta a reserva e a vaga no contador global */
 #ifdef A64_HAVE_JIT
     if (T->cpu.jit) a64_jit_thread_exit(&T->cpu);
 #endif
@@ -394,7 +396,7 @@ static void fork_child(rt_thread_t *T) {
     T->pend = 0;                       /* POSIX: o filho não herda sinal pendente */
     T->fault_pending = 0;
     T->in_guest = 0;
-    T->cpu.excl_valid = 0;             /* a exceção do fork limpa o monitor local */
+    a64_xmon_fork_child(&T->cpu);      /* a cópia trouxe gates e travas das threads que morreram */
     rt_sig_fork_child();               /* disposição e sigaltstack já vieram na cópia; solta a trava */
 #ifdef A64_HAVE_JIT
     /* cache JIT copiado (COW). O kernel mantém PTE_JWP e entrega SIGBUS na primeira escrita de cada lado,
@@ -406,7 +408,7 @@ static void fork_child(rt_thread_t *T) {
 /* fork e vfork (o vfork do mOS é um fork de verdade: o filho tem espaço próprio). O monitor exclusivo
  * sai antes da syscall, para o pai e a cópia do filho nascerem limpos. */
 static long rt_do_fork(rt_thread_t *T) {
-    T->cpu.excl_valid = 0;
+    a64_xmon_invalidate(&T->cpu);      /* a exceção do fork limpa o monitor dos dois lados */
     long r = RS0(SYS_FORK);
     if (r == 0) fork_child(T);
     T->intr_sig = 0;                                   /* fork não é refazível; o filho não herda o sinal que acordou o pai */
@@ -576,6 +578,7 @@ void rt_run_thread(rt_thread_t *T) {
             T = rt_self();
             c = &T->cpu;
             T->in_guest = 0;
+            a64_xmon_invalidate(c);
             rt_sig_raise_sync(T, T->fault_sig, T->fault_code, T->fault_addr, T->fault_esr);
             continue;
         }
@@ -584,11 +587,13 @@ void rt_run_thread(rt_thread_t *T) {
         T->in_guest = 0;
         if (T->fault_pending) {                        /* falta dentro do JIT (rt_host_signal + a64_jit_unwind) */
             T->fault_pending = 0;
+            a64_xmon_invalidate(c);
             rt_sig_raise_sync(T, T->fault_sig, T->fault_code, T->fault_addr, T->fault_esr);
             continue;
         }
         switch (r) {
         case A64_EXIT_SVC: {
+            a64_xmon_invalidate(c);                    /* SVC é exceção: a reserva não sobrevive */
             u32 imm = (u32)(c->exit_info & 0xFFFF);
             if (imm == A64RT_SVC_MOS) mos_svc(T); else darwin_svc(T);
             break;
@@ -596,6 +601,7 @@ void rt_run_thread(rt_thread_t *T) {
         case A64_EXIT_BRK:
         case A64_EXIT_UDF: case A64_EXIT_HLT: case A64_EXIT_HVC:
         case A64_EXIT_FAULT:
+            a64_xmon_invalidate(c);                /* BRK, indefinida e falta são exceção: a reserva não sobrevive */
             if (rt_debug && r != A64_EXIT_BRK && r != A64_EXIT_FAULT)
                 rt_log("a64rt[%d]: instrução %08x indefinida (saída %d) em pc=%lx\n", (int)T->tid, c->exit_insn, r, c->pc);
             rt_sig_from_motor(T, r);

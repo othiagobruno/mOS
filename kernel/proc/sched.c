@@ -306,8 +306,27 @@ static thread_t *next_ready(int me, thread_t *from) {
     return NULL;
 }
 
+/* Preempção de um processo arm64 traduzido: a reserva do LDXR não sobrevive à troca.
+ * A rt_thread_t fica na base da pilha do host (1 MiB, alinhada). Só escreve com a página
+ * presente. excl_valid = base+860 e reserved[8] = base+960, conferidos em a64_xmon.c.
+ * O contador global fica para a thread recolher quando voltar a rodar: daqui não há
+ * endereço estável dele, e zerar inflight antes do store abriria uma janela de ABA. */
+static void a64_xmon_on_switch(thread_t *from, int_frame_t *f) {
+    if (!from || !from->proc || !(f->cs & 3)) return;
+    u64 sp = f->rsp;
+    if (sp < USER_BASE || sp >= USER_END) return;
+    u64 base = sp & ~0xFFFFFULL;
+    if (base < USER_BASE || base + 968 > USER_END) return;
+    if (!uvm_pte(from->proc, base)) return;
+    volatile u64 *hdr = (volatile u64 *)base;
+    if (hdr[0] != 0x4441455254343641ULL || hdr[1] != base) return;
+    *(volatile u32 *)(base + 860) = 0;
+    (*(volatile u64 *)(base + 960))++;
+}
+
 static u64 switch_to(pcpu_t *c, int_frame_t *f, thread_t *to) {
     thread_t *from = c->cur;
+    if (to != from) a64_xmon_on_switch(from, f);
     if (to == from) { from->state = TH_RUNNING; return (u64)f; }
     account(c);
     from->frame = (u64)f;
