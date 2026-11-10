@@ -331,7 +331,6 @@ id CGColorCreateCopyByMatchingToColorSpace(void *space, int intent, id color, id
 void *CGColorSpaceCreateICCBased(size_t n, const double *range, void *profile, void *alt) { (void)n; (void)range; (void)profile; (void)alt; return CGColorSpaceCreateDeviceRGB(); }
 id CGColorSpaceCopyICCData(void *space) { (void)space; return 0; }
 /* fontes CG: o Skia usa CTFont; com NULL ele não segue o caminho de CGFont */
-void *CGFontCreateWithDataProvider(void *p) { (void)p; return 0; }
 void CGFontRelease(void *f) { if (f) objc_release((id)f); }
 u16 CGFontGetGlyphWithGlyphName(void *f, id name) { (void)f; (void)name; return 0; }
 void CGContextSetFont(void *c, void *f) { (void)c; (void)f; }
