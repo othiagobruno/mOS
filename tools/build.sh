@@ -152,6 +152,10 @@ echo "==> libSystem.mos"
 LS_SRC=()
 for f in "$ROOT"/userland/libsystem/*.c "$ROOT"/userland/libsystem/*.S; do
     [ -f "$f" ] || continue
+    # sqlite3.c pede assert.h/stdio.h. Compila com o shim, fora do -I do resto.
+    case "$f" in
+        */sqlite3_mos.c) continue ;;
+    esac
     LS_SRC+=("$f")
 done
 # audiodec.c inclui stdlib/math do decodificador de terceiros. Fica fora do glob
@@ -160,11 +164,16 @@ done
     -fpie -mno-red-zone -Wall -Wno-unused-parameter -Wno-incompatible-library-redeclaration -Wno-builtin-requires-header \
     -I"$ROOT/userland/host-audio/shim" \
     -c "$ROOT/userland/host-audio/audiodec.c" -o "$OUT/audiodec.o"
+"$ZIG" cc -target x86_64-freestanding-none -O2 -g0 -ffreestanding -fno-stack-protector -fno-builtin -nostdlib \
+    -fpie -mno-red-zone -Wall -Wno-unused-parameter -Wno-incompatible-library-redeclaration -Wno-builtin-requires-header \
+    -Wno-unused-function -Wno-unused-variable -Wno-unreachable-code \
+    -I"$ROOT/userland/host-audio/shim" -I"$ROOT/userland/libsystem" \
+    -c "$ROOT/userland/libsystem/sqlite3_mos.c" -o "$OUT/sqlite3_mos.o"
 "$ZIG" cc -target x86_64-freestanding-none -O2 -g0 -ffreestanding -fno-stack-protector -fno-builtin -nostdlib -static -no-pie \
     -fpie -mno-red-zone -Wall -Wno-unused-parameter -Wno-incompatible-library-redeclaration -Wno-builtin-requires-header \
     -I"$ROOT/userland/libsystem/kshim" \
     -Wl,--image-base=0x400000100000 -Wl,-e,cx_start -Wl,--no-gc-sections \
-    "${LS_SRC[@]}" "$OUT/audiodec.o" "$UWO"/libunwind.cpp.o "$UWO"/UnwindLevel1.c.o "$UWO"/UnwindLevel1-gcc-ext.c.o \
+    "${LS_SRC[@]}" "$OUT/audiodec.o" "$OUT/sqlite3_mos.o" "$UWO"/libunwind.cpp.o "$UWO"/UnwindLevel1-gcc-ext.c.o \
     "$UWO"/UnwindRegistersSave.S.o "$UWO"/UnwindRegistersRestore.S.o \
     -o "$OUT/libSystem.mos"
 python3 "$ROOT/tools/patch-ehframe.py" "$OUT/libSystem.mos"

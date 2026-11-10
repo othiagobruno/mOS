@@ -28,14 +28,14 @@ typedef struct { ui_pt o; ui_sz s; } ui_nsrect;
 typedef struct { unsigned long loc, len; } ui_rng;
 
 #define K(N) cx_class_t N##_c __asm__("OBJC_CLASS_$_" #N); cx_class_t N##_m __asm__("OBJC_METACLASS_$_" #N);
-K(NSTextStorage) K(NSLayoutManager) K(NSTextContainer) K(NSTextTab)
+K(NSTextStorage) K(NSLayoutManager)
 K(NSCollectionView) K(NSCollectionViewItem) K(NSCollectionViewLayout)
 K(NSCollectionViewFlowLayout) K(NSCollectionViewLayoutAttributes)
 K(NSCollectionViewCompositionalLayout) K(NSCollectionViewCompositionalLayoutConfiguration)
 K(NSCollectionLayoutSection) K(NSCollectionLayoutGroup) K(NSCollectionLayoutItem)
 K(NSCollectionLayoutSize) K(NSCollectionLayoutDimension) K(NSCollectionLayoutSpacing)
 K(NSCollectionLayoutGroupCustomItem) K(NSCollectionLayoutBoundarySupplementaryItem)
-K(NSArrayController) K(NSClickGestureRecognizer) K(NSDataAsset) K(NSCIImageRep)
+K(NSArrayController) K(NSDataAsset) K(NSCIImageRep)
 
 static cx_class_t *cl(const char *n) { return cx_class_named(n); }
 static void def(cx_class_t *k, cx_class_t *m, const char *name, const char *super) {
@@ -411,22 +411,16 @@ extern char cx_cfconst_isa[] __asm__("__CFConstantStringClassReference");
 #define AK(var, text) static ap_const_t var##_s = {cx_cfconst_isa, 0x7c8, text, sizeof(text) - 1}; const void *var = &var##_s;
 AK(NSAttachmentAttributeName, "NSAttachment")
 AK(NSBaselineOffsetAttributeName, "NSBaselineOffset")
-AK(NSKernAttributeName, "NSKern")
 AK(NSLigatureAttributeName, "NSLigature")
 AK(NSStrokeWidthAttributeName, "NSStrokeWidth")
 AK(NSStrokeColorAttributeName, "NSStrokeColor")
-AK(NSStrikethroughColorAttributeName, "NSStrikethroughColor")
 AK(NSSuperscriptAttributeName, "NSSuperscript")
-AK(NSToolTipAttributeName, "NSToolTip")
-AK(NSFontFamilyAttribute, "NSFontFamilyAttribute")
 AK(NSRTFTextDocumentType, "NSRTF")
 AK(NSTextStorageDidProcessEditingNotification, "NSTextStorageDidProcessEditingNotification")
 AK(NSTableViewSelectionDidChangeNotification, "NSTableViewSelectionDidChangeNotification")
 AK(NSTableViewSelectionIsChangingNotification, "NSTableViewSelectionIsChangingNotification")
 AK(NSScrollViewDidEndLiveScrollNotification, "NSScrollViewDidEndLiveScrollNotification")
 AK(NSScrollViewWillStartLiveScrollNotification, "NSScrollViewWillStartLiveScrollNotification")
-AK(NSApplicationWillResignActiveNotification, "NSApplicationWillResignActiveNotification")
-AK(NSAppearanceNameVibrantDark, "NSAppearanceNameVibrantDark")
 AK(NSAccessibilityWindowRole, "AXWindow")
 AK(NSAccessibilitySheetRole, "AXSheet")
 AK(NSAccessibilityDialogSubrole, "AXDialog")
@@ -460,16 +454,18 @@ void cx_appkit_apps_ui_init(void) {
     IM(NSLayoutManager, "numberOfGlyphs", lm_glyphs);
     IM(NSLayoutManager, "glyphRangeForTextContainer:", lm_glyph_range);
 
-    DEF(NSTextContainer, "NSObject");
-    IM(NSTextContainer, "initWithSize:", tc_init); IM(NSTextContainer, "initWithContainerSize:", tc_init);
-    IM(NSTextContainer, "containerSize", tc_size); IM(NSTextContainer, "setContainerSize:", tc_set_size);
-    IM(NSTextContainer, "size", tc_size); IM(NSTextContainer, "setSize:", tc_set_size);
-    IM(NSTextContainer, "layoutManager", tc_lm);
-    IM(NSTextContainer, "lineFragmentPadding", tc_pad); IM(NSTextContainer, "setLineFragmentPadding:", tc_set_pad);
-
-    DEF(NSTextTab, "NSObject");
-    IM(NSTextTab, "initWithTextAlignment:location:options:", tab_init);
-    IM(NSTextTab, "alignment", tab_align); IM(NSTextTab, "location", tab_loc); IM(NSTextTab, "options", tab_opts);
+    { cx_class_t *tc = cl("NSTextContainer"); if (tc) {
+        cx_add_method(tc, "initWithSize:", (void *)tc_init); cx_add_method(tc, "initWithContainerSize:", (void *)tc_init);
+        cx_add_method(tc, "containerSize", (void *)tc_size); cx_add_method(tc, "setContainerSize:", (void *)tc_set_size);
+        cx_add_method(tc, "size", (void *)tc_size); cx_add_method(tc, "setSize:", (void *)tc_set_size);
+        cx_add_method(tc, "layoutManager", (void *)tc_lm);
+        cx_add_method(tc, "lineFragmentPadding", (void *)tc_pad); cx_add_method(tc, "setLineFragmentPadding:", (void *)tc_set_pad);
+    } }
+    { cx_class_t *tt = cl("NSTextTab"); if (tt) {
+        cx_add_method(tt, "initWithTextAlignment:location:options:", (void *)tab_init);
+        cx_add_method(tt, "alignment", (void *)tab_align); cx_add_method(tt, "location", (void *)tab_loc);
+        cx_add_method(tt, "options", (void *)tab_opts);
+    } }
 
     DEF(NSCollectionViewLayout, "NSObject");
     DEF(NSCollectionViewFlowLayout, "NSCollectionViewLayout");
@@ -510,10 +506,11 @@ void cx_appkit_apps_ui_init(void) {
     IM(NSArrayController, "addObject:", ac_add); IM(NSArrayController, "removeObject:", ac_remove);
     IM(NSArrayController, "selectionIndex", ac_sel); IM(NSArrayController, "setSelectionIndex:", ac_set_sel);
 
-    DEF(NSClickGestureRecognizer, "NSObject");
-    IM(NSClickGestureRecognizer, "initWithTarget:action:", gr_init);
-    IM(NSClickGestureRecognizer, "setTarget:", gr_set_target); IM(NSClickGestureRecognizer, "target", gr_target);
-    IM(NSClickGestureRecognizer, "setAction:", gr_set_action); IM(NSClickGestureRecognizer, "action", gr_action);
+    { cx_class_t *g = cl("NSClickGestureRecognizer"); if (g) {
+        cx_add_method(g, "initWithTarget:action:", (void *)gr_init);
+        cx_add_method(g, "setTarget:", (void *)gr_set_target); cx_add_method(g, "target", (void *)gr_target);
+        cx_add_method(g, "setAction:", (void *)gr_set_action); cx_add_method(g, "action", (void *)gr_action);
+    } }
 
     DEF(NSDataAsset, "NSObject");
     IM(NSDataAsset, "initWithName:", asset_init_name); IM(NSDataAsset, "initWithName:bundle:", asset_init);
@@ -551,6 +548,3 @@ SWIFT_STUB(sw_diff_apply, "$s6AppKit34NSCollectionViewDiffableDataSourceC5apply_
 SWIFT_STUB(sw_diff_mn, "$s6AppKit34NSCollectionViewDiffableDataSourceCMn")
 SWIFT_STUB(sw_prio_mc, "$sSo16NSLayoutPrioritya6AppKit01_cdD23NumericRawRepresentableACMc")
 SWIFT_STUB(sw_img_lit, "$sSo7NSImageC6AppKitE24imageLiteralResourceNameABSS_tcfC")
-extern int NSApplicationMain(int argc, const char **argv);
-int sw_nsapp_main(int argc, const char **argv) __asm__("$s6AppKit17NSApplicationMainys5Int32VAD_SpySpys4Int8VGSgGtF");
-int sw_nsapp_main(int argc, const char **argv) { return NSApplicationMain(argc, argv); }

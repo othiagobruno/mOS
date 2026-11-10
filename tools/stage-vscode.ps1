@@ -138,6 +138,8 @@ Write-Host ("VSCode.app: {0:N1} MiB" -f $mb) -ForegroundColor Cyan
 # imagem de teste: overlay de teste com o marcador que pula o assistente do Live (tools\overlay-teste.ps1)
 . "$PSScriptRoot\overlay-teste.ps1"
 $ovt = New-OverlayTeste $root $OutDir
+. (Join-Path $PSScriptRoot 'stage-xpc.ps1')
+Copy-MosBundleServices $src $dst
 & (Join-Path $root "$OutDir\mkimg.exe") (Join-Path $root "$OutDir\mOS.img") $esp $SizeMiB --test-overlay $ovt
 if ($LASTEXITCODE -ne 0) { Write-Host 'mkimg FAILED' -ForegroundColor Red; exit 1 }
 Write-Host "OK: $OutDir\mOS.img (boote com -Memory 2560: o arquivo de 202 MiB fica na RAM e é copiado para o processo)" -ForegroundColor Green

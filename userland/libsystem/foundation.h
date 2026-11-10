@@ -18,6 +18,8 @@ typedef struct cx_timer {
 typedef struct { long sec; int usec; } mac_tv_t;
 typedef void FILE_;
 
+const char *cx_locale_id(void);
+id cx_bundle_localized(id bundle, id name, id type, id sub, id loc);
 id cx_str(const char *s);
 id cx_str_n(const char *s, u64 n);
 const char *cx_cstr(id o);
