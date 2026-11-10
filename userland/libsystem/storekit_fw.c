@@ -150,14 +150,14 @@ static id sk_transactions(id self, SEL c) {
     for (i = 0; i < SK_TX_MAX; i++) if (g_tx_obj[i]) cx_arr_add(a, g_tx_obj[i]);
     return a;
 }
-static void bind_tx(int id) {
+static void bind_tx(int tok) {
     id tx = cx_alloc_instance(&SKPaymentTransaction_c);
     sk_slot *s = slot_make(tx);
     if (s) {
         s->tx = SK_TX_PURCHASING;
         if (g_pay_for_bind) s->username = objc_retain(g_pay_for_bind);
     }
-    tx_bind(id, tx);
+    tx_bind(tok, tx);
 }
 static void sk_add(id self, SEL c, id payment) {
     sk_slot *ps = slot_of(payment);
