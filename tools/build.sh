@@ -23,6 +23,9 @@ gcc -O2 -Wall -Wextra -DMOS_HOST_TEST -I kernel/include -I tools tools/resto_hos
     kernel/proc/cred.c kernel/proc/fdshare.c kernel/proc/fileport.c kernel/mm/commpage.c kernel/mm/swap.c \
     -o /tmp/resto_host
 /tmp/resto_host
+gcc -O2 -Wall -Wextra -DMOS_HOST_TEST -I kernel/include -I tools tools/r8169_host.c kernel/dev/r8169.c \
+    -o /tmp/r8169_host
+/tmp/r8169_host
 
 kind_of() {
     local b

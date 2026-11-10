@@ -19,7 +19,7 @@ Toda a pilha guarda endereços de 16 bytes em ordem de rede. O IPv4 entra como *
 | DNS | Cache por (nome, tipo): A (1) e AAAA (28). O servidor é o do DHCP. Numa rede só IPv6, é o do RA, por UDP sobre IPv6. `localhost` vira `::1` e literais voltam direto. |
 | TCP | `tcp_connect6`, `tcp_listen`/`tcp_accept` (SYN → SYN_RCVD → SYN+ACK com retransmissão → ESTAB → fila do accept, com backlog). Os ouvintes têm ids a partir de `TCP_LISTEN_BASE`. Num ouvinte, `TCP_L_V4`/`TCP_L_V6` dizem quais famílias ele aceita. MSS 1440 no IPv6. |
 | Laço local | Pacotes para `127.x`, `::1` ou para o próprio endereço não vão à placa: entram numa fila de 96 e voltam à entrada por `net_loop_drain`. Essa função roda no `net_poll` e em toda syscall de rede dos apps, junto de um `tcp_tick` para os ACKs, então o TCP local não espera o laço da área de trabalho. Um `connect` local sem ouvinte devolve `ECONNREFUSED` na hora, como antes. |
-| Placa | O e1000 liga `RCTL_MPE` (todo o multicast), porque o mOS não fala MLD. O filtro é feito em software (`33:33:…` no Ethernet e grupos nossos no IPv6). |
+| Placa | O e1000 liga `RCTL_MPE` (todo o multicast) e o r8169 põe `0xFF` em MAR0..7, porque o mOS não fala MLD. O filtro é feito em software (`33:33:…` no Ethernet e grupos nossos no IPv6). |
 
 Syscalls novas no fim do enum de `SYS_NET` (`kernel/include/syscall.h`): `MOS_NET_RESOLVE6`, `CONNECT6`, `LISTEN`, `ACCEPT`, `ADDRS`, `INFO6`, `ICMP_SEND`, `ICMP_RECV`. O `MOS_NET_CONNECT` antigo (IPv4) passa pelo mesmo caminho.
 
