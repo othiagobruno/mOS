@@ -1,4 +1,5 @@
 #pragma once
-#include "stdlib.h"
+#include "../sys.h"
 typedef long ptrdiff_t;
-#define offsetof(type, member) __builtin_offsetof(type, member)
+#define NULL ((void *)0)
+#define offsetof(t, m) __builtin_offsetof(t, m)
