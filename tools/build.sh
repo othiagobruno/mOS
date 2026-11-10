@@ -149,6 +149,8 @@ for f in libunwind.cpp UnwindLevel1.c UnwindLevel1-gcc-ext.c UnwindRegistersSave
 done
 
 echo "==> libSystem.mos"
+# UnwindLevel1.c repete _Unwind_* que cxx_unwind.c define no x86. O arm64
+# continua com o libunwind inteiro (tools/build-libsystem-arm64.ps1).
 LS_SRC=()
 for f in "$ROOT"/userland/libsystem/*.c "$ROOT"/userland/libsystem/*.S; do
     [ -f "$f" ] || continue
@@ -158,7 +160,7 @@ done
     -fpie -mno-red-zone -Wall -Wno-unused-parameter -Wno-incompatible-library-redeclaration -Wno-builtin-requires-header \
     -I"$ROOT/userland/libsystem/kshim" \
     -Wl,--image-base=0x400000100000 -Wl,-e,cx_start -Wl,--no-gc-sections \
-    "${LS_SRC[@]}" "$UWO"/libunwind.cpp.o "$UWO"/UnwindLevel1.c.o "$UWO"/UnwindLevel1-gcc-ext.c.o \
+    "${LS_SRC[@]}" "$UWO"/libunwind.cpp.o "$UWO"/UnwindLevel1-gcc-ext.c.o \
     "$UWO"/UnwindRegistersSave.S.o "$UWO"/UnwindRegistersRestore.S.o \
     -o "$OUT/libSystem.mos"
 python3 "$ROOT/tools/patch-ehframe.py" "$OUT/libSystem.mos"
