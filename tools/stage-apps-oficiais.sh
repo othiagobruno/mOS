@@ -90,7 +90,7 @@ EOF
         "$ROOT/tools/dmgtest.c" "$OUT/dmghost.c" \
         "$ROOT/kernel/fs/apfs.c" "$ROOT/kernel/fs/blkdev.c" "$ROOT/kernel/fs/bzip2.c" \
         "$ROOT/kernel/fs/dfs.c" "$ROOT/kernel/fs/dmg.c" "$ROOT/kernel/fs/hfsplus.c" \
-        "$ROOT/kernel/fs/hfsplus_wr.c" \
+        "$ROOT/kernel/fs/hfsplus_wr.c" "$ROOT/kernel/fs/pcache.c" \
         "$ROOT/kernel/fs/inflate.c" "$ROOT/kernel/fs/lzfse.c" "$ROOT/kernel/fs/xz.c" \
         "$ROOT/kernel/fs/pcache.c" "$ROOT/kernel/fs/fat.c" -o "$DMG"
 fi
