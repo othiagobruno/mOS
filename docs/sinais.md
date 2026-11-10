@@ -110,7 +110,7 @@ em `mos_spawn_vec_t.flags`; `proc_spawn_in` chama `proc_hold` (`kernel/include/p
 a thread principal. `proc_hold` grava `SIGSTOP` em `process.stopped`, marca a parada para o `waitpid` e
 manda `SIGCHLD` `CLD_STOPPED` (salvo `SA_NOCLDSTOP`). Um `SIGCONT` passa por `proc_continue` e o processo
 roda. Não é `thread.suspend`: essa suspensão Mach só sai com `thread_resume`, e o `SIGCONT` não a mexe.
-Quem traduz o `posix_spawn` (o `rt.c` do #47) só precisa repassar o bit no `SYS_SPAWNVEC`.
+O `posix_spawn` do tradutor (`userland/a64rt/rt.c`) repassa esse bit no `SYS_SPAWNVEC`.
 
 ## Decisões
 
