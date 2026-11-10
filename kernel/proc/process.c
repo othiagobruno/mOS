@@ -208,6 +208,8 @@ bool uvm_map(process_t *p, u64 va, u64 len) {
  * pref[] conta os donos de cada página física (0 = um dono só). */
 #define PTE_COW (1ULL << 9)
 #define PTE_JWP (1ULL << 10)   /* JIT arm64: página de código traduzido, sem escrita (uvm_jit_wprotect) */
+#define PTE_SHARED (1ULL << 11) /* MAP_SHARED: a mesma página física nos dois lados, sem COW */
+#define PTE_NX (1ULL << 63)     /* só vale com EFER.NXE (mm/memory.c); o mapa do kernel não usa este bit */
 static u16 *pref;
 static u64 pref_n;
 
@@ -272,11 +274,12 @@ static void vm_flush(process_t *p, u64 va) {
 
 static bool cow_break(process_t *p, u64 *e, u64 va) {
     u64 phys = *e & PTE_ADDR;
+    u64 nx = *e & PTE_NX;
     if (page_refs(phys) > 1) {
         u64 np = pmm_alloc(1);
         if (!np) return false;
         memcpy((void *)np, (void *)phys, 4096);
-        *e = np | PTE_P | PTE_RW | PTE_U;
+        *e = np | PTE_P | PTE_RW | PTE_U | nx;
         vm_flush(p, va);                                /* nenhuma CPU pode continuar lendo a original... */
         /* ...antes de largar a referência a ela: se o outro dono a largou enquanto copiávamos, esta era a última
          * e a página é liberada (antes, pref[]-- deixava a página órfã nesse caso) */
@@ -292,11 +295,12 @@ static bool cow_break(process_t *p, u64 *e, u64 va) {
  * runtime (SIGBUS), que invalida só as traduções deste processo. O outro lado permanece protegido. */
 static bool cow_split_jwp(process_t *p, u64 *e, u64 va) {
     u64 phys = *e & PTE_ADDR;
+    u64 nx = *e & PTE_NX;
     if (page_refs(phys) > 1) {
         u64 np = pmm_alloc(1);
         if (!np) return false;
         memcpy((void *)np, (void *)phys, 4096);
-        *e = np | PTE_P | PTE_U | PTE_JWP;
+        *e = np | PTE_P | PTE_U | PTE_JWP | nx;
         vm_flush(p, va);
         page_put(phys);
         return true;
@@ -360,6 +364,51 @@ bool uvm_install(process_t *p, u64 va, u64 phys) {
     return true;
 }
 u16 uvm_page_refs(u64 phys) { return page_refs(phys); }
+
+/* MAP_SHARED: a página do cache ganha mais um dono e entra com PTE_SHARED (o fork não a transforma em COW).
+ * prot: bit 1 leitura, bit 2 escrita, bit 4 execução. Sem execução, bit 63 (NX). No x86 a página presente
+ * continua legível: não há bit de "só escrita" nem de PROT_NONE. */
+bool uvm_map_shared(process_t *p, u64 va, u64 phys, u8 prot) {
+    if (!pref_ready()) return false;
+    u64 *e = walk(p, va & ~0xFFFULL, true);
+    if (!e) return false;
+    if (*e & PTE_P) return true;
+    page_ref_inc(phys);
+    u64 bits = PTE_P | PTE_U | PTE_SHARED;
+    if (prot & 2) bits |= PTE_RW;
+    if (!(prot & 4)) bits |= PTE_NX;
+    *e = (phys & PTE_ADDR) | bits;
+    p->mem_pages++;
+    vm_flush(p, va);
+    return true;
+}
+
+/* mprotect de verdade. Página COW não ganha RW (a escrita ainda copia). Página JWP sem escrita fica JWP;
+ * mprotect com escrita desfaz o JWP. O bit de execução liga ou tira o NX. Página ausente fica para a falta. */
+bool uvm_protect(process_t *p, u64 va, u64 len, u8 prot) {
+    u64 end = va + len;
+    if (end < va) return false;
+    for (u64 a = va & ~0xFFFULL; a < end; ) {
+        u64 *e = walk(p, a, false);
+        if (!e) { a = (a + 0x200000) & ~0x1FFFFFULL; continue; }
+        if ((*e & PTE_P) && (*e & PTE_U)) {
+            if (*e & PTE_JWP) {
+                if (prot & 2) {
+                    if ((*e & PTE_COW) && !cow_break(p, e, a)) return false;
+                    *e = (*e | PTE_RW) & ~PTE_JWP;
+                }
+            } else if (!(*e & PTE_COW)) {
+                if (prot & 2) *e |= PTE_RW;
+                else *e &= ~PTE_RW;
+            }
+            if (prot & 4) *e &= ~PTE_NX;
+            else *e |= PTE_NX;
+            vm_flush(p, a);
+        }
+        a += 4096;
+    }
+    return true;
+}
 
 /* Rede de segurança do JIT do tradutor arm64 (userland/a64rt, MACH_VM_JIT_WPROTECT): página com código traduzido
  * perde a escrita na PTE e ganha o bit PTE_JWP (10, livre para o SO); a escrita do programa vira falta de proteção →
@@ -510,7 +559,9 @@ static bool cow_copy_level(process_t *dst, u64 *s, u64 *d, int level) {
     for (int i = 0; i < 512; i++) {
         if (!(s[i] & PTE_P)) continue;
         if (level == 1) {
-            if (s[i] & PTE_JWP) s[i] = (s[i] & ~PTE_RW) | PTE_COW;   /* código traduzido: segue sem escrita e com JWP */
+            if (s[i] & PTE_SHARED) {
+                /* MAP_SHARED: os dois lados escrevem na mesma página. Não vira COW. */
+            } else if (s[i] & PTE_JWP) s[i] = (s[i] & ~PTE_RW) | PTE_COW;   /* código traduzido: segue sem escrita e com JWP */
             else if (s[i] & PTE_RW) s[i] = (s[i] & ~PTE_RW) | PTE_COW;
             page_ref_inc(s[i] & PTE_ADDR);
             d[i] = s[i];
@@ -926,10 +977,15 @@ static u64 proc_fault_(int_frame_t *f, u64 cr2) {
     }
     /* falta espúria (SMP): outro núcleo mapeou a página ou quebrou o COW entre a falta e esta trava, ou a TLB deste
      * núcleo ainda tinha a entrada velha. Se a página agora permite o acesso, invalida a entrada local e repete.
-     * Sem isto o marcador concorrente do V8 (lock cmpxchg no bitmap de marcação) matava o Claude.app. */
+     * Sem isto o marcador concorrente do V8 (lock cmpxchg no bitmap de marcação) matava o Claude.app.
+     * Busca de instrução com NX não repete: senão a falta de uma página não executável não acaba nunca. */
     if (f->vector == 14 && cr2 >= USER_BASE && cr2 < USER_END) {
         u64 *e = uvm_pte(p, cr2);
-        if (e && (*e & PTE_P) && (*e & PTE_U) && (!(f->error & 2) || ((*e & PTE_RW) && !(*e & PTE_COW)))) {
+        bool write = (f->error & 2) != 0;
+        bool fetch = (f->error & 0x10) != 0;
+        bool can = e && (*e & PTE_P) && (*e & PTE_U) && (!write || ((*e & PTE_RW) && !(*e & PTE_COW)));
+        if (can && fetch && (*e & PTE_NX)) can = false;
+        if (can) {
             __asm__ volatile("invlpg (%0)" :: "r"(cr2) : "memory");
             return (u64)f;
         }
@@ -1778,6 +1834,26 @@ static i64 file_write_at(process_t *p, const char *path, u64 off, u64 ubuf, u64 
     if (!file_room(v, nsz)) return -MOS_ENOMEM;
     if (off > old) memset(v->data + old, 0, off - old);        /* buraco depois do fim lê como zeros */
     if (len && !uvm_copy_in(p, v->data + off, ubuf, len)) { v->data[v->size] = 0; return -MOS_EFAULT; }
+    v->size = nsz;
+    v->data[nsz] = 0;
+    v->mtime = timer_ticks();
+    persist_mark(v);
+    return (i64)len;
+}
+
+/* o mesmo que file_write_at, com a origem já no kernel (página física do MAP_SHARED). Não cria arquivo. */
+i64 file_store_at(const char *path, u64 off, const void *src, u64 len) {
+    if (!path || (!src && len)) return -MOS_EINVAL;
+    vnode_t *v = vfs_lookup(path);
+    if (!v || v->dir) return -MOS_ENOENT;
+    if (vfs_is_read_only(v)) return -MOS_ENOENT;
+    u64 end = off + len;
+    if (end < off) return -MOS_EINVAL;
+    u64 old = v->size, nsz = MAX(old, end);
+    if (nsz > (256ull << 20)) return -MOS_ENOSPC;
+    if (!file_room(v, nsz)) return -MOS_ENOMEM;
+    if (off > old) memset(v->data + old, 0, off - old);
+    if (len) memcpy(v->data + off, src, len);
     v->size = nsz;
     v->data[nsz] = 0;
     v->mtime = timer_ticks();
@@ -2699,6 +2775,43 @@ static u64 proc_syscall_(int_frame_t *f) {
                                        (unsigned long long)at, (unsigned long long)len, p->fds[c].path, (unsigned long long)foff);
             break;
         }
+        /* b = 5: arquivo MAP_SHARED. c = fd, r10 = deslocamento, r8 = prot (1 leitura, 2 escrita, 4 execução).
+         * b = 6: MAP_SHARED|MAP_ANON. A página física é a mesma para quem mapeou o objeto (kernel/mm/lazy.c).
+         * Pipe, terminal e /dev/null devolvem EINVAL para o libSystem cair na cópia. */
+        if (b == 5 || b == 6) {
+            extern bool lazy_add_shared_file(process_t *p, u64 va, u64 len, const char *path, u64 foff, u8 prot);
+            extern bool lazy_add_shared_anon(process_t *p, u64 va, u64 len, u8 prot);
+            u8 prot = (u8)(f->r8 & 7);
+            if (!prot) prot = 1;
+            if (!len || len > (64ull << 30)) { r = -MOS_EINVAL; break; }
+            u64 at = p->mmap_next;
+            if (at + len > USER_END) { r = -MOS_ENOMEM; MMAP_NOMEM_LOG(); break; }
+            if (b == 5) {
+                u64 foff = f->r10;
+                if (fd_get(p, c) < 0) { r = -MOS_EBADF; break; }
+                if (p->fds[c].pipe || p->fds[c].pty || is_devnull(p->fds[c].path)) { r = -MOS_EINVAL; break; }
+                if (p->fds[c].flags & MOS_O_WRONLY) { r = -MOS_EACCES; break; }
+                if ((prot & 2) && !(p->fds[c].flags & (MOS_O_WRONLY | MOS_O_RDWR))) { r = -MOS_EACCES; break; }
+                if (foff & 0xFFF) { r = -MOS_EINVAL; break; }
+                vnode_t *v = vfs_lookup(p->fds[c].path);
+                if (!v) { r = -MOS_ENOENT; break; }
+                if (v->dir) { r = -MOS_EINVAL; break; }
+                if (!lazy_add_shared_file(p, at, len, p->fds[c].path, foff, prot)) { r = -MOS_ENOMEM; MMAP_NOMEM_LOG(); break; }
+            } else if (!lazy_add_shared_anon(p, at, len, prot)) { r = -MOS_ENOMEM; MMAP_NOMEM_LOG(); break; }
+            p->mmap_next += len + 4096;
+            r = (i64)at;
+            break;
+        }
+        /* b = 7: prot (r8) nas PTEs de [c, c+len) e na faixa que a falta consulta. Sem o bit 4 a página fica NX.
+         * Página que ainda não existe só fica registrada; a falta aplica o prot. PROT_NONE (0) não desmapeia. */
+        if (b == 7) {
+            extern bool lazy_protect(process_t *p, u64 va, u64 len, u8 prot);
+            u64 at = c & ~0xFFFULL, end = (c + a + 0xFFF) & ~0xFFFULL;
+            if (!a) { r = 0; break; }
+            if (at < USER_BASE || end > USER_END || end < at) { r = -MOS_EINVAL; break; }
+            r = lazy_protect(p, at, end - at, (u8)(f->r8 & 7)) ? 0 : -MOS_ENOMEM;
+            break;
+        }
         if (b == 2) {
             u64 at = c & ~0xFFFULL, end = (c + a + 0xFFF) & ~0xFFFULL;
             if (!a || at < USER_MMAP_BASE || end > p->mmap_next || end < at) { r = -MOS_EINVAL; break; }
@@ -2728,6 +2841,13 @@ static u64 proc_syscall_(int_frame_t *f) {
          * zerada no próximo toque (lazy_fault), como o VM_SYNC_KILLPAGES do XNU. Compartilhadas (COW, memória Mach) e
          * de arquivo ficam. O mimalloc 3 do Bun conta com os zeros depois do purge: sem isto o vetor de índices de uma
          * PropertyTable do JavaScriptCore vinha sujo e o rehash procurava um vazio para sempre (claude -p). */
+        /* MOS_MUNMAP_SYNC: msync. Grava o MAP_SHARED de arquivo no vnode e não desmapeia. */
+        if (c == MOS_MUNMAP_SYNC) {
+            extern void lazy_sync(process_t *p, u64 va, u64 len, int only_last);
+            lazy_sync(p, a, b, 0);
+            r = 0;
+            break;
+        }
         if (c == MOS_MUNMAP_DISCARD) {
             extern bool lazy_is_anon(process_t *p, u64 va);
             u64 gone[64];
@@ -2752,6 +2872,7 @@ static u64 proc_syscall_(int_frame_t *f) {
             r = 0;
             break;
         }
+        { extern void lazy_sync(process_t *p, u64 va, u64 len, int only_last); lazy_sync(p, a, b, 0); }
         { extern void lazy_remove(process_t *p, u64 va, u64 len); lazy_remove(p, a, b); }
         /* as páginas só voltam ao pmm depois que nenhuma CPU as enxerga mais: em lotes de 64, um
          * smp_tlb_shootdown por lote (com threads do processo em outros núcleos) */
