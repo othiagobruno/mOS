@@ -70,9 +70,13 @@ em 0 e `timeout_ms` diferente de 0 bloqueia a thread (`wait_pid` -12) até o sin
 destruição (`-MOS_ENOENT`) ou o prazo (`-MOS_ETIMEDOUT`). `timeout_ms` 0 devolve
 `-MOS_EAGAIN` na hora.
 
-O formato dos bytes em `cmds` é o do dispositivo: virgl (cabeçalho de
-comando do virtio-gpu 3D) ou venus (fluxo Venus). O kernel não interpreta
-shader. Rejeita lote vazio e contexto destruído.
+Sem o bit `VIRGL` ou `VENUS`, criar contexto, criar BO e `SUBMIT` são aceitos
+e a fence dispara. O pacote só segue para o virtio-gpu quando o dispositivo
+anunciou o cap correspondente. `MOS_GPU_INFO` traz `MOS_GPU_CAP_IOSURF` sempre
+que a IOSurface compartilhada desta syscall está ativa.
+
+O número da chamada é o `SYS_GPU` de `syscall.h` (62). 61 é `SYS_UNIX`.
+`gpucall.c` inclui esse header; o valor 61 não é a GPU.
 
 ## IOSurface na memória da GPU
 
