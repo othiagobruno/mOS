@@ -8,7 +8,7 @@
  *
  * No Linux, zig cc ou clang:
  *   zig cc -target x86_64-linux-gnu -O2 -std=gnu11 -DMOS_HOST_TEST -fno-strict-aliasing \
- *       -Ikernel/include -Itools tools/machotest.c tools/host_unix.c tools/host_gpu.c tools/host_qos.c tools/host_id.c \
+ *       -Ikernel/include -Itools tools/machotest.c tools/host_unix.c tools/host_gpu.c tools/host_qos.c tools/host_id.c tools/host_bootstrap.c \
  *       tools/host_enter.S kernel/compat/macho.c \
  *       -o build/machotest -pthread
  * No Windows o comando continua o de docs/porte-vscode.md (zig cc -target x86_64-windows-gnu).
@@ -42,6 +42,7 @@
 #include "host_unix.h"
 #include "host_qos.h"
 #include "host_id.h"
+#include "host_bootstrap.h"
 long host_gpu_op(unsigned long long op, unsigned long long user, unsigned long long len, int *blocked);
 #include <stdio.h>
 #include <stdlib.h>
@@ -829,6 +830,10 @@ static hport_t *hport_new(u32 name, u32 type) {
     }
     return NULL;
 }
+static unsigned bs_new_recv(void) {
+    hport_t *p = hport_new(0, HT_RECV);
+    return p ? p->name : 0;
+}
 static void hport_free_slot(hport_t *p) {
     for (int i = 0; i < p->qn; i++) free(p->qdata[(p->qh + i) % HMSG_N]);
 #ifndef _WIN32
@@ -1232,28 +1237,20 @@ static long long do_syscall_locked(u64 n, u64 a, u64 b, u64 c, u64 d) {
     if (n == SYS_MACH_MSG) return mach_msg_call(a);
     if (n == SYS_MACH_VM) return mach_vm_op(a, b);
     if (n == SYS_MACH_BOOTSTRAP) {
-        /* op, nome, u32 *porta. Registro local: o Electron procura serviços cedo. */
-        static struct { char name[96]; u32 port; int on; } bs[64];
+        /* Igual a bootstrap_op: check_in de nome novo cria o direito de receber.
+         * look_up devolve esse porto e marca o direito de enviar. */
         const char *nm = (const char *)b;
         u32 *pp = (u32 *)c;
-        if (!nm) return 1102;
-        if (a == 3 || a == 4) { /* REGISTER / RESERVE */
-            for (int i = 0; i < 64; i++) if (!bs[i].on || !strcmp(bs[i].name, nm)) {
-                snprintf(bs[i].name, sizeof bs[i].name, "%s", nm);
-                bs[i].port = pp ? *pp : 0;
-                bs[i].on = 1;
-                return 0;
-            }
-            return 1105;
+        unsigned port = pp ? *pp : 0;
+        unsigned (*mk)(void) = NULL;
+        if (a == MACH_BS_CHECK_IN || a == MACH_BS_RESERVE) mk = bs_new_recv;
+        long r = host_bootstrap((unsigned)a, nm, &port, mk);
+        if (r == 0 && pp) *pp = port;
+        if (r == 0 && a == MACH_BS_LOOK_UP) {
+            hport_t *hp = hport_get(port);
+            if (hp) { hp->type |= HT_SEND; hp->srefs++; }
         }
-        if (a == 2 || a == 1) { /* LOOK_UP / CHECK_IN */
-            for (int i = 0; i < 64; i++) if (bs[i].on && !strcmp(bs[i].name, nm)) {
-                if (pp) *pp = bs[i].port;
-                return 0;
-            }
-            return a == 1 ? 1102 : 1102;
-        }
-        return 1102;
+        return r;
     }
     if (n == SYS_PIPE) return pipe_make(a, b == MOS_PIPE_SOCKPAIR);
     char hp[4096];
