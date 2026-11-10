@@ -51,6 +51,7 @@ static vnode_t *add_child(vnode_t *dir, const char *name, bool isdir) {
     vnode_t *n = kcalloc(1, sizeof(vnode_t));
     strncpy(n->name, name, sizeof(n->name) - 1);
     n->dir = isdir;
+    n->mode = isdir ? 0755 : 0644;
     n->parent = dir;
     n->mtime = timer_ticks();
     /* inserção ordenada (diretórios e arquivos misturados, ordem alfabética sem caixa) */
