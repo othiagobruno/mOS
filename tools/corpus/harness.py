@@ -85,6 +85,32 @@ def compile_machocheck() -> Path:
     return out
 
 
+def extrai_7z(archive: Path, dest: Path) -> None:
+    """O 7z do Ubuntu devolve 2 quando o DMG tem um alias para /Applications.
+
+    Esse aviso não apaga o .app. Outro status, ou um 2 com erro diferente, continua falha.
+    """
+    proc = subprocess.run(
+        ["7z", "x", "-y", f"-o{dest}", str(archive)],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if proc.returncode == 0:
+        return
+    linhas = [ln.strip() for ln in proc.stderr.splitlines() if ln.strip()]
+    so_alias = bool(linhas) and all(
+        ln.startswith("ERROR: Dangerous link path was ignored")
+        or ln.startswith("ERROR: Dangerous symbolic link path was ignored")
+        for ln in linhas
+    )
+    tem_arquivo = any(p.is_file() for p in dest.rglob("*"))
+    if proc.returncode == 2 and so_alias and tem_arquivo:
+        print(f"7z: {len(linhas)} alias(es) fora do pacote em {archive.name}; o app foi extraído", flush=True)
+        return
+    raise SystemExit(f"7z saiu {proc.returncode} em {archive.name}\n{proc.stderr[-500:]}")
+
+
 def extract(archive: Path, dest: Path) -> None:
     if dest.exists():
         shutil.rmtree(dest)
@@ -93,7 +119,7 @@ def extract(archive: Path, dest: Path) -> None:
     if name.endswith(".pkg"):
         raise SystemExit(f"{archive.name}: pacote .pkg fora do corpus")
     if name.endswith(".zip") or name.endswith(".dmg") or name.endswith(".tar.bz2") or name.endswith(".tbz"):
-        subprocess.check_call(["7z", "x", "-y", f"-o{dest}", str(archive)], stdout=subprocess.DEVNULL)
+        extrai_7z(archive, dest)
         return
     if name.endswith(".tar.gz") or name.endswith(".tgz"):
         with tarfile.open(archive, "r:gz") as tf:
@@ -132,12 +158,18 @@ def fetch_one(app: dict) -> Path:
     dest_dir.mkdir(parents=True, exist_ok=True)
     filename = app["url"].rstrip("/").split("/")[-1].split("?")[0]
     archive = dest_dir / filename
-    if not archive.is_file() or sha256_file(archive) != app["sha256"]:
-        print(f"baixando {app['id']}", flush=True)
-        download(app["url"], archive)
-    digest = sha256_file(archive)
+    digest = ""
+    for tentativa in range(1, 4):
+        if not archive.is_file() or sha256_file(archive) != app["sha256"]:
+            if archive.exists():
+                archive.unlink()
+            print(f"baixando {app['id']} (tentativa {tentativa})", flush=True)
+            download(app["url"], archive)
+        digest = sha256_file(archive)
+        if digest == app["sha256"]:
+            break
     if digest != app["sha256"]:
-        raise SystemExit(f"{app['id']}: sha256 {digest} != {app['sha256']}")
+        raise SystemExit(f"{app['id']}: sha256 {digest} != {app['sha256']} depois de 3 tentativas")
     extracted = dest_dir / "extracted"
     marker = dest_dir / "extracted.ok"
     if not marker.is_file():
@@ -348,7 +380,36 @@ def cmd_gate(_: argparse.Namespace) -> None:
     print("gate ok")
 
 
+def testa_alias_do_dmg() -> None:
+    """O Rectangle.dmg faz o 7z sair 2 por um alias para /Applications. O .app tem de ficar."""
+    work = CACHE / "alias-hosttest"
+    if work.exists():
+        shutil.rmtree(work)
+    src = work / "src"
+    mac = src / "Rectangle.app" / "Contents" / "MacOS"
+    mac.mkdir(parents=True)
+    (mac / "Rectangle").write_text("binario", encoding="utf-8")
+    os.symlink("/Applications", src / "Applications")
+    archive = work / "Rectangle.zip"
+    subprocess.check_call(["zip", "-ry", str(archive), "."], cwd=src, stdout=subprocess.DEVNULL)
+    dest = work / "out"
+    extract(archive, dest)
+    got = (dest / "Rectangle.app" / "Contents" / "MacOS" / "Rectangle").read_text(encoding="utf-8")
+    if got != "binario":
+        raise SystemExit("o 7z aceitou o alias e perdeu o executável")
+    ruim = work / "vazio.dmg"
+    ruim.write_bytes(b"nao e um dmg")
+    try:
+        extract(ruim, work / "vazio-out")
+    except SystemExit:
+        pass
+    else:
+        raise SystemExit("um arquivo inválido passou na extração")
+    print("hosttest extração: alias do Rectangle aceito, lixo recusado")
+
+
 def cmd_hosttest(args: argparse.Namespace) -> None:
+    testa_alias_do_dmg()
     amostra = (
         "Total: 3 imports, 1 sem implementacao (1 simbolos distintos)\n"
         "Ausentes por origem (simbolos distintos): sistema 1, libc++ 0, Swift 0, unwind 0\n"
