@@ -43,6 +43,7 @@ typedef struct { void *isa; int flags, reserved; void (*invoke)(void *, ...); } 
 K(NSWorkspaceOpenConfiguration) K(NSDocumentController) K(NSAnimationContext) K(NSParagraphStyle) K(NSMutableParagraphStyle)
 K(NSSharingService) K(NSSharingServicePicker) K(NSTouchBar) K(NSTouchBarItem) K(NSCustomTouchBarItem) K(NSColorPickerTouchBarItem)
 K(NSSliderTouchBarItem) K(NSPopoverTouchBarItem) K(NSGroupTouchBarItem) K(NSCandidateListTouchBarItem) K(NSColorList)
+K(_MOSPopoverFrame)
 K(NSSegmentedControl) K(NSScrubber) K(NSScrubberItemView) K(NSScrubberTextItemView) K(NSScrubberImageItemView)
 K(NSScrubberSelectionStyle) K(NSSavePanel) K(NSOpenPanel) K(NSPopUpButton) K(NSCell) K(NSActionCell) K(NSButtonCell)
 K(NSMenuItemCell) K(NSPopUpButtonCell) K(NSStatusBar) K(NSStatusItem) K(NSStatusBarButton) K(NSImageRep) K(NSBitmapImageRep)
@@ -232,8 +233,8 @@ static void sbb_open_menu(id it) {
         MSG(void, del, "menuWillOpen:", menu);
 }
 
-void cx_status_kernel_click(unsigned id) {
-    id it = (id)cx_sb_by_token((int)id);
+void cx_status_kernel_click(unsigned token) {
+    id it = (id)cx_sb_by_token((int)token);
     if (!it) return;
     sbb_open_menu(it);
     status_publish(it);
@@ -317,7 +318,58 @@ static void si_popup(id self, SEL c, id menu) {
     sbb_open_menu(self);
 }
 
-/* NSPopover já existe como classe vazia (vscode_fwclasses.c). O comportamento é o de appkit_status.c. */
+/* NSPopover: a classe nasce em vscode_fwclasses.c. Aqui a janela, a borda e a seta. */
+void objc_msgSend_stret(void);
+typedef struct { double x, y, w, h; } popr_t;
+void CGContextSetRGBFillColor(id c, double r, double g, double b, double a);
+void CGContextSetRGBStrokeColor(id c, double r, double g, double b, double a);
+void CGContextSetLineWidth(id c, double w);
+void CGContextFillRect(id c, popr_t r);
+void CGContextStrokeRect(id c, popr_t r);
+void CGContextBeginPath(id c);
+void CGContextMoveToPoint(id c, double x, double y);
+void CGContextAddLineToPoint(id c, double x, double y);
+void CGContextClosePath(id c);
+void CGContextFillPath(id c);
+void CGContextStrokePath(id c);
+static char pop_owner_key;
+static popr_t pop_rect_get(id o, const char *sel) {
+    return ((popr_t (*)(id, SEL))objc_msgSend_stret)(o, sel_registerName(sel));
+}
+static void pop_set_frame(id o, popr_t r) {
+    ((void (*)(id, SEL, popr_t))objc_msgSend)(o, sel_registerName("setFrame:"), r);
+}
+static void pop_hide_win(void *pop, void *win) {
+    (void)pop;
+    if (win) MSG(void, (id)win, "orderOut:", (id)0);
+}
+static void pop_frame_draw(id self, SEL c, popr_t dirty) {
+    id pop, gc;
+    cx_pop_chrome_t ch;
+    popr_t body;
+    (void)c; (void)dirty;
+    pop = objc_getAssociatedObject(self, &pop_owner_key);
+    if (!cx_pop_chrome(pop, &ch)) return;
+    gc = MSG0(id, (id)cls("NSGraphicsContext"), "currentContext");
+    gc = gc ? MSG0(id, gc, "CGContext") : 0;
+    CGContextSetRGBFillColor(gc, 1, 1, 1, 0.98);
+    body.x = ch.content_x; body.y = ch.content_y; body.w = ch.content_w; body.h = ch.content_h;
+    CGContextFillRect(gc, body);
+    CGContextBeginPath(gc);
+    CGContextMoveToPoint(gc, ch.tip_x, ch.tip_y);
+    CGContextAddLineToPoint(gc, ch.base0_x, ch.base0_y);
+    CGContextAddLineToPoint(gc, ch.base1_x, ch.base1_y);
+    CGContextClosePath(gc);
+    CGContextFillPath(gc);
+    CGContextSetRGBStrokeColor(gc, 0, 0, 0, 0.28);
+    CGContextSetLineWidth(gc, 1);
+    CGContextStrokeRect(gc, body);
+    CGContextBeginPath(gc);
+    CGContextMoveToPoint(gc, ch.base0_x, ch.base0_y);
+    CGContextAddLineToPoint(gc, ch.tip_x, ch.tip_y);
+    CGContextAddLineToPoint(gc, ch.base1_x, ch.base1_y);
+    CGContextStrokePath(gc);
+}
 static void pop_set_beh(id self, SEL c, i64 b) { (void)c; pset(self, "behavior", cx_num_i(b)); cx_pop_set_behavior(self, (int)b); }
 static i64 pop_beh(id self, SEL c) { (void)c; return cx_pop_behavior(self); }
 static void pop_set_view(id self, SEL c, id v) { (void)c; pset(self, "contentView", v); cx_pop_set_content(self, v); }
@@ -331,8 +383,10 @@ static void pop_set_vc(id self, SEL c, id vc) {
 }
 static id pop_vc(id self, SEL c) { (void)c; return pget(self, "contentViewController"); }
 static void pop_show(id self, SEL c, ax_rect_t r, id view, unsigned long edge) {
-    id content, vc;
-    (void)c; (void)r; (void)view; (void)edge;
+    id content, vc, win, frame, screen;
+    popr_t anchor, cf, wf, scr;
+    cx_pop_chrome_t ch;
+    (void)c;
     content = pget(self, "contentView");
     if (!content) {
         vc = pget(self, "contentViewController");
@@ -340,8 +394,48 @@ static void pop_show(id self, SEL c, ax_rect_t r, id view, unsigned long edge) {
     }
     if (content) cx_pop_set_content(self, content);
     cx_pop_set_behavior(self, (int)pget_i(self, "behavior", cx_pop_behavior(self)));
+    anchor.x = r.x; anchor.y = r.y; anchor.w = r.w > 0 ? r.w : 1; anchor.h = r.h > 0 ? r.h : 1;
+    if (view) {
+        anchor = ((popr_t (*)(id, SEL, popr_t, id))objc_msgSend_stret)(view, sel_registerName("convertRect:toView:"), anchor, (id)0);
+        win = MSG0(id, view, "window");
+        if (win) anchor = ((popr_t (*)(id, SEL, popr_t))objc_msgSend_stret)(win, sel_registerName("convertRectToScreen:"), anchor);
+        pset(self, "positioningView", view);
+    }
+    cf.w = 160; cf.h = 64;
+    if (content) cf = pop_rect_get(content, "frame");
+    screen = MSG0(id, (id)cls("NSScreen"), "mainScreen");
+    scr = screen ? pop_rect_get(screen, "frame") : (popr_t){0, 0, 1440, 900};
+    if (scr.w < 1 || scr.h < 1) { scr.w = 1440; scr.h = 900; }
+    cx_pop_set_anchor(self, anchor.x, anchor.y, anchor.w, anchor.h, (int)edge);
+    cx_pop_set_content_size(self, cf.w, cf.h);
+    cx_pop_set_screen(self, scr.w, scr.h);
+    cx_pop_layout(self);
+    if (!cx_pop_chrome(self, &ch)) return;
+    wf.x = ch.win_x; wf.y = ch.win_y; wf.w = ch.win_w; wf.h = ch.win_h;
+    win = (id)cx_pop_window(self);
+    if (!win) {
+        win = ((id (*)(id, SEL, popr_t, u64, u64, int))objc_msgSend)(
+            MSG0(id, (id)cls("NSPanel"), "alloc"),
+            sel_registerName("initWithContentRect:styleMask:backing:defer:"), wf, (u64)0, (u64)2, 0);
+        cx_pop_set_window(self, win);
+    } else {
+        ((void (*)(id, SEL, popr_t, int))objc_msgSend)(win, sel_registerName("setFrame:display:"), wf, 1);
+    }
+    frame = pget(self, "frameView");
+    if (!frame) {
+        frame = ((id (*)(id, SEL, popr_t))objc_msgSend)(
+            MSG0(id, (id)&_MOSPopoverFrame_c, "alloc"), sel_registerName("initWithFrame:"), wf);
+        objc_setAssociatedObject(frame, &pop_owner_key, self, 0);
+        pset(self, "frameView", frame);
+        if (win) MSG(void, win, "setContentView:", frame);
+    }
+    if (content && frame) {
+        popr_t box = {ch.content_x, ch.content_y, ch.content_w, ch.content_h};
+        pop_set_frame(content, box);
+        MSG(void, frame, "addSubview:", content);
+    }
     cx_pop_show(self);
-    if (view) pset(self, "positioningView", view);
+    if (win) MSG(void, win, "orderFront:", (id)0);
 }
 static void pop_close(id self, SEL c) { (void)c; cx_pop_close(self); }
 static BOOL pop_shown(id self, SEL c) { (void)c; return cx_pop_shown(self) ? YES : NO; }
@@ -556,6 +650,9 @@ void cx_appkit_extra_init(void) {
     REG_PROP(NSSegmentedControl, segmentCount, setSegmentCount); REG_PROP(NSSegmentedControl, selectedSegment, setSelectedSegment);
 
     DEF(NSStatusBar, "NSObject"); DEF(NSStatusItem, "NSObject"); DEF(NSStatusBarButton, "NSButton");
+    DEF(_MOSPopoverFrame, "NSView");
+    IM(_MOSPopoverFrame, "drawRect:", pop_frame_draw);
+    cx_pop_on_hide(pop_hide_win);
     CM(NSStatusBar, "systemStatusBar", sb_system); IM(NSStatusBar, "statusItemWithLength:", sb_item);
     IM(NSStatusBar, "removeStatusItem:", sb_remove); IM(NSStatusBar, "thickness", sb_thickness);
     IM(NSStatusItem, "button", si_button); IM(NSStatusItem, "statusBar", si_bar);
