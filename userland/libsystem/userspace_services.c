@@ -19,6 +19,7 @@ void cx_coredata_init(void);
 void cx_photos_init(void);
 void cx_virtualization_init(void);
 void cx_wa_frameworks_init(void);
+void cx_mapkit_init(void);
 
 int cx_tcc_request(const char *service);
 int cx_tcc_state(const char *service);
@@ -63,6 +64,7 @@ void cx_userspace_services_init(void) {
     cx_photos_init();
     cx_virtualization_init();
     cx_wa_frameworks_init();
+    cx_mapkit_init();
     cx_add_cmethod(&UNUserNotificationCenter_c, "currentNotificationCenter", (void *)un_current_real);
     cx_add_method(&UNUserNotificationCenter_c, "requestAuthorizationWithOptions:completionHandler:", (void *)un_request);
     cx_add_method(&UNUserNotificationCenter_c, "authorizationStatus", (void *)un_auth);
