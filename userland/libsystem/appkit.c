@@ -7,6 +7,7 @@
  * entrega mouseDown:/mouseUp:/mouseDragged:/keyDown:/scrollWheel: como no macOS.
  */
 #include "foundation.h"
+#include "progress_draw.h"
 #include "libc.h"
 #include "appkit_table.h"
 #include "appkit_status.h"
@@ -29,6 +30,7 @@ CLASS(NSTextField) CLASS(NSSlider) CLASS(NSProgressIndicator) CLASS(NSBox) CLASS
 CLASS(NSColor) CLASS(NSFont) CLASS(NSBezierPath) CLASS(NSEvent) CLASS(NSMenu) CLASS(NSMenuItem) CLASS(NSAlert)
 CLASS(NSScreen) CLASS(NSGraphicsContext) CLASS(NSCursor) CLASS(NSWorkspace) CLASS(NSImage) CLASS(NSAttributedString)
 CLASS(NSRunningApplication) CLASS(NSSound) CLASS(NSPanel) CLASS(NSScrollView) CLASS(NSTextView) CLASS(NSClipView)
+CLASS(NSWindowTab)
 CLASS(NSVisualEffectView) CLASS(NSLayoutConstraint) CLASS(NSColorWell) CLASS(NSTableView) CLASS(NSTableColumn) CLASS(NSTableCellView) CLASS(NSIndexSet)
 
 extern cx_class_t NSObject_c __asm__("OBJC_CLASS_$_NSObject");
@@ -105,6 +107,7 @@ typedef struct {
     id next_responder;             /* nextResponder explícito; senão a superview (fraco) */
     id header_view;                /* NSTableHeaderView real, quando o nib traz um (retido) */
     int tv_dirty;                  /* NSTableView: o delegate precisa ser perguntado de novo */
+    BOOL show_idle;                /* NSProgressIndicator: displayedWhenStopped */
 } vstate_t;
 
 typedef struct {
@@ -120,6 +123,8 @@ typedef struct {
     double alpha;                   /* alphaValue (0 = nunca definido = 1,0) */
     id parent;                      /* parentWindow (fraco) */
     i64 number;                     /* windowNumber: único e estável pela vida da janela (0 = ainda não pedido) */
+    id subtitle, represented_url, tab;
+    BOOL restorable;
 } wstate_t;
 
 typedef struct { double r, g, b, a; } rgba_t;     /* NSColor: campos logo após o isa */
@@ -999,7 +1004,17 @@ static void sl_set_min(id self, SEL c, double v) { (void)c; vs(self)->minv = v; 
 static void sl_set_max(id self, SEL c, double v) { (void)c; vs(self)->maxv = v; mark(self); }
 static double sl_min(id self, SEL c) { (void)c; return vs(self)->minv; }
 static double sl_max(id self, SEL c) { (void)c; return vs(self)->maxv; }
-static id pg_init_frame(id self, SEL c, NSRect f) { v_init_frame(self, c, f); vstate_t *s = vs(self); s->kind = K_PROGRESS; s->minv = 0; s->maxv = 100; return self; }
+static id pg_init_frame(id self, SEL c, NSRect f) {
+    v_init_frame(self, c, f);
+    vstate_t *s = vs(self);
+    s->kind = K_PROGRESS;
+    s->minv = 0;
+    s->maxv = 100;
+    s->show_idle = YES;
+    return self;
+}
+static void pg_set_idle(id self, SEL c, BOOL v) { (void)c; vs(self)->show_idle = v ? YES : NO; mark(self); }
+static BOOL pg_idle(id self, SEL c) { (void)c; return vs(self)->show_idle; }
 static void pg_inc(id self, SEL c, double d) { (void)c; vs(self)->dval += d; mark(self); }
 static id bx_init_frame(id self, SEL c, NSRect f) { v_init_frame(self, c, f); vstate_t *s = vs(self); s->kind = K_BOX; s->title = cx_str(""); return self; }
 static id st_init_frame(id self, SEL c, NSRect f) { v_init_frame(self, c, f); vstate_t *s = vs(self); s->kind = K_STACK; s->spacing = 8; s->orientation = 0; return self; }
@@ -1144,6 +1159,7 @@ static void draw_builtin(id v, absr_t *a) {
         break;
     }
     case K_PROGRESS: {
+        if (!cx_progress_draws(s->show_idle, s->dval, s->minv)) break;
         double range = s->maxv - s->minv, t = range > 0 ? (s->dval - s->minv) / range : 0;
         if (t < 0) t = 0; if (t > 1) t = 1;
         double cy = y + h / 2;
@@ -1229,6 +1245,7 @@ static id w_init(id self, SEL c, NSRect r, u64 style, u64 backing, BOOL defer) {
     s->style = style;
     s->title = cx_str("");
     s->released_when_closed = YES;
+    s->restorable = YES;
     s->bg = cx_color(0.93, 0.93, 0.93, 1);
     id cv = MSG(id, MSG0(id, &NSView_c, "alloc"), "initWithFrame:", r_make(0, 0, r.s.w, r.s.h));
     s->content = cv;
@@ -1245,6 +1262,38 @@ static void w_set_title(id self, SEL c, id t) {
     if (s->gid > 0) SYS2(GUI_WIN_TITLE, s->gid, cx_cstr(s->title));
 }
 static id w_title(id self, SEL c) { (void)c; return ws(self)->title; }
+static void w_set_subtitle(id self, SEL c, id t) {
+    (void)c;
+    wstate_t *s = ws(self);
+    id nt = t ? MSG0(id, t, "copy") : cx_str("");
+    objc_release(s->subtitle);
+    s->subtitle = nt;
+}
+static id w_subtitle(id self, SEL c) { (void)c; id t = ws(self)->subtitle; return t ? t : cx_str(""); }
+static void w_set_url(id self, SEL c, id u) { (void)c; keep(&ws(self)->represented_url, u); }
+static id w_url(id self, SEL c) { (void)c; return ws(self)->represented_url; }
+static void w_set_restorable(id self, SEL c, BOOL v) { (void)c; ws(self)->restorable = v ? YES : NO; }
+static BOOL w_restorable(id self, SEL c) { (void)c; return ws(self)->restorable; }
+static char tab_win_key;
+static id tab_window(id self, SEL c) { (void)c; return objc_getAssociatedObject(self, &tab_win_key); }
+static void tab_set_window(id self, SEL c, id w) { (void)c; objc_setAssociatedObject(self, &tab_win_key, w, 0); }
+static id w_tab(id self, SEL c) {
+    (void)c;
+    wstate_t *s = ws(self);
+    if (!s->tab) {
+        cx_class_t *k = cx_class_named("NSWindowTab");
+        if (k) {
+            s->tab = cx_alloc_instance(k);
+            if (s->tab) tab_set_window(s->tab, 0, self);
+        }
+    }
+    return s->tab;
+}
+static void w_set_tab(id self, SEL c, id t) {
+    (void)c;
+    keep(&ws(self)->tab, t);
+    if (t) tab_set_window(t, 0, self);
+}
 static id w_content(id self, SEL c) { (void)c; return ws(self)->content; }
 static void w_set_content(id self, SEL c, id v) {
     (void)c;
@@ -2560,7 +2609,7 @@ id cx_window_hit(id w, double x, double y) {
 }
 
 /* ================================================================ NSApplication */
-typedef struct { id delegate, menu; BOOL running, launched, terminating; int modal_result; BOOL in_modal; } appstate_t;
+typedef struct { id delegate, menu, help; BOOL running, launched, terminating; int modal_result; BOOL in_modal; } appstate_t;
 static appstate_t app;
 static id app_singleton;
 /* O renderer do Chromium (RendererMainPlatformDelegate::EnableSandbox) faz CHECK(NSApp == nil)
@@ -2594,6 +2643,8 @@ static BOOL ap_set_policy(id self, SEL c, i64 p) { (void)self; (void)c; return c
 static i64 ap_policy(id self, SEL c) { (void)self; (void)c; return cx_act_policy(); }
 static void ap_set_menu(id self, SEL c, id m) { (void)self; (void)c; keep(&app.menu, m); menus_dirty = YES; }
 static id ap_menu(id self, SEL c) { (void)self; (void)c; return app.menu; }
+static void ap_set_help(id self, SEL c, id m) { (void)self; (void)c; keep(&app.help, m); }
+static id ap_help(id self, SEL c) { (void)self; (void)c; return app.help; }
 static id ap_windows(id self, SEL c) { (void)self; (void)c; return app_windows ? app_windows : cx_arr_new(&NSMutableArray_c); }
 /* -orderedWindows: as janelas visíveis da frente para trás (a última trazida à frente fica no fim de app_windows).
  * O WebContentsOcclusionCheckerMac do Chromium percorre esta lista para decidir se cada WebContents está visível. */
@@ -4609,15 +4660,22 @@ void cx_appkit_init(void) {
     M(NSApplication, "orderedWindows", ap_ordered_windows);
     M(NSApplication, "keyWindow", ap_key_window); M(NSApplication, "mainWindow", ap_key_window); M(NSApplication, "sendAction:to:from:", ap_send_action);
     M(NSApplication, "runModalForWindow:", ap_run_modal); M(NSApplication, "stopModalWithCode:", ap_stop_modal_code); M(NSApplication, "stopModal", ap_stop_modal);
-    M(NSApplication, "setWindowsMenu:", noop1_m); M(NSApplication, "setServicesMenu:", noop1_m); M(NSApplication, "setHelpMenu:", noop1_m);
+    M(NSApplication, "setWindowsMenu:", noop1_m); M(NSApplication, "setServicesMenu:", noop1_m);
+    M(NSApplication, "setHelpMenu:", ap_set_help); M(NSApplication, "helpMenu", ap_help);
     M(NSApplication, "setApplicationIconImage:", noop1_m); M(NSApplication, "hide:", noop1_m); M(NSApplication, "orderFrontStandardAboutPanel:", ap_about_panel);
     M(NSApplication, "requestUserAttention:", noop1_m);
 
     DEF(NSWindow, NSResponder);
     DEF(NSPanel, NSWindow);
+    DEF(NSWindowTab, NSObject);
+    M(NSWindowTab, "window", tab_window); M(NSWindowTab, "setWindow:", tab_set_window);
     M(NSWindow, "initWithContentRect:styleMask:backing:defer:", w_init); M(NSWindow, "init", w_init_simple);
     CM(NSWindow, "windowWithContentViewController:", w_with_vc);
     M(NSWindow, "setTitle:", w_set_title); M(NSWindow, "title", w_title); M(NSWindow, "contentView", w_content); M(NSWindow, "setContentView:", w_set_content);
+    M(NSWindow, "setSubtitle:", w_set_subtitle); M(NSWindow, "subtitle", w_subtitle);
+    M(NSWindow, "setRepresentedURL:", w_set_url); M(NSWindow, "representedURL", w_url);
+    M(NSWindow, "setRestorable:", w_set_restorable); M(NSWindow, "isRestorable", w_restorable);
+    M(NSWindow, "tab", w_tab); M(NSWindow, "setTab:", w_set_tab);
     M(NSWindow, "isDocumentEdited", no_m); M(NSWindow, "representedFilename", noop_ret_nil);
     M(NSWindow, "setTouchBar:", noop1_m); M(NSWindow, "touchBar", noop_ret_nil);
     M(NSWindow, "setDelegate:", w_set_delegate); M(NSWindow, "delegate", w_delegate); M(NSWindow, "alphaValue", w_alpha); M(NSWindow, "setAlphaValue:", w_set_alpha);
@@ -4697,6 +4755,7 @@ void cx_appkit_init(void) {
     M(NSProgressIndicator, "setMinValue:", sl_set_min); M(NSProgressIndicator, "setMaxValue:", sl_set_max); M(NSProgressIndicator, "incrementBy:", pg_inc);
     M(NSProgressIndicator, "setIndeterminate:", noop1_m); M(NSProgressIndicator, "startAnimation:", noop1_m); M(NSProgressIndicator, "stopAnimation:", noop1_m);
     M(NSProgressIndicator, "setStyle:", noop1_m);
+    M(NSProgressIndicator, "setDisplayedWhenStopped:", pg_set_idle); M(NSProgressIndicator, "isDisplayedWhenStopped", pg_idle);
     DEF(NSBox, NSView);
     M(NSBox, "initWithFrame:", bx_init_frame); M(NSBox, "setTitle:", bt_set_title); M(NSBox, "setContentView:", v_add_sub); M(NSBox, "setBoxType:", bx_set_type); M(NSBox, "setFillColor:", tf_set_bg); M(NSBox, "setCornerRadius:", bx_set_radius);
     DEF(NSStackView, NSView);
