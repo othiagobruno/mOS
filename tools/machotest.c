@@ -537,6 +537,8 @@ static long long gui_syscall(u64 n, u64 a, u64 b, u64 c, u64 d) {
 static CRITICAL_SECTION sys_lock;
 static CONDITION_VARIABLE sys_cv = CONDITION_VARIABLE_INIT;
 static void host_broadcast(void) { WakeAllConditionVariable(&sys_cv); }
+static void host_lock_fn(void) { HOST_LOCK(); }
+static void host_unlock_fn(void) { HOST_UNLOCK(); }
 /* devolve 1 se o prazo venceu. O chamador já entrou em sys_lock exatamente uma vez. */
 static int host_wait_ms(u64 ms) {
     if (ms == ~(u64)0) { SleepConditionVariableCS(&sys_cv, &sys_lock, INFINITE); return 0; }
@@ -558,6 +560,8 @@ static void host_cv_init(void) {
     sys_cv_ready = 1;
 }
 static void host_broadcast(void) { if (sys_cv_ready) pthread_cond_broadcast(&sys_cv); }
+static void host_lock_fn(void) { HOST_LOCK(); }
+static void host_unlock_fn(void) { HOST_UNLOCK(); }
 static int host_wait_ms(u64 ms) {
     if (ms == ~(u64)0) { pthread_cond_wait(&sys_cv, &sys_lock); return 0; }
     struct timespec ts;
@@ -1214,7 +1218,8 @@ static void ux_hooks(void) {
     if (once) return;
     once = 1;
     host_thr_boot();
-    host_unix_hooks hk = { ux_alloc, ux_slot, ux_set_slot, ux_dup, ux_parent, ux_touch, ux_unlink };
+    host_unix_hooks hk = { ux_alloc, ux_slot, ux_set_slot, ux_dup, ux_parent, ux_touch, ux_unlink,
+                           host_unlock_fn, host_lock_fn };
     host_unix_set_hooks(&hk);
 }
 

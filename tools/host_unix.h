@@ -9,6 +9,11 @@ typedef struct host_unix_hooks {
     int (*parent_ok)(const char *path);
     int (*create_node)(const char *path);
     int (*unlink_node)(const char *path);
+    /* trava grande do processo, a mesma que cobre as outras syscalls. O recv bloqueante
+     * solta ela enquanto dorme: no kernel a thread sai do escalonador e outra roda
+     * (FUTEX_WAKE inclusive). Sem isto o recv segura a trava e o wake não entra. */
+    void (*drop_proc)(void);
+    void (*take_proc)(void);
 } host_unix_hooks;
 
 void host_unix_set_hooks(const host_unix_hooks *h);
