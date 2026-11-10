@@ -59,7 +59,7 @@ static u32 seq_id = 1;
 
 static u32 caps_now(void) {
 #ifdef MOS_GPU_HOST
-    return host_caps;
+    return host_caps | MOS_GPU_CAP_IOSURF;
 #else
     u32 c = virtio_gpu_caps() | MOS_GPU_CAP_IOSURF;
     if (gpu_kms_available()) c |= MOS_GPU_CAP_KMS;
@@ -122,6 +122,87 @@ static void signal_fence(int pid, u32 id) {
 #endif
 }
 
+static int batch_u32(const u8 *b, u32 n, u32 off, u32 *out) {
+    if (off + 4 > n) return -1;
+    memcpy(out, b + off, 4);
+    return 0;
+}
+
+static int batch_ok(int pid, u32 ctx_kind, const u8 *b, u32 n) {
+    mos_gpu_batch_hdr_t h;
+    u32 handles[MOS_GPU_BATCH_MAX_BO];
+    u32 cmd_at[MOS_GPU_BATCH_MAX_CMD], cmd_sz[MOS_GPU_BATCH_MAX_CMD];
+    u32 off, i, pos;
+    if (n < sizeof h || (n & 3)) return -MOS_EINVAL;
+    memcpy(&h, b, sizeof h);
+    if (h.version != MOS_GPU_BATCH_VER || h.kind != ctx_kind || h.bytes != n || h.pad0 || h.pad1) return -MOS_EINVAL;
+    if (!h.ncmd || h.ncmd > MOS_GPU_BATCH_MAX_CMD || h.nbo > MOS_GPU_BATCH_MAX_BO || h.nreloc > MOS_GPU_BATCH_MAX_RELOC)
+        return -MOS_EINVAL;
+    off = (u32)sizeof h;
+    if (off + h.nbo * 4u + h.nreloc * (u32)sizeof(mos_gpu_reloc_t) > n) return -MOS_EINVAL;
+    for (i = 0; i < h.nbo; i++) {
+        if (batch_u32(b, n, off + i * 4u, &handles[i]) || !bo_of(pid, handles[i])) return -MOS_ENOENT;
+    }
+    off += h.nbo * 4u;
+    pos = off + h.nreloc * (u32)sizeof(mos_gpu_reloc_t);
+    for (i = 0; i < h.ncmd; i++) {
+        mos_gpu_cmd_hdr_t c;
+        u32 expect;
+        if (pos + sizeof c > n) return -MOS_EINVAL;
+        memcpy(&c, b + pos, sizeof c);
+        if (c.bytes < sizeof c || (c.bytes & 3) || pos + c.bytes > n) return -MOS_EINVAL;
+        if (c.op < MOS_GPU_CMD_BIND || c.op > MOS_GPU_CMD_DISPATCH) return -MOS_EINVAL;
+        if (ctx_kind == MOS_GPU_CTX_VIRGL) {
+            expect = c.op == MOS_GPU_CMD_BIND ? MOS_GPU_VIRGL_SET_SHADER_BUFFERS :
+                     c.op == MOS_GPU_CMD_SHADER ? MOS_GPU_VIRGL_BIND_SHADER : MOS_GPU_VIRGL_LAUNCH_GRID;
+            if (c.venus || c.virgl != expect) return -MOS_EINVAL;
+        } else {
+            expect = c.op == MOS_GPU_CMD_BIND ? MOS_GPU_VENUS_BIND :
+                     c.op == MOS_GPU_CMD_SHADER ? MOS_GPU_VENUS_SHADER : MOS_GPU_VENUS_DISPATCH;
+            if (c.virgl || c.venus != expect) return -MOS_EINVAL;
+        }
+        if (c.op == MOS_GPU_CMD_BIND) {
+            mos_gpu_bind_t bd;
+            bo_t *bo;
+            if (c.bytes < sizeof c + sizeof bd) return -MOS_EINVAL;
+            memcpy(&bd, b + pos + sizeof c, sizeof bd);
+            if (bd.slot > 31 || bd.bo_index >= h.nbo || !bd.range) return -MOS_EINVAL;
+            bo = bo_of(pid, handles[bd.bo_index]);
+            if (!bo || (u64)bd.offset + bd.range > bo->size) return bo ? -MOS_EINVAL : -MOS_ENOENT;
+        } else if (c.op == MOS_GPU_CMD_SHADER) {
+            mos_gpu_shader_t sh;
+            bo_t *bo;
+            if (c.bytes < sizeof c + sizeof sh) return -MOS_EINVAL;
+            memcpy(&sh, b + pos + sizeof c, sizeof sh);
+            if (sh.bo_index >= h.nbo || !sh.length || !sh.local_x || !sh.local_y || !sh.local_z) return -MOS_EINVAL;
+            bo = bo_of(pid, handles[sh.bo_index]);
+            if (!bo || (u64)sh.offset + sh.length > bo->size) return bo ? -MOS_EINVAL : -MOS_ENOENT;
+        } else {
+            mos_gpu_dispatch_t d;
+            if (c.bytes < sizeof c + sizeof d) return -MOS_EINVAL;
+            memcpy(&d, b + pos + sizeof c, sizeof d);
+            if (!d.x || !d.y || !d.z || d.x > 65535 || d.y > 65535 || d.z > 65535) return -MOS_EINVAL;
+        }
+        cmd_at[i] = pos;
+        cmd_sz[i] = c.bytes;
+        pos += c.bytes;
+    }
+    if (pos != n) return -MOS_EINVAL;
+    for (i = 0; i < h.nreloc; i++) {
+        mos_gpu_reloc_t r;
+        u32 word;
+        bo_t *bo;
+        memcpy(&r, b + off + i * sizeof r, sizeof r);
+        if (r.cmd >= h.ncmd || r.bo_index >= h.nbo) return -MOS_EINVAL;
+        if ((r.off & 3) || r.off < sizeof(mos_gpu_cmd_hdr_t) || r.off + 4 > cmd_sz[r.cmd]) return -MOS_EINVAL;
+        memcpy(&word, b + cmd_at[r.cmd] + r.off, 4);
+        if (word != r.bo_index) return -MOS_EINVAL;
+        bo = bo_of(pid, handles[r.bo_index]);
+        if (!bo || r.bo_off >= bo->size) return bo ? -MOS_EINVAL : -MOS_ENOENT;
+    }
+    return 0;
+}
+
 i64 gpu_syscall(process_t *p, u64 op, u64 user, u64 len, thread_t *self, int *blocked) {
     if (blocked) *blocked = 0;
     if (!p) return -MOS_EINVAL;
@@ -148,15 +229,16 @@ i64 gpu_syscall(process_t *p, u64 op, u64 user, u64 len, thread_t *self, int *bl
         int e = rd(p, &in, user, len, sizeof in);
         if (e) return e;
         if (in.kind != MOS_GPU_CTX_VIRGL && in.kind != MOS_GPU_CTX_VENUS) return -MOS_EINVAL;
-        if (in.kind == MOS_GPU_CTX_VIRGL && !(caps_now() & MOS_GPU_CAP_VIRGL)) return -MOS_ENXIO;
-        if (in.kind == MOS_GPU_CTX_VENUS && !(caps_now() & MOS_GPU_CAP_VENUS)) return -MOS_ENXIO;
         ctx_t *c = 0;
         for (int i = 0; i < GPU_N; i++) if (!ctxs[i].used) { c = &ctxs[i]; break; }
         if (!c) return -MOS_ENOMEM;
         u32 id = seq_id++;
 #ifndef MOS_GPU_HOST
-        e = virtio_gpu_ctx(id, in.kind, 1);
-        if (e) return e;
+        if ((in.kind == MOS_GPU_CTX_VIRGL && (caps_now() & MOS_GPU_CAP_VIRGL)) ||
+            (in.kind == MOS_GPU_CTX_VENUS && (caps_now() & MOS_GPU_CAP_VENUS))) {
+            e = virtio_gpu_ctx(id, in.kind, 1);
+            if (e) return e;
+        }
 #endif
         c->used = 1; c->pid = pid; c->id = id; c->kind = in.kind;
         in.ctx = id;
@@ -187,7 +269,7 @@ i64 gpu_syscall(process_t *p, u64 op, u64 user, u64 len, thread_t *self, int *bl
         if (!dma_alloc((usize)in.size, &phys)) return -MOS_ENOMEM;
         u32 id = seq_id++;
 #ifndef MOS_GPU_HOST
-        if (in.ctx) {
+        if (in.ctx && (caps_now() & (MOS_GPU_CAP_VIRGL | MOS_GPU_CAP_VENUS))) {
             e = virtio_gpu_bo(in.ctx, id, in.size, 1);
             if (e) { pmm_free(phys, in.size / 4096); return e; }
         }
@@ -290,9 +372,17 @@ i64 gpu_syscall(process_t *p, u64 op, u64 user, u64 len, thread_t *self, int *bl
         u8 tmp[GPU_CMD_MAX];
         e = rd(p, tmp, in.cmds, in.cmd_bytes, in.cmd_bytes);
         if (e) return e;
-#ifndef MOS_GPU_HOST
-        e = virtio_gpu_submit(c->id, tmp, in.cmd_bytes, in.fence);
+        e = batch_ok(pid, c->kind, tmp, in.cmd_bytes);
         if (e) return e;
+#ifndef MOS_GPU_HOST
+        {
+            int hw = (c->kind == MOS_GPU_CTX_VENUS && (caps_now() & MOS_GPU_CAP_VENUS)) ||
+                     (c->kind == MOS_GPU_CTX_VIRGL && (caps_now() & MOS_GPU_CAP_VIRGL));
+            if (hw) {
+                e = virtio_gpu_submit(c->id, tmp, in.cmd_bytes, in.fence);
+                if (e) return e;
+            }
+        }
 #else
         (void)c;
         (void)tmp;

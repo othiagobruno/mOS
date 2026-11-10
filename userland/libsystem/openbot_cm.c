@@ -14,6 +14,7 @@ void *memcpy(void *d, const void *s, size_t n);
 id objc_retain(id o);
 void objc_release(id o);
 void cx_objc_boot(unsigned long long sects, unsigned long long n);
+int h264_sps_wh(const u8 *nal, int n, int *w, int *h);
 
 typedef struct { i64 value; i32 timescale; u32 flags; i64 epoch; } cm_time_t;
 typedef struct { cm_time_t duration, presentationTimeStamp, decodeTimeStamp; } cm_timing_t;
@@ -298,6 +299,12 @@ int CMVideoFormatDescriptionCreateFromH264ParameterSets(void *a, size_t n, const
     if (!out || !n || !p || !s) return CM_BAD_FMT;
     fd_t *f = fd_new(0x76696465, 0x61766331 /* avc1 */);
     if (!f || fd_store_sets(f, n, p, s, nal)) { if (f) objc_release((id)f); return CM_BAD_FMT; }
+    for (size_t i = 0; i < n; i++) {
+        if (!p[i] || s[i] < 1 || (p[i][0] & 31) != 7) continue;
+        int sw = 0, sh = 0;
+        if (h264_sps_wh(p[i], (int)s[i], &sw, &sh) == 0) { f->w = sw; f->h = sh; }
+        break;
+    }
     *out = f;
     return 0;
 }

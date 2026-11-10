@@ -5,6 +5,7 @@
 #include "rt.h"
 #include "writes.h"
 #include "a64_xmon.h"
+#include "jit_share.h"
 
 _Static_assert(SYS_THREAD_EXIT == 35 && SYS_SIG == 58 && MOS_SIGOP_RETURN == 6, "números literais em start.S");
 _Static_assert(sizeof(rt_thread_t) < 64 * 1024, "rt_thread_t na base da pilha do host");
@@ -535,7 +536,7 @@ static void mos_svc(rt_thread_t *T) {
  * file_actions). A attr começa com psa_flags (short). Cada file action tem 1040 bytes:
  * tipo em +0, fd em +4, open (oflag +8, mode +12, path +14), dup2 (novo fd +8), chdir (path +8).
  * O contêiner é { int alloc; int count; ações... }. FILEPORT_DUP2 não tem porta Mach aqui.
- * SETSIGDEF, SETSIGMASK e RESETIDS são lidos e ignorados. START_SUSPENDED (0x80) vai em
+ * SETSIGDEF, SETSIGMASK e RESETIDS vão no fim de mos_spawn_vec_t. START_SUSPENDED (0x80) vai em
  * mos_spawn_vec_t.flags; o kernel (proc_hold) deixa o filho parado até um SIGCONT.
  * Não há commpage: o endereço do Darwin arm64
  * (0xFFFFFC000) cai no mapa de identidade do kernel, abaixo de USER_BASE. */
@@ -614,6 +615,22 @@ static long spawn_fill(const void *adesc, u64 argv, u64 envp, mos_spawn_vec_t *v
         if (flags & 0x0400) v->flags |= MOS_SPAWN_SETSID;
         if (flags & 0x4000) v->flags |= MOS_SPAWN_CLOEXEC_DEFAULT;
         if (flags & 0x0080) v->flags |= MOS_SPAWN_START_SUSPENDED;
+        if (flags & 0x0001) v->extra |= 4;
+        if ((flags & 0x0004) || (flags & 0x0008)) {
+            if (hdr[0] >= 16) {
+                unsigned sd = 0, sm = 0;
+                memcpy(&sd, (const char *)hdr[1] + 8, 4);
+                memcpy(&sm, (const char *)hdr[1] + 12, 4);
+                if (flags & 0x0004) {
+                    v->extra |= 1;
+                    for (int b = 1; b < 32; b++) if (sd & (1u << b)) v->sigdef |= 1u << sig_darwin_to_mos(b);
+                }
+                if (flags & 0x0008) {
+                    v->extra |= 2;
+                    for (int b = 1; b < 32; b++) if (sm & (1u << b)) v->sigmask |= 1u << sig_darwin_to_mos(b);
+                }
+            }
+        }
         if (flags & 0x0040) *setexec = 1;
     }
     if (!hdr[3] || hdr[2] < 8) return 0;
@@ -654,7 +671,11 @@ static long spawn_fill(const void *adesc, u64 argv, u64 envp, mos_spawn_vec_t *v
                 fa->a = filedes;
                 fa->b = newfd;
             } else if (type == PSFA_FILEPORT_DUP2) {
-                return -MOS_EINVAL;
+                unsigned port = 0;
+                memcpy(&port, a + 8, 4);
+                fa->kind = MOS_SPAWN_FA_FILEPORT;
+                fa->a = filedes;
+                fa->b = (int)port;
             } else if (type == PSFA_CHDIR) {
                 rc = copy_guest_path(fa->path, (const char *)(a + 8), (int)sizeof fa->path);
                 if (rc) return rc;
@@ -673,6 +694,8 @@ static long spawn_fill(const void *adesc, u64 argv, u64 envp, mos_spawn_vec_t *v
     }
     return 0;
 }
+
+static void touch_code(u64 addr, u64 len) { if (addr && len) a64_invalidate(addr, len); }
 
 static void darwin_svc(rt_thread_t *T) {
     a64_cpu *c = &T->cpu;
@@ -729,6 +752,99 @@ static void darwin_svc(rt_thread_t *T) {
                 touch_code(c->x[0], 4);
             }
             r = 0;
+        }
+        break;
+    }
+    case 97:                                                   /* socket(domain, type, protocol) */
+        if (c->x[0] != 0 && c->x[0] != 1) { r = -MOS_EAFNOSUPPORT; break; }
+        r = rt_sys(SYS_UNIX, MOS_UNIX_SOCKET, (long)c->x[0], (long)c->x[1], (long)c->x[2], 0, 0);
+        break;
+    case 135:                                                  /* socketpair(domain, type, protocol, int[2]) */
+        if (c->x[0] != 0 && c->x[0] != 1) { r = -MOS_EAFNOSUPPORT; break; }
+        r = rt_sys(SYS_UNIX, MOS_UNIX_PAIR, (long)c->x[1], (long)c->x[2], (long)c->x[3], 0, 0);
+        touch_writes(SYS_UNIX, MOS_UNIX_PAIR, c->x[1], c->x[2], c->x[3], 0, r);
+        break;
+    case 104:                                                  /* bind */
+        r = rt_sys(SYS_UNIX, MOS_UNIX_BIND, (long)c->x[0], (long)c->x[1], (long)c->x[2], 0, 0);
+        break;
+    case 106:                                                  /* listen */
+        r = rt_sys(SYS_UNIX, MOS_UNIX_LISTEN, (long)c->x[0], (long)c->x[1], 0, 0, 0);
+        break;
+    case 30:                                                   /* accept */
+        r = rt_sys(SYS_UNIX, MOS_UNIX_ACCEPT, (long)c->x[0], (long)c->x[1], (long)c->x[2], 0, 0);
+        touch_writes(SYS_UNIX, MOS_UNIX_ACCEPT, c->x[0], c->x[1], c->x[2], 0, r);
+        break;
+    case 98:                                                   /* connect */
+        r = rt_sys(SYS_UNIX, MOS_UNIX_CONNECT, (long)c->x[0], (long)c->x[1], (long)c->x[2], 0, 0);
+        break;
+    case 134:                                                  /* shutdown */
+        r = rt_sys(SYS_UNIX, MOS_UNIX_SHUTDOWN, (long)c->x[0], (long)c->x[1], 0, 0, 0);
+        break;
+    case 32:                                                   /* getsockname */
+        r = rt_sys(SYS_UNIX, MOS_UNIX_SOCKNAME, (long)c->x[0], (long)c->x[1], (long)c->x[2], 0, 0);
+        touch_writes(SYS_UNIX, MOS_UNIX_SOCKNAME, c->x[0], c->x[1], c->x[2], 0, r);
+        break;
+    case 31:                                                   /* getpeername */
+        r = rt_sys(SYS_UNIX, MOS_UNIX_PEERNAME, (long)c->x[0], (long)c->x[1], (long)c->x[2], 0, 0);
+        touch_writes(SYS_UNIX, MOS_UNIX_PEERNAME, c->x[0], c->x[1], c->x[2], 0, r);
+        break;
+    case 105: {                                                /* setsockopt: o kernel não muda opções; SO_TYPE confirma o fd */
+        int typ = 0;
+        mos_unix_sockopt_t o;
+        memset(&o, 0, sizeof o);
+        o.level = 0xffff;
+        o.name = 0x1008;
+        o.len = 4;
+        o.val = &typ;
+        r = rt_sys(SYS_UNIX, MOS_UNIX_GETSOCKOPT, (long)c->x[0], (long)&o, 0, 0, 0);
+        break;
+    }
+    case 118: {                                                /* getsockopt(fd, level, name, val, len*) */
+        unsigned ln = 0;
+        mos_unix_sockopt_t o;
+        if (c->x[4]) memcpy(&ln, (void *)c->x[4], 4);
+        memset(&o, 0, sizeof o);
+        o.level = (int)c->x[1];
+        o.name = (int)c->x[2];
+        o.len = ln;
+        o.val = (void *)c->x[3];
+        r = rt_sys(SYS_UNIX, MOS_UNIX_GETSOCKOPT, (long)c->x[0], (long)&o, 0, 0, 0);
+        if (r == 0 && c->x[4]) {
+            memcpy((void *)c->x[4], &o.len, 4);
+            touch_code(c->x[4], 4);
+        }
+        touch_writes(SYS_UNIX, MOS_UNIX_GETSOCKOPT, c->x[0], (u64)&o, 0, 0, r);
+        break;
+    }
+    case 27:                                                   /* recvmsg */
+    case 28:                                                   /* sendmsg */
+        r = rt_sys(SYS_UNIX, n == 27 ? MOS_UNIX_RECVMSG : MOS_UNIX_SENDMSG,
+                   (long)c->x[0], (long)c->x[1], (long)c->x[2], 0, 0);
+        if (n == 27) touch_writes(SYS_UNIX, MOS_UNIX_RECVMSG, c->x[0], c->x[1], c->x[2], 0, r);
+        break;
+    case 29:                                                   /* recvfrom */
+    case 133: {                                                /* sendto: um iovec na pilha do runtime, que é memória do processo */
+        struct { u64 base, len; } iv;
+        struct { u64 name; unsigned namelen, pad; u64 iov; int iovlen, pad2;
+                 u64 control; unsigned controllen; int flags; } h;
+        unsigned nl = 0;
+        memset(&h, 0, sizeof h);
+        iv.base = c->x[1];
+        iv.len = c->x[2];
+        if (n == 29 && c->x[5]) memcpy(&nl, (void *)c->x[5], 4);
+        else if (n == 133) nl = (unsigned)c->x[5];
+        h.name = c->x[4];
+        h.namelen = nl;
+        h.iov = (u64)&iv;
+        h.iovlen = 1;
+        r = rt_sys(SYS_UNIX, n == 29 ? MOS_UNIX_RECVMSG : MOS_UNIX_SENDMSG,
+                   (long)c->x[0], (long)&h, (long)c->x[3], 0, 0);
+        if (n == 29) {
+            if (c->x[5] && r >= 0) {
+                memcpy((void *)c->x[5], &h.namelen, 4);
+                touch_code(c->x[5], 4);
+            }
+            touch_writes(SYS_UNIX, MOS_UNIX_RECVMSG, c->x[0], (u64)&h, 0, 0, r);
         }
         break;
     }
@@ -804,8 +920,23 @@ static void pick_engine(u64 cxs) {
     }
 }
 
+int a64_host_ro_file(uint64_t page, uint64_t *file_id, uint64_t *file_off) {
+    uint64_t pair[2];
+    long r;
+    if (!file_id || !file_off) return 0;
+    r = RS3(SYS_THREADCTL, MOS_THR_ROFILE, page, pair);
+    if (r != 1) return 0;
+    *file_id = pair[0];
+    *file_off = pair[1];
+    return 1;
+}
+
 void rt_main(const a64rt_boot_t *b) {
     if (!b || b->magic != A64RT_BOOT_MAGIC) rt_die("descritor de partida inválido");
+#ifdef A64_HAVE_JIT
+    if (*(volatile uint64_t *)(uintptr_t)JIT_SHARE_VA == JIT_SHARE_MAGIC)
+        jit_share_bind((void *)(uintptr_t)JIT_SHARE_VA, JIT_SHARE_BYTES);
+#endif
     g_boot = b;
     rt_text_lo = b->rt_base;
     rt_text_hi = b->rt_base + b->rt_size;

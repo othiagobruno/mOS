@@ -81,6 +81,11 @@ os zips do inventário em `docs/compat-open-usage.md`:
 `libswiftCoreFoundation`, `libswiftMetal` e `libswiftCoreGraphics` fecharam em 0
 nessa medição. Antes: 53 no VS Code e 230 no OpenBot.
 
+`libswiftMetal.dylib` exporta `_$sSo9MTLBufferP5MetalE14didModifyRangeyySnySiGF`
+(`MTLBuffer.didModifyRange`), implementado em `mos_mtl_modify.c`: `Range<Int>`
+vira `NSRange` e chama `-didModifyRange:`. O `build-libswift-real.sh` recusa o
+dylib se esse nome não estiver no binário.
+
 O overlay `UniformTypeIdentifiers/UTType.swift` não compila sem o módulo
 Foundation. O erro exato:
 
