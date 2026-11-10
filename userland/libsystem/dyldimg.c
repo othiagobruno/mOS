@@ -98,8 +98,8 @@ void cx_dyld_notify_add(u32 first, u32 n) {
         for (int k = 0; k < nadd_cbs; k++) add_cbs[k](h, slide_of(h));
     }
 }
-/* O kernel não desmapeia imagem (MOS_DYLD_CLOSE só tira uma referência). O callback fica guardado
- * para cx_dyld_notify_remove, que ainda não é chamado no dlclose. Sem isto o registro era no-op. */
+/* Último dlclose (MOS_DYLD_CLOSE devolve 1): dlfcn.c chama cx_dyld_notify_remove com o cabeçalho e o slide.
+ * O kernel não desmapeia. Dylib com seção __objc_ ou __swift não recebe o aviso. */
 typedef void (*rem_fn)(const void *mh, i64 slide);
 static rem_fn rem_cbs[32];
 static int nrem_cbs;

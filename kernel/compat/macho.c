@@ -996,7 +996,8 @@ static bool run_chained(load_t *L) {
         u64 seg_off = rd64(ss + 8);
         /* 2 = DYLD_CHAINED_PTR_64, 6 = _64_OFFSET (passo de 4 bytes); arm64e (passo de 8): 1 = ARM64E (rebase por vmaddr),
          * 12 = ARM64E_USERLAND, 13 = ARM64E_USERLAND24 (rebase por deslocamento, bind com ordinal de 24 bits). Os
-         * ponteiros autenticados viram ponteiros puros: o PAC do tradutor é a identidade (docs/tradutor-arm64.md). */
+         * ponteiros autenticados viram ponteiros puros: o PAC do tradutor é a identidade (docs/tradutor-arm64.md).
+         * Nenhum binário dos apps-alvo neste repositório pede um formato fora desta lista. */
         bool e64 = fmt == 1 || fmt == 12 || fmt == 13;
         if (fmt != 2 && fmt != 6 && !e64) { snprintf(L->err, L->errlen, "formato de ponteiro encadeado %u não suportado", fmt); ok = false; break; }
         if (L->report_only) continue;
@@ -2008,8 +2009,11 @@ i64 macho_dyld_syscall(process_t *p, u64 op, u64 a, u64 b, u64 c) {
         return (i64)dyld_sym(K, (i64)a, name, c);
     }
     case MOS_DYLD_CLOSE:
-        if (a < (u64)K->n && K->im[a]->refs > 0) K->im[a]->refs--;
-        return 0;
+        /* 1 = esta foi a última referência. A imagem continua mapeada: o mOS não descarrega.
+         * dlfcn.c usa o 1 para avisar remove_image num dylib sem seção __objc_/__swift. */
+        if (a >= (u64)K->n || !K->im[a] || K->im[a]->refs == 0) return 0;
+        K->im[a]->refs--;
+        return K->im[a]->refs == 0 ? 1 : 0;
     case MOS_DYLD_COUNT: return K->n;
     case MOS_DYLD_IMAGE: {
         if (a >= (u64)K->n) return 0;

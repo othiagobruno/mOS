@@ -10,7 +10,8 @@
  * sequência do dyld da Apple.
  *
  * Handles: (índice da imagem + 1) << 4; RTLD_DEFAULT/NEXT/SELF/MAIN_ONLY com os valores do macOS.
- * Nada é descarregado no dlclose (como o dyld faz com imagens que têm ObjC ou Swift).
+ * dlclose não desmapeia. Na última referência de um dylib sem seção __objc_/__swift, chama
+ * _dyld_register_func_for_remove_image. Imagem com ObjC ou Swift fica em silêncio, como o dyld da Apple.
  */
 #include "sys.h"
 #include "libc.h"
@@ -105,6 +106,7 @@ const void *_dyld_get_image_header_containing_address(const void *addr) {
 void *dlsym(void *h, const char *name);
 extern void cx_objc_boot(u64 sects, u64 n);                  /* objc.c: liga o runtime (se preciso) e registra */
 extern void cx_dyld_notify_add(u32 first, u32 n);            /* dyldimg.c: callbacks de add_image */
+extern void cx_dyld_notify_remove(const void *mh, i64 slide);
 typedef void (*init_fn)(int, char **, char **, char **, void *);
 
 static void *handle_of(long idx) { return (void *)(u64)(((u64)idx + 1) << 4); }
@@ -143,12 +145,38 @@ void *dlopen(const char *path, int mode) {
     return handle_of(r);
 }
 
+/* ObjC/Swift: o dyld da Apple não descarrega e não chama remove_image. */
+static int image_keeps_resident(const void *h) {
+    const u32 *mh = h;
+    if (!mh || mh[0] != 0xFEEDFACFu) return 1;
+    u32 ncmds = mh[4], scmds = mh[5];
+    const u8 *p = (const u8 *)h + 32, *end = p + scmds;
+    for (u32 i = 0; i < ncmds && p + 8 <= end; i++) {
+        u32 cmd = *(const u32 *)p, sz = *(const u32 *)(p + 4);
+        if (sz < 8 || p + sz > end) break;
+        if (cmd == 0x19 && sz >= 72) {
+            u32 nsects = *(const u32 *)(p + 64);
+            for (u32 k = 0; k < nsects; k++) {
+                const u8 *s = p + 72 + (usize)k * 80;
+                if (s + 16 > p + sz) break;
+                if (!strncmp((const char *)s, "__objc_", 7) || !strncmp((const char *)s, "__swift", 7)) return 1;
+            }
+        }
+        p += sz;
+    }
+    return 0;
+}
+
 int dlclose(void *h) {
     u64 v = (u64)h;
     if ((long)v < 0 || !v) return 0;
     if (v & 15) { set_err("dlclose(%s): handle inválido%s", "?", ""); return -1; }
     long idx = (long)(v >> 4) - 1;
-    if (idx != H_LIBSYSTEM && !no_kernel) SYS2(SYS_DYLD, MOS_DYLD_CLOSE, idx);
+    if (idx == H_LIBSYSTEM || no_kernel) return 0;
+    const void *mh = _dyld_get_image_header((u32)idx);
+    long sl = slide_of(mh);
+    long r = SYS2(SYS_DYLD, MOS_DYLD_CLOSE, idx);
+    if (r == 1 && mh && !image_keeps_resident(mh)) cx_dyld_notify_remove(mh, sl);
     return 0;
 }
 

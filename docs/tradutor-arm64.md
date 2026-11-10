@@ -210,6 +210,16 @@ próprias `0x4D00..`, ucontext/mcontext64 do Darwin arm64, ESR, tabela de sysctl
   autenticados viram ponteiros puros), rebase com o byte alto preservado (TBI: RTTI não único da libc++),
   stubs de símbolo ausente em arm64. O runtime `/Sistema/Biblioteca/a64/a64rt.mos` entra em `A64RT_BASE` (montado
   uma vez, cópia na escrita) com uma pilha do host de 1 MiB alinhada; a thread começa nele com `rdi = a64rt_boot_t*`.
+
+  **Formatos de ponteiro encadeado.** `run_chained` aceita 2 (`DYLD_CHAINED_PTR_64`), 6 (`_64_OFFSET`), 1 (`ARM64E`,
+  rebase por vmaddr) e, no mesmo desenho de 8 bytes, 12 (ordinal de bind de 16 bits) e 13 (ordinal de 24 bits). O
+  comentário no código chama 12 de `ARM64E_USERLAND` e 13 de `ARM64E_USERLAND24`. A enum pública da Apple numera 9 como
+  `DYLD_CHAINED_PTR_ARM64E_USERLAND` e 12 como `DYLD_CHAINED_PTR_ARM64E_USERLAND24`; o formato 9 não é aceito. Não há
+  outro caso implementado: este repositório não contém os Mach-O de Codex, Cursor, Antigravity, Grok Bot, Postico,
+  WhatsApp, Chrome, Slack ou VS Code, e nenhum documento daqui registra falha de carga por um formato fora de
+  {2, 6, 1, 12, 13}. O zig 0.17.1, que gera os dylibs de teste, emite `LC_DYLD_INFO_ONLY` em `x86_64-macos` e
+  `aarch64-macos` (também com ponteiro global e import) e recusa `-Wl,-fixup_chains`. Isso não é compatibilidade com
+  todo binário da Apple.
 - **Runtime (`userland/a64rt`, `tools/build-a64rt.ps1`).** Laço `a64_run` por thread (o `rt_thread_t` mora na base
   da pilha do host: `rsp & ~(1 MiB-1)`); `svc #0x4d4f` → `int 0x80` 1:1; `svc #0x80` Darwin cru (exit/read/write/
   getpid/kill/thread_selfid/TSD; o resto SIGSYS); threads (`SYS_THREAD_CREATE` com estado guest, TPIDRRO pelo

@@ -27,7 +27,10 @@ typedef unsigned long usize;
 int *__error(void);
 #define cx_errno (*__error())
 
-#if defined(__aarch64__)
+#if defined(MOS_LIBSYS_SYSCALL)
+/* Só o teste de host tools/dyld_remove_test.c: o int 0x80 é uma função. Não é um modo do sistema. */
+long cx_syscall(long n, long a, long b, long c, long d, long e);
+#elif defined(__aarch64__)
 /* o "pause" das esperas ativas do x86 vira o yield do arm64: código novo que usa __builtin_ia32_pause compila nos dois */
 #define __builtin_ia32_pause() __asm__ volatile("yield" ::: "memory")
 /* libSystem arm64 (docs/tradutor-arm64.md): svc #0x4d4f, número em x8, argumentos x0..x4, resultado em x0; o runtime
