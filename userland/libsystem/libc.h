@@ -2,6 +2,7 @@
 #pragma once
 #include <stdarg.h>
 #include <stddef.h>
+#include <stdint.h>
 #ifndef MOS_SSIZE_T_DEFINED
 #define MOS_SSIZE_T_DEFINED
 typedef long ssize_t;
