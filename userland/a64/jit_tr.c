@@ -662,16 +662,15 @@ static int tr_branch(T *t, a64_u32 w) {
         if (imm == 0 || imm == 0x20 || imm == 0x22 || imm == 0x24 || imm == 0x26) return 1;  /* NOP, BTI */
         return 0;
     }
-    if ((w & 0xFFFFF0FF) == 0xD503305F) {                       /* CLREX */
-        x_mov_mi(B, 0, XM(RCPU, (int32_t)offsetof(a64_cpu, excl_valid)), 0);
-        return 1;
-    }
-    if ((w & 0xFFFFF09F) == 0xD503309F) {                       /* DSB/DMB/ISB */
+    if ((w & 0xFFFFF0FF) == 0xD503305F) return 0;              /* CLREX: o interpretador desarma o monitor */
+    if ((w & 0xFFFFF09F) == 0xD503309F) {                       /* DSB/DMB/ISB/SB */
         unsigned op2 = BITS(w, 7, 5), crm = BITS(w, 11, 8);
-        if (op2 == 6) { t->ended = 2; return 1; }               /* ISB: fecha o bloco */
+        if (op2 == 6) { t->ended = 2; return 1; }               /* ISB: fecha o bloco, sem mfence */
+        if (op2 == 7 && crm == 0) { xe8(B, 0x0F); xe8(B, 0xAE); xe8(B, 0xE8); return 1; } /* SB: lfence */
+        if (op2 == 4 && (crm == 0 || crm == 4)) { xe8(B, 0x0F); xe8(B, 0xAE); xe8(B, 0xE8); return 1; } /* SSBB/PSSBB */
         if ((op2 == 4 || op2 == 5) && (crm & 3)) {
-            if ((crm & 3) == 3) x_mfence(B);                    /* só st→ld precisa de barreira no TSO */
-            return 1;
+            if ((crm & 3) == 3) x_mfence(B);                    /* SY/ISH/NSH/OSH: store→load */
+            return 1;                                           /* LD/ST: o TSO já ordena */
         }
         return 0;
     }
@@ -976,6 +975,95 @@ static int tr_dpreg(T *t, a64_u32 w) {
 /* ---------------------------------------------------------------------------------------------
  * Loads / stores
  * ------------------------------------------------------------------------------------------- */
+/* store do guest avisa o monitor exclusivo. O caminho rápido não chama C e não mexe nos
+ * registradores do cache. O lento salva os caller-saved, chama e restaura: o número de
+ * registrador usado depois continua válido. xmm não é tocado (helpers general-regs-only). */
+#define OFF_XGATE ((int32_t)offsetof(a64_cpu, reserved[11]))
+
+static void x_call_abs(xb *b, const void *fn) {
+    x_mov_ri(b, XAX, (a64_u64)(uintptr_t)fn);
+    xop1(b, 0, 0xFF, 2, XR(XAX));
+}
+static void xmon_save_callers(T *t) {
+#ifdef _WIN32
+    static const int cs[] = { X8, X9, X10, X11 };
+    x_alu_ri(B, 1, A_SUB, XR(XSP), 64);
+    for (int i = 0; i < 4; i++) x_mov_mr(B, 1, XM(XSP, 32 + 8 * i), cs[i]);
+#else
+    static const int cs[] = { XSI, XDI, X8, X9, X10, X11 };
+    x_alu_ri(B, 1, A_SUB, XR(XSP), 48);
+    for (int i = 0; i < 6; i++) x_mov_mr(B, 1, XM(XSP, 8 * i), cs[i]);
+#endif
+    (void)t;
+}
+static void xmon_restore_callers(T *t) {
+#ifdef _WIN32
+    static const int cs[] = { X8, X9, X10, X11 };
+    for (int i = 0; i < 4; i++) x_mov_rm(B, 1, cs[i], XM(XSP, 32 + 8 * i));
+    x_alu_ri(B, 1, A_ADD, XR(XSP), 64);
+#else
+    static const int cs[] = { XSI, XDI, X8, X9, X10, X11 };
+    for (int i = 0; i < 6; i++) x_mov_rm(B, 1, cs[i], XM(XSP, 8 * i));
+    x_alu_ri(B, 1, A_ADD, XR(XSP), 48);
+#endif
+    (void)t;
+}
+static void xmon_pre(T *t, xo m, int bytes) {
+    if (bytes <= 0) return;
+    t->mxclean = 0;
+    fl_clobber_force(t);
+    x_lea(B, 1, XCX, m);
+    x_mov_rm(B, 1, XAX, XM(RCPU, OFF_XGATE));
+    x_test_rr(B, 1, XAX, XAX);
+    a64_u8 *j_none = x_jcc32(B, CC_E);
+    x_alu_ri(B, 0, A_CMP, XM(XAX, 16), 0);
+    a64_u8 *j_held = x_jcc32(B, CC_NE);
+    x_mov_mr(B, 1, XM(XAX, 0), XCX);
+    x_mov_mi(B, 0, XM(XAX, 8), bytes);
+    x_mov_mi(B, 0, XM(XAX, 12), 1);
+    x_mov_ri(B, XDX, (a64_u64)(uintptr_t)&a64_xmon_live);
+    x_alu_ri(B, 0, A_CMP, XM(XDX, 0), 0);
+    a64_u8 *j_fast = x_jcc32(B, CC_E);
+    xmon_save_callers(t);
+#ifdef _WIN32
+    x_mov_rr(B, 1, XCX, RCPU);
+#else
+    x_mov_rr(B, 1, XDI, RCPU);
+#endif
+    x_call_abs(B, (const void *)a64_xmon_bump);
+    xmon_restore_callers(t);
+    a64_u8 *j_done = x_jmp32(B);
+    if (!t->b.ovf) x_patch32(j_held, t->b.p);
+    x_alu_ri(B, 0, A_ADD, XM(XAX, 20), 1);
+    a64_u8 *j_done2 = x_jmp32(B);
+    if (!t->b.ovf) x_patch32(j_none, t->b.p);
+    xmon_save_callers(t);
+#ifdef _WIN32
+    x_mov_rr(B, 1, XDX, XCX);
+    x_mov_rr(B, 1, XCX, RCPU);
+    x_mov_ri(B, X8, (a64_u64)(a64_u32)bytes);
+#else
+    x_mov_rr(B, 1, XSI, XCX);
+    x_mov_rr(B, 1, XDI, RCPU);
+    x_mov_ri(B, XDX, (a64_u64)(a64_u32)bytes);
+#endif
+    x_call_abs(B, (const void *)a64_xmon_prepare);
+    xmon_restore_callers(t);
+    if (!t->b.ovf) { x_patch32(j_fast, t->b.p); x_patch32(j_done, t->b.p); x_patch32(j_done2, t->b.p); }
+}
+static void xmon_post(T *t) {
+    x_mov_rm(B, 1, XAX, XM(RCPU, OFF_XGATE));
+    x_test_rr(B, 1, XAX, XAX);
+    a64_u8 *j0 = x_jcc32(B, CC_E);
+    x_alu_ri(B, 0, A_CMP, XM(XAX, 20), 0);
+    a64_u8 *j1 = x_jcc32(B, CC_E);
+    x_alu_ri(B, 0, A_SUB, XM(XAX, 20), 1);
+    a64_u8 *j2 = x_jmp32(B);
+    if (!t->b.ovf) x_patch32(j1, t->b.p);
+    x_mov_mi(B, 0, XM(XAX, 12), 0);
+    if (!t->b.ovf) { x_patch32(j0, t->b.p); x_patch32(j2, t->b.p); }
+}
+
 /* acesso de um registrador inteiro: size 0..3, kind 0 store, 1 load zx, 2 load sx64, 3 load sx32 */
 static void ld_int(T *t, int hd, xo m, int size, int kind) {
     fp_mark(t);
@@ -991,11 +1079,13 @@ static void ld_int(T *t, int hd, xo m, int size, int kind) {
     }
 }
 static void st_int(T *t, int rt, xo m, int size) {
+    xmon_pre(t, m, 1 << size);
     if (rt == 31) {
         fp_mark(t);
         if (size == 0) x_mov8_mi(B, m, 0);
         else if (size == 1) x_mov16_mi(B, m, 0);
         else x_mov_mi(B, size == 3, m, 0);
+        xmon_post(t);
         return;
     }
     int hs = rget(t, rt);
@@ -1003,6 +1093,7 @@ static void st_int(T *t, int rt, xo m, int size) {
     if (size == 0) x_mov8_mr(B, m, hs);
     else if (size == 1) x_mov16_mr(B, m, hs);
     else x_mov_mr(B, size == 3, m, hs);
+    xmon_post(t);
 }
 /* SIMD&FP: tamanho em bytes 1,2,4,8,16 ; xmm 'x' como temporário */
 static void ld_vec_tmp(T *t, int x, xo m, int bytes) {
@@ -1016,6 +1107,7 @@ static void ld_vec_tmp(T *t, int x, xo m, int bytes) {
     }
 }
 static void st_vec(T *t, int vt, xo m, int bytes) {
+    xmon_pre(t, m, bytes);
     xo v = XM(RCPU, OFF_V(vt));
     switch (bytes) {
     case 1: x_movzx8(B, XDX, v); fp_mark(t); x_mov8_mr(B, m, XDX); break;
@@ -1024,6 +1116,7 @@ static void st_vec(T *t, int vt, xo m, int bytes) {
     case 8: x_mov_rm(B, 1, XDX, v); fp_mark(t); x_mov_mr(B, 1, m, XDX); break;
     default: x_movdqa_ld(B, 0, v); fp_mark(t); x_movdqu_st(B, m, 0); break;
     }
+    xmon_post(t);
 }
 static void wb_base(T *t, int rn, int64_t off) {
     int h = rget(t, rn);
@@ -1052,11 +1145,13 @@ static int tr_rcpc2(T *t, a64_u32 w) {
     }
     xo m = XM(hb, off);
     if (kind) { ld_int(t, rt == 31 ? XDX : rdef(t, rt), m, size, kind); return 1; }
+    xmon_pre(t, m, 1 << size);
     if (rt == 31) x_mov_ri(B, XAX, 0); else x_mov_rr(B, 1, XAX, rget(t, rt));
     fp_mark(t);
     if (size == 0) x_xchg8_mr(B, m, XAX);
     else if (size == 1) x_xchg16_mr(B, m, XAX);
     else x_xchg_mr(B, size == 3, m, XAX);
+    xmon_post(t);
     return 1;
 }
 
@@ -1137,11 +1232,13 @@ static int tr_ldst(T *t, a64_u32 w) {
                         xop2(B, XF_66, 0x70, 0, XR(0)); xe8(B, 0xEE);      /* pshufd xmm0, xmm0, 0xEE */
                         xop2(B, XF_66 | XF_W, 0x7E, 0, XR(h2));
                     } else {
+                        xmon_pre(t, m1, 16);
                         xop2(B, XF_66 | XF_W, 0x6E, 0, XR(s1));            /* movq xmm0, s1 */
                         xop2(B, XF_66 | XF_W, 0x6E, 1, XR(s2));
                         x_sse66(B, 0x6C, 0, XR(1));                         /* punpcklqdq */
                         fp_mark(t);
                         x_movdqu_st(B, m1, 0);
+                        xmon_post(t);
                     }
                 } else {
                     if (single < 0 || 1) fl_clobber_force(t);
@@ -1151,12 +1248,14 @@ static int tr_ldst(T *t, a64_u32 w) {
                         if (sx) { x_movsxd(B, h1, XR(XAX)); x_shift_ri(B, 1, S_SAR, XAX, 32); x_mov_rr(B, 1, h2, XAX); }
                         else { x_mov_rr(B, 1, h2, XAX); x_shift_ri(B, 1, S_SHR, h2, 32); x_mov_rr(B, 0, h1, XAX); }
                     } else {
+                        xmon_pre(t, m1, 8);
                         x_mov_rr(B, 0, XAX, s1);
                         x_mov_rr(B, 1, XCX, s2);
                         x_shift_ri(B, 1, S_SHL, XCX, 32);
                         x_alu_rr(B, 1, A_OR, XAX, XCX);
                         fp_mark(t);
                         x_mov_mr(B, 1, m1, XAX);
+                        xmon_post(t);
                     }
                 }
                 if (single < 0) jdone = x_jmp32(B);
@@ -1167,10 +1266,12 @@ static int tr_ldst(T *t, a64_u32 w) {
                     if (sx) { fp_mark(t); x_movsxd(B, XAX, m1); fp_mark(t); x_movsxd(B, h2, m2); x_mov_rr(B, 1, h1, XAX); }
                     else { fp_mark(t); x_mov_rm(B, scale == 3, XAX, m1); fp_mark(t); x_mov_rm(B, scale == 3, h2, m2); x_mov_rr(B, scale == 3, h1, XAX); }
                 } else {
+                    xmon_pre(t, m1, sz * 2);
                     fp_mark(t);
                     if (scale == 3) x_mov_mr(B, 1, m1, s1); else x_mov_mr(B, 0, m1, s1);
                     fp_mark(t);
                     if (scale == 3) x_mov_mr(B, 1, m2, s2); else x_mov_mr(B, 0, m2, s2);
+                    xmon_post(t);
                 }
             }
             if (jdone && !t->b.ovf) x_patch32(jdone, t->b.p);
@@ -1191,7 +1292,8 @@ static int tr_ldst(T *t, a64_u32 w) {
     if ((w & 0x3F000000) == 0x08000000) {                       /* exclusivos / ordenados */
         int size = (int)BITS(w, 31, 30), L = (int)BIT(w, 22), rt = (int)(w & 31), rn = (int)BITS(w, 9, 5);
         if (!BIT(w, 23) || BIT(w, 21)) return tr_excl(t, w);
-        if (!BIT(w, 23) || BIT(w, 21) || !BIT(w, 15) || BITS(w, 20, 16) != 31 || BITS(w, 14, 10) != 31) return 0;
+        /* bit 15 limpo é LDLAR/STLLR: sem LORegion, a mesma ordem que LDAR/STLR */
+        if (!BIT(w, 23) || BIT(w, 21) || BITS(w, 20, 16) != 31 || BITS(w, 14, 10) != 31) return 0;
         int hb = rget(t, rn);
         sa0_check(t, rn, hb);
         if (size && !JIT_NAA && !(JIT_SA0 && rn == 31)) {       /* atravessa 16 bytes: falha de alinhamento */
@@ -1201,14 +1303,16 @@ static int tr_ldst(T *t, a64_u32 w) {
             x_alu_ri(B, 0, A_CMP, XR(XAX), 16 - (1 << size));
             slow_if(t, CC_A);
         }
-        if (L) { ld_int(t, wx(t, rt), XM(hb, 0), size, 1); return 1; }     /* LDAR */
-        /* STLR: xchg = store + barreira completa (RCsc com LDAR posterior) */
+        if (L) { ld_int(t, wx(t, rt), XM(hb, 0), size, 1); return 1; }     /* LDAR / LDLAR */
+        /* STLR/STLLR: xchg = store + barreira completa (RCsc com LDAR posterior) */
+        xmon_pre(t, XM(hb, 0), 1 << size);
         if (rt == 31) x_mov_ri(B, XAX, 0);
         else x_mov_rr(B, 1, XAX, rget(t, rt));
         fp_mark(t);
         if (size == 0) x_xchg8_mr(B, XM(hb, 0), XAX);
         else if (size == 1) x_xchg16_mr(B, XM(hb, 0), XAX);
         else x_xchg_mr(B, size == 3, XM(hb, 0), XAX);
+        xmon_post(t);
         return 1;
     }
     if ((w & 0x3A000000) != 0x38000000) return 0;               /* registrador único */

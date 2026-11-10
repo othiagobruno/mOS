@@ -3,19 +3,13 @@
  * atômicos LSE (LDADD/LDCLR/LDEOR/LDSET/SWP, LDAPR) emitidos nativamente. Incluído por jit_tr.c.
  *
  * Mesma semântica do interpretador (interp_int_ls.c):
- *  - monitor = (excl_addr, excl_size, excl_val[0], excl_valid); LDXR lê e arma; STXR faz
- *    lock cmpxchg contra o valor guardado se o monitor bate (endereço e tamanho), status 0/1, e
- *    desarma sempre. ABA aceito (doc).
+ *  - LDXR/STXR/LDXP/STXP vão ao interpretador: o monitor é por época (a64_xmon), não por
+ *    compare-exchange do valor. CAS/LSE/SWP ficam nativos e avisam o monitor (são stores).
  *  - acesso que atravessa um bloco de 16 bytes → FAULT de alinhamento (o STXR confere antes do
  *    monitor); SA0 para base SP. Esses casos vão ao interpretador pelo caminho lento.
  *  - instruções com lock no x86 já são barreira completa (acquire/release/RCsc de graça).
  * Pares: LDXP/STXP/CASP com movdqu/lock cmpxchg16b (X) ou 8 bytes (W).
  */
-
-#define OFF_EXA  ((int32_t)offsetof(a64_cpu, excl_addr))
-#define OFF_EXV  ((int32_t)offsetof(a64_cpu, excl_val))
-#define OFF_EXS  ((int32_t)offsetof(a64_cpu, excl_size))
-#define OFF_EXOK ((int32_t)offsetof(a64_cpu, excl_valid))
 
 /* lock + op de 1/2/4/8 bytes com memória: op8 para byte, op para os outros (0F xx) */
 static void x_lock2(T *t, int size, unsigned op8, unsigned op, int reg, xo m) {
@@ -68,6 +62,7 @@ static int tr_xpair(T *t, a64_u32 w) {             /* o2 = 0, o1 = 1 */
         cross_check_n(t, rn, hb, x ? 16 : 8);
         fl_clobber_force(t);
         int d0 = wx(t, rs), d1 = wx(t, rs + 1);
+        xmon_pre(t, XM(hb, 0), x ? 16 : 8);
         if (x) {
             x_mov_rr(B, 1, XAX, s0); x_mov_rr(B, 1, XDX, s1);
             x_mov_rr(B, 1, XBX, n0); x_mov_rr(B, 1, XCX, n1);
@@ -83,119 +78,19 @@ static int tr_xpair(T *t, a64_u32 w) {             /* o2 = 0, o1 = 1 */
             x_mov_rr(B, 0, d0, XAX); x_mov_rr(B, 0, d1, XDX);
         }
         t->fe = 0;
+        xmon_post(t);
         return 1;
     }
-    int x = size == 3, tot = x ? 16 : 8;
-    if (L) {                                        /* LDXP / LDAXP */
-        if (rt == rt2) return 0;
-        int hb = rget(t, rn);
-        sa0_check(t, rn, hb);
-        cross_check_n(t, rn, hb, tot);
-        fl_clobber_force(t);                        /* o shr do par de W destrói o EFLAGS */
-        int h1 = wx(t, rt), h2 = wx(t, rt2);
-        fp_mark(t);
-        if (x) {
-            x_movdqu_ld(B, 0, XM(hb, 0));
-            xop2(B, XF_66 | XF_W, 0x7E, 0, XR(XAX));
-            xop2(B, XF_66, 0x70, 0, XR(0)); xe8(B, 0xEE);
-            xop2(B, XF_66 | XF_W, 0x7E, 0, XR(XDX));
-            x_mov_mr(B, 1, XM(RCPU, OFF_EXV + 8), XDX);
-        } else {
-            x_mov_rm(B, 1, XAX, XM(hb, 0));
-            x_mov_rr(B, 1, XDX, XAX); x_shift_ri(B, 1, S_SHR, XDX, 32);
-            x_mov_mi(B, 1, XM(RCPU, OFF_EXV + 8), 0);
-        }
-        x_mov_mr(B, 1, XM(RCPU, OFF_EXA), hb);
-        x_mov_mi(B, 0, XM(RCPU, OFF_EXS), tot);
-        x_mov_mr(B, 1, XM(RCPU, OFF_EXV), XAX);
-        x_mov_mi(B, 0, XM(RCPU, OFF_EXOK), 1);
-        x_mov_rr(B, x, h1, XAX);
-        x_mov_rr(B, x, h2, XDX);
-        return 1;
-    }
-    /* STXP / STLXP */
-    if (rs == rt || rs == rt2 || (rs == rn && rn != 31)) return 0;
-    if (x) reserve_rbx(t);
-    int hb = rget(t, rn);
-    int ha = rx(t, rt), hc = rx(t, rt2);
-    int hst = wx(t, rs);
-    sa0_check(t, rn, hb);
-    cross_check_n(t, rn, hb, tot);                  /* confere o alinhamento antes do monitor */
-    fl_clobber_force(t);
-    x_alu_ri(B, 0, A_CMP, XM(RCPU, OFF_EXOK), 0);
-    a64_u8 *f1 = x_jcc32(B, CC_E);
-    x_alu_rm(B, 1, A_CMP, hb, XM(RCPU, OFF_EXA));
-    a64_u8 *f2 = x_jcc32(B, CC_NE);
-    x_alu_ri(B, 0, A_CMP, XM(RCPU, OFF_EXS), tot);
-    a64_u8 *f3 = x_jcc32(B, CC_NE);
-    x_mov_rm(B, 1, XAX, XM(RCPU, OFF_EXV));
-    if (x) {
-        x_mov_rm(B, 1, XDX, XM(RCPU, OFF_EXV + 8));
-        x_mov_rr(B, 1, XBX, ha); x_mov_rr(B, 1, XCX, hc);
-        fp_mark(t);
-        xe8(B, 0xF0); xop2(B, XF_W, 0xC7, 1, XM(hb, 0));
-    } else {
-        x_mov_rr(B, 0, XCX, hc); x_shift_ri(B, 1, S_SHL, XCX, 32); x_mov_rr(B, 0, XDX, ha); x_alu_rr(B, 1, A_OR, XCX, XDX);
-        fp_mark(t);
-        x_lock2(t, 3, 0xB0, 0xB1, XCX, XM(hb, 0));
-    }
-    x_setcc(B, CC_NE, XDX);
-    x_movzx8(B, XDX, XR(XDX));
-    a64_u8 *jd = x_jmp32(B);
-    if (!t->b.ovf) { x_patch32(f1, t->b.p); x_patch32(f2, t->b.p); x_patch32(f3, t->b.p); }
-    x_mov_ri(B, XDX, 1);
-    if (!t->b.ovf) x_patch32(jd, t->b.p);
-    x_mov_mi(B, 0, XM(RCPU, OFF_EXOK), 0);
-    x_mov_rr(B, 0, hst, XDX);
-    return 1;
+    (void)L; (void)rs; (void)rt2; (void)rn; (void)rt;
+    return 0;                                          /* LDXP/STXP: monitor de época no interpretador */
 }
 
 static int tr_excl(T *t, a64_u32 w) {           /* grupo 001000 com o2 = 0 (LDXR/STXR) ou CAS */
     int size = (int)BITS(w, 31, 30), o2 = (int)BIT(w, 23), L = (int)BIT(w, 22), o1 = (int)BIT(w, 21);
     int rs = (int)BITS(w, 20, 16), rt2 = (int)BITS(w, 14, 10), rn = (int)BITS(w, 9, 5), rt = (int)(w & 31);
+    (void)L;
     if (!JIT_DEF) return 0;                     /* configuração de compatibilidade do oráculo */
-    if (!o2 && !o1) {
-        if (!L && (rs == rt || (rs == rn && rn != 31))) return 0;   /* deixo os casos com sobreposição ao interp */
-        int hb = rget(t, rn);
-        sa0_check(t, rn, hb);
-        cross16_check(t, rn, hb, size);
-        if (L) {                                /* LDXR / LDAXR */
-            int hd = wx(t, rt);
-            fp_mark(t);
-            if (size == 0) x_movzx8(B, XDX, XM(hb, 0));
-            else if (size == 1) x_movzx16(B, XDX, XM(hb, 0));
-            else x_mov_rm(B, size == 3, XDX, XM(hb, 0));
-            x_mov_mr(B, 1, XM(RCPU, OFF_EXA), hb);
-            x_mov_mi(B, 0, XM(RCPU, OFF_EXS), 1 << size);
-            x_mov_mr(B, 1, XM(RCPU, OFF_EXV), XDX);
-            x_mov_mi(B, 1, XM(RCPU, OFF_EXV + 8), 0);
-            x_mov_mi(B, 0, XM(RCPU, OFF_EXOK), 1);
-            x_mov_rr(B, 1, hd, XDX);
-            return 1;
-        }
-        /* STXR / STLXR */
-        int hv = rx(t, rt);
-        int hst = wx(t, rs);
-        fl_clobber_force(t);
-        x_alu_ri(B, 0, A_CMP, XM(RCPU, OFF_EXOK), 0);
-        a64_u8 *f1 = x_jcc32(B, CC_E);
-        x_alu_rm(B, 1, A_CMP, hb, XM(RCPU, OFF_EXA));
-        a64_u8 *f2 = x_jcc32(B, CC_NE);
-        x_alu_ri(B, 0, A_CMP, XM(RCPU, OFF_EXS), 1 << size);
-        a64_u8 *f3 = x_jcc32(B, CC_NE);
-        x_mov_rm(B, 1, XAX, XM(RCPU, OFF_EXV));
-        fp_mark(t);
-        x_lock2(t, size, 0xB0, 0xB1, hv, XM(hb, 0));
-        x_setcc(B, CC_NE, XDX);
-        x_movzx8(B, XDX, XR(XDX));
-        a64_u8 *jd = x_jmp32(B);
-        if (!t->b.ovf) { x_patch32(f1, t->b.p); x_patch32(f2, t->b.p); x_patch32(f3, t->b.p); }
-        x_mov_ri(B, XDX, 1);
-        if (!t->b.ovf) x_patch32(jd, t->b.p);
-        x_mov_mi(B, 0, XM(RCPU, OFF_EXOK), 0);
-        x_mov_rr(B, 0, hst, XDX);
-        return 1;
-    }
+    if (!o2 && !o1) return 0;                       /* LDXR/STXR: monitor de época no interpretador */
     if (!o2 && o1) return tr_xpair(t, w);
     if (o2 && o1) {                             /* CAS / CASA / CASL / CASAL */
         if (rt2 != 31) return 0;
@@ -205,6 +100,7 @@ static int tr_excl(T *t, a64_u32 w) {           /* grupo 001000 com o2 = 0 (LDXR
         cross16_check(t, rn, hb, size);
         fl_clobber_force(t);
         int hd = wx(t, rs);
+        xmon_pre(t, XM(hb, 0), 1 << size);
         x_mov_rr(B, 1, XAX, hs);
         zext_rax(t, size);                      /* Rs & máscara (o interp compara e devolve assim) */
         fp_mark(t);
@@ -212,6 +108,7 @@ static int tr_excl(T *t, a64_u32 w) {           /* grupo 001000 com o2 = 0 (LDXR
         zext_rax(t, size);
         t->fe = 0;                              /* cmpxchg destrói EFLAGS (salvas acima) */
         x_mov_rr(B, 1, hd, XAX);
+        xmon_post(t);
         return 1;
     }
     return 0;
@@ -244,6 +141,7 @@ static int tr_lse(T *t, a64_u32 w) {
     }
     fl_clobber_force(t);
     int hd = wx(t, rt);
+    xmon_pre(t, XM(hb, 0), 1 << size);
     if (o3 || opc == 0) {                       /* SWP: xchg; LDADD: lock xadd */
         x_mov_rr(B, 1, XAX, hv);
         fp_mark(t);
@@ -274,5 +172,6 @@ static int tr_lse(T *t, a64_u32 w) {
         zext_rax(t, size);
     }
     x_mov_rr(B, 1, hd, XAX);
+    xmon_post(t);
     return 1;
 }
