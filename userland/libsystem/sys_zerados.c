@@ -5058,10 +5058,6 @@ void backtrace_from_fp(void) {}
 void cbrtl(void) {}
 void coshl(void) {}
 void dispatch_apply(void) {}
-void dispatch_block_cancel(void) {}
-void dispatch_block_create(void) {}
-void dispatch_block_create_with_qos_class(void) {}
-void dispatch_block_wait(void) {}
 void dispatch_data_create_map(void) {}
 void dispatch_queue_attr_make_initially_inactive(void) {}
 void endfsent(void) {}
@@ -5242,7 +5238,6 @@ void swift_isUniquelyReferenced_native(void) {}
 void swift_isUniquelyReferenced_nonNull_bridgeObject(void) {}
 void swift_isUniquelyReferenced_nonNull_native(void) {}
 void swift_isaMask(void) {}
-void swift_job_run(void) {}
 void swift_lookUpClassMethod(void) {}
 void swift_makeBoxUnique(void) {}
 void swift_modifyAtReferenceWritableKeyPath(void) {}
@@ -5263,9 +5258,6 @@ void swift_taskGroup_wait_next_throwing(void) {}
 void swift_task_addCancellationHandler(void) {}
 void swift_task_asyncMainDrainQueue(void) {}
 void swift_task_future_wait_throwing(void) {}
-void swift_task_getMainExecutor(void) {}
-void swift_task_isCancelled(void) {}
-void swift_task_isCurrentExecutor(void) {}
 void swift_task_localValueGet(void) {}
 void swift_task_localValuePop(void) {}
 void swift_task_localValuePush(void) {}
