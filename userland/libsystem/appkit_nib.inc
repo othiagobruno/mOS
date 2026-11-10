@@ -213,8 +213,8 @@ static id v_init_coder(id self, SEL c, id coder) {
             id hv = nib_obj(x, idx, "NSHeaderView");
             if (hv) MSG(void, self, "setHeaderView:", hv);
         } else s->header = NO;
-        id arch = nib_obj(x, idx, "NSTableViewArchivedReusableViewsKey");
-        if (!arch) arch = nib_obj(x, idx, "NSTableViewReusableViewsKey");
+        id arch = nib_obj(x, idx, cx_tv_archived_views_key);
+        if (!arch) arch = nib_obj(x, idx, cx_tv_reusable_views_key);
         if (arch) tv_install_archived(self, arch);
         break;
     }
