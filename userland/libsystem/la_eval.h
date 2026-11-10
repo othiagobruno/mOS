@@ -14,6 +14,14 @@ enum {
     CX_LA_ERR_BIOMETRY_NOT_AVAILABLE = -6
 };
 
+/* Valor da constante LAErrorDomain. */
+#define CX_LA_ERROR_DOMAIN "com.apple.LocalAuthentication"
+
 /* 1 se a política pode ser avaliada. Neste sistema as quatro devolvem 0 e um erro. */
 int cx_la_can_evaluate(int policy, int *error);
 int cx_la_evaluate(int policy, int *error);
+
+/* O que canEvaluatePolicy:error: e evaluatePolicy:localizedReason:reply: colocam no NSError.
+ * domain é CX_LA_ERROR_DOMAIN quando ok é 0. code é o LAError. */
+int cx_la_can_evaluate_policy(int policy, int *code, const char **domain);
+int cx_la_evaluate_policy(int policy, int *code, const char **domain);
