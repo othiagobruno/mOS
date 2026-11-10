@@ -157,11 +157,6 @@ void $s7SwiftUI13ImageRendererCMa(void) {}
 void $s7SwiftUI13ImageRendererCMn(void) {}
 void $s7SwiftUI13KeyEquivalentVMa(void) {}
 void $s7SwiftUI13KeyEquivalentVyACSJcfC(void) {}
-void $s7SwiftUI13NSHostingViewC04rootD0ACyxGx_tcfCTq(void) {}
-void $s7SwiftUI13NSHostingViewC04rootD0ACyxGx_tcfc(void) {}
-void $s7SwiftUI13NSHostingViewC04rootD0xvMTj(void) {}
-void $s7SwiftUI13NSHostingViewC04rootD0xvsTj(void) {}
-void $s7SwiftUI13NSHostingViewCMn(void) {}
 void $s7SwiftUI13TextAlignmentOMn(void) {}
 void $s7SwiftUI13_EndedGestureVMn(void) {}
 void $s7SwiftUI13_EndedGestureVyxGAA0D0AAMc(void) {}

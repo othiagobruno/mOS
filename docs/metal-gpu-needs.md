@@ -23,9 +23,11 @@ dispatch, o lote da revisão 2 (cabeçalho, handles, relocs, `BIND`, `SHADER`,
 não lê o shader. O lote cabe em 400 bytes e leva no máximo 5 buffers.
 
 Com `MOS_GPU_CAP_VIRGL` ou `MOS_GPU_CAP_VENUS` o lote segue para o
-dispositivo e o interpretador não repete o dispatch. Sem esses caps o kernel
-valida e sinaliza a fence, e `mtlexec.c` executa o kernel para o resultado
-ficar certo. Textura, sampler e threadgroup memory não entram no lote.
+dispositivo (a tradução do kernel, não o lote cru) e o interpretador não
+repete o dispatch. A fence sobe no IRQ do virtio-gpu. Sem esses caps o
+kernel valida e sinaliza a fence na hora, e `mtlexec.c` executa o kernel
+para o resultado ficar certo. Textura, sampler e threadgroup memory não
+entram no lote.
 
 ## O que o teste de host cobre
 
