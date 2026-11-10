@@ -69,6 +69,29 @@ static void on_cont(void *ctx, int kind) {
     c->kind = kind;
 }
 
+static int fn_frame;
+
+static void on_frame(sk2_frame *f) {
+    fn_frame++;
+    (void)f;
+}
+
+void sk_host_throw(sk2_frame *f) { sk_core_throw_frame(f); }
+
+#if defined(__x86_64__)
+__asm__(
+".text\n"
+".globl sk2_r14_entry\n"
+"sk2_r14_entry:\n"
+"  movq %r14, %rdi\n"
+"  jmp sk_host_throw\n"
+);
+void sk2_r14_entry(void);
+static void via_r14(sk2_frame *f) {
+    __asm__ volatile ("movq %0, %%r14\n\tcall sk2_r14_entry" :: "r"(f) : "r14", "rdi", "rax", "memory", "cc");
+}
+#endif
+
 static void setup(void) {
     sk_core_reset();
     g_tid = 1;
@@ -195,6 +218,41 @@ int main(void) {
     CHECK(cont.n == 1 && cont.kind == SK2_ERR_NETWORK);
     CHECK(sk_core_entitlements_next() == 0);
     CHECK(sk_core_updates_next() == 0);
+
+    /* Continuação no formato do AsyncContext: parent em +0, resume em +8.
+     * O frame Swift gerado pelo swift-frontend não existe neste host. */
+    {
+        sk2_frame parent, child;
+        memset(&parent, 0, sizeof parent);
+        memset(&child, 0, sizeof child);
+        child.parent = &parent;
+        child.resume = on_frame;
+        fn_frame = 0;
+        sk_core_throw_frame(&child);
+        CHECK(fn_frame == 1);
+        CHECK(parent.error_kind == SK2_ERR_NETWORK);
+        CHECK(parent.url_error == SK2_URL_NOT_CONNECTED);
+        CHECK(child.error_kind == 0);
+        CHECK(sk_core_entitlements_next() == 0);
+        memset(&child, 0, sizeof child);
+        child.resume = on_frame;
+        fn_frame = 0;
+        sk_core_throw_frame(&child);
+        CHECK(fn_frame == 1);
+        CHECK(child.error_kind == SK2_ERR_NETWORK);
+        CHECK(child.url_error == SK2_URL_NOT_CONNECTED);
+#if defined(__x86_64__)
+        memset(&parent, 0, sizeof parent);
+        memset(&child, 0, sizeof child);
+        child.parent = &parent;
+        child.resume = on_frame;
+        fn_frame = 0;
+        via_r14(&child);
+        CHECK(fn_frame == 1);
+        CHECK(parent.error_kind == SK2_ERR_NETWORK);
+        CHECK(parent.url_error == SK2_URL_NOT_CONNECTED);
+#endif
+    }
 
     printf("%d checks, %d fails\n", checks, fails);
     return fails ? 1 : 0;

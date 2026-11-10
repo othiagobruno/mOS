@@ -1,6 +1,7 @@
 /* Teste no host do page cache, writeback e aio. Só arquivos temporários. */
 #define MOS_HOST_TEST 1
 #include "fs.h"
+#include "syscall.h"
 #include <stdio.h>
 #include <unistd.h>
 
@@ -109,8 +110,29 @@ int main(void) {
     CHECK(aio_error(&cb) == MOS_EINPROGRESS, "ainda pendente");
     CHECK(ctx->writes == w0, "submissão não escreveu");
     const struct aiocb *one = &cb;
-    CHECK(aio_suspend(&one, 1, NULL) == 0, "suspend");
-    CHECK(aio_error(&cb) == 0 && aio_return(&cb) == 64, "aio concluiu");
+    struct { i64 tv_sec; i64 tv_nsec; } zero = {0, 0};
+    CHECK(aio_suspend(&one, 1, &zero) == -MOS_EAGAIN, "timeout zero não espera");
+    CHECK(aio_error(&cb) == MOS_EINPROGRESS, "timeout zero não concluiu");
+    aio_host_intr = 1;
+    CHECK(aio_suspend(&one, 1, NULL) == -MOS_EINTR, "eintr");
+    CHECK(aio_error(&cb) == MOS_EINPROGRESS, "eintr não concluiu");
+    struct aiocb extra;
+    memset(&extra, 0, sizeof extra);
+    extra.aio_fildes = 7;
+    extra.aio_offset = 128;
+    extra.aio_buf = w;
+    extra.aio_nbytes = 32;
+    CHECK(aio_write(&extra) == 0, "segunda escrita");
+    const struct aiocb *both[2] = { &cb, &extra };
+    CHECK(aio_suspend(both, 2, NULL) == 0, "suspend devolve no primeiro");
+    int done_cb = aio_error(&cb) == 0, done_ex = aio_error(&extra) == 0;
+    CHECK(done_cb + done_ex == 1, "um da lista concluiu e o outro segue");
+    const struct aiocb *rest = done_cb ? &extra : &cb;
+    CHECK(aio_suspend(&rest, 1, NULL) == 0, "o segundo conclui");
+    CHECK(aio_error(&cb) == 0 && aio_error(&extra) == 0, "os dois prontos");
+    CHECK(aio_return(&cb) == 64 && aio_return(&extra) == 32, "retornos");
+    struct { i64 tv_sec; i64 tv_nsec; } bad = {0, 1000000000LL};
+    CHECK(aio_suspend(both, 2, &bad) == -MOS_EINVAL, "timespec inválido");
     CHECK(ctx->writes == w0, "aio_write é writeback");
     struct aiocb sy;
     memset(&sy, 0, sizeof sy);

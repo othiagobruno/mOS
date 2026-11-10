@@ -23,6 +23,8 @@ int compression_stream_destroy(compression_stream *);
 #define LZ4_RAW 0x101
 #define LZFSE 0x801
 #define LZMA 0x306
+#define BROTLI 0xB02
+#define LZBITMAP 0x702
 
 static const char plain[] = "mOS libcompression raw deflate vector v1\n";
 
@@ -38,6 +40,14 @@ static const uint8_t lz4_ref[] = {
 static const uint8_t lzfse_ref[] = {
     98,118,120,45,41,0,0,0,109,79,83,32,108,105,98,99,111,109,112,114,101,115,115,105,111,110,32,114,97,119,32,100,101,102,108,97,116,101,32,118,101,99,116,111,114,32,118,49,10,98,118,120,36
 };
+/* lzma.compress FORMAT_XZ preset 6 do CPython (liblzma do sistema). */
+static const uint8_t xz_ref[] = {
+    253,55,122,88,90,0,0,4,230,214,180,70,2,0,33,1,22,0,0,0,116,47,229,163,1,0,40,109,79,83,32,108,105,98,99,111,109,112,114,101,115,115,105,111,110,32,114,97,119,32,100,101,102,108,97,116,101,32,118,101,99,116,111,114,32,118,49,10,0,0,0,0,17,56,54,19,142,186,90,232,0,1,65,41,3,83,86,139,31,182,243,125,1,0,0,0,0,4,89,90
+};
+/* BrotliEncoderCompress qualidade 5, lgwin 22, da referência 1.1.0. */
+static const uint8_t brotli_ref[] = {
+    27,40,0,0,68,231,214,41,233,161,154,146,193,144,20,31,216,68,54,230,176,4,26,168,176,46,222,7,142,45,13,247,97,113,145,243,99,179,151,68,81,95,36,170,9
+};
 
 static int fail;
 
@@ -51,7 +61,7 @@ static void expect_dec(const char *name, int algo, const uint8_t *ref, size_t rn
 }
 
 static void roundtrip(const char *name, int algo) {
-    uint8_t comp[256], back[256];
+    uint8_t comp[512], back[256];
     const char *msg = "abcdefghijklmnopqrstuvwxyz 0123456789 mOS round trip payload.";
     size_t sn = strlen(msg);
     size_t n = compression_encode_buffer(comp, sizeof comp, (const uint8_t *)msg, sn, NULL, algo);
@@ -60,6 +70,32 @@ static void roundtrip(const char *name, int algo) {
         fprintf(stderr, "round-trip %s falhou enc=%zu dec=%zu\n", name, n, m);
         fail = 1;
     }
+}
+
+static void stream_bag(const char *name, int algo) {
+    compression_stream e, d;
+    uint8_t comp[512], back[128];
+    const char *msg = "stream-duas-partes";
+    size_t sn = strlen(msg), half = 6, got = 0;
+    memset(&e, 0, sizeof e);
+    e.dst_ptr = comp; e.dst_size = sizeof comp;
+    if (compression_stream_init(&e, 0, algo) != 0) { fprintf(stderr, "stream %s init\n", name); fail = 1; return; }
+    e.src_ptr = (const uint8_t *)msg; e.src_size = half;
+    if (compression_stream_process(&e, 0) != 0) fail = 1;
+    e.src_ptr = (const uint8_t *)msg + half; e.src_size = sn - half;
+    if (compression_stream_process(&e, 1) != 1) fail = 1;
+    got = (size_t)(e.dst_ptr - comp);
+    compression_stream_destroy(&e);
+    memset(&d, 0, sizeof d);
+    d.dst_ptr = back; d.dst_size = sizeof back;
+    d.src_ptr = comp; d.src_size = got;
+    if (compression_stream_init(&d, 1, algo) != 0) fail = 1;
+    if (compression_stream_process(&d, 1) != 1) fail = 1;
+    if ((size_t)(d.dst_ptr - back) != sn || memcmp(back, msg, sn) != 0) {
+        fprintf(stderr, "stream %s falhou\n", name);
+        fail = 1;
+    }
+    compression_stream_destroy(&d);
 }
 
 static void stream_rt(void) {
@@ -89,11 +125,13 @@ static void stream_rt(void) {
 }
 
 int main(void) {
-    uint8_t z[64];
+    uint8_t z[256];
     size_t n;
     expect_dec("zlib", ZLIB, zlib_ref, sizeof zlib_ref);
     expect_dec("lz4", LZ4, lz4_ref, sizeof lz4_ref);
     expect_dec("lzfse", LZFSE, lzfse_ref, sizeof lzfse_ref);
+    expect_dec("xz", LZMA, xz_ref, sizeof xz_ref);
+    expect_dec("brotli", BROTLI, brotli_ref, sizeof brotli_ref);
     n = compression_encode_buffer(z, sizeof z, (const uint8_t *)plain, sizeof plain - 1, NULL, ZLIB);
     if (n != sizeof zlib_ref || memcmp(z, zlib_ref, n) != 0) {
         fprintf(stderr, "encode zlib nao bate com a referencia n=%zu\n", n);
@@ -103,11 +141,15 @@ int main(void) {
     roundtrip("lz4", LZ4);
     roundtrip("lz4_raw", LZ4_RAW);
     roundtrip("lzfse", LZFSE);
-    if (compression_encode_buffer(z, sizeof z, (const uint8_t *)plain, sizeof plain - 1, NULL, LZMA) != 0) {
-        fprintf(stderr, "LZMA devia ser 0\n");
+    roundtrip("lzma", LZMA);
+    roundtrip("brotli", BROTLI);
+    if (compression_encode_buffer(z, sizeof z, (const uint8_t *)plain, sizeof plain - 1, NULL, LZBITMAP) != 0) {
+        fprintf(stderr, "LZBITMAP devia ser 0\n");
         fail = 1;
     }
     stream_rt();
+    stream_bag("lzma", LZMA);
+    stream_bag("brotli", BROTLI);
     if (fail) return 1;
     printf("compression host ok\n");
     return 0;

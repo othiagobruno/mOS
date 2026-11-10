@@ -96,6 +96,11 @@ int  aio_error(const struct aiocb *cb);
 i64  aio_return(struct aiocb *cb);
 int  aio_fsync(int op, struct aiocb *cb);
 int  aio_suspend(const struct aiocb *const list[], int nent, const void *timeout);
+int  aio_suspend_mem(const u64 *keys, int nent, const void *timeout); /* SYS_AIO: chaves do processo */
+#ifdef MOS_HOST_TEST
+extern u64 aio_host_ms;   /* relógio do aio_suspend no teste de host, em ms */
+extern int aio_host_intr; /* 1 = a próxima espera devolve EINTR */
+#endif
 blkdev_t *blk_from_memory(const u8 *data, u64 size);
 blkdev_t *blk_slice(blkdev_t *parent, u64 off, u64 size);
 void      blk_release(blkdev_t *d);

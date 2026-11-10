@@ -116,6 +116,32 @@ static void test_prp_sgl_queue(void) {
     expect(nvme_intr_pick(1, 0, 1, 1) == NVME_INTR_MSI, "cai para msi");
     expect(nvme_intr_pick(1, 0, 1, 0) == NVME_INTR_POLL, "cai para polling");
 
+    u32 alo, ahi, adata;
+    expect(nvme_msi_compose(0, 1, 0, 0xE0, &alo, &ahi, &adata) != 0, "msi sem lapic");
+    expect(nvme_msi_compose(0xFEE00000ull, 0, 0, 0xE0, &alo, &ahi, &adata) == 0
+           && alo == 0xFEE00000u && adata == 0xE0, "msi apic 0");
+    expect(nvme_msi_compose(0xFEC00000ull, 5, 0, 0xE0, &alo, &ahi, &adata) == 0
+           && alo == (0xFEC00000u | (5u << 12)) && alo != 0xFEE00000u, "msi base do madt");
+    expect(nvme_msi_compose(0xFEE00000ull, 0x123, 1, 0xE0, &alo, &ahi, &adata) == 0
+           && (alo & 0xFF000) == (0x23u << 12) && ahi == 0x1, "msi x2apic");
+    expect(nvme_ioq_count(0, 4, 8, 8) == 0, "filas antes do smp");
+    expect(nvme_ioq_count(1, 4, 8, 8) == 4, "uma fila por cpu");
+    expect(nvme_ioq_count(1, 8, 3, 8) == 3, "teto do controlador");
+
+    nvme_flights_t fl;
+    nvme_flights_init(&fl, 8);
+    int s0 = nvme_flight_claim(&fl, 1);
+    int s1 = nvme_flight_claim(&fl, 1);
+    int s2 = nvme_flight_claim(&fl, 2);
+    expect(s0 == 0 && s1 == 1 && s2 == 2, "tres tags");
+    expect(nvme_flight_outstanding(&fl) == 3, "tres em voo");
+    u16 c1 = fl.slot[s1].cid;
+    expect(nvme_flight_complete(&fl, 1, c1, 0, 0) == s1, "irq do meio");
+    expect(fl.slot[s1].done && !fl.slot[s0].done && !fl.slot[s2].done, "os outros seguem");
+    expect(nvme_flight_outstanding(&fl) == 2, "dois ainda em voo");
+    nvme_flight_release(&fl, s1);
+    expect(nvme_flight_claim(&fl, 1) == s1, "tag reaproveitada");
+
     nvdev_t dev;
     memset(&dev, 0, sizeof dev);
     dev.depth = 4;
@@ -235,6 +261,22 @@ static void test_ncq(void) {
     memcpy(ram + 2000, disk, 512);
     expect(ct[2] == ATA_READ_FPDMA && memcmp(ram + 2000, ram + 100, 512) == 0, "leitura fpdma");
     (void)ci;
+
+    ahci_batch_t b;
+    ahci_batch_init(&b, 32);
+    expect(ahci_batch_post(&b, 0) == 0 && ahci_batch_post(&b, 4) == 0 && ahci_batch_post(&b, 7) == 0, "tres fpdma");
+    expect(ahci_batch_post(&b, 4) != 0, "tag repetida");
+    expect(ahci_batch_pending(&b) == ((1u << 0) | (1u << 4) | (1u << 7)), "tres bits em voo");
+    u32 live = (1u << 0) | (1u << 7); /* a tag 4 saiu do CI: a interrupção a completa */
+    ahci_batch_irq(&b, live);
+    expect(ahci_batch_pending(&b) == live, "so a tag 4 concluiu");
+    expect((b.done & (1u << 4)) != 0, "done da tag 4");
+    ahci_batch_irq(&b, 0);
+    expect(ahci_batch_pending(&b) == 0, "interrupcao final");
+    ahci_batch_release(&b, 0);
+    ahci_batch_release(&b, 4);
+    ahci_batch_release(&b, 7);
+    expect(ahci_batch_post(&b, 4) == 0, "tag 4 de novo em voo");
 }
 
 int main(void) {
