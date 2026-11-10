@@ -41,6 +41,10 @@ void cx_un_set_delegate(cx_un_present_fn present, cx_un_receive_fn receive, void
 void cx_un_set_banner_sink(cx_un_banner_fn fn, void *ctx);
 
 /* interval <= 0 entrega agora. repeats só reprograma quando interval > 0. */
+/* Texto do userInfo para o próximo cx_un_add. Vazio limpa. */
+void cx_un_stage_info(const char *info);
+const char *cx_un_info(const char *ident);
+
 int cx_un_add(const char *ident, const char *title, const char *subtitle, const char *body,
               double interval, int repeats);
 int cx_un_remove_pending(const char *ident);   /* ident NULL: todos os pendentes */

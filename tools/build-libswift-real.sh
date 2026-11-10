@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 # Compila o runtime Swift real (Mach-O x86_64) para build/swift/objc/dylib/usr/lib/swift.
 # Não é o stub de tools/gen-libswift-stubs.c. tools/build.sh e o CI chamam este arquivo.
 #
@@ -58,7 +58,7 @@ for g in "$src"/stdlib/public/core/*.gyb; do
     base=$(basename "$g" .gyb)
     extra=
     case "$base" in
-        IntegerTypes|FloatingPointTypes|SIMD*) extra="-D CMAKE_SIZEOF_VOID_P=8" ;;
+        IntegerTypes.swift|FloatingPointTypes.swift|SIMD*) extra="-D CMAKE_SIZEOF_VOID_P=8" ;;
     esac
     # shellcheck disable=SC2086
     python3 "$src/utils/gyb.py" $extra -o "$src/gen/$base" "$g"
@@ -113,6 +113,9 @@ fargs=()
 for x in $feat; do fargs+=(-enable-experimental-feature "$x"); done
 
 echo "==> stdlib"
+if [ -n "${MOS_SWIFT_SKIP_CORE:-}" ] && [ -f "$objc/swiftCore.o" ]; then
+    echo "stdlib: reusa $objc/swiftCore.o"
+else
 "$fe" -frontend -c -target x86_64-apple-macos26 -module-name Swift -parse-stdlib -parse-as-library \
     -nostdimport -swift-version 5 -O -enforce-exclusivity=unchecked \
     -I "$shims" -disable-objc-attr-requires-foundation-module \
@@ -123,8 +126,12 @@ echo "==> stdlib"
     -enable-library-evolution "${fargs[@]}" "${AVAIL[@]}" \
     -emit-module-path "$objc/Swift.swiftmodule/x86_64-apple-macos.swiftmodule" \
     -o "$objc/swiftCore.o" "${FILES[@]}"
+fi
 
 echo "==> runtime C++"
+if [ -n "${MOS_SWIFT_SKIP_CORE:-}" ] && ls "$objc/runtime/"*.o >/dev/null 2>&1; then
+    echo "runtime: reusa objetos"
+else
 python3 - "$root" "$zig" "$src" << 'PY'
 import subprocess, sys, pathlib
 root, zig, src = map(pathlib.Path, sys.argv[1:4])
@@ -161,6 +168,7 @@ for f in files:
 print("runtime: %d arquivos, %d erros" % (len(files), bad))
 sys.exit(1 if bad else 0)
 PY
+fi
 
 link_one() {
     name=$1
@@ -184,6 +192,7 @@ fi
 
 echo "==> cabeçalhos do overlay"
 rm -rf "$inc"
+mkdir -p "$(dirname "$inc")"
 cp -a "$root/.tools/zig-x86_64-linux-0.17.1/lib/libc/include/any-darwin-any" "$inc" 2>/dev/null || \
     cp -a "$(dirname "$zig")/lib/libc/include/any-darwin-any" "$inc"
 python3 - "$inc" << 'PY'
@@ -348,3 +357,4 @@ if ! grep -a -q '_objc_addLoadImageFunc' "$dest/libswiftCore.dylib"; then
     echo "libswiftCore não importa _objc_addLoadImageFunc" >&2
     exit 1
 fi
+

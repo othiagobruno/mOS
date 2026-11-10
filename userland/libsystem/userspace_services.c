@@ -3,9 +3,9 @@
  * "userNotifications"). Não há APNs. O completion do request só roda quando a
  * Interface chama cx_un_decide.
  *
- * StoreKit, QuickLookUI e Core Data estão em storekit_fw.c, quicklook_fw.c e
- * coredata_fw.c. O init daqui só os registra, depois que as classes de fachada
- * já existem.
+ * StoreKit, QuickLookUI, Core Data e Photos estão em storekit_fw.c,
+ * quicklook_fw.c, coredata_fw.c e photos_fw.c. O init daqui só os registra,
+ * depois que as classes de fachada já existem.
  */
 #include "foundation.h"
 #include "libc.h"
@@ -16,6 +16,8 @@ extern cx_class_t UNUserNotificationCenter_c __asm__("OBJC_CLASS_$_UNUserNotific
 void cx_storekit_init(void);
 void cx_quicklook_init(void);
 void cx_coredata_init(void);
+void cx_photos_init(void);
+void cx_virtualization_init(void);
 
 int cx_tcc_request(const char *service);
 int cx_tcc_state(const char *service);
@@ -57,6 +59,8 @@ void cx_userspace_services_init(void) {
     cx_storekit_init();
     cx_quicklook_init();
     cx_coredata_init();
+    cx_photos_init();
+    cx_virtualization_init();
     cx_add_cmethod(&UNUserNotificationCenter_c, "currentNotificationCenter", (void *)un_current_real);
     cx_add_method(&UNUserNotificationCenter_c, "requestAuthorizationWithOptions:completionHandler:", (void *)un_request);
     cx_add_method(&UNUserNotificationCenter_c, "authorizationStatus", (void *)un_auth);
