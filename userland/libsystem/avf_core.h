@@ -17,4 +17,10 @@ unsigned avf_copy_capture(short *dst, unsigned frames, int *err);
 int avf_device_kinds(int *out, int cap); /* 1 = microfone embutido. Câmera não entra: não há driver. */
 int avf_cap_start(int has_mic, int has_cam, int *err); /* 1 corre. err 1 = TCC, 2 = sem dispositivo de quadro */
 unsigned avf_cap_pull(int running, short *dst, unsigned frames, int *err);
+/* O mesmo passo de AVPlayer: cx_audio_read_stereo + relógio. pos em segundos. rate 0 não anda. */
+unsigned avf_pull_seconds(void *dec, double *pos, float play_rate, float volume, float *stereo, unsigned frames, int *ended);
+/* O mesmo passo de AVAudioPlayer: posição em quadros, ganho volume/pan. */
+unsigned avf_pull_frames(void *dec, double *pos_frames, float volume, float pan, float *stereo, unsigned frames, int *ended);
+/* Observador periódico no tempo do arquivo. 1 quando o intervalo de mídia passou. */
+int avf_obs_due(double *last, double interval, double pos, float play_rate);
 #endif
