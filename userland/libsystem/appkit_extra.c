@@ -233,8 +233,8 @@ static void sbb_open_menu(id it) {
         MSG(void, del, "menuWillOpen:", menu);
 }
 
-void cx_status_kernel_click(unsigned token) {
-    id it = (id)cx_sb_by_token((int)token);
+void cx_status_kernel_click(unsigned tok) {
+    id it = (id)cx_sb_by_token((int)tok);
     if (!it) return;
     sbb_open_menu(it);
     status_publish(it);

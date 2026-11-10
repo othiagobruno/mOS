@@ -885,7 +885,7 @@ ssize_t read(int fd, void *b, size_t n) {
     if (IS_SOCK(fd)) return cx_sock_read(fd, b, n);
     if (nb_on(fd) && n) {
         mos_stat_t st;   /* pipe: is_dir 2 = ponta de leitura, size = bytes prontos, mtime = 1 se o escritor fechou */
-        if (SYS2(SYS_FSTAT, fd, &st) == 0 && st.is_dir == 2 && st.size == 0 && !st.mtime) { cx_errno = 35; return -1; }   /* EAGAIN */
+        if (SYS2(SYS_FSTAT, fd, &st) == 0 && (st.is_dir == 2 || st.is_dir == 6) && st.size == 0 && !st.mtime) { cx_errno = 35; return -1; }   /* EAGAIN */
     }
     return ret_errno(SYS3(SYS_READ, fd, b, n));
 }
@@ -1333,8 +1333,8 @@ typedef struct {
 
 static void to_mac_stat(const mos_stat_t *s, mac_stat_t *m) {
     memset(m, 0, sizeof *m);
-    /* is_dir: 0 arquivo, 1 pasta, 2/3 pipe (ponta de leitura/escrita), 4 dispositivo (/dev/null), 5 terminal (pty) */
-    m->st_mode = s->is_dir == 5 ? 0020620 : s->is_dir == 4 ? 0020666 : s->is_dir >= 2 ? 0010600 : s->is_dir ? 0040755 : 0100644;
+    /* is_dir: 0 arquivo, 1 pasta, 2/3 pipe, 4 dispositivo, 5 terminal, 6 socket AF_UNIX */
+    m->st_mode = s->is_dir == 6 ? 0140666 : s->is_dir == 5 ? 0020620 : s->is_dir == 4 ? 0020666 : s->is_dir >= 2 ? 0010600 : s->is_dir ? 0040755 : 0100644;
     m->st_dev = 0x1000002;      /* um só volume; o st_ino (hash do caminho) separa os arquivos */
     m->st_nlink = 1;
     m->st_uid = 501;

@@ -7,10 +7,13 @@
  * imagem Mach-O x86_64 (chained fixups ou dyld_info) e os exports (export trie), e resolve
  * cada import como o mOS resolveria: primeiro nas imagens do proprio bundle, depois no
  * libSystem.mos (mesma regra de nomes do kernel/compat/macho.c: tira o "_" e a variante "$...").
- * --disco aponta a libc++, as libswift* e a libunwind do build ou da imagem (um diretorio
- * vasculhado, ou o arquivo em si). Os exports desses arquivos entram na resolucao, como o
- * carregador le /usr/lib/libc++.1.dylib e /usr/lib/swift/libswift*.dylib do disco, e como o
+ * --disco aponta a libc++, as libswift*, a libunwind, a libz e o CryptoKit do build ou da
+ * imagem (um diretorio vasculhado, ou o arquivo em si). Os exports entram na resolucao, como
+ * o carregador le /usr/lib/libc++.1.dylib, /usr/lib/swift/libswift*.dylib, /usr/lib/libz.1.dylib
+ * e /System/Library/Frameworks/CryptoKit.framework/Versions/A/CryptoKit do disco, e como o
  * libunwind entra no libSystem quando os objetos de build/libunwind-x86 sao ligados.
+ * A libz nao e reimplementada aqui: vale a dylib do build-zlib.ps1. O CryptoKit vale o
+ * framework compilado de userland/frameworks/CryptoKit, nao a trie de tools/ckhost/mkexports.py.
  * Imprime um resumo por biblioteca e grava os ausentes separados em sistema, libc++, Swift
  * e unwind.
  * Compilar: zig cc -O2 -target x86_64-windows-gnu tools/machocheck.c -o build/machocheck.exe
@@ -220,10 +223,10 @@ static int load_libsystem(const char *path) {
     return libsys.n > 0;
 }
 
-/* ---------------------------------------------------------------- libc++, libswift* e libunwind no disco */
-static set_t disk_cxx, disk_swift, disk_unwind, swift_lidas;
-static u32 cxx_files, swift_files, uw_files;
-static u32 cxx_syms, swift_syms, uw_syms;
+/* ---------------------------------------------------------------- bibliotecas que o carregador le do disco */
+static set_t disk_cxx, disk_swift, disk_unwind, disk_z, disk_ck, swift_lidas;
+static u32 cxx_files, swift_files, uw_files, z_files, ck_files;
+static u32 cxx_syms, swift_syms, uw_syms, z_syms, ck_syms;
 static int disco_faltou;
 static dev_t seen_dev[8192];
 static ino_t seen_ino[8192];
@@ -234,7 +237,7 @@ static int sufixo(const char *s, const char *suf) {
     return n >= m && !memcmp(s + n - m, suf, m);
 }
 
-/* 1 = libc++, 2 = Swift, 3 = libunwind, 0 = outro */
+/* 1 = libc++, 2 = Swift, 3 = libunwind, 4 = libz, 5 = CryptoKit, 0 = outro */
 static int kind_de(const char *path) {
     const char *b = strrchr(path, '/');
     b = b ? b + 1 : path;
@@ -242,6 +245,10 @@ static int kind_de(const char *path) {
     if (!strncmp(b, "libswift", 8) && sufixo(b, ".dylib")) return 2;
     if ((sufixo(b, ".o") || sufixo(b, ".a") || sufixo(b, ".dylib")) &&
         (strstr(b, "libunwind") || !strncmp(b, "Unwind", 6))) return 3;
+    /* /usr/lib/libz.1.dylib da imagem (tools/build-zlib.ps1). Nao e simbolo do libSystem. */
+    if (!strcmp(b, "libz.1.dylib") || !strcmp(b, "libz.dylib")) return 4;
+    /* binario do framework, install name .../CryptoKit.framework/Versions/A/CryptoKit */
+    if (!strcmp(b, "CryptoKit")) return 5;
     return 0;
 }
 
@@ -453,9 +460,12 @@ static void carrega_kind(const char *path, int kind) {
     struct stat st;
     if (stat(path, &st)) { fprintf(stderr, "disco: nao consegui ler %s\n", path); return; }
     if (visto_dir(st.st_dev, st.st_ino)) return;
-    set_t *dest = kind == 1 ? &disk_cxx : kind == 2 ? &disk_swift : &disk_unwind;
-    u32 *cnt = kind == 1 ? &cxx_syms : kind == 2 ? &swift_syms : &uw_syms;
-    u32 *files = kind == 1 ? &cxx_files : kind == 2 ? &swift_files : &uw_files;
+    set_t *dest = &disk_cxx;
+    u32 *cnt = &cxx_syms, *files = &cxx_files;
+    if (kind == 2) { dest = &disk_swift; cnt = &swift_syms; files = &swift_files; }
+    else if (kind == 3) { dest = &disk_unwind; cnt = &uw_syms; files = &uw_files; }
+    else if (kind == 4) { dest = &disk_z; cnt = &z_syms; files = &z_files; }
+    else if (kind == 5) { dest = &disk_ck; cnt = &ck_syms; files = &ck_files; }
     if (carrega_exports(path, dest, cnt)) {
         (*files)++;
         if (kind == 2) set_add(&swift_lidas, strrchr(path, '/') ? strrchr(path, '/') + 1 : path);
@@ -492,7 +502,7 @@ static void carrega_disco(const char *path) {
     if (stat(path, &st)) { fprintf(stderr, "disco: caminho inexistente: %s\n", path); disco_faltou = 1; return; }
     if (S_ISREG(st.st_mode)) {
         int k = kind_de(path);
-        if (!k) { fprintf(stderr, "disco: %s nao e libc++, libswift* nem libunwind\n", path); disco_faltou = 1; return; }
+        if (!k) { fprintf(stderr, "disco: %s nao e libc++, libswift*, libunwind, libz nem CryptoKit\n", path); disco_faltou = 1; return; }
         carrega_kind(path, k);
         return;
     }
@@ -501,7 +511,8 @@ static void carrega_disco(const char *path) {
 }
 
 static int no_disco(const char *mname) {
-    return set_has(&disk_cxx, mname) || set_has(&disk_swift, mname) || set_has(&disk_unwind, mname);
+    return set_has(&disk_cxx, mname) || set_has(&disk_swift, mname) || set_has(&disk_unwind, mname)
+        || set_has(&disk_z, mname) || set_has(&disk_ck, mname);
 }
 
 /* mesma regra do ls_lookup do kernel */
@@ -782,9 +793,10 @@ static int uso(void) {
             "     machocheck --calls <imagem> <endereco hex>\n"
             "     machocheck --sym <libSystem.mos> <endereco hex>\n"
             "     machocheck --refs <imagem> <endereco hex>\n"
-            "--disco: diretorio (ou arquivo) da libc++, das libswift* e da libunwind\n"
-            "         do build ou da imagem. Ex.: build/libcxx, build/swift/objc/dylib,\n"
-            "         build/libunwind-x86, esp/mOS\n");
+            "--disco: diretorio (ou arquivo) da libc++, das libswift*, da libunwind,\n"
+            "         da libz.1.dylib e do CryptoKit.framework do build ou da imagem.\n"
+            "         Ex.: build/libcxx, build/swift/objc/dylib, build/libunwind-x86,\n"
+            "         build/zlib-x86_64/libz.1.dylib, esp/mOS\n");
     return 2;
 }
 
@@ -822,6 +834,8 @@ int main(int argc, char **argv) {
         printf("  libc++: %u arquivo(s), %u simbolos\n", cxx_files, cxx_syms);
         printf("  Swift: %u arquivo(s), %u simbolos\n", swift_files, swift_syms);
         printf("  unwind: %u arquivo(s), %u simbolos\n", uw_files, uw_syms);
+        printf("  libz: %u arquivo(s), %u simbolos\n", z_files, z_syms);
+        printf("  CryptoKit: %u arquivo(s), %u simbolos\n", ck_files, ck_syms);
     }
     printf("Imagens Mach-O x86_64 no bundle: %d (exports do bundle: %u)\n\n", nimgs, bundle_exports.n);
     set_t sysdylibs = {0};

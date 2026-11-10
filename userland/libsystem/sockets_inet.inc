@@ -362,7 +362,7 @@ int getsockname(int fd, void *addr, u32 *len) {
 }
 int getpeername(int fd, void *addr, u32 *len) {
     sock_t *s = sock_of(fd);
-    if (!s) { cx_errno = CX_EBADF; return -1; }
+    if (!s) return (int)uerr(SYS4(SYS_UNIX, MOS_UNIX_PEERNAME, fd, addr, len));
     if (is_inet(s) && s->udp) {
         if (!s->uconn) { cx_errno = CX_ENOTCONN; return -1; }
         put_sa(s, addr, len, s->raddr, s->rport);
@@ -372,30 +372,45 @@ int getpeername(int fd, void *addr, u32 *len) {
     put_sa(s, addr, len, s->raddr, s->rport);
     return 0;
 }
+/* struct msghdr do macOS: name(8) namelen(4)+pad iov(8) iovlen(4)+pad control(8) controllen(4) flags(4) */
+typedef struct { void *base; size_t len; } cx_iovec_t;
+typedef struct { void *name; u32 namelen; cx_iovec_t *iov; int iovlen; void *control; u32 controllen; int flags; } cx_msghdr_t;
+
 long send(int fd, const void *b, size_t n, int fl) {
-    (void)fl;
     sock_t *s = sock_of(fd);
-    if (!s) { cx_errno = CX_EBADF; return -1; }
+    if (!s) {
+        cx_iovec_t iov = { (void *)b, n };
+        cx_msghdr_t h;
+        memset(&h, 0, sizeof h);
+        h.iov = &iov;
+        h.iovlen = 1;
+        return uerr(SYS4(SYS_UNIX, MOS_UNIX_SENDMSG, fd, &h, fl));
+    }
     if (!is_inet(s)) { cx_errno = CX_ENOTCONN; return -1; }
     if (s->udp) return udp_sendto(s, b, n, 0, 0);
     if (s->proto) return icmp_sendto(s, b, n, 0, 0);
     return in_send(s, b, n);
 }
 long recv(int fd, void *b, size_t n, int fl) {
-    /* MSG_PEEK, MSG_WAITALL e MSG_DONTWAIT: in_recv */
+    /* MSG_PEEK, MSG_WAITALL e MSG_DONTWAIT: in_recv (TCP) ou o kernel (AF_UNIX) */
     sock_t *s = sock_of(fd);
-    if (!s) { cx_errno = CX_EBADF; return -1; }
+    if (!s) {
+        cx_iovec_t iov = { b, n };
+        cx_msghdr_t h;
+        memset(&h, 0, sizeof h);
+        h.iov = &iov;
+        h.iovlen = 1;
+        return uerr(SYS4(SYS_UNIX, MOS_UNIX_RECVMSG, fd, &h, fl));
+    }
     if (!is_inet(s)) { cx_errno = CX_ENOTCONN; return -1; }
     if (s->udp) return udp_recvfrom(s, b, n, fl, 0, 0);
     if (s->proto) return icmp_recvfrom(s, b, n, fl, 0, 0);
     return in_recv(s, b, n, fl);
 }
-/* struct msghdr do macOS: name(8) namelen(4)+pad iov(8) iovlen(4)+pad control(8) controllen(4) flags(4) */
-typedef struct { void *base; size_t len; } cx_iovec_t;
-typedef struct { void *name; u32 namelen; cx_iovec_t *iov; int iovlen; void *control; u32 controllen; int flags; } cx_msghdr_t;
 #include "sockets_udp.inc"
 long sendmsg(int fd, const void *m, int fl) {
     const cx_msghdr_t *h = m;
+    if (!sock_of(fd)) return uerr(SYS4(SYS_UNIX, MOS_UNIX_SENDMSG, fd, m, fl));
     { sock_t *s = sock_of(fd); if (h && is_inet(s) && s->udp) return udp_sendmsg(s, h, fl); }
     long total = 0;
     for (int i = 0; h && i < h->iovlen; i++) {
@@ -409,6 +424,7 @@ long sendmsg(int fd, const void *m, int fl) {
 }
 long recvmsg(int fd, void *m, int fl) {
     cx_msghdr_t *h = m;
+    if (!sock_of(fd)) return uerr(SYS4(SYS_UNIX, MOS_UNIX_RECVMSG, fd, m, fl));
     { sock_t *s = sock_of(fd); if (h && is_inet(s) && s->udp) return udp_recvmsg(s, h, fl); }
     if (h) { h->controllen = 0; h->flags = 0; }
     for (int i = 0; h && i < h->iovlen; i++)
@@ -424,12 +440,34 @@ cx_sysret_t sendto(int fd, const void *b, size_t n, int fl, const void *a, u32 a
     sock_t *s = sock_of(fd);
     if (is_inet(s) && s->udp) return (cx_sysret_t){udp_sendto(s, b, n, a, al), 0};
     if (s && s->proto) return (cx_sysret_t){icmp_sendto(s, b, n, a, al), 0};
+    if (!s) {
+        cx_iovec_t iov = { (void *)b, n };
+        cx_msghdr_t h;
+        memset(&h, 0, sizeof h);
+        h.name = (void *)a;
+        h.namelen = al;
+        h.iov = &iov;
+        h.iovlen = 1;
+        return (cx_sysret_t){uerr(SYS4(SYS_UNIX, MOS_UNIX_SENDMSG, fd, &h, fl)), 0};
+    }
     return (cx_sysret_t){send(fd, b, n, fl), 0};
 }
 long recvfrom(int fd, void *b, size_t n, int fl, void *a, u32 *al) {
     sock_t *s = sock_of(fd);
     if (is_inet(s) && s->udp) return udp_recvfrom(s, b, n, fl, a, al);
     if (s && s->proto) return icmp_recvfrom(s, b, n, fl, a, al);
+    if (!s) {
+        cx_iovec_t iov = { b, n };
+        cx_msghdr_t h;
+        memset(&h, 0, sizeof h);
+        h.name = a;
+        h.namelen = al ? *al : 0;
+        h.iov = &iov;
+        h.iovlen = 1;
+        long r = uerr(SYS4(SYS_UNIX, MOS_UNIX_RECVMSG, fd, &h, fl));
+        if (r >= 0 && al) *al = h.namelen;
+        return r;
+    }
     long r = recv(fd, b, n, fl);
     if (r >= 0 && a && al && is_inet(s)) put_sa(s, a, al, s->raddr, s->rport);
     else if (al) *al = 0;

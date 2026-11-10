@@ -73,6 +73,7 @@ enum {
     SYS_SIG,           /* 58: (op, a, b, c) -> ...                  sinais POSIX completos: ações, máscaras, sigsuspend, sigaltstack (MOS_SIGOP_* abaixo) */
     SYS_WEB,           /* 59: (op, id, a, b) -> ...                 motor web do sistema para o WKWebView (MOS_WEB_* abaixo, kernel/web/webview.c) */
     SYS_THREADCTL,     /* 60: (op, tid, a) -> ...                   outra thread do processo: suspender, retomar, registradores (MOS_THR_* abaixo) */
+    SYS_UNIX,          /* 61: (op, ...) -> ...                      AF_UNIX entre processos (MOS_UNIX_*, kernel/net/unix.c) */
     SYS_COUNT,
     /* 63: banner de notificação do app e selo do Dock (kernel/ui/deskbridge.c).
      * rdi = MOS_DESK_BANNER (título, corpo, token) | MOS_DESK_TAKE (int *token) | MOS_DESK_BADGE (rótulo). */
@@ -124,6 +125,7 @@ enum {
 #define MOS_SPAWN_CLOEXEC_DEFAULT 0x4000u   /* o filho começa sem os fds do pai; só as ações abrem */
 #define MOS_SPAWN_SETPGROUP 0x0002u          /* (valores do macOS) o filho vira líder de um grupo de processos novo */
 #define MOS_SPAWN_SETSID    0x0400u          /* o filho começa uma sessão nova, sem terminal de controle (node-pty) */
+#define MOS_SPAWN_START_SUSPENDED 0x0080u    /* POSIX_SPAWN_START_SUSPENDED: nasce parado (proc_hold); SIGCONT retoma */
 typedef struct {
     int kind, a, b, flags;
     unsigned mode;
@@ -469,6 +471,47 @@ enum {
 #define MOS_EAGAIN 35            /* valores do macOS */
 #define MOS_ETIMEDOUT 60
 #define MOS_EBUSY  16            /* SYS_THREADCTL GETSTATE: a thread ainda não parou */
+#define MOS_ENXIO  6             /* open() de um caminho que é socket AF_UNIX */
+#define MOS_ENOTSOCK 38
+#define MOS_EMSGSIZE 40
+#define MOS_EPROTOTYPE 41
+#define MOS_ENOPROTOOPT 42
+#define MOS_EPROTONOSUPPORT 43
+#define MOS_EOPNOTSUPP 45
+#define MOS_EAFNOSUPPORT 47
+#define MOS_EADDRINUSE 48
+#define MOS_EISCONN 56
+#define MOS_ENOTCONN 57
+#define MOS_ECONNREFUSED 61
+#define MOS_ECONNRESET 54
+#define MOS_ENAMETOOLONG 63
+
+/* SYS_UNIX (61). rdi = operação, os demais registros são os argumentos (rsi, rdx, r10, r8).
+ * O descritor devolvido é um fd do processo (0..PROC_MAX_FDS-1), kind FD_UNIX. read/write/poll
+ * passam por SYS_READ, SYS_WRITE e SYS_FSTAT (is_dir 6). O layout de msghdr e cmsghdr é o do
+ * Darwin LP64. Contrato para quem consome (XPC, AX): docs/af-unix.md. */
+enum {
+    MOS_UNIX_SOCKET = 1,    /* (domínio, tipo, protocolo) -> fd. domínio 1. tipo: bit baixo = 1 stream ou 2 dgram;
+                             * bits 0x800, 0x10000000 e 0x40000000 = não-bloqueante; 0x80000, 0x20000000 e 0x80000000 = CLOEXEC */
+    MOS_UNIX_BIND,          /* (fd, sockaddr_un *, len) -> 0 */
+    MOS_UNIX_LISTEN,        /* (fd, backlog) -> 0. backlog limitado a 32 */
+    MOS_UNIX_ACCEPT,        /* (fd, sockaddr_un *, len *) -> fd */
+    MOS_UNIX_CONNECT,       /* (fd, sockaddr_un *, len) -> 0. fila cheia e não-bloqueante: -EAGAIN (não há EINPROGRESS) */
+    MOS_UNIX_SHUTDOWN,      /* (fd, how) -> 0. how 0 = leitura, 1 = escrita, 2 = as duas */
+    MOS_UNIX_SOCKNAME,      /* (fd, sockaddr_un *, len *) -> 0 */
+    MOS_UNIX_PEERNAME,      /* (fd, sockaddr_un *, len *) -> 0 */
+    MOS_UNIX_PAIR,          /* (tipo, protocolo, int out[2]) -> 0. as duas pontas nascem conectadas */
+    MOS_UNIX_SENDMSG,       /* (fd, msghdr *, flags) -> bytes. flags: PEEK não se aplica; DONTWAIT 0x80, NOSIGNAL 0x80000 */
+    MOS_UNIX_RECVMSG,       /* (fd, msghdr *, flags) -> bytes. PEEK 0x2 não consome nem entrega SCM_RIGHTS */
+    MOS_UNIX_GETSOCKOPT,    /* (fd, mos_unix_sockopt_t *) -> 0. SOL_SOCKET e SOL_LOCAL */
+};
+
+/* getsockopt: o bloco vai e volta. len é a capacidade na entrada e o tamanho gravado na saída. */
+typedef struct {
+    int level, name;
+    unsigned len;
+    void *val;
+} mos_unix_sockopt_t;
 
 typedef struct {
     int pid, ppid, state;     /* state: 0 pronto, 1 rodando, 2 dormindo, 3 esperando */
@@ -479,7 +522,8 @@ typedef struct {
 
 typedef struct {
     unsigned long long size;
-    unsigned long long is_dir; /* 0 arquivo, 1 pasta, 2/3 pipe (leitura/escrita), 4 /dev/null, 5 terminal (SYS_TTY) */
+    unsigned long long is_dir; /* 0 arquivo, 1 pasta, 2/3 pipe (leitura/escrita), 4 /dev/null, 5 terminal (SYS_TTY),
+                                * 6 socket AF_UNIX (só no fstat do descritor; o stat do caminho continua 0) */
     long long mtime;          /* segundos desde 1970 (0 = desconhecido) */
 } mos_stat_t;
 
