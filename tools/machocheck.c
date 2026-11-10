@@ -7,7 +7,8 @@
  * imagem Mach-O x86_64 (chained fixups ou dyld_info) e os exports (export trie), e resolve
  * cada import como o mOS resolveria: primeiro nas imagens do proprio bundle, depois no
  * libSystem.mos (mesma regra de nomes do kernel/compat/macho.c: tira o "_" e a variante "$...").
- * --disco aponta a libc++, as libswift* e a libunwind do build ou da imagem (um diretorio
+ * --disco aponta a libc++, as libswift*, a libunwind e as dylibs de /usr/lib que o
+ * carregador lê do disco (libcurl.4, libz.1, libcompression) (um diretorio
  * vasculhado, ou o arquivo em si). Os exports desses arquivos entram na resolucao, como o
  * carregador le /usr/lib/libc++.1.dylib e /usr/lib/swift/libswift*.dylib do disco, e como o
  * libunwind entra no libSystem quando os objetos de build/libunwind-x86 sao ligados.
@@ -220,10 +221,10 @@ static int load_libsystem(const char *path) {
     return libsys.n > 0;
 }
 
-/* ---------------------------------------------------------------- libc++, libswift* e libunwind no disco */
-static set_t disk_cxx, disk_swift, disk_unwind, swift_lidas;
-static u32 cxx_files, swift_files, uw_files;
-static u32 cxx_syms, swift_syms, uw_syms;
+/* ---------------------------------------------------------------- libc++, libswift*, libunwind e dylibs de /usr/lib no disco */
+static set_t disk_cxx, disk_swift, disk_unwind, disk_usr, swift_lidas;
+static u32 cxx_files, swift_files, uw_files, usr_files;
+static u32 cxx_syms, swift_syms, uw_syms, usr_syms;
 static int disco_faltou;
 static dev_t seen_dev[8192];
 static ino_t seen_ino[8192];
@@ -234,7 +235,7 @@ static int sufixo(const char *s, const char *suf) {
     return n >= m && !memcmp(s + n - m, suf, m);
 }
 
-/* 1 = libc++, 2 = Swift, 3 = libunwind, 0 = outro */
+/* 1 = libc++, 2 = Swift, 3 = libunwind, 4 = libcurl/libz/libcompression, 0 = outro */
 static int kind_de(const char *path) {
     const char *b = strrchr(path, '/');
     b = b ? b + 1 : path;
@@ -242,6 +243,7 @@ static int kind_de(const char *path) {
     if (!strncmp(b, "libswift", 8) && sufixo(b, ".dylib")) return 2;
     if ((sufixo(b, ".o") || sufixo(b, ".a") || sufixo(b, ".dylib")) &&
         (strstr(b, "libunwind") || !strncmp(b, "Unwind", 6))) return 3;
+    if (!strcmp(b, "libcurl.4.dylib") || !strcmp(b, "libz.1.dylib") || !strcmp(b, "libcompression.dylib")) return 4;
     return 0;
 }
 
@@ -453,9 +455,9 @@ static void carrega_kind(const char *path, int kind) {
     struct stat st;
     if (stat(path, &st)) { fprintf(stderr, "disco: nao consegui ler %s\n", path); return; }
     if (visto_dir(st.st_dev, st.st_ino)) return;
-    set_t *dest = kind == 1 ? &disk_cxx : kind == 2 ? &disk_swift : &disk_unwind;
-    u32 *cnt = kind == 1 ? &cxx_syms : kind == 2 ? &swift_syms : &uw_syms;
-    u32 *files = kind == 1 ? &cxx_files : kind == 2 ? &swift_files : &uw_files;
+    set_t *dest = kind == 1 ? &disk_cxx : kind == 2 ? &disk_swift : kind == 3 ? &disk_unwind : &disk_usr;
+    u32 *cnt = kind == 1 ? &cxx_syms : kind == 2 ? &swift_syms : kind == 3 ? &uw_syms : &usr_syms;
+    u32 *files = kind == 1 ? &cxx_files : kind == 2 ? &swift_files : kind == 3 ? &uw_files : &usr_files;
     if (carrega_exports(path, dest, cnt)) {
         (*files)++;
         if (kind == 2) set_add(&swift_lidas, strrchr(path, '/') ? strrchr(path, '/') + 1 : path);
@@ -492,7 +494,7 @@ static void carrega_disco(const char *path) {
     if (stat(path, &st)) { fprintf(stderr, "disco: caminho inexistente: %s\n", path); disco_faltou = 1; return; }
     if (S_ISREG(st.st_mode)) {
         int k = kind_de(path);
-        if (!k) { fprintf(stderr, "disco: %s nao e libc++, libswift* nem libunwind\n", path); disco_faltou = 1; return; }
+        if (!k) { fprintf(stderr, "disco: %s nao e libc++, libswift*, libunwind, libcurl, libz nem libcompression\n", path); disco_faltou = 1; return; }
         carrega_kind(path, k);
         return;
     }
@@ -501,7 +503,7 @@ static void carrega_disco(const char *path) {
 }
 
 static int no_disco(const char *mname) {
-    return set_has(&disk_cxx, mname) || set_has(&disk_swift, mname) || set_has(&disk_unwind, mname);
+    return set_has(&disk_cxx, mname) || set_has(&disk_swift, mname) || set_has(&disk_unwind, mname) || set_has(&disk_usr, mname);
 }
 
 /* mesma regra do ls_lookup do kernel */
@@ -529,6 +531,7 @@ static int sys_ok(const char *n) {
         "/usr/lib/libresolv.9.dylib", "/usr/lib/libicucore.A.dylib",
         "/usr/lib/libbz2.1.0.dylib", "/usr/lib/libxar.1.dylib",
         "/usr/lib/libc++.1.dylib", "/usr/lib/libc++abi.dylib",
+        "/usr/lib/libz.1.dylib", "/usr/lib/libcurl.4.dylib", "/usr/lib/libcompression.dylib",
     };
     static const char *fw[] = {
         "/usr/lib/libobjc.A.dylib", "/System/Library/Frameworks/Foundation.framework/",
@@ -782,7 +785,8 @@ static int uso(void) {
             "     machocheck --calls <imagem> <endereco hex>\n"
             "     machocheck --sym <libSystem.mos> <endereco hex>\n"
             "     machocheck --refs <imagem> <endereco hex>\n"
-            "--disco: diretorio (ou arquivo) da libc++, das libswift* e da libunwind\n"
+            "--disco: diretorio (ou arquivo) da libc++, das libswift*, da libunwind,\n"
+            "         libcurl.4.dylib, libz.1.dylib e libcompression.dylib\n"
             "         do build ou da imagem. Ex.: build/libcxx, build/swift/objc/dylib,\n"
             "         build/libunwind-x86, esp/mOS\n");
     return 2;
@@ -822,6 +826,7 @@ int main(int argc, char **argv) {
         printf("  libc++: %u arquivo(s), %u simbolos\n", cxx_files, cxx_syms);
         printf("  Swift: %u arquivo(s), %u simbolos\n", swift_files, swift_syms);
         printf("  unwind: %u arquivo(s), %u simbolos\n", uw_files, uw_syms);
+        printf("  usr/lib: %u arquivo(s), %u simbolos\n", usr_files, usr_syms);
     }
     printf("Imagens Mach-O x86_64 no bundle: %d (exports do bundle: %u)\n\n", nimgs, bundle_exports.n);
     set_t sysdylibs = {0};

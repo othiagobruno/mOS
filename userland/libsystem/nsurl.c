@@ -561,6 +561,8 @@ void cx_darwin_init(void) {
     cx_foundation_more_init();                  /* o resto do Foundation (classes e símbolos que os apps importam) */
     extern void cx_coreml_init(void);
     cx_coreml_init();                           /* MLDictionaryFeatureProvider (voz do OpenBot) */
+    extern void cx_openbot_gap_init(void);
+    cx_openbot_gap_init();
     extern void **cx_tsd(void);
     cx_tsd();                                   /* GS da thread principal antes do código do app */
     extern int cx_main_tid;
