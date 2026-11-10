@@ -224,18 +224,77 @@ static int in_libsystem(const char *mname) {
     return set_has(&libsys, t);
 }
 
-/* bibliotecas do sistema que o kernel aceita (libsystem_dylib_ok) */
+/* Espelho de libsystem_dylib_ok em kernel/compat/macho.c. O carregador aceita estas
+ * bibliotecas e as resolve no libSystem.mos; uma lista mais curta faz o relatório
+ * dizer "biblioteca inexistente" para um app que o kernel abre (o Codex CLI liga
+ * Security, CFNetwork, SystemConfiguration, CoreServices, IOKit e LocalAuthentication). */
 static int sys_ok(const char *n) {
-    static const char *ok[] = {"/usr/lib/libSystem.B.dylib", "/usr/lib/libSystem.dylib", "/usr/lib/libc.dylib", "/usr/lib/libm.dylib",
-        "/usr/lib/libdl.dylib", "/usr/lib/libpthread.dylib", "/usr/lib/libinfo.dylib", "/usr/lib/libgcc_s.1.dylib",
-        "/usr/lib/libiconv.2.dylib", "/usr/lib/libiconv.dylib", "/usr/lib/libobjc.A.dylib"};
-    static const char *fw[] = {"Foundation", "AppKit", "Cocoa", "CoreFoundation", "CoreGraphics", "ApplicationServices", "QuartzCore", "CoreText", "IOSurface", "CoreVideo"};
+    static const char *ok[] = {
+        "/usr/lib/libSystem.B.dylib", "/usr/lib/libSystem.dylib", "/usr/lib/libc.dylib",
+        "/usr/lib/libm.dylib", "/usr/lib/libdl.dylib", "/usr/lib/libpthread.dylib",
+        "/usr/lib/libinfo.dylib", "/usr/lib/libgcc_s.1.dylib", "/usr/lib/libiconv.2.dylib", "/usr/lib/libiconv.dylib",
+        "/usr/lib/libresolv.9.dylib", "/usr/lib/libicucore.A.dylib",
+        "/usr/lib/libbz2.1.0.dylib", "/usr/lib/libxar.1.dylib",
+        "/usr/lib/libc++.1.dylib", "/usr/lib/libc++abi.dylib",
+    };
+    static const char *fw[] = {
+        "/usr/lib/libobjc.A.dylib", "/System/Library/Frameworks/Foundation.framework/",
+        "/System/Library/Frameworks/AppKit.framework/", "/System/Library/Frameworks/Cocoa.framework/",
+        "/System/Library/Frameworks/CoreFoundation.framework/", "/System/Library/Frameworks/CoreGraphics.framework/",
+        "/System/Library/Frameworks/ApplicationServices.framework/", "/System/Library/Frameworks/QuartzCore.framework/",
+        "/System/Library/Frameworks/CoreText.framework/",
+        "/System/Library/Frameworks/IOSurface.framework/", "/System/Library/Frameworks/CoreVideo.framework/",
+        "/System/Library/Frameworks/Metal.framework/", "/System/Library/Frameworks/MetalKit.framework/",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/",
+        "/System/Library/Frameworks/Security.framework/", "/System/Library/Frameworks/SystemConfiguration.framework/",
+        "/System/Library/Frameworks/CFNetwork.framework/", "/System/Library/Frameworks/CoreServices.framework/",
+        "/System/Library/Frameworks/IOKit.framework/", "/System/Library/Frameworks/LocalAuthentication.framework/",
+        "/System/Library/Frameworks/LDAP.framework/", "/System/Library/Frameworks/Kerberos.framework/",
+        "/System/Library/Frameworks/GSS.framework/",
+        "/System/Library/Frameworks/AVFAudio.framework/",
+        "/System/Library/Frameworks/AVFoundation.framework/",
+        "/System/Library/Frameworks/Accelerate.framework/",
+        "/System/Library/Frameworks/Accessibility.framework/",
+        "/System/Library/Frameworks/AudioToolbox.framework/",
+        "/System/Library/Frameworks/AudioUnit.framework/",
+        "/System/Library/Frameworks/AuthenticationServices.framework/",
+        "/System/Library/Frameworks/Carbon.framework/",
+        "/System/Library/Frameworks/CoreAudio.framework/",
+        "/System/Library/Frameworks/CoreBluetooth.framework/",
+        "/System/Library/Frameworks/CoreHaptics.framework/",
+        "/System/Library/Frameworks/CoreImage.framework/",
+        "/System/Library/Frameworks/CoreLocation.framework/",
+        "/System/Library/Frameworks/CoreMIDI.framework/",
+        "/System/Library/Frameworks/CoreML.framework/",
+        "/System/Library/Frameworks/CoreMedia.framework/",
+        "/System/Library/Frameworks/CoreMediaIO.framework/",
+        "/System/Library/Frameworks/CoreWLAN.framework/",
+        "/System/Library/Frameworks/CryptoTokenKit.framework/",
+        "/System/Library/Frameworks/DiskArbitration.framework/",
+        "/System/Library/Frameworks/ForceFeedback.framework/",
+        "/System/Library/Frameworks/GameController.framework/",
+        "/System/Library/Frameworks/IOBluetooth.framework/",
+        "/System/Library/Frameworks/LocalAuthenticationEmbeddedUI.framework/",
+        "/System/Library/Frameworks/MediaAccessibility.framework/",
+        "/System/Library/Frameworks/MediaPlayer.framework/",
+        "/System/Library/Frameworks/Network.framework/",
+        "/System/Library/Frameworks/OpenDirectory.framework/",
+        "/System/Library/Frameworks/OpenGL.framework/",
+        "/System/Library/Frameworks/Quartz.framework/",
+        "/System/Library/Frameworks/QuickLookThumbnailing.framework/",
+        "/System/Library/Frameworks/SafariServices.framework/",
+        "/System/Library/Frameworks/ScreenCaptureKit.framework/",
+        "/System/Library/Frameworks/SecurityInterface.framework/",
+        "/System/Library/Frameworks/ServiceManagement.framework/",
+        "/System/Library/Frameworks/UserNotifications.framework/",
+        "/System/Library/Frameworks/VideoToolbox.framework/",
+        "/System/Library/Frameworks/Vision.framework/",
+        "/System/Library/PrivateFrameworks/SkyLight.framework/", "/usr/lib/libsandbox.1.dylib",
+        "/usr/lib/libbsm.0.dylib", "/usr/lib/libcups.2.dylib", "/usr/lib/libpmenergy.dylib", "/usr/lib/libpmsample.dylib",
+    };
     for (size_t i = 0; i < sizeof ok / sizeof *ok; i++) if (!strcmp(n, ok[i])) return 1;
-    for (size_t i = 0; i < sizeof fw / sizeof *fw; i++) {
-        char p[160]; snprintf(p, sizeof p, "/System/Library/Frameworks/%s.framework/", fw[i]);
-        if (!strncmp(n, p, strlen(p))) return 1;
-    }
-    return 0;
+    for (size_t i = 0; i < sizeof fw / sizeof *fw; i++) if (!strncmp(n, fw[i], strlen(fw[i]))) return 1;
+    return !strncmp(n, "/usr/lib/system/", 16);
 }
 static int is_bundled(const char *n) { return n[0] == '@'; }
 

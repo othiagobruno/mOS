@@ -40,7 +40,7 @@ Cuidados:
 | Grok Bot | 27 | 2.562 → 2.393 | 974 | Swift 541 (só o helper "Computer Use"), Foundation 219 |
 | Claude | 27 | 4.279 → 4.040 | 2.700 | Swift 1.256 + SwiftUI 547 (`swift_addon.node`, `computer_use.node`, simulador iOS) |
 | WhatsApp | 9 | 8.922 → 8.675 → 7.783 → 4.730 (dylibs Swift do mOS) → 4.444 (Combine) → 4.415 (Dispatch) → 4.265 (Foundation, marco C) → 3.694 (UIKit.framework do Catalyst) → 3.622 → 3.413 (libswiftUIKit completa, 7 nov.; ver [uikit-catalyst.md](uikit-catalyst.md)) → **3.105** com a `libc++.1.dylib` do LLVM (`tools\build-libcxx.ps1`) no diretório de varredura; o kernel também a carrega do disco desde 7 nov. | 8.344 | SwiftUI 555, Swift Foundation 278 (quase tudo ICU) |
-| **Codex CLI** | 1 | **271 → 90** | 152 | Security zerado; sobram CF, termios, rede |
+| **Codex CLI** | 1 | **271 → 90 → 0** (10 nov., binário 0.167.0, 630 imports) | 152 | símbolos fechados; ver a medição abaixo |
 
 \* O número do VS Code subiu porque o bundle em `build-vscode` foi preparado de novo, agora com mais módulos nativos. Não é regressão.
 
@@ -162,6 +162,35 @@ rolagem, tabelas, coleções e navegação; ainda sem modais nem animações).
 - **Codex CLI: `codex login --device-auth` funciona.** Ele negocia TLS 1.3 com `auth.openai.com` (cadeia até a ISRG Root X2),
   recebe o código de dispositivo e mostra a tela "Follow these steps to sign in with ChatGPT using device code
   authorization". Antes parava em "error sending request".
+
+### Machocheck refeito (10 nov. 2026, `codex-x86_64-apple-darwin` 0.167.0)
+
+O binário oficial tem 278 MiB, um único executável x86_64, binds do `LC_DYLD_INFO_ONLY` (não chained) e nenhum import fraco.
+No libSystem ligado a partir do `main` (6975 símbolos exportados): **630 imports, 0 símbolos distintos ausentes**.
+A conta antiga "faltam 90" era o buraco que `cli.c` e o resto do libSystem já tinham fechado; não havia sido medido de novo.
+
+O `machocheck` ainda dizia que seis bibliotecas "não existem" (Security 168, CFNetwork 14, SystemConfiguration 9,
+CoreServices 11, IOKit 2, LocalAuthentication 0 símbolos). O carregador já as aceita em `libsystem_dylib_ok`. A lista
+do `tools/machocheck.c` agora é a mesma: as 13 bibliotecas do CLI saem `[ok]`, e o total continua 630 / 0.
+
+O que cada grupo faz, separado:
+
+- **Funcional.** libc, libm e pthread, inclusive `stat$INODE64` (o carregador tira o `$` e acha o `stat` de 144 bytes).
+  Security de senha e de TLS (`SecItem*`, `SecKeychain*`, `SSL*`, `SecTrustSettings*`). `CFURL`, `CFError`, `CFTimeZone`
+  e `CFPreferences` (este último em `prefs.c`, gravado em disco). Proxies: `SCDynamicStoreCopyProxies` lê o configd e,
+  sem ele, devolve o dicionário do macOS sem proxy; `CFNetworkCopyProxiesForURL` devolve a lista "sem proxy".
+  `proc_*`, `waitid`, o pty e o `sandbox-exec` (o `execve` ignora a política e roda o comando). O ObjC que o CoreFoundation
+  usa (`objc_msgSend`, `objc_getClass`, pools).
+- **Stub.** `FSEventStream*`: o fluxo sobe e não entrega evento. `CFNetworkExecuteProxyAutoConfiguration*` devolve nulo
+  (não há PAC). `IOPMAssertion*` aceita, porque o mOS não dorme sozinho. `copyfile_state_get` e `acl_get_*` devolvem o
+  erro de "não há o quê". `fclonefileat`, `fsctl`, `fsetattrlist` e `proc_pid_rusage` devolvem `ENOTSUP`.
+  LocalAuthentication está ligada e não importa símbolo nenhum.
+- **Limitação.** A frase "Follow these steps…" só é impressa depois que o POST TLS em
+  `https://auth.openai.com/api/accounts/deviceauth/usercode` responde. `codex login` (sem `--device-auth`) sobe um
+  servidor em `localhost` e imprime o URL. Entrar com a conta e o polling até o token ficam para o Thiago: esta
+  medição não autentica. O `connect` de `AF_UNIX` dentro do processo ainda devolve `ECONNREFUSED` (`sockets.c`);
+  o `login` e o `login status` do fonte 0.167.0 não passam por aí. No harness, o processo para em
+  "failed to create UnixStream" porque o machotest não emula `socketpair`; na VM o par é um pipe do kernel.
 - **XPC** (`userland/libsystem/xpc.c`). O modelo de objetos inteiro: null, bool, int64, uint64, double, date, data, string,
   uuid, fd, array, dictionary e error, com `xpc_copy`, `xpc_equal`, `xpc_hash`, `xpc_copy_description` e os `apply` com blocos.
   São objetos ObjC da classe `OS_xpc_object`, então ARC/`objc_release` funcionam. `XPC_BOOL_*` e `XPC_ERROR_*` são estáticos e
@@ -412,16 +441,17 @@ O que se sabe do laço (quarta rodada):
 
 ## Roteiro (do mais perto para o mais longe)
 
-1. **Codex CLI** (faltam 90). É o primeiro app da lista que pode rodar inteiro:
+1. **Codex CLI** (0 símbolos ausentes em 10 nov.; ver a medição acima). O que resta para a conta real é o login, fora desta medição:
    - ~~termios (`tcgetattr/tcsetattr/cfmakeraw/openpty/ttyname_r/tcgetpgrp`)~~: feitos de verdade, com pseudoterminais
      no kernel (`kernel/proc/pty.c`, `userland/libsystem/pty.c`; ver "Terminal integrado" em [porte-vscode.md](porte-vscode.md));
      o mesmo caminho abre o shell no terminal integrado do VS Code, do Cursor e do Claude (node-pty);
-   - ~~`getaddrinfo` e TLS~~: feitos (SecureTransport real; o login por código de dispositivo chega à OpenAI). Falta concluir
-     um login de ponta a ponta e conferir o polling do token;
-   - CFURL, CFError, CFPreferences, CFTimeZone;
-   - FSEvents (pode começar sem eventos) e proxies (`CFNetworkCopyProxiesForURL`, `SCDynamicStore`: "sem proxy");
-   - `proc_pidinfo/proc_pidpath/proc_listchildpids`, `flock/lockf`, `copyfile_state_*`, `acl_*` (sem ACL);
-   - `/usr/bin/sandbox-exec`.
+   - ~~`getaddrinfo` e TLS~~: feitos (SecureTransport real; o login por código de dispositivo chega à OpenAI). Concluir
+     o login com a conta e o polling do token fica para quem tem a conta;
+   - ~~CFURL, CFError, CFTimeZone~~ e ~~CFPreferences~~ (`prefs.c`, valor gravado);
+   - FSEvents é stub (sobe e não entrega) e os proxies são funcionais ("sem proxy" quando o configd não responde);
+   - ~~`proc_pidinfo/proc_pidpath/proc_listchildpids`, `flock/lockf`~~; `copyfile_state_get` e `acl_get_*` devolvem erro
+     (não há ACL nem estado de cópia);
+   - ~~`/usr/bin/sandbox-exec`~~: o `execve` ignora a política e roda o comando.
 2. **Slack**: depois do VS Code chegar à janela, sobram só ~123 a mais: libc++ (em andamento), `CFPreferences*`, CoreSpotlight vazio,
    `AVFAudio` (constantes) e `SMAppService`. Ele exige a integridade do asar e o Safe Storage (este já está pronto).
 3. **Cursor**: o mesmo caminho do VS Code. Os ~760 a mais são libc++ dos módulos `.node` e Security (já coberto). O Swift fica só no
