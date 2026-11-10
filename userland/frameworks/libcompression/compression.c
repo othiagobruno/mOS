@@ -6,6 +6,9 @@
  * COMPRESSION_LZMA (0x306) é o contêiner .xz (liblzma 5.8.1, 0BSD).
  * COMPRESSION_BROTLI (0xB02) é o fluxo Brotli (1.1.0, MIT).
  * COMPRESSION_LZBITMAP (0x702) devolve 0.
+ * MOS_LIBSYSTEM: o mesmo arquivo entra no ELF do libSystem.
+ * ZLIB, LZ4, LZFSE, LZMA e Brotli são o código vendorizado. LZBITMAP devolve 0.
+ * O cz_raw_* já está em compression_z.c.
  */
 #include <stddef.h>
 #include <stdint.h>
@@ -36,8 +39,16 @@ typedef struct {
 #define COMPRESSION_STREAM_ENCODE 0
 #define COMPRESSION_STREAM_FINALIZE 0x0001
 
+#ifdef MOS_LIBSYSTEM
+#define Z_SOLO 1
+#include "zlib.h"
+int cz_raw_begin(z_stream *z, int encode);
+void cz_raw_end(z_stream *z, int encode);
+size_t cz_raw_buffer(unsigned char *dst, size_t dn, const unsigned char *src, size_t sn, int encode);
+#else
 #define CZ_HOST 1
 #include "../../libsystem/compression_z.c"
+#endif
 
 #include "lz4.h"
 #include "lz4frame.h"

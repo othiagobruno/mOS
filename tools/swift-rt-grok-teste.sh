@@ -12,6 +12,7 @@ mkdir -p "$OUT"
     -isystem "$ZIGDIR/lib/include" \
     -c "$ROOT/userland/libsystem/swift_rt_grok.c" -o "$OUT/swift_rt_grok_fs.o"
 "$ZIG" cc -target x86_64-linux-gnu -O2 \
+    "$ROOT/userland/libsystem/swift_refcount.c" \
     "$ROOT/userland/libsystem/swift_rt_grok.c" "$ROOT/tools/swift_rt_grok_test.c" -o "$OUT/swift_rt_grok_test"
 "$OUT/swift_rt_grok_test"
 echo "swift-rt-grok: freestanding compilou"

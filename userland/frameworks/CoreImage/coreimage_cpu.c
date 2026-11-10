@@ -4,7 +4,6 @@
  * MIT.
  */
 #include "coreimage_cpu.h"
-#include "../ImageIO/imageio_codec.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -25,6 +24,16 @@ struct mos_ci {
     double ax, ay, bx, by, tx, ty;
     double cx, cy, cw, ch;
 };
+
+/* A definição única fica no grok_imageio.c do libSystem. Aqui só o extern. */
+typedef struct {
+    int w, h;
+    int has_alpha;
+    uint32_t *px;
+} mos_img_t;
+extern const char *mos_img_uti(const uint8_t *data, size_t n);
+extern int mos_img_decode(const uint8_t *data, size_t n, mos_img_t *out);
+extern void mos_img_free(mos_img_t *img);
 
 static int too_big(int w, int h) {
     if (w <= 0 || h <= 0) return 1;
@@ -526,6 +535,20 @@ static mos_ci *flatten(mos_ci *im) {
         mos_ci_release(bg);
         return out;
     }
+    return 0;
+}
+
+mos_ci *mos_ci_apply(const char *name, mos_ci *input, mos_ci *background,
+                     double radius, double saturation, double brightness, double contrast,
+                     double scale, double aspect,
+                     double a, double b, double c, double d, double tx, double ty, int crop) {
+    if (!name || !input) return 0;
+    if (!strcmp(name, "CIGaussianBlur")) return mos_ci_blur(input, radius);
+    if (!strcmp(name, "CIColorControls")) return mos_ci_color(input, saturation, brightness, contrast);
+    if (!strcmp(name, "CISourceOverCompositing")) return background ? mos_ci_over(input, background) : 0;
+    if (!strcmp(name, "CILanczosScaleTransform")) return mos_ci_lanczos(input, scale, aspect);
+    if (!strcmp(name, "CIAffineTransform")) return mos_ci_affine(input, a, b, c, d, tx, ty);
+    if (!strcmp(name, "CICrop") && crop) return mos_ci_crop(input, tx, ty, a, b);
     return 0;
 }
 
