@@ -19,7 +19,7 @@ zig cc -target x86_64-freestanding-none -O2 -ffreestanding -fno-stack-protector 
 
 zig cc -target x86_64-linux-gnu -O2 -std=gnu11 -DMOS_HOST_TEST -fno-strict-aliasing \
     -Ikernel/include -Itools \
-    tools/machotest.c tools/host_enter.S kernel/compat/macho.c \
+    tools/machotest.c tools/host_unix.c tools/host_gpu.c tools/host_enter.S kernel/compat/macho.c \
     -o build/machotest -pthread
 ```
 
