@@ -101,6 +101,16 @@ u64    pmm_total_pages(void);
 u64    pmm_free_pages(void);
 bool   pmm_is_ram(u64 addr, u64 len);   /* buffer do kernel apto a DMA direto (identidade) */
 void   paging_init(void);
+void   swap_init(void);
+bool   swap_is(u64 pte);
+void   swap_hold(u64 pte);
+void   swap_release(u64 pte);
+u64    swap_store(u64 phys, int nx, int jwp);
+void   swap_load(u64 pte, u64 page);
+u64    swap_floor(void);
+int    swap_busy(void);
+void   swap_set_busy(int v);
+void   mem_pressure(void);
 void   pmm_reclaim_boot(void);
 void   vmm_map_mmio(u64 phys, u64 size);
 void  *kmalloc(usize n);
@@ -126,6 +136,7 @@ typedef struct {
 } int_frame_t;
 typedef void (*irq_handler_t)(int_frame_t *f);
 void   irq_install(int irq, irq_handler_t h);
+void   msi_set_handler(void (*fn)(void)); /* vetor 0xE0, MSI/MSI-X (NVMe) */
 void   pic_init(void);
 void   pic_unmask(int irq);
 void   pit_init(u32 hz);

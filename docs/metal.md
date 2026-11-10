@@ -157,3 +157,10 @@ mostra tudo isso (imagem acima, no QEMU).
 **Validação no QEMU (7 nov.)**: com o libSystem oficial, o `MetalTest` passa inteiro no mOS de verdade
 (14/14 no log serial) e o `Triangulo` gira na janela; o `Camadas` desenha forma, gradiente e texto e anima o
 quadrado, com os delegates chamados e o `CADisplayLink` contando quadros.
+
+## GPU do kernel (ABI r1)
+
+`gpucall.c` chama `SYS_GPU` (62, `syscall.h`) com os tipos de `kernel/include/mos_gpu.h`.
+`IOSurfaceCreate` BGRA, que é o drawable do `CAMetalLayer`, usa o BO e o id da ABI
+quando `MOS_GPU_INFO` traz `MOS_GPU_CAP_IOSURF`. O que falta para o submit 3D está
+em `docs/metal-gpu-needs.md`. A janela continua no compositor do QuartzCore.

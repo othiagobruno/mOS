@@ -126,12 +126,32 @@ static BOOL is_set_prop(id s, SEL c, id v, id key) { (void)s; (void)c; (void)v; 
 
 /* ================================================================ CFFileSecurity e NSURLFileSecurityKey */
 id NSURLFileSecurityKey;
-typedef struct { u16 mode; u32 owner, group; u8 has_mode, has_owner, has_group; } cffsec_t;
+typedef struct { u16 mode; u32 owner, group; u8 has_mode, has_owner, has_group, has_uuid; u8 uuid[16]; } cffsec_t;
 void *CFFileSecurityCreate(void *alloc) { (void)alloc; return calloc(1, sizeof(cffsec_t)); }
 u8 CFFileSecurityGetMode(void *s, u16 *mode) { cffsec_t *x = s; if (!x || !x->has_mode) return 0; if (mode) *mode = x->mode; return 1; }
 u8 CFFileSecuritySetMode(void *s, u16 mode) { cffsec_t *x = s; if (!x) return 0; x->mode = mode; x->has_mode = 1; return 1; }
 u8 CFFileSecuritySetOwner(void *s, u32 uid) { cffsec_t *x = s; if (!x) return 0; x->owner = uid; x->has_owner = 1; return 1; }
 u8 CFFileSecuritySetGroup(void *s, u32 gid) { cffsec_t *x = s; if (!x) return 0; x->group = gid; x->has_group = 1; return 1; }
+u64 CFFileSecurityGetTypeID(void) { return 44; }
+typedef struct { u8 b[16]; } gap_uuid_bytes;
+id CFUUIDCreateFromUUIDBytes(void *alloc, gap_uuid_bytes b);
+gap_uuid_bytes CFUUIDGetUUIDBytes(id u);
+id CFFileSecurityCopyOwnerUUID(void *s) {
+    cffsec_t *x = s;
+    gap_uuid_bytes b;
+    if (!x || !x->has_uuid) return 0;
+    memcpy(b.b, x->uuid, 16);
+    return CFUUIDCreateFromUUIDBytes(0, b);
+}
+u8 CFFileSecuritySetOwnerUUID(void *s, id uuid) {
+    cffsec_t *x = s;
+    gap_uuid_bytes b;
+    if (!x || !uuid) return 0;
+    b = CFUUIDGetUUIDBytes(uuid);
+    memcpy(x->uuid, b.b, 16);
+    x->has_uuid = 1;
+    return 1;
+}
 
 /* ================================================================ UTType (CoreServices, a API antiga em C) */
 id kUTTypeApplicationBundle, kUTTypeData;

@@ -18,6 +18,7 @@
  */
 #include "foundation.h"
 #include "libc.h"
+#include "gpucall.h"
 
 id objc_retain(id o);
 void objc_release(id o);
@@ -46,9 +47,11 @@ typedef struct iosurf {
     u32 port;                   /* porta Mach (0 = ainda não criada) */
     u32 w, h, bpe, fmt, nplanes;
     u64 bpr, alloc;
-    u8 *base;                   /* pixels = mem + 4096 */
-    u8 *mem;                    /* bloco mapeado: cabeçalho + pixels */
+    u8 *base;                   /* pixels. Com a ABI, é o BO mapeado; senão mem + 4096 */
+    u8 *mem;                    /* cabeçalho. Sem ABI, o bloco inteiro (cabeçalho + pixels) */
     u64 memlen;
+    u32 abi_bo;                 /* handle do BO quando os pixels são a IOSurface da ABI */
+    int abi;
     plane_t pl[4];
     volatile i32 use, locks;
     volatile u32 seed;
@@ -88,6 +91,24 @@ CFCONST(kIOSurfacePlaneElementHeight, "IOSurfacePlaneElementHeight")
 CFCONST(kIOSurfacePlaneOffset, "IOSurfacePlaneOffset")
 CFCONST(kIOSurfacePlaneSize, "IOSurfacePlaneSize")
 CFCONST(kIOSurfacePlaneBase, "IOSurfacePlaneBase")
+/* Os nomes IOSurfacePropertyKey* são os mesmos ponteiros que kIOSurface*: o dicionário compara a chave por identidade. */
+__asm__(
+".globl IOSurfacePropertyKeyAllocSize\n.set IOSurfacePropertyKeyAllocSize, kIOSurfaceAllocSize\n"
+".globl IOSurfacePropertyKeyBytesPerElement\n.set IOSurfacePropertyKeyBytesPerElement, kIOSurfaceBytesPerElement\n"
+".globl IOSurfacePropertyKeyBytesPerRow\n.set IOSurfacePropertyKeyBytesPerRow, kIOSurfaceBytesPerRow\n"
+".globl IOSurfacePropertyKeyHeight\n.set IOSurfacePropertyKeyHeight, kIOSurfaceHeight\n"
+".globl IOSurfacePropertyKeyPixelFormat\n.set IOSurfacePropertyKeyPixelFormat, kIOSurfacePixelFormat\n"
+".globl IOSurfacePropertyKeyPlaneBytesPerElement\n.set IOSurfacePropertyKeyPlaneBytesPerElement, kIOSurfacePlaneBytesPerElement\n"
+".globl IOSurfacePropertyKeyPlaneBytesPerRow\n.set IOSurfacePropertyKeyPlaneBytesPerRow, kIOSurfacePlaneBytesPerRow\n"
+".globl IOSurfacePropertyKeyPlaneElementHeight\n.set IOSurfacePropertyKeyPlaneElementHeight, kIOSurfacePlaneElementHeight\n"
+".globl IOSurfacePropertyKeyPlaneElementWidth\n.set IOSurfacePropertyKeyPlaneElementWidth, kIOSurfacePlaneElementWidth\n"
+".globl IOSurfacePropertyKeyPlaneHeight\n.set IOSurfacePropertyKeyPlaneHeight, kIOSurfacePlaneHeight\n"
+".globl IOSurfacePropertyKeyPlaneInfo\n.set IOSurfacePropertyKeyPlaneInfo, kIOSurfacePlaneInfo\n"
+".globl IOSurfacePropertyKeyPlaneOffset\n.set IOSurfacePropertyKeyPlaneOffset, kIOSurfacePlaneOffset\n"
+".globl IOSurfacePropertyKeyPlaneSize\n.set IOSurfacePropertyKeyPlaneSize, kIOSurfacePlaneSize\n"
+".globl IOSurfacePropertyKeyPlaneWidth\n.set IOSurfacePropertyKeyPlaneWidth, kIOSurfacePlaneWidth\n"
+".globl IOSurfacePropertyKeyWidth\n.set IOSurfacePropertyKeyWidth, kIOSurfaceWidth\n"
+);
 
 /* ---- tabela global de surfaces (ID e porta -> objeto), protegida por trava simples */
 #define MAX_SURF 1024
@@ -114,7 +135,15 @@ static void surf_write_hdr(iosurf_t *s) {
     h->nplanes = s->nplanes; h->bpr = s->bpr; h->alloc = s->alloc;
     memcpy(h->pl, s->pl, sizeof h->pl);
 }
-static void surf_mem_free(iosurf_t *s) { if (s->mem) munmap(s->mem, (size_t)s->memlen); s->mem = s->base = 0; }
+static void surf_mem_free(iosurf_t *s) {
+    if (s->abi) {
+        mos_gpu_unbind_iosurface(s->sid, s->abi_bo);
+        free(s->mem);
+    } else if (s->mem) munmap(s->mem, (size_t)s->memlen);
+    s->mem = s->base = 0;
+    s->abi = 0;
+    s->abi_bo = 0;
+}
 
 /* ---- leitura do dicionário de propriedades */
 static id dget(id d, const void *k) { return d ? MSG(id, d, "objectForKey:", (id)k) : 0; }
@@ -142,6 +171,7 @@ static BOOL surf_register(iosurf_t *s) {
     for (int i = 0; i < MAX_SURF; i++) if (!table[i]) {
         table[i] = s;
         if (!s->sid) s->sid = next_sid++;
+        if (s->sid >= next_sid) next_sid = s->sid + 1;
         T_unlock();
         return YES;
     }
@@ -195,6 +225,24 @@ IOSurfaceRef IOSurfaceCreate(id props) {
     u64 asz = (u64)dnum(props, kIOSurfaceAllocSize, 0);
     if (asz > s->alloc) s->alloc = asz;
     s->alloc = (s->alloc + 4095) & ~4095ull;
+    /* CAMetalLayer pede BGRA de um plano. Com MOS_GPU_CAP_IOSURF os pixels são o BO
+     * da ABI e o id do objeto é o id da syscall. O cabeçalho local continua o que
+     * a porta Mach exporta; GetBaseAddress aponta para o mesmo mapeamento. */
+    if (!np && s->bpe == 4) {
+        void *px = 0;
+        unsigned aid = 0, abo = 0;
+        if (mos_gpu_bind_iosurface(s->w, s->h, (unsigned)s->bpr, &px, &aid, &abo) == 0 && px) {
+            s->base = px;
+            s->sid = aid;
+            s->abi_bo = abo;
+            s->abi = 1;
+            s->mem = calloc(1, 4096);
+            s->memlen = 4096;
+            if (!s->mem || !surf_register(s)) { objc_release((id)s); return 0; }
+            surf_write_hdr(s);
+            return s;
+        }
+    }
     if (!surf_mem_alloc(s) || !surf_register(s)) { objc_release((id)s); return 0; }
     surf_write_hdr(s);
     return s;

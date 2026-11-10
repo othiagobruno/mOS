@@ -55,10 +55,11 @@ isr\n:
     ISR_NOERR \n
 .endr
     ISR_NOERR 128               /* int 0x80: syscalls (proc/process.c) */
+    ISR_NOERR 224               /* MSI/MSI-X (dev/nvme.c) */
     ISR_NOERR 240               /* IPI de wake-up dos APs / temporizador do LAPIC (arch/smp.c) */
     ISR_NOERR 242               /* IPI "olhe o escalonador": TLB e threads mortas (proc/sched.c) */
     ISR_NOERR 255               /* interrupção espúria do LAPIC */
-    .globl isr128, isr240, isr242, isr255
+    .globl isr128, isr224, isr240, isr242, isr255
 
     /* IPI que acorda os APs operários (arch/smp.c, vetor 0xF1): só o EOI. Não passa pelo isr_common,
      * que chamaria o escalonador. Se pegar um AP em ring 3 (rodando uma thread de usuário), a pilha é a

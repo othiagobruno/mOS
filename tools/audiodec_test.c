@@ -1,6 +1,6 @@
 /* Teste de host dos decodificadores. Gera os arquivos com o ffmpeg e compara.
  * Não é teste de VM e não exercita microfone de hardware.
- *   clang -std=c11 -O1 -o /tmp/audiodec_test tools/audiodec_test.c userland/libsystem/audiodec.c -lm
+ *   clang -std=c11 -O1 -o /tmp/audiodec_test tools/audiodec_test.c userland/host-audio/audiodec.c -lm
  */
 #include <stdio.h>
 #include <stdlib.h>

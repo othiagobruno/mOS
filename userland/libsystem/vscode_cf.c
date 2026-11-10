@@ -52,6 +52,7 @@ const double kCFAbsoluteTimeIntervalSince1970 = 978307200.0;
 typedef struct { i64 value; i32 timescale; u32 flags; i64 epoch; } cm_time_t;
 const cm_time_t kCMTimeZero = {0, 1, 1, 0};
 const cm_time_t kCMTimeInvalid = {0, 0, 0, 0};
+const cm_time_t kCMTimeIndefinite = {0, 0, 0x11, 0}; /* Valid | Indefinite */
 const double kCLLocationAccuracyBest = -1.0;
 const double kCLLocationAccuracyHundredMeters = 100.0;
 /* CoreGraphics: a conexão do WindowServer (CGS*) é um inteiro qualquer diferente de zero */
@@ -156,6 +157,10 @@ static id loc_ident(id self, SEL c) { (void)c; return ((cfloc_t *)self)->ident; 
 id CFLocaleCopyCurrent(void) { return loc_new(cur_locale_id()); }
 id CFLocaleCreate(void *alloc, id ident) { (void)alloc; return loc_new(ident); }
 /* chaves comparadas pelo texto (as constantes ficam em vscode_consts.c) */
+id CFLocaleGetIdentifier(id loc) {
+    return loc && resp(loc, "localeIdentifier") ? MSG0(id, loc, "localeIdentifier") : 0;
+}
+u64 CFLocaleGetTypeID(void) { return 25; }
 id CFLocaleGetValue(id loc, id key) {
     const char *k = key ? cx_cstr(key) : "";
     id ident = loc && resp(loc, "localeIdentifier") ? MSG0(id, loc, "localeIdentifier") : cur_locale_id();
@@ -213,6 +218,24 @@ id CFUUIDCreate(void *alloc) {
     return uuid_make(&b);
 }
 id CFUUIDCreateFromUUIDBytes(void *alloc, cf_uuid_bytes_t b) { (void)alloc; return uuid_make(&b); }   /* Postico */
+id CFUUIDCreateFromString(void *alloc, id str) {
+    (void)alloc;
+    cf_uuid_bytes_t b;
+    memset(&b, 0, sizeof b);
+    const char *s = str ? cx_cstr(str) : 0;
+    int n = 0;
+    if (!s) return 0;
+    for (; *s && n < 16; s++) {
+        if (*s == '-') continue;
+        int hi = *s >= '0' && *s <= '9' ? *s - '0' : *s >= 'a' && *s <= 'f' ? *s - 'a' + 10 : *s >= 'A' && *s <= 'F' ? *s - 'A' + 10 : -1;
+        if (hi < 0 || !s[1]) return 0;
+        s++;
+        int lo = *s >= '0' && *s <= '9' ? *s - '0' : *s >= 'a' && *s <= 'f' ? *s - 'a' + 10 : *s >= 'A' && *s <= 'F' ? *s - 'A' + 10 : -1;
+        if (lo < 0) return 0;
+        b.b[n++] = (u8)((hi << 4) | lo);
+    }
+    return n == 16 ? uuid_make(&b) : 0;
+}
 cf_uuid_bytes_t CFUUIDGetUUIDBytes(id u) {
     cf_uuid_bytes_t r;
     memset(&r, 0, sizeof r);
@@ -247,6 +270,40 @@ id CFSetCreate(void *alloc, const id *vals, long n, const void *cb) {
     return s;
 }
 long CFSetGetCount(id s) { return s ? (long)MSG0(u64, s, "count") : 0; }
+void CFSetGetValues(id s, id *out);
+u64 CFSetGetTypeID(void) { return 17; }
+u8 CFSetContainsValue(id s, id v) { return s && v && MSG(BOOL, s, "containsObject:", v); }
+id CFSetGetValue(id s, id v) { return CFSetContainsValue(s, v) ? v : 0; }
+u8 CFSetGetValueIfPresent(id s, id v, id *out) {
+    id g = CFSetGetValue(s, v);
+    if (out) *out = g;
+    return g != 0;
+}
+long CFSetGetCountOfValue(id s, id v) { return CFSetContainsValue(s, v) ? 1 : 0; }
+void CFSetRemoveValue(id s, id v) { if (s && v) MSG(void, s, "removeObject:", v); }
+void CFSetRemoveAllValues(id s) { if (s) MSG0(void, s, "removeAllObjects"); }
+void CFSetReplaceValue(id s, id v) { if (CFSetContainsValue(s, v)) { CFSetRemoveValue(s, v); CFSetAddValue(s, v); } }
+void CFSetSetValue(id s, id v) { if (!s || !v) return; CFSetRemoveValue(s, v); CFSetAddValue(s, v); }
+id CFSetCreateCopy(void *alloc, id s) {
+    long n = CFSetGetCount(s);
+    id *v = n > 0 ? calloc((size_t)n, sizeof *v) : 0;
+    if (v) CFSetGetValues(s, v);
+    id c = CFSetCreate(alloc, v, n, 0);
+    free(v);
+    return c;
+}
+id CFSetCreateMutableCopy(void *alloc, long cap, id s) {
+    (void)cap;
+    id m = CFSetCreateMutable(alloc, 0, 0);
+    long n = CFSetGetCount(s);
+    id *v = n > 0 ? calloc((size_t)n, sizeof *v) : 0;
+    if (v) {
+        CFSetGetValues(s, v);
+        for (long i = 0; i < n; i++) CFSetAddValue(m, v[i]);
+        free(v);
+    }
+    return m;
+}
 void CFSetGetValues(id s, id *out) {
     if (!s || !out) return;
     id a = MSG0(id, s, "allObjects");
@@ -436,6 +493,30 @@ void CFCharacterSetUnion(id s, id other) {
     if (a && b) for (u32 i = 0; i < CS_BYTES; i++) a[i] |= b[i];
 }
 u8 CFCharacterSetIsLongCharacterMember(id s, u32 c) { return (u8)cs_has(cs_bits(s), c); }
+u8 CFCharacterSetIsCharacterMember(id s, unsigned short c) { return CFCharacterSetIsLongCharacterMember(s, c); }
+u64 CFCharacterSetGetTypeID(void) { return 45; }
+id CFCharacterSetCreateWithCharactersInString(void *alloc, id str) {
+    id s = CFCharacterSetCreateMutable(alloc);
+    CFCharacterSetAddCharactersInString(s, str);
+    return s;
+}
+id CFCharacterSetCreateCopy(void *alloc, id s) {
+    (void)alloc;
+    id n = cs_new();
+    u8 *a = cs_bits(n), *b = cs_bits(s);
+    if (a && b) memcpy(a, b, CS_BYTES);
+    return n;
+}
+id CFCharacterSetCreateInvertedSet(void *alloc, id s) {
+    (void)alloc;
+    id n = cs_new();
+    u8 *a = cs_bits(n), *b = cs_bits(s);
+    if (a) {
+        if (b) for (u32 i = 0; i < CS_BYTES; i++) a[i] = (u8)~b[i];
+        else memset(a, 0xff, CS_BYTES);
+    }
+    return n;
+}
 /* conjuntos predefinidos (kCFCharacterSet*): faixas ASCII/Latin-1 e os blocos mais comuns */
 id CFCharacterSetGetPredefined(long which) {
     static id cache[16];
@@ -539,6 +620,33 @@ void CFBinaryHeapRemoveMinimumValue(id hp) {
         i = m;
     }
     if (h->cb.release) h->cb.release(0, min);
+}
+long CFBinaryHeapGetCount(id hp) { cfbh_t *h = (cfbh_t *)hp; return h ? h->n : 0; }
+const void *CFBinaryHeapGetMinimum(id hp) { const void *v = 0; return CFBinaryHeapGetMinimumIfPresent(hp, &v) ? v : 0; }
+u8 CFBinaryHeapContainsValue(id hp, const void *v) {
+    cfbh_t *h = (cfbh_t *)hp; long i;
+    if (!h) return 0;
+    for (i = 0; i < h->n; i++) if (bh_cmp(h, h->v[i], v) == 0) return 1;
+    return 0;
+}
+long CFBinaryHeapGetCountOfValue(id hp, const void *v) { return CFBinaryHeapContainsValue(hp, v) ? 1 : 0; }
+void CFBinaryHeapRemoveAllValues(id hp) { while (CFBinaryHeapGetCount(hp)) CFBinaryHeapRemoveMinimumValue(hp); }
+void CFBinaryHeapGetValues(id hp, const void **out) {
+    cfbh_t *h = (cfbh_t *)hp; long i;
+    if (!h || !out) return;
+    for (i = 0; i < h->n; i++) out[i] = h->v[i];
+}
+void CFBinaryHeapApplyFunction(id hp, void (*fn)(const void *, void *), void *ctx) {
+    cfbh_t *h = (cfbh_t *)hp; long i;
+    if (!h || !fn) return;
+    for (i = 0; i < h->n; i++) fn(h->v[i], ctx);
+}
+id CFBinaryHeapCreateCopy(void *alloc, long cap, id hp) {
+    cfbh_t *h = (cfbh_t *)hp;
+    id n = CFBinaryHeapCreate(alloc, cap > 0 ? cap : (h ? h->n : 0), h ? &h->cb : 0, 0);
+    long i;
+    if (h) for (i = 0; i < h->n; i++) CFBinaryHeapAddValue(n, h->v[i]);
+    return n;
 }
 
 /* ================================================================ erros, URLs e bundles */

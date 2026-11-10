@@ -131,6 +131,8 @@ if ($KernelTeste) {
     if (-not $ok) { Write-Host 'kernel de teste FAILED' -ForegroundColor Red; exit 1 }
     Copy-Item "$root\$OutDir\BOOTX64-teste.EFI" "$esp\EFI\BOOT\BOOTX64.EFI" -Force
 }
+. (Join-Path $PSScriptRoot 'stage-xpc.ps1')
+Copy-MosBundleServices $src $dst
 & (Join-Path $root "$OutDir\mkimg.exe") (Join-Path $root "$OutDir\mOS.img") $esp $SizeMiB --test-overlay $ovt
 if ($LASTEXITCODE -ne 0) { Write-Host 'mkimg FAILED' -ForegroundColor Red; exit 1 }
 Write-Host "OK: $OutDir\mOS.img (boote com -Memory 3072: os arquivos do app ficam na RAM)" -ForegroundColor Green
