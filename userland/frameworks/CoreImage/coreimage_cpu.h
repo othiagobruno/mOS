@@ -42,4 +42,10 @@ int mos_ci_render_format(mos_ci *im, double x, double y, int w, int h, int forma
 /* PNG ou JPEG pelo decodificador do ImageIO (imageio_decode.c). NULL se não for esses tipos. */
 mos_ci *mos_ci_from_encoded(const uint8_t *data, size_t n);
 
+/* O mesmo despacho de -[CIFilter outputImage]. crop=1 usa tx,ty,a,b como retângulo. */
+mos_ci *mos_ci_apply(const char *name, mos_ci *input, mos_ci *background,
+                     double radius, double saturation, double brightness, double contrast,
+                     double scale, double aspect,
+                     double a, double b, double c, double d, double tx, double ty, int crop);
+
 #endif

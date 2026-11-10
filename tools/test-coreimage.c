@@ -134,6 +134,13 @@ int main(void) {
     expect(dec && mos_ci_render(dec, 0, 0, 2, 2, decpx) == 0 && !memcmp(decpx, want, sizeof want), "PNG do ImageIO vira CIImage");
     expect(mos_ci_from_encoded((const uint8_t *)"GIF89a", 6) == 0, "GIF não decodifica");
 
+    mos_ci *byname = mos_ci_apply("CIGaussianBlur", dot, 0, 1, 1, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0);
+    uint32_t bypx[49];
+    expect(byname && mos_ci_render(byname, -3, -3, 7, 7, bypx) == 0 && !memcmp(bypx, tile, sizeof tile),
+           "CIFilter CIGaussianBlur pelo nome");
+    expect(mos_ci_apply("CIComicEffect", im, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0) == 0, "filtro desconhecido é nil");
+    mos_ci_release(byname);
+
     mos_ci_release(im); mos_ci_release(crop); mos_ci_release(gray); mos_ci_release(blk);
     mos_ci_release(bright); mos_ci_release(fgi); mos_ci_release(bgi); mos_ci_release(over);
     mos_ci_release(dot); mos_ci_release(blur); mos_ci_release(same); mos_ci_release(flat);
