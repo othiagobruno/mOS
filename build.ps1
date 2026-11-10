@@ -138,6 +138,8 @@ Copy-Item "$root\build\libcompression-x86_64\libcompression.dylib" "$esp\mOS\usr
 New-Item -ItemType Directory -Force "$esp\mOS\usr\share\zlib", "$esp\mOS\usr\share\curl" | Out-Null
 Copy-Item "$root\build\zlib-x86_64\LICENSE" "$esp\mOS\usr\share\zlib\LICENSE" -Force
 Copy-Item "$root\build\curl-x86_64\COPYING" "$esp\mOS\usr\share\curl\COPYING" -Force
+Copy-Item "$root\build\curl-x86_64\LICENSE.mbedtls" "$esp\mOS\usr\share\curl\LICENSE.mbedtls" -Force -ErrorAction SilentlyContinue
+Copy-Item "$root\assets\certs\cacert.pem" "$esp\mOS\usr\share\curl\cacert.pem" -Force
 # WebKit.framework do mOS (userland\frameworks\WebKit): WKWebView sobre o motor web do sistema (SYS_WEB, kernel/web/webview.c)
 $wkdir = "$esp\mOS\System\Library\Frameworks\WebKit.framework\Versions\A"
 New-Item -ItemType Directory -Force $wkdir | Out-Null
