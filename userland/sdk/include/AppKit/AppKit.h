@@ -50,6 +50,13 @@ extern NSString *const NSWindowWillCloseNotification;
 - (void)keyDown:(NSEvent *)e;
 - (void)keyUp:(NSEvent *)e;
 - (void)flagsChanged:(NSEvent *)e;
+- (void)rightMouseUp:(NSEvent *)e;
+- (void)otherMouseDown:(NSEvent *)e;
+- (void)otherMouseUp:(NSEvent *)e;
+- (void)otherMouseDragged:(NSEvent *)e;
+- (void)insertText:(id)text;
+- (BOOL)tryToPerform:(SEL)action with:(id)object;
+- (void)noResponderFor:(SEL)action;
 @property (readonly) BOOL acceptsFirstResponder;
 @property (weak) NSResponder *nextResponder;
 @end
@@ -149,7 +156,20 @@ int NSApplicationMain(int argc, const char *argv[]);
 - (void)layoutSubtreeIfNeeded;
 - (void)layout;
 - (void)setContentHuggingPriority:(float)p forOrientation:(NSInteger)o;
+- (float)contentHuggingPriorityForOrientation:(NSInteger)o;
 - (void)setContentCompressionResistancePriority:(float)p forOrientation:(NSInteger)o;
+- (float)contentCompressionResistancePriorityForOrientation:(NSInteger)o;
+- (NSString *)accessibilityRole;
+- (void)setAccessibilityRole:(NSString *)role;
+- (NSString *)accessibilityLabel;
+- (void)setAccessibilityLabel:(NSString *)label;
+- (id)accessibilityValue;
+- (void)setAccessibilityValue:(id)value;
+- (NSArray *)accessibilityChildren;
+- (id)accessibilityParent;
+- (NSRect)accessibilityFrame;
+- (BOOL)isAccessibilityElement;
+- (BOOL)accessibilityPerformPress;
 @end
 
 @interface NSControl : NSView
@@ -196,6 +216,40 @@ int NSApplicationMain(int argc, const char *argv[]);
 @property (strong) NSColor *backgroundColor;
 @property (copy) NSString *placeholderString;
 @property (weak) id<NSTextFieldDelegate> delegate;
+@end
+
+@interface NSStepper : NSControl
+@property double minValue;
+@property double maxValue;
+@property double increment;
+@end
+
+@interface NSComboBox : NSTextField
+- (void)addItemWithObjectValue:(id)object;
+- (void)removeAllItems;
+@property (readonly) NSInteger numberOfItems;
+@property (readonly) NSInteger indexOfSelectedItem;
+- (void)selectItemAtIndex:(NSInteger)index;
+- (id)objectValueOfSelectedItem;
+@property BOOL completes;
+@end
+
+@interface NSLevelIndicator : NSControl
+@property double minValue;
+@property double maxValue;
+@property double warningValue;
+@property double criticalValue;
+@end
+
+@interface NSPathComponentCell : NSObject
+@property (readonly, copy) NSString *title;
+@property (readonly, copy) NSURL *URL;
+@end
+
+@interface NSPathControl : NSControl
+@property (copy) NSURL *URL;
+@property (readonly, copy) NSArray<NSPathComponentCell *> *pathItems;
+@property (readonly, strong) NSPathComponentCell *clickedPathItem;
 @end
 
 @interface NSSlider : NSControl
