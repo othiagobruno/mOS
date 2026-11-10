@@ -68,6 +68,7 @@ typedef struct {
     char name[96];                 /* kCGWindowName */
 } gui_cgwindow_t;
 int compat_gui_cgwindow(int index, gui_cgwindow_t *out);
+#define DEV_AUDIO_READ 21     /* (amostras i16 estéreo 48 kHz, quadros) -> quadros copiados da captura; 0 = anel vazio ou sem entrada */
 typedef struct {
     unsigned int queued, capacity, rate, channels;
     unsigned long long played, underruns;
