@@ -3676,7 +3676,20 @@ static u64 proc_syscall_(int_frame_t *f) {
         /* op em a, aiocb* do usuário em b. Submete e consulta sem bloquear. */
         int op = (int)a;
         if (op == 3) { i64 ret; r = aio_mem_poll(b, &ret); break; }
-        if (op == 6) { aio_pump(); r = 0; break; }
+        if (op == 6) {
+            int nent = (int)c;
+            if (nent < 0 || nent > 64) { r = -MOS_EINVAL; break; }
+            u64 keys[64];
+            if (nent && !uvm_copy_in(p, keys, b, (u64)nent * sizeof(u64))) { r = -MOS_EFAULT; break; }
+            struct { i64 tv_sec; i64 tv_nsec; } ts;
+            const void *to = NULL;
+            if (f->r10) {
+                if (!uvm_copy_in(p, &ts, f->r10, sizeof ts)) { r = -MOS_EFAULT; break; }
+                to = &ts;
+            }
+            r = aio_suspend_mem(keys, nent, to);
+            break;
+        }
         if (op == 4) {
             i64 ret; int st = aio_mem_poll(b, &ret);
             if (st == MOS_EINPROGRESS) { r = -MOS_EINVAL; break; }

@@ -89,8 +89,9 @@ enum {
     SYS_MACH_BOOTSTRAP = 82,/* (op, nome, u32 *porta) -> código do bootstrap  registro global de serviços */
     SYS_MACH_VM = 83,       /* (op, u64 args[8]) -> kern_return_t           entradas de memória compartilhada */
     SYS_MACH_LAST = 95,
-    /* 96: aio POSIX. op em rdi: 1 leitura, 2 escrita, 3 erro, 4 retorno, 5 fsync, 6 suspende (um passo).
-     * rsi = ponteiro do aiocb no processo. Não bloqueia: a conclusão sai em pcache_tick/aio_pump. */
+    /* 96: aio POSIX. op em rdi: 1 leitura, 2 escrita, 3 erro, 4 retorno, 5 fsync,
+     * 6 suspende (rsi = aiocb *const[], rdx = nent, r10 = timespec ou 0).
+     * Submeter não bloqueia. O suspende espera um da lista, EAGAIN no prazo, EINTR no sinal. */
     SYS_AIO = 96,
     SYS_VFORK = 97,    /* () -> pid no pai, 0 no filho. O pai dorme até exec ou _exit; o pml4 é o mesmo. */
 };
