@@ -1,5 +1,6 @@
 /* mOS libSystem — declarações internas compartilhadas entre libc.c e stdio.c */
 #pragma once
+#include "sys.h"
 #include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>
