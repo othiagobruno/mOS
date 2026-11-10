@@ -818,6 +818,19 @@ void *mmap(void *addr, size_t len, int prot, int flags, int fd, off_t off) {
         len = (size_t)adj.len;
     }
 #endif
+    /* MAP_FIXED de arquivo: o kernel substitui [addr, addr+len) e devolve esse endereço
+     * (b = 8 privado, b = 9 compartilhado). c = endereço, r10 = deslocamento,
+     * r8 = fd | (prot << 32). Erro não cai na cópia com read(), que ignoraria o endereço.
+     * No arm64 o comprimento já saiu de a64_mmap_adjust (16 KiB); o endereço é o pedido,
+     * então não há cursor para realinhar nem sobra de 4 KiB para devolver. */
+    if ((flags & 0x10) && !(flags & 0x1000) && fd >= 0 && addr) {
+        unsigned long long pack = (unsigned)fd | ((unsigned long long)(prot ? prot : 1) << 32);
+        long mode = (flags & 1) ? 9 : 8;
+        long k = SYS5(SYS_MMAP, len, mode, addr, off, pack);
+        if (k < 0) { cx_errno = (int)-k; return (void *)-1; }
+        if (cx_pte_prot((u64)k, len, prot)) return (void *)-1;
+        return (void *)k;
+    }
     /* MAP_FIXED sobre a pilha (página de guarda do Rust, por exemplo): a região já existe.
      * A pilha principal fica abaixo de USER_MMAP_BASE: o kernel recusa munmap ali, então a guarda
      * da pilha principal não é desmapeável. A das threads (pthread_create) fica na arena de mmap. */
@@ -1072,15 +1085,21 @@ void dispatch_retain(void *o) { cx_dispatch_retain(o); }
 /* processos, usuários e sistema */
 int sched_yield(void) { SYS0(SYS_YIELD); return 0; }
 /* pause: libc.c (sigsuspend com a máscara atual) */
-/* status no formato do macOS (WIFEXITED/WEXITSTATUS/WIFSIGNALED); opt: WNOHANG = 1, o resto é ignorado */
+/* status no formato do macOS (WIFEXITED/WIFSIGNALED/WIFSTOPPED/WIFCONTINUED).
+ * WNOHANG, WUNTRACED e WCONTINUED passam ao kernel; o resto (WNOWAIT, WEXITED) é ignorado. */
 int waitpid(int pid, int *st, int opt) {
     int s = 0;
-    long r = cx_syscall(SYS_WAITPID, pid, (long)&s, opt & MOS_WNOHANG, 0, 0);
+    long r = cx_syscall(SYS_WAITPID, pid, (long)&s, opt & (MOS_WNOHANG | MOS_WUNTRACED | MOS_WCONTINUED), 0, 0);
     if (r < 0) { cx_errno = (int)-r; return -1; }
-    {   /* WTERMSIG vem com o número do kernel (USR1 10, CHLD 17...): o macOS espera o dele */
+    {   /* número do kernel (USR1 10, STOP 20, CHLD 17) → o do macOS. Parada: byte baixo 0x7f e o sinal no alto. */
         extern int cx_sig_from_mos(int);
-        int ts = s & 0x7F;
-        if (ts && ts != 0x7F) s = (s & ~0x7F) | cx_sig_from_mos(ts);
+        if ((s & 0xFF) == 0x7F) {
+            int sig = (s >> 8) & 0xFF;
+            if (sig) s = (cx_sig_from_mos(sig) << 8) | 0x7F;
+        } else {
+            int ts = s & 0x7F;
+            if (ts) s = (s & ~0x7F) | cx_sig_from_mos(ts);
+        }
     }
     if (st && r > 0) *st = s;
     return (int)r;

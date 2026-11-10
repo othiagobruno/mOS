@@ -546,7 +546,12 @@ kern_return_t mach_vm_map(mach_port_t task, u64 *addr, u64 size, u64 mask, int f
         if (r == KERN_SUCCESS) *addr = a[0];
         return (kern_return_t)r;
     }
-    void *p = mmap((flags & 1) ? 0 : (void *)*addr, size, 3, 0x1002, -1, 0);   /* anônima */
+    /* sem objeto: anônima. Sem VM_FLAGS_ANYWHERE o endereço pedido vai com MAP_FIXED.
+     * Esse caminho substitui a faixa (mmap); KERN_NO_SPACE de faixa ocupada sem
+     * VM_FLAGS_OVERWRITE vale para o caminho com objeto, no kernel. */
+    int mf = 0x1002;
+    if (!(flags & 1) && *addr) mf |= 0x10;
+    void *p = mmap((flags & 1) ? 0 : (void *)*addr, size, 3, mf, -1, 0);
     if (p == (void *)-1) return 3;                             /* KERN_NO_SPACE */
     *addr = (u64)p;
     return KERN_SUCCESS;

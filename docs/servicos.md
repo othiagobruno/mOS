@@ -59,8 +59,19 @@ O launchd atende o serviço Mach `com.apple.launchd.mos` (protocolo `LC_*` em `u
 - Morte do outro lado: as duas pontas pedem aviso de nome morto. O cliente de um serviço recebe
   `XPC_ERROR_CONNECTION_INTERRUPTED` (as respostas pendentes também) e o próximo envio reconecta — o launchd reinicia
   o daemon. Do lado do servidor, o par de um cliente que morreu recebe `XPC_ERROR_CONNECTION_INVALID`.
-- O fio é próprio do mOS (os dois lados são esta libxpc). Ainda faltam direitos Mach e fds dentro de dicionários
-  (`xpc_dictionary_set_mach_send`/`copy_mach_send`), `xpc_pipe_*` e o `xpc_set_event_stream_handler`.
+- O fio é próprio do mOS (os dois lados são esta libxpc). Um dicionário com `xpc_dictionary_set_mach_send`
+  sai com descritor `COPY_SEND`: quem recebe ganha um direito de envio no espaço dele. No mesmo processo,
+  `copy_mach_send` devolve o mesmo nome, sem criar outro direito. Não há direito de arquivo (`fd`) no dicionário.
+- `xpc_pipe_create` faz `bootstrap_look_up`. `xpc_pipe_routine` manda o dicionário e espera a resposta num send-once.
+  O servidor faz `xpc_pipe_receive` e `xpc_pipe_routine_reply`. Não é o protocolo privado do launchd da Apple.
+- `xpc_set_event_stream_handler` guarda o bloco e o chama. `xpc_event_stream_post` entrega neste processo e, se outro
+  processo fez check-in de `com.mos.xpc.ev.<stream>`, manda por Mach. Não há o daemon de eventos do launchd.
+- `NSXPCConnection` / `NSXPCListener` falam por estas conexões. O proxy `MOSXPCProxy` encaminha seletor com até 4
+  argumentos objeto; o bloco de resposta, se houver, é o último e tem de ser chamado na hora. Não filtra protocolo
+  e não é o fio binário da Apple. `anonymousListener` não publica endpoint.
+- Bytes entre pids, para a Interface ligar em `axtransport.h`: `userland/libsystem/xpctransport.h`
+  (`cx_xpc_peer_ready`, `cx_xpc_peer_call`, `cx_xpc_peer_send`, `cx_xpc_peer_listen`). Serviço
+  `com.mos.xpc.peer.<pid>`. Não usa AF_UNIX nem `sockets.c`.
 
 ## Daemons
 

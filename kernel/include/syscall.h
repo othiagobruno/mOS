@@ -28,7 +28,9 @@ enum {
     SYS_FSTAT,         /* (fd, mos_stat_t*) -> 0 */
     SYS_MMAP,          /* (len[, modo, c, r10, r8]) -> endereço ou 0. b=0 anônima RW; b=1 reserva; b=2 preenche;
                         * b=3 sob demanda; b=4 arquivo privado; b=5 MAP_SHARED de arquivo; b=6 MAP_SHARED|MAP_ANON;
-                        * b=7 prot (r8: 1 leitura, 2 escrita, 4 execução) em [c, c+len). Sem execução a PTE fica NX. */
+                        * b=7 prot (r8: 1 leitura, 2 escrita, 4 execução) em [c, c+len). Sem execução a PTE fica NX.
+                        * b=8 MAP_FIXED arquivo privado; b=9 MAP_FIXED arquivo compartilhado: c = endereço,
+                        * r10 = deslocamento, r8 = fd | (prot << 32). Substitui [c, c+len) e devolve c. */
     SYS_MUNMAP,        /* (addr, len[, MOS_MUNMAP_KEEP]) -> 0       KEEP: só descarta as páginas, a faixa segue reservada */
     SYS_UNIXTIME,      /* () -> segundos desde 1970 (relógio do sistema) */
     SYS_STAT,          /* (path, mos_stat_t*) -> 0 */
@@ -72,6 +74,9 @@ enum {
     SYS_WEB,           /* 59: (op, id, a, b) -> ...                 motor web do sistema para o WKWebView (MOS_WEB_* abaixo, kernel/web/webview.c) */
     SYS_THREADCTL,     /* 60: (op, tid, a) -> ...                   outra thread do processo: suspender, retomar, registradores (MOS_THR_* abaixo) */
     SYS_COUNT,
+    /* 63: banner de notificação do app e selo do Dock (kernel/ui/deskbridge.c).
+     * rdi = MOS_DESK_BANNER (título, corpo, token) | MOS_DESK_TAKE (int *token) | MOS_DESK_BADGE (rótulo). */
+    SYS_DESKTOP = 63,
     SYS_GUI_FIRST = 64,/* 64..79: interface gráfica dos apps do macOS (kernel/compat/guisys.c) */
     SYS_GUI_LAST = 79,
     /* 80..95: portas Mach entre processos (kernel/proc/machipc.c; libSystem: userland/libsystem/mach.c) */
@@ -82,6 +87,10 @@ enum {
     SYS_MACH_VM = 83,       /* (op, u64 args[8]) -> kern_return_t           entradas de memória compartilhada */
     SYS_MACH_LAST = 95
 };
+
+#define MOS_DESK_BANNER 1
+#define MOS_DESK_TAKE   2
+#define MOS_DESK_BADGE  3
 
 /* SYS_SPAWNVEC: vetores no espaço do pai. argv e envp são char *const * terminados em NULL.
  * envp 0 = o ambiente curto padrão (HOME, PATH, …). O Electron passa os dois completos:
@@ -199,7 +208,9 @@ enum {
 #define MOS_O_NONBLOCK 0x0800    /* leitura/escrita que esperaria devolve -EAGAIN (o kernel só consulta em terminais;
                                     nos pipes o libSystem decide pelo SYS_FSTAT) */
 #define MOS_O_CLOEXEC 0x1000000  /* valor do macOS: o fd fecha no execve */
-#define MOS_WNOHANG  1           /* SYS_WAITPID: não bloqueia (devolve 0) */
+#define MOS_WNOHANG    1         /* SYS_WAITPID: não bloqueia (devolve 0) */
+#define MOS_WUNTRACED  2         /* também informa filho parado (status (sinal << 8) | 0x7f) */
+#define MOS_WCONTINUED 0x10      /* também informa filho que voltou a rodar (WIFCONTINUED: sinal 19) */
 
 /* sinais (números do Linux/BSD para os comuns) */
 #define MOS_SIGHUP   1
@@ -301,6 +312,7 @@ typedef struct {
 #define MOS_SI_USER     0x10001  /* si_code (valores do macOS) */
 #define MOS_SI_QUEUE    0x10002
 #define MOS_SI_TIMER    0x10003
+#define MOS_SI_KERNEL   0x80     /* gerado pelo kernel (job control do terminal) */
 #define MOS_SEGV_MAPERR 1
 #define MOS_SEGV_ACCERR 2
 #define MOS_BUS_ADRALN  1
@@ -309,8 +321,10 @@ typedef struct {
 #define MOS_FPE_FLTINV  5
 #define MOS_ILL_ILLOPC  1
 #define MOS_TRAP_BRKPT  1
-#define MOS_CLD_EXITED  1
-#define MOS_CLD_KILLED  2
+#define MOS_CLD_EXITED    1
+#define MOS_CLD_KILLED    2
+#define MOS_CLD_STOPPED   5      /* SIGCHLD: filho parou (si_status = sinal, número do kernel) */
+#define MOS_CLD_CONTINUED 6      /* SIGCHLD: filho voltou (si_status = SIGCONT) */
 
 /* SYS_DYLD: carregador Mach-O em tempo de execução (kernel/compat/macho.c, userland/libsystem/dlfcn.c).
  * Imagens são índices (0 = executável, na ordem de carga). Só processos Mach-O; senão -EINVAL. */

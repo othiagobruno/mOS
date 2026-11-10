@@ -219,6 +219,14 @@ if [ -d "$ROOT/userland/cli-macos" ]; then
     done
 fi
 
+echo "==> libswift"
+if [ -f "$ROOT/build/universal-swift/usr/lib/swift/libswiftCore.dylib" ]; then
+    cp -a "$ROOT/build/universal-swift/." "$ESP/mOS/"
+elif [ -f "$ROOT/build/swift/objc/dylib/usr/lib/swift/libswiftCore.dylib" ]; then
+    cp -a "$ROOT/build/swift/objc/dylib/." "$ESP/mOS/"
+fi
+sh "$ROOT/tools/stage-libswift.sh" "$ESP/mOS/usr/lib/swift"
+
 KEY=${MOS_CHAVE_ATUALIZACAO:-$ROOT/tools/chave-atualizacao.semente}
 REV=$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo local)
 VER="0.1-$(date +%Y%m%d.%H%M)-$REV"

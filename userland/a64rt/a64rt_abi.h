@@ -76,6 +76,10 @@ typedef struct {
     unsigned long long x[29], fp, lr, sp, pc;
     unsigned int cpsr, pad;                                                                        /* 272 */
 } a64_darwin_thread_state_t;
+/* __darwin_arm_neon_state64 do XNU: __uint128_t __v[32]; __fpsr; __fpcr. O __uint128_t alinha a 16,
+ * então o sizeof no clang -target aarch64-apple-macos é 528 (520 de registradores + 8 de pad de cauda).
+ * fpsr/fpcr ficam em 512/516 dentro do neon. Encolher para 520 mudaria o sizeof e o uc_mcsize para 808,
+ * e o sigreturn do XNU só aceita UC_FLAVOR_SIZE64, que é a soma dos sizeof (816). */
 typedef struct {
     unsigned long long v[32][2];
     unsigned int fpsr, fpcr;
@@ -91,10 +95,15 @@ typedef struct {
     unsigned long long ss_sp, ss_size; int ss_flags, ss_pad;
     unsigned long long uc_link, uc_mcsize, uc_mcontext;
 } a64_darwin_ucontext_t;                                                                           /* 56 */
+_Static_assert(sizeof(a64_darwin_exc_state_t) == 16, "arm_exception_state64");
 _Static_assert(sizeof(a64_darwin_thread_state_t) == 272, "arm_thread_state64");
 _Static_assert(sizeof(a64_darwin_neon_state_t) == 528, "arm_neon_state64");
 _Static_assert(sizeof(a64_darwin_mcontext_t) == 816, "mcontext64");
 _Static_assert(sizeof(a64_darwin_ucontext_t) == 56, "ucontext");
+_Static_assert(__builtin_offsetof(a64_darwin_mcontext_t, ns) == 288, "neon no mcontext");
+_Static_assert(__builtin_offsetof(a64_darwin_neon_state_t, fpsr) == 512, "fpsr");
+_Static_assert(__builtin_offsetof(a64_darwin_mcontext_t, ns.fpsr) == 800, "fpsr no mcontext");
+_Static_assert(__builtin_offsetof(a64_darwin_mcontext_t, ns.fpcr) == 804, "fpcr no mcontext");
 
 /* ESR_EL1 entregue em __es.esr (classes do ARM ARM D17.2.37) */
 #define A64_ESR_EC_UNKNOWN  0x00     /* UDF / não alocada → SIGILL */

@@ -14,7 +14,7 @@ if (-not $mosZigPick) { exit 1 }
 $zig = $mosZigPick.Path
 $esp = Join-Path $root "$OutDir\esp"
 if (-not (Test-Path "$esp\mOS")) { Write-Host "rode antes: .\build.ps1 -OutDir $OutDir" -ForegroundColor Red; exit 1 }
-& "$PSScriptRoot\build-a64rt.ps1" -Parcial
+& "$PSScriptRoot\build-a64rt.ps1"
 if ($LASTEXITCODE -ne 0) { exit 1 }
 if (-not (Test-Path "$root\build\libSystem-arm64.mos")) { Write-Host 'falta build\libSystem-arm64.mos (tools\build-libsystem-arm64.ps1)' -ForegroundColor Red; exit 1 }
 $a64 = "$esp\mOS\Sistema\Biblioteca\a64"

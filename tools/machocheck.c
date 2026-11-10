@@ -1,14 +1,21 @@
 ﻿/*
  * mOS - machocheck: mede o que falta para um .app do macOS rodar no mOS.
  *
- *   machocheck <libSystem.mos> <Pasta.app> [relatorio.txt]
+ *   machocheck [--disco DIR]... <libSystem.mos> <Pasta.app> [relatorio.txt]
  *
  * Varre o bundle inteiro (executavel + frameworks/dylibs embutidos), le os imports de cada
  * imagem Mach-O x86_64 (chained fixups ou dyld_info) e os exports (export trie), e resolve
  * cada import como o mOS resolveria: primeiro nas imagens do proprio bundle, depois no
  * libSystem.mos (mesma regra de nomes do kernel/compat/macho.c: tira o "_" e a variante "$...").
- * Imprime um resumo por biblioteca e grava a lista completa de simbolos ausentes no relatorio.
+ * --disco aponta a libc++, as libswift* e a libunwind do build ou da imagem (um diretorio
+ * vasculhado, ou o arquivo em si). Os exports desses arquivos entram na resolucao, como o
+ * carregador le /usr/lib/libc++.1.dylib e /usr/lib/swift/libswift*.dylib do disco, e como o
+ * libunwind entra no libSystem quando os objetos de build/libunwind-x86 sao ligados.
+ * Imprime um resumo por biblioteca e grava os ausentes separados em sistema, libc++, Swift
+ * e unwind.
  * Compilar: zig cc -O2 -target x86_64-windows-gnu tools/machocheck.c -o build/machocheck.exe
+ *           gcc -O2 -o machocheck tools/machocheck.c
+ *           clang -O2 -o machocheck tools/machocheck.c
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -213,6 +220,290 @@ static int load_libsystem(const char *path) {
     return libsys.n > 0;
 }
 
+/* ---------------------------------------------------------------- libc++, libswift* e libunwind no disco */
+static set_t disk_cxx, disk_swift, disk_unwind, swift_lidas;
+static u32 cxx_files, swift_files, uw_files;
+static u32 cxx_syms, swift_syms, uw_syms;
+static int disco_faltou;
+static dev_t seen_dev[8192];
+static ino_t seen_ino[8192];
+static int nseen;
+
+static int sufixo(const char *s, const char *suf) {
+    size_t n = strlen(s), m = strlen(suf);
+    return n >= m && !memcmp(s + n - m, suf, m);
+}
+
+/* 1 = libc++, 2 = Swift, 3 = libunwind, 0 = outro */
+static int kind_de(const char *path) {
+    const char *b = strrchr(path, '/');
+    b = b ? b + 1 : path;
+    if (!strcmp(b, "libc++.1.dylib") || !strcmp(b, "libc++abi.dylib")) return 1;
+    if (!strncmp(b, "libswift", 8) && sufixo(b, ".dylib")) return 2;
+    if ((sufixo(b, ".o") || sufixo(b, ".a") || sufixo(b, ".dylib")) &&
+        (strstr(b, "libunwind") || !strncmp(b, "Unwind", 6))) return 3;
+    return 0;
+}
+
+static u8 *ler_arquivo(const char *path, u64 *out_n) {
+    FILE *f = fopen(path, "rb");
+    if (!f) return NULL;
+    if (fseek(f, 0, SEEK_END) != 0) { fclose(f); return NULL; }
+    long n = ftell(f);
+    if (n <= 0) { fclose(f); return NULL; }
+    if (fseek(f, 0, SEEK_SET) != 0) { fclose(f); return NULL; }
+    u8 *b = malloc((size_t)n);
+    if (!b) { fclose(f); return NULL; }
+    if (fread(b, 1, (size_t)n, f) != (size_t)n) { free(b); fclose(f); return NULL; }
+    fclose(f);
+    *out_n = (u64)n;
+    return b;
+}
+
+static int fatia_x64(const u8 *f, u64 flen, const u8 **m, u64 *ml) {
+    *m = NULL; *ml = 0;
+    if (flen < 8) return 0;
+    u32 mg = be32(f);
+    if (mg == 0xCAFEBABE || mg == 0xCAFEBABF) {
+        u32 nar = be32(f + 4);
+        int b64 = mg == 0xCAFEBABF;
+        for (u32 i = 0; i < nar && i < 64; i++) {
+            const u8 *a = f + 8 + (u64)i * (b64 ? 32 : 20);
+            if ((u64)(a - f) + (b64 ? 32 : 20) > flen) break;
+            u64 off = b64 ? be64(a + 8) : be32(a + 8);
+            u64 sz = b64 ? be64(a + 16) : be32(a + 12);
+            if (be32(a) == 0x01000007 && sz >= 32 && off + sz <= flen) { *m = f + off; *ml = sz; return 1; }
+        }
+        return 0;
+    }
+    if (flen >= 32 && rd32(f) == 0xFEEDFACF && rd32(f + 4) == 0x01000007) { *m = f; *ml = flen; return 1; }
+    return 0;
+}
+
+static void trie_para(set_t *dest, u32 *cnt, const u8 *base, const u8 *end, const u8 *node, char *buf, int len, int depth) {
+    if (node < base || node >= end || depth > 512) return;
+    const u8 *p = node;
+    u64 tsz = uleb(&p, end);
+    if (tsz && len > 0) {
+        buf[len] = 0;
+        if (!set_has(dest, buf)) { set_add(dest, buf); (*cnt)++; }
+    }
+    if ((u64)(end - p) < tsz) return;
+    p += tsz;
+    if (p >= end) return;
+    u8 nch = *p++;
+    for (u8 i = 0; i < nch && p < end; i++) {
+        int l = len;
+        while (p < end && *p && l < 4000) buf[l++] = (char)*p++;
+        if (p < end) p++;
+        u64 off = uleb(&p, end);
+        if (off < (u64)(end - base)) trie_para(dest, cnt, base, end, base + off, buf, l, depth + 1);
+    }
+}
+
+static int nome_terminado(const u8 *s, const u8 *end) {
+    while (s < end) { if (!*s) return 1; s++; }
+    return 0;
+}
+
+/* symtab Mach-O quando a imagem nao tem export trie (objeto .o, ou dylib antigo) */
+static void nlist_para(set_t *dest, u32 *cnt, const u8 *m, u64 ml, u32 symoff, u32 nsyms, u32 stroff, u32 strsize) {
+    if (!nsyms || !strsize) return;
+    if ((u64)symoff + (u64)nsyms * 16 > ml || (u64)stroff + strsize > ml) return;
+    const u8 *str = m + stroff;
+    for (u32 i = 0; i < nsyms; i++) {
+        const u8 *s = m + symoff + (u64)i * 16;
+        u32 strx = rd32(s);
+        u8 type = s[4];
+        if (strx >= strsize || !nome_terminado(str + strx, str + strsize)) continue;
+        if (type & 0xE0) continue;                 /* N_STAB */
+        if (type & 0x10) continue;                 /* N_PEXT: nao sai na tabela de exportacao */
+        if (!(type & 0x01)) continue;              /* N_EXT */
+        u8 kind = type & 0x0E;
+        if (kind != 0x0E && kind != 0x02) continue; /* N_SECT ou N_ABS */
+        const char *nm = (const char *)str + strx;
+        if (!nm[0]) continue;
+        if (!set_has(dest, nm)) { set_add(dest, nm); (*cnt)++; }
+    }
+}
+
+/* O ELF do libunwind (zig -target *-apple-*-elf) pode gravar o nome C ou o nome Mach-O.
+ * Guarda as duas grafias, e tambem com um "_" a mais, para casar o import do app. */
+static void poe_formas(set_t *dest, u32 *cnt, const char *nm) {
+    if (!nm || !nm[0] || nm[0] == '.') return;
+    if (!set_has(dest, nm)) { set_add(dest, nm); (*cnt)++; }
+    if (nm[0] == '_' && nm[1] && !set_has(dest, nm + 1)) set_add(dest, nm + 1);
+    if (strlen(nm) < 1100) {
+        char buf[1200];
+        buf[0] = '_';
+        memcpy(buf + 1, nm, strlen(nm) + 1);
+        if (!set_has(dest, buf)) set_add(dest, buf);
+    }
+}
+
+static int elf_para(set_t *dest, u32 *cnt, const u8 *e, u64 n) {
+    if (n < 64 || memcmp(e, "\x7F" "ELF", 4) || e[4] != 2 || e[5] != 1) return 0;
+    u64 shoff = rd64(e + 40);
+    u16 shes = rd16(e + 58), shn = rd16(e + 60);
+    if (!shes || shoff + (u64)shn * shes > n) return 0;
+    for (u16 i = 0; i < shn; i++) {
+        const u8 *sh = e + shoff + (u64)i * shes;
+        u32 typ = rd32(sh + 4);
+        if (typ != 2 && typ != 11) continue;       /* SHT_SYMTAB ou SHT_DYNSYM */
+        u64 off = rd64(sh + 24), size = rd64(sh + 32), es = rd64(sh + 56);
+        u32 link = rd32(sh + 40);
+        if (es < 24 || !size || off + size > n || link >= shn) continue;
+        const u8 *strsh = e + shoff + (u64)link * shes;
+        u64 stroff = rd64(strsh + 24), strsz = rd64(strsh + 32);
+        if (stroff + strsz > n) continue;
+        for (u64 k = 0; k < size / es; k++) {
+            const u8 *s = e + off + k * es;
+            u8 info = s[4], bind = info >> 4, ty = info & 15;
+            u16 shndx = rd16(s + 6);
+            if (bind != 1 && bind != 2) continue;  /* GLOBAL ou WEAK (aliases unw_*) */
+            if (!shndx) continue;
+            if (ty > 2) continue;                  /* NOTYPE, OBJECT, FUNC */
+            u32 noff = rd32(s);
+            if ((u64)noff >= strsz) continue;
+            const char *nm = (const char *)e + stroff + noff;
+            if (!nome_terminado((const u8 *)nm, e + stroff + strsz)) continue;
+            poe_formas(dest, cnt, nm);
+        }
+    }
+    return 1;
+}
+
+static int macho_exports(set_t *dest, u32 *cnt, const u8 *f, u64 flen) {
+    const u8 *m; u64 ml;
+    if (!fatia_x64(f, flen, &m, &ml) || ml < 32) return 0;
+    u32 ncmds = rd32(m + 16), cszs = rd32(m + 20);
+    if (32 + (u64)cszs > ml) return 0;
+    const u8 *c = m + 32, *cend = m + 32 + cszs;
+    const u8 *trie = NULL; u32 triesz = 0;
+    u32 symoff = 0, nsyms = 0, stroff = 0, strsize = 0, tem_sym = 0;
+    for (u32 i = 0; i < ncmds && c + 8 <= cend; i++) {
+        u32 cmd = rd32(c), csz = rd32(c + 4);
+        if (csz < 8 || c + csz > cend) break;
+        if (cmd == 0x80000033 && csz >= 16) {          /* LC_DYLD_EXPORTS_TRIE */
+            u32 off = rd32(c + 8), sz = rd32(c + 12);
+            if (sz && off + (u64)sz <= ml) { trie = m + off; triesz = sz; }
+        } else if ((cmd == 0x22 || cmd == 0x80000022) && csz >= 48) {
+            u32 off = rd32(c + 40), sz = rd32(c + 44);
+            if (sz && off + (u64)sz <= ml) { trie = m + off; triesz = sz; }
+        } else if (cmd == 0x02 && csz >= 24) {         /* LC_SYMTAB */
+            symoff = rd32(c + 8); nsyms = rd32(c + 12); stroff = rd32(c + 16); strsize = rd32(c + 20);
+            tem_sym = 1;
+        }
+        c += csz;
+    }
+    if (trie && triesz) {
+        char buf[4096];
+        trie_para(dest, cnt, trie, trie + triesz, trie, buf, 0, 0);
+        return 1;
+    }
+    if (tem_sym) { nlist_para(dest, cnt, m, ml, symoff, nsyms, stroff, strsize); return 1; }
+    return 0;
+}
+
+static void ar_membros(set_t *dest, u32 *cnt, const u8 *b, u64 n) {
+    if (n < 8 || memcmp(b, "!<arch>\n", 8)) return;
+    u64 o = 8;
+    while (o + 60 <= n) {
+        char sizeb[16];
+        memcpy(sizeb, b + o + 48, 10);
+        sizeb[10] = 0;
+        char nome[20];
+        memcpy(nome, b + o, 16);
+        nome[16] = 0;
+        u64 sz = strtoull(sizeb, NULL, 10);
+        o += 60;
+        if (!sz || sz > n - o) break;
+        u64 skip = !strncmp(nome, "#1/", 3) ? strtoull(nome + 3, NULL, 10) : 0;
+        if (skip < sz) {
+            const u8 *m = b + o + skip;
+            u64 ml = sz - skip;
+            if (ml >= 4 && !memcmp(m, "\x7F" "ELF", 4)) elf_para(dest, cnt, m, ml);
+            else macho_exports(dest, cnt, m, ml);
+        }
+        o += sz;
+        if (o & 1) o++;
+    }
+}
+
+static int carrega_exports(const char *path, set_t *dest, u32 *cnt) {
+    u64 n = 0;
+    u8 *b = ler_arquivo(path, &n);
+    if (!b) { fprintf(stderr, "disco: nao consegui ler %s\n", path); return 0; }
+    int ok = 0;
+    if (n >= 8 && !memcmp(b, "!<arch>\n", 8)) { ar_membros(dest, cnt, b, n); ok = 1; }
+    else if (n >= 4 && !memcmp(b, "\x7F" "ELF", 4)) ok = elf_para(dest, cnt, b, n);
+    else ok = macho_exports(dest, cnt, b, n);
+    free(b);
+    if (!ok) fprintf(stderr, "disco: %s nao e Mach-O x86_64, ELF ou arquivo .a\n", path);
+    return ok;
+}
+
+static int visto_dir(dev_t dev, ino_t ino) {
+    for (int i = 0; i < nseen; i++) if (seen_dev[i] == dev && seen_ino[i] == ino) return 1;
+    if (nseen < 8192) { seen_dev[nseen] = dev; seen_ino[nseen++] = ino; return 0; }
+    return 1;
+}
+
+static void carrega_kind(const char *path, int kind) {
+    struct stat st;
+    if (stat(path, &st)) { fprintf(stderr, "disco: nao consegui ler %s\n", path); return; }
+    if (visto_dir(st.st_dev, st.st_ino)) return;
+    set_t *dest = kind == 1 ? &disk_cxx : kind == 2 ? &disk_swift : &disk_unwind;
+    u32 *cnt = kind == 1 ? &cxx_syms : kind == 2 ? &swift_syms : &uw_syms;
+    u32 *files = kind == 1 ? &cxx_files : kind == 2 ? &swift_files : &uw_files;
+    if (carrega_exports(path, dest, cnt)) {
+        (*files)++;
+        if (kind == 2) set_add(&swift_lidas, strrchr(path, '/') ? strrchr(path, '/') + 1 : path);
+    }
+}
+
+static void anda_disco(const char *dir, int depth) {
+    if (depth > 16) return;
+    DIR *d = opendir(dir);
+    if (!d) { fprintf(stderr, "disco: nao abri %s\n", dir); disco_faltou = 1; return; }
+    struct dirent *e;
+    while ((e = readdir(d))) {
+        if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
+        if (!strcmp(e->d_name, ".git") || !strcmp(e->d_name, "node_modules")) continue;
+        char p[4096];
+        int wr = snprintf(p, sizeof p, "%s/%s", dir, e->d_name);
+        if (wr < 0 || wr >= (int)sizeof p) continue;
+        struct stat st;
+        if (lstat(p, &st)) continue;
+        if (S_ISLNK(st.st_mode) && stat(p, &st)) continue;
+        if (S_ISDIR(st.st_mode)) {
+            if (visto_dir(st.st_dev, st.st_ino)) continue;
+            anda_disco(p, depth + 1);
+        } else if (S_ISREG(st.st_mode)) {
+            int k = kind_de(p);
+            if (k) carrega_kind(p, k);
+        }
+    }
+    closedir(d);
+}
+
+static void carrega_disco(const char *path) {
+    struct stat st;
+    if (stat(path, &st)) { fprintf(stderr, "disco: caminho inexistente: %s\n", path); disco_faltou = 1; return; }
+    if (S_ISREG(st.st_mode)) {
+        int k = kind_de(path);
+        if (!k) { fprintf(stderr, "disco: %s nao e libc++, libswift* nem libunwind\n", path); disco_faltou = 1; return; }
+        carrega_kind(path, k);
+        return;
+    }
+    if (!S_ISDIR(st.st_mode)) { fprintf(stderr, "disco: %s ignorado\n", path); disco_faltou = 1; return; }
+    if (!visto_dir(st.st_dev, st.st_ino)) anda_disco(path, 0);
+}
+
+static int no_disco(const char *mname) {
+    return set_has(&disk_cxx, mname) || set_has(&disk_swift, mname) || set_has(&disk_unwind, mname);
+}
+
 /* mesma regra do ls_lookup do kernel */
 static int in_libsystem(const char *mname) {
     if (mname[0] == '_') mname++;
@@ -229,6 +520,8 @@ static int in_libsystem(const char *mname) {
  * dizer "biblioteca inexistente" para um app que o kernel abre (o Codex CLI liga
  * Security, CFNetwork, SystemConfiguration, CoreServices, IOKit e LocalAuthentication). */
 static int sys_ok(const char *n) {
+    if (!strcmp(n, "(flat/self)")) return 1;
+    if (set_has(&swift_lidas, strrchr(n, '/') ? strrchr(n, '/') + 1 : n)) return 1;
     static const char *ok[] = {
         "/usr/lib/libSystem.B.dylib", "/usr/lib/libSystem.dylib", "/usr/lib/libc.dylib",
         "/usr/lib/libm.dylib", "/usr/lib/libdl.dylib", "/usr/lib/libpthread.dylib",
@@ -303,6 +596,7 @@ static int is_bundled(const char *n) { return n[0] == '@'; }
 
 static const char *shortname(const char *p) {
     static char out[256];
+    if (!strcmp(p, "(flat/self)")) { snprintf(out, sizeof out, "(flat/self)"); return out; }
     const char *fw = strstr(p, ".framework");
     if (fw) { const char *s = fw; while (s > p && s[-1] != '/') s--; snprintf(out, sizeof out, "%.*s.framework", (int)(fw - s), s); return out; }
     const char *b = strrchr(p, '/'); snprintf(out, sizeof out, "%s", b ? b + 1 : p); return out;
@@ -430,23 +724,114 @@ static int refs_mode(const char *path, u64 target) {
     return 0;
 }
 
+/* origem de um ausente: unwind pelo nome (_Unwind ou unw_), libc++ e Swift pela biblioteca
+ * que importou (ou, no bind flat, pelo mangling Itanium __Z ou Swift $). O resto e sistema. */
+static set_t missing_nomes;
+static const char *classe_de(const char *libpath, const char *sym) {
+    const char *s = sym ? sym : "";
+    if (s[0] == '_') s++;
+    if (!strncmp(s, "_Unwind", 7) || !strncmp(s, "Unwind_", 7) || !strncmp(s, "unw_", 4)) return "unwind";
+    if (!strcmp(libpath, "(flat/self)")) {
+        const char *z = (sym && sym[0] == '_') ? sym + 1 : s;
+        if (z[0] == '_' && z[1] == 'Z') return "libc++";
+        if (z[0] == '$') return "Swift";
+    }
+    const char *b = strrchr(libpath, '/');
+    b = b ? b + 1 : libpath;
+    if (!strcmp(b, "libc++.1.dylib") || !strcmp(b, "libc++abi.dylib")) return "libc++";
+    if (!strncmp(b, "libswift", 8)) return "Swift";
+    return "sistema";
+}
+
+typedef struct { const char *cat; char lib[256]; char *name; } mrec_t;
+static mrec_t *mrecs;
+static u32 nmrec, cmrec, n_sis, n_cxx, n_sw, n_uw;
+
+static void anota_ausente(const char *libpath, const char *name) {
+    if (set_has(&missing_nomes, name)) return;
+    set_add(&missing_nomes, name);
+    const char *cat = classe_de(libpath, name);
+    if (!strcmp(cat, "libc++")) n_cxx++;
+    else if (!strcmp(cat, "Swift")) n_sw++;
+    else if (!strcmp(cat, "unwind")) n_uw++;
+    else { cat = "sistema"; n_sis++; }
+    if (nmrec == cmrec) {
+        u32 nc = cmrec ? cmrec * 2 : 256;
+        mrec_t *nr = realloc(mrecs, nc * sizeof *nr);
+        if (!nr) return;
+        mrecs = nr;
+        cmrec = nc;
+    }
+    char *copia = strdup(name);
+    if (!copia) return;
+    mrec_t *r = &mrecs[nmrec++];
+    r->cat = cat;
+    snprintf(r->lib, sizeof r->lib, "%s", shortname(libpath));
+    r->name = copia;
+}
+
+static void grava_cat(FILE *rep, const char *cat, u32 n) {
+    fprintf(rep, "# ausentes %s: %u\n", cat, n);
+    for (u32 i = 0; i < nmrec; i++) if (mrecs[i].cat == cat || !strcmp(mrecs[i].cat, cat))
+        fprintf(rep, "%s\t%s\n", mrecs[i].lib, mrecs[i].name);
+}
+
+static int uso(void) {
+    fprintf(stderr,
+            "uso: machocheck [--disco DIR]... <libSystem.mos> <Pasta.app> [relatorio.txt]\n"
+            "     machocheck --calls <imagem> <endereco hex>\n"
+            "     machocheck --sym <libSystem.mos> <endereco hex>\n"
+            "     machocheck --refs <imagem> <endereco hex>\n"
+            "--disco: diretorio (ou arquivo) da libc++, das libswift* e da libunwind\n"
+            "         do build ou da imagem. Ex.: build/libcxx, build/swift/objc/dylib,\n"
+            "         build/libunwind-x86, esp/mOS\n");
+    return 2;
+}
+
 int main(int argc, char **argv) {
     if (argc == 4 && !strcmp(argv[1], "--refs")) return refs_mode(argv[2], strtoull(argv[3], 0, 16));
     if (argc == 4 && !strcmp(argv[1], "--sym")) return sym_mode(argv[2], strtoull(argv[3], 0, 16));
     if (argc == 4 && !strcmp(argv[1], "--calls")) return calls_mode(argv[2], strtoull(argv[3], 0, 16));
-    if (argc < 3) { fprintf(stderr, "uso: machocheck <libSystem.mos> <Pasta.app> [relatorio.txt]\n       machocheck --calls <imagem> <endereÃ§o hex>\n"); return 2; }
-    if (!load_libsystem(argv[1])) { fprintf(stderr, "nao consegui ler a tabela de simbolos de %s\n", argv[1]); return 1; }
+    const char *discos[32];
+    int ndisco = 0;
+    const char *pos[4];
+    int npos = 0;
+    for (int i = 1; i < argc; i++) {
+        if (!strcmp(argv[i], "--disco")) {
+            if (i + 1 >= argc || ndisco == 32) return uso();
+            discos[ndisco++] = argv[++i];
+            continue;
+        }
+        if (!strcmp(argv[i], "--refs") || !strcmp(argv[i], "--sym") || !strcmp(argv[i], "--calls")) return uso();
+        if (npos == 4) return uso();
+        pos[npos++] = argv[i];
+    }
+    if (npos < 2) return uso();
+    const char *libpath = pos[0], *app = pos[1], *reppath = npos > 2 ? pos[2] : NULL;
+    if (!load_libsystem(libpath)) { fprintf(stderr, "nao consegui ler a tabela de simbolos de %s\n", libpath); return 1; }
+    for (int i = 0; i < ndisco; i++) carrega_disco(discos[i]);
     imgs = calloc(4096, sizeof(img_t));
-    scan(argv[2]);
-    FILE *rep = argc > 3 ? fopen(argv[3], "w") : NULL;
+    scan(app);
+    FILE *rep = reppath ? fopen(reppath, "w") : NULL;
+    if (reppath && !rep) fprintf(stderr, "nao consegui gravar %s\n", reppath);
     printf("libSystem.mos: %u simbolos exportados\n", libsys.n);
+    if (ndisco) {
+        printf("Disco:");
+        for (int i = 0; i < ndisco; i++) printf(" %s", discos[i]);
+        printf("\n");
+        printf("  libc++: %u arquivo(s), %u simbolos\n", cxx_files, cxx_syms);
+        printf("  Swift: %u arquivo(s), %u simbolos\n", swift_files, swift_syms);
+        printf("  unwind: %u arquivo(s), %u simbolos\n", uw_files, uw_syms);
+    }
     printf("Imagens Mach-O x86_64 no bundle: %d (exports do bundle: %u)\n\n", nimgs, bundle_exports.n);
-    set_t missing = {0}, sysdylibs = {0};
+    set_t sysdylibs = {0};
     u64 tot = 0, miss = 0;
     int tlv = 0;
+    size_t applen = strlen(app);
     for (int i = 0; i < nimgs; i++) {
         img_t *im = &imgs[i];
-        const char *rel = im->path + strlen(argv[2]);
+        const char *rel = im->path;
+        if (!strncmp(im->path, app, applen)) rel = im->path + applen;
         u32 mi = 0;
         if (im->has_tlv_init) tlv++;
         for (u32 k = 0; k < im->nimp; k++) {
@@ -455,9 +840,9 @@ int main(int argc, char **argv) {
             int weak = x->weak || (x->lib > 0 && x->lib <= im->nd && im->dweak[x->lib - 1]);
             libstat_t *l = libstat(lib);
             l->total++; tot++;
-            if (set_has(&bundle_exports, x->name) || in_libsystem(x->name) || weak) continue;
+            if (set_has(&bundle_exports, x->name) || in_libsystem(x->name) || no_disco(x->name) || weak) continue;
             l->missing++; miss++; mi++;
-            if (!set_has(&missing, x->name)) { set_add(&missing, x->name); if (rep) fprintf(rep, "%s\t%s\n", shortname(lib), x->name); }
+            anota_ausente(lib, x->name);
         }
         for (int k = 0; k < im->nd; k++) if (!is_bundled(im->dylibs[k])) set_add(&sysdylibs, im->dylibs[k]);
         printf("%-9s %6.1f MiB  imports %6u  ausentes %6u%s%s  %s\n",
@@ -470,8 +855,16 @@ int main(int argc, char **argv) {
     for (int i = 0; i < nls; i++) if (!ls[i].bundled)
         printf("  %-40s %7u / %7u%s\n", ls[i].name, ls[i].total, ls[i].missing, ls[i].sysok ? "" : "   (biblioteca inexistente no mOS)");
     printf("\nTotal: %llu imports, %llu sem implementacao (%u simbolos distintos)%s\n",
-           (unsigned long long)tot, (unsigned long long)miss, missing.n, rep ? "; lista completa no relatorio" : "");
+           (unsigned long long)tot, (unsigned long long)miss, missing_nomes.n, rep ? "; lista completa no relatorio" : "");
+    printf("Ausentes por origem (simbolos distintos): sistema %u, libc++ %u, Swift %u, unwind %u\n",
+           n_sis, n_cxx, n_sw, n_uw);
     if (tlv) printf("Imagens com inicializadores thread-local (nao suportados): %d\n", tlv);
-    if (rep) fclose(rep);
-    return 0;
+    if (rep) {
+        grava_cat(rep, "sistema", n_sis);
+        grava_cat(rep, "libc++", n_cxx);
+        grava_cat(rep, "Swift", n_sw);
+        grava_cat(rep, "unwind", n_uw);
+        fclose(rep);
+    }
+    return disco_faltou ? 1 : 0;
 }

@@ -8,7 +8,10 @@
  * Os protótipos são declarados aqui (o SDK do mOS não tem os cabeçalhos do Security), com os tipos da Apple.
  */
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <fcntl.h>
+#include <unistd.h>
 
 typedef const void *CFTypeRef;
 typedef const void *CFStringRef, *CFDataRef, *CFDictionaryRef, *CFArrayRef, *CFAllocatorRef;
@@ -174,6 +177,38 @@ int main(int argc, char **argv) {
     CFDictionarySetValue(p, kSecValueData, CFDataCreate(0, (const unsigned char *)"sobrevive", 9));
     SecItemDelete(Q(kSecClassGenericPassword, "mOS Teste Persistente", 0));
     check(SecItemAdd(p, 0) == 0, "item persistente gravado");
+
+    /* Só no arquivo v2 do mOS. No macOS o Keychain não é este texto e a checagem não entra na conta. */
+    const char *home = getenv("HOME");
+    if (home && home[0]) {
+        char path[512];
+        snprintf(path, sizeof path, "%s/Library/Keychains/mos-keychain.txt", home);
+        int fd = open(path, O_RDONLY);
+        if (fd >= 0) {
+            char *all = 0;
+            size_t n = 0, cap = 0;
+            char tmp[4096];
+            ssize_t k;
+            while ((k = read(fd, tmp, sizeof tmp)) > 0) {
+                if (n + (size_t)k > cap) {
+                    cap = n + (size_t)k + 4096;
+                    char *nb = realloc(all, cap);
+                    if (!nb) break;
+                    all = nb;
+                }
+                memcpy(all + n, tmp, (size_t)k);
+                n += (size_t)k;
+            }
+            close(fd);
+            if (all && n >= 15 && !memcmp(all, "mOS-keychain 2\n", 15)) {
+                int seen = 0;
+                for (size_t i = 0; i + 9 <= n; i++)
+                    if (!memcmp(all + i, "sobrevive", 9)) seen = 1;
+                check(!seen, "arquivo v2 não mostra o segredo em claro");
+            }
+            free(all);
+        }
+    }
 
     printf("sectest: %d/%d ok\n", ok, total);
     return ok == total ? 0 : 1;

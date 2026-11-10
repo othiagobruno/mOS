@@ -1,5 +1,11 @@
 /* mOS — fila de eventos de entrada + controlador PS/2 (teclado e mouse) */
 #include "kernel.h"
+#include "kbd_mod.h"
+
+_Static_assert(KEY_LSHIFT == KBD_KEY_LSHIFT && KEY_RSHIFT == KBD_KEY_RSHIFT, "shift");
+_Static_assert(KEY_LCTRL == KBD_KEY_LCTRL && KEY_LALT == KBD_KEY_LALT && KEY_LCMD == KBD_KEY_LCMD, "mods esquerdos");
+_Static_assert(KEY_CAPS == KBD_KEY_CAPS && KEY_RCTRL == KBD_KEY_RCTRL && KEY_RALT == KBD_KEY_RALT && KEY_RCMD == KBD_KEY_RCMD, "mods direitos");
+_Static_assert(MOD_SHIFT == 1 && MOD_CTRL == 2 && MOD_ALT == 4 && MOD_CMD == 8, "máscara");
 
 /* ---------------------------------------------------------- fila */
 #define QSIZE 512
@@ -111,6 +117,7 @@ static i32 dead_char(i32 d) {
 
 static bool e0, caps;
 static i32 pending_dead;
+static u16 phys; /* esquerda e direita de cada modificador, para soltar um não apagar o outro */
 
 static void emit_key(i32 key, bool down) {
     input_event_t ev = {0};
@@ -138,15 +145,17 @@ void input_kbd_scancode(u16 code, bool up) {
 
 /* traduz um scancode set 1 (já sem prefixo) em eventos, com layout ABNT2/US e teclas mortas */
 static void kbd_scancode(u8 sc, bool ext, bool up) {
-    u16 bit = 0;
-    if (sc == 0x2A || sc == 0x36) bit = MOD_SHIFT;
-    else if (sc == 0x1D) bit = MOD_CTRL;
-    else if (sc == 0x38) bit = MOD_ALT;
-    else if (ext && (sc == 0x5B || sc == 0x5C)) bit = MOD_CMD;
-    if (bit) { if (up) mods &= ~bit; else mods |= bit; return; }
-    if (sc == 0x3A) { if (!up) { caps = !caps; mods ^= MOD_CAPS; } return; }
+    int key = 0, mr = kbd_mod_apply(&mods, &phys, sc, ext, up, &key);
+    /* Shift, Ctrl, Option e Command sozinhos: o evento chega ao first responder como flagsChanged */
+    if (mr == 1) { emit_key(key, !up); return; }
+    if (mr == 2) return;
+    if (sc == 0x3A) {
+        if (!up) { caps = !caps; mods ^= MOD_CAPS; }
+        emit_key(KBD_KEY_CAPS, !up);
+        return;
+    }
 
-    i32 key = 0;
+    key = 0;
     if (ext) {
         switch (sc) {
         case 0x48: key = KEY_UP; break;    case 0x50: key = KEY_DOWN; break;

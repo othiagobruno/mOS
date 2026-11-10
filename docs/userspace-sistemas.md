@@ -6,27 +6,28 @@ Estado do que esta frente implementou. Não é compatibilidade universal: cada i
 
 `NSUserDefaults` e `CFPreferences` gravam property list XML.
 
-- Usuário atual: `NSHomeDirectory()/Library/Preferences/<domínio>.plist` (hoje `NSHomeDirectory` é `/Users/Visitante`).
-- Qualquer usuário: `/Library/Preferences/<domínio>.plist`.
-- `NSGlobalDomain`, `kCFPreferencesAnyApplication` e `.GlobalPreferences` são o mesmo arquivo.
-- `objectForKey:` procura o domínio primário, as suítes, `.GlobalPreferences`, o domínio de qualquer usuário e, por último, o registro.
-- `CopyAppValue` não vê o registro: usuário do app, `.GlobalPreferences`, qualquer usuário do app.
+- Usuário atual, `kCFPreferencesAnyHost` ou host nulo: `NSHomeDirectory()/Library/Preferences/<domínio>.plist` (hoje `NSHomeDirectory` é `/Users/Visitante`).
+- Host atual (`kCFPreferencesCurrentHost`): `NSHomeDirectory()/Library/Preferences/ByHost/<domínio>.<token>.plist`. O token sai de `gethostname`, só com letras, dígitos, `.`, `_` e `-`. No mOS o hostname é `mos`.
+- Qualquer usuário: `/Library/Preferences/<domínio>.plist`. Qualquer usuário no host atual: `/Library/Preferences/ByHost/<domínio>.<token>.plist`.
+- `NSGlobalDomain`, `kCFPreferencesAnyApplication` e `.GlobalPreferences` são o mesmo arquivo, com a variante ByHost à parte.
+- `objectForKey:` procura ByHost do app, o domínio do usuário, as suítes, ByHost de `.GlobalPreferences`, `.GlobalPreferences`, o domínio de qualquer usuário e, por último, o registro.
+- `CopyAppValue` não vê o registro: ByHost do app, usuário do app, ByHost de `.GlobalPreferences`, `.GlobalPreferences`, qualquer usuário do app.
 - `registerDefaults:` e a semente `com.apple.universalaccess` / `mouseDriverCursorSize = 1.0` ficam só em memória. O registro não dispara KVO.
-- `synchronize` devolve falha se a escrita falhar. A escrita é `arquivo.tmp` + `rename` no mesmo diretório.
-- Arquivo vazio vira dicionário vazio. `bplist00` não é importado e não é sobrescrito.
-- Data ISO-8601 (`YYYY-MM-DDTHH:MM:SSZ`) vira segundos desde 1970 em UTC. Se o texto veio de um plist, a gravação o preserva; data criada pelo bridge sai como double em texto.
+- `synchronize` devolve falha se a escrita falhar. A escrita é `arquivo.tmp` + `rename` no mesmo diretório e continua em XML.
+- Arquivo vazio vira dicionário vazio. `bplist00` com trailer válido é lido. `bplist00` ilegível não é sobrescrito. A gravação seguinte de um domínio sujo sai em XML.
+- Data ISO-8601 (`YYYY-MM-DDTHH:MM:SSZ`) e a data binária (`bplist` 0x33, CFAbsoluteTime) viram segundos desde 1970 em UTC. Se o texto veio de um plist, a gravação o preserva; data criada pelo bridge sai como double em texto.
 
-Limitações: não há `cfprefsd`. Outro processo só é visto se `mtime` ou tamanho mudarem (`stamp = mtime<<20 xor tamanho`). `CurrentHost` e `AnyHost` são o mesmo domínio. `CFPreferencesAppValueIsForced` é 0 porque não há MDM. Valor que não é property list é recusado, sem exceção. O container devolvido é cópia.
+Limitações: não há `cfprefsd`. O carimbo da releitura é o hash do conteúdo do arquivo, então dois processos veem a mesma chave mesmo com `mtime` e tamanho iguais. `CFPreferencesAppValueIsForced` é 0 porque não há MDM. Valor que não é property list é recusado, sem exceção. O container devolvido é cópia. `NSUserDefaults synchronize` grava o domínio do usuário, não o ByHost.
 
 ### Contrato para Storage
 
 O VFS precisa, em `/Users/Visitante` e em `/Library`:
 
-- `mkdir` de `Library`, `Library/Preferences` e `Library/Application Support/...`
+- `mkdir` de `Library`, `Library/Preferences`, `Library/Preferences/ByHost` e `Library/Application Support/...`
 - `fopen` / `fread` / `fwrite` / `fclose`
 - `rename` atômico no mesmo volume (`path.tmp` → `path`)
 - `unlink`
-- `stat` com `mtime` em segundos e `st_size` corretos. Se o `mtime` não mudar e o tamanho ficar igual, a releitura entre processos não vê a gravação até um `synchronize` com o arquivo diferente.
+- leitura do arquivo depois do `rename`. O carimbo das preferências é o hash dos bytes, não o `mtime`.
 
 Não há mudança de dyld nem de VFS neste trabalho.
 
@@ -63,26 +64,30 @@ Não há branch de Interface aberta no GitHub para alinhar este contrato (consul
 - Centro distribuído: só neste processo. Não há `distnoted`; `userInfo` não atravessa processo. `NSDistributedNotificationCenter` segue sendo o centro local (limitação anterior).
 - Drop/Coalesce/Hold são aceitos; a entrega é síncrona. Snapshot de 128 observadores por post.
 
-## XPC — dicionário com porta, pipes ainda sem o launchd
+## XPC — Mach entre processos, sem o fio da Apple
 
-O fio `xpc.c` + launchd entre processos do mOS já existe (não é a libxpc da Apple). Não foi reescrito.
+O fio continua o de `xpc.c` (os dois lados são esta lib). Não usa AF_UNIX e não mexe em `sockets.c`. O número de uma porta não atravessa sozinho: no fio, o tipo 13 vai com um descritor `COPY_SEND`, e o kernel entrega um direito de envio com o nome do processo que recebe. No mesmo processo, `copy_mach_send` devolve o mesmo nome.
 
-- **Funcional neste fio:** `xpc_dictionary_set_mach_send` grava o nome da porta num valor `_xpc_type_mach_send`. `xpc_dictionary_copy_mach_send` lê esse nome. A cópia do dicionário e o `xpc_equal` preservam o valor. Na serialização própria do mOS o tipo é 13 (u32). O nome é copiado, não movido: ninguém dá `deallocate` nem cria um direito novo. O wrapper de `mach_port_*` ignora a tarefa, então o número continua válido no outro processo enquanto a porta existir.
-- **Limitação:** `xpc_pipe_create` devolve NULL. `xpc_pipe_create_from_port` devolve NULL. `xpc_pipe_routine`, `xpc_pipe_routine_reply` e `xpc_pipe_receive` devolvem EINVAL. Não há o protocolo privado do launchd.
-- **Limitação:** `xpc_set_event_stream_handler` aceita os argumentos e não chama o bloco. Não há stream de eventos do launchd.
-- `NSXPCConnection` continua um stub de processo (resume só marca a conexão). Helpers de computer use que esperam um daemon XPC da Apple não sobem sozinhos.
+- **Pipe:** `xpc_pipe_create` / `xpc_pipe_create_from_port` / `xpc_pipe_routine` / `xpc_pipe_receive` / `xpc_pipe_routine_reply` falam esse fio. Não é o protocolo privado do launchd.
+- **Eventos:** `xpc_set_event_stream_handler` guarda o bloco e o chama. `xpc_event_stream_post` entrega aqui e, se outro processo registrou o stream, manda em `com.mos.xpc.ev.<stream>`. Não há o launchd de eventos da Apple.
+- **NSXPC:** `NSXPCListener` faz check-in e `NSXPCConnection` faz o proxy. Seletor com até 4 argumentos objeto; o bloco de resposta é o último e é chamado na hora. Sem filtro de protocolo. `anonymousListener` não cria endpoint. Opções de `initWithMachServiceName:options:` ficam guardadas e o cliente não as repassa ao serviço.
+- **Transporte para o AX** (`xpctransport.h`, a Interface pluga em `axtransport.h`): `cx_xpc_peer_ready`, `cx_xpc_peer_listen`, `cx_xpc_peer_call`, `cx_xpc_peer_send`. Serviço `com.mos.xpc.peer.<pid>`. `call` espera o `send` de volta. Esta frente não editou os arquivos de AX.
 
-## Keychain — funcional, sem criptografia
+## Keychain — funcional, arquivo versão 2 cifrado com o nome de login
 
-`SecItemAdd` / `CopyMatching` / `Update` / `Delete` para senha genérica e de internet já estavam implementados e testados em `userland/tests-security`. O arquivo não é cifrado. Esta frente não mudou esse código.
+`SecItemAdd` / `CopyMatching` / `Update` / `Delete` para senha genérica e de internet continuam em `security.c`. O arquivo `$HOME/Library/Keychains/mos-keychain.txt` na versão 2 é `mOS-keychain 2\n` + nonce + ciphertext + MAC. A chave é HMAC-SHA256 do nome de login (`USER`, senão `LOGNAME`, senão o último componente de `HOME`, senão `visitante`), com sal fixo `mOS-keychain-v2`. Não é senha e não é credencial: quem sabe o login abre o arquivo. A versão 1 (texto) ainda é lida e a gravação seguinte passa para a versão 2. MAC ruim marca o arquivo como bloqueado e a gravação devolve `errSecNotAvailable`, sem apagar o que estava no disco.
 
-## URLSession — parcial, como já estava
+## URLSession — dados, download, resposta e dois desafios
 
-Há callbacks de dados e de download em `foundation_more.c`. Desafio de autenticação e `didReceiveResponse` não são tratados (a conexão segue). Não é um `NSURLSession` completo.
+Há callbacks de dados e de download em `foundation_more.c`. Antes do HTTP de uma URL `https`, o delegate recebe `NSURLAuthenticationMethodServerTrust` (`URLSession:didReceiveChallenge:`, ou o método da tarefa se o da sessão não existir). Não há objeto `SecTrust`: `serverTrust` devolve nil. Resposta 401 com `WWW-Authenticate: Basic` chama `NSURLAuthenticationMethodHTTPBasic` (o método da tarefa primeiro). `UseCredential` repete o pedido uma vez com `Authorization`. `Cancel`/`Reject` entregam `NSURLErrorDomain` -999 e não entregam o corpo. `URLSession:dataTask:didReceiveResponse:completionHandler:` roda na entrega: 0 cancela o corpo, 1 entrega, 2 trata como download. O bloco é de pilha e vale durante a chamada do delegate. Não é um `NSURLSession` completo.
+
+## CoreML — só o dicionário da voz
+
+`MLDictionaryFeatureProvider` (`coreml.c`) aceita `initWithDictionary:error:` com chaves string, `featureValueForName:`, `featureNames`, `dictionary`, `objectForKeyedSubscript:` e `count`. `MLModel` / `predictionFromFeatures:` continuam o stub vazio de `vscode_fwclasses.c`. A libc++ do onnxruntime e do sherpa-onnx não foi mexida.
 
 ## UserNotifications — autorização local, sem push
 
-`UNUserNotificationCenter.currentNotificationCenter`, `requestAuthorizationWithOptions:completionHandler:` e `authorizationStatus` (0 não determinado, 1 negado, 2 autorizado). O pedido grava pending no TCC (`userNotifications`). O bloco só é chamado em `cx_un_decide`. Não há servidor APNs nem `UNNotificationSettings`.
+`UNUserNotificationCenter.currentNotificationCenter`, `requestAuthorizationWithOptions:completionHandler:` e `authorizationStatus` (0 não determinado, 1 negado, 2 autorizado). O pedido grava pending no TCC (`userNotifications`). O bloco só é chamado em `cx_un_decide`. Não há servidor APNs nem `UNNotificationSettings`. Pedido, gatilho, delegate e banner estão em `docs/interface-i19-i23.md`.
 
 ## StoreKit, QuickLookUI e Core Data — Slack, Claude Desktop e Cursor
 

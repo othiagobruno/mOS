@@ -1,0 +1,21 @@
+# mOS - /usr/lib/libcompression.dylib a partir de userland\frameworks\libcompression\compression.c.
+# Os símbolos compression_* existem. Os codecs ainda devolvem erro (o fonte diz isso). O arquivo na
+# imagem é o que tira o nome da recusa do carregador.
+#   .\tools\build-libcompression.ps1 -Arch x86_64 [-Force]
+param([switch]$Force, [ValidateSet('x86_64', 'arm64')][string]$Arch = 'x86_64')
+$root = Split-Path $PSScriptRoot -Parent
+$zigDir = Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*' -ErrorAction SilentlyContinue | Where-Object { Test-Path "$($_.FullName)\zig.exe" } | Select-Object -First 1
+if (-not $zigDir) { Write-Host 'zig nao encontrado em .tools (zig.exe)' -ForegroundColor Red; exit 1 }
+$zig = Join-Path $zigDir.FullName 'zig.exe'
+$src = "$root\userland\frameworks\libcompression\compression.c"
+if (-not (Test-Path $src)) { Write-Host 'falta userland\frameworks\libcompression\compression.c' -ForegroundColor Red; exit 1 }
+$tgt = if ($Arch -eq 'arm64') { 'aarch64-macos.11.0' } else { 'x86_64-macos.11.0' }
+$out = "$root\build\libcompression-$Arch"
+$dylib = "$out\libcompression.dylib"
+if ((Test-Path $dylib) -and -not $Force) { exit 0 }
+New-Item -ItemType Directory -Force $out | Out-Null
+& $zig cc -target $tgt -O2 -g0 -fPIC -shared $src -o $dylib `
+    '-Wl,-install_name,/usr/lib/libcompression.dylib' '-Wl,-undefined,dynamic_lookup' 2>&1 |
+    Select-String ' error' | ForEach-Object { "  $_" }
+if ($LASTEXITCODE -ne 0 -or -not (Test-Path $dylib)) { Write-Host 'libcompression.dylib FALHOU' -ForegroundColor Red; exit 1 }
+Write-Host ("OK: $dylib ({0:N0} KiB, sem codecs)" -f ((Get-Item $dylib).Length / 1KB))

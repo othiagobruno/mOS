@@ -7,8 +7,8 @@
  * Todas ficam na superclasse certa, com símbolo exportado. As que o Electron chama de fato têm o
  * comportamento de um Mac sem o recurso:
  *   NSOpenPanel/NSSavePanel: o diálogo é cancelado (NSModalResponseCancel); o Electron devolve "canceled".
- *   NSStatusBar/NSStatusItem: a barra guarda o item, o clique abre o menu e o modelo
- *   está em appkit_status.c. O desenho do ícone na barra do sistema é do kernel.
+ *   NSStatusBar/NSStatusItem: a barra guarda o item e publica ícone, título e menu no
+ *   window server (DEV_STATUS). O clique do kernel volta como GEV_STATUS e abre o menu.
  *   NSAnimation: termina na hora (progresso 1, animationDidEnd:). NSAnimationContext: grupos imediatos.
  *   NSParagraphStyle/NSMutableParagraphStyle, NSFontManager, NSPrintInfo, NSSpellChecker (sem erros),
  *   NSDocumentController (documentos recentes em memória), NSWorkspaceOpenConfiguration, NSToolbar,
@@ -24,7 +24,10 @@ void *calloc(size_t n, size_t s);
 void *malloc(size_t n);
 void free(void *p);
 void *memset(void *d, int c, size_t n);
+void *memcpy(void *d, const void *s, size_t n);
 int strcmp(const char *a, const char *b);
+const u32 *cx_nsimage_pixels(id img, int *w, int *h);
+u32 cx_menu_item_action(id item);
 id objc_retain(id o);
 void objc_release(id o);
 id objc_autorelease(id o);
@@ -143,6 +146,83 @@ static sbb_act_t *sbb_slot(id button, int make) {
     free_slot->action = 0;
     return free_slot;
 }
+static void wr32(u8 *b, u32 *n, u32 v) { memcpy(b + *n, &v, 4); *n += 4; }
+
+/* manda o item para a faixa da barra. O menu publicado é o que o clique do kernel mostra;
+ * menuWillOpen: republica, e o kernel troca os rótulos se o item ainda está aberto. */
+static void status_publish(id it) {
+    u8 *b;
+    u32 n = 0, token, tlen, nitems = 0, iw = 0, ih = 0, need;
+    i32 length;
+    const char *title;
+    id menu;
+    const u32 *src;
+    u32 *pix = 0;
+    int sw = 0, sh = 0, dw = 0, dh = 0, y, x;
+    i64 cnt, i;
+    if (!it) return;
+    token = (u32)cx_sb_id(it);
+    if (!token) return;
+    title = cx_sb_title(it);
+    if (!title) title = "";
+    tlen = 0;
+    while (title[tlen] && tlen < 95) tlen++;
+    length = (i32)cx_sb_length(it);
+    src = cx_nsimage_pixels(pget(it, "image"), &sw, &sh);
+    if (src && sw > 0 && sh > 0) {
+        dw = sw > 64 ? 64 : sw;
+        dh = sh > 64 ? 64 : sh;
+        pix = malloc((size_t)dw * (size_t)dh * 4);
+        if (!pix) { dw = 0; dh = 0; }
+        else for (y = 0; y < dh; y++) {
+            int sy = (int)(((y * 2 + 1) * (long)sh) / (dh * 2));
+            if (sy >= sh) sy = sh - 1;
+            for (x = 0; x < dw; x++) {
+                int sx = (int)(((x * 2 + 1) * (long)sw) / (dw * 2));
+                if (sx >= sw) sx = sw - 1;
+                pix[y * dw + x] = src[sy * sw + sx];
+            }
+        }
+    }
+    iw = (u32)dw;
+    ih = (u32)dh;
+    menu = (id)cx_sb_menu(it);
+    cnt = menu ? MSG0(i64, menu, "numberOfItems") : 0;
+    if (cnt < 0) cnt = 0;
+    if (cnt > 16) cnt = 16;
+    nitems = (u32)cnt;
+    need = 28 + tlen + nitems * (12 + 80) + iw * ih * 4 + 8;
+    b = malloc(need);
+    if (!b) { free(pix); return; }
+    wr32(b, &n, token);
+    wr32(b, &n, (u32)length);
+    wr32(b, &n, cx_sb_visible(it) ? 1u : 0u);
+    wr32(b, &n, iw);
+    wr32(b, &n, ih);
+    wr32(b, &n, nitems);
+    wr32(b, &n, tlen);
+    if (tlen) memcpy(b + n, title, tlen);
+    n += tlen;
+    for (i = 0; i < cnt; i++) {
+        id item = MSG(id, menu, "itemAtIndex:", (u64)i);
+        int sep = item && MSG0(BOOL, item, "isSeparatorItem");
+        int en = item && MSG0(BOOL, item, "isEnabled");
+        id lab = item ? MSG0(id, item, "title") : 0;
+        const char *ls = lab && cx_is_str(lab) ? cx_cstr(lab) : "";
+        u32 llen = 0, act = sep ? 0 : cx_menu_item_action(item), mf = (en ? 0u : 1u) | (sep ? 2u : 0u);
+        while (ls[llen] && llen < 79) llen++;
+        wr32(b, &n, act);
+        wr32(b, &n, mf);
+        wr32(b, &n, llen);
+        if (llen) memcpy(b + n, ls, llen);
+        n += llen;
+    }
+    if (pix && iw && ih) { memcpy(b + n, pix, iw * ih * 4); n += iw * ih * 4; }
+    SYS4(GUI_DEVICE, DEV_STATUS, SB_SET, b, n);
+    free(b);
+    free(pix);
+}
+
 static void sbb_open_menu(id it) {
     id menu, del;
     if (!it || !cx_sb_click(it)) return;
@@ -150,6 +230,17 @@ static void sbb_open_menu(id it) {
     del = menu ? MSG0(id, menu, "delegate") : 0;
     if (del && cx_responds(del->isa, sel_registerName("menuWillOpen:")))
         MSG(void, del, "menuWillOpen:", menu);
+}
+
+void cx_status_kernel_click(unsigned id) {
+    id it = (id)cx_sb_by_token((int)id);
+    if (!it) return;
+    sbb_open_menu(it);
+    status_publish(it);
+}
+
+void cx_dock_set_visible(int on) {
+    SYS3(GUI_DEVICE, DEV_DOCK, DK_VISIBLE, on ? 1 : 0);
 }
 static void sbb_down(id self, SEL c, id ev) {
     id it;
@@ -187,30 +278,38 @@ static id sb_item(id self, SEL c, double len) {
     objc_setAssociatedObject(b, &sb_btn_key, it, 0);
     /* a barra fica com um retain; quem chama recebe o objeto sem ser dono, como no Cocoa */
     objc_retain(it);
+    status_publish(it);
     return objc_autorelease(it);
 }
 static void sb_remove(id self, SEL c, id it) {
+    int token;
     (void)self; (void)c;
-    if (cx_sb_unregister(it)) objc_release(it);
+    token = cx_sb_id(it);
+    if (cx_sb_unregister(it)) {
+        if (token) SYS3(GUI_DEVICE, DEV_STATUS, SB_REMOVE, token);
+        objc_release(it);
+    }
 }
 static double sb_thickness(id self, SEL c) { (void)self; (void)c; return 24; }
 static id si_button(id self, SEL c) { (void)c; return pget(self, "button"); }
 static id si_bar(id self, SEL c) { (void)self; (void)c; return sb_system((id)&NSStatusBar_c, 0); }
-static void si_set_menu(id self, SEL c, id m) { s_menu(self, c, m); cx_sb_set_menu(self, m); }
-static void si_set_visible(id self, SEL c, i64 v) { s_visible(self, c, v); cx_sb_set_visible(self, v ? 1 : 0); }
-static void si_set_length(id self, SEL c, double v) { s_length(self, c, v); cx_sb_set_length(self, v); }
+static void si_set_menu(id self, SEL c, id m) { s_menu(self, c, m); cx_sb_set_menu(self, m); status_publish(self); }
+static void si_set_visible(id self, SEL c, i64 v) { s_visible(self, c, v); cx_sb_set_visible(self, v ? 1 : 0); status_publish(self); }
+static void si_set_length(id self, SEL c, double v) { s_length(self, c, v); cx_sb_set_length(self, v); status_publish(self); }
 static void si_set_title(id self, SEL c, id t) {
     id b;
     s_title(self, c, t);
     b = pget(self, "button");
     if (b) MSG(void, b, "setTitle:", t);
     cx_sb_set_title(self, t && cx_is_str(t) ? cx_cstr(t) : "");
+    status_publish(self);
 }
 static void si_set_image(id self, SEL c, id im) {
     id b;
     s_image(self, c, im);
     b = pget(self, "button");
     if (b) MSG(void, b, "setImage:", im);
+    status_publish(self);
 }
 static void si_popup(id self, SEL c, id menu) {
     (void)c;
