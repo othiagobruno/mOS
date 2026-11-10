@@ -8,8 +8,6 @@ typedef struct { void *isa; unsigned long long flags; const char *s; unsigned lo
     static gap_cf_t var##_box = {(void *)cx_cfconst_isa, 0x7c8, text, sizeof(text) - 1}; \
     const void *var = &var##_box;
 GAPCF(kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly, "kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly")
-GAPCF(kCFCopyStringSetCallBacks, "kCFCopyStringSetCallBacks")
-GAPCF(kCFTypeBagCallBacks, "kCFTypeBagCallBacks")
 GAPCF(kCGImageDestinationLossyCompressionQuality, "kCGImageDestinationLossyCompressionQuality")
 GAPCF(AVNumberOfChannelsKey, "AVNumberOfChannelsKey")
 size_t CGImageGetWidth(void *img);
@@ -105,118 +103,5 @@ int CGImageDestinationFinalize(void *dst) {
     close(fd); free(png); return 1;
 }
 
-/* gap_stub */
-long CFAttributedStringGetLength(void) { return 0; }
-long CFAttributedStringGetString(void) { return 0; }
-long CFAttributedStringGetTypeID(void) { return 0; }
-long CFBagContainsValue(void) { return 0; }
-long CFBagCreate(void) { return 0; }
-long CFBagGetCount(void) { return 0; }
-long CFBagGetCountOfValue(void) { return 0; }
-long CFBagGetTypeID(void) { return 0; }
-long CFBundleCopyResourceURL(void) { return 0; }
-long CFBundleGetTypeID(void) { return 0; }
-long CFCalendarCopyCurrent(void) { return 0; }
-long CFCalendarCopyTimeZone(void) { return 0; }
-long CFCalendarCreateWithIdentifier(void) { return 0; }
-long CFCalendarGetIdentifier(void) { return 0; }
-long CFCalendarGetTypeID(void) { return 0; }
-long CFCalendarSetTimeZone(void) { return 0; }
-long CFCharacterSetCreateInvertedSet(void) { return 0; }
-long CFCharacterSetCreateWithCharactersInString(void) { return 0; }
-long CFCharacterSetGetTypeID(void) { return 0; }
-long CFCharacterSetIsCharacterMember(void) { return 0; }
-long CFDateFormatterCreate(void) { return 0; }
-long CFDateFormatterCreateStringWithDate(void) { return 0; }
-long CFDateFormatterGetTypeID(void) { return 0; }
-long CFErrorCopyFailureReason(void) { return 0; }
-long CFFileDescriptorCreate(void) { return 0; }
-long CFFileDescriptorGetNativeDescriptor(void) { return 0; }
-long CFFileDescriptorGetTypeID(void) { return 0; }
-long CFFileDescriptorInvalidate(void) { return 0; }
-long CFFileSecurityCopyOwnerUUID(void) { return 0; }
-long CFFileSecurityGetTypeID(void) { return 0; }
-long CFFileSecuritySetOwnerUUID(void) { return 0; }
-long CFLocaleGetIdentifier(void) { return 0; }
-long CFLocaleGetTypeID(void) { return 0; }
-long CFMessagePortCreateLocal(void) { return 0; }
-long CFMessagePortCreateRemote(void) { return 0; }
-long CFMessagePortCreateRunLoopSource(void) { return 0; }
-long CFMessagePortGetTypeID(void) { return 0; }
-long CFMessagePortInvalidate(void) { return 0; }
-long CFMessagePortSendRequest(void) { return 0; }
-long CFNotificationCenterGetTypeID(void) { return 0; }
-long CFNumberFormatterCreate(void) { return 0; }
-long CFNumberFormatterCreateNumberFromString(void) { return 0; }
-long CFNumberFormatterCreateStringWithNumber(void) { return 0; }
-long CFNumberFormatterGetTypeID(void) { return 0; }
-long CFPropertyListCreateData(void) { return 0; }
-long CFPropertyListCreateDeepCopy(void) { return 0; }
-long CFPropertyListCreateWithStream(void) { return 0; }
-long CFPropertyListWrite(void) { return 0; }
-long CFReadStreamGetTypeID(void) { return 0; }
-long CFRunLoopGetTypeID(void) { return 0; }
-long CFRunLoopTimerCreateWithHandler(void) { return 0; }
-long CFRunLoopTimerGetTypeID(void) { return 0; }
-long CFSetContainsValue(void) { return 0; }
-long CFSetCreateCopy(void) { return 0; }
-long CFSetCreateMutableCopy(void) { return 0; }
-long CFSetGetCountOfValue(void) { return 0; }
-long CFSetGetTypeID(void) { return 0; }
-long CFSetGetValue(void) { return 0; }
-long CFSetGetValueIfPresent(void) { return 0; }
-long CFSetRemoveAllValues(void) { return 0; }
-long CFSetRemoveValue(void) { return 0; }
-long CFSetReplaceValue(void) { return 0; }
-long CFSetSetValue(void) { return 0; }
-long CFSocketCreate(void) { return 0; }
-long CFSocketGetNative(void) { return 0; }
-long CFSocketGetTypeID(void) { return 0; }
-long CFSocketInvalidate(void) { return 0; }
-long CFSocketIsValid(void) { return 0; }
-long CFStreamCreateBoundPair(void) { return 0; }
-long CFTimeZoneCreateWithName(void) { return 0; }
-long CFTimeZoneGetSecondsFromGMT(void) { return 0; }
-long CFTimeZoneGetTypeID(void) { return 0; }
-long CFUUIDCreateFromString(void) { return 0; }
-long CFWriteStreamGetTypeID(void) { return 0; }
-long CFXMLCreateStringByEscapingEntities(void) { return 0; }
-long CFXMLCreateStringByUnescapingEntities(void) { return 0; }
-long gap_sw_0(void) __asm__("$s10Foundation22_convertNSErrorToErrorys0E0_pSo0C0CSgF");
-long gap_sw_0(void) { return 0; }
-long gap_sw_1(void) __asm__("$s10Foundation3URLV15fileURLWithPathACSSh_tcfC");
-long gap_sw_1(void) { return 0; }
-long gap_sw_2(void) __asm__("$s10Foundation3URLV19_bridgeToObjectiveCSo5NSURLCyF");
-long gap_sw_2(void) { return 0; }
-long gap_sw_3(void) __asm__("$s10Foundation3URLV36_unconditionallyBridgeFromObjectiveCyACSo5NSURLCSgFZ");
-long gap_sw_3(void) { return 0; }
-long gap_sw_4(void) __asm__("$s10Foundation3URLV4pathSSvg");
-long gap_sw_4(void) { return 0; }
-long gap_sw_5(void) __asm__("$s10Foundation3URLVMa");
-long gap_sw_5(void) { return 0; }
-long gap_sw_6(void) __asm__("$sSD10FoundationE19_bridgeToObjectiveCSo12NSDictionaryCyF");
-long gap_sw_6(void) { return 0; }
-long gap_sw_7(void) __asm__("$sSS10FoundationE19_bridgeToObjectiveCSo8NSStringCyF");
-long gap_sw_7(void) { return 0; }
-long gap_sw_8(void) __asm__("$sSS10FoundationE26_forceBridgeFromObjectiveC_6resultySo8NSStringC_SSSgztFZ");
-long gap_sw_8(void) { return 0; }
-long gap_sw_9(void) __asm__("$sSS10FoundationE34_conditionallyBridgeFromObjectiveC_6resultSbSo8NSStringC_SSSgztFZ");
-long gap_sw_9(void) { return 0; }
-long gap_sw_10(void) __asm__("$sSS10FoundationE36_unconditionallyBridgeFromObjectiveCySSSo8NSStringCSgFZ");
-long gap_sw_10(void) { return 0; }
-long gap_sw_11(void) __asm__("$sSS10FoundationE8EncodingV4utf8ACvgZ");
-long gap_sw_11(void) { return 0; }
-long gap_sw_12(void) __asm__("$sSS10FoundationE8EncodingVMa");
-long gap_sw_12(void) { return 0; }
-long gap_sw_13(void) __asm__("$sSa10FoundationE19_bridgeToObjectiveCSo7NSArrayCyF");
-long gap_sw_13(void) { return 0; }
-long gap_sw_14(void) __asm__("$sSa10FoundationE34_conditionallyBridgeFromObjectiveC_6resultSbSo7NSArrayC_SayxGSgztFZ");
-long gap_sw_14(void) { return 0; }
-long gap_sw_15(void) __asm__("$sSa10FoundationE36_unconditionallyBridgeFromObjectiveCySayxGSo7NSArrayCSgFZ");
-long gap_sw_15(void) { return 0; }
-long gap_sw_16(void) __asm__("$sSo12NSDictionaryC10FoundationE17dictionaryLiteralAByp_yptd_tcfC");
-long gap_sw_16(void) { return 0; }
-long gap_sw_17(void) __asm__("$sSy10FoundationE7cString5usingSays4Int8VGSgSSAAE8EncodingV_tF");
-long gap_sw_17(void) { return 0; }
-long gap_sw_18(void) __asm__("$ss5ErrorP10FoundationE20localizedDescriptionSSvg");
-long gap_sw_18(void) { return 0; }
+/* As CF* que estavam aqui estão em cf_public.c, vscode_cf.c, cfrunloop.c e slack_frameworks.c.
+ * As 19 pontes Swift de Foundation estão em foundation_swift_data.c. */

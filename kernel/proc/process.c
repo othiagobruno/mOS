@@ -9,9 +9,11 @@
  * Ver userland/mos.h.
  */
 #include "proc.h"
+#include "smp_perf.h"
 #include "vfs.h"
 #include "syscall.h"
 #include "account.h"
+#include "fs.h"
 
 #define PTE_P  1ULL
 #define PTE_RW 2ULL
@@ -173,6 +175,26 @@ static u64 *table(process_t *p, u64 *t, int i, bool create) {
     return (u64 *)(t[i] & PTE_ADDR);
 }
 
+static void vm_lock_mask(process_t *p, unsigned m) {
+    int me = this_cpu(), i;
+    for (i = 0; i < 16; i++) if (m & (1u << i)) {
+        if (p->vmreg[i].depth && p->vmreg[i].owner == me) { p->vmreg[i].depth++; continue; }
+        p->vmreg[i].fl = spin_lock_irqsave((spinlock_t *)&p->vmreg[i].lk);
+        p->vmreg[i].owner = me;
+        p->vmreg[i].depth = 1;
+    }
+}
+static void vm_unlock_mask(process_t *p, unsigned m) {
+    int i;
+    for (i = 15; i >= 0; i--) if (m & (1u << i)) {
+        if (--p->vmreg[i].depth) continue;
+        p->vmreg[i].owner = 0;
+        spin_unlock_irqrestore((spinlock_t *)&p->vmreg[i].lk, p->vmreg[i].fl);
+    }
+}
+static void vm_lock_range(process_t *p, u64 a, u64 len) { if (p && len) vm_lock_mask(p, smp_stripes(a, len)); }
+static void vm_unlock_range(process_t *p, u64 a, u64 len) { if (p && len) vm_unlock_mask(p, smp_stripes(a, len)); }
+
 static u64 *walk(process_t *p, u64 va, bool create) {
     if (va < USER_BASE || va >= USER_END) return NULL;
     u64 *pdpt = table(p, p->pml4, (va >> 39) & 511, create);
@@ -188,18 +210,21 @@ u64 *uvm_pte(process_t *p, u64 va) {
 
 bool uvm_map(process_t *p, u64 va, u64 len) {
     u64 end = va + len;
+    bool ok = true;
     if (end < va || va < USER_BASE || end > USER_END) return false;
+    vm_lock_range(p, va, len);
     for (u64 a = va & ~0xFFFULL; a < end; a += 4096) {
         u64 *e = walk(p, a, true);
-        if (!e) return false;
+        if (!e) { ok = false; break; }
         if (*e & PTE_P) continue;
         u64 pg = pmm_alloc(1);
-        if (!pg) return false;
+        if (!pg) { ok = false; break; }
         memset((void *)pg, 0, 4096);
         *e = pg | PTE_P | PTE_RW | PTE_U;
         p->mem_pages++;
     }
-    return true;
+    vm_unlock_range(p, va, len);
+    return ok;
 }
 
 /* ------------------------------------------------------------ cópia na escrita (fork)
@@ -268,27 +293,33 @@ static void page_put(u64 phys) {
  * kernel/proc/sched.c (sessão SMP); esta definição fraca vale enquanto só o BSP roda threads de usuário. */
 __attribute__((weak)) void smp_tlb_shootdown(u64 cr3) { (void)cr3; }
 static void vm_flush(process_t *p, u64 va) {
-    if ((u64)p->pml4 == read_cr3()) __asm__ volatile("invlpg (%0)" :: "r"(va & ~0xFFFULL) : "memory");
+    u64 cur = read_cr3() & ~0xFFFULL & ~(1ULL << 63);
+    if (cur == ((u64)p->pml4 & ~0xFFFULL)) __asm__ volatile("invlpg (%0)" :: "r"(va & ~0xFFFULL) : "memory");
     smp_tlb_shootdown((u64)p->pml4);
 }
 
 static bool cow_break(process_t *p, u64 *e, u64 va) {
-    u64 phys = *e & PTE_ADDR;
-    u64 nx = *e & PTE_NX;
+    bool ok = false;
+    u64 phys, nx, np;
+    vm_lock_range(p, va, 4096);
+    phys = *e & PTE_ADDR;
+    nx = *e & PTE_NX;
     if (page_refs(phys) > 1) {
-        u64 np = pmm_alloc(1);
-        if (!np) return false;
-        memcpy((void *)np, (void *)phys, 4096);
-        *e = np | PTE_P | PTE_RW | PTE_U | nx;
-        vm_flush(p, va);                                /* nenhuma CPU pode continuar lendo a original... */
-        /* ...antes de largar a referência a ela: se o outro dono a largou enquanto copiávamos, esta era a última
-         * e a página é liberada (antes, pref[]-- deixava a página órfã nesse caso) */
-        page_put(phys);
-        return true;
+        np = pmm_alloc(1);
+        if (np) {
+            memcpy((void *)np, (void *)phys, 4096);
+            *e = np | PTE_P | PTE_RW | PTE_U | nx;
+            vm_flush(p, va);
+            page_put(phys);
+            ok = true;
+        }
+    } else {
+        *e = (*e | PTE_RW) & ~PTE_COW;
+        vm_flush(p, va);
+        ok = true;
     }
-    *e = (*e | PTE_RW) & ~PTE_COW;
-    vm_flush(p, va);
-    return true;
+    vm_unlock_range(p, va, 4096);
+    return ok;
 }
 
 /* fork de página PTE_JWP: a cópia fica privada, ainda sem escrita e com JWP. A falta segue para o
@@ -388,25 +419,35 @@ bool uvm_share_cow(process_t *p, u64 va, u64 *phys) {
     return true;
 }
 bool uvm_map_cow(process_t *p, u64 va, u64 phys) {
+    bool ok = false;
     if (!pref_ready()) return false;
+    vm_lock_range(p, va, 4096);
     u64 *e = walk(p, va & ~0xFFFULL, true);
-    if (!e) return false;
-    if (*e & PTE_P) { page_put(*e & PTE_ADDR); p->mem_pages--; }
-    uvm_page_get(phys);
-    *e = (phys & PTE_ADDR) | PTE_P | PTE_U | PTE_COW;
-    p->mem_pages++;
-    vm_flush(p, va);
-    return true;
+    if (e) {
+        if (*e & PTE_P) { page_put(*e & PTE_ADDR); p->mem_pages--; }
+        uvm_page_get(phys);
+        *e = (phys & PTE_ADDR) | PTE_P | PTE_U | PTE_COW;
+        p->mem_pages++;
+        vm_flush(p, va);
+        ok = true;
+    }
+    vm_unlock_range(p, va, 4096);
+    return ok;
 }
 /* página nova (um dono só, já preenchida) em va, se lá ainda não houver página: false = já havia (outra thread
  * resolveu a mesma falta) ou faltou memória para as tabelas; o chamador então devolve a página. kernel/mm/lazy.c */
 bool uvm_install(process_t *p, u64 va, u64 phys) {
+    bool ok = false;
+    vm_lock_range(p, va, 4096);
     u64 *e = walk(p, va & ~0xFFFULL, true);
-    if (!e || (*e & PTE_P)) return false;
-    *e = (phys & PTE_ADDR) | PTE_P | PTE_RW | PTE_U;
-    p->mem_pages++;
-    vm_flush(p, va);
-    return true;
+    if (e && !(*e & PTE_P)) {
+        *e = (phys & PTE_ADDR) | PTE_P | PTE_RW | PTE_U;
+        p->mem_pages++;
+        vm_flush(p, va);
+        ok = true;
+    }
+    vm_unlock_range(p, va, 4096);
+    return ok;
 }
 u16 uvm_page_refs(u64 phys) { return page_refs(phys); }
 
@@ -437,10 +478,12 @@ bool gpu_user_unmap(process_t *p, u64 va, u64 len) {
 }
 
 bool uvm_map_shared(process_t *p, u64 va, u64 phys, u8 prot) {
+    bool ok = false;
     if (!pref_ready()) return false;
+    vm_lock_range(p, va, 4096);
     u64 *e = walk(p, va & ~0xFFFULL, true);
-    if (!e) return false;
-    if (*e & PTE_P) return true;
+    if (!e) { vm_unlock_range(p, va, 4096); return false; }
+    if (*e & PTE_P) { vm_unlock_range(p, va, 4096); return true; }
     page_ref_inc(phys);
     u64 bits = PTE_P | PTE_U | PTE_SHARED;
     if (prot & 2) bits |= PTE_RW;
@@ -448,21 +491,56 @@ bool uvm_map_shared(process_t *p, u64 va, u64 phys, u8 prot) {
     *e = (phys & PTE_ADDR) | bits;
     p->mem_pages++;
     vm_flush(p, va);
-    return true;
+    ok = true;
+    vm_unlock_range(p, va, 4096);
+    return ok;
+}
+
+/* 64 KiB NX compartilhados (A64RT_JIT_SHARE): cache de blocos do JIT entre processos. */
+#define JIT_SHARE_VA 0x0000400044000000ULL
+#define JIT_SHARE_NP 16
+#define JIT_SHARE_MAGIC 0x4A49545348415245ULL
+static u64 jit_share_phys;
+static void jitshare_map(process_t *p) {
+    int i;
+    if (!p || !p->pml4 || !pref_ready()) return;
+    if (!jit_share_phys) {
+        u64 ph = pmm_alloc(JIT_SHARE_NP);
+        if (!ph) return;
+        memset((void *)ph, 0, JIT_SHARE_NP * 4096);
+        *(u64 *)ph = JIT_SHARE_MAGIC;
+        jit_share_phys = ph;
+    }
+    for (i = 0; i < JIT_SHARE_NP; i++) {
+        u64 va = JIT_SHARE_VA + (u64)i * 4096, old, phys = jit_share_phys + (u64)i * 4096;
+        u64 *e = walk(p, va, true);
+        if (!e) return;
+        if ((*e & PTE_P) && (*e & PTE_SHARED) && (*e & PTE_ADDR) == phys) continue;
+        if (*e & PTE_P) {
+            old = *e & PTE_ADDR;
+            *e = 0;
+            if (p->mem_pages) p->mem_pages--;
+            if (old != phys) page_put(old);
+            vm_flush(p, va);
+        }
+        uvm_map_shared(p, va, phys, 3);
+    }
 }
 
 /* mprotect de verdade. Página COW não ganha RW (a escrita ainda copia). Página JWP sem escrita fica JWP;
  * mprotect com escrita desfaz o JWP. O bit de execução liga ou tira o NX. Página ausente fica para a falta. */
 bool uvm_protect(process_t *p, u64 va, u64 len, u8 prot) {
     u64 end = va + len;
+    bool ok = true;
     if (end < va) return false;
+    vm_lock_range(p, va, len);
     for (u64 a = va & ~0xFFFULL; a < end; ) {
         u64 *e = walk(p, a, false);
         if (!e) { a = (a + 0x200000) & ~0x1FFFFFULL; continue; }
         if ((*e & PTE_P) && (*e & PTE_U)) {
             if (*e & PTE_JWP) {
                 if (prot & 2) {
-                    if ((*e & PTE_COW) && !cow_break(p, e, a)) return false;
+                    if ((*e & PTE_COW) && !cow_break(p, e, a)) { ok = false; break; }
                     *e = (*e | PTE_RW) & ~PTE_JWP;
                 }
             } else if (!(*e & PTE_COW)) {
@@ -475,7 +553,8 @@ bool uvm_protect(process_t *p, u64 va, u64 len, u8 prot) {
         }
         a += 4096;
     }
-    return true;
+    vm_unlock_range(p, va, len);
+    return ok;
 }
 
 /* Rede de segurança do JIT do tradutor arm64 (userland/a64rt, MACH_VM_JIT_WPROTECT): página com código traduzido
@@ -935,6 +1014,7 @@ int proc_spawn_in(const char *path, const char *arg, tty_t *tty,
     memcpy(p->pml4, kernel_pml4, 4096);
     for (int k = 0; k < USER_PML4_SLOTS; k++) p->pml4[USER_PML4_FIRST + k] = 0;
     p->mem_pages = 1;
+    jitshare_map(p);
 
     char err[128];
     u64 entry = 0;
@@ -2272,6 +2352,7 @@ static i64 proc_exec(int_frame_t *f, thread_t *t, process_t *p, char *path, char
     memcpy(np->pml4, kernel_pml4, 4096);
     for (int k = 0; k < USER_PML4_SLOTS; k++) np->pml4[USER_PML4_FIRST + k] = 0;
     np->mem_pages = 1;
+    jitshare_map(np);
 
     char err[128];
     u64 entry = 0, usp = 0, rdi = 0;
@@ -3260,6 +3341,7 @@ static u64 proc_syscall_(int_frame_t *f) {
             fork_ok = cow_copy_level(q, (u64 *)(p->pml4[ui] & PTE_ADDR), (u64 *)nt, 3);
         }
         if (!fork_ok) { free_address_space(q); kfree(q); r = -MOS_ENOMEM; break; }
+        jitshare_map(q);
         __asm__ volatile("mov %%cr3, %%rax; mov %%rax, %%cr3" ::: "rax", "memory");   /* o pai agora é só leitura */
         smp_tlb_shootdown((u64)p->pml4);                /* também nas outras CPUs com threads do pai */
         q->pid = next_pid++;
@@ -3316,8 +3398,17 @@ static u64 proc_syscall_(int_frame_t *f) {
         extern void sched_kick_thread(thread_t *t);
         extern bool sched_thread_stopped(const thread_t *t);
         thread_t *q = NULL;
+        if (a == MOS_THR_ROFILE) {
+            extern int lazy_ro_file_at(process_t *p, u64 va, u64 *id, u64 *off);
+            u64 id = 0, off = 0, pair[2];
+            if (!lazy_ro_file_at(p, b, &id, &off)) { r = 0; break; }
+            pair[0] = id; pair[1] = off;
+            r = c && uvm_copy_out(p, c, pair, sizeof pair) ? 1 : -MOS_EFAULT;
+            break;
+        }
         for (thread_t *w = sched_threads(); w; w = w->next)
             if (w->proc == p && w->id == (int)b && w->state != TH_DEAD) { q = w; break; }
+        if (!q && b == 0 && (a == MOS_THR_SETQOS || a == MOS_THR_AFFINITY)) q = t;
         if (!q) { r = -MOS_ESRCH; break; }
         {   /* diagnóstico: as primeiras chamadas (quem suspende quem), para ver no log que o coletor do JSC usa isto */
             static int vistos;
@@ -3345,6 +3436,12 @@ static u64 proc_syscall_(int_frame_t *f) {
             u64 regs[21] = { g->rax, g->rbx, g->rcx, g->rdx, g->rdi, g->rsi, g->rbp, g->rsp, g->r8, g->r9, g->r10, g->r11,
                              g->r12, g->r13, g->r14, g->r15, g->rip, g->rflags, g->cs, 0, 0 };
             r = uvm_copy_out(p, c, regs, sizeof regs) ? 0 : -MOS_EFAULT;
+        } else if (a == MOS_THR_SETQOS) {
+            sched_set_qos(q, (unsigned)c);
+            r = 0;
+        } else if (a == MOS_THR_AFFINITY) {
+            sched_set_affinity(q, c);
+            r = 0;
         } else r = -MOS_EINVAL;
         break;
     }
@@ -3433,6 +3530,41 @@ static u64 proc_syscall_(int_frame_t *f) {
     case SYS_DESKTOP: {
         extern i64 deskbridge_syscall(process_t *p, u64 op, u64 b, u64 c, u64 d);
         r = deskbridge_syscall(p, a, b, c, f->r10);
+        break;
+    }
+    case SYS_AIO: {
+        /* op em a, aiocb* do usuário em b. Submete e consulta sem bloquear. */
+        int op = (int)a;
+        if (op == 3) { i64 ret; r = aio_mem_poll(b, &ret); break; }
+        if (op == 6) { aio_pump(); r = 0; break; }
+        if (op == 4) {
+            i64 ret; int st = aio_mem_poll(b, &ret);
+            if (st == MOS_EINPROGRESS) { r = -MOS_EINVAL; break; }
+            u8 *bounce = NULL; void *ubuf = NULL; u64 n = 0;
+            aio_mem_take(b, &bounce, &n, &ubuf, &ret);
+            if (st != 0) { kfree(bounce); r = -st; break; }
+            if (bounce && ubuf && n && !uvm_copy_out(p, (u64)ubuf, bounce, n)) r = -MOS_EFAULT;
+            else r = ret;
+            kfree(bounce);
+            break;
+        }
+        if (op == 5) { r = aio_mem_fsync(b) ? 0 : -MOS_EIO; break; }
+        struct aiocb cb;
+        if (op != 1 && op != 2) { r = -MOS_EINVAL; break; }
+        if (!uvm_copy_in(p, &cb, b, sizeof cb)) { r = -MOS_EFAULT; break; }
+        if (fd_get(p, (u64)cb.aio_fildes) < 0 || p->fds[cb.aio_fildes].kind != FD_FILE) { r = -MOS_EBADF; break; }
+        vnode_t *v = vfs_lookup(p->fds[cb.aio_fildes].path);
+        if (!v || v->dir || !v->data) { r = -MOS_EBADF; break; }
+        u8 *bounce = kmalloc(cb.aio_nbytes ? cb.aio_nbytes : 1);
+        if (!bounce) { r = -MOS_ENOMEM; break; }
+        if (op == 2) {
+            if (!(p->fds[cb.aio_fildes].flags & (MOS_O_WRONLY | MOS_O_RDWR))) { kfree(bounce); r = -MOS_EBADF; break; }
+            if (!uvm_copy_in(p, bounce, (u64)cb.aio_buf, cb.aio_nbytes)) { kfree(bounce); r = -MOS_EFAULT; break; }
+        }
+        if (aio_mem_submit(b, op == 2, v->data, v->size, (u64)cb.aio_offset, cb.aio_nbytes, bounce, (void *)cb.aio_buf) != 0) {
+            kfree(bounce); r = -MOS_EAGAIN; break;
+        }
+        r = 0;
         break;
     }
     default:
