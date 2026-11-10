@@ -259,6 +259,8 @@ static u64 low_page(void) {
 }
 
 void smp_init(void) {
+    extern void cpu_pcid_init(void);
+    cpu_pcid_init();          /* antes de copiar o CR4 para os APs */
     hpet_init();
     sdt_t *madt = find_table("APIC");
     if (!madt) { kprintf("smp: sem tabela MADT, um núcleo\n"); return; }
