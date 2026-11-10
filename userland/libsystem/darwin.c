@@ -412,10 +412,7 @@ int statvfs(const char *path, void *out) {
     return 0;
 }
 int fstatvfs(int fd, void *out) { (void)fd; return statvfs("/", out); }
-/* resolver: sem /etc/resolv.conf no mOS; falha documentada (o Chromium usa o resolvedor interno) */
-int res_9_ninit(void *state) { (void)state; return -1; }
-void res_9_ndestroy(void *state) { (void)state; }
-void res_9_nclose(void *state) { (void)state; }
+/* res_9_ninit e o resto do resolvedor estão em resolv.c. */
 
 /* confstr: pastas do usuário do Darwin (o Chromium monta o sandbox dos processos filhos com elas) */
 int mkdir(const char *p, unsigned mode);

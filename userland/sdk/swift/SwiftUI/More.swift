@@ -84,6 +84,7 @@ extension View {
                     let flag = isPresented
                     t.action = { flag.wrappedValue = false }
                     let panel = Node(.background)
+                    panel.placeholder = "popover"
                     panel.color = Color(red: 0.98, green: 0.98, blue: 0.99)
                     panel.radius = 10
                     panel.insets = EdgeInsets(top: 12, leading: 12, bottom: 12, trailing: 12)
@@ -293,6 +294,7 @@ nonisolated(unsafe) var _navCurrent: [_NavState] = []
 public struct NavigationStack<Content: View>: _PrimitiveView {
     let content: Content
     public init(@ViewBuilder content: () -> Content) { self.content = content() }
+    public init(path: Binding<NavigationPath>, @ViewBuilder content: () -> Content) { self.content = content() }
     public func _build(_ b: _Builder) {
         let nav = _Runtime.shared.boxAt("nav:" + b.path, _NavState()).value
         let col = Node(.stack); col.axisVertical = true; col.spacing = 10; col.align = -1; col.maxW = true; col.maxH = true
