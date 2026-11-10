@@ -9,7 +9,9 @@
  * O que esta versão não faz: CIKernel, Metal, CIDetector, formatos half/float,
  * GIF/HEIF/WebP (o ImageIO do mOS só decodifica PNG e JPEG) e o espaço de cor
  * além de 8 bits reto. Opções de CIContext são aceitas e ignoradas.
- * Sem o binário, o loader continua na fachada vazia do libSystem (vscode_fwclasses.c).
+ * tools/build.sh grava o Mach-O em /System/Library/Frameworks/CoreImage.framework
+ * (tools/build-coreimage.sh). O loader prefere esse arquivo; sem ele, a fachada
+ * vazia do libSystem (vscode_fwclasses.c) continua.
  *
  * Símbolos medidos no repositório: não há binário do claude-ios-sim, do WhatsApp,
  * do ChatGPT nem do Grok Bot aqui. docs/compat-open-usage.md conta 7 símbolos de
@@ -270,9 +272,11 @@ static CIImage *from_px(const uint32_t *px, int w, int h) {
 static double num_of(id v, double fallback) {
     if (!v) return fallback;
     if ([v isKindOfClass:[CIVector class]]) return [(CIVector *)v X];
-    if ([v respondsToSelector:@selector(doubleValue)]) return ((double (*)(id, SEL))objc_msgSend)(v, @selector(doubleValue));
+    if ([v isKindOfClass:[NSNumber class]]) return [(NSNumber *)v doubleValue];
     return fallback;
 }
+
+int mos_coreimage_real(void) { return 0xC1; }
 
 @implementation CIFilter
 + (CIFilter *)filterWithName:(NSString *)n {
@@ -348,18 +352,11 @@ static double num_of(id v, double fallback) {
 }
 - (CIImage *)outputImage {
     if (!inputImage || !inputImage->img) return nil;
-    mos_ci *m = 0;
-    if ([name isEqualToString:@"CIGaussianBlur"]) m = mos_ci_blur(inputImage->img, radius);
-    else if ([name isEqualToString:@"CIColorControls"]) m = mos_ci_color(inputImage->img, saturation, brightness, contrast);
-    else if ([name isEqualToString:@"CISourceOverCompositing"]) {
-        if (!inputBackgroundImage) return nil;
-        m = mos_ci_over(inputImage->img, inputBackgroundImage->img);
-    } else if ([name isEqualToString:@"CILanczosScaleTransform"]) m = mos_ci_lanczos(inputImage->img, scale, aspect);
-    else if ([name isEqualToString:@"CIAffineTransform"]) m = mos_ci_affine(inputImage->img, transform.a, transform.b, transform.c, transform.d, transform.tx, transform.ty);
-    else if ([name isEqualToString:@"CICrop"] && hasTransform == 2)
-        m = mos_ci_crop(inputImage->img, transform.tx, transform.ty, transform.a, transform.b);
-    else return nil;
-    return wrap(m);
+    return wrap(mos_ci_apply(name.UTF8String, inputImage->img,
+                             inputBackgroundImage ? inputBackgroundImage->img : 0,
+                             radius, saturation, brightness, contrast, scale, aspect,
+                             transform.a, transform.b, transform.c, transform.d, transform.tx, transform.ty,
+                             hasTransform == 2));
 }
 @end
 

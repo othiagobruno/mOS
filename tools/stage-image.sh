@@ -129,13 +129,17 @@ if [ -d "$SRC/Frameworks" ]; then
     done
 fi
 RES="Frameworks/Electron Framework.framework/Resources"
-mkdir -p "$DST/$RES"
+VERRES="Frameworks/Electron Framework.framework/Versions/A/Resources"
+mkdir -p "$DST/$RES" "$DST/$VERRES"
 RESSRC="$SRC/Frameworks/Electron Framework.framework/Versions/A/Resources"
 [ -d "$RESSRC" ] || RESSRC="$SRC/Frameworks/Electron Framework.framework/Resources"
 if [ -d "$RESSRC" ]; then
+    # O binário fica em Versions/A. O Electron abre Versions/A/Resources/icudtl.dat
+    # (DIR_MODULE + Resources). Só a Resources do topo deixa o arquivo fora do caminho.
     find "$RESSRC" -maxdepth 1 -type f -exec cp -f {} "$DST/$RES/" \;
+    find "$RESSRC" -maxdepth 1 -type f -exec cp -f {} "$DST/$VERRES/" \;
     for l in en.lproj pt_BR.lproj; do
-        [ -d "$RESSRC/$l" ] && cp -a "$RESSRC/$l" "$DST/$RES/"
+        [ -d "$RESSRC/$l" ] && cp -a "$RESSRC/$l" "$DST/$RES/" && cp -a "$RESSRC/$l" "$DST/$VERRES/"
     done
 fi
 LIB="$SRC/Frameworks/Electron Framework.framework/Versions/A/Libraries"

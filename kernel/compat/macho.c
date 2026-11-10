@@ -504,6 +504,7 @@ static bool framework_has_libsystem_fallback(const char *n) {
         "/System/Library/Frameworks/CoreData.framework/",
         "/System/Library/Frameworks/WebKit.framework/",
         "/System/Library/Frameworks/ImageIO.framework/",
+        "/System/Library/Frameworks/CoreImage.framework/",
         "/System/Library/Frameworks/CryptoKit.framework/",
         "/System/Library/Frameworks/UIKit.framework/",
         "/System/Library/Frameworks/SwiftUI.framework/",

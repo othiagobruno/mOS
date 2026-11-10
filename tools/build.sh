@@ -165,6 +165,9 @@ cc -O1 -fno-omit-frame-pointer -funwind-tables -rdynamic \
     -ldl -o "$OUT/unw_hosttest"
 "$OUT/unw_hosttest"
 
+echo "==> runtime Swift do Grok (teste de host)"
+bash "$ROOT/tools/swift-rt-grok-teste.sh" "$ZIG" "$OUT/swift-rt-grok"
+
 echo "==> libSystem.mos"
 # x86_64: _Unwind_* fica em cxx_unwind.c. UnwindLevel1.c repete esses nomes; o resto do libunwind fica.
 LS_SRC=()
@@ -188,6 +191,32 @@ done
     -Wno-unused-function -Wno-unused-variable -Wno-unreachable-code \
     -I"$ROOT/userland/host-audio/shim" -I"$ROOT/userland/libsystem" \
     -c "$ROOT/userland/libsystem/sqlite3_mos.c" -o "$OUT/sqlite3_mos.o"
+# compression.c do #135 entra no ELF. MOS_LIBSYSTEM usa o cz_raw_* de compression_z.c
+# (já na lista) em vez de incluir o .c de novo. LZMA/Brotli ficam na dylib.
+comp_one() {
+    "$ZIG" cc -target x86_64-freestanding-none -O2 -g0 -ffreestanding -fno-stack-protector -fno-builtin -nostdlib \
+        -fpie -mno-red-zone -Wall -Wno-unused-parameter -Wno-incompatible-library-redeclaration -Wno-builtin-requires-header \
+        -Wno-unused-function \
+        -I"$ROOT/userland/libsystem/kshim" -I"$ROOT/userland/libsystem" -I"$ROOT/userland/third_party/zlib" \
+        -I"$ROOT/userland/third_party/lz4" -I"$ROOT/userland/third_party/lzfse" \
+        -isystem "$ZIGDIR/lib/include" \
+        "$@" || return 1
+}
+comp_one -DMOS_LIBSYSTEM -c "$ROOT/userland/frameworks/libcompression/compression.c" -o "$OUT/compression.o"
+for pair in \
+    lz4.c:lz4.o lz4hc.c:lz4hc.o lz4frame.c:lz4frame.o xxhash.c:xxhash.o
+do
+    src="${pair%%:*}"; obj="${pair##*:}"
+    comp_one -c "$ROOT/userland/third_party/lz4/$src" -o "$OUT/$obj"
+done
+for pair in \
+    lzfse_decode.c:lzfse_decode.o lzfse_decode_base.c:lzfse_decode_base.o \
+    lzfse_encode.c:lzfse_encode.o lzfse_encode_base.c:lzfse_encode_base.o lzfse_fse.c:lzfse_fse.o \
+    lzvn_decode_base.c:lzvn_decode_base.o lzvn_encode_base.c:lzvn_encode_base.o
+do
+    src="${pair%%:*}"; obj="${pair##*:}"
+    comp_one -c "$ROOT/userland/third_party/lzfse/$src" -o "$OUT/$obj"
+done
 # UnwindLevel1.c, UnwindLevel1-gcc-ext.c, UnwindRegistersSave.S e libunwind.cpp repetem cxx_unwind.c.
 "$ZIG" cc -target x86_64-freestanding-none -O2 -g0 -ffreestanding -fno-stack-protector -fno-builtin -nostdlib -static -no-pie \
     -fpie -mno-red-zone -Wall -Wno-unused-parameter -Wno-incompatible-library-redeclaration -Wno-builtin-requires-header \
@@ -195,6 +224,9 @@ done
     -isystem "$ZIGDIR/lib/include" \
     -Wl,--image-base=0x400000100000 -Wl,-e,cx_start -Wl,--no-gc-sections \
     "${LS_SRC[@]}" "$OUT/audiodec.o" "$OUT/sqlite3_mos.o" \
+    "$OUT/compression.o" "$OUT/lz4.o" "$OUT/lz4hc.o" "$OUT/lz4frame.o" "$OUT/xxhash.o" \
+    "$OUT/lzfse_decode.o" "$OUT/lzfse_decode_base.o" "$OUT/lzfse_encode.o" \
+    "$OUT/lzfse_encode_base.o" "$OUT/lzfse_fse.o" "$OUT/lzvn_decode_base.o" "$OUT/lzvn_encode_base.o" \
     -o "$OUT/libSystem.mos"
 python3 "$ROOT/tools/patch-ehframe.py" "$OUT/libSystem.mos"
 HASH=$(sha256sum "$OUT/libSystem.mos" | cut -c1-16)
@@ -385,6 +417,9 @@ else
     echo "StoreKit.framework não compilou" >&2
     exit 1
 fi
+
+echo "==> CoreImage.framework"
+bash "$ROOT/tools/build-coreimage.sh" "$ZIG" "$ESP/mOS"
 
 echo "==> apps oficiais em /Aplicativos"
 bash "$ROOT/tools/stage-apps-oficiais.sh" "$OUT"

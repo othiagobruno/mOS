@@ -13,6 +13,7 @@
 #include <fcntl.h>
 #include <semaphore.h>
 #include <stdarg.h>
+#include <stdio.h>
 #include <sys/ioctl.h>
 #else
 int open(const char *path, int flags, ...);
@@ -36,6 +37,8 @@ static int mos_flags(int f) {
     if (f & 0x0800) o |= O_EXCL;
     return o;
 }
+static void *mos_stdout(void) { return stdout; }
+static void *mos_stderr(void) { return stderr; }
 static int mos_open(const char *path, int flags, unsigned mode) {
     if (flags & 0x0200) return open(path, mos_flags(flags), mode);
     return open(path, mos_flags(flags));
@@ -55,6 +58,10 @@ static void *mos_sem_open(const char *name, int oflag, unsigned mode, unsigned v
 static int *mos_err(void) { return __error(); }
 static int mos_open(const char *path, int flags, unsigned mode) { return open(path, flags, mode); }
 static int mos_openat(int fd, const char *path, int flags, unsigned mode) { return openat(fd, path, flags, mode); }
+typedef struct mos_FILE mos_FILE;
+extern mos_FILE *__stdoutp, *__stderrp;
+static void *mos_stdout(void) { return __stdoutp; }
+static void *mos_stderr(void) { return __stderrp; }
 static void *mos_sem_open(const char *name, int oflag, unsigned mode, unsigned value) {
     if (oflag & 0x0200) return sem_open(name, oflag, mode, value);
     return sem_open(name, oflag);
@@ -102,6 +109,29 @@ MOS_SWIFT void *$s6Darwin8sem_openySpys5Int32VGSgSPys4Int8VG_s5Int32Vs6UInt16Vs6
     if (mos_bad_path(name)) return 0;
     return mos_sem_open(name, oflag, mode, value);
 }
+
+/* Optional<POSIXErrorCode>: enum de um payload Int32 sem extra inhabitant.
+ * O some fica com tag 0; o none usa a tag 1 no byte seguinte (bits 32–39
+ * do registrador de retorno, no x86_64 e no arm64). ELAST do Darwin é 107. */
+typedef struct {
+    int value;
+    unsigned char tag;
+} mos_posix_opt;
+
+MOS_SWIFT mos_posix_opt $s6Darwin14POSIXErrorCodeO8rawValueACSgs5Int32V_tcfC(int raw) {
+    mos_posix_opt o;
+    if (raw >= 1 && raw <= 107) {
+        o.value = raw;
+        o.tag = 0;
+    } else {
+        o.value = 0;
+        o.tag = 1;
+    }
+    return o;
+}
+
+MOS_SWIFT void *$s6Darwin6stdoutSpySo7__sFILEVGvg(void) { return mos_stdout(); }
+MOS_SWIFT void *$s6Darwin6stderrSpySo7__sFILEVGvg(void) { return mos_stderr(); }
 
 MOS_SWIFT int $s6Darwin5errnos5Int32Vvg(void) { return *mos_err(); }
 MOS_SWIFT int $s6Darwin5noErrs5Int32Vvg(void) { return 0; }

@@ -3,7 +3,11 @@
  * COMPRESSION_ZLIB (0x205) é deflate cru, RFC 1951, zlib 1.3.2 (windowBits -15).
  * COMPRESSION_LZ4 (0x100) é frame LZ4. COMPRESSION_LZ4_RAW (0x101) é um bloco cru.
  * COMPRESSION_LZFSE (0x801) é a referência Apple (BSD-3).
- * COMPRESSION_LZMA, LZBITMAP e BROTLI devolvem 0 (não ligados).
+ * COMPRESSION_LZMA (0x306) é o contêiner .xz (liblzma 5.8.1, 0BSD).
+ * COMPRESSION_BROTLI (0xB02) é o fluxo Brotli (1.1.0, MIT).
+ * COMPRESSION_LZBITMAP (0x702) devolve 0.
+ * MOS_LIBSYSTEM: o mesmo arquivo entra no ELF do libSystem (ZLIB, LZ4, LZFSE).
+ * LZMA e Brotli ficam na dylib; o cz_raw_* já está em compression_z.c.
  */
 #include <stddef.h>
 #include <stdint.h>
@@ -34,20 +38,38 @@ typedef struct {
 #define COMPRESSION_STREAM_ENCODE 0
 #define COMPRESSION_STREAM_FINALIZE 0x0001
 
+#ifdef MOS_LIBSYSTEM
+#define Z_SOLO 1
+#include "zlib.h"
+int cz_raw_begin(z_stream *z, int encode);
+void cz_raw_end(z_stream *z, int encode);
+size_t cz_raw_buffer(unsigned char *dst, size_t dn, const unsigned char *src, size_t sn, int encode);
+#else
 #define CZ_HOST 1
 #include "../../libsystem/compression_z.c"
+#endif
 
 #include "lz4.h"
 #include "lz4frame.h"
 #include "lzfse.h"
+#ifndef MOS_LIBSYSTEM
+#include <lzma.h>
+#include <brotli/encode.h>
+#include <brotli/decode.h>
+#endif
 
 static void warn_unsupported(compression_algorithm a) {
     static int w;
-    if (!w++) fprintf(stderr, "libcompression[mOS]: algoritmo 0x%x sem codec (LZMA/LZBITMAP/BROTLI)\n", a);
+    if (!w++) fprintf(stderr, "libcompression[mOS]: algoritmo 0x%x sem codec (LZBITMAP)\n", a);
 }
 
 static int supported(compression_algorithm a) {
-    return a == COMPRESSION_ZLIB || a == COMPRESSION_LZ4 || a == COMPRESSION_LZ4_RAW || a == COMPRESSION_LZFSE;
+    return a == COMPRESSION_ZLIB || a == COMPRESSION_LZ4 || a == COMPRESSION_LZ4_RAW
+        || a == COMPRESSION_LZFSE
+#ifndef MOS_LIBSYSTEM
+        || a == COMPRESSION_LZMA || a == COMPRESSION_BROTLI
+#endif
+        ;
 }
 
 size_t compression_encode_scratch_buffer_size(compression_algorithm a) {
@@ -98,6 +120,33 @@ static size_t lz4_raw_decode(uint8_t *dst, size_t dn, const uint8_t *src, size_t
     return n >= 0 ? (size_t)n : 0;
 }
 
+#ifndef MOS_LIBSYSTEM
+static size_t xz_encode(uint8_t *dst, size_t dn, const uint8_t *src, size_t sn) {
+    size_t pos = 0;
+    lzma_ret r = lzma_easy_buffer_encode(6, LZMA_CHECK_CRC64, NULL, src, sn, dst, &pos, dn);
+    return r == LZMA_OK ? pos : 0;
+}
+
+static size_t xz_decode(uint8_t *dst, size_t dn, const uint8_t *src, size_t sn) {
+    uint64_t mem = UINT64_MAX;
+    size_t in_pos = 0, out_pos = 0;
+    lzma_ret r = lzma_stream_buffer_decode(&mem, 0, NULL, src, &in_pos, sn, dst, &out_pos, dn);
+    return r == LZMA_OK ? out_pos : 0;
+}
+
+static size_t brotli_encode(uint8_t *dst, size_t dn, const uint8_t *src, size_t sn) {
+    size_t n = dn;
+    if (!BrotliEncoderCompress(5, 22, BROTLI_MODE_GENERIC, sn, src, &n, dst)) return 0;
+    return n;
+}
+
+static size_t brotli_decode(uint8_t *dst, size_t dn, const uint8_t *src, size_t sn) {
+    size_t n = dn;
+    if (BrotliDecoderDecompress(sn, src, &n, dst) != BROTLI_DECODER_RESULT_SUCCESS) return 0;
+    return n;
+}
+#endif
+
 size_t compression_encode_buffer(uint8_t *dst, size_t dn, const uint8_t *src, size_t sn,
                                  void *scratch, compression_algorithm a) {
     if (!dst || !dn) return 0;
@@ -105,6 +154,10 @@ size_t compression_encode_buffer(uint8_t *dst, size_t dn, const uint8_t *src, si
     if (a == COMPRESSION_LZ4) return lz4_frame_encode(dst, dn, src, sn);
     if (a == COMPRESSION_LZ4_RAW) return lz4_raw_encode(dst, dn, src, sn);
     if (a == COMPRESSION_LZFSE) return lzfse_encode_buffer(dst, dn, src, sn, scratch);
+#ifndef MOS_LIBSYSTEM
+    if (a == COMPRESSION_LZMA) return xz_encode(dst, dn, src, sn);
+    if (a == COMPRESSION_BROTLI) return brotli_encode(dst, dn, src, sn);
+#endif
     warn_unsupported(a);
     return 0;
 }
@@ -116,6 +169,10 @@ size_t compression_decode_buffer(uint8_t *dst, size_t dn, const uint8_t *src, si
     if (a == COMPRESSION_LZ4) return lz4_frame_decode(dst, dn, src, sn);
     if (a == COMPRESSION_LZ4_RAW) return lz4_raw_decode(dst, dn, src, sn);
     if (a == COMPRESSION_LZFSE) return lzfse_decode_buffer(dst, dn, src, sn, scratch);
+#ifndef MOS_LIBSYSTEM
+    if (a == COMPRESSION_LZMA) return xz_decode(dst, dn, src, sn);
+    if (a == COMPRESSION_BROTLI) return brotli_decode(dst, dn, src, sn);
+#endif
     warn_unsupported(a);
     return 0;
 }

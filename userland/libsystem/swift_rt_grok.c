@@ -22,6 +22,7 @@ typedef uint32_t uint_fast32_t;
 typedef uint64_t uint_fast64_t;
 typedef int64_t intmax_t;
 typedef uint64_t uintmax_t;
+typedef int wchar_t;
 #endif
 typedef int wchar_t;
 #define _WCHAR_T
@@ -40,64 +41,9 @@ typedef int wchar_t;
 int posix_memalign(void **out, size_t align, size_t n);
 void abort(void);
 
-typedef struct {
-    const void *metadata;
-    _Atomic uint64_t refcount;
-} mos_heap_t;
-
-#define MOS_SPARE 7u
-
 void *swift_allocObject(const void *metadata, size_t size, size_t align_mask);
 void *swift_retain(void *object);
 void swift_release(void *object);
-
-static size_t mos_align(size_t n, size_t align) {
-    return (n + align - 1) & ~(align - 1);
-}
-
-void *swift_allocObject(const void *metadata, size_t size, size_t align_mask) {
-    size_t align = align_mask + 1;
-    if (align < sizeof(void *)) align = sizeof(void *);
-    if (size < sizeof(mos_heap_t)) size = sizeof(mos_heap_t);
-    size = mos_align(size, align);
-    void *mem = 0;
-    if (posix_memalign(&mem, align, size) != 0) return 0;
-    memset(mem, 0, size);
-    mos_heap_t *obj = mem;
-    obj->metadata = metadata;
-    atomic_store(&obj->refcount, 1);
-    return obj;
-}
-
-void *swift_retain(void *object) {
-    if (!object) return 0;
-    mos_heap_t *obj = object;
-    atomic_fetch_add(&obj->refcount, 1);
-    return object;
-}
-
-void swift_release(void *object) {
-    if (!object) return;
-    mos_heap_t *obj = object;
-    uint64_t prev = atomic_fetch_sub(&obj->refcount, 1);
-    if (prev == 1) free(obj);
-}
-
-void *swift_bridgeObjectRetain(void *object);
-void swift_bridgeObjectRelease(void *object);
-
-void *swift_bridgeObjectRetain(void *object) {
-    uintptr_t raw = (uintptr_t)object;
-    void *native = (void *)(raw & ~(uintptr_t)MOS_SPARE);
-    if (native) swift_retain(native);
-    return object;
-}
-
-void swift_bridgeObjectRelease(void *object) {
-    uintptr_t raw = (uintptr_t)object;
-    void *native = (void *)(raw & ~(uintptr_t)MOS_SPARE);
-    if (native) swift_release(native);
-}
 
 void *swift_errorRetain(void *object);
 void swift_errorRelease(void *object);
@@ -112,7 +58,7 @@ mos_box_t swift_allocBox(const void *type) {
     void *obj = swift_allocObject(type, 256, 15);
     mos_box_t box;
     box.object = obj;
-    box.buffer = obj ? (char *)obj + sizeof(mos_heap_t) : 0;
+    box.buffer = obj ? (char *)obj + 16 : 0;
     return box;
 }
 

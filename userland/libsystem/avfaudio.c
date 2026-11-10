@@ -1023,19 +1023,17 @@ static void plr_render(void *ce, float *stereo, u32 frames, const void *ts) {
     id s = cx_cae_ctx(ce);
     avplayer_t *p = PLR(s);
     if (!p->playing || !p->dec) return;
-    u64 total = cx_audio_frames(p->dec);
     u32 o = 0;
     while (o < frames) {
-        u64 at = (u64)p->pos;
-        if (at >= total) {
+        int ended = 0;
+        u32 k = avf_pull_frames(p->dec, &p->pos, 1, 0, stereo + o * 2, frames - o, &ended);
+        o += k;
+        if (ended) {
             if (p->loops_left != 0) { if (p->loops_left > 0) p->loops_left--; p->pos = 0; continue; }
             if (!p->finished_pending) { p->finished_pending = YES; on_main(player_finished_main, objc_retain(s)); }
             break;
         }
-        u32 k = cx_audio_read_stereo(p->dec, at, frames - o, stereo + o * 2);
         if (!k) break;
-        o += k;
-        p->pos += k;
     }
     float vl = p->volume * (p->pan > 0 ? 1 - p->pan : 1), vr = p->volume * (p->pan < 0 ? 1 + p->pan : 1);
     float pk[2] = {0, 0};
@@ -1372,9 +1370,6 @@ static void apl_end_main(void *a) {
     if (p->item) cx_post(cx_note(AVPlayerItemDidPlayToEndTimeNotification, p->item, 0));
     objc_release(s);
 }
-static u32 apl_read(void *ctx, unsigned long long at, unsigned n, float *out) {
-    return cx_audio_read_stereo(ctx, at, n, out);
-}
 static void apl_render(void *ce, float *stereo, u32 frames, const void *ts) {
     (void)ts;
     id s = cx_cae_ctx(ce);
@@ -1383,8 +1378,7 @@ static void apl_render(void *ce, float *stereo, u32 frames, const void *ts) {
     void *d = AST(ITM(p->item)->asset)->dec;
     if (!d) return;
     int ended = 0;
-    avf_clock_t ck = {&ITM(p->item)->pos, cx_audio_rate(d), cx_audio_frames(d), p->rate, p->muted ? 0 : p->volume};
-    avf_clock_render(&ck, apl_read, d, stereo, frames, &ended);
+    avf_pull_seconds(d, &ITM(p->item)->pos, p->rate, p->muted ? 0 : p->volume, stereo, frames, &ended);
     if (ended) { p->rate = 0; on_main(apl_end_main, objc_retain(s)); }
 }
 static id apl_init(id s, SEL c) { (void)c; APL(s)->volume = 1; APL(s)->status = 1; APL(s)->observers = objc_retain(MSG0(id, cls("NSMutableArray"), "array")); return s; }
@@ -1434,11 +1428,8 @@ static void obs_fire(id s, SEL c, id timer) {
     (void)c; (void)timer;
     aplobs_t *o = (aplobs_t *)s;
     if (!o->blk || !o->player) return;
-    double now = host_seconds();
-    if (now - o->last < o->interval) return;
-    o->last = now;
-    if (APL(o->player)->rate == 0) return;
     cmtime_t t = apl_current(o->player, 0);
+    if (!avf_obs_due(&o->last, o->interval, cm_to_sec(t), APL(o->player)->rate)) return;
     ((void (*)(void *, cmtime_t))BLK_FN(o->blk))(o->blk, t);
 }
 static id apl_add_periodic(id s, SEL c, cmtime_t interval, void *queue, void *blk) {
