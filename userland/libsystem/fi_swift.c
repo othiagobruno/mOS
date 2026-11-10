@@ -20,6 +20,7 @@
 void *dlsym(void *h, const char *name);
 char *strcat(char *d, const char *s);
 int sscanf(const char *s, const char *fmt, ...);
+#include <stdint.h>
 #endif
 #include "fi_abi.inc"
 #include "fi_behavior.inc"
