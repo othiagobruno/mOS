@@ -150,3 +150,28 @@ int avf_obs_due(double *last, double interval, double pos, float play_rate) {
     *last = pos;
     return 1;
 }
+int avk_play(avk_transport_t *t) {
+    if (!t || !t->controls || !t->rate) return 0;
+    *t->rate = 1;
+    return 1;
+}
+int avk_pause(avk_transport_t *t) {
+    if (!t || !t->controls || !t->rate) return 0;
+    *t->rate = 0;
+    return 1;
+}
+int avk_seek(avk_transport_t *t, double sec) {
+    if (!t || !t->controls || !t->pos) return 0;
+    if (sec < 0) sec = 0;
+    if (t->duration > 0 && sec > t->duration) sec = t->duration;
+    *t->pos = sec;
+    return 1;
+}
+int avk_pip_supported(void) { return 0; }
+int avk_pip_start(int *err) {
+    if (err) *err = -11800; /* AVErrorUnknown: não há superfície de picture-in-picture */
+    return 0;
+}
+int avk_route_count(void) { return 1; }
+const char *avk_route_port(int index) { return index == 0 ? "Speaker" : 0; }
+const char *avk_route_name(int index) { return index == 0 ? "Alto-falantes" : 0; }
