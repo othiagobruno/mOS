@@ -589,3 +589,39 @@ int mos_ci_render_format(mos_ci *im, double x, double y, int w, int h, int forma
     free(tmp);
     return 0;
 }
+
+void mos_ci_ctx_init(mos_ci_ctx *c, int cache) {
+    if (!c) return;
+    memset(c, 0, sizeof *c);
+    c->cache = cache ? 1 : 0;
+}
+int mos_ci_ctx_renders(const mos_ci_ctx *c) { return c ? c->renders : 0; }
+void mos_ci_ctx_free(mos_ci_ctx *c) {
+    if (!c) return;
+    free(c->px);
+    c->px = 0;
+    c->im = 0;
+}
+int mos_ci_colorspace_ok(int foreign_space) { return foreign_space ? 0 : 1; }
+int mos_ci_ctx_render(mos_ci_ctx *c, mos_ci *im, double x, double y, int w, int h, uint32_t *px) {
+    if (!c || !px) return -1;
+    size_t n = (size_t)w * (size_t)h;
+    if (c->cache && c->px && c->im == im && c->x == x && c->y == y && c->w == w && c->h == h) {
+        memcpy(px, c->px, n * 4u);
+        return 0;
+    }
+    if (mos_ci_render(im, x, y, w, h, px) != 0) return -1;
+    c->renders++;
+    if (!c->cache) return 0;
+    uint32_t *copy = malloc(n * 4u);
+    if (!copy) return 0;
+    memcpy(copy, px, n * 4u);
+    free(c->px);
+    c->px = copy;
+    c->im = im;
+    c->x = x;
+    c->y = y;
+    c->w = w;
+    c->h = h;
+    return 0;
+}

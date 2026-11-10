@@ -8,7 +8,8 @@
  *
  * O que esta versão não faz: CIKernel, Metal, CIDetector, formatos half/float,
  * GIF/HEIF/WebP (o ImageIO do mOS só decodifica PNG e JPEG) e o espaço de cor
- * além de 8 bits reto. Opções de CIContext são aceitas e ignoradas.
+ * além de 8 bits reto. kCIImageColorSpace com valor não nulo recusa a imagem:
+ * não há conversão de espaço. kCIContextCacheIntermediates = NO recalcula o raster.
  * tools/build.sh grava o Mach-O em /System/Library/Frameworks/CoreImage.framework
  * (tools/build-coreimage.sh). O loader prefere esse arquivo; sem ele, a fachada
  * vazia do libSystem (vscode_fwclasses.c) continua.
@@ -47,6 +48,8 @@ NSString *const kCIInputScaleKey = @"inputScale";
 NSString *const kCIInputAspectRatioKey = @"inputAspectRatio";
 NSString *const kCIInputTransformKey = @"inputTransform";
 NSString *const kCIOutputImageKey = @"outputImage";
+NSString *const kCIContextCacheIntermediates = @"kCIContextCacheIntermediates";
+NSString *const kCIImageColorSpace = @"kCIImageColorSpace";
 
 extern int cx_cgimage_src(const void *img, const uint8_t **px, long *bpr, int *w, int *h, int *premul);
 extern void *CGDataProviderCreateWithData(void *info, const void *data, size_t size, void (*release)(void *, const void *, size_t));
@@ -164,7 +167,8 @@ static CIImage *from_px(const uint32_t *px, int w, int h) {
     return [self imageWithCGImage:cg options:nil];
 }
 + (CIImage *)imageWithCGImage:(id)cg options:(NSDictionary *)options {
-    (void)options;
+    id space = options ? [options objectForKey:kCIImageColorSpace] : nil;
+    if (!mos_ci_colorspace_ok(space != nil)) return nil;
     const uint8_t *bytes = 0;
     long bpr = 0;
     int w = 0, h = 0, prem = 0;
@@ -360,7 +364,10 @@ int mos_coreimage_real(void) { return 0xC1; }
 }
 @end
 
-@interface CIContext : NSObject
+@interface CIContext : NSObject {
+    mos_ci_ctx ctx;
+    int ready;
+}
 + (CIContext *)contextWithOptions:(NSDictionary *)options;
 + (CIContext *)context;
 - (id)createCGImage:(CIImage *)im fromRect:(CGRect)r;
@@ -373,9 +380,18 @@ static void free_bytes(void *info, const void *data, size_t size) {
 }
 
 @implementation CIContext
+- (void)dealloc {
+    if (ready) mos_ci_ctx_free(&ctx);
+    [super dealloc];
+}
 + (CIContext *)contextWithOptions:(NSDictionary *)options {
-    (void)options;
-    return [[CIContext alloc] init];
+    CIContext *o = [[CIContext alloc] init];
+    if (!o) return nil;
+    id flag = options ? [options objectForKey:kCIContextCacheIntermediates] : nil;
+    int cache = flag ? [flag boolValue] : 1;
+    mos_ci_ctx_init(&o->ctx, cache);
+    o->ready = 1;
+    return o;
 }
 + (CIContext *)context { return [self contextWithOptions:nil]; }
 - (id)createCGImage:(CIImage *)im fromRect:(CGRect)r {
@@ -385,7 +401,8 @@ static void free_bytes(void *info, const void *data, size_t size) {
     if (w <= 0 || h <= 0) return nil;
     uint32_t *px = malloc((size_t)w * (size_t)h * 4u);
     if (!px) return nil;
-    if (mos_ci_render(im->img, r.origin.x, r.origin.y, w, h, px) != 0) { free(px); return nil; }
+    if (!ready) mos_ci_ctx_init(&ctx, 1), ready = 1;
+    if (mos_ci_ctx_render(&ctx, im->img, r.origin.x, r.origin.y, w, h, px) != 0) { free(px); return nil; }
     void *prov = CGDataProviderCreateWithData(0, px, (size_t)w * (size_t)h * 4u, free_bytes);
     if (!prov) { free(px); return nil; }
     void *cg = CGImageCreate((size_t)w, (size_t)h, 8, 32, (size_t)w * 4u, 0, 4, prov, 0, 0, 0);
@@ -398,6 +415,22 @@ static void free_bytes(void *info, const void *data, size_t size) {
     int w = (int)llround(bounds.size.width);
     int h = (int)llround(bounds.size.height);
     if (w <= 0 || h <= 0) return;
-    mos_ci_render_format(im->img, bounds.origin.x, bounds.origin.y, w, h, format, data, rb);
+    if (!ready) mos_ci_ctx_init(&ctx, 1), ready = 1;
+    uint32_t *tmp = malloc((size_t)w * (size_t)h * 4u);
+    if (!tmp) return;
+    if (mos_ci_ctx_render(&ctx, im->img, bounds.origin.x, bounds.origin.y, w, h, tmp) != 0) { free(tmp); return; }
+    for (int row = 0; row < h; row++) {
+        uint8_t *d = (uint8_t *)data + (long)row * rb;
+        for (int col = 0; col < w; col++) {
+            uint32_t p = tmp[(size_t)row * (size_t)w + (size_t)col];
+            uint8_t A = (uint8_t)(p >> 24), R = (uint8_t)(p >> 16), G = (uint8_t)(p >> 8), B = (uint8_t)p;
+            uint8_t *o = d + (size_t)col * 4u;
+            if (format == MOS_CI_BGRA8) { o[0] = B; o[1] = G; o[2] = R; o[3] = A; }
+            else if (format == MOS_CI_RGBA8) { o[0] = R; o[1] = G; o[2] = B; o[3] = A; }
+            else if (format == MOS_CI_ABGR8) { o[0] = A; o[1] = B; o[2] = G; o[3] = R; }
+            else { o[0] = A; o[1] = R; o[2] = G; o[3] = B; }
+        }
+    }
+    free(tmp);
 }
 @end

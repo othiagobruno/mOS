@@ -108,6 +108,31 @@ int main(void) {
     g_tcc_mic = 0;
     expect_i("cap tcc", avf_cap_start(1, 0, &err), 0);
     expect_i("cap tcc err", err, 1);
+    float tone[8] = {0.5f, -0.5f, 0.25f, -0.25f, 0, 0, 1, -1};
+    avf_read_t rd;
+    expect_i("read video", avf_read_begin(&rd, 2, tone, 2, 4), 0);
+    expect_i("read video err", rd.err, -11821);
+    expect_i("read texto", avf_read_begin(&rd, 3, tone, 2, 4), 0);
+    expect_i("read capitulo", avf_read_begin(&rd, 4, tone, 2, 4), 0);
+    expect_i("read audio", avf_read_begin(&rd, 1, tone, 2, 4), 1);
+    float gotf[4];
+    expect_i("read copy", (int)avf_read_copy(&rd, gotf, 2), 2);
+    expect_i("read resto", (int)avf_read_copy(&rd, gotf, 4), 2);
+    expect_i("read fim", rd.status, AVF_READ_COMPLETED);
+    if (gotf[0] != 0 || gotf[1] != 0) { printf("FALHA amostra final\n"); g_fail++; }
+    avf_write_t wr;
+    expect_i("write mp4", avf_write_begin(&wr, "public.mpeg-4", 8000, 1), 0);
+    expect_i("write mp4 err", wr.err, -11822);
+    expect_i("write wav", avf_write_begin(&wr, "public.wav", 8000, 1), 1);
+    short samples[4] = {1000, -1000, 2000, -2000};
+    expect_i("write append", (int)avf_write_append(&wr, samples, 4), 4);
+    expect_i("write finish", avf_write_finish(&wr, "/tmp/avf-wav-host.wav"), 1);
+    FILE *wf = fopen("/tmp/avf-wav-host.wav", "rb");
+    unsigned char wh[52];
+    size_t wn = wf ? fread(wh, 1, 52, wf) : 0;
+    if (wf) fclose(wf);
+    expect_i("wav bytes", (int)wn, 44 + 8);
+    expect_i("wav riff", wh[0] == 'R' && wh[8] == 'W' && wh[20] == 1 && wh[22] == 1, 1);
     cn = avf_cap_pull(0, got, 2, &err);
     expect_i("pull parado", (int)cn, 0);
     if (g_fail) { printf("FALHOU %d\n", g_fail); return 1; }

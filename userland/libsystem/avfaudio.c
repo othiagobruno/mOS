@@ -1339,6 +1339,193 @@ static id asset_tracks_media(id s, SEL c, id m) {
     return asset_tracks(s, c);
 }
 static void asset_load(id s, SEL c, id keys, void *blk) { (void)s; (void)c; (void)keys; if (blk) CALL_BLOCK0(blk); }
+/* AVAssetReader / AVAssetWriter. Áudio PCM vira CMSampleBuffer e WAV.
+ * Vídeo, texto e capítulo devolvem erro: não há decodificador nem câmera. */
+extern void *cx_cm_audio_sample(const short *pcm, unsigned frames, double rate);
+extern void *CMSampleBufferGetDataBuffer(void *s);
+extern int CMBlockBufferGetDataPointer(void *b, size_t off, size_t *lenAt, size_t *total, char **ptr);
+typedef struct {
+    cx_class_t *isa;
+    id asset, output, error;
+    avf_read_t rd;
+    u64 at;
+    double rate;
+} avrd_t;
+typedef struct { cx_class_t *isa; id track; int media; } avrdo_t;
+typedef struct {
+    cx_class_t *isa;
+    id url, error, input;
+    avf_write_t wr;
+} avwr_t;
+typedef struct { cx_class_t *isa; id track; } awin_t;
+cx_class_t AVAssetReader_c __asm__("OBJC_CLASS_$_AVAssetReader"), AVAssetReader_m __asm__("OBJC_METACLASS_$_AVAssetReader");
+cx_class_t AVAssetReaderTrackOutput_c __asm__("OBJC_CLASS_$_AVAssetReaderTrackOutput"), AVAssetReaderTrackOutput_m __asm__("OBJC_METACLASS_$_AVAssetReaderTrackOutput");
+cx_class_t AVAssetWriter_c __asm__("OBJC_CLASS_$_AVAssetWriter"), AVAssetWriter_m __asm__("OBJC_METACLASS_$_AVAssetWriter");
+cx_class_t AVAssetWriterInput_c __asm__("OBJC_CLASS_$_AVAssetWriterInput"), AVAssetWriterInput_m __asm__("OBJC_METACLASS_$_AVAssetWriterInput");
+#define ARD(o) ((avrd_t *)(o))
+#define ARO(o) ((avrdo_t *)(o))
+#define AWR(o) ((avwr_t *)(o))
+static int media_code(id m) {
+    const char *s = m ? cx_cstr(m) : "";
+    if (!s) return 0;
+    if (!strcmp(s, "soun") || !strcmp(s, "AVMediaTypeAudio")) return 1;
+    if (!strcmp(s, "vide") || !strcmp(s, "AVMediaTypeVideo")) return 2;
+    if (!strcmp(s, "text") || !strcmp(s, "AVMediaTypeText")) return 3;
+    if (!strcmp(s, "chap")) return 4;
+    return 0;
+}
+static void reader_fail(avrd_t *r, int code, const char *msg) {
+    r->rd.status = AVF_READ_FAILED;
+    r->rd.err = code;
+    id err = error_with("AVFoundationErrorDomain", code, msg);
+    setobj(&r->error, err);
+}
+static id reader_init(id s, SEL c, id asset, id *err) {
+    (void)c;
+    setobj(&ARD(s)->asset, asset);
+    ARD(s)->rd.status = AVF_READ_UNKNOWN;
+    if (!asset || !AST(asset)->dec) {
+        reader_fail(ARD(s), -11828, "O formato não é reconhecido pelo mOS.");
+        if (err) *err = ARD(s)->error;
+    }
+    return s;
+}
+static BOOL reader_can_add(id s, SEL c, id out) {
+    (void)c;
+    if (!out || ARD(s)->output || ARD(s)->rd.status == AVF_READ_FAILED) return 0;
+    int media = ARO(out)->media;
+    return media == 1 && ARD(s)->asset && AST(ARD(s)->asset)->dec;
+}
+static void reader_add(id s, SEL c, id out) {
+    (void)c;
+    if (!reader_can_add(s, 0, out)) {
+        int media = out ? ARO(out)->media : 0;
+        float dummy = 0;
+        avf_read_t fail;
+        avf_read_begin(&fail, media == 1 ? 2 : media, &dummy, 1, 1);
+        reader_fail(ARD(s), fail.err ? fail.err : -11821, "Não há decodificador para esta faixa. Vídeo, texto e capítulo não são lidos.");
+        return;
+    }
+    setobj(&ARD(s)->output, out);
+    objc_setAssociatedObject(out, "reader", s, 0);
+}
+static BOOL reader_start(id s, SEL c) {
+    (void)c;
+    avrd_t *r = ARD(s);
+    if (r->rd.status == AVF_READ_FAILED || !r->asset || !AST(r->asset)->dec || !r->output) return 0;
+    void *d = AST(r->asset)->dec;
+    r->rate = cx_audio_rate(d);
+    r->at = 0;
+    r->rd.status = AVF_READ_READING;
+    r->rd.media = 1;
+    r->rd.err = 0;
+    return 1;
+}
+static void reader_cancel(id s, SEL c) { (void)c; avf_read_cancel(&ARD(s)->rd); ARD(s)->rd.status = AVF_READ_CANCELLED; }
+static i64 reader_status(id s, SEL c) { (void)c; return ARD(s)->rd.status; }
+static id reader_error(id s, SEL c) { (void)c; return ARD(s)->error; }
+static id reader_copy(id s, SEL c) {
+    (void)c;
+    avrd_t *r = ARD(s);
+    if (r->rd.status != AVF_READ_READING) return 0;
+    void *d = r->asset ? AST(r->asset)->dec : 0;
+    if (!d) { reader_fail(r, -11828, "O formato não é reconhecido pelo mOS."); return 0; }
+    u64 total = cx_audio_frames(d);
+    if (r->at >= total) { r->rd.status = AVF_READ_COMPLETED; return 0; }
+    u32 n = 1024;
+    if (r->at + n > total) n = (u32)(total - r->at);
+    float *st = calloc(n, 2 * sizeof(float));
+    short *pcm = calloc(n, 4);
+    if (!st || !pcm) { free(st); free(pcm); reader_fail(r, -11821, "Sem memória para a amostra de áudio."); return 0; }
+    u32 got = cx_audio_read_stereo(d, r->at, n, st);
+    if (!got) { free(st); free(pcm); r->rd.status = AVF_READ_COMPLETED; return 0; }
+    avf_read_t chunk;
+    float *inter = malloc((size_t)got * 2 * sizeof(float));
+    if (!inter || !avf_read_begin(&chunk, 1, st, 2, got) || avf_read_copy(&chunk, inter, got) != got) {
+        free(inter); free(st); free(pcm);
+        reader_fail(r, -11821, "A amostra de áudio não pôde ser montada.");
+        return 0;
+    }
+    for (u32 i = 0; i < got; i++) {
+        float a = inter[i * 2], b = inter[i * 2 + 1];
+        if (a > 1) a = 1; if (a < -1) a = -1;
+        if (b > 1) b = 1; if (b < -1) b = -1;
+        pcm[i * 2] = (short)(a * 32767.f);
+        pcm[i * 2 + 1] = (short)(b * 32767.f);
+    }
+    void *sample = cx_cm_audio_sample(pcm, got, r->rate > 0 ? r->rate : 48000);
+    free(inter);
+    free(st);
+    free(pcm);
+    if (!sample) { reader_fail(r, -11821, "A amostra de áudio não pôde ser montada."); return 0; }
+    r->at += got;
+    if (r->at >= total) r->rd.status = AVF_READ_COMPLETED;
+    return objc_autorelease((id)sample);
+}
+static id output_copy(id s, SEL c) {
+    id reader = objc_getAssociatedObject(s, "reader");
+    return reader ? reader_copy(reader, c) : 0;
+}
+static id rout_init(id s, SEL c, id track, id settings) {
+    (void)c; (void)settings;
+    setobj(&ARO(s)->track, track);
+    ARO(s)->media = track ? 1 : 0;
+    return s;
+}
+static id rout_with(id k, SEL c, id track, id settings) {
+    (void)k;
+    return objc_autorelease(rout_init(cx_alloc_instance(&AVAssetReaderTrackOutput_c), c, track, settings));
+}
+static id rout_track(id s, SEL c) { (void)c; return ARO(s)->track; }
+static id writer_init(id s, SEL c, id url, id ftype, id *err) {
+    (void)c;
+    setobj(&AWR(s)->url, url);
+    const char *ft = ftype ? cx_cstr(ftype) : "";
+    if (!avf_write_begin(&AWR(s)->wr, ft, 48000, 2)) {
+        id e = error_with("AVFoundationErrorDomain", AWR(s)->wr.err, "O mOS só grava WAV PCM. Vídeo e outros contêineres não são escritos.");
+        setobj(&AWR(s)->error, e);
+        if (err) *err = e;
+    }
+    return s;
+}
+static BOOL writer_can_add(id s, SEL c, id input) {
+    (void)c;
+    return input && !AWR(s)->input && AWR(s)->wr.status == AVF_WRITE_WRITING;
+}
+static void writer_add(id s, SEL c, id input) {
+    (void)c;
+    if (!writer_can_add(s, 0, input)) return;
+    setobj(&AWR(s)->input, input);
+    objc_setAssociatedObject(input, "writer", s, 0);
+}
+static BOOL writer_start(id s, SEL c) {
+    (void)c;
+    return AWR(s)->wr.status == AVF_WRITE_WRITING && AWR(s)->input;
+}
+static BOOL writer_finish(id s, SEL c) {
+    (void)c;
+    const char *path = cx_audio_url_path(AWR(s)->url);
+    if (!avf_write_finish(&AWR(s)->wr, path)) {
+        id e = error_with("AVFoundationErrorDomain", AWR(s)->wr.err ? AWR(s)->wr.err : -11822, "O WAV não foi gravado.");
+        setobj(&AWR(s)->error, e);
+        return 0;
+    }
+    return 1;
+}
+static void writer_cancel(id s, SEL c) { (void)c; avf_write_cancel(&AWR(s)->wr); }
+static i64 writer_status(id s, SEL c) { (void)c; return AWR(s)->wr.status; }
+static id writer_error(id s, SEL c) { (void)c; return AWR(s)->error; }
+static BOOL input_append(id s, SEL c, id sample) {
+    (void)c;
+    id w = objc_getAssociatedObject(s, "writer");
+    if (!w || !sample || AWR(w)->wr.status != AVF_WRITE_WRITING) return 0;
+    void *bb = CMSampleBufferGetDataBuffer(sample);
+    char *ptr = 0;
+    size_t total = 0;
+    if (!bb || CMBlockBufferGetDataPointer(bb, 0, 0, &total, &ptr) || !ptr || total < 4 || (total & 3)) return 0;
+    return avf_write_append(&AWR(w)->wr, (const short *)ptr, (unsigned)(total / 4)) != 0;
+}
+static BOOL input_ready(id s, SEL c) { (void)s; (void)c; return 1; }
 static i64 asset_status_key(id s, SEL c, id key, id *err) {
     (void)c; (void)key;
     if (AST(s)->dec) return 2;   /* AVKeyValueStatusLoaded */
@@ -1791,6 +1978,31 @@ void cx_avfaudio_init(void) {
     M(AVAsset, "tracks", asset_tracks); M(AVAsset, "tracksWithMediaType:", asset_tracks_media);
     M(AVAsset, "loadValuesAsynchronouslyForKeys:completionHandler:", asset_load);
     M(AVAsset, "statusOfValueForKey:error:", asset_status_key);
+    K(&AVAssetReader_c, &AVAssetReader_m, "AVAssetReader", obj, sizeof(avrd_t) - 8);
+    M(AVAssetReader, "initWithAsset:error:", reader_init);
+    M(AVAssetReader, "canAddOutput:", reader_can_add);
+    M(AVAssetReader, "addOutput:", reader_add);
+    M(AVAssetReader, "startReading", reader_start);
+    M(AVAssetReader, "cancelReading", reader_cancel);
+    M(AVAssetReader, "status", reader_status);
+    M(AVAssetReader, "error", reader_error);
+    K(&AVAssetReaderTrackOutput_c, &AVAssetReaderTrackOutput_m, "AVAssetReaderTrackOutput", obj, sizeof(avrdo_t) - 8);
+    CM(AVAssetReaderTrackOutput, "assetReaderTrackOutputWithTrack:outputSettings:", rout_with);
+    M(AVAssetReaderTrackOutput, "initWithTrack:outputSettings:", rout_init);
+    M(AVAssetReaderTrackOutput, "track", rout_track);
+    M(AVAssetReaderTrackOutput, "copyNextSampleBuffer", output_copy);
+    K(&AVAssetWriter_c, &AVAssetWriter_m, "AVAssetWriter", obj, sizeof(avwr_t) - 8);
+    M(AVAssetWriter, "initWithURL:fileType:error:", writer_init);
+    M(AVAssetWriter, "canAddInput:", writer_can_add);
+    M(AVAssetWriter, "addInput:", writer_add);
+    M(AVAssetWriter, "startWriting", writer_start);
+    M(AVAssetWriter, "finishWriting", writer_finish);
+    M(AVAssetWriter, "cancelWriting", writer_cancel);
+    M(AVAssetWriter, "status", writer_status);
+    M(AVAssetWriter, "error", writer_error);
+    K(&AVAssetWriterInput_c, &AVAssetWriterInput_m, "AVAssetWriterInput", obj, sizeof(awin_t) - 8);
+    M(AVAssetWriterInput, "appendSampleBuffer:", input_append);
+    M(AVAssetWriterInput, "isReadyForMoreMediaData", input_ready);
     K(&AVPlayerItem_c, &AVPlayerItem_m, "AVPlayerItem", obj, sizeof(avitem_t) - 8);
     CM(AVPlayerItem, "playerItemWithURL:", item_with_url); CM(AVPlayerItem, "playerItemWithAsset:", item_with_asset);
     M(AVPlayerItem, "initWithURL:", item_init_url); M(AVPlayerItem, "initWithAsset:", item_init_asset);
