@@ -71,7 +71,7 @@ typedef struct mrpipe {
 typedef struct mcpipe { MHDR; id func; msl_fn_t *fn; u32 maxthreads; } mcpipe_t;
 
 /* ---- gravação de comandos */
-typedef struct { id obj; u64 off; void *bytes; } bind_t;
+typedef struct { id obj; u64 off; void *bytes; u64 nbytes; } bind_t;
 typedef struct rstate {
     mrpipe_t *pipe;
     bind_t vb[31], fb[31];
