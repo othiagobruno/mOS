@@ -13,7 +13,9 @@
 void *_Block_copy(const void *b);
 void _Block_release(const void *b);
 id objc_autorelease(id o);
-extern cx_class_t SKPaymentQueue_c, UNUserNotificationCenter_c;
+/* o nome de link é o OBJC_CLASS_$_… de vscode_fwclasses.c; sem o asm o zig não acha o símbolo */
+extern cx_class_t SKPaymentQueue_c __asm__("OBJC_CLASS_$_SKPaymentQueue");
+extern cx_class_t UNUserNotificationCenter_c __asm__("OBJC_CLASS_$_UNUserNotificationCenter");
 
 int cx_storekit_verify_receipt(const void *bytes, size_t n, char *err, size_t cap) {
     return sk_verify(bytes, n, err, cap);
