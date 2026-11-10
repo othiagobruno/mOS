@@ -1,7 +1,7 @@
 /*
  * API C dos formatadores de fmt_core.inc. O overlay Swift (FormatStyles / IntegerFormatStyle)
  * repete as mesmas saídas para en, pt, de e fr; o teste de host compara este núcleo.
- * Não exporta os símbolos mangled do FoundationInternationalization.
+ * Os símbolos mangled que o WhatsApp importa estão em fi_swift.c e chamam este núcleo.
  */
 #include "foundation.h"
 #include "libc.h"
