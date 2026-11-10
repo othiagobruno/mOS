@@ -586,6 +586,8 @@ void cx_appkit_input_init(void) {
     if (cx_corebluetooth_init) cx_corebluetooth_init();   /* corebluetooth.c */
     cx_framework_classes_init(); /* vscode_fwclasses.c: classes de frameworks ausentes */
     { extern void cx_userspace_services_init(void); cx_userspace_services_init(); }
+    { extern void cx_usernotifications_init(void); cx_usernotifications_init(); }   /* usernotifications.c: addNotificationRequest, delegate, banner */
+    { extern void cx_appkit_docktile_init(void); cx_appkit_docktile_init(); }       /* appkit_docktile.c: NSDockTile */
     cx_appkit_extra_init();     /* appkit_extra.c: painéis, barra de status, NSAnimation, NSParagraphStyle... */
     cx_tracking_init();         /* hover: NSTrackingArea e mouseEntered/Exited/Moved */
     cx_foundation_extra_init(); /* foundation_extra.c: NSMutableData, NSTimeZone, NSCalendar, NSInvocation... */

@@ -82,7 +82,7 @@ Há callbacks de dados e de download em `foundation_more.c`. Desafio de autentic
 
 ## UserNotifications — autorização local, sem push
 
-`UNUserNotificationCenter.currentNotificationCenter`, `requestAuthorizationWithOptions:completionHandler:` e `authorizationStatus` (0 não determinado, 1 negado, 2 autorizado). O pedido grava pending no TCC (`userNotifications`). O bloco só é chamado em `cx_un_decide`. Não há servidor APNs nem `UNNotificationSettings`.
+`UNUserNotificationCenter.currentNotificationCenter`, `requestAuthorizationWithOptions:completionHandler:` e `authorizationStatus` (0 não determinado, 1 negado, 2 autorizado). O pedido grava pending no TCC (`userNotifications`). O bloco só é chamado em `cx_un_decide`. Não há servidor APNs nem `UNNotificationSettings`. Pedido, gatilho, delegate e banner estão em `docs/interface-i19-i23.md`.
 
 ## StoreKit — stub local rotulado
 

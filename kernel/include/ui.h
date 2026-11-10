@@ -198,6 +198,7 @@ typedef struct app {
     void *state;
     /* Dock */
     int badge;                  /* número no selo vermelho do ícone (0 = sem selo) */
+    char badge_label[8];        /* texto do selo; vazio desenha o número */
     bool attention;             /* pula no Dock até o app ficar ativo */
     bool open_at_login;         /* Opções > Abrir ao Iniciar */
     bool always_tick;           /* tick roda mesmo com o app fechado (alarmes, lembretes) */
@@ -255,6 +256,8 @@ int  desktop_dock_top(void);
 rect_t desktop_dock_rect(void);
 void desktop_rebuild_wallpaper(void);
 void notify(const char *title, const char *body);
+void notify_tagged(const char *title, const char *body, int pid, int token);
+int notify_banner_hit(int x, int y, int *pid, int *token);
 void desktop_open_menu(int index);
 void desktop_close_menus(void);
 bool desktop_menu_open(void);
@@ -269,6 +272,7 @@ surface_t *desktop_wallpaper_blur(void);        /* papel de parede inteiro desfo
 rect_t dock_icon_rect(app_t *a);
 rect_t dock_window_rect(window_t *w);           /* destino do gênio: a miniatura da janela no Dock */
 void dock_set_badge(app_t *a, int n);           /* selo vermelho com número (0 remove) */
+void dock_set_badge_label(app_t *a, const char *label); /* texto; vazio ou "0" remove */
 void dock_request_attention(app_t *a);          /* o ícone pula até o app ficar ativo */
 void desktop_tile_popover(window_t *w, int bx, int by); /* menu do botão verde (bx,by = centro do botão na tela) */
 bool desktop_tile_popover_open(void);

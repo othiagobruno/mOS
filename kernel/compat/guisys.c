@@ -364,6 +364,16 @@ static gapp_t *gapp_for(process_t *p) {
     return ga;
 }
 
+int compat_gui_set_badge_label(process_t *p, const char *label) {
+    gapp_t *ga = gapp_for(p);
+    app_t *sc;
+    if (!ga) return 0;
+    dock_set_badge_label(&ga->app, label ? label : "");
+    sc = apps_shortcut_for(&ga->app);
+    if (sc && sc != &ga->app) dock_set_badge_label(sc, label ? label : "");
+    return 1;
+}
+
 static gapp_t *gapp_find(process_t *p) {
     for (gapp_t *ga = gapps; ga; ga = ga->next) if (ga->pid == p->pid) return ga;
     return NULL;

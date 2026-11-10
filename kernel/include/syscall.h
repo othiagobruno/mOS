@@ -70,6 +70,9 @@ enum {
     SYS_WEB,           /* 59: (op, id, a, b) -> ...                 motor web do sistema para o WKWebView (MOS_WEB_* abaixo, kernel/web/webview.c) */
     SYS_THREADCTL,     /* 60: (op, tid, a) -> ...                   outra thread do processo: suspender, retomar, registradores (MOS_THR_* abaixo) */
     SYS_COUNT,
+    /* 63: banner de notificação do app e selo do Dock (kernel/ui/deskbridge.c).
+     * rdi = MOS_DESK_BANNER (título, corpo, token) | MOS_DESK_TAKE (int *token) | MOS_DESK_BADGE (rótulo). */
+    SYS_DESKTOP = 63,
     SYS_GUI_FIRST = 64,/* 64..79: interface gráfica dos apps do macOS (kernel/compat/guisys.c) */
     SYS_GUI_LAST = 79,
     /* 80..95: portas Mach entre processos (kernel/proc/machipc.c; libSystem: userland/libsystem/mach.c) */
@@ -80,6 +83,10 @@ enum {
     SYS_MACH_VM = 83,       /* (op, u64 args[8]) -> kern_return_t           entradas de memória compartilhada */
     SYS_MACH_LAST = 95
 };
+
+#define MOS_DESK_BANNER 1
+#define MOS_DESK_TAKE   2
+#define MOS_DESK_BADGE  3
 
 /* SYS_SPAWNVEC: vetores no espaço do pai. argv e envp são char *const * terminados em NULL.
  * envp 0 = o ambiente curto padrão (HOME, PATH, …). O Electron passa os dois completos:

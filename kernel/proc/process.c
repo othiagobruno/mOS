@@ -3010,6 +3010,11 @@ static u64 proc_syscall_(int_frame_t *f) {
         r = uvm_copy_out(p, b, &pi, sizeof pi) ? 1 : -MOS_EFAULT;
         break;
     }
+    case SYS_DESKTOP: {
+        extern i64 deskbridge_syscall(process_t *p, u64 op, u64 b, u64 c, u64 d);
+        r = deskbridge_syscall(p, a, b, c, f->r10);
+        break;
+    }
     default:
         if (f->rax >= SYS_MACH_FIRST && f->rax <= SYS_MACH_LAST) return machipc_syscall(f);   /* pode bloquear */
         if (f->rax >= SYS_GUI_FIRST && f->rax <= SYS_GUI_LAST) r = compat_gui_syscall(p, f->rax, a, b, c, f->r10, f->r8);
