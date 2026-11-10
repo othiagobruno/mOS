@@ -581,6 +581,12 @@ static void unwind_loop(void *exc, int resume) {
 
 int _Unwind_RaiseException(struct uw_exc *e) { unwind_loop(e, 0); return UR_END; }
 void _Unwind_Resume(struct uw_exc *e) { unwind_loop(e, 1); }
+u64 _Unwind_GetCFA(void *p) { return ((struct uw_ctx *)p)->r[6] ? ((struct uw_ctx *)p)->r[6] : ((struct uw_ctx *)p)->r[7]; }
+int _Unwind_GetIPInfo(void *p, int *before) { if (before) *before = 0; return (int)_Unwind_GetIP(p); }
+u64 _Unwind_GetDataRelBase(void *p) { (void)p; return 0; }
+u64 _Unwind_GetTextRelBase(void *p) { (void)p; return 0; }
+void _Unwind_DeleteException(void *e) { (void)e; }
+int _Unwind_Backtrace(int (*cb)(void *, void *), void *arg) { (void)cb; (void)arg; return UR_END; }
 
 #else
 int _Unwind_RaiseException(void *);
