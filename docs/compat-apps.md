@@ -659,8 +659,8 @@ O computer use destes três apps precisa de captura, lista de janelas, injeção
 
 ### O que é stub
 
-- **AX de outro processo.** O elemento é criado, mas ler a árvore devolve `-25204`. O transporte entre processos é do Sistemas e não existe na interface deles. Não há um XPC paralelo neste branch.
-- **`SCStream` e `CGDisplayStream`.** Vídeo contínuo não é entregue. A captura pontual é a de `SCScreenshotManager`.
+- **AX de outro processo.** A árvore de views de outro pid continua `-25204`. `_AXUIElementCreateWithRemoteToken` aceita o token `mAX1` (12 bytes: marca, pid, número da janela) e, com a janela na lista do compositor, devolve título, posição e tamanho. Não há XPC paralelo neste branch.
+- **`SCStream`.** `startCaptureWithCompletionHandler:` entrega um quadro (`CMSampleBuffer` com `CVPixelBuffer` BGRA e as chaves `SCStreamFrameInfo*`) da área do filtro. Sem a concessão, o bloco recebe erro e não há pixel. Não há quadro seguinte nem áudio. `CGDisplayStream` continua ausente.
 - **`SCShareableContent` acima/abaixo de uma janela âncora.** Entra o recorte on-screen. A janela âncora não filtra a lista.
 - **`AXObserver` e atributo parametrizado.** Com a permissão, `-25208`. Sem ela, `-25211`.
 - **`CGEventPostToPid`.** O pid é ignorado; o evento segue a fila global.

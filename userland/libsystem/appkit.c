@@ -202,8 +202,10 @@ typedef struct {
     u32 fill, stroke;
     double line_width;
     double galpha;                  /* CGContextSetAlpha: multiplica o alfa das cores de preenchimento e traço */
+    int blend;                      /* CGContextSetBlendMode no contexto da janela; 16 = clear */
 } ctx_t;
-static ctx_t ctx = {0, 0, 0, 0, NO, 0xFF000000, 0xFF000000, 1, 1};
+static ctx_t ctx = {0, 0, 0, 0, NO, 0xFF000000, 0xFF000000, 1, 1, 0};
+void cx_cg_note_blend(int mode) { ctx.blend = mode; }
 /* aplica o alfa global (CGContextSetAlpha) a uma cor ARGB */
 static u32 ga(u32 argb) { if (ctx.galpha >= 1) return argb; u32 a = (u32)((argb >> 24) * (ctx.galpha > 0 ? ctx.galpha : 0) + 0.5); return (a << 24) | (argb & 0xFFFFFF); }
 u32 cx_cg_fill_argb(void) { return ctx.fill; }
@@ -544,6 +546,7 @@ void CGContextSetStrokeColorWithColor(id c, id color) { (void)c; ctx.stroke = ga
 void CGContextSetLineWidth(id c, double w) { (void)c; ctx.line_width = w; pth(cgp())->lw = w; }
 void CGContextFillRect(id c, CGRect r) {
     if (cx_bm_fill_rect(c, r.o.x, r.o.y, r.s.w, r.s.h)) return;
+    if (ctx.blend == 16) { double x, y, w, h; px_rect(r, &x, &y, &w, &h); g_fill(x, y, w, h, 0); return; }
     NSRectFill(r);
 }
 void CGContextFillRects(id c, const CGRect *r, u64 n) { for (u64 i = 0; i < n; i++) CGContextFillRect(c, r[i]); }
