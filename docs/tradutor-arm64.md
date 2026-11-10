@@ -218,8 +218,9 @@ próprias `0x4D00..`, ucontext/mcontext64 do Darwin arm64, ESR, tabela de sysctl
   interpretador: estado já no início da instrução + volta ao laço), UDF/HLT → SIGILL, BRK → SIGTRAP com o imediato
   no ESR; `THREADCTL GETSTATE` em formato arm64; `munmap`/`mach_vm_protect` invalidam traduções; fork/exec/
   posix_spawn passam pelo kernel (x86_64 ↔ arm64 nos dois sentidos). `MOS_A64_ENGINE=interp|jit` escolhe o motor.
-- **Limites conhecidos.** O kernel não aplica proteção por página, então a rede de segurança de SMC do JIT
-  (`a64_host_jit_wprotect`) fica desligada e vale o IC IVAU/`sys_icache_invalidate`; não há commpage arm64 (a
+- **Limites conhecidos.** A rede de SMC do JIT existe (`PTE_JWP`): página traduzida perde a escrita e a
+  falta vira invalidação. `MAP_JIT` + `pthread_jit_write_protect_np` valem por thread, só nessas faixas;
+  página MAP_JIT ainda não executada continua gravável. Não há commpage arm64 (a
   região baixa não é do usuário no mOS). A página vista pelo processo arm64 é de 16 KiB de verdade
   nas operações de memória (contrato em `docs/pagesize-arm64.md`); o kernel continua em 4 KiB.
 
@@ -359,7 +360,9 @@ Arquivos: `jit_core.c` (cache, despachante, threads, invalidação, recuperaçã
   indiretas (u64 de `reserved[15]`: baixo = runtime, alto = JIT).
 - **Multithread**: cache compartilhado, trava global para tradução/encadeamento/invalidação;
   código só é reaproveitado no esvaziamento total, com todas as threads fora (quiescência).
-- **Invalidação**: `a64_invalidate`/IC IVAU por intervalo (índice por página). Rede de
+- **Invalidação**: `a64_invalidate`/IC IVAU por intervalo (índice por página). O cache de saltos
+  publica o ponteiro de código e só depois o pc; quem lê confere o pc de novo antes de saltar, e a
+  invalidação dá um chute nas threads antes de soltar a trava. Rede de
   segurança: páginas com código traduzido ficam sem escrita; a falha de escrita devolve a
   escrita, agenda a invalidação e expulsa as threads. Depois de 4 vezes a página vira
   "volátil" e seus blocos conferem o próprio código na entrada.
@@ -374,7 +377,7 @@ Arquivos: `jit_core.c` (cache, despachante, threads, invalidação, recuperaçã
 
 Testes: `jit_fault_{mid,sub,pair,ldp,q,ld1}` (falha no meio do bloco, STP/LDP/LDP Q/ST1
 parciais), `jit_sa0`, `jit_ldar`, `jit_pairs`, `jit_smc` (IC IVAU e só rede de segurança),
-`jit_smc_wp`, `jit_badpc`, `jit_udf_first`, `jit_atomics`, `jit_xpair`, `jit_fp`, `jit_fcmp`, `jit_cvt`, `jit_fpv`, `jit_fpsr`, `jit_neon`, `jit_neon2`, `jit_neon3`, `jit_neon4`, `jit_ldn`, `jit_crypto`, `jit_sha`, `jit_f16`, `jit_fpv_fma`, `jit_xpair_tam`, `jit_bench_int`, `jit_bench_mem`, `jit_bench_call`.
+`jit_smc_wp`, `jit_v8` (duas funções na mesma página; reescrita parcial), `jit_badpc`, `jit_udf_first`, `jit_atomics`, `jit_xpair`, `jit_fp`, `jit_fcmp`, `jit_cvt`, `jit_fpv`, `jit_fpsr`, `jit_neon`, `jit_neon2`, `jit_neon3`, `jit_neon4`, `jit_ldn`, `jit_crypto`, `jit_sha`, `jit_f16`, `jit_fpv_fma`, `jit_xpair_tam`, `jit_bench_int`, `jit_bench_mem`, `jit_bench_call`.
 
 Desempenho (harness no Windows, instruções contadas pelo interpretador):
 
