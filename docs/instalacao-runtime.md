@@ -14,6 +14,7 @@ Frente do loader, do Launch Services, do dyld e do VFS: abrir, encerrar e persis
 - **Instalar de um .dmg.** Depois de montar, o DiskImageMounter copia os `.app` do topo do volume novo e de `Applications` e `Aplicativos` para `/Aplicativos` (`ls_install_app`). Não entra dentro do bundle. O destino que já existe não é sobrescrito.
 - **Instalar de um .pkg / .mpkg.** O DiskImageMounter extrai o Payload (cpio em gzip ou pbzx) de um xar flat, confere os caminhos no Bom e grava em `/Aplicativos` (`kernel/apps/pkgextract.c`). Um `.mpkg` que é diretório instala os `.pkg` do topo e de `Contents/Packages`. Scripts de pré e pós-instalação são contados e não executados. Symlink do cpio não é materializado. Caminho absoluto, `..` ou componente `SC_Info` recusa o pacote inteiro antes de qualquer escrita. O destino no VFS só cria diretório real, sem seguir `#mOS-link:` no meio do caminho.
 - **Agentes e login.** O init varre de novo, a cada 5 s, LaunchAgents/LaunchDaemons de sistema e de usuário, os de `Conteúdo/Library` dentro de cada `.app` em `/Aplicativos`, e `~/Library/Preferences/com.mos.loginitems` (um caminho absoluto por linha). No boot a varredura extra não inicia ninguém: o laço que já existia inicia os `RunAtLoad`. A cada 5 s só inicia job com `last_start == 0`, para não duplicar. `LSSharedFileListInsertItemURL`, `LSSharedFileListCopySnapshot` e `LSSharedFileListItemRemove` (`userland/libsystem/vscode_frameworks.c`, arquivo da frente Sistemas) chamam `userland/libsystem/loginitems.c`, que reescreve o arquivo. Cada arquivo só reconcilia jobs com `src` naquele caminho, então a lista vazia de outro usuário não apaga o resto. O rótulo é `mos.login.<nome do app>`. Item removido sai da lista e o init não o sobe (`runatload` e `keep` em 0; se o pid ainda é 0, o job some). Processo que já está no ar não é morto. O "abrir ao iniciar sessão" do Dock já é outro arquivo, da Interface (`com.mos.dock.cfg`).
+- **XPC no bundle.** Ao reler um `.app`, o Launch Services anuncia os `.xpc` de `Contents/XPCServices`, de `Frameworks/*.framework` (também `Versions/*/XPCServices` e `Updater.app`) e o init cria o job sob demanda (`runatload` 0, nome Mach = `CFBundleIdentifier`). O plugin em `Library/SecurityAgentPlugins` ou `AuthorizationPlugins`, ou com `AuthorizationPlugin` no nome, só é registrado ou recusado no log. Não é executado e não ganha privilégio. `tools/stage-xpc.ps1` copia esses bundles no stage do Chrome, do Electron, do VS Code e do layout Chromium (`stage-chromeapp.ps1`).
 - **dyld remove.** `_dyld_register_func_for_remove_image` guarda até 32 callbacks. `cx_dyld_notify_remove` os chama. O `dlclose` não chama: `MOS_DYLD_CLOSE` só tira uma referência e o kernel não desmapeia.
 
 ## O que é recusa ou stub
@@ -100,6 +101,8 @@ gcc -std=c11 -Wall -Wextra -O1 -DMOS_HOST_TEST -D_GNU_SOURCE -D_msize=malloc_usa
   kernel/fs/inflate.c kernel/fs/xz.c -o /tmp/pkgtest && /tmp/pkgtest
 gcc -std=c11 -Wall -Wextra -O1 -D_GNU_SOURCE -Ikernel/include \
   tools/loginitemtest.c -o /tmp/loginitemtest && /tmp/loginitemtest
+gcc -std=c11 -Wall -Wextra -O1 -D_GNU_SOURCE -Ikernel/include \
+  tools/xpctest.c -o /tmp/xpctest && /tmp/xpctest
 ```
 
 Resultado nesta máquina (gcc, árvore descartável em `/tmp`, sem disco):
@@ -132,6 +135,19 @@ login init subiria: 1 (mos.login.Ficar.app)
 login init depois de remover: 0
 login em execução não sobe de novo: pid=7 runatload=0
 loginitemtest: 25/25 PASS
+registro:
+  xpc com.mos.local -> /tmp/mos-xpc-Nupv9u/Demo.app/Contents/XPCServices/Local.xpc/Contents/MacOS/Local
+  job com.mos.local runatload=0 nsvc=1 mach=com.mos.local privilegio=0
+  xpc org.sparkle-project.InstallerService -> /tmp/mos-xpc-Nupv9u/Demo.app/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Installer.xpc/Contents/MacOS/Installer
+  job org.sparkle-project.InstallerService runatload=0 nsvc=1 mach=org.sparkle-project.InstallerService privilegio=0
+  xpc org.sparkle-project.DownloaderService -> /tmp/mos-xpc-Nupv9u/Demo.app/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Downloader.xpc/Contents/MacOS/Downloader
+  job org.sparkle-project.DownloaderService runatload=0 nsvc=1 mach=org.sparkle-project.DownloaderService privilegio=0
+  xpc org.sparkle-project.UpdaterXPC -> /tmp/mos-xpc-Nupv9u/Demo.app/Contents/Frameworks/Sparkle.framework/Versions/B/Updater.app/Contents/XPCServices/UpdaterXPC.xpc/Contents/MacOS/UpdaterXPC
+  job org.sparkle-project.UpdaterXPC runatload=0 nsvc=1 mach=org.sparkle-project.UpdaterXPC privilegio=0
+  authplugin recusado /tmp/mos-xpc-Nupv9u/Demo.app/Contents/Library/SecurityAgentPlugins/SemInfo.bundle (sem Info.plist); nenhum privilégio concedido
+  authplugin com.openai.CodexComputerUseAuthorizationPlugin registrado em /tmp/mos-xpc-Nupv9u/Demo.app/Contents/Library/SecurityAgentPlugins/CodexComputerUseAuthorizationPlugin.bundle; não carregado e sem privilégio
+xpctest: 4 xpc, 1 auth registrado, 1 recusado, privilegio=0
+xpctest: 34/34 PASS
 ```
 
 A imagem de 32 MiB contém `#mOS-link:A` e conserva o magic `\xcf\xfa\xed\xfeDEMO`. Não houve assinatura Ed25519 nesse teste (sem `--key`).

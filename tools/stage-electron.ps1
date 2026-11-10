@@ -217,6 +217,8 @@ if ($Tracepoints) { ($Tracepoints -split ';') -join "`n" | Set-Content -Path $tp
 else { Remove-Item $tpFile -ErrorAction SilentlyContinue }
 $mb = (Get-ChildItem -LiteralPath $dstApp -Recurse -File | Measure-Object Length -Sum).Sum / 1MB
 Write-Host ("{0}.app ({1}): {2:N1} MiB" -f $name, $exe, $mb) -ForegroundColor Cyan
+. (Join-Path $PSScriptRoot 'stage-xpc.ps1')
+Copy-MosBundleServices $src $dst
 & (Join-Path $root "$OutDir\mkimg.exe") (Join-Path $root "$OutDir\mOS.img") $esp $SizeMiB --test-overlay $ovt
 if ($LASTEXITCODE -ne 0) { Write-Host 'mkimg FAILED' -ForegroundColor Red; exit 1 }
 Write-Host "OK: $OutDir\mOS.img" -ForegroundColor Green

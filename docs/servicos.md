@@ -53,9 +53,7 @@ O launchd atende o serviço Mach `com.apple.launchd.mos` (protocolo `LC_*` em `u
   cliente, `WELCOME` com a porta do par no servidor). O prazo é de 30 s, para cobrir o launchd iniciar o daemon.
 - Ouvinte (`XPC_CONNECTION_MACH_SERVICE_LISTENER`) e `xpc_main`: `bootstrap_check_in`; cada cliente vira uma conexão
   "par" com thread de recepção própria. O nome do `xpc_main` vem de `XPC_SERVICE_NAME` (ou do `CFBundleIdentifier`).
-- **XPC services em bundles**: `xpc_connection_create(nome)` sem o nome no bootstrap procura em
-  `<app>/Contents/XPCServices/*.xpc` o bundle com `CFBundleIdentifier` = nome e pede ao launchd (`LC_SUBMIT`) um job
-  sob demanda com o executável dele; depois o `look_up` acha o nome.
+- **XPC services em bundles**: o init, ao varrer `/Aplicativos`, registra os `.xpc` de `Contents/XPCServices` e os de dentro de frameworks (`Versions/*/XPCServices` e `Updater.app`) como job sob demanda. O nome Mach é o `CFBundleIdentifier`. `xpc_connection_create(nome)` sem o nome no bootstrap ainda procura em `<app>/Contents/XPCServices/*.xpc` e pede `LC_SUBMIT`. Um authorization plugin só aparece no log (`registrado` ou `recusado`); não é carregado e não recebe privilégio.
 - Morte do outro lado: as duas pontas pedem aviso de nome morto. O cliente de um serviço recebe
   `XPC_ERROR_CONNECTION_INTERRUPTED` (as respostas pendentes também) e o próximo envio reconecta — o launchd reinicia
   o daemon. Do lado do servidor, o par de um cliente que morreu recebe `XPC_ERROR_CONNECTION_INVALID`.

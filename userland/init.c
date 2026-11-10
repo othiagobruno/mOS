@@ -25,6 +25,7 @@
 #define LI_LOGIC_ONLY 1
 #define LI_SYNC 1
 #include "loginitem.inc"
+#include "bundlereg.inc"
 
 #define LEGACY_DIR "/Sistema/Biblioteca/LaunchDaemons"
 #define MAX_JOBS 64
@@ -290,6 +291,84 @@ out:
 }
 
 static void scan_dir(const char *dir);
+static void print_line(const char *prefix, const char *s) {
+    char nl = '\n';
+    if (prefix) write(1, prefix, strlen(prefix));
+    if (s) write(1, s, strlen(s));
+    write(1, &nl, 1);
+}
+
+static int br_init_list(void *ctx, const char *dir, int index, char *name, int cap) {
+    (void)ctx;
+    if (!name || cap < 2) return 0;
+    return readdir(dir, index, name, (usize)cap) == 1;
+}
+static int br_init_read(void *ctx, const char *path, char *buf, int cap) {
+    i64 n;
+    (void)ctx;
+    if (!buf || cap < 2) return -1;
+    memset(buf, 0, (usize)cap);
+    n = read_file(path, buf, (usize)cap - 1);
+    if (n < 0) return -1;
+    buf[n] = 0;
+    return (int)n;
+}
+static int br_init_isfile(void *ctx, const char *path) {
+    (void)ctx;
+    return file_size(path) >= 0;
+}
+
+static br_item_t br_items[BR_MAX];
+static char br_auth_seen[BR_MAX][BR_PATH];
+static int br_nauth;
+
+static int br_auth_logged(const char *where) {
+    int i;
+    for (i = 0; i < br_nauth; i++) if (br_eq(br_auth_seen[i], where)) return 1;
+    if (br_nauth < BR_MAX && br_copy(br_auth_seen[br_nauth], BR_PATH, where) == 0) br_nauth++;
+    return 0;
+}
+
+/* XPC dos apps em /Aplicativos: sob demanda, nome Mach = CFBundleIdentifier. O plugin só entra no log. */
+static void scan_bundle_services(void) {
+    char app[160], path[400], line[480];
+    br_fs_t fs;
+    int i, a;
+    fs.list = br_init_list;
+    fs.read = br_init_read;
+    fs.isfile = br_init_isfile;
+    fs.ctx = 0;
+    for (a = 0; readdir("/Aplicativos", a, app, sizeof app) == 1; a++) {
+        int n;
+        if (!ends(app, ".app")) continue;
+        join(path, sizeof path, "/Aplicativos", app);
+        memset(br_items, 0, sizeof br_items);
+        n = br_scan(&fs, path, br_items, BR_MAX);
+        for (i = 0; i < n; i++) {
+            br_item_t *it = &br_items[i];
+            if (br_fmt(it, line, (int)sizeof line) <= 0) continue;
+            if (it->kind == BR_XPC) {
+                job_t *j = job_find(it->label);
+                if (j) continue;
+                j = job_new(it->label);
+                if (!j) { print_line("launchd: sem vaga ", it->label); continue; }
+                scopy(j->src, it->where, sizeof j->src);
+                scopy(j->prog, it->exe, sizeof j->prog);
+                scopy(j->argv[0], it->exe, sizeof j->argv[0]);
+                j->argc = 1;
+                scopy(j->svc[0], it->label, sizeof j->svc[0]);
+                j->nsvc = 1;
+                j->runatload = 0;
+                j->keep = 0;
+                reserve(j);
+                print_line("launchd: ", line);
+            } else if (!br_auth_logged(it->where)) {
+                print_line("launchd: ", line);
+            }
+        }
+    }
+}
+
 static void scan_app_agents(void) {
     char app[160], dir[512];
     for (int i = 0; readdir("/Aplicativos", i, app, sizeof app) == 1; i++) {
@@ -383,6 +462,7 @@ static void scan_user_jobs(int autostart) {
         scan_dir(la);
     }
     scan_app_agents();
+    scan_bundle_services();
     scan_loginitems();
     if (!autostart) return;
     lock();
