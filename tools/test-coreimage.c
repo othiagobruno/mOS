@@ -1,4 +1,5 @@
 /* Host: pixels do CoreImage contra valores calculados à parte.
+ * O teste liga o imageio_decode.c só para fornecer mos_img_decode. O framework não o define.
  * cc -O2 tools/test-coreimage.c userland/frameworks/CoreImage/coreimage_cpu.c \
  *    userland/frameworks/ImageIO/imageio_decode.c -lm -I userland/frameworks/CoreImage -o /tmp/test-coreimage
  */
