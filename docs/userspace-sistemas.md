@@ -89,13 +89,21 @@ Há callbacks de dados e de download em `foundation_more.c`. No `https`, o hands
 
 `UNUserNotificationCenter.currentNotificationCenter`, `requestAuthorizationWithOptions:completionHandler:` e `authorizationStatus` (0 não determinado, 1 negado, 2 autorizado). O pedido grava pending no TCC (`userNotifications`). O bloco só é chamado em `cx_un_decide`. Não há servidor APNs nem `UNNotificationSettings`. Pedido, gatilho, delegate e banner estão em `docs/interface-i19-i23.md`.
 
-## StoreKit — stub local rotulado
+## StoreKit, QuickLookUI e Core Data — Slack, Claude Desktop e Cursor
 
-`SKPaymentQueue.canMakePayments` é NÃO. `addPayment:` não conclui compra. `transactions` é um array vazio. `cx_storekit_verify_receipt` devolve -1 e o texto "recibo não verificado: o mOS não valida recibo da App Store nem fala com a Apple". Não há rede com a Apple, não há recibo assinado e não há contorno de FairPlay. Apps da App Store continuam sujeitos a DRM que esta frente não quebra.
+O Electron desses três apps liga `QuickLookUI.framework` e `StoreKit.framework`. O Mantle (e, no Claude, o `SimulatorFrameworkBridge-iOS`) liga `CoreData.framework` sem importar símbolo nenhum. O loader recusava a biblioteca quando o arquivo não estava na imagem. Os três prefixos estão em `libsystem_dylib_ok` e na lista `sys_ok` do `machocheck`. Se o Mach-O do framework existir no disco, ele é carregado; senão o símbolo cai no libSystem.
 
-## Foundation / formatação — 204 símbolos do WhatsApp, 17 com miolo
+**StoreKit — stub, sem compra.** `canMakePayments` é NÃO. `SKProductsRequest start` devolve zero produtos, a lista pedida como inválida, e chama `productsRequest:didReceiveResponse:` e `requestDidFinish:` na hora, na mesma thread. `addPayment:` entrega uma transação no estado 2 (falha) e volta. `restoreCompletedTransactions` chama `paymentQueue:restoreCompletedTransactionsFailedWithError:`. Não há estado comprado (1) nem restaurado (3). `appStoreReceiptURL` devolve nil e não cria arquivo. `cx_storekit_verify_receipt` devolve -1 e o texto "recibo não verificado: o mOS não valida recibo da App Store nem fala com a Apple". Não há rede com a Apple, não há recibo assinado e não há contorno de FairPlay. A mesma política está em `userland/frameworks/StoreKit/StoreKit.m` para quando a dylib está na imagem.
 
-O `machocheck` do WhatsApp 2.26.45.13 (x86_64) não acha o módulo `FoundationInternationalization` (`$s29…`). A conta antiga de ~278 era uma estimativa. A lista medida, gravada em `tools` a partir desse binário, tem **204 símbolos distintos** de `libswiftFoundation` / `Foundation` em FormatStyle, ISO8601, Measurement, NSDecimal, AttributedString, PersonNameComponents e comparação com locale. Contra um libSystem de 1 símbolo, os 204 apareciam no relatório de ausentes. Contra `fi_swift.c` + `fi_exports.c`, o mesmo `machocheck` no executável principal lista **0** desses 204.
+**QuickLookUI — stub, sem janela.** `sharedPreviewPanel` devolve um painel. `makeKeyAndOrderFront:` e `orderFront:` só marcam visível e retornam; não chamam `NSWindow` e não entram em loop. `reloadData` pergunta a contagem uma vez e, no máximo, o item 0. `enterFullScreenMode:withOptions:` devolve NÃO. A prévia não é desenhada.
+
+**Core Data — loja MOSCD1 no libSystem, memória na dylib de disco.** Slack e Claude não importam classe de Core Data. O libSystem (`coredata_fw.c` + `coredata_store.inc`) grava e relê um arquivo próprio, primeira linha `MOSCD1`, no caminho pedido por `addPersistentStoreWithType:configuration:URL:options:error:` ou em `~/Library/Application Support/<nome>/store.moscd` no `loadPersistentStoresWithCompletionHandler:` (o bloco roda antes do retorno). `NSInMemoryStoreType` não toca disco. Não é um banco SQLite: `sqlite3_open_v2` do libSystem continua falhando, e o arquivo não abre no sqlite3 da Apple. Predicado usa o `NSPredicate` que já existe (`evaluateWithObject:`); predicado que não responde a isso devolve fetch vazio. A dylib `CoreData.framework` do disco, a do Postico, continua só em memória.
+
+`tools/cdtest.c` exercita a loja no host (inserir, gravar, reabrir, apagar, limite, entidades separadas, escape de tab e quebra de linha, magic ruim). `tools/sktest.c` confere a política e o texto do recibo. Isso não é o `build.ps1`, não é a VM e não é hardware.
+
+## Foundation / formatação — 204 símbolos do WhatsApp
+
+O `machocheck` do WhatsApp 2.26.45.13 (x86_64) não acha o módulo `FoundationInternationalization` (`$s29…`). A conta antiga de ~278 era uma estimativa. A lista medida tem **204 símbolos distintos** de `libswiftFoundation` / `Foundation` em FormatStyle, ISO8601, Measurement, NSDecimal, AttributedString, PersonNameComponents e comparação com locale. URL e Data não estão nessa lista. O `machocheck` anterior, contra `fi_swift.c` + os stubs, listou **0** desses 204 no executável principal. Este ambiente não tem o binário do WhatsApp, então o `machocheck` não foi repetido; os 204 nomes continuam definidos no x86_64 (17 em `fi_swift.c`, 187 em `fi_thunks.c`).
 
 `userland/libsystem/fmt_core.inc` formata de verdade, com saídas fixas no `tools/fmttest.c`:
 
@@ -113,7 +121,24 @@ A ponte swiftcc x86_64 está em `fi_abi.inc` e `fi_swift.c`. **Funcional** (liga
 - `NSDecimal` a partir de Int e Double, `+`, `-`, `*`, `/`, `==`, `<` — a conta é em base 10 (`0.1 + 0.2 = 0.3`, `1/4 = 0.25`)
 - `Measurement.value`, `init(value:unit:)` e `converted(to:)` — comprimento e massa das unidades acima; outra unidade devolve o valor original
 
-**Stub:** os outros 187 nomes existem para o dyld resolver. Cada um devolve string Swift vazia (`rax = 0`, `rdx = 0xE000…`) ou nil em `rax`. Isso inclui descritores de metadata (`Ma`, `Mn`, `Mc`), `PersonNameComponents.formatted()`, markdown de `AttributedString`, `ListFormatStyle` e `IntegerFormatStyle`. Chamar um accessor de metadata e usar o ponteiro nulo continua faltando: não há o runtime Swift desses tipos. No arm64 os 204 nomes existem e só dão `ret`.
+Os outros 187 estão em `fi_thunks.c` (gerado por `tools/gen_fi_thunks.py` a partir de `tools/fi_swift_187.txt`). A lista com o estado de cada um é `docs/foundation-swift-187.md`. No x86_64: **163 reais** e **24 stubs justificados**.
+
+Real, no C de `fi_behavior.inc`, com a mesma frase do `fmttest` quando ela existe:
+
+- `FormatStyle.dateTime`, símbolos de data (ano, mês abreviado/longo, dia, weekday) e o `formatted` genérico. `731289600` (2024-03-05 00:00:00Z) com o estilo padrão sai `3/5/2024, 12:00 AM`; mês abreviado + dia + ano sai `Mar 5, 2024`; em `pt_BR`, `5 de mar. de 2024`; weekday largo + mês largo + dia + ano sai `Tuesday, March 5, 2024`
+- ISO8601: o padrão continua `2024-03-05T00:00:00Z`; ano+mês+dia sai `2024-03-05`; separador de data omitido sai `20240305`; separador de data/hora espaço sai `2024-03-05 00:00:00Z`. `format` com estilo que não é o nosso cai no ISO completo
+- inteiro com locale (`1,234,567` / `1.234.567`), sinal `+` inclusive no zero, percentual com arredondamento half-even (`0.125` → `12%`, `0.126` → `13%`, uma casa → `12.5%`), moeda (`$1,234.50`, `1.234,50 €`, `R$ 1.234,50`) e compacto (`1500` → `1.5K`)
+- lista and/or, narrow, en/pt/de/fr
+- `String` compare (byte, case-insensitive, numérico: `file2` < `file10`) e `localizedStringWithFormat` / `appendingFormat` para `%d %@ %%`
+- `PersonNameComponents`: given + family (`Ada Lovelace`); campo ausente é nil (`0,0`), não string vazia
+- `AttributedString`: concatenação do texto, markdown `**oi**` e `[a](https://mos)` com o membro `link`
+- `NSDecimal` a mais: `UInt`, `Int64`, expoente, `negate`, `pow` (`2^10 = 1024`, `0^0` é NaN), `string:locale:` (`1,234.50` e `1.234,50`)
+- `Measurement.FormatStyle.string(from:)` (`1,500 m`) e o `outputFormat` do `PropertyListEncoder` (tabela de 32 entradas)
+- `Ma` devolve metadata com tamanho 8 (16 só em `Measurement`) e `Mn` é descritor nominal (kind 17 struct, 18 enum). Valores que a gente aloca são ponteiros de 8 bytes com retain/release
+
+**Stub justificado (24):** os `Mc` devolvem uma testemunha que zera rax e a string, porque a ordem dos requisitos do protocolo não foi confirmada sem o `swift-frontend`. As pontes de `PersonNameComponents` e `NSDecimal` para ObjC devolvem nil: `NSPersonNameComponents` não é classe daqui, e o `NSDecimalNumber` deste libSystem guarda double, não os 20 bytes. O materialize de KeyPath de escrita devolve um slot estável e não lê o valor.
+
+No arm64, `fi_exports.c` continua com `ret` para os 204. String com mais de 15 bytes pede `String._fromUTF8Repairing` no libswiftCore; sem ele, ficam os 15 primeiros bytes (`fi_last_full` guarda o texto inteiro para o teste de host). Locale que não é string C `pt_BR` cai em `en`. `Sequence.formatted` só lê um buffer no formato de array da Apple (count em +16, elementos em +32) e devolve vazio se o layout não fecha. O `+` de `AttributedString` concatena o texto e não funde os runs.
 
 O toolchain Swift 6.0.3 (Linux) confirmou o layout da small string. O `swiftc` desse toolchain não emite Mach-O de macOS sem o SDK da Apple, então a convenção foi escrita em C e assembly.
 
@@ -132,14 +157,10 @@ Rodados com gcc 13 (`-std=c11 -Wall -Wextra -O1`) neste ambiente. Não há zig n
 - `tools/tcctest.c`: 18/18
 - `tools/smlogintest.c`: 16/16
 - `tools/fmttest.c`: 94/94
-- `tools/fitest.c`: 22/22, no núcleo e em dois thunks swiftcc (`Date.formatted(date:time:)` e `NSDecimal.init(Int)`), com `-mno-red-zone`
+- `tools/fitest.c`: 420/420, com `-mno-red-zone -rdynamic`, ligando `fi_swift.c` e `fi_thunks.c`. Os 22 antigos continuam. Os novos comparam as frases acima com o texto completo (`fi_last_full`) e, quando cabe em 15 bytes, com a small string. O laço entra nos 187 thunks: `Ma` confere tamanho e a flag de COW, `Mn` confere o kind, `Mc` confere a testemunha, o resto é chamado com registradores zerados. Dois thunks swiftcc com argumento de verdade: `Date.formatted(date:time:)` (já existia) e `Date.formatted<FormatStyle>` (`3/5/2024, 12:00 AM`)
 
-O `machocheck` (`tools/machocheck.c`) rodou no WhatsApp 2.26.45.13. Antes, com libSystem de 1 símbolo, o relatório do bundle tinha 9989 linhas e os 204 nomes desta lista. Depois, com os objetos novos, o executável principal não lista nenhum dos 204. `libswiftFoundation.dylib` nesse executável: 1057 imports, 884 ainda sem implementação (os 204 desta lista saíram dessa conta).
+O `machocheck` (`tools/machocheck.c`) rodou no WhatsApp 2.26.45.13 antes desta leva, com os 204 nomes já exportados (17 com miolo e 187 stubs vazios): o executável principal não listava nenhum dos 204. Este ambiente não tem o `.app`, então o `machocheck` não foi repetido depois de trocar o miolo dos 187. A checagem daqui foi `nm` nos objetos x86_64: os 204 nomes estão definidos, sem duplicata.
 
 ## Sobreposição com outras frentes
 
-Consulta em 2026-11-10, PRs abertos:
-
-- AppKit (tabelas, teclado, barra de menus) não toca estes arquivos.
-- Instalação/runtime edita `vscode_frameworks.c` em `LSSharedFileList*` (itens de login em `Library/Preferences/com.mos.loginitems`, sem sufixo `.plist`). Esta frente edita o mesmo arquivo só nas funções AX. O launchd dessa branch continua varrendo `LaunchAgents` e `LaunchDaemons`, que é onde o SMAppService publica o plist.
-- JIT não toca libSystem desta frente.
+Consulta em 2026-11-10, depois do rebase em `origin/main` (`b4130f1`). O único PR aberto era o #52 (`cursor/quicklook-storekit-coredata-19e0`): QuickLookUI, StoreKit e Core Data. Não edita `fi_swift.c`, `fi_thunks.c`, `fi_abi.inc`, `fi_exports.c` nem `tools/fitest.c`. Edita este documento na seção de StoreKit, acima da de Foundation. Esta leva não mexe nessa seção.

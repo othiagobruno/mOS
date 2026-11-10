@@ -1,16 +1,17 @@
 /* Transporte da árvore AX entre processos.
  *
- * Este lado não abre socket, porta Mach nem XPC. Quem implementa call/send/listen é
- * SYS-XPC-MACH (bc-1a126ada, Mach/XPC) ou KER-UNIX-IPC (bc-4bbc4f8a, AF_UNIX).
- * Enquanto nenhum dos dois publicar a API, cx_ax_transport_ready() é 0 e a leitura
- * remota continua -25204. O servidor da árvore (axserver.c) já responde no processo
- * alvo assim que alguém chamar cx_ax_transport_bind. */
+ * O vtable é o de xpctransport.h (PR #49, bootstrap Mach, serviço com.mos.xpc.peer.<pid>).
+ * cx_ax_bind_xpc grava ready/call/send/listen nessas funções. Este arquivo não abre
+ * socket, porta Mach nem XPC. Se ready falha, ou se call devolve 60 (prazo) ou 61
+ * (ninguém escutando), a leitura remota continua -25204. */
 #pragma once
 
 #define CX_AX_TRANSPORT_DEPENDENCY \
-    "SYS-XPC-MACH (bc-1a126ada, Mach/XPC) e KER-UNIX-IPC (bc-4bbc4f8a, AF_UNIX). " \
-    "git fetch origin e gh pr list em 2026-11-10: nenhum PR aberto e nenhuma branch com essa API. " \
-    "Os agentes bc-1a126ada e bc-4bbc4f8a não estão acessíveis neste ambiente."
+    "cx_xpc_peer_* do PR #49 (xpctransport.h, commit a6141d4, serviço com.mos.xpc.peer.<pid>, bootstrap Mach). " \
+    "As assinaturas batem com este vtable e cx_ax_bind_xpc já liga xpc-mach. " \
+    "Neste Linux o xpctest não chega a rodar: gcc recusa -fblocks; clang -fblocks compila userland/tests-xpc/main.c, " \
+    "e o link de xpc.c para com referências indefinidas a bootstrap_check_in, bootstrap_look_up, bootstrap_port, " \
+    "mach_msg, mach_port_allocate, objc_msgSend e _Block_copy. Não há libSystem.mos nem zig neste ambiente."
 
 typedef struct cx_ax_transport {
     const char *name;
@@ -27,3 +28,6 @@ void cx_ax_transport_on_bind(void (*fn)(void));
 int cx_ax_transport_ready(void);
 const char *cx_ax_transport_dependency(void);
 const cx_ax_transport *cx_ax_transport_get(void);
+/* 0 segue. 60, 61 e qualquer outra falha do fio viram -25204. */
+int cx_ax_wire_status(int rc);
+void cx_ax_bind_xpc(void);

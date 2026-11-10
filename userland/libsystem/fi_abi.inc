@@ -27,7 +27,8 @@ static fi_repair_fn fi_repair(void) {
     if (fi_repair_tried) return fi_repair_cached;
     fi_repair_tried = 1;
 #ifdef FI_HOST
-    fi_repair_cached = (fi_repair_fn)dlsym((void *)-2,
+    /* glibc: RTLD_DEFAULT é 0. O -2 é o valor do macOS e derruba o dlsym do host. */
+    fi_repair_cached = (fi_repair_fn)dlsym(RTLD_DEFAULT,
         "$sSS18_fromUTF8RepairingySS6result_Sb11repairsMadetSRys5UInt8VGFZ");
 #else
     fi_repair_cached = (fi_repair_fn)dlsym((void *)-2,
@@ -36,10 +37,16 @@ static fi_repair_fn fi_repair(void) {
     return fi_repair_cached;
 }
 
+char fi_last_full[192];
+
 static fi_swstr fi_pack(const char *s, int n) {
     fi_repair_fn fn;
+    int keep;
     if (!s) n = 0;
     if (n < 0) n = (int)strlen(s);
+    keep = n < 191 ? n : 191;
+    if (keep > 0 && s) memcpy(fi_last_full, s, (size_t)keep);
+    fi_last_full[keep > 0 ? keep : 0] = 0;
     if (n <= 15) return fi_small(s, n);
     fn = fi_repair();
     if (fn) {
