@@ -36,6 +36,48 @@ void *swift_unownedRetainStrong(void *object);
 void swift_unownedCheck(void *object);
 uint64_t mos_swift_rc_frees(void);
 void mos_swift_rc_make_immortal(void *object);
+void swift_unknownObjectWeakInit(void *ref, void *value);
+void swift_unknownObjectWeakAssign(void *ref, void *value);
+void *swift_unknownObjectWeakLoadStrong(void *ref);
+void *swift_unknownObjectWeakTakeStrong(void *ref);
+void swift_unknownObjectWeakDestroy(void *ref);
+void swift_unknownObjectWeakCopyInit(void *dest, void *src);
+void swift_unknownObjectWeakCopyAssign(void *dest, void *src);
+void swift_unknownObjectWeakTakeInit(void *dest, void *src);
+void swift_unknownObjectWeakTakeAssign(void *dest, void *src);
+void swift_unknownObjectUnownedInit(void *ref, void *value);
+void swift_unknownObjectUnownedAssign(void *ref, void *value);
+void *swift_unknownObjectUnownedLoadStrong(void *ref);
+void *swift_unknownObjectUnownedTakeStrong(void *ref);
+void swift_unknownObjectUnownedDestroy(void *ref);
+void swift_unknownObjectUnownedCopyInit(void *dest, void *src);
+void swift_unknownObjectUnownedCopyAssign(void *dest, void *src);
+void swift_unknownObjectUnownedTakeInit(void *dest, void *src);
+void swift_unknownObjectUnownedTakeAssign(void *dest, void *src);
+
+static int g_objc_weak_init, g_objc_weak_load, g_objc_weak_destroy, g_objc_retain;
+void *objc_initWeak(void **loc, void *value) {
+    g_objc_weak_init++;
+    if (loc) *loc = value;
+    return value;
+}
+void *objc_loadWeakRetained(void **loc) {
+    g_objc_weak_load++;
+    return loc ? *loc : 0;
+}
+void objc_destroyWeak(void **loc) {
+    g_objc_weak_destroy++;
+    if (loc) *loc = 0;
+}
+void objc_copyWeak(void **dst, void **src) { objc_initWeak(dst, src ? *src : 0); }
+void objc_moveWeak(void **dst, void **src) {
+    if (dst) *dst = src ? *src : 0;
+    if (src) *src = 0;
+}
+void *objc_retain(void *object) {
+    g_objc_retain++;
+    return object;
+}
 
 static int g_destroys;
 static int g_fail;
@@ -218,6 +260,67 @@ int main(void) {
     }
     waitpid(pid, &st, 0);
     expect(WIFSIGNALED(st) && WTERMSIG(st) == SIGABRT, "unownedCheck aborta");
+
+    g_destroys = 0;
+    obj = swift_allocObject(meta_keep, 32, 15);
+    struct { void *side; } uw, uw2;
+    memset(&uw, 0, sizeof uw);
+    memset(&uw2, 0, sizeof uw2);
+    swift_unknownObjectWeakInit(&uw, obj);
+    loaded = swift_unknownObjectWeakLoadStrong(&uw);
+    expect(loaded == obj, "unknown weak nativo carrega");
+    swift_release(loaded);
+    swift_unknownObjectWeakCopyInit(&uw2, &uw);
+    swift_unknownObjectWeakAssign(&uw, obj);
+    loaded = swift_unknownObjectWeakTakeStrong(&uw2);
+    expect(loaded == obj, "unknown weak take");
+    swift_release(loaded);
+    swift_release(obj);
+    expect(g_destroys == 1, "unknown weak deixa destruir");
+    expect(swift_unknownObjectWeakLoadStrong(&uw) == 0, "unknown weak vira nil");
+    swift_unknownObjectWeakDestroy(&uw);
+
+    g_destroys = 0;
+    uint64_t before_uun = mos_swift_rc_frees();
+    obj = swift_allocObject(meta_keep, 32, 15);
+    struct { void *value; } uu, uu2;
+    memset(&uu, 0, sizeof uu);
+    memset(&uu2, 0, sizeof uu2);
+    swift_unknownObjectUnownedInit(&uu, obj);
+    swift_unknownObjectUnownedCopyInit(&uu2, &uu);
+    loaded = swift_unknownObjectUnownedLoadStrong(&uu);
+    expect(loaded == obj, "unknown unowned vira forte");
+    swift_release(loaded);
+    loaded = swift_unknownObjectUnownedTakeStrong(&uu2);
+    expect(loaded == obj, "unknown unowned take");
+    swift_release(loaded);
+    swift_release(obj);
+    expect(g_destroys == 1, "unknown unowned chama destrutor");
+    expect(mos_swift_rc_frees() == before_uun, "unknown unowned segura a memoria");
+    swift_unknownObjectUnownedDestroy(&uu);
+    expect(mos_swift_rc_frees() == before_uun + 1, "unknown unowned zero libera");
+
+    unsigned char objcbuf[32];
+    memset(objcbuf, 0, sizeof objcbuf);
+    void *fake = objcbuf;
+    int wi = g_objc_weak_init, wl = g_objc_weak_load, wd = g_objc_weak_destroy, wr = g_objc_retain;
+    struct { void *side; } ow, ow2;
+    memset(&ow, 0, sizeof ow);
+    memset(&ow2, 0, sizeof ow2);
+    swift_unknownObjectWeakInit(&ow, fake);
+    expect(g_objc_weak_init == wi + 1, "objc weak init");
+    expect(swift_unknownObjectWeakLoadStrong(&ow) == fake, "objc weak load");
+    expect(g_objc_weak_load == wl + 1, "objc loadWeakRetained");
+    swift_unknownObjectWeakCopyAssign(&ow2, &ow);
+    swift_unknownObjectWeakTakeAssign(&ow, &ow2);
+    swift_unknownObjectWeakDestroy(&ow);
+    expect(g_objc_weak_destroy > wd, "objc weak destroy");
+    struct { void *value; } ou;
+    memset(&ou, 0, sizeof ou);
+    swift_unknownObjectUnownedInit(&ou, fake);
+    expect(swift_unknownObjectUnownedLoadStrong(&ou) == fake, "objc unowned load");
+    expect(g_objc_retain == wr + 1, "objc unowned retém no load");
+    swift_unknownObjectUnownedDestroy(&ou);
 
     if (g_fail) return 1;
     puts("swift_refcount_host: ok");

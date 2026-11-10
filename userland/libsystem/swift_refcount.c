@@ -250,7 +250,22 @@ static mos_side_t *rc_ensure_side(mos_ho_t *o, int atom) {
     }
 }
 
-static void rc_weak_inc(mos_side_t *s) { if (s) rc_add_atomic(&s->weak, 1); }
+/* No slot da weak: bit 0 = objeto imortal, bit 1 = ponteiro de side table.
+ * Ponteiro alinhado é um id ObjC (o runtime ObjC grava o objeto cru). */
+#define WEAK_IMMORTAL 1u
+#define WEAK_SIDE 2u
+
+static mos_side_t *rc_weak_side(void *p) {
+    uintptr_t u = (uintptr_t)p;
+    if (!p || (u & WEAK_IMMORTAL)) return 0;
+    if (!(u & WEAK_SIDE)) return 0;
+    return (mos_side_t *)(u & ~(uintptr_t)WEAK_SIDE);
+}
+
+static void rc_weak_inc(mos_side_t *s) {
+    s = rc_weak_side(s);
+    if (s) rc_add_atomic(&s->weak, 1);
+}
 
 static void rc_weak_dec(mos_side_t *s) {
     if (!s) return;
@@ -265,7 +280,7 @@ static void rc_weak_init(mos_weak_t *ref, void *value, int atom) {
     mos_ho_t *o = value;
     uint64_t b = rc_load(&o->bits, atom);
     if (rc_immortal(b)) {
-        ref->side = (mos_side_t *)((uintptr_t)value | 1u);
+        ref->side = (mos_side_t *)((uintptr_t)value | WEAK_IMMORTAL);
         return;
     }
     if (b & RC_DEINIT) return;
@@ -274,26 +289,26 @@ static void rc_weak_init(mos_weak_t *ref, void *value, int atom) {
     uint64_t now;
     rc_word(o, atom, &now);
     if (now & RC_DEINIT) return;
-    rc_weak_inc(s);
-    ref->side = s;
+    rc_add_atomic(&s->weak, 1);
+    ref->side = (mos_side_t *)((uintptr_t)s | WEAK_SIDE);
 }
 
 static void rc_weak_destroy(mos_weak_t *ref) {
     if (!ref || !ref->side) return;
-    if ((uintptr_t)ref->side & 1u) { ref->side = 0; return; }
-    mos_side_t *s = ref->side;
+    mos_side_t *s = rc_weak_side(ref->side);
     ref->side = 0;
-    rc_weak_dec(s);
+    if (s) rc_weak_dec(s);
 }
 
 static void *rc_weak_load(mos_weak_t *ref, int take, int atom) {
     if (!ref || !ref->side) return 0;
-    if ((uintptr_t)ref->side & 1u) {
-        void *obj = (void *)((uintptr_t)ref->side & ~(uintptr_t)1);
+    if ((uintptr_t)ref->side & WEAK_IMMORTAL) {
+        void *obj = (void *)((uintptr_t)ref->side & ~(uintptr_t)WEAK_IMMORTAL);
         if (take) ref->side = 0;
         return obj;
     }
-    mos_side_t *s = ref->side;
+    mos_side_t *s = rc_weak_side(ref->side);
+    if (!s) return 0;
     void *obj = (void *)rc_load_atomic(&s->object);
     if (!obj) {
         if (take) rc_weak_destroy(ref);
@@ -458,7 +473,7 @@ void swift_weakCopyInit(void *dest, void *src) {
     mos_weak_t *s = src;
     if (!d) return;
     d->side = s ? s->side : 0;
-    if (d->side && !((uintptr_t)d->side & 1u)) rc_weak_inc(d->side);
+    if (rc_weak_side(d->side)) rc_weak_inc(d->side);
 }
 void swift_weakCopyAssign(void *dest, void *src) {
     mos_weak_t tmp;
@@ -490,4 +505,154 @@ void *swift_unownedRetainStrong(void *object) {
 
 void swift_unownedCheck(void *object) {
     if (rc_is_deinit(object, 1)) abort();
+}
+
+/* Objeto nativo: bit 0 do InlineRefCounts, side table ou imortal.
+ * Sem isso (e ponteiro com tag) o valor é tratado como objeto ObjC do mOS.
+ * Leitura só do campo de contagem, que no objeto Swift fica logo após o metadata. */
+static int rc_is_native(void *object) {
+    if (!object || ((uintptr_t)object & 7u)) return 0;
+    uint64_t b = rc_load(&((mos_ho_t *)object)->bits, 1);
+    if (rc_immortal(b) || (b & RC_SLOW) || (b & RC_PURE)) return 1;
+    return 0;
+}
+
+typedef void *mos_id;
+mos_id objc_initWeak(mos_id *loc, mos_id value);
+mos_id objc_loadWeakRetained(mos_id *loc);
+void objc_destroyWeak(mos_id *loc);
+void objc_copyWeak(mos_id *dst, mos_id *src);
+void objc_moveWeak(mos_id *dst, mos_id *src);
+mos_id objc_retain(mos_id object);
+
+static int weak_slot_native(void *ref) {
+    mos_weak_t *r = ref;
+    if (!r || !r->side) return 0;
+    uintptr_t u = (uintptr_t)r->side;
+    return (u & WEAK_IMMORTAL) || (u & WEAK_SIDE);
+}
+
+void swift_unknownObjectWeakInit(void *ref, void *value) {
+    if (!ref) return;
+    if (value && rc_is_native(value)) swift_weakInit(ref, value);
+    else objc_initWeak(ref, value);
+}
+void swift_unknownObjectWeakDestroy(void *ref) {
+    if (weak_slot_native(ref)) swift_weakDestroy(ref);
+    else if (ref && ((mos_weak_t *)ref)->side) objc_destroyWeak(ref);
+}
+void swift_unknownObjectWeakAssign(void *ref, void *value) {
+    swift_unknownObjectWeakDestroy(ref);
+    swift_unknownObjectWeakInit(ref, value);
+}
+void *swift_unknownObjectWeakLoadStrong(void *ref) {
+    if (weak_slot_native(ref)) return swift_weakLoadStrong(ref);
+    if (!ref || !((mos_weak_t *)ref)->side) return 0;
+    return objc_loadWeakRetained(ref);
+}
+void *swift_unknownObjectWeakTakeStrong(void *ref) {
+    if (weak_slot_native(ref)) return swift_weakTakeStrong(ref);
+    if (!ref || !((mos_weak_t *)ref)->side) return 0;
+    void *obj = objc_loadWeakRetained(ref);
+    objc_destroyWeak(ref);
+    return obj;
+}
+void swift_unknownObjectWeakCopyInit(void *dest, void *src) {
+    if (!dest) return;
+    if (weak_slot_native(src)) swift_weakCopyInit(dest, src);
+    else if (src && ((mos_weak_t *)src)->side) objc_copyWeak(dest, src);
+    else ((mos_weak_t *)dest)->side = 0;
+}
+void swift_unknownObjectWeakCopyAssign(void *dest, void *src) {
+    swift_unknownObjectWeakDestroy(dest);
+    swift_unknownObjectWeakCopyInit(dest, src);
+}
+void swift_unknownObjectWeakTakeInit(void *dest, void *src) {
+    if (!dest) return;
+    if (weak_slot_native(src)) swift_weakTakeInit(dest, src);
+    else if (src && ((mos_weak_t *)src)->side) objc_moveWeak(dest, src);
+    else ((mos_weak_t *)dest)->side = 0;
+}
+void swift_unknownObjectWeakTakeAssign(void *dest, void *src) {
+    swift_unknownObjectWeakDestroy(dest);
+    swift_unknownObjectWeakTakeInit(dest, src);
+}
+
+/* Unowned desconhecido: bit 63 no slot marca objeto Swift nativo.
+ * ObjC fica com o ponteiro cru (__unsafe_unretained): LoadStrong retém com objc_retain. */
+#define UNOWNED_NATIVE (1ull << 63)
+
+typedef struct { uintptr_t value; } mos_unref_t;
+
+static void *unref_obj(mos_unref_t *r) {
+    if (!r) return 0;
+    return (void *)(r->value & ~UNOWNED_NATIVE);
+}
+
+void swift_unknownObjectUnownedInit(void *ref, void *value) {
+    mos_unref_t *r = ref;
+    if (!r) return;
+    if (value && rc_is_native(value)) {
+        swift_unownedRetain(value);
+        r->value = (uintptr_t)value | UNOWNED_NATIVE;
+    } else {
+        r->value = (uintptr_t)value;
+    }
+}
+void swift_unknownObjectUnownedDestroy(void *ref) {
+    mos_unref_t *r = ref;
+    if (!r || !r->value) return;
+    if (r->value & UNOWNED_NATIVE) swift_unownedRelease(unref_obj(r));
+    r->value = 0;
+}
+void swift_unknownObjectUnownedAssign(void *ref, void *value) {
+    swift_unknownObjectUnownedDestroy(ref);
+    swift_unknownObjectUnownedInit(ref, value);
+}
+void *swift_unknownObjectUnownedLoadStrong(void *ref) {
+    mos_unref_t *r = ref;
+    if (!r || !r->value) return 0;
+    if (r->value & UNOWNED_NATIVE) return swift_unownedRetainStrong(unref_obj(r));
+    return objc_retain(unref_obj(r));
+}
+void *swift_unknownObjectUnownedTakeStrong(void *ref) {
+    mos_unref_t *r = ref;
+    if (!r || !r->value) return 0;
+    void *obj;
+    if (r->value & UNOWNED_NATIVE) {
+        obj = swift_unownedRetainStrong(unref_obj(r));
+        swift_unownedRelease(unref_obj(r));
+    } else {
+        obj = objc_retain(unref_obj(r));
+    }
+    r->value = 0;
+    return obj;
+}
+void swift_unknownObjectUnownedCopyInit(void *dest, void *src) {
+    mos_unref_t *d = dest;
+    mos_unref_t *s = src;
+    if (!d) return;
+    if (!s || !s->value) { d->value = 0; return; }
+    if (s->value & UNOWNED_NATIVE) {
+        void *obj = unref_obj(s);
+        swift_unownedRetain(obj);
+        d->value = (uintptr_t)obj | UNOWNED_NATIVE;
+    } else {
+        d->value = s->value;
+    }
+}
+void swift_unknownObjectUnownedCopyAssign(void *dest, void *src) {
+    swift_unknownObjectUnownedDestroy(dest);
+    swift_unknownObjectUnownedCopyInit(dest, src);
+}
+void swift_unknownObjectUnownedTakeInit(void *dest, void *src) {
+    mos_unref_t *d = dest;
+    mos_unref_t *s = src;
+    if (!d) return;
+    d->value = s ? s->value : 0;
+    if (s) s->value = 0;
+}
+void swift_unknownObjectUnownedTakeAssign(void *dest, void *src) {
+    swift_unknownObjectUnownedDestroy(dest);
+    swift_unknownObjectUnownedTakeInit(dest, src);
 }
