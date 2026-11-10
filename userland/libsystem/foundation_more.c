@@ -2674,7 +2674,10 @@ static void resreq_begin(id s, SEL c, void *block) {
     void (*inv)(void *, id) = *(void **)((u8 *)block + 16);
     inv(block, 0);
 }
-static void proxy_fwd(id s, SEL c) { (void)s; (void)c; }
+/* A base não encaminha. methodSignature nil faz o _objc_msgForward parar; a subclasse
+ * implementa os dois. Não é o doesNotRecognizeSelector: da Apple. */
+static id proxy_sig(id s, SEL c, SEL sel) { (void)s; (void)c; (void)sel; return nil; }
+static void proxy_fwd(id s, SEL c, id inv) { (void)s; (void)c; (void)inv; }
 static id proxy_desc(id s, SEL c) { (void)s; (void)c; return ar(ns("<NSProxy>")); }
 static BOOL proxy_kind(id s, SEL c, cx_class_t *k) { (void)c; return cx_is_subclass(s->isa, k); }
 
@@ -2789,7 +2792,7 @@ void cx_foundation_more_init(void) {
     CM(NSProxy, "alloc", lock_alloc);
     M(NSProxy, "init", box_init); M(NSProxy, "dealloc", noop); M(NSProxy, "description", proxy_desc);
     M(NSProxy, "isKindOfClass:", proxy_kind); M(NSProxy, "forwardInvocation:", proxy_fwd);
-    M(NSProxy, "methodSignatureForSelector:", proxy_fwd);
+    M(NSProxy, "methodSignatureForSelector:", proxy_sig);
 
     /* NSError já existe desde o Foundation; estes métodos ficam por cima dos antigos */
     CM(NSError, "errorWithDomain:code:userInfo:", err_with);

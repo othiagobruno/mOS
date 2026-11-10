@@ -21,7 +21,9 @@
  *    devolvida é marcada como válida (cx_trust_mark_verified, security.c).
  *  - SSLRead devolve o que tiver assim que tiver algo; fim do fluxo = errSSLClosedGraceful/NoNotify.
  * Limites: só cliente (lado servidor: SSLCreateContext = NULL), sem certificado de cliente, sem ALPN negociado
- * (SSLCopyALPNProtocols devolve vazio: o app cai para HTTP/1.1), sem retomada de sessão.
+ * (SSLCopyALPNProtocols devolve vazio: o app cai para HTTP/1.1). SSLSetSessionTicketsEnabled guarda o
+ * pedido; o motor (kernel/net/tls.c) não envia nem retoma ticket, então desligar coincide com o fio e
+ * ligar não cria retomada.
  */
 #include "foundation.h"
 #include "libc.h"
@@ -76,7 +78,7 @@ typedef struct {
     ssl_write_fn wr;
     const void *conn;
     char peer[256];
-    Boolean break_auth, auth_done, saw_eof;
+    Boolean break_auth, auth_done, saw_eof, tickets;
     OSStatus err;                        /* erro fatal guardado (as chamadas seguintes o repetem) */
     int vmin, vmax;
     u8 *rec, *out, *plain;
@@ -134,6 +136,7 @@ void *SSLCreateContext(void *alloc, int side, int type) {
     s->h = -1;
     s->vmin = kTLSProtocol12;
     s->vmax = kTLSProtocol13;
+    s->tickets = 1;
     s->rec = malloc(REC_MAX);
     s->out = malloc(OUT_CAP);
     s->plain = malloc(PLAIN_CAP);
@@ -231,6 +234,13 @@ OSStatus SSLGetSessionOption(void *ctx, int opt, Boolean *v) {
     ssl_t *s = S(ctx);
     if (!s || !v) return errSecParam;
     *v = opt == kSSLSessionOptionBreakOnServerAuth ? s->break_auth : 0;
+    return errSecSuccess;
+}
+/* O kernel ignora NewSessionTicket. O flag fica no contexto; não muda o handshake. */
+OSStatus SSLSetSessionTicketsEnabled(void *ctx, Boolean enabled) {
+    ssl_t *s = S(ctx);
+    if (!s) return errSecParam;
+    s->tickets = enabled ? 1 : 0;
     return errSecSuccess;
 }
 
