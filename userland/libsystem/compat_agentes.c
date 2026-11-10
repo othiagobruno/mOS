@@ -391,10 +391,8 @@ long vImageBoxConvolve_Planar8(const vimg_t *src, const vimg_t *dst, void *tmp, 
 int AEDeterminePermissionToAutomateTarget(const void *target, u32 cls, u32 id_, u8 ask) { (void)target; (void)cls; (void)id_; (void)ask; return -1743; }
 /* ---- VideoToolbox: sem conversão de CVPixelBuffer para CGImage (kVTParameterErr) */
 int VTCreateCGImageFromCVPixelBuffer(void *pb, void *opts, void **out) { (void)pb; (void)opts; if (out) *out = 0; return -12902; }
-/* ---- libsqlite3: o mOS não tem SQLite; abrir falha com SQLITE_CANTOPEN e o chamador segue sem o banco */
-int sqlite3_open_v2(const char *name, void **db, int flags, const char *vfs) { (void)name; (void)flags; (void)vfs; if (db) *db = 0; return 14; }
-int sqlite3_exec(void *db, const char *sql, void *cb, void *arg, char **err) { (void)db; (void)sql; (void)cb; (void)arg; if (err) *err = 0; return 21; }   /* SQLITE_MISUSE */
-int sqlite3_close(void *db) { (void)db; return 0; }
+/* SQLite real: sqlite3_open_v2, sqlite3_exec e sqlite3_close vêm do amalgama
+ * (userland/libsystem/sqlite3_mos.c). Não há stub que recuse abrir. */
 /* par-ímpar: o rasterizador de caminhos do AppKit do mOS só preenche com a regra do enrolamento (diferente só em
  * caminhos que se cruzam) */
 void CGContextFillPath(void *c);
