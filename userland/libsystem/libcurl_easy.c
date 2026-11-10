@@ -246,6 +246,87 @@ static int io_read_raw(void *tls, int fd, void *b, int n, long long deadline) {
     }
 }
 
+static int hdr_is(const char *line, const char *name) {
+    unsigned long i;
+    for (i = 0; name[i]; i++) {
+        char a = line[i], b = name[i];
+        if (a >= 'A' && a <= 'Z') a = (char)(a - 'A' + 'a');
+        if (b >= 'A' && b <= 'Z') b = (char)(b - 'A' + 'a');
+        if (a != b) return 0;
+    }
+    return line[i] == ':';
+}
+
+static int hexval(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+static int read_more(unsigned char **buf, unsigned long *n, void *tls, int fd, long long deadline) {
+    unsigned char tmp[2048];
+    int k = io_read_raw(tls, fd, tmp, (int)sizeof tmp, deadline);
+    unsigned char *nb;
+    if (k == -2) return -2;
+    if (k <= 0) return 0;
+    nb = realloc(*buf, *n + (unsigned)k + 1);
+    if (!nb) return -1;
+    *buf = nb;
+    memcpy(*buf + *n, tmp, (unsigned)k);
+    *n += (unsigned)k;
+    (*buf)[*n] = 0;
+    return k;
+}
+
+static int take_body(unsigned char *raw, unsigned long raw_n, unsigned long hdr, int chunked, long clen, char **body, unsigned long *body_n) {
+    unsigned long i = hdr, outn = 0;
+    char *out = 0;
+    if (chunked) {
+        int finished = 0;
+        while (i < raw_n && !finished) {
+            unsigned long size = 0, j;
+            int hv;
+            char *nl;
+            char *grown;
+            while (i < raw_n && (raw[i] == '\r' || raw[i] == '\n')) i++;
+            if (i >= raw_n) break;
+            j = i;
+            while (j < raw_n && raw[j] != '\n' && raw[j] != ';') {
+                hv = hexval((char)raw[j]);
+                if (hv < 0) break;
+                size = (size << 4) + (unsigned)hv;
+                j++;
+            }
+            nl = memchr(raw + i, '\n', raw_n - i);
+            if (!nl) { free(out); return -1; }
+            i = (unsigned long)(nl - (char *)raw) + 1;
+            if (size == 0) { finished = 1; break; }
+            if (i + size > raw_n) { free(out); return -1; }
+            grown = realloc(out, outn + size + 1);
+            if (!grown) { free(out); return -1; }
+            out = grown;
+            memcpy(out + outn, raw + i, size);
+            outn += size;
+            out[outn] = 0;
+            i += size;
+            if (i < raw_n && raw[i] == '\r') i++;
+            if (i < raw_n && raw[i] == '\n') i++;
+        }
+        if (!finished) { free(out); return -1; }
+    } else if (clen >= 0) {
+        if (hdr + (unsigned long)clen > raw_n) return -1;
+        out = dupn((char *)raw + hdr, (int)clen);
+        outn = (unsigned long)clen;
+    } else {
+        outn = raw_n > hdr ? raw_n - hdr : 0;
+        out = dupn((char *)raw + hdr, (int)outn);
+    }
+    *body = out;
+    *body_n = outn;
+    return 0;
+}
+
 static int append(char *d, unsigned long cap, const char *s) {
     unsigned long n = strlen(d), m = strlen(s);
     if (n + m + 1 > cap) return -1;
@@ -310,76 +391,93 @@ static int http_once(struct easy *e, const char *url, long long deadline, int *s
         tcp_close(fd);
         return rc == -2 ? CURLE_OPERATION_TIMEDOUT : CURLE_COULDNT_CONNECT;
     }
-    for (;;) {
-        unsigned char tmp[2048];
-        int k = io_read_raw(tls, fd, tmp, (int)sizeof tmp, deadline);
-        unsigned char *nb;
-        if (k == -2) {
-#ifdef CURL_HOST
-            if (tls) tls_free(tls);
-#else
-            if (tls) SSLDisposeContext(tls);
-#endif
-            tcp_close(fd); free(buf); return CURLE_OPERATION_TIMEDOUT;
+    {
+        int chunked = 0;
+        long clen = -1;
+        unsigned long hdr = 0;
+        int saw = 0;
+        for (;;) {
+            unsigned long i;
+            int k;
+            for (i = 0; i + 3 < n; i++) if (buf[i] == '\r' && buf[i + 1] == '\n' && buf[i + 2] == '\r' && buf[i + 3] == '\n') {
+                hdr = i + 4; saw = 1; break;
+            }
+            if (saw) break;
+            k = read_more(&buf, &n, tls, fd, deadline);
+            if (k == -2) { rc = CURLE_OPERATION_TIMEDOUT; goto done; }
+            if (k < 0) { rc = CURLE_WRITE_ERROR; goto done; }
+            if (k == 0) break;
+            if (n > 1024 * 1024) break;
         }
-        if (k <= 0) break;
-        nb = realloc(buf, n + (unsigned)k + 1);
-        if (!nb) {
-#ifdef CURL_HOST
-            if (tls) tls_free(tls);
-#else
-            if (tls) SSLDisposeContext(tls);
-#endif
-            tcp_close(fd); free(buf); return CURLE_WRITE_ERROR;
+        if (buf && n >= 12 && !memcmp(buf, "HTTP/", 5)) {
+            char *sp = memchr(buf, ' ', n < hdr ? n : hdr);
+            char *linep;
+            if (sp) {
+                int v = 0;
+                char *d = sp + 1;
+                while (*d >= '0' && *d <= '9') { v = v * 10 + *d - '0'; d++; }
+                *status = v;
+            }
+            linep = (char *)buf;
+            if (saw) buf[hdr - 4] = 0;
+            while (linep && *linep) {
+                char *nl = strchr(linep, '\n');
+                char *v;
+                if (nl) *nl = 0;
+                if (hdr_is(linep, "location")) {
+                    v = strchr(linep, ':');
+                    if (v) {
+                        char *end;
+                        v++;
+                        while (*v == ' ' || *v == '\t') v++;
+                        end = v + strlen(v);
+                        while (end > v && (end[-1] == '\r' || end[-1] == ' ')) end--;
+                        *loc = dupn(v, (int)(end - v));
+                    }
+                } else if (hdr_is(linep, "content-length")) {
+                    v = strchr(linep, ':');
+                    clen = 0;
+                    if (v) { v++; while (*v == ' ') v++; while (*v >= '0' && *v <= '9') { clen = clen * 10 + *v - '0'; v++; } }
+                } else if (hdr_is(linep, "transfer-encoding")) {
+                    v = strchr(linep, ':');
+                    if (v && strstr(v, "chunked")) chunked = 1;
+                }
+                if (!nl) break;
+                linep = nl + 1;
+            }
+            if (saw) buf[hdr - 4] = '\r';
         }
-        buf = nb;
-        memcpy(buf + n, tmp, (unsigned)k);
-        n += (unsigned)k;
-        buf[n] = 0;
-        if (n > 8 * 1024 * 1024) break;
+        if (chunked) {
+            for (;;) {
+                if (take_body(buf, n, hdr, 1, -1, body, body_n) == 0) break;
+                free(*body); *body = 0;
+                {
+                    int k = read_more(&buf, &n, tls, fd, deadline);
+                    if (k == -2) { rc = CURLE_OPERATION_TIMEDOUT; goto done; }
+                    if (k <= 0) { rc = CURLE_WRITE_ERROR; goto done; }
+                }
+            }
+        } else if (clen >= 0) {
+            while (n < hdr + (unsigned long)clen) {
+                int k = read_more(&buf, &n, tls, fd, deadline);
+                if (k == -2) { rc = CURLE_OPERATION_TIMEDOUT; goto done; }
+                if (k <= 0) { rc = CURLE_WRITE_ERROR; goto done; }
+            }
+            if (take_body(buf, n, hdr, 0, clen, body, body_n)) { rc = CURLE_WRITE_ERROR; goto done; }
+        } else if (take_body(buf, n, hdr, 0, -1, body, body_n)) {
+            rc = CURLE_WRITE_ERROR;
+        }
     }
+done:
 #ifdef CURL_HOST
     if (tls) tls_free(tls);
 #else
     if (tls) SSLDisposeContext(tls);
 #endif
     tcp_close(fd);
-    if (buf && n >= 12 && !memcmp(buf, "HTTP/", 5)) {
-        char *sp = memchr(buf, ' ', n);
-        unsigned long i;
-        if (sp) {
-            int v = 0;
-            char *d = sp + 1;
-            while (*d >= '0' && *d <= '9') { v = v * 10 + *d - '0'; d++; }
-            *status = v;
-        }
-        for (i = 0; i + 3 < n; i++) if (buf[i] == '\r' && buf[i + 1] == '\n' && buf[i + 2] == '\r' && buf[i + 3] == '\n') {
-            char *linep = (char *)buf;
-            buf[i] = 0;
-            while (linep && *linep) {
-                char *nl = strchr(linep, '\n');
-                char *v;
-                if (nl) *nl = 0;
-                if (!strncmp(linep, "Location:", 9) || !strncmp(linep, "location:", 9)) {
-                    v = linep + 9;
-                    while (*v == ' ' || *v == '\t') v++;
-                    {
-                        char *end = v + strlen(v);
-                        while (end > v && (end[-1] == '\r' || end[-1] == ' ')) end--;
-                        *loc = dupn(v, (int)(end - v));
-                    }
-                }
-                if (!nl) break;
-                linep = nl + 1;
-            }
-            *body_n = n - (i + 4);
-            *body = dupn((char *)buf + i + 4, (int)*body_n);
-            break;
-        }
-    }
     free(buf);
     (void)cap;
-    return CURLE_OK;
+    return rc;
 }
 
 static char *join_loc(const char *base, const char *loc) {
@@ -495,6 +593,29 @@ char *curl_easy_escape(void *e, const char *s, int len) {
     return o;
 }
 void curl_free(void *p) { free(p); }
+
+struct curl_slist *curl_slist_append(struct curl_slist *list, const char *data) {
+    struct curl_slist *n, *p;
+    if (!data) return list;
+    n = malloc(sizeof *n);
+    if (!n) return 0;
+    n->data = dupn(data, -1);
+    n->next = 0;
+    if (!n->data) { free(n); return 0; }
+    if (!list) return n;
+    for (p = list; p->next; p = p->next) {}
+    p->next = n;
+    return list;
+}
+
+void curl_slist_free_all(struct curl_slist *list) {
+    while (list) {
+        struct curl_slist *n = list->next;
+        free(list->data);
+        free(list);
+        list = n;
+    }
+}
 
 void *curl_url(void) { return calloc(1, sizeof(struct url)); }
 static int parse_into(struct url *u, const char *s) {

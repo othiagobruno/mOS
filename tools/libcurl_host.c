@@ -42,6 +42,8 @@ int curl_url_get(void *, int, char **, unsigned);
 void curl_url_cleanup(void *);
 
 struct curl_slist { char *data; struct curl_slist *next; };
+struct curl_slist *curl_slist_append(struct curl_slist *, const char *);
+void curl_slist_free_all(struct curl_slist *);
 
 static int socks[8];
 static int nsocks;
@@ -99,22 +101,33 @@ static void check(const char *name, int cond) {
 
 static pid_t serve_http(int port) {
     pid_t p = fork();
-    char script[900];
+    char script[2200];
     if (p < 0) return -1;
     if (p == 0) {
         snprintf(script, sizeof script,
                  "from http.server import BaseHTTPRequestHandler,HTTPServer\n"
+                 "from socketserver import ThreadingMixIn\n"
+                 "import time\n"
                  "class H(BaseHTTPRequestHandler):\n"
+                 " protocol_version='HTTP/1.1'\n"
                  " def do_GET(self):\n"
                  "  if self.path.startswith('/redir'):\n"
-                 "   self.send_response(302); self.send_header('Location','/ok'); self.end_headers(); return\n"
-                 "  self.send_response(200); self.end_headers(); self.wfile.write(b'hello' if self.path!='/ok' else b'landed')\n"
+                 "   self.send_response(302); self.send_header('Location','/ok'); self.send_header('Content-Length','0'); self.end_headers(); return\n"
+                 "  if self.path.startswith('/len'):\n"
+                 "   b=b'LENOK'; self.send_response(200); self.send_header('Content-Length',str(len(b))); self.send_header('Connection','keep-alive'); self.end_headers(); self.wfile.write(b); self.close_connection=False; time.sleep(3); return\n"
+                 "  if self.path.startswith('/chunk'):\n"
+                 "   self.send_response(200); self.send_header('Transfer-Encoding','chunked'); self.send_header('Connection','keep-alive'); self.end_headers(); self.wfile.write(b'5\\r\\nchunk\\r\\n0\\r\\n\\r\\n'); self.close_connection=False; time.sleep(3); return\n"
+                 "  body=b'hello' if self.path!='/ok' else b'landed'\n"
+                 "  self.send_response(200); self.send_header('Content-Length',str(len(body))); self.end_headers(); self.wfile.write(body)\n"
                  " def do_POST(self):\n"
                  "  n=int(self.headers.get('Content-Length','0')); b=self.rfile.read(n)\n"
                  "  ok=self.headers.get('X-Test')=='sim'\n"
-                 "  self.send_response(200 if ok else 400); self.end_headers(); self.wfile.write(b if ok else b'no')\n"
+                 "  out=b if ok else b'no'\n"
+                 "  self.send_response(200 if ok else 400); self.send_header('Content-Length',str(len(out))); self.end_headers(); self.wfile.write(out)\n"
                  " def log_message(self,*a): pass\n"
-                 "HTTPServer(('127.0.0.1',%d),H).serve_forever()\n", port);
+                 "class S(ThreadingMixIn,HTTPServer):\n"
+                 " daemon_threads=True\n"
+                 "S(('127.0.0.1',%d),H).serve_forever()\n", port);
         execlp("python3", "python3", "-c", script, (char *)0);
         _exit(127);
     }
@@ -179,7 +192,7 @@ int main(void) {
     pid_t hp, tp;
     void *e, *u;
     struct buf b;
-    struct curl_slist h = { "X-Test: sim", 0 };
+    struct curl_slist *h = 0;
     char *esc, *got = 0;
     int rc;
     for (int i = 0; i < 8; i++) socks[i] = -1;
@@ -198,12 +211,28 @@ int main(void) {
     memset(&b, 0, sizeof b);
     curl_easy_setopt(e, 10002, "http://127.0.0.1:18771/echo");
     curl_easy_setopt(e, 10015, "abc=1");
-    curl_easy_setopt(e, 10023, &h);
+    h = curl_slist_append(h, "X-Test: sim");
+    h = curl_slist_append(h, "X-Outro: 1");
+    curl_easy_setopt(e, 10023, h);
     rc = curl_easy_perform(e);
-    check("POST com cabeçalho", rc == 0 && strstr(b.d, "abc=1"));
+    check("POST com slist_append", rc == 0 && h && h->next && strstr(b.d, "abc=1"));
+    curl_slist_free_all(h);
+    h = 0;
+    curl_easy_setopt(e, 10023, (struct curl_slist *)0);
 
     memset(&b, 0, sizeof b);
     curl_easy_setopt(e, 80, 1L);
+    curl_easy_setopt(e, 155, 1500L);
+    curl_easy_setopt(e, 10002, "http://127.0.0.1:18771/len");
+    rc = curl_easy_perform(e);
+    check("Content-Length sem fechar", rc == 0 && strstr(b.d, "LENOK"));
+
+    memset(&b, 0, sizeof b);
+    curl_easy_setopt(e, 10002, "http://127.0.0.1:18771/chunk");
+    rc = curl_easy_perform(e);
+    check("chunked sem fechar", rc == 0 && strstr(b.d, "chunk"));
+
+    memset(&b, 0, sizeof b);
     curl_easy_setopt(e, 52, 1L);
     curl_easy_setopt(e, 10002, "http://127.0.0.1:18771/redir");
     rc = curl_easy_perform(e);
