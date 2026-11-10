@@ -20,3 +20,5 @@ jobs:
         run: tools/build.sh --out /tmp/mos-linux-build
       - name: hosttest do gate
         run: python3 tools/corpus/harness.py hosttest --lib /tmp/mos-linux-build/libSystem.mos --disco /tmp/mos-linux-build/libunwind-x86
+      - name: teste de host do Virtualization
+        run: sh tools/test-vz.sh

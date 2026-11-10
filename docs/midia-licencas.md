@@ -9,7 +9,7 @@ O repositório é MIT. Só entra decodificador com licença compatível, e só o
 | AAC | fdk-aac seria a escolha BSD | — | não vendida | Reconhecido (ADTS e `mp4a`), sem PCM. FAAD2 é GPL e foi rejeitado. |
 | Opus | libopus seria a escolha BSD-3 | — | não vendida | Reconhecido (Ogg `OpusHead` e CAF `opus`), sem PCM. |
 
-H.264 em software é I_PCM (Constrained Baseline, 4:2:0, 8 bits) em `userland/libsystem/h264sw.c`. As tabelas CAVLC copiadas do OpenH264 (BSD-2, Cisco) ficam no arquivo; o quadro que sai é I_PCM, porque o residual CAVLC ainda não passa num decodificador de referência. Não há x264, x265, libde265 nem FFmpeg no fonte. HEVC não entra: o encoder permissivo (Kvazaar) é C++ e só codifica, e não há decodificador HEVC permissivo pequeno o bastante para o libSystem. VideoToolbox devolve -12906/-12908 para HEVC. Não se contorna FairPlay nem outro DRM.
+O decodificador H.264 Baseline (CAVLC, intra 4x4 e 16x16, P-slice, deblocking) é o [h264bsd](https://github.com/oneam/h264bsd) (Apache-2.0, Android Open Source) em `userland/third_party/h264bsd/`, com a casca `h264bsd_glue.c`. O codificador em `h264sw.c` continua I_PCM: o residual CAVLC próprio não passa no ffmpeg. Não há x264, x265, libde265 nem libavcodec no fonte. HEVC é stub: VideoToolbox devolve -12906/-12908. Não se contorna FairPlay nem outro DRM.
 
 A permissão de microfone e câmera não está nesta frente. O contrato é o símbolo fraco
 
