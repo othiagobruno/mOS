@@ -223,6 +223,11 @@ static void end_prep(T *t) { insn_end(t); fl_spill(t); rc_flush(t); }
 
 static void emit_exit(T *t, a64_u64 target) {   /* regs na memória, flags em reserved[14] */
     a64_u8 *jne = NULL;
+    /* safepoint do jmp remendado que volta ao início do traço (ou antes). A comparação é de
+     * 64 bits: o bit baixo é a64_request_stop, o alto é o chute do JIT. A aresta interna do
+     * laço sem memória (emit_backedge) confere o mesmo registrador; os outros elos são zerados
+     * por kill_block, então a próxima passagem cai no despachante. Desvio para a frente não
+     * confere: um cmp aqui mediria no traço quente. */
     if (target <= t->pc0) {
         x_alu_ri(B, 1, A_CMP, XM(RCPU, OFF_STOP), 0);
         jne = x_jcc32(B, CC_NE);

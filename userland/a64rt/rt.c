@@ -445,24 +445,17 @@ static void fbstat_tick(void) {
 #endif
 
 /* escrita do kernel (ou memcpy do runtime no lugar dele) na memória do guest: não passa pela PTE, então a
- * proteção do JIT não vê. has_code evita a trava no caso comum (buffer sem tradução). */
+ * proteção do JIT não vê. a64rt_invalidate_range é o único ponto; se a lista estourar, invalida tudo. */
 static int peek_guest(void *ctx, u64 addr, void *dst, u64 n) {
     (void)ctx;
     if (!addr || !dst || !n) return 0;
     memcpy(dst, (const void *)addr, (size_t)n);
     return 1;
 }
-static void touch_code(u64 addr, u64 len) {
-    if (!addr || !len) return;
-#ifdef A64_HAVE_JIT
-    if (!a64_jit_has_code(addr, len)) return;   /* o caso comum (buffer sem tradução) não toma a trava */
-#endif
-    a64_invalidate(addr, len);
-}
-static void touch_writes(long nr, u64 x0, u64 x1, u64 x2, u64 x3, long ret) {
-    a64rt_span sp[4];
-    int n = a64rt_guest_writes(nr, x0, x1, x2, x3, ret, peek_guest, 0, sp, 4);
-    for (int i = 0; i < n; i++) touch_code(sp[i].addr, sp[i].len);
+static void touch_writes(long nr, u64 x0, u64 x1, u64 x2, u64 x3, u64 x4, long ret) {
+    a64rt_span sp[16];
+    int n = a64rt_guest_writes(nr, x0, x1, x2, x3, x4, ret, peek_guest, 0, sp, 16);
+    a64rt_invalidate_spans(sp, n);
 }
 
 static void mos_svc(rt_thread_t *T) {
@@ -505,7 +498,7 @@ static void mos_svc(rt_thread_t *T) {
     case SYS_SIG:
         r = rt_sig_syscall(T, (long)a, (long)b, (long)d, (long)e);
         c->x[0] = (u64)r;
-        touch_writes(SYS_SIG, a, b, d, e, r);
+        touch_writes(SYS_SIG, a, b, d, e, f, r);
         return;
     case SYS_SIGACTION: c->x[0] = (u64)rt_sigaction_old(T, (long)a, (long)b, (long)d); return;
     case SYS_SIGRETURN: rt_sig_return_old(T); return;
@@ -513,7 +506,7 @@ static void mos_svc(rt_thread_t *T) {
         if (a == MOS_THR_GETSTATE) {
             r = threadctl_getstate((long)b, d);
             c->x[0] = (u64)r;
-            touch_writes(SYS_THREADCTL, a, b, d, e, r);
+            touch_writes(SYS_THREADCTL, a, b, d, e, f, r);
             return;
         }
         break;
@@ -529,7 +522,7 @@ static void mos_svc(rt_thread_t *T) {
     /* munmap (também KEEP e DISCARD) tira ou zera a faixa: a tradução dela não vale mais */
     if (n == SYS_MUNMAP && r == 0) a64_invalidate(a, b);
     /* o kernel escreve na memória do usuário sem passar pela PTE. read/pread e o resto (rede, stat, mach, dyld, ...) */
-    touch_writes(n, a, b, d, e, r);
+    touch_writes(n, a, b, d, e, f, r);
     if (r == -MOS_EINTR && rt_sig_should_restart(T, n)) { c->pc -= 4; return; }   /* a syscall é refeita depois do tratador */
     T->intr_sig = 0;
     c->x[0] = (u64)r;
@@ -696,7 +689,7 @@ static void darwin_svc(rt_thread_t *T) {
         T->in_svc = 1;
         r = n == 3 ? RS3(SYS_READ, c->x[0], c->x[1], c->x[2]) : RS3(SYS_WRITE, c->x[0], c->x[1], c->x[2]);
         T->in_svc = 0;
-        if (r > 0 && n == 3) touch_writes(SYS_READ, c->x[0], c->x[1], c->x[2], 0, r);
+        if (r > 0 && n == 3) touch_writes(SYS_READ, c->x[0], c->x[1], c->x[2], 0, 0, r);
         if (r == -MOS_EINTR && rt_sig_should_restart(T, n == 3 ? SYS_READ : SYS_WRITE)) { c->pc -= 4; return; }
         T->intr_sig = 0;
         break;
