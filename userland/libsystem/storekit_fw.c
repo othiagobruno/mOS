@@ -1,19 +1,26 @@
 /* StoreKit no libSystem.
  *
- * Estende o stub de SKPaymentQueue / SKProductsRequest / SKMutablePayment
- * (as classes já existem em vscode_fwclasses.c). Não há compra, recibo, rede
- * com a Apple, FairPlay nem assinatura. canMakePayments é não. Um pedido
- * devolve zero produtos e a lista pedida como inválida, e termina na hora.
- * addPayment: entrega uma transação falha (estado 2) e volta. O estado
- * comprado (1) e o restaurado (3) não são produzidos.
+ * A fila está em storekit_core.inc. addPayment entrega .purchasing e em
+ * seguida .failed com SKErrorCloudServiceNetworkConnectionFailed (7), na
+ * thread da fila (a main). Fora dela os avisos ficam pendentes e o drain
+ * corre na main. SKProductsRequest chama request:didFailWithError: com o
+ * mesmo código. Não há resposta com produto. restoreCompletedTransactions
+ * chama restoreCompletedTransactionsFailedWithError:. StoreKit 2
+ * (products, purchase, sync) completa a continuação com StoreKitError.networkError.
+ * currentEntitlements e updates não emitem transação. Sem rede, sem recibo,
+ * sem FairPlay.
  */
 #include "foundation.h"
 #include "libc.h"
 #include "storekit_stub.inc"
+#include "storekit_core.inc"
 
 void cx_mark_stub_class(cx_class_t *c);
 id objc_autorelease(id o);
 id objc_retain(id o);
+int pthread_main_np(void);
+void *dispatch_get_main_queue(void);
+void dispatch_async_f(void *q, void *ctx, void (*fn)(void *));
 
 extern cx_class_t SKPaymentQueue_c __asm__("OBJC_CLASS_$_SKPaymentQueue");
 extern cx_class_t SKProductsRequest_c __asm__("OBJC_CLASS_$_SKProductsRequest");
@@ -26,20 +33,21 @@ SKC(SKProductsResponse)
 SKC(SKPaymentTransaction)
 
 typedef struct {
-    id key, ids, delegate, payment, error, username;
-    int cancelled, state, qty;
+    id key, delegate, username;
+    int tx, cancelled, qty;
     char pid[160];
 } sk_slot;
 
 static sk_slot slots[48];
-static id g_queue, g_txs, g_obs[8];
-static int nobs;
+static id g_queue, g_pay_for_bind, g_tx_obj[SK_TX_MAX];
+static int g_tx_id[SK_TX_MAX];
 
 static int responds(id o, const char *sel) {
     return o && cx_responds(o->isa, sel_registerName(sel));
 }
 static sk_slot *slot_of(id o) {
-    for (int i = 0; i < 48; i++) if (slots[i].key == o) return &slots[i];
+    int i;
+    for (i = 0; i < 48; i++) if (slots[i].key == o) return &slots[i];
     return 0;
 }
 static sk_slot *slot_make(id o) {
@@ -50,23 +58,66 @@ static sk_slot *slot_make(id o) {
         memset(&slots[i], 0, sizeof slots[i]);
         slots[i].key = o;
         slots[i].qty = 1;
-        slots[i].state = sk_policy_fail_state();
         return &slots[i];
     }
     return 0;
 }
-static id txs(void) {
-    if (!g_txs) g_txs = cx_arr_new(cx_class_named("NSMutableArray"));
-    return g_txs;
+static int fw_tid(void) { return pthread_main_np() ? 1 : 0; }
+static void drain_main(void *unused) {
+    (void)unused;
+    sk_core_drain();
 }
-static id sk_err(const char *msg) {
+static void sk_flush(void) {
+    if (!sk_core_pending()) return;
+    if (pthread_main_np()) sk_core_drain();
+    else dispatch_async_f(dispatch_get_main_queue(), 0, drain_main);
+}
+static id sk_err(long code, const char *msg) {
     id ui = MSG(id, (id)cx_class_named("NSDictionary"), "dictionaryWithObject:forKey:", cx_str(msg), cx_str("NSLocalizedDescription"));
-    return MSG(id, (id)cx_class_named("NSError"), "errorWithDomain:code:userInfo:", cx_str("SKErrorDomain"), (long)2, ui);
+    return MSG(id, (id)cx_class_named("NSError"), "errorWithDomain:code:userInfo:", cx_str("SKErrorDomain"), code, ui);
 }
-static long safe_state(long st) {
-    /* 1 = purchased, 3 = restored. A política não liga compra; se ligasse, ainda cairia aqui. */
-    if (st == 1 || st == 3 || sk_policy_purchased()) return sk_policy_fail_state();
-    return st;
+static id tx_obj(int tx) {
+    int i;
+    for (i = 0; i < SK_TX_MAX; i++) if (g_tx_id[i] == tx && g_tx_obj[i]) return g_tx_obj[i];
+    return 0;
+}
+static void tx_bind(int tx, id obj) {
+    int i;
+    for (i = 0; i < SK_TX_MAX; i++) if (!g_tx_obj[i]) {
+        g_tx_id[i] = tx;
+        g_tx_obj[i] = obj;
+        return;
+    }
+}
+static void tx_unbind(int tx) {
+    int i;
+    for (i = 0; i < SK_TX_MAX; i++) if (g_tx_id[i] == tx) {
+        g_tx_id[i] = 0;
+        g_tx_obj[i] = 0;
+    }
+}
+
+static void on_tx(void *ctx, int tx, int state, int err) {
+    id obs = (id)ctx;
+    id obj = tx_obj(tx);
+    sk_slot *s;
+    id one;
+    if (!obj) return;
+    s = slot_make(obj);
+    if (s) {
+        s->tx = state;
+        if (err) s->delegate = objc_retain(sk_err(err, "não foi possível contatar a App Store (SKErrorCloudServiceNetworkConnectionFailed)"));
+    }
+    if (!responds(obs, "paymentQueue:updatedTransactions:")) return;
+    one = cx_arr_new(cx_class_named("NSMutableArray"));
+    cx_arr_add(one, obj);
+    MSG(void, obs, "paymentQueue:updatedTransactions:", g_queue, one);
+}
+static void on_restore(void *ctx, int err) {
+    id obs = (id)ctx;
+    if (!responds(obs, "paymentQueue:restoreCompletedTransactionsFailedWithError:")) return;
+    MSG(void, obs, "paymentQueue:restoreCompletedTransactionsFailedWithError:", g_queue,
+        sk_err(err, "não foi possível contatar a App Store (SKErrorCloudServiceNetworkConnectionFailed)"));
 }
 
 static id sk_default(id cls, SEL c) {
@@ -74,143 +125,207 @@ static id sk_default(id cls, SEL c) {
     if (!g_queue) g_queue = cx_alloc_instance((cx_class_t *)cls);
     return g_queue;
 }
-static BOOL sk_can(id self, SEL c) { (void)self; (void)c; return sk_policy_can_pay() ? YES : NO; }
+static BOOL sk_can(id self, SEL c) {
+    (void)self;
+    (void)c;
+    return sk_core_can_pay() ? YES : NO;
+}
 static void sk_add_obs(id self, SEL c, id obs) {
-    (void)self; (void)c;
-    if (!obs || nobs >= 8) return;
-    g_obs[nobs++] = objc_retain(obs);
+    (void)self;
+    (void)c;
+    if (!obs) return;
+    if (sk_core_add_observer(obs, on_tx, on_restore) == 2) objc_retain(obs);
+    sk_flush();
 }
 static void sk_rm_obs(id self, SEL c, id obs) {
-    int i;
-    (void)self; (void)c;
-    for (i = 0; i < nobs; i++) if (g_obs[i] == obs) {
-        g_obs[i] = g_obs[--nobs];
-        g_obs[nobs] = 0;
-        return;
-    }
+    (void)self;
+    (void)c;
+    sk_core_remove_observer(obs);
 }
-static id sk_transactions(id self, SEL c) { (void)self; (void)c; return txs(); }
-static id make_tx(id payment) {
+static id sk_transactions(id self, SEL c) {
+    id a = cx_arr_new(cx_class_named("NSMutableArray"));
+    int i;
+    (void)self;
+    (void)c;
+    for (i = 0; i < SK_TX_MAX; i++) if (g_tx_obj[i]) cx_arr_add(a, g_tx_obj[i]);
+    return a;
+}
+static void bind_tx(int id) {
     id tx = cx_alloc_instance(&SKPaymentTransaction_c);
     sk_slot *s = slot_make(tx);
     if (s) {
-        s->state = safe_state(sk_policy_fail_state());
-        s->payment = payment ? objc_retain(payment) : 0;
-        s->error = objc_retain(sk_err("o mOS não conclui compra da App Store"));
-        s->pid[0] = 0;
+        s->tx = SK_TX_PURCHASING;
+        if (g_pay_for_bind) s->username = objc_retain(g_pay_for_bind);
     }
-    cx_arr_add(txs(), tx);
-    return tx;
-}
-static void tell_updated(id queue, id tx) {
-    id one = cx_arr_new(cx_class_named("NSMutableArray"));
-    int i;
-    cx_arr_add(one, tx);
-    for (i = 0; i < nobs; i++)
-        if (responds(g_obs[i], "paymentQueue:updatedTransactions:"))
-            MSG(void, g_obs[i], "paymentQueue:updatedTransactions:", queue, one);
+    tx_bind(id, tx);
 }
 static void sk_add(id self, SEL c, id payment) {
+    sk_slot *ps = slot_of(payment);
+    (void)self;
     (void)c;
-    tell_updated(self, make_tx(payment));
+    g_pay_for_bind = payment;
+    sk_core_add_payment(ps ? ps->pid : "", ps ? ps->qty : 1);
+    g_pay_for_bind = 0;
+    sk_flush();
 }
 static void sk_finish(id self, SEL c, id tx) {
-    (void)self; (void)c;
-    if (txs() && tx) MSG(void, txs(), "removeObject:", tx);
+    sk_slot *s = slot_of(tx);
+    int i;
+    (void)self;
+    (void)c;
+    if (!s) return;
+    for (i = 0; i < SK_TX_MAX; i++) if (g_tx_obj[i] == tx) {
+        sk_core_finish(g_tx_id[i]);
+        if (!sk_core_tx_get(g_tx_id[i], 0, 0, 0, 0)) tx_unbind(g_tx_id[i]);
+        return;
+    }
 }
 static void sk_restore(id self, SEL c) {
-    id err = sk_err("o mOS não restaura compras da App Store");
-    int i;
+    (void)self;
     (void)c;
-    for (i = 0; i < nobs; i++)
-        if (responds(g_obs[i], "paymentQueue:restoreCompletedTransactionsFailedWithError:"))
-            MSG(void, g_obs[i], "paymentQueue:restoreCompletedTransactionsFailedWithError:", self, err);
+    sk_core_restore();
+    sk_flush();
 }
 
 static id pay_with_id(id cls, SEL c, id pid) {
     id p = cx_alloc_instance((cx_class_t *)cls);
     sk_slot *s = slot_make(p);
     (void)c;
-    if (s && pid) snprintf(s->pid, sizeof s->pid, "%s", cx_cstr(pid));
+    if (s && pid) {
+        const char *z = cx_cstr(pid);
+        int i = 0;
+        if (!z) z = "";
+        for (; z[i] && i + 1 < (int)sizeof s->pid; i++) s->pid[i] = z[i];
+        s->pid[i] = 0;
+    }
     return objc_autorelease(p);
 }
 static id pay_with_product(id cls, SEL c, id product) {
     id pid = product && responds(product, "productIdentifier") ? MSG0(id, product, "productIdentifier") : 0;
     return pay_with_id(cls, c, pid);
 }
-static id pay_pid(id self, SEL c) { (void)c; sk_slot *s = slot_of(self); return s && s->pid[0] ? objc_autorelease(cx_str(s->pid)) : 0; }
+static id pay_pid(id self, SEL c) {
+    sk_slot *s = slot_of(self);
+    (void)c;
+    return s && s->pid[0] ? objc_autorelease(cx_str(s->pid)) : 0;
+}
 static void pay_set_pid(id self, SEL c, id pid) {
     sk_slot *s = slot_make(self);
+    const char *z = pid ? cx_cstr(pid) : "";
+    int i = 0;
     (void)c;
-    if (s) snprintf(s->pid, sizeof s->pid, "%s", pid ? cx_cstr(pid) : "");
+    if (!s) return;
+    if (!z) z = "";
+    for (; z[i] && i + 1 < (int)sizeof s->pid; i++) s->pid[i] = z[i];
+    s->pid[i] = 0;
 }
-static unsigned long pay_qty(id self, SEL c) { (void)c; sk_slot *s = slot_of(self); return s ? (unsigned long)s->qty : 1; }
-static void pay_set_qty(id self, SEL c, unsigned long q) { (void)c; sk_slot *s = slot_make(self); if (s) s->qty = q ? (int)q : 1; }
-static id pay_user(id self, SEL c) { (void)c; sk_slot *s = slot_of(self); return s ? s->username : 0; }
-static void pay_set_user(id self, SEL c, id u) { (void)c; sk_slot *s = slot_make(self); if (s) s->username = u ? objc_retain(u) : 0; }
-
-static id prod_pid(id self, SEL c) { return pay_pid(self, c); }
-static id prod_title(id self, SEL c) { (void)self; (void)c; return objc_autorelease(cx_str("")); }
-static id prod_price(id self, SEL c) { (void)self; (void)c; return objc_autorelease(cx_num_d(0)); }
-
-static id resp_init(id self, SEL c) { (void)c; slot_make(self); return self; }
-static id resp_products(id self, SEL c) {
+static unsigned long pay_qty(id self, SEL c) {
     sk_slot *s = slot_of(self);
     (void)c;
-    return s && s->ids ? s->ids : objc_autorelease(cx_arr_new(cx_class_named("NSMutableArray")));
+    return s ? (unsigned long)s->qty : 1;
 }
-static id resp_invalid(id self, SEL c) {
-    sk_slot *s = slot_of(self);
-    (void)c;
-    return s && s->delegate ? s->delegate : objc_autorelease(cx_arr_new(cx_class_named("NSMutableArray")));
-}
-
-static id req_init(id self, SEL c, id ids) {
+static void pay_set_qty(id self, SEL c, unsigned long q) {
     sk_slot *s = slot_make(self);
     (void)c;
-    if (s && ids) s->ids = objc_retain(ids);
-    return self;
+    if (s) s->qty = q ? (int)q : 1;
 }
-static void req_set_del(id self, SEL c, id del) { (void)c; sk_slot *s = slot_make(self); if (s) s->delegate = del; }
-static id req_del(id self, SEL c) { (void)c; sk_slot *s = slot_of(self); return s ? s->delegate : 0; }
-static void req_cancel(id self, SEL c) { (void)c; sk_slot *s = slot_make(self); if (s) s->cancelled = 1; }
-static id invalid_ids(id ids) {
-    if (ids && responds(ids, "allObjects")) return MSG0(id, ids, "allObjects");
-    if (ids && responds(ids, "count")) return ids;
-    return cx_arr_new(cx_class_named("NSMutableArray"));
-}
-static void req_start(id self, SEL c) {
+static id pay_user(id self, SEL c) {
     sk_slot *s = slot_of(self);
-    id resp, products, invalid;
-    int i;
     (void)c;
-    if (!s || s->cancelled) return;
-    products = cx_arr_new(cx_class_named("NSMutableArray"));
-    for (i = 0; i < sk_policy_product_count(); i++) (void)products;
-    invalid = invalid_ids(s->ids);
-    resp = cx_alloc_instance(&SKProductsResponse_c);
-    slot_make(resp);
-    { sk_slot *r = slot_of(resp); if (r) { r->ids = objc_retain(products); r->delegate = objc_retain(invalid); } }
-    if (s->delegate && responds(s->delegate, "productsRequest:didReceiveResponse:"))
-        MSG(void, s->delegate, "productsRequest:didReceiveResponse:", self, resp);
-    if (s->delegate && responds(s->delegate, "requestDidFinish:"))
-        MSG(void, s->delegate, "requestDidFinish:", self);
+    return s ? s->username : 0;
+}
+static void pay_set_user(id self, SEL c, id u) {
+    sk_slot *s = slot_make(self);
+    (void)c;
+    if (s) s->username = u ? objc_retain(u) : 0;
+}
+
+static id prod_pid(id self, SEL c) { return pay_pid(self, c); }
+static id prod_title(id self, SEL c) {
+    (void)self;
+    (void)c;
+    return objc_autorelease(cx_str(""));
+}
+static id prod_price(id self, SEL c) {
+    (void)self;
+    (void)c;
+    return objc_autorelease(cx_num_d(0));
 }
 
 static long tx_state(id self, SEL c) {
     sk_slot *s = slot_of(self);
     (void)c;
-    return safe_state(s ? s->state : sk_policy_fail_state());
+    if (!s) return SK_TX_FAILED;
+    if (s->tx == SK_TX_PURCHASED || s->tx == SK_TX_RESTORED) return SK_TX_FAILED;
+    return s->tx;
 }
-static id tx_err(id self, SEL c) { (void)c; sk_slot *s = slot_of(self); return s ? s->error : 0; }
-static id tx_pay(id self, SEL c) { (void)c; sk_slot *s = slot_of(self); return s ? s->payment : 0; }
-static id tx_nil(id self, SEL c) { (void)self; (void)c; (void)sk_policy_receipt_len; return 0; }
+static id tx_err(id self, SEL c) {
+    sk_slot *s = slot_of(self);
+    (void)c;
+    return s ? s->delegate : 0;
+}
+static id tx_pay(id self, SEL c) {
+    sk_slot *s = slot_of(self);
+    (void)c;
+    return s ? s->username : 0;
+}
+static id tx_nil(id self, SEL c) {
+    (void)self;
+    (void)c;
+    (void)sk_policy_receipt_len;
+    return 0;
+}
 
-static id receipt_url(id self, SEL c) { (void)self; (void)c; return 0; }
+static id req_init(id self, SEL c, id ids) {
+    sk_slot *s = slot_make(self);
+    (void)c;
+    (void)ids;
+    if (s) s->delegate = 0;
+    return self;
+}
+static void req_set_del(id self, SEL c, id del) {
+    sk_slot *s = slot_make(self);
+    (void)c;
+    if (s) s->delegate = del;
+}
+static id req_del(id self, SEL c) {
+    sk_slot *s = slot_of(self);
+    (void)c;
+    return s ? s->delegate : 0;
+}
+static void req_cancel(id self, SEL c) {
+    sk_slot *s = slot_make(self);
+    (void)c;
+    if (s) s->cancelled = 1;
+}
+static void on_req(void *ctx, int err) {
+    id self = (id)ctx;
+    sk_slot *s = slot_of(self);
+    if (!s || !s->delegate || !responds(s->delegate, "request:didFailWithError:")) return;
+    MSG(void, s->delegate, "request:didFailWithError:", self, sk_err(err, "não foi possível contatar a App Store (SKErrorCloudServiceNetworkConnectionFailed)"));
+}
+static void req_start(id self, SEL c) {
+    sk_slot *s = slot_of(self);
+    (void)c;
+    sk_core_request(self, on_req, s ? s->cancelled : 1);
+    sk_flush();
+}
+
+static id receipt_url(id self, SEL c) {
+    (void)self;
+    (void)c;
+    return 0;
+}
 
 int cx_storekit_verify_receipt(const void *bytes, size_t n, char *err, size_t cap) {
     return sk_verify(bytes, n, err, cap);
 }
+
+void sk2_products_for(int n_ids, sk2_cont cont, void *ctx) { sk_core_products(n_ids, cont, ctx); }
+void sk2_purchase(const char *pid, sk2_cont cont, void *ctx) { sk_core_purchase(pid, cont, ctx); }
+void sk2_appstore_sync(sk2_cont cont, void *ctx) { sk_core_sync(cont, ctx); }
+int sk2_entitlements_next(void) { return sk_core_entitlements_next(); }
+int sk2_updates_next(void) { return sk_core_updates_next(); }
 
 static void sk_def(cx_class_t *c, cx_class_t *m, const char *name) {
     cx_define_class(c, m, name, cx_class_named("NSObject"), 0);
@@ -218,6 +333,9 @@ static void sk_def(cx_class_t *c, cx_class_t *m, const char *name) {
 }
 
 void cx_storekit_init(void) {
+    sk_core_set_tid(fw_tid);
+    sk_core_set_bind(bind_tx);
+    sk_core_bind_queue(1);
     sk_def(&SKProduct_c, &SKProduct_m, "SKProduct");
     sk_def(&SKProductsResponse_c, &SKProductsResponse_m, "SKProductsResponse");
     sk_def(&SKPaymentTransaction_c, &SKPaymentTransaction_m, "SKPaymentTransaction");
@@ -241,9 +359,6 @@ void cx_storekit_init(void) {
     cx_add_method(&SKProduct_c, "localizedTitle", (void *)prod_title);
     cx_add_method(&SKProduct_c, "localizedDescription", (void *)prod_title);
     cx_add_method(&SKProduct_c, "price", (void *)prod_price);
-    cx_add_method(&SKProductsResponse_c, "init", (void *)resp_init);
-    cx_add_method(&SKProductsResponse_c, "products", (void *)resp_products);
-    cx_add_method(&SKProductsResponse_c, "invalidProductIdentifiers", (void *)resp_invalid);
     cx_add_method(&SKProductsRequest_c, "initWithProductIdentifiers:", (void *)req_init);
     cx_add_method(&SKProductsRequest_c, "setDelegate:", (void *)req_set_del);
     cx_add_method(&SKProductsRequest_c, "delegate", (void *)req_del);
