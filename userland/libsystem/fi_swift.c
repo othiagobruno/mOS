@@ -16,6 +16,7 @@
 #else
 #include "foundation.h"
 #include "libc.h"
+#include <stdint.h>
 void *dlsym(void *h, const char *name);
 char *strcat(char *d, const char *s);
 int sscanf(const char *s, const char *fmt, ...);
