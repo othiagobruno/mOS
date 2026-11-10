@@ -1218,7 +1218,8 @@ u32 cx_sigmask_from_mos(u32 m) {
  * traduz o número e a máscara para os do macOS, chama o tratador e volta pelo MOS_SIGOP_RETURN, que restaura o
  * contexto (inclusive o que o tratador tiver mudado no mcontext, ex.: __ss.__rip). */
 typedef struct { void *handler; u32 mask; int flags; } mac_sigaction_t;
-static __attribute__((used, noreturn)) void cx_sigtramp(void *h, int style, int mossig, mos_siginfo_t *si, mos_ucontext_t *uc) {
+/* Global: unw_is_signal_frame compara o início da função com este símbolo. */
+__attribute__((noreturn)) void cx_sigtramp(void *h, int style, int mossig, mos_siginfo_t *si, mos_ucontext_t *uc) {
     (void)style;
     int s = sig_from_mos(mossig);
     int saved_errno = cx_errno;

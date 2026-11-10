@@ -150,6 +150,13 @@ for f in libunwind.cpp UnwindLevel1.c UnwindLevel1-gcc-ext.c UnwindRegistersSave
     compile_uw "$f"
 done
 
+echo "==> unw_hosttest (API pública da libunwind no host)"
+cc -O1 -fno-omit-frame-pointer -funwind-tables -rdynamic \
+    -I"$ROOT/userland/libsystem" \
+    "$ROOT/tools/unw_hosttest.c" "$ROOT/userland/libsystem/cxx_unwind.c" "$ROOT/userland/libsystem/unw_alias.S" \
+    -ldl -o "$OUT/unw_hosttest"
+"$OUT/unw_hosttest"
+
 echo "==> libSystem.mos"
 # x86_64: _Unwind_* fica em cxx_unwind.c. UnwindLevel1.c repete esses nomes; o resto do libunwind fica.
 LS_SRC=()
