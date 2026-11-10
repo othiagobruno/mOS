@@ -746,18 +746,8 @@ void qsort(void *base, size_t n, size_t sz, int (*cmp)(const void *, const void 
     }
 }
 
-void qsort_r(void *base, size_t n, size_t sz, void *thunk, int (*cmp)(void *, const void *, const void *)) {
-    /* inserção estável: suficiente para o uso típico */
-    u8 *a = base, *tmp = malloc(sz);
-    if (!tmp) return;
-    for (size_t i = 1; i < n; i++) {
-        memcpy(tmp, a + i * sz, sz);
-        size_t j = i;
-        while (j > 0 && cmp(thunk, a + (j - 1) * sz, tmp) > 0) { memcpy(a + j * sz, a + (j - 1) * sz, sz); j--; }
-        memcpy(a + j * sz, tmp, sz);
-    }
-    free(tmp);
-}
+/* qsort_r está em sortb.c: heapsort O(n log n), sem buffer e sem estado global.
+ * A versão anterior era inserção O(n²). Não é estável; o estável é mergesort. */
 
 void *bsearch(const void *key, const void *base, size_t n, size_t sz, int (*cmp)(const void *, const void *)) {
     size_t lo = 0, hi = n;
