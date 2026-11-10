@@ -16,6 +16,9 @@
  *    confirm devolve false e prompt devolve null para a página (o completionHandler do app é aceito e ignorado).
  * Limites: um mundo de conteúdo só (WKContentWorld é aceito e ignorado), sem quadros (iframes não carregam), sem
  * mídia, sem impressão/PDF, e os recursos de esquemas próprios só valem para o documento principal.
+ * WebArchive/WebResource (WebKit1) guardam o plist da Apple (WebMainResource / WebSubresources /
+ * WebSubframeArchives). `data` grava XML; `initWithData:` lê XML e bplist. Não há desafio de autenticação,
+ * download (WKDownload) nem painel de arquivo: o motor não emite esses eventos, então o delegate não é chamado.
  *   tools/build-frameworks-objc.ps1 -Only WebKit
  */
 #import <AppKit/AppKit.h>
@@ -120,6 +123,9 @@ typedef struct _NSZone NSZone;
 @end
 @interface NSException : NSObject
 + (void)raise:(NSString *)n format:(NSString *)f, ...;
+@end
+@interface NSPropertyListSerialization (MOSWebArchive)
++ (NSData *)dataWithPropertyList:(id)plist format:(NSUInteger)format options:(NSUInteger)opt error:(NSError **)error;
 @end
 
 void *_Block_copy(const void *b);
@@ -1540,12 +1546,27 @@ static int wk_mods(NSEvent *e) {
 - (void)stopLoading { wk_sys(MOS_WEB_GO, _wid, MOS_WEB_GO_STOP, 0); for (WKMOSSchemeTask *t in _schemeTasks) [self _mosStopTask:t]; }
 - (WKNavigation *)goBack { if (!_canBack) return nil; WKNavigation *n = [self _mosBeginNav]; wk_sys(MOS_WEB_GO, _wid, MOS_WEB_GO_BACK, 0); return n; }
 - (WKNavigation *)goForward { if (!_canForward) return nil; WKNavigation *n = [self _mosBeginNav]; wk_sys(MOS_WEB_GO, _wid, MOS_WEB_GO_FORWARD, 0); return n; }
+- (void)_mosGoRelative:(int)rel {
+    for (; rel < 0; rel++) wk_sys(MOS_WEB_GO, _wid, MOS_WEB_GO_BACK, 0);
+    for (; rel > 0; rel--) wk_sys(MOS_WEB_GO, _wid, MOS_WEB_GO_FORWARD, 0);
+}
 - (WKNavigation *)goToBackForwardListItem:(WKBackForwardListItem *)item {
     if (!item || !item->_rel) return nil;
+    int rel = item->_rel;
     WKNavigation *n = [self _mosBeginNav];
-    int k = item->_rel;
-    for (; k < 0; k++) wk_sys(MOS_WEB_GO, _wid, MOS_WEB_GO_BACK, 0);
-    for (; k > 0; k--) wk_sys(MOS_WEB_GO, _wid, MOS_WEB_GO_FORWARD, 0);
+    id d = _navigationDelegate;
+    if ([d respondsToSelector:@selector(webView:shouldGoToBackForwardListItem:willUseInstantBack:completionHandler:)]) {
+        __block BOOL called = NO;
+        /* instant back não existe neste motor: o terceiro argumento é NO */
+        [d webView:self shouldGoToBackForwardListItem:item willUseInstantBack:NO completionHandler:^(BOOL allow) {
+            if (called || _closed) return;
+            called = YES;
+            if (!allow) { [_pendingNav autorelease]; _pendingNav = nil; return; }
+            [self _mosGoRelative:rel];
+        }];
+        return n;
+    }
+    [self _mosGoRelative:rel];
     return n;
 }
 - (IBAction)goBack:(id)s { [self goBack]; }
@@ -1846,6 +1867,139 @@ static int wk_mods(NSEvent *e) {
 - (void)dealloc { [_lists release]; [super dealloc]; }
 @end
 
+/* ================================================================ WebArchive / WebResource (WebKit1)
+ * Plist da Apple, o que o CUALockScreenGuardian do ChatGPT/Codex liga forte:
+ *   WebMainResource, WebSubresources, WebSubframeArchives
+ *   WebResourceData, WebResourceURL, WebResourceMIMEType, WebResourceTextEncodingName, WebResourceFrameName
+ * `data` grava XML (NSPropertyListXMLFormat_v1_0 = 100). `initWithData:` aceita XML e bplist. */
+static NSString *wa_str(id v) { return [v isKindOfClass:[NSString class]] ? v : nil; }
+static NSData *wa_bytes(id v) { return [v isKindOfClass:[NSData class]] ? v : nil; }
+
+@interface WebResource : NSObject
+- (instancetype)initWithData:(NSData *)data URL:(NSURL *)url MIMEType:(NSString *)mime textEncodingName:(NSString *)enc frameName:(NSString *)frame;
+- (NSData *)data;
+- (NSURL *)URL;
+- (NSString *)MIMEType;
+- (NSString *)textEncodingName;
+- (NSString *)frameName;
+- (NSDictionary *)_mosPlist;
+@end
+@interface WebArchive : NSObject
+- (instancetype)initWithMainResource:(WebResource *)main subresources:(NSArray *)subs subframeArchives:(NSArray *)frames;
+- (instancetype)initWithData:(NSData *)data;
+- (NSData *)data;
+- (WebResource *)mainResource;
+- (NSArray *)subresources;
+- (NSArray *)subframeArchives;
+@end
+
+@implementation WebResource {
+    NSData *_data;
+    NSURL *_url;
+    NSString *_mime, *_enc, *_frame;
+}
+- (instancetype)initWithData:(NSData *)data URL:(NSURL *)url MIMEType:(NSString *)mime textEncodingName:(NSString *)enc frameName:(NSString *)frame {
+    if ((self = [super init])) {
+        _data = [data copy];
+        _url = [url copy];
+        _mime = [mime copy];
+        _enc = [enc copy];
+        _frame = [frame copy];
+    }
+    return self;
+}
+- (NSData *)data { return _data; }
+- (NSURL *)URL { return _url; }
+- (NSString *)MIMEType { return _mime; }
+- (NSString *)textEncodingName { return _enc; }
+- (NSString *)frameName { return _frame; }
+- (NSDictionary *)_mosPlist {
+    NSMutableDictionary *d = [NSMutableDictionary dictionary];
+    if (_data) [d setObject:_data forKey:@"WebResourceData"];
+    if (_url) [d setObject:[_url absoluteString] ?: @"" forKey:@"WebResourceURL"];
+    if (_mime) [d setObject:_mime forKey:@"WebResourceMIMEType"];
+    if (_enc) [d setObject:_enc forKey:@"WebResourceTextEncodingName"];
+    if (_frame) [d setObject:_frame forKey:@"WebResourceFrameName"];
+    return d;
+}
++ (WebResource *)_mosFromPlist:(id)pl {
+    if (![pl isKindOfClass:[NSDictionary class]]) return nil;
+    NSString *us = wa_str([pl objectForKey:@"WebResourceURL"]);
+    return [[[self alloc] initWithData:wa_bytes([pl objectForKey:@"WebResourceData"])
+                                    URL:us ? [NSURL URLWithString:us] : nil
+                               MIMEType:wa_str([pl objectForKey:@"WebResourceMIMEType"])
+                       textEncodingName:wa_str([pl objectForKey:@"WebResourceTextEncodingName"])
+                              frameName:wa_str([pl objectForKey:@"WebResourceFrameName"])] autorelease];
+}
+- (void)dealloc { [_data release]; [_url release]; [_mime release]; [_enc release]; [_frame release]; [super dealloc]; }
+@end
+
+@implementation WebArchive {
+    WebResource *_main;
+    NSArray *_subs, *_frames;
+}
++ (NSArray *)_mosResources:(id)a {
+    NSMutableArray *o = [NSMutableArray array];
+    if ([a isKindOfClass:[NSArray class]]) for (id x in a) { WebResource *r = [WebResource _mosFromPlist:x]; if (r) [o addObject:r]; }
+    return o;
+}
++ (NSArray *)_mosArchives:(id)a {
+    NSMutableArray *o = [NSMutableArray array];
+    if ([a isKindOfClass:[NSArray class]]) for (id x in a) {
+        WebArchive *sub = nil;
+        if ([x isKindOfClass:[NSDictionary class]]) {
+            sub = [[self alloc] init];
+            sub = [sub _mosInitWithPlist:x];
+        }
+        if (sub) [o addObject:[sub autorelease]];
+    }
+    return o;
+}
+/* self já passou por init. Não chama [super init] de novo. */
+- (instancetype)_mosInitWithPlist:(NSDictionary *)pl {
+    if (![pl isKindOfClass:[NSDictionary class]]) { [self release]; return nil; }
+    _main = [[WebResource _mosFromPlist:[pl objectForKey:@"WebMainResource"]] retain];
+    _subs = [[[self class] _mosResources:[pl objectForKey:@"WebSubresources"]] retain];
+    _frames = [[[self class] _mosArchives:[pl objectForKey:@"WebSubframeArchives"]] retain];
+    return self;
+}
+- (instancetype)initWithMainResource:(WebResource *)main subresources:(NSArray *)subs subframeArchives:(NSArray *)frames {
+    if ((self = [super init])) {
+        _main = [main retain];
+        _subs = [[WebArchive _mosKeep:subs class:[WebResource class]] retain];
+        _frames = [[WebArchive _mosKeep:frames class:[WebArchive class]] retain];
+    }
+    return self;
+}
++ (NSArray *)_mosKeep:(NSArray *)a class:(Class)c {
+    NSMutableArray *o = [NSMutableArray array];
+    if (c && [a isKindOfClass:[NSArray class]]) for (id x in a) if ([x isKindOfClass:c]) [o addObject:x];
+    return o;
+}
+- (instancetype)initWithData:(NSData *)data {
+    if (!(self = [super init])) return nil;
+    id pl = data ? [NSPropertyListSerialization propertyListWithData:data options:0 format:NULL error:NULL] : nil;
+    if (![pl isKindOfClass:[NSDictionary class]]) { [self release]; return nil; }
+    return [self _mosInitWithPlist:pl];
+}
+- (NSDictionary *)_mosPlist {
+    NSMutableDictionary *d = [NSMutableDictionary dictionary];
+    if (_main) [d setObject:[_main _mosPlist] forKey:@"WebMainResource"];
+    NSMutableArray *subs = [NSMutableArray array];
+    for (WebResource *r in _subs) [subs addObject:[r _mosPlist]];
+    if ([subs count]) [d setObject:subs forKey:@"WebSubresources"];
+    NSMutableArray *frames = [NSMutableArray array];
+    for (WebArchive *a in _frames) [frames addObject:[a _mosPlist]];
+    if ([frames count]) [d setObject:frames forKey:@"WebSubframeArchives"];
+    return d;
+}
+- (NSData *)data { return [NSPropertyListSerialization dataWithPropertyList:[self _mosPlist] format:100 options:0 error:NULL]; }
+- (WebResource *)mainResource { return _main; }
+- (NSArray *)subresources { return _subs ?: [NSArray array]; }
+- (NSArray *)subframeArchives { return _frames ?: [NSArray array]; }
+- (void)dealloc { [_main release]; [_subs release]; [_frames release]; [super dealloc]; }
+@end
+
 /* ================================================================ WebKit1 (WebView legada) sobre o WKWebView */
 @interface WebPreferences : NSObject
 + (instancetype)standardPreferences;
@@ -1944,6 +2098,10 @@ static int wk_mods(NSEvent *e) {
 - (void)loadRequest:(NSURLRequest *)r { [_wv loadRequest:r]; }
 - (void)loadHTMLString:(NSString *)s baseURL:(NSURL *)u { [_wv loadHTMLString:s baseURL:u]; }
 - (void)loadData:(NSData *)d MIMEType:(NSString *)m textEncodingName:(NSString *)e baseURL:(NSURL *)u { [_wv loadData:d MIMEType:m characterEncodingName:e baseURL:u]; }
+- (void)loadData:(NSData *)d MIMEType:(NSString *)m textEncodingName:(NSString *)e baseURL:(NSURL *)u completionHandler:(void (^)(NSError *))h {
+    [self loadData:d MIMEType:m textEncodingName:e baseURL:u];
+    if (h) h(nil);
+}
 - (void)loadAlternateHTMLString:(NSString *)s baseURL:(NSURL *)u forUnreachableURL:(NSURL *)x { [_wv loadHTMLString:s baseURL:u]; }
 - (void)stopLoading { [_wv stopLoading]; }
 - (void)reload { [_wv reload]; }
