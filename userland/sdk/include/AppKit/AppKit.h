@@ -4,7 +4,10 @@
 
 @class NSWindow, NSView, NSEvent, NSColor, NSFont, NSMenu, NSScreen, NSImage, NSTableView, NSTableColumn;
 
-typedef NS_ENUM(NSInteger, NSApplicationActivationPolicy) { NSApplicationActivationPolicyRegular = 0, NSApplicationActivationPolicyAccessory = 1 };
+typedef NS_ENUM(NSInteger, NSApplicationActivationPolicy) {
+    NSApplicationActivationPolicyRegular = 0, NSApplicationActivationPolicyAccessory = 1,
+    NSApplicationActivationPolicyProhibited = 2
+};
 typedef NS_OPTIONS(NSUInteger, NSWindowStyleMask) {
     NSWindowStyleMaskBorderless = 0, NSWindowStyleMaskTitled = 1, NSWindowStyleMaskClosable = 2,
     NSWindowStyleMaskMiniaturizable = 4, NSWindowStyleMaskResizable = 8
@@ -73,6 +76,7 @@ extern NSString *const NSWindowWillCloseNotification;
 @property (readonly, copy) NSArray<NSWindow *> *windows;
 @property (readonly) NSWindow *keyWindow;
 - (BOOL)setActivationPolicy:(NSApplicationActivationPolicy)p;
+@property (readonly) NSApplicationActivationPolicy activationPolicy;
 - (void)activateIgnoringOtherApps:(BOOL)b;
 - (void)run;
 - (void)stop:(id)sender;
@@ -575,4 +579,42 @@ typedef NSString *NSStoryboardSceneIdentifier;
 - (void)removeLayoutGuide:(NSLayoutGuide *)g;
 @property (readonly, strong) NSLayoutGuide *safeAreaLayoutGuide;
 @property (readonly, strong) NSLayoutGuide *layoutMarginsGuide;
+@end
+
+/* ---- barra de menus e popover (Usagebar, Setapp, apps LSUIElement) */
+typedef NS_ENUM(NSUInteger, NSRectEdge) {
+    NSRectEdgeMinX = 0, NSRectEdgeMinY = 1, NSRectEdgeMaxX = 2, NSRectEdgeMaxY = 3
+};
+typedef NS_ENUM(NSInteger, NSPopoverBehavior) {
+    NSPopoverBehaviorApplicationDefined = 0, NSPopoverBehaviorTransient = 1, NSPopoverBehaviorSemitransient = 2
+};
+extern const CGFloat NSStatusItemLength;       /* -1, largura do título */
+extern const CGFloat NSStatusItemSquareLength; /* -2, quadrado da espessura da barra */
+@class NSStatusBar, NSStatusItem, NSStatusBarButton, NSPopover, NSViewController;
+@interface NSStatusBar : NSObject
++ (NSStatusBar *)systemStatusBar;
+- (NSStatusItem *)statusItemWithLength:(CGFloat)length;
+- (void)removeStatusItem:(NSStatusItem *)item;
+@property (readonly) CGFloat thickness;
+@end
+@interface NSStatusItem : NSObject
+@property (strong) NSMenu *menu;
+@property (copy) NSString *title;
+@property (strong) NSImage *image;
+@property (copy) NSString *toolTip;
+@property (getter=isVisible) BOOL visible;
+@property CGFloat length;
+@property (readonly, strong) NSStatusBarButton *button;
+@property (readonly, weak) NSStatusBar *statusBar;
+- (void)popUpStatusItemMenu:(NSMenu *)menu;
+@end
+@interface NSStatusBarButton : NSButton
+@end
+@interface NSPopover : NSResponder
+@property NSPopoverBehavior behavior;
+@property (strong) NSView *contentView;
+@property (strong) NSViewController *contentViewController;
+@property (readonly, getter=isShown) BOOL shown;
+- (void)showRelativeToRect:(NSRect)rect ofView:(NSView *)view preferredEdge:(NSRectEdge)edge;
+- (void)close;
 @end

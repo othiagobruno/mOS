@@ -9,6 +9,7 @@
 #include "foundation.h"
 #include "libc.h"
 #include "appkit_table.h"
+#include "appkit_status.h"
 #include "../../kernel/include/compat_gui.h"
 
 double floor(double), cos(double), sin(double), strtod(const char *, char **);
@@ -2546,7 +2547,8 @@ static id ap_shared(id cls, SEL c) {
 }
 static void ap_set_delegate(id self, SEL c, id d) { (void)self; (void)c; app.delegate = d; }
 static id ap_delegate(id self, SEL c) { (void)self; (void)c; return app.delegate; }
-static BOOL ap_set_policy(id self, SEL c, i64 p) { (void)self; (void)c; (void)p; return YES; }
+static BOOL ap_set_policy(id self, SEL c, i64 p) { (void)self; (void)c; return cx_act_set_policy((int)p) ? YES : NO; }
+static i64 ap_policy(id self, SEL c) { (void)self; (void)c; return cx_act_policy(); }
 static void ap_set_menu(id self, SEL c, id m) { (void)self; (void)c; keep(&app.menu, m); menus_dirty = YES; }
 static id ap_menu(id self, SEL c) { (void)self; (void)c; return app.menu; }
 static id ap_windows(id self, SEL c) { (void)self; (void)c; return app_windows ? app_windows : cx_arr_new(&NSMutableArray_c); }
@@ -2653,6 +2655,14 @@ static void dispatch(gui_event_t *g) {
         id v = hit(s->content, &a, g->x, g->y);
         if (!v) v = s->content;
         if (g->type == GEV_MOUSE_DOWN) {
+            id cur = v;
+            int inside = 0;
+            for (int i = 0; cur && i < 32; i++) {
+                if (cx_pop_is_content(cur)) { inside = 1; break; }
+                if (!cx_is_subclass(cur->isa, &NSView_c)) break;
+                cur = vs(cur)->superview;
+            }
+            if (!inside) cx_pop_close_transients(); /* NSPopoverBehaviorTransient */
             if (w != g_key_window) w_become_key(w);   /* o clique torna chave a janela que aceita (Cocoa); popups não */
             if (MSG0(BOOL, v, "acceptsFirstResponder")) w_make_first(w, 0, v);
             else if (s->first && vs(s->first)->kind == K_TEXT) w_make_first(w, 0, 0);
@@ -2840,7 +2850,8 @@ static void ap_run(id self, SEL c) {
         if (ms) SYS1(SYS_SLEEP, ms);
     }
 }
-static void ap_activate(id self, SEL c, BOOL b) { (void)self; (void)c; (void)b; }
+static void ap_activate(id self, SEL c, BOOL b) { (void)self; (void)c; (void)b; cx_act_activate(); }
+static void ap_activate_simple(id self, SEL c) { (void)self; (void)c; cx_act_activate(); }
 static BOOL ap_send_action(id self, SEL c, SEL a, id to, id from) {
     (void)self; (void)c;
     if (!to) to = app.delegate;
@@ -4484,7 +4495,8 @@ void cx_appkit_init(void) {
     DEF(NSApplication, NSResponder);
     CM(NSApplication, "sharedApplication", ap_shared);
     M(NSApplication, "setDelegate:", ap_set_delegate); M(NSApplication, "delegate", ap_delegate); M(NSApplication, "run", ap_run);
-    M(NSApplication, "setActivationPolicy:", ap_set_policy); M(NSApplication, "activateIgnoringOtherApps:", ap_activate); M(NSApplication, "activate", noop_m);
+    M(NSApplication, "setActivationPolicy:", ap_set_policy); M(NSApplication, "activationPolicy", ap_policy);
+    M(NSApplication, "activateIgnoringOtherApps:", ap_activate); M(NSApplication, "activate", ap_activate_simple);
     M(NSApplication, "setMainMenu:", ap_set_menu); M(NSApplication, "mainMenu", ap_menu); M(NSApplication, "terminate:", ap_terminate);
     M(NSApplication, "stop:", ap_stop); M(NSApplication, "finishLaunching", ap_finish_launching); M(NSApplication, "windows", ap_windows);
     M(NSApplication, "orderedWindows", ap_ordered_windows);

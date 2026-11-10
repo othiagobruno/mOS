@@ -7,7 +7,8 @@
  * Todas ficam na superclasse certa, com símbolo exportado. As que o Electron chama de fato têm o
  * comportamento de um Mac sem o recurso:
  *   NSOpenPanel/NSSavePanel: o diálogo é cancelado (NSModalResponseCancel); o Electron devolve "canceled".
- *   NSStatusBar/NSStatusItem: o item existe (botão, menu, título), sem barra de status no mOS.
+ *   NSStatusBar/NSStatusItem: a barra guarda o item, o clique abre o menu e o modelo
+ *   está em appkit_status.c. O desenho do ícone na barra do sistema é do kernel.
  *   NSAnimation: termina na hora (progresso 1, animationDidEnd:). NSAnimationContext: grupos imediatos.
  *   NSParagraphStyle/NSMutableParagraphStyle, NSFontManager, NSPrintInfo, NSSpellChecker (sem erros),
  *   NSDocumentController (documentos recentes em memória), NSWorkspaceOpenConfiguration, NSToolbar,
@@ -16,6 +17,7 @@
  */
 #include "foundation.h"
 #include "sys.h"
+#include "appkit_status.h"
 #include "../../kernel/include/compat_gui.h"
 
 void *calloc(size_t n, size_t s);
@@ -26,6 +28,8 @@ int strcmp(const char *a, const char *b);
 id objc_retain(id o);
 void objc_release(id o);
 id objc_autorelease(id o);
+void objc_setAssociatedObject(id object, const void *key, id value, u64 policy);
+id objc_getAssociatedObject(id object, const void *key);
 
 typedef struct { double x, y, w, h; } ax_rect_t;
 typedef struct { double w, h; } ax_size_t;
@@ -115,20 +119,132 @@ static void panel_begin(id self, SEL c, void *blk) { (void)self; (void)c; if (bl
 static void panel_begin_sheet(id self, SEL c, id win, void *blk) { (void)win; panel_begin(self, c, blk); }
 static id panel_urls(id self, SEL c) { (void)self; (void)c; return objc_autorelease(cx_arr_new(0)); }
 
-/* ---- barra de status */
+/* ---- barra de status: a lista, o menu e o clique ficam em appkit_status.c */
+const double NSStatusItemLength = -1;
+const double NSStatusItemSquareLength = -2;
+const long NSPopoverBehaviorApplicationDefined = 0;
+const long NSPopoverBehaviorTransient = 1;
+const long NSPopoverBehaviorSemitransient = 2;
+static const char sb_btn_key = 0;
+typedef struct { id button; id target; SEL action; } sbb_act_t;
+static sbb_act_t sbb_act[32];
+
 static id sb_system(id k, SEL c) { (void)c; static id s; if (!s) s = new_inst(k); return s; }
-static id sb_item(id self, SEL c, double len) {
-    (void)self; (void)c;
-    id it = new_inst((id)&NSStatusItem_c);
-    pset(it, "length", cx_num_d(len));
-    id b = MSG0(id, MSG0(id, (id)&NSStatusBarButton_c, "alloc"), "init");
-    pset(it, "button", b);
-    return it;
+static sbb_act_t *sbb_slot(id button, int make) {
+    sbb_act_t *free_slot = 0;
+    for (int i = 0; i < 32; i++) {
+        if (sbb_act[i].button == button) return &sbb_act[i];
+        if (!sbb_act[i].button && !free_slot) free_slot = &sbb_act[i];
+    }
+    if (!make || !free_slot) return 0;
+    free_slot->button = button;
+    free_slot->target = 0;
+    free_slot->action = 0;
+    return free_slot;
 }
-static void sb_remove(id self, SEL c, id it) { (void)self; (void)c; (void)it; }
+static void sbb_open_menu(id it) {
+    id menu, del;
+    if (!it || !cx_sb_click(it)) return;
+    menu = pget(it, "menu");
+    del = menu ? MSG0(id, menu, "delegate") : 0;
+    if (del && cx_responds(del->isa, sel_registerName("menuWillOpen:")))
+        MSG(void, del, "menuWillOpen:", menu);
+}
+static void sbb_down(id self, SEL c, id ev) {
+    id it;
+    sbb_act_t *slot;
+    (void)c; (void)ev;
+    it = objc_getAssociatedObject(self, &sb_btn_key);
+    if (it && pget(it, "menu")) { sbb_open_menu(it); return; }
+    slot = sbb_slot(self, 0);
+    if (slot && slot->action && slot->target)
+        ((void (*)(id, SEL, id))objc_msgSend)(slot->target, slot->action, self);
+}
+static void sbb_set_target(id self, SEL c, id t) {
+    sbb_act_t *slot;
+    (void)c;
+    slot = sbb_slot(self, 1);
+    if (slot) slot->target = t;
+}
+static void sbb_set_action(id self, SEL c, SEL a) {
+    sbb_act_t *slot;
+    (void)c;
+    slot = sbb_slot(self, 1);
+    if (slot) slot->action = a;
+}
+static id sb_item(id self, SEL c, double len) {
+    id it, b;
+    (void)self; (void)c;
+    it = new_inst((id)&NSStatusItem_c);
+    if (!it || !cx_sb_register(it, len)) {
+        if (it) objc_release(it);
+        return 0;
+    }
+    pset(it, "length", cx_num_d(len));
+    b = MSG0(id, MSG0(id, (id)&NSStatusBarButton_c, "alloc"), "init");
+    pset(it, "button", b);
+    objc_setAssociatedObject(b, &sb_btn_key, it, 0);
+    /* a barra fica com um retain; quem chama recebe o objeto sem ser dono, como no Cocoa */
+    objc_retain(it);
+    return objc_autorelease(it);
+}
+static void sb_remove(id self, SEL c, id it) {
+    (void)self; (void)c;
+    if (cx_sb_unregister(it)) objc_release(it);
+}
 static double sb_thickness(id self, SEL c) { (void)self; (void)c; return 24; }
 static id si_button(id self, SEL c) { (void)c; return pget(self, "button"); }
 static id si_bar(id self, SEL c) { (void)self; (void)c; return sb_system((id)&NSStatusBar_c, 0); }
+static void si_set_menu(id self, SEL c, id m) { s_menu(self, c, m); cx_sb_set_menu(self, m); }
+static void si_set_visible(id self, SEL c, i64 v) { s_visible(self, c, v); cx_sb_set_visible(self, v ? 1 : 0); }
+static void si_set_length(id self, SEL c, double v) { s_length(self, c, v); cx_sb_set_length(self, v); }
+static void si_set_title(id self, SEL c, id t) {
+    id b;
+    s_title(self, c, t);
+    b = pget(self, "button");
+    if (b) MSG(void, b, "setTitle:", t);
+    cx_sb_set_title(self, t && cx_is_str(t) ? cx_cstr(t) : "");
+}
+static void si_set_image(id self, SEL c, id im) {
+    id b;
+    s_image(self, c, im);
+    b = pget(self, "button");
+    if (b) MSG(void, b, "setImage:", im);
+}
+static void si_popup(id self, SEL c, id menu) {
+    (void)c;
+    if (menu) si_set_menu(self, 0, menu);
+    sbb_open_menu(self);
+}
+
+/* NSPopover já existe como classe vazia (vscode_fwclasses.c). O comportamento é o de appkit_status.c. */
+static void pop_set_beh(id self, SEL c, i64 b) { (void)c; pset(self, "behavior", cx_num_i(b)); cx_pop_set_behavior(self, (int)b); }
+static i64 pop_beh(id self, SEL c) { (void)c; return cx_pop_behavior(self); }
+static void pop_set_view(id self, SEL c, id v) { (void)c; pset(self, "contentView", v); cx_pop_set_content(self, v); }
+static id pop_view(id self, SEL c) { (void)c; return pget(self, "contentView"); }
+static void pop_set_vc(id self, SEL c, id vc) {
+    id v;
+    (void)c;
+    pset(self, "contentViewController", vc);
+    v = vc ? MSG0(id, vc, "view") : 0;
+    if (v) cx_pop_set_content(self, v);
+}
+static id pop_vc(id self, SEL c) { (void)c; return pget(self, "contentViewController"); }
+static void pop_show(id self, SEL c, ax_rect_t r, id view, unsigned long edge) {
+    id content, vc;
+    (void)c; (void)r; (void)view; (void)edge;
+    content = pget(self, "contentView");
+    if (!content) {
+        vc = pget(self, "contentViewController");
+        if (vc) content = MSG0(id, vc, "view");
+    }
+    if (content) cx_pop_set_content(self, content);
+    cx_pop_set_behavior(self, (int)pget_i(self, "behavior", cx_pop_behavior(self)));
+    cx_pop_show(self);
+    if (view) pset(self, "positioningView", view);
+}
+static void pop_close(id self, SEL c) { (void)c; cx_pop_close(self); }
+static BOOL pop_shown(id self, SEL c) { (void)c; return cx_pop_shown(self) ? YES : NO; }
 
 /* ---- animações: não desenham passos, só terminam. Modo bloqueante (NSAnimationBlocking = 0, o padrão): termina antes de
  * startAnimation voltar, como no AppKit. Modos não bloqueantes (1, 2): no AppKit a animação corre no run loop e o
@@ -345,6 +461,23 @@ void cx_appkit_extra_init(void) {
     IM(NSStatusItem, "button", si_button); IM(NSStatusItem, "statusBar", si_bar);
     REG_PROP(NSStatusItem, menu, setMenu); REG_PROP(NSStatusItem, length, setLength); REG_PROP(NSStatusItem, visible, setVisible);
     REG_PROP(NSStatusItem, title, setTitle); REG_PROP(NSStatusItem, image, setImage); REG_PROP(NSStatusItem, toolTip, setToolTip);
+    IM(NSStatusItem, "setMenu:", si_set_menu); IM(NSStatusItem, "setVisible:", si_set_visible);
+    IM(NSStatusItem, "setLength:", si_set_length); IM(NSStatusItem, "setTitle:", si_set_title);
+    IM(NSStatusItem, "setImage:", si_set_image);
+    IM(NSStatusItem, "isVisible", g_visible); IM(NSStatusItem, "popUpStatusItemMenu:", si_popup);
+    IM(NSStatusBarButton, "mouseDown:", sbb_down); IM(NSStatusBarButton, "performClick:", sbb_down);
+    IM(NSStatusBarButton, "setTarget:", sbb_set_target); IM(NSStatusBarButton, "setAction:", sbb_set_action);
+    {
+        cx_class_t *pop = cx_class_named("NSPopover");
+        if (pop) {
+            cx_add_method(pop, "setBehavior:", (void *)pop_set_beh); cx_add_method(pop, "behavior", (void *)pop_beh);
+            cx_add_method(pop, "setContentView:", (void *)pop_set_view); cx_add_method(pop, "contentView", (void *)pop_view);
+            cx_add_method(pop, "setContentViewController:", (void *)pop_set_vc);
+            cx_add_method(pop, "contentViewController", (void *)pop_vc);
+            cx_add_method(pop, "showRelativeToRect:ofView:preferredEdge:", (void *)pop_show);
+            cx_add_method(pop, "close", (void *)pop_close); cx_add_method(pop, "isShown", (void *)pop_shown);
+        }
+    }
 
     DEF(NSAnimation, "NSObject"); DEF(NSAnimationContext, "NSObject");
     IM(NSAnimation, "initWithDuration:animationCurve:", an_init); IM(NSAnimation, "startAnimation", an_start);
