@@ -13,61 +13,27 @@ void cx_mark_stub_class(cx_class_t *c);
 #define VZCLS(N) \
     cx_class_t N##_c __asm__("OBJC_CLASS_$_" #N); \
     static cx_class_t N##_m __asm__("OBJC_METACLASS_$_" #N)
-
-VZCLS(VZConsoleDeviceConfiguration);
-VZCLS(VZDirectorySharingDeviceConfiguration);
-VZCLS(VZDiskImageStorageDeviceAttachment);
-VZCLS(VZEFIBootLoader);
-VZCLS(VZEFIVariableStore);
-VZCLS(VZEntropyDeviceConfiguration);
-VZCLS(VZFileHandleNetworkDeviceAttachment);
-VZCLS(VZFileHandleSerialPortAttachment);
-VZCLS(VZGenericMachineIdentifier);
-VZCLS(VZGenericPlatformConfiguration);
-VZCLS(VZGraphicsDeviceConfiguration);
-VZCLS(VZKeyboardConfiguration);
-VZCLS(VZLinuxBootLoader);
-VZCLS(VZMACAddress);
-VZCLS(VZMemoryBalloonDeviceConfiguration);
-VZCLS(VZMultipleDirectoryShare);
-VZCLS(VZNATNetworkDeviceAttachment);
-VZCLS(VZNVMExpressControllerDeviceConfiguration);
-VZCLS(VZNetworkDeviceConfiguration);
-VZCLS(VZPointingDeviceConfiguration);
-VZCLS(VZSharedDirectory);
-VZCLS(VZSocketDevice);
-VZCLS(VZSocketDeviceConfiguration);
-VZCLS(VZStorageDeviceConfiguration);
-VZCLS(VZUSBKeyboardConfiguration);
-VZCLS(VZUSBScreenCoordinatePointingDeviceConfiguration);
-VZCLS(VZVirtioBlockDeviceConfiguration);
-VZCLS(VZVirtioConsoleDeviceConfiguration);
-VZCLS(VZVirtioConsolePortConfiguration);
-VZCLS(VZVirtioEntropyDeviceConfiguration);
-VZCLS(VZVirtioFileSystemDeviceConfiguration);
-VZCLS(VZVirtioGraphicsDeviceConfiguration);
-VZCLS(VZVirtioGraphicsScanoutConfiguration);
-VZCLS(VZVirtioNetworkDeviceConfiguration);
-VZCLS(VZVirtioSocketDevice);
-VZCLS(VZVirtioSocketDeviceConfiguration);
-VZCLS(VZVirtioSocketListener);
-VZCLS(VZVirtioTraditionalMemoryBalloonDeviceConfiguration);
-VZCLS(VZVirtualMachine);
-VZCLS(VZVirtualMachineConfiguration);
-VZCLS(VZVmnetNetworkDeviceAttachment);
+#define VZ_DEF_SYM(N) VZCLS(N);
+VZ_CLASS_LIST(VZ_DEF_SYM)
+#undef VZ_DEF_SYM
 
 typedef struct { void *isa; int flags, reserved; void (*invoke)(void *, id); } vz_blk_t;
 
 static id vz_err(void) {
-    id ui = MSG(id, (id)cx_class_named("NSDictionary"), "dictionaryWithObject:forKey:",
-                cx_str(VZ_UNSUPPORTED_MSG), cx_str("NSLocalizedDescription"));
+    const char *msg = 0;
+    id ui;
+    vz_policy_validate(&msg);
+    ui = MSG(id, (id)cx_class_named("NSDictionary"), "dictionaryWithObject:forKey:",
+             cx_str(msg), cx_str("NSLocalizedDescription"));
     return MSG(id, (id)cx_class_named("NSError"), "errorWithDomain:code:userInfo:",
                cx_str(VZ_ERROR_DOMAIN), (long)VZ_ERROR_CODE, ui);
 }
 
-static BOOL vz_supported(id cls, SEL c) { (void)cls; (void)c; return vz_is_supported() ? YES : NO; }
+static BOOL vz_supported(id cls, SEL c) { (void)cls; (void)c; return vz_policy_supported() ? YES : NO; }
 static BOOL vz_validate(id self, SEL c, id *err) {
+    const char *msg = 0;
     (void)self; (void)c;
+    if (vz_policy_validate(&msg)) return YES;
     if (err) *err = vz_err();
     return NO;
 }
@@ -76,7 +42,9 @@ static BOOL vz_validate_url(id self, SEL c, id url, id *err) {
     return vz_validate(self, c, err);
 }
 static void vz_fail_block(id handler) {
+    const char *msg = 0;
     vz_blk_t *b = (vz_blk_t *)handler;
+    vz_policy_start(&msg);
     if (b && b->invoke) b->invoke(handler, vz_err());
 }
 static void vz_start(id self, SEL c, id handler) { (void)self; (void)c; vz_fail_block(handler); }
@@ -87,21 +55,25 @@ static void vz_fail_url(id self, SEL c, id url, id handler) {
     (void)self; (void)c; (void)url; vz_fail_block(handler);
 }
 static id vz_init_cfg(id self, SEL c, id cfg) { (void)c; (void)cfg; return self; }
-static long vz_state(id self, SEL c) { (void)self; (void)c; return 0; }
-static BOOL vz_no(id self, SEL c) { (void)self; (void)c; return NO; }
+static long vz_state(id self, SEL c) { (void)self; (void)c; return vz_policy_state(); }
+static BOOL vz_no(id self, SEL c) { (void)self; (void)c; return vz_policy_can() ? YES : NO; }
 static BOOL vz_reqstop(id self, SEL c, id *err) { return vz_validate(self, c, err); }
 static id vz_disk_init(id self, SEL c, id url, BOOL ro, id *err) {
-    (void)self; (void)c; (void)url; (void)ro;
+    const char *msg = 0;
+    (void)c; (void)url; (void)ro;
+    if (vz_policy_disk(&msg)) return self;
     if (err) *err = vz_err();
     return nil;
 }
 static id vz_efi_init(id self, SEL c, id url, id *err) {
-    (void)self; (void)c; (void)url;
+    const char *msg = 0;
+    (void)c; (void)url;
+    if (vz_policy_efi(&msg)) return self;
     if (err) *err = vz_err();
     return nil;
 }
 static id vz_kernel_init(id self, SEL c, id url) { (void)c; (void)url; return self; }
-static id vz_nil(id self, SEL c) { (void)self; (void)c; return nil; }
+static id vz_nil(id self, SEL c) { (void)self; (void)c; return vz_policy_mac() ? self : nil; }
 
 static void vz_def(cx_class_t *c, cx_class_t *m, const char *name, cx_class_t *super) {
     cx_define_class(c, m, name, super ? super : cx_class_named("NSObject"), 0);
@@ -111,49 +83,25 @@ static void vz_def(cx_class_t *c, cx_class_t *m, const char *name, cx_class_t *s
     cx_add_method(c, "validateSaveRestoreAtURL:error:", (void *)vz_validate_url);
 }
 
+static cx_class_t *vz_super(const char *name) {
+    if (!strcmp(name, "VZUSBKeyboardConfiguration")) return &VZKeyboardConfiguration_c;
+    if (!strcmp(name, "VZUSBScreenCoordinatePointingDeviceConfiguration")) return &VZPointingDeviceConfiguration_c;
+    if (!strcmp(name, "VZVirtioBlockDeviceConfiguration")) return &VZStorageDeviceConfiguration_c;
+    if (!strcmp(name, "VZVirtioConsoleDeviceConfiguration")) return &VZConsoleDeviceConfiguration_c;
+    if (!strcmp(name, "VZVirtioEntropyDeviceConfiguration")) return &VZEntropyDeviceConfiguration_c;
+    if (!strcmp(name, "VZVirtioFileSystemDeviceConfiguration")) return &VZDirectorySharingDeviceConfiguration_c;
+    if (!strcmp(name, "VZVirtioGraphicsDeviceConfiguration")) return &VZGraphicsDeviceConfiguration_c;
+    if (!strcmp(name, "VZVirtioNetworkDeviceConfiguration")) return &VZNetworkDeviceConfiguration_c;
+    if (!strcmp(name, "VZVirtioSocketDevice")) return &VZSocketDevice_c;
+    if (!strcmp(name, "VZVirtioSocketDeviceConfiguration")) return &VZSocketDeviceConfiguration_c;
+    if (!strcmp(name, "VZVirtioTraditionalMemoryBalloonDeviceConfiguration")) return &VZMemoryBalloonDeviceConfiguration_c;
+    return 0;
+}
+
 void cx_virtualization_init(void) {
-    cx_class_t *ns = cx_class_named("NSObject");
-    vz_def(&VZConsoleDeviceConfiguration_c, &VZConsoleDeviceConfiguration_m, "VZConsoleDeviceConfiguration", ns);
-    vz_def(&VZDirectorySharingDeviceConfiguration_c, &VZDirectorySharingDeviceConfiguration_m, "VZDirectorySharingDeviceConfiguration", ns);
-    vz_def(&VZDiskImageStorageDeviceAttachment_c, &VZDiskImageStorageDeviceAttachment_m, "VZDiskImageStorageDeviceAttachment", ns);
-    vz_def(&VZEFIBootLoader_c, &VZEFIBootLoader_m, "VZEFIBootLoader", ns);
-    vz_def(&VZEFIVariableStore_c, &VZEFIVariableStore_m, "VZEFIVariableStore", ns);
-    vz_def(&VZEntropyDeviceConfiguration_c, &VZEntropyDeviceConfiguration_m, "VZEntropyDeviceConfiguration", ns);
-    vz_def(&VZFileHandleNetworkDeviceAttachment_c, &VZFileHandleNetworkDeviceAttachment_m, "VZFileHandleNetworkDeviceAttachment", ns);
-    vz_def(&VZFileHandleSerialPortAttachment_c, &VZFileHandleSerialPortAttachment_m, "VZFileHandleSerialPortAttachment", ns);
-    vz_def(&VZGenericMachineIdentifier_c, &VZGenericMachineIdentifier_m, "VZGenericMachineIdentifier", ns);
-    vz_def(&VZGenericPlatformConfiguration_c, &VZGenericPlatformConfiguration_m, "VZGenericPlatformConfiguration", ns);
-    vz_def(&VZGraphicsDeviceConfiguration_c, &VZGraphicsDeviceConfiguration_m, "VZGraphicsDeviceConfiguration", ns);
-    vz_def(&VZKeyboardConfiguration_c, &VZKeyboardConfiguration_m, "VZKeyboardConfiguration", ns);
-    vz_def(&VZLinuxBootLoader_c, &VZLinuxBootLoader_m, "VZLinuxBootLoader", ns);
-    vz_def(&VZMACAddress_c, &VZMACAddress_m, "VZMACAddress", ns);
-    vz_def(&VZMemoryBalloonDeviceConfiguration_c, &VZMemoryBalloonDeviceConfiguration_m, "VZMemoryBalloonDeviceConfiguration", ns);
-    vz_def(&VZMultipleDirectoryShare_c, &VZMultipleDirectoryShare_m, "VZMultipleDirectoryShare", ns);
-    vz_def(&VZNATNetworkDeviceAttachment_c, &VZNATNetworkDeviceAttachment_m, "VZNATNetworkDeviceAttachment", ns);
-    vz_def(&VZNVMExpressControllerDeviceConfiguration_c, &VZNVMExpressControllerDeviceConfiguration_m, "VZNVMExpressControllerDeviceConfiguration", ns);
-    vz_def(&VZNetworkDeviceConfiguration_c, &VZNetworkDeviceConfiguration_m, "VZNetworkDeviceConfiguration", ns);
-    vz_def(&VZPointingDeviceConfiguration_c, &VZPointingDeviceConfiguration_m, "VZPointingDeviceConfiguration", ns);
-    vz_def(&VZSharedDirectory_c, &VZSharedDirectory_m, "VZSharedDirectory", ns);
-    vz_def(&VZSocketDevice_c, &VZSocketDevice_m, "VZSocketDevice", ns);
-    vz_def(&VZSocketDeviceConfiguration_c, &VZSocketDeviceConfiguration_m, "VZSocketDeviceConfiguration", ns);
-    vz_def(&VZStorageDeviceConfiguration_c, &VZStorageDeviceConfiguration_m, "VZStorageDeviceConfiguration", ns);
-    vz_def(&VZUSBKeyboardConfiguration_c, &VZUSBKeyboardConfiguration_m, "VZUSBKeyboardConfiguration", &VZKeyboardConfiguration_c);
-    vz_def(&VZUSBScreenCoordinatePointingDeviceConfiguration_c, &VZUSBScreenCoordinatePointingDeviceConfiguration_m, "VZUSBScreenCoordinatePointingDeviceConfiguration", &VZPointingDeviceConfiguration_c);
-    vz_def(&VZVirtioBlockDeviceConfiguration_c, &VZVirtioBlockDeviceConfiguration_m, "VZVirtioBlockDeviceConfiguration", &VZStorageDeviceConfiguration_c);
-    vz_def(&VZVirtioConsoleDeviceConfiguration_c, &VZVirtioConsoleDeviceConfiguration_m, "VZVirtioConsoleDeviceConfiguration", &VZConsoleDeviceConfiguration_c);
-    vz_def(&VZVirtioConsolePortConfiguration_c, &VZVirtioConsolePortConfiguration_m, "VZVirtioConsolePortConfiguration", ns);
-    vz_def(&VZVirtioEntropyDeviceConfiguration_c, &VZVirtioEntropyDeviceConfiguration_m, "VZVirtioEntropyDeviceConfiguration", &VZEntropyDeviceConfiguration_c);
-    vz_def(&VZVirtioFileSystemDeviceConfiguration_c, &VZVirtioFileSystemDeviceConfiguration_m, "VZVirtioFileSystemDeviceConfiguration", &VZDirectorySharingDeviceConfiguration_c);
-    vz_def(&VZVirtioGraphicsDeviceConfiguration_c, &VZVirtioGraphicsDeviceConfiguration_m, "VZVirtioGraphicsDeviceConfiguration", &VZGraphicsDeviceConfiguration_c);
-    vz_def(&VZVirtioGraphicsScanoutConfiguration_c, &VZVirtioGraphicsScanoutConfiguration_m, "VZVirtioGraphicsScanoutConfiguration", ns);
-    vz_def(&VZVirtioNetworkDeviceConfiguration_c, &VZVirtioNetworkDeviceConfiguration_m, "VZVirtioNetworkDeviceConfiguration", &VZNetworkDeviceConfiguration_c);
-    vz_def(&VZVirtioSocketDevice_c, &VZVirtioSocketDevice_m, "VZVirtioSocketDevice", &VZSocketDevice_c);
-    vz_def(&VZVirtioSocketDeviceConfiguration_c, &VZVirtioSocketDeviceConfiguration_m, "VZVirtioSocketDeviceConfiguration", &VZSocketDeviceConfiguration_c);
-    vz_def(&VZVirtioSocketListener_c, &VZVirtioSocketListener_m, "VZVirtioSocketListener", ns);
-    vz_def(&VZVirtioTraditionalMemoryBalloonDeviceConfiguration_c, &VZVirtioTraditionalMemoryBalloonDeviceConfiguration_m, "VZVirtioTraditionalMemoryBalloonDeviceConfiguration", &VZMemoryBalloonDeviceConfiguration_c);
-    vz_def(&VZVirtualMachineConfiguration_c, &VZVirtualMachineConfiguration_m, "VZVirtualMachineConfiguration", ns);
-    vz_def(&VZVirtualMachine_c, &VZVirtualMachine_m, "VZVirtualMachine", ns);
-    vz_def(&VZVmnetNetworkDeviceAttachment_c, &VZVmnetNetworkDeviceAttachment_m, "VZVmnetNetworkDeviceAttachment", ns);
+#define VZ_DEF_ONE(N) vz_def(&N##_c, &N##_m, #N, vz_super(#N));
+    VZ_CLASS_LIST(VZ_DEF_ONE)
+#undef VZ_DEF_ONE
 
     cx_add_method(&VZVirtualMachine_c, "initWithConfiguration:", (void *)vz_init_cfg);
     cx_add_method(&VZVirtualMachine_c, "state", (void *)vz_state);

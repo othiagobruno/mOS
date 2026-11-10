@@ -13,21 +13,25 @@
 @end
 
 static NSError *vz_err(void) {
+    const char *msg = 0;
+    vz_policy_validate(&msg);
     return [NSError errorWithDomain:@VZ_ERROR_DOMAIN code:VZ_ERROR_CODE
-                            userInfo:@{ @"NSLocalizedDescription": @VZ_UNSUPPORTED_MSG }];
+                            userInfo:@{ @"NSLocalizedDescription": [NSString stringWithUTF8String:msg] }];
 }
 
 typedef struct { void *isa; int flags; int reserved; void (*invoke)(void *, id); } vz_blk_t;
 
 static void vz_fail_block(id handler) {
+    const char *msg = 0;
     vz_blk_t *b = (vz_blk_t *)handler;
+    vz_policy_start(&msg);
     if (b && b->invoke) b->invoke(handler, vz_err());
 }
 
 #define VZ_COMMON \
-+ (BOOL)isSupported { return vz_is_supported() ? YES : NO; } \
-- (BOOL)validateWithError:(NSError **)error { if (error) *error = vz_err(); return NO; } \
-- (BOOL)validateSaveRestoreAtURL:(id)url error:(NSError **)error { (void)url; if (error) *error = vz_err(); return NO; }
++ (BOOL)isSupported { return vz_policy_supported() ? YES : NO; } \
+- (BOOL)validateWithError:(NSError **)error { const char *m = 0; if (vz_policy_validate(&m)) return YES; if (error) *error = vz_err(); return NO; } \
+- (BOOL)validateSaveRestoreAtURL:(id)url error:(NSError **)error { const char *m = 0; (void)url; if (vz_policy_validate(&m)) return YES; if (error) *error = vz_err(); return NO; }
 
 #define VZ_IFACE(Name, Super) @interface Name : Super @end
 #define VZ_IMPL(Name) @implementation Name VZ_COMMON @end
@@ -111,7 +115,9 @@ VZ_IMPL(VZVmnetNetworkDeviceAttachment)
 @implementation VZDiskImageStorageDeviceAttachment
 VZ_COMMON
 - (instancetype)initWithURL:(id)url readOnly:(BOOL)ro error:(NSError **)error {
+    const char *msg = 0;
     (void)url; (void)ro;
+    if (vz_policy_disk(&msg)) return self;
     if (error) *error = vz_err();
     return nil;
 }
@@ -120,7 +126,9 @@ VZ_COMMON
 @implementation VZEFIVariableStore
 VZ_COMMON
 - (instancetype)initWithURL:(id)url error:(NSError **)error {
+    const char *msg = 0;
     (void)url;
+    if (vz_policy_efi(&msg)) return self;
     if (error) *error = vz_err();
     return nil;
 }
@@ -141,7 +149,10 @@ VZ_COMMON
 
 @implementation VZMACAddress
 VZ_COMMON
-+ (instancetype)randomLocallyAdministeredAddress { return nil; }
++ (instancetype)randomLocallyAdministeredAddress {
+    if (vz_policy_mac()) return [self alloc];
+    return nil;
+}
 - (NSString *)string { return nil; }
 @end
 
@@ -152,12 +163,12 @@ VZ_COMMON
 @implementation VZVirtualMachine
 VZ_COMMON
 - (instancetype)initWithConfiguration:(id)configuration { (void)configuration; return self; }
-- (NSInteger)state { return 0; } /* VZVirtualMachineStateStopped */
-- (BOOL)canStart { return NO; }
-- (BOOL)canStop { return NO; }
-- (BOOL)canPause { return NO; }
-- (BOOL)canResume { return NO; }
-- (BOOL)canRequestStop { return NO; }
+- (NSInteger)state { return vz_policy_state(); }
+- (BOOL)canStart { return vz_policy_can() ? YES : NO; }
+- (BOOL)canStop { return vz_policy_can() ? YES : NO; }
+- (BOOL)canPause { return vz_policy_can() ? YES : NO; }
+- (BOOL)canResume { return vz_policy_can() ? YES : NO; }
+- (BOOL)canRequestStop { return vz_policy_can() ? YES : NO; }
 - (BOOL)requestStopWithError:(NSError **)error { if (error) *error = vz_err(); return NO; }
 - (void)startWithCompletionHandler:(id)handler { vz_fail_block(handler); }
 - (void)startWithOptions:(NSUInteger)options completionHandler:(id)handler { (void)options; vz_fail_block(handler); }
