@@ -47,6 +47,15 @@ const char *cx_un_info(const char *ident);
 
 int cx_un_add(const char *ident, const char *title, const char *subtitle, const char *body,
               double interval, int repeats);
+
+/* -1 num campo quer dizer "qualquer". O relógio é Unix, em UTC. */
+typedef struct {
+    int year, month, day, hour, minute, second;
+} cx_un_cal_t;
+
+double cx_un_calendar_next(const cx_un_cal_t *c, double from, int repeats);
+int cx_un_add_calendar(const char *ident, const char *title, const char *subtitle, const char *body,
+                       const cx_un_cal_t *c, int repeats);
 int cx_un_remove_pending(const char *ident);   /* ident NULL: todos os pendentes */
 int cx_un_remove_delivered(const char *ident); /* ident NULL: todas as entregues */
 int cx_un_pending_count(void);

@@ -4,6 +4,7 @@
 #include "foundation.h"
 #include "cn_store.h"
 
+void cx_contacts_ui_init(void);
 int cx_tcc_request(const char *service);
 int cx_tcc_state(const char *service);
 id objc_autorelease(id o);
@@ -243,6 +244,17 @@ static id store_enumerate(id self, SEL c, id request, id *error, void *block) {
     return 0;
 }
 
+static id get_image_data(id self, SEL c) {
+    cn_slot_t *s = slot_of(self, 0);
+    unsigned char buf[32];
+    int n;
+    (void)c;
+    if (!s || !s->c.image[0]) return 0;
+    n = cx_cn_image_bytes(s->c.image, buf, (int)sizeof buf);
+    if (n < 0) return 0;
+    return objc_autorelease(MSG(id, (id)cx_class_named("NSData"), "dataWithBytes:length:", buf, (unsigned long)n));
+}
+
 static id fmt_string(id self, SEL c, id obj) {
     cn_slot_t *s = slot_of(obj, 0);
     char buf[400];
@@ -323,6 +335,7 @@ void cx_contacts_init(void) {
     add_m(&CNMutableContact_c, "setSocialProfileUserIdentifier:", (void *)set_social_id);
     add_m(&CNContact_c, "imageDataHex", (void *)get_image);
     add_m(&CNMutableContact_c, "setImageDataHex:", (void *)set_image);
+    add_m(&CNContact_c, "imageData", (void *)get_image_data);
 
     add_m(&CNSaveRequest_c, "addContact:toContainerWithIdentifier:", (void *)req_add);
     add_m(&CNSaveRequest_c, "updateContact:", (void *)req_update);
@@ -332,4 +345,5 @@ void cx_contacts_init(void) {
     add_m(&CNContactStore_c, "requestAccessForEntityType:completionHandler:", (void *)store_request_access);
     add_m(&CNContactStore_c, "enumerateContactsWithFetchRequest:error:usingBlock:", (void *)store_enumerate);
     add_m(&CNPostalAddressFormatter_c, "stringForObjectValue:", (void *)fmt_string);
+    cx_contacts_ui_init();
 }

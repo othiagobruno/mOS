@@ -63,3 +63,21 @@ int cx_cn_get(int index, cx_cn_contact *out);
 
 /* Linhas com os campos preenchidos. BR usa "cidade - UF". */
 int cx_cn_format_postal(const cx_cn_contact *c, char *out, int cap);
+
+/* 1 = nome próprio primeiro, 2 = família primeiro. Ordenação: 2 próprio, 3 família. */
+void cx_cn_set_name_order(int order);
+int cx_cn_name_order(void);
+void cx_cn_set_sort_order(int order);
+int cx_cn_sort_order(void);
+int cx_cn_display_name(const cx_cn_contact *c, char *out, int cap);
+
+/* Hexadecimal par vira bytes. Retorna a quantidade, ou -1 se o texto não for hex. */
+int cx_cn_image_bytes(const char *hex, unsigned char *out, int cap);
+
+const char *cx_cn_container_id(void);
+const char *cx_cn_container_name(void);
+
+typedef void (*cx_cn_pick_fn)(const char *id, void *ctx);
+typedef void (*cx_cn_cancel_fn)(void *ctx);
+int cx_cn_picker_select(int index, cx_cn_pick_fn fn, void *ctx);
+void cx_cn_picker_cancel(cx_cn_cancel_fn fn, void *ctx);

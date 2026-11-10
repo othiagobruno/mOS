@@ -27,6 +27,8 @@ static int g_seq;
 static int g_auth_over;
 static int g_auth_force;
 static char g_path[512];
+static int g_name_order = 1;
+static int g_sort_order = 2;
 
 static void scopy(char *d, int cap, const char *s) {
     int i = 0;
@@ -197,6 +199,8 @@ void cx_cn_reset(void) {
     g_auth_over = 0;
     g_auth_force = 0;
     g_path[0] = 0;
+    g_name_order = 1;
+    g_sort_order = 2;
 }
 
 void cx_cn_set_path(const char *path) {
@@ -322,4 +326,72 @@ int cx_cn_format_postal(const cx_cn_contact *c, char *out, int cap) {
     if (br) add_line(out, cap, &n, c->zip);
     add_line(out, cap, &n, c->country);
     return n;
+}
+
+void cx_cn_set_name_order(int order) { g_name_order = order == 2 ? 2 : 1; }
+int cx_cn_name_order(void) { return g_name_order; }
+void cx_cn_set_sort_order(int order) { g_sort_order = order == 3 ? 3 : 2; }
+int cx_cn_sort_order(void) { return g_sort_order; }
+
+int cx_cn_display_name(const cx_cn_contact *c, char *out, int cap) {
+    int n = 0;
+    if (!out || cap < 1) return 0;
+    out[0] = 0;
+    if (!c) return 0;
+    if (g_name_order == 2) {
+        if (c->family[0]) { scopy(out, cap, c->family); n = (int)strlen(out); }
+        if (c->given[0] && n < cap - 2) {
+            if (n) out[n++] = ' ';
+            scopy(out + n, cap - n, c->given);
+        }
+    } else {
+        if (c->prefix[0]) { scopy(out, cap, c->prefix); n = (int)strlen(out); }
+        if (c->given[0] && n < cap - 2) {
+            if (n) out[n++] = ' ';
+            scopy(out + n, cap - n, c->given);
+            n = (int)strlen(out);
+        }
+        if (c->family[0] && n < cap - 2) {
+            if (n) out[n++] = ' ';
+            scopy(out + n, cap - n, c->family);
+        }
+    }
+    return (int)strlen(out);
+}
+
+static int hex_nibble(char ch) {
+    if (ch >= '0' && ch <= '9') return ch - '0';
+    if (ch >= 'a' && ch <= 'f') return ch - 'a' + 10;
+    if (ch >= 'A' && ch <= 'F') return ch - 'A' + 10;
+    return -1;
+}
+
+int cx_cn_image_bytes(const char *hex, unsigned char *out, int cap) {
+    int n = 0, i = 0;
+    if (!hex || !out || cap < 1) return -1;
+    while (hex[i] && hex[i + 1]) {
+        int hi = hex_nibble(hex[i]);
+        int lo = hex_nibble(hex[i + 1]);
+        if (hi < 0 || lo < 0) return -1;
+        if (n >= cap) return -1;
+        out[n++] = (unsigned char)((hi << 4) | lo);
+        i += 2;
+    }
+    if (hex[i]) return -1;
+    return n;
+}
+
+const char *cx_cn_container_id(void) { return "local"; }
+const char *cx_cn_container_name(void) { return "Contatos"; }
+
+int cx_cn_picker_select(int index, cx_cn_pick_fn fn, void *ctx) {
+    cx_cn_contact c;
+    int rc = cx_cn_get(index, &c);
+    if (rc != CX_CN_OK) return rc;
+    if (fn) fn(c.id, ctx);
+    return CX_CN_OK;
+}
+
+void cx_cn_picker_cancel(cx_cn_cancel_fn fn, void *ctx) {
+    if (fn) fn(ctx);
 }
