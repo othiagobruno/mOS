@@ -5,6 +5,21 @@
 #include <stdio.h>
 #include <string.h>
 
+void wa_cx_deliver(void *queue, void *ctx, void (*fn)(void *));
+static void *g_asked;
+static void *g_current;
+static char g_priv;
+void *dispatch_queue_create(const char *label, void *attr) {
+    (void)label; (void)attr;
+    return &g_priv;
+}
+void dispatch_async_f(void *q, void *ctx, void (*fn)(void *)) {
+    g_asked = q;
+    g_current = q;
+    if (fn) fn(ctx);
+    g_current = 0;
+}
+
 static int fails;
 static void expect(int cond, const char *msg) {
     if (!cond) { fprintf(stderr, "FALHOU: %s\n", msg); fails++; }
@@ -93,6 +108,33 @@ static void test_callkit_objetos(void) {
     expect(wa_cx_submit_full(&b, CX_START, "e", "5", CX_HANDLE_PHONE, 0, 0, 0, &idx) == CX_ERR_LIMIT, "o grupo cheio e maximumCallGroups 1 recusam a próxima");
 }
 
+static int g_jobs;
+static void on_delegate(void *ctx) {
+    g_jobs++;
+    if (g_current != ctx) g_jobs = -100;
+}
+static void test_fila_e_leitura(void) {
+    cx_box b;
+    const cx_call *live;
+    int idx = -1;
+    void *fila = (void *)&idx;
+    wa_cx_box_init(&b);
+    wa_cx_set_provider(&b, 1, 1);
+    expect(wa_cx_cap_on(1) == 1, "supportsHolding ligado responde sim");
+    expect(wa_cx_cap_on(0) == 0, "supportsGrouping desligado responde não");
+    expect(wa_cx_cap_on(-1) == 0, "supportsUngrouping e supportsDTMF ainda não marcados respondem não");
+    expect(wa_cx_submit(&b, CX_START, "viva", "1", 0, 0, &idx) == CX_OK && wa_cx_fulfill(&b, idx) == CX_OK, "chamada viva criada");
+    live = wa_cx_call_at(&b, 0);
+    expect(live && live->on_hold == 0, "a lista aponta a chamada, ainda sem espera");
+    expect(wa_cx_submit(&b, CX_HOLD, "viva", 0, 0, 1, &idx) == CX_OK && wa_cx_fulfill(&b, idx) == CX_OK, "colocar em espera");
+    expect(live->on_hold == 1 && live->has_connected == 1 && live->has_ended == 0, "o mesmo CXCall acompanhou o estado, sem cópia velha");
+    wa_cx_deliver(fila, fila, on_delegate);
+    expect(g_jobs == 1 && g_asked == fila, "dispatch_async_f chamou o delegate na fila pedida");
+    g_jobs = 0;
+    wa_cx_deliver(0, &g_priv, on_delegate);
+    expect(g_jobs == 1 && g_asked == &g_priv, "sem fila, dispatch_async_f usa a fila serial do provedor");
+}
+
 static void test_telephony(void) {
     expect(wa_ct_providers() == 0, "CoreTelephony sem operadora");
     expect(wa_ct_radio() == 0, "CoreTelephony sem tecnologia de rádio atual");
@@ -121,6 +163,7 @@ static void test_bg(void) {
 int main(void) {
     test_callkit();
     test_callkit_objetos();
+    test_fila_e_leitura();
     test_telephony();
     test_location();
     test_bg();

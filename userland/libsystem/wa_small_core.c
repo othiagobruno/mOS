@@ -42,6 +42,8 @@ int wa_cx_handle_equal(int t1, const char *v1, int t2, const char *v2) {
     return strcmp(v1, v2) == 0;
 }
 
+int wa_cx_cap_on(int flag) { return flag == 1; }
+
 unsigned wa_cx_handle_hash(int type, const char *value) {
     unsigned h = 2166136261u ^ (unsigned)type;
     const unsigned char *p = (const unsigned char *)(value ? value : "");

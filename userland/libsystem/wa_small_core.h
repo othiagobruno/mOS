@@ -97,6 +97,8 @@ void wa_cx_set_observer(cx_box *b, int on, int qid);
 void wa_cx_set_config(cx_box *b, const cx_cfg *cfg);
 int wa_cx_handle_equal(int t1, const char *v1, int t2, const char *v2);
 unsigned wa_cx_handle_hash(int type, const char *value);
+/* 1 só quando o flag foi marcado. Ausente (-1) e zero respondem 0. */
+int wa_cx_cap_on(int flag);
 int wa_cx_submit(cx_box *b, int kind, const char *uuid, const char *handle, int muted, int held, int *idx);
 int wa_cx_submit_full(cx_box *b, int kind, const char *uuid, const char *handle, int handle_type, int muted, int held, int video, int *idx);
 int wa_cx_fulfill(cx_box *b, int idx);
