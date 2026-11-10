@@ -6,7 +6,9 @@
  * do bundle em newDefaultLibrary) pelo compilador de mtlshader.c e interpretados por mtlexec.c; o
  * rasterizador, o compute e o blit ficam em metalexec.c. Os comandos são gravados nos encoders (com
  * uma cópia do estado a cada draw) e executados no -commit, em ordem; os handlers de conclusão rodam
- * logo depois. .metallib (AIR, LLVM bitcode) não é suportado: a lib devolve erro com a explicação.
+ * logo depois. .metallib (AIR) baixa para o mesmo interpretador quando os opcodes e os intrínsecos
+ * cabem nele; o que não cabe faz a função faltar (newFunctionWithName: devolve nil) e, se nenhuma
+ * função baixar, a lib devolve erro com o motivo. Não há caminho que finja ter executado.
  *
  * CAMetalLayer: os drawables são texturas sobre IOSurfaces BGRA; -present põe o IOSurface como
  * contents do layer, e o compositor do QuartzCore (quartzcore.c) o mostra na janela. Formatos que
@@ -848,6 +850,18 @@ static char *macros_str(id opts) {
     }
     return s;
 }
+msl_lib_t *mtlair_lower(const void *data, u64 len, char *err, int errn);
+msl_lib_t *mtlair_lower_binds(msl_lib_t *into, const void *data, u64 len, const char *fn, const int *attrs, const int *idxs, int nargs, char *err, int errn);
+static id lib_wrap(msl_lib_t *L) {
+    mlib_t *l = (mlib_t *)new_obj(&MLib_c);
+    l->L = L;
+    l->names = cx_arr_new(cx_class_named("NSMutableArray"));
+    for (int i = 0; i < msl_fn_count(L); i++) {
+        msl_fn_t *f = msl_fn_at(L, i);
+        if (msl_fn_stage(f) != MSL_HELPER) { id s = cx_str(msl_fn_name(f)); cx_arr_add(l->names, s); objc_release(s); }
+    }
+    return (id)l;
+}
 static id lib_from_source(const char *src, u64 n, id opts, id *err) {
     char e[1024];
     char *defs = macros_str(opts);
@@ -857,14 +871,7 @@ static id lib_from_source(const char *src, u64 n, id opts, id *err) {
     gpu_unlock();
     free(defs);
     if (!L) { set_err(err, mk_error("MTLLibraryErrorDomain", 3, "erro de compilação do shader: %s", e)); return 0; }
-    mlib_t *l = (mlib_t *)new_obj(&MLib_c);
-    l->L = L;
-    l->names = cx_arr_new(cx_class_named("NSMutableArray"));
-    for (int i = 0; i < msl_fn_count(L); i++) {
-        msl_fn_t *f = msl_fn_at(L, i);
-        if (msl_fn_stage(f) != MSL_HELPER) { id s = cx_str(msl_fn_name(f)); cx_arr_add(l->names, s); objc_release(s); }
-    }
-    return (id)l;
+    return lib_wrap(L);
 }
 static id dv_newlib_src(id s, SEL c, id src, id opts, id *err) {
     (void)s; (void)c;
@@ -881,8 +888,15 @@ static void dv_newlib_src_blk(id s, SEL c, id src, id opts, void *blk) {
 static int is_air(const char *p, u64 n) { return n >= 4 && p[0] == 'M' && p[1] == 'T' && p[2] == 'L' && p[3] == 'B'; }
 static id lib_from_bytes(const char *p, u64 n, id *err) {
     if (is_air(p, n)) {
-        set_err(err, mk_error("MTLLibraryErrorDomain", 2, "metallib (AIR) não é suportado pelo Metal por software do mOS; compile os shaders do fonte (.metal) com newLibraryWithSource:"));
-        return 0;
+        char e[512];
+        gpu_lock();
+        msl_lib_t *L = mtlair_lower(p, n, e, sizeof e);
+        gpu_unlock();
+        if (!L) {
+            set_err(err, mk_error("MTLLibraryErrorDomain", 2, "metallib (AIR) não executável: %s", e[0] ? e : "nenhuma função baixou"));
+            return 0;
+        }
+        return lib_wrap(L);
     }
     return lib_from_source(p, n, 0, err);
 }
@@ -914,13 +928,17 @@ static id lib_from_dir(const char *dir, id *err) {
     u64 cap = 4096, used = 0;
     char *all = malloc(cap);
     all[0] = 0;
-    int found = 0, air = 0;
+    int found = 0, nair = 0;
+    char airp[8][1024];
     void *e;
     while ((e = readdir(d))) {
         /* dirent do Darwin: d_ino(8) d_seekoff(8) d_reclen(2) d_namlen(2) d_type(1) d_name[] */
         const char *nm = (const char *)e + 21;
         u64 nl = strlen(nm);
-        if (nl > 9 && !strcmp(nm + nl - 9, ".metallib")) air = 1;
+        if (nl > 9 && !strcmp(nm + nl - 9, ".metallib") && nair < 8) {
+            snprintf(airp[nair], sizeof airp[0], "%s/%s", dir, nm);
+            nair++;
+        }
         if (nl < 7 || strcmp(nm + nl - 6, ".metal")) continue;
         char p[1024];
         snprintf(p, sizeof p, "%s/%s", dir, nm);
@@ -940,8 +958,24 @@ static id lib_from_dir(const char *dir, id *err) {
     if (found) {
         g_incdir = strdup(dir);
         l = lib_from_source(all, used, 0, err);
-    } else if (air)
-        set_err(err, mk_error("MTLLibraryErrorDomain", 2, "o bundle só tem default.metallib (AIR), que o Metal por software do mOS não executa; inclua os .metal em Resources"));
+    } else if (nair) {
+        char e[512] = {0};
+        msl_lib_t *L = 0;
+        for (int i = 0; i < nair; i++) {
+            u64 nb = 0;
+            char *b = read_file(airp[i], &nb);
+            if (!b) continue;
+            gpu_lock();
+            L = mtlair_lower_binds(L, b, nb, 0, 0, 0, 0, e, sizeof e);
+            gpu_unlock();
+            free(b);
+        }
+        if (L && msl_fn_count(L) > 0) l = lib_wrap(L);
+        else {
+            if (L) msl_lib_free(L);
+            set_err(err, mk_error("MTLLibraryErrorDomain", 2, "default.metallib (AIR) não executável: %s", e[0] ? e : "nenhuma função baixou"));
+        }
+    }
     free(all);
     return l;
 }
