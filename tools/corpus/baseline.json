@@ -1,0 +1,50 @@
+{
+  "nota": "S\u00edmbolos distintos ausentes no subconjunto fixo. O gate falha se algum destes subir.",
+  "apps": {
+    "rectangle": {
+      "distintos": 902,
+      "origens": {
+        "sistema": 508,
+        "libc++": 0,
+        "Swift": 394,
+        "unwind": 0
+      }
+    },
+    "keepingyouawake": {
+      "distintos": 26,
+      "origens": {
+        "sistema": 26,
+        "libc++": 0,
+        "Swift": 0,
+        "unwind": 0
+      }
+    },
+    "hiddenbar": {
+      "distintos": 229,
+      "origens": {
+        "sistema": 37,
+        "libc++": 0,
+        "Swift": 192,
+        "unwind": 0
+      }
+    },
+    "mos": {
+      "distintos": 259,
+      "origens": {
+        "sistema": 258,
+        "libc++": 1,
+        "Swift": 0,
+        "unwind": 0
+      }
+    },
+    "alt-tab": {
+      "distintos": 832,
+      "origens": {
+        "sistema": 116,
+        "libc++": 3,
+        "Swift": 713,
+        "unwind": 0
+      }
+    }
+  }
+}

@@ -45,10 +45,12 @@ fetch "https://downloads.claude.ai/releases/darwin/universal/4.23118.1/Claude-e0
     "$DL/Claude.zip" a1b69ab28237a34b9894c7fe370492107e3e3b6a6cccb98a258bde27ce98a575
 fetch "https://downloads.cursor.com/production/86776fcb52ca505783155631089b65d646f9b03f/darwin/arm64/Cursor-darwin-arm64.zip" \
     "$DL/Cursor.zip" 8fa25e50a63b04e8d8a8645834e7471d0d102b229b8c16bf9e06dd623e694986
-fetch "https://downloads.slack-edge.com/desktop-releases/mac/arm64/4.53.287/Slack-4.53.287-macOS.dmg" \
-    "$DL/Slack.dmg" 4d4b794cfca076d438122693889179ef6c59066a239413b76df9b51c6dd14082
-fetch "https://downloads.cursor.com/sand/stable/darwin-arm64/0.79.4/Grok_Bot_0.79.4.zip" \
-    "$DL/Grok.zip" fdbe280ff9bf23ad95efb518141a8892fc39f677bef5d6540a73010993ad2ac4
+# Slack e Grok: x64, os builds que o machocheck do host lê. O DMG do Slack
+# começa com bloco bzip2 (UDIF). O zip universal do Grok 0.79.4 responde 403.
+fetch "https://downloads.slack-edge.com/desktop-releases/mac/x64/4.53.287/Slack-4.53.287-macOS.dmg" \
+    "$DL/Slack.dmg" 3053e29516857c31d55b79fc0dc288c590a9742a1e7aec0e6e29419206449660
+fetch "https://downloads.cursor.com/sand/stable/darwin-x64/0.79.4/Grok_Bot_0.79.4_x64.dmg" \
+    "$DL/Grok.dmg" e756dda191013c4042b3ceb886d699f0fb07b83c93ecbe4c9181888737d9d0b6
 fetch "https://persistent.oaistatic.com/codex-app-prod/ChatGPT-darwin-arm64-26.1103.60933.zip" \
     "$DL/ChatGPT.zip" 1d671e7784e0e379f7293ebcfeac826c2a297524ea806cd55e994068d019e388
 fetch "https://update.code.visualstudio.com/1.145.3/darwin-arm64/stable" \
@@ -89,9 +91,8 @@ EOF
     cc -O2 -DMOS_HOST_TEST -I"$ROOT/kernel/include" -I"$ROOT/tools" \
         "$ROOT/tools/dmgtest.c" "$OUT/dmghost.c" \
         "$ROOT/kernel/fs/apfs.c" "$ROOT/kernel/fs/blkdev.c" "$ROOT/kernel/fs/bzip2.c" \
-        "$ROOT/kernel/fs/dfs.c" "$ROOT/kernel/fs/dmg.c"         "$ROOT/kernel/fs/hfsplus.c" \
-        "$ROOT/kernel/fs/hfsplus_wr.c" \
-        "$ROOT/kernel/fs/pcache.c" \
+        "$ROOT/kernel/fs/dfs.c" "$ROOT/kernel/fs/dmg.c" "$ROOT/kernel/fs/hfsplus.c" \
+        "$ROOT/kernel/fs/hfsplus_wr.c" "$ROOT/kernel/fs/pcache.c" \
         "$ROOT/kernel/fs/inflate.c" "$ROOT/kernel/fs/lzfse.c" "$ROOT/kernel/fs/xz.c" \
         "$ROOT/kernel/fs/fat.c" -o "$DMG"
 fi
@@ -102,11 +103,46 @@ stage_one() {
     bash "$ROOT/tools/stage-image.sh" --out "$OUT" --sem-imagem --app "$app" --efi "$OUT/BOOTX64.EFI" "$@"
 }
 
+# DMG UDIF (o Slack aparece como bzip2 no file(1); o Grok x64, como zlib).
+# Se o leitor não montar e o arquivo for um bzip2 único, descompacta e procura o .app.
+extrair_dmg() {
+    local dmg=$1 name=$2
+    local dest=$DL/x-$name
+    rm -rf "$dest"
+    mkdir -p "$dest"
+    if "$DMG" "$dmg" "$dest" >/tmp/$name-dmg.txt 2>&1; then
+        return 0
+    fi
+    if file "$dmg" | grep -q 'bzip2'; then
+        echo "stage-apps: $name é bzip2; descompactando"
+        bzip2 -dc "$dmg" > "$dest/payload" || true
+        if file "$dest/payload" | grep -q 'Zip archive'; then
+            python3 - "$dest/payload" "$dest" <<'PY'
+import sys, zipfile
+with zipfile.ZipFile(sys.argv[1]) as zf:
+    zf.extractall(sys.argv[2])
+PY
+            rm -f "$dest/payload"
+            return 0
+        fi
+        if file "$dest/payload" | grep -q 'bzip2\|zlib\|UDIF\|Macintosh'; then
+            if "$DMG" "$dest/payload" "$dest" >>/tmp/$name-dmg.txt 2>&1; then
+                return 0
+            fi
+        fi
+    fi
+    echo "stage-apps: não extraí o .app de $dmg" >&2
+    tail -20 /tmp/$name-dmg.txt >&2 || true
+    return 1
+}
+
 APP=$(unzip_app "$DL/Claude.zip" claude)
 stage_one "$APP"
 APP=$(unzip_app "$DL/Cursor.zip" cursor)
 stage_one "$APP" --cursor-extras
-APP=$(unzip_app "$DL/Grok.zip" grok)
+extrair_dmg "$DL/Grok.dmg" grok
+APP=$(find "$DL/x-grok" -name 'Grok Bot.app' -type d | head -1)
+if [ -z "$APP" ]; then echo "stage-apps: Grok Bot.app não saiu do dmg" >&2; exit 1; fi
 stage_one "$APP"
 APP=$(unzip_app "$DL/ChatGPT.zip" chatgpt)
 stage_one "$APP"
@@ -117,9 +153,7 @@ stage_one "$APP"
 APP=$(unzip_app "$DL/OpenBot.zip" openbot)
 stage_one "$APP"
 
-rm -rf "$DL/x-slack"
-mkdir -p "$DL/x-slack"
-"$DMG" "$DL/Slack.dmg" "$DL/x-slack" >/tmp/slack-dmg.txt
+extrair_dmg "$DL/Slack.dmg" slack
 APP=$(find "$DL/x-slack" -name 'Slack.app' -type d | head -1)
 if [ -z "$APP" ]; then echo "stage-apps: Slack.app não saiu do dmg" >&2; tail -20 /tmp/slack-dmg.txt >&2; exit 1; fi
 stage_one "$APP"
