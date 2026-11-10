@@ -25,6 +25,7 @@ SUI_VIEW($s7SwiftUI6ToggleVMn, $s7SwiftUI6ToggleVyxGAA4ViewAAMc, SUI_K_TOGGLE, "
 SUI_VIEW($s7SwiftUI9TextFieldVMn, $s7SwiftUI9TextFieldVyxGAA4ViewAAMc, SUI_K_TEXTFIELD, "TextField")
 SUI_VIEW($s7SwiftUI10TextEditorVMn, $s7SwiftUI10TextEditorVAA4ViewAAMc, SUI_K_TEXTEDITOR, "TextEditor")
 SUI_VIEW($s7SwiftUI10ScrollViewVMn, $s7SwiftUI10ScrollViewVyxGAA0D0AAMc, SUI_K_SCROLL, "ScrollView")
+SUI_VIEW($s7SwiftUI7TabViewVMn, $s7SwiftUI7TabViewVyxq_GAA0D0AAMc, SUI_K_TABVIEW, "TabView")
 SUI_VIEW($s7SwiftUI4ListVMn, $s7SwiftUI4ListVyxq_GAA4ViewAAMc, SUI_K_LIST, "List")
 SUI_VIEW($s7SwiftUI7ForEachVMn, $s7SwiftUI7ForEachVyxq_q0_GAA4ViewA2aER0_rlMc, SUI_K_FOREACH, "ForEach")
 SUI_VIEW($s7SwiftUI7DividerVMn, $s7SwiftUI7DividerVAA4ViewAAMc, SUI_K_DIVIDER, "Divider")
@@ -475,6 +476,13 @@ void *$s7SwiftUI10ScrollViewV_15showsIndicators7contentACyxGAA4AxisO3SetV_SbxyXE
     s->code = axes & 0xFF;
     if (shows & 1) s->flags |= SUI_F_INDICATORS;
     return s;
+}
+
+/* TabView { ... } sem seleção (SelectionValue == Int): a aba 0 abre; cada filho traz o tabItem. */
+void *$s7SwiftUI7TabViewVAASiRszrlE7contentACySiq_Gq_yXE_tcfC(void *fn, void *ctx) {
+    sui_node *t = sui_container(&$s7SwiftUI7TabViewVMn, fn, ctx);
+    if (t) t->num[0] = 0;
+    return t;
 }
 
 void *$s7SwiftUI4ListV9selection7contentACyxq_GAA7BindingVyxSgGSg_q_yXEtcfC(void *selection, void *fn, void *ctx) {

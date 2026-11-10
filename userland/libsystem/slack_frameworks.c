@@ -155,6 +155,7 @@ u8 CFFileSecuritySetOwnerUUID(void *s, id uuid) {
 
 /* ================================================================ UTType (CoreServices, a API antiga em C) */
 id kUTTypeApplicationBundle, kUTTypeData;
+id kUTTypeFolder, kUTTypePlainText, kUTTypeApplication, kUTTypeBundle, kUTTypePNG;
 /* hierarquia mínima: os tipos que o macOS declara como "conforma a" */
 static const char *uti_parent(const char *t) {
     static const char *map[][2] = {
@@ -376,6 +377,11 @@ void cx_slack_frameworks_init(void) {
     NSURLFileSecurityKey = S("NSURLFileSecurityKey");
     kUTTypeApplicationBundle = S("com.apple.application-bundle");
     kUTTypeData = S("public.data");
+    kUTTypeFolder = S("public.folder");
+    kUTTypePlainText = S("public.plain-text");
+    kUTTypeApplication = S("com.apple.application");
+    kUTTypeBundle = S("com.apple.bundle");
+    kUTTypePNG = S("public.png");
     AVCaptureSessionInterruptionEndedNotification = S("AVCaptureSessionInterruptionEndedNotification");
     AVCaptureSessionWasInterruptedNotification = S("AVCaptureSessionWasInterruptedNotification");
     AVFormatIDKey = S("AVFormatIDKey"); AVLinearPCMBitDepthKey = S("AVLinearPCMBitDepthKey");

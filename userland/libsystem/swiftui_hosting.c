@@ -94,4 +94,19 @@ void *$s7SwiftUI19UIHostingControllerC5coder8rootViewACyxGSgSo7NSCoderC_xtcfc(vo
 }
 
 void *$s7SwiftUI19UIHostingControllerC8rootViewACyxGx_tcfCTq = (void *)$s7SwiftUI19UIHostingControllerC8rootViewACyxGx_tcfC;
+
+/* NSHostingController (AppKit): o mesmo controller, com a view hospedeira como view. */
+mos_hv_desc $s7SwiftUI19NSHostingControllerCMn = { 16, "NSHostingController" };
+
+void *$s7SwiftUI19NSHostingControllerC8rootViewACyxGx_tcfc(void *root, void *metadata) {
+    mos_hc *c;
+    (void)metadata;
+    c = mos_hc_new(root, 0);
+    if (c) c->isa = &$s7SwiftUI19NSHostingControllerCMn;
+    return c;
+}
+
+void *$s7SwiftUI19NSHostingControllerC8rootViewACyxGx_tcfC(void *root, void *metadata) {
+    return $s7SwiftUI19NSHostingControllerC8rootViewACyxGx_tcfc(root, metadata);
+}
 void *$s7SwiftUI19UIHostingControllerC5coder8rootViewACyxGSgSo7NSCoderC_xtcfCTq = (void *)$s7SwiftUI19UIHostingControllerC5coder8rootViewACyxGSgSo7NSCoderC_xtcfc;

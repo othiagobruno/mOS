@@ -102,6 +102,7 @@ void *$s7SwiftUI15CoordinateSpaceOMa(void) { return &sui_coord_desc; }
 
 /* RoundedCornerStyle: circular 0, continuous 1. */
 static sui_desc sui_corner_desc = { SUI_K_ENUM, "RoundedCornerStyle" };
+const int32_t $s7SwiftUI18RoundedCornerStyleO8circularyA2CmFWC = 0;
 const int32_t $s7SwiftUI18RoundedCornerStyleO10continuousyA2CmFWC = 1;
 void *$s7SwiftUI18RoundedCornerStyleOMa(void) { return &sui_corner_desc; }
 
@@ -133,6 +134,16 @@ uint64_t $s7SwiftUI15SafeAreaRegionsV3allACvgZ(void) { return 3; }
 uint64_t $s7SwiftUI11GestureMaskV3allACvgZ(void) { return 3; }
 /* EventModifiers: capsLock 1, shift 2, control 4, option 8, command 16. */
 uint64_t $s7SwiftUI14EventModifiersV7commandACvgZ(void) { return 16; }
+/* EventModifiers(rawValue:): o OptionSet é o próprio Int. */
+uint64_t $s7SwiftUI14EventModifiersV8rawValueACSi_tcfC(int64_t raw) { return (uint64_t)raw; }
+
+/* ControlActiveState: key 0, active 1, inactive 2 (ordem da declaração). */
+static sui_desc sui_active_desc = { SUI_K_ENUM, "ControlActiveState" };
+const int32_t $s7SwiftUI18ControlActiveStateO3keyyA2CmFWC = 0;
+const int32_t $s7SwiftUI18ControlActiveStateO6activeyA2CmFWC = 1;
+const int32_t $s7SwiftUI18ControlActiveStateO8inactiveyA2CmFWC = 2;
+int $s7SwiftUI18ControlActiveStateO2eeoiySbAC_ACtFZ(int a, int b) { return (a & 0xFF) == (b & 0xFF); }
+void *$s7SwiftUI18ControlActiveStateOMa(void) { return &sui_active_desc; }
 /* SubmitTriggers: text 1, search 2. */
 static sui_desc sui_submit_desc = { SUI_K_STRUCT, "SubmitTriggers" };
 uint64_t $s7SwiftUI14SubmitTriggersV4textACvgZ(void) { return 1; }
@@ -177,6 +188,8 @@ void *$s7SwiftUI27AnimationCompletionCriteriaVMa(void) { return &sui_criteria_de
 static sui_desc sui_key_desc = { SUI_K_STRUCT, "KeyEquivalent" };
 sui_pair $s7SwiftUI13KeyEquivalentVyACSJcfC(uint64_t w0, uint64_t w1) { sui_pair p; p.w0 = w0; p.w1 = w1; return p; }
 void *$s7SwiftUI13KeyEquivalentVMa(void) { return &sui_key_desc; }
+/* KeyEquivalent.return: Character "\r" na forma pequena (byte no w0, 0xE0 | contagem no topo do w1). */
+sui_pair $s7SwiftUI13KeyEquivalentV6returnACvgZ(void) { sui_pair p; p.w0 = 0x0D; p.w1 = 0xE1ull << 56; return p; }
 
 /* KeyboardShortcut: tecla e modificadores; defaultAction é Return sem modificador. */
 typedef struct { const sui_desc *isa; char key[8]; uint64_t modifiers; } sui_shortcut;
@@ -189,6 +202,7 @@ void *$s7SwiftUI16KeyboardShortcutVMa(void) { return &$s7SwiftUI16KeyboardShortc
 sui_desc $s7SwiftUI4TextV14TruncationModeOMn = { SUI_K_ENUM, "Text.TruncationMode" };
 const int32_t $s7SwiftUI4TextV14TruncationModeO4headyA2EmFWC = 0;
 const int32_t $s7SwiftUI4TextV14TruncationModeO4tailyA2EmFWC = 1;
+const int32_t $s7SwiftUI4TextV14TruncationModeO6middleyA2EmFWC = 2;
 void *$s7SwiftUI4TextV14TruncationModeOMa(void) { return &$s7SwiftUI4TextV14TruncationModeOMn; }
 sui_desc $s7SwiftUI4TextV4CaseOMn = { SUI_K_ENUM, "Text.Case" };
 const int32_t $s7SwiftUI4TextV4CaseO9uppercaseyA2EmFWC = 0;

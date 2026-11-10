@@ -89,6 +89,8 @@ u64 CFGetTypeID(id_ o);
 u64 CFStringGetTypeID(void);
 u64 CFDataGetTypeID(void);
 long CFDataGetLength(id_ d);
+id_ CFDataCreateMutable(void *alloc, long cap);
+void CFDataAppendBytes(id_ d, const u8 *b, long n);
 const u8 *CFDataGetBytePtr(id_ d);
 id_ cx_data_new(const void *b, u64 n);          /* cfdata.c: NSData +1 */
 id_ CFDateCreate(void *alloc, double at);
@@ -940,7 +942,42 @@ static const char *trust_host(id_ t) {
     for (unsigned i = 0; i < 64; i++) if (g_thost[i].t == t) return g_thost[i].host;
     return "";
 }
+/* Exceções (SecTrustCopyExceptions/SetExceptions): o app guarda o "confiar neste certificado" do usuário.
+ * O dado é "mOS-exc" seguido do DER do certificado folha; vale só para a confiança cuja folha é esse DER. */
+static id_ g_excepted[64];
+static unsigned g_nexcepted;
+static const char trust_exc_tag[8] = "mOS-exc";
+static id_ trust_leaf(id_ trust) {
+    id_ c = trust && CFArrayGetCount(trust) > 0 ? CFArrayGetValueAtIndex(trust, 0) : 0;
+    return c && CFGetTypeID(c) == CFDataGetTypeID() ? c : 0;
+}
+static void trust_exc_clear(id_ t) { for (int i = 0; t && i < 64; i++) if (g_excepted[i] == t) g_excepted[i] = 0; }
+static int trust_excepted(id_ t) { for (int i = 0; t && i < 64; i++) if (g_excepted[i] == t) return 1; return 0; }
+id_ SecTrustCopyExceptions(id_ trust) {
+    id_ leaf = trust_leaf(trust);
+    if (!leaf) return 0;
+    long n = CFDataGetLength(leaf);
+    id_ d = CFDataCreateMutable(0, 0);
+    CFDataAppendBytes(d, (const u8 *)trust_exc_tag, (long)sizeof trust_exc_tag);
+    CFDataAppendBytes(d, CFDataGetBytePtr(leaf), n);
+    return d;
+}
+Boolean SecTrustSetExceptions(id_ trust, id_ exceptions) {
+    if (!trust) return 0;
+    trust_exc_clear(trust);
+    if (!exceptions) return 0;
+    id_ leaf = trust_leaf(trust);
+    if (!leaf || CFGetTypeID(exceptions) != CFDataGetTypeID()) return 0;
+    long n = CFDataGetLength(leaf), m = CFDataGetLength(exceptions);
+    const u8 *e = CFDataGetBytePtr(exceptions);
+    if (m != n + (long)sizeof trust_exc_tag || memcmp(e, trust_exc_tag, sizeof trust_exc_tag) ||
+        memcmp(e + sizeof trust_exc_tag, CFDataGetBytePtr(leaf), (size_t)n))
+        return 0;
+    g_excepted[g_nexcepted++ % 64] = trust;
+    return 1;
+}
 static void trust_unmark(id_ t) {
+    trust_exc_clear(t);
     for (int i = 0; i < 64; i++) if (g_verified[i] == t) g_verified[i] = 0;
     for (int i = 0; i < 64; i++) if (g_thost[i].t == t) g_thost[i].t = 0;
 }
@@ -961,6 +998,7 @@ OSStatus SecTrustEvaluate(id_ trust, u32 *result) {
         }
         if (good) ok = cx_sectrust_verify(ders, lens, (unsigned)n, trust_host(trust));
     } else ok = trust_verified(trust);
+    if (!ok && trust_excepted(trust)) ok = 1;
     if (result) *result = ok ? kSecTrustResultUnspecified : kSecTrustResultRecoverableTrustFailure;
     return errSecSuccess;
 }
