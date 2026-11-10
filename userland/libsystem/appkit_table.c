@@ -87,6 +87,9 @@ struct cx_tv_engine {
     int last_first, last_last;
     double last_scroll;
     int have_span;
+    double own_scroll;
+    struct { int row, col, got; } *cells;
+    int ncells, ccells;
 };
 
 #define CX_TV_MAX 64
@@ -210,4 +213,144 @@ void cx_tv_engine_note_span(cx_tv_engine_t *e, int first, int last, double scrol
     e->last_first = first;
     e->last_last = last;
     e->last_scroll = scroll_y;
+}
+
+int cx_tv_show_cell(int got_view) { return !got_view; }
+
+void cx_tv_engine_cells_clear(cx_tv_engine_t *e) { if (e) e->ncells = 0; }
+
+void cx_tv_engine_note_cell(cx_tv_engine_t *e, int row, int col, int got_view) {
+    if (!e) return;
+    for (int i = 0; i < e->ncells; i++) if (e->cells[i].row == row && e->cells[i].col == col) {
+        e->cells[i].got = got_view ? 1 : 0;
+        return;
+    }
+    if (e->ncells == e->ccells) {
+        int nc = e->ccells ? e->ccells * 2 : 16;
+        void *p = realloc(e->cells, (size_t)nc * sizeof *e->cells);
+        if (!p) return;
+        e->cells = p;
+        e->ccells = nc;
+    }
+    e->cells[e->ncells].row = row;
+    e->cells[e->ncells].col = col;
+    e->cells[e->ncells].got = got_view ? 1 : 0;
+    e->ncells++;
+}
+
+int cx_tv_engine_cell_view(const cx_tv_engine_t *e, int row, int col) {
+    if (!e) return 0;
+    for (int i = 0; i < e->ncells; i++) if (e->cells[i].row == row && e->cells[i].col == col) return e->cells[i].got;
+    return 0;
+}
+
+void *cx_tv_remap_outlet(void *value, void *const *src, void *const *dst, int n) {
+    if (!value || !src || !dst || n <= 0) return 0;
+    for (int i = 0; i < n; i++) if (src[i] == value && dst[i]) return dst[i];
+    return 0;
+}
+
+double cx_tv_reveal_row(cx_tv_engine_t *e, int in_scroll_view, double scroll_y, double view_h, double row_h, double header_h, int row, int nrows) {
+    double next = cx_tv_scroll_target(scroll_y, view_h, row_h, header_h, row, nrows);
+    if (e && !in_scroll_view) e->own_scroll = next;
+    return next;
+}
+
+double cx_tv_engine_own_scroll(const cx_tv_engine_t *e) { return e ? e->own_scroll : 0; }
+
+double cx_tv_cell_y_scrolled(double header_h, double row_h, int row, int in_scroll_view, double own_scroll) {
+    double y = cx_tv_cell_y(header_h, row_h, row);
+    if (!in_scroll_view && own_scroll > 0) y -= own_scroll;
+    return y;
+}
+
+const char cx_tv_archived_views_key[] = "NSTableViewArchivedReusableViewsKey";
+const char cx_tv_reusable_views_key[] = "NSTableViewReusableViewsKey";
+
+static void cx_ol_rec(const cx_ol_ops *ops, void *ctx, const void *parent, int level, cx_ol_emit_fn emit, void *emit_ctx, int *n, int cap) {
+    if (!ops || !ops->count || !ops->child || level > 32) return;
+    int nch = ops->count(ctx, parent);
+    if (nch < 0) nch = 0;
+    if (nch > 4096) nch = 4096;
+    for (int i = 0; i < nch; i++) {
+        if (cap > 0 && *n >= cap) return;
+        const void *ch = ops->child(ctx, i, parent);
+        if (emit) emit(emit_ctx, ch, level);
+        (*n)++;
+        if (ops->expanded && ch && ops->expanded(ctx, ch))
+            cx_ol_rec(ops, ctx, ch, level + 1, emit, emit_ctx, n, cap);
+    }
+}
+
+int cx_ol_flatten(const cx_ol_ops *ops, void *ctx, cx_ol_emit_fn emit, void *emit_ctx, int cap) {
+    int n = 0;
+    cx_ol_rec(ops, ctx, 0, 0, emit, emit_ctx, &n, cap);
+    return n;
+}
+
+void cx_tb_layout(const cx_tb_spec *items, int n, double width, double height, cx_tb_rect *out) {
+    if (!out || n <= 0) return;
+    if (height < 1) height = 1;
+    if (width < 0) width = 0;
+    double fixed = 0;
+    int nflex = 0;
+    for (int i = 0; i < n; i++) {
+        out[i].x = out[i].y = out[i].w = out[i].h = 0;
+        if (!items) continue;
+        if (items[i].flexible) nflex++;
+        else fixed += items[i].min_w > 1 ? items[i].min_w : 32;
+    }
+    double extra = width - fixed;
+    if (extra < 0) extra = 0;
+    double flex_w = nflex ? extra / (double)nflex : 0;
+    double x = 0;
+    for (int i = 0; i < n; i++) {
+        double w = 32;
+        if (items && items[i].flexible) w = flex_w;
+        else if (items && items[i].min_w > 1) w = items[i].min_w;
+        out[i].x = x;
+        out[i].y = 0;
+        out[i].w = w;
+        out[i].h = height;
+        x += w;
+    }
+}
+
+int cx_tb_hit(const cx_tb_rect *rects, int n, double x, double y) {
+    if (!rects || n <= 0) return -1;
+    for (int i = 0; i < n; i++) {
+        if (rects[i].w <= 0 || rects[i].h <= 0) continue;
+        if (x >= rects[i].x && x < rects[i].x + rects[i].w && y >= rects[i].y && y < rects[i].y + rects[i].h) return i;
+    }
+    return -1;
+}
+
+int cx_tb_click(const cx_tb_spec *items, const cx_tb_rect *rects, int n, double x, double y, cx_tb_send_fn send, void *ctx) {
+    int i = cx_tb_hit(rects, n, x, y);
+    if (i < 0 || !items) return 0;
+    if (!items[i].enabled || items[i].flexible) return 0;
+    if (!items[i].target || !items[i].action) return 0;
+    if (send) send(items[i].target, items[i].action, i, ctx);
+    return 1;
+}
+
+int cx_sv_divider_hit(double mouse, double divider_pos, double thickness) {
+    if (thickness < 1) thickness = 1;
+    return mouse >= divider_pos - 4 && mouse < divider_pos + thickness + 4;
+}
+
+double cx_sv_drag(double pos, double delta, double min_pos, double max_pos, const cx_sv_lim *lim, void *ctx, int index) {
+    if (min_pos > max_pos) { double t = min_pos; min_pos = max_pos; max_pos = t; }
+    if (lim && lim->min_coord) min_pos = lim->min_coord(ctx, index, min_pos);
+    if (lim && lim->max_coord) max_pos = lim->max_coord(ctx, index, max_pos);
+    if (min_pos > max_pos) { double t = min_pos; min_pos = max_pos; max_pos = t; }
+    double p = pos + delta;
+    if (p < min_pos) p = min_pos;
+    if (p > max_pos) p = max_pos;
+    if (lim && lim->position) {
+        p = lim->position(ctx, index, p);
+        if (p < min_pos) p = min_pos;
+        if (p > max_pos) p = max_pos;
+    }
+    return p;
 }

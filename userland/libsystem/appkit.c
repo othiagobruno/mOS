@@ -1629,6 +1629,16 @@ static void render_window(id w) {
     vs(s->content)->frame = r_make(0, 0, s->frame.s.w, s->frame.s.h);
     cx_gui_cur_gid = s->gid;                     /* gancho QuartzCore */
     draw_view_tree(s->content, &a);
+    if (cx_responds(w->isa, sel_registerName("toolbar"))) {
+        id tb = MSG0(id, w, "toolbar");
+        if (tb && cx_responds(tb->isa, sel_registerName("isVisible")) && MSG0(BOOL, tb, "isVisible")
+            && cx_responds(tb->isa, sel_registerName("drawInRect:"))) {
+            ctx_t save = ctx;
+            ctx.tlx = 0; ctx.tly = 0; ctx.w = s->frame.s.w; ctx.h = s->frame.s.h; ctx.flipped = 0; ctx.fill = 0xFF000000;
+            ((void (*)(id, SEL, NSRect))objc_msgSend)(tb, sel_registerName("drawInRect:"), r_make(0, s->frame.s.h - 28, s->frame.s.w, 28));
+            ctx = save;
+        }
+    }
     flush_to(s->gid);
     SYS1(GUI_PRESENT, s->gid);
     s->needs = NO;
@@ -2673,6 +2683,14 @@ static void dispatch(gui_event_t *g) {
         break;
     }
     case GEV_MOUSE_DOWN: case GEV_RIGHT_DOWN: case GEV_SCROLL: {
+        if (g->type == GEV_MOUSE_DOWN && g->y >= 0 && g->y < 28 && cx_responds(w->isa, sel_registerName("toolbar"))) {
+            id tb = MSG0(id, w, "toolbar");
+            if (tb && cx_responds(tb->isa, sel_registerName("isVisible")) && MSG0(BOOL, tb, "isVisible")
+                && cx_responds(tb->isa, sel_registerName("mouseDown:"))) {
+                MSG(void, tb, "mouseDown:", make_event(1, w, g->x, g->y, g));
+                break;
+            }
+        }
         absr_t a = {0, 0, s->frame.s.w, s->frame.s.h, is_flipped(s->content)};
         id v = hit(s->content, &a, g->x, g->y);
         if (!v) v = s->content;
@@ -3517,8 +3535,39 @@ static void tv_install_archived(id table, id arch) {
 }
 static void tv_register_nib(id self, SEL c, id nib, id ident) { (void)c; tv_register_token(self, tv_ident_cstr(ident), nib, CX_TV_NIB); }
 
-/* cópia estrutural de um protótipo. setTextField:/setImageView: religam os outlets que o clone consegue ver;
- * outlets de uma subclasse do app só voltam quando o token é um nib (reinstanciado), não nesta cópia. */
+/* cópia estrutural de um protótipo. Os outlets da subclasse do app (ivars que apontam para
+ * subviews) passam a apontar para os clones, sem reinstanciar o nib. */
+extern void **class_copyIvarList(cx_class_t *c, u32 *count);
+extern const char *ivar_getTypeEncoding(void *iv);
+extern id object_getIvar(id o, void *iv);
+extern void object_setIvar(id o, void *iv, id v);
+extern cx_class_t *class_getSuperclass(cx_class_t *c);
+static int tv_collect_pair(id src, id dst, id *ss, id *dd, int n, int cap) {
+    if (!src || !dst || n >= cap) return n;
+    ss[n] = src;
+    dd[n] = dst;
+    n++;
+    vstate_t *a = vs(src), *b = vs(dst);
+    u32 m = a->nsub < b->nsub ? a->nsub : b->nsub;
+    for (u32 i = 0; i < m; i++) n = tv_collect_pair(a->sub[i], b->sub[i], ss, dd, n, cap);
+    return n;
+}
+static void tv_remap_ivars(id src, id dst, id *ss, id *dd, int n) {
+    if (!src || !dst) return;
+    for (cx_class_t *k = src->isa; k; k = class_getSuperclass(k)) {
+        u32 ni = 0;
+        void **ivs = class_copyIvarList(k, &ni);
+        if (!ivs) continue;
+        for (u32 i = 0; i < ni; i++) {
+            const char *ty = ivar_getTypeEncoding(ivs[i]);
+            if (!ty || ty[0] != '@') continue;
+            id val = object_getIvar(src, ivs[i]);
+            void *mapped = cx_tv_remap_outlet(val, (void *const *)ss, (void *const *)dd, n);
+            if (mapped) object_setIvar(dst, ivs[i], (id)mapped);
+        }
+        free(ivs);
+    }
+}
 static id tv_clone_view(id src) {
     if (!src || !cx_is_subclass(src->isa, &NSView_c)) return 0;
     id dst = MSG(id, MSG0(id, (id)src->isa, "alloc"), "initWithFrame:", vs(src)->frame);
@@ -3545,6 +3594,9 @@ static id tv_clone_view(id src) {
         for (u32 i = 0; iv && i < n; i++) if (a->sub[i] == iv && clones[i]) MSG(void, dst, "setImageView:", clones[i]);
     }
     free(clones);
+    id ss[128], dd[128];
+    int np = tv_collect_pair(src, dst, ss, dd, 0, 128);
+    tv_remap_ivars(src, dst, ss, dd, np);
     return dst;
 }
 static id tv_materialize(id self, id ident, id owner, void *token, int kind);
@@ -3567,16 +3619,29 @@ static id tv_make_view(id self, SEL c, id ident, id owner) {
     if (cx_is_subclass(v->isa, &NSView_c)) MSG(void, v, "setIdentifier:", ident);
     return objc_autorelease(v);
 }
+static int tv_in_scroll(id self) {
+    id sv = vs(self)->superview;
+    return sv && vs(sv)->kind == K_SCROLL;
+}
 static void tv_scroll_row(id self, SEL c, i64 r) {
     (void)c;
     vstate_t *s = vs(self);
-    id sv = s->superview;
-    if (!sv || vs(sv)->kind != K_SCROLL) return;
-    vstate_t *sc = vs(sv);
+    cx_tv_engine_t *e = cx_tv_engine_get(self, 1);
+    if (!e) return;
+    int in_sc = tv_in_scroll(self);
     double header = s->header ? 24 : 0;
-    sc->scroll_y = cx_tv_scroll_target(sc->scroll_y, sc->frame.s.h, s->row_h > 0 ? s->row_h : 24, header, (int)r, (int)tv_rows(self));
-    layout_scroll(sv);
-    mark(sv);
+    double row_h = s->row_h > 0 ? s->row_h : 24;
+    double cur = in_sc ? vs(s->superview)->scroll_y : cx_tv_engine_own_scroll(e);
+    double view_h = in_sc ? vs(s->superview)->frame.s.h : s->frame.s.h;
+    double next = cx_tv_reveal_row(e, in_sc, cur, view_h, row_h, header, (int)r, (int)tv_rows(self));
+    if (in_sc) {
+        vs(s->superview)->scroll_y = next;
+        layout_scroll(s->superview);
+        mark(s->superview);
+    } else {
+        s->tv_dirty = 1;
+        mark(self);
+    }
 }
 typedef struct { cx_class_t *isa; i64 first; } nsindexset_t;
 static id ixs_with_index(id cls, SEL c, u64 i) { (void)c; nsindexset_t *o = (nsindexset_t *)cx_alloc_instance((cx_class_t *)cls); o->first = (i64)i; return (id)o; }
@@ -3631,18 +3696,18 @@ static void tv_layout_views(id self) {
     if (!self || !ST(self) || tv_in_layout) return;
     vstate_t *s = vs(self);
     if (s->kind != K_TABLE) return;
-    double scroll_y = 0, view_h = s->frame.s.h, header = s->header ? 24 : 0, row_h = s->row_h > 0 ? s->row_h : 24;
-    if (s->superview && vs(s->superview)->kind == K_SCROLL) {
-        scroll_y = vs(s->superview)->scroll_y;
-        view_h = vs(s->superview)->frame.s.h;
-    }
-    i64 nrows = tv_rows(self);
-    cx_tv_span_t sp = cx_tv_visible_rows(scroll_y, view_h, row_h, header, (int)nrows);
+    int in_sc = tv_in_scroll(self);
     cx_tv_engine_t *e = cx_tv_engine_get(self, 1);
     if (!e) return;
+    double scroll_y = in_sc ? vs(s->superview)->scroll_y : cx_tv_engine_own_scroll(e);
+    double view_h = in_sc ? vs(s->superview)->frame.s.h : s->frame.s.h;
+    double header = s->header ? 24 : 0, row_h = s->row_h > 0 ? s->row_h : 24;
+    i64 nrows = tv_rows(self);
+    cx_tv_span_t sp = cx_tv_visible_rows(scroll_y, view_h, row_h, header, (int)nrows);
     int want = s->delegate && cx_responds(s->delegate->isa, sel_registerName("tableView:viewForTableColumn:row:"));
     if (!want) {
         if (cx_tv_engine_placed_count(e)) { tv_in_layout = 1; tv_reclaim(self); tv_in_layout = 0; }
+        cx_tv_engine_cells_clear(e);
         cx_tv_engine_note_span(e, -1, -1, scroll_y);
         s->tv_dirty = 0;
         return;
@@ -3650,6 +3715,7 @@ static void tv_layout_views(id self) {
     if (!s->tv_dirty && cx_tv_engine_same_span(e, sp.first, sp.last, scroll_y)) return;
     tv_in_layout = 1;
     tv_reclaim(self);
+    cx_tv_engine_cells_clear(e);
     s->tv_dirty = 0;   /* um reload no meio do loop marca de novo e o próximo desenho refaz */
     nsarr_t *cols = (nsarr_t *)s->cols;
     u64 nc = cols ? cols->n : 0;
@@ -3662,10 +3728,12 @@ static void tv_layout_views(id self) {
             id col = nc ? cols->items[k] : 0;
             double cw = col ? cs_(col)->width : s->frame.s.w;
             id v = MSG(id, s->delegate, "tableView:viewForTableColumn:row:", self, col, (i64)r);
-            if (v && cx_is_subclass(v->isa, &NSView_c)) {
+            int got = v && cx_is_subclass(v->isa, &NSView_c);
+            cx_tv_engine_note_cell(e, r, (int)k, got);
+            if (got && !cx_tv_show_cell(got)) {
                 int ocol_here = level >= 0 && (ocol ? col == ocol : k == 0);
                 double cell_x = cx_tv_cell_x(x, level, per, ocol_here);
-                NSRect fr = r_make(cell_x, cx_tv_cell_y(header, row_h, r), cx_tv_cell_w(cw, x, cell_x), row_h);
+                NSRect fr = r_make(cell_x, cx_tv_cell_y_scrolled(header, row_h, r, in_sc, scroll_y), cx_tv_cell_w(cw, x, cell_x), row_h);
                 ((void (*)(id, SEL, NSRect))objc_msgSend)(v, sel_registerName("setFrame:"), fr);
                 if (vs(v)->superview != self) v_add_sub(self, 0, v);
                 cx_tv_engine_placed_add(e, v);
@@ -3681,12 +3749,13 @@ static void draw_table(id t, absr_t *a) {
     vstate_t *s = vs(t);
     nsarr_t *cols = (nsarr_t *)s->cols;
     i64 rows = tv_rows(t);
-    double y = a->tly + (s->header ? 24 : 0), x0 = a->tlx;
     cx_tv_engine_t *eng = cx_tv_engine_get(t, 0);
-    BOOL view_based = eng && cx_tv_engine_placed_count(eng) > 0;
+    int in_sc = s->superview && vs(s->superview)->kind == K_SCROLL;
+    double own = (!in_sc && eng) ? cx_tv_engine_own_scroll(eng) : 0;
+    double y = a->tly + (s->header ? 24 : 0), x0 = a->tlx;
     int outline = tv_is_outline(t);
     for (i64 r = 0; r < rows; r++) {
-        double ry = y + r * s->row_h;
+        double ry = y + r * s->row_h - own;
         if (ry + s->row_h < clip_y0 || ry > clip_y1) continue;   /* fora da área visível da rolagem */
         BOOL sel = r == s->selected;
         if (sel) g_rrect(x0 + 4, ry + 1, a->w - 8, s->row_h - 2, 5, accent);
@@ -3710,7 +3779,8 @@ static void draw_table(id t, absr_t *a) {
                     g_poly(tri, 3, sel ? 0xFFFFFFFF : 0xFF666666, 1, 0);
                 }
             }
-            if (!view_based) {
+            int got = eng ? cx_tv_engine_cell_view(eng, (int)r, (int)k) : 0;
+            if (cx_tv_show_cell(got)) {
                 id txt = cell_text(t, cols->items[k], r);
                 if (txt) {
                     const char *tt = cx_cstr(txt);
@@ -3750,6 +3820,10 @@ static void tv_mouse_down(id self, SEL c, id e) {
     absr_t sa;
     if (s->header && s->superview && vs(s->superview)->kind == K_SCROLL && abs_rect(s->superview, &sa) && win_h(s->window) - evs(e)->y - sa.tly < 24) return;   /* clique no cabeçalho fixo */
     double py = win_h(s->window) - evs(e)->y - a.tly - (s->header ? 24 : 0);
+    if (!tv_in_scroll(self)) {
+        cx_tv_engine_t *eng = cx_tv_engine_get(self, 0);
+        if (eng) py += cx_tv_engine_own_scroll(eng);
+    }
     i64 r = py < 0 ? -1 : (i64)(py / s->row_h);
     if (r >= tv_rows(self)) r = -1;
     if (r >= 0 && tv_is_outline(self)) {
