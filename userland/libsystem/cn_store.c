@@ -74,21 +74,24 @@ static int write_all(void *f, const char *s) {
 
 static int load_file(void) {
     void *f;
-    char line[1024];
+    char line[2048];
+    int wide;
     default_path();
     g_n = 0;
     f = fopen(g_path, "r");
     if (!f) return CX_CN_OK;
-    if (!fgets(line, (int)sizeof line, f) || strncmp(line, "MOSCN1", 6) != 0) {
+    if (!fgets(line, (int)sizeof line, f)) { fclose(f); return CX_CN_ERR_IO; }
+    wide = strncmp(line, "MOSCN2", 6) == 0;
+    if (!wide && strncmp(line, "MOSCN1", 6) != 0) {
         fclose(f);
         return CX_CN_ERR_IO;
     }
     while (fgets(line, (int)sizeof line, f) && g_n < CN_MAX) {
         char *p = line;
-        char *fields[12];
-        int i;
+        char *fields[28];
+        int i, nfields = wide ? 28 : 12;
         cx_cn_contact *c;
-        for (i = 0; i < 12; i++) {
+        for (i = 0; i < nfields; i++) {
             fields[i] = p;
             while (*p && *p != '\t' && *p != '\n' && *p != '\r') p++;
             if (*p == '\t') { *p++ = 0; }
@@ -108,6 +111,23 @@ static int load_file(void) {
         scopy(c->zip, 16, fields[9]);
         scopy(c->country, 48, fields[10]);
         scopy(c->iso, 8, fields[11]);
+        if (!wide) continue;
+        scopy(c->prefix, 32, fields[12]);
+        scopy(c->suffix, 32, fields[13]);
+        scopy(c->previous, 64, fields[14]);
+        scopy(c->phonetic_given, 64, fields[15]);
+        scopy(c->phonetic_middle, 64, fields[16]);
+        scopy(c->phonetic_family, 64, fields[17]);
+        scopy(c->phonetic_org, 80, fields[18]);
+        scopy(c->url, 96, fields[19]);
+        scopy(c->relation, 48, fields[20]);
+        scopy(c->im_user, 64, fields[21]);
+        scopy(c->im_service, 32, fields[22]);
+        scopy(c->social_user, 64, fields[23]);
+        scopy(c->social_service, 32, fields[24]);
+        scopy(c->social_url, 96, fields[25]);
+        scopy(c->social_id, 64, fields[26]);
+        scopy(c->image, 68, fields[27]);
     }
     fclose(f);
     return CX_CN_OK;
@@ -140,19 +160,24 @@ static int ensure_dir(void) {
 static int save_file(void) {
     void *f;
     char tmp[540];
-    char line[1024];
+    char line[2048];
     int i;
     default_path();
     ensure_dir();
     snprintf(tmp, sizeof tmp, "%s.tmp", g_path);
     f = fopen(tmp, "w");
     if (!f) return CX_CN_ERR_IO;
-    if (!write_all(f, "MOSCN1\n")) { fclose(f); return CX_CN_ERR_IO; }
+    if (!write_all(f, "MOSCN2\n")) { fclose(f); return CX_CN_ERR_IO; }
     for (i = 0; i < g_n; i++) {
         cx_cn_contact *c = &g_db[i];
-        snprintf(line, sizeof line, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+        snprintf(line, sizeof line,
+                 "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
                  c->id, c->given, c->family, c->org, c->phone, c->email,
-                 c->street, c->city, c->state, c->zip, c->country, c->iso);
+                 c->street, c->city, c->state, c->zip, c->country, c->iso,
+                 c->prefix, c->suffix, c->previous, c->phonetic_given, c->phonetic_middle,
+                 c->phonetic_family, c->phonetic_org, c->url, c->relation,
+                 c->im_user, c->im_service, c->social_user, c->social_service,
+                 c->social_url, c->social_id, c->image);
         if (!write_all(f, line)) {
             fclose(f);
             return CX_CN_ERR_IO;

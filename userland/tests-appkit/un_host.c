@@ -10,6 +10,13 @@
 static int ok, total;
 static int present_opts = CX_UN_PRESENT_BANNER | CX_UN_PRESENT_LIST;
 static int got_click;
+static const char *g_fail_dom;
+
+static void remote_fail(int code, const char *domain, void *ctx) {
+    int *out = ctx;
+    if (out) *out = code;
+    g_fail_dom = domain;
+}
 static char click_id[64];
 static char click_action[80];
 static char sink_title[96];
@@ -125,6 +132,29 @@ int main(void) {
     present_opts = CX_UN_PRESENT_LIST;
     check(cx_un_add("lista", "Lista", 0, "só lista", 0, 0) == CX_UN_OK, "só a lista não abre banner");
     check(cx_un_banner_visible() == 0 && cx_un_delivered_has("lista") == 1, "a entrega na lista não é um banner");
+
+    cx_un_set_auth(CX_UN_AUTHORIZED);
+    {
+        cx_un_settings_t st;
+        void *token = (void *)1;
+        int fail_code = 0;
+        char kept[32];
+        cx_un_settings(&st);
+        check(st.authorization == CX_UN_AUTHORIZED && st.alert == 2 && st.sound == 2 && st.badge == 2
+              && st.notification_center == 2 && st.lock_screen == 2 && st.alert_style == 1,
+              "autorizado liga alerta, som, badge, central e tela bloqueada");
+        cx_un_set_auth(CX_UN_DENIED);
+        cx_un_settings(&st);
+        check(st.authorization == CX_UN_DENIED && st.alert == 1 && st.alert_style == 0,
+              "negado desliga o alerta e não escolhe estilo");
+        check(cx_un_register_remote(&token, remote_fail, &fail_code) == CX_UN_ERR_DENIED && token == 0
+              && fail_code == 1 && g_fail_dom && strcmp(g_fail_dom, "UNErrorDomain") == 0,
+              "registro remoto falha sem token");
+        strcpy(kept, "original");
+        check(cx_un_service_receive("original", kept, (int)sizeof kept) == CX_UN_ERR_DENIED
+              && strcmp(kept, "original") == 0,
+              "a extensão não inventa payload remoto");
+    }
 
     printf("un-host: %d/%d ok\n", ok, total);
     return ok == total ? 0 : 1;

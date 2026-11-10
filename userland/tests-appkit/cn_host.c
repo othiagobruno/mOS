@@ -2,6 +2,7 @@
       userland/libsystem/cn_store.c userland/tests-appkit/cn_host.c -o /tmp/cn-host
 */
 #include "cn_store.h"
+#include "cn_labels.h"
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
@@ -68,6 +69,37 @@ int main(void) {
     for (i = 0; i < n; i++) found++;
     (void)found;
     unlink(path);
+    {
+        cx_cn_contact extra;
+        memset(&extra, 0, sizeof extra);
+        strcpy(extra.given, "Lia");
+        strcpy(extra.family, "Souza");
+        strcpy(extra.prefix, "Dra.");
+        strcpy(extra.phonetic_given, "LI");
+        strcpy(extra.phonetic_family, "SO");
+        strcpy(extra.url, "https://lia.example");
+        strcpy(extra.relation, CN_LBL_SISTER);
+        strcpy(extra.im_user, "lia");
+        strcpy(extra.im_service, "Skype");
+        strcpy(extra.social_user, "liasouza");
+        strcpy(extra.social_service, "Twitter");
+        strcpy(extra.image, "6869");
+        cx_cn_begin();
+        check(cx_cn_stage_add(&extra, id) == CX_CN_OK && cx_cn_commit() == CX_CN_OK, "grava prefixo, fonética, url, relação, IM e imagem");
+        cx_cn_reset();
+        cx_cn_set_path(path);
+        cx_cn_set_auth(CX_CN_AUTHORIZED);
+        check(cx_cn_count() == 1 && cx_cn_get(0, &out) == CX_CN_OK
+              && strcmp(out.prefix, "Dra.") == 0 && strcmp(out.phonetic_family, "SO") == 0
+              && strcmp(out.url, "https://lia.example") == 0 && strcmp(out.relation, CN_LBL_SISTER) == 0
+              && strcmp(out.im_service, "Skype") == 0 && strcmp(out.social_service, "Twitter") == 0
+              && strcmp(out.image, "6869") == 0,
+              "a leitura devolve os campos das chaves");
+        check(strcmp(CN_LBL_HOME, "_$!<Home>!$_") == 0 && strcmp(CN_LBL_IPHONE, "iPhone") == 0
+              && strcmp(CN_LBL_ICLOUD, "iCloud") == 0 && strcmp(CN_LBL_MANAGER, "_$!<Manager>!$_") == 0,
+              "os rótulos usam o texto da Apple");
+    }
+
     printf("cn-host: %d/%d ok\n", ok, total);
     return ok == total ? 0 : 1;
 }

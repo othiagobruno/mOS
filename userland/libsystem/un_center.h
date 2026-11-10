@@ -65,6 +65,23 @@ int cx_un_banner_token(void);
 int cx_un_banner_click(void);
 int cx_un_click_token(int token);
 
+/* UNNotificationSetting: 0 notSupported, 1 disabled, 2 enabled.
+ * alert_style: 0 none, 1 banner, 2 alert. */
+typedef struct {
+    int authorization;
+    int sound, badge, alert, notification_center, lock_screen;
+    int alert_style;
+} cx_un_settings_t;
+
+void cx_un_settings(cx_un_settings_t *out);
+
+/* Sem APNs. token_out fica NULL e fail recebe UNErrorDomain / código 1. */
+typedef void (*cx_un_remote_fail_fn)(int code, const char *domain, void *ctx);
+int cx_un_register_remote(void **token_out, cx_un_remote_fail_fn fail, void *ctx);
+
+/* A extensão não altera o conteúdo: não há payload remoto. */
+int cx_un_service_receive(const char *title, char *out_title, int cap);
+
 int cx_un_present_count(void);
 int cx_un_receive_count(void);
 const char *cx_un_last_action(void);
