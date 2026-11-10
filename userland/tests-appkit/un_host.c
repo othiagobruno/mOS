@@ -156,6 +156,37 @@ int main(void) {
               "a extensão não inventa payload remoto");
     }
 
+    {
+        cx_un_cal_t once, daily;
+        double next;
+        memset(&once, 0xff, sizeof once);
+        once.year = 2026; once.month = 1; once.day = 2; once.hour = 3; once.minute = 4; once.second = 5;
+        cx_un_set_clock(1767323045 - 30);
+        cx_un_set_auth(CX_UN_AUTHORIZED);
+        next = cx_un_calendar_next(&once, 1767323045 - 30, 0);
+        check(next == 1767323045, "a data cheia cai em 2026-01-02 03:04:05 UTC");
+        check(cx_un_calendar_next(&once, 1767323045, 0) < 0, "sem repetição não há próxima depois da data");
+        check(cx_un_calendar_next(&once, 1767323045, 1) == 1767323045.0 + 366 * 86400 ||
+              cx_un_calendar_next(&once, 1767323045, 1) > 1767323045,
+              "com repetição a próxima data cheia é um ano depois");
+        check(cx_un_add_calendar("cal", "Calendário", 0, "na data", &once, 0) == CX_UN_OK, "o centro aceita o gatilho de calendário");
+        cx_un_advance(30);
+        check(cx_un_delivered_has("cal") == 1 && cx_un_pending_has("cal") == 0, "na hora certa entrega uma vez");
+        memset(&daily, 0xff, sizeof daily);
+        daily.hour = 8; daily.minute = 0;
+        cx_un_set_clock(1767340800 - 120);
+        next = cx_un_calendar_next(&daily, 1767340800 - 120, 1);
+        check(next == 1767340800, "hora e minuto sem ano caem no mesmo dia");
+        check(cx_un_add_calendar("dia", "Todo dia", 0, "8h", &daily, 1) == CX_UN_OK, "repetição diária entra na fila");
+        cx_un_advance(120);
+        check(cx_un_delivered_has("dia") == 1 && cx_un_pending_has("dia") == 1, "a repetição entrega e continua pendente");
+        {
+            int before = cx_un_present_count();
+            cx_un_advance(86400);
+            check(cx_un_present_count() > before, "no dia seguinte apresenta de novo");
+        }
+    }
+
     printf("un-host: %d/%d ok\n", ok, total);
     return ok == total ? 0 : 1;
 }

@@ -35,6 +35,8 @@ cx_class_t UNNotificationActionIcon_c __asm__("OBJC_CLASS_$_UNNotificationAction
 cx_class_t UNNotificationActionIcon_m __asm__("OBJC_METACLASS_$_UNNotificationActionIcon");
 cx_class_t UNPushNotificationTrigger_c __asm__("OBJC_CLASS_$_UNPushNotificationTrigger");
 cx_class_t UNPushNotificationTrigger_m __asm__("OBJC_METACLASS_$_UNPushNotificationTrigger");
+cx_class_t UNCalendarNotificationTrigger_c __asm__("OBJC_CLASS_$_UNCalendarNotificationTrigger");
+cx_class_t UNCalendarNotificationTrigger_m __asm__("OBJC_METACLASS_$_UNCalendarNotificationTrigger");
 cx_class_t UNNotificationServiceExtension_c __asm__("OBJC_CLASS_$_UNNotificationServiceExtension");
 cx_class_t UNNotificationServiceExtension_m __asm__("OBJC_METACLASS_$_UNNotificationServiceExtension");
 
@@ -44,7 +46,8 @@ typedef struct {
     id obj;
     char title[96], subtitle[96], body[160], ident[64], action[80];
     double interval;
-    int repeats, used, push;
+    int repeats, used, push, calendar;
+    cx_un_cal_t cal;
     int auth, sound, badge, alert, center, lockscreen, style;
     id content, trigger, ident_obj, note, userinfo;
 } un_slot_t;
@@ -380,12 +383,19 @@ static void un_add(id self, SEL c, id req, void *block) {
     } else {
         cx_un_stage_info("");
     }
-    rc = cx_un_add(rs ? rs->ident : "",
-                   cs ? cs->title : "",
-                   cs ? cs->subtitle : "",
-                   cs ? cs->body : "",
-                   ts ? ts->interval : 0,
-                   ts ? ts->repeats : 0);
+    if (ts && ts->calendar)
+        rc = cx_un_add_calendar(rs ? rs->ident : "",
+                                cs ? cs->title : "",
+                                cs ? cs->subtitle : "",
+                                cs ? cs->body : "",
+                                &ts->cal, ts->repeats);
+    else
+        rc = cx_un_add(rs ? rs->ident : "",
+                       cs ? cs->title : "",
+                       cs ? cs->subtitle : "",
+                       cs ? cs->body : "",
+                       ts ? ts->interval : 0,
+                       ts ? ts->repeats : 0);
     call_err(block, rc == CX_UN_OK ? 0 : un_error());
     poll_clicks();
 }
@@ -496,6 +506,48 @@ static id icon_name(id self, SEL c) {
     return objc_autorelease(cx_str(s ? s->ident : ""));
 }
 
+static int comp_or_any(id comps, const char *sel) {
+    long long v;
+    if (!comps) return -1;
+    v = MSG0(long long, comps, sel);
+    if (v == 0x7fffffffffffffffLL) return -1;
+    return (int)v;
+}
+
+static id cal_with(id cls, SEL c, id comps, BOOL repeats) {
+    id o = cx_alloc_instance((cx_class_t *)cls);
+    un_slot_t *s = slot_get(o, 1);
+    (void)c;
+    if (s) {
+        s->calendar = 1;
+        s->repeats = repeats ? 1 : 0;
+        s->cal.year = comp_or_any(comps, "year");
+        s->cal.month = comp_or_any(comps, "month");
+        s->cal.day = comp_or_any(comps, "day");
+        s->cal.hour = comp_or_any(comps, "hour");
+        s->cal.minute = comp_or_any(comps, "minute");
+        s->cal.second = comp_or_any(comps, "second");
+        s->content = comps ? objc_retain(comps) : 0;
+    }
+    return objc_autorelease(o);
+}
+
+static id cal_next(id self, SEL c) {
+    un_slot_t *s = slot_get(self, 0);
+    double t;
+    (void)c;
+    if (!s || !s->calendar) return 0;
+    t = cx_un_calendar_next(&s->cal, cx_now(), s->repeats);
+    if (t < 0) return 0;
+    return MSG(id, (id)cx_class_named("NSDate"), "dateWithTimeIntervalSince1970:", t);
+}
+
+static id cal_comps(id self, SEL c) {
+    un_slot_t *s = slot_get(self, 0);
+    (void)c;
+    return s ? s->content : 0;
+}
+
 static id push_new(id self, SEL c) {
     id o = cx_alloc_instance(&UNPushNotificationTrigger_c);
     un_slot_t *s = slot_get(o, 1);
@@ -560,6 +612,12 @@ void cx_usernotifications_init(void) {
     cx_define_class(&UNNotificationSettings_c, &UNNotificationSettings_m, "UNNotificationSettings", obj, 0);
     cx_define_class(&UNNotificationActionIcon_c, &UNNotificationActionIcon_m, "UNNotificationActionIcon", obj, 0);
     cx_define_class(&UNPushNotificationTrigger_c, &UNPushNotificationTrigger_m, "UNPushNotificationTrigger", &UNNotificationTrigger_c, 0);
+    cx_define_class(&UNCalendarNotificationTrigger_c, &UNCalendarNotificationTrigger_m,
+                    "UNCalendarNotificationTrigger", &UNNotificationTrigger_c, 0);
+    cx_add_cmethod(&UNCalendarNotificationTrigger_c, "triggerWithDateMatchingComponents:repeats:", (void *)cal_with);
+    cx_add_method(&UNCalendarNotificationTrigger_c, "nextTriggerDate", (void *)cal_next);
+    cx_add_method(&UNCalendarNotificationTrigger_c, "dateComponents", (void *)cal_comps);
+    cx_add_method(&UNCalendarNotificationTrigger_c, "repeats", (void *)trig_repeats);
     cx_define_class(&UNNotificationServiceExtension_c, &UNNotificationServiceExtension_m, "UNNotificationServiceExtension", obj, 0);
     cx_add_method(&UNNotificationSettings_c, "authorizationStatus", (void *)settings_auth);
     cx_add_method(&UNNotificationSettings_c, "soundSetting", (void *)settings_sound);
