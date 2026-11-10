@@ -108,6 +108,7 @@ typedef struct {
     id header_view;                /* NSTableHeaderView real, quando o nib traz um (retido) */
     int tv_dirty;                  /* NSTableView: o delegate precisa ser perguntado de novo */
     BOOL show_idle;                /* NSProgressIndicator: displayedWhenStopped */
+    float hug_h, hug_v, cr_h, cr_v; /* Auto Layout: 0 = padrão (hugging 250, resistência 750) */
 } vstate_t;
 
 typedef struct {
@@ -125,6 +126,7 @@ typedef struct {
     i64 number;                     /* windowNumber: único e estável pela vida da janela (0 = ainda não pedido) */
     id subtitle, represented_url, tab;
     BOOL restorable;
+    id next_responder;              /* nextResponder explícito; senão o NSApp */
 } wstate_t;
 
 typedef struct { double r, g, b, a; } rgba_t;     /* NSColor: campos logo após o isa */
@@ -1275,6 +1277,8 @@ static void w_set_title(id self, SEL c, id t) {
     if (s->gid > 0) SYS2(GUI_WIN_TITLE, s->gid, cx_cstr(s->title));
 }
 static id w_title(id self, SEL c) { (void)c; return ws(self)->title; }
+static void w_set_next(id self, SEL c, id n) { (void)c; ws(self)->next_responder = n; }
+static id w_next(id self, SEL c) { (void)c; wstate_t *s = ws(self); return s->next_responder ? s->next_responder : NSApp; }
 static void w_set_subtitle(id self, SEL c, id t) {
     (void)c;
     wstate_t *s = ws(self);
@@ -4322,6 +4326,21 @@ static BOOL propagate(BOOL optional) {
     for (u32 i = 0; i < nlv; i++) if (try_done(&lv[i])) any = YES;
     return any;
 }
+static float pri_get(float v, float def) { return v == 0 ? def : v; }
+static void v_set_hug(id self, SEL c, float p, i64 o) {
+    (void)c;
+    if (p == 0) p = 0.001f;
+    if (o == 1) vs(self)->hug_v = p; else vs(self)->hug_h = p;
+    layout_dirty = YES;
+}
+static float v_hug(id self, SEL c, i64 o) { (void)c; vstate_t *s = vs(self); return pri_get(o == 1 ? s->hug_v : s->hug_h, 250); }
+static void v_set_cr(id self, SEL c, float p, i64 o) {
+    (void)c;
+    if (p == 0) p = 0.001f;
+    if (o == 1) vs(self)->cr_v = p; else vs(self)->cr_h = p;
+    layout_dirty = YES;
+}
+static float v_cr(id self, SEL c, i64 o) { (void)c; vstate_t *s = vs(self); return pri_get(o == 1 ? s->cr_v : s->cr_h, 750); }
 static int nset(const u8 *s) { return s[0] + s[1] + s[2] + s[3]; }
 /* sem informação suficiente: completa UM eixo de UMA view (o menos restrito) e volta a propagar */
 static BOOL fallback(BOOL positions) {
@@ -4351,8 +4370,12 @@ static BOOL fallback(BOOL positions) {
     if (!positions) {
         NSSize z = MSG0(NSSize, best->v, "intrinsicContentSize");
         double iz = best_h ? z.w : z.h, fz = best_h ? s->frame.s.w : s->frame.s.h;
+        float hugp = MSG(float, best->v, "contentHuggingPriorityForOrientation:", (i64)(best_h ? 0 : 1));
         set[3] = 1;
+        /* hugging alto fica no tamanho intrínseco; hugging baixo preserva o frame se ele já for maior */
         sv[3] = iz > 0 ? iz : fz;
+        if (hugp < 500 && fz > sv[3]) sv[3] = fz;
+        if (hugp >= 750 && iz > 0) sv[3] = iz;
         /* se já havia dois valores (ex.: início e centro), o tamanho manda e o centro sai */
         if (set[0] && (set[1] || set[2])) set[1] = set[2] = 0;
         else if (set[1] && set[2]) set[2] = 0;
@@ -4390,6 +4413,12 @@ static void apply_inequalities(void) {
             case 2: *pos += d; break;
             }
             if (*size < 0) *size = 0;
+            {
+                NSSize z = MSG0(NSSize, e->v, "intrinsicContentSize");
+                double iz = h ? z.w : z.h;
+                float cr = MSG(float, e->v, "contentCompressionResistancePriorityForOrientation:", (i64)(h ? 0 : 1));
+                if (cr >= 750 && iz > 0 && *size < iz && s->prio < cr) *size = iz;
+            }
         }
 }
 static int lv_depth_cmp(const void *a, const void *b) { return ((const lv_t *)a)->depth - ((const lv_t *)b)->depth; }
@@ -4779,6 +4808,7 @@ void cx_appkit_init(void) {
     M(NSWindow, "setFrameTopLeftPoint:", noop1_m); M(NSWindow, "windowNumber", w_number); M(NSWindow, "setTabbingMode:", noop1_m);
     M(NSWindow, "occlusionState", w_occlusion); M(NSWindow, "convertRectToScreen:", w_convert_to_screen);
     M(NSWindow, "isKeyWindow", yes_m); M(NSWindow, "isMainWindow", yes_m);
+    M(NSWindow, "setNextResponder:", w_set_next); M(NSWindow, "nextResponder", w_next);
 
     DEF(NSView, NSResponder);
     M(NSView, "initWithFrame:", v_init_frame); M(NSView, "init", v_init); M(NSView, "frame", v_frame); M(NSView, "bounds", v_bounds);
@@ -5076,7 +5106,8 @@ void cx_appkit_init(void) {
     M(NSLayoutGuide, "owningView", lg_owning); M(NSLayoutGuide, "layoutFrame", lg_frame); M(NSLayoutGuide, "frame", lg_frame);
     M(NSView, "addLayoutGuide:", v_add_guide); M(NSView, "removeLayoutGuide:", v_remove_guide);
     M(NSView, "safeAreaLayoutGuide", v_safe_area); M(NSView, "layoutMarginsGuide", v_margins);
-    M(NSView, "setContentHuggingPriority:forOrientation:", noop1_m); M(NSView, "setContentCompressionResistancePriority:forOrientation:", noop1_m);
+    M(NSView, "setContentHuggingPriority:forOrientation:", v_set_hug); M(NSView, "contentHuggingPriorityForOrientation:", v_hug);
+    M(NSView, "setContentCompressionResistancePriority:forOrientation:", v_set_cr); M(NSView, "contentCompressionResistancePriorityForOrientation:", v_cr);
     M(NSWindow, "layoutIfNeeded", noop_m);
     nib_register();
     bindings_register();
