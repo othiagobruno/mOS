@@ -504,6 +504,35 @@ void *class_getClassMethod(cx_class_t *c, SEL s) { return c ? method_of(c->isa, 
 SEL method_getName(cx_meth_t *m) { return m ? m->sel : 0; }
 IMP method_getImplementation(cx_meth_t *m) { return m ? m->imp : 0; }
 const char *method_getTypeEncoding(cx_meth_t *m) { return m ? m->types : 0; }
+/* objc_method_description é {name, types}; o cx_meth_t tem o IMP no meio. Uma descrição por método, guardada
+ * para o ponteiro continuar válido como na Apple (aponta para dentro do método). */
+typedef struct { SEL name; const char *types; } cx_mdesc_t;
+typedef struct { cx_meth_t *m; cx_mdesc_t d; } cx_mdesc_ent_t;
+static cx_mdesc_ent_t *mdesc_tab;
+static u32 mdesc_cap, mdesc_n;
+cx_mdesc_t *method_getDescription(cx_meth_t *m) {
+    if (!m) return 0;
+    if (mdesc_n * 2 >= mdesc_cap) {
+        u32 ncap = mdesc_cap ? mdesc_cap * 2 : 256;
+        cx_mdesc_ent_t *nt = calloc(ncap, sizeof *nt);
+        if (!nt) return 0;
+        for (u32 i = 0; i < mdesc_cap; i++) {
+            if (!mdesc_tab[i].m) continue;
+            u32 h = (u32)(((u64)mdesc_tab[i].m >> 3) & (ncap - 1));
+            while (nt[h].m) h = (h + 1) & (ncap - 1);
+            nt[h] = mdesc_tab[i];
+        }
+        free(mdesc_tab);
+        mdesc_tab = nt;
+        mdesc_cap = ncap;
+    }
+    u32 h = (u32)(((u64)m >> 3) & (mdesc_cap - 1));
+    while (mdesc_tab[h].m && mdesc_tab[h].m != m) h = (h + 1) & (mdesc_cap - 1);
+    if (!mdesc_tab[h].m) { mdesc_tab[h].m = m; mdesc_n++; }
+    mdesc_tab[h].d.name = m->sel;      /* sel e types podem mudar (method_setImplementation não mexe neles) */
+    mdesc_tab[h].d.types = m->types;
+    return &mdesc_tab[h].d;
+}
 IMP method_setImplementation(cx_meth_t *m, IMP imp) { IMP o = m->imp; m->imp = imp; flush_caches(); return o; }
 void method_exchangeImplementations(cx_meth_t *a, cx_meth_t *b) { IMP t = a->imp; a->imp = b->imp; b->imp = t; flush_caches(); }
 BOOL class_addMethod(cx_class_t *c, SEL s, IMP imp, const char *types) {

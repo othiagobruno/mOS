@@ -1719,6 +1719,123 @@ static void snd_set_delegate(id s, SEL c, id d) {
 static id snd_delegate(id s, SEL c) { (void)c; id b = objc_getAssociatedObject(s, "bridge"); return b ? ((sbridge_t *)b)->delegate : 0; }
 
 /* ================================================================ registro das classes */
+/* ================================================================ AVAudioConverter
+ * PCM para PCM (float32/float64/int16/int32, intercalado ou não), troca de canais e de taxa.
+ * O cálculo mora em avconv_core.c; aqui só a ponte com AVAudioFormat/AVAudioPCMBuffer. */
+#include "avconv_core.h"
+typedef struct {
+    cx_class_t *isa;
+    id in, out, map;
+    avc_state st;
+    BOOL dither, downmix;
+    i64 quality, prime;
+    id algorithm;
+} avconv_t;
+cx_class_t AVAudioConverter_c __asm__("OBJC_CLASS_$_AVAudioConverter"), AVAudioConverter_m __asm__("OBJC_METACLASS_$_AVAudioConverter");
+#define CNV(o) ((avconv_t *)(o))
+
+static avc_fmt conv_fmt(id f) {
+    avc_fmt r;
+    r.common = FMT(f)->common;
+    r.channels = FMT(f)->d.mChannelsPerFrame;
+    r.interleaved = FMT(f)->inter ? 1 : 0;
+    r.rate = FMT(f)->d.mSampleRate;
+    return r;
+}
+static avc_buf conv_view(id b) {
+    avc_buf v;
+    v.fmt = conv_fmt(BUF(b)->fmt);
+    v.planes = BUF(b)->planes;
+    v.len = BUF(b)->len;
+    v.cap = BUF(b)->cap;
+    return v;
+}
+/* channelMap (NSArray de NSNumber) vira um vetor de long; até 32 canais de saída */
+typedef struct { avc_route r; long m[32]; } conv_route_t;
+static void conv_route(avconv_t *k, conv_route_t *out) {
+    out->r.map = out->m;
+    out->r.nmap = -1;
+    if (!k->map) return;
+    long n = MSG0(long, k->map, "count");
+    if (n > 32) n = 32;
+    for (long i = 0; i < n; i++) out->m[i] = MSG0(long, MSG(id, k->map, "objectAtIndex:", (u64)i), "longValue");
+    out->r.nmap = n;
+}
+static BOOL conv_pcm(id f) { return f && FMT(f)->common != CF_OTHER && FMT(f)->d.mChannelsPerFrame && FMT(f)->d.mChannelsPerFrame <= 32; }
+static id conv_init(id s, SEL c, id from, id to) {
+    (void)c;
+    if (!conv_pcm(from) || !conv_pcm(to) || FMT(from)->d.mSampleRate <= 0 || FMT(to)->d.mSampleRate <= 0) return 0;
+    setobj(&CNV(s)->in, from);
+    setobj(&CNV(s)->out, to);
+    CNV(s)->quality = 64;        /* AVAudioQualityMedium */
+    return s;
+}
+static id conv_in(id s, SEL c) { (void)c; return CNV(s)->in; }
+static id conv_out(id s, SEL c) { (void)c; return CNV(s)->out; }
+static void conv_reset(id s, SEL c) { (void)c; avc_reset(&CNV(s)->st); }
+static id conv_map(id s, SEL c) { (void)c; return CNV(s)->map; }
+static void conv_set_map(id s, SEL c, id m) { (void)c; setobj(&CNV(s)->map, m); }
+static BOOL conv_dither(id s, SEL c) { (void)c; return CNV(s)->dither; }
+static void conv_set_dither(id s, SEL c, BOOL v) { (void)c; CNV(s)->dither = v; }
+static BOOL conv_downmix(id s, SEL c) { (void)c; return CNV(s)->downmix; }
+static void conv_set_downmix(id s, SEL c, BOOL v) { (void)c; CNV(s)->downmix = v; }
+static i64 conv_quality(id s, SEL c) { (void)c; return CNV(s)->quality; }
+static void conv_set_quality(id s, SEL c, i64 v) { (void)c; CNV(s)->quality = v; }
+static i64 conv_prime(id s, SEL c) { (void)c; return CNV(s)->prime; }
+static void conv_set_prime(id s, SEL c, i64 v) { (void)c; CNV(s)->prime = v; }
+static id conv_algorithm(id s, SEL c) { (void)c; return CNV(s)->algorithm ? CNV(s)->algorithm : cx_str("AVSampleRateConverterAlgorithm_Normal"); }
+static void conv_set_algorithm(id s, SEL c, id v) { (void)c; setobj(&CNV(s)->algorithm, v); }
+static i64 conv_max_out(id s, SEL c) { (void)c; return (i64)FMT(CNV(s)->out)->d.mBytesPerPacket; }
+static void conv_dealloc(id s, SEL c) {
+    (void)c;
+    avconv_t *k = CNV(s);
+    avc_free(&k->st);
+    if (k->in) objc_release(k->in);
+    if (k->out) objc_release(k->out);
+    if (k->map) objc_release(k->map);
+    if (k->algorithm) objc_release(k->algorithm);
+    k->in = k->out = k->map = k->algorithm = 0;
+    struct { id r; cx_class_t *s; } sup = {s, cx_class_named("NSObject")};
+    ((void (*)(void *, SEL))objc_msgSendSuper)(&sup, sel_registerName("dealloc"));
+}
+/* convertToBuffer:fromBuffer:error: — como no macOS, só sem troca de taxa. */
+static BOOL conv_direct(id s, SEL c, id outb, id inb, id *err) {
+    (void)c;
+    if (!outb || !inb) { set_err(err, -50, "AVAudioConverter: buffer nulo"); return NO; }
+    conv_route_t r;
+    conv_route(CNV(s), &r);
+    avc_buf in = conv_view(inb), out = conv_view(outb);
+    if (avc_direct(&r.r, &in, &out) < 0) {
+        set_err(err, -50, "AVAudioConverter: convertToBuffer:fromBuffer: não troca a taxa; use withInputFromBlock:");
+        return NO;
+    }
+    buf_set_len(outb, 0, out.len);
+    return YES;
+}
+/* AVAudioConverterInputBlock: AVAudioBuffer *(^)(AVAudioPacketCount, AVAudioConverterInputStatus *) */
+typedef struct { void *isa; int flags, reserved; id (*invoke)(void *blk, u32 packets, i64 *status); } convblk_t;
+static int conv_pull(void *ctx, u32 want, avc_buf *got) {
+    convblk_t *b = (convblk_t *)ctx;
+    i64 st = 0;
+    id inb = b->invoke(b, want, &st);
+    if (st == 0 && inb) *got = conv_view(inb);
+    return (int)st;
+}
+/* volta AVAudioConverterOutputStatus: 0 HaveData, 1 InputRanDry, 2 EndOfStream, 3 Error */
+static i64 conv_block(id s, SEL c, id outb, id *err, void *blk) {
+    (void)c;
+    convblk_t *b = (convblk_t *)blk;
+    if (!outb || !b || !b->invoke) { set_err(err, -50, "AVAudioConverter: sem buffer ou bloco"); return 3; }
+    conv_route_t r;
+    conv_route(CNV(s), &r);
+    avc_fmt in = conv_fmt(CNV(s)->in);
+    avc_buf out = conv_view(outb);
+    int st = avc_convert(&CNV(s)->st, &r.r, &in, &out, conv_pull, b);
+    if (st == 3) { set_err(err, -108, "AVAudioConverter: sem memória"); return 3; }
+    buf_set_len(outb, 0, out.len);
+    return st;
+}
+
 static void K(cx_class_t *k, cx_class_t *m, const char *name, cx_class_t *super, u32 extra) {
     if (!cx_class_named(name)) cx_define_class(k, m, name, super, extra);
 }
@@ -1779,6 +1896,21 @@ void cx_avfaudio_init(void) {
     M(AVAudioPCMBuffer, "stride", buf_stride); M(AVAudioBuffer, "format", buf_format);
     M(AVAudioBuffer, "audioBufferList", buf_abl); M(AVAudioBuffer, "mutableAudioBufferList", buf_abl);
     M(AVAudioBuffer, "dealloc", buf_dealloc);
+
+    K(&AVAudioConverter_c, &AVAudioConverter_m, "AVAudioConverter", obj, sizeof(avconv_t) - 8);
+    M(AVAudioConverter, "initFromFormat:toFormat:", conv_init);
+    M(AVAudioConverter, "inputFormat", conv_in); M(AVAudioConverter, "outputFormat", conv_out);
+    M(AVAudioConverter, "reset", conv_reset);
+    M(AVAudioConverter, "channelMap", conv_map); M(AVAudioConverter, "setChannelMap:", conv_set_map);
+    M(AVAudioConverter, "dither", conv_dither); M(AVAudioConverter, "setDither:", conv_set_dither);
+    M(AVAudioConverter, "downmix", conv_downmix); M(AVAudioConverter, "setDownmix:", conv_set_downmix);
+    M(AVAudioConverter, "sampleRateConverterQuality", conv_quality); M(AVAudioConverter, "setSampleRateConverterQuality:", conv_set_quality);
+    M(AVAudioConverter, "sampleRateConverterAlgorithm", conv_algorithm); M(AVAudioConverter, "setSampleRateConverterAlgorithm:", conv_set_algorithm);
+    M(AVAudioConverter, "primeMethod", conv_prime); M(AVAudioConverter, "setPrimeMethod:", conv_set_prime);
+    M(AVAudioConverter, "maximumOutputPacketSize", conv_max_out);
+    M(AVAudioConverter, "convertToBuffer:fromBuffer:error:", conv_direct);
+    M(AVAudioConverter, "convertToBuffer:error:withInputFromBlock:", conv_block);
+    M(AVAudioConverter, "dealloc", conv_dealloc);
 
     K(&AVAudioTime_c, &AVAudioTime_m, "AVAudioTime", obj, sizeof(avtime_t) - 8);
     M(AVAudioTime, "initWithSampleTime:atRate:", time_init_st); M(AVAudioTime, "initWithHostTime:", time_init_host);

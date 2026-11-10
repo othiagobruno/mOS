@@ -58,6 +58,13 @@ void *$s7SwiftUI5ColorV06accentC0ACvgZ(void) { return &sui_c_accent; }
 
 static double sui_clamp01(double v) { return v < 0 ? 0 : v > 1 ? 1 : v; }
 
+/* Color == Color: a mesma referência, ou as duas com o mesmo espaço, os mesmos componentes e a mesma cor nativa. */
+int $s7SwiftUI5ColorV2eeoiySbAC_ACtFZ(const sui_color *a, const sui_color *b) {
+    if (a == b) return 1;
+    if (!a || !b || a->isa != &$s7SwiftUI5ColorVMn || b->isa != &$s7SwiftUI5ColorVMn) return 0;
+    return a->space == b->space && a->r == b->r && a->g == b->g && a->b == b->b && a->a == b->a && a->native == b->native;
+}
+
 static sui_color *sui_color_new(double r, double g, double b, double a, int space) {
     sui_color *c = (sui_color *)sui_new(&$s7SwiftUI5ColorVMn, sizeof *c);
     if (!c) return 0;
@@ -325,6 +332,10 @@ SUI_STYLE($s7SwiftUI27RoundedBorderTextFieldStyleVMn, $s7SwiftUI27RoundedBorderT
           $s7SwiftUI27RoundedBorderTextFieldStyleVAA0efG0AAMc, "RoundedBorderTextFieldStyle", "TextFieldStyle")
 SUI_STYLE($s7SwiftUI23LinearProgressViewStyleVMn, $s7SwiftUI23LinearProgressViewStyleVMa, $s7SwiftUI23LinearProgressViewStyleVACycfC,
           $s7SwiftUI23LinearProgressViewStyleVAA0deF0AAMc, "LinearProgressViewStyle", "ProgressViewStyle")
+SUI_STYLE($s7SwiftUI21BorderlessButtonStyleVMn, $s7SwiftUI21BorderlessButtonStyleVMa, $s7SwiftUI21BorderlessButtonStyleVACycfC,
+          $s7SwiftUI21BorderlessButtonStyleVAA09PrimitivedE0AAMc, "BorderlessButtonStyle", "PrimitiveButtonStyle")
+SUI_STYLE($s7SwiftUI25CircularProgressViewStyleVMn, $s7SwiftUI25CircularProgressViewStyleVMa, $s7SwiftUI25CircularProgressViewStyleVACycfC,
+          $s7SwiftUI25CircularProgressViewStyleVAA0deF0AAMc, "CircularProgressViewStyle", "ProgressViewStyle")
 SUI_STYLE($s7SwiftUI24StackNavigationViewStyleVMn, $s7SwiftUI24StackNavigationViewStyleVMa, $s7SwiftUI24StackNavigationViewStyleVACycfC,
           $s7SwiftUI24StackNavigationViewStyleVAA0deF0AAMc, "StackNavigationViewStyle", "NavigationViewStyle")
 SUI_STYLE_WP($s7SwiftUI15MenuPickerStyleVMn, $s7SwiftUI15MenuPickerStyleVMa, $s7SwiftUI15MenuPickerStyleVACycfC,

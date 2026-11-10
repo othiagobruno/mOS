@@ -23,6 +23,8 @@ typedef struct {
     uint64_t *slot;
     sui_get_fn get;
     sui_set_fn set;
+    uint64_t constant;   /* Binding.constant: o valor fica aqui e a escrita é ignorada */
+    int readonly;
 } sui_binding;
 
 sui_desc $s7SwiftUI5StateVMn = { 2, "State" };
@@ -90,9 +92,21 @@ uint64_t $s7SwiftUI7BindingV12wrappedValuexvg(void) {
 
 void $s7SwiftUI7BindingV12wrappedValuexvs(uint64_t value) {
     sui_binding *b = (sui_binding *)sui_r13();
-    if (!b) return;
+    if (!b || b->readonly) return;
     if (b->slot) { *b->slot = value; return; }
     if (b->set) b->set(value);
+}
+
+/* Binding.constant(_:): o valor genérico chega por referência; cabe num uint64 como no resto do modelo. */
+void *$s7SwiftUI7BindingV8constantyACyxGxFZ(const void *value, void *metadata) {
+    sui_binding *b = (sui_binding *)calloc(1, sizeof *b);
+    (void)metadata;
+    if (!b) return 0;
+    b->isa = &$s7SwiftUI7BindingVMn;
+    if (value) memcpy(&b->constant, value, sizeof b->constant);
+    b->slot = &b->constant;
+    b->readonly = 1;
+    return b;
 }
 
 void *$s7SwiftUI7BindingV14projectedValueACyxGvg(void) {

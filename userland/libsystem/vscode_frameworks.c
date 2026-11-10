@@ -107,6 +107,33 @@ OSStatus AXUIElementCopyAttributeValue(id e, id attr, id *v) { return cx_ax_copy
 OSStatus AXUIElementCopyAttributeValues(id e, id attr, long index, long maxValues, id *values) {
     return cx_ax_copy_values(e, attr, index, maxValues, values);
 }
+/* Vários atributos de uma vez. Atributo sem valor vira AXValue do tipo AXError, como no macOS; com a opção
+ * kAXCopyMultipleAttributeOptionStopOnError (1) a primeira falha devolve o erro e nenhum array. */
+id AXValueCreate(u32 type, const void *p);
+long CFArrayGetCount(id a);
+id CFArrayGetValueAtIndex(id a, long i);
+id CFArrayCreateMutable(void *alloc, long cap, const void *cb);
+void CFArrayAppendValue(id a, id v);
+OSStatus AXUIElementCopyMultipleAttributeValues(id e, id attrs, u32 options, id *values) {
+    if (!values) return -25201;                  /* kAXErrorIllegalArgument */
+    *values = 0;
+    if (!e || !attrs) return -25201;
+    long n = CFArrayGetCount(attrs);
+    id out = CFArrayCreateMutable(0, n, 0);
+    for (long i = 0; i < n; i++) {
+        id v = 0;
+        OSStatus err = cx_ax_copy(e, CFArrayGetValueAtIndex(attrs, i), &v);
+        if (err || !v) {
+            if (options & 1) { objc_release(out); return err ? err : -25212; }
+            int32_t code = err ? err : -25212;   /* kAXErrorNoValue */
+            v = AXValueCreate(5, &code);
+        }
+        CFArrayAppendValue(out, v);
+        if (v) objc_release(v);
+    }
+    *values = out;
+    return 0;
+}
 OSStatus AXUIElementCopyAttributeNames(id e, id *names) { return cx_ax_names(e, names); }
 OSStatus AXUIElementCopyParameterizedAttributeNames(id e, id *names) { return cx_ax_param_names(e, names); }
 OSStatus AXUIElementCopyParameterizedAttributeValue(id e, id attr, id p, id *v) { return cx_ax_param(e, attr, p, v); }
@@ -116,7 +143,8 @@ OSStatus AXUIElementPerformAction(id e, id action) { return cx_ax_perform(e, act
 /* AXValue: caixa de CGPoint/CGSize/CGRect/CFRange (tipos 1..4) */
 typedef struct { void *isa; u32 type; u8 data[32]; } axval_t;
 static cx_class_t axv_c, axv_m;
-static int axv_size(u32 t) { return t == 3 ? 32 : t == 1 || t == 2 || t == 4 ? 16 : 0; }
+/* 5 = kAXValueTypeAXError: um AXError (int32) */
+static int axv_size(u32 t) { return t == 3 ? 32 : t == 1 || t == 2 || t == 4 ? 16 : t == 5 ? 4 : 0; }
 id AXValueCreate(u32 type, const void *p) {
     if (!axv_c.vtable) cx_define_class(&axv_c, &axv_m, "__mOSAXValue", cx_class_named("NSObject"), 40);
     int n = axv_size(type);
@@ -238,7 +266,7 @@ void *CGWindowListCreateImageFromArray(cg_rect_t r, id arr, u32 img) { (void)r; 
 /* CGDisplayStream: cgdisplaystream.c, quadros reais via DEV_SCREEN_CAPTURE. */
 /* kCGWindowListOptionOnScreenOnly=1, AboveWindow=2, BelowWindow=4, IncludingWindow=8 */
 extern const void *kCGWindowNumber, *kCGWindowOwnerPID, *kCGWindowOwnerName, *kCGWindowName;
-extern const void *kCGWindowBounds, *kCGWindowLayer, *kCGWindowIsOnscreen;
+extern const void *kCGWindowBounds, *kCGWindowLayer, *kCGWindowIsOnscreen, *kCGWindowSharingState;
 extern void *kCFBooleanTrue, *kCFBooleanFalse;
 id CGRectCreateDictionaryRepresentation(cg_rect_t r);
 static id cg_num(long long v) { return CFNumberCreate(0, 4 /* kCFNumberSInt64Type */, &v); }
@@ -276,6 +304,7 @@ id CGWindowListCopyWindowInfo(u32 opt, u32 rel) {
         cg_put_num(d, kCGWindowNumber, (long long)w->number);
         cg_put_num(d, kCGWindowOwnerPID, w->pid);
         cg_put_num(d, kCGWindowLayer, w->layer);
+        cg_put_num(d, kCGWindowSharingState, 1);   /* kCGWindowSharingReadOnly: o compositor deixa ler os pixels */
         CFDictionarySetValue(d, (id)kCGWindowIsOnscreen, (id)(w->onscreen ? kCFBooleanTrue : kCFBooleanFalse));
         id owner = cx_str(w->owner);
         id name = cx_str(w->name);
@@ -434,8 +463,15 @@ OSStatus GetEventParameter(void *ev, u32 name, u32 type, u32 *outType, u64 size,
 void ReleaseEvent(void *ev) { (void)ev; }
 OSStatus ReceiveNextEvent(u32 n, const void *types, double timeout, u8 pull, void **out) { (void)n; (void)types; (void)timeout; (void)pull; if (out) *out = 0; return -9875; /* eventLoopTimedOutErr */ }
 OSStatus AEProcessEvent(void *ev) { (void)ev; return 0; }
-OSStatus EnableSecureEventInput(void) { return 0; }
-OSStatus DisableSecureEventInput(void) { return 0; }
+/* Entrada segura (campos de senha): contador como no Carbon; Enable/Disable em pares. */
+static volatile int g_secure_input;
+OSStatus EnableSecureEventInput(void) { __sync_fetch_and_add(&g_secure_input, 1); return 0; }
+OSStatus DisableSecureEventInput(void) {
+    int v = g_secure_input;
+    while (v > 0 && !__sync_bool_compare_and_swap(&g_secure_input, v, v - 1)) v = g_secure_input;
+    return 0;
+}
+u8 IsSecureEventInputEnabled(void) { return g_secure_input > 0; }
 OSStatus TSMSetDocumentProperty(void *doc, u32 tag, u32 size, void *data) { (void)doc; (void)tag; (void)size; (void)data; return 0; }
 OSStatus TSMRemoveDocumentProperty(void *doc, u32 tag) { (void)doc; (void)tag; return 0; }
 u8 LMGetKbdLast(void) { return 0; }
