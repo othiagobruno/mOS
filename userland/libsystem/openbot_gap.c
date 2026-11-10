@@ -182,41 +182,4 @@ long CFUUIDCreateFromString(void) { return 0; }
 long CFWriteStreamGetTypeID(void) { return 0; }
 long CFXMLCreateStringByEscapingEntities(void) { return 0; }
 long CFXMLCreateStringByUnescapingEntities(void) { return 0; }
-long gap_sw_0(void) __asm__("$s10Foundation22_convertNSErrorToErrorys0E0_pSo0C0CSgF");
-long gap_sw_0(void) { return 0; }
-long gap_sw_1(void) __asm__("$s10Foundation3URLV15fileURLWithPathACSSh_tcfC");
-long gap_sw_1(void) { return 0; }
-long gap_sw_2(void) __asm__("$s10Foundation3URLV19_bridgeToObjectiveCSo5NSURLCyF");
-long gap_sw_2(void) { return 0; }
-long gap_sw_3(void) __asm__("$s10Foundation3URLV36_unconditionallyBridgeFromObjectiveCyACSo5NSURLCSgFZ");
-long gap_sw_3(void) { return 0; }
-long gap_sw_4(void) __asm__("$s10Foundation3URLV4pathSSvg");
-long gap_sw_4(void) { return 0; }
-long gap_sw_5(void) __asm__("$s10Foundation3URLVMa");
-long gap_sw_5(void) { return 0; }
-long gap_sw_6(void) __asm__("$sSD10FoundationE19_bridgeToObjectiveCSo12NSDictionaryCyF");
-long gap_sw_6(void) { return 0; }
-long gap_sw_7(void) __asm__("$sSS10FoundationE19_bridgeToObjectiveCSo8NSStringCyF");
-long gap_sw_7(void) { return 0; }
-long gap_sw_8(void) __asm__("$sSS10FoundationE26_forceBridgeFromObjectiveC_6resultySo8NSStringC_SSSgztFZ");
-long gap_sw_8(void) { return 0; }
-long gap_sw_9(void) __asm__("$sSS10FoundationE34_conditionallyBridgeFromObjectiveC_6resultSbSo8NSStringC_SSSgztFZ");
-long gap_sw_9(void) { return 0; }
-long gap_sw_10(void) __asm__("$sSS10FoundationE36_unconditionallyBridgeFromObjectiveCySSSo8NSStringCSgFZ");
-long gap_sw_10(void) { return 0; }
-long gap_sw_11(void) __asm__("$sSS10FoundationE8EncodingV4utf8ACvgZ");
-long gap_sw_11(void) { return 0; }
-long gap_sw_12(void) __asm__("$sSS10FoundationE8EncodingVMa");
-long gap_sw_12(void) { return 0; }
-long gap_sw_13(void) __asm__("$sSa10FoundationE19_bridgeToObjectiveCSo7NSArrayCyF");
-long gap_sw_13(void) { return 0; }
-long gap_sw_14(void) __asm__("$sSa10FoundationE34_conditionallyBridgeFromObjectiveC_6resultSbSo7NSArrayC_SayxGSgztFZ");
-long gap_sw_14(void) { return 0; }
-long gap_sw_15(void) __asm__("$sSa10FoundationE36_unconditionallyBridgeFromObjectiveCySayxGSo7NSArrayCSgFZ");
-long gap_sw_15(void) { return 0; }
-long gap_sw_16(void) __asm__("$sSo12NSDictionaryC10FoundationE17dictionaryLiteralAByp_yptd_tcfC");
-long gap_sw_16(void) { return 0; }
-long gap_sw_17(void) __asm__("$sSy10FoundationE7cString5usingSays4Int8VGSgSSAAE8EncodingV_tF");
-long gap_sw_17(void) { return 0; }
-long gap_sw_18(void) __asm__("$ss5ErrorP10FoundationE20localizedDescriptionSSvg");
-long gap_sw_18(void) { return 0; }
+/* As 19 pontes Swift de Foundation saíram daqui: estão em foundation_swift_data.c. */
