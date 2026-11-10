@@ -12,6 +12,7 @@
  */
 #ifndef FI_BEHAVIOR_INC
 #define FI_BEHAVIOR_INC
+#include <stdint.h>
 
 #define FI_MAGIC_STYLE 0xF15E0001u
 #define FI_MAGIC_PERSON 0xF1504E01u
@@ -1172,10 +1173,10 @@ int fi_dec_from_locale(const char *s, const char *locale, void *out, int *is_nil
 
 void fi_dec_locale_entry(unsigned long long w0, unsigned long long w1, const void *locale, void *out) {
     char buf[80], loc[8];
-    int nil = 1;
+    int missing = 1;
     fi_read_locale(locale, loc, sizeof loc);
     if (fi_read_small(w0, w1, buf, sizeof buf) < 0) buf[0] = 0;
-    fi_dec_from_locale(buf, loc, out, &nil);
+    fi_dec_from_locale(buf, loc, out, &missing);
 }
 
 fi_swstr fi_meas_format(const void *meas) {
@@ -1225,12 +1226,6 @@ void fi_dec_from_objc(void *obj, void *out) {
 
 /* Slot de materialize para KeyPath que o compilador escreve e a gente não interpreta. */
 unsigned char fi_member_slot[16];
-
-#ifndef FI_HOST
-void *cx_class_named(const char *name);
-void *objc_msgSend(void *, void *, ...);
-void *sel_registerName(const char *);
-#endif
 
 void *fi_nsattr_from_plain(const char *plain) {
 #ifndef FI_HOST
