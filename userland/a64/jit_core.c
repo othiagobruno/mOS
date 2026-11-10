@@ -266,7 +266,7 @@ static void inval_page(jpage *p, a64_u64 lo, a64_u64 hi) {   /* J.lock e wplock 
     jblk **pp = &p->blocks;
     while (*pp) {
         jblk *b = *pp;
-        if (!b->dead && b->pc < hi && b->end > lo) kill_block(b);
+        if (!b->dead && b->lo < hi && b->hi > lo) kill_block(b);
         if (b->dead) *pp = b->pgnext[PGI(b, p)]; else pp = &b->pgnext[PGI(b, p)];
     }
 }
@@ -768,7 +768,7 @@ bool a64_jit_recover(a64_cpu *c, const a64_hostctx *h) {
         c->pc = b->pc;
         c->nzcv = jit_x86_to_nzcv(JIT_F(c));
     } else {
-        c->pc = b->pc + 4ull * f->idx;
+        c->pc = f->gpc;
         for (int r = 0; r < 16; r++) if (f->map[r] != 0xFF) c->x[f->map[r]] = h->gpr[r];
         int fe = f->fl & 3;
         if (fe) c->nzcv = jit_rflags_to_nzcv(h->rflags, fe == 2);
