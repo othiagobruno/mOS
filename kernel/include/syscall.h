@@ -94,6 +94,7 @@ enum {
     SYS_AIO = 96,
     SYS_VFORK = 97,    /* () -> pid no pai, 0 no filho. O pai dorme até exec ou _exit; o pml4 é o mesmo. */
     SYS_CHMOD = 98,    /* (path, mode) -> 0. O stat devolve esse mode. */
+    SYS_FCHMOD = 105,  /* (fd, mode) -> 0. Grava o mode do vnode desse fd. */
     SYS_GETUID = 99,   /* () -> uid real */
     SYS_GETEUID = 100, /* () -> uid efetivo */
     SYS_GETGID = 101,  /* () -> gid real */

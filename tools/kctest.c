@@ -187,6 +187,27 @@ int main(void) {
         free(still);
         free(after);
         free(stuck);
+        u8 e1[32], e2[32];
+        int ediff = 0, i;
+        CHECK(kc_hwentropy(e1, 32) == 0);
+        CHECK(kc_hwentropy(e2, 32) == 0);
+        for (i = 0; i < 32; i++) if (e1[i] != e2[i]) ediff = 1;
+        CHECK(ediff == 1);
+        memset(e1, 0xab, 32);
+        kc_entropy_fail = 1;
+        CHECK(kc_hwentropy(e1, 32) != 0);
+        ediff = 1;
+        for (i = 0; i < 32; i++) if (e1[i]) ediff = 0;
+        CHECK(ediff == 1);
+        {
+            char failkey[160];
+            snprintf(failkey, sizeof failkey, "%s/noent.key", d1);
+            CHECK(kc_key_create(failkey, e2) != 0);
+            CHECK(lstat(failkey, &st) != 0);
+        }
+        kc_entropy_fail = 0;
+        memset(e1, 0, 32);
+        memset(e2, 0, 32);
         memset(a, 0, 32);
         memset(b, 0, 32);
         memset(again, 0, 32);

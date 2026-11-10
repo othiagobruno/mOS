@@ -19,6 +19,10 @@ mkdir -p "$OUT"
 cd "$ROOT"
 gcc -O2 -Wall -Wextra -I kernel/include tools/cred_host.c kernel/proc/cred.c -o /tmp/cred_host
 /tmp/cred_host
+gcc -O2 -Wall -Wextra -DMOS_HOST_TEST -I kernel/include -I tools tools/resto_host.c \
+    kernel/proc/cred.c kernel/proc/fdshare.c kernel/proc/fileport.c kernel/mm/commpage.c kernel/mm/swap.c \
+    -o /tmp/resto_host
+/tmp/resto_host
 
 kind_of() {
     local b
@@ -109,6 +113,10 @@ else
     exit 1
 fi
 
+echo "==> libc++ (LLVM, dylib Mach-O)"
+export ZIG
+bash "$ROOT/tools/build-libcxx.sh"
+
 echo "==> libunwind ($ZIG)"
 UWO="$OUT/libunwind-x86"
 mkdir -p "$UWO"
@@ -149,6 +157,13 @@ compile_uw() {
 for f in libunwind.cpp UnwindLevel1.c UnwindLevel1-gcc-ext.c UnwindRegistersSave.S UnwindRegistersRestore.S; do
     compile_uw "$f"
 done
+
+echo "==> unw_hosttest (API pública da libunwind no host)"
+cc -O1 -fno-omit-frame-pointer -funwind-tables -rdynamic \
+    -I"$ROOT/userland/libsystem" \
+    "$ROOT/tools/unw_hosttest.c" "$ROOT/userland/libsystem/cxx_unwind.c" "$ROOT/userland/libsystem/unw_alias.S" \
+    -ldl -o "$OUT/unw_hosttest"
+"$OUT/unw_hosttest"
 
 echo "==> libSystem.mos"
 # x86_64: _Unwind_* fica em cxx_unwind.c. UnwindLevel1.c repete esses nomes; o resto do libunwind fica.
@@ -197,6 +212,9 @@ mkdir -p "$ROOT/build"
 if [ "$(readlink -f "$OUT/libSystem.mos")" != "$(readlink -f "$ROOT/build/libSystem.mos")" ]; then
     cp -f "$OUT/libSystem.mos" "$ROOT/build/libSystem.mos"
 fi
+
+echo "==> overlay Darwin (teste de host)"
+bash "$ROOT/tools/darwin-swift-teste.sh" "$ZIG" "$OUT/darwin-swift"
 
 echo "==> kernel"
 mapfile -t KSRC < <(find "$ROOT/kernel" -type f \( -name '*.c' -o -name '*.S' \) | sort)
@@ -252,7 +270,7 @@ mkdir -p "$ESP/mOS/Sistema/Biblioteca/a64"
 echo "==> libswift"
 # Runtime real (swift-6.4.2) quando a toolchain e o fonte estão em .tools/. Sem isso, o stage completa com stub.
 if [ -f "$ROOT/tools/build-libswift-real.sh" ]; then
-    sh "$ROOT/tools/build-libswift-real.sh" || echo "aviso: build-libswift-real.sh falhou; o que faltar continua stub" >&2
+    bash "$ROOT/tools/build-libswift-real.sh" || echo "aviso: build-libswift-real.sh falhou; o que faltar continua stub" >&2
 fi
 if [ -f "$ROOT/build/universal-swift/usr/lib/swift/libswiftCore.dylib" ]; then
     cp -a "$ROOT/build/universal-swift/." "$ESP/mOS/"
@@ -310,6 +328,8 @@ fi
 
 echo "==> apps oficiais em /Aplicativos"
 bash "$ROOT/tools/stage-apps-oficiais.sh" "$OUT"
+mkdir -p "$ESP/mOS/usr/lib"
+cp -f "$ROOT/build/libcxx/libc++.1.dylib" "$ESP/mOS/usr/lib/libc++.1.dylib"
 
 KEY=${MOS_CHAVE_ATUALIZACAO:-$ROOT/tools/chave-atualizacao.semente}
 REV=$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo local)

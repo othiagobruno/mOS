@@ -8,5 +8,6 @@ void cred_spawn_apply(unsigned long long handlers[32], unsigned *mask,
                       unsigned sigdef, unsigned sigmask, unsigned extra);
 unsigned mode_for_creat(unsigned req);
 void mode_apply(unsigned *slot, unsigned mode);
+void fchmod_apply(unsigned *vnode_mode, unsigned *fd_mode, unsigned mode);
 unsigned mode_stat(unsigned slot, int is_dir);
 int cred_seteid(int real, int saved, int *eff, int neu);

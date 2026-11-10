@@ -12,6 +12,8 @@
 #include "smp_perf.h"
 #include "vfs.h"
 #include "cred.h"
+#include "fdshare.h"
+#include "fileport.h"
 #include "syscall.h"
 #include "account.h"
 #include "fs.h"
@@ -939,7 +941,8 @@ static void finish(process_t *p, int code) {
         }
     { extern void smp_kick_proc(process_t *p); smp_kick_proc(p); }   /* as que rodam em outro núcleo saem do ring 3 já */
     pty_proc_exit(p);                                 /* líder de sessão: SIGHUP ao grupo em frente, a sessão perde o terminal */
-    for (int i = 0; i < PROC_MAX_FDS; i++) fd_close(p, i);      /* fecha arquivos, pipes e terminais (acorda quem espera) */
+    if (!fd_tab_shared(p->fds, p->fds_own))
+        for (int i = 0; i < PROC_MAX_FDS; i++) fd_close(p, i);      /* vfork: a tabela é do pai e não fecha aqui */
     compat_gui_proc_exit(p);
     machipc_exit(p);                                  /* portas Mach: receptores morrem, envios viram nomes mortos */
     { extern void net_user_exit(process_t *p); net_user_exit(p); }   /* conexões TCP do processo (kernel/net/usersock.c) */
@@ -1050,6 +1053,9 @@ static void spawn_apply_fds(process_t *child, process_t *parent, mos_spawn_fa_t 
                 fd_copy(child, a, child, tmp);
                 fd_close(child, tmp);
             }
+            fileport_dup2((unsigned char *)&child->fds[a].used, &child->fds[a].flags, &child->fds[a].mode,
+                          child->fds[a].path, sizeof child->fds[a].path,
+                          child->fds[a].used, child->fds[a].flags, child->fds[a].mode, child->fds[a].path);
         }
     }
 }
@@ -1067,6 +1073,7 @@ int proc_spawn_in(const char *path, const char *arg, tty_t *tty,
     if (!v->data || !v->size) { kprintf("proc: %s: arquivo vazio\n", path); return -1; }
     process_t *p = kcalloc(1, sizeof *p);
     if (!p) return -1;
+    p->fds = p->fds_own;
     p->pid = next_pid++;
     p->uid = p->euid = p->suid = 501;
     p->gid = p->egid = p->sgid = 20;
@@ -2538,6 +2545,7 @@ static i64 proc_exec(int_frame_t *f, thread_t *t, process_t *p, char *path, char
     }
     free_address_space(np);
     kfree(np);
+    fd_unshare_tab(p->fds_own, (void **)&p->fds, sizeof p->fds_own);
     for (int i = 0; i < PROC_MAX_FDS; i++)                       /* O_CLOEXEC fecha; o resto passa para a imagem nova */
         if (p->fds[i].used && (p->fds[i].flags & MOS_O_CLOEXEC)) fd_close(p, i);
     for (int s = 0; s < 32; s++)                       /* tratadores somem; "ignorar" continua */
@@ -3125,6 +3133,16 @@ static u64 proc_syscall_(int_frame_t *f) {
         r = 0;
         break;
     }
+    case SYS_FCHMOD: {
+        if (a < 0 || a >= PROC_MAX_FDS || !p->fds || !p->fds[a].used) { r = -MOS_EBADF; break; }
+        if (!p->fds[a].path[0]) { r = -MOS_EINVAL; break; }
+        vnode_t *fv = vfs_lookup(p->fds[a].path);
+        if (!fv) { r = -MOS_ENOENT; break; }
+        fchmod_apply(&fv->mode, &p->fds[a].mode, (unsigned)b);
+        persist_mark(fv);
+        r = 0;
+        break;
+    }
     case SYS_GETUID: r = p->uid; break;
     case SYS_GETEUID: r = p->euid; break;
     case SYS_GETGID: r = p->gid; break;
@@ -3477,11 +3495,11 @@ static u64 proc_syscall_(int_frame_t *f) {
         q->sig_restorer = p->sig_restorer;
         q->tty = p->tty; if (q->tty) q->tty->refs++;
         q->pgid = p->pgid; q->sid = p->sid; q->ctty = p->ctty;
-        for (int i = 0; i < PROC_MAX_FDS; i++) if (p->fds[i].used) fd_copy(q, i, p, i);
+        q->fds = fd_share_tab(p->fds);
         f->rax = 0;
         thread_t *ct = uthread_clone(q, f);
         if (!ct) {
-            for (int i = 0; i < PROC_MAX_FDS; i++) fd_close(q, i);
+            q->fds = NULL;
             q->pml4 = NULL; q->pml4_borrowed = 0;
             if (q->tty) q->tty->refs--;
             kfree(q); r = -MOS_ENOMEM; break;
@@ -3499,6 +3517,7 @@ static u64 proc_syscall_(int_frame_t *f) {
     case SYS_FORK: {
         if (!pref_ready()) { r = -MOS_ENOMEM; break; }
         process_t *q = kcalloc(1, sizeof *q);
+        if (q) q->fds = q->fds_own;
         u64 *pml4 = q ? (u64 *)pmm_alloc(1) : NULL;
         if (!pml4) { kfree(q); r = -MOS_ENOMEM; break; }
         memcpy(pml4, kernel_pml4, 4096);

@@ -1,7 +1,8 @@
 /* Selo do Keychain em disco.
- * A chave do arquivo são 32 bytes lidos de getentropy() (libSystem; no mOS,
- * extra.c encaminha getentropy para arc4random_buf). Não há gerador neste
- * arquivo. A chave fica em <home>/Library/Keychains/mos-keychain.key, modo
+ * A chave do arquivo são 32 bytes de kc_hwentropy() (entropy_hw.inc): no host,
+ * getrandom(2); no mOS, RDSEED/RDRAND. Se a fonte não entrega, a criação falha.
+ * Não há gerador próprio nem queda para arc4random. A chave fica em
+ * <home>/Library/Keychains/mos-keychain.key, modo
  * 0600, dono = o usuário, pasta 0700. Leitura recusa symlink, modo diferente
  * de 0600, dono diferente, tamanho diferente de 32 e pasta que não seja 0700.
  * A chave não é impressa.
@@ -15,6 +16,7 @@
  * u8, u32, size_t, ssize_t, malloc, free, memcpy, memcmp, strlen, open, read, close.
  */
 void *memset(void *s, int c, size_t n);
+#include "entropy_hw.inc"
 
 #ifdef KC_HOST
 #include <fcntl.h>
@@ -254,7 +256,7 @@ static int kc_key_create(const char *path, u8 out[32]) {
     if (kc_parent_dir(path, dir, sizeof dir)) return -1;
     kc_mkdir_p(dir);
     u8 buf[32];
-    if (getentropy(buf, 32) != 0) { memset(buf, 0, 32); return -1; }
+    if (kc_hwentropy(buf, 32) != 0) { memset(buf, 0, 32); return -1; }
     int fd = open(path, KC_O_WRONLY | KC_O_CREAT | KC_O_EXCL | KC_O_NOFOLLOW, 0600);
     if (fd < 0) { memset(buf, 0, 32); return -1; }
     if (chmod(path, 0600) != 0) { close(fd); unlink(path); memset(buf, 0, 32); return -1; }

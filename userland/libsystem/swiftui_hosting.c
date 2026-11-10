@@ -13,6 +13,8 @@
 typedef struct {
     const void *isa;
     void *root;
+    double width;
+    double height;
 } mos_hv;
 
 typedef struct {
@@ -37,6 +39,8 @@ void *$s7SwiftUI13NSHostingViewC04rootD0ACyxGx_tcfc(void *root, void *metadata) 
     if (!h) return 0;
     h->isa = &$s7SwiftUI13NSHostingViewCMn;
     h->root = root;
+    h->width = 240;
+    h->height = 200;
     return h;
 }
 
