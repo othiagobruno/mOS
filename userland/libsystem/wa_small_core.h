@@ -13,43 +13,100 @@ enum {
     CX_MUTE
 };
 enum { CX_PENDING = 0, CX_FULFILLED = 1, CX_FAILED = 2 };
-enum { CX_OK = 0, CX_ERR_NO_PROVIDER = 1, CX_ERR_BAD = 2 };
+enum { CX_OK = 0, CX_ERR_NO_PROVIDER = 1, CX_ERR_BAD = 2, CX_ERR_LIMIT = 3, CX_ERR_HANDLE = 4, CX_ERR_VIDEO = 5 };
 
 enum { CX_CALL_RINGING = 1, CX_CALL_ACTIVE = 2, CX_CALL_ENDED = 3 };
+enum { CX_HANDLE_PHONE = 1, CX_HANDLE_EMAIL = 2, CX_HANDLE_GENERIC = 3 };
+enum { CX_EV_ACTION = 1, CX_EV_CHANGED = 2 };
+
+typedef struct {
+    int on;
+    int max_groups; /* padrão da Apple: 2 */
+    int max_per;    /* padrão da Apple: 5 */
+    int video;
+    unsigned handle_mask; /* bit (1u << CX_HANDLE_*) */
+} cx_cfg;
+
+typedef struct {
+    int has_handle;
+    int handle_type;
+    char handle[80];
+    int has_name;
+    char name[80];
+    int has_video; /* -1 ausente, 0 ou 1 */
+    int hold, group, ungroup, dtmf; /* -1 ausente */
+} cx_update;
 
 typedef struct {
     int kind;
     int state;
-    int muted; /* 0 ou 1; -1 se a ação não mexe no mudo */
+    int muted;
     int held;
+    int video;
+    int handle_type;
+    int group;
     char uuid[48];
     char handle[80];
 } cx_act;
 
 typedef struct {
-    int alive; /* 0 livre, senão CX_CALL_* */
+    int alive;
     int held;
     int muted;
+    int outgoing;
+    int on_hold;
+    int has_connected;
+    int has_ended;
+    int has_video;
+    int group;
+    int cap_hold, cap_group, cap_ungroup, cap_dtmf;
+    int handle_type;
     char uuid[48];
     char handle[80];
+    char name[80];
 } cx_call;
+
+typedef struct {
+    int qid;
+    int what;
+    int action;
+    int outgoing, on_hold, connected, ended;
+    char uuid[48];
+} cx_ev;
 
 typedef struct {
     int provider;
     int delegate;
+    int delegate_q;
+    int observer;
+    int observer_q;
+    int next_group;
+    cx_cfg cfg;
     cx_act acts[16];
     int nacts;
     cx_call calls[16];
     int ncalls;
+    cx_ev q[32];
+    int nq;
 } cx_box;
 
 void wa_cx_box_init(cx_box *b);
 int wa_cx_set_provider(cx_box *b, int on, int delegate_on);
+void wa_cx_set_delegate_queue(cx_box *b, int qid);
+void wa_cx_set_observer(cx_box *b, int on, int qid);
+void wa_cx_set_config(cx_box *b, const cx_cfg *cfg);
+int wa_cx_handle_equal(int t1, const char *v1, int t2, const char *v2);
+unsigned wa_cx_handle_hash(int type, const char *value);
 int wa_cx_submit(cx_box *b, int kind, const char *uuid, const char *handle, int muted, int held, int *idx);
+int wa_cx_submit_full(cx_box *b, int kind, const char *uuid, const char *handle, int handle_type, int muted, int held, int video, int *idx);
 int wa_cx_fulfill(cx_box *b, int idx);
 int wa_cx_fail(cx_box *b, int idx);
 int wa_cx_report_incoming(cx_box *b, const char *uuid, const char *handle);
+int wa_cx_apply_update(cx_box *b, const char *uuid, const cx_update *u);
 const cx_call *wa_cx_find_call(const cx_box *b, const char *uuid);
+int wa_cx_call_count(const cx_box *b);
+const cx_call *wa_cx_call_at(const cx_box *b, int i);
+int wa_cx_drain(cx_box *b, int qid, cx_ev *out, int cap);
 
 /* CoreLocation. Concedido no TCC vira WhenInUse. Sem GPS o resultado nunca é coordenada. */
 enum { CL_AUTH_NOT = 0, CL_AUTH_DENIED = 2, CL_AUTH_WHEN_IN_USE = 4 };
