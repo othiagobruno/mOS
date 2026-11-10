@@ -153,6 +153,15 @@ CG_EXTERN bool CGRectContainsPoint(CGRect r, CGPoint p);
 CG_EXTERN bool CGRectContainsRect(CGRect a, CGRect b);
 CG_EXTERN bool CGRectIntersectsRect(CGRect a, CGRect b);
 
+/* Dicionário da Apple: chaves CFString "X"/"Y"/"Width"/"Height", valores CFNumber (CGFloat).
+ * Implementação: userland/libsystem/cgdict.c */
+CG_EXTERN CFDictionaryRef CGPointCreateDictionaryRepresentation(CGPoint point);
+CG_EXTERN CFDictionaryRef CGSizeCreateDictionaryRepresentation(CGSize size);
+CG_EXTERN CFDictionaryRef CGRectCreateDictionaryRepresentation(CGRect rect);
+CG_EXTERN bool CGPointMakeWithDictionaryRepresentation(CFDictionaryRef _Nullable dict, CGPoint *_Nullable point);
+CG_EXTERN bool CGSizeMakeWithDictionaryRepresentation(CFDictionaryRef _Nullable dict, CGSize *_Nullable size);
+CG_EXTERN bool CGRectMakeWithDictionaryRepresentation(CFDictionaryRef _Nullable dict, CGRect *_Nullable rect);
+
 /* ---- CGAffineTransform */
 CG_EXTERN const CGAffineTransform CGAffineTransformIdentity;
 CG_EXTERN CGAffineTransform CGAffineTransformMake(CGFloat a, CGFloat b, CGFloat c, CGFloat d, CGFloat tx, CGFloat ty);

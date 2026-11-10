@@ -16,7 +16,11 @@ jobs:
           curl -fsSL -o /tmp/zig.tar.xz https://ziglang.org/download/0.17.1/zig-x86_64-linux-0.17.1.tar.xz
           sudo tar -xJf /tmp/zig.tar.xz -C /opt
           echo /opt/zig-x86_64-linux-0.17.1 >> "$GITHUB_PATH"
+      - name: testes de unwind no host
+        run: tools/cxx_unwind_host.sh
       - name: tools/build.sh
         run: tools/build.sh --out /tmp/mos-linux-build
+      - name: hosttest do gate
+        run: python3 tools/corpus/harness.py hosttest --lib /tmp/mos-linux-build/libSystem.mos --disco /tmp/mos-linux-build/libunwind-x86
       - name: teste de host do Virtualization
         run: sh tools/test-vz.sh
