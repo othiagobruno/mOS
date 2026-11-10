@@ -29,6 +29,8 @@ id CFLocaleGetIdentifier(id loc);
 id CFTimeZoneCopySystem(void);
 int socket(int domain, int type, int proto);
 int close(int fd);
+long recv(int fd, void *b, unsigned long n, int flags);
+long send(int fd, const void *b, unsigned long n, int flags);
 id cx_plist_parse(const unsigned char *b, unsigned long n);
 
 #define ENC_UTF8 0x08000100u
@@ -272,14 +274,34 @@ id CFDateFormatterCreateStringWithDate(id fmt, id date) {
 }
 
 /* ---- descritor de arquivo ---- */
-typedef struct { int k; int fd; int close_on; int valid; } fd_o;
+typedef void (*fd_cb_f)(void *fd, unsigned long flags, void *info);
+typedef struct { int k; int fd; int close_on; int valid; unsigned long enabled; fd_cb_f cb; void *info; } fd_o;
 u64 CFFileDescriptorGetTypeID(void) { return 35; }
 id CFFileDescriptorCreate(void *alloc, int fd, unsigned char close_on, void *cb, const void *ctx) {
-    (void)alloc; (void)cb; (void)ctx;
+    (void)alloc;
     fd_o *f = calloc(1, sizeof *f);
     if (!f) return 0;
-    f->k = K_FD; f->fd = fd; f->close_on = close_on; f->valid = 1;
+    f->k = K_FD; f->fd = fd; f->close_on = close_on; f->valid = 1; f->cb = (fd_cb_f)cb;
+    f->info = ctx ? *(void **)((char *)ctx + sizeof(long)) : 0;
     return box_new(f);
+}
+static fd_o *as_fd(id o);
+void CFFileDescriptorEnableCallBacks(id o, unsigned long flags) { fd_o *f = as_fd(o); if (f) f->enabled |= flags; }
+static void fd_perform(void *info) {
+    fd_o *f = info;
+    if (f && f->valid && f->enabled && f->cb) f->cb(f, f->enabled, f->info);
+}
+void *CFFileDescriptorCreateRunLoopSource(void *alloc, id fd, long order) {
+    struct {
+        long version; void *info; const void *(*retain)(const void *); void (*release)(const void *);
+        void *copyDescription, *equal, *hash;
+        void (*schedule)(void *, void *, void *); void (*cancel)(void *, void *, void *);
+        void (*perform)(void *);
+    } ctx;
+    memset(&ctx, 0, sizeof ctx);
+    ctx.info = as_fd(fd);
+    ctx.perform = fd_perform;
+    return CFRunLoopSourceCreate(alloc, order, &ctx);
 }
 static fd_o *as_fd(id o) { fd_o *f = is_box(o) ? ((box_t *)o)->p : 0; return f && f->k == K_FD ? f : 0; }
 int CFFileDescriptorGetNativeDescriptor(id o) { fd_o *f = as_fd(o); return f ? f->fd : -1; }
@@ -292,7 +314,8 @@ void CFFileDescriptorInvalidate(id o) {
 
 /* ---- CFMessagePort: entrega no mesmo processo, pelo nome ---- */
 typedef id (*mp_cb_f)(void *local, long msgid, id data, void *info);
-typedef struct { int k; char name[128]; int valid, remote; mp_cb_f cb; void *info; } mp_o;
+typedef void (*mp_inv_f)(void *port, void *info);
+typedef struct { int k; char name[128]; int valid, remote; mp_cb_f cb; void *info; void *queue; mp_inv_f inv; } mp_o;
 enum { MP_N = 32 };
 static mp_o *mp_tab[MP_N];
 u64 CFMessagePortGetTypeID(void) { return 36; }
@@ -323,10 +346,14 @@ id CFMessagePortCreateRemote(void *alloc, id name) {
 void CFMessagePortInvalidate(id o) {
     mp_o *m = as_mp(o);
     int i;
-    if (!m) return;
+    if (!m || !m->valid) return;
     m->valid = 0;
+    if (m->inv) m->inv(o, m->info);
     for (i = 0; i < MP_N; i++) if (mp_tab[i] == m) mp_tab[i] = 0;
 }
+unsigned char CFMessagePortIsValid(id o) { mp_o *m = as_mp(o); return m && m->valid; }
+void CFMessagePortSetDispatchQueue(id o, void *q) { mp_o *m = as_mp(o); if (m) m->queue = q; }
+void CFMessagePortSetInvalidationCallBack(id o, void *cb) { mp_o *m = as_mp(o); if (m) m->inv = (mp_inv_f)cb; }
 long CFMessagePortSendRequest(id remote, long msgid, id data, double send_to, double recv_to, id mode, id *reply) {
     mp_o *r = as_mp(remote);
     int i;
@@ -356,17 +383,57 @@ void *CFMessagePortCreateRunLoopSource(void *alloc, id port, long order) {
 }
 
 /* ---- CFSocket: o descritor nativo vem de socket() ---- */
-typedef struct { int k; int fd; int valid; } sock_o;
+typedef void (*sock_cb_f)(void *s, unsigned long type, void *addr, const void *data, void *info);
+typedef struct { int k; int fd; int valid; unsigned long flags; sock_cb_f cb; void *info; } sock_o;
 u64 CFSocketGetTypeID(void) { return 37; }
 id CFSocketCreate(void *alloc, int family, int type, int proto, unsigned long flags, void *cb, const void *ctx) {
-    (void)alloc; (void)flags; (void)cb; (void)ctx;
+    (void)alloc;
     sock_o *s = calloc(1, sizeof *s);
     int fd;
     if (!s) return 0;
     fd = socket(family, type, proto);
-    s->k = K_SOCK; s->fd = fd; s->valid = fd >= 0;
+    s->k = K_SOCK; s->fd = fd; s->valid = fd >= 0; s->flags = flags; s->cb = (sock_cb_f)cb;
+    s->info = ctx ? *(void **)((char *)ctx + sizeof(long)) : 0;
     return box_new(s);
 }
+static void sock_bridge(void *info, int kind, const void *data, int n) {
+    sock_o *s = info;
+    (void)n;
+    if (s && s->cb) s->cb(s, (unsigned long)kind, 0, data, s->info);
+}
+static void sock_perform(void *info) {
+    sock_o *s = info;
+    if (s && s->valid) cf_sock_service(s->fd, (unsigned)s->flags, sock_bridge, s);
+}
+static sock_o *as_sock(id o);
+void *CFSocketCreateRunLoopSource(void *alloc, id sock, long order) {
+    struct {
+        long version; void *info; const void *(*retain)(const void *); void (*release)(const void *);
+        void *copyDescription, *equal, *hash;
+        void (*schedule)(void *, void *, void *); void (*cancel)(void *, void *, void *);
+        void (*perform)(void *);
+    } ctx;
+    memset(&ctx, 0, sizeof ctx);
+    ctx.info = as_sock(sock);
+    ctx.perform = sock_perform;
+    return CFRunLoopSourceCreate(alloc, order, &ctx);
+}
+long recv(int fd, void *b, unsigned long n, int flags);
+int connect(int fd, const void *addr, unsigned len);
+long send(int fd, const void *b, unsigned long n, int flags);
+int CFSocketConnectToAddress(id sock, id addr, double timeout) {
+    sock_o *s = as_sock(sock);
+    (void)timeout;
+    if (!s || !s->valid || !addr) return -1;
+    return connect(s->fd, CFDataGetBytePtr(addr), (unsigned)CFDataGetLength(addr));
+}
+void CFSocketSendData(id sock, id addr, id data, double timeout) {
+    sock_o *s = as_sock(sock);
+    (void)addr; (void)timeout;
+    if (!s || !s->valid || !data) return;
+    send(s->fd, CFDataGetBytePtr(data), (unsigned long)CFDataGetLength(data), 0);
+}
+void CFSocketSetSocketFlags(id sock, unsigned long flags) { sock_o *s = as_sock(sock); if (s) s->flags = flags; }
 static sock_o *as_sock(id o) { sock_o *s = is_box(o) ? ((box_t *)o)->p : 0; return s && s->k == K_SOCK ? s : 0; }
 int CFSocketGetNative(id o) { sock_o *s = as_sock(o); return s ? s->fd : -1; }
 void CFSocketInvalidate(id o) {
@@ -379,7 +446,7 @@ unsigned char CFSocketIsValid(id o) { sock_o *s = as_sock(o); return s && s->val
 
 /* ---- par de streams sobre um anel ---- */
 typedef struct { cf_ring g; int refs; } ring_s;
-typedef struct { int k; ring_s *r; } stream_o;
+typedef struct { int k; ring_s *r; int fd; } stream_o;
 static cx_class_t st_c, st_m;
 static int st_ready;
 u64 CFReadStreamGetTypeID(void) { return 38; }
@@ -395,12 +462,16 @@ static void st_dealloc(id self, SEL c) {
 static long st_read(id self, SEL c, unsigned char *buf, unsigned long n) {
     stream_o *s = ((box_t *)self)->p;
     (void)c;
-    return s && s->k == K_RD && s->r ? cf_ring_read(&s->r->g, buf, (int)n) : -1;
+    if (s && s->k == K_RD && s->r) return cf_ring_read(&s->r->g, buf, (int)n);
+    if (s && s->fd >= 0) return (long)recv(s->fd, buf, n, 0);
+    return -1;
 }
 static long st_write(id self, SEL c, const unsigned char *buf, unsigned long n) {
     stream_o *s = ((box_t *)self)->p;
     (void)c;
-    return s && s->k == K_WR && s->r ? cf_ring_write(&s->r->g, buf, (int)n) : -1;
+    if (s && s->k == K_WR && s->r) return cf_ring_write(&s->r->g, buf, (int)n);
+    if (s && s->fd >= 0) return (long)send(s->fd, buf, n, 0);
+    return -1;
 }
 static signed char st_has_r(id self, SEL c) { stream_o *s = ((box_t *)self)->p; (void)c; return s && s->r && s->r->g.n > 0; }
 static signed char st_has_w(id self, SEL c) { stream_o *s = ((box_t *)self)->p; (void)c; return s && s->r && s->r->g.n < CF_RING; }
@@ -430,16 +501,53 @@ void CFStreamCreateBoundPair(void *alloc, id *rd, id *wr, long bufsz) {
         cx_add_method(&st_c, "close", (void *)st_close);
         cx_add_method(&st_c, "streamStatus", (void *)st_status);
     }
+    if (!rd && !wr) return;
     g = calloc(1, sizeof *g);
     a = calloc(1, sizeof *a);
     b = calloc(1, sizeof *b);
     if (!g || !a || !b) { free(g); free(a); free(b); return; }
-    a->k = K_RD; b->k = K_WR; a->r = b->r = g; g->refs = 2;
+    a->k = K_RD; b->k = K_WR; a->r = b->r = g; a->fd = b->fd = -1; g->refs = 2;
     if (rd) *rd = box_new(a); else free(a);
     if (wr) *wr = box_new(b); else free(b);
     /* box_new usa box_c, não st_c: o read: precisa estar na classe do objeto. */
     if (rd && *rd) ((box_t *)*rd)->isa = &st_c;
     if (wr && *wr) ((box_t *)*wr)->isa = &st_c;
+}
+static id stream_on_fd(int fd, int kind) {
+    stream_o *s;
+    id o;
+    if (!st_ready) CFStreamCreateBoundPair(0, 0, 0, 0);
+    s = calloc(1, sizeof *s);
+    if (!s) return 0;
+    s->k = kind; s->fd = fd; s->r = 0;
+    o = box_new(s);
+    if (o) ((box_t *)o)->isa = &st_c;
+    return o;
+}
+void CFStreamCreatePairWithSocket(void *alloc, int fd, id *rd, id *wr) {
+    (void)alloc;
+    if (rd) *rd = stream_on_fd(fd, K_RD);
+    if (wr) *wr = stream_on_fd(fd, K_WR);
+}
+void CFStreamCreatePairWithSocketToHost(void *alloc, id host, int port, id *rd, id *wr) {
+    typedef struct { int flags, family, socktype, protocol; unsigned addrlen; char *canon; void *addr; void *next; } ai_t;
+    int getaddrinfo(const char *, const char *, const ai_t *, ai_t **);
+    void freeaddrinfo(ai_t *);
+    ai_t hint, *res = 0;
+    char svc[16];
+    int fd = -1;
+    (void)alloc;
+    if (rd) *rd = 0;
+    if (wr) *wr = 0;
+    memset(&hint, 0, sizeof hint);
+    hint.family = 2; hint.socktype = 1;
+    snprintf(svc, sizeof svc, "%d", port);
+    if (getaddrinfo(C(host), svc, &hint, &res) || !res) return;
+    fd = socket(res->family, res->socktype ? res->socktype : 1, res->protocol);
+    if (fd >= 0 && connect(fd, res->addr, res->addrlen)) { close(fd); fd = -1; }
+    freeaddrinfo(res);
+    if (fd < 0) return;
+    CFStreamCreatePairWithSocket(alloc, fd, rd, wr);
 }
 
 /* ---- bundle, erro, notificação ---- */
@@ -549,7 +657,57 @@ static void plist_xml(id o, char **b, unsigned long *n, unsigned long *cap, int 
     }
     pb_add(b, n, cap, "<string></string>");
 }
-static id plist_data(id plist) {
+static int bp_add_obj(cf_bpw *w, id o, int depth);
+static int bp_add_obj(cf_bpw *w, id o, int depth) {
+    if (!o || depth > 32) return cf_bpw_str(w, "");
+    if (is_class(o, "NSString") || cx_is_str(o)) return cf_bpw_str(w, C(o));
+    if (is_class(o, "NSNumber")) {
+        typedef struct { void *isa; unsigned kind; unsigned pad; double d; long long i; } num_t;
+        num_t *num = (num_t *)o;
+        if (num->kind == 2) return cf_bpw_bool(w, num->i != 0);
+        return cf_bpw_int(w, num->i);
+    }
+    if (is_class(o, "NSData")) return cf_bpw_data(w, CFDataGetBytePtr(o), (int)CFDataGetLength(o));
+    if (is_class(o, "NSArray")) {
+        long i, c = CFArrayGetCount(o);
+        int *ix = c ? (int *)calloc((size_t)c, sizeof(int)) : 0;
+        int id0 = 0, k;
+        for (i = 0; i < c; i++) ix[i] = bp_add_obj(w, CFArrayGetValueAtIndex(o, i), depth + 1);
+        id0 = cf_bpw_arr(w, ix, (int)c);
+        free(ix);
+        (void)k;
+        return id0;
+    }
+    if (is_class(o, "NSDictionary")) {
+        nsdict_t *d = (nsdict_t *)o;
+        int n = (int)d->n, i;
+        int *ks = n ? (int *)calloc((size_t)n, sizeof(int)) : 0;
+        int *vs = n ? (int *)calloc((size_t)n, sizeof(int)) : 0;
+        int id0;
+        for (i = 0; i < n; i++) {
+            ks[i] = cf_bpw_str(w, C(d->keys[i]));
+            vs[i] = bp_add_obj(w, d->vals[i], depth + 1);
+        }
+        id0 = cf_bpw_dict(w, ks, vs, n);
+        free(ks); free(vs);
+        return id0;
+    }
+    return cf_bpw_str(w, "");
+}
+static id plist_bplist(id plist) {
+    cf_bpw *w = cf_bpw_new();
+    unsigned char *b = 0; int n = 0; int top;
+    id d;
+    if (!w) return 0;
+    top = bp_add_obj(w, plist, 0);
+    if (cf_bpw_finish(w, top, &b, &n)) { cf_bpw_free(w); return 0; }
+    d = b ? CFDataCreate(0, b, n) : 0;
+    free(b);
+    cf_bpw_free(w);
+    return d;
+}
+static id plist_data(id plist, long format) {
+    if (format == 200) return plist_bplist(plist);
     char *b = 0; unsigned long n = 0, cap = 0;
     pb_add(&b, &n, &cap, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<plist version=\"1.0\">");
     plist_xml(plist, &b, &n, &cap, 0);
@@ -559,15 +717,15 @@ static id plist_data(id plist) {
     return d;
 }
 id CFPropertyListCreateData(void *alloc, id plist, long format, unsigned long opt, id *err) {
-    (void)alloc; (void)format; (void)opt;
+    (void)alloc; (void)opt;
     if (err) *err = 0;
-    return plist_data(plist);
+    return plist_data(plist, format);
 }
 long CFPropertyListWrite(id plist, id stream, long format, unsigned long opt, id *err) {
     id data; const unsigned char *p; long n, w;
-    (void)format; (void)opt;
+    (void)opt;
     if (err) *err = 0;
-    data = plist_data(plist);
+    data = plist_data(plist, format);
     if (!data) return 0;
     p = CFDataGetBytePtr(data);
     n = CFDataGetLength(data);

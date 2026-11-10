@@ -334,6 +334,10 @@ link_one libswiftCoreFoundation "$out/CoreFoundation.o"
 link_one libswiftCoreGraphics "$out/CoreGraphics.o"
 link_one libswiftDispatch "$out/Dispatch.o"
 link_one libswiftMetal "$out/Metal.o" "$out/mos_mtl_modify.o"
+if ! grep -a -q '_\$sSo9MTLBufferP5MetalE14didModifyRangeyySnySiGF' "$dest/libswiftMetal.dylib"; then
+    echo "libswiftMetal sem MTLBuffer.didModifyRange" >&2
+    exit 1
+fi
 # shellcheck disable=SC2046
 link_one libswift_Concurrency "$out/_Concurrency.o" $(find "$out" -name '_Concurrency_*.o')
 for m in XPC QuartzCore IOKit OSLog Spatial CoreAudio CoreImage CoreMIDI QuickLookUI simd; do

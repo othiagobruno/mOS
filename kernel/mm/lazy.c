@@ -197,6 +197,29 @@ bool lazy_is_anon(process_t *p, u64 va) {
     return p && lazy_hit(p, va, &h) && h.kind == 1;
 }
 
+static u64 path_id(const char *s) {
+    u64 h = 1469598103934665603ull;
+    if (!s || !s[0]) return 0;
+    for (; *s; s++) { h ^= (u8)*s; h *= 1099511628211ull; }
+    return h ? h : 1;
+}
+
+/* página de arquivo sem escrita e executável: o JIT pode publicar o bloco traduzido. */
+int lazy_ro_file_at(process_t *p, u64 va, u64 *id, u64 *off) {
+    lazy_hit_t h;
+    u64 *e;
+    if (!p || !id || !off || !lazy_hit(p, va, &h) || (h.kind != 2 && h.kind != 3) || !h.path[0]) return 0;
+    if (h.prot & 2) return 0;
+    e = uvm_pte(p, va);
+    if (h.prot) {
+        if (!(h.prot & 4)) return 0;
+    } else if (!e || (*e & (1ULL << 63)) || (*e & 2ULL)) return 0;
+    if (e && (*e & 2ULL)) return 0;
+    *id = path_id(h.path);
+    *off = h.off;
+    return 1;
+}
+
 /* alguma faixa de conteúdo (anônima, arquivo ou compartilhada) cruza [va, va+len)?
  * A página de guarda entre regiões de mmap não entra. Usado pelo mach_vm_map fixo
  * para devolver KERN_NO_SPACE sem varrer página a página com a trava. */

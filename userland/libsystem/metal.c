@@ -1875,8 +1875,8 @@ static void present_now(id drawable) {
     d->presented = 1;
     mlayer_t *m = ml(d->layer);
     if (d->conv) mx_to_bgra8((mtex_t *)d->tex, IOSurfaceGetBaseAddress(d->surf), IOSurfaceGetBytesPerRow(d->surf));
-    mos_gpu_present_layer(IOSurfaceGetBaseAddress(d->surf), (unsigned)IOSurfaceGetWidth(d->surf),
-                          (unsigned)IOSurfaceGetHeight(d->surf), (unsigned)IOSurfaceGetBytesPerRow(d->surf));
+    /* Os pixels já são o BO da ABI quando IOSurfaceCreate ligou a superfície.
+     * Não há segunda cópia no present. */
     g_presenting++;
     IOSurfaceLock(d->surf, 0, 0);
     IOSurfaceUnlock(d->surf, 0, 0);

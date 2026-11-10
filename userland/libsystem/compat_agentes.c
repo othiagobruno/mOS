@@ -276,6 +276,13 @@ int BZ2_bzBuffToBuffCompress(char *dest, unsigned *destlen, char *src, unsigned 
     (void)dest; (void)destlen; (void)src; (void)srclen; (void)b; (void)v; (void)w;
     return -9;
 }
+/* o Codex liga a API de fluxo (bzCompress*). Sem compressor: BZ_CONFIG_ERROR, o mesmo -9 de cima. */
+int BZ2_bzCompressInit(void *strm, int block, int verbosity, int work) {
+    (void)strm; (void)block; (void)verbosity; (void)work;
+    return -9;
+}
+int BZ2_bzCompress(void *strm, int action) { (void)strm; (void)action; return -9; }
+int BZ2_bzCompressEnd(void *strm) { (void)strm; return 0; }
 
 /* ---- libxar (arquivos .xar dos patches delta do Sparkle): o mOS não lê nem grava xar. xar_open devolve NULL, como
  * para um arquivo inválido, e o resto responde "vazio" sem tocar em nada; o Sparkle trata e usa a atualização inteira. */

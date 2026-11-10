@@ -26,7 +26,9 @@ int main(void) {
     expect(gpu_syscall(&a, MOS_GPU_CTX_CREATE, (unsigned long long)&ctx, sizeof ctx, 0, &blocked) == 0, "ctx");
     expect(ctx.ctx != 0, "ctx id");
     mos_gpu_ctx_t ven = {.kind = MOS_GPU_CTX_VENUS};
-    expect(gpu_syscall(&a, MOS_GPU_CTX_CREATE, (unsigned long long)&ven, sizeof ven, 0, &blocked) == -MOS_ENXIO, "venus ausente");
+    expect(gpu_syscall(&a, MOS_GPU_CTX_CREATE, (unsigned long long)&ven, sizeof ven, 0, &blocked) == 0, "venus sem dispositivo");
+    expect(gpu_syscall(&a, MOS_GPU_CTX_DESTROY, (unsigned long long)&ven, sizeof ven, 0, &blocked) == 0, "venus fim");
+    expect(info.caps & MOS_GPU_CAP_IOSURF, "cap iosurface");
 
     mos_gpu_bo_t bo = {.size = 4096, .flags = MOS_GPU_BO_READ | MOS_GPU_BO_WRITE | MOS_GPU_BO_SHARED | MOS_GPU_BO_GPU, .ctx = ctx.ctx};
     expect(gpu_syscall(&a, MOS_GPU_BO_CREATE, (unsigned long long)&bo, sizeof bo, 0, &blocked) == 0, "bo");
@@ -37,9 +39,46 @@ int main(void) {
     mos_gpu_fence_t fen = {0};
     expect(gpu_syscall(&a, MOS_GPU_FENCE_CREATE, (unsigned long long)&fen, sizeof fen, 0, &blocked) == 0, "fence");
     expect(gpu_syscall(&a, MOS_GPU_FENCE_WAIT, (unsigned long long)&fen, sizeof fen, 0, &blocked) == -MOS_EAGAIN, "wait cedo");
-    unsigned cmd = 0x01020304u;
-    mos_gpu_submit_t sub = {.ctx = ctx.ctx, .cmd_bytes = 4, .fence = fen.fence, .flags = MOS_GPU_SUBMIT_3D, .cmds = (unsigned long long)&cmd};
-    expect(gpu_syscall(&a, MOS_GPU_SUBMIT, (unsigned long long)&sub, sizeof sub, 0, &blocked) == 0, "submit");
+    {
+        unsigned char lote[160];
+        unsigned *w;
+        mos_gpu_batch_hdr_t *bh;
+        mos_gpu_cmd_hdr_t *ch;
+        mos_gpu_dispatch_t *dp;
+        mos_gpu_reloc_t *rc;
+        unsigned n;
+        memset(lote, 0, sizeof lote);
+        bh = (mos_gpu_batch_hdr_t *)lote;
+        bh->version = MOS_GPU_BATCH_VER;
+        bh->kind = MOS_GPU_CTX_VIRGL;
+        bh->ncmd = 1;
+        bh->nbo = 1;
+        bh->nreloc = 1;
+        w = (unsigned *)(lote + sizeof *bh);
+        w[0] = bo.handle;
+        rc = (mos_gpu_reloc_t *)(w + 1);
+        ch = (mos_gpu_cmd_hdr_t *)(rc + 1);
+        ch->op = MOS_GPU_CMD_DISPATCH;
+        ch->bytes = (unsigned)(sizeof *ch + sizeof *dp);
+        ch->virgl = MOS_GPU_VIRGL_LAUNCH_GRID;
+        dp = (mos_gpu_dispatch_t *)(ch + 1);
+        dp->x = dp->y = dp->z = 1;
+        rc->cmd = 0;
+        rc->off = (unsigned)(sizeof *ch + 12);
+        rc->bo_index = 0;
+        rc->bo_off = 0;
+        dp->pad = 0; /* a reloc aponta para o pad, que vale o índice 0 */
+        n = (unsigned)((unsigned char *)(dp + 1) - lote);
+        bh->bytes = n;
+        {
+            unsigned bad = 0x01020304u;
+            mos_gpu_submit_t ruim = {.ctx = ctx.ctx, .cmd_bytes = 4, .fence = fen.fence, .flags = MOS_GPU_SUBMIT_3D, .cmds = (unsigned long long)&bad};
+            mos_gpu_submit_t sub = {.ctx = ctx.ctx, .cmd_bytes = n, .fence = fen.fence, .flags = MOS_GPU_SUBMIT_3D, .cmds = (unsigned long long)lote};
+            expect(gpu_syscall(&a, MOS_GPU_SUBMIT, (unsigned long long)&ruim, sizeof ruim, 0, &blocked) == -MOS_EINVAL, "lote cru");
+            expect(gpu_syscall(&a, MOS_GPU_FENCE_WAIT, (unsigned long long)&fen, sizeof fen, 0, &blocked) == -MOS_EAGAIN, "fence intacta");
+            expect(gpu_syscall(&a, MOS_GPU_SUBMIT, (unsigned long long)&sub, sizeof sub, 0, &blocked) == 0, "submit");
+        }
+    }
     expect(gpu_syscall(&a, MOS_GPU_FENCE_WAIT, (unsigned long long)&fen, sizeof fen, 0, &blocked) == 0 && fen.seq == 1, "fence sinalizada");
 
     expect(gpu_syscall(&a, MOS_GPU_BO_EXPORT, (unsigned long long)&bo, sizeof bo, 0, &blocked) == 0 && bo.token, "export");

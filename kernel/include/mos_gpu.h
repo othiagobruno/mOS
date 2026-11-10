@@ -7,15 +7,16 @@
  * Resultado em rax: 0 ou -errno (MOS_* de syscall.h). Handles saem nos
  * campos da estrutura, não em rax.
  *
- * Estruturas só crescem no fim. O kernel lê min(rdx, sizeof atual) e trata
- * o resto como zero. Um campo novo no fim não muda os anteriores.
- * MOS_GPU_ABI sobe só quando um campo existente muda de sentido.
+ * Estruturas de syscall só crescem no fim. O kernel lê min(rdx, sizeof atual)
+ * e trata o resto como zero. Um campo novo no fim não muda os anteriores.
+ * MOS_GPU_ABI 2 não muda essas estruturas: passa a exigir o lote descrito
+ * abaixo em MOS_GPU_SUBMIT. A revisão 1 não tinha layout de lote.
  *
  * Detalhe de cada operação: docs/gpu-abi.md.
  */
 #pragma once
 
-#define MOS_GPU_ABI 1u
+#define MOS_GPU_ABI 2u
 
 enum {
     MOS_GPU_INFO = 1,          /* mos_gpu_info_t        consulta */
@@ -133,3 +134,73 @@ typedef struct {
     unsigned format;           /* MOS_GPU_FMT_* */
     unsigned bo;               /* 0 = framebuffer do firmware */
 } mos_gpu_kms_t;
+
+/* Lote de MOS_GPU_SUBMIT (MOS_GPU_ABI 2). Little-endian, múltiplo de 4.
+ * Ordem: mos_gpu_batch_hdr_t, handles[nbo] u32, mos_gpu_reloc_t[nreloc],
+ * comandos mos_gpu_cmd_hdr_t + carga. bytes do cabeçalho = cmd_bytes.
+ * kind igual ao do contexto. pad0 e pad1 são zero.
+ * O índice na tabela de handles é o que a reloc e a carga citam.
+ * O kernel não executa shader. Sem cap virgl/venus o lote válido só
+ * sinaliza a fence. */
+#define MOS_GPU_BATCH_VER 1u
+#define MOS_GPU_BATCH_MAX_BO 8u
+#define MOS_GPU_BATCH_MAX_RELOC 8u
+#define MOS_GPU_BATCH_MAX_CMD 8u
+
+enum {
+    MOS_GPU_CMD_BIND = 1,      /* mos_gpu_bind_t */
+    MOS_GPU_CMD_SHADER,        /* mos_gpu_shader_t: bytes do shader num BO */
+    MOS_GPU_CMD_DISPATCH       /* mos_gpu_dispatch_t */
+};
+
+/* Números de comando do virgl_protocol.h para o compute mínimo. */
+#define MOS_GPU_VIRGL_BIND_SHADER        31u
+#define MOS_GPU_VIRGL_SET_SHADER_BUFFERS 32u
+#define MOS_GPU_VIRGL_LAUNCH_GRID        35u
+/* Subconjunto mOS do fluxo venus (não é o vn_cs inteiro). */
+#define MOS_GPU_VENUS_BIND     1u
+#define MOS_GPU_VENUS_SHADER   2u
+#define MOS_GPU_VENUS_DISPATCH 3u
+
+typedef struct {
+    unsigned version;          /* MOS_GPU_BATCH_VER */
+    unsigned kind;             /* MOS_GPU_CTX_VIRGL ou VENUS */
+    unsigned bytes;            /* tamanho total do lote */
+    unsigned ncmd;
+    unsigned nbo;              /* tabela de handles */
+    unsigned nreloc;
+    unsigned pad0, pad1;       /* zero */
+} mos_gpu_batch_hdr_t;
+
+typedef struct {
+    unsigned cmd;              /* índice do comando */
+    unsigned off;              /* byte dentro do comando, >= 16 e alinhado a 4 */
+    unsigned bo_index;         /* índice na tabela, não o handle */
+    unsigned bo_off;           /* deslocamento no BO, menor que o tamanho */
+} mos_gpu_reloc_t;
+
+typedef struct {
+    unsigned op;               /* MOS_GPU_CMD_* */
+    unsigned bytes;            /* comando inteiro, com este cabeçalho */
+    unsigned virgl;            /* opcode virgl, ou 0 no lote venus */
+    unsigned venus;            /* opcode venus, ou 0 no lote virgl */
+} mos_gpu_cmd_hdr_t;
+
+typedef struct {
+    unsigned slot;             /* 0..31 */
+    unsigned bo_index;
+    unsigned offset;
+    unsigned range;            /* > 0 e cabe no BO */
+} mos_gpu_bind_t;
+
+typedef struct {
+    unsigned bo_index;
+    unsigned offset;
+    unsigned length;
+    unsigned local_x, local_y, local_z; /* os três > 0 */
+} mos_gpu_shader_t;
+
+typedef struct {
+    unsigned x, y, z;          /* 1..65535 */
+    unsigned pad;
+} mos_gpu_dispatch_t;
