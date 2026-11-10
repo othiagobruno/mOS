@@ -2588,9 +2588,17 @@ bool macho_load(process_t *p, const u8 *img, usize len, const char *arg, u64 *en
      * shell que aceite -c: o caminho antigo continua e o spawn falha logo (ENOENT) em vez de esperar o prazo. */
     usize bash_len;                                      /* dep_read: vfs_lookup no kernel, arquivo no harness do host */
     const char *shell_env = dep_read("/usr/local/bin/bash", &bash_len) ? "SHELL=/usr/local/bin/bash" : "SHELL=/bin/msh";
+#ifndef MOS_HOST_TEST
+    extern int g_lang;   /* 0 = pt-BR, 1 = inglês; kernel/lib/i18n.c */
+#endif
     const char *envs[] = {"HOME=/Users/Visitante", "USER=visitante", "LOGNAME=visitante",
                           "PATH=/usr/local/bin:/Sistema/Programas:/usr/bin:/bin", p->tty ? "TERM=xterm-256color" : "TERM=dumb",   /* sessão do Terminal: isatty(0..2) verdadeiro */
+#ifndef MOS_HOST_TEST
+                          /* g_lang: 0 pt-BR, 1 inglês (kernel/include/i18n.h). O pak do Chromium segue este nome. */
+                          (g_lang == 1 ? "LANG=en_US.UTF-8" : "LANG=pt_BR.UTF-8"),
+#else
                           "LANG=pt_BR.UTF-8",
+#endif
                           pwd, shell_env};
     bool own_env = p->spawn_envc > 0 && p->spawn_env;
     int nenv = own_env ? envc : (int)ARRAY_LEN(envs);

@@ -693,10 +693,38 @@ static void drop_pipe_waiters(process_t *p, thread_t *keep) {
         }
 }
 
+/* /Sistema/Biblioteca/log-saida: cada término e cada syscall que o kernel não conhece.
+ * O serviço de rede do Chromium sai por exit() sem sinal; sem esta linha o serial não diz o código. */
+static int saida_log_on(void) {
+    static int on = -1;
+    if (on < 0) on = vfs_lookup("/Sistema/Biblioteca/log-saida") != NULL;
+    return on;
+}
+static void log_exit_stack(process_t *p, int_frame_t *f, int code) {
+    if (!saida_log_on() || !f) return;
+    thread_t *t = thread_current();
+    kprintf("proc: %s (pid %d) exit(%d) thread %d rip 0x%llx rsp 0x%llx\n", p->name, p->pid, code,
+            t ? t->id : -1, (unsigned long long)f->rip, (unsigned long long)f->rsp);
+    u64 fp = f->rbp;
+    char line[200];
+    usize o = 0;
+    for (int k = 0; k < 12 && fp; k++) {
+        u64 fr[2];
+        if ((fp & 7) || !uvm_copy_in(p, fr, fp, sizeof fr)) break;
+        if (fr[1] >= USER_BASE && fr[1] < USER_END)
+            o += (usize)snprintf(line + o, sizeof line - o, " %llx", (unsigned long long)fr[1]);
+        if (o > 150) { kprintf("proc:   chamadas:%s\n", line); o = 0; }
+        if (fr[0] <= fp) break;
+        fp = fr[0];
+    }
+    if (o) kprintf("proc:   chamadas:%s\n", line);
+}
 static void finish(process_t *p, int code) {
     if (p->exited) return;
     p->exited = true;
     p->exit_code = code;
+    if (saida_log_on())
+        kprintf("proc: %s (pid %d, pai %d) terminou com código %d\n", p->name, p->pid, p->ppid, code);
     drop_pipe_waiters(p, NULL);
     for (thread_t *t = sched_threads(); t; t = t->next)   /* todas as threads do processo */
         if (t->proc == p) {
@@ -2187,6 +2215,7 @@ static u64 proc_syscall_(int_frame_t *f) {
     switch (f->rax) {
     case SYS_EXIT:
         /* diagnóstico (despejar-threads): quem encerra um helper do VS Code, com código e pilha */
+        log_exit_stack(p, f, (int)a);
         if (!strncmp(p->name, "Code Helper", 11) && vfs_lookup("/Sistema/Biblioteca/despejar-threads")) {
             kprintf("proc: %s (pid %d) chamou exit(%d), thread %d\n", p->name, p->pid, (int)a, t ? t->id : -1);
             u64 w[64];
@@ -3134,7 +3163,17 @@ static u64 proc_syscall_(int_frame_t *f) {
     default:
         if (f->rax >= SYS_MACH_FIRST && f->rax <= SYS_MACH_LAST) return machipc_syscall(f);   /* pode bloquear */
         if (f->rax >= SYS_GUI_FIRST && f->rax <= SYS_GUI_LAST) r = compat_gui_syscall(p, f->rax, a, b, c, f->r10, f->r8);
-        else r = -MOS_EINVAL;
+        else {
+            r = -MOS_EINVAL;
+            if (saida_log_on() && f->rax < 512) {
+                static u8 vista[512];
+                if (!vista[f->rax]) {
+                    vista[f->rax] = 1;
+                    kprintf("proc: %s pid %d syscall %llu desconhecida -> EINVAL\n", p->name, p->pid,
+                            (unsigned long long)f->rax);
+                }
+            }
+        }
         break;
     }
     f->rax = (u64)r;

@@ -1335,24 +1335,72 @@ static id b_init_path(id self, SEL c, id path) {
 }
 static id b_main(id cls, SEL c) { return g_singleton(cls, c); }
 static id b_for_class(id cls, SEL c, id k) { (void)k; return g_singleton(cls, c); }
-static id b_resource(id self, SEL c, id name, id type) {
-    id dir = b_resources(self, c);
+static void loc_folder(const char *in, char *out, u64 cap) {
+    u64 i = 0;
+    if (!in) in = "";
+    for (; in[i] && i + 1 < cap; i++) out[i] = in[i] == '-' ? '_' : in[i];
+    out[i] = 0;
+}
+static id resource_file(const char *dir, const char *mid, const char *name, const char *type) {
     char f[1200];
-    snprintf(f, sizeof f, "%s/%s%s%s", S(dir), cx_cstr(name), type && N(type) ? "." : "", type ? cx_cstr(type) : "");
-    if (access(f, 0) == 0) return cx_str(f);
-    /* recursos localizados: Base.lproj, pt-BR, pt, en */
-    static const char *lp[] = {"Base", "pt-BR", "pt_BR", "pt", "en", "English"};
+    snprintf(f, sizeof f, "%s/%s%s%s%s", dir, mid ? mid : "", name, type && type[0] ? "." : "", type ? type : "");
+    return access(f, 0) == 0 ? cx_str(f) : 0;
+}
+static id resource_lproj(const char *dir, const char *folder, const char *name, const char *type) {
+    char mid[80];
+    snprintf(mid, sizeof mid, "%s.lproj/", folder);
+    return resource_file(dir, mid, name, type);
+}
+/* loc != nil: só aquela localização (en_US no disco é en.lproj, como no Chromium). loc nil: o arquivo
+ * solto e, se não houver, o lproj do idioma do sistema, depois en e pt_BR. Devolver outro idioma quando
+ * o pedido não existe faz o Chromium achar que o pak carregou e não cair no fallback. */
+id cx_bundle_localized(id self, id name, id type, id sub, id loc) {
+    char dir[1100];
+    b_res_dir(self, dir, sizeof dir);
+    if (sub && N(sub)) {
+        char d2[1200];
+        snprintf(d2, sizeof d2, "%s/%s", dir, S(sub));
+        strlcpy(dir, d2, sizeof dir);
+    }
+    const char *nm = name && N(name) ? S(name) : "";
+    const char *ty = type && N(type) ? S(type) : "";
+    if (loc && N(loc)) {
+        char folder[64];
+        id hit;
+        loc_folder(S(loc), folder, sizeof folder);
+        hit = resource_lproj(dir, folder, nm, ty);
+        if (hit) return hit;
+        if (!strcmp(folder, "en_US") || !strcmp(folder, "English")) return resource_lproj(dir, "en", nm, ty);
+        if (!strcmp(folder, "pt") || !strcmp(folder, "pt_BR")) {
+            hit = resource_lproj(dir, "pt_BR", nm, ty);
+            if (hit) return hit;
+            return resource_lproj(dir, "pt", nm, ty);
+        }
+        return 0;
+    }
+    id plain = resource_file(dir, "", nm, ty);
+    if (plain) return plain;
+    {
+        const char *sys = cx_locale_id();
+        id hit = 0;
+        if (sys[0] == 'e') hit = resource_lproj(dir, "en", nm, ty);
+        else hit = resource_lproj(dir, "pt_BR", nm, ty);
+        if (hit) return hit;
+    }
+    static const char *lp[] = {"Base", "en", "pt_BR", "pt", "English"};
     for (u32 i = 0; i < sizeof lp / sizeof lp[0]; i++) {
-        snprintf(f, sizeof f, "%s/%s.lproj/%s%s%s", S(dir), lp[i], cx_cstr(name), type && N(type) ? "." : "", type ? cx_cstr(type) : "");
-        if (access(f, 0) == 0) return cx_str(f);
+        id hit = resource_lproj(dir, lp[i], nm, ty);
+        if (hit) return hit;
     }
     return 0;
 }
+static id b_resource(id self, SEL c, id name, id type) {
+    (void)c;
+    return cx_bundle_localized(self, name, type, 0, 0);
+}
 static id b_resource_dir(id self, SEL c, id name, id type, id sub) {
-    if (!sub || !N(sub)) return b_resource(self, c, name, type);
-    char n[600];
-    snprintf(n, sizeof n, "%s/%s", cx_cstr(sub), cx_cstr(name));
-    return b_resource(self, c, cx_str(n), type);
+    (void)c;
+    return cx_bundle_localized(self, name, type, sub, 0);
 }
 extern id cx_plist_file(const char *path);
 static id b_info_dict(id self, SEL c) {
