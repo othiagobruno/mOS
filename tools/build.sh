@@ -17,6 +17,8 @@ while [ $# -gt 0 ]; do
 done
 mkdir -p "$OUT"
 cd "$ROOT"
+gcc -O2 -Wall -Wextra -I kernel/include tools/cred_host.c kernel/proc/cred.c -o /tmp/cred_host
+/tmp/cred_host
 
 kind_of() {
     local b

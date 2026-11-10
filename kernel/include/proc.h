@@ -133,7 +133,8 @@ struct process {
     struct { int code, pid, status; u64 addr; } sig_info[32];   /* siginfo dos pendentes do processo */
     /* parada do processo inteiro (SIGSTOP/TSTP/TTIN/TTOU). stopped = 0 rodando, senão o sinal do kernel
      * que parou. Não é o thread_suspend do Mach (thread.suspend): o escalonador pula todas as threads. */
-    int uid, euid;         /* os dois nascem 501; RESETIDS faz euid = uid. Não há getuid. */
+    int uid, euid, suid;   /* nascem 501. getuid/geteuid leem. RESETIDS faz euid = suid = uid. */
+    int gid, egid, sgid;   /* nascem 20. RESETIDS faz egid = sgid = gid. */
     int vfork_of;          /* pid do pai suspenso, se este processo pegou o pml4 emprestado */
     int pml4_borrowed;     /* 1 = não liberar o pml4: é o do pai */
     unsigned spawn_sigdef, spawn_sigmask, spawn_extra;
