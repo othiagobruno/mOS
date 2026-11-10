@@ -1,5 +1,8 @@
 #pragma once
 #include "../sys.h"
-#define UINT64_C(x) ((uint64_t)x)
-#define INT64_C(x) ((int64_t)x)
-#define UINT32_C(x) ((uint32_t)x)
+typedef long long intmax_t;
+typedef unsigned long long uintmax_t;
+#define UINT64_C(c) (c ## ULL)
+#define INT64_C(c) (c ## LL)
+#define UINT32_C(c) (c ## U)
+#define INT32_C(c) (c)

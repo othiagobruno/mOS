@@ -215,6 +215,9 @@ static int emit_dylib(const char *dir, const dy_t *dy) {
     FILE *fp;
     int i;
     trie_reset();
+    if (dy->nsym == 0) {
+        if (trie_insert("_mos_swift_stub")) return -1;
+    }
     for (i = 0; i < dy->nsym; i++) if (trie_insert(dy->sym[i])) return -1;
     stub_off = 0x200;
     trie_sz = build_trie(trie, sizeof trie, stub_off);
