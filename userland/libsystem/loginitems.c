@@ -7,7 +7,7 @@
 
 id NSHomeDirectory(void);
 
-#include "loginitem.inc"
+#include "../../kernel/include/loginitem.inc"
 
 static const char *li_home(void) {
     const char *h = getenv("HOME");

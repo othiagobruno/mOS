@@ -1,0 +1,10 @@
+#pragma once
+int isspace(int);
+int isdigit(int);
+int isalpha(int);
+int isalnum(int);
+int isxdigit(int);
+int isupper(int);
+int islower(int);
+int tolower(int);
+int toupper(int);

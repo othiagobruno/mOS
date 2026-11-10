@@ -1,4 +1,5 @@
 #pragma once
+#define INFINITY (__builtin_inff())
 double fabs(double x);
 double sqrt(double x);
 double floor(double x);
