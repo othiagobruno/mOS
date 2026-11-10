@@ -42,3 +42,36 @@ int nvme_q_for_cpu(int cpu, int nq);
 
 /* MSI-X se a programação da tabela deu certo; senão MSI; senão polling. */
 int nvme_intr_pick(int has_msix, int msix_ok, int has_msi, int msi_ok);
+
+/* Mensagem MSI a partir do LAPIC real (base do MADT, não um 0xFEE00000 chumbado).
+ * Destino físico: APIC ID nos bits 19:12. Com x2APIC, os bits altos do ID vão em addr_hi.
+ * 0 = ok; -1 se a base, o vetor ou os ponteiros não servem. */
+int nvme_msi_compose(u64 lapic_base, u32 apic_id, int x2apic, u32 vector,
+                     u32 *addr_lo, u32 *addr_hi, u32 *data);
+
+/* Filas de E/S por CPU. Antes do SMP (`smp_done` == 0) devolve 0: o chamador não cria o conjunto ainda.
+ * Depois, min(ncpus, granted, maxq). */
+int nvme_ioq_count(int smp_done, int ncpus, int granted, int maxq);
+
+/* Vários comandos em voo. A conclusão casa tag (cid+fila), fora de ordem. */
+#define NVME_FLIGHT_MAX 31
+typedef struct {
+    u16 cid;
+    u16 qid;
+    u16 status;
+    u32 dw0;
+    u8 used;
+    u8 done;
+} nvme_flight_slot_t;
+
+typedef struct {
+    nvme_flight_slot_t slot[NVME_FLIGHT_MAX];
+    int max;
+    u16 next_cid;
+} nvme_flights_t;
+
+void nvme_flights_init(nvme_flights_t *f, int max);
+int  nvme_flight_claim(nvme_flights_t *f, u16 qid); /* índice ou -1 se a janela está cheia */
+int  nvme_flight_complete(nvme_flights_t *f, u16 qid, u16 cid, u16 status, u32 dw0);
+int  nvme_flight_outstanding(const nvme_flights_t *f);
+void nvme_flight_release(nvme_flights_t *f, int idx);

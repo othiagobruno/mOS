@@ -36,6 +36,7 @@ const char *storage_disk_name(int i);
 const char *storage_disk_desc(int i);
 
 void        nvme_init(void);   /* dev/nvme.c: registra cada namespace NVMe */
+void        nvme_smp_ready(void); /* filas por CPU e MSI no LAPIC real, depois do smp_init */
 int         nvme_disk_count(void);
 
 /* ---- formatação e partições (fs/fat.c, fs/gpt.c) */

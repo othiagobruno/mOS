@@ -165,6 +165,9 @@ cc -O1 -fno-omit-frame-pointer -funwind-tables -rdynamic \
     -ldl -o "$OUT/unw_hosttest"
 "$OUT/unw_hosttest"
 
+echo "==> runtime Swift do Grok (teste de host)"
+bash "$ROOT/tools/swift-rt-grok-teste.sh" "$ZIG" "$OUT/swift-rt-grok"
+
 echo "==> libSystem.mos"
 # x86_64: _Unwind_* fica em cxx_unwind.c. UnwindLevel1.c repete esses nomes; o resto do libunwind fica.
 LS_SRC=()
@@ -215,6 +218,9 @@ fi
 
 echo "==> overlay Darwin (teste de host)"
 bash "$ROOT/tools/darwin-swift-teste.sh" "$ZIG" "$OUT/darwin-swift"
+
+echo "==> String, Array e Dictionary (teste de host)"
+bash "$ROOT/tools/string-fdn-teste.sh" "$ZIG" "$OUT/string-fdn"
 
 echo "==> kernel"
 mapfile -t KSRC < <(find "$ROOT/kernel" -type f \( -name '*.c' -o -name '*.S' \) | sort)
@@ -268,7 +274,7 @@ mkdir -p "$ESP/mOS/Sistema/Biblioteca/a64"
     "${A64SRC[@]}" -o "$ESP/mOS/Sistema/Biblioteca/a64/a64rt.mos"
 
 echo "==> /usr/lib (libc++ do LLVM e zlib 1.3.2; não são stub)"
-MOS_ZIG="$ZIG" sh "$ROOT/tools/build-libcxx.sh" "$ROOT/build/libcxx"
+MOS_ZIG="$ZIG" bash "$ROOT/tools/build-libcxx.sh" "$ROOT/build/libcxx"
 MOS_ZIG="$ZIG" sh "$ROOT/tools/build-libz.sh"
 mkdir -p "$ESP/mOS/usr/lib"
 cp -f "$ROOT/build/libcxx/libc++.1.dylib" "$ESP/mOS/usr/lib/libc++.1.dylib"
@@ -331,6 +337,56 @@ pathlib.Path(out).write_bytes(buf)
 PY
 else
     echo "aviso: Virtualization.framework não compilou" >&2
+fi
+
+echo "==> StoreKit.framework"
+SKSRC="$ROOT/userland/frameworks/StoreKit/StoreKit.m"
+SKOUT="$OUT/storekit"
+SKDIR="$ESP/mOS/System/Library/Frameworks/StoreKit.framework/Versions/A"
+mkdir -p "$SKOUT" "$SKDIR"
+sk_one() {
+    "$ZIG" cc -target "$1" -O2 -shared -x objective-c -I"$ROOT/userland/sdk/include" \
+        -Wno-objc-root-class -Wno-objc-method-access "$SKSRC" -o "$2" \
+        -Wl,-install_name,/System/Library/Frameworks/StoreKit.framework/Versions/A/StoreKit \
+        -Wl,-undefined,dynamic_lookup
+}
+if sk_one x86_64-macos "$SKOUT/StoreKit.x86" && sk_one aarch64-macos "$SKOUT/StoreKit.arm"; then
+    python3 - "$SKDIR/StoreKit" "$SKOUT/StoreKit.x86" "$SKOUT/StoreKit.arm" <<'PY'
+import pathlib, struct, sys
+out, *srcs = sys.argv[1:]
+slices = []
+for p in srcs:
+    b = pathlib.Path(p).read_bytes()
+    if struct.unpack_from("<I", b, 0)[0] != 0xFEEDFACF:
+        raise SystemExit(p + " nao e Mach-O fino")
+    cpu, sub = struct.unpack_from("<II", b, 4)
+    align = 14 if cpu == 0x0100000C else 12
+    slices.append((cpu, sub, align, b))
+off = 8 + 20 * len(slices)
+parts = []
+for cpu, sub, align, b in slices:
+    a = 1 << align
+    if off % a:
+        off += a - (off % a)
+    parts.append((cpu, sub, align, off, b))
+    off += len(b)
+buf = bytearray()
+def be(v):
+    buf.extend(struct.pack(">I", v & 0xFFFFFFFF))
+parts_n = len(parts)
+buf.extend(struct.pack(">II", 0xCAFEBABE, parts_n))
+for cpu, sub, align, o, b in parts:
+    buf.extend(struct.pack(">IIIII", cpu & 0xFFFFFFFF, sub & 0xFFFFFFFF, o & 0xFFFFFFFF, len(b) & 0xFFFFFFFF, align & 0xFFFFFFFF))
+for cpu, sub, align, o, b in parts:
+    if len(buf) < o:
+        buf.extend(b"\0" * (o - len(buf)))
+    buf.extend(b)
+pathlib.Path(out).write_bytes(buf)
+PY
+    echo "StoreKit.framework ok"
+else
+    echo "StoreKit.framework não compilou" >&2
+    exit 1
 fi
 
 echo "==> apps oficiais em /Aplicativos"
