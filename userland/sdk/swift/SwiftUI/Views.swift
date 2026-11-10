@@ -214,6 +214,15 @@ public struct Image: _PrimitiveView {
 
 // MARK: - Pilhas e coleções
 
+public struct ZStack<Content: View>: _PrimitiveView {
+    let content: Content
+    public init(alignment: Alignment = .center, @ViewBuilder content: () -> Content) { self.content = content() }
+    public func _build(_ b: _Builder) {
+        let n = Node(.zstack)
+        b.container(n) { content._build($0) }
+    }
+}
+
 public struct VStack<Content: View>: _PrimitiveView {
     let alignment: HorizontalAlignment, spacing: Double?, content: Content
     public init(alignment: HorizontalAlignment = .center, spacing: Double? = nil, @ViewBuilder content: () -> Content) { self.alignment = alignment; self.spacing = spacing; self.content = content() }
