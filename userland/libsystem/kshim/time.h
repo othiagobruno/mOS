@@ -8,4 +8,5 @@ struct tm {
 };
 long time(long *t);
 struct tm *gmtime(const long *t);
+struct tm *localtime(const long *t);
 unsigned long strftime(char *s, unsigned long max, const char *fmt, const struct tm *tm);
