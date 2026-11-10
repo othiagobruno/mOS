@@ -9,7 +9,7 @@
  *  - CoreSpotlight (índice local em memória com busca por texto), AVCaptureAudioDataOutput e as chaves do AVFAudio;
  *  - NSPreviewRepresentingActivityItem, NSHapticFeedbackManager (o mOS não tem trackpad com atuador: nada vibra);
  *  - AXIsProcessTrusted, CGEvent de teclado (CGEventPost entrega a tecla à janela-chave deste app) e
- *    CGSessionCopyCurrentDictionary; CMTimeConvertScale.
+ *    CGSessionCopyCurrentDictionary. CMTimeConvertScale está em cmtime.c.
  */
 #include "foundation.h"
 #include "sys.h"
@@ -364,17 +364,6 @@ id CGSessionCopyCurrentDictionary(void) {
     MSG(void, d, "setObject:forKey:", uid, cx_str("kCGSSessionUserIDKey"));
     MSG(void, d, "setObject:forKey:", cx_str("Visitante"), cx_str("kCGSSessionUserNameKey"));
     return objc_retain(d);
-}
-
-/* ================================================================ CoreMedia */
-typedef struct { i64 value; i32 timescale; u32 flags; i64 epoch; } cmtime_t;
-/* método de arredondamento: 1 meio para longe de zero (padrão), 2 para zero, 3 para longe de zero, 4 para −∞, 5 para +∞ */
-cmtime_t CMTimeConvertScale(cmtime_t t, i32 scale, u32 method) {
-    if (!(t.flags & 1) || t.timescale <= 0 || scale <= 0 || (t.flags & 0x1C)) { t.timescale = scale > 0 ? scale : t.timescale; return t; }
-/* t.value * scale / t.timescale sem __int128: quociente e resto separados (cabe em 64 bits para escalas reais) */    i64 den = t.timescale, qa = t.value / den, ra = t.value % den;    i64 q = qa * scale + (ra * scale) / den, r = (ra * scale) % den;    int rounded = r != 0;    if (r) {        int neg = t.value < 0;        switch (method) {        case 2: break;        case 3: q += neg ? -1 : 1; break;        case 4: if (neg) q -= 1; break;        case 5: if (!neg) q += 1; break;        default: { i64 ar = r < 0 ? -r : r; if (2 * ar >= den) q += neg ? -1 : 1; }        }    }    t.value = q;
-    t.timescale = scale;
-    if (rounded) t.flags |= 2;                                       /* kCMTimeFlags_HasBeenRounded */
-    return t;
 }
 
 /* ================================================================ registro */
