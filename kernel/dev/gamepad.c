@@ -155,8 +155,8 @@ i64 gamepad_syscall(process_t *pr, u64 op, u64 b, u64 c, u64 d) {
         return ok ? (i64)n : -MOS_EFAULT;
     }
     case DEV_INPUT_POST: {
-        /* CGEventPost / CGEventPostToPid: o evento sintético entra na mesma fila do teclado e do mouse do hardware,
-         * então vale para o sistema todo (a janela em foco recebe a tecla; o clique vai para o que está sob o cursor) */
+        /* CGEventPost: o evento sintético entra na mesma fila do teclado e do mouse do hardware.
+         * CGEventPostToPid não passa por aqui: é DEV_INPUT_TO_PID, na fila do processo, sem mudar o foco. */
         input_event_t e;
         memset(&e, 0, sizeof e);
         e.type = (u8)(b & 0xFF);

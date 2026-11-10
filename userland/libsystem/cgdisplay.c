@@ -55,8 +55,14 @@ static const int cg_display_mode = 1;
 void *CGDisplayCopyDisplayMode(u32 d) { (void)d; return (void *)&cg_display_mode; }
 double CGDisplayModeGetRefreshRate(void *mode) { (void)mode; return 60.0; }
 void CGDisplayModeRelease(void *mode) { (void)mode; }
-size_t CGDisplayModeGetPixelWidth(void *mode) { (void)mode; return CGDisplayPixelsWide(MAIN_DISPLAY); }
-size_t CGDisplayModeGetPixelHeight(void *mode) { (void)mode; return CGDisplayPixelsHigh(MAIN_DISPLAY); }
+size_t CGDisplayModeGetPixelWidth(void *mode) {
+    if (!mode) return 0;
+    return CGDisplayPixelsWide(MAIN_DISPLAY);
+}
+size_t CGDisplayModeGetPixelHeight(void *mode) {
+    if (!mode) return 0;
+    return CGDisplayPixelsHigh(MAIN_DISPLAY);
+}
 void *CGDisplayCreateUUIDFromDisplayID(u32 d) { (void)d; return 0; }
 u32 CGDisplayGetDisplayIDFromUUID(void *uuid) { (void)uuid; return MAIN_DISPLAY; }
 

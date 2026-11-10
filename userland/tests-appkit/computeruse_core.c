@@ -6,6 +6,7 @@ typedef struct {
     int id, pid, onscreen, layer, x, y, w, h, scroll;
     char owner[32];
     char name[64];
+    char bundle[96];
     unsigned color;
 } cu_win;
 
@@ -27,6 +28,13 @@ struct cu_world {
     cu_win wins[CU_MAX_WIN];
     cu_ctl ctls[CU_MAX_CTL];
     unsigned fb[CU_W * CU_H];
+    int focus_pid;
+    int post_seq, post_pid, post_type, post_x, post_y, post_extra;
+    int note_seq, note_pid, note_kind, note_id;
+    char note_name[48];
+    int ax_seq, ax_pid, ax_n, ax_rn, ax_busy;
+    unsigned char ax_req[640];
+    unsigned char ax_rep[640];
 };
 
 unsigned cu_world_bytes_size(void) { return (unsigned)sizeof(cu_world); }
@@ -192,10 +200,20 @@ int cu_post_mouse(cu_world *w, int tap, int type, int x, int y) {
     return 0;
 }
 
-static void write_value(cu_ctl *c, const char *s) {
+static void emit_note(cu_world *w, cu_ctl *c, const char *name) {
+    cu_win *win = win_by_id(w, c->win);
+    scopy(w->note_name, 48, name);
+    w->note_pid = win ? win->pid : 0;
+    w->note_kind = CU_KIND_CTL;
+    w->note_id = c->id;
+    __atomic_fetch_add(&w->note_seq, 1, __ATOMIC_RELEASE);
+}
+
+static void write_value(cu_world *w, cu_ctl *c, const char *s) {
     __atomic_fetch_add(&c->seq, 1, __ATOMIC_RELEASE);
     scopy(c->value, 80, s);
     __atomic_fetch_add(&c->seq, 1, __ATOMIC_RELEASE);
+    emit_note(w, c, "AXValueChanged");
 }
 
 int cu_post_key(cu_world *w, int tap, unsigned unicode, int down) {
@@ -208,6 +226,7 @@ int cu_post_key(cu_world *w, int tap, unsigned unicode, int down) {
     int n = slen(c->value);
     if (n < 79) { c->value[n] = (char)unicode; c->value[n + 1] = 0; }
     __atomic_fetch_add(&c->seq, 1, __ATOMIC_RELEASE);
+    emit_note(w, c, "AXValueChanged");
     return 0;
 }
 
@@ -291,8 +310,136 @@ int cu_ax_set(cu_world *w, int kind, int id, const char *attr, const char *value
     if (kind != CU_KIND_CTL || scmp(attr, "AXValue")) return -25205;
     cu_ctl *c = ctl_by_id(w, id);
     if (!c || c->kind != CU_FIELD) return -25205;
-    write_value(c, value ? value : "");
+    write_value(w, c, value ? value : "");
     return 0;
+}
+
+static cu_win *front_of_pid(cu_world *w, int pid) {
+    for (int i = w->nwin - 1; i >= 0; i--) if (w->wins[i].pid == pid && w->wins[i].onscreen) return &w->wins[i];
+    return 0;
+}
+static cu_win *win_of_pid_at(cu_world *w, int pid, int x, int y) {
+    for (int i = w->nwin - 1; i >= 0; i--) {
+        cu_win *win = &w->wins[i];
+        if (win->pid != pid || !win->onscreen) continue;
+        if (x >= win->x && y >= win->y && x < win->x + win->w && y < win->y + win->h) return win;
+    }
+    return front_of_pid(w, pid);
+}
+static cu_ctl *field_of_pid(cu_world *w, int pid) {
+    for (int i = 0; i < w->nctl; i++) {
+        cu_ctl *c = &w->ctls[i];
+        cu_win *win = win_by_id(w, c->win);
+        if (c->kind == CU_FIELD && win && win->pid == pid) return c;
+    }
+    return 0;
+}
+
+int cu_post_to_pid(cu_world *w, int pid, int type, int x, int y, int extra) {
+    if (!ax_ok(w)) return -25211;
+    if (type == 22) {
+        cu_win *win = win_of_pid_at(w, pid, x, y);
+        if (win && extra) __atomic_fetch_add(&win->scroll, extra, __ATOMIC_RELEASE);
+        return win ? 0 : -3;
+    }
+    if (type == 1) {
+        cu_win *win = win_of_pid_at(w, pid, x, y);
+        cu_ctl *c = ctl_at(w, win, x, y);
+        if (c && c->kind == CU_BUTTON) __atomic_fetch_add(&c->clicks, 1, __ATOMIC_RELEASE);
+        return 0;
+    }
+    if (type == 10) {
+        cu_ctl *c = field_of_pid(w, pid);
+        if (!c || extra < 32 || extra > 126) return 0;
+        __atomic_fetch_add(&c->seq, 1, __ATOMIC_RELEASE);
+        int n = slen(c->value);
+        if (n < 79) { c->value[n] = (char)extra; c->value[n + 1] = 0; }
+        __atomic_fetch_add(&c->seq, 1, __ATOMIC_RELEASE);
+        emit_note(w, c, "AXValueChanged");
+        return 0;
+    }
+    return -25201;
+}
+
+void cu_activate(cu_world *w, int pid) { w->focus_pid = pid; }
+int cu_front_pid(cu_world *w) { return w->focus_pid; }
+
+int cu_running(cu_world *w, int index, int *pid, char *name, int cap) {
+    int seen = 0;
+    for (int i = 0; i < w->nwin; i++) {
+        int dup = 0;
+        for (int j = 0; j < i; j++) if (w->wins[j].pid == w->wins[i].pid) dup = 1;
+        if (dup) continue;
+        if (seen++ != index) continue;
+        if (pid) *pid = w->wins[i].pid;
+        if (name) scopy(name, cap, w->wins[i].owner);
+        return 1;
+    }
+    return 0;
+}
+
+int cu_post_begin(cu_world *w, int pid, int type, int x, int y, int extra) {
+    int seq = __atomic_load_n(&w->post_seq, __ATOMIC_ACQUIRE);
+    if (seq & 1) return -1;
+    w->post_pid = pid;
+    w->post_type = type;
+    w->post_x = x;
+    w->post_y = y;
+    w->post_extra = extra;
+    __atomic_store_n(&w->post_seq, seq + 1, __ATOMIC_RELEASE);
+    return seq;
+}
+int cu_post_seq(cu_world *w) { return __atomic_load_n(&w->post_seq, __ATOMIC_ACQUIRE); }
+void cu_post_poll(cu_world *w, int pid) {
+    int seq = __atomic_load_n(&w->post_seq, __ATOMIC_ACQUIRE);
+    if (!(seq & 1) || w->post_pid != pid) return;
+    cu_post_to_pid(w, w->post_pid, w->post_type, w->post_x, w->post_y, w->post_extra);
+    __atomic_store_n(&w->post_seq, seq + 1, __ATOMIC_RELEASE);
+}
+
+int cu_note_seq(cu_world *w) { return __atomic_load_n(&w->note_seq, __ATOMIC_ACQUIRE); }
+void cu_note_read(cu_world *w, int *pid, int *kind, int *id, char *name, int cap) {
+    if (pid) *pid = w->note_pid;
+    if (kind) *kind = w->note_kind;
+    if (id) *id = w->note_id;
+    if (name) scopy(name, cap, w->note_name);
+}
+
+int cu_ax_begin(cu_world *w, int pid, const void *req, int n) {
+    int seq = __atomic_load_n(&w->ax_seq, __ATOMIC_ACQUIRE);
+    if (seq & 1 || n < 0 || n > 640 || !req) return -1;
+    for (int i = 0; i < n; i++) w->ax_req[i] = ((const unsigned char *)req)[i];
+    w->ax_pid = pid;
+    w->ax_n = n;
+    w->ax_busy = 0;
+    __atomic_store_n(&w->ax_seq, seq + 1, __ATOMIC_RELEASE);
+    return seq;
+}
+int cu_ax_seq(cu_world *w) { return __atomic_load_n(&w->ax_seq, __ATOMIC_ACQUIRE); }
+int cu_ax_poll(cu_world *w, int pid, void *req, int cap) {
+    int seq = __atomic_load_n(&w->ax_seq, __ATOMIC_ACQUIRE);
+    int n;
+    if (!(seq & 1) || w->ax_pid != pid || w->ax_busy) return 0;
+    w->ax_busy = 1;
+    n = w->ax_n;
+    if (n > cap) n = cap;
+    if (req) for (int i = 0; i < n; i++) ((unsigned char *)req)[i] = w->ax_req[i];
+    return w->ax_n;
+}
+void cu_ax_finish(cu_world *w, const void *rep, int n) {
+    int seq = __atomic_load_n(&w->ax_seq, __ATOMIC_ACQUIRE);
+    if (n < 0) n = 0;
+    if (n > 640) n = 640;
+    for (int i = 0; i < n; i++) w->ax_rep[i] = ((const unsigned char *)rep)[i];
+    w->ax_rn = n;
+    w->ax_busy = 0;
+    __atomic_store_n(&w->ax_seq, seq + 1, __ATOMIC_RELEASE);
+}
+int cu_ax_reply(cu_world *w, void *rep, int cap) {
+    int n = w->ax_rn;
+    if (n > cap) n = cap;
+    if (rep) for (int i = 0; i < n; i++) ((unsigned char *)rep)[i] = w->ax_rep[i];
+    return w->ax_rn;
 }
 
 int cu_ctl_clicks(cu_world *w, int id) {

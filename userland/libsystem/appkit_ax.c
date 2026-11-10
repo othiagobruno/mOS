@@ -2,16 +2,19 @@
  *
  * AXUIElementCreateApplication / SystemWide, CopyAttributeValue (role, title, value,
  * position, size, children, focused), PerformAction (AXPress) e SetAttributeValue
- * leem as views de verdade. A permissão é o TCC do Sistemas (cx_tcc_preflight de
- * kTCCServiceAccessibility): sem ela a resposta é -25211. Com ela, outro pid devolve
- * -25204 para a árvore de views. _AXUIElementCreateWithRemoteToken aceita o token
- * mAX1 (ax_token.h): com número de janela, título e geometria saem de DEV_WINDOW_LIST.
- * A árvore de views de outro processo continua -25204. Não há um segundo TCC nem um
- * XPC paralelo aqui.
+ * leem as views de verdade. Atributos parametrizados de texto (AXStringForRange,
+ * AXBoundsForRange, AXRangeForPosition) também. A permissão é o TCC do Sistemas
+ * (cx_tcc_preflight de kTCCServiceAccessibility): sem ela a resposta é -25211.
+ * _AXUIElementCreateWithRemoteToken aceita o token mAX1 (ax_token.h): com número de
+ * janela, título e geometria saem de DEV_WINDOW_LIST. A árvore de views de outro pid
+ * só atravessa se cx_ax_transport_ready() (axtransport.h). Sem o IPC de SYS-XPC-MACH /
+ * KER-UNIX-IPC essa leitura continua -25204. O protocolo está em axproto.h.
  */
 #include "foundation.h"
 #include "computeruse_win.h"
 #include "ax_token.h"
+#include "axproto.h"
+#include "axtransport.h"
 
 int cx_tcc_preflight(const char *service);
 int getpid(void);
@@ -21,10 +24,15 @@ int cx_appkit_window_frame(id w, double *x, double *y, double *wd, double *ht);
 int cx_appkit_window_number(id w);
 int cx_appkit_view_frame(id v, double *x, double *y, double *wd, double *ht);
 id AXValueCreate(unsigned type, const void *p);
+unsigned char AXValueGetValue(id v, unsigned type, void *out);
+size_t strlen(const char *s);
+void *memcpy(void *d, const void *s, unsigned long n);
 id CFArrayCreate(void *alloc, const id *vals, long n, const void *cb);
 id objc_retain(id o);
 void objc_release(id o);
 id objc_msgSend(id self, SEL op, ...);
+int snprintf(char *b, size_t n, const char *fmt, ...);
+void *memset(void *d, int c, size_t n);
 
 enum {
     AXK_APP = 1,
@@ -50,6 +58,7 @@ typedef struct {
     cx_class_t *isa;
     int kind;
     int pid;
+    int elem_id;
     id obj;
     unsigned wid;
 } axel_t;
@@ -61,6 +70,19 @@ static void ax_boot(void) {
     cx_define_class(&ax_c, &ax_m, "__mOSAXElement", cx_class_named("NSObject"), (u32)(sizeof(axel_t) - sizeof(void *)));
 }
 
+static struct { id obj; int kind, id; } g_tab[96];
+static int g_ntab, g_seq = 1000;
+
+static int id_for(id obj, int kind) {
+    int idn = 0;
+    if (!obj) return 0;
+    for (int i = 0; i < g_ntab; i++) if (g_tab[i].obj == obj) return g_tab[i].id;
+    if (kind == AXK_WIN) idn = cx_appkit_window_number(obj);
+    if (idn <= 0) idn = g_seq++;
+    if (g_ntab < 96) { g_tab[g_ntab].obj = obj; g_tab[g_ntab].kind = kind; g_tab[g_ntab].id = idn; g_ntab++; }
+    return idn;
+}
+
 static id ax_new(int kind, int pid, id obj) {
     ax_boot();
     axel_t *e = (axel_t *)cx_alloc_instance(&ax_c);
@@ -69,7 +91,14 @@ static id ax_new(int kind, int pid, id obj) {
     e->pid = pid;
     e->obj = obj;
     e->wid = 0;
+    e->elem_id = obj ? id_for(obj, kind) : (kind == AXK_APP ? pid : 0);
     return (id)e;
+}
+
+static id ax_handle(int kind, int pid, int elem_id) {
+    id o = ax_new(kind, pid, 0);
+    if (o) ((axel_t *)o)->elem_id = elem_id;
+    return o;
 }
 
 static axel_t *ax_of(id e) {
@@ -82,9 +111,9 @@ static int ax_gate(void) {
     return cx_tcc_preflight("kTCCServiceAccessibility") ? 0 : AX_OFF;
 }
 
-/* Outro processo: o elemento existe, a árvore não atravessa o processo. */
+/* Outro processo: o handle existe. A árvore só sai se o transporte estiver ligado. */
 static int ax_remote(axel_t *e) {
-    return e && e->kind == AXK_APP && e->pid && e->pid != getpid();
+    return e && e->pid && e->pid != getpid();
 }
 
 static int is_a(id o, const char *cls) {
@@ -246,14 +275,86 @@ static int focused_flag(axel_t *e) {
     return fr == e->obj;
 }
 
+static int remote_roundtrip(axel_t *e, int op, const char *name, const char *str, int loc, int len, int px, int py, ax_msg *out) {
+    const cx_ax_transport *t = cx_ax_transport_get();
+    ax_msg req;
+    unsigned char buf[640], rbuf[640];
+    int n, rn = 0;
+    if (!out) return AX_CANT;
+    memset(out, 0, sizeof *out);
+    if (!e || !cx_ax_transport_ready() || !t || !t->call) return AX_CANT;
+    memset(&req, 0, sizeof req);
+    req.op = op;
+    req.pid = e->pid;
+    req.kind = e->kind;
+    req.id = e->elem_id;
+    req.loc = loc;
+    req.len = len;
+    req.px = px;
+    req.py = py;
+    if (name) snprintf(req.name, sizeof req.name, "%s", name);
+    if (str) {
+        snprintf(req.str, sizeof req.str, "%s", str);
+        req.pay = AX_PAY_STR;
+    } else if (name && !strcmp(name, "AXRangeForPosition")) req.pay = AX_PAY_RANGE;
+    n = ax_msg_encode(&req, buf, (int)sizeof buf);
+    if (n < 0 || t->call(e->pid, buf, n, rbuf, (int)sizeof rbuf, &rn) != 0) return AX_CANT;
+    if (ax_msg_decode(rbuf, rn, out) != 0) return AX_CANT;
+    return out->status;
+}
+
+static id msg_value(axel_t *e, const ax_msg *m, const char *attr) {
+    if (m->pay == AX_PAY_STR) return cx_str(m->str);
+    if (m->pay == AX_PAY_I32) return cx_num_i(m->i);
+    if (m->pay == AX_PAY_BOX) {
+        if (attr && !strcmp(attr, "AXPosition")) {
+            double p[2] = {m->x, m->y};
+            return AXValueCreate(1, p);
+        }
+        if (attr && !strcmp(attr, "AXSize")) {
+            double p[2] = {m->w, m->h};
+            return AXValueCreate(2, p);
+        }
+        double r[4] = {m->x, m->y, m->w, m->h};
+        return AXValueCreate(3, r);
+    }
+    if (m->pay == AX_PAY_RANGE) {
+        long rg[2] = {m->loc, m->len};
+        return AXValueCreate(4, rg);
+    }
+    if (m->pay == AX_PAY_KIDS) {
+        id tmp[AX_KIDS_MAX];
+        int n = m->nkids;
+        if (n < 0) n = 0;
+        if (n > AX_KIDS_MAX) n = AX_KIDS_MAX;
+        for (int i = 0; i < n; i++) tmp[i] = ax_handle(m->kid_kind[i], e->pid, m->kid_id[i]);
+        id arr = CFArrayCreate(0, tmp, n, 0);
+        for (int i = 0; i < n; i++) if (tmp[i]) objc_release(tmp[i]);
+        return arr;
+    }
+    return 0;
+}
+
+static int remote_copy(axel_t *e, const char *name, id *v) {
+    ax_msg out;
+    int st = remote_roundtrip(e, AX_OP_COPY, name, 0, 0, 0, 0, 0, &out);
+    if (st) return st;
+    if (v) *v = msg_value(e, &out, name);
+    return AX_OK;
+}
+
 int cx_ax_copy(id elem, id attr, id *v) {
     if (v) *v = 0;
     int g = ax_gate();
     if (g) return g;
     axel_t *e = ax_of(elem);
     if (!e || !attr) return e ? AX_BADARG : AX_BAD_ELEM;
-    if (ax_remote(e)) return AX_CANT;
     const char *name = cx_cstr(attr);
+    /* Janela mAX1: role, título e geometria saem da lista do compositor, sem o transporte. */
+    if (ax_remote(e) && !(e->kind == AXK_WIN && e->wid && !e->obj &&
+            (!strcmp(name, "AXRole") || !strcmp(name, "AXRoleDescription") || !strcmp(name, "AXTitle") ||
+             !strcmp(name, "AXPosition") || !strcmp(name, "AXSize"))))
+        return remote_copy(e, name, v);
     if (!strcmp(name, "AXRole")) { if (v) *v = cx_str(role_of(e)); return AX_OK; }
     if (!strcmp(name, "AXRoleDescription")) { if (v) *v = cx_str(role_desc(role_of(e))); return AX_OK; }
     if (!strcmp(name, "AXTitle")) {
@@ -361,7 +462,17 @@ int cx_ax_set(id elem, id attr, id value) {
     if (g) return g;
     axel_t *e = ax_of(elem);
     if (!e || !attr) return e ? AX_BADARG : AX_BAD_ELEM;
-    if (ax_remote(e)) return AX_CANT;
+    if (ax_remote(e)) {
+        const char *s = 0;
+        char buf[AX_STR_MAX];
+        if (value && cx_is_str(value)) s = cx_cstr(value);
+        else if (value) {
+            id d = MSG0(id, value, "description");
+            if (cx_is_str(d)) { snprintf(buf, sizeof buf, "%s", cx_cstr(d)); s = buf; }
+        }
+        ax_msg out;
+        return remote_roundtrip(e, AX_OP_SET, cx_cstr(attr), s, 0, 0, 0, 0, &out);
+    }
     if (e->kind != AXK_VIEW || !e->obj) return AX_NOATTR;
     const char *name = cx_cstr(attr);
     if (!strcmp(name, "AXValue")) {
@@ -403,7 +514,10 @@ int cx_ax_perform(id elem, id action) {
     if (g) return g;
     axel_t *e = ax_of(elem);
     if (!e || !action) return e ? AX_BADARG : AX_BAD_ELEM;
-    if (ax_remote(e)) return AX_CANT;
+    if (ax_remote(e)) {
+        ax_msg out;
+        return remote_roundtrip(e, AX_OP_PRESS, cx_cstr(action), 0, 0, 0, 0, 0, &out);
+    }
     if (strcmp(cx_cstr(action), "AXPress")) return AX_NOACT;
     if (e->kind != AXK_VIEW || !is_a(e->obj, "NSButton")) return AX_NOACT;
     SEL act = 0;
@@ -454,6 +568,10 @@ int cx_ax_window(id elem, unsigned *wid) {
     if (g) return g;
     axel_t *e = ax_of(elem);
     if (!e) return AX_BAD_ELEM;
+    if (e->kind == AXK_WIN && e->wid && !e->obj) {
+        if (wid) *wid = e->wid;
+        return AX_OK;
+    }
     if (ax_remote(e)) return AX_CANT;
     id w = 0;
     if (e->kind == AXK_WIN) w = e->obj;
@@ -518,4 +636,184 @@ int cx_ax_at(id app, float x, float y, id *out) {
         return AX_OK;
     }
     return AX_NOVAL;
+}
+
+id cx_ax_find(int kind, int idn) {
+    if (kind == AXK_SYS) return cx_ax_system();
+    if (kind == AXK_APP) {
+        if (idn && idn != getpid()) return 0;
+        return ax_new(AXK_APP, getpid(), 0);
+    }
+    for (int i = 0; i < g_ntab; i++) {
+        if (g_tab[i].id == idn && (kind == 0 || g_tab[i].kind == kind))
+            return wrap_obj(g_tab[i].obj);
+    }
+    if (kind == AXK_WIN || kind == 0) {
+        id app = nsapp();
+        id wins = app ? MSG0(id, app, "orderedWindows") : 0;
+        u64 n = wins ? MSG0(u64, wins, "count") : 0;
+        for (u64 i = 0; i < n; i++) {
+            id w = MSG(id, wins, "objectAtIndex:", i);
+            if (w && cx_appkit_window_number(w) == idn) return wrap_obj(w);
+        }
+    }
+    return 0;
+}
+
+int cx_ax_kind_id(id obj, int *kind, int *idn) {
+    axel_t *e = ax_of(obj);
+    if (e) {
+        if (kind) *kind = e->kind;
+        if (idn) *idn = e->elem_id;
+        return 1;
+    }
+    if (!obj) return 0;
+    int k = is_a(obj, "NSWindow") ? AXK_WIN : AXK_VIEW;
+    int idv = id_for(obj, k);
+    if (kind) *kind = k;
+    if (idn) *idn = idv;
+    return 1;
+}
+
+int cx_ax_matches(id elem, id obj) {
+    axel_t *e = ax_of(elem);
+    if (!e) return 0;
+    if (e->kind == AXK_APP && (!e->pid || e->pid == getpid())) return 1;
+    if (e->kind == AXK_SYS) return 1;
+    if (!obj) return 0;
+    if (e->obj == obj) return 1;
+    if (e->kind == AXK_WIN && !is_a(obj, "NSWindow")) {
+        id w = MSG(BOOL, obj, "respondsToSelector:", sel_registerName("window")) ? MSG0(id, obj, "window") : 0;
+        return w && w == e->obj;
+    }
+    return 0;
+}
+
+static const char *text_cstr(id obj, id *held) {
+    id v = 0;
+    *held = 0;
+    if (!obj) return 0;
+    if (is_a(obj, "NSTextView") && MSG(BOOL, obj, "respondsToSelector:", sel_registerName("string")))
+        v = MSG0(id, obj, "string");
+    else if (is_a(obj, "NSTextField") && MSG(BOOL, obj, "respondsToSelector:", sel_registerName("stringValue")))
+        v = MSG0(id, obj, "stringValue");
+    else return 0;
+    if (!v) return "";
+    if (!cx_is_str(v)) return "";
+    *held = objc_retain(v);
+    return cx_cstr(*held);
+}
+
+static id range_value(id param, long *loc, long *len) {
+    long rg[2] = {0, 0};
+    if (!param || !AXValueGetValue(param, 4, rg)) return (id)0;
+    *loc = rg[0];
+    *len = rg[1];
+    return (id)1;
+}
+
+int cx_ax_param(id elem, id attr, id param, id *v) {
+    long loc = 0, len = 0;
+    id held = 0;
+    const char *text, *name;
+    if (v) *v = 0;
+    int g = ax_gate();
+    if (g) return g;
+    axel_t *e = ax_of(elem);
+    if (!e || !attr) return e ? AX_BADARG : AX_BAD_ELEM;
+    name = cx_cstr(attr);
+    if (ax_remote(e)) {
+        ax_msg out;
+        int px = 0, py = 0, st;
+        if (!strcmp(name, "AXRangeForPosition")) {
+            double pt[2] = {0, 0};
+            if (param && AXValueGetValue(param, 1, pt)) { px = (int)pt[0]; py = (int)pt[1]; }
+        } else if (!range_value(param, &loc, &len)) return AX_BADARG;
+        st = remote_roundtrip(e, AX_OP_PARAM, name, 0, (int)loc, (int)len, px, py, &out);
+        if (st) return st;
+        if (v) *v = msg_value(e, &out, name);
+        return AX_OK;
+    }
+    if (e->kind != AXK_VIEW || !e->obj) return AX_NOATTR;
+    text = text_cstr(e->obj, &held);
+    if (!text) return AX_NOATTR;
+    if (!strcmp(name, "AXStringForRange")) {
+        long n = (long)strlen(text);
+        char buf[AX_STR_MAX];
+        if (!range_value(param, &loc, &len)) { objc_release(held); return AX_BADARG; }
+        if (loc < 0) loc = 0;
+        if (loc > n) loc = n;
+        if (len < 0) len = 0;
+        if (loc + len > n) len = n - loc;
+        if (len >= (long)sizeof buf) len = (long)sizeof buf - 1;
+        memcpy(buf, text + loc, (unsigned long)len);
+        buf[len] = 0;
+        if (v) *v = cx_str(buf);
+        objc_release(held);
+        return AX_OK;
+    }
+    if (!strcmp(name, "AXBoundsForRange")) {
+        double x, y, w, h;
+        double r[4];
+        if (!range_value(param, &loc, &len)) { objc_release(held); return AX_BADARG; }
+        if (!frame_of(e, &x, &y, &w, &h)) { x = y = 0; }
+        r[0] = x + (double)loc * 7.0;
+        r[1] = y;
+        r[2] = (double)(len < 0 ? 0 : len) * 7.0;
+        r[3] = 16;
+        if (v) *v = AXValueCreate(3, r);
+        objc_release(held);
+        return AX_OK;
+    }
+    if (!strcmp(name, "AXRangeForPosition")) {
+        double pt[2] = {0, 0};
+        double x, y, w, h;
+        long n = (long)strlen(text);
+        long idx;
+        long rg[2];
+        if (!param || !AXValueGetValue(param, 1, pt)) { objc_release(held); return AX_BADARG; }
+        if (!frame_of(e, &x, &y, &w, &h)) x = 0;
+        idx = (long)((pt[0] - x) / 7.0);
+        if (idx < 0) idx = 0;
+        if (idx > n) idx = n;
+        rg[0] = idx;
+        rg[1] = idx < n ? 1 : 0;
+        if (v) *v = AXValueCreate(4, rg);
+        objc_release(held);
+        return AX_OK;
+    }
+    objc_release(held);
+    return AX_NOATTR;
+}
+
+int cx_ax_param_names(id elem, id *names) {
+    id held = 0;
+    const char *text;
+    if (names) *names = 0;
+    int g = ax_gate();
+    if (g) return g;
+    axel_t *e = ax_of(elem);
+    if (!e) return AX_BAD_ELEM;
+    if (ax_remote(e)) {
+        const char *list[] = {"AXBoundsForRange", "AXStringForRange", "AXRangeForPosition"};
+        id tmp[3];
+        for (int i = 0; i < 3; i++) tmp[i] = cx_str(list[i]);
+        if (names) *names = CFArrayCreate(0, tmp, 3, 0);
+        for (int i = 0; i < 3; i++) objc_release(tmp[i]);
+        return AX_OK;
+    }
+    text = (e->kind == AXK_VIEW) ? text_cstr(e->obj, &held) : 0;
+    if (!text) {
+        if (names) *names = CFArrayCreate(0, 0, 0, 0);
+        return AX_OK;
+    }
+    {
+        const char *list[] = {"AXBoundsForRange", "AXStringForRange", "AXRangeForPosition"};
+        id tmp[3];
+        for (int i = 0; i < 3; i++) tmp[i] = cx_str(list[i]);
+        if (names) *names = CFArrayCreate(0, tmp, 3, 0);
+        for (int i = 0; i < 3; i++) objc_release(tmp[i]);
+    }
+    objc_release(held);
+    return AX_OK;
 }

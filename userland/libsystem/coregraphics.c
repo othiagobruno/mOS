@@ -629,7 +629,7 @@ typedef struct {
     double tstk[8][6];
     i32 cstk[8][4];
     u32 fillstk[8];
-    u8 blend;                                /* CGContextSetBlendMode: 0 normal */
+    u8 blend;                                /* CGContextSetBlendMode: 0 normal, 1 copy, 2 multiply, 3 screen, 16 clear */
     u8 blendstk[8];
     void *cb_info;
     void (*rel_cb)(void *, const void *, size_t);

@@ -58,6 +58,10 @@ enum {
 #define DEV_AUDIO_INFO 19     /* (gui_audio_state_t *) -> 1 se há saída de som de verdade (senão os streams andam no relógio) */
 #define DEV_WINDOW_LIST 20    /* (índice, gui_cgwindow_t *) 1 = preencheu, 0 = acabou. Da frente para o fundo.
                                * CGWindowListCopyWindowInfo / SCShareableContent. A permissão de gravar a tela fica no userland (TCC). */
+#define DEV_INPUT_TO_PID 24   /* CGEventPostToPid: (tipo CG | botões << 8 | mods << 16 | roda << 32, tecla | pid << 32, x | y << 32).
+                               * Entrega na fila do processo. Não muda o foco nem o cursor global. 21 é DEV_AUDIO_READ. */
+#define DEV_FOCUS_PID 25      /* (pid) foca a janela da frente desse processo. 0 ou -MOS_ESRCH */
+#define DEV_FRONT_PID 26      /* () pid da janela em foco, ou 0 */
 typedef struct {
     unsigned int number;           /* kCGWindowNumber */
     int pid;                       /* kCGWindowOwnerPID; 0 se a janela não é de um processo convidado */
@@ -66,6 +70,7 @@ typedef struct {
     int x, y, w, h;                /* kCGWindowBounds, origem no canto superior esquerdo do compositor */
     char owner[64];                /* kCGWindowOwnerName */
     char name[96];                 /* kCGWindowName */
+    char bundle[128];              /* caminho do .app, quando o processo veio de um bundle */
 } gui_cgwindow_t;
 int compat_gui_cgwindow(int index, gui_cgwindow_t *out);
 #define DEV_AUDIO_READ 21     /* (amostras i16 estéreo 48 kHz, quadros) -> quadros copiados da captura; 0 = anel vazio ou sem entrada */
