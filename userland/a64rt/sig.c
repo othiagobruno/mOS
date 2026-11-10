@@ -18,6 +18,7 @@
  * A syscall interrompida olha o sinal que a acordou (intr_sig), não o de menor número que estiver pendente.
  */
 #include "rt.h"
+#include "a64_xmon.h"
 
 void rt_host_tramp(void);
 
@@ -92,6 +93,7 @@ static __attribute__((noreturn)) void reraise_default(rt_thread_t *T, int sig) {
 /* ---------------------------------------------------------------- entrega ao guest */
 /* 1 = o pc do guest agora é o tratador (o laço tem que deixá-lo rodar); 0 = sinal descartado */
 static int deliver(rt_thread_t *T, int sig, const mos_siginfo_t *si, u32 oldmask, u32 esr, bool fault) {
+    a64_xmon_invalidate(&T->cpu);              /* a exceção não deixa a reserva para o tratador */
     if (rt_debug) rt_log("a64rt[%d]: entrega do sinal %d (falta %d, pc %lx, tratador %lx, tramp %lx)\n", (int)T->tid, sig, (int)fault, T->cpu.pc, g_act[sig].handler, g_act[sig].tramp);
     a64_cpu *c = &T->cpu;
     gact_t a = g_act[sig];
@@ -131,8 +133,7 @@ static int deliver(rt_thread_t *T, int sig, const mos_siginfo_t *si, u32 oldmask
         host_install(sig);
         aunlock();
     }
-    c->x[31] = fa;
-    c->excl_valid = 0;                                 /* exceção zera o monitor local antes do tratador */
+    c->x[31] = fa;                                     /* o monitor já foi derrubado no início da entrega */
     c->pstate &= ~(3u << A64_PS_BTYPE_SHIFT);
     if (a.tramp) {                                     /* _sigtramp(handler, estilo, sinal, siginfo*, ucontext*, token) */
         c->pc = a.tramp;
@@ -198,7 +199,7 @@ static void sig_return(rt_thread_t *T, u64 ucva) {
     for (int i = 0; i < 32; i++) { c->v[i].d[0] = mc->ns.v[i][0]; c->v[i].d[1] = mc->ns.v[i][1]; }
     c->fpsr = mc->ns.fpsr & A64_FPSR_MASK;
     c->fpcr = mc->ns.fpcr & A64_FPCR_MASK;
-    c->excl_valid = 0;                                  /* exceção limpa o monitor local */
+    a64_xmon_invalidate(c);                             /* o retorno do sinal também é exceção */
     set_mask(uc->uc_sigmask);
 }
 
