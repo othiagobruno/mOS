@@ -587,6 +587,8 @@ void cx_appkit_input_init(void) {
     cx_framework_classes_init(); /* vscode_fwclasses.c: classes de frameworks ausentes */
     { extern void cx_userspace_services_init(void); cx_userspace_services_init(); }
     cx_appkit_extra_init();     /* appkit_extra.c: painéis, barra de status, NSAnimation, NSParagraphStyle... */
+    { extern void cx_nsrunning_init(void); cx_nsrunning_init(); }   /* nsrunningapp.c */
+    { extern void cx_ax_server_start(void); cx_ax_server_start(); } /* axserver.c: árvore AX pronta para o transporte */
     cx_tracking_init();         /* hover: NSTrackingArea e mouseEntered/Exited/Moved */
     cx_foundation_extra_init(); /* foundation_extra.c: NSMutableData, NSTimeZone, NSCalendar, NSInvocation... */
     cx_uttype_init();           /* vscode_media.c: classe UTType */

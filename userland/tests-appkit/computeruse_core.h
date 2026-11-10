@@ -60,6 +60,26 @@ int cu_ctl_presses(cu_world *w, int id);
 int cu_win_scroll(cu_world *w, int id);
 int cu_read_value(cu_world *w, int id, char *dst, int cap);
 
+/* Foco de processo, separado do campo de texto em foco. PostToPid não mexe nele. */
+void cu_activate(cu_world *w, int pid);
+int cu_front_pid(cu_world *w);
+int cu_running(cu_world *w, int index, int *pid, char *name, int cap);
+
+/* O filho do pid aplica. O pai só enfileira. Não passa pela fila global. */
+int cu_post_begin(cu_world *w, int pid, int type, int x, int y, int extra);
+int cu_post_seq(cu_world *w);
+void cu_post_poll(cu_world *w, int pid);
+
+int cu_note_seq(cu_world *w);
+void cu_note_read(cu_world *w, int *pid, int *kind, int *id, char *name, int cap);
+
+/* Caixa de bytes do protocolo AX. Não é o IPC de produção. */
+int cu_ax_begin(cu_world *w, int pid, const void *req, int n);
+int cu_ax_seq(cu_world *w);
+int cu_ax_poll(cu_world *w, int pid, void *req, int cap);
+void cu_ax_finish(cu_world *w, const void *rep, int n);
+int cu_ax_reply(cu_world *w, void *rep, int cap);
+
 enum { CU_READY = 0, CU_DONE, CU_APP_CLICKS, CU_APP_PRESSES, CU_APP_SCROLL, CU_APP_TEXT_N };
 int cu_load(cu_world *w, int slot);
 void cu_store(cu_world *w, int slot, int v);

@@ -12,6 +12,8 @@
 #include "appkit_status.h"
 #include "../../kernel/include/compat_gui.h"
 
+void cx_ax_note_view(id obj, const char *note);
+
 double floor(double), cos(double), sin(double), strtod(const char *, char **);
 char *strcpy(char *, const char *);
 int isalnum(int);
@@ -896,7 +898,7 @@ static BOOL ctl_enabled(id self, SEL c) { (void)c; return vs(self)->enabled; }
 static void ctl_set_font(id self, SEL c, id f) { (void)c; keep(&vs(self)->font, f); mark(self); }
 static id ctl_font(id self, SEL c) { (void)c; return vs(self)->font ? vs(self)->font : dflt_font(); }
 static void ctl_set_align(id self, SEL c, i64 a) { (void)c; vs(self)->alignment = (int)a; mark(self); }
-static void ctl_set_string(id self, SEL c, id s) { (void)c; vstate_t *v = vs(self); id nv = s ? MSG0(id, s, "copy") : cx_str(""); objc_release(v->value); v->value = nv; if (v->caret > (int)strlen(cx_cstr(v->value))) v->caret = (int)strlen(cx_cstr(v->value)); mark(self); }
+static void ctl_set_string(id self, SEL c, id s) { (void)c; vstate_t *v = vs(self); id nv = s ? MSG0(id, s, "copy") : cx_str(""); objc_release(v->value); v->value = nv; if (v->caret > (int)strlen(cx_cstr(v->value))) v->caret = (int)strlen(cx_cstr(v->value)); mark(self); cx_ax_note_view(self, "AXValueChanged"); }
 static id ctl_string(id self, SEL c) { (void)c; vstate_t *v = vs(self); return v->value ? v->value : cx_str(""); }
 static void ctl_set_int(id self, SEL c, int i) { char b[32]; snprintf(b, sizeof b, "%d", i); vs(self)->dval = i; ctl_set_string(self, c, cx_str(b)); }
 static void ctl_set_double(id self, SEL c, double d) {
@@ -1386,6 +1388,7 @@ static BOOL w_make_first(id self, SEL c, id r) {
         if (!MSG0(BOOL, r, "becomeFirstResponder")) { s->first = 0; return NO; }
         mark(r);
     }
+    cx_ax_note_view(r ? r : self, "AXFocusedUIElementChanged");
     return YES;
 }
 /* windowNumber: como no macOS, cada janela tem o seu, único e fixo, mesmo antes de ir à tela e depois de fechada.
@@ -1442,6 +1445,7 @@ static void w_become_key(id self) {
     cx_post(nm);
     if (d && cx_responds(d->isa, sel_registerName("windowDidBecomeKey:"))) MSG(void, d, "windowDidBecomeKey:", nk);
     cx_post(nk);
+    cx_ax_note_view(self, "AXFocusedWindowChanged");
 }
 /* Como no Cocoa, a janela filha (addChildWindow:ordered:, ex.: o diálogo "Abrir o Slack?" do Chrome, que é outra
  * NSWindow) fica acima da mãe: quando a mãe volta à frente, as filhas visíveis voltam por cima dela. O window server
@@ -1486,6 +1490,7 @@ static void w_order_in(id self) {
         }
         if (!app_windows) app_windows = cx_arr_new(&NSMutableArray_c);
         cx_arr_add(app_windows, self);
+        cx_ax_note_view(self, "AXWindowCreated");
     } else {
         if (!s->visible) SYS2(GUI_WIN_FOCUS, s->gid, GUI_FOCUS_SHOW);   /* escondida por orderOut: volta na frente */
         else SYS1(GUI_WIN_FOCUS, s->gid);
@@ -1574,6 +1579,7 @@ static void close_window(id self, BOOL from_wm) {
     s->closed = YES;
     s->visible = NO;
     if (g_key_window == self) g_key_window = 0;
+    cx_ax_note_view(self, "AXUIElementDestroyed");
     id d = s->delegate;
     if (d && cx_responds(d->isa, sel_registerName("windowWillClose:"))) MSG(void, d, "windowWillClose:", cx_note(NSWindowWillCloseNotification, self, 0));
     cx_post(cx_note(NSWindowWillCloseNotification, self, 0));
@@ -1990,6 +1996,7 @@ static void tx_changed(id self) {
     bind_push(self);
     id d = s->delegate;
     if (d && cx_responds(d->isa, sel_registerName("textDidChange:"))) MSG(void, d, "textDidChange:", cx_note(cx_str("NSTextDidChangeNotification"), self, 0));
+    cx_ax_note_view(self, "AXValueChanged");
 }
 static void tx_insert(id self, const char *ins) {
     vstate_t *s = vs(self);
@@ -2074,6 +2081,7 @@ static void tx_set_string(id self, SEL c, id str) {
     s->has_anchor = NO;
     if (s->superview && vs(s->superview)->kind == K_SCROLL) tx_fit(self, vs(s->superview)->frame.s.w);
     mark(s->superview ? s->superview : self);
+    cx_ax_note_view(self, "AXValueChanged");
 }
 static void tx_insert_text(id self, SEL c, id str) { (void)c; if (str) tx_insert(self, cx_cstr(cx_is_str(str) ? str : MSG0(id, str, "string"))); }
 static void tx_append_astr(id self, SEL c, id astr) {
