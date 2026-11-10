@@ -1,0 +1,21 @@
+name: corpus machocheck
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: ferramentas
+        run: sudo apt-get update && sudo apt-get install -y build-essential python3 curl xz-utils p7zip-full ca-certificates
+      - name: zig 0.17.1
+        run: |
+          curl -fsSL -o /tmp/zig.tar.xz https://ziglang.org/download/0.17.1/zig-x86_64-linux-0.17.1.tar.xz
+          sudo tar -xJf /tmp/zig.tar.xz -C /opt
+          echo /opt/zig-x86_64-linux-0.17.1 >> "$GITHUB_PATH"
+      - name: subconjunto fixo não pode piorar
+        run: python3 tools/corpus/harness.py gate
