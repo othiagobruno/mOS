@@ -37,8 +37,10 @@ Executor do harness: `build/a64rt-test/apps.sh`. Raízes em `build/a64rt-test/ro
 ### 2. Claude arm64 caiu na VM depois de ~15 min
 - Falta no `a64_jit_recover` de uma thread nova: o estado por thread do JIT estava numa página que sumiu.
 - Hipótese principal: buracos deixados pelo `munmap` das sobras da pilha do host (`alloc_hstack`).
-- Mudança feita, ainda não confirmada na VM: o runtime passou a usar `SYS_MMAP` sob demanda, sem `munmap` das sobras.
-- Se cair de novo: rodar com `/Sistema/Biblioteca/rastrear-munmap` para ver quem desmapeou a página.
+- Caminho feliz, já feito e ainda não confirmado na VM: `SYS_MMAP` sob demanda de 2 MiB, sem `munmap` da sobra.
+- Caminho de falha (tabela de threads cheia, ou mmap sem o modo 3, alinhado a 4 KiB): solta o bloco inteiro a
+  partir da base crua (`a64rt_hstack_plan` em `userland/a64rt/writes.c`, usado por `alloc_hstack`). Antes o
+  `rt_free` ia no ponteiro alinhado, que pode ser o meio da faixa. O harness Linux cobre o plano; a VM não.
 - Mesmo antes de cair, o app não abriu janela em 15 min. Medir onde gasta o tempo:
   - estatísticas do JIT na saída (`/Sistema/Biblioteca/a64/depurar` já está na imagem `build-a64e`);
   - volume de SIGBUS da rede de SMC; o JIT já passou a marcar páginas voláteis depois de 2 invalidações.
@@ -56,12 +58,20 @@ colhida no Electron arm64 rodando de verdade na VM. As listas do machotest já e
 - O teste `smc` (código reescrito com e sem `sys_icache_invalidate`) no kernel com `MACH_VM_JIT_WPROTECT`.
 - O fork arm64 com `a64_jit_fork_child`: falta um teste com fork de verdade no `tests-a64rt` (hoje só há
   `posix_spawn`).
-- O `read()` que escreve sobre código traduzido (invalidação com `a64_jit_has_code`).
+- O `read()` que escreve sobre código traduzido. No host Linux, `tools/a64hostcheck` cobre a invalidação e a
+  reexecução (sem invalidate o bloco velho continua; com `a64_invalidate` o valor novo vale). Falta a mesma
+  prova no QEMU / na VM, com a PTE de verdade.
 
 ### 6. Limites conhecidos (documentar ou resolver)
-- Escritas do kernel em memória do usuário (por exemplo `read()` direto num buffer de código) não passam pela PTE.
-  Cobertas só pelo `a64_invalidate` depois de `read`/`pread`; outras syscalls que escrevem em memória do guest não
-  invalidam.
+- Escritas do kernel em memória do usuário não passam pela PTE. `userland/a64rt/writes.c` lista o que
+  `mos_svc` (e o `read` cru do `svc #0x80`) invalida: read/pread/readfile, fstat/stat, readdir, pipe, getcwd,
+  fdpath, waitpid/waitany, proclist, imgattach, rede (recv, udp, resolve, info), sinais (action, mask, pending,
+  altstack, wait), tty (nome, procinfo, ioctl de saída), dyld (imagem, erro, open), launchd (`SYS_LS`),
+  mach port/bootstrap/vm/msg e `GETSTATE`. Continuam de fora, porque o ponteiro do buffer mora dentro do
+  pedido e não num registrador: GUI, web, BLE, gamepad e descritores OOL do mach. O corpo da imagem do
+  `DYLD_OPEN` é um VA novo (não há tradução velha). `mmap` com modo 2 ou 3 em endereço já reservado não
+  cobre página existente. Uma thread que já está dentro do bloco não vê o `a64_invalidate` até a próxima
+  fronteira (o kick e o safepoint do desvio para a frente ficam com outra frente).
 - Não há commpage arm64: a região baixa não é memória do usuário no mOS.
 - Hoje o build usa `tools\build-a64rt.ps1 -Parcial`, que troca por stub os símbolos do motor que as outras frentes
   ainda não escreveram. Tirar o `-Parcial` do `build.ps1` quando o motor estiver completo.
