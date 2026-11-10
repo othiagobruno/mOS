@@ -136,10 +136,15 @@ static void exc_panic(int_frame_t *f) {
 }
 
 /* IRQs do PIC (PIT, PS/2; só chegam ao BSP): rodam sem a trava grande — só mexem nos próprios buffers */
-static void (*msi_handler)(void);
-void msi_set_handler(void (*fn)(void)) { msi_handler = fn; }
+static void (*msi_handlers[4])(void);
+static int nmsi;
+void msi_set_handler(void (*fn)(void)) {
+    if (!fn) return;
+    for (int i = 0; i < nmsi; i++) if (msi_handlers[i] == fn) return;
+    if (nmsi < 4) msi_handlers[nmsi++] = fn;
+}
 static void msi_dispatch(void) {
-    if (msi_handler) msi_handler();
+    for (int i = 0; i < nmsi; i++) msi_handlers[i]();
     lapic_eoi();
 }
 

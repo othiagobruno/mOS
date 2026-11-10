@@ -14,6 +14,7 @@
  */
 #include "storage.h"
 #include "ahci_ncq.h"
+#include "nvme_xfer.h"
 
 /* ---- registradores do HBA */
 #define HBA_CAP   0x00
@@ -647,6 +648,56 @@ void ahci_init(void) {
         break; /* um controlador por enquanto (abar é global) */
     }
     if (abar) snprintf(status, sizeof status, ndisks == 1 ? "%d disco SATA" : "%d discos SATA", ndisks);
+}
+
+static bool pci_cap(pci_dev_t *d, u8 want, u8 *at) {
+    if (!d || !((pci_read(d, 0x04) >> 16) & (1u << 4))) return false;
+    u8 off = (u8)(pci_read(d, 0x34) & 0xFC);
+    for (int i = 0; i < 48 && off >= 0x40; i++) {
+        u32 w = pci_read(d, off);
+        u8 id = (u8)(w & 0xFF);
+        u8 next = (u8)((w >> 8) & 0xFC);
+        if (id == want) { *at = off; return true; }
+        if (!next || next == off) return false;
+        off = next;
+    }
+    return false;
+}
+
+/* MSI no LAPIC real. Sem ele o NCQ continua, e a conclusão lê o CI. */
+static int arm_hba_msi(u32 addr, u32 addr_hi, u32 data) {
+    if (!hba_pci) return 0;
+    u8 off;
+    if (!pci_cap(hba_pci, 0x05, &off)) return 0;
+    u32 w = pci_read(hba_pci, off);
+    u16 mc = (u16)(w >> 16);
+    int is64 = (mc & (1u << 7)) != 0;
+    pci_write(hba_pci, (u8)(off + 4), addr);
+    if (is64) {
+        pci_write(hba_pci, (u8)(off + 8), addr_hi);
+        pci_write(hba_pci, (u8)(off + 12), data);
+    } else pci_write(hba_pci, (u8)(off + 8), data);
+    mc = (u16)((mc & ~(7u << 1)) | 1u);
+    pci_write(hba_pci, off, (w & 0xFFFF) | ((u32)mc << 16));
+    u32 cmd = pci_read(hba_pci, 0x04);
+    pci_write(hba_pci, 0x04, cmd | (1u << 10));
+    return 1;
+}
+
+void ahci_smp_ready(void) {
+    if (!abar || !ndisks) return;
+    u32 lo, hi, data;
+    int msg = nvme_msi_compose(smp_lapic_base(), smp_apic_id(0), smp_x2apic(), 0xE0, &lo, &hi, &data);
+    int msi = !msg && arm_hba_msi(lo, hi, data);
+    if (msi) {
+        hw(HBA_GHC, hr(HBA_GHC) | GHC_IE);
+        for (int i = 0; i < ndisks; i++) {
+            disks[i]->intr = 1;
+            pw(disks[i]->port, P_IE, 0x4000000Fu); /* DHRS, PSS, DSS, SDBS e TFES */
+        }
+        msi_set_handler(ahci_on_irq);
+        kprintf("ahci: MSI %08x:%08x, conclusão por interrupção\n", hi, lo);
+    }
 }
 
 int ahci_disk_count(void) { return ndisks; }

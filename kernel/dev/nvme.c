@@ -465,13 +465,8 @@ static bool pci_find_cap(pci_dev_t *d, u8 want, u8 *at) {
     return false;
 }
 
-static void msi_msg(u32 *addr, u32 *data) {
-    *addr = (u32)MSI_ADDR;          /* LAPIC no endereço arquitetural; destino = APIC ID 0 */
-    *data = MSI_VECTOR;             /* borda, entrega fixa */
-}
-
 /* Programa uma mensagem. Se a capability não existe ou a tabela não cabe, o chamador fica em polling. */
-static bool arm_msix(pci_dev_t *pd) {
+static bool arm_msix(pci_dev_t *pd, u32 addr, u32 addr_hi, u32 data) {
     u8 off;
     if (!pci_find_cap(pd, 0x11, &off)) return false;
     u32 toff = pci_read(pd, (u8)(off + 4));
@@ -482,10 +477,8 @@ static bool arm_msix(pci_dev_t *pd) {
     u64 tbl = bar + (toff & ~7u);
     vmm_map_mmio(tbl, 16);
     volatile u32 *e = (volatile u32 *)tbl;
-    u32 addr, data;
-    msi_msg(&addr, &data);
     e[0] = addr;
-    e[1] = 0;
+    e[1] = addr_hi;
     e[2] = data;
     e[3] = 0;                       /* desmascara o vetor 0 */
     u32 w = pci_read(pd, off);
@@ -497,17 +490,15 @@ static bool arm_msix(pci_dev_t *pd) {
     return true;
 }
 
-static bool arm_msi(pci_dev_t *pd) {
+static bool arm_msi(pci_dev_t *pd, u32 addr, u32 addr_hi, u32 data) {
     u8 off;
     if (!pci_find_cap(pd, 0x05, &off)) return false;
     u32 w = pci_read(pd, off);
     u16 mc = (u16)(w >> 16);
     bool is64 = (mc & (1u << 7)) != 0;
-    u32 addr, data;
-    msi_msg(&addr, &data);
     pci_write(pd, (u8)(off + 4), addr);
     if (is64) {
-        pci_write(pd, (u8)(off + 8), 0);
+        pci_write(pd, (u8)(off + 8), addr_hi);
         pci_write(pd, (u8)(off + 12), data);
     } else {
         pci_write(pd, (u8)(off + 8), data);
@@ -569,12 +560,8 @@ static bool setup(pci_dev_t *pd) {
     u32 nn = le32(c->buf + 516);
     c->sgl = (le32(c->buf + 536) & 3u) != 0;
 
-    u8 cap_msix = 0, cap_msi = 0;
-    bool msix_ok = false, msi_ok = false;
-    if (pci_find_cap(pd, 0x11, &cap_msix)) msix_ok = arm_msix(pd);
-    if (!msix_ok && pci_find_cap(pd, 0x05, &cap_msi)) msi_ok = arm_msi(pd);
-    c->intr = nvme_intr_pick(cap_msix != 0, msix_ok, cap_msi != 0, msi_ok);
-    if (c->intr) msi_set_handler(nvme_on_irq);
+    /* A MSI usa o LAPIC, que o smp_init ainda não mapeou. Até lá, uma fila do BSP em polling. */
+    c->intr = NVME_INTR_POLL;
 
     /* quantas filas de E/S o controlador concede (uma por núcleo, teto NVME_MAX_IOQ) */
     u32 want = NVME_MAX_IOQ;
@@ -590,8 +577,10 @@ static bool setup(pci_dev_t *pd) {
     } else want = 1;
     if (want < 1) want = 1;
     if (want > NVME_MAX_IOQ) want = NVME_MAX_IOQ;
+    c->granted = (int)want;
 
-    u32 ien = c->intr ? (1u << 1) : 0;            /* IEN só com MSI/MSI-X; senão a fase é só polling */
+    u32 ien = 0;                                  /* polling até o nvme_smp_ready */
+    want = 1;                                     /* o conjunto por CPU nasce depois do SMP */
     for (u32 q = 0; q < want; q++) {
         if (!alloc_queue(&c->io[q], (u16)(q + 1), (u16)qd)) { kprintf("nvme%d: sem memória para a fila %u\n", c->idx, q + 1); kfree(c); return false; }
         memset(&cmd, 0, sizeof cmd);
@@ -608,7 +597,6 @@ static bool setup(pci_dev_t *pd) {
         if (submit(c, &c->admin, &cmd, ADMIN_TIMEOUT_MS, NULL)) { kprintf("nvme%d: criar SQ %u falhou\n", c->idx, q + 1); kfree(c); return false; }
     }
     c->nio = (int)want;
-    c->granted = (int)want;
     c->qd = qd;
     nvme_flights_init(&c->flight, (int)qd > 1 ? (int)qd - 1 : 1);
 
@@ -633,6 +621,81 @@ void nvme_init(void) {
         pci_dev_t *pd = pci_find_class(1, 8, nth);
         if (!pd) break;
         if (pd->progif == 2) setup(pd);
+    }
+}
+
+static bool delete_ioq(nvme_ctrl_t *c, u16 qid) {
+    sqe_t cmd = {0};
+    cmd.cdw[0] = 0x00;                 /* Delete I/O Submission Queue */
+    cmd.cdw[10] = qid;
+    if (submit(c, &c->admin, &cmd, ADMIN_TIMEOUT_MS, NULL)) return false;
+    memset(&cmd, 0, sizeof cmd);
+    cmd.cdw[0] = 0x04;                 /* Delete I/O Completion Queue */
+    cmd.cdw[10] = qid;
+    return submit(c, &c->admin, &cmd, ADMIN_TIMEOUT_MS, NULL) == 0;
+}
+
+static bool create_ioq(nvme_ctrl_t *c, u32 q, u32 ien) {
+    u32 qd = c->qd;
+    if (!qd) return false;
+    if (!c->io[q].sq) {
+        if (!alloc_queue(&c->io[q], (u16)(q + 1), (u16)qd)) return false;
+    } else {
+        c->io[q].head = c->io[q].tail = 0;
+        c->io[q].phase = 1;
+        c->io[q].qid = (u16)(q + 1);
+    }
+    sqe_t cmd = {0};
+    cmd.cdw[0] = ADM_CREATE_CQ;
+    cmd.cdw[6] = (u32)c->io[q].cq_phys;
+    cmd.cdw[7] = (u32)(c->io[q].cq_phys >> 32);
+    cmd.cdw[10] = (qd - 1) << 16 | (q + 1);
+    cmd.cdw[11] = ien | 1;
+    if (submit(c, &c->admin, &cmd, ADMIN_TIMEOUT_MS, NULL)) return false;
+    memset(&cmd, 0, sizeof cmd);
+    cmd.cdw[0] = ADM_CREATE_SQ;
+    cmd.cdw[6] = (u32)c->io[q].sq_phys;
+    cmd.cdw[7] = (u32)(c->io[q].sq_phys >> 32);
+    cmd.cdw[10] = (qd - 1) << 16 | (q + 1);
+    cmd.cdw[11] = ((q + 1) << 16) | 1;
+    return submit(c, &c->admin, &cmd, ADMIN_TIMEOUT_MS, NULL) == 0;
+}
+
+void nvme_smp_ready(void) {
+    for (int i = 0; i < nctrls; i++) {
+        nvme_ctrl_t *c = ctrls[i];
+        if (!c) continue;
+        int n = nvme_ioq_count(1, smp_cpu_count(), c->granted > 0 ? c->granted : 1, NVME_MAX_IOQ);
+        if (n < 1) n = 1;
+        u32 lo = 0, hi = 0, data = 0;
+        int msg = nvme_msi_compose(smp_lapic_base(), smp_apic_id(0), smp_x2apic(), MSI_VECTOR, &lo, &hi, &data);
+        int mode = NVME_INTR_POLL;
+        if (!msg && c->pci) {
+            u8 off = 0;
+            if (pci_find_cap(c->pci, 0x11, &off) && arm_msix(c->pci, lo, hi, data)) mode = NVME_INTR_MSIX;
+            else if (pci_find_cap(c->pci, 0x05, &off) && arm_msi(c->pci, lo, hi, data)) mode = NVME_INTR_MSI;
+        }
+        if (mode != NVME_INTR_POLL && !nvme_flight_outstanding(&c->flight)) {
+            int old = c->nio;
+            for (int q = 0; q < old; q++) delete_ioq(c, (u16)(q + 1));
+            c->nio = 0;
+            int made = 0;
+            for (int q = 0; q < n && q < NVME_MAX_IOQ; q++) {
+                if (!create_ioq(c, (u32)q, 1u << 1)) break;
+                made++;
+            }
+            if (made) {
+                c->nio = made;
+                c->intr = mode;
+                msi_set_handler(nvme_on_irq);
+            } else if (!create_ioq(c, 0, 0)) {
+                kprintf("nvme%d: fila de E/S perdida ao recriar\n", c->idx);
+            } else c->nio = 1;
+        }
+        kprintf("nvme%d: %d fila(s) de E/S após o SMP, %s, mensagem %08x:%08x\n",
+                c->idx, c->nio,
+                c->intr == NVME_INTR_MSIX ? "MSI-X" : c->intr == NVME_INTR_MSI ? "MSI" : "polling",
+                hi, lo);
     }
 }
 
