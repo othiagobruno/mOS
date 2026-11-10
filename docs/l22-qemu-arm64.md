@@ -39,16 +39,16 @@ Slack e Grok Bot nesta tabela são os DMGs x64, que o `machocheck` do host lê. 
 
 Sem QEMU. No host, `tools/stage-image.sh` gravou os dois `.app` na mesma imagem (`/Aplicativos/Slack.app` e `/Aplicativos/Grok Bot.app`, 2048 MiB, manifesto com os dois). `machocheck --disco` no `libSystem.mos` deste build e `machotest` no executável principal:
 
-- **Slack 4.53.287 x64.** `machocheck`: 2 símbolos de `libc++.1.dylib` (`__assoc_sub_state`), 0 de sistema, Swift e unwind. `machotest --report`: veredito compatível (Electron Framework e libSystem). A execução carrega 6 imagens, o harness não emula `SYS_UNIX` (61), o ICU do Electron devolve `U_INVALID_FORMAT_ERROR` e o processo cai com sinal 5 (código -11).
-- **Grok Bot 0.79.4 x64.** `machocheck`: 22 símbolos distintos sem implementação, todos de sistema: CryptoKit 8 e ImageIO 16. Swift, libc++ e unwind em 0. Esses símbolos não foram implementados aqui. `machotest --report`: veredito compatível. A execução para no mesmo ponto do Slack: `SYS_UNIX` não emulada, ICU inválido, sinal 5, código -11.
+- **Slack 4.53.287 x64.** `machocheck`: 7345 imports, 2 sem implementação, os dois de `libc++.1.dylib` (`__assoc_sub_state`). Sistema, Swift e unwind em 0. A execução carrega 7 imagens, o harness não emula `SYS_UNIX` (61) nem `SYS_GPU` (62), o ICU do Electron devolve `U_INVALID_FORMAT_ERROR` e o processo cai com sinal 5 (código -11).
+- **Grok Bot 0.79.4 x64.** `machocheck`: 7940 imports, 13 sem implementação, todos de ImageIO. CryptoKit, Swift, libc++ e unwind em 0. Os símbolos de ImageIO e CryptoKit não foram implementados nesta mudança. A execução para no mesmo ponto do Slack: `SYS_UNIX` e `SYS_GPU` não emuladas, ICU inválido, sinal 5, código -11.
 
 Dono do que ainda falta, separado:
 
 | | Slack | Grok Bot |
 |---|---|---|
-| Sistemas | libc++ `__assoc_sub_state` (2); ICU do Electron sem dados válidos; classe ObjC `setTimeoutInterval:` | ImageIO (16) e CryptoKit (8), de propósito fora desta mudança; ICU; `setTimeoutInterval:` |
+| Sistemas | libc++ `__assoc_sub_state` (2); ICU do Electron sem dados válidos; classe ObjC `setTimeoutInterval:` | ImageIO (13). CryptoKit não aparece neste libSystem. ICU e `setTimeoutInterval:` iguais aos do Slack |
 | Interface | o processo não chega a desenhar janela | o processo não chega a desenhar janela |
-| Kernel | `SYS_UNIX` (61) não emulada no harness; queda com sinal 5 | o mesmo |
+| Kernel | `SYS_UNIX` (61) e `SYS_GPU` (62) não emuladas no harness; queda com sinal 5 | o mesmo |
 
 ## Stub
 
