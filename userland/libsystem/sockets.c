@@ -1,11 +1,9 @@
 /*
  * mOS libSystem — sockets e links simbólicos, para o porte do VS Code/Electron (docs/porte-vscode.md).
  *
- * O kernel do mOS ainda não tem a API de sockets. AF_UNIX existe só dentro do processo: socket/bind/
- * listen funcionam (bind cria o arquivo do socket), e connect sem servidor neste processo devolve
- * ECONNREFUSED — o que basta para o VS Code e o Chromium concluírem "sou a primeira instância".
- * AF_INET e AF_INET6 (TCP, cliente e servidor) passam pela pilha de rede do kernel (SYS_NET, sockets_inet.inc). Os
- * descritores ficam a partir de SOCK_FD_BASE; read/write/fcntl/ioctl/close do libc e o kqueue/poll os entregam aqui.
+ * AF_UNIX é um descritor do kernel (SYS_UNIX, kernel/net/unix.c, docs/af-unix.md): o número cabe em
+ * 0..255 e read/write/poll seguem o caminho normal do libc. AF_INET e AF_INET6 continuam em SOCK_FD_BASE
+ * (SYS_NET, sockets_inet.inc).
  *
  * symlink/readlink: o FAT não tem links; o link vira um arquivo pequeno marcado com o destino.
  */
@@ -60,8 +58,11 @@ static sock_t *sock_of(int fd) {
     return i >= 0 && i < MAX_SOCK && socks[i].used ? &socks[i] : 0;
 }
 
+static long uerr(long r) { if (r < 0) { cx_errno = (int)-r; return -1; } return r; }
+
 int socket(int domain, int type, int proto) {
-    if (domain != 1 && domain != 2 && domain != 30) { cx_errno = CX_EAFNOSUPPORT; return -1; }   /* AF_UNIX, AF_INET, AF_INET6 */
+    if (domain == 1) return (int)uerr(SYS4(SYS_UNIX, MOS_UNIX_SOCKET, domain, type, proto));
+    if (domain != 2 && domain != 30) { cx_errno = CX_EAFNOSUPPORT; return -1; }   /* AF_INET, AF_INET6; AF_UNIX já voltou acima */
     int icmp = 0, udp = 0;
     if (domain != 1 && (type & 0xF) != 1) {
         /* fora o TCP: UDP (SOCK_DGRAM com protocolo 0 ou 17, sockets_udp.inc) e o "socket de ping" do Darwin
@@ -85,77 +86,46 @@ int socket(int domain, int type, int proto) {
     return -1;
 }
 int socketpair(int domain, int type, int proto, int sv[2]) {
-    (void)domain; (void)type; (void)proto;
-    /* par bidirecional do kernel (dois pipes cruzados, kernel/proc/process.c): o libuv liga o stdin dos filhos assim */
+    /* AF_UNIX (e AF_UNSPEC, que o Darwin trata como unix) nasce conectado no kernel e sobrevive ao fork.
+     * Outro domínio continua nos dois pipes cruzados: o libuv liga o stdin dos filhos assim. */
+    if (domain == 0 || domain == 1) return (int)uerr(SYS4(SYS_UNIX, MOS_UNIX_PAIR, type, proto, sv));
+    (void)type; (void)proto;
     extern int cx_socketpair_fds(int *fds);
     return cx_socketpair_fds(sv);
 }
 
-/* sockaddr_un do macOS: {u8 len; u8 family; char path[104]} */
-static const char *un_path(const void *addr, u32 len) {
-    if (!addr || len < 3) return 0;
-    return (const char *)addr + 2;
-}
-static sock_t *listener_at(const char *path) {
-    for (int i = 0; i < MAX_SOCK; i++)
-        if (socks[i].used && socks[i].listening && !strncmp(socks[i].path, path, sizeof socks[i].path)) return &socks[i];
-    return 0;
-}
-
-static int un_bind(int fd, const void *addr, u32 len) {
-    sock_t *s = sock_of(fd);
-    if (!s) { cx_errno = CX_EBADF; return -1; }
-    const char *p = un_path(addr, len);
-    if (!p || !*p) { cx_errno = CX_EINVAL; return -1; }
-    if (access(p, 0) == 0) { cx_errno = CX_EADDRINUSE; return -1; }
-    strlcpy(s->path, p, sizeof s->path);
-    int f = open(p, 0x0202, 0600);                               /* cria o "arquivo de socket" */
-    if (f >= 0) { extern int close(int); close(f); }
-    return 0;
-}
-static int un_listen(int fd, int backlog) {
-    (void)backlog;
-    sock_t *s = sock_of(fd);
-    if (!s) { cx_errno = CX_EBADF; return -1; }
-    s->listening = 1;
-    return 0;
-}
-static int un_connect(int fd, const void *addr, u32 len) {
-    sock_t *s = sock_of(fd);
-    if (!s) { cx_errno = CX_EBADF; return -1; }
-    const char *p = un_path(addr, len);
-    (void)listener_at;
-    (void)p;
-    cx_errno = CX_ECONNREFUSED;                                  /* ainda sem conexões dentro do processo */
+/* AF_UNIX mora no kernel. Um fd que não é socket (o socketpair antigo, em pipes) continua aceitando
+ * shutdown e getsockopt como feitos: o Crashpad do Chrome aborta com EBADF. */
+static int fd_open(int fd) { extern int fcntl(int, int, ...); return fd >= 0 && fcntl(fd, 1 /* F_GETFD */) >= 0; }
+static int un_bind(int fd, const void *addr, u32 len) { return (int)uerr(SYS4(SYS_UNIX, MOS_UNIX_BIND, fd, addr, len)); }
+static int un_listen(int fd, int backlog) { return (int)uerr(SYS4(SYS_UNIX, MOS_UNIX_LISTEN, fd, backlog, 0)); }
+static int un_connect(int fd, const void *addr, u32 len) { return (int)uerr(SYS4(SYS_UNIX, MOS_UNIX_CONNECT, fd, addr, len)); }
+static int un_accept(int fd, void *addr, u32 *len) { return (int)uerr(SYS4(SYS_UNIX, MOS_UNIX_ACCEPT, fd, addr, len)); }
+int shutdown(int fd, int how) {
+    if (sock_of(fd)) return 0;
+    long r = SYS4(SYS_UNIX, MOS_UNIX_SHUTDOWN, fd, how, 0);
+    if (r == 0) return 0;
+    if (r == -MOS_ENOTSOCK || r == -MOS_EBADF) return fd_open(fd) ? 0 : (cx_errno = CX_EBADF, -1);
+    cx_errno = (int)-r;
     return -1;
 }
-static int un_accept(int fd, void *addr, u32 *len) { (void)addr; (void)len; cx_errno = sock_of(fd) ? CX_EAGAIN : CX_EBADF; return -1; }
-/* as pontas de um socketpair são pipes do kernel (acima): para elas shutdown/setsockopt valem como feitos,
- * senão o Crashpad do Chrome (child_port_handshake.cc) aborta com EBADF. (O fcntl(F_GETFD) do mOS ainda não
- * distingue fd fechado, então na prática só fd negativo dá EBADF.) */
-static int fd_open(int fd) { extern int fcntl(int, int, ...); return fd >= 0 && fcntl(fd, 1 /* F_GETFD */) >= 0; }
-int shutdown(int fd, int how) { (void)how; return sock_of(fd) || fd_open(fd) ? 0 : (cx_errno = CX_EBADF, -1); }
-/* setsockopt: sockets_inet.inc (IPV6_V6ONLY; o resto vale como feito) */
 static int un_getsockopt(int fd, int level, int name, void *v, u32 *len) {
-    (void)level; (void)name;
-    if (!sock_of(fd)) { cx_errno = CX_EBADF; return -1; }
-    if (v && len && *len >= 4) { *(int *)v = 0; *len = 4; }
-    return 0;
-}
-static int un_getsockname(int fd, void *addr, u32 *len) {
-    sock_t *s = sock_of(fd);
-    if (!s) { cx_errno = CX_EBADF; return -1; }
-    if (addr && len && *len >= 3) {
-        u8 *a = addr;
-        size_t n = strlen(s->path);
-        if (n + 3 > *len) n = *len - 3;
-        a[0] = (u8)(n + 2); a[1] = 1;
-        memcpy(a + 2, s->path, n);
-        a[2 + n] = 0;
-        *len = (u32)(n + 3);
+    mos_unix_sockopt_t o;
+    o.level = level;
+    o.name = name;
+    o.len = len ? *len : 0;
+    o.val = v;
+    long r = SYS3(SYS_UNIX, MOS_UNIX_GETSOCKOPT, fd, &o);
+    if (r == 0) { if (len) *len = o.len; return 0; }
+    if (r == -MOS_ENOTSOCK || r == -MOS_EBADF) {
+        if (!fd_open(fd)) { cx_errno = CX_EBADF; return -1; }
+        if (v && len && *len >= 4) { *(int *)v = 0; *len = 4; }
+        return 0;
     }
-    return 0;
+    cx_errno = (int)-r;
+    return -1;
 }
+static int un_getsockname(int fd, void *addr, u32 *len) { return (int)uerr(SYS4(SYS_UNIX, MOS_UNIX_SOCKNAME, fd, addr, len)); }
 #include "sockets_inet.inc"
 /* ---- links simbólicos como arquivos marcados */
 #define LINK_MAGIC "#mOS-link:"

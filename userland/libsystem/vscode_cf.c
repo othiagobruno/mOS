@@ -52,6 +52,7 @@ const double kCFAbsoluteTimeIntervalSince1970 = 978307200.0;
 typedef struct { i64 value; i32 timescale; u32 flags; i64 epoch; } cm_time_t;
 const cm_time_t kCMTimeZero = {0, 1, 1, 0};
 const cm_time_t kCMTimeInvalid = {0, 0, 0, 0};
+const cm_time_t kCMTimeIndefinite = {0, 0, 0x11, 0}; /* Valid | Indefinite */
 const double kCLLocationAccuracyBest = -1.0;
 const double kCLLocationAccuracyHundredMeters = 100.0;
 /* CoreGraphics: a conexão do WindowServer (CGS*) é um inteiro qualquer diferente de zero */
