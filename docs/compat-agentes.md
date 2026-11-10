@@ -36,7 +36,8 @@ um recurso opcional que espera o runtime Swift ([swift-objc-runtime.md](swift-ob
 - `userland/libsystem/compat_agentes.c` (novo): `stat64`/`lstat64`/`fstat64`/`fstatat64` (no x86_64 a `struct stat`
   já é a de 64 bits), `mlockall`/`munlockall`, `ptrace` (só `PT_DENY_ATTACH`), `memccpy`, `nice`, `asctime_r`/`ctime_r`,
   `__floattidf`/`__floatuntidf` (int128 → double com um só arredondamento), `CFTimeZoneCopyDefault`,
-  `CTFontDescriptorCreateWithNameAndSize`, as variantes de FSEvents por dispositivo e as consultas do fluxo,
+  `CTFontDescriptorCreateWithNameAndSize`, as variantes de FSEvents por dispositivo e as consultas do fluxo
+  (a entrega em si está em `fsevents.c`),
   `kDADiskDescriptionMatchVolumeMountable`/`WatchVolumePath`, `IOHIDManagerSetDeviceMatching`/
   `RegisterInputReportCallback` e `SecTrustSettingsSet/RemoveTrustSettings` (`errSecUnimplemented`).
 - `cli.c`: `proc_listpids` (todos, por grupo, usuário ou pai), `proc_listallpids`, `proc_name`, e o `proc_pidinfo` de
@@ -211,7 +212,7 @@ O helper `Grok Bot Computer Use.app/Contents/MacOS/CUGrokBotService` (Swift) ia 
   caminho "sem permissão", como num Mac antes de autorizar.
 - **C e ObjC** (`compat_agentes.c`, `vscode_fwclasses.c`): constantes do Contacts/AppKit/CoreLocation, classes vazias do
   ScreenCaptureKit/Contacts/EventKit/CoreLocation, `CGContextAddPath` (quadráticas viram cúbicas),
-  `CGContextEOFillPath`, `vImageBoxConvolve_Planar8`, e falhas limpas de `sqlite3_open_v2` (o mOS não tem SQLite) e
+  `CGContextEOFillPath`, `vImageBoxConvolve_Planar8`, e `sqlite3_open_v2` (amálgama no libSystem, `sqlite3_mos.c`) e
   `VTCreateCGImageFromCVPixelBuffer`.
 - **Swift:** `CryptoKit.framework` novo (`userland/frameworks/CryptoKit`: `HashFunction`, `Digest`, `SHA256` sobre o
   `CC_SHA256_*`); overlay `CoreGraphics` com `CGPathFillRule`, `fillPath(using:)`, `move(to:transform:)`,

@@ -1,12 +1,13 @@
 /* Loja do Core Data do mOS.
  *
- * NSSQLiteStoreType grava neste formato (primeira linha "MOSCD1"), no caminho que o
- * app pediu. Não é um arquivo SQLite: o libSystem já publica sqlite3_open_v2 que
- * falha de propósito, e um amalgama aqui colidiria com esses símbolos. Quem abrir
- * o arquivo no sqlite3 da Apple não vê um banco. NSInMemoryStoreType não toca disco.
+ * NSSQLiteStoreType grava um arquivo SQLite (tabelas mos_object e mos_attr) que o
+ * sqlite3 padrão abre. sqlite3_open_v2 é o do amalgama em sqlite3_mos.c.
+ * Um arquivo antigo MOSCD1 é lido e copiado para SQLite na primeira abertura.
+ * NSInMemoryStoreType continua só na memória e não toca disco.
  *
  * Incluir uma vez por unidade. Com CD_HOST, o teste de host (tools/cdtest.c) usa a libc.
  */
+#include "../third_party/sqlite/sqlite3.h"
 #ifdef CD_HOST
 #include <stdio.h>
 #include <stdlib.h>
@@ -37,6 +38,8 @@ extern int strcmp(const char *a, const char *b);
 extern unsigned long strtoul(const char *s, char **e, int base);
 extern long long strtoll(const char *s, char **e, int base);
 extern double strtod(const char *s, char **e);
+extern int memcmp(const void *a, const void *b, size_t n);
+extern size_t fread(void *p, size_t s, size_t n, void *f);
 #endif
 
 #define CD_EOF (-1)
@@ -60,6 +63,8 @@ typedef struct cd_row {
 typedef struct cd_store {
     int memory;
     char *path;
+    sqlite3 *db;
+    char *scratch;
     cd_row *rows;
     int n, cap;
     unsigned long next_id;
@@ -77,6 +82,8 @@ static cd_store *cd_new(int memory, const char *path) {
     if (!s) return 0;
     s->memory = memory;
     s->path = path ? strdup(path) : 0;
+    s->db = 0;
+    s->scratch = 0;
     s->rows = 0;
     s->n = s->cap = 0;
     s->next_id = 1;
@@ -100,6 +107,8 @@ static void cd_row_clear(cd_row *r) {
 
 static void cd_close(cd_store *s) {
     if (!s) return;
+    if (s->db) sqlite3_close(s->db);
+    free(s->scratch);
     for (int i = 0; i < s->n; i++) cd_row_clear(&s->rows[i]);
     free(s->rows);
     free(s->path);
@@ -245,31 +254,145 @@ static int cd_load(cd_store *s) {
 
 static cd_store *cd_open_memory(void) { return cd_new(1, 0); }
 
-static cd_store *cd_open_file(const char *path) {
-    cd_store *s;
-    if (!path || !path[0]) return 0;
-    s = cd_new(0, path);
+static const char cd_schema[] =
+    "CREATE TABLE IF NOT EXISTS mos_object("
+    "id INTEGER PRIMARY KEY, entity TEXT NOT NULL, deleted INTEGER NOT NULL DEFAULT 0);"
+    "CREATE TABLE IF NOT EXISTS mos_attr("
+    "obj INTEGER NOT NULL, key TEXT NOT NULL, kind INTEGER NOT NULL,"
+    "vtext TEXT, vint INTEGER, vreal REAL, PRIMARY KEY(obj,key));";
+
+static cd_store *cd_open_sqlite(const char *path) {
+    cd_store *s = cd_new(0, path);
     if (!s) return 0;
-    if (cd_load(s)) { cd_close(s); return 0; }
+    if (sqlite3_open_v2(path, &s->db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, 0) != SQLITE_OK) {
+        cd_close(s);
+        return 0;
+    }
+    if (sqlite3_exec(s->db, cd_schema, 0, 0, 0) != SQLITE_OK) {
+        cd_close(s);
+        return 0;
+    }
     return s;
+}
+
+static int cd_file_kind(const char *path) {
+    cd_file *f = fopen(path, "rb");
+    char b[16];
+    size_t n;
+    if (!f) return 0;
+    n = fread(b, 1, 15, f);
+    fclose(f);
+    if (n >= 6 && !memcmp(b, "MOSCD1", 6)) return 1;
+    if (n >= 15 && !memcmp(b, "SQLite format 3", 15)) return 2;
+    return -1;
+}
+
+static int cd_migrate(cd_store *sql, cd_store *mem) {
+    int i, k;
+    for (i = 0; i < mem->n; i++) {
+        cd_row *r = &mem->rows[i];
+        sqlite3_stmt *st = 0;
+        if (r->deleted) continue;
+        if (sqlite3_prepare_v2(sql->db, "INSERT INTO mos_object(id,entity,deleted) VALUES(?,?,0)", -1, &st, 0) != SQLITE_OK) return -1;
+        sqlite3_bind_int64(st, 1, (sqlite3_int64)r->id);
+        sqlite3_bind_text(st, 2, r->entity ? r->entity : "", -1, SQLITE_TRANSIENT);
+        if (sqlite3_step(st) != SQLITE_DONE) { sqlite3_finalize(st); return -1; }
+        sqlite3_finalize(st);
+        for (k = 0; k < r->na; k++) {
+            cd_attr *a = &r->a[k];
+            if (sqlite3_prepare_v2(sql->db, "INSERT INTO mos_attr(obj,key,kind,vtext,vint,vreal) VALUES(?,?,?,?,?,?)", -1, &st, 0) != SQLITE_OK) return -1;
+            sqlite3_bind_int64(st, 1, (sqlite3_int64)r->id);
+            sqlite3_bind_text(st, 2, a->key, -1, SQLITE_TRANSIENT);
+            sqlite3_bind_int(st, 3, a->kind);
+            if (a->kind == 1) sqlite3_bind_text(st, 4, a->s ? a->s : "", -1, SQLITE_TRANSIENT);
+            else sqlite3_bind_null(st, 4);
+            sqlite3_bind_int64(st, 5, (sqlite3_int64)a->i);
+            sqlite3_bind_double(st, 6, a->d);
+            if (sqlite3_step(st) != SQLITE_DONE) { sqlite3_finalize(st); return -1; }
+            sqlite3_finalize(st);
+        }
+    }
+    return 0;
+}
+
+static cd_store *cd_open_file(const char *path) {
+    int kind;
+    cd_store *mem, *sql;
+    if (!path || !path[0]) return 0;
+    kind = cd_file_kind(path);
+    if (kind < 0) return 0;
+    if (kind == 1) {
+        mem = cd_new(1, path);
+        if (!mem || cd_load(mem)) { cd_close(mem); return 0; }
+        unlink(path);
+        sql = cd_open_sqlite(path);
+        if (!sql || cd_migrate(sql, mem)) { cd_close(mem); cd_close(sql); return 0; }
+        cd_close(mem);
+        return sql;
+    }
+    return cd_open_sqlite(path);
+}
+
+static int cd_sql_set(cd_store *s, unsigned long id, const char *key, int kind, const char *str, long long iv, double dv) {
+    sqlite3_stmt *st = 0;
+    if (!key) return -1;
+    if (!kind) {
+        if (sqlite3_prepare_v2(s->db, "DELETE FROM mos_attr WHERE obj=? AND key=?", -1, &st, 0) != SQLITE_OK) return -1;
+        sqlite3_bind_int64(st, 1, (sqlite3_int64)id);
+        sqlite3_bind_text(st, 2, key, -1, SQLITE_TRANSIENT);
+    } else {
+        if (sqlite3_prepare_v2(s->db,
+                "INSERT INTO mos_attr(obj,key,kind,vtext,vint,vreal) VALUES(?,?,?,?,?,?) "
+                "ON CONFLICT(obj,key) DO UPDATE SET kind=excluded.kind,vtext=excluded.vtext,vint=excluded.vint,vreal=excluded.vreal",
+                -1, &st, 0) != SQLITE_OK) return -1;
+        sqlite3_bind_int64(st, 1, (sqlite3_int64)id);
+        sqlite3_bind_text(st, 2, key, -1, SQLITE_TRANSIENT);
+        sqlite3_bind_int(st, 3, kind);
+        if (kind == 1) sqlite3_bind_text(st, 4, str ? str : "", -1, SQLITE_TRANSIENT);
+        else sqlite3_bind_null(st, 4);
+        sqlite3_bind_int64(st, 5, (sqlite3_int64)iv);
+        sqlite3_bind_double(st, 6, dv);
+    }
+    if (sqlite3_step(st) != SQLITE_DONE) { sqlite3_finalize(st); return -1; }
+    sqlite3_finalize(st);
+    return 0;
 }
 
 static unsigned long cd_insert(cd_store *s, const char *entity) {
     unsigned long id;
+    sqlite3_stmt *st = 0;
     if (!s) return 0;
+    if (s->db) {
+        if (sqlite3_prepare_v2(s->db, "INSERT INTO mos_object(entity,deleted) VALUES(?,0)", -1, &st, 0) != SQLITE_OK) return 0;
+        sqlite3_bind_text(st, 1, entity && entity[0] ? entity : "Entity", -1, SQLITE_TRANSIENT);
+        if (sqlite3_step(st) != SQLITE_DONE) { sqlite3_finalize(st); return 0; }
+        sqlite3_finalize(st);
+        return (unsigned long)sqlite3_last_insert_rowid(s->db);
+    }
     id = s->next_id++;
     if (cd_add_row(s, id, entity && entity[0] ? entity : "Entity")) return 0;
     return id;
 }
 
 static void cd_delete(cd_store *s, unsigned long id) {
-    cd_row *r = cd_row_of(s, id);
+    sqlite3_stmt *st = 0;
+    cd_row *r;
+    if (s && s->db) {
+        if (sqlite3_prepare_v2(s->db, "UPDATE mos_object SET deleted=1 WHERE id=?", -1, &st, 0) == SQLITE_OK) {
+            sqlite3_bind_int64(st, 1, (sqlite3_int64)id);
+            sqlite3_step(st);
+            sqlite3_finalize(st);
+        }
+        return;
+    }
+    r = cd_row_of(s, id);
     if (r) r->deleted = 1;
 }
 
 static int cd_set_str(cd_store *s, unsigned long id, const char *key, const char *val) {
     cd_row *r;
     int i;
+    if (s && s->db) return cd_sql_set(s, id, key, val ? 1 : 0, val, 0, 0);
     if (!val) {
         r = cd_row_of(s, id);
         if (!r) return -1;
@@ -286,14 +409,39 @@ static int cd_set_str(cd_store *s, unsigned long id, const char *key, const char
 }
 
 static int cd_set_i64(cd_store *s, unsigned long id, const char *key, long long v) {
+    if (s && s->db) return cd_sql_set(s, id, key, 2, 0, v, (double)v);
     return cd_set_raw(s, id, key, 2, 0, v, (double)v);
 }
 static int cd_set_f64(cd_store *s, unsigned long id, const char *key, double v) {
+    if (s && s->db) return cd_sql_set(s, id, key, 3, 0, (long long)v, v);
     return cd_set_raw(s, id, key, 3, 0, (long long)v, v);
 }
 
+static int cd_sql_kind(cd_store *s, unsigned long id, const char *key, long long *iv, double *dv, int copy_text) {
+    sqlite3_stmt *st = 0;
+    int kind = 0, rc;
+    if (sqlite3_prepare_v2(s->db, "SELECT kind,vtext,vint,vreal FROM mos_attr WHERE obj=? AND key=?", -1, &st, 0) != SQLITE_OK) return 0;
+    sqlite3_bind_int64(st, 1, (sqlite3_int64)id);
+    sqlite3_bind_text(st, 2, key, -1, SQLITE_TRANSIENT);
+    rc = sqlite3_step(st);
+    if (rc == SQLITE_ROW) {
+        const char *t;
+        kind = sqlite3_column_int(st, 0);
+        if (iv) *iv = sqlite3_column_int64(st, 2);
+        if (dv) *dv = sqlite3_column_double(st, 3);
+        if (copy_text && kind == 1) {
+            t = (const char *)sqlite3_column_text(st, 1);
+            free(s->scratch);
+            s->scratch = strdup(t ? t : "");
+        }
+    }
+    sqlite3_finalize(st);
+    return kind;
+}
 static int cd_get_kind(cd_store *s, unsigned long id, const char *key) {
-    cd_row *r = cd_row_of(s, id);
+    cd_row *r;
+    if (s && s->db) return cd_sql_kind(s, id, key, 0, 0, 0);
+    r = cd_row_of(s, id);
     int i;
     if (!r || !key) return 0;
     for (i = 0; i < r->na; i++)
@@ -301,7 +449,12 @@ static int cd_get_kind(cd_store *s, unsigned long id, const char *key) {
     return 0;
 }
 static const char *cd_get_str(cd_store *s, unsigned long id, const char *key) {
-    cd_row *r = cd_row_of(s, id);
+    cd_row *r;
+    if (s && s->db) {
+        if (cd_sql_kind(s, id, key, 0, 0, 1) != 1) return 0;
+        return s->scratch;
+    }
+    r = cd_row_of(s, id);
     int i;
     if (!r) return 0;
     for (i = 0; i < r->na; i++)
@@ -309,7 +462,10 @@ static const char *cd_get_str(cd_store *s, unsigned long id, const char *key) {
     return 0;
 }
 static long long cd_get_i64(cd_store *s, unsigned long id, const char *key) {
-    cd_row *r = cd_row_of(s, id);
+    long long v = 0;
+    cd_row *r;
+    if (s && s->db) { cd_sql_kind(s, id, key, &v, 0, 0); return v; }
+    r = cd_row_of(s, id);
     int i;
     if (!r) return 0;
     for (i = 0; i < r->na; i++)
@@ -317,7 +473,10 @@ static long long cd_get_i64(cd_store *s, unsigned long id, const char *key) {
     return 0;
 }
 static double cd_get_f64(cd_store *s, unsigned long id, const char *key) {
-    cd_row *r = cd_row_of(s, id);
+    double v = 0;
+    cd_row *r;
+    if (s && s->db) { cd_sql_kind(s, id, key, 0, &v, 0); return v; }
+    r = cd_row_of(s, id);
     int i;
     if (!r) return 0;
     for (i = 0; i < r->na; i++)
@@ -325,7 +484,20 @@ static double cd_get_f64(cd_store *s, unsigned long id, const char *key) {
     return 0;
 }
 static const char *cd_entity_of(cd_store *s, unsigned long id) {
-    cd_row *r = cd_row_of(s, id);
+    sqlite3_stmt *st = 0;
+    cd_row *r;
+    if (s && s->db) {
+        if (sqlite3_prepare_v2(s->db, "SELECT entity FROM mos_object WHERE id=? AND deleted=0", -1, &st, 0) != SQLITE_OK) return 0;
+        sqlite3_bind_int64(st, 1, (sqlite3_int64)id);
+        if (sqlite3_step(st) == SQLITE_ROW) {
+            const char *t = (const char *)sqlite3_column_text(st, 0);
+            free(s->scratch);
+            s->scratch = strdup(t ? t : "");
+        }
+        sqlite3_finalize(st);
+        return s->scratch;
+    }
+    r = cd_row_of(s, id);
     return r ? r->entity : 0;
 }
 
@@ -354,6 +526,45 @@ static unsigned long *cd_fetch(cd_store *s, const char *entity, const char *pk, 
     int i;
     if (n) *n = 0;
     if (!s) return 0;
+    if (s->db) {
+        sqlite3_stmt *st = 0;
+        unsigned long *ids;
+        unsigned cap = 8, k = 0, seen = 0;
+        if (sqlite3_prepare_v2(s->db, "SELECT id FROM mos_object WHERE deleted=0 ORDER BY id", -1, &st, 0) != SQLITE_OK) return 0;
+        ids = (unsigned long *)malloc(cap * sizeof *ids);
+        if (!ids) { sqlite3_finalize(st); return 0; }
+        while (sqlite3_step(st) == SQLITE_ROW) {
+            unsigned long id = (unsigned long)sqlite3_column_int64(st, 0);
+            char num[64];
+            const char *got = 0;
+            int kind;
+            long long iv = 0;
+            double dv = 0;
+            if (entity && entity[0]) {
+                const char *en = cd_entity_of(s, id);
+                if (!en || strcmp(en, entity) != 0) continue;
+            }
+            if (pk) {
+                kind = cd_sql_kind(s, id, pk, &iv, &dv, 1);
+                if (kind == 1) got = s->scratch;
+                else if (kind == 2) { snprintf(num, sizeof num, "%lld", iv); got = num; }
+                else if (kind == 3) { snprintf(num, sizeof num, "%.17g", dv); got = num; }
+                if (!got || !pv || strcmp(got, pv) != 0) continue;
+            }
+            if (seen++ < offset) continue;
+            if (limit && k >= limit) break;
+            if (k == cap) {
+                unsigned long *g = (unsigned long *)realloc(ids, (cap * 2) * sizeof *ids);
+                if (!g) break;
+                ids = g;
+                cap *= 2;
+            }
+            ids[k++] = id;
+        }
+        sqlite3_finalize(st);
+        if (n) *n = k;
+        return ids;
+    }
     for (i = 0; i < s->n; i++)
         if (cd_match(s, &s->rows[i], entity, pk, pv)) total++;
     ids = (unsigned long *)malloc(((size_t)total + 1) * sizeof *ids);
@@ -399,7 +610,7 @@ static int cd_save(cd_store *s) {
     cd_file *f;
     int i, k;
     if (!s) return -1;
-    if (s->memory || !s->path) return 0;
+    if (s->db || s->memory || !s->path) return 0;
     if (strlen(s->path) + 5 >= sizeof tmp) return -1;
     cd_mkdir_parent(s->path);
     snprintf(tmp, sizeof tmp, "%s.tmp", s->path);
