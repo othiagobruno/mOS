@@ -21,6 +21,8 @@ int compression_stream_destroy(compression_stream *);
 #define ZLIB 0x205
 #define LZ4 0x100
 #define LZFSE 0x801
+#define LZMA 0x306
+#define BROTLI 0xB02
 
 static int roundtrip(const char *name, int algo) {
     const char *msg = "libSystem compression round trip";
@@ -60,7 +62,8 @@ static int roundtrip(const char *name, int algo) {
 }
 
 int main(void) {
-    if (roundtrip("zlib", ZLIB) || roundtrip("lz4", LZ4) || roundtrip("lzfse", LZFSE)) return 1;
+    if (roundtrip("zlib", ZLIB) || roundtrip("lz4", LZ4) || roundtrip("lzfse", LZFSE)
+        || roundtrip("lzma", LZMA) || roundtrip("brotli", BROTLI)) return 1;
     printf("libSystem compression ok\n");
     return 0;
 }

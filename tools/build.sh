@@ -191,14 +191,24 @@ done
     -Wno-unused-function -Wno-unused-variable -Wno-unreachable-code \
     -I"$ROOT/userland/host-audio/shim" -I"$ROOT/userland/libsystem" \
     -c "$ROOT/userland/libsystem/sqlite3_mos.c" -o "$OUT/sqlite3_mos.o"
-# compression.c do #135 entra no ELF. MOS_LIBSYSTEM usa o cz_raw_* de compression_z.c
-# (já na lista) em vez de incluir o .c de novo. LZMA/Brotli ficam na dylib.
+# compression.c entra no ELF. MOS_LIBSYSTEM usa o cz_raw_* de compression_z.c
+# (já na lista) em vez de incluir o .c de novo. liblzma (0BSD) e Brotli (MIT)
+# compilam no mesmo link; o kshim cobre o que o freestanding não traz.
+XZ="$ROOT/userland/third_party/xz"
+BR="$ROOT/userland/third_party/brotli"
 comp_one() {
     "$ZIG" cc -target x86_64-freestanding-none -O2 -g0 -ffreestanding -fno-stack-protector -fno-builtin -nostdlib \
         -fpie -mno-red-zone -Wall -Wno-unused-parameter -Wno-incompatible-library-redeclaration -Wno-builtin-requires-header \
-        -Wno-unused-function \
-        -I"$ROOT/userland/libsystem/kshim" -I"$ROOT/userland/libsystem" -I"$ROOT/userland/third_party/zlib" \
+        -Wno-unused-function -Wno-unused-variable \
+        -DHAVE_CONFIG_H -DTUKLIB_SYMBOL_PREFIX=lzma_ \
+        -I"$ROOT/userland/libsystem/kshim" -I"$ROOT/userland/libsystem/kshim/xz-config" \
+        -I"$ROOT/userland/libsystem" -I"$ROOT/userland/third_party/zlib" \
         -I"$ROOT/userland/third_party/lz4" -I"$ROOT/userland/third_party/lzfse" \
+        -I"$XZ" -I"$XZ/src/liblzma/api" -I"$XZ/src/liblzma/common" -I"$XZ/src/liblzma/check" \
+        -I"$XZ/src/liblzma/lz" -I"$XZ/src/liblzma/rangecoder" -I"$XZ/src/liblzma/lzma" \
+        -I"$XZ/src/liblzma/delta" -I"$XZ/src/liblzma/simple" -I"$XZ/src/common" \
+        -I"$BR/c/include" \
+        -include "$ROOT/userland/libsystem/kshim/math.h" \
         -isystem "$ZIGDIR/lib/include" \
         "$@" || return 1
 }
@@ -217,6 +227,32 @@ do
     src="${pair%%:*}"; obj="${pair##*:}"
     comp_one -c "$ROOT/userland/third_party/lzfse/$src" -o "$OUT/$obj"
 done
+LZMA_OBJS=()
+while IFS= read -r src; do
+    base=$(basename "$src" .c)
+    case "$base" in
+        crc_clmul_consts_gen|crc32_small|crc64_small|tuklib_exit|tuklib_mbstr_fw|tuklib_mbstr_nonprint|tuklib_mbstr_width|tuklib_mbstr_wrap|tuklib_open_stdxxx|tuklib_progname|stream_decoder_mt|stream_encoder_mt) continue ;;
+    esac
+    comp_one -c "$src" -o "$OUT/lzma_${base}.o"
+    LZMA_OBJS+=("$OUT/lzma_${base}.o")
+done < <(find "$XZ/src/liblzma" "$XZ/src/common" -name '*.c' | sort)
+BR_OBJS=()
+while IFS= read -r src; do
+    base=$(basename "$src" .c)
+    comp_one -c "$src" -o "$OUT/br_${base}.o"
+    BR_OBJS+=("$OUT/br_${base}.o")
+done < <(find "$BR/c/common" "$BR/c/dec" "$BR/c/enc" -name '*.c' | sort)
+comp_one -c "$ROOT/userland/libsystem/compression_z.c" -o "$OUT/compression_z.o"
+echo "==> compression no ELF (ida e volta pelos símbolos)"
+cc -O2 -I"$ROOT/userland/third_party/zlib" \
+    "$ROOT/tools/compression_libsystem_host.c" \
+    "$OUT/compression.o" "$OUT/compression_z.o" \
+    "$OUT/lz4.o" "$OUT/lz4hc.o" "$OUT/lz4frame.o" "$OUT/xxhash.o" \
+    "$OUT/lzfse_decode.o" "$OUT/lzfse_decode_base.o" "$OUT/lzfse_encode.o" \
+    "$OUT/lzfse_encode_base.o" "$OUT/lzfse_fse.o" "$OUT/lzvn_decode_base.o" "$OUT/lzvn_encode_base.o" \
+    "${LZMA_OBJS[@]}" "${BR_OBJS[@]}" \
+    -lm -o "$OUT/compression_libsystem_host"
+"$OUT/compression_libsystem_host"
 # UnwindLevel1.c, UnwindLevel1-gcc-ext.c, UnwindRegistersSave.S e libunwind.cpp repetem cxx_unwind.c.
 "$ZIG" cc -target x86_64-freestanding-none -O2 -g0 -ffreestanding -fno-stack-protector -fno-builtin -nostdlib -static -no-pie \
     -fpie -mno-red-zone -Wall -Wno-unused-parameter -Wno-incompatible-library-redeclaration -Wno-builtin-requires-header \
@@ -227,6 +263,7 @@ done
     "$OUT/compression.o" "$OUT/lz4.o" "$OUT/lz4hc.o" "$OUT/lz4frame.o" "$OUT/xxhash.o" \
     "$OUT/lzfse_decode.o" "$OUT/lzfse_decode_base.o" "$OUT/lzfse_encode.o" \
     "$OUT/lzfse_encode_base.o" "$OUT/lzfse_fse.o" "$OUT/lzvn_decode_base.o" "$OUT/lzvn_encode_base.o" \
+    "${LZMA_OBJS[@]}" "${BR_OBJS[@]}" \
     -o "$OUT/libSystem.mos"
 python3 "$ROOT/tools/patch-ehframe.py" "$OUT/libSystem.mos"
 HASH=$(sha256sum "$OUT/libSystem.mos" | cut -c1-16)
