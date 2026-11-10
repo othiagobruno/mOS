@@ -815,7 +815,13 @@ void strmode(unsigned short mode, char *p) {
     p[9] = ' ';
     p[10] = 0;
 }
-int vfork(void) { return fork(); }
+/* vfork não chama pthread_atfork (como no macOS). O kernel não tem espaço compartilhado: é um fork
+ * com endereço próprio. Em processo com outras threads o POSIX deixa o vfork indefinido. */
+int vfork(void) {
+    long r = SYS0(SYS_FORK);
+    if (r < 0) { cx_errno = (int)-r; return -1; }
+    return (int)r;
+}
 
 /* execl/execle: variádicas sobre o execve */
 int execl(const char *path, const char *a0, ...) {
