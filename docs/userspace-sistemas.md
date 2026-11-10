@@ -63,11 +63,14 @@ Não há branch de Interface aberta no GitHub para alinhar este contrato (consul
 - Centro distribuído: só neste processo. Não há `distnoted`; `userInfo` não atravessa processo. `NSDistributedNotificationCenter` segue sendo o centro local (limitação anterior).
 - Drop/Coalesce/Hold são aceitos; a entrega é síncrona. Snapshot de 128 observadores por post.
 
-## XPC — o que já era funcional, e o que falta
+## XPC — dicionário com porta, pipes ainda sem o launchd
 
 O fio `xpc.c` + launchd entre processos do mOS já existe (não é a libxpc da Apple). Não foi reescrito.
 
-Ainda faltam, e não foram simulados: `xpc_dictionary_set_mach_send` / `copy_mach_send`, `xpc_pipe_*`, `xpc_set_event_stream_handler`. `NSXPCConnection` continua um stub de processo (resume só marca a conexão). Helpers de computer use que esperam um daemon XPC da Apple não sobem sozinhos.
+- **Funcional neste fio:** `xpc_dictionary_set_mach_send` grava o nome da porta num valor `_xpc_type_mach_send`. `xpc_dictionary_copy_mach_send` lê esse nome. A cópia do dicionário e o `xpc_equal` preservam o valor. Na serialização própria do mOS o tipo é 13 (u32). O nome é copiado, não movido: ninguém dá `deallocate` nem cria um direito novo. O wrapper de `mach_port_*` ignora a tarefa, então o número continua válido no outro processo enquanto a porta existir.
+- **Limitação:** `xpc_pipe_create` devolve NULL. `xpc_pipe_create_from_port` devolve NULL. `xpc_pipe_routine`, `xpc_pipe_routine_reply` e `xpc_pipe_receive` devolvem EINVAL. Não há o protocolo privado do launchd.
+- **Limitação:** `xpc_set_event_stream_handler` aceita os argumentos e não chama o bloco. Não há stream de eventos do launchd.
+- `NSXPCConnection` continua um stub de processo (resume só marca a conexão). Helpers de computer use que esperam um daemon XPC da Apple não sobem sozinhos.
 
 ## Keychain — funcional, sem criptografia
 
@@ -85,7 +88,9 @@ Há callbacks de dados e de download em `foundation_more.c`. Desafio de autentic
 
 `SKPaymentQueue.canMakePayments` é NÃO. `addPayment:` não conclui compra. `transactions` é um array vazio. `cx_storekit_verify_receipt` devolve -1 e o texto "recibo não verificado: o mOS não valida recibo da App Store nem fala com a Apple". Não há rede com a Apple, não há recibo assinado e não há contorno de FairPlay. Apps da App Store continuam sujeitos a DRM que esta frente não quebra.
 
-## Foundation / ICU — núcleo real, não os 278 símbolos
+## Foundation / formatação — 204 símbolos do WhatsApp, 17 com miolo
+
+O `machocheck` do WhatsApp 2.26.45.13 (x86_64) não acha o módulo `FoundationInternationalization` (`$s29…`). A conta antiga de ~278 era uma estimativa. A lista medida, gravada em `tools` a partir desse binário, tem **204 símbolos distintos** de `libswiftFoundation` / `Foundation` em FormatStyle, ISO8601, Measurement, NSDecimal, AttributedString, PersonNameComponents e comparação com locale. Contra um libSystem de 1 símbolo, os 204 apareciam no relatório de ausentes. Contra `fi_swift.c` + `fi_exports.c`, o mesmo `machocheck` no executável principal lista **0** desses 204.
 
 `userland/libsystem/fmt_core.inc` formata de verdade, com saídas fixas no `tools/fmttest.c`:
 
@@ -96,9 +101,18 @@ Há callbacks de dados e de download em `foundation_more.c`. Desafio de autentic
 - soma decimal em base 10 (`0.1 + 0.2 = 0.3`)
 - Markdown mínimo: `**negrito**`, `*itálico*`, `` `código` ``, `[texto](url)`
 
-O mesmo texto de data/número está no overlay Swift (`FormatStyles.swift`, `Coders.swift`). Esse overlay não foi executado aqui: não há `swiftc`. O teste que rodou é o núcleo C.
+A ponte swiftcc x86_64 está em `fi_abi.inc` e `fi_swift.c`. **Funcional** (ligado a esse núcleo), nos nomes mangled que o WhatsApp importa:
 
-Não está feito: os símbolos mangled do FoundationInternationalization (a conta de ~278 do WhatsApp), `PersonNameComponents`, plurais do ICU, calendário que não seja o gregoriano, e locale fora de en/pt/de/fr (cai em inglês, com agrupamento de pt/de para o número quando o idioma não é en nem fr). A dylib `libicucore.A.dylib` continua sendo a do `tools/build-icu.ps1`; este núcleo não a exige.
+- `Date.formatted()` e `Date.formatted(date:time:)` — data e hora gregorianas, estilos numérico / abreviado / longo
+- `Date.ISO8601FormatStyle.format` e `parse` — `YYYY-MM-DDTHH:MM:SSZ`; outro texto vira 0
+- `NSDecimal` a partir de Int e Double, `+`, `-`, `*`, `/`, `==`, `<` — a conta é em base 10 (`0.1 + 0.2 = 0.3`, `1/4 = 0.25`)
+- `Measurement.value`, `init(value:unit:)` e `converted(to:)` — comprimento e massa das unidades acima; outra unidade devolve o valor original
+
+**Stub:** os outros 187 nomes existem para o dyld resolver. Cada um devolve string Swift vazia (`rax = 0`, `rdx = 0xE000…`) ou nil em `rax`. Isso inclui descritores de metadata (`Ma`, `Mn`, `Mc`), `PersonNameComponents.formatted()`, markdown de `AttributedString`, `ListFormatStyle` e `IntegerFormatStyle`. Chamar um accessor de metadata e usar o ponteiro nulo continua faltando: não há o runtime Swift desses tipos. No arm64 os 204 nomes existem e só dão `ret`.
+
+O toolchain Swift 6.0.3 (Linux) confirmou o layout da small string. O `swiftc` desse toolchain não emite Mach-O de macOS sem o SDK da Apple, então a convenção foi escrita em C e assembly.
+
+Limitações que continuam: plurais do ICU, calendário que não seja o gregoriano, e locale fora de en/pt/de/fr (cai em inglês, com agrupamento de pt/de para o número quando o idioma não é en nem fr). A dylib `libicucore.A.dylib` continua sendo a do `tools/build-icu.ps1`; este núcleo não a exige. O overlay Swift (`FormatStyles.swift`) não foi compilado.
 
 ## Fora desta frente
 
@@ -106,13 +120,16 @@ Não há contrato novo com Metal nem com mídia. Os arquivos `metal.c`, AIR, AVF
 
 ## Testes de host
 
-Rodados com gcc 13 (`-std=c11 -Wall -Wextra -O1`) neste ambiente. Não há zig nem QEMU aqui: o `build.ps1` do libSystem e a VM não rodaram. O overlay Swift não foi compilado (`swiftc` ausente).
+Rodados com gcc 13 (`-std=c11 -Wall -Wextra -O1`) neste ambiente. Não há zig nem QEMU aqui: o `build.ps1` do libSystem e a VM não rodaram. O `swiftc` 6.0.3 do toolchain Linux está no ambiente e serviu para ler o layout da small string; ele não gera o Mach-O de macOS sem o SDK da Apple, então o overlay `FormatStyles.swift` não foi compilado.
 
 - `tools/prefstest.c`: 72/72
 - `tools/cfnotifytest.c`: 15/15
 - `tools/tcctest.c`: 18/18
 - `tools/smlogintest.c`: 16/16
-- `tools/fmttest.c`: 87/87
+- `tools/fmttest.c`: 94/94
+- `tools/fitest.c`: 22/22, no núcleo e em dois thunks swiftcc (`Date.formatted(date:time:)` e `NSDecimal.init(Int)`), com `-mno-red-zone`
+
+O `machocheck` (`tools/machocheck.c`) rodou no WhatsApp 2.26.45.13. Antes, com libSystem de 1 símbolo, o relatório do bundle tinha 9989 linhas e os 204 nomes desta lista. Depois, com os objetos novos, o executável principal não lista nenhum dos 204. `libswiftFoundation.dylib` nesse executável: 1057 imports, 884 ainda sem implementação (os 204 desta lista saíram dessa conta).
 
 ## Sobreposição com outras frentes
 

@@ -20,7 +20,11 @@
  *    sob demanda, e os XPC services do bundle (Contents/XPCServices) são registrados nele na hora (LC_SUBMIT).
  *    Se o serviço morre, o cliente recebe INTERRUPTED e o próximo envio reconecta; o par de um cliente morto, INVALID.
  *  - xpc_main, com XPC_SERVICE_NAME no ambiente (ou o CFBundleIdentifier), faz check_in desse nome e fica à espera.
- *    xpc_pipe_* (API privada do launchd) devolve EINVAL; xpc_dictionary_copy_mach_send devolve MACH_PORT_NULL.
+ *    xpc_dictionary_set_mach_send guarda o nome da porta no dicionário e o fio do mOS o carrega
+ *    (tipo 13). Não move o direito: o kernel desta lib ignora a tarefa, então o nome segue válido
+ *    no outro processo só enquanto ninguém der deallocate. xpc_pipe_* continua EINVAL (não há o
+ *    protocolo privado do launchd). xpc_set_event_stream_handler não guarda nem chama o bloco:
+ *    não há stream de eventos do launchd.
  * A entrega usa dispatch_async_f na fila da conexão (a libdispatch do mOS ainda roda na hora, na thread de quem
  * chama: dispatch.c).
  */
@@ -395,9 +399,23 @@ void xpc_dictionary_set_fd(xpc_object_t d, const char *k, int fd) { xo_t *o = xp
 int xpc_dictionary_dup_fd(xpc_object_t d, const char *k) { return xpc_fd_dup(xpc_dictionary_get_value(d, k)); }
 xpc_object_t xpc_dictionary_get_dictionary(xpc_object_t d, const char *k) { xo_t *o = xpc_dictionary_get_value(d, k); return o && o->type == &_xpc_type_dictionary ? o : 0; }
 xpc_object_t xpc_dictionary_get_array(xpc_object_t d, const char *k) { xo_t *o = xpc_dictionary_get_value(d, k); return IS_ARR(o) ? o : 0; }
-/* direitos Mach por XPC: sem launchd/serviços, nenhuma mensagem traz um */
-unsigned xpc_dictionary_copy_mach_send(xpc_object_t d, const char *k) { (void)d; (void)k; return 0; }
-void xpc_dictionary_set_mach_send(xpc_object_t d, const char *k, unsigned port) { (void)d; (void)k; (void)port; }
+/* Direito de envio Mach dentro do dicionário. O nome é copiado, não movido: set não dá
+ * deallocate no remetente e copy não cria um direito novo. No fio, o tipo 13 leva o u32. */
+static xo_t *xpc_mach_send_create(unsigned port) {
+    xo_t *o = xnew(&_xpc_type_mach_send);
+    if (o) o->u.u = port;
+    return o;
+}
+unsigned xpc_dictionary_copy_mach_send(xpc_object_t d, const char *k) {
+    xo_t *o = xpc_dictionary_get_value(d, k);
+    return o && o->type == &_xpc_type_mach_send ? (unsigned)o->u.u : 0;
+}
+void xpc_dictionary_set_mach_send(xpc_object_t d, const char *k, unsigned port) {
+    xo_t *o = xpc_mach_send_create(port);
+    if (!o) return;
+    xpc_dictionary_set_value(d, k, o);
+    xpc_release(o);
+}
 /* mensagem recebida que pede resposta -> conexão que a enviou (create_reply / get_remote_connection).
  * Mensagem montada aqui não entra na tabela, e create_reply devolve NULL, como no teste. */
 static struct { xo_t *dict; xo_t *conn; } xpc_remote[16];
@@ -453,7 +471,7 @@ Boolean xpc_equal(xpc_object_t a, xpc_object_t b) {
     if (!a || !b || a->type != b->type) return 0;
     xpc_type_t t = a->type;
     if (t == &_xpc_type_int64 || t == &_xpc_type_date) return a->u.i == b->u.i;
-    if (t == &_xpc_type_uint64) return a->u.u == b->u.u;
+    if (t == &_xpc_type_uint64 || t == &_xpc_type_mach_send) return a->u.u == b->u.u;
     if (t == &_xpc_type_double) return a->u.d == b->u.d;
     if (t == &_xpc_type_bool) return a->u.b == b->u.b;
     if (t == &_xpc_type_null) return 1;
@@ -724,7 +742,8 @@ static void xp_enc(xpbuf_t *b, xo_t *o, int depth) {
             xp_put(b, o->u.dict.k[i], kn);
             xp_enc(b, o->u.dict.v[i], depth + 1);
         }
-    } else if (t == &_xpc_type_error) {
+    } else if (t == &_xpc_type_mach_send) { xp_u8(b, 13); xp_u32(b, (u32)o->u.u); }
+    else if (t == &_xpc_type_error) {
         const char *s = xpc_dictionary_get_string(o, "XPCErrorDescription");
         u32 kn = s ? (u32)strlen(s) : 0;
         xp_u8(b, 12);
@@ -797,6 +816,7 @@ static xo_t *xp_dec(xprd_t *r, int depth) {
         return d;
     }
     case 12: { u32 n = xp_r32(r); char *s = xp_rstr(r, n); xo_t *e = xp_err_singleton(s); free(s); return e ? e : xpc_null_create(); }
+    case 13: return xpc_mach_send_create(xp_r32(r));
     default: r->err = 1; return 0;
     }
 }

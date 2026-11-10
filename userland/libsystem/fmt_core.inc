@@ -181,6 +181,34 @@ static int mf_date(const char *locale, int y, int m, int d, int style, char *out
     return mf_put(out, cap, tmp);
 }
 
+/* dias civis de Howard Hinnant: dia 0 = 1970-01-01. */
+static void mf_civil_from_unix(long long unix_s, int *Y, int *M, int *D, int *hh, int *mm, int *ss) {
+    long long days, rem;
+    if (unix_s >= 0) {
+        days = unix_s / 86400;
+        rem = unix_s % 86400;
+    } else {
+        days = (unix_s - 86399) / 86400;
+        rem = unix_s - days * 86400;
+    }
+    if (hh) *hh = (int)(rem / 3600);
+    if (mm) *mm = (int)((rem % 3600) / 60);
+    if (ss) *ss = (int)(rem % 60);
+    long long z = days + 719468;
+    long long era = (z >= 0 ? z : z - 146096) / 146097;
+    unsigned doe = (unsigned)(z - era * 146097);
+    unsigned yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    long long y = (long long)yoe + era * 400;
+    unsigned doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    unsigned mp = (5 * doy + 2) / 153;
+    unsigned d = doy - (153 * mp + 2) / 5 + 1;
+    unsigned m = mp + (mp < 10 ? 3 : -9);
+    y += (m <= 2);
+    if (Y) *Y = (int)y;
+    if (M) *M = (int)m;
+    if (D) *D = (int)d;
+}
+
 static int mf_time(const char *locale, int hour, int min, int sec, int style, char *out, size_t cap) {
     char lang[8];
     char tmp[32];
@@ -196,6 +224,24 @@ static int mf_time(const char *locale, int hour, int min, int sec, int style, ch
     } else if (style == MF_TIME_STANDARD) snprintf(tmp, sizeof tmp, "%02d:%02d:%02d", hour, min, sec);
     else snprintf(tmp, sizeof tmp, "%02d:%02d", hour, min);
     return mf_put(out, cap, tmp);
+}
+
+/* date_style: -1 omite; senão MF_DATE_*. time_style: 0 omite, 1 curto, 2 padrão.
+ * Os dois presentes saem como "data, hora". */
+static int mf_datetime(const char *locale, int y, int m, int d, int hh, int mm, int ss,
+                       int date_style, int time_style, char *out, size_t cap) {
+    char date[96], tim[40], both[160];
+    int hd = date_style >= 0;
+    int ht = time_style > 0;
+    if (hd && mf_date(locale, y, m, d, date_style, date, sizeof date) < 0) return -1;
+    if (ht && mf_time(locale, hh, mm, ss, time_style == 1 ? MF_TIME_SHORT : MF_TIME_STANDARD, tim, sizeof tim) < 0) return -1;
+    if (hd && ht) {
+        snprintf(both, sizeof both, "%s, %s", date, tim);
+        return mf_put(out, cap, both);
+    }
+    if (hd) return mf_put(out, cap, date);
+    if (ht) return mf_put(out, cap, tim);
+    return mf_put(out, cap, "");
 }
 
 static const char *mf_and(const char *lang) {
