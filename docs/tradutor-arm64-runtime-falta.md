@@ -72,7 +72,7 @@ colhida no Electron arm64 rodando de verdade na VM. As listas do machotest já e
   `DYLD_OPEN` é um VA novo (não há tradução velha). `mmap` com modo 2 ou 3 em endereço já reservado não
   cobre página existente. Uma thread que já está dentro do bloco não vê o `a64_invalidate` até a próxima
   fronteira (o kick e o safepoint do desvio para a frente ficam com outra frente).
-- Não há commpage arm64: a região baixa não é memória do usuário no mOS.
+- Não há commpage arm64: a região baixa não é memória do usuário no mOS. O tamanho de página do processo arm64 não depende dela (`docs/pagesize-arm64.md`).
 - Hoje o build usa `tools\build-a64rt.ps1 -Parcial`, que troca por stub os símbolos do motor que as outras frentes
   ainda não escreveram. Tirar o `-Parcial` do `build.ps1` quando o motor estiver completo.
 - O harness (machotest) não emula portas Mach, `socketpair` nem `futex`. No Electron ele sempre para no mesmo ponto

@@ -92,7 +92,7 @@ Encontrados ao comparar com a referência x86_64. Não são do tradutor, mas afe
 ## 7. Limites conhecidos (documentados, não bloqueiam)
 
 - Não há commpage arm64: a região baixa não é do usuário no mOS. Até agora nada precisou dela.
-- `hw.pagesize` = 16 KiB é o que o libSystem arm64 informa, mas as páginas reais do mOS são de 4 KiB.
+- A página de 16 KiB do processo arm64 (anúncio e operações) está em `docs/pagesize-arm64.md`. O kernel segue em 4 KiB. O que ainda não é página guest: a pilha principal não desmapeia, `MAP_FIXED` de arquivo não honra o endereço, e não há commpage.
 - O `svc #0x80` "cru" do Darwin só trata exit/read/write/getpid/kill/thread_selfid/TSD. O resto vira
   SIGSYS. Os apps usam o libSystem, então isso só aparece em binários que fazem syscall direto.
 

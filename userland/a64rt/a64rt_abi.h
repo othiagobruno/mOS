@@ -133,12 +133,20 @@ _Static_assert(sizeof(a64_darwin_ucontext_t) == 56, "ucontext");
     X("hw.optional.arm.FEAT_PAuth2", 0) X("hw.optional.arm.FEAT_EPAC", 0) \
     X("hw.optional.arm.AdvSIMD_HPFPCvt", 1) X("hw.optional.arm.SME_F32F32", 0) \
     X("hw.cachelinesize", 128) X("hw.l1icachesize", 131072) X("hw.l1dcachesize", 65536) X("hw.l2cachesize", 4194304) \
-    X("hw.pagesize", 16384) X("hw.pagesize32", 16384) X("vm.pagesize", 16384) X("hw.tbfrequency", 24000000) \
+    X("hw.pagesize", A64_GUEST_PAGE) X("hw.pagesize32", A64_GUEST_PAGE) X("vm.pagesize", A64_GUEST_PAGE) \
+    X("hw.tbfrequency", 24000000) \
     X("hw.optional.arm.caps", 0)
 #define A64RT_SYSCTL_STRS(X) \
     X("hw.machine", "arm64") X("hw.model", "Mac14,2") X("machdep.cpu.brand_string", "Apple M2 (mOS)") \
     X("kern.version_arch", "ARM64")
 /* uname(3) do processo arm64: machine = "arm64"; arch(1) e NXGetLocalArchInfo: "arm64" */
 #define A64RT_UNAME_MACHINE "arm64"
-/* hw.pagesize = 16 KiB como no Apple Silicon: o mmap do libSystem arm64 alinha a 16 KiB (o kernel aloca
- * em 4 KiB; o Go/Swift/V8 do arm64 contam com páginas de 16 KiB). */
+/* Página que o processo arm64 traduzido vê. O kernel continua em 4 KiB (docs/pagesize-arm64.md).
+ * hw.pagesize / vm_page_size / getpagesize / sysconf(_SC_PAGESIZE) / host_page_size usam este valor.
+ * O processo x86_64 continua em 4096 e não lê esta constante. */
+#define A64_GUEST_PAGE       16384u
+#define A64_GUEST_PAGE_MASK  (A64_GUEST_PAGE - 1u)
+#define A64_GUEST_PAGE_SHIFT 14
+/* fim exclusivo, alinhado a 16 KiB, de [addr, addr+len) */
+#define A64_GUEST_PAGE_END(addr, len) \
+    (((unsigned long long)(addr) + (unsigned long long)(len) + A64_GUEST_PAGE_MASK) & ~(unsigned long long)A64_GUEST_PAGE_MASK)

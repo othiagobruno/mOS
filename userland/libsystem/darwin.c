@@ -778,8 +778,18 @@ int pthread_attr_getstack(const void *a, void **addr, size_t *s) { (void)a; if (
 int pthread_attr_setstack(void *a, void *addr, size_t s) { (void)a; (void)addr; (void)s; return 0; }
 int pthread_attr_setdetachstate(void *a, int st) { (void)a; (void)st; return 0; }
 int pthread_attr_getdetachstate(const void *a, int *st) { (void)a; if (st) *st = 1; return 0; }   /* JOINABLE */
-int pthread_attr_setguardsize(void *a, size_t s) { (void)a; (void)s; return 0; }
-int pthread_attr_getguardsize(const void *a, size_t *s) { (void)a; if (s) *s = 4096; return 0; }
+size_t cx_attr_getguard(const void *a);   /* extra.c: 16 KiB no arm64 (página guest); 4096 no x86_64 */
+int cx_attr_setguard(void *a, size_t s);
+int pthread_attr_setguardsize(void *a, size_t s) { return cx_attr_setguard(a, s); }
+int pthread_attr_getguardsize(const void *a, size_t *s) {
+#if defined(__aarch64__)
+    if (!s) return 22;   /* EINVAL, como no macOS */
+#else
+    if (!s) return 0;    /* x86_64: o comportamento anterior, ponteiro nulo ignorado */
+#endif
+    *s = cx_attr_getguard(a);
+    return 0;
+}
 int pthread_attr_setscope(void *a, int s) { (void)a; (void)s; return 0; }
 int pthread_attr_setschedpolicy(void *a, int p) { (void)a; (void)p; return 0; }
 int pthread_attr_setschedparam(void *a, const void *p) { (void)a; (void)p; return 0; }

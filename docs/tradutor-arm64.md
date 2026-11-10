@@ -220,7 +220,8 @@ próprias `0x4D00..`, ucontext/mcontext64 do Darwin arm64, ESR, tabela de sysctl
   posix_spawn passam pelo kernel (x86_64 ↔ arm64 nos dois sentidos). `MOS_A64_ENGINE=interp|jit` escolhe o motor.
 - **Limites conhecidos.** O kernel não aplica proteção por página, então a rede de segurança de SMC do JIT
   (`a64_host_jit_wprotect`) fica desligada e vale o IC IVAU/`sys_icache_invalidate`; não há commpage arm64 (a
-  região baixa não é do usuário no mOS); hw.pagesize 16 KiB é o que o libSystem arm64 informa.
+  região baixa não é do usuário no mOS). A página vista pelo processo arm64 é de 16 KiB de verdade
+  nas operações de memória (contrato em `docs/pagesize-arm64.md`); o kernel continua em 4 KiB.
 
 Testes:
 ```
@@ -230,7 +231,7 @@ build/a64rt-test/run.sh <mach-o arm64> [args]       # machotest (MOS_A64_ENGINE,
 ```
 `userland/tests-a64rt/main.cpp` (zig c++ -target aarch64-macos): threads, mutex, thread_local, sinais (raise,
 máscara, pendentes, pthread_kill, SIGSEGV com far/esr e mcontext alterado, brk, udf, sigaltstack), exceções C++
-(também dentro de thread), uname/sysctl, posix_spawn arm64→x86_64 e arm64→arm64.
+(também dentro de thread), uname/sysctl, página de 16 KiB (`pagina`), posix_spawn arm64→x86_64 e arm64→arm64.
 
 ## libSystem e bibliotecas do sistema em arm64 (frente LIBSYS)
 
@@ -288,8 +289,8 @@ funções**.
   preprocessador do `objc_setExceptionPreprocessor` e um terminate handler que chama o `NSSetUncaughtExceptionHandler` e
   imprime nome e motivo. Sem a libc++ no disco, imprime e aborta como antes.
 - Hardware visto pelo processo: sysctl do Apple Silicon (`darwin_arm64.c`, de `A64RT_SYSCTL_INTS/STRS` e
-  `A64_FEATURES`), `uname -m` = arm64, páginas de 16 KiB (`vm_page_size`, `getpagesize`, `sysconf`, `host_page_size`;
-  o mmap anônimo alinha a 16 KiB).
+  `A64_FEATURES`), `uname -m` = arm64, páginas de 16 KiB de verdade no guest (`docs/pagesize-arm64.md`:
+  `vm_page_size`, `getpagesize`, `sysconf`, `host_page_size`, mmap/mprotect/munmap e a guarda de pthread).
 
 **Demais bibliotecas.** `tools/build-libs-arm64.ps1` faz os slices arm64 (`build-libcxx.ps1`, `build-sqlite.ps1`,
 `build-icu.ps1` com `-Arch arm64` → `build\<lib>-arm64`; WebKit.framework, cujo `wk_sys` ganhou `svc #0x4d4f`) e junta

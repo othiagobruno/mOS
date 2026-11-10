@@ -7,7 +7,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
+#include <stdint.h>
 #include <unistd.h>
+#include <sys/mman.h>
 #include <sys/utsname.h>
 #include <sys/sysctl.h>
 #include <sys/ucontext.h>
@@ -206,8 +209,149 @@ static void teste_sistema(void) {
     CHECK("hw.cputype = arm64", sysctlbyname("hw.cputype", &ct, &n, 0, 0) == 0 && ct == 0x0100000C);
 }
 
-// ---- código gerado em tempo de execução (MAP_JIT): com sys_icache_invalidate e sem (rede de segurança do JIT)
-#include <sys/mman.h>
+// ---- página de 16 KiB vista pelo processo arm64 (docs/pagesize-arm64.md)
+// O kernel continua em 4 KiB. Este teste só roda no mOS (zig c++ -target aarch64-macos + machotest/VM).
+#ifdef __aarch64__
+extern "C" unsigned long long vm_page_size, vm_kernel_page_size;
+extern "C" int vm_page_shift, vm_kernel_page_shift;
+extern "C" int host_page_size(unsigned, unsigned long long *);
+extern "C" int mach_vm_deallocate(unsigned, unsigned long long, unsigned long long);
+
+static volatile char *volatile pag_alvo;
+static volatile int pag_falta;
+static void h_pagina(int s, siginfo_t *si, void *ucv) {
+    ucontext_t *uc = (ucontext_t *)ucv;
+    pag_falta = s == SIGSEGV && si && si->si_addr == (void *)pag_alvo;
+    if (uc && uc->uc_mcontext) uc->uc_mcontext->__ss.__pc += 4;
+}
+/* 1 se o load faltou e a instrução foi pulada. Instala o tratador só em volta do load. */
+static int load_falta(volatile char *p) {
+    struct sigaction sa, old;
+    memset(&sa, 0, sizeof sa);
+    sa.sa_sigaction = h_pagina;
+    sa.sa_flags = SA_SIGINFO;
+    pag_alvo = p;
+    pag_falta = 0;
+    if (sigaction(SIGSEGV, &sa, &old) != 0) return 0;
+    unsigned char b = 0xA5;
+    __asm__ volatile("ldrb %w0, [%1]" : "+r"(b) : "r"(p) : "memory");
+    int falta = pag_falta && b == 0xA5;
+    sigaction(SIGSEGV, &old, 0);
+    return falta;
+}
+struct pag_pilha { int base_ok; int falta; size_t sz; uintptr_t top; };
+static void *olha_pilha(void *arg) {
+    pag_pilha *i = (pag_pilha *)arg;
+    char *top = (char *)pthread_get_stackaddr_np(pthread_self());
+    size_t sz = pthread_get_stacksize_np(pthread_self());
+    i->top = (uintptr_t)top;
+    i->sz = sz;
+    char *base = top - sz;
+    base[0] = 1;
+    i->base_ok = base[0] == 1;
+    i->falta = load_falta(base - 1);
+    return 0;
+}
+static void teste_pagina(void) {
+    unsigned long long hostpg = 0;
+    CHECK("vm_page_size e vm_kernel_page_size = 16 KiB, shift 14",
+          vm_page_size == 16384 && vm_kernel_page_size == 16384 &&
+          vm_page_shift == 14 && vm_kernel_page_shift == 14);
+    CHECK("getpagesize e sysconf(_SC_PAGESIZE) = 16 KiB",
+          getpagesize() == 16384 && sysconf(29) == 16384 &&
+          sysconf(_SC_PAGESIZE) == 16384 && _SC_PAGESIZE == 29);
+    CHECK("host_page_size = 16 KiB", host_page_size(0, &hostpg) == 0 && hostpg == 16384);
+
+    unsigned long long pg = 0; size_t n = sizeof pg;
+    CHECK("sysctl hw.pagesize é u64 16384",
+          sysctlbyname("hw.pagesize", &pg, &n, 0, 0) == 0 && n == 8 && pg == 16384);
+    int p32 = 0; n = sizeof p32;
+    CHECK("sysctl hw.pagesize32 é int 16384",
+          sysctlbyname("hw.pagesize32", &p32, &n, 0, 0) == 0 && n == 4 && p32 == 16384);
+    int vp = 0; n = sizeof vp;
+    CHECK("sysctl vm.pagesize é int 16384",
+          sysctlbyname("vm.pagesize", &vp, &n, 0, 0) == 0 && n == 4 && vp == 16384);
+    int mib[2] = {6, 7}, mb = 0; n = sizeof mb;
+    CHECK("sysctl MIB {6,7} (hw.pagesize) = 16384",
+          sysctl(mib, 2, &mb, &n, 0, 0) == 0 && n == 4 && mb == 16384);
+
+    void *p = mmap(0, 100000, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+    size_t arred = (100000u + 16383u) & ~16383u;   /* 114688 */
+    int alinhado = p != MAP_FAILED && ((uintptr_t)p & 16383) == 0;
+    if (alinhado) {
+        ((volatile char *)p)[0] = 1;
+        ((volatile char *)p)[99999] = 2;
+        ((volatile char *)p)[arred - 1] = 3;
+    }
+    CHECK("mmap(100000) alinha a 16 KiB e o pedido cabe na faixa",
+          alinhado && ((volatile char *)p)[99999] == 2 && ((volatile char *)p)[arred - 1] == 3);
+    if (alinhado) {
+        CHECK("o byte depois da página guest falta", load_falta((volatile char *)p + arred));
+        errno = 0;
+        void *ruim = mmap((char *)p + 4096, 16384, PROT_READ | PROT_WRITE,
+                          MAP_FIXED | MAP_PRIVATE | MAP_ANON, -1, 0);
+        CHECK("MAP_FIXED desalinhado é EINVAL", ruim == MAP_FAILED && errno == EINVAL);
+
+        void *meio = mmap((char *)p + 16384, 1, PROT_NONE, MAP_FIXED | MAP_PRIVATE | MAP_ANON, -1, 0);
+        CHECK("MAP_FIXED de 1 byte troca a página guest do meio",
+              meio == (char *)p + 16384 && ((volatile char *)p)[0] == 1 &&
+              load_falta((volatile char *)p + 16384) && ((volatile char *)p)[32768] == 0);
+
+        errno = 0;
+        int pr = mprotect((char *)p + 32768, 1, PROT_NONE);
+        int vizinho = ((volatile char *)p)[49152] == 0;
+        CHECK("mprotect parcial PROT_NONE cobre 16 KiB e poupa o vizinho",
+              pr == 0 && load_falta((volatile char *)p + 32768) && vizinho);
+        errno = 0;
+        CHECK("mprotect no meio da página guest é EINVAL",
+              mprotect((char *)p + 32768 + 4096, 4096, PROT_READ | PROT_WRITE) == -1 && errno == EINVAL &&
+              load_falta((volatile char *)p + 32768));
+        CHECK("mprotect de volta a RW religa a página",
+              mprotect((char *)p + 32768, 1, PROT_READ | PROT_WRITE) == 0 &&
+              (((volatile char *)p)[32768] = 4) == 4);
+
+        /* a página em +16384 continua solta pelo MAP_FIXED; o vizinho em +49152 segue mapeado */
+        CHECK("munmap de 100 bytes solta a página guest",
+              munmap(p, 100) == 0 && load_falta((volatile char *)p) && ((volatile char *)p)[49152] == 0);
+        errno = 0;
+        CHECK("munmap desalinhado é EINVAL", munmap((char *)p + 8, 16384) == -1 && errno == EINVAL);
+        CHECK("munmap de comprimento 0 é sucesso", munmap(p, 0) == 0);
+        munmap((char *)p + 16384, arred - 16384);
+    }
+
+    void *g = mmap(0, 65536, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+    if (g != MAP_FAILED) ((volatile char *)g)[16384] = 9;
+    CHECK("mach_vm_deallocate no meio da página solta só essa página guest",
+          g != MAP_FAILED && ((volatile char *)g)[16384] == 9 &&
+          mach_vm_deallocate(0, (unsigned long long)(uintptr_t)g + 4096, 16) == 0 &&
+          load_falta((volatile char *)g) && ((volatile char *)g)[16384] == 9);
+    if (g != MAP_FAILED) munmap(g, 65536);
+
+    pthread_attr_t at;
+    size_t gs = 0;
+    CHECK("guarda padrão da pthread é 16 KiB",
+          pthread_attr_init(&at) == 0 && pthread_attr_getguardsize(&at, &gs) == 0 && gs == 16384);
+    CHECK("setguardsize(100) sobe a 16 KiB",
+          pthread_attr_setguardsize(&at, 100) == 0 && pthread_attr_getguardsize(&at, &gs) == 0 && gs == 16384);
+    CHECK("setguardsize(0) tira a guarda",
+          pthread_attr_setguardsize(&at, 0) == 0 && pthread_attr_getguardsize(&at, &gs) == 0 && gs == 0);
+    CHECK("setguardsize(NULL) é EINVAL", pthread_attr_setguardsize(0, 16384) == 22);
+    CHECK("getguardsize(NULL) é EINVAL", pthread_attr_getguardsize(&at, 0) == 22);
+
+    pthread_attr_setguardsize(&at, 16384);
+    pthread_attr_setstacksize(&at, 64 << 10);
+    pag_pilha info = {0, 0, 0, 0};
+    pthread_t th;
+    int cr = pthread_create(&th, &at, olha_pilha, &info);
+    if (!cr) pthread_join(th, 0);
+    CHECK("pilha da thread: base usável e a página de guarda abaixo falta",
+          cr == 0 && info.base_ok && info.falta && info.sz == (64u << 10) && (info.top & 16383) == 0 &&
+          (info.sz & 16383) == 0);
+    pthread_attr_destroy(&at);
+}
+#else
+static void teste_pagina(void) { printf("pula pagina (não é arm64)\n"); }
+#endif
 #include <libkern/OSCacheControl.h>
 static void teste_smc(void) {
 #ifdef __aarch64__
@@ -454,12 +598,13 @@ int main(int argc, char **argv) {
     }
 #endif
     printf("%sa64rt-teste: %s (argc %d)\n", motor, argv[0], argc);
-    const char *so = argc > 1 ? argv[1] : 0;   // um teste só: threads, mutex, sinais, cxx, sistema, smc, fork, spawn
+    const char *so = argc > 1 ? argv[1] : 0;   // um teste só: threads, mutex, sinais, cxx, sistema, pagina, smc, fork, spawn
 #define RODA(n, f) if (!so || !strcmp(so, n)) f()
     RODA("threads", teste_threads);
     RODA("mutex", teste_mutex);
     RODA("sinais", teste_sinais);
     RODA("sistema", teste_sistema);
+    RODA("pagina", teste_pagina);
     RODA("smc", teste_smc);
     RODA("fork", teste_fork);
     RODA("spawn", teste_spawn);
