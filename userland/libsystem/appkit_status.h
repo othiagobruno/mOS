@@ -56,6 +56,8 @@ void cx_pop_resign_active(void);
 
 /* Política do NSApplication. set devolve 1 se o valor é regular, accessory ou prohibited. */
 int cx_act_set_policy(int policy);
+/* Info.plist LSUIElement no launch, se setActivationPolicy ainda não foi chamado. Devolve 1 se passou a accessory. */
+int cx_act_note_lsuielement(int present);
 int cx_act_policy(void);
 int cx_act_lsuielement(void);
 int cx_act_hides_dock(void);

@@ -2672,7 +2672,7 @@ static BOOL ap_set_policy(id self, SEL c, i64 p) {
     (void)self; (void)c;
     if (!cx_act_set_policy((int)p)) return NO;
     /* accessory e prohibited saem do Dock; regular volta. O selo do NSDockTile segue em MOS_DESK_BADGE. */
-    SYS3(GUI_DEVICE, DEV_DOCK, DK_VISIBLE, cx_act_hides_dock() ? 0 : 1);
+    cx_dock_set_visible(cx_act_hides_dock() ? 0 : 1);
     return YES;
 }
 static i64 ap_policy(id self, SEL c) { (void)self; (void)c; return cx_act_policy(); }
@@ -2709,6 +2709,18 @@ static void ap_finish_launching(id self, SEL c) {
     (void)c;
     if (app.launched) return;
     app.launched = YES;
+    /* LSUIElement no Info.plist esconde o Dock mesmo se o app nunca chama setActivationPolicy */
+    {
+        id bundle = MSG0(id, cx_class_named("NSBundle"), "mainBundle");
+        id v = bundle ? MSG(id, bundle, "objectForInfoDictionaryKey:", cx_str("LSUIElement")) : 0;
+        int yes = 0;
+        if (v && cx_is_str(v)) {
+            const char *s = cx_cstr(v);
+            yes = s && (s[0] == '1' || s[0] == 'Y' || s[0] == 'y' || s[0] == 't' || s[0] == 'T');
+        } else if (v && cx_responds(v->isa, sel_registerName("longLongValue")))
+            yes = MSG0(long long, v, "longLongValue") != 0;
+        if (cx_act_note_lsuielement(yes)) cx_dock_set_visible(0);
+    }
     { extern void cx_gc_app_launched(void); cx_gc_app_launched(); }   /* GameController: controles já ligados */
     id d = app.delegate;
     id note = cx_note(NSApplicationWillFinishLaunchingNotification, self, 0);
@@ -3151,7 +3163,7 @@ static void al_begin_sheet_delegate(id self, SEL c, id win, id delegate, SEL did
 }
 
 /* ================================================================ NSMenu (aceito, sem efeito visual) */
-typedef struct { id title, items, key, submenu; SEL action; id target; i64 tag; int state; BOOL sep, disabled; u64 mask; BOOL mask_set;
+typedef struct { id title, attr_title, items, key, submenu; SEL action; id target; i64 tag; int state; BOOL sep, disabled; u64 mask; BOOL mask_set;
                  BOOL hidden, alternate, header; id image, represented;
                  id owner, delegate; } menust_t;   /* owner: o NSMenu que contém o item (fraco); delegate: do NSMenu (fraco) */
 static menust_t *mn(id m) { if (!ST(m)) { menust_t *s = calloc(1, sizeof *s); s->items = cx_arr_new(&NSMutableArray_c); ST(m) = s; } return ST(m); }
@@ -3177,6 +3189,8 @@ static id mi_init(id self, SEL c, id t, SEL a, id k) { (void)c; menust_t *s = mn
 static id mi_sep(id cls, SEL c) { (void)c; id it = MSG0(id, MSG0(id, cls, "alloc"), "init"); mn(it)->sep = YES; return it; }
 static void mi_set_enabled(id self, SEL c, BOOL b) { (void)c; mn(self)->disabled = !b; menus_dirty = YES; }
 static void mi_set_state(id self, SEL c, i64 st) { (void)c; mn(self)->state = (int)st; menus_dirty = YES; }
+static void mi_set_attr(id self, SEL c, id a) { (void)c; keep(&mn(self)->attr_title, a); menus_dirty = YES; }
+static id mi_attr(id self, SEL c) { (void)c; return mn(self)->attr_title; }
 static void mi_set_mask(id self, SEL c, u64 m) { (void)c; mn(self)->mask = m; mn(self)->mask_set = YES; menus_dirty = YES; }
 static u64 mi_mask_get(id self, SEL c) {
     (void)c;
@@ -3279,8 +3293,19 @@ u32 cx_menu_item_action(id item) {
     if (mn(item)->sep) return 0;
     return menu_id(item);
 }
+void cx_menu_tab_forget(id item) {
+    u32 i;
+    if (!item) return;
+    for (i = 0; i < nmenu_tab; i++)
+        if (menu_tab[i] == item) { objc_release(item); menu_tab[i] = 0; return; }
+}
 static u32 menu_id(id item) {
-    for (u32 i = 0; i < nmenu_tab; i++) if (menu_tab[i] == item) return i + 1;
+    u32 i, hole = nmenu_tab;
+    for (i = 0; i < nmenu_tab; i++) {
+        if (menu_tab[i] == item) return i + 1;
+        if (!menu_tab[i] && hole == nmenu_tab) hole = i;
+    }
+    if (hole < nmenu_tab) { menu_tab[hole] = objc_retain(item); return hole + 1; }
     if (nmenu_tab == capmenu_tab) { capmenu_tab = capmenu_tab ? capmenu_tab * 2 : 64; menu_tab = realloc(menu_tab, capmenu_tab * sizeof(id)); }
     menu_tab[nmenu_tab++] = objc_retain(item);
     return nmenu_tab;
@@ -3393,7 +3418,7 @@ static void perform_menu(int k) {
     }
     if (k == GUI_MENU_PREFS) { id it = find_item(app.menu, pred_comma, 0); if (it) perform_item(it); return; }
     if (k == GUI_MENU_HIDE) return;
-    if (k >= 1 && (u32)k <= nmenu_tab) perform_item(menu_tab[k - 1]);
+    if (k >= 1 && (u32)k <= nmenu_tab && menu_tab[k - 1]) perform_item(menu_tab[k - 1]);
 }
 static BOOL menu_shortcut(gui_event_t *g) {
     if (!app.menu || !(g->mods & 8)) return NO;
@@ -4999,6 +5024,7 @@ void cx_appkit_init(void) {
     M(NSMenuItem, "keyEquivalentModifierMask", mi_mask_get); M(NSMenuItem, "userKeyEquivalent", mi_user_key); M(NSMenuItem, "setUserKeyEquivalent:", mi_set_key);
     M(NSMenuItem, "userKeyEquivalentModifierMask", mi_user_mask); M(NSMenuItem, "setUserKeyEquivalentModifierMask:", mi_set_mask);
     M(NSMenuItem, "setAction:", mi_set_action); M(NSMenuItem, "setTitle:", mi_set_title); M(NSMenuItem, "setKeyEquivalent:", mi_set_key); M(NSMenuItem, "tag", mi_tag); M(NSMenuItem, "state", mi_state);
+    M(NSMenuItem, "setAttributedTitle:", mi_set_attr); M(NSMenuItem, "attributedTitle", mi_attr);
     M(NSMenuItem, "setTag:", mi_set_tag); M(NSMenuItem, "setState:", mi_set_state); M(NSMenuItem, "setEnabled:", mi_set_enabled);
     M(NSMenuItem, "setToolTip:", mi_set_tooltip); M(NSMenuItem, "toolTip", mi_tooltip);
     M(NSMenuItem, "setAllowsKeyEquivalentWhenHidden:", mi_set_bool_ignored);

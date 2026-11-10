@@ -33,6 +33,7 @@ static cx_sb_slot_t g_sb[CX_SB_MAX];
 static int g_sb_seq = 1;
 static cx_pop_slot_t g_pop[CX_POP_MAX];
 static int g_policy = CX_ACT_REGULAR;
+static int g_policy_explicit;
 static int g_active = 1;
 
 static void copy_title(char *dst, const char *src) {
@@ -243,6 +244,7 @@ void cx_pop_resign_active(void) {
 int cx_act_set_policy(int policy) {
     if (policy != CX_ACT_REGULAR && policy != CX_ACT_ACCESSORY && policy != CX_ACT_PROHIBITED)
         return 0;
+    g_policy_explicit = 1;
     g_policy = policy;
     if (policy == CX_ACT_PROHIBITED) {
         g_active = 0;
@@ -254,6 +256,11 @@ int cx_act_set_policy(int policy) {
 int cx_act_policy(void) { return g_policy; }
 int cx_act_lsuielement(void) { return g_policy == CX_ACT_ACCESSORY; }
 int cx_act_hides_dock(void) { return g_policy != CX_ACT_REGULAR; }
+int cx_act_note_lsuielement(int present) {
+    if (!present || g_policy_explicit) return 0;
+    g_policy = CX_ACT_ACCESSORY;
+    return 1;
+}
 int cx_act_active(void) { return g_active; }
 
 int cx_act_activate(void) {
@@ -266,5 +273,6 @@ void cx_status_reset(void) {
     for (int i = 0; i < CX_SB_MAX; i++) g_sb[i].used = 0;
     for (int i = 0; i < CX_POP_MAX; i++) g_pop[i].used = 0;
     g_policy = CX_ACT_REGULAR;
+    g_policy_explicit = 0;
     g_active = 1;
 }
