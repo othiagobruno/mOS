@@ -8,6 +8,9 @@
  * animações nem as outras classes de controle (ver docs/uikit-catalyst.md).
  */
 #import "UIKitMOS.h"
+#include <math.h>
+#include <string.h>
+#include <objc/runtime.h>
 
 extern void _mos_uikit_constants_init(void);
 extern NSString *const UIApplicationDidFinishLaunchingNotification, *const UIApplicationDidBecomeActiveNotification;
@@ -23,10 +26,17 @@ extern void CGContextSaveGState(CGContextRef c);
 extern void CGContextRestoreGState(CGContextRef c);
 extern void CGContextTranslateCTM(CGContextRef c, CGFloat x, CGFloat y);
 extern void CGContextScaleCTM(CGContextRef c, CGFloat x, CGFloat y);
+extern void CGContextConcatCTM(CGContextRef c, CGAffineTransform t);
 extern void CGContextClipToRect(CGContextRef c, CGRect r);
 extern void CGContextSetAlpha(CGContextRef c, CGFloat a);
+extern CATransform3D CATransform3DMakeAffineTransform(CGAffineTransform a);
+extern CGAffineTransform CATransform3DGetAffineTransform(CATransform3D t);
+extern int mos_anim_draw_transition(UIView *v, CGContextRef c);
 
 extern void CGContextDrawImage(CGContextRef c, CGRect r, void *img);
+extern void UIGraphicsBeginImageContextWithOptions(CGSize size, BOOL opaque, CGFloat scale);
+extern UIImage *UIGraphicsGetImageFromCurrentImageContext(void);
+extern void UIGraphicsEndImageContext(void);
 extern void *CGColorCreateSRGB(CGFloat r, CGFloat g, CGFloat b, CGFloat a);
 extern size_t CGImageGetWidth(void *img), CGImageGetHeight(void *img);
 extern void *CGImageRetain(void *img);
@@ -211,20 +221,107 @@ C(systemPinkColor, 1, .18, .33, 1) C(systemPurpleColor, .69, .32, .87, 1) C(syst
 - (void)performAsCurrentTraitCollection:(void (^)(void))b { if (b) b(); }
 @end
 
+/* ================================================================ transform da UIView
+ * A matriz fica na view (fonte da verdade do hit-test, do frame e do desenho). O layer, quando existe, espelha:
+ * setTransform: empurra para ele, e setTransform: do layer (subclasse) volta para a view. Rotação e escala são em
+ * volta do centro, como o anchorPoint (0,5, 0,5) do CALayer. O frame com transform não-identidade é a caixa
+ * alinhada aos eixos; bounds e center continuam os do modelo. */
+static int mos_t3_ident(CATransform3D t) {
+    return t.m11 == 1 && t.m12 == 0 && t.m13 == 0 && t.m14 == 0 && t.m21 == 0 && t.m22 == 1 && t.m23 == 0 && t.m24 == 0
+        && t.m31 == 0 && t.m32 == 0 && t.m33 == 1 && t.m34 == 0 && t.m41 == 0 && t.m42 == 0 && t.m43 == 0 && t.m44 == 1;
+}
+static int mos_t3_eq(CATransform3D a, CATransform3D b) { return memcmp(&a, &b, sizeof a) == 0; }
+static void mos_t3_ident_set(CATransform3D *t) {
+    memset(t, 0, sizeof *t);
+    t->m11 = t->m22 = t->m33 = t->m44 = 1;
+}
+/* [x y 0 1] * M, com divisão por w (perspectiva). */
+static void mos_apply(CATransform3D t, CGFloat x, CGFloat y, CGFloat *ox, CGFloat *oy) {
+    CGFloat xp = t.m11 * x + t.m21 * y + t.m41, yp = t.m12 * x + t.m22 * y + t.m42, wp = t.m14 * x + t.m24 * y + t.m44;
+    if (wp != 0 && wp != 1) { xp /= wp; yp /= wp; }
+    *ox = xp; *oy = yp;
+}
+/* inversa da parte afim (m11, m12, m21, m22, m41, m42). Rotação/escala/translação invertem certo; perspectiva é aproximada. */
+static int mos_unapply(CATransform3D t, CGFloat x, CGFloat y, CGFloat *ox, CGFloat *oy) {
+    CGFloat a = t.m11, b = t.m12, c = t.m21, d = t.m22, tx = t.m41, ty = t.m42, det = a * d - b * c;
+    if (fabs(det) < 1e-12) return 0;
+    CGFloat dx = x - tx, dy = y - ty;
+    *ox = (d * dx - c * dy) / det;
+    *oy = (-b * dx + a * dy) / det;
+    return 1;
+}
+static CGPoint mos_l2s(UIView *v, CGPoint p) {
+    if (mos_t3_ident(v->_t3))
+        return CGPointMake(p.x + v->_frame.origin.x - v->_boundsOrigin.x, p.y + v->_frame.origin.y - v->_boundsOrigin.y);
+    CGFloat w = v->_frame.size.width, h = v->_frame.size.height, x, y;
+    mos_apply(v->_t3, p.x - (v->_boundsOrigin.x + w / 2), p.y - (v->_boundsOrigin.y + h / 2), &x, &y);
+    return CGPointMake(v->_frame.origin.x + w / 2 + x, v->_frame.origin.y + h / 2 + y);
+}
+static CGPoint mos_s2l(UIView *v, CGPoint p) {
+    if (mos_t3_ident(v->_t3))
+        return CGPointMake(p.x - v->_frame.origin.x + v->_boundsOrigin.x, p.y - v->_frame.origin.y + v->_boundsOrigin.y);
+    CGFloat w = v->_frame.size.width, h = v->_frame.size.height, x, y;
+    if (!mos_unapply(v->_t3, p.x - (v->_frame.origin.x + w / 2), p.y - (v->_frame.origin.y + h / 2), &x, &y))
+        return CGPointMake(-1e9, -1e9);
+    return CGPointMake(v->_boundsOrigin.x + w / 2 + x, v->_boundsOrigin.y + h / 2 + y);
+}
+static int mos_up_ident(UIView *v) { for (; v; v = v->_superview) if (!mos_t3_ident(v->_t3)) return 0; return 1; }
+static CGRect mos_frame_aabb(UIView *v) {
+    CGFloat w = v->_frame.size.width, h = v->_frame.size.height;
+    CGFloat lcx = v->_boundsOrigin.x + w / 2, lcy = v->_boundsOrigin.y + h / 2;
+    CGFloat scx = v->_frame.origin.x + w / 2, scy = v->_frame.origin.y + h / 2;
+    CGFloat xs[4] = {v->_boundsOrigin.x, v->_boundsOrigin.x + w, v->_boundsOrigin.x, v->_boundsOrigin.x + w};
+    CGFloat ys[4] = {v->_boundsOrigin.y, v->_boundsOrigin.y, v->_boundsOrigin.y + h, v->_boundsOrigin.y + h};
+    CGFloat minx = 1e300, miny = 1e300, maxx = -1e300, maxy = -1e300;
+    for (int i = 0; i < 4; i++) {
+        CGFloat x, y;
+        mos_apply(v->_t3, xs[i] - lcx, ys[i] - lcy, &x, &y);
+        x += scx; y += scy;
+        if (x < minx) minx = x; if (y < miny) miny = y; if (x > maxx) maxx = x; if (y > maxy) maxy = y;
+    }
+    return CGRectMake(minx, miny, maxx - minx, maxy - miny);
+}
+static CGFloat mos_alpha_prod(UIView *v) {
+    CGFloat a = 1;
+    for (UIView *x = v; x; x = x->_superview) a *= x->_alpha;
+    return a < 0 ? 0 : a > 1 ? 1 : a;
+}
+static char k_mos_view;
+static int g_t3_sync;
+@interface CALayer : NSObject
+- (void)setTransform:(CATransform3D)t;
+- (CATransform3D)transform;
+@end
+@interface _MOSViewLayer : CALayer
+@end
+@implementation _MOSViewLayer
+- (void)setTransform:(CATransform3D)t {
+    [super setTransform:t];
+    if (g_t3_sync) return;
+    UIView *v = objc_getAssociatedObject(self, &k_mos_view);
+    if (v) [v setTransform3D:t];
+}
+- (void)setAffineTransform:(CGAffineTransform)a { [self setTransform:CATransform3DMakeAffineTransform(a)]; }
+@end
+
 /* ================================================================ UIView */
 @implementation UIView
-+ (Class)layerClass { return NSClassFromString(@"CALayer"); }
++ (Class)layerClass { return [_MOSViewLayer class]; }
 - (instancetype)init { return [self initWithFrame:CGRectMake(0, 0, 0, 0)]; }
 - (instancetype)initWithFrame:(CGRect)frame {
     if ((self = [super init])) {
         _frame = frame; _subviews = [[NSMutableArray alloc] init]; _alpha = 1; _userInteraction = YES; _tamic = YES;
+        mos_t3_ident_set(&_t3);
     }
     return self;
 }
 - (instancetype)initWithCoder:(NSCoder *)c { (void)c; return [self initWithFrame:CGRectMake(0, 0, 0, 0)]; }
-- (void)dealloc { [_subviews release]; [_backgroundColor release]; [_tintColor release]; [_layer release]; [super dealloc]; }
+- (void)dealloc {
+    if (_layer) objc_setAssociatedObject(_layer, &k_mos_view, nil, OBJC_ASSOCIATION_ASSIGN);
+    [_subviews release]; [_backgroundColor release]; [_tintColor release]; [_layer release]; [super dealloc];
+}
 - (UIResponder *)nextResponder { return _viewController ? (UIResponder *)_viewController : (UIResponder *)_superview; }
-- (CGRect)frame { return _frame; }
+- (CGRect)frame { return mos_t3_ident(_t3) ? _frame : mos_frame_aabb(self); }
 - (void)setFrame:(CGRect)f { _frame = f; [self setNeedsLayout]; [self setNeedsDisplay]; }
 - (CGRect)bounds { return CGRectMake(_boundsOrigin.x, _boundsOrigin.y, _frame.size.width, _frame.size.height); }
 - (void)setBounds:(CGRect)b { _boundsOrigin = b.origin; _frame.size = b.size; [self setNeedsLayout]; [self setNeedsDisplay]; }
@@ -293,7 +390,31 @@ C(systemPinkColor, 1, .18, .33, 1) C(systemPurpleColor, .69, .32, .87, 1) C(syst
 - (void)setAutoresizingMask:(NSUInteger)m { _autoresizingMask = m; }
 - (BOOL)translatesAutoresizingMaskIntoConstraints { return _tamic; }
 - (void)setTranslatesAutoresizingMaskIntoConstraints:(BOOL)t { _tamic = t; }
-- (id)layer { if (!_layer) { Class c = [[self class] layerClass]; _layer = c ? [[c alloc] init] : nil; } return _layer; }
+- (id)layer {
+    if (!_layer) {
+        Class c = [[self class] layerClass];
+        if (!c) c = [_MOSViewLayer class];
+        _layer = [[c alloc] init];
+        if (_layer) {
+            objc_setAssociatedObject(_layer, &k_mos_view, self, OBJC_ASSOCIATION_ASSIGN);
+            if (!mos_t3_ident(_t3) && [_layer respondsToSelector:@selector(setTransform:)]) {
+                g_t3_sync = 1; [(_MOSViewLayer *)_layer setTransform:_t3]; g_t3_sync = 0;
+            }
+        }
+    }
+    return _layer;
+}
+- (CATransform3D)transform3D { return _t3; }
+- (void)setTransform3D:(CATransform3D)t {
+    if (mos_t3_eq(_t3, t)) return;
+    _t3 = t;
+    if (_layer && !g_t3_sync && [_layer respondsToSelector:@selector(setTransform:)]) {
+        g_t3_sync = 1; [(_MOSViewLayer *)_layer setTransform:t]; g_t3_sync = 0;
+    }
+    [self setNeedsDisplay];
+}
+- (CGAffineTransform)transform { return CATransform3DGetAffineTransform(_t3); }
+- (void)setTransform:(CGAffineTransform)t { [self setTransform3D:CATransform3DMakeAffineTransform(t)]; }
 - (id)traitCollection { return [UITraitCollection currentTraitCollection]; }
 - (void)setNeedsDisplay { UIWindow *w = [self window]; if (w && w->_nsWindow) [w->_nsWindow.contentView setNeedsDisplay:YES]; }
 - (void)setNeedsDisplayInRect:(CGRect)r { (void)r; [self setNeedsDisplay]; }
@@ -308,17 +429,55 @@ C(systemPinkColor, 1, .18, .33, 1) C(systemPurpleColor, .69, .32, .87, 1) C(syst
 - (CGSize)sizeThatFits:(CGSize)s { (void)s; return _frame.size; }
 - (void)sizeToFit { CGSize s = [self sizeThatFits:_frame.size]; _frame.size = s; }
 - (CGSize)intrinsicContentSize { return CGSizeMake(-1, -1); }
-- (CGPoint)convertPoint:(CGPoint)p toView:(UIView *)v {
-    for (UIView *x = self; x; x = x->_superview) { if (x == v) return p; p.x += x->_frame.origin.x - x->_boundsOrigin.x; p.y += x->_frame.origin.y - x->_boundsOrigin.y; }
-    if (v) { CGPoint o = [v convertPoint:CGPointMake(0, 0) toView:nil]; p.x -= o.x; p.y -= o.y; }
+- (CGPoint)_mosFromScreen:(CGPoint)p {
+    UIView *chain[64];
+    int n = 0;
+    for (UIView *x = self; x && n < 64; x = x->_superview) chain[n++] = x;
+    for (int i = n - 1; i >= 0; i--) p = mos_s2l(chain[i], p);
     return p;
 }
-- (CGPoint)convertPoint:(CGPoint)p fromView:(UIView *)v {
-    CGPoint a = v ? [v convertPoint:p toView:nil] : p, b = [self convertPoint:CGPointMake(0, 0) toView:nil];
-    return CGPointMake(a.x - b.x, a.y - b.y);
+- (CGPoint)convertPoint:(CGPoint)p toView:(UIView *)dest {
+    if (dest == self) return p;
+    UIView *chain[64];
+    int n = 0;
+    for (UIView *x = self; x && n < 64; x = x->_superview) {
+        if (x == dest) { for (int i = 0; i < n; i++) p = mos_l2s(chain[i], p); return p; }
+        chain[n++] = x;
+    }
+    for (int i = 0; i < n; i++) p = mos_l2s(chain[i], p);
+    return dest ? [dest _mosFromScreen:p] : p;
 }
-- (CGRect)convertRect:(CGRect)r toView:(UIView *)v { r.origin = [self convertPoint:r.origin toView:v]; return r; }
-- (CGRect)convertRect:(CGRect)r fromView:(UIView *)v { r.origin = [self convertPoint:r.origin fromView:v]; return r; }
+- (CGPoint)convertPoint:(CGPoint)p fromView:(UIView *)v {
+    return [self _mosFromScreen:(v ? [v convertPoint:p toView:nil] : p)];
+}
+static CGRect mos_rect_aabb(CGPoint q[4]) {
+    CGFloat minx = q[0].x, maxx = q[0].x, miny = q[0].y, maxy = q[0].y;
+    for (int i = 1; i < 4; i++) {
+        if (q[i].x < minx) minx = q[i].x; if (q[i].x > maxx) maxx = q[i].x;
+        if (q[i].y < miny) miny = q[i].y; if (q[i].y > maxy) maxy = q[i].y;
+    }
+    return CGRectMake(minx, miny, maxx - minx, maxy - miny);
+}
+- (CGRect)convertRect:(CGRect)r toView:(UIView *)v {
+    if (mos_up_ident(self) && (!v || mos_up_ident(v))) { r.origin = [self convertPoint:r.origin toView:v]; return r; }
+    CGPoint q[4] = {
+        [self convertPoint:r.origin toView:v],
+        [self convertPoint:CGPointMake(r.origin.x + r.size.width, r.origin.y) toView:v],
+        [self convertPoint:CGPointMake(r.origin.x, r.origin.y + r.size.height) toView:v],
+        [self convertPoint:CGPointMake(r.origin.x + r.size.width, r.origin.y + r.size.height) toView:v],
+    };
+    return mos_rect_aabb(q);
+}
+- (CGRect)convertRect:(CGRect)r fromView:(UIView *)src {
+    if (mos_up_ident(self) && (!src || mos_up_ident(src))) { r.origin = [self convertPoint:r.origin fromView:src]; return r; }
+    CGPoint pts[4] = {
+        r.origin, CGPointMake(r.origin.x + r.size.width, r.origin.y),
+        CGPointMake(r.origin.x, r.origin.y + r.size.height), CGPointMake(r.origin.x + r.size.width, r.origin.y + r.size.height),
+    };
+    CGPoint q[4];
+    for (int i = 0; i < 4; i++) q[i] = [self convertPoint:pts[i] fromView:src];
+    return mos_rect_aabb(q);
+}
 - (UIView *)hitTest:(CGPoint)p withEvent:(id)e {
     if (_hidden || !_userInteraction || _alpha < 0.01 || ![self pointInside:p withEvent:e]) return nil;
     for (NSInteger k = (NSInteger)_subviews.count - 1; k >= 0; k--) {
@@ -330,12 +489,23 @@ C(systemPinkColor, 1, .18, .33, 1) C(systemPurpleColor, .69, .32, .87, 1) C(syst
 }
 - (BOOL)pointInside:(CGPoint)p withEvent:(id)e { (void)e; CGRect b = [self bounds]; return p.x >= b.origin.x && p.y >= b.origin.y && p.x < b.origin.x + b.size.width && p.y < b.origin.y + b.size.height; }
 
-/* desenho da árvore (chamado pela NSView hospedeira com o contexto já transladado para a origem desta view) */
-- (void)_mosRender:(CGContextRef)c {
-    if (_hidden || _alpha < 0.01) return;
+/* desenho da árvore. `local` desenha o conteúdo sem o transform desta view (o snapshot da transição).
+ * O CTM do contexto bitmap leva o transform; o contexto da janela do AppKit ignora CGContextConcatCTM
+ * (o deslocamento das subviews já era assim) — hit-test, frame e o bitmap honram o transform. */
+- (void)_mosRender:(CGContextRef)c { [self _mosDraw:c local:NO]; }
+- (void)_mosDraw:(CGContextRef)c local:(BOOL)local {
+    CGFloat aa = mos_alpha_prod(self);
+    if (_hidden || aa < 0.01) return;
     CGRect b = [self bounds];
     CGContextSaveGState(c);
-    if (_alpha < 1) CGContextSetAlpha(c, _alpha);       /* alfa da view (multiplica as cores desenhadas) */
+    if (!local && !mos_t3_ident(_t3)) {
+        CGFloat cx = _frame.size.width / 2, cy = _frame.size.height / 2;
+        CGContextTranslateCTM(c, cx, cy);
+        CGContextConcatCTM(c, CATransform3DGetAffineTransform(_t3));
+        CGContextTranslateCTM(c, -cx, -cy);
+    }
+    CGContextSetAlpha(c, aa);                           /* alfa próprio vezes o dos ancestrais (o save do bitmap não guarda o alfa) */
+    if (!local && mos_anim_draw_transition(self, c)) { CGContextRestoreGState(c); return; }
     if (_clipsToBounds) CGContextClipToRect(c, CGRectMake(0, 0, b.size.width, b.size.height));
     if (_backgroundColor && _backgroundColor->_a > 0) {
         CGContextSetFillColorWithColor(c, [_backgroundColor CGColor]);
@@ -351,6 +521,16 @@ C(systemPinkColor, 1, .18, .33, 1) C(systemPurpleColor, .69, .32, .87, 1) C(syst
         CGContextRestoreGState(c);
     }
     CGContextRestoreGState(c);
+}
+- (UIImage *)_mosSnapshotImage {
+    CGFloat w = _frame.size.width, h = _frame.size.height;
+    if (w < 1 || h < 1 || w > 2048 || h > 2048) return nil;
+    UIGraphicsBeginImageContextWithOptions(CGSizeMake(w, h), NO, 1);
+    CGContextRef c = UIGraphicsGetCurrentContext();
+    if (c) [self _mosDraw:c local:YES];
+    UIImage *img = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    return img;
 }
 @end
 

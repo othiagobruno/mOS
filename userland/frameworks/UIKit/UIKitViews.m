@@ -53,7 +53,15 @@ static NSNumber *num(double d) { return [NSNumber numberWithDouble:d]; }
     [self layoutSubviews];
     [self setNeedsDisplay];
 }
-- (void)setContentOffset:(CGPoint)p animated:(BOOL)a { (void)a; [self setContentOffset:p]; }
+- (void)setContentOffset:(CGPoint)p animated:(BOOL)a {
+    p = [self _mosClamp:p];
+    if (!a || ![UIView areAnimationsEnabled] || ![self window] || (p.x == _boundsOrigin.x && p.y == _boundsOrigin.y)) {
+        [self setContentOffset:p];
+        return;
+    }
+    /* 0,25 s linear: o meio do relógio cai na metade do deslocamento. Dentro de outro animate o capture só aplica. */
+    [UIView animateWithDuration:0.25 delay:0 options:(3u << 16) animations:^{ [self setContentOffset:p]; } completion:nil];
+}
 - (CGSize)contentSize { return _contentSize; }
 - (void)setContentSize:(CGSize)s { _contentSize = s; [self setNeedsDisplay]; }
 - (UIEdgeInsets)contentInset { return _contentInset; }
@@ -77,10 +85,9 @@ static NSNumber *num(double d) { return [NSNumber numberWithDouble:d]; }
 - (void)setDecelerationRate:(CGFloat)r { (void)r; }
 - (void)flashScrollIndicators {}
 - (void)scrollRectToVisible:(CGRect)r animated:(BOOL)a {
-    (void)a;
     CGPoint o = _boundsOrigin;
     if (r.origin.y < o.y) o.y = r.origin.y; else if (r.origin.y + r.size.height > o.y + _frame.size.height) o.y = r.origin.y + r.size.height - _frame.size.height;
-    [self setContentOffset:[self _mosClamp:o]];
+    [self setContentOffset:o animated:a];
 }
 /* rolagem pela roda (NSView hospedeira) e por arrastar */
 - (void)_mosScrollBy:(CGFloat)dy dx:(CGFloat)dx {
