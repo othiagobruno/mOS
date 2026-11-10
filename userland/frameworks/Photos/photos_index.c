@@ -18,6 +18,12 @@ size_t fread(void *p, size_t s, size_t n, photos_FILE *f);
 int fclose(photos_FILE *f);
 int fseek(photos_FILE *f, long off, int wh);
 long ftell(photos_FILE *f);
+#endif
+#ifndef PHOTOS_HOST
+/* mesma assinatura do foundation.h; file_mtime lê o struct stat do mOS por deslocamento */
+int stat(const char *p, void *st);
+#endif
+#if !(defined(PHOTOS_HOST) || !defined(PHOTOS_IN_LIBSYSTEM))
 #ifndef SEEK_SET
 #define SEEK_SET 0
 #define SEEK_END 2
