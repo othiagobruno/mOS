@@ -48,7 +48,7 @@ static u32 be32_(const u8 *p) { return (u32)p[0] << 24 | (u32)p[1] << 16 | (u32)
 static u64 be64_(const u8 *p) { return (u64)be32_(p) << 32 | be32_(p + 4); }
 
 /* ================================================================ libSystem.mos (ELF) */
-typedef struct { const char *name; u64 addr; } lsym_t;
+typedef struct { const char *name; u64 addr; u8 vazio; } lsym_t;
 /* Um libSystem por arquitetura do processo: 0 = x86_64 (embutido no kernel), 1 = arm64 (tradutor arm64,
  * docs/tradutor-arm64.md: o libSystem arm64 do disco em A64RT_LIBSYSTEM; o runtime a64rt.mos roda o código).
  * ls_cur é a arquitetura do link em andamento (um por vez, sob a trava grande do kernel). */
@@ -107,6 +107,17 @@ static bool libsystem_index(char *err, usize errlen) {
             if ((info & 15) > 2) continue;             /* NOTYPE (rótulos de asm), OBJECT ou FUNC */
             lsyms[nlsyms].name = (const char *)e + stroff + rd32(s);
             lsyms[nlsyms].addr = rd64(s + 8) + (rd16(e + 16) == 3 ? LIBSYSTEM_BASE : 0);
+            lsyms[nlsyms].vazio = 0;
+            if ((info & 15) == 2 && shndx < shnum) {
+                const u8 *bsh = e + shoff + (u64)shndx * shentsize;
+                u64 bva = rd64(s + 8), baddr = rd64(bsh + 16), boff = rd64(bsh + 24), bsz = rd64(bsh + 32);
+                if (bva >= baddr && bva - baddr + 6 <= bsz && boff + (bva - baddr) + 6 <= len) {
+                    const u8 *p = e + boff + (bva - baddr);
+                    int ret3 = p[0] == 0xC3 && p[1] == 0xCC;
+                    int vazia = p[0] == 0x55 && p[1] == 0x48 && p[2] == 0x89 && p[3] == 0xE5 && p[4] == 0x5D && p[5] == 0xC3;
+                    lsyms[nlsyms].vazio = (u8)(ret3 || vazia);
+                }
+            }
             nlsyms++;
         }
         break;
@@ -115,9 +126,14 @@ static bool libsystem_index(char *err, usize errlen) {
     return true;
 }
 
+static int ls_vazio;
+
 static u64 ls_lookup_exact(const char *name, usize n) {
     for (u32 i = 0; i < nlsyms; i++)
-        if (!strncmp(lsyms[i].name, name, n) && !lsyms[i].name[n]) return lsyms[i].addr;
+        if (!strncmp(lsyms[i].name, name, n) && !lsyms[i].name[n]) {
+            ls_vazio = lsyms[i].vazio;
+            return lsyms[i].addr;
+        }
     return 0;
 }
 
@@ -868,7 +884,7 @@ typedef struct {
     /* símbolos ausentes viram stubs */
     char **missing;
     u32 nmissing, capmissing;
-    /* export cujo código é `ret; int3` (tools/wa-swift-stubs.txt). Não é implementação. */
+    /* `ret; int3` ou a função vazia `push rbp; mov rbp, rsp; pop rbp; ret`. Não é implementação. */
     char **stubs;
     u32 nstub, capstub;
     u64 stub_base, end;
@@ -1053,7 +1069,7 @@ static u64 resolve(load_t *L, int ord, const char *name, bool weak) {
     if (ord > 0 && ord <= I->mo.ndylibs && I->dep[ord - 1] >= 0) a = image_export(K, I->dep[ord - 1], name, 0);
     else if (ord == 0) a = image_export(K, I->idx, name, 0);
     else if (ord == -1) a = image_export(K, 0, name, 0);
-    if (!a) a = ls_lookup(name);
+    if (!a) { ls_vazio = 0; a = ls_lookup(name); if (a && ls_vazio) exp_from_stub = 1; }
     for (int i = 0; i < K->n && !a; i++) a = image_export(K, i, name, 0);
     if (a) {
         if (exp_from_stub) note_stub(K, name);
@@ -3008,7 +3024,10 @@ bool macho_report_image(const u8 *img, usize len, const char *name, char *out, u
             u32 nswift = 0;
             for (u32 i = 0; i < K->nmissing; i++)
                 if (K->missing[i][0] == '_' && K->missing[i][1] == '$') nswift++;
-            OUT("Símbolos Swift ausentes (%u)\n", nswift);
+            u32 nret = 0;
+            for (u32 i = 0; i < K->nstub; i++)
+                if (K->stubs[i][0] == '_' && K->stubs[i][1] == '$') nret++;
+            OUT("Swift que ainda falta: %u sem símbolo, %u só com ret e sem corpo\n", nswift, nret);
         }
         if (built && K->nmissing) {
             OUT("Símbolos sem implementação no libSystem do mOS (%u):", K->nmissing);
@@ -3018,9 +3037,9 @@ bool macho_report_image(const u8 *img, usize len, const char *name, char *out, u
             OUT("\n");
         }
         if (built && K->nstub) {
-            OUT("Stub (%u):", K->nstub);
+            OUT("Swift só com ret, ainda falta (%u):", K->nstub);
             u32 nshow = K->nstub > 12 ? 8 : K->nstub;
-            for (u32 i = 0; i < nshow; i++) OUT(" Stub %s", K->stubs[i]);
+            for (u32 i = 0; i < nshow; i++) OUT(" falta %s", K->stubs[i]);
             if (nshow < K->nstub) OUT(" ... e mais %u", K->nstub - nshow);
             OUT("\n");
         }
