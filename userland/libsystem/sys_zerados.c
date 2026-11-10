@@ -255,14 +255,9 @@ void $s10Foundation13URLComponentsVMn(void) {}
 void $s10Foundation13URLComponentsVSQAAMc(void) {}
 void $s10Foundation13__DataStorageC12_deallocatorySv_SitcSgvg(void) {}
 void $s10Foundation13__DataStorageC5bytes6length4copy11deallocator6offsetACSvSg_SiSbySv_SitcSgSitcfc(void) {}
-void $s10Foundation13__DataStorageC5bytes6lengthACSVSg_Sitcfc(void) {}
-void $s10Foundation13__DataStorageC6_bytesSvSgvg(void) {}
 void $s10Foundation13__DataStorageC6lengthACSi_tcfc(void) {}
-void $s10Foundation13__DataStorageC7_lengthSivg(void) {}
-void $s10Foundation13__DataStorageC7_offsetSivg(void) {}
 void $s10Foundation13__DataStorageC8capacityACSi_tcfc(void) {}
 void $s10Foundation13__DataStorageC9_capacitySivM(void) {}
-void $s10Foundation13__DataStorageCMa(void) {}
 void $s10Foundation14DateComponentsV07isValidB02inSbAA8CalendarV_tF(void) {}
 void $s10Foundation14DateComponentsV10nanosecondSiSgvg(void) {}
 void $s10Foundation14DateComponentsV10nanosecondSiSgvs(void) {}
@@ -320,7 +315,6 @@ void $s10Foundation15AttributeScopesO5UIKitE0D10AttributesV4fontAF04FontB0Ovg(vo
 void $s10Foundation15AttributeScopesO5UIKitE0D10AttributesV4fontAF04FontB0OvpMV(void) {}
 void $s10Foundation15AttributeScopesO5UIKitE0D10AttributesVMn(void) {}
 void $s10Foundation15ContiguousBytesMp(void) {}
-void $s10Foundation15ContiguousBytesP010withUnsafeC0yqd__qd__SWKXEKlFTj(void) {}
 void $s10Foundation15ListFormatStyleV5WidthO5shortyAEyxq__GAGmAA0cD0RzSTR_7ElementQy_0C5InputRtzSS0C6OutputRtzr0_lFWC(void) {}
 void $s10Foundation15ListFormatStyleV5WidthO8standardyAEyxq__GAGmAA0cD0RzSTR_7ElementQy_0C5InputRtzSS0C6OutputRtzr0_lFWC(void) {}
 void $s10Foundation15_BridgedNSErrorMp(void) {}
@@ -522,7 +516,6 @@ void $s10Foundation21_BridgedStoredNSErrorPSHTb(void) {}
 void $s10Foundation22AttributeDynamicLookupO5UIKitE13dynamicMemberxs7KeyPathCyAA0B6ScopesOADE0E10AttributesVxG_tcAA016AttributedStringH0Rzluig(void) {}
 void $s10Foundation22AttributeDynamicLookupO5UIKitE13dynamicMemberxs7KeyPathCyAA0B6ScopesOADE0E10AttributesVxG_tcAA016AttributedStringH0RzluipMV(void) {}
 void $s10Foundation22AttributeDynamicLookupOMn(void) {}
-void $s10Foundation22_convertErrorToNSErrorySo0E0Cs0C0_pF(void) {}
 void $s10Foundation24FloatingPointFormatStyleV16decimalSeparator8strategyACyxGAA06NumberdE13ConfigurationO07DecimalG15DisplayStrategyV_tF(void) {}
 void $s10Foundation24FloatingPointFormatStyleV6formatySSxF(void) {}
 void $s10Foundation24FloatingPointFormatStyleV6localeACyxGAA6LocaleV_tcfC(void) {}
@@ -634,14 +627,12 @@ void $s10Foundation4DataV12makeIteratorAC0D0VyF(void) {}
 void $s10Foundation4DataV13_copyContents12initializingAC8IteratorV_SitSrys5UInt8VG_tF(void) {}
 void $s10Foundation4DataV13base64Encoded7optionsACSgACh_So27NSDataBase64DecodingOptionsVtcfC(void) {}
 void $s10Foundation4DataV13base64Encoded7optionsACSgSSh_So27NSDataBase64DecodingOptionsVtcfC(void) {}
-void $s10Foundation4DataV14RangeReferenceCMa(void) {}
 void $s10Foundation4DataV15_RepresentationO10resetBytes2inySnySiG_tF(void) {}
 void $s10Foundation4DataV15_RepresentationO15replaceSubrange_4with5countySnySiG_SVSgSitF(void) {}
 void $s10Foundation4DataV15_RepresentationO15reserveCapacityyySiF(void) {}
 void $s10Foundation4DataV15_RepresentationO22withUnsafeMutableBytesyxxSwKXEKlF(void) {}
 void $s10Foundation4DataV15_RepresentationO5countAESi_tcfC(void) {}
 void $s10Foundation4DataV15_RepresentationO5countSivs(void) {}
-void $s10Foundation4DataV15_RepresentationO6append10contentsOfySW_tF(void) {}
 void $s10Foundation4DataV15_RepresentationO8capacityAESi_tcfC(void) {}
 void $s10Foundation4DataV15_RepresentationON(void) {}
 void $s10Foundation4DataV15_RepresentationO_5countAeA02__B7StorageC_SitcfC(void) {}
@@ -651,11 +642,9 @@ void $s10Foundation4DataV15_RepresentationOys5UInt8VSicig(void) {}
 void $s10Foundation4DataV15_RepresentationOys5UInt8VSicis(void) {}
 void $s10Foundation4DataV15withUnsafeBytesyxxSWKXEKlF(void) {}
 void $s10Foundation4DataV16debugDescriptionSSvg(void) {}
-void $s10Foundation4DataV19_bridgeToObjectiveCSo6NSDataCyF(void) {}
 void $s10Foundation4DataV19base64EncodedString7optionsSSSo27NSDataBase64EncodingOptionsV_tF(void) {}
 void $s10Foundation4DataV22withUnsafeMutableBytesyxxSwKXEKlF(void) {}
 void $s10Foundation4DataV2eeoiySbAC_ACtFZ(void) {}
-void $s10Foundation4DataV36_unconditionallyBridgeFromObjectiveCyACSo6NSDataCSgFZ(void) {}
 void $s10Foundation4DataV4hash4intoys6HasherVz_tF(void) {}
 void $s10Foundation4DataV5countACSi_tcfC(void) {}
 void $s10Foundation4DataV5countSivg(void) {}
@@ -1975,7 +1964,6 @@ void $sSRMa(void) {}
 void $sSRMn(void) {}
 void $sSRySRyxGSryxGcfC(void) {}
 void $sSRys5SliceVySRyxGGSnySiGcig(void) {}
-void $sSRyxG10Foundation15ContiguousBytesABs5UInt8VRszlMc(void) {}
 void $sSRyxGSKsMc(void) {}
 void $sSRyxGSTsMc(void) {}
 void $sSRyxGSksMc(void) {}

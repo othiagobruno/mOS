@@ -675,6 +675,8 @@ static long spawn_fill(const void *adesc, u64 argv, u64 envp, mos_spawn_vec_t *v
     return 0;
 }
 
+static void touch_code(u64 addr, u64 len) { if (addr && len) a64_invalidate(addr, len); }
+
 static void darwin_svc(rt_thread_t *T) {
     a64_cpu *c = &T->cpu;
     i64 n = (i64)c->x[16];
@@ -730,6 +732,99 @@ static void darwin_svc(rt_thread_t *T) {
                 touch_code(c->x[0], 4);
             }
             r = 0;
+        }
+        break;
+    }
+    case 97:                                                   /* socket(domain, type, protocol) */
+        if (c->x[0] != 0 && c->x[0] != 1) { r = -MOS_EAFNOSUPPORT; break; }
+        r = rt_sys(SYS_UNIX, MOS_UNIX_SOCKET, (long)c->x[0], (long)c->x[1], (long)c->x[2], 0, 0);
+        break;
+    case 135:                                                  /* socketpair(domain, type, protocol, int[2]) */
+        if (c->x[0] != 0 && c->x[0] != 1) { r = -MOS_EAFNOSUPPORT; break; }
+        r = rt_sys(SYS_UNIX, MOS_UNIX_PAIR, (long)c->x[1], (long)c->x[2], (long)c->x[3], 0, 0);
+        touch_writes(SYS_UNIX, MOS_UNIX_PAIR, c->x[1], c->x[2], c->x[3], 0, r);
+        break;
+    case 104:                                                  /* bind */
+        r = rt_sys(SYS_UNIX, MOS_UNIX_BIND, (long)c->x[0], (long)c->x[1], (long)c->x[2], 0, 0);
+        break;
+    case 106:                                                  /* listen */
+        r = rt_sys(SYS_UNIX, MOS_UNIX_LISTEN, (long)c->x[0], (long)c->x[1], 0, 0, 0);
+        break;
+    case 30:                                                   /* accept */
+        r = rt_sys(SYS_UNIX, MOS_UNIX_ACCEPT, (long)c->x[0], (long)c->x[1], (long)c->x[2], 0, 0);
+        touch_writes(SYS_UNIX, MOS_UNIX_ACCEPT, c->x[0], c->x[1], c->x[2], 0, r);
+        break;
+    case 98:                                                   /* connect */
+        r = rt_sys(SYS_UNIX, MOS_UNIX_CONNECT, (long)c->x[0], (long)c->x[1], (long)c->x[2], 0, 0);
+        break;
+    case 134:                                                  /* shutdown */
+        r = rt_sys(SYS_UNIX, MOS_UNIX_SHUTDOWN, (long)c->x[0], (long)c->x[1], 0, 0, 0);
+        break;
+    case 32:                                                   /* getsockname */
+        r = rt_sys(SYS_UNIX, MOS_UNIX_SOCKNAME, (long)c->x[0], (long)c->x[1], (long)c->x[2], 0, 0);
+        touch_writes(SYS_UNIX, MOS_UNIX_SOCKNAME, c->x[0], c->x[1], c->x[2], 0, r);
+        break;
+    case 31:                                                   /* getpeername */
+        r = rt_sys(SYS_UNIX, MOS_UNIX_PEERNAME, (long)c->x[0], (long)c->x[1], (long)c->x[2], 0, 0);
+        touch_writes(SYS_UNIX, MOS_UNIX_PEERNAME, c->x[0], c->x[1], c->x[2], 0, r);
+        break;
+    case 105: {                                                /* setsockopt: o kernel não muda opções; SO_TYPE confirma o fd */
+        int typ = 0;
+        mos_unix_sockopt_t o;
+        memset(&o, 0, sizeof o);
+        o.level = 0xffff;
+        o.name = 0x1008;
+        o.len = 4;
+        o.val = &typ;
+        r = rt_sys(SYS_UNIX, MOS_UNIX_GETSOCKOPT, (long)c->x[0], (long)&o, 0, 0, 0);
+        break;
+    }
+    case 118: {                                                /* getsockopt(fd, level, name, val, len*) */
+        unsigned ln = 0;
+        mos_unix_sockopt_t o;
+        if (c->x[4]) memcpy(&ln, (void *)c->x[4], 4);
+        memset(&o, 0, sizeof o);
+        o.level = (int)c->x[1];
+        o.name = (int)c->x[2];
+        o.len = ln;
+        o.val = (void *)c->x[3];
+        r = rt_sys(SYS_UNIX, MOS_UNIX_GETSOCKOPT, (long)c->x[0], (long)&o, 0, 0, 0);
+        if (r == 0 && c->x[4]) {
+            memcpy((void *)c->x[4], &o.len, 4);
+            touch_code(c->x[4], 4);
+        }
+        touch_writes(SYS_UNIX, MOS_UNIX_GETSOCKOPT, c->x[0], (u64)&o, 0, 0, r);
+        break;
+    }
+    case 27:                                                   /* recvmsg */
+    case 28:                                                   /* sendmsg */
+        r = rt_sys(SYS_UNIX, n == 27 ? MOS_UNIX_RECVMSG : MOS_UNIX_SENDMSG,
+                   (long)c->x[0], (long)c->x[1], (long)c->x[2], 0, 0);
+        if (n == 27) touch_writes(SYS_UNIX, MOS_UNIX_RECVMSG, c->x[0], c->x[1], c->x[2], 0, r);
+        break;
+    case 29:                                                   /* recvfrom */
+    case 133: {                                                /* sendto: um iovec na pilha do runtime, que é memória do processo */
+        struct { u64 base, len; } iv;
+        struct { u64 name; unsigned namelen, pad; u64 iov; int iovlen, pad2;
+                 u64 control; unsigned controllen; int flags; } h;
+        unsigned nl = 0;
+        memset(&h, 0, sizeof h);
+        iv.base = c->x[1];
+        iv.len = c->x[2];
+        if (n == 29 && c->x[5]) memcpy(&nl, (void *)c->x[5], 4);
+        else if (n == 133) nl = (unsigned)c->x[5];
+        h.name = c->x[4];
+        h.namelen = nl;
+        h.iov = (u64)&iv;
+        h.iovlen = 1;
+        r = rt_sys(SYS_UNIX, n == 29 ? MOS_UNIX_RECVMSG : MOS_UNIX_SENDMSG,
+                   (long)c->x[0], (long)&h, (long)c->x[3], 0, 0);
+        if (n == 29) {
+            if (c->x[5] && r >= 0) {
+                memcpy((void *)c->x[5], &h.namelen, 4);
+                touch_code(c->x[5], 4);
+            }
+            touch_writes(SYS_UNIX, MOS_UNIX_RECVMSG, c->x[0], (u64)&h, 0, 0, r);
         }
         break;
     }
