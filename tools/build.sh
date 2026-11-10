@@ -165,6 +165,9 @@ cc -O1 -fno-omit-frame-pointer -funwind-tables -rdynamic \
     -ldl -o "$OUT/unw_hosttest"
 "$OUT/unw_hosttest"
 
+echo "==> runtime Swift do Grok (teste de host)"
+bash "$ROOT/tools/swift-rt-grok-teste.sh" "$ZIG" "$OUT/swift-rt-grok"
+
 echo "==> libSystem.mos"
 # x86_64: _Unwind_* fica em cxx_unwind.c. UnwindLevel1.c repete esses nomes; o resto do libunwind fica.
 LS_SRC=()

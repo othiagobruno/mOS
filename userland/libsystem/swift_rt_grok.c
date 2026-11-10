@@ -22,6 +22,7 @@ typedef uint32_t uint_fast32_t;
 typedef uint64_t uint_fast64_t;
 typedef int64_t intmax_t;
 typedef uint64_t uintmax_t;
+typedef __WCHAR_TYPE__ wchar_t;
 #endif
 #include <stdatomic.h>
 /* Runtime Swift do caminho de carga das imagens que o VS Code abre
