@@ -4,7 +4,10 @@
 
 @class NSWindow, NSView, NSEvent, NSColor, NSFont, NSMenu, NSScreen, NSImage, NSTableView, NSTableColumn;
 
-typedef NS_ENUM(NSInteger, NSApplicationActivationPolicy) { NSApplicationActivationPolicyRegular = 0, NSApplicationActivationPolicyAccessory = 1 };
+typedef NS_ENUM(NSInteger, NSApplicationActivationPolicy) {
+    NSApplicationActivationPolicyRegular = 0, NSApplicationActivationPolicyAccessory = 1,
+    NSApplicationActivationPolicyProhibited = 2
+};
 typedef NS_OPTIONS(NSUInteger, NSWindowStyleMask) {
     NSWindowStyleMaskBorderless = 0, NSWindowStyleMaskTitled = 1, NSWindowStyleMaskClosable = 2,
     NSWindowStyleMaskMiniaturizable = 4, NSWindowStyleMaskResizable = 8
@@ -22,7 +25,8 @@ typedef NS_ENUM(NSInteger, NSTextAlignment) { NSTextAlignmentLeft = 0, NSTextAli
 typedef NS_ENUM(NSInteger, NSUserInterfaceLayoutOrientation) { NSUserInterfaceLayoutOrientationHorizontal = 0, NSUserInterfaceLayoutOrientationVertical = 1 };
 typedef NS_ENUM(NSUInteger, NSEventType) {
     NSEventTypeLeftMouseDown = 1, NSEventTypeLeftMouseUp = 2, NSEventTypeRightMouseDown = 3,
-    NSEventTypeLeftMouseDragged = 6, NSEventTypeKeyDown = 10, NSEventTypeScrollWheel = 22
+    NSEventTypeLeftMouseDragged = 6, NSEventTypeKeyDown = 10, NSEventTypeKeyUp = 11,
+    NSEventTypeFlagsChanged = 12, NSEventTypeScrollWheel = 22
 };
 typedef NS_OPTIONS(NSUInteger, NSEventModifierFlags) {
     NSEventModifierFlagShift = 1 << 17, NSEventModifierFlagControl = 1 << 18,
@@ -44,7 +48,10 @@ extern NSString *const NSWindowWillCloseNotification;
 - (void)rightMouseDown:(NSEvent *)e;
 - (void)scrollWheel:(NSEvent *)e;
 - (void)keyDown:(NSEvent *)e;
+- (void)keyUp:(NSEvent *)e;
+- (void)flagsChanged:(NSEvent *)e;
 @property (readonly) BOOL acceptsFirstResponder;
+@property (weak) NSResponder *nextResponder;
 @end
 
 @protocol NSApplicationDelegate <NSObject>
@@ -69,6 +76,7 @@ extern NSString *const NSWindowWillCloseNotification;
 @property (readonly, copy) NSArray<NSWindow *> *windows;
 @property (readonly) NSWindow *keyWindow;
 - (BOOL)setActivationPolicy:(NSApplicationActivationPolicy)p;
+@property (readonly) NSApplicationActivationPolicy activationPolicy;
 - (void)activateIgnoringOtherApps:(BOOL)b;
 - (void)run;
 - (void)stop:(id)sender;
@@ -108,6 +116,7 @@ int NSApplicationMain(int argc, const char *argv[]);
 @property NSRect frame;
 @property (readonly) NSRect bounds;
 @property (readonly) NSView *superview;
+@property (copy) NSString *identifier;
 @property (readonly, copy) NSArray<__kindof NSView *> *subviews;
 @property (readonly) NSWindow *window;
 @property (getter=isHidden) BOOL hidden;
@@ -290,6 +299,8 @@ int NSApplicationMain(int argc, const char *argv[]);
 @property (copy) NSString *title;
 @property (copy) NSString *keyEquivalent;
 @property NSEventModifierFlags keyEquivalentModifierMask;
+@property (copy) NSString *userKeyEquivalent;
+@property NSEventModifierFlags userKeyEquivalentModifierMask;
 @property NSInteger tag;
 @property NSControlStateValue state;
 @property (getter=isEnabled) BOOL enabled;
@@ -373,10 +384,25 @@ typedef NS_ENUM(NSUInteger, NSBorderType) { NSNoBorder = 0, NSLineBorder = 1, NS
 @property NSUInteger gridStyleMask;
 - (void)reloadData;
 - (__kindof NSView *)makeViewWithIdentifier:(NSString *)i owner:(id)o;
+- (void)registerNib:(id)nib forIdentifier:(NSString *)identifier;
 - (void)scrollRowToVisible:(NSInteger)r;
 - (void)selectRowIndexes:(NSIndexSet *)s byExtendingSelection:(BOOL)e;
 - (void)deselectAll:(id)sender;
 - (void)sizeLastColumnToFit;
+@end
+
+@interface NSOutlineView : NSTableView
+@property CGFloat indentationPerLevel;
+@property (strong) NSTableColumn *outlineTableColumn;
+- (void)expandItem:(id)item;
+- (void)expandItem:(id)item expandChildren:(BOOL)children;
+- (void)collapseItem:(id)item;
+- (void)collapseItem:(id)item collapseChildren:(BOOL)children;
+- (BOOL)isItemExpanded:(id)item;
+- (BOOL)isExpandable:(id)item;
+- (id)itemAtRow:(NSInteger)row;
+- (NSInteger)rowForItem:(id)item;
+- (NSInteger)levelForRow:(NSInteger)row;
 @end
 
 @interface NSAlert : NSObject
@@ -553,4 +579,42 @@ typedef NSString *NSStoryboardSceneIdentifier;
 - (void)removeLayoutGuide:(NSLayoutGuide *)g;
 @property (readonly, strong) NSLayoutGuide *safeAreaLayoutGuide;
 @property (readonly, strong) NSLayoutGuide *layoutMarginsGuide;
+@end
+
+/* ---- barra de menus e popover (Usagebar, Setapp, apps LSUIElement) */
+typedef NS_ENUM(NSUInteger, NSRectEdge) {
+    NSRectEdgeMinX = 0, NSRectEdgeMinY = 1, NSRectEdgeMaxX = 2, NSRectEdgeMaxY = 3
+};
+typedef NS_ENUM(NSInteger, NSPopoverBehavior) {
+    NSPopoverBehaviorApplicationDefined = 0, NSPopoverBehaviorTransient = 1, NSPopoverBehaviorSemitransient = 2
+};
+extern const CGFloat NSStatusItemLength;       /* -1, largura do título */
+extern const CGFloat NSStatusItemSquareLength; /* -2, quadrado da espessura da barra */
+@class NSStatusBar, NSStatusItem, NSStatusBarButton, NSPopover, NSViewController;
+@interface NSStatusBar : NSObject
++ (NSStatusBar *)systemStatusBar;
+- (NSStatusItem *)statusItemWithLength:(CGFloat)length;
+- (void)removeStatusItem:(NSStatusItem *)item;
+@property (readonly) CGFloat thickness;
+@end
+@interface NSStatusItem : NSObject
+@property (strong) NSMenu *menu;
+@property (copy) NSString *title;
+@property (strong) NSImage *image;
+@property (copy) NSString *toolTip;
+@property (getter=isVisible) BOOL visible;
+@property CGFloat length;
+@property (readonly, strong) NSStatusBarButton *button;
+@property (readonly, weak) NSStatusBar *statusBar;
+- (void)popUpStatusItemMenu:(NSMenu *)menu;
+@end
+@interface NSStatusBarButton : NSButton
+@end
+@interface NSPopover : NSResponder
+@property NSPopoverBehavior behavior;
+@property (strong) NSView *contentView;
+@property (strong) NSViewController *contentViewController;
+@property (readonly, getter=isShown) BOOL shown;
+- (void)showRelativeToRect:(NSRect)rect ofView:(NSView *)view preferredEdge:(NSRectEdge)edge;
+- (void)close;
 @end
