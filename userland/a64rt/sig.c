@@ -367,8 +367,23 @@ void rt_host_signal(int sig, mos_siginfo_t *si, mos_ucontext_t *uc) {
         bool in_translated = T->in_guest && !T->in_svc;
 #ifdef A64_HAVE_JIT
         /* escrita numa página que o JIT protegeu: só retomar (a escrita é refeita). Vale também fora do guest: o próprio
-         * runtime escreve na memória do guest (quadros de sinal, structs de syscall emuladas) */
-        if ((sig == MOS_SIGSEGV || sig == MOS_SIGBUS) && (mc->err & 2) && a64_jit_write_fault(si->si_addr)) return;
+         * runtime escreve na memória do guest (quadros de sinal, structs de syscall emuladas).
+         * MAP_JIT com pthread_jit_write_protect_np(1) é falta do guest: a escrita não completa. */
+        if ((sig == MOS_SIGSEGV || sig == MOS_SIGBUS) && (mc->err & 2)) {
+            u64 fa = si->si_addr;
+            int mj = rt_jit_contains(fa);
+            if (!(mj && T->jit_wp)) {
+                int ok = a64_jit_write_fault(fa);
+                u64 o = rt_jit_alias_page(fa);
+                if (o) a64_jit_write_fault(o);                 /* a outra vista, sem tomar J.lock */
+                if (!ok && o) ok = a64_host_jit_wprotect(fa & ~0xfffULL, 0);
+                if (ok) {
+                    if (mj) rt_jit_note_write(T, fa);
+                    if (o) rt_jit_note_write(T, o);
+                    return;
+                }
+            }
+        }
         a64_hostctx h;
         memset(&h, 0, sizeof h);
         bool jit_pc = false;

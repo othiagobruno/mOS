@@ -100,6 +100,7 @@ static void thread_init(rt_thread_t *T) {
     T->hstack_lo = lo;
     T->state = 1;
     T->cpu.host = T;
+    T->jit_wp = 1;                     /* Apple: thread nova nasce sem poder escrever MAP_JIT */
 }
 
 /* ---------------------------------------------------------------- serviços do hospedeiro para o motor */
@@ -137,17 +138,180 @@ void a64_host_icache_inval(a64_cpu *c, a64_u64 addr, a64_u64 len) { (void)c; a64
 void a64_host_yield(a64_cpu *c) { (void)c; RS0(SYS_YIELD); }
 /* JIT: regiões RWX (todo mmap do mOS é leitura+escrita+execução) */
 void *a64_host_jit_alloc(a64_u64 len) { return rt_alloc(len); }
+/* MAP_JIT e apelidos (vm_remap das mesmas páginas). O JIT chama a64_host_jit_wprotect com J.lock tomado:
+ * a leitura é seqlock, sem a trava de escrita, para não inverter a ordem com J.lock. */
+#define RT_JIT_MAX   48
+#define RT_ALIAS_MAX 32
+typedef struct { u64 lo, hi; } rt_span_t;
+typedef struct { u64 a, b, len; } rt_alias_t;
+static rt_span_t g_jitmap[RT_JIT_MAX];
+static rt_alias_t g_alias[RT_ALIAS_MAX];
+static int g_jitmap_n, g_alias_n;
+static volatile u32 g_jseq;
+static volatile int g_jw;
+
+static void jitmap_wlock(void) {
+    while (__atomic_exchange_n(&g_jw, 1, __ATOMIC_ACQUIRE)) RS0(SYS_YIELD);
+    __atomic_fetch_add(&g_jseq, 1, __ATOMIC_ACQ_REL);       /* par → ímpar: o leitor tenta de novo */
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);
+}
+static void jitmap_wunlock(void) {
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);
+    __atomic_fetch_add(&g_jseq, 1, __ATOMIC_RELEASE);       /* ímpar → par */
+    __atomic_store_n(&g_jw, 0, __ATOMIC_RELEASE);
+}
+static u64 ld64(u64 *p) { return __atomic_load_n(p, __ATOMIC_RELAXED); }
+static int ldint(int *p) { return __atomic_load_n(p, __ATOMIC_RELAXED); }
+
+static void mirror_range(u64 addr, u64 end, u64 base, u64 other, u64 n, u64 *blo, u64 *bhi, int *any) {
+    if (!n || other + n < other) return;
+    u64 be = base + n;
+    u64 lo = addr > base ? addr : base;
+    u64 hi = end < be ? end : be;
+    if (lo >= hi) return;
+    u64 mlo = other + (lo - base), mhi = other + (hi - base);
+    if (!*any || mlo < *blo) *blo = mlo;
+    if (!*any || mhi > *bhi) *bhi = mhi;
+    *any = 1;
+}
+
+int a64_jit_alias_span(a64_u64 addr, a64_u64 len, a64_u64 *lo, a64_u64 *hi) {
+    if (!len || !lo || !hi) return 0;
+    a64_u64 end = addr + len;
+    if (end < addr) end = ~0ull;
+    for (;;) {
+        u32 s = __atomic_load_n(&g_jseq, __ATOMIC_ACQUIRE);
+        if (s & 1) { __builtin_ia32_pause(); continue; }
+        int n = ldint(&g_alias_n), any = 0;
+        u64 blo = ~0ull, bhi = 0;
+        if (n > RT_ALIAS_MAX) n = RT_ALIAS_MAX;
+        for (int i = 0; i < n; i++) {
+            u64 a = ld64(&g_alias[i].a), b = ld64(&g_alias[i].b), ln = ld64(&g_alias[i].len);
+            mirror_range(addr, end, a, b, ln, &blo, &bhi, &any);
+            mirror_range(addr, end, b, a, ln, &blo, &bhi, &any);
+        }
+        __atomic_thread_fence(__ATOMIC_ACQUIRE);
+        if (__atomic_load_n(&g_jseq, __ATOMIC_ACQUIRE) != s) continue;
+        if (!any || bhi <= blo) return 0;
+        *lo = blo;
+        *hi = bhi;
+        return 1;
+    }
+}
+
+u64 rt_jit_alias_page(u64 addr) {
+    a64_u64 lo, hi;
+    addr &= ~0xfffULL;
+    if (!a64_jit_alias_span(addr, 4096, &lo, &hi) || hi < lo + 4096) return 0;
+    return lo & ~0xfffULL;
+}
+
+int rt_jit_contains(u64 addr) {
+    for (;;) {
+        u32 s = __atomic_load_n(&g_jseq, __ATOMIC_ACQUIRE);
+        if (s & 1) { __builtin_ia32_pause(); continue; }
+        int yes = 0, n = ldint(&g_jitmap_n);
+        if (n > RT_JIT_MAX) n = RT_JIT_MAX;
+        for (int i = 0; i < n && !yes; i++) {
+            u64 lo = ld64(&g_jitmap[i].lo), hi = ld64(&g_jitmap[i].hi);
+            if (addr >= lo && addr < hi) yes = 1;
+        }
+        n = ldint(&g_alias_n);
+        if (n > RT_ALIAS_MAX) n = RT_ALIAS_MAX;
+        for (int i = 0; i < n && !yes; i++) {
+            u64 a = ld64(&g_alias[i].a), b = ld64(&g_alias[i].b), ln = ld64(&g_alias[i].len);
+            if ((addr >= a && addr < a + ln) || (addr >= b && addr < b + ln)) yes = 1;
+        }
+        __atomic_thread_fence(__ATOMIC_ACQUIRE);
+        if (__atomic_load_n(&g_jseq, __ATOMIC_ACQUIRE) == s) return yes;
+    }
+}
+
+void rt_jit_note_write(rt_thread_t *T, u64 addr) {
+    if (!T) return;
+    addr &= ~0xfffULL;
+    for (int i = 0; i < T->jit_dirty_n; i++) if (T->jit_dirty[i] == addr) return;
+    if (T->jit_dirty_n >= RT_JIT_DIRTY) { T->jit_dirty_all = 1; return; }
+    T->jit_dirty[T->jit_dirty_n++] = addr;
+}
+
+static void rt_jit_publish(rt_thread_t *T) {
+    if (T->jit_dirty_all) {
+        rt_span_t spans[RT_JIT_MAX];
+        rt_alias_t als[RT_ALIAS_MAX];
+        int ns, na;
+        jitmap_wlock();
+        ns = g_jitmap_n; if (ns > RT_JIT_MAX) ns = RT_JIT_MAX;
+        for (int i = 0; i < ns; i++) spans[i] = g_jitmap[i];
+        na = g_alias_n; if (na > RT_ALIAS_MAX) na = RT_ALIAS_MAX;
+        for (int i = 0; i < na; i++) als[i] = g_alias[i];
+        jitmap_wunlock();
+        for (int i = 0; i < ns; i++)
+            if (spans[i].hi > spans[i].lo) a64_invalidate(spans[i].lo, spans[i].hi - spans[i].lo);
+        for (int i = 0; i < na; i++) {
+            a64_invalidate(als[i].a, als[i].len);
+            a64_invalidate(als[i].b, als[i].len);
+        }
+    } else {
+        for (int i = 0; i < T->jit_dirty_n; i++) a64_invalidate(T->jit_dirty[i], 4096);
+    }
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);
+    T->jit_dirty_n = 0;
+    T->jit_dirty_all = 0;
+}
+
+static void rt_jit_add_region(u64 addr, u64 len) {
+    if (!addr || !len) return;
+    u64 lo = addr & ~0xfffULL;
+    u64 hi = addr + len;
+    if (hi < addr) return;
+    hi = (hi + 0xfffULL) & ~0xfffULL;
+    jitmap_wlock();
+    for (int i = 0; i < g_jitmap_n; i++) {
+        if (hi < g_jitmap[i].lo || lo > g_jitmap[i].hi) continue;
+        if (lo < g_jitmap[i].lo) g_jitmap[i].lo = lo;
+        if (hi > g_jitmap[i].hi) g_jitmap[i].hi = hi;
+        jitmap_wunlock();
+        return;
+    }
+    if (g_jitmap_n < RT_JIT_MAX) g_jitmap[g_jitmap_n++] = (rt_span_t){lo, hi};
+    /* cheia: a faixa nova fica só com a rede PTE_JWP (a escrita depois de executar invalida) */
+    jitmap_wunlock();
+}
+
 /* Rede de segurança do JIT contra código que se reescreve sem IC IVAU: proteção de escrita de verdade na PTE
  * (MACH_VM_JIT_WPROTECT, kernel/proc/process.c uvm_jit_wprotect). protect=1 tira a escrita (1 se a página era
  * gravável e não COW), 0 devolve, 2 consulta. Sem o op no kernel (kernel antigo), devolve 0: a rede fica desligada e
- * vale o IC IVAU / sys_icache_invalidate, que é o que a arquitetura exige de quem gera código. */
+ * vale o IC IVAU / sys_icache_invalidate, que é o que a arquitetura exige de quem gera código.
+ * A outra vista do mesmo físico recebe o mesmo op, senão a escrita pelo apelido não falta. */
 static int wp_off;
-int a64_host_jit_wprotect(a64_u64 page, int protect) {
+static int wp_call(u64 page, int protect) {
     if (wp_off) return 0;
     u64 a[8] = {page, (u64)protect, 0, 0, 0, 0, 0, 0};
     long r = RS2(SYS_MACH_VM, MACH_VM_JIT_WPROTECT, a);
     if (r != 0) { wp_off = 1; return 0; }
     return (int)a[2];
+}
+int a64_host_jit_wprotect(a64_u64 page, int protect) {
+    int r = wp_call(page, protect);
+    u64 o = rt_jit_alias_page(page);
+    if (o && o != (page & ~0xfffULL)) wp_call(o, protect);
+    return r;
+}
+
+static void rt_jit_add_alias(u64 dst, u64 src, u64 len) {
+    dst &= ~0xfffULL;
+    src &= ~0xfffULL;
+    if (len & 0xfff) len = (len + 0xfffULL) & ~0xfffULL;
+    if (!dst || !src || !len || len > (1ull << 30) || dst + len < dst || src + len < src) return;
+    jitmap_wlock();
+    if (g_alias_n < RT_ALIAS_MAX) g_alias[g_alias_n++] = (rt_alias_t){dst, src, len};
+    jitmap_wunlock();
+    a64_invalidate(src, len);
+    a64_invalidate(dst, len);
+    /* se a vista de origem já não é gravável, a nova também deixa de ser (senão a escrita fura o JWP) */
+    for (u64 p = 0; p < len; p += 4096)
+        if (!a64_host_jit_wprotect(src + p, 2)) a64_host_jit_wprotect(dst + p, 1);
 }
 
 /* ---------------------------------------------------------------- syscalls */
@@ -211,6 +375,10 @@ static long threadctl_getstate(long tid, u64 out) {
 
 static void fork_child(rt_thread_t *T) {
     g_tlock = 0;
+    g_jw = 0;
+    /* a cópia pode ter pego o seqlock no meio da escrita: ímpar faria o leitor girar para sempre */
+    if (__atomic_load_n(&g_jseq, __ATOMIC_RELAXED) & 1)
+        __atomic_fetch_add(&g_jseq, 1, __ATOMIC_RELAXED);
     u64 now = (u64)RS0(SYS_TIME);
     for (int i = 0; i < RT_MAX_THREADS; i++) {
         rt_thread_t *O = g_threads[i];
@@ -302,7 +470,16 @@ static void mos_svc(rt_thread_t *T) {
     case A64RT_SYS_SET_TSD: c->tpidrro_el0 = a; c->x[0] = 0; return;
     case A64RT_SYS_GET_TSD: c->x[0] = c->tpidrro_el0; return;
     case A64RT_SYS_ICACHE_INVAL: a64_invalidate(a, b); c->x[0] = 0; return;
-    case A64RT_SYS_JIT_WP: c->x[0] = 0; return;
+    case A64RT_SYS_JIT_WP: {
+        int prev = T->jit_wp, en = a ? 1 : 0;
+        if (prev && !en) { T->jit_dirty_n = 0; T->jit_dirty_all = 0; }
+        if (!prev && en) rt_jit_publish(T);          /* a janela de escrita fechou: o que faltou sai do cache */
+        T->jit_wp = en;
+        c->x[0] = (u64)prev;
+        return;
+    }
+    case A64RT_SYS_MAP_JIT: rt_jit_add_region(a, b); c->x[0] = 0; return;
+    case A64RT_SYS_JIT_ALIAS: rt_jit_add_alias(a, b, d); c->x[0] = 0; return;
     case A64RT_SYS_INFO:
         c->x[0] = a == A64RT_INFO_ENGINE ? (u64)rt_engine : a == A64RT_INFO_VERSION ? 1 : (u64)-MOS_EINVAL;
         return;

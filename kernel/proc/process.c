@@ -385,6 +385,64 @@ int uvm_jit_wprotect(process_t *p, u64 va, int op) {
     }
     return 1;
 }
+
+/* MACH_VM_REMAP sem cópia: o mesmo físico em outro endereço virtual, os dois no mesmo processo.
+ * A vista nova nasce gravável. Se a origem era COW, vira privada antes: senão a escrita no apelido
+ * copiaria só uma das PTEs e as duas deixariam de ver os mesmos bytes. O fork (T4) ainda pode
+ * separar o par, porque cada PTE vira COW por conta própria. */
+bool lazy_fault(process_t *p, u64 va);
+static void alias_drop(process_t *p, u64 va, u64 n) {
+    for (u64 a = va; a < va + n; a += 4096) {
+        u64 *e = walk(p, a, false);
+        if (!e || !(*e & PTE_P)) continue;
+        u64 pg = *e & PTE_ADDR;
+        *e = 0;
+        if (p->mem_pages) p->mem_pages--;
+        uvm_page_put(pg);
+        vm_flush(p, a);
+    }
+}
+int uvm_alias_map(process_t *p, u64 *dst_io, u64 src, u64 len) {
+    if (!p || !dst_io || !len || (len & 0xFFF) || (src & 0xFFF) || len > (1ull << 30)) return -MOS_EINVAL;
+    if (src < USER_BASE || src + len > USER_END || src + len < src) return -MOS_EINVAL;
+    u64 dst = *dst_io;
+    if (dst & 0xFFF) return -MOS_EINVAL;
+    if (!dst) {
+        if (!p->mmap_next) p->mmap_next = USER_MMAP_BASE;
+        u64 at = p->mmap_next;
+        int found = 0;
+        for (int t = 0; t < 64; t++) {
+            if (at < USER_MMAP_BASE || at + len > USER_END || at + len < at) return -MOS_ENOMEM;
+            int free = 1;
+            for (u64 a = at; a < at + len; a += 4096) if (uvm_pte(p, a)) { free = 0; break; }
+            if (free) { dst = at; found = 1; break; }
+            at += len + 4096;
+        }
+        if (!found) return -MOS_ENOMEM;
+    } else if (dst < USER_BASE || dst + len > USER_END || dst + len < dst) {
+        return -MOS_EINVAL;
+    } else {
+        for (u64 a = dst; a < dst + len; a += 4096) if (uvm_pte(p, a)) return -MOS_EINVAL;
+    }
+    if (!(dst + len <= src || src + len <= dst)) return -MOS_EINVAL;
+    u64 done = 0;
+    for (u64 i = 0; i < len; i += 4096) {
+        u64 sva = src + i;
+        u64 *e = uvm_pte(p, sva);
+        if (!e && lazy_fault(p, sva)) e = uvm_pte(p, sva);
+        if (!e) { alias_drop(p, dst, done); return -MOS_ENOMEM; }
+        if ((*e & PTE_COW) && !cow_break(p, e, sva)) { alias_drop(p, dst, done); return -MOS_ENOMEM; }
+        e = uvm_pte(p, sva);
+        if (!e || !uvm_map_phys(p, dst + i, *e & PTE_ADDR, true)) {
+            alias_drop(p, dst, done);
+            return -MOS_ENOMEM;
+        }
+        done += 4096;
+    }
+    if (!*dst_io && dst + len + 4096 > p->mmap_next) p->mmap_next = dst + len + 4096;
+    *dst_io = dst;
+    return 0;
+}
 /* página COW (fork, imagem compartilhada) vira privada antes de ir, com escrita, para outro processo
  * (mach_make_memory_entry de uma faixa existente): senão o outro escreveria na cópia de todos */
 bool uvm_make_private(process_t *p, u64 va) {

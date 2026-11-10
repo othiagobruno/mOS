@@ -42,10 +42,14 @@ Responsáveis: RUNTIME, com a LIBSYS para símbolos e bibliotecas que faltarem.
 
 ## 2. Proteção de página no kernel (rede de segurança contra código que se reescreve)
 
-O kernel do mOS não aplica proteção por página. Por isso a rede de segurança do JIT para código
-auto-modificável (`a64_host_jit_wprotect`) fica desligada. Hoje só vale a invalidação explícita
-(IC IVAU / `sys_icache_invalidate`), que os JITs corretos (V8, JSC, wasm) fazem. Um programa que reescreve
-código sem invalidar pode executar a tradução antiga. Responsáveis: RUNTIME + JIT.
+A rede existe: `uvm_jit_wprotect` / `PTE_JWP`, shootdown de TLB no `vm_flush`, e o runtime trata a falta
+de escrita. Por cima disso, o JIT guest (V8) no processo traduzido usa `mmap(MAP_JIT)` e
+`pthread_jit_write_protect_np` por thread: com a proteção ligada, escrever numa página MAP_JIT que já
+foi executada é SIGBUS do guest. `mach_vm_remap` sem cópia compartilha o físico e as duas vistas caem
+juntas na invalidação. Uma página MAP_JIT que ainda não foi executada continua gravável (a reserva do
+V8 é grande demais para materializar). O fork de um apelido duplo pode separar as duas vistas, porque
+cada PTE vira COW por conta própria. IC IVAU / `sys_icache_invalidate` continuam obrigatórios para quem
+publica código.
 
 ## 3. Desempenho do JIT nos apps reais
 

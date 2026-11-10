@@ -791,6 +791,10 @@ static long a64_sys(long n, long a, long b, long c, long d, void *ctx) {
     (void)ctx;
     return cx_syscall(n, a, b, c, d, 0);
 }
+void a64rt_map_jit_register(void *addr, unsigned long long len);
+static void note_map_jit(int flags, void *p, unsigned long long n) {
+    if ((flags & 0x800) && p && p != (void *)-1) a64rt_map_jit_register(p, n);
+}
 #endif
 void *mmap(void *addr, size_t len, int prot, int flags, int fd, off_t off) {
     /* MAP_JIT (0x800): o V8 pede uma região anônima executável. O NX está desligado no mOS,
@@ -815,6 +819,7 @@ void *mmap(void *addr, size_t len, int prot, int flags, int fd, off_t off) {
 #if defined(__aarch64__)
         long c = a64_map_fixed_anon(a64_sys, 0, (unsigned long long)addr, len, prot);
         if (c < 0) { cx_errno = (int)-c; return (void *)-1; }
+        note_map_jit(flags, (void *)c, (unsigned long long)len);
         return (void *)c;
 #else
         SYS3(SYS_MUNMAP, addr, len, MOS_MUNMAP_KEEP);
@@ -852,6 +857,7 @@ void *mmap(void *addr, size_t len, int prot, int flags, int fd, off_t off) {
         long rc = a64_map_fresh(a64_sys, 0, len, mode, &at);
         if (rc < 0) { cx_errno = (int)-rc; return (void *)-1; }
         r = (long)at;
+        note_map_jit(flags, (void *)r, (unsigned long long)len);
     }
 #else
     r = SYS2(SYS_MMAP, len, anon ? (prot ? 3 : 1) : 0);
@@ -909,10 +915,13 @@ int mprotect(void *a, size_t len, int prot) {
     return 0;
 #endif
 }
-/* JIT do macOS 11+. O V8 alterna escrita e execução com isto. No mOS as duas já valem ao mesmo tempo. */
+#if !defined(__aarch64__)
+/* x86_64 nativo: a página de usuário já é leitura+escrita+execução. No arm64 estas três funções
+ * estão em libc_arm64.S e falam com o a64rt (proteção por thread só nas faixas MAP_JIT). */
 void pthread_jit_write_protect_np(int enabled) { (void)enabled; }
 int pthread_jit_write_protect_supported_np(void) { return 1; }
 void pthread_jit_write_with_callback_np(void (*cb)(void *), void *ctx) { if (cb) cb(ctx); }
+#endif
 #if !defined(__aarch64__)   /* arm64: libc_arm64.S (DC CVAU + IC IVAU + DSB/ISB) */
 void sys_icache_invalidate(void *start, size_t len) { (void)start; (void)len; }
 void sys_dcache_flush(void *start, size_t len) { (void)start; (void)len; }

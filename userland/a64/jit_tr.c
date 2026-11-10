@@ -546,8 +546,11 @@ static void emit_ind(T *t) {
     x_shift_ri(B, 0, S_SHL, XDX, 4);
     x_alu_rm(B, 1, A_CMP, XAX, XMI(XCX, XDX, 0, 0));
     a64_u8 *j2 = x_jcc32(B, CC_NE);
-    x_jmp_m(B, XMI(XCX, XDX, 0, 8));
-    if (!t->b.ovf) { x_patch32(j1, t->b.p); x_patch32(j2, t->b.p); }
+    x_mov_rm(B, 1, XSI, XMI(XCX, XDX, 0, 8));
+    x_alu_rm(B, 1, A_CMP, XAX, XMI(XCX, XDX, 0, 0));
+    a64_u8 *j3 = x_jcc32(B, CC_NE);
+    x_jmp_r(B, XSI);
+    if (!t->b.ovf) { x_patch32(j1, t->b.p); x_patch32(j2, t->b.p); x_patch32(j3, t->b.p); }
     x_jmp_to(B, jit_g.g_ind);
 }
 /* BL/BLR: empilha (pc+4, continuação). Devolve o campo do lea a remendar com o endereço do stub
