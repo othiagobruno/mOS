@@ -161,7 +161,7 @@ done
     -I"$ROOT/userland/libsystem/kshim" \
     -Wl,--image-base=0x400000100000 -Wl,-e,cx_start -Wl,--no-gc-sections \
     "${LS_SRC[@]}" "$UWO"/libunwind.cpp.o "$UWO"/UnwindLevel1-gcc-ext.c.o \
-    "$UWO"/UnwindRegistersSave.S.o "$UWO"/UnwindRegistersRestore.S.o \
+    "$UWO"/UnwindRegistersRestore.S.o \
     -o "$OUT/libSystem.mos"
 python3 "$ROOT/tools/patch-ehframe.py" "$OUT/libSystem.mos"
 HASH=$(sha256sum "$OUT/libSystem.mos" | cut -c1-16)
