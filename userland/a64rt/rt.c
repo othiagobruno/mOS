@@ -5,6 +5,7 @@
 #include "rt.h"
 #include "writes.h"
 #include "a64_xmon.h"
+#include "jit_share.h"
 
 _Static_assert(SYS_THREAD_EXIT == 35 && SYS_SIG == 58 && MOS_SIGOP_RETURN == 6, "números literais em start.S");
 _Static_assert(sizeof(rt_thread_t) < 64 * 1024, "rt_thread_t na base da pilha do host");
@@ -824,8 +825,23 @@ static void pick_engine(u64 cxs) {
     }
 }
 
+int a64_host_ro_file(uint64_t page, uint64_t *file_id, uint64_t *file_off) {
+    uint64_t pair[2];
+    long r;
+    if (!file_id || !file_off) return 0;
+    r = RS3(SYS_THREADCTL, MOS_THR_ROFILE, page, pair);
+    if (r != 1) return 0;
+    *file_id = pair[0];
+    *file_off = pair[1];
+    return 1;
+}
+
 void rt_main(const a64rt_boot_t *b) {
     if (!b || b->magic != A64RT_BOOT_MAGIC) rt_die("descritor de partida inválido");
+#ifdef A64_HAVE_JIT
+    if (*(volatile uint64_t *)(uintptr_t)JIT_SHARE_VA == JIT_SHARE_MAGIC)
+        jit_share_bind((void *)(uintptr_t)JIT_SHARE_VA, JIT_SHARE_BYTES);
+#endif
     g_boot = b;
     rt_text_lo = b->rt_base;
     rt_text_hi = b->rt_base + b->rt_size;

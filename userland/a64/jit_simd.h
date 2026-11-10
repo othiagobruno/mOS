@@ -1520,6 +1520,16 @@ static int s_ldst_single(T *t, a64_u32 w) {
  * AESMC = aesenc(aesdeclast(x, 0), 0): aesdeclast desfaz ShiftRows e SubBytes, aesenc os refaz
  * (comutam: permutação de bytes × mapa byte a byte) e aplica MixColumns; a chave zero não muda nada.
  * SHA1/SHA256/SHA512 ficam no interpretador (SHA-NI divide a rodada de outro jeito). */
+/* SHA1H: o dword baixo gira 30; o resto do vetor zera. SHA-NI não faz isso. */
+static int s_sha1h(T *t, a64_u32 w) {
+    if ((w & 0xFFFFFC00) != 0x5E280800) return 0;
+    int n = (int)BITS(w, 9, 5), d = (int)(w & 31);
+    fl_clobber(t);
+    x_mov_rm(B, 0, XAX, VO(n));
+    x_shift_ri(B, 0, S_ROL, XAX, 30);
+    s_wsc_rax(t, d);
+    return 1;
+}
 static int s_aes(T *t, a64_u32 w) {
     int op = (int)BITS(w, 16, 12), n = (int)BITS(w, 9, 5), d = (int)(w & 31);
     if (!jit_g.aes || op < 4 || op > 7) return 0;
@@ -2092,7 +2102,10 @@ static int tr_simd(T *t, a64_u32 w) {
         switch (BITS(w, 20, 17)) {
         case 0x0: return s_misc(t, w);
         case 0x8: return s_across(t, w);
-        case 0x4: return (BITS(w, 31, 29) == 2 && BITS(w, 23, 22) == 0) ? s_aes(t, w) : 0;
+        case 0x4:
+            if (!(BITS(w, 31, 29) == 2 && BITS(w, 23, 22) == 0)) return 0;
+            if (s_aes(t, w) || s_sha1h(t, w)) return 1;
+            return 0;
         default: return 0;
         }
     }

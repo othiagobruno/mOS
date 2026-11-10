@@ -26,7 +26,9 @@ int main(void) {
     expect(gpu_syscall(&a, MOS_GPU_CTX_CREATE, (unsigned long long)&ctx, sizeof ctx, 0, &blocked) == 0, "ctx");
     expect(ctx.ctx != 0, "ctx id");
     mos_gpu_ctx_t ven = {.kind = MOS_GPU_CTX_VENUS};
-    expect(gpu_syscall(&a, MOS_GPU_CTX_CREATE, (unsigned long long)&ven, sizeof ven, 0, &blocked) == -MOS_ENXIO, "venus ausente");
+    expect(gpu_syscall(&a, MOS_GPU_CTX_CREATE, (unsigned long long)&ven, sizeof ven, 0, &blocked) == 0, "venus sem dispositivo");
+    expect(gpu_syscall(&a, MOS_GPU_CTX_DESTROY, (unsigned long long)&ven, sizeof ven, 0, &blocked) == 0, "venus fim");
+    expect(info.caps & MOS_GPU_CAP_IOSURF, "cap iosurface");
 
     mos_gpu_bo_t bo = {.size = 4096, .flags = MOS_GPU_BO_READ | MOS_GPU_BO_WRITE | MOS_GPU_BO_SHARED | MOS_GPU_BO_GPU, .ctx = ctx.ctx};
     expect(gpu_syscall(&a, MOS_GPU_BO_CREATE, (unsigned long long)&bo, sizeof bo, 0, &blocked) == 0, "bo");
