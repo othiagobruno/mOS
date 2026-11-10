@@ -913,7 +913,16 @@ const char *cx_path(const char *in, char *out, size_t cap) {
 #define PATH(var, in) char var##_buf[1024]; const char *var = cx_path(in, var##_buf, sizeof var##_buf)
 
 static int link_step(char *abs, size_t cap, long *tlen);
+void cx_perm_set(const char *path, unsigned mode);
 int open(const char *path, int flags, ...) {
+    unsigned mode = 0666;
+    int created = 0;
+    if (flags & MAC_O_CREAT) {
+        __builtin_va_list ap;
+        __builtin_va_start(ap, flags);
+        mode = __builtin_va_arg(ap, unsigned);
+        __builtin_va_end(ap);
+    }
     int k = 0;
     if ((flags & 3) == MAC_O_WRONLY) k |= MOS_O_WRONLY;
     if ((flags & 3) == MAC_O_RDWR) k |= MOS_O_RDWR;
@@ -924,9 +933,10 @@ int open(const char *path, int flags, ...) {
     if (flags & 0x20000) k |= MOS_O_NOCTTY;               /* O_NOCTTY: abrir um escravo de pty não o adota como terminal */
     if (flags & 0x4) k |= MOS_O_NONBLOCK;                 /* O_NONBLOCK: nos terminais o kernel devolve EAGAIN */
     PATH(p, path);
-    if ((flags & MAC_O_EXCL) && (flags & MAC_O_CREAT)) {
+    if (flags & MAC_O_CREAT) {
         mos_stat_t st;
-        if (SYS2(SYS_STAT, p, &st) == 0) { cx_errno = CX_EEXIST; return -1; }
+        created = SYS2(SYS_STAT, p, &st) != 0;
+        if ((flags & MAC_O_EXCL) && !created) { cx_errno = CX_EEXIST; return -1; }
     }
     if (flags & 0x100000) {                               /* O_DIRECTORY: o cp do GNU testa se o destino é pasta assim */
         mos_stat_t ds;
@@ -939,6 +949,8 @@ int open(const char *path, int flags, ...) {
     int fd = (int)ret_errno(SYS2(SYS_OPEN, p, k));
     if (fd >= 0) nb_set(fd, (flags & 0x4) != 0);          /* O_NONBLOCK */
     if (fd >= 0) acc_set(fd, flags & 3);
+    /* O_CREAT grava o mode (com a umask 022, como o mkdir). Arquivo que já existia não muda de modo. */
+    if (fd >= 0 && created) cx_perm_set(p, mode & 0777 & ~022u);
     return fd;
 }
 int creat(const char *path, int mode) { return open(path, 0x0601, mode); }

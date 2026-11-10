@@ -196,6 +196,9 @@ if [ "$(readlink -f "$OUT/libSystem.mos")" != "$(readlink -f "$ROOT/build/libSys
     cp -f "$OUT/libSystem.mos" "$ROOT/build/libSystem.mos"
 fi
 
+echo "==> overlay Darwin (teste de host)"
+bash "$ROOT/tools/darwin-swift-teste.sh" "$ZIG" "$OUT/darwin-swift"
+
 echo "==> kernel"
 mapfile -t KSRC < <(find "$ROOT/kernel" -type f \( -name '*.c' -o -name '*.S' \) | sort)
 "$ZIG" cc -target x86_64-uefi-msvc -O2 -g0 -ffreestanding -fno-stack-protector -fno-stack-check -mno-stack-arg-probe \
