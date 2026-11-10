@@ -90,6 +90,12 @@ int DNSServiceQueryRecord(void **sd, u32 flags, u32 iface, const char *name, u16
 int DNSServiceRefSockFD(void *sd) { (void)sd; return -1; }
 int DNSServiceProcessResult(void *sd) { (void)sd; return kDNSServiceErr_ServiceNotRunning; }
 void DNSServiceRefDeallocate(void *sd) { (void)sd; }
+int DNSServiceRegister(void **sd, u32 flags, u32 iface, const char *name, const char *regtype, const char *domain,
+                       const char *host, u16 port, u16 txtLen, const void *txt, void *cb, void *ctx) {
+    (void)flags; (void)iface; (void)name; (void)regtype; (void)domain; (void)host; (void)port; (void)txtLen; (void)txt; (void)cb; (void)ctx;
+    if (sd) *sd = 0;
+    return kDNSServiceErr_ServiceNotRunning;
+}
 
 /* ================================================================ arquivos */
 int statfs64(const char *path, void *s) { return statfs(path, s); }   /* no x86_64 o statfs já é o de 64 bits */

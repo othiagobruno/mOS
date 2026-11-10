@@ -140,6 +140,21 @@ Copy-Item "$root\build\zlib-x86_64\LICENSE" "$esp\mOS\usr\share\zlib\LICENSE" -F
 Copy-Item "$root\build\curl-x86_64\COPYING" "$esp\mOS\usr\share\curl\COPYING" -Force
 Copy-Item "$root\build\curl-x86_64\LICENSE.mbedtls" "$esp\mOS\usr\share\curl\LICENSE.mbedtls" -Force -ErrorAction SilentlyContinue
 Copy-Item "$root\assets\certs\cacert.pem" "$esp\mOS\usr\share\curl\cacert.pem" -Force
+# CryptoKit.framework: o Swift de userland\frameworks\CryptoKit (PRs #26 e #29), ligado por
+# tools\build-frameworks-objc.ps1. O carregador abre o caminho absoluto; não vai para o libSystem
+# e a trie de tools\ckhost\mkexports.py não é copiada.
+$tcCk = Get-ChildItem "$root\.tools\swift\LocalApp\Programs\Swift\Toolchains" -Directory -ErrorAction SilentlyContinue | Select-Object -First 1
+if ($tcCk) {
+    & "$root\tools\build-frameworks-objc.ps1" -Only CryptoKit
+    if ($LASTEXITCODE -ne 0) { Write-Host 'aviso: CryptoKit.framework não compilou' -ForegroundColor Yellow }
+} else { Write-Host 'aviso: sem toolchain Swift; CryptoKit.framework fica de fora desta imagem' -ForegroundColor Yellow }
+$ck = "$root\build\swift\objc\dylib\System\Library\Frameworks\CryptoKit.framework\Versions\A\CryptoKit"
+if (Test-Path $ck) {
+    $ckdir = "$esp\mOS\System\Library\Frameworks\CryptoKit.framework\Versions\A"
+    New-Item -ItemType Directory -Force $ckdir | Out-Null
+    Copy-Item $ck "$ckdir\CryptoKit" -Force
+    Write-Host 'CryptoKit.framework na imagem'
+}
 # WebKit.framework do mOS (userland\frameworks\WebKit): WKWebView sobre o motor web do sistema (SYS_WEB, kernel/web/webview.c)
 $wkdir = "$esp\mOS\System\Library\Frameworks\WebKit.framework\Versions\A"
 New-Item -ItemType Directory -Force $wkdir | Out-Null

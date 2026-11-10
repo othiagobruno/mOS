@@ -181,7 +181,8 @@ O que cada grupo faz, separado:
   sem ele, devolve o dicionário do macOS sem proxy; `CFNetworkCopyProxiesForURL` devolve a lista "sem proxy".
   `proc_*`, `waitid`, o pty e o `sandbox-exec` (o `execve` ignora a política e roda o comando). O ObjC que o CoreFoundation
   usa (`objc_msgSend`, `objc_getClass`, pools).
-- **Stub.** `FSEventStream*`: o fluxo sobe e não entrega evento. `CFNetworkExecuteProxyAutoConfiguration*` devolve nulo
+- **Funcional, com limite.** `FSEventStream*`: entrega criar, editar e apagar por varredura (`fsevents.c`, [fsevents.md](fsevents.md)). O kernel não avisa.
+- **Stub.** `CFNetworkExecuteProxyAutoConfiguration*` devolve nulo
   (não há PAC). `IOPMAssertion*` aceita, porque o mOS não dorme sozinho. `copyfile_state_get` e `acl_get_*` devolvem o
   erro de "não há o quê". `fclonefileat`, `fsctl`, `fsetattrlist` e `proc_pid_rusage` devolvem `ENOTSUP`.
   LocalAuthentication está ligada e não importa símbolo nenhum.
@@ -448,7 +449,7 @@ O que se sabe do laço (quarta rodada):
    - ~~`getaddrinfo` e TLS~~: feitos (SecureTransport real; o login por código de dispositivo chega à OpenAI). Concluir
      o login com a conta e o polling do token fica para quem tem a conta;
    - ~~CFURL, CFError, CFTimeZone~~ e ~~CFPreferences~~ (`prefs.c`, valor gravado);
-   - FSEvents é stub (sobe e não entrega) e os proxies são funcionais ("sem proxy" quando o configd não responde);
+   - FSEvents entrega criar/editar/apagar por varredura (`fsevents.c`); os proxies são funcionais ("sem proxy" quando o configd não responde);
    - ~~`proc_pidinfo/proc_pidpath/proc_listchildpids`, `flock/lockf`~~; `copyfile_state_get` e `acl_get_*` devolvem erro
      (não há ACL nem estado de cópia);
    - ~~`/usr/bin/sandbox-exec`~~: o `execve` ignora a política e roda o comando.
@@ -662,9 +663,9 @@ O computer use destes três apps precisa de captura, lista de janelas, injeção
 
 ### O que é stub
 
-- **AX de outro processo, em produção.** `_AXUIElementCreateWithRemoteToken` aceita o token `mAX1` (12 bytes: marca, pid, número da janela) e, com a janela na lista do compositor, devolve título, posição e tamanho. A árvore de views continua `-25204` até o transporte. O protocolo serializado está em `axproto.h` e o servidor no processo alvo está em `axserver.c`, atrás de `axtransport.h`. A dependência é SYS-XPC-MACH (bc-1a126ada, Mach/XPC) e KER-UNIX-IPC (bc-4bbc4f8a, AF_UNIX). Em 2026-11-10 não havia PR aberto nem branch com essa API, e esses agentes não estavam acessíveis. Este lado não abre socket, porta Mach nem XPC.
+- **AX de outro processo.** `_AXUIElementCreateWithRemoteToken` aceita o token `mAX1` (12 bytes: marca, pid, número da janela) e, com a janela na lista do compositor, devolve título, posição e tamanho sem IPC. A árvore de views, os children, o `PerformAction` e a lista de ações (`AXActionNames`) atravessam `cx_xpc_peer_call` quando `cx_xpc_peer_ready` responde. O vínculo é `cx_ax_bind_xpc` (`xpc-mach`, `xpctransport.h` do PR #49). Se o ready falha, ou se o call devolve 60 ou 61, a resposta continua `-25204`. O servidor no processo alvo escuta `com.mos.xpc.peer.<pid>`. Este lado não abre socket nem porta Mach: quem faz isso é o `xpc.c` do #49.
 - **`SCStream`.** `startCaptureWithCompletionHandler:` entrega um quadro (`CMSampleBuffer` com `CVPixelBuffer` BGRA e as chaves `SCStreamFrameInfo*`) da área do filtro. Sem a concessão, o bloco recebe erro e não há pixel. Não há quadro seguinte nem áudio. `CGDisplayStream` continua ausente.
 - **`SCShareableContent` acima/abaixo de uma janela âncora.** Entra o recorte on-screen. A janela âncora não filtra a lista.
 - **Computer use real do Grok Bot, do Claude Desktop e do ChatGPT.** Exigiria login e um `libSystem.mos` medido de novo com `tools/machocheck.c`. Não foi feito.
 
-O teste de host (`userland/tests-appkit/computeruse_host.c`) cobre captura, lista, clique, rolagem e AX no mesmo modelo. `computeruse_remote.c` cobre dois processos: PostToPid no app de fundo sem mudar o foco, `AXValueChanged` observado do outro processo, e role/title/children pelo `ax_msg`. A leitura remota de produção fica marcada PENDENTE, com a dependência acima. O QEMU (`tools/qemu-test.ps1`) não rodou neste ambiente.
+O teste de host (`userland/tests-appkit/computeruse_host.c`) cobre captura, lista, clique, rolagem e AX no mesmo modelo. `computeruse_remote.c` cobre dois processos: PostToPid no app de fundo sem mudar o foco, `AXValueChanged` observado do outro processo, role/title/children pelo `ax_msg`, e o mesmo trio por um `fork` com `call`/`listen`/`send` no vtable. O `cx_xpc_peer_call` de verdade fica marcado PENDENTE neste host: o link de `xpc.c` não fecha sem `bootstrap_check_in`, `mach_msg` e o runtime ObjC. O QEMU (`tools/qemu-test.ps1`) não rodou neste ambiente.
