@@ -24,8 +24,14 @@ typedef short i16;
 typedef int i32;
 typedef long long i64;
 typedef unsigned long size_t;
+#ifndef MOS_SSIZE_T_DEFINED
+#define MOS_SSIZE_T_DEFINED
 typedef long ssize_t;
+#endif
+#ifndef MOS_OFF_T_DEFINED
+#define MOS_OFF_T_DEFINED
 typedef long off_t;
+#endif
 typedef unsigned long usize;
 
 #include "../../kernel/include/syscall.h"

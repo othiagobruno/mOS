@@ -15,10 +15,11 @@
  * contents do layer, e o compositor do QuartzCore (quartzcore.c) o mostra na janela. Formatos que
  * não são BGRA8 são convertidos no present.
  *
- * Processos do Chromium/Electron continuam sem device (MTLCreateSystemDefaultDevice = nil) para não
- * trocarem o caminho de software (SwiftShader) pelo ANGLE/Metal; MOS_METAL=1 força, MOS_METAL=0 desliga.
+ * O navegador do Chromium/Electron continua sem device (compõe por software). O helper de GPU
+ * recebe o device (metal_gate.c): sem ele o processo sai na partida. MOS_METAL=1 força, MOS_METAL=0 desliga.
  */
 #include "metalint.h"
+#include "metal_gate.h"
 #include "gpucall.h"
 
 id objc_retain(id o);
@@ -2158,17 +2159,27 @@ static id cm_scope(id s, SEL c, id d) { (void)s; (void)c; (void)d; return new_ob
 
 /* ================================================================ entrada */
 void cx_metal_init(void);
+extern int NXArgc;
+extern char **NXArgv;
 static int metal_allowed(void) {
     const char *e = getenv("MOS_METAL");
     if (e && e[0]) return e[0] != '0';
     u32 n = _dyld_image_count();
-    for (u32 i = 0; i < n; i++) {
+    const char *imgs[48];
+    u32 k = 0;
+    for (u32 i = 0; i < n && k + 1 < 48; i++) {
         const char *nm = _dyld_get_image_name(i);
-        if (nm && (strstr(nm, "Electron Framework") || strstr(nm, "Chromium Framework") || strstr(nm, "Chromium Embedded Framework") ||
-                   strstr(nm, "Google Chrome Framework") || strstr(nm, "Microsoft Edge Framework")))
-            return 0;
+        if (nm) imgs[k++] = nm;
     }
-    return 1;
+    imgs[k] = 0;
+    const char *argv_buf[64];
+    const char **av = 0;
+    if (NXArgv && NXArgc > 0 && NXArgc < 63) {
+        for (int i = 0; i < NXArgc; i++) argv_buf[i] = NXArgv[i] ? NXArgv[i] : "";
+        argv_buf[NXArgc] = 0;
+        av = argv_buf;
+    }
+    return cx_chromium_metal_ok(imgs, av);
 }
 /* um executável sem metadados de ObjC (C puro) não passa pelo boot do runtime, que é quem
  * inicializa a Foundation, o QuartzCore e este arquivo */
