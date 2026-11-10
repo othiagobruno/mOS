@@ -1501,6 +1501,14 @@ static u32 vm_op(mspace_t *sp, u32 op, u64 *a) {
         a[2] = (u64)uvm_jit_wprotect(sp->proc, a[0], (int)a[1]);
         return KERN_SUCCESS;
     }
+    if (op == MACH_VM_REMAP) {          /* mesmas páginas físicas em outro VA (JIT com duas vistas) */
+        extern int uvm_alias_map(process_t *p, u64 *dst_io, u64 src, u64 len);
+        u64 dst = a[0];
+        int rc = uvm_alias_map(sp->proc, &dst, a[2], a[1]);
+        if (rc) return rc == -MOS_EINVAL ? KERN_INVALID_ADDRESS : KERN_NO_SPACE;
+        a[0] = dst;
+        return KERN_SUCCESS;
+    }
     if (op == MACH_VM_REGION) {
         u64 addr = a[0];
         if (addr < USER_BASE || addr >= USER_END) return KERN_INVALID_ADDRESS;

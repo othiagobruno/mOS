@@ -196,6 +196,8 @@ u8 smp_apic_id(int cpu) { return cpu >= 0 && cpu < MAX_CPUS ? cpu_apic[cpu] : 0;
 /* IPI fixo para um núcleo (proc/sched.c: TLB shootdown e threads mortas) */
 void smp_send_ipi(int cpu, u8 vec) {
     if (!lapic || cpu < 0 || cpu >= ncpus_online) return;
+    /* a PTE (W^X do JIT, COW) tem que estar visível nos outros núcleos antes do IPI de TLB */
+    __asm__ volatile("mfence" ::: "memory");
     u64 f = irq_save();
     for (int i = 0; i < 100000 && (lr(LAPIC_ICRLO) & (1u << 12)); i++) __asm__ volatile("pause");
     lw(LAPIC_ICRHI, (u32)cpu_apic[cpu] << 24);

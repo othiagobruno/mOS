@@ -177,6 +177,8 @@ enum {
     MACH_VM_JIT_WPROTECT = 18, /* a0 = página, a1 = 1 tira a escrita / 0 devolve / 2 consulta -> a2 = resultado
                             * (rede de SMC do JIT do tradutor arm64, userland/a64rt: proteção de verdade na PTE; páginas
                             * COW não entram; a escrita do programa vira SIGBUS para o runtime) */
+    MACH_VM_REMAP = 19,     /* a0 = dst (0 = o kernel escolhe), a1 = tamanho, a2 = src. Mesmas páginas físicas,
+                            * as duas graváveis. -> a0 = dst. O a64rt registra o par (A64RT_SYS_JIT_ALIAS). */
     MACH_VM_CA_ALLOC = 4,   /* () -> a0 = id de CAContext, único no sistema */
     MACH_VM_CA_PUBLISH,     /* a0 = id, a1 = nome da entrada de memória -> a2 = geração */
     MACH_VM_CA_GEN,         /* a0 = id -> a1 = geração (0 = ninguém publicou) */
