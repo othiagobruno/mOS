@@ -4,8 +4,8 @@
  * da libc++ x86_64 (string não-alternada, iostream com base virtual).
  *
  * Limitações, não feature flags:
- * - não há desenrolamento de pilha: throw continua abortando (libcxx.c);
- *   current_exception fica vazio e rethrow_exception aborta.
+ * - desenrolamento C++ no x86_64 está em cxx_unwind.c. No arm64 o _Unwind_*
+ *   continua o libunwind ligado por tools/build-libsystem-arm64.ps1.
  * - __dynamic_cast resolve hint >= 0, tipo exato, base primária e bases do
  *   __vmi_class_type_info não virtuais. Base virtual sem hint devolve nulo.
  * - to_chars de long double usa a precisão de double.
@@ -380,26 +380,7 @@ void throw_bad_alloc(void) { ob_fail("std::bad_alloc"); }
 void vec_throw_len(const void *v) __asm__("_ZNKSt3__120__vector_base_commonILb1EE20__throw_length_errorEv");
 void vec_throw_len(const void *v) { (void)v; ob_fail("std::length_error: vector"); }
 
-/* exception_ptr: ponteiro com refcount. Sem unwinding não há exceção corrente. */
-typedef struct { long refs; void *obj; } ob_ep;
-static void ep_hold(ob_ep *e) { if (e) __atomic_add_fetch(&e->refs, 1, __ATOMIC_RELAXED); }
-static void ep_drop(ob_ep *e) { if (e && __atomic_sub_fetch(&e->refs, 1, __ATOMIC_ACQ_REL) == 0) free(e); }
-void ep_from(ob_ep **ret, void *p) __asm__("_ZNSt13exception_ptr31__from_native_exception_pointerEPv");
-void ep_from(ob_ep **ret, void *p) { ob_ep *e = 0; if (p) { e = (ob_ep *)calloc(1, sizeof *e); e->refs = 1; e->obj = p; } *ret = e; }
-void ep_copy(ob_ep **d, ob_ep *const *s) __asm__("_ZNSt13exception_ptrC1ERKS_");
-void ep_copy(ob_ep **d, ob_ep *const *s) { *d = *s; ep_hold(*d); }
-void ep_dtor(ob_ep **d) __asm__("_ZNSt13exception_ptrD1Ev");
-void ep_dtor(ob_ep **d) { ep_drop(*d); *d = 0; }
-ob_ep **ep_eq(ob_ep **d, ob_ep *const *s) __asm__("_ZNSt13exception_ptraSERKS_");
-ob_ep **ep_eq(ob_ep **d, ob_ep *const *s) { if (*d != *s) { ep_hold(*s); ep_drop(*d); *d = *s; } return d; }
-void cur_exc(ob_ep **ret) __asm__("_ZSt17current_exceptionv");
-void cur_exc(ob_ep **ret) { *ret = 0; } /* stub de unwinding: não há exceção viva */
-void rethrow_exc(ob_ep **e) __asm__("_ZSt17rethrow_exceptionSt13exception_ptr");
-void rethrow_exc(ob_ep **e) { (void)e; ob_fail("std::rethrow_exception (sem desenrolamento)"); }
-int uncaught1(void) __asm__("_ZSt18uncaught_exceptionv");
-int uncaught1(void) { return 0; }
-int uncaughtn(void) __asm__("_ZSt19uncaught_exceptionsv");
-int uncaughtn(void) { return 0; }
+/* exception_ptr, current_exception e rethrow_exception: cxx_unwind.c */
 char std_nothrow __asm__("_ZSt7nothrow");
 void *cxa_init_primary(void *obj, void *ti, void (*dtor)(void *)) __asm__("__cxa_init_primary_exception");
 void *cxa_init_primary(void *obj, void *ti, void (*dtor)(void *)) {
@@ -481,7 +462,6 @@ const void *ti_len[2] __asm__("_ZTISt12length_error") = { (void *)&vt_class_ti[2
 const void *ti_oor[2] __asm__("_ZTISt12out_of_range") = { (void *)&vt_class_ti[2], "St12out_of_range" };
 const void *ti_bex[2] __asm__("_ZTISt13bad_exception") = { (void *)&vt_class_ti[2], "St13bad_exception" };
 const void *ti_rt[2] __asm__("_ZTISt13runtime_error") = { (void *)&vt_class_ti[2], "St13runtime_error" };
-const void *ti_inv[2] __asm__("_ZTISt16invalid_argument") = { (void *)&vt_class_ti[2], "St16invalid_argument" };
 const void *ti_bvar[2] __asm__("_ZTISt18bad_variant_access") = { (void *)&vt_class_ti[2], "St18bad_variant_access" };
 const void *ti_bopt[2] __asm__("_ZTISt19bad_optional_access") = { (void *)&vt_class_ti[2], "St19bad_optional_access" };
 const void *ti_ban[2] __asm__("_ZTISt20bad_array_new_length") = { (void *)&vt_class_ti[2], "St20bad_array_new_length" };

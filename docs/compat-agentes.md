@@ -212,7 +212,7 @@ O helper `Grok Bot Computer Use.app/Contents/MacOS/CUGrokBotService` (Swift) ia 
   caminho "sem permissão", como num Mac antes de autorizar.
 - **C e ObjC** (`compat_agentes.c`, `vscode_fwclasses.c`): constantes do Contacts/AppKit/CoreLocation, classes vazias do
   ScreenCaptureKit/Contacts/EventKit/CoreLocation, `CGContextAddPath` (quadráticas viram cúbicas),
-  `CGContextEOFillPath`, `vImageBoxConvolve_Planar8`, e falhas limpas de `sqlite3_open_v2` (o mOS não tem SQLite) e
+  `CGContextEOFillPath`, `vImageBoxConvolve_Planar8`, e `sqlite3_open_v2` (amálgama no libSystem, `sqlite3_mos.c`) e
   `VTCreateCGImageFromCVPixelBuffer`.
 - **Swift:** `CryptoKit.framework` novo (`userland/frameworks/CryptoKit`: `HashFunction`, `Digest`, `SHA256` sobre o
   `CC_SHA256_*`); overlay `CoreGraphics` com `CGPathFillRule`, `fillPath(using:)`, `move(to:transform:)`,

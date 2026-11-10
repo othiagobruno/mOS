@@ -138,6 +138,8 @@ Copy-Item "$root\build\libcompression-x86_64\libcompression.dylib" "$esp\mOS\usr
 New-Item -ItemType Directory -Force "$esp\mOS\usr\share\zlib", "$esp\mOS\usr\share\curl" | Out-Null
 Copy-Item "$root\build\zlib-x86_64\LICENSE" "$esp\mOS\usr\share\zlib\LICENSE" -Force
 Copy-Item "$root\build\curl-x86_64\COPYING" "$esp\mOS\usr\share\curl\COPYING" -Force
+Copy-Item "$root\build\curl-x86_64\LICENSE.mbedtls" "$esp\mOS\usr\share\curl\LICENSE.mbedtls" -Force -ErrorAction SilentlyContinue
+Copy-Item "$root\assets\certs\cacert.pem" "$esp\mOS\usr\share\curl\cacert.pem" -Force
 # CryptoKit.framework: o Swift de userland\frameworks\CryptoKit (PRs #26 e #29), ligado por
 # tools\build-frameworks-objc.ps1. O carregador abre o caminho absoluto; não vai para o libSystem
 # e a trie de tools\ckhost\mkexports.py não é copiada.

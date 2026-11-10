@@ -83,6 +83,9 @@ static void net_spans(a64rt_u64 op, a64rt_u64 a, a64rt_u64 b, a64rt_i64 ret, a64
     case MOS_NET_TLS_ROOTS:
         if (a && ret > 0) push(s, a, (a64rt_u64)ret);              /* PEM em x1 */
         break;
+    case MOS_NET_TLS_CERTS:
+        if (b && ret > 0) push(s, b, (a64rt_u64)ret);              /* cadeia DER em x2 */
+        break;
     case MOS_NET_RESOLVE:
         if (ret == 1 && b) push(s, b, 4);
         break;

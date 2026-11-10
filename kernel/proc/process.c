@@ -768,11 +768,11 @@ static void finish(process_t *p, int code) {
     if (p->exited) return;
     p->exited = true;
     p->exit_code = code;
-    if (saida_log_on())
-        kprintf("proc: %s (pid %d, pai %d) terminou com código %d\n", p->name, p->pid, p->ppid, code);
     p->stopped = 0;
     p->stop_unreported = 0;
     p->cont_unreported = 0;
+    if (saida_log_on())
+        kprintf("proc: %s (pid %d, pai %d) terminou com código %d\n", p->name, p->pid, p->ppid, code);
     drop_pipe_waiters(p, NULL);
     for (thread_t *t = sched_threads(); t; t = t->next)   /* todas as threads do processo */
         if (t->proc == p) {

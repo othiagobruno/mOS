@@ -38,18 +38,9 @@ degrau 3 "libSystem libc.c" d3
 
 d4() {
     cd $S || return 1
-    local L=/usr/local/zig/lib/libunwind UW=/tmp-zig/uw f x
-    mkdir -p $UW
-    local fl="--target=x86_64-apple-macos11-elf -O2 -g0 -fPIC -mno-red-zone -fno-stack-protector -funwind-tables -D_LIBUNWIND_IS_NATIVE_ONLY -DNDEBUG -w -I$L/include -isystem /usr/local/zig/lib/include -isystem /usr/local/zig/lib/libc/include/any-darwin-any"
-    for f in libunwind.cpp UnwindLevel1.c UnwindLevel1-gcc-ext.c UnwindRegistersSave.S UnwindRegistersRestore.S; do
-        case $f in *.cpp) x="-std=c++17 -fno-exceptions -fno-rtti -nostdinc++";; *.S) x="-U__APPLE__ -U__MACH__";; *) x="-std=c11";; esac
-        $Z clang $fl $x -c $L/src/$f -o $UW/$f.o || { cd /tmp-zig; return 1; }
-        echo "uw $f: $(sha256sum < $UW/$f.o | cut -c1-16) host $(sha256sum < $S/$f.o.host | cut -c1-16)"
-    done
     $Z cc -target x86_64-freestanding-none -O2 -g0 -ffreestanding -fno-stack-protector -fno-builtin -nostdlib -static -no-pie \
         -fpie -mno-red-zone -w -Iuserland/libsystem/kshim -Wl,--image-base=0x400000100000 -Wl,-e,cx_start -Wl,--no-gc-sections \
-        $(cat libsystem-fontes.txt) $UW/libunwind.cpp.o $UW/UnwindLevel1.c.o $UW/UnwindLevel1-gcc-ext.c.o \
-        $UW/UnwindRegistersSave.S.o $UW/UnwindRegistersRestore.S.o -o /tmp-zig/libSystem.mos
+        $(cat libsystem-fontes.txt) -o /tmp-zig/libSystem.mos
     local rc=$?
     cd /tmp-zig
     [ $rc -eq 0 ] || return $rc
