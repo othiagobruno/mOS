@@ -84,9 +84,17 @@ Há callbacks de dados e de download em `foundation_more.c`. Desafio de autentic
 
 `UNUserNotificationCenter.currentNotificationCenter`, `requestAuthorizationWithOptions:completionHandler:` e `authorizationStatus` (0 não determinado, 1 negado, 2 autorizado). O pedido grava pending no TCC (`userNotifications`). O bloco só é chamado em `cx_un_decide`. Não há servidor APNs nem `UNNotificationSettings`.
 
-## StoreKit — stub local rotulado
+## StoreKit, QuickLookUI e Core Data — Slack, Claude Desktop e Cursor
 
-`SKPaymentQueue.canMakePayments` é NÃO. `addPayment:` não conclui compra. `transactions` é um array vazio. `cx_storekit_verify_receipt` devolve -1 e o texto "recibo não verificado: o mOS não valida recibo da App Store nem fala com a Apple". Não há rede com a Apple, não há recibo assinado e não há contorno de FairPlay. Apps da App Store continuam sujeitos a DRM que esta frente não quebra.
+O Electron desses três apps liga `QuickLookUI.framework` e `StoreKit.framework`. O Mantle (e, no Claude, o `SimulatorFrameworkBridge-iOS`) liga `CoreData.framework` sem importar símbolo nenhum. O loader recusava a biblioteca quando o arquivo não estava na imagem. Os três prefixos estão em `libsystem_dylib_ok` e na lista `sys_ok` do `machocheck`. Se o Mach-O do framework existir no disco, ele é carregado; senão o símbolo cai no libSystem.
+
+**StoreKit — stub, sem compra.** `canMakePayments` é NÃO. `SKProductsRequest start` devolve zero produtos, a lista pedida como inválida, e chama `productsRequest:didReceiveResponse:` e `requestDidFinish:` na hora, na mesma thread. `addPayment:` entrega uma transação no estado 2 (falha) e volta. `restoreCompletedTransactions` chama `paymentQueue:restoreCompletedTransactionsFailedWithError:`. Não há estado comprado (1) nem restaurado (3). `appStoreReceiptURL` devolve nil e não cria arquivo. `cx_storekit_verify_receipt` devolve -1 e o texto "recibo não verificado: o mOS não valida recibo da App Store nem fala com a Apple". Não há rede com a Apple, não há recibo assinado e não há contorno de FairPlay. A mesma política está em `userland/frameworks/StoreKit/StoreKit.m` para quando a dylib está na imagem.
+
+**QuickLookUI — stub, sem janela.** `sharedPreviewPanel` devolve um painel. `makeKeyAndOrderFront:` e `orderFront:` só marcam visível e retornam; não chamam `NSWindow` e não entram em loop. `reloadData` pergunta a contagem uma vez e, no máximo, o item 0. `enterFullScreenMode:withOptions:` devolve NÃO. A prévia não é desenhada.
+
+**Core Data — loja MOSCD1 no libSystem, memória na dylib de disco.** Slack e Claude não importam classe de Core Data. O libSystem (`coredata_fw.c` + `coredata_store.inc`) grava e relê um arquivo próprio, primeira linha `MOSCD1`, no caminho pedido por `addPersistentStoreWithType:configuration:URL:options:error:` ou em `~/Library/Application Support/<nome>/store.moscd` no `loadPersistentStoresWithCompletionHandler:` (o bloco roda antes do retorno). `NSInMemoryStoreType` não toca disco. Não é um banco SQLite: `sqlite3_open_v2` do libSystem continua falhando, e o arquivo não abre no sqlite3 da Apple. Predicado usa o `NSPredicate` que já existe (`evaluateWithObject:`); predicado que não responde a isso devolve fetch vazio. A dylib `CoreData.framework` do disco, a do Postico, continua só em memória.
+
+`tools/cdtest.c` exercita a loja no host (inserir, gravar, reabrir, apagar, limite, entidades separadas, escape de tab e quebra de linha, magic ruim). `tools/sktest.c` confere a política e o texto do recibo. Isso não é o `build.ps1`, não é a VM e não é hardware.
 
 ## Foundation / formatação — 204 símbolos do WhatsApp, 17 com miolo
 
