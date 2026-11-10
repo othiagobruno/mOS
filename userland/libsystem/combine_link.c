@@ -1,6 +1,6 @@
 /*
  * Liga os $s7Combine que o Claude e o ChatGPT importam ao runtime cx_*.
- * Metadado (Mn, Ma, Mc, Mp, WP, Tn, Tq) é só um endereço: não é layout Swift.
+ * Os metadados (Mn, Ma, Mc, Mp, WP, Tn, Tq, Tl) estão em combine_meta.c.
  */
 #ifdef CX_HOST
 #include <stdlib.h>
@@ -125,39 +125,6 @@ cx_pub *mos_owc(cx_pub **slot) {
     if (slot && !*slot) *slot = cx_passthrough();
     return slot ? *slot : 0;
 }
-
-#define META(var, mangled) const char var[] __asm__(mangled) = "mos-combine-meta"
-
-META(m_cmap_mn, "$s7Combine10PublishersO10CompactMapVMn");
-META(m_cmap_mc, "$s7Combine10PublishersO10CompactMapVy_xq_GAA9PublisherAAMc");
-META(m_dedup_mn, "$s7Combine10PublishersO16RemoveDuplicatesVMn");
-META(m_dedup_mc, "$s7Combine10PublishersO16RemoveDuplicatesVy_xGAA9PublisherAAMc");
-META(m_drop_mn, "$s7Combine10PublishersO4DropVMn");
-META(m_drop_mc, "$s7Combine10PublishersO4DropVy_xGAA9PublisherAAMc");
-META(m_first_mn, "$s7Combine10PublishersO5FirstVMn");
-META(m_first_mc, "$s7Combine10PublishersO5FirstVy_xGAA9PublisherAAMc");
-META(m_filt_mn, "$s7Combine10PublishersO6FilterVMn");
-META(m_filt_mc, "$s7Combine10PublishersO6FilterVy_xGAA9PublisherAAMc");
-META(m_thr_mn, "$s7Combine10PublishersO8ThrottleVMn");
-META(m_thr_mc, "$s7Combine10PublishersO8ThrottleVy_xq_GAA9PublisherAAMc");
-META(m_recv_mn, "$s7Combine10PublishersO9ReceiveOnVMn");
-META(m_recv_mc, "$s7Combine10PublishersO9ReceiveOnVy_xq_GAA9PublisherAAMc");
-META(m_any_mn, "$s7Combine12AnyPublisherVMn");
-META(m_any_mc, "$s7Combine12AnyPublisherVyxq_GAA0C0AAMc");
-META(m_can_ma, "$s7Combine14AnyCancellableCMa");
-META(m_can_mn, "$s7Combine14AnyCancellableCMn");
-const char m_oo_mp[] = "mos-combine-meta";
-extern const char m_oo_mp_sym[16] ASM("$s7Combine16ObservableObjectMp") __attribute__((alias("m_oo_mp")));
-META(m_oo_tn, "$s7Combine16ObservableObjectP0C19WillChangePublisherAC_AA0F0Tn");
-META(m_oo_tq, "$s7Combine16ObservableObjectP16objectWillChange0ceF9PublisherQzvgTq");
-META(m_pass_mn, "$s7Combine18PassthroughSubjectCMn");
-META(m_owp_wp, "$s7Combine25ObservableObjectPublisherCAA0D0AAWP");
-META(m_owp_mn, "$s7Combine25ObservableObjectPublisherCMn");
-META(m_pub_pmn, "$s7Combine9PublishedV9PublisherVMn");
-META(m_pub_pmc, "$s7Combine9PublishedV9PublisherVyx_GAadAMc");
-META(m_pub_ma, "$s7Combine9PublishedVMa");
-META(m_pub_mn, "$s7Combine9PublishedVMn");
-META(m_owc_tl, "$s25ObjectWillChangePublisher7Combine010ObservableA0PTl");
 
 #define EXP(mangled, src) void src##_exp(void) ASM(mangled) __attribute__((alias(#src)))
 EXP("$s7Combine14AnyCancellableC6cancelyyF", mos_any_cancel);
