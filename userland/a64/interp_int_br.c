@@ -105,17 +105,27 @@ static int hint(a64_cpu *c, a64_u32 i) {
     }
 }
 
+/* TSO: mfence só quando o ARM ordena store→load ((CRm & 3) == 3). LD/ST já estão no TSO.
+ * SSBB/PSSBB e SB são barreiras de especulação: lfence. ISB é sincronização de contexto,
+ * não barreira de dado. */
+static void fence_spec(void) { __asm__ volatile("lfence" ::: "memory"); }
+static void fence_comp(void) { __asm__ volatile("" ::: "memory"); }
+
 static int barrier(a64_cpu *c, a64_u32 i) {
     unsigned crm = BITS(i, 11, 8), op2 = BITS(i, 7, 5);
     switch (op2) {
-    case 2: c->excl_valid = 0; return A64_NEXT;                                 /* CLREX */
-    case 4: a64_fence_full(); return A64_NEXT;                                  /* DSB, SSBB, PSSBB */
+    case 2: a64_xmon_clrex(c); return A64_NEXT;                                 /* CLREX */
+    case 4:                                                                     /* DSB */
+        if (crm == 0 || crm == 4) fence_spec();                                 /* SSBB, PSSBB */
+        else if ((crm & 3) == 1 || (crm & 3) == 2) fence_comp();                /* LD / ST */
+        else a64_fence_full();                                                  /* SY, ISH, NSH, OSH e o resto */
+        return A64_NEXT;
     case 5:                                                                     /* DMB */
-        if ((crm & 3) == 1 || (crm & 3) == 2) __atomic_signal_fence(__ATOMIC_SEQ_CST); /* LD/ST: TSO já ordena */
+        if ((crm & 3) == 1 || (crm & 3) == 2) fence_comp();
         else a64_fence_full();
         return A64_NEXT;
-    case 6: return A64_NEXT;                                                    /* ISB */
-    case 7: return crm == 0 ? A64_NEXT : A64_EXIT_UDF;                          /* SB */
+    case 6: fence_comp(); return A64_NEXT;                                      /* ISB */
+    case 7: if (crm == 0) { fence_spec(); return A64_NEXT; } return A64_EXIT_UDF; /* SB */
     default: return A64_EXIT_UDF;   /* DSB nXS (FEAT_XS), TCOMMIT (TME), não alocados */
     }
 }
