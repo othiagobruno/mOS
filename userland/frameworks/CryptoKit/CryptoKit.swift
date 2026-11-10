@@ -3,10 +3,10 @@
 // (-enable-library-evolution, -module-name CryptoKit). Os nomes mangled têm de ser os da Apple:
 // o machocheck dos apps-alvo (nov. 2026) importa 68 símbolos distintos; o do VS Code 1.145.1
 // são 39 (46 imports). Compilado contra o Foundation de ABI "Foundation", o objeto exporta
-// esses nomes. O machocheck só os zera se a pasta varrida inclui uma dylib com esse export
-// trie (docs/compat-apps.md): tools/ckhost/mkexports.py grava o trie a partir do nm desse
-// objeto, e o grupo CryptoKit do VS Code vai de 46/46 a 46/0. Essa dylib de medição não é
-// o binário do sistema; o que roda sai do tools/build-frameworks-objc.ps1.
+// esses nomes. O carregador abre o Mach-O em
+// /System/Library/Frameworks/CryptoKit.framework/Versions/A/CryptoKit, e o machocheck
+// --disco conta os exports desse arquivo. O build.ps1 copia a saída de
+// tools/build-frameworks-objc.ps1. A trie de tools/ckhost/mkexports.py não entra na imagem.
 //
 // Funcional (primitiva real, falha de verdade):
 //   SHA-256 (CC_SHA256_* do CommonCrypto), Insecure.MD5 (CC_MD5_*), HMAC e HKDF sobre o HashFunction,
