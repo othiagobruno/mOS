@@ -11,6 +11,9 @@
 #include "compat_gui.h"
 #include "syscall.h"
 #include "quitpol.h"
+#include "composite.h"
+#include "kernel/ui/statusdock.h"
+#include "kernel/dev/kbd_mod.h"
 
 #define MAX_GWIN 64
 #define QLEN 256
@@ -101,30 +104,29 @@ static void proxy_paint(window_t *w, ui_t *u) {
     u->clicked_any = false;
 }
 
-static void proxy_key(window_t *w, input_event_t *ev) {
-    gwin_t *g = gwin_of(w);
-    if (!g || ev->type != EV_KEY_DOWN) return;
+/* tecla normal vira GEV_KEY_DOWN/UP. Modificador sozinho (Shift, Ctrl, Option, Command, Caps)
+ * vira GEV_FLAGS: o AppKit entrega flagsChanged: e não keyDown:. */
+static void push_key(gwin_t *g, input_event_t *ev, int up) {
     gui_event_t e;
+    if (!g) return;
     memset(&e, 0, sizeof e);
-    e.type = GEV_KEY_DOWN;
     e.win = (u32)g->id;
     e.key = ev->key;
     e.mods = ev->mods;
+    e.clicks = up ? 0 : 1;
+    if (kbd_key_is_modifier(ev->key)) { e.type = GEV_FLAGS; push(g->ga, &e); return; }
+    e.type = up ? GEV_KEY_UP : GEV_KEY_DOWN;
     if (ev->key >= 32 && ev->key < 0x100 && ev->key != 127 && !(ev->mods & (MOD_CMD | MOD_CTRL))) utf8_encode((u32)ev->key, e.text);
     push(g->ga, &e);
 }
+static void proxy_key(window_t *w, input_event_t *ev) {
+    if (ev->type != EV_KEY_DOWN) return;
+    push_key(gwin_of(w), ev, 0);
+}
 /* tecla solta (wm.c chama para a janela em foco; só as janelas de apps do macOS se interessam) */
 void compat_gui_key_up(window_t *w, input_event_t *ev) {
-    gwin_t *g = gwin_of(w);
-    if (!g || ev->type != EV_KEY_UP) return;
-    gui_event_t e;
-    memset(&e, 0, sizeof e);
-    e.type = GEV_KEY_UP;
-    e.win = (u32)g->id;
-    e.key = ev->key;
-    e.mods = ev->mods;
-    if (ev->key >= 32 && ev->key < 0x100 && ev->key != 127 && !(ev->mods & (MOD_CMD | MOD_CTRL))) utf8_encode((u32)ev->key, e.text);
-    push(g->ga, &e);
+    if (ev->type != EV_KEY_UP) return;
+    push_key(gwin_of(w), ev, 1);
 }
 
 static void proxy_close(window_t *w) {
@@ -447,7 +449,12 @@ const char *compat_app_bundle(app_t *a) {
 /* chamado quando o processo termina (gancho de proc/process.c) */
 void compat_gui_proc_exit(process_t *p) {
     gapp_t *ga = gapp_find(p);
+    app_t *sc;
     if (!ga) return;
+    sc = apps_shortcut_for(&ga->app);
+    if (sc) sc->dock_suppressed = 0;
+    sb_remove_pid(ga->pid);
+    dock_tile_remove(ga->pid);
     drag_forget_app(ga);
     for (int i = 0; i < MAX_GWIN; i++) if (wins[i].used && wins[i].ga == ga) destroy(&wins[i]);
     for (gapp_t **pp = &gapps; *pp; pp = &(*pp)->next)
@@ -469,6 +476,36 @@ static bool copy_str(process_t *p, u64 va, char *out, usize cap) {
 }
 
 static font_t *font_w(u32 weight) { return font_get(weight >= FONT_COUNT ? FONT_REGULAR : (int)weight); }
+
+/* preenchimento e blit com NSCompositingOperation. A cor e os pixels chegam retos (ARGB). */
+static void comp_fill(surface_t *s, int x, int y, int w, int h, u32 straight, unsigned op) {
+    rect_t r;
+    u32 pm;
+    int yy, xx;
+    if (w <= 0 || h <= 0) return;
+    pm = gui_premul(straight);
+    r = rect_intersect(rect_make(x + s->ox, y + s->oy, w, h), s->clip);
+    if (rect_empty(r)) return;
+    for (yy = 0; yy < r.h; yy++) {
+        u32 *row = s->px + (usize)(r.y + yy) * (usize)s->stride + r.x;
+        for (xx = 0; xx < r.w; xx++) row[xx] = gui_composite_px(row[xx], pm, op);
+    }
+}
+static void comp_image(surface_t *s, int x, int y, int w, int h, const u32 *straight, unsigned op) {
+    rect_t r;
+    int yy, xx;
+    if (!straight || w <= 0 || h <= 0) return;
+    r = rect_intersect(rect_make(x + s->ox, y + s->oy, w, h), s->clip);
+    if (rect_empty(r)) return;
+    for (yy = r.y; yy < r.y + r.h; yy++) {
+        int sy = yy - (y + s->oy);
+        u32 *row = s->px + (usize)yy * (usize)s->stride;
+        for (xx = r.x; xx < r.x + r.w; xx++) {
+            int sx = xx - (x + s->ox);
+            row[xx] = gui_composite_px(row[xx], gui_premul(straight[(usize)sy * (usize)w + (usize)sx]), op);
+        }
+    }
+}
 
 static void run_cmds(surface_t *s, const u8 *b, usize n) {
     usize o = 0;
@@ -538,6 +575,25 @@ static void run_cmds(surface_t *s, const u8 *b, usize n) {
             /* pixels ARGB não pré-multiplicados: converte linha a linha */
             for (int k = 0; k < iv[2] * iv[3]; k++) img.px[k] = color_premul(img.px[k]);
             gfx_blend(s, &img, iv[0], iv[1], 255);
+            break;
+        }
+        case GC_COMP_FILL: {
+            float f[4];
+            u32 col, oper;
+            NEED(24);
+            memcpy(f, a, 16);
+            memcpy(&col, a + 16, 4);
+            memcpy(&oper, a + 20, 4);
+            comp_fill(s, (int)f[0], (int)f[1], (int)(f[2] + 0.5f), (int)(f[3] + 0.5f), col, oper);
+            break;
+        }
+        case GC_COMP_IMAGE: {
+            u32 oper;
+            NEED(20);
+            memcpy(iv, a, 16);
+            memcpy(&oper, a + 16, 4);
+            if (iv[2] <= 0 || iv[3] <= 0 || iv[2] > 4096 || iv[3] > 4096 || al < 20 + (usize)iv[2] * iv[3] * 4) break;
+            comp_image(s, iv[0], iv[1], iv[2], iv[3], (const u32 *)(a + 20), oper);
             break;
         }
         }
@@ -631,6 +687,78 @@ static i64 front_pid(void) {
     if (!w) return 0;
     int pid = compat_gui_pid_of(w->app);
     return pid > 0 ? pid : 0;
+}
+
+static gapp_t *gapp_by_pid(int pid) {
+    for (gapp_t *ga = gapps; ga; ga = ga->next) if (ga->pid == pid) return ga;
+    return NULL;
+}
+
+/* o ocultar do Dock vai para o app proxy e para o atalho mac: que o desktop desenha.
+ * O selo continua em compat_gui_set_badge_label (MOS_DESK_BADGE). */
+static void dock_apply(gapp_t *ga) {
+    app_t *sc = apps_shortcut_for(&ga->app);
+    int hidden = dock_tile_is_hidden(ga->pid);
+    ga->app.dock_suppressed = hidden;
+    if (sc && sc != &ga->app) sc->dock_suppressed = hidden;
+    wm_damage_all();
+}
+
+static i64 gui_status_syscall(process_t *p, u64 op, u64 b, u64 c, u64 d) {
+    gapp_t *ga = gapp_for(p);
+    if (!ga) return -MOS_ENOMEM;
+    if (op == DEV_STATUS) {
+        if (b == SB_REMOVE) {
+            sb_remove(ga->pid, (u32)c);
+            desktop_status_note(ga->pid, (u32)c);
+            return 0;
+        }
+        if (b == SB_SET) {
+            u8 *buf;
+            u32 id = 0;
+            int rc;
+            if (d == 0 || d > 65536) return -MOS_EINVAL;
+            buf = kmalloc((usize)d);
+            if (!buf) return -MOS_ENOMEM;
+            if (!uvm_copy_in(p, buf, c, (usize)d)) { kfree(buf); return -MOS_EFAULT; }
+            rc = sb_upsert_wire(ga->pid, buf, (u32)d);
+            if (rc == 0) memcpy(&id, buf, 4);
+            kfree(buf);
+            if (rc != 0) return -MOS_EINVAL;
+            desktop_status_note(ga->pid, id);
+            return 0;
+        }
+        return -MOS_EINVAL;
+    }
+    if (op == DEV_DOCK) {
+        if (b == DK_VISIBLE) {
+            if (dock_tile_set_visible(ga->pid, c ? 1 : 0)) return -MOS_EINVAL;
+            dock_apply(ga);
+            return 0;
+        }
+        return -MOS_EINVAL;
+    }
+    return -MOS_EINVAL;
+}
+
+void compat_gui_status_open(int pid, unsigned id) {
+    gapp_t *ga = gapp_by_pid(pid);
+    gui_event_t e;
+    if (!ga) return;
+    memset(&e, 0, sizeof e);
+    e.type = GEV_STATUS;
+    e.key = (int)id;
+    push(ga, &e);
+}
+void compat_gui_status_pick(int pid, unsigned id, unsigned action) {
+    gapp_t *ga = gapp_by_pid(pid);
+    gui_event_t e;
+    (void)id;
+    if (!ga || !action) return;
+    memset(&e, 0, sizeof e);
+    e.type = GEV_MENU;
+    e.key = (int)action;
+    push(ga, &e);
 }
 
 /* ------------------------------------------------------------ syscalls */
@@ -845,6 +973,8 @@ i64 compat_gui_syscall(process_t *p, u64 n, u64 a, u64 b, u64 c, u64 d, u64 e) {
         if (a == DEV_INPUT_TO_PID) return input_to_pid(b, c, d);
         if (a == DEV_FOCUS_PID) return focus_pid((int)b);
         if (a == DEV_FRONT_PID) return front_pid();
+        /* 22 e 23 são a faixa de status e o ocultar do Dock; 21 continua sendo a captura de áudio */
+        if (a == DEV_STATUS || a == DEV_DOCK) return gui_status_syscall(p, a, b, c, d);
         /* números acima dos do Bluetooth que mesmo assim são do gamepad.c: áudio e a lista de janelas */
         bool pad = a < DEV_BT_STATE || a == DEV_AUDIO_STATE || a == DEV_AUDIO_CTL || a == DEV_AUDIO_INFO || a == DEV_AUDIO_READ || a == DEV_WINDOW_LIST;
         return pad ? gamepad_syscall(p, a, b, c, d) : bt_user_syscall(p, a, b, c, d);
