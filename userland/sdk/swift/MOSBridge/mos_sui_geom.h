@@ -35,6 +35,17 @@ static inline int mos_sui_intersect_inline(
     return 1;
 }
 
+/* Célula de LazyVGrid: coluna = index % columns, linha = index / columns. */
+static inline void mos_sui_grid_cell_inline(int index, int columns, double cellW, double cellH, double spacing,
+                                            double *x, double *y) {
+    int cols = columns < 1 ? 1 : columns;
+    int i = index < 0 ? 0 : index;
+    int col = i % cols;
+    int row = i / cols;
+    *x = (double)col * (cellW + spacing);
+    *y = (double)row * (cellH + spacing);
+}
+
 /* Popover logo abaixo da âncora; se não cabe, acima. Sempre dentro do contêiner. */
 static inline void mos_sui_popover_frame_inline(
     double ax, double ay, double aw, double ah,
@@ -517,6 +528,10 @@ static int mos_sui_selftest_run(char *err, int errlen) {
     SUI_CHECK(mos_sui_intersect_inline(0, -10, 40, 30, 0, 0, 100, 50, &x, &y, &w, &h) == 1, "recorte parcial existe");
     SUI_CHECK(y == 0 && h == 20 && x == 0 && w == 40, "recorte parcial 0,0 40x20");
     SUI_CHECK(mos_sui_intersect_inline(0, 60, 10, 10, 0, 0, 100, 50, &x, &y, &w, &h) == 0, "fora do viewport");
+    mos_sui_grid_cell_inline(4, 3, 40, 20, 8, &x, &y);
+    SUI_CHECK(x == 48 && y == 28, "grid coluna 1 linha 1");
+    mos_sui_grid_cell_inline(0, 0, 10, 10, 0, &x, &y);
+    SUI_CHECK(x == 0 && y == 0, "grid sem colunas cai na célula 0");
     mos_sui_popover_frame_inline(16, 40, 80, 24, 150, 64, 0, 0, 240, 200, &x, &y, &w, &h);
     SUI_CHECK(x == 0 && y == 68 && w == 150 && h == 64, "popover centrado na âncora e dentro da janela");
     mos_sui_popover_frame_inline(200, 180, 30, 16, 80, 40, 0, 0, 240, 200, &x, &y, &w, &h);
