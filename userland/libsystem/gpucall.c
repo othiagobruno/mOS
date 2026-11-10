@@ -80,10 +80,6 @@ typedef struct {
 } mos_gpu_kms_t;
 #endif
 
-#ifndef SYS_GPU
-#define SYS_GPU 61
-#endif
-
 #define MOS_GPU_EINVAL 22
 #define MOS_GPU_ENOMEM 12
 #define MOS_GPU_EBUSY  16
