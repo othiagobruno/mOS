@@ -143,18 +143,18 @@ static id cx_cfg_init(id self, SEL c, id name) {
 static id cx_prov_init(id self, SEL c, id cfg) {
     (void)c; (void)cfg;
     Gprov = self;
-    cx_set_provider(&Gcx, 1, Gdel ? 1 : 0);
+    wa_cx_set_provider(&Gcx, 1, Gdel ? 1 : 0);
     return self;
 }
 static void cx_set_del(id self, SEL c, id del, id q) {
     (void)c; (void)q; (void)self;
     Gdel = del;
-    cx_set_provider(&Gcx, 1, del ? 1 : 0);
+    wa_cx_set_provider(&Gcx, 1, del ? 1 : 0);
 }
 static void cx_incoming(id self, SEL c, id uuid, id update, void *done) {
     int rc;
     (void)c; (void)self; (void)update;
-    rc = cx_report_incoming(&Gcx, cstr(uuid), 0);
+    rc = wa_cx_report_incoming(&Gcx, cstr(uuid), 0);
     call_block(done, rc == CX_OK ? 0 : make_err(CXErrorDomainIncomingCall, 1, "chamada de entrada não registrada"));
 }
 static id cx_ctl_init(id self, SEL c) { (void)c; Gctl = self; return self; }
@@ -171,7 +171,7 @@ static void cx_request(id self, SEL c, id tx, void *done) {
         slot_t *s = slot_of(tx);
         if (s && s->kind) {
             int idx = -1;
-            rc = cx_submit(&Gcx, s->kind, s->uuid[0] ? s->uuid : "local", s->handle, s->flag, s->flag, &idx);
+            rc = wa_cx_submit(&Gcx, s->kind, s->uuid[0] ? s->uuid : "local", s->handle, s->flag, s->flag, &idx);
             if (rc == CX_OK) { s->idx = idx; tell_delegate(s->kind, tx); any = 1; }
         }
     }
@@ -180,7 +180,7 @@ static void cx_request(id self, SEL c, id tx, void *done) {
         slot_t *s = slot_of(act);
         int idx = -1;
         if (!s) continue;
-        rc = cx_submit(&Gcx, s->kind, s->uuid[0] ? s->uuid : "local", s->handle, s->flag, s->flag, &idx);
+        rc = wa_cx_submit(&Gcx, s->kind, s->uuid[0] ? s->uuid : "local", s->handle, s->flag, s->flag, &idx);
         if (rc != CX_OK) break;
         s->idx = idx;
         tell_delegate(s->kind, act);
@@ -202,8 +202,8 @@ static id act_init(id self, SEL c, id uuid) {
     return self;
 }
 static id act_uuid(id self, SEL c) { slot_t *s = slot_of(self); (void)c; return cx_str(s ? s->uuid : ""); }
-static void act_fulfill(id self, SEL c) { slot_t *s = slot_of(self); (void)c; if (s && s->idx >= 0) cx_fulfill(&Gcx, s->idx); }
-static void act_fail(id self, SEL c) { slot_t *s = slot_of(self); (void)c; if (s && s->idx >= 0) cx_fail(&Gcx, s->idx); }
+static void act_fulfill(id self, SEL c) { slot_t *s = slot_of(self); (void)c; if (s && s->idx >= 0) wa_cx_fulfill(&Gcx, s->idx); }
+static void act_fail(id self, SEL c) { slot_t *s = slot_of(self); (void)c; if (s && s->idx >= 0) wa_cx_fail(&Gcx, s->idx); }
 static void act_set_held(id self, SEL c, BOOL v) { slot_t *s = slot_of(self); (void)c; if (s) s->flag = v ? 1 : 0; }
 static void act_set_muted(id self, SEL c, BOOL v) { slot_t *s = slot_of(self); (void)c; if (s) s->flag = v ? 1 : 0; }
 static id TxArr[16];
@@ -239,20 +239,20 @@ static id ct_empty(id self, SEL c) {
 
 static long cl_status(id self, SEL c) {
     (void)self; (void)c;
-    Gauth = cl_auth_from_tcc(cx_tcc_state("kTCCServiceLocation"));
+    Gauth = wa_cl_auth(cx_tcc_state("kTCCServiceLocation"));
     return Gauth;
 }
 static void cl_ask(id self, SEL c) {
     (void)c; (void)self;
     cx_tcc_request("kTCCServiceLocation");
-    Gauth = cl_auth_from_tcc(cx_tcc_state("kTCCServiceLocation"));
+    Gauth = wa_cl_auth(cx_tcc_state("kTCCServiceLocation"));
 }
 static id Gcldel;
 static id cl_loc(id self, SEL c) { (void)self; (void)c; return 0; }
 static id cl_get_del(id self, SEL c) { (void)self; (void)c; return Gcldel; }
 static void cl_fail_to(id del, id mgr) {
     id err;
-    int code = cl_location_error(Gauth);
+    int code = wa_cl_error(Gauth);
     if (!del || !cx_responds(del->isa, sel_registerName("locationManager:didFailWithError:"))) return;
     err = make_err("kCLErrorDomain", code, code == CL_ERR_DENIED ? "localização negada" : "localização desconhecida: o mOS não tem GPS");
     ((void (*)(id, SEL, id, id))objc_msgSend)(del, sel_registerName("locationManager:didFailWithError:"), mgr, err);
@@ -260,7 +260,7 @@ static void cl_fail_to(id del, id mgr) {
 static void cl_set_del(id self, SEL c, id d) { (void)self; (void)c; Gcldel = d; }
 static void cl_start(id self, SEL c) {
     (void)c;
-    Gauth = cl_auth_from_tcc(cx_tcc_state("kTCCServiceLocation"));
+    Gauth = wa_cl_auth(cx_tcc_state("kTCCServiceLocation"));
     cl_fail_to(Gcldel, self);
 }
 static void cl_geocode(id self, SEL c, id a, void *done) {
@@ -274,7 +274,7 @@ cl_coord_t CLLocationCoordinate2DMake(double lat, double lon) {
     c.longitude = lon;
     return c;
 }
-int CLLocationCoordinate2DIsValid(cl_coord_t c) { return cl_coord_valid(c.latitude, c.longitude); }
+int CLLocationCoordinate2DIsValid(cl_coord_t c) { return wa_cl_coord_valid(c.latitude, c.longitude); }
 
 static id bg_shared(id cls, SEL c) {
     static id s;
@@ -284,13 +284,13 @@ static id bg_shared(id cls, SEL c) {
 }
 static void bg_reg(id self, SEL c, id ident, id q, void *handler) {
     (void)self; (void)c; (void)q; (void)handler;
-    bg_register(&Gbg, cstr(ident));
+    wa_bg_register(&Gbg, cstr(ident));
 }
-static BOOL bg_submit_m(id self, SEL c, id req, id *err) {
+static BOOL wa_bg_submit_m(id self, SEL c, id req, id *err) {
     slot_t *s = slot_of(req);
     int code = BG_ERR_NOT_PERMITTED;
     (void)self; (void)c;
-    bg_submit(&Gbg, s ? s->uuid : "", s ? s->kind : 0, &code);
+    wa_bg_submit(&Gbg, s ? s->uuid : "", s ? s->kind : 0, &code);
     if (err) *err = make_err(BGTaskSchedulerErrorDomain, code, code == BG_ERR_UNAVAILABLE ? "o mOS não executa tarefa em segundo plano" : "tarefa não registrada");
     return NO;
 }
@@ -315,8 +315,8 @@ void cx_wa_frameworks_init(void) {
     memcpy(&nanv, &nanb, sizeof nanv);
     kCLLocationCoordinate2DInvalid.latitude = nanv;
     kCLLocationCoordinate2DInvalid.longitude = nanv;
-    cx_box_init(&Gcx);
-    bg_box_init(&Gbg);
+    wa_cx_box_init(&Gcx);
+    wa_bg_init(&Gbg);
     def(&CXProvider_c, &CXProvider_m, "CXProvider");
     def(&CXProviderConfiguration_c, &CXProviderConfiguration_m, "CXProviderConfiguration");
     def(&CXCallController_c, &CXCallController_m, "CXCallController");
@@ -378,7 +378,7 @@ void cx_wa_frameworks_init(void) {
     cx_add_method(&CLGeocoder_c, "geocodeAddressString:completionHandler:", (void *)cl_geocode);
     cx_add_cmethod(&BGTaskScheduler_c, "sharedScheduler", (void *)bg_shared);
     cx_add_method(&BGTaskScheduler_c, "registerForTaskWithIdentifier:usingQueue:launchHandler:", (void *)bg_reg);
-    cx_add_method(&BGTaskScheduler_c, "submitTaskRequest:error:", (void *)bg_submit_m);
+    cx_add_method(&BGTaskScheduler_c, "submitTaskRequest:error:", (void *)wa_bg_submit_m);
     cx_add_method(&BGAppRefreshTaskRequest_c, "initWithIdentifier:", (void *)bg_req_init);
     cx_add_method(&BGProcessingTaskRequest_c, "initWithIdentifier:", (void *)bg_req_init);
     (void)Gctl;

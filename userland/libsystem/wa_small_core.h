@@ -43,20 +43,20 @@ typedef struct {
     int ncalls;
 } cx_box;
 
-void cx_box_init(cx_box *b);
-int cx_set_provider(cx_box *b, int on, int delegate_on);
-int cx_submit(cx_box *b, int kind, const char *uuid, const char *handle, int muted, int held, int *idx);
-int cx_fulfill(cx_box *b, int idx);
-int cx_fail(cx_box *b, int idx);
-int cx_report_incoming(cx_box *b, const char *uuid, const char *handle);
-const cx_call *cx_find_call(const cx_box *b, const char *uuid);
+void wa_cx_box_init(cx_box *b);
+int wa_cx_set_provider(cx_box *b, int on, int delegate_on);
+int wa_cx_submit(cx_box *b, int kind, const char *uuid, const char *handle, int muted, int held, int *idx);
+int wa_cx_fulfill(cx_box *b, int idx);
+int wa_cx_fail(cx_box *b, int idx);
+int wa_cx_report_incoming(cx_box *b, const char *uuid, const char *handle);
+const cx_call *wa_cx_find_call(const cx_box *b, const char *uuid);
 
 /* CoreLocation. Concedido no TCC vira WhenInUse. Sem GPS o resultado nunca é coordenada. */
 enum { CL_AUTH_NOT = 0, CL_AUTH_DENIED = 2, CL_AUTH_WHEN_IN_USE = 4 };
 enum { CL_ERR_UNKNOWN = 0, CL_ERR_DENIED = 1 };
-int cl_auth_from_tcc(int tcc_state);
-int cl_location_error(int auth);
-int cl_coord_valid(double lat, double lon);
+int wa_cl_auth(int tcc_state);
+int wa_cl_error(int auth);
+int wa_cl_coord_valid(double lat, double lon);
 
 /* BackgroundTasks. 2 = indisponível, 4 = não registrado. */
 enum { BG_REFRESH = 1, BG_PROCESSING = 2, BG_ERR_UNAVAILABLE = 2, BG_ERR_NOT_PERMITTED = 4 };
@@ -70,13 +70,13 @@ typedef struct {
     bg_item sub[8];
     int nsub;
 } bg_box;
-void bg_box_init(bg_box *b);
-int bg_register(bg_box *b, const char *ident);
+void wa_bg_init(bg_box *b);
+int wa_bg_register(bg_box *b, const char *ident);
 /* 0 e *err preenchido: a tarefa fica gravada só se o identificador foi registrado. */
-int bg_submit(bg_box *b, const char *ident, int kind, int *err);
+int wa_bg_submit(bg_box *b, const char *ident, int kind, int *err);
 
 /* CoreTelephony: sem operadora. */
-int ct_provider_count(void);
-const char *ct_radio(void);
+int wa_ct_providers(void);
+const char *wa_ct_radio(void);
 
 #endif
