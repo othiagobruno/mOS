@@ -303,7 +303,7 @@ mkdir -p "$ESP/mOS/Sistema/Biblioteca/a64"
     "${A64SRC[@]}" -o "$ESP/mOS/Sistema/Biblioteca/a64/a64rt.mos"
 
 echo "==> /usr/lib (libc++ do LLVM e zlib 1.3.2; não são stub)"
-MOS_ZIG="$ZIG" sh "$ROOT/tools/build-libcxx.sh" "$ROOT/build/libcxx"
+MOS_ZIG="$ZIG" bash "$ROOT/tools/build-libcxx.sh" "$ROOT/build/libcxx"
 MOS_ZIG="$ZIG" sh "$ROOT/tools/build-libz.sh"
 mkdir -p "$ESP/mOS/usr/lib"
 cp -f "$ROOT/build/libcxx/libc++.1.dylib" "$ESP/mOS/usr/lib/libc++.1.dylib"

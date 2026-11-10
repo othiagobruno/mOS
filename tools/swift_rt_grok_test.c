@@ -1,10 +1,16 @@
 /* O stdatomic do runtime do Grok compila sem wchar_t e o once só corre uma vez. */
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
-void *swift_allocObject(const void *metadata, unsigned long size, unsigned long align_mask);
-void *swift_retain(void *object);
-void swift_release(void *object);
+void *swift_allocObject(const void *metadata, unsigned long size, unsigned long align_mask) {
+    void *p = calloc(1, size ? size : 1);
+    if (p) *(const void **)p = metadata;
+    (void)align_mask;
+    return p;
+}
+void *swift_retain(void *object) { return object; }
+void swift_release(void *object) { (void)object; }
 void swift_once(long *token, void (*fn)(void *), void *ctx);
 
 static int ran;
