@@ -5,6 +5,7 @@
  *   exceto rax (rcx e r11 também podem mudar, como no `syscall` do Linux).
  */
 #pragma once
+#include "mos_gpu.h"
 
 enum {
     SYS_EXIT = 0,      /* (code)                                   não volta */
@@ -73,6 +74,7 @@ enum {
     SYS_SIG,           /* 58: (op, a, b, c) -> ...                  sinais POSIX completos: ações, máscaras, sigsuspend, sigaltstack (MOS_SIGOP_* abaixo) */
     SYS_WEB,           /* 59: (op, id, a, b) -> ...                 motor web do sistema para o WKWebView (MOS_WEB_* abaixo, kernel/web/webview.c) */
     SYS_THREADCTL,     /* 60: (op, tid, a) -> ...                   outra thread do processo: suspender, retomar, registradores (MOS_THR_* abaixo) */
+    SYS_GPU = 61,      /* 61: (op, struct*, tamanho) -> 0 | -errno   GPU: kernel/include/mos_gpu.h e docs/gpu-abi.md */
     SYS_COUNT,
     /* 63: banner de notificação do app e selo do Dock (kernel/ui/deskbridge.c).
      * rdi = MOS_DESK_BANNER (título, corpo, token) | MOS_DESK_TAKE (int *token) | MOS_DESK_BADGE (rótulo). */
