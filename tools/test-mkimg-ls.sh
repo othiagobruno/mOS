@@ -10,7 +10,8 @@ trap 'rm -rf "$TMP"' EXIT
 cd "$TMP"
 
 if ! git -C "$ROOT" cat-file -e 7b65273:tools/mkimg.c 2>/dev/null; then
-    git -C "$ROOT" fetch --depth=1 origin 7b65273
+    # checkout do Actions é raso; 7b65273 é commit, não um ref.
+    git -C "$ROOT" fetch --depth=80 origin main
 fi
 mkdir -p "$TMP/ref/tools"
 git -C "$ROOT" show 7b65273:tools/mkimg.c > "$TMP/ref/tools/mkimg.c"
