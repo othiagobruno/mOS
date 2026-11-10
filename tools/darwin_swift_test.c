@@ -8,6 +8,8 @@
 #include <unistd.h>
 #include <semaphore.h>
 
+typedef struct { int value; unsigned char tag; } mos_posix_opt;
+
 #define MOS_SWIFT __attribute__((swiftcall))
 
 MOS_SWIFT int $s6Darwin6openatys5Int32VAD_SPys4Int8VGADtF(int fd, const char *path, int oflag);
@@ -19,6 +21,9 @@ MOS_SWIFT void *$s6Darwin8sem_openySpys5Int32VGSgSPys4Int8VG_s5Int32Vs6UInt16Vs6
 MOS_SWIFT int $s6Darwin5errnos5Int32Vvg(void);
 MOS_SWIFT unsigned short $s6Darwin6S_IFMTs6UInt16Vvg(void);
 MOS_SWIFT unsigned short $s6Darwin7S_IFDIRs6UInt16Vvg(void);
+MOS_SWIFT mos_posix_opt $s6Darwin14POSIXErrorCodeO8rawValueACSgs5Int32V_tcfC(int raw);
+MOS_SWIFT void *$s6Darwin6stdoutSpySo7__sFILEVGvg(void);
+MOS_SWIFT void *$s6Darwin6stderrSpySo7__sFILEVGvg(void);
 
 #define O_CREAT_D 0x200
 #define O_EXCL_D  0x800
@@ -91,6 +96,19 @@ int main(void) {
     if ((again != (void *)-1 && again != 0) || $s6Darwin5errnos5Int32Vvg() != EEXIST) return fail("sem_open excl");
     sem_close(sem);
     sem_unlink("/mos-darwin-swift");
+    mos_posix_opt some = $s6Darwin14POSIXErrorCodeO8rawValueACSgs5Int32V_tcfC(2);
+    mos_posix_opt last = $s6Darwin14POSIXErrorCodeO8rawValueACSgs5Int32V_tcfC(107);
+    mos_posix_opt zero = $s6Darwin14POSIXErrorCodeO8rawValueACSgs5Int32V_tcfC(0);
+    mos_posix_opt over = $s6Darwin14POSIXErrorCodeO8rawValueACSgs5Int32V_tcfC(108);
+    mos_posix_opt neg = $s6Darwin14POSIXErrorCodeO8rawValueACSgs5Int32V_tcfC(-1);
+    if (some.tag != 0 || some.value != 2) return fail("POSIX some ENOENT");
+    if (last.tag != 0 || last.value != 107) return fail("POSIX some ELAST");
+    if (zero.tag != 1 || over.tag != 1 || neg.tag != 1) return fail("POSIX nil");
+    FILE *out = $s6Darwin6stdoutSpySo7__sFILEVGvg();
+    FILE *err = $s6Darwin6stderrSpySo7__sFILEVGvg();
+    if (out != stdout || err != stderr || out == err) return fail("stdout/stderr");
+    if (fputc('x', err) == EOF) return fail("fputc stderr");
+    fflush(err);
     unlink(path);
     close(dirfd);
     rmdir(dir);
