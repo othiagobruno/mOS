@@ -8,6 +8,7 @@
 #include "sys.h"
 #include "../../kernel/include/compat_gui.h"
 #include "computeruse_win.h"
+#include "cgpid.h"
 
 void *memset(void *d, int c, size_t n);
 void *malloc(size_t n);
@@ -21,6 +22,7 @@ int cx_cgtap_is_on(void *tap);
 void *cx_cgtap_offer(unsigned type, void *event);
 void cx_cgtap_fanout(unsigned type, int x, int y, int key, int button, int down, int wheel, unsigned flags);
 void cx_cgtap_set_wire(void (*fn)(unsigned, int, int, int, int, int, int, unsigned));
+int getpid(void);
 
 typedef struct { double x, y; } cgpt_t;
 typedef struct {
@@ -34,6 +36,7 @@ typedef struct {
     double d1, d2, d3;          /* kCGScrollWheelEventFixedPtDeltaAxis1/2/3 (campos 93, 94, 95) */
     u8 dvalid;                  /* bits 0..2: o double correspondente foi gravado */
     u16 *uni; u32 nuni;         /* CGEventKeyboardSetUnicodeString */
+    i64 target_pid, source_pid; /* kCGEventTargetUnixProcessID (40) e kCGEventSourceUnixProcessID (41) */
 } cgev_t;
 
 cx_class_t CGEventMOS_c __asm__("OBJC_CLASS_$_CGEventMOS"), CGEventMOS_m __asm__("OBJC_METACLASS_$_CGEventMOS");
@@ -59,6 +62,7 @@ static cgev_t *mk(u32 type) {
     e->type = type;
     e->ts = (u64)SYS0(SYS_TIME) * 1000000ull;
     e->loc = cursor_now();
+    e->source_pid = getpid();
     return e;
 }
 
@@ -107,13 +111,15 @@ void CGEventSetTimestamp(void *e, u64 t) { cgev_t *x = ev(e); if (x) x->ts = t; 
 cgpt_t CGEventGetLocation(void *e) { cgev_t *x = ev(e); if (x) return x->loc; return cursor_now(); }
 void CGEventSetLocation(void *e, cgpt_t p) { cgev_t *x = ev(e); if (x) x->loc = p; }
 /* campos (CGEventField): 1 kCGMouseEventClickState, 3 kCGMouseEventButtonNumber, 9 kCGKeyboardEventKeycode,
- * 11/12 kCGScrollWheelEventDeltaAxis1/2, 42 kCGEventSourceUserData, 96/97 PointDelta (pixels) */
+ * 11/12 kCGScrollWheelEventDeltaAxis1/2, 40 kCGEventTargetUnixProcessID (o pid do CGEventPostToPid),
+ * 41 kCGEventSourceUnixProcessID (quem criou), 42 kCGEventSourceUserData, 96/97 PointDelta (pixels) */
 i64 CGEventGetIntegerValueField(void *e, u32 f) {
     cgev_t *x = ev(e);
     if (!x) return 0;
     switch (f) {
     case 1: return x->clicks; case 3: return x->button; case 9: return x->key;
     case 11: case 96: return x->wheel1; case 12: case 97: return x->wheel2; case 42: return x->user;
+    case 40: return x->target_pid; case 41: return x->source_pid;
     }
     return 0;
 }
@@ -140,6 +146,7 @@ void CGEventSetIntegerValueField(void *e, u32 f, i64 v) {
     case 11: x->wheel1 = (i32)v; x->units = 1; break; case 12: x->wheel2 = (i32)v; x->units = 1; break;
     case 96: x->wheel1 = (i32)v; x->units = 0; break; case 97: x->wheel2 = (i32)v; x->units = 0; break;
     case 42: x->user = v; break;
+    case 40: x->target_pid = v; break; case 41: x->source_pid = v; break;
     }
 }
 void CGEventKeyboardSetUnicodeString(void *e, u64 n, const u16 *s) {
@@ -202,12 +209,6 @@ static int inject(u32 type, u32 buttons, u32 mods, i32 wheel, i32 key, i32 x, i3
     return (int)SYS4(GUI_DEVICE, DEV_INPUT_POST, b, (u64)(u32)key, d);
 }
 /* tipo CG no byte baixo: 1 é mouse-down no CGEvent e key-down na fila global, então o pid tem opcode próprio */
-static int inject_pid(i32 pid, u32 cg_type, u32 buttons, u32 mods, i32 wheel, i32 key, i32 x, i32 y) {
-    u64 b = cg_type | (u64)buttons << 8 | (u64)(mods & 0xFFFF) << 16 | (u64)(u32)wheel << 32;
-    u64 c = (u64)(u32)key | (u64)(u32)pid << 32;
-    u64 d = (u64)(u32)x | (u64)(u32)y << 32;
-    return (int)SYS4(GUI_DEVICE, DEV_INPUT_TO_PID, b, c, d);
-}
 static i32 wheel_lines(cgev_t *x) {
     i32 src = x->wheel1;
     if (!src && (x->dvalid & 1)) {
@@ -274,49 +275,35 @@ static void post(cgev_t *x) {
     inject(K_EV_MOUSE_ABS, g_buttons, mods, wheel, 0, (i32)p.x, (i32)p.y);
 }
 /* Entrega ao pid. Não mexe em g_cursor, g_buttons nem na fila global. A roda já vai com o sinal do kernel. */
+/* CGEventPostToPid: só o processo do pid recebe (cgpid.h). Taps de outros processos não veem o evento (antes ele ia
+ * para o tap local e para o fan-out de todos, como um CGEventPost); só quando o alvo é este processo o tap local entra. */
 static void post_pid(i32 pid, cgev_t *x) {
-    void *kept;
     if (!x || pid <= 0) return;
     if (!cx_tcc_preflight("kTCCServiceAccessibility")) return;
-    cgtap_arm();
-    kept = cx_cgtap_offer(x->type, x);
-    if (!kept) return;
-    x = ev(kept);
-    if (!x) return;
-    fan_of(x);
-    u32 t = x->type, mods = mos_mods(x->flags);
-    if (t == 10 || t == 11) {
-        if (x->nuni) {
-            if (t != 10) return;
-            for (u32 i = 0; i < x->nuni; i++) {
-                u16 ch = x->uni[i];
-                int k = ch == '\r' || ch == '\n' ? 10 : ch == '\t' ? 9 : ch < 0x100 ? ch : -1;
-                if (k < 0) continue;
-                inject_pid(pid, 10, 0, mods, 0, k, 0, 0);
-                inject_pid(pid, 11, 0, mods, 0, k, 0, 0);
-            }
-            return;
-        }
-        int k = mos_key(x->key);
-        if (k < 0) return;
-        if ((mods & 1) && k >= 'a' && k <= 'z') k -= 32;
-        inject_pid(pid, t, 0, mods, 0, k, 0, 0);
-        return;
+    x->target_pid = pid;
+    if (cx_cgpid_taps(pid, getpid())) {
+        void *kept;
+        cgtap_arm();
+        kept = cx_cgtap_offer(x->type, x);
+        if (!kept) return;
+        x = ev(kept);
+        if (!x) return;
+        x->target_pid = pid;
     }
-    u32 bit = 0, buttons = 0;
-    switch (t) {
-    case 1: case 2: case 6: bit = 1; break;
-    case 3: case 4: case 7: bit = 2; break;
-    case 25: case 26: case 27: bit = 4; break;
-    }
-    if (t == 1 || t == 3 || t == 25) buttons = bit;
-    i32 wheel = 0;
-    if (t == 22) {
-        wheel = -wheel_lines(x);
-        if (!wheel) return;
-    }
-    cgpt_t p = t == 22 ? cursor_now() : x->loc;
-    inject_pid(pid, t, buttons, mods, wheel, 0, (i32)p.x, (i32)p.y);
+    cgpid_ev pe;
+    memset(&pe, 0, sizeof pe);
+    pe.type = x->type;
+    pe.mods = mos_mods(x->flags);
+    pe.key = (x->type == 10 || x->type == 11) ? mos_key(x->key) : -1;
+    pe.uni = x->uni;
+    pe.nuni = x->nuni;
+    if (x->type == 22) pe.wheel = -wheel_lines(x);
+    cgpt_t p = x->type == 22 ? cursor_now() : x->loc;
+    pe.x = (i32)p.x;
+    pe.y = (i32)p.y;
+    cgpid_pkt pk[64];
+    int n = cx_cgpid_packets(&pe, pid, pk, 64);
+    for (int i = 0; i < n; i++) SYS4(GUI_DEVICE, DEV_INPUT_TO_PID, pk[i].b, pk[i].c, pk[i].d);
 }
 /* kCGHIDEventTap (0), kCGSessionEventTap (1) e kCGAnnotatedSessionEventTap (2) entram na mesma fila.
  * O kernel tem uma fila só: a tecla vai para a janela em foco e o clique para o que está sob o cursor. */

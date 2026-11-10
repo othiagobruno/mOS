@@ -30,6 +30,14 @@ gcc -O2 -Wall -Wextra -DMOS_HOST_TEST -I kernel/include -I tools tools/r8169_hos
 gcc -std=gnu11 -DMOS_HOST_TEST -I kernel/include -I tools tools/http_url_longa_host.c kernel/net/http.c -o /tmp/http_url_longa
 /tmp/http_url_longa > /tmp/http_url_longa.log || { cat /tmp/http_url_longa.log; exit 1; }
 tail -1 /tmp/http_url_longa.log
+# computer use: AX entre processos (reserva AF_UNIX, páginas, elemento único) e CGEventPostToPid só no pid alvo
+gcc -std=gnu11 -Wall -Wextra -pthread -I userland/libsystem userland/libsystem/axproto.c userland/libsystem/axtransport.c \
+    userland/libsystem/axunix.c userland/libsystem/axremote.c tools/axremote_host.c -o /tmp/axremote_host
+/tmp/axremote_host > /tmp/axremote_host.log || { cat /tmp/axremote_host.log; exit 1; }
+tail -1 /tmp/axremote_host.log
+gcc -std=c11 -Wall -Wextra -I userland/libsystem userland/libsystem/cgpid.c tools/cgpid_host.c -o /tmp/cgpid_host
+/tmp/cgpid_host > /tmp/cgpid_host.log || { cat /tmp/cgpid_host.log; exit 1; }
+tail -1 /tmp/cgpid_host.log
 
 kind_of() {
     local b

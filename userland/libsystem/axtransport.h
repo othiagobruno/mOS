@@ -33,3 +33,4 @@ const cx_ax_transport *cx_ax_transport_get(void);
 int cx_ax_wire_status(int rc);
 void cx_ax_bind_xpc(void);
 void cx_ax_unix_bind(void);
+const cx_ax_transport *cx_ax_unix_transport(void);
