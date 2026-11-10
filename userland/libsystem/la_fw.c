@@ -6,7 +6,6 @@
 id objc_autorelease(id o);
 
 extern cx_class_t LAContext_c __asm__("OBJC_CLASS_$_LAContext");
-id objc_autorelease(id o);
 
 typedef struct { void *isa; u64 flags; const char *s; u64 n; } la_cfk_t;
 extern char cx_cfconst_isa2[] __asm__("__CFConstantStringClassReference");
