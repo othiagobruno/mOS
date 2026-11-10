@@ -17,6 +17,7 @@
 #include "proc.h"
 #endif
 #include "compat.h"
+#include "macho_buildver.h"
 #ifdef MOS_HOST_TEST
 #undef SYS_OPEN
 #endif
@@ -297,6 +298,7 @@ typedef struct {
     u64 tlv_desc[8], tlv_desc_size[8];       /* seções de descritores (__thread_vars) */
     int ntlv_desc;    u32 flags;
     u32 minos;              /* 0xMMMMmmpp */
+    u32 platform;           /* LC_BUILD_VERSION; 0 vira macCatalyst (mos_build_version_platform) */
     u32 ftype;              /* MH_EXECUTE ou MH_DYLIB */
     const char *rpaths[MAX_RPATHS];          /* LC_RPATH (podem usar @executable_path/@loader_path) */
     int nrpaths;
@@ -754,7 +756,13 @@ static bool parse(mach_t *mo, const u8 *m, usize len, bool dylib, char *err, usi
         case LC_MAIN: mo->entryoff = rd64(c + 8); mo->has_main = true; break;
         case LC_UNIXTHREAD: if (csz >= 16 && rd32(c + 8) == (ls_cur ? 6u : 4u)) mo->has_thread = true; break;   /* x86_THREAD_STATE64 / ARM_THREAD_STATE64 */
         case LC_VERSION_MIN_MACOSX: mo->minos = rd32(c + 8); break;
-        case LC_BUILD_VERSION: mo->minos = rd32(c + 12); break;
+        case LC_BUILD_VERSION: {
+            /* platform em +8; se o comando não traz (0 ou curto), o loader assume macCatalyst */
+            u32 plat = csz >= 16 ? rd32(c + 8) : 0;
+            mo->platform = mos_build_version_platform(plat);
+            if (csz >= 16) mo->minos = rd32(c + 12);
+            break;
+        }
         }
         c += csz;
     }
@@ -2939,6 +2947,7 @@ bool macho_report_image(const u8 *img, usize len, const char *name, char *out, u
         mach_t *mo = &I0->mo;
         OUT("%s\nArquiteturas: %s\n", name, K->archs);
         if (mo->minos) OUT("macOS mínimo: %u.%u\n", mo->minos >> 16, (mo->minos >> 8) & 0xFF);
+        if (mo->platform) OUT("plataforma LC_BUILD_VERSION: %u%s\n", mo->platform, mo->platform == MOS_PLATFORM_MACCATALYST ? " (macCatalyst)" : "");
         OUT("Ligação: %s\n", mo->chained ? "chained fixups (macOS 11+)" : mo->dyld_info ? "dyld_info" : "nenhuma");
         OUT("Bibliotecas:\n");
         int shown = 0;
