@@ -22,7 +22,8 @@ typedef NS_ENUM(NSInteger, NSTextAlignment) { NSTextAlignmentLeft = 0, NSTextAli
 typedef NS_ENUM(NSInteger, NSUserInterfaceLayoutOrientation) { NSUserInterfaceLayoutOrientationHorizontal = 0, NSUserInterfaceLayoutOrientationVertical = 1 };
 typedef NS_ENUM(NSUInteger, NSEventType) {
     NSEventTypeLeftMouseDown = 1, NSEventTypeLeftMouseUp = 2, NSEventTypeRightMouseDown = 3,
-    NSEventTypeLeftMouseDragged = 6, NSEventTypeKeyDown = 10, NSEventTypeScrollWheel = 22
+    NSEventTypeLeftMouseDragged = 6, NSEventTypeKeyDown = 10, NSEventTypeKeyUp = 11,
+    NSEventTypeFlagsChanged = 12, NSEventTypeScrollWheel = 22
 };
 typedef NS_OPTIONS(NSUInteger, NSEventModifierFlags) {
     NSEventModifierFlagShift = 1 << 17, NSEventModifierFlagControl = 1 << 18,
@@ -44,7 +45,10 @@ extern NSString *const NSWindowWillCloseNotification;
 - (void)rightMouseDown:(NSEvent *)e;
 - (void)scrollWheel:(NSEvent *)e;
 - (void)keyDown:(NSEvent *)e;
+- (void)keyUp:(NSEvent *)e;
+- (void)flagsChanged:(NSEvent *)e;
 @property (readonly) BOOL acceptsFirstResponder;
+@property (weak) NSResponder *nextResponder;
 @end
 
 @protocol NSApplicationDelegate <NSObject>
@@ -108,6 +112,7 @@ int NSApplicationMain(int argc, const char *argv[]);
 @property NSRect frame;
 @property (readonly) NSRect bounds;
 @property (readonly) NSView *superview;
+@property (copy) NSString *identifier;
 @property (readonly, copy) NSArray<__kindof NSView *> *subviews;
 @property (readonly) NSWindow *window;
 @property (getter=isHidden) BOOL hidden;
@@ -290,6 +295,8 @@ int NSApplicationMain(int argc, const char *argv[]);
 @property (copy) NSString *title;
 @property (copy) NSString *keyEquivalent;
 @property NSEventModifierFlags keyEquivalentModifierMask;
+@property (copy) NSString *userKeyEquivalent;
+@property NSEventModifierFlags userKeyEquivalentModifierMask;
 @property NSInteger tag;
 @property NSControlStateValue state;
 @property (getter=isEnabled) BOOL enabled;
@@ -373,10 +380,25 @@ typedef NS_ENUM(NSUInteger, NSBorderType) { NSNoBorder = 0, NSLineBorder = 1, NS
 @property NSUInteger gridStyleMask;
 - (void)reloadData;
 - (__kindof NSView *)makeViewWithIdentifier:(NSString *)i owner:(id)o;
+- (void)registerNib:(id)nib forIdentifier:(NSString *)identifier;
 - (void)scrollRowToVisible:(NSInteger)r;
 - (void)selectRowIndexes:(NSIndexSet *)s byExtendingSelection:(BOOL)e;
 - (void)deselectAll:(id)sender;
 - (void)sizeLastColumnToFit;
+@end
+
+@interface NSOutlineView : NSTableView
+@property CGFloat indentationPerLevel;
+@property (strong) NSTableColumn *outlineTableColumn;
+- (void)expandItem:(id)item;
+- (void)expandItem:(id)item expandChildren:(BOOL)children;
+- (void)collapseItem:(id)item;
+- (void)collapseItem:(id)item collapseChildren:(BOOL)children;
+- (BOOL)isItemExpanded:(id)item;
+- (BOOL)isExpandable:(id)item;
+- (id)itemAtRow:(NSInteger)row;
+- (NSInteger)rowForItem:(id)item;
+- (NSInteger)levelForRow:(NSInteger)row;
 @end
 
 @interface NSAlert : NSObject

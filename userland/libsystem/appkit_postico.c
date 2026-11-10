@@ -7,6 +7,7 @@
  *    largura, a última fica com o resto (o comportamento padrão de quem não fixou prioridades).
  *  - NSOutlineView: NSTableView com um adaptador próprio como fonte de dados e delegate da tabela: achata a árvore
  *    (itens expandidos) em linhas e traduz numberOfRows/objectValue/viewFor... e a seleção para a API de outline.
+ *    A indentação, o triângulo e o scroll das views ficam na NSTableView (appkit.c).
  *  - NSTabView/NSTabViewItem/NSTabViewController: mostram a view do item selecionado.
  *  - Células (NSTextFieldCell, NSSearchFieldCell, NSTokenFieldCell, NSSegmentedCell, NSImageCell, NSTableHeaderCell...),
  *    NSSearchField/NSTokenField (campos de texto), NSTableRowView/NSTableHeaderView, NSGridView, NSDocument, NSGradient,
@@ -35,6 +36,7 @@ K(NSFilePromiseProvider) K(NSFilePromiseReceiver) K(_MOSOutlineAdapter)
 
 void objc_setAssociatedObject(id obj, const void *key, id value, u64 policy);
 id objc_getAssociatedObject(id obj, const void *key);
+extern const char cx_tv_header_key;
 IMP class_getMethodImplementation(cx_class_t *c, SEL s);
 id cx_arr_new(cx_class_t *cls);
 
@@ -92,7 +94,7 @@ DBLP(indentationPerLevel, setIndentationPerLevel, 16) DBLP(rowSpacing, setRowSpa
 DBLP(alphaValueP, setAlphaValueP, 1)
 
 static id ret_self(id s, SEL c) { (void)c; return s; }
-static id ret_nil(id s, SEL c) { (void)s; (void)c; return 0; }
+static id th_table(id self, SEL c) { (void)c; return objc_getAssociatedObject(self, &cx_tv_header_key); }
 static BOOL ret_yes(id s, SEL c) { (void)s; (void)c; return 1; }
 static BOOL ret_no(id s, SEL c) { (void)s; (void)c; return 0; }
 static void noop(id s, SEL c) { (void)s; (void)c; }
@@ -238,10 +240,28 @@ static id ov_dl(id self, SEL c) { (void)c; ol_t *o = ol_of(self); return o ? o->
 static void ov_reload(id self, SEL c) { (void)c; ol_t *o = ol_make(self); ol_rebuild(o); SUPER("NSTableView", void, self, "reloadData"); }
 static void ov_reload_item(id self, SEL c, id item) { (void)c; (void)item; ov_reload(self, 0); }
 static void ov_reload_item2(id self, SEL c, id item, BOOL ch) { (void)c; (void)item; (void)ch; ov_reload(self, 0); }
+static void ol_expand_deep(ol_t *o, id item, int depth) {
+    if (depth > 32) return;
+    if (item && !ol_is_expanded(o, item)) MSG(void, o->expanded, "addObject:", item);
+    if (!ol_resp(o->ds, "outlineView:numberOfChildrenOfItem:") || !ol_resp(o->ds, "outlineView:child:ofItem:")) return;
+    i64 n = MSG(i64, o->ds, "outlineView:numberOfChildrenOfItem:", o->outline, item);
+    if (n > 4096) n = 4096;
+    for (i64 i = 0; i < n; i++) ol_expand_deep(o, MSG(id, o->ds, "outlineView:child:ofItem:", o->outline, i, item), depth + 1);
+}
+static void ol_collapse_deep(ol_t *o, id item, int depth) {
+    if (!item || depth > 32) return;
+    if (ol_resp(o->ds, "outlineView:numberOfChildrenOfItem:") && ol_resp(o->ds, "outlineView:child:ofItem:")) {
+        i64 n = MSG(i64, o->ds, "outlineView:numberOfChildrenOfItem:", o->outline, item);
+        if (n > 4096) n = 4096;
+        for (i64 i = 0; i < n; i++) ol_collapse_deep(o, MSG(id, o->ds, "outlineView:child:ofItem:", o->outline, i, item), depth + 1);
+    }
+    MSG(void, o->expanded, "removeObject:", item);
+}
 static void ov_expand(id self, SEL c, id item, BOOL children) {
-    (void)c; (void)children;
+    (void)c;
     ol_t *o = ol_make(self);
-    if (!item) {                               /* nil: todos os itens de primeiro nível */
+    if (children) ol_expand_deep(o, item, 0);
+    else if (!item) {
         ol_rebuild(o);
         for (i64 i = 0; i < o->n; i++) if (!ol_is_expanded(o, o->rows[i].item)) MSG(void, o->expanded, "addObject:", o->rows[i].item);
     } else if (!ol_is_expanded(o, item)) MSG(void, o->expanded, "addObject:", item);
@@ -249,9 +269,11 @@ static void ov_expand(id self, SEL c, id item, BOOL children) {
 }
 static void ov_expand1(id self, SEL c, id item) { ov_expand(self, c, item, 0); }
 static void ov_collapse(id self, SEL c, id item, BOOL children) {
-    (void)c; (void)children;
+    (void)c;
     ol_t *o = ol_make(self);
-    if (item) MSG(void, o->expanded, "removeObject:", item); else MSG0(void, o->expanded, "removeAllObjects");
+    if (!item) MSG0(void, o->expanded, "removeAllObjects");
+    else if (children) ol_collapse_deep(o, item, 0);
+    else MSG(void, o->expanded, "removeObject:", item);
     ov_reload(self, 0);
 }
 static void ov_collapse1(id self, SEL c, id item) { ov_collapse(self, c, item, 0); }
@@ -598,7 +620,8 @@ void cx_appkit_postico_init(void) {
     REG(NSTableRowView, groupRowStyle, setGroupRowStyle);
     IM(NSTableRowView, "isSelected", g_selected); IM(NSTableRowView, "setSelected:", s_selected); IM(NSTableRowView, "isEmphasized", g_emphasized);
     IM(NSTableRowView, "drawSelectionInRect:", noop1); IM(NSTableRowView, "drawBackgroundInRect:", noop1);
-    DEF(NSTableHeaderView, "NSView"); IM(NSTableHeaderView, "tableView", ret_nil);
+    DEF(NSTableHeaderView, "NSView");
+    IM(NSTableHeaderView, "tableView", th_table);
 
     DEF(NSTextFieldCell, "NSActionCell"); DEF(NSSecureTextFieldCell, "NSTextFieldCell"); DEF(NSSearchFieldCell, "NSTextFieldCell");
     DEF(NSTokenFieldCell, "NSTextFieldCell"); DEF(NSTableHeaderCell, "NSTextFieldCell"); DEF(NSSegmentedCell, "NSActionCell");
