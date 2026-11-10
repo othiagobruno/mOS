@@ -373,6 +373,11 @@ bool libsystem_dylib_ok(const char *n) {
                                "/System/Library/Frameworks/Quartz.framework/",
                                /* Codex desktop (runtime OWL): liga o framework sem importar símbolos (pede QLThumbnail* pelo nome; sem a classe, sem miniatura) */
                                "/System/Library/Frameworks/QuickLookThumbnailing.framework/",
+                               /* Slack, Claude Desktop e Cursor: o Electron liga os três. Se a dylib estiver no disco,
+                                * link_image carrega ela; senão o libSystem (quicklook_fw.c, storekit_fw.c, coredata_fw.c). */
+                               "/System/Library/Frameworks/QuickLookUI.framework/",
+                               "/System/Library/Frameworks/StoreKit.framework/",
+                               "/System/Library/Frameworks/CoreData.framework/",
                                "/System/Library/Frameworks/SafariServices.framework/",
                                "/System/Library/Frameworks/ScreenCaptureKit.framework/",
                                "/System/Library/Frameworks/SecurityInterface.framework/",
@@ -384,6 +389,31 @@ bool libsystem_dylib_ok(const char *n) {
                                "/usr/lib/libbsm.0.dylib", "/usr/lib/libcups.2.dylib", "/usr/lib/libpmenergy.dylib", "/usr/lib/libpmsample.dylib"};
     for (u32 i = 0; i < ARRAY_LEN(fw); i++) if (!strncmp(n, fw[i], strlen(fw[i]))) return true;
     return !strncmp(n, "/usr/lib/system/", 16);
+}
+
+/* QuickLookUI, StoreKit e Core Data também estão no libSystem. Se o Mach-O do framework
+ * existir no disco, ele ganha: o Core Data de memória do Postico e o overlay Swift não
+ * regridem. Sem o arquivo, o loader aceita e resolve no libSystem. */
+static bool framework_has_libsystem_fallback(const char *n) {
+    static const char *fw[] = {
+        "/System/Library/Frameworks/QuickLookUI.framework/",
+        "/System/Library/Frameworks/StoreKit.framework/",
+        "/System/Library/Frameworks/CoreData.framework/",
+    };
+    for (u32 i = 0; i < ARRAY_LEN(fw); i++) if (!strncmp(n, fw[i], strlen(fw[i]))) return true;
+    return false;
+}
+static bool framework_disk_present(const char *n) {
+    usize len;
+    char alt[384];
+    const char *fw, *tail;
+    if (dep_read(n, &len)) return true;
+    fw = strstr(n, ".framework/");
+    if (!fw) return false;
+    tail = fw + 11;
+    if (strchr(tail, '/')) return false;
+    snprintf(alt, sizeof alt, "%.*sVersions/A/%s", (int)(tail - n), n, tail);
+    return dep_read(alt, &len) != NULL;
 }
 
 /* libc++ e libc++abi: vêm da dylib do LLVM no disco quando ela existe (link_image e dyld_open); o libSystem só as
@@ -1497,6 +1527,12 @@ static int link_add(link_t *K, const char *path, const u8 *file, usize flen, boo
             if (d == -2) return -1;
             if (d >= 0) { I->dep[i] = (i16)d; continue; }
         }
+        if (framework_has_libsystem_fallback(dn)) {
+            /* a dylib do disco (Postico / overlay Swift) ganha; sem arquivo, o libSystem abaixo */
+            int d = link_abs_dep(K, dn);
+            if (d == -2) return -1;
+            if (d >= 0) { I->dep[i] = (i16)d; continue; }
+        }
         if (libsystem_dylib_ok(dn)) {
             /* Foundation.framework é do libSystem, mas a parte Swift dele (overlay + FoundationEssentials com o ABI da
              * Apple, docs/swift-objc-runtime.md, fase 5) é uma dylib Mach-O: no macOS 14+ ela mora dentro do framework,
@@ -1825,6 +1861,7 @@ static i64 dyld_open(process_t *p, link_t *K, const char *req, u64 out_va, u64 c
     usize cxx_len;
     if (libcxx_name(req) && dep_read(LIBCXX_DISK, &cxx_len)) req = LIBCXX_DISK;   /* a libc++ do disco, como no link_image */
     else if (!strcmp(req, LIBICU_DISK) && dep_read(LIBICU_DISK, &cxx_len)) { /* o ICU do disco, como no link_image */ }
+    else if (framework_has_libsystem_fallback(req) && framework_disk_present(req)) { /* o framework do disco, como no link_image */ }
     else if (libsystem_dylib_ok(req)) return DYLD_H_LIBSYSTEM;
     int ci = image_at(K, caller);
     image_t *C = K->im[ci >= 0 ? ci : 0];
