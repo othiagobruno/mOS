@@ -108,6 +108,7 @@ typedef struct {
     id header_view;                /* NSTableHeaderView real, quando o nib traz um (retido) */
     int tv_dirty;                  /* NSTableView: o delegate precisa ser perguntado de novo */
     BOOL show_idle;                /* NSProgressIndicator: displayedWhenStopped */
+    float hug_h, hug_v, cr_h, cr_v; /* Auto Layout: 0 = padrão (hugging 250, resistência 750) */
 } vstate_t;
 
 typedef struct {
@@ -125,6 +126,7 @@ typedef struct {
     i64 number;                     /* windowNumber: único e estável pela vida da janela (0 = ainda não pedido) */
     id subtitle, represented_url, tab;
     BOOL restorable;
+    id next_responder;              /* nextResponder explícito; senão o NSApp */
 } wstate_t;
 
 typedef struct { double r, g, b, a; } rgba_t;     /* NSColor: campos logo após o isa */
@@ -1275,6 +1277,8 @@ static void w_set_title(id self, SEL c, id t) {
     if (s->gid > 0) SYS2(GUI_WIN_TITLE, s->gid, cx_cstr(s->title));
 }
 static id w_title(id self, SEL c) { (void)c; return ws(self)->title; }
+static void w_set_next(id self, SEL c, id n) { (void)c; ws(self)->next_responder = n; }
+static id w_next(id self, SEL c) { (void)c; wstate_t *s = ws(self); return s->next_responder ? s->next_responder : NSApp; }
 static void w_set_subtitle(id self, SEL c, id t) {
     (void)c;
     wstate_t *s = ws(self);
@@ -2672,7 +2676,7 @@ static BOOL ap_set_policy(id self, SEL c, i64 p) {
     (void)self; (void)c;
     if (!cx_act_set_policy((int)p)) return NO;
     /* accessory e prohibited saem do Dock; regular volta. O selo do NSDockTile segue em MOS_DESK_BADGE. */
-    SYS3(GUI_DEVICE, DEV_DOCK, DK_VISIBLE, cx_act_hides_dock() ? 0 : 1);
+    cx_dock_set_visible(cx_act_hides_dock() ? 0 : 1);
     return YES;
 }
 static i64 ap_policy(id self, SEL c) { (void)self; (void)c; return cx_act_policy(); }
@@ -2709,6 +2713,18 @@ static void ap_finish_launching(id self, SEL c) {
     (void)c;
     if (app.launched) return;
     app.launched = YES;
+    /* LSUIElement no Info.plist esconde o Dock mesmo se o app nunca chama setActivationPolicy */
+    {
+        id bundle = MSG0(id, cx_class_named("NSBundle"), "mainBundle");
+        id v = bundle ? MSG(id, bundle, "objectForInfoDictionaryKey:", cx_str("LSUIElement")) : 0;
+        int yes = 0;
+        if (v && cx_is_str(v)) {
+            const char *s = cx_cstr(v);
+            yes = s && (s[0] == '1' || s[0] == 'Y' || s[0] == 'y' || s[0] == 't' || s[0] == 'T');
+        } else if (v && cx_responds(v->isa, sel_registerName("longLongValue")))
+            yes = MSG0(long long, v, "longLongValue") != 0;
+        if (cx_act_note_lsuielement(yes)) cx_dock_set_visible(0);
+    }
     { extern void cx_gc_app_launched(void); cx_gc_app_launched(); }   /* GameController: controles já ligados */
     id d = app.delegate;
     id note = cx_note(NSApplicationWillFinishLaunchingNotification, self, 0);
@@ -3151,7 +3167,7 @@ static void al_begin_sheet_delegate(id self, SEL c, id win, id delegate, SEL did
 }
 
 /* ================================================================ NSMenu (aceito, sem efeito visual) */
-typedef struct { id title, items, key, submenu; SEL action; id target; i64 tag; int state; BOOL sep, disabled; u64 mask; BOOL mask_set;
+typedef struct { id title, attr_title, items, key, submenu; SEL action; id target; i64 tag; int state; BOOL sep, disabled; u64 mask; BOOL mask_set;
                  BOOL hidden, alternate, header; id image, represented;
                  id owner, delegate; } menust_t;   /* owner: o NSMenu que contém o item (fraco); delegate: do NSMenu (fraco) */
 static menust_t *mn(id m) { if (!ST(m)) { menust_t *s = calloc(1, sizeof *s); s->items = cx_arr_new(&NSMutableArray_c); ST(m) = s; } return ST(m); }
@@ -3177,6 +3193,8 @@ static id mi_init(id self, SEL c, id t, SEL a, id k) { (void)c; menust_t *s = mn
 static id mi_sep(id cls, SEL c) { (void)c; id it = MSG0(id, MSG0(id, cls, "alloc"), "init"); mn(it)->sep = YES; return it; }
 static void mi_set_enabled(id self, SEL c, BOOL b) { (void)c; mn(self)->disabled = !b; menus_dirty = YES; }
 static void mi_set_state(id self, SEL c, i64 st) { (void)c; mn(self)->state = (int)st; menus_dirty = YES; }
+static void mi_set_attr(id self, SEL c, id a) { (void)c; keep(&mn(self)->attr_title, a); menus_dirty = YES; }
+static id mi_attr(id self, SEL c) { (void)c; return mn(self)->attr_title; }
 static void mi_set_mask(id self, SEL c, u64 m) { (void)c; mn(self)->mask = m; mn(self)->mask_set = YES; menus_dirty = YES; }
 static u64 mi_mask_get(id self, SEL c) {
     (void)c;
@@ -3279,8 +3297,19 @@ u32 cx_menu_item_action(id item) {
     if (mn(item)->sep) return 0;
     return menu_id(item);
 }
+void cx_menu_tab_forget(id item) {
+    u32 i;
+    if (!item) return;
+    for (i = 0; i < nmenu_tab; i++)
+        if (menu_tab[i] == item) { objc_release(item); menu_tab[i] = 0; return; }
+}
 static u32 menu_id(id item) {
-    for (u32 i = 0; i < nmenu_tab; i++) if (menu_tab[i] == item) return i + 1;
+    u32 i, hole = nmenu_tab;
+    for (i = 0; i < nmenu_tab; i++) {
+        if (menu_tab[i] == item) return i + 1;
+        if (!menu_tab[i] && hole == nmenu_tab) hole = i;
+    }
+    if (hole < nmenu_tab) { menu_tab[hole] = objc_retain(item); return hole + 1; }
     if (nmenu_tab == capmenu_tab) { capmenu_tab = capmenu_tab ? capmenu_tab * 2 : 64; menu_tab = realloc(menu_tab, capmenu_tab * sizeof(id)); }
     menu_tab[nmenu_tab++] = objc_retain(item);
     return nmenu_tab;
@@ -3393,7 +3422,7 @@ static void perform_menu(int k) {
     }
     if (k == GUI_MENU_PREFS) { id it = find_item(app.menu, pred_comma, 0); if (it) perform_item(it); return; }
     if (k == GUI_MENU_HIDE) return;
-    if (k >= 1 && (u32)k <= nmenu_tab) perform_item(menu_tab[k - 1]);
+    if (k >= 1 && (u32)k <= nmenu_tab && menu_tab[k - 1]) perform_item(menu_tab[k - 1]);
 }
 static BOOL menu_shortcut(gui_event_t *g) {
     if (!app.menu || !(g->mods & 8)) return NO;
@@ -4322,6 +4351,21 @@ static BOOL propagate(BOOL optional) {
     for (u32 i = 0; i < nlv; i++) if (try_done(&lv[i])) any = YES;
     return any;
 }
+static float pri_get(float v, float def) { return v == 0 ? def : v; }
+static void v_set_hug(id self, SEL c, float p, i64 o) {
+    (void)c;
+    if (p == 0) p = 0.001f;
+    if (o == 1) vs(self)->hug_v = p; else vs(self)->hug_h = p;
+    layout_dirty = YES;
+}
+static float v_hug(id self, SEL c, i64 o) { (void)c; vstate_t *s = vs(self); return pri_get(o == 1 ? s->hug_v : s->hug_h, 250); }
+static void v_set_cr(id self, SEL c, float p, i64 o) {
+    (void)c;
+    if (p == 0) p = 0.001f;
+    if (o == 1) vs(self)->cr_v = p; else vs(self)->cr_h = p;
+    layout_dirty = YES;
+}
+static float v_cr(id self, SEL c, i64 o) { (void)c; vstate_t *s = vs(self); return pri_get(o == 1 ? s->cr_v : s->cr_h, 750); }
 static int nset(const u8 *s) { return s[0] + s[1] + s[2] + s[3]; }
 /* sem informação suficiente: completa UM eixo de UMA view (o menos restrito) e volta a propagar */
 static BOOL fallback(BOOL positions) {
@@ -4351,8 +4395,12 @@ static BOOL fallback(BOOL positions) {
     if (!positions) {
         NSSize z = MSG0(NSSize, best->v, "intrinsicContentSize");
         double iz = best_h ? z.w : z.h, fz = best_h ? s->frame.s.w : s->frame.s.h;
+        float hugp = MSG(float, best->v, "contentHuggingPriorityForOrientation:", (i64)(best_h ? 0 : 1));
         set[3] = 1;
+        /* hugging alto fica no tamanho intrínseco; hugging baixo preserva o frame se ele já for maior */
         sv[3] = iz > 0 ? iz : fz;
+        if (hugp < 500 && fz > sv[3]) sv[3] = fz;
+        if (hugp >= 750 && iz > 0) sv[3] = iz;
         /* se já havia dois valores (ex.: início e centro), o tamanho manda e o centro sai */
         if (set[0] && (set[1] || set[2])) set[1] = set[2] = 0;
         else if (set[1] && set[2]) set[2] = 0;
@@ -4390,6 +4438,12 @@ static void apply_inequalities(void) {
             case 2: *pos += d; break;
             }
             if (*size < 0) *size = 0;
+            {
+                NSSize z = MSG0(NSSize, e->v, "intrinsicContentSize");
+                double iz = h ? z.w : z.h;
+                float cr = MSG(float, e->v, "contentCompressionResistancePriorityForOrientation:", (i64)(h ? 0 : 1));
+                if (cr >= 750 && iz > 0 && *size < iz && s->prio < cr) *size = iz;
+            }
         }
 }
 static int lv_depth_cmp(const void *a, const void *b) { return ((const lv_t *)a)->depth - ((const lv_t *)b)->depth; }
@@ -4779,6 +4833,7 @@ void cx_appkit_init(void) {
     M(NSWindow, "setFrameTopLeftPoint:", noop1_m); M(NSWindow, "windowNumber", w_number); M(NSWindow, "setTabbingMode:", noop1_m);
     M(NSWindow, "occlusionState", w_occlusion); M(NSWindow, "convertRectToScreen:", w_convert_to_screen);
     M(NSWindow, "isKeyWindow", yes_m); M(NSWindow, "isMainWindow", yes_m);
+    M(NSWindow, "setNextResponder:", w_set_next); M(NSWindow, "nextResponder", w_next);
 
     DEF(NSView, NSResponder);
     M(NSView, "initWithFrame:", v_init_frame); M(NSView, "init", v_init); M(NSView, "frame", v_frame); M(NSView, "bounds", v_bounds);
@@ -4999,6 +5054,7 @@ void cx_appkit_init(void) {
     M(NSMenuItem, "keyEquivalentModifierMask", mi_mask_get); M(NSMenuItem, "userKeyEquivalent", mi_user_key); M(NSMenuItem, "setUserKeyEquivalent:", mi_set_key);
     M(NSMenuItem, "userKeyEquivalentModifierMask", mi_user_mask); M(NSMenuItem, "setUserKeyEquivalentModifierMask:", mi_set_mask);
     M(NSMenuItem, "setAction:", mi_set_action); M(NSMenuItem, "setTitle:", mi_set_title); M(NSMenuItem, "setKeyEquivalent:", mi_set_key); M(NSMenuItem, "tag", mi_tag); M(NSMenuItem, "state", mi_state);
+    M(NSMenuItem, "setAttributedTitle:", mi_set_attr); M(NSMenuItem, "attributedTitle", mi_attr);
     M(NSMenuItem, "setTag:", mi_set_tag); M(NSMenuItem, "setState:", mi_set_state); M(NSMenuItem, "setEnabled:", mi_set_enabled);
     M(NSMenuItem, "setToolTip:", mi_set_tooltip); M(NSMenuItem, "toolTip", mi_tooltip);
     M(NSMenuItem, "setAllowsKeyEquivalentWhenHidden:", mi_set_bool_ignored);
@@ -5076,7 +5132,8 @@ void cx_appkit_init(void) {
     M(NSLayoutGuide, "owningView", lg_owning); M(NSLayoutGuide, "layoutFrame", lg_frame); M(NSLayoutGuide, "frame", lg_frame);
     M(NSView, "addLayoutGuide:", v_add_guide); M(NSView, "removeLayoutGuide:", v_remove_guide);
     M(NSView, "safeAreaLayoutGuide", v_safe_area); M(NSView, "layoutMarginsGuide", v_margins);
-    M(NSView, "setContentHuggingPriority:forOrientation:", noop1_m); M(NSView, "setContentCompressionResistancePriority:forOrientation:", noop1_m);
+    M(NSView, "setContentHuggingPriority:forOrientation:", v_set_hug); M(NSView, "contentHuggingPriorityForOrientation:", v_hug);
+    M(NSView, "setContentCompressionResistancePriority:forOrientation:", v_set_cr); M(NSView, "contentCompressionResistancePriorityForOrientation:", v_cr);
     M(NSWindow, "layoutIfNeeded", noop_m);
     nib_register();
     bindings_register();

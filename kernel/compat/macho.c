@@ -17,6 +17,7 @@
 #include "proc.h"
 #endif
 #include "compat.h"
+#include "macho_buildver.h"
 #ifdef MOS_HOST_TEST
 #undef SYS_OPEN
 #endif
@@ -297,6 +298,7 @@ typedef struct {
     u64 tlv_desc[8], tlv_desc_size[8];       /* seções de descritores (__thread_vars) */
     int ntlv_desc;    u32 flags;
     u32 minos;              /* 0xMMMMmmpp */
+    u32 platform;           /* LC_BUILD_VERSION; 0 vira macCatalyst (mos_build_version_platform) */
     u32 ftype;              /* MH_EXECUTE ou MH_DYLIB */
     const char *rpaths[MAX_RPATHS];          /* LC_RPATH (podem usar @executable_path/@loader_path) */
     int nrpaths;
@@ -306,6 +308,12 @@ typedef struct {
 
 /* nomes de bibliotecas que o libSystem.mos substitui */
 bool libsystem_dylib_ok(const char *n) {
+    char iosbuf[384];
+    /* Catalyst (WhatsApp) grava o mesmo framework sob /System/iOSSupport. */
+    if (n && !strncmp(n, "/System/iOSSupport", 18)) {
+        snprintf(iosbuf, sizeof iosbuf, "%s", n + 18);
+        n = iosbuf;
+    }
     static const char *ok[] = {
         "/usr/lib/libSystem.B.dylib", "/usr/lib/libSystem.dylib", "/usr/lib/libc.dylib",
         "/usr/lib/libm.dylib", "/usr/lib/libdl.dylib", "/usr/lib/libpthread.dylib",
@@ -378,6 +386,69 @@ bool libsystem_dylib_ok(const char *n) {
                                "/System/Library/Frameworks/QuickLookUI.framework/",
                                "/System/Library/Frameworks/StoreKit.framework/",
                                "/System/Library/Frameworks/CoreData.framework/",
+                               /* medidos no host (machocheck, 10 nov. 2026): o LC_LOAD_DYLIB
+                                * absoluto recusava o processo. O arquivo no disco, se existir,
+                                * entra por framework_has_libsystem_fallback; senão o libSystem. */
+                               "/System/Library/Frameworks/WebKit.framework/",
+                               "/System/Library/Frameworks/ImageIO.framework/",
+                               "/System/Library/Frameworks/CryptoKit.framework/",
+                               "/System/Library/Frameworks/UIKit.framework/",
+                               "/System/Library/Frameworks/SwiftUI.framework/",
+                               "/System/Library/Frameworks/Combine.framework/",
+                               "/System/Library/Frameworks/Contacts.framework/",
+                               "/System/Library/Frameworks/Photos.framework/",
+                               "/System/Library/Frameworks/DeviceCheck.framework/",
+                               "/System/Library/Frameworks/Intents.framework/",
+                               "/System/Library/Frameworks/BackgroundTasks.framework/",
+                               "/System/Library/Frameworks/CoreMotion.framework/",
+                               "/System/Library/Frameworks/CoreTelephony.framework/",
+                               "/System/Library/Frameworks/EventKit.framework/",
+                               "/System/Library/Frameworks/MediaToolbox.framework/",
+                               "/System/Library/Frameworks/NaturalLanguage.framework/",
+                               "/System/Library/Frameworks/OSLog.framework/",
+                               "/System/Library/Frameworks/AVKit.framework/",
+                               "/System/Library/Frameworks/CoreAudioKit.framework/",
+                               "/System/Library/Frameworks/EventKitUI.framework/",
+                               "/System/Library/Frameworks/IntentsUI.framework/",
+                               "/System/Library/Frameworks/MapKit.framework/",
+                               "/System/Library/Frameworks/MessageUI.framework/",
+                               "/System/Library/Frameworks/MobileCoreServices.framework/",
+                               "/System/Library/Frameworks/PDFKit.framework/",
+                               "/System/Library/Frameworks/PassKit.framework/",
+                               "/System/Library/Frameworks/QuickLook.framework/",
+                               "/System/Library/Frameworks/Social.framework/",
+                               "/System/Library/Frameworks/VisionKit.framework/",
+                               "/System/Library/Frameworks/WidgetKit.framework/",
+                               "/System/Library/Frameworks/Virtualization.framework/",
+                               "/System/Library/Frameworks/CoreSpotlight.framework/",
+                               "/System/Library/Frameworks/vmnet.framework/",
+                               "/System/Library/Frameworks/ColorSync.framework/",
+                               "/System/Library/Frameworks/ScriptingBridge.framework/",
+                               "/System/Library/Frameworks/ExtensionKit.framework/",
+                               "/System/Library/Frameworks/Charts.framework/",
+                               "/System/Library/Frameworks/ARKit.framework/",
+                               "/System/Library/Frameworks/PushKit.framework/",
+                               "/System/Library/Frameworks/WatchConnectivity.framework/",
+                               "/System/Library/Frameworks/ReplayKit.framework/",
+                               "/System/Library/Frameworks/_Translation_SwiftUI.framework/",
+                               "/System/Library/Frameworks/AdServices.framework/",
+                               "/System/Library/Frameworks/NetworkExtension.framework/",
+                               "/System/Library/Frameworks/Symbols.framework/",
+                               "/System/Library/Frameworks/Speech.framework/",
+                               "/System/Library/Frameworks/LinkPresentation.framework/",
+                               "/System/Library/Frameworks/FoundationModels.framework/",
+                               "/System/Library/Frameworks/CallKit.framework/",
+                               "/System/Library/Frameworks/ContactsUI.framework/",
+                               "/System/Library/Frameworks/PhotosUI.framework/",
+                               "/System/Library/Frameworks/MetricKit.framework/",
+                               "/System/Library/Frameworks/CloudKit.framework/",
+                               "/System/Library/Frameworks/Translation.framework/",
+                               "/System/Library/Frameworks/SceneKit.framework/",
+                               "/System/Library/Frameworks/AppIntents.framework/",
+                               "/System/Library/Frameworks/ExtensionFoundation.framework/",
+                               "/System/Library/Frameworks/MetalPerformanceShaders.framework/",
+                               "/System/Library/PrivateFrameworks/AccessibilityPlatformTranslation.framework/",
+                               "/Library/Developer/PrivateFrameworks/CoreSimulator.framework/",
                                "/System/Library/Frameworks/SafariServices.framework/",
                                "/System/Library/Frameworks/ScreenCaptureKit.framework/",
                                "/System/Library/Frameworks/SecurityInterface.framework/",
@@ -391,14 +462,89 @@ bool libsystem_dylib_ok(const char *n) {
     return !strncmp(n, "/usr/lib/system/", 16);
 }
 
+/* libz, libcompression e libunwind: o binário no disco ganha (link_abs_dep). Sem o arquivo,
+ * o install name é o libSystem — crc32, compression_stream_* e _Unwind_* já estão no ELF.
+ * Não é um segundo export: o dlopen e o relatório deixam de tratar o caminho como biblioteca que falta. */
+static bool syslib_provided_by_libsystem(const char *n) {
+    if (!n) return false;
+    return !strcmp(n, "/usr/lib/libz.1.dylib") || !strcmp(n, "/usr/lib/libz.dylib")
+        || !strcmp(n, "/usr/lib/libcompression.dylib")
+        || !strcmp(n, "/usr/lib/libunwind.dylib");
+}
+
 /* QuickLookUI, StoreKit e Core Data também estão no libSystem. Se o Mach-O do framework
  * existir no disco, ele ganha: o Core Data de memória do Postico e o overlay Swift não
  * regridem. Sem o arquivo, o loader aceita e resolve no libSystem. */
 static bool framework_has_libsystem_fallback(const char *n) {
+    char iosbuf[384];
+    if (n && !strncmp(n, "/System/iOSSupport", 18)) {
+        snprintf(iosbuf, sizeof iosbuf, "%s", n + 18);
+        n = iosbuf;
+    }
     static const char *fw[] = {
         "/System/Library/Frameworks/QuickLookUI.framework/",
         "/System/Library/Frameworks/StoreKit.framework/",
         "/System/Library/Frameworks/CoreData.framework/",
+        "/System/Library/Frameworks/WebKit.framework/",
+        "/System/Library/Frameworks/ImageIO.framework/",
+        "/System/Library/Frameworks/CryptoKit.framework/",
+        "/System/Library/Frameworks/UIKit.framework/",
+        "/System/Library/Frameworks/SwiftUI.framework/",
+        "/System/Library/Frameworks/Combine.framework/",
+        "/System/Library/Frameworks/Contacts.framework/",
+        "/System/Library/Frameworks/Photos.framework/",
+        "/System/Library/Frameworks/DeviceCheck.framework/",
+        "/System/Library/Frameworks/Intents.framework/",
+        "/System/Library/Frameworks/BackgroundTasks.framework/",
+        "/System/Library/Frameworks/CoreMotion.framework/",
+        "/System/Library/Frameworks/CoreTelephony.framework/",
+        "/System/Library/Frameworks/EventKit.framework/",
+        "/System/Library/Frameworks/MediaToolbox.framework/",
+        "/System/Library/Frameworks/NaturalLanguage.framework/",
+        "/System/Library/Frameworks/OSLog.framework/",
+        "/System/Library/Frameworks/AVKit.framework/",
+        "/System/Library/Frameworks/CoreAudioKit.framework/",
+        "/System/Library/Frameworks/EventKitUI.framework/",
+        "/System/Library/Frameworks/IntentsUI.framework/",
+        "/System/Library/Frameworks/MapKit.framework/",
+        "/System/Library/Frameworks/MessageUI.framework/",
+        "/System/Library/Frameworks/MobileCoreServices.framework/",
+        "/System/Library/Frameworks/PDFKit.framework/",
+        "/System/Library/Frameworks/PassKit.framework/",
+        "/System/Library/Frameworks/QuickLook.framework/",
+        "/System/Library/Frameworks/Social.framework/",
+        "/System/Library/Frameworks/VisionKit.framework/",
+        "/System/Library/Frameworks/WidgetKit.framework/",
+        "/System/Library/Frameworks/Virtualization.framework/",
+        "/System/Library/Frameworks/CoreSpotlight.framework/",
+        "/System/Library/Frameworks/vmnet.framework/",
+        "/System/Library/Frameworks/ColorSync.framework/",
+        "/System/Library/Frameworks/ScriptingBridge.framework/",
+        "/System/Library/Frameworks/ExtensionKit.framework/",
+        "/System/Library/Frameworks/Charts.framework/",
+        "/System/Library/Frameworks/ARKit.framework/",
+        "/System/Library/Frameworks/PushKit.framework/",
+        "/System/Library/Frameworks/WatchConnectivity.framework/",
+        "/System/Library/Frameworks/ReplayKit.framework/",
+        "/System/Library/Frameworks/_Translation_SwiftUI.framework/",
+        "/System/Library/Frameworks/AdServices.framework/",
+        "/System/Library/Frameworks/NetworkExtension.framework/",
+        "/System/Library/Frameworks/Symbols.framework/",
+        "/System/Library/Frameworks/Speech.framework/",
+        "/System/Library/Frameworks/LinkPresentation.framework/",
+        "/System/Library/Frameworks/FoundationModels.framework/",
+        "/System/Library/Frameworks/CallKit.framework/",
+        "/System/Library/Frameworks/ContactsUI.framework/",
+        "/System/Library/Frameworks/PhotosUI.framework/",
+        "/System/Library/Frameworks/MetricKit.framework/",
+        "/System/Library/Frameworks/CloudKit.framework/",
+        "/System/Library/Frameworks/Translation.framework/",
+        "/System/Library/Frameworks/SceneKit.framework/",
+        "/System/Library/Frameworks/AppIntents.framework/",
+        "/System/Library/Frameworks/ExtensionFoundation.framework/",
+        "/System/Library/Frameworks/MetalPerformanceShaders.framework/",
+        "/System/Library/PrivateFrameworks/AccessibilityPlatformTranslation.framework/",
+        "/Library/Developer/PrivateFrameworks/CoreSimulator.framework/",
     };
     for (u32 i = 0; i < ARRAY_LEN(fw); i++) if (!strncmp(n, fw[i], strlen(fw[i]))) return true;
     return false;
@@ -620,7 +766,13 @@ static bool parse(mach_t *mo, const u8 *m, usize len, bool dylib, char *err, usi
         case LC_MAIN: mo->entryoff = rd64(c + 8); mo->has_main = true; break;
         case LC_UNIXTHREAD: if (csz >= 16 && rd32(c + 8) == (ls_cur ? 6u : 4u)) mo->has_thread = true; break;   /* x86_THREAD_STATE64 / ARM_THREAD_STATE64 */
         case LC_VERSION_MIN_MACOSX: mo->minos = rd32(c + 8); break;
-        case LC_BUILD_VERSION: mo->minos = rd32(c + 12); break;
+        case LC_BUILD_VERSION: {
+            /* platform em +8; se o comando não traz (0 ou curto), o loader assume macCatalyst */
+            u32 plat = csz >= 16 ? rd32(c + 8) : 0;
+            mo->platform = mos_build_version_platform(plat);
+            if (csz >= 16) mo->minos = rd32(c + 12);
+            break;
+        }
         }
         c += csz;
     }
@@ -1552,6 +1704,17 @@ static int link_add(link_t *K, const char *path, const u8 *file, usize flen, boo
             if (d >= 0) { I->dep[i] = (i16)d; continue; }
         }
         if (I->mo.dylib_weak[i]) continue;
+        /* libswift*: o basename vai para /usr/lib/swift (mos_libswift_resolve). Sem o
+         * arquivo, o processo abre e o símbolo cai no stub do libSystem. libz, libcurl,
+         * libcompression, libsqlite3 e libxml2 seguem o mesmo caminho: o disco ganha
+         * em link_abs_dep; sem o arquivo não recusam o LC_LOAD_DYLIB. */
+        {
+            char swift[96];
+            if (mos_libswift_resolve(dn, swift, sizeof swift)) continue;
+        }
+        if (!strcmp(dn, "/usr/lib/libz.1.dylib") || !strcmp(dn, "/usr/lib/libcurl.4.dylib") ||
+            !strcmp(dn, "/usr/lib/libcompression.dylib") || !strcmp(dn, "/usr/lib/libsqlite3.dylib") ||
+            !strcmp(dn, "/usr/lib/libxml2.2.dylib")) continue;
         note_absent(K, dn);
     }
     return I->idx;
@@ -1862,6 +2025,10 @@ static i64 dyld_open(process_t *p, link_t *K, const char *req, u64 out_va, u64 c
     if (libcxx_name(req) && dep_read(LIBCXX_DISK, &cxx_len)) req = LIBCXX_DISK;   /* a libc++ do disco, como no link_image */
     else if (!strcmp(req, LIBICU_DISK) && dep_read(LIBICU_DISK, &cxx_len)) { /* o ICU do disco, como no link_image */ }
     else if (framework_has_libsystem_fallback(req) && framework_disk_present(req)) { /* o framework do disco, como no link_image */ }
+    else if (syslib_provided_by_libsystem(req)) {
+        usize zl;
+        if (!dep_read(req, &zl)) return DYLD_H_LIBSYSTEM;   /* sem o dylib no disco: símbolos no libSystem */
+    }
     else if (libsystem_dylib_ok(req)) return DYLD_H_LIBSYSTEM;
     int ci = image_at(K, caller);
     image_t *C = K->im[ci >= 0 ? ci : 0];
@@ -2638,9 +2805,17 @@ bool macho_load(process_t *p, const u8 *img, usize len, const char *arg, u64 *en
      * shell que aceite -c: o caminho antigo continua e o spawn falha logo (ENOENT) em vez de esperar o prazo. */
     usize bash_len;                                      /* dep_read: vfs_lookup no kernel, arquivo no harness do host */
     const char *shell_env = dep_read("/usr/local/bin/bash", &bash_len) ? "SHELL=/usr/local/bin/bash" : "SHELL=/bin/msh";
+#ifndef MOS_HOST_TEST
+    extern int g_lang;   /* 0 = pt-BR, 1 = inglês; kernel/lib/i18n.c */
+#endif
     const char *envs[] = {"HOME=/Users/Visitante", "USER=visitante", "LOGNAME=visitante",
                           "PATH=/usr/local/bin:/Sistema/Programas:/usr/bin:/bin", p->tty ? "TERM=xterm-256color" : "TERM=dumb",   /* sessão do Terminal: isatty(0..2) verdadeiro */
+#ifndef MOS_HOST_TEST
+                          /* g_lang: 0 pt-BR, 1 inglês (kernel/include/i18n.h). O pak do Chromium segue este nome. */
+                          (g_lang == 1 ? "LANG=en_US.UTF-8" : "LANG=pt_BR.UTF-8"),
+#else
                           "LANG=pt_BR.UTF-8",
+#endif
                           pwd, shell_env};
     bool own_env = p->spawn_envc > 0 && p->spawn_env;
     int nenv = own_env ? envc : (int)ARRAY_LEN(envs);
@@ -2786,6 +2961,7 @@ bool macho_report_image(const u8 *img, usize len, const char *name, char *out, u
         mach_t *mo = &I0->mo;
         OUT("%s\nArquiteturas: %s\n", name, K->archs);
         if (mo->minos) OUT("macOS mínimo: %u.%u\n", mo->minos >> 16, (mo->minos >> 8) & 0xFF);
+        if (mo->platform) OUT("plataforma LC_BUILD_VERSION: %u%s\n", mo->platform, mo->platform == MOS_PLATFORM_MACCATALYST ? " (macCatalyst)" : "");
         OUT("Ligação: %s\n", mo->chained ? "chained fixups (macOS 11+)" : mo->dyld_info ? "dyld_info" : "nenhuma");
         OUT("Bibliotecas:\n");
         int shown = 0;
@@ -2793,7 +2969,7 @@ bool macho_report_image(const u8 *img, usize len, const char *name, char *out, u
             char s[96];
             dylib_short(mo->dylibs[i], s, sizeof s);
             if (I0->dep[i] >= 0) { OUT("  [ok] %s (dentro do app)\n", s); continue; }
-            if (libsystem_dylib_ok(mo->dylibs[i])) { OUT("  [ok] %s\n", s); continue; }
+            if (libsystem_dylib_ok(mo->dylibs[i]) || syslib_provided_by_libsystem(mo->dylibs[i])) { OUT("  [ok] %s\n", s); continue; }
             if (shown < 10) { OUT("  [falta] %s%s\n", s, mo->dylib_weak[i] ? " (opcional)" : ""); shown++; }
         }
         if (K->n > 1) {

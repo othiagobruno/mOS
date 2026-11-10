@@ -21,6 +21,20 @@ static const char *const mos_libswift_image[] = {
     "/usr/lib/swift/libswiftUniformTypeIdentifiers.dylib",
     "/usr/lib/swift/libswiftCoreGraphics.dylib",
     "/usr/lib/swift/libswiftMetal.dylib",
+    /* basenames pedidos pelos apps (Claude, ChatGPT, WhatsApp), inclusive
+     * /System/iOSSupport/usr/lib/swift: mos_libswift_resolve usa o basename. */
+    "/usr/lib/swift/libswiftAVFoundation.dylib",
+    "/usr/lib/swift/libswiftCoreMedia.dylib",
+    "/usr/lib/swift/libswiftCoreAudio.dylib",
+    "/usr/lib/swift/libswiftCoreData.dylib",
+    "/usr/lib/swift/libswiftNetwork.dylib",
+    "/usr/lib/swift/libswiftQuartzCore.dylib",
+    "/usr/lib/swift/libswiftAppKit.dylib",
+    "/usr/lib/swift/libswiftUIKit.dylib",
+    "/usr/lib/swift/libswiftWebKit.dylib",
+    "/usr/lib/swift/libswiftos.dylib",
+    "/usr/lib/swift/libswift_errno.dylib",
+    "/usr/lib/swift/libswift_StringProcessing.dylib",
 };
 
 /* 1 se req é uma libswift* da imagem. out recebe o caminho canônico. */
@@ -41,5 +55,13 @@ static int mos_libswift_resolve(const char *req, char *out, unsigned cap) {
         for (n = 0; (out[n] = mos_libswift_image[i][n]); n++) {}
         return 1;
     }
-    return 0;
+    /* Qualquer libswift*.dylib (WhatsApp pede Accelerate, NaturalLanguage, …).
+     * O basename vai para /usr/lib/swift. Sem o arquivo, o LC_LOAD não recusa. */
+    if (strncmp(base, "libswift", 8)) return 0;
+    for (n = 0; base[n]; n++) {}
+    if (n < 7 || strcmp(base + n - 6, ".dylib")) return 0;
+    if (16 + n + 1 > cap) return 0;
+    for (n = 0; n < 16; n++) out[n] = "/usr/lib/swift/"[n];
+    for (i = 0; (out[n + i] = base[i]); i++) {}
+    return 1;
 }

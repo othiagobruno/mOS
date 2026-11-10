@@ -18,6 +18,7 @@ void kmain(void) {
     pmm_init();
     paging_init();
     pmm_reclaim_boot();
+    swap_init();
     heap_init();
     pit_init(1000);
     sti();

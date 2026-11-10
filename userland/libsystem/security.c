@@ -12,7 +12,9 @@
  *    Delete (kSecReturnData/Attributes/Ref, kSecMatchLimitOne/All) e a API antiga SecKeychainFindGenericPassword/
  *    AddGenericPassword/ItemModifyAttributesAndData/ItemDelete/ItemFreeContent. Os itens ficam em
  *    $HOME/Library/Keychains/mos-keychain.txt. A versão 2 do arquivo é ciphertext (HMAC em modo
- *    contador + MAC). A chave sai do nome de login, não de uma senha: ver kcseal.inc.
+ *    contador + MAC). A chave são 32 bytes de getentropy(), em mos-keychain.key (0600, pasta
+ *    0700). Um arquivo versão 2 antigo, cifrado com a chave derivada do login, é aberto uma vez
+ *    e regravado com a chave nova; se essa regravação falha, o arquivo original fica no lugar.
  *    A versão 1 (texto) ainda é lida e, na gravação seguinte, vira versão 2.
  *  - SecCertificateCreateWithData/CopyData (o certificado é o DER num CFData), SecCopyErrorMessageString.
  * O que responde "indisponível" com o erro que a API documenta (regra de chrome.c: nunca 0/sucesso sem preencher):
@@ -175,6 +177,13 @@ static int keychain_path(char *buf, size_t n, int mk) {
     return 1;
 }
 
+static int keyfile_path(char *buf, size_t n) {
+    const char *home = getenv("HOME");
+    if (!home || !*home) home = "/Usuarios/visitante";
+    cx_snprintf(buf, n, "%s/Library/Keychains/mos-keychain.key", home);
+    return 1;
+}
+
 /* formato do arquivo: "mOS-keychain 1\n" e uma linha por item:
  *   classe id cdat mdat dados f0 f1 ... f6\n   (campos binários em hex; "-" = ausente) */
 static const char HEX[] = "0123456789abcdef";
@@ -251,12 +260,32 @@ static void load(void) {
     if (!buf) return;
     if (len >= 15 && !memcmp(buf, "mOS-keychain 2\n", 15)) {
         u8 key[32];
-        char login[96];
+        char kpath[512];
         u8 *plain = 0;
         u32 pn = 0;
-        kc_login(login, sizeof login);
-        kc_key_from(login, key);
-        int r = kc_open(key, (const u8 *)buf, (u32)len, &plain, &pn);
+        keyfile_path(kpath, sizeof kpath);
+        int kr = kc_key_read(kpath, key);
+        int r = kr == 0 ? kc_open(key, (const u8 *)buf, (u32)len, &plain, &pn) : -1;
+        if (r != 0) {
+            u8 old[32];
+            char login[96];
+            kc_login(login, sizeof login);
+            kc_key_from(login, old);
+            r = kc_open(old, (const u8 *)buf, (u32)len, &plain, &pn);
+            memset(old, 0, sizeof old);
+            if (r == 0 && plain) {
+                if (kr != 0) kr = kc_key_create(kpath, key);
+                if (kr == 0) {
+                    u8 *sealed = 0;
+                    u32 sn = 0;
+                    if (kc_seal(key, plain, pn, &sealed, &sn) == 0 && sealed) {
+                        if (kc_replace_file(path, sealed, sn) != 0) { /* original conservado */ }
+                        memset(sealed, 0, sn);
+                        free(sealed);
+                    }
+                }
+            }
+        }
         memset(key, 0, sizeof key);
         free(buf);
         if (r != 0 || !plain) { kc_blocked = 1; return; }
@@ -312,12 +341,13 @@ static OSStatus save(void) {
     }
     size_t plain_n = (size_t)(o - out);
     u8 key[32];
-    char login[96];
+    char kpath[512];
     u8 *sealed = 0;
     u32 sn = 0;
-    kc_login(login, sizeof login);
-    kc_key_from(login, key);
-    int sealed_ok = kc_seal(key, (const u8 *)out, (u32)plain_n, &sealed, &sn);
+    keyfile_path(kpath, sizeof kpath);
+    int sealed_ok = kc_key_ensure(kpath, key);
+    if (sealed_ok == 0) sealed_ok = kc_seal(key, (const u8 *)out, (u32)plain_n, &sealed, &sn);
+    else sealed_ok = -1;
     memset(key, 0, sizeof key);
     memset(out, 0, plain_n);
     free(out);
@@ -334,7 +364,7 @@ static OSStatus save(void) {
     memset(sealed, 0, sn);
     free(sealed);
     if (done != total) { unlink(tmp); return errSecNotAvailable; }
-    if (rename(tmp, path) != 0) { unlink(path); if (rename(tmp, path) != 0) return errSecNotAvailable; }
+    if (rename(tmp, path) != 0) { unlink(tmp); return errSecNotAvailable; }
     return errSecSuccess;
 }
 
@@ -781,15 +811,55 @@ OSStatus SecTrustSetOCSPResponse(id_ trust, id_ r) { (void)trust; (void)r; retur
  * nome: essas avaliam como válidas; as demais continuam "não confiável" (o mOS não reavalia cadeias aqui) */
 static id_ g_verified[64];
 static unsigned g_nverified;
+static struct { id_ t; char host[256]; } g_thost[64];
 void cx_trust_mark_verified(id_ t) { g_verified[g_nverified++ % 64] = t; }
-static void trust_unmark(id_ t) { for (int i = 0; i < 64; i++) if (g_verified[i] == t) g_verified[i] = 0; }
+void cx_trust_set_host(id_ t, const char *host) {
+    if (!t) return;
+    unsigned slot = 0;
+    for (unsigned i = 0; i < 64; i++) if (g_thost[i].t == t || !g_thost[i].t) { slot = i; break; }
+    g_thost[slot].t = t;
+    g_thost[slot].host[0] = 0;
+    if (host) {
+        unsigned n = 0;
+        while (host[n] && n + 1 < sizeof g_thost[slot].host) { g_thost[slot].host[n] = host[n]; n++; }
+        g_thost[slot].host[n] = 0;
+    }
+}
+static const char *trust_host(id_ t) {
+    for (unsigned i = 0; i < 64; i++) if (g_thost[i].t == t) return g_thost[i].host;
+    return "";
+}
+static void trust_unmark(id_ t) {
+    for (int i = 0; i < 64; i++) if (g_verified[i] == t) g_verified[i] = 0;
+    for (int i = 0; i < 64; i++) if (g_thost[i].t == t) g_thost[i].t = 0;
+}
 static int trust_verified(id_ t) { for (int i = 0; t && i < 64; i++) if (g_verified[i] == t) return 1; return 0; }
+extern int cx_sectrust_verify(const u8 *const *ders, const u32 *lens, unsigned n, const char *host);
 OSStatus SecTrustEvaluate(id_ trust, u32 *result) {
-    if (result) *result = trust_verified(trust) ? kSecTrustResultUnspecified : kSecTrustResultRecoverableTrustFailure;
+    int ok = 0;
+    long n = trust ? CFArrayGetCount(trust) : 0;
+    if (n > 0 && n <= 8) {
+        const u8 *ders[8];
+        u32 lens[8];
+        int good = 1;
+        for (long i = 0; i < n; i++) {
+            id_ c = CFArrayGetValueAtIndex(trust, i);
+            if (!c || CFGetTypeID(c) != CFDataGetTypeID() || CFDataGetLength(c) < 4) { good = 0; break; }
+            ders[i] = CFDataGetBytePtr(c);
+            lens[i] = (u32)CFDataGetLength(c);
+        }
+        if (good) ok = cx_sectrust_verify(ders, lens, (unsigned)n, trust_host(trust));
+    } else ok = trust_verified(trust);
+    if (result) *result = ok ? kSecTrustResultUnspecified : kSecTrustResultRecoverableTrustFailure;
     return errSecSuccess;
 }
 OSStatus SecTrustGetTrustResult(id_ trust, u32 *result) { return SecTrustEvaluate(trust, result); }
-Boolean SecTrustEvaluateWithError(id_ trust, id_ *err) { if (err) *err = 0; return trust_verified(trust) ? 1 : 0; }
+Boolean SecTrustEvaluateWithError(id_ trust, id_ *err) {
+    u32 result = 0;
+    SecTrustEvaluate(trust, &result);
+    if (err) *err = 0;
+    return result == kSecTrustResultUnspecified;
+}
 OSStatus SecTrustEvaluateAsync(id_ trust, void *queue, void *block) { (void)trust; (void)queue; (void)block; return errSecUnimplemented; }
 OSStatus SecTrustEvaluateAsyncWithError(id_ trust, void *queue, void *block) { (void)trust; (void)queue; (void)block; return errSecUnimplemented; }
 

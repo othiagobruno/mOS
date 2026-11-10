@@ -3,8 +3,8 @@
  * tools/machocheck.c):
  *  - Accelerate/vDSP: implementado de verdade (o WebAudio do Chromium faz convolução, FFT real e
  *    filtros biquad com ele). FFT real com o empacotamento e a escala da Apple (direta multiplica por 2).
- *  - CoreMedia: CMTime e o que só lê estruturas; criação de buffers/formatos devolve erro.
- *  - VideoToolbox: sem codec por hardware (o Chromium decodifica/codifica por software, ffmpeg).
+ *  - CoreMedia: CMTime aqui; bloco, formato e sample buffer em openbot_cm.c.
+ *  - VideoToolbox: H.264 em software (I_PCM). HEVC devolve -12906/-12908. A cópia de pixel está em openbot_vt.c.
  *  - CoreAudio/AudioToolbox/CoreMIDI: nenhum dispositivo/componente (áudio do Chromium fica mudo).
  *  - CUPS: nenhuma impressora. GSS/Kerberos: sem credenciais (autenticação Negotiate falha limpa).
  *  - UniformTypeIdentifiers: objetos UTType com identificador, extensão e MIME.
@@ -24,6 +24,7 @@ void objc_release(id o);
 id CFArrayCreate(void *alloc, const id *vals, long n, const void *cb);
 id CFDictionaryCreateMutable(void *alloc, long cap, const void *kcb, const void *vcb);
 int clock_gettime(int clk, void *ts);
+void cx_objc_boot(unsigned long long sects, unsigned long long n);
 typedef int OSStatus;
 #define PI 3.14159265358979323846
 
@@ -142,130 +143,218 @@ u64 CMClockConvertHostTimeToSystemUnits(cm_time_t t) {
     if (!(t.flags & kCMTimeFlags_Valid) || !t.timescale) return 0;
     return (u64)((double)t.value * 1e9 / (double)t.timescale);    /* mach_absolute_time em ns no mOS */
 }
-#define kCMBlockBufferBadCustomBlockSourceErr (-12702)
-#define kCMFormatDescriptionError_InvalidParameter (-12710)
-#define kCMSampleBufferError_InvalidMediaFormat (-12743)
-#define CM_FAIL(err) { return err; }
-/* Áudio e formatos continuam sem hardware. O buffer de imagem existe: o SCStream entrega um quadro. */
-OSStatus CMBlockBufferCreateEmpty(void *a, u32 cap, u32 flags, void **out) { (void)a; (void)cap; (void)flags; if (out) *out = 0; CM_FAIL(kCMBlockBufferBadCustomBlockSourceErr) }
-OSStatus CMBlockBufferCreateWithMemoryBlock(void *a, void *mem, size_t len, void *ba, const void *cb, size_t off, size_t dlen, u32 flags, void **out) {
-    (void)a; (void)mem; (void)len; (void)ba; (void)cb; (void)off; (void)dlen; (void)flags; if (out) *out = 0; CM_FAIL(kCMBlockBufferBadCustomBlockSourceErr)
-}
-OSStatus CMBlockBufferCreateContiguous(void *a, void *src, void *ba, const void *cb, size_t off, size_t len, u32 flags, void **out) { (void)a; (void)src; (void)ba; (void)cb; (void)off; (void)len; (void)flags; if (out) *out = 0; CM_FAIL(kCMBlockBufferBadCustomBlockSourceErr) }
-OSStatus CMBlockBufferAppendMemoryBlock(void *b, void *mem, size_t len, void *ba, const void *cb, size_t off, size_t dlen, u32 flags) { (void)b; (void)mem; (void)len; (void)ba; (void)cb; (void)off; (void)dlen; (void)flags; CM_FAIL(kCMBlockBufferBadCustomBlockSourceErr) }
-OSStatus CMBlockBufferGetDataPointer(void *b, size_t off, size_t *lenAt, size_t *total, char **ptr) { (void)b; (void)off; if (lenAt) *lenAt = 0; if (total) *total = 0; if (ptr) *ptr = 0; CM_FAIL(kCMBlockBufferBadCustomBlockSourceErr) }
-size_t CMBlockBufferGetDataLength(void *b) { (void)b; return 0; }
-u8 CMBlockBufferIsRangeContiguous(void *b, size_t off, size_t len) { (void)b; (void)off; (void)len; return 1; }
-OSStatus CMBlockBufferReplaceDataBytes(const void *src, void *b, size_t off, size_t len) { (void)src; (void)b; (void)off; (void)len; CM_FAIL(kCMBlockBufferBadCustomBlockSourceErr) }
-OSStatus CMBlockBufferAssureBlockMemory(void *b) { (void)b; CM_FAIL(kCMBlockBufferBadCustomBlockSourceErr) }
-OSStatus CMAudioFormatDescriptionCreate(void *a, const void *asbd, size_t ls, const void *l, size_t cs, const void *c, id ext, void **out) { (void)a; (void)asbd; (void)ls; (void)l; (void)cs; (void)c; (void)ext; if (out) *out = 0; CM_FAIL(kCMFormatDescriptionError_InvalidParameter) }
-const void *CMAudioFormatDescriptionGetStreamBasicDescription(void *d) { (void)d; return 0; }
-OSStatus CMVideoFormatDescriptionCreate(void *a, u32 codec, i32 w, i32 h, id ext, void **out) { (void)a; (void)codec; (void)w; (void)h; (void)ext; if (out) *out = 0; CM_FAIL(kCMFormatDescriptionError_InvalidParameter) }
-OSStatus CMVideoFormatDescriptionCreateFromH264ParameterSets(void *a, size_t n, const u8 *const *p, const size_t *s, int nal, void **out) { (void)a; (void)n; (void)p; (void)s; (void)nal; if (out) *out = 0; CM_FAIL(kCMFormatDescriptionError_InvalidParameter) }
-OSStatus CMVideoFormatDescriptionCreateFromHEVCParameterSets(void *a, size_t n, const u8 *const *p, const size_t *s, int nal, id ext, void **out) { (void)a; (void)n; (void)p; (void)s; (void)nal; (void)ext; if (out) *out = 0; CM_FAIL(kCMFormatDescriptionError_InvalidParameter) }
-OSStatus CMVideoFormatDescriptionCreateForImageBuffer(void *a, void *img, void **out) { (void)a; (void)img; if (out) *out = 0; CM_FAIL(kCMFormatDescriptionError_InvalidParameter) }
-OSStatus CMVideoFormatDescriptionGetH264ParameterSetAtIndex(void *d, size_t i, const u8 **p, size_t *s, size_t *n, int *nal) { (void)d; (void)i; if (p) *p = 0; if (s) *s = 0; if (n) *n = 0; if (nal) *nal = 0; CM_FAIL(kCMFormatDescriptionError_InvalidParameter) }
-OSStatus CMVideoFormatDescriptionGetHEVCParameterSetAtIndex(void *d, size_t i, const u8 **p, size_t *s, size_t *n, int *nal) { (void)d; (void)i; if (p) *p = 0; if (s) *s = 0; if (n) *n = 0; if (nal) *nal = 0; CM_FAIL(kCMFormatDescriptionError_InvalidParameter) }
-typedef struct { i32 w, h; } cm_dim_t;
-cm_dim_t CMVideoFormatDescriptionGetDimensions(void *d) { (void)d; cm_dim_t r = {0, 0}; return r; }
-u32 CMFormatDescriptionGetMediaSubType(void *d) { (void)d; return 0; }
-id CMFormatDescriptionGetExtension(void *d, id key) { (void)d; (void)key; return 0; }
-OSStatus CMSampleBufferCreate(void *a, void *db, u8 ready, void *cb, void *ref, void *fd, long ns, long nt, const void *t, long nsz, const size_t *sz, void **out) {
-    (void)a; (void)db; (void)ready; (void)cb; (void)ref; (void)fd; (void)ns; (void)nt; (void)t; (void)nsz; (void)sz; if (out) *out = 0; CM_FAIL(kCMSampleBufferError_InvalidMediaFormat)
-}
-typedef struct { cx_class_t *isa; void *image; cm_time_t pts; id atts; } cmsb_t;
-static cx_class_t cmsb_c, cmsb_m;
-static int cmsb_ready;
-static void cmsb_free(id self, SEL c) {
-    cmsb_t *b = (cmsb_t *)self;
-    if (b->image) objc_release((id)b->image);
-    if (b->atts) objc_release(b->atts);
-    b->image = 0;
-    b->atts = 0;
-    IMP sup = cx_lookup(cx_class_named("NSObject"), c);
-    if (sup) ((void (*)(id, SEL))sup)(self, c);
-}
-static void cmsb_boot(void) {
-    if (cmsb_ready) return;
-    cx_class_t *ns = cx_class_named("NSObject");
-    if (!ns) return;
-    cx_define_class(&cmsb_c, &cmsb_m, "CMSampleBuffer", ns, (u32)(sizeof(cmsb_t) - sizeof(void *)));
-    cx_add_method(&cmsb_c, "dealloc", (void *)cmsb_free);
-    cmsb_ready = 1;
-}
-static cmsb_t *as_sb(void *s) {
-    cmsb_t *b = (cmsb_t *)s;
-    return (b && cmsb_ready && b->isa == &cmsb_c) ? b : 0;
-}
-OSStatus CMSampleBufferCreateForImageBuffer(void *a, void *img, u8 ready, void *cb, void *ref, void *fd, const void *t, void **out) {
-    (void)a; (void)ready; (void)cb; (void)ref; (void)fd;
-    if (!out) return kCMSampleBufferError_InvalidMediaFormat;
-    *out = 0;
-    if (!img) CM_FAIL(kCMSampleBufferError_InvalidMediaFormat)
-    cmsb_boot();
-    if (!cmsb_ready) CM_FAIL(kCMSampleBufferError_InvalidMediaFormat)
-    cmsb_t *s = (cmsb_t *)cx_alloc_instance(&cmsb_c);
-    if (!s) CM_FAIL(kCMSampleBufferError_InvalidMediaFormat)
-    s->image = objc_retain((id)img);
-    s->pts = (cm_time_t){0, 1, kCMTimeFlags_Valid, 0};
-    if (t) {
-        const cm_time_t *times = (const cm_time_t *)t;
-        s->pts = times[1].flags ? times[1] : times[0];
-    }
-    id dict = MSG0(id, (id)cx_class_named("NSMutableDictionary"), "dictionary");
-    id arr = MSG0(id, (id)cx_class_named("NSMutableArray"), "array");
-    if (arr && dict) MSG(void, arr, "addObject:", dict);
-    s->atts = arr ? objc_retain(arr) : 0;
-    *out = s;
-    return 0;
-}
-long CMSampleBufferGetNumSamples(void *s) { return as_sb(s) ? 1 : 0; }
-void *CMSampleBufferGetFormatDescription(void *s) { (void)s; return 0; }
-void *CMSampleBufferGetDataBuffer(void *s) { (void)s; return 0; }
-void *CMSampleBufferGetImageBuffer(void *s) { cmsb_t *b = as_sb(s); return b ? b->image : 0; }
-cm_time_t CMSampleBufferGetPresentationTimeStamp(void *s) {
-    cmsb_t *b = as_sb(s);
-    if (!b) { cm_time_t z = {0, 0, 0, 0}; return z; }
-    return b->pts;
-}
-id CMSampleBufferGetSampleAttachmentsArray(void *s, u8 create) {
-    (void)create;
-    cmsb_t *b = as_sb(s);
-    return b ? b->atts : 0;
-}
-void CMSetAttachment(void *t, id key, id v, u32 mode) {
-    (void)mode;
-    cmsb_t *b = as_sb(t);
-    if (!b || !b->atts || !key || !v) return;
-    id d = MSG(id, b->atts, "objectAtIndex:", (u64)0);
-    if (d) MSG(void, d, "setObject:forKey:", v, key);
-}
-id CMCopyDictionaryOfAttachments(void *a, void *t, u32 mode) { (void)a; (void)t; (void)mode; return CFDictionaryCreateMutable(0, 0, 0, 0); }
+/* Bloco, formato e sample buffer: openbot_cm.c. */
 OSStatus CMIOObjectGetPropertyData(u32 obj, const void *addr, u32 qs, const void *q, u32 sz, u32 *used, void *data) { (void)obj; (void)addr; (void)qs; (void)q; (void)sz; (void)data; if (used) *used = 0; return 0x77686F3F; /* kCMIOHardwareUnknownPropertyError 'who?' */ }
 
 /* ================================================================ VideoToolbox
- * Limitação honesta: não há decodificador nem codificador de H.264/HEVC em software neste
- * build, e não se contorna FairPlay. As chamadas devolvem o erro da Apple (decoder -12906,
- * encoder -12908, propriedade -12900). VTIsHardwareDecodeSupported continua 0. */
+ * H.264 em software (I_PCM, h264sw.c): CVPixelBuffer BGRA ou NV12 entra e sai,
+ * CMSampleBuffer em AVCC com o format description avc1. HEVC continua -12906/-12908:
+ * não há par encoder/decoder permissivo que caiba aqui. Sem FairPlay.
+ * VTIsHardwareDecodeSupported continua 0. */
 #define kVTCouldNotFindVideoDecoderErr (-12906)
 #define kVTCouldNotFindVideoEncoderErr (-12908)
 #define kVTPropertyNotSupportedErr (-12900)
+#define kCMVideoCodecType_H264 0x61766331u
+#define kCMVideoCodecType_HEVC 0x68766331u
+typedef void (*vt_enc_fn)(void *ref, void *src, OSStatus st, u32 flags, void *sb);
+typedef void (*vt_dec_fn)(void *ref, void *src, OSStatus st, u32 flags, void *img, cm_time_t pts, cm_time_t dur);
+typedef struct { vt_dec_fn fn; void *ref; } vt_dec_rec;
+typedef struct { cm_time_t duration, presentationTimeStamp, decodeTimeStamp; } vt_timing_t;
+enum { VT_ENC = 1, VT_DEC = 2 };
+typedef struct {
+    cx_class_t *isa;
+    int kind, dead, w, h;
+    u32 codec;
+    vt_enc_fn enc;
+    void *enc_ref;
+    vt_dec_fn dec;
+    void *dec_ref;
+} vts_t;
+static cx_class_t VTS_c, VTS_m;
+static int vts_ready;
+static void vts_dealloc(id s, SEL c) {
+    (void)s;
+    IMP sup = cx_lookup(cx_class_named("NSObject"), c);
+    if (sup) ((void (*)(id, SEL))sup)(s, c);
+}
+static void vts_ensure(void) {
+    if (vts_ready) return;
+    cx_objc_boot(0, 0);
+    cx_class_t *ob = cx_class_named("NSObject");
+    if (!ob) return;
+    cx_define_class(&VTS_c, &VTS_m, "VTSession", ob, (u32)(sizeof(vts_t) - sizeof(void *)));
+    cx_add_method(&VTS_c, "dealloc", (void *)vts_dealloc);
+    vts_ready = 1;
+}
+static vts_t *vts_new(int kind) {
+    vts_ensure();
+    vts_t *s = (vts_t *)cx_alloc_instance(&VTS_c);
+    if (s) s->kind = kind;
+    return s;
+}
+static vts_t *vts_as(void *p, int kind) {
+    if (!p || ((unsigned long long)p & 7)) return 0;
+    vts_t *s = (vts_t *)p;
+    if (s->isa != &VTS_c || s->kind != kind || s->dead) return 0;
+    return s;
+}
+static int h264_codec(u32 c) { return c == kCMVideoCodecType_H264 || c == 0x61766333u; }
+static int hevc_codec(u32 c) { return c == kCMVideoCodecType_HEVC || c == 0x68657631u; }
+
+int CVPixelBufferLockBaseAddress(void *p, u64 f);
+int CVPixelBufferUnlockBaseAddress(void *p, u64 f);
+void *CVPixelBufferGetBaseAddress(void *p);
+void *CVPixelBufferGetBaseAddressOfPlane(void *p, u64 i);
+u64 CVPixelBufferGetBytesPerRow(void *p);
+u64 CVPixelBufferGetBytesPerRowOfPlane(void *p, u64 i);
+u64 CVPixelBufferGetWidth(void *p);
+u64 CVPixelBufferGetHeight(void *p);
+u32 CVPixelBufferGetPixelFormatType(void *p);
+u64 CVPixelBufferGetPlaneCount(void *p);
+int CVPixelBufferCreate(void *a, u64 w, u64 h, u32 fmt, id attrs, void **out);
+int CMBlockBufferCreateWithMemoryBlock(void *a, void *mem, size_t len, void *ba, const void *cb, size_t off, size_t dlen, u32 flags, void **out);
+int CMVideoFormatDescriptionCreateFromH264ParameterSets(void *a, size_t n, const u8 *const *p, const size_t *s, int nal, void **out);
+int CMSampleBufferCreate(void *a, void *db, u8 ready, void *cb, void *ref, void *fd, long ns, long nt, const void *t, long nsz, const size_t *sz, void **out);
+void *CMSampleBufferGetDataBuffer(void *s);
+void *CMSampleBufferGetFormatDescription(void *s);
+int CMBlockBufferGetDataPointer(void *b, size_t off, size_t *lenAt, size_t *total, char **ptr);
+int CMVideoFormatDescriptionGetH264ParameterSetAtIndex(void *d, size_t i, const u8 **p, size_t *s, size_t *n, int *nal);
+typedef struct { u8 *sps, *pps, *sample, *annexb; int sps_n, pps_n, sample_n, annexb_n, w, h; } h264_au;
+int h264_encode_i420(const u8 *y, const u8 *u, const u8 *v, int w, int h, int sy, int su, int sv, int qp, h264_au *o);
+void h264_au_free(h264_au *o);
+int h264_decode_avcc(const u8 *sps, int sps_n, const u8 *pps, int pps_n, const u8 *sample, int sample_n,
+                     u8 *y, u8 *u, u8 *v, int sy, int su, int sv, int *w, int *h);
+int h264_sps_wh(const u8 *nal, int n, int *w, int *h);
+void h264_bgra_to_i420(const u8 *bgra, int w, int h, int sb, u8 *y, u8 *u, u8 *v, int sy, int su, int sv);
+void h264_i420_to_bgra(const u8 *y, const u8 *u, const u8 *v, int w, int h, int sy, int su, int sv, u8 *bgra, int sb);
+void h264_nv12_to_i420(const u8 *yp, int sy, const u8 *uv, int suv, int w, int h, u8 *y, u8 *u, u8 *v, int dy, int du, int dv);
+void h264_i420_to_nv12(const u8 *y, const u8 *u, const u8 *v, int w, int h, int sy, int su, int sv, u8 *yp, int dy, u8 *uv, int duv);
+
 u8 VTIsHardwareDecodeSupported(u32 codec) { (void)codec; return 0; }
 void VTRegisterSupplementalVideoDecoderIfAvailable(u32 codec) { (void)codec; }
-OSStatus VTDecompressionSessionCreate(void *a, void *fd, id spec, id attrs, const void *cb, void **out) { (void)a; (void)fd; (void)spec; (void)attrs; (void)cb; if (out) *out = 0; return kVTCouldNotFindVideoDecoderErr; }
-u8 VTDecompressionSessionCanAcceptFormatDescription(void *s, void *fd) { (void)s; (void)fd; return 0; }
-OSStatus VTDecompressionSessionDecodeFrame(void *s, void *sb, u32 flags, void *ref, u32 *info) { (void)s; (void)sb; (void)flags; (void)ref; if (info) *info = 0; return kVTCouldNotFindVideoDecoderErr; }
-void VTDecompressionSessionInvalidate(void *s) { (void)s; }
-OSStatus VTCompressionSessionCreate(void *a, i32 w, i32 h, u32 codec, id spec, id src, void *ca, void *cb, void *ref, void **out) { (void)a; (void)w; (void)h; (void)codec; (void)spec; (void)src; (void)ca; (void)cb; (void)ref; if (out) *out = 0; return kVTCouldNotFindVideoEncoderErr; }
-OSStatus VTCompressionSessionEncodeFrame(void *s, void *img, cm_time_t pts, cm_time_t dur, id props, void *ref, u32 *info) { (void)s; (void)img; (void)pts; (void)dur; (void)props; (void)ref; if (info) *info = 0; return kVTCouldNotFindVideoEncoderErr; }
+
+OSStatus VTDecompressionSessionCreate(void *a, void *fd, id spec, id attrs, const void *cb, void **out) {
+    (void)a; (void)spec; (void)attrs;
+    if (out) *out = 0;
+    if (!out || !cb) return kVTCouldNotFindVideoDecoderErr;
+    u32 codec = 0;
+    if (fd) {
+        typedef struct { void *isa; u32 kind, media, subtype; } fd_peek;
+        codec = ((fd_peek *)fd)->subtype;
+    }
+    if (hevc_codec(codec)) return kVTCouldNotFindVideoDecoderErr;
+    if (codec && !h264_codec(codec)) return kVTCouldNotFindVideoDecoderErr;
+    const vt_dec_rec *rec = (const vt_dec_rec *)cb;
+    vts_t *s = vts_new(VT_DEC);
+    if (!s) return kVTCouldNotFindVideoDecoderErr;
+    s->codec = codec ? codec : kCMVideoCodecType_H264;
+    s->dec = rec->fn;
+    s->dec_ref = rec->ref;
+    *out = s;
+    return 0;
+}
+u8 VTDecompressionSessionCanAcceptFormatDescription(void *s, void *fd) {
+    vts_t *v = vts_as(s, VT_DEC);
+    if (!v || !fd) return 0;
+    typedef struct { void *isa; u32 kind, media, subtype; } fd_peek;
+    return h264_codec(((fd_peek *)fd)->subtype);
+}
+OSStatus VTDecompressionSessionDecodeFrame(void *s, void *sb, u32 flags, void *ref, u32 *info) {
+    (void)flags;
+    if (info) *info = 0;
+    vts_t *v = vts_as(s, VT_DEC);
+    if (!v) return kVTCouldNotFindVideoDecoderErr;
+    void *bb = CMSampleBufferGetDataBuffer(sb);
+    void *fmt = CMSampleBufferGetFormatDescription(sb);
+    const u8 *sps = 0, *pps = 0;
+    size_t sps_n = 0, pps_n = 0, np = 0;
+    if (CMVideoFormatDescriptionGetH264ParameterSetAtIndex(fmt, 0, &sps, &sps_n, &np, 0) ||
+        CMVideoFormatDescriptionGetH264ParameterSetAtIndex(fmt, 1, &pps, &pps_n, &np, 0)) {
+        if (v->dec) v->dec(v->dec_ref, ref, kVTCouldNotFindVideoDecoderErr, 0, 0, CMTimeMake(0, 1), CMTimeMake(0, 1));
+        return kVTCouldNotFindVideoDecoderErr;
+    }
+    char *data = 0;
+    size_t dlen = 0;
+    if (CMBlockBufferGetDataPointer(bb, 0, 0, &dlen, &data) || !data) return kVTCouldNotFindVideoDecoderErr;
+    int w = 0, h = 0;
+    if (h264_sps_wh(sps, (int)sps_n, &w, &h) || w < 2 || h < 2 || w > 4096 || h > 4096) return kVTCouldNotFindVideoDecoderErr;
+    u8 *y = malloc((size_t)w * h), *u = malloc((size_t)w * h / 4), *v2 = malloc((size_t)w * h / 4);
+    if (!y || !u || !v2) { free(y); free(u); free(v2); return kVTCouldNotFindVideoDecoderErr; }
+    int rc = h264_decode_avcc(sps, (int)sps_n, pps, (int)pps_n, (const u8 *)data, (int)dlen, y, u, v2, w, w / 2, w / 2, &w, &h);
+    if (rc || w < 2 || h < 2) { free(y); free(u); free(v2); return kVTCouldNotFindVideoDecoderErr; }
+    void *img = 0;
+    if (CVPixelBufferCreate(0, (u64)w, (u64)h, 0x42475241u, 0, &img) != 0 || !img) {
+        free(y); free(u); free(v2);
+        return kVTCouldNotFindVideoDecoderErr;
+    }
+    CVPixelBufferLockBaseAddress(img, 0);
+    h264_i420_to_bgra(y, u, v2, w, h, w, w / 2, w / 2, CVPixelBufferGetBaseAddress(img), (int)CVPixelBufferGetBytesPerRow(img));
+    CVPixelBufferUnlockBaseAddress(img, 0);
+    free(y); free(u); free(v2);
+    if (v->dec) v->dec(v->dec_ref, ref, 0, 0, img, CMTimeMake(0, 1), CMTimeMake(0, 1));
+    objc_release((id)img);
+    return 0;
+}
+void VTDecompressionSessionInvalidate(void *s) { vts_t *v = vts_as(s, VT_DEC); if (v) v->dead = 1; }
+
+OSStatus VTCompressionSessionCreate(void *a, i32 w, i32 h, u32 codec, id spec, id src, void *ca, void *cb, void *ref, void **out) {
+    (void)a; (void)spec; (void)src; (void)ca;
+    if (out) *out = 0;
+    if (!out || w < 2 || h < 2) return kVTCouldNotFindVideoEncoderErr;
+    if (hevc_codec(codec) || !h264_codec(codec)) return kVTCouldNotFindVideoEncoderErr;
+    vts_t *s = vts_new(VT_ENC);
+    if (!s) return kVTCouldNotFindVideoEncoderErr;
+    s->w = w; s->h = h; s->codec = codec; s->enc = (vt_enc_fn)cb; s->enc_ref = ref;
+    *out = s;
+    return 0;
+}
+OSStatus VTCompressionSessionEncodeFrame(void *s, void *img, cm_time_t pts, cm_time_t dur, id props, void *ref, u32 *info) {
+    (void)props;
+    if (info) *info = 0;
+    vts_t *v = vts_as(s, VT_ENC);
+    if (!v || !img) return kVTCouldNotFindVideoEncoderErr;
+    int w = (int)CVPixelBufferGetWidth(img), h = (int)CVPixelBufferGetHeight(img);
+    if (w < 2 || h < 2 || (w & 1) || (h & 1)) return kVTCouldNotFindVideoEncoderErr;
+    u8 *y = malloc((size_t)w * h), *u = malloc((size_t)w * h / 4), *vv = malloc((size_t)w * h / 4);
+    if (!y || !u || !vv) { free(y); free(u); free(vv); return kVTCouldNotFindVideoEncoderErr; }
+    CVPixelBufferLockBaseAddress(img, 1);
+    u32 fmt = CVPixelBufferGetPixelFormatType(img);
+    if (CVPixelBufferGetPlaneCount(img) >= 2 && (fmt == 0x34323076u || fmt == 0x34323066u)) {
+        h264_nv12_to_i420(CVPixelBufferGetBaseAddressOfPlane(img, 0), (int)CVPixelBufferGetBytesPerRowOfPlane(img, 0),
+                          CVPixelBufferGetBaseAddressOfPlane(img, 1), (int)CVPixelBufferGetBytesPerRowOfPlane(img, 1),
+                          w, h, y, u, vv, w, w / 2, w / 2);
+    } else {
+        h264_bgra_to_i420(CVPixelBufferGetBaseAddress(img), w, h, (int)CVPixelBufferGetBytesPerRow(img), y, u, vv, w, w / 2, w / 2);
+    }
+    CVPixelBufferUnlockBaseAddress(img, 1);
+    h264_au au;
+    int erc = h264_encode_i420(y, u, vv, w, h, w, w / 2, w / 2, 16, &au);
+    free(y); free(u); free(vv);
+    if (erc) { h264_au_free(&au); return kVTCouldNotFindVideoEncoderErr; }
+    void *bb = 0, *fd = 0, *sb = 0;
+    const u8 *sets[2] = {au.sps, au.pps};
+    size_t slen[2] = {(size_t)au.sps_n, (size_t)au.pps_n};
+    size_t sample_n = (size_t)au.sample_n;
+    if (CMBlockBufferCreateWithMemoryBlock(0, au.sample, sample_n, 0, 0, 0, sample_n, 0, &bb) ||
+        CMVideoFormatDescriptionCreateFromH264ParameterSets(0, 2, sets, slen, 4, &fd)) {
+        h264_au_free(&au); if (bb) objc_release((id)bb);
+        return kVTCouldNotFindVideoEncoderErr;
+    }
+    vt_timing_t tm;
+    tm.duration = dur; tm.presentationTimeStamp = pts; tm.decodeTimeStamp = pts;
+    int crc = CMSampleBufferCreate(0, bb, 1, 0, 0, fd, 1, 1, &tm, 1, &sample_n, &sb);
+    objc_release((id)bb); objc_release((id)fd); h264_au_free(&au);
+    if (crc || !sb) return kVTCouldNotFindVideoEncoderErr;
+    if (v->enc) v->enc(v->enc_ref, ref, 0, 0, sb);
+    objc_release((id)sb);
+    return 0;
+}
 OSStatus VTCompressionSessionCompleteFrames(void *s, cm_time_t until) { (void)s; (void)until; return 0; }
-void VTCompressionSessionInvalidate(void *s) { (void)s; }
-OSStatus VTSessionSetProperty(void *s, id key, id v) { (void)s; (void)key; (void)v; return kVTPropertyNotSupportedErr; }
+void VTCompressionSessionInvalidate(void *s) { vts_t *v = vts_as(s, VT_ENC); if (v) v->dead = 1; }
+OSStatus VTSessionSetProperty(void *s, id key, id val) { (void)s; (void)key; (void)val; return 0; }
 OSStatus VTSessionCopyProperty(void *s, id key, void *a, void *out) { (void)s; (void)key; (void)a; if (out) *(void **)out = 0; return kVTPropertyNotSupportedErr; }
 OSStatus VTSessionCopySupportedPropertyDictionary(void *s, id *out) { (void)s; if (out) *out = CFDictionaryCreateMutable(0, 0, 0, 0); return 0; }
-OSStatus VTPixelTransferSessionCreate(void *a, void **out) { (void)a; if (out) *out = 0; return kVTCouldNotFindVideoEncoderErr; }
-OSStatus VTPixelTransferSessionTransferImage(void *s, void *src, void *dst) { (void)s; (void)src; (void)dst; return kVTCouldNotFindVideoEncoderErr; }
-void VTPixelTransferSessionInvalidate(void *s) { (void)s; }
+/* VTPixelTransferSession*: openbot_vt.c copia o quadro quando o formato coincide. */
 
 /* CoreAudio, AudioUnit, AudioQueue, AudioConverter, AudioFile e AudioServices: coreaudio.c */
 

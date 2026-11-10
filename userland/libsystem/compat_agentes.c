@@ -8,7 +8,8 @@
  *  - ptrace: só PT_DENY_ATTACH (o resto: EPERM, não há depurador no mOS);
  *  - memccpy, ctime_r, nice, __floattidf/__floatuntidf (int128 -> double, do compiler-rt);
  *  - CFTimeZoneCopyDefault, CTFontDescriptorCreateWithNameAndSize;
- *  - FSEvents: as variantes por dispositivo e as consultas do fluxo (o fluxo de cli.c nunca dispara);
+ *  - FSEvents: o fluxo que entrega eventos é fsevents.c. Aqui ficam o atalho por dispositivo
+ *    (um volume só) e as consultas que não têm journal;
  *  - IOHIDManager (sem dispositivos HID), classes vazias de MapKit/Contacts em vscode_fwclasses.c;
  *  - SecTrustSettingsSet/RemoveTrustSettings: o mOS não grava confiança do usuário (errSecUnimplemented).
  */
@@ -123,19 +124,15 @@ id_ CTFontDescriptorCreateWithNameAndSize(id_ name, double size) {
     return CTFontDescriptorCreateWithAttributes(d);
 }
 
-/* ---- FSEvents (o fluxo é o de cli.c) */
+/* ---- FSEvents: entrega em fsevents.c. O mOS tem um volume (st_dev 0x1000002), então o device é ignorado. */
 void *FSEventStreamCreate(void *alloc, void *cb, void *ctx, id_ paths, u64 since, double latency, u32 flags);
 void *FSEventStreamCreateRelativeToDevice(void *alloc, void *cb, void *ctx, long dev, id_ paths, u64 since, double latency,
                                           u32 flags) {
-    (void)dev;
+    (void)dev; /* STUB de volume: não há UUID nem journal por dispositivo */
     return FSEventStreamCreate(alloc, cb, ctx, paths, since, latency, flags);
 }
-id_ CFArrayCreateMutable(void *alloc, long cap, const void *cb);
-id_ CFStringCreateWithCString(void *alloc, const char *s, u32 enc);
-id_ FSEventStreamCopyPathsBeingWatched(void *s) { (void)s; return CFArrayCreateMutable(0, 0, 0); }
-id_ FSEventStreamCopyDescription(void *s) { (void)s; return CFStringCreateWithCString(0, "FSEventStream (mOS: sem eventos)", 0x08000100); }
-id_ FSEventsCopyUUIDForDevice(long dev) { (void)dev; return 0; }
-u64 FSEventsGetLastEventIdForDeviceBeforeTime(long dev, double t) { (void)dev; (void)t; return 0; }
+id_ FSEventsCopyUUIDForDevice(long dev) { (void)dev; return 0; } /* STUB: o VFS não tem UUID de volume */
+u64 FSEventsGetLastEventIdForDeviceBeforeTime(long dev, double t) { (void)dev; (void)t; return 0; } /* STUB: sem journal */
 
 /* ---- DiskArbitration: os dicionários de filtro prontos (CFDictionaryRef). NULL = "todos os discos", o que o
  * DARegister*Callback do mOS faria de qualquer forma (ele nunca chama de volta: não há discos removíveis) */
@@ -279,6 +276,13 @@ int BZ2_bzBuffToBuffCompress(char *dest, unsigned *destlen, char *src, unsigned 
     (void)dest; (void)destlen; (void)src; (void)srclen; (void)b; (void)v; (void)w;
     return -9;
 }
+/* o Codex liga a API de fluxo (bzCompress*). Sem compressor: BZ_CONFIG_ERROR, o mesmo -9 de cima. */
+int BZ2_bzCompressInit(void *strm, int block, int verbosity, int work) {
+    (void)strm; (void)block; (void)verbosity; (void)work;
+    return -9;
+}
+int BZ2_bzCompress(void *strm, int action) { (void)strm; (void)action; return -9; }
+int BZ2_bzCompressEnd(void *strm) { (void)strm; return 0; }
 
 /* ---- libxar (arquivos .xar dos patches delta do Sparkle): o mOS não lê nem grava xar. xar_open devolve NULL, como
  * para um arquivo inválido, e o resto responde "vazio" sem tocar em nada; o Sparkle trata e usa a atualização inteira. */
@@ -391,10 +395,8 @@ long vImageBoxConvolve_Planar8(const vimg_t *src, const vimg_t *dst, void *tmp, 
 int AEDeterminePermissionToAutomateTarget(const void *target, u32 cls, u32 id_, u8 ask) { (void)target; (void)cls; (void)id_; (void)ask; return -1743; }
 /* ---- VideoToolbox: sem conversão de CVPixelBuffer para CGImage (kVTParameterErr) */
 int VTCreateCGImageFromCVPixelBuffer(void *pb, void *opts, void **out) { (void)pb; (void)opts; if (out) *out = 0; return -12902; }
-/* ---- libsqlite3: o mOS não tem SQLite; abrir falha com SQLITE_CANTOPEN e o chamador segue sem o banco */
-int sqlite3_open_v2(const char *name, void **db, int flags, const char *vfs) { (void)name; (void)flags; (void)vfs; if (db) *db = 0; return 14; }
-int sqlite3_exec(void *db, const char *sql, void *cb, void *arg, char **err) { (void)db; (void)sql; (void)cb; (void)arg; if (err) *err = 0; return 21; }   /* SQLITE_MISUSE */
-int sqlite3_close(void *db) { (void)db; return 0; }
+/* SQLite real: sqlite3_open_v2, sqlite3_exec e sqlite3_close vêm do amalgama
+ * (userland/libsystem/sqlite3_mos.c). Não há stub que recuse abrir. */
 /* par-ímpar: o rasterizador de caminhos do AppKit do mOS só preenche com a regra do enrolamento (diferente só em
  * caminhos que se cruzam) */
 void CGContextFillPath(void *c);

@@ -56,6 +56,7 @@ u64 timer_ticks(void) { return GetTickCount64(); }
 /* relógio: UTC do Windows, ou uma data forçada pelos testes offline */
 static bool g_fake_clock;
 static datetime_t g_fake_now;
+void rtc_now_utc(datetime_t *dt);
 void rtc_now(datetime_t *dt) {
     if (g_fake_clock) { *dt = g_fake_now; return; }
     SYSTEMTIME st;
@@ -63,6 +64,7 @@ void rtc_now(datetime_t *dt) {
     dt->year = st.wYear; dt->month = st.wMonth; dt->day = st.wDay;
     dt->hour = st.wHour; dt->minute = st.wMinute; dt->second = st.wSecond; dt->weekday = st.wDayOfWeek;
 }
+void rtc_now_utc(datetime_t *dt) { rtc_now(dt); }
 
 static u8 *read_file(const char *path, u32 *len) {
     FILE *f = fopen(path, "rb");
