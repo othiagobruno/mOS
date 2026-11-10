@@ -187,6 +187,12 @@ if ($ComSwift -or $env:MOS_COM_SWIFT -eq '1') {
     & "$root\tools\build-swift-arm64.ps1" -SoJuntar
     if ($LASTEXITCODE -ne 0) { Write-Host 'aviso: Swift universal incompleto' -ForegroundColor Yellow }
 }
+# Linux: tools/build-libswift-real.sh compila libswiftCore e as overlays a partir de swift-6.4.2.
+# No Windows a cadeia continua tools\build-swift-full-objc.ps1 + link-swift-dylibs-objc.ps1.
+if ($IsLinux -and (Test-Path "$root\tools\build-libswift-real.sh")) {
+    & bash "$root/tools/build-libswift-real.sh"
+    if ($LASTEXITCODE -ne 0) { Write-Host 'aviso: build-libswift-real.sh falhou; o que faltar continua stub' -ForegroundColor Yellow; $global:LASTEXITCODE = 0 }
+}
 $swiftSrc = $null
 if (Test-Path "$root\build\universal-swift\usr\lib\swift\libswiftCore.dylib") { $swiftSrc = "$root\build\universal-swift" }
 elseif (Test-Path "$root\build\swift\objc\dylib\usr\lib\swift\libswiftCore.dylib") { $swiftSrc = "$root\build\swift\objc\dylib" }

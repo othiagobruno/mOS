@@ -211,4 +211,5 @@ void cx_framework_classes_init(void) {
     d(&WKWebsiteDataStore_c, &WKWebsiteDataStore_m, "WKWebsiteDataStore", "NSObject");
     d(&SFCertificateTrustPanel_c, &SFCertificateTrustPanel_m, "SFCertificateTrustPanel", "SFCertificatePanel");
     d(&UNTextInputNotificationAction_c, &UNTextInputNotificationAction_m, "UNTextInputNotificationAction", "UNNotificationAction");
+    { extern void cx_webauth_init(void); cx_webauth_init(); }
 }

@@ -1,13 +1,11 @@
-/* time.h mínimo. SQLITE_OMIT_DATETIME_FUNCS está ligado no sqlite3_mos.c. */
-#ifndef MOS_KSHIM_TIME_H
-#define MOS_KSHIM_TIME_H
-typedef unsigned long size_t;
+/* Freestanding. O corpo está em libc.c (mac_tm_t tem o mesmo layout). */
+#pragma once
 typedef long time_t;
 struct tm {
     int tm_sec, tm_min, tm_hour, tm_mday, tm_mon, tm_year, tm_wday, tm_yday, tm_isdst;
+    long tm_gmtoff;
+    const char *tm_zone;
 };
-time_t time(time_t *t);
-struct tm *gmtime(const time_t *t);
-struct tm *localtime(const time_t *t);
-size_t strftime(char *s, size_t max, const char *fmt, const struct tm *tm);
-#endif
+long time(long *t);
+struct tm *gmtime(const long *t);
+unsigned long strftime(char *s, unsigned long max, const char *fmt, const struct tm *tm);
