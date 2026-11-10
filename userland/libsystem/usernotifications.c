@@ -37,8 +37,12 @@ typedef struct {
     char title[96], subtitle[96], body[160], ident[64], action[80];
     double interval;
     int repeats, used;
-    id content, trigger, ident_obj, note;
+    id content, trigger, ident_obj, note, userinfo;
 } un_slot_t;
+
+enum { UN_INFO_N = 24 };
+static id g_info_obj[UN_INFO_N];
+static char g_info_id[UN_INFO_N][64];
 
 static un_slot_t g_slot[UN_SLOTS];
 static id g_delegate;
@@ -76,7 +80,58 @@ static id ct_body(id self, SEL c) { un_slot_t *s = slot_get(self, 0); (void)c; r
 static void ct_set_title(id self, SEL c, id v) { un_slot_t *s = slot_get(self, 1); (void)c; if (s) copy_field(s->title, (int)sizeof s->title, v); }
 static void ct_set_subtitle(id self, SEL c, id v) { un_slot_t *s = slot_get(self, 1); (void)c; if (s) copy_field(s->subtitle, (int)sizeof s->subtitle, v); }
 static void ct_set_body(id self, SEL c, id v) { un_slot_t *s = slot_get(self, 1); (void)c; if (s) copy_field(s->body, (int)sizeof s->body, v); }
-static id ct_userinfo(id self, SEL c) { (void)self; (void)c; return objc_autorelease(MSG0(id, (id)cx_class_named("NSDictionary"), "dictionary")); }
+static id empty_dict(void) {
+    return objc_autorelease(MSG0(id, (id)cx_class_named("NSDictionary"), "dictionary"));
+}
+
+static void remember_info(const char *ident, id info) {
+    int free_i = -1, i;
+    if (!ident || !ident[0]) return;
+    for (i = 0; i < UN_INFO_N; i++) {
+        if (g_info_id[i][0] && !strcmp(g_info_id[i], ident)) {
+            if (g_info_obj[i]) objc_release(g_info_obj[i]);
+            g_info_obj[i] = info ? objc_retain(info) : 0;
+            if (!info) g_info_id[i][0] = 0;
+            return;
+        }
+        if (!g_info_id[i][0] && free_i < 0) free_i = i;
+    }
+    if (free_i < 0 || !info) return;
+    copy_field(g_info_id[free_i], 64, 0);
+    {
+        int n = 0;
+        for (; ident[n] && n < 63; n++) g_info_id[free_i][n] = ident[n];
+        g_info_id[free_i][n] = 0;
+    }
+    g_info_obj[free_i] = objc_retain(info);
+}
+
+static id lookup_info(const char *ident) {
+    int i;
+    if (!ident) return 0;
+    for (i = 0; i < UN_INFO_N; i++)
+        if (g_info_id[i][0] && !strcmp(g_info_id[i], ident)) return g_info_obj[i];
+    return 0;
+}
+
+static id ct_userinfo(id self, SEL c) {
+    un_slot_t *s = slot_get(self, 0);
+    (void)c;
+    if (s && s->userinfo) return s->userinfo;
+    if (s && s->ident[0]) {
+        id found = lookup_info(s->ident);
+        if (found) return found;
+    }
+    return empty_dict();
+}
+
+static void ct_set_userinfo(id self, SEL c, id v) {
+    un_slot_t *s = slot_get(self, 1);
+    (void)c;
+    if (!s) return;
+    if (s->userinfo) objc_release(s->userinfo);
+    s->userinfo = v ? objc_retain(v) : 0;
+}
 
 static id trig_with(id cls, SEL c, double interval, BOOL repeats) {
     id o = cx_alloc_instance((cx_class_t *)cls);
@@ -227,6 +282,11 @@ static int objc_present(const char *ident, const char *title, const char *body, 
     if (!cx_responds(object_getClass(g_delegate), sel)) return CX_UN_PRESENT_BANNER | CX_UN_PRESENT_LIST;
     center = MSG0(id, (id)&UNUserNotificationCenter_c, "currentNotificationCenter");
     note = make_note(ident, title, body);
+    {
+        un_slot_t *ns = slot_get(note, 1);
+        id info = lookup_info(ident);
+        if (ns && info) ns->userinfo = objc_retain(info);
+    }
     memset(&out, 0, sizeof out);
     out.opts = CX_UN_PRESENT_BANNER | CX_UN_PRESENT_LIST;
     memset(&blk, 0, sizeof blk);
@@ -303,6 +363,13 @@ static void un_add(id self, SEL c, id req, void *block) {
     rs = slot_get(req, 0);
     cs = rs && rs->content ? slot_get(rs->content, 0) : 0;
     ts = rs && rs->trigger ? slot_get(rs->trigger, 0) : 0;
+    if (cs && cs->userinfo) {
+        id desc = MSG0(id, cs->userinfo, "description");
+        cx_un_stage_info(desc ? cx_cstr(desc) : "");
+        remember_info(rs ? rs->ident : "", cs->userinfo);
+    } else {
+        cx_un_stage_info("");
+    }
     rc = cx_un_add(rs ? rs->ident : "",
                    cs ? cs->title : "",
                    cs ? cs->subtitle : "",
@@ -361,6 +428,7 @@ void cx_usernotifications_init(void) {
     cx_add_method(&UNNotificationContent_c, "subtitle", (void *)ct_subtitle);
     cx_add_method(&UNNotificationContent_c, "body", (void *)ct_body);
     cx_add_method(&UNNotificationContent_c, "userInfo", (void *)ct_userinfo);
+    cx_add_method(&UNMutableNotificationContent_c, "setUserInfo:", (void *)ct_set_userinfo);
     cx_add_method(&UNMutableNotificationContent_c, "setTitle:", (void *)ct_set_title);
     cx_add_method(&UNMutableNotificationContent_c, "setSubtitle:", (void *)ct_set_subtitle);
     cx_add_method(&UNMutableNotificationContent_c, "setBody:", (void *)ct_set_body);

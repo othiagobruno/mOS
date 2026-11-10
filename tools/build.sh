@@ -17,6 +17,12 @@ while [ $# -gt 0 ]; do
 done
 mkdir -p "$OUT"
 cd "$ROOT"
+gcc -O2 -Wall -Wextra -I kernel/include tools/cred_host.c kernel/proc/cred.c -o /tmp/cred_host
+/tmp/cred_host
+gcc -O2 -Wall -Wextra -DMOS_HOST_TEST -I kernel/include -I tools tools/resto_host.c \
+    kernel/proc/cred.c kernel/proc/fdshare.c kernel/proc/fileport.c kernel/mm/commpage.c kernel/mm/swap.c \
+    -o /tmp/resto_host
+/tmp/resto_host
 
 kind_of() {
     local b
@@ -107,6 +113,10 @@ else
     exit 1
 fi
 
+echo "==> libc++ (LLVM, dylib Mach-O)"
+export ZIG
+bash "$ROOT/tools/build-libcxx.sh"
+
 echo "==> libunwind ($ZIG)"
 UWO="$OUT/libunwind-x86"
 mkdir -p "$UWO"
@@ -148,10 +158,17 @@ for f in libunwind.cpp UnwindLevel1.c UnwindLevel1-gcc-ext.c UnwindRegistersSave
     compile_uw "$f"
 done
 
+echo "==> unw_hosttest (API pública da libunwind no host)"
+cc -O1 -fno-omit-frame-pointer -funwind-tables -rdynamic \
+    -I"$ROOT/userland/libsystem" \
+    "$ROOT/tools/unw_hosttest.c" "$ROOT/userland/libsystem/cxx_unwind.c" "$ROOT/userland/libsystem/unw_alias.S" \
+    -ldl -o "$OUT/unw_hosttest"
+"$OUT/unw_hosttest"
+
 echo "==> libSystem.mos"
 # x86_64: _Unwind_* fica em cxx_unwind.c. UnwindLevel1.c repete esses nomes; o resto do libunwind fica.
 LS_SRC=()
-for f in "$ROOT"/userland/libsystem/*.c "$ROOT"/userland/libsystem/*.S; do
+for f in "$ROOT"/userland/libsystem/*.c "$ROOT"/userland/libsystem/*.S "$ROOT"/userland/third_party/h264bsd/*.c; do
     [ -f "$f" ] || continue
     # sqlite3.c pede assert.h/stdio.h. Compila com o shim, fora do -I do resto.
     case "$f" in
@@ -174,7 +191,7 @@ done
 # UnwindLevel1.c, UnwindLevel1-gcc-ext.c, UnwindRegistersSave.S e libunwind.cpp repetem cxx_unwind.c.
 "$ZIG" cc -target x86_64-freestanding-none -O2 -g0 -ffreestanding -fno-stack-protector -fno-builtin -nostdlib -static -no-pie \
     -fpie -mno-red-zone -Wall -Wno-unused-parameter -Wno-incompatible-library-redeclaration -Wno-builtin-requires-header \
-    -I"$ROOT/userland/libsystem/kshim" -I"$ROOT/userland/libsystem/fsinc" -I"$ROOT/kernel/include" \
+    -I"$ROOT/userland/libsystem/kshim" -I"$ROOT/userland/libsystem/fsinc" -I"$ROOT/kernel/include" -I"$ROOT/userland/third_party/h264bsd" \
     -isystem "$ZIGDIR/lib/include" \
     -Wl,--image-base=0x400000100000 -Wl,-e,cx_start -Wl,--no-gc-sections \
     "${LS_SRC[@]}" "$OUT/audiodec.o" "$OUT/sqlite3_mos.o" \
@@ -195,6 +212,9 @@ mkdir -p "$ROOT/build"
 if [ "$(readlink -f "$OUT/libSystem.mos")" != "$(readlink -f "$ROOT/build/libSystem.mos")" ]; then
     cp -f "$OUT/libSystem.mos" "$ROOT/build/libSystem.mos"
 fi
+
+echo "==> overlay Darwin (teste de host)"
+bash "$ROOT/tools/darwin-swift-teste.sh" "$ZIG" "$OUT/darwin-swift"
 
 echo "==> kernel"
 mapfile -t KSRC < <(find "$ROOT/kernel" -type f \( -name '*.c' -o -name '*.S' \) | sort)
@@ -250,7 +270,7 @@ mkdir -p "$ESP/mOS/Sistema/Biblioteca/a64"
 echo "==> libswift"
 # Runtime real (swift-6.4.2) quando a toolchain e o fonte estão em .tools/. Sem isso, o stage completa com stub.
 if [ -f "$ROOT/tools/build-libswift-real.sh" ]; then
-    sh "$ROOT/tools/build-libswift-real.sh" || echo "aviso: build-libswift-real.sh falhou; o que faltar continua stub" >&2
+    bash "$ROOT/tools/build-libswift-real.sh" || echo "aviso: build-libswift-real.sh falhou; o que faltar continua stub" >&2
 fi
 if [ -f "$ROOT/build/universal-swift/usr/lib/swift/libswiftCore.dylib" ]; then
     cp -a "$ROOT/build/universal-swift/." "$ESP/mOS/"
@@ -259,8 +279,57 @@ elif [ -f "$ROOT/build/swift/objc/dylib/usr/lib/swift/libswiftCore.dylib" ]; the
 fi
 sh "$ROOT/tools/stage-libswift.sh" "$ESP/mOS/usr/lib/swift"
 
+echo "==> Virtualization.framework"
+VZSRC="$ROOT/userland/frameworks/Virtualization/Virtualization.m"
+VZOUT="$OUT/vz"
+VZDIR="$ESP/mOS/System/Library/Frameworks/Virtualization.framework/Versions/A"
+mkdir -p "$VZOUT" "$VZDIR"
+vz_one() {
+    "$ZIG" cc -target "$1" -O2 -shared -x objective-c -I"$ROOT/userland/sdk/include" -I"$ROOT/userland/frameworks/Virtualization" \
+        -Wno-objc-root-class -Wno-objc-method-access "$VZSRC" -o "$2" \
+        -Wl,-install_name,/System/Library/Frameworks/Virtualization.framework/Versions/A/Virtualization \
+        -Wl,-undefined,dynamic_lookup
+}
+if vz_one x86_64-macos "$VZOUT/Virtualization.x86" && vz_one aarch64-macos "$VZOUT/Virtualization.arm"; then
+    python3 - "$VZDIR/Virtualization" "$VZOUT/Virtualization.x86" "$VZOUT/Virtualization.arm" <<'PY'
+import pathlib, struct, sys
+out, *srcs = sys.argv[1:]
+slices = []
+for p in srcs:
+    b = pathlib.Path(p).read_bytes()
+    if struct.unpack_from("<I", b, 0)[0] != 0xFEEDFACF:
+        raise SystemExit(p + " nao e Mach-O fino")
+    cpu, sub = struct.unpack_from("<II", b, 4)
+    align = 14 if cpu == 0x0100000C else 12
+    slices.append((cpu, sub, align, b))
+off = 8 + 20 * len(slices)
+parts = []
+for cpu, sub, align, b in slices:
+    a = 1 << align
+    if off % a:
+        off += a - (off % a)
+    parts.append((cpu, sub, align, off, b))
+    off += len(b)
+buf = bytearray()
+def be(v):
+    buf.extend(struct.pack(">I", v & 0xFFFFFFFF))
+be(0xCAFEBABE); be(len(parts))
+for cpu, sub, align, o, b in parts:
+    be(cpu); be(sub); be(o); be(len(b)); be(align)
+for cpu, sub, align, o, b in parts:
+    if len(buf) < o:
+        buf.extend(b"\0" * (o - len(buf)))
+    buf.extend(b)
+pathlib.Path(out).write_bytes(buf)
+PY
+else
+    echo "aviso: Virtualization.framework não compilou" >&2
+fi
+
 echo "==> apps oficiais em /Aplicativos"
 bash "$ROOT/tools/stage-apps-oficiais.sh" "$OUT"
+mkdir -p "$ESP/mOS/usr/lib"
+cp -f "$ROOT/build/libcxx/libc++.1.dylib" "$ESP/mOS/usr/lib/libc++.1.dylib"
 
 KEY=${MOS_CHAVE_ATUALIZACAO:-$ROOT/tools/chave-atualizacao.semente}
 REV=$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo local)

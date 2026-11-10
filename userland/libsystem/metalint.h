@@ -23,6 +23,7 @@ typedef struct mbuf {
     int own;
     void *dealloc_blk;
     id heap;
+    u64 mod_loc, mod_len;     /* último -didModifyRange: (bytes já visíveis em p) */
 } mbuf_t;
 
 typedef struct mtex {
