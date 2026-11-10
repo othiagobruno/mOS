@@ -7,8 +7,8 @@
  * (cx_tcc_preflight de kTCCServiceAccessibility): sem ela a resposta é -25211.
  * _AXUIElementCreateWithRemoteToken aceita o token mAX1 (ax_token.h): com número de
  * janela, título e geometria saem de DEV_WINDOW_LIST. A árvore de views de outro pid
- * só atravessa se cx_ax_transport_ready() (axtransport.h). Sem o IPC de SYS-XPC-MACH /
- * KER-UNIX-IPC essa leitura continua -25204. O protocolo está em axproto.h.
+ * atravessa cx_xpc_peer_call quando cx_ax_transport_ready(). Se o ready falha, ou se
+ * o call devolve 60 ou 61, a resposta continua -25204. O protocolo está em axproto.h.
  */
 #include "foundation.h"
 #include "computeruse_win.h"
@@ -33,6 +33,8 @@ void objc_release(id o);
 id objc_msgSend(id self, SEL op, ...);
 int snprintf(char *b, size_t n, const char *fmt, ...);
 void *memset(void *d, int c, size_t n);
+void cx_ax_bind_xpc(void);
+int cx_ax_wire_status(int rc);
 
 enum {
     AXK_APP = 1,
@@ -66,8 +68,12 @@ typedef struct {
 static cx_class_t ax_c, ax_m;
 
 static void ax_boot(void) {
-    if (ax_c.vtable) return;
+    if (ax_c.vtable) {
+        cx_ax_bind_xpc();
+        return;
+    }
     cx_define_class(&ax_c, &ax_m, "__mOSAXElement", cx_class_named("NSObject"), (u32)(sizeof(axel_t) - sizeof(void *)));
+    cx_ax_bind_xpc();
 }
 
 static struct { id obj; int kind, id; } g_tab[96];
@@ -279,9 +285,10 @@ static int remote_roundtrip(axel_t *e, int op, const char *name, const char *str
     const cx_ax_transport *t = cx_ax_transport_get();
     ax_msg req;
     unsigned char buf[640], rbuf[640];
-    int n, rn = 0;
+    int n, rn = 0, rc;
     if (!out) return AX_CANT;
     memset(out, 0, sizeof *out);
+    /* ready falho, ou call 60/61, continuam -25204. */
     if (!e || !cx_ax_transport_ready() || !t || !t->call) return AX_CANT;
     memset(&req, 0, sizeof req);
     req.op = op;
@@ -298,7 +305,9 @@ static int remote_roundtrip(axel_t *e, int op, const char *name, const char *str
         req.pay = AX_PAY_STR;
     } else if (name && !strcmp(name, "AXRangeForPosition")) req.pay = AX_PAY_RANGE;
     n = ax_msg_encode(&req, buf, (int)sizeof buf);
-    if (n < 0 || t->call(e->pid, buf, n, rbuf, (int)sizeof rbuf, &rn) != 0) return AX_CANT;
+    if (n < 0) return AX_CANT;
+    rc = t->call(e->pid, buf, n, rbuf, (int)sizeof rbuf, &rn);
+    if (cx_ax_wire_status(rc)) return AX_CANT;
     if (ax_msg_decode(rbuf, rn, out) != 0) return AX_CANT;
     return out->status;
 }
@@ -492,13 +501,38 @@ int cx_ax_set(id elem, id attr, id value) {
     return AX_NOATTR;
 }
 
+static id actions_from_str(const char *s) {
+    id tmp[8];
+    int n = 0;
+    if (s && s[0]) {
+        const char *p = s;
+        while (*p && n < 8) {
+            char buf[AX_NAME_MAX];
+            int i = 0;
+            while (*p && *p != ',' && i < AX_NAME_MAX - 1) buf[i++] = *p++;
+            buf[i] = 0;
+            if (*p == ',') p++;
+            if (i) tmp[n++] = cx_str(buf);
+        }
+    }
+    id arr = CFArrayCreate(0, tmp, n, 0);
+    for (int i = 0; i < n; i++) objc_release(tmp[i]);
+    return arr;
+}
+
 int cx_ax_actions(id elem, id *names) {
     if (names) *names = 0;
     int g = ax_gate();
     if (g) return g;
     axel_t *e = ax_of(elem);
     if (!e) return AX_BAD_ELEM;
-    if (ax_remote(e)) return AX_CANT;
+    if (ax_remote(e)) {
+        ax_msg out;
+        int st = remote_roundtrip(e, AX_OP_COPY, "AXActionNames", 0, 0, 0, 0, 0, &out);
+        if (st) return st;
+        if (names) *names = actions_from_str(out.pay == AX_PAY_STR ? out.str : "");
+        return AX_OK;
+    }
     if (e->kind == AXK_VIEW && is_a(e->obj, "NSButton")) {
         id press = cx_str("AXPress");
         if (names) *names = CFArrayCreate(0, &press, 1, 0);

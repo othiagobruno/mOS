@@ -5,11 +5,13 @@
 #include "foundation.h"
 #include "axproto.h"
 #include "axtransport.h"
+#include "xpctransport.h"
 
 int cx_ax_copy(id elem, id attr, id *v);
 int cx_ax_set(id elem, id attr, id value);
 int cx_ax_perform(id elem, id action);
 int cx_ax_param(id elem, id attr, id param, id *v);
+int cx_ax_actions(id elem, id *names);
 id cx_ax_find(int kind, int id);
 int cx_ax_kind_id(id obj, int *kind, int *id);
 id AXValueCreate(unsigned type, const void *p);
@@ -151,6 +153,31 @@ int cx_ax_server_handle(int from_pid, const void *req, int n, void *reply, int c
         return ax_msg_encode(&out, reply, cap);
     }
     attr = cx_str(in.name);
+    if (in.op == AX_OP_COPY && !strcmp(in.name, "AXActionNames")) {
+        id names = 0;
+        int at = 0;
+        unsigned long kn, ki;
+        st = cx_ax_actions(elem, &names);
+        out.op = AX_OP_REPLY;
+        out.str[0] = 0;
+        if (st) reply_status(&out, st);
+        else {
+            kn = names ? MSG0(unsigned long, names, "count") : 0;
+            for (ki = 0; ki < kn && at < AX_STR_MAX - 1; ki++) {
+                id s = MSG(id, names, "objectAtIndex:", ki);
+                const char *c = cx_cstr(s);
+                int k;
+                if (ki && at < AX_STR_MAX - 1) out.str[at++] = ',';
+                for (k = 0; c && c[k] && at < AX_STR_MAX - 1; k++) out.str[at++] = c[k];
+            }
+            out.str[at] = 0;
+            out.pay = AX_PAY_STR;
+            out.status = AX_OK;
+        }
+        if (names) objc_release(names);
+        if (attr) objc_release(attr);
+        return ax_msg_encode(&out, reply, cap);
+    }
     if (in.op == AX_OP_COPY) {
         st = cx_ax_copy(elem, attr, &val);
         if (st) reply_status(&out, st);
@@ -221,7 +248,24 @@ static void arm_listen(void) {
     if (t->listen(on_transport, 0) == 0) g_listening = 1;
 }
 
+static cx_ax_transport g_xpc_ax = {
+    "xpc-mach",
+    cx_xpc_peer_ready,
+    cx_xpc_peer_call,
+    cx_xpc_peer_send,
+    cx_xpc_peer_listen,
+};
+static int g_bound;
+
+void cx_ax_bind_xpc(void) {
+    if (!g_bound) {
+        g_bound = 1;
+        cx_ax_transport_bind(&g_xpc_ax);
+    }
+    arm_listen();
+}
+
 void cx_ax_server_start(void) {
     cx_ax_transport_on_bind(arm_listen);
-    arm_listen();
+    cx_ax_bind_xpc();
 }
