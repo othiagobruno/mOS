@@ -26,6 +26,8 @@ $src = "$root\userland\tests-a64rt"
 "#include <stdio.h>`nint main(int c, char **v) { printf(""hello %s: argc=%d\n"", v[0], c); return 7; }" | Set-Content -Encoding ascii "$root\build\a64rt-hello.c"
 & $zig cc -target aarch64-macos -O1 "$root\build\a64rt-hello.c" -o "$t\hello-arm64" '-Wl,-undefined,dynamic_lookup' 2>&1 | ForEach-Object { "$_" }
 & $zig cc -target x86_64-macos -O1 "$root\build\a64rt-hello.c" -o "$t\hello-x86" '-Wl,-undefined,dynamic_lookup' 2>&1 | ForEach-Object { "$_" }
+& $zig cc -target x86_64-macos -O1 "$src\exec-from-x86.c" -o "$t\exec-from-x86" '-Wl,-undefined,dynamic_lookup' 2>&1 | ForEach-Object { "$_" }
+if ($LASTEXITCODE -ne 0) { Write-Host 'exec-from-x86: FAILED' -ForegroundColor Red; exit 1 }
 & $zig c++ -target aarch64-macos -O1 "$src\main.cpp" -o "$t\a64rt-teste" '-Wl,-undefined,dynamic_lookup' 2>&1 | ForEach-Object { "$_" }
 if ($LASTEXITCODE -ne 0) { Write-Host 'testes arm64: FAILED' -ForegroundColor Red; exit 1 }
 
@@ -46,7 +48,8 @@ function Write-Job([string]$label, [string[]]$argv, [hashtable]$envs) {
 </dict></plist>
 "@ | Set-Content -Encoding ascii "$ld\$label.plist"
 }
-$spawn = '/Sistema/Programas/a64teste/hello-x86:7;/Sistema/Programas/a64teste/hello-arm64:7'
+# hello-x86: posix_spawn arm64→x86. hello-arm64: arm64→arm64. exec-from-x86: x86 faz exec do hello-arm64.
+$spawn = '/Sistema/Programas/a64teste/hello-x86:7;/Sistema/Programas/a64teste/hello-arm64:7;/Sistema/Programas/a64teste/exec-from-x86:7'
 foreach ($m in $Motores.Split(',')) {
     Write-Job "com.mos.a64teste.$m" @('/Sistema/Programas/a64teste/a64rt-teste') @{ MOS_A64_ENGINE = $m; A64RT_TESTE_SPAWN = $spawn }
 }

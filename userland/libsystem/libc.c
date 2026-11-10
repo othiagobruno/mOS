@@ -1062,7 +1062,54 @@ int cx_socketpair_fds(int *fds) {
     if (r == 0) { nb_set(fds[0], 0); nb_set(fds[1], 0); acc_set(fds[0], 2); acc_set(fds[1], 2); }
     return r;
 }
-int fork(void) { return (int)ret_errno(SYS0(SYS_FORK)); }
+/* pthread_atfork: prepare em LIFO, parent e child em FIFO (POSIX). A trava do heap entra no meio,
+ * depois dos prepare do usuário e antes dos parent/child, para o filho não herdar a trava presa
+ * por uma thread que não existe mais e para os handlers poderem chamar malloc. */
+#define ATFORK_MAX 256
+static struct { void (*pre)(void); void (*parent)(void); void (*child)(void); } atfork_tab[ATFORK_MAX];
+static int atfork_n;
+static volatile int atfork_lock;
+static int fork_depth;
+static void af_lock(void) {
+    while (__sync_lock_test_and_set(&atfork_lock, 1))
+        while (atfork_lock) __builtin_ia32_pause();
+}
+static void af_unlock(void) { __sync_lock_release(&atfork_lock); }
+static void atfork_run(int which) {
+    void (*fns[ATFORK_MAX])(void);
+    af_lock();
+    int n = atfork_n;
+    for (int i = 0; i < n; i++)
+        fns[i] = which == 0 ? atfork_tab[i].pre : which == 1 ? atfork_tab[i].parent : atfork_tab[i].child;
+    af_unlock();
+    if (which == 0) { for (int i = n - 1; i >= 0; i--) if (fns[i]) fns[i](); }
+    else { for (int i = 0; i < n; i++) if (fns[i]) fns[i](); }
+}
+int pthread_atfork(void (*pre)(void), void (*parent)(void), void (*child)(void)) {
+    af_lock();
+    if (atfork_n >= ATFORK_MAX) { af_unlock(); return 12; }   /* ENOMEM */
+    atfork_tab[atfork_n].pre = pre;
+    atfork_tab[atfork_n].parent = parent;
+    atfork_tab[atfork_n].child = child;
+    atfork_n++;
+    af_unlock();
+    return 0;
+}
+int fork(void) {
+    int top = fork_depth == 0;
+    fork_depth++;
+    if (top) { atfork_run(0); hl(); }
+    long r = SYS0(SYS_FORK);
+    if (r == 0) {
+        fork_depth = 0;
+        __atomic_store_n(&heap_lock, 0, __ATOMIC_RELEASE);
+        if (top) atfork_run(2);
+        return 0;
+    }
+    if (top) { hu(); atfork_run(1); }
+    fork_depth--;
+    return (int)ret_errno(r);
+}
 /* execve/execvp ficam em extra.c (precisam do posix_spawnp e do atalho do sandbox-exec) */
 int ioctl(int fd, unsigned long req, ...) {
     /* FIONBIO / FIOCLEX / FIONCLEX (libuv): o mOS ainda não distingue E/S não bloqueante nem

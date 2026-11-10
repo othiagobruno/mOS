@@ -11,6 +11,9 @@
 #include <sys/utsname.h>
 #include <sys/sysctl.h>
 #include <sys/ucontext.h>
+#include <sys/mman.h>
+#include <sys/wait.h>
+#include <spawn.h>
 #include <setjmp.h>
 #include <stdexcept>
 #include <string>
@@ -231,6 +234,189 @@ static void teste_smc(void) {
 #endif
 }
 
+// ---- fork / vfork / posix_spawn / exec a partir do processo traduzido
+extern char **environ;
+static char *argv_fork;
+static int ordem_atfork[8], n_ordem;
+static int atfork_chi, atfork_par;
+static void atfork_parent(void) { atfork_par++; }
+static void atfork_child(void) { atfork_chi++; }
+static void marca_atfork(int n) { if (n_ordem < 8) ordem_atfork[n_ordem++] = n; }
+static void pre1(void) { marca_atfork(1); }
+static void pre2(void) { marca_atfork(2); }
+static int filho_ok(pid_t pid, int want) {
+    int st = 0;
+    if (pid <= 0 || waitpid(pid, &st, 0) != pid) return 0;
+    return WIFEXITED(st) && WEXITSTATUS(st) == want;
+}
+static volatile int pulsos_fork, gira_fork = 1;
+static void *pulsa_fork(void *) {
+    while (gira_fork) {
+        void *p = malloc(64);
+        if (p) free(p);
+        pulsos_fork++;
+        usleep(1000);
+    }
+    return 0;
+}
+static int quente(int n) {
+    int s = 0;
+    for (int i = 0; i < n; i++) s += i * 3 + 1;
+    return s;
+}
+static void teste_fork(void) {
+    pid_t pid = fork();
+    if (pid == 0) _exit(getpid() > 0 ? 0 : 1);
+    CHECK("fork devolve no pai e o filho sai 0", pid > 0 && pid != getpid() && filho_ok(pid, 0));
+
+    tls_val = 77;
+    volatile int pilha = 41;
+    volatile int global_local = 41;
+    pid = fork();
+    if (pid == 0) {
+        int ok = tls_val == 77 && pilha == 41 && global_local == 41;
+        tls_val = 1;
+        pilha = 2;
+        _exit(ok ? 0 : 1);
+    }
+    int herdou = pid > 0 && filho_ok(pid, 0);
+    CHECK("filho herda TLS e pilha; a escrita dele não volta", herdou && tls_val == 77 && pilha == 41);
+
+    int esp = quente(1000);
+    for (int i = 0; i < 2000; i++) if (quente(1000) != esp) esp = -1;
+    pid = fork();
+    if (pid == 0) _exit(quente(1000) == esp ? 0 : 1);
+    CHECK("fork depois do código aquecido (JIT ou interpretador)", esp > 0 && pid > 0 && filho_ok(pid, 0));
+
+#ifdef __aarch64__
+    unsigned long long celula __attribute__((aligned(16))) = 0x1111, lida = 0;
+    __asm__ volatile("ldxr %0, [%1]" : "=r"(lida) : "r"(&celula) : "memory");
+    pid = fork();
+    if (pid == 0) {
+        unsigned st = 99;
+        __asm__ volatile("stxr %w0, %1, [%2]" : "=&r"(st) : "r"(lida), "r"(&celula) : "memory");
+        _exit(st == 1 ? 0 : 1);
+    }
+    unsigned st_pai = 99;
+    if (pid > 0) __asm__ volatile("stxr %w0, %1, [%2]" : "=&r"(st_pai) : "r"(lida), "r"(&celula) : "memory");
+    CHECK("monitor exclusivo limpo no pai e no filho", pid > 0 && st_pai == 1 && filho_ok(pid, 0) && celula == 0x1111);
+#endif
+
+    struct sigaction sa;
+    memset(&sa, 0, sizeof sa);
+    sa.sa_handler = h_usr1;
+    sigaction(SIGUSR1, &sa, 0);
+    int usr_antes = usr1_vezes;
+    pid = fork();
+    if (pid == 0) {
+        usr1_vezes = 0;
+        raise(SIGUSR1);
+        _exit(usr1_vezes == 1 ? 0 : 1);
+    }
+    CHECK("filho herda o tratador de sinal", pid > 0 && filho_ok(pid, 0) && usr1_vezes == usr_antes);
+
+    stack_t ss;
+    ss.ss_sp = altpilha;
+    ss.ss_size = sizeof altpilha;
+    ss.ss_flags = 0;
+    int alt = sigaltstack(&ss, 0);
+    pid = alt == 0 ? fork() : -1;
+    if (pid == 0) {
+        stack_t cur;
+        memset(&cur, 0, sizeof cur);
+        sigaltstack(0, &cur);
+        _exit(cur.ss_sp == altpilha && cur.ss_size == sizeof altpilha ? 0 : 1);
+    }
+    stack_t off;
+    memset(&off, 0, sizeof off);
+    off.ss_flags = SS_DISABLE;
+    sigaltstack(&off, 0);
+    CHECK("filho herda sigaltstack", alt == 0 && pid > 0 && filho_ok(pid, 0));
+
+    pthread_atfork(pre1, 0, 0);
+    pthread_atfork(pre2, 0, 0);
+    n_ordem = 0;
+    atfork_chi = atfork_par = 0;
+    pthread_atfork(0, atfork_parent, atfork_child);
+    pid = fork();
+    if (pid == 0) _exit(atfork_chi == 1 && atfork_par == 0 ? 0 : 1);
+    CHECK("pthread_atfork: prepare LIFO, parent no pai, child no filho",
+          pid > 0 && n_ordem >= 2 && ordem_atfork[0] == 2 && ordem_atfork[1] == 1 && atfork_par == 1 && filho_ok(pid, 0));
+
+    int pre_v = n_ordem, par_v = atfork_par;
+    pid = vfork();
+    if (pid == 0) _exit(0);
+    CHECK("vfork devolve e não dispara pthread_atfork", pid > 0 && filho_ok(pid, 0) && n_ordem == pre_v && atfork_par == par_v);
+
+    pthread_t outra;
+    gira_fork = 1;
+    pulsos_fork = 0;
+    int tc = pthread_create(&outra, 0, pulsa_fork, 0);
+    for (int i = 0; tc == 0 && i < 1000 && pulsos_fork < 2; i++) usleep(1000);
+    pid = tc == 0 ? fork() : -1;
+    if (pid == 0) {
+        int a = pulsos_fork;
+        usleep(20000);
+        void *b = malloc(128);
+        int e = pthread_kill(outra, 0);
+        pthread_t nova;
+        int rc = pthread_create(&nova, 0, trabalho, (void *)3);
+        void *r = 0;
+        if (rc == 0) pthread_join(nova, &r);
+        int ok = b && e != 0 && pulsos_fork == a && rc == 0 && (long)r == esperado(3);
+        _exit(ok ? 0 : 1);
+    }
+    gira_fork = 0;
+    if (tc == 0) pthread_join(outra, 0);
+    CHECK("fork com outra thread: filho fica só com quem chamou e cria thread nova", tc == 0 && pid > 0 && filho_ok(pid, 0));
+
+#ifdef __aarch64__
+    unsigned *pag = (unsigned *)mmap(0, 16384, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANON | MAP_JIT, -1, 0);
+    if (pag == (unsigned *)MAP_FAILED) CHECK("mmap para o fork com código reescrito", 0);
+    else {
+        pag[0] = 0x52800000u | (7u << 5);   // mov w0, #7
+        pag[1] = 0xd65f03c0u;               // ret
+        int (*fn)(void) = (int (*)(void))pag;
+        int warm = fn() == 7;
+        for (int i = 0; i < 500 && warm; i++) if (fn() != 7) warm = 0;
+        pid = warm ? fork() : -1;
+        if (pid == 0) {
+            pag[0] = 0x52800000u | (9u << 5);   // sem sys_icache_invalidate: a proteção da página tem de pegar
+            _exit(fn() == 9 ? 0 : 1);
+        }
+        int vivo = pid > 0 && filho_ok(pid, 0);
+        int pai_antigo = fn() == 7;
+        pag[0] = 0x52800000u | (4u << 5);
+        int pai_novo = fn() == 4;
+        munmap(pag, 16384);
+        CHECK("fork com código aquecido: o filho não vaza a escrita e os dois lados vêem o código novo",
+              warm && vivo && pai_antigo && pai_novo);
+    }
+#endif
+
+    pid = fork();
+    if (pid == 0) {
+        char *av[] = {argv_fork, (char *)"--filho-exec", 0};
+        execv(argv_fork, av);
+        _exit(127);
+    }
+    CHECK("exec de binário arm64 a partir de processo arm64", pid > 0 && filho_ok(pid, 42));
+
+    char *av[] = {argv_fork, (char *)"--filho-spawn", 0};
+    int sp = posix_spawn(&pid, argv_fork, 0, 0, av, environ);
+    CHECK("posix_spawn de filho arm64", sp == 0 && filho_ok(pid, 43));
+
+    if (access("/Sistema/Programas/a64teste/hello-x86", 0) == 0) {
+        pid = fork();
+        if (pid == 0) {
+            char *xv[] = {(char *)"/Sistema/Programas/a64teste/hello-x86", 0};
+            execv(xv[0], xv);
+            _exit(127);
+        }
+        CHECK("exec de binário x86_64 a partir de processo arm64", pid > 0 && filho_ok(pid, 7));
+    } else printf("pula exec x86_64 (sem hello-x86)\n");
+}
+
 // ---- posix_spawn de outro Mach-O (A64RT_TESTE_SPAWN="caminho:código esperado;..."): arm64 → x86_64 e arm64 → arm64
 #include <spawn.h>
 #include <sys/wait.h>
@@ -257,6 +443,9 @@ static void teste_spawn(void) {
 }
 
 int main(int argc, char **argv) {
+    if (argc > 1 && !strcmp(argv[1], "--filho-exec")) return 42;
+    if (argc > 1 && !strcmp(argv[1], "--filho-spawn")) return 43;
+    argv_fork = argv[0];
 #ifdef __aarch64__
     {   // svc #0x4d4f com x8 = A64RT_SYS_INFO (userland/a64rt/a64rt_abi.h): 0 interpretador, 1 JIT
         register long x0 __asm__("x0") = 1, x8 __asm__("x8") = 0x4D03;
@@ -265,13 +454,14 @@ int main(int argc, char **argv) {
     }
 #endif
     printf("%sa64rt-teste: %s (argc %d)\n", motor, argv[0], argc);
-    const char *so = argc > 1 ? argv[1] : 0;   // um teste só: threads, mutex, sinais, cxx, sistema, spawn
+    const char *so = argc > 1 ? argv[1] : 0;   // um teste só: threads, mutex, sinais, cxx, sistema, smc, fork, spawn
 #define RODA(n, f) if (!so || !strcmp(so, n)) f()
     RODA("threads", teste_threads);
     RODA("mutex", teste_mutex);
     RODA("sinais", teste_sinais);
     RODA("sistema", teste_sistema);
     RODA("smc", teste_smc);
+    RODA("fork", teste_fork);
     RODA("spawn", teste_spawn);
     RODA("cxx", teste_cxx);                     // por último: sem unwinder no libSystem vira std::terminate
     printf("%sa64rt-teste: %d falhas\n", motor, falhas);

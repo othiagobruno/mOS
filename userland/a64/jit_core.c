@@ -783,14 +783,16 @@ void a64_jit_abort(a64_cpu *c) {
 
 /* filho de fork: só sobrou a thread que chamou fork. Travas que outra thread do pai segurava e
  * marcas "dentro do JIT" dela não valem mais; as estruturas dessas threads viram livres (são
- * reaproveitadas). Chamar antes de qualquer outra função do JIT no filho (e depois descartar as
- * traduções com a64_invalidate(0, ~0ull), como o runtime faz). */
+ * reaproveitadas). O cache em si fica: as páginas de código guest continuam com PTE_JWP, e a
+ * primeira escrita em cada processo vira SIGBUS. Invalidações que o pai ainda não tinha aplicado
+ * são feitas agora, senão o filho executaria tradução de bytes que já mudaram. */
 void a64_jit_fork_child(a64_cpu *self) {
     J.lock = 0;
     J.wplock = 0;
     init_lock = 0;
     J.flush_active = 0;
     for (jthr *t = J.threads; t; t = t->next) {
+        t->saved_rsp = 0;
         t->in_jit = 0;
         t->in_run = 0;
         t->translating = 0;
@@ -799,6 +801,11 @@ void a64_jit_fork_child(a64_cpu *self) {
             t->cpu = NULL;
             t->live = 0;
         }
+    }
+    if (J.inited && __atomic_load_n(&J.pending, __ATOMIC_ACQUIRE)) {
+        lk(&J.lock);
+        process_pending();
+        ulk(&J.lock);
     }
 }
 

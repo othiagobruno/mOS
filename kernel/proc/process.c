@@ -207,6 +207,7 @@ bool uvm_map(process_t *p, u64 va, u64 len) {
  * SO). A primeira escrita (falta de página) copia a página se ela ainda tiver mais de um dono.
  * pref[] conta os donos de cada página física (0 = um dono só). */
 #define PTE_COW (1ULL << 9)
+#define PTE_JWP (1ULL << 10)   /* JIT arm64: página de código traduzido, sem escrita (uvm_jit_wprotect) */
 static u16 *pref;
 static u64 pref_n;
 
@@ -287,6 +288,24 @@ static bool cow_break(process_t *p, u64 *e, u64 va) {
     return true;
 }
 
+/* fork de página PTE_JWP: a cópia fica privada, ainda sem escrita e com JWP. A falta segue para o
+ * runtime (SIGBUS), que invalida só as traduções deste processo. O outro lado permanece protegido. */
+static bool cow_split_jwp(process_t *p, u64 *e, u64 va) {
+    u64 phys = *e & PTE_ADDR;
+    if (page_refs(phys) > 1) {
+        u64 np = pmm_alloc(1);
+        if (!np) return false;
+        memcpy((void *)np, (void *)phys, 4096);
+        *e = np | PTE_P | PTE_U | PTE_JWP;
+        vm_flush(p, va);
+        page_put(phys);
+        return true;
+    }
+    *e = (*e | PTE_JWP) & ~(PTE_RW | PTE_COW);
+    vm_flush(p, va);
+    return true;
+}
+
 /* memória Mach compartilhada (machipc.c): a mesma página física em vários espaços, contada em pref[]
  * como as do COW; cada mapeamento e cada objeto de memória é um dono */
 void uvm_page_get(u64 phys) {
@@ -345,9 +364,9 @@ u16 uvm_page_refs(u64 phys) { return page_refs(phys); }
 /* Rede de segurança do JIT do tradutor arm64 (userland/a64rt, MACH_VM_JIT_WPROTECT): página com código traduzido
  * perde a escrita na PTE e ganha o bit PTE_JWP (10, livre para o SO); a escrita do programa vira falta de proteção →
  * SIGBUS no tratador do runtime, que devolve a escrita (op 0), invalida as traduções e repete a instrução. Páginas
- * COW ficam de fora (op 1 devolve 0): devolver a escrita a uma página compartilhada a escreveria para todos. No fork
- * uma página PTE_JWP vai para os dois lados como COW (cow_copy_level). */
-#define PTE_JWP (1ULL << 10)
+ * COW ficam de fora de op 1 (devolver a escrita a uma página compartilhada a escreveria para todos). op 0 numa
+ * página COW primeiro a torna privada. No fork a página segue com JWP e COW (cow_copy_level); a escrita quebra
+ * a cópia sem devolver a escrita e o SIGBUS avisa o runtime daquele processo. */
 int uvm_jit_wprotect(process_t *p, u64 va, int op) {
     va &= ~0xFFFULL;
     u64 *e = uvm_pte(p, va);
@@ -360,6 +379,7 @@ int uvm_jit_wprotect(process_t *p, u64 va, int op) {
         return 1;
     }
     if (*e & PTE_JWP) {
+        if ((*e & PTE_COW) && !cow_break(p, e, va)) return 0;
         *e = (*e | PTE_RW) & ~PTE_JWP;
         vm_flush(p, va);
     }
@@ -432,8 +452,8 @@ static bool cow_copy_level(process_t *dst, u64 *s, u64 *d, int level) {
     for (int i = 0; i < 512; i++) {
         if (!(s[i] & PTE_P)) continue;
         if (level == 1) {
-            if (s[i] & PTE_RW) s[i] = (s[i] & ~PTE_RW) | PTE_COW;
-            if (s[i] & (1ULL << 10)) s[i] = (s[i] & ~(1ULL << 10)) | PTE_COW;   /* PTE_JWP (JIT arm64): era gravável */
+            if (s[i] & PTE_JWP) s[i] = (s[i] & ~PTE_RW) | PTE_COW;   /* código traduzido: segue sem escrita e com JWP */
+            else if (s[i] & PTE_RW) s[i] = (s[i] & ~PTE_RW) | PTE_COW;
             page_ref_inc(s[i] & PTE_ADDR);
             d[i] = s[i];
             dst->mem_pages++;
@@ -832,10 +852,14 @@ static u64 proc_fault_(int_frame_t *f, u64 cr2) {
     thread_t *t = thread_current();
     process_t *p = t->proc;
     if (!p) return (u64)f;
-    /* escrita numa página compartilhada depois do fork: copia e repete a instrução */
+    /* escrita numa página compartilhada depois do fork: copia e repete a instrução. Página de código
+     * traduzido (JWP) fica privada ainda sem escrita; o SIGBUS abaixo avisa o runtime deste processo. */
     if (f->vector == 14 && (f->error & 7) == 7) {
         u64 *e = uvm_pte(p, cr2);
-        if (e && (*e & PTE_COW) && cow_break(p, e, cr2)) return (u64)f;
+        if (e && (*e & PTE_COW)) {
+            if (*e & PTE_JWP) cow_split_jwp(p, e, cr2);
+            else if (cow_break(p, e, cr2)) return (u64)f;
+        }
     }
     /* página ausente numa faixa de memória sob demanda (mmap anônimo, kernel/mm/lazy.c): página zerada e repete */
     if (f->vector == 14 && !(f->error & 1)) {

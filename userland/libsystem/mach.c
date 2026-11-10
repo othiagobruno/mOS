@@ -702,7 +702,7 @@ kern_return_t mach_msg_receive(mach_msg_header_t *msg) { return msg ? mach_msg(m
 
 /* IOKit energia: sem informação (kIOReturnUnsupported) */
 int IOPMCopyCPUPowerStatus(void **status) { if (status) *status = 0; return (int)0xe00002c7; }
-int pthread_atfork(void (*pre)(void), void (*parent)(void), void (*child)(void)) { (void)pre; (void)parent; (void)child; return 0; }
+/* pthread_atfork fica em libc.c (junto do fork, para soltar a trava do heap no filho) */
 
 kern_return_t mach_port_destruct(mach_port_t task, mach_port_t name, int delta, u64 guard) {
     (void)task; (void)guard;
