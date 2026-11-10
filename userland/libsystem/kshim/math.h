@@ -1,6 +1,5 @@
 #pragma once
-#define INFINITY (1.0/0.0)
-#define NAN (0.0/0.0)
+#define INFINITY (__builtin_huge_val())
 double fabs(double x);
 double sqrt(double x);
 double floor(double x);
