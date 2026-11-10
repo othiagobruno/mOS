@@ -1085,15 +1085,21 @@ void dispatch_retain(void *o) { cx_dispatch_retain(o); }
 /* processos, usuários e sistema */
 int sched_yield(void) { SYS0(SYS_YIELD); return 0; }
 /* pause: libc.c (sigsuspend com a máscara atual) */
-/* status no formato do macOS (WIFEXITED/WEXITSTATUS/WIFSIGNALED); opt: WNOHANG = 1, o resto é ignorado */
+/* status no formato do macOS (WIFEXITED/WIFSIGNALED/WIFSTOPPED/WIFCONTINUED).
+ * WNOHANG, WUNTRACED e WCONTINUED passam ao kernel; o resto (WNOWAIT, WEXITED) é ignorado. */
 int waitpid(int pid, int *st, int opt) {
     int s = 0;
-    long r = cx_syscall(SYS_WAITPID, pid, (long)&s, opt & MOS_WNOHANG, 0, 0);
+    long r = cx_syscall(SYS_WAITPID, pid, (long)&s, opt & (MOS_WNOHANG | MOS_WUNTRACED | MOS_WCONTINUED), 0, 0);
     if (r < 0) { cx_errno = (int)-r; return -1; }
-    {   /* WTERMSIG vem com o número do kernel (USR1 10, CHLD 17...): o macOS espera o dele */
+    {   /* número do kernel (USR1 10, STOP 20, CHLD 17) → o do macOS. Parada: byte baixo 0x7f e o sinal no alto. */
         extern int cx_sig_from_mos(int);
-        int ts = s & 0x7F;
-        if (ts && ts != 0x7F) s = (s & ~0x7F) | cx_sig_from_mos(ts);
+        if ((s & 0xFF) == 0x7F) {
+            int sig = (s >> 8) & 0xFF;
+            if (sig) s = (cx_sig_from_mos(sig) << 8) | 0x7F;
+        } else {
+            int ts = s & 0x7F;
+            if (ts) s = (s & ~0x7F) | cx_sig_from_mos(ts);
+        }
     }
     if (st && r > 0) *st = s;
     return (int)r;

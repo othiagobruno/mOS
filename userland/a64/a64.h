@@ -50,7 +50,8 @@ typedef union a64_vreg {
 #define A64_FPCR_FZ    (1u << 24)
 #define A64_FPCR_DN    (1u << 25)
 #define A64_FPCR_AHP   (1u << 26)
-/* bits graváveis do FPCR no hardware da Apple (traps de exceção não implementados: ficam 0) */
+/* bits graváveis do FPCR no Apple Silicon. IDE/IXE/UFE/OFE/DZE/IOE são RES0 nesse hardware: o mOS
+ * também os descarta (sem SIGFPE). Os apps usam os sticky flags do FPSR. Decisão em docs/sinais.md. */
 #define A64_FPCR_MASK  (A64_FPCR_FZ16 | (3u << A64_FPCR_RMODE_SHIFT) | A64_FPCR_FZ | A64_FPCR_DN | A64_FPCR_AHP)
 
 /* FPSR (exceções acumuladas + QC) */

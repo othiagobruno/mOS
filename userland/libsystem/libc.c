@@ -1209,7 +1209,9 @@ static __attribute__((used, noreturn)) void cx_sigtramp(void *h, int style, int 
     int s = sig_from_mos(mossig);
     int saved_errno = cx_errno;
     si->si_signo = s;
-    if (s == 20 && si->si_code == MOS_CLD_KILLED) si->si_status = sig_from_mos(si->si_status);   /* SIGCHLD de filho morto por sinal */
+    /* SIGCHLD: si_status é um sinal do kernel em CLD_KILLED, CLD_STOPPED (STOP 20 → 17) e CLD_CONTINUED */
+    if (s == 20 && (si->si_code == MOS_CLD_KILLED || si->si_code == MOS_CLD_STOPPED || si->si_code == MOS_CLD_CONTINUED))
+        si->si_status = sig_from_mos(si->si_status);
     uc->uc_sigmask = cx_sigmask_from_mos(uc->uc_sigmask);
     ((void (*)(int, void *, void *))h)(s, si, uc);     /* o macOS passa (sinal, siginfo, ucontext) nos dois estilos */
     uc->uc_sigmask = cx_sigmask_to_mos(uc->uc_sigmask);

@@ -132,6 +132,6 @@ O que ainda falta:
 - **Mach-O**: o carregador está sendo feito pela sessão "Compatibilidade DMG", sobre o gancho `macho_load()`.
 - **SMP fino**: os APs já rodam processos e threads de usuário em paralelo (`docs/smp.md`), mas o kernel inteiro está sob uma trava grande e o desktop só a solta nos `hlt`. Falta trocar por travas por subsistema (VFS, Mach IPC, rede, heap de páginas) e tirar a UI/drivers do BSP.
 - **Memória virtual**: paginação para disco. `MAP_SHARED` gravável (arquivo e anônimo), `msync`/`munmap` e o bit NX da PTE estão feitos (`docs/mm-shared.md`). COW e `fork` também.
-- **Processos**: parar/continuar processos (SIGSTOP/SIGTSTP/SIGCONT) e sinais de tempo real. Os tratadores de sinal no usuário estão feitos (`docs/sinais.md`).
+- **Processos**: sinais de tempo real (`sigqueue`). Parar/continuar (`SIGSTOP`/`SIGTSTP`/`SIGTTIN`/`SIGTTOU`/`SIGCONT`, `waitpid` com `WUNTRACED`/`WCONTINUED`) está feito (`docs/sinais.md`).
 - **Interface**: tela de login (sessão principal, com o backend de contas já pronto), atalho de captura de tela (sessão de UI).
 - **Grandes portes**: objc4/Foundation/AppKit e toolchain nativa. O IPv6 está feito ([ipv6.md](ipv6.md)); falta UDP para os apps.

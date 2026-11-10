@@ -114,7 +114,7 @@ static int deliver(rt_thread_t *T, int sig, const mos_siginfo_t *si, u32 oldmask
     f.uc.uc_sigmask = oldmask;
     f.uc.ss_sp = T->ss_sp; f.uc.ss_size = T->ss_size;
     f.uc.ss_flags = !T->ss_size ? MOS_SS_DISABLE : (onalt || usealt) ? MOS_SS_ONSTACK : 0;
-    f.uc.uc_mcsize = sizeof(a64_darwin_mcontext_t);
+    f.uc.uc_mcsize = sizeof(a64_darwin_mcontext_t);   /* 816 = UC_FLAVOR_SIZE64 do XNU; ver a64rt_abi.h */
     f.uc.uc_mcontext = fa + __builtin_offsetof(gframe_t, mc);
     a64_darwin_mcontext_t *mc = &f.mc;
     if (fault || esr) { mc->es.far = si->si_addr; mc->es.esr = esr; mc->es.exception = esr >> 26; }
