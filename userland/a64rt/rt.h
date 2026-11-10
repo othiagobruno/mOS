@@ -27,6 +27,7 @@ int rt_setjmp(rt_jmp_t *j);
 
 #define RT_THREAD_MAGIC 0x4441455254343641ULL   /* "A64TREAD" */
 #define RT_MAX_THREADS  4096
+#define RT_JIT_DIRTY    128                     /* páginas MAP_JIT escritas nesta janela; acima disso, invalida a faixa */
 
 typedef struct rt_thread {
     u64 magic;
@@ -55,6 +56,11 @@ typedef struct rt_thread {
     int intr_sig;                   /* sinal que interrompeu a syscall do guest (0 = nenhum); o primeiro, não o último */
     int sig_depth;
     volatile u64 freed_ms;          /* SYS_TIME de quando a thread saiu (reuso só depois de uma carência) */
+    /* pthread_jit_write_protect_np: 1 = esta thread não escreve MAP_JIT (padrão Apple, também na thread nova) */
+    int jit_wp;
+    int jit_dirty_n;
+    int jit_dirty_all;
+    u64 jit_dirty[RT_JIT_DIRTY];
 } rt_thread_t;
 
 static inline rt_thread_t *rt_self(void) {
@@ -72,6 +78,9 @@ void rt_log(const char *fmt, ...);
 void rt_die(const char *fmt, ...) __attribute__((noreturn));
 void *rt_alloc(u64 len);
 void rt_free(void *p, u64 len);
+int rt_jit_contains(u64 addr);          /* sig.c: a falta é numa faixa MAP_JIT (ou no apelido dela) */
+void rt_jit_note_write(rt_thread_t *T, u64 addr);
+u64 rt_jit_alias_page(u64 addr);        /* a outra vista da página, ou 0 */
 
 /* sig.c */
 void rt_sig_init(void);

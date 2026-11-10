@@ -56,9 +56,11 @@ typedef struct {
 
 #define A64RT_SYS_SET_TSD       0x4D00  /* (base) -> 0      TPIDRRO_EL0 da thread atual (o TSD do pthread) */
 #define A64RT_SYS_ICACHE_INVAL  0x4D01  /* (addr, len) -> 0 sys_icache_invalidate (IC IVAU também serve) */
-#define A64RT_SYS_JIT_WP        0x4D02  /* (habilita) -> 0  pthread_jit_write_protect_np (memória do mOS é RWX) */
+#define A64RT_SYS_JIT_WP        0x4D02  /* (habilita) -> estado anterior (1 = MAP_JIT sem escrita nesta thread) */
 #define A64RT_SYS_INFO          0x4D03  /* (A64RT_INFO_*) -> valor */
 #define A64RT_SYS_GET_TSD       0x4D04  /* () -> TPIDRRO_EL0 */
+#define A64RT_SYS_MAP_JIT       0x4D05  /* (addr, len) -> 0  registra a faixa do mmap(MAP_JIT) */
+#define A64RT_SYS_JIT_ALIAS     0x4D06  /* (dst, src, len) -> 0  duas vistas das mesmas páginas (vm_remap) */
 enum { A64RT_INFO_ENGINE = 1,           /* 0 interpretador, 1 JIT */
        A64RT_INFO_VERSION = 2 };
 
