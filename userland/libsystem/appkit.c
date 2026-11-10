@@ -548,16 +548,45 @@ int cx_bm_save(const void *c);
 int cx_bm_restore(const void *c);
 int cx_bm_fill_rect(const void *c, double x, double y, double w, double h);
 int cx_bm_clear_rect(const void *c, double x, double y, double w, double h);
+/* coregraphics_bm.inc: o CGBitmapContext tem path, traço e estado próprios; 1 = era bitmap e já tratou */
+int cx_bm_is(const void *c);
+int cx_bm_move(const void *c, double x, double y);
+int cx_bm_line(const void *c, double x, double y);
+int cx_bm_curve(const void *c, double c1x, double c1y, double c2x, double c2y, double x, double y);
+int cx_bm_close(const void *c);
+int cx_bm_begin(const void *c);
+int cx_bm_rect(const void *c, double x, double y, double w, double h);
+int cx_bm_ellipse(const void *c, double x, double y, double w, double h);
+int cx_bm_fill(const void *c, int eo);
+int cx_bm_stroke(const void *c);
+int cx_bm_draw(const void *c, int mode);
+int cx_bm_set_stroke(const void *c, u32 argb);
+int cx_bm_set_line_width(const void *c, double w);
+int cx_bm_set_cap(const void *c, int v);
+int cx_bm_set_join(const void *c, int v);
+int cx_bm_set_alpha(const void *c, double a);
+int cx_bm_set_aa(const void *c, int v);
+/* path da janela para o coregraphics_bm.inc: ponto atual e recorte pela caixa do path */
+int cx_win_current(double *x, double *y) {
+    path_t *p = pth(cgp());
+    if (!p->n) return 0;
+    *x = p->xy[(p->n - 1) * 2];
+    *y = p->xy[(p->n - 1) * 2 + 1];
+    return 1;
+}
+void cx_win_clip(void) { if (pth(cgp())->n) bp_add_clip(cgp(), 0); bp_remove_all(cgp(), 0); }
 void CGContextSetRGBFillColor(id c, double r, double g, double b, double a) {
+    if (cx_bm_is(c)) { cx_bm_set_fill(c, argb(cx_color(r, g, b, a))); return; }
     ctx.fill = ga(argb(cx_color(r, g, b, a)));
     cx_bm_set_fill(c, ctx.fill);
 }
-void CGContextSetRGBStrokeColor(id c, double r, double g, double b, double a) { (void)c; ctx.stroke = ga(argb(cx_color(r, g, b, a))); }
+void CGContextSetRGBStrokeColor(id c, double r, double g, double b, double a) { if (cx_bm_set_stroke(c, argb(cx_color(r, g, b, a)))) return; ctx.stroke = ga(argb(cx_color(r, g, b, a))); }
 void CGContextSetGrayFillColor(id c, double g, double a) { CGContextSetRGBFillColor(c, g, g, g, a); }
 void CGContextSetGrayStrokeColor(id c, double g, double a) { CGContextSetRGBStrokeColor(c, g, g, g, a); }
-void CGContextSetFillColorWithColor(id c, id color) { ctx.fill = ga(argb(color)); cx_bm_set_fill(c, ctx.fill); }
+void CGContextSetFillColorWithColor(id c, id color) { if (cx_bm_is(c)) { cx_bm_set_fill(c, argb(color)); return; } ctx.fill = ga(argb(color)); }
 /* alfa global do contexto: vale para as cores definidas depois e para a cor de preenchimento atual */
 void CGContextSetAlpha(id c, double a) {
+    if (cx_bm_set_alpha(c, a)) return;
     double old = ctx.galpha > 0 ? ctx.galpha : 1;
     if (a < 0) a = 0;
     if (a > 1) a = 1;
@@ -566,8 +595,8 @@ void CGContextSetAlpha(id c, double a) {
     ctx.fill = (fa << 24) | (ctx.fill & 0xFFFFFF);
     cx_bm_set_fill(c, ctx.fill);
 }
-void CGContextSetStrokeColorWithColor(id c, id color) { (void)c; ctx.stroke = ga(argb(color)); }
-void CGContextSetLineWidth(id c, double w) { (void)c; ctx.line_width = w; pth(cgp())->lw = w; }
+void CGContextSetStrokeColorWithColor(id c, id color) { if (cx_bm_set_stroke(c, argb(color))) return; ctx.stroke = ga(argb(color)); }
+void CGContextSetLineWidth(id c, double w) { if (cx_bm_set_line_width(c, w)) return; ctx.line_width = w; pth(cgp())->lw = w; }
 void CGContextFillRect(id c, CGRect r) {
     if (cx_bm_fill_rect(c, r.o.x, r.o.y, r.s.w, r.s.h)) return;
     if (ctx.blend == 16) { double x, y, w, h; px_rect(r, &x, &y, &w, &h); g_fill(x, y, w, h, 0); return; }
@@ -578,25 +607,43 @@ void CGContextClearRect(id c, CGRect r) {
     if (cx_bm_clear_rect(c, r.o.x, r.o.y, r.s.w, r.s.h)) return;
     double x, y, w, h; px_rect(r, &x, &y, &w, &h); g_fill(x, y, w, h, 0xFFFFFFFF);
 }
-void CGContextStrokeRect(id c, CGRect r) { (void)c; id p = bp_rect(0, 0, r); pth(p)->lw = ctx.line_width; bp_stroke(p, 0); }
-void CGContextStrokeRectWithWidth(id c, CGRect r, double w) { (void)c; id p = bp_rect(0, 0, r); pth(p)->lw = w; bp_stroke(p, 0); }
-void CGContextFillEllipseInRect(id c, CGRect r) { (void)c; bp_fill(bp_oval(0, 0, r), 0); }
-void CGContextStrokeEllipseInRect(id c, CGRect r) { (void)c; id p = bp_oval(0, 0, r); pth(p)->lw = ctx.line_width; bp_stroke(p, 0); }
-void CGContextBeginPath(id c) { (void)c; bp_remove_all(cgp(), 0); }
-void CGContextMoveToPoint(id c, double x, double y) { (void)c; NSPoint p = {x, y}; bp_move(cgp(), 0, p); }
-void CGContextAddLineToPoint(id c, double x, double y) { (void)c; NSPoint p = {x, y}; bp_line(cgp(), 0, p); }
-void CGContextAddCurveToPoint(id c, double c1x, double c1y, double c2x, double c2y, double x, double y) { (void)c; NSPoint e = {x, y}, a = {c1x, c1y}, b = {c2x, c2y}; bp_curve(cgp(), 0, e, a, b); }
-void CGContextAddRect(id c, CGRect r) { (void)c; add_rect(pth(cgp()), r); }
-void CGContextAddEllipseInRect(id c, CGRect r) { (void)c; add_oval(pth(cgp()), r); }
-void CGContextClosePath(id c) { (void)c; bp_close(cgp(), 0); }
-void CGContextFillPath(id c) { (void)c; bp_fill(cgp(), 0); bp_remove_all(cgp(), 0); }
-void CGContextStrokePath(id c) { (void)c; pth(cgp())->lw = ctx.line_width; bp_stroke(cgp(), 0); bp_remove_all(cgp(), 0); }
-void CGContextDrawPath(id c, int mode) { if (mode == 0 || mode == 3) bp_fill(cgp(), 0); if (mode >= 2) bp_stroke(cgp(), 0); bp_remove_all(cgp(), 0); (void)c; }
+void CGContextStrokeRect(id c, CGRect r) {
+    if (cx_bm_is(c)) { cx_bm_begin(c); cx_bm_rect(c, r.o.x, r.o.y, r.s.w, r.s.h); cx_bm_stroke(c); return; }
+    id p = bp_rect(0, 0, r); pth(p)->lw = ctx.line_width; bp_stroke(p, 0); }
+void CGContextStrokeRectWithWidth(id c, CGRect r, double w) {
+    if (cx_bm_is(c)) { cx_bm_save(c); cx_bm_set_line_width(c, w); CGContextStrokeRect(c, r); cx_bm_restore(c); return; }
+    id p = bp_rect(0, 0, r); pth(p)->lw = w; bp_stroke(p, 0); }
+void CGContextFillEllipseInRect(id c, CGRect r) {
+    if (cx_bm_is(c)) { cx_bm_begin(c); cx_bm_ellipse(c, r.o.x, r.o.y, r.s.w, r.s.h); cx_bm_fill(c, 0); return; }
+    bp_fill(bp_oval(0, 0, r), 0);
+}
+void CGContextStrokeEllipseInRect(id c, CGRect r) {
+    if (cx_bm_is(c)) { cx_bm_begin(c); cx_bm_ellipse(c, r.o.x, r.o.y, r.s.w, r.s.h); cx_bm_stroke(c); return; }
+    id p = bp_oval(0, 0, r); pth(p)->lw = ctx.line_width; bp_stroke(p, 0); }
+void CGContextBeginPath(id c) { if (cx_bm_begin(c)) return; bp_remove_all(cgp(), 0); }
+void CGContextMoveToPoint(id c, double x, double y) { if (cx_bm_move(c, x, y)) return; NSPoint p = {x, y}; bp_move(cgp(), 0, p); }
+void CGContextAddLineToPoint(id c, double x, double y) { if (cx_bm_line(c, x, y)) return; NSPoint p = {x, y}; bp_line(cgp(), 0, p); }
+void CGContextAddCurveToPoint(id c, double c1x, double c1y, double c2x, double c2y, double x, double y) {
+    if (cx_bm_curve(c, c1x, c1y, c2x, c2y, x, y)) return;
+    NSPoint e = {x, y}, a = {c1x, c1y}, b = {c2x, c2y};
+    bp_curve(cgp(), 0, e, a, b);
+}
+void CGContextAddRect(id c, CGRect r) { if (cx_bm_rect(c, r.o.x, r.o.y, r.s.w, r.s.h)) return; add_rect(pth(cgp()), r); }
+void CGContextAddEllipseInRect(id c, CGRect r) { if (cx_bm_ellipse(c, r.o.x, r.o.y, r.s.w, r.s.h)) return; add_oval(pth(cgp()), r); }
+void CGContextClosePath(id c) { if (cx_bm_close(c)) return; bp_close(cgp(), 0); }
+void CGContextFillPath(id c) { if (cx_bm_fill(c, 0)) return; bp_fill(cgp(), 0); bp_remove_all(cgp(), 0); }
+void CGContextStrokePath(id c) { if (cx_bm_stroke(c)) return; pth(cgp())->lw = ctx.line_width; bp_stroke(cgp(), 0); bp_remove_all(cgp(), 0); }
+void CGContextDrawPath(id c, int mode) {
+    if (cx_bm_draw(c, mode)) return;
+    if (mode == 0 || mode == 1 || mode == 3 || mode == 4) bp_fill(cgp(), 0);
+    if (mode >= 2) bp_stroke(cgp(), 0);
+    bp_remove_all(cgp(), 0);
+}
 void CGContextSaveGState(id c) { if (!cx_bm_save(c)) gc_save(c, 0); }
 void CGContextRestoreGState(id c) { if (!cx_bm_restore(c)) gc_restore(c, 0); }
-void CGContextSetLineCap(id c, int v) { (void)c; (void)v; }
-void CGContextSetLineJoin(id c, int v) { (void)c; (void)v; }
-void CGContextSetShouldAntialias(id c, int v) { (void)c; (void)v; }
+void CGContextSetLineCap(id c, int v) { cx_bm_set_cap(c, v); }
+void CGContextSetLineJoin(id c, int v) { cx_bm_set_join(c, v); }
+void CGContextSetShouldAntialias(id c, int v) { cx_bm_set_aa(c, v); }
 id CGColorCreateGenericRGB(double r, double g, double b, double a) { return cx_color(r, g, b, a); }
 id CGColorCreateGenericGray(double g, double a) { return cx_color(g, g, g, a); }
 void CGColorRelease(id c) { (void)c; }
