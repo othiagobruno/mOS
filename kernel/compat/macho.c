@@ -498,6 +498,13 @@ static bool parse(mach_t *mo, const u8 *m, usize len, bool dylib, char *err, usi
             if (zero) break;
             if (vmaddr < mo->vmin) mo->vmin = vmaddr;
             if (vmaddr + vmsize > mo->vmax) mo->vmax = vmaddr + vmsize;
+            /* Processo arm64: a imagem cobre a página guest de 16 KiB do último byte do segmento.
+             * O vmaddr dos binários da Apple já é múltiplo de 16 KiB; o slide preserva isso porque
+             * a base da imagem também é. Não muda o vmaddr usado nos fixups. x86_64 não entra aqui. */
+            if (ls_cur && vmsize) {
+                u64 page_hi = A64_GUEST_PAGE_END(vmaddr, vmsize);
+                if (page_hi > mo->vmax) mo->vmax = page_hi;
+            }
             for (u32 k = 0; k < nsects && 72 + (k + 1) * 80 <= csz; k++) {
                 const u8 *sc = c + 72 + k * 80;
                 u32 type = rd32(sc + 64) & 0xFF;
@@ -1510,7 +1517,21 @@ static void link_order(link_t *K, int i) {
 
 /* registra a proteção inicial (initprot) de cada segmento das imagens [from, n) no kernel, para o
  * mach_vm_region do libSystem responder como o macOS (o base::ProtectedMemory do Chromium confere que o
- * segmento PROTECTED_MEMORY é só leitura). Não muda a PTE: ver machipc.c. */
+ * segmento PROTECTED_MEMORY é só leitura). Não muda a PTE: ver machipc.c.
+ * No arm64 o fim sobe até a página guest de 16 KiB, sem invadir o segmento seguinte. */
+#ifndef MOS_HOST_TEST
+static u64 seg_prot_hi(image_t *I, seg_t *g, u64 lo, u64 hi) {
+    if (!ls_cur || !g->vmsize) return hi;
+    u64 up = A64_GUEST_PAGE_END(lo, g->vmsize);
+    for (int t = 0; t < I->mo.nsegs; t++) {
+        seg_t *o = &I->mo.segs[t];
+        if (o == g || o->zero || !o->vmsize) continue;
+        u64 olo = o->vmaddr + (u64)I->slide;
+        if (olo > lo && olo < up) up = olo;
+    }
+    return up;
+}
+#endif
 static void segs_prot(process_t *p, link_t *K, int from) {
 #ifndef MOS_HOST_TEST
     for (int i = from; i < K->n; i++) {
@@ -1519,7 +1540,7 @@ static void segs_prot(process_t *p, link_t *K, int from) {
             seg_t *g = &I->mo.segs[s];
             if (g->zero || !g->vmsize) continue;
             u64 lo = g->vmaddr + (u64)I->slide;
-            machipc_set_prot(p, lo, lo + g->vmsize, g->prot);
+            machipc_set_prot(p, lo, seg_prot_hi(I, g, lo, lo + g->vmsize), g->prot);
         }
     }
 #else

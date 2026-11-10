@@ -4,6 +4,9 @@
  */
 #include "sys.h"
 #include "libc.h"
+#if defined(__aarch64__)
+#include "a64page.h"
+#endif
 
 double sqrt(double), exp(double), log(double), pow(double, double), fabs(double), floor(double);
 double sin(double), cos(double), atan(double), frexp(double, int *), ldexp(double, int), trunc(double);
@@ -246,6 +249,9 @@ static __attribute__((noreturn)) void cx_thread_entry(cx_tstart_t *ts) {
     for (;;) {}
 }
 void *mmap(void *addr, size_t len, int prot, int flags, int fd, off_t off);
+int munmap(void *a, size_t len);
+int mprotect(void *a, size_t len, int prot);
+size_t cx_attr_getguard(const void *a);
 /* pthread_attr_t do macOS: {long sig; char opaque[56]}. Guardamos o tamanho de pilha pedido em opaque[0..8)
  * (sig = ATTR_SIG); sem attr, ou attr de antes, 512 KiB como sempre. O Codex CLI (Rust) pede pilhas grandes para a
  * thread principal do tokio e estourava os 512 KiB. Limite de 64 MiB (o mmap do kernel aloca na hora). */
@@ -258,21 +264,30 @@ static size_t attr_stack(const void *a) {
 }
 int pthread_create(unsigned long *t, const void *attr, void *(*fn)(void *), void *arg) {
     size_t sz = (attr_stack(attr) + 0xFFF) & ~(size_t)0xFFF;
-    char *stack = mmap(0, sz, 3, 0x1002, -1, 0);
+    size_t guard = 0;
+#if defined(__aarch64__)
+    /* página de guarda abaixo da pilha, do tamanho anunciado (16 KiB por padrão). PROT_NONE
+     * desmapeia essa página na arena de mmap: o estouro gera falta de verdade. */
+    guard = cx_attr_getguard(attr);
+    sz = (size_t)a64_guard_round(sz ? sz : A64_GUEST_PAGE);
+#endif
+    char *stack = mmap(0, sz + guard, 3, 0x1002, -1, 0);
     if (stack == (char *)-1) { cx_fdprintf(2, "[thread] pthread_create: sem pilha de %lu KiB\n", (unsigned long)(sz >> 10)); return 35; }
+    if (guard && mprotect(stack, guard, 0) != 0) { munmap(stack, sz + guard); return 35; }
     cx_tstart_t *ts = malloc(sizeof *ts);
-    if (!ts) return 35;
+    if (!ts) { munmap(stack, sz + guard); return 35; }
     ts->fn = fn;
     ts->arg = arg;
-    ts->stack_top = (u64)stack + sz;
-    ts->stack_size = sz;
-    u64 top = ((u64)stack + sz) & ~15ULL;
+    ts->stack_top = (u64)stack + guard + sz;
+    ts->stack_size = sz;                        /* a guarda não entra no tamanho, como no macOS */
+    /* a guarda fica no começo da faixa: o sp nasce no topo da parte usável, não dentro dela */
+    u64 top = ((u64)stack + guard + sz) & ~15ULL;
 #if !defined(__aarch64__)   /* arm64: sp alinhado a 16, sem endereço de volta na pilha (lr = 0) */
     top -= 8;                                   /* rsp = 16n - 8, como logo após um call */
     *(u64 *)top = 0;
 #endif
     long tid = SYS3(SYS_THREAD_CREATE, cx_thread_entry, top, ts);
-    if (tid < 0) { free(ts); cx_fdprintf(2, "[thread] pthread_create: o kernel recusou a thread (%ld)\n", tid); return 35; }
+    if (tid < 0) { munmap(stack, sz + guard); free(ts); cx_fdprintf(2, "[thread] pthread_create: o kernel recusou a thread (%ld)\n", tid); return 35; }
     { char *getenv(const char *); if (getenv("CX_TRACE_THREADS")) cx_fdprintf(2, "[thread] %ld: entrada %p, arg %p\n", tid, (void *)fn, arg); }   /* diagnóstico (porte do VS Code): CX_TRACE_THREADS=1 */
     *t = (unsigned long)tid;
     return 0;
@@ -481,7 +496,42 @@ int pthread_rwlock_unlock(void *l) {
     if (!n && __atomic_load_n(rww(l), __ATOMIC_SEQ_CST)) cx_futex_wake(rws(l), 0x7FFFFFFF);
     return 0;
 }
-int pthread_attr_init(void *a) { if (a) { ((long *)a)[0] = ATTR_SIG; ((size_t *)a)[1] = DEF_STACK; } return 0; }
+int pthread_attr_init(void *a) {
+    if (a) {
+        ((long *)a)[0] = ATTR_SIG;
+        ((size_t *)a)[1] = DEF_STACK;
+#if defined(__aarch64__)
+        ((size_t *)a)[2] = A64_GUEST_PAGE;   /* guarda padrão: uma página guest */
+        ((size_t *)a)[3] = 1;
+#endif
+    }
+    return 0;
+}
+/* Guarda da pilha. No arm64 o slot [3] == 1 significa que [2] foi pedido (0 = sem guarda).
+ * Sem o pedido, a guarda é uma página de 16 KiB. No x86_64 a resposta continua 4096 e o
+ * pthread_create não reserva guarda (o comportamento anterior). */
+size_t cx_attr_getguard(const void *a) {
+#if defined(__aarch64__)
+    if (a && ((const long *)a)[0] == ATTR_SIG && ((const size_t *)a)[3] == 1)
+        return (size_t)((const size_t *)a)[2];
+    return A64_GUEST_PAGE;
+#else
+    (void)a;
+    return 4096;
+#endif
+}
+int cx_attr_setguard(void *a, size_t s) {
+#if defined(__aarch64__)
+    if (!a) return 22;
+    ((long *)a)[0] = ATTR_SIG;
+    ((size_t *)a)[2] = (size_t)a64_guard_round(s);
+    ((size_t *)a)[3] = 1;
+#else
+    (void)a;
+    (void)s;
+#endif
+    return 0;
+}
 int pthread_attr_destroy(void *a) { (void)a; return 0; }
 int pthread_attr_setstacksize(void *a, size_t s) {
     if (!a || s < 16384) return 22;                              /* EINVAL, como o macOS abaixo de PTHREAD_STACK_MIN */
@@ -736,20 +786,42 @@ static void shm_flush(u64 a, size_t n, int drop) {
     }
     shm_give();
 }
+#if defined(__aarch64__)
+static long a64_sys(long n, long a, long b, long c, long d, void *ctx) {
+    (void)ctx;
+    return cx_syscall(n, a, b, c, d, 0);
+}
+#endif
 void *mmap(void *addr, size_t len, int prot, int flags, int fd, off_t off) {
     /* MAP_JIT (0x800): o V8 pede uma região anônima executável. O NX está desligado no mOS,
      * então a página de usuário já executa; aqui só garantimos o caminho anônimo. */
     if (flags & 0x800) flags |= 0x1000;
-    /* MAP_FIXED sobre a pilha (página de guarda do Rust, por exemplo): a região já existe */
+#if defined(__aarch64__)
+    /* Processo arm64: granularidade de 16 KiB (docs/pagesize-arm64.md). O kernel segue em 4 KiB. */
+    {
+        a64_mmap_adj_t adj = a64_mmap_adjust((unsigned long long)addr, len, flags, off);
+        if (adj.err) { cx_errno = adj.err; return (void *)-1; }
+        len = (size_t)adj.len;
+    }
+#endif
+    /* MAP_FIXED sobre a pilha (página de guarda do Rust, por exemplo): a região já existe.
+     * A pilha principal fica abaixo de USER_MMAP_BASE: o kernel recusa munmap ali, então a guarda
+     * da pilha principal não é desmapeável. A das threads (pthread_create) fica na arena de mmap. */
     if ((flags & 0x10) && addr && (u64)addr >= 0x400000000000ULL && (u64)addr < 0x400040000000ULL) return addr;
     /* MAP_FIXED|MAP_ANON dentro da área de mmap (ex.: trecho de uma reserva do PartitionAlloc):
      * troca o trecho por páginas zeradas, ou só devolve as páginas se for PROT_NONE. O trecho continua do processo
      * (MOS_MUNMAP_KEEP): solto, o topo voltava ao alocador de endereços e o próximo mmap de outro componente caía nele */
     if ((flags & 0x1010) == 0x1010 && addr && (u64)addr >= CX_MMAP_BASE) {
+#if defined(__aarch64__)
+        long c = a64_map_fixed_anon(a64_sys, 0, (unsigned long long)addr, len, prot);
+        if (c < 0) { cx_errno = (int)-c; return (void *)-1; }
+        return (void *)c;
+#else
         SYS3(SYS_MUNMAP, addr, len, MOS_MUNMAP_KEEP);
         /* b = 3: o trecho vira memória sob demanda (páginas zeradas ao tocar; kernel/mm/lazy.c) */
         if (prot) { long c = SYS3(SYS_MMAP, len, 3, addr); if (c < 0) { cx_errno = (int)-c; return (void *)-1; } }
         return addr;
+#endif
     }
     /* anônimo: PROT_NONE = só reservar endereços (as páginas vêm no mprotect); com acesso = sob demanda, como no
      * macOS (o JavaScriptCore do Claude Code pede 1-4 GB assim e usa uma fração). */
@@ -757,25 +829,34 @@ void *mmap(void *addr, size_t len, int prot, int flags, int fd, off_t off) {
     /* arquivo MAP_PRIVATE ou só leitura: o kernel lê cada página na primeira falta (b = 4, kernel/mm/lazy.c).
      * MAP_SHARED com escrita e o que o kernel recusar (pipe, terminal, /dev/null) seguem pela cópia com read() */
     if (!anon && fd >= 0 && !(off & 0xFFF) && !((flags & 1) && (prot & 2))) {
+#if defined(__aarch64__)
+        long aln = a64_align_cursor(a64_sys, 0);
+        if (aln < 0) { cx_errno = (int)-aln; return (void *)-1; }
+#endif
         long k = SYS4(SYS_MMAP, len, 4, fd, off);
-        if (k >= 0) return (void *)k;
+        if (k >= 0) {
+#if defined(__aarch64__)
+            long sl = a64_reclaim_slop(a64_sys, 0, (unsigned long long)k, len);
+            if (sl < 0) { cx_errno = (int)-sl; return (void *)-1; }
+#endif
+            return (void *)k;
+        }
         if (k == -9 || k == -13) { cx_errno = (int)-k; return (void *)-1; }   /* EBADF, EACCES */
     }
+    long r;
 #if defined(__aarch64__)
-    /* processo arm64: páginas de 16 KiB como no Apple Silicon (hw.pagesize, vm_page_size; o jemalloc/mimalloc/Go do
-     * arm64 contam com o alinhamento). O kernel aloca em 4 KiB: pede 12 KiB a mais e devolve as pontas. */
-    if (anon) {
-        u64 L = ((u64)len + 0x3FFF) & ~0x3FFFULL;
-        long b = SYS2(SYS_MMAP, L + 0x3000, prot ? 3 : 1);
-        if (b < 0) { cx_errno = (int)-b; return (void *)-1; }
-        u64 a = ((u64)b + 0x3FFF) & ~0x3FFFULL;
-        if (a > (u64)b) SYS2(SYS_MUNMAP, b, a - (u64)b);
-        if ((u64)b + L + 0x3000 > a + L) SYS2(SYS_MUNMAP, a + L, (u64)b + L + 0x3000 - (a + L));
-        return (void *)a;
+    {
+        /* O rt_alloc do tradutor também anda o cursor, em 4 KiB: cada faixa nova realinha. */
+        unsigned long long at = 0;
+        long mode = anon ? (prot ? 3 : 1) : 0;
+        long rc = a64_map_fresh(a64_sys, 0, len, mode, &at);
+        if (rc < 0) { cx_errno = (int)-rc; return (void *)-1; }
+        r = (long)at;
     }
-#endif
-    long r = SYS2(SYS_MMAP, len, anon ? (prot ? 3 : 1) : 0);
+#else
+    r = SYS2(SYS_MMAP, len, anon ? (prot ? 3 : 1) : 0);
     if (r < 0) { cx_errno = (int)-r; return (void *)-1; }
+#endif
     if (!(flags & 0x1000) && fd >= 0) {           /* MAP_ANON = 0x1000; senão: copia o arquivo */
         off_t cur = lseek(fd, 0, 1);
         lseek(fd, off, 0);
@@ -787,8 +868,18 @@ void *mmap(void *addr, size_t len, int prot, int flags, int fd, off_t off) {
     return (void *)r;
 }
 int munmap(void *a, size_t len) {
+#if defined(__aarch64__)
+    a64_span_t sp = a64_span((unsigned long long)a, len);
+    if (sp.err) { cx_errno = sp.err; return -1; }
+    if (!sp.len) return 0;
+    shm_flush(sp.addr, (size_t)sp.len, 1);
+    long r = a64_sys(SYS_MUNMAP, (long)sp.addr, (long)sp.len, 0, 0, 0);
+    if (r < 0) { cx_errno = (int)-r; return -1; }
+    return 0;
+#else
     shm_flush((u64)a, len, 1);
     return SYS2(SYS_MUNMAP, a, len) < 0 ? -1 : 0;
+#endif
 }
 /* msync: grava no arquivo o que mudou nos mapeamentos MAP_SHARED do trecho */
 int msync(void *a, size_t n, int f) { (void)f; shm_flush((u64)a, n, 0); return 0; }
@@ -796,13 +887,27 @@ void cx_mach_record_prot(u64 addr, u64 len, int prot);   /* mach.c: proteção r
 int mprotect(void *a, size_t len, int prot) {
     /* liberar acesso a um trecho reservado: as páginas que faltam passam a vir sob demanda (as existentes ficam).
      * Os bits de proteção não mudam o PTE: EFER.NXE está desligado, então leitura/escrita já executa.
-     * A proteção pedida fica registrada no kernel para o mach_vm_region (base::ProtectedMemory do Chromium). */
+     * A proteção pedida fica registrada no kernel para o mach_vm_region (base::ProtectedMemory do Chromium).
+     * No arm64, PROT_NONE na arena de mmap tira as páginas de 4 KiB da página guest inteira: a guarda falta de verdade.
+     * Endereço não múltiplo de 16 KiB é EINVAL; o comprimento sobe até fechar a página guest. */
+#if defined(__aarch64__)
+    a64_span_t sp = a64_span((unsigned long long)a, len);
+    if (sp.err) { cx_errno = sp.err; return -1; }
+    if (sp.len) cx_mach_record_prot(sp.addr, sp.len, prot);
+    if (sp.len && sp.addr >= CX_MMAP_BASE) {
+        long r = !prot ? a64_sys(SYS_MUNMAP, (long)sp.addr, (long)sp.len, MOS_MUNMAP_KEEP, 0, 0)
+                       : a64_sys(SYS_MMAP, (long)sp.len, 3, (long)sp.addr, 0, 0);
+        if (r < 0) { cx_errno = (int)-r; return -1; }
+    }
+    return 0;
+#else
     if (len) cx_mach_record_prot((u64)a, (u64)len, prot);
     if (prot && len && (u64)a >= CX_MMAP_BASE) {
         long r = SYS3(SYS_MMAP, len, 3, a);
         if (r < 0) { cx_errno = (int)-r; return -1; }
     }
     return 0;
+#endif
 }
 /* JIT do macOS 11+. O V8 alterna escrita e execução com isto. No mOS as duas já valem ao mesmo tempo. */
 void pthread_jit_write_protect_np(int enabled) { (void)enabled; }
@@ -818,9 +923,20 @@ void sys_dcache_flush(void *start, size_t len) { (void)start; (void)len; }
  * zerada; sem efeito, um bloco "zerado" vinha com dados velhos e o rehash de uma PropertyTable do JSC não terminava.
  * O resto (WILLNEED, RANDOM, FREE_REUSE...) segue sem efeito. O posix_madvise não descarta nada, como no POSIX. */
 int madvise(void *a, size_t len, int adv) {
+#if defined(__aarch64__)
+    /* Mesma granularidade do mmap: endereço desalinhado é EINVAL e o descarte cobre a página guest. */
+    if (adv == 4 || adv == 5 || adv == 7) {
+        a64_span_t sp = a64_span((unsigned long long)a, len);
+        if (sp.err) { cx_errno = sp.err; return -1; }
+        if (sp.len && sp.addr >= CX_MMAP_BASE)
+            a64_sys(SYS_MUNMAP, (long)sp.addr, (long)sp.len, MOS_MUNMAP_DISCARD, 0, 0);
+    }
+    return 0;
+#else
     if ((adv == 4 || adv == 5 || adv == 7) && len && !((u64)a & 0xFFF) && (u64)a >= CX_MMAP_BASE)
         SYS3(SYS_MUNMAP, a, (len + 0xFFF) & ~(size_t)0xFFF, MOS_MUNMAP_DISCARD);
     return 0;
+#endif
 }
 int posix_madvise(void *a, size_t len, int adv) { (void)a; (void)len; (void)adv; return 0; }
 int mlock(const void *a, size_t len) { (void)a; (void)len; return 0; }
