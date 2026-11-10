@@ -3,6 +3,7 @@
  * Ver rt.h e a64rt_abi.h (contrato com o kernel e com o libSystem arm64).
  */
 #include "rt.h"
+#include "writes.h"
 
 _Static_assert(SYS_THREAD_EXIT == 35 && SYS_SIG == 58 && MOS_SIGOP_RETURN == 6, "números literais em start.S");
 _Static_assert(sizeof(rt_thread_t) < 64 * 1024, "rt_thread_t na base da pilha do host");
@@ -32,12 +33,21 @@ void *rt_alloc(u64 len) {
 }
 void rt_free(void *p, u64 len) { if (p) RS2(SYS_MUNMAP, p, (len + 0xFFF) & ~0xFFFULL); }
 
-/* pilha do host alinhada ao próprio tamanho (rt_self): 2 MiB sob demanda já vêm alinhados a 2 MiB; usa a primeira
- * metade e nunca devolve a sobra (sem munmap no meio das regiões: a faixa de cima não fica livre para outros mmap) */
-static void *alloc_hstack(void) {
-    u64 a = (u64)rt_alloc(2 * A64RT_HSTACK);
-    if (!a) return 0;
-    return (void *)((a + A64RT_HSTACK - 1) & ~(A64RT_HSTACK - 1));
+/* pilha do host alinhada ao próprio tamanho (rt_self). 2 MiB sob demanda já vêm alinhados a 2 MiB: usa a
+ * primeira metade e, no caminho feliz, não devolve a sobra (munmap no meio da faixa deixa um buraco e o
+ * mmap seguinte pode cair nele). Se a tabela de threads estiver cheia, solta o bloco inteiro a partir da
+ * base crua — no harness, sem o modo 3, o mmap vem alinhado a 4 KiB e o ponteiro usado não é essa base. */
+static void *alloc_hstack(u64 *free_base, u64 *free_len) {
+    u64 raw = (u64)rt_alloc(2 * A64RT_HSTACK);
+    a64rt_hstack plan;
+    if (!raw) return 0;
+    if (!a64rt_hstack_plan(raw, A64RT_HSTACK, &plan)) {
+        rt_free((void *)raw, 2 * A64RT_HSTACK);
+        return 0;
+    }
+    *free_base = plan.free_base;
+    *free_len = plan.free_len;
+    return (void *)plan.use;
 }
 
 /* ---------------------------------------------------------------- tabela de threads */
@@ -70,14 +80,15 @@ static rt_thread_t *thread_take(void) {
             return T;
         }
     tunlock();
-    rt_thread_t *T = alloc_hstack();
+    u64 free_base = 0, free_len = 0;
+    rt_thread_t *T = alloc_hstack(&free_base, &free_len);
     if (!T) return 0;
     T->state = 1;
     tlock();
     int ok = 0;
     for (int i = 0; i < RT_MAX_THREADS; i++) if (!g_threads[i]) { g_threads[i] = T; ok = 1; break; }
     tunlock();
-    if (!ok) { rt_free(T, A64RT_HSTACK); return 0; }
+    if (!ok) { rt_free((void *)free_base, free_len); return 0; }
     return T;
 }
 
@@ -238,6 +249,27 @@ static void fbstat_tick(void) {
 }
 #endif
 
+/* escrita do kernel (ou memcpy do runtime no lugar dele) na memória do guest: não passa pela PTE, então a
+ * proteção do JIT não vê. has_code evita a trava no caso comum (buffer sem tradução). */
+static int peek_guest(void *ctx, u64 addr, void *dst, u64 n) {
+    (void)ctx;
+    if (!addr || !dst || !n) return 0;
+    memcpy(dst, (const void *)addr, (size_t)n);
+    return 1;
+}
+static void touch_code(u64 addr, u64 len) {
+    if (!addr || !len) return;
+#ifdef A64_HAVE_JIT
+    if (!a64_jit_has_code(addr, len)) return;   /* o caso comum (buffer sem tradução) não toma a trava */
+#endif
+    a64_invalidate(addr, len);
+}
+static void touch_writes(long nr, u64 x0, u64 x1, u64 x2, u64 x3, long ret) {
+    a64rt_span sp[4];
+    int n = a64rt_guest_writes(nr, x0, x1, x2, x3, ret, peek_guest, 0, sp, 4);
+    for (int i = 0; i < n; i++) touch_code(sp[i].addr, sp[i].len);
+}
+
 static void mos_svc(rt_thread_t *T) {
     a64_cpu *c = &T->cpu;
     long n = (long)c->x[8];
@@ -266,11 +298,20 @@ static void mos_svc(rt_thread_t *T) {
         }
 #endif
         break;
-    case SYS_SIG: c->x[0] = (u64)rt_sig_syscall(T, (long)a, (long)b, (long)d, (long)e); return;
+    case SYS_SIG:
+        r = rt_sig_syscall(T, (long)a, (long)b, (long)d, (long)e);
+        c->x[0] = (u64)r;
+        touch_writes(SYS_SIG, a, b, d, e, r);
+        return;
     case SYS_SIGACTION: c->x[0] = (u64)rt_sigaction_old(T, (long)a, (long)b, (long)d); return;
     case SYS_SIGRETURN: rt_sig_return_old(T); return;
     case SYS_THREADCTL:
-        if (a == MOS_THR_GETSTATE) { c->x[0] = (u64)threadctl_getstate((long)b, d); return; }
+        if (a == MOS_THR_GETSTATE) {
+            r = threadctl_getstate((long)b, d);
+            c->x[0] = (u64)r;
+            touch_writes(SYS_THREADCTL, a, b, d, e, r);
+            return;
+        }
         break;
     case SYS_FORK:
         r = RS0(SYS_FORK);
@@ -283,17 +324,10 @@ static void mos_svc(rt_thread_t *T) {
     T->in_svc = 1;
     r = rt_sys(n, (long)a, (long)b, (long)d, (long)e, (long)f, (long)g);
     T->in_svc = 0;
-    /* memória que deixou de ser o que era (munmap, MAP_FIXED por cima, mprotect): traduções dela não valem mais */
+    /* munmap (também KEEP e DISCARD) tira ou zera a faixa: a tradução dela não vale mais */
     if (n == SYS_MUNMAP && r == 0) a64_invalidate(a, b);
-    /* o kernel escreve na memória do usuário sem passar pela PTE (a proteção do JIT não vê): leitura direto num buffer
-     * que tem código traduzido */
-    if ((n == SYS_READ || n == SYS_PREAD) && r > 0) {
-#ifdef A64_HAVE_JIT
-        if (a64_jit_has_code(b, (u64)r))               /* consulta sem trava: o caso comum não toma a trava do JIT */
-#endif
-            a64_invalidate(b, (u64)r);
-    }
-    if (n == SYS_MACH_VM && b && r == 0 && a == MACH_VM_PROTECT) a64_invalidate(((const u64 *)b)[0], ((const u64 *)b)[1]);
+    /* o kernel escreve na memória do usuário sem passar pela PTE. read/pread e o resto (rede, stat, mach, dyld, ...) */
+    touch_writes(n, a, b, d, e, r);
     if (r == -MOS_EINTR && T->pend && restartable(n)) {
         int sig = __builtin_ctz(T->pend);
         if (rt_sig_restart_ok(sig)) { c->pc -= 4; return; }   /* a syscall é refeita depois do tratador */
@@ -319,7 +353,10 @@ static void darwin_svc(rt_thread_t *T) {
     }
     switch (n) {
     case 1: RS1(SYS_EXIT, c->x[0]); for (;;) {}
-    case 3: r = RS3(SYS_READ, c->x[0], c->x[1], c->x[2]); break;
+    case 3:
+        r = RS3(SYS_READ, c->x[0], c->x[1], c->x[2]);
+        if (r > 0) touch_writes(SYS_READ, c->x[0], c->x[1], c->x[2], 0, r);
+        break;
     case 4: r = RS3(SYS_WRITE, c->x[0], c->x[1], c->x[2]); break;
     case 20: r = RS0(SYS_GETPID); break;
     case 37: r = RS2(SYS_SIGKILL, c->x[0], sig_darwin_to_mos((int)c->x[1])); break;

@@ -733,7 +733,7 @@ bool a64_jit_recover(a64_cpu *c, const a64_hostctx *h) {
     if (!b) {
         /* fora dos blocos: helper do interpretador (estado já sincronizado em c) ou despachante */
         if (t && t->in_run) c->nzcv = jit_x86_to_nzcv(JIT_F(c));
-        if (t) t->in_jit = 0;
+        if (t) __atomic_store_n(&t->in_jit, 0, __ATOMIC_SEQ_CST);
         return false;
     }
     a64_u32 off = (a64_u32)(rip - b->code);
@@ -750,7 +750,7 @@ bool a64_jit_recover(a64_cpu *c, const a64_hostctx *h) {
         else c->nzcv = jit_x86_to_nzcv(JIT_F(c));
     }
     JIT_F(c) = jit_nzcv_to_x86(c->nzcv);
-    if (t) t->in_jit = 0;
+    if (t) __atomic_store_n(&t->in_jit, 0, __ATOMIC_SEQ_CST);
     return true;
 }
 
