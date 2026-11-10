@@ -477,6 +477,30 @@ int CMSampleBufferCreate(void *a, void *db, u8 ready, void *cb, void *ref, void 
     *out = s;
     return 0;
 }
+/* PCM s16 estéreo intercalado do AVCapture. O bloco copia os bytes; não há quadro de vídeo aqui. */
+void *cx_cm_audio_sample(const short *pcm, unsigned frames, double rate) {
+    if (!pcm || !frames) return 0;
+    void *bb = 0;
+    size_t nbytes = (size_t)frames * 4;
+    if (CMBlockBufferCreateWithMemoryBlock(0, (void *)pcm, nbytes, 0, 0, 0, nbytes, 0, &bb) || !bb) return 0;
+    cm_timing_t timing;
+    memset(&timing, 0, sizeof timing);
+    i32 scale = rate > 0 && rate < 200000 ? (i32)(rate + 0.5) : 48000;
+    timing.duration.value = (i64)frames;
+    timing.duration.timescale = scale;
+    timing.duration.flags = 1;
+    timing.presentationTimeStamp.timescale = scale;
+    timing.presentationTimeStamp.flags = 1;
+    timing.decodeTimeStamp = timing.presentationTimeStamp;
+    size_t sz = nbytes;
+    void *out = 0;
+    if (CMSampleBufferCreate(0, bb, 1, 0, 0, 0, (long)frames, 1, &timing, 1, &sz, &out)) {
+        objc_release((id)bb);
+        return 0;
+    }
+    objc_release((id)bb);
+    return out;
+}
 int CMSampleBufferCreateForImageBuffer(void *a, void *img, u8 ready, void *cb, void *ref, void *fd, const void *t, void **out) {
     (void)cb; (void)ref;
     if (!out || !img) return CM_BAD_SAMPLE;
