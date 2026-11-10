@@ -796,8 +796,14 @@ int pthread_attr_setschedparam(void *a, const void *p) { (void)a; (void)p; retur
 int pthread_attr_getschedparam(const void *a, int *p) { (void)a; if (p) *p = 31; return 0; }
 int pthread_attr_setinheritsched(void *a, int i) { (void)a; (void)i; return 0; }
 int pthread_attr_set_qos_class_np(void *a, unsigned q, int r) { (void)a; (void)q; (void)r; return 0; }
-int pthread_set_qos_class_self_np(unsigned q, int r) { (void)q; (void)r; return 0; }
-unsigned qos_class_self(void) { return 0x21; }                    /* QOS_CLASS_USER_INTERACTIVE */
+static unsigned self_qos = 0x15;                                  /* QOS_CLASS_DEFAULT */
+int pthread_set_qos_class_self_np(unsigned q, int r) {
+    (void)r;
+    self_qos = q ? q : 0x15;
+    SYS3(60, 5, 0, q);                                            /* SYS_THREADCTL, MOS_THR_SETQOS, tid 0 = atual */
+    return 0;
+}
+unsigned qos_class_self(void) { return self_qos; }
 unsigned qos_class_main(void) { return 0x21; }
 int pthread_setschedparam(void *t, int pol, const void *p) { (void)t; (void)pol; (void)p; return 0; }
 int pthread_getschedparam(void *t, int *pol, int *p) { (void)t; if (pol) *pol = 1; if (p) *p = 31; return 0; }

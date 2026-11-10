@@ -112,6 +112,9 @@ enum {
     MOS_THR_STOPPED,       /* (tid) -> 1 parada fora da CPU, 0 ainda rodando */
     MOS_THR_GETSTATE,      /* (tid, u64 regs[21]) -> 0 | -MOS_EBUSY   x86_thread_state64_t: rax rbx rcx rdx rdi rsi rbp
                             * rsp r8..r15 rip rflags cs fs gs, do frame salvo da thread */
+    MOS_THR_SETQOS,        /* (tid, classe Darwin) -> 0 | -ESRCH     QOS_CLASS_* (0x21..0x09); fila e fatia */
+    MOS_THR_AFFINITY,      /* (tid, máscara de CPUs) -> 0            bit i = núcleo i; 0 = qualquer um */
+    MOS_THR_ROFILE,        /* (va, u64 id_off[2]) -> 1 se a página é código de arquivo sem escrita */
 };
 #define MOS_MUNMAP_KEEP    0x4B454550u   /* 'KEEP' */
 #define MOS_MUNMAP_DISCARD 0x44495343u   /* 'DISC' */
