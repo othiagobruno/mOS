@@ -175,6 +175,14 @@ i64 gamepad_syscall(process_t *pr, u64 op, u64 b, u64 c, u64 d) {
                 return -MOS_EFAULT;
         return (i64)((u64)w | (u64)h << 32);
     }
+    case DEV_WINDOW_LIST: {
+        /* CGWindowListCopyWindowInfo / SCShareableContent: uma janela do compositor por índice (frente -> fundo) */
+        gui_cgwindow_t info;
+        if (!compat_gui_cgwindow((int)b, &info)) return 0;
+        if (!c) return 1;
+        if (!uvm_copy_out(pr, c, &info, sizeof info)) return -MOS_EFAULT;
+        return 1;
+    }
     case DEV_PAD_RUMBLE: {
         if (b >= MAX_PADS || !pads[b].used) return -MOS_EINVAL;
         pad_t *p = &pads[b];

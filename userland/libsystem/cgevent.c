@@ -7,6 +7,7 @@
 #include "foundation.h"
 #include "sys.h"
 #include "../../kernel/include/compat_gui.h"
+#include "computeruse_win.h"
 
 void *memset(void *d, int c, size_t n);
 void *malloc(size_t n);
@@ -184,6 +185,9 @@ static void post(cgev_t *x) {
     if (t != 22) g_cursor = p;
     inject(K_EV_MOUSE_ABS, g_buttons, mods, wheel, 0, (i32)p.x, (i32)p.y);
 }
+/* kCGHIDEventTap (0), kCGSessionEventTap (1) e kCGAnnotatedSessionEventTap (2) entram na mesma fila.
+ * O kernel tem uma fila só: a tecla vai para a janela em foco e o clique para o que está sob o cursor.
+ * CGEventPostToPid não escolhe o processo: o destino continua sendo foco / cursor. */
 void CGEventPost(u32 tap, void *e) { (void)tap; post(ev(e)); }
 void CGEventPostToPid(i32 pid, void *e) { (void)pid; post(ev(e)); }
 void CGEventPostToPSN(void *psn, void *e) { (void)psn; post(ev(e)); }
@@ -220,8 +224,30 @@ u8 CGPreflightScreenCaptureAccess(void) { return (u8)cx_tcc_preflight("kTCCServi
 u8 CGRequestScreenCaptureAccess(void) { return (u8)cx_tcc_request("kTCCServiceScreenCapture"); }
 void *CGDisplayCreateImage(u32 display) { (void)display; return capture(0, 0, 0, 0); }
 void *CGDisplayCreateImageForRect(u32 display, cgrect_t r) { (void)display; return rect_ok(r) ? capture((i64)r.x, (i64)r.y, (i64)r.w, (i64)r.h) : capture(0, 0, 0, 0); }
-/* uma janela específica (win != 0 com kCGWindowListOptionIncludingWindow) ainda sai como o retângulo da tela */
+/* Janela pedida: o retângulo dela no compositor (pixels já compostos, inclusive o que estiver por cima).
+ * Sem id, o retângulo pedido ou a tela inteira. A permissão continua dentro de capture(). */
+static void *capture_window(u32 win, cgrect_t r) {
+    gui_cgwindow_t info;
+    int found = 0;
+    for (int i = 0; i < 64; i++) {
+        if (!cx_cg_window_at(i, &info)) break;
+        if (info.number == win) { found = 1; break; }
+    }
+    if (!found || info.w <= 0 || info.h <= 0) return 0;
+    i64 x = info.x, y = info.y, w = info.w, h = info.h;
+    if (rect_ok(r)) {
+        i64 x2 = x + w, y2 = y + h, rx2 = (i64)r.x + (i64)r.w, ry2 = (i64)r.y + (i64)r.h;
+        i64 nx = x > (i64)r.x ? x : (i64)r.x;
+        i64 ny = y > (i64)r.y ? y : (i64)r.y;
+        i64 nx2 = x2 < rx2 ? x2 : rx2;
+        i64 ny2 = y2 < ry2 ? y2 : ry2;
+        if (nx2 <= nx || ny2 <= ny) return 0;
+        x = nx; y = ny; w = nx2 - nx; h = ny2 - ny;
+    }
+    return capture(x, y, w, h);
+}
 void *CGWindowListCreateImage(cgrect_t r, u32 opt, u32 win, u32 imgopt) {
-    (void)opt; (void)win; (void)imgopt;
+    (void)opt; (void)imgopt;
+    if (win) return capture_window(win, r);
     return rect_ok(r) ? capture((i64)r.x, (i64)r.y, (i64)r.w, (i64)r.h) : capture(0, 0, 0, 0);
 }

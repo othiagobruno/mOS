@@ -37,6 +37,8 @@ int wm_mouse_x(void) { return mx; }
 int wm_mouse_y(void) { return my; }
 int wm_mouse_buttons(void) { return mbuttons; }
 window_t *wm_window_list(void) { return nwins ? wins[0] : NULL; }
+int wm_window_count(void) { return nwins; }
+window_t *wm_window_at(int i) { return i >= 0 && i < nwins ? wins[i] : NULL; }
 
 /* ============================================================ dano */
 void wm_damage(rect_t r) {

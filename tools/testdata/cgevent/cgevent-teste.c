@@ -1,5 +1,7 @@
 /* mOS — teste da entrada sintética global (CGEventPost -> GUI_DEVICE/DEV_INPUT_POST) e da captura de tela
  * (CGDisplayCreateImage -> DEV_SCREEN_CAPTURE): clica num ponto da tela e deixa o cursor em outro.
+ * O passe automático de computer use (pixels, geometria, clique e AX entre dois processos) está em
+ * userland/tests-appkit/computeruse_host.c. Este arquivo continua o ensaio dentro da VM.
  * Uso: cgevent-teste x y [xfinal yfinal [espera]]. Com "espera", antes do clique aguarda o pixel do alvo ficar escuro
  * (um botão preto, como o "Sign in with ChatGPT" do Codex), lendo a tela a cada segundo (até 15 min): não depende do
  * relógio do kernel, que sob WHPX anda devagar. Compilado com zig cc -target x86_64-macos -Wl,-undefined,dynamic_lookup. */

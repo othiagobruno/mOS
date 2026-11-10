@@ -56,6 +56,18 @@ enum {
 #define DEV_AUDIO_STATE 17    /* (stream, gui_audio_state_t *) -> 0 */
 #define DEV_AUDIO_CTL 18      /* (stream, ganho 0..65536 (-1 = mantém) | pausa (-1/0/1) << 32, descartar) -> 0 */
 #define DEV_AUDIO_INFO 19     /* (gui_audio_state_t *) -> 1 se há saída de som de verdade (senão os streams andam no relógio) */
+#define DEV_WINDOW_LIST 20    /* (índice, gui_cgwindow_t *) 1 = preencheu, 0 = acabou. Da frente para o fundo.
+                               * CGWindowListCopyWindowInfo / SCShareableContent. A permissão de gravar a tela fica no userland (TCC). */
+typedef struct {
+    unsigned int number;           /* kCGWindowNumber */
+    int pid;                       /* kCGWindowOwnerPID; 0 se a janela não é de um processo convidado */
+    int layer;                     /* kCGWindowLayer (0 = janela normal) */
+    int onscreen;                  /* kCGWindowIsOnscreen */
+    int x, y, w, h;                /* kCGWindowBounds, origem no canto superior esquerdo do compositor */
+    char owner[64];                /* kCGWindowOwnerName */
+    char name[96];                 /* kCGWindowName */
+} gui_cgwindow_t;
+int compat_gui_cgwindow(int index, gui_cgwindow_t *out);
 typedef struct {
     unsigned int queued, capacity, rate, channels;
     unsigned long long played, underruns;
