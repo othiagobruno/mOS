@@ -818,6 +818,19 @@ void *mmap(void *addr, size_t len, int prot, int flags, int fd, off_t off) {
         len = (size_t)adj.len;
     }
 #endif
+    /* MAP_FIXED de arquivo: o kernel substitui [addr, addr+len) e devolve esse endereço
+     * (b = 8 privado, b = 9 compartilhado). c = endereço, r10 = deslocamento,
+     * r8 = fd | (prot << 32). Erro não cai na cópia com read(), que ignoraria o endereço.
+     * No arm64 o comprimento já saiu de a64_mmap_adjust (16 KiB); o endereço é o pedido,
+     * então não há cursor para realinhar nem sobra de 4 KiB para devolver. */
+    if ((flags & 0x10) && !(flags & 0x1000) && fd >= 0 && addr) {
+        unsigned long long pack = (unsigned)fd | ((unsigned long long)(prot ? prot : 1) << 32);
+        long mode = (flags & 1) ? 9 : 8;
+        long k = SYS5(SYS_MMAP, len, mode, addr, off, pack);
+        if (k < 0) { cx_errno = (int)-k; return (void *)-1; }
+        if (cx_pte_prot((u64)k, len, prot)) return (void *)-1;
+        return (void *)k;
+    }
     /* MAP_FIXED sobre a pilha (página de guarda do Rust, por exemplo): a região já existe.
      * A pilha principal fica abaixo de USER_MMAP_BASE: o kernel recusa munmap ali, então a guarda
      * da pilha principal não é desmapeável. A das threads (pthread_create) fica na arena de mmap. */

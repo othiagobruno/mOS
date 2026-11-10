@@ -28,7 +28,9 @@ enum {
     SYS_FSTAT,         /* (fd, mos_stat_t*) -> 0 */
     SYS_MMAP,          /* (len[, modo, c, r10, r8]) -> endereço ou 0. b=0 anônima RW; b=1 reserva; b=2 preenche;
                         * b=3 sob demanda; b=4 arquivo privado; b=5 MAP_SHARED de arquivo; b=6 MAP_SHARED|MAP_ANON;
-                        * b=7 prot (r8: 1 leitura, 2 escrita, 4 execução) em [c, c+len). Sem execução a PTE fica NX. */
+                        * b=7 prot (r8: 1 leitura, 2 escrita, 4 execução) em [c, c+len). Sem execução a PTE fica NX.
+                        * b=8 MAP_FIXED arquivo privado; b=9 MAP_FIXED arquivo compartilhado: c = endereço,
+                        * r10 = deslocamento, r8 = fd | (prot << 32). Substitui [c, c+len) e devolve c. */
     SYS_MUNMAP,        /* (addr, len[, MOS_MUNMAP_KEEP]) -> 0       KEEP: só descarta as páginas, a faixa segue reservada */
     SYS_UNIXTIME,      /* () -> segundos desde 1970 (relógio do sistema) */
     SYS_STAT,          /* (path, mos_stat_t*) -> 0 */

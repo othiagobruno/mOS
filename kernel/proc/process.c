@@ -329,6 +329,51 @@ bool uvm_map_phys(process_t *p, u64 va, u64 phys, bool rw) {
     return true;
 }
 
+/* Solta [a, a+len) sem devolver o endereço ao cursor (mmap_next). mmap MAP_FIXED e
+ * mach_vm_map com VM_FLAGS_OVERWRITE substituem a faixa: o MAP_SHARED grava de volta
+ * antes (lazy_sync), a faixa lazy é furada e as PTEs saem. A ordem é a do munmap,
+ * para o writeback ainda enxergar a página. */
+void mm_release_span(process_t *p, u64 a, u64 len) {
+    extern void lazy_sync(process_t *p, u64 va, u64 len, int only_last);
+    extern void lazy_remove(process_t *p, u64 va, u64 len);
+    if (!p || !len || a + len < a) return;
+    lazy_sync(p, a, len, 0);
+    lazy_remove(p, a, len);
+    u64 gone[64];
+    int ng = 0;
+    for (u64 va = a; va < a + len; ) {
+        u64 *e = walk(p, va, false);
+        if (!e) { va = (va + 0x200000) & ~0x1FFFFFULL; continue; }
+        if (*e & PTE_P) {
+            gone[ng++] = *e & 0x000FFFFFFFFFF000ULL;
+            p->mem_pages--;
+            __asm__ volatile("invlpg (%0)" :: "r"(va) : "memory");
+        }
+        *e = 0;
+        va += 4096;
+        if (ng == 64 || (ng && va >= a + len)) {
+            smp_tlb_shootdown((u64)p->pml4);
+            for (int k = 0; k < ng; k++) page_put(gone[k]);
+            ng = 0;
+        }
+    }
+    if (ng) { smp_tlb_shootdown((u64)p->pml4); for (int k = 0; k < ng; k++) page_put(gone[k]); }
+}
+
+/* 1 se alguma página de [a, a+len) tem PTE presente ou faixa lazy. */
+int mm_span_taken(process_t *p, u64 a, u64 len) {
+    extern bool lazy_overlaps(process_t *p, u64 va, u64 len);
+    if (!p || !len || a + len < a) return 0;
+    if (lazy_overlaps(p, a, len)) return 1;
+    for (u64 va = a; va < a + len; ) {
+        u64 *e = walk(p, va, false);
+        if (!e) { va = (va + 0x200000) & ~0x1FFFFFULL; continue; }
+        if (*e & PTE_P) return 1;
+        va += 4096;
+    }
+    return 0;
+}
+
 /* imagens Mach-O compartilhadas entre processos (macho.c, icache): as mesmas páginas físicas em cópia-na-escrita, como
  * no fork. uvm_share_cow põe a página de va em COW e dá mais uma referência a ela (a do cache); uvm_map_cow mapeia em
  * va, como COW, uma página do cache. */
@@ -2800,6 +2845,38 @@ static u64 proc_syscall_(int_frame_t *f) {
             } else if (!lazy_add_shared_anon(p, at, len, prot)) { r = -MOS_ENOMEM; MMAP_NOMEM_LOG(); break; }
             p->mmap_next += len + 4096;
             r = (i64)at;
+            break;
+        }
+        /* b = 8: MAP_FIXED de arquivo privado. b = 9: MAP_FIXED de arquivo compartilhado.
+         * c = endereço, r10 = deslocamento, r8 = fd | (prot << 32). Substitui o que houver
+         * em [c, c+len), como o mmap MAP_FIXED do Darwin (grava o MAP_SHARED antes).
+         * Não recua mmap_next. Se a faixa passa do cursor, o cursor anda para depois dela
+         * e da página de guarda, para o alocador sequencial não cair em cima. */
+        if (b == 8 || b == 9) {
+            extern bool lazy_add_file(process_t *p, u64 va, u64 len, const char *path, u64 foff);
+            extern bool lazy_add_shared_file(process_t *p, u64 va, u64 len, const char *path, u64 foff, u8 prot);
+            u64 at = c, foff = f->r10, end = at + len;
+            int fd = (int)(u32)f->r8;
+            u8 prot = (u8)((f->r8 >> 32) & 7);
+            if (!prot) prot = 1;
+            if (!len || len > (64ull << 30) || (at & 0xFFF) || (foff & 0xFFF) ||
+                at < USER_BASE || end > USER_END || end < at) { r = -MOS_EINVAL; break; }
+            if (fd_get(p, (u64)fd) < 0) { r = -MOS_EBADF; break; }
+            if (p->fds[fd].pipe || p->fds[fd].pty || is_devnull(p->fds[fd].path)) { r = -MOS_EINVAL; break; }
+            if (p->fds[fd].flags & MOS_O_WRONLY) { r = -MOS_EACCES; break; }
+            if (b == 9 && (prot & 2) && !(p->fds[fd].flags & (MOS_O_WRONLY | MOS_O_RDWR))) { r = -MOS_EACCES; break; }
+            vnode_t *v = vfs_lookup(p->fds[fd].path);
+            if (!v) { r = -MOS_ENOENT; break; }
+            if (v->dir) { r = -MOS_EINVAL; break; }
+            mm_release_span(p, at, len);
+            if (!(b == 8 ? lazy_add_file(p, at, len, p->fds[fd].path, foff)
+                         : lazy_add_shared_file(p, at, len, p->fds[fd].path, foff, prot))) {
+                r = -MOS_ENOMEM; MMAP_NOMEM_LOG(); break;
+            }
+            if (at >= USER_MMAP_BASE && end + 4096 > p->mmap_next) p->mmap_next = end + 4096;
+            r = (i64)at;
+            if (rastrear_mm()) kprintf("mm: %s pid %d tid %d mmap fixo 0x%llx + 0x%llx arquivo %s @0x%llx\n", p->name, p->pid, t->id,
+                                       (unsigned long long)at, (unsigned long long)len, p->fds[fd].path, (unsigned long long)foff);
             break;
         }
         /* b = 7: prot (r8) nas PTEs de [c, c+len) e na faixa que a falta consulta. Sem o bit 4 a página fica NX.
