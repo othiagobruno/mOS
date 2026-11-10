@@ -127,6 +127,8 @@ typedef struct {
     id subtitle, represented_url, tab;
     BOOL restorable;
     id next_responder;              /* nextResponder explícito; senão o NSApp */
+    id tb_host;                     /* view que hospeda os itens da NSToolbar (fraco: a toolbar retém) */
+    double tb_top;                  /* faixa da toolbar acima do conteúdo (0 sem toolbar ou com fullSizeContentView) */
 } wstate_t;
 
 typedef struct { double r, g, b, a; } rgba_t;     /* NSColor: campos logo após o isa */
@@ -831,7 +833,8 @@ static BOOL abs_rect(id v, absr_t *out) {
     vstate_t *s = vs(v);
     if (!s->window) return NO;
     id content = ws(s->window)->content;
-    if (v == content) { out->tlx = 0; out->tly = 0; out->w = s->frame.s.w; out->h = s->frame.s.h; out->flipped = is_flipped(v); return YES; }
+    if (v == content) { out->tlx = 0; out->tly = ws(s->window)->tb_top; out->w = s->frame.s.w; out->h = s->frame.s.h; out->flipped = is_flipped(v); return YES; }
+    if (v == ws(s->window)->tb_host) { out->tlx = 0; out->tly = 0; out->w = s->frame.s.w; out->h = s->frame.s.h; out->flipped = is_flipped(v); return YES; }
     if (!s->superview) return NO;
     absr_t p;
     if (!abs_rect(s->superview, &p)) return NO;
@@ -1688,23 +1691,63 @@ static void maybe_dump_tree(id w) {
                 (unsigned long long)ws(w)->style, cx_class_name(object_getClass(w)));
     dump_view_tree(ws(w)->content, 1);
 }
+/* NSToolbar visível: a barra fica no topo (TB_H) e o conteúdo começa embaixo dela, salvo com
+ * NSWindowStyleMaskFullSizeContentView (1 << 15), em que o conteúdo passa por baixo da barra. Os itens
+ * são views de verdade dentro da view hospedeira da toolbar (appkit_postico.c, -_mosHostViewWithWidth:):
+ * desenho, clique e digitação seguem o caminho de qualquer view, com raiz nela. */
+#define TB_H 28
+static id hit(id v, absr_t *a, double x, double y);
+static void win_tb_update(id w) {
+    wstate_t *s = ws(w);
+    id tb = cx_responds(w->isa, sel_registerName("toolbar")) ? MSG0(id, w, "toolbar") : 0, host = 0;
+    if (tb && cx_responds(tb->isa, sel_registerName("isVisible")) && !MSG0(BOOL, tb, "isVisible")) tb = 0;
+    if (tb && cx_responds(tb->isa, sel_registerName("_mosHostViewWithWidth:")))
+        host = MSG(id, tb, "_mosHostViewWithWidth:", s->frame.s.w);
+    s->tb_host = host && cx_is_subclass(host->isa, &NSView_c) ? host : 0;
+    s->tb_top = s->tb_host && !(s->style & (1ull << 15)) ? TB_H : 0;
+    if (s->tb_host) {
+        vs(s->tb_host)->frame = r_make(0, 0, s->frame.s.w, TB_H);
+        if (vs(s->tb_host)->window != w) set_window_rec(s->tb_host, w);
+    }
+}
+/* view sob (x, y) da janela (origem em cima à esquerda): a faixa da toolbar tem a raiz própria */
+static id win_hit_root(id w, double x, double y) {
+    wstate_t *s = ws(w);
+    if (s->tb_host && y >= 0 && y < TB_H) {
+        absr_t ta = {0, 0, s->frame.s.w, TB_H, is_flipped(s->tb_host)};
+        id v = hit(s->tb_host, &ta, x, y);
+        return v ? v : s->tb_host;
+    }
+    if (!s->content) return 0;
+    absr_t a = {0, s->tb_top, s->frame.s.w, s->frame.s.h - s->tb_top, is_flipped(s->content)};
+    id v = hit(s->content, &a, x, y);
+    return v ? v : s->content;
+}
+
 static void render_window(id w) {
     wstate_t *s = ws(w);
     if (s->gid <= 0 || !s->visible) return;
     maybe_dump_tree(w);
-    if (vs(s->content)->frame.s.w != s->frame.s.w || vs(s->content)->frame.s.h != s->frame.s.h)
-        v_set_frame(s->content, 0, r_make(0, 0, s->frame.s.w, s->frame.s.h));   /* com autoresizing das subviews */
-    vs(s->content)->frame = r_make(0, 0, s->frame.s.w, s->frame.s.h);
+    win_tb_update(w);
+    double ch = s->frame.s.h - s->tb_top;
+    if (ch < 0) ch = 0;
+    if (vs(s->content)->frame.s.w != s->frame.s.w || vs(s->content)->frame.s.h != ch)
+        v_set_frame(s->content, 0, r_make(0, 0, s->frame.s.w, ch));   /* com autoresizing das subviews */
+    vs(s->content)->frame = r_make(0, 0, s->frame.s.w, ch);
     autolayout_window(w);
     ncmd = 0;
     u32 bg = argb(s->bg);
     put(GC_CLEAR, &bg, 4);
-    absr_t a = {0, 0, s->frame.s.w, s->frame.s.h, is_flipped(s->content)};
+    absr_t a = {0, s->tb_top, s->frame.s.w, ch, is_flipped(s->content)};
     clip_x0 = clip_y0 = -1e9; clip_x1 = clip_y1 = 1e9;
-    vs(s->content)->frame = r_make(0, 0, s->frame.s.w, s->frame.s.h);
+    vs(s->content)->frame = r_make(0, 0, s->frame.s.w, ch);
     cx_gui_cur_gid = s->gid;                     /* gancho QuartzCore */
     draw_view_tree(s->content, &a);
-    if (cx_responds(w->isa, sel_registerName("toolbar"))) {
+    if (s->tb_host) {                            /* a barra por cima, com os itens que são views */
+        absr_t ta = {0, 0, s->frame.s.w, TB_H, is_flipped(s->tb_host)};
+        clip_x0 = clip_y0 = -1e9; clip_x1 = clip_y1 = 1e9;
+        draw_view_tree(s->tb_host, &ta);
+    } else if (cx_responds(w->isa, sel_registerName("toolbar"))) {
         id tb = MSG0(id, w, "toolbar");
         if (tb && cx_responds(tb->isa, sel_registerName("isVisible")) && MSG0(BOOL, tb, "isVisible")
             && cx_responds(tb->isa, sel_registerName("drawInRect:"))) {
@@ -2636,9 +2679,7 @@ id cx_window_hit(id w, double x, double y) {
     if (!w || !cx_is_subclass(w->isa, &NSWindow_c)) return 0;
     wstate_t *s = ws(w);
     if (!s->content) return 0;
-    absr_t a = {0, 0, s->frame.s.w, s->frame.s.h, is_flipped(s->content)};
-    id v = hit(s->content, &a, x, y);
-    return v ? v : s->content;
+    return win_hit_root(w, x, y);
 }
 
 /* ================================================================ NSApplication */
@@ -2802,7 +2843,7 @@ static void dispatch(gui_event_t *g) {
         break;
     }
     case GEV_MOUSE_DOWN: case GEV_RIGHT_DOWN: case GEV_SCROLL: {
-        if (g->type == GEV_MOUSE_DOWN && g->y >= 0 && g->y < 28 && cx_responds(w->isa, sel_registerName("toolbar"))) {
+        if (!s->tb_host && g->type == GEV_MOUSE_DOWN && g->y >= 0 && g->y < 28 && cx_responds(w->isa, sel_registerName("toolbar"))) {
             id tb = MSG0(id, w, "toolbar");
             if (tb && cx_responds(tb->isa, sel_registerName("isVisible")) && MSG0(BOOL, tb, "isVisible")
                 && cx_responds(tb->isa, sel_registerName("mouseDown:"))) {
@@ -2810,8 +2851,7 @@ static void dispatch(gui_event_t *g) {
                 break;
             }
         }
-        absr_t a = {0, 0, s->frame.s.w, s->frame.s.h, is_flipped(s->content)};
-        id v = hit(s->content, &a, g->x, g->y);
+        id v = win_hit_root(w, g->x, g->y);
         if (!v) v = s->content;
         if (g->type == GEV_MOUSE_DOWN) {
             id cur = v;
@@ -2847,8 +2887,7 @@ static void dispatch(gui_event_t *g) {
         if (g->buttons && s->mouse_view) MSG(void, s->mouse_view, "mouseDragged:", make_event(6, w, g->x, g->y, g));
         else {
             /* sem botão: hover (o Chromium realça botões, mostra dicas e muda o cursor com estes eventos) */
-            absr_t a = {0, 0, s->frame.s.w, s->frame.s.h, is_flipped(s->content)};
-            id v = hit(s->content, &a, g->x, g->y);
+            id v = win_hit_root(w, g->x, g->y);
             if (!v) v = s->content;
             id prev = cx_hover_view(w);
             if (prev != v) {
@@ -2943,7 +2982,7 @@ static int pump(void) {
     for (u64 i = 0; a && i < a->n; i++) {
         id w = a->items[i];
         wstate_t *s = ws(w);
-        if (!s->visible || !(s->needs || tree_needs(s->content))) continue;
+        if (!s->visible || !(s->needs || tree_needs(s->content) || (s->tb_host && tree_needs(s->tb_host)))) continue;
         if (now - s->last_render < 0.04) continue;
         s->last_render = now;
         render_window(w);
@@ -3865,6 +3904,21 @@ static void tv_outline_metrics(id self, i64 row, int *level, double *per, id *oc
     if (*level < 0) *level = 0;
     if (cx_responds(self->isa, sel_registerName("outlineTableColumn"))) *ocol = MSG0(id, self, "outlineTableColumn");
 }
+/* tableView:isGroupRow: (o adaptador do outline traduz para outlineView:isGroupItem:) */
+static int tv_is_group_row(id self, i64 r) {
+    id d = vs(self)->delegate;
+    return d && cx_responds(d->isa, sel_registerName("tableView:isGroupRow:")) && MSG(BOOL, d, "tableView:isGroupRow:", self, r);
+}
+/* como no Cocoa: a view de célula recebe objectValue do dataSource (no outline, o item quando o
+ * dataSource não dá valor) */
+static void tv_set_cell_value(id self, id v, id col, i64 r) {
+    if (!v || !cx_responds(v->isa, sel_registerName("setObjectValue:"))) return;
+    id ds = vs(self)->data_source, val = 0;
+    if (ds && cx_responds(ds->isa, sel_registerName("tableView:objectValueForTableColumn:row:")))
+        val = MSG(id, ds, "tableView:objectValueForTableColumn:row:", self, col, r);
+    if (!val && tv_is_outline(self) && cx_responds(self->isa, sel_registerName("itemAtRow:"))) val = MSG(id, self, "itemAtRow:", r);
+    MSG(void, v, "setObjectValue:", val);
+}
 static void tv_layout_views(id self) {
     if (!self || !ST(self) || tv_in_layout) return;
     vstate_t *s = vs(self);
@@ -3895,21 +3949,24 @@ static void tv_layout_views(id self) {
     for (int r = sp.first; r >= 0 && r <= sp.last; r++) {
         int level; double per; id ocol;
         tv_outline_metrics(self, r, &level, &per, &ocol);
-        u64 passes = nc ? nc : 1;
+        /* linha de grupo: uma view só, de coluna nil, na largura toda (tableView:isGroupRow:) */
+        int group = tv_is_group_row(self, r);
+        u64 passes = group ? 1 : nc ? nc : 1;
         double x = 0;
         for (u64 k = 0; k < passes; k++) {
-            id col = nc ? cols->items[k] : 0;
+            id col = nc && !group ? cols->items[k] : 0;
             double cw = col ? cs_(col)->width : s->frame.s.w;
             id v = MSG(id, s->delegate, "tableView:viewForTableColumn:row:", self, col, (i64)r);
             int got = v && cx_is_subclass(v->isa, &NSView_c);
             cx_tv_engine_note_cell(e, r, (int)k, got);
             if (got && !cx_tv_show_cell(got)) {
-                int ocol_here = level >= 0 && (ocol ? col == ocol : k == 0);
+                int ocol_here = !group && level >= 0 && (ocol ? col == ocol : k == 0);
                 double cell_x = cx_tv_cell_x(x, level, per, ocol_here);
                 NSRect fr = r_make(cell_x, cx_tv_cell_y_scrolled(header, row_h, r, in_sc, scroll_y), cx_tv_cell_w(cw, x, cell_x), row_h);
                 ((void (*)(id, SEL, NSRect))objc_msgSend)(v, sel_registerName("setFrame:"), fr);
+                tv_set_cell_value(self, v, col, r);
                 if (vs(v)->superview != self) v_add_sub(self, 0, v);
-                cx_tv_engine_placed_add(e, v);
+                cx_tv_engine_placed_add_at(e, v, r, group ? -1 : (int)k);
             }
             x += cw;
         }
@@ -4024,11 +4081,77 @@ static void tv_mouse_down(id self, SEL c, id e) {
         }
     }
     s->clicked = r;
+    if (r >= 0 && s->delegate && cx_responds(s->delegate->isa, sel_registerName("tableView:shouldSelectRow:")) &&
+        !MSG(BOOL, s->delegate, "tableView:shouldSelectRow:", self, r))
+        r = -2;                                   /* o delegate recusou: a seleção fica como estava */
     if (r >= 0) select_row(self, r, YES);
     if (evs(e)->clicks >= 2 && s->double_action && r >= 0) {
         id t = s->target ? s->target : (s->delegate ? s->delegate : app.delegate);
         if (t) ((void (*)(id, SEL, id))objc_msgSend)(t, s->double_action, self);
     } else if (s->action && r >= 0) send_action(self);
+}
+/* view de célula -> linha/coluna: sobe pelas superviews até achar uma view que o layout pôs */
+static int tv_cell_pos(id self, id v, int *row, int *col) {
+    cx_tv_engine_t *e = cx_tv_engine_get(self, 0);
+    *row = -1; *col = -1;
+    for (int i = 0; v && v != self && i < 64; i++, v = vs(v)->superview)
+        if (cx_tv_engine_placed_find(e, v, row, col) >= 0) return 1;
+    return 0;
+}
+static i64 tv_row_for_view(id self, SEL c, id v) { (void)c; int r, k; return tv_cell_pos(self, v, &r, &k) ? r : -1; }
+static i64 tv_col_for_view(id self, SEL c, id v) { (void)c; int r, k; return tv_cell_pos(self, v, &r, &k) ? k : -1; }
+static id tv_view_at(id self, SEL c, i64 col, i64 row, BOOL make) {
+    (void)c;
+    vstate_t *s = vs(self);
+    if (row < 0 || row >= tv_rows(self)) return 0;
+    if (make) tv_layout_views(self);
+    id v = cx_tv_engine_placed_view(cx_tv_engine_get(self, 0), (int)row, (int)col);
+    if (!v) v = cx_tv_engine_placed_view(cx_tv_engine_get(self, 0), (int)row, -1);
+    if (!v && make && s->delegate && cx_responds(s->delegate->isa, sel_registerName("tableView:viewForTableColumn:row:"))) {
+        nsarr_t *cols = (nsarr_t *)s->cols;
+        id cl = cols && col >= 0 && (u64)col < cols->n ? cols->items[col] : 0;
+        v = MSG(id, s->delegate, "tableView:viewForTableColumn:row:", self, cl, row);   /* linha fora da área visível */
+    }
+    return v;
+}
+static i64 tv_num_cols(id self, SEL c) { (void)c; nsarr_t *cols = (nsarr_t *)vs(self)->cols; return cols ? (i64)cols->n : 0; }
+static i64 tv_col_with_ident(id self, SEL c, id ident) {
+    (void)c;
+    nsarr_t *cols = (nsarr_t *)vs(self)->cols;
+    for (u64 k = 0; cols && ident && k < cols->n; k++) {
+        id ci = cs_(cols->items[k])->ident;
+        if (ci == ident || (ci && MSG(BOOL, ci, "isEqual:", ident))) return (i64)k;
+    }
+    return -1;
+}
+static id tv_col_named(id self, SEL c, id ident) {
+    i64 k = tv_col_with_ident(self, c, ident);
+    return k >= 0 ? ((nsarr_t *)vs(self)->cols)->items[k] : 0;
+}
+static id tv_sel_indexes(id self, SEL c) {
+    (void)c;
+    cx_class_t *k = cx_class_named("NSMutableIndexSet");
+    id set = k ? MSG0(id, (id)k, "indexSet") : 0;
+    if (set && vs(self)->selected >= 0) MSG(void, set, "addIndex:", (u64)vs(self)->selected);
+    return set;
+}
+static void tv_remove_col(id self, SEL c, id col) {
+    (void)c;
+    vstate_t *s = vs(self);
+    if (col && s->cols) MSG(void, s->cols, "removeObject:", col);
+    s->tv_dirty = 1;
+    mark(self);
+}
+static void tv_note_rows(id self, SEL c) { tv_reload(self, c); }
+static void tv_reload_rows(id self, SEL c, id rows, id cols) { (void)rows; (void)cols; tv_reload(self, c); }
+/* editColumn:row:withEvent:select: — o campo de texto da célula vira o primeiro respondedor */
+static void tv_edit(id self, SEL c, i64 col, i64 row, id ev, BOOL sel) {
+    (void)ev; (void)sel;
+    id v = tv_view_at(self, c, col, row, YES);
+    if (!v) return;
+    id tf = cx_responds(v->isa, sel_registerName("textField")) ? MSG0(id, v, "textField") : v;
+    id w = vs(self)->window;
+    if (tf && w) MSG(void, w, "makeFirstResponder:", tf);
 }
 /* NSTableCellView: guarda textField/imageView */
 static void tcv_set_tf(id self, SEL c, id tf) { (void)c; vstate_t *s = vs(self); keep(&s->text_field, tf); if (tf) v_add_sub(self, c, tf); }
@@ -4921,6 +5044,12 @@ void cx_appkit_init(void) {
     M(NSTableView, "selectRowIndexes:byExtendingSelection:", tv_select); M(NSTableView, "deselectAll:", tv_deselect_all);
     M(NSTableView, "mouseDown:", tv_mouse_down); M(NSTableView, "setStyle:", noop1_m); M(NSTableView, "setGridStyleMask:", noop1_m);
     M(NSTableView, "setAllowsMultipleSelection:", noop1_m); M(NSTableView, "sizeLastColumnToFit", noop_m);
+    M(NSTableView, "rowForView:", tv_row_for_view); M(NSTableView, "columnForView:", tv_col_for_view);
+    M(NSTableView, "viewAtColumn:row:makeIfNecessary:", tv_view_at); M(NSTableView, "numberOfColumns", tv_num_cols);
+    M(NSTableView, "columnWithIdentifier:", tv_col_with_ident); M(NSTableView, "tableColumnWithIdentifier:", tv_col_named);
+    M(NSTableView, "selectedRowIndexes", tv_sel_indexes); M(NSTableView, "removeTableColumn:", tv_remove_col);
+    M(NSTableView, "noteNumberOfRowsChanged", tv_note_rows); M(NSTableView, "reloadDataForRowIndexes:columnIndexes:", tv_reload_rows);
+    M(NSTableView, "editColumn:row:withEvent:select:", tv_edit);
     DEF(NSTableColumn, NSObject);
     M(NSTableColumn, "initWithIdentifier:", col_init); M(NSTableColumn, "identifier", col_ident); M(NSTableColumn, "setTitle:", col_set_title);
     M(NSTableColumn, "title", col_title); M(NSTableColumn, "setWidth:", col_set_width); M(NSTableColumn, "width", col_width);

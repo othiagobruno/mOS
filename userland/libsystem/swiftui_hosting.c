@@ -57,3 +57,41 @@ void $s7SwiftUI13NSHostingViewC04rootD0xvsTj(void *root) {
     if (!h) return;
     h->root = root;
 }
+
+/* UIHostingController (o WhatsApp é Catalyst): guarda o rootView e monta um
+ * NSHostingView com ele, que é a view do controller. */
+typedef struct {
+    const void *isa;
+    void *root;
+    mos_hv *view;
+    void *coder;
+} mos_hc;
+
+mos_hv_desc $s7SwiftUI19UIHostingControllerCMn = { 16, "UIHostingController" };
+
+static mos_hc *mos_hc_new(void *root, void *coder) {
+    mos_hc *c = (mos_hc *)calloc(1, sizeof *c);
+    if (!c) return 0;
+    c->isa = &$s7SwiftUI19UIHostingControllerCMn;
+    c->root = root;
+    c->coder = coder;
+    c->view = (mos_hv *)$s7SwiftUI13NSHostingViewC04rootD0ACyxGx_tcfc(root, 0);
+    return c;
+}
+
+void *$s7SwiftUI19UIHostingControllerC8rootViewACyxGx_tcfc(void *root, void *metadata) {
+    (void)metadata;
+    return mos_hc_new(root, 0);
+}
+
+void *$s7SwiftUI19UIHostingControllerC8rootViewACyxGx_tcfC(void *root, void *metadata) {
+    return $s7SwiftUI19UIHostingControllerC8rootViewACyxGx_tcfc(root, metadata);
+}
+
+/* init?(coder:rootView:): com o rootView dado o controller sempre nasce. */
+void *$s7SwiftUI19UIHostingControllerC5coder8rootViewACyxGSgSo7NSCoderC_xtcfc(void *coder, void *root) {
+    return mos_hc_new(root, coder);
+}
+
+void *$s7SwiftUI19UIHostingControllerC8rootViewACyxGx_tcfCTq = (void *)$s7SwiftUI19UIHostingControllerC8rootViewACyxGx_tcfC;
+void *$s7SwiftUI19UIHostingControllerC5coder8rootViewACyxGSgSo7NSCoderC_xtcfCTq = (void *)$s7SwiftUI19UIHostingControllerC5coder8rootViewACyxGSgSo7NSCoderC_xtcfc;

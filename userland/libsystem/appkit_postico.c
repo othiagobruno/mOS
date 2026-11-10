@@ -2,10 +2,11 @@
  * mOS libSystem — classes do AppKit que o Postico 2 usa e o libSystem ainda não tinha (docs/swift-objc-runtime.md, fase 7):
  * as que o binário referencia (OBJC_CLASS_$_...) e as que os nibs dele instanciam pelo nome. Sem a classe, uma subclasse
  * Swift do app (FavoritesOutlineView: NSOutlineView, PCOToolbarItem: NSToolbarItem...) ficava pendurada no NSObject.
- *  - NSToolbarItem: identificador, rótulos, imagem, view, alvo/ação. A NSToolbar desenha os itens e
- *    encaminha o clique para target/action (appkit_table.c: cx_tb_layout / cx_tb_click).
- *  - NSSplitView: dispõe as subviews lado a lado (ou empilhadas). A divisória arrasta com o mouse, presa
- *    aos limites e ao delegate (cx_sv_drag).
+ *  - NSToolbarItem: identificador, rótulos, imagem, view, alvo/ação, minSize/maxSize. A NSToolbar pega os itens
+ *    padrão do delegate, desenha numa view hospedeira (_MOSToolbarView) que o appkit.c põe no topo da janela, com
+ *    as views dos itens como subviews, e encaminha o clique para target/action (appkit_table.c: cx_tb_layout / cx_tb_click).
+ *  - NSSplitView: dispõe as subviews pela holdingPriority, arrasta a divisória presa aos limites do delegate,
+ *    colapsa (canCollapseSubview:, duplo clique) e desenha as divisórias (appkit_table.c: cx_sv_*).
  *  - NSOutlineView: NSTableView com um adaptador próprio como fonte de dados e delegate da tabela: achata a árvore
  *    (itens expandidos) em linhas e traduz numberOfRows/objectValue/viewFor... e a seleção para a API de outline.
  *    A indentação, o triângulo e o scroll das views ficam na NSTableView (appkit.c).
@@ -26,6 +27,8 @@ void objc_release(id o);
 id objc_autorelease(id o);
 
 typedef struct { double x, y, w, h; } pr_rect_t;
+void objc_msgSend_stret(void);   /* NSRect (32 bytes) volta por ponteiro oculto: MSG0 leria o isa do buffer */
+#define MSGR(T, obj, sel) ((T (*)(id, SEL))objc_msgSend_stret)((id)(obj), sel_registerName(sel))
 typedef struct { double x, y; } pr_pt;
 typedef struct { double w, h; } pr_size_t;
 
@@ -35,7 +38,7 @@ K(NSTextFieldCell) K(NSSecureTextFieldCell) K(NSSearchFieldCell) K(NSTokenFieldC
 K(NSSearchField) K(NSTokenField) K(NSTabView) K(NSTabViewItem) K(NSTabViewController) K(NSPageController)
 K(NSGridView) K(NSGridCell) K(NSGridRow) K(NSGridColumn) K(NSDocument) K(NSGradient) K(NSColorPanel) K(NSRulerView)
 K(NSRulerMarker) K(NSTextTable) K(NSTextTableBlock) K(NSTextAttachmentCell) K(NSDraggingImageComponent)
-K(NSFilePromiseProvider) K(NSFilePromiseReceiver) K(_MOSOutlineAdapter)
+K(NSFilePromiseProvider) K(NSFilePromiseReceiver) K(_MOSOutlineAdapter) K(_MOSToolbarView)
 
 void objc_setAssociatedObject(id obj, const void *key, id value, u64 policy);
 id objc_getAssociatedObject(id obj, const void *key);
@@ -112,70 +115,21 @@ static id tbi_init(id self, SEL c, id ident) {
 }
 static SEL tbi_action(id self, SEL c) { (void)c; id v = pget(self, "action"); return v ? (SEL)MSG0(void *, v, "pointerValue") : 0; }
 static void tbi_set_action(id self, SEL c, SEL a) { (void)c; pset(self, "action", MSG(id, (id)cl("NSValue"), "valueWithPointer:", (void *)a)); }
-static pr_size_t tbi_min(id s, SEL c) { (void)s; (void)c; pr_size_t z = {32, 28}; return z; }
-static void tbi_set_size(id s, SEL c, pr_size_t z) { (void)s; (void)c; (void)z; }
 static id tbi_toolbar(id s, SEL c) { (void)c; return pget(s, "toolbar"); }
 
-/* ================================================================ NSSplitView */
+/* ================================================================ NSSplitView
+ * Tamanhos ao longo do eixo (largura se vertical). A conta (holdingPriority, posição, colapso) está em
+ * appkit_table.c e tem teste de host; aqui só ler/gravar frames e perguntar ao delegate. Colapsada = oculta e 0. */
+#define SV_MAX 32
+void NSRectFill(pr_rect_t r);
 static id sv_subviews(id self) { return MSG0(id, self, "subviews"); }
-static void sv_adjust(id self, SEL c) {
-    (void)c;
-    id subs = sv_subviews(self);
-    u64 n = subs ? MSG0(u64, subs, "count") : 0;
-    if (!n) return;
-    pr_rect_t b = MSG0(pr_rect_t, self, "bounds");
-    BOOL vert = pget_i(self, "vertical", 1) != 0;
-    double div = 1, total = vert ? b.w : b.h, used = 0;
-    double *sz = calloc(n, sizeof *sz);
-    for (u64 i = 0; i < n; i++) {
-        id v = MSG(id, subs, "objectAtIndex:", i);
-        pr_rect_t f = MSG0(pr_rect_t, v, "frame");
-        sz[i] = vert ? f.w : f.h;
-        if (i + 1 < n) used += sz[i] + div;
-    }
-    if (used > total - 40 && n > 1) {                 /* não cabe: divide igualmente */
-        for (u64 i = 0; i < n; i++) sz[i] = (total - div * (double)(n - 1)) / (double)n;
-        used = total - sz[n - 1];
-    }
-    sz[n - 1] = total - used;
-    if (sz[n - 1] < 0) sz[n - 1] = 0;
-    double pos = 0;
-    for (u64 i = 0; i < n; i++) {
-        id v = MSG(id, subs, "objectAtIndex:", i);
-        pr_rect_t f = vert ? (pr_rect_t){pos, 0, sz[i], b.h} : (pr_rect_t){0, pos, b.w, sz[i]};
-        MSG(void, v, "setFrame:", f);
-        pos += sz[i] + div;
-    }
-    free(sz);
+static BOOL sv_is_vert(id self) { return pget_i(self, "vertical", 1) != 0; }
+static double sv_div(id self, SEL c) { (void)c; return cx_sv_thickness((int)pget_i(self, "dividerStyle", 2)); }
+static id sv_dl(id self, const char *sel) { id d = pget(self, "delegate"); return d && cx_responds(d->isa, sel_registerName(sel)) ? d : 0; }
+static void sv_note(id self, const char *sel, const char *name) {
+    id d = sv_dl(self, sel);
+    if (d) ((void (*)(id, SEL, id))objc_msgSend)(d, sel_registerName(sel), objc_autorelease(cx_note(cx_str(name), self, 0)));
 }
-static void sv_set_frame_size(id self, SEL c, pr_size_t z) { SUPER("NSView", void, self, "setFrameSize:", z); (void)c; sv_adjust(self, 0); }
-static void sv_set_frame(id self, SEL c, pr_rect_t f) { SUPER("NSView", void, self, "setFrame:", f); (void)c; sv_adjust(self, 0); }
-static void sv_layout(id self, SEL c) { (void)c; sv_adjust(self, 0); }
-static BOOL sv_vertical(id self, SEL c) { (void)c; return pget_i(self, "vertical", 1) != 0; }
-static void sv_set_vertical(id self, SEL c, BOOL v) { (void)c; pset(self, "vertical", cx_num_i(v)); sv_adjust(self, 0); }
-static double sv_div(id s, SEL c) { (void)s; (void)c; return 1; }
-static id sv_arranged(id self, SEL c) { (void)c; return sv_subviews(self); }
-static void sv_add_arranged(id self, SEL c, id v) { (void)c; MSG(void, self, "addSubview:", v); sv_adjust(self, 0); }
-static void sv_insert_arranged(id self, SEL c, id v, i64 i) { (void)c; (void)i; MSG(void, self, "addSubview:", v); sv_adjust(self, 0); }
-static void sv_remove_arranged(id self, SEL c, id v) { (void)c; (void)self; MSG0(void, v, "removeFromSuperview"); }
-static void sv_set_pos(id self, SEL c, double p, i64 idx) {
-    (void)c;
-    id subs = sv_subviews(self);
-    if (!subs || idx < 0 || (u64)idx + 1 >= MSG0(u64, subs, "count")) return;
-    BOOL vert = pget_i(self, "vertical", 1) != 0;
-    double start = 0;
-    for (i64 i = 0; i < idx; i++) { pr_rect_t f = MSG0(pr_rect_t, MSG(id, subs, "objectAtIndex:", (u64)i), "frame"); start += (vert ? f.w : f.h) + 1; }
-    id v = MSG(id, subs, "objectAtIndex:", (u64)idx);
-    pr_rect_t f = MSG0(pr_rect_t, v, "frame");
-    if (vert) f.w = p - start; else f.h = p - start;
-    if (f.w < 0) f.w = 0;
-    if (f.h < 0) f.h = 0;
-    MSG(void, v, "setFrame:", f);
-    sv_adjust(self, 0);
-}
-static double sv_min_pos(id s, SEL c, i64 i) { (void)s; (void)c; (void)i; return 0; }
-static double sv_max_pos(id self, SEL c, i64 i) { (void)c; (void)i; pr_rect_t b = MSG0(pr_rect_t, self, "bounds"); return pget_i(self, "vertical", 1) ? b.w : b.h; }
-static BOOL sv_collapsed(id s, SEL c, id v) { (void)s; (void)c; return MSG0(BOOL, v, "isHidden"); }
 static float sv_holding(id s, SEL c, i64 i) {
     (void)c;
     char k[32];
@@ -189,90 +143,283 @@ static void sv_set_holding(id s, SEL c, float p, i64 i) {
     snprintf(k, sizeof k, "hold%lld", (long long)i);
     pset(s, k, cx_num_d(p));
 }
-static int sv_divider_at(id self, double mouse, double *out_pos) {
+static int sv_collect(id self, double *sz, float *hold, int *col) {
+    id subs = sv_subviews(self);
+    int n = subs ? (int)MSG0(u64, subs, "count") : 0;
+    BOOL vert = sv_is_vert(self);
+    id d = sv_dl(self, "splitView:shouldAdjustSizeOfSubview:");
+    if (n > SV_MAX) n = SV_MAX;
+    for (int i = 0; i < n; i++) {
+        id v = MSG(id, subs, "objectAtIndex:", (u64)i);
+        pr_rect_t f = MSGR(pr_rect_t, v, "frame");
+        col[i] = MSG0(BOOL, v, "isHidden") ? 1 : 0;
+        sz[i] = col[i] ? 0 : (vert ? f.w : f.h);
+        hold[i] = sv_holding(self, 0, i);
+        /* o delegate pediu para não mexer: só se não houver outra */
+        if (d && !MSG(BOOL, d, "splitView:shouldAdjustSizeOfSubview:", self, v)) hold[i] += 10000;
+    }
+    return n;
+}
+static void sv_apply(id self, const double *sz, const int *col, int n) {
+    id subs = sv_subviews(self);
+    pr_rect_t b = MSGR(pr_rect_t, self, "bounds");
+    BOOL vert = sv_is_vert(self);
+    double div = sv_div(self, 0), pos = 0;
+    for (int i = 0; i < n; i++) {
+        id v = MSG(id, subs, "objectAtIndex:", (u64)i);
+        double w = col[i] ? 0 : sz[i];
+        pr_rect_t f = vert ? (pr_rect_t){pos, 0, w, b.h} : (pr_rect_t){0, pos, b.w, w};
+        if (MSG0(BOOL, v, "isHidden") != (col[i] != 0)) MSG(void, v, "setHidden:", (BOOL)(col[i] != 0));
+        MSG(void, v, "setFrame:", f);
+        pos += w + div;
+    }
+    MSG(void, self, "setNeedsDisplay:", (BOOL)1);
+}
+static void sv_adjust(id self, SEL c) {
+    (void)c;
+    double sz[SV_MAX];
+    float hold[SV_MAX];
+    int col[SV_MAX];
+    int n = sv_collect(self, sz, hold, col);
+    if (!n) return;
+    pr_rect_t b = MSGR(pr_rect_t, self, "bounds");
+    double total = sv_is_vert(self) ? b.w : b.h, div = sv_div(self, 0), avail = total - div * (n - 1), cur = 0;
+    int open = 0;
+    for (int i = 0; i < n; i++) { cur += sz[i]; open += !col[i]; }
+    /* frames do nib sem sentido (todas com 0, ou cada uma do tamanho inteiro): divide igualmente */
+    if (open && (cur <= 0 || cur > avail * 1.5 + 1))
+        for (int i = 0; i < n; i++) sz[i] = col[i] ? 0 : (avail > 0 ? avail : 0) / open;
+    sv_note(self, "splitViewWillResizeSubviews:", "NSSplitViewWillResizeSubviewsNotification");
+    cx_sv_resize(sz, hold, col, n, total, div);
+    sv_apply(self, sz, col, n);
+    sv_note(self, "splitViewDidResizeSubviews:", "NSSplitViewDidResizeSubviewsNotification");
+}
+/* mudou o tamanho: o delegate que implementa splitView:resizeSubviewsWithOldSize: decide (e costuma chamar
+ * adjustSubviews); senão adjustSubviews */
+static void sv_resized(id self, pr_size_t old) {
+    id d = sv_dl(self, "splitView:resizeSubviewsWithOldSize:");
+    if (d) MSG(void, d, "splitView:resizeSubviewsWithOldSize:", self, old);
+    else sv_adjust(self, 0);
+}
+static void sv_set_frame_size(id self, SEL c, pr_size_t z) {
+    (void)c;
+    pr_rect_t o = MSGR(pr_rect_t, self, "frame");
+    SUPER("NSView", void, self, "setFrameSize:", z);
+    sv_resized(self, (pr_size_t){o.w, o.h});
+}
+static void sv_set_frame(id self, SEL c, pr_rect_t f) {
+    (void)c;
+    pr_rect_t o = MSGR(pr_rect_t, self, "frame");
+    SUPER("NSView", void, self, "setFrame:", f);
+    sv_resized(self, (pr_size_t){o.w, o.h});
+}
+static void sv_layout(id self, SEL c) { (void)c; sv_adjust(self, 0); }
+static BOOL sv_vertical(id self, SEL c) { (void)c; return sv_is_vert(self); }
+static void sv_set_vertical(id self, SEL c, BOOL v) { (void)c; pset(self, "vertical", cx_num_i(v)); sv_adjust(self, 0); }
+static BOOL sv_flipped(id s, SEL c) { (void)s; (void)c; return 1; }     /* como no Cocoa: a primeira view fica em cima */
+static id sv_arranged(id self, SEL c) { (void)c; return sv_subviews(self); }
+static void sv_add_arranged(id self, SEL c, id v) { (void)c; MSG(void, self, "addSubview:", v); sv_adjust(self, 0); }
+static void sv_insert_arranged(id self, SEL c, id v, i64 i) {
+    (void)c;
     id subs = sv_subviews(self);
     u64 n = subs ? MSG0(u64, subs, "count") : 0;
-    if (n < 2) return -1;
-    BOOL vert = pget_i(self, "vertical", 1) != 0;
-    double div = sv_div(self, 0), pos = 0;
-    for (u64 i = 0; i + 1 < n; i++) {
-        pr_rect_t f = MSG0(pr_rect_t, MSG(id, subs, "objectAtIndex:", i), "frame");
-        double sz = vert ? f.w : f.h;
-        if (cx_sv_divider_hit(mouse, pos + sz, div)) {
-            if (out_pos) *out_pos = pos + sz;
-            return (int)i;
-        }
-        pos += sz + div;
-    }
-    return -1;
+    if (i >= 0 && (u64)i < n && cx_responds(self->isa, sel_registerName("addSubview:positioned:relativeTo:"))) {
+        id rel = MSG(id, subs, "objectAtIndex:", (u64)i);
+        MSG(void, self, "addSubview:positioned:relativeTo:", v, (i64)-1, rel);   /* NSWindowBelow */
+    } else MSG(void, self, "addSubview:", v);
+    sv_adjust(self, 0);
+}
+static void sv_remove_arranged(id self, SEL c, id v) { (void)c; MSG0(void, v, "removeFromSuperview"); sv_adjust(self, 0); }
+/* pontas possíveis da divisória idx: lo = a view idx com 0, hi = a view idx+1 com 0 */
+static void sv_span(const double *sz, int idx, double div, double *lo, double *hi) {
+    double p = 0;
+    for (int i = 0; i < idx; i++) p += sz[i] + div;
+    *lo = p;
+    *hi = p + sz[idx] + sz[idx + 1];
 }
 static double sv_cb_min(void *ctx, int index, double proposed) {
-    id self = ctx, d = pget(self, "delegate");
-    SEL s = sel_registerName("splitView:constrainMinCoordinate:ofSubviewAt:");
-    if (d && cx_responds(d->isa, s)) return ((double (*)(id, SEL, id, double, i64))objc_msgSend)(d, s, self, proposed, (i64)index);
+    id self = ctx, d = sv_dl(self, "splitView:constrainMinCoordinate:ofSubviewAt:");
+    if (d) return ((double (*)(id, SEL, id, double, i64))objc_msgSend)(d, sel_registerName("splitView:constrainMinCoordinate:ofSubviewAt:"), self, proposed, (i64)index);
     return proposed;
 }
 static double sv_cb_max(void *ctx, int index, double proposed) {
-    id self = ctx, d = pget(self, "delegate");
-    SEL s = sel_registerName("splitView:constrainMaxCoordinate:ofSubviewAt:");
-    if (d && cx_responds(d->isa, s)) return ((double (*)(id, SEL, id, double, i64))objc_msgSend)(d, s, self, proposed, (i64)index);
+    id self = ctx, d = sv_dl(self, "splitView:constrainMaxCoordinate:ofSubviewAt:");
+    if (d) return ((double (*)(id, SEL, id, double, i64))objc_msgSend)(d, sel_registerName("splitView:constrainMaxCoordinate:ofSubviewAt:"), self, proposed, (i64)index);
     return proposed;
 }
 static double sv_cb_pos(void *ctx, int index, double proposed) {
-    id self = ctx, d = pget(self, "delegate");
-    SEL s = sel_registerName("splitView:constrainSplitPosition:ofSubviewAt:");
-    if (d && cx_responds(d->isa, s)) return ((double (*)(id, SEL, id, double, i64))objc_msgSend)(d, s, self, proposed, (i64)index);
+    id self = ctx, d = sv_dl(self, "splitView:constrainSplitPosition:ofSubviewAt:");
+    if (d) return ((double (*)(id, SEL, id, double, i64))objc_msgSend)(d, sel_registerName("splitView:constrainSplitPosition:ofSubviewAt:"), self, proposed, (i64)index);
     return proposed;
+}
+static void sv_set_pos(id self, SEL c, double p, i64 idx) {
+    (void)c;
+    double sz[SV_MAX];
+    float hold[SV_MAX];
+    int col[SV_MAX];
+    int n = sv_collect(self, sz, hold, col);
+    if (idx < 0 || idx + 1 >= n) return;
+    cx_sv_set_position(sz, n, (int)idx, p, sv_div(self, 0));
+    sv_apply(self, sz, col, n);
+    sv_note(self, "splitViewDidResizeSubviews:", "NSSplitViewDidResizeSubviewsNotification");
+}
+static double sv_min_pos(id self, SEL c, i64 i) {
+    (void)c;
+    double sz[SV_MAX], lo, hi;
+    float hold[SV_MAX];
+    int col[SV_MAX], n = sv_collect(self, sz, hold, col);
+    if (i < 0 || i + 1 >= n) return 0;
+    sv_span(sz, (int)i, sv_div(self, 0), &lo, &hi);
+    return sv_cb_min(self, (int)i, lo);
+}
+static double sv_max_pos(id self, SEL c, i64 i) {
+    (void)c;
+    double sz[SV_MAX], lo, hi;
+    float hold[SV_MAX];
+    int col[SV_MAX], n = sv_collect(self, sz, hold, col);
+    if (i < 0 || i + 1 >= n) return 0;
+    sv_span(sz, (int)i, sv_div(self, 0), &lo, &hi);
+    return sv_cb_max(self, (int)i, hi);
+}
+static BOOL sv_collapsed(id s, SEL c, id v) { (void)s; (void)c; return v && MSG0(BOOL, v, "isHidden"); }
+static BOOL sv_can_collapse(id self, id v) {
+    id d = sv_dl(self, "splitView:canCollapseSubview:");
+    return d && v && MSG(BOOL, d, "splitView:canCollapseSubview:", self, v);
+}
+static int sv_divider_at(id self, double mouse, double *out_pos) {
+    double sz[SV_MAX];
+    float hold[SV_MAX];
+    int col[SV_MAX], n = sv_collect(self, sz, hold, col);
+    double div = sv_div(self, 0), pos = 0;
+    for (int i = 0; i + 1 < n; i++) {
+        pos += sz[i];
+        if (cx_sv_divider_hit(mouse, pos, div)) {
+            if (out_pos) *out_pos = pos;
+            return i;
+        }
+        pos += div;
+    }
+    return -1;
 }
 static pr_pt sv_local_pt(id self, id e) {
     pr_pt p = MSG0(pr_pt, e, "locationInWindow");
     return ((pr_pt (*)(id, SEL, pr_pt, id))objc_msgSend)(self, sel_registerName("convertPoint:fromView:"), p, (id)0);
 }
 static id sv_hit_test(id self, SEL c, pr_pt p) {
-    pr_rect_t f = MSG0(pr_rect_t, self, "frame");
+    pr_rect_t f = MSGR(pr_rect_t, self, "frame");
     id sup = MSG0(id, self, "superview");
     int fs = sup && MSG0(BOOL, sup, "isFlipped");
     int fm = MSG0(BOOL, self, "isFlipped");
     pr_pt q = {p.x - f.x, p.y - f.y};
     if (fs != fm) q.y = f.h - q.y;
-    double mouse = pget_i(self, "vertical", 1) ? q.x : q.y;
-    if (sv_divider_at(self, mouse, 0) >= 0) return self;
+    if (q.x >= 0 && q.y >= 0 && q.x < f.w && q.y < f.h && sv_divider_at(self, sv_is_vert(self) ? q.x : q.y, 0) >= 0) return self;
     return ((id (*)(id, SEL, pr_pt))class_getMethodImplementation(cl("NSView"), c))(self, c, p);
+}
+/* colapsa (ou reabre) a view k: a vizinha do outro lado da divisória idx fica com o par inteiro */
+static void sv_collapse_view(id self, int idx, int k, int on) {
+    double sz[SV_MAX];
+    float hold[SV_MAX];
+    int col[SV_MAX], n = sv_collect(self, sz, hold, col);
+    if (idx < 0 || idx + 1 >= n || (k != idx && k != idx + 1)) return;
+    int other = k == idx ? idx + 1 : idx;
+    if (on) {
+        char key[32];
+        snprintf(key, sizeof key, "expanded%d", k);
+        pset(self, key, cx_num_d(sz[k]));                 /* para reabrir no mesmo tamanho */
+        sz[other] += sz[k];
+        sz[k] = 0;
+        col[k] = 1;
+    } else if (col[k]) {
+        char key[32];
+        snprintf(key, sizeof key, "expanded%d", k);
+        double want = pget_d(self, key, sz[other] / 3);
+        if (want > sz[other]) want = sz[other];
+        sz[k] = want;
+        sz[other] -= want;
+        col[k] = 0;
+    }
+    sv_apply(self, sz, col, n);
+    sv_note(self, "splitViewDidResizeSubviews:", "NSSplitViewDidResizeSubviewsNotification");
 }
 static void sv_mouse_down(id self, SEL c, id e) {
     pr_pt q = sv_local_pt(self, e);
-    double mouse = pget_i(self, "vertical", 1) ? q.x : q.y;
+    double mouse = sv_is_vert(self) ? q.x : q.y;
     double dpos = 0;
     int idx = sv_divider_at(self, mouse, &dpos);
     if (idx < 0) {
         ((void (*)(id, SEL, id))class_getMethodImplementation(cl("NSView"), c))(self, c, e);
         return;
     }
+    if (MSG0(i64, e, "clickCount") >= 2) {           /* duplo clique: o delegate escolhe quem colapsa */
+        id d = sv_dl(self, "splitView:shouldCollapseSubview:forDoubleClickOnDividerAtIndex:");
+        id subs = sv_subviews(self);
+        for (int k = idx; d && k <= idx + 1; k++) {
+            id v = MSG(id, subs, "objectAtIndex:", (u64)k);
+            if (sv_can_collapse(self, v) && MSG(BOOL, d, "splitView:shouldCollapseSubview:forDoubleClickOnDividerAtIndex:", self, v, (i64)idx)) {
+                sv_collapse_view(self, idx, k, !MSG0(BOOL, v, "isHidden"));
+                return;
+            }
+        }
+    }
     pset(self, "dragIndex", cx_num_i(idx));
-    pset(self, "dragMouse", cx_num_d(mouse));
-    pset(self, "dragPos", cx_num_d(dpos));
+    pset(self, "dragMouse0", cx_num_d(mouse));
+    pset(self, "dragPos0", cx_num_d(dpos));
 }
 static void sv_mouse_drag(id self, SEL c, id e) {
     (void)c;
     id ix = pget(self, "dragIndex");
     if (!ix) return;
-    i64 idx = MSG0(i64, ix, "longLongValue");
+    int idx = (int)MSG0(i64, ix, "longLongValue");
+    double sz[SV_MAX], lo, hi;
+    float hold[SV_MAX];
+    int col[SV_MAX], n = sv_collect(self, sz, hold, col);
+    if (idx < 0 || idx + 1 >= n) return;
     pr_pt q = sv_local_pt(self, e);
-    double mouse = pget_i(self, "vertical", 1) ? q.x : q.y;
-    double last = pget_d(self, "dragMouse", mouse);
-    double cur = pget_d(self, "dragPos", 0);
-    pr_rect_t b = MSG0(pr_rect_t, self, "bounds");
-    double hi = pget_i(self, "vertical", 1) ? b.w : b.h;
+    double mouse = sv_is_vert(self) ? q.x : q.y;
+    double proposed = pget_d(self, "dragPos0", 0) + mouse - pget_d(self, "dragMouse0", mouse);
+    double div = sv_div(self, 0);
+    sv_span(sz, idx, div, &lo, &hi);
+    double mn = sv_cb_min(self, idx, lo), mx = sv_cb_max(self, idx, hi);
+    id subs = sv_subviews(self);
+    id va = MSG(id, subs, "objectAtIndex:", (u64)idx), vb = MSG(id, subs, "objectAtIndex:", (u64)(idx + 1));
+    int k = cx_sv_collapse(proposed, lo, hi, mn, mx, sv_can_collapse(self, va), sv_can_collapse(self, vb));
+    if (k) {
+        int v = k < 0 ? idx : idx + 1;
+        if (!col[v]) sv_collapse_view(self, idx, v, 1);
+        return;
+    }
+    col[idx] = col[idx + 1] = 0;                      /* arrastou de volta: reabre */
     cx_sv_lim lim = {sv_cb_min, sv_cb_max, sv_cb_pos};
-    double np = cx_sv_drag(cur, mouse - last, 0, hi, &lim, self, (int)idx);
-    sv_set_pos(self, 0, np, idx);
-    pset(self, "dragMouse", cx_num_d(mouse));
-    pset(self, "dragPos", cx_num_d(np));
+    double np = cx_sv_drag(proposed, 0, lo, hi, &lim, self, idx);
+    cx_sv_set_position(sz, n, idx, np, div);
+    sv_apply(self, sz, col, n);
+    sv_note(self, "splitViewDidResizeSubviews:", "NSSplitViewDidResizeSubviewsNotification");
 }
 static void sv_mouse_up(id self, SEL c, id e) {
     (void)e;
     (void)c;
     pset(self, "dragIndex", 0);
+}
+/* as divisórias: fina = linha cinza; grossa/pane = faixa clara com a linha no meio */
+static void sv_draw(id self, SEL c, pr_rect_t r) {
+    (void)c; (void)r;
+    double sz[SV_MAX];
+    float hold[SV_MAX];
+    int col[SV_MAX], n = sv_collect(self, sz, hold, col);
+    pr_rect_t b = MSGR(pr_rect_t, self, "bounds");
+    BOOL vert = sv_is_vert(self);
+    double div = sv_div(self, 0), pos = 0;
+    id line = MSG(id, (id)cl("NSColor"), "colorWithCalibratedWhite:alpha:", 0.80, 1.0);
+    id band = MSG(id, (id)cl("NSColor"), "colorWithCalibratedWhite:alpha:", 0.93, 1.0);
+    for (int i = 0; i + 1 < n; i++) {
+        pos += sz[i];
+        pr_rect_t d = vert ? (pr_rect_t){pos, 0, div, b.h} : (pr_rect_t){0, pos, b.w, div};
+        if (div > 1 && band) { MSG0(void, band, "setFill"); NSRectFill(d); }
+        if (line) MSG0(void, line, "setFill");
+        if (div > 1) d = vert ? (pr_rect_t){pos + div / 2 - 0.5, 0, 1, b.h} : (pr_rect_t){0, pos + div / 2 - 0.5, b.w, 1};
+        NSRectFill(d);
+        pos += div;
+    }
 }
 
 /* ================================================================ NSOutlineView
@@ -333,6 +480,18 @@ static id oa_view(id self, SEL c, id t, id col, i64 row) {
     if (!o || row < 0 || row >= o->n || !ol_resp(o->dl, "outlineView:viewForTableColumn:item:")) return 0;
     return MSG(id, o->dl, "outlineView:viewForTableColumn:item:", t, col, o->rows[row].item);
 }
+static BOOL oa_group(id self, SEL c, id t, i64 row) {
+    (void)self; (void)c;
+    ol_t *o = ol_of(t);
+    if (!o || row < 0 || row >= o->n || !ol_resp(o->dl, "outlineView:isGroupItem:")) return 0;
+    return MSG(BOOL, o->dl, "outlineView:isGroupItem:", t, o->rows[row].item);
+}
+static BOOL oa_should_select(id self, SEL c, id t, i64 row) {
+    (void)self; (void)c;
+    ol_t *o = ol_of(t);
+    if (!o || row < 0 || row >= o->n || !ol_resp(o->dl, "outlineView:shouldSelectItem:")) return 1;
+    return MSG(BOOL, o->dl, "outlineView:shouldSelectItem:", t, o->rows[row].item);
+}
 static void oa_sel_changed(id self, SEL c, id note) {
     (void)self; (void)c;
     id t = MSG0(id, note, "object");
@@ -365,24 +524,41 @@ static void ol_collapse_deep(ol_t *o, id item, int depth) {
     }
     MSG(void, o->expanded, "removeObject:", item);
 }
+/* aviso de expandir/recolher: ao delegate (outlineViewItemDidExpand: etc.) e à central, com o item em
+ * userInfo["NSObject"], como no Cocoa */
+static void ov_note(id self, ol_t *o, id item, const char *dsel, const char *name) {
+    id info = MSG0(id, (id)cl("NSMutableDictionary"), "dictionary");
+    if (info && item) MSG(void, info, "setObject:forKey:", item, cx_str("NSObject"));
+    id note = objc_autorelease(cx_note(cx_str(name), self, info));
+    if (o->dl && cx_responds(o->dl->isa, sel_registerName(dsel)))
+        ((void (*)(id, SEL, id))objc_msgSend)(o->dl, sel_registerName(dsel), note);
+    id nc = cl("NSNotificationCenter") ? MSG0(id, (id)cl("NSNotificationCenter"), "defaultCenter") : 0;
+    if (nc) MSG(void, nc, "postNotification:", note);
+}
 static void ov_expand(id self, SEL c, id item, BOOL children) {
     (void)c;
     ol_t *o = ol_make(self);
+    if (item && ol_resp(o->dl, "outlineView:shouldExpandItem:") && !MSG(BOOL, o->dl, "outlineView:shouldExpandItem:", self, item)) return;
+    if (item) ov_note(self, o, item, "outlineViewItemWillExpand:", "NSOutlineViewItemWillExpandNotification");
     if (children) ol_expand_deep(o, item, 0);
     else if (!item) {
         ol_rebuild(o);
         for (i64 i = 0; i < o->n; i++) if (!ol_is_expanded(o, o->rows[i].item)) MSG(void, o->expanded, "addObject:", o->rows[i].item);
     } else if (!ol_is_expanded(o, item)) MSG(void, o->expanded, "addObject:", item);
     ov_reload(self, 0);
+    if (item) ov_note(self, o, item, "outlineViewItemDidExpand:", "NSOutlineViewItemDidExpandNotification");
 }
 static void ov_expand1(id self, SEL c, id item) { ov_expand(self, c, item, 0); }
 static void ov_collapse(id self, SEL c, id item, BOOL children) {
     (void)c;
     ol_t *o = ol_make(self);
+    if (item && ol_resp(o->dl, "outlineView:shouldCollapseItem:") && !MSG(BOOL, o->dl, "outlineView:shouldCollapseItem:", self, item)) return;
+    if (item) ov_note(self, o, item, "outlineViewItemWillCollapse:", "NSOutlineViewItemWillCollapseNotification");
     if (!item) MSG0(void, o->expanded, "removeAllObjects");
     else if (children) ol_collapse_deep(o, item, 0);
     else MSG(void, o->expanded, "removeObject:", item);
     ov_reload(self, 0);
+    if (item) ov_note(self, o, item, "outlineViewItemDidCollapse:", "NSOutlineViewItemDidCollapseNotification");
 }
 static void ov_collapse1(id self, SEL c, id item) { ov_collapse(self, c, item, 0); }
 static BOOL ov_is_exp(id self, SEL c, id item) { (void)c; ol_t *o = ol_of(self); return o && ol_is_expanded(o, item); }
@@ -448,7 +624,7 @@ static void tab_show(id self, id item) {
     for (u64 i = n; i > 0; i--) MSG0(void, MSG(id, subs, "objectAtIndex:", i - 1), "removeFromSuperview");
     id v = item ? pget(item, "view") : 0;
     if (!v && item && pget(item, "viewController")) v = MSG0(id, pget(item, "viewController"), "view");
-    if (v) { MSG(void, v, "setFrame:", MSG0(pr_rect_t, self, "bounds")); MSG(void, self, "addSubview:", v); }
+    if (v) { MSG(void, v, "setFrame:", MSGR(pr_rect_t, self, "bounds")); MSG(void, self, "addSubview:", v); }
     pset(self, "selectedTabViewItem", item);
     id d = pget(self, "delegate");
     if (d && cx_responds(d->isa, sel_registerName("tabView:didSelectTabViewItem:"))) MSG(void, d, "tabView:didSelectTabViewItem:", self, item);
@@ -476,7 +652,7 @@ static void tab_set_frame_size(id self, SEL c, pr_size_t z) {
     SUPER("NSView", void, self, "setFrameSize:", z);
     id it = pget(self, "selectedTabViewItem");
     id v = it ? pget(it, "view") : 0;
-    if (v) MSG(void, v, "setFrame:", MSG0(pr_rect_t, self, "bounds"));
+    if (v) MSG(void, v, "setFrame:", MSGR(pr_rect_t, self, "bounds"));
 }
 /* NSTabViewController: a view é um NSTabView */
 static id tvc_tab_view(id self, SEL c) {
@@ -642,7 +818,7 @@ static void pc_show(id self) {
     if (!host || !v) return;
     id subs = MSG0(id, host, "subviews");
     for (u64 k = subs ? MSG0(u64, subs, "count") : 0; k > 0; k--) MSG0(void, MSG(id, subs, "objectAtIndex:", k - 1), "removeFromSuperview");
-    MSG(void, v, "setFrame:", MSG0(pr_rect_t, host, "bounds"));
+    MSG(void, v, "setFrame:", MSGR(pr_rect_t, host, "bounds"));
     MSG(void, host, "addSubview:", v);
     if (cx_responds(d->isa, sel_registerName("pageControllerDidEndLiveTransition:"))) MSG(void, d, "pageControllerDidEndLiveTransition:", self);
 }
@@ -657,8 +833,10 @@ static void pc_complete(id s, SEL c) { (void)s; (void)c; }
 static u64 gc_compositing(id s, SEL c) { (void)s; (void)c; return 2; }   /* NSCompositingOperationSourceOver */
 static void gc_set_compositing(id s, SEL c, u64 v) { (void)s; (void)c; (void)v; }
 
-/* ================================================================ NSToolbar: desenho e clique */
-void NSRectFill(pr_rect_t r);
+/* ================================================================ NSToolbar: desenho e clique
+ * A barra é a view hospedeira (_MOSToolbarView, filha de NSView): o appkit.c a desenha no topo da janela e manda
+ * para ela os eventos da faixa. Item com view (campo de busca, controle segmentado...) vira subview dela e recebe
+ * clique e teclado como qualquer view; os outros são desenhados aqui (imagem ou rótulo) e o clique vai ao target/action. */
 static BOOL tb_is_visible(id self, SEL c) {
     (void)c;
     id v = pget(self, "visible");
@@ -676,14 +854,15 @@ static int tb_fill_spec(id item, cx_tb_spec *sp) {
     else if (ident && !strcmp(ident, "NSToolbarSpaceItem")) sp->min_w = 12;
     else {
         pr_size_t z = MSG0(pr_size_t, item, "minSize");
-        sp->min_w = z.w > 1 ? z.w : 72;
+        sp->min_w = z.w > 1 ? z.w + 4 : 72;
     }
     sp->target = MSG0(id, item, "target");
     sp->action = (void *)((SEL (*)(id, SEL))objc_msgSend)(item, sel_registerName("action"));
     return 1;
 }
+static id tb_items_get(id self, SEL c);
 static int tb_specs(id self, cx_tb_spec *spec, id *items_out, int cap) {
-    id items = pget(self, "items");
+    id items = tb_items_get(self, 0);
     u64 n = items ? MSG0(u64, items, "count") : 0;
     if ((int)n > cap) n = (u64)cap;
     for (u64 i = 0; i < n; i++) {
@@ -698,9 +877,8 @@ static void tb_send(void *target, void *action, int index, void *ctx) {
     id item = items && index >= 0 ? items[index] : 0;
     if (target && action) ((void (*)(id, SEL, id))objc_msgSend)((id)target, (SEL)action, item ? item : (id)target);
 }
-static void tb_draw(id self, SEL c, pr_rect_t r) {
-    (void)c;
-    if (!tb_is_visible(self, 0) || r.w < 1 || r.h < 1) return;
+/* r: a faixa da barra no espaço de desenho atual (a view hospedeira é invertida: y de cima para baixo) */
+static void tb_paint(id self, pr_rect_t r) {
     cx_tb_spec spec[64];
     cx_tb_rect rects[64];
     id objs[64];
@@ -709,35 +887,110 @@ static void tb_draw(id self, SEL c, pr_rect_t r) {
     id bar = MSG(id, (id)cl("NSColor"), "colorWithCalibratedWhite:alpha:", 0.93, 1.0);
     if (bar) MSG0(void, bar, "setFill");
     NSRectFill(r);
+    id sep = MSG(id, (id)cl("NSColor"), "colorWithCalibratedWhite:alpha:", 0.80, 1.0);
+    if (sep) { MSG0(void, sep, "setFill"); NSRectFill((pr_rect_t){r.x, r.y + r.h - 1, r.w, 1}); }
     id chip = MSG(id, (id)cl("NSColor"), "colorWithCalibratedWhite:alpha:", 0.84, 1.0);
     for (int i = 0; i < n; i++) {
-        if (spec[i].flexible || rects[i].w < 8) continue;
+        if (spec[i].flexible || rects[i].w < 8 || MSG0(id, objs[i], "view")) continue;   /* a view se desenha */
         pr_rect_t fr = {r.x + rects[i].x + 2, r.y + 4, rects[i].w - 4, r.h - 8};
         if (fr.w < 1 || fr.h < 1) continue;
-        if (chip) MSG0(void, chip, "setFill");
-        NSRectFill(fr);
+        id img = MSG0(id, objs[i], "image");
+        if (img) {
+            double s = fr.h < 16 ? fr.h : 16;
+            pr_rect_t ir = {fr.x + (fr.w - s) / 2, fr.y + (fr.h - s) / 2, s, s};
+            MSG(void, img, "drawInRect:", ir);
+            continue;
+        }
+        if (MSG0(BOOL, objs[i], "isBordered") || spec[i].target) { if (chip) MSG0(void, chip, "setFill"); NSRectFill(fr); }
         id label = MSG0(id, objs[i], "label");
-        if (!label || !cx_is_str(label)) label = MSG0(id, objs[i], "title");
+        if (!label || !cx_is_str(label) || !cx_cstr(label)[0]) label = MSG0(id, objs[i], "title");
         if (label && cx_is_str(label)) {
             pr_pt pt = {fr.x + 6, fr.y + 4};
             ((void (*)(id, SEL, pr_pt, id))objc_msgSend)(label, sel_registerName("drawAtPoint:withAttributes:"), pt, (id)0);
         }
     }
 }
-static void tb_mouse(id self, SEL c, id e) {
+static void tb_draw(id self, SEL c, pr_rect_t r) {
     (void)c;
-    if (!tb_is_visible(self, 0) || !e) return;
-    id win = MSG0(id, e, "window");
-    pr_rect_t wf = win ? MSG0(pr_rect_t, win, "frame") : (pr_rect_t){0, 0, 0, 0};
-    pr_pt p = MSG0(pr_pt, e, "locationInWindow");
-    double local_y = p.y - (wf.h - 28);
-    if (local_y < 0 || local_y >= 28) return;
+    if (!tb_is_visible(self, 0) || r.w < 1 || r.h < 1) return;
+    tb_paint(self, r);
+}
+/* clique na faixa (x, y a partir do canto de cima, largura w) */
+static void tb_click_at(id self, double x, double y, double w) {
     cx_tb_spec spec[64];
     cx_tb_rect rects[64];
     id objs[64];
     int n = tb_specs(self, spec, objs, 64);
-    cx_tb_layout(spec, n, wf.w > 1 ? wf.w : 200, 28, rects);
-    cx_tb_click(spec, rects, n, p.x, local_y, tb_send, objs);
+    cx_tb_layout(spec, n, w > 1 ? w : 200, 28, rects);
+    cx_tb_click(spec, rects, n, x, y, tb_send, objs);
+}
+static void tb_mouse(id self, SEL c, id e) {
+    (void)c;
+    if (!tb_is_visible(self, 0) || !e) return;
+    id win = MSG0(id, e, "window");
+    pr_rect_t wf = win ? MSGR(pr_rect_t, win, "frame") : (pr_rect_t){0, 0, 0, 0};
+    pr_pt p = MSG0(pr_pt, e, "locationInWindow");
+    double local_y = p.y - (wf.h - 28);
+    if (local_y < 0 || local_y >= 28) return;
+    tb_click_at(self, p.x, local_y, wf.w);
+}
+/* ---- view hospedeira */
+static char tbh_toolbar_key;
+static BOOL tbh_flipped(id s, SEL c) { (void)s; (void)c; return 1; }
+static void tbh_draw(id self, SEL c, pr_rect_t r) {
+    (void)c; (void)r;
+    id tb = objc_getAssociatedObject(self, &tbh_toolbar_key);
+    if (tb) tb_paint(tb, MSGR(pr_rect_t, self, "bounds"));
+}
+static void tbh_mouse(id self, SEL c, id e) {
+    (void)c;
+    id tb = objc_getAssociatedObject(self, &tbh_toolbar_key);
+    if (!tb || !e) return;
+    pr_pt p = ((pr_pt (*)(id, SEL, pr_pt, id))objc_msgSend)(self, sel_registerName("convertPoint:fromView:"), MSG0(pr_pt, e, "locationInWindow"), (id)0);
+    tb_click_at(tb, p.x, p.y, MSGR(pr_rect_t, self, "bounds").w);
+}
+/* -_mosHostViewWithWidth: (appkit.c): cria a view, põe as views dos itens nos retângulos do layout e tira as que
+ * saíram da barra */
+static id tb_host(id self, SEL c, double width) {
+    (void)c;
+    id host = pget(self, "hostView");
+    if (!host) {
+        host = MSG(id, MSG0(id, (id)cl("_MOSToolbarView"), "alloc"), "initWithFrame:", ((pr_rect_t){0, 0, width, 28}));
+        if (!host) return 0;
+        objc_setAssociatedObject(host, &tbh_toolbar_key, self, 0);      /* fraco: a toolbar retém a view */
+        pset(self, "hostView", host);
+        objc_release(host);
+    }
+    MSG(void, host, "setFrame:", ((pr_rect_t){0, 0, width, 28}));
+    cx_tb_spec spec[64];
+    cx_tb_rect rects[64];
+    id objs[64];
+    int n = tb_specs(self, spec, objs, 64);
+    cx_tb_layout(spec, n, width, 28, rects);
+    id subs = MSG0(id, host, "subviews");
+    for (u64 k = subs ? MSG0(u64, subs, "count") : 0; k > 0; k--) {
+        id sv = MSG(id, subs, "objectAtIndex:", k - 1);
+        int keep = 0;
+        for (int i = 0; i < n && !keep; i++) keep = MSG0(id, objs[i], "view") == sv;
+        if (!keep) MSG0(void, sv, "removeFromSuperview");
+    }
+    for (int i = 0; i < n; i++) {
+        id v = MSG0(id, objs[i], "view");
+        if (!v) continue;
+        pr_rect_t vf = MSGR(pr_rect_t, v, "frame");
+        double h = vf.h > 1 && vf.h < 24 ? vf.h : 22;
+        pr_rect_t f = {rects[i].x + 2, (28 - h) / 2, rects[i].w - 4 > 1 ? rects[i].w - 4 : 1, h};
+        if (MSG0(id, v, "superview") != host) MSG(void, host, "addSubview:", v);
+        MSG(void, v, "setFrame:", f);
+    }
+    return host;
+}
+static void tb_note_add(id self, id item) {
+    id d = pget(self, "delegate");
+    if (!d || !item || !cx_responds(d->isa, sel_registerName("toolbarWillAddItem:"))) return;
+    id info = MSG0(id, (id)cl("NSMutableDictionary"), "dictionary");
+    if (info) MSG(void, info, "setObject:forKey:", item, cx_str("item"));
+    MSG(void, d, "toolbarWillAddItem:", objc_autorelease(cx_note(cx_str("NSToolbarWillAddItemNotification"), self, info)));
 }
 static void tb_insert(id self, SEL c, id ident, i64 idx) {
     (void)c;
@@ -746,21 +999,71 @@ static void tb_insert(id self, SEL c, id ident, i64 idx) {
     if (d && cx_responds(d->isa, sel_registerName("toolbar:itemForItemIdentifier:willBeInsertedIntoToolbar:")))
         item = MSG(id, d, "toolbar:itemForItemIdentifier:willBeInsertedIntoToolbar:", self, ident, YES);
     if (!item) item = objc_autorelease(MSG(id, MSG0(id, (id)cl("NSToolbarItem"), "alloc"), "initWithItemIdentifier:", ident));
-    if (item) pset(item, "toolbar", self);
+    if (!item) return;
+    pset(item, "toolbar", self);
     id items = pget(self, "items");
     if (!items) {
         items = MSG0(id, (id)cl("NSMutableArray"), "array");
         pset(self, "items", items);
     }
-    u64 n = items ? MSG0(u64, items, "count") : 0;
     if (!items) return;
+    tb_note_add(self, item);
+    u64 n = MSG0(u64, items, "count");
     if (idx < 0 || (u64)idx >= n) MSG(void, items, "addObject:", item);
     else MSG(void, items, "insertObject:atIndex:", item, (u64)idx);
 }
-static id tb_items_get(id self, SEL c) { (void)c; return pget(self, "items"); }
+/* sem itens ainda: os padrões do delegate (toolbarDefaultItemIdentifiers:), como o Cocoa faz ao mostrar a barra */
+static id tb_items_get(id self, SEL c) {
+    (void)c;
+    id items = pget(self, "items");
+    if (items || pget(self, "loadedDefaults")) return items;
+    pset(self, "loadedDefaults", cx_num_i(1));
+    id d = pget(self, "delegate");
+    if (!d || !cx_responds(d->isa, sel_registerName("toolbarDefaultItemIdentifiers:"))) return 0;
+    id ids = MSG(id, d, "toolbarDefaultItemIdentifiers:", self);
+    u64 n = ids ? MSG0(u64, ids, "count") : 0;
+    for (u64 i = 0; i < n && i < 64; i++) tb_insert(self, 0, MSG(id, ids, "objectAtIndex:", i), -1);
+    return pget(self, "items");
+}
 static void tb_items_set(id self, SEL c, id a) { (void)c; pset(self, "items", a); }
+static void tb_remove_at(id self, SEL c, i64 idx) {
+    (void)c;
+    id items = pget(self, "items");
+    if (!items || idx < 0 || (u64)idx >= MSG0(u64, items, "count")) return;
+    id it = MSG(id, items, "objectAtIndex:", (u64)idx);
+    id d = pget(self, "delegate");
+    if (d && cx_responds(d->isa, sel_registerName("toolbarDidRemoveItem:"))) {
+        id info = MSG0(id, (id)cl("NSMutableDictionary"), "dictionary");
+        if (info) MSG(void, info, "setObject:forKey:", it, cx_str("item"));
+        MSG(void, d, "toolbarDidRemoveItem:", objc_autorelease(cx_note(cx_str("NSToolbarDidRemoveItemNotification"), self, info)));
+    }
+    MSG(void, items, "removeObjectAtIndex:", (u64)idx);
+}
 static id tb_centered(id self, SEL c) { (void)c; return pget(self, "centeredItemIdentifiers"); }
 static void tb_set_centered(id self, SEL c, id a) { (void)c; pset(self, "centeredItemIdentifiers", a); }
+OBJP(selectedItemIdentifier, setSelectedItemIdentifier)
+INTP(displayMode, setDisplayMode, 0) INTP(sizeMode, setSizeMode, 0) INTP(allowsUserCustomization, setAllowsUserCustomization, 0)
+INTP(autosavesConfiguration, setAutosavesConfiguration, 0) INTP(showsBaselineSeparator, setShowsBaselineSeparator, 1)
+INTP(controlSize, setControlSize, 0)   /* NSControlSizeRegular */
+/* NSToolbarItem: minSize/maxSize guardados; sem valor, o tamanho da view ou do rótulo */
+static pr_size_t tbi_min(id s, SEL c) {
+    (void)c;
+    id w = pget(s, "minW");
+    if (w) return (pr_size_t){MSG0(double, w, "doubleValue"), pget_d(s, "minH", 28)};
+    id v = pget(s, "view");
+    if (v) { pr_rect_t f = MSGR(pr_rect_t, v, "frame"); if (f.w > 1) return (pr_size_t){f.w, f.h}; }
+    if (pget(s, "image")) return (pr_size_t){32, 28};
+    id l = pget(s, "label");
+    size_t n = l && cx_is_str(l) ? strlen(cx_cstr(l)) : 0;
+    return (pr_size_t){n ? 7.0 * (double)n + 16 : 32, 28};
+}
+static pr_size_t tbi_max(id s, SEL c) {
+    id w = pget(s, "maxW");
+    if (w) return (pr_size_t){MSG0(double, w, "doubleValue"), pget_d(s, "maxH", 28)};
+    return tbi_min(s, c);
+}
+static void tbi_set_min(id s, SEL c, pr_size_t z) { (void)c; pset(s, "minW", cx_num_d(z.w)); pset(s, "minH", cx_num_d(z.h)); }
+static void tbi_set_max(id s, SEL c, pr_size_t z) { (void)c; pset(s, "maxW", cx_num_d(z.w)); pset(s, "maxH", cx_num_d(z.h)); }
 static char win_tb_key;
 static id win_toolbar(id self, SEL c) { (void)c; return objc_getAssociatedObject(self, &win_tb_key); }
 static void win_set_toolbar(id self, SEL c, id tb) { (void)c; objc_setAssociatedObject(self, &win_tb_key, tb, 1); }
@@ -770,6 +1073,7 @@ void cx_appkit_postico_init(void) {
     { cx_class_t *k = cl("NSGraphicsContext"); if (k) { cx_add_method(k, "compositingOperation", (void *)gc_compositing); cx_add_method(k, "setCompositingOperation:", (void *)gc_set_compositing); } }
     { cx_class_t *v = cl("NSView"); if (v) { if (!cx_responds(v, sel_registerName("enclosingScrollView"))) cx_add_method(v, "enclosingScrollView", (void *)v_enclosing_scroll); if (!cx_responds(v, sel_registerName("menu"))) { cx_add_method(v, "menu", (void *)v_menu); cx_add_method(v, "setMenu:", (void *)v_set_menu); } } }
     { cx_class_t *k = cl("NSTableCellView"); if (k && !cx_responds(k, sel_registerName("imageView"))) { cx_add_method(k, "imageView", (void *)tcv_image_view); cx_add_method(k, "setImageView:", (void *)tcv_set_image_view); } }
+    { cx_class_t *k = cl("NSTableCellView"); if (k && !cx_responds(k, sel_registerName("objectValue"))) { cx_add_method(k, "objectValue", (void *)g_objectValue); cx_add_method(k, "setObjectValue:", (void *)s_objectValue); } }
     { cx_class_t *k = cl("NSTableView"); if (k) cx_add_method(k, "setDraggingSourceOperationMask:forLocal:", (void *)tv_drag_mask); }
     { cx_class_t *k = cl("NSObject"); if (k && !cx_responds(k, sel_registerName("awakeFromNib"))) cx_add_method(k, "awakeFromNib", (void *)noop); }
     { cx_class_t *k = cl("NSToolbar"); if (k) {
@@ -778,7 +1082,17 @@ void cx_appkit_postico_init(void) {
         cx_add_method(k, "setItems:", (void *)tb_items_set); cx_add_method(k, "drawInRect:", (void *)tb_draw);
         cx_add_method(k, "mouseDown:", (void *)tb_mouse); cx_add_method(k, "insertItemWithItemIdentifier:atIndex:", (void *)tb_insert);
         cx_add_method(k, "centeredItemIdentifiers", (void *)tb_centered); cx_add_method(k, "setCenteredItemIdentifiers:", (void *)tb_set_centered);
+        cx_add_method(k, "_mosHostViewWithWidth:", (void *)tb_host); cx_add_method(k, "removeItemAtIndex:", (void *)tb_remove_at);
+        cx_add_method(k, "selectedItemIdentifier", (void *)g_selectedItemIdentifier); cx_add_method(k, "setSelectedItemIdentifier:", (void *)s_selectedItemIdentifier);
+        cx_add_method(k, "displayMode", (void *)g_displayMode); cx_add_method(k, "setDisplayMode:", (void *)s_displayMode);
+        cx_add_method(k, "sizeMode", (void *)g_sizeMode); cx_add_method(k, "setSizeMode:", (void *)s_sizeMode);
+        cx_add_method(k, "allowsUserCustomization", (void *)g_allowsUserCustomization); cx_add_method(k, "setAllowsUserCustomization:", (void *)s_allowsUserCustomization);
+        cx_add_method(k, "autosavesConfiguration", (void *)g_autosavesConfiguration); cx_add_method(k, "setAutosavesConfiguration:", (void *)s_autosavesConfiguration);
+        cx_add_method(k, "showsBaselineSeparator", (void *)g_showsBaselineSeparator); cx_add_method(k, "setShowsBaselineSeparator:", (void *)s_showsBaselineSeparator);
     } }
+    { cx_class_t *k = cl("NSControl"); if (k) { cx_add_method(k, "controlSize", (void *)g_controlSize); cx_add_method(k, "setControlSize:", (void *)s_controlSize); } }
+    DEF(_MOSToolbarView, "NSView");
+    IM(_MOSToolbarView, "isFlipped", tbh_flipped); IM(_MOSToolbarView, "drawRect:", tbh_draw); IM(_MOSToolbarView, "mouseDown:", tbh_mouse);
     { cx_class_t *k = cl("NSWindow"); if (k) { cx_add_method(k, "toolbar", (void *)win_toolbar); cx_add_method(k, "setToolbar:", (void *)win_set_toolbar); } }
     { cx_class_t *k = cl("NSColor"); if (k) { cx_add_cmethod(k, "colorNamed:", (void *)color_named); cx_add_cmethod(k, "colorNamed:bundle:", (void *)color_named_b); } }
     { cx_class_t *k = cl("NSButton"); if (k) cx_add_cmethod(k, "buttonWithImage:target:action:", (void *)bt_with_image); }
@@ -795,8 +1109,8 @@ void cx_appkit_postico_init(void) {
     IM(NSToolbarItem, "isEnabled", g_enabled); IM(NSToolbarItem, "setEnabled:", s_enabled); IM(NSToolbarItem, "isBordered", g_bordered);
     IM(NSToolbarItem, "isNavigational", g_navigational);
     IM(NSToolbarItem, "action", tbi_action); IM(NSToolbarItem, "setAction:", tbi_set_action);
-    IM(NSToolbarItem, "minSize", tbi_min); IM(NSToolbarItem, "maxSize", tbi_min);
-    IM(NSToolbarItem, "setMinSize:", tbi_set_size); IM(NSToolbarItem, "setMaxSize:", tbi_set_size);
+    IM(NSToolbarItem, "minSize", tbi_min); IM(NSToolbarItem, "maxSize", tbi_max);
+    IM(NSToolbarItem, "setMinSize:", tbi_set_min); IM(NSToolbarItem, "setMaxSize:", tbi_set_max);
     IM(NSToolbarItem, "toolbar", tbi_toolbar); IM(NSToolbarItem, "validate", noop);
 
     DEF(NSSplitView, "NSView");
@@ -808,6 +1122,7 @@ void cx_appkit_postico_init(void) {
     IM(NSSplitView, "minPossiblePositionOfDividerAtIndex:", sv_min_pos); IM(NSSplitView, "maxPossiblePositionOfDividerAtIndex:", sv_max_pos);
     IM(NSSplitView, "isSubviewCollapsed:", sv_collapsed); IM(NSSplitView, "holdingPriorityForSubviewAtIndex:", sv_holding);
     IM(NSSplitView, "setHoldingPriority:forSubviewAtIndex:", sv_set_holding);
+    IM(NSSplitView, "isFlipped", sv_flipped); IM(NSSplitView, "drawRect:", sv_draw);
     IM(NSSplitView, "hitTest:", sv_hit_test); IM(NSSplitView, "mouseDown:", sv_mouse_down);
     IM(NSSplitView, "mouseDragged:", sv_mouse_drag); IM(NSSplitView, "mouseUp:", sv_mouse_up);
     REG(NSSplitView, dividerStyle, setDividerStyle); REG(NSSplitView, arrangesAllSubviews, setArrangesAllSubviews);
@@ -819,6 +1134,7 @@ void cx_appkit_postico_init(void) {
     IM(_MOSOutlineAdapter, "tableView:objectValueForTableColumn:row:", oa_value);
     IM(_MOSOutlineAdapter, "tableView:viewForTableColumn:row:", oa_view);
     IM(_MOSOutlineAdapter, "tableViewSelectionDidChange:", oa_sel_changed);
+    IM(_MOSOutlineAdapter, "tableView:isGroupRow:", oa_group); IM(_MOSOutlineAdapter, "tableView:shouldSelectRow:", oa_should_select);
     DEF(NSOutlineView, "NSTableView");
     IM(NSOutlineView, "setDataSource:", ov_set_ds); IM(NSOutlineView, "dataSource", ov_ds);
     IM(NSOutlineView, "setDelegate:", ov_set_dl); IM(NSOutlineView, "delegate", ov_dl);
@@ -898,7 +1214,7 @@ void cx_appkit_postico_init(void) {
     DEF(NSRulerView, "NSView"); DEF(NSRulerMarker, "NSObject");
     { cx_class_t *tb = cl("NSTextBlock"); DEF(NSTextTable, tb ? "NSTextBlock" : "NSObject"); DEF(NSTextTableBlock, tb ? "NSTextBlock" : "NSObject"); }
     DEF(NSDraggingImageComponent, "NSObject"); DEF(NSFilePromiseProvider, "NSObject"); DEF(NSFilePromiseReceiver, "NSObject"); CM(NSFilePromiseReceiver, "readableDraggedTypes", fpr_types);
-    (void)ret_self; (void)ret_yes; (void)g_alphaValueP; (void)s_alphaValueP; (void)g_objectValue; (void)s_objectValue;
+    (void)ret_self; (void)ret_yes; (void)g_alphaValueP; (void)s_alphaValueP; 
     (void)g_state; (void)s_state; (void)g_arrangedSubviewsStore; (void)s_arrangedSubviewsStore; (void)g_viewController;
     (void)s_tabView;
 }

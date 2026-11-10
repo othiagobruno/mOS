@@ -49,16 +49,25 @@ sui_desc $s7SwiftUI6HStackVMn = { 7, "HStack" };
 sui_desc $s7SwiftUI6VStackVMn = { 8, "VStack" };
 sui_desc $s7SwiftUI6ZStackVMn = { 9, "ZStack" };
 sui_desc $s7SwiftUI13GeometryProxyVMn = { 10, "GeometryProxy" };
+sui_desc $s7SwiftUI14GeometryReaderVMn = { 11, "GeometryReader" };
+/* Layouts das stacks (13..15): o body não os trata como stack montada. */
+sui_desc $s7SwiftUI13_HStackLayoutVMn = { 13, "_HStackLayout" };
+sui_desc $s7SwiftUI13_VStackLayoutVMn = { 14, "_VStackLayout" };
+sui_desc $s7SwiftUI13_ZStackLayoutVMn = { 15, "_ZStackLayout" };
+static sui_desc sui_proposed_desc = { 12, "_ProposedSize" };
 
 typedef struct { void *body; const char *proto; } sui_conf;
 void *$s7SwiftUI4ViewP4body4BodyQzvgTq(void);
 sui_conf $s7SwiftUI6HStackVyxGAA4ViewAAMc = { (void *)$s7SwiftUI4ViewP4body4BodyQzvgTq, "View" };
 sui_conf $s7SwiftUI6VStackVyxGAA4ViewAAMc = { (void *)$s7SwiftUI4ViewP4body4BodyQzvgTq, "View" };
 sui_conf $s7SwiftUI6ZStackVyxGAA4ViewAAMc = { (void *)$s7SwiftUI4ViewP4body4BodyQzvgTq, "View" };
+sui_conf $s7SwiftUI14GeometryReaderVyxGAA4ViewAAMc = { (void *)$s7SwiftUI4ViewP4body4BodyQzvgTq, "View" };
 
 void *$s7SwiftUI6HStackVMa(void) { return &$s7SwiftUI6HStackVMn; }
 void *$s7SwiftUI6ZStackVMa(void) { return &$s7SwiftUI6ZStackVMn; }
 void *$s7SwiftUI13GeometryProxyVMa(void) { return &$s7SwiftUI13GeometryProxyVMn; }
+void *$s7SwiftUI14GeometryReaderVMa(void) { return &$s7SwiftUI14GeometryReaderVMn; }
+void *$s7SwiftUI13_ProposedSizeVMa(void) { return &sui_proposed_desc; }
 
 static void *sui_r13(void) {
     void *p;
@@ -159,9 +168,8 @@ void *$s7SwiftUI4ViewP4body4BodyQzvgTq(void) {
 
 void *$s7SwiftUI14GeometryReaderV7contentACyxGxAA0C5ProxyVc_tcfC(void *content) {
     sui_reader *r = (sui_reader *)calloc(1, sizeof *r);
-    static sui_desc desc = { 11, "GeometryReader" };
     if (!r) return 0;
-    r->isa = &desc;
+    r->isa = &$s7SwiftUI14GeometryReaderVMn;
     r->content = content;
     r->proxy.isa = &$s7SwiftUI13GeometryProxyVMn;
     r->proxy.w = 240;

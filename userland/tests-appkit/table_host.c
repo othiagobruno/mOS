@@ -238,6 +238,59 @@ int main(void) {
     check(cx_sv_drag(100, -50, 0, 300, &lim, 0, 0) == 120, "delegate segura o mínimo da divisória");
     check(cx_sv_drag(100, 200, 0, 300, &lim, 0, 0) == 180, "delegate segura o máximo da divisória");
 
+    /* split: espessura, holdingPriority, posição e colapso */
+    check(cx_sv_thickness(1) == 9 && cx_sv_thickness(2) == 1 && cx_sv_thickness(3) == 10, "espessura pelo dividerStyle");
+    {
+        double sz[2] = {200, 599};
+        float hold[2] = {260, 250};
+        cx_sv_resize(sz, hold, 0, 2, 1001, 1);
+        check(sz[0] == 200 && sz[1] == 800, "crescer: só a de menor holdingPriority muda");
+        cx_sv_resize(sz, hold, 0, 2, 901, 1);
+        check(sz[0] == 200 && sz[1] == 700, "encolher: idem");
+        cx_sv_resize(sz, hold, 0, 2, 101, 1);
+        check(sz[0] == 100 && sz[1] == 0, "encolher além: a de maior prioridade cede o resto");
+    }
+    {
+        double sz[3] = {100, 100, 100};
+        cx_sv_resize(sz, 0, 0, 3, 332, 1);
+        check(sz[0] == 110 && sz[1] == 110 && sz[2] == 110, "mesma prioridade divide por igual");
+        int col[3] = {1, 0, 0};
+        cx_sv_resize(sz, 0, col, 3, 332, 1);
+        check(sz[0] == 0 && sz[1] == 165 && sz[2] == 165, "colapsada fica com 0 e as outras dividem");
+    }
+    {
+        double sz[3] = {100, 100, 100};
+        cx_sv_set_position(sz, 3, 1, 150, 1);
+        check(sz[0] == 100 && sz[1] == 49 && sz[2] == 151, "setPosition mexe só no par da divisória");
+        cx_sv_set_position(sz, 3, 0, 999, 1);
+        check(sz[0] == 149 && sz[1] == 0 && sz[2] == 151, "setPosition preso às pontas do par");
+    }
+    check(cx_sv_collapse(30, 0, 300, 100, 300, 1, 0) == -1, "passou da metade do mínimo: colapsa a primeira");
+    check(cx_sv_collapse(60, 0, 300, 100, 300, 1, 0) == 0, "antes da metade do mínimo não colapsa");
+    check(cx_sv_collapse(30, 0, 300, 100, 300, 0, 0) == 0, "sem canCollapse não colapsa");
+    check(cx_sv_collapse(290, 0, 300, 0, 250, 0, 1) == 1, "do outro lado colapsa a segunda");
+    check(cx_sv_collapse(0, 0, 300, 0, 300, 1, 0) == -1, "sem mínimo: colapsa ao chegar na ponta");
+
+    /* rowForView:/columnForView:/viewAtColumn:row: pelo registro das views postas */
+    {
+        int tk1, tk2;
+        cx_tv_engine_t *pe = cx_tv_engine_get(&tk1, 1);
+        int pr = 9, pc = 9;
+        cx_tv_engine_placed_clear(pe);
+        cx_tv_engine_placed_add_at(pe, (void *)0x100, 3, 0);
+        cx_tv_engine_placed_add_at(pe, (void *)0x200, 3, 1);
+        cx_tv_engine_placed_add_at(pe, (void *)0x300, 5, -1);
+        cx_tv_engine_placed_add(pe, (void *)0x400);
+        check(cx_tv_engine_placed_find(pe, (void *)0x200, &pr, &pc) == 1 && pr == 3 && pc == 1, "rowForView/columnForView da célula");
+        check(cx_tv_engine_placed_find(pe, (void *)0x400, &pr, &pc) == 3 && pr == -1 && pc == -1, "view sem posição devolve -1");
+        check(cx_tv_engine_placed_find(pe, (void *)0x999, &pr, &pc) == -1 && pr == -1, "view que não está na tabela");
+        check(cx_tv_engine_placed_view(pe, 3, 1) == (void *)0x200 && cx_tv_engine_placed_view(pe, 3, -1) == (void *)0x100, "viewAtColumn:row:");
+        check(cx_tv_engine_placed_view(pe, 5, -1) == (void *)0x300 && cx_tv_engine_placed_view(pe, 4, 0) == 0, "linha de grupo e linha vazia");
+        cx_tv_engine_placed_clear(pe);
+        check(cx_tv_engine_placed_view(pe, 3, 1) == 0, "depois do reclaim não sobra view");
+        (void)tk2;
+    }
+
     printf("appkit-table: %d/%d ok\n", ok, total);
     return ok == total ? 0 : 1;
 }

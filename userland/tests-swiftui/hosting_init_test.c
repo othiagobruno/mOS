@@ -1,5 +1,5 @@
 /* Host: init(rootView:), setter e modify do NSHostingView.
- *   clang -std=c11 -Wall -Wextra -Werror -DSWIFTUI_HOSTING_HOST \
+ *   clang -std=c11 -Wall -Wextra -Werror -DSWIFTUI_HOSTING_HOST userland/libsystem/swiftui_hosting.c \
  *     userland/tests-swiftui/hosting_init_test.c -o /tmp/hosting_init && /tmp/hosting_init
  */
 #define SWIFTUI_HOSTING_HOST 1
@@ -15,6 +15,11 @@ extern mos_hv_desc $s7SwiftUI13NSHostingViewCMn;
 extern void *$s7SwiftUI13NSHostingViewC04rootD0ACyxGx_tcfCTq;
 void *$s7SwiftUI13NSHostingViewC04rootD0ACyxGx_tcfc(void *root, void *metadata);
 void *$s7SwiftUI13NSHostingViewC04rootD0xvMTj(void);
+typedef struct { const void *isa; void *root; mos_hv *view; void *coder; } mos_hc;
+extern mos_hv_desc $s7SwiftUI19UIHostingControllerCMn;
+extern void *$s7SwiftUI19UIHostingControllerC8rootViewACyxGx_tcfCTq;
+void *$s7SwiftUI19UIHostingControllerC8rootViewACyxGx_tcfC(void *root, void *metadata);
+void *$s7SwiftUI19UIHostingControllerC5coder8rootViewACyxGSgSo7NSCoderC_xtcfc(void *coder, void *root);
 void $s7SwiftUI13NSHostingViewC04rootD0xvsTj(void *root);
 
 static void *hv_self;
@@ -58,6 +63,18 @@ int main(void) {
     call_set(0, &a);
     g = call_init(0);
     if (!g || g == h || g->root != 0) { fprintf(stderr, "FAIL segundo init\n"); fails++; }
+    {
+        mos_hc *c = $s7SwiftUI19UIHostingControllerC8rootViewACyxGx_tcfC(&a, 0);
+        mos_hc *d = $s7SwiftUI19UIHostingControllerC5coder8rootViewACyxGSgSo7NSCoderC_xtcfc(&b, &a);
+        if (!c || c->isa != &$s7SwiftUI19UIHostingControllerCMn || c->root != &a || !c->view ||
+            c->view->isa != &$s7SwiftUI13NSHostingViewCMn || c->view->root != &a) {
+            fprintf(stderr, "FAIL UIHostingController\n"); fails++;
+        }
+        if (!d || d->coder != &b || d->root != &a) { fprintf(stderr, "FAIL UIHostingController(coder:)\n"); fails++; }
+        if ($s7SwiftUI19UIHostingControllerC8rootViewACyxGx_tcfCTq != (void *)$s7SwiftUI19UIHostingControllerC8rootViewACyxGx_tcfC) {
+            fprintf(stderr, "FAIL method descriptor do controller\n"); fails++;
+        }
+    }
     if (fails) { fprintf(stderr, "RESULT FAIL %d\n", fails); return 1; }
     printf("RESULT PASS\n");
     return 0;
