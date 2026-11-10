@@ -8,6 +8,8 @@
  *   SYS_MMAP b = 5  arquivo MAP_SHARED. c = fd, r10 = deslocamento, r8 = prot (1 leitura, 2 escrita, 4 execução)
  *   SYS_MMAP b = 6  MAP_SHARED|MAP_ANON. r8 = prot
  *   SYS_MMAP b = 7  proteção no PTE de [c, c + len). r8 = prot. Sem o bit 4 a página fica NX.
+ *   SYS_MMAP b = 8  MAP_FIXED arquivo privado. b = 9 compartilhado. c = endereço, r10 = deslocamento,
+ *                  r8 = fd | (prot << 32). Devolve o endereço pedido com o conteúdo do arquivo.
  *   SYS_MUNMAP c = MOS_MUNMAP_SYNC ('SYNC')  grava o trecho no arquivo e não desmapeia (msync)
  *
  * O que se espera ver no log: uma linha "ok" por checagem e, no fim, "mmshared: TODOS OS TESTES OK".
@@ -24,6 +26,8 @@ static int fails;
 #define MM_FILE  5u
 #define MM_ANON  6u
 #define MM_PROT  7u
+#define MM_FIXED_PRIV 8u
+#define MM_FIXED_SH   9u
 #define PROT_R   1u
 #define PROT_W   2u
 #define PROT_X   4u
@@ -245,6 +249,67 @@ void _start(const char *arg) {
         int st = fk > 0 ? wait(fk) : fk;
         CHECK(st == 100 + MOS_SIGBUS, "JIT W^X: executa sem escrita e a escrita falta (filho %d)", (i64)st);
         if ((i64)p > 0) munmap((void *)p, 4096);
+    }
+
+    /* ---- MAP_FIXED de arquivo e mach_vm_map no endereço pedido ---- */
+    {
+        enum { N = 8192 };
+        static char img[N], back[8];
+        volatile unsigned char *slot;
+        i64 hole;
+        u64 pack, args[8], map[8], again[8], ow[8];
+        i64 m, s, sy, kr, kr2, kr3, kr4;
+        unsigned name;
+        int fd, ok, bytes, sh;
+        unsigned char before;
+        fill(img, 4096, 'A');
+        fill(img + 4096, 4096, 'B');
+        CHECK(write_file("/tmp/mm-fixed.bin", img, N) == 0, "arquivo MAP_FIXED criado");
+        fd = open("/tmp/mm-fixed.bin", MOS_O_RDWR);
+        slot = (volatile unsigned char *)sys3(SYS_MMAP, 8192, 3, 0);
+        ok = fd >= 0 && (i64)slot > 0;
+        if (ok) { slot[0] = 'x'; slot[4096] = 'y'; }
+        pack = ok ? ((u64)(unsigned)fd | ((u64)PROT_RW << 32)) : 0;
+        CHECK(!ok || sys5(SYS_MMAP, 4096, MM_FIXED_PRIV, (u64)slot + 1, 0, pack) == -MOS_EINVAL,
+              "MAP_FIXED desalinhado: EINVAL");
+        CHECK(sys5(SYS_MMAP, 4096, MM_FIXED_PRIV, ok ? (u64)slot : 0x400100000000ULL, 0, 99) == -MOS_EBADF,
+              "MAP_FIXED com fd inválido: EBADF");
+        m = ok ? sys5(SYS_MMAP, 4096, MM_FIXED_PRIV, (u64)slot + 4096, 4096, pack) : -1;
+        bytes = m == (i64)slot + 4096 && slot[4096] == 'B' && slot[0] == 'x';
+        CHECK(ok && bytes, "MAP_FIXED privado no endereço pedido, offset 4096 (mapa %d, byte %u)",
+              m, ok ? slot[4096] : 0);
+        s = ok ? sys5(SYS_MMAP, 4096, MM_FIXED_SH, (u64)slot, 0, pack) : -1;
+        sh = s == (i64)slot && slot[0] == 'A';
+        if (sh) slot[0] = 'C';
+        sy = sh ? sys3(SYS_MUNMAP, (u64)slot, 4096, MOS_MUNMAP_SYNC) : -1;
+        if (fd >= 0) { lseek(fd, 0, MOS_SEEK_SET); read(fd, back, 8); }
+        CHECK(sh && sy == 0 && back[0] == 'C', "MAP_FIXED compartilhado grava no arquivo (%u)", (unsigned)back[0]);
+
+        args[0] = 4096; args[1] = (u64)slot; args[2] = PROT_RW; args[3] = 0;
+        args[4] = args[5] = args[6] = args[7] = 0;
+        kr = sh ? sys3(SYS_MACH_VM, 1, (u64)args, 0) : -1; /* MACH_VM_MAKE_ENTRY */
+        name = (unsigned)args[4];
+        hole = sys3(SYS_MMAP, 4096, 3, 0);
+        if (hole > 0) munmap((void *)hole, 4096);
+        map[0] = hole > 0 ? (u64)hole : 0;
+        map[1] = 4096; map[2] = 0; map[3] = name; map[4] = 0; map[5] = PROT_RW; map[6] = PROT_RW; map[7] = 0;
+        kr2 = (kr == 0 && name && hole > 0) ? sys3(SYS_MACH_VM, 2, (u64)map, 0) : -1;
+        CHECK(kr == 0 && kr2 == 0 && map[0] == (u64)hole && *(volatile unsigned char *)map[0] == 'C',
+              "mach_vm_map fixo devolve o endereço e o byte do arquivo (kr %d/%d)", kr, kr2);
+        again[0] = (u64)slot; again[1] = 4096; again[2] = 0; again[3] = name;
+        again[4] = 0; again[5] = PROT_RW; again[6] = PROT_RW; again[7] = 0;
+        before = sh ? slot[0] : 0;
+        kr3 = (kr == 0 && name) ? sys3(SYS_MACH_VM, 2, (u64)again, 0) : -1;
+        CHECK(kr3 == 3 && slot[0] == before, "mach_vm_map sem OVERWRITE em faixa ocupada: KERN_NO_SPACE (%d)", kr3);
+        ow[0] = (u64)slot + 4096; ow[1] = 4096; ow[2] = 0x4000; ow[3] = name;
+        ow[4] = 0; ow[5] = PROT_RW; ow[6] = PROT_RW; ow[7] = 0;
+        kr4 = (kr == 0 && name) ? sys3(SYS_MACH_VM, 2, (u64)ow, 0) : -1;
+        CHECK(kr4 == 0 && ow[0] == (u64)slot + 4096 && slot[4096] == 'C',
+              "mach_vm_map com OVERWRITE substitui e mostra o byte (%d, %u)", kr4, ok ? slot[4096] : 0);
+        if (ok) munmap((void *)slot, 8192);
+        if (kr2 == 0) munmap((void *)map[0], 4096);
+        if (fd >= 0) close(fd);
+        unlink("/tmp/mm-fixed.bin");
     }
 
     print(fails ? "mmshared: %d FALHA(S)\n" : "mmshared: TODOS OS TESTES OK\n", (i64)fails);
