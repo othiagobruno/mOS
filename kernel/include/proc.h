@@ -121,7 +121,7 @@ struct process {
     u64 start_ms;
     thread_t *main;
     struct process *next;
-    struct { bool used; int flags; u64 off; char path[256]; u8 kind; struct pipe *pipe, *pipe2; struct pty *pty; } fds[PROC_MAX_FDS];   /* arquivos (VFS), pipes e terminais */
+    struct { bool used; int flags; u64 off; char path[256]; u8 kind; struct pipe *pipe, *pipe2; struct pty *pty; unsigned mode; } fds[PROC_MAX_FDS];
     u64 mmap_next;          /* próxima região anônima (SYS_MMAP) */
     int nthreads;           /* threads vivas ou ainda não recolhidas (a memória sai com a última) */
     u64 sig_handler[32];    /* 0 = padrão, 1 = ignorar, senão endereço do tratador */
@@ -133,6 +133,10 @@ struct process {
     struct { int code, pid, status; u64 addr; } sig_info[32];   /* siginfo dos pendentes do processo */
     /* parada do processo inteiro (SIGSTOP/TSTP/TTIN/TTOU). stopped = 0 rodando, senão o sinal do kernel
      * que parou. Não é o thread_suspend do Mach (thread.suspend): o escalonador pula todas as threads. */
+    int uid, euid;         /* os dois nascem 501; RESETIDS faz euid = uid. Não há getuid. */
+    int vfork_of;          /* pid do pai suspenso, se este processo pegou o pml4 emprestado */
+    int pml4_borrowed;     /* 1 = não liberar o pml4: é o do pai */
+    unsigned spawn_sigdef, spawn_sigmask, spawn_extra;
     int stopped;
     int stop_unreported;    /* 1 até um waitpid com WUNTRACED consumir */
     int cont_unreported;    /* 1 até um waitpid com WCONTINUED consumir */

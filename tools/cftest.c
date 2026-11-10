@@ -6,7 +6,15 @@
 #define CF_HOST 1
 #include "../userland/libsystem/cf_public_core.inc"
 #include <stdio.h>
+#include <sys/socket.h>
+#include <unistd.h>
 static int checks, fails;
+static unsigned char sock_got[8];
+static int sock_gn;
+static void sock_cb(void *info, int kind, const void *data, int n) {
+    (void)info; (void)kind;
+    if (data && n > 0 && n < 8) { memcpy(sock_got, data, (size_t)n); sock_gn = n; }
+}
 #define CHECK(c) do { checks++; if (!(c)) { fprintf(stderr, "FAIL %s:%d %s\n", __FILE__, __LINE__, #c); fails++; } } while (0)
 int main(void) {
     int y, mo, d, h, mi, s, wd;
@@ -61,6 +69,34 @@ int main(void) {
     cf_locale_seps("fr_FR", &dec, &grp); CHECK(dec == ',' && grp == ' ');
     CHECK(!strcmp(cf_tz_abbr("America/Sao_Paulo", at), "BRT"));
     CHECK(cf_b64((const cf_u8 *)"Man", 3, buf, 80) == 4 && !strcmp(buf, "TWFu"));
+    CHECK(cf_tz_next_dst("America/Sao_Paulo", at) == 0);
+    CHECK(cf_tz_next_dst("America/New_York", cf_abs_from_ymdhms(2024, 1, 15, 12, 0, 0)) > 0);
+    {
+        cf_bpw *w = cf_bpw_new();
+        unsigned char *raw = 0; int rn = 0;
+        int ks, vs, top;
+        cf_bpr rd;
+        int kind = 0, len = 0; unsigned long long iv = 0; const unsigned char *bytes = 0;
+        int arr[2];
+        ks = cf_bpw_str(w, "nome");
+        vs = cf_bpw_str(w, "mOS");
+        arr[0] = cf_bpw_bool(w, 1);
+        arr[1] = cf_bpw_int(w, 42);
+        CHECK(cf_bpw_data(w, "xy", 2) >= 0);
+        CHECK(cf_bpw_arr(w, arr, 2) >= 0);
+        top = cf_bpw_dict(w, &ks, &vs, 1);
+        CHECK(cf_bpw_finish(w, top, &raw, &rn) == 0);
+        CHECK(cf_bpr_open(&rd, raw, rn) == 0 && rd.top == top);
+        CHECK(cf_bpr_obj(&rd, vs, &kind, &iv, &bytes, &len) && kind == 5 && len == 3 && !memcmp(bytes, "mOS", 3));
+        free(raw); cf_bpw_free(w);
+    }
+    {
+        int sv[2];
+        CHECK(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
+        CHECK(write(sv[0], "hi", 2) == 2);
+        CHECK(cf_sock_service(sv[1], 3, sock_cb, 0) == 1 && sock_gn == 2 && sock_got[0] == 'h' && sock_got[1] == 'i');
+        close(sv[0]); close(sv[1]);
+    }
     if (fails) { fprintf(stderr, "%d falhas em %d\n", fails, checks); return 1; }
     printf("%d ok\n", checks);
     return 0;
