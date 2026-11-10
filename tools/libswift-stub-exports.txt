@@ -196,9 +196,9 @@ _$s10Foundation4DataVyACxcSTRzs5UInt8V7ElementRtzlufC
 _$sSRyxG10Foundation12DataProtocolABs5UInt8VRszlMc
 _$sSRyxG10Foundation15ContiguousBytesABs5UInt8VRszlMc
 
-# OpenBot: docs/compat-open-usage.md só publica estes dois nomes.
+# OpenBot pede libswiftMetal.dylib. didModifyRange não entra no stub:
+# um ret na trie esconde o símbolo real do ELF (userland/libsystem/mtl_didmodify.c).
 libswiftMetal.dylib
-_$sSo9MTLBufferP5MetalE14didModifyRangeyySnySiGF
 
 libswiftObjectiveC.dylib
 _$sSo8NSObjectC10ObjectiveCE9hashValueSivg

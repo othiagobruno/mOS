@@ -611,6 +611,16 @@ static void buf_dealloc(id s, SEL c) {
     o_dealloc(s, c);
 }
 static void *bf_contents(id s, SEL c) { (void)c; return ((mbuf_t *)s)->p; }
+/* Managed no macOS copia essa faixa para a GPU. Aqui p já é a memória que o rasterizador lê. */
+static void bf_did_modify(id s, SEL c, nsrange_t r) {
+    mbuf_t *b = (mbuf_t *)s;
+    (void)c;
+    if (!b->p) { b->mod_loc = 0; b->mod_len = 0; return; }
+    if (r.loc >= b->len) { b->mod_loc = b->len; b->mod_len = 0; return; }
+    if (r.len > b->len - r.loc) r.len = b->len - r.loc;
+    b->mod_loc = r.loc;
+    b->mod_len = r.len;
+}
 static u64 bf_length(id s, SEL c) { (void)c; return ((mbuf_t *)s)->len; }
 static u64 bf_gpuaddr(id s, SEL c) { (void)c; return (u64)((mbuf_t *)s)->p; }
 static u64 bf_opts(id s, SEL c) { (void)c; return ((mbuf_t *)s)->opts; }
@@ -2669,7 +2679,7 @@ void cx_metal_init(void) {
     M(MBuf, "dealloc", buf_dealloc); M(MBuf, "contents", bf_contents); M(MBuf, "length", bf_length); M(MBuf, "allocatedSize", bf_length);
     M(MBuf, "gpuAddress", bf_gpuaddr); M(MBuf, "resourceOptions", bf_opts); M(MBuf, "storageMode", bf_storage);
     M(MBuf, "cpuCacheMode", bf_cache); M(MBuf, "hazardTrackingMode", bf_hazard); M(MBuf, "heap", bf_heap); M(MBuf, "heapOffset", ret_zero);
-    M(MBuf, "didModifyRange:", noop); M(MBuf, "newTextureWithDescriptor:offset:bytesPerRow:", bf_newtex);
+    M(MBuf, "didModifyRange:", bf_did_modify); M(MBuf, "newTextureWithDescriptor:offset:bytesPerRow:", bf_newtex);
     M(MBuf, "newRemoteBufferViewForDevice:", ret_nil); M(MBuf, "remoteStorageBuffer", ret_nil);
 
     def_obj(&MTex_c, &MTex_m, "MTLSoftTexture", sizeof(mtex_t));
