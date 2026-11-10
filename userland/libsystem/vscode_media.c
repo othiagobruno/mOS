@@ -184,7 +184,10 @@ void CMSetAttachment(void *t, id key, id v, u32 mode) { (void)t; (void)key; (voi
 id CMCopyDictionaryOfAttachments(void *a, void *t, u32 mode) { (void)a; (void)t; (void)mode; return CFDictionaryCreateMutable(0, 0, 0, 0); }
 OSStatus CMIOObjectGetPropertyData(u32 obj, const void *addr, u32 qs, const void *q, u32 sz, u32 *used, void *data) { (void)obj; (void)addr; (void)qs; (void)q; (void)sz; (void)data; if (used) *used = 0; return 0x77686F3F; /* kCMIOHardwareUnknownPropertyError 'who?' */ }
 
-/* ================================================================ VideoToolbox: sem codec por hardware */
+/* ================================================================ VideoToolbox
+ * Limitação honesta: não há decodificador nem codificador de H.264/HEVC em software neste
+ * build, e não se contorna FairPlay. As chamadas devolvem o erro da Apple (decoder -12906,
+ * encoder -12908, propriedade -12900). VTIsHardwareDecodeSupported continua 0. */
 #define kVTCouldNotFindVideoDecoderErr (-12906)
 #define kVTCouldNotFindVideoEncoderErr (-12908)
 #define kVTPropertyNotSupportedErr (-12900)
