@@ -274,6 +274,36 @@ int cx_un_click_token(int token) {
     return cx_un_banner_click();
 }
 
+void cx_un_settings(cx_un_settings_t *out) {
+    int auth;
+    int on;
+    if (!out) return;
+    auth = cx_un_auth();
+    on = auth == CX_UN_AUTHORIZED ? 2 : 1;
+    out->authorization = auth;
+    out->sound = on;
+    out->badge = on;
+    out->alert = on;
+    out->notification_center = on;
+    out->lock_screen = on;
+    out->alert_style = auth == CX_UN_AUTHORIZED ? 1 : 0;
+}
+
+int cx_un_register_remote(void **token_out, cx_un_remote_fail_fn fail, void *ctx) {
+    if (token_out) *token_out = 0;
+    if (fail) fail(1, "UNErrorDomain", ctx);
+    return CX_UN_ERR_DENIED;
+}
+
+int cx_un_service_receive(const char *title, char *out_title, int cap) {
+    int i = 0;
+    if (!out_title || cap < 1) return CX_UN_ERR_BAD;
+    if (!title) title = "";
+    for (; i < cap - 1 && title[i]; i++) out_title[i] = title[i];
+    out_title[i] = 0;
+    return CX_UN_ERR_DENIED;
+}
+
 int cx_un_present_count(void) { return g_present_n; }
 int cx_un_receive_count(void) { return g_receive_n; }
 const char *cx_un_last_action(void) { return g_action; }

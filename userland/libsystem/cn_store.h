@@ -29,6 +29,22 @@ typedef struct {
     char zip[16];
     char country[48];
     char iso[8];
+    char prefix[32];
+    char suffix[32];
+    char previous[64];
+    char phonetic_given[64];
+    char phonetic_middle[64];
+    char phonetic_family[64];
+    char phonetic_org[80];
+    char url[96];
+    char relation[48];
+    char im_user[64];
+    char im_service[32];
+    char social_user[64];
+    char social_service[32];
+    char social_url[96];
+    char social_id[64];
+    char image[68];
 } cx_cn_contact;
 
 void cx_cn_reset(void);
