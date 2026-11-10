@@ -40,12 +40,30 @@ int cx_sb_menu_open(const void *item);
 int cx_sb_id(const void *item);
 void *cx_sb_by_token(int token);
 
-/* Popover, um por ponteiro. */
+/* Popover, um por ponteiro.
+ * edge é NSRectEdge: 0 MinX (à esquerda), 1 MinY (abaixo), 2 MaxX (à direita), 3 MaxY (acima).
+ * A âncora está em coordenadas de tela, origem embaixo à esquerda. */
+typedef struct {
+    double win_x, win_y, win_w, win_h;
+    double content_x, content_y, content_w, content_h;
+    double tip_x, tip_y;
+    double base0_x, base0_y, base1_x, base1_y;
+    int edge;
+} cx_pop_chrome_t;
+
 void cx_pop_set_behavior(void *pop, int behavior);
 int cx_pop_behavior(const void *pop);
 void cx_pop_set_content(void *pop, void *content);
 void *cx_pop_content(const void *pop);
 int cx_pop_is_content(const void *view);
+void cx_pop_set_anchor(void *pop, double x, double y, double w, double h, int edge);
+void cx_pop_set_content_size(void *pop, double w, double h);
+void cx_pop_set_screen(void *pop, double w, double h);
+int cx_pop_layout(void *pop);
+int cx_pop_chrome(const void *pop, cx_pop_chrome_t *out);
+void cx_pop_set_window(void *pop, void *window);
+void *cx_pop_window(const void *pop);
+void cx_pop_on_hide(void (*fn)(void *pop, void *window));
 void cx_pop_show(void *pop);
 void cx_pop_close(void *pop);
 int cx_pop_shown(const void *pop);
