@@ -79,3 +79,16 @@ libswiftXPC.dylib
 libswift_Concurrency.dylib
 libswiftUniformTypeIdentifiers.dylib
 libswiftCoreGraphics.dylib
+# Basenames do LC_LOAD_DYLIB (Claude, ChatGPT, WhatsApp, inclusive iOSSupport).
+libswiftAVFoundation.dylib
+libswiftCoreMedia.dylib
+libswiftCoreAudio.dylib
+libswiftCoreData.dylib
+libswiftNetwork.dylib
+libswiftQuartzCore.dylib
+libswiftAppKit.dylib
+libswiftUIKit.dylib
+libswiftWebKit.dylib
+libswiftos.dylib
+libswift_errno.dylib
+libswift_StringProcessing.dylib

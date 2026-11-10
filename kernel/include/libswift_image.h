@@ -21,6 +21,20 @@ static const char *const mos_libswift_image[] = {
     "/usr/lib/swift/libswiftUniformTypeIdentifiers.dylib",
     "/usr/lib/swift/libswiftCoreGraphics.dylib",
     "/usr/lib/swift/libswiftMetal.dylib",
+    /* basenames pedidos pelos apps (Claude, ChatGPT, WhatsApp), inclusive
+     * /System/iOSSupport/usr/lib/swift: mos_libswift_resolve usa o basename. */
+    "/usr/lib/swift/libswiftAVFoundation.dylib",
+    "/usr/lib/swift/libswiftCoreMedia.dylib",
+    "/usr/lib/swift/libswiftCoreAudio.dylib",
+    "/usr/lib/swift/libswiftCoreData.dylib",
+    "/usr/lib/swift/libswiftNetwork.dylib",
+    "/usr/lib/swift/libswiftQuartzCore.dylib",
+    "/usr/lib/swift/libswiftAppKit.dylib",
+    "/usr/lib/swift/libswiftUIKit.dylib",
+    "/usr/lib/swift/libswiftWebKit.dylib",
+    "/usr/lib/swift/libswiftos.dylib",
+    "/usr/lib/swift/libswift_errno.dylib",
+    "/usr/lib/swift/libswift_StringProcessing.dylib",
 };
 
 /* 1 se req é uma libswift* da imagem. out recebe o caminho canônico. */
