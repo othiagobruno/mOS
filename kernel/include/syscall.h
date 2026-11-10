@@ -94,6 +94,14 @@ enum {
      * Submeter não bloqueia. O suspende espera um da lista, EAGAIN no prazo, EINTR no sinal. */
     SYS_AIO = 96,
     SYS_VFORK = 97,    /* () -> pid no pai, 0 no filho. O pai dorme até exec ou _exit; o pml4 é o mesmo. */
+    SYS_CHMOD = 98,    /* (path, mode) -> 0. O stat devolve esse mode. */
+    SYS_FCHMOD = 105,  /* (fd, mode) -> 0. Grava o mode do vnode desse fd. */
+    SYS_GETUID = 99,   /* () -> uid real */
+    SYS_GETEUID = 100, /* () -> uid efetivo */
+    SYS_GETGID = 101,  /* () -> gid real */
+    SYS_GETEGID = 102, /* () -> gid efetivo */
+    SYS_SETEUID = 103, /* (uid) -> 0 | -MOS_EPERM. Só real, efetivo ou saved. */
+    SYS_SETEGID = 104, /* (gid) -> 0 | -MOS_EPERM. */
 };
 
 #define MOS_DESK_BANNER 1
@@ -541,6 +549,7 @@ typedef struct {
     unsigned long long is_dir; /* 0 arquivo, 1 pasta, 2/3 pipe (leitura/escrita), 4 /dev/null, 5 terminal (SYS_TTY),
                                 * 6 socket AF_UNIX (só no fstat do descritor; o stat do caminho continua 0) */
     long long mtime;          /* segundos desde 1970 (0 = desconhecido) */
+    unsigned mode;            /* permissão (12 bits). 0 no struct zerado de pipe não entra no st_mode. */
 } mos_stat_t;
 
 /* SYS_LS: o banco do Launch Services fica no kernel (kernel/compat/launchsvc.c); o libSystem (openurl.c) faz as

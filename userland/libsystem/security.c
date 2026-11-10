@@ -12,7 +12,7 @@
  *    Delete (kSecReturnData/Attributes/Ref, kSecMatchLimitOne/All) e a API antiga SecKeychainFindGenericPassword/
  *    AddGenericPassword/ItemModifyAttributesAndData/ItemDelete/ItemFreeContent. Os itens ficam em
  *    $HOME/Library/Keychains/mos-keychain.txt. A versão 2 do arquivo é ciphertext (HMAC em modo
- *    contador + MAC). A chave são 32 bytes de getentropy(), em mos-keychain.key (0600, pasta
+ *    contador + MAC). A chave são 32 bytes de RDSEED/RDRAND (getentropy falha sem essa fonte), em mos-keychain.key (0600, pasta
  *    0700). Um arquivo versão 2 antigo, cifrado com a chave derivada do login, é aberto uma vez
  *    e regravado com a chave nova; se essa regravação falha, o arquivo original fica no lugar.
  *    A versão 1 (texto) ainda é lida e, na gravação seguinte, vira versão 2.

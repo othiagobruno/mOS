@@ -8,3 +8,5 @@ double pow(double x, double y);
 double floor(double x);
 double ceil(double x);
 double fabs(double x);
+double cos(double x);
+float cosf(float x);

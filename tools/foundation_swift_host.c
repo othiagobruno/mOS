@@ -41,6 +41,9 @@ void fdn_force_bridge_string(id ns, swstr *out);
 int fdn_cond_bridge_string(id ns, swstr *out);
 int fdn_cond_bridge_array(id ns, id *out);
 unsigned long long fdn_with_unsafe(const void *p, long long n, void *fn, void *ctx, unsigned long long *hi);
+int fdn_copy_bytes_entry(void *dst, long long count, long long lo, long long hi,
+                         unsigned long long tag, unsigned long long rep_lo, unsigned long long rep_hi);
+unsigned long long fdn_with_unsafe_regs(void *fn, void *ctx, const void *p, long long n);
 
 static int fails, checks;
 static void ok(int c, const char *m) { checks++; if (!c) { fails++; fprintf(stderr, "falhou: %s\n", m); } }
@@ -95,6 +98,10 @@ id fdn_host_msg(id o, const char *sel, uintptr_t a, uintptr_t b, int n) {
         int i = (int)a;
         return x && i >= 0 && i < x->n ? x->items[i] : 0;
     }
+    if (!strcmp(sel, "addObject:") && x && x->n < 8) {
+        x->items[x->n++] = (obj *)a;
+        return 0;
+    }
     if (!strcmp(sel, "localizedDescription")) return x && x->s ? cx_str(x->s) : cx_str("Erro");
     return 0;
 }
@@ -131,6 +138,17 @@ int main(void) {
     ok(rep[14] == 3 && memcmp(rep, "hi!", 3) == 0, "append inline");
     n = fdn_rep_copy(rep, out, 8, 1, 3, 1);
     ok(n == 2 && memcmp(out, "i!", 2) == 0, "copy range");
+    {
+        unsigned long long lo = 0, hiw = 0;
+        memcpy(&lo, rep, 8);
+        memcpy(&hiw, rep + 8, 8);
+        memset(out, 0, 8);
+        n = fdn_copy_bytes_entry(out, 8, 1, 3, 0, lo, hiw);
+        ok(n == 2 && memcmp(out, "i!", 2) == 0, "copyBytes range");
+        memset(out, 0, 8);
+        n = fdn_copy_bytes_entry(out, 8, 1, 3, 1, lo, hiw);
+        ok(n == 3 && memcmp(out, "hi!", 3) == 0, "copyBytes nil range");
+    }
 
     fdn_rep_from_bytes(rep, "0123456789abcdef", 16);
     ok((rep[15] & 0xC0) == 0x40, "slice tag");
@@ -145,6 +163,7 @@ int main(void) {
     ok(n == 18 && out[16] == 'X', "from nsdata");
 
     ok(fdn_with_unsafe("ABC", 3, (void *)body_sum, 0, 0) == (unsigned)'A' + 'B' + 'C', "contiguous");
+    ok(fdn_with_unsafe_regs((void *)body_sum, 0, "ABC", 3) == (unsigned)'A' + 'B' + 'C', "withUnsafeBytes regs");
 
     s = fdn_pack("ola", 3);
     ok(fdn_unpack(s, buf, 64) == 3 && strcmp(buf, "ola") == 0, "small");
@@ -182,7 +201,12 @@ int main(void) {
         arr = fdn_array_from_ns(arrns);
         ok(arr && ((i8arr_t *)arr)->count == 2, "array from ns");
         ok(fdn_cond_bridge_array(arrns, &arr) == 1, "cond array");
-        ok(fdn_bridge_array(arr) == arr, "array bridge");
+        {
+            obj *bridged = fdn_bridge_array(arr);
+            ok(bridged && bridged->kind == K_ARR && bridged->n == 2, "array bridge swift");
+            ok(strcmp(bridged->items[0]->s, "a") == 0 && strcmp(bridged->items[1]->s, "b") == 0, "array bridge elems");
+            ok(fdn_bridge_array(arrns) == arrns && arrns->rc == 2, "array bridge ns");
+        }
     }
 
     s = fdn_pack("xyz", 3);

@@ -298,26 +298,7 @@ size_t CGDisplayModeGetWidth(void *m) { (void)m; return CGDisplayPixelsWide(CGMa
 size_t CGDisplayModeGetHeight(void *m) { (void)m; return CGDisplayPixelsHigh(CGMainDisplayID()); }
 u32 CGDisplayIDToOpenGLDisplayMask(u32 d) { (void)d; return 1; }
 void *CGDirectDisplayCopyCurrentMetalDevice(u32 d) { (void)d; return 0; }   /* sem GPU */
-/* CGRect <-> dicionário {X, Y, Width, Height} */
-id CGRectCreateDictionaryRepresentation(cg_rect_t r) {
-    id d = CFDictionaryCreateMutable(0, 4, 0, 0);
-    const char *k[4] = {"X", "Y", "Width", "Height"};
-    double v[4] = {r.x, r.y, r.w, r.h};
-    for (int i = 0; i < 4; i++) { id n = CFNumberCreate(0, 13 /* kCFNumberFloat64Type */, &v[i]); CFDictionarySetValue(d, cx_str(k[i]), n); objc_release(n); }
-    return d;
-}
-u8 CGRectMakeWithDictionaryRepresentation(id d, cg_rect_t *r) {
-    if (!d || !r) return 0;
-    const char *k[4] = {"X", "Y", "Width", "Height"};
-    double v[4] = {0, 0, 0, 0};
-    for (int i = 0; i < 4; i++) {
-        id n = CFDictionaryGetValue(d, cx_str(k[i]));
-        if (!n) return 0;
-        CFNumberGetValue(n, 13, &v[i]);
-    }
-    r->x = v[0]; r->y = v[1]; r->w = v[2]; r->h = v[3];
-    return 1;
-}
+/* CGRect*DictionaryRepresentation está em cgdict.c (mesmo layout de quatro doubles). */
 /* cores e espaços de cor */
 id CGColorGetConstantColor(id name) {
     const char *n = name ? cx_cstr(name) : "";
@@ -331,7 +312,6 @@ id CGColorCreateCopyByMatchingToColorSpace(void *space, int intent, id color, id
 void *CGColorSpaceCreateICCBased(size_t n, const double *range, void *profile, void *alt) { (void)n; (void)range; (void)profile; (void)alt; return CGColorSpaceCreateDeviceRGB(); }
 id CGColorSpaceCopyICCData(void *space) { (void)space; return 0; }
 /* fontes CG: o Skia usa CTFont; com NULL ele não segue o caminho de CGFont */
-void *CGFontCreateWithDataProvider(void *p) { (void)p; return 0; }
 void CGFontRelease(void *f) { if (f) objc_release((id)f); }
 u16 CGFontGetGlyphWithGlyphName(void *f, id name) { (void)f; (void)name; return 0; }
 void CGContextSetFont(void *c, void *f) { (void)c; (void)f; }

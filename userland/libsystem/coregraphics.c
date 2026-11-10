@@ -8,6 +8,7 @@
  *    arcos e elipses viram curvas de Bézier cúbicas (≤ 90° cada), como no macOS.
  *  - CGColor é o NSColor do mOS ({isa, r, g, b, a}): componentes RGBA em double.
  *  - CGColorSpace: um objeto por nome, criado na primeira vez e mantido vivo.
+ *  - CGPoint/CGSize/CGRect *DictionaryRepresentation: userland/libsystem/cgdict.c.
  */
 #include <stdbool.h>
 #include "foundation.h"
