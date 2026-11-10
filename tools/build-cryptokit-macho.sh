@@ -43,8 +43,8 @@ PY
   -module-name CryptoKit -import-underlying-module \
   -I "$ROOT/userland/frameworks/CryptoKit/include" -I "$OUT" \
   -o "$OUT/CryptoKit.o" "$ROOT/userland/frameworks/CryptoKit/CryptoKit.swift"
-"$ZIG" cc -target x86_64-macos-none -c -o "$OUT/thunks.o" "$STUB/thunks.S"
-"$ZIG" cc -target x86_64-macos-none -shared -o "$OUT/CryptoKit" "$OUT/CryptoKit.o" "$OUT/Foundation.o" "$OUT/thunks.o" \
+"$ZIG" cc -target x86_64-macos-none -shared -o "$OUT/CryptoKit" "$OUT/CryptoKit.o" "$OUT/Foundation.o" \
   -Wl,-install_name,/System/Library/Frameworks/CryptoKit.framework/Versions/A/CryptoKit \
-  -Wl,-undefined,dynamic_lookup
+  -Wl,-undefined,dynamic_lookup \
+  -Wl,-u,_\$s9CryptoKit12HashFunctionPxycfCTj
 echo "$OUT/CryptoKit"

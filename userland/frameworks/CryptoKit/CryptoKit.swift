@@ -29,6 +29,9 @@ import Foundation
 @_silgen_name("CC_SHA256_Init") private func _cc_sha256_init(_ c: UnsafeMutableRawPointer) -> Int32
 @_silgen_name("CC_SHA256_Update") private func _cc_sha256_update(_ c: UnsafeMutableRawPointer, _ d: UnsafeRawPointer?, _ n: UInt32) -> Int32
 @_silgen_name("CC_SHA256_Final") private func _cc_sha256_final(_ md: UnsafeMutableRawPointer, _ c: UnsafeMutableRawPointer) -> Int32
+@_silgen_name("CC_SHA256_Init") private func _cc_sha256_init_raw(_ c: Builtin.RawPointer) -> Builtin.Int32
+@_silgen_name("CC_SHA256_Update") private func _cc_sha256_update_raw(_ c: Builtin.RawPointer, _ d: Builtin.RawPointer, _ n: Builtin.Int64) -> Builtin.Int32
+@_silgen_name("CC_SHA256_Final") private func _cc_sha256_final_raw(_ md: Builtin.RawPointer, _ c: Builtin.RawPointer) -> Builtin.Int32
 @_silgen_name("CC_MD5_Init") private func _cc_md5_init(_ c: UnsafeMutableRawPointer) -> Int32
 @_silgen_name("CC_MD5_Update") private func _cc_md5_update(_ c: UnsafeMutableRawPointer, _ d: UnsafeRawPointer?, _ n: UInt32) -> Int32
 @_silgen_name("CC_MD5_Final") private func _cc_md5_final(_ md: UnsafeMutableRawPointer, _ c: UnsafeMutableRawPointer) -> Int32
@@ -74,6 +77,17 @@ extension Digest {
     }
 }
 
+/* Thunk que o Grok chama (FTj). O genérico lê o slot da tabela de testemunhas
+ * e chama o método daquele tipo: SHA256 e MD5 não compartilham o mesmo corpo. */
+@_silgen_name("_$s9CryptoKit12HashFunctionPxycfCTj")
+public func ckHashFunctionInit<H: HashFunction>(_: H.Type) -> H { H() }
+@_silgen_name("_$s9CryptoKit12HashFunctionP6update13bufferPointerySW_tFTj")
+public func ckHashFunctionUpdate<H: HashFunction>(_ h: inout H, _ buffer: UnsafeRawBufferPointer) {
+    h.update(bufferPointer: buffer)
+}
+@_silgen_name("_$s9CryptoKit12HashFunctionP8finalize6DigestQzyFTj")
+public func ckHashFunctionFinalize<H: HashFunction>(_ h: H) -> H.Digest { h.finalize() }
+
 public protocol HashFunction: Sendable {
     associatedtype Digest: CryptoKit.Digest
     static var blockByteCount: Int { get }
@@ -109,16 +123,29 @@ public struct SHA256: HashFunction {
     // CC_SHA256_CTX: count[2], hash[8], wbuf[16] (u32) = 104 bytes
     var ctx: (UInt64, UInt64, UInt64, UInt64, UInt64, UInt64, UInt64, UInt64, UInt64, UInt64, UInt64, UInt64, UInt64) =
         (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
-    public init() { _ = Swift.withUnsafeMutableBytes(of: &ctx) { _cc_sha256_init($0.baseAddress!) } }
+    public init() { ctx = (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0); _ = _cc_sha256_init_raw(Builtin.addressof(&ctx)) }
     public mutating func update(bufferPointer: UnsafeRawBufferPointer) {
-        Swift.withUnsafeMutableBytes(of: &ctx) { ccUpdate($0.baseAddress!, bufferPointer, _cc_sha256_update) }
+        _ = _cc_sha256_update_raw(Builtin.addressof(&ctx), bufferPointer._p, bufferPointer._n)
     }
     public func finalize() -> SHA256Digest {
         var c = ctx
         var d = SHA256Digest()
-        Swift.withUnsafeMutableBytes(of: &d.b) { md in _ = Swift.withUnsafeMutableBytes(of: &c) { _cc_sha256_final(md.baseAddress!, $0.baseAddress!) } }
+        _ = _cc_sha256_final_raw(Builtin.addressof(&d.b), Builtin.addressof(&c))
         return d
     }
+}
+
+func ckFeed<H: HashFunction>(_ h: inout H, _ p: Builtin.RawPointer, _ n: Builtin.Int64) {
+    h.update(bufferPointer: UnsafeRawBufferPointer(p: p, n: n))
+}
+@_silgen_name("ck_copy32")
+func ck_copy32(_ d: Builtin.RawPointer, _ s: Builtin.RawPointer)
+@_silgen_name("ck_sha256")
+public func ck_sha256(_ p: Builtin.RawPointer, _ n: Builtin.Int64, _ out: Builtin.RawPointer) {
+    var h = SHA256()
+    ckFeed(&h, p, n)
+    var d = h.finalize()
+    ck_copy32(out, Builtin.addressof(&d.b))
 }
 
 public enum Insecure {

@@ -82,11 +82,16 @@ void *CGImageDestinationCreateWithURL(id url, id type, unsigned long count, id o
     gap_dest *d; (void)type; (void)count; (void)opts;
     d = calloc(1, sizeof *d); if (!d) return 0; d->url = url; return d;
 }
+extern void gio_destination_add(void *dst, void *image, void *props);
+extern int gio_destination_finish(void *dst);
 void CGImageDestinationAddImage(void *dst, id img, id props) {
-    gap_dest *d = dst; (void)props; if (d) d->img = img;
+    gap_dest *d = dst;
+    if (dst && *(unsigned *)dst == 0x47494f31u) { gio_destination_add(dst, img, props); return; }
+    (void)props; if (d) d->img = img;
 }
 int CGImageDestinationFinalize(void *dst) {
     gap_dest *d = dst; int w, h, bpr, fd; void *prov, *data; const unsigned char *px;
+    if (dst && *(unsigned *)dst == 0x47494f31u) return gio_destination_finish(dst);
     unsigned char *png; unsigned long pn; id path; const char *c;
     if (!d || !d->img || !d->url) return 0;
     w = (int)CGImageGetWidth(d->img); h = (int)CGImageGetHeight(d->img); bpr = (int)CGImageGetBytesPerRow(d->img);
