@@ -97,9 +97,9 @@ O Electron desses três apps liga `QuickLookUI.framework` e `StoreKit.framework`
 
 **QuickLookUI — stub, sem janela.** `sharedPreviewPanel` devolve um painel. `makeKeyAndOrderFront:` e `orderFront:` só marcam visível e retornam; não chamam `NSWindow` e não entram em loop. `reloadData` pergunta a contagem uma vez e, no máximo, o item 0. `enterFullScreenMode:withOptions:` devolve NÃO. A prévia não é desenhada.
 
-**Core Data — loja MOSCD1 no libSystem, memória na dylib de disco.** Slack e Claude não importam classe de Core Data. O libSystem (`coredata_fw.c` + `coredata_store.inc`) grava e relê um arquivo próprio, primeira linha `MOSCD1`, no caminho pedido por `addPersistentStoreWithType:configuration:URL:options:error:` ou em `~/Library/Application Support/<nome>/store.moscd` no `loadPersistentStoresWithCompletionHandler:` (o bloco roda antes do retorno). `NSInMemoryStoreType` não toca disco. Não é um banco SQLite: `sqlite3_open_v2` do libSystem continua falhando, e o arquivo não abre no sqlite3 da Apple. Predicado usa o `NSPredicate` que já existe (`evaluateWithObject:`); predicado que não responde a isso devolve fetch vazio. A dylib `CoreData.framework` do disco, a do Postico, continua só em memória.
+**Core Data — SQLite no libSystem, memória na dylib de disco.** Slack e Claude não importam classe de Core Data. O libSystem (`coredata_fw.c` + `coredata_store.inc` + o amalgama em `sqlite3_mos.c`) grava um arquivo SQLite (`mos_object`, `mos_attr`) no caminho pedido, ou em `~/Library/Application Support/<nome>/store.moscd`. Um arquivo antigo `MOSCD1` é migrado na primeira abertura. `NSInMemoryStoreType` não toca disco. `sqlite3_open_v2` abre o banco. Predicado usa o `NSPredicate` já existente. A dylib `CoreData.framework` do disco, a do Postico, continua só em memória.
 
-`tools/cdtest.c` exercita a loja no host (inserir, gravar, reabrir, apagar, limite, entidades separadas, escape de tab e quebra de linha, magic ruim). `tools/sktest.c` confere a política e o texto do recibo. Isso não é o `build.ps1`, não é a VM e não é hardware.
+`tools/cdtest.c` exercita a loja no host (inserir, gravar, reabrir, apagar, limite, migração de MOSCD1 e o arquivo aberto pelo `sqlite3` do host). `tools/sktest.c` confere a política e o texto do recibo. Isso não é o `build.ps1`, não é a VM e não é hardware.
 
 ## Foundation / formatação — 204 símbolos do WhatsApp
 
