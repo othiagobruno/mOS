@@ -22,6 +22,10 @@
 #include "mos.h"
 #include "svcnative.h"
 #include "plistmini.h"
+#define LI_LOGIC_ONLY 1
+#define LI_SYNC 1
+#include "loginitem.inc"
+#include "bundlereg.inc"
 
 /* zig 0.17 trata declaração implícita como erro. mos.h tem strchr, não strrchr nem snprintf.
  * As três chamadas deste arquivo são literais com um único %s. */
@@ -311,6 +315,84 @@ out:
 }
 
 static void scan_dir(const char *dir);
+static void print_line(const char *prefix, const char *s) {
+    char nl = '\n';
+    if (prefix) write(1, prefix, strlen(prefix));
+    if (s) write(1, s, strlen(s));
+    write(1, &nl, 1);
+}
+
+static int br_init_list(void *ctx, const char *dir, int index, char *name, int cap) {
+    (void)ctx;
+    if (!name || cap < 2) return 0;
+    return readdir(dir, index, name, (usize)cap) == 1;
+}
+static int br_init_read(void *ctx, const char *path, char *buf, int cap) {
+    i64 n;
+    (void)ctx;
+    if (!buf || cap < 2) return -1;
+    memset(buf, 0, (usize)cap);
+    n = read_file(path, buf, (usize)cap - 1);
+    if (n < 0) return -1;
+    buf[n] = 0;
+    return (int)n;
+}
+static int br_init_isfile(void *ctx, const char *path) {
+    (void)ctx;
+    return file_size(path) >= 0;
+}
+
+static br_item_t br_items[BR_MAX];
+static char br_auth_seen[BR_MAX][BR_PATH];
+static int br_nauth;
+
+static int br_auth_logged(const char *where) {
+    int i;
+    for (i = 0; i < br_nauth; i++) if (br_eq(br_auth_seen[i], where)) return 1;
+    if (br_nauth < BR_MAX && br_copy(br_auth_seen[br_nauth], BR_PATH, where) == 0) br_nauth++;
+    return 0;
+}
+
+/* XPC dos apps em /Aplicativos: sob demanda, nome Mach = CFBundleIdentifier. O plugin só entra no log. */
+static void scan_bundle_services(void) {
+    char app[160], path[400], line[480];
+    br_fs_t fs;
+    int i, a;
+    fs.list = br_init_list;
+    fs.read = br_init_read;
+    fs.isfile = br_init_isfile;
+    fs.ctx = 0;
+    for (a = 0; readdir("/Aplicativos", a, app, sizeof app) == 1; a++) {
+        int n;
+        if (!ends(app, ".app")) continue;
+        join(path, sizeof path, "/Aplicativos", app);
+        memset(br_items, 0, sizeof br_items);
+        n = br_scan(&fs, path, br_items, BR_MAX);
+        for (i = 0; i < n; i++) {
+            br_item_t *it = &br_items[i];
+            if (br_fmt(it, line, (int)sizeof line) <= 0) continue;
+            if (it->kind == BR_XPC) {
+                job_t *j = job_find(it->label);
+                if (j) continue;
+                j = job_new(it->label);
+                if (!j) { print_line("launchd: sem vaga ", it->label); continue; }
+                scopy(j->src, it->where, sizeof j->src);
+                scopy(j->prog, it->exe, sizeof j->prog);
+                scopy(j->argv[0], it->exe, sizeof j->argv[0]);
+                j->argc = 1;
+                scopy(j->svc[0], it->label, sizeof j->svc[0]);
+                j->nsvc = 1;
+                j->runatload = 0;
+                j->keep = 0;
+                reserve(j);
+                print_line("launchd: ", line);
+            } else if (!br_auth_logged(it->where)) {
+                print_line("launchd: ", line);
+            }
+        }
+    }
+}
+
 static void scan_app_agents(void) {
     char app[160], dir[512];
     for (int i = 0; readdir("/Aplicativos", i, app, sizeof app) == 1; i++) {
@@ -322,36 +404,62 @@ static void scan_app_agents(void) {
     }
 }
 
-/* Uma linha por caminho absoluto. Quem grava: LSSharedFileListInsertItemURL (vscode_frameworks.c). */
+/* Uma linha por caminho absoluto. Quem grava e apaga: loginitems.c, chamado por
+ * LSSharedFileList* em vscode_frameworks.c. Arquivo ausente vale lista vazia. */
+static char li_paths[LI_MAX][LI_PATH];
+static li_slot_t li_slots[LI_MAX];
+
 static void load_loginitems(const char *path) {
     i64 len = read_file(path, filebuf, sizeof filebuf - 1);
-    char *p;
-    if (len <= 0) return;
+    int n, i, s, nslot;
+    if (len < 0) len = 0;
+    if (len >= (i64)sizeof filebuf) len = (i64)sizeof filebuf - 1;
     filebuf[len] = 0;
-    for (p = filebuf; *p; ) {
-        char *nl = strchr(p, '\n');
-        char label[160];
-        const char *base;
-        job_t *j;
-        if (nl) *nl = 0;
-        while (*p == ' ' || *p == '\t') p++;
-        if (p[0] == '/') {
-            base = strrchr(p, '/');
-            base = base ? base + 1 : p;
-            snprintf(label, sizeof label, "mos.login.%s", base);
-            if (!job_find(label)) {
-                j = job_new(label);
-                if (j) {
-                    scopy(j->src, path, sizeof j->src);
-                    scopy(j->prog, p, sizeof j->prog);
-                    scopy(j->argv[0], p, sizeof j->argv[0]);
-                    j->argc = 1;
-                    j->runatload = 1;
-                }
-            }
+    n = li_parse(filebuf, li_paths, LI_MAX);
+    memset(li_slots, 0, sizeof li_slots);
+    nslot = 0;
+    for (i = 0; i < MAX_JOBS && nslot < LI_MAX; i++) {
+        if (!jobs[i].used || strncmp(jobs[i].label, "mos.login.", 10) || strcmp(jobs[i].src, path)) continue;
+        li_slots[nslot].used = 1;
+        li_slots[nslot].pid = jobs[i].pid;
+        li_slots[nslot].last_start = jobs[i].last_start ? 1 : 0;
+        li_slots[nslot].runatload = jobs[i].runatload;
+        li_slots[nslot].keep = jobs[i].keep;
+        li_copy(li_slots[nslot].path, LI_PATH, jobs[i].prog);
+        li_copy(li_slots[nslot].label, (int)sizeof li_slots[nslot].label, jobs[i].label);
+        nslot++;
+    }
+    li_sync(li_slots, LI_MAX, li_paths, n);
+    for (i = 0; i < MAX_JOBS; i++) {
+        int found = 0;
+        if (!jobs[i].used || strncmp(jobs[i].label, "mos.login.", 10) || strcmp(jobs[i].src, path)) continue;
+        for (s = 0; s < LI_MAX; s++)
+            if (li_slots[s].used && li_eq(li_slots[s].path, jobs[i].prog)) { found = 1; break; }
+        if (found) {
+            jobs[i].runatload = li_slots[s].runatload;
+            jobs[i].keep = li_slots[s].keep;
+            continue;
         }
-        if (!nl) break;
-        p = nl + 1;
+        if (jobs[i].runatload || jobs[i].keep || jobs[i].pid <= 0)
+            print("launchd: login item removido %s\n", jobs[i].prog);
+        if (jobs[i].pid > 0) {
+            jobs[i].runatload = 0;
+            jobs[i].keep = 0;
+        } else {
+            memset(&jobs[i], 0, sizeof jobs[i]);
+        }
+    }
+    for (s = 0; s < LI_MAX; s++) {
+        job_t *j;
+        if (!li_slots[s].used || job_find(li_slots[s].label)) continue;
+        j = job_new(li_slots[s].label);
+        if (!j) continue;
+        scopy(j->src, path, sizeof j->src);
+        scopy(j->prog, li_slots[s].path, sizeof j->prog);
+        scopy(j->argv[0], li_slots[s].path, sizeof j->argv[0]);
+        j->argc = 1;
+        j->runatload = li_slots[s].runatload;
+        j->keep = li_slots[s].keep;
     }
 }
 
@@ -378,6 +486,7 @@ static void scan_user_jobs(int autostart) {
         scan_dir(la);
     }
     scan_app_agents();
+    scan_bundle_services();
     scan_loginitems();
     if (!autostart) return;
     lock();

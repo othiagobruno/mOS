@@ -26,6 +26,7 @@ void archive_open_file(const char *path);
 void diskimage_open_file(const char *path);
 void script_open_file(const char *path);
 void mail_open_url(const char *url);
+void br_vfs_announce(const char *root);   /* compat/bundlereg.c: XPC e plugin, sem privilégio */
 extern app_t app_compactacao, app_dimounter;
 app_t *compat_gui_app_for_pid(int pid);
 void wm_bring_app(app_t *a);
@@ -748,6 +749,7 @@ static ls_app_t *register_bundle(const char *path) {
     pl_free(info);
     ls_gen++;
     kprintf("ls: %s (%s): %d tipos de documento, %d esquemas\n", a->name, a->id, a->nclaims, a->nschemes);
+    br_vfs_announce(path);
     return a;
 }
 
