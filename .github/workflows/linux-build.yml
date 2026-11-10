@@ -16,5 +16,7 @@ jobs:
           curl -fsSL -o /tmp/zig.tar.xz https://ziglang.org/download/0.17.1/zig-x86_64-linux-0.17.1.tar.xz
           sudo tar -xJf /tmp/zig.tar.xz -C /opt
           echo /opt/zig-x86_64-linux-0.17.1 >> "$GITHUB_PATH"
+      - name: teste de host da contagem Swift
+        run: gcc -O2 -Wall -Wextra -pthread -o /tmp/swift_refcount_host tools/swift_refcount_host.c userland/libsystem/swift_refcount.c && /tmp/swift_refcount_host
       - name: tools/build.sh
         run: tools/build.sh --out /tmp/mos-linux-build
