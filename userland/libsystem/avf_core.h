@@ -2,6 +2,7 @@
 #define MOS_AVF_CORE_H
 /* Núcleo de AVFoundation sem Objective-C. As classes em avfaudio.c e avcapture.c
  * chamam estas funções. O teste de host (tools/avf_core_test.c) cobre o mesmo código. */
+#include <stddef.h>
 #include <stdint.h>
 typedef struct { double duration, rate; unsigned channels; int media; } avf_track_t; /* media 1 = áudio */
 int avf_describe_audio(unsigned long long frames, double rate, unsigned channels, avf_track_t *out);
@@ -33,4 +34,27 @@ int avk_pip_start(int *err); /* 0 e *err != 0: o start falha e o delegate recebe
 int avk_route_count(void);
 const char *avk_route_port(int index); /* "Speaker", a mesma porta da AVAudioSession */
 const char *avk_route_name(int index);
+/* Leitor de faixa. media 1 = áudio. Vídeo (2), texto (3) e capítulo (4) falham: não há decodificador. */
+enum { AVF_READ_UNKNOWN = 0, AVF_READ_READING = 1, AVF_READ_COMPLETED = 2, AVF_READ_FAILED = 3, AVF_READ_CANCELLED = 4 };
+typedef struct {
+    int status, err, media;
+    const float *pcm;
+    unsigned ch;
+    unsigned long long frames, at;
+} avf_read_t;
+int avf_read_begin(avf_read_t *r, int media, const float *pcm, unsigned ch, unsigned long long frames);
+unsigned avf_read_copy(avf_read_t *r, float *dst, unsigned frames);
+void avf_read_cancel(avf_read_t *r);
+/* Escritor. Só WAV PCM 16 bits. Outro tipo de arquivo falha com -11822. */
+enum { AVF_WRITE_UNKNOWN = 0, AVF_WRITE_WRITING = 1, AVF_WRITE_COMPLETED = 2, AVF_WRITE_FAILED = 3, AVF_WRITE_CANCELLED = 4 };
+typedef struct {
+    int status, err;
+    unsigned rate, ch;
+    unsigned char *pcm;
+    size_t n, cap;
+} avf_write_t;
+int avf_write_begin(avf_write_t *w, const char *filetype, unsigned rate, unsigned ch);
+unsigned avf_write_append(avf_write_t *w, const short *pcm, unsigned frames);
+int avf_write_finish(avf_write_t *w, const char *path);
+void avf_write_cancel(avf_write_t *w);
 #endif

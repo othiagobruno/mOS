@@ -140,6 +140,19 @@ int main(void) {
     expect(byname && mos_ci_render(byname, -3, -3, 7, 7, bypx) == 0 && !memcmp(bypx, tile, sizeof tile),
            "CIFilter CIGaussianBlur pelo nome");
     expect(mos_ci_apply("CIComicEffect", im, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0) == 0, "filtro desconhecido é nil");
+    expect(mos_ci_colorspace_ok(0) == 1 && mos_ci_colorspace_ok(1) == 0, "espaço de cor estrangeiro é recusado");
+    mos_ci_ctx cache;
+    mos_ci_ctx_init(&cache, 1);
+    uint32_t once = 0, twice = 0;
+    expect(mos_ci_ctx_render(&cache, im, 0, 0, 1, 1, &once) == 0, "contexto desenha");
+    expect(mos_ci_ctx_render(&cache, im, 0, 0, 1, 1, &twice) == 0 && twice == once && mos_ci_ctx_renders(&cache) == 1,
+           "kCIContextCacheIntermediates reaproveita o raster");
+    mos_ci_ctx_free(&cache);
+    mos_ci_ctx fresh;
+    mos_ci_ctx_init(&fresh, 0);
+    expect(mos_ci_ctx_render(&fresh, im, 0, 0, 1, 1, &once) == 0 && mos_ci_ctx_render(&fresh, im, 0, 0, 1, 1, &twice) == 0
+           && mos_ci_ctx_renders(&fresh) == 2, "cache desligado recalcula");
+    mos_ci_ctx_free(&fresh);
     mos_ci_release(byname);
 
     mos_ci_release(im); mos_ci_release(crop); mos_ci_release(gray); mos_ci_release(blk);

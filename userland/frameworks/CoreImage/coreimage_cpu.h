@@ -42,6 +42,21 @@ int mos_ci_render_format(mos_ci *im, double x, double y, int w, int h, int forma
 /* PNG ou JPEG por mos_img_decode, extern do libSystem (grok_imageio.c). NULL se não for esses tipos. */
 mos_ci *mos_ci_from_encoded(const uint8_t *data, size_t n);
 
+/* CIContext. cache=0 recalcula sempre. Um espaço de cor estrangeiro não é convertido. */
+typedef struct {
+    int cache;
+    mos_ci *im;
+    double x, y;
+    int w, h;
+    uint32_t *px;
+    int renders;
+} mos_ci_ctx;
+void mos_ci_ctx_init(mos_ci_ctx *c, int cache);
+int mos_ci_ctx_render(mos_ci_ctx *c, mos_ci *im, double x, double y, int w, int h, uint32_t *px);
+int mos_ci_ctx_renders(const mos_ci_ctx *c);
+void mos_ci_ctx_free(mos_ci_ctx *c);
+int mos_ci_colorspace_ok(int foreign_space);
+
 /* O mesmo despacho de -[CIFilter outputImage]. crop=1 usa tx,ty,a,b como retângulo. */
 mos_ci *mos_ci_apply(const char *name, mos_ci *input, mos_ci *background,
                      double radius, double saturation, double brightness, double contrast,
