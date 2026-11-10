@@ -585,6 +585,7 @@ void cx_appkit_input_init(void) {
     { extern void cx_slack_frameworks_init(void); cx_slack_frameworks_init(); }   /* slack_frameworks.c */
     if (cx_corebluetooth_init) cx_corebluetooth_init();   /* corebluetooth.c */
     cx_framework_classes_init(); /* vscode_fwclasses.c: classes de frameworks ausentes */
+    { extern void cx_userspace_services_init(void); cx_userspace_services_init(); }
     cx_appkit_extra_init();     /* appkit_extra.c: painéis, barra de status, NSAnimation, NSParagraphStyle... */
     cx_tracking_init();         /* hover: NSTrackingArea e mouseEntered/Exited/Moved */
     cx_foundation_extra_init(); /* foundation_extra.c: NSMutableData, NSTimeZone, NSCalendar, NSInvocation... */

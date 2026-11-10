@@ -190,13 +190,17 @@ void CGEventPostToPSN(void *psn, void *e) { (void)psn; post(ev(e)); }
 i32 CGWarpMouseCursorPosition(cgpt_t p) { g_cursor = p; inject(K_EV_MOUSE_ABS, g_buttons, 0, 0, 0, (i32)p.x, (i32)p.y); return 0; }
 
 /* ---- captura de tela (GUI_DEVICE/DEV_SCREEN_CAPTURE): a tela composta, com todos os monitores num espaço só como o
- * g_screen do kernel. O mOS não tem permissão de gravação de tela: está sempre concedida. */
+ * g_screen do kernel. Pixels só saem se o TCC local concedeu kTCCServiceScreenCapture (tcc.c). A Interface
+ * responde o prompt com cx_tcc_decide; o padrão é negado. */
 void *CGDataProviderCreateWithData(void *info, const void *data, size_t size, void (*release)(void *, const void *, size_t));
 void CGDataProviderRelease(void *p);
 void *CGImageCreate(size_t w, size_t h, size_t bpc, size_t bpp, size_t bpr, const void *space, u32 info,
                     void *provider, const void *decode, u8 interp, int intent);
 typedef struct { double x, y, w, h; } cgrect_t;
+int cx_tcc_preflight(const char *service);
+int cx_tcc_request(const char *service);
 static void *capture(i64 x, i64 y, i64 w, i64 h) {
+    if (!cx_tcc_preflight("kTCCServiceScreenCapture")) return 0;
     long sz = (long)SYS4(GUI_DEVICE, DEV_SCREEN_CAPTURE, (u64)(u32)x | (u64)(u32)y << 32, (u64)(u32)w | (u64)(u32)h << 32, 0);
     if (sz < 0) return 0;
     u32 cw = (u32)sz, ch = (u32)((u64)sz >> 32);
@@ -212,8 +216,8 @@ static void *capture(i64 x, i64 y, i64 w, i64 h) {
     return img;
 }
 static int rect_ok(cgrect_t r) { return r.w > 0 && r.h > 0 && r.w < 1e7 && r.h < 1e7 && r.x > -1e7 && r.x < 1e7 && r.y > -1e7 && r.y < 1e7; }
-u8 CGPreflightScreenCaptureAccess(void) { return 1; }
-u8 CGRequestScreenCaptureAccess(void) { return 1; }
+u8 CGPreflightScreenCaptureAccess(void) { return (u8)cx_tcc_preflight("kTCCServiceScreenCapture"); }
+u8 CGRequestScreenCaptureAccess(void) { return (u8)cx_tcc_request("kTCCServiceScreenCapture"); }
 void *CGDisplayCreateImage(u32 display) { (void)display; return capture(0, 0, 0, 0); }
 void *CGDisplayCreateImageForRect(u32 display, cgrect_t r) { (void)display; return rect_ok(r) ? capture((i64)r.x, (i64)r.y, (i64)r.w, (i64)r.h) : capture(0, 0, 0, 0); }
 /* uma janela específica (win != 0 com kCGWindowListOptionIncludingWindow) ainda sai como o retângulo da tela */

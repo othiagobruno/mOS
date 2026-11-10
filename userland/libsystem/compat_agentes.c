@@ -324,11 +324,12 @@ CFK(kCLErrorDomain, "kCLErrorDomain")
 /* ---- ApplicationServices: sem permissão de acessibilidade (AXIsProcessTrusted = 0), as consultas falham com
  * kAXErrorAPIDisabled, como num Mac antes de autorizar o app */
 #define AX_DISABLED (-25211)
-int AXUIElementCopyElementAtPosition(void *app, float x, float y, void **out) { (void)app; (void)x; (void)y; if (out) *out = 0; return AX_DISABLED; }
-int AXUIElementGetPid(void *e, int *pid) { (void)e; if (pid) *pid = 0; return AX_DISABLED; }
-int AXUIElementIsAttributeSettable(void *e, void *attr, u8 *settable) { (void)e; (void)attr; if (settable) *settable = 0; return AX_DISABLED; }
+int cx_ax_unavailable(void);
+int AXUIElementCopyElementAtPosition(void *app, float x, float y, void **out) { (void)app; (void)x; (void)y; if (out) *out = 0; return cx_ax_unavailable(); }
+int AXUIElementGetPid(void *e, int *pid) { (void)e; if (pid) *pid = 0; return cx_ax_unavailable(); }
+int AXUIElementIsAttributeSettable(void *e, void *attr, u8 *settable) { (void)e; (void)attr; if (settable) *settable = 0; return cx_ax_unavailable(); }
 int AXUIElementSetMessagingTimeout(void *e, float s) { (void)e; (void)s; return 0; }
-int _AXUIElementGetWindow(void *e, u32 *wid) { (void)e; if (wid) *wid = 0; return AX_DISABLED; }
+int _AXUIElementGetWindow(void *e, u32 *wid) { (void)e; if (wid) *wid = 0; return cx_ax_unavailable(); }
 
 /* ---- CoreGraphics: CGContextAddPath copia os elementos do CGPath para o caminho atual do contexto */
 typedef struct { double x, y; } cu_pt_t;

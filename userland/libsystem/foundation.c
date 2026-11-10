@@ -1060,6 +1060,7 @@ static void nc_deliver_async(obs_t *o, id note) {
     id mainq = oq ? MSG0(id, (id)oq, "mainQueue") : 0;
     dispatch_async_f(o->queue == mainq ? dispatch_get_main_queue() : dispatch_get_global_queue(0, 0), a, nc_async_run);
 }
+void cx_cfnotify_from_ns(id note);
 void cx_post(id note) {
     nsnote_t *n = (nsnote_t *)note;
     for (obs_t *o = observers; o; o = o->next) {
@@ -1069,6 +1070,7 @@ void cx_post(id note) {
         else if (o->block) { void (*inv)(void *, id) = *(void **)((u8 *)o->block + 16); inv(o->block, note); }
         else if (o->target) ((void (*)(id, SEL, id))objc_msgSend)(o->target, o->sel, note);
     }
+    cx_cfnotify_from_ns(note);
 }
 static void nc_post(id self, SEL c, id note) { (void)self; (void)c; cx_post(note); }
 static void nc_post_name(id self, SEL c, id name, id obj) { (void)self; (void)c; cx_post(cx_note(name, obj, 0)); }
@@ -1126,41 +1128,37 @@ static BOOL th_is_main(id self, SEL c) { (void)self; (void)c; return YES; }
 static id th_current(id cls, SEL c) { return g_singleton(cls, c); }
 static void th_sleep(id cls, SEL c, double s) { (void)cls; (void)c; usleep((unsigned)(s * 1e6)); }
 
-/* NSUserDefaults: em memória (persistência fica para quando o mOS tiver um diretório de prefs).
- * O padrão (standardUserDefaults, [[NSUserDefaults alloc] init]) usa ud_dict. -initWithSuiteName: dá um objeto por
- * suíte, com os valores que o macOS traz nesse domínio (ud_system_defaults). */
-static id ud_dict;
+/* NSUserDefaults persiste em Library/Preferences (prefs.c). O registro não vai para o disco.
+ * com.apple.universalaccess/mouseDriverCursorSize = 1.0 fica no domínio de registro dessa suíte
+ * (o Chromium recusa o CreateView se o fator do cursor for < 1). */
+extern void cx_prefs_bind(void *ud, const char *suite_or_null);
+extern id cx_prefs_object(void *ud, id key);
+extern int cx_prefs_set(void *ud, id key, id value);
+extern void cx_prefs_register(void *ud, id dict);
+extern id cx_prefs_representation(void *ud);
+extern id cx_prefs_persistent(const char *name);
+extern int cx_prefs_synchronize(void *ud);
+extern void cx_prefs_remove_persistent(const char *name);
+extern int cx_prefs_set_persistent(const char *name, id dict);
+extern void cx_prefs_add_suite(void *ud, const char *name);
+extern void cx_prefs_remove_suite(void *ud, const char *name);
+extern id NSUserDefaultsDidChangeNotification;
 #define UD_SUITES 8
-static struct { id obj; char name[96]; id dict; } ud_suites[UD_SUITES];
+static struct { id obj; char name[96]; } ud_suites[UD_SUITES];
 static int ud_nsuites;
-static id ud_dict_of(id self, SEL c, BOOL create) {
-    for (int i = 0; i < ud_nsuites; i++) if (ud_suites[i].obj == self) return ud_suites[i].dict;
-    if (!ud_dict && create) ud_dict = d_dict((id)&NSMutableDictionary_c, c);
-    return ud_dict;
-}
-/* valores de sistema por domínio. com.apple.universalaccess/mouseDriverCursorSize: o Chromium observa essa chave (KVO,
- * opção Initial) e manda o valor ao renderer em VisualProperties.cursor_accessibility_scale_factor; abaixo de 1 o
- * renderer recusa o CreateView inteiro (VALIDATION_ERROR_DESERIALIZATION_FAILED) e a janela fica sem conteúdo */
-static void ud_system_defaults(const char *suite, id dict) {
-    if (!strcmp(suite, "com.apple.universalaccess")) {
-        d_set(dict, cx_num_d(1.0), cx_str("mouseDriverCursorSize"));
-        d_set(dict, cx_num_i(0), cx_str("reduceMotion"));
-        d_set(dict, cx_num_i(0), cx_str("reduceTransparency"));
-        d_set(dict, cx_num_i(0), cx_str("increaseContrast"));
-        d_set(dict, cx_num_i(0), cx_str("differentiateWithoutColor"));
-    }
-}
 static id ud_init_suite(id self, SEL c, id name) {
-    if (!name || !N(name) || !S(name)) return self;                 /* suíte nil: o domínio do app */
-    const char *s = S(name);
-    for (int i = 0; i < ud_nsuites; i++)
-        if (!strcmp(ud_suites[i].name, s)) { objc_release(self); return objc_retain(ud_suites[i].obj); }
-    if (ud_nsuites == UD_SUITES) return self;
-    ud_suites[ud_nsuites].obj = objc_retain(self);                  /* a tabela guarda uma referência: vive para sempre */
-    strlcpy(ud_suites[ud_nsuites].name, s, sizeof ud_suites[ud_nsuites].name);
-    ud_suites[ud_nsuites].dict = d_dict((id)&NSMutableDictionary_c, c);
-    ud_system_defaults(s, ud_suites[ud_nsuites].dict);
-    ud_nsuites++;
+    (void)c;
+    const char *s = (name && N(name) && S(name)) ? S(name) : 0;
+    if (s && s[0]) {
+        for (int i = 0; i < ud_nsuites; i++)
+            if (!strcmp(ud_suites[i].name, s)) { objc_release(self); return objc_retain(ud_suites[i].obj); }
+        if (ud_nsuites < UD_SUITES) {
+            ud_suites[ud_nsuites].obj = objc_retain(self);
+            strlcpy(ud_suites[ud_nsuites].name, s, sizeof ud_suites[ud_nsuites].name);
+            ud_nsuites++;
+        }
+        cx_prefs_bind(self, s);
+    } else cx_prefs_bind(self, 0);
     return self;
 }
 /* KVO no NSUserDefaults. Com NSKeyValueObservingOptionInitial (4) o observador recebe o valor atual na hora, como no
@@ -1200,32 +1198,35 @@ static void ud_kvo_notify(id self, id key, id v) {
             MSG(void, ud_obs[i].obs, "observeValueForKeyPath:ofObject:change:context:", ud_obs[i].path, self,
                 ud_change(v, ud_obs[i].opts), ud_obs[i].ctx);
 }
-static id ud_obj(id self, SEL c, id k) { id d = ud_dict_of(self, c, NO); return d ? d_get(d, c, k) : 0; }
+static id ud_obj(id self, SEL c, id k) { (void)c; return cx_prefs_object(self, k); }
+static void ud_changed(id self) {
+    id note = cx_note(NSUserDefaultsDidChangeNotification, self, 0);
+    cx_post(note);
+    objc_autorelease(note);
+}
 /* como no macOS, o KVO só dispara quando o valor muda: regravar o mesmo valor (preferências do WhatsApp) não notifica */
 static void ud_set(id self, SEL c, id v, id k) {
-    id d = ud_dict_of(self, c, YES), old = d_get(d, c, k);
+    (void)c;
+    id old = cx_prefs_object(self, k);
     if (old && v && (old == v || MSG(BOOL, old, "isEqual:", v))) return;
-    d_set(d, v, k);
-    ud_kvo_notify(self, k, v);
+    if (cx_prefs_set(self, k, v) > 0) { ud_kvo_notify(self, k, cx_prefs_object(self, k)); ud_changed(self); }
 }
 static float ud_float(id self, SEL c, id k) { id v = ud_obj(self, c, k); return v ? (float)MSG0(double, v, "doubleValue") : 0.0f; }
 static BOOL ud_bool(id self, SEL c, id k) { id v = ud_obj(self, c, k); return v ? MSG0(BOOL, v, "boolValue") : NO; }
 static i64 ud_int(id self, SEL c, id k) { id v = ud_obj(self, c, k); return v ? MSG0(i64, v, "integerValue") : 0; }
 static double ud_double(id self, SEL c, id k) { id v = ud_obj(self, c, k); return v ? MSG0(double, v, "doubleValue") : 0; }
-static void ud_set_bool(id self, SEL c, BOOL b, id k) { ud_set(self, c, cx_num_i(b), k); }
+static void ud_set_bool(id self, SEL c, BOOL b, id k) { ud_set(self, c, cx_num_bool(b), k); }
 static void ud_set_int(id self, SEL c, i64 b, id k) { ud_set(self, c, cx_num_i(b), k); }
 static void ud_set_double(id self, SEL c, double b, id k) { ud_set(self, c, cx_num_d(b), k); }
 /* -removeObjectForKey: e setObject:nil (era um no-op: o armazenamento de preferências do WhatsApp removia uma chave,
  * conferia, achava de novo e tentava sem fim). Mais o resto da API que os apps usam. */
 static void ud_remove(id self, SEL c, id k) {
-    id d = ud_dict_of(self, c, NO);
-    if (!d || !k) return;
-    if (!d_get(d, c, k)) return;
-    d_remove(d, c, k);
-    ud_kvo_notify(self, k, 0);
+    (void)c;
+    if (!k) return;
+    if (cx_prefs_set(self, k, 0) > 0) { ud_kvo_notify(self, k, cx_prefs_object(self, k)); ud_changed(self); }
 }
 static void ud_set_or_remove(id self, SEL c, id v, id k) { if (!v) ud_remove(self, c, k); else ud_set(self, c, v, k); }
-static id ud_dict_repr(id self, SEL c) { id d = ud_dict_of(self, c, NO); return d ? d_mcopy(d, c) : d_dict((id)&NSMutableDictionary_c, c); }
+static id ud_dict_repr(id self, SEL c) { (void)c; return cx_prefs_representation(self); }
 static id ud_typed(id self, SEL c, id k, cx_class_t *want) {
     id v = ud_obj(self, c, k);
     return v && want && cx_is_subclass(v->isa, want) ? v : 0;
@@ -1241,25 +1242,28 @@ static id ud_url(id self, SEL c, id k) {
 static void ud_set_url(id self, SEL c, id u, id k) { ud_set_or_remove(self, c, u ? MSG0(id, u, "absoluteString") : 0, k); }
 static void ud_set_float(id self, SEL c, float f, id k) { ud_set(self, c, cx_num_d((double)f), k); }
 static BOOL ud_forced(id self, SEL c, id k) { (void)self; (void)c; (void)k; return NO; }
-static void ud_noop1(id self, SEL c, id a) { (void)self; (void)c; (void)a; }
-static id ud_persistent(id self, SEL c, id name) { (void)name; return ud_dict_repr(self, c); }
+static id ud_persistent(id self, SEL c, id name) {
+    (void)self; (void)c;
+    return cx_prefs_persistent(name && N(name) && S(name) ? S(name) : 0);
+}
 static void ud_remove_persistent(id self, SEL c, id name) {
-    (void)name;
-    id d = ud_dict_of(self, c, NO);
-    if (!d) return;
-    id keys = MSG0(id, d, "allKeys");
-    u64 n = MSG0(u64, keys, "count");
-    for (u64 i = 0; i < n; i++) ud_remove(self, c, MSG(id, keys, "objectAtIndex:", i));
+    (void)self; (void)c;
+    cx_prefs_remove_persistent(name && N(name) && S(name) ? S(name) : 0);
 }
 static void ud_set_persistent(id self, SEL c, id dict, id name) {
-    ud_remove_persistent(self, c, name);
-    nsdict_t *s = (nsdict_t *)dict;
-    for (u64 i = 0; dict && i < s->n; i++) ud_set(self, c, s->vals[i], s->keys[i]);
+    (void)self; (void)c;
+    cx_prefs_set_persistent(name && N(name) && S(name) ? S(name) : 0, dict);
 }
-static void ud_register(id self, SEL c, id d) {
-    nsdict_t *s = (nsdict_t *)d;
-    for (u64 i = 0; d && i < s->n; i++) if (!ud_obj(self, c, s->keys[i])) ud_set(self, c, s->vals[i], s->keys[i]);
+static void ud_register(id self, SEL c, id d) { (void)c; cx_prefs_register(self, d); }
+static void ud_add_suite(id self, SEL c, id name) {
+    (void)c;
+    if (name && N(name) && S(name)) cx_prefs_add_suite(self, S(name));
 }
+static void ud_remove_suite(id self, SEL c, id name) {
+    (void)c;
+    if (name && N(name) && S(name)) cx_prefs_remove_suite(self, S(name));
+}
+static BOOL ud_sync(id self, SEL c) { (void)c; return cx_prefs_synchronize(self) ? YES : NO; }
 static BOOL yes_m(id self, SEL c) { (void)self; (void)c; return YES; }
 
 /* NSBundle: o mainBundle (path NULL) vem do argv[0]; +bundleWithPath: cria instâncias para outros
@@ -1683,11 +1687,11 @@ void cx_foundation_init(void) {
     M(NSUserDefaults, "dictionaryForKey:", ud_obj); M(NSUserDefaults, "setObject:forKey:", ud_set_or_remove); M(NSUserDefaults, "boolForKey:", ud_bool);
     M(NSUserDefaults, "integerForKey:", ud_int); M(NSUserDefaults, "doubleForKey:", ud_double); M(NSUserDefaults, "setBool:forKey:", ud_set_bool);
     M(NSUserDefaults, "setInteger:forKey:", ud_set_int); M(NSUserDefaults, "setDouble:forKey:", ud_set_double); M(NSUserDefaults, "registerDefaults:", ud_register);
-    M(NSUserDefaults, "synchronize", yes_m); M(NSUserDefaults, "removeObjectForKey:", ud_remove);
+    M(NSUserDefaults, "synchronize", ud_sync); M(NSUserDefaults, "removeObjectForKey:", ud_remove);
     M(NSUserDefaults, "dictionaryRepresentation", ud_dict_repr); M(NSUserDefaults, "dataForKey:", ud_data);
     M(NSUserDefaults, "stringArrayForKey:", ud_str_array); M(NSUserDefaults, "URLForKey:", ud_url); M(NSUserDefaults, "setURL:forKey:", ud_set_url);
     M(NSUserDefaults, "setFloat:forKey:", ud_set_float); M(NSUserDefaults, "objectIsForcedForKey:", ud_forced);
-    M(NSUserDefaults, "addSuiteNamed:", ud_noop1); M(NSUserDefaults, "removeSuiteNamed:", ud_noop1);
+    M(NSUserDefaults, "addSuiteNamed:", ud_add_suite); M(NSUserDefaults, "removeSuiteNamed:", ud_remove_suite);
     M(NSUserDefaults, "persistentDomainForName:", ud_persistent); M(NSUserDefaults, "removePersistentDomainForName:", ud_remove_persistent);
     M(NSUserDefaults, "setPersistentDomain:forName:", ud_set_persistent); M(NSUserDefaults, "setValue:forKey:", ud_set_or_remove);
     M(NSUserDefaults, "initWithSuiteName:", ud_init_suite); M(NSUserDefaults, "floatForKey:", ud_float);

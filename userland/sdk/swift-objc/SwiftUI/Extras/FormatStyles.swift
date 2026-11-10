@@ -1,8 +1,8 @@
 // mOS — cópia de userland/sdk/openswiftui/swift/Foundation/FormatStyles.swift para o SwiftUI.framework (variante com
-// interop ObjC): os estilos de formatação do FoundationInternationalization (ICU) que o OpenSwiftUI usa, sem ICU.
-// mOS SDK — estilos de formatação que o OpenSwiftUI usa e que moram no FoundationInternationalization
-// (ICU) da Apple. Sem ICU: datas e durações saem em inglês fixo, com o calendário gregoriano do
-// FoundationEssentials. A forma da API é a do Foundation (FormatStyle, DiscreteFormatStyle, Codable).
+// interop ObjC): os estilos de formatação do FoundationInternationalization (ICU) que o OpenSwiftUI usa.
+// Datas e números de en/pt/de/fr seguem o mesmo texto que userland/libsystem/fmt_core.inc (teste tools/fmttest.c).
+// Não é o ICU inteiro: locale fora desses quatro cai em inglês, e os ~278 símbolos mangled continuam de fora.
+// A forma da API é a do Foundation (FormatStyle, DiscreteFormatStyle, Codable).
 
 @_spi(SwiftCorelibsFoundation) import Foundation
 
@@ -112,7 +112,9 @@ public struct FloatingPointFormatStyle<Value: BinaryFloatingPoint>: Hashable, Co
 }
 
 extension FloatingPointFormatStyle: FormatStyle {
-    public func format(_ value: Value) -> String { String(format: "%g", Double(value)) }
+    public func format(_ value: Value) -> String {
+        _mosGrouped(Double(value), frac: 6, trim: true, locale: locale.identifier)
+    }
     public func locale(_ locale: Locale) -> Self { var copy = self; copy.locale = locale; return copy }
 }
 
@@ -309,17 +311,42 @@ extension Date {
             var parts: [String] = []
             if let dateStyle, dateStyle != .omitted {
                 let y = c.year ?? 0, m = c.month ?? 1, d = c.day ?? 1
-                if dateStyle == .numeric { parts.append("\(m)/\(d)/\(y)") }
-                else if dateStyle == .abbreviated { parts.append("\(_mosMonth(m, wide: false)) \(d), \(y)") }
-                else if dateStyle == .long { parts.append("\(_mosMonth(m, wide: true)) \(d), \(y)") }
-                else if dateStyle == .complete { parts.append("\(_mosWeekday(c.weekday ?? 1, wide: true)), \(_mosMonth(m, wide: true)) \(d), \(y)") }
+                let id = locale.identifier.lowercased()
+                let lang = id.hasPrefix("pt") ? "pt" : id.hasPrefix("de") ? "de" : id.hasPrefix("fr") ? "fr" : "en"
+                if dateStyle == .numeric {
+                    if lang == "en" { parts.append("\(m)/\(d)/\(y)") }
+                    else if lang == "de" { parts.append(String(format: "%02d.%02d.%04d", d, m, y)) }
+                    else { parts.append(String(format: "%02d/%02d/%04d", d, m, y)) }
+                } else if dateStyle == .abbreviated || dateStyle == .long {
+                    let wide = dateStyle == .long
+                    let mo = _mosMonth(m, wide: wide, lang: lang)
+                    if lang == "pt" { parts.append("\(d) de \(mo) de \(y)") }
+                    else if lang == "de" { parts.append("\(d). \(mo) \(y)") }
+                    else if lang == "fr" { parts.append("\(d) \(mo) \(y)") }
+                    else { parts.append("\(mo) \(d), \(y)") }
+                } else if dateStyle == .complete {
+                    let wd = _mosWeekday(c.weekday ?? 1, wide: true, lang: lang)
+                    let mo = _mosMonth(m, wide: true, lang: lang)
+                    if lang == "pt" { parts.append("\(wd), \(d) de \(mo) de \(y)") }
+                    else if lang == "de" { parts.append("\(wd), \(d). \(mo) \(y)") }
+                    else if lang == "fr" { parts.append("\(wd) \(d) \(mo) \(y)") }
+                    else { parts.append("\(wd), \(mo) \(d), \(y)") }
+                }
             }
             if let timeStyle, timeStyle != .omitted, let h = c.hour {
-                let h12 = h % 12 == 0 ? 12 : h % 12
-                var t = "\(h12):\(_mosPad(c.minute ?? 0))"
-                if timeStyle == .standard || timeStyle == .complete { t += ":\(_mosPad(c.second ?? 0))" }
-                t += h < 12 ? " AM" : " PM"
-                parts.append(t)
+                let id = locale.identifier.lowercased()
+                let en = !(id.hasPrefix("pt") || id.hasPrefix("de") || id.hasPrefix("fr"))
+                if en {
+                    let h12 = h % 12 == 0 ? 12 : h % 12
+                    var t = "\(h12):\(_mosPad(c.minute ?? 0))"
+                    if timeStyle == .standard || timeStyle == .complete { t += ":\(_mosPad(c.second ?? 0))" }
+                    t += h < 12 ? " AM" : " PM"
+                    parts.append(t)
+                } else {
+                    var t = String(format: "%02d:%02d", h, c.minute ?? 0)
+                    if timeStyle == .standard || timeStyle == .complete { t += String(format: ":%02d", c.second ?? 0) }
+                    parts.append(t)
+                }
             }
             return parts.joined(separator: ", ")
         }
@@ -774,13 +801,68 @@ private let _mosMonthsShort = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", 
 private let _mosWeekdays = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
 private let _mosWeekdaysShort = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
 
-private func _mosMonth(_ m: Int, wide: Bool) -> String {
-    let names = wide ? _mosMonths : _mosMonthsShort
+private let _mosMonthsPt = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"]
+private let _mosMonthsPtShort = ["jan.", "fev.", "mar.", "abr.", "mai.", "jun.", "jul.", "ago.", "set.", "out.", "nov.", "dez."]
+private let _mosWeekdaysPt = ["domingo", "segunda-feira", "terça-feira", "quarta-feira", "quinta-feira", "sexta-feira", "sábado"]
+private let _mosMonthsDe = ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"]
+private let _mosMonthsDeShort = ["Jan.", "Feb.", "März", "Apr.", "Mai", "Juni", "Juli", "Aug.", "Sep.", "Okt.", "Nov.", "Dez."]
+private let _mosWeekdaysDe = ["Sonntag", "Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag"]
+private let _mosMonthsFr = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"]
+private let _mosMonthsFrShort = ["janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc."]
+private let _mosWeekdaysFr = ["dimanche", "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi"]
+
+private func _mosMonth(_ m: Int, wide: Bool, lang: String = "en") -> String {
+    let names: [String]
+    if lang == "pt" { names = wide ? _mosMonthsPt : _mosMonthsPtShort }
+    else if lang == "de" { names = wide ? _mosMonthsDe : _mosMonthsDeShort }
+    else if lang == "fr" { names = wide ? _mosMonthsFr : _mosMonthsFrShort }
+    else { names = wide ? _mosMonths : _mosMonthsShort }
     return names[min(max(m, 1), 12) - 1]
 }
-private func _mosWeekday(_ w: Int, wide: Bool) -> String {
-    let names = wide ? _mosWeekdays : _mosWeekdaysShort
+private func _mosWeekday(_ w: Int, wide: Bool, lang: String = "en") -> String {
+    let names: [String]
+    if lang == "pt" { names = _mosWeekdaysPt }
+    else if lang == "de" { names = _mosWeekdaysDe }
+    else if lang == "fr" { names = _mosWeekdaysFr }
+    else { names = wide ? _mosWeekdays : _mosWeekdaysShort }
     return names[min(max(w, 1), 7) - 1]
+}
+private func _mosGrouped(_ value: Double, frac: Int, trim: Bool, locale: String) -> String {
+    let id = locale.lowercased()
+    let group: Character = id.hasPrefix("fr") ? " " : id.hasPrefix("en") ? "," : "."
+    let dec: Character = id.hasPrefix("en") ? "." : ","
+    let neg = value < 0
+    var scale = 1.0
+    for _ in 0..<frac { scale *= 10 }
+    var scaled = (neg ? -value : value) * scale + 0.5
+    if scaled < 0 { scaled = 0 }
+    var n = UInt64(scaled)
+    var div: UInt64 = 1
+    for _ in 0..<frac { div *= 10 }
+    let ip = frac > 0 ? n / div : n
+    var fp = frac > 0 ? n % div : 0
+    var digits = String(ip)
+    var grouped = ""
+    var rest = digits
+    while rest.count > 3 {
+        grouped = String(group) + String(rest.suffix(3)) + grouped
+        rest.removeLast(3)
+    }
+    digits = rest + grouped
+    var text = (neg ? "-" : "") + digits
+    if frac > 0 {
+        var fracDigits = ""
+        var p10 = div / 10
+        for _ in 0..<frac {
+            let dgt = p10 == 0 ? 0 : Int((fp / p10) % 10)
+            fracDigits.append(String(dgt))
+            if p10 > 0 { p10 /= 10 }
+            _ = fp
+        }
+        if trim { while fracDigits.last == "0" { fracDigits.removeLast() } }
+        if !fracDigits.isEmpty { text.append(dec); text.append(fracDigits) }
+    }
+    return text
 }
 private func _mosPad(_ n: Int, _ width: Int = 2) -> String {
     let s = String(n)
