@@ -2,12 +2,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#if !defined(__STDC_HOSTED__) || __STDC_HOSTED__ == 0
-/* o stdio.h do kshim (build freestanding do libSystem) só traz printf/snprintf; o libSystem exporta estes */
-void *fopen(const char *path, const char *mode);
-unsigned long fwrite(const void *p, unsigned long size, unsigned long n, void *f);
-int fclose(void *f);
-#endif
 /* cx_media_tcc está em audiodec.c. A leitura do anel é do CoreAudio (kernel DEV_AUDIO_READ).
  * No host o teste define cx_capture_i16. Sem o símbolo, o anel está vazio: silêncio, não um tom. */
 extern int cx_media_tcc(const char *service);
