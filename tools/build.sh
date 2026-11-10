@@ -152,15 +152,29 @@ echo "==> libSystem.mos"
 LS_SRC=()
 for f in "$ROOT"/userland/libsystem/*.c "$ROOT"/userland/libsystem/*.S; do
     [ -f "$f" ] || continue
+    # sqlite3.c pede assert.h/stdio.h. Compila com o shim, fora do -I do resto.
+    case "$f" in
+        */sqlite3_mos.c) continue ;;
+    esac
     LS_SRC+=("$f")
 done
-# x86_64: Raise/Resume/GetIP ficam em cxx_unwind.c. UnwindLevel1.c do zig repete
-# esses nomes. O resto do libunwind fica: __unw_getcontext (unw_alias.S) e o cache de FDE.
+# audiodec.c e o SQLite usam o shim de host-audio, fora do -I do resto.
+# Raise/Resume/GetIP e __unw_getcontext ficam em cxx_unwind.c: sem UnwindLevel1.c
+# e sem UnwindRegistersSave.S.
+"$ZIG" cc -target x86_64-freestanding-none -O2 -g0 -ffreestanding -fno-stack-protector -fno-builtin -nostdlib \
+    -fpie -mno-red-zone -Wall -Wno-unused-parameter -Wno-incompatible-library-redeclaration -Wno-builtin-requires-header \
+    -I"$ROOT/userland/host-audio/shim" -I"$ROOT/userland/libsystem" \
+    -c "$ROOT/userland/host-audio/audiodec.c" -o "$OUT/audiodec.o"
+"$ZIG" cc -target x86_64-freestanding-none -O2 -g0 -ffreestanding -fno-stack-protector -fno-builtin -nostdlib \
+    -fpie -mno-red-zone -Wall -Wno-unused-parameter -Wno-incompatible-library-redeclaration -Wno-builtin-requires-header \
+    -Wno-unused-function -Wno-unused-variable -Wno-unreachable-code \
+    -I"$ROOT/userland/host-audio/shim" -I"$ROOT/userland/libsystem" \
+    -c "$ROOT/userland/libsystem/sqlite3_mos.c" -o "$OUT/sqlite3_mos.o"
 "$ZIG" cc -target x86_64-freestanding-none -O2 -g0 -ffreestanding -fno-stack-protector -fno-builtin -nostdlib -static -no-pie \
     -fpie -mno-red-zone -Wall -Wno-unused-parameter -Wno-incompatible-library-redeclaration -Wno-builtin-requires-header \
-    -I"$ROOT/userland/libsystem/kshim" \
+    -I"$ROOT/userland/libsystem/kshim" -I"$ROOT/userland/libsystem/fsinc" \
     -Wl,--image-base=0x400000100000 -Wl,-e,cx_start -Wl,--no-gc-sections \
-    "${LS_SRC[@]}" "$UWO"/libunwind.cpp.o "$UWO"/UnwindLevel1-gcc-ext.c.o \
+    "${LS_SRC[@]}" "$OUT/audiodec.o" "$OUT/sqlite3_mos.o" "$UWO"/libunwind.cpp.o "$UWO"/UnwindLevel1-gcc-ext.c.o \
     "$UWO"/UnwindRegistersRestore.S.o \
     -o "$OUT/libSystem.mos"
 python3 "$ROOT/tools/patch-ehframe.py" "$OUT/libSystem.mos"
