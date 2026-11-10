@@ -247,10 +247,17 @@ mkdir -p "$ESP/mOS/Sistema/Biblioteca/a64"
     -Wl,--image-base=0x400041000000 -Wl,-e,_start \
     "${A64SRC[@]}" -o "$ESP/mOS/Sistema/Biblioteca/a64/a64rt.mos"
 
+echo "==> /usr/lib (libc++ do LLVM e zlib 1.3.2; não são stub)"
+MOS_ZIG="$ZIG" sh "$ROOT/tools/build-libcxx.sh" "$ROOT/build/libcxx"
+MOS_ZIG="$ZIG" sh "$ROOT/tools/build-libz.sh"
+mkdir -p "$ESP/mOS/usr/lib"
+cp -f "$ROOT/build/libcxx/libc++.1.dylib" "$ESP/mOS/usr/lib/libc++.1.dylib"
+cp -f "$ROOT/build/zlib-x86_64/libz.1.dylib" "$ESP/mOS/usr/lib/libz.1.dylib"
+
 echo "==> libswift"
 # Runtime real (swift-6.4.2) quando a toolchain e o fonte estão em .tools/. Sem isso, o stage completa com stub.
 if [ -f "$ROOT/tools/build-libswift-real.sh" ]; then
-    sh "$ROOT/tools/build-libswift-real.sh" || echo "aviso: build-libswift-real.sh falhou; o que faltar continua stub" >&2
+    sh "$ROOT/tools/build-libswift-real.sh"
 fi
 if [ -f "$ROOT/build/universal-swift/usr/lib/swift/libswiftCore.dylib" ]; then
     cp -a "$ROOT/build/universal-swift/." "$ESP/mOS/"
@@ -274,3 +281,4 @@ rm -f "$OUT/mOS.img"
 "$OUT/mkimg" "$OUT/mOS.img" "$ESP" "$MIB" --live-overlay "$ROOT/root-live" --key "$KEY" --manifest-out "$OUT/manifesto.txt" --versao "$VER"
 echo "OK: $OUT/mOS.img"
 ls -lh "$OUT/BOOTX64.EFI" "$OUT/mOS.img"
+python3 "$ROOT/tools/verificar-imagem-apps.py" "$ESP"
