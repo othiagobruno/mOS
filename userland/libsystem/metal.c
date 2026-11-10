@@ -1,8 +1,9 @@
 /*
  * mOS libSystem — Metal por software (Metal.framework + CAMetalLayer + MetalKit/MTKView).
  *
- * O mOS não tem driver de GPU: o "MTLDevice" daqui roda tudo na CPU. Buffers e texturas são memória
- * comum (unified memory); os shaders são compilados do fonte MSL (newLibraryWithSource:, ou os .metal
+ * O "MTLDevice" roda na CPU. A ABI de GPU (kernel/include/mos_gpu.h, cliente em gpucall.c)
+ * é consultada no boot; sem caps do kernel, buffers e texturas seguem em memória
+ * comum (unified memory). Os shaders são compilados do fonte MSL (newLibraryWithSource:, ou os .metal
  * do bundle em newDefaultLibrary) pelo compilador de mtlshader.c e interpretados por mtlexec.c; o
  * rasterizador, o compute e o blit ficam em metalexec.c. Os comandos são gravados nos encoders (com
  * uma cópia do estado a cada draw) e executados no -commit, em ordem; os handlers de conclusão rodam
@@ -18,6 +19,7 @@
  * trocarem o caminho de software (SwiftShader) pelo ANGLE/Metal; MOS_METAL=1 força, MOS_METAL=0 desliga.
  */
 #include "metalint.h"
+#include "gpucall.h"
 
 id objc_retain(id o);
 void objc_release(id o);
@@ -1872,6 +1874,8 @@ static void present_now(id drawable) {
     d->presented = 1;
     mlayer_t *m = ml(d->layer);
     if (d->conv) mx_to_bgra8((mtex_t *)d->tex, IOSurfaceGetBaseAddress(d->surf), IOSurfaceGetBytesPerRow(d->surf));
+    mos_gpu_present_layer(IOSurfaceGetBaseAddress(d->surf), (unsigned)IOSurfaceGetWidth(d->surf),
+                          (unsigned)IOSurfaceGetHeight(d->surf), (unsigned)IOSurfaceGetBytesPerRow(d->surf));
     g_presenting++;
     IOSurfaceLock(d->surf, 0, 0);
     IOSurfaceUnlock(d->surf, 0, 0);
@@ -2460,6 +2464,7 @@ void cx_metal_init(void) {
     static int done;
     if (done) return;
     done = 1;
+    mos_gpu_boot();
     cx_class_t *ob = cx_class_named("NSObject");
     cx_class_t *nserr = cx_class_named("NSError");
     u32 ebase = cx_instance_size(nserr ? nserr : ob);

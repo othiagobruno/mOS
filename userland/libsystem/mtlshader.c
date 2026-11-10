@@ -1983,6 +1983,7 @@ static void top(P_t *P) {
 }
 
 /* ================================================================ API */
+void msl_spirv_attach(msl_fn_t *f);
 msl_lib_t *msl_compile(const char *src, u64 n, const char *defines, char *err, int errn) {
     msl_lib_t *L = calloc(1, sizeof *L);
     pp_t pp = {0};
@@ -2042,6 +2043,7 @@ msl_lib_t *msl_compile(const char *src, u64 n, const char *defines, char *err, i
         if (L->fns[i]->stage == MSL_KERNEL) L->fns[i]->barrier |= anybar;
         if (L->fns[i]->stage == MSL_FRAGMENT) L->fns[i]->discard |= anydisc;
     }
+    for (int i = 0; i < L->nfn; i++) msl_spirv_attach(L->fns[i]);
     free(raw.v);
     free(toks.v);
     for (int i = 0; i < pp.nbufs; i++) free(pp.bufs[i]);
@@ -2052,6 +2054,7 @@ msl_lib_t *msl_compile(const char *src, u64 n, const char *defines, char *err, i
 }
 void msl_lib_free(msl_lib_t *L) {
     if (!L) return;
+    for (int i = 0; i < L->nfn; i++) free(L->fns[i]->spirv);
     for (arena_blk_t *b = L->arena, *n; b; b = n) { n = b->next; free(b); }
     free(L->fns);
     free(L->gmem);
@@ -2072,6 +2075,13 @@ int msl_fn_stagein(msl_fn_t *f, const msl_field_t **fields, int *size) { *fields
 u32 msl_fn_tgstatic(msl_fn_t *f) { return f->tgstatic; }
 int msl_fn_barrier(msl_fn_t *f) { return f->barrier; }
 int msl_fn_discards(msl_fn_t *f) { return f->discard; }
+int msl_fn_spirv(msl_fn_t *f, const u32 **words, u32 *nwords) {
+    if (!f || !f->spirv) return 0;
+    if (words) *words = f->spirv;
+    if (nwords) *nwords = f->spirv_n;
+    return 1;
+}
+const char *msl_fn_spirv_note(msl_fn_t *f) { return f && f->spirv_note[0] ? f->spirv_note : ""; }
 
 /* ---- tabela das embutidas */
 static int bi_lookup(const char *s, int *rule) {
