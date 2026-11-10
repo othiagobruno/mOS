@@ -102,6 +102,7 @@ u64    pmm_free_pages(void);
 bool   pmm_is_ram(u64 addr, u64 len);   /* buffer do kernel apto a DMA direto (identidade) */
 void   paging_init(void);
 void   swap_init(void);
+void   swap_use(void *mem, u32 n);
 bool   swap_is(u64 pte);
 void   swap_hold(u64 pte);
 void   swap_release(u64 pte);
@@ -137,6 +138,7 @@ typedef struct {
 typedef void (*irq_handler_t)(int_frame_t *f);
 void   irq_install(int irq, irq_handler_t h);
 void   msi_set_handler(void (*fn)(void)); /* vetor 0xE0, MSI/MSI-X (NVMe) */
+void   msi_add_handler(void (*fn)(void)); /* segundo dispositivo no mesmo vetor */
 void   pic_init(void);
 void   pic_unmask(int irq);
 void   pit_init(u32 hz);

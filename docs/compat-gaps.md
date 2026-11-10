@@ -1,9 +1,15 @@
 # Lacunas de compatibilidade no corpus macOS
 
 Gerado por `python3 tools/corpus/harness.py gaps` depois de `machocheck --disco build/libunwind-x86`.
-O disco aponta a libunwind do `tools/build.sh`. Não há `libc++.1.dylib` nem `libswift*` nessa árvore,
-então os baldes libc++ e Swift continuam os imports que o bundle pede e o libSystem não exporta.
 Binários não estão no git. URLs e sha256 ficam em `tools/corpus/manifest.json`.
+
+## O que é real
+
+O `machocheck` leu os Mach-O x86_64 dos 61 apps e a tabela de símbolos do `libSystem.mos` produzido por `tools/build.sh`. O `--disco` apontou os objetos da libunwind compilados nesse build (código do LLVM, não stub vazio). A coluna **sistema** e a coluna **unwind** são essa comparação. O gate em `tools/corpus/baseline.json` usa o inteiro "símbolos distintos" dessa mesma corrida. `python3 tools/corpus/harness.py hosttest` repete a conta num dylib mínimo que importa `mos_corpus_ausente` e falha se esse nome não sair no relatório ou se `malloc` (exportado pelo libSystem) sair como ausente.
+
+## O que ainda não é runtime real
+
+Não havia `libc++.1.dylib` nem `libswift*` de implementação no `--disco`. As colunas **libc++** e **Swift** são o nome da biblioteca de origem do import, não uma busca numa libc++ ou num runtime Swift construídos. Os `libswift*.dylib` que `tools/stage-libswift.sh` grava como stub não entram nessa conta e não fecham símbolo nenhum. Tratar essas duas colunas como "falta implementar no runtime" passa do que foi medido.
 
 Apps com pelo menos uma imagem Mach-O x86_64: **61**.
 

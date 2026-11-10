@@ -320,6 +320,7 @@ bool libsystem_dylib_ok(const char *n) {
         "/usr/lib/libinfo.dylib", "/usr/lib/libgcc_s.1.dylib", "/usr/lib/libiconv.2.dylib", "/usr/lib/libiconv.dylib",
         /* git e curl do Homebrew: res_9_* (darwin.c) e uidna_* (posixmore.c, só nomes ASCII) */
         "/usr/lib/libresolv.9.dylib", "/usr/lib/libicucore.A.dylib",
+        "/usr/lib/libcurl.4.dylib",    /* libcurl_easy.c: easy + URL, TLS do Security, DNS e sockets */
         "/usr/lib/libbz2.1.0.dylib",   /* bzip2.c (o unzip do Homebrew a lista; descompressão BZ2_*) */
         "/usr/lib/libxar.1.dylib",     /* compat_agentes.c: o Sparkle a liga para patches delta; xar_open sempre falha */
         /* libc++/libc++abi: operator new/delete, guardas de estáticos e o resto em cxxabi.c e libcxx.c */
@@ -867,6 +868,9 @@ typedef struct {
     /* símbolos ausentes viram stubs */
     char **missing;
     u32 nmissing, capmissing;
+    /* export cujo código é `ret; int3` (tools/wa-swift-stubs.txt). Não é implementação. */
+    char **stubs;
+    u32 nstub, capstub;
     u64 stub_base, end;
     u64 unresolved_fn;
     /* bibliotecas do sistema que o mOS não tem (as 4 primeiras por nome) */
@@ -993,6 +997,31 @@ static const u8 *trie_find(const u8 *t, u32 n, const char *s) {
     return NULL;
 }
 
+/* 1 se o endereço virtual (antes do slide) cai num `ret; int3`, a marca dos stubs. */
+static int export_is_stub(mach_t *mo, u64 vm) {
+    for (int i = 0; i < mo->nsegs; i++) {
+        seg_t *s = &mo->segs[i];
+        if (s->zero || vm < s->vmaddr || vm + 2 > s->vmaddr + s->filesize) continue;
+        const u8 *p = mo->m + s->fileoff + (vm - s->vmaddr);
+        return p[0] == 0xC3 && p[1] == 0xCC;
+    }
+    return 0;
+}
+
+static int exp_from_stub;
+
+static void note_stub(link_t *K, const char *name) {
+    for (u32 i = 0; i < K->nstub; i++) if (!strcmp(K->stubs[i], name)) return;
+    if (K->nstub == K->capstub) {
+        u32 nc = K->capstub ? K->capstub * 2 : 64;
+        char **n = krealloc(K->stubs, nc * sizeof(char *));
+        if (!n) return;
+        K->stubs = n;
+        K->capstub = nc;
+    }
+    K->stubs[K->nstub++] = strdup(name);
+}
+
 static u64 image_export(link_t *K, int idx, const char *name, int depth) {
     if (idx < 0 || idx >= K->n || depth > 8) return 0;
     image_t *I = K->im[idx];
@@ -1010,6 +1039,7 @@ static u64 image_export(link_t *K, int idx, const char *name, int depth) {
     if (flags & 0x10) return I->hdr + uleb(&p, end);      /* STUB_AND_RESOLVER: usa o stub */
     u64 v = uleb(&p, end);
     if ((flags & 3) == 2) return v;                       /* ABSOLUTE */
+    if (export_is_stub(&I->mo, v)) exp_from_stub = 1;
     return I->hdr + v;
 }
 
@@ -1018,13 +1048,17 @@ static u64 resolve(load_t *L, int ord, const char *name, bool weak) {
     link_t *K = L->K;
     image_t *I = L->I;
     u64 a = 0;
+    exp_from_stub = 0;
     if (K->tlv_per_thread && !strcmp(name, "__tlv_bootstrap")) return ls_lookup("_cx_tlv_bootstrap");
     if (ord > 0 && ord <= I->mo.ndylibs && I->dep[ord - 1] >= 0) a = image_export(K, I->dep[ord - 1], name, 0);
     else if (ord == 0) a = image_export(K, I->idx, name, 0);
     else if (ord == -1) a = image_export(K, 0, name, 0);
     if (!a) a = ls_lookup(name);
     for (int i = 0; i < K->n && !a; i++) a = image_export(K, i, name, 0);
-    if (a) return a;
+    if (a) {
+        if (exp_from_stub) note_stub(K, name);
+        return a;
+    }
     if (weak) return 0;
     u64 stub = missing_stub(K, name);
     /* classe ObjC que o mOS não tem: um stub de código não serve como classe (o runtime leria o isa
@@ -1807,6 +1841,8 @@ static void link_free(link_t *K) {
     for (int i = 0; i < K->n; i++) { kfree(K->im[i]->own); kfree(K->im[i]); }
     for (u32 i = 0; i < K->nmissing; i++) kfree(K->missing[i]);
     kfree(K->missing);
+    for (u32 i = 0; i < K->nstub; i++) kfree(K->stubs[i]);
+    kfree(K->stubs);
     kfree(K->inits);
     kfree(K);
 }
@@ -2963,6 +2999,31 @@ bool macho_report_image(const u8 *img, usize len, const char *name, char *out, u
         if (mo->minos) OUT("macOS mínimo: %u.%u\n", mo->minos >> 16, (mo->minos >> 8) & 0xFF);
         if (mo->platform) OUT("plataforma LC_BUILD_VERSION: %u%s\n", mo->platform, mo->platform == MOS_PLATFORM_MACCATALYST ? " (macCatalyst)" : "");
         OUT("Ligação: %s\n", mo->chained ? "chained fixups (macOS 11+)" : mo->dyld_info ? "dyld_info" : "nenhuma");
+        char need[200] = "";
+        absent_summary(K, need, sizeof need);
+        bool libs_ok = !K->nabsent || K->tolerant;
+        bool built = libs_ok;
+        for (int k = 0; built && k < K->norder; k++) built = image_fix(K, K->im[K->order[k]], NULL);
+        if (built) {
+            u32 nswift = 0;
+            for (u32 i = 0; i < K->nmissing; i++)
+                if (K->missing[i][0] == '_' && K->missing[i][1] == '$') nswift++;
+            OUT("Símbolos Swift ausentes (%u)\n", nswift);
+        }
+        if (built && K->nmissing) {
+            OUT("Símbolos sem implementação no libSystem do mOS (%u):", K->nmissing);
+            u32 nshow = K->nmissing > 12 ? 8 : K->nmissing;
+            for (u32 i = 0; i < nshow; i++) OUT(" %s", K->missing[i]);
+            if (nshow < K->nmissing) OUT(" ... e mais %u", K->nmissing - nshow);
+            OUT("\n");
+        }
+        if (built && K->nstub) {
+            OUT("Stub (%u):", K->nstub);
+            u32 nshow = K->nstub > 12 ? 8 : K->nstub;
+            for (u32 i = 0; i < nshow; i++) OUT(" Stub %s", K->stubs[i]);
+            if (nshow < K->nstub) OUT(" ... e mais %u", K->nstub - nshow);
+            OUT("\n");
+        }
         OUT("Bibliotecas:\n");
         int shown = 0;
         for (int i = 0; i < mo->ndylibs; i++) {
@@ -2977,19 +3038,7 @@ bool macho_report_image(const u8 *img, usize len, const char *name, char *out, u
             for (int i = 1; i < K->n; i++) total += K->im[i]->mo.vmax - K->im[i]->mo.vmin;
             OUT("Bibliotecas do próprio app: %d (%llu MiB)\n", K->n - 1, (unsigned long long)(total >> 20));
         }
-        char need[200] = "";
-        absent_summary(K, need, sizeof need);
         if (K->nabsent) OUT("Bibliotecas do sistema que o mOS não tem (%d): %s\n", K->nabsent, need);
-        bool libs_ok = !K->nabsent || K->tolerant;
-        bool built = libs_ok;
-        for (int k = 0; built && k < K->norder; k++) built = image_fix(K, K->im[K->order[k]], NULL);
-        if (built && K->nmissing) {
-            OUT("Símbolos sem implementação no libSystem do mOS (%u):", K->nmissing);
-            u32 nshow = K->nmissing > 12 ? 8 : K->nmissing;      /* listas enormes escondem o veredito no Terminal */
-            for (u32 i = 0; i < nshow; i++) OUT(" %s", K->missing[i]);
-            if (nshow < K->nmissing) OUT(" ... e mais %u", K->nmissing - nshow);
-            OUT("\n");
-        }
         runs = built && mo->has_main;
         if (!libs_ok) snprintf(verdict, sizeof verdict, "Veredito: precisa de %s, que o mOS ainda não tem", need);
         else if (!built) snprintf(verdict, sizeof verdict, "Veredito: não carrega (%s)", err);

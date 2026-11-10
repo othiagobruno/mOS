@@ -94,7 +94,7 @@ EOF
         "$ROOT/kernel/fs/dfs.c" "$ROOT/kernel/fs/dmg.c" "$ROOT/kernel/fs/hfsplus.c" \
         "$ROOT/kernel/fs/hfsplus_wr.c" "$ROOT/kernel/fs/pcache.c" \
         "$ROOT/kernel/fs/inflate.c" "$ROOT/kernel/fs/lzfse.c" "$ROOT/kernel/fs/xz.c" \
-        "$ROOT/kernel/fs/pcache.c" "$ROOT/kernel/fs/fat.c" -o "$DMG"
+        "$ROOT/kernel/fs/fat.c" -o "$DMG"
 fi
 
 stage_one() {
@@ -164,4 +164,12 @@ CODEX=$(find "$DL/x-codex" -type f \( -name codex -o -name 'codex-*apple-darwin'
 if [ -z "$CODEX" ]; then echo "stage-apps: binário codex ausente no tar" >&2; exit 1; fi
 cp -f "$CODEX" "$MOS/Aplicativos/Codex CLI/codex"
 chmod +x "$MOS/Aplicativos/Codex CLI/codex"
+# O stage-image.sh só leva o executável e dois frameworks do WhatsApp.
+# O bundle nativo (Resources, PlugIns) entra inteiro; o reparo copia o alvo do link.
+WA=$(find "$DL/x-whatsapp" -name 'WhatsApp.app' -type d | head -1)
+if [ -n "$WA" ]; then
+    rm -rf "$MOS/Aplicativos/WhatsApp.app"
+    cp -a "$WA" "$MOS/Aplicativos/WhatsApp.app"
+    python3 "$ROOT/tools/extrair-framework.py" --reparar "$MOS/Aplicativos/WhatsApp.app" >/dev/null || true
+fi
 echo "OK: apps em $MOS/Aplicativos"
