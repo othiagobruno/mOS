@@ -46,7 +46,7 @@ foreach ($b in $runs) {
     $null = $p.Handle
     if (-not $p.WaitForExit($Timeout * 1000)) { $p.Kill(); Write-Host "${b}: passou de $Timeout s" -ForegroundColor Red; $rc++ }
     Get-Content "$out\$b.log", "$out\$b.err" -ErrorAction SilentlyContinue | Where-Object { $_ -match 'ok |FALHA|falhas|macho|erro|panic|sinal' }
-    # o x86_64 é referência: falhas dele são do libSystem x86 (NSInvocation sem argumentos na pilha), não do tradutor
+    # o x86_64 é referência no mesmo libSystem: falha aqui é do userland, não do tradutor
     if ($p.ExitCode -ne 0) { if ($b -like "*arm64") { $rc++ } else { Write-Host "  (x86_64 de referência com $($p.ExitCode) falha(s): pendências do libSystem x86)" -ForegroundColor Yellow } }
 }
 exit $rc
