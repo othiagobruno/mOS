@@ -1,10 +1,12 @@
 /* Contacts: CNContactStore, CNMutableContact, CNSaveRequest e o formatador postal.
  * A agenda é o arquivo de cn_store.c. Não fala com a Apple. */
+#include "libc.h"
 #include "foundation.h"
 #include "cn_store.h"
 
 int cx_tcc_request(const char *service);
 int cx_tcc_state(const char *service);
+id objc_autorelease(id o);
 
 extern cx_class_t CNContact_c __asm__("OBJC_CLASS_$_CNContact");
 extern cx_class_t CNContactStore_c __asm__("OBJC_CLASS_$_CNContactStore");
@@ -79,15 +81,6 @@ static cn_req_t *req_of(id o, int make) {
     free_s->used = 1;
     free_s->obj = o;
     return free_s;
-}
-
-static void fill_from_obj(cx_cn_contact *c, id contact) {
-    cn_slot_t *s = slot_of(contact, 0);
-    cn_slot_t *p;
-    if (!s) return;
-    *c = s->c;
-    p = s->c.street[0] || s->kind ? 0 : 0;
-    (void)p;
 }
 
 #define GETF(name, field, cap) \

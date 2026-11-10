@@ -8,6 +8,7 @@
 #include "foundation.h"
 char *fgets(char *s, int n, void *f);
 int rename(const char *a, const char *b);
+int cx_tcc_state(const char *service);
 #endif
 #include "cn_store.h"
 
