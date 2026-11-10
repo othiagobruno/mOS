@@ -124,6 +124,7 @@ enum {
 #define MOS_SPAWN_CLOEXEC_DEFAULT 0x4000u   /* o filho começa sem os fds do pai; só as ações abrem */
 #define MOS_SPAWN_SETPGROUP 0x0002u          /* (valores do macOS) o filho vira líder de um grupo de processos novo */
 #define MOS_SPAWN_SETSID    0x0400u          /* o filho começa uma sessão nova, sem terminal de controle (node-pty) */
+#define MOS_SPAWN_START_SUSPENDED 0x0080u    /* POSIX_SPAWN_START_SUSPENDED: nasce parado (proc_hold); SIGCONT retoma */
 typedef struct {
     int kind, a, b, flags;
     unsigned mode;

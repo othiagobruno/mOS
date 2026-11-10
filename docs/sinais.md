@@ -105,6 +105,13 @@ tendo prioridade. O `^Z` do terminal (`SIGTSTP`) e o job control (`SIGTTIN` na l
 do grupo em primeiro plano, `SIGTTOU` na escrita se `TOSTOP`) usam o mesmo caminho. Grupo órfão não
 para: a chamada devolve `EIO`. `waitid` (`cli.c`) continua só com saída e morte; o job control dos shells passa por `waitpid`.
 
+`POSIX_SPAWN_START_SUSPENDED` usa o mesmo estado. O bit do macOS é `MOS_SPAWN_START_SUSPENDED` (`0x80`)
+em `mos_spawn_vec_t.flags`; `proc_spawn_in` chama `proc_hold` (`kernel/include/proc.h`) depois de criar
+a thread principal. `proc_hold` grava `SIGSTOP` em `process.stopped`, marca a parada para o `waitpid` e
+manda `SIGCHLD` `CLD_STOPPED` (salvo `SA_NOCLDSTOP`). Um `SIGCONT` passa por `proc_continue` e o processo
+roda. Não é `thread.suspend`: essa suspensão Mach só sai com `thread_resume`, e o `SIGCONT` não a mexe.
+Quem traduz o `posix_spawn` (o `rt.c` do #47) só precisa repassar o bit no `SYS_SPAWNVEC`.
+
 ## Decisões
 
 - **Armadilhas do FPCR.** No Apple Silicon os bits IDE, IXE, UFE, OFE, DZE e IOE são RES0. O mOS faz o

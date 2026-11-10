@@ -212,6 +212,10 @@ void _start(const char *arg) {
         int ms = spawn("mmshared", 0);
         CHECK(ms > 0 && wait(ms) == 0, "mmshared: MAP_SHARED, msync, munmap parcial e NX");
     }
+    if (file_size("/Sistema/Programas/parateste") > 0) {   /* ELF: SIGSTOP/SIGCONT e spawn suspenso (userland/parateste.c) */
+        int ps = spawn("parateste", 0);
+        CHECK(ps > 0 && wait(ps) == 0, "parateste: SIGSTOP, SIGCONT e POSIX_SPAWN_START_SUSPENDED");
+    }
 
     print(fails ? "teste: %d FALHA(S)\n" : "teste: TODOS OS TESTES OK\n", (i64)fails);
     exit(fails);
