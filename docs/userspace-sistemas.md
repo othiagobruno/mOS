@@ -6,27 +6,28 @@ Estado do que esta frente implementou. Não é compatibilidade universal: cada i
 
 `NSUserDefaults` e `CFPreferences` gravam property list XML.
 
-- Usuário atual: `NSHomeDirectory()/Library/Preferences/<domínio>.plist` (hoje `NSHomeDirectory` é `/Users/Visitante`).
-- Qualquer usuário: `/Library/Preferences/<domínio>.plist`.
-- `NSGlobalDomain`, `kCFPreferencesAnyApplication` e `.GlobalPreferences` são o mesmo arquivo.
-- `objectForKey:` procura o domínio primário, as suítes, `.GlobalPreferences`, o domínio de qualquer usuário e, por último, o registro.
-- `CopyAppValue` não vê o registro: usuário do app, `.GlobalPreferences`, qualquer usuário do app.
+- Usuário atual, `kCFPreferencesAnyHost` ou host nulo: `NSHomeDirectory()/Library/Preferences/<domínio>.plist` (hoje `NSHomeDirectory` é `/Users/Visitante`).
+- Host atual (`kCFPreferencesCurrentHost`): `NSHomeDirectory()/Library/Preferences/ByHost/<domínio>.<token>.plist`. O token sai de `gethostname`, só com letras, dígitos, `.`, `_` e `-`. No mOS o hostname é `mos`.
+- Qualquer usuário: `/Library/Preferences/<domínio>.plist`. Qualquer usuário no host atual: `/Library/Preferences/ByHost/<domínio>.<token>.plist`.
+- `NSGlobalDomain`, `kCFPreferencesAnyApplication` e `.GlobalPreferences` são o mesmo arquivo, com a variante ByHost à parte.
+- `objectForKey:` procura ByHost do app, o domínio do usuário, as suítes, ByHost de `.GlobalPreferences`, `.GlobalPreferences`, o domínio de qualquer usuário e, por último, o registro.
+- `CopyAppValue` não vê o registro: ByHost do app, usuário do app, ByHost de `.GlobalPreferences`, `.GlobalPreferences`, qualquer usuário do app.
 - `registerDefaults:` e a semente `com.apple.universalaccess` / `mouseDriverCursorSize = 1.0` ficam só em memória. O registro não dispara KVO.
-- `synchronize` devolve falha se a escrita falhar. A escrita é `arquivo.tmp` + `rename` no mesmo diretório.
-- Arquivo vazio vira dicionário vazio. `bplist00` não é importado e não é sobrescrito.
-- Data ISO-8601 (`YYYY-MM-DDTHH:MM:SSZ`) vira segundos desde 1970 em UTC. Se o texto veio de um plist, a gravação o preserva; data criada pelo bridge sai como double em texto.
+- `synchronize` devolve falha se a escrita falhar. A escrita é `arquivo.tmp` + `rename` no mesmo diretório e continua em XML.
+- Arquivo vazio vira dicionário vazio. `bplist00` com trailer válido é lido. `bplist00` ilegível não é sobrescrito. A gravação seguinte de um domínio sujo sai em XML.
+- Data ISO-8601 (`YYYY-MM-DDTHH:MM:SSZ`) e a data binária (`bplist` 0x33, CFAbsoluteTime) viram segundos desde 1970 em UTC. Se o texto veio de um plist, a gravação o preserva; data criada pelo bridge sai como double em texto.
 
-Limitações: não há `cfprefsd`. Outro processo só é visto se `mtime` ou tamanho mudarem (`stamp = mtime<<20 xor tamanho`). `CurrentHost` e `AnyHost` são o mesmo domínio. `CFPreferencesAppValueIsForced` é 0 porque não há MDM. Valor que não é property list é recusado, sem exceção. O container devolvido é cópia.
+Limitações: não há `cfprefsd`. O carimbo da releitura é o hash do conteúdo do arquivo, então dois processos veem a mesma chave mesmo com `mtime` e tamanho iguais. `CFPreferencesAppValueIsForced` é 0 porque não há MDM. Valor que não é property list é recusado, sem exceção. O container devolvido é cópia. `NSUserDefaults synchronize` grava o domínio do usuário, não o ByHost.
 
 ### Contrato para Storage
 
 O VFS precisa, em `/Users/Visitante` e em `/Library`:
 
-- `mkdir` de `Library`, `Library/Preferences` e `Library/Application Support/...`
+- `mkdir` de `Library`, `Library/Preferences`, `Library/Preferences/ByHost` e `Library/Application Support/...`
 - `fopen` / `fread` / `fwrite` / `fclose`
 - `rename` atômico no mesmo volume (`path.tmp` → `path`)
 - `unlink`
-- `stat` com `mtime` em segundos e `st_size` corretos. Se o `mtime` não mudar e o tamanho ficar igual, a releitura entre processos não vê a gravação até um `synchronize` com o arquivo diferente.
+- leitura do arquivo depois do `rename`. O carimbo das preferências é o hash dos bytes, não o `mtime`.
 
 Não há mudança de dyld nem de VFS neste trabalho.
 
@@ -72,13 +73,17 @@ O fio `xpc.c` + launchd entre processos do mOS já existe (não é a libxpc da A
 - **Limitação:** `xpc_set_event_stream_handler` aceita os argumentos e não chama o bloco. Não há stream de eventos do launchd.
 - `NSXPCConnection` continua um stub de processo (resume só marca a conexão). Helpers de computer use que esperam um daemon XPC da Apple não sobem sozinhos.
 
-## Keychain — funcional, sem criptografia
+## Keychain — funcional, arquivo versão 2 cifrado com o nome de login
 
-`SecItemAdd` / `CopyMatching` / `Update` / `Delete` para senha genérica e de internet já estavam implementados e testados em `userland/tests-security`. O arquivo não é cifrado. Esta frente não mudou esse código.
+`SecItemAdd` / `CopyMatching` / `Update` / `Delete` para senha genérica e de internet continuam em `security.c`. O arquivo `$HOME/Library/Keychains/mos-keychain.txt` na versão 2 é `mOS-keychain 2\n` + nonce + ciphertext + MAC. A chave é HMAC-SHA256 do nome de login (`USER`, senão `LOGNAME`, senão o último componente de `HOME`, senão `visitante`), com sal fixo `mOS-keychain-v2`. Não é senha e não é credencial: quem sabe o login abre o arquivo. A versão 1 (texto) ainda é lida e a gravação seguinte passa para a versão 2. MAC ruim marca o arquivo como bloqueado e a gravação devolve `errSecNotAvailable`, sem apagar o que estava no disco.
 
-## URLSession — parcial, como já estava
+## URLSession — dados, download, resposta e dois desafios
 
-Há callbacks de dados e de download em `foundation_more.c`. Desafio de autenticação e `didReceiveResponse` não são tratados (a conexão segue). Não é um `NSURLSession` completo.
+Há callbacks de dados e de download em `foundation_more.c`. Antes do HTTP de uma URL `https`, o delegate recebe `NSURLAuthenticationMethodServerTrust` (`URLSession:didReceiveChallenge:`, ou o método da tarefa se o da sessão não existir). Não há objeto `SecTrust`: `serverTrust` devolve nil. Resposta 401 com `WWW-Authenticate: Basic` chama `NSURLAuthenticationMethodHTTPBasic` (o método da tarefa primeiro). `UseCredential` repete o pedido uma vez com `Authorization`. `Cancel`/`Reject` entregam `NSURLErrorDomain` -999 e não entregam o corpo. `URLSession:dataTask:didReceiveResponse:completionHandler:` roda na entrega: 0 cancela o corpo, 1 entrega, 2 trata como download. O bloco é de pilha e vale durante a chamada do delegate. Não é um `NSURLSession` completo.
+
+## CoreML — só o dicionário da voz
+
+`MLDictionaryFeatureProvider` (`coreml.c`) aceita `initWithDictionary:error:` com chaves string, `featureValueForName:`, `featureNames`, `dictionary`, `objectForKeyedSubscript:` e `count`. `MLModel` / `predictionFromFeatures:` continuam o stub vazio de `vscode_fwclasses.c`. A libc++ do onnxruntime e do sherpa-onnx não foi mexida.
 
 ## UserNotifications — autorização local, sem push
 

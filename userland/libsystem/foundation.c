@@ -1128,9 +1128,30 @@ static BOOL th_is_main(id self, SEL c) { (void)self; (void)c; return YES; }
 static id th_current(id cls, SEL c) { return g_singleton(cls, c); }
 static void th_sleep(id cls, SEL c, double s) { (void)cls; (void)c; usleep((unsigned)(s * 1e6)); }
 
-/* NSUserDefaults persiste em Library/Preferences (prefs.c). O registro não vai para o disco.
- * com.apple.universalaccess/mouseDriverCursorSize = 1.0 fica no domínio de registro dessa suíte
- * (o Chromium recusa o CreateView se o fator do cursor for < 1). */
+/* NSUserDefaults persiste em Library/Preferences (prefs.c), inclusive ByHost.
+ * O registro não vai para o disco. com.apple.universalaccess/mouseDriverCursorSize = 1.0
+ * fica no domínio de registro dessa suíte (o Chromium recusa o CreateView se o fator
+ * do cursor for < 1). O token do host entra no nome do arquivo ByHost. */
+int gethostname(char *b, size_t n);
+const char *cx_host_token(void) {
+    static char tok[64];
+    static int ready;
+    if (ready) return tok;
+    char host[256];
+    host[0] = 0;
+    if (gethostname(host, sizeof host) != 0) host[0] = 0;
+    host[sizeof host - 1] = 0;
+    size_t j = 0;
+    for (size_t i = 0; host[i] && j + 1 < sizeof tok; i++) {
+        unsigned char c = (unsigned char)host[i];
+        int ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-';
+        if (ok) tok[j++] = (char)c;
+    }
+    if (!j) memcpy(tok, "mos", 4);
+    else tok[j] = 0;
+    ready = 1;
+    return tok;
+}
 extern void cx_prefs_bind(void *ud, const char *suite_or_null);
 extern id cx_prefs_object(void *ud, id key);
 extern int cx_prefs_set(void *ud, id key, id value);
