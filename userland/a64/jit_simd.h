@@ -181,6 +181,7 @@ static int s_misc(T *t, a64_u32 w) {
     if (op == 0x1D && !(size & 2)) return s_scvtf(t, q, u, size, n, d, 0);
     {
         int key = (u << 6) | ((size >> 1) << 5) | op;
+        if (key == 0x58 || key == 0x59) return 0; /* FRINTA / FRINTX vetoriais → interpretador */
         if (key == 0x18 || key == 0x19 || key == 0x38 || key == 0x39 || key == 0x79)
             return s_frint_vec(t, q, size, key == 0x79 ? -1 : key == 0x18 ? 0 : key == 0x19 ? 1 : key == 0x38 ? 2 : 3, n, d);
         if (key == 0x2F || key == 0x6F) return s_fabsneg_vec(t, q, size, key == 0x6F, n, d);
@@ -1913,6 +1914,8 @@ static int s_fminmax(T *t, int dbl, int which, int n, int m, int d) {
 
 /* FRINT escalar. opc 8..11 = N/P/M/Z, 12 = A, 14 = X (IXC), 15 = I (FPCR, sem IXC). */
 static int s_frint_sc(T *t, int dbl, int opc, int n, int d) {
+    /* FRINTA: somar 0,5 e arredondar erra 2^52+1 / 2^23+1 e o zero com sinal. Interpretador. */
+    if (opc == 12) return 0;
     if (!jit_g.sse41) return 0;
     static const int mode[4] = { 0, 2, 1, 3 };      /* N P M Z → par, teto, chão, trunca */
     int kind = dbl ? 1 : 0;

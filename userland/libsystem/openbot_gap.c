@@ -8,8 +8,6 @@ typedef struct { void *isa; unsigned long long flags; const char *s; unsigned lo
     static gap_cf_t var##_box = {(void *)cx_cfconst_isa, 0x7c8, text, sizeof(text) - 1}; \
     const void *var = &var##_box;
 GAPCF(kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly, "kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly")
-GAPCF(kCFCopyStringSetCallBacks, "kCFCopyStringSetCallBacks")
-GAPCF(kCFTypeBagCallBacks, "kCFTypeBagCallBacks")
 GAPCF(kCGImageDestinationLossyCompressionQuality, "kCGImageDestinationLossyCompressionQuality")
 GAPCF(AVNumberOfChannelsKey, "AVNumberOfChannelsKey")
 size_t CGImageGetWidth(void *img);
@@ -105,83 +103,9 @@ int CGImageDestinationFinalize(void *dst) {
     close(fd); free(png); return 1;
 }
 
-/* gap_stub */
-long CFAttributedStringGetLength(void) { return 0; }
-long CFAttributedStringGetString(void) { return 0; }
-long CFAttributedStringGetTypeID(void) { return 0; }
-long CFBagContainsValue(void) { return 0; }
-long CFBagCreate(void) { return 0; }
-long CFBagGetCount(void) { return 0; }
-long CFBagGetCountOfValue(void) { return 0; }
-long CFBagGetTypeID(void) { return 0; }
-long CFBundleCopyResourceURL(void) { return 0; }
-long CFBundleGetTypeID(void) { return 0; }
-long CFCalendarCopyCurrent(void) { return 0; }
-long CFCalendarCopyTimeZone(void) { return 0; }
-long CFCalendarCreateWithIdentifier(void) { return 0; }
-long CFCalendarGetIdentifier(void) { return 0; }
-long CFCalendarGetTypeID(void) { return 0; }
-long CFCalendarSetTimeZone(void) { return 0; }
-long CFCharacterSetCreateInvertedSet(void) { return 0; }
-long CFCharacterSetCreateWithCharactersInString(void) { return 0; }
-long CFCharacterSetGetTypeID(void) { return 0; }
-long CFCharacterSetIsCharacterMember(void) { return 0; }
-long CFDateFormatterCreate(void) { return 0; }
-long CFDateFormatterCreateStringWithDate(void) { return 0; }
-long CFDateFormatterGetTypeID(void) { return 0; }
-long CFErrorCopyFailureReason(void) { return 0; }
-long CFFileDescriptorCreate(void) { return 0; }
-long CFFileDescriptorGetNativeDescriptor(void) { return 0; }
-long CFFileDescriptorGetTypeID(void) { return 0; }
-long CFFileDescriptorInvalidate(void) { return 0; }
-long CFFileSecurityCopyOwnerUUID(void) { return 0; }
-long CFFileSecurityGetTypeID(void) { return 0; }
-long CFFileSecuritySetOwnerUUID(void) { return 0; }
-long CFLocaleGetIdentifier(void) { return 0; }
-long CFLocaleGetTypeID(void) { return 0; }
-long CFMessagePortCreateLocal(void) { return 0; }
-long CFMessagePortCreateRemote(void) { return 0; }
-long CFMessagePortCreateRunLoopSource(void) { return 0; }
-long CFMessagePortGetTypeID(void) { return 0; }
-long CFMessagePortInvalidate(void) { return 0; }
-long CFMessagePortSendRequest(void) { return 0; }
-long CFNotificationCenterGetTypeID(void) { return 0; }
-long CFNumberFormatterCreate(void) { return 0; }
-long CFNumberFormatterCreateNumberFromString(void) { return 0; }
-long CFNumberFormatterCreateStringWithNumber(void) { return 0; }
-long CFNumberFormatterGetTypeID(void) { return 0; }
-long CFPropertyListCreateData(void) { return 0; }
-long CFPropertyListCreateDeepCopy(void) { return 0; }
-long CFPropertyListCreateWithStream(void) { return 0; }
-long CFPropertyListWrite(void) { return 0; }
-long CFReadStreamGetTypeID(void) { return 0; }
-long CFRunLoopGetTypeID(void) { return 0; }
-long CFRunLoopTimerCreateWithHandler(void) { return 0; }
-long CFRunLoopTimerGetTypeID(void) { return 0; }
-long CFSetContainsValue(void) { return 0; }
-long CFSetCreateCopy(void) { return 0; }
-long CFSetCreateMutableCopy(void) { return 0; }
-long CFSetGetCountOfValue(void) { return 0; }
-long CFSetGetTypeID(void) { return 0; }
-long CFSetGetValue(void) { return 0; }
-long CFSetGetValueIfPresent(void) { return 0; }
-long CFSetRemoveAllValues(void) { return 0; }
-long CFSetRemoveValue(void) { return 0; }
-long CFSetReplaceValue(void) { return 0; }
-long CFSetSetValue(void) { return 0; }
-long CFSocketCreate(void) { return 0; }
-long CFSocketGetNative(void) { return 0; }
-long CFSocketGetTypeID(void) { return 0; }
-long CFSocketInvalidate(void) { return 0; }
-long CFSocketIsValid(void) { return 0; }
-long CFStreamCreateBoundPair(void) { return 0; }
-long CFTimeZoneCreateWithName(void) { return 0; }
-long CFTimeZoneGetSecondsFromGMT(void) { return 0; }
-long CFTimeZoneGetTypeID(void) { return 0; }
-long CFUUIDCreateFromString(void) { return 0; }
-long CFWriteStreamGetTypeID(void) { return 0; }
-long CFXMLCreateStringByEscapingEntities(void) { return 0; }
-long CFXMLCreateStringByUnescapingEntities(void) { return 0; }
+/* As CF* que estavam aqui (bag, calendário, set, plist, stream, porta, soquete, XML, …)
+ * estão implementadas em cf_public.c, vscode_cf.c, cfrunloop.c e slack_frameworks.c.
+ * Os símbolos Swift de Foundation continuam nesta frente como ponte vazia: a T5 é quem os completa. */
 long gap_sw_0(void) __asm__("$s10Foundation22_convertNSErrorToErrorys0E0_pSo0C0CSgF");
 long gap_sw_0(void) { return 0; }
 long gap_sw_1(void) __asm__("$s10Foundation3URLV15fileURLWithPathACSSh_tcfC");

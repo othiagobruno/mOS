@@ -682,6 +682,9 @@ static void emit_selfcheck(T *t) {
 static void emit_backedge(T *t, a64_u64 target) {
     RMap back;
     snap_save(t, &back);
+    /* O laço sem memória segura o Xn num registrador do host. Sem publicar aqui, quem observa
+     * c->x[] (o pedido de parada do a64sig) nunca vê o contador andar e o SIGALRM estoura. */
+    store_dirty(t, 0);
     if (back.fe) fl_spill(t);
     snap_restore(t, &back);
     x_alu_ri(B, 1, A_CMP, XM(RCPU, OFF_STOP), 0);

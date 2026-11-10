@@ -3,6 +3,7 @@
  * sqlite3_open_v2 / sqlite3_exec / sqlite3_close saem daqui; o stub de
  * compat_agentes.c foi retirado para não duplicar o símbolo.
  */
+#define NDEBUG 1
 #define SQLITE_OS_OTHER 1
 #define SQLITE_OMIT_LOAD_EXTENSION 1
 #define SQLITE_THREADSAFE 0
