@@ -110,6 +110,7 @@ public final class Node {
     var tagPtr: UnsafeMutableRawPointer? = nil   // .tag(_:) (lido pelo Picker/TabView com o tipo certo)
     var radius: Double = 6
     var transition = 0, transitionEdge = 0
+    var clipOut = false
     // layout calculado (coordenadas da janela, topo-esquerda)
     var x: Double = 0, y: Double = 0, w: Double = 0, h: Double = 0
     init(_ k: _Kind) { kind = k }
@@ -181,6 +182,8 @@ public final class _Runtime {
     var implicitAnimation: Animation? = nil
     var title = ""
     var pending: [() -> Void] = []
+    /// Sem janela (host isolado): quem desenha o NSHostingView registra o relayout aqui.
+    var hostRelayout: (() -> Void)?
 
     func beginScope(_ p: String) { scopes.append(p); slot.append(0) }
     func endScope() { scopes.removeLast(); slot.removeLast() }
@@ -205,7 +208,8 @@ public final class _Runtime {
     }
     public func invalidate() {
         if rendering || batching { dirty = true; return }
-        mos_request_render()
+        if mos_main_window() != nil { mos_request_render() }
+        else { hostRelayout?() }
     }
 }
 

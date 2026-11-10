@@ -23,7 +23,7 @@ func flexible(_ n: Node, vertical: Bool) -> Bool {
     }
     if n.kind == .background && n.children.isEmpty { return vertical ? n.maxH : n.maxW }   // Color como view
     if n.kind == .zstack { if let f = n.children.first { return flexible(f, vertical: vertical) }; return false }
-    if n.kind == .stack && (vertical ? n.maxH : n.maxW) { return true }
+    if (n.kind == .stack || n.kind == .scroll) && (vertical ? n.maxH : n.maxW) { return true }
     for c in n.children {
         // um Spacer só expande no eixo da pilha que o contém
         if c.kind == .spacer { if n.kind == .stack && n.axisVertical == vertical { return true }; continue }
@@ -66,7 +66,13 @@ func size(_ n: Node, _ pw: Double, _ ph: Double) -> (Double, Double) {
         if n.fixedW >= 0 { w = n.fixedW } else if n.maxW && pw >= 0 { w = pw }
         if n.fixedH >= 0 { h = n.fixedH } else if n.maxH && ph >= 0 { h = ph }
         return (w, h)
-    case .stack, .scroll, .image:
+    case .scroll:
+        // Eixo aberto: o mínimo é zero para o pai entregar o que sobrar. O tamanho do
+        // conteúdo é medido de novo em placeScroll, que é quem aplica o deslocamento.
+        if pw >= 0 && ph >= 0 { return (pw, ph) }
+        let content = stackSize(n, pw, ph)
+        return (pw >= 0 ? pw : content.0, ph >= 0 ? ph : 0)
+    case .stack, .image:
         return stackSize(n, pw, ph)
     }
 }
@@ -112,7 +118,9 @@ func place(_ n: Node, _ x: Double, _ y: Double, _ w: Double, _ h: Double) {
             let cx = n.align < 0 ? x : n.align > 0 ? x + w - cw : x + (w - cw) / 2
             place(c, cx, y + (h - ch) / 2, cw, ch)
         }
-    case .stack, .scroll, .image:
+    case .scroll:
+        placeScroll(n, x, y, w, h)
+    case .stack, .image:
         let v = n.axisVertical
         let kids = n.children
         var fixedMain = n.spacing * Double(max(0, kids.count - 1))
@@ -148,6 +156,66 @@ func place(_ n: Node, _ x: Double, _ y: Double, _ w: Double, _ h: Double) {
         }
     default: break
     }
+}
+
+/// ScrollView: o conteúdo guarda o tamanho intrínseco e anda com `n.value` (deslocamento).
+/// O valor já limitado volta pelo `onDouble`, para o próximo quadro não acumular além do fim.
+func placeScroll(_ n: Node, _ x: Double, _ y: Double, _ w: Double, _ h: Double) {
+    n.x = x; n.y = y; n.w = w; n.h = h
+    let v = n.axisVertical
+    let kids = n.children
+    var sizes: [(Double, Double)] = []
+    var contentMain = n.spacing * Double(max(0, kids.count - 1))
+    for c in kids {
+        let s = v ? size(c, w, -1) : size(c, -1, h)
+        sizes.append(s)
+        contentMain += v ? s.1 : s.0
+    }
+    let viewport = v ? h : w
+    let off = mos_sui_clamp_offset(n.value, 0, viewport, contentMain)
+    n.value = off
+    n.upper = contentMain
+    n.onDouble?(off)
+    var pos = (v ? y : x) - off
+    for (i, c) in kids.enumerated() {
+        if v {
+            let ch = sizes[i].1
+            let cw = min(max(sizes[i].0, 0), w)
+            let cx = n.align < 0 ? x : n.align > 0 ? x + max(0, w - cw) : x + max(0, w - cw) / 2
+            place(c, cx, pos, cw > 0 ? cw : w, ch)
+            pos += ch + n.spacing
+        } else {
+            let cw = sizes[i].0
+            let ch = min(max(sizes[i].1, 0), h)
+            place(c, pos, y, cw, ch > 0 ? ch : h)
+            pos += cw + n.spacing
+        }
+    }
+}
+
+func markClipOut(_ n: Node) {
+    n.clipOut = true
+    n.w = 0
+    n.h = 0
+    for c in n.children { markClipOut(c) }
+}
+
+func applyClip(_ nodes: [Node], _ x: Double, _ y: Double, _ w: Double, _ h: Double) {
+    for c in nodes {
+        var ix = 0.0, iy = 0.0, iw = 0.0, ih = 0.0
+        if mos_sui_intersect(c.x, c.y, c.w, c.h, x, y, w, h, &ix, &iy, &iw, &ih) == 0 {
+            markClipOut(c)
+            continue
+        }
+        c.x = ix; c.y = iy; c.w = iw; c.h = ih
+        c.clipOut = false
+        applyClip(c.children, x, y, w, h)
+    }
+}
+
+func clipScrolls(_ n: Node) {
+    if n.kind == .scroll { applyClip(n.children, n.x, n.y, n.w, n.h) }
+    for c in n.children { clipScrolls(c) }
 }
 
 // MARK: - Reconciliação: uma NSView por nó primitivo, reaproveitada pelo caminho
@@ -188,6 +256,7 @@ final class _Renderer {
             let s = size(root, w, h)
             let fw = flexible(root, vertical: false) ? w : min(s.0, w), fh = flexible(root, vertical: true) ? h : min(s.1, h)
             place(root, (w - fw) / 2, (h - fh) / 2, fw, fh)
+            clipScrolls(root)
             for (_, hd) in handles { hd.seen = false }
             sync(root)
             for (k, hd) in handles where !hd.seen && !hd.leaving {
@@ -203,11 +272,21 @@ final class _Renderer {
     }
 
     func sync(_ n: Node) {
+        if n.clipOut {
+            let key = n.path + ":" + String(n.kind.code)
+            if let hd = handles[key] {
+                hd.seen = true
+                mos_send_i(hd.view, "setHidden:", 1)
+            }
+            for c in n.children { sync(c) }
+            return
+        }
         switch n.kind {
         case .stack, .padding, .frame, .scroll, .spacer, .image, .zstack: for c in n.children { sync(c) }; return
         case .background:
             // fundo: uma caixa colorida criada antes (atrás) do conteúdo
             let hd = handle(n, "NSBox")
+            mos_send_i(hd.view, "setHidden:", 0)
             mos_send_i(hd.view, "setBoxType:", 4)
             mos_send_d(hd.view, "setCornerRadius:", n.radius)
             if let c = n.color { mos_send_p(hd.view, "setFillColor:", mos_color(c.r, c.g, c.b, c.a)) }
@@ -230,6 +309,7 @@ final class _Renderer {
         }
         let hd = handle(n, cls)
         let v = hd.view
+        mos_send_i(v, "setHidden:", 0)
         hd.node = n
         switch n.kind {
         case .text:
@@ -370,16 +450,13 @@ public struct WindowGroup<Content: View>: Scene {
     public func defaultSize(width: Double, height: Double) -> WindowGroup<Content> { var s = self; s.width = width; s.height = height; return s }
     public func _start() {
         let make = content
-        _renderer.build = { b in
-            _Runtime.shared.beginScope("root")
-            let root = make()
-            _Runtime.shared.endScope()
-            root._build(b)
-        }
+        let host = NSHostingView(rootView: make())
+        host.rebuild = make
+        _currentHost = host
         let t = title.isEmpty ? _Runtime.shared.title : title
         t.withCString { tp in
             mos_run_app(tp, width, height, { _, content, w, h in
-                _renderer.render(content!, w, h)
+                _currentHost?.embed(content!, w, h)
             }, nil)
         }
     }
