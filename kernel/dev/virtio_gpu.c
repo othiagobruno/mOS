@@ -12,6 +12,7 @@
  */
 #include "gpu.h"
 #include "gfx.h"
+#include "syscall.h"
 
 /* ---- comandos e respostas (virtio_gpu.h) */
 enum {
@@ -49,6 +50,7 @@ static volatile vq_used_t *used;
 static u16 qsize, avail_idx;
 static u8 *cmd; static u64 cmd_phys;
 static bool ready, scanout_on, broken;
+static u32 feats;                       /* bits de recurso da GPU (word 0): VIRGL, BLOB, CONTEXT_INIT */
 static const u32 *bound_px;              /* superfície presa ao recurso */
 static int res_w, res_h;
 
@@ -125,9 +127,15 @@ bool virtio_gpu_probe(gpu_info_t *g) {
     w8(0x14, 0);                                    /* reset */
     for (int i = 0; i < 1000000 && c8(0x14); i++) __asm__ volatile("pause");
     w8(0x14, 1); w8(0x14, 1 | 2);                   /* ACKNOWLEDGE | DRIVER */
+    w32(0x00, 0);
+    u32 dev0 = c32(0x04);
+    feats = 0;
+    if (dev0 & 1) feats |= 1;                       /* VIRTIO_GPU_F_VIRGL */
+    if (dev0 & (1u << 3)) feats |= 1u << 3;         /* RESOURCE_BLOB (venus) */
+    if (dev0 & (1u << 4)) feats |= 1u << 4;         /* CONTEXT_INIT (venus) */
     w32(0x00, 1);
     if (!(c32(0x04) & 1)) { kprintf("virtio-gpu: sem VIRTIO_F_VERSION_1\n"); w8(0x14, 0x80); return false; }
-    w32(0x08, 0); w32(0x0C, 0);                     /* nenhum recurso opcional (sem virgl/EDID por ora) */
+    w32(0x08, 0); w32(0x0C, feats);
     w32(0x08, 1); w32(0x0C, 1);                     /* VERSION_1 */
     w8(0x14, 1 | 2 | 8);
     if (!(c8(0x14) & 8)) { kprintf("virtio-gpu: recursos recusados\n"); w8(0x14, 0x80); return false; }
@@ -238,4 +246,84 @@ bool gpu_present(const u32 *px, int w, int h, int x, int y, int rw, int rh) {
     f->id = res_id;
     u32 lens[2] = { sizeof *t, sizeof *f };
     return submit(2, lens);
+}
+
+u32 virtio_gpu_caps(void) {
+    u32 c = 0;
+    if (!ready || broken) return 0;
+    if (feats & 1) c |= MOS_GPU_CAP_VIRGL;
+    if ((feats & (1u << 3)) && (feats & (1u << 4))) c |= MOS_GPU_CAP_VENUS;
+    return c;
+}
+
+static int xmit(void *pkt, u32 n) {
+    if (!ready || broken || n > RESP - 16) return -MOS_EINVAL;
+    memcpy(cmd, pkt, n);
+    u32 len = n;
+    if (!submit(1, &len)) return -MOS_EIO;
+    return 0;
+}
+
+int virtio_gpu_ctx(unsigned id, unsigned kind, int create) {
+    if (!ready || broken) return -MOS_ENXIO;
+    if (create && kind == MOS_GPU_CTX_VENUS && !(virtio_gpu_caps() & MOS_GPU_CAP_VENUS)) return -MOS_ENXIO;
+    if (create && kind == MOS_GPU_CTX_VIRGL && !(feats & 1)) return -MOS_ENXIO;
+    u8 pkt[128];
+    memset(pkt, 0, sizeof pkt);
+    hdr_t *h = (hdr_t *)pkt;
+    h->type = create ? 0x0200 : 0x0201;
+    if (create) {
+        u32 *w = (u32 *)(pkt + sizeof *h);
+        w[0] = 4;                                      /* nlen do nome curto */
+        w[1] = kind == MOS_GPU_CTX_VENUS ? 4u : 1u;    /* context_init: venus=4, virgl=1 */
+        memcpy(pkt + sizeof *h + 8, kind == MOS_GPU_CTX_VENUS ? "ven" : "v3d", 4);
+    }
+    h->ctx = id;
+    return xmit(pkt, create ? (u32)(sizeof *h + 8 + 64) : (u32)sizeof *h);
+}
+
+int virtio_gpu_bo(unsigned ctx, unsigned id, unsigned long long size, int create) {
+    if (!ready || broken) return -MOS_ENXIO;
+    if (!create) {
+        u8 pkt[32];
+        memset(pkt, 0, sizeof pkt);
+        ((hdr_t *)pkt)->type = CMD_RESOURCE_UNREF;
+        *(u32 *)(pkt + sizeof(hdr_t)) = id;
+        return xmit(pkt, sizeof(hdr_t) + 4);
+    }
+    u8 pkt[64];
+    memset(pkt, 0, sizeof pkt);
+    hdr_t *h = (hdr_t *)pkt;
+    h->type = 0x0204;                                  /* RESOURCE_CREATE_3D */
+    h->ctx = ctx;
+    u32 *w = (u32 *)(pkt + sizeof *h);
+    w[0] = id;
+    w[1] = 0;                                          /* PIPE_BUFFER */
+    w[2] = 1;                                          /* B8G8R8A8 */
+    w[3] = 0;
+    w[4] = (u32)(size > 0xFFFFFFFFull ? 0xFFFFFFFFu : size);
+    w[5] = 1; w[6] = 1; w[7] = 1; w[8] = 0; w[9] = 0; w[10] = 0;
+    int rc = xmit(pkt, sizeof *h + 11 * 4);
+    if (rc) return rc;
+    memset(pkt, 0, sizeof pkt);
+    h = (hdr_t *)pkt;
+    h->type = 0x0202;                                  /* CTX_ATTACH_RESOURCE */
+    h->ctx = ctx;
+    *(u32 *)(pkt + sizeof *h) = id;
+    return xmit(pkt, sizeof *h + 8);
+}
+
+int virtio_gpu_submit(unsigned ctx, const void *cmds, unsigned n, unsigned fence_id) {
+    if (!ready || broken) return -MOS_ENXIO;
+    if (!cmds || !n || n > 400) return -MOS_EINVAL;
+    u8 pkt[512];
+    memset(pkt, 0, sizeof pkt);
+    hdr_t *h = (hdr_t *)pkt;
+    h->type = 0x0207;                                  /* SUBMIT_3D */
+    h->ctx = ctx;
+    if (fence_id) { h->flags = 1; h->fence = fence_id; }
+    u32 *w = (u32 *)(pkt + sizeof *h);
+    w[0] = n;
+    memcpy(pkt + sizeof *h + 8, cmds, n);
+    return xmit(pkt, (u32)(sizeof *h + 8 + n));
 }
