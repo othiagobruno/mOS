@@ -6,8 +6,8 @@
  * dylib não está no disco. São fachada (cx_mark_stub_class): se o CoreData.framework
  * do disco carregar, a classe de lá ganha a busca por nome.
  *
- * Persistência: coredata_store.inc. NSSQLiteStoreType grava o arquivo MOSCD1 no
- * caminho pedido. Não é SQLite e não passa por sqlite3_open_v2.
+ * Persistência: coredata_store.inc grava SQLite (sqlite3_open_v2 do amalgama).
+ * Arquivo MOSCD1 antigo é migrado na primeira abertura.
  */
 #include "foundation.h"
 #include "libc.h"

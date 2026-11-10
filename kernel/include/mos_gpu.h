@@ -1,6 +1,7 @@
 /* mOS — ABI de GPU para o Metal da Sistemas.
  *
- * Contrato estável. O número da syscall é SYS_GPU (61) em syscall.h.
+ * Contrato estável. O número da syscall é SYS_GPU (62) em syscall.h.
+ * O rascunho chegou a dizer 61; a main ocupou 61 com SYS_UNIX. 62 não muda.
  * Chamada: int 0x80, rax = SYS_GPU, rdi = MOS_GPU_*, rsi = ponteiro da
  * estrutura desta operação, rdx = tamanho em bytes que o chamador preencheu.
  * Resultado em rax: 0 ou -errno (MOS_* de syscall.h). Handles saem nos

@@ -102,6 +102,7 @@ int  tls_send(tls_conn_t *c, const void *data, int len);
 int  tls_recv(tls_conn_t *c, void *buf, int max); /* como tcp_recv */
 void tls_free(tls_conn_t *c);
 const char *tls_error(tls_conn_t *c);
+int  tls_copy_peer_chain(const tls_conn_t *c, u8 *buf, u32 cap);
 
 /* HTTP/1.1 cliente assíncrono (http:// e https://) */
 typedef struct http_req {

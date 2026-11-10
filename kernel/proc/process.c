@@ -738,6 +738,32 @@ static void drop_pipe_waiters(process_t *p, thread_t *keep) {
         }
 }
 
+/* /Sistema/Biblioteca/log-saida: cada término e cada syscall que o kernel não conhece.
+ * O serviço de rede do Chromium sai por exit() sem sinal; sem esta linha o serial não diz o código. */
+static int saida_log_on(void) {
+    static int on = -1;
+    if (on < 0) on = vfs_lookup("/Sistema/Biblioteca/log-saida") != NULL;
+    return on;
+}
+static void log_exit_stack(process_t *p, int_frame_t *f, int code) {
+    if (!saida_log_on() || !f) return;
+    thread_t *t = thread_current();
+    kprintf("proc: %s (pid %d) exit(%d) thread %d rip 0x%llx rsp 0x%llx\n", p->name, p->pid, code,
+            t ? t->id : -1, (unsigned long long)f->rip, (unsigned long long)f->rsp);
+    u64 fp = f->rbp;
+    char line[200];
+    usize o = 0;
+    for (int k = 0; k < 12 && fp; k++) {
+        u64 fr[2];
+        if ((fp & 7) || !uvm_copy_in(p, fr, fp, sizeof fr)) break;
+        if (fr[1] >= USER_BASE && fr[1] < USER_END)
+            o += (usize)snprintf(line + o, sizeof line - o, " %llx", (unsigned long long)fr[1]);
+        if (o > 150) { kprintf("proc:   chamadas:%s\n", line); o = 0; }
+        if (fr[0] <= fp) break;
+        fp = fr[0];
+    }
+    if (o) kprintf("proc:   chamadas:%s\n", line);
+}
 static void finish(process_t *p, int code) {
     if (p->exited) return;
     p->exited = true;
@@ -745,6 +771,8 @@ static void finish(process_t *p, int code) {
     p->stopped = 0;
     p->stop_unreported = 0;
     p->cont_unreported = 0;
+    if (saida_log_on())
+        kprintf("proc: %s (pid %d, pai %d) terminou com código %d\n", p->name, p->pid, p->ppid, code);
     drop_pipe_waiters(p, NULL);
     for (thread_t *t = sched_threads(); t; t = t->next)   /* todas as threads do processo */
         if (t->proc == p) {
@@ -915,6 +943,7 @@ int proc_spawn_in(const char *path, const char *arg, tty_t *tty,
             finish(p, -1); return -1;
         }
         p->spawn_argv = NULL; p->spawn_argc = 0; p->spawn_env = NULL; p->spawn_envc = 0;
+        if (spawn_flags & MOS_SPAWN_START_SUSPENDED) proc_hold(p);
         kprintf("proc: iniciado %s (Mach-O, pid %d, %llu KiB)\n", p->name, p->pid, p->mem_pages * 4);
         if (xargc || xenvc) kprintf("proc: %s pid %d recebeu %d argumentos e %d variáveis de ambiente\n", p->name, p->pid, xargc, xenvc);
         /* processos do Chromium/Electron: o tipo vem em --type= (e --utility-sub-type=), não no nome do helper */
@@ -955,6 +984,7 @@ int proc_spawn_in(const char *path, const char *arg, tty_t *tty,
     p->nthreads = p->main ? 1 : 0;
     irq_restore(fl);
     if (!p->main) { finish(p, -1); return -1; }
+    if (spawn_flags & MOS_SPAWN_START_SUSPENDED) proc_hold(p);
     kprintf("proc: iniciado %s (pid %d, %llu KiB)\n", p->name, p->pid, p->mem_pages * 4);
     return p->pid;
 }
@@ -1234,7 +1264,7 @@ static void sig_interrupt(thread_t *t) {
     if (sig_diag()) kprintf("sinal: %s pid %d thread %d acordada com EINTR (espera %d, syscall %llu)\n", p->name, p->pid, t->id,
                             t->state == TH_SLEEPING ? -100 : t->wait_pid, (unsigned long long)t->sys_nr);
     if (p->tty && p->tty->reader == t) p->tty->reader = NULL;
-    if (t->wait_pid == -3 || t->wait_pid == -4)
+    if (t->wait_pid == -3 || t->wait_pid == -4) {
         for (int i = 0; i < PROC_MAX_FDS; i++) {
             for (int k = 0; k < 2; k++) {
                 pipe_t *pp = !p->fds[i].used ? NULL : k ? p->fds[i].pipe2 : p->fds[i].pipe;
@@ -1242,6 +1272,8 @@ static void sig_interrupt(thread_t *t) {
                 if (pp && pp->wwait == t) pp->wwait = NULL;
             }
         }
+        unix_clear_waiter(t);
+    }
     t->pty_wait = NULL;
     t->futex_va = 0;
     t->wake_at = 0;
@@ -1330,6 +1362,12 @@ static void proc_stop(process_t *p, int sig) {
     { extern void smp_kick_proc(process_t *p); smp_kick_proc(p); }
 }
 
+/* POSIX_SPAWN_START_SUSPENDED. O processo já está na lista, com a thread principal criada;
+ * o chamador (proc_spawn_in) ainda segura a trava da syscall, então ela não chega a rodar. */
+void proc_hold(process_t *p) {
+    proc_stop(p, MOS_SIGSTOP);
+}
+
 static void proc_continue(process_t *p) {
     if (!p || !p->stopped) return;
     p->stopped = 0;
@@ -1416,7 +1454,7 @@ int proc_job_signal(process_t *p, thread_t *th, int sig) {
 
 /* syscalls que o SA_RESTART refaz (as demais bloqueantes devolvem EINTR, como no macOS: sleep, poll, sigsuspend) */
 static bool sys_restartable(u64 nr) {
-    return nr == SYS_READ || nr == SYS_WRITE || nr == SYS_WAITPID || nr == SYS_WAIT || nr == SYS_WAITANY || nr == SYS_FUTEX_WAIT;
+    return nr == SYS_READ || nr == SYS_WRITE || nr == SYS_WAITPID || nr == SYS_WAIT || nr == SYS_WAITANY || nr == SYS_FUTEX_WAIT || nr == SYS_UNIX;
 }
 static void sys_restart(int_frame_t *f, thread_t *t) { f->rip -= 2; f->rax = t->sys_nr; }   /* int 0x80 e syscall: 2 bytes */
 
@@ -1837,6 +1875,7 @@ static void pipe_refs_drop(pipe_t *pp, pipe_t *pp2, u8 kind) {
 
 static void fd_close(process_t *p, int fd) {
     if (!p->fds[fd].used) return;
+    if (p->fds[fd].kind == FD_UNIX) unix_put((int)p->fds[fd].off);
     pipe_t *pp = p->fds[fd].pipe, *pp2 = p->fds[fd].pipe2;
     struct pty *ty = p->fds[fd].pty;
     bool tm = p->fds[fd].kind == FD_PTY_M;
@@ -1852,6 +1891,7 @@ static void fd_copy(process_t *dst, int dfd, process_t *src, int sfd) {
     /* a referência nova entra antes de fechar o destino: se os dois são do mesmo pipe e o destino era a
      * última referência, fechar primeiro liberaria o pipe que a cópia ainda vai usar (kfree duplo depois) */
     __typeof__(src->fds[0]) e = src->fds[sfd];
+    if (e.kind == FD_UNIX) unix_hold((int)e.off);
     pipe_refs(e.pipe, e.pipe2, e.kind, +1);
     if (e.pty) pty_fd_ref(e.pty, e.kind == FD_PTY_M, +1);
     if (dst->fds[dfd].used) fd_close(dst, dfd);
@@ -1869,6 +1909,7 @@ void *proc_fd_snapshot(process_t *p, int fd) {
     if (!s) return NULL;
     *s = p->fds[fd];
     s->flags &= ~MOS_O_CLOEXEC;
+    if (s->kind == FD_UNIX) unix_hold((int)s->off);
     pipe_refs(s->pipe, s->pipe2, s->kind, +1);
     if (s->pty) pty_fd_ref(s->pty, s->kind == FD_PTY_M, +1);
     return s;
@@ -1879,6 +1920,7 @@ int proc_fd_from_snapshot(process_t *p, const void *snap) {
         if (p->fds[fd].used) continue;
         p->fds[fd] = *s;
         p->fds[fd].used = true;
+        if (s->kind == FD_UNIX) unix_hold((int)s->off);
         pipe_refs(s->pipe, s->pipe2, s->kind, +1);
         if (s->pty) pty_fd_ref(s->pty, s->kind == FD_PTY_M, +1);
         return fd;
@@ -1888,6 +1930,7 @@ int proc_fd_from_snapshot(process_t *p, const void *snap) {
 void proc_fd_snapshot_free(void *snap) {
     fdent_t *s = snap;
     if (!s) return;
+    if (s->kind == FD_UNIX) unix_put((int)s->off);
     if (s->pipe || s->pipe2) pipe_refs_drop(s->pipe, s->pipe2, s->kind);
     if (s->pty) pty_fd_ref(s->pty, s->kind == FD_PTY_M, -1);
     kfree(s);
@@ -2345,6 +2388,7 @@ static u64 proc_syscall_(int_frame_t *f) {
     switch (f->rax) {
     case SYS_EXIT:
         /* diagnóstico (despejar-threads): quem encerra um helper do VS Code, com código e pilha */
+        log_exit_stack(p, f, (int)a);
         if (!strncmp(p->name, "Code Helper", 11) && vfs_lookup("/Sistema/Biblioteca/despejar-threads")) {
             kprintf("proc: %s (pid %d) chamou exit(%d), thread %d\n", p->name, p->pid, (int)a, t ? t->id : -1);
             u64 w[64];
@@ -2358,6 +2402,7 @@ static u64 proc_syscall_(int_frame_t *f) {
         finish(p, (int)a);
         return sched_switch(f);
     case SYS_WRITE:
+        if (fd_get(p, a) >= 0 && p->fds[a].kind == FD_UNIX) return unix_rw(f, t, p, (int)a, 0, b, c);
         if (fd_get(p, a) >= 0 && p->fds[a].pty) return pty_rw(f, t, p, (int)a, false, b, c);   /* terminal (pty.c) */
         if (fd_get(p, a) >= 0 && p->fds[a].kind == FD_PIPE_RW) return pipe_op(f, t, p->fds[a].pipe2, false, b, c);   /* socketpair */
         if (fd_get(p, a) >= 0 && p->fds[a].pipe) {
@@ -2543,6 +2588,7 @@ static u64 proc_syscall_(int_frame_t *f) {
     /* ---- arquivos por descritor */
     case SYS_OPEN: {
         if (!copy_path(p, path, a)) { r = -MOS_EFAULT; break; }
+        if (unix_path_is_sock(path)) { r = -MOS_ENXIO; break; }   /* o arquivo do socket não é um fd comum */
         int fd = -1;
         for (int i = 3; i < PROC_MAX_FDS; i++) if (!p->fds[i].used) { fd = i; break; }
         {   /* /dev/fd/N e /dev/std{in,out,err}: um dup do descritor (o bash usa /dev/fd/63 em "< <(comando)") */
@@ -2726,6 +2772,7 @@ static u64 proc_syscall_(int_frame_t *f) {
         break;
     }
     case SYS_READ: {
+        if (fd_get(p, a) >= 0 && p->fds[a].kind == FD_UNIX) return unix_rw(f, t, p, (int)a, 1, b, c);
         if (fd_get(p, a) >= 0 && p->fds[a].pty) return pty_rw(f, t, p, (int)a, true, b, c);    /* terminal (pty.c) */
         if (fd_get(p, a) >= 0 && p->fds[a].pipe) {
             if (p->fds[a].kind != FD_PIPE_R && p->fds[a].kind != FD_PIPE_RW) { r = -MOS_EBADF; break; }
@@ -2759,7 +2806,7 @@ static u64 proc_syscall_(int_frame_t *f) {
     /* pread/pwrite: deslocamento explícito, posição do fd intocada. No libSystem eram lseek+read+lseek, o que quebrava
      * com threads lendo o mesmo fd (o pool do libuv lendo o node_modules.asar enquanto o AsarURLLoader lia também) */
     case SYS_PREAD: {
-        if (fd_get(p, a) < 0 || p->fds[a].pipe || p->fds[a].pty) { r = fd_get(p, a) < 0 ? -MOS_EBADF : -MOS_ESPIPE; break; }
+        if (fd_get(p, a) < 0 || p->fds[a].pipe || p->fds[a].pty || p->fds[a].kind == FD_UNIX) { r = fd_get(p, a) < 0 ? -MOS_EBADF : -MOS_ESPIPE; break; }
         if (p->fds[a].flags & MOS_O_WRONLY) { r = -MOS_EBADF; break; }
         if (is_devnull(p->fds[a].path)) { r = 0; break; }
         vnode_t *v = vfs_lookup(p->fds[a].path);
@@ -2771,14 +2818,14 @@ static u64 proc_syscall_(int_frame_t *f) {
         break;
     }
     case SYS_PWRITE: {
-        if (fd_get(p, a) < 0 || p->fds[a].pipe || p->fds[a].pty) { r = fd_get(p, a) < 0 ? -MOS_EBADF : -MOS_ESPIPE; break; }
+        if (fd_get(p, a) < 0 || p->fds[a].pipe || p->fds[a].pty || p->fds[a].kind == FD_UNIX) { r = fd_get(p, a) < 0 ? -MOS_EBADF : -MOS_ESPIPE; break; }
         if (!(p->fds[a].flags & (MOS_O_WRONLY | MOS_O_RDWR))) { r = -MOS_EBADF; break; }
         if (is_devnull(p->fds[a].path)) { r = (i64)c; break; }
         r = file_write_at(p, p->fds[a].path, f->r10, b, c);
         break;
     }
     case SYS_FTRUNCATE: {
-        if (fd_get(p, a) < 0 || p->fds[a].pipe || p->fds[a].pty) { r = fd_get(p, a) < 0 ? -MOS_EBADF : -MOS_EINVAL; break; }
+        if (fd_get(p, a) < 0 || p->fds[a].pipe || p->fds[a].pty || p->fds[a].kind == FD_UNIX) { r = fd_get(p, a) < 0 ? -MOS_EBADF : -MOS_EINVAL; break; }
         if (!(p->fds[a].flags & (MOS_O_WRONLY | MOS_O_RDWR))) { r = -MOS_EBADF; break; }
         if (is_devnull(p->fds[a].path)) { r = 0; break; }
         r = file_truncate(p->fds[a].path, b);
@@ -2792,7 +2839,7 @@ static u64 proc_syscall_(int_frame_t *f) {
     }
     case SYS_LSEEK: {
         if (fd_get(p, a) < 0) { r = -MOS_EBADF; break; }
-        if (p->fds[a].pty) { r = -MOS_ESPIPE; break; }      /* terminal: sem posição */
+        if (p->fds[a].pty || p->fds[a].kind == FD_UNIX) { r = -MOS_ESPIPE; break; }
         vnode_t *v = vfs_lookup(p->fds[a].path);
         i64 base = c == MOS_SEEK_SET ? 0 : c == MOS_SEEK_CUR ? (i64)p->fds[a].off : c == MOS_SEEK_END ? (i64)(v ? v->size : 0) : -1;
         i64 pos = base + (i64)b;
@@ -2806,6 +2853,12 @@ static u64 proc_syscall_(int_frame_t *f) {
         vnode_t *v;
         /* pipe: is_dir = 2 (ponta de leitura) ou 3 (escrita); size = bytes para ler (ou espaço livre);
          * mtime = 1 se a outra ponta já fechou. É o que kqueue/poll do libSystem usam para saber se há dados. */
+        if (f->rax == SYS_FSTAT && fd_get(p, a) >= 0 && p->fds[a].kind == FD_UNIX) {
+            mos_stat_t st;
+            r = unix_fstat(p, (int)a, &st);
+            if (r == 0) r = uvm_copy_out(p, b, &st, sizeof st) ? 0 : -MOS_EFAULT;
+            break;
+        }
         if (f->rax == SYS_FSTAT && fd_get(p, a) >= 0 && p->fds[a].pty) { r = pty_fstat(p, (int)a, b); break; }   /* is_dir 5 */
         if (f->rax == SYS_FSTAT && fd_get(p, a) >= 0 && p->fds[a].pipe) {
             pipe_t *pp = p->fds[a].pipe;
@@ -2865,6 +2918,7 @@ static u64 proc_syscall_(int_frame_t *f) {
         if (!copy_path(p, path, a)) { r = -MOS_EFAULT; break; }
         vnode_t *v = vfs_lookup(path);
         r = !v ? -MOS_ENOENT : vfs_delete(v) ? 0 : -MOS_EINVAL;
+        if (r == 0) unix_unbind(path);
         break;
     }
     case SYS_RENAME: {
@@ -2885,9 +2939,10 @@ static u64 proc_syscall_(int_frame_t *f) {
             if (!old->dir && v->dir) { r = -MOS_ENOTDIR; break; }
             if (old->dir && old->child) { r = -MOS_ENOTEMPTY; break; }
             if (!vfs_delete(old)) { r = -MOS_EINVAL; break; }
+            unix_unbind(to_full);
         }
         r = vfs_move(v, np, slash + 1) ? 0 : -MOS_EINVAL;
-        if (r == 0) rename_fix_fds(path, to_full);
+        if (r == 0) { rename_fix_fds(path, to_full); unix_rename(path, to_full); }
         break;
     }
 
@@ -3278,6 +3333,7 @@ static u64 proc_syscall_(int_frame_t *f) {
     case SYS_DYLD: r = macho_dyld_syscall(p, a, b, c, f->r10); break;   /* dlopen/dlsym (kernel/compat/macho.c) */
     case SYS_LS: { extern i64 ls_syscall(process_t *p, u64 op, u64 ureq); r = ls_syscall(p, a, b); break; }   /* Launch Services (kernel/compat/launchsvc.c) */
     case SYS_NET: { extern i64 net_user_syscall(process_t *p, u64 op, u64 a, u64 b, u64 c); r = net_user_syscall(p, a, b, c, f->r10); break; }   /* TCP/DNS (kernel/net/usersock.c) */
+    case SYS_UNIX: return unix_syscall(f, t, p);   /* AF_UNIX (kernel/net/unix.c) */
 
     /* ---- processos e pasta atual */
     case SYS_WAITANY: {
@@ -3316,6 +3372,14 @@ static u64 proc_syscall_(int_frame_t *f) {
         break;
     }
     case SYS_FDPATH: {                                      /* fcntl(F_GETPATH) e fchdir no libSystem */
+        if (fd_get(p, a) >= 0 && p->fds[a].kind == FD_UNIX) {
+            char nm[104];
+            int n = unix_fd_path(p, (int)a, nm, (int)sizeof nm);
+            if (n < 0) { r = n; break; }
+            if ((u64)n + 1 > c) { r = -MOS_EINVAL; break; }
+            r = uvm_copy_out(p, b, nm, (usize)n + 1) ? n : -MOS_EFAULT;
+            break;
+        }
         if (fd_get(p, a) < 0 || p->fds[a].kind != FD_FILE) { r = -MOS_EBADF; break; }
         usize n = strlen(p->fds[a].path) + 1;
         if (n > c) { r = -MOS_EINVAL; break; }
@@ -3344,7 +3408,17 @@ static u64 proc_syscall_(int_frame_t *f) {
     default:
         if (f->rax >= SYS_MACH_FIRST && f->rax <= SYS_MACH_LAST) return machipc_syscall(f);   /* pode bloquear */
         if (f->rax >= SYS_GUI_FIRST && f->rax <= SYS_GUI_LAST) r = compat_gui_syscall(p, f->rax, a, b, c, f->r10, f->r8);
-        else r = -MOS_EINVAL;
+        else {
+            r = -MOS_EINVAL;
+            if (saida_log_on() && f->rax < 512) {
+                static u8 vista[512];
+                if (!vista[f->rax]) {
+                    vista[f->rax] = 1;
+                    kprintf("proc: %s pid %d syscall %llu desconhecida -> EINVAL\n", p->name, p->pid,
+                            (unsigned long long)f->rax);
+                }
+            }
+        }
         break;
     }
     f->rax = (u64)r;
@@ -3430,5 +3504,7 @@ void proc_init(void) {
         sh_test_pid = proc_spawn_tty("/Sistema/Programas/sh", NULL);
         if (sh_test_pid > 0) kthread_create("teste-sh", sh_test, NULL);
         if (vfs_lookup("/Sistema/Programas/smpteste")) proc_spawn("/Sistema/Programas/smpteste", NULL);   /* SMP: carga paralela */
+    } else if (vfs_lookup("/Sistema/Programas/.autoteste") && vfs_lookup("/Sistema/Programas/unixipc")) {
+        proc_spawn("/Sistema/Programas/unixipc", NULL);   /* AF_UNIX sem o teste geral na imagem */
     }
 }

@@ -3,8 +3,9 @@
 Contrato entre o kernel do mOS e o Metal da Sistemas. O Metal é quem consome.
 Este documento e `kernel/include/mos_gpu.h` são a fonte. `MOS_GPU_ABI` vale 1.
 
-A syscall é `SYS_GPU` (61), a mesma convenção das outras: `int 0x80`, número
-em `rax`, argumentos em `rdi`, `rsi`, `rdx`. `rdi` é o código `MOS_GPU_*`.
+A syscall é `SYS_GPU` (62). O primeiro rascunho dizia 61; a `main` já usava
+61 para `SYS_UNIX`. Os códigos `MOS_GPU_*` não mudaram. Convenção: `int 0x80`,
+número em `rax`, argumentos em `rdi`, `rsi`, `rdx`. `rdi` é o código `MOS_GPU_*`.
 `rsi` aponta para a estrutura da operação. `rdx` é quantos bytes o chamador
 escreveu. O retorno em `rax` é 0 ou `-errno` (`MOS_EINVAL`, `MOS_ENOMEM`,
 `MOS_EFAULT`, `MOS_EBUSY`, `MOS_ETIMEDOUT`, `MOS_ENOENT`, `MOS_EAGAIN`).

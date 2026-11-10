@@ -633,6 +633,14 @@ int pthread_kill(unsigned long t, int sig) {
 void *pthread_override_qos_class_start_np(unsigned long t, unsigned qos, int prio) { (void)t; (void)qos; (void)prio; static int dummy; return &dummy; }
 int pthread_override_qos_class_end_np(void *o) { (void)o; return 0; }
 int pthread_condattr_init(void *a) { memset(a, 0, 16); return 0; }
+int pthread_condattr_destroy(void *a) { if (a) memset(a, 0, 16); return a ? 0 : 22; }
+/* O atributo é guardado. Cond_wait/signal deste processo não mudam; entre processos o futex não é compartilhado. */
+int pthread_condattr_setpshared(void *a, int p) {
+    if (!a || (p != 0 && p != 1)) return 22;
+    ((int *)a)[1] = p;
+    return 0;
+}
+int pthread_condattr_getpshared(const void *a, int *p) { if (!a) return 22; if (p) *p = ((const int *)a)[1]; return 0; }
 int pthread_setcancelstate(int st, int *old) { (void)st; if (old) *old = 0; return 0; }
 /* quadro de pilha: [rbp] = rbp anterior, [rbp+8] = endereço de retorno */
 usize pthread_stack_frame_decode_np(usize frame, usize *ret) {
