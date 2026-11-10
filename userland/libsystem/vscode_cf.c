@@ -500,6 +500,13 @@ id CFCharacterSetCreateWithCharactersInString(void *alloc, id str) {
     CFCharacterSetAddCharactersInString(s, str);
     return s;
 }
+id CFCharacterSetCreateCopy(void *alloc, id s) {
+    (void)alloc;
+    id n = cs_new();
+    u8 *a = cs_bits(n), *b = cs_bits(s);
+    if (a && b) memcpy(a, b, CS_BYTES);
+    return n;
+}
 id CFCharacterSetCreateInvertedSet(void *alloc, id s) {
     (void)alloc;
     id n = cs_new();
@@ -613,6 +620,33 @@ void CFBinaryHeapRemoveMinimumValue(id hp) {
         i = m;
     }
     if (h->cb.release) h->cb.release(0, min);
+}
+long CFBinaryHeapGetCount(id hp) { cfbh_t *h = (cfbh_t *)hp; return h ? h->n : 0; }
+const void *CFBinaryHeapGetMinimum(id hp) { const void *v = 0; return CFBinaryHeapGetMinimumIfPresent(hp, &v) ? v : 0; }
+u8 CFBinaryHeapContainsValue(id hp, const void *v) {
+    cfbh_t *h = (cfbh_t *)hp; long i;
+    if (!h) return 0;
+    for (i = 0; i < h->n; i++) if (bh_cmp(h, h->v[i], v) == 0) return 1;
+    return 0;
+}
+long CFBinaryHeapGetCountOfValue(id hp, const void *v) { return CFBinaryHeapContainsValue(hp, v) ? 1 : 0; }
+void CFBinaryHeapRemoveAllValues(id hp) { while (CFBinaryHeapGetCount(hp)) CFBinaryHeapRemoveMinimumValue(hp); }
+void CFBinaryHeapGetValues(id hp, const void **out) {
+    cfbh_t *h = (cfbh_t *)hp; long i;
+    if (!h || !out) return;
+    for (i = 0; i < h->n; i++) out[i] = h->v[i];
+}
+void CFBinaryHeapApplyFunction(id hp, void (*fn)(const void *, void *), void *ctx) {
+    cfbh_t *h = (cfbh_t *)hp; long i;
+    if (!h || !fn) return;
+    for (i = 0; i < h->n; i++) fn(h->v[i], ctx);
+}
+id CFBinaryHeapCreateCopy(void *alloc, long cap, id hp) {
+    cfbh_t *h = (cfbh_t *)hp;
+    id n = CFBinaryHeapCreate(alloc, cap > 0 ? cap : (h ? h->n : 0), h ? &h->cb : 0, 0);
+    long i;
+    if (h) for (i = 0; i < h->n; i++) CFBinaryHeapAddValue(n, h->v[i]);
+    return n;
 }
 
 /* ================================================================ erros, URLs e bundles */
