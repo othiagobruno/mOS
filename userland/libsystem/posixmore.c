@@ -829,10 +829,10 @@ void strmode(unsigned short mode, char *p) {
     p[9] = ' ';
     p[10] = 0;
 }
-/* vfork não chama pthread_atfork (como no macOS). O kernel não tem espaço compartilhado: é um fork
- * com endereço próprio. Em processo com outras threads o POSIX deixa o vfork indefinido. */
+/* vfork: o pai fica suspenso e o filho usa o mesmo pml4 até exec ou _exit.
+ * A tabela de descritores é uma cópia. Com outras threads o kernel devolve EINVAL. */
 int vfork(void) {
-    long r = SYS0(SYS_FORK);
+    long r = SYS0(SYS_VFORK);
     if (r < 0) { cx_errno = (int)-r; return -1; }
     return (int)r;
 }
