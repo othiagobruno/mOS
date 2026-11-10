@@ -142,21 +142,21 @@ int renamex_np(const char *a, const char *b, unsigned flags) { (void)flags; retu
 int renameatx_np(int fa, const char *a, int fb, const char *b, unsigned flags) { (void)flags; return renameat(fa, a, fb, b); }
 
 /* ======================================================================== cópia de arquivos */
-static int copy_fd(int in, int out) {
+static long copy_fd(int in, int out) {
     char buf[16384];
-    long n;
+    long n, total = 0;
     while ((n = read(in, buf, sizeof buf)) > 0)
-        for (long o = 0; o < n;) { long w = write(out, buf + o, (size_t)(n - o)); if (w <= 0) return -1; o += w; }
-    return n < 0 ? -1 : 0;
+        for (long o = 0; o < n;) { long w = write(out, buf + o, (size_t)(n - o)); if (w <= 0) return -1; o += w; total += w; }
+    return n < 0 ? -1 : total;
 }
 static int copy_file(const char *from, const char *to) {
     int in = open(from, 0);
     if (in < 0) return -1;
     int out = open(to, 0x0601, 0644);   /* O_WRONLY|O_CREAT|O_TRUNC */
     if (out < 0) { close(in); return -1; }
-    int r = copy_fd(in, out);
+    long n = copy_fd(in, out);
     close(in); close(out);
-    return r;
+    return n < 0 ? -1 : 0;
 }
 static int copy_tree(const char *from, const char *to) {
     char st[STAT_SIZE];
@@ -179,21 +179,33 @@ static int copy_tree(const char *from, const char *to) {
 }
 #define COPYFILE_RECURSIVE (1 << 15)
 #define COPYFILE_DATA (1 << 3)
+void cx_copyfile_note(void *state, int src_fd, const char *src, int dst_fd, const char *dst, long copied);
 int copyfile(const char *from, const char *to, void *state, u32 flags) {
-    (void)state;
     char st[STAT_SIZE];
     if (stat(from, st) < 0) return -1;
-    if (is_dir_mode(st_mode(st))) {
-        if (flags & COPYFILE_RECURSIVE) return copy_tree(from, to);
-        if (mkdir(to, 0755) < 0 && stat(to, st) < 0) return -1;
-        return 0;
+    int dir = is_dir_mode(st_mode(st));
+    int r;
+    if (dir) {
+        if (flags & COPYFILE_RECURSIVE) r = copy_tree(from, to);
+        else { r = 0; if (mkdir(to, 0755) < 0 && stat(to, st) < 0) r = -1; }
+    } else r = copy_file(from, to);
+    long bytes = -1;
+    if (r == 0) {
+        bytes = 0;
+        if (!dir) {
+            char ds[STAT_SIZE];
+            if (stat(to, ds) == 0) bytes = *(long long *)(ds + 96);
+        }
     }
-    return copy_file(from, to);
+    cx_copyfile_note(state, -1, from, -1, to, bytes);
+    return r;
 }
 int fcopyfile(int from, int to, void *state, u32 flags) {
-    (void)state; (void)flags;
+    (void)flags;
     lseek(from, 0, 0);
-    return copy_fd(from, to);
+    long n = copy_fd(from, to);
+    cx_copyfile_note(state, from, 0, to, 0, n);
+    return n < 0 ? -1 : 0;
 }
 /* link físico: o VFS não tem; uma cópia mantém o conteúdo visível pelos dois nomes */
 int link(const char *a, const char *b) { char st[STAT_SIZE]; if (stat(b, st) == 0) { SET(CX_EEXIST); return -1; } return copy_file(a, b); }

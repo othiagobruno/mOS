@@ -1491,18 +1491,17 @@ static id fm_cwd(id self, SEL c) { (void)self; (void)c; char b[1024]; return cx_
 /* NSNull, NSCharacterSet, NSError, NSException (mínimos) */
 static id null_desc(id self, SEL c) { (void)self; (void)c; return cx_str("<null>"); }
 static id err_desc(id self, SEL c) { (void)self; (void)c; return cx_str("Erro"); }
+void cx_nsexception_raise_format(id cls, id name, id fmt, va_list ap);
 static id exc_raise(id cls, SEL c, id name, id fmt, ...) {
-    (void)cls; (void)c;
+    (void)c;
     va_list ap;
     va_start(ap, fmt);
-    id m = cx_str_vfmt(fmt, ap);
+    cx_nsexception_raise_format(cls, name, fmt, ap);
     va_end(ap);
-    cx_fdprintf(2, "*** Exceção '%s': %s\n", cx_cstr(name), cx_cstr(m));
-    abort();
+    return 0;
 }
-/* NSException com nome, motivo e userInfo: antes +exceptionWithName:reason:userInfo: devolvia nil e um @throw do app
- * (ex.: o Squirrel do Electron) abortava com "exceção não tratada: nil", sem dizer qual. O mOS ainda não desenrola
- * exceções até um @catch; isto ao menos faz o objc_exception_throw contar o nome e o motivo. */
+/* NSException com nome, motivo e userInfo. +raise:format: (nsexc_raise.c) formata o motivo e
+ * chama objc_exception_throw: com a libc++abi carregada o @catch recebe; sem ela, o throw encerra. */
 typedef struct { cx_class_t *isa; id name, reason, info; } nsexc_t;
 static id exc_init(id self, SEL c, id name, id reason, id info) {
     (void)c;
@@ -1511,6 +1510,7 @@ static id exc_init(id self, SEL c, id name, id reason, id info) {
     return self;
 }
 static id exc_with(id cls, SEL c, id name, id reason, id info) { return cx_autorelease(exc_init(cx_alloc_instance((cx_class_t *)cls), c, name, reason, info)); }
+id cx_exception_with(id cls, id name, id reason, id info) { return exc_with(cls, 0, name, reason, info); }
 static id exc_name(id self, SEL c) { (void)c; return ((nsexc_t *)self)->name; }
 static id exc_reason(id self, SEL c) { (void)c; return ((nsexc_t *)self)->reason; }
 static id exc_info(id self, SEL c) { (void)c; return ((nsexc_t *)self)->info; }

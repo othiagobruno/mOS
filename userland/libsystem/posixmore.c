@@ -757,11 +757,15 @@ float __extendhfsf2(unsigned short h) {
     return v.x;
 }
 
-/* ACL: o sistema de arquivos do mOS não tem; ENOTSUP faz o ls e o cp seguirem sem elas */
-void *acl_get_file(const char *p, int t) { (void)p; (void)t; cx_errno = 45; return 0; }
-void *acl_get_link_np(const char *p, int t) { (void)p; (void)t; cx_errno = 45; return 0; }
-void *acl_get_fd_np(int fd, int t) { (void)fd; (void)t; cx_errno = 45; return 0; }
-int acl_set_file(const char *p, int t, void *a) { (void)p; (void)t; (void)a; cx_errno = 45; return -1; }
+/* ACL de acesso no processo (cli.c). ACL default de diretório não existe no FAT: ENOENT/ENOTSUP. */
+void *cx_acl_get_path(const char *path, int follow);
+int cx_acl_set_path(const char *path, void *a, int follow);
+void *acl_get_fd(int fd);
+int acl_set_fd(int fd, void *a);
+void *acl_get_file(const char *p, int t) { if (t == 1) { cx_errno = 2; return 0; } return cx_acl_get_path(p, 1); }
+void *acl_get_link_np(const char *p, int t) { if (t == 1) { cx_errno = 2; return 0; } return cx_acl_get_path(p, 0); }
+void *acl_get_fd_np(int fd, int t) { if (t == 1) { cx_errno = 2; return 0; } return acl_get_fd(fd); }
+int acl_set_file(const char *p, int t, void *a) { if (t == 1) { cx_errno = 45; return -1; } return cx_acl_set_path(p, a, 1); }
 
 int clock_getres(int clk, cx_ts_t *ts) { (void)clk; if (ts) { ts->tv_sec = 0; ts->tv_nsec = 1000000; } return 0; }   /* relógio do kernel: 1 ms */
 int clock_settime(int clk, const cx_ts_t *ts) { (void)clk; (void)ts; cx_errno = 1; return -1; }
