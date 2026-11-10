@@ -4,6 +4,7 @@
  * syscalls svc #0x80 (x16: 1 exit, 4 write, 20 getpid, 0x4000 dump) e svc #0x4001/#0x4002.
  *
  *   a64host [--jit] [--count] [--tempo] [--budget N] [--argv0 NOME] programa.elf [args...]
+ *   a64host [--jit] [--budget N] --fuzz lote.bin saida.bin
  *
  * --tempo grava em stderr "tempo_ns <n>" só do a64_run (sem carga do ELF).
  * --count executa no interpretador e grava "insns <n>" (instruções guest arquiteturais).
@@ -222,10 +223,119 @@ static a64_u64 nsec_now(void) {
     return (a64_u64)ts.tv_sec * 1000000000ull + (a64_u64)ts.tv_nsec;
 }
 
+static void st_to_cpu(a64_cpu *c, const fz_state *s) {
+    memset(c, 0, sizeof *c);
+    memcpy(c->x, s->x, sizeof s->x);
+    c->x[31] = s->sp;
+    c->nzcv = s->nzcv & 0xF0000000u;
+    c->fpcr = s->fpcr; c->fpsr = s->fpsr;
+    c->pstate = s->pstate & (A64_PS_DIT | A64_PS_SSBS);
+    c->tpidr_el0 = s->tpidr;
+    memcpy(c->v, s->v, sizeof s->v);
+}
+static void cpu_to_st(fz_state *s, const a64_cpu *c) {
+    memset(s, 0, sizeof *s);
+    memcpy(s->x, c->x, sizeof s->x);
+    s->sp = c->x[31];
+    s->nzcv = c->nzcv; s->fpcr = c->fpcr; s->fpsr = c->fpsr;
+    s->pstate = c->pstate & (A64_PS_DIT | A64_PS_SSBS);
+    s->tpidr = c->tpidr_el0;
+    memcpy(s->v, c->v, sizeof s->v);
+}
+
+static int fuzz_main(int engine, a64_u64 budget, const char *inpath, const char *outpath) {
+    FILE *f = fopen(inpath, "rb");
+    if (!f) { fprintf(stderr, "a64host: não abriu %s\n", inpath); return 2; }
+    fz_batch_hdr hdr;
+    if (fread(&hdr, sizeof hdr, 1, f) != 1 || hdr.magic != FZ_BATCH_MAGIC ||
+        hdr.case_size != sizeof(fz_case) || hdr.res_size != sizeof(fz_result)) {
+        fprintf(stderr, "a64host: lote inválido\n"); return 2;
+    }
+    fz_case *cases = calloc(hdr.ncases ? hdr.ncases : 1, sizeof(fz_case));
+    fz_result *res = calloc(hdr.ncases ? hdr.ncases : 1, sizeof(fz_result));
+    if (!cases || !res || fread(cases, sizeof(fz_case), hdr.ncases, f) != hdr.ncases) {
+        fprintf(stderr, "a64host: lote truncado\n"); return 2;
+    }
+    fclose(f);
+    if (!budget) budget = hdr.budget ? hdr.budget : 100000;
+    if (!map_span(FZ_CODE_VA, FZ_CODE_SZ) || !map_span(FZ_SCR_VA, FZ_SCR_SZ)) return 2;
+    size_t csz = (sizeof(a64_cpu) + 63u) & ~(size_t)63u;
+    a64_cpu *c = aligned_alloc(64, csz);
+    if (!c) return 2;
+    memset(c, 0, sizeof *c);
+    g_cpu = c;
+    volatile a64_u32 *code = (volatile a64_u32 *)(uintptr_t)FZ_CODE_VA;
+    for (unsigned i = 0; i < FZ_CODE_SZ / 4; i++) code[i] = FZ_TRAP_INSN;
+    for (uint32_t ci = 0; ci < hdr.ncases; ci++) {
+        fz_case *k = &cases[ci];
+        fz_result *r = &res[ci];
+        unsigned n = k->ninsn > FZ_MAXINSN ? FZ_MAXINSN : k->ninsn;
+        volatile a64_u32 *at = code + FZ_CASE_OFF / 4;
+        for (unsigned i = 0; i < n; i++) at[i] = k->insn[i];
+        at[n] = FZ_END_INSN;
+        a64_invalidate(FZ_CODE_VA + FZ_CASE_OFF, 4ull * (n + 1));
+        fz_fill((volatile uint64_t *)(uintptr_t)FZ_SCR_VA, k->scr_seed);
+        st_to_cpu(c, &k->st);
+        c->pc = FZ_CODE_VA + FZ_CASE_OFF;
+        int rr;
+        g_faulted = 0;
+        g_fault_addr = 0;
+        if (sigsetjmp(g_jb, 1) != 0) {
+            rr = A64_EXIT_FAULT;
+            c->exit_info = g_fault_addr;
+            c->exit_insn = 0;
+        } else {
+            g_in_guest = 1;
+            if (engine == A64_ENGINE_JIT) {
+                for (;;) {
+                    rr = a64_run(c, engine);
+                    if (rr == A64_EXIT_ICACHE) { a64_invalidate(c->exit_info & ~63ull, 64); continue; }
+                    if (rr == A64_EXIT_YIELD) continue;
+                    break;
+                }
+            } else rr = a64_interp_run(c, budget);
+            g_in_guest = 0;
+        }
+        memset(r, 0, sizeof *r);
+        r->pc = c->pc;
+        r->insn = c->exit_insn;
+        switch (rr) {
+        case A64_EXIT_SVC:
+            r->info = c->exit_info & 0xFFFF;
+            r->kind = (r->info == FZ_SVC_DUMP && c->pc == FZ_CODE_VA + FZ_CASE_OFF + 4 * n + 4) ? FZK_END : FZK_SVC;
+            break;
+        case A64_EXIT_BRK: r->kind = FZK_BRK; r->info = c->exit_info & 0xFFFF; break;
+        case A64_EXIT_UDF: r->kind = FZK_UDF; break;
+        case A64_EXIT_HLT: r->kind = FZK_HLT; r->info = c->exit_info & 0xFFFF; break;
+        case A64_EXIT_FAULT:
+            r->kind = FZK_FAULT; r->info = c->exit_info;
+            if (g_fault_sig && g_fault_sig != SIGSEGV && g_fault_sig != SIGBUS) {
+                r->kind = FZK_OTHER; r->info = 0x8000000000000000ull | (unsigned)g_fault_sig;
+            }
+            if (r->kind == FZK_FAULT && !r->insn) {
+                a64_u64 p = c->pc;
+                if (p >= FZ_CODE_VA && p < FZ_CODE_VA + FZ_CODE_SZ) r->insn = *(a64_u32 *)(uintptr_t)p;
+            }
+            break;
+        case A64_EXIT_STOP: r->kind = FZK_BUDGET; break;
+        default: r->kind = FZK_OTHER; r->info = (a64_u64)rr; break;
+        }
+        cpu_to_st(&r->st, c);
+        r->scr_hash = fz_hash((const volatile uint8_t *)(uintptr_t)FZ_SCR_VA, FZ_SCR_SZ);
+        for (unsigned i = 0; i <= n; i++) at[i] = FZ_TRAP_INSN;
+        a64_invalidate(FZ_CODE_VA + FZ_CASE_OFF, 4ull * (n + 1));
+    }
+    FILE *o = fopen(outpath, "wb");
+    if (!o) { fprintf(stderr, "a64host: não criou %s\n", outpath); return 2; }
+    if (fwrite(res, sizeof(fz_result), hdr.ncases, o) != hdr.ncases) { fclose(o); return 2; }
+    fclose(o);
+    return 0;
+}
+
 int main(int argc, char **argv) {
     int engine = A64_ENGINE_INTERP, ai = 1;
     a64_u64 budget = 0;
-    const char *argv0 = NULL;
+    const char *argv0 = NULL, *fuzz_in = NULL, *fuzz_out = NULL;
     for (; ai < argc && argv[ai][0] == '-'; ai++) {
         if (!strcmp(argv[ai], "--jit")) engine = A64_ENGINE_JIT;
         else if (!strcmp(argv[ai], "--trace")) g_trace = 1;
@@ -233,11 +343,8 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[ai], "--tempo")) g_tempo = 1;
         else if (!strcmp(argv[ai], "--budget") && ai + 1 < argc) budget = strtoull(argv[++ai], NULL, 0);
         else if (!strcmp(argv[ai], "--argv0") && ai + 1 < argc) argv0 = argv[++ai];
+        else if (!strcmp(argv[ai], "--fuzz") && ai + 2 < argc) { fuzz_in = argv[++ai]; fuzz_out = argv[++ai]; }
         else { fprintf(stderr, "a64host: opção desconhecida %s\n", argv[ai]); return 2; }
-    }
-    if (ai >= argc) {
-        fprintf(stderr, "uso: a64host [--jit] [--count] [--tempo] [--budget N] [--argv0 NOME] programa.elf [args]\n");
-        return 2;
     }
     struct sigaction sa;
     memset(&sa, 0, sizeof sa);
@@ -248,6 +355,12 @@ int main(int argc, char **argv) {
     sigaction(SIGBUS, &sa, NULL);
     sigaction(SIGFPE, &sa, NULL);
     sigaction(SIGILL, &sa, NULL);
+    if (fuzz_in) return fuzz_main(engine, budget, fuzz_in, fuzz_out);
+    if (ai >= argc) {
+        fprintf(stderr, "uso: a64host [--jit] [--count] [--tempo] [--budget N] [--argv0 NOME] programa.elf [args]\n"
+                        "     a64host [--jit] [--budget N] --fuzz lote.bin saida.bin\n");
+        return 2;
+    }
 
     a64_u64 entry;
     if (!load_elf(argv[ai], &entry)) return 2;
