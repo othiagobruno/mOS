@@ -1,9 +1,16 @@
 /*
  * Registro das seções __swift5_* que o dyld já mapeou.
- * O runtime Swift da Apple acha types/protos/proto/fieldmd/reflstr por
- * getsectiondata depois de _dyld_register_func_for_add_image. Aqui o dyld
- * (dyldimg.c) grava o mesmo conjunto quando a imagem entra e esquece no
- * remove_image. Não executa os descritores: só o endereço e o tamanho.
+ *
+ * A entrega ao runtime não é esta tabela. O libswiftCore (ImageInspectionMachO.cpp
+ * da tag swift-6.4.2) registra, no inicializador, objc_addLoadImageFunc e, se esse
+ * símbolo não existir, _dyld_register_func_for_add_image. Os dois estão no libSystem
+ * (objc.c e dyldimg.c). O callback chama getsectiondata e consome os descritores
+ * de __swift5_types, __swift5_protos, __swift5_proto, __swift5_replace,
+ * __swift5_replac2 e __swift5_acfuncs. typeref, reflstr, fieldmd, assocty e capture
+ * o runtime lê depois, também por getsectiondata, quando reflete.
+ *
+ * A tabela abaixo só espelha endereço e tamanho para o teste de host
+ * (tools/swiftsect_test.c) e para quem consulta cx_swift_lookup.
  */
 #include "foundation.h"
 #include "libc.h"
