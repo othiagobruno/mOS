@@ -588,6 +588,7 @@ void cx_appkit_input_init(void) {
     { extern void cx_userspace_services_init(void); cx_userspace_services_init(); }
     { extern void cx_usernotifications_init(void); cx_usernotifications_init(); }   /* usernotifications.c: addNotificationRequest, delegate, banner */
     { extern void cx_la_init(void); cx_la_init(); }                                 /* la_fw.c: LAContext sem biometria */
+    { extern void cx_contacts_init(void); cx_contacts_init(); }                     /* contacts_fw.c: agenda local */
     { extern void cx_appkit_docktile_init(void); cx_appkit_docktile_init(); }       /* appkit_docktile.c: NSDockTile */
     cx_appkit_extra_init();     /* appkit_extra.c: painéis, barra de status, NSAnimation, NSParagraphStyle... */
     { extern void cx_nsrunning_init(void); cx_nsrunning_init(); }   /* nsrunningapp.c */

@@ -217,6 +217,8 @@ static void dict_put(id self, id key, id val) {
     d->v[d->n] = val;
     d->n++;
 }
+static id dict_new(id cls, SEL c) { return dict_init(alloc_m(cls, c), c); }
+static void dict_set(id self, SEL c, id val, id key) { (void)c; dict_put(self, key, val); }
 static id dict_get(id self, SEL c, id key) {
     (void)c;
     dictb *d = *(dictb **)((u8 *)self + 8);
@@ -454,9 +456,11 @@ void host_runtime_init(void) {
     cx_add_method(&NSArray_c, "count", (void *)arr_count);
     cx_add_method(&NSArray_c, "objectAtIndex:", (void *)arr_at);
     cx_define_class(&NSData_c, &NSData_m, "NSData", &NSObject_c, 16);
-    cx_define_class(&NSDict_c, &NSDict_m, "NSDictionary", &NSObject_c, 8);
+    cx_define_class(&NSDict_c, &NSDict_m, "NSMutableDictionary", &NSObject_c, 8);
+    cx_add_cmethod(&NSDict_c, "dictionary", (void *)dict_new);
     cx_add_method(&NSDict_c, "init", (void *)dict_init);
     cx_add_method(&NSDict_c, "objectForKey:", (void *)dict_get);
+    cx_add_method(&NSDict_c, "setObject:forKey:", (void *)dict_set);
     cx_define_class(&NSFont_c, &NSFont_m, "NSFont", &NSObject_c, 16);
     cx_add_cmethod(&NSFont_c, "systemFontOfSize:", (void *)font_sys);
     cx_add_method(&NSFont_c, "pointSize", (void *)font_pt);
