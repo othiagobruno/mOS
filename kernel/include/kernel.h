@@ -137,6 +137,7 @@ typedef struct {
 typedef void (*irq_handler_t)(int_frame_t *f);
 void   irq_install(int irq, irq_handler_t h);
 void   msi_set_handler(void (*fn)(void)); /* vetor 0xE0, MSI/MSI-X (NVMe) */
+void   msi_add_handler(void (*fn)(void)); /* segundo dispositivo no mesmo vetor */
 void   pic_init(void);
 void   pic_unmask(int irq);
 void   pit_init(u32 hz);
