@@ -78,14 +78,39 @@ programa; agora ela desenrola como no macOS. Isso muda o comportamento de todos 
 - Se algum app regredir, use a chave de volta: `MOS_DESENROLAR=0` no ambiente ou o arquivo
   `/Sistema/Biblioteca/sem-desenrolar` na imagem. Também dá para deixá-la ligada por padrão no `build.ps1`.
 
-## 5. Sobras menores do placar
+## 5. Sobras menores do placar — fechadas em 2026-11-10
 
-- **br.reg:** 1 caso "deveria ser UDF" (palavra de recurso não anunciado). A TESTES mudou o fuzzer para
-  classificar esses casos. Só falta confirmar no próximo placar que o caso sumiu.
-- **Sequências (K=8):** 2 casos divergentes de 27 900, com 0 de JIT ≠ interp. Falta analisar os casos
-  minimizados em `tools/a64tests/regress_*` e dizer se é bug nosso ou do QEMU.
-- **SIMD:** 2 casos na coluna "FMA?" (`simdv.indexed`), atribuídos ao bug de FMA do QEMU para Windows e
-  que o fuzzer não conseguiu isolar. Falta confirmar.
+Reproduzidas no Linux com QEMU 11.1.0 `-cpu max` e LLVM 23.1.5, sementes do placar (20261115 e, nas
+sequências, 20261116). Nenhuma é bug do tradutor. O JIT não foi reexecutado: o placar original tinha
+JIT≠ 0 nesses itens, e o interpretador é quem classifica o UDF e o FAULT.
+
+- **br.reg, "deveria ser UDF":** `tools/a64tests/regress_br_reg_d65f0160.S`. A palavra é `ret x11`, que o
+  LLVM nomeia com os nossos recursos. O desvio cai num `stlxp` cujo endereço atravessa 16 bytes, com o
+  monitor exclusivo vazio. Nós damos FAULT (o ARM manda conferir o alinhamento antes); o QEMU devolve
+  status 1 sem acessar — IMPLEMENTATION DEFINED — e só então dá UDF numa palavra `<unknown>` até com
+  `+all` (`0x76c123a6`). Não era recurso não anunciado que nós executamos. O fuzzer agora trata esse
+  STXR* do rascunho como o caso já tolerado do STXR.
+- **Sequências, 2 divergências de 27 900:** `regress_br_reg_503c5df0.S` e `regress_dp_csel_33e9fc55.S`.
+  Os dois terminam em UDF nosso numa palavra que o LLVM com `A64_FEATURES` não conhece e com `+all`
+  nomeia `cbge` / `cbeq` (FEAT_CMPBR, não anunciado). O `-cpu max` executa o CMPBR e dá UDF mais adiante
+  (`sttp`, ou uma palavra `<unknown>` até com `+all`). O UDF nosso está certo. O fuzzer passa a aceitar
+  esse UDF mesmo quando o QEMU também termina em UDF, desde que não seja na mesma palavra.
+- **SIMD, 2 casos FMA? em `simdv.indexed`:** contra o QEMU 11.1 do Linux (o `fma()` da libm arredonda
+  uma vez, como o FPMulAdd do ARM) o grupo fecha 1839/1839, o mesmo número de execuções do placar, com
+  0 na coluna FMA? e 0 lanes corrigidas. A diferença só existe no QEMU para Windows, cujo `fma()` do
+  mingw arredonda o produto em 80 bits e de novo no destino quando FPSR.IXC já está ligado, o modo é RN
+  e as entradas são normais (ver a tabela de limitações em `tradutor-arm64.md`). Um modelo desse
+  arredondamento, em cima das FMLA/FMLS/FCMLA/FMLAL/BFMLAL indexadas desta semente, não achou lane em
+  que a regra do hardfloat do QEMU ficaria com o resultado errado (a única diferença numérica era um
+  NaN, e nesse caso o QEMU usa o softfloat). As duas palavras do placar não foram recuperadas: o fuzzer
+  não as isolou e, no Linux, elas batem. Não há correção em `jit_tr.c`, `jit_simd.h` nem no SIMD/FP do
+  interpretador. A frente T1 já está na main (PR #18, JIT nativo de SSHR/USHL, CNT, REV, FCVT, FRINT e
+  FMAX) e não mexe nesses casos.
+
+Com o fuzzer ajustado, a mesma semente dá 0 divergências, 0 "deveria ser UDF" e 0 FMA? nos 186 000
+casos de uma instrução (o `br.reg` passa a 1614 execuções: o `ret x11` entra na conta e é tolerado;
+avisos de STXR sobem de 182 para 183) e 0 divergências nas 27 900 sequências. O JIT não entrou nessas
+rodadas.
 
 ## 6. Achados fora do tradutor (no libSystem x86_64)
 
