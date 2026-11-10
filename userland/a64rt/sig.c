@@ -7,12 +7,15 @@
  *     do guest).
  *   - guest com tratador → tratador do host, sem SA_RESTART (o runtime decide refazer a syscall do guest).
  * Sinal assíncrono: o tratador do host anota o sinal na thread, já aplica a máscara que valerá no tratador do
- * guest (uc_sigmask do host) e pede a64_request_stop; o laço da thread monta o quadro arm64 (siginfo +
- * ucontext + mcontext64 do Darwin) na pilha do guest e desvia para o _sigtramp do libSystem arm64.
+ * guest (uc_sigmask do host) e pede a64_request_stop; o laço da thread monta UM quadro arm64 por vez (siginfo +
+ * ucontext + mcontext64 do Darwin) na pilha do guest e desvia para o _sigtramp do libSystem arm64. O próximo
+ * pendente só sai depois do sigreturn. No JIT o pedido de parada é lido nas arestas para trás e nos saltos
+ * indiretos (estado do guest já na memória); no interpretador, entre instruções.
  * Falta síncrona no código do guest: estado do guest reconstruído (a64_jit_recover no JIT; no interpretador
  * o a64_cpu já está no início da instrução, pelo contrato do motor) e "longjmp" para o laço, que entrega
- * SIGSEGV/SIGBUS com far/esr coerentes. Máscara e sigsuspend/sigwait/tkill ficam no kernel (a máscara do host
- * é a do guest).
+ * SIGSEGV/SIGBUS/SIGILL/SIGFPE/SIGTRAP com far/esr e pc do guest. Falta de alinhamento do motor (A64_EXIT_FAULT)
+ * é SIGBUS, não SIGSEGV. Máscara e sigsuspend/sigwait/tkill ficam no kernel (a máscara do host é a do guest).
+ * A syscall interrompida olha o sinal que a acordou (intr_sig), não o de menor número que estiver pendente.
  */
 #include "rt.h"
 
@@ -87,12 +90,13 @@ static __attribute__((noreturn)) void reraise_default(rt_thread_t *T, int sig) {
 }
 
 /* ---------------------------------------------------------------- entrega ao guest */
-static void deliver(rt_thread_t *T, int sig, const mos_siginfo_t *si, u32 oldmask, u32 esr, bool fault) {
+/* 1 = o pc do guest agora é o tratador (o laço tem que deixá-lo rodar); 0 = sinal descartado */
+static int deliver(rt_thread_t *T, int sig, const mos_siginfo_t *si, u32 oldmask, u32 esr, bool fault) {
     if (rt_debug) rt_log("a64rt[%d]: entrega do sinal %d (falta %d, pc %lx, tratador %lx, tramp %lx)\n", (int)T->tid, sig, (int)fault, T->cpu.pc, g_act[sig].handler, g_act[sig].tramp);
     a64_cpu *c = &T->cpu;
     gact_t a = g_act[sig];
     if (a.handler <= MOS_SIG_IGN) {
-        if (a.handler == MOS_SIG_IGN || ((DFL_IGN_SET & BIT(sig)) && !fault)) { set_mask(oldmask); return; }
+        if (a.handler == MOS_SIG_IGN || ((DFL_IGN_SET & BIT(sig)) && !fault)) { set_mask(oldmask); return 0; }
         reraise_default(T, sig);
     }
     u64 gsp = c->x[31];
@@ -128,6 +132,7 @@ static void deliver(rt_thread_t *T, int sig, const mos_siginfo_t *si, u32 oldmas
         aunlock();
     }
     c->x[31] = fa;
+    c->excl_valid = 0;                                 /* exceção zera o monitor local antes do tratador */
     c->pstate &= ~(3u << A64_PS_BTYPE_SHIFT);
     if (a.tramp) {                                     /* _sigtramp(handler, estilo, sinal, siginfo*, ucontext*, token) */
         c->pc = a.tramp;
@@ -145,6 +150,7 @@ static void deliver(rt_thread_t *T, int sig, const mos_siginfo_t *si, u32 oldmas
         c->x[2] = fa + __builtin_offsetof(gframe_t, uc);
         c->x[30] = g_restorer;
     }
+    return 1;
 }
 
 void rt_sig_deliver_pending(rt_thread_t *T, int unused) {
@@ -155,7 +161,7 @@ void rt_sig_deliver_pending(rt_thread_t *T, int unused) {
         mos_siginfo_t si = T->pinfo[sig];
         u32 om = T->pend_oldmask[sig], esr = T->pesr[sig];
         __atomic_and_fetch(&T->pend, ~BIT(sig), __ATOMIC_ACQ_REL);
-        deliver(T, sig, &si, om, esr, false);
+        if (deliver(T, sig, &si, om, esr, false)) return;   /* um por vez: o sigreturn volta ao laço, que entrega o próximo */
     }
 }
 
@@ -254,7 +260,7 @@ long rt_sig_syscall(rt_thread_t *T, long op, long a, long b, long c) {
         if (onalt) return -MOS_EPERM;
         if (n.flags & MOS_SS_DISABLE) { T->ss_sp = 0; T->ss_size = 0; return 0; }
         if (n.flags & ~MOS_SS_DISABLE) return -MOS_EINVAL;
-        if (n.size < 8192) return -MOS_ENOMEM;          /* MINSIGSTKSZ do Darwin arm64 = 32 KiB; 8 KiB como o kernel */
+        if (n.size < 32768) return -MOS_ENOMEM;         /* MINSIGSTKSZ do Darwin arm64 (e do kernel) = 32 KiB */
         T->ss_sp = n.sp; T->ss_size = n.size;
         return 0;
     }
@@ -262,6 +268,81 @@ long rt_sig_syscall(rt_thread_t *T, long op, long a, long b, long c) {
     default:                                            /* MASK, SUSPEND, TKILL, WAIT: no kernel */
         return sigop(op, a, b, c);
     }
+}
+
+/* A64_EXIT_FAULT é sempre alinhamento (o interpretador não devolve FAULT para página ausente: isso vira
+ * falta do host). PC desalinhado: o desvio já se completou e c->pc == FAR. SP desalinhado com FAR == SP: SA0. */
+static int fault_is_store(u32 i) {
+    if (((i >> 26) & 1) == 0 && ((i >> 28) & 3) == 0 && ((i >> 24) & 1) == 0) {
+        unsigned o2 = (i >> 23) & 1, L = (i >> 22) & 1, o1 = (i >> 21) & 1;
+        if (o2 && o1) return 1;                         /* CAS* escreve */
+        return !L;                                      /* LDXR/LDAR = load, STXR/STLR = store */
+    }
+    /* LSE (LDADD, SWP, ...): bit 21 e bits 11:10 == 0 no grupo de load/store com registrador */
+    if (((i >> 26) & 1) == 0 && ((i >> 21) & 1) && ((i >> 10) & 3) == 0) return 1;
+    return 0;
+}
+
+void rt_sig_classify_fault(const a64_cpu *c, int *sig, int *code, u32 *esr) {
+    u64 far = c->exit_info;
+    *sig = MOS_SIGBUS;
+    *code = MOS_BUS_ADRALN;
+    if (c->pc & 3) {
+        *esr = A64_ESR_IL | (A64_ESR_EC_PCALIGN << 26);
+        return;
+    }
+    if ((c->x[31] & 15) && far == c->x[31]) {
+        *esr = A64_ESR_IL | (A64_ESR_EC_SPALIGN << 26);
+        return;
+    }
+    *esr = A64_ESR_IL | (A64_ESR_EC_DABT_LO << 26) | (fault_is_store(c->exit_insn) ? A64_ESR_WNR : 0) | A64_ESR_DFSC_ALIGN;
+}
+
+u32 rt_sig_esr_host(int sig, u32 err, u64 addr, u64 guest_pc) {
+    if (sig == MOS_SIGILL) return A64_ESR_IL | (A64_ESR_EC_UNKNOWN << 26);
+    if (sig == MOS_SIGTRAP) return A64_ESR_IL | (A64_ESR_EC_BRK << 26);
+    if (sig == MOS_SIGFPE) return A64_ESR_IL | (A64_ESR_EC_FP << 26);
+    int present = (err & 1) != 0;
+    if (addr == guest_pc || (err & 0x10))
+        return A64_ESR_IL | (A64_ESR_EC_IABT_LO << 26) | (present ? A64_ESR_DFSC_PERM : A64_ESR_DFSC_TRANS);
+    return A64_ESR_IL | (A64_ESR_EC_DABT_LO << 26) | ((err & 2) ? A64_ESR_WNR : 0) | (present ? A64_ESR_DFSC_PERM : A64_ESR_DFSC_TRANS);
+}
+
+void rt_sig_from_motor(rt_thread_t *T, int reason) {
+    a64_cpu *c = &T->cpu;
+    switch (reason) {
+    case A64_EXIT_BRK:
+        rt_sig_raise_sync(T, MOS_SIGTRAP, MOS_TRAP_BRKPT, c->pc,
+                          A64_ESR_IL | (A64_ESR_EC_BRK << 26) | (u32)(c->exit_info & 0xFFFF));
+        break;
+    case A64_EXIT_UDF:
+    case A64_EXIT_HLT:
+    case A64_EXIT_HVC:
+        rt_sig_raise_sync(T, MOS_SIGILL, MOS_ILL_ILLOPC, c->pc, A64_ESR_IL | (A64_ESR_EC_UNKNOWN << 26));
+        break;
+    case A64_EXIT_FAULT: {
+        int sig, code;
+        u32 esr;
+        rt_sig_classify_fault(c, &sig, &code, &esr);
+        rt_sig_raise_sync(T, sig, code, c->exit_info, esr);
+        break;
+    }
+    default:
+        break;
+    }
+}
+
+static int syscall_restartable(long n) {
+    return n == SYS_READ || n == SYS_WRITE || n == SYS_WAITPID || n == SYS_WAIT || n == SYS_WAITANY || n == SYS_FUTEX_WAIT;
+}
+
+bool rt_sig_should_restart(rt_thread_t *T, long nr) {
+    int sig = T->intr_sig;
+    T->intr_sig = 0;
+    if (sig <= 0 || sig >= MOS_NSIG) return false;
+    if (!(__atomic_load_n(&T->pend, __ATOMIC_ACQUIRE) & BIT(sig))) return false;
+    if (!syscall_restartable(nr)) return false;
+    return rt_sig_restart_ok(sig);
 }
 
 /* ---------------------------------------------------------------- tratador do host */
@@ -282,13 +363,27 @@ void rt_host_signal(int sig, mos_siginfo_t *si, mos_ucontext_t *uc) {
     bool sync = (SYNC_SET & BIT(sig)) && si->si_code != MOS_SI_USER && si->si_code != MOS_SI_QUEUE;
     if (sync) {
         a64_cpu *c = &T->cpu;
-        bool guest = T->in_guest && !T->in_svc && (sig == MOS_SIGSEGV || sig == MOS_SIGBUS);
+        bool mem = sig == MOS_SIGSEGV || sig == MOS_SIGBUS;
+        bool in_translated = T->in_guest && !T->in_svc;
 #ifdef A64_HAVE_JIT
         /* escrita numa página que o JIT protegeu: só retomar (a escrita é refeita). Vale também fora do guest: o próprio
          * runtime escreve na memória do guest (quadros de sinal, structs de syscall emuladas) */
         if ((sig == MOS_SIGSEGV || sig == MOS_SIGBUS) && (mc->err & 2) && a64_jit_write_fault(si->si_addr)) return;
+        a64_hostctx h;
+        memset(&h, 0, sizeof h);
+        bool jit_pc = false;
+        if (c->jit && in_translated) {
+            hostctx_from(&h, mc);
+            jit_pc = a64_jit_recover(c, &h);            /* false: falta no interpretador, o a64_cpu já vale */
+        }
+#else
+        bool jit_pc = false;
+        (void)hostctx_from;
 #endif
-        if (!guest) {
+        /* SEGV/BUS: qualquer falta com in_guest (o interpretador desreferencia ponteiro do guest).
+         * ILL/FPE/TRAP do host: só se o RIP está no código gerado — UDF/BRK do guest saem pelo motor, e um
+         * ud2 no meio do runtime não é instrução do guest. */
+        if ((mem && !in_translated) || (!mem && !jit_pc)) {
             rt_log("a64rt: %s %d no próprio runtime: rip=%lx endereço=%lx (pc do guest %lx, tid %d%s)\n",
                    T->sig_depth ? "sem pilha do guest para o sinal; falta" : "falta", sig, mc->ss.rip, si->si_addr,
                    c->pc, (int)T->tid, T->in_svc ? ", numa syscall" : "");
@@ -296,34 +391,22 @@ void rt_host_signal(int sig, mos_siginfo_t *si, mos_ucontext_t *uc) {
             sigop(MOS_SIGOP_ACTION, sig, (long)&d, 0);   /* volta e repete a instrução: o kernel encerra pelo sinal */
             return;
         }
-        u64 addr = si->si_addr;
-        bool write = (mc->err & 2) != 0, present = (mc->err & 1) != 0;
         T->fault_sig = sig;
         T->fault_code = si->si_code;
-        T->fault_addr = addr;
-        if (addr == c->pc || (mc->err & 0x10))          /* busca de instrução */
-            T->fault_esr = A64_ESR_IL | (A64_ESR_EC_IABT_LO << 26) | (present ? A64_ESR_DFSC_PERM : A64_ESR_DFSC_TRANS);
-        else
-            T->fault_esr = A64_ESR_IL | (A64_ESR_EC_DABT_LO << 26) | (write ? A64_ESR_WNR : 0) | (present ? A64_ESR_DFSC_PERM : A64_ESR_DFSC_TRANS);
+        T->fault_addr = mem ? si->si_addr : c->pc;      /* ILL/FPE/TRAP: si_addr do host é o RIP x86; o guest vê o pc */
+        T->fault_esr = rt_sig_esr_host(sig, mc->err, T->fault_addr, c->pc);
         mos_thread_state_t *s = &mc->ss;
 #ifdef A64_HAVE_JIT
         /* dentro do a64_jit_run (código gerado ou o interpretador chamado por ele): o JIT reconstrói o estado do guest
          * (pc na instrução que falhou) e faz o a64_jit_run devolver; o laço entrega o sinal (fault_pending) */
         if (c->jit) {
-            a64_hostctx h;
-            hostctx_from(&h, mc);
-            a64_jit_recover(c, &h);                     /* false: falta no interpretador, o a64_cpu já vale */
             if (a64_jit_unwind(c, &h, A64_EXIT_STOP)) {
                 T->fault_pending = 1;
                 s->rsp = h.gpr[4]; s->rax = h.gpr[0]; s->rip = h.rip;
                 return;
             }
+            a64_jit_abort(c);                           /* longjmp para fora do a64_jit_run: solta o estado da thread */
         }
-#else
-        (void)hostctx_from;
-#endif
-#ifdef A64_HAVE_JIT
-        if (c->jit) a64_jit_abort(c);                   /* longjmp para fora do a64_jit_run: solta o estado da thread */
 #endif
         /* interpretador: "longjmp" para o rt_setjmp do laço; o kernel restaura estes registradores na volta */
         s->rbx = T->jb.rbx; s->rbp = T->jb.rbp; s->r12 = T->jb.r12; s->r13 = T->jb.r13;
@@ -341,5 +424,6 @@ void rt_host_signal(int sig, mos_siginfo_t *si, mos_ucontext_t *uc) {
         __atomic_or_fetch(&T->pend, BIT(sig), __ATOMIC_ACQ_REL);
     }
     if (a.handler > MOS_SIG_IGN) uc->uc_sigmask |= a.mask | ((a.flags & MOS_SA_NODEFER) ? 0 : BIT(sig));
+    if (T->in_svc && !T->intr_sig) T->intr_sig = sig;   /* o que interrompeu a syscall, mesmo que outro já estivesse pendente */
     a64_request_stop(&T->cpu);
 }

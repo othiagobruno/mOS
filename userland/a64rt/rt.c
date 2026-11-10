@@ -151,9 +151,8 @@ int a64_host_jit_wprotect(a64_u64 page, int protect) {
 }
 
 /* ---------------------------------------------------------------- syscalls */
-static bool restartable(long n) {
-    return n == SYS_READ || n == SYS_WRITE || n == SYS_WAITPID || n == SYS_WAIT || n == SYS_WAITANY || n == SYS_FUTEX_WAIT;
-}
+/* a lista de syscalls refazíveis mora em rt_sig_should_restart (sig.c): o sinal que interrompeu
+ * (não o de menor número pendente) decide o SA_RESTART */
 
 static long thread_create(u64 entry, u64 sp, u64 arg) {
     rt_thread_t *T = thread_take();
@@ -242,6 +241,7 @@ static long rt_do_fork(rt_thread_t *T) {
     T->cpu.excl_valid = 0;
     long r = RS0(SYS_FORK);
     if (r == 0) fork_child(T);
+    T->intr_sig = 0;                                   /* fork não é refazível; o filho não herda o sinal que acordou o pai */
     return r;
 }
 
@@ -346,10 +346,8 @@ static void mos_svc(rt_thread_t *T) {
     if (n == SYS_MUNMAP && r == 0) a64_invalidate(a, b);
     /* o kernel escreve na memória do usuário sem passar pela PTE. read/pread e o resto (rede, stat, mach, dyld, ...) */
     touch_writes(n, a, b, d, e, r);
-    if (r == -MOS_EINTR && T->pend && restartable(n)) {
-        int sig = __builtin_ctz(T->pend);
-        if (rt_sig_restart_ok(sig)) { c->pc -= 4; return; }   /* a syscall é refeita depois do tratador */
-    }
+    if (r == -MOS_EINTR && rt_sig_should_restart(T, n)) { c->pc -= 4; return; }   /* a syscall é refeita depois do tratador */
+    T->intr_sig = 0;
     c->x[0] = (u64)r;
 }
 
@@ -371,11 +369,15 @@ static void darwin_svc(rt_thread_t *T) {
     }
     switch (n) {
     case 1: RS1(SYS_EXIT, c->x[0]); for (;;) {}
-    case 3:
-        r = RS3(SYS_READ, c->x[0], c->x[1], c->x[2]);
-        if (r > 0) touch_writes(SYS_READ, c->x[0], c->x[1], c->x[2], 0, r);
+    case 3: case 4: {                                  /* read/write: EINTR e SA_RESTART iguais ao svc do mOS */
+        T->in_svc = 1;
+        r = n == 3 ? RS3(SYS_READ, c->x[0], c->x[1], c->x[2]) : RS3(SYS_WRITE, c->x[0], c->x[1], c->x[2]);
+        T->in_svc = 0;
+        if (r > 0 && n == 3) touch_writes(SYS_READ, c->x[0], c->x[1], c->x[2], 0, r);
+        if (r == -MOS_EINTR && rt_sig_should_restart(T, n == 3 ? SYS_READ : SYS_WRITE)) { c->pc -= 4; return; }
+        T->intr_sig = 0;
         break;
-    case 4: r = RS3(SYS_WRITE, c->x[0], c->x[1], c->x[2]); break;
+    }
     case 2: case 66: r = rt_do_fork(T); break;         /* fork e vfork (vfork = fork com espaço próprio) */
     case 20: r = RS0(SYS_GETPID); break;
     case 37: r = RS2(SYS_SIGKILL, c->x[0], sig_darwin_to_mos((int)c->x[1])); break;
@@ -415,14 +417,11 @@ void rt_run_thread(rt_thread_t *T) {
             break;
         }
         case A64_EXIT_BRK:
-            rt_sig_raise_sync(T, MOS_SIGTRAP, MOS_TRAP_BRKPT, c->pc, A64_ESR_IL | (A64_ESR_EC_BRK << 26) | (u32)(c->exit_info & 0xFFFF));
-            break;
         case A64_EXIT_UDF: case A64_EXIT_HLT: case A64_EXIT_HVC:
-            if (rt_debug) rt_log("a64rt[%d]: instrução %08x indefinida (saída %d) em pc=%lx\n", (int)T->tid, c->exit_insn, r, c->pc);
-            rt_sig_raise_sync(T, MOS_SIGILL, MOS_ILL_ILLOPC, c->pc, A64_ESR_IL | (A64_ESR_EC_UNKNOWN << 26));
-            break;
         case A64_EXIT_FAULT:
-            rt_sig_raise_sync(T, MOS_SIGSEGV, MOS_SEGV_MAPERR, c->exit_info, A64_ESR_IL | (A64_ESR_EC_DABT_LO << 26) | A64_ESR_DFSC_TRANS);
+            if (rt_debug && r != A64_EXIT_BRK && r != A64_EXIT_FAULT)
+                rt_log("a64rt[%d]: instrução %08x indefinida (saída %d) em pc=%lx\n", (int)T->tid, c->exit_insn, r, c->pc);
+            rt_sig_from_motor(T, r);
             break;
         case A64_EXIT_ICACHE: a64_invalidate(c->exit_info & ~63ull, 64); break;
         case A64_EXIT_YIELD: RS0(SYS_YIELD); break;

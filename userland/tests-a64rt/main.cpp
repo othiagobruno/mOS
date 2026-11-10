@@ -2,6 +2,7 @@
 // sinais (ucontext arm64 do Darwin: leitura e alteração do mcontext, falta de dados, brk, SIGUSR1 entre threads,
 // máscara, sigaltstack), TLS (thread_local) e exceções C++. Compilado com zig c++ -target aarch64-macos.
 // Imprime "ok <nome>" por verificação e "a64rt-teste: N falhas" no fim; código de saída = falhas.
+#include <errno.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdio.h>
@@ -92,7 +93,34 @@ static void h_ill(int s, siginfo_t *, void *ucv) {
     uc->uc_mcontext->__ss.__pc += 4;
 }
 
+static volatile int bus_ok, bus_load, bus_far;
+static volatile void *bus_addr;
+static void h_bus(int s, siginfo_t *si, void *ucv) {
+    ucontext_t *uc = (ucontext_t *)ucv;
+    unsigned esr = uc->uc_mcontext->__es.__esr;
+    bus_ok = s == SIGBUS && si->si_code == BUS_ADRALN && (esr >> 26) == 0x24 && (esr & 0x3F) == 0x21;
+    bus_load = (esr & (1u << 6)) == 0;
+    bus_far = si->si_addr == bus_addr && (void *)(uintptr_t)uc->uc_mcontext->__es.__far == bus_addr;
+    uc->uc_mcontext->__ss.__pc += 4;
+    uc->uc_mcontext->__ss.__x[0] = 0x66;
+}
+
 #endif
+static volatile int rst_vezes, nd_depth, nd_max, pipe_vezes, chld_ok, alrm_vezes;
+static volatile pid_t chld_pid;
+static void h_rst(int) { rst_vezes++; }
+static void h_nd(int) {
+    int d = ++nd_depth;
+    if (d > nd_max) nd_max = d;
+    if (d == 1) raise(SIGURG);
+    nd_depth--;
+}
+static void h_pipe(int s) { if (s == SIGPIPE) pipe_vezes++; }
+static void h_alrm(int s) { if (s == SIGALRM) alrm_vezes++; }
+static void h_chld(int s, siginfo_t *si, void *) {
+    chld_ok = s == SIGCHLD && si->si_code == CLD_EXITED;
+    chld_pid = si->si_pid;
+}
 static volatile int alt_ok;
 static char altpilha[65536];
 static void h_alt(int) {
@@ -131,6 +159,8 @@ static void teste_sinais(void) {
     usleep(20000);
     pthread_kill(t, SIGUSR1);
     pthread_join(t, 0);
+    sigpending(&pend);
+    CHECK("pthread_kill não deixa o sinal pendente na thread principal", !sigismember(&pend, SIGUSR1));
     sigprocmask(SIG_SETMASK, &old, 0);
     CHECK("pthread_kill entrega na outra thread", usr1_vezes == 3);
 
@@ -158,8 +188,80 @@ static void teste_sinais(void) {
     __asm__ volatile(".inst 0x00000000");
     CHECK("udf vira SIGILL", ill_ok);
 
+    // LDAR de 8 bytes que cruza uma fronteira de 16: SIGBUS, não SIGSEGV; o tratador pula a instrução
+    alignas(16) unsigned char cruza[32];
+    memset(cruza, 0xAB, sizeof cruza);
+    void *meio = cruza + 12;
+    bus_addr = meio;
+    memset(&sa, 0, sizeof sa);
+    sa.sa_sigaction = h_bus; sa.sa_flags = SA_SIGINFO;
+    sigaction(SIGBUS, &sa, 0);
+    long xbus = 0;
+    __asm__ volatile("mov x1, %1\n ldar x0, [x1]\n mov %0, x0" : "=r"(xbus) : "r"(meio) : "x0", "x1", "memory");
+    CHECK("ldar que cruza 16 bytes é SIGBUS ADRALN e o tratador grava x0", bus_ok && bus_load && bus_far && xbus == 0x66);
+
 #endif
-    // sigaltstack + SA_ONSTACK
+    // SA_RESETHAND, SA_NODEFER, SIGPIPE, SIGCHLD, EINTR e SA_RESTART
+    memset(&sa, 0, sizeof sa);
+    sa.sa_handler = h_rst; sa.sa_flags = SA_RESETHAND;
+    sigaction(SIGWINCH, &sa, 0);
+    raise(SIGWINCH);
+    struct sigaction agora;
+    sigaction(SIGWINCH, 0, &agora);
+    CHECK("SA_RESETHAND volta o tratador para SIG_DFL", rst_vezes == 1 && agora.sa_handler == SIG_DFL);
+
+    memset(&sa, 0, sizeof sa);
+    sa.sa_handler = h_nd; sa.sa_flags = SA_NODEFER;
+    sigaction(SIGURG, &sa, 0);
+    raise(SIGURG);
+    CHECK("SA_NODEFER entrega o sinal de novo dentro do tratador", nd_max == 2);
+
+    int fds[2];
+    CHECK("pipe para SIGPIPE", pipe(fds) == 0);
+    close(fds[0]);
+    memset(&sa, 0, sizeof sa);
+    sa.sa_handler = h_pipe;
+    sigaction(SIGPIPE, &sa, 0);
+    errno = 0;
+    ssize_t nw = write(fds[1], "z", 1);
+    CHECK("SIGPIPE no write e errno EPIPE", nw == -1 && errno == EPIPE && pipe_vezes == 1);
+    close(fds[1]);
+
+    memset(&sa, 0, sizeof sa);
+    sa.sa_sigaction = h_chld; sa.sa_flags = SA_SIGINFO;
+    sigaction(SIGCHLD, &sa, 0);
+    pid_t filho = fork();
+    if (filho == 0) _exit(0);
+    for (int i = 0; i < 100 && !chld_ok; i++) usleep(10000);
+    CHECK("SIGCHLD com si_pid do filho", filho > 0 && chld_ok && chld_pid == filho);
+    int st = 0;
+    if (filho > 0) waitpid(filho, &st, 0);
+
+    memset(&sa, 0, sizeof sa);
+    sa.sa_handler = h_alrm;
+    sigaction(SIGALRM, &sa, 0);
+    int pr[2];
+    CHECK("pipe para o read bloqueante", pipe(pr) == 0);
+    char byte = 0;
+    alarm(1);
+    errno = 0;
+    ssize_t nr = read(pr[0], &byte, 1);
+    int er = errno;
+    CHECK("SIGALRM interrompe read com EINTR", nr == -1 && er == EINTR && alrm_vezes == 1);
+    sa.sa_flags = SA_RESTART;
+    sigaction(SIGALRM, &sa, 0);
+    pid_t escreve = fork();
+    if (escreve == 0) { usleep(1500000); write(pr[1], "x", 1); _exit(0); }
+    alarm(1);
+    nr = read(pr[0], &byte, 1);
+    CHECK("SA_RESTART refaz o read e entrega o byte", nr == 1 && byte == 'x' && alrm_vezes == 2);
+    if (escreve > 0) waitpid(escreve, 0, 0);
+    close(pr[0]); close(pr[1]);
+    // sigaltstack + SA_ONSTACK. Darwin arm64 (e o kernel) exigem 32 KiB.
+    stack_t pequena; pequena.ss_sp = altpilha; pequena.ss_size = 8192; pequena.ss_flags = 0;
+    errno = 0;
+    int alt_rc = sigaltstack(&pequena, 0);
+    CHECK("sigaltstack menor que 32 KiB é ENOMEM", alt_rc == -1 && errno == ENOMEM);
     stack_t ss; ss.ss_sp = altpilha; ss.ss_size = sizeof altpilha; ss.ss_flags = 0;
     sigaltstack(&ss, 0);
     memset(&sa, 0, sizeof sa);
