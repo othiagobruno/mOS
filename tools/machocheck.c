@@ -25,6 +25,12 @@
 #include <stdint.h>
 #include <dirent.h>
 #include <sys/stat.h>
+#ifdef _WIN32
+#define lstat stat
+#ifndef S_ISLNK
+#define S_ISLNK(m) 0
+#endif
+#endif
 
 typedef uint8_t u8; typedef uint16_t u16; typedef uint32_t u32; typedef uint64_t u64; typedef int64_t i64; typedef int32_t i32;
 static u16 rd16(const u8 *p) { return (u16)(p[0] | p[1] << 8); }
@@ -188,7 +194,8 @@ static void scan(const char *dir) {
         if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
         char p[1024]; snprintf(p, sizeof p, "%s/%s", dir, e->d_name);
         struct stat st;
-        if (stat(p, &st)) continue;
+        /* link simbolico (Versions/Current, o atalho do framework): o alvo ja entra pelo caminho real */
+        if (lstat(p, &st) || S_ISLNK(st.st_mode)) continue;
         if (S_ISDIR(st.st_mode)) { scan(p); continue; }
         if (st.st_size < 32) continue;
         FILE *fp = fopen(p, "rb"); if (!fp) continue;
