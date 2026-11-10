@@ -26,6 +26,10 @@ gcc -O2 -Wall -Wextra -DMOS_HOST_TEST -I kernel/include -I tools tools/resto_hos
 gcc -O2 -Wall -Wextra -DMOS_HOST_TEST -I kernel/include -I tools tools/r8169_host.c kernel/dev/r8169.c \
     -o /tmp/r8169_host
 /tmp/r8169_host
+# URL longa no cliente HTTP do kernel (OAuth do Google no Antigravity: invalid_scope com o scope cortado)
+gcc -std=gnu11 -DMOS_HOST_TEST -I kernel/include -I tools tools/http_url_longa_host.c kernel/net/http.c -o /tmp/http_url_longa
+/tmp/http_url_longa > /tmp/http_url_longa.log || { cat /tmp/http_url_longa.log; exit 1; }
+tail -1 /tmp/http_url_longa.log
 
 kind_of() {
     local b
