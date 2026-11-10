@@ -83,6 +83,9 @@ static void net_spans(a64rt_u64 op, a64rt_u64 a, a64rt_u64 b, a64rt_i64 ret, a64
     case MOS_NET_TLS_ROOTS:
         if (a && ret > 0) push(s, a, (a64rt_u64)ret);              /* PEM em x1 */
         break;
+    case MOS_NET_TLS_CERTS:
+        if (b && ret > 0) push(s, b, (a64rt_u64)ret);              /* cadeia DER em x2 */
+        break;
     case MOS_NET_RESOLVE:
         if (ret == 1 && b) push(s, b, 4);
         break;
@@ -422,6 +425,33 @@ int a64rt_guest_writes(long nr, a64rt_u64 x0, a64rt_u64 x1, a64rt_u64 x2, a64rt_
         break;
     case SYS_WEB:
         web_spans(x0, x2, x3, ret, peek, ctx, &s);
+        break;
+    case SYS_UNIX:
+        /* x0 = operação. Quatro intervalos no máximo (touch_writes): o payload vem primeiro. */
+        if (ret < 0) break;
+        if ((x0 == MOS_UNIX_ACCEPT || x0 == MOS_UNIX_SOCKNAME || x0 == MOS_UNIX_PEERNAME)) {
+            if (x2) push(o, &n, max, x2, 108);
+            if (x3) push(o, &n, max, x3, 4);
+        } else if (x0 == MOS_UNIX_PAIR && x3) {
+            push(o, &n, max, x3, 8);
+        } else if (x0 == MOS_UNIX_GETSOCKOPT && x2 && peek) {
+            struct { int level, name; unsigned len, pad; a64rt_u64 val; } g;
+            push(o, &n, max, x2, sizeof g);
+            if (peek(ctx, x2, &g, sizeof g) && g.val && g.len && g.len <= 256)
+                push(o, &n, max, g.val, g.len);
+        } else if (x0 == MOS_UNIX_RECVMSG && x2 && peek) {
+            struct { a64rt_u64 name; unsigned namelen, pad; a64rt_u64 iov; int iovlen, pad2;
+                     a64rt_u64 control; unsigned controllen; int flags; } h;
+            struct { a64rt_u64 base, len; } iv;
+            if (!peek(ctx, x2, &h, 48)) break;
+            if (ret > 0 && h.iov && h.iovlen > 0 && peek(ctx, h.iov, &iv, sizeof iv) && iv.base && iv.len) {
+                a64rt_u64 k = (a64rt_u64)ret < iv.len ? (a64rt_u64)ret : iv.len;
+                push(o, &n, max, iv.base, k);
+            }
+            push(o, &n, max, x2, 48);
+            if (h.name && h.namelen) push(o, &n, max, h.name, h.namelen < 108 ? h.namelen + 1 : 108);
+            if (h.control && h.controllen && h.controllen <= 512) push(o, &n, max, h.control, h.controllen);
+        }
         break;
     default:
         if (nr >= GUI_WIN_CREATE && nr <= GUI_LAST)

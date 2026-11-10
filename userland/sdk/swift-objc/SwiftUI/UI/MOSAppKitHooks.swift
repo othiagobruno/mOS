@@ -2,8 +2,7 @@
 //
 // Este arquivo é do SwiftUI. Não altera appkit*.c. O presenter padrão é
 // MOSAppKitPopoverPresenter: chama showRelativeToRect:ofView:preferredEdge: e close.
-// O NSPopover do mOS só registra o modelo (appkit_status.c); não pinta janela.
-// replacesCard fica false para o cartão do SwiftUI continuar visível.
+// O NSPopover pinta a janela (borda, seta e posição). replacesCard esconde o cartão.
 //
 // MOSPopoverRequest.edge: 0 topo, 1 base, 2 início, 3 fim.
 // anchor pode vir .zero quando a view ainda não publicou o quadro global.
@@ -31,9 +30,9 @@ public protocol MOSPopoverPresenting: AnyObject {
     var replacesCard: Bool { get }
 }
 
-/// Instala o NSPopover sem criar NSWindow. O cartão SwiftUI permanece.
+/// O NSPopover desenha a janela. O cartão SwiftUI fica escondido.
 public final class MOSAppKitPopoverPresenter: NSObject, MOSPopoverPresenting {
-    public var replacesCard: Bool { false }
+    public var replacesCard: Bool { true }
     private var popover: NSPopover?
     private var anchorView: NSView?
 
