@@ -1,18 +1,86 @@
 /*
- * mOS â€” teste no Windows do carregador Mach-O + libSystem.mos, sem QEMU.
- *   machotest <libSystem.mos> <raiz-do-vfs> <executÃ¡vel Mach-O> [args...]
- *   machotest --report <libSystem.mos> <executÃ¡vel>
- * O processo Ã© montado nos mesmos endereÃ§os do mOS; cada "int 0x80" vira uma exceÃ§Ã£o que este
- * programa trata como syscall do mOS (kernel/include/syscall.h), sobre a pasta <raiz-do-vfs>.
+ * mOS — teste no host do carregador Mach-O + libSystem.mos, sem QEMU.
+ *   machotest <libSystem.mos> <raiz-do-vfs> <executável Mach-O> [args...]
+ *   machotest --report <libSystem.mos> <executável>
+ * O processo é montado nos mesmos endereços do mOS; cada "int 0x80" vira uma exceção
+ * (VEH no Windows, seccomp+SIGSYS no Linux) que este programa trata como syscall do mOS
+ * (kernel/include/syscall.h), sobre a pasta <raiz-do-vfs>.
+ *
+ * No Linux, zig cc ou clang:
+ *   zig cc -target x86_64-linux-gnu -O2 -std=gnu11 -DMOS_HOST_TEST -fno-strict-aliasing \
+ *       -Ikernel/include -Itools tools/machotest.c tools/host_enter.S kernel/compat/macho.c \
+ *       -o build/machotest -pthread
+ * No Windows o comando continua o de docs/porte-vscode.md (zig cc -target x86_64-windows-gnu).
  */
+#ifndef _WIN32
+#define _GNU_SOURCE
+#define _FILE_OFFSET_BITS 64
+#endif
+#ifdef _WIN32
 #include <windows.h>
-#include <stdio.h>
 #include <sys/stat.h>
 #include <direct.h>
 #include <io.h>
+#else
+#include <errno.h>
+#include <pthread.h>
+#include <unistd.h>
+#include <dirent.h>
+#include <fcntl.h>
+#include <sched.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <signal.h>
+#include <ucontext.h>
+#include <sys/prctl.h>
+#include <linux/seccomp.h>
+#include <linux/filter.h>
+#include <linux/audit.h>
+#include <stddef.h>
+#endif
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <time.h>
+#ifdef _WIN32
+/* o MinGW expõe os nomes POSIX como _dup/_close/_fileno */
+#ifndef fileno
+#define fileno _fileno
+#endif
+#ifndef dup
+#define dup _dup
+#endif
+#ifndef close
+#define close _close
+#endif
+#ifndef fdopen
+#define fdopen _fdopen
+#endif
+#endif
 #include "compat.h"
 #undef SYS_OPEN
+/* O glibc define si_pid/si_addr/... como macros da siginfo_t do Linux. O mOS tem os mesmos
+ * nomes como campos de mos_siginfo_t. Sem isto o syscall.h não compila no Linux. */
+#ifdef __linux__
+#undef si_pid
+#undef si_uid
+#undef si_status
+#undef si_addr
+#undef si_value
+#undef si_band
+#undef si_fd
+#undef si_int
+#undef si_ptr
+#undef si_overrun
+#undef si_timerid
+#undef si_addr_lsb
+#undef si_lower
+#undef si_upper
+#undef si_pkey
+#undef si_call_addr
+#undef si_syscall
+#undef si_arch
+#endif
 #include "../kernel/include/syscall.h"
 #include "../kernel/include/compat_gui.h"
 #include "../userland/a64rt/a64rt_abi.h"
@@ -21,6 +89,7 @@ long long g_live_allocs, g_live_bytes;
 extern const u8 *libsystem_mos, *libsystem_mos_end;
 extern void host_enter(u64 entry, u64 rdi, u64 rsp);
 extern void host_exit(void);
+extern void host_jump(u64 entry, u64 rdi, u64 rsp);
 extern u64 host_saved_rsp;
 
 static const char *g_root;
@@ -31,6 +100,8 @@ static u64 mmap_next = 0x400100000000ULL;
 bool uvm_map(process_t *p, u64 va, u64 len) {
     u64 lo = va & ~0xFFFFULL, hi = (va + len + 0xFFFF) & ~0xFFFFULL;
     (void)p;
+    if (hi <= lo) return true;
+#ifdef _WIN32
     for (u64 a = lo; a < hi; a += 0x10000) {
         MEMORY_BASIC_INFORMATION mbi;
         if (VirtualQuery((void *)a, &mbi, sizeof mbi) && mbi.State != MEM_FREE) {
@@ -43,6 +114,22 @@ bool uvm_map(process_t *p, u64 va, u64 len) {
         }
     }
     return true;
+#else
+    int fl = MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE;
+    if (mmap((void *)lo, (size_t)(hi - lo), PROT_READ | PROT_WRITE | PROT_EXEC, fl, -1, 0) != MAP_FAILED)
+        return true;
+    for (u64 a = lo; a < hi; a += 4096) {
+        unsigned char one;
+        if (mincore((void *)a, 4096, &one) == 0) continue;
+        void *r = mmap((void *)a, 4096, PROT_READ | PROT_WRITE | PROT_EXEC,
+                       MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+        if (r == MAP_FAILED) {
+            fprintf(stderr, "mmap(%llx) falhou: %s\n", (unsigned long long)a, strerror(errno));
+            return false;
+        }
+    }
+    return true;
+#endif
 }
 
 bool uvm_copy_out(process_t *p, u64 va, const void *src, usize len) { (void)p; memcpy((void *)va, src, len); return true; }
@@ -52,35 +139,52 @@ i64 macho_dyld_syscall(process_t *p, u64 op, u64 a, u64 b, u64 c);   /* dlopen (
 static u8 *read_file(const char *path, usize *len) {
     FILE *f = fopen(path, "rb");
     if (!f) return NULL;
+#ifdef _WIN32
     _fseeki64(f, 0, SEEK_END);
     long long n = _ftelli64(f);
     _fseeki64(f, 0, SEEK_SET);
-    u8 *b = malloc(n ? n : 1);
-    if (fread(b, 1, n, f) != (size_t)n) { fclose(f); free(b); return NULL; }
+#else
+    if (fseeko(f, 0, SEEK_END) != 0) { fclose(f); return NULL; }
+    long long n = (long long)ftello(f);
+    if (n < 0) { fclose(f); return NULL; }
+    fseeko(f, 0, SEEK_SET);
+#endif
+    u8 *b = malloc(n ? (size_t)n : 1);
+    if (!b || fread(b, 1, (size_t)n, f) != (size_t)n) { fclose(f); free(b); return NULL; }
     fclose(f);
     *len = (usize)n;
     return b;
 }
 
-/* dependÃªncias (dylibs do bundle) pedidas pelo carregador: caminho do mOS sob g_root, ou caminho
- * do host no --report. Ficam na memÃ³ria atÃ© o fim (o carregador guarda ponteiros para elas). */
+/* dependências (dylibs do bundle) pedidas pelo carregador: caminho do mOS sob g_root, ou caminho
+ * do host no --report. Ficam na memória até o fim (o carregador guarda ponteiros para elas). */
 const u8 *host_read_file(const char *path, usize *len) {
-    char hp[1024];
+    char hp[4096];
     if (g_root) snprintf(hp, sizeof hp, "%s%s", g_root, path);
     else snprintf(hp, sizeof hp, "%s", path);
+#ifdef _WIN32
     for (char *c = hp; *c; c++) if (*c == '/') *c = '\\';
+#endif
     return read_file(hp, len);
 }
 
 /* ---- syscalls do mOS sobre a pasta g_root */
 static void host_path(u64 upath, char *out, size_t cap) {
-    if (!strcmp((const char *)upath, "/dev/null")) { snprintf(out, cap, "NUL"); return; }   /* como o kernel */
-    snprintf(out, cap, "%s%s", g_root, (const char *)upath);
+    const char *u = (const char *)upath;
+    if (!strcmp(u, "/dev/null")) {
+#ifdef _WIN32
+        snprintf(out, cap, "NUL");
+#else
+        snprintf(out, cap, "/dev/null");
+#endif
+        return;
+    }
+    snprintf(out, cap, "%s%s", g_root ? g_root : "", u);
+#ifdef _WIN32
     for (char *c = out; *c; c++) if (*c == '/') *c = '\\';
+#endif
 }
 
-#define MAXFD 32
-static FILE *fds[MAXFD];
 
 /* ---- GUI emulada: imprime o conteÃºdo dos quadros e reproduz um roteiro de eventos
  * (MACHOTEST_EVENTS="f:3;down:265,75;up:265,75;key:a;text:abc;close") */
@@ -421,13 +525,60 @@ static long long gui_syscall(u64 n, u64 a, u64 b, u64 c, u64 d) {
     return -MOS_EINVAL;
 }
 
-/* ---- threads: uma thread do Windows por thread do mOS */
+/* ---- threads, pipes, futex e portas Mach (o mesmo no Windows e no Linux) */
+#ifdef _WIN32
+#define HOST_LOCK() EnterCriticalSection(&sys_lock)
+#define HOST_UNLOCK() LeaveCriticalSection(&sys_lock)
+static CRITICAL_SECTION sys_lock;
+static CONDITION_VARIABLE sys_cv = CONDITION_VARIABLE_INIT;
+static void host_broadcast(void) { WakeAllConditionVariable(&sys_cv); }
+/* devolve 1 se o prazo venceu. O chamador já entrou em sys_lock exatamente uma vez. */
+static int host_wait_ms(u64 ms) {
+    if (ms == ~(u64)0) { SleepConditionVariableCS(&sys_cv, &sys_lock, INFINITE); return 0; }
+    return SleepConditionVariableCS(&sys_cv, &sys_lock, (DWORD)ms) ? 0 : 1;
+}
+#else
+#define HOST_LOCK() pthread_mutex_lock(&sys_lock)
+#define HOST_UNLOCK() pthread_mutex_unlock(&sys_lock)
+static pthread_mutex_t sys_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t sys_cv;
+static int sys_cv_ready;
+static void host_cv_init(void) {
+    if (sys_cv_ready) return;
+    pthread_condattr_t ca;
+    pthread_condattr_init(&ca);
+    pthread_condattr_setclock(&ca, CLOCK_MONOTONIC);
+    pthread_cond_init(&sys_cv, &ca);
+    pthread_condattr_destroy(&ca);
+    sys_cv_ready = 1;
+}
+static void host_broadcast(void) { if (sys_cv_ready) pthread_cond_broadcast(&sys_cv); }
+static int host_wait_ms(u64 ms) {
+    if (ms == ~(u64)0) { pthread_cond_wait(&sys_cv, &sys_lock); return 0; }
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    ts.tv_sec += (time_t)(ms / 1000);
+    ts.tv_nsec += (long)(ms % 1000) * 1000000L;
+    if (ts.tv_nsec >= 1000000000L) { ts.tv_sec++; ts.tv_nsec -= 1000000000L; }
+    return pthread_cond_timedwait(&sys_cv, &sys_lock, &ts) == ETIMEDOUT;
+}
+#endif
+
 extern void host_jump(u64 entry, u64 rdi, u64 rsp);
 static __thread long long my_tid = 1;
 static __thread u64 my_gs;
 static volatile long next_tid = 1;
+static volatile u64 g_last_sys[3];
+static volatile u64 g_guest_rip;
+#ifdef _WIN32
 static HANDLE thread_handles[256];
+#else
+static pthread_t thread_handles[256];
+static __thread int in_sig;
+#endif
 typedef struct { u64 entry, rsp, arg; long long tid; } thread_start_t;
+
+#ifdef _WIN32
 static DWORD WINAPI thread_main(LPVOID p) {
     thread_start_t s = *(thread_start_t *)p;
     free(p);
@@ -435,68 +586,635 @@ static DWORD WINAPI thread_main(LPVOID p) {
     host_jump(s.entry, s.arg, s.rsp);
     return 0;
 }
-static CRITICAL_SECTION sys_lock;
+#else
+static void host_linux_altstack(void) {
+    stack_t ss;
+    ss.ss_sp = malloc(1 << 20);
+    ss.ss_size = 1 << 20;
+    ss.ss_flags = 0;
+    if (ss.ss_sp) sigaltstack(&ss, NULL);
+}
+static void *thread_main(void *p) {
+    thread_start_t s = *(thread_start_t *)p;
+    free(p);
+    my_tid = s.tid;
+    /* A thread nasce dentro do tratador de SIGSYS (a syscall SYS_THREAD_CREATE).
+     * O pthread herda essa máscara: com SIGSYS bloqueado, o próximo int 0x80 do guest
+     * mata o processo em vez de voltar para on_guest_signal. */
+    sigset_t set;
+    sigemptyset(&set);
+    sigaddset(&set, SIGSYS);
+    sigaddset(&set, SIGSEGV);
+    sigaddset(&set, SIGBUS);
+    sigaddset(&set, SIGILL);
+    sigaddset(&set, SIGFPE);
+    sigaddset(&set, SIGTRAP);
+    pthread_sigmask(SIG_UNBLOCK, &set, NULL);
+    host_linux_altstack();
+    host_jump(s.entry, s.arg, s.rsp);
+    return NULL;
+}
+#endif
+
+/* ---- descritores: arquivo do host ou pipe/socketpair (o mesmo modelo do kernel) */
+#define MAXFD 256
+enum { HFD_NONE = 0, HFD_FILE, HFD_PR, HFD_PW, HFD_RW };
+typedef struct hpipe {
+    u8 buf[4096];
+    unsigned head, tail, count;
+    int readers, writers, busy;
+} hpipe;
+typedef struct {
+    int kind;
+    FILE *fp;
+    char mode[4];
+    char gpath[1024];   /* caminho do guest (SYS_FDPATH / fcntl F_GETPATH) */
+    hpipe *a, *b;
+    int nb, cloexec, acc;
+} hfd_t;
+static hfd_t hfd[MAXFD];
+
+static void pipe_maybe_free(hpipe *p) {
+    if (p && p->readers <= 0 && p->writers <= 0 && p->busy == 0) free(p);
+}
+static void pipe_end(hpipe *p, int reader) {
+    if (!p) return;
+    if (reader) p->readers--; else p->writers--;
+    host_broadcast();
+    pipe_maybe_free(p);
+}
+static void pipe_addref(const hfd_t *e) {
+    if (e->kind == HFD_PR && e->a) e->a->readers++;
+    else if (e->kind == HFD_PW && e->a) e->a->writers++;
+    else if (e->kind == HFD_RW) { if (e->a) e->a->readers++; if (e->b) e->b->writers++; }
+}
+static void pipe_drop(hfd_t *e) {
+    if (e->kind == HFD_PR) pipe_end(e->a, 1);
+    else if (e->kind == HFD_PW) pipe_end(e->a, 0);
+    else if (e->kind == HFD_RW) { pipe_end(e->a, 1); pipe_end(e->b, 0); }
+    e->a = e->b = NULL;
+}
+static void fd_clear(int fd) {
+    hfd_t *e = &hfd[fd];
+    if (e->kind == HFD_FILE && e->fp) fclose(e->fp);
+    else if (e->kind) pipe_drop(e);
+    memset(e, 0, sizeof *e);
+}
+static int fd_alloc(void) {
+    for (int i = 3; i < MAXFD; i++) if (!hfd[i].kind) return i;
+    return -1;
+}
+static long pipe_io(int rd, int fd, u64 buf, u64 len) {
+    hfd_t *e = &hfd[fd];
+    if (rd && e->kind == HFD_PW) return -MOS_EBADF;
+    if (!rd && e->kind == HFD_PR) return -MOS_EBADF;
+    hpipe *p = rd ? e->a : (e->kind == HFD_RW ? e->b : e->a);
+    if (!p) return -MOS_EBADF;
+    if (!len) return 0;
+    p->busy++;
+    long ret = 0;
+    for (;;) {
+        if (rd) {
+            if (p->count) {
+                u64 n = len < p->count ? len : p->count;
+                u8 *dst = (u8 *)buf;
+                for (u64 i = 0; i < n; i++) { dst[i] = p->buf[p->tail]; p->tail = (p->tail + 1) % 4096; }
+                p->count -= (unsigned)n;
+                host_broadcast();
+                ret = (long)n;
+                break;
+            }
+            if (!p->writers) { ret = 0; break; }
+        } else {
+            if (!p->readers) { ret = -MOS_EPIPE; break; }
+            if (p->count < 4096) {
+                u64 space = 4096 - p->count;
+                u64 n = len < space ? len : space;
+                const u8 *src = (const u8 *)buf;
+                for (u64 i = 0; i < n; i++) { p->buf[p->head] = src[i]; p->head = (p->head + 1) % 4096; }
+                p->count += (unsigned)n;
+                host_broadcast();
+                ret = (long)n;
+                break;
+            }
+        }
+        if (e->nb) { ret = -MOS_EAGAIN; break; }
+        host_wait_ms(~(u64)0);
+    }
+    p->busy--;
+    pipe_maybe_free(p);
+    return ret;
+}
+static long pipe_make(u64 user, int sock) {
+    int rfd = fd_alloc();
+    int wfd = -1;
+    if (rfd >= 0) {
+        hfd[rfd].kind = HFD_FILE; /* reserva o número */
+        wfd = fd_alloc();
+        hfd[rfd].kind = HFD_NONE;
+    }
+    if (rfd < 0 || wfd < 0) return -MOS_EMFILE;
+    hpipe *p1 = calloc(1, sizeof *p1);
+    if (!p1) return -MOS_ENOMEM;
+    p1->readers = p1->writers = 1;
+    int both[2] = {rfd, wfd};
+    memcpy((void *)user, both, sizeof both);
+    if (!sock) {
+        hfd[rfd].kind = HFD_PR; hfd[rfd].a = p1; hfd[rfd].acc = 0;
+        hfd[wfd].kind = HFD_PW; hfd[wfd].a = p1; hfd[wfd].acc = 1;
+        return 0;
+    }
+    hpipe *p2 = calloc(1, sizeof *p2);
+    if (!p2) { free(p1); return -MOS_ENOMEM; }
+    p2->readers = p2->writers = 1;
+    hfd[rfd].kind = HFD_RW; hfd[rfd].a = p1; hfd[rfd].b = p2; hfd[rfd].acc = 2;
+    hfd[wfd].kind = HFD_RW; hfd[wfd].a = p2; hfd[wfd].b = p1; hfd[wfd].acc = 2;
+    return 0;
+}
+static void pipe_stat(int fd, mos_stat_t *m) {
+    hfd_t *e = &hfd[fd];
+    hpipe *p = e->a;
+    int rd = e->kind == HFD_PR || e->kind == HFD_RW;
+    memset(m, 0, sizeof *m);
+    m->is_dir = rd ? 2 : 3;
+    m->size = rd ? p->count : 4096 - p->count;
+    m->mtime = rd ? (p->writers == 0) : (p->readers == 0);
+}
+
+/* ---- futex (SYS_FUTEX_WAIT/WAKE): a comparação e a entrada na fila são atômicas com o WAKE */
+typedef struct fwait { u64 addr; int woken; struct fwait *next; } fwait;
+static fwait *fwaits;
+static long futex_wait(u64 addr, u32 expected, u64 ms) {
+    if ((addr & 3) || addr < USER_BASE || addr >= 0x0000800000000000ULL) return -MOS_EFAULT;
+    u32 cur = *(volatile u32 *)addr;
+    if (cur != expected) return -MOS_EAGAIN;
+    if (!ms) return -MOS_ETIMEDOUT;
+    fwait w;
+    w.addr = addr; w.woken = 0; w.next = fwaits; fwaits = &w;
+    int timed = 0;
+    while (!w.woken && !timed) timed = host_wait_ms(ms);
+    fwait **pp = &fwaits;
+    while (*pp) { if (*pp == &w) { *pp = w.next; break; } pp = &(*pp)->next; }
+    return w.woken ? 0 : -MOS_ETIMEDOUT;
+}
+static long futex_wake(u64 addr, u64 n) {
+    if (!n) n = 1;
+    long c = 0;
+    for (fwait *w = fwaits; w && c < (long)n; w = w->next)
+        if (w->addr == addr && !w->woken) { w->woken = 1; c++; }
+    if (c) host_broadcast();
+    return c;
+}
+
+/* ---- portas Mach no processo único do harness (mach_port_construct, mach_msg, socketpair do Electron) */
+#define HT_SEND    0x10000u
+#define HT_RECV    0x20000u
+#define HT_SO      0x40000u
+#define HT_DEAD    0x100000u
+#define HPORT_N    1024
+#define HMSG_N     32
+#define KERN_OK 0
+#define KERN_NO_SPACE_ 3
+#define KERN_INVAL_ARG 4
+#define KERN_SHORT 6
+#define KERN_EXISTS 13
+#define KERN_INVAL_NAME 15
+#define KERN_INVAL_RIGHT 17
+typedef struct {
+    int used;
+    u32 name, type, srefs, qlimit, seqno;
+    u64 context;
+    u8 *qdata[HMSG_N];
+    u32 qsize[HMSG_N];
+    int qh, qn;
+    int memfd;
+    u64 memsz;
+} hport_t;
+static hport_t hports[HPORT_N];
+static u32 hname_next = 0x11000;
+static int said_construct;
+
+static int hport_special(u32 name) {
+    return name == 0x103u || name == 0x203u || name == 0x303u || (name >= 0x1000u && name < 0x10000u);
+}
+static hport_t *hport_get(u32 name) {
+    if (!name) return NULL;
+    for (int i = 0; i < HPORT_N; i++) if (hports[i].used && hports[i].name == name) return &hports[i];
+    return NULL;
+}
+static hport_t *hport_new(u32 name, u32 type) {
+    if (name && hport_get(name)) return NULL;
+    for (int i = 0; i < HPORT_N; i++) if (!hports[i].used) {
+        memset(&hports[i], 0, sizeof hports[i]);
+        hports[i].used = 1;
+        hports[i].name = name ? name : hname_next++;
+        hports[i].type = type;
+        hports[i].qlimit = 5;
+        hports[i].memfd = -1;
+        return &hports[i];
+    }
+    return NULL;
+}
+static void hport_free_slot(hport_t *p) {
+    for (int i = 0; i < p->qn; i++) free(p->qdata[(p->qh + i) % HMSG_N]);
+#ifndef _WIN32
+    if (p->memfd >= 0) close(p->memfd);
+#endif
+    memset(p, 0, sizeof *p);
+    p->memfd = -1;
+}
+static u32 rd32u(const u8 *p) { return (u32)p[0] | (u32)p[1] << 8 | (u32)p[2] << 16 | (u32)p[3] << 24; }
+static void wr32u(u8 *p, u32 v) { p[0] = (u8)v; p[1] = (u8)(v >> 8); p[2] = (u8)(v >> 16); p[3] = (u8)(v >> 24); }
+
+static long mach_port_op(u64 op, u64 ap) {
+    u64 *a = (u64 *)ap;
+    if (!a) return KERN_INVAL_ARG;
+    switch (op) {
+    case MACH_OP_ALLOCATE: {
+        u32 ty = a[0] == 1 ? HT_RECV : a[0] == 3 ? HT_SEND : a[0] == 4 ? HT_DEAD : HT_RECV;
+        hport_t *p = hport_new((u32)a[1], ty);
+        if (!p) return a[1] ? KERN_EXISTS : KERN_SHORT;
+        if (ty == HT_SEND) p->srefs = 1;
+        a[2] = p->name;
+        return KERN_OK;
+    }
+    case MACH_OP_CONSTRUCT: {
+        hport_t *p = hport_new(0, HT_RECV);
+        if (!p) return KERN_SHORT;
+        if (a[1]) p->qlimit = (u32)a[1];
+        p->context = a[2];
+        a[3] = p->name;
+        if (!said_construct) {
+            said_construct = 1;
+            fprintf(stderr, "[machotest] mach_port_construct ok nome=%u qlimit=%u\n", p->name, p->qlimit);
+        }
+        return KERN_OK;
+    }
+    case MACH_OP_INSERT_RIGHT: {
+        hport_t *src = hport_get((u32)a[1]);
+        u32 disp = (u32)a[2];
+        if (!src) return KERN_INVAL_NAME;
+        if (a[0] && a[0] != src->name) return KERN_INVAL_RIGHT;
+        if (disp == 16) { src->type |= HT_RECV; return KERN_OK; }
+        if (disp == 18 || disp == 21) { src->type |= HT_SO; return KERN_OK; }
+        src->type |= HT_SEND;
+        src->srefs++;
+        return KERN_OK;
+    }
+    case MACH_OP_DEALLOCATE:
+    case MACH_OP_DESTRUCT: {
+        hport_t *p = hport_get((u32)a[0]);
+        if (!p) return hport_special((u32)a[0]) ? KERN_OK : KERN_INVAL_NAME;
+        if (p->type & HT_SEND) {
+            if (p->srefs) p->srefs--;
+            if (!p->srefs) p->type &= ~HT_SEND;
+        } else if (p->type & HT_RECV) p->type &= ~HT_RECV;
+        if (!(p->type & (HT_SEND | HT_RECV | HT_SO))) hport_free_slot(p);
+        host_broadcast();
+        return KERN_OK;
+    }
+    case MACH_OP_MOD_REFS: {
+        hport_t *p = hport_get((u32)a[0]);
+        if (!p) return hport_special((u32)a[0]) ? KERN_OK : KERN_INVAL_NAME;
+        i64 delta = (i64)a[2];
+        if (a[1] == 0 && (p->type & HT_SEND)) {
+            if ((i64)p->srefs + delta < 0) return 18;
+            p->srefs = (u32)((i64)p->srefs + delta);
+            if (!p->srefs) p->type &= ~HT_SEND;
+        } else if (delta < 0 && a[1] == 1 && (p->type & HT_RECV)) p->type &= ~HT_RECV;
+        if (!(p->type & (HT_SEND | HT_RECV | HT_SO))) hport_free_slot(p);
+        return KERN_OK;
+    }
+    case MACH_OP_TYPE: {
+        hport_t *p = hport_get((u32)a[0]);
+        if (!p) { if (hport_special((u32)a[0])) { a[1] = HT_SEND; return KERN_OK; } return KERN_INVAL_NAME; }
+        a[1] = p->type;
+        return KERN_OK;
+    }
+    case MACH_OP_GET_REFS: {
+        hport_t *p = hport_get((u32)a[0]);
+        if (!p) return KERN_INVAL_NAME;
+        a[2] = a[1] == 0 ? p->srefs : (p->type & (a[1] == 1 ? HT_RECV : HT_SEND)) ? 1 : 0;
+        return KERN_OK;
+    }
+    case MACH_OP_SET_CONTEXT: {
+        hport_t *p = hport_get((u32)a[0]);
+        if (!p) return KERN_INVAL_NAME;
+        p->context = a[1];
+        return KERN_OK;
+    }
+    case MACH_OP_GET_CONTEXT: {
+        hport_t *p = hport_get((u32)a[0]);
+        if (!p) return KERN_INVAL_NAME;
+        a[1] = p->context;
+        return KERN_OK;
+    }
+    case MACH_OP_SET_ATTR: {
+        hport_t *p = hport_get((u32)a[0]);
+        if (!p) return KERN_INVAL_NAME;
+        if (a[1] == 1) p->qlimit = (u32)a[2];
+        return KERN_OK;
+    }
+    case MACH_OP_STATUS: {
+        hport_t *p = hport_get((u32)a[0]);
+        if (!p) return KERN_INVAL_NAME;
+        a[1] = (u64)p->qn; a[2] = p->seqno; a[3] = p->qlimit; a[4] = p->srefs;
+        return KERN_OK;
+    }
+    case MACH_OP_PENDING: {
+        hport_t *p = hport_get((u32)a[0]);
+        a[1] = p ? (u64)p->qn : 0;
+        a[2] = a[0];
+        return KERN_OK;
+    }
+    case MACH_OP_GET_SPECIAL:
+        if (a[0] == 4) {
+            if (!hport_get(0x303)) { hport_t *b = hport_new(0x303, HT_SEND); if (b) b->srefs = 1; }
+            a[1] = 0x303;
+            return KERN_OK;
+        }
+        a[1] = a[0] == 1 ? 0x103 : a[0] == 2 ? 0x203 : 0;
+        return a[1] ? KERN_OK : KERN_INVAL_ARG;
+    case MACH_OP_NOTIFY:
+    case MACH_OP_INSERT_MEMBER:
+    case MACH_OP_EXTRACT_MEMBER:
+    case MACH_OP_MOVE_MEMBER:
+    case MACH_OP_SET_SPECIAL:
+    case MACH_OP_SPAWN_SPECIAL:
+        return KERN_OK;
+    case MACH_OP_EXTRACT_RIGHT: {
+        hport_t *p = hport_get((u32)a[0]);
+        if (!p) return KERN_INVAL_NAME;
+        hport_t *n = hport_new(0, (a[1] == 18 || a[1] == 21) ? HT_SO : HT_SEND);
+        if (!n) return KERN_SHORT;
+        n->srefs = 1;
+        a[2] = n->name;
+        a[3] = a[1];
+        return KERN_OK;
+    }
+    default:
+        return KERN_INVAL_ARG;
+    }
+}
+
+static long mach_msg_call(u64 args_ptr) {
+    mos_mach_msg_args_t a;
+    if (!args_ptr) return KERN_INVAL_ARG;
+    memcpy(&a, (void *)args_ptr, sizeof a);
+    if (a.option & 1) {
+        if (a.send_size < 24) return 0x10000008;
+        u8 *msg = (u8 *)a.msg;
+        u32 remote = rd32u(msg + 8);
+        hport_t *dest = hport_get(remote);
+        if (!dest || !(dest->type & HT_RECV)) return 0x10000003;
+        u32 cap = dest->qlimit ? dest->qlimit : 5;
+        if ((u32)dest->qn >= cap || dest->qn >= HMSG_N) return 0x10000004;
+        u8 *copy = malloc(a.send_size ? a.send_size : 1);
+        if (!copy) return KERN_SHORT;
+        memcpy(copy, msg, a.send_size);
+        int slot = (dest->qh + dest->qn) % HMSG_N;
+        dest->qdata[slot] = copy;
+        dest->qsize[slot] = a.send_size;
+        dest->qn++;
+        dest->seqno++;
+        host_broadcast();
+    }
+    if (a.option & 2) {
+        hport_t *rcv = hport_get(a.rcv_name);
+        if (!rcv || !(rcv->type & HT_RECV)) return 0x10004002;
+        while (!rcv->qn) {
+            if ((a.option & 0x100) && a.timeout == 0) return 0x10004003;
+            u64 ms = (a.option & 0x100) ? a.timeout : ~(u64)0;
+            if (host_wait_ms(ms) && !rcv->qn) return 0x10004003;
+        }
+        u8 *data = rcv->qdata[rcv->qh];
+        u32 sz = rcv->qsize[rcv->qh];
+        u32 el = (a.option >> 24) & 0xF;
+        u32 tsize = el == 0 ? 8 : el == 1 ? 12 : el == 2 ? 20 : 52;
+        u32 body = (sz + 3u) & ~3u;
+        u32 need = body + tsize;
+        u8 *dst = (u8 *)a.msg;
+        if (need > a.rcv_size) {
+            if (a.option & 4) { memcpy(dst, data, sz < 24 ? sz : 24); wr32u(dst + 4, need); return 0x10004004; }
+            free(data);
+            rcv->qdata[rcv->qh] = NULL;
+            rcv->qh = (rcv->qh + 1) % HMSG_N;
+            rcv->qn--;
+            return 0x10004004;
+        }
+        memcpy(dst, data, sz);
+        if (need > sz) memset(dst + sz, 0, need - sz);
+        wr32u(dst + 4, need);
+        wr32u(dst + body, 0);
+        wr32u(dst + body + 4, tsize);
+        if (tsize >= 52) { wr32u(dst + body + 20, 42); wr32u(dst + body + 40, 42); }
+        free(data);
+        rcv->qdata[rcv->qh] = NULL;
+        rcv->qh = (rcv->qh + 1) % HMSG_N;
+        rcv->qn--;
+    }
+    return KERN_OK;
+}
+
+static long mach_vm_op(u64 op, u64 ap) {
+    u64 *a = (u64 *)ap;
+    if (!a) return KERN_INVAL_ARG;
+    if (op == MACH_VM_PROTECT || op == MACH_VM_JIT_WPROTECT) return KERN_OK;
+    if (op == MACH_VM_REGION) {
+        u64 addr = a[0];
+        if (addr < USER_BASE || addr >= USER_END) return 1;
+        a[1] = addr & ~0xFFFULL;
+        a[2] = 0x1000;
+        a[3] = 7;
+        a[4] = 7;
+        return KERN_OK;
+    }
+    if (op == MACH_VM_MAKE_ENTRY) {
+        u64 sz = a[0];
+        if (!sz || sz > (256ull << 20)) return KERN_SHORT;
+        sz = (sz + 0xFFFULL) & ~0xFFFULL;
+        hport_t *p = hport_new(0, HT_SEND);
+        if (!p) return KERN_SHORT;
+        p->srefs = 1;
+        p->memsz = sz;
+#ifndef _WIN32
+        p->memfd = memfd_create("mos-mach", 0);
+        if (p->memfd < 0 || ftruncate(p->memfd, (off_t)sz) != 0) { hport_free_slot(p); return KERN_SHORT; }
+#else
+        p->memfd = -1;
+#endif
+        a[4] = p->name;
+        a[5] = sz;
+        return KERN_OK;
+    }
+    if (op == MACH_VM_MAP) {
+        hport_t *p = hport_get((u32)a[3]);
+        if (!p || !p->memsz) return KERN_INVAL_ARG;
+        u64 sz = a[1] ? a[1] : p->memsz;
+        u64 at = a[0];
+        if ((a[2] & 1) || !at) {
+            if (!g_proc.mmap_next) g_proc.mmap_next = mmap_next;
+            at = (g_proc.mmap_next + 0xFFFFULL) & ~0xFFFFULL;
+            g_proc.mmap_next = at + ((sz + 0xFFFFULL) & ~0xFFFFULL);
+        }
+        if (!uvm_map(&g_proc, at, sz)) return KERN_NO_SPACE_;
+#ifndef _WIN32
+        if (p->memfd >= 0) {
+            int prot = PROT_READ | PROT_WRITE;
+            if (a[5] & 4) prot |= PROT_EXEC;
+            void *r = mmap((void *)at, (size_t)sz, prot, MAP_SHARED | MAP_FIXED, p->memfd, (off_t)a[4]);
+            if (r == MAP_FAILED) return KERN_NO_SPACE_;
+        }
+#endif
+        a[0] = at;
+        return KERN_OK;
+    }
+    return 5;
+}
 
 static long long do_syscall_locked(u64 n, u64 a, u64 b, u64 c, u64 d);
-static volatile u64 g_last_sys[3];   /* watchdog: última syscall da thread principal */
 static long long do_syscall(u64 n, u64 a, u64 b, u64 c, u64 d) {
     if (my_tid == 1) { g_last_sys[0] = n; g_last_sys[1] = a; g_last_sys[2] = b; }
     switch (n) {
-    case SYS_SLEEP: Sleep((DWORD)a); return 0;
-    case SYS_YIELD: SwitchToThread(); return 0;
+    case SYS_SLEEP:
+#ifdef _WIN32
+        Sleep((DWORD)a);
+#else
+        { struct timespec ts; ts.tv_sec = (time_t)(a / 1000); ts.tv_nsec = (long)(a % 1000) * 1000000L; nanosleep(&ts, NULL); }
+#endif
+        return 0;
+    case SYS_YIELD:
+#ifdef _WIN32
+        SwitchToThread();
+#else
+        sched_yield();
+#endif
+        return 0;
     case SYS_GETTID: return my_tid;
     case SYS_THREAD_CREATE: {
-        long long tid = InterlockedIncrement(&next_tid);
-        if (tid >= 256) return -MOS_ENOMEM;
+        long long tid = 
+#ifdef _WIN32
+            InterlockedIncrement(&next_tid);
+#else
+            __atomic_add_fetch(&next_tid, 1, __ATOMIC_SEQ_CST);
+#endif
+        if (tid <= 0 || tid >= 256) return -MOS_ENOMEM;
         thread_start_t *s = malloc(sizeof *s);
+        if (!s) return -MOS_ENOMEM;
         s->entry = a; s->rsp = b; s->arg = c; s->tid = tid;
+#ifdef _WIN32
         HANDLE h = CreateThread(NULL, 1 << 20, thread_main, s, 0, NULL);
         if (!h) { free(s); return -MOS_ENOMEM; }
         thread_handles[tid] = h;
+#else
+        if (pthread_create(&thread_handles[tid], NULL, thread_main, s) != 0) { free(s); return -MOS_ENOMEM; }
+#endif
         return tid;
     }
-    case SYS_THREAD_EXIT: ExitThread((DWORD)a); return 0;
+    case SYS_THREAD_EXIT:
+#ifdef _WIN32
+        ExitThread((DWORD)a);
+#else
+        pthread_exit((void *)(intptr_t)a);
+#endif
+        return 0;
     case SYS_THREAD_JOIN: {
-        if (a >= 256 || !thread_handles[a]) return -MOS_ESRCH;
+        if (a >= 256 || a == 0) return -MOS_ESRCH;
+#ifdef _WIN32
+        if (!thread_handles[a]) return -MOS_ESRCH;
         WaitForSingleObject(thread_handles[a], INFINITE);
         DWORD code = 0;
         GetExitCodeThread(thread_handles[a], &code);
         return (long long)(int)code;
+#else
+        void *code = NULL;
+        if (pthread_join(thread_handles[a], &code) != 0) return -MOS_ESRCH;
+        return (long long)(intptr_t)code;
+#endif
     }
     }
-    EnterCriticalSection(&sys_lock);
+    HOST_LOCK();
     long long r = do_syscall_locked(n, a, b, c, d);
-    LeaveCriticalSection(&sys_lock);
+    HOST_UNLOCK();
     return r;
 }
 
 static long long do_syscall_locked(u64 n, u64 a, u64 b, u64 c, u64 d) {
     if (n >= 64 && n <= 79) return gui_syscall(n, a, b, c, d);
-    char hp[1024];
+    if (n == SYS_FUTEX_WAIT) return futex_wait(a, (u32)b, c);
+    if (n == SYS_FUTEX_WAKE) return futex_wake(a, b);
+    if (n == SYS_MACH_PORT) return mach_port_op(a, b);
+    if (n == SYS_MACH_MSG) return mach_msg_call(a);
+    if (n == SYS_MACH_VM) return mach_vm_op(a, b);
+    if (n == SYS_MACH_BOOTSTRAP) {
+        /* op, nome, u32 *porta. Registro local: o Electron procura serviços cedo. */
+        static struct { char name[96]; u32 port; int on; } bs[64];
+        const char *nm = (const char *)b;
+        u32 *pp = (u32 *)c;
+        if (!nm) return 1102;
+        if (a == 3 || a == 4) { /* REGISTER / RESERVE */
+            for (int i = 0; i < 64; i++) if (!bs[i].on || !strcmp(bs[i].name, nm)) {
+                snprintf(bs[i].name, sizeof bs[i].name, "%s", nm);
+                bs[i].port = pp ? *pp : 0;
+                bs[i].on = 1;
+                return 0;
+            }
+            return 1105;
+        }
+        if (a == 2 || a == 1) { /* LOOK_UP / CHECK_IN */
+            for (int i = 0; i < 64; i++) if (bs[i].on && !strcmp(bs[i].name, nm)) {
+                if (pp) *pp = bs[i].port;
+                return 0;
+            }
+            return a == 1 ? 1102 : 1102;
+        }
+        return 1102;
+    }
+    if (n == SYS_PIPE) return pipe_make(a, b == MOS_PIPE_SOCKPAIR);
+    char hp[4096];
     (void)d;
     switch (n) {
     case SYS_WRITE:
-        if (a == 1 || a == 2) { fwrite((void *)b, 1, c, a == 1 ? stdout : stderr); fflush(a == 1 ? stdout : stderr); return (long long)c; }
-        if (a < MAXFD && fds[a]) return (long long)fwrite((void *)b, 1, c, fds[a]);
+        if (a < MAXFD && (hfd[a].kind == HFD_PR || hfd[a].kind == HFD_PW || hfd[a].kind == HFD_RW))
+            return pipe_io(0, (int)a, b, c);
+        if ((a == 1 || a == 2) && hfd[a].kind == HFD_NONE) {
+            fwrite((void *)b, 1, (size_t)c, a == 1 ? stdout : stderr);
+            fflush(a == 1 ? stdout : stderr);
+            return (long long)c;
+        }
+        if (a < MAXFD && hfd[a].kind == HFD_FILE && hfd[a].fp) return (long long)fwrite((void *)b, 1, (size_t)c, hfd[a].fp);
         return -MOS_EBADF;
     case SYS_READ:
-        if (a == 0) return 0;
-        if (a < MAXFD && fds[a]) return (long long)fread((void *)b, 1, c, fds[a]);
+        if (a < MAXFD && (hfd[a].kind == HFD_PR || hfd[a].kind == HFD_PW || hfd[a].kind == HFD_RW))
+            return pipe_io(1, (int)a, b, c);
+        if (a == 0 && hfd[a].kind == HFD_NONE) return 0;
+        if (a < MAXFD && hfd[a].kind == HFD_FILE && hfd[a].fp) return (long long)fread((void *)b, 1, (size_t)c, hfd[a].fp);
         return -MOS_EBADF;
     case SYS_GETPID: return 42;
-    case 0x7FFF: {   /* stub de sÃ­mbolo ausente com MACHOTEST_STUB_LOG (a = nome): registra e devolve 0 */
+    case SYS_CPUS:
+#ifdef _WIN32
+        { SYSTEM_INFO si; GetSystemInfo(&si); return (long long)si.dwNumberOfProcessors; }
+#else
+        return sysconf(_SC_NPROCESSORS_ONLN);
+#endif
+    case 0x7FFF: {
         static unsigned long long calls;
         static char seen[8192];
         const char *nm = (const char *)a;
         calls++;
-        if (!strstr(seen, nm) && strlen(seen) + strlen(nm) + 2 < sizeof seen) {
+        if (nm && !strstr(seen, nm) && strlen(seen) + strlen(nm) + 2 < sizeof seen) {
             strcat(seen, nm); strcat(seen, " ");
             fprintf(stderr, "[ausente #%llu] %s\n", calls, nm);
         }
         if (calls > 200000) { fprintf(stderr, "[machotest] chamadas a stubs demais, parando\n"); return -1; }
         return 0;
     }
-    case SYS_TIME: return (long long)GetTickCount64();
+    case SYS_TIME:
+#ifdef _WIN32
+        return (long long)GetTickCount64();
+#else
+        { struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts); return (long long)ts.tv_sec * 1000 + ts.tv_nsec / 1000000; }
+#endif
     case SYS_UNIXTIME: return (long long)time(NULL);
     case SYS_BRK:
         if (!a) return (long long)brk_cur;
@@ -505,11 +1223,33 @@ static long long do_syscall_locked(u64 n, u64 a, u64 b, u64 c, u64 d) {
         brk_cur = a;
         return (long long)brk_cur;
     case SYS_MMAP: {
-        /* a mesma regiÃ£o que o dlopen usa (g_proc.mmap_next, compartilhado com macho.c) */
         if (!g_proc.mmap_next) g_proc.mmap_next = mmap_next;
-        if (b == 2 || (b == 3 && c)) return uvm_map(&g_proc, c, a) ? 0 : -MOS_ENOMEM;   /* aloca trecho de uma reserva (b = 3: sob demanda no kernel; aqui, na hora) */
+        if (b == 2 || (b == 3 && c)) return uvm_map(&g_proc, c, a) ? 0 : -MOS_ENOMEM;
+        /* b = 4: mmap de arquivo (MAP_PRIVATE). Sem isto o icudtl.dat do Electron vira página zerada
+         * e o ICU aborta com U_INVALID_FORMAT_ERROR. Pipe devolve EINVAL, como o kernel, e o libSystem
+         * copia com read(). */
+        if (b == 4) {
+            if (!a || (d & 0xFFF)) return -MOS_EINVAL;
+            if (c >= MAXFD || !hfd[c].kind) return -MOS_EBADF;
+            if (hfd[c].kind != HFD_FILE || !hfd[c].fp) return -MOS_EINVAL;
+            if (hfd[c].acc == 1) return -MOS_EACCES;
+            u64 len = (a + 0xFFFF) & ~0xFFFFULL, at = (g_proc.mmap_next + 0xFFFF) & ~0xFFFFULL;
+            if (!uvm_map(&g_proc, at, len)) return -MOS_ENOMEM;
+            g_proc.mmap_next = at + len;
+#ifndef _WIN32
+            ssize_t got = pread(fileno(hfd[c].fp), (void *)at, (size_t)a, (off_t)d);
+            if (got < 0) got = 0;
+#else
+            long long cur = _ftelli64(hfd[c].fp);
+            _fseeki64(hfd[c].fp, (long long)d, SEEK_SET);
+            size_t got = fread((void *)at, 1, (size_t)a, hfd[c].fp);
+            if (cur >= 0) _fseeki64(hfd[c].fp, cur, SEEK_SET);
+            (void)got;
+#endif
+            return (long long)at;
+        }
         u64 len = (a + 0xFFFF) & ~0xFFFFULL, at = (g_proc.mmap_next + 0xFFFF) & ~0xFFFFULL;
-        if (b != 1 && !uvm_map(&g_proc, at, len)) return -MOS_ENOMEM;   /* b = 1: sÃ³ reserva endereÃ§os */
+        if (b != 1 && !uvm_map(&g_proc, at, len)) return -MOS_ENOMEM;
         g_proc.mmap_next = at + len;
         return (long long)at;
     }
@@ -520,51 +1260,173 @@ static long long do_syscall_locked(u64 n, u64 a, u64 b, u64 c, u64 d) {
         const char *mode = "rb";
         if (b & MOS_O_TRUNC) mode = (b & MOS_O_RDWR) ? "w+b" : "wb";
         else if (b & MOS_O_APPEND) mode = (b & MOS_O_RDWR) ? "a+b" : "ab";
-        else if (b & (MOS_O_WRONLY | MOS_O_RDWR)) { mode = "r+b"; if ((b & MOS_O_CREAT) && _access(hp, 0)) mode = "w+b"; }
-        int fd = 3;
-        while (fd < MAXFD && fds[fd]) fd++;
-        if (fd == MAXFD) return -MOS_EMFILE;
-        fds[fd] = fopen(hp, mode);
-        if (getenv("MACHOTEST_TRACE_FS")) fprintf(stderr, "[fs] open %s -> %s\n", (const char *)a, fds[fd] ? "ok" : "nÃ£o existe");
-        return fds[fd] ? fd : -MOS_ENOENT;
+        else if (b & (MOS_O_WRONLY | MOS_O_RDWR)) {
+            mode = "r+b";
+#ifdef _WIN32
+            if ((b & MOS_O_CREAT) && _access(hp, 0)) mode = "w+b";
+#else
+            if ((b & MOS_O_CREAT) && access(hp, F_OK) != 0) mode = "w+b";
+#endif
+        }
+        int fd = fd_alloc();
+        if (fd < 0) return -MOS_EMFILE;
+        FILE *fp = fopen(hp, mode);
+        if (getenv("MACHOTEST_TRACE_FS")) fprintf(stderr, "[fs] open %s -> %s\n", (const char *)a, fp ? "ok" : "não existe");
+        if (!fp) return -MOS_ENOENT;
+        hfd[fd].kind = HFD_FILE;
+        hfd[fd].fp = fp;
+        snprintf(hfd[fd].gpath, sizeof hfd[fd].gpath, "%s", (const char *)a);
+        snprintf(hfd[fd].mode, sizeof hfd[fd].mode, "%s", mode);
+        hfd[fd].acc = (b & MOS_O_RDWR) ? 2 : (b & MOS_O_WRONLY) ? 1 : 0;
+        hfd[fd].cloexec = (b & MOS_O_CLOEXEC) ? 1 : 0;
+        return fd;
     }
-    case SYS_CLOSE: if (a < MAXFD && fds[a]) { fclose(fds[a]); fds[a] = NULL; return 0; } return -MOS_EBADF;
-    case SYS_LSEEK: if (a < MAXFD && fds[a]) { _fseeki64(fds[a], (long long)b, (int)c); return _ftelli64(fds[a]); } return -MOS_EBADF;
+    case SYS_CLOSE:
+        if (a >= MAXFD || !hfd[a].kind) return -MOS_EBADF;
+        fd_clear((int)a);
+        return 0;
+    case SYS_FDPATH: {
+        if (a >= MAXFD || hfd[a].kind != HFD_FILE) return -MOS_EBADF;
+        size_t n = strlen(hfd[a].gpath) + 1;
+        if (n <= 1 || n > c) return -MOS_EINVAL;
+        memcpy((void *)b, hfd[a].gpath, n);
+        return (long long)n - 1;
+    }
+    case SYS_LSEEK:
+        if (a >= MAXFD || hfd[a].kind != HFD_FILE || !hfd[a].fp) return -MOS_EBADF;
+#ifdef _WIN32
+        _fseeki64(hfd[a].fp, (long long)b, (int)c);
+        return _ftelli64(hfd[a].fp);
+#else
+        if (fseeko(hfd[a].fp, (off_t)b, (int)c) != 0) return -MOS_EINVAL;
+        return (long long)ftello(hfd[a].fp);
+#endif
+    case SYS_DUP2: {
+        if (a >= MAXFD || !hfd[a].kind) return -MOS_EBADF;
+        int nfd;
+        if (b == MOS_DUP_ANY) {
+            int min = (int)(c > 3 ? c : 3);
+            nfd = -1;
+            for (int i = min; i < MAXFD; i++) if (!hfd[i].kind) { nfd = i; break; }
+            if (nfd < 0) return -MOS_EMFILE;
+        } else {
+            if (b >= MAXFD) return -MOS_EBADF;
+            if (a == b) return (long long)a;
+            nfd = (int)b;
+        }
+        if (hfd[a].kind == HFD_FILE) {
+            int dfd = dup(fileno(hfd[a].fp));
+            if (dfd < 0) return -MOS_EMFILE;
+            FILE *nf = fdopen(dfd, hfd[a].mode[0] ? hfd[a].mode : "rb");
+            if (!nf) { close(dfd); return -MOS_EMFILE; }
+            if (hfd[nfd].kind) fd_clear(nfd);
+            hfd[nfd] = hfd[a];
+            hfd[nfd].fp = nf;
+            return nfd;
+        }
+        pipe_addref(&hfd[a]);
+        if (hfd[nfd].kind) fd_clear(nfd);
+        hfd[nfd] = hfd[a];
+        return nfd;
+    }
+    case SYS_FDFLAGS:
+        if (a >= MAXFD || !hfd[a].kind) return -MOS_EBADF;
+        if (b == 2) return hfd[a].acc & 3;
+        if (b) hfd[a].cloexec = c ? 1 : 0;
+        return hfd[a].cloexec ? 1 : 0;
+    case SYS_TTY:
+        if (a == MOS_TTY_SETFL) {
+            if (b >= MAXFD || !hfd[b].kind) return -MOS_EBADF;
+            hfd[b].nb = c ? 1 : 0;
+            return 0;
+        }
+        return -MOS_ENOTTY;
     case SYS_FSTAT: case SYS_STAT: {
+        if (n == SYS_FSTAT && a < MAXFD && (hfd[a].kind == HFD_PR || hfd[a].kind == HFD_PW || hfd[a].kind == HFD_RW)) {
+            pipe_stat((int)a, (mos_stat_t *)b);
+            return 0;
+        }
+#ifdef _WIN32
         struct _stat64 s;
         int r;
-        if (n == SYS_FSTAT) { if (a >= MAXFD || !fds[a]) return -MOS_EBADF; r = _fstat64(_fileno(fds[a]), &s); }
+        if (n == SYS_FSTAT) { if (a >= MAXFD || hfd[a].kind != HFD_FILE || !hfd[a].fp) return -MOS_EBADF; r = _fstat64(_fileno(hfd[a].fp), &s); }
         else { host_path(a, hp, sizeof hp); r = _stat64(hp, &s); }
-        if (getenv("MACHOTEST_TRACE_FS") && n == SYS_STAT) fprintf(stderr, "[fs] stat %s -> %s\n", (const char *)a, r ? "nÃ£o existe" : "ok");
+        if (getenv("MACHOTEST_TRACE_FS") && n == SYS_STAT) fprintf(stderr, "[fs] stat %s -> %s\n", (const char *)a, r ? "não existe" : "ok");
         if (r) return -MOS_ENOENT;
         mos_stat_t *m = (mos_stat_t *)b;
         m->size = (unsigned long long)s.st_size;
         m->is_dir = (s.st_mode & _S_IFDIR) != 0;
         m->mtime = s.st_mtime;
+#else
+        struct stat s;
+        int r;
+        if (n == SYS_FSTAT) { if (a >= MAXFD || hfd[a].kind != HFD_FILE || !hfd[a].fp) return -MOS_EBADF; r = fstat(fileno(hfd[a].fp), &s); }
+        else { host_path(a, hp, sizeof hp); r = stat(hp, &s); }
+        if (getenv("MACHOTEST_TRACE_FS") && n == SYS_STAT) fprintf(stderr, "[fs] stat %s -> %s\n", (const char *)a, r ? "não existe" : "ok");
+        if (r) return -MOS_ENOENT;
+        mos_stat_t *m = (mos_stat_t *)b;
+        memset(m, 0, sizeof *m);
+        m->size = (unsigned long long)s.st_size;
+        m->is_dir = S_ISDIR(s.st_mode) ? 1 : 0;
+        m->mtime = (long long)s.st_mtime;
+#endif
         return 0;
     }
     case SYS_READDIR: {
         host_path(a, hp, sizeof hp);
+#ifdef _WIN32
         strcat(hp, "\\*");
-        WIN32_FIND_DATAA fd;
-        HANDLE h = FindFirstFileA(hp, &fd);
+        WIN32_FIND_DATAA wfd;
+        HANDLE h = FindFirstFileA(hp, &wfd);
         if (h == INVALID_HANDLE_VALUE) return -MOS_ENOENT;
         u64 i = 0;
         do {
-            if (!strcmp(fd.cFileName, ".") || !strcmp(fd.cFileName, "..")) continue;
-            if (i++ == b) { snprintf((char *)c, d, "%s", fd.cFileName); FindClose(h); return 1; }
-        } while (FindNextFileA(h, &fd));
+            if (!strcmp(wfd.cFileName, ".") || !strcmp(wfd.cFileName, "..")) continue;
+            if (i++ == b) { snprintf((char *)c, d, "%s", wfd.cFileName); FindClose(h); return 1; }
+        } while (FindNextFileA(h, &wfd));
         FindClose(h);
         return 0;
+#else
+        DIR *dir = opendir(hp);
+        if (!dir) return -MOS_ENOENT;
+        struct dirent *de;
+        u64 i = 0;
+        while ((de = readdir(dir))) {
+            if (!strcmp(de->d_name, ".") || !strcmp(de->d_name, "..")) continue;
+            if (i++ == b) { snprintf((char *)c, (size_t)d, "%s", de->d_name); closedir(dir); return 1; }
+        }
+        closedir(dir);
+        return 0;
+#endif
     }
-    case SYS_MKDIR: host_path(a, hp, sizeof hp); return _mkdir(hp) ? -MOS_EEXIST : 0;
+    case SYS_MKDIR:
+        host_path(a, hp, sizeof hp);
+#ifdef _WIN32
+        return _mkdir(hp) ? -MOS_EEXIST : 0;
+#else
+        return mkdir(hp, 0755) ? -MOS_EEXIST : 0;
+#endif
     case SYS_UNLINK: host_path(a, hp, sizeof hp); return remove(hp) ? -MOS_ENOENT : 0;
-    case SYS_RENAME: { char hp2[1024]; host_path(a, hp, sizeof hp); host_path(b, hp2, sizeof hp2); return rename(hp, hp2) ? -MOS_ENOENT : 0; }
+    case SYS_RENAME: {
+        char hp2[4096];
+        host_path(a, hp, sizeof hp);
+        host_path(b, hp2, sizeof hp2);
+        return rename(hp, hp2) ? -MOS_ENOENT : 0;
     }
-    fprintf(stderr, "[machotest] syscall %llu nÃ£o emulada\n", n);
+    }
+    {
+        static unsigned char seen_sys[256];
+        if (n < 256) {
+            if (seen_sys[n]) return -MOS_EINVAL;
+            seen_sys[n] = 1;
+        }
+        fprintf(stderr, "[machotest] syscall %llu não emulada (a=%llx b=%llx c=%llx)\n",
+                (unsigned long long)n, (unsigned long long)a, (unsigned long long)b, (unsigned long long)c);
+    }
     return -MOS_EINVAL;
 }
 
+#ifdef _WIN32
 /* ---- sinais (SYS_SIG), o bastante para o runtime do tradutor arm64 (userland/a64rt/sig.c) e para tratadores x86:
  * ações por processo, máscara por thread, faltas do Windows (VEH) viram o quadro do kernel (siginfo + ucontext +
  * mcontext x86 do Darwin) e desviam para o trampolim; MOS_SIGOP_RETURN restaura o CONTEXT. TKILL para outra thread
@@ -814,16 +1676,307 @@ static DWORD WINAPI watchdog(LPVOID arg) {
     ExitProcess(124);
     return 0;
 }
+#else
+
+/* ---- Linux: int 0x80 vira SIGSYS (seccomp AUDIT_ARCH_I386). O RIP já aponta depois da instrução.
+ * Faltas do guest viram o quadro de sinal do mOS, como a VEH do Windows. */
+static mos_sigaction_t sig_act[MOS_NSIG];
+static __thread u32 sig_mask_t;
+static volatile unsigned sig_pend[256];
+static int sig_default_kills(int s) {
+    return !(s == MOS_SIGCHLD || s == MOS_SIGURG || s == MOS_SIGWINCH || s == MOS_SIGINFO || s == MOS_SIGCONT || s == MOS_SIGIO);
+}
+typedef struct { mos_siginfo_t info; mos_ucontext_t uc; u64 pad; mos_mcontext_t mc; } host_sigframe_t;
+static void lx_to_ss(ucontext_t *uc, mos_thread_state_t *s) {
+    greg_t *g = uc->uc_mcontext.gregs;
+    s->rax = (u64)g[REG_RAX]; s->rbx = (u64)g[REG_RBX]; s->rcx = (u64)g[REG_RCX]; s->rdx = (u64)g[REG_RDX];
+    s->rdi = (u64)g[REG_RDI]; s->rsi = (u64)g[REG_RSI]; s->rbp = (u64)g[REG_RBP]; s->rsp = (u64)g[REG_RSP];
+    s->r8 = (u64)g[REG_R8]; s->r9 = (u64)g[REG_R9]; s->r10 = (u64)g[REG_R10]; s->r11 = (u64)g[REG_R11];
+    s->r12 = (u64)g[REG_R12]; s->r13 = (u64)g[REG_R13]; s->r14 = (u64)g[REG_R14]; s->r15 = (u64)g[REG_R15];
+    s->rip = (u64)g[REG_RIP]; s->rflags = (u64)g[REG_EFL]; s->cs = 0x1B;
+}
+static void ss_to_lx(const mos_thread_state_t *s, ucontext_t *uc) {
+    greg_t *g = uc->uc_mcontext.gregs;
+    g[REG_RAX] = (greg_t)s->rax; g[REG_RBX] = (greg_t)s->rbx; g[REG_RCX] = (greg_t)s->rcx; g[REG_RDX] = (greg_t)s->rdx;
+    g[REG_RDI] = (greg_t)s->rdi; g[REG_RSI] = (greg_t)s->rsi; g[REG_RBP] = (greg_t)s->rbp; g[REG_RSP] = (greg_t)s->rsp;
+    g[REG_R8] = (greg_t)s->r8; g[REG_R9] = (greg_t)s->r9; g[REG_R10] = (greg_t)s->r10; g[REG_R11] = (greg_t)s->r11;
+    g[REG_R12] = (greg_t)s->r12; g[REG_R13] = (greg_t)s->r13; g[REG_R14] = (greg_t)s->r14; g[REG_R15] = (greg_t)s->r15;
+    g[REG_RIP] = (greg_t)s->rip; g[REG_EFL] = (greg_t)((g[REG_EFL] & ~0xDD5u) | (s->rflags & 0xDD5u));
+}
+static void sig_die(int s) {
+    fflush(stdout);
+    fprintf(stderr, "[machotest] encerrado pelo sinal %d (thread %lld)\n", s, my_tid);
+    _exit(128 + s);
+}
+static int sig_deliver_uc(ucontext_t *uc, int s, int code, u64 addr, u32 err) {
+    greg_t *g = uc->uc_mcontext.gregs;
+    mos_sigaction_t sa = sig_act[s];
+    if (sa.handler == MOS_SIG_IGN) return 1;
+    if (sa.handler == MOS_SIG_DFL || (sig_mask_t & (1u << s))) { if (sig_default_kills(s)) sig_die(s); return 1; }
+    u64 fa = ((u64)g[REG_RSP] - 128 - sizeof(host_sigframe_t)) & ~15ULL;
+    host_sigframe_t *f = (host_sigframe_t *)fa;
+    memset(f, 0, sizeof *f);
+    f->info.si_signo = s; f->info.si_code = code; f->info.si_addr = addr; f->info.si_pid = 42; f->info.si_uid = 501;
+    f->uc.uc_sigmask = sig_mask_t;
+    f->uc.uc_stack.flags = MOS_SS_DISABLE;
+    f->uc.uc_mcsize = sizeof(mos_mcontext_t);
+    f->uc.uc_mcontext = (u64)&f->mc;
+    f->mc.err = err; f->mc.faultvaddr = addr; f->mc.trapno = s == MOS_SIGSEGV ? 14 : 0;
+    lx_to_ss(uc, &f->mc.ss);
+    if (uc->uc_mcontext.fpregs) memcpy(f->mc.fx, uc->uc_mcontext.fpregs, 512);
+    sig_mask_t |= sa.mask | ((sa.flags & MOS_SA_NODEFER) ? 0 : (1u << s));
+    g[REG_RSP] = (greg_t)(fa - 8);
+    if (sa.tramp) {
+        g[REG_RIP] = (greg_t)sa.tramp; g[REG_RDI] = (greg_t)sa.handler;
+        g[REG_RSI] = (sa.flags & MOS_SA_SIGINFO) ? 30 : 1; g[REG_RDX] = (greg_t)s;
+        g[REG_RCX] = (greg_t)&f->info; g[REG_R8] = (greg_t)&f->uc;
+    } else {
+        g[REG_RIP] = (greg_t)sa.handler; g[REG_RDI] = (greg_t)s; g[REG_RSI] = (greg_t)&f->info; g[REG_RDX] = (greg_t)&f->uc;
+    }
+    *(u64 *)(u64)g[REG_RSP] = 0;
+    return 1;
+}
+static void sig_check_uc(ucontext_t *uc) {
+    if (my_tid < 0 || my_tid >= 256) return;
+    u32 p = sig_pend[my_tid] & ~sig_mask_t;
+    if (!p) return;
+    int s = __builtin_ctz(p);
+    __atomic_and_fetch((unsigned *)&sig_pend[my_tid], ~(1u << s), __ATOMIC_SEQ_CST);
+    sig_deliver_uc(uc, s, MOS_SI_USER, 0, 0);
+}
+static int sig_syscall_uc(ucontext_t *uc) {
+    greg_t *g = uc->uc_mcontext.gregs;
+    u64 op = (u64)g[REG_RDI], a = (u64)g[REG_RSI], b = (u64)g[REG_RDX], d = (u64)g[REG_R10];
+    long long r = 0;
+    switch (op) {
+    case MOS_SIGOP_ACTION:
+        if (a == 0 || a >= MOS_NSIG) { r = -MOS_EINVAL; break; }
+        if (d) memcpy((void *)d, &sig_act[a], sizeof(mos_sigaction_t));
+        if (b) memcpy(&sig_act[a], (const void *)b, sizeof(mos_sigaction_t));
+        break;
+    case MOS_SIGOP_MASK: {
+        u32 old = sig_mask_t, set = b ? *(const u32 *)b : 0;
+        if (b) {
+            if (a == MOS_SIG_BLOCK) sig_mask_t |= set; else if (a == MOS_SIG_UNBLOCK) sig_mask_t &= ~set;
+            else if (a == MOS_SIG_SETMASK) sig_mask_t = set; else { r = -MOS_EINVAL; break; }
+            sig_mask_t &= ~((1u << MOS_SIGKILL) | (1u << MOS_SIGSTOP));
+        }
+        if (d) *(u32 *)d = old;
+        break;
+    }
+    case MOS_SIGOP_PENDING: *(u32 *)a = my_tid < 256 ? sig_pend[my_tid] : 0; break;
+    case MOS_SIGOP_ALTSTACK: if (b) memset((void *)b, 0, sizeof(mos_sigstack_t)), ((mos_sigstack_t *)b)->flags = MOS_SS_DISABLE; break;
+    case MOS_SIGOP_RETURN: {
+        const mos_ucontext_t *u = (const mos_ucontext_t *)a;
+        const mos_mcontext_t *mc = (const mos_mcontext_t *)u->uc_mcontext;
+        ss_to_lx(&mc->ss, uc);
+        if (uc->uc_mcontext.fpregs) memcpy(uc->uc_mcontext.fpregs, mc->fx, 512);
+        sig_mask_t = u->uc_sigmask & ~((1u << MOS_SIGKILL) | (1u << MOS_SIGSTOP));
+        sig_check_uc(uc);
+        return 1;
+    }
+    case MOS_SIGOP_TKILL:
+        if (b == 0) break;
+        if (b >= MOS_NSIG || a >= 256) { r = -MOS_EINVAL; break; }
+        __atomic_or_fetch((unsigned *)&sig_pend[a], 1u << b, __ATOMIC_SEQ_CST);
+        if ((long long)a == my_tid) sig_check_uc(uc);
+        break;
+    case MOS_SIGOP_SUSPEND: r = -MOS_EINTR; break;
+    case MOS_SIGOP_WAIT: r = -MOS_EAGAIN; break;
+    default: r = -MOS_EINVAL;
+    }
+    g[REG_RAX] = (greg_t)r;
+    return 1;
+}
+
+static int prot_spin;
+static struct { u64 page; u8 prot; int used; } ph[65536];
+static void prot_lock(void) { while (__atomic_exchange_n(&prot_spin, 1, __ATOMIC_ACQUIRE)) {} }
+static void prot_unlock(void) { __atomic_store_n(&prot_spin, 0, __ATOMIC_RELEASE); }
+static u8 prot_get(u64 page) {
+    unsigned i = (unsigned)((page / 4096) & 65535u);
+    prot_lock();
+    u8 r = 7;
+    for (int n = 0; n < 48; n++) {
+        unsigned j = (i + (unsigned)n) & 65535u;
+        if (!ph[j].used) break;
+        if (ph[j].page == page) { r = ph[j].prot; break; }
+    }
+    prot_unlock();
+    return r;
+}
+static void prot_set(u64 page, u8 prot) {
+    unsigned i = (unsigned)((page / 4096) & 65535u);
+    prot_lock();
+    for (int n = 0; n < 48; n++) {
+        unsigned j = (i + (unsigned)n) & 65535u;
+        if (!ph[j].used || ph[j].page == page) { ph[j].used = 1; ph[j].page = page; ph[j].prot = prot; break; }
+    }
+    prot_unlock();
+}
+static int jit_wprotect(u64 *a) {
+    u64 pg = a[0] & ~0xFFFULL;
+    int cur = prot_get(pg);
+    int has_w = (cur & 2) != 0;
+    a[2] = 0;
+    if (a[1] == 2) { a[2] = has_w; return 1; }
+    if (a[1] == 1) {
+        if (!has_w) return 1;
+        int np = (cur & 4) ? (PROT_READ | PROT_EXEC) : PROT_READ;
+        if (mprotect((void *)pg, 4096, np) == 0) { prot_set(pg, (u8)(cur & ~2)); a[2] = 1; }
+        return 1;
+    }
+    a[2] = 1;
+    if (!(cur & 2)) {
+        int np = (cur & 4) ? (PROT_READ | PROT_WRITE | PROT_EXEC) : (PROT_READ | PROT_WRITE);
+        if (mprotect((void *)pg, 4096, np) == 0) prot_set(pg, (u8)(cur | 2));
+    }
+    return 1;
+}
+
+static void lx_leave(ucontext_t *uc, long long code) {
+    greg_t *g = uc->uc_mcontext.gregs;
+    g[REG_RAX] = (greg_t)code;
+    g[REG_RIP] = (greg_t)(u64)host_exit;
+    g[REG_RSP] = (greg_t)host_saved_rsp;
+}
+static void on_guest_signal(int sig, siginfo_t *si, void *v) {
+    ucontext_t *uc = v;
+    greg_t *g = uc->uc_mcontext.gregs;
+    if (in_sig) _exit(139);
+    in_sig = 1;
+    if (sig == SIGUSR1) { g_guest_rip = (u64)g[REG_RIP]; in_sig = 0; return; }
+    if (sig == SIGSYS) {
+        if (my_tid == 1) g_guest_rip = (u64)g[REG_RIP];
+        if (g[REG_RAX] == SYS_EXIT && my_tid != 1) {
+            fflush(stdout);
+            fprintf(stderr, "[machotest] código de saída: %d (thread %lld)\n", (int)g[REG_RDI], my_tid);
+            _exit((unsigned)(int)g[REG_RDI] & 255u);
+        }
+        if (g[REG_RAX] == SYS_EXIT) { lx_leave(uc, (long long)(int)g[REG_RDI]); in_sig = 0; return; }
+        if (g[REG_RAX] == SYS_SIG && sig_syscall_uc(uc)) { in_sig = 0; return; }
+        if (g[REG_RAX] == SYS_MACH_VM && g[REG_RDI] == MACH_VM_JIT_WPROTECT && !getenv("MACHOTEST_NO_WP")) {
+            jit_wprotect((u64 *)g[REG_RSI]);
+            g[REG_RAX] = 0;
+            in_sig = 0;
+            return;
+        }
+        g_r8 = (u64)g[REG_R8];
+        g[REG_RAX] = (greg_t)do_syscall((u64)g[REG_RAX], (u64)g[REG_RDI], (u64)g[REG_RSI], (u64)g[REG_RDX], (u64)g[REG_R10]);
+        sig_check_uc(uc);
+        in_sig = 0;
+        return;
+    }
+    u64 rip = (u64)g[REG_RIP];
+    if (sig == SIGILL && rip >= USER_BASE && rip < USER_END) {
+        const u8 *ip = (const u8 *)rip;
+        if (ip[0] == 0xF3 && (ip[1] & 0xF8) == 0x48 && ip[2] == 0x0F && ip[3] == 0xAE && (ip[4] & 0xC0) == 0xC0) {
+            int reg = (ip[4] >> 3) & 7, rm = (ip[4] & 7) | ((ip[1] & 1) << 3);
+            int map[16] = { REG_RAX, REG_RCX, REG_RDX, REG_RBX, REG_RSP, REG_RBP, REG_RSI, REG_RDI,
+                            REG_R8, REG_R9, REG_R10, REG_R11, REG_R12, REG_R13, REG_R14, REG_R15 };
+            if (reg == 1) { g[map[rm]] = (greg_t)my_gs; g[REG_RIP] += 5; in_sig = 0; return; }
+            if (reg == 3) { my_gs = (u64)g[map[rm]]; g[REG_RIP] += 5; in_sig = 0; return; }
+        }
+    }
+    if (rip < USER_BASE || rip >= USER_END) {
+        fprintf(stderr, "[machotest] sinal %d no host rip=%llx\n", sig, (unsigned long long)rip);
+        _exit(139);
+    }
+    int s = 0, sc = 0;
+    u64 fa = 0;
+    u32 ferr = 0;
+    if (sig == SIGSEGV || sig == SIGBUS) { s = MOS_SIGSEGV; sc = MOS_SEGV_MAPERR; fa = (u64)si->_sifields._sigfault.si_addr; ferr = si->si_code == SEGV_ACCERR ? 2 : 0; }
+    else if (sig == SIGILL) { s = MOS_SIGILL; sc = MOS_ILL_ILLOPC; fa = rip; }
+    else if (sig == SIGTRAP) { s = MOS_SIGTRAP; sc = MOS_TRAP_BRKPT; fa = rip; }
+    else if (sig == SIGFPE) { s = MOS_SIGFPE; sc = MOS_FPE_INTDIV; fa = rip; }
+    bool rt = s && sig_act[s].handler >= A64RT_BASE && sig_act[s].handler < A64RT_BASE + A64RT_SPAN_MAX;
+    if (s && (rt || getenv("MACHOTEST_SIGNALS")) && sig_act[s].handler > MOS_SIG_IGN && !(sig_mask_t & (1u << s))) {
+        sig_deliver_uc(uc, s, sc, fa, ferr);
+        in_sig = 0;
+        return;
+    }
+    if (s && sig_act[s].handler == MOS_SIG_DFL && getenv("MACHOTEST_SIGDIE")) sig_die(s);
+    fprintf(stderr, "[machotest] exceção sinal %d em rip=%llx (endereço %llx)\n", sig, (unsigned long long)rip, (unsigned long long)fa);
+    extern const char *macho_host_symbolize(u64 addr, u64 *off);
+    u64 off;
+    const char *fn = macho_host_symbolize(rip, &off);
+    if (fn && rip < USER_BASE + 0x01000000ULL) fprintf(stderr, "  em libSystem: %s+0x%llx\n", fn, (unsigned long long)off);
+    fprintf(stderr, "  rdi=%llx rsi=%llx rdx=%llx rax=%llx rbx=%llx\n",
+            (unsigned long long)g[REG_RDI], (unsigned long long)g[REG_RSI], (unsigned long long)g[REG_RDX],
+            (unsigned long long)g[REG_RAX], (unsigned long long)g[REG_RBX]);
+    if (my_tid != 1) { fflush(stdout); fprintf(stderr, "[machotest] falha na thread %lld; encerrando\n", my_tid); _exit(245); }
+    lx_leave(uc, -11);
+    in_sig = 0;
+}
+
+static pthread_t g_main_thread;
+static int g_watch_ms;
+static void *watchdog(void *arg) {
+    (void)arg;
+    struct timespec ts = { g_watch_ms / 1000, (long)(g_watch_ms % 1000) * 1000000L };
+    nanosleep(&ts, NULL);
+    extern const char *macho_host_symbolize(u64 addr, u64 *off);
+    for (int k = 0; k < 3; k++) {
+        u64 rip = g_guest_rip, off = 0;
+        const char *fn = rip && rip < USER_BASE + 0x01000000ULL ? macho_host_symbolize(rip, &off) : NULL;
+        fprintf(stderr, "[watchdog] amostra %d: rip=%llx %s+0x%llx (última syscall %llu a=%llx b=%llx)\n",
+                k, (unsigned long long)rip, fn ? fn : "(imagem)", fn ? (unsigned long long)off : 0,
+                (unsigned long long)g_last_sys[0], (unsigned long long)g_last_sys[1], (unsigned long long)g_last_sys[2]);
+        fflush(stderr);
+        struct timespec p = { 0, 300000000L };
+        nanosleep(&p, NULL);
+    }
+    fflush(stdout);
+    _exit(124);
+    return NULL;
+}
+static int host_linux_init(void) {
+    host_cv_init();
+    host_linux_altstack();
+    struct sigaction sa;
+    memset(&sa, 0, sizeof sa);
+    sa.sa_sigaction = on_guest_signal;
+    sa.sa_flags = SA_SIGINFO | SA_ONSTACK | SA_RESTART;
+    sigemptyset(&sa.sa_mask);
+    int sigs[] = { SIGSYS, SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGTRAP, SIGUSR1 };
+    for (unsigned i = 0; i < sizeof sigs / sizeof sigs[0]; i++)
+        if (sigaction(sigs[i], &sa, NULL) != 0) { perror("sigaction"); return -1; }
+    signal(SIGPIPE, SIG_IGN);
+    struct sock_filter f[] = {
+        BPF_STMT(BPF_LD | BPF_W | BPF_ABS, (unsigned)offsetof(struct seccomp_data, arch)),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, AUDIT_ARCH_I386, 0, 1),
+        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_TRAP),
+        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
+    };
+    struct sock_fprog prog = { .len = 4, .filter = f };
+    if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0 || prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &prog) != 0) {
+        perror("seccomp");
+        fprintf(stderr, "[machotest] sem o filtro seccomp o int 0x80 vira syscall do Linux; não dá para rodar o guest\n");
+        return -1;
+    }
+    g_main_thread = pthread_self();
+    if (getenv("MACHOTEST_WATCHDOG")) {
+        g_watch_ms = atoi(getenv("MACHOTEST_WATCHDOG"));
+        pthread_t th;
+        pthread_create(&th, NULL, watchdog, NULL);
+    }
+    return 0;
+}
+#endif
 
 int main(int argc, char **argv) {
+#ifdef _WIN32
     SetConsoleOutputCP(CP_UTF8);
     DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &g_main_thread, 0, FALSE, DUPLICATE_SAME_ACCESS);
     if (getenv("MACHOTEST_WATCHDOG")) CreateThread(NULL, 0, watchdog, (LPVOID)(uintptr_t)atoi(getenv("MACHOTEST_WATCHDOG")), 0, NULL);
     InitializeCriticalSection(&sys_lock);
+#else
+    if (host_linux_init() != 0) return 2;
+#endif
     if (argc >= 4 && !strcmp(argv[1], "--report")) {
         usize ll, ml;
         u8 *ls = read_file(argv[2], &ll), *m = read_file(argv[3], &ml);
-        if (!ls || !m) { fprintf(stderr, "nÃ£o foi possÃ­vel ler os arquivos\n"); return 2; }
+        if (!ls || !m) { fprintf(stderr, "não foi possível ler os arquivos\n"); return 2; }
         libsystem_mos = ls; libsystem_mos_end = ls + ll;
         static char out[8192];
         bool ok = macho_report_image(m, ml, argv[3], out, sizeof out);
@@ -833,7 +1986,7 @@ int main(int argc, char **argv) {
     if (argc < 4) { fprintf(stderr, "uso: machotest <libSystem.mos> <raiz> <mach-o> [args]\n"); return 2; }
     usize ll, ml;
     u8 *ls = read_file(argv[1], &ll), *m = read_file(argv[3], &ml);
-    if (!ls || !m) { fprintf(stderr, "nÃ£o foi possÃ­vel ler os arquivos\n"); return 2; }
+    if (!ls || !m) { fprintf(stderr, "não foi possível ler os arquivos\n"); return 2; }
     libsystem_mos = ls; libsystem_mos_end = ls + ll;
     g_root = argv[2];
     const char *base = strrchr(argv[3], '/');
@@ -848,14 +2001,17 @@ int main(int argc, char **argv) {
     script = getenv("MACHOTEST_EVENTS");
     brk_cur = g_proc.brk;
     brk_limit = brk_cur + (512ull << 20);
+#ifdef _WIN32
     AddVectoredExceptionHandler(1, veh);
-    if (getenv("MACHOTEST_DEBUG")) fprintf(stderr, "[machotest] entry=%llx rsp=%llx rdi=%llx brk=%llx\n", entry, rsp, rdi, brk_cur);
+#endif
+    if (getenv("MACHOTEST_DEBUG")) fprintf(stderr, "[machotest] entry=%llx rsp=%llx rdi=%llx brk=%llx\n",
+        (unsigned long long)entry, (unsigned long long)rsp, (unsigned long long)rdi, (unsigned long long)brk_cur);
     int code = 0;
     {
         int (*enter)(u64, u64, u64) = (int (*)(u64, u64, u64))host_enter;
         code = enter(entry, rdi, rsp);
     }
     fflush(stdout);
-    fprintf(stderr, "[machotest] cÃ³digo de saÃ­da: %d\n", code);
+    fprintf(stderr, "[machotest] código de saída: %d\n", code);
     return code;
 }

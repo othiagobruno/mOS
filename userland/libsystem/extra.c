@@ -306,7 +306,7 @@ extern int cx_main_tid;
 int pthread_main_np(void) { return !cx_main_tid || (int)SYS0(SYS_GETTID) == cx_main_tid; }
 /* futex do kernel (SYS_FUTEX_WAIT/WAKE, kernel/proc/process.c): a thread que espera fica parada no kernel em vez de
  * girar com SYS_YIELD. ms < 0 = sem prazo. Devolve 0 (acordada), -35 (o valor já tinha mudado), -60 (prazo) ou -4
- * (sinal). Sem o futex (o harness machotest não o emula: -EINVAL), cede a CPU como antes e o chamador confere de novo. */
+ * (sinal). O harness também emula estas duas syscalls. Se alguma devolver -EINVAL, cede a CPU e o chamador confere de novo. */
 static int futex_ok = 1;
 int cx_futex_wait(volatile int *w, int expected, long ms) {
     if (futex_ok) {
