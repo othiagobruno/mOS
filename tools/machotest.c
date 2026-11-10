@@ -602,6 +602,10 @@ static void *thread_main(void *p) {
     thread_start_t s = *(thread_start_t *)p;
     free(p);
     my_tid = s.tid;
+    /* O kernel zera gs_base na criação (process.c). O clone do Linux copia o GS do pai:
+     * sem isto a thread nova reusa a TSD/TLV da principal e um CHECK de "thread ainda
+     * não registrada" (cmp [rsi], 0; int3; ud2) dispara no Electron. */
+    __asm__ volatile("wrgsbase %0" :: "r"((unsigned long)0) : "memory");
     /* A thread nasce dentro do tratador de SIGSYS (a syscall SYS_THREAD_CREATE).
      * O pthread herda essa máscara: com SIGSYS bloqueado, o próximo int 0x80 do guest
      * mata o processo em vez de voltar para on_guest_signal. */
