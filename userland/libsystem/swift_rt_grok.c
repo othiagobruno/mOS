@@ -23,6 +23,7 @@ typedef uint64_t uint_fast64_t;
 typedef int64_t intmax_t;
 typedef uint64_t uintmax_t;
 #endif
+#include <stddef.h>
 #include <stdatomic.h>
 /* Runtime Swift do caminho de carga das imagens que o VS Code abre
  * (libmsalruntime e vsce-sign). Alocação, retenção, swift_once e a tabela
