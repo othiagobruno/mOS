@@ -24,20 +24,14 @@ typedef size_t usize;
 
 /* contagem de alocações vivas para achar vazamentos (tools/dmgtest.c) */
 extern long long g_live_allocs, g_live_bytes;
-#ifdef _WIN32
+#if defined(_WIN32)
 #include <malloc.h>
-#define host_usable_size(p) _msize(p)
+static inline size_t mos_usable(void *p) { return _msize(p); }
 #else
 #include <malloc.h>
-#define host_usable_size(p) malloc_usable_size(p)
+extern size_t malloc_usable_size(void *);
+static inline size_t mos_usable(void *p) { return malloc_usable_size(p); }
 #endif
-static inline size_t mos_usable(void *p) {
-#ifdef _WIN32
-    return _msize(p);
-#else
-    return malloc_usable_size(p);
-#endif
-}
 static inline void *kmalloc(size_t n) { void *p = malloc(n ? n : 1); if (p) { g_live_allocs++; g_live_bytes += mos_usable(p); } return p; }
 static inline void *kcalloc(size_t n, size_t s) { void *p = kmalloc(n * s); if (p) memset(p, 0, n * s); return p; }
 static inline void kfree(void *p) { if (!p) return; g_live_allocs--; g_live_bytes -= mos_usable(p); free(p); }

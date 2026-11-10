@@ -45,6 +45,14 @@ void              gpu_vsync_wait(void);
  * px (w x h, stride = w) sem cópia na CPU. false = sem GPU apta; quem chama copia para o framebuffer. */
 bool              gpu_present(const u32 *px, int w, int h, int x, int y, int rw, int rh);
 bool              virtio_gpu_probe(gpu_info_t *g);   /* dev/virtio_gpu.c */
+/* virtio-gpu 3D (virgl / venus). 0 = ok; senão -MOS_*. Sem dispositivo: -MOS_ENXIO. */
+u32               virtio_gpu_caps(void);             /* MOS_GPU_CAP_VIRGL / VENUS */
+int               virtio_gpu_ctx(unsigned id, unsigned kind, int create);
+int               virtio_gpu_bo(unsigned ctx, unsigned id, unsigned long long size, int create);
+int               virtio_gpu_submit(unsigned ctx, const void *cmds, unsigned n, unsigned fence_id);
+/* KMS: framebuffer e modo. Intel Gen9+ programa o pipe; AMD só troca o modo acompanhado. */
+int               gpu_kms_available(void);
+int               gpu_kms_set(unsigned connector, unsigned w, unsigned h, unsigned stride, unsigned format, unsigned long long surf_phys);
 void              gpu_displays_changed(void);        /* o arranjo dos monitores mudou: religar as saídas */
 bool              gpu_vsync_active(void);
 u32               gpu_refresh_hz(void);   /* 0 = desconhecida */
