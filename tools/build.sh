@@ -308,6 +308,11 @@ rm -rf "$ESP"
 mkdir -p "$ESP/EFI/BOOT" "$ESP/mOS/Sistema/Programas" "$ESP/mOS/usr/bin"
 cp -f "$OUT/BOOTX64.EFI" "$ESP/EFI/BOOT/BOOTX64.EFI"
 cp -a "$ROOT/root/mOS/." "$ESP/mOS/"
+# firmware de dispositivos (Intel e Realtek Wi-Fi/Bluetooth, do linux-firmware, redistribuível; licenças junto)
+if [ -d "$ROOT/firmware" ]; then
+    mkdir -p "$ESP/mOS/Sistema/Firmware"
+    cp -a "$ROOT/firmware/." "$ESP/mOS/Sistema/Firmware/"
+fi
 rm -rf "$ESP/mOS/mOS"
 if [ -d "$ESP/mOS/Users" ]; then
     if ! find "$ESP/mOS/Users" -type f | grep -q .; then

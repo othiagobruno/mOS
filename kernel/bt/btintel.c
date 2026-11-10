@@ -20,9 +20,12 @@
 #define FW_DIR "/Sistema/Firmware"
 
 /* fornecidos por dev/bluetooth.c; as versões fracas abaixo só valem enquanto ele não os tiver */
-__attribute__((weak)) int bt_hci_cmd_resp(u16 opcode, const void *p, u8 len, u8 *resp, int max, int timeout_ms) { return -1; }
-__attribute__((weak)) bool bt_hci_cmd_async(u16 opcode, const void *p, u8 len) { return false; }
-__attribute__((weak)) int bt_wait_event(u8 *buf, int max, int timeout_ms) { return -1; }
+__attribute__((weak)) int bt_hci_cmd_resp(u16 opcode, const void *p, u8 len, u8 *resp, int max, int timeout_ms) {
+    (void)opcode; (void)p; (void)len; (void)resp; (void)max; (void)timeout_ms;
+    return -1;
+}
+__attribute__((weak)) bool bt_hci_cmd_async(u16 opcode, const void *p, u8 len) { (void)opcode; (void)p; (void)len; return false; }
+__attribute__((weak)) int bt_wait_event(u8 *buf, int max, int timeout_ms) { (void)buf; (void)max; (void)timeout_ms; return -1; }
 
 typedef struct {
     u32 cnvi_top, cnvr_top, cnvi_bt;
@@ -138,7 +141,8 @@ static bool load_ddc(const char *name) {
     return true;
 }
 
-bool bt_vendor_setup(u16 vid, u16 pid) {
+bool btintel_setup(u16 vid, u16 pid) {
+    (void)pid;
     if (vid != 0x8087) return true;                    /* só controladores Intel */
     ver_t v;
     if (!read_version(&v)) return false;

@@ -12,4 +12,6 @@ void bt_poll(void);
 int  bt_hci_cmd_resp(u16 opcode, const void *p, u8 len, u8 *resp, int max, int timeout_ms); /* bytes do Command Complete (status incluso) ou <0 */
 bool bt_hci_cmd_async(u16 opcode, const void *p, u8 len);          /* envia sem esperar resposta */
 int  bt_wait_event(u8 *buf, int max, int timeout_ms);              /* só dentro de bt_vendor_setup; <0 em timeout */
-bool bt_vendor_setup(u16 vid, u16 pid);                            /* fraco: true. Roda após o VFS, antes do HCI_Reset; false = adaptador fica desligado */
+bool bt_vendor_setup(u16 vid, u16 pid);                            /* kernel/bt/vendor.c. Roda após o VFS, antes do HCI_Reset; false = adaptador fica desligado */
+bool btintel_setup(u16 vid, u16 pid);                              /* kernel/bt/btintel.c: true se não for Intel */
+bool btrtl_setup(u16 vid, u16 pid);                                /* kernel/bt/btrtl.c: true se não for Realtek */

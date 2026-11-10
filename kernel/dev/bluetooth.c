@@ -331,8 +331,8 @@ int bt_wait_event(u8 *buf, int max, int timeout_ms) {
     }
 }
 
-/* configuração do fabricante (ex.: carregar firmware Intel); a implementação forte fica em kernel/bt/ */
-__attribute__((weak)) bool bt_vendor_setup(u16 vid, u16 pid) { (void)vid; (void)pid; return true; }
+/* configuração do fabricante (firmware Intel/Realtek): bt_vendor_setup fica em kernel/bt/vendor.c */
+bool bt_vendor_setup(u16 vid, u16 pid);
 
 bool bt_acl_send(u16 handle, const void *data, u16 len) {
     if (!bt.present || !bt.d || !bt.ep_out || len > 1021) return false;
