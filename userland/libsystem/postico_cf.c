@@ -159,6 +159,7 @@ PK(NSRecoveryAttempterErrorKey, "NSRecoveryAttempter")
 PK(kCFGetAddrInfoFailureKey, "kCFGetAddrInfoFailureKey")
 PK(kCFStreamErrorDomainNetDB, "kCFStreamErrorDomainNetDB")
 PK(kCFStreamErrorDomainNetServices, "kCFStreamErrorDomainNetServices")
+/* CFHost e NSHost estão em cfhost.c. kCFErrorDomainCFNetwork está em vscode_consts.c. Não redefinir. */
 
 typedef struct { double top, left, bottom, right; } ns_edge_insets_t;
 const ns_edge_insets_t NSEdgeInsetsZero = {0, 0, 0, 0};
