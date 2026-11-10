@@ -317,6 +317,17 @@ def cmd_gaps(args: argparse.Namespace) -> None:
     print("gaps", out, "apps", len(usados))
 
 
+def contas_que_subiram(baseline: dict, atual: dict, ids: list[str]) -> list[str]:
+    """Apps cujo número de símbolos distintos ausentes passou da baseline."""
+    subiu = []
+    for app_id in ids:
+        base = int(baseline["apps"][app_id]["distintos"])
+        cur = int(atual[app_id]["distintos"])
+        if cur > base:
+            subiu.append(app_id)
+    return subiu
+
+
 def cmd_gate(_: argparse.Namespace) -> None:
     man = load_manifest()
     baseline_path = Path(__file__).resolve().parent / "baseline.json"
@@ -325,17 +336,73 @@ def cmd_gate(_: argparse.Namespace) -> None:
     ns = argparse.Namespace(ids=None, gate=True, summary=str(summary_path))
     cmd_scan(ns)
     got = json.loads(summary_path.read_text(encoding="utf-8"))
-    failed = False
+    subiu = contas_que_subiram(baseline, got, man["gate_ids"])
     for app_id in man["gate_ids"]:
         base = baseline["apps"][app_id]["distintos"]
         cur = got[app_id]["distintos"]
         print(f"{app_id}: baseline {base}, agora {cur}")
-        if cur > base:
-            print(f"FALHA: {app_id} subiu de {base} para {cur} símbolos distintos ausentes")
-            failed = True
-    if failed:
+    if subiu:
+        for app_id in subiu:
+            print(f"FALHA: {app_id} subiu de {baseline['apps'][app_id]['distintos']} para {got[app_id]['distintos']} símbolos distintos ausentes")
         raise SystemExit(1)
     print("gate ok")
+
+
+def cmd_hosttest(args: argparse.Namespace) -> None:
+    amostra = (
+        "Total: 3 imports, 1 sem implementacao (1 simbolos distintos)\n"
+        "Ausentes por origem (simbolos distintos): sistema 1, libc++ 0, Swift 0, unwind 0\n"
+    )
+    got = parse_summary(amostra)
+    if got["distintos"] != 1 or got["origens"].get("sistema") != 1:
+        raise SystemExit(f"parse_summary não leu a conta real: {got}")
+    base = {"apps": {"a": {"distintos": 2}, "b": {"distintos": 5}}}
+    if contas_que_subiram(base, {"a": {"distintos": 2}, "b": {"distintos": 4}}, ["a", "b"]):
+        raise SystemExit("o gate acusou subida quando a conta caiu ou ficou igual")
+    ruim = contas_que_subiram(base, {"a": {"distintos": 3}, "b": {"distintos": 5}}, ["a", "b"])
+    if ruim != ["a"]:
+        raise SystemExit(f"o gate não apontou só o app que piorou: {ruim}")
+
+    lib = Path(args.lib)
+    disco = Path(args.disco)
+    if not lib.is_file() or not disco.is_dir():
+        raise SystemExit(f"falta libSystem ({lib}) ou libunwind ({disco}) do build.sh")
+    zig = ensure_zig()
+    mc = compile_machocheck()
+    work = CACHE / "hosttest"
+    if work.exists():
+        shutil.rmtree(work)
+    macos = work / "HostTest.app" / "Contents" / "MacOS"
+    macos.mkdir(parents=True)
+    src = work / "ausente.c"
+    src.write_text(
+        "extern void mos_corpus_ausente(void);\n"
+        "void mos_corpus_entry(void) { mos_corpus_ausente(); }\n",
+        encoding="utf-8",
+    )
+    dylib = macos / "HostTest"
+    subprocess.check_call(
+        [str(zig), "cc", "-target", "x86_64-macos", "-dynamiclib", "-undefined", "dynamic_lookup",
+         "-o", str(dylib), str(src)]
+    )
+    report = work / "relatorio.txt"
+    log = work / "machocheck.txt"
+    proc = subprocess.run(
+        [str(mc), "--disco", str(disco), str(lib), str(work / "HostTest.app"), str(report)],
+        text=True, capture_output=True,
+    )
+    log.write_text(proc.stdout + proc.stderr, encoding="utf-8")
+    if proc.returncode != 0:
+        raise SystemExit(f"machocheck no hosttest saiu {proc.returncode}\n{proc.stderr[-400:]}")
+    texto = report.read_text(encoding="utf-8")
+    if "mos_corpus_ausente" not in texto:
+        raise SystemExit("o símbolo inventado não apareceu como ausente; o machocheck não mediu o binário")
+    if "_malloc" in texto or "\tmalloc\n" in texto:
+        raise SystemExit("malloc saiu como ausente; a tabela do libSystem não entrou na conta")
+    info = parse_summary(log.read_text(encoding="utf-8"))
+    if info["distintos"] < 1:
+        raise SystemExit("conta distinta zerou num binário que importa símbolo inexistente")
+    print(f"hosttest ok: {info['distintos']} símbolo(s) distinto(s) ausente(s), mos_corpus_ausente medido")
 
 
 def main() -> None:
@@ -354,6 +421,10 @@ def main() -> None:
     gaps = sub.add_parser("gaps")
     gaps.add_argument("--out", default=str(ROOT / "docs" / "compat-gaps.md"))
     gaps.set_defaults(func=cmd_gaps)
+    h = sub.add_parser("hosttest")
+    h.add_argument("--lib", required=True)
+    h.add_argument("--disco", required=True)
+    h.set_defaults(func=cmd_hosttest)
     args = p.parse_args()
     args.func(args)
 

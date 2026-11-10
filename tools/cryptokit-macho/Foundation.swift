@@ -1,6 +1,7 @@
 // Shim de Foundation com -module-abi-name Foundation ($s10Foundation…).
 // Não é o Foundation da Apple. Serve para o mangling do CryptoKit bater
 // com o que o VS Code importa.
+import Swift
 
 public protocol ContiguousBytes {
     func withUnsafeBytes<R>(_ body: (UnsafeRawBufferPointer) throws -> R) rethrows -> R

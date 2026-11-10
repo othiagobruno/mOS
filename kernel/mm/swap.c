@@ -10,8 +10,14 @@
  * COW: só sai quem tem um dono. O fork copia a PTE de swap e soma uma referência no slot; cada
  * lado que falta recebe uma cópia privada, e o slot só se reaproveita quando a conta chega a zero.
  */
+#ifdef MOS_HOST_TEST
+#include "host_shim.h"
+static u64 pmm_total_pages(void) { return 0; }
+static u64 pmm_free_pages(void) { return 0; }
+static u64 pmm_alloc(u64 n) { (void)n; return 0; }
+#else
 #include "kernel.h"
-#include "proc.h"
+#endif
 
 #define SWAP_MARK (1ULL << 52)
 #define SWAP_MAX  4096u
@@ -27,6 +33,13 @@ bool swap_is(u64 pte) { return !(pte & 1) && (pte & SWAP_MARK); }
 
 static u32 swap_slot(u64 pte) { return (u32)((pte >> 12) & 0xFFFF); }
 
+void swap_use(void *mem, u32 n) {
+    swap_mem = mem;
+    nslots = n > SWAP_MAX ? SWAP_MAX : n;
+    memset(slot_ref, 0, sizeof slot_ref);
+    nout = nin = 0;
+}
+
 void swap_init(void) {
     u64 tot = pmm_total_pages();
     u64 n = tot / 16;
@@ -37,8 +50,7 @@ void swap_init(void) {
     }
     u64 phys = pmm_alloc(n);
     if (!phys) return;
-    swap_mem = (u8 *)phys;
-    nslots = (u32)n;
+    swap_use((void *)phys, (u32)n);
     floor_pages = tot / 16;
     if (floor_pages < 256) floor_pages = 256;
     kprintf("swap: partição de %u páginas (%u MiB) reservada no PMM, pressão abaixo de %llu páginas livres\n",

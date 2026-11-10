@@ -1034,7 +1034,8 @@ int mlock(const void *a, size_t len) { (void)a; (void)len; return 0; }
 
 /* aleatoriedade (CommonCrypto faz parte do libSystem) */
 int CCRandomGenerateBytes(void *buf, size_t n) { arc4random_buf(buf, n); return 0; }
-int getentropy(void *buf, size_t n) { arc4random_buf(buf, n); return 0; }
+#include "entropy_hw.inc"
+int getentropy(void *buf, size_t n) { return kc_hwentropy(buf, n); }
 int SecRandomCopyBytes(void *rnd, size_t n, void *buf) { (void)rnd; arc4random_buf(buf, n); return 0; }
 
 /* libdispatch: semáforos de um processo com uma thread */

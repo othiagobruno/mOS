@@ -397,9 +397,28 @@ id fdn_bridge_dict(id d) {
 }
 
 id fdn_bridge_array(id a) {
+    i8arr_t *s;
+    id out;
+    int64_t i;
     if (!a) return fdn_empty_array();
-    objc_retain(a);
-    return a;
+    /* isa preenchido: já é NSArray. Buffer Swift nosso começa com isa nulo. */
+    if (*(void **)a) {
+        objc_retain(a);
+        return a;
+    }
+    s = (i8arr_t *)(void *)a;
+    out = fdn_empty_array();
+    if (s->count < 0) return out;
+    for (i = 0; i < s->count; i++) {
+        id el = ((id *)s->el)[i];
+        if (!el) continue;
+#ifdef FDN_HOST
+        fdn_host_msg(out, "addObject:", (uintptr_t)el, 0, 1);
+#else
+        MSG(void, out, "addObject:", el);
+#endif
+    }
+    return out;
 }
 
 id fdn_array_from_ns(id a) {
@@ -414,7 +433,7 @@ id fdn_array_from_ns(id a) {
     buf->cap = n;
     for (i = 0; i < n; i++)
         ((id *)buf->el)[i] = MSG(id, a, "objectAtIndex:", (long)i);
-    return (id)buf;
+    return (id)(void *)buf;
 }
 
 static id fdn_set_pair(id d, id key, id val) {
@@ -516,8 +535,27 @@ void fdn_data_from_ns(uint8_t r[16], id data) {
 /* withUnsafeBytes: chama o closure (fn, ctx) com (ptr, count). */
 typedef uint64_t (*fdn_body)(void *ctx, const void *ptr, int64_t n, uint64_t *hi);
 uint64_t fdn_with_unsafe(const void *ptr, int64_t n, void *fn, void *ctx, uint64_t *hi) {
-    if (!fn) return 0;
+    if (!fn || !ptr || n < 0) return 0;
     return ((fdn_body)fn)(ctx, ptr, n, hi);
+}
+
+/*
+ * copyBytes(to:from:) no swiftcc x86_64. Self de 16 bytes no fim:
+ * rdi = base do buffer, rsi = count, rdx = Range.lower, rcx = Range.upper,
+ * r8 = tag do Optional (0 = some), r9 = palavra baixa do Data, 8(%rsp) = palavra alta.
+ * some limita a cópia; none copia do início o que cabe no buffer.
+ */
+int fdn_copy_bytes_entry(void *dst, int64_t count, int64_t lo, int64_t hi,
+                         uint64_t tag, uint64_t rep_lo, uint64_t rep_hi) {
+    uint8_t rep[16];
+    if (!dst || count <= 0) return 0;
+    memcpy(rep, &rep_lo, 8);
+    memcpy(rep + 8, &rep_hi, 8);
+    return fdn_rep_copy(rep, dst, count, lo, hi, (tag & 0xff) == 0);
+}
+
+uint64_t fdn_with_unsafe_regs(void *fn, void *ctx, const void *ptr, int64_t n) {
+    return fdn_with_unsafe(ptr, n, fn, ctx, 0);
 }
 
 #ifdef FDN_HOST
@@ -566,15 +604,16 @@ __asm__(
 "  jmp fdn_data_from_ns_regs\n"
 ".globl \"$s10Foundation4DataV9copyBytes2to4fromSiSryxG_SnySiGSgtlF\"\n"
 "\"$s10Foundation4DataV9copyBytes2to4fromSiSryxG_SnySiGSgtlF\":\n"
-"  movq %r13, %r8\n"
-"  jmp fdn_copy_bytes_thunk\n"
+"  movq 8(%rsp), %rax\n"
+"  pushq %rax\n"
+"  call fdn_copy_bytes_entry\n"
+"  addq $8, %rsp\n"
+"  ret\n"
 ".globl \"$s10Foundation15ContiguousBytesP010withUnsafeC0yqd__qd__SWKXEKlFTj\"\n"
 "\"$s10Foundation15ContiguousBytesP010withUnsafeC0yqd__qd__SWKXEKlFTj\":\n"
-"  movq %r13, %rdi\n"
-"  movq %r14, %rsi\n"
-"  movq %rdi, %rdx\n"
-"  movq %rsi, %rcx\n"
-"  jmp fdn_with_unsafe\n"
+"  movq %r13, %rdx\n"
+"  movq %r14, %rcx\n"
+"  jmp fdn_with_unsafe_regs\n"
 );
 
 id fdn_data_bridge_regs(uint64_t lo, uint64_t hi) {
@@ -591,23 +630,6 @@ swstr fdn_data_from_ns_regs(id data) {
     memcpy(&s.w0, r, 8);
     memcpy(&s.w1, r + 8, 8);
     return s;
-}
-
-/*
- * copyBytes: rdi = ponteiro do buffer, rsi = count, rdx = stride,
- * rcx = lo, r8 = hi, r9 = has_range, r13 = Data*.
- * O trampolim só move r13 para o 5º argumento inteiro (r8) e o resto já está
- * em rdi/rsi/rdx/rcx. has_range e hi ficam na pilha se precisarem; o teste de
- * host chama fdn_rep_copy direto. O trampolim cobre o caso sem range:
- * copia o mínimo entre o buffer e o Data.
- */
-int fdn_copy_bytes_thunk(void *dst, int64_t count, int64_t stride, int64_t ignored, const uint8_t *rep) {
-    int64_t nbytes;
-    (void)ignored;
-    if (stride <= 0) stride = 1;
-    nbytes = count * stride;
-    if (!rep) return 0;
-    return fdn_rep_copy(rep, dst, nbytes, 0, 0, 0);
 }
 
 __asm__(
