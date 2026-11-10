@@ -65,6 +65,9 @@ typedef struct {
     u64 size;
 } img_t;
 static img_t *imgs; static int nimgs;
+/* --arch: CPU da fatia lida no bundle (x86_64 = 0x01000007, arm64 = 0x0100000C) */
+static u32 g_cpu = 0x01000007;
+static const char *g_arch = "x86_64";
 static set_t bundle_exports, libsys;
 
 static void add_imp(img_t *im, const char *name, int lib, int weak) {
@@ -120,10 +123,10 @@ static void parse_macho(const char *path, const u8 *f, u64 flen) {
             const u8 *a = f + 8 + i * (b64 ? 32 : 20);
             if ((u64)(a - f) + 20 > flen) break;
             u64 off = b64 ? be64(a + 8) : be32(a + 8), sz = b64 ? be64(a + 16) : be32(a + 12);
-            if (be32(a) == 0x01000007 && off + sz <= flen) { m = f + off; ml = sz; }
+            if (be32(a) == g_cpu && off + sz <= flen) { m = f + off; ml = sz; }
         }
     } else if (flen >= 32 && rd32(f) == 0xFEEDFACF) { m = f; ml = flen; }
-    if (!m || ml < 32 || rd32(m) != 0xFEEDFACF || rd32(m + 4) != 0x01000007) return;
+    if (!m || ml < 32 || rd32(m) != 0xFEEDFACF || rd32(m + 4) != g_cpu) return;
     img_t *im = &imgs[nimgs++];
     memset(im, 0, sizeof *im);
     snprintf(im->path, sizeof im->path, "%s", path);
@@ -281,11 +284,11 @@ static int fatia_x64(const u8 *f, u64 flen, const u8 **m, u64 *ml) {
             if ((u64)(a - f) + (b64 ? 32 : 20) > flen) break;
             u64 off = b64 ? be64(a + 8) : be32(a + 8);
             u64 sz = b64 ? be64(a + 16) : be32(a + 12);
-            if (be32(a) == 0x01000007 && sz >= 32 && off + sz <= flen) { *m = f + off; *ml = sz; return 1; }
+            if ((be32(a) == g_cpu || be32(a) == 0x01000007) && sz >= 32 && off + sz <= flen) { *m = f + off; *ml = sz; if (be32(a) == g_cpu) return 1; }
         }
-        return 0;
+        return *m != NULL;
     }
-    if (flen >= 32 && rd32(f) == 0xFEEDFACF && rd32(f + 4) == 0x01000007) { *m = f; *ml = flen; return 1; }
+    if (flen >= 32 && rd32(f) == 0xFEEDFACF && (rd32(f + 4) == 0x01000007 || rd32(f + 4) == g_cpu)) { *m = f; *ml = flen; return 1; }
     return 0;
 }
 
@@ -858,14 +861,16 @@ static void grava_cat(FILE *rep, const char *cat, u32 n) {
 
 static int uso(void) {
     fprintf(stderr,
-            "uso: machocheck [--disco DIR]... <libSystem.mos> <Pasta.app> [relatorio.txt]\n"
+            "uso: machocheck [--arch x86_64|arm64] [--resolvidos ARQ] [--disco DIR]... <libSystem.mos> <Pasta.app> [relatorio.txt]\n"
             "     machocheck --calls <imagem> <endereco hex>\n"
             "     machocheck --sym <libSystem.mos> <endereco hex>\n"
             "     machocheck --refs <imagem> <endereco hex>\n"
             "--disco: diretorio (ou arquivo) da libc++, das libswift*, da libunwind,\n"
             "         da libz, da libcurl, da libcompression e do CryptoKit do build ou da imagem.\n"
             "         Ex.: build/libcxx, build/swift/objc/dylib, build/libunwind-x86,\n"
-            "         build/zlib-x86_64/libz.1.dylib, build/curl-x86_64, esp/mOS\n");
+            "         build/zlib-x86_64/libz.1.dylib, build/curl-x86_64, esp/mOS\n"
+            "--arch: fatia lida no bundle (padrao x86_64). arm64 mede o slice que o tradutor roda.\n"
+            "--resolvidos: grava os nomes (sem o _) que so o libSystem.mos resolveu, um por linha.\n");
     return 2;
 }
 
@@ -874,10 +879,24 @@ int main(int argc, char **argv) {
     if (argc == 4 && !strcmp(argv[1], "--sym")) return sym_mode(argv[2], strtoull(argv[3], 0, 16));
     if (argc == 4 && !strcmp(argv[1], "--calls")) return calls_mode(argv[2], strtoull(argv[3], 0, 16));
     const char *discos[32];
+    const char *respath = NULL;
     int ndisco = 0;
     const char *pos[4];
     int npos = 0;
     for (int i = 1; i < argc; i++) {
+        if (!strcmp(argv[i], "--arch")) {
+            if (i + 1 >= argc) return uso();
+            g_arch = argv[++i];
+            if (!strcmp(g_arch, "arm64")) g_cpu = 0x0100000C;
+            else if (!strcmp(g_arch, "x86_64")) g_cpu = 0x01000007;
+            else return uso();
+            continue;
+        }
+        if (!strcmp(argv[i], "--resolvidos")) {
+            if (i + 1 >= argc) return uso();
+            respath = argv[++i];
+            continue;
+        }
         if (!strcmp(argv[i], "--disco")) {
             if (i + 1 >= argc || ndisco == 32) return uso();
             discos[ndisco++] = argv[++i];
@@ -907,7 +926,8 @@ int main(int argc, char **argv) {
         printf("  CryptoKit/CoreImage: %u arquivo(s), %u simbolos\n", ck_files, ck_syms);
         printf("  curl/compression: %u arquivo(s), %u simbolos\n", usr_files, usr_syms);
     }
-    printf("Imagens Mach-O x86_64 no bundle: %d (exports do bundle: %u)\n\n", nimgs, bundle_exports.n);
+    printf("Imagens Mach-O %s no bundle: %d (exports do bundle: %u)\n\n", g_arch, nimgs, bundle_exports.n);
+    set_t resolvidos = {0};
     set_t sysdylibs = {0};
     u64 tot = 0, miss = 0;
     int tlv = 0;
@@ -924,7 +944,9 @@ int main(int argc, char **argv) {
             int weak = x->weak || (x->lib > 0 && x->lib <= im->nd && im->dweak[x->lib - 1]);
             libstat_t *l = libstat(lib);
             l->total++; tot++;
-            if (set_has(&bundle_exports, x->name) || in_libsystem(x->name) || no_disco(x->name) || weak) continue;
+            if (set_has(&bundle_exports, x->name)) continue;
+            if (in_libsystem(x->name) && !no_disco(x->name)) { set_add(&resolvidos, x->name[0] == '_' ? x->name + 1 : x->name); continue; }
+            if (no_disco(x->name) || weak) continue;
             l->missing++; miss++; mi++;
             anota_ausente(lib, x->name);
         }
@@ -943,6 +965,11 @@ int main(int argc, char **argv) {
     printf("Ausentes por origem (simbolos distintos): sistema %u, libc++ %u, Swift %u, unwind %u\n",
            n_sis, n_cxx, n_sw, n_uw);
     if (tlv) printf("Imagens com inicializadores thread-local (nao suportados): %d\n", tlv);
+    if (respath) {
+        FILE *rf = fopen(respath, "w");
+        if (!rf) fprintf(stderr, "nao consegui gravar %s\n", respath);
+        else { for (u32 i = 0; i < resolvidos.cap; i++) if (resolvidos.k[i]) fprintf(rf, "%s\n", resolvidos.k[i]); fclose(rf); }
+    }
     if (rep) {
         grava_cat(rep, "sistema", n_sis);
         grava_cat(rep, "libc++", n_cxx);
