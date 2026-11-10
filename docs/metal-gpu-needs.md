@@ -24,10 +24,11 @@ esse formato: serve para o subconjunto de MSL já descrito (kernel, buffer
 `float`/`uint`, thread id, aritmética escalar). Quem executa o comando
 continua o interpretador de `mtlexec.c`.
 
-Quando o kernel anunciar `MOS_GPU_CAP_VIRGL` ou `MOS_GPU_CAP_VENUS` e fixar
-o layout do lote, o `-commit` de um compute pode passar a chamar
-`MOS_GPU_SUBMIT` com `MOS_GPU_SUBMIT_3D`. Até lá o Metal não envia um pacote
-que só pareceria válido.
+Quando `MOS_GPU_CAP_VIRGL` ou `MOS_GPU_CAP_VENUS` estiver ligado, o `-commit`
+de um compute pode chamar `MOS_GPU_SUBMIT` com `MOS_GPU_SUBMIT_3D`. O lote é
+o da revisão 2: cabeçalho, tabela de handles, relocs e os comandos
+`BIND` / `SHADER` / `DISPATCH` em `mos_gpu.h`. Sem o cap o kernel valida e
+sinaliza a fence, e não executa o shader.
 
 ## O que o teste de host cobre
 
