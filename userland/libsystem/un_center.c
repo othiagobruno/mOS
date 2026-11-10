@@ -2,6 +2,7 @@
 #ifdef CX_UN_HOST
 #include <string.h>
 #else
+#include "sys.h"
 #include "libc.h"
 #include "foundation.h"
 #endif
