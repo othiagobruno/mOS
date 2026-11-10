@@ -22,7 +22,6 @@ typedef uint32_t uint_fast32_t;
 typedef uint64_t uint_fast64_t;
 typedef int64_t intmax_t;
 typedef uint64_t uintmax_t;
-typedef int wchar_t;
 #endif
 typedef int wchar_t;
 #define _WCHAR_T
