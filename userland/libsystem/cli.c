@@ -7,7 +7,7 @@
  * nunca sucesso sem preencher a saída. O que funciona de verdade: termios guardado por processo (tcgetattr/
  * tcsetattr/cfmakeraw), proc_pidpath/proc_listchildpids pela lista de processos do kernel, waitid sobre waitpid,
  * killpg, strsignal, umask, CFError, CFURL (as que faltavam em nsurl.c), CFTimeZone, CFPreferences (prefs.c),
- * proxies = "sem proxy", FSEvents = fluxo que nunca dispara (o mOS ainda não notifica mudanças no disco).
+ * proxies = "sem proxy". FSEvents (criar/editar/apagar) está em fsevents.c.
  */
 #include "sys.h"
 
@@ -695,26 +695,4 @@ id_ CFTimeZoneGetName(id_ tz) { return tz; }
 void CFTimeZoneResetSystem(void) {}
 /* CFPreferencesCopyAppValue / CFPreferencesAppSynchronize: prefs.c */
 
-/* ================================================================ FSEvents: o fluxo existe e pode ser iniciado, mas
- * nunca entrega eventos (o mOS ainda não notifica mudanças no disco). Quem precisa de eventos verifica de novo
- * por conta própria ou só perde o recarregamento automático. */
-typedef struct { u32 magic; int started; } fsstream_t;
-void *FSEventStreamCreate(void *alloc, void *cb, void *ctx, id_ paths, u64 since, double latency, u32 flags) {
-    (void)alloc; (void)cb; (void)ctx; (void)paths; (void)since; (void)latency; (void)flags;
-    fsstream_t *s = calloc(1, sizeof *s);
-    if (s) s->magic = 0x46534576;
-    return s;
-}
-unsigned char FSEventStreamStart(void *s) { if (!s) return 0; ((fsstream_t *)s)->started = 1; return 1; }
-void FSEventStreamStop(void *s) { if (s) ((fsstream_t *)s)->started = 0; }
-void FSEventStreamInvalidate(void *s) { (void)s; }
-void FSEventStreamRelease(void *s) { free(s); }
-void FSEventStreamScheduleWithRunLoop(void *s, void *rl, id_ mode) { (void)s; (void)rl; (void)mode; }
-void FSEventStreamUnscheduleFromRunLoop(void *s, void *rl, id_ mode) { (void)s; (void)rl; (void)mode; }
-void FSEventStreamSetDispatchQueue(void *s, void *q) { (void)s; (void)q; }
-void FSEventStreamFlushSync(void *s) { (void)s; }
-void FSEventStreamFlushAsync(void *s) { (void)s; }
-int FSEventStreamGetDeviceBeingWatched(void *s) { (void)s; return 0; }
-u64 FSEventStreamGetLatestEventId(void *s) { (void)s; return 0; }
-u64 FSEventsGetCurrentEventId(void) { return 0; }
-unsigned char FSEventsPurgeEventsForDeviceUpToEventId(int dev, u64 id) { (void)dev; (void)id; return 1; }
+/* FSEvents: userland/libsystem/fsevents.c (varredura stat/readdir; o kernel não tem fila de vnode). */
