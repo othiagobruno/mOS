@@ -5001,6 +5001,7 @@ void cx_appkit_init(void) {
     cx_appkit_input_init();     /* appkit_input.c: interpretKeyEvents:, NSTextInputContext, arrastar e soltar */
     (void)run_loop_until;
     cx_runloop_hook = run_loop_until;
+    { extern void cx_un_install_runloop(void); cx_un_install_runloop(); }
 }
 
 /* ================================================================ primitivas da ponte de Path

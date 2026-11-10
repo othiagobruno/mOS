@@ -618,3 +618,17 @@ extern const CGFloat NSStatusItemSquareLength; /* -2, quadrado da espessura da b
 - (void)showRelativeToRect:(NSRect)rect ofView:(NSView *)view preferredEdge:(NSRectEdge)edge;
 - (void)close;
 @end
+
+/* ---- selo do Dock (NSDockTile). A view de conteúdo fica no tile; o selo vai ao Dock. */
+@interface NSDockTile : NSObject
+- (void)setBadgeLabel:(NSString *)label;
+- (NSString *)badgeLabel;
+@property (strong) NSView *contentView;
+- (void)display;
+- (NSSize)size;
+- (id)owner;
+@property BOOL showsApplicationBadge;
+@end
+@interface NSApplication (NSDockTileSupport)
+- (NSDockTile *)dockTile;
+@end

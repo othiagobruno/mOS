@@ -2,6 +2,7 @@
 #include "ui.h"
 #include "vfs.h"
 #include "gpu.h"
+#include "dockbadge.h"
 
 /* ---- coordenadas
  * O desktop (barra de menus, Dock, menus, Busca, notificações...) trabalha no sistema do monitor principal,
@@ -328,7 +329,7 @@ enum { ACT_DOCK_KEEP = 6001, ACT_DOCK_LOGIN, ACT_DOCK_SHOW, ACT_DOCK_HIDE, ACT_D
        ACT_DOCK_RESTORE, ACT_DOCK_CLOSEWIN };
 
 /* ============================================================ notificações */
-typedef struct { char title[64], body[160]; u64 t0; app_t *app; } notif_t;
+typedef struct { char title[64], body[160]; u64 t0; app_t *app; int pid, token; } notif_t;
 static notif_t notifs[16]; /* histórico (a Central de Notificações mostra todas) */
 static void nc_toggle(void);
 static bool nc_visible(void);
@@ -1363,8 +1364,22 @@ static rect_t dock_window_rect_local(window_t *w) {
 }
 
 void dock_set_badge(app_t *a, int n) {
-    if (!a || a->badge == n) return;
-    a->badge = MAX(0, n);
+    if (!a) return;
+    n = MAX(0, n);
+    if (a->badge == n && !a->badge_label[0]) return;
+    a->badge_label[0] = 0;
+    a->badge = n;
+    wm_damage(rect_make(0, SH - 220, SW, 220));
+}
+
+void dock_set_badge_label(app_t *a, const char *label) {
+    int n = 0;
+    char text[8];
+    if (!a) return;
+    dock_badge_apply(&n, text, label);
+    if (a->badge == n && !strcmp(a->badge_label, text)) return;
+    memcpy(a->badge_label, text, sizeof a->badge_label);
+    a->badge = n;
     wm_damage(rect_make(0, SH - 220, SW, 220));
 }
 
@@ -1402,9 +1417,11 @@ static void dock_click(app_t *a) {
 static void draw_downloads_icon(surface_t *s, int x, int y, int size) { icon_folder(s, x, y, size, RGB(110, 190, 245)); }
 
 /* selo vermelho com número, no canto superior direito do ícone */
-static void draw_badge(surface_t *s, int ix, int iy, int sz, int n) {
+static void draw_badge(surface_t *s, int ix, int iy, int sz, app_t *a) {
     char t[8];
-    if (n > 999) snprintf(t, sizeof t, "999+"); else snprintf(t, sizeof t, "%d", n);
+    if (a->badge_label[0]) snprintf(t, sizeof t, "%s", a->badge_label);
+    else if (a->badge > 999) snprintf(t, sizeof t, "999+");
+    else snprintf(t, sizeof t, "%d", a->badge);
     font_t *f = font_get(FONT_SEMIBOLD);
     float fs = MAX(10.0f, sz * 0.25f);
     float h = MAX(16.0f, sz * 0.38f);
@@ -1490,7 +1507,7 @@ static void draw_dock(surface_t *s) {
             gfx_circle(s, dcx, dcy, dr + 0.9f, RGBA(0, 0, 0, 40));
             gfx_circle(s, dcx, dcy, dr, RGB(255, 255, 255));
         }
-        if (d->app->badge > 0) draw_badge(s, (int)d->x, y, sz, d->app->badge);
+        if (d->app->badge > 0 || d->app->badge_label[0]) draw_badge(s, (int)d->x, y, sz, d->app);
     }
     /* ícone sendo arrastado: segue o mouse; fora do Dock mostra "Remover" */
     if (DD.active) {
@@ -1698,17 +1715,47 @@ static void draw_desktop_icons(surface_t *s, rect_t D) {
 bool g_notify_dnd;          /* Ajustes > Notificações: Não Perturbe */
 bool g_notify_sound = true; /* tocar som ao chegar notificação */
 int  g_notify_count;        /* total recebido desde o boot (inclusive silenciadas) */
-void notify(const char *title, const char *body) {
+static void notify_put(const char *title, const char *body, int pid, int token) {
     g_notify_count++;
     if (g_notify_dnd) { kprintf("Notificação (silenciada): %s — %s\n", title, body ? body : ""); return; }
     if (nnotif == ARRAY_LEN(notifs)) { memmove(notifs, notifs + 1, sizeof(notif_t) * (ARRAY_LEN(notifs) - 1)); nnotif--; }
     notif_t *n = &notifs[nnotif++];
-    strncpy(n->title, title, sizeof n->title - 1);
+    memset(n, 0, sizeof *n);
+    strncpy(n->title, title ? title : "", sizeof n->title - 1);
     strncpy(n->body, body ? body : "", sizeof n->body - 1);
     n->t0 = timer_ticks();
+    n->pid = pid;
+    n->token = token;
     if (g_notify_sound) sound_alert();
     wm_damage(rect_make(SW - 380, MENUBAR_H, 380, 120));
-    kprintf("Notificação: %s — %s\n", title, body ? body : "");
+    kprintf("Notificação: %s — %s\n", title ? title : "", body ? body : "");
+}
+
+void notify(const char *title, const char *body) { notify_put(title, body, 0, 0); }
+
+void notify_tagged(const char *title, const char *body, int pid, int token) {
+    notify_put(title, body, pid, token > 0 ? token : 1);
+}
+
+/* O banner flutuante ocupa o canto superior direito por ~5,5 s. O clique só vale
+ * para um aviso marcado com token (veio de um app). */
+int notify_banner_hit(int x, int y, int *pid, int *token) {
+    u64 now;
+    int i, w, h, x0, y0;
+    if (nc_visible() || nnotif <= 0) return 0;
+    now = timer_ticks();
+    for (i = nnotif - 1; i >= 0; i--) if (now - notifs[i].t0 < 5500) break;
+    if (i < 0 || notifs[i].token <= 0) return 0;
+    w = MIN(350, SW - 24);
+    h = 72;
+    x0 = SW - w - 12;
+    y0 = MENUBAR_H + 10;
+    if (x < x0 || y < y0 || x >= x0 + w || y >= y0 + h) return 0;
+    if (pid) *pid = notifs[i].pid;
+    if (token) *token = notifs[i].token;
+    notifs[i].t0 = now - 6000;
+    wm_damage(rect_make(SW - 400, MENUBAR_H, 400, 120));
+    return 1;
 }
 
 static void draw_notifications(surface_t *s) {
@@ -3178,6 +3225,16 @@ static bool desktop_handle_event_local(input_event_t *e) {
     bool lr = !(e->buttons & 1) && (last_buttons & 1);
     bool rp = (e->buttons & 2) && !(last_buttons & 2);
     last_buttons = e->buttons;
+
+    /* banner de um app: o clique entrega o token para o delegate (deskbridge.c) */
+    if (lp) {
+        int bpid = 0, btok = 0;
+        if (notify_banner_hit(x, y, &bpid, &btok)) {
+            extern void desk_banner_enqueue(int pid, int token);
+            desk_banner_enqueue(bpid, btok);
+            return true;
+        }
+    }
 
     /* ícone do Dock sendo arrastado: reordena ao vivo; puxado para fora do Dock, remove */
     if (DD.active) {

@@ -4,7 +4,7 @@
  *
  * UserNotifications: autorização local no mesmo arquivo do TCC (serviço
  * "userNotifications"). Não há APNs. O completion do request só roda quando a
- * Interface chama cx_un_decide.
+ * Interface chama cx_un_decide. Pedido, delegate e banner ficam em usernotifications.c.
  */
 #include "foundation.h"
 #include "libc.h"
