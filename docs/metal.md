@@ -157,3 +157,12 @@ mostra tudo isso (imagem acima, no QEMU).
 **Validação no QEMU (7 nov.)**: com o libSystem oficial, o `MetalTest` passa inteiro no mOS de verdade
 (14/14 no log serial) e o `Triangulo` gira na janela; o `Camadas` desenha forma, gradiente e texto e anima o
 quadrado, com os delegates chamados e o `CADisplayLink` contando quadros.
+
+## GPU do kernel (ABI r1)
+
+O desenho acima não mudou de lugar. `gpucall.c` é o cliente de `kernel/include/mos_gpu.h`
+(`SYS_GPU`, contexto, BO, submit, fence, IOSurface). Enquanto o header não está na árvore,
+ou a syscall falha, o mesmo cliente responde no CPU. O que o Metal ainda precisa do kernel,
+e o que o SPIR-V cobre, está em `docs/metal-gpu-needs.md`. O `CAMetalLayer` só publica o
+quadro nessa ABI quando o kernel anuncia `MOS_GPU_CAP_IOSURF`; a janela continua no
+compositor do QuartzCore.
