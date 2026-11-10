@@ -462,6 +462,16 @@ bool libsystem_dylib_ok(const char *n) {
     return !strncmp(n, "/usr/lib/system/", 16);
 }
 
+/* libz, libcompression e libunwind: o binário no disco ganha (link_abs_dep). Sem o arquivo,
+ * o install name é o libSystem — crc32, compression_stream_* e _Unwind_* já estão no ELF.
+ * Não é um segundo export: o dlopen e o relatório deixam de tratar o caminho como biblioteca que falta. */
+static bool syslib_provided_by_libsystem(const char *n) {
+    if (!n) return false;
+    return !strcmp(n, "/usr/lib/libz.1.dylib") || !strcmp(n, "/usr/lib/libz.dylib")
+        || !strcmp(n, "/usr/lib/libcompression.dylib")
+        || !strcmp(n, "/usr/lib/libunwind.dylib");
+}
+
 /* QuickLookUI, StoreKit e Core Data também estão no libSystem. Se o Mach-O do framework
  * existir no disco, ele ganha: o Core Data de memória do Postico e o overlay Swift não
  * regridem. Sem o arquivo, o loader aceita e resolve no libSystem. */
@@ -2015,6 +2025,10 @@ static i64 dyld_open(process_t *p, link_t *K, const char *req, u64 out_va, u64 c
     if (libcxx_name(req) && dep_read(LIBCXX_DISK, &cxx_len)) req = LIBCXX_DISK;   /* a libc++ do disco, como no link_image */
     else if (!strcmp(req, LIBICU_DISK) && dep_read(LIBICU_DISK, &cxx_len)) { /* o ICU do disco, como no link_image */ }
     else if (framework_has_libsystem_fallback(req) && framework_disk_present(req)) { /* o framework do disco, como no link_image */ }
+    else if (syslib_provided_by_libsystem(req)) {
+        usize zl;
+        if (!dep_read(req, &zl)) return DYLD_H_LIBSYSTEM;   /* sem o dylib no disco: símbolos no libSystem */
+    }
     else if (libsystem_dylib_ok(req)) return DYLD_H_LIBSYSTEM;
     int ci = image_at(K, caller);
     image_t *C = K->im[ci >= 0 ? ci : 0];
@@ -2955,7 +2969,7 @@ bool macho_report_image(const u8 *img, usize len, const char *name, char *out, u
             char s[96];
             dylib_short(mo->dylibs[i], s, sizeof s);
             if (I0->dep[i] >= 0) { OUT("  [ok] %s (dentro do app)\n", s); continue; }
-            if (libsystem_dylib_ok(mo->dylibs[i])) { OUT("  [ok] %s\n", s); continue; }
+            if (libsystem_dylib_ok(mo->dylibs[i]) || syslib_provided_by_libsystem(mo->dylibs[i])) { OUT("  [ok] %s\n", s); continue; }
             if (shown < 10) { OUT("  [falta] %s%s\n", s, mo->dylib_weak[i] ? " (opcional)" : ""); shown++; }
         }
         if (K->n > 1) {

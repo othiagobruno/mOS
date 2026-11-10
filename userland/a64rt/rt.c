@@ -536,7 +536,7 @@ static void mos_svc(rt_thread_t *T) {
  * file_actions). A attr começa com psa_flags (short). Cada file action tem 1040 bytes:
  * tipo em +0, fd em +4, open (oflag +8, mode +12, path +14), dup2 (novo fd +8), chdir (path +8).
  * O contêiner é { int alloc; int count; ações... }. FILEPORT_DUP2 não tem porta Mach aqui.
- * SETSIGDEF, SETSIGMASK e RESETIDS são lidos e ignorados. START_SUSPENDED (0x80) vai em
+ * SETSIGDEF, SETSIGMASK e RESETIDS vão no fim de mos_spawn_vec_t. START_SUSPENDED (0x80) vai em
  * mos_spawn_vec_t.flags; o kernel (proc_hold) deixa o filho parado até um SIGCONT.
  * Não há commpage: o endereço do Darwin arm64
  * (0xFFFFFC000) cai no mapa de identidade do kernel, abaixo de USER_BASE. */
@@ -615,6 +615,22 @@ static long spawn_fill(const void *adesc, u64 argv, u64 envp, mos_spawn_vec_t *v
         if (flags & 0x0400) v->flags |= MOS_SPAWN_SETSID;
         if (flags & 0x4000) v->flags |= MOS_SPAWN_CLOEXEC_DEFAULT;
         if (flags & 0x0080) v->flags |= MOS_SPAWN_START_SUSPENDED;
+        if (flags & 0x0001) v->extra |= 4;
+        if ((flags & 0x0004) || (flags & 0x0008)) {
+            if (hdr[0] >= 16) {
+                unsigned sd = 0, sm = 0;
+                memcpy(&sd, (const char *)hdr[1] + 8, 4);
+                memcpy(&sm, (const char *)hdr[1] + 12, 4);
+                if (flags & 0x0004) {
+                    v->extra |= 1;
+                    for (int b = 1; b < 32; b++) if (sd & (1u << b)) v->sigdef |= 1u << sig_darwin_to_mos(b);
+                }
+                if (flags & 0x0008) {
+                    v->extra |= 2;
+                    for (int b = 1; b < 32; b++) if (sm & (1u << b)) v->sigmask |= 1u << sig_darwin_to_mos(b);
+                }
+            }
+        }
         if (flags & 0x0040) *setexec = 1;
     }
     if (!hdr[3] || hdr[2] < 8) return 0;
@@ -655,7 +671,11 @@ static long spawn_fill(const void *adesc, u64 argv, u64 envp, mos_spawn_vec_t *v
                 fa->a = filedes;
                 fa->b = newfd;
             } else if (type == PSFA_FILEPORT_DUP2) {
-                return -MOS_EINVAL;
+                unsigned port = 0;
+                memcpy(&port, a + 8, 4);
+                fa->kind = MOS_SPAWN_FA_FILEPORT;
+                fa->a = filedes;
+                fa->b = (int)port;
             } else if (type == PSFA_CHDIR) {
                 rc = copy_guest_path(fa->path, (const char *)(a + 8), (int)sizeof fa->path);
                 if (rc) return rc;

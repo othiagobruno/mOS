@@ -27,6 +27,7 @@ MOTOR=""
 CURSOR=0
 BOTTLES=""
 EFI=""
+SEMIMG=0
 ARGSAPP=()
 
 while [ $# -gt 0 ]; do
@@ -54,6 +55,7 @@ while [ $# -gt 0 ]; do
         --cursor-extras) CURSOR=1; shift ;;
         --bottles) BOTTLES=$2; shift 2 ;;
         --efi) EFI=$2; shift 2 ;;
+        --sem-imagem) SEMIMG=1; shift ;;
         *) echo "argumento desconhecido: $1" >&2; exit 2 ;;
     esac
 done
@@ -276,6 +278,11 @@ PY
 fi
 if [ ${#ARGSAPP[@]} -gt 0 ]; then
     printf '%s\n' "${ARGSAPP[@]}" > "$OVT/mOS/Sistema/Biblioteca/Preferencias/com.mos.argumentos.cfg"
+fi
+
+if [ "$SEMIMG" = 1 ]; then
+    echo "OK: app em $DSTAPP (sem mkimg)"
+    exit 0
 fi
 
 MK=$OUTABS/mkimg
