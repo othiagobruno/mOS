@@ -5,3 +5,5 @@ double sqrt(double x);
 double floor(double x);
 double log(double x);
 double pow(double x, double y);
+double cos(double x);
+float cosf(float x);

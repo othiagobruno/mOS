@@ -22,6 +22,7 @@
 // no tempo de cache); ChaCha20-Poly1305 e o GHASH do GCM são. O Data/DataProtocol/ContiguousBytes
 // vêm do overlay Foundation com -module-abi-name Foundation ($s10Foundation4DataV).
 
+import Swift
 @_exported import CryptoKit
 import Foundation
 
