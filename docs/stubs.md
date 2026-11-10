@@ -22,82 +22,100 @@ Conferido na main, não são mais stub:
 - `crc32` da zlib está em `userland/third_party/zlib/crc32.c`, incluído por `compression_z.c`. No Mach-O o nome exportado é `_crc32`. Não há um segundo stub `_crc32` no libSystem.
 - O desenrolar de `-O1` do #77 continua com outro agente. Não é item desta lista.
 
-ImageIO, CryptoKit e libcurl **não aparecem** entre as 5346. Quando surgirem: ImageIO e CryptoKit são da Sistemas (bc-315c5f63, `cursor/grok-imageio-cryptokit-6729`); libcurl é da Sistemas (bc-10a98d26).
+ImageIO, VideoToolbox, Metal, libcurl e libz não têm `void nome(void) {}` neste arquivo. CryptoKit também não. O dono, quando o símbolo aparecer, é Sistemas. libcurl segue com o agente bc-10a98d26. ImageIO segue com bc-315c5f63 (`cursor/grok-imageio-cryptokit-6729`).
+
+## Donos
+Combinado com a Sistemas:
+
+- **Sistemas:** tudo de `CF*` / CoreFoundation, Foundation (libswift e os `NS*`), Security, libcurl, ImageIO, CoreMedia, VideoToolbox, Metal, libcompression (o módulo Swift `Compression` incluso) e libz.
+- **Runtime C/C++ e Swift:** libc++, libc++abi, libunwind / `_Unwind_*` / `unw_*`, runtime e stdlib do Swift. Entram os `swift_*` e os módulos Swift, Dispatch, Darwin, `os`, System e ObjectiveC de `sys_zerados.c`.
+- **Kernel, Interface, Storage:** pelo que a área faz.
+- **a definir:** o grupo não está na lista fechada e não cabe numa área só. A nota está na tabela.
+
+## Em andamento (outro agente)
+Não implementar neste ciclo:
+
+- A API `unw_*` da libunwind.
+- Os símbolos de libc++ de `string`, `stringbuf`, `exception`, `filesystem`, `iostream`, `sort`, `__sp_mut` e `__cxa_bad_typeid`.
+- O desenrolar de `-O1` do #77 (já citado acima).
+
+`_Unwind_DeleteException`, `crc32` e `compression_stream_*` não entram aqui: já estão na main.
 
 ## sys_zerados.c por biblioteca
-Dono da libswift (todo símbolo `$s…` e `swift_*`): Runtime C/C++ e Swift. O arquivo também tem símbolos C. Esses são o lado compartilhado com a Sistemas (bc-315c5f63), salvo mach/xpc (Kernel) e filesystem (Storage).
+A libswift de stdlib e de runtime deste arquivo é nossa. Foundation, CoreFoundation, Security, CoreMedia e Compression, mesmo mangled, são da Sistemas.
 
 | Quantidade | Grupo | Dono | Primeiro símbolo |
 |---:|---|---|---|
 | 2907 | Swift (stdlib) | Runtime C/C++ e Swift | `$s10_ErrorType10Foundation01_A12CodeProtocolPTl` |
-| 1070 | Foundation | Runtime C/C++ e Swift | `$s10Foundation10CocoaErrorV03_nsC0So7NSErrorCvg` |
-| 248 | UIKit | Runtime C/C++ e Swift | `$s5UIKit01_A23NumericRawRepresentablePAAE1poiyxx_0C5ValueQztFZ` |
+| 1070 | Foundation | Sistemas | `$s10Foundation10CocoaErrorV03_nsC0So7NSErrorCvg` |
+| 248 | UIKit | Interface | `$s5UIKit01_A23NumericRawRepresentablePAAE1poiyxx_0C5ValueQztFZ` |
 | 174 | swift_* (runtime C) | Runtime C/C++ e Swift | `swift_allocBox` |
-| 154 | Network | Runtime C/C++ e Swift | `$s7Network10NWEndpointO4HostO13stringLiteralAESS_tcfC` |
+| 154 | Network | a definir | `$s7Network10NWEndpointO4HostO13stringLiteralAESS_tcfC` |
 | 116 | Dispatch | Runtime C/C++ e Swift | `$s8Dispatch0A11SpecificKeyCACyxGycfC` |
-| 69 | ObjC (sem módulo reconhecido) | Runtime C/C++ e Swift | `$sSo10CKDatabaseC8CloudKitE17modifyRecordZones6saving8deletingSDySo14CKRecordZoneIDCs6ResultOySo0iJ0Cs5Error_pGG11saveResults_SDyAhJyytsAM_pGG06deleteO0tSayALG_SayAHGtYaKF` |
-| 65 | CoreMedia | Runtime C/C++ e Swift | `$s9CoreMedia15CMTIME_IS_VALIDySbSo6CMTimeaF` |
-| 62 | libc/libm (C) | Sistemas (bc-315c5f63), lado compartilhado de sys_zerados.c | `NXGetArchInfoFromCpuType` |
-| 60 | CoreGraphics | Runtime C/C++ e Swift | `$s12CoreGraphics14CGPathFillRuleO7evenOddyA2CmFWC` |
-| 47 | UniformTypeIdentifiers | Runtime C/C++ e Swift | `$s22UniformTypeIdentifiers10UTTagClassV04mimeB0ACvgZ` |
-| 34 | AVFoundation | Runtime C/C++ e Swift | `$s12AVFoundation15AVAsyncPropertyC6StatusO11descriptionSSvg` |
+| 69 | ObjC (sem módulo reconhecido) | a definir | `$sSo10CKDatabaseC8CloudKitE17modifyRecordZones6saving8deletingSDySo14CKRecordZoneIDCs6ResultOySo0iJ0Cs5Error_pGG11saveResults_SDyAhJyytsAM_pGG06deleteO0tSayALG_SayAHGtYaKF` |
+| 65 | CoreMedia | Sistemas | `$s9CoreMedia15CMTIME_IS_VALIDySbSo6CMTimeaF` |
+| 62 | libc/libm (C) | a definir | `NXGetArchInfoFromCpuType` |
+| 60 | CoreGraphics | Interface | `$s12CoreGraphics14CGPathFillRuleO7evenOddyA2CmFWC` |
+| 47 | UniformTypeIdentifiers | a definir | `$s22UniformTypeIdentifiers10UTTagClassV04mimeB0ACvgZ` |
+| 34 | AVFoundation | a definir | `$s12AVFoundation15AVAsyncPropertyC6StatusO11descriptionSSvg` |
 | 32 | System | Runtime C/C++ e Swift | `$s6System14FileDescriptorV11OpenOptionsVMn` |
 | 29 | Darwin | Runtime C/C++ e Swift | `$s6Darwin0A7BooleanVMn` |
-| 27 | Foundation (C, NS*) | Sistemas (bc-315c5f63), lado compartilhado de sys_zerados.c | `NSLocaleCalendar` |
-| 27 | PhotosUI | Runtime C/C++ e Swift | `$s8PhotosUI14PHPickerFilterV6imagesACvgZ` |
+| 27 | Foundation (C, NS*) | Sistemas | `NSLocaleCalendar` |
+| 27 | PhotosUI | Interface | `$s8PhotosUI14PHPickerFilterV6imagesACvgZ` |
 | 27 | os | Runtime C/C++ e Swift | `$s2os0A4_log_3dso0B04type_ys12StaticStringV_SVSgSo03OS_a1_B0CSo0a1_b1_D2_tas7CVarArg_pdtF` |
-| 25 | Network (C, nw_*) | Sistemas (bc-315c5f63), lado compartilhado de sys_zerados.c | `nw_connection_cancel` |
+| 25 | Network (C, nw_*) | a definir | `nw_connection_cancel` |
 | 21 | ObjectiveC | Runtime C/C++ e Swift | `$s10ObjectiveC8ObjCBoolVMn` |
 | 21 | _StringProcessing | Runtime C/C++ e Swift | `$s17_StringProcessing13_RegexFactoryV10accumulateyAA0C0VyxGq__q0_tAA0C9ComponentR_AaHR0_r1_lF` |
 | 18 | RegexBuilder | Runtime C/C++ e Swift | `$s12RegexBuilder0a9ComponentB0O15buildExpressionyxx17_StringProcessing0aC0RzlFZ` |
-| 15 | XPC | Runtime C/C++ e Swift | `$s3XPC0A10_TYPE_BOOLs13OpaquePointerVvg` |
-| 13 | CoreAudio | Runtime C/C++ e Swift | `$s9CoreAudio013UnsafeMutableB17BufferListPointerV06unsafeG0SPySo0beF0VGvg` |
-| 11 | CommonCrypto (C) | Sistemas (bc-315c5f63), lado compartilhado de sys_zerados.c | `CCCalibratePBKDF` |
-| 10 | AppleArchive | Runtime C/C++ e Swift | `$s12AppleArchive0B10ByteStreamC015withCompressionD05using9writingTo9blockSize5flags11threadCount_xAA0bF0V_ACSiAA0B5FlagsVSixACKXEtKlFZ` |
-| 9 | Compression | Runtime C/C++ e Swift | `$s11Compression12OutputFilterC5writeyyxSgK10Foundation12DataProtocolRzlFTj` |
+| 15 | XPC | Kernel | `$s3XPC0A10_TYPE_BOOLs13OpaquePointerVvg` |
+| 13 | CoreAudio | a definir | `$s9CoreAudio013UnsafeMutableB17BufferListPointerV06unsafeG0SPySo0beF0VGvg` |
+| 11 | CommonCrypto (C) | a definir | `CCCalibratePBKDF` |
+| 10 | AppleArchive | Storage | `$s12AppleArchive0B10ByteStreamC015withCompressionD05using9writingTo9blockSize5flags11threadCount_xAA0bF0V_ACSiAA0B5FlagsVSixACKXEtKlFZ` |
+| 9 | Compression | Sistemas | `$s11Compression12OutputFilterC5writeyyxSgK10Foundation12DataProtocolRzlFTj` |
 | 9 | Observation | Runtime C/C++ e Swift | `$s11Observation04withA8Tracking_8onChangexxyXE_yyYbcyXKtlF` |
-| 7 | Accelerate | Runtime C/C++ e Swift | `$s10Accelerate6vImageO7OptionsV7noFlagsAEvgZ` |
+| 7 | Accelerate | a definir | `$s10Accelerate6vImageO7OptionsV7noFlagsAEvgZ` |
 | 7 | libdispatch (C) | Runtime C/C++ e Swift | `dispatch_apply` |
 | 6 | filesystem (C) | Storage | `endfsent` |
-| 5 | Combine | Runtime C/C++ e Swift | `$sSo12NSURLSessionC10FoundationE17DataTaskPublisherV7Combine0E0ACMc` |
-| 5 | CoreFoundation | Runtime C/C++ e Swift | `$s14CoreFoundation9_CFObjectMp` |
+| 5 | Combine | a definir | `$sSo12NSURLSessionC10FoundationE17DataTaskPublisherV7Combine0E0ACMc` |
+| 5 | CoreFoundation | Sistemas | `$s14CoreFoundation9_CFObjectMp` |
 | 5 | mach (C) | Kernel | `mach_port_get_attributes` |
 | 4 | pthread (C) | Runtime C/C++ e Swift | `pthread_fchdir_np` |
 | 3 | mach exception (C) | Kernel | `exception_raise` |
-| 2 | Security (C) | Sistemas (bc-315c5f63), lado compartilhado de sys_zerados.c | `SecTaskCopyTeamIdentifier` |
+| 2 | Security (C) | Sistemas | `SecTaskCopyTeamIdentifier` |
 | 2 | xpc (C) | Kernel | `xpc_dictionary_get_audit_token` |
 
 Soma: **5346**. Há ainda 29 `void *kCF…` / `kCFURL…` sem inicializador (ponteiro nulo), listados no anexo. Não são função.
 
 ### O que o grupo deveria fazer
-- **Swift (stdlib), 2859.** Metadados, witness tables e entradas da stdlib. Corpo vazio: o binário liga e qualquer chamada não materializa tipo, não compara e não formata. Apps Swift que passam de `swift_retain` e caem num símbolo `$ss…` quebram em silêncio.
-- **Foundation (libswift), 1070.** `URLRequest`, `JSONDecoder`, `Data`, `Date`, erros POSIX/Cocoa. Sem isso o overlay não decodifica JSON nem monta pedido HTTP.
-- **UIKit, 248; PhotosUI, 27; AVFoundation, 34; CoreGraphics, 60; CoreMedia, 65.** Superfície Swift desses frameworks. Dono do símbolo neste arquivo é Runtime (é libswift). O desenho na tela continua com a Interface.
-- **swift_*, 174.** `swift_retain`/`release`, `swift_allocObject`, cast, key path, task e actor. São o núcleo. A implementação de referência já está em `tools/vscode-macho-stubs/libswift-runtime.c` (#82/#94), não nestes corpos vazios.
-- **Network (libswift) 154 e nw_* 26.** `NWConnection` não abre socket. O C `nw_*` é da Sistemas no recorte compartilhado.
-- **Dispatch 116 e libdispatch C.** Fila e `dispatch_block_*` vazios. Jobs Swift não entram na fila.
-- **libc/libm, CommonCrypto, CF e NS* (C).** Nomes que o machocheck pedia e ninguém implementou aqui. CommonCrypto vazio: hash e PBKDF não rodam por este símbolo (há outra implementação de CC em `commoncrypto.c` se o link escolher a de lá).
-- **mach / exception / xpc (10).** Portas e exceção Mach. Dono Kernel.
-- **filesystem (6).** `getfsent`/`setfsent`/`endfsent`, `xattr_name_with_flags`, `nftw$INODE64`, `open_dprotected_np`. Dono Storage.
+- **Swift (stdlib), 2907. Runtime.** Metadados e witness tables. Corpo vazio: o binário liga e a chamada não materializa tipo nem compara. O primeiro símbolo da tabela é um associated type cujo módulo não parseou como Foundation; os 1070 com módulo Foundation estão na linha de baixo.
+- **Foundation, 1070 + 27 `NS*`. Sistemas.** `URLRequest`, `JSONDecoder`, `Data`, `Date`, erros Cocoa/POSIX. Sem isso o app não decodifica JSON nem monta pedido HTTP. Não é PR do Runtime.
+- **CoreFoundation, 5, e os 29 ponteiros `kCF*`. Sistemas.** O mesmo vale para qualquer `CF*` que aparecer fora deste arquivo.
+- **CoreMedia, 65, e Compression, 9. Sistemas.** Junto com VideoToolbox, Metal, ImageIO, libcurl e libz (zero stubs `void nome(void) {}` aqui).
+- **Security, 2. Sistemas.** `SecTaskCopyTeamIdentifier` e o vizinho. `SecTransformCreateGroupTransform` em `security.c` também.
+- **swift_*, 174, Dispatch 116, libdispatch 7, pthread 4, Darwin, os, System, ObjectiveC, _StringProcessing, RegexBuilder, Observation. Runtime.** `swift_retain` / `allocObject` / cast / task. Referência: `tools/vscode-macho-stubs/libswift-runtime.c` (#82/#94).
+- **UIKit 248, PhotosUI 27, CoreGraphics 60. Interface.** SwiftUI dos 976 de `swiftui_imports.c` também.
+- **mach, exception, xpc e o módulo XPC. Kernel.**
+- **filesystem 6 e AppleArchive 10. Storage.**
+- **a definir:** Network e `nw_*` (rede, fora da lista fechada), libc/libm, UniformTypeIdentifiers, AVFoundation (encosta em CoreMedia/VideoToolbox, que são da Sistemas), CoreAudio, CommonCrypto (encosta em Security), Accelerate, Combine, e os 69 ObjC sem módulo (há CloudKit no meio).
 
 ## Outros corpos vazios ou que só devolvem 0/NULL
 Uma linha, fora de `third_party` e fora de `sys_zerados.c`. Métodos de amostra em `userland/samples` não entram.
 
 | Quantidade | Arquivo | Dono | Impacto |
 |---:|---|---|---|
-| 976 | `userland/libsystem/swiftui_imports.c` | Runtime C/C++ e Swift | SwiftUI importado por Claude, ChatGPT e WhatsApp liga e não desenha. Lista no anexo. |
+| 976 | `userland/libsystem/swiftui_imports.c` | Interface | SwiftUI importado por Claude, ChatGPT e WhatsApp liga e não desenha. Lista no anexo. |
 | 31 | `kernel/stubs.c` | Kernel | Áudio, rede, ping e DHCP fracos (`weak`): o subsistema real, se existir, substitui. |
-| 6 | `userland/libsystem/vscode_frameworks.c` | Runtime C/C++ e Swift | Símbolos de framework do VS Code que só retornam vazio. |
-| 5 | `userland/libsystem/posixmore.c` | Runtime C/C++ e Swift | `endservent`, `getservent` (NULL), `sync`, `gethostid` (0), utmpx. |
-| 4 | `userland/libsystem/chrome.c` | Runtime C/C++ e Swift | Kill ring do AppKit (`_NSInitializeKillRing` e vizinhos). |
+| 6 | `userland/libsystem/vscode_frameworks.c` | Interface | Símbolos de framework do VS Code que só retornam vazio. |
+| 5 | `userland/libsystem/posixmore.c` | a definir | `endservent`, `getservent` (NULL), `sync`, `gethostid` (0), utmpx. |
+| 4 | `userland/libsystem/chrome.c` | Interface | Kill ring do AppKit (`_NSInitializeKillRing` e vizinhos). |
 | 4 | `kernel/arch/cpu.c` | Kernel | Entradas de CPU vazias ou que retornam 0. |
-| 2 | `userland/libsystem/vscode_media.c` | Runtime C/C++ e Swift | `MIDIGetNumberOfSources` e `MIDIGetNumberOfDestinations` devolvem 0. |
-| 2 | `userland/libsystem/cgdisplay.c` | Runtime C/C++ e Swift | Display que devolve 0. |
-| 2 | `userland/libsystem/xpc.c` | Runtime C/C++ e Swift | XPC que devolve 0. |
+| 2 | `userland/libsystem/vscode_media.c` | Interface | `MIDIGetNumberOfSources` e `MIDIGetNumberOfDestinations` devolvem 0. |
+| 2 | `userland/libsystem/cgdisplay.c` | Interface | Display que devolve 0. |
+| 2 | `userland/libsystem/xpc.c` | Kernel | XPC que devolve 0. |
 | 2 | `userland/libsystem/openbot_swift.c` | Runtime C/C++ e Swift | Símbolo Swift do OpenBot vazio. |
-| 2 | `userland/libsystem/compat_agentes.c` | Runtime C/C++ e Swift | Compat de agentes. |
-| 1 | `userland/libsystem/security.c:946` `SecTransformCreateGroupTransform` | Runtime C/C++ e Swift | Devolve NULL. O resto de Security no mesmo arquivo não é este caso. |
-| 1 | `userland/frameworks/CloudKit/CloudKit.c` | Runtime C/C++ e Swift | Uma entrada vazia. |
+| 2 | `userland/libsystem/compat_agentes.c` | a definir | Compat de agentes. |
+| 1 | `userland/libsystem/security.c:946` `SecTransformCreateGroupTransform` | Sistemas | Devolve NULL. O resto de Security no mesmo arquivo não é este caso. |
+| 1 | `userland/frameworks/CloudKit/CloudKit.c` | a definir | Uma entrada vazia. |
 | 1 | `kernel/bt/btintel.c` | Kernel | Bluetooth Intel. |
 | 1 | `kernel/lib/vfs.c` | Storage | Uma entrada do VFS que devolve 0. |
 
@@ -111,26 +129,26 @@ Uma linha, fora de `third_party` e fora de `sys_zerados.c`. Métodos de amostra 
 | `libcxx.c:328` | vtables `__class_type_info` | `dynamic_cast` / `catch` por base | Entradas nulas. O arquivo diz isso. |
 | `swiftrt.c:15` | `_swift_stdlib_getNormData` e a decomposição | Tabelas Unicode (NFC/NFD) | Devolve 0: só casa texto já igual. Composição devolve `0xFFFFFFFF`. |
 | `swiftobjc.c:68` | `voucher_adopt` / `voucher_copy` | Voucher de QoS | Devolve NULL. O comentário assume que o mOS não tem voucher. |
-| `frameworks/libcompression/compression.c:20` | `compression_encode_buffer` / `decode_buffer` | LZFSE, LZ4, LZMA, zlib | Devolve 0 e avisa no stderr. O fluxo `compression_stream_*` de zlib já está em `compression_z.c`. |
+| `frameworks/libcompression/compression.c:20` | `compression_encode_buffer` / `decode_buffer` | LZFSE, LZ4, LZMA além do zlib | Devolve 0. Dono Sistemas (libcompression). `compression_stream_*` de zlib já está em `compression_z.c`. |
 
 ## Próximos PRs do Runtime (um comportamento por PR)
-Base dos `swift_*`: `tools/vscode-macho-stubs/libswift-runtime.c` dos PRs #82 e #94. Não reimplementar `_Unwind_DeleteException`, `crc32` nem `compression_stream_*`. Não mexer no unwind de `-O1` do #77.
+Base dos `swift_*`: `tools/vscode-macho-stubs/libswift-runtime.c` dos PRs #82 e #94. Fora deste ciclo: `_Unwind_DeleteException`, `crc32`, `compression_stream_*`, a API `unw_*`, os símbolos libc++ de string/stringbuf/exception/filesystem/iostream/sort/`__sp_mut`/`__cxa_bad_typeid`, e o unwind de `-O1` do #77. Foundation, CF, Security, CoreMedia, VideoToolbox, Metal, ImageIO, libcurl, libcompression e libz são da Sistemas.
 
-1. **`swift_retain` / `swift_release` / `swift_allocObject` / `swift_deallocObject`.** Tirar esses quatro (e os `_n`) de `sys_zerados.c` e apontar para o runtime já escrito. Teste de host: um programa C que chama `swift_allocObject` com um descritor mínimo e confere que `swift_retain`/`swift_release` zera e libera, no estilo de `tools/libswift_check.sh`.
-2. **`swift_once`, `swift_getTypeByMangledNameInContext` e `swift_conformsToProtocol`.** Sem isso genérico e protocolo não resolvem. Teste de host: mangled name de `Swift.Int` devolve o mesmo metadado duas vezes; conformidade ausente devolve nulo de verdade, não «ligou».
-3. **`__cxa_throw` do libSystem passa a chamar `_Unwind_RaiseException` de `cxx_unwind.c`.** Hoje aborta. Teste de host: `tools/cxx_unwind_host.cpp` (já no repo) com um `try/catch` de `std::runtime_error` que imprime a mensagem e segue, sem `abort`.
-4. **Personalidade e `type_info` de `catch` por base em `libcxx.c`.** Uma personalidade só. Teste de host: `catch (const std::exception&)` pega `std::runtime_error` lançado pelo teste 3.
-5. **Tabelas Unicode de `swiftrt.c`.** NFC de `a` + acento combinante igual a `á`. Teste de host: comparar as duas sequências pela função que a stdlib chama (`_swift_stdlib_getComposition` deixa de ser `0xFFFFFFFF` nesse par).
-6. **`URLRequest` do grupo Foundation em `sys_zerados.c` (25 símbolos em volta de `URLRequest`, mais o bridge para `NSURLRequest`).** Teste de host: criar o pedido, ler `httpMethod` e `url`, e ver o objeto ObjC com o mesmo URL. O resto dos 1070 fica para outro PR.
-7. **`dispatch_block_create` / `wait` / `cancel`.** Teste de host: o bloco roda numa fila, `wait` só volta depois, `cancel` antes do run não chama a função.
-8. **SwiftUI: um tipo com corpo, não os 976.** Começar por `Text`/`View` se ainda estiverem vazios em `swiftui_imports.c`, com teste de host que instancia e lê a string. O restante do arquivo continua stub até o PR seguinte.
+1. **`swift_retain` / `swift_release` / `swift_allocObject` / `swift_deallocObject`.** Tirar esses quatro (e os `_n`) de `sys_zerados.c` e usar o runtime já escrito. Teste de host: `swift_allocObject` com um descritor mínimo; `swift_retain`/`swift_release` sobem e liberam, no estilo de `tools/libswift_check.sh`.
+2. **`swift_once`, `swift_getTypeByMangledNameInContext` e `swift_conformsToProtocol`.** Teste de host: o mangled name de `Swift.Int` devolve o mesmo metadado duas vezes; conformidade ausente devolve nulo.
+3. **Tabelas Unicode de `swiftrt.c`.** NFC de `a` + acento combinante igual a `á`. Teste de host: `_swift_stdlib_getComposition` desse par deixa de ser `0xFFFFFFFF`.
+4. **`dispatch_block_create` / `wait` / `cancel`.** Teste de host: o bloco roda numa fila, `wait` só volta depois, `cancel` antes do run não chama a função.
+5. **`swift_task_isCancelled` e `swift_task_getMainExecutor`.** Dois símbolos do grupo `swift_*`, com teste de host: tarefa não cancelada devolve falso; o executor principal é o mesmo ponteiro nas duas chamadas.
+6. **`swift_dynamicCast` de classe.** Teste de host: cast para a própria classe devolve o objeto; cast para uma classe sem relação devolve nulo, sem abortar.
+
+`__cxa_throw` em `libcxx.c` continua abortando. Mexer nisso atravessa os símbolos de `exception` que outro agente já pegou, então fica de fora desta fila.
 
 ## Outros times
-- **Kernel:** `kernel/stubs.c` (rede e áudio fracos), `mach_*` e `exception_*` de `sys_zerados.c`, XPC, `kernel/arch/cpu.c`.
-- **Interface:** `swiftui_imports.c` é símbolo de Runtime, mas a janela é da Interface. `chrome.c` (kill ring), `vscode_media.c` (MIDI), `cgdisplay.c`, `vscode_frameworks.c`.
-- **Sistemas (bc-315c5f63):** lado C de `sys_zerados.c` (CF, NS*, `nw_*`, CommonCrypto, Security, libc/libm), `posixmore.c`, CloudKit, ImageIO e CryptoKit quando existirem (`cursor/grok-imageio-cryptokit-6729`).
-- **Sistemas (bc-10a98d26):** libcurl. Zero símbolos neste arquivo.
-- **Storage:** `getfsent` e xattr em `sys_zerados.c`, a entrada de `kernel/lib/vfs.c`.
+- **Sistemas:** Foundation, `CF*` / CoreFoundation, Security, CoreMedia, VideoToolbox, Metal, ImageIO, libcurl (bc-10a98d26), libcompression e libz. Os 29 ponteiros `kCF*` também.
+- **Kernel:** `kernel/stubs.c`, `mach_*`, `exception_*`, XPC, `kernel/arch/cpu.c`, `xpc.c`, `kernel/bt/btintel.c`.
+- **Interface:** UIKit, PhotosUI, CoreGraphics, `swiftui_imports.c`, `chrome.c`, `vscode_media.c`, `cgdisplay.c`, `vscode_frameworks.c`.
+- **Storage:** `getfsent` e xattr, AppleArchive, `kernel/lib/vfs.c`.
+- **a definir:** Network/`nw_*`, libc/libm, UniformTypeIdentifiers, AVFoundation, CoreAudio, CommonCrypto, Accelerate, Combine, CloudKit, `posixmore.c`, `compat_agentes.c`, ObjC sem módulo.
 
 ## Build e testes de host
 Nesta rodada não rodei `tools/build.sh`, QEMU nem a suíte de host. O estado abaixo é leitura do fonte na main `0c9c75e`.

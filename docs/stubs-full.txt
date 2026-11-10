@@ -1,6 +1,9 @@
 Lista completa. 5346 funcoes `void nome(void) {}` em userland/libsystem/sys_zerados.c.
 Formato: arquivo:linha simbolo
-ImageIO: 0. CryptoKit: 0. libcurl: 0. Nao ha o que marcar desses tres neste arquivo.
+Donos combinados: Sistemas = CF*/CoreFoundation, Foundation, Security, CoreMedia, Compression, libcurl, ImageIO, VideoToolbox, Metal, libcompression, libz.
+Runtime = libc++, libc++abi, libunwind/_Unwind_*/unw_*, stdlib e runtime Swift (swift_* e modulos Swift/Dispatch/Darwin/os/System/ObjectiveC neste arquivo).
+ImageIO, VideoToolbox, Metal, libcurl e libz: 0 funcoes void nome(void) {} aqui. CryptoKit: 0.
+a definir: grupo fora da lista fechada e sem area unica.
 swiftui_imports.c (976 corpos vazios) entra na secao seguinte, dono Runtime.
 
 ## Swift (stdlib) | 2907 | Runtime C/C++ e Swift
@@ -2912,7 +2915,7 @@ userland/libsystem/sys_zerados.c:5023 $sytN
 userland/libsystem/sys_zerados.c:5024 $sytWV
 userland/libsystem/sys_zerados.c:5025 $syycWV
 
-## Foundation | 1070 | Runtime C/C++ e Swift
+## Foundation | 1070 | Sistemas
 userland/libsystem/sys_zerados.c:10 $s10Foundation10CocoaErrorV03_nsC0So7NSErrorCvg
 userland/libsystem/sys_zerados.c:11 $s10Foundation10CocoaErrorV14fileNoSuchFileAC4CodeVvgZ
 userland/libsystem/sys_zerados.c:12 $s10Foundation10CocoaErrorV15fileReadUnknownAC4CodeVvgZ
@@ -3984,7 +3987,7 @@ userland/libsystem/sys_zerados.c:3228 $sSo9NSScannerC10FoundationE20NumberRepres
 userland/libsystem/sys_zerados.c:3229 $sSo9NSScannerC10FoundationE20NumberRepresentationOMa
 userland/libsystem/sys_zerados.c:3230 $sSo9NSScannerC10FoundationE9scanInt3214representations0D0VSgAbCE20NumberRepresentationO_tF
 
-## UIKit | 248 | Runtime C/C++ e Swift
+## UIKit | 248 | Interface
 userland/libsystem/sys_zerados.c:1198 $s5UIKit01_A23NumericRawRepresentablePAAE1poiyxx_0C5ValueQztFZ
 userland/libsystem/sys_zerados.c:1199 $s5UIKit01_A23NumericRawRepresentablePAAE1soiyxx_0C5ValueQztFZ
 userland/libsystem/sys_zerados.c:1200 $s5UIKit01_A23NumericRawRepresentablePAAE2seoiyyxz_0C5ValueQztFZ
@@ -4410,7 +4413,7 @@ userland/libsystem/sys_zerados.c:5369 swift_weakTakeInit
 userland/libsystem/sys_zerados.c:5370 swift_willThrow
 userland/libsystem/sys_zerados.c:5371 swift_willThrowTypedImpl
 
-## Network | 154 | Runtime C/C++ e Swift
+## Network | 154 | a definir
 userland/libsystem/sys_zerados.c:1447 $s7Network10NWEndpointO4HostO13stringLiteralAESS_tcfC
 userland/libsystem/sys_zerados.c:1448 $s7Network10NWEndpointO4HostO4ipv4yAeA11IPv4AddressVcAEmFWC
 userland/libsystem/sys_zerados.c:1449 $s7Network10NWEndpointO4HostOMa
@@ -4684,7 +4687,7 @@ userland/libsystem/sys_zerados.c:3063 $sSo24OS_dispatch_source_timerP8DispatchE8
 userland/libsystem/sys_zerados.c:3072 $sSo27OS_dispatch_source_data_addP8DispatchE0E00D0ySu_tF
 userland/libsystem/sys_zerados.c:3084 $sSo33OS_dispatch_source_memorypressureP8DispatchE4dataSo0a1_b1_C0CACE19MemoryPressureEventVvg
 
-## ObjC (sem módulo reconhecido) | 69 | Runtime C/C++ e Swift
+## ObjC (sem módulo reconhecido) | 69 | a definir
 userland/libsystem/sys_zerados.c:2780 $sSo10CKDatabaseC8CloudKitE17modifyRecordZones6saving8deletingSDySo14CKRecordZoneIDCs6ResultOySo0iJ0Cs5Error_pGG11saveResults_SDyAhJyytsAM_pGG06deleteO0tSayALG_SayAHGtYaKF
 userland/libsystem/sys_zerados.c:2781 $sSo10CKDatabaseC8CloudKitE17modifyRecordZones6saving8deletingSDySo14CKRecordZoneIDCs6ResultOySo0iJ0Cs5Error_pGG11saveResults_SDyAhJyytsAM_pGG06deleteO0tSayALG_SayAHGtYaKFTu
 userland/libsystem/sys_zerados.c:2782 $sSo10CKRecordIDC8CloudKitE10recordName04zoneB0ABSS_So0a4ZoneB0CtcfC
@@ -4755,7 +4758,7 @@ userland/libsystem/sys_zerados.c:3239 $sSo9WKWebViewC6WebKitE19callAsyncJavaScri
 userland/libsystem/sys_zerados.c:3240 $sSo9WKWebViewC6WebKitE19callAsyncJavaScript_9arguments2in12contentWorldypSgSS_SDySSypGSo11WKFrameInfoCSgSo09WKContentL0CtYaKFTu
 userland/libsystem/sys_zerados.c:3241 $sSo9WKWebViewC6WebKitE19callAsyncJavaScript_9arguments2inAF17completionHandlerySS_SDySSypGSo11WKFrameInfoCSgSo14WKContentWorldCys6ResultOyyps5Error_pGcSgtF
 
-## CoreMedia | 65 | Runtime C/C++ e Swift
+## CoreMedia | 65 | Sistemas
 userland/libsystem/sys_zerados.c:1697 $s9CoreMedia15CMTIME_IS_VALIDySbSo6CMTimeaF
 userland/libsystem/sys_zerados.c:1698 $s9CoreMedia17CMTIME_IS_NUMERICySbSo6CMTimeaF
 userland/libsystem/sys_zerados.c:2792 $sSo11CMTimeRangea9CoreMediaE12containsTimeySbSo0A0aF
@@ -4822,7 +4825,7 @@ userland/libsystem/sys_zerados.c:3114 $sSo6CMTimea9CoreMediaE7secondsSdvg
 userland/libsystem/sys_zerados.c:3115 $sSo6CMTimea9CoreMediaE9isNumericSbvg
 userland/libsystem/sys_zerados.c:3116 $sSo6CMTimeaSL9CoreMediaMc
 
-## libc/libm (C) | 62 | Sistemas (bc-315c5f63), lado compartilhado de sys_zerados.c
+## libc/libm (C) | 62 | a definir
 userland/libsystem/sys_zerados.c:5064 NXGetArchInfoFromCpuType
 userland/libsystem/sys_zerados.c:5065 NXGetLocalArchInfo
 userland/libsystem/sys_zerados.c:5074 __CFStringMakeConstantString
@@ -4886,7 +4889,7 @@ userland/libsystem/sys_zerados.c:5376 tgammal
 userland/libsystem/sys_zerados.c:5377 timingsafe_bcmp
 userland/libsystem/sys_zerados.c:5378 vasprintf_l
 
-## CoreGraphics | 60 | Runtime C/C++ e Swift
+## CoreGraphics | 60 | Interface
 userland/libsystem/sys_zerados.c:1021 $s12CoreGraphics14CGPathFillRuleO7evenOddyA2CmFWC
 userland/libsystem/sys_zerados.c:1022 $s12CoreGraphics14CGPathFillRuleO7windingyA2CmFWC
 userland/libsystem/sys_zerados.c:1023 $s12CoreGraphics14CGPathFillRuleOMa
@@ -4948,7 +4951,7 @@ userland/libsystem/sys_zerados.c:3123 $sSo7CGPointVSe12CoreGraphicsMc
 userland/libsystem/sys_zerados.c:3174 $sSo8UIButtonC5UIKitE13ConfigurationV12imagePadding12CoreGraphics7CGFloatVvs
 userland/libsystem/sys_zerados.c:3212 $sSo9CGPathRefa12CoreGraphicsE8contains_5using9transformSbSo7CGPointV_AC0A8FillRuleOSo17CGAffineTransformVtF
 
-## UniformTypeIdentifiers | 47 | Runtime C/C++ e Swift
+## UniformTypeIdentifiers | 47 | a definir
 userland/libsystem/sys_zerados.c:1101 $s22UniformTypeIdentifiers10UTTagClassV04mimeB0ACvgZ
 userland/libsystem/sys_zerados.c:1102 $s22UniformTypeIdentifiers10UTTagClassVMa
 userland/libsystem/sys_zerados.c:1103 $s22UniformTypeIdentifiers6UTTypeV04mimeB012conformingToACSgSS_ACtcfC
@@ -4997,7 +5000,7 @@ userland/libsystem/sys_zerados.c:1145 $s22UniformTypeIdentifiers6UTTypeVSEAAMc
 userland/libsystem/sys_zerados.c:1146 $s22UniformTypeIdentifiers6UTTypeVSeAAMc
 userland/libsystem/sys_zerados.c:1147 $s22UniformTypeIdentifiers6UTTypeVyACSgSScfC
 
-## AVFoundation | 34 | Runtime C/C++ e Swift
+## AVFoundation | 34 | a definir
 userland/libsystem/sys_zerados.c:978 $s12AVFoundation15AVAsyncPropertyC6StatusO11descriptionSSvg
 userland/libsystem/sys_zerados.c:979 $s12AVFoundation15AVAsyncPropertyC6StatusOMa
 userland/libsystem/sys_zerados.c:980 $s12AVFoundation15AVAsyncPropertyC6StatusOMn
@@ -5098,7 +5101,7 @@ userland/libsystem/sys_zerados.c:1401 $s6Darwin7S_IWOTHs6UInt16Vvg
 userland/libsystem/sys_zerados.c:1402 $s6Darwin7S_IWUSRs6UInt16Vvg
 userland/libsystem/sys_zerados.c:1403 $s6Darwin8S_IFSOCKs6UInt16Vvg
 
-## Foundation (C, NS*) | 27 | Sistemas (bc-315c5f63), lado compartilhado de sys_zerados.c
+## Foundation (C, NS*) | 27 | Sistemas
 userland/libsystem/sys_zerados.c:5037 NSLocaleCalendar
 userland/libsystem/sys_zerados.c:5038 NSLocaleCountryCode
 userland/libsystem/sys_zerados.c:5039 NSLocaleCurrencyCode
@@ -5127,7 +5130,7 @@ userland/libsystem/sys_zerados.c:5061 NSURLVolumeAvailableCapacityForImportantUs
 userland/libsystem/sys_zerados.c:5062 NSURLVolumeAvailableCapacityKey
 userland/libsystem/sys_zerados.c:5063 NSURLVolumeTotalCapacityKey
 
-## PhotosUI | 27 | Runtime C/C++ e Swift
+## PhotosUI | 27 | Interface
 userland/libsystem/sys_zerados.c:1658 $s8PhotosUI14PHPickerFilterV6imagesACvgZ
 userland/libsystem/sys_zerados.c:1659 $s8PhotosUI14PHPickerFilterV6videosACvgZ
 userland/libsystem/sys_zerados.c:1660 $s8PhotosUI14PHPickerFilterVMa
@@ -5185,7 +5188,7 @@ userland/libsystem/sys_zerados.c:1174 $s2os6LoggerVMa
 userland/libsystem/sys_zerados.c:1175 $s2os6LoggerVMn
 userland/libsystem/sys_zerados.c:1176 $s2os6LoggerVyACSo03OS_A4_logCcfC
 
-## Network (C, nw_*) | 25 | Sistemas (bc-315c5f63), lado compartilhado de sys_zerados.c
+## Network (C, nw_*) | 25 | a definir
 userland/libsystem/sys_zerados.c:5157 nw_connection_cancel
 userland/libsystem/sys_zerados.c:5158 nw_connection_copy_endpoint
 userland/libsystem/sys_zerados.c:5159 nw_connection_create
@@ -5278,7 +5281,7 @@ userland/libsystem/sys_zerados.c:1058 $s12RegexBuilder9OneOrMoreVMn
 userland/libsystem/sys_zerados.c:1059 $s12RegexBuilder9OneOrMoreVyACyxG17_StringProcessing0A0VyxGcfC
 userland/libsystem/sys_zerados.c:1060 $s12RegexBuilder9OneOrMoreVyxG17_StringProcessing0A9ComponentAAMc
 
-## XPC | 15 | Runtime C/C++ e Swift
+## XPC | 15 | Kernel
 userland/libsystem/sys_zerados.c:1181 $s3XPC0A10_TYPE_BOOLs13OpaquePointerVvg
 userland/libsystem/sys_zerados.c:1182 $s3XPC0A10_TYPE_DATAs13OpaquePointerVvg
 userland/libsystem/sys_zerados.c:1183 $s3XPC0A10_TYPE_NULLs13OpaquePointerVvg
@@ -5295,7 +5298,7 @@ userland/libsystem/sys_zerados.c:1193 $s3XPC0A25_ERROR_CONNECTION_INVALIDSo13OS_
 userland/libsystem/sys_zerados.c:1194 $s3XPC0A29_ERROR_CONNECTION_INTERRUPTEDSo13OS_xpc_object_pvg
 userland/libsystem/sys_zerados.c:1195 $s3XPC0A8_TYPE_FDs13OpaquePointerVvg
 
-## CoreAudio | 13 | Runtime C/C++ e Swift
+## CoreAudio | 13 | a definir
 userland/libsystem/sys_zerados.c:1685 $s9CoreAudio013UnsafeMutableB17BufferListPointerV06unsafeG0SPySo0beF0VGvg
 userland/libsystem/sys_zerados.c:1686 $s9CoreAudio013UnsafeMutableB17BufferListPointerV06unsafedG0SpySo0beF0VGvg
 userland/libsystem/sys_zerados.c:1687 $s9CoreAudio013UnsafeMutableB17BufferListPointerV5countSivg
@@ -5310,7 +5313,7 @@ userland/libsystem/sys_zerados.c:1695 $s9CoreAudio013UnsafeMutableB17BufferListP
 userland/libsystem/sys_zerados.c:1696 $s9CoreAudio013UnsafeMutableB17BufferListPointerVySo0bE0VSicis
 userland/libsystem/sys_zerados.c:2899 $sSo16CATapDescriptionC9CoreAudioE34stereoGlobalTapButExcludeProcessesABSays6UInt32VG_tcfC
 
-## CommonCrypto (C) | 11 | Sistemas (bc-315c5f63), lado compartilhado de sys_zerados.c
+## CommonCrypto (C) | 11 | a definir
 userland/libsystem/sys_zerados.c:5026 CCCalibratePBKDF
 userland/libsystem/sys_zerados.c:5027 CC_MD2_Final
 userland/libsystem/sys_zerados.c:5028 CC_MD2_Init
@@ -5323,7 +5326,7 @@ userland/libsystem/sys_zerados.c:5034 CC_SHA224_Final
 userland/libsystem/sys_zerados.c:5035 CC_SHA224_Init
 userland/libsystem/sys_zerados.c:5036 CC_SHA224_Update
 
-## AppleArchive | 10 | Runtime C/C++ e Swift
+## AppleArchive | 10 | Storage
 userland/libsystem/sys_zerados.c:1011 $s12AppleArchive0B10ByteStreamC015withCompressionD05using9writingTo9blockSize5flags11threadCount_xAA0bF0V_ACSiAA0B5FlagsVSixACKXEtKlFZ
 userland/libsystem/sys_zerados.c:1012 $s12AppleArchive0B10ByteStreamC017withDecompressionD011readingFrom5flags11threadCount_xAC_AA0B5FlagsVSixACKXEtKlFZ
 userland/libsystem/sys_zerados.c:1013 $s12AppleArchive0B10ByteStreamC08withFileD04path4mode7options11permissions_x6System0F4PathV_AI0F10DescriptorV10AccessModeVAM11OpenOptionsVAI0F11PermissionsVxACKXEtKlFZ
@@ -5335,7 +5338,7 @@ userland/libsystem/sys_zerados.c:1018 $s12AppleArchive0B5FlagsVMa
 userland/libsystem/sys_zerados.c:1019 $s12AppleArchive0B5FlagsVMn
 userland/libsystem/sys_zerados.c:1020 $s12AppleArchive0B5FlagsVs10SetAlgebraAAMc
 
-## Compression | 9 | Runtime C/C++ e Swift
+## Compression | 9 | Sistemas
 userland/libsystem/sys_zerados.c:958 $s11Compression12OutputFilterC5writeyyxSgK10Foundation12DataProtocolRzlFTj
 userland/libsystem/sys_zerados.c:959 $s11Compression12OutputFilterC8finalizeyyKFTj
 userland/libsystem/sys_zerados.c:960 $s11Compression12OutputFilterCMa
@@ -5357,7 +5360,7 @@ userland/libsystem/sys_zerados.c:974 $s11Observation0A9RegistrarVMa
 userland/libsystem/sys_zerados.c:975 $s11Observation0A9RegistrarVMn
 userland/libsystem/sys_zerados.c:976 $s11Observation10ObservableMp
 
-## Accelerate | 7 | Runtime C/C++ e Swift
+## Accelerate | 7 | a definir
 userland/libsystem/sys_zerados.c:8 $s10Accelerate6vImageO7OptionsV7noFlagsAEvgZ
 userland/libsystem/sys_zerados.c:9 $s10Accelerate6vImageO7OptionsVMa
 userland/libsystem/sys_zerados.c:2868 $sSo13vImage_BufferV10AccelerateE02cgA06format5flagsABSo10CGImageRefa_So01va1_G6FormatVAC01vA0O7OptionsVtKcfC
@@ -5383,14 +5386,14 @@ userland/libsystem/sys_zerados.c:5182 open_dprotected_np
 userland/libsystem/sys_zerados.c:5193 setfsent
 userland/libsystem/sys_zerados.c:5380 xattr_name_with_flags
 
-## Combine | 5 | Runtime C/C++ e Swift
+## Combine | 5 | a definir
 userland/libsystem/sys_zerados.c:2837 $sSo12NSURLSessionC10FoundationE17DataTaskPublisherV7Combine0E0ACMc
 userland/libsystem/sys_zerados.c:2998 $sSo20NSNotificationCenterC10FoundationE9PublisherV7CombineAdCMc
 userland/libsystem/sys_zerados.c:3137 $sSo7NSTimerC10FoundationE14TimerPublisherC7Combine011ConnectableD0ACMc
 userland/libsystem/sys_zerados.c:3138 $sSo7NSTimerC10FoundationE14TimerPublisherC7connect7Combine11Cancellable_pyF
 userland/libsystem/sys_zerados.c:3152 $sSo8NSObjectC10FoundationE26KeyValueObservingPublisherVy_xq_G7Combine0F0ACMc
 
-## CoreFoundation | 5 | Runtime C/C++ e Swift
+## CoreFoundation | 5 | Sistemas
 userland/libsystem/sys_zerados.c:1066 $s14CoreFoundation9_CFObjectMp
 userland/libsystem/sys_zerados.c:1067 $s14CoreFoundation9_CFObjectPAAE2eeoiySbx_xtFZ
 userland/libsystem/sys_zerados.c:1068 $s14CoreFoundation9_CFObjectPAAE4hash4intoys6HasherVz_tF
@@ -5415,7 +5418,7 @@ userland/libsystem/sys_zerados.c:5112 exception_raise
 userland/libsystem/sys_zerados.c:5113 exception_raise_state
 userland/libsystem/sys_zerados.c:5114 exception_raise_state_identity
 
-## Security (C) | 2 | Sistemas (bc-315c5f63), lado compartilhado de sys_zerados.c
+## Security (C) | 2 | Sistemas
 userland/libsystem/sys_zerados.c:5072 SecTaskCopyTeamIdentifier
 userland/libsystem/sys_zerados.c:5073 SecTaskCreateWithAuditToken
 
@@ -5423,7 +5426,7 @@ userland/libsystem/sys_zerados.c:5073 SecTaskCreateWithAuditToken
 userland/libsystem/sys_zerados.c:5381 xpc_dictionary_get_audit_token
 userland/libsystem/sys_zerados.c:5382 xpc_pipe_simpleroutine
 
-## ponteiros nulos (dados, nao funcao) | Sistemas (bc-315c5f63), lado compartilhado
+## ponteiros nulos (dados, nao funcao) | Sistemas
 userland/libsystem/sys_zerados.c:5066 void *OBJC_CLASS_$_NSOutputStream;
 userland/libsystem/sys_zerados.c:5067 void *OBJC_CLASS_$_NSStream;
 userland/libsystem/sys_zerados.c:5068 void *OBJC_CLASS_$_SwiftNativeNSObject;
@@ -5454,7 +5457,7 @@ userland/libsystem/sys_zerados.c:5142 void *kCFStringTransformToLatin;
 userland/libsystem/sys_zerados.c:5143 void *kCFURLContentAccessDateKey;
 userland/libsystem/sys_zerados.c:5144 void *kCFURLFileSizeKey;
 
-## userland/libsystem/swiftui_imports.c | Runtime C/C++ e Swift
+## userland/libsystem/swiftui_imports.c | Interface
 userland/libsystem/swiftui_imports.c:5 $s10Foundation15AttributeScopesO7SwiftUIE0D12UIAttributesV014UnderlineStyleB0OAA19AttributedStringKeyADMc
 userland/libsystem/swiftui_imports.c:6 $s10Foundation15AttributeScopesO7SwiftUIE0D12UIAttributesV014UnderlineStyleB0OMn
 userland/libsystem/swiftui_imports.c:7 $s10Foundation15AttributeScopesO7SwiftUIE0D12UIAttributesV014UnderlineStyleB0ON
