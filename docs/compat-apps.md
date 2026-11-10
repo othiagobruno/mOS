@@ -190,8 +190,8 @@ O que cada grupo faz, separado:
   `https://auth.openai.com/api/accounts/deviceauth/usercode` responde. `codex login` (sem `--device-auth`) sobe um
   servidor em `localhost` e imprime o URL. Entrar com a conta e o polling até o token ficam para o Thiago: esta
   medição não autentica. O `connect` de `AF_UNIX` dentro do processo ainda devolve `ECONNREFUSED` (`sockets.c`);
-  o `login` e o `login status` do fonte 0.167.0 não passam por aí. No harness, o processo para em
-  "failed to create UnixStream" porque o machotest não emula `socketpair`; na VM o par é um pipe do kernel.
+  o `login` e o `login status` do fonte 0.167.0 não passam por aí. No harness (`tools/machotest.c`) o CLI
+  roda `--version`, o `apply_patch` de ponta a ponta e o login por API key: ver [compat-codex-cli.md](compat-codex-cli.md).
 - **XPC** (`userland/libsystem/xpc.c`). O modelo de objetos inteiro: null, bool, int64, uint64, double, date, data, string,
   uuid, fd, array, dictionary e error, com `xpc_copy`, `xpc_equal`, `xpc_hash`, `xpc_copy_description` e os `apply` com blocos.
   São objetos ObjC da classe `OS_xpc_object`, então ARC/`objc_release` funcionam. `XPC_BOOL_*` e `XPC_ERROR_*` são estáticos e

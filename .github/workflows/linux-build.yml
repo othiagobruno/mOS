@@ -36,3 +36,7 @@ jobs:
         run: python3 tools/corpus/harness.py hosttest --lib /tmp/mos-linux-build/libSystem.mos --disco /tmp/mos-linux-build/libunwind-x86
       - name: teste de host do Virtualization
         run: sh tools/test-vz.sh
+      - name: teste de host do readdir (retrato da pasta)
+        run: gcc -std=c11 -O1 -Wall -Wextra tools/dirsnap_host.c -o /tmp/dirsnap_host && /tmp/dirsnap_host
+      - name: Codex CLI oficial no machotest (versão, apply_patch, login por API key falsa)
+        run: bash tools/codex-cli-harness.sh /tmp/mos-linux-build/libSystem.mos
