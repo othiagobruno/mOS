@@ -12,6 +12,7 @@
 #include <sys/stat.h>
 #include <time.h>
 #include "../kernel/include/ed25519_impl.h"
+#include "../kernel/include/fwlink.h"
 
 #define SECTOR 512
 #define SPC 2 /* setores por cluster (1 KiB) */
@@ -76,6 +77,30 @@ static int path_stat(const char *p, int *is_dir, uint64_t *size) {
 }
 static FILE *path_open(const char *p) { return fopen(p, "rb"); }
 #endif
+
+/* Symlink de .framework que veio como arquivo de texto vira #mOS-link: antes do manifesto,
+ * para o hash do payload bater com os bytes da imagem e o VFS seguir o componente do meio. */
+static void canon_fw_links(node *n, const char *prefix) {
+    char path[1024];
+    if (!n) return;
+    snprintf(path, sizeof path, "%s/%s", prefix ? prefix : "", n->name);
+    if (n->is_dir) {
+        for (node *c = n->child; c; c = c->next) canon_fw_links(c, path);
+        return;
+    }
+    if (!strstr(path, ".framework/")) return;
+    char out[560];
+    unsigned long long nw = fwlink_canonicalize(n->data, n->size, out, sizeof out);
+    unsigned char *nd;
+    if (!nw) return;
+    nd = malloc((size_t)nw + 1);
+    if (!nd) return;
+    memcpy(nd, out, (size_t)nw);
+    nd[nw] = 0;
+    free(n->data);
+    n->data = nd;
+    n->size = (uint32_t)nw;
+}
 
 static node *load_tree(const char *path, const char *name, node *parent) {
     node *n = calloc(1, sizeof(node));
@@ -596,15 +621,18 @@ int main(int argc, char **argv) {
     bs[510] = 0x55; bs[511] = 0xAA;
 
     node *root = load_tree(argv[2], "", NULL);
+    canon_fw_links(root, "");
     validate_staging(root, "");
     make_manifest(root);
     if (overlay_dir) {
         node *ov = load_tree(overlay_dir, "", NULL);
+        canon_fw_links(ov, "");
         validate_overlay(ov, "", &LIVE_RULE);
         printf("mkimg: overlay Live (fora do payload e do manifesto): %d arquivos\n", merge_overlay(root, ov));
     }
     if (test_dir) {
         node *ov = load_tree(test_dir, "", NULL);
+        canon_fw_links(ov, "");
         validate_overlay(ov, "", &TEST_RULE);
         printf("mkimg: overlay de TESTE (preferências; fora do payload e do manifesto; imagem de teste, não de release): %d arquivos\n",
                merge_overlay(root, ov));

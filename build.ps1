@@ -9,9 +9,28 @@ $ErrorActionPreference = 'Continue'
 $root = $PSScriptRoot
 Set-Location $root
 
-$zig = Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*' -ErrorAction SilentlyContinue | Where-Object { Test-Path "$($_.FullName)\zig.exe" } | Select-Object -First 1
-if ($zig) { $zig = Join-Path $zig.FullName 'zig.exe' } elseif ($env:MOS_ZIG) { $zig = $env:MOS_ZIG } else { $zig = (Get-Command zig -ErrorAction SilentlyContinue).Source }
-if (-not $zig) { Write-Error "Zig not found. Download from https://ziglang.org/download/ and extract into .tools\"; exit 1 }
+function Test-MosZigPe([string]$Path) {
+    if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { return $false }
+    $full = (Resolve-Path -LiteralPath $Path).Path
+    $fs = [IO.File]::OpenRead('\\?\' + $full)
+    $b = New-Object byte[] 2
+    $n = $fs.Read($b, 0, 2)
+    $fs.Close()
+    return ($n -eq 2 -and $b[0] -eq 0x4D -and $b[1] -eq 0x5A)
+}
+$zig = $null
+Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*' -ErrorAction SilentlyContinue | ForEach-Object {
+    $cand = Join-Path $_.FullName 'zig.exe'
+    if (-not (Test-Path -LiteralPath $cand)) { return }
+    if (Test-MosZigPe $cand) { if (-not $zig) { $zig = $cand } }
+    else { Write-Host "aviso: $cand não é um executável Windows (MZ); ignorado. Um zig de macOS em .tools\zig-macos-dl faz o libSystem falhar na primeira compilação." -ForegroundColor Yellow }
+}
+if (-not $zig -and $env:MOS_ZIG -and (Test-MosZigPe $env:MOS_ZIG)) { $zig = $env:MOS_ZIG }
+if (-not $zig) {
+    $onPath = (Get-Command zig -ErrorAction SilentlyContinue).Source
+    if ($onPath -and (Test-Mos ZigPe $onPath)) { $zig = $onPath }
+}
+if (-not $zig) { Write-Error "Zig not found. Download from https://ziglang.org/download/ and extract into .tools\ (o zig.exe precisa ser PE/MZ, não um binário de macOS)."; exit 1 }
 
 if ($Clean) { Remove-Item -Recurse -Force "$root\$OutDir" -ErrorAction SilentlyContinue; exit 0 }
 New-Item -ItemType Directory -Force "$root\$OutDir" | Out-Null
@@ -44,14 +63,43 @@ if (-not (Test-Path $OutDir/mkimg.exe) -or (Get-Item tools/mkimg.c).LastWriteTim
 
 # ESP tree: EFI\BOOT\BOOTX64.EFI + \mOS\ (system and user files)
 $esp = "$root\$OutDir\esp"
+# O que o build não gera (apps já staged, Swift copiado à mão) sai antes do wipe e volta depois.
+# Contas, Preferências, logs e .conta ficam de fora: o mkimg recusa esse payload.
+$keep = "$root\$OutDir\esp-preservar"
+Remove-Item -Recurse -Force $keep -ErrorAction SilentlyContinue
+$keepRel = @(
+    'mOS\Aplicativos',
+    'mOS\usr\lib\swift',
+    'mOS\System\Library\Frameworks\SwiftUI.framework',
+    'mOS\System\Library\Frameworks\Combine.framework'
+)
+foreach ($rel in $keepRel) {
+    $src = Join-Path $esp $rel
+    if (Test-Path -LiteralPath $src) {
+        $dst = Join-Path $keep $rel
+        New-Item -ItemType Directory -Force (Split-Path $dst) | Out-Null
+        Copy-Item -Recurse -Force -LiteralPath $src $dst
+    }
+}
 Remove-Item -Recurse -Force $esp -ErrorAction SilentlyContinue
 if (Test-Path $esp) { Start-Sleep -Milliseconds 500; Remove-Item -Recurse -Force $esp -ErrorAction SilentlyContinue }
+if (Test-Path $esp) {
+    $full = (Resolve-Path -LiteralPath $esp).Path
+    & cmd.exe /c "rd /s /q `"\\?\$full`"" | Out-Null
+}
 # fail-closed: um staging que sobrou (arquivo em uso, resíduo de build antigo, contas/logs de uma sessão) NUNCA pode virar payload
 if (Test-Path $esp) { Write-Host "ERRO: build\esp não pôde ser apagado por inteiro (arquivo em uso?). Feche o que o estiver usando e rode de novo; o build não continua com um staging sujo." -ForegroundColor Red; exit 1 }
 New-Item -ItemType Directory -Force "$esp\EFI\BOOT", "$esp\mOS" | Out-Null
 Copy-Item $OutDir/BOOTX64.EFI "$esp\EFI\BOOT\BOOTX64.EFI" -Force
 # o conteúdo de root\mOS para dentro de esp\mOS (com "root\mOS" sem \*, uma esp\mOS que sobrou viraria esp\mOS\mOS)
 Copy-Item -Recurse -Force "$root\root\mOS\*" "$esp\mOS\"
+foreach ($rel in $keepRel) {
+    $src = Join-Path $keep $rel
+    if (-not (Test-Path -LiteralPath $src)) { continue }
+    $dst = Join-Path $esp $rel
+    New-Item -ItemType Directory -Force $dst | Out-Null
+    Copy-Item -Recurse -Force "$src\*" $dst
+}
 Remove-Item -Recurse -Force "$esp\mOS\mOS" -ErrorAction SilentlyContinue   # resto de builds antigos
 # root\mOS\Users só com pastas vazias (sobra de quando os exemplos moravam ali; hoje estão em root-live\mOS\Users, e o git
 # não apaga pastas que ficaram presas): fica fora do staging. Com qualquer arquivo dentro ela vai, e o mkimg recusa a imagem.
@@ -114,14 +162,21 @@ if ((Test-Path "$root\build\a64rt.mos") -and (Test-Path "$root\build\libSystem-a
 & "$root\tools\build-libs-arm64.ps1"
 if ($LASTEXITCODE -ne 0) { Write-Host 'aviso: slices arm64 das bibliotecas incompletos; apps arm64 ficam sem elas' -ForegroundColor Yellow }
 if (Test-Path "$root\build\universal") { Copy-Item "$root\build\universal\*" "$esp\mOS\" -Recurse -Force }
-# cadeia Swift (/usr/lib/swift, Combine/SwiftUI/frameworks do mOS): junta build\swift\objc\dylib (x86_64) e
-# build\swift-arm64\objc\dylib (tools\build-swift-arm64.ps1) em build\universal-swift; não compila nada aqui. São ~110 MB e o
-# sistema de arquivos da VM mora na RAM: só entra na imagem com -ComSwift (ou MOS_COM_SWIFT=1), como antes a imagem base
-# não levava dylib Swift nenhuma (os testes de apps Swift montam a sua)
+# cadeia Swift (/usr/lib/swift, Combine/SwiftUI). -ComSwift (ou MOS_COM_SWIFT=1) só junta os slices já compilados
+# (tools\build-swift-arm64.ps1 -SoJuntar); não é um interruptor de runtime. Se os artefatos existirem, entram na imagem
+# mesmo sem o interruptor. São ~110 MB e o sistema de arquivos da VM mora na RAM.
 if ($ComSwift -or $env:MOS_COM_SWIFT -eq '1') {
     & "$root\tools\build-swift-arm64.ps1" -SoJuntar
     if ($LASTEXITCODE -ne 0) { Write-Host 'aviso: Swift universal incompleto' -ForegroundColor Yellow }
-    if (Test-Path "$root\build\universal-swift") { Copy-Item "$root\build\universal-swift\*" "$esp\mOS\" -Recurse -Force }
+}
+$swiftSrc = $null
+if (Test-Path "$root\build\universal-swift\usr\lib\swift\libswiftCore.dylib") { $swiftSrc = "$root\build\universal-swift" }
+elseif (Test-Path "$root\build\swift\objc\dylib\usr\lib\swift\libswiftCore.dylib") { $swiftSrc = "$root\build\swift\objc\dylib" }
+if ($swiftSrc) {
+    Copy-Item -Recurse -Force "$swiftSrc\*" "$esp\mOS\"
+    Write-Host "Swift na imagem a partir de $swiftSrc (o FS da VM é RAM; a imagem cresce ~110 MB)" -ForegroundColor Yellow
+} elseif (-not (Test-Path "$esp\mOS\usr\lib\swift\libswiftCore.dylib")) {
+    Write-Host 'aviso: sem libswiftCore.dylib nem SwiftUI.framework; apps Swift e módulos .node que ligam libswiftCore não carregam. Compile a cadeia ou use -ComSwift quando os slices já existirem.' -ForegroundColor Yellow
 }
 # ferramentas de linha de comando do macOS em Mach-O (userland\cli-macos\<nome>.c -> /usr/bin/<nome>): open(1)
 New-Item -ItemType Directory -Force "$esp\mOS\usr\bin" | Out-Null

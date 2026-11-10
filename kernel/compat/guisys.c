@@ -10,6 +10,7 @@
 #include "ui.h"
 #include "compat_gui.h"
 #include "syscall.h"
+#include "quitpol.h"
 
 #define MAX_GWIN 64
 #define QLEN 256
@@ -238,14 +239,100 @@ static bool set_menus(gapp_t *ga, const u8 *b, usize n) {
     return true;
 }
 
+#define MAX_Q 32
+typedef struct { int pid; quit_stage_t stage; u64 deadline; } qtrack_t;
+static qtrack_t qtrack[MAX_Q];
+
+static qtrack_t *q_slot(int pid, int alloc) {
+    qtrack_t *free_slot = NULL;
+    for (int i = 0; i < MAX_Q; i++) {
+        if (qtrack[i].pid == pid) return &qtrack[i];
+        if (!qtrack[i].pid && !free_slot) free_slot = &qtrack[i];
+    }
+    return alloc ? free_slot : NULL;
+}
+
+static void quit_post_gev(int pid) {
+    gui_event_t e;
+    memset(&e, 0, sizeof e);
+    e.type = GEV_QUIT;
+    for (gapp_t *ga = gapps; ga; ga = ga->next) if (ga->pid == pid) push(ga, &e);
+}
+
+static void quit_enter(qtrack_t *q, int pid, quit_stage_t stage) {
+    q->pid = pid;
+    q->stage = stage;
+    switch (stage) {
+    case QUIT_GEV:
+        q->deadline = timer_ticks() + QUIT_GRACE_MS;
+        quit_post_gev(pid);
+        break;
+    case QUIT_TERM:
+        q->deadline = timer_ticks() + QUIT_TERM_MS;
+        proc_signal(pid, MOS_SIGTERM);
+        break;
+    case QUIT_KILL:
+        proc_signal(pid, MOS_SIGKILL);
+        q->pid = 0;
+        q->stage = QUIT_IDLE;
+        break;
+    case QUIT_IDLE:
+        q->pid = 0;
+        break;
+    default: {
+        quit_stage_t never = stage;
+        (void)never;
+        q->pid = 0;
+        q->stage = QUIT_IDLE;
+        break;
+    }
+    }
+}
+
+void compat_gui_request_quit(int pid, int force) {
+    qtrack_t *q;
+    int again;
+    quit_stage_t next;
+    if (pid <= 0 || !proc_alive(pid)) return;
+    q = q_slot(pid, 1);
+    if (!q) {
+        proc_signal(pid, force ? MOS_SIGKILL : MOS_SIGTERM);
+        return;
+    }
+    again = !force && q->pid == pid && q->stage != QUIT_IDLE;
+    next = quitpol_step(q->pid == pid ? q->stage : QUIT_IDLE, force, again, 0);
+    if (q->pid == pid && next == q->stage && q->stage != QUIT_IDLE) return;
+    quit_enter(q, pid, next);
+}
+
+void compat_gui_quit_tick(void) {
+    u64 now = timer_ticks();
+    for (int i = 0; i < MAX_Q; i++) {
+        qtrack_t *q = &qtrack[i];
+        quit_stage_t next;
+        int elapsed;
+        if (!q->pid) continue;
+        if (!proc_alive(q->pid) || q->stage == QUIT_KILL || q->stage == QUIT_IDLE) {
+            q->pid = 0;
+            q->stage = QUIT_IDLE;
+            continue;
+        }
+        if (now < q->deadline) continue;
+        elapsed = q->stage == QUIT_GEV ? QUIT_GRACE_MS : QUIT_TERM_MS;
+        next = quitpol_step(q->stage, 0, 0, elapsed);
+        if (next != q->stage) quit_enter(q, q->pid, next);
+    }
+}
+
+int compat_gui_quit_pending(int pid) {
+    if (pid <= 0) return 0;
+    for (int i = 0; i < MAX_Q; i++) if (qtrack[i].pid == pid && qtrack[i].stage != QUIT_IDLE) return 1;
+    return 0;
+}
+
 static void gapp_quit(app_t *a) {
     for (gapp_t *ga = gapps; ga; ga = ga->next)
-        if (&ga->app == a) {
-            gui_event_t e;
-            memset(&e, 0, sizeof e);
-            e.type = GEV_QUIT;
-            push(ga, &e);
-        }
+        if (&ga->app == a) compat_gui_request_quit(ga->pid, 0);
 }
 
 static void gapp_icon(surface_t *s, int x, int y, int size) {

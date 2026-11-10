@@ -85,6 +85,13 @@ bool        horizonte_motor_disponivel(void);
 bool        horizonte_motor_abrir(const char *url);      /* url NULL: abre ou traz o Horizonte; false: sem motor ou não iniciou */
 bool        horizonte_motor_bundle(const char *bundle);  /* o .app é o motor? (Dock, barra de menus, alertas) */
 void        horizonte_motor_encerrar(void);              /* "Encerrar" do Horizonte: pede ao motor que encerre */
+void        horizonte_motor_parar(int force);            /* 0 = GEV_QUIT e escalação; 1 = SIGKILL */
+/* Copia um .app para /Aplicativos. 1 copiou, 0 já estava, -1 erro, -2 FairPlay (SC_Info): não copiado. */
+int         ls_install_app(const char *src_app);
+#ifdef MOS_UNIT_TESTS
+void        ls_test_poke(void);                          /* faz o próximo ls_tick vigiar na hora */
+int         ls_test_reparses(void);                      /* quantas vezes um bundle foi relido de verdade */
+#endif
 void        horizonte_legado_abrir(const char *url);     /* kernel/apps/horizonte.c: a URL no motor próprio do Horizonte */
 /* Ninguém abre o documento: alerta "Não há um aplicativo definido..." com "Escolher Aplicativo…" (Arquivos) */
 extern void (*ls_choose_app_hook)(const char *path);

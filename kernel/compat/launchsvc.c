@@ -367,7 +367,8 @@ struct ls_app {
     int nschemes;
     bool gone;
     u32 order;
-    usize plist_size;       /* para saber se o Info.plist mudou */
+    usize plist_size;
+    u64 bundle_stamp;       /* conteúdo do bundle, não só o tamanho do Info.plist */
 };
 
 #define MAX_APPS 256
@@ -645,21 +646,75 @@ static void stem_of(const char *path, char *out, usize cap) {
     if (ends_with(out, ".app")) out[strlen(out) - 4] = 0;
 }
 
+#ifdef MOS_UNIT_TESTS
+static int ls_reparse_count;
+#endif
+static u64 fnv_mix(u64 h, u64 v) { return (h ^ v) * 1099511628211ull; }
+static u64 fnv_bytes(u64 h, const void *p, usize n) {
+    const u8 *b = p;
+    for (usize i = 0; i < n; i++) h = (h ^ b[i]) * 1099511628211ull;
+    return h;
+}
+static u64 fnv_str(u64 h, const char *s) {
+    for (; s && *s; s++) h = (h ^ (u8)*s) * 1099511628211ull;
+    return h;
+}
+/* Arquivo inteiro até 64 KiB; acima disso, começo e fim. mtime entra para uma cópia por cima do mesmo tamanho. */
+static u64 file_sample(u64 h, vnode_t *f) {
+    if (!f || f->dir || !f->data) return fnv_mix(h, 0);
+    h = fnv_mix(h, f->size);
+    h = fnv_mix(h, f->mtime);
+    if (f->size <= 65536) return fnv_bytes(h, f->data, f->size);
+    h = fnv_bytes(h, f->data, 4096);
+    return fnv_bytes(h, f->data + f->size - 4096, 4096);
+}
+static u64 bundle_fingerprint(vnode_t *app) {
+    u64 h = 1469598103934665603ull;
+    vnode_t *ct, *mac, *c;
+    if (!app) return 0;
+    h = fnv_str(h, app->name);
+    h = fnv_mix(h, app->mtime);
+    ct = vfs_child(app, "Contents");
+    h = file_sample(h, ct ? vfs_child(ct, "Info.plist") : NULL);
+    if (ct) {
+        h = fnv_mix(h, ct->mtime);
+        for (c = ct->child; c; c = c->next) {
+            h = fnv_str(h, c->name);
+            h = fnv_mix(h, c->dir ? 1 : 0);
+            h = fnv_mix(h, c->size);
+            h = fnv_mix(h, c->mtime);
+        }
+    }
+    mac = ct ? vfs_child(ct, "MacOS") : NULL;
+    if (mac && mac->dir)
+        for (c = mac->child; c; c = c->next) {
+            h = fnv_str(h, c->name);
+            h = c->dir ? fnv_mix(h, c->mtime) : file_sample(h, c);
+        }
+    return h;
+}
+
 /* lê (ou relê) o .app; NULL se não for um bundle com Info.plist */
 static ls_app_t *register_bundle(const char *path) {
     char ip[400];
+    vnode_t *app = vfs_lookup(path);
+    u64 stamp = bundle_fingerprint(app);
     snprintf(ip, sizeof ip, "%s/Contents/Info.plist", path);
     vnode_t *v = vfs_lookup(ip);
     if (!v || v->dir || !v->data) return NULL;
     ls_app_t *a = NULL;
     for (int i = 0; i < napps; i++) if (!strcmp(apps[i]->path, path)) a = apps[i];
-    if (a && !a->gone && a->plist_size == v->size) return a;
+    if (a && !a->gone && stamp && a->bundle_stamp == stamp) return a;
+#ifdef MOS_UNIT_TESTS
+    ls_reparse_count++;
+#endif
     pl_t *info = pl_parse(v->data, v->size);
     if (!info || info->type != PL_DICT) { pl_free(info); return NULL; }
     if (!a) { a = app_new(); if (!a) { pl_free(info); return NULL; } }
     else { claims_clear(a); types_drop_owner(a); }
     a->gone = false;
     a->plist_size = v->size;
+    a->bundle_stamp = stamp;
     snprintf(a->path, sizeof a->path, "%s", path);
     char stem[128];
     stem_of(path, stem, sizeof stem);
@@ -716,13 +771,25 @@ static fpref_t fprefs[128];
 static int nfprefs;
 static char prefs_home[256];
 static bool prefs_loaded;
+static u64 prefs_stamp;
+#ifdef MOS_UNIT_TESTS
+int ls_test_reparses(void) { return ls_reparse_count; }
+#endif
 
 static const char *prefs_file(void) { return home_sub("/Library/Preferences/com.apple.LaunchServices/com.apple.launchservices.secure.plist"); }
 
+static u64 prefs_file_stamp(void) {
+    vnode_t *v = vfs_lookup(prefs_file());
+    if (!v || v->dir || !v->data || !v->size) return 1;
+    return file_sample(1469598103934665603ull, v);
+}
+
 static void prefs_load(void) {
     const char *home = home_sub("");
-    if (prefs_loaded && !strcmp(home, prefs_home)) return;
+    u64 st = prefs_file_stamp();
+    if (prefs_loaded && !strcmp(home, prefs_home) && st == prefs_stamp) return;
     prefs_loaded = true;
+    prefs_stamp = st;
     ls_gen++;
     snprintf(prefs_home, sizeof prefs_home, "%s", home);
     nprefs = nfprefs = 0;
@@ -799,6 +866,7 @@ static void prefs_save(void) {
     vfs_mkdir(home_sub("/Library/Preferences/com.apple.LaunchServices"));
     vfs_write_file(prefs_file(), b.p, (usize)b.len);
     sb_free(&b);
+    prefs_stamp = prefs_file_stamp();
 }
 
 static ls_app_t *pref_lookup(u8 kind, const char *key, u32 roles) {
@@ -1258,11 +1326,11 @@ static int motor_pid(void) {
     return 0;
 }
 /* "Encerrar" do Horizonte (Dock, ⌘Q no motor próprio): o motor recebe o pedido de encerrar, como um app do macOS */
-void horizonte_motor_encerrar(void) {
+void horizonte_motor_parar(int force) {
     int pid = motor_pid();
-    app_t *proxy = pid > 0 ? compat_gui_app_for_pid(pid) : NULL;
-    if (proxy && proxy->on_quit) proxy->on_quit(proxy);
+    if (pid > 0) compat_gui_request_quit(pid, force);
 }
+void horizonte_motor_encerrar(void) { horizonte_motor_parar(0); }
 bool horizonte_motor_abrir(const char *url) {
     if (!horizonte_motor_disponivel()) return false;
     int pid = motor_pid();
@@ -1422,17 +1490,17 @@ static u64 dir_signature(void) {
     for (u32 d = 0; d < ARRAY_LEN(app_dirs); d++) {
         vnode_t *dir = vfs_lookup(app_dirs[d]);
         for (vnode_t *c = dir && dir->dir ? dir->child : NULL; c; c = c->next) {
-            if (!c->dir || !ends_with(c->name, ".app")) continue;
-            for (const char *p = c->name; *p; p++) h = (h ^ (u8)*p) * 1099511628211ull;
-            vnode_t *ct = vfs_child(c, "Contents");
-            vnode_t *ip = ct ? vfs_child(ct, "Info.plist") : NULL;
-            h = (h ^ (ip ? ip->size + 1 : 0)) * 1099511628211ull;
+            if (!c->dir || !ends_with(c->name, ".app") || !vfs_child(c, "Contents")) continue;
+            h = fnv_mix(h, bundle_fingerprint(c));
         }
     }
     return h;
 }
 
 static u64 last_sig, last_check;
+#ifdef MOS_UNIT_TESTS
+void ls_test_poke(void) { last_check = timer_ticks() - 2000; }
+#endif
 
 /* pedidos dos apps (syscall): a interface (alertas, janelas, processos novos) só muda no loop principal */
 typedef struct { u8 kind; bool used; char target[1024]; char app[128]; } defer_t;   /* 0 abrir, 1 esquema padrão */
@@ -1500,6 +1568,31 @@ void ls_rescan(void) {
     apps_sync_mac();
 }
 
+/* Copia um .app (de um volume montado, em geral) para /Aplicativos e registra.
+ * 1 copiou, 0 já estava, -1 erro, -2 FairPlay (SC_Info): não copiado e não contornado. */
+int ls_install_app(const char *src) {
+    vnode_t *app, *ct;
+    const char *base;
+    char dest[400];
+    if (!src || !src[0]) return -1;
+    app = vfs_lookup(src);
+    if (!app || !app->dir) return -1;
+    base = strrchr(src, '/');
+    base = base ? base + 1 : src;
+    if (!ends_with(base, ".app")) return -1;
+    ct = vfs_child(app, "Contents");
+    if (ct && vfs_child(ct, "SC_Info")) {
+        kprintf("ls: \"%s\" traz SC_Info (App Store / FairPlay); o mOS não copia nem contorna\n", base);
+        return -2;
+    }
+    snprintf(dest, sizeof dest, "/Aplicativos/%s", base);
+    if (vfs_lookup(dest)) return 0;
+    if (!vfs_copy_tree(src, dest)) return -1;
+    kprintf("ls: instalado %s\n", dest);
+    ls_rescan();
+    return 1;
+}
+
 void ls_init(void) {
     if (napps) return;
     register_builtins();
@@ -1516,6 +1609,7 @@ void ls_tick(void) {
     last_check = now;
     pend_tick();
     bwatch_tick();
+    prefs_load();   /* o plist de escolhas pode mudar sem a pasta de apps mudar */
     if (dir_signature() != last_sig) ls_rescan();
 }
 
