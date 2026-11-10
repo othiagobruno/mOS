@@ -244,11 +244,11 @@ O `machocheck` listou **96** caminhos absolutos. A lista `libsystem_dylib_ok` do
 `libsandbox`, `libresolv`, `libbz2`, `libiconv`, `libpmsample`, `libpmenergy`, entre outras). Não aparecem nessa
 lista, lida em `kernel/compat/macho.c` nesta data:
 
-- `CoreData`, `CloudKit`, `ImageIO`, `QuickLookUI`, `StoreKit`
-- `/usr/lib/libcompression.dylib`
+- `CoreData`, `CloudKit`, `ImageIO`, `QuickLookUI`, `StoreKit` — QuickLookUI, StoreKit e CoreData continuam de fora deste trabalho
 - as `libswift*` (o carregador ainda tenta `/usr/lib/swift/libswiftFoundation.dylib` no disco, se o arquivo existir)
-- `/usr/lib/libz.1.dylib` e `/usr/lib/libcurl.4.dylib`: não estão na lista; `link_abs_dep` troca o caminho pela
-  fórmula Homebrew correspondente, se esse arquivo existir no disco
+- `/usr/lib/libcompression.dylib`, `/usr/lib/libz.1.dylib` e `/usr/lib/libcurl.4.dylib` também não estão em
+  `libsystem_dylib_ok`. O `link_abs_dep` resolve o nome para o mesmo caminho em `/usr/lib`, onde o `build.ps1`
+  grava a dylib gerada do fonte. Não há troca pelo keg do Homebrew
 
 ## stage-electron
 

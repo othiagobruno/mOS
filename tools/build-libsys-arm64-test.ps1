@@ -35,7 +35,7 @@ Copy-Item "$root\build\libSystem-arm64.mos" "$a64\libSystem.mos" -Force
 if (-not (Test-Path "$root\build\machotest.exe")) { Write-Host 'falta build\machotest.exe (build\a64rt-test\run.sh compila)' -ForegroundColor Red; exit 1 }
 if ($haveDylibs) {
     New-Item -ItemType Directory -Force "$vfs\usr\lib", "$vfs\usr\share\icu" | Out-Null
-    Copy-Item "$root\build\universal\usr" "$vfs\" -Recurse -Force             # /usr/lib e /usr/local/opt/zlib
+    Copy-Item "$root\build\universal\usr" "$vfs\" -Recurse -Force             # /usr/lib (libz, libcurl, libcompression quando o universal existe)
     Copy-Item "$root\build\icu\icudt74l.dat" "$vfs\usr\share\icu\" -Force -ErrorAction SilentlyContinue
 }
 $rc = 0

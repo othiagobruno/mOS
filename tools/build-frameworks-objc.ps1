@@ -1,8 +1,8 @@
 # mOS - frameworks do sistema como Mach-O de verdade (docs/swift-objc-runtime.md, fase 7), escritos para o mOS:
 # userland\frameworks\<Nome>\*.m|*.c (+ *.swift: overlay Swift, como o CoreData da Apple, que traz o seu no próprio
 # framework). Cada um vira /System/Library/Frameworks/<Nome>.framework/Versions/A/<Nome> (install name da Apple) na
-# mesma raiz das dylibs Swift (build\swift\objc\dylib), que o carregador do mOS lê do VFS. Também põe o zlib do
-# Homebrew (bottle em build\brew\x\zlib) em /usr/local/opt/zlib/lib, para onde o carregador manda /usr/lib/libz.1.dylib.
+# mesma raiz das dylibs Swift (build\swift\objc\dylib), que o carregador do mOS lê do VFS. Se a libz deste
+# arch já foi compilada (tools\build-zlib.ps1), copia para usr\lib. Sem bottle do Homebrew.
 #   .\tools\build-frameworks-objc.ps1 [-Only CoreData]
 param([string[]]$Only, [string]$Arch = 'x86_64')
 $root = Split-Path $PSScriptRoot -Parent
@@ -59,12 +59,11 @@ foreach ($fw in Get-ChildItem "$root\userland\frameworks" -Directory) {
     }
     Write-Host ("{0}: ok ({1:N0} KB) -> {2}" -f $name, ((Get-Item "$dir\$file").Length / 1KB), $install)
 }
-# zlib: o bottle do Homebrew (zlib 1.3.2, licença zlib)
-$z = "$root\build\brew\x\zlib\1.3.2\lib\libz.1.dylib"
-if ($Arch -ne 'x86_64') { Write-Host 'libz: sem slice arm64 (o bottle do Homebrew é x86_64)' -ForegroundColor DarkGray }
-elseif (Test-Path $z) {
-    New-Item -ItemType Directory -Force "$dst\usr\local\opt\zlib\lib" | Out-Null
-    Copy-Item $z "$dst\usr\local\opt\zlib\lib\libz.1.dylib" -Force
-    Write-Host 'libz: bottle do Homebrew em /usr/local/opt/zlib/lib/libz.1.dylib'
-} else { Write-Host 'libz: bottle do Homebrew ausente (build\brew\x\zlib)' -ForegroundColor Yellow }
+# libz deste arch, se o build já a gerou (a imagem padrão a põe em /usr/lib pelo build.ps1)
+$z = "$root\build\zlib-$Arch\libz.1.dylib"
+if (Test-Path $z) {
+    New-Item -ItemType Directory -Force "$dst\usr\lib" | Out-Null
+    Copy-Item $z "$dst\usr\lib\libz.1.dylib" -Force
+    Write-Host 'libz: /usr/lib/libz.1.dylib a partir do fonte'
+} else { Write-Host "libz: sem build\zlib-$Arch (tools\build-zlib.ps1)" -ForegroundColor Yellow }
 exit $fails

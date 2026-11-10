@@ -133,13 +133,21 @@ if (Test-Path "$root\build\icu\libicucore.A.dylib") {
     Copy-Item "$root\build\icu\icudt74l.dat" "$esp\mOS\usr\share\icu\icudt74l.dat" -Force
     Copy-Item "$root\build\icu\LICENSE" "$esp\mOS\usr\share\icu\LICENSE" -Force -ErrorAction SilentlyContinue
 }
-# zlib (licença zlib) do bottle do Homebrew em /usr/local/opt/zlib/lib, para onde o carregador manda /usr/lib/libz.1.dylib
-# (kernel/compat/macho.c). Módulos nativos a ligam: o file_service.node do Cursor (busca de arquivos) caía sem crc32/inflate.
-$zl = Get-ChildItem "$root\build\brew\x\zlib\*\lib\libz.1.*.dylib" -ErrorAction SilentlyContinue | Select-Object -First 1
-if ($zl) {
-    New-Item -ItemType Directory -Force "$esp\mOS\usr\local\opt\zlib\lib" | Out-Null
-    Copy-Item $zl.FullName "$esp\mOS\usr\local\opt\zlib\lib\libz.1.dylib" -Force
-}
+# libz, libcurl e libcompression em /usr/lib, geradas pelo build (fonte zlib e curl; libcompression é do repositório).
+# O carregador resolve esses nomes para estes caminhos (kernel\compat\macho.c, usrlib_alias). Sem Homebrew.
+# O file_service.darwin-x64.node (Cursor e Slack) liga /usr/lib/libz.1.dylib.
+& "$root\tools\build-zlib.ps1" -Arch x86_64
+if ($LASTEXITCODE -ne 0) { Write-Host 'libz build FAILED' -ForegroundColor Red; exit 1 }
+& "$root\tools\build-libcurl.ps1" -Arch x86_64
+if ($LASTEXITCODE -ne 0) { Write-Host 'libcurl build FAILED' -ForegroundColor Red; exit 1 }
+& "$root\tools\build-libcompression.ps1" -Arch x86_64
+if ($LASTEXITCODE -ne 0) { Write-Host 'libcompression build FAILED' -ForegroundColor Red; exit 1 }
+Copy-Item "$root\build\zlib-x86_64\libz.1.dylib" "$esp\mOS\usr\lib\libz.1.dylib" -Force
+Copy-Item "$root\build\curl-x86_64\libcurl.4.dylib" "$esp\mOS\usr\lib\libcurl.4.dylib" -Force
+Copy-Item "$root\build\libcompression-x86_64\libcompression.dylib" "$esp\mOS\usr\lib\libcompression.dylib" -Force
+New-Item -ItemType Directory -Force "$esp\mOS\usr\share\zlib", "$esp\mOS\usr\share\curl" | Out-Null
+Copy-Item "$root\build\zlib-x86_64\LICENSE" "$esp\mOS\usr\share\zlib\LICENSE" -Force
+Copy-Item "$root\build\curl-x86_64\COPYING" "$esp\mOS\usr\share\curl\COPYING" -Force
 # WebKit.framework do mOS (userland\frameworks\WebKit): WKWebView sobre o motor web do sistema (SYS_WEB, kernel/web/webview.c)
 $wkdir = "$esp\mOS\System\Library\Frameworks\WebKit.framework\Versions\A"
 New-Item -ItemType Directory -Force $wkdir | Out-Null
@@ -158,7 +166,7 @@ if ((Test-Path "$root\build\a64rt.mos") -and (Test-Path "$root\build\libSystem-a
     Copy-Item "$root\build\libSystem-arm64.mos" "$a64\libSystem.mos" -Force
 }
 # bibliotecas Mach-O universais (x86_64 + arm64) por cima das só x86_64: o carregador escolhe o slice do processo
-# (tools\build-libs-arm64.ps1: libc++, sqlite, ICU, WebKit.framework)
+# (tools\build-libs-arm64.ps1: libc++, sqlite, ICU, WebKit.framework, libz, libcurl, libcompression)
 & "$root\tools\build-libs-arm64.ps1"
 if ($LASTEXITCODE -ne 0) { Write-Host 'aviso: slices arm64 das bibliotecas incompletos; apps arm64 ficam sem elas' -ForegroundColor Yellow }
 if (Test-Path "$root\build\universal") { Copy-Item "$root\build\universal\*" "$esp\mOS\" -Recurse -Force }
