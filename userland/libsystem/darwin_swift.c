@@ -130,6 +130,12 @@ MOS_SWIFT mos_posix_opt $s6Darwin14POSIXErrorCodeO8rawValueACSgs5Int32V_tcfC(int
     return o;
 }
 
+/* O enum cabe num Int32. O getter recebe esse self por valor (primeiro
+ * argumento do swiftcall) e devolve o mesmo número. */
+MOS_SWIFT int $s6Darwin14POSIXErrorCodeO8rawValues5Int32Vvg(int self) {
+    return self;
+}
+
 MOS_SWIFT void *$s6Darwin6stdoutSpySo7__sFILEVGvg(void) { return mos_stdout(); }
 MOS_SWIFT void *$s6Darwin6stderrSpySo7__sFILEVGvg(void) { return mos_stderr(); }
 

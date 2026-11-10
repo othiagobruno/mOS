@@ -1375,7 +1375,6 @@ void $s5WordsSzTl(void) {}
 void $s6Darwin0A7BooleanVMn(void) {}
 void $s6Darwin10MAP_FAILEDSvSgvg(void) {}
 void $s6Darwin10TIOCGWINSZSuvg(void) {}
-void $s6Darwin14POSIXErrorCodeO8rawValues5Int32Vvg(void) {}
 void $s6Darwin7SIG_IGNyys5Int32VXCvg(void) {}
 void $s6Darwin7S_IRWXGs6UInt16Vvg(void) {}
 void $s6Darwin7S_IRWXOs6UInt16Vvg(void) {}
