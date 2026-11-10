@@ -11,6 +11,10 @@ int mos_sui_intersect(double ax, double ay, double aw, double ah, double bx, dou
     return mos_sui_intersect_inline(ax, ay, aw, ah, bx, by, bw, bh, x, y, w, h);
 }
 
+void mos_sui_grid_cell(int index, int columns, double cellW, double cellH, double spacing, double *x, double *y) {
+    mos_sui_grid_cell_inline(index, columns, cellW, cellH, spacing, x, y);
+}
+
 void mos_sui_popover_frame(double ax, double ay, double aw, double ah, double pw, double ph, double bx, double by,
                            double bw, double bh, double *x, double *y, double *w, double *h) {
     mos_sui_popover_frame_inline(ax, ay, aw, ah, pw, ph, bx, by, bw, bh, x, y, w, h);

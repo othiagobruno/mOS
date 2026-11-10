@@ -9,10 +9,14 @@
  */
 #include "../third_party/sqlite/sqlite3.h"
 #ifdef CD_HOST
+#ifndef _POSIX_C_SOURCE
+#define _POSIX_C_SOURCE 200809L
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <sys/stat.h>
 typedef FILE cd_file;
 #else
 #include <stddef.h>
@@ -261,8 +265,12 @@ static const char cd_schema[] =
     "obj INTEGER NOT NULL, key TEXT NOT NULL, kind INTEGER NOT NULL,"
     "vtext TEXT, vint INTEGER, vreal REAL, PRIMARY KEY(obj,key));";
 
+static void cd_mkdir_parent(const char *path);
+
 static cd_store *cd_open_sqlite(const char *path) {
-    cd_store *s = cd_new(0, path);
+    cd_store *s;
+    cd_mkdir_parent(path);
+    s = cd_new(0, path);
     if (!s) return 0;
     if (sqlite3_open_v2(path, &s->db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, 0) != SQLITE_OK) {
         cd_close(s);

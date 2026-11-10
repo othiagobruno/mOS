@@ -184,6 +184,11 @@ public final class _Runtime {
     var pending: [() -> Void] = []
     /// Sem janela (host isolado): quem desenha o NSHostingView registra o relayout aqui.
     var hostRelayout: (() -> Void)?
+    /// Proposta do NSHostingView, lida pelo GeometryReader na próxima avaliação do body.
+    var hostW: Double = 0
+    var hostH: Double = 0
+    var env = EnvironmentValues()
+    var objects: [ObjectIdentifier: UnsafeMutableRawPointer] = [:]
 
     func beginScope(_ p: String) { scopes.append(p); slot.append(0) }
     func endScope() { scopes.removeLast(); slot.removeLast() }
