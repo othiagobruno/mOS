@@ -22,6 +22,7 @@
 #define SK_ERR_CLOUD_NETWORK 7
 /* StoreKitError.networkError — a loja não respondeu, então não é notAvailableInStorefront */
 #define SK2_ERR_NETWORK 2
+#define SK2_URL_NOT_CONNECTED (-1009)
 #define SK_TX_MAX 32
 #define SK_OBS_MAX 8
 #define SK_NOTE_MAX 96
@@ -255,6 +256,27 @@ static void sk_core_purchase(const char *pid, sk2_cont cont, void *ctx) {
 }
 
 static void sk_core_sync(sk2_cont cont, void *ctx) { sk2_fail(cont, ctx); }
+
+/* Prefixo do AsyncContext do Swift: Parent em +0, ResumeParent em +8.
+ * O erro não é um objeto Swift (não há witness table de StoreKitError aqui).
+ * Antes de retomar, grava o discriminante 2 (networkError) e o URLError -1009
+ * no frame que a continuação recebe. notAvailableInStorefront (4) não entra:
+ * a loja não respondeu, então não há storefront. */
+typedef struct sk2_frame {
+    struct sk2_frame *parent;
+    void (*resume)(struct sk2_frame *);
+    int error_kind;
+    int url_error;
+} sk2_frame;
+
+static void sk_core_throw_frame(sk2_frame *frame) {
+    sk2_frame *dst;
+    if (!frame || !frame->resume) return;
+    dst = frame->parent ? frame->parent : frame;
+    dst->error_kind = SK2_ERR_NETWORK;
+    dst->url_error = SK2_URL_NOT_CONNECTED;
+    frame->resume(dst);
+}
 
 /* currentEntitlements e updates: nenhuma transação. Não há o que emitir. */
 static int sk_core_entitlements_next(void) { return 0; }

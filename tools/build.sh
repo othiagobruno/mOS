@@ -333,6 +333,56 @@ else
     echo "aviso: Virtualization.framework não compilou" >&2
 fi
 
+echo "==> StoreKit.framework"
+SKSRC="$ROOT/userland/frameworks/StoreKit/StoreKit.m"
+SKOUT="$OUT/storekit"
+SKDIR="$ESP/mOS/System/Library/Frameworks/StoreKit.framework/Versions/A"
+mkdir -p "$SKOUT" "$SKDIR"
+sk_one() {
+    "$ZIG" cc -target "$1" -O2 -shared -x objective-c -I"$ROOT/userland/sdk/include" \
+        -Wno-objc-root-class -Wno-objc-method-access "$SKSRC" -o "$2" \
+        -Wl,-install_name,/System/Library/Frameworks/StoreKit.framework/Versions/A/StoreKit \
+        -Wl,-undefined,dynamic_lookup
+}
+if sk_one x86_64-macos "$SKOUT/StoreKit.x86" && sk_one aarch64-macos "$SKOUT/StoreKit.arm"; then
+    python3 - "$SKDIR/StoreKit" "$SKOUT/StoreKit.x86" "$SKOUT/StoreKit.arm" <<'PY'
+import pathlib, struct, sys
+out, *srcs = sys.argv[1:]
+slices = []
+for p in srcs:
+    b = pathlib.Path(p).read_bytes()
+    if struct.unpack_from("<I", b, 0)[0] != 0xFEEDFACF:
+        raise SystemExit(p + " nao e Mach-O fino")
+    cpu, sub = struct.unpack_from("<II", b, 4)
+    align = 14 if cpu == 0x0100000C else 12
+    slices.append((cpu, sub, align, b))
+off = 8 + 20 * len(slices)
+parts = []
+for cpu, sub, align, b in slices:
+    a = 1 << align
+    if off % a:
+        off += a - (off % a)
+    parts.append((cpu, sub, align, off, b))
+    off += len(b)
+buf = bytearray()
+def be(v):
+    buf.extend(struct.pack(">I", v & 0xFFFFFFFF))
+parts_n = len(parts)
+buf.extend(struct.pack(">II", 0xCAFEBABE, parts_n))
+for cpu, sub, align, o, b in parts:
+    buf.extend(struct.pack(">IIIII", cpu & 0xFFFFFFFF, sub & 0xFFFFFFFF, o & 0xFFFFFFFF, len(b) & 0xFFFFFFFF, align & 0xFFFFFFFF))
+for cpu, sub, align, o, b in parts:
+    if len(buf) < o:
+        buf.extend(b"\0" * (o - len(buf)))
+    buf.extend(b)
+pathlib.Path(out).write_bytes(buf)
+PY
+    echo "StoreKit.framework ok"
+else
+    echo "StoreKit.framework não compilou" >&2
+    exit 1
+fi
+
 echo "==> apps oficiais em /Aplicativos"
 bash "$ROOT/tools/stage-apps-oficiais.sh" "$OUT"
 mkdir -p "$ESP/mOS/usr/lib"
