@@ -22,6 +22,7 @@ MOS_SWIFT int $s6Darwin5errnos5Int32Vvg(void);
 MOS_SWIFT unsigned short $s6Darwin6S_IFMTs6UInt16Vvg(void);
 MOS_SWIFT unsigned short $s6Darwin7S_IFDIRs6UInt16Vvg(void);
 MOS_SWIFT mos_posix_opt $s6Darwin14POSIXErrorCodeO8rawValueACSgs5Int32V_tcfC(int raw);
+MOS_SWIFT int $s6Darwin14POSIXErrorCodeO8rawValues5Int32Vvg(int self);
 MOS_SWIFT void *$s6Darwin6stdoutSpySo7__sFILEVGvg(void);
 MOS_SWIFT void *$s6Darwin6stderrSpySo7__sFILEVGvg(void);
 
@@ -103,6 +104,11 @@ int main(void) {
     mos_posix_opt neg = $s6Darwin14POSIXErrorCodeO8rawValueACSgs5Int32V_tcfC(-1);
     if (some.tag != 0 || some.value != 2) return fail("POSIX some ENOENT");
     if (last.tag != 0 || last.value != 107) return fail("POSIX some ELAST");
+    if ($s6Darwin14POSIXErrorCodeO8rawValues5Int32Vvg(some.value) != 2) return fail("rawValue ENOENT");
+    if ($s6Darwin14POSIXErrorCodeO8rawValues5Int32Vvg(last.value) != 107) return fail("rawValue ELAST");
+    if ($s6Darwin14POSIXErrorCodeO8rawValueACSgs5Int32V_tcfC(
+            $s6Darwin14POSIXErrorCodeO8rawValues5Int32Vvg(some.value)).value != 2)
+        return fail("ida e volta");
     if (zero.tag != 1 || over.tag != 1 || neg.tag != 1) return fail("POSIX nil");
     FILE *out = $s6Darwin6stdoutSpySo7__sFILEVGvg();
     FILE *err = $s6Darwin6stderrSpySo7__sFILEVGvg();
