@@ -230,12 +230,11 @@ Nomes nos grupos pequenos (primeira biblioteca):
 | libswiftMetal.dylib | `_$sSo9MTLBufferP5MetalE14didModifyRangeyySnySiGF` |
 | libswiftObjectiveC.dylib | `_$sSo8NSObjectC10ObjectiveCE9hashValueSivg` |
 
-A libc++ (859 imports, 364 nomes) e as `libswift*` (230 imports, todos ausentes: Core 162, Dispatch 38, Concurrency
-11, UniformTypeIdentifiers 8, CoreFoundation 6, CoreGraphics 3, Metal 1, ObjectiveC 1) dominam o buraco. O
-`machocheck` não olha `/usr/lib/libc++.1.dylib` nem `build/swift/objc/dylib` se esses arquivos não estão na pasta
-varrida. Nesta rodada não estavam: `tools/build-libcxx.ps1` não foi executado, e as dylibs Swift do mOS não foram
-copiadas para a pasta. Com a libc++ do LLVM no diretório, como em [compat-agentes.md](compat-agentes.md), os 859 da
-libc++ deixam de contar contra o libSystem. Sem o arquivo, o número medido é este.
+A libc++ (859 imports, 364 nomes) e as `libswift*` (230 nomes, todos ausentes: Core 162, Dispatch 38, Concurrency
+11, UniformTypeIdentifiers 8, CoreFoundation 6, CoreGraphics 3, Metal 1, ObjectiveC 1) dominam o buraco desta
+rodada. O `machocheck` de então só enxergava a libc++ e as `libswift*` quando o arquivo estava dentro da pasta
+varrida. Nesta rodada não estava: `tools/build-libcxx.ps1` não foi executado, e as dylibs Swift do mOS não foram
+copiadas para a pasta. A releitura com `--disco` está na seção seguinte.
 
 ### Dylibs de sistema que o bundle pede
 
@@ -274,6 +273,137 @@ Mesmo num Windows com imagem pronta, o `stage-electron.ps1` não copia `Resource
 `remote-desktop-runtime` nem `voice`: só entra o que o script lista (executável, `Versions/A`, helpers, recursos do
 Electron, `app.asar` e `app.asar.unpacked`). Quase todos os 1344 ausentes estão justamente nessas pastas que o stage
 deixa de fora. A contagem deste documento é a do bundle inteiro.
+
+## Releitura com `--disco` (10 nov. 2026)
+
+O `machocheck` agora aceita `--disco DIR` (repetível; também aceita o arquivo). O caminho é o build ou a imagem.
+A varredura fica em `libc++.1.dylib`, `libc++abi.dylib`, `libswift*.dylib` e na libunwind (`libunwind*.o`,
+`Unwind*.o`, `libunwind.a` ou `libunwind.dylib`). Os exports entram na resolução, como o carregador lê
+`/usr/lib/libc++.1.dylib` e `/usr/lib/swift/libswift*.dylib` do disco. O relatório agrupa os ausentes e a última
+linha da saída é a conta:
+
+```
+# ausentes sistema: N
+biblioteca	simbolo
+# ausentes libc++: N
+# ausentes Swift: N
+# ausentes unwind: N
+Ausentes por origem (simbolos distintos): sistema N, libc++ N, Swift N, unwind N
+```
+
+O balde libc++ inclui o bind flat de RTTI Itanium (`__Z…`). No OpenBot são 366, não 364: 364 de
+`libc++.1.dylib` e os dois que o inventário acima já listava em `(flat/self)`, `__ZTISt12length_error` e
+`__ZTISt12out_of_range`.
+
+### O que havia para apontar
+
+Compilado nesta VM, fora do repositório (não se rodou `build.ps1` nem `patch-ehframe.ps1`, e
+`kernel/compat/libsystem_blob.S` não foi reescrito).
+
+| Peça | Origem | O que o `--disco` leu |
+|---|---|---|
+| `libc++.1.dylib` | zig 0.17.1 (`https://ziglang.org/download/0.17.1/zig-x86_64-linux-0.17.1.tar.xz`), flags de `tools/build-libcxx.ps1`, 0 falhas de compilação | 1 arquivo Mach-O x86_64, **2356** símbolos |
+| libunwind | os cinco objetos que `tools/build-libsystem.ps1` compila do LLVM que vem com o zig | 5 arquivos, **102** símbolos |
+| `libswift*.dylib` | não estão no repositório, no zig nem na imagem. O compilador Swift não está nesta VM | **0** arquivos |
+
+O binário do zig usado aqui é `58959f01285c05a74276f09327b551d42ed6006bf325a78dc661a024e314987b`. Não é o
+`3581863e…` citado no inventário de cima. `userland/libsystem/fi_swift.c` não entrou no ELF: o protótipo local
+`cx_cstr(void *)` conflita com `cx_cstr(id)` de `foundation.h`. O `libSystem.mos` com a libunwind exporta **7188**
+símbolos globais; sem os cinco objetos, **7144**. Sem o `patch-ehframe.ps1`, `unw_getcontext` sai `WEAK` e o
+`machocheck` não o indexa no ELF (o script promove `unw_*` / `_Unwind_*` / `__unw_*` de `WEAK` para `GLOBAL`).
+Promovi só esse símbolo, do mesmo jeito, numa cópia. Com isso o balde unwind do ELF completo é 0.
+
+Não há `libswift*` para ler. O balde Swift não muda.
+
+### OpenBot de novo
+
+O mesmo zip, o mesmo `sha256` `473091aa…`. `gcc -O2 -Wall -Wextra -o machocheck tools/machocheck.c`.
+
+Antes, ELF com libunwind (7188 símbolos), sem `--disco`:
+
+```
+./machocheck libSystem-com-unwind-prom.mos OpenBot.app relatorio.txt
+```
+
+```
+Imagens Mach-O x86_64 no bundle: 43 (exports do bundle: 55374)
+libc++.1.dylib                              3888 /     859
+Total: 29399 imports, 1352 sem implementacao (844 simbolos distintos)
+Ausentes por origem (simbolos distintos): sistema 248, libc++ 366, Swift 230, unwind 0
+```
+
+É o mesmo 29399 / 1352 / 844 da rodada que segue symlink, agora separado. Os 366 são 364 + 2.
+
+Depois, apontando a `libc++.1.dylib` do build:
+
+```
+./machocheck --disco libc++.1.dylib libSystem-com-unwind-prom.mos OpenBot.app relatorio.txt
+```
+
+```
+Disco: /tmp/mos-build/libcxx
+  libc++: 1 arquivo(s), 2356 simbolos
+  Swift: 0 arquivo(s), 0 simbolos
+  unwind: 0 arquivo(s), 0 simbolos
+libc++.1.dylib                              3888 /       0
+Total: 29399 imports, 491 sem implementacao (478 simbolos distintos)
+Ausentes por origem (simbolos distintos): sistema 248, libc++ 0, Swift 230, unwind 0
+```
+
+`clang -O2 -Wall -Wextra` gerou o mesmo relatório (`diff` vazio contra o do gcc). Os 366 da libc++ saíram.
+844 − 366 = 478. Sobram 248 de sistema e 230 de Swift.
+
+Sem a libunwind no ELF (7144 símbolos) o mesmo app marca unwind **13** (857 distintos, 1517 imports sem
+implementação). Com `--disco` nos cinco `.o`, os 13 saem e a conta volta a 844 / 1352, com unwind 0. A libc++
+continua 366 enquanto o `--disco` não aponta a dylib.
+
+### VS Code 1.145.2
+
+O zip `https://update.code.visualstudio.com/1.145.2/darwin/stable` (`VSCode-darwin.zip`, 342 MiB). O
+`Info.plist` diz `CFBundleShortVersionString` 1.145.2, `com.microsoft.VSCode`. 70 imagens x86_64, 31362 imports,
+31908 exports do bundle. Não havia esse binário na VM antes do download.
+
+Sem a libunwind no ELF, que é o caso em que o backlog contava 330 ausentes:
+
+```
+./machocheck libSystem-sem-unwind.mos "Visual Studio Code.app" relatorio.txt
+```
+
+```
+libc++.1.dylib                              3097 /     836
+Total: 31362 imports, 1313 sem implementacao (330 simbolos distintos)
+Ausentes por origem (simbolos distintos): sistema 64, libc++ 194, Swift 53, unwind 19
+```
+
+Dos 194 da libc++, **189** são `libc++.1.dylib` e 5 são RTTI flat: `__ZTISt11range_error`,
+`__ZTISt12domain_error`, `__ZTISt14overflow_error`, `__ZTISt15underflow_error`, `__ZTISt16invalid_argument`.
+Swift **53** e unwind **19** (`__Unwind_Resume`, `__Unwind_Backtrace`, `__Unwind_DeleteException`,
+`__Unwind_GetCFA`, `__Unwind_GetDataRelBase`, `__Unwind_GetIP`, `__Unwind_GetIPInfo`,
+`__Unwind_GetLanguageSpecificData`, `__Unwind_GetRegionStart`, `__Unwind_GetTextRelBase`,
+`__Unwind_RaiseException`, `__Unwind_SetGR`, `__Unwind_SetIP`, `_unw_get_reg`, `_unw_getcontext`,
+`_unw_init_local`, `_unw_is_signal_frame`, `_unw_set_reg`, `_unw_step`). Sistema 64. 64 + 189 + 5 + 53 + 19 = 330.
+
+Depois, `--disco` na dylib e nos cinco objetos:
+
+```
+./machocheck --disco libc++.1.dylib --disco libunwind-x86 libSystem-sem-unwind.mos "Visual Studio Code.app" relatorio.txt
+```
+
+```
+Disco: /tmp/mos-build/libcxx/libc++.1.dylib /tmp/mos-build/libunwind-x86
+  libc++: 1 arquivo(s), 2356 simbolos
+  Swift: 0 arquivo(s), 0 simbolos
+  unwind: 5 arquivo(s), 102 simbolos
+libc++.1.dylib                              3097 /       0
+Total: 31362 imports, 131 sem implementacao (117 simbolos distintos)
+Ausentes por origem (simbolos distintos): sistema 64, libc++ 0, Swift 53, unwind 0
+```
+
+330 − 194 − 19 = 117, que é 64 de sistema + 53 de Swift. Com a libunwind já no ELF e `unw_getcontext` promovido,
+o antes já é 311 (unwind 0) e o depois só da libc++ também fecha em 117.
+
+As `libswift*` não estavam no disco. Os 53 do VS Code e os 230 do OpenBot continuam ausentes, e o relatório
+marca `libswiftCore.dylib` como biblioteca inexistente no mOS.
 
 ## Usagebar: sem pacote
 
