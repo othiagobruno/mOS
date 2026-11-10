@@ -166,6 +166,11 @@ process_t *proc_find(int pid);
 /* job control (pty.c): 0 = ignorado ou bloqueado (o chamador devolve EIO na leitura e segue na escrita);
  * 1 = o processo parou (refazer a syscall quando continuar); 2 = há tratador (EINTR, SA_RESTART na volta) */
 int       proc_job_signal(process_t *p, thread_t *th, int sig);
+/* Coloca um processo já criado no mesmo estado de um SIGSTOP: o escalonador não escolhe as threads
+ * dele até um SIGCONT (proc_continue). waitpid(WUNTRACED) informa a parada e o pai recebe SIGCHLD
+ * CLD_STOPPED, salvo SA_NOCLDSTOP. Não usa thread.suspend (suspensão Mach: o SIGCONT não a desfaz).
+ * proc_spawn_in chama isto quando mos_spawn_vec_t.flags traz MOS_SPAWN_START_SUSPENDED (0x80). */
+void      proc_hold(process_t *p);
 
 /* páginas físicas compartilhadas entre espaços (memória Mach, proc/process.c) */
 bool      uvm_map_phys(process_t *p, u64 va, u64 phys, bool rw);  /* mais uma referência à página */

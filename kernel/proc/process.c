@@ -915,6 +915,7 @@ int proc_spawn_in(const char *path, const char *arg, tty_t *tty,
             finish(p, -1); return -1;
         }
         p->spawn_argv = NULL; p->spawn_argc = 0; p->spawn_env = NULL; p->spawn_envc = 0;
+        if (spawn_flags & MOS_SPAWN_START_SUSPENDED) proc_hold(p);
         kprintf("proc: iniciado %s (Mach-O, pid %d, %llu KiB)\n", p->name, p->pid, p->mem_pages * 4);
         if (xargc || xenvc) kprintf("proc: %s pid %d recebeu %d argumentos e %d variáveis de ambiente\n", p->name, p->pid, xargc, xenvc);
         /* processos do Chromium/Electron: o tipo vem em --type= (e --utility-sub-type=), não no nome do helper */
@@ -955,6 +956,7 @@ int proc_spawn_in(const char *path, const char *arg, tty_t *tty,
     p->nthreads = p->main ? 1 : 0;
     irq_restore(fl);
     if (!p->main) { finish(p, -1); return -1; }
+    if (spawn_flags & MOS_SPAWN_START_SUSPENDED) proc_hold(p);
     kprintf("proc: iniciado %s (pid %d, %llu KiB)\n", p->name, p->pid, p->mem_pages * 4);
     return p->pid;
 }
@@ -1330,6 +1332,12 @@ static void proc_stop(process_t *p, int sig) {
     report_child_event(p, stop_status(sig), false);
     notify_parent_cld(p, MOS_CLD_STOPPED, sig);
     { extern void smp_kick_proc(process_t *p); smp_kick_proc(p); }
+}
+
+/* POSIX_SPAWN_START_SUSPENDED. O processo já está na lista, com a thread principal criada;
+ * o chamador (proc_spawn_in) ainda segura a trava da syscall, então ela não chega a rodar. */
+void proc_hold(process_t *p) {
+    proc_stop(p, MOS_SIGSTOP);
 }
 
 static void proc_continue(process_t *p) {
