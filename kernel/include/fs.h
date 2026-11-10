@@ -41,17 +41,61 @@ static inline bool blk_policy_allows(struct blkdev *d) { (void)d; return true; }
 bool blk_policy_allows(struct blkdev *d);
 #endif
 
-static inline bool blk_read(blkdev_t *d, u64 off, void *buf, u64 len) {
-    if (off > d->size || len > d->size - off) return false;
-    return d->read(d, off, buf, len);
-}
 static inline bool blk_hw_writable(blkdev_t *d) { return d->write != NULL; }   /* o hardware aceita escrita (ignora a política) */
 static inline bool blk_writable(blkdev_t *d) { return d->write != NULL && blk_policy_allows(d); }
-static inline bool blk_write(blkdev_t *d, u64 off, const void *buf, u64 len) {
-    if (!d->write || off > d->size || len > d->size - off) return false;
-    return d->write(d, off, buf, len);
-}
-static inline bool blk_flush(blkdev_t *d) { return d->flush ? d->flush(d) : true; }
+/* Leitura/escrita passam pelo page cache unificado (fs/pcache.c). A escrita é writeback:
+ * o dispositivo só muda em blk_flush, pcache_tick ou fsync/aio_fsync. */
+bool blk_read(blkdev_t *d, u64 off, void *buf, u64 len);
+bool blk_write(blkdev_t *d, u64 off, const void *buf, u64 len);
+bool blk_flush(blkdev_t *d);
+void pcache_tick(void);          /* flush periódico do writeback + um passo de I/O assíncrono */
+void pcache_drop(blkdev_t *d);   /* solta páginas deste disco (blk_release) */
+
+typedef struct pcache_stats {
+    u64 hits, misses, dev_reads, dev_read_bytes, dev_writes, writebacks, ra_pages;
+} pcache_stats_t;
+void pcache_stats(pcache_stats_t *o);
+void pcache_stats_reset(void);
+
+/* I/O assíncrono de bloco: submeter e consultar não bloqueiam; aio_pump/pcache_tick completam. */
+#define MOS_EINPROGRESS 36
+typedef struct blk_aiocb {
+    blkdev_t *dev;
+    u64 off;
+    void *buf;
+    u64 len;
+    bool write;
+    int err;     /* MOS_EINPROGRESS enquanto pendente; 0 concluído */
+    i64 ret;
+    void *link;
+} blk_aiocb_t;
+int  blk_aio_submit(blk_aiocb_t *cb); /* 0 enfileirado; -1 recusado */
+int  blk_aio_error(const blk_aiocb_t *cb);
+i64  blk_aio_return(blk_aiocb_t *cb);
+void aio_pump(void);
+
+/* caminho POSIX (aiocb mínimo). O fd aponta para um blkdev ligado com aio_bind. */
+struct aiocb {
+    int aio_fildes;
+    int aio_pad;
+    i64 aio_offset;
+    volatile void *aio_buf;
+    u64 aio_nbytes;
+    int aio_reqprio;
+    int aio_lio_opcode; /* 0 = segundo o pedido (read/write); 1 = fsync de dados */
+};
+/* fila de aio sobre memória de arquivo (syscall SYS_AIO). O ponteiro do aiocb do usuário é a chave. */
+int  aio_mem_submit(u64 key, int write, u8 *mem, u64 memlen, u64 off, u64 n, u8 *bounce, void *ubuf);
+int  aio_mem_poll(u64 key, i64 *ret);                 /* MOS_EINPROGRESS, 0 ou errno */
+void aio_mem_take(u64 key, u8 **bounce, u64 *n, void **ubuf, i64 *ret);
+int  aio_mem_fsync(u64 key);
+int  aio_bind(int fd, blkdev_t *dev);
+int  aio_read(struct aiocb *cb);
+int  aio_write(struct aiocb *cb);
+int  aio_error(const struct aiocb *cb);
+i64  aio_return(struct aiocb *cb);
+int  aio_fsync(int op, struct aiocb *cb);
+int  aio_suspend(const struct aiocb *const list[], int nent, const void *timeout);
 blkdev_t *blk_from_memory(const u8 *data, u64 size);
 blkdev_t *blk_slice(blkdev_t *parent, u64 off, u64 size);
 void      blk_release(blkdev_t *d);
