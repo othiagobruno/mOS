@@ -157,7 +157,8 @@ enum {
 #define MOS_GPU_VIRGL_BIND_SHADER        31u
 #define MOS_GPU_VIRGL_SET_SHADER_BUFFERS 32u
 #define MOS_GPU_VIRGL_LAUNCH_GRID        35u
-/* Subconjunto mOS do fluxo venus (não é o vn_cs inteiro). */
+/* Subconjunto mOS do compute (bind, shader, dispatch). Cada comando no
+ * SUBMIT_3D vem precedido do número de u32 seguintes. Não é o vn_cs inteiro. */
 #define MOS_GPU_VENUS_BIND     1u
 #define MOS_GPU_VENUS_SHADER   2u
 #define MOS_GPU_VENUS_DISPATCH 3u
