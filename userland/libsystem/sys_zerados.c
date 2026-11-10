@@ -5065,7 +5065,6 @@ void _swiftEmptyDictionarySingleton(void) {}
 void _swiftEmptySetSingleton(void) {}
 void _swiftImmortalRefCount(void) {}
 void _swift_stdlib_bridgeErrorToNSError(void) {}
-void _swift_stdlib_operatingSystemVersion(void) {}
 void _swift_stdlib_reportUnimplementedInitializer(void) {}
 void _swift_stdlib_reportUnimplementedInitializerInFile(void) {}
 void _swift_stdlib_strtod_clocale(void) {}
@@ -5177,10 +5176,7 @@ void setstate(void) {}
 void sinhl(void) {}
 void strtoll_l(void) {}
 void strtoull_l(void) {}
-void swift_allocBox(void) {}
 void swift_allocEmptyBox(void) {}
-void swift_allocError(void) {}
-void swift_allocObject(void) {}
 void swift_allocateGenericClassMetadata(void) {}
 void swift_allocateGenericValueMetadata(void) {}
 void swift_arrayDestroy(void) {}
@@ -5192,11 +5188,8 @@ void swift_asyncLet_finish(void) {}
 void swift_asyncLet_get(void) {}
 void swift_asyncLet_get_throwing(void) {}
 void swift_beginAccess(void) {}
-void swift_bridgeObjectRelease(void) {}
 void swift_bridgeObjectRelease_n(void) {}
-void swift_bridgeObjectRetain(void) {}
 void swift_bridgeObjectRetain_n(void) {}
-void swift_checkMetadataState(void) {}
 void swift_conformsToProtocol(void) {}
 void swift_conformsToProtocol2(void) {}
 void swift_continuation_resume(void) {}
@@ -5209,8 +5202,6 @@ void swift_defaultActor_deallocate(void) {}
 void swift_defaultActor_destroy(void) {}
 void swift_defaultActor_initialize(void) {}
 void swift_deletedAsyncMethodErrorTu(void) {}
-void swift_deletedMethodError(void) {}
-void swift_dynamicCast(void) {}
 void swift_dynamicCastClass(void) {}
 void swift_dynamicCastClassUnconditional(void) {}
 void swift_dynamicCastMetatype(void) {}
@@ -5223,8 +5214,6 @@ void swift_dynamicCastUnknownClass(void) {}
 void swift_dynamicCastUnknownClassUnconditional(void) {}
 void swift_endAccess(void) {}
 void swift_errorInMain(void) {}
-void swift_errorRelease(void) {}
-void swift_errorRetain(void) {}
 void swift_getAssociatedConformanceWitness(void) {}
 void swift_getAssociatedTypeWitness(void) {}
 void swift_getAtKeyPath(void) {}
@@ -5265,7 +5254,6 @@ void swift_getTypeByMangledNameInContext(void) {}
 void swift_getTypeByMangledNameInContext2(void) {}
 void swift_getTypeByMangledNameInContextInMetadataState(void) {}
 void swift_getTypeByMangledNameInContextInMetadataState2(void) {}
-void swift_getWitnessTable(void) {}
 void swift_initClassMetadata2(void) {}
 void swift_initEnumMetadataMultiPayload(void) {}
 void swift_initEnumMetadataSingleCase(void) {}
@@ -5287,12 +5275,9 @@ void swift_lookUpClassMethod(void) {}
 void swift_makeBoxUnique(void) {}
 void swift_modifyAtReferenceWritableKeyPath(void) {}
 void swift_modifyAtWritableKeyPath(void) {}
-void swift_once(void) {}
 void swift_projectBox(void) {}
 void swift_readAtKeyPath(void) {}
-void swift_release(void) {}
 void swift_release_n(void) {}
-void swift_retain(void) {}
 void swift_retain_n(void) {}
 void swift_setAtReferenceWritableKeyPath(void) {}
 void swift_setAtWritableKeyPath(void) {}
@@ -5349,7 +5334,6 @@ void swift_weakInit(void) {}
 void swift_weakLoadStrong(void) {}
 void swift_weakTakeAssign(void) {}
 void swift_weakTakeInit(void) {}
-void swift_willThrow(void) {}
 void swift_willThrowTypedImpl(void) {}
 void sys_nerr(void) {}
 void syscall(void) {}
