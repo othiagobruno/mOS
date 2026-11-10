@@ -396,6 +396,30 @@ int compat_gui_pid_of(app_t *a) {
     return 0;
 }
 
+/* CGWindowListCopyWindowInfo: cada janela do compositor, da frente para o fundo. */
+int compat_gui_cgwindow(int index, gui_cgwindow_t *out) {
+    if (!out || index < 0) return 0;
+    int seen = 0;
+    for (int i = wm_window_count() - 1; i >= 0; i--) {
+        window_t *w = wm_window_at(i);
+        if (!w || w->closing) continue;
+        if (seen++ != index) continue;
+        memset(out, 0, sizeof *out);
+        out->number = (unsigned)w->id;
+        out->pid = compat_gui_pid_of(w->app);
+        out->layer = w->owner ? 3 : 0;
+        out->onscreen = w->visible && !w->minimized && !w->tab_hidden;
+        out->x = w->x;
+        out->y = w->y;
+        out->w = w->w;
+        out->h = w->h;
+        if (w->app && w->app->name) strncpy(out->owner, w->app->name, sizeof out->owner - 1);
+        strncpy(out->name, w->title, sizeof out->name - 1);
+        return 1;
+    }
+    return 0;
+}
+
 /* caminho do .app de um app_t (atalho "mac:<caminho>" de /Aplicativos ou proxy de um processo); NULL se não houver */
 const char *compat_app_bundle(app_t *a) {
     if (!a || !a->exec) return NULL;

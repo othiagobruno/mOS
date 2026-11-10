@@ -645,3 +645,25 @@ A `NSStatusBar` implementada neste branch não é a trava destes três. O ChatGP
 - **Kernel.** Tradutor e o processo renderer. No ChatGPT o Framework é Chromium 157 (`BrowserCrApplication`), no caminho do porte do Chrome. No Cursor e no Grok Bot é o renderer Electron, no caminho do VS Code. O ícone do Dock também é desta frente.
 - **Sistemas.** Keychain do cookie criptografado (Grok Bot, e a casca do ChatGPT se o fuse de cookie estiver ligado; o fuse deste build não foi relido). Swift do Computer Use, do `cursor-update-supervisor` e dos helpers do Codex. Sparkle é framework próprio, com UI de atualização.
 - **Storage.** Loader, dyld, VFS, os helpers `(GPU|Renderer|Service|Alerts)`, o XPC do Sparkle e o authorization plugin do Computer Use. Sem isso o zip oficial não chega a `main`.
+
+## Computer use (Grok Bot, Claude Desktop, ChatGPT)
+
+O computer use destes três apps precisa de captura, lista de janelas, injeção de eventos e árvore de acessibilidade. A permissão continua a do Sistemas (`cx_tcc_preflight` / `cx_tcc_request` / `cx_tcc_decide` em `tcc.c`, serviços `kTCCServiceScreenCapture` e `kTCCServiceAccessibility`). Este lado não grava `decisions.txt` e não desenha o prompt.
+
+### O que funciona
+
+- **Captura.** `CGDisplayCreateImage`, `CGDisplayCreateImageForRect` e `CGWindowListCreateImage` devolvem pixels ARGB do compositor (`DEV_SCREEN_CAPTURE`). Com id de janela, o retângulo é o da janela nessa tela composta. `SCScreenshotManager` segue o mesmo caminho. Sem a concessão do TCC a imagem é nula.
+- **Lista.** `CGWindowListCopyWindowInfo` preenche `kCGWindowNumber`, `kCGWindowOwnerPID`, `kCGWindowOwnerName`, `kCGWindowName`, `kCGWindowBounds`, `kCGWindowLayer` e `kCGWindowIsOnscreen` a partir de `DEV_WINDOW_LIST` (janelas do window server, da frente para o fundo). `SCShareableContent` publica essas janelas (`SCWindow`) e os donos (`SCRunningApplication`). Sem a concessão, a lista de janelas vem vazia.
+- **Eventos.** `CGEventCreateMouseEvent`, `CGEventCreateKeyboardEvent`, `CGEventKeyboardSetUnicodeString`, rolagem e `CGEventPost` já entravam na fila global (`DEV_INPUT_POST`). `kCGHIDEventTap` (0), `kCGSessionEventTap` (1) e o tap anotado (2) usam essa mesma fila: tecla para a janela em foco, clique para o que está sob o cursor. `CGEventPostToPid` não escolhe o processo.
+- **Acessibilidade no próprio processo.** Com `kTCCServiceAccessibility`, `AXUIElementCreateApplication` / `CreateSystemWide`, `CopyAttributeValue` (role, title, value, position, size, children, focused), `PerformAction` (`AXPress`) e `SetAttributeValue` (`AXValue`, `AXFocused`) andam na árvore real de `NSView` / `NSWindow`. Sem a concessão, `-25211`.
+
+### O que é stub
+
+- **AX de outro processo.** O elemento é criado, mas ler a árvore devolve `-25204`. O transporte entre processos é do Sistemas e não existe na interface deles. Não há um XPC paralelo neste branch.
+- **`SCStream` e `CGDisplayStream`.** Vídeo contínuo não é entregue. A captura pontual é a de `SCScreenshotManager`.
+- **`SCShareableContent` acima/abaixo de uma janela âncora.** Entra o recorte on-screen. A janela âncora não filtra a lista.
+- **`AXObserver` e atributo parametrizado.** Com a permissão, `-25208`. Sem ela, `-25211`.
+- **`CGEventPostToPid`.** O pid é ignorado; o evento segue a fila global.
+- **Computer use real do Grok Bot, do Claude Desktop e do ChatGPT.** Exigiria login. Não foi feito. Validação pendente.
+
+O teste de host (`userland/tests-appkit/computeruse_host.c`) cobre os quatro passos com um processo de amostra e um processo de teste. O QEMU (`tools/qemu-test.ps1`) não rodou neste ambiente.

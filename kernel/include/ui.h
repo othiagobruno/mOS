@@ -232,6 +232,8 @@ void      wm_damage(rect_t r);
 void      wm_damage_all(void);
 rect_t    wm_content_rect(window_t *w);   /* em coordenadas de tela */
 window_t *wm_window_list(void);
+int       wm_window_count(void);
+window_t *wm_window_at(int i);          /* 0 = fundo, count-1 = topo; NULL fora da faixa */
 void      wm_close_app(app_t *a);
 void      wm_bring_app(app_t *a);
 int       wm_count_for(app_t *a);

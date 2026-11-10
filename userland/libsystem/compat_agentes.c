@@ -321,15 +321,16 @@ CFK(NSWorkspaceDidTerminateApplicationNotification, "NSWorkspaceDidTerminateAppl
 CFK(NSURLContentModificationDateKey, "NSURLContentModificationDateKey")
 CFK(kCLErrorDomain, "kCLErrorDomain")
 
-/* ---- ApplicationServices: sem permissão de acessibilidade (AXIsProcessTrusted = 0), as consultas falham com
- * kAXErrorAPIDisabled, como num Mac antes de autorizar o app */
-#define AX_DISABLED (-25211)
-int cx_ax_unavailable(void);
-int AXUIElementCopyElementAtPosition(void *app, float x, float y, void **out) { (void)app; (void)x; (void)y; if (out) *out = 0; return cx_ax_unavailable(); }
-int AXUIElementGetPid(void *e, int *pid) { (void)e; if (pid) *pid = 0; return cx_ax_unavailable(); }
-int AXUIElementIsAttributeSettable(void *e, void *attr, u8 *settable) { (void)e; (void)attr; if (settable) *settable = 0; return cx_ax_unavailable(); }
+/* ---- ApplicationServices: a árvore AX é a do AppKit (appkit_ax.c). Sem kTCCServiceAccessibility, -25211. */
+int cx_ax_at(void *app, float x, float y, void **out);
+int cx_ax_pid(void *e, int *pid);
+int cx_ax_settable(void *e, void *attr, unsigned char *settable);
+int cx_ax_window(void *e, unsigned *wid);
+int AXUIElementCopyElementAtPosition(void *app, float x, float y, void **out) { return cx_ax_at(app, x, y, out); }
+int AXUIElementGetPid(void *e, int *pid) { return cx_ax_pid(e, pid); }
+int AXUIElementIsAttributeSettable(void *e, void *attr, u8 *settable) { return cx_ax_settable(e, attr, settable); }
 int AXUIElementSetMessagingTimeout(void *e, float s) { (void)e; (void)s; return 0; }
-int _AXUIElementGetWindow(void *e, u32 *wid) { (void)e; if (wid) *wid = 0; return cx_ax_unavailable(); }
+int _AXUIElementGetWindow(void *e, u32 *wid) { return cx_ax_window(e, wid); }
 
 /* ---- CoreGraphics: CGContextAddPath copia os elementos do CGPath para o caminho atual do contexto */
 typedef struct { double x, y; } cu_pt_t;

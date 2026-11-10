@@ -1,16 +1,17 @@
 /*
  * mOS libSystem — ScreenCaptureKit mínimo para capturas de tela (os helpers de "computer use": Grok Bot, Codex, Claude):
  *   +[SCShareableContent getShareableContentWithCompletionHandler:] (e as variantes com filtros): um SCDisplay com a tela
- *     composta do mOS (todos os monitores num espaço só) e a lista de janelas vazia;
+ *     composta do mOS (todos os monitores num espaço só) e as janelas do compositor (DEV_WINDOW_LIST);
  *   SCContentFilter (initWithDisplay:excludingWindows: e afins) e SCStreamConfiguration (largura/altura/sourceRect);
  *   +[SCScreenshotManager captureImageWithFilter:configuration:completionHandler:] e +captureImageInRect:completionHandler:
  *     -> CGDisplayCreateImage / CGDisplayCreateImageForRect (cgevent.c), entregues na fila global.
- * SCStream (vídeo contínuo) não existe. As classes vêm vazias de vscode_fwclasses.c; os métodos entram em
+ * SCStream (vídeo contínuo) não existe: estes apps capturam por SCScreenshotManager. As classes vêm vazias de vscode_fwclasses.c; os métodos entram em
  * cx_screencapturekit_init (chamado no fim do cx_objc_boot, depois de todas as classes).
  */
 #include "foundation.h"
 #include "sys.h"
 #include "../../kernel/include/compat_gui.h"
+#include "computeruse_win.h"
 
 void *memset(void *d, int c, size_t n);
 void *malloc(size_t n);
@@ -40,6 +41,15 @@ typedef struct { cx_class_t *isa; screct_t frame; } scdisplay_t;          /* SCD
 typedef struct { cx_class_t *isa; id displays, windows, apps; } sccontent_t;  /* SCShareableContent: cabe em 32 bytes */
 typedef struct { cx_class_t *isa; screct_t rect; } scfilter_t;            /* SCContentFilter: área da captura */
 typedef struct { cx_class_t *isa; i64 w, h; } sccfg_t;                   /* SCStreamConfiguration */
+typedef struct { cx_class_t *isa; u32 wid; i32 pid; float x, y, w, h; int on; } scwin_t; /* SCWindow: cabe nos 32 bytes extras */
+typedef struct { cx_class_t *isa; i32 pid; } scapp_t;                    /* SCRunningApplication */
+
+int cx_tcc_preflight(const char *service);
+static cx_class_t SCRunningApplication_c, SCRunningApplication_m;
+static void ensure_app_class(void) {
+    if (cx_class_named("SCRunningApplication")) return;
+    cx_define_class(&SCRunningApplication_c, &SCRunningApplication_m, "SCRunningApplication", cx_class_named("NSObject"), 16);
+}
 
 static id new_of(const char *cls) { cx_class_t *c = cx_class_named(cls); return c ? cx_alloc_instance(c) : 0; }
 
@@ -49,17 +59,94 @@ static long d_w(id s, SEL c) { (void)c; return (long)((scdisplay_t *)s)->frame.w
 static long d_h(id s, SEL c) { (void)c; return (long)((scdisplay_t *)s)->frame.h; }
 static screct_t d_frame(id s, SEL c) { (void)c; return ((scdisplay_t *)s)->frame; }
 
-/* SCShareableContent */
-static id content_make(void) {
+/* SCWindow / SCRunningApplication: dados da lista do compositor */
+static int sc_find(u32 wid, gui_cgwindow_t *out) {
+    for (int i = 0; i < 64; i++) {
+        if (!cx_cg_window_at(i, out)) return 0;
+        if (out->number == wid) return 1;
+    }
+    return 0;
+}
+static u32 w_id(id s, SEL c) { (void)c; return ((scwin_t *)s)->wid; }
+static screct_t w_frame(id s, SEL c) {
+    (void)c;
+    scwin_t *w = (scwin_t *)s;
+    screct_t r = {w->x, w->y, w->w, w->h};
+    return r;
+}
+static u8 w_on(id s, SEL c) { (void)c; return (u8)((scwin_t *)s)->on; }
+static id w_title(id s, SEL c) {
+    (void)c;
+    gui_cgwindow_t info;
+    if (!sc_find(((scwin_t *)s)->wid, &info)) return objc_autorelease(cx_str(""));
+    return objc_autorelease(cx_str(info.name));
+}
+static id w_owner(id s, SEL c) {
+    (void)c;
+    ensure_app_class();
+    scapp_t *a = (scapp_t *)cx_alloc_instance(cx_class_named("SCRunningApplication"));
+    if (!a) return 0;
+    a->pid = ((scwin_t *)s)->pid;
+    return objc_autorelease((id)a);
+}
+static long app_pid(id s, SEL c) { (void)c; return ((scapp_t *)s)->pid; }
+static id app_name(id s, SEL c) {
+    (void)c;
+    i32 pid = ((scapp_t *)s)->pid;
+    gui_cgwindow_t info;
+    for (int i = 0; i < 64; i++) {
+        if (!cx_cg_window_at(i, &info)) break;
+        if (info.pid == pid && info.owner[0]) return objc_autorelease(cx_str(info.owner));
+    }
+    return objc_autorelease(cx_str(""));
+}
+static id app_bundle(id s, SEL c) { (void)s; (void)c; return objc_autorelease(cx_str("")); }
+
+/* SCShareableContent. Sem kTCCServiceScreenCapture a lista de janelas fica vazia (o display, não). */
+static id content_make(int exclude_desktop, int onscreen_only) {
     sccontent_t *ct = (sccontent_t *)new_of("SCShareableContent");
     scdisplay_t *d = (scdisplay_t *)new_of("SCDisplay");
     if (!ct || !d) return 0;
     d->frame = screen_rect();
-    cx_class_t *arr = cx_class_named("NSArray");
-    ct->displays = objc_retain(MSG(id, (id)arr, "arrayWithObject:", (id)d));
-    ct->windows = objc_retain(MSG0(id, (id)arr, "array"));
-    ct->apps = objc_retain(MSG0(id, (id)arr, "array"));
+    cx_class_t *arr = cx_class_named("NSMutableArray");
+    id windows = objc_retain(MSG0(id, (id)arr, "array"));
+    id apps = objc_retain(MSG0(id, (id)arr, "array"));
+    ct->displays = objc_retain(MSG(id, (id)cx_class_named("NSArray"), "arrayWithObject:", (id)d));
     objc_release((id)d);
+    int granted = cx_tcc_preflight("kTCCServiceScreenCapture");
+    int seen_pid[48], np = 0;
+    if (granted) {
+        for (int i = 0; i < 48; i++) {
+            gui_cgwindow_t info;
+            if (!cx_cg_window_at(i, &info)) break;
+            if (exclude_desktop && info.pid == 0) continue;
+            if (onscreen_only && !info.onscreen) continue;
+            scwin_t *win = (scwin_t *)new_of("SCWindow");
+            if (!win) continue;
+            win->wid = info.number;
+            win->pid = info.pid;
+            win->x = (float)info.x;
+            win->y = (float)info.y;
+            win->w = (float)info.w;
+            win->h = (float)info.h;
+            win->on = info.onscreen;
+            MSG(void, windows, "addObject:", (id)win);
+            objc_release((id)win);
+            if (info.pid == 0) continue;
+            int dup = 0;
+            for (int k = 0; k < np; k++) if (seen_pid[k] == info.pid) dup = 1;
+            if (dup || np >= 48) continue;
+            seen_pid[np++] = info.pid;
+            ensure_app_class();
+            scapp_t *ap = (scapp_t *)cx_alloc_instance(cx_class_named("SCRunningApplication"));
+            if (!ap) continue;
+            ap->pid = info.pid;
+            MSG(void, apps, "addObject:", (id)ap);
+            objc_release((id)ap);
+        }
+    }
+    ct->windows = windows;
+    ct->apps = apps;
     return objc_autorelease((id)ct);
 }
 static id ct_displays(id s, SEL c) { (void)c; return ((sccontent_t *)s)->displays; }
@@ -90,9 +177,14 @@ static void later(void *blk, int kind, id a, void *img) {
     }
     dispatch_async_f(dispatch_get_global_queue(0, 0), j, run_job);
 }
-static void ct_get(id cls, SEL c, void *blk) { (void)cls; (void)c; later(blk, 0, content_make(), 0); }
-static void ct_get2(id cls, SEL c, u8 a, u8 b, void *blk) { (void)a; (void)b; ct_get(cls, c, blk); }
-static void ct_get3(id cls, SEL c, u8 a, id w, void *blk) { (void)a; (void)w; ct_get(cls, c, blk); }
+static void ct_get(id cls, SEL c, void *blk) { (void)cls; (void)c; later(blk, 0, content_make(0, 0), 0); }
+static void ct_get2(id cls, SEL c, u8 exclude_desktop, u8 onscreen, void *blk) {
+    (void)cls; (void)c; later(blk, 0, content_make(exclude_desktop, onscreen), 0);
+}
+/* Acima/abaixo de uma janela âncora: só o recorte on-screen. A âncora em si não filtra (stub dessa variante). */
+static void ct_get3(id cls, SEL c, u8 exclude_desktop, id w, void *blk) {
+    (void)cls; (void)c; (void)w; later(blk, 0, content_make(exclude_desktop, 1), 0);
+}
 
 /* SCContentFilter: a área é a da tela (com janelas excluídas ou não: o mOS captura a tela composta) */
 static id f_init_display(id s, SEL c, id display) {
@@ -102,7 +194,14 @@ static id f_init_display(id s, SEL c, id display) {
 }
 static id f_init_display2(id s, SEL c, id display, id list) { (void)list; return f_init_display(s, c, display); }
 static id f_init_display3(id s, SEL c, id display, id apps, id except) { (void)apps; (void)except; return f_init_display(s, c, display); }
-static id f_init_window(id s, SEL c, id win) { (void)win; return f_init_display(s, c, 0); }
+static id f_init_window(id s, SEL c, id win) {
+    (void)c;
+    scwin_t *w = (scwin_t *)win;
+    screct_t r = screen_rect();
+    if (w && w->w > 0 && w->h > 0) { r.x = w->x; r.y = w->y; r.w = w->w; r.h = w->h; }
+    ((scfilter_t *)s)->rect = r;
+    return s;
+}
 static screct_t f_rect(id s, SEL c) { (void)c; return ((scfilter_t *)s)->rect; }
 
 /* SCStreamConfiguration */
@@ -133,6 +232,15 @@ void cx_screencapturekit_init(void) {
     add("SCDisplay", "width", (void *)d_w, 0);
     add("SCDisplay", "height", (void *)d_h, 0);
     add("SCDisplay", "frame", (void *)d_frame, 0);
+    add("SCWindow", "windowID", (void *)w_id, 0);
+    add("SCWindow", "frame", (void *)w_frame, 0);
+    add("SCWindow", "title", (void *)w_title, 0);
+    add("SCWindow", "owningApplication", (void *)w_owner, 0);
+    add("SCWindow", "isOnScreen", (void *)w_on, 0);
+    ensure_app_class();
+    add("SCRunningApplication", "processID", (void *)app_pid, 0);
+    add("SCRunningApplication", "applicationName", (void *)app_name, 0);
+    add("SCRunningApplication", "bundleIdentifier", (void *)app_bundle, 0);
     add("SCShareableContent", "displays", (void *)ct_displays, 0);
     add("SCShareableContent", "windows", (void *)ct_windows, 0);
     add("SCShareableContent", "applications", (void *)ct_apps, 0);

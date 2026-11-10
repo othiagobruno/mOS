@@ -817,6 +817,28 @@ static BOOL abs_rect(id v, absr_t *out) {
     out->flipped = is_flipped(v);
     return YES;
 }
+/* Geometria que a árvore de acessibilidade entrega. O frame da janela é o do AppKit
+ * (origem no canto inferior esquerdo da tela). A view sai no mesmo espaço. */
+int cx_appkit_window_frame(id w, double *x, double *y, double *wd, double *ht) {
+    if (!w || !x || !y || !wd || !ht) return 0;
+    wstate_t *s = ws(w);
+    *x = s->frame.o.x;
+    *y = s->frame.o.y;
+    *wd = s->frame.s.w;
+    *ht = s->frame.s.h;
+    return 1;
+}
+int cx_appkit_window_number(id w) { return w ? ws(w)->gid : 0; }
+int cx_appkit_view_frame(id v, double *x, double *y, double *wd, double *ht) {
+    absr_t a;
+    if (!v || !x || !y || !wd || !ht || !abs_rect(v, &a)) return 0;
+    wstate_t *s = ws(vs(v)->window);
+    *x = s->frame.o.x + a.tlx;
+    *y = s->frame.o.y + (s->frame.s.h - a.tly - a.h);
+    *wd = a.w;
+    *ht = a.h;
+    return 1;
+}
 static double win_h(id w) { wstate_t *s = ws(w); return s->frame.s.h; }
 /* conversões entre views passam pela base da janela (from/to nil = a janela, como no AppKit) */
 static NSPoint v_convert_to(id self, SEL c, NSPoint p, id to);
