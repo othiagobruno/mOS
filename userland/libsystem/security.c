@@ -811,15 +811,55 @@ OSStatus SecTrustSetOCSPResponse(id_ trust, id_ r) { (void)trust; (void)r; retur
  * nome: essas avaliam como válidas; as demais continuam "não confiável" (o mOS não reavalia cadeias aqui) */
 static id_ g_verified[64];
 static unsigned g_nverified;
+static struct { id_ t; char host[256]; } g_thost[64];
 void cx_trust_mark_verified(id_ t) { g_verified[g_nverified++ % 64] = t; }
-static void trust_unmark(id_ t) { for (int i = 0; i < 64; i++) if (g_verified[i] == t) g_verified[i] = 0; }
+void cx_trust_set_host(id_ t, const char *host) {
+    if (!t) return;
+    unsigned slot = 0;
+    for (unsigned i = 0; i < 64; i++) if (g_thost[i].t == t || !g_thost[i].t) { slot = i; break; }
+    g_thost[slot].t = t;
+    g_thost[slot].host[0] = 0;
+    if (host) {
+        unsigned n = 0;
+        while (host[n] && n + 1 < sizeof g_thost[slot].host) { g_thost[slot].host[n] = host[n]; n++; }
+        g_thost[slot].host[n] = 0;
+    }
+}
+static const char *trust_host(id_ t) {
+    for (unsigned i = 0; i < 64; i++) if (g_thost[i].t == t) return g_thost[i].host;
+    return "";
+}
+static void trust_unmark(id_ t) {
+    for (int i = 0; i < 64; i++) if (g_verified[i] == t) g_verified[i] = 0;
+    for (int i = 0; i < 64; i++) if (g_thost[i].t == t) g_thost[i].t = 0;
+}
 static int trust_verified(id_ t) { for (int i = 0; t && i < 64; i++) if (g_verified[i] == t) return 1; return 0; }
+extern int cx_sectrust_verify(const u8 *const *ders, const u32 *lens, unsigned n, const char *host);
 OSStatus SecTrustEvaluate(id_ trust, u32 *result) {
-    if (result) *result = trust_verified(trust) ? kSecTrustResultUnspecified : kSecTrustResultRecoverableTrustFailure;
+    int ok = 0;
+    long n = trust ? CFArrayGetCount(trust) : 0;
+    if (n > 0 && n <= 8) {
+        const u8 *ders[8];
+        u32 lens[8];
+        int good = 1;
+        for (long i = 0; i < n; i++) {
+            id_ c = CFArrayGetValueAtIndex(trust, i);
+            if (!c || CFGetTypeID(c) != CFDataGetTypeID() || CFDataGetLength(c) < 4) { good = 0; break; }
+            ders[i] = CFDataGetBytePtr(c);
+            lens[i] = (u32)CFDataGetLength(c);
+        }
+        if (good) ok = cx_sectrust_verify(ders, lens, (unsigned)n, trust_host(trust));
+    } else ok = trust_verified(trust);
+    if (result) *result = ok ? kSecTrustResultUnspecified : kSecTrustResultRecoverableTrustFailure;
     return errSecSuccess;
 }
 OSStatus SecTrustGetTrustResult(id_ trust, u32 *result) { return SecTrustEvaluate(trust, result); }
-Boolean SecTrustEvaluateWithError(id_ trust, id_ *err) { if (err) *err = 0; return trust_verified(trust) ? 1 : 0; }
+Boolean SecTrustEvaluateWithError(id_ trust, id_ *err) {
+    u32 result = 0;
+    SecTrustEvaluate(trust, &result);
+    if (err) *err = 0;
+    return result == kSecTrustResultUnspecified;
+}
 OSStatus SecTrustEvaluateAsync(id_ trust, void *queue, void *block) { (void)trust; (void)queue; (void)block; return errSecUnimplemented; }
 OSStatus SecTrustEvaluateAsyncWithError(id_ trust, void *queue, void *block) { (void)trust; (void)queue; (void)block; return errSecUnimplemented; }
 

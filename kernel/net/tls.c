@@ -1509,6 +1509,26 @@ int tls_recv(tls_conn_t *c, void *buf, int max) {
     return c->closed ? -1 : 0;
 }
 
+/* Cadeia já validada, para o SecTrust do userspace. buf nulo devolve o tamanho.
+ * Formato: u32 quantidade, depois (u32 tamanho + DER) por certificado. */
+int tls_copy_peer_chain(const tls_conn_t *c, u8 *buf, u32 cap) {
+    if (!c || c->hs != HS_DONE || !c->chain || !c->chain_n) return -1;
+    u32 need = 4;
+    for (u32 i = 0; i < c->chain_n && i < 10; i++) need += 4 + c->chain_len[i];
+    if (!buf) return (int)need;
+    if (cap < need) return -1;
+    u32 n = c->chain_n < 10 ? c->chain_n : 10;
+    buf[0] = (u8)n; buf[1] = (u8)(n >> 8); buf[2] = (u8)(n >> 16); buf[3] = (u8)(n >> 24);
+    u32 o = 4;
+    for (u32 i = 0; i < n; i++) {
+        u32 L = c->chain_len[i];
+        buf[o] = (u8)L; buf[o + 1] = (u8)(L >> 8); buf[o + 2] = (u8)(L >> 16); buf[o + 3] = (u8)(L >> 24);
+        memcpy(buf + o + 4, c->chain + c->chain_off[i], L);
+        o += 4 + L;
+    }
+    return (int)need;
+}
+
 void tls_free(tls_conn_t *c) {
     if (!c) return;
     if (c->hs == HS_DONE && !c->closed && c->obuf) {
