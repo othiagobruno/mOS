@@ -36,7 +36,33 @@ static int ext_cmp(const u8 *k, const void *t) {
     return 0;
 }
 
+static void ecache_save(hfs_t *h, u32 file_id, u8 fork_type, const fork_t *f) {
+    if (h->wr) return; /* volume gravável: extents mudam; não guardar cópia velha */
+    int slot = 0;
+    for (int i = 0; i < 8; i++) if (!h->ecache[i].used) { slot = i; break; }
+    if (h->ecache[slot].used) kfree(h->ecache[slot].f.ext);
+    ext_t *c = f->n ? kmalloc(sizeof(ext_t) * f->n) : NULL;
+    if (f->n && !c) return;
+    if (c) memcpy(c, f->ext, sizeof(ext_t) * f->n);
+    h->ecache[slot].used = true;
+    h->ecache[slot].id = file_id;
+    h->ecache[slot].ft = fork_type;
+    h->ecache[slot].f.size = f->size;
+    h->ecache[slot].f.n = f->n;
+    h->ecache[slot].f.ext = c;
+}
+
 bool hfs_fork_load(hfs_t *h, const u8 *fd, u32 file_id, u8 fork_type, fork_t *f) {
+    if (!h->wr) {
+        for (int i = 0; i < 8; i++) if (h->ecache[i].used && h->ecache[i].id == file_id && h->ecache[i].ft == fork_type) {
+            f->size = h->ecache[i].f.size;
+            f->n = h->ecache[i].f.n;
+            f->ext = f->n ? kmalloc(sizeof(ext_t) * f->n) : NULL;
+            if (f->n && !f->ext) return false;
+            if (f->n) memcpy(f->ext, h->ecache[i].f.ext, sizeof(ext_t) * f->n);
+            return true;
+        }
+    }
     f->size = be64(fd);
     u32 total = be32(fd + 12), have = 0;
     f->n = 0;
@@ -75,6 +101,7 @@ bool hfs_fork_load(hfs_t *h, const u8 *fd, u32 file_id, u8 fork_type, fork_t *f)
         }
         if (!added) return false;
     }
+    ecache_save(h, file_id, fork_type, f);
     return true;
 }
 
@@ -85,8 +112,30 @@ typedef int (*keycmp_t)(const u8 *key, const void *target);
 static bool read_node(hfs_t *h, int tree, u32 idx) {
     const fork_t *f = tree == 0 ? &h->cat : tree == 1 ? &h->ext : &h->attr;
     u32 ns = tree == 0 ? h->cat_ns : tree == 1 ? h->ext_ns : h->attr_ns;
-    if ((u64)(idx + 1) * ns > f->size) return false;
-    return hfs_fork_read(h, f, (u64)idx * ns, h->node, ns);
+    if ((u64)(idx + 1) * ns > f->size || !h->node) return false;
+    for (int i = 0; i < 8; i++) {
+        if (h->ncache[i].data && h->ncache[i].tree == tree && h->ncache[i].idx == idx && h->ncache[i].len == ns) {
+            memcpy(h->node, h->ncache[i].data, ns);
+            h->ncache[i].stamp = ++h->nclock;
+            return true;
+        }
+    }
+    if (!hfs_fork_read(h, f, (u64)idx * ns, h->node, ns)) return false;
+    int slot = 0;
+    for (int i = 1; i < 8; i++)
+        if (!h->ncache[i].data || h->ncache[i].stamp < h->ncache[slot].stamp) slot = i;
+    if (!h->ncache[slot].data || h->ncache[slot].len != ns) {
+        kfree(h->ncache[slot].data);
+        h->ncache[slot].data = kmalloc(ns);
+        h->ncache[slot].len = h->ncache[slot].data ? ns : 0;
+    }
+    if (h->ncache[slot].data) {
+        memcpy(h->ncache[slot].data, h->node, ns);
+        h->ncache[slot].tree = tree;
+        h->ncache[slot].idx = idx;
+        h->ncache[slot].stamp = ++h->nclock;
+    }
+    return true;
 }
 
 static int cat_cmp(const u8 *k, const void *t);
@@ -357,6 +406,7 @@ static void hfs_unmount(dmount_t *m) {
     if (h->wr) hfs_wr_close(h);          /* grava o pendente e marca o volume como desmontado direito */
     kfree(h->cat.ext); kfree(h->ext.ext); kfree(h->attr.ext);
     kfree(h->node); kfree(h->cache);
+    for (int i = 0; i < 8; i++) { kfree(h->ncache[i].data); kfree(h->ecache[i].f.ext); }
     if (h->own_dev) blk_release(h->dev); /* o resto pertence à imagem (dfs.c) */
     kfree(h);
 }
@@ -373,6 +423,12 @@ static void hfs_trim(dmount_t *m) {
     h->cache = NULL;
     h->cache_len = 0;
     h->cache_ino = 0;
+    for (int i = 0; i < 8; i++) {
+        kfree(h->ncache[i].data);
+        h->ncache[i].data = NULL;
+        h->ncache[i].len = 0;
+        if (!h->wr) { kfree(h->ecache[i].f.ext); h->ecache[i].f.ext = NULL; h->ecache[i].used = false; }
+    }
 }
 
 /* Consentimento do usuário (por volume): liga a escrita num volume que foi montado só leitura porque o disco não estava liberado.
@@ -445,7 +501,9 @@ int hfsplus_probe(blkdev_t *dev, const char *source, const char *fmt) {
     ok = ok && tree_header(h, 2, &h->attr, &h->attr_ns, &h->attr_root);
     if (!ok) {
         kprintf("hfs+: volume inválido\n");
-        kfree(h->ext.ext); kfree(h->cat.ext); kfree(h->attr.ext); kfree(h->node); kfree(h);
+        kfree(h->ext.ext); kfree(h->cat.ext); kfree(h->attr.ext); kfree(h->node);
+        for (int i = 0; i < 8; i++) { kfree(h->ncache[i].data); kfree(h->ecache[i].f.ext); }
+        kfree(h);
         if (vol != dev) blk_release(vol);
         return 0;
     }

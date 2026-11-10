@@ -13,6 +13,7 @@
 #include "vfs.h"
 #include "syscall.h"
 #include "account.h"
+#include "fs.h"
 
 #define PTE_P  1ULL
 #define PTE_RW 2ULL
@@ -3529,6 +3530,41 @@ static u64 proc_syscall_(int_frame_t *f) {
     case SYS_DESKTOP: {
         extern i64 deskbridge_syscall(process_t *p, u64 op, u64 b, u64 c, u64 d);
         r = deskbridge_syscall(p, a, b, c, f->r10);
+        break;
+    }
+    case SYS_AIO: {
+        /* op em a, aiocb* do usuário em b. Submete e consulta sem bloquear. */
+        int op = (int)a;
+        if (op == 3) { i64 ret; r = aio_mem_poll(b, &ret); break; }
+        if (op == 6) { aio_pump(); r = 0; break; }
+        if (op == 4) {
+            i64 ret; int st = aio_mem_poll(b, &ret);
+            if (st == MOS_EINPROGRESS) { r = -MOS_EINVAL; break; }
+            u8 *bounce = NULL; void *ubuf = NULL; u64 n = 0;
+            aio_mem_take(b, &bounce, &n, &ubuf, &ret);
+            if (st != 0) { kfree(bounce); r = -st; break; }
+            if (bounce && ubuf && n && !uvm_copy_out(p, (u64)ubuf, bounce, n)) r = -MOS_EFAULT;
+            else r = ret;
+            kfree(bounce);
+            break;
+        }
+        if (op == 5) { r = aio_mem_fsync(b) ? 0 : -MOS_EIO; break; }
+        struct aiocb cb;
+        if (op != 1 && op != 2) { r = -MOS_EINVAL; break; }
+        if (!uvm_copy_in(p, &cb, b, sizeof cb)) { r = -MOS_EFAULT; break; }
+        if (fd_get(p, (u64)cb.aio_fildes) < 0 || p->fds[cb.aio_fildes].kind != FD_FILE) { r = -MOS_EBADF; break; }
+        vnode_t *v = vfs_lookup(p->fds[cb.aio_fildes].path);
+        if (!v || v->dir || !v->data) { r = -MOS_EBADF; break; }
+        u8 *bounce = kmalloc(cb.aio_nbytes ? cb.aio_nbytes : 1);
+        if (!bounce) { r = -MOS_ENOMEM; break; }
+        if (op == 2) {
+            if (!(p->fds[cb.aio_fildes].flags & (MOS_O_WRONLY | MOS_O_RDWR))) { kfree(bounce); r = -MOS_EBADF; break; }
+            if (!uvm_copy_in(p, bounce, (u64)cb.aio_buf, cb.aio_nbytes)) { kfree(bounce); r = -MOS_EFAULT; break; }
+        }
+        if (aio_mem_submit(b, op == 2, v->data, v->size, (u64)cb.aio_offset, cb.aio_nbytes, bounce, (void *)cb.aio_buf) != 0) {
+            kfree(bounce); r = -MOS_EAGAIN; break;
+        }
+        r = 0;
         break;
     }
     default:
