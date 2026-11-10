@@ -179,6 +179,41 @@ int main(void) {
     if (!gio_image_wh(thumb, &w, &h) || w != 2 || h != 2) return 12;
     if (roundtrip("public.png", 0)) return 20 + roundtrip("public.png", 0);
     if (roundtrip("public.jpeg", 1)) return 30 + roundtrip("public.jpeg", 1);
-    printf("ok png jpeg thumb\n");
+    {
+        /* JPEG com APP1 Exif: IFD little-endian, Compression = 6 (JPEG). */
+        extern int mos_img_encode_jpeg(const uint32_t *, int, int, int, uint8_t **, size_t *);
+        extern void *kCGImagePropertyTIFFDictionary, *kCGImagePropertyTIFFCompression;
+        uint32_t red[64];
+        uint8_t *jpg = 0;
+        size_t jn = 0;
+        unsigned char app[40];
+        unsigned char *joined;
+        void *jsrc, *props, *tiff;
+        long long cv = 0;
+        int ai;
+        for (ai = 0; ai < 64; ai++) red[ai] = 0xffff0000u;
+        if (mos_img_encode_jpeg(red, 8, 8, 90, &jpg, &jn) || jn < 2) return 40;
+        memset(app, 0, sizeof app);
+        app[0] = 0xff; app[1] = 0xe1; app[2] = 0; app[3] = 36;
+        memcpy(app + 4, "Exif\0\0", 6);
+        app[10] = 'I'; app[11] = 'I'; app[12] = 42;
+        app[14] = 8;
+        app[18] = 1;
+        app[20] = 0x03; app[21] = 0x01; /* tag 259 */
+        app[22] = 3;                    /* SHORT */
+        app[24] = 1;                    /* count */
+        app[28] = 6;                    /* compression */
+        joined = malloc(jn + sizeof app);
+        joined[0] = 0xff; joined[1] = 0xd8;
+        memcpy(joined + 2, app, sizeof app);
+        memcpy(joined + 2 + sizeof app, jpg + 2, jn - 2);
+        jsrc = CGImageSourceCreateWithData(data_new(joined, (long)(jn + sizeof app)), 0);
+        props = CGImageSourceCopyPropertiesAtIndex(jsrc, 0, 0);
+        tiff = CFDictionaryGetValue(props, kCGImagePropertyTIFFDictionary);
+        if (!tiff) return 41;
+        if (!CFNumberGetValue(CFDictionaryGetValue(tiff, kCGImagePropertyTIFFCompression), 4, &cv) || cv != 6) return 42;
+        if (CFDictionaryGetValue(CGImageSourceCopyPropertiesAtIndex(src, 0, 0), kCGImagePropertyTIFFDictionary)) return 43;
+    }
+    printf("ok png jpeg thumb tiff\n");
     return 0;
 }

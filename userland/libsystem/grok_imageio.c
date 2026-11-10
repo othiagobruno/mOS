@@ -33,6 +33,8 @@ extern void *kCFBooleanFalse;
 
 void *kCGImagePropertyPixelWidth;
 void *kCGImagePropertyPixelHeight;
+void *kCGImagePropertyTIFFDictionary;
+void *kCGImagePropertyTIFFCompression;
 void *kCGImageSourceCreateThumbnailFromImageAlways;
 void *kCGImageSourceCreateThumbnailWithTransform;
 void *kCGImageSourceShouldCache;
@@ -47,6 +49,8 @@ static void gio_keys(void) {
     if (kCGImagePropertyPixelWidth) return;
     kCGImagePropertyPixelWidth = CFStringCreateWithCString(0, "PixelWidth", 0x08000100);
     kCGImagePropertyPixelHeight = CFStringCreateWithCString(0, "PixelHeight", 0x08000100);
+    kCGImagePropertyTIFFDictionary = CFStringCreateWithCString(0, "{TIFF}", 0x08000100);
+    kCGImagePropertyTIFFCompression = CFStringCreateWithCString(0, "Compression", 0x08000100);
     kCGImageSourceCreateThumbnailFromImageAlways = CFStringCreateWithCString(0, "kCGImageSourceCreateThumbnailFromImageAlways", 0x08000100);
     kCGImageSourceCreateThumbnailWithTransform = CFStringCreateWithCString(0, "kCGImageSourceCreateThumbnailWithTransform", 0x08000100);
     kCGImageSourceShouldCache = CFStringCreateWithCString(0, "kCGImageSourceShouldCache", 0x08000100);
@@ -150,18 +154,80 @@ void *CGImageSourceCreateImageAtIndex(void *src, unsigned long index, void *opts
     return image_box(s->img.px, s->img.w, s->img.h);
 }
 
+static unsigned gio_u16(const unsigned char *p, int be) {
+    return be ? ((unsigned)p[0] << 8 | p[1]) : ((unsigned)p[0] | (unsigned)p[1] << 8);
+}
+static unsigned gio_u32(const unsigned char *p, int be) {
+    return be ? ((unsigned)p[0] << 24 | (unsigned)p[1] << 16 | (unsigned)p[2] << 8 | p[3])
+              : ((unsigned)p[0] | (unsigned)p[1] << 8 | (unsigned)p[2] << 16 | (unsigned)p[3] << 24);
+}
+
+/* IFD do TIFF dentro do APP1 Exif. Tag 259 (Compression) vira o número do dicionário {TIFF}. */
+static int exif_compression(const unsigned char *tif, unsigned long n, long long *out) {
+    int be;
+    unsigned off, count, i;
+    if (n < 8) return 0;
+    if (tif[0] == 'M' && tif[1] == 'M') be = 1;
+    else if (tif[0] == 'I' && tif[1] == 'I') be = 0;
+    else return 0;
+    if (gio_u16(tif + 2, be) != 42) return 0;
+    off = gio_u32(tif + 4, be);
+    if ((unsigned long)off + 2 > n) return 0;
+    count = gio_u16(tif + off, be);
+    if ((unsigned long)off + 2 + (unsigned long)count * 12 > n) return 0;
+    for (i = 0; i < count; i++) {
+        const unsigned char *e = tif + off + 2 + i * 12;
+        unsigned tag = gio_u16(e, be), typ = gio_u16(e + 2, be), cnt = gio_u32(e + 4, be);
+        if (tag == 259 && typ == 3 && cnt >= 1) {
+            *out = gio_u16(e + 8, be);
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int jpeg_exif_compression(const unsigned char *b, unsigned long n, long long *out) {
+    unsigned long i;
+    if (n < 4 || b[0] != 0xff || b[1] != 0xd8) return 0;
+    i = 2;
+    while (i + 4 < n) {
+        unsigned m, len;
+        if (b[i] != 0xff) return 0;
+        while (i < n && b[i] == 0xff) i++;
+        if (i >= n) return 0;
+        m = b[i++];
+        if (m == 0xd9 || m == 0xda) return 0;
+        if (m == 0x01 || (m >= 0xd0 && m <= 0xd8)) continue;
+        if (i + 2 > n) return 0;
+        len = (unsigned)b[i] << 8 | b[i + 1];
+        if (len < 2 || i + len > n) return 0;
+        if (m == 0xe1 && len >= 8 && memcmp(b + i + 2, "Exif\0\0", 6) == 0)
+            return exif_compression(b + i + 8, len - 8, out);
+        i += len;
+    }
+    return 0;
+}
+
 void *CGImageSourceCopyPropertiesAtIndex(void *src, unsigned long index, void *opts) {
     gio_src *s = src;
     void *d, *nw, *nh;
+    long long comp = 0;
     (void)opts;
     gio_keys();
     if (!s || s->magic != GIO_MAGIC || !s->ok || index != 0) return 0;
-    d = CFDictionaryCreateMutable(0, 4, 0, 0);
+    d = CFDictionaryCreateMutable(0, 8, 0, 0);
     if (!d) return 0;
     nw = gio_num_obj(s->img.w);
     nh = gio_num_obj(s->img.h);
     CFDictionarySetValue(d, kCGImagePropertyPixelWidth, nw);
     CFDictionarySetValue(d, kCGImagePropertyPixelHeight, nh);
+    if (jpeg_exif_compression(s->bytes, s->n, &comp)) {
+        void *tiff = CFDictionaryCreateMutable(0, 4, 0, 0);
+        if (tiff) {
+            CFDictionarySetValue(tiff, kCGImagePropertyTIFFCompression, gio_num_obj(comp));
+            CFDictionarySetValue(d, kCGImagePropertyTIFFDictionary, tiff);
+        }
+    }
     return d;
 }
 
