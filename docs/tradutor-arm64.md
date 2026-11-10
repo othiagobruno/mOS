@@ -51,12 +51,15 @@ Rosetta, **todo** o código do processo é arm64 e a única fronteira é a das s
 - **Mapeamento de memória 1:1.** Endereço do guest = endereço do host. Loads/stores traduzidos acessam
   o ponteiro direto. Falhas viram exceção do host; o motor reconstrói o estado do guest e o runtime
   entrega SIGSEGV/SIGBUS ao handler arm64 com o `pc` exato (V8/wasm dependem disso).
-- **Modelo de memória.** O x86 (TSO) é mais forte que o ARM, então loads/stores comuns traduzem direto.
-  `LDAR/LDAPR` = load comum; `STLR` = store + `mfence` quando necessário para RCsc; `DMB/DSB` →
-  `mfence` (ou nada, quando o tipo só ordena o que o TSO já ordena). Exclusivos: `LDXR` guarda
-  (endereço, tamanho, valor); `STXR` faz `lock cmpxchg` (ou `cmpxchg16b` para 128 bits) contra o valor
-  guardado; falha devolve 1 (o ARM permite falhas espúrias; ABA é aceito, como no QEMU). LSE → `lock
-  xadd/cmpxchg` em laço.
+- **Modelo de memória.** O x86 (TSO) é mais forte que o ARM: load-load, store-store e load-store já
+  estão ordenados. `mfence` só entra onde o ARM exige store→load: `DMB`/`DSB` com `(CRm & 3) == 3`
+  (SY, ISH, NSH, OSH) e o store RCsc (`STLR` e `STLLR`; sem LORegion os dois são iguais). `DMB`/`DSB`
+  LD e ST não levam `mfence`. `SSBB`, `PSSBB` e `SB` viram `lfence`. `LDAR`/`LDAPR` são load comum.
+  Exclusivos: cada `LDXR`/`LDXP` arma uma época no intervalo exato dos bytes. Qualquer store que
+  sobreponha (inclusive o mesmo valor, na mesma thread ou em outra) faz o `STXR`/`STXP` falhar.
+  Falha espúria continua permitida. O grânulo não é a linha de cache, para dois endereços diferentes
+  não entrarem em livelock. Sinal, SVC, fork e a troca de contexto derrubam a reserva. LSE → `lock
+  xadd/cmpxchg` em laço, e o store também derruba exclusivos que cubram o endereço.
 - **PAC.** Anunciamos FEAT_PAuth com algoritmo "identidade": PAC* não alteram o ponteiro, AUT* sempre
   autenticam, XPAC* limpam nada. É uma implementação válida (o algoritmo é IMPLEMENTATION DEFINED) e
   roda arm64 e arm64e. `BLRAA/RETAA/LDRAA...` são implementados com essa semântica.
@@ -335,9 +338,8 @@ dentro de bloco do libSystem, com `catch(...)` do C++): **36/36 no arm64** (JIT 
 35/36 (só o NSInvocation x86 com argumentos na pilha).
 `userland/tests-a64libsys/dylibs.cpp`: libc++/libc++abi, sqlite, ICU e zlib carregados dos universais do disco: **6/6**.
 
-**zlib.** `tools/build-zlib.ps1` compila o fonte oficial (zlib 1.3.2, `.tools\zlib-dl`) no slice arm64; o x86_64 continua o
-bottle do Homebrew da mesma versão; o universal vai para `/usr/local/opt/zlib/lib/libz.1.dylib` (para onde o carregador
-manda `/usr/lib/libz.1.dylib`).
+**zlib.** `tools/build-zlib.ps1` compila o fonte oficial (zlib 1.3.2, `.tools\zlib-dl`) nos slices x86_64 e arm64. O
+universal fica em `/usr/lib/libz.1.dylib`. O carregador não manda mais esse nome para o bottle do Homebrew.
 
 **Pendências.** (1) Cadeia Swift: só falta rodar um app SwiftUI/Combine/Concurrency arm64 de verdade (os testes cobrem
 stdlib, runtime e Foundation). (2) Achados no x86 pela referência, fora do tradutor:
@@ -356,7 +358,7 @@ Arquivos: `jit_core.c` (cache, despachante, threads, invalidação, recuperaçã
   formato x86 (lahf/seto), r15 = `a64_cpu*`. Dentro do bloco: X0..X30/SP em 11 registradores
   do host (LRU); flags no EFLAGS em modo ADD (CF = C) ou SUB (CF = !C). Acessos à memória e
   instruções do interpretador contam como leitura de flags (estado exato em falha/saída).
-- **Exclusivos e LSE** (`jit_atom.h`): monitor do contrato (endereço, tamanho, valor), STXR = `lock cmpxchg` contra o valor guardado; CAS = `lock cmpxchg`; LDADD = `lock xadd`; SWP = `xchg`; LDCLR/LDEOR/LDSET/LDSMAX..LDUMIN = laço de `cmpxchg`; LDAPR = load. Alinhamento (atravessar 16 bytes) e SA0 como no INT, pelo caminho lento.
+- **Exclusivos e LSE** (`jit_atom.h`, `a64_xmon.c`): `LDXR`/`LDXP`/`STXR`/`STXP`/`CLREX` caem no interpretador, que arma uma época no intervalo exato (não um CAS do valor). `CAS`/`CASP`/`LDADD`/`SWP` e o restante do LSE continuam nativos (`lock cmpxchg`/`xadd`/`xchg`, laço de `cmpxchg`) e avisam o monitor em todo store. `LDAPR` é load. Alinhamento (atravessar 16 bytes) e SA0 como no INT, pelo caminho lento.
 - **FP** (`jit_simd.h`): escalar S/D e vetorial 4S/2S/2D com SSE/FMA3 só quando FPCR = RN e FZ = 0, sem flag do x86 além de PE e com resultado (cada lane) normal, finito e não-NaN; senão a instrução inteira vai ao interpretador. PE → IXC. FCMP/FCCMP: sem NaN (ucomis) e FZ = 0, NZCV montado direto em `reserved[14]`; FCSEL é seleção de bits. FCVTZS/ZU com faixa conferida nos bits (cvtt trunca como o ARM), SCVTF/UCVTF em RN, FCVT S↔D. FABS/FNEG/FMOV são operações de bits. MXCSR do host fica em 0x1F80.
 - **Chamada leve**: SIMD/FP sem emissão nativa que só toca registradores V e FPCR/FPSR chama `a64_interp_exec` direto (`jit_h_exec`), gravando os GPRs sujos e descartando só os voláteis da ABI; UDF vai ao caminho lento. Ficam fora as classes que escrevem GPR ou NZCV.
 - **Estatística do interpretador**: `a64_jit_fbstat(1)` + `a64_jit_fbstat_dump` (o runtime liga com `MOS_A64_DEBUG`; no harness `A64JIT_FBSTAT=1`) contam por classe de codificação o que ainda vai ao interpretador — é o guia para a próxima emissão nativa.

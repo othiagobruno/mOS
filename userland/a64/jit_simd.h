@@ -804,6 +804,7 @@ static int s_ldst_multi(T *t, a64_u32 w) {
     if (selem > 1 && size == 3 && !q) return 0;
     int bytes = q ? 16 : 8;
     int hb = rget(t, rn);
+    int noted = 0;
     /* o interpretador acessa elemento a elemento: se o intervalo cruza página, o efeito parcial
      * de uma falha seria outro; esse caso vai inteiro ao interpretador */
     fl_clobber_force(t);
@@ -811,6 +812,7 @@ static int s_ldst_multi(T *t, a64_u32 w) {
     x_alu_ri(B, 0, A_AND, XR(XAX), 0xFFF);
     x_alu_ri(B, 0, A_CMP, XR(XAX), 0x1000 - nr * bytes);
     slow_if(t, CC_A);
+    if (!L) { xmon_pre(t, XM(hb, 0), nr * bytes); hb = rget(t, rn); noted = 1; }
     if (selem > 1) {                                /* estruturas intercaladas: elemento a elemento */
         int eb = 1 << size, ne = bytes >> size;     /* tudo numa página: só o 1º acesso pode falhar */
         for (int e = 0; e < ne; e++)
@@ -849,6 +851,7 @@ static int s_ldst_multi(T *t, a64_u32 w) {
             x_lea(B, 1, h, XMI(h, hm, 0, 0));
         }
     }
+    if (noted) xmon_post(t);
     return 1;
 }
 
@@ -1480,6 +1483,7 @@ static int s_ldst_single(T *t, a64_u32 w) {
         x_alu_ri(B, 0, A_CMP, XR(XAX), 0x1000 - selem * eb);
         slow_if(t, CC_A);
     }
+    if (!L) { xmon_pre(t, XM(hb, 0), selem * eb); hb = rget(t, rn); }
     for (int s = 0; s < selem; s++) {
         xo mem = XM(hb, s * eb);
         int v = (rt + s) & 31;
@@ -1502,6 +1506,7 @@ static int s_ldst_single(T *t, a64_u32 w) {
             if (scale == 0) x_mov8_mr(B, mem, XDX); else if (scale == 1) x_mov16_mr(B, mem, XDX); else x_mov_mr(B, scale == 3, mem, XDX);
         }
     }
+    if (!L) xmon_post(t);
     if (post) {
         if (rm == 31) wb_base(t, rn, selem * eb);
         else { int hm = rget(t, rm); int h = rget(t, rn); rdef(t, rn); x_lea(B, 1, h, XMI(h, hm, 0, 0)); }

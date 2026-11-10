@@ -171,8 +171,24 @@ air_module_t *mtlair_parse(const void *data, u64 len, char *err, int errn) {
             for (int j = 0; j < m->nfns; j++)
                 if (m->fns[j].name && !strcmp(m->fns[j].name, c.funcs[i].name)) m->fns[j].stage = c.funcs[i].stage;
         }
+        /* sem STRTAB o nome do módulo fica vazio: casa pela ordem dos corpos com a lista do contêiner */
+        int ci = 0;
+        for (int j = 0; j < m->nfns; j++) {
+            if (!m->fns[j].has_body) continue;
+            if (!m->fns[j].name && ci < m->nfuncs_container) {
+                const char *nm = m->func_names[ci];
+                u64 n = 0;
+                while (nm[n]) n++;
+                char *s = malloc(n + 1);
+                if (s) { memcpy(s, nm, n + 1); m->fns[j].name = s; }
+            }
+            if (m->fns[j].stage < 0 && ci < m->nfuncs_container) m->fns[j].stage = m->func_stage[ci];
+            ci++;
+        }
     }
     air_close(&c);
     return m;
 }
 void mtlair_free(air_module_t *m) { airmod_free(m); }
+
+#include "mtlair_lower.inc"

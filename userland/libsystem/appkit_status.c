@@ -17,6 +17,7 @@ typedef struct {
     int visible;
     int menu_open;
     int used;
+    int token;
     char title[CX_TITLE];
 } cx_sb_slot_t;
 
@@ -29,8 +30,10 @@ typedef struct {
 } cx_pop_slot_t;
 
 static cx_sb_slot_t g_sb[CX_SB_MAX];
+static int g_sb_seq = 1;
 static cx_pop_slot_t g_pop[CX_POP_MAX];
 static int g_policy = CX_ACT_REGULAR;
+static int g_policy_explicit;
 static int g_active = 1;
 
 static void copy_title(char *dst, const char *src) {
@@ -76,6 +79,8 @@ int cx_sb_register(void *item, double length) {
         g_sb[i].visible = 1;
         g_sb[i].menu_open = 0;
         g_sb[i].title[0] = 0;
+        g_sb[i].token = g_sb_seq++;
+        if (g_sb_seq <= 0) g_sb_seq = 1;
         return 1;
     }
     return 0;
@@ -160,6 +165,19 @@ int cx_sb_click(void *item) {
     return 1;
 }
 
+int cx_sb_id(const void *item) {
+    cx_sb_slot_t *s = sb_find(item);
+    return s ? s->token : 0;
+}
+
+void *cx_sb_by_token(int token) {
+    int i;
+    if (token <= 0) return 0;
+    for (i = 0; i < CX_SB_MAX; i++)
+        if (g_sb[i].used && g_sb[i].token == token) return g_sb[i].item;
+    return 0;
+}
+
 int cx_sb_menu_open(const void *item) {
     cx_sb_slot_t *s = sb_find(item);
     return s ? s->menu_open : 0;
@@ -226,6 +244,7 @@ void cx_pop_resign_active(void) {
 int cx_act_set_policy(int policy) {
     if (policy != CX_ACT_REGULAR && policy != CX_ACT_ACCESSORY && policy != CX_ACT_PROHIBITED)
         return 0;
+    g_policy_explicit = 1;
     g_policy = policy;
     if (policy == CX_ACT_PROHIBITED) {
         g_active = 0;
@@ -237,6 +256,11 @@ int cx_act_set_policy(int policy) {
 int cx_act_policy(void) { return g_policy; }
 int cx_act_lsuielement(void) { return g_policy == CX_ACT_ACCESSORY; }
 int cx_act_hides_dock(void) { return g_policy != CX_ACT_REGULAR; }
+int cx_act_note_lsuielement(int present) {
+    if (!present || g_policy_explicit) return 0;
+    g_policy = CX_ACT_ACCESSORY;
+    return 1;
+}
 int cx_act_active(void) { return g_active; }
 
 int cx_act_activate(void) {
@@ -249,5 +273,6 @@ void cx_status_reset(void) {
     for (int i = 0; i < CX_SB_MAX; i++) g_sb[i].used = 0;
     for (int i = 0; i < CX_POP_MAX; i++) g_pop[i].used = 0;
     g_policy = CX_ACT_REGULAR;
+    g_policy_explicit = 0;
     g_active = 1;
 }

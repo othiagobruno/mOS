@@ -1,9 +1,12 @@
 // mOS — CryptoKit.framework (só Swift, como o da Apple). O carregador resolve o import
 // /System/Library/Frameworks/CryptoKit.framework nas imagens de tools/build-frameworks-objc.ps1
 // (-enable-library-evolution, -module-name CryptoKit). Os nomes mangled têm de ser os da Apple:
-// o machocheck dos apps-alvo (nov. 2026) importa 68 símbolos distintos. Compilado contra o
-// Foundation de ABI "Foundation", o objeto exporta os 68. O machocheck continua a listá-los
-// enquanto a dylib não está no VFS: ele só consulta libSystem.mos e os exports do bundle.
+// o machocheck dos apps-alvo (nov. 2026) importa 68 símbolos distintos; o do VS Code 1.145.1
+// são 39 (46 imports). Compilado contra o Foundation de ABI "Foundation", o objeto exporta
+// esses nomes. O carregador abre o Mach-O em
+// /System/Library/Frameworks/CryptoKit.framework/Versions/A/CryptoKit, e o machocheck
+// --disco conta os exports desse arquivo. O build.ps1 copia a saída de
+// tools/build-frameworks-objc.ps1. A trie de tools/ckhost/mkexports.py não entra na imagem.
 //
 // Funcional (primitiva real, falha de verdade):
 //   SHA-256 (CC_SHA256_* do CommonCrypto), Insecure.MD5 (CC_MD5_*), HMAC e HKDF sobre o HashFunction,

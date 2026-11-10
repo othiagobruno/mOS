@@ -7,7 +7,9 @@ Frente do loader, do Launch Services, do dyld e do VFS: abrir, encerrar e persis
 - **Launch Services.** `ls_rescan` deixa de olhar só o nome e o tamanho do `Info.plist`. O carimbo mistura nome, mtime, amostra do plist e dos arquivos em `Contents/MacOS`. `ls_tick` (~1,5 s) relê o bundle quando esse carimbo muda, inclusive com o mesmo tamanho. O plist de escolhas (`~/Library/Preferences/com.apple.LaunchServices/com.apple.launchservices.secure.plist`) é relido quando o carimbo dele muda. Teste de regressão em `kernel/fs/unit_tests.c` (`test_launch_runtime`), compilado só com `-DMOS_UNIT_TESTS`. Este ambiente não compilou o kernel UEFI, então o teste não rodou aqui. Os testes de host que rodaram estão no final.
 - **Encerrar.** `compat_gui_request_quit` segue `kernel/include/quitpol.h`: `GEV_QUIT`, 3 s, `SIGTERM`, 2 s, `SIGKILL`. Um segundo pedido sobe um estágio. Forçar vai ao `SIGKILL`. O Dock (⌘Q, menu) continua no pedido com folga. ⌥⌘Esc chama `app_force_quit`. Atalhos `mac:` e apps `macapp` encerram pelo pid, também com zero janelas. O Horizonte pede o encerramento do motor e não chama `on_quit` de novo. `watch_tick` roda antes de `compat_gui_quit_tick`: saída 0, -9 e -1000 não abrem o diálogo; saída -15 (`SIGTERM`) também não, se o encerramento ainda está pendente.
 - **Links de framework.** Um arquivo dentro de um `.framework` cujo conteúdo é uma linha de caminho (`A`, `Versions/Current/Electron Framework`) ou `#mOS-link:` é seguido no meio do caminho (`kernel/lib/vfs.c`). O `macho.c` segue também o último componente ao ler a dependência; se o alvo não existe, devolve nulo para o `locate()` ainda tentar `Versions/A` e `Versions/Current`. O `mkimg` reescreve esses textos para `#mOS-link:` antes do manifesto, no payload e nos overlays. Um Mach-O, um plist, um bplist ou uma URL não viram link. Um arquivo de texto curto dentro de um `.framework` que seja só um caminho também vira link: é o formato que o Windows grava no lugar do symlink.
-- **Swift na imagem.** `build.ps1` copia `usr/lib/swift` e `System` (SwiftUI, Combine) quando `build/universal-swift` ou `build/swift/objc/dylib` já tem `libswiftCore.dylib`. `-ComSwift` (ou `MOS_COM_SWIFT=1`) só manda o `build-swift-arm64.ps1 -SoJuntar` juntar slices já compilados. Sem artefato, o script avisa e a imagem segue sem a cadeia. São cerca de 110 MB e o sistema de arquivos da VM mora na RAM.
+- **Swift na imagem.** `build.ps1` copia `usr/lib/swift` e `System` (SwiftUI, Combine) quando `build/universal-swift` ou `build/swift/objc/dylib` já tem `libswiftCore.dylib`. `-ComSwift` (ou `MOS_COM_SWIFT=1`) só manda o `build-swift-arm64.ps1 -SoJuntar` juntar slices já compilados. Sem esses artefatos, `tools/gen-libswift-stubs.c` grava as `libswift*` que o VS Code 1.145.2 e o inventário do OpenBot pedem. No Windows o `build.ps1` compila o gerador com zig; no Linux, `tools/build.sh` chama `tools/stage-libswift.sh` (`cc`/`gcc`) e, se a cadeia existir, copia a árvore antes. Cada símbolo exportado é um `ret` e o binário contém `STUB mOS libswift`. Uma dylib da cadeia compilada não é substituída. São cerca de 110 MB só quando a cadeia real entra; os stubs são pequenos. O sistema de arquivos da VM mora na RAM.
+- **Resolução no carregador.** `kernel/include/libswift_image.h` lista os caminhos em `/usr/lib/swift`. `link_abs_dep` em `kernel/compat/macho.c` (logo depois de `usrlib_alias`) manda o basename para essa lista. Não há alias Homebrew. `libz`, `libcurl` e `libcompression` continuam em `usrlib_alias` para a frente STOR-SYSDYLIBS. Esta mudança em `macho.c` precisa de revisão do Kernel.
+- **Seções `__swift5_*`.** `userland/libsystem/swiftsect.c` grava types, protos, proto, fieldmd, reflstr e as outras seções `__TEXT,__swift5_*` quando `dyldimg.c` vê a imagem, e esquece no `remove_image`. Não interpreta os descritores.
 - **Wipe do esp.** Antes de apagar `build/esp`, o script guarda `mOS/Aplicativos`, `mOS/usr/lib/swift`, `SwiftUI.framework` e `Combine.framework` e os devolve depois de copiar `root/mOS`. Contas, Preferências, logs e `.conta` não são preservados: o `mkimg` recusa esse payload. Se `Remove-Item` não apaga (caminho longo), tenta `cmd rd /s /q \\?\`. Se ainda sobrar, o build para.
 - **Home.** `account_ensure_dirs` cria Mesa, Documentos, Downloads, Imagens, Música, Lixeira e `Library` com Preferences, Application Support, Logs, Saved Application State, Caches e LaunchAgents. Vale para a conta nova, para a sessão e para `/Users/Visitante` no `vfs_init`.
 - **Persistência.** Com a gravação ligada (instalado, primeiro boot ou Live após consentimento), `~/Library` entra no disco: `tracked_path` só exclui `/Volumes`, `/tmp` e o diretório de atualização. Caches também são gravados. Arquivo vindo da imagem ou do disco entra com mtime 0 e não é reescrito. `persist_capture_existing` marca, só depois de `persist_consent_live` ligar a gravação, nós com mtime diferente de 0 ou dirty. Não é chamado de `persist_enable`.
@@ -19,6 +21,7 @@ Frente do loader, do Launch Services, do dyld e do VFS: abrir, encerrar e persis
 
 ## O que é recusa ou stub
 
+- **libswift* sem a cadeia compilada.** O corpo de cada símbolo exportado é `ret` (0xC3) e o arquivo contém `STUB mOS libswift`. Não executa metadados Swift. A cadeia de `build/universal-swift` ou `build/swift/objc/dylib`, quando existe, permanece no lugar do stub.
 - **FairPlay.** Bundle com `Contents/SC_Info` não é copiado (`ls_install_app` devolve -2). Não há descriptografia. Apps da App Store ficam de fora.
 - **.pkg que não é xar**, com TOC inválida, Bom que não confere, Payload vazio ou caminho fora do destino: recusa, com o motivo no log `pkg:`. Nada é escrito fora de `/Aplicativos`.
 - **Forçar encerrar um app do kernel** (exceto o Horizonte) é o mesmo `on_quit` de sempre: não há `SIGKILL` para código que roda dentro do kernel.
@@ -38,7 +41,7 @@ Frente do loader, do Launch Services, do dyld e do VFS: abrir, encerrar e persis
 
 O guisys usa `proc_signal(pid, MOS_SIGTERM)` e depois `proc_signal(pid, MOS_SIGKILL)`. `MOS_SIGKILL` é 9. Não é preciso um `proc_kill` separado para o escalonamento.
 
-`kernel/compat/macho.c`: o seguimento de link de framework entrou em `dep_read`. Os fixups encadeados não foram mexidos. Os formatos 1 (ARM64E), 2 (PTR_64), 6 (PTR_64_OFFSET), 12 (ARM64E_USERLAND) e 13 (ARM64E_USERLAND24) já são aceitos. A frase "só 2 e 6" está desatualizada. Proposta, se um binário real estourar o teto ou cair em "formato de ponteiro encadeado":
+`kernel/compat/macho.c`: o seguimento de link de framework entrou em `dep_read`. **Revisão do Kernel:** `link_abs_dep`, logo depois de `usrlib_alias`, chama `mos_libswift_resolve` (`kernel/include/libswift_image.h`) e, se o arquivo pedido não existe, procura o mesmo basename em `/usr/lib/swift`. `usrlib_alias` não foi alterado (libz, libcurl, libcompression ficam para STOR-SYSDYLIBS). Os fixups encadeados não foram mexidos. Os formatos 1 (ARM64E), 2 (PTR_64), 6 (PTR_64_OFFSET), 12 (ARM64E_USERLAND) e 13 (ARM64E_USERLAND24) já são aceitos. A frase "só 2 e 6" está desatualizada. Proposta, se um binário real estourar o teto ou cair em "formato de ponteiro encadeado":
 
 - subir `MAX_IMAGES` de 96 para 256 (`link_t` já é heap; um vetor de 256 na pilha é pequeno);
 - só então olhar um formato novo, com o número que o log imprimir.
@@ -74,7 +77,7 @@ mtime 0 e dirty falso = veio da imagem ou do disco e não é regravado. `NSUserD
 
 Este ambiente é Linux, sem `zig` e sem PowerShell. O fluxo `build.ps1` não rodou. Não há log desta sessão com o erro do libSystem.
 
-O que o repositório já registra (`docs/libsys-pendencias.md`, §5): `.tools\zig-macos-dl` casa com `zig-*` antes do zig de Windows. O script checava se `zig.exe` existe, não se é um PE (MZ). Um binário de macOS com esse nome faz a primeira compilação, a do libSystem, falhar. `build.ps1` e `tools/build-libsystem.ps1` agora pulam `zig.exe` que não começa com `MZ` e avisam. Os outros scripts em `tools\` que ainda pegam a primeira pasta `zig-*` continuam com o mesmo buraco.
+O que o repositório já registra (`docs/libsys-pendencias.md`, §5): `.tools\zig-macos-dl` casa com `zig-*` antes do zig de Windows. Um `zig.exe` de macOS nesse nome fazia a primeira compilação, a do libSystem, falhar. `tools/stage-host.ps1` (`Resolve-MosZig`) e `tools/build.sh` leem os 4 primeiros bytes: no Windows só PE/MZ, no Linux só ELF, e entre os que servem fica a maior `zig version`, não a primeira pasta. `MOS_ZIG` com a magia certa vence. Os scripts de `tools/` que compilam chamam essa escolha. O procedimento no Linux está em `docs/staging-linux.md`.
 
 O mesmo documento cita staging do Cursor com caminho acima de 260 caracteres, que `Remove-Item` não apaga. O wipe do esp agora tenta `rd /s /q \\?\` depois de guardar Aplicativos e Swift.
 
@@ -153,3 +156,13 @@ xpctest: 34/34 PASS
 A imagem de 32 MiB contém `#mOS-link:A` e conserva o magic `\xcf\xfa\xed\xfeDEMO`. Não houve assinatura Ed25519 nesse teste (sem `--key`).
 
 Não rodou: `build.ps1`, `build-libsystem.ps1`, kernel UEFI, QEMU, `-DMOS_UNIT_TESTS` no kernel, qualquer app da lista, hardware, Secure Boot, criptografia.
+
+### libswift (L15)
+
+`sh tools/libswift_check.sh` (gcc). O gerador, o resolvedor de nomes e o registro de `__swift5_*` passaram. O `machocheck` contra um `libSystem.mos` vazio:
+
+- fixture que importa os 55 nomes da lista, sem as dylibs: 55 ausentes;
+- o mesmo fixture com as dylibs no diretório: 0 ausentes;
+- VS Code 1.145.2 (darwin, sha256 `b6c60d84a8ffb85c5bb4106d6ff74773fec07e6c1a4bb944f8af68e3bfe5abbe`, fora do repositório, em `/tmp/vscode-app`): 53 linhas `libswift*` no relatório de ausentes; com as `libswift*` geradas no mesmo diretório, 0. A marca `[falta]` permanece: `sys_ok` do machocheck não trata essas dylibs como substituto do libSystem. O que zera é a coluna de símbolos (libswiftCore 40/0, libswiftFoundation 20/0).
+
+`tools/stage-libswift.sh` não substituiu um `libswiftCore.dylib` que já estava no destino e completou as outras. `mkimg` de uma árvore descartável (EFI falso só para o formato aceitar o payload, mais `mOS/usr/lib/swift`) gravou `libswiftCore.dylib` na imagem de 32 MiB. Essa imagem não foi iniciada. O VS Code não foi executado.

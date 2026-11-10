@@ -12,6 +12,7 @@
 #include <stdbool.h>
 #include "foundation.h"
 #include "libc.h"
+#include "cg_blend.h"
 
 double sqrt(double), sin(double), cos(double), atan2(double, double), fabs(double), floor(double), ceil(double);
 id objc_retain(id o);
@@ -628,6 +629,8 @@ typedef struct {
     double tstk[8][6];
     i32 cstk[8][4];
     u32 fillstk[8];
+    u8 blend;                                /* CGContextSetBlendMode: 0 normal, 1 copy, 2 multiply, 3 screen, 16 clear */
+    u8 blendstk[8];
     void *cb_info;
     void (*rel_cb)(void *, const void *, size_t);
     u64 cb_size;
@@ -793,14 +796,11 @@ CGAffineTransform CGContextGetTextMatrix(void *c) {
     t.a = o->ta; t.b = o->tb; t.c = o->tc; t.d = o->td; t.tx = o->tx; t.ty = o->ty;
     return t;
 }
-static u32 over_px(u32 s, u32 d) {
-    u32 a = s >> 24;
-    if (a == 255) return s;
-    if (!a) return d;
-    u32 k = 255 - a;
-    u32 rb = ((d & 0xFF00FF) * k + 0x800080) >> 8 & 0xFF00FF;
-    u32 ag = ((d >> 8 & 0xFF00FF) * k + 0x800080) & 0xFF00FF00;
-    return s + (rb | ag);
+void cx_cg_note_blend(int mode);
+void CGContextSetBlendMode(void *c, int mode) {
+    cgobj_t *o = as_kind(c, CGK_BM);
+    if (o) { o->blend = (u8)mode; return; }
+    cx_cg_note_blend(mode);
 }
 static void store_px(u8 *dp, u32 info, u32 argb) {
     u32 ainfo = info & 31;
@@ -810,20 +810,23 @@ static void store_px(u8 *dp, u32 info, u32 argb) {
     else { dp[0] = (u8)R; dp[1] = (u8)G; dp[2] = (u8)B; dp[3] = (u8)A; }
 }
 static void blend_at(cgobj_t *o, int x, int y, u32 src) {
-    if (x < o->cl || y < o->ct || x >= o->cr || y >= o->cbt || !(src >> 24)) return;
+    int mode = o->blend;
+    if (x < o->cl || y < o->ct || x >= o->cr || y >= o->cbt) return;
+    if (mode != 1 && mode != 16 && !(src >> 24)) return;
     u8 *dp = o->data + (size_t)y * o->bpr + (size_t)x * o->bpp;
     if (o->bpp == 1) {
-        u32 a = src >> 24;
-        if (a > dp[0]) dp[0] = (u8)a;
+        if (mode == 16) dp[0] = 0;
+        else if (mode == 1) dp[0] = (u8)(src >> 24);
+        else if ((src >> 24) > dp[0]) dp[0] = (u8)(src >> 24);
         return;
     }
     u32 dst = px_argb(dp, o->info);
     u32 ainfo = o->info & 31;
-    if (ainfo != 1 && ainfo != 2) {
+    if (mode != 1 && mode != 16 && ainfo != 1 && ainfo != 2) {
         u32 a = dst >> 24;
         if (a && a < 255) dst = a << 24 | (((dst >> 16) & 255) * a / 255) << 16 | (((dst >> 8) & 255) * a / 255) << 8 | ((dst & 255) * a / 255);
     }
-    store_px(dp, o->info, over_px(src, dst));
+    store_px(dp, o->info, cx_cg_blend_px(mode, src, dst));
 }
 static void ctm_of(const cgobj_t *o, double x, double y, double *dx, double *dy) {
     *dx = o->ca * x + o->cc * y + o->cu;
@@ -900,6 +903,7 @@ int cx_bm_save(const void *c) {
     o->tstk[o->gsp][3] = o->td; o->tstk[o->gsp][4] = o->tx; o->tstk[o->gsp][5] = o->ty;
     o->cstk[o->gsp][0] = o->cl; o->cstk[o->gsp][1] = o->ct; o->cstk[o->gsp][2] = o->cr; o->cstk[o->gsp][3] = o->cbt;
     o->fillstk[o->gsp] = o->fill;
+    o->blendstk[o->gsp] = o->blend;
     o->gsp++;
     return 1;
 }
@@ -914,6 +918,7 @@ int cx_bm_restore(const void *c) {
     o->td = o->tstk[o->gsp][3]; o->tx = o->tstk[o->gsp][4]; o->ty = o->tstk[o->gsp][5];
     o->cl = o->cstk[o->gsp][0]; o->ct = o->cstk[o->gsp][1]; o->cr = o->cstk[o->gsp][2]; o->cbt = o->cstk[o->gsp][3];
     o->fill = o->fillstk[o->gsp];
+    o->blend = o->blendstk[o->gsp];
     return 1;
 }
 static void dev_box(cgobj_t *o, double x, double y, double w, double h, int *x0, int *y0, int *x1, int *y1) {

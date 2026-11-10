@@ -72,9 +72,10 @@ dispara o boot se ainda não houve.
 
 ## Limites conhecidos
 
-- `.metallib` (AIR, bitcode do LLVM) não executa: `newLibraryWithData:`/`newLibraryWithURL:` devolvem
-  erro explicando isso. O `newDefaultLibrary` compila os `.metal` que estiverem em `Resources` do
-  bundle; um app que só traz `default.metallib` precisa ser recompilado com os fontes.
+- `.metallib` (AIR) baixa para o interpretador quando a função cabe nos 17 opcodes e nos intrínsecos conhecidos.
+  Função que não baixa é omitida; se nenhuma baixa, `newLibraryWithData:` devolve erro. O diferencial de host
+  (`tools/airlower_test.c`) compara o bitcode do clang com o shader compilado do fonte. Não há conferência contra
+  um `.metallib` de app. O `newDefaultLibrary` continua compilando os `.metal` de `Resources`.
 - Desempenho de CPU: o fragment shader é interpretado por pixel. Bom para UI e cenas simples; jogos
   pesados ficam lentos.
 - Processos do Chromium/Electron (VS Code, Cursor, Slack...) continuam vendo `MTLCreateSystemDefaultDevice`

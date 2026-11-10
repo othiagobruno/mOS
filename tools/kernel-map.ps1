@@ -6,8 +6,10 @@ param([string]$OutDir = 'build-exec', [string[]]$Addr = @())
 $root = Split-Path $PSScriptRoot -Parent
 Set-Location $root
 if (-not $Addr) {
-    $zig = Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*' | Where-Object { Test-Path "$($_.FullName)\zig.exe" } | Select-Object -First 1
-    $zig = Join-Path $zig.FullName 'zig.exe'
+    if (-not (Get-Command Resolve-MosZig -ErrorAction SilentlyContinue)) { foreach ($mosHost in @("$PSScriptRoot\stage-host.ps1","$PSScriptRoot\..\stage-host.ps1","$PSScriptRoot\..\..\stage-host.ps1","$PSScriptRoot\..\..\..\stage-host.ps1")) { if (Test-Path -LiteralPath $mosHost) { . $mosHost; break } } }
+    $mosZigPick = Resolve-MosZig $root
+    if (-not $mosZigPick) { exit 1 }
+    $zig = $mosZigPick.Path
     $sources = Get-ChildItem "$root\kernel" -Recurse -Include *.c, *.S | ForEach-Object { $_.FullName.Substring($root.Length + 1) }
     $cflags = @('-target', 'x86_64-uefi-msvc', '-O2', '-g', '-ffreestanding', '-fno-stack-protector', '-fno-stack-check',
         '-mno-stack-arg-probe', '-mno-red-zone', '-fshort-wchar', '-fno-sanitize=all', '-fno-strict-aliasing', '-nostdlib',

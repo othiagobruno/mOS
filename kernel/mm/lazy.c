@@ -197,6 +197,21 @@ bool lazy_is_anon(process_t *p, u64 va) {
     return p && lazy_hit(p, va, &h) && h.kind == 1;
 }
 
+/* alguma faixa de conteúdo (anônima, arquivo ou compartilhada) cruza [va, va+len)?
+ * A página de guarda entre regiões de mmap não entra. Usado pelo mach_vm_map fixo
+ * para devolver KERN_NO_SPACE sem varrer página a página com a trava. */
+bool lazy_overlaps(process_t *p, u64 va, u64 len) {
+    if (!p || !len) return false;
+    u64 s = va & ~0xFFFULL, e = (va + len + 0xFFF) & ~0xFFFULL;
+    if (e <= s) return false;
+    u64 fl = spin_lock_irqsave(&lazy_lock);
+    bool hit = false;
+    for (u32 i = 0; i < nlz && !hit; i++)
+        if (lz[i].pid == p->pid && e > lz[i].start && s < lz[i].end) hit = true;
+    spin_unlock_irqrestore(&lazy_lock, fl);
+    return hit;
+}
+
 static bool file_cached(const char *path, u64 off, u64 *phys) {
     for (u32 i = 0; i < nfc; i++)
         if (fc[i].off == off && !strcmp(fc[i].path, path)) { *phys = fc[i].phys; return true; }

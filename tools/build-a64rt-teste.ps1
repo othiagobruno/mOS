@@ -8,11 +8,13 @@
 param([Parameter(Mandatory)][string]$OutDir, [string]$Motores = 'interp,jit', [string]$Real = '', [string]$RealArgs = '--version',
       [int]$SizeMiB = 400)
 $root = Split-Path $PSScriptRoot -Parent
-$zig = Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*' -ErrorAction SilentlyContinue | Where-Object { Test-Path (Join-Path $_.FullName 'zig.exe') } | Select-Object -First 1
-if ($zig) { $zig = Join-Path $zig.FullName 'zig.exe' } elseif ($env:MOS_ZIG) { $zig = $env:MOS_ZIG } else { $zig = (Get-Command zig -ErrorAction SilentlyContinue).Source }
+if (-not (Get-Command Resolve-MosZig -ErrorAction SilentlyContinue)) { foreach ($mosHost in @("$PSScriptRoot\stage-host.ps1","$PSScriptRoot\..\stage-host.ps1","$PSScriptRoot\..\..\stage-host.ps1","$PSScriptRoot\..\..\..\stage-host.ps1")) { if (Test-Path -LiteralPath $mosHost) { . $mosHost; break } } }
+$mosZigPick = Resolve-MosZig $root
+if (-not $mosZigPick) { exit 1 }
+$zig = $mosZigPick.Path
 $esp = Join-Path $root "$OutDir\esp"
 if (-not (Test-Path "$esp\mOS")) { Write-Host "rode antes: .\build.ps1 -OutDir $OutDir" -ForegroundColor Red; exit 1 }
-& "$PSScriptRoot\build-a64rt.ps1" -Parcial
+& "$PSScriptRoot\build-a64rt.ps1"
 if ($LASTEXITCODE -ne 0) { exit 1 }
 if (-not (Test-Path "$root\build\libSystem-arm64.mos")) { Write-Host 'falta build\libSystem-arm64.mos (tools\build-libsystem-arm64.ps1)' -ForegroundColor Red; exit 1 }
 $a64 = "$esp\mOS\Sistema\Biblioteca\a64"

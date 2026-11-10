@@ -3,8 +3,10 @@
 # (o libSystem do mOS fornece a libc/pthread/dyld). Saída: build\swift\full\runtime\*.o e libswiftRuntime.a
 param([string[]]$Only)
 $root = Split-Path $PSScriptRoot -Parent
-$zig = Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*' | Where-Object { Test-Path "$($_.FullName)\zig.exe" } | Select-Object -First 1
-$zig = Join-Path $zig.FullName 'zig.exe'
+if (-not (Get-Command Resolve-MosZig -ErrorAction SilentlyContinue)) { foreach ($mosHost in @("$PSScriptRoot\stage-host.ps1","$PSScriptRoot\..\stage-host.ps1","$PSScriptRoot\..\..\stage-host.ps1","$PSScriptRoot\..\..\..\stage-host.ps1")) { if (Test-Path -LiteralPath $mosHost) { . $mosHost; break } } }
+$mosZigPick = Resolve-MosZig $root
+if (-not $mosZigPick) { exit 1 }
+$zig = $mosZigPick.Path
 $src = "$root\.tools\swift-src"
 $out = "$root\build\swift\full\runtime"
 New-Item -ItemType Directory -Force $out | Out-Null

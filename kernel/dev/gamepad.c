@@ -142,9 +142,21 @@ i64 gamepad_syscall(process_t *pr, u64 op, u64 b, u64 c, u64 d) {
         int pause = (int)(i32)(c >> 32);
         return audio_stream_ctl(pr->pid, (int)b, gain, pause, d != 0) ? 0 : -MOS_EBADF;
     }
+    case DEV_AUDIO_READ: {
+        /* captura já existente em sound.c: 48 kHz estéreo i16. 0 quadros = dispositivo vazio, não um sinal inventado. */
+        extern u32 audio_capture_read(i16 *stereo, u32 frames);
+        u64 frames = c > 12000 ? 12000 : c;
+        if (!frames) return 0;
+        i16 *buf = kmalloc((usize)frames * 4);
+        if (!buf) return -MOS_ENOMEM;
+        u32 n = audio_capture_read(buf, (u32)frames);
+        bool ok = !n || uvm_copy_out(pr, b, buf, (usize)n * 4);
+        kfree(buf);
+        return ok ? (i64)n : -MOS_EFAULT;
+    }
     case DEV_INPUT_POST: {
-        /* CGEventPost / CGEventPostToPid: o evento sintético entra na mesma fila do teclado e do mouse do hardware,
-         * então vale para o sistema todo (a janela em foco recebe a tecla; o clique vai para o que está sob o cursor) */
+        /* CGEventPost: o evento sintético entra na mesma fila do teclado e do mouse do hardware.
+         * CGEventPostToPid não passa por aqui: é DEV_INPUT_TO_PID, na fila do processo, sem mudar o foco. */
         input_event_t e;
         memset(&e, 0, sizeof e);
         e.type = (u8)(b & 0xFF);

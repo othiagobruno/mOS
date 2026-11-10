@@ -52,6 +52,7 @@ const double kCFAbsoluteTimeIntervalSince1970 = 978307200.0;
 typedef struct { i64 value; i32 timescale; u32 flags; i64 epoch; } cm_time_t;
 const cm_time_t kCMTimeZero = {0, 1, 1, 0};
 const cm_time_t kCMTimeInvalid = {0, 0, 0, 0};
+const cm_time_t kCMTimeIndefinite = {0, 0, 0x11, 0}; /* Valid | Indefinite */
 const double kCLLocationAccuracyBest = -1.0;
 const double kCLLocationAccuracyHundredMeters = 100.0;
 /* CoreGraphics: a conexão do WindowServer (CGS*) é um inteiro qualquer diferente de zero */
@@ -550,6 +551,80 @@ id CFErrorCopyDescription(id e) {
     id d = e && resp(e, "localizedDescription") ? MSG0(id, e, "localizedDescription") : 0;
     return objc_retain(d ? d : cx_str("Operação não concluída."));
 }
+extern char cx_cfconst_isa[] __asm__("__CFConstantStringClassReference");
+typedef struct { void *isa; u64 flags; const char *s; u64 n; } urlk_t;
+#define URLK(var, text) \
+    static urlk_t var##_cs = {cx_cfconst_isa, 0x7c8, text, sizeof(text) - 1}; \
+    const void *var = &var##_cs;
+URLK(kCFURLVolumeNameKey, "NSURLVolumeNameKey")
+URLK(kCFURLVolumeTotalCapacityKey, "NSURLVolumeTotalCapacityKey")
+URLK(kCFURLVolumeAvailableCapacityKey, "NSURLVolumeAvailableCapacityKey")
+URLK(kCFURLVolumeAvailableCapacityForImportantUsageKey, "NSURLVolumeAvailableCapacityForImportantUsageKey")
+URLK(kCFURLVolumeIsLocalKey, "NSURLVolumeIsLocalKey")
+URLK(kCFURLVolumeIsInternalKey, "NSURLVolumeIsInternalKey")
+URLK(kCFURLVolumeIsBrowsableKey, "NSURLVolumeIsBrowsableKey")
+URLK(kCFURLVolumeIsEjectableKey, "NSURLVolumeIsEjectableKey")
+URLK(kCFURLVolumeIsRemovableKey, "NSURLVolumeIsRemovableKey")
+URLK(kCFURLIsExcludedFromBackupKey, "NSURLIsExcludedFromBackupKey")
+extern void *kCFBooleanTrue, *kCFBooleanFalse;
+id CFNumberCreate(void *alloc, long type, const void *p);
+id CFDictionaryCreateMutable(void *alloc, long cap, const void *kcb, const void *vcb);
+void CFDictionarySetValue(id d, id key, id val);
+long CFArrayGetCount(id a);
+id CFArrayGetValueAtIndex(id a, long i);
+int statfs(const char *path, void *buf);
+
+typedef struct {
+    u32 f_bsize; i32 f_iosize; u64 f_blocks, f_bfree, f_bavail, f_files, f_ffree; i32 f_fsid[2]; u32 f_owner;
+    u32 f_type, f_flags, f_fssubtype; char f_fstypename[16], f_mntonname[1024], f_mntfromname[1024]; u32 f_flags_ext, f_reserved[7];
+} vol_statfs_t;
+_Static_assert(sizeof(vol_statfs_t) == 2168, "statfs do volume");
+
+static const char *url_fs_path(id url) {
+    if (!url) return 0;
+    if (resp(url, "fileSystemRepresentation")) {
+        const char *p = MSG0(const char *, url, "fileSystemRepresentation");
+        if (p && *p) return p;
+    }
+    if (resp(url, "path")) {
+        id s = MSG0(id, url, "path");
+        const char *p = s ? cx_cstr(s) : 0;
+        if (p && *p) return p;
+    }
+    return 0;
+}
+/* 1 = preenchido, 0 = não é chave de volume, -1 = a chave é e o caminho não existe. */
+static int vol_prop(id url, const char *k, id *value) {
+    int which = 0;
+    if (!strcmp(k, "NSURLVolumeNameKey")) which = 1;
+    else if (!strcmp(k, "NSURLVolumeTotalCapacityKey")) which = 2;
+    else if (!strcmp(k, "NSURLVolumeAvailableCapacityKey")) which = 3;
+    else if (!strcmp(k, "NSURLVolumeAvailableCapacityForImportantUsageKey")) which = 4;
+    else if (!strcmp(k, "NSURLVolumeIsLocalKey")) which = 5;
+    else if (!strcmp(k, "NSURLVolumeIsInternalKey")) which = 6;
+    else if (!strcmp(k, "NSURLVolumeIsBrowsableKey")) which = 7;
+    else if (!strcmp(k, "NSURLVolumeIsEjectableKey")) which = 8;
+    else if (!strcmp(k, "NSURLVolumeIsRemovableKey")) which = 9;
+    else if (!strcmp(k, "NSURLIsExcludedFromBackupKey")) which = 10;
+    else return 0;
+    const char *path = url_fs_path(url);
+    vol_statfs_t fs;
+    if (!path || statfs(path, &fs) < 0) return -1;
+    id v = 0;
+    if (which == 1) v = objc_retain(cx_str("mOS"));
+    else if (which == 2 || which == 3 || which == 4) {
+        /* ImportantUsage = disponível: não há espaço purgável separado neste volume. */
+        unsigned long long bytes = (which == 2 ? fs.f_blocks : fs.f_bavail) * fs.f_bsize;
+        long long n = (long long)bytes;
+        v = CFNumberCreate(0, 4, &n);
+    } else if (which == 10) v = objc_retain((id)kCFBooleanFalse);
+    else {
+        int yes = which == 7 || ((which == 5 || which == 6) && (fs.f_flags & 0x00001000u));
+        v = objc_retain((id)(yes ? kCFBooleanTrue : kCFBooleanFalse));
+    }
+    if (value) *value = v;
+    return v ? 1 : -1;
+}
 u8 CFURLCopyResourcePropertyForKey(id url, id key, id *value, id *err) {
     if (err) *err = 0;
     if (value) *value = 0;
@@ -566,7 +641,23 @@ u8 CFURLCopyResourcePropertyForKey(id url, id key, id *value, id *err) {
         if (value) *value = p ? objc_retain(p) : 0;
         return p != 0;
     }
+    int vol = vol_prop(url, k ? k : "", value);
+    if (vol) return vol > 0;
     return 1;    /* propriedade sem valor: sucesso com NULL, como o macOS para chaves que não se aplicam */
+}
+id CFURLCopyResourcePropertiesForKeys(id url, id keys, id *err) {
+    if (err) *err = 0;
+    if (!url || !keys) return 0;
+    id d = CFDictionaryCreateMutable(0, 0, 0, 0);
+    if (!d) return 0;
+    long n = CFArrayGetCount(keys);
+    for (long i = 0; i < n; i++) {
+        id k = CFArrayGetValueAtIndex(keys, i);
+        id v = 0;
+        if (!CFURLCopyResourcePropertyForKey(url, k, &v, err)) { objc_release(d); return 0; }
+        if (v) { CFDictionarySetValue(d, k, v); objc_release(v); }
+    }
+    return d;
 }
 void CFBundleGetPackageInfo(id bundle, u32 *type, u32 *creator) {
     (void)bundle;

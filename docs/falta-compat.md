@@ -9,8 +9,8 @@ arm64 → x86_64**. Este documento resume o que está pronto, o que está em and
 |---|---|---|
 | WebKit / WKWebView | ✅ **completo** | 55/55 no QEMU ([webkit.md](webkit.md)) |
 | UDP para os apps | ✅ **completo** | 34/34 no QEMU |
-| CoreAudio + AVFoundation (áudio) | ✅ **completo** | 42/42 no QEMU + WAV conferido no host |
-| `.metallib` (AIR) | 🟡 **parser pronto, lowering em andamento** | 14/14 .metallib reais lidos ([metallib-air.md](metallib-air.md)) |
+| CoreAudio + AVFoundation (áudio) | 🟡 **LPCM completo; MP3/ALAC no host** | 42/42 no QEMU é resultado antigo, não reexecutado. MP3/ALAC: `tools/audiodec_test.c` |
+| `.metallib` (AIR) | 🟡 **17 opcodes no host** | diferencial clang vs fonte (`tools/airlower_test.c`); sem `.metallib` de app nesta entrega |
 | arm64 → x86_64 | 🟡 **em andamento (outra sessão)** | runtime e libSystem arm64 em curso |
 | SwiftUI | 🟡 **em andamento (outra sessão)** | para no AppKit (Postico) |
 
@@ -30,18 +30,35 @@ esquemas próprios só servem a navegação principal. Ver [webkit.md](webkit.md
 truncamento, SO_RCVTIMEO, DNS real. Teste: `tools/build-udptest.ps1` (34/34). **Falta (fora de escopo):** UDP multicast
 de entrada por grupo (join), e o microfone (entrada de áudio) para os apps.
 
-## 3. AVFoundation + CoreAudio — completo (áudio)
+## 3. AVFoundation + CoreAudio — áudio LPCM completo; comprimido e captura parciais
 
 Streams de áudio por processo no mixer (`kernel/dev/sound.c`, DEV_AUDIO_*), `userland/libsystem/coreaudio.c` e
 `avfaudio.c`: HAL, AudioUnit, AudioQueue, AudioConverter, AudioFile/ExtAudioFile (WAV/AIFF/CAF), AudioServices,
-AVAudioPlayer/Engine/Session, NSSound, AVPlayer (áudio local). Teste: `tools/build-audiotest.ps1` (42/42) + WAV da
-saída do QEMU conferido no host. **Falta:**
-- **decodificadores comprimidos**: MP3, AAC, ALAC, Opus (hoje devolvem `kAudioFileUnsupportedDataFormatError`);
-- **microfone** para os apps (captura);
-- **vídeo**: AVFoundation de vídeo (AVPlayer com imagem), AVCaptureSession real, VideoToolbox (decodificação) —
-  tudo ainda stub.
+AVAudioPlayer/Engine/Session, NSSound, AVPlayer (áudio local). Teste antigo: `tools/build-audiotest.ps1` (42/42) + WAV da
+saída do QEMU conferido no host. Esse teste de VM **não foi reexecutado** nesta entrega.
 
-## 4. `.metallib` (AIR) — parser pronto, lowering em andamento
+**Funciona (host, `tools/audiodec_test.c`):**
+- MP3 (minimp3, CC0) e ALAC de 16 bits em CAF e M4A (decodificador de referência da Apple, Apache-2.0). O ALAC bate
+  bit a bit com o ffmpeg. O MP3, depois do atraso do lame, teve correlação 1 no seno de teste. Ver
+  [midia-licencas.md](midia-licencas.md). O CoreAudio troca o arquivo por esse PCM e o AVPlayer toca o áudio.
+
+**Reconhecido, sem PCM (limitação):**
+- AAC (ADTS e `mp4a`) e Opus (Ogg e CAF). Continuam `kAudioFileUnsupportedDataFormatError`. FAAD2 é GPL e não entra.
+  fdk-aac (BSD) e libopus (BSD-3) não foram vendidos.
+
+**Microfone:** `DEV_AUDIO_READ` lê `audio_capture_read` (48 kHz estéreo i16). `AudioQueueNewInput` e
+`AudioUnitRender` no barramento de entrada só seguem se `cx_tcc_request("kTCCServiceMicrophone")` devolver 1.
+Sem o símbolo, ou com negação, a API devolve erro e não captura. 0 quadros da captura viram silêncio marcado, não
+um sinal inventado. Não houve teste em VM nem em hardware: o anel de captura não foi exercitado.
+
+**Vídeo:** o AVPlayer não produz quadro. `AVCaptureSession` tem o portão de TCC (câmera/microfone) e lista de
+dispositivos vazia; `startRunning` com câmera concedida fica `isRunning` sem quadro. Sem FairPlay.
+`AVCaptureScreenInput` só muda o portão para `kTCCServiceScreenCapture`; não fabrica quadro.
+A captura contínua (`SCStream`, `CGDisplayStream`) lê `DEV_SCREEN_CAPTURE` depois de `cx_tcc_preflight` e
+embrulha o ARGB em IOSurface, CVPixelBuffer e CMSampleBuffer. Codificar e decodificar H.264/HEVC no
+VideoToolbox continua -12906/-12908. `VTPixelTransferSession` copia o buffer quando formato e tamanho coincidem.
+
+## 4. `.metallib` (AIR) — opcodes emitidos e conferidos no host contra o fonte
 
 Objetivo: executar os `.metallib` pré-compilados (AIR = bitcode LLVM) no Metal por software, já que muitos apps não
 trazem o fonte `.metal`. Ver [metallib-air.md](metallib-air.md) e a memória [[metallib-air-parser]].
@@ -57,15 +74,14 @@ trazem o fonte `.metal`. Ver [metallib-air.md](metallib-air.md) e a memória [[m
 **Conjunto de opcodes medido** (17 distintos; as `CALL` são os intrínsecos `air.*`): BINOP, CALL, EXTRACTELT,
 INSERTELT, GEP, BR, PHI, RET, LOAD, SHUFFLEVEC, CMP2, CAST, EXTRACTVAL, STORE, VSELECT, INSERTVAL, ALLOCA.
 
-**Falta:**
-- **emissão dos nós**: traduzir cada um dos 17 opcodes (com controle de fluxo BR/PHI) e cada intrínseco `air.*`
-  (amostragem de textura, conversões, acesso a `[[buffer]]`/`[[texture]]` via metadados) para a árvore de nós que
-  `mtlexec.c` executa. É um arquivo do tamanho do `mtlshader.c` (~2000 linhas);
-- **binding dos argumentos**: ligar os `[[buffer(n)]]`/`[[texture(n)]]`/`[[stage_in]]` do AIR (descritos nos
-  metadados `air.*`) ao `msl_ctx_t` do interpretador;
-- **ligação no `metal.c`**: `lib_from_bytes`/`is_air` hoje devolvem erro; passar a chamar o lowering e só cair no erro
-  quando algo não for traduzível;
-- **teste de execução**: rodar um `.metallib` real e comparar a saída com o mesmo shader compilado do fonte.
+**Feito nesta entrega (host, sem VM):** emissão dos 17 opcodes, intrínsecos `air.*`/`llvm.*` conhecidos, binds
+explícitos e o fallback de ponteiro para `[[buffer]]`, e `metal.c` chamando `mtlair_lower`. O teste
+`tools/airlower_test.c` compara o bitcode do clang com o shader compilado do fonte (0 falhas). Detalhe em
+[metallib-air.md](metallib-air.md).
+
+**Ainda não conferido:** um `.metallib` real de app. Função com `double`, `icmp` vetorial sem sinal, atômico,
+`fcmp` não ordenado ou pack/unpack é omitida. Textura/sampler e `thread_position_in_grid` dependem de metadado ou
+de bind explícito; sem isso o tid fica 0.
 
 ## 5. arm64 → x86_64 — em andamento (outra sessão)
 

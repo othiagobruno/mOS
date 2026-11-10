@@ -20,7 +20,10 @@ $root = Split-Path $PSScriptRoot -Parent
 # Foundation/OpenSwiftUICore precisam do FoundationEssentials: compila-o antes se ainda não existe (-Repo FoundationEssentials força)
 if (($Repo -contains 'Foundation' -or $Repo -contains 'OpenSwiftUICore') -and $Repo -notcontains 'FoundationEssentials' -and
     -not (Test-Path "$PSScriptRoot\..\build\swift\openswiftui\FoundationEssentials\FoundationEssentials.swiftmodule")) { $Repo = @('FoundationEssentials') + $Repo }
-$zig = Join-Path (Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*' | Where-Object { Test-Path "$($_.FullName)\zig.exe" } | Select-Object -First 1).FullName 'zig.exe'
+if (-not (Get-Command Resolve-MosZig -ErrorAction SilentlyContinue)) { foreach ($mosHost in @("$PSScriptRoot\stage-host.ps1","$PSScriptRoot\..\stage-host.ps1","$PSScriptRoot\..\..\stage-host.ps1","$PSScriptRoot\..\..\..\stage-host.ps1")) { if (Test-Path -LiteralPath $mosHost) { . $mosHost; break } } }
+$mosZigPick = Resolve-MosZig $root
+if (-not $mosZigPick) { exit 1 }
+$zig = $mosZigPick.Path
 $deps = "$root\.tools\openswiftui\deps"
 $swsrc = "$root\.tools\swift-src"
 $outRoot = "$SwiftBuild\openswiftui"

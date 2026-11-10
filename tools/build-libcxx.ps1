@@ -16,8 +16,11 @@
 param([switch]$Force, [int]$Jobs = 8, [ValidateSet('x86_64', 'arm64')][string]$Arch = 'x86_64')
 $tgt = if ($Arch -eq 'arm64') { 'aarch64-macos.12.0' } else { 'x86_64-macos.12.0' }
 $root = Split-Path $PSScriptRoot -Parent
-$zig = Get-ChildItem "$root\.tools" -Directory -Filter 'zig-*' -ErrorAction SilentlyContinue | Where-Object { Test-Path "$($_.FullName)\zig.exe" } | Select-Object -First 1
-if ($zig) { $zigdir = $zig.FullName; $zig = Join-Path $zigdir 'zig.exe' } elseif ($env:MOS_ZIG) { $zig = $env:MOS_ZIG; $zigdir = Split-Path $zig } else { $zig = (Get-Command zig -ErrorAction SilentlyContinue).Source; $zigdir = Split-Path $zig }
+if (-not (Get-Command Resolve-MosZig -ErrorAction SilentlyContinue)) { foreach ($mosHost in @("$PSScriptRoot\stage-host.ps1","$PSScriptRoot\..\stage-host.ps1","$PSScriptRoot\..\..\stage-host.ps1","$PSScriptRoot\..\..\..\stage-host.ps1")) { if (Test-Path -LiteralPath $mosHost) { . $mosHost; break } } }
+$mosZigPick = Resolve-MosZig $root
+if (-not $mosZigPick) { exit 1 }
+$zig = $mosZigPick.Path
+$zigdir = $mosZigPick.Dir
 if (-not $zig) { Write-Host 'zig nao encontrado (.tools\, MOS_ZIG ou PATH)' -ForegroundColor Red; exit 1 }
 $out = "$root\build\libcxx" + $(if ($Arch -eq 'arm64') { '-arm64' } else { '' })
 $dylib = "$out\libc++.1.dylib"

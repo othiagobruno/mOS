@@ -7,13 +7,14 @@
  *    taxa, buffer, formato, latência, volume...) e IOProcs (AudioDeviceCreateIOProcID[WithBlock]/Start/Stop);
  *  - AudioComponent/AudioUnit: as unidades de saída DefaultOutput, SystemOutput, HALOutput, VoiceProcessingIO e o
  *    RemoteIO do iOS/Catalyst, com render callback, formato do cliente (qualquer LPCM), parâmetro de volume;
- *    AudioOutputUnitStart/Stop; o barramento de entrada devolve silêncio (o mOS ainda não expõe o microfone aos apps);
- *  - AudioQueue de saída (LPCM): buffers, enfileirar, iniciar/pausar/parar/flush, volume, tempo, IsRunning;
+ *    AudioOutputUnitStart/Stop; o barramento de entrada (elemento != 0) lê o microfone se o TCC conceder;
+ *  - AudioQueue de saída (LPCM) e de entrada (microfone, mesma condição de TCC);
  *  - AudioConverter LPCM -> LPCM (formato, canais e taxa);
- *  - AudioFile/ExtAudioFile: leitura de WAV, AIFF/AIFC e CAF em LPCM e escrita de WAV;
+ *  - AudioFile/ExtAudioFile: WAV, AIFF/AIFC, CAF em LPCM, e MP3/ALAC de 16 bits (audiodec.c);
  *  - AudioServices: sons de sistema a partir de arquivos (WAV/AIFF/CAF), o alerta e a conclusão.
- * O que é comprimido (MP3, AAC, ALAC, Opus) devolve kAudioFileUnsupportedDataFormatError: os decodificadores ainda não
- * existem no mOS. O motor de saída comum (cae_*) também serve ao AVAudioEngine/AVAudioPlayer (avfaudio.c).
+ * AAC e Opus são reconhecidos e devolvem kAudioFileUnsupportedDataFormatError. Sem concessão de
+ * kTCCServiceMicrophone (cx_tcc_request, frente de TCC) a entrada devolve erro e não captura.
+ * O motor de saída comum (cae_*) também serve ao AVAudioEngine/AVAudioPlayer (avfaudio.c).
  */
 #include "foundation.h"
 #include "sys.h"
@@ -44,6 +45,7 @@ int usleep(unsigned us);
 int pthread_create(unsigned long *t, const void *attr, void *(*fn)(void *), void *arg);
 int pthread_detach(unsigned long t);
 int pthread_join(unsigned long t, void **r);
+void cx_tap_push(const void *pcm, u32 frames);
 int pthread_mutex_init(void *m, const void *a);
 int pthread_mutex_lock(void *m);
 int pthread_mutex_unlock(void *m);
@@ -61,6 +63,17 @@ size_t fwrite(const void *p, size_t s, size_t n, FILE_ *f);
 int fclose(FILE_ *f);
 int fseek(FILE_ *f, long off, int wh);
 double floor(double);
+unsigned long pthread_self(void);
+int cx_media_tcc(const char *service);
+int cx_pcm_s16_resample(const short *src, int nsrc, int src_rate, short *dst, int ndst, int dst_rate, int ch);
+typedef struct {
+    int kind, status;
+    const char *limit;
+    int rate, channels, frames;
+    short *pcm;
+} cx_audiodec_out;
+int cx_audiodec(const void *bytes, unsigned long long n, cx_audiodec_out *o);
+void cx_audiodec_free(cx_audiodec_out *o);
 
 #define FCC(a, b, c, d) ((u32)(a) << 24 | (u32)(b) << 16 | (u32)(c) << 8 | (u32)(d))
 #define OUT_RATE 48000.0
@@ -372,6 +385,7 @@ static void *cae_thread(void *arg) {
             long w = dev3(DEV_AUDIO_WRITE, e->stream, (long)(pcm + off * 2), k - off);
             if (w < 0) { e->run = 0; break; }
             if (w == 0) { usleep(2000); continue; }
+            cx_tap_push(pcm + off * 2, (u32)w);
             off += (u32)w;
         }
     }
@@ -727,7 +741,11 @@ OSStatus AudioHardwareCreateAggregateDevice(id desc, u32 *out) { (void)desc; if 
 OSStatus AudioHardwareDestroyAggregateDevice(u32 d) { (void)d; return kAudioHardwareBadObjectError; }
 OSStatus AudioHardwareUnload(void) { return 0; }
 
+int cx_tap_owns(u32 d);
+OSStatus cx_tap_add_ioproc(void *proc, void *block, void *ctx, void **out);
+OSStatus cx_tap_remove_ioproc(void *pid);
 static OSStatus ioproc_add(u32 d, void *proc, void *block, void *ctx, void **out) {
+    if (cx_tap_owns(d)) return cx_tap_add_ioproc(proc, block, ctx, out);
     if (d != DEV_OUT) return kAudioHardwareBadObjectError;
     if (!out || (!proc && !block)) return kAudio_ParamError;
     plock();
@@ -751,6 +769,7 @@ static ioproc_t *ioproc_of(void *pid) {
     return i >= 1 && i <= MAX_IOPROCS && (g_procs[i - 1].proc || g_procs[i - 1].block) ? &g_procs[i - 1] : 0;
 }
 OSStatus AudioDeviceDestroyIOProcID(u32 d, void *pid) {
+    if (cx_tap_owns(d)) return cx_tap_remove_ioproc(pid);
     if (d != DEV_OUT) return kAudioHardwareBadObjectError;
     ioproc_t *p = ioproc_of(pid);
     if (!p) return kAudioHardwareIllegalOperationError;
@@ -1071,16 +1090,67 @@ OSStatus AudioUnitGetParameter(void *u, u32 id_, u32 sc, u32 el, float *v) {
 }
 OSStatus AudioUnitReset(void *u, u32 sc, u32 el) { (void)sc; (void)el; return au_of(u) ? 0 : kAudio_ParamError; }
 
-/* o barramento de entrada (microfone): silêncio no formato pedido */
+/* Lê a captura do kernel (48 kHz estéreo i16) e escreve n quadros no formato do cliente.
+ * 0 quadros lidos = dispositivo vazio: o buffer fica em silêncio e *silence = 1. Não inventa sinal. */
+static OSStatus mic_fill(const asbd_t *fmt, ablist_t *list, u32 n, int *silence) {
+    if (silence) *silence = 1;
+    if (!n || !fmt || !list) return 0;
+    double rate = fmt->mSampleRate > 0 ? fmt->mSampleRate : OUT_RATE;
+    int need = (int)((double)n * OUT_RATE / rate) + 2;
+    if (need < 1) need = 1;
+    if (need > 12000) need = 12000;
+    short *src = calloc((size_t)need, 4);
+    if (!src) return -108;
+    long got = dev3(DEV_AUDIO_READ, (long)src, need, 0);
+    if (got < 0) got = 0;
+    if (got == 0) {
+        for (u32 i = 0; i < list->mNumberBuffers; i++)
+            if (list->mBuffers[i].mData) memset(list->mBuffers[i].mData, 0, list->mBuffers[i].mDataByteSize);
+        free(src);
+        return 0;
+    }
+    int ch = fmt->mChannelsPerFrame > 1 ? 2 : 1;
+    short *dst = calloc((size_t)n * (size_t)(ch ? ch : 1), 2);
+    float *st = calloc((size_t)n, 8);
+    if (!dst || !st) { free(src); free(dst); free(st); return -108; }
+    int wr = cx_pcm_s16_resample(src, (int)got, 48000, dst, (int)n, (int)rate, ch);
+    for (int i = 0; i < wr; i++) {
+        if (ch == 1) st[i * 2] = st[i * 2 + 1] = (float)dst[i] / 32768.0f;
+        else {
+            st[i * 2] = (float)dst[i * 2] / 32768.0f;
+            st[i * 2 + 1] = (float)dst[i * 2 + 1] / 32768.0f;
+        }
+    }
+    from_stereo(fmt, list, n, st);
+    if (silence) *silence = wr == 0;
+    free(st);
+    free(dst);
+    free(src);
+    return 0;
+}
+
+/* Barramento 0: o pull de saída continua em silêncio (o app é quem escreve nesse barramento).
+ * Barramento de entrada: só lê o microfone com kTCCServiceMicrophone concedido. */
 OSStatus AudioUnitRender(void *u, u32 *flags, const ats_t *ts, u32 bus, u32 n, ablist_t *list) {
-    (void)ts; (void)bus;
+    (void)ts;
     au_t *a = au_of(u);
     if (!a || !list) return kAudio_ParamError;
     if (n > a->max_frames) return -10874;   /* kAudioUnitErr_TooManyFramesToProcess */
-    for (u32 i = 0; i < list->mNumberBuffers; i++)
-        if (list->mBuffers[i].mData) memset(list->mBuffers[i].mData, 0, list->mBuffers[i].mDataByteSize);
-    if (flags) *flags |= 16;   /* kAudioUnitRenderAction_OutputIsSilence */
-    return 0;
+    if (bus == 0) {
+        for (u32 i = 0; i < list->mNumberBuffers; i++)
+            if (list->mBuffers[i].mData) memset(list->mBuffers[i].mData, 0, list->mBuffers[i].mDataByteSize);
+        if (flags) *flags |= 16;   /* kAudioUnitRenderAction_OutputIsSilence */
+        return 0;
+    }
+    int perm = cx_media_tcc("kTCCServiceMicrophone");
+    if (perm != 1) return perm < 0 ? -66680 : -54;   /* sem a frente de TCC, ou permissão negada */
+    int silence = 1;
+    OSStatus r = mic_fill(&a->input_client, list, n, &silence);
+    if (flags) {
+        if (silence) *flags |= 16;
+        else *flags &= ~16u;
+    }
+    return r;
 }
 
 OSStatus AudioOutputUnitStart(void *u) {
@@ -1139,6 +1209,10 @@ typedef struct aq {
     int nlisteners;
     u8 lock[64];
     double start_played;
+    int input;                   /* fila de microfone: não abre stream de saída */
+    int spawning;
+    int free_on_exit;
+    unsigned long ithread;
 } aq_t;
 
 static aq_t *aq_of(void *q) { aq_t *a = q; return a && a->magic == AQ_MAGIC && !a->disposed ? a : 0; }
@@ -1220,6 +1294,74 @@ static OSStatus aq_new(const asbd_t *f, aqout_fn cb, void *block, void *ud, int 
     *out = q;
     return 0;
 }
+static void aq_release(aq_t *q) {
+    cae_free(q->eng);
+    q->eng = 0;
+    for (int i = 0; i < q->nowned; i++) { free(q->owned[i]->mAudioData); free(q->owned[i]->mPacketDescriptions); free(q->owned[i]); }
+    q->nowned = 0;
+    if (q->cb_block) _Block_release(q->cb_block);
+    q->disposed = 1;
+    q->magic = 0;
+    free(q);
+}
+static void aq_fill_input(aq_t *q, aqbuf_t *b) {
+    u32 bpf = q->fmt.mBytesPerFrame ? q->fmt.mBytesPerFrame : 1;
+    u32 frames = bpf ? b->mAudioDataBytesCapacity / bpf : 0;
+    b->mAudioDataByteSize = frames * bpf;
+    ablist_t l;
+    memset(&l, 0, sizeof l);
+    l.mNumberBuffers = 1;
+    l.mBuffers[0].mNumberChannels = q->fmt.mChannelsPerFrame;
+    l.mBuffers[0].mDataByteSize = b->mAudioDataByteSize;
+    l.mBuffers[0].mData = b->mAudioData;
+    int silence = 1;
+    mic_fill(&q->fmt, &l, frames, &silence);
+}
+static void *aq_in_thread(void *arg) {
+    aq_t *q = arg;
+    unsigned long me = pthread_self();
+    for (;;) {
+        pthread_mutex_lock(q->lock);
+        if (q->ithread != me) { pthread_mutex_unlock(q->lock); usleep(1000); continue; }
+        if (!q->running || q->disposed) {
+            int free_it = q->free_on_exit;
+            q->ithread = 0;
+            pthread_mutex_unlock(q->lock);
+            if (free_it) aq_release(q);
+            return 0;
+        }
+        if (!q->n) { pthread_mutex_unlock(q->lock); usleep(4000); continue; }
+        aqbuf_t *b = q->ring[q->head];
+        q->head = (q->head + 1) % AQ_MAXBUF;
+        q->n--;
+        pthread_mutex_unlock(q->lock);
+        aq_fill_input(q, b);
+        aq_call(q, 0, b, 0);
+    }
+}
+static OSStatus aq_start_input(aq_t *q) {
+    pthread_mutex_lock(q->lock);
+    q->running = 1;
+    q->stopping = 0;
+    int spawn = !q->ithread && !q->spawning;
+    if (spawn) q->spawning = 1;
+    pthread_mutex_unlock(q->lock);
+    if (!spawn) return 0;
+    unsigned long th = 0;
+    if (pthread_create(&th, 0, aq_in_thread, q) != 0) {
+        pthread_mutex_lock(q->lock);
+        q->running = 0;
+        q->spawning = 0;
+        pthread_mutex_unlock(q->lock);
+        return -66680;
+    }
+    pthread_mutex_lock(q->lock);
+    q->ithread = th;
+    q->spawning = 0;
+    pthread_mutex_unlock(q->lock);
+    return 0;
+}
+
 OSStatus AudioQueueNewOutput(const asbd_t *f, aqout_fn cb, void *ud, void *runloop, id mode, u32 flags, void **out) {
     (void)mode; (void)flags;
     return aq_new(f, cb, 0, ud, runloop != 0, out);
@@ -1281,6 +1423,13 @@ OSStatus AudioQueueStart(void *q_, const ats_t *t) {
     (void)t;
     aq_t *q = aq_of(q_);
     if (!q) return -66681;
+    if (q->input) {
+        bool was = q->running;
+        OSStatus r = aq_start_input(q);
+        if (r) return r;
+        if (!was) aq_call(q, 1, 0, FCC('a', 'q', 'r', 'n'));
+        return 0;
+    }
     if (!q->eng) q->eng = cae_new(q->fmt.mSampleRate, 0, aq_render, q);
     if (!q->eng) return -108;
     q->eng->gain = q->volume;
@@ -1302,7 +1451,16 @@ OSStatus AudioQueueFlush(void *q_) { return aq_of(q_) ? 0 : -66681; }
 OSStatus AudioQueueStop(void *q_, u8 immediate) {
     aq_t *q = aq_of(q_);
     if (!q) return -66681;
-    if (!immediate && q->running) { q->stopping = 1; return 0; }   /* toca o que está enfileirado e para */
+    int notify_stop = 0;
+    if (q->input) {
+        notify_stop = q->running;
+        pthread_mutex_lock(q->lock);
+        q->running = 0;
+        q->stopping = 0;
+        unsigned long th = q->ithread;
+        pthread_mutex_unlock(q->lock);
+        if (th && th != pthread_self()) pthread_join(th, 0);
+    } else if (!immediate && q->running) { q->stopping = 1; return 0; }   /* toca o que está enfileirado e para */
     if (q->eng) cae_stop(q->eng, true);
     pthread_mutex_lock(q->lock);
     aqbuf_t *back[AQ_MAXBUF];
@@ -1314,7 +1472,7 @@ OSStatus AudioQueueStop(void *q_, u8 immediate) {
     for (u32 i = 0; i < n; i++) aq_call(q, 0, back[i], 0);   /* os buffers voltam ao app, como no WebKit da Apple */
     bool was = q->running;
     q->running = 0;
-    if (was) aq_call(q, 1, 0, FCC('a', 'q', 'r', 'n'));
+    if (was || notify_stop) aq_call(q, 1, 0, FCC('a', 'q', 'r', 'n'));
     return 0;
 }
 OSStatus AudioQueueReset(void *q_) {
@@ -1330,14 +1488,16 @@ OSStatus AudioQueueDispose(void *q_, u8 immediate) {
     (void)immediate;
     aq_t *q = aq_of(q_);
     if (!q) return -66681;
-    cae_free(q->eng);
-    q->eng = 0;
-    for (int i = 0; i < q->nowned; i++) { free(q->owned[i]->mAudioData); free(q->owned[i]->mPacketDescriptions); free(q->owned[i]); }
-    q->nowned = 0;
-    if (q->cb_block) _Block_release(q->cb_block);
+    pthread_mutex_lock(q->lock);
+    q->running = 0;
     q->disposed = 1;
-    q->magic = 0;
-    free(q);
+    unsigned long th = q->ithread;
+    int self = th && th == pthread_self();
+    if (self) q->free_on_exit = 1;
+    pthread_mutex_unlock(q->lock);
+    if (self) return 0;   /* a thread de entrada libera a fila ao sair */
+    if (th) pthread_join(th, 0);
+    aq_release(q);
     return 0;
 }
 OSStatus AudioQueueSetParameter(void *q_, u32 id_, float v) {
@@ -1404,11 +1564,14 @@ OSStatus AudioQueueGetCurrentTime(void *q_, void *tl, ats_t *t, u8 *disc) {
 OSStatus AudioQueueDeviceGetCurrentTime(void *q_, ats_t *t) { return AudioQueueGetCurrentTime(q_, 0, t, 0); }
 OSStatus AudioQueueDeviceTranslateTime(void *q_, const ats_t *in, ats_t *out) { if (!aq_of(q_) || !in || !out) return -66681; *out = *in; return 0; }
 OSStatus AudioQueueDeviceGetNearestStartTime(void *q_, ats_t *t, u32 flags) { (void)flags; return AudioQueueGetCurrentTime(q_, 0, t, 0); }
-/* entrada: o mOS ainda não entrega o microfone aos apps */
+/* Entrada: só cria a fila com kTCCServiceMicrophone concedido. Sem o símbolo da frente de TCC, recusa. */
 OSStatus AudioQueueNewInput(const asbd_t *f, void *cb, void *ud, void *rl, id mode, u32 flags, void **out) {
-    (void)f; (void)cb; (void)ud; (void)rl; (void)mode; (void)flags;
-    if (out) *out = 0;
-    return -66680;   /* kAudioQueueErr_InvalidDevice */
+    (void)mode; (void)flags;
+    int perm = cx_media_tcc("kTCCServiceMicrophone");
+    if (perm != 1) { if (out) *out = 0; return perm < 0 ? -66680 : -54; }
+    OSStatus r = aq_new(f, (aqout_fn)cb, 0, ud, rl != 0, out);
+    if (r == 0 && out && *out) ((aq_t *)*out)->input = 1;
+    return r;
 }
 
 /* ================================================================ AudioConverter (LPCM -> LPCM) */
@@ -1555,6 +1718,7 @@ typedef struct {
     asbd_t fmt;
     u8 *file;                    /* o arquivo inteiro */
     u64 file_len;
+    u8 *pcm;                     /* PCM s16 alocado pelo decodificador; data aponta para cá quando existe */
     const u8 *data;              /* primeiro byte de áudio */
     u64 data_len;
     double duration;
@@ -1574,6 +1738,30 @@ static double ext80(const u8 *p) {   /* o "extended" de 80 bits do AIFF (taxa de
     return (p[0] & 0x80) ? -v : v;
 }
 
+/* 0 = virou LPCM, 1 = não é formato desta frente (o parser antigo segue), outro = erro da Apple. */
+static OSStatus decode_from_compressed(adecode_t *d) {
+    cx_audiodec_out ao;
+    if (!cx_audiodec(d->file, d->file_len, &ao)) return 1;
+    if (ao.status != 0 || !ao.pcm || ao.channels < 1 || ao.rate < 1000) {
+        cx_audiodec_free(&ao);
+        return kAudioFileUnsupportedDataFormatError;
+    }
+    d->type = FCC('L', 'P', 'C', 'M');
+    d->fmt.mFormatID = kAudioFormatLinearPCM;
+    d->fmt.mSampleRate = ao.rate;
+    d->fmt.mChannelsPerFrame = (u32)ao.channels;
+    d->fmt.mBitsPerChannel = 16;
+    d->fmt.mFormatFlags = kFmtSignedInt | kFmtPacked;
+    d->fmt.mFramesPerPacket = 1;
+    d->fmt.mBytesPerFrame = d->fmt.mBytesPerPacket = 2u * (u32)ao.channels;
+    d->pcm = (u8 *)ao.pcm;
+    ao.pcm = 0;
+    d->data = d->pcm;
+    d->data_len = (u64)ao.frames * d->fmt.mBytesPerFrame;
+    cx_audiodec_free(&ao);
+    return 0;
+}
+
 /* 0 ou o OSStatus de erro da Apple */
 static OSStatus decode_parse(adecode_t *d) {
     const u8 *b = d->file;
@@ -1581,6 +1769,11 @@ static OSStatus decode_parse(adecode_t *d) {
     memset(&d->fmt, 0, sizeof d->fmt);
     d->fmt.mFormatID = kAudioFormatLinearPCM;
     d->fmt.mFramesPerPacket = 1;
+    OSStatus compressed = decode_from_compressed(d);
+    if (compressed != 1) {
+        if (compressed) return compressed;
+        goto lpcm_tail;
+    }
     if (n >= 12 && !memcmp(b, "RIFF", 4) && !memcmp(b + 8, "WAVE", 4)) {
         d->type = FCC('W', 'A', 'V', 'E');
         bool have_fmt = false;
@@ -1670,10 +1863,11 @@ static OSStatus decode_parse(adecode_t *d) {
         }
         if (!have || !d->data) return kAudioFileInvalidFileError;
     } else if (n >= 3 && (!memcmp(b, "ID3", 3) || (b[0] == 0xFF && (b[1] & 0xE0) == 0xE0))) {
-        return kAudioFileUnsupportedDataFormatError;   /* MP3: o decodificador ainda não existe no mOS */
+        return kAudioFileUnsupportedDataFormatError;   /* MP3 que o decodificador não aceitou */
     } else if (n >= 12 && !memcmp(b + 4, "ftyp", 4)) {
-        return kAudioFileUnsupportedDataFormatError;   /* M4A/AAC/ALAC */
+        return kAudioFileUnsupportedDataFormatError;   /* M4A que não é ALAC de 16 bits (AAC fica aqui) */
     } else return kAudioFileUnsupportedFileTypeError;
+lpcm_tail:
     if (!lpcm_ok(&d->fmt)) return kAudioFileUnsupportedDataFormatError;
     if (d->fmt.mBytesPerFrame) d->data_len -= d->data_len % d->fmt.mBytesPerFrame;
     d->duration = d->fmt.mBytesPerFrame && d->fmt.mSampleRate ? (double)(d->data_len / d->fmt.mBytesPerFrame) / d->fmt.mSampleRate : 0;
@@ -1681,6 +1875,7 @@ static OSStatus decode_parse(adecode_t *d) {
 }
 
 /* abre um arquivo pelo caminho; devolve um adecode_t (free com cx_audio_close) ou 0 com *err */
+static void decode_close(adecode_t *d);
 static adecode_t *decode_open_path(const char *path, OSStatus *err) {
     u64 len = 0;
     u8 *f = path ? cx_read_file(path, &len) : 0;
@@ -1690,7 +1885,7 @@ static adecode_t *decode_open_path(const char *path, OSStatus *err) {
     d->file = f;
     d->file_len = len;
     OSStatus r = decode_parse(d);
-    if (r) { free(f); free(d); if (err) *err = r; return 0; }
+    if (r) { decode_close(d); if (err) *err = r; return 0; }
     if (err) *err = 0;
     return d;
 }
@@ -1703,11 +1898,11 @@ static adecode_t *decode_open_data(const u8 *bytes, u64 len, OSStatus *err) {
     d->file = f;
     d->file_len = len;
     OSStatus r = decode_parse(d);
-    if (r) { free(f); free(d); if (err) *err = r; return 0; }
+    if (r) { decode_close(d); if (err) *err = r; return 0; }
     if (err) *err = 0;
     return d;
 }
-static void decode_close(adecode_t *d) { if (d) { free(d->file); free(d); } }
+static void decode_close(adecode_t *d) { if (d) { free(d->pcm); free(d->file); free(d); } }
 
 /* para o avfaudio.c: abrir, formato, quadros e leitura em estéreo float na taxa do arquivo */
 void *cx_audio_open_path(const char *path, int *err) { OSStatus e = 0; void *d = decode_open_path(path, &e); if (err) *err = e; return d; }

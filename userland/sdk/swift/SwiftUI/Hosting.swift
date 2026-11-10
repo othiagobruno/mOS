@@ -28,7 +28,14 @@ public final class NSHostingView<Content: View>: _HostBox {
     public func embed(_ content: UnsafeMutableRawPointer, _ w: Double, _ h: Double) {
         width = w
         height = h
-        if view == nil { view = mos_new_view("NSView", 0, 0, w, h) }
+        if view == nil {
+            view = mos_host_view(0, 0, w, h)
+            if let view {
+                mos_view_on_scroll(view, { _, x, y, dx, dy in
+                    _ScrollHits.wheel(x, y, dx, dy)
+                }, UnsafeMutableRawPointer(bitPattern: 1))
+            }
+        }
         guard let view else { return }
         if !embedded {
             mos_add_subview(content, view)

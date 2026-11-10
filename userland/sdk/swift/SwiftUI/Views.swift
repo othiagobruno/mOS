@@ -237,8 +237,8 @@ public struct HStack<Content: View>: _PrimitiveView {
 public struct ScrollView<Content: View>: _PrimitiveView {
     let content: Content
     public init(@ViewBuilder content: () -> Content) { self.content = content() }
-    /// O conteúdo anda no eixo e é recortado no viewport. Subir/Descer existem porque o
-    /// renderer embutido não recebe scrollWheel (isso fica no canvas do SwiftUI.framework).
+    /// O conteúdo anda no eixo e é recortado no viewport. A roda chega por mos_host_view
+    /// (scrollWheel no swiftbridge). Subir/Descer continuam para quem não tem mouse.
     public func _build(_ b: _Builder) {
         let box = _Runtime.shared.boxAt("scroll:" + b.path, 0.0)
         let outer = Node(.stack)
@@ -254,6 +254,8 @@ public struct ScrollView<Content: View>: _PrimitiveView {
             sc.align = -1
             sc.maxW = true
             sc.maxH = true
+            sc.flag = true
+            sc.placeholder = "scroll:" + b.path
             sc.value = box.value
             sc.onDouble = { box.value = $0 }
             bb.container(sc) { content._build($0) }
