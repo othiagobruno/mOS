@@ -39,7 +39,7 @@ typedef struct process process_t;
  * FD_PTY_M/FD_PTY_S: ponta mestre/escrava de um pseudoterminal (proc/pty.c), com a referência em .pty */
 /* FD_PIPE_RW: ponta de um socketpair (SYS_PIPE com b = MOS_PIPE_SOCKPAIR, um valor mágico: o SYS1 dos programas antigos
  * deixa lixo no 2º argumento): lê do .pipe e escreve no .pipe2 (o par tem os dois cruzados) */
-enum { FD_FILE, FD_PIPE_R, FD_PIPE_W, FD_PTY_M, FD_PTY_S, FD_PIPE_RW };
+enum { FD_FILE, FD_PIPE_R, FD_PIPE_W, FD_PTY_M, FD_PTY_S, FD_PIPE_RW, FD_UNIX };
 struct pty;
 typedef struct pipe {
     char buf[4096];
@@ -224,6 +224,18 @@ bool      uvm_map(process_t *p, u64 va, u64 len);       /* páginas de 4 KiB, ze
 u64      *uvm_pte(process_t *p, u64 va);               /* NULL se não mapeado */
 bool      uvm_copy_out(process_t *p, u64 va, const void *src, usize len);
 bool      uvm_copy_in(process_t *p, void *dst, u64 va, usize len);
+
+/* AF_UNIX (kernel/net/unix.c). O número do socket fica em fds[].off quando kind == FD_UNIX. */
+void      unix_hold(int slot);
+void      unix_put(int slot);
+void      unix_clear_waiter(thread_t *t);
+int       unix_path_is_sock(const char *path);          /* 1 se o caminho é (ou foi) um socket nomeado */
+void      unix_unbind(const char *path);
+void      unix_rename(const char *from, const char *to);
+u64       unix_syscall(int_frame_t *f, thread_t *t, process_t *p);
+u64       unix_rw(int_frame_t *f, thread_t *t, process_t *p, int fd, int rd, u64 buf, u64 len);
+int       unix_fstat(process_t *p, int fd, void *st);   /* preenche mos_stat_t; 0 ou -errno */
+int       unix_fd_path(process_t *p, int fd, char *out, int cap);
 
 /* ---- arquitetura (arch/cpu.c, arch/smp.c) */
 void      tss_set_rsp0(u64 rsp0);

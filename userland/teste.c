@@ -208,6 +208,10 @@ void _start(const char *arg) {
         int st3 = spawn("sinaisteste", 0);
         CHECK(st3 > 0 && wait(st3) == 0, "sinaisteste (Mach-O): tratadores, máscaras, sigsuspend, sigaltstack, EINTR/SA_RESTART");
     }
+    if (file_size("/Sistema/Programas/unixipc") > 0) {   /* ELF: AF_UNIX entre processos (userland/unixipc.c) */
+        int ux = spawn("unixipc", 0);
+        CHECK(ux > 0 && wait(ux) == 0, "unixipc: bind/listen/accept, send/recv e SCM_RIGHTS");
+    }
     if (file_size("/Sistema/Programas/mmshared") > 0) {   /* ELF: MAP_SHARED, msync e página NX (userland/mmshared.c) */
         int ms = spawn("mmshared", 0);
         CHECK(ms > 0 && wait(ms) == 0, "mmshared: MAP_SHARED, msync, munmap parcial e NX");
