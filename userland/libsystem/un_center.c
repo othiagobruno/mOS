@@ -3,8 +3,8 @@
 #include <string.h>
 #else
 #include "sys.h"
-#include "libc.h"
 #include "foundation.h"
+#include "libc.h"
 #endif
 #include "un_center.h"
 

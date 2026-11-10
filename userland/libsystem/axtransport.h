@@ -1,9 +1,10 @@
 /* Transporte da árvore AX entre processos.
  *
  * O vtable é o de xpctransport.h (PR #49, bootstrap Mach, serviço com.mos.xpc.peer.<pid>).
- * cx_ax_bind_xpc grava ready/call/send/listen nessas funções. Este arquivo não abre
- * socket, porta Mach nem XPC. Se ready falha, ou se call devolve 60 (prazo) ou 61
- * (ninguém escutando), a leitura remota continua -25204. */
+ * cx_ax_bind_xpc grava o vtable xpc-mach quando cx_xpc_peer_ready responde.
+ * Se o check-in Mach falha, cx_ax_unix_bind grava o vtable af-unix:
+ * SOCK_DGRAM em /tmp/mos-ax/<pid> (docs/af-unix.md). Se o call devolve 60 (prazo)
+ * ou 61 (ninguém escutando), a leitura remota continua -25204. */
 #pragma once
 
 #define CX_AX_TRANSPORT_DEPENDENCY \
@@ -31,3 +32,4 @@ const cx_ax_transport *cx_ax_transport_get(void);
 /* 0 segue. 60, 61 e qualquer outra falha do fio viram -25204. */
 int cx_ax_wire_status(int rc);
 void cx_ax_bind_xpc(void);
+void cx_ax_unix_bind(void);

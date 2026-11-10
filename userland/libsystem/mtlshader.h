@@ -84,6 +84,10 @@ int msl_fn_stagein(msl_fn_t *f, const msl_field_t **fields, int *size);
 u32 msl_fn_tgstatic(msl_fn_t *f);          /* memória threadgroup estática do kernel */
 int msl_fn_barrier(msl_fn_t *f);            /* usa threadgroup_barrier */
 int msl_fn_discards(msl_fn_t *f);           /* pode chamar discard_fragment */
+/* SPIR-V da função, se a tradução coube. words aponta para o módulo; nwords é a contagem.
+ * Devolve 1 quando há módulo. A nota explica o que ficou de fora (pode ser vazia). */
+int msl_fn_spirv(msl_fn_t *f, const u32 **words, u32 *nwords);
+const char *msl_fn_spirv_note(msl_fn_t *f);
 extern char *(*msl_include_hook)(const char *name, u64 *len);
 /* roda a função de entrada; out recebe o valor devolvido (tamanho de msl_fn_out) */
 void msl_run(msl_fn_t *f, msl_ctx_t *c, void *out);
