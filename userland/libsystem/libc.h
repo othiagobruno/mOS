@@ -3,8 +3,14 @@
 #include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>
+#ifndef MOS_SSIZE_T_DEFINED
+#define MOS_SSIZE_T_DEFINED
 typedef long ssize_t;
+#endif
+#ifndef MOS_OFF_T_DEFINED
+#define MOS_OFF_T_DEFINED
 typedef long off_t;
+#endif
 
 extern int cx_errno;
 extern char **environ;

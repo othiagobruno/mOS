@@ -413,6 +413,29 @@ u16 uvm_page_refs(u64 phys) { return page_refs(phys); }
 /* MAP_SHARED: a página do cache ganha mais um dono e entra com PTE_SHARED (o fork não a transforma em COW).
  * prot: bit 1 leitura, bit 2 escrita, bit 4 execução. Sem execução, bit 63 (NX). No x86 a página presente
  * continua legível: não há bit de "só escrita" nem de PROT_NONE. */
+bool uvm_map_shared(process_t *p, u64 va, u64 phys, u8 prot);
+bool gpu_user_map(process_t *p, u64 va, u64 phys, u64 len, int rw) {
+    if (!p || (va & 0xFFF) || (phys & 0xFFF) || !len || (len & 0xFFF)) return false;
+    u8 prot = rw ? 3 : 1;
+    for (u64 i = 0; i < len; i += 4096)
+        if (!uvm_map_shared(p, va + i, phys + i, prot)) return false;
+    return true;
+}
+
+bool gpu_user_unmap(process_t *p, u64 va, u64 len) {
+    if (!p || (va & 0xFFF) || !len) return false;
+    for (u64 a = va; a < va + len; a += 4096) {
+        u64 *e = walk(p, a, false);
+        if (!e || !(*e & PTE_P)) continue;
+        u64 ph = *e & PTE_ADDR;
+        *e = 0;
+        p->mem_pages--;
+        __asm__ volatile("invlpg (%0)" :: "r"(a) : "memory");
+        page_put(ph);
+    }
+    return true;
+}
+
 bool uvm_map_shared(process_t *p, u64 va, u64 phys, u8 prot) {
     if (!pref_ready()) return false;
     u64 *e = walk(p, va & ~0xFFFULL, true);
@@ -3398,6 +3421,13 @@ static u64 proc_syscall_(int_frame_t *f) {
         pi.cpu_ms = q->main ? q->main->cpu_ms : 0;
         memcpy(pi.name, q->name, sizeof pi.name);
         r = uvm_copy_out(p, b, &pi, sizeof pi) ? 1 : -MOS_EFAULT;
+        break;
+    }
+    case SYS_GPU: {
+        extern i64 gpu_syscall(process_t *p, u64 op, u64 user, u64 len, thread_t *self, int *blocked);
+        int blocked = 0;
+        r = gpu_syscall(p, a, b, c, t, &blocked);
+        if (blocked) return sched_switch(f);
         break;
     }
     case SYS_DESKTOP: {
