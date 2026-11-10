@@ -13,6 +13,7 @@
  */
 #include "foundation.h"
 #include "sys.h"
+#include "avf_core.h"
 
 typedef int OSStatus;
 typedef int bool_t;
@@ -471,6 +472,8 @@ typedef struct avnode {
     u64 cur_stamp;
     /* parâmetros dos efeitos (EQ, reverb...) guardados para o app ler de volta */
     id params;
+    float *tap_mem;
+    u32 tap_len, tap_cap;
 } avnode_t;
 #define NOD(o) ((avnode_t *)(o))
 
@@ -638,13 +641,10 @@ static void node_pull(avengine_t *e, avnode_t *n, float *out, u32 frames, donejo
     switch (n->kind) {
     case N_PLAYER: player_render(n, n->cur, frames, done); break;
     case N_SOURCE: source_render(n, n->cur, frames); break;
-    case N_INPUT: break;   /* sem microfone: silêncio */
+    case N_INPUT: avf_mic_pull(n->cur, frames); break;
     default:
         for (int i = 0; i < n->nin; i++) if (n->in[i]) node_pull(e, n->in[i], n->cur, frames, done, depth + 1);
-        if (n->kind == N_MIXER) {
-            float vl = n->outvol * (n->pan > 0 ? 1 - n->pan : 1), vr = n->outvol * (n->pan < 0 ? 1 + n->pan : 1);
-            for (u32 i = 0; i < frames; i++) { n->cur[i * 2] *= vl; n->cur[i * 2 + 1] *= vr; }
-        }
+        if (n->kind == N_MIXER) avf_mix_scale(n->cur, frames, n->outvol, n->pan);
         break;
     }
     n->cur_stamp = e->stamp;
@@ -663,36 +663,34 @@ static void *tap_thread(void *c) {
     free(t);
     return 0;
 }
+static void tap_ready(const float *interleaved, unsigned frames, void *ctx) {
+    avnode_t *n = ctx;
+    id buf = buf_new(std_fmt48(), frames);
+    if (!buf) return;
+    avbuf_t *b = BUF(buf);
+    for (u32 i = 0; i < frames; i++) {
+        ((float *)b->planes[0])[i] = interleaved[i * 2];
+        ((float *)b->planes[1])[i] = interleaved[i * 2 + 1];
+    }
+    b->len = frames;
+    buf_update_abl(b);
+    tapjob_t *t = calloc(1, sizeof *t);
+    if (!t) { objc_release(buf); return; }
+    t->blk = _Block_copy(n->tap);
+    t->buf = buf;
+    t->when = objc_retain(time_new(n->node_time, RATE, mach_absolute_time()));
+    unsigned long th;
+    if (pthread_create(&th, 0, tap_thread, t) == 0) pthread_detach(th);
+    else { _Block_release(t->blk); objc_release(t->buf); objc_release(t->when); free(t); }
+}
 static void tap_feed(avnode_t *n, const float *st, u32 frames, donejob_t **done) {
     (void)done;
-    if (!n->tap_buf) { n->tap_buf = buf_new(std_fmt48(), n->tap_size ? n->tap_size : 4096); if (!n->tap_buf) return; }
-    avbuf_t *b = BUF(n->tap_buf);
-    for (u32 i = 0; i < frames; i++) {
-        ((float *)b->planes[0])[b->len] = st[i * 2];
-        ((float *)b->planes[1])[b->len] = st[i * 2 + 1];
-        b->len++;
-        if (b->len >= b->cap) {
-            buf_update_abl(b);
-            tapjob_t *t = calloc(1, sizeof *t);
-            if (t) {
-                t->blk = _Block_copy(n->tap);
-                t->buf = n->tap_buf;
-                t->when = objc_retain(time_new(n->node_time, RATE, mach_absolute_time()));
-                n->tap_buf = 0;
-                unsigned long th;
-                if (pthread_create(&th, 0, tap_thread, t) == 0) pthread_detach(th);
-                else { _Block_release(t->blk); objc_release(t->buf); objc_release(t->when); free(t); }
-            }
-            n->tap_buf = buf_new(std_fmt48(), n->tap_size ? n->tap_size : 4096);
-            if (!n->tap_buf) return;
-            b = BUF(n->tap_buf);
-        }
-    }
+    unsigned cap = n->tap_size ? n->tap_size : 4096;
+    if (n->tap_cap != cap) { free(n->tap_mem); n->tap_mem = 0; n->tap_len = 0; n->tap_cap = cap; }
+    avf_tap_push(&n->tap_mem, &n->tap_len, cap, st, frames, tap_ready, n);
 }
 
-static void engine_render(void *ce, float *stereo, u32 frames, const void *ts) {
-    (void)ts;
-    avengine_t *e = cx_cae_ctx(ce);
+static void engine_render_eng(avengine_t *e, float *stereo, u32 frames) {
     donejob_t *done = 0;
     pthread_mutex_lock(e->lock);
     e->stamp++;
@@ -703,6 +701,10 @@ static void engine_render(void *ce, float *stereo, u32 frames, const void *ts) {
         if (pthread_create(&th, 0, done_thread, done) == 0) pthread_detach(th);
         else done_thread(done);
     }
+}
+static void engine_render(void *ce, float *stereo, u32 frames, const void *ts) {
+    (void)ts;
+    engine_render_eng(cx_cae_ctx(ce), stereo, frames);
 }
 
 static avnode_t *new_node(cx_class_t *k, int kind) { avnode_t *n = (avnode_t *)cx_alloc_instance(k); node_setup(n, kind); return n; }
@@ -815,6 +817,27 @@ static void eng_reset(id s, SEL c) { (void)s; (void)c; }
 static BOOL eng_running(id s, SEL c) { (void)c; return ENG(s)->running; }
 static id eng_attached(id s, SEL c) { (void)c; return MSG(id, cls("NSSet"), "setWithArray:", ENG(s)->nodes); }
 static BOOL eng_manual(id s, SEL c) { (void)c; return ENG(s)->manual; }
+static void engine_render_eng(avengine_t *e, float *stereo, u32 frames);
+static BOOL eng_offline(id s, SEL c, u32 frames, id buf, id *err) {
+    (void)c;
+    if (!ENG(s)->manual) { set_err(err, FCC('m', 'a', 'n', 'u'), "O motor não está em render manual."); return NO; }
+    if (!buf || !frames || frames > BUF(buf)->cap) { set_err(err, FCC('b', 'u', 'f', 'f'), "O buffer não cabe o pedido."); return NO; }
+    float *st = calloc(frames, 8);
+    if (!st) { set_err(err, -108, "Sem memória."); return NO; }
+    eng_mixer(s, 0);
+    engine_render_eng(ENG(s), st, frames);
+    avbuf_t *b = BUF(buf);
+    if (b->planes && b->planes[0] && FMT(b->fmt)->d.mChannelsPerFrame >= 2 && b->planes[1]) {
+        for (u32 i = 0; i < frames; i++) {
+            ((float *)b->planes[0])[i] = st[i * 2];
+            ((float *)b->planes[1])[i] = st[i * 2 + 1];
+        }
+        b->len = frames;
+        buf_update_abl(b);
+    }
+    free(st);
+    return YES;
+}
 static BOOL eng_enable_manual(id s, SEL c, i64 mode, id fmt, u32 max, id *err) { (void)c; (void)mode; (void)fmt; (void)max; (void)err; ENG(s)->manual = 1; return YES; }
 static void eng_disable_manual(id s, SEL c) { (void)c; ENG(s)->manual = 0; }
 static id eng_input_point(id s, SEL c, id node, u64 bus) { (void)s; (void)c; (void)node; (void)bus; return 0; }
@@ -845,6 +868,7 @@ static void node_install_tap(id s, SEL c, u64 bus, u32 size, id fmt, void *blk) 
     n->tap = blk ? _Block_copy(blk) : 0;
     n->tap_size = size ? size : 4096;
     if (n->tap_buf) { objc_release(n->tap_buf); n->tap_buf = 0; }
+    free(n->tap_mem); n->tap_mem = 0; n->tap_len = 0; n->tap_cap = 0;
     if (e) pthread_mutex_unlock(e->lock);
 }
 static void node_remove_tap(id s, SEL c, u64 bus) { node_install_tap(s, c, bus, 0, 0, 0); }
@@ -1212,7 +1236,7 @@ static double ses_rate(id s, SEL c) { (void)s; (void)c; return RATE; }
 static double ses_pref_rate(id s, SEL c) { (void)c; return SES(s)->pref_rate; }
 static BOOL ses_set_pref_rate(id s, SEL c, double r, id *err) { (void)c; (void)err; SES(s)->pref_rate = r; return YES; }
 static double ses_io(id s, SEL c) { (void)c; return SES(s)->pref_io; }
-static BOOL ses_set_pref_io(id s, SEL c, double d, id *err) { (void)c; (void)err; SES(s)->pref_io = d < 0.002 ? 0.002 : d > 0.1 ? 0.1 : d; return YES; }
+static BOOL ses_set_pref_io(id s, SEL c, double d, id *err) { (void)c; (void)err; SES(s)->pref_io = avf_clamp_io(d); return YES; }
 static float ses_out_volume(id s, SEL c) { (void)s; (void)c; return 1.0f; }
 static double ses_out_latency(id s, SEL c) { (void)s; (void)c; return 2048.0 / RATE; }
 static double ses_in_latency(id s, SEL c) { (void)s; (void)c; return cx_media_tcc("kTCCServiceMicrophone") == 1 ? 2048.0 / RATE : 0; }
@@ -1223,9 +1247,7 @@ static BOOL ses_yes_err(id s, SEL c, i64 v, id *err) { (void)s; (void)c; (void)v
 /* AVAudioSessionRecordPermission: 'undt' sem a frente de TCC, 'grnt' concedido, 'deny' negado. */
 static u64 ses_record_perm(id s, SEL c) {
     (void)s; (void)c;
-    int p = cx_media_tcc("kTCCServiceMicrophone");
-    if (p < 0) return FCC('u', 'n', 'd', 't');
-    return p == 1 ? FCC('g', 'r', 'n', 't') : FCC('d', 'e', 'n', 'y');
+    return avf_record_permission(cx_media_tcc("kTCCServiceMicrophone"));
 }
 static void ses_request_record(id s, SEL c, void *blk) {
     (void)s; (void)c;
@@ -1290,9 +1312,34 @@ static id asset_with_url_opts(id k, SEL c, id url, id opts) { (void)k; return ob
 static id asset_url(id s, SEL c) { (void)c; return AST(s)->url; }
 static cmtime_t asset_duration(id s, SEL c) { (void)c; void *d = AST(s)->dec; return d ? cm_seconds((double)cx_audio_frames(d) / cx_audio_rate(d)) : cm_invalid(); }
 static BOOL asset_playable(id s, SEL c) { (void)c; return AST(s)->dec != 0; }
-/* Áudio toca se o CoreAudio abriu o arquivo. Não há faixa de vídeo nem quadro decodificado. */
-static id asset_tracks(id s, SEL c) { (void)s; (void)c; return MSG0(id, cls("NSArray"), "array"); }
-static id asset_tracks_media(id s, SEL c, id m) { (void)m; return asset_tracks(s, c); }
+/* Áudio toca se o CoreAudio abriu o arquivo. Não há faixa de vídeo: o kernel não decodifica quadro. */
+extern id AVMediaTypeAudio;
+typedef struct { cx_class_t *isa; double dur, rate; u32 ch; } avtrack_t;
+cx_class_t AVAssetTrack_c __asm__("OBJC_CLASS_$_AVAssetTrack"), AVAssetTrack_m __asm__("OBJC_METACLASS_$_AVAssetTrack");
+#define TRK(o) ((avtrack_t *)(o))
+static id track_media(id s, SEL c) { (void)s; (void)c; return AVMediaTypeAudio; }
+static cmtime_t track_range(id s, SEL c) { (void)c; return cm_seconds(TRK(s)->dur); }
+static cmtime_t track_duration(id s, SEL c) { return track_range(s, c); }
+static i32 track_scale(id s, SEL c) { (void)c; return TRK(s)->rate > 0 ? (i32)(TRK(s)->rate + 0.5) : 1; }
+static BOOL track_yes(id s, SEL c) { (void)c; return TRK(s)->ch > 0; }
+static id asset_tracks(id s, SEL c) {
+    (void)c;
+    id arr = MSG0(id, cls("NSMutableArray"), "array");
+    void *d = AST(s)->dec;
+    avf_track_t info;
+    if (!d || !avf_describe_audio(cx_audio_frames(d), cx_audio_rate(d), cx_audio_channels(d), &info)) return arr;
+    avtrack_t *t = (avtrack_t *)cx_alloc_instance(&AVAssetTrack_c);
+    t->dur = info.duration;
+    t->rate = info.rate;
+    t->ch = info.channels;
+    MSG(void, arr, "addObject:", (id)t);
+    return arr;
+}
+static id asset_tracks_media(id s, SEL c, id m) {
+    const char *ms = m ? cx_cstr(m) : "";
+    if (ms && ms[0] && strcmp(ms, "soun") && strcmp(ms, "AVMediaTypeAudio")) return MSG0(id, cls("NSArray"), "array");
+    return asset_tracks(s, c);
+}
 static void asset_load(id s, SEL c, id keys, void *blk) { (void)s; (void)c; (void)keys; if (blk) CALL_BLOCK0(blk); }
 static i64 asset_status_key(id s, SEL c, id key, id *err) {
     (void)c; (void)key;
@@ -1325,22 +1372,20 @@ static void apl_end_main(void *a) {
     if (p->item) cx_post(cx_note(AVPlayerItemDidPlayToEndTimeNotification, p->item, 0));
     objc_release(s);
 }
+static u32 apl_read(void *ctx, unsigned long long at, unsigned n, float *out) {
+    return cx_audio_read_stereo(ctx, at, n, out);
+}
 static void apl_render(void *ce, float *stereo, u32 frames, const void *ts) {
     (void)ts;
     id s = cx_cae_ctx(ce);
     avpl_t *p = APL(s);
-    if (p->rate == 0 || !p->item || !ITM(p->item)->asset) return;
+    if (!p->item || !ITM(p->item)->asset) return;
     void *d = AST(ITM(p->item)->asset)->dec;
     if (!d) return;
-    double rate = cx_audio_rate(d);
-    u64 at = (u64)(ITM(p->item)->pos * rate);
-    u64 total = cx_audio_frames(d);
-    if (at >= total) return;
-    u32 k = cx_audio_read_stereo(d, at, frames, stereo);
-    float g = p->muted ? 0 : p->volume;
-    for (u32 i = 0; i < k * 2; i++) stereo[i] *= g;
-    ITM(p->item)->pos += (double)k / rate;
-    if (at + k >= total) { p->rate = 0; on_main(apl_end_main, objc_retain(s)); }
+    int ended = 0;
+    avf_clock_t ck = {&ITM(p->item)->pos, cx_audio_rate(d), cx_audio_frames(d), p->rate, p->muted ? 0 : p->volume};
+    avf_clock_render(&ck, apl_read, d, stereo, frames, &ended);
+    if (ended) { p->rate = 0; on_main(apl_end_main, objc_retain(s)); }
 }
 static id apl_init(id s, SEL c) { (void)c; APL(s)->volume = 1; APL(s)->status = 1; APL(s)->observers = objc_retain(MSG0(id, cls("NSMutableArray"), "array")); return s; }
 static id apl_init_item(id s, SEL c, id item) { apl_init(s, c); setobj(&APL(s)->item, item); return s; }
@@ -1481,6 +1526,35 @@ static void K(cx_class_t *k, cx_class_t *m, const char *name, cx_class_t *super,
 #define CM(k, s, f) cx_add_cmethod(&k##_c, s, (void *)(f))
 #define S(x) objc_retain(cx_str(x))
 
+/* FairPlay não existe neste sistema. A sessão guarda o pedido e entrega o erro ao delegate.
+ * Não há chave, token nem caminho que aceite o conteúdo protegido. */
+typedef struct { cx_class_t *isa; id delegate; id error; id system; } ckey_t;
+cx_class_t AVContentKeySession_c __asm__("OBJC_CLASS_$_AVContentKeySession"), AVContentKeySession_m __asm__("OBJC_METACLASS_$_AVContentKeySession");
+static id ckey_init(id s, SEL c, id system) {
+    (void)c;
+    if (system) setobj(&((ckey_t *)s)->system, system);
+    return s;
+}
+static id ckey_with(id k, SEL c, id system) { (void)k; return objc_autorelease(ckey_init(cx_alloc_instance(&AVContentKeySession_c), c, system)); }
+static void ckey_set_delegate(id s, SEL c, id d, void *q) { (void)c; (void)q; ((ckey_t *)s)->delegate = d; }
+static id ckey_delegate(id s, SEL c) { (void)c; return ((ckey_t *)s)->delegate; }
+static id ckey_system(id s, SEL c) { (void)c; return ((ckey_t *)s)->system; }
+static id ckey_error(id s, SEL c) { (void)c; return ((ckey_t *)s)->error; }
+static void ckey_fail(id s, id req) {
+    ckey_t *k = (ckey_t *)s;
+    id err = error_with("AVFoundationErrorDomain", -11835, "FairPlay não está disponível no mOS. O conteúdo protegido não abre.");
+    setobj(&k->error, err);
+    id d = k->delegate;
+    if (d && resp(d, "contentKeySession:contentKeyRequest:didFailWithError:"))
+        MSG(void, d, "contentKeySession:contentKeyRequest:didFailWithError:", s, req, err);
+}
+static void ckey_process(id s, SEL c, id req) { (void)c; ckey_fail(s, req); }
+static id ckey_token(id s, SEL c, id date, id *err) {
+    (void)c; (void)date;
+    ckey_fail(s, 0);
+    if (err) *err = ((ckey_t *)s)->error;
+    return 0;
+}
 void cx_avfaudio_init(void) {
     cx_class_t *obj = cx_class_named("NSObject");
     K(&AVAudioFormat_c, &AVAudioFormat_m, "AVAudioFormat", obj, sizeof(avfmt_t) - 8);
@@ -1598,6 +1672,7 @@ void cx_avfaudio_init(void) {
     M(AVAudioEngine, "pause", eng_pause); M(AVAudioEngine, "stop", eng_stop); M(AVAudioEngine, "reset", eng_reset);
     M(AVAudioEngine, "isRunning", eng_running); M(AVAudioEngine, "attachedNodes", eng_attached);
     M(AVAudioEngine, "isInManualRenderingMode", eng_manual);
+    M(AVAudioEngine, "renderOffline:toBuffer:error:", eng_offline);
     M(AVAudioEngine, "enableManualRenderingMode:format:maximumFrameCount:error:", eng_enable_manual);
     M(AVAudioEngine, "disableManualRenderingMode", eng_disable_manual);
     M(AVAudioEngine, "inputConnectionPointForNode:inputBus:", eng_input_point);
@@ -1691,6 +1766,11 @@ void cx_avfaudio_init(void) {
     M(AVAudioSessionPortDescription, "UID", port_uid); M(AVAudioSessionPortDescription, "channels", ses_empty);
 
     K(&AVAsset_c, &AVAsset_m, "AVAsset", obj, sizeof(avasset_t) - 8);
+    K(&AVAssetTrack_c, &AVAssetTrack_m, "AVAssetTrack", obj, sizeof(avtrack_t) - 8);
+    M(AVAssetTrack, "mediaType", track_media); M(AVAssetTrack, "timeRange", track_range);
+    M(AVAssetTrack, "duration", track_duration); M(AVAssetTrack, "naturalTimeScale", track_scale);
+    M(AVAssetTrack, "isPlayable", track_yes); M(AVAssetTrack, "isEnabled", track_yes);
+    M(AVAssetTrack, "isDecodable", track_yes);
     K(&AVURLAsset_c, &AVURLAsset_m, "AVURLAsset", &AVAsset_c, 0);
     CM(AVAsset, "assetWithURL:", asset_with_url); CM(AVURLAsset, "URLAssetWithURL:options:", asset_with_url_opts);
     M(AVURLAsset, "initWithURL:options:", asset_init); M(AVURLAsset, "URL", asset_url);
@@ -1739,4 +1819,13 @@ void cx_avfaudio_init(void) {
     }
     K(&MOSSoundBridge_c, &MOSSoundBridge_m, "MOSSoundBridge", obj, sizeof(sbridge_t) - 8);
     M(MOSSoundBridge, "audioPlayerDidFinishPlaying:successfully:", sb_finished);
+    K(&AVContentKeySession_c, &AVContentKeySession_m, "AVContentKeySession", obj, sizeof(ckey_t) - 8);
+    CM(AVContentKeySession, "contentKeySessionWithKeySystem:", ckey_with);
+    M(AVContentKeySession, "initWithKeySystem:", ckey_init);
+    M(AVContentKeySession, "setDelegate:queue:", ckey_set_delegate);
+    M(AVContentKeySession, "delegate", ckey_delegate);
+    M(AVContentKeySession, "keySystem", ckey_system);
+    M(AVContentKeySession, "error", ckey_error);
+    M(AVContentKeySession, "processContentKeyRequest:", ckey_process);
+    M(AVContentKeySession, "makeSecureTokenForExpirationDateOfPersistableContentKey:error:", ckey_token);
 }

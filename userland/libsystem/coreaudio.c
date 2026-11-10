@@ -1083,6 +1083,12 @@ OSStatus AudioUnitGetParameter(void *u, u32 id_, u32 sc, u32 el, float *v) {
 }
 OSStatus AudioUnitReset(void *u, u32 sc, u32 el) { (void)sc; (void)el; return au_of(u) ? 0 : kAudio_ParamError; }
 
+/* Para o AVAudioEngine e o AVCaptureSession: o anel de captura, sem inventar amostra. */
+u32 cx_capture_i16(short *dst, u32 frames) {
+    if (!dst || !frames) return 0;
+    long got = dev3(DEV_AUDIO_READ, (long)dst, (long)frames, 0);
+    return got > 0 ? (u32)got : 0;
+}
 /* Lê a captura do kernel (48 kHz estéreo i16) e escreve n quadros no formato do cliente.
  * 0 quadros lidos = dispositivo vazio: o buffer fica em silêncio e *silence = 1. Não inventa sinal. */
 static OSStatus mic_fill(const asbd_t *fmt, ablist_t *list, u32 n, int *silence) {

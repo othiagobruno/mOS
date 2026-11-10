@@ -153,7 +153,11 @@ OSStatus CMBlockBufferCreateWithMemoryBlock(void *a, void *mem, size_t len, void
 }
 OSStatus CMBlockBufferCreateContiguous(void *a, void *src, void *ba, const void *cb, size_t off, size_t len, u32 flags, void **out) { (void)a; (void)src; (void)ba; (void)cb; (void)off; (void)len; (void)flags; if (out) *out = 0; CM_FAIL(kCMBlockBufferBadCustomBlockSourceErr) }
 OSStatus CMBlockBufferAppendMemoryBlock(void *b, void *mem, size_t len, void *ba, const void *cb, size_t off, size_t dlen, u32 flags) { (void)b; (void)mem; (void)len; (void)ba; (void)cb; (void)off; (void)dlen; (void)flags; CM_FAIL(kCMBlockBufferBadCustomBlockSourceErr) }
-OSStatus CMBlockBufferGetDataPointer(void *b, size_t off, size_t *lenAt, size_t *total, char **ptr) { (void)b; (void)off; if (lenAt) *lenAt = 0; if (total) *total = 0; if (ptr) *ptr = 0; CM_FAIL(kCMBlockBufferBadCustomBlockSourceErr) }
+static int cm_audio_ptr(void *b, size_t off, size_t *lenAt, size_t *total, char **ptr);
+OSStatus CMBlockBufferGetDataPointer(void *b, size_t off, size_t *lenAt, size_t *total, char **ptr) {
+    if (cm_audio_ptr(b, off, lenAt, total, ptr)) return 0;
+    if (lenAt) *lenAt = 0; if (total) *total = 0; if (ptr) *ptr = 0; CM_FAIL(kCMBlockBufferBadCustomBlockSourceErr)
+}
 size_t CMBlockBufferGetDataLength(void *b) { (void)b; return 0; }
 u8 CMBlockBufferIsRangeContiguous(void *b, size_t off, size_t len) { (void)b; (void)off; (void)len; return 1; }
 OSStatus CMBlockBufferReplaceDataBytes(const void *src, void *b, size_t off, size_t len) { (void)src; (void)b; (void)off; (void)len; CM_FAIL(kCMBlockBufferBadCustomBlockSourceErr) }
@@ -173,15 +177,17 @@ id CMFormatDescriptionGetExtension(void *d, id key) { (void)d; (void)key; return
 OSStatus CMSampleBufferCreate(void *a, void *db, u8 ready, void *cb, void *ref, void *fd, long ns, long nt, const void *t, long nsz, const size_t *sz, void **out) {
     (void)a; (void)db; (void)ready; (void)cb; (void)ref; (void)fd; (void)ns; (void)nt; (void)t; (void)nsz; (void)sz; if (out) *out = 0; CM_FAIL(kCMSampleBufferError_InvalidMediaFormat)
 }
-typedef struct { cx_class_t *isa; void *image; cm_time_t pts; id atts; } cmsb_t;
+typedef struct { cx_class_t *isa; void *image; cm_time_t pts; id atts; void *audio; u32 audio_bytes; u32 audio_frames; } cmsb_t;
 static cx_class_t cmsb_c, cmsb_m;
 static int cmsb_ready;
 static void cmsb_free(id self, SEL c) {
     cmsb_t *b = (cmsb_t *)self;
     if (b->image) objc_release((id)b->image);
     if (b->atts) objc_release(b->atts);
+    free(b->audio);
     b->image = 0;
     b->atts = 0;
+    b->audio = 0;
     IMP sup = cx_lookup(cx_class_named("NSObject"), c);
     if (sup) ((void (*)(id, SEL))sup)(self, c);
 }
@@ -196,6 +202,14 @@ static void cmsb_boot(void) {
 static cmsb_t *as_sb(void *s) {
     cmsb_t *b = (cmsb_t *)s;
     return (b && cmsb_ready && b->isa == &cmsb_c) ? b : 0;
+}
+static int cm_audio_ptr(void *b, size_t off, size_t *lenAt, size_t *total, char **ptr) {
+    cmsb_t *s = as_sb(b);
+    if (!s || !s->audio || off > s->audio_bytes) return 0;
+    if (lenAt) *lenAt = s->audio_bytes - off;
+    if (total) *total = s->audio_bytes;
+    if (ptr) *ptr = (char *)s->audio + off;
+    return 1;
 }
 OSStatus CMSampleBufferCreateForImageBuffer(void *a, void *img, u8 ready, void *cb, void *ref, void *fd, const void *t, void **out) {
     (void)a; (void)ready; (void)cb; (void)ref; (void)fd;
@@ -219,9 +233,24 @@ OSStatus CMSampleBufferCreateForImageBuffer(void *a, void *img, u8 ready, void *
     *out = s;
     return 0;
 }
-long CMSampleBufferGetNumSamples(void *s) { return as_sb(s) ? 1 : 0; }
+long CMSampleBufferGetNumSamples(void *s) { cmsb_t *b = as_sb(s); return b ? (b->audio_frames ? (long)b->audio_frames : 1) : 0; }
 void *CMSampleBufferGetFormatDescription(void *s) { (void)s; return 0; }
-void *CMSampleBufferGetDataBuffer(void *s) { (void)s; return 0; }
+void *CMSampleBufferGetDataBuffer(void *s) { cmsb_t *b = as_sb(s); return (b && b->audio) ? b : 0; }
+void *cx_cm_audio_sample(const short *pcm, unsigned frames, double rate) {
+    if (!pcm || !frames) return 0;
+    cmsb_boot();
+    if (!cmsb_ready) return 0;
+    cmsb_t *s = (cmsb_t *)cx_alloc_instance(&cmsb_c);
+    if (!s) return 0;
+    s->audio = malloc((size_t)frames * 4);
+    if (!s->audio) { objc_release((id)s); return 0; }
+    memcpy(s->audio, pcm, (size_t)frames * 4);
+    s->audio_bytes = frames * 4;
+    s->audio_frames = frames;
+    i32 scale = rate > 0 && rate < 200000 ? (i32)(rate + 0.5) : 48000;
+    s->pts = (cm_time_t){0, scale, kCMTimeFlags_Valid, 0};
+    return s;
+}
 void *CMSampleBufferGetImageBuffer(void *s) { cmsb_t *b = as_sb(s); return b ? b->image : 0; }
 cm_time_t CMSampleBufferGetPresentationTimeStamp(void *s) {
     cmsb_t *b = as_sb(s);
