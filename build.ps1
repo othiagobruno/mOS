@@ -151,7 +151,7 @@ if (-not (Test-Path "$wkdir\WebKit")) {
 # tradutor arm64 (docs/tradutor-arm64.md): o runtime a64rt.mos (tools\build-a64rt.ps1) e o libSystem arm64
 # (tools\build-libsystem-arm64.ps1) em /Sistema/Biblioteca/a64; sem eles os apps só arm64 dizem o que falta
 $a64 = "$esp\mOS\Sistema\Biblioteca\a64"
-& "$root\tools\build-a64rt.ps1" -Parcial
+& "$root\tools\build-a64rt.ps1"
 if ($LASTEXITCODE -ne 0) { Write-Host 'aviso: a64rt.mos não compilou; apps arm64 ficam sem o tradutor' -ForegroundColor Yellow }
 if ((Test-Path "$root\build\a64rt.mos") -and (Test-Path "$root\build\libSystem-arm64.mos")) {
     New-Item -ItemType Directory -Force $a64 | Out-Null
