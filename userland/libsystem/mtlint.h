@@ -88,6 +88,9 @@ struct msl_fn {
     int nout, outsize, nin, insize;
     struct msl_lib *lib;
     int defined;
+    u32 *spirv;
+    u32 spirv_n;
+    char spirv_note[80];
 };
 
 typedef struct arena_blk { struct arena_blk *next; u64 used, cap; u8 data[]; } arena_blk_t;

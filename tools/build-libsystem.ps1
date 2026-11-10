@@ -15,7 +15,7 @@ $src = Get-ChildItem "$root\userland\libsystem\*" -Include *.c, *.S | ForEach-Ob
 
 & $zig cc -target x86_64-freestanding-none -O2 -g0 -ffreestanding -fno-stack-protector -fno-builtin -nostdlib -static -no-pie `
     -fpie -mno-red-zone -Wall -Wno-unused-parameter -Wno-incompatible-library-redeclaration -Wno-builtin-requires-header `
-    "-I$root\userland\libsystem\kshim" "-I$root\userland\libsystem\fsinc" `
+    "-I$root\userland\libsystem\kshim" "-I$root\userland\libsystem\fsinc" "-I$root\kernel\include" `
     "-isystem", (Join-Path $zigdir 'lib\include') `
     "-Wl,--image-base=0x400000100000" "-Wl,-e,cx_start" "-Wl,--no-gc-sections" `
     $src -o "$root\build\libSystem.mos" 2>&1 | ForEach-Object { "$_" }
