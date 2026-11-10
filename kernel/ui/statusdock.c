@@ -26,7 +26,15 @@ typedef struct {
     u32 action[SB_MENU_MAX];
     int disabled[SB_MENU_MAX];
     int separator[SB_MENU_MAX];
+    int checked[SB_MENU_MAX];
+    int sub_n[SB_MENU_MAX];
+    int sub_at[SB_MENU_MAX];
+    int nsub;
+    u32 sub_act[SB_SUB_MAX];
+    int sub_dis[SB_SUB_MAX];
+    int sub_chk[SB_SUB_MAX];
     char label[SB_MENU_MAX][SB_LABEL_MAX];
+    char sub_lab[SB_SUB_MAX][SB_LABEL_MAX];
 } sb_slot_t;
 
 typedef struct {
@@ -112,14 +120,35 @@ int sb_upsert_wire(int pid, const void *buf, u32 len) {
     copy_cap(tmp->title, SB_TITLE_MAX, (const char *)b + o, (int)tlen);
     o += tlen;
     for (k = 0; k < (int)nitems; k++) {
-        u32 act = 0, mf = 0, llen = 0;
+        u32 act = 0, mf = 0, llen = 0, nsub = 0;
+        int s;
         if (!rd_u32(b, len, &o, &act) || !rd_u32(b, len, &o, &mf) || !rd_u32(b, len, &o, &llen)) goto out;
         if (llen > 4096 || o + llen > len) goto out;
         tmp->action[k] = act;
         tmp->disabled[k] = (mf & 1) ? 1 : 0;
         tmp->separator[k] = (mf & 2) ? 1 : 0;
+        tmp->checked[k] = (mf & 4) ? 1 : 0;
         copy_cap(tmp->label[k], SB_LABEL_MAX, (const char *)b + o, (int)llen);
         o += llen;
+        tmp->sub_n[k] = 0;
+        tmp->sub_at[k] = -1;
+        if (!(mf & 8)) continue;
+        if (!rd_u32(b, len, &o, &nsub) || nsub > 16) goto out;
+        if (tmp->nsub + (int)nsub > SB_SUB_MAX) goto out;
+        tmp->sub_at[k] = tmp->nsub;
+        tmp->sub_n[k] = (int)nsub;
+        for (s = 0; s < (int)nsub; s++) {
+            u32 sa = 0, sm = 0, sl = 0;
+            int at = tmp->nsub + s;
+            if (!rd_u32(b, len, &o, &sa) || !rd_u32(b, len, &o, &sm) || !rd_u32(b, len, &o, &sl)) goto out;
+            if (sl > 4096 || o + sl > len) goto out;
+            tmp->sub_act[at] = sa;
+            tmp->sub_dis[at] = (sm & 1) ? 1 : 0;
+            tmp->sub_chk[at] = (sm & 4) ? 1 : 0;
+            copy_cap(tmp->sub_lab[at], SB_LABEL_MAX, (const char *)b + o, (int)sl);
+            o += sl;
+        }
+        tmp->nsub += (int)nsub;
     }
     tmp->nitems = (int)nitems;
     if (iw && ih) {
@@ -314,6 +343,29 @@ const char *sb_menu_label(int pid, u32 id, int index, u32 *action, int *disabled
     if (disabled) *disabled = s->disabled[index];
     if (separator) *separator = s->separator[index];
     return s->separator[index] ? "" : s->label[index];
+}
+
+int sb_menu_checked(int pid, u32 id, int index) {
+    sb_slot_t *s = sb_find(pid, id, 0);
+    if (!s || index < 0 || index >= s->nitems) return 0;
+    return s->checked[index];
+}
+
+int sb_menu_sub_count(int pid, u32 id, int index) {
+    sb_slot_t *s = sb_find(pid, id, 0);
+    if (!s || index < 0 || index >= s->nitems) return 0;
+    return s->sub_n[index];
+}
+
+const char *sb_menu_sub(int pid, u32 id, int index, int sub, u32 *action, int *disabled, int *checked) {
+    sb_slot_t *s = sb_find(pid, id, 0);
+    int at;
+    if (!s || index < 0 || index >= s->nitems || sub < 0 || sub >= s->sub_n[index]) return 0;
+    at = s->sub_at[index] + sub;
+    if (action) *action = s->sub_act[at];
+    if (disabled) *disabled = s->sub_dis[at];
+    if (checked) *checked = s->sub_chk[at];
+    return s->sub_lab[at];
 }
 
 static dock_tile_t *tile_find(int pid, int make) {

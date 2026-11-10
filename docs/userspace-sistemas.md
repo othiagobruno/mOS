@@ -45,7 +45,7 @@ Arquivo: `NSHomeDirectory()/Library/Application Support/com.mos.tcc/decisions.tx
 
 1. Antes de devolver pixels de tela ou de injetar a árvore de acessibilidade, ler `cx_tcc_preflight("kTCCServiceScreenCapture")` ou `cx_tcc_preflight("kTCCServiceAccessibility")`.
 2. Se o estado for pending (`cx_tcc_state` devolve 3), mostrar o prompt. A decisão é `cx_tcc_decide(bundle, serviço, granted)` com granted 1 ou 0. Bundle NULL usa o bundle do processo.
-3. A injeção de eventos (`CGEventPost`) não é bloqueada por este registro: o gate é a captura e a árvore.
+3. `CGEventPost` e `CGEventTapCreate` exigem `kTCCServiceAccessibility` granted. Sem isso o post não entra na fila e o tap é nulo. A captura continua no gate de gravação de tela.
 4. Quando a árvore existir, o ponto de entrada continua `AXUIElementCopyAttributeValue` e as irmãs. Hoje, com permissão, elas devolvem -25200 de propósito.
 
 Não há branch de Interface aberta no GitHub para alinhar este contrato (consulta em 2026-11-10: nenhum PR aberto).
@@ -79,7 +79,7 @@ O fio continua o de `xpc.c` (os dois lados são esta lib). Não usa AF_UNIX e n�
 
 ## URLSession — dados, download, resposta e dois desafios
 
-Há callbacks de dados e de download em `foundation_more.c`. Antes do HTTP de uma URL `https`, o delegate recebe `NSURLAuthenticationMethodServerTrust` (`URLSession:didReceiveChallenge:`, ou o método da tarefa se o da sessão não existir). Não há objeto `SecTrust`: `serverTrust` devolve nil. Resposta 401 com `WWW-Authenticate: Basic` chama `NSURLAuthenticationMethodHTTPBasic` (o método da tarefa primeiro). `UseCredential` repete o pedido uma vez com `Authorization`. `Cancel`/`Reject` entregam `NSURLErrorDomain` -999 e não entregam o corpo. `URLSession:dataTask:didReceiveResponse:completionHandler:` roda na entrega: 0 cancela o corpo, 1 entrega, 2 trata como download. O bloco é de pilha e vale durante a chamada do delegate. Não é um `NSURLSession` completo.
+Há callbacks de dados e de download em `foundation_more.c`. No `https`, o handshake usa o SecureTransport (motor TLS do kernel: cadeia, datas, nome e raízes da Mozilla). O delegate recebe `NSURLAuthenticationMethodServerTrust` depois do handshake, com `serverTrust` apontando para o `SecTrust` da cadeia. Certificado inválido falha o handshake (`-1200`) e não é aceito. `SecTrustEvaluate` reavalia a cadeia com o mesmo `x509.c`, contra essas raízes. Resposta 401 com `WWW-Authenticate: Basic` chama `NSURLAuthenticationMethodHTTPBasic` (o método da tarefa primeiro). `UseCredential` repete o pedido uma vez com `Authorization`. `Cancel`/`Reject` entregam `NSURLErrorDomain` -999 e não entregam o corpo. `URLSession:dataTask:didReceiveResponse:completionHandler:` roda na entrega: 0 cancela o corpo, 1 entrega, 2 trata como download. O bloco é de pilha e vale durante a chamada do delegate. Não é um `NSURLSession` completo.
 
 ## CoreML — só o dicionário da voz
 
@@ -97,9 +97,9 @@ O Electron desses três apps liga `QuickLookUI.framework` e `StoreKit.framework`
 
 **QuickLookUI — stub, sem janela.** `sharedPreviewPanel` devolve um painel. `makeKeyAndOrderFront:` e `orderFront:` só marcam visível e retornam; não chamam `NSWindow` e não entram em loop. `reloadData` pergunta a contagem uma vez e, no máximo, o item 0. `enterFullScreenMode:withOptions:` devolve NÃO. A prévia não é desenhada.
 
-**Core Data — loja MOSCD1 no libSystem, memória na dylib de disco.** Slack e Claude não importam classe de Core Data. O libSystem (`coredata_fw.c` + `coredata_store.inc`) grava e relê um arquivo próprio, primeira linha `MOSCD1`, no caminho pedido por `addPersistentStoreWithType:configuration:URL:options:error:` ou em `~/Library/Application Support/<nome>/store.moscd` no `loadPersistentStoresWithCompletionHandler:` (o bloco roda antes do retorno). `NSInMemoryStoreType` não toca disco. Não é um banco SQLite: `sqlite3_open_v2` do libSystem continua falhando, e o arquivo não abre no sqlite3 da Apple. Predicado usa o `NSPredicate` que já existe (`evaluateWithObject:`); predicado que não responde a isso devolve fetch vazio. A dylib `CoreData.framework` do disco, a do Postico, continua só em memória.
+**Core Data — a mesma loja SQLite no libSystem e na dylib de disco.** Slack e Claude não importam classe de Core Data. O libSystem (`coredata_fw.c` + `coredata_store.inc` + o amalgama em `sqlite3_mos.c`) grava um arquivo SQLite (`mos_object`, `mos_attr`) no caminho pedido, ou em `~/Library/Application Support/<nome>/store.moscd`. A dylib `CoreData.framework` (`CoreData.m`) chama `moscd_*` no libSystem quando o Postico carrega o Mach-O do disco: `addPersistentStoreWithType:NSSQLiteStoreType` abre o arquivo, `save` confirma, o fetch aceita predicado `chave == valor` (ou `evaluateWithObject:`). Um arquivo antigo `MOSCD1` é migrado na primeira abertura. `NSInMemoryStoreType` não toca disco. Binary e XML continuam só em memória. Não há `.momd`. `sqlite3_open_v2` abre o banco.
 
-`tools/cdtest.c` exercita a loja no host (inserir, gravar, reabrir, apagar, limite, entidades separadas, escape de tab e quebra de linha, magic ruim). `tools/sktest.c` confere a política e o texto do recibo. Isso não é o `build.ps1`, não é a VM e não é hardware.
+`tools/cdtest.c` exercita a loja do libSystem no host (inserir, gravar, reabrir, apagar, limite, migração de MOSCD1 e o arquivo aberto pelo `sqlite3` do host). `tools/cdfwtest.c` (com `tools/cdfw_host.c`) exercita os mesmos `moscd_*` que a dylib de disco chama: abrir, gravar, fechar, reabrir, predicado `chave == valor`, migração MOSCD1 e o `sqlite3` do host. `tools/sktest.c` confere a política e o texto do recibo. Isso não é o `build.ps1`, não é a VM e não é hardware.
 
 ## Foundation / formatação — 204 símbolos do WhatsApp
 
@@ -164,3 +164,5 @@ O `machocheck` (`tools/machocheck.c`) rodou no WhatsApp 2.26.45.13 antes desta l
 ## Sobreposição com outras frentes
 
 Consulta em 2026-11-10, depois do rebase em `origin/main` (`b4130f1`). O único PR aberto era o #52 (`cursor/quicklook-storekit-coredata-19e0`): QuickLookUI, StoreKit e Core Data. Não edita `fi_swift.c`, `fi_thunks.c`, `fi_abi.inc`, `fi_exports.c` nem `tools/fitest.c`. Edita este documento na seção de StoreKit, acima da de Foundation. Esta leva não mexe nessa seção.
+
+Instalação/runtime edita `vscode_frameworks.c` só em `LSSharedFileList*` (itens de login em `Library/Preferences/com.mos.loginitems`, sem sufixo `.plist`). Incluir, listar e remover reescrevem o arquivo. A janela de Ajustes não está nesta frente: `-[SMAppService openSystemSettingsLoginItems]` em `slack_frameworks.c` (`sm_open_settings`) segue sem UI. Esta frente edita o mesmo arquivo só nas funções AX. O launchd continua varrendo `LaunchAgents` e `LaunchDaemons`, que é onde o SMAppService publica o plist.

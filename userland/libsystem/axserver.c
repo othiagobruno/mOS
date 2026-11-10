@@ -260,7 +260,8 @@ static int g_bound;
 void cx_ax_bind_xpc(void) {
     if (!g_bound) {
         g_bound = 1;
-        cx_ax_transport_bind(&g_xpc_ax);
+        if (cx_xpc_peer_ready()) cx_ax_transport_bind(&g_xpc_ax);
+        else cx_ax_unix_bind();
     }
     arm_listen();
 }

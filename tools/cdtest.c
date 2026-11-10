@@ -1,6 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
-/* gcc -std=c11 -Wall -Wextra -O1 -DCD_HOST tools/cdtest.c -o /tmp/cdtest && /tmp/cdtest
- * Teste de host da loja MOSCD1. Não é o libSystem ligado, não é a VM e não é SQLite. */
+/* gcc -std=c11 -Wall -Wextra -O1 -DCD_HOST tools/cdtest.c userland/libsystem/sqlite3_mos.c -o /tmp/cdtest -lm && /tmp/cdtest
+ * Teste de host da loja SQLite. Não é o libSystem ligado, não é a VM. */
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
@@ -84,6 +84,47 @@ int main(void) {
     CHECK(nfetch(b, "Person", 0, 0) == 1);
     CHECK(nfetch(b, "Team", "name", "mOS") == 1);
     cd_close(b);
+    {
+        char cmd[640];
+        char buf[128];
+        FILE *p;
+        snprintf(cmd, sizeof cmd, "sqlite3 '%s' \"SELECT a.vtext FROM mos_attr a JOIN mos_object o ON o.id=a.obj WHERE a.key='name' AND o.deleted=0 ORDER BY a.vtext;\"", path);
+        p = popen(cmd, "r");
+        CHECK(p != 0);
+        buf[0] = 0;
+        if (p) {
+            CHECK(fgets(buf, sizeof buf, p) != 0);
+            CHECK(strncmp(buf, "Bob", 3) == 0);
+            pclose(p);
+        }
+    }
+    unlink(path);
+    {
+        FILE *old = fopen(path, "wb");
+        cd_store *mig;
+        CHECK(old != 0);
+        if (old) {
+            fputs("MOSCD1\nO\t7\tPerson\nA\t7\ts\tname\tAna\nA\t7\ti\tage\t30\n", old);
+            fclose(old);
+        }
+        mig = cd_open_file(path);
+        CHECK(mig != 0);
+        CHECK(nfetch(mig, "Person", "name", "Ana") == 1);
+        if (mig) cd_close(mig);
+        {
+            char cmd[640], buf[64];
+            FILE *p;
+            snprintf(cmd, sizeof cmd, "sqlite3 '%s' \"SELECT vint FROM mos_attr WHERE key='age';\"", path);
+            p = popen(cmd, "r");
+            CHECK(p != 0);
+            buf[0] = 0;
+            if (p) {
+                CHECK(fgets(buf, sizeof buf, p) != 0);
+                CHECK(strncmp(buf, "30", 2) == 0);
+                pclose(p);
+            }
+        }
+    }
 
     {
         FILE *bad = fopen(path, "wb");

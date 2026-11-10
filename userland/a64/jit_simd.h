@@ -181,6 +181,7 @@ static int s_misc(T *t, a64_u32 w) {
     if (op == 0x1D && !(size & 2)) return s_scvtf(t, q, u, size, n, d, 0);
     {
         int key = (u << 6) | ((size >> 1) << 5) | op;
+        if (key == 0x58 || key == 0x59) return 0; /* FRINTA / FRINTX vetoriais → interpretador */
         if (key == 0x18 || key == 0x19 || key == 0x38 || key == 0x39 || key == 0x79)
             return s_frint_vec(t, q, size, key == 0x79 ? -1 : key == 0x18 ? 0 : key == 0x19 ? 1 : key == 0x38 ? 2 : 3, n, d);
         if (key == 0x2F || key == 0x6F) return s_fabsneg_vec(t, q, size, key == 0x6F, n, d);
@@ -1518,7 +1519,160 @@ static int s_ldst_single(T *t, a64_u32 w) {
  * AESE = aesenclast(d ^ n, 0); AESD = aesdeclast(d ^ n, 0); AESIMC = aesimc;
  * AESMC = aesenc(aesdeclast(x, 0), 0): aesdeclast desfaz ShiftRows e SubBytes, aesenc os refaz
  * (comutam: permutação de bytes × mapa byte a byte) e aplica MixColumns; a chave zero não muda nada.
- * SHA1/SHA256/SHA512 ficam no interpretador (SHA-NI divide a rodada de outro jeito). */
+ * SHA1H e SHA256 (H, H2, SU0, SU1) são inteiros do x86.
+ * SHA-NI parte a rodada de outro jeito e não entra. SHA512 ainda cai no interpretador. */
+/* SHA256/SHA512 em inteiros do x86 (não usa SHA-NI: a rodada não é a do ARM).
+ * Os GPRs voláteis saem do cache; rbx/rbp/r12–r15 (e o cpu em r15) ficam. */
+static void sha_spill(T *t) {
+    static const int volat[] = { XSI, XDI, X8, X9, X10, X11 };
+    fl_clobber(t);
+    for (int k = 0; k < NHREGS; k++) {
+        int h = HREGS[k], g = t->h2g[h];
+        if (g >= 0 && (t->dirty & (1u << h))) { x_mov_mr(B, 1, XM(RCPU, OFF_X(g)), h); t->dirty &= ~(1u << h); }
+    }
+    for (unsigned k = 0; k < sizeof volat / sizeof volat[0]; k++) {
+        int h = volat[k], g = t->h2g[h];
+        if (g >= 0) t->g2h[g] = -1;
+        t->h2g[h] = -1;
+    }
+}
+/* eax = ror(src,a) ^ ror(src,b) ^ (c_shr ? src>>c : ror(src,c)). src fica. */
+static void sha_mix32(T *t, int src, int a, int b, int c, int c_shr) {
+    x_mov_rr(B, 0, XAX, src);
+    x_shift_ri(B, 0, S_ROR, XAX, a);
+    x_mov_rr(B, 0, XDX, src);
+    x_shift_ri(B, 0, S_ROR, XDX, b);
+    x_alu_rr(B, 0, A_XOR, XAX, XDX);
+    x_mov_rr(B, 0, XDX, src);
+    x_shift_ri(B, 0, c_shr ? S_SHR : S_ROR, XDX, c);
+    x_alu_rr(B, 0, A_XOR, XAX, XDX);
+}
+/* SHA256SU0: r[e] = σ0(T[e]) + Vd[e], T = {Vd1, Vd2, Vd3, Vn0} */
+static int s_sha256su0(T *t, a64_u32 w) {
+    if ((w & 0xFFFFFC00) != 0x5E282800) return 0;
+    int n = (int)BITS(w, 9, 5), d = (int)(w & 31);
+    sha_spill(t);
+    x_alu_ri(B, 1, A_SUB, XR(XSP), 32);
+    x_mov_rm(B, 0, X8, VOE(d, 4));
+    x_mov_rm(B, 0, X9, VOE(d, 8));
+    x_mov_rm(B, 0, X10, VOE(d, 12));
+    x_mov_rm(B, 0, X11, VOE(n, 0));
+    int Ts[4] = { X8, X9, X10, X11 };
+    for (int e = 0; e < 4; e++) {
+        sha_mix32(t, Ts[e], 7, 18, 3, 1);
+        x_alu_rm(B, 0, A_ADD, XAX, VOE(d, e * 4));
+        x_mov_mr(B, 0, XM(XSP, e * 4), XAX);
+    }
+    for (int e = 0; e < 4; e++) {
+        x_mov_rm(B, 0, X8, XM(XSP, e * 4));
+        x_mov_mr(B, 0, VOE(d, e * 4), X8);
+    }
+    x_alu_ri(B, 1, A_ADD, XR(XSP), 32);
+    return 1;
+}
+/* SHA256H / H2: quatro rodadas. H devolve X (começou em Vd); H2 devolve Y (começou em Vd). */
+static int s_sha256h(T *t, a64_u32 w) {
+    a64_u32 top = w & 0xFFE0FC00;
+    int part1 = top == 0x5E004000;
+    if (!part1 && top != 0x5E005000 && (w & 0xFFE0FC00) != 0x5E006000) return 0;
+    int su1 = (w & 0xFFE0FC00) == 0x5E006000;
+    int n = (int)BITS(w, 9, 5), m = (int)BITS(w, 20, 16), d = (int)(w & 31);
+    sha_spill(t);
+    if (su1) {
+        /* T0 = {Vn1, Vn2, Vn3, Vm0}; el de Vm2, Vm3, depois dos resultados */
+        x_mov_rm(B, 0, X8, VOE(n, 4));
+        x_mov_rm(B, 0, X9, VOE(n, 8));
+        x_mov_rm(B, 0, X10, VOE(n, 12));
+        x_mov_rm(B, 0, X11, VOE(m, 0));
+        int T0[4] = { X8, X9, X10, X11 };
+        x_alu_ri(B, 1, A_SUB, XR(XSP), 32);
+        for (int e = 0; e < 4; e++) {
+            if (e < 2) x_mov_rm(B, 0, XCX, VOE(m, (2 + e) * 4));
+            else x_mov_rm(B, 0, XCX, XM(XSP, (e - 2) * 4));
+            sha_mix32(t, XCX, 17, 19, 10, 1);
+            x_alu_rm(B, 0, A_ADD, XAX, VOE(d, e * 4));
+            x_alu_rr(B, 0, A_ADD, XAX, T0[e]);
+            x_mov_mr(B, 0, XM(XSP, e * 4), XAX);
+        }
+        for (int e = 0; e < 4; e++) {
+            x_mov_rm(B, 0, X8, XM(XSP, e * 4));
+            x_mov_mr(B, 0, VOE(d, e * 4), X8);
+        }
+        x_alu_ri(B, 1, A_ADD, XR(XSP), 32);
+        return 1;
+    }
+    int xbase = part1 ? d : n, ybase = part1 ? n : d;
+    x_alu_ri(B, 1, A_SUB, XR(XSP), 48);
+    for (int e = 0; e < 4; e++) {
+        x_mov_rm(B, 0, XAX, VOE(xbase, e * 4));
+        x_mov_mr(B, 0, XM(XSP, e * 4), XAX);
+        x_mov_rm(B, 0, XAX, VOE(ybase, e * 4));
+        x_mov_mr(B, 0, XM(XSP, 16 + e * 4), XAX);
+    }
+    for (int e = 0; e < 4; e++) {
+        x_mov_rm(B, 0, X8, XM(XSP, 20));                  /* Y1 */
+        x_mov_rm(B, 0, X9, XM(XSP, 24));                  /* Y2 */
+        x_alu_rr(B, 0, A_XOR, X8, X9);
+        x_mov_rm(B, 0, XCX, XM(XSP, 16));                 /* Y0 */
+        x_alu_rr(B, 0, A_AND, X8, XCX);
+        x_alu_rr(B, 0, A_XOR, X8, X9);                    /* chs */
+        x_mov_rm(B, 0, X9, XM(XSP, 0));                   /* X0 */
+        x_mov_rm(B, 0, X10, XM(XSP, 4));                  /* X1 */
+        x_mov_rr(B, 0, X11, X9);
+        x_alu_rr(B, 0, A_AND, X11, X10);                  /* X0&X1 */
+        x_alu_rr(B, 0, A_OR, X9, X10);                    /* X0|X1, X0 perdido */
+        x_mov_rm(B, 0, X10, XM(XSP, 8));                  /* X2 */
+        x_alu_rr(B, 0, A_AND, X9, X10);
+        x_alu_rr(B, 0, A_OR, X9, X11);                    /* maj */
+        x_mov_rm(B, 0, XCX, XM(XSP, 16));
+        sha_mix32(t, XCX, 6, 11, 25, 0);                  /* σ1(Y0) */
+        x_alu_rm(B, 0, A_ADD, XAX, XM(XSP, 28));          /* +Y3 */
+        x_alu_rr(B, 0, A_ADD, XAX, X8);                   /* +chs */
+        x_alu_rm(B, 0, A_ADD, XAX, VOE(m, e * 4));        /* +W */
+        x_mov_rr(B, 0, X8, XAX);                          /* t */
+        x_alu_rm(B, 0, A_ADD, XAX, XM(XSP, 12));
+        x_mov_mr(B, 0, XM(XSP, 12), XAX);                 /* X3 novo */
+        x_mov_rm(B, 0, XCX, XM(XSP, 0));
+        sha_mix32(t, XCX, 2, 13, 22, 0);                  /* σ0(X0) */
+        x_alu_rr(B, 0, A_ADD, XAX, X8);
+        x_alu_rr(B, 0, A_ADD, XAX, X9);                   /* Y3 novo */
+        x_mov_mr(B, 0, XM(XSP, 28), XAX);
+        /* <Y,X> = ROL de 32: Y0 = X3, X0 = Y3, o resto desce */
+        x_mov_rm(B, 0, X8, XM(XSP, 12));                  /* xt */
+        x_mov_rm(B, 0, X9, XM(XSP, 28));                  /* yt */
+        x_mov_rm(B, 0, XAX, XM(XSP, 24));
+        x_mov_mr(B, 0, XM(XSP, 28), XAX);                 /* Y3=Y2 */
+        x_mov_rm(B, 0, XAX, XM(XSP, 20));
+        x_mov_mr(B, 0, XM(XSP, 24), XAX);                 /* Y2=Y1 */
+        x_mov_rm(B, 0, XAX, XM(XSP, 16));
+        x_mov_mr(B, 0, XM(XSP, 20), XAX);                 /* Y1=Y0 */
+        x_mov_mr(B, 0, XM(XSP, 16), X8);                  /* Y0=xt */
+        x_mov_rm(B, 0, XAX, XM(XSP, 8));
+        x_mov_mr(B, 0, XM(XSP, 12), XAX);                 /* X3=X2 */
+        x_mov_rm(B, 0, XAX, XM(XSP, 4));
+        x_mov_mr(B, 0, XM(XSP, 8), XAX);                  /* X2=X1 */
+        x_mov_rm(B, 0, XAX, XM(XSP, 0));
+        x_mov_mr(B, 0, XM(XSP, 4), XAX);                  /* X1=X0 */
+        x_mov_mr(B, 0, XM(XSP, 0), X9);                   /* X0=yt */
+    }
+    int dst = part1 ? 0 : 16;
+    for (int e = 0; e < 4; e++) {
+        x_mov_rm(B, 0, XAX, XM(XSP, dst + e * 4));
+        x_mov_mr(B, 0, VOE(d, e * 4), XAX);
+    }
+    x_alu_ri(B, 1, A_ADD, XR(XSP), 48);
+    return 1;
+}
+
+static int s_sha1h(T *t, a64_u32 w) {
+    if ((w & 0xFFFFFC00) != 0x5E280800) return 0;
+    int n = (int)BITS(w, 9, 5), d = (int)(w & 31);
+    fl_clobber(t);
+    x_mov_rm(B, 0, XAX, VO(n));
+    x_shift_ri(B, 0, S_ROL, XAX, 30);
+    s_wsc_rax(t, d);
+    return 1;
+}
 static int s_aes(T *t, a64_u32 w) {
     int op = (int)BITS(w, 16, 12), n = (int)BITS(w, 9, 5), d = (int)(w & 31);
     if (!jit_g.aes || op < 4 || op > 7) return 0;
@@ -1561,7 +1715,7 @@ static int s_crypto_c(T *t, a64_u32 w) {           /* op0 = 1100 */
         else { s_op(t, 0xEF, 0, 1); s_op(t, 0xEF, 0, 2); }
         s_st(t, d, 0, 1);
         return 1;
-    case 3:                                         /* RAX1 (os SHA512 vão ao interpretador) */
+    case 3:                                         /* RAX1; SHA512 ainda no interpretador */
         if (!BIT(w, 15) || BIT(w, 14) || BITS(w, 13, 12) || BITS(w, 11, 10) != 3) return 0;
         s_ld(t, 1, m);
         s_rol64(t, 1, 1);
@@ -1913,6 +2067,8 @@ static int s_fminmax(T *t, int dbl, int which, int n, int m, int d) {
 
 /* FRINT escalar. opc 8..11 = N/P/M/Z, 12 = A, 14 = X (IXC), 15 = I (FPCR, sem IXC). */
 static int s_frint_sc(T *t, int dbl, int opc, int n, int d) {
+    /* FRINTA: somar 0,5 e arredondar erra 2^52+1 / 2^23+1 e o zero com sinal. Interpretador. */
+    if (opc == 12) return 0;
     if (!jit_g.sse41) return 0;
     static const int mode[4] = { 0, 2, 1, 3 };      /* N P M Z → par, teto, chão, trunca */
     int kind = dbl ? 1 : 0;
@@ -2089,7 +2245,10 @@ static int tr_simd(T *t, a64_u32 w) {
         switch (BITS(w, 20, 17)) {
         case 0x0: return s_misc(t, w);
         case 0x8: return s_across(t, w);
-        case 0x4: return (BITS(w, 31, 29) == 2 && BITS(w, 23, 22) == 0) ? s_aes(t, w) : 0;
+        case 0x4:
+            if (!(BITS(w, 31, 29) == 2 && BITS(w, 23, 22) == 0)) return 0;
+            if (s_aes(t, w) || s_sha1h(t, w) || s_sha256su0(t, w)) return 1;
+            return 0;
         default: return 0;
         }
     }
@@ -2105,6 +2264,8 @@ static int tr_simd(T *t, a64_u32 w) {
         }
         return 0;
     }
+    if (!BIT(w, 21) && !BIT(w, 10) && !BIT(w, 15) && !BIT(w, 11) && !BIT(w, 29) && BITS(w, 23, 22) == 0 && s_sha256h(t, w))
+        return 1;
     if (BIT(w, 15)) return 0;
     if (!BIT(w, 29)) return BIT(w, 11) ? s_perm(t, w) : s_tbl(t, w);
     return s_ext(t, w);

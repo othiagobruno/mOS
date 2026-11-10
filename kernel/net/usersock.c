@@ -289,6 +289,25 @@ i64 net_user_syscall(process_t *p, u64 op, u64 a, u64 b, u64 c) {
     if (op >= MOS_NET_TLS_NEW && op <= MOS_NET_TLS_FREE) return tls_user_op(p, op, a, b, c);
     if (op >= MOS_NET_RESOLVE6 && op <= MOS_NET_ICMP_RECV) return net6_user_op(p, op, a, b, c);
     if (op >= MOS_NET_UDP_OPEN && op <= MOS_NET_UDP_ADDRS) { extern i64 udp_user_op(process_t *p, u64 op, u64 a, u64 b, u64 c); return udp_user_op(p, op, a, b, c); }   /* userudp.c */
+    if (op == MOS_NET_TLS_CERTS) {
+        extern int tls_copy_peer_chain(const tls_conn_t *c, u8 *buf, u32 cap);
+        fl = spin_lock_irqsave(&g_tls_lock);
+        utls_t *u = ut_of(p, a);
+        int need = u && u->tls ? tls_copy_peer_chain(u->tls, NULL, 0) : -1;
+        u8 *tmp = NULL;
+        if (need > 0 && b) {
+            if ((u64)c < (u64)need) need = -MOS_EINVAL;
+            else {
+                tmp = kmalloc((usize)need);
+                if (!tmp) need = -MOS_ENOMEM;
+                else if (tls_copy_peer_chain(u->tls, tmp, (u32)need) != need) need = -1;
+            }
+        }
+        spin_unlock_irqrestore(&g_tls_lock, fl);
+        if (need > 0 && b && tmp && !uvm_copy_out(p, b, tmp, (usize)need)) need = -MOS_EFAULT;
+        kfree(tmp);
+        return need;
+    }
     if (op == MOS_NET_TLS_ROOTS) {             /* a mesma lista que o tls.c usa (kernel/arch/certs.S) */
         extern const char mos_cacert_pem[], mos_cacert_pem_end[];
         u64 len = (u64)(mos_cacert_pem_end - mos_cacert_pem);

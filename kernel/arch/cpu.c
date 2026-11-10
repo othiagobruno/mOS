@@ -70,7 +70,7 @@ static void set_gate(int n, u64 h, u8 ist) {
     idt[n].zero = 0;
 }
 
-extern void isr128(void), isr240(void), isr242(void), isr255(void), isr_wake(void);
+extern void isr128(void), isr224(void), isr240(void), isr242(void), isr255(void), isr_wake(void);
 
 void tss_set_rsp0(u64 rsp0) { tss[this_cpu()].rsp[0] = rsp0; }
 
@@ -78,6 +78,7 @@ void idt_init(void) {
     for (int i = 0; i < 49; i++) set_gate(i, isr_table[i], (i == 8 || i == 2) ? 1 : 0);
     set_gate(0x80, (u64)isr128, 0);
     idt[0x80].type = 0xEE;          /* DPL 3: o ring 3 pode chamar int 0x80 */
+    set_gate(0xE0, (u64)isr224, 0);    /* MSI/MSI-X (dev/nvme.c) */
     set_gate(0xF0, (u64)isr240, 0);
     set_gate(0xF1, (u64)isr_wake, 0);  /* acorda os APs de par_for (arch/smp.c) */
     set_gate(0xF2, (u64)isr242, 0);    /* "olhe o escalonador": TLB e threads mortas em outro núcleo (proc/sched.c) */
@@ -135,6 +136,16 @@ static void exc_panic(int_frame_t *f) {
 }
 
 /* IRQs do PIC (PIT, PS/2; só chegam ao BSP): rodam sem a trava grande — só mexem nos próprios buffers */
+static void (*msi_handler)(void);
+static void (*msi_handler2)(void);
+void msi_set_handler(void (*fn)(void)) { msi_handler = fn; }
+void msi_add_handler(void (*fn)(void)) { msi_handler2 = fn; }
+static void msi_dispatch(void) {
+    if (msi_handler) msi_handler();
+    if (msi_handler2) msi_handler2();
+    lapic_eoi();
+}
+
 static int pic_irq(int_frame_t *f) {
     int irq = (int)f->vector - 32;
     if (irq >= 0 && irq < 17 && irq_handlers[irq]) irq_handlers[irq](f);
@@ -148,6 +159,7 @@ static int pic_irq(int_frame_t *f) {
 u64 isr_dispatch(int_frame_t *f) {
     if (sched_nested()) {           /* interrupção no meio da espera pela trava grande: só o mínimo */
         if (f->vector < 32) exc_panic(f);
+        if (f->vector == 0xE0) { msi_dispatch(); return (u64)f; }
         if (f->vector == 0xF0 || f->vector == 0xF2) lapic_eoi();
         else if (f->vector != 0xFF) pic_irq(f);
         return (u64)f;
@@ -158,6 +170,9 @@ u64 isr_dispatch(int_frame_t *f) {
         sched_klock();
         r = sched_dead_check(f);
         if (!r) r = proc_syscall(f);
+    } else if (f->vector == 0xE0) {
+        msi_dispatch();
+        r = (u64)f;
     } else if (f->vector == 0xF0 || f->vector == 0xF2) {
         lapic_eoi();
         r = sched_ktry() ? sched_irq_exit(f, this_cpu() != 0 || f->vector == 0xF2) : (u64)f;

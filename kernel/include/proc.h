@@ -39,7 +39,7 @@ typedef struct process process_t;
  * FD_PTY_M/FD_PTY_S: ponta mestre/escrava de um pseudoterminal (proc/pty.c), com a referência em .pty */
 /* FD_PIPE_RW: ponta de um socketpair (SYS_PIPE com b = MOS_PIPE_SOCKPAIR, um valor mágico: o SYS1 dos programas antigos
  * deixa lixo no 2º argumento): lê do .pipe e escreve no .pipe2 (o par tem os dois cruzados) */
-enum { FD_FILE, FD_PIPE_R, FD_PIPE_W, FD_PTY_M, FD_PTY_S, FD_PIPE_RW };
+enum { FD_FILE, FD_PIPE_R, FD_PIPE_W, FD_PTY_M, FD_PTY_S, FD_PIPE_RW, FD_UNIX };
 struct pty;
 typedef struct pipe {
     char buf[4096];
@@ -92,6 +92,12 @@ typedef struct thread {
     /* thread_suspend do Mach (SYS_THREADCTL): > 0 = suspensa. O escalonador não a escolhe e tira da CPU a que estiver
      * rodando; o coletor do JavaScriptCore suspende as outras threads para ler pilha e registradores */
     u16 suspend;
+    /* filas por núcleo (proc/sched.c): qos 0..4 = classes Darwin; affinity 0 = qualquer CPU */
+    u8 qos;
+    u8 on_rq;
+    u8 rq_cpu;
+    u64 affinity;
+    struct thread *rq_next;
 } thread_t;
 
 /* sessão de terminal: entrada (stdin) e saída (stdout/stderr) de um grupo de processos */
@@ -115,7 +121,7 @@ struct process {
     u64 start_ms;
     thread_t *main;
     struct process *next;
-    struct { bool used; int flags; u64 off; char path[256]; u8 kind; struct pipe *pipe, *pipe2; struct pty *pty; } fds[PROC_MAX_FDS];   /* arquivos (VFS), pipes e terminais */
+    struct { bool used; int flags; u64 off; char path[256]; u8 kind; struct pipe *pipe, *pipe2; struct pty *pty; unsigned mode; } fds[PROC_MAX_FDS];
     u64 mmap_next;          /* próxima região anônima (SYS_MMAP) */
     int nthreads;           /* threads vivas ou ainda não recolhidas (a memória sai com a última) */
     u64 sig_handler[32];    /* 0 = padrão, 1 = ignorar, senão endereço do tratador */
@@ -127,6 +133,11 @@ struct process {
     struct { int code, pid, status; u64 addr; } sig_info[32];   /* siginfo dos pendentes do processo */
     /* parada do processo inteiro (SIGSTOP/TSTP/TTIN/TTOU). stopped = 0 rodando, senão o sinal do kernel
      * que parou. Não é o thread_suspend do Mach (thread.suspend): o escalonador pula todas as threads. */
+    int uid, euid, suid;   /* nascem 501. getuid/geteuid leem. RESETIDS faz euid = suid = uid. */
+    int gid, egid, sgid;   /* nascem 20. RESETIDS faz egid = sgid = gid. */
+    int vfork_of;          /* pid do pai suspenso, se este processo pegou o pml4 emprestado */
+    int pml4_borrowed;     /* 1 = não liberar o pml4: é o do pai */
+    unsigned spawn_sigdef, spawn_sigmask, spawn_extra;
     int stopped;
     int stop_unreported;    /* 1 até um waitpid com WUNTRACED consumir */
     int cont_unreported;    /* 1 até um waitpid com WCONTINUED consumir */
@@ -143,6 +154,9 @@ struct process {
      * a própria sessão. ctty = terminal de controle da sessão (NULL = nenhum) */
     int pgid, sid;
     struct pty *ctty;
+    /* travas da tabela de páginas, 16 faixas de 2 MiB (VA>>21). depth 0 = livre. */
+    struct { volatile u32 lk; int owner; int depth; u64 fl; } vmreg[16];
+    u16 pcid;               /* 1..4095 com PCID; 0 = ainda sem (o escalonador atribui) */
 };
 
 /* ---- portas Mach entre processos (proc/machipc.c) */
@@ -166,6 +180,11 @@ process_t *proc_find(int pid);
 /* job control (pty.c): 0 = ignorado ou bloqueado (o chamador devolve EIO na leitura e segue na escrita);
  * 1 = o processo parou (refazer a syscall quando continuar); 2 = há tratador (EINTR, SA_RESTART na volta) */
 int       proc_job_signal(process_t *p, thread_t *th, int sig);
+/* Coloca um processo já criado no mesmo estado de um SIGSTOP: o escalonador não escolhe as threads
+ * dele até um SIGCONT (proc_continue). waitpid(WUNTRACED) informa a parada e o pai recebe SIGCHLD
+ * CLD_STOPPED, salvo SA_NOCLDSTOP. Não usa thread.suspend (suspensão Mach: o SIGCONT não a desfaz).
+ * proc_spawn_in chama isto quando mos_spawn_vec_t.flags traz MOS_SPAWN_START_SUSPENDED (0x80). */
+void      proc_hold(process_t *p);
 
 /* páginas físicas compartilhadas entre espaços (memória Mach, proc/process.c) */
 bool      uvm_map_phys(process_t *p, u64 va, u64 phys, bool rw);  /* mais uma referência à página */
@@ -182,6 +201,9 @@ void      thread_exit(void) NORETURN;           /* threads do kernel */
 u64       sched_irq_exit(int_frame_t *f, bool timer);   /* devolve o frame a restaurar */
 u64       sched_switch(int_frame_t *f);         /* a thread atual bloqueou/saiu: escolhe outra */
 void      sched_make_ready(thread_t *t);
+void      sched_set_qos(thread_t *t, unsigned darwin_qos);
+void      sched_set_affinity(thread_t *t, u64 cpu_mask);
+u16       sched_alloc_pcid(void);
 thread_t *sched_threads(void);
 
 /* ---- processos (proc/process.c) */
@@ -222,8 +244,22 @@ bool      elf_load(process_t *p, const u8 *img, usize len, u64 *entry, char *err
 /* ---- memória de usuário (proc/process.c) */
 bool      uvm_map(process_t *p, u64 va, u64 len);       /* páginas de 4 KiB, zeradas, U|RW */
 u64      *uvm_pte(process_t *p, u64 va);               /* NULL se não mapeado */
+bool      gpu_user_map(process_t *p, u64 va, u64 phys, u64 len, int rw);
+bool      gpu_user_unmap(process_t *p, u64 va, u64 len);
 bool      uvm_copy_out(process_t *p, u64 va, const void *src, usize len);
 bool      uvm_copy_in(process_t *p, void *dst, u64 va, usize len);
+
+/* AF_UNIX (kernel/net/unix.c). O número do socket fica em fds[].off quando kind == FD_UNIX. */
+void      unix_hold(int slot);
+void      unix_put(int slot);
+void      unix_clear_waiter(thread_t *t);
+int       unix_path_is_sock(const char *path);          /* 1 se o caminho é (ou foi) um socket nomeado */
+void      unix_unbind(const char *path);
+void      unix_rename(const char *from, const char *to);
+u64       unix_syscall(int_frame_t *f, thread_t *t, process_t *p);
+u64       unix_rw(int_frame_t *f, thread_t *t, process_t *p, int fd, int rd, u64 buf, u64 len);
+int       unix_fstat(process_t *p, int fd, void *st);   /* preenche mos_stat_t; 0 ou -errno */
+int       unix_fd_path(process_t *p, int fd, char *out, int cap);
 
 /* ---- arquitetura (arch/cpu.c, arch/smp.c) */
 void      tss_set_rsp0(u64 rsp0);
