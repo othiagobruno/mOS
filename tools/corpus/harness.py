@@ -107,10 +107,23 @@ def extract(archive: Path, dest: Path) -> None:
 
 
 def find_app(root: Path) -> Path | None:
-    apps = [p for p in root.rglob("*.app") if p.is_dir()]
+    apps = [p for p in root.rglob("*.app") if (p / "Contents").is_dir()]
     if not apps:
         return None
-    apps.sort(key=lambda p: (len(p.parts), str(p)))
+
+    def peso(p: Path) -> int:
+        total = 0
+        for dirpath, _dirs, files in os.walk(p):
+            for name in files:
+                try:
+                    total += os.path.getsize(os.path.join(dirpath, name))
+                except OSError:
+                    pass
+            if total > 400_000_000:
+                break
+        return total
+
+    apps.sort(key=lambda p: (-peso(p), len(p.parts), str(p)))
     return apps[0]
 
 
