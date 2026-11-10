@@ -5,11 +5,11 @@
  * e pixels 0 — não há valor inventado.
  */
 #include "photos_index.h"
-#include <ctype.h>
 #include <string.h>
 #if defined(PHOTOS_HOST) || !defined(PHOTOS_IN_LIBSYSTEM)
 #include <stdio.h>
 #include <stdlib.h>
+typedef FILE photos_FILE;
 #else
 #include <stddef.h>
 typedef void photos_FILE;
@@ -22,12 +22,9 @@ long ftell(photos_FILE *f);
 #define SEEK_SET 0
 #define SEEK_END 2
 #endif
-#define FILE photos_FILE
 #endif
-/* o restante do libSystem não pode herdar esse apelido */
-#ifdef PHOTOS_IN_LIBSYSTEM
-#undef FILE
-#endif
+
+static int photos_lower(int c) { return (c >= 'A' && c <= 'Z') ? c - 'A' + 'a' : c; }
 
 #ifdef PHOTOS_HOST
 #define _POSIX_C_SOURCE 200809L
@@ -88,8 +85,8 @@ static const char *ext_of(const char *name) {
 static int ext_is(const char *name, const char *e) {
     const char *x = ext_of(name);
     while (*x && *e) {
-        char a = (char)tolower((unsigned char)*x++);
-        char b = (char)tolower((unsigned char)*e++);
+        char a = (char)photos_lower((unsigned char)*x++);
+        char b = (char)photos_lower((unsigned char)*e++);
         if (a != b) return 0;
     }
     return *x == 0 && *e == 0;
@@ -201,7 +198,7 @@ static int file_mtime(const char *path, long long *out) {
 }
 
 static void fill_meta(photos_asset *a) {
-    FILE *f;
+    photos_FILE *f;
     unsigned char *buf;
     size_t n = 0;
     long sz;
