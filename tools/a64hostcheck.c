@@ -20,6 +20,13 @@
 #include <time.h>
 #include <ucontext.h>
 
+typedef unsigned int u32;
+typedef int i32;
+typedef unsigned long long u64;
+typedef long long i64;
+typedef unsigned long long usize;
+#include "compat_gui.h"
+
 static int g_falhas;
 
 static void ok(int cond, const char *msg) {
@@ -56,7 +63,7 @@ static int peek_mem(void *ctx, a64rt_u64 addr, void *dst, a64rt_u64 n) {
 
 static int nspans(long nr, a64rt_u64 x0, a64rt_u64 x1, a64rt_u64 x2, a64rt_u64 x3, a64rt_i64 ret,
                   a64rt_span *o, int max) {
-    return a64rt_guest_writes(nr, x0, x1, x2, x3, ret, peek_mem, NULL, o, max);
+    return a64rt_guest_writes(nr, x0, x1, x2, x3, 0, ret, peek_mem, NULL, o, max);
 }
 
 static int tem(const a64rt_span *o, int n, a64rt_u64 addr, a64rt_u64 len) {
@@ -116,13 +123,15 @@ static void teste_intervalos(void) {
     n = nspans(SYS_TTY, MOS_TTY_IOCTL, 1, 0x40487413u, buf, 0, o, 4);
     ok(n == 1 && tem(o, n, buf, 72), "TIOCGETA tem 72 bytes");
 
+    unsigned char corpo[128];
+    memset(corpo, 0, sizeof corpo);
     mos_mach_msg_args_t msg;
     memset(&msg, 0, sizeof msg);
-    msg.msg = 0x8000;
+    msg.msg = (a64rt_u64)(uintptr_t)corpo;
     msg.option = 2;
     msg.rcv_size = 128;
     n = nspans(SYS_MACH_MSG, (a64rt_u64)(uintptr_t)&msg, 0, 0, 0, 0, o, 4);
-    ok(n == 1 && tem(o, n, 0x8000, 128), "mach_msg com receive grava o buffer");
+    ok(n == 1 && tem(o, n, msg.msg, 128), "mach_msg com receive grava o buffer");
     msg.option = 0;
     n = nspans(SYS_MACH_MSG, (a64rt_u64)(uintptr_t)&msg, 0, 0, 0, 0, o, 4);
     ok(n == 0, "mach_msg sem receive não grava o buffer");
@@ -144,6 +153,129 @@ static void teste_intervalos(void) {
     ok(n == 0, "launchd com EFAULT não grava");
     n = nspans(SYS_LS, 0, buf, 0, 0, 0, o, 4);
     ok(n == 1 && tem(o, n, buf, sizeof(mos_ls_req_t)), "launchd grava o pedido inteiro");
+
+    n = nspans(SYS_MACH_VM, MACH_VM_MAP, (a64rt_u64)(uintptr_t)vec, 0, 0, 0, o, 1);
+    ok(n == -1, "faixa que não cabe pede invalidação total");
+
+    n = nspans(GUI_POLL, buf, 0, 0, 0, 1, o, 4);
+    ok(n == 1 && tem(o, n, buf, sizeof(gui_event_t)), "GUI_POLL grava o evento em x0");
+    n = nspans(GUI_POLL, buf, 0, 0, 0, 0, o, 4);
+    ok(n == 0, "GUI_POLL sem evento não grava");
+    n = nspans(GUI_MEASURE, 0, 0, buf, 0, 0, o, 4);
+    ok(n == 1 && tem(o, n, buf, sizeof(gui_metrics_t)), "GUI_MEASURE grava as métricas em x2");
+    n = nspans(GUI_WIN_INFO, 1, buf, 0, 0, 0, o, 4);
+    ok(n == 1 && tem(o, n, buf, sizeof(gui_wininfo_t)), "GUI_WIN_INFO grava em x1");
+    n = nspans(GUI_SCREEN, buf, 0, 0, 0, 0, o, 4);
+    ok(n == 1 && tem(o, n, buf, sizeof(gui_wininfo_t)), "GUI_SCREEN grava em x0");
+    n = nspans(GUI_DECODE_IMAGE, 0, 0, buf, 100, 40, o, 4);
+    ok(n == 1 && tem(o, n, buf, 40), "decode grava quando a capacidade cabe");
+    n = nspans(GUI_DECODE_IMAGE, 0, 0, buf, 10, 40, o, 4);
+    ok(n == 0, "decode sem capacidade não grava");
+
+    n = nspans(GUI_DEVICE, DEV_PAD_GET, 0, buf, 0, 1, o, 4);
+    ok(n == 1 && tem(o, n, buf, sizeof(gui_gamepad_t)), "gamepad grava o estado em x2");
+    n = nspans(GUI_DEVICE, DEV_PAD_GET, 0, 0, 0, 1, o, 4);
+    ok(n == 0, "gamepad sem ponteiro não grava");
+    n = nspans(GUI_DEVICE, DEV_AUDIO_STATE, 1, buf, 0, 0, o, 4);
+    ok(n == 1 && tem(o, n, buf, sizeof(gui_audio_state_t)), "áudio grava o estado em x2");
+    n = nspans(GUI_DEVICE, DEV_AUDIO_INFO, buf, 0, 0, 0, o, 4);
+    ok(n == 1 && tem(o, n, buf, sizeof(gui_audio_state_t)), "info de áudio grava em x1 mesmo com retorno 0");
+    n = nspans(GUI_DEVICE, DEV_SCREEN_CAPTURE, 0, 0, buf, (a64rt_i64)(2ull | (3ull << 32)), o, 4);
+    ok(n == 1 && tem(o, n, buf, 24), "captura de tela grava w*h*4");
+    n = nspans(GUI_DEVICE, DEV_SCREEN_CAPTURE, 0, 0, 0, (a64rt_i64)(2ull | (3ull << 32)), o, 4);
+    ok(n == 0, "captura sem buffer não grava");
+    n = nspans(GUI_DEVICE, DEV_WINDOW_LIST, 0, buf, 0, 1, o, 4);
+    ok(n == 1 && tem(o, n, buf, sizeof(gui_cgwindow_t)), "lista de janelas grava em x2");
+    n = nspans(GUI_DEVICE, DEV_BT_DEVICE, 0, buf, 0, 1, o, 4);
+    ok(n == 1 && tem(o, n, buf, sizeof(gui_bt_device_t)), "BLE grava o dispositivo em x2");
+    n = nspans(GUI_DEVICE, DEV_BT_ATT_RECV, buf, 32, 0, 5, o, 4);
+    ok(n == 1 && tem(o, n, buf, 5), "ATT grava os bytes recebidos em x1");
+    n = nspans(GUI_DEVICE, DEV_BT_LINK, buf, 0, 0, 0, o, 4);
+    ok(n == 1 && tem(o, n, buf, sizeof(gui_bt_link_t)), "link BLE grava em x1");
+
+    n = a64rt_guest_writes(GUI_FONT, GF_TABLE, 0, 0, buf, 10, 40, peek_mem, NULL, o, 4);
+    ok(n == 1 && tem(o, n, buf, 10), "tabela de fonte grava min(tamanho, capacidade de x4)");
+    n = a64rt_guest_writes(GUI_FONT, GF_TABLE, 0, 0, buf, 100, 40, peek_mem, NULL, o, 4);
+    ok(n == 1 && tem(o, n, buf, 40), "tabela de fonte grava o tamanho quando a capacidade sobra");
+    n = a64rt_guest_writes(GUI_FONT, GF_TABLE, 0, 0, 0, 100, 40, peek_mem, NULL, o, 4);
+    ok(n == 0, "tabela de fonte sem buffer não grava");
+    n = nspans(GUI_FONT, GF_METRICS, 0, 0, buf, 0, o, 4);
+    ok(n == 1 && tem(o, n, buf, sizeof(gui_font_metrics_t)), "métricas da fonte gravam a struct");
+
+    static unsigned char alfa[32];
+    gui_glyph_req_t gl;
+    memset(&gl, 0, sizeof gl);
+    gl.buf = (u64)(uintptr_t)alfa;
+    gl.cap = 32;
+    n = nspans(GUI_FONT, GF_RASTER, 0, 0, (a64rt_u64)(uintptr_t)&gl, 16, o, 4);
+    ok(n == 2 && tem(o, n, (a64rt_u64)(uintptr_t)&gl, sizeof gl) && tem(o, n, gl.buf, 16),
+       "raster grava a struct e o bitmap");
+    gl.cap = 8;
+    n = nspans(GUI_FONT, GF_RASTER, 0, 0, (a64rt_u64)(uintptr_t)&gl, 16, o, 4);
+    ok(n == 2 && tem(o, n, gl.buf, 8), "raster corta o bitmap na capacidade");
+
+    n = nspans(SYS_WEB, MOS_WEB_PAINT, 1, buf, 64, 16, o, 4);
+    ok(n == 1 && tem(o, n, buf, 16), "web paint grava os bytes em x2");
+    n = nspans(SYS_WEB, MOS_WEB_INFO, 1, buf, 0, 0, o, 4);
+    ok(n == 1 && tem(o, n, buf, sizeof(mos_web_info_t)), "web info grava a struct");
+    n = nspans(SYS_WEB, MOS_WEB_TEXT, 1, buf, 4, 10, o, 4);
+    ok(n == 1 && tem(o, n, buf, 4), "web text grava min(tamanho, capacidade)");
+    n = nspans(SYS_WEB, MOS_WEB_RESULT, 1, buf, 8, 6, o, 4);
+    ok(n == 1 && tem(o, n, buf, 6), "web result grava o resultado");
+    n = nspans(SYS_WEB, MOS_WEB_RESULT, 1, buf, 8, -MOS_EINVAL, o, 4);
+    ok(n == 0, "web result que não coube não grava");
+    n = nspans(SYS_WEB, MOS_WEB_HISTORY, 1, 0, buf, 1, o, 4);
+    ok(n == 1 && tem(o, n, buf, sizeof(mos_web_hist_t)), "web history grava em x3");
+
+    static unsigned char evout[8];
+    mos_web_eval_t ev;
+    memset(&ev, 0, sizeof ev);
+    ev.out = (unsigned long long)(uintptr_t)evout;
+    ev.len = 4;
+    ev.cap = 8;
+    n = nspans(SYS_WEB, MOS_WEB_EVAL, 1, (a64rt_u64)(uintptr_t)&ev, 0, 4, o, 4);
+    ok(n == 2 && tem(o, n, (a64rt_u64)(uintptr_t)&ev, sizeof ev) && tem(o, n, ev.out, 4),
+       "web eval grava a struct e o texto que coube");
+    ev.len = 20;
+    n = nspans(SYS_WEB, MOS_WEB_EVAL, 1, (a64rt_u64)(uintptr_t)&ev, 0, 20, o, 4);
+    ok(n == 1 && tem(o, n, (a64rt_u64)(uintptr_t)&ev, sizeof ev) && !tem(o, n, ev.out, 20),
+       "web eval sem espaço não grava o texto");
+
+    static unsigned char corpo_msg[16];
+    mos_web_msg_t wm;
+    memset(&wm, 0, sizeof wm);
+    wm.body = (unsigned long long)(uintptr_t)corpo_msg;
+    wm.len = 6;
+    wm.cap = 16;
+    n = nspans(SYS_WEB, MOS_WEB_TAKEMSG, 1, (a64rt_u64)(uintptr_t)&wm, 0, 1, o, 4);
+    ok(n == 2 && tem(o, n, (a64rt_u64)(uintptr_t)&wm, sizeof wm) && tem(o, n, wm.body, 6),
+       "web takemsg grava a struct e o corpo");
+    n = nspans(SYS_WEB, MOS_WEB_TAKEMSG, 1, (a64rt_u64)(uintptr_t)&wm, 0, -MOS_EINVAL, o, 4);
+    ok(n == 1 && tem(o, n, (a64rt_u64)(uintptr_t)&wm, sizeof wm) && !tem(o, n, wm.body, 6),
+       "web takemsg que não cabe grava só a struct");
+
+    /* descritor de porta (12 bytes) e depois um OOL: o passo não pode ser 16 para os dois */
+    unsigned char oolmsg[64];
+    memset(oolmsg, 0, sizeof oolmsg);
+    oolmsg[3] = 0x80;                                          /* MSGH_COMPLEX */
+    oolmsg[24] = 2;                                            /* dois descritores */
+    oolmsg[28 + 11] = 0;                                       /* porta */
+    const a64rt_u64 ool_at = 0xABC000;
+    memcpy(oolmsg + 40, &ool_at, 8);
+    oolmsg[40 + 11] = 1;                                       /* OOL */
+    uint32_t osz = 4;
+    memcpy(oolmsg + 40 + 12, &osz, 4);
+    memset(&msg, 0, sizeof msg);
+    msg.msg = (a64rt_u64)(uintptr_t)oolmsg;
+    msg.option = 2;
+    msg.rcv_size = sizeof oolmsg;
+    n = nspans(SYS_MACH_MSG, (a64rt_u64)(uintptr_t)&msg, 0, 0, 0, 0, o, 4);
+    ok(n == 2 && tem(o, n, msg.msg, sizeof oolmsg) && tem(o, n, ool_at, 4096),
+       "OOL depois de uma porta invalida a página mapeada");
+
+    oolmsg[24] = 65;                                           /* o kernel não entrega mais que 64 descritores */
+    n = nspans(SYS_MACH_MSG, (a64rt_u64)(uintptr_t)&msg, 0, 0, 0, 0, o, 4);
+    ok(n == -1, "descritores demais pedem invalidação total");
 }
 
 static void teste_pilha(void) {
@@ -358,6 +490,147 @@ static void teste_concorrente(void) {
     munmap(nada, 4096);
 }
 
+/* reexecuta movz/brk. Sem invalidar, o bloco velho fica; a faixa devolvida pelo pedido faz valer o novo. */
+static void reexecuta(uint32_t *codigo, const a64rt_span *sp, int nsp, const char *quem) {
+    a64_cpu *c = calloc(1, sizeof *c);
+    if (!c) exit(1);
+    int r = rodar(c, codigo);
+    ok(r == A64_EXIT_BRK && c->x[0] == 3, quem);
+    codigo[0] = 0x528000E0u; /* movz w0, #7 */
+    memset(c, 0, sizeof *c);
+    r = rodar(c, codigo);
+    char antigo[96];
+    snprintf(antigo, sizeof antigo, "%s: sem invalidar, o bloco velho continua", quem);
+    ok(r == A64_EXIT_BRK && c->x[0] == 3, antigo);
+    int cobriu = 0;
+    for (int i = 0; i < nsp; i++) {
+        if (sp[i].addr == (a64rt_u64)(uintptr_t)codigo) {
+            a64rt_invalidate_range(sp[i].addr, sp[i].len);
+            cobriu = 1;
+        }
+    }
+    ok(cobriu, quem);
+    memset(c, 0, sizeof *c);
+    r = rodar(c, codigo);
+    char novo[96];
+    snprintf(novo, sizeof novo, "%s: a reexecução vê o valor novo", quem);
+    ok(r == A64_EXIT_BRK && c->x[0] == 7, novo);
+    free(c);
+}
+
+static void teste_escrita_host(void) {
+    uint32_t *gui = pagina(PROT_READ | PROT_WRITE | PROT_EXEC, 4096);
+    gui[0] = 0x52800060u;
+    gui[1] = 0xD4200000u;
+    a64rt_span sp[4];
+    int n = nspans(GUI_POLL, (a64rt_u64)(uintptr_t)gui, 0, 0, 0, 1, sp, 4);
+    ok(n == 1 && sp[0].len == sizeof(gui_event_t), "o pedido GUI cobre o código traduzido");
+    reexecuta(gui, sp, n, "escrita GUI");
+    a64_invalidate((a64_u64)(uintptr_t)gui, 4096);
+    munmap(gui, 4096);
+
+    uint32_t *ool = pagina(PROT_READ | PROT_WRITE | PROT_EXEC, 4096);
+    ool[0] = 0x52800060u;
+    ool[1] = 0xD4200000u;
+    unsigned char corpo[64];
+    memset(corpo, 0, sizeof corpo);
+    corpo[3] = 0x80;
+    corpo[24] = 1;
+    a64rt_u64 dest = (a64rt_u64)(uintptr_t)ool;
+    memcpy(corpo + 28, &dest, 8);
+    corpo[28 + 11] = 1;
+    uint32_t sz = 4;
+    memcpy(corpo + 28 + 12, &sz, 4);
+    mos_mach_msg_args_t msg;
+    memset(&msg, 0, sizeof msg);
+    msg.msg = (a64rt_u64)(uintptr_t)corpo;
+    msg.option = 2;
+    msg.rcv_size = sizeof corpo;
+    n = nspans(SYS_MACH_MSG, (a64rt_u64)(uintptr_t)&msg, 0, 0, 0, 0, sp, 4);
+    ok(n == 2 && tem(sp, n, dest, 4096), "o descritor OOL cobre a página do código");
+    reexecuta(ool, sp, n, "escrita OOL");
+    a64_invalidate((a64_u64)(uintptr_t)ool, 4096);
+    munmap(ool, 4096);
+}
+
+struct laco {
+    uint32_t *codigo;
+    volatile uint32_t visto;
+    volatile uint32_t parar;
+    volatile uint64_t passos;
+    int saiu;
+};
+
+static void *laco_thread(void *arg) {
+    struct laco *g = arg;
+    uint32_t *codigo = g->codigo;
+    a64_cpu *c = calloc(1, sizeof *c);
+    if (!c) return NULL;
+    c->x[1] = (a64_u64)(uintptr_t)&g->visto;
+    c->x[3] = (a64_u64)(uintptr_t)&g->parar;
+    c->x[5] = (a64_u64)(uintptr_t)&g->passos;
+    g->saiu = rodar(c, codigo);
+    free(c);
+    return NULL;
+}
+
+static int esperou(volatile uint64_t *p, uint64_t alvo, int segundos) {
+    struct timespec t0, agora;
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    while (*p < alvo) {
+        clock_gettime(CLOCK_MONOTONIC, &agora);
+        if (agora.tv_sec - t0.tv_sec > segundos) return 0;
+    }
+    return 1;
+}
+
+static void teste_laco_safepoint(void) {
+    struct laco g;
+    memset(&g, 0, sizeof g);
+    g.codigo = pagina(PROT_READ | PROT_WRITE | PROT_EXEC, 4096);
+    /* prefixo fora do laço: o traço começa aqui, e o cbz volta para o movz, não para o início.
+     * Um safepoint só em alvo <= pc0 não vê este desvio. */
+    g.codigo[0] = 0x52800026u; /* movz w6, #1 (não é x5: x5 é o ponteiro do contador) */
+    g.codigo[1] = 0x52800060u; /* movz w0, #3 */
+    g.codigo[2] = 0xB9000020u; /* str w0, [x1] */
+    g.codigo[3] = 0x91000484u; /* add x4, x4, #1 */
+    g.codigo[4] = 0xF90000A4u; /* str x4, [x5] */
+    g.codigo[5] = 0xB9400062u; /* ldr w2, [x3] */
+    g.codigo[6] = 0x34FFFF62u; /* cbz w2, movz w0 (imm19 = -5) */
+    g.codigo[7] = 0xD4200000u;
+
+    pthread_t th;
+    ok(pthread_create(&th, NULL, laco_thread, &g) == 0, "a thread do safepoint sobe");
+    ok(esperou(&g.passos, 100000, 3) && g.visto == 3, "o laço traduzido publica o imediato 3");
+
+    g.codigo[1] = 0x528000E0u; /* movz w0, #7, ainda sem invalidar */
+    uint64_t marca = g.passos;
+    ok(esperou(&g.passos, marca + 10000, 2) && g.visto == 3,
+       "dentro do bloco, o imediato novo ainda não vale");
+
+    /* o mesmo caminho do runtime: o pedido GUI (ou o OOL) produz a faixa, e um só ponto invalida */
+    a64rt_span sp[4];
+    int n = nspans(GUI_POLL, (a64rt_u64)(uintptr_t)g.codigo, 0, 0, 0, 1, sp, 4);
+    ok(n == 1 && sp[0].addr == (a64rt_u64)(uintptr_t)g.codigo, "a faixa do GUI cobre o laço");
+    a64rt_invalidate_spans(sp, n);
+    struct timespec t0, agora;
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    while (g.visto != 7) {
+        clock_gettime(CLOCK_MONOTONIC, &agora);
+        if (agora.tv_sec - t0.tv_sec > 2) break;
+    }
+    ok(g.visto == 7, "no próximo desvio para trás o laço vê o valor novo");
+
+    g.parar = 1;
+    struct timespec limite;
+    clock_gettime(CLOCK_REALTIME, &limite);
+    limite.tv_sec += 3;
+    int jr = pthread_timedjoin_np(th, NULL, &limite);
+    ok(jr == 0 && g.saiu == A64_EXIT_BRK, "o laço sai no brk depois do safepoint");
+    a64_invalidate((a64_u64)(uintptr_t)g.codigo, 4096);
+    munmap(g.codigo, 4096);
+}
+
 int main(void) {
     teste_intervalos();
     teste_pilha();
@@ -372,6 +645,8 @@ int main(void) {
         return 1;
     }
     teste_invalidar();
+    teste_escrita_host();
+    teste_laco_safepoint();
     teste_falta();
     teste_concorrente();
 

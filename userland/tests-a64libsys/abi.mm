@@ -32,6 +32,7 @@
 @end
 @interface NSException : NSObject
 + (id)exceptionWithName:(id)name reason:(id)reason userInfo:(id)info;
++ (void)raise:(id)name format:(id)fmt, ...;
 - (void)raise;
 - (id)name;
 - (id)reason;
@@ -290,6 +291,11 @@ int main() {
             [[NSException exceptionWithName:(id)S("MeuErro") reason:(id)S("motivo") userInfo:nil] raise];
         } @catch (NSException *e) { nm = U([e name]); }
         CHECK("@throw (-[NSException raise]) e @catch (NSException *)", !strcmp(nm, "MeuErro"));
+        const char *fmtnm = "", *fmtrs = "";
+        @try {
+            [NSException raise:(id)S("FmtErro") format:(id)S("n=%d"), 7];
+        } @catch (NSException *e) { fmtnm = U([e name]); fmtrs = U([e reason]); }
+        CHECK("+[NSException raise:format:] capturável por @catch", !strcmp(fmtnm, "FmtErro") && !strcmp(fmtrs, "n=7"));
         int fim = 0, pegou = 0;
         @try {
             @try { @throw [[LibsysAbiErro alloc] init]; }

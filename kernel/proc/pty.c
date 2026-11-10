@@ -14,8 +14,8 @@
  * LNEXT/EOF/EOL, ECHO/ECHOE/ECHOK/ECHOKE/ECHOCTL/ECHONL, ISIG (INTR/QUIT/SUSP viram sinais para o grupo em
  * primeiro plano), ICRNL/INLCR/IGNCR/ISTRIP, IXON/IXANY (^S/^Q), IMAXBEL, IUTF8 (o apagar tira o caractere
  * inteiro), OPOST/ONLCR/OCRNL, e no modo não canônico VMIN/VTIME. A struct termios e os números de ioctl são
- * os do macOS (o libSystem repassa o pedido como veio). Sem modo pacote (TIOCPKT) e sem SIGTTIN/SIGTTOU: o
- * mOS não para processos, então os sinais de parada são ignorados por padrão (process.c: default_ignored).
+ * os do macOS (o libSystem repassa o pedido como veio). Sem modo pacote (TIOCPKT). Leitura do escravo em
+ * segundo plano gera SIGTTIN; escrita com TOSTOP gera SIGTTOU. A ação padrão para o processo (process.c).
  *
  * Espera: leitura sem dados e escrita com a fila cheia bloqueiam a thread (wait_pid = -9, pty_wait), salvo com
  * MOS_O_NONBLOCK no fd (-EAGAIN); cada mudança no par tenta concluir as operações pendentes (pty_wake), como os
@@ -70,6 +70,7 @@ _Static_assert(sizeof(mac_termios_t) == 72, "termios do macOS");
 #define ALTWERASE 0x200
 #define IEXTEN  0x400
 #define NOFLSH  0x80000000ULL
+#define TOSTOP  0x00400000ULL   /* SIGTTOU na escrita do grupo em segundo plano (sys/termios.h do macOS) */
 enum { VEOF = 0, VEOL, VEOL2, VERASE, VWERASE, VKILL, VREPRINT, VINTR = 8, VQUIT, VSUSP, VDSUSP, VSTART, VSTOP,
        VLNEXT, VDISCARD, VMIN, VTIME, VSTATUS };
 #define VDIS 0xFF   /* _POSIX_VDISABLE */
@@ -171,6 +172,17 @@ static int pgsignal(int pgrp, int sig) {
     for (process_t *q = proc_list(); q; q = q->next)
         if (!q->exited && q->pgid == pgrp) { if (sig) proc_signal(q->pid, sig); n++; }
     return n;
+}
+/* órfão: nenhum membro tem pai na mesma sessão e noutro grupo. POSIX: não para, a chamada devolve EIO. */
+static bool group_orphaned(process_t *p) {
+    bool any = false;
+    for (process_t *q = proc_list(); q; q = q->next) {
+        if (q->exited || q->pgid != p->pgid) continue;
+        any = true;
+        process_t *par = proc_find(q->ppid);
+        if (par && !par->exited && par->sid == q->sid && par->pgid != q->pgid) return false;
+    }
+    return any;
 }
 static bool pgrp_in_session(int pgrp, int sid) {
     for (process_t *q = proc_list(); q; q = q->next)
@@ -474,6 +486,24 @@ u64 pty_rw(int_frame_t *f, thread_t *th, process_t *p, int fd, bool rd, u64 buf,
     int fl = p->fds[fd].flags;
     if (rd ? (fl & MOS_O_WRONLY) != 0 : !(fl & (MOS_O_WRONLY | MOS_O_RDWR))) { f->rax = (u64)-MOS_EBADF; return (u64)f; }
     if (!len) { f->rax = 0; return (u64)f; }
+    /* job control só no terminal de controle, e só se há um grupo em primeiro plano */
+    if (!master && p->ctty == t && t->pgrp && p->pgid != t->pgrp && (rd || (t->tio.lflag & TOSTOP))) {
+        if (group_orphaned(p)) { f->rax = (u64)-MOS_EIO; return (u64)f; }
+        int how = proc_job_signal(p, th, rd ? MOS_SIGTTIN : MOS_SIGTTOU);
+        if (how == 1) {                               /* parou: a syscall recomeça depois do SIGCONT */
+            f->rip -= 2;
+            f->rax = th->sys_nr;
+            if (th->state == TH_RUNNING) th->state = TH_READY;
+            return sched_switch(f);
+        }
+        if (how == 2) {                               /* tratador: EINTR, ou SA_RESTART na entrega */
+            th->sig_intr = true;
+            f->rax = (u64)-MOS_EINTR;
+            return (u64)f;
+        }
+        if (rd) { f->rax = (u64)-MOS_EIO; return (u64)f; }   /* TTIN ignorado ou bloqueado */
+        /* TTOU ignorado ou bloqueado: a escrita segue */
+    }
     int mode = rd ? (master ? PTY_RD_MASTER : PTY_RD_SLAVE) : (master ? PTY_WR_MASTER : PTY_WR_SLAVE);
     i64 n = try_op(t, mode, p, buf, len);
     if (n != -MOS_EAGAIN) {

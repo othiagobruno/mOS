@@ -36,7 +36,8 @@ um recurso opcional que espera o runtime Swift ([swift-objc-runtime.md](swift-ob
 - `userland/libsystem/compat_agentes.c` (novo): `stat64`/`lstat64`/`fstat64`/`fstatat64` (no x86_64 a `struct stat`
   já é a de 64 bits), `mlockall`/`munlockall`, `ptrace` (só `PT_DENY_ATTACH`), `memccpy`, `nice`, `asctime_r`/`ctime_r`,
   `__floattidf`/`__floatuntidf` (int128 → double com um só arredondamento), `CFTimeZoneCopyDefault`,
-  `CTFontDescriptorCreateWithNameAndSize`, as variantes de FSEvents por dispositivo e as consultas do fluxo,
+  `CTFontDescriptorCreateWithNameAndSize`, as variantes de FSEvents por dispositivo e as consultas do fluxo
+  (a entrega em si está em `fsevents.c`),
   `kDADiskDescriptionMatchVolumeMountable`/`WatchVolumePath`, `IOHIDManagerSetDeviceMatching`/
   `RegisterInputReportCallback` e `SecTrustSettingsSet/RemoveTrustSettings` (`errSecUnimplemented`).
 - `cli.c`: `proc_listpids` (todos, por grupo, usuário ou pai), `proc_listallpids`, `proc_name`, e o `proc_pidinfo` de

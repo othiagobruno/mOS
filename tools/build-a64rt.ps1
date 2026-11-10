@@ -2,7 +2,8 @@
 #   ELF x86_64 freestanding ligado em A64RT_BASE (userland\a64rt\a64rt_abi.h), com o motor (userland\a64\*.c) e
 #   o runtime (userland\a64rt\*). Vai para a imagem em /Sistema/Biblioteca/a64/a64rt.mos (build.ps1).
 #   -NoJit : sem o JIT mesmo que userland\a64\jit*.c exista (o motor fica só com o interpretador)
-#   -Parcial : aceita símbolos do motor ainda não escritos pelas outras frentes (viram 0; só para iterar)
+#   -Parcial : se o link falhar, troca o símbolo ausente por um stub que para (ud2). O build.ps1 não passa
+#              este interruptor: um símbolo faltando tem que aparecer no link, não em silêncio no app.
 #   No processo, MOS_A64_ENGINE=interp|jit escolhe o motor (padrão: JIT quando compilado).
 param([switch]$NoJit, [switch]$Parcial)
 $root = Split-Path $PSScriptRoot -Parent

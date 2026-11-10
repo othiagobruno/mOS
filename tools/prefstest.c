@@ -12,6 +12,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
+#include <fcntl.h>
 #include <unistd.h>
 #include <errno.h>
 
@@ -33,12 +35,9 @@ static int host_read(void *ctx, const char *path, char **buf, size_t *len, unsig
     size_t n = fread(b, 1, (size_t)sz, f);
     fclose(f);
     b[n] = 0;
-    struct stat st;
-    unsigned long long s = 0;
-    if (stat(path, &st) == 0) s = ((unsigned long long)st.st_mtime << 20) ^ (unsigned long long)st.st_size;
     *buf = b;
     *len = n;
-    if (stamp) *stamp = s;
+    if (stamp) *stamp = pf_fnv(b, n);
     return 0;
 }
 static int host_write(void *ctx, const char *path, const char *buf, size_t len) {
@@ -54,12 +53,14 @@ static int host_write(void *ctx, const char *path, const char *buf, size_t len) 
     return 0;
 }
 static int host_stamp(void *ctx, const char *path, unsigned long long *stamp) {
-    (void)ctx;
-    struct stat st;
-    if (stat(path, &st) != 0) return -1;
-    *stamp = ((unsigned long long)st.st_mtime << 20) ^ (unsigned long long)st.st_size;
+    char *b = 0;
+    size_t n = 0;
+    if (host_read(ctx, path, &b, &n, stamp) != 0) return -1;
+    free(b);
     return 0;
 }
+
+static const pf_fs fs = {0, host_read, host_write, host_stamp};
 
 static void test_roundtrip(void) {
     pf_val *d = pf_dict();
@@ -117,7 +118,6 @@ static void test_search_and_file(const char *dir) {
     snprintf(any, sizeof any, "%s/any-com.visualstudio.code.plist", dir);
     snprintf(glob, sizeof glob, "%s/.GlobalPreferences.plist", dir);
     snprintf(binp, sizeof binp, "%s/com.binary.plist", dir);
-    pf_fs fs = {0, host_read, host_write, host_stamp};
     pf_db *db = pf_db_new();
     CHECK(pf_domain_ok("com.visualstudio.code"));
     CHECK(pf_domain_ok(".GlobalPreferences"));
@@ -231,11 +231,114 @@ static void test_search_and_file(const char *dir) {
     pf_db_free(db2);
 }
 
+/* bplist00 gerado pelo plistlib do Python (formato da Apple). */
+static const unsigned char k_voz_bplist[] = {
+    98,112,108,105,115,116,48,48,215,1,2,3,4,5,6,7,
+    8,11,12,13,14,15,16,85,108,105,115,116,97,81,110,82,
+    110,111,82,111,107,86,113,117,97,110,100,111,81,114,83,118,
+    111,122,162,9,10,81,97,81,98,16,7,8,9,51,65,197,
+    203,76,0,0,0,0,35,63,248,0,0,0,0,0,0,87,
+    111,112,101,110,98,111,116,8,23,29,31,34,37,44,46,50,
+    53,55,57,59,60,61,70,79,0,0,0,0,0,0,1,1,
+    0,0,0,0,0,0,0,17,0,0,0,0,0,0,0,0,
+    0,0,0,0,0,0,0,87
+};
+
+static void test_cross_byhost_bplist(const char *dir) {
+    char path[1100], puser[256], phost[256], pany[256], panyh[256];
+    CHECK(pf_pref_path("/Users/Visitante", "mos", 0, "com.mos.app", puser, sizeof puser) == 0);
+    CHECK(strcmp(puser, "/Users/Visitante/Library/Preferences/com.mos.app.plist") == 0);
+    CHECK(pf_pref_path("/Users/Visitante", "mos", "host", "com.mos.app", phost, sizeof phost) == 0);
+    CHECK(strcmp(phost, "/Users/Visitante/Library/Preferences/ByHost/com.mos.app.mos.plist") == 0);
+    CHECK(pf_pref_path("/Users/Visitante", "mos", "any", "com.mos.app", pany, sizeof pany) == 0);
+    CHECK(strcmp(pany, "/Library/Preferences/com.mos.app.plist") == 0);
+    CHECK(pf_pref_path("/Users/Visitante", "mos", "any.host", "com.mos.app", panyh, sizeof panyh) == 0);
+    CHECK(strcmp(panyh, "/Library/Preferences/ByHost/com.mos.app.mos.plist") == 0);
+    CHECK(strcmp(puser, phost) != 0);
+
+    snprintf(path, sizeof path, "%s/cross.plist", dir);
+    pf_db *parent = pf_db_new();
+    CHECK(pf_put(parent, "user", "com.cross", "k", pf_str("aaaa")) == 1);
+    CHECK(pf_save(parent, "user", "com.cross", path, &fs) == 0);
+    struct timespec ts[2] = {{1000, 0}, {1000, 0}};
+    CHECK(utimensat(AT_FDCWD, path, ts, 0) == 0);
+
+    pid_t pid = fork();
+    CHECK(pid >= 0);
+    if (pid == 0) {
+        pf_db *child = pf_db_new();
+        int bad = 0;
+        if (pf_load(child, "user", "com.cross", path, &fs, 1) != 0) bad = 1;
+        pf_val *seen = pf_get_mem(child, "user", "com.cross", "k");
+        if (!seen || seen->type != PF_STR || !seen->str || strcmp(seen->str, "aaaa") != 0) bad = 1;
+        if (pf_put(child, "user", "com.cross", "k", pf_str("bbbb")) != 1) bad = 1;
+        if (pf_save(child, "user", "com.cross", path, &fs) != 0) bad = 1;
+        if (utimensat(AT_FDCWD, path, ts, 0) != 0) bad = 1;
+        _exit(bad ? 2 : 0);
+    }
+    if (pid > 0) {
+        int st = 0;
+        CHECK(waitpid(pid, &st, 0) == pid);
+        CHECK(WIFEXITED(st) && WEXITSTATUS(st) == 0);
+    }
+    struct stat stt;
+    CHECK(stat(path, &stt) == 0 && stt.st_mtime == 1000);
+    CHECK(pf_load(parent, "user", "com.cross", path, &fs, 0) == 0);
+    pf_val *got = pf_get_mem(parent, "user", "com.cross", "k");
+    CHECK(got && got->str && strcmp(got->str, "bbbb") == 0);
+
+    CHECK(pf_put(parent, "host", "com.cross", "k", pf_str("so-neste-host")) == 1);
+    CHECK(pf_get_mem(parent, "user", "com.cross", "k") && strcmp(pf_get_mem(parent, "user", "com.cross", "k")->str, "bbbb") == 0);
+    CHECK(pf_get_mem(parent, "host", "com.cross", "k") && strcmp(pf_get_mem(parent, "host", "com.cross", "k")->str, "so-neste-host") == 0);
+
+    char bp[1100];
+    snprintf(bp, sizeof bp, "%s/voz.bplist", dir);
+    FILE *bf = fopen(bp, "wb");
+    CHECK(bf != 0);
+    if (bf) {
+        CHECK(fwrite(k_voz_bplist, 1, sizeof k_voz_bplist, bf) == sizeof k_voz_bplist);
+        fclose(bf);
+    }
+    struct stat before;
+    CHECK(stat(bp, &before) == 0);
+    CHECK(pf_load(parent, "user", "com.voz", bp, &fs, 1) == 0);
+    CHECK(!pf_is_blocked(parent, "user", "com.voz"));
+    pf_val *voz = pf_get_mem(parent, "user", "com.voz", "voz");
+    CHECK(voz && voz->type == PF_STR && voz->str && strcmp(voz->str, "openbot") == 0);
+    pf_val *num = pf_get_mem(parent, "user", "com.voz", "n");
+    CHECK(num && num->type == PF_INT && num->i == 7);
+    pf_val *okv = pf_get_mem(parent, "user", "com.voz", "ok");
+    CHECK(okv && okv->type == PF_BOOL && okv->b == 1);
+    pf_val *nov = pf_get_mem(parent, "user", "com.voz", "no");
+    CHECK(nov && nov->type == PF_BOOL && nov->b == 0);
+    pf_val *real = pf_get_mem(parent, "user", "com.voz", "r");
+    CHECK(real && real->type == PF_REAL && real->d > 1.49 && real->d < 1.51);
+    pf_val *lista = pf_get_mem(parent, "user", "com.voz", "lista");
+    CHECK(lista && lista->type == PF_ARRAY && lista->ent && lista->ent->v && lista->ent->v->type == PF_STR &&
+          lista->ent->v->str && strcmp(lista->ent->v->str, "a") == 0 && lista->ent->next && lista->ent->next->v &&
+          lista->ent->next->v->str && strcmp(lista->ent->next->v->str, "b") == 0);
+    pf_val *quando = pf_get_mem(parent, "user", "com.voz", "quando");
+    CHECK(quando && quando->type == PF_DATE && quando->d > 1709596799.0 && quando->d < 1709596801.0);
+    CHECK(pf_save(parent, "user", "com.voz", bp, &fs) == 0);
+    struct stat after;
+    CHECK(stat(bp, &after) == 0 && before.st_size == after.st_size);
+    unsigned char magic[8] = {0};
+    FILE *br = fopen(bp, "rb");
+    CHECK(br != 0);
+    if (br) {
+        CHECK(fread(magic, 1, 8, br) == 8);
+        fclose(br);
+    }
+    CHECK(memcmp(magic, "bplist00", 8) == 0);
+    pf_db_free(parent);
+}
+
 int main(void) {
     char dir[] = "/tmp/mos-prefs-test-XXXXXX";
     if (!mkdtemp(dir)) { perror("mkdtemp"); return 1; }
     test_roundtrip();
     test_search_and_file(dir);
+    test_cross_byhost_bplist(dir);
     char cmd[1200];
     snprintf(cmd, sizeof cmd, "rm -rf '%s'", dir);
     if (system(cmd) != 0) fprintf(stderr, "aviso: não apaguei %s\n", dir);

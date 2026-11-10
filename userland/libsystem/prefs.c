@@ -2,14 +2,16 @@
  * mOS libSystem — CFPreferences e o armazenamento do NSUserDefaults.
  *
  * Funcional: domínio do usuário em NSHomeDirectory()/Library/Preferences/<domínio>.plist,
- * domínio de qualquer usuário em /Library/Preferences, .GlobalPreferences no mesmo arquivo
- * que NSGlobalDomain e kCFPreferencesAnyApplication, domínio de registro só em memória,
- * synchronize devolve falha real se a escrita falhar, bplist existente não é sobrescrito.
+ * ByHost em Library/Preferences/ByHost/<domínio>.<host>.plist quando o host é
+ * kCFPreferencesCurrentHost, domínio de qualquer usuário em /Library/Preferences,
+ * .GlobalPreferences no mesmo arquivo que NSGlobalDomain e kCFPreferencesAnyApplication,
+ * domínio de registro só em memória, synchronize devolve falha real se a escrita falhar.
+ * bplist00 válido é lido. bplist ilegível não é sobrescrito. A gravação continua em XML.
+ * Outro processo aparece pelo hash do arquivo, mesmo com mtime e tamanho iguais.
  *
- * Limitações: não há cfprefsd (cada processo grava o plist; outro processo só aparece se o
- * mtime ou o tamanho mudar — contrato com o VFS). CurrentHost e AnyHost são o mesmo domínio.
- * Sem MDM: CFPreferencesAppValueIsForced é 0 de verdade. Tipo que não é property list é
- * recusado, sem exceção. Container devolvido é cópia: mutar no lugar não grava.
+ * Limitações: não há cfprefsd. Sem MDM: CFPreferencesAppValueIsForced é 0 de verdade.
+ * Tipo que não é property list é recusado, sem exceção. Container devolvido é cópia:
+ * mutar no lugar não grava. NULL e kCFPreferencesAnyHost continuam fora do ByHost.
  */
 #include "foundation.h"
 #include "libc.h"
@@ -26,11 +28,6 @@ int rename(const char *a, const char *b);
 
 typedef struct { cx_class_t *isa; u32 kind; u32 pad; double d; i64 i; } pf_num_t;
 typedef struct { cx_class_t *isa; double t; } pf_date_t;
-typedef struct {
-    u32 st_dev; u16 st_mode, st_nlink; u64 st_ino; u32 st_uid, st_gid, st_rdev;
-    i64 atime, atime_ns, mtime, mtime_ns, ctime, ctime_ns, btime, btime_ns;
-    i64 st_size, st_blocks; i32 st_blksize; u32 st_flags, st_gen; i32 lspare; i64 qspare[2];
-} pf_stat_t;
 
 typedef struct pf_ud {
     void *obj;
@@ -97,9 +94,9 @@ static const char *home_dir(void) {
     return s;
 }
 
+extern const char *cx_host_token(void);
 static void dom_path(const char *scope, const char *name, char *out, size_t cap) {
-    if (scope && !strcmp(scope, "any")) snprintf(out, cap, "/Library/Preferences/%s.plist", name);
-    else snprintf(out, cap, "%s/Library/Preferences/%s.plist", home_dir(), name);
+    pf_pref_path(home_dir(), cx_host_token(), scope, name, out, cap);
 }
 
 static void mkdir_parent(const char *path) {
@@ -112,17 +109,7 @@ static void mkdir_parent(const char *path) {
     mkdir(b, 0755);
 }
 
-static int fs_stamp(void *ctx, const char *path, unsigned long long *stamp) {
-    (void)ctx;
-    pf_stat_t st;
-    memset(&st, 0, sizeof st);
-    if (stat(path, &st) != 0) return -1;
-    if (stamp) *stamp = ((unsigned long long)st.mtime << 20) ^ (unsigned long long)st.st_size;
-    return 0;
-}
-
-static int fs_read(void *ctx, const char *path, char **buf, size_t *len, unsigned long long *stamp) {
-    (void)ctx;
+static int fs_slurp(const char *path, char **buf, size_t *len) {
     FILE_ *f = fopen(path, "rb");
     if (!f) return -1;
     size_t cap = 256, n = 0;
@@ -143,7 +130,23 @@ static int fs_read(void *ctx, const char *path, char **buf, size_t *len, unsigne
     b[n] = 0;
     *buf = b;
     *len = n;
-    if (stamp) fs_stamp(0, path, stamp);
+    return 0;
+}
+
+static int fs_stamp(void *ctx, const char *path, unsigned long long *stamp) {
+    (void)ctx;
+    char *b = 0;
+    size_t n = 0;
+    if (fs_slurp(path, &b, &n) != 0) return -1;
+    if (stamp) *stamp = pf_fnv(b, n);
+    free(b);
+    return 0;
+}
+
+static int fs_read(void *ctx, const char *path, char **buf, size_t *len, unsigned long long *stamp) {
+    (void)ctx;
+    if (fs_slurp(path, buf, len) != 0) return -1;
+    if (stamp) *stamp = pf_fnv(*buf, *len);
     return 0;
 }
 
@@ -361,8 +364,10 @@ static pf_ud *ensure(void *ud) {
 
 static int search_of(pf_ud *u, const char **sc, const char **nm, int cap) {
     int n = 0;
+    if (n < cap) { sc[n] = "host"; nm[n] = u->primary; n++; }
     if (n < cap) { sc[n] = "user"; nm[n] = u->primary; n++; }
     for (int i = 0; i < u->nsuites && n < cap; i++) { sc[n] = "user"; nm[n] = u->suites[i]; n++; }
+    if (n < cap) { sc[n] = "host"; nm[n] = ".GlobalPreferences"; n++; }
     if (n < cap) { sc[n] = "user"; nm[n] = ".GlobalPreferences"; n++; }
     if (n < cap) { sc[n] = "any"; nm[n] = u->primary; n++; }
     if (n < cap) { sc[n] = "reg"; nm[n] = u->reg; n++; }
@@ -370,8 +375,10 @@ static int search_of(pf_ud *u, const char **sc, const char **nm, int cap) {
 }
 
 static void load_search(pf_ud *u) {
+    load_dom("host", u->primary);
     load_dom("user", u->primary);
     for (int i = 0; i < u->nsuites; i++) load_dom("user", u->suites[i]);
+    load_dom("host", ".GlobalPreferences");
     load_dom("user", ".GlobalPreferences");
     load_dom("any", u->primary);
 }
@@ -521,10 +528,13 @@ static int domain_from_app(id app, char *out, size_t cap) {
     return canon_domain(s, out, cap);
 }
 
-static const char *scope_of(id user) {
-    const char *s = user ? prefs_cstr(user) : 0;
-    if (s && !strcmp(s, "kCFPreferencesAnyUser")) return "any";
-    return "user";
+static const char *scope_of(id user, id host) {
+    const char *u = user ? prefs_cstr(user) : 0;
+    const char *h = host ? prefs_cstr(host) : 0;
+    int any = u && !strcmp(u, "kCFPreferencesAnyUser");
+    int cur = h && !strcmp(h, "kCFPreferencesCurrentHost");
+    if (cur) return any ? "any.host" : "host";
+    return any ? "any" : "user";
 }
 
 static id copy_cached(const char *scope, const char *name, const char *key) {
@@ -539,7 +549,11 @@ id CFPreferencesCopyAppValue(id key, id app) {
     char dom[208];
     const char *k = key ? prefs_cstr(key) : 0;
     if (!k || !domain_from_app(app, dom, sizeof dom)) return 0;
-    id o = copy_cached("user", dom, k);
+    id o = copy_cached("host", dom, k);
+    if (o) return o;
+    o = copy_cached("user", dom, k);
+    if (o) return o;
+    o = copy_cached("host", ".GlobalPreferences", k);
     if (o) return o;
     o = copy_cached("user", ".GlobalPreferences", k);
     if (o) return o;
@@ -554,19 +568,17 @@ unsigned char CFPreferencesAppSynchronize(id app) {
 }
 
 id CFPreferencesCopyValue(id key, id app, id user, id host) {
-    (void)host;
     char dom[208];
     const char *k = key ? prefs_cstr(key) : 0;
     if (!k || !domain_from_app(app, dom, sizeof dom)) return 0;
-    return copy_cached(scope_of(user), dom, k);
+    return copy_cached(scope_of(user, host), dom, k);
 }
 
 void CFPreferencesSetValue(id key, id value, id app, id user, id host) {
-    (void)host;
     char dom[208];
     const char *k = key ? prefs_cstr(key) : 0;
     if (!k || !domain_from_app(app, dom, sizeof dom)) return;
-    const char *sc = scope_of(user);
+    const char *sc = scope_of(user, host);
     load_dom(sc, dom);
     if (!value) { pf_put(db(), sc, dom, k, 0); return; }
     pf_val *v = pf_from_id(value, 0);
@@ -575,10 +587,9 @@ void CFPreferencesSetValue(id key, id value, id app, id user, id host) {
 }
 
 unsigned char CFPreferencesSynchronize(id app, id user, id host) {
-    (void)host;
     char dom[208];
     if (!domain_from_app(app, dom, sizeof dom)) return 0;
-    const char *sc = scope_of(user);
+    const char *sc = scope_of(user, host);
     load_dom(sc, dom);
     return save_dom(sc, dom) ? 1 : 0;
 }
@@ -603,10 +614,9 @@ unsigned char CFPreferencesAppValueIsForced(id key, id app) {
 }
 
 id CFPreferencesCopyKeyList(id app, id user, id host) {
-    (void)host;
     char dom[208];
     if (!domain_from_app(app, dom, sizeof dom)) return 0;
-    const char *sc = scope_of(user);
+    const char *sc = scope_of(user, host);
     load_dom(sc, dom);
     id a = cx_arr_new(cx_class_named("NSMutableArray"));
     pf_dom *d = 0;

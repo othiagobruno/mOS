@@ -1,7 +1,8 @@
 /*
  * mOS libSystem — o que faltava para o bash 5.3, o readline 8.3, o ncurses 6.6 e o libintl do
  * Homebrew (docs/porte-brew.md): regex POSIX, fnmatch, tsearch, caracteres largos, locale "C.UTF-8",
- * usuários/grupos, terminal e temporizadores. Só existe UTF-8; as funções de locale devolvem o C.
+ * usuários/grupos, terminal e temporizadores. Só existe UTF-8. O nome do locale segue cx_locale_id
+ * (en_US ou pt_BR); a classificação de caracteres continua a do C.
  */
 #include "sys.h"
 extern int cx_errno;
@@ -18,6 +19,7 @@ void free(void *p);
 int isatty(int fd);
 int getpid(void);
 int access(const char *p, int m);
+const char *cx_locale_id(void);
 double frexp(double x, int *e);
 double ldexp(double x, int e);
 int tolower(int c);
@@ -140,15 +142,22 @@ typedef struct {
          int_n_sep_by_space, int_p_sign_posn, int_n_sign_posn;
 } mac_lconv_t;
 mac_lconv_t *localeconv(void) {
-    static mac_lconv_t lc = {".", "", "", "", "", "", "", "", "", "",
-                             127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127};
-    return &lc;
+    static mac_lconv_t c = {".", "", "", "", "", "", "", "", "", "",
+                            127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127};
+    static mac_lconv_t en = {".", ",", "\3", "", "$", ".", ",", "\3", "", "-",
+                             2, 2, 1, 0, 1, 0, 1, 1, 1, 1, 1, 0, 1, 1};
+    static mac_lconv_t pt = {",", ".", "\3", "", "R$", ",", ".", "\3", "", "-",
+                             2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
+    const char *id = cx_locale_id();
+    if (id[0] == 'e') return &en;
+    if (id[0] == 'p') return &pt;
+    return &c;
 }
 static int cx_locale_obj;
 void *newlocale(int mask, const char *name, void *base) { (void)mask; (void)name; (void)base; return &cx_locale_obj; }
 void freelocale(void *l) { (void)l; }
 void *uselocale(void *l) { (void)l; return (void *)-1; }               /* LC_GLOBAL_LOCALE */
-const char *querylocale(int mask, void *l) { (void)mask; (void)l; return "C"; }
+const char *querylocale(int mask, void *l) { (void)mask; (void)l; return cx_locale_id(); }
 /* nl_item do macOS: CODESET 0, D_T_FMT 1, D_FMT 2, T_FMT 3, RADIXCHAR 50, THOUSEP 51, YESEXPR 52, NOEXPR 53 */
 char *nl_langinfo(int item) {
     switch (item) {
@@ -156,7 +165,8 @@ char *nl_langinfo(int item) {
     case 1: return "%a %b %e %H:%M:%S %Y";
     case 2: return "%m/%d/%y";
     case 3: return "%H:%M:%S";
-    case 50: return ".";
+    case 50: return cx_locale_id()[0] == 'p' ? "," : ".";
+    case 51: return cx_locale_id()[0] == 'e' ? "," : cx_locale_id()[0] == 'p' ? "." : "";
     case 52: return "^[yY]";
     case 53: return "^[nN]";
     }
@@ -757,11 +767,15 @@ float __extendhfsf2(unsigned short h) {
     return v.x;
 }
 
-/* ACL: o sistema de arquivos do mOS não tem; ENOTSUP faz o ls e o cp seguirem sem elas */
-void *acl_get_file(const char *p, int t) { (void)p; (void)t; cx_errno = 45; return 0; }
-void *acl_get_link_np(const char *p, int t) { (void)p; (void)t; cx_errno = 45; return 0; }
-void *acl_get_fd_np(int fd, int t) { (void)fd; (void)t; cx_errno = 45; return 0; }
-int acl_set_file(const char *p, int t, void *a) { (void)p; (void)t; (void)a; cx_errno = 45; return -1; }
+/* ACL de acesso no processo (cli.c). ACL default de diretório não existe no FAT: ENOENT/ENOTSUP. */
+void *cx_acl_get_path(const char *path, int follow);
+int cx_acl_set_path(const char *path, void *a, int follow);
+void *acl_get_fd(int fd);
+int acl_set_fd(int fd, void *a);
+void *acl_get_file(const char *p, int t) { if (t == 1) { cx_errno = 2; return 0; } return cx_acl_get_path(p, 1); }
+void *acl_get_link_np(const char *p, int t) { if (t == 1) { cx_errno = 2; return 0; } return cx_acl_get_path(p, 0); }
+void *acl_get_fd_np(int fd, int t) { if (t == 1) { cx_errno = 2; return 0; } return acl_get_fd(fd); }
+int acl_set_file(const char *p, int t, void *a) { if (t == 1) { cx_errno = 45; return -1; } return cx_acl_set_path(p, a, 1); }
 
 int clock_getres(int clk, cx_ts_t *ts) { (void)clk; if (ts) { ts->tv_sec = 0; ts->tv_nsec = 1000000; } return 0; }   /* relógio do kernel: 1 ms */
 int clock_settime(int clk, const cx_ts_t *ts) { (void)clk; (void)ts; cx_errno = 1; return -1; }

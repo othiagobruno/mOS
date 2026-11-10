@@ -229,6 +229,12 @@ void a64_jit_thread_exit(a64_cpu *c) {
 static inline volatile a64_u32 *stop_lo(a64_cpu *c) { return (volatile a64_u32 *)&c->reserved[15]; }
 static inline volatile a64_u32 *stop_hi(a64_cpu *c) { return (volatile a64_u32 *)&c->reserved[15] + 1; }
 
+/* Chute para quem já está dentro de um bloco. O código gerado olha este pedido na fronteira:
+ * a aresta interna do laço sem memória (emit_backedge), o jmp remendado que volta ao início do
+ * traço (emit_exit com alvo <= pc0), o salto indireto e o RET. Todos conferem reserved[15] inteiro
+ * (este bit alto) antes de saltar direto. Um elo remendado que não volta ao início é zerado por
+ * kill_block e cai no despachante na próxima passagem. Um desvio para a frente já encadeado não
+ * confere: essa cadeia pode acabar o bloco corrente (até 64 instruções, sem cruzar página). */
 static void kick_all(void) {
     for (jthr *t = J.threads; t; t = t->next) {
         a64_cpu *c = t->cpu;

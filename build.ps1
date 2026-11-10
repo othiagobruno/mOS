@@ -138,6 +138,21 @@ Copy-Item "$root\build\libcompression-x86_64\libcompression.dylib" "$esp\mOS\usr
 New-Item -ItemType Directory -Force "$esp\mOS\usr\share\zlib", "$esp\mOS\usr\share\curl" | Out-Null
 Copy-Item "$root\build\zlib-x86_64\LICENSE" "$esp\mOS\usr\share\zlib\LICENSE" -Force
 Copy-Item "$root\build\curl-x86_64\COPYING" "$esp\mOS\usr\share\curl\COPYING" -Force
+# CryptoKit.framework: o Swift de userland\frameworks\CryptoKit (PRs #26 e #29), ligado por
+# tools\build-frameworks-objc.ps1. O carregador abre o caminho absoluto; não vai para o libSystem
+# e a trie de tools\ckhost\mkexports.py não é copiada.
+$tcCk = Get-ChildItem "$root\.tools\swift\LocalApp\Programs\Swift\Toolchains" -Directory -ErrorAction SilentlyContinue | Select-Object -First 1
+if ($tcCk) {
+    & "$root\tools\build-frameworks-objc.ps1" -Only CryptoKit
+    if ($LASTEXITCODE -ne 0) { Write-Host 'aviso: CryptoKit.framework não compilou' -ForegroundColor Yellow }
+} else { Write-Host 'aviso: sem toolchain Swift; CryptoKit.framework fica de fora desta imagem' -ForegroundColor Yellow }
+$ck = "$root\build\swift\objc\dylib\System\Library\Frameworks\CryptoKit.framework\Versions\A\CryptoKit"
+if (Test-Path $ck) {
+    $ckdir = "$esp\mOS\System\Library\Frameworks\CryptoKit.framework\Versions\A"
+    New-Item -ItemType Directory -Force $ckdir | Out-Null
+    Copy-Item $ck "$ckdir\CryptoKit" -Force
+    Write-Host 'CryptoKit.framework na imagem'
+}
 # WebKit.framework do mOS (userland\frameworks\WebKit): WKWebView sobre o motor web do sistema (SYS_WEB, kernel/web/webview.c)
 $wkdir = "$esp\mOS\System\Library\Frameworks\WebKit.framework\Versions\A"
 New-Item -ItemType Directory -Force $wkdir | Out-Null
@@ -151,7 +166,7 @@ if (-not (Test-Path "$wkdir\WebKit")) {
 # tradutor arm64 (docs/tradutor-arm64.md): o runtime a64rt.mos (tools\build-a64rt.ps1) e o libSystem arm64
 # (tools\build-libsystem-arm64.ps1) em /Sistema/Biblioteca/a64; sem eles os apps só arm64 dizem o que falta
 $a64 = "$esp\mOS\Sistema\Biblioteca\a64"
-& "$root\tools\build-a64rt.ps1" -Parcial
+& "$root\tools\build-a64rt.ps1"
 if ($LASTEXITCODE -ne 0) { Write-Host 'aviso: a64rt.mos não compilou; apps arm64 ficam sem o tradutor' -ForegroundColor Yellow }
 if ((Test-Path "$root\build\a64rt.mos") -and (Test-Path "$root\build\libSystem-arm64.mos")) {
     New-Item -ItemType Directory -Force $a64 | Out-Null

@@ -1,7 +1,7 @@
 /*
  * Símbolos Swift de Foundation que o WhatsApp importa e que o overlay do mOS não traz
  * (FormatStyle, ISO8601, NSDecimal, Measurement). O miolo é fmt_core.inc.
- * Os outros nomes da mesma lista são stubs em fi_exports.c: o dyld resolve, o valor é vazio.
+ * Os outros 187 nomes estão em fi_thunks.c. No arm64, fi_exports.c continua com ret.
  *
  * swiftcc x86_64: self em r13, sret em rax, inteiros em rdi/rsi/rdx, Double em xmm0,
  * String de volta em rax:rdx.
@@ -21,6 +21,7 @@ char *strcat(char *d, const char *s);
 int sscanf(const char *s, const char *fmt, ...);
 #endif
 #include "fi_abi.inc"
+#include "fi_behavior.inc"
 
 typedef struct { double value; void *unit; } fi_meas;
 
@@ -57,7 +58,8 @@ __asm__(
 ".globl \"$s10Foundation4DateV18ISO8601FormatStyleV6formatySSACF\"\n"
 "\"$s10Foundation4DateV18ISO8601FormatStyleV6formatySSACF\":\n"
 "  movq %xmm0, %rdi\n"
-"  jmp fi_iso_format\n"
+"  movq %r13, %rsi\n"
+"  jmp fi_iso_format_styled\n"
 ".globl \"$s10Foundation4DateV18ISO8601FormatStyleV5parseyACSSKF\"\n"
 "\"$s10Foundation4DateV18ISO8601FormatStyleV5parseyACSSKF\":\n"
 "  subq $8, %rsp\n"

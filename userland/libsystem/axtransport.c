@@ -22,3 +22,7 @@ int cx_ax_transport_ready(void) {
 const char *cx_ax_transport_dependency(void) { return CX_AX_TRANSPORT_DEPENDENCY; }
 
 const cx_ax_transport *cx_ax_transport_get(void) { return g_transport; }
+
+int cx_ax_wire_status(int rc) {
+    return rc == 0 ? 0 : -25204;
+}

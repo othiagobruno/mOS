@@ -73,7 +73,8 @@ int cx_fd_readable(int fd, long *avail, int *eof) {
     *avail = 0; *eof = 0;
     if (fd >= 768 && cx_sock_is && cx_sock_is(fd)) return cx_sock_readable(fd, avail, eof);
     if (fd < 0 || fd >= 0x4000 || SYS2(SYS_FSTAT, fd, &st) < 0) return 0;
-    if (st.is_dir == 2) { *avail = (long)st.size; *eof = st.mtime != 0; return st.size > 0 || st.mtime; }
+    /* 2 = pipe de leitura; 6 = socket AF_UNIX (bytes prontos, ou conexões na fila do listen) */
+    if (st.is_dir == 2 || st.is_dir == 6) { *avail = (long)st.size; *eof = st.mtime != 0; return st.size > 0 || st.mtime; }
     if (st.is_dir == 3) return 0;
     /* terminal (kernel/proc/pty.c): size = o que um read devolve agora; mtime = 1 se o read daria fim de arquivo */
     if (st.is_dir == 5) { *avail = (long)st.size; *eof = st.mtime != 0; return st.size > 0 || st.mtime; }

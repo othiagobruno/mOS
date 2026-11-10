@@ -1,5 +1,7 @@
 /* mOS — ambiente de trabalho: papel de parede, barra de menus, Dock, menus, Busca, notificações e alertas */
 #include "ui.h"
+#include "statusdock.h"
+#include "kernel/dev/kbd_mod.h"
 #include "vfs.h"
 #include "gpu.h"
 #include "dockbadge.h"
@@ -240,6 +242,13 @@ enum { ACT_ABOUT = 1001, ACT_PREFS, ACT_ACTIVITY, ACT_FORCEQUIT, ACT_RESTART, AC
 #define TITLE_CC     206
 #define TITLE_FOCUS  207
 #define TITLE_BATT   208
+#define TITLE_STATUS 220          /* menu aberto por um NSStatusItem */
+#define ACT_STATUS_PICK 73000     /* + índice do item no pacote publicado */
+static int status_pid;
+static u32 status_id;
+static u32 status_act[SB_MENU_MAX + SB_SUB_MAX];
+static menu_item_t status_sub_items[SB_MENU_MAX][16];
+static menu_t status_sub_menu[SB_MENU_MAX];
 void glyph_focus_moon(surface_t *s, int x, int y, int sz, u32 c);
 #include "power.h"
 /* bateria da barra: contorno arredondado, carga proporcional (vermelha abaixo de 20%, verde carregando),
@@ -414,8 +423,21 @@ static void measure_bar_luminance(void) {
 
 void desktop_measure_bar(void) { measure_bar_luminance(); }
 
+static int status_text_w(const char *t, int n, void *ctx) {
+    (void)ctx;
+    return text_width_n(font_get(FONT_MEDIUM), 13.5f, t, n);
+}
+
 #define BAR_PAD 20     /* margem esquerda/direita */
 #define BAR_GAP 9      /* metade do espaço entre títulos */
+
+/* a faixa dos apps usa a mesma borda esquerda dos ícones do sistema que o último desenho gravou */
+static void status_relayout(void) {
+    int left = SW, i;
+    if (nstatus <= 0) left = SW - (BAR_PAD - BAR_GAP);
+    else for (i = 0; i < nstatus; i++) if (status[i].x < left) left = status[i].x;
+    sb_layout(SW, MENUBAR_H, left, status_text_w, NULL);
+}
 
 static void draw_menubar(surface_t *s) {
     int h = MENUBAR_H;
@@ -513,6 +535,34 @@ static void draw_menubar(surface_t *s) {
         }
         status[nstatus++] = (bar_title_t){items[i].title, rx, w};
     }
+    /* itens de status dos apps, imediatamente à esquerda dos ícones do sistema */
+    {
+        int left = SW, i, ng;
+        const sb_geom_t *gs;
+        if (nstatus <= 0) left = SW - (BAR_PAD - BAR_GAP);
+        else for (i = 0; i < nstatus; i++) if (status[i].x < left) left = status[i].x;
+        sb_layout(SW, MENUBAR_H, left, status_text_w, NULL);
+        gs = sb_geoms(&ng);
+        for (i = 0; i < ng; i++) {
+            const sb_geom_t *g = &gs[i];
+            if (g->open) BAR_HL(g->x, g->w);
+            if (g->img_w > 0) {
+                int iw = 0, ih = 0;
+                const u32 *px = sb_image(g->pid, g->id, &iw, &ih);
+                if (px && iw > 0 && ih > 0) {
+                    surface_t im;
+                    memset(&im, 0, sizeof im);
+                    im.w = iw; im.h = ih; im.stride = iw;
+                    im.px = (u32 *)px; /* o slot é estático; o blit só lê */
+                    im.clip = rect_make(0, 0, iw, ih);
+                    gfx_blit_scaled(s, &im, g->img_x, g->img_y, g->img_w, g->img_h, 255);
+                }
+            }
+            if (g->title_x >= 0 && g->title[0])
+                text_draw(s, fr, fs, g->title_x, base, tc, g->title);
+        }
+    }
+#undef BAR_HL
 }
 
 /* ============================================================ menus suspensos */
@@ -539,6 +589,74 @@ static void add_item(const char *label, const char *sc, int action, bool disable
     it->label = label; it->shortcut = sc; it->action = action; it->disabled = disabled; it->checked = checked;
 }
 static void add_sep(void) { add_item(NULL, NULL, 0, false, false); }
+static void submenu_close(void);
+
+/* notify 1 avisa o app (menuWillOpen:). 0 só redesenha o menu já aberto, sem outro evento. */
+static void open_status_menu(int pid, u32 id, int notify) {
+    int n, i, gx = 0, ng;
+    const sb_geom_t *gs;
+    submenu_close();
+    status_relayout();
+    if (notify) compat_gui_status_open(pid, id);
+    n = sb_menu_count(pid, id);
+    status_pid = pid;
+    status_id = id;
+    if (n <= 0) {
+        if (M.kind != MK_NONE) M.kind = MK_NONE;
+        wm_damage(rect_make(0, 0, SW, MENUBAR_H));
+        return;
+    }
+    M.kind = MK_BAR;
+    M.title = TITLE_STATUS;
+    M.n = 0;
+    M.hover = -1;
+    M.opened_at = timer_ticks();
+    gs = sb_geoms(&ng);
+    for (i = 0; i < ng; i++) if (gs[i].pid == pid && gs[i].id == id) gx = gs[i].x;
+    M.x = gx;
+    M.y = MENUBAR_H + 4;
+    cc_open = false;
+    {
+        int subbase = 0;
+        for (i = 0; i < n && i < SB_MENU_MAX; i++) {
+            u32 act = 0;
+            int dis = 0, sep = 0, nsub, s, ns;
+            const char *lab = sb_menu_label(pid, id, i, &act, &dis, &sep);
+            status_act[i] = act;
+            if (sep || !lab || !lab[0]) { add_sep(); continue; }
+            add_item(lab, NULL, ACT_STATUS_PICK + i, dis != 0, sb_menu_checked(pid, id, i) != 0);
+            nsub = sb_menu_sub_count(pid, id, i);
+            ns = nsub > 16 ? 16 : nsub;
+            if (ns <= 0 || subbase + ns > SB_SUB_MAX) continue;
+            for (s = 0; s < ns; s++) {
+                u32 sa = 0;
+                int sd = 0, sc = 0;
+                const char *sl = sb_menu_sub(pid, id, i, s, &sa, &sd, &sc);
+                menu_item_t *it = &status_sub_items[i][s];
+                memset(it, 0, sizeof *it);
+                it->label = sl && sl[0] ? sl : NULL;
+                it->action = ACT_STATUS_PICK + SB_MENU_MAX + subbase + s;
+                it->disabled = sd != 0;
+                it->checked = sc != 0;
+                status_act[SB_MENU_MAX + subbase + s] = sa;
+            }
+            status_sub_menu[i].title = NULL;
+            status_sub_menu[i].items = status_sub_items[i];
+            status_sub_menu[i].count = ns;
+            M.items[M.n - 1].submenu = &status_sub_menu[i];
+            subbase += ns;
+        }
+    }
+    menu_layout();
+    wm_damage_all();
+}
+
+void desktop_status_note(int pid, unsigned id) {
+    wm_damage(rect_make(0, 0, SW, MENUBAR_H));
+    /* o app pode republicar o menu depois do menuWillOpen:; se o item segue aberto, o dropdown acompanha */
+    if (sb_is_open(pid, id) && status_pid == pid && status_id == id)
+        open_status_menu(pid, id, 0);
+}
 
 static char about_label[64], quit_label[64], hide_label[64];
 static char win_labels[12][64];
@@ -749,6 +867,7 @@ static void open_bar_menu(int title) {
 
 void desktop_close_menus(void) {
     submenu_close();
+    sb_close_open();
     if (M.kind != MK_NONE) {
         if (M.kind == MK_POPUP) popup_res.ready = false;
         M.kind = MK_NONE;
@@ -968,6 +1087,10 @@ static void dock_empty_trash_cb(int button, void *ctx) {
 }
 
 static void run_action(int act) {
+    if (act >= ACT_STATUS_PICK && act < ACT_STATUS_PICK + SB_MENU_MAX + SB_SUB_MAX) {
+        compat_gui_status_pick(status_pid, status_id, status_act[act - ACT_STATUS_PICK]);
+        return;
+    }
     app_t *a = active_app();
     window_t *f = wm_focused();
     switch (act) {
@@ -1239,11 +1362,13 @@ static void dock_layout(void) {
     for (int i = 0; i < ndock_order && ndslots < cap; i++) {
         app_t *a = dock_order[i];
         if (DD.active && DD.remove && a == DD.app) continue;   /* puxado para fora: o espaço fecha */
+        if (a->dock_suppressed) continue;
         dslots[ndslots++] = (dock_slot_t){a, 0, 0, false, NULL};
     }
     for (int i = 0; i < apps_count() && ndslots < cap; i++) {
         app_t *a = apps_get(i);
         /* apps do macOS: as janelas são do processo (proxy), o atalho só marca "rodando" */
+        if (a->dock_suppressed) continue;
         if (!a->pinned && dock_app_running(a)) dslots[ndslots++] = (dock_slot_t){a, 0, 0, false, NULL};
     }
     /* toda janela aberta tem o seu app no Dock: apps fora do registro (processos do macOS abertos
@@ -1254,8 +1379,12 @@ static void dock_layout(void) {
         if (!w) break;
         app_t *a = w->app;
         if (!a || w->closing || !w->visible) continue;
+        if (a->dock_suppressed) continue;
         app_t *sc = apps_shortcut_for(a);          /* o atalho de /Aplicativos já representa o processo */
-        if (sc) a = sc;
+        if (sc) {
+            if (sc->dock_suppressed) continue;
+            a = sc;
+        }
         bool have = false;
         for (int k = 0; k < ndslots && !have; k++) have = dslots[k].app == a;
         if (have) continue;
@@ -3080,6 +3209,8 @@ bool desktop_handle_event(input_event_t *e) {
 static bool desktop_handle_event_local(input_event_t *e) {
     if (setup_active()) return setup_handle_event(e);            /* assistente de configuração/instalação (tela cheia) */
     if (login_active() && !A.open) return login_handle_event(e);
+    /* Shift, Command, Option e Control sozinhos vão para a janela em foco (flagsChanged:), sem atalho */
+    if (e->type == EV_KEY_DOWN && kbd_key_is_modifier(e->key)) return false;
     if (e->type == EV_KEY_DOWN) {
         u16 m = e->mods;
         if (tcc_prompt_key(e->key)) return true;
@@ -3338,7 +3469,16 @@ static bool desktop_handle_event_local(input_event_t *e) {
         }
         if (it != M.hover) { M.hover = it; wm_damage(rect_make(M.x - 30, M.y - 30, M.w + 60, M.h + 60)); }
         if (M.kind == MK_BAR && y < MENUBAR_H) {
-            /* deslizar entre títulos com o menu aberto */
+            /* deslizar entre títulos com o menu aberto, inclusive a faixa dos apps */
+            {
+                int spid; u32 sid;
+                status_relayout();
+                if (sb_hit(x, y, &spid, &sid) && !(M.title == TITLE_STATUS && status_pid == spid && status_id == sid)) {
+                    int st = sb_click(x, y, &spid, &sid);
+                    if (st == 1) { open_status_menu(spid, sid, 1); return true; }
+                    if (st == 2) { desktop_close_menus(); return true; }
+                }
+            }
             for (int i = 0; i < nbar; i++)
                 if (x >= bar[i].x && x < bar[i].x + bar[i].w && bar[i].title != M.title) { open_bar_menu(bar[i].title); return true; }
             for (int i = 0; i < nstatus; i++)
@@ -3367,8 +3507,16 @@ static bool desktop_handle_event_local(input_event_t *e) {
         return it >= 0 || y < MENUBAR_H || (e->buttons & 1);
     }
     /* barra de menus */
+    if (lp && y >= MENUBAR_H) sb_close_open();
     if (y < MENUBAR_H && bar_visible()) {
         if (lp) {
+            int spid; u32 sid;
+            int st;
+            status_relayout();
+            st = sb_click(x, y, &spid, &sid);
+            if (st == 2) { desktop_close_menus(); return true; }
+            if (st == 1) { open_status_menu(spid, sid, 1); return true; }
+            if (st == 0) sb_close_open();
             for (int i = 0; i < nbar; i++) if (x >= bar[i].x && x < bar[i].x + bar[i].w) { open_bar_menu(bar[i].title); return true; }
             for (int i = 0; i < nstatus; i++) if (x >= status[i].x && x < status[i].x + status[i].w) { open_bar_menu(status[i].title); return true; }
         }

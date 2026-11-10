@@ -44,8 +44,8 @@ Os segmentos arm64 da Apple já nascem alinhados a 16 KiB entre si. A base da im
 ## O que este contrato não faz
 
 - Não muda a página do kernel nem a de um processo x86_64.
-- Não cria commpage.
-- `MAP_FIXED` de **arquivo** e `mach_vm_map` sem `VM_FLAGS_ANYWHERE` continuam sem honrar o endereço pedido: o kernel não tem `mmap` de arquivo em endereço fixo. O endereço novo é 16 KiB alinhado.
+- Não cria commpage. O endereço do Darwin arm64 (`_COMM_PAGE64_BASE_ADDRESS`, `0xFFFFFC000`) fica no mapa de identidade do kernel, abaixo de `USER_BASE`. Mapear uma página de usuário ali colide com o kernel. O carregador é o `macho.c`, não o dyld da Apple, e nada neste contrato lê a commpage.
+- `MAP_FIXED` de arquivo (`SYS_MMAP` b = 8 privado, b = 9 compartilhado) e `mach_vm_map` sem `VM_FLAGS_ANYWHERE` devolvem o endereço pedido. O de arquivo traz o conteúdo e o deslocamento; o `mach_vm_map` devolve `KERN_NO_SPACE` se a faixa está ocupada e não veio `VM_FLAGS_OVERWRITE` (`0x4000`). Pelo libSystem o endereço e o comprimento continuam em 16 KiB. Um `svc` direto segue em 4 KiB.
 - A pilha principal não ganha guarda que falte. A das threads criadas por `pthread_create`, sim.
 - `PROT_NONE` na arena de `mmap` é o que tira o acesso de verdade. RW contra RX, quando o prot pede, vai para a PTE (NX e o bit de escrita). `mach_vm_region` continua lendo a proteção registrada, não o bit da PTE.
 - Um `mmap` feito pelo binário com `svc` direto, sem o libSystem, continua em 4 KiB. Os apps passam pelo libSystem.

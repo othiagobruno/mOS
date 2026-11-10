@@ -416,7 +416,20 @@ static void bp_add_clip(id self, SEL c) { NSRect r = bp_bounds(self, c); double 
 
 /* funções C de desenho do AppKit */
 void NSRectFill(NSRect r) { double x, y, w, h; px_rect(r, &x, &y, &w, &h); g_fill(x, y, w, h, ctx.fill); }
-void NSRectFillUsingOperation(NSRect r, u64 op) { (void)op; NSRectFill(r); }
+static void g_comp_fill(double x, double y, double w, double h, u32 c, u32 op) {
+    float p[4] = {(float)x, (float)y, (float)w, (float)h};
+    u8 b[24];
+    if (op > 28) op = 2; /* NSCompositingOperationSourceOver */
+    memcpy(b, p, 16);
+    memcpy(b + 16, &c, 4);
+    memcpy(b + 20, &op, 4);
+    put(GC_COMP_FILL, b, 24);
+}
+void NSRectFillUsingOperation(NSRect r, u64 op) {
+    double x, y, w, h;
+    px_rect(r, &x, &y, &w, &h);
+    g_comp_fill(x, y, w, h, ctx.fill, (u32)op);
+}
 void NSEraseRect(NSRect r) { double x, y, w, h; px_rect(r, &x, &y, &w, &h); g_fill(x, y, w, h, 0xFFFFFFFF); }
 void NSFrameRectWithWidth(NSRect r, double t) { double x, y, w, h; px_rect(r, &x, &y, &w, &h); g_rstroke(x + t / 2, y + t / 2, w - t, h - t, 0, t, ctx.fill); }
 void NSFrameRect(NSRect r) { NSFrameRectWithWidth(r, 1); }
@@ -1774,6 +1787,21 @@ static u16 mac_keycode(int k) {
     }
     return 0x7F;
 }
+/* keyCode do flagsChanged: no macOS (Carbon / NSEvent). */
+static u16 mac_mod_keycode(int k) {
+    switch (k) {
+    case GUI_KEY_LSHIFT: return 56;
+    case GUI_KEY_RSHIFT: return 60;
+    case GUI_KEY_LCTRL: return 59;
+    case GUI_KEY_RCTRL: return 62;
+    case GUI_KEY_LALT: return 58;
+    case GUI_KEY_RALT: return 61;
+    case GUI_KEY_LCMD: return 55;
+    case GUI_KEY_RCMD: return 54;
+    case GUI_KEY_CAPS: return 57;
+    default: return 0x7F;
+    }
+}
 static id make_event(u64 type, id win, double px, double py, gui_event_t *g) {
     id e = objc_autorelease(cx_alloc_instance(&NSEvent_c));
     evstate_t *s = calloc(1, sizeof *s);
@@ -1787,8 +1815,9 @@ static id make_event(u64 type, id win, double px, double py, gui_event_t *g) {
     s->clicks = g->clicks;
     s->dy = -g->w;
     s->ts = (double)mach_absolute_time() / 1e9;
-    if (type == 10 || type == 11) {          /* keyDown / keyUp */
-        s->keycode = mac_keycode(g->key);
+    if (type == 10 || type == 11 || type == 12) {          /* keyDown / keyUp / flagsChanged */
+        s->keycode = type == 12 ? mac_mod_keycode(g->key) : mac_keycode(g->key);
+        if (type == 12) return e;
         u32 cp = 0;
         switch (g->key) {
         case 0x100: cp = 0xF700; break; case 0x101: cp = 0xF701; break; case 0x102: cp = 0xF702; break; case 0x103: cp = 0xF703; break;
@@ -2639,7 +2668,13 @@ static id ap_shared(id cls, SEL c) {
 }
 static void ap_set_delegate(id self, SEL c, id d) { (void)self; (void)c; app.delegate = d; }
 static id ap_delegate(id self, SEL c) { (void)self; (void)c; return app.delegate; }
-static BOOL ap_set_policy(id self, SEL c, i64 p) { (void)self; (void)c; return cx_act_set_policy((int)p) ? YES : NO; }
+static BOOL ap_set_policy(id self, SEL c, i64 p) {
+    (void)self; (void)c;
+    if (!cx_act_set_policy((int)p)) return NO;
+    /* accessory e prohibited saem do Dock; regular volta. O selo do NSDockTile segue em MOS_DESK_BADGE. */
+    cx_dock_set_visible(cx_act_hides_dock() ? 0 : 1);
+    return YES;
+}
 static i64 ap_policy(id self, SEL c) { (void)self; (void)c; return cx_act_policy(); }
 static void ap_set_menu(id self, SEL c, id m) { (void)self; (void)c; keep(&app.menu, m); menus_dirty = YES; }
 static id ap_menu(id self, SEL c) { (void)self; (void)c; return app.menu; }
@@ -2674,6 +2709,18 @@ static void ap_finish_launching(id self, SEL c) {
     (void)c;
     if (app.launched) return;
     app.launched = YES;
+    /* LSUIElement no Info.plist esconde o Dock mesmo se o app nunca chama setActivationPolicy */
+    {
+        id bundle = MSG0(id, cx_class_named("NSBundle"), "mainBundle");
+        id v = bundle ? MSG(id, bundle, "objectForInfoDictionaryKey:", cx_str("LSUIElement")) : 0;
+        int yes = 0;
+        if (v && cx_is_str(v)) {
+            const char *s = cx_cstr(v);
+            yes = s && (s[0] == '1' || s[0] == 'Y' || s[0] == 'y' || s[0] == 't' || s[0] == 'T');
+        } else if (v && cx_responds(v->isa, sel_registerName("longLongValue")))
+            yes = MSG0(long long, v, "longLongValue") != 0;
+        if (cx_act_note_lsuielement(yes)) cx_dock_set_visible(0);
+    }
     { extern void cx_gc_app_launched(void); cx_gc_app_launched(); }   /* GameController: controles já ligados */
     id d = app.delegate;
     id note = cx_note(NSApplicationWillFinishLaunchingNotification, self, 0);
@@ -2703,6 +2750,12 @@ static void dispatch(gui_event_t *g) {
     if (g->type == GEV_QUIT) { MSG(void, NSApp, "terminate:", (id)0); return; }
     if (g->type == GEV_MENU) { perform_menu(g->key); return; }
     if (g->type == GEV_INPUT_SOURCE) { extern void cx_ime_source_changed(int src); cx_ime_source_changed(g->key); return; }
+    /* um agente (LSUIElement) pode não ter janela; o clique na faixa mesmo assim abre o menu */
+    if (g->type == GEV_STATUS) {
+        extern void cx_status_kernel_click(unsigned id);
+        cx_status_kernel_click((unsigned)g->key);
+        return;
+    }
     id w = find_window((int)g->win);
     if (g->type >= GEV_DRAG_ENTER && g->type <= GEV_DRAG_END) {
         /* arrastar e soltar (appkit_input.c); o fim de um arrasto chega mesmo se a janela da fonte já fechou */
@@ -2715,7 +2768,7 @@ static void dispatch(gui_event_t *g) {
      * Chromium (sugestões da barra de endereço, bolha de status, balões) são janelas filhas por cima da mãe que não
      * aceitam ser chave: sem isto as teclas iam para elas e se perdiam. Uma filha que aceita ser chave (o diálogo
      * "Abrir o X?") também fica por cima da mãe quando o clique tornou a mãe chave; aí as teclas são da mãe. */
-    if ((g->type == GEV_KEY_DOWN || g->type == GEV_KEY_UP) && w != g_key_window && g_key_window &&
+    if ((g->type == GEV_KEY_DOWN || g->type == GEV_KEY_UP || g->type == GEV_FLAGS) && w != g_key_window && g_key_window &&
         ws(g_key_window)->visible && ws(g_key_window)->gid > 0 &&
         ((cx_responds(w->isa, sel_registerName("canBecomeKeyWindow")) && !MSG0(BOOL, w, "canBecomeKeyWindow")) ||
          w_descends(w, g_key_window)))
@@ -2802,6 +2855,14 @@ static void dispatch(gui_event_t *g) {
             MSG(void, v, "mouseMoved:", make_event(5, w, g->x, g->y, g));
         }
         break;
+    case GEV_FLAGS: {
+        g_last_flags = mac_mods(g->mods);
+        {
+            id target = s->first ? s->first : s->content;
+            if (target) MSG(void, target, "flagsChanged:", make_event(12, w, 0, 0, g));
+        }
+        break;
+    }
     case GEV_KEY_UP: {
         extern void cx_gc_keyboard_event(u16 mac_keycode, u64 mods, int down);
         if (cx_mods_changed(g_last_flags, mac_mods(g->mods))) {
@@ -3102,7 +3163,7 @@ static void al_begin_sheet_delegate(id self, SEL c, id win, id delegate, SEL did
 }
 
 /* ================================================================ NSMenu (aceito, sem efeito visual) */
-typedef struct { id title, items, key, submenu; SEL action; id target; i64 tag; int state; BOOL sep, disabled; u64 mask; BOOL mask_set;
+typedef struct { id title, attr_title, items, key, submenu; SEL action; id target; i64 tag; int state; BOOL sep, disabled; u64 mask; BOOL mask_set;
                  BOOL hidden, alternate, header; id image, represented;
                  id owner, delegate; } menust_t;   /* owner: o NSMenu que contém o item (fraco); delegate: do NSMenu (fraco) */
 static menust_t *mn(id m) { if (!ST(m)) { menust_t *s = calloc(1, sizeof *s); s->items = cx_arr_new(&NSMutableArray_c); ST(m) = s; } return ST(m); }
@@ -3128,6 +3189,8 @@ static id mi_init(id self, SEL c, id t, SEL a, id k) { (void)c; menust_t *s = mn
 static id mi_sep(id cls, SEL c) { (void)c; id it = MSG0(id, MSG0(id, cls, "alloc"), "init"); mn(it)->sep = YES; return it; }
 static void mi_set_enabled(id self, SEL c, BOOL b) { (void)c; mn(self)->disabled = !b; menus_dirty = YES; }
 static void mi_set_state(id self, SEL c, i64 st) { (void)c; mn(self)->state = (int)st; menus_dirty = YES; }
+static void mi_set_attr(id self, SEL c, id a) { (void)c; keep(&mn(self)->attr_title, a); menus_dirty = YES; }
+static id mi_attr(id self, SEL c) { (void)c; return mn(self)->attr_title; }
 static void mi_set_mask(id self, SEL c, u64 m) { (void)c; mn(self)->mask = m; mn(self)->mask_set = YES; menus_dirty = YES; }
 static u64 mi_mask_get(id self, SEL c) {
     (void)c;
@@ -3224,8 +3287,25 @@ static id *menu_tab;
 static u32 nmenu_tab, capmenu_tab;
 static BOOL menus_sent;
 
+static u32 menu_id(id item);
+u32 cx_menu_item_action(id item) {
+    if (!item) return 0;
+    if (mn(item)->sep) return 0;
+    return menu_id(item);
+}
+void cx_menu_tab_forget(id item) {
+    u32 i;
+    if (!item) return;
+    for (i = 0; i < nmenu_tab; i++)
+        if (menu_tab[i] == item) { objc_release(item); menu_tab[i] = 0; return; }
+}
 static u32 menu_id(id item) {
-    for (u32 i = 0; i < nmenu_tab; i++) if (menu_tab[i] == item) return i + 1;
+    u32 i, hole = nmenu_tab;
+    for (i = 0; i < nmenu_tab; i++) {
+        if (menu_tab[i] == item) return i + 1;
+        if (!menu_tab[i] && hole == nmenu_tab) hole = i;
+    }
+    if (hole < nmenu_tab) { menu_tab[hole] = objc_retain(item); return hole + 1; }
     if (nmenu_tab == capmenu_tab) { capmenu_tab = capmenu_tab ? capmenu_tab * 2 : 64; menu_tab = realloc(menu_tab, capmenu_tab * sizeof(id)); }
     menu_tab[nmenu_tab++] = objc_retain(item);
     return nmenu_tab;
@@ -3338,7 +3418,7 @@ static void perform_menu(int k) {
     }
     if (k == GUI_MENU_PREFS) { id it = find_item(app.menu, pred_comma, 0); if (it) perform_item(it); return; }
     if (k == GUI_MENU_HIDE) return;
-    if (k >= 1 && (u32)k <= nmenu_tab) perform_item(menu_tab[k - 1]);
+    if (k >= 1 && (u32)k <= nmenu_tab && menu_tab[k - 1]) perform_item(menu_tab[k - 1]);
 }
 static BOOL menu_shortcut(gui_event_t *g) {
     if (!app.menu || !(g->mods & 8)) return NO;
@@ -3407,11 +3487,12 @@ static NSSize im_size(id self, SEL c) { (void)c; imgst_t *s = im(self); NSSize z
 static void im_set_size(id self, SEL c, NSSize z) { (void)c; im(self)->dw = z.w; im(self)->dh = z.h; }
 static BOOL im_valid(id self, SEL c) { (void)c; return im(self)->px != 0; }
 /* desenha a imagem escalada para um retângulo em pixels */
-static void blit_image(imgst_t *s, double x, double y, double w, double h, double alpha) {
+static void blit_image(imgst_t *s, double x, double y, double w, double h, double alpha, u32 op) {
     if (!s->px || w < 1 || h < 1) return;
     int dw = (int)(w + 0.5), dh = (int)(h + 0.5);
     if (dw > 2048) dw = 2048;
     if (dh > 2048) dh = 2048;
+    if (op > 28) op = 2;
     u32 *buf = malloc((size_t)dw * dh * 4 + 16);
     if (!buf) return;
     u32 a8 = (u32)(alpha * 255 + 0.5);
@@ -3424,17 +3505,32 @@ static void blit_image(imgst_t *s, double x, double y, double w, double h, doubl
             buf[j * dw + i] = p;
         }
     }
-    u32 hdrsz = 16, bytes = (u32)dw * dh * 4;
-    u8 *b = malloc(hdrsz + bytes);
-    i32 r[4] = {(i32)x, (i32)y, dw, dh};
-    memcpy(b, r, 16);
-    memcpy(b + 16, buf, bytes);
-    put(GC_IMAGE, b, hdrsz + bytes);
-    free(b);
+    u32 bytes = (u32)dw * dh * 4;
+    /* op 2 continua no blit source-over do kernel (SSE). Os outros modos vão no caminho escalar. */
+    if (op == 2) {
+        u8 *b = malloc(16 + bytes);
+        i32 r[4] = {(i32)x, (i32)y, dw, dh};
+        if (b) {
+            memcpy(b, r, 16);
+            memcpy(b + 16, buf, bytes);
+            put(GC_IMAGE, b, 16 + bytes);
+            free(b);
+        }
+    } else {
+        u8 *b = malloc(20 + bytes);
+        i32 r[4] = {(i32)x, (i32)y, dw, dh};
+        if (b) {
+            memcpy(b, r, 16);
+            memcpy(b + 16, &op, 4);
+            memcpy(b + 20, buf, bytes);
+            put(GC_COMP_IMAGE, b, 20 + bytes);
+            free(b);
+        }
+    }
     free(buf);
 }
-static void im_draw_in(id self, SEL c, NSRect r) { (void)c; double x, y, w, h; px_rect(r, &x, &y, &w, &h); blit_image(im(self), x, y, w, h, 1); }
-static void im_draw_in_frac(id self, SEL c, NSRect r, NSRect from, u64 op, double f) { (void)c; (void)from; (void)op; double x, y, w, h; px_rect(r, &x, &y, &w, &h); blit_image(im(self), x, y, w, h, f); }
+static void im_draw_in(id self, SEL c, NSRect r) { (void)c; double x, y, w, h; px_rect(r, &x, &y, &w, &h); blit_image(im(self), x, y, w, h, 1, 2); }
+static void im_draw_in_frac(id self, SEL c, NSRect r, NSRect from, u64 op, double f) { (void)c; (void)from; double x, y, w, h; px_rect(r, &x, &y, &w, &h); blit_image(im(self), x, y, w, h, f, (u32)op); }
 static void im_draw_at(id self, SEL c, NSPoint p, NSRect from, u64 op, double f) { (void)from; imgst_t *s = im(self); NSRect r = {p, {s->dw, s->dh}}; im_draw_in_frac(self, c, r, r, op, f); }
 
 static void iv_set_image(id self, SEL c, id img) { (void)c; keep(&vs(self)->image, img); mark(self); }
@@ -3446,7 +3542,18 @@ static void draw_image_fit(id img, double x, double y, double w, double h) {
     double sc = 1;
     if (s->dw > w || s->dh > h) { double a = w / s->dw, b = h / s->dh; sc = a < b ? a : b; }
     double iw = s->dw * sc, ih = s->dh * sc;
-    blit_image(s, x + (w - iw) / 2, y + (h - ih) / 2, iw, ih, 1);
+    blit_image(s, x + (w - iw) / 2, y + (h - ih) / 2, iw, ih, 1, 2);
+}
+const u32 *cx_nsimage_pixels(id img, int *w, int *h) {
+    imgst_t *s;
+    if (w) *w = 0;
+    if (h) *h = 0;
+    if (!img) return 0;
+    s = im(img);
+    if (!s->px || s->w <= 0 || s->h <= 0) return 0;
+    if (w) *w = s->w;
+    if (h) *h = s->h;
+    return s->px;
 }
 
 /* ================================================================ NSScrollView */
@@ -4917,6 +5024,7 @@ void cx_appkit_init(void) {
     M(NSMenuItem, "keyEquivalentModifierMask", mi_mask_get); M(NSMenuItem, "userKeyEquivalent", mi_user_key); M(NSMenuItem, "setUserKeyEquivalent:", mi_set_key);
     M(NSMenuItem, "userKeyEquivalentModifierMask", mi_user_mask); M(NSMenuItem, "setUserKeyEquivalentModifierMask:", mi_set_mask);
     M(NSMenuItem, "setAction:", mi_set_action); M(NSMenuItem, "setTitle:", mi_set_title); M(NSMenuItem, "setKeyEquivalent:", mi_set_key); M(NSMenuItem, "tag", mi_tag); M(NSMenuItem, "state", mi_state);
+    M(NSMenuItem, "setAttributedTitle:", mi_set_attr); M(NSMenuItem, "attributedTitle", mi_attr);
     M(NSMenuItem, "setTag:", mi_set_tag); M(NSMenuItem, "setState:", mi_set_state); M(NSMenuItem, "setEnabled:", mi_set_enabled);
     M(NSMenuItem, "setToolTip:", mi_set_tooltip); M(NSMenuItem, "toolTip", mi_tooltip);
     M(NSMenuItem, "setAllowsKeyEquivalentWhenHidden:", mi_set_bool_ignored);

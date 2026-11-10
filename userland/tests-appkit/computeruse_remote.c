@@ -3,11 +3,13 @@
  *   CGEventPostToPid é aplicado pelo processo do pid e não muda o foco.
  *   AXValueChanged desse processo chega no observador.
  *   A árvore (role, title, children) e AXStringForRange atravessam o ax_msg.
- * A caixa de bytes é o harness. O IPC de produção (SYS-XPC-MACH / KER-UNIX-IPC)
- * não está ligado: a leitura remota de verdade continua -25204 e o teste marca PENDENTE.
+ * Um terceiro fork usa o vtable de axtransport.h num par de sockets: call no pai,
+ * listen/send no filho. Isso não é o bootstrap Mach. cx_xpc_peer_call continua
+ * PENDENTE neste host: o link de xpc.c não fecha sem o kernel.
  *
  *   gcc -std=c11 -Wall -Wextra -Iuserland/tests-appkit -Iuserland/libsystem \
- *       userland/libsystem/axproto.c userland/tests-appkit/computeruse_core.c \
+ *       userland/libsystem/axproto.c userland/libsystem/axtransport.c \
+ *       userland/tests-appkit/computeruse_core.c \
  *       userland/tests-appkit/computeruse_remote.c -o /tmp/computer-use-remote \
  *       && /tmp/computer-use-remote
  */
@@ -19,6 +21,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <sys/mman.h>
+#include <sys/socket.h>
 #include <sys/wait.h>
 
 enum { PID_FUNDO = 41, PID_FRENTE = 42 };
@@ -110,6 +113,88 @@ static void child_main(int pid) {
         usleep(1000);
     }
     _exit(0);
+}
+
+static int g_pipe = -1;
+
+static int io_full(int fd, void *buf, int n, int wr) {
+    int off = 0;
+    char *p = buf;
+    while (off < n) {
+        int k = wr ? (int)write(fd, p + off, (size_t)(n - off)) : (int)read(fd, p + off, (size_t)(n - off));
+        if (k <= 0) return -1;
+        off += k;
+    }
+    return 0;
+}
+
+static int pipe_ready(void) { return g_pipe >= 0; }
+
+static int pipe_send(int pid, const void *bytes, int n) {
+    int len = n;
+    (void)pid;
+    if (n < 0 || (n && !bytes)) return 22;
+    if (io_full(g_pipe, &len, 4, 1) || (n && io_full(g_pipe, (void *)bytes, n, 1))) return 61;
+    return 0;
+}
+
+static int pipe_call(int pid, const void *req, int n, void *reply, int cap, int *out_n) {
+    int len = n, rn = 0;
+    (void)pid;
+    if (out_n) *out_n = 0;
+    if (n < 0 || cap < 0 || (n && !req)) return 22;
+    if (io_full(g_pipe, &len, 4, 1) || (n && io_full(g_pipe, (void *)req, n, 1))) return 61;
+    if (io_full(g_pipe, &rn, 4, 0)) return 60;
+    if (rn < 0 || rn > cap) return 22;
+    if (rn && io_full(g_pipe, reply, rn, 0)) return 60;
+    if (out_n) *out_n = rn;
+    return 0;
+}
+
+static int pipe_listen(void (*fn)(int from_pid, const void *bytes, int n, void *ctx), void *ctx) {
+    for (;;) {
+        int n = 0;
+        unsigned char buf[640];
+        if (io_full(g_pipe, &n, 4, 0)) return 0;
+        if (n <= 0 || n > (int)sizeof buf) return 22;
+        if (io_full(g_pipe, buf, n, 0)) return 61;
+        if (fn) fn(0, buf, n, ctx);
+    }
+}
+
+static int ready_off(void) { return 0; }
+static int call_61(int pid, const void *req, int n, void *reply, int cap, int *out_n) {
+    (void)pid; (void)req; (void)n; (void)reply; (void)cap;
+    if (out_n) *out_n = 0;
+    return 61;
+}
+
+static void on_ax_pipe(int from, const void *bytes, int n, void *ctx) {
+    unsigned char rep[640];
+    int rn = 0;
+    (void)from;
+    (void)ctx;
+    serve(G, bytes, n, rep, &rn);
+    if (rn > 0) pipe_send(from, rep, rn);
+}
+
+static int vtable_copy(int pid, int kind, int id, const char *name, ax_msg *out) {
+    const cx_ax_transport *t = cx_ax_transport_get();
+    ax_msg req;
+    unsigned char buf[640], rep[640];
+    int n, rn = 0, rc;
+    if (!t || !t->call || !out) return 0;
+    memset(&req, 0, sizeof req);
+    req.op = AX_OP_COPY;
+    req.pid = pid;
+    req.kind = kind;
+    req.id = id;
+    snprintf(req.name, sizeof req.name, "%s", name);
+    n = ax_msg_encode(&req, buf, (int)sizeof buf);
+    if (n < 0) return 0;
+    rc = t->call(pid, buf, n, rep, (int)sizeof rep, &rn);
+    if (cx_ax_wire_status(rc)) return 0;
+    return ax_msg_decode(rep, rn, out) == 0;
 }
 
 static int ax_call(int pid, const ax_msg *req, ax_msg *out) {
@@ -231,8 +316,47 @@ int main(void) {
     back_scroll = cu_win_scroll(G, fundo_win);
     check(front_scroll == 3 && back_scroll == 5 && cu_front_pid(G) == PID_FRENTE, "foco e filas continuam separados");
 
+    check(cx_ax_wire_status(0) == 0 && cx_ax_wire_status(60) == -25204 && cx_ax_wire_status(61) == -25204,
+          "60 e 61 do transporte viram -25204");
+    {
+        cx_ax_transport down = {"xpc-mach", ready_off, call_61, 0, 0};
+        cx_ax_transport_bind(&down);
+        check(!cx_ax_transport_ready(), "ready falho deixa o AX remoto fechado");
+    }
+    {
+        int sv[2];
+        pid_t c;
+        ax_msg got;
+        int opened = socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0;
+        c = opened ? fork() : -1;
+        if (c == 0) {
+            g_pipe = sv[1];
+            close(sv[0]);
+            pipe_listen(on_ax_pipe, 0);
+            _exit(0);
+        }
+        if (c > 0) {
+            g_pipe = sv[0];
+            close(sv[1]);
+        }
+        {
+            cx_ax_transport up = {"xpc-mach", pipe_ready, pipe_call, pipe_send, pipe_listen};
+            if (c > 0) cx_ax_transport_bind(&up);
+        }
+        check(c > 0 && cx_ax_transport_ready() && vtable_copy(PID_FUNDO, CU_KIND_WIN, fundo_win, "AXRole", &got) &&
+                  got.status == 0 && got.pay == AX_PAY_STR && !strcmp(got.str, "AXWindow"),
+              "fork + call/listen devolve o role");
+        check(c > 0 && vtable_copy(PID_FUNDO, CU_KIND_WIN, fundo_win, "AXTitle", &got) && !strcmp(got.str, "Janela Fundo"),
+              "fork + call/listen devolve o title");
+        check(c > 0 && vtable_copy(PID_FUNDO, CU_KIND_WIN, fundo_win, "AXChildren", &got) && got.pay == AX_PAY_KIDS && got.nkids == 2,
+              "fork + call/listen devolve os children");
+        if (g_pipe >= 0) close(g_pipe);
+        g_pipe = -1;
+        if (c > 0) waitpid(c, 0, 0);
+    }
+
     pending++;
-    printf("  PENDENTE  AX remoto de produção: %s\n", CX_AX_TRANSPORT_DEPENDENCY);
+    printf("  PENDENTE  cx_xpc_peer_call no Linux: %s\n", CX_AX_TRANSPORT_DEPENDENCY);
 
     cu_store(G, CU_DONE, 1);
     waitpid(a, 0, 0);
