@@ -598,6 +598,7 @@ void cx_appkit_input_init(void) {
     cx_vscode_cf_classes();     /* vscode_cf.c: classes internas de CF (locale, UUID, CharacterSet, BinaryHeap) e kCFNull */
     { extern void cx_appkit_postico_init(void); cx_appkit_postico_init(); }   /* appkit_postico.c: NSOutlineView, NSSplitView, NSToolbarItem... (Postico) */
     { extern void cx_appkit_electron_init(void); cx_appkit_electron_init(); } /* appkit_electron.c: AppKit que o Claude e o ChatGPT importam */
+    { extern void cx_appkit_apps_ui_init(void); cx_appkit_apps_ui_init(); }   /* appkit_apps_ui.c: texto, grade, folha (Postico e Setapp) */
     cx_class_t *resp = cx_class_named("NSResponder");
     cx_class_t *view = cx_class_named("NSView");
     cx_class_t *obj = cx_class_named("NSObject");
