@@ -157,7 +157,8 @@ done
 # x86_64: _Unwind_* fica em cxx_unwind.c. Os .o do libunwind do zig repetem esses nomes.
 "$ZIG" cc -target x86_64-freestanding-none -O2 -g0 -ffreestanding -fno-stack-protector -fno-builtin -nostdlib -static -no-pie \
     -fpie -mno-red-zone -Wall -Wno-unused-parameter -Wno-incompatible-library-redeclaration -Wno-builtin-requires-header \
-    -I"$ROOT/userland/libsystem/kshim" -I"$ROOT/kernel/include" \
+    -I"$ROOT/userland/libsystem/kshim" -I"$ROOT/userland/libsystem/fsinc" \
+    -isystem "$ZIGDIR/lib/include" \
     -Wl,--image-base=0x400000100000 -Wl,-e,cx_start -Wl,--no-gc-sections \
     "${LS_SRC[@]}" \
     -o "$OUT/libSystem.mos"
