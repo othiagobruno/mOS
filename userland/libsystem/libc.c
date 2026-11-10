@@ -885,7 +885,7 @@ ssize_t read(int fd, void *b, size_t n) {
     if (IS_SOCK(fd)) return cx_sock_read(fd, b, n);
     if (nb_on(fd) && n) {
         mos_stat_t st;   /* pipe: is_dir 2 = ponta de leitura, size = bytes prontos, mtime = 1 se o escritor fechou */
-        if (SYS2(SYS_FSTAT, fd, &st) == 0 && st.is_dir == 2 && st.size == 0 && !st.mtime) { cx_errno = 35; return -1; }   /* EAGAIN */
+        if (SYS2(SYS_FSTAT, fd, &st) == 0 && (st.is_dir == 2 || st.is_dir == 6) && st.size == 0 && !st.mtime) { cx_errno = 35; return -1; }   /* EAGAIN */
     }
     return ret_errno(SYS3(SYS_READ, fd, b, n));
 }
@@ -1322,7 +1322,50 @@ int sigaltstack(const void *ss, void *old) {
     return 0;
 }
 int setlocale_dummy;
-char *setlocale(int cat, const char *loc) { (void)cat; (void)loc; return "C"; }
+/* O Chromium pede o pak em <locale>.lproj com este identificador (en_US vira en no próprio motor).
+ * LANG=en_US.UTF-8 / pt_BR.UTF-8 vem do kernel; o arquivo de preferências cobre o processo sem LANG. */
+const char *cx_locale_id(void) {
+    static char id[8];
+    if (id[0]) return id;
+    const char *lang = getenv("LANG");
+    int en = 0, from_env = 0;
+    if (lang && lang[0] && strcmp(lang, "POSIX") != 0 && !(lang[0] == 'C' && (lang[1] == 0 || lang[1] == '.'))) {
+        en = lang[0] == 'e' || lang[0] == 'E';
+        from_env = 1;
+    }
+    if (!from_env) {
+        int fd = open("/Sistema/Biblioteca/Preferencias/com.mos.sistema.cfg", 0);
+        if (fd >= 0) {
+            char buf[256];
+            ssize_t n = read(fd, buf, sizeof buf - 1);
+            close(fd);
+            if (n > 0) { buf[n] = 0; if (strstr(buf, "idioma=en")) en = 1; }
+        }
+    }
+    memcpy(id, en ? "en_US" : "pt_BR", 6);
+    return id;
+}
+static char locale_full[24] = "pt_BR.UTF-8";
+static void locale_store(const char *tag) {
+    size_t n = strlen(tag);
+    if (n > 12) n = 12;
+    memcpy(locale_full, tag, n);
+    if (strcmp(tag, "C") == 0) locale_full[n] = 0;
+    else memcpy(locale_full + n, ".UTF-8", 7);
+}
+static const char *locale_tag_of(const char *loc) {
+    if (!loc || !loc[0]) return cx_locale_id();
+    if (!strcmp(loc, "C") || !strcmp(loc, "POSIX")) return "C";
+    if (loc[0] == 'e' || loc[0] == 'E') return "en_US";
+    if (loc[0] == 'p' || loc[0] == 'P') return "pt_BR";
+    return cx_locale_id();
+}
+char *setlocale(int cat, const char *loc) {
+    (void)cat;
+    if (loc) locale_store(locale_tag_of(loc));
+    else locale_store(cx_locale_id());
+    return locale_full;
+}
 
 /* stat do macOS ($INODE64): 144 bytes */
 typedef struct {
@@ -1333,8 +1376,8 @@ typedef struct {
 
 static void to_mac_stat(const mos_stat_t *s, mac_stat_t *m) {
     memset(m, 0, sizeof *m);
-    /* is_dir: 0 arquivo, 1 pasta, 2/3 pipe (ponta de leitura/escrita), 4 dispositivo (/dev/null), 5 terminal (pty) */
-    m->st_mode = s->is_dir == 5 ? 0020620 : s->is_dir == 4 ? 0020666 : s->is_dir >= 2 ? 0010600 : s->is_dir ? 0040755 : 0100644;
+    /* is_dir: 0 arquivo, 1 pasta, 2/3 pipe, 4 dispositivo, 5 terminal, 6 socket AF_UNIX */
+    m->st_mode = s->is_dir == 6 ? 0140666 : s->is_dir == 5 ? 0020620 : s->is_dir == 4 ? 0020666 : s->is_dir >= 2 ? 0010600 : s->is_dir ? 0040755 : 0100644;
     m->st_dev = 0x1000002;      /* um só volume; o st_ino (hash do caminho) separa os arquivos */
     m->st_nlink = 1;
     m->st_uid = 501;

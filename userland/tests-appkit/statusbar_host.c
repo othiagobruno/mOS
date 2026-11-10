@@ -105,6 +105,53 @@ int main(void) {
 
     n = pack_item(buf, sizeof buf, 3, -1, 0, 0, 0, 0, "Oculto", 0, 0, 0, 0);
     check(sb_upsert_wire(7, buf, n) == 0, "publica um item oculto");
+
+    {
+        unsigned char big[8192];
+        unsigned acts[20], flags[20], nn = 0, k;
+        const char *labs[20];
+        char store[20][8];
+        u32 act = 0, suba = 0;
+        int dis = 0, sep = 0, sd = 0, sc = 0;
+        const char *sub;
+        for (k = 0; k < 20; k++) {
+            store[k][0] = 'a' + (char)k; store[k][1] = 0;
+            labs[k] = store[k];
+            acts[k] = 100 + k;
+            flags[k] = (k == 3) ? 4u : 0u;
+        }
+        nn = pack_item(big, sizeof big, 9, -1, 1, 0, 0, 0, "Checado", acts, flags, labs, 20);
+        check(nn > 0 && sb_upsert_wire(7, big, nn) == 0, "publica menu com 20 itens");
+        check(sb_menu_count(7, 9) == 20, "o protocolo aceita mais de 16 itens");
+        check(sb_menu_checked(7, 9, 3) == 1 && sb_menu_checked(7, 9, 0) == 0, "estado de check no item");
+        check(strcmp(sb_menu_label(7, 9, 19, &act, &dis, &sep), "t") == 0 && act == 119, "o 20º rótulo chega inteiro");
+        /* submenu: bit 3, um filho marcado, rótulo vindo de attributedTitle já em texto puro */
+        nn = 0;
+        wr_u32(big, &nn, 10);
+        wr_u32(big, &nn, (unsigned)-1);
+        wr_u32(big, &nn, 1);
+        wr_u32(big, &nn, 0);
+        wr_u32(big, &nn, 0);
+        wr_u32(big, &nn, 1);
+        wr_u32(big, &nn, 5);
+        wr_bytes(big, &nn, "Atrib", 5);
+        wr_u32(big, &nn, 7);
+        wr_u32(big, &nn, 8u);
+        wr_u32(big, &nn, 4);
+        wr_bytes(big, &nn, "Mais", 4);
+        wr_u32(big, &nn, 1);
+        wr_u32(big, &nn, 41);
+        wr_u32(big, &nn, 4u);
+        wr_u32(big, &nn, 6);
+        wr_bytes(big, &nn, "Marcar", 6);
+        check(sb_upsert_wire(7, big, nn) == 0, "publica submenu e attributedTitle");
+        check(strcmp(sb_menu_label(7, 10, 0, &act, &dis, &sep), "Mais") == 0 && act == 7, "rótulo do item pai");
+        check(sb_menu_sub_count(7, 10, 0) == 1, "um filho no submenu");
+        sub = sb_menu_sub(7, 10, 0, 0, &suba, &sd, &sc);
+        check(sub && strcmp(sub, "Marcar") == 0 && suba == 41 && sc == 1 && sd == 0, "filho marcado do submenu");
+        sb_remove(7, 9);
+        sb_remove(7, 10);
+    }
     check(sb_count() == 3, "três itens na lista, inclusive o oculto");
 
     ng = sb_layout(800, 26, 700, 0, 0);
@@ -183,6 +230,13 @@ int main(void) {
         unsigned src = gui_premul(0x80FF0000u);
         for (i = 0; i < 4; i++) rect[i] = gui_composite_px(rect[i], src, GUI_COMP_SOURCE_OVER);
         check(rect[0] == rect[3] && rect[0] != 0xFFFFFFFFu, "preenchimento 2x2 em source-over");
+        /* GC_COMP_FILL / GC_COMP_IMAGE usam estes ops sobre o pixel pré-multiplicado */
+        check(gui_composite_px(0xFF0000FFu, gui_premul(0xFFFF0000u), GUI_COMP_COPY) == gui_premul(0xFFFF0000u),
+              "GC_COMP_FILL copy substitui o destino");
+        check(gui_composite_px(0xFF808080u, gui_premul(0xFFFF0000u), GUI_COMP_MULTIPLY) != 0xFF808080u,
+              "GC_COMP_IMAGE multiply altera o destino");
+        check(gui_composite_px(0xFF112233u, gui_premul(0x80FF0000u), GUI_COMP_CLEAR) == 0,
+              "GC_COMP_FILL clear zera o pixel");
     }
 
     /* Shift sozinho: pressionar e soltar entregam o evento de flags, sem ser uma letra */

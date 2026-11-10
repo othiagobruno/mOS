@@ -279,6 +279,7 @@ void dispatch_barrier_async_f(void *q, void *ctx, dispatch_function_t fn) { q_as
 void dispatch_barrier_sync_f(void *q, void *ctx, dispatch_function_t fn) { q_sync(q, ctx, fn, 0); }
 void dispatch_async(void *q, void *block) { q_async(q, 0, 0, block, 0); }
 void dispatch_sync(void *q, void *block) { q_sync(q, 0, 0, block); }
+void dispatch_async_and_wait(void *q, void *block) { dispatch_sync(q, block); }
 void dispatch_barrier_async(void *q, void *block) { q_async(q, 0, 0, block, 0); }
 void dispatch_barrier_sync(void *q, void *block) { q_sync(q, 0, 0, block); }
 void dispatch_after_f(u64 when, void *q, void *ctx, dispatch_function_t fn) { q_async(q, ctx, fn, 0, delay_of(when)); }
