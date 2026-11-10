@@ -149,13 +149,13 @@ escondida como "bate":
 |---|---|
 | FMA "hardfloat": com FPSR.IXC ligado, RN e entradas normais, o QEMU calcula muladd f32/f64 com o `fma()` estático do mingw, que arredonda duas vezes | casos de FMA começam com IXC = 0 (escalar e lane 0 exatos); FMLA/FMLS/FRECPS/FCMLA vetoriais divergentes são refeitos lane a lane com as lanes anteriores zeradas (exatas, IXC limpo); o que não dá para isolar vira a coluna **FMA?**; a suíte C compara a linha `fma` só com o x86_64 |
 | não implementa SCTLR.SA0 (sp desalinhado como base) | o fuzzer só gera sp inicial alinhado; numa sequência em que um pré/pós-índice desalinha o sp, "nós FAULT com addr = sp" × "QEMU segue" corta a comparação ali; SA0 fica com os testes da INT |
-| STXR com monitor aberto não verifica alinhamento/tradução | aceita "abort" × "status 1 sem acesso" (IMPLEMENTATION DEFINED no ARM) |
+| STXR com monitor aberto não verifica alinhamento/tradução | aceita "abort" × "status 1 sem acesso" (IMPLEMENTATION DEFINED no ARM). Vale também quando o STXR* está no rascunho, depois de um BR/RET: o QEMU segue e pode dar UDF na palavra seguinte; o caso deixa de ser comparável (`regress_br_reg_d65f0160.S`) |
 | DC CVAC/CVAU/CIVAC e IC IVAU não sondam o endereço | aceita "nós FAULT" × "QEMU segue" com o resto igual; DC CVAP/CVADP o QEMU sonda: estrito |
 | DCZID_EL0 = 512 B + DZP=1 (efeito do trap do DC ZVA), CNTFRQ 62,5 MHz, contadores de tempo, PACGA (QARMA) | fora do gerador; valores do M1 ficam nos testes próprios (`int_sys.S`) |
 | `-cpu max` tem recursos que não anunciamos (SVE, SME, MTE, MOPS, AFP, XS, SPECRES, FP8, LUT, FPRCVT...) | validade pelo LLVM (abaixo): o que o LLVM com os nossos recursos não conhece tem que ser UDF; um `MSR FPCR` que deixa AH/FIZ/NEP/EBF ligados no QEMU torna o caso não comparável |
 | console de semihosting troca LF por CRLF | desfeito em `common.ps1` (troca exata) |
 | (harness) o Windows mapeia 0x7FFE0000..0x7FFEFFFF (KUSER_SHARED_DATA) em todo processo e o a64test não consegue reservar | "QEMU FAULT ali" × "nós seguimos" é tolerado |
-| (harness) UDF nosso numa palavra executada fora do caso (desvio para o rascunho, que executa dados) | se o LLVM com os nossos recursos não conhece a palavra (MTE, HBC, SM3...), o UDF conta como correto |
+| (harness) UDF nosso numa palavra executada fora do caso (desvio para o rascunho, que executa dados) | se o LLVM com os nossos recursos não conhece a palavra (MTE, HBC, SM3, CMPBR...), o UDF conta como correto, mesmo se o QEMU executa a palavra (o `-cpu max` tem o recurso) e só dá UDF mais adiante (`regress_br_reg_503c5df0.S`, `regress_dp_csel_33e9fc55.S`) |
 
 ### Fuzzing diferencial (`tools/a64fuzz.c` → `build/a64fuzz.exe`)
 

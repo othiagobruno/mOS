@@ -475,6 +475,15 @@ static int excl_tolerated(const fz_result *a, const fz_result *b, u32 insn, u32 
     g_warn_excl++;
     return 1;
 }
+/* O mesmo IMPLEMENTATION DEFINED, quando o STXR* não é a palavra do caso: um BR/RET caiu no
+ * rascunho (dados) e a exclusiva que falha aborta aqui e não no QEMU. O QEMU segue e pode dar
+ * UDF numa palavra seguinte. O resto deixa de ser comparável. */
+static int excl_fail_tolerated(const fz_result *ours, const fz_result *q) {
+    if (ours->kind != FZK_FAULT || !store_excl(ours->insn)) return 0;
+    if (q->kind == FZK_FAULT && q->pc == ours->pc) return 0;
+    g_warn_excl++;
+    return 1;
+}
 
 /* DC CVAC/CVAU/CIVAC e IC IVAU num endereço sem mapeamento: no ARM podem dar falha de tradução
  * (o tradutor sonda a linha, como o hardware), mas o QEMU trata como NOP sem sondar. Aceita
@@ -836,12 +845,13 @@ int main(int argc, char **argv) {
 
     u8 *susp = calloc(n, 1);
     /* UDF nosso numa palavra que não é a do caso (dado do rascunho executado depois de um desvio):
-     * se o LLVM com os nossos recursos não a conhece (MTE, HBC... que o -cpu max tem), o UDF está certo */
+     * se o LLVM com os nossos recursos não a conhece (MTE, HBC, CMPBR... que o -cpu max tem), o UDF
+     * está certo. Vale também quando o QEMU executa essa palavra e só dá UDF mais adiante. */
     u8 *udf_alt = calloc(n, 1);
     {
         u32 na = 0, *idx = malloc((size_t)n * 4), *wa = malloc((size_t)n * 4);
         for (u32 i = 0; i < n; i++)
-            if (ri[i].kind == FZK_UDF && rq[i].kind != FZK_UDF && ri[i].insn != cs[i].insn[0]) { idx[na] = i; wa[na++] = ri[i].insn; }
+            if (ri[i].kind == FZK_UDF && ri[i].insn != cs[i].insn[0]) { idx[na] = i; wa[na++] = ri[i].insn; }
         if (na) {
             disinfo *da = calloc(na, sizeof *da);
             llvm_classify(wa, na, da);
@@ -863,17 +873,23 @@ int main(int argc, char **argv) {
         int exp_udf = mu || (K == 1 && rq[i].kind == FZK_UDF);   /* K>1: UDF do QEMU no meio da sequência compara como saída */
         if (mu) s->must_udf++;
         const char *verd;
-        if (exp_udf) {
+        int same_udf = ri[i].kind == FZK_UDF && rq[i].kind == FZK_UDF && rq[i].pc == ri[i].pc;
+        if (exp_udf && ri[i].kind == FZK_UDF) {
             s->exp_udf++;
-            if (ri[i].kind == FZK_UDF) { s->udf_ok++; verd = NULL; }
-            else { s->should_udf++; verd = "deveria_udf"; }
+            s->udf_ok++; verd = NULL;
+        } else if (exp_udf && !mu && excl_fail_tolerated(&ri[i], &rq[i])) {
+            /* o UDF do QEMU é consequência de ele ter passado do STXR*; o caso em si executou */
+            s->exp_exec++; s->impl++; s->match++; verd = NULL;
+        } else if (exp_udf) {
+            s->exp_udf++;
+            s->should_udf++; verd = "deveria_udf";
         } else {
             s->exp_exec++;
-            if (ri[i].kind == FZK_UDF && rq[i].kind != FZK_UDF && udf_alt[i]) { s->impl++; s->match++; verd = NULL; }   /* executou o caso; o UDF foi depois, e está certo */
+            if (ri[i].kind == FZK_UDF && udf_alt[i] && !same_udf) { s->impl++; s->match++; verd = NULL; }   /* executou o caso; o UDF da palavra não anunciada está certo */
             else if (ri[i].kind == FZK_UDF && rq[i].kind != FZK_UDF && !(K > 1 && seq_tolerated(&ri[i], &rq[i], &cs[i]))) { s->udf_bad++; verd = "udf_indevido"; }
             else {
                 s->impl++;
-                if (cmp_res(&ri[i], &rq[i]) && !excl_tolerated(&ri[i], &rq[i], cs[i].insn[0], cs[i].ninsn) && !dc_tolerated(&ri[i], &rq[i], cs[i].insn[0], cs[i].ninsn) && !seq_tolerated(&ri[i], &rq[i], &cs[i]) && !afp_tolerated(&rq[i]) && !win_tolerated(&ri[i], &rq[i])) {
+                if (cmp_res(&ri[i], &rq[i]) && !excl_tolerated(&ri[i], &rq[i], cs[i].insn[0], cs[i].ninsn) && !dc_tolerated(&ri[i], &rq[i], cs[i].insn[0], cs[i].ninsn) && !seq_tolerated(&ri[i], &rq[i], &cs[i]) && !excl_fail_tolerated(&ri[i], &rq[i]) && !afp_tolerated(&rq[i]) && !win_tolerated(&ri[i], &rq[i])) {
                     if (susp[i]) { s->fma_susp++; verd = "suspeito_fma"; } else { s->diverge++; verd = "diverge"; }
                 } else { s->match++; verd = NULL; }
             }
