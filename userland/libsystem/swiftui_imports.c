@@ -45,7 +45,6 @@ void $s7SwiftUI10EdgeInsetsVMn(void) {}
 void $s7SwiftUI10EdgeInsetsVN(void) {}
 void $s7SwiftUI10FocusStateV12wrappedValuexvg(void) {}
 void $s7SwiftUI10FocusStateV12wrappedValuexvs(void) {}
-void $s7SwiftUI10FocusStateV14projectedValueAC7BindingVyx_Gvg(void) {}
 void $s7SwiftUI10FocusStateVACySbGycSbRszrlufC(void) {}
 void $s7SwiftUI10FocusStateVMn(void) {}
 void $s7SwiftUI10ScrollViewVMn(void) {}
@@ -822,12 +821,6 @@ void $s7SwiftUI5ShapePAAE4fill_5styleQrqd___AA9FillStyleVtAA0cG0Rd__lF(void) {}
 void $s7SwiftUI5ShapePAAE4roleAA0C4RoleOvgZ(void) {}
 void $s7SwiftUI5ShapePAAE6stroke_9lineWidthQrqd___12CoreGraphics7CGFloatVtAA0C5StyleRd__lF(void) {}
 void $s7SwiftUI5ShapePAAE9_makeView4view6inputsAA01_E7OutputsVAA11_GraphValueVyxG_AA01_E6InputsVtFZ(void) {}
-void $s7SwiftUI5StateV12wrappedValueACyxGx_tcfC(void) {}
-void $s7SwiftUI5StateV12wrappedValuexvg(void) {}
-void $s7SwiftUI5StateV12wrappedValuexvs(void) {}
-void $s7SwiftUI5StateV14projectedValueAA7BindingVyxGvg(void) {}
-void $s7SwiftUI5StateVMa(void) {}
-void $s7SwiftUI5StateVMn(void) {}
 void $s7SwiftUI6AnchorV6SourceVAASo6CGRectVRszlE6boundsAEyAG_GvgZ(void) {}
 void $s7SwiftUI6ButtonV6action5labelACyxGyyc_xyXEtcfC(void) {}
 void $s7SwiftUI6ButtonVA2A4TextVRszrlE_6actionACyAEGAA18LocalizedStringKeyV_yyctcfC(void) {}
@@ -872,13 +865,7 @@ void $s7SwiftUI7AnyViewVAA0D0AAWP(void) {}
 void $s7SwiftUI7AnyViewVMn(void) {}
 void $s7SwiftUI7AnyViewVN(void) {}
 void $s7SwiftUI7AnyViewVyACxcAA0D0RzlufC(void) {}
-void $s7SwiftUI7BindingV12wrappedValuexvg(void) {}
-void $s7SwiftUI7BindingV12wrappedValuexvs(void) {}
 void $s7SwiftUI7BindingV13dynamicMemberACyqd__Gs15WritableKeyPathCyxqd__G_tcluig(void) {}
-void $s7SwiftUI7BindingV14projectedValueACyxGvg(void) {}
-void $s7SwiftUI7BindingV3get3setACyxGxyc_yxctcfC(void) {}
-void $s7SwiftUI7BindingVMa(void) {}
-void $s7SwiftUI7BindingVMn(void) {}
 void $s7SwiftUI7BindingVyxGSkAASMRzSkRzlMc(void) {}
 void $s7SwiftUI7BindingVyxGs12IdentifiableAAsAERzlMc(void) {}
 void $s7SwiftUI7CapsuleVMn(void) {}
