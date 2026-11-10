@@ -24,6 +24,8 @@ void * $s7SwiftUI13GeometryProxyV5frame2inSo6CGRectVAA15CoordinateSpaceO_tF(int 
 void * $s7SwiftUI5ShapePAAE12sizeThatFitsySo6CGSizeVAA16ProposedViewSizeVF(sui_size *proposal);
 void * $s7SwiftUI13NSHostingViewC04rootD0ACyxGx_tcfc(void *root, void *metadata);
 extern sui_conf $s7SwiftUI6HStackVyxGAA4ViewAAMc;
+extern struct { unsigned kind; const char *name; } $s7SwiftUI14GeometryReaderVMn;
+void *$s7SwiftUI14GeometryReaderVMa(void);
 
 #define arm(p) __asm__ volatile("mov %0, %%r13" :: "r"(p) : "r13", "memory")
 
@@ -65,6 +67,8 @@ int main(void) {
         fprintf(stderr, "FAIL hosting layout\n"); fails++;
     }
     gr = $s7SwiftUI14GeometryReaderV7contentACyxGxAA0C5ProxyVc_tcfC(&mark);
+    if (gr->isa != (void *)&$s7SwiftUI14GeometryReaderVMn || $s7SwiftUI14GeometryReaderVMa() != gr->isa ||
+        $s7SwiftUI14GeometryReaderVMn.kind != 11) { fprintf(stderr, "FAIL descritor do GeometryReader\n"); fails++; }
     arm(&gr->proxy);
     sz = $s7SwiftUI13GeometryProxyV4sizeSo6CGSizeVvg();
     fr = $s7SwiftUI13GeometryProxyV5frame2inSo6CGRectVAA15CoordinateSpaceO_tF(0);

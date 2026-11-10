@@ -88,7 +88,10 @@ unsigned char *cx_read_file(const char *path, unsigned long long *len) { (void)p
 double cx_bm_scale(const void *ctx) { (void)ctx; return 1; }
 void *CGPathCreateWithRect(ct_pt_t r, const void *m) { (void)r; (void)m; return 0; }
 unsigned long CFGetTypeID(const void *cf) { (void)cf; return 1; }
-char cx_cfconst_isa[8] __asm__("__CFConstantStringClassReference");
+/* as constantes CFSTR do coretext.c apontam para cá: classe de verdade, filha do NSString do harness
+ * (o layout {isa, flags, ptr, len} é o mesmo), para o dicionário poder mandar isEqual: às chaves */
+cx_class_t cx_cfconst_isa __asm__("__CFConstantStringClassReference");
+static cx_class_t cfconst_meta;
 
 int main(void) {
     id font, astr, line, runs, run, just, fs, frame;
@@ -96,6 +99,7 @@ int main(void) {
     ct_range_t zr = {0, 0}, fr;
     ct_pt_t origins[8];
     host_runtime_init();
+    cx_define_class(&cx_cfconst_isa, &cfconst_meta, "__NSCFConstantString", cx_class_named("NSString"), 0);
     cx_coretext_init();
     font = ct_test_font(10);
     astr = ct_test_astr("ab c", font, 0);

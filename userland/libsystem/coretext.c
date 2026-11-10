@@ -93,9 +93,49 @@ CTCONST(kCTVerticalFormsAttributeName, "CTVerticalForms")
 typedef struct { double x, y; } ct_pt_t;
 typedef struct { double w, h; } ct_sz_t;
 typedef struct { double x, y, w, h; } ct_rect_t;
+typedef struct { double a, b, c, d, tx, ty; } ct_mx_t;
 
 static id cls(const char *n) { return (id)cx_class_named(n); }
 static double fsize(id f) { if (!f) return 13; double s = MSG0(double, f, "pointSize"); return s > 0 ? s : 13; }
+
+/* matriz de fonte (o parâmetro matrix de CTFontCreateWith*): o NSFont do appkit.c não tem campo para
+ * ela, então fica numa tabela da fonte. A tabela retém a fonte (o endereço não é reaproveitado por outro
+ * objeto enquanto a entrada vive); passou de 64, a mais antiga sai e essa fonte volta à identidade. */
+#define FMX_MAX 64
+static struct { id f; ct_mx_t m; } fmx[FMX_MAX];
+static int fmx_next;
+static int mx_identity(const ct_mx_t *m) {
+    return m->a == 1 && m->b == 0 && m->c == 0 && m->d == 1 && m->tx == 0 && m->ty == 0;
+}
+static int ct_font_matrix(id f, ct_mx_t *out) {
+    for (int i = 0; f && i < FMX_MAX; i++)
+        if (fmx[i].f == f) { if (out) *out = fmx[i].m; return 1; }
+    if (out) { out->a = 1; out->b = 0; out->c = 0; out->d = 1; out->tx = 0; out->ty = 0; }
+    return 0;
+}
+static void ct_font_set_matrix(id f, const ct_mx_t *m) {
+    int i, slot = -1;
+    if (!f) return;
+    for (i = 0; i < FMX_MAX; i++) if (fmx[i].f == f) { slot = i; break; }
+    if (!m || mx_identity(m)) {
+        if (slot >= 0) { objc_release(fmx[slot].f); fmx[slot].f = 0; }
+        return;
+    }
+    if (slot < 0) {
+        slot = fmx_next;
+        fmx_next = (fmx_next + 1) % FMX_MAX;
+        if (fmx[slot].f) objc_release(fmx[slot].f);
+        fmx[slot].f = objc_retain(f);
+    }
+    fmx[slot].m = *m;
+}
+/* f é sempre um objeto novo aqui: grava a matriz pedida, ou herda a de src */
+static id ct_with_matrix(id f, const void *matrix, id src) {
+    ct_mx_t m;
+    if (matrix) ct_font_set_matrix(f, (const ct_mx_t *)matrix);
+    else if (src && ct_font_matrix(src, &m)) ct_font_set_matrix(f, &m);
+    return f;
+}
 
 /* NSFont do mOS: {isa, double size, int weight, int mono} em appkit.c. weight é a face do kernel
  * (GUI_FONT): 0..3 = Inter regular, medium, semibold, bold; 32..79 = fonte que o app registrou a partir
@@ -464,36 +504,34 @@ static id font_from_desc(id desc, double size) {
     return f;
 }
 id CTFontCreateWithName(id name, double size, const void *matrix) {
-    (void)matrix;
     if (size <= 0) size = 12;
     id f = name ? MSG(id, cls("NSFont"), "fontWithName:size:", name, size) : 0;
-    return objc_retain(f ? f : font_of_size(size, 0));
+    return objc_retain(ct_with_matrix(f ? f : font_of_size(size, 0), matrix, 0));
 }
-id CTFontCreateWithFontDescriptor(id desc, double size, const void *matrix) { (void)matrix; return objc_retain(font_from_desc(desc, size)); }
+id CTFontCreateWithFontDescriptor(id desc, double size, const void *matrix) { return objc_retain(ct_with_matrix(font_from_desc(desc, size), matrix, 0)); }
 id CTFontCreateUIFontForLanguage(u32 type, double size, id lang) { (void)type; (void)lang; return objc_retain(font_of_size(size > 0 ? size : 13, 0)); }
 /* O Skia copia toda fonte para o tamanho do texto com um descritor que só traz variações
  * (SkCTFontCreateExactCopy), e o Blink pede o peso da fonte do sistema do mesmo jeito: um descritor sem
  * nome mantém a face de f (antes virava a regular, e uma fonte web virava a Inter). */
 id CTFontCreateCopyWithAttributes(id f, double size, const void *matrix, id desc) {
-    (void)matrix;
     double s = size > 0 ? size : fsize(f);
     if (desc && (desc_user_id(desc) >= 0 || MSG(id, desc, "objectForKey:", (id)kCTFontNameAttribute) ||
                  MSG(id, desc, "objectForKey:", (id)kCTFontFamilyNameAttribute)))
-        return objc_retain(font_from_desc(desc, s));
+        return objc_retain(ct_with_matrix(font_from_desc(desc, s), matrix, f));
     int w = desc_weight(desc);
-    if (w < 0 && (size <= 0 || size == fsize(f)) && f) return objc_retain(f);
+    /* sem mudança devolve a própria f; com matriz nova é preciso outro objeto */
+    if (w < 0 && !matrix && (size <= 0 || size == fsize(f)) && f) return objc_retain(f);
     id n = font_copy(f, s);
     int fw = fweight_raw(n);
     if (n && w >= 0 && fw >= 0 && fw <= 3) ftf(n)->weight = w;
-    return objc_retain(n);
+    return objc_retain(ct_with_matrix(n, matrix, f));
 }
 id CTFontCreateCopyWithSymbolicTraits(id f, double size, const void *matrix, u32 value, u32 mask) {
-    (void)matrix;
     double s = size > 0 ? size : fsize(f);
     id n = font_copy(f, s);
     int fw = fweight_raw(n);
     if (n && fw >= 0 && fw <= 3 && (mask & TRAIT_BOLD)) ftf(n)->weight = (value & TRAIT_BOLD) ? 3 : 0;
-    return objc_retain(n);
+    return objc_retain(ct_with_matrix(n, matrix, f));
 }
 typedef struct { long loc, len; } ct_range_t;
 /* ---- fontes de reserva (fallback): árabe, hebraico e CJK
@@ -854,11 +892,9 @@ int CTFontManagerRegisterFontsForURL(id url, unsigned scope, id *error) {
 }
 unsigned CTFontGetTypeID(void) { return 0x4354464Eu; }
 unsigned CTGetCoreTextVersion(void) { return 0x00080000u; }
-typedef struct { double a, b, c, d, tx, ty; } ct_mx_t;
 ct_mx_t CTFontGetMatrix(id f) {
     ct_mx_t m;
-    (void)f;
-    m.a = 1; m.b = 0; m.c = 0; m.d = 1; m.tx = 0; m.ty = 0;
+    ct_font_matrix(f, &m);
     return m;
 }
 static u16 ct_glyph(id font, u32 cp);
@@ -878,10 +914,100 @@ u16 CTFontGetGlyphWithName(id f, id name) {
     if (!cp) return 0;
     return ct_glyph(f, cp);
 }
+/* tabela sfnt da fonte: dos bytes guardados da fonte registrada, ou a cópia que o kernel dá da face
+ * (GF_TABLE). *own recebe o buffer a liberar (0 quando aponta para user_bytes). */
+static const u8 *ct_font_table(id f, u32 tag, long *len, u8 **own) {
+    int w = fweight_raw(f);
+    *own = 0;
+    *len = 0;
+    if (is_user(w) && user_bytes[w - USER_BASE])
+        return sfnt_find(user_bytes[w - USER_BASE], user_nbytes[w - USER_BASE], tag, len);
+    if (f && font_live()) {
+        int face = w >= 0 ? w : fweight(f);
+        long n = SYS5(GUI_FONT, GF_TABLE, face, tag, 0, 0);
+        u8 *b = (n > 0 && n <= (8 << 20)) ? malloc((size_t)n) : 0;
+        long n2 = b ? SYS5(GUI_FONT, GF_TABLE, face, tag, b, n) : 0;
+        if (n2 > 0) {
+            *own = b;
+            *len = n2 < n ? n2 : n;
+            return b;
+        }
+        free(b);
+    }
+    return 0;
+}
+static u32 rd32(const u8 *p) { return (u32)p[0] << 24 | (u32)p[1] << 16 | (u32)p[2] << 8 | p[3]; }
+static int rds16(const u8 *p) { return (int)(i16)rd16(p); }
+typedef struct { const u8 *p; long n; u8 *own; } ct_tab_t;
+static void ct_tab(id f, u32 tag, ct_tab_t *t) { t->p = ct_font_table(f, tag, &t->n, &t->own); }
+/* yMax do glifo g pelo loca/glyf; 0 = glifo vazio ou tabela ausente */
+static int ct_glyph_ymax(const ct_tab_t *head, const ct_tab_t *loca, const ct_tab_t *glyf, u32 g, int *ymax) {
+    long a, b;
+    if (!head->p || head->n < 54 || !loca->p || !glyf->p) return 0;
+    if (rds16(head->p + 50) == 0) {
+        if ((long)(g + 2) * 2 > loca->n) return 0;
+        a = (long)rd16(loca->p + g * 2) * 2;
+        b = (long)rd16(loca->p + g * 2 + 2) * 2;
+    } else {
+        if ((long)(g + 2) * 4 > loca->n) return 0;
+        a = (long)rd32(loca->p + g * 4);
+        b = (long)rd32(loca->p + g * 4 + 4);
+    }
+    if (b <= a || a + 10 > glyf->n) return 0;
+    *ymax = rds16(glyf->p + a + 8);
+    return 1;
+}
+/* Translação do glifo para o desenho vertical, como o CoreText: x = -(avanço horizontal)/2 e
+ * y = -(origem vertical). A origem vertical vem do VORG; senão de yMax + topSideBearing (vmtx + glyf);
+ * senão do ascender do hhea (ou do ascent do CTFont, sem tabela). */
 void CTFontGetVerticalTranslationsForGlyphs(id f, int orientation, const u16 *glyphs, ct_sz_t *trans, long n) {
-    (void)f; (void)orientation; (void)glyphs;
+    ct_tab_t head, hhea, hmtx, vhea, vmtx, vorg, loca, glyf;
+    double scale, asc;
+    u32 nhm = 0, nvm = 0;
+    (void)orientation;
     if (!trans || n <= 0) return;
-    memset(trans, 0, (size_t)n * sizeof *trans);
+    ct_tab(f, 0x68656164u, &head);   /* head */
+    ct_tab(f, 0x68686561u, &hhea);   /* hhea */
+    ct_tab(f, 0x686D7478u, &hmtx);   /* hmtx */
+    ct_tab(f, 0x76686561u, &vhea);   /* vhea */
+    ct_tab(f, 0x766D7478u, &vmtx);   /* vmtx */
+    ct_tab(f, 0x564F5247u, &vorg);   /* VORG */
+    ct_tab(f, 0x6C6F6361u, &loca);   /* loca */
+    ct_tab(f, 0x676C7966u, &glyf);   /* glyf */
+    {
+        u32 upem = head.p && head.n >= 20 ? rd16(head.p + 18) : 0;
+        scale = upem ? fsize(f) / upem : 0;
+    }
+    if (hhea.p && hhea.n >= 36) nhm = rd16(hhea.p + 34);
+    if (vhea.p && vhea.n >= 36) nvm = rd16(vhea.p + 34);
+    asc = scale && hhea.p && hhea.n >= 6 ? rds16(hhea.p + 4) * scale : CTFontGetAscent(f);
+    for (long i = 0; i < n; i++) {
+        u32 g = glyphs ? glyphs[i] : 0;
+        double adv, oy = asc;
+        int ymax;
+        if (scale && nhm && hmtx.p && (long)nhm * 4 <= hmtx.n)
+            adv = rd16(hmtx.p + (g < nhm ? g : nhm - 1) * 4) * scale;
+        else {
+            ct_sz_t sz;
+            u16 gl = (u16)g;
+            CTFontGetAdvancesForGlyphs(f, 0, &gl, &sz, 1);
+            adv = sz.w;
+        }
+        if (scale && vorg.p && vorg.n >= 8) {
+            u32 cnt = rd16(vorg.p + 6), k;
+            int y = rds16(vorg.p + 4);
+            for (k = 0; k < cnt && 8 + (long)(k + 1) * 4 <= vorg.n; k++)
+                if (rd16(vorg.p + 8 + k * 4) == g) { y = rds16(vorg.p + 8 + k * 4 + 2); break; }
+            oy = y * scale;
+        } else if (scale && nvm && vmtx.p && ct_glyph_ymax(&head, &loca, &glyf, g, &ymax)) {
+            long at = g < nvm ? (long)g * 4 + 2 : (long)nvm * 4 + (long)(g - nvm) * 2;
+            if (at + 2 <= vmtx.n) oy = (ymax + rds16(vmtx.p + at)) * scale;
+        }
+        trans[i].w = -adv / 2;
+        trans[i].h = -oy;
+    }
+    free(head.own); free(hhea.own); free(hmtx.own); free(vhea.own);
+    free(vmtx.own); free(vorg.own); free(loca.own); free(glyf.own);
 }
 static id ct_feat_dict(u32 ident, const char *name) {
     id d = MSG0(id, cls("NSMutableDictionary"), "dictionary");
@@ -891,104 +1017,258 @@ static id ct_feat_dict(u32 ident, const char *name) {
     if (name && name[0]) MSG(void, d, "setObject:forKey:", cx_str(name), (id)kCTFontFeatureTypeNameKey);
     return d;
 }
-static void ct_feat_add_sel(id typeDict, u32 ident, const char *name) {
+/* seletor dentro de typeDict; devolve o dicionário do seletor (sem retenção extra) */
+static id ct_feat_add_sel(id typeDict, u32 ident, const char *name) {
     id arr, sel;
-    if (!typeDict) return;
+    if (!typeDict) return 0;
     arr = MSG(id, typeDict, "objectForKey:", (id)kCTFontFeatureTypeSelectorsKey);
     if (!arr) {
         arr = MSG0(id, cls("NSMutableArray"), "array");
         if (arr) MSG(void, typeDict, "setObject:forKey:", arr, (id)kCTFontFeatureTypeSelectorsKey);
     }
-    sel = ct_feat_dict(ident, name);
-    if (arr && sel) MSG(void, arr, "addObject:", sel);
-    objc_release(sel);
+    sel = MSG0(id, cls("NSMutableDictionary"), "dictionary");
+    if (!sel) return 0;
+    /* o seletor usa as chaves de seletor, não as de tipo */
+    MSG(void, sel, "setObject:forKey:", cx_num_i((i64)ident), (id)kCTFontFeatureSelectorIdentifierKey);
+    if (name && name[0]) MSG(void, sel, "setObject:forKey:", cx_str(name), (id)kCTFontFeatureSelectorNameKey);
+    if (!arr) return 0;
+    MSG(void, arr, "addObject:", sel);  /* dictionary é autoreleased: quem segura é o array */
+    return sel;
 }
 static void ct_name_by_id(const u8 *name, long nn, u32 idn, char *out, int cap) {
     name_entry(name, nn, idn, out, cap);
 }
-static id ct_features_from_bytes(const u8 *b, long n) {
+/* feature OpenType → tipo/seletores AAT (SFNTLayoutTypes.h), como o CoreText as expõe; on/off = -1 não
+ * existe. excl: o tipo é exclusivo (um seletor por vez). */
+typedef struct { char tag[5]; u16 type; i16 on, off; u8 excl, dflt; const char *tname, *sname; } ct_otmap_t;
+static const ct_otmap_t ct_otmap[] = {
+    {"liga", 1, 2, 3, 0, 1, "Ligatures", "Common Ligatures"},
+    {"rlig", 1, 0, 1, 0, 1, "Ligatures", "Required Ligatures"},
+    {"dlig", 1, 4, 5, 0, 0, "Ligatures", "Rare Ligatures"},
+    {"clig", 1, 18, 19, 0, 1, "Ligatures", "Contextual Ligatures"},
+    {"hlig", 1, 20, 21, 0, 0, "Ligatures", "Historical Ligatures"},
+    {"tnum", 6, 0, -1, 1, 0, "Number Spacing", "Monospaced Numbers"},
+    {"pnum", 6, 1, -1, 1, 0, "Number Spacing", "Proportional Numbers"},
+    {"sups", 10, 1, -1, 1, 0, "Vertical Position", "Superiors"},
+    {"subs", 10, 2, -1, 1, 0, "Vertical Position", "Inferiors"},
+    {"ordn", 10, 3, -1, 1, 0, "Vertical Position", "Ordinals"},
+    {"frac", 11, 2, -1, 1, 0, "Fractions", "Diagonal Fractions"},
+    {"zero", 14, 4, 5, 0, 0, "Typographic Extras", "Slashed Zero"},
+    {"onum", 21, 0, -1, 1, 0, "Number Case", "Lower Case Numbers"},
+    {"lnum", 21, 1, -1, 1, 0, "Number Case", "Upper Case Numbers"},
+    {"case", 33, 0, 1, 0, 0, "Case Sensitive Layout", "Case Sensitive Layout"},
+    {"calt", 36, 0, 1, 0, 1, "Contextual Alternates", "Contextual Alternates"},
+    {"smcp", 37, 1, -1, 1, 0, "Lower Case", "Small Capitals"},
+    {"c2sc", 38, 1, -1, 1, 0, "Upper Case", "Small Capitals"},
+};
+#define CT_SS_TYPE 35u   /* kStylisticAlternativesType: ssNN = seletores 2NN (on) e 2NN+1 (off) */
+typedef struct { u32 type; id dict; } ct_ftype_t;
+static id ct_ftype_get(id arr, ct_ftype_t *ft, int *nft, int cap, u32 type, const char *tname, int excl, const char *tag) {
+    id d;
+    for (int i = 0; i < *nft; i++) if (ft[i].type == type) return ft[i].dict;
+    if (*nft >= cap) return 0;
+    d = ct_feat_dict(type, tname);
+    if (!d) return 0;
+    MSG(void, d, "setObject:forKey:", cx_num_i(excl ? 1 : 0), (id)kCTFontFeatureTypeExclusiveKey);
+    if (tag) MSG(void, d, "setObject:forKey:", cx_str(tag), (id)kCTFontOpenTypeFeatureTag);
+    MSG(void, arr, "addObject:", d);
+    ft[*nft].type = type;
+    ft[*nft].dict = d;
+    (*nft)++;
+    return d;
+}
+static void ct_sel_ot(id sel, const char *tag, int value, int dflt) {
+    if (!sel) return;
+    MSG(void, sel, "setObject:forKey:", cx_str(tag), (id)kCTFontOpenTypeFeatureTag);
+    MSG(void, sel, "setObject:forKey:", cx_num_i(value), (id)kCTFontOpenTypeFeatureValue);
+    if (dflt) MSG(void, sel, "setObject:forKey:", cx_num_i(1), (id)kCTFontFeatureSelectorDefaultKey);
+}
+/* FeatureList de um GSUB/GPOS (offset no byte 6 do cabeçalho) */
+static void ct_features_ot(id arr, ct_ftype_t *ft, int *nft, int cap, const u8 *t, long tl) {
+    u32 foff, fc, i;
+    if (!t || tl < 10) return;
+    foff = rd16(t + 6);
+    if (!foff || foff + 2 > (u32)tl) return;
+    fc = rd16(t + foff);
+    if (fc > 512) fc = 512;
+    for (i = 0; i < fc && foff + 2 + (i + 1) * 6 <= (u32)tl; i++) {
+        const u8 *rec = t + foff + 2 + i * 6;
+        char tag[5];
+        const ct_otmap_t *m = 0;
+        u32 k;
+        id td, sel;
+        tag[0] = (char)rec[0]; tag[1] = (char)rec[1]; tag[2] = (char)rec[2]; tag[3] = (char)rec[3]; tag[4] = 0;
+        for (k = 0; k < sizeof ct_otmap / sizeof ct_otmap[0]; k++)
+            if (!strncmp(ct_otmap[k].tag, tag, 4)) { m = &ct_otmap[k]; break; }
+        if (m) {
+            /* já visto (a FeatureList repete a tag por script/idioma)? */
+            td = ct_ftype_get(arr, ft, nft, cap, m->type, m->tname, m->excl, 0);
+            if (!td) continue;
+            {
+                id sels = MSG(id, td, "objectForKey:", (id)kCTFontFeatureTypeSelectorsKey);
+                u64 ns = sels ? MSG0(u64, sels, "count") : 0, j;
+                int dup = 0;
+                for (j = 0; j < ns && !dup; j++) {
+                    id sd = MSG(id, sels, "objectAtIndex:", j);
+                    id st = sd ? MSG(id, sd, "objectForKey:", (id)kCTFontOpenTypeFeatureTag) : 0;
+                    if (st && cx_is_str(st) && !strcmp(cx_cstr(st), tag)) dup = 1;
+                }
+                if (dup) continue;
+            }
+            sel = ct_feat_add_sel(td, (u32)m->on, m->sname);
+            ct_sel_ot(sel, tag, 1, m->dflt);
+            if (m->off >= 0) {
+                char off[64];
+                int L = 0;
+                for (const char *p = m->sname; *p && L < 58; p++) off[L++] = *p;
+                memcpy(off + L, " Off", 5);
+                sel = ct_feat_add_sel(td, (u32)m->off, off);
+                ct_sel_ot(sel, tag, 0, !m->dflt);
+            }
+        } else if (tag[0] == 's' && tag[1] == 's' && tag[2] >= '0' && tag[2] <= '9' && tag[3] >= '0' && tag[3] <= '9') {
+            u32 nn = (u32)(tag[2] - '0') * 10 + (u32)(tag[3] - '0');
+            char sn[24];
+            td = ct_ftype_get(arr, ft, nft, cap, CT_SS_TYPE, "Alternative Stylistic Sets", 0, 0);
+            if (!td || !nn || nn > 20) continue;
+            memcpy(sn, "Stylistic Set ", 14);
+            sn[14] = tag[2]; sn[15] = tag[3]; sn[16] = 0;
+            {
+                id sels = MSG(id, td, "objectForKey:", (id)kCTFontFeatureTypeSelectorsKey);
+                u64 ns = sels ? MSG0(u64, sels, "count") : 0, j;
+                int dup = 0;
+                for (j = 0; j < ns && !dup; j++) {
+                    id sd = MSG(id, sels, "objectAtIndex:", j);
+                    id st = sd ? MSG(id, sd, "objectForKey:", (id)kCTFontOpenTypeFeatureTag) : 0;
+                    if (st && cx_is_str(st) && !strcmp(cx_cstr(st), tag)) dup = 1;
+                }
+                if (dup) continue;
+            }
+            sel = ct_feat_add_sel(td, nn * 2, sn);
+            ct_sel_ot(sel, tag, 1, 0);
+            memcpy(sn + 16, " Off", 5);
+            sel = ct_feat_add_sel(td, nn * 2 + 1, sn);
+            ct_sel_ot(sel, tag, 0, 1);
+        } else {
+            /* sem tipo AAT: o tipo é a própria tag (como o CoreText faz com as features só OpenType) */
+            u32 four = rd32(rec);
+            td = ct_ftype_get(arr, ft, nft, cap, four, tag, 0, tag);
+            if (!td || MSG(id, td, "objectForKey:", (id)kCTFontFeatureTypeSelectorsKey)) continue;
+            {
+                int on = !strncmp(tag, "kern", 4) || !strncmp(tag, "ccmp", 4) || !strncmp(tag, "locl", 4) ||
+                         !strncmp(tag, "mark", 4) || !strncmp(tag, "mkmk", 4);
+                sel = ct_feat_add_sel(td, 1, "On");
+                ct_sel_ot(sel, tag, 1, on);
+                sel = ct_feat_add_sel(td, 0, "Off");
+                ct_sel_ot(sel, tag, 0, !on);
+            }
+        }
+    }
+}
+static id ct_features_build(const u8 *name, long nl, const u8 *feat, long fl, const u8 *gsub, long gl,
+                            const u8 *gpos, long pl) {
     id a = MSG0(id, cls("NSMutableArray"), "array");
-    long fl = 0, nl = 0;
-    const u8 *feat, *name, *gsub;
     char nm[96];
-    if (!a) a = MSG0(id, cls("NSArray"), "array");
-    if (!a || !b) return a ? objc_retain(a) : 0;
-    name = sfnt_find(b, n, 0x6E616D65u, &nl);
-    feat = sfnt_find(b, n, 0x66656174u, &fl);
+    if (!a) return 0;
     if (feat && fl >= 12) {
         u32 count = rd16(feat + 4);
         u32 i;
         if (count > 256) count = 256;
         for (i = 0; i < count; i++) {
             const u8 *rec;
-            u32 feature, nset, nameIndex, off;
+            u32 feature, nset, nameIndex, off, flags;
             id td;
             long recAt = 12 + (long)i * 12;
             if (recAt + 12 > fl) break;
             rec = feat + recAt;
             feature = rd16(rec);
             nset = rd16(rec + 2);
-            off = ((u32)rec[4] << 24) | ((u32)rec[5] << 16) | ((u32)rec[6] << 8) | rec[7];
+            off = rd32(rec + 4);
+            flags = rd16(rec + 8);
             nameIndex = rd16(rec + 10);
             nm[0] = 0;
             if (name) ct_name_by_id(name, nl, nameIndex, nm, sizeof nm);
             td = ct_feat_dict(feature, nm[0] ? nm : 0);
+            if (!td) continue;
+            /* flags: bit 15 = exclusivo; bit 14 = o índice do seletor padrão está no byte baixo */
+            MSG(void, td, "setObject:forKey:", cx_num_i((flags & 0x8000u) ? 1 : 0), (id)kCTFontFeatureTypeExclusiveKey);
             if (nset && off + 4 <= (u32)fl) {
-                u32 s;
+                u32 sidx, dflt = (flags & 0x4000u) ? (flags & 0xFFu) : 0;
                 if (nset > 64) nset = 64;
-                for (s = 0; s < nset; s++) {
+                for (sidx = 0; sidx < nset; sidx++) {
                     const u8 *st;
                     u32 sid, sname;
                     char sn[96];
-                    if (off + (s + 1) * 4 > (u32)fl) break;
-                    st = feat + off + s * 4;
+                    id sel;
+                    if (off + (sidx + 1) * 4 > (u32)fl) break;
+                    st = feat + off + sidx * 4;
                     sid = rd16(st);
                     sname = rd16(st + 2);
                     sn[0] = 0;
                     if (name) ct_name_by_id(name, nl, sname, sn, sizeof sn);
-                    ct_feat_add_sel(td, sid, sn);
+                    sel = ct_feat_add_sel(td, sid, sn);
+                    if (sel && sidx == dflt)
+                        MSG(void, sel, "setObject:forKey:", cx_num_i(1), (id)kCTFontFeatureSelectorDefaultKey);
                 }
             }
-            if (td) MSG(void, a, "addObject:", td);
-            objc_release(td);
-        }
-    }
-    gsub = sfnt_find(b, n, 0x47535542u, &fl);
-    if (gsub && fl >= 8 && MSG0(u64, a, "count") == 0) {
-        u32 foff = rd16(gsub + 6);
-        u32 fc, i;
-        if (foff + 2 <= (u32)fl) {
-            fc = rd16(gsub + foff);
-            if (fc > 64) fc = 64;
-            for (i = 0; i < fc; i++) {
-                const u8 *rec = gsub + foff + 2 + i * 6;
-                char tag[5];
-                id td;
-                if (foff + 2 + (i + 1) * 6 > (u32)fl) break;
-                tag[0] = (char)rec[0]; tag[1] = (char)rec[1]; tag[2] = (char)rec[2]; tag[3] = (char)rec[3]; tag[4] = 0;
-                td = ct_feat_dict(((u32)rec[0] << 24) | ((u32)rec[1] << 16) | ((u32)rec[2] << 8) | rec[3], tag);
-                if (td) MSG(void, a, "addObject:", td);
-                objc_release(td);
+            MSG(void, a, "addObject:", td);
             }
-        }
     }
-    return objc_retain(a);
+    if (MSG0(u64, a, "count") == 0) {
+        ct_ftype_t ft[64];
+        int nft = 0;
+        ct_features_ot(a, ft, &nft, 64, gsub, gl);
+        ct_features_ot(a, ft, &nft, 64, gpos, pl);
+    }
+    return a;
+}
+/* fonte sem tabela legível: o mínimo que o CoreText relata de qualquer fonte (o tipo "todas as
+ * features tipográficas" e as ligaduras obrigatórias/comuns, ligadas por padrão) */
+static id ct_features_default(void) {
+    id a = MSG0(id, cls("NSMutableArray"), "array");
+    id td, sel;
+    if (!a) return 0;
+    td = ct_feat_dict(0, "All Typographic Features");
+    if (td) {
+        MSG(void, td, "setObject:forKey:", cx_num_i(0), (id)kCTFontFeatureTypeExclusiveKey);
+        sel = ct_feat_add_sel(td, 0, "All Type Features On");
+        if (sel) MSG(void, sel, "setObject:forKey:", cx_num_i(1), (id)kCTFontFeatureSelectorDefaultKey);
+        ct_feat_add_sel(td, 1, "All Type Features Off");
+        MSG(void, a, "addObject:", td);
+    }
+    td = ct_feat_dict(1, "Ligatures");
+    if (td) {
+        MSG(void, td, "setObject:forKey:", cx_num_i(0), (id)kCTFontFeatureTypeExclusiveKey);
+        sel = ct_feat_add_sel(td, 0, "Required Ligatures");
+        if (sel) MSG(void, sel, "setObject:forKey:", cx_num_i(1), (id)kCTFontFeatureSelectorDefaultKey);
+        ct_feat_add_sel(td, 1, "Required Ligatures Off");
+        sel = ct_feat_add_sel(td, 2, "Common Ligatures");
+        if (sel) MSG(void, sel, "setObject:forKey:", cx_num_i(1), (id)kCTFontFeatureSelectorDefaultKey);
+        ct_feat_add_sel(td, 3, "Common Ligatures Off");
+        MSG(void, a, "addObject:", td);
+    }
+    return a;
 }
 id CTFontCopyFeatures(id f) {
-    int w = fweight_raw(f);
-    if (is_user(w) && user_bytes[w - USER_BASE])
-        return ct_features_from_bytes(user_bytes[w - USER_BASE], user_nbytes[w - USER_BASE]);
-    return objc_retain(MSG0(id, cls("NSMutableArray"), "array"));
+    ct_tab_t name, feat, gsub, gpos;
+    id a;
+    ct_tab(f, 0x6E616D65u, &name);   /* name */
+    ct_tab(f, 0x66656174u, &feat);   /* feat */
+    ct_tab(f, 0x47535542u, &gsub);   /* GSUB */
+    ct_tab(f, 0x47504F53u, &gpos);   /* GPOS */
+    a = ct_features_build(name.p, name.n, feat.p, feat.n, gsub.p, gsub.n, gpos.p, gpos.n);
+    free(name.own); free(feat.own); free(gsub.own); free(gpos.own);
+    if (a && MSG0(u64, a, "count") == 0) a = 0;
+    if (!a) a = ct_features_default();
+    return a ? objc_retain(a) : 0;
 }
 id CTFontCreateWithGraphicsFont(void *font, double size, const void *matrix, id attrs) {
     cgf_t *g;
-    (void)matrix;
     if (font && object_getClass((id)font) == &CGFont_c) {
         g = ct_state((id)font);
-        if (g && is_user(g->fid)) return objc_retain(font_with_face(size > 0 ? size : 13, g->fid, 0));
+        if (g && is_user(g->fid)) return objc_retain(ct_with_matrix(font_with_face(size > 0 ? size : 13, g->fid, 0), matrix, 0));
     }
-    if (attrs) return CTFontCreateWithFontDescriptor(attrs, size, 0);
-    return objc_retain(font_of_size(size > 0 ? size : 13, 0));
+    if (attrs) return CTFontCreateWithFontDescriptor(attrs, size, matrix);
+    return objc_retain(ct_with_matrix(font_of_size(size > 0 ? size : 13, 0), matrix, 0));
 }
 id CTFontDescriptorCreateCopyWithAttributes(id d, id attrs) {
     id n = CTFontDescriptorCreateWithAttributes(d);
@@ -1072,6 +1352,7 @@ typedef struct {
     int units;
     double adv;
     id font;
+    u8 level;       /* nível bidi resolvido: ímpar = direita para esquerda */
 } ct_clus;
 typedef struct {
     id astr;
@@ -1224,6 +1505,74 @@ static void ct_recompute(ct_line_t *b) {
         b->leading = ld;
     }
 }
+/* Bidi simplificado (UBA sem embeddings nem isolates): letras hebraicas/árabes e afins são fortes R;
+ * dígitos (ASCII e arábico-índicos) são números, que tomam a direção do forte anterior (W2/W7) e sobem
+ * um ou dois níveis (I1/I2), mantendo a ordem LTR dentro do RTL; demais letras são L; espaço,
+ * pontuação e controles são neutros e ficam com a direção dos vizinhos quando os dois lados concordam,
+ * senão com a do parágrafo (N1/N2). O parágrafo é RTL se o primeiro forte for R (P2/P3). Depois
+ * reordena (L2): inverte do nível mais alto até o 1. */
+static int ct_bidi_class(u32 cp) {                     /* 0 = L, 1 = R, 2 = número, -1 = neutro */
+    if ((cp >= '0' && cp <= '9') || (cp >= 0x0660 && cp <= 0x0669) || (cp >= 0x06F0 && cp <= 0x06F9)) return 2;
+    if ((cp >= 0x0590 && cp <= 0x08FF) || (cp >= 0xFB1D && cp <= 0xFDFF) || (cp >= 0xFE70 && cp <= 0xFEFF) ||
+        (cp >= 0x10800 && cp <= 0x10FFF) || (cp >= 0x1E800 && cp <= 0x1EFFF))
+        return 1;
+    if (cp < 0x80) return ((cp >= 'A' && cp <= 'Z') || (cp >= 'a' && cp <= 'z')) ? 0 : -1;
+    if ((cp >= 0x2000 && cp <= 0x206F) || (cp >= 0x3000 && cp <= 0x303F) || (cp >= 0xA0 && cp <= 0xBF) ||
+        cp == 0xD7 || cp == 0xF7 || cp == 0xFFFD)
+        return -1;
+    return 0;
+}
+static void ct_bidi(ct_line_t *b) {
+    long n = b->n, i, j;
+    int base = 0, maxl = 0, strong;
+    signed char *d;
+    if (n <= 0) return;
+    for (i = 0; i < n; i++) {
+        int c = ct_bidi_class(b->g[i].cp);
+        if (c == 0 || c == 1) { base = c; break; }
+    }
+    d = malloc((size_t)n);
+    if (!d) { for (i = 0; i < n; i++) b->g[i].level = (u8)(base ? 1 : 0); return; }
+    /* direção resolvida de fortes e números; neutros = -1 */
+    strong = base;
+    for (i = 0; i < n; i++) {
+        int c = ct_bidi_class(b->g[i].cp);
+        if (c == 0 || c == 1) strong = c;
+        d[i] = (signed char)(c == 2 ? strong : c);   /* número no contexto R conta como R para os neutros */
+    }
+    for (i = 0; i < n; i++) {
+        int c = ct_bidi_class(b->g[i].cp), lv;
+        int dir = d[i];
+        u32 cp = b->g[i].cp;
+        if (dir < 0) {
+            int before = -1, after = -1;
+            for (j = i - 1; j >= 0 && before < 0; j--) before = d[j];
+            for (j = i + 1; j < n && after < 0; j++) after = d[j];
+            if (before < 0) before = base;
+            if (after < 0) after = base;
+            dir = before == after ? before : base;
+            if (cp == '\n' || cp == '\r' || cp == '\t') dir = base;
+        }
+        if (c == 2) lv = dir ? 2 : (base ? 2 : 0);
+        else lv = dir ? 1 : (base ? 2 : 0);
+        b->g[i].level = (u8)lv;
+        if (lv > maxl) maxl = lv;
+    }
+    free(d);
+    for (int k = maxl; k >= 1; k--) {
+        for (i = 0; i < n;) {
+            if (b->g[i].level < k) { i++; continue; }
+            j = i;
+            while (j < n && b->g[j].level >= k) j++;
+            for (long x = i, y = j - 1; x < y; x++, y--) {
+                ct_clus t = b->g[x];
+                b->g[x] = b->g[y];
+                b->g[y] = t;
+            }
+            i = j;
+        }
+    }
+}
 static void ct_free_line(ct_line_t *b) {
     if (!b) return;
     for (long i = 0; i < b->n; i++) objc_release(b->g[i].font);
@@ -1331,6 +1680,7 @@ id CTLineCreateWithAttributedString(id astr) {
     b->range.len = len;
     b->g = g;
     b->n = n;
+    ct_bidi(b);
     ct_recompute(b);
     return ct_line_wrap(b);
 }
@@ -1398,6 +1748,7 @@ id CTTypesetterCreateLine(id ts, ct_range_t range) {
         b->g[k].font = objc_retain(t->g[i].font);
         k++;
     }
+    ct_bidi(b);
     ct_recompute(b);
     return ct_line_wrap(b);
 }
@@ -1621,7 +1972,12 @@ typedef struct {
     u16 *glyphs;
     ct_pt_t *pos;
     long *idxs;
+    u32 status;         /* CTRunStatus: 1 = RTL, 2 = índices não monotônicos, 4 = matriz não identidade */
+    ct_mx_t matrix;     /* text matrix do run: matriz da fonte × formas verticais × obliquidade */
 } ct_run_t;
+#define CT_RUN_RTL 1u
+#define CT_RUN_NONMONO 2u
+#define CT_RUN_MATRIX 4u
 typedef struct {
     id lines, path, astr;
     ct_pt_t *origins;
@@ -1668,6 +2024,52 @@ static void ct_run_bounds(ct_run_t *r, ct_range_t range, long *a, long *b) {
     *a = range.loc;
     *b = range.loc + range.len;
 }
+static ct_mx_t ct_mx_mul(ct_mx_t p, ct_mx_t q) {      /* p seguido de q (CGAffineTransformConcat) */
+    ct_mx_t r;
+    r.a = p.a * q.a + p.b * q.c;
+    r.b = p.a * q.b + p.b * q.d;
+    r.c = p.c * q.a + p.d * q.c;
+    r.d = p.c * q.b + p.d * q.d;
+    r.tx = p.tx * q.a + p.ty * q.c + q.tx;
+    r.ty = p.tx * q.b + p.ty * q.d + q.ty;
+    return r;
+}
+static double ct_attr_num(id attrs, id key) {
+    id v = ct_dict_get(attrs, key);
+    if (!v || !cx_responds(object_getClass(v), sel_registerName("doubleValue"))) return 0;
+    return MSG0(double, v, "doubleValue");
+}
+/* status e matriz a partir do que o run guarda: nível bidi dos clusters, ordem dos índices e atributos */
+static void ct_run_status(ct_run_t *r) {
+    ct_line_t *line = r->line;
+    long prev = -1;
+    int rtl;
+    static id kobl, kvert;
+    r->status = 0;
+    ct_font_matrix(r->font, &r->matrix);
+    if (r->count < 1) return;
+    rtl = line->g[r->begin].level & 1;
+    if (rtl) r->status |= CT_RUN_RTL;
+    for (long i = 0; i < r->count; i++) {
+        long idx = line->g[r->begin + i].idx;
+        if (idx < 0) continue;                  /* glifo do token de truncamento */
+        if (prev >= 0 && (rtl ? idx >= prev : idx <= prev)) r->status |= CT_RUN_NONMONO;
+        prev = idx;
+    }
+    if (ct_attr_num(r->attrs, (id)kCTVerticalFormsAttributeName) != 0 ||
+        ct_attr_num(r->attrs, ct_key("CTVerticalForms", &kvert)) != 0) {
+        ct_mx_t rot = {0, -1, 1, 0, 0, 0};       /* glifo girado 90° para a coluna vertical */
+        r->matrix = ct_mx_mul(r->matrix, rot);
+    }
+    {
+        double ob = ct_attr_num(r->attrs, ct_key("NSObliqueness", &kobl));
+        if (ob != 0) {
+            ct_mx_t sk = {1, 0, ob, 1, 0, 0};
+            r->matrix = ct_mx_mul(r->matrix, sk);
+        }
+    }
+    if (!mx_identity(&r->matrix)) r->status |= CT_RUN_MATRIX;
+}
 static id ct_run_new(ct_line_t *line, long begin, long count) {
     ct_run_t *r = calloc(1, sizeof *r);
     id o;
@@ -1676,9 +2078,12 @@ static id ct_run_new(ct_line_t *line, long begin, long count) {
     r->begin = begin;
     r->count = count;
     if (count > 0) {
+        long first = line->g[begin].idx;
+        for (long i = 0; first < 0 && i < count; i++) first = line->g[begin + i].idx;
         r->font = objc_retain(line->g[begin].font);
-        r->attrs = objc_retain(ct_attrs(line->astr, line->g[begin].idx));
+        r->attrs = objc_retain(ct_attrs(line->astr, first < 0 ? 0 : first));
     }
+    ct_run_status(r);
     o = cx_alloc_instance(&CTRun_c);
     if (!o) { objc_release(r->font); objc_release(r->attrs); free(r); return 0; }
     *(void **)((u8 *)o + 8) = r;
@@ -1696,7 +2101,8 @@ id CTLineGetGlyphRuns(id line) {
     while (i < b->n) {
         long j = i + 1;
         id font = b->g[i].font;
-        while (j < b->n && b->g[j].font == font) j++;
+        int dir = b->g[i].level & 1;
+        while (j < b->n && b->g[j].font == font && (b->g[j].level & 1) == dir) j++;
         id run = ct_run_new(b, i, j - i);
         if (run) MSG(void, arr, "addObject:", run);
         objc_release(run);
@@ -1724,16 +2130,21 @@ double CTLineGetOffsetForStringIndex(id line, long idx, double *secondary) {
     double x = 0;
     if (secondary) *secondary = 0;
     if (!b) return 0;
+    /* ordem visual: procura o cluster que contém idx; no RTL a borda de entrada é a da direita */
+    long lo = -1;
     for (long i = 0; i < b->n; i++) {
         ct_clus *g = &b->g[i];
-        if (g->idx < 0) { x += g->adv; continue; }
-        if (idx < g->idx + g->units) {
-            double frac = g->units > 1 && idx > g->idx ? g->adv : 0;
+        if (g->idx >= 0 && (lo < 0 || g->idx < lo)) lo = g->idx;
+        if (g->idx >= 0 && idx >= g->idx && idx < g->idx + g->units) {
+            int rtl = g->level & 1;
+            int inside = g->units > 1 && idx > g->idx;
+            double lead = rtl ? g->adv : 0;
             if (secondary) *secondary = x + g->adv * 0.5;
-            return x + frac;
+            return x + (inside ? g->adv - lead : lead);
         }
         x += g->adv;
     }
+    if (lo >= 0 && idx < lo) return 0;
     return x;
 }
 double CTLineGetTrailingWhitespaceWidth(id line) {
@@ -1785,7 +2196,12 @@ ct_range_t CTRunGetStringRange(id run) {
     return z;
 }
 id CTRunGetAttributes(id run) { ct_run_t *r = ct_state(run); return r ? r->attrs : 0; }
-unsigned CTRunGetStatus(id run) { (void)run; return 0; }
+unsigned CTRunGetStatus(id run) { ct_run_t *r = ct_state(run); return r ? r->status : 0; }
+ct_mx_t CTRunGetTextMatrix(id run) {
+    ct_mx_t m = {1, 0, 0, 1, 0, 0};
+    ct_run_t *r = ct_state(run);
+    return r ? r->matrix : m;
+}
 void CTRunGetGlyphs(id run, ct_range_t range, u16 *buf) {
     ct_run_t *r = ct_state(run);
     long a, b;
