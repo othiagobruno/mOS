@@ -55,5 +55,13 @@ static int mos_libswift_resolve(const char *req, char *out, unsigned cap) {
         for (n = 0; (out[n] = mos_libswift_image[i][n]); n++) {}
         return 1;
     }
-    return 0;
+    /* Qualquer libswift*.dylib (WhatsApp pede Accelerate, NaturalLanguage, …).
+     * O basename vai para /usr/lib/swift. Sem o arquivo, o LC_LOAD não recusa. */
+    if (strncmp(base, "libswift", 8)) return 0;
+    for (n = 0; base[n]; n++) {}
+    if (n < 7 || strcmp(base + n - 6, ".dylib")) return 0;
+    if (16 + n + 1 > cap) return 0;
+    for (n = 0; n < 16; n++) out[n] = "/usr/lib/swift/"[n];
+    for (i = 0; (out[n + i] = base[i]); i++) {}
+    return 1;
 }
