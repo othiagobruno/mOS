@@ -30,6 +30,11 @@ void mode_apply(unsigned *slot, unsigned mode) {
     if (slot) *slot = (mode & 07777u) | MODE_SET;
 }
 
+void fchmod_apply(unsigned *vnode_mode, unsigned *fd_mode, unsigned mode) {
+    mode_apply(vnode_mode, mode);
+    if (fd_mode) *fd_mode = mode & 07777u;
+}
+
 unsigned mode_stat(unsigned slot, int is_dir) {
     if (slot & MODE_SET) return slot & 07777u;
     return is_dir ? 0755u : 0644u;
