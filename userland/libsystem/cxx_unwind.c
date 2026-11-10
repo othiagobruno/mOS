@@ -111,12 +111,12 @@ __attribute__((naked)) static void cx_uw_install(u64 *r) {
         "jmp *%r11\n\t");
 }
 
-u64 _Unwind_GetGR(struct uw_ctx *c, int n) { return (n >= 0 && n < 17) ? c->r[n] : 0; }
-void _Unwind_SetGR(struct uw_ctx *c, int n, u64 v) { if (n >= 0 && n < 17) c->r[n] = v; }
-u64 _Unwind_GetIP(struct uw_ctx *c) { return c->r[16]; }
-void _Unwind_SetIP(struct uw_ctx *c, u64 ip) { c->r[16] = ip; }
-u64 _Unwind_GetLanguageSpecificData(struct uw_ctx *c) { return (u64)c->lsda; }
-u64 _Unwind_GetRegionStart(struct uw_ctx *c) { return c->region; }
+static u64 _Unwind_GetGR(struct uw_ctx *c, int n) { return (n >= 0 && n < 17) ? c->r[n] : 0; }
+static void _Unwind_SetGR(struct uw_ctx *c, int n, u64 v) { if (n >= 0 && n < 17) c->r[n] = v; }
+static u64 _Unwind_GetIP(struct uw_ctx *c) { return c->r[16]; }
+static void _Unwind_SetIP(struct uw_ctx *c, u64 ip) { c->r[16] = ip; }
+static u64 _Unwind_GetLanguageSpecificData(struct uw_ctx *c) { return (u64)c->lsda; }
+static u64 _Unwind_GetRegionStart(struct uw_ctx *c) { return c->region; }
 
 static u64 rd_u(const u8 **p, int n) {
     u64 v = 0;
@@ -573,8 +573,8 @@ static void unwind_loop(void *exc, int resume) {
     abort();
 }
 
-int _Unwind_RaiseException(struct uw_exc *e) { unwind_loop(e, 0); return UR_END; }
-void _Unwind_Resume(struct uw_exc *e) { unwind_loop(e, 1); }
+static int _Unwind_RaiseException(struct uw_exc *e) { unwind_loop(e, 0); return UR_END; }
+static void _Unwind_Resume(struct uw_exc *e) { unwind_loop(e, 1); }
 
 int __gxx_personality_v0(int ver, int actions, u64 cls, struct uw_exc *exc, struct uw_ctx *ctx) {
     (void)cls;
