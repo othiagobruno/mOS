@@ -6,8 +6,11 @@
  * O harness oficial (tools/build-a64test.ps1) é PowerShell + zig e produz um binário Windows. Este
  * arquivo compila no Linux:
  *   clang -O1 -g -pthread -mcx16 -fno-strict-aliasing -std=gnu11 -DA64_HAVE_JIT \
- *     -I userland/a64 tools/jit_v8_mt.c userland/a64/*.c -o /tmp/jit_v8_mt -lm
- * (o glob userland/a64/*.c no shell, não neste comentário)
+ *     -I userland/a64 tools/jit_v8_mt.c userland/a64/a64_fp.c userland/a64/engine.c \
+ *     userland/a64/interp.c userland/a64/interp_fp.c userland/a64/interp_int.c \
+ *     userland/a64/interp_int_br.c userland/a64/interp_int_ls.c userland/a64/interp_simd.c \
+ *     userland/a64/interp_simd_crypto.c userland/a64/interp_simd_fp.c userland/a64/interp_simd_int.c \
+ *     userland/a64/jit_core.c userland/a64/jit_tr.c -o /tmp/jit_v8_mt -lm
  */
 #include "a64.h"
 
