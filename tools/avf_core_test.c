@@ -1,7 +1,8 @@
 /* Comportamento de AVAudioEngine (mixer, tap, entrada), AVAudioSession (permissão),
  * AVCaptureSession (TCC, sem câmera inventada) e o relógio do AVPlayer.
  * As classes ObjC chamam userland/libsystem/avf_core.c. Este teste chama as mesmas funções.
- *   gcc -std=c11 -O1 -o /tmp/avf_core_test tools/avf_core_test.c userland/libsystem/avf_core.c userland/libsystem/audiodec.c -lm
+ *   gcc -std=c11 -O1 -I userland/libsystem -I userland/host-audio/shim -o /tmp/avf_core_test \
+ *     tools/avf_core_test.c userland/libsystem/avf_core.c userland/host-audio/audiodec.c -lm
  */
 #include <stdio.h>
 #include <string.h>
