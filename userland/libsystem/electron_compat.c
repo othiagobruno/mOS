@@ -373,6 +373,92 @@ static id o_class_name(id self, SEL c) { (void)c; return cx_str(cx_class_name(ob
 static id c_class_name(id self, SEL c) { (void)c; return cx_str(cx_class_name((cx_class_t *)self)); }
 
 /* ================================================================ registro */
+/* ================================================================ M3 dos apps Electron (VS Code, Cursor, Slack)
+ * Seletores que os três chamam ao abrir a janela, vistos no machotest (docs/porte-vscode.md):
+ *  - NSWindow -sharingType/-setSharingType: (padrão NSWindowSharingReadOnly = 1, como o AppKit). O Slack lê ao criar a
+ *    janela; a captura de tela do mOS ainda não filtra por isto, mas o valor volta como foi gravado.
+ *  - NSView -viewDidHide/-viewDidUnhide: no AppKit são ganchos vazios que as subclasses sobrescrevem; o setHidden: do
+ *    appkit.c já os chama. Sem o vazio na base, uma view do Chromium que não sobrescreve caía no "ainda não".
+ *  - NSImage -capInsets/-setCapInsets: (NSEdgeInsets) e -resizingMode/-setResizingMode: (NSImageResizingModeStretch = 1).
+ *  - NSVisualEffectView -maskImage/-setMaskImage:.
+ *  - NSWindow -keyViewSelectionDirection (NSDirectSelection) e -[NSSpellChecker dismissCorrectionIndicatorForView:].
+ *  - +[NSURLConnection sendAsynchronousRequest:queue:completionHandler:]: o mesmo pedido do sendSynchronousRequest
+ *    numa thread; o bloco (resposta, dados, erro) roda na fila principal se a fila é a mainQueue, senão nessa thread
+ *    (as filas de NSOperationQueue do mOS já rodam cada operação numa thread própria). É o que o Squirrel usa. */
+typedef struct { double top, left, bottom, right; } ec_insets_t;
+void objc_setAssociatedObject(id object, const void *key, id value, unsigned long policy);
+id objc_getAssociatedObject(id object, const void *key);
+static const char k_sharing, k_capins, k_resize, k_mask;
+static id ec_num_i(long v) { return MSG(id, (id)cls("NSNumber"), "numberWithLong:", v); }
+static long ec_get_i(id self, const void *k, long def) { id v = objc_getAssociatedObject(self, k); return v ? MSG0(long, v, "longValue") : def; }
+static unsigned long w_sharing(id self, SEL c) { (void)c; return (unsigned long)ec_get_i(self, &k_sharing, 1); }
+static void w_set_sharing(id self, SEL c, unsigned long t) { (void)c; objc_setAssociatedObject(self, &k_sharing, ec_num_i((long)t), 1); }
+static void v_hook_noop(id self, SEL c) { (void)self; (void)c; }
+/* -[NSWindow keyViewSelectionDirection]: só é diferente de NSDirectSelection (0) durante selectNextKeyView:/
+ * selectPreviousKeyView:, e o mOS troca o foco na hora, sem uma passagem em andamento. */
+static unsigned long w_key_dir(id self, SEL c) { (void)self; (void)c; return 0; }
+/* -[NSSpellChecker dismissCorrectionIndicatorForView:]: o corretor do mOS não mostra o balão de autocorreção, então
+ * nunca há indicador aberto para fechar. */
+static void sc_dismiss_indicator(id self, SEL c, id view) { (void)self; (void)c; (void)view; }
+static ec_insets_t img_cap_insets(id self, SEL c) {
+    (void)c;
+    ec_insets_t r = {0, 0, 0, 0};
+    id v = objc_getAssociatedObject(self, &k_capins);
+    if (v) memcpy(&r, MSG0(const void *, v, "bytes"), sizeof r);
+    return r;
+}
+static void img_set_cap_insets(id self, SEL c, ec_insets_t in) {
+    (void)c;
+    objc_setAssociatedObject(self, &k_capins, MSG(id, (id)cls("NSData"), "dataWithBytes:length:", (const void *)&in, (unsigned long)sizeof in), 1);
+}
+static long img_resizing(id self, SEL c) { (void)c; return ec_get_i(self, &k_resize, 1); }
+static void img_set_resizing(id self, SEL c, long m) { (void)c; objc_setAssociatedObject(self, &k_resize, ec_num_i(m), 1); }
+static id vev_mask(id self, SEL c) { (void)c; return objc_getAssociatedObject(self, &k_mask); }
+static void vev_set_mask(id self, SEL c, id img) { (void)c; objc_setAssociatedObject(self, &k_mask, img, 1); }
+
+typedef struct { void *isa; int flags, reserved; void (*invoke)(void *, id, id, id); } ec_block_t;
+void *_Block_copy(const void *b);
+void _Block_release(const void *b);
+void *dispatch_get_main_queue(void);
+void dispatch_async_f(void *q, void *ctx, void (*fn)(void *));
+int pthread_create(unsigned long *t, const void *attr, void *(*fn)(void *), void *arg);
+int pthread_detach(unsigned long t);
+typedef struct { id req; ec_block_t *blk; BOOL on_main; id resp, data, err; } ec_async_t;
+static void ec_async_deliver(void *v) {
+    ec_async_t *a = v;
+    a->blk->invoke(a->blk, a->resp, a->data, a->err);
+    _Block_release(a->blk);
+    if (a->resp) objc_release(a->resp);
+    if (a->data) objc_release(a->data);
+    if (a->err) objc_release(a->err);
+    objc_release(a->req);
+    free(a);
+}
+static void *ec_async_thread(void *v) {
+    ec_async_t *a = v;
+    id resp = 0, err = 0;
+    id data = ((id (*)(id, SEL, id, id *, id *))objc_msgSend)((id)cls("NSURLConnection"),
+        sel_registerName("sendSynchronousRequest:returningResponse:error:"), a->req, &resp, &err);
+    a->resp = resp ? objc_retain(resp) : 0;
+    a->data = data ? objc_retain(data) : 0;
+    a->err = err ? objc_retain(err) : 0;
+    if (a->on_main) dispatch_async_f(dispatch_get_main_queue(), a, ec_async_deliver);
+    else ec_async_deliver(a);
+    return 0;
+}
+static void conn_send_async(id k, SEL c, id req, id queue, void *handler) {
+    (void)k; (void)c;
+    if (!req || !handler) return;
+    ec_async_t *a = calloc(1, sizeof *a);
+    if (!a) return;
+    a->req = objc_retain(req);
+    a->blk = _Block_copy(handler);
+    a->on_main = queue && queue == MSG0(id, (id)cls("NSOperationQueue"), "mainQueue");
+    unsigned long t = 0;
+    if (pthread_create(&t, 0, ec_async_thread, a)) { ec_async_thread(a); return; }
+    pthread_detach(t);
+}
+
 static void add_if_missing(cx_class_t *k, const char *sel, void *imp) {
     if (k && !cx_responds(k, sel_registerName(sel))) cx_add_method(k, sel, imp);
 }
@@ -437,4 +523,20 @@ void cx_electron_compat_init(void) {
     add_cls_if_missing(dict, "dictionaryWithContentsOfURL:error:", (void *)d_with_url_err);
     add_cls_if_missing(dict, "dictionaryWithContentsOfURL:", (void *)d_with_url);
     add_if_missing(dict, "initWithContentsOfURL:error:", (void *)d_init_url_err);
+    cx_class_t *win = cls("NSWindow");
+    add_if_missing(win, "sharingType", (void *)w_sharing);
+    add_if_missing(win, "setSharingType:", (void *)w_set_sharing);
+    add_if_missing(win, "keyViewSelectionDirection", (void *)w_key_dir);
+    add_if_missing(cls("NSSpellChecker"), "dismissCorrectionIndicatorForView:", (void *)sc_dismiss_indicator);
+    add_if_missing(view, "viewDidHide", (void *)v_hook_noop);
+    add_if_missing(view, "viewDidUnhide", (void *)v_hook_noop);
+    cx_class_t *img = cls("NSImage");
+    add_if_missing(img, "capInsets", (void *)img_cap_insets);
+    add_if_missing(img, "setCapInsets:", (void *)img_set_cap_insets);
+    add_if_missing(img, "resizingMode", (void *)img_resizing);
+    add_if_missing(img, "setResizingMode:", (void *)img_set_resizing);
+    cx_class_t *vev = cls("NSVisualEffectView");
+    add_if_missing(vev, "maskImage", (void *)vev_mask);
+    add_if_missing(vev, "setMaskImage:", (void *)vev_set_mask);
+    add_cls_if_missing(cls("NSURLConnection"), "sendAsynchronousRequest:queue:completionHandler:", (void *)conn_send_async);
 }

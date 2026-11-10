@@ -357,14 +357,30 @@ static nw_pt_t w_pt_to_screen(id self, SEL c, nw_pt_t p) {
 static id tf_nil_1(id self, SEL c, long a) { (void)self; (void)c; (void)a; return 0; }
 static void w_noop_size(id self, SEL c, double w, double h) { (void)self; (void)c; (void)w; (void)h; }
 static nw_pt_t ev_mouse_location(id cls, SEL c) { (void)cls; (void)c; nw_pt_t p = {0, 0}; return p; }
+/* -[NSApplication updateWindows]: o AppKit manda -update a cada janela a cada volta do laço de eventos (o Electron
+ * chama direto depois de mudar o menu). Janela sem -update próprio não tem o que atualizar. */
+static void app_update_windows(id self, SEL c) {
+    (void)c;
+    id wins = MSG0(id, self, "windows");
+    long n = wins ? MSG0(long, wins, "count") : 0;
+    SEL up = sel_registerName("update");
+    for (long i = 0; i < n; i++) {
+        id w = MSG(id, wins, "objectAtIndex:", (unsigned long)i);
+        if (w && cx_responds(*(cx_class_t **)w, up)) MSG0(void, w, "update");
+    }
+}
 static void window_methods_init(void) {
     cx_class_t *w = cx_class_named("NSWindow");
     if (!w) return;
+    cx_class_t *nsapp = cx_class_named("NSApplication");
+    if (nsapp && !cx_responds(nsapp, sel_registerName("updateWindows"))) cx_add_method(nsapp, "updateWindows", (void *)app_update_windows);
 #define ADD_IF_MISSING(k, s, f) do { if (!cx_responds(k, sel_registerName(s))) cx_add_method(k, s, (void *)(f)); } while (0)
     ADD_IF_MISSING(w, "styleMask", w_style);
     ADD_IF_MISSING(w, "level", w_zero);
     ADD_IF_MISSING(w, "isMiniaturized", w_no);
     ADD_IF_MISSING(w, "isZoomed", w_no);
+    /* o compositor do mOS aplica o tamanho novo de uma vez: não há redimensionamento ao vivo em andamento */
+    ADD_IF_MISSING(w, "inLiveResize", w_no);
     ADD_IF_MISSING(w, "isOpaque", w_yes);
     ADD_IF_MISSING(w, "standardWindowButton:", tf_nil_1);
     ADD_IF_MISSING(w, "setContentMaxSize:", w_noop_size);
