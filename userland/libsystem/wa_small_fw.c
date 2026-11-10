@@ -61,7 +61,7 @@ cl_coord_t kCLLocationCoordinate2DInvalid;
 int cx_tcc_state(const char *service);
 int cx_tcc_request(const char *service);
 void *dispatch_queue_create(const char *label, void *attr);
-void dispatch_async_f(void *q, void *ctx, void (*fn)(void *));
+void wa_cx_deliver(void *queue, void *ctx, void (*fn)(void *));
 
 static void call_block(void *blk, id err) {
     void (*inv)(void *, id);
@@ -172,13 +172,13 @@ static void post(id q, id del, id a, id b, const char *sel) {
     j->a = a;
     j->b = b;
     j->sel = sel;
-    dispatch_async_f(q ? q : provider_queue(), j, run_job);
+    wa_cx_deliver(q ? q : provider_queue(), j, run_job);
 }
 static void tell_delegate(int kind, id action) {
     const char *sel;
     if (!Gdel || !Gcx.delegate) return;
     sel = sel_for(kind);
-    post(provider_queue(), Gdel, Gprov, action, sel);
+    post(Gq, Gdel, Gprov, action, sel);
 }
 
 static id cx_cfg_init(id self, SEL c, id name) {
@@ -427,14 +427,18 @@ static void upd_from(slot_t *s, cx_update *u) {
     u->dtmf = s->cap_dtmf;
 }
 static id call_obj(const cx_call *c) {
-    id o = cx_alloc_instance(&CXCall_c);
-    slot_t *s = o ? slot_new(o) : 0;
-    if (!s || !c) return o;
+    int i;
+    id o;
+    slot_t *s;
+    if (!c) return 0;
+    for (i = 0; i < 48; i++) {
+        s = &Slots[i];
+        if (s->key && s->key->isa == &CXCall_c && !strcmp(s->uuid, c->uuid)) return s->key;
+    }
+    o = cx_alloc_instance(&CXCall_c);
+    s = o ? slot_new(o) : 0;
+    if (!s) return o;
     memcpy(s->uuid, c->uuid, sizeof s->uuid);
-    s->outgoing = c->outgoing;
-    s->on_hold = c->on_hold;
-    s->connected = c->has_connected;
-    s->ended = c->has_ended;
     return o;
 }
 static void notify_call(const char *uuid) {
@@ -478,13 +482,25 @@ static void cx_report_updated(id self, SEL c, id uuid, id update) {
 static id cx_call_uuid(id self, SEL c) { slot_t *s = slot_of(self); (void)c; return cx_str(s ? s->uuid : ""); }
 static BOOL cx_call_flag(id self, SEL c) {
     slot_t *s = slot_of(self);
+    const cx_call *live = s ? wa_cx_find_call(&Gcx, s->uuid) : 0;
     const char *n = (const char *)c;
-    if (!s || !n) return NO;
-    if (!strcmp(n, "isOutgoing")) return s->outgoing ? YES : NO;
-    if (!strcmp(n, "isOnHold")) return s->on_hold ? YES : NO;
-    if (!strcmp(n, "hasConnected")) return s->connected ? YES : NO;
-    if (!strcmp(n, "hasEnded")) return s->ended ? YES : NO;
+    if (!live || !n) return NO;
+    if (!strcmp(n, "isOutgoing")) return live->outgoing ? YES : NO;
+    if (!strcmp(n, "isOnHold")) return live->on_hold ? YES : NO;
+    if (!strcmp(n, "hasConnected")) return live->has_connected ? YES : NO;
+    if (!strcmp(n, "hasEnded")) return live->has_ended ? YES : NO;
     return NO;
+}
+static BOOL upd_cap_get(id self, SEL c) {
+    slot_t *s = slot_of(self);
+    const char *n = (const char *)c;
+    int flag = -1;
+    if (!s || !n) return NO;
+    if (!strcmp(n, "supportsHolding")) flag = s->cap_hold;
+    else if (!strcmp(n, "supportsGrouping")) flag = s->cap_group;
+    else if (!strcmp(n, "supportsUngrouping")) flag = s->cap_ungroup;
+    else if (!strcmp(n, "supportsDTMF")) flag = s->cap_dtmf;
+    return wa_cx_cap_on(flag) ? YES : NO;
 }
 static id obs_init(id self, SEL c) { (void)c; Gobs = self; return self; }
 static void obs_set(id self, SEL c, id del, id q) { (void)self; (void)c; Gobsdel = del; Gobsq = q; wa_cx_set_observer(&Gcx, del ? 1 : 0, q ? 2 : 0); }
@@ -582,6 +598,10 @@ void cx_wa_frameworks_init(void) {
     cx_add_method(&CXCallUpdate_c, "setSupportsGrouping:", (void *)upd_cap);
     cx_add_method(&CXCallUpdate_c, "setSupportsUngrouping:", (void *)upd_cap);
     cx_add_method(&CXCallUpdate_c, "setSupportsDTMF:", (void *)upd_cap);
+    cx_add_method(&CXCallUpdate_c, "supportsHolding", (void *)upd_cap_get);
+    cx_add_method(&CXCallUpdate_c, "supportsGrouping", (void *)upd_cap_get);
+    cx_add_method(&CXCallUpdate_c, "supportsUngrouping", (void *)upd_cap_get);
+    cx_add_method(&CXCallUpdate_c, "supportsDTMF", (void *)upd_cap_get);
     cx_add_method(&CXCall_c, "UUID", (void *)cx_call_uuid);
     cx_add_method(&CXCall_c, "isOutgoing", (void *)cx_call_flag);
     cx_add_method(&CXCall_c, "isOnHold", (void *)cx_call_flag);
