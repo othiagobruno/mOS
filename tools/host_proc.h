@@ -19,7 +19,7 @@ typedef struct process {
     void *tty;              /* sessão do Terminal (no harness: nenhuma) */
 } process_t;
 
-#define USER_END        0x0000408000000000ULL
+#define USER_END        (USER_BASE + 8 * 0x8000000000ULL)   /* como kernel/include/proc.h: 8 entradas do PML4 (4 TiB) */
 #define USER_MMAP_BASE  (USER_BASE + 0x100000000ULL)
 
 bool uvm_map(process_t *p, u64 va, u64 len);

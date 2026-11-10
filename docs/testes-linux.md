@@ -111,6 +111,38 @@ Antes disso o harness também precisou de duas syscalls que o Electron usa no ca
 
 Nada disso exigiu mudança em `kernel/compat/macho.c` nem em `kernel/proc/process.c`. O kernel já tem essas syscalls; o que faltava era o harness.
 
+## Electron até a janela (VS Code, Cursor, Slack — 10 nov. 2026)
+
+`tools/test-electron-janela.sh <libSystem.mos> <machotest> <App.app> [segundos]` monta a raiz e roda o app x86_64
+oficial com `--no-sandbox --disable-gpu --in-process-gpu --enable-features=NetworkServiceInProcess`. Passa se sair
+`[gui] janela 1`. Para o VS Code, o CryptoKit compilado entra com `MOS_CRYPTOKIT=<build>/CryptoKit`.
+
+O que o harness precisou para isso (o kernel já fazia; faltava aqui):
+
+- `MACH_OP_PEEK`: fila vazia é `KERN_FAILURE`. Antes caía no `KERN_INVALID_ARGUMENT` e o `WaitableEvent` do Chromium
+  dava CHECK (`mach_port_peek: (os/kern) invalid argument`).
+- `USER_END` igual ao do kernel (8 entradas do PML4, 4 TiB). Com 512 GiB, a reserva do V8 passava do fim e todo
+  `dlopen` de módulo `.node` falhava com "sem memória para a imagem".
+- Entradas de memória: a permissão da entrada vale no `MACH_VM_MAP` (pedir escrita numa entrada só-leitura é
+  `KERN_INVALID_RIGHT`, o `CheckPlatformHandlePermissionsCorrespond` do Chromium confere) e a entrada feita de um
+  endereço já mapeado usa as mesmas páginas.
+- `SYS_PWRITE`, `SYS_FTRUNCATE`, `SYS_AIO` (o `fsync` do libSystem), `SYS_CHMOD`/`SYS_FCHMOD` e o `mode` do stat;
+  `SYS_MKDIR` devolve `ENOENT` sem o pai (o `mkdir -p` do Node depende disso).
+
+Achado no `kernel/compat/macho.c` (vale no mOS também): depois do `image_persist`, `export_is_stub` lia o `__TEXT`
+fora do buffer que sobrou (só comandos de carga e trie). O `dlopen` do primeiro `.node` contra o Electron Framework
+derrubava o harness.
+
+Onde cada app chega (libSystem com os seletores de `tools/test-electron-m3.sh`):
+
+| App | Módulos `.node` (ausentes) | Janela | Para em |
+|---|---|---|---|
+| VS Code 1.145.3 x64 | policy-watcher, spdlog, sqlite3, keymapping, os-proxy-resolver (0) | `"Visual Studio Code" 1200x800` | renderer: o harness não lança o Helper (`SYS_SPAWNVEC`) |
+| Cursor 3.29.15 x64 | policy-watcher, spdlog, cursor-proclist, sqlite3 (0) | `"Cursor Agents" 1280x800` | o mesmo |
+| Slack 4.53.287 x64 | cf-prefs, slack-desktop-utils, file-handler-info, electron-native-auth, keymapping (0) | menus (6); a janela espera o `ready-to-show` do renderer | o mesmo |
+
+O conteúdo da janela, o terminal, as extensões e o login só se provam na VM, onde os Helpers sobem.
+
 ## O que não rodou
 
 | Script | Motivo |
