@@ -1391,10 +1391,28 @@ static void apl_ensure(id s) {
     if (p->eng || !p->item || !ITM(p->item)->asset || !AST(ITM(p->item)->asset)->dec) return;
     p->eng = cx_cae_new(cx_audio_rate(AST(ITM(p->item)->asset)->dec), 0, apl_render, s);
 }
+static double apl_duration(id s) {
+    avpl_t *p = APL(s);
+    if (!p->item || !ITM(p->item)->asset) return 0;
+    void *d = AST(ITM(p->item)->asset)->dec;
+    double rate = d ? cx_audio_rate(d) : 0;
+    return d && rate > 0 ? (double)cx_audio_frames(d) / rate : 0;
+}
+static avk_transport_t apl_transport(id s, int controls) {
+    avpl_t *p = APL(s);
+    avk_transport_t t = {&p->rate, p->item ? &ITM(p->item)->pos : 0, apl_duration(s), controls};
+    return t;
+}
+avk_transport_t cx_avplayer_transport(id player, int controls) {
+    if (!player) { avk_transport_t z = {0, 0, 0, 0}; return z; }
+    return apl_transport(player, controls);
+}
 static void apl_set_rate(id s, SEL c, float r) {
     (void)c;
     avpl_t *p = APL(s);
-    p->rate = r;
+    avk_transport_t t = apl_transport(s, 1);
+    if (r == 0) avk_pause(&t);
+    else { if (t.rate) *t.rate = r; }
     if (r != 0) { apl_ensure(s); if (p->eng) { cx_cae_set_rate(p->eng, cx_audio_rate(AST(ITM(p->item)->asset)->dec) * r); cx_cae_start(p->eng); } }
     else if (p->eng) cx_cae_stop(p->eng, 1);
 }
@@ -1417,7 +1435,11 @@ static void apl_replace(id s, SEL c, id item) {
     if (p->rate != 0) apl_set_rate(s, 0, p->rate);
 }
 static cmtime_t apl_current(id s, SEL c) { (void)c; return APL(s)->item ? cm_seconds(ITM(APL(s)->item)->pos) : cm_invalid(); }
-static void apl_seek(id s, SEL c, cmtime_t t) { (void)c; if (APL(s)->item) ITM(APL(s)->item)->pos = cm_to_sec(t); }
+static void apl_seek(id s, SEL c, cmtime_t t) {
+    (void)c;
+    avk_transport_t tr = apl_transport(s, 1);
+    avk_seek(&tr, cm_to_sec(t));
+}
 static void apl_seek_done(id s, SEL c, cmtime_t t, void *blk) { apl_seek(s, c, t); if (blk) ((void (*)(void *, BOOL))BLK_FN(blk))(blk, YES); }
 static void apl_seek_tol(id s, SEL c, cmtime_t t, cmtime_t a, cmtime_t b) { (void)a; (void)b; apl_seek(s, c, t); }
 static void apl_seek_tol_done(id s, SEL c, cmtime_t t, cmtime_t a, cmtime_t b, void *blk) { (void)a; (void)b; apl_seek_done(s, c, t, blk); }
@@ -1819,4 +1841,5 @@ void cx_avfaudio_init(void) {
     M(AVContentKeySession, "error", ckey_error);
     M(AVContentKeySession, "processContentKeyRequest:", ckey_process);
     M(AVContentKeySession, "makeSecureTokenForExpirationDateOfPersistableContentKey:error:", ckey_token);
+    { extern void cx_avkit_init(void); cx_avkit_init(); }
 }
