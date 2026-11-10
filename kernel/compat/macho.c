@@ -22,6 +22,7 @@
 #endif
 #include "syscall.h"           /* SYS_DYLD / MOS_DYLD_* (dlopen em tempo de execução) e errno */
 #include "fwlink.h"            /* symlink de .framework gravado como texto */
+#include "libswift_image.h"    /* libswift* da imagem; revisão do Kernel no uso em link_abs_dep */
 #include "../../userland/a64rt/a64rt_abi.h"   /* processos arm64: runtime do tradutor (docs/tradutor-arm64.md) */
 
 #define LIBSYSTEM_BASE (USER_BASE + 0x00100000ULL)
@@ -1430,6 +1431,16 @@ static int link_abs_dep(link_t *K, const char *dn) {
                 snprintf(cand, CAP, "%s", usrlib_alias[k][1]);
                 d = locate(K, cand, CAP, &data, &len);
             }
+        /* L15: libswift* moram na imagem em /usr/lib/swift (mos_libswift_image).
+         * Não é alias Homebrew. STOR-SYSDYLIBS mexe só em usrlib_alias (libz, libcurl,
+         * libcompression). Revisão do Kernel: este ramo do carregador é novo. */
+        if (d < 0 && !data) {
+            char swift[96];
+            if (mos_libswift_resolve(cand, swift, sizeof swift) && strcmp(swift, cand) != 0) {
+                snprintf(cand, CAP, "%s", swift);
+                d = locate(K, cand, CAP, &data, &len);
+            }
+        }
         if (d < 0 && data) { d = link_add(K, cand, data, len, true); if (d < 0) d = -2; }   /* link_add copia o caminho */
     }
     kfree(cand);
