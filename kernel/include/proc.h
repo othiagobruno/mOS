@@ -121,7 +121,8 @@ struct process {
     u64 start_ms;
     thread_t *main;
     struct process *next;
-    struct { bool used; int flags; u64 off; char path[256]; u8 kind; struct pipe *pipe, *pipe2; struct pty *pty; unsigned mode; } fds[PROC_MAX_FDS];
+    struct fdent { bool used; int flags; u64 off; char path[256]; u8 kind; struct pipe *pipe, *pipe2; struct pty *pty; unsigned mode; } fds_own[PROC_MAX_FDS];
+    struct fdent *fds; /* vfork: aponta para a tabela do pai até exec ou _exit */
     u64 mmap_next;          /* próxima região anônima (SYS_MMAP) */
     int nthreads;           /* threads vivas ou ainda não recolhidas (a memória sai com a última) */
     u64 sig_handler[32];    /* 0 = padrão, 1 = ignorar, senão endereço do tratador */

@@ -3,8 +3,14 @@
  * (backtrace) que apps do macOS e o motor de grafo do OpenSwiftUI (Compute) importam.
  * CCRandomGenerateBytes já está em extra.c.
  */
+#if defined(CK_HOST)
+#include <string.h>
+#include <stddef.h>
+#include <stdint.h>
+#else
 #include "sys.h"
 #include "libc.h"
+#endif
 
 typedef unsigned char u8_;
 typedef unsigned int u32_;

@@ -115,9 +115,10 @@ public struct UInt32: ExpressibleByIntegerLiteral {
     public init(_builtinIntegerLiteral value: Builtin.IntLiteral) {}
 }
 public struct UInt64: ExpressibleByIntegerLiteral, Equatable {
-    public init() {}
-    public init(integerLiteral value: UInt64) {}
-    public init(_builtinIntegerLiteral value: Builtin.IntLiteral) {}
+    public var _v: Builtin.Int64
+    public init() { _v = Builtin.zeroInitializer() }
+    public init(integerLiteral value: UInt64) { _v = value._v }
+    public init(_builtinIntegerLiteral value: Builtin.IntLiteral) { _v = Builtin.zeroInitializer() }
 }
 public typealias IntegerLiteralType = Int
 public protocol _ExpressibleByBuiltinFloatLiteral {
@@ -170,14 +171,25 @@ public struct Hasher {
     public mutating func combine(_ v: UInt64) {}
     public mutating func combine(_ v: Array<UInt8>) {}
 }
-public struct UnsafeMutableRawPointer {}
-public struct UnsafeRawPointer {}
+public struct UnsafeMutableRawPointer {
+    public var _p: Builtin.RawPointer
+    public init(_ p: Builtin.RawPointer) { _p = p }
+    public init() { _p = Builtin.zeroInitializer() }
+}
+public struct UnsafeRawPointer {
+    public var _p: Builtin.RawPointer
+    public init(_ p: Builtin.RawPointer) { _p = p }
+    public init() { _p = Builtin.zeroInitializer() }
+}
 public struct UnsafeRawBufferPointer: Sequence {
     public typealias Element = UInt8
     public typealias Iterator = Array<UInt8>.Iterator
-    public init() {}
+    public var _p: Builtin.RawPointer
+    public var _n: Builtin.Int64
+    public init() { _p = Builtin.zeroInitializer(); _n = Builtin.zeroInitializer() }
+    public init(p: Builtin.RawPointer, n: Builtin.Int64) { _p = p; _n = n }
     public func makeIterator() -> Iterator { Iterator() }
-    public var baseAddress: UnsafeRawPointer? { Optional<UnsafeRawPointer>.none }
+    public var baseAddress: UnsafeRawPointer? { Optional(UnsafeRawPointer(_p)) }
     public var count: Int { Int() }
 }
 public struct UnsafeMutableRawBufferPointer {

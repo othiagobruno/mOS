@@ -102,6 +102,7 @@ u64    pmm_free_pages(void);
 bool   pmm_is_ram(u64 addr, u64 len);   /* buffer do kernel apto a DMA direto (identidade) */
 void   paging_init(void);
 void   swap_init(void);
+void   swap_use(void *mem, u32 n);
 bool   swap_is(u64 pte);
 void   swap_hold(u64 pte);
 void   swap_release(u64 pte);

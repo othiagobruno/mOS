@@ -15,26 +15,24 @@ O `MTLDevice` (fila, encoders, interpretador) não foi duplicado.
 
 ## Submit de compute
 
-Não há codificador virgl nem venus. Um dispatch de compute nesse protocolo
-precisa de handles de recurso do virtio-gpu 3D, do shader no formato do
-dispositivo e de um lote que caiba nos 400 bytes que o kernel aceita. A ABI
-diz que o kernel não interpreta shader e que a codificação interna do
-virtio-gpu fica de fora desta revisão. O SPIR-V gerado em `mslspirv.c` não é
-esse formato: serve para o subconjunto de MSL já descrito (kernel, buffer
-`float`/`uint`, thread id, aritmética escalar). Quem executa o comando
-continua o interpretador de `mtlexec.c`.
+`-commit` de um command buffer com `MTLComputeCommandEncoder` monta, por
+dispatch, o lote da revisão 2 (cabeçalho, handles, relocs, `BIND`, `SHADER`,
+`DISPATCH`) e chama `MOS_GPU_SUBMIT` com `MOS_GPU_SUBMIT_3D` em `SYS_GPU`.
+`-waitUntilCompleted` espera a fence. O shader no BO é o SPIR-V de
+`mslspirv.c` quando o kernel coube nele; senão são 4 bytes, porque o kernel
+não lê o shader. O lote cabe em 400 bytes e leva no máximo 5 buffers.
 
-Quando `MOS_GPU_CAP_VIRGL` ou `MOS_GPU_CAP_VENUS` estiver ligado, o `-commit`
-de um compute pode chamar `MOS_GPU_SUBMIT` com `MOS_GPU_SUBMIT_3D`. O lote é
-o da revisão 2: cabeçalho, tabela de handles, relocs e os comandos
-`BIND` / `SHADER` / `DISPATCH` em `mos_gpu.h`. Com o cap, a fence só sobe no
-IRQ do virtio-gpu. Sem o cap o kernel valida e sinaliza a fence, e não
-executa o shader. O Venus desses três comandos sai com contagem de palavras
-na frente de cada um.
+Com `MOS_GPU_CAP_VIRGL` ou `MOS_GPU_CAP_VENUS` o lote segue para o
+dispositivo (a tradução do kernel, não o lote cru) e o interpretador não
+repete o dispatch. A fence sobe no IRQ do virtio-gpu. Sem esses caps o
+kernel valida e sinaliza a fence na hora, e `mtlexec.c` executa o kernel
+para o resultado ficar certo. Textura, sampler e threadgroup memory não
+entram no lote.
 
 ## O que o teste de host cobre
 
 `tools/host-metal-gpu.c` desvia `SYS_GPU` para `gpu_syscall` de
 `kernel/dev/gpu_abi.c` (`MOS_GPU_HOST`). Confere o cap de IOSurface, o bind
-do drawable (mesmos pixels e o mesmo id na lookup) e o SPIR-V do kernel de
-exemplo. Sem QEMU.
+do drawable (mesmos pixels e o mesmo id na lookup), o SPIR-V do kernel de
+exemplo e os bytes do lote de um dispatch (BIND, SHADER, DISPATCH, handles
+e relocs) junto com o resultado do interpretador. Sem QEMU e sem GPU real.

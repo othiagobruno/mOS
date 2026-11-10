@@ -22,6 +22,58 @@ id CTFrameGetLines(id frame);
 ct_range_t CTFrameGetStringRange(id frame);
 void CTFrameGetLineOrigins(id frame, ct_range_t range, ct_pt_t *buf);
 long CTRunGetGlyphCount(id run);
+const unsigned short *CTRunGetGlyphsPtr(id run);
+const ct_pt_t *CTRunGetPositionsPtr(id run);
+const long *CTRunGetStringIndicesPtr(id run);
+void *CGFontCreateWithDataProvider(void *prov);
+int CTFontManagerRegisterGraphicsFont(void *font, id *error);
+id CTFontCreateWithGraphicsFont(void *font, double size, const void *matrix, id attrs);
+id CTFontCopyFeatures(id font);
+extern const void *kCTFontFeatureTypeNameKey;
+const char *cx_cstr(id o);
+id objc_retain(id o);
+
+id CFDataCreate(void *alloc, const unsigned char *bytes, long n);
+static id g_font_data;
+void *CGDataProviderCopyData(void *p) {
+    (void)p;
+    return g_font_data ? objc_retain(g_font_data) : 0;
+}
+static void be16(unsigned char *p, unsigned v) { p[0] = (unsigned char)(v >> 8); p[1] = (unsigned char)v; }
+static void be32(unsigned char *p, unsigned v) { be16(p, v >> 16); be16(p + 2, v); }
+static id make_sfnt(void) {
+    unsigned char b[256];
+    unsigned name_at = 64, feat_at = 160;
+    memset(b, 0, sizeof b);
+    be32(b, 0x00010000);
+    be16(b + 4, 2);
+    be16(b + 6, 32);
+    be16(b + 8, 1);
+    b[12] = 'n'; b[13] = 'a'; b[14] = 'm'; b[15] = 'e';
+    be32(b + 20, name_at);
+    be32(b + 24, 42);
+    b[28] = 'f'; b[29] = 'e'; b[30] = 'a'; b[31] = 't';
+    be32(b + 36, feat_at);
+    be32(b + 40, 28);
+    be16(b + name_at + 2, 2);
+    be16(b + name_at + 4, 30);
+    be16(b + name_at + 6, 1);
+    be16(b + name_at + 12, 6);
+    be16(b + name_at + 14, 8);
+    be16(b + name_at + 18, 1);
+    be16(b + name_at + 24, 256);
+    be16(b + name_at + 26, 4);
+    be16(b + name_at + 28, 8);
+    memcpy(b + name_at + 30, "TestFontLiga", 12);
+    be32(b + feat_at, 0x00010000);
+    be16(b + feat_at + 4, 1);
+    be16(b + feat_at + 12, 1);
+    be16(b + feat_at + 14, 1);
+    be32(b + feat_at + 16, 24);
+    be16(b + feat_at + 22, 256);
+    be16(b + feat_at + 26, 256);
+    return CFDataCreate(0, b, 188);
+}
 
 static int fails;
 
@@ -69,6 +121,25 @@ int main(void) {
     memset(origins, 0, sizeof origins);
     CTFrameGetLineOrigins(frame, zr, origins);
     expect("origem", origins[0].y != 0 || CTLineGetGlyphCount(line) == 4);
+    {
+        const unsigned short *gs = CTRunGetGlyphsPtr(run);
+        const ct_pt_t *ps = CTRunGetPositionsPtr(run);
+        const long *is = CTRunGetStringIndicesPtr(run);
+        void *cgf;
+        id ctf, feats, one, nm;
+        expect("glyphs ptr", gs && gs[0] == (unsigned short)'a' && gs[3] == (unsigned short)'c');
+        expect("pos ptr", ps && ps[0].x == 0 && ps[1].x > 0);
+        expect("idx ptr", is && is[0] == 0 && is[1] == 1);
+        g_font_data = make_sfnt();
+        cgf = CGFontCreateWithDataProvider((void *)1);
+        expect("cgfont", cgf != 0);
+        expect("registro", CTFontManagerRegisterGraphicsFont(cgf, 0) == 1);
+        ctf = CTFontCreateWithGraphicsFont(cgf, 12, 0, 0);
+        feats = ctf ? CTFontCopyFeatures(ctf) : 0;
+        one = feats ? MSG(id, feats, "objectAtIndex:", (u64)0) : 0;
+        nm = one ? MSG(id, one, "objectForKey:", (id)kCTFontFeatureTypeNameKey) : 0;
+        expect("feat", nm && cx_cstr(nm) && !strcmp(cx_cstr(nm), "Liga"));
+    }
     printf("%s (%d)\n", fails ? "FALHOU" : "ok", fails);
     return fails ? 1 : 0;
 }
