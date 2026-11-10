@@ -937,6 +937,12 @@ static void drop_receive(mspace_t *sp, ment_t *e) {
     if (!e->type) ent_del(sp, e);
 }
 
+void *mach_fileport_snap(process_t *src, unsigned name) {
+    if (!src || !src->mach) return NULL;
+    ment_t *e = ent_find(src->mach, name);
+    if (!e || !e->port || e->port->kind != KP_FILE || !e->port->file || !(e->type & T_SEND)) return NULL;
+    return e->port->file;
+}
 static u32 port_op(mspace_t *sp, u32 op, u64 *a) {
     switch (op) {
     case MACH_OP_ALLOCATE: {

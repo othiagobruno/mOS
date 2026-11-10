@@ -85,6 +85,7 @@ static u64 pmm_find(u64 from, u64 pages) {
 
 u64 pmm_alloc(u64 pages) {
     if (!pages) return 0;
+    if (!swap_busy() && swap_floor() && pmm_free_pages() < swap_floor()) mem_pressure();
     u64 f = spin_lock_irqsave(&pmm_lock);
     u64 s = pmm_find(hint, pages);
     if (s == ~0ULL && hint > 256) s = pmm_find(256, pages);
@@ -201,6 +202,41 @@ void paging_init(void) {
             __asm__ volatile("rdmsr" : "=a"(lo), "=d"(hi) : "c"(0xC0000080u));
             __asm__ volatile("wrmsr" :: "c"(0xC0000080u), "a"(lo | (1u << 11)), "d"(hi));
             kprintf("Paging: EFER.NXE ligado; o mapa de identidade segue sem o bit 63\n");
+        }
+    }
+    /* Commpage Darwin arm64 em 0xFFFFFC000 (64 GiB − 16 KiB). Não está no mapa de 4 GiB:
+     * uma folha nova, usuário, só leitura, NX. Os níveis de cima ganham U; o resto não. */
+    {
+        const u64 va = 0xFFFFFC000ULL;
+        u64 *pdpt = next_table(pml4, (int)((va >> 39) & 511));
+        u64 *pd = next_table(pdpt, (int)((va >> 30) & 511));
+        int pdi = (int)((va >> 21) & 511);
+        u64 pde = pd[pdi];
+        if (!(pde & PG_PS) || !is_ram(va & ~0x1FFFFFULL)) {
+            int hole = !(pde & PG_PS);
+            u64 *pt = (u64 *)pmm_alloc(1);
+            u64 page = pt ? pmm_alloc(1) : 0;
+            if (pt && page) {
+                memset(pt, 0, 4096);
+                if (!hole) {
+                    u64 cache = pde & (PG_PWT | PG_PCD);
+                    u64 base = pde & ~0x1FFFFFULL;
+                    for (int i = 0; i < 512; i++)
+                        pt[i] = (base + (u64)i * 4096) | PG_P | PG_RW | cache;
+                }
+                memset((void *)page, 0, 4096);
+                for (int i = 0; "commpage 64-bit"[i]; i++) ((u8 *)page)[i] = (u8)"commpage 64-bit"[i];
+                *(u16 *)(page + 0x01E) = 7;
+                *(u8 *)(page + 0x022) = 1;
+                *(u8 *)(page + 0x025) = 14;
+                *(u16 *)(page + 0x026) = 64;
+                pt[(va >> 12) & 511] = page | PG_P | (1ULL << 2) | (1ULL << 63);
+                pd[pdi] = (u64)pt | PG_P | PG_RW | (1ULL << 2);
+                pml4[(va >> 39) & 511] |= 1ULL << 2;
+                pdpt[(va >> 30) & 511] |= 1ULL << 2;
+                __asm__ volatile("mov %0,%%cr3" :: "r"((u64)pml4) : "memory");
+                kprintf("commpage: Darwin arm64 em 0x%llx\n", va);
+            }
         }
     }
     kprintf("Paging: identidade até 0x%llx, framebuffer em WC\n", top);

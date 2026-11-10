@@ -259,6 +259,9 @@ elif [ -f "$ROOT/build/swift/objc/dylib/usr/lib/swift/libswiftCore.dylib" ]; the
 fi
 sh "$ROOT/tools/stage-libswift.sh" "$ESP/mOS/usr/lib/swift"
 
+echo "==> apps oficiais em /Aplicativos"
+bash "$ROOT/tools/stage-apps-oficiais.sh" "$OUT"
+
 KEY=${MOS_CHAVE_ATUALIZACAO:-$ROOT/tools/chave-atualizacao.semente}
 REV=$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo local)
 VER="0.1-$(date +%Y%m%d.%H%M)-$REV"
