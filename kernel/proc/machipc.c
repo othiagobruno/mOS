@@ -1512,7 +1512,8 @@ static u32 vm_op(mspace_t *sp, u32 op, u64 *a) {
     if (op == MACH_VM_REGION) {
         u64 addr = a[0];
         if (addr < USER_BASE || addr >= USER_END) return KERN_INVALID_ADDRESS;
-        /* faixa registrada que contém o endereço; sem registro: a página, RWX (o NX está desligado) */
+        /* faixa registrada que contém o endereço; sem registro a consulta devolve RWX.
+         * Isso é o prot registrado, não o bit da PTE: uma página pode estar NX (SYS_MMAP b = 7). */
         for (u32 i = 0; i < sp->npr; i++)
             if (addr >= sp->pr[i].lo && addr < sp->pr[i].hi) {
                 a[1] = sp->pr[i].lo;

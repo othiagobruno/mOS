@@ -26,7 +26,9 @@ enum {
     SYS_READ,          /* (fd, buf, len) -> bytes                  fd 0 = sem entrada (0 = EOF) */
     SYS_LSEEK,         /* (fd, off, whence) -> nova posição        SEEK_SET/CUR/END */
     SYS_FSTAT,         /* (fd, mos_stat_t*) -> 0 */
-    SYS_MMAP,          /* (len) -> endereço                        memória anônima zerada, RW */
+    SYS_MMAP,          /* (len[, modo, c, r10, r8]) -> endereço ou 0. b=0 anônima RW; b=1 reserva; b=2 preenche;
+                        * b=3 sob demanda; b=4 arquivo privado; b=5 MAP_SHARED de arquivo; b=6 MAP_SHARED|MAP_ANON;
+                        * b=7 prot (r8: 1 leitura, 2 escrita, 4 execução) em [c, c+len). Sem execução a PTE fica NX. */
     SYS_MUNMAP,        /* (addr, len[, MOS_MUNMAP_KEEP]) -> 0       KEEP: só descarta as páginas, a faixa segue reservada */
     SYS_UNIXTIME,      /* () -> segundos desde 1970 (relógio do sistema) */
     SYS_STAT,          /* (path, mos_stat_t*) -> 0 */
@@ -104,6 +106,7 @@ enum {
 };
 #define MOS_MUNMAP_KEEP    0x4B454550u   /* 'KEEP' */
 #define MOS_MUNMAP_DISCARD 0x44495343u   /* 'DISC' */
+#define MOS_MUNMAP_SYNC    0x53594E43u   /* 'SYNC': msync do MAP_SHARED de arquivo; não desmapeia */
 #define MOS_SPAWN_FA_MAX 48
 #define MOS_SPAWN_FA_DUP2  1
 #define MOS_SPAWN_FA_CLOSE 2

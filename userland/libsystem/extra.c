@@ -740,6 +740,17 @@ void _tlv_atexit(void (*fn)(void *), void *obj) { __cxa_atexit(fn, obj, 0); }
 /* memória virtual */
 #define CX_MMAP_BASE 0x400100000000ULL   /* USER_MMAP_BASE do kernel */
 
+/* Grava o prot na PTE (SYS_MMAP b = 7). Sem PROT_EXEC a página fica NX. PROT_NONE não passa por aqui:
+ * no guest arm64 o PR #11 desmapeia a página de 16 KiB inteira (a64_span + MOS_MUNMAP_KEEP); no x86 a
+ * reserva continua. O comprimento já é o span do chamador — 4 KiB no x86, 16 KiB no arm64 quando o
+ * a64_span do PR #11 arredondou antes. No x86 a página presente segue legível (não há PROT_NONE no PTE). */
+static int cx_pte_prot(u64 addr, u64 len, int prot) {
+    if (!prot || !len || addr < CX_MMAP_BASE) return 0;
+    long r = SYS5(SYS_MMAP, (long)len, 7, (long)addr, 0, prot);
+    if (r < 0) { cx_errno = (int)-r; return -1; }
+    return 0;
+}
+
 /* MAP_SHARED de arquivo com escrita: o mapeamento é uma cópia em memória (lida com read). Para o que se escreve nele
  * chegar ao arquivo, cada mapeamento fica registrado com um dup do fd (no macOS o mapeamento sobrevive ao close) e
  * volta ao arquivo com pwrite no msync e no munmap, até o tamanho atual do arquivo (além do fim seria SIGBUS no macOS).
@@ -797,8 +808,7 @@ static void note_map_jit(int flags, void *p, unsigned long long n) {
 }
 #endif
 void *mmap(void *addr, size_t len, int prot, int flags, int fd, off_t off) {
-    /* MAP_JIT (0x800): o V8 pede uma região anônima executável. O NX está desligado no mOS,
-     * então a página de usuário já executa; aqui só garantimos o caminho anônimo. */
+    /* MAP_JIT (0x800): o V8 pede uma região anônima executável. Com PROT_EXEC a PTE não leva NX. */
     if (flags & 0x800) flags |= 0x1000;
 #if defined(__aarch64__)
     /* Processo arm64: granularidade de 16 KiB (docs/pagesize-arm64.md). O kernel segue em 4 KiB. */
@@ -819,20 +829,44 @@ void *mmap(void *addr, size_t len, int prot, int flags, int fd, off_t off) {
 #if defined(__aarch64__)
         long c = a64_map_fixed_anon(a64_sys, 0, (unsigned long long)addr, len, prot);
         if (c < 0) { cx_errno = (int)-c; return (void *)-1; }
+        if (prot && cx_pte_prot((u64)c, len, prot)) return (void *)-1;
         note_map_jit(flags, (void *)c, (unsigned long long)len);
         return (void *)c;
 #else
         SYS3(SYS_MUNMAP, addr, len, MOS_MUNMAP_KEEP);
         /* b = 3: o trecho vira memória sob demanda (páginas zeradas ao tocar; kernel/mm/lazy.c) */
-        if (prot) { long c = SYS3(SYS_MMAP, len, 3, addr); if (c < 0) { cx_errno = (int)-c; return (void *)-1; } }
+        if (prot) {
+            long c = SYS3(SYS_MMAP, len, 3, addr);
+            if (c < 0) { cx_errno = (int)-c; return (void *)-1; }
+            if (cx_pte_prot((u64)addr, len, prot)) return (void *)-1;
+        }
         return addr;
 #endif
     }
     /* anônimo: PROT_NONE = só reservar endereços (as páginas vêm no mprotect); com acesso = sob demanda, como no
      * macOS (o JavaScriptCore do Claude Code pede 1-4 GB assim e usa uma fração). */
     int anon = (flags & 0x1000) != 0;
-    /* arquivo MAP_PRIVATE ou só leitura: o kernel lê cada página na primeira falta (b = 4, kernel/mm/lazy.c).
-     * MAP_SHARED com escrita e o que o kernel recusar (pipe, terminal, /dev/null) seguem pela cópia com read() */
+    /* MAP_SHARED de arquivo (b = 5): a página física é a mesma para outro mapeamento do arquivo.
+     * Pipe, terminal e /dev/null devolvem EINVAL e caem na cópia com shm_track, abaixo.
+     * No guest arm64 o PR #11 realinha o cursor (a64_align_cursor) e devolve a sobra de 4 KiB
+     * (a64_reclaim_slop) antes deste SYS_MMAP; o comprimento que chega aqui já é o span de 16 KiB. */
+    if (!anon && fd >= 0 && (flags & 1) && !(off & 0xFFF)) {
+#if defined(__aarch64__)
+        long aln = a64_align_cursor(a64_sys, 0);
+        if (aln < 0) { cx_errno = (int)-aln; return (void *)-1; }
+#endif
+        long k = SYS5(SYS_MMAP, len, 5, fd, off, prot ? prot : 1);
+        if (k >= 0) {
+#if defined(__aarch64__)
+            long sl = a64_reclaim_slop(a64_sys, 0, (unsigned long long)k, len);
+            if (sl < 0) { cx_errno = (int)-sl; return (void *)-1; }
+#endif
+            if (cx_pte_prot((u64)k, len, prot)) return (void *)-1;
+            return (void *)k;
+        }
+        if (k == -9 || k == -13) { cx_errno = (int)-k; return (void *)-1; }
+    }
+    /* arquivo MAP_PRIVATE ou só leitura: o kernel lê cada página na primeira falta (b = 4, kernel/mm/lazy.c). */
     if (!anon && fd >= 0 && !(off & 0xFFF) && !((flags & 1) && (prot & 2))) {
 #if defined(__aarch64__)
         long aln = a64_align_cursor(a64_sys, 0);
@@ -844,23 +878,33 @@ void *mmap(void *addr, size_t len, int prot, int flags, int fd, off_t off) {
             long sl = a64_reclaim_slop(a64_sys, 0, (unsigned long long)k, len);
             if (sl < 0) { cx_errno = (int)-sl; return (void *)-1; }
 #endif
+            if (cx_pte_prot((u64)k, len, prot)) return (void *)-1;
             return (void *)k;
         }
         if (k == -9 || k == -13) { cx_errno = (int)-k; return (void *)-1; }   /* EBADF, EACCES */
     }
     long r;
 #if defined(__aarch64__)
-    {
+    if (anon && (flags & 1)) {
+        /* MAP_SHARED|MAP_ANON: o mesmo alinhamento de 16 KiB, com o prot no 5º argumento (b = 6). */
+        long aln = a64_align_cursor(a64_sys, 0);
+        if (aln < 0) { cx_errno = (int)-aln; return (void *)-1; }
+        r = SYS5(SYS_MMAP, len, 6, 0, 0, prot ? prot : 1);
+        if (r < 0) { cx_errno = (int)-r; return (void *)-1; }
+        long sl = a64_reclaim_slop(a64_sys, 0, (unsigned long long)r, len);
+        if (sl < 0) { cx_errno = (int)-sl; return (void *)-1; }
+    } else {
         /* O rt_alloc do tradutor também anda o cursor, em 4 KiB: cada faixa nova realinha. */
         unsigned long long at = 0;
         long mode = anon ? (prot ? 3 : 1) : 0;
         long rc = a64_map_fresh(a64_sys, 0, len, mode, &at);
         if (rc < 0) { cx_errno = (int)-rc; return (void *)-1; }
         r = (long)at;
-        note_map_jit(flags, (void *)r, (unsigned long long)len);
     }
+    note_map_jit(flags, (void *)r, (unsigned long long)len);
 #else
-    r = SYS2(SYS_MMAP, len, anon ? (prot ? 3 : 1) : 0);
+    if (anon && (flags & 1)) r = SYS5(SYS_MMAP, len, 6, 0, 0, prot ? prot : 1);
+    else r = SYS2(SYS_MMAP, len, anon ? (prot ? 3 : 1) : 0);
     if (r < 0) { cx_errno = (int)-r; return (void *)-1; }
 #endif
     if (!(flags & 0x1000) && fd >= 0) {           /* MAP_ANON = 0x1000; senão: copia o arquivo */
@@ -871,6 +915,7 @@ void *mmap(void *addr, size_t len, int prot, int flags, int fd, off_t off) {
         lseek(fd, cur, 0);
         if ((flags & 1) && (prot & 2)) shm_track((u64)r, len, fd, off);   /* MAP_SHARED com escrita: volta ao arquivo */
     }
+    if (prot && cx_pte_prot((u64)r, len, prot)) return (void *)-1;
     return (void *)r;
 }
 int munmap(void *a, size_t len) {
@@ -887,15 +932,30 @@ int munmap(void *a, size_t len) {
     return SYS2(SYS_MUNMAP, a, len) < 0 ? -1 : 0;
 #endif
 }
-/* msync: grava no arquivo o que mudou nos mapeamentos MAP_SHARED do trecho */
-int msync(void *a, size_t n, int f) { (void)f; shm_flush((u64)a, n, 0); return 0; }
+/* msync: a cópia antiga (shm_flush) e o MAP_SHARED do kernel (MOS_MUNMAP_SYNC). O kernel não desmapeia.
+ * No arm64 o trecho é o span de 16 KiB, como o munmap. */
+int msync(void *a, size_t n, int f) {
+    (void)f;
+#if defined(__aarch64__)
+    a64_span_t sp = a64_span((unsigned long long)a, n);
+    if (sp.err) { cx_errno = sp.err; return -1; }
+    if (!sp.len) return 0;
+    shm_flush(sp.addr, (size_t)sp.len, 0);
+    SYS3(SYS_MUNMAP, sp.addr, sp.len, MOS_MUNMAP_SYNC);
+    return 0;
+#else
+    shm_flush((u64)a, n, 0);
+    if (n) SYS3(SYS_MUNMAP, a, n, MOS_MUNMAP_SYNC);
+    return 0;
+#endif
+}
 void cx_mach_record_prot(u64 addr, u64 len, int prot);   /* mach.c: proteção registrada, lida pelo mach_vm_region */
 int mprotect(void *a, size_t len, int prot) {
     /* liberar acesso a um trecho reservado: as páginas que faltam passam a vir sob demanda (as existentes ficam).
-     * Os bits de proteção não mudam o PTE: EFER.NXE está desligado, então leitura/escrita já executa.
-     * A proteção pedida fica registrada no kernel para o mach_vm_region (base::ProtectedMemory do Chromium).
-     * No arm64, PROT_NONE na arena de mmap tira as páginas de 4 KiB da página guest inteira: a guarda falta de verdade.
-     * Endereço não múltiplo de 16 KiB é EINVAL; o comprimento sobe até fechar a página guest. */
+     * Com prot diferente de zero, b = 7 grava a PTE: sem PROT_EXEC fica NX, sem PROT_WRITE perde a escrita.
+     * PROT_NONE não mexe na PTE. No arm64 ele desmapeia a página guest inteira (a guarda falta de verdade).
+     * Endereço não múltiplo de 16 KiB é EINVAL; o comprimento sobe até fechar a página guest, e o b = 7
+     * cobre esse span. A proteção pedida continua registrada para o mach_vm_region. */
 #if defined(__aarch64__)
     a64_span_t sp = a64_span((unsigned long long)a, len);
     if (sp.err) { cx_errno = sp.err; return -1; }
@@ -904,6 +964,7 @@ int mprotect(void *a, size_t len, int prot) {
         long r = !prot ? a64_sys(SYS_MUNMAP, (long)sp.addr, (long)sp.len, MOS_MUNMAP_KEEP, 0, 0)
                        : a64_sys(SYS_MMAP, (long)sp.len, 3, (long)sp.addr, 0, 0);
         if (r < 0) { cx_errno = (int)-r; return -1; }
+        if (prot && cx_pte_prot(sp.addr, sp.len, prot)) return -1;
     }
     return 0;
 #else
@@ -911,6 +972,7 @@ int mprotect(void *a, size_t len, int prot) {
     if (prot && len && (u64)a >= CX_MMAP_BASE) {
         long r = SYS3(SYS_MMAP, len, 3, a);
         if (r < 0) { cx_errno = (int)-r; return -1; }
+        if (cx_pte_prot((u64)a, len, prot)) return -1;
     }
     return 0;
 #endif
