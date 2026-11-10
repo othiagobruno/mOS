@@ -84,11 +84,22 @@ static int nb_fd(int fd, int flags) {
     return e && e->nb;
 }
 
-static void wake(void) { pthread_cond_broadcast(&g_cv); }
+static unsigned wake_gen;
+static void wake(void) { wake_gen++; pthread_cond_broadcast(&g_cv); }
 
 static void wait_nb(int nb) {
     if (nb) return;
-    pthread_cond_wait(&g_cv, &g_mu);
+    if (!g_hk.drop_proc) { pthread_cond_wait(&g_cv, &g_mu); return; }
+    /* Solta as duas travas sem segurar uma enquanto pega a outra. O contador
+     * cobre o wake que acontece no intervalo (senão o recv dorme para sempre). */
+    unsigned seen = wake_gen;
+    ux_unlock();
+    g_hk.drop_proc();
+    ux_lock();
+    while (wake_gen == seen) pthread_cond_wait(&g_cv, &g_mu);
+    ux_unlock();
+    g_hk.take_proc();
+    ux_lock();
 }
 
 static uend *alloc_end(int kind) {
