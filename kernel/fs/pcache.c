@@ -77,7 +77,7 @@ static blkdev_t *root_of(blkdev_t *d, u64 off, u64 *abs) {
 }
 
 static u32 hash(blkdev_t *r, u64 off) {
-    u64 x = (u64)(unsigned long)r ^ (off / PG);
+    u64 x = (u64)(usize)r ^ (off / PG);
     x ^= x >> 17;
     return (u32)x & (HT - 1);
 }

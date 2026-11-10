@@ -274,11 +274,11 @@ static bool ext_read(vol_t *vl, const fext_t *ext, u32 n, u64 off, void *buf, u6
                 u64 end_l = e->logical + e->len;
                 u64 end_p = e->phys + e->len / nx->bs;
                 while (chunk < len) {
-                    const fext_t *n = NULL;
+                    const fext_t *nxt = NULL;
                     for (u32 i = 0; i < n; i++)
-                        if (ext[i].logical == end_l) { n = &ext[i]; break; }
-                    if (!n || !n->phys || n->phys != end_p) break;
-                    u64 add = MIN(len - chunk, n->len);
+                        if (ext[i].logical == end_l) { nxt = &ext[i]; break; }
+                    if (!nxt || !nxt->phys || nxt->phys != end_p) break;
+                    u64 add = MIN(len - chunk, nxt->len);
                     chunk += add;
                     end_l += add;
                     end_p += add / nx->bs;
