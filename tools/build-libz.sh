@@ -11,15 +11,8 @@ TGZ=$DL/zlib-$VER.tar.gz
 OUT=$ROOT/build/zlib-x86_64
 DY=$OUT/libz.1.dylib
 mkdir -p "$DL" "$OUT"
-if [ ! -f "$TGZ" ] || [ "$(sha256sum "$TGZ" | awk '{print $1}')" != "$SHA" ]; then
-    curl -fL --retry 3 -o "$TGZ.partial" "https://github.com/madler/zlib/releases/download/v$VER/zlib-$VER.tar.gz"
-    mv "$TGZ.partial" "$TGZ"
-fi
-got=$(sha256sum "$TGZ" | awk '{print $1}')
-if [ "$got" != "$SHA" ]; then
-    echo "zlib: hash $got != $SHA" >&2
-    exit 1
-fi
+. "$ROOT/tools/baixar.sh"
+baixar "https://github.com/madler/zlib/releases/download/v$VER/zlib-$VER.tar.gz" "$TGZ" "$SHA" || exit 1
 if [ ! -f "$DL/zlib-$VER/zlib.h" ]; then
     tar -xzf "$TGZ" -C "$DL"
 fi

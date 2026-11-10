@@ -21,21 +21,11 @@ fi
 DL=$OUT/apps-dl
 mkdir -p "$DL" "$MOS/Aplicativos" "$MOS/usr/lib" "$MOS/usr/lib/swift"
 
+# download com SHA-256 conferido (curl, wget ou python3: tools/baixar.sh)
+. "$ROOT/tools/baixar.sh"
 fetch() {
-    local url=$1 dest=$2 want=$3
-    if [ -f "$dest" ] && [ "$(sha256sum "$dest" | awk '{print $1}')" = "$want" ]; then
-        echo "cache ok $(basename "$dest")"
-        return 0
-    fi
-    echo "baixando $(basename "$dest")"
-    curl -fL --retry 3 -o "$dest.partial" "$url"
-    mv "$dest.partial" "$dest"
-    local got
-    got=$(sha256sum "$dest" | awk '{print $1}')
-    if [ "$got" != "$want" ]; then
-        echo "stage-apps: SHA-256 de $(basename "$dest") é $got, esperado $want" >&2
-        exit 1
-    fi
+    baixar "$1" "$2" "$3" || exit 1
+    echo "ok $(basename "$2")"
 }
 
 # Versões e hashes: docs/l22-qemu-arm64.md, exceto onde o comentário diz o contrário.

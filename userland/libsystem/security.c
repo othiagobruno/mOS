@@ -10,7 +10,8 @@
  * O que funciona DE VERDADE:
  *  - Keychain de senhas (kSecClassGenericPassword e kSecClassInternetPassword): SecItemAdd/CopyMatching/Update/
  *    Delete (kSecReturnData/Attributes/Ref, kSecMatchLimitOne/All) e a API antiga SecKeychainFindGenericPassword/
- *    AddGenericPassword/ItemModifyAttributesAndData/ItemDelete/ItemFreeContent. Os itens ficam em
+ *    AddGenericPassword/Find e AddInternetPassword/ItemCopyContent/ItemModifyAttributesAndData/ItemDelete/
+ *    ItemFreeContent/GetPath (o /usr/bin/security de userland/cli-macos/security.c usa essas). Os itens ficam em
  *    $HOME/Library/Keychains/mos-keychain.txt. A versão 2 do arquivo é ciphertext (HMAC em modo
  *    contador + MAC). A chave são 32 bytes de RDSEED/RDRAND (getentropy falha sem essa fonte), em mos-keychain.key (0600, pasta
  *    0700). Um arquivo versão 2 antigo, cifrado com a chave derivada do login, é aberto uma vez
@@ -585,13 +586,14 @@ static void q_from_c(query_t *x, const char *cls, const char *svc, u32 sl, const
 }
 static void q_free(query_t *x) { for (int i = 0; i < NFIELD; i++) if (x->f[i]) CFRelease(x->f[i]); }
 
-OSStatus SecKeychainFindGenericPassword(void *kc, u32 sl, const char *svc, u32 al, const char *acc, u32 *pl, void **pw, id_ *item) {
-    (void)kc;
+/* a busca e a gravação da API antiga, para as duas classes de senha: genp (serviço) e inet (servidor) */
+static OSStatus find_password(const char *cls, int keyf, const char *svc, u32 sl, const char *acc, u32 al,
+                              u32 *pl, void **pw, id_ *item) {
     if (pl) *pl = 0;
     if (pw) *pw = 0;
     if (item) *item = 0;
     query_t x;
-    q_from_c(&x, "genp", svc, sl, acc, al, F_SVCE);
+    q_from_c(&x, cls, svc, sl, acc, al, keyf);
     lock(); load();
     OSStatus st = errSecItemNotFound;
     for (int i = 0; i < nitems; i++) {
@@ -611,22 +613,21 @@ OSStatus SecKeychainFindGenericPassword(void *kc, u32 sl, const char *svc, u32 a
     q_free(&x);
     return st;
 }
-
-OSStatus SecKeychainAddGenericPassword(void *kc, u32 sl, const char *svc, u32 al, const char *acc, u32 pl, const void *pw, id_ *item) {
-    (void)kc;
+static OSStatus add_password(const char *cls, int keyf, const char *svc, u32 sl, const char *acc, u32 al,
+                             u32 pl, const void *pw, id_ *item) {
     if (item) *item = 0;
     query_t x;
-    q_from_c(&x, "genp", svc, sl, acc, al, F_SVCE);
+    q_from_c(&x, cls, svc, sl, acc, al, keyf);
     lock(); load();
     OSStatus st = errSecSuccess;
-    for (int i = 0; i < nitems; i++) if (same_identity(&items[i], "genp", &x)) { st = errSecDuplicateItem; break; }
+    for (int i = 0; i < nitems; i++) if (same_identity(&items[i], cls, &x)) { st = errSecDuplicateItem; break; }
     kitem_t *it = 0;
     if (st == errSecSuccess && !(it = new_item())) st = errSecAllocate;
     if (st == errSecSuccess) {
-        memcpy(it->cls, "genp", 5);
+        memcpy(it->cls, cls, 5);
         it->id = next_id++;
         it->cdat = it->mdat = CFAbsoluteTimeGetCurrent();
-        if (svc) { set_field(it, F_SVCE, (const u8 *)svc, sl); set_field(it, F_LABL, (const u8 *)svc, sl); }
+        if (svc) { set_field(it, keyf, (const u8 *)svc, sl); set_field(it, F_LABL, (const u8 *)svc, sl); }
         if (acc) set_field(it, F_ACCT, (const u8 *)acc, al);
         set_data(it, pw, pw ? pl : 0);
         st = save();
@@ -636,6 +637,110 @@ OSStatus SecKeychainAddGenericPassword(void *kc, u32 sl, const char *svc, u32 al
     unlock();
     q_free(&x);
     return st;
+}
+
+OSStatus SecKeychainFindGenericPassword(void *kc, u32 sl, const char *svc, u32 al, const char *acc, u32 *pl, void **pw, id_ *item) {
+    (void)kc;
+    return find_password("genp", F_SVCE, svc, sl, acc, al, pl, pw, item);
+}
+
+OSStatus SecKeychainAddGenericPassword(void *kc, u32 sl, const char *svc, u32 al, const char *acc, u32 pl, const void *pw, id_ *item) {
+    (void)kc;
+    return add_password("genp", F_SVCE, svc, sl, acc, al, pl, pw, item);
+}
+
+/* senha de internet: o item guarda servidor e conta. Domínio de segurança, caminho, porta, protocolo e tipo de
+ * autenticação não são gravados no mOS-keychain, então não filtram a busca (o /usr/bin/security os mostra vazios). */
+OSStatus SecKeychainFindInternetPassword(void *kc, u32 srvl, const char *srv, u32 dl, const char *dom, u32 al, const char *acc,
+                                         u32 pathl, const char *path, unsigned short port, u32 proto, u32 auth,
+                                         u32 *pl, void **pw, id_ *item) {
+    (void)kc; (void)dl; (void)dom; (void)pathl; (void)path; (void)port; (void)proto; (void)auth;
+    return find_password("inet", F_SRVR, srv, srvl, acc, al, pl, pw, item);
+}
+OSStatus SecKeychainAddInternetPassword(void *kc, u32 srvl, const char *srv, u32 dl, const char *dom, u32 al, const char *acc,
+                                        u32 pathl, const char *path, unsigned short port, u32 proto, u32 auth,
+                                        u32 pl, const void *pw, id_ *item) {
+    (void)kc; (void)dl; (void)dom; (void)pathl; (void)path; (void)port; (void)proto; (void)auth;
+    return add_password("inet", F_SRVR, srv, srvl, acc, al, pl, pw, item);
+}
+
+/* SecKeychainItemCopyContent: classe, atributos pedidos (tags de SecKeychainAttributeList) e o segredo.
+ * Atributo que o item não tem volta com length 0 e data NULL. Datas no formato do macOS: "AAAAMMDDhhmmssZ\0". */
+typedef struct { u32 tag; u32 length; void *data; } kcattr_t;
+typedef struct { u32 count; kcattr_t *attr; } kcattrlist_t;
+#define FOURCC(a, b, c, d) (((u32)(a) << 24) | ((u32)(b) << 16) | ((u32)(c) << 8) | (u32)(d))
+static int tag_field(u32 tag) {
+    switch (tag) {
+    case FOURCC('s', 'v', 'c', 'e'): return F_SVCE;
+    case FOURCC('a', 'c', 'c', 't'): return F_ACCT;
+    case FOURCC('l', 'a', 'b', 'l'): case 7: return F_LABL;
+    case FOURCC('d', 'e', 's', 'c'): return F_DESC;
+    case FOURCC('g', 'e', 'n', 'a'): return F_GENA;
+    case FOURCC('s', 'r', 'v', 'r'): return F_SRVR;
+    }
+    return -1;
+}
+static void timedate(double at, char out[16]) {
+    long long s = (long long)at + 978307200LL;              /* 2001-01-01 -> 1970-01-01 */
+    long long d = s / 86400, r = s % 86400;
+    if (r < 0) { r += 86400; d--; }
+    /* dias -> data civil (algoritmo de Howard Hinnant) */
+    d += 719468;
+    long long era = (d >= 0 ? d : d - 146096) / 146097;
+    long long doe = d - era * 146097;
+    long long yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    long long y = yoe + era * 400, doy = doe - (365 * yoe + yoe / 4 - yoe / 100), mp = (5 * doy + 2) / 153;
+    long long dd = doy - (153 * mp + 2) / 5 + 1, mm = mp < 10 ? mp + 3 : mp - 9;
+    if (mm <= 2) y++;
+    cx_snprintf(out, 16, "%04d%02d%02d%02d%02d%02dZ", (int)y, (int)mm, (int)dd, (int)(r / 3600), (int)(r / 60 % 60), (int)(r % 60));
+}
+OSStatus SecKeychainItemCopyContent(id_ item, u32 *cls, void *attrs, u32 *len, void **data) {
+    kcattrlist_t *al = attrs;
+    if (len) *len = 0;
+    if (data) *data = 0;
+    if (al) for (u32 i = 0; i < al->count; i++) { al->attr[i].length = 0; al->attr[i].data = 0; }
+    lock(); load();
+    kitem_t *it = item_from_ref(item);
+    OSStatus st = it ? errSecSuccess : errSecItemNotFound;
+    if (it && cls) *cls = FOURCC(it->cls[0], it->cls[1], it->cls[2], it->cls[3]);
+    for (u32 i = 0; it && al && i < al->count && st == errSecSuccess; i++) {
+        kcattr_t *a = &al->attr[i];
+        const u8 *b = 0;
+        u32 n = 0;
+        char td[16];
+        int f = tag_field(a->tag);
+        if (f >= 0 && it->f[f]) { b = it->f[f]; n = it->fl[f]; }
+        else if (a->tag == FOURCC('c', 'd', 'a', 't') || a->tag == FOURCC('m', 'd', 'a', 't')) {
+            timedate(a->tag == FOURCC('c', 'd', 'a', 't') ? it->cdat : it->mdat, td);
+            b = (const u8 *)td;
+            n = 16;                                         /* o \0 faz parte do valor, como no macOS */
+        }
+        if (!b) continue;
+        a->data = malloc(n ? n : 1);
+        if (!a->data) { st = errSecAllocate; break; }
+        memcpy(a->data, b, n);
+        a->length = n;
+    }
+    if (it && st == errSecSuccess && data) {
+        *data = malloc(it->dlen ? it->dlen : 1);
+        if (!*data) st = errSecAllocate;
+        else { memcpy(*data, it->data, it->dlen); if (len) *len = it->dlen; }
+    }
+    unlock();
+    return st;
+}
+
+/* caminho do arquivo do Keychain (há um só; kc é ignorado) */
+OSStatus SecKeychainGetPath(void *kc, u32 *io_len, char *path) {
+    (void)kc;
+    if (!io_len || !path) return errSecParam;
+    char b[512];
+    keychain_path(b, sizeof b, 0);
+    u32 n = (u32)strlen(b);
+    if (n + 1 > *io_len) { *io_len = n + 1; return errSecParam; }
+    memcpy(path, b, n + 1);
+    *io_len = n;
+    return errSecSuccess;
 }
 
 OSStatus SecKeychainItemModifyAttributesAndData(id_ item, const void *attrs, u32 len, const void *data) {
@@ -661,7 +766,13 @@ OSStatus SecKeychainItemDelete(id_ item) {
     return st;
 }
 
-OSStatus SecKeychainItemFreeContent(void *attrs, void *data) { (void)attrs; free(data); return errSecSuccess; }
+/* attrs: a lista que SecKeychainItemCopyContent preencheu (cada data é liberado) */
+OSStatus SecKeychainItemFreeContent(void *attrs, void *data) {
+    kcattrlist_t *al = attrs;
+    if (al) for (u32 i = 0; i < al->count; i++) { free(al->attr[i].data); al->attr[i].data = 0; al->attr[i].length = 0; }
+    free(data);
+    return errSecSuccess;
+}
 u64 SecKeychainItemGetTypeID(void) { return CFStringGetTypeID(); }   /* a referência é um CFString (item_ref) */
 /* domínio padrão: há um Keychain só, e as funções acima aceitam kc = NULL; o objeto é só um marcador */
 OSStatus SecKeychainCopyDomainDefault(int domain, id_ *kc) {
