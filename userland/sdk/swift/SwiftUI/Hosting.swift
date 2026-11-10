@@ -28,6 +28,8 @@ public final class NSHostingView<Content: View>: _HostBox {
     public func embed(_ content: UnsafeMutableRawPointer, _ w: Double, _ h: Double) {
         width = w
         height = h
+        _Runtime.shared.hostW = w
+        _Runtime.shared.hostH = h
         if view == nil {
             view = mos_host_view(0, 0, w, h)
             if let view {
