@@ -137,10 +137,7 @@ typedef struct { i64 value; i32 timescale; u32 flags; i64 epoch; } cm_time_t;
 cm_time_t CMTimeMake(i64 value, i32 timescale);
 cm_time_t CMTimeMakeWithSeconds(double seconds, i32 timescale);
 cm_time_t CMTimeSubtract(cm_time_t a, cm_time_t b);
-double CMTimeGetSeconds(cm_time_t t) {
-    if (!(t.flags & kCMTimeFlags_Valid) || !t.timescale) return __builtin_nan("");
-    return (double)t.value / (double)t.timescale;
-}
+double CMTimeGetSeconds(cm_time_t t); /* cmtime.c */
 u64 CMClockConvertHostTimeToSystemUnits(cm_time_t t) {
     if (!(t.flags & kCMTimeFlags_Valid) || !t.timescale) return 0;
     return (u64)((double)t.value * 1e9 / (double)t.timescale);    /* mach_absolute_time em ns no mOS */
