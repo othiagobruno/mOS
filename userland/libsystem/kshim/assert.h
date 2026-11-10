@@ -1,3 +1,3 @@
+/* Freestanding. O SQLite chama funções que só existem com SQLITE_DEBUG. */
 #pragma once
-/* Freestanding: o zig não entrega assert.h. NDEBUG: a expressão não é compilada. */
-#define assert(e) ((void)0)
+#define assert(c) ((void)0)
