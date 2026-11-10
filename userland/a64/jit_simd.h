@@ -26,6 +26,21 @@ static void vcvtps2ph_r(T *t, int x, int s);
 static int s_qxtn(T *t, int q, int u, int op, int size, int n, int d);
 static int s_addhn(T *t, int q, int u, int size, int sub, int n, int m, int d);
 static int s_ldst_single(T *t, a64_u32 w);
+static void s_round_packed(T *t, int pd, int dst, int src, int mode);
+static void s_cvtsi_rax(T *t, int dbl, int uns);
+static int s_shlreg(T *t, int q, int u, int size, int n, int m, int d, int scalar);
+static int s_pairwise_mm(T *t, int q, int u, int size, int mn, int n, int m, int d);
+static int s_rev(T *t, int q, int u, int op, int size, int n, int d);
+static int s_cnt(T *t, int q, int n, int d);
+static int s_iabs(T *t, int q, int size, int n, int d, int scalar);
+static int s_scvtf(T *t, int q, int u, int size, int n, int d, int scalar);
+static int s_frint_vec(T *t, int q, int size, int mode, int n, int d);
+static int s_fabsneg_vec(T *t, int q, int size, int neg, int n, int d);
+static int s_fminmax(T *t, int dbl, int which, int n, int m, int d);
+static int s_frint_sc(T *t, int dbl, int opc, int n, int d);
+static int s_fcvt_gpr(T *t, int dbl, int sf, int rmode, int opc, int n, int d);
+static int s_shift_scalar(T *t, a64_u32 w);
+static int s_scalar_simd(T *t, a64_u32 w);
 
 static void s_ld(T *t, int x, int v) { x_movdqu_ld(B, x, VO(v)); }
 static void s_st(T *t, int v, int x, int q) {
@@ -148,6 +163,11 @@ static int s_three_same(T *t, a64_u32 w) {
         if (size == 1) s_op(t, 0xD5, 0, 1); else s_op38(t, 0x40, 0, 1);
         s_st(t, d, 0, q);
         return 1;
+    case 0x08:                                      /* SSHL / USHL */
+        return s_shlreg(t, q, u, size, n, m, d, 0);
+    case 0x14: case 0x15:                           /* SMAXP UMAXP / SMINP UMINP */
+        if (size == 3) return 0;
+        return s_pairwise_mm(t, q, u, size, op == 0x15, n, m, d);
     }
     return 0;
 }
@@ -155,6 +175,16 @@ static int s_three_same(T *t, a64_u32 w) {
 static int s_misc(T *t, a64_u32 w) {
     int q = (int)BIT(w, 30), u = (int)BIT(w, 29), size = (int)BITS(w, 23, 22), op = (int)BITS(w, 16, 12);
     int n = (int)BITS(w, 9, 5), d = (int)(w & 31);
+    if (op == 0x00 || (op == 0x01 && !u)) return s_rev(t, q, u, op, size, n, d);
+    if (op == 0x05 && !u && size == 0) return s_cnt(t, q, n, d);
+    if (op == 0x0B && !u) return s_iabs(t, q, size, n, d, 0);
+    if (op == 0x1D && !(size & 2)) return s_scvtf(t, q, u, size, n, d, 0);
+    {
+        int key = (u << 6) | ((size >> 1) << 5) | op;
+        if (key == 0x18 || key == 0x19 || key == 0x38 || key == 0x39 || key == 0x79)
+            return s_frint_vec(t, q, size, key == 0x79 ? -1 : key == 0x18 ? 0 : key == 0x19 ? 1 : key == 0x38 ? 2 : 3, n, d);
+        if (key == 0x2F || key == 0x6F) return s_fabsneg_vec(t, q, size, key == 0x6F, n, d);
+    }
     if (op == 0x05 && u && size == 0) {             /* NOT */
         s_ld(t, 0, n); s_ones(t, 1); s_op(t, 0xEF, 0, 1); s_st(t, d, 0, q);
         return 1;
@@ -391,7 +421,19 @@ static int s_shimm(T *t, int x, int eb, int kind, int sh) {
         }
         return 1;
     }
-    if (eb == 64 && kind == 2) return 0;            /* sem psraq no SSE */
+    /* psraq não existe no SSE: desloca lógico e preenche com o sinal do qword
+     * (psrad 31 + pshufd 0xF5 copia o sinal de cada metade de 64 para as duas dwords).
+     * sh >= 64 vira 63: o resultado é 0 ou -1, igual ao deslocamento pela largura. */
+    if (eb == 64 && kind == 2) {
+        if (sh >= 64) sh = 63;
+        x_movdqa_ld(B, 4, XR(x));
+        xop2(B, XF_66, 0x73, 2, XR(x)); xe8(B, (a64_u8)sh);          /* psrlq */
+        xop2(B, XF_66, 0x72, 4, XR(4)); xe8(B, 31);                  /* psrad 31 */
+        xop2(B, XF_66, 0x70, 4, XR(4)); xe8(B, 0xF5);                /* sinal do qword nas duas dwords */
+        xop2(B, XF_66, 0x73, 6, XR(4)); xe8(B, (a64_u8)(64 - sh));   /* psllq: bits de sinal acima */
+        s_op(t, 0xEB, x, 4);
+        return 1;
+    }
     if (sh >= eb) { if (kind != 2) { s_zero(t, x); return 1; } sh = eb - 1; }
     xop2(B, XF_66, eb == 16 ? 0x71 : eb == 32 ? 0x72 : 0x73, ext[kind], XR(x));
     xe8(B, (a64_u8)sh);
@@ -501,7 +543,6 @@ static int s_qaddsub(T *t, int q, int u, int size, int sub, int n, int m, int d)
 /* deslocamento arredondado à direita de x (lanes de eb): (x >> sh) + ((x >> (sh-1)) & 1).
  * Exato sem alargar (é floor(x/2^sh + 1/2)). kind 1 sem sinal, 2 com sinal. Usa xmm3, xmm4. */
 static int s_rshr(T *t, int x, int eb, int kind, int sh) {
-    if (eb == 64 && kind == 2) return 0;
     x_movdqa_ld(B, 3, XR(x));
     if (!s_shimm(t, x, eb, kind, sh)) return 0;
     s_shimm(t, 3, eb, 1, sh - 1);
@@ -571,7 +612,6 @@ static int s_shift(T *t, a64_u32 w) {              /* AdvSIMD vetorial, deslocam
     int rsh = 2 * eb - hb, lsh = hb - eb;
     if (op == 0x00 || op == 0x02 || (op == 0x0A && !u)) {   /* SSHR USHR SSRA USRA SHL */
         if (eb == 64 && !q) return 0;
-        if (eb == 64 && !u && op != 0x0A) return 0; /* SSHR/SSRA de 64 bits: interpretador */
         s_ld(t, 0, n);
         if (op == 0x0A) s_shimm(t, 0, eb, 0, lsh);
         else s_shimm(t, 0, eb, u ? 1 : 2, rsh);
@@ -583,7 +623,7 @@ static int s_shift(T *t, a64_u32 w) {              /* AdvSIMD vetorial, deslocam
         return 1;
     }
     if (op == 0x04 || op == 0x06) {               /* SRSHR URSHR SRSRA URSRA */
-        if ((eb == 64 && !q) || (eb == 64 && !u)) return 0;
+        if (eb == 64 && !q) return 0;
         s_ld(t, 0, n);
         s_rshr(t, 0, eb, u ? 1 : 2, rsh);
         if (op == 0x06) { s_ld(t, 1, d); s_op(t, eb == 8 ? 0xFC : eb == 16 ? 0xFD : eb == 32 ? 0xFE : 0xD4, 0, 1); }
@@ -979,28 +1019,8 @@ static int s_cvt(T *t, a64_u32 w) {
     int dbl = type == 1;
     if ((w & 0x7F20FC00) == 0x1E200000) {
         int sf = (int)BIT(w, 31), rmode = (int)BITS(w, 20, 19), opc = (int)BITS(w, 18, 16);
-        if (rmode == 3 && opc <= 1) {               /* FCVTZS / FCVTZU */
-            int u = opc;
-            int bias = dbl ? 1023 : 127, lim = bias + (sf ? 62 : (u ? 31 : 30));
-            fl_clobber(t);
-            int hd = wx(t, d);
-            x_mov_rm(B, dbl, XAX, VO(n));
-            x_mov_rr(B, dbl, XCX, XAX);
-            x_shift_ri(B, dbl, S_SHR, XCX, dbl ? 52 : 23);
-            if (!u) x_alu_ri(B, 0, A_AND, XR(XCX), dbl ? 0x7FF : 0xFF);   /* sem sinal: sinal → fora */
-            x_alu_ri(B, 0, A_CMP, XR(XCX), lim);
-            slow_if(t, CC_A);                       /* NaN, inf, fora da faixa, negativo em U */
-            x_test_ri(B, 0, XM(RCPU, OFF_FPCR), 1u << 24);   /* FZ */
-            slow_if(t, CC_NE);
-            mx_clean(t);
-            if (dbl) xop2(B, XF_66 | XF_W, 0x6E, 0, XR(XAX)); else x_movd_ld(B, 0, XR(XAX));
-            int w64 = sf || u;                      /* U de 32 bits: converte em 64 e fica com o baixo */
-            xop2(B, (dbl ? XF_F2 : XF_F3) | (w64 ? XF_W : 0), 0x2C, XDX, XR(0));   /* cvtt*2si */
-            xop2(B, 0, 0xAE, 3, XM(XSP, 0));
-            ixc_if_pe(t);
-            x_mov_rr(B, sf, hd, XDX);
-            return 1;
-        }
+        if (opc <= 1 || ((opc == 4 || opc == 5) && rmode == 0)) /* FCVTN/P/M/Z e FCVTA, com e sem sinal */
+            return s_fcvt_gpr(t, dbl, sf, rmode, opc, n, d);
         if (rmode == 0 && (opc == 2 || opc == 3)) { /* SCVTF / UCVTF */
             int u = opc == 3;
             fl_clobber(t);
@@ -1008,13 +1028,10 @@ static int s_cvt(T *t, a64_u32 w) {
             x_test_ri(B, 0, XM(RCPU, OFF_FPCR), 3u << 22);   /* só RN (o resultado nunca é denormal) */
             slow_if(t, CC_NE);
             if (!sf) { if (u) x_mov_rr(B, 0, XAX, hn); else x_movsxd(B, XAX, XR(hn)); }
-            else {
-                x_mov_rr(B, 1, XAX, hn);
-                if (u) { x_test_rr(B, 1, XAX, XAX); slow_if(t, CC_S); }
-            }
+            else x_mov_rr(B, 1, XAX, hn);
             mx_clean(t);
             s_zero(t, 0);
-            xop2(B, (dbl ? XF_F2 : XF_F3) | XF_W, 0x2A, 0, XR(XAX));   /* cvtsi2sd/ss xmm0, rax */
+            s_cvtsi_rax(t, dbl, u && sf);          /* u64 com bit 63: (n>>1)*2, exato acima de 2^63 */
             xop2(B, 0, 0xAE, 3, XM(XSP, 0));
             ixc_if_pe(t);
             x_movdqu_st(B, VO(d), 0);
@@ -1075,6 +1092,7 @@ static int s_cvt(T *t, a64_u32 w) {
  * arredondado. IXC = PE da operação ou da conversão. Exige F16C, FPCR RN, FZ = FZ16 = 0, sem
  * flag além de PE e resultado (cada lane) normal e finito; senão interpretador.
  * ------------------------------------------------------------------------------------------- */
+static void s_cvtsi_rax(T *t, int dbl, int uns);
 static void vcvtph2ps_r(T *t, int x, int s) { xe8(B, 0xC4); xe8(B, 0xE2); xe8(B, 0x79); xe8(B, 0x13); xe8(B, 0xC0 | (x << 3) | s); }
 static void vcvtps2ph_r(T *t, int x, int s) { xe8(B, 0xC4); xe8(B, 0xE3); xe8(B, 0x79); xe8(B, 0x1D); xe8(B, 0xC0 | (s << 3) | x); xe8(B, 0x00); }
 /* lanes de 16 bits de xmm0: minúsculas (expoente <= 1, não zero) ou expoente máximo → lento */
@@ -1150,6 +1168,8 @@ static int s_fp(T *t, a64_u32 w) {
     unsigned op;
     if ((w & 0xFF207C00) == 0x1E204000) {           /* 1 fonte: FABS / FNEG / FSQRT */
         unsigned opc = BITS(w, 20, 15);
+        if (opc >= 8 && opc <= 12) return s_frint_sc(t, dbl, (int)opc, n, d);   /* FRINTN/P/M/Z/A */
+        if (opc == 14 || opc == 15) return s_frint_sc(t, dbl, (int)opc, n, d);  /* FRINTX / FRINTI */
         if (opc == 1 || opc == 2) {                 /* FABS / FNEG: só o bit de sinal, sem exceção */
             fl_clobber(t);
             x_mov_rm(B, dbl, XAX, VO(n));
@@ -1166,8 +1186,10 @@ static int s_fp(T *t, a64_u32 w) {
         case 1: op = 0x5E; break;                   /* FDIV */
         case 2: op = 0x58; break;                   /* FADD */
         case 3: op = 0x5C; break;                   /* FSUB */
+        case 4: case 5: case 6: case 7:             /* FMAX FMIN FMAXNM FMINNM */
+            return s_fminmax(t, dbl, (int)BITS(w, 15, 12), n, (int)BITS(w, 20, 16), d);
         case 8: op = 0x59; neg = 1; break;          /* FNMUL = -(n*m) */
-        default: return 0;                          /* FMAX/FMIN/FMAXNM/FMINNM: interpretador */
+        default: return 0;
         }
     } else if ((w & 0xFF000000) == 0x1F000000) {   /* FMADD FMSUB FNMADD FNMSUB (FMA3) */
         if (!jit_g.fma) return 0;
@@ -1552,6 +1574,489 @@ static int s_crypto_c(T *t, a64_u32 w) {           /* op0 = 1100 */
     return 0;
 }
 
+/* MXCSR de volta a 0x1F80. O PE que o x86 acumula não pode vazar para a instrução seguinte
+ * quando o ARM não levanta IXC (FRINTN/M/P/Z/A/I, e o +0,5 do FCVTAS). */
+static void mx_reset(T *t) {
+    x_mov_mi(B, 0, XM(XSP, 4), 0x1F80);
+    xop2(B, 0, 0xAE, 2, XM(XSP, 4));
+    t->mxclean = 1;
+}
+
+/* cvtsi2ss/sd de rax. uns: o bit 63 pode estar ligado; (n>>1)+(n>>1) é o dobro exato,
+ * porque acima de 2^63 o ulp é pelo menos 2048 em f64 e muito maior em f32. */
+static void s_cvtsi_rax(T *t, int dbl, int uns) {
+    int pf = (dbl ? XF_F2 : XF_F3) | XF_W;
+    if (!uns) { xop2(B, pf, 0x2A, 0, XR(XAX)); return; }
+    x_test_rr(B, 1, XAX, XAX);
+    a64_u8 *jp = x_jcc32(B, CC_NS);
+    /* bit 0 perdido no >>1: o dobro de n>>1 acerta o valor (ulp >= 2048) mas é inexato */
+    x_test_ri(B, 0, XR(XAX), 1);
+    x_setcc(B, CC_NE, XCX);
+    x_mov8_mr(B, XM(XSP, 0), XCX);
+    x_shift_ri(B, 1, S_SHR, XAX, 1);
+    xop2(B, pf, 0x2A, 0, XR(XAX));
+    xop2(B, dbl ? XF_F2 : XF_F3, 0x58, 0, XR(0));
+    x_test8_mi(B, XM(XSP, 0), 0xFF);
+    a64_u8 *jz = x_jcc8(B, CC_E);
+    xop2(B, 0, 0xAE, 3, XM(XSP, 4));
+    x_alu_ri(B, 0, A_OR, XM(XSP, 4), 0x20);
+    xop2(B, 0, 0xAE, 2, XM(XSP, 4));
+    if (!t->b.ovf) x_patch8(jz, t->b.p);
+    a64_u8 *jd = x_jmp32(B);
+    if (!t->b.ovf) x_patch32(jp, t->b.p);
+    xop2(B, pf, 0x2A, 0, XR(XAX));
+    if (!t->b.ovf) x_patch32(jd, t->b.p);
+}
+
+/* RC do MXCSR: 0 par, 1 chão, 2 teto, 3 trunca. Alguns hosts ignoram o imediato do
+ * round* e usam só o MXCSR; outros honram o imediato e ignoram o MXCSR. Os dois
+ * ficam com o mesmo modo, então o resultado coincide. mxclean deixa de valer. */
+static void mx_set_rc(T *t, int mode) {
+    x_mov_mi(B, 0, XM(XSP, 4), (int32_t)(0x1F80u | ((a64_u32)(mode & 3) << 13)));
+    xop2(B, 0, 0xAE, 2, XM(XSP, 4));
+    t->mxclean = 0;
+}
+
+/* kind: 0 roundss, 1 roundsd, 2 roundps, 3 roundpd. mode: 0 par, 1 chão, 2 teto, 3 trunca. */
+static void s_round_packed(T *t, int kind, int dst, int src, int mode) {
+    static const unsigned op[4] = { 0x0A, 0x0B, 0x08, 0x09 };
+    mx_set_rc(t, mode);
+    xop3(B, XF_66, 0x3A, op[kind], dst, XR(src));
+    xe8(B, (a64_u8)(4 | (mode & 3)));
+}
+
+static void s_round_fpcr(T *t, int kind) {
+    x_mov_rm(B, 0, XAX, XM(RCPU, OFF_FPCR));
+    x_shift_ri(B, 0, S_SHR, XAX, 22);
+    x_alu_ri(B, 0, A_AND, XR(XAX), 3);
+    x_alu_ri(B, 0, A_CMP, XR(XAX), 1);
+    a64_u8 *jp = x_jcc32(B, CC_E);
+    x_alu_ri(B, 0, A_CMP, XR(XAX), 2);
+    a64_u8 *jm = x_jcc32(B, CC_E);
+    x_alu_ri(B, 0, A_CMP, XR(XAX), 3);
+    a64_u8 *jz = x_jcc32(B, CC_E);
+    s_round_packed(t, kind, 0, 0, 0);
+    a64_u8 *d0 = x_jmp32(B);
+    if (!t->b.ovf) x_patch32(jp, t->b.p);
+    s_round_packed(t, kind, 0, 0, 2);
+    a64_u8 *d1 = x_jmp32(B);
+    if (!t->b.ovf) x_patch32(jm, t->b.p);
+    s_round_packed(t, kind, 0, 0, 1);
+    a64_u8 *d2 = x_jmp32(B);
+    if (!t->b.ovf) x_patch32(jz, t->b.p);
+    s_round_packed(t, kind, 0, 0, 3);
+    if (!t->b.ovf) { x_patch32(d0, t->b.p); x_patch32(d1, t->b.p); x_patch32(d2, t->b.p); }
+}
+
+/* lane idx do xmm `src` em rax, zero-estendido. Usa xmm0 se idx != 0. */
+static void s_xmm_lane(T *t, int src, int idx, int size) {
+    int bytes = idx << size;
+    if (bytes) { x_movdqa_ld(B, 0, XR(src)); s_shiftdq(t, 0, 0, bytes); src = 0; }
+    if (size == 3) xop2(B, XF_66 | XF_W, 0x7E, src, XR(XAX));
+    else if (size == 2) x_movd_st(B, XR(XAX), src);
+    else if (size == 1) { x_movd_st(B, XR(XAX), src); x_movzx16(B, XAX, XR(XAX)); }
+    else { x_movd_st(B, XR(XAX), src); x_movzx8(B, XAX, XR(XAX)); }
+}
+
+/* rax = valor (já estendido), rcx = contagem com sinal de 8 bits. Resultado mascarado em rax. */
+static void s_apply_shl(T *t, int eb, int uns) {
+    x_test_rr(B, 1, XCX, XCX);
+    a64_u8 *jneg = x_jcc32(B, CC_S);
+    x_alu_ri(B, 1, A_CMP, XR(XCX), eb);
+    a64_u8 *jhi = x_jcc32(B, CC_AE);
+    x_shift_cl(B, 1, S_SHL, XAX);
+    a64_u8 *j1 = x_jmp32(B);
+    if (!t->b.ovf) x_patch32(jhi, t->b.p);
+    x_alu_rr(B, 1, A_XOR, XAX, XAX);
+    a64_u8 *j2 = x_jmp32(B);
+    if (!t->b.ovf) x_patch32(jneg, t->b.p);
+    x_f7(B, 1, 3, XR(XCX));
+    x_alu_ri(B, 1, A_CMP, XR(XCX), eb);
+    a64_u8 *jge = x_jcc32(B, CC_AE);
+    x_shift_cl(B, 1, uns ? S_SHR : S_SAR, XAX);
+    a64_u8 *j3 = x_jmp32(B);
+    if (!t->b.ovf) x_patch32(jge, t->b.p);
+    if (uns) x_alu_rr(B, 1, A_XOR, XAX, XAX);
+    else x_shift_ri(B, 1, S_SAR, XAX, 63);
+    if (!t->b.ovf) { x_patch32(j1, t->b.p); x_patch32(j2, t->b.p); x_patch32(j3, t->b.p); }
+    if (eb == 32) x_mov_rr(B, 0, XAX, XAX);
+    else if (eb < 32) x_alu_ri(B, 1, A_AND, XR(XAX), eb == 8 ? 0xFF : 0xFFFF);
+}
+
+static void s_store_lane(T *t, int d, int size, int idx) {
+    int off = idx << size;
+    if (size >= 2) x_mov_mr(B, size == 3, VOE(d, off), XAX);
+    else if (size == 1) x_mov16_mr(B, VOE(d, off), XAX);
+    else x_mov8_mr(B, VOE(d, off), XAX);
+}
+
+/* SSHL/USHL. A contagem é o byte baixo da lane, com sinal. À direita, USHL é lógico e SSHL aritmético.
+ * Contagem >= largura zera (ou preenche com o sinal, no deslocamento aritmético). */
+static int s_shlreg(T *t, int q, int u, int size, int n, int m, int d, int scalar) {
+    if (scalar) { if (size != 3) return 0; }
+    else if (size == 3 && !q) return 0;
+    int eb = 8 << size, ne = scalar ? 1 : (q ? 128 : 64) / eb;
+    fl_clobber(t);
+    if (scalar) { x_movq_ld(B, 2, VO(n)); x_movq_ld(B, 3, VO(m)); }
+    else { s_ld(t, 2, n); s_ld(t, 3, m); }
+    for (int e = 0; e < ne; e++) {
+        s_xmm_lane(t, 2, e, size);
+        if (!u && eb < 64) {
+            if (eb == 32) x_movsxd(B, XAX, XR(XAX));
+            else if (eb == 16) x_movsx16(B, 1, XAX, XR(XAX));
+            else x_movsx8(B, 1, XAX, XR(XAX));
+        }
+        x_mov_rr(B, 1, XDX, XAX);
+        s_xmm_lane(t, 3, e, size);
+        x_movsx8(B, 1, XCX, XR(XAX));
+        x_mov_rr(B, 1, XAX, XDX);
+        s_apply_shl(t, eb, u);
+        s_store_lane(t, d, size, e);
+    }
+    if (scalar || !q) x_mov_mi(B, 1, VOE(d, 8), 0);
+    return 1;
+}
+
+static void s_pminmax(T *t, int dst, int src, int u, int mn, int size) {
+    int sse2 = (size == 1 && !u) || (size == 0 && u);
+    unsigned opc = 0;
+    if (!u && size == 0) opc = mn ? 0x38 : 0x3C;
+    else if (!u && size == 1) opc = mn ? 0xEA : 0xEE;
+    else if (!u && size == 2) opc = mn ? 0x39 : 0x3D;
+    else if (u && size == 0) opc = mn ? 0xDA : 0xDE;
+    else if (u && size == 1) opc = mn ? 0x3A : 0x3E;
+    else opc = mn ? 0x3B : 0x3F;
+    if (sse2) s_op(t, opc, dst, src); else s_op38(t, opc, dst, src);
+}
+
+/* reduz pares adjacentes de xmm x para a metade baixa. Usa xmm1, xmm2 e xmm5. */
+static void s_pair_reduce(T *t, int x, int u, int mn, int size) {
+    if (size == 2) {
+        xop2(B, XF_66, 0x70, 1, XR(x)); xe8(B, 0xB1);
+        s_pminmax(t, x, 1, u, mn, size);
+        xop2(B, XF_66, 0x70, x, XR(x)); xe8(B, 0x08);
+        return;
+    }
+    x_movdqa_ld(B, 1, XR(x));
+    if (size == 0) s_const2(t, 2, 0x0607040502030001ull, 0x0E0F0C0D0A0B0809ull);
+    else s_const2(t, 2, 0x0504070601000302ull, 0x0D0C0F0E09080B0Aull);
+    s_pshufb(t, 1, 2);
+    s_pminmax(t, x, 1, u, mn, size);
+    if (size == 0) s_const2(t, 2, 0x0E0C0A0806040200ull, 0x8080808080808080ull);
+    else s_const2(t, 2, 0x0D0C090805040100ull, 0x8080808080808080ull);
+    s_pshufb(t, x, 2);
+}
+
+/* SMAXP/UMAXP/SMINP/UMINP sobre concat(Vm:Vn). Q=0 usa só os 64 bits baixos de cada fonte. */
+static int s_pairwise_mm(T *t, int q, int u, int size, int mn, int n, int m, int d) {
+    int sse2 = (size == 1 && !u) || (size == 0 && u);
+    if (size < 2 && !jit_g.ssse3) return 0;
+    if (!sse2 && !jit_g.sse41) return 0;
+    if (q) {
+        s_ld(t, 0, n);
+        s_pair_reduce(t, 0, u, mn, size);
+        x_movdqa_ld(B, 4, XR(0));
+        s_ld(t, 0, m);
+        s_pair_reduce(t, 0, u, mn, size);
+        s_op(t, 0x6C, 4, 0);
+        s_st(t, d, 4, 1);
+    } else {
+        x_movq_ld(B, 0, VO(n));
+        x_movq_ld(B, 1, VO(m));
+        s_op(t, 0x6C, 0, 1);
+        s_pair_reduce(t, 0, u, mn, size);
+        s_st(t, d, 0, 0);
+    }
+    return 1;
+}
+
+static int s_rev(T *t, int q, int u, int op, int size, int n, int d) {
+    if (!jit_g.ssse3) return 0;
+    int eb = 8 << size, cb = op == 1 ? 16 : u ? 32 : 64;
+    if (size > 2 || eb >= cb) return 0;
+    a64_u64 lo, hi;
+    if (cb == 16) { lo = 0x0607040502030001ull; hi = 0x0E0F0C0D0A0B0809ull; }
+    else if (cb == 32 && eb == 8) { lo = 0x0405060700010203ull; hi = 0x0C0D0E0F08090A0Bull; }
+    else if (cb == 32) { lo = 0x0504070601000302ull; hi = 0x0D0C0F0E09080B0Aull; }
+    else if (eb == 8) { lo = 0x0001020304050607ull; hi = 0x08090A0B0C0D0E0Full; }
+    else if (eb == 16) { lo = 0x0100030205040706ull; hi = 0x09080B0A0D0C0F0Eull; }
+    else { lo = 0x0302010007060504ull; hi = 0x0B0A09080F0E0D0Cull; }
+    s_ld(t, 0, n);
+    s_const2(t, 1, lo, hi);
+    s_pshufb(t, 0, 1);
+    s_st(t, d, 0, q);
+    return 1;
+}
+
+static int s_cnt(T *t, int q, int n, int d) {
+    if (!jit_g.ssse3) return 0;
+    s_ld(t, 0, n);
+    s_const(t, 4, 0x0F0F0F0F0F0F0F0Full);
+    x_movdqa_ld(B, 1, XR(0));
+    s_op(t, 0xDB, 1, 4);
+    xop2(B, XF_66, 0x71, 2, XR(0)); xe8(B, 4);
+    s_op(t, 0xDB, 0, 4);
+    s_const2(t, 2, 0x0302020102010100ull, 0x0403030203020201ull);
+    x_movdqa_ld(B, 3, XR(2));
+    s_pshufb(t, 2, 1);
+    s_pshufb(t, 3, 0);
+    s_op(t, 0xFC, 2, 3);
+    s_st(t, d, 2, q);
+    return 1;
+}
+
+/* ABS inteiro com wrap: 0x80 e INT64_MIN permanecem. pabsb/w/d no SSSE3; 64 bits na máscara de sinal. */
+static int s_iabs(T *t, int q, int size, int n, int d, int scalar) {
+    if (scalar) { if (size != 3) return 0; q = 0; }
+    else if (size == 3 && !q) return 0;
+    if (size < 3 && !jit_g.ssse3) return 0;
+    if (scalar) x_movq_ld(B, 0, VO(n)); else s_ld(t, 0, n);
+    if (size < 3) s_op38(t, 0x1C + (unsigned)size, 0, 0);
+    else {
+        x_movdqa_ld(B, 1, XR(0));
+        s_signmask(t, 1, 64);
+        s_op(t, 0xEF, 0, 1);
+        s_op(t, 0xFB, 0, 1);
+    }
+    s_st(t, d, 0, q);
+    return 1;
+}
+
+/* SCVTF/UCVTF de mesma largura (escalar SIMD e vetor). Só RN; u64 com bit 63 pelo dobro de n>>1. */
+static int s_scvtf(T *t, int q, int u, int size, int n, int d, int scalar) {
+    if (size & 2) return 0;
+    int dbl = size & 1;
+    if (!scalar && dbl && !q) return 0;
+    int ne = scalar ? 1 : (q ? 128 : 64) / (dbl ? 64 : 32);
+    fl_clobber(t);
+    x_test_ri(B, 0, XM(RCPU, OFF_FPCR), 3u << 22);
+    slow_if(t, CC_NE);
+    mx_clean(t);
+    for (int e = 0; e < ne; e++) {
+        s_elem(t, n, e, dbl ? 3 : 2);
+        if (!u && !dbl) x_movsxd(B, XAX, XR(XAX));
+        s_zero(t, 0);
+        s_cvtsi_rax(t, dbl, u && dbl);
+        if (dbl) x_movq_st(B, VOE(d, e * 8), 0);
+        else x_movd_st(B, VOE(d, e * 4), 0);
+    }
+    if (scalar) { if (!dbl) x_mov_mi(B, 0, VOE(d, 4), 0); x_mov_mi(B, 1, VOE(d, 8), 0); }
+    else if (!q) x_mov_mi(B, 1, VOE(d, 8), 0);
+    xop2(B, 0, 0xAE, 3, XM(XSP, 0));
+    ixc_if_pe(t);
+    return 1;
+}
+
+/* mode: 0 par, 1 chão, 2 teto, 3 trunca, -1 = FPCR. FRINTN/M/P/Z/I não levantam IXC. */
+static int s_frint_vec(T *t, int q, int size, int mode, int n, int d) {
+    if (!jit_g.sse41) return 0;
+    int dbl = size & 1;
+    if (dbl && !q) return 0;
+    int kind = dbl ? 3 : 2;
+    fl_clobber(t);
+    x_test_ri(B, 0, XM(RCPU, OFF_FPCR), 1u << 24);
+    slow_if(t, CC_NE);
+    mx_clean(t);
+    if (q) s_ld(t, 0, n); else x_movq_ld(B, 0, VO(n));
+    if (mode < 0) s_round_fpcr(t, kind);
+    else s_round_packed(t, kind, 0, 0, mode);
+    xop2(B, 0, 0xAE, 3, XM(XSP, 0));
+    x_test8_mi(B, XM(XSP, 0), 0x1F);
+    slow_if(t, CC_NE);
+    s_lanecheck(t, dbl, q);
+    s_st(t, d, 0, q);
+    mx_reset(t);
+    return 1;
+}
+
+static int s_fabsneg_vec(T *t, int q, int size, int neg, int n, int d) {
+    if ((size & 1) && !q) return 0;
+    int dbl = size & 1;
+    s_ld(t, 0, n);
+    if (neg) { s_const(t, 1, dbl ? 0x8000000000000000ull : 0x8000000080000000ull); s_op(t, 0xEF, 0, 1); }
+    else { s_const(t, 1, dbl ? 0x7FFFFFFFFFFFFFFFull : 0x7FFFFFFF7FFFFFFFull); s_op(t, 0xDB, 0, 1); }
+    s_st(t, d, 0, q);
+    return 1;
+}
+
+/* FMAX/FMIN/FMAXNM/FMINNM numéricos. Qualquer NaN, ou FZ, vai ao interpretador.
+ * Iguais: MAX faz AND (o +0 vence) e MIN faz OR (o -0 vence). */
+static int s_fminmax(T *t, int dbl, int which, int n, int m, int d) {
+    int ismin = which & 1;
+    fl_clobber(t);
+    x_test_ri(B, 0, XM(RCPU, OFF_FPCR), 1u << 24);
+    slow_if(t, CC_NE);
+    if (dbl) { x_movq_ld(B, 0, VO(n)); x_movq_ld(B, 1, VO(m)); }
+    else { x_movd_ld(B, 0, VO(n)); x_movd_ld(B, 1, VO(m)); }
+    xop2(B, dbl ? XF_66 : 0, 0x2E, 0, XR(1));
+    slow_if(t, CC_P);
+    a64_u8 *jlt = x_jcc32(B, CC_B);
+    a64_u8 *jeq = x_jcc32(B, CC_E);
+    x_mov_rm(B, dbl, XAX, VO(ismin ? m : n));
+    a64_u8 *jd1 = x_jmp32(B);
+    if (!t->b.ovf) x_patch32(jlt, t->b.p);
+    x_mov_rm(B, dbl, XAX, VO(ismin ? n : m));
+    a64_u8 *jd2 = x_jmp32(B);
+    if (!t->b.ovf) x_patch32(jeq, t->b.p);
+    x_mov_rm(B, dbl, XAX, VO(n));
+    x_mov_rm(B, dbl, XCX, VO(m));
+    x_alu_rr(B, dbl, ismin ? A_OR : A_AND, XAX, XCX);
+    if (!t->b.ovf) { x_patch32(jd1, t->b.p); x_patch32(jd2, t->b.p); }
+    s_wsc_es(t, d, dbl);
+    return 1;
+}
+
+/* FRINT escalar. opc 8..11 = N/P/M/Z, 12 = A, 14 = X (IXC), 15 = I (FPCR, sem IXC). */
+static int s_frint_sc(T *t, int dbl, int opc, int n, int d) {
+    if (!jit_g.sse41) return 0;
+    static const int mode[4] = { 0, 2, 1, 3 };      /* N P M Z → par, teto, chão, trunca */
+    int kind = dbl ? 1 : 0;
+    fl_clobber(t);
+    x_test_ri(B, 0, XM(RCPU, OFF_FPCR), 1u << 24);
+    slow_if(t, CC_NE);
+    mx_clean(t);
+    if (dbl) x_movq_ld(B, 0, VO(n)); else x_movd_ld(B, 0, VO(n));
+    if (opc == 12) {
+        x_mov_ri(B, XAX, dbl ? 0x3fe0000000000000ull : 0x3f000000u);
+        if (dbl) xop2(B, XF_66 | XF_W, 0x6E, 3, XR(XAX)); else x_movd_ld(B, 3, XR(XAX));
+        if (dbl) xop2(B, XF_66 | XF_W, 0x7E, 0, XR(XAX)); else x_movd_st(B, XR(XAX), 0);
+        x_test_rr(B, dbl, XAX, XAX);
+        a64_u8 *jneg = x_jcc32(B, CC_S);
+        xop2(B, dbl ? XF_F2 : XF_F3, 0x58, 0, XR(3));
+        s_round_packed(t, kind, 0, 0, 1);
+        a64_u8 *jd = x_jmp32(B);
+        if (!t->b.ovf) x_patch32(jneg, t->b.p);
+        xop2(B, dbl ? XF_F2 : XF_F3, 0x5C, 0, XR(3));
+        s_round_packed(t, kind, 0, 0, 2);
+        if (!t->b.ovf) x_patch32(jd, t->b.p);
+    } else if (opc == 14 || opc == 15) s_round_fpcr(t, kind);
+    else s_round_packed(t, kind, 0, 0, mode[opc - 8]);
+    xop2(B, 0, 0xAE, 3, XM(XSP, 0));
+    x_test8_mi(B, XM(XSP, 0), 0x1F);
+    slow_if(t, CC_NE);
+    if (dbl) xop2(B, XF_66 | XF_W, 0x7E, 0, XR(XAX)); else x_movd_st(B, XR(XAX), 0);
+    x_mov_rr(B, dbl, XCX, XAX);
+    x_shift_ri(B, dbl, S_SHL, XCX, 1);
+    a64_u8 *jz = x_jcc32(B, CC_E);
+    x_shift_ri(B, dbl, S_SHR, XCX, dbl ? 53 : 24);
+    x_alu_ri(B, 0, A_CMP, XR(XCX), 1);
+    a64_u8 *jlo = x_jcc32(B, CC_BE);
+    x_alu_ri(B, 0, A_CMP, XR(XCX), dbl ? 0x7FF : 0xFF);
+    a64_u8 *jhi = x_jcc32(B, CC_E);
+    a64_u8 *jok = x_jmp32(B);
+    if (!t->b.ovf) { x_patch32(jlo, t->b.p); x_patch32(jhi, t->b.p); }
+    emit_slow_interp(t);
+    if (!t->b.ovf) { x_patch32(jz, t->b.p); x_patch32(jok, t->b.p); }
+    s_wsc_es(t, d, dbl);
+    if (opc == 14) ixc_if_pe(t);
+    mx_reset(t);
+    return 1;
+}
+
+/* FCVT* de escalar FP para GPR. rmode 0..3 = N/P/M/Z; opc 4/5 com rmode 0 = FCVTAS/FCVTAU.
+ * Fora da faixa, NaN, infinito e FZ vão ao interpretador, que satura e levanta IOC. */
+static int s_fcvt_gpr(T *t, int dbl, int sf, int rmode, int opc, int n, int d) {
+    int u = opc & 1, away = opc >= 4;
+    int bias = dbl ? 1023 : 127;
+    int guard = (rmode == 3 && !away) ? 0 : 1;
+    int lim = bias + (sf ? 62 - guard : (u ? 31 : 30) - guard);
+    int w64 = sf || u;
+    fl_clobber(t);
+    int hd = wx(t, d);
+    x_mov_rm(B, dbl, XAX, VO(n));
+    x_mov_rr(B, dbl, XCX, XAX);
+    x_shift_ri(B, dbl, S_SHR, XCX, dbl ? 52 : 23);
+    if (!u) x_alu_ri(B, 0, A_AND, XR(XCX), dbl ? 0x7FF : 0xFF);
+    x_alu_ri(B, 0, A_CMP, XR(XCX), lim);
+    slow_if(t, CC_A);
+    x_test_ri(B, 0, XM(RCPU, OFF_FPCR), 1u << 24);
+    slow_if(t, CC_NE);
+    mx_clean(t);
+    if (dbl) xop2(B, XF_66 | XF_W, 0x6E, 0, XR(XAX)); else x_movd_ld(B, 0, XR(XAX));
+    if (away) {
+        x_movdqa_ld(B, 2, XR(0));
+        xop2(B, (dbl ? XF_F2 : XF_F3) | XF_W, 0x2C, XDX, XR(0));
+        xop2(B, (dbl ? XF_F2 : XF_F3) | XF_W, 0x2A, 1, XR(XDX));
+        xop2(B, dbl ? XF_66 : 0, 0x2E, 2, XR(1));
+        x_setcc(B, CC_NE, XCX);
+        x_mov8_mr(B, XM(XSP, 0), XCX);
+        x_movdqa_ld(B, 0, XR(2));
+        x_mov_ri(B, XAX, dbl ? 0x3fe0000000000000ull : 0x3f000000u);
+        if (dbl) xop2(B, XF_66 | XF_W, 0x6E, 3, XR(XAX)); else x_movd_ld(B, 3, XR(XAX));
+        if (dbl) xop2(B, XF_66 | XF_W, 0x7E, 2, XR(XAX)); else x_movd_st(B, XR(XAX), 2);
+        x_test_rr(B, dbl, XAX, XAX);
+        a64_u8 *jneg = x_jcc32(B, CC_S);
+        xop2(B, dbl ? XF_F2 : XF_F3, 0x58, 0, XR(3));
+        s_round_packed(t, dbl ? 1 : 0, 0, 0, 1);
+        a64_u8 *jd = x_jmp32(B);
+        if (!t->b.ovf) x_patch32(jneg, t->b.p);
+        xop2(B, dbl ? XF_F2 : XF_F3, 0x5C, 0, XR(3));
+        s_round_packed(t, dbl ? 1 : 0, 0, 0, 2);
+        if (!t->b.ovf) x_patch32(jd, t->b.p);
+        xop2(B, (dbl ? XF_F2 : XF_F3) | (w64 ? XF_W : 0), 0x2C, XDX, XR(0));
+        x_mov_rr(B, sf, hd, XDX);
+        x_test8_mi(B, XM(XSP, 0), 0xFF);
+        a64_u8 *jz = x_jcc8(B, CC_E);
+        x_alu_ri(B, 0, A_OR, XM(RCPU, OFF_FPSR), 0x10);
+        x_patch8(jz, t->b.p);
+        mx_reset(t);
+        return 1;
+    }
+    /* rmode 3 trunca com cvtt (não depende do MXCSR). +inf/−inf passam o RC do MXCSR
+     * para o cvt, porque o imediato do round* não é honrado em todo host. */
+    if (rmode == 1 || rmode == 2) mx_set_rc(t, rmode == 1 ? 2 : 1);
+    xop2(B, (dbl ? XF_F2 : XF_F3) | (w64 ? XF_W : 0), (rmode == 3 ? 0x2C : 0x2D), XDX, XR(0));
+    xop2(B, 0, 0xAE, 3, XM(XSP, 0));
+    ixc_if_pe(t);
+    x_mov_rr(B, sf, hd, XDX);
+    if (rmode == 1 || rmode == 2) mx_reset(t);
+    return 1;
+}
+
+static int s_shift_scalar(T *t, a64_u32 w) {
+    int u = (int)BIT(w, 29), immh = (int)BITS(w, 22, 19);
+    if (!immh || BIT(w, 23) || !(immh & 8)) return 0;
+    int eb = 64;
+    int hb = (int)BITS(w, 22, 16), op = (int)BITS(w, 15, 11);
+    int n = (int)BITS(w, 9, 5), d = (int)(w & 31);
+    int rsh = 2 * eb - hb, lsh = hb - eb;
+    if (op == 0x00 || op == 0x02 || (op == 0x0A && !u)) {
+        x_movq_ld(B, 0, VO(n));
+        if (op == 0x0A) s_shimm(t, 0, eb, 0, lsh);
+        else s_shimm(t, 0, eb, u ? 1 : 2, rsh);
+        if (op == 0x02) { s_ld(t, 1, d); s_op(t, 0xD4, 0, 1); }
+        s_st(t, d, 0, 0);
+        return 1;
+    }
+    if (op == 0x04 || op == 0x06) {
+        x_movq_ld(B, 0, VO(n));
+        s_rshr(t, 0, eb, u ? 1 : 2, rsh);
+        if (op == 0x06) { s_ld(t, 1, d); s_op(t, 0xD4, 0, 1); }
+        s_st(t, d, 0, 0);
+        return 1;
+    }
+    return 0;
+}
+
+/* Escalar AdvSIMD (op0 0x5/0x7): só o que tem forma de uma lane de 64, ou SCVTF da mesma largura. */
+static int s_scalar_simd(T *t, a64_u32 w) {
+    if (BIT(w, 24) && BIT(w, 10) && !BIT(w, 23) && BITS(w, 22, 19) != 0) return s_shift_scalar(t, w);
+    if (BIT(w, 21) && BIT(w, 10)) {
+        int size = (int)BITS(w, 23, 22), op = (int)BITS(w, 15, 11);
+        if (op == 0x08 && size == 3)
+            return s_shlreg(t, 0, (int)BIT(w, 29), 3, (int)BITS(w, 9, 5), (int)BITS(w, 20, 16), (int)(w & 31), 1);
+        return 0;
+    }
+    if (BIT(w, 21) && !BIT(w, 10) && BIT(w, 11) && BITS(w, 20, 17) == 0) {
+        int size = (int)BITS(w, 23, 22), op = (int)BITS(w, 16, 12);
+        int n = (int)BITS(w, 9, 5), d = (int)(w & 31), u = (int)BIT(w, 29);
+        if (op == 0x0B && !u) return s_iabs(t, 0, size, n, d, 1);
+        if (op == 0x1D && !(size & 2)) return s_scvtf(t, 0, u, size, n, d, 1);
+        return 0;
+    }
+    return 0;
+}
+
 /* despacho: op0 = x111 (dados FP/SIMD) */
 static int tr_simd(T *t, a64_u32 w) {
     if (((w >> 28) & 1) && !((w >> 30) & 1)) return s_fmov(t, w) || s_fcmp(t, w) || s_cvt(t, w) || s_fp(t, w); /* grupo FP escalar */
@@ -1565,7 +2070,8 @@ static int tr_simd(T *t, a64_u32 w) {
         return 1;
     }
     if (op0 == 0xC) return s_crypto_c(t, w);
-    if ((op0 & 1) || (op0 & 8)) return 0;                                    /* escalares: interpretador */
+    if ((op0 & 1) && !(op0 & 8)) return (op0 & 4) ? s_scalar_simd(t, w) : 0; /* escalar AdvSIMD */
+    if (op0 & 8) return 0;
     if (BIT(w, 24)) {
         if (BIT(w, 10) && !BIT(w, 23) && BITS(w, 22, 19) == 0) return s_modimm(t, w);
         if (BIT(w, 10) && !BIT(w, 23)) return s_shift(t, w);
