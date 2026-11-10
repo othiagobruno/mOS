@@ -1,100 +1,74 @@
-/* STUB. libswiftCore and libswiftFoundation symbols VS Code 1.145.2 imports.
- * Each function returns immediately. This is not the Swift runtime.
- * Both dylibs export the same set; machocheck counts a symbol once. */
+/* STUB. Metadados e métodos de Foundation/Error que o VS Code importa e que
+ * não rodam no caminho de carga (swift_once / alloc / retain). Cada símbolo
+ * é uma função que volta na hora. Não é o descritor emitido pelo compilador.
+ *
+ * Continuam stub:
+ *   _$sBOWV
+ *   _$ss5ErrorMp
+ *   _$ss5ErrorP19_getEmbeddedNSErroryXlSgyFTq
+ *   _$ss5ErrorP5_codeSivgTq
+ *   _$ss5ErrorP7_domainSSvgTq
+ *   _$ss5ErrorP9_userInfoyXlSgvgTq
+ *   _$sytN
+ *   _$ss5ErrorPsE19_getEmbeddedNSErroryXlSgyF
+ *   _$ss5ErrorPsE5_codeSivg
+ *   _$ss5ErrorPsE7_domainSSvg
+ *   _$ss5ErrorPsE9_userInfoyXlSgvg
+ *   _$sSqMa
+ *   _$ss5UInt8VMn
+ *   _$ss5UInt8VN
+ *   _swift_getAssociatedConformanceWitness
+ *   _swift_getAssociatedTypeWitness
+ *   _swift_getTypeByMangledNameInContext
+ *   _swift_getTypeByMangledNameInContextInMetadataState
+ *   _$s10Foundation13__DataStorageC5bytes6lengthACSVSg_Sitcfc
+ *   _$s10Foundation13__DataStorageC6_bytesSvSgvg
+ *   _$s10Foundation13__DataStorageC7_lengthSivg
+ *   _$s10Foundation13__DataStorageC7_offsetSivg
+ *   _$s10Foundation13__DataStorageCMa
+ *   _$s10Foundation15ContiguousBytesP010withUnsafeC0yqd__qd__SWKXEKlFTj
+ *   _$s10Foundation22_convertErrorToNSErrorySo0E0Cs0C0_pF
+ *   _$s10Foundation4DataV14RangeReferenceCMa
+ *   _$s10Foundation4DataV15_RepresentationO6append10contentsOfySW_tF
+ *   _$s10Foundation4DataV19_bridgeToObjectiveCSo6NSDataCyF
+ *   _$s10Foundation4DataV36_unconditionallyBridgeFromObjectiveCyACSo6NSDataCSgFZ
+ *   _$s10Foundation4DataV9copyBytes2to4fromSiSryxG_SnySiGSgtlF
+ *   _$sSRyxG10Foundation12DataProtocolABs5UInt8VRszlMc
+ *   _$sSRyxG10Foundation15ContiguousBytesABs5UInt8VRszlMc
+ */
+#define MOS_STUB(n, sym) \
+    __attribute__((visibility("default"))) void mos_stub_##n(void) __asm__(sym); \
+    void mos_stub_##n(void) {}
 
-__attribute__((visibility("default"))) void mos_stub_0(void) __asm__("_$sBOWV");
-void mos_stub_0(void) {}
-__attribute__((visibility("default"))) void mos_stub_1(void) __asm__("_$ss5ErrorMp");
-void mos_stub_1(void) {}
-__attribute__((visibility("default"))) void mos_stub_2(void) __asm__("_$ss5ErrorP19_getEmbeddedNSErroryXlSgyFTq");
-void mos_stub_2(void) {}
-__attribute__((visibility("default"))) void mos_stub_3(void) __asm__("_$ss5ErrorP5_codeSivgTq");
-void mos_stub_3(void) {}
-__attribute__((visibility("default"))) void mos_stub_4(void) __asm__("_$ss5ErrorP7_domainSSvgTq");
-void mos_stub_4(void) {}
-__attribute__((visibility("default"))) void mos_stub_5(void) __asm__("_$ss5ErrorP9_userInfoyXlSgvgTq");
-void mos_stub_5(void) {}
-__attribute__((visibility("default"))) void mos_stub_6(void) __asm__("_$sytN");
-void mos_stub_6(void) {}
-__attribute__((visibility("default"))) void mos_stub_7(void) __asm__("_swift_deletedMethodError");
-void mos_stub_7(void) {}
-__attribute__((visibility("default"))) void mos_stub_8(void) __asm__("_$s10Foundation13__DataStorageC5bytes6lengthACSVSg_Sitcfc");
-void mos_stub_8(void) {}
-__attribute__((visibility("default"))) void mos_stub_9(void) __asm__("_$s10Foundation13__DataStorageC6_bytesSvSgvg");
-void mos_stub_9(void) {}
-__attribute__((visibility("default"))) void mos_stub_10(void) __asm__("_$s10Foundation13__DataStorageC7_lengthSivg");
-void mos_stub_10(void) {}
-__attribute__((visibility("default"))) void mos_stub_11(void) __asm__("_$s10Foundation13__DataStorageC7_offsetSivg");
-void mos_stub_11(void) {}
-__attribute__((visibility("default"))) void mos_stub_12(void) __asm__("_$s10Foundation13__DataStorageCMa");
-void mos_stub_12(void) {}
-__attribute__((visibility("default"))) void mos_stub_13(void) __asm__("_$s10Foundation15ContiguousBytesP010withUnsafeC0yqd__qd__SWKXEKlFTj");
-void mos_stub_13(void) {}
-__attribute__((visibility("default"))) void mos_stub_14(void) __asm__("_$s10Foundation22_convertErrorToNSErrorySo0E0Cs0C0_pF");
-void mos_stub_14(void) {}
-__attribute__((visibility("default"))) void mos_stub_15(void) __asm__("_$s10Foundation4DataV14RangeReferenceCMa");
-void mos_stub_15(void) {}
-__attribute__((visibility("default"))) void mos_stub_16(void) __asm__("_$s10Foundation4DataV15_RepresentationO6append10contentsOfySW_tF");
-void mos_stub_16(void) {}
-__attribute__((visibility("default"))) void mos_stub_17(void) __asm__("_$s10Foundation4DataV19_bridgeToObjectiveCSo6NSDataCyF");
-void mos_stub_17(void) {}
-__attribute__((visibility("default"))) void mos_stub_18(void) __asm__("_$s10Foundation4DataV36_unconditionallyBridgeFromObjectiveCyACSo6NSDataCSgFZ");
-void mos_stub_18(void) {}
-__attribute__((visibility("default"))) void mos_stub_19(void) __asm__("_$ss5ErrorPsE19_getEmbeddedNSErroryXlSgyF");
-void mos_stub_19(void) {}
-__attribute__((visibility("default"))) void mos_stub_20(void) __asm__("_$ss5ErrorPsE5_codeSivg");
-void mos_stub_20(void) {}
-__attribute__((visibility("default"))) void mos_stub_21(void) __asm__("_$ss5ErrorPsE7_domainSSvg");
-void mos_stub_21(void) {}
-__attribute__((visibility("default"))) void mos_stub_22(void) __asm__("_$ss5ErrorPsE9_userInfoyXlSgvg");
-void mos_stub_22(void) {}
-__attribute__((visibility("default"))) void mos_stub_23(void) __asm__("__swift_stdlib_operatingSystemVersion");
-void mos_stub_23(void) {}
-__attribute__((visibility("default"))) void mos_stub_24(void) __asm__("_swift_allocBox");
-void mos_stub_24(void) {}
-__attribute__((visibility("default"))) void mos_stub_25(void) __asm__("_swift_allocError");
-void mos_stub_25(void) {}
-__attribute__((visibility("default"))) void mos_stub_26(void) __asm__("_swift_allocObject");
-void mos_stub_26(void) {}
-__attribute__((visibility("default"))) void mos_stub_27(void) __asm__("_swift_bridgeObjectRelease");
-void mos_stub_27(void) {}
-__attribute__((visibility("default"))) void mos_stub_28(void) __asm__("_swift_bridgeObjectRetain");
-void mos_stub_28(void) {}
-__attribute__((visibility("default"))) void mos_stub_29(void) __asm__("_swift_errorRelease");
-void mos_stub_29(void) {}
-__attribute__((visibility("default"))) void mos_stub_30(void) __asm__("_swift_errorRetain");
-void mos_stub_30(void) {}
-__attribute__((visibility("default"))) void mos_stub_31(void) __asm__("_swift_getWitnessTable");
-void mos_stub_31(void) {}
-__attribute__((visibility("default"))) void mos_stub_32(void) __asm__("_swift_once");
-void mos_stub_32(void) {}
-__attribute__((visibility("default"))) void mos_stub_33(void) __asm__("_swift_release");
-void mos_stub_33(void) {}
-__attribute__((visibility("default"))) void mos_stub_34(void) __asm__("_swift_retain");
-void mos_stub_34(void) {}
-__attribute__((visibility("default"))) void mos_stub_35(void) __asm__("_swift_willThrow");
-void mos_stub_35(void) {}
-__attribute__((visibility("default"))) void mos_stub_36(void) __asm__("_$s10Foundation4DataV9copyBytes2to4fromSiSryxG_SnySiGSgtlF");
-void mos_stub_36(void) {}
-__attribute__((visibility("default"))) void mos_stub_37(void) __asm__("_$sSRyxG10Foundation12DataProtocolABs5UInt8VRszlMc");
-void mos_stub_37(void) {}
-__attribute__((visibility("default"))) void mos_stub_38(void) __asm__("_$sSRyxG10Foundation15ContiguousBytesABs5UInt8VRszlMc");
-void mos_stub_38(void) {}
-__attribute__((visibility("default"))) void mos_stub_39(void) __asm__("_$sSqMa");
-void mos_stub_39(void) {}
-__attribute__((visibility("default"))) void mos_stub_40(void) __asm__("_$ss5UInt8VMn");
-void mos_stub_40(void) {}
-__attribute__((visibility("default"))) void mos_stub_41(void) __asm__("_$ss5UInt8VN");
-void mos_stub_41(void) {}
-__attribute__((visibility("default"))) void mos_stub_42(void) __asm__("_swift_checkMetadataState");
-void mos_stub_42(void) {}
-__attribute__((visibility("default"))) void mos_stub_43(void) __asm__("_swift_dynamicCast");
-void mos_stub_43(void) {}
-__attribute__((visibility("default"))) void mos_stub_44(void) __asm__("_swift_getAssociatedConformanceWitness");
-void mos_stub_44(void) {}
-__attribute__((visibility("default"))) void mos_stub_45(void) __asm__("_swift_getAssociatedTypeWitness");
-void mos_stub_45(void) {}
-__attribute__((visibility("default"))) void mos_stub_46(void) __asm__("_swift_getTypeByMangledNameInContext");
-void mos_stub_46(void) {}
-__attribute__((visibility("default"))) void mos_stub_47(void) __asm__("_swift_getTypeByMangledNameInContextInMetadataState");
-void mos_stub_47(void) {}
+MOS_STUB(0, "_$sBOWV")
+MOS_STUB(1, "_$ss5ErrorMp")
+MOS_STUB(2, "_$ss5ErrorP19_getEmbeddedNSErroryXlSgyFTq")
+MOS_STUB(3, "_$ss5ErrorP5_codeSivgTq")
+MOS_STUB(4, "_$ss5ErrorP7_domainSSvgTq")
+MOS_STUB(5, "_$ss5ErrorP9_userInfoyXlSgvgTq")
+MOS_STUB(6, "_$sytN")
+MOS_STUB(7, "_$ss5ErrorPsE19_getEmbeddedNSErroryXlSgyF")
+MOS_STUB(8, "_$ss5ErrorPsE5_codeSivg")
+MOS_STUB(9, "_$ss5ErrorPsE7_domainSSvg")
+MOS_STUB(10, "_$ss5ErrorPsE9_userInfoyXlSgvg")
+MOS_STUB(11, "_$sSqMa")
+MOS_STUB(12, "_$ss5UInt8VMn")
+MOS_STUB(13, "_$ss5UInt8VN")
+MOS_STUB(14, "_swift_getAssociatedConformanceWitness")
+MOS_STUB(15, "_swift_getAssociatedTypeWitness")
+MOS_STUB(16, "_swift_getTypeByMangledNameInContext")
+MOS_STUB(17, "_swift_getTypeByMangledNameInContextInMetadataState")
+MOS_STUB(18, "_$s10Foundation13__DataStorageC5bytes6lengthACSVSg_Sitcfc")
+MOS_STUB(19, "_$s10Foundation13__DataStorageC6_bytesSvSgvg")
+MOS_STUB(20, "_$s10Foundation13__DataStorageC7_lengthSivg")
+MOS_STUB(21, "_$s10Foundation13__DataStorageC7_offsetSivg")
+MOS_STUB(22, "_$s10Foundation13__DataStorageCMa")
+MOS_STUB(23, "_$s10Foundation15ContiguousBytesP010withUnsafeC0yqd__qd__SWKXEKlFTj")
+MOS_STUB(24, "_$s10Foundation22_convertErrorToNSErrorySo0E0Cs0C0_pF")
+MOS_STUB(25, "_$s10Foundation4DataV14RangeReferenceCMa")
+MOS_STUB(26, "_$s10Foundation4DataV15_RepresentationO6append10contentsOfySW_tF")
+MOS_STUB(27, "_$s10Foundation4DataV19_bridgeToObjectiveCSo6NSDataCyF")
+MOS_STUB(28, "_$s10Foundation4DataV36_unconditionallyBridgeFromObjectiveCyACSo6NSDataCSgFZ")
+MOS_STUB(29, "_$s10Foundation4DataV9copyBytes2to4fromSiSryxG_SnySiGSgtlF")
+MOS_STUB(30, "_$sSRyxG10Foundation12DataProtocolABs5UInt8VRszlMc")
+MOS_STUB(31, "_$sSRyxG10Foundation15ContiguousBytesABs5UInt8VRszlMc")
