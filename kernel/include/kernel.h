@@ -191,6 +191,7 @@ bool   bkl_held(void);                          /* este núcleo segura a trava g
 void   smp_tlb_shootdown(u64 cr3);              /* invalida o TLB dos OUTROS núcleos com esse CR3 (com a BKL) */
 void   smp_send_ipi(int cpu, u8 vec);
 u8     smp_apic_id(int cpu);
+int    smp_cpu_count(void);                    /* núcleos ativos (BSP + APs) */
 u64    smp_lapic_base(void);                   /* base física do MADT; 0 se o SMP não achou LAPIC */
 int    smp_x2apic(void);
 
