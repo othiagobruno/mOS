@@ -320,6 +320,7 @@ bool libsystem_dylib_ok(const char *n) {
         "/usr/lib/libinfo.dylib", "/usr/lib/libgcc_s.1.dylib", "/usr/lib/libiconv.2.dylib", "/usr/lib/libiconv.dylib",
         /* git e curl do Homebrew: res_9_* (darwin.c) e uidna_* (posixmore.c, só nomes ASCII) */
         "/usr/lib/libresolv.9.dylib", "/usr/lib/libicucore.A.dylib",
+        "/usr/lib/libcurl.4.dylib",    /* libcurl_easy.c: easy + URL, TLS do Security, DNS e sockets */
         "/usr/lib/libbz2.1.0.dylib",   /* bzip2.c (o unzip do Homebrew a lista; descompressão BZ2_*) */
         "/usr/lib/libxar.1.dylib",     /* compat_agentes.c: o Sparkle a liga para patches delta; xar_open sempre falha */
         /* libc++/libc++abi: operator new/delete, guardas de estáticos e o resto em cxxabi.c e libcxx.c */
