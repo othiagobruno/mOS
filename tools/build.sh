@@ -154,10 +154,17 @@ for f in libunwind.cpp UnwindLevel1.c UnwindLevel1-gcc-ext.c UnwindRegistersSave
     compile_uw "$f"
 done
 
+echo "==> unw_hosttest (API pública da libunwind no host)"
+cc -O1 -fno-omit-frame-pointer -funwind-tables -rdynamic \
+    -I"$ROOT/userland/libsystem" \
+    "$ROOT/tools/unw_hosttest.c" "$ROOT/userland/libsystem/cxx_unwind.c" "$ROOT/userland/libsystem/unw_alias.S" \
+    -ldl -o "$OUT/unw_hosttest"
+"$OUT/unw_hosttest"
+
 echo "==> libSystem.mos"
 # x86_64: _Unwind_* fica em cxx_unwind.c. UnwindLevel1.c repete esses nomes; o resto do libunwind fica.
 LS_SRC=()
-for f in "$ROOT"/userland/libsystem/*.c "$ROOT"/userland/libsystem/*.S; do
+for f in "$ROOT"/userland/libsystem/*.c "$ROOT"/userland/libsystem/*.S "$ROOT"/userland/third_party/h264bsd/*.c; do
     [ -f "$f" ] || continue
     # sqlite3.c pede assert.h/stdio.h. Compila com o shim, fora do -I do resto.
     case "$f" in
@@ -180,7 +187,7 @@ done
 # UnwindLevel1.c, UnwindLevel1-gcc-ext.c, UnwindRegistersSave.S e libunwind.cpp repetem cxx_unwind.c.
 "$ZIG" cc -target x86_64-freestanding-none -O2 -g0 -ffreestanding -fno-stack-protector -fno-builtin -nostdlib -static -no-pie \
     -fpie -mno-red-zone -Wall -Wno-unused-parameter -Wno-incompatible-library-redeclaration -Wno-builtin-requires-header \
-    -I"$ROOT/userland/libsystem/kshim" -I"$ROOT/userland/libsystem/fsinc" -I"$ROOT/kernel/include" \
+    -I"$ROOT/userland/libsystem/kshim" -I"$ROOT/userland/libsystem/fsinc" -I"$ROOT/kernel/include" -I"$ROOT/userland/third_party/h264bsd" \
     -isystem "$ZIGDIR/lib/include" \
     -Wl,--image-base=0x400000100000 -Wl,-e,cx_start -Wl,--no-gc-sections \
     "${LS_SRC[@]}" "$OUT/audiodec.o" "$OUT/sqlite3_mos.o" \
@@ -256,7 +263,7 @@ mkdir -p "$ESP/mOS/Sistema/Biblioteca/a64"
 echo "==> libswift"
 # Runtime real (swift-6.4.2) quando a toolchain e o fonte estão em .tools/. Sem isso, o stage completa com stub.
 if [ -f "$ROOT/tools/build-libswift-real.sh" ]; then
-    sh "$ROOT/tools/build-libswift-real.sh" || echo "aviso: build-libswift-real.sh falhou; o que faltar continua stub" >&2
+    bash "$ROOT/tools/build-libswift-real.sh" || echo "aviso: build-libswift-real.sh falhou; o que faltar continua stub" >&2
 fi
 if [ -f "$ROOT/build/universal-swift/usr/lib/swift/libswiftCore.dylib" ]; then
     cp -a "$ROOT/build/universal-swift/." "$ESP/mOS/"
