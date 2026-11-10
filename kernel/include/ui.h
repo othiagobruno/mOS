@@ -202,6 +202,7 @@ typedef struct app {
     bool attention;             /* pula no Dock até o app ficar ativo */
     bool open_at_login;         /* Opções > Abrir ao Iniciar */
     bool always_tick;           /* tick roda mesmo com o app fechado (alarmes, lembretes) */
+    int dock_suppressed;        /* o processo pediu para sair do Dock (LSUIElement / prohibited) */
 } app_t;
 
 /* window server */
@@ -274,6 +275,9 @@ rect_t dock_window_rect(window_t *w);           /* destino do gênio: a miniatur
 void dock_set_badge(app_t *a, int n);           /* selo vermelho com número (0 remove) */
 void dock_set_badge_label(app_t *a, const char *label); /* texto; vazio ou "0" remove */
 void dock_request_attention(app_t *a);          /* o ícone pula até o app ficar ativo */
+void compat_gui_status_open(int pid, unsigned id);          /* GEV_STATUS: o clique abriu o item */
+void compat_gui_status_pick(int pid, unsigned id, unsigned action); /* GEV_MENU com a ação do item */
+void desktop_status_note(int pid, unsigned id);             /* o pacote do item mudou; redesenha a faixa */
 void desktop_tile_popover(window_t *w, int bx, int by); /* menu do botão verde (bx,by = centro do botão na tela) */
 bool desktop_tile_popover_open(void);
 extern int g_wallpaper_style;
