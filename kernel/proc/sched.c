@@ -293,6 +293,11 @@ static void wake_sleepers(void) {
     }
 }
 
+/* thread_suspend do Mach, ou o processo inteiro parado (SIGSTOP e os de job control) */
+static bool thread_parked(const thread_t *t) {
+    return t->suspend || (t->proc && t->proc->stopped);
+}
+
 /* próxima thread pronta depois de `from` (round-robin), sem contar a thread 0, nenhuma que já esteja
  * em outro núcleo e, fora do BSP, nenhuma thread do kernel (elas supõem o modelo de um núcleo) */
 static thread_t *next_ready(int me, thread_t *from) {
@@ -300,7 +305,7 @@ static thread_t *next_ready(int me, thread_t *from) {
     thread_t *t = from;
     for (int guard = 0; guard < 100000; guard++) {
         t = t->next ? t->next : threads;
-        if (t != &thread0 && t->state == TH_READY && !t->suspend && (me == 0 || t->proc) && !on_cpu(t)) return t;
+        if (t != &thread0 && t->state == TH_READY && !thread_parked(t) && (me == 0 || t->proc) && !on_cpu(t)) return t;
         if (t == from) break;
     }
     return NULL;
@@ -371,11 +376,11 @@ static u64 irq_exit(int_frame_t *f, bool timer) {
         thread_t *t = next_ready(me, c->last_user);
         return t ? switch_to(c, f, t) : (u64)f;
     }
-    if (cur->state == TH_RUNNING && !cur->suspend && timer_ticks() - c->slice_start < SCHED_SLICE_MS) return (u64)f;
+    if (cur->state == TH_RUNNING && !thread_parked(cur) && timer_ticks() - c->slice_start < SCHED_SLICE_MS) return (u64)f;
     reap();
     if (me == 0) return switch_to(c, f, &thread0);   /* fim da fatia: o desktop roda */
     thread_t *t = next_ready(me, cur);
-    if (!t) t = cur->state == TH_RUNNING && !cur->suspend ? cur : c->idle;
+    if (!t) t = cur->state == TH_RUNNING && !thread_parked(cur) ? cur : c->idle;
     return switch_to(c, f, t);
 }
 
@@ -385,7 +390,7 @@ u64 sched_switch(int_frame_t *f) {
     pcpu_t *c = &pc[me];
     wake_sleepers();
     thread_t *t = next_ready(me, c->cur);
-    if (!t || t == c->cur) t = c->cur->state == TH_RUNNING && !c->cur->suspend ? c->cur : c->idle;
+    if (!t || t == c->cur) t = c->cur->state == TH_RUNNING && !thread_parked(c->cur) ? c->cur : c->idle;
     return switch_to(c, f, t);
 }
 
@@ -425,9 +430,9 @@ u64 sched_kexit(u64 r) {
     for (;;) {
         int_frame_t *f = (int_frame_t *)r;
         bool held = __atomic_load_n(&bkl_owner, __ATOMIC_RELAXED) == me;
-        if ((f->cs & 3) && c->cur->suspend && c->cur->proc) {
-            /* thread_suspend (SYS_THREADCTL): a syscall ou a falta já terminou (rax é o resultado); sai da CPU antes de
-             * voltar ao usuário, e o frame salvo é o que o thread_get_state lê */
+        if ((f->cs & 3) && c->cur->proc && (c->cur->suspend || c->cur->proc->stopped)) {
+            /* thread_suspend (SYS_THREADCTL) ou processo parado (SIGSTOP): a syscall ou a falta já terminou; sai da
+             * CPU antes de voltar ao usuário. O frame salvo é o que o thread_get_state lê no caso do suspend. */
             if (!held) sched_klock();
             r = sched_switch(f);
             continue;

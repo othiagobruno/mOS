@@ -110,6 +110,10 @@ void rt_die(const char *fmt, ...) {
 }
 void rt_fbstat_final(const char *quando) { (void)quando; }
 void rt_host_tramp(void) {}
+/* rt.c não entra neste link: nenhuma página é MAP_JIT, então a falta segue o caminho normal */
+int rt_jit_contains(u64 addr) { (void)addr; return 0; }
+u64 rt_jit_alias_page(u64 addr) { (void)addr; return 0; }
+void rt_jit_note_write(rt_thread_t *T, u64 addr) { (void)T; (void)addr; }
 
 void *a64_host_jit_alloc(a64_u64 len) {
     void *p = mmap(0, (size_t)len, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
@@ -350,6 +354,10 @@ static void teste_quadro(rt_thread_t *T) {
     CHECK("neon v3, fpsr e o tamanho do mcontext",
           mc->ns.v[3][0] == 0x0123456789ABCDEFULL && mc->ns.v[3][1] == 0xFEDCBA9876543210ULL &&
           mc->ns.fpsr == 1 && uc->uc_mcsize == sizeof(a64_darwin_mcontext_t));
+    CHECK("uc_mcsize e offsets iguais ao __darwin_mcontext64 (816, fpsr em 800)",
+          sizeof(a64_darwin_neon_state_t) == 528 && sizeof(a64_darwin_mcontext_t) == 816 &&
+          uc->uc_mcsize == 816 && __builtin_offsetof(a64_darwin_mcontext_t, ns.fpsr) == 800 &&
+          __builtin_offsetof(a64_darwin_mcontext_t, ns.fpcr) == 804);
     CHECK("a máscara do tratador bloqueia o sinal e o conjunto da ação",
           (mascara(T) & BIT(MOS_SIGUSR1)) && (mascara(T) & BIT(MOS_SIGUSR2)));
     CHECK("entregar o sinal zera o monitor exclusivo", T->cpu.excl_valid == 0);

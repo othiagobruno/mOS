@@ -338,9 +338,8 @@ dentro de bloco do libSystem, com `catch(...)` do C++): **36/36 no arm64** (JIT 
 35/36 (só o NSInvocation x86 com argumentos na pilha).
 `userland/tests-a64libsys/dylibs.cpp`: libc++/libc++abi, sqlite, ICU e zlib carregados dos universais do disco: **6/6**.
 
-**zlib.** `tools/build-zlib.ps1` compila o fonte oficial (zlib 1.3.2, `.tools\zlib-dl`) no slice arm64; o x86_64 continua o
-bottle do Homebrew da mesma versão; o universal vai para `/usr/local/opt/zlib/lib/libz.1.dylib` (para onde o carregador
-manda `/usr/lib/libz.1.dylib`).
+**zlib.** `tools/build-zlib.ps1` compila o fonte oficial (zlib 1.3.2, `.tools\zlib-dl`) nos slices x86_64 e arm64. O
+universal fica em `/usr/lib/libz.1.dylib`. O carregador não manda mais esse nome para o bottle do Homebrew.
 
 **Pendências.** (1) Cadeia Swift: só falta rodar um app SwiftUI/Combine/Concurrency arm64 de verdade (os testes cobrem
 stdlib, runtime e Foundation). (2) Achados no x86 pela referência, fora do tradutor:

@@ -2,8 +2,9 @@
  * Um .inc para o libSystem (prefs.c) e para o teste de host (tools/prefstest.c).
  *
  * Funcional: dicionário de tipos de property list (bool, int, real, string, data,
- * data, array, dict), ordem de busca, domínio de registro que não vai para o disco,
- * gravação/leitura de plist XML e recusa de sobrescrever um arquivo ilegível.
+ * array, dict), ordem de busca, domínio de registro que não vai para o disco,
+ * gravação/leitura de plist XML, leitura de bplist00 e recusa de sobrescrever
+ * um arquivo ilegível. O stamp é o hash do conteúdo, não o mtime.
  *
  * Não é um cfprefsd. Quem inclui este arquivo faz o I/O (prefs.c usa fopen/rename
  * do libSystem; o teste usa o POSIX do host).
@@ -620,11 +621,237 @@ static pf_val *pf_parse_val(pf_x *x, int depth) {
     return v;
 }
 
-/* 0 = ok. Recusa bplist. *err_kind: 1 sintaxe, 2 binário. */
+/* FNV-1a de 64 bits, misturado com o tamanho. 0 vira 1 para não colidir com "arquivo ausente". */
+static unsigned long long pf_fnv(const void *p, size_t n) {
+    const unsigned char *b = (const unsigned char *)p;
+    unsigned long long h = 14695981039346656037ull;
+    for (size_t i = 0; i < n; i++) {
+        h ^= b[i];
+        h *= 1099511628211ull;
+    }
+    h ^= (unsigned long long)n + 1ull;
+    return h ? h : 1ull;
+}
+
+/* scope: user (ou NULL) = ~/Library/Preferences, host = ByHost do usuário,
+ * any = /Library/Preferences, any.host = /Library/Preferences/ByHost. */
+static int pf_pref_path(const char *home, const char *token, const char *scope, const char *name, char *out, size_t cap) {
+    if (!name || !name[0] || !out || cap < 8) return -1;
+    if (!token || !token[0]) token = "mos";
+    if (!home || !home[0]) home = "/Users/Visitante";
+    int k;
+    if (scope && strcmp(scope, "any") == 0)
+        k = snprintf(out, cap, "/Library/Preferences/%s.plist", name);
+    else if (scope && strcmp(scope, "any.host") == 0)
+        k = snprintf(out, cap, "/Library/Preferences/ByHost/%s.%s.plist", name, token);
+    else if (scope && strcmp(scope, "host") == 0)
+        k = snprintf(out, cap, "%s/Library/Preferences/ByHost/%s.%s.plist", home, name, token);
+    else
+        k = snprintf(out, cap, "%s/Library/Preferences/%s.plist", home, name);
+    return (k > 0 && (size_t)k < cap) ? 0 : -1;
+}
+
+static unsigned long long pf_be(const unsigned char *p, int n) {
+    unsigned long long v = 0;
+    for (int i = 0; i < n && i < 8; i++) v = (v << 8) | p[i];
+    return v;
+}
+
+typedef struct {
+    const unsigned char *b;
+    size_t n;
+    int osz, rsz;
+    unsigned long long nobj, top, otab;
+} pf_bp;
+
+static pf_val *pf_bp_obj(pf_bp *bp, unsigned long long idx, int depth);
+
+static int pf_bp_len(pf_bp *bp, const unsigned char **p, unsigned long long *len) {
+    if (*p >= bp->b + bp->n) return 0;
+    unsigned m = **p & 0x0Fu;
+    (*p)++;
+    if (m != 0x0Fu) { *len = m; return 1; }
+    if (*p >= bp->b + bp->n) return 0;
+    unsigned t = **p;
+    if ((t & 0xF0u) != 0x10u) return 0;
+    int nb = 1 << (t & 0x0Fu);
+    if (nb < 1 || nb > 8 || *p + 1 + nb > bp->b + bp->n) return 0;
+    *len = pf_be(*p + 1, nb);
+    *p += 1 + nb;
+    return 1;
+}
+
+static pf_val *pf_from_utf16(const unsigned char *p, unsigned long long nchars) {
+    char *o = (char *)malloc((size_t)nchars * 3 + 1);
+    if (!o) return 0;
+    size_t k = 0;
+    for (unsigned long long i = 0; i < nchars; i++) {
+        unsigned c = (unsigned)pf_be(p + (size_t)i * 2, 2);
+        if (c >= 0xD800 && c < 0xDC00 && i + 1 < nchars) {
+            unsigned d = (unsigned)pf_be(p + (size_t)(i + 1) * 2, 2);
+            if (d >= 0xDC00 && d < 0xE000) {
+                c = 0x10000u + ((c - 0xD800u) << 10) + (d - 0xDC00u);
+                i++;
+            }
+        }
+        if (c < 0x80) o[k++] = (char)c;
+        else if (c < 0x800) { o[k++] = (char)(0xC0 | (c >> 6)); o[k++] = (char)(0x80 | (c & 63)); }
+        else if (c < 0x10000) {
+            o[k++] = (char)(0xE0 | (c >> 12));
+            o[k++] = (char)(0x80 | ((c >> 6) & 63));
+            o[k++] = (char)(0x80 | (c & 63));
+        } else {
+            o[k++] = (char)(0xF0 | (c >> 18));
+            o[k++] = (char)(0x80 | ((c >> 12) & 63));
+            o[k++] = (char)(0x80 | ((c >> 6) & 63));
+            o[k++] = (char)(0x80 | (c & 63));
+        }
+    }
+    o[k] = 0;
+    pf_val *v = pf_str(o);
+    free(o);
+    return v;
+}
+
+static pf_val *pf_bp_obj(pf_bp *bp, unsigned long long idx, int depth) {
+    if (!bp || idx >= bp->nobj || depth > 32) return 0;
+    if (bp->osz < 1 || bp->osz > 8) return 0;
+    if (bp->otab + (idx + 1) * (unsigned long long)bp->osz > bp->n) return 0;
+    unsigned long long off = pf_be(bp->b + bp->otab + (size_t)idx * (size_t)bp->osz, bp->osz);
+    if (off >= bp->n) return 0;
+    const unsigned char *p = bp->b + off;
+    const unsigned char *end = bp->b + bp->n;
+    unsigned hi = *p >> 4;
+    switch (hi) {
+    case 0x0:
+        if ((*p & 0x0F) == 9) return pf_bool(1);
+        if ((*p & 0x0F) == 8) return pf_bool(0);
+        return 0;
+    case 0x1: {
+        int nb = 1 << (*p & 0x0F);
+        if (nb < 1 || nb > 8 || p + 1 + nb > end) return 0;
+        unsigned long long v = pf_be(p + 1, nb);
+        if (nb < 8) {
+            unsigned bits = (unsigned)nb * 8u;
+            if (v & (1ull << (bits - 1))) v |= (~0ull) << bits;
+        }
+        return pf_int((long long)v);
+    }
+    case 0x2: {
+        int nb = 1 << (*p & 0x0F);
+        if ((nb != 4 && nb != 8) || p + 1 + nb > end) return 0;
+        unsigned long long u = pf_be(p + 1, nb);
+        double d;
+        if (nb == 4) {
+            union { unsigned u; float f; } x;
+            x.u = (unsigned)u;
+            d = (double)x.f;
+        } else {
+            union { unsigned long long u; double d; } x;
+            x.u = u;
+            d = x.d;
+        }
+        return pf_real(d);
+    }
+    case 0x3: {
+        if ((*p & 0x0F) != 3 || p + 9 > end) return 0;
+        union { unsigned long long u; double d; } x;
+        x.u = pf_be(p + 1, 8);
+        return pf_date(x.d + 978307200.0);
+    }
+    case 0x4: {
+        const unsigned char *q = p;
+        unsigned long long len = 0;
+        if (!pf_bp_len(bp, &q, &len) || q + len > end) return 0;
+        return pf_data(q, (size_t)len);
+    }
+    case 0x5: {
+        const unsigned char *q = p;
+        unsigned long long len = 0;
+        if (!pf_bp_len(bp, &q, &len) || q + len > end) return 0;
+        char *s = (char *)malloc((size_t)len + 1);
+        if (!s) return 0;
+        if (len) memcpy(s, q, (size_t)len);
+        s[len] = 0;
+        pf_val *v = pf_str(s);
+        free(s);
+        return v;
+    }
+    case 0x6: {
+        const unsigned char *q = p;
+        unsigned long long len = 0;
+        if (!pf_bp_len(bp, &q, &len) || q + len * 2 > end) return 0;
+        return pf_from_utf16(q, len);
+    }
+    case 0xA:
+    case 0xC: {
+        const unsigned char *q = p;
+        unsigned long long len = 0;
+        if (!pf_bp_len(bp, &q, &len)) return 0;
+        if (len > 100000 || q + len * (unsigned long long)bp->rsz > end) return 0;
+        pf_val *a = pf_array();
+        if (!a) return 0;
+        for (unsigned long long i = 0; i < len; i++) {
+            pf_val *v = pf_bp_obj(bp, pf_be(q + (size_t)i * (size_t)bp->rsz, bp->rsz), depth + 1);
+            if (!v) { pf_free(a); return 0; }
+            pf_array_add(a, v);
+        }
+        return a;
+    }
+    case 0xD: {
+        const unsigned char *q = p;
+        unsigned long long len = 0;
+        if (!pf_bp_len(bp, &q, &len)) return 0;
+        if (len > 100000 || q + len * 2 * (unsigned long long)bp->rsz > end) return 0;
+        pf_val *d = pf_dict();
+        if (!d) return 0;
+        for (unsigned long long i = 0; i < len; i++) {
+            unsigned long long ki = pf_be(q + (size_t)i * (size_t)bp->rsz, bp->rsz);
+            unsigned long long vi = pf_be(q + (size_t)(len + i) * (size_t)bp->rsz, bp->rsz);
+            pf_val *k = pf_bp_obj(bp, ki, depth + 1);
+            pf_val *v = pf_bp_obj(bp, vi, depth + 1);
+            if (!k || k->type != PF_STR || !k->str || !v) {
+                pf_free(k);
+                pf_free(v);
+                pf_free(d);
+                return 0;
+            }
+            pf_dict_put(d, k->str, v);
+            pf_free(k);
+        }
+        return d;
+    }
+    default:
+        return 0;
+    }
+}
+
+/* Raiz tem de ser dicionário. Arquivo com mágica e trailer inválido devolve 0. */
+static pf_val *pf_bplist_parse(const unsigned char *b, size_t n) {
+    if (!b || n < 40 || memcmp(b, "bplist00", 8) != 0) return 0;
+    const unsigned char *t = b + n - 32;
+    int osz = t[6], rsz = t[7];
+    unsigned long long nobj = pf_be(t + 8, 8);
+    unsigned long long top = pf_be(t + 16, 8);
+    unsigned long long otab = pf_be(t + 24, 8);
+    if (osz < 1 || osz > 8 || rsz < 1 || rsz > 8 || otab >= n || top >= nobj) return 0;
+    if (nobj > 1000000 || otab + nobj * (unsigned long long)osz > n) return 0;
+    pf_bp bp = {b, n, osz, rsz, nobj, top, otab};
+    pf_val *v = pf_bp_obj(&bp, top, 0);
+    if (!v || v->type != PF_DICT) { pf_free(v); return 0; }
+    return v;
+}
+
+/* 0 = ok. bplist00 válido vira dicionário; mágica sem trailer válido fica err_kind 2.
+ * *err_kind: 1 sintaxe, 2 binário ilegível. */
 static pf_val *pf_xml_parse(const char *buf, size_t len, int *err_kind) {
     if (err_kind) *err_kind = 0;
     if (!buf || !len) { if (err_kind) *err_kind = 1; return 0; }
-    if (len >= 8 && memcmp(buf, "bplist00", 8) == 0) { if (err_kind) *err_kind = 2; return 0; }
+    if (len >= 8 && memcmp(buf, "bplist00", 8) == 0) {
+        pf_val *bin = pf_bplist_parse((const unsigned char *)buf, len);
+        if (!bin) { if (err_kind) *err_kind = 2; return 0; }
+        return bin;
+    }
     pf_x x = {buf, buf + len, 0};
     char tag[32];
     pf_skip(&x);

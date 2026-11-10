@@ -7,7 +7,7 @@ Este arquivo é o roteiro que um agente segue nesta máquina. O que está abaixo
 | Onde | O que faz |
 |---|---|
 | `build.ps1` | Build no Windows. No Linux, com `pwsh`, usa o mesmo `Resolve-MosZig`, o `\\?\` só no Windows, o `mkimg` nativo e não aborta se libc++, sqlite, ICU, WebKit, exemplos ou Swift faltarem. O kernel e o libSystem continuam obrigatórios. |
-| `tools/build.sh` | O mesmo núcleo quando não há `pwsh`: libSystem, kernel UEFI, `mkimg` com `cc`, userland, imagem em `--out`. |
+| `tools/build.sh` | O mesmo núcleo quando não há `pwsh`: libSystem, kernel UEFI, `mkimg` com `cc`, userland, imagem em `--out`. Antes do `mkimg` chama `tools/stage-libswift.sh`: a cadeia Swift compilada entra; o que faltar vira stub em `/usr/lib/swift`. |
 | `tools/stage-electron.ps1` | Lista de arquivos do app no Windows (`\\?\` e `mkimg.exe`). No Linux, se existir `bash`, delega para `tools/stage-image.sh` e sai. |
 | `tools/stage-image.sh` | A mesma lista no Linux: cria `esp/mOS` se faltar, copia o alvo de um link de texto por cima do arquivo, `mkimg` nativo, overlay de teste. |
 | `tools/stage-host.ps1` | `Resolve-MosZig`, caminho longo, `esp` e `mkimg`. Os outros `tools/*.ps1` chamam `Resolve-MosZig` em vez de pegar a primeira pasta `zig-*`. |

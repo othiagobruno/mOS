@@ -3,8 +3,8 @@
  * tools/machocheck.c):
  *  - Accelerate/vDSP: implementado de verdade (o WebAudio do Chromium faz convolução, FFT real e
  *    filtros biquad com ele). FFT real com o empacotamento e a escala da Apple (direta multiplica por 2).
- *  - CoreMedia: CMTime e o que só lê estruturas; criação de buffers/formatos devolve erro.
- *  - VideoToolbox: sem codec por hardware (o Chromium decodifica/codifica por software, ffmpeg).
+ *  - CoreMedia: CMTime aqui; bloco, formato e sample buffer em openbot_cm.c.
+ *  - VideoToolbox: codificar/decodificar H.264/HEVC continua erro honesto. A cópia de pixel está em openbot_vt.c.
  *  - CoreAudio/AudioToolbox/CoreMIDI: nenhum dispositivo/componente (áudio do Chromium fica mudo).
  *  - CUPS: nenhuma impressora. GSS/Kerberos: sem credenciais (autenticação Negotiate falha limpa).
  *  - UniformTypeIdentifiers: objetos UTType com identificador, extensão e MIME.
@@ -20,6 +20,7 @@ void *memcpy(void *d, const void *s, size_t n);
 int strcmp(const char *a, const char *b);
 double sin(double), cos(double), sqrt(double), fabs(double);
 id objc_retain(id o);
+void objc_release(id o);
 id CFArrayCreate(void *alloc, const id *vals, long n, const void *cb);
 id CFDictionaryCreateMutable(void *alloc, long cap, const void *kcb, const void *vcb);
 int clock_gettime(int clk, void *ts);
@@ -141,47 +142,7 @@ u64 CMClockConvertHostTimeToSystemUnits(cm_time_t t) {
     if (!(t.flags & kCMTimeFlags_Valid) || !t.timescale) return 0;
     return (u64)((double)t.value * 1e9 / (double)t.timescale);    /* mach_absolute_time em ns no mOS */
 }
-#define kCMBlockBufferBadCustomBlockSourceErr (-12702)
-#define kCMFormatDescriptionError_InvalidParameter (-12710)
-#define kCMSampleBufferError_InvalidMediaFormat (-12743)
-#define CM_FAIL(err) { return err; }
-/* o vídeo/áudio por hardware não existe, então ninguém deveria chegar a montar estes buffers;
- * quem chegar recebe o erro de parâmetro do macOS */
-OSStatus CMBlockBufferCreateEmpty(void *a, u32 cap, u32 flags, void **out) { (void)a; (void)cap; (void)flags; if (out) *out = 0; CM_FAIL(kCMBlockBufferBadCustomBlockSourceErr) }
-OSStatus CMBlockBufferCreateWithMemoryBlock(void *a, void *mem, size_t len, void *ba, const void *cb, size_t off, size_t dlen, u32 flags, void **out) {
-    (void)a; (void)mem; (void)len; (void)ba; (void)cb; (void)off; (void)dlen; (void)flags; if (out) *out = 0; CM_FAIL(kCMBlockBufferBadCustomBlockSourceErr)
-}
-OSStatus CMBlockBufferCreateContiguous(void *a, void *src, void *ba, const void *cb, size_t off, size_t len, u32 flags, void **out) { (void)a; (void)src; (void)ba; (void)cb; (void)off; (void)len; (void)flags; if (out) *out = 0; CM_FAIL(kCMBlockBufferBadCustomBlockSourceErr) }
-OSStatus CMBlockBufferAppendMemoryBlock(void *b, void *mem, size_t len, void *ba, const void *cb, size_t off, size_t dlen, u32 flags) { (void)b; (void)mem; (void)len; (void)ba; (void)cb; (void)off; (void)dlen; (void)flags; CM_FAIL(kCMBlockBufferBadCustomBlockSourceErr) }
-OSStatus CMBlockBufferGetDataPointer(void *b, size_t off, size_t *lenAt, size_t *total, char **ptr) { (void)b; (void)off; if (lenAt) *lenAt = 0; if (total) *total = 0; if (ptr) *ptr = 0; CM_FAIL(kCMBlockBufferBadCustomBlockSourceErr) }
-size_t CMBlockBufferGetDataLength(void *b) { (void)b; return 0; }
-u8 CMBlockBufferIsRangeContiguous(void *b, size_t off, size_t len) { (void)b; (void)off; (void)len; return 1; }
-OSStatus CMBlockBufferReplaceDataBytes(const void *src, void *b, size_t off, size_t len) { (void)src; (void)b; (void)off; (void)len; CM_FAIL(kCMBlockBufferBadCustomBlockSourceErr) }
-OSStatus CMBlockBufferAssureBlockMemory(void *b) { (void)b; CM_FAIL(kCMBlockBufferBadCustomBlockSourceErr) }
-OSStatus CMAudioFormatDescriptionCreate(void *a, const void *asbd, size_t ls, const void *l, size_t cs, const void *c, id ext, void **out) { (void)a; (void)asbd; (void)ls; (void)l; (void)cs; (void)c; (void)ext; if (out) *out = 0; CM_FAIL(kCMFormatDescriptionError_InvalidParameter) }
-const void *CMAudioFormatDescriptionGetStreamBasicDescription(void *d) { (void)d; return 0; }
-OSStatus CMVideoFormatDescriptionCreate(void *a, u32 codec, i32 w, i32 h, id ext, void **out) { (void)a; (void)codec; (void)w; (void)h; (void)ext; if (out) *out = 0; CM_FAIL(kCMFormatDescriptionError_InvalidParameter) }
-OSStatus CMVideoFormatDescriptionCreateFromH264ParameterSets(void *a, size_t n, const u8 *const *p, const size_t *s, int nal, void **out) { (void)a; (void)n; (void)p; (void)s; (void)nal; if (out) *out = 0; CM_FAIL(kCMFormatDescriptionError_InvalidParameter) }
-OSStatus CMVideoFormatDescriptionCreateFromHEVCParameterSets(void *a, size_t n, const u8 *const *p, const size_t *s, int nal, id ext, void **out) { (void)a; (void)n; (void)p; (void)s; (void)nal; (void)ext; if (out) *out = 0; CM_FAIL(kCMFormatDescriptionError_InvalidParameter) }
-OSStatus CMVideoFormatDescriptionCreateForImageBuffer(void *a, void *img, void **out) { (void)a; (void)img; if (out) *out = 0; CM_FAIL(kCMFormatDescriptionError_InvalidParameter) }
-OSStatus CMVideoFormatDescriptionGetH264ParameterSetAtIndex(void *d, size_t i, const u8 **p, size_t *s, size_t *n, int *nal) { (void)d; (void)i; if (p) *p = 0; if (s) *s = 0; if (n) *n = 0; if (nal) *nal = 0; CM_FAIL(kCMFormatDescriptionError_InvalidParameter) }
-OSStatus CMVideoFormatDescriptionGetHEVCParameterSetAtIndex(void *d, size_t i, const u8 **p, size_t *s, size_t *n, int *nal) { (void)d; (void)i; if (p) *p = 0; if (s) *s = 0; if (n) *n = 0; if (nal) *nal = 0; CM_FAIL(kCMFormatDescriptionError_InvalidParameter) }
-typedef struct { i32 w, h; } cm_dim_t;
-cm_dim_t CMVideoFormatDescriptionGetDimensions(void *d) { (void)d; cm_dim_t r = {0, 0}; return r; }
-u32 CMFormatDescriptionGetMediaSubType(void *d) { (void)d; return 0; }
-id CMFormatDescriptionGetExtension(void *d, id key) { (void)d; (void)key; return 0; }
-OSStatus CMSampleBufferCreate(void *a, void *db, u8 ready, void *cb, void *ref, void *fd, long ns, long nt, const void *t, long nsz, const size_t *sz, void **out) {
-    (void)a; (void)db; (void)ready; (void)cb; (void)ref; (void)fd; (void)ns; (void)nt; (void)t; (void)nsz; (void)sz; if (out) *out = 0; CM_FAIL(kCMSampleBufferError_InvalidMediaFormat)
-}
-OSStatus CMSampleBufferCreateForImageBuffer(void *a, void *img, u8 ready, void *cb, void *ref, void *fd, const void *t, void **out) { (void)a; (void)img; (void)ready; (void)cb; (void)ref; (void)fd; (void)t; if (out) *out = 0; CM_FAIL(kCMSampleBufferError_InvalidMediaFormat) }
-long CMSampleBufferGetNumSamples(void *s) { (void)s; return 0; }
-void *CMSampleBufferGetFormatDescription(void *s) { (void)s; return 0; }
-void *CMSampleBufferGetDataBuffer(void *s) { (void)s; return 0; }
-void *CMSampleBufferGetImageBuffer(void *s) { (void)s; return 0; }
-cm_time_t CMSampleBufferGetPresentationTimeStamp(void *s) { (void)s; cm_time_t t = {0, 0, 0, 0}; return t; }
-id CMSampleBufferGetSampleAttachmentsArray(void *s, u8 create) { (void)s; (void)create; return 0; }
-void CMSetAttachment(void *t, id key, id v, u32 mode) { (void)t; (void)key; (void)v; (void)mode; }
-id CMCopyDictionaryOfAttachments(void *a, void *t, u32 mode) { (void)a; (void)t; (void)mode; return CFDictionaryCreateMutable(0, 0, 0, 0); }
+/* Bloco, formato e sample buffer: openbot_cm.c. */
 OSStatus CMIOObjectGetPropertyData(u32 obj, const void *addr, u32 qs, const void *q, u32 sz, u32 *used, void *data) { (void)obj; (void)addr; (void)qs; (void)q; (void)sz; (void)data; if (used) *used = 0; return 0x77686F3F; /* kCMIOHardwareUnknownPropertyError 'who?' */ }
 
 /* ================================================================ VideoToolbox
@@ -204,9 +165,7 @@ void VTCompressionSessionInvalidate(void *s) { (void)s; }
 OSStatus VTSessionSetProperty(void *s, id key, id v) { (void)s; (void)key; (void)v; return kVTPropertyNotSupportedErr; }
 OSStatus VTSessionCopyProperty(void *s, id key, void *a, void *out) { (void)s; (void)key; (void)a; if (out) *(void **)out = 0; return kVTPropertyNotSupportedErr; }
 OSStatus VTSessionCopySupportedPropertyDictionary(void *s, id *out) { (void)s; if (out) *out = CFDictionaryCreateMutable(0, 0, 0, 0); return 0; }
-OSStatus VTPixelTransferSessionCreate(void *a, void **out) { (void)a; if (out) *out = 0; return kVTCouldNotFindVideoEncoderErr; }
-OSStatus VTPixelTransferSessionTransferImage(void *s, void *src, void *dst) { (void)s; (void)src; (void)dst; return kVTCouldNotFindVideoEncoderErr; }
-void VTPixelTransferSessionInvalidate(void *s) { (void)s; }
+/* VTPixelTransferSession*: openbot_vt.c copia o quadro quando o formato coincide. */
 
 /* CoreAudio, AudioUnit, AudioQueue, AudioConverter, AudioFile e AudioServices: coreaudio.c */
 

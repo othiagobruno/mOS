@@ -36,6 +36,9 @@ const char *cx_sb_title(const void *item);
 /* 1 se o menu abriu. Item oculto ou sem menu devolve 0 e fecha os outros menus. */
 int cx_sb_click(void *item);
 int cx_sb_menu_open(const void *item);
+/* id estável que o kernel usa no pacote e no GEV_STATUS. 0 se o item não existe. */
+int cx_sb_id(const void *item);
+void *cx_sb_by_token(int token);
 
 /* Popover, um por ponteiro. */
 void cx_pop_set_behavior(void *pop, int behavior);
@@ -57,6 +60,8 @@ int cx_act_policy(void);
 int cx_act_lsuielement(void);
 int cx_act_hides_dock(void);
 int cx_act_activate(void);
+/* Ocultar o ícone no Dock (LSUIElement). O selo continua em MOS_DESK_BADGE (I19, appkit_docktile.c). */
+void cx_dock_set_visible(int on);
 int cx_act_active(void);
 
 void cx_status_reset(void);

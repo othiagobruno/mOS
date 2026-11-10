@@ -1128,9 +1128,30 @@ static BOOL th_is_main(id self, SEL c) { (void)self; (void)c; return YES; }
 static id th_current(id cls, SEL c) { return g_singleton(cls, c); }
 static void th_sleep(id cls, SEL c, double s) { (void)cls; (void)c; usleep((unsigned)(s * 1e6)); }
 
-/* NSUserDefaults persiste em Library/Preferences (prefs.c). O registro não vai para o disco.
- * com.apple.universalaccess/mouseDriverCursorSize = 1.0 fica no domínio de registro dessa suíte
- * (o Chromium recusa o CreateView se o fator do cursor for < 1). */
+/* NSUserDefaults persiste em Library/Preferences (prefs.c), inclusive ByHost.
+ * O registro não vai para o disco. com.apple.universalaccess/mouseDriverCursorSize = 1.0
+ * fica no domínio de registro dessa suíte (o Chromium recusa o CreateView se o fator
+ * do cursor for < 1). O token do host entra no nome do arquivo ByHost. */
+int gethostname(char *b, size_t n);
+const char *cx_host_token(void) {
+    static char tok[64];
+    static int ready;
+    if (ready) return tok;
+    char host[256];
+    host[0] = 0;
+    if (gethostname(host, sizeof host) != 0) host[0] = 0;
+    host[sizeof host - 1] = 0;
+    size_t j = 0;
+    for (size_t i = 0; host[i] && j + 1 < sizeof tok; i++) {
+        unsigned char c = (unsigned char)host[i];
+        int ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-';
+        if (ok) tok[j++] = (char)c;
+    }
+    if (!j) memcpy(tok, "mos", 4);
+    else tok[j] = 0;
+    ready = 1;
+    return tok;
+}
 extern void cx_prefs_bind(void *ud, const char *suite_or_null);
 extern id cx_prefs_object(void *ud, id key);
 extern int cx_prefs_set(void *ud, id key, id value);
@@ -1518,18 +1539,17 @@ static id fm_cwd(id self, SEL c) { (void)self; (void)c; char b[1024]; return cx_
 /* NSNull, NSCharacterSet, NSError, NSException (mínimos) */
 static id null_desc(id self, SEL c) { (void)self; (void)c; return cx_str("<null>"); }
 static id err_desc(id self, SEL c) { (void)self; (void)c; return cx_str("Erro"); }
+void cx_nsexception_raise_format(id cls, id name, id fmt, va_list ap);
 static id exc_raise(id cls, SEL c, id name, id fmt, ...) {
-    (void)cls; (void)c;
+    (void)c;
     va_list ap;
     va_start(ap, fmt);
-    id m = cx_str_vfmt(fmt, ap);
+    cx_nsexception_raise_format(cls, name, fmt, ap);
     va_end(ap);
-    cx_fdprintf(2, "*** Exceção '%s': %s\n", cx_cstr(name), cx_cstr(m));
-    abort();
+    return 0;
 }
-/* NSException com nome, motivo e userInfo: antes +exceptionWithName:reason:userInfo: devolvia nil e um @throw do app
- * (ex.: o Squirrel do Electron) abortava com "exceção não tratada: nil", sem dizer qual. O mOS ainda não desenrola
- * exceções até um @catch; isto ao menos faz o objc_exception_throw contar o nome e o motivo. */
+/* NSException com nome, motivo e userInfo. +raise:format: (nsexc_raise.c) formata o motivo e
+ * chama objc_exception_throw: com a libc++abi carregada o @catch recebe; sem ela, o throw encerra. */
 typedef struct { cx_class_t *isa; id name, reason, info; } nsexc_t;
 static id exc_init(id self, SEL c, id name, id reason, id info) {
     (void)c;
@@ -1538,6 +1558,7 @@ static id exc_init(id self, SEL c, id name, id reason, id info) {
     return self;
 }
 static id exc_with(id cls, SEL c, id name, id reason, id info) { return cx_autorelease(exc_init(cx_alloc_instance((cx_class_t *)cls), c, name, reason, info)); }
+id cx_exception_with(id cls, id name, id reason, id info) { return exc_with(cls, 0, name, reason, info); }
 static id exc_name(id self, SEL c) { (void)c; return ((nsexc_t *)self)->name; }
 static id exc_reason(id self, SEL c) { (void)c; return ((nsexc_t *)self)->reason; }
 static id exc_info(id self, SEL c) { (void)c; return ((nsexc_t *)self)->info; }

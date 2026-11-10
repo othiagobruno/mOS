@@ -18,6 +18,7 @@ static int fails;
 #define CHECK(c, ...) do { if (c) printf("  ok  " __VA_ARGS__); else { fails++; printf("  FALHOU  " __VA_ARGS__); } printf("\n"); } while (0)
 
 static volatile sig_atomic_t got_usr1, got_alrm, got_chld, got_usr2, chld_pid, info_ok;
+static volatile sig_atomic_t stop_chld, stop_code, stop_status;
 static volatile void *segv_addr;
 static volatile int segv_code, alt_ok;
 static char altstack[64 << 10];
@@ -26,6 +27,14 @@ static void on_usr1(int s) { got_usr1 = s; }
 static void on_alrm(int s) { got_alrm++; (void)s; }
 static void on_usr2(int s) { got_usr2++; (void)s; }
 static void on_chld(int s, siginfo_t *si, void *uc) { (void)s; (void)uc; got_chld++; chld_pid = si->si_pid; }
+static void on_stopchld(int s, siginfo_t *si, void *uc) {
+    (void)s; (void)uc;
+    if (si->si_code == CLD_STOPPED || si->si_code == CLD_CONTINUED) {
+        stop_chld++;
+        stop_code = si->si_code;
+        stop_status = si->si_status;
+    }
+}
 
 /* SIGSEGV: anota o endereço e pula a instrução que falhou (mov %eax, (%rdx): 2 bytes) pelo mcontext */
 static void on_segv(int s, siginfo_t *si, void *ucv) {
@@ -169,6 +178,50 @@ int main(void) {
     void *ret = 0;
     pthread_join(th, &ret);
     CHECK((long)ret == SIGUSR2, "sigwait numa thread recebe o pthread_kill (%ld)", (long)ret);
+
+    /* 12. SIGSTOP de outro processo suspende, SIGCONT retoma, waitpid informa os dois e o filho segue */
+    {
+        struct sigaction sc;
+        memset(&sc, 0, sizeof sc);
+        sc.sa_sigaction = on_stopchld;
+        sc.sa_flags = SA_SIGINFO;
+        sigaction(SIGCHLD, &sc, 0);
+        int pfd[2], cfd[2];
+        CHECK(pipe(pfd) == 0 && pipe(cfd) == 0, "pipes do teste de parada");
+        pid_t c = fork();
+        if (c == 0) {
+            char b;
+            close(pfd[0]); close(cfd[1]);
+            if (write(pfd[1], "A", 1) != 1) _exit(2);
+            if (read(cfd[0], &b, 1) != 1) _exit(3);          /* bloqueia até o pai continuar e escrever */
+            _exit(b == 'Z' ? 42 : 4);
+        }
+        close(pfd[1]); close(cfd[0]);
+        char a = 0;
+        CHECK(read(pfd[0], &a, 1) == 1 && a == 'A', "filho vivo antes do SIGSTOP");
+        stop_chld = 0; stop_code = 0; stop_status = 0;
+        CHECK(kill(c, SIGSTOP) == 0, "kill(SIGSTOP) a partir do pai");
+        CHECK(stop_chld >= 1 && stop_code == CLD_STOPPED && stop_status == SIGSTOP,
+              "SIGCHLD CLD_STOPPED (code %d status %d)", stop_code, stop_status);
+        st = 0;
+        pid_t w = waitpid(c, &st, WUNTRACED);
+        CHECK(w == c && WIFSTOPPED(st) && !WIFCONTINUED(st) && WSTOPSIG(st) == SIGSTOP,
+              "waitpid WUNTRACED: parado por SIGSTOP (status 0x%x)", st);
+        st = 0;
+        CHECK(waitpid(c, &st, WNOHANG | WUNTRACED) == 0, "parada já informada não se repete");
+        stop_chld = 0; stop_code = 0;
+        CHECK(kill(c, SIGCONT) == 0, "kill(SIGCONT)");
+        CHECK(stop_chld >= 1 && stop_code == CLD_CONTINUED, "SIGCHLD CLD_CONTINUED (code %d)", stop_code);
+        st = 0;
+        w = waitpid(c, &st, WCONTINUED);
+        CHECK(w == c && WIFCONTINUED(st) && !WIFSTOPPED(st), "waitpid WCONTINUED (status 0x%x)", st);
+        CHECK(write(cfd[1], "Z", 1) == 1, "escreve para o filho que voltou");
+        st = 0;
+        w = waitpid(c, &st, 0);
+        CHECK(w == c && WIFEXITED(st) && WEXITSTATUS(st) == 42, "filho retomou e saiu 42 (status 0x%x)", st);
+        close(pfd[0]); close(cfd[1]);
+        signal(SIGCHLD, SIG_DFL);
+    }
 
     printf(fails ? "sinaisteste: %d FALHA(S)\n" : "sinaisteste: TODOS OK\n", fails);
     return fails;

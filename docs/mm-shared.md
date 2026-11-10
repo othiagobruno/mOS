@@ -52,3 +52,5 @@ Não implementada. O que falta, quando for a hora:
 6. Reuso do slot só depois que a página saiu de todas as PTEs. Crash no meio de uma escrita não pode devolver o slot velho a outra página.
 
 O teste desta branch não exercita swap. Não há imagem de disco de swap.
+
+`MAP_FIXED` de arquivo (b = 8 privado, b = 9 compartilhado) usa o mesmo `lazy_add_file` / `lazy_add_shared_file` depois de `lazy_sync` e de furar a faixa antiga. Não é outro cache.

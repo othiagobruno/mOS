@@ -88,6 +88,24 @@ CFCONST(kIOSurfacePlaneElementHeight, "IOSurfacePlaneElementHeight")
 CFCONST(kIOSurfacePlaneOffset, "IOSurfacePlaneOffset")
 CFCONST(kIOSurfacePlaneSize, "IOSurfacePlaneSize")
 CFCONST(kIOSurfacePlaneBase, "IOSurfacePlaneBase")
+/* Os nomes IOSurfacePropertyKey* são os mesmos ponteiros que kIOSurface*: o dicionário compara a chave por identidade. */
+__asm__(
+".globl IOSurfacePropertyKeyAllocSize\n.set IOSurfacePropertyKeyAllocSize, kIOSurfaceAllocSize\n"
+".globl IOSurfacePropertyKeyBytesPerElement\n.set IOSurfacePropertyKeyBytesPerElement, kIOSurfaceBytesPerElement\n"
+".globl IOSurfacePropertyKeyBytesPerRow\n.set IOSurfacePropertyKeyBytesPerRow, kIOSurfaceBytesPerRow\n"
+".globl IOSurfacePropertyKeyHeight\n.set IOSurfacePropertyKeyHeight, kIOSurfaceHeight\n"
+".globl IOSurfacePropertyKeyPixelFormat\n.set IOSurfacePropertyKeyPixelFormat, kIOSurfacePixelFormat\n"
+".globl IOSurfacePropertyKeyPlaneBytesPerElement\n.set IOSurfacePropertyKeyPlaneBytesPerElement, kIOSurfacePlaneBytesPerElement\n"
+".globl IOSurfacePropertyKeyPlaneBytesPerRow\n.set IOSurfacePropertyKeyPlaneBytesPerRow, kIOSurfacePlaneBytesPerRow\n"
+".globl IOSurfacePropertyKeyPlaneElementHeight\n.set IOSurfacePropertyKeyPlaneElementHeight, kIOSurfacePlaneElementHeight\n"
+".globl IOSurfacePropertyKeyPlaneElementWidth\n.set IOSurfacePropertyKeyPlaneElementWidth, kIOSurfacePlaneElementWidth\n"
+".globl IOSurfacePropertyKeyPlaneHeight\n.set IOSurfacePropertyKeyPlaneHeight, kIOSurfacePlaneHeight\n"
+".globl IOSurfacePropertyKeyPlaneInfo\n.set IOSurfacePropertyKeyPlaneInfo, kIOSurfacePlaneInfo\n"
+".globl IOSurfacePropertyKeyPlaneOffset\n.set IOSurfacePropertyKeyPlaneOffset, kIOSurfacePlaneOffset\n"
+".globl IOSurfacePropertyKeyPlaneSize\n.set IOSurfacePropertyKeyPlaneSize, kIOSurfacePlaneSize\n"
+".globl IOSurfacePropertyKeyPlaneWidth\n.set IOSurfacePropertyKeyPlaneWidth, kIOSurfacePlaneWidth\n"
+".globl IOSurfacePropertyKeyWidth\n.set IOSurfacePropertyKeyWidth, kIOSurfaceWidth\n"
+);
 
 /* ---- tabela global de surfaces (ID e porta -> objeto), protegida por trava simples */
 #define MAX_SURF 1024

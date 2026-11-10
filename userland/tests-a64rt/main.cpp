@@ -17,6 +17,8 @@
 #include <sys/ucontext.h>
 #include <sys/mman.h>
 #include <sys/wait.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 #include <spawn.h>
 #include <setjmp.h>
 #include <stdexcept>
@@ -688,9 +690,160 @@ static void teste_spawn(void) {
     }
 }
 
+/* svc #0x80 do Darwin, sem o libSystem: 59 = execve, 244 = posix_spawn.
+ * O args_desc é o do XNU (LP64): 32 bytes iniciais e file action de 1040 bytes
+ * (tipo +0, fd +4, dup2 novo fd +8, chdir path +8). O contêiner é {alloc, count, ações}. */
+#ifdef __aarch64__
+static long svc80(long nr, long a0, long a1, long a2, long a3, long a4, int *carry) {
+    register long r0 __asm__("x0") = a0;
+    register long r1 __asm__("x1") = a1;
+    register long r2 __asm__("x2") = a2;
+    register long r3 __asm__("x3") = a3;
+    register long r4 __asm__("x4") = a4;
+    register long r16 __asm__("x16") = nr;
+    unsigned long nzcv = 0;
+    __asm__ volatile("svc #0x80\n\tmrs %1, nzcv"
+                     : "+r"(r0), "=r"(nzcv)
+                     : "r"(r1), "r"(r2), "r"(r3), "r"(r4), "r"(r16)
+                     : "memory");
+    if (carry) *carry = (int)((nzcv >> 29) & 1);
+    return r0;
+}
+struct fa_box { int alloc, count; unsigned char act[1040]; };
+struct spawn_desc { unsigned long long attr_size, attrp, fa_size, fap; };
+struct spawn_attr { unsigned short flags, pad; };
+static void fa_set(fa_box *b, int type, int fd, int extra, const char *path) {
+    memset(b, 0, sizeof *b);
+    b->alloc = 1;
+    b->count = 1;
+    memcpy(b->act, &type, 4);
+    memcpy(b->act + 4, &fd, 4);
+    if (type == 2) memcpy(b->act + 8, &extra, 4);
+    if (path) memcpy(b->act + 8, path, strlen(path) + 1);
+}
+#endif
+extern "C" int mach_vm_map(unsigned task, unsigned long long *addr, unsigned long long size, unsigned long long mask,
+                           int flags, unsigned object, unsigned long long offset, int copy, int cur, int max, unsigned inherit);
+extern "C" int mach_make_memory_entry_64(unsigned task, unsigned long long *size, unsigned long long offset,
+                                         int perm, unsigned *handle, unsigned parent);
+static void teste_svc(void) {
+#ifdef __aarch64__
+    pid_t pid = fork();
+    if (pid == 0) {
+        char *av[] = {argv_fork, (char *)"--filho-exec", 0};
+        int carry = 0;
+        svc80(59, (long)argv_fork, (long)av, (long)environ, 0, 0, &carry);
+        _exit(127);
+    }
+    CHECK("svc 59 execve executa o filho e devolve o status", pid > 0 && filho_ok(pid, 42));
+
+    pid = fork();
+    if (pid == 0) {
+        char *av[] = {argv_fork, (char *)"--filho-exec", 0};
+        int carry = 0;
+        long r = svc80(59, (long)"/nao/existe-a64", (long)av, 0, 0, 0, &carry);
+        _exit(carry && r == ENOENT ? 7 : 8);
+    }
+    CHECK("svc 59 de caminho ausente volta com ENOENT", pid > 0 && filho_ok(pid, 7));
+
+    int spid = -1, carry = 0;
+    char *av[] = {argv_fork, (char *)"--filho-spawn", 0};
+    long r = svc80(244, (long)&spid, (long)argv_fork, 0, (long)av, (long)environ, &carry);
+    CHECK("svc 244 posix_spawn executa o filho e devolve o status", carry == 0 && r == 0 && spid > 0 && filho_ok(spid, 43));
+
+    int fds[2];
+    int pp = pipe(fds);
+    fa_box dup;
+    fa_set(&dup, 2, pp == 0 ? fds[1] : -1, 1, 0);
+    spawn_desc desc;
+    memset(&desc, 0, sizeof desc);
+    desc.fa_size = 8 + 1040;
+    desc.fap = (unsigned long long)&dup;
+    char *ioav[] = {argv_fork, (char *)"--filho-io", 0};
+    spid = -1; carry = 0;
+    r = pp == 0 ? svc80(244, (long)&spid, (long)argv_fork, (long)&desc, (long)ioav, (long)environ, &carry) : -1;
+    char z = 0;
+    int n = (r == 0 && spid > 0 && filho_ok(spid, 0)) ? (int)read(fds[0], &z, 1) : -1;
+    if (pp == 0) { close(fds[0]); close(fds[1]); }
+    CHECK("svc 244 com file action dup2: o filho escreve no pipe", pp == 0 && carry == 0 && r == 0 && n == 1 && z == 'Z');
+
+    mkdir("/tmp/a64cwd", 0755);
+    fa_box ch;
+    fa_set(&ch, 5, 0, 0, "/tmp/a64cwd");
+    memset(&desc, 0, sizeof desc);
+    desc.fa_size = 8 + 1040;
+    desc.fap = (unsigned long long)&ch;
+    char *cdav[] = {argv_fork, (char *)"--filho-cwd", 0};
+    spid = -1; carry = 0;
+    r = svc80(244, (long)&spid, (long)argv_fork, (long)&desc, (long)cdav, (long)environ, &carry);
+    CHECK("svc 244 com file action chdir", carry == 0 && r == 0 && spid > 0 && filho_ok(spid, 0));
+
+    int cfd = open("/tmp/a64-cloexec.bin", O_RDWR | O_CREAT | O_TRUNC, 0644);
+    if (cfd >= 0) { if (write(cfd, "Q", 1) == 1) lseek(cfd, 0, SEEK_SET); }
+    spawn_attr attr;
+    attr.flags = 0x4000; /* POSIX_SPAWN_CLOEXEC_DEFAULT */
+    attr.pad = 0;
+    memset(&desc, 0, sizeof desc);
+    desc.attr_size = 4;
+    desc.attrp = (unsigned long long)&attr;
+    char num[16];
+    snprintf(num, sizeof num, "%d", cfd);
+    char *fdav[] = {argv_fork, (char *)"--filho-fd", num, 0};
+    spid = -1; carry = 0;
+    r = cfd >= 0 ? svc80(244, (long)&spid, (long)argv_fork, (long)&desc, (long)fdav, (long)environ, &carry) : -1;
+    int fechou = cfd >= 0 && r == 0 && spid > 0 && filho_ok(spid, 0);
+    if (cfd >= 0) close(cfd);
+    CHECK("svc 244 com POSIX_SPAWN_CLOEXEC_DEFAULT não entrega o fd do pai", fechou && carry == 0);
+#else
+    printf("pula svc (sem aarch64)\n");
+#endif
+}
+
+static void teste_fixo(void) {
+    const long page = 16384;
+    char img[32768];
+    memset(img, 'A', page);
+    memset(img + page, 'B', page);
+    int fd = open("/tmp/a64-fixed.bin", O_RDWR | O_CREAT | O_TRUNC, 0644);
+    int wr = fd >= 0 ? (int)write(fd, img, (size_t)page * 2) : -1;
+    void *slot = mmap(0, (size_t)page * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+    void *p = (fd >= 0 && slot != MAP_FAILED)
+                  ? mmap(slot, (size_t)page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_FIXED, fd, page)
+                  : MAP_FAILED;
+    int conteudo = p == slot && p != MAP_FAILED && ((char *)p)[0] == 'B';
+    CHECK("mmap MAP_FIXED de arquivo devolve o endereço e o conteúdo", fd >= 0 && wr == page * 2 && conteudo);
+
+    unsigned long long sz = (unsigned long long)page;
+    unsigned handle = 0;
+    int kr = conteudo ? mach_make_memory_entry_64(0, &sz, (unsigned long long)p, PROT_READ | PROT_WRITE, &handle, 0) : -1;
+    void *hole = mmap(0, (size_t)page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+    if (hole != MAP_FAILED) munmap(hole, (size_t)page);
+    unsigned long long at = hole != MAP_FAILED ? (unsigned long long)hole : 0;
+    int kr2 = (kr == 0 && handle && at) ? mach_vm_map(0, &at, (unsigned long long)page, 0, 0, handle, 0, 0, 3, 3, 0) : -1;
+    int viu = kr2 == 0 && at == (unsigned long long)hole && ((char *)at)[0] == 'B';
+    CHECK("mach_vm_map fixo devolve o endereço e o conteúdo do arquivo", viu);
+    unsigned long long busy = (unsigned long long)p;
+    int kr3 = viu ? mach_vm_map(0, &busy, (unsigned long long)page, 0, 0, handle, 0, 0, 3, 3, 0) : -1;
+    CHECK("mach_vm_map sem OVERWRITE em faixa ocupada é KERN_NO_SPACE", kr3 == 3 && ((char *)p)[0] == 'B');
+    if (fd >= 0) close(fd);
+    if (slot != MAP_FAILED) munmap(slot, (size_t)page * 2);
+    if (viu) munmap((void *)at, (size_t)page);
+}
+
 int main(int argc, char **argv) {
     if (argc > 1 && !strcmp(argv[1], "--filho-exec")) return 42;
     if (argc > 1 && !strcmp(argv[1], "--filho-spawn")) return 43;
+    if (argc > 1 && !strcmp(argv[1], "--filho-io")) { char z = 'Z'; return write(1, &z, 1) == 1 ? 0 : 2; }
+    if (argc > 1 && !strcmp(argv[1], "--filho-cwd")) {
+        char b[256];
+        if (!getcwd(b, sizeof b)) return 2;
+        return strcmp(b, "/tmp/a64cwd") == 0 ? 0 : 1;
+    }
+    if (argc > 1 && !strcmp(argv[1], "--filho-fd")) {
+        int fd = argc > 2 ? atoi(argv[2]) : -1;
+        char b;
+        return read(fd, &b, 1) < 0 ? 0 : 1;
+    }
     argv_fork = argv[0];
 #ifdef __aarch64__
     {   // svc #0x4d4f com x8 = A64RT_SYS_INFO (userland/a64rt/a64rt_abi.h): 0 interpretador, 1 JIT
@@ -700,7 +853,7 @@ int main(int argc, char **argv) {
     }
 #endif
     printf("%sa64rt-teste: %s (argc %d)\n", motor, argv[0], argc);
-    const char *so = argc > 1 ? argv[1] : 0;   // um teste só: threads, mutex, sinais, cxx, sistema, pagina, smc, fork, spawn
+    const char *so = argc > 1 ? argv[1] : 0;   // um teste só: threads, mutex, sinais, cxx, sistema, pagina, smc, fork, spawn, svc, fixo
 #define RODA(n, f) if (!so || !strcmp(so, n)) f()
     RODA("threads", teste_threads);
     RODA("mutex", teste_mutex);
@@ -710,6 +863,8 @@ int main(int argc, char **argv) {
     RODA("smc", teste_smc);
     RODA("fork", teste_fork);
     RODA("spawn", teste_spawn);
+    RODA("svc", teste_svc);
+    RODA("fixo", teste_fixo);
     RODA("cxx", teste_cxx);                     // por último: sem unwinder no libSystem vira std::terminate
     printf("%sa64rt-teste: %d falhas\n", motor, falhas);
     return falhas;

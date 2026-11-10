@@ -39,7 +39,7 @@ typedef struct process process_t;
  * FD_PTY_M/FD_PTY_S: ponta mestre/escrava de um pseudoterminal (proc/pty.c), com a referência em .pty */
 /* FD_PIPE_RW: ponta de um socketpair (SYS_PIPE com b = MOS_PIPE_SOCKPAIR, um valor mágico: o SYS1 dos programas antigos
  * deixa lixo no 2º argumento): lê do .pipe e escreve no .pipe2 (o par tem os dois cruzados) */
-enum { FD_FILE, FD_PIPE_R, FD_PIPE_W, FD_PTY_M, FD_PTY_S, FD_PIPE_RW };
+enum { FD_FILE, FD_PIPE_R, FD_PIPE_W, FD_PTY_M, FD_PTY_S, FD_PIPE_RW, FD_UNIX };
 struct pty;
 typedef struct pipe {
     char buf[4096];
@@ -66,6 +66,7 @@ typedef struct thread {
     int join_tid;           /* TH_WAITING em SYS_THREAD_JOIN */
     u64 gs_base;            /* base do GS em ring 3 (TLS das threads do macOS: gs:[chave*8]) */
     bool wait_posix;        /* SYS_WAITPID: rax = pid e status POSIX gravado em wait_status */
+    int wait_opt;           /* opções desse waitpid (MOS_WUNTRACED / MOS_WCONTINUED) */
     /* espera numa porta Mach (kernel/proc/machipc.c), com wait_pid = -7 e TH_WAITING */
     void *mach_wait;        /* porta ou conjunto esperado */
     u64 mach_deadline;      /* 0 = sem prazo; o escalonador acorda no prazo (rax já tem o erro de tempo) */
@@ -124,6 +125,11 @@ struct process {
     u32 sig_flags[32];      /* sa_flags (MOS_SA_*) */
     u64 sig_tramp[32];      /* trampolim do libSystem (0 = chamada direta com sig_restorer) */
     struct { int code, pid, status; u64 addr; } sig_info[32];   /* siginfo dos pendentes do processo */
+    /* parada do processo inteiro (SIGSTOP/TSTP/TTIN/TTOU). stopped = 0 rodando, senão o sinal do kernel
+     * que parou. Não é o thread_suspend do Mach (thread.suspend): o escalonador pula todas as threads. */
+    int stopped;
+    int stop_unreported;    /* 1 até um waitpid com WUNTRACED consumir */
+    int cont_unreported;    /* 1 até um waitpid com WCONTINUED consumir */
     struct { int tid, code; } texit[16];   /* códigos de threads já encerradas (para join) */
     tty_t *tty;             /* NULL = console global do sistema */
     char cwd[128];          /* pasta atual (caminhos relativos nas syscalls) */
@@ -157,6 +163,14 @@ void      pty_proc_init(process_t *child, process_t *parent, unsigned spawn_flag
 void      pty_proc_exit(process_t *p);                                      /* líder de sessão saindo: SIGHUP e desliga o terminal */
 process_t *proc_list(void);                                                 /* lista de processos (proc/process.c) */
 process_t *proc_find(int pid);
+/* job control (pty.c): 0 = ignorado ou bloqueado (o chamador devolve EIO na leitura e segue na escrita);
+ * 1 = o processo parou (refazer a syscall quando continuar); 2 = há tratador (EINTR, SA_RESTART na volta) */
+int       proc_job_signal(process_t *p, thread_t *th, int sig);
+/* Coloca um processo já criado no mesmo estado de um SIGSTOP: o escalonador não escolhe as threads
+ * dele até um SIGCONT (proc_continue). waitpid(WUNTRACED) informa a parada e o pai recebe SIGCHLD
+ * CLD_STOPPED, salvo SA_NOCLDSTOP. Não usa thread.suspend (suspensão Mach: o SIGCONT não a desfaz).
+ * proc_spawn_in chama isto quando mos_spawn_vec_t.flags traz MOS_SPAWN_START_SUSPENDED (0x80). */
+void      proc_hold(process_t *p);
 
 /* páginas físicas compartilhadas entre espaços (memória Mach, proc/process.c) */
 bool      uvm_map_phys(process_t *p, u64 va, u64 phys, bool rw);  /* mais uma referência à página */
@@ -215,6 +229,18 @@ bool      uvm_map(process_t *p, u64 va, u64 len);       /* páginas de 4 KiB, ze
 u64      *uvm_pte(process_t *p, u64 va);               /* NULL se não mapeado */
 bool      uvm_copy_out(process_t *p, u64 va, const void *src, usize len);
 bool      uvm_copy_in(process_t *p, void *dst, u64 va, usize len);
+
+/* AF_UNIX (kernel/net/unix.c). O número do socket fica em fds[].off quando kind == FD_UNIX. */
+void      unix_hold(int slot);
+void      unix_put(int slot);
+void      unix_clear_waiter(thread_t *t);
+int       unix_path_is_sock(const char *path);          /* 1 se o caminho é (ou foi) um socket nomeado */
+void      unix_unbind(const char *path);
+void      unix_rename(const char *from, const char *to);
+u64       unix_syscall(int_frame_t *f, thread_t *t, process_t *p);
+u64       unix_rw(int_frame_t *f, thread_t *t, process_t *p, int fd, int rd, u64 buf, u64 len);
+int       unix_fstat(process_t *p, int fd, void *st);   /* preenche mos_stat_t; 0 ou -errno */
+int       unix_fd_path(process_t *p, int fd, char *out, int cap);
 
 /* ---- arquitetura (arch/cpu.c, arch/smp.c) */
 void      tss_set_rsp0(u64 rsp0);

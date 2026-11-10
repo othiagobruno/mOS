@@ -329,6 +329,19 @@ const void *vt_class_ti[16] __asm__("_ZTVN10__cxxabiv117__class_type_infoE");
 const void *vt_si_class_ti[16] __asm__("_ZTVN10__cxxabiv120__si_class_type_infoE");
 const void *vt_vmi_class_ti[16] __asm__("_ZTVN10__cxxabiv121__vmi_class_type_infoE");
 
+/* typeinfo Itanium { vptr no meio da vtable, nome mangled sem _Z, base }. As cinco bases
+ * std::logic_error / runtime_error / exception não são importadas; existem para o ponteiro base.
+ * As vtables continuam zeradas: dynamic_cast e catch C++ ainda não desenrolam. */
+typedef struct { const void *vptr; const char *name; const void *base; } cxx_si_ti;
+static const cxx_si_ti ti_exception = { &vt_class_ti[2], "St9exception", 0 };
+static const cxx_si_ti ti_logic = { &vt_si_class_ti[2], "St11logic_error", &ti_exception };
+static const cxx_si_ti ti_runtime = { &vt_si_class_ti[2], "St13runtime_error", &ti_exception };
+const cxx_si_ti ti_invalid_argument __asm__("_ZTISt16invalid_argument") = { &vt_si_class_ti[2], "St16invalid_argument", &ti_logic };
+const cxx_si_ti ti_domain_error __asm__("_ZTISt12domain_error") = { &vt_si_class_ti[2], "St12domain_error", &ti_logic };
+const cxx_si_ti ti_range_error __asm__("_ZTISt11range_error") = { &vt_si_class_ti[2], "St11range_error", &ti_runtime };
+const cxx_si_ti ti_overflow_error __asm__("_ZTISt14overflow_error") = { &vt_si_class_ti[2], "St14overflow_error", &ti_runtime };
+const cxx_si_ti ti_underflow_error __asm__("_ZTISt15underflow_error") = { &vt_si_class_ti[2], "St15underflow_error", &ti_runtime };
+
 /* ================================================================ std::locale e numpunct<char> (o fmt do spdlog) */
 /* locale::id {once_flag; int id}; numpunct<char> com a vtable {D1, D0, on_zero_shared, do_decimal_point,
  * do_thousands_sep, do_grouping(sret), do_truename(sret), do_falsename(sret)} */
@@ -343,17 +356,23 @@ static const void *vt_numpunct[10] = {0, 0, (void *)np_noop, (void *)np_noop, (v
                                       (void *)np_thousands, (void *)np_grouping, (void *)np_true, (void *)np_false};
 /* facet {vptr; long owners (shared_count)}: nunca é liberado */
 static struct { void **vt; long owners; char dp, ts; } numpunct_c = {(void **)&vt_numpunct[2], 0x3fffffff, '.', ','};
-static struct { long refs; } locale_imp = {1};
+struct { long refs; } cx_locale_imp = {1};
 
+void *cx_locale_classic_imp(void) { return &cx_locale_imp; }
 void locale_ctor(void **l) __asm__("_ZNSt3__16localeC1Ev");
-void locale_ctor(void **l) { *l = &locale_imp; }
+void locale_ctor(void **l) { *l = &cx_locale_imp; }
 void locale_copy(void **l, void *const *o) __asm__("_ZNSt3__16localeC1ERKS0_");
 void locale_copy(void **l, void *const *o) { *l = *o; }
 void locale_dtor(void **l) __asm__("_ZNSt3__16localeD1Ev");
 void locale_dtor(void **l) { (void)l; }
+extern const void *cx_locale_facet(void *id);
 const void *locale_use_facet(void *const *l, void *id) __asm__("_ZNKSt3__16locale9use_facetERNS0_2idE");
 const void *locale_use_facet(void *const *l, void *id) {
+    const void *f;
     (void)l;
-    if (id != (void *)numpunct_char_id) cxx_fatal("std::bad_cast", "locale::use_facet: só numpunct<char> existe no mOS");
-    return &numpunct_c;
+    if (id == (void *)numpunct_char_id) return &numpunct_c;
+    f = cx_locale_facet(id);
+    if (f) return f;
+    cxx_fatal("std::bad_cast", "locale::use_facet");
+    return 0;
 }

@@ -56,8 +56,32 @@ enum {
 #define DEV_AUDIO_STATE 17    /* (stream, gui_audio_state_t *) -> 0 */
 #define DEV_AUDIO_CTL 18      /* (stream, ganho 0..65536 (-1 = mantém) | pausa (-1/0/1) << 32, descartar) -> 0 */
 #define DEV_AUDIO_INFO 19     /* (gui_audio_state_t *) -> 1 se há saída de som de verdade (senão os streams andam no relógio) */
+/* Barra de menus (NSStatusItem). O selo do Dock já entra por SYS_DESKTOP / MOS_DESK_BADGE (I19).
+ * 21 é DEV_AUDIO_READ. Estes ficam em 22 e 23.
+ * DEV_STATUS: b = SB_SET, c = pacote, d = bytes (formato em kernel/ui/statusdock.h);
+ *             b = SB_REMOVE, c = id.
+ * DEV_DOCK:   b = DK_VISIBLE, c = 1 mostra o ícone, 0 esconde (LSUIElement / prohibited). */
+#define DEV_STATUS 22
+#define SB_SET 1
+#define SB_REMOVE 2
+#define DEV_DOCK 23
+#define DK_VISIBLE 1
+/* teclas de GEV_FLAGS (os mesmos números de KEY_LSHIFT … em kernel.h) */
+#define GUI_KEY_LSHIFT 0x116
+#define GUI_KEY_RSHIFT 0x117
+#define GUI_KEY_LCTRL  0x118
+#define GUI_KEY_LALT   0x119
+#define GUI_KEY_LCMD   0x11A
+#define GUI_KEY_CAPS   0x11B
+#define GUI_KEY_RCTRL  0x11C
+#define GUI_KEY_RALT   0x11D
+#define GUI_KEY_RCMD   0x11E
 #define DEV_WINDOW_LIST 20    /* (índice, gui_cgwindow_t *) 1 = preencheu, 0 = acabou. Da frente para o fundo.
                                * CGWindowListCopyWindowInfo / SCShareableContent. A permissão de gravar a tela fica no userland (TCC). */
+#define DEV_INPUT_TO_PID 24   /* CGEventPostToPid: (tipo CG | botões << 8 | mods << 16 | roda << 32, tecla | pid << 32, x | y << 32).
+                               * Entrega na fila do processo. Não muda o foco nem o cursor global. 21 é DEV_AUDIO_READ. */
+#define DEV_FOCUS_PID 25      /* (pid) foca a janela da frente desse processo. 0 ou -MOS_ESRCH */
+#define DEV_FRONT_PID 26      /* () pid da janela em foco, ou 0 */
 typedef struct {
     unsigned int number;           /* kCGWindowNumber */
     int pid;                       /* kCGWindowOwnerPID; 0 se a janela não é de um processo convidado */
@@ -66,6 +90,7 @@ typedef struct {
     int x, y, w, h;                /* kCGWindowBounds, origem no canto superior esquerdo do compositor */
     char owner[64];                /* kCGWindowOwnerName */
     char name[96];                 /* kCGWindowName */
+    char bundle[128];              /* caminho do .app, quando o processo veio de um bundle */
 } gui_cgwindow_t;
 int compat_gui_cgwindow(int index, gui_cgwindow_t *out);
 #define DEV_AUDIO_READ 21     /* (amostras i16 estéreo 48 kHz, quadros) -> quadros copiados da captura; 0 = anel vazio ou sem entrada */
@@ -185,7 +210,11 @@ enum { GEV_NONE, GEV_MOUSE_DOWN, GEV_MOUSE_UP, GEV_MOUSE_MOVE, GEV_RIGHT_DOWN, G
        GEV_KEY_DOWN, GEV_CLOSE, GEV_RESIZE, GEV_FOCUS, GEV_QUIT, GEV_MENU,     /* GEV_MENU: key = ação */
        GEV_DRAG_ENTER, GEV_DRAG_MOVE, GEV_DRAG_EXIT, GEV_DRAG_DROP, GEV_DRAG_SRC_MOVE, GEV_DRAG_END,
        GEV_INPUT_SOURCE,    /* key = nova fonte de entrada (⌃Espaço troca) */
-       GEV_KEY_UP };        /* tecla solta (mesmos campos de GEV_KEY_DOWN) */
+       GEV_KEY_UP,          /* tecla solta (mesmos campos de GEV_KEY_DOWN) */
+       GEV_FLAGS,           /* só o modificador (Shift/Ctrl/Option/Command/Caps). key = GUI_KEY_*; mods já é o estado novo.
+                             * O AppKit entrega flagsChanged: ao first responder, sem keyDown:/keyUp:. */
+       GEV_STATUS };        /* clique num status item da barra. key = id do item. O menu, se houver, abre no window server
+                             * e a escolha volta como GEV_MENU com a ação que o app registrou. */
 
 typedef struct {
     unsigned int type, win;
@@ -216,6 +245,8 @@ enum {
     GC_UNCLIP,
     GC_GRAD,            /* i32 x, y, w, h; u32 top, bottom */
     GC_IMAGE,           /* i32 x, y, w, h; u32 pixels[w*h] (ARGB) */
+    GC_COMP_FILL,       /* f32 x, y, w, h; u32 color (ARGB reto); u32 op (NSCompositingOperation) */
+    GC_COMP_IMAGE,      /* i32 x, y, w, h; u32 op; u32 pixels[w*h] ARGB reto */
 };
 
 #define GUI_MAX_BATCH (512u << 10)

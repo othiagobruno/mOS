@@ -1,9 +1,9 @@
 /*
- * mOS — CoreData.framework (Mach-O, em /System/Library/Frameworks), primeira versão: as classes e constantes que
- * binários da Apple referenciam (o Postico guarda favoritos e configurações em CoreData), com um armazenamento só em
- * memória. Ainda não há SQLite nem modelos compilados (.momd): o modelo carregado fica vazio, a coordenadora aceita
- * qualquer loja (que não persiste), o contexto guarda os objetos inseridos e os fetches devolvem os da entidade
- * pedida (sem predicados nem ordenação). Os atributos ficam num dicionário por objeto (KVC).
+ * mOS — CoreData.framework (Mach-O, em /System/Library/Frameworks). Esta dylib continua só em memória:
+ * é o caminho do Postico quando o arquivo está na imagem. O loader prefere este arquivo ao libSystem.
+ * Slack, Claude Desktop e Cursor só têm o LC_LOAD_DYLIB (nenhum símbolo). Sem este arquivo no disco,
+ * o libSystem atende com a loja MOSCD1 de userland/libsystem/coredata_store.inc (coredata_fw.c).
+ * Esse arquivo não é SQLite. Ainda não há modelos compilados (.momd).
  * O overlay Swift (NSManagedObjectContext.fetch) está em CoreData.swift. tools/build-frameworks-objc.ps1
  */
 #import <Foundation/Foundation.h>

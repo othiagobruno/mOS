@@ -494,21 +494,7 @@ BOOL imp_removeBlock(IMP imp) {
 }
 
 /* ================================================================ encaminhamento e exceções */
-/* _objc_msgForward: o IMP que significa "encaminhe". Sem NSInvocation completo, tenta o caminho rápido
- * (forwardingTargetForSelector:) e senão avisa e devolve nil, como uma mensagem sem implementação. */
-id _objc_msgForward(id self, SEL sel, ...) {
-    if (!self) return 0;
-    SEL ft = sel_registerName("forwardingTargetForSelector:");
-    if (cx_lookup(self->isa, ft)) {
-        id t = ((id (*)(id, SEL, SEL))objc_msgSend)(self, ft, sel);
-        if (t && t != self) {
-            cx_fdprintf(2, "objc: _objc_msgForward: -%s encaminhado sem argumentos para %s\n", sel, cx_class_name(t->isa));
-            return ((id (*)(id, SEL))objc_msgSend)(t, sel);
-        }
-    }
-    cx_fdprintf(2, "objc: _objc_msgForward: -[%s %s] sem destino\n", cx_class_name(self->isa), sel);
-    return 0;
-}
+/* _objc_msgForward está em objc_forward.S: o corpo em C descartava os argumentos. */
 void _objc_msgForward_stret(void *ret, id self, SEL sel, ...) { (void)self; (void)sel; if (ret) memset(ret, 0, 32); }
 
 /* typeinfo das exceções ObjC (objc_ehtype_vtable, OBJC_EHTYPE_id): objc_exc.c */

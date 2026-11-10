@@ -45,6 +45,7 @@ int usleep(unsigned us);
 int pthread_create(unsigned long *t, const void *attr, void *(*fn)(void *), void *arg);
 int pthread_detach(unsigned long t);
 int pthread_join(unsigned long t, void **r);
+void cx_tap_push(const void *pcm, u32 frames);
 int pthread_mutex_init(void *m, const void *a);
 int pthread_mutex_lock(void *m);
 int pthread_mutex_unlock(void *m);
@@ -384,6 +385,7 @@ static void *cae_thread(void *arg) {
             long w = dev3(DEV_AUDIO_WRITE, e->stream, (long)(pcm + off * 2), k - off);
             if (w < 0) { e->run = 0; break; }
             if (w == 0) { usleep(2000); continue; }
+            cx_tap_push(pcm + off * 2, (u32)w);
             off += (u32)w;
         }
     }
@@ -739,7 +741,11 @@ OSStatus AudioHardwareCreateAggregateDevice(id desc, u32 *out) { (void)desc; if 
 OSStatus AudioHardwareDestroyAggregateDevice(u32 d) { (void)d; return kAudioHardwareBadObjectError; }
 OSStatus AudioHardwareUnload(void) { return 0; }
 
+int cx_tap_owns(u32 d);
+OSStatus cx_tap_add_ioproc(void *proc, void *block, void *ctx, void **out);
+OSStatus cx_tap_remove_ioproc(void *pid);
 static OSStatus ioproc_add(u32 d, void *proc, void *block, void *ctx, void **out) {
+    if (cx_tap_owns(d)) return cx_tap_add_ioproc(proc, block, ctx, out);
     if (d != DEV_OUT) return kAudioHardwareBadObjectError;
     if (!out || (!proc && !block)) return kAudio_ParamError;
     plock();
@@ -763,6 +769,7 @@ static ioproc_t *ioproc_of(void *pid) {
     return i >= 1 && i <= MAX_IOPROCS && (g_procs[i - 1].proc || g_procs[i - 1].block) ? &g_procs[i - 1] : 0;
 }
 OSStatus AudioDeviceDestroyIOProcID(u32 d, void *pid) {
+    if (cx_tap_owns(d)) return cx_tap_remove_ioproc(pid);
     if (d != DEV_OUT) return kAudioHardwareBadObjectError;
     ioproc_t *p = ioproc_of(pid);
     if (!p) return kAudioHardwareIllegalOperationError;
