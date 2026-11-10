@@ -158,7 +158,7 @@ done
     -fpie -mno-red-zone -Wall -Wno-unused-parameter -Wno-incompatible-library-redeclaration -Wno-builtin-requires-header \
     -I"$ROOT/userland/libsystem/kshim" \
     -Wl,--image-base=0x400000100000 -Wl,-e,cx_start -Wl,--no-gc-sections \
-    "${LS_SRC[@]}" "$UWO"/libunwind.cpp.o "$UWO"/UnwindLevel1.c.o "$UWO"/UnwindLevel1-gcc-ext.c.o \
+    "${LS_SRC[@]}" "$UWO"/libunwind.cpp.o \
     "$UWO"/UnwindRegistersSave.S.o "$UWO"/UnwindRegistersRestore.S.o \
     -o "$OUT/libSystem.mos"
 python3 "$ROOT/tools/patch-ehframe.py" "$OUT/libSystem.mos"
