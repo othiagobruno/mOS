@@ -193,8 +193,8 @@ size_t wcsftime(wchar_t_ *s, size_t max, const wchar_t_ *fmt, const void *tm) {
 int getpriority(int which, unsigned who) { (void)which; (void)who; set_errno(0); return 0; }
 int setpriority(int which, unsigned who, int prio) { (void)which; (void)who; (void)prio; return 0; }
 int initgroups(const char *name, int gid) { (void)name; (void)gid; return 0; }
-int setegid(unsigned g) { (void)g; return 0; }
-int seteuid(unsigned u) { (void)u; return 0; }
+int setegid(unsigned g) { long r = SYS1(SYS_SETEGID, g); if (r < 0) { set_errno(E_PERM); return -1; } return 0; }
+int seteuid(unsigned u) { long r = SYS1(SYS_SETEUID, u); if (r < 0) { set_errno(E_PERM); return -1; } return 0; }
 /* getsid: em pty.c (sessões do kernel, SYS_TTY) */
 int getgrouplist(const char *name, int base, int *groups, int *ngroups) {
     (void)name;
