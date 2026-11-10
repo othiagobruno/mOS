@@ -247,7 +247,9 @@ static void kill_block(jblk *b) {           /* J.lock tomada */
     b->in = NULL;
     for (jthr *t = J.threads; t; t = t->next) {
         jc_ent *e = &t->jc[hjc(b->pc)];
-        if (e->pc == b->pc) __atomic_store_n(&e->pc, ~0ull, __ATOMIC_RELEASE);
+        /* pc publicado por último: quem leu o ponteiro de código confere pc de novo antes de saltar */
+        if (__atomic_load_n(&e->pc, __ATOMIC_RELAXED) == b->pc)
+            __atomic_store_n(&e->pc, ~0ull, __ATOMIC_RELEASE);
     }
 }
 
@@ -300,6 +302,10 @@ void a64_jit_invalidate(a64_u64 addr, a64_u64 len) {
         }
     }
     ulk(&J.wplock);
+    /* os blocos já estão mortos e os pc do cache em ~0. A barreira e o chute acontecem antes de
+     * soltar J.lock: a thread que acordar não traduz o intervalo velho. */
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);
+    kick_all();
     ulk(&J.lock);
 }
 
@@ -403,9 +409,13 @@ static void gen_stubs(xb *b) {
     x_shift_ri(b, 0, S_SHL, XDX, 4);
     x_alu_rm(b, 1, A_CMP, XAX, XMI(XCX, XDX, 0, 0));
     a64_u8 *j2 = x_jcc32(b, CC_NE);
-    x_jmp_m(b, XMI(XCX, XDX, 0, 8));
+    x_mov_rm(b, 1, XSI, XMI(XCX, XDX, 0, 8));          /* lê o código e só então confere o pc de novo */
+    x_alu_rm(b, 1, A_CMP, XAX, XMI(XCX, XDX, 0, 0));
+    a64_u8 *j3 = x_jcc32(b, CC_NE);
+    x_jmp_r(b, XSI);
     x_patch32(j1, b->p);
     x_patch32(j2, b->p);
+    x_patch32(j3, b->p);
     x_mov_mr(b, 1, XM(RCPU, OFF_PC), XAX);
     x_mov_ri(b, XAX, JX_IND);
     x_jmp_to(b, jit_g.g_exit);
@@ -644,7 +654,9 @@ static int jit_loop(a64_cpu *c, jthr *t) {
             return A64_EXIT_STOP;
         }
         __atomic_store_n(&t->in_jit, 1, __ATOMIC_SEQ_CST);
-        if (__builtin_expect(J.flush_active || J.pending || *stop_hi(c), 0)) {
+        if (__builtin_expect(__atomic_load_n(&J.flush_active, __ATOMIC_ACQUIRE)
+                              || __atomic_load_n(&J.pending, __ATOMIC_ACQUIRE)
+                              || __atomic_load_n(stop_hi(c), __ATOMIC_ACQUIRE), 0)) {
             __atomic_store_n(&t->in_jit, 0, __ATOMIC_SEQ_CST);
             while (__atomic_load_n(&J.flush_active, __ATOMIC_SEQ_CST)) __builtin_ia32_pause();
             if (J.pending) { lk(&J.lock); process_pending(); ulk(&J.lock); }
@@ -652,7 +664,12 @@ static int jit_loop(a64_cpu *c, jthr *t) {
             continue;
         }
         jc_ent *e = &t->jc[hjc(c->pc)];
-        void *code = (e->pc == c->pc) ? e->code : NULL;
+        a64_u64 jpc = __atomic_load_n(&e->pc, __ATOMIC_ACQUIRE);
+        void *code = NULL;
+        if (jpc == c->pc) {
+            code = __atomic_load_n(&e->code, __ATOMIC_ACQUIRE);
+            if (__atomic_load_n(&e->pc, __ATOMIC_ACQUIRE) != c->pc) code = NULL;
+        }
         if (!code) {
             __atomic_store_n(&t->in_jit, 0, __ATOMIC_SEQ_CST);
             a64_u64 pc = c->pc;
@@ -661,7 +678,10 @@ static int jit_loop(a64_cpu *c, jthr *t) {
             t->translating = 1;
             jblk *b = get_block(t, pc);
             t->translating = 0;
-            if (b) { e->code = b->code; __atomic_store_n(&e->pc, pc, __ATOMIC_RELEASE); }
+            if (b) {
+                __atomic_store_n(&e->code, b->code, __ATOMIC_RELAXED);
+                __atomic_store_n(&e->pc, pc, __ATOMIC_RELEASE);
+            }
             ulk(&J.lock);
             if (!b) { c->nzcv = jit_x86_to_nzcv(JIT_F(c)); return a64_interp_run(c, 0); }
             continue;                           /* volta ao topo: in_jit e pedidos conferidos de novo */
@@ -688,7 +708,11 @@ static int jit_loop(a64_cpu *c, jthr *t) {
                     __atomic_store_n((int32_t *)site, (int32_t)(dst->code - (site + 4)), __ATOMIC_RELEASE);
                 }
             }
-            if (dst) { jc_ent *f = &t->jc[hjc(dst->pc)]; f->code = dst->code; __atomic_store_n(&f->pc, dst->pc, __ATOMIC_RELEASE); }
+            if (dst) {
+                jc_ent *f = &t->jc[hjc(dst->pc)];
+                __atomic_store_n(&f->code, dst->code, __ATOMIC_RELAXED);
+                __atomic_store_n(&f->pc, dst->pc, __ATOMIC_RELEASE);
+            }
             ulk(&J.lock);
             break;
         }

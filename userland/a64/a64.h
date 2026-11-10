@@ -318,3 +318,6 @@ bool a64_jit_has_code(a64_u64 addr, a64_u64 len);
  * classes mais frequentes (chave = palavra sem os campos de registrador 20:16 e 9:0) */
 void a64_jit_fbstat(int on);
 void a64_jit_fbstat_dump(void (*out)(a64_u32 key, a64_u64 count, void *arg), void *arg, int max);
+/* Se [addr, addr+len) é uma das duas vistas de um vm_remap (as mesmas páginas físicas), devolve a
+ * outra em [*lo, *hi). Sem apelido, 0. O motor tem uma definição fraca; o a64rt substitui. */
+int a64_jit_alias_span(a64_u64 addr, a64_u64 len, a64_u64 *lo, a64_u64 *hi);
