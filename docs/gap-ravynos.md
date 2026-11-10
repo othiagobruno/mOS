@@ -45,7 +45,7 @@ Legenda: ✅ o mOS já tem · 🟡 parcial ou stub · ❌ não tem
 | **USB (xHCI)** | ✅ `dev/xhci.c`, `usb_hub.c` (sessão principal) | `RavynXHCIPort` (fora do build) | |
 | Teclado/mouse USB (HID) | ✅ `dev/usb_hid.c` (sessão principal) | `IOHIDFamily` | |
 | Armazenamento USB | ✅ `dev/usb_msc.c` + persistência no pendrive | `RavynXHCIMassStorageDisk` | |
-| Rede (e1000/virtio) | ✅ e1000, rtl8139, IPv4/DHCP/DNS/TCP/TLS/HTTP (sessão principal) | ❌ (nenhum driver NIC no tree) | |
+| Rede (e1000/virtio) | ✅ e1000, rtl8139, IPv4/DHCP/DNS/TCP/TLS/HTTP (sessão principal); 🟡 r8169 (RTL8111/8168, RTL810x): só o teste de host `tools/r8169_host.c` contra um chip simulado, falta o PC real (o QEMU não emula o 8168) | ❌ (nenhum driver NIC no tree) | |
 | Áudio (HDA) | ✅ `dev/hda.c` (sessão principal) | ❌ | |
 | Bluetooth | 🟡 HCI (sessão principal) | ❌ | |
 | NVRAM EFI | ❌ | `IOACPIFamily/EFINVRAM.cpp` | |
