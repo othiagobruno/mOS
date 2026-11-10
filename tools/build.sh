@@ -170,10 +170,10 @@ done
     -Wno-unused-function -Wno-unused-variable -Wno-unreachable-code \
     -I"$ROOT/userland/host-audio/shim" -I"$ROOT/userland/libsystem" \
     -c "$ROOT/userland/libsystem/sqlite3_mos.c" -o "$OUT/sqlite3_mos.o"
-# x86_64: _Unwind_* fica em cxx_unwind.c. Os .o do libunwind do zig repetem esses nomes.
+# UnwindLevel1.c, UnwindLevel1-gcc-ext.c, UnwindRegistersSave.S e libunwind.cpp repetem cxx_unwind.c.
 "$ZIG" cc -target x86_64-freestanding-none -O2 -g0 -ffreestanding -fno-stack-protector -fno-builtin -nostdlib -static -no-pie \
     -fpie -mno-red-zone -Wall -Wno-unused-parameter -Wno-incompatible-library-redeclaration -Wno-builtin-requires-header \
-    -I"$ROOT/userland/libsystem/kshim" -I"$ROOT/userland/libsystem/fsinc" \
+    -I"$ROOT/userland/libsystem/kshim" -I"$ROOT/userland/libsystem/fsinc" -I"$ROOT/kernel/include" \
     -isystem "$ZIGDIR/lib/include" \
     -Wl,--image-base=0x400000100000 -Wl,-e,cx_start -Wl,--no-gc-sections \
     "${LS_SRC[@]}" "$OUT/audiodec.o" "$OUT/sqlite3_mos.o" \
@@ -237,6 +237,10 @@ if [ -d "$ROOT/userland/cli-macos" ]; then
 fi
 
 echo "==> libswift"
+# Runtime real (swift-6.4.2) quando a toolchain e o fonte estão em .tools/. Sem isso, o stage completa com stub.
+if [ -f "$ROOT/tools/build-libswift-real.sh" ]; then
+    sh "$ROOT/tools/build-libswift-real.sh" || echo "aviso: build-libswift-real.sh falhou; o que faltar continua stub" >&2
+fi
 if [ -f "$ROOT/build/universal-swift/usr/lib/swift/libswiftCore.dylib" ]; then
     cp -a "$ROOT/build/universal-swift/." "$ESP/mOS/"
 elif [ -f "$ROOT/build/swift/objc/dylib/usr/lib/swift/libswiftCore.dylib" ]; then

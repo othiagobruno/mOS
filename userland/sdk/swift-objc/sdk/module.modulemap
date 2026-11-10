@@ -29,6 +29,11 @@ module os [system] [extern_c] {
 }
 
 // CoreFoundation: o modulemap vem com os cabeçalhos do importador (CoreFoundation/module.modulemap)
+module Metal [system] [extern_c] {
+    header "Metal/Metal.h"
+    export *
+}
+
 module CoreGraphics [system] [extern_c] {
     umbrella header "CoreGraphics/CoreGraphics.h"
     export *
