@@ -5,6 +5,7 @@
 #include <atomic>
 #include <exception>
 #include <filesystem>
+#include <future>
 #include <fstream>
 #include <memory>
 #include <sstream>
@@ -163,6 +164,64 @@ static void teste_sp_mut() {
     espera(_ZNSt3__112__get_sp_mutEPKv(p.get()) != nullptr, "__get_sp_mut");
 }
 
+extern "C" void _ZNSt3__117__assoc_sub_state10__sub_waitERNS_11unique_lockINS_5mutexEEE(void *, void *);
+extern "C" void _ZNSt3__117__assoc_sub_state9__executeEv(void *);
+
+static void teste_future() {
+    std::promise<int> pronto;
+    std::future<int> valor = pronto.get_future();
+    std::thread produtor([&] { pronto.set_value(42); });
+    espera(valor.get() == 42, "promise set_value / future get");
+    produtor.join();
+
+    std::promise<int> falha;
+    std::future<int> com_erro = falha.get_future();
+    std::thread lanca([&] { falha.set_exception(std::make_exception_ptr(std::runtime_error("falhou-de-proposito"))); });
+    bool pegou = false;
+    try {
+        (void)com_erro.get();
+    } catch (const std::runtime_error &ex) {
+        pegou = std::strcmp(ex.what(), "falhou-de-proposito") == 0;
+    }
+    lanca.join();
+    espera(pegou, "set_exception / get relança");
+
+    std::future<int> quebrado;
+    {
+        std::promise<int> abandonada;
+        quebrado = abandonada.get_future();
+    }
+    bool broken = false;
+    try {
+        (void)quebrado.get();
+    } catch (const std::future_error &ex) {
+        broken = ex.code() == std::make_error_code(std::future_errc::broken_promise);
+    }
+    espera(broken, "broken_promise");
+
+    std::promise<int> duas;
+    duas.set_value(1);
+    bool ja = false;
+    try {
+        duas.set_value(2);
+    } catch (const std::future_error &ex) {
+        ja = ex.code() == std::make_error_code(std::future_errc::promise_already_satisfied);
+    }
+    espera(ja, "promise_already_satisfied");
+
+    std::future<int> adiado = std::async(std::launch::deferred, [] { return 7; });
+    espera(adiado.get() == 7, "deferred __execute");
+
+    bool no_state = false;
+    try {
+        _ZNSt3__117__assoc_sub_state9__executeEv(nullptr);
+    } catch (const std::future_error &ex) {
+        no_state = ex.code() == std::make_error_code(std::future_errc::no_state);
+    }
+    espera(no_state, "__execute da base");
+    (void)_ZNSt3__117__assoc_sub_state10__sub_waitERNS_11unique_lockINS_5mutexEEE;
+}
+
 int main() {
     char modelo[] = "/tmp/mos-libcxx-XXXXXX";
     char *dir = mkdtemp(modelo);
@@ -177,6 +236,7 @@ int main() {
     teste_filesystem(raiz);
     teste_sort();
     teste_sp_mut();
+    teste_future();
     std::error_code ec;
     fs::remove_all(raiz, ec);
     if (falhas) {
