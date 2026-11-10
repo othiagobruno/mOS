@@ -249,6 +249,53 @@ elif [ -f "$ROOT/build/swift/objc/dylib/usr/lib/swift/libswiftCore.dylib" ]; the
 fi
 sh "$ROOT/tools/stage-libswift.sh" "$ESP/mOS/usr/lib/swift"
 
+echo "==> Virtualization.framework"
+VZSRC="$ROOT/userland/frameworks/Virtualization/Virtualization.m"
+VZOUT="$OUT/vz"
+VZDIR="$ESP/mOS/System/Library/Frameworks/Virtualization.framework/Versions/A"
+mkdir -p "$VZOUT" "$VZDIR"
+vz_one() {
+    "$ZIG" cc -target "$1" -O2 -shared -x objective-c -I"$ROOT/userland/sdk/include" -I"$ROOT/userland/frameworks/Virtualization" \
+        -Wno-objc-root-class -Wno-objc-method-access "$VZSRC" -o "$2" \
+        -Wl,-install_name,/System/Library/Frameworks/Virtualization.framework/Versions/A/Virtualization \
+        -Wl,-undefined,dynamic_lookup
+}
+if vz_one x86_64-macos "$VZOUT/Virtualization.x86" && vz_one aarch64-macos "$VZOUT/Virtualization.arm"; then
+    python3 - "$VZDIR/Virtualization" "$VZOUT/Virtualization.x86" "$VZOUT/Virtualization.arm" <<'PY'
+import pathlib, struct, sys
+out, *srcs = sys.argv[1:]
+slices = []
+for p in srcs:
+    b = pathlib.Path(p).read_bytes()
+    if struct.unpack_from("<I", b, 0)[0] != 0xFEEDFACF:
+        raise SystemExit(p + " nao e Mach-O fino")
+    cpu, sub = struct.unpack_from("<II", b, 4)
+    align = 14 if cpu == 0x0100000C else 12
+    slices.append((cpu, sub, align, b))
+off = 8 + 20 * len(slices)
+parts = []
+for cpu, sub, align, b in slices:
+    a = 1 << align
+    if off % a:
+        off += a - (off % a)
+    parts.append((cpu, sub, align, off, b))
+    off += len(b)
+buf = bytearray()
+def be(v):
+    buf.extend(struct.pack(">I", v & 0xFFFFFFFF))
+be(0xCAFEBABE); be(len(parts))
+for cpu, sub, align, o, b in parts:
+    be(cpu); be(sub); be(o); be(len(b)); be(align)
+for cpu, sub, align, o, b in parts:
+    if len(buf) < o:
+        buf.extend(b"\0" * (o - len(buf)))
+    buf.extend(b)
+pathlib.Path(out).write_bytes(buf)
+PY
+else
+    echo "aviso: Virtualization.framework não compilou" >&2
+fi
+
 KEY=${MOS_CHAVE_ATUALIZACAO:-$ROOT/tools/chave-atualizacao.semente}
 REV=$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo local)
 VER="0.1-$(date +%Y%m%d.%H%M)-$REV"
