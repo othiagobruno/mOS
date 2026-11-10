@@ -409,7 +409,7 @@ id fdn_array_from_ns(id a) {
     buf->cap = n;
     for (i = 0; i < n; i++)
         ((id *)buf->el)[i] = MSG(id, a, "objectAtIndex:", (long)i);
-    return buf;
+    return (id)buf;
 }
 
 static id fdn_set_pair(id d, id key, id val) {
