@@ -3,28 +3,7 @@
  * Sem o prefixo Mach-O: o ELF exporta swift_allocObject, que o machocheck procura.
  */
 #include <stdint.h>
-#if !defined(__STDC_HOSTED__) || __STDC_HOSTED__ == 0
-typedef uint8_t uint_least8_t;
-typedef uint16_t uint_least16_t;
-typedef uint32_t uint_least32_t;
-typedef uint64_t uint_least64_t;
-typedef int8_t int_least8_t;
-typedef int16_t int_least16_t;
-typedef int32_t int_least32_t;
-typedef int64_t int_least64_t;
-typedef int8_t int_fast8_t;
-typedef int16_t int_fast16_t;
-typedef int32_t int_fast32_t;
-typedef int64_t int_fast64_t;
-typedef uint8_t uint_fast8_t;
-typedef uint16_t uint_fast16_t;
-typedef uint32_t uint_fast32_t;
-typedef uint64_t uint_fast64_t;
-typedef int64_t intmax_t;
-typedef uint64_t uintmax_t;
-typedef int wchar_t;
-#endif
-#include <stdatomic.h>
+/* Sem <stdatomic.h> do host: no freestanding ele exige wchar_t. Os __atomic_* são do compilador. */
 /* Runtime Swift do caminho de carga das imagens que o VS Code abre
  * (libmsalruntime e vsce-sign). Alocação, retenção, swift_once e a tabela
  * de testemunhas são de verdade. Ponteiro nativo: cabeçalho { metadata, contagem }.
@@ -70,15 +49,15 @@ mos_box_t swift_allocError(const void *type, const void *witness, void *initial,
 
 void swift_once(long *token, void (*fn)(void *), void *ctx);
 void swift_once(long *token, void (*fn)(void *), void *ctx) {
-    long cur = atomic_load((_Atomic long *)token);
+    long cur = __atomic_load_n(token, __ATOMIC_SEQ_CST);
     if (cur == 1) return;
     long expected = 0;
-    if (atomic_compare_exchange_strong((_Atomic long *)token, &expected, 2)) {
+    if (__atomic_compare_exchange_n(token, &expected, (long)2, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)) {
         if (fn) fn(ctx);
-        atomic_store((_Atomic long *)token, 1);
+        __atomic_store_n(token, (long)1, __ATOMIC_SEQ_CST);
         return;
     }
-    while (atomic_load((_Atomic long *)token) != 1) {}
+    while (__atomic_load_n(token, __ATOMIC_SEQ_CST) != 1) {}
 }
 
 typedef struct {
