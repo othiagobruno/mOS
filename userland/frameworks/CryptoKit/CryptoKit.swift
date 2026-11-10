@@ -79,13 +79,13 @@ extension Digest {
 
 /* Thunk que o Grok chama (FTj). O genérico lê o slot da tabela de testemunhas
  * e chama o método daquele tipo: SHA256 e MD5 não compartilham o mesmo corpo. */
-@_silgen_name("_$s9CryptoKit12HashFunctionPxycfCTj")
+@_silgen_name("$s9CryptoKit12HashFunctionPxycfCTj")
 public func ckHashFunctionInit<H: HashFunction>(_: H.Type) -> H { H() }
-@_silgen_name("_$s9CryptoKit12HashFunctionP6update13bufferPointerySW_tFTj")
+@_silgen_name("$s9CryptoKit12HashFunctionP6update13bufferPointerySW_tFTj")
 public func ckHashFunctionUpdate<H: HashFunction>(_ h: inout H, _ buffer: UnsafeRawBufferPointer) {
     h.update(bufferPointer: buffer)
 }
-@_silgen_name("_$s9CryptoKit12HashFunctionP8finalize6DigestQzyFTj")
+@_silgen_name("$s9CryptoKit12HashFunctionP8finalize6DigestQzyFTj")
 public func ckHashFunctionFinalize<H: HashFunction>(_ h: H) -> H.Digest { h.finalize() }
 
 public protocol HashFunction: Sendable {
