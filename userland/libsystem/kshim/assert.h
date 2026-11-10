@@ -1,4 +1,3 @@
+/* Freestanding. O SQLite chama funções que só existem com SQLITE_DEBUG. */
 #pragma once
-/* NDEBUG: o argumento some. O amalgamation do SQLite chama, dentro do assert,
- * símbolos que só existem com SQLITE_DEBUG. */
-#define assert(cond) ((void)0)
+#define assert(c) ((void)0)
