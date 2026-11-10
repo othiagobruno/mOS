@@ -125,7 +125,7 @@ stage_one "$APP"
 
 mkdir -p "$DL/x-codex" "$MOS/Aplicativos/Codex CLI"
 tar -xzf "$DL/codex-cli.tar.gz" -C "$DL/x-codex"
-CODEX=$(find "$DL/x-codex" -type f -name codex | head -1)
+CODEX=$(find "$DL/x-codex" -type f \( -name codex -o -name 'codex-*apple-darwin' \) | head -1)
 if [ -z "$CODEX" ]; then echo "stage-apps: binário codex ausente no tar" >&2; exit 1; fi
 cp -f "$CODEX" "$MOS/Aplicativos/Codex CLI/codex"
 chmod +x "$MOS/Aplicativos/Codex CLI/codex"
