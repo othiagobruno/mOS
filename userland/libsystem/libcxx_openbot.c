@@ -481,7 +481,6 @@ const void *ti_len[2] __asm__("_ZTISt12length_error") = { (void *)&vt_class_ti[2
 const void *ti_oor[2] __asm__("_ZTISt12out_of_range") = { (void *)&vt_class_ti[2], "St12out_of_range" };
 const void *ti_bex[2] __asm__("_ZTISt13bad_exception") = { (void *)&vt_class_ti[2], "St13bad_exception" };
 const void *ti_rt[2] __asm__("_ZTISt13runtime_error") = { (void *)&vt_class_ti[2], "St13runtime_error" };
-const void *ti_inv[2] __asm__("_ZTISt16invalid_argument") = { (void *)&vt_class_ti[2], "St16invalid_argument" };
 const void *ti_bvar[2] __asm__("_ZTISt18bad_variant_access") = { (void *)&vt_class_ti[2], "St18bad_variant_access" };
 const void *ti_bopt[2] __asm__("_ZTISt19bad_optional_access") = { (void *)&vt_class_ti[2], "St19bad_optional_access" };
 const void *ti_ban[2] __asm__("_ZTISt20bad_array_new_length") = { (void *)&vt_class_ti[2], "St20bad_array_new_length" };
