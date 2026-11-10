@@ -6,8 +6,9 @@
  * COMPRESSION_LZMA (0x306) é o contêiner .xz (liblzma 5.8.1, 0BSD).
  * COMPRESSION_BROTLI (0xB02) é o fluxo Brotli (1.1.0, MIT).
  * COMPRESSION_LZBITMAP (0x702) devolve 0.
- * MOS_LIBSYSTEM: o mesmo arquivo entra no ELF do libSystem (ZLIB, LZ4, LZFSE).
- * LZMA e Brotli ficam na dylib; o cz_raw_* já está em compression_z.c.
+ * MOS_LIBSYSTEM: o mesmo arquivo entra no ELF do libSystem.
+ * ZLIB, LZ4, LZFSE, LZMA e Brotli são o código vendorizado. LZBITMAP devolve 0.
+ * O cz_raw_* já está em compression_z.c.
  */
 #include <stddef.h>
 #include <stdint.h>
@@ -52,11 +53,9 @@ size_t cz_raw_buffer(unsigned char *dst, size_t dn, const unsigned char *src, si
 #include "lz4.h"
 #include "lz4frame.h"
 #include "lzfse.h"
-#ifndef MOS_LIBSYSTEM
 #include <lzma.h>
 #include <brotli/encode.h>
 #include <brotli/decode.h>
-#endif
 
 static void warn_unsupported(compression_algorithm a) {
     static int w;
@@ -65,11 +64,7 @@ static void warn_unsupported(compression_algorithm a) {
 
 static int supported(compression_algorithm a) {
     return a == COMPRESSION_ZLIB || a == COMPRESSION_LZ4 || a == COMPRESSION_LZ4_RAW
-        || a == COMPRESSION_LZFSE
-#ifndef MOS_LIBSYSTEM
-        || a == COMPRESSION_LZMA || a == COMPRESSION_BROTLI
-#endif
-        ;
+        || a == COMPRESSION_LZFSE || a == COMPRESSION_LZMA || a == COMPRESSION_BROTLI;
 }
 
 size_t compression_encode_scratch_buffer_size(compression_algorithm a) {
@@ -120,7 +115,6 @@ static size_t lz4_raw_decode(uint8_t *dst, size_t dn, const uint8_t *src, size_t
     return n >= 0 ? (size_t)n : 0;
 }
 
-#ifndef MOS_LIBSYSTEM
 static size_t xz_encode(uint8_t *dst, size_t dn, const uint8_t *src, size_t sn) {
     size_t pos = 0;
     lzma_ret r = lzma_easy_buffer_encode(6, LZMA_CHECK_CRC64, NULL, src, sn, dst, &pos, dn);
@@ -145,7 +139,6 @@ static size_t brotli_decode(uint8_t *dst, size_t dn, const uint8_t *src, size_t 
     if (BrotliDecoderDecompress(sn, src, &n, dst) != BROTLI_DECODER_RESULT_SUCCESS) return 0;
     return n;
 }
-#endif
 
 size_t compression_encode_buffer(uint8_t *dst, size_t dn, const uint8_t *src, size_t sn,
                                  void *scratch, compression_algorithm a) {
@@ -154,10 +147,8 @@ size_t compression_encode_buffer(uint8_t *dst, size_t dn, const uint8_t *src, si
     if (a == COMPRESSION_LZ4) return lz4_frame_encode(dst, dn, src, sn);
     if (a == COMPRESSION_LZ4_RAW) return lz4_raw_encode(dst, dn, src, sn);
     if (a == COMPRESSION_LZFSE) return lzfse_encode_buffer(dst, dn, src, sn, scratch);
-#ifndef MOS_LIBSYSTEM
     if (a == COMPRESSION_LZMA) return xz_encode(dst, dn, src, sn);
     if (a == COMPRESSION_BROTLI) return brotli_encode(dst, dn, src, sn);
-#endif
     warn_unsupported(a);
     return 0;
 }
@@ -169,10 +160,8 @@ size_t compression_decode_buffer(uint8_t *dst, size_t dn, const uint8_t *src, si
     if (a == COMPRESSION_LZ4) return lz4_frame_decode(dst, dn, src, sn);
     if (a == COMPRESSION_LZ4_RAW) return lz4_raw_decode(dst, dn, src, sn);
     if (a == COMPRESSION_LZFSE) return lzfse_decode_buffer(dst, dn, src, sn, scratch);
-#ifndef MOS_LIBSYSTEM
     if (a == COMPRESSION_LZMA) return xz_decode(dst, dn, src, sn);
     if (a == COMPRESSION_BROTLI) return brotli_decode(dst, dn, src, sn);
-#endif
     warn_unsupported(a);
     return 0;
 }

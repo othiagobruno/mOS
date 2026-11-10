@@ -30,7 +30,16 @@ $cflags = @("--target=$triple", '-mcpu=apple-m1', '-O2', '-g0', '-ffreestanding'
     '-fPIC', '-ffixed-x18', '-fsigned-char', '-fno-common', '-funwind-tables',
     '-Wall', '-Wno-unused-parameter', '-Wno-incompatible-library-redeclaration', '-Wno-builtin-requires-header',
     '-Wno-unknown-warning-option', '-Wno-unused-function', "-isystem", $inc, "-I$ls\kshim", "-I$root\userland\third_party\h264bsd",
-    "-I$root\userland\third_party\zlib", "-I$root\userland\third_party\lz4", "-I$root\userland\third_party\lzfse", '-DMOS_LIBSYSTEM')
+    "-I$ls\kshim\xz-config",
+    "-I$root\userland\third_party\zlib", "-I$root\userland\third_party\lz4", "-I$root\userland\third_party\lzfse",
+    "-I$root\userland\third_party\xz", "-I$root\userland\third_party\xz\src\liblzma\api",
+    "-I$root\userland\third_party\xz\src\liblzma\common", "-I$root\userland\third_party\xz\src\liblzma\check",
+    "-I$root\userland\third_party\xz\src\liblzma\lz", "-I$root\userland\third_party\xz\src\liblzma\rangecoder",
+    "-I$root\userland\third_party\xz\src\liblzma\lzma", "-I$root\userland\third_party\xz\src\liblzma\delta",
+    "-I$root\userland\third_party\xz\src\liblzma\simple", "-I$root\userland\third_party\xz\src\common",
+    "-I$root\userland\third_party\brotli\c\include",
+    '-include', "$ls\kshim\math.h",
+    '-DHAVE_CONFIG_H', '-DTUKLIB_SYMBOL_PREFIX=lzma_', '-DMOS_LIBSYSTEM')
 
 # os .S x86 tem versao *_arm64.S; os *_arm64.S ficam fora do build x86 por #if defined(__aarch64__)
 $x86only = @('objc_msg.S', 'objc_tramp.S', 'sigjmp.S', 'start.S', 'tlv.S')
@@ -38,6 +47,9 @@ $src = @(Get-ChildItem "$ls\*" -Include *.c, *.S | Where-Object { $x86only -notc
 $src += "$root\userland\frameworks\libcompression\compression.c"
 $src += @('lz4.c','lz4hc.c','lz4frame.c','xxhash.c') | ForEach-Object { "$root\userland\third_party\lz4\$_" }
 $src += @('lzfse_decode.c','lzfse_decode_base.c','lzfse_encode.c','lzfse_encode_base.c','lzfse_fse.c','lzvn_decode_base.c','lzvn_encode_base.c') | ForEach-Object { "$root\userland\third_party\lzfse\$_" }
+$skip = @('crc_clmul_consts_gen.c','crc32_small.c','crc64_small.c','tuklib_exit.c','tuklib_mbstr_fw.c','tuklib_mbstr_nonprint.c','tuklib_mbstr_width.c','tuklib_mbstr_wrap.c','tuklib_open_stdxxx.c','tuklib_progname.c','stream_decoder_mt.c','stream_encoder_mt.c')
+$src += Get-ChildItem "$root\userland\third_party\xz\src\liblzma","$root\userland\third_party\xz\src\common" -Recurse -Filter *.c | Where-Object { $skip -notcontains $_.Name } | ForEach-Object FullName
+$src += Get-ChildItem "$root\userland\third_party\brotli\c\common","$root\userland\third_party\brotli\c\dec","$root\userland\third_party\brotli\c\enc" -Filter *.c | ForEach-Object FullName
 
 function Run-Pool($items, $mkargs) {
     $running = @(); $fail = 0

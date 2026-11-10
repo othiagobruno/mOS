@@ -12,6 +12,11 @@ $src = @(Get-ChildItem "$root\userland\libsystem\*" -Include *.c, *.S | ForEach-
 $src += "$root\userland\frameworks\libcompression\compression.c"
 $src += @('lz4.c','lz4hc.c','lz4frame.c','xxhash.c') | ForEach-Object { "$root\userland\third_party\lz4\$_" }
 $src += @('lzfse_decode.c','lzfse_decode_base.c','lzfse_encode.c','lzfse_encode_base.c','lzfse_fse.c','lzvn_decode_base.c','lzvn_encode_base.c') | ForEach-Object { "$root\userland\third_party\lzfse\$_" }
+$skip = @('crc_clmul_consts_gen.c','crc32_small.c','crc64_small.c','tuklib_exit.c','tuklib_mbstr_fw.c','tuklib_mbstr_nonprint.c','tuklib_mbstr_width.c','tuklib_mbstr_wrap.c','tuklib_open_stdxxx.c','tuklib_progname.c','stream_decoder_mt.c','stream_encoder_mt.c')
+$xz = "$root\userland\third_party\xz"
+$br = "$root\userland\third_party\brotli"
+$src += Get-ChildItem "$xz\src\liblzma","$xz\src\common" -Recurse -Filter *.c | Where-Object { $skip -notcontains $_.Name } | ForEach-Object FullName
+$src += Get-ChildItem "$br\c\common","$br\c\dec","$br\c\enc" -Filter *.c | ForEach-Object FullName
 
 # x86_64: _Unwind_* e a personality C++ estão em userland/libsystem/cxx_unwind.c.
 # Não ligar os .o do libunwind do zig: os nomes _Unwind_* batem. arm64 segue em build-libsystem-arm64.ps1.
@@ -19,8 +24,13 @@ $src += @('lzfse_decode.c','lzfse_decode_base.c','lzfse_encode.c','lzfse_encode_
 & $zig cc -target x86_64-freestanding-none -O2 -g0 -ffreestanding -fno-stack-protector -fno-builtin -nostdlib -static -no-pie `
     -fpie -mno-red-zone -Wall -Wno-unused-parameter -Wno-incompatible-library-redeclaration -Wno-builtin-requires-header `
     "-I$root\userland\libsystem\kshim" "-I$root\userland\libsystem\fsinc" "-I$root\kernel\include" "-I$root\userland\third_party\h264bsd" `
+    "-I$root\userland\libsystem\kshim\xz-config" `
     "-I$root\userland\third_party\zlib" "-I$root\userland\third_party\lz4" "-I$root\userland\third_party\lzfse" `
-    -DMOS_LIBSYSTEM `
+    "-I$xz" "-I$xz\src\liblzma\api" "-I$xz\src\liblzma\common" "-I$xz\src\liblzma\check" `
+    "-I$xz\src\liblzma\lz" "-I$xz\src\liblzma\rangecoder" "-I$xz\src\liblzma\lzma" `
+    "-I$xz\src\liblzma\delta" "-I$xz\src\liblzma\simple" "-I$xz\src\common" "-I$br\c\include" `
+    -include "$root\userland\libsystem\kshim\math.h" `
+    -DHAVE_CONFIG_H -DTUKLIB_SYMBOL_PREFIX=lzma_ -DMOS_LIBSYSTEM `
     "-isystem", (Join-Path $zigdir 'lib\include') `
     "-Wl,--image-base=0x400000100000" "-Wl,-e,cx_start" "-Wl,--no-gc-sections" `
     $src -o "$root\build\libSystem.mos" 2>&1 | ForEach-Object { "$_" }
