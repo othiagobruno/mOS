@@ -361,6 +361,64 @@ id CVPixelBufferPoolGetAttributes(cvpool_t *pool) { (void)pool; return MSG0(id, 
 cvpool_t *CVPixelBufferPoolRetain(cvpool_t *p) { if (p) objc_retain((id)p); return p; }
 void CVPixelBufferPoolRelease(cvpool_t *p) { if (p) objc_release((id)p); }
 
+u64 CVPixelBufferPoolGetTypeID(void) { return 0x2C1; }
+int CVPixelBufferFillExtendedPixels(cvpb_t *p, void *ext) {
+    (void)ext;
+    return p ? kCVReturnSuccess : kCVReturnInvalidArgument;
+}
+int CVPixelBufferGetExtendedPixels(cvpb_t *p, u64 *left, u64 *right, u64 *top, u64 *bottom) {
+    if (!p) return kCVReturnInvalidArgument;
+    if (left) *left = 0;
+    if (right) *right = 0;
+    if (top) *top = 0;
+    if (bottom) *bottom = 0;
+    return kCVReturnSuccess;
+}
+CFCONST(kCVImageBufferChromaLocation_Left, "Left")
+CFCONST(kCVImageBufferChromaLocation_Center, "Center")
+CFCONST(kCVImageBufferChromaLocation_TopLeft, "TopLeft")
+CFCONST(kCVImageBufferChromaLocation_Top, "Top")
+CFCONST(kCVImageBufferChromaLocation_BottomLeft, "BottomLeft")
+CFCONST(kCVImageBufferChromaLocation_Bottom, "Bottom")
+CFCONST(kCVImageBufferPixelAspectRatioKey, "CVImageBufferPixelAspectRatio")
+CFCONST(kCVImageBufferPixelAspectRatioHorizontalSpacingKey, "CVImageBufferPixelAspectRatioHorizontalSpacing")
+CFCONST(kCVImageBufferPixelAspectRatioVerticalSpacingKey, "CVImageBufferPixelAspectRatioVerticalSpacing")
+
+/* Códigos iguais aos de ISO/IEC 23001-8, que o CoreVideo usa. Código desconhecido devolve NULL. */
+const void *CVColorPrimariesGetStringForIntegerCodePoint(int c) {
+    switch (c) {
+    case 1: return kCVImageBufferColorPrimaries_ITU_R_709_2;
+    case 5: return kCVImageBufferColorPrimaries_EBU_3213;
+    case 6: return kCVImageBufferColorPrimaries_SMPTE_C;
+    case 9: return kCVImageBufferColorPrimaries_ITU_R_2020;
+    case 11: return kCVImageBufferColorPrimaries_DCI_P3;
+    case 12: return kCVImageBufferColorPrimaries_P3_D65;
+    default: return 0;
+    }
+}
+const void *CVTransferFunctionGetStringForIntegerCodePoint(int c) {
+    switch (c) {
+    case 1: return kCVImageBufferTransferFunction_ITU_R_709_2;
+    case 7: return kCVImageBufferTransferFunction_SMPTE_240M_1995;
+    case 8: return kCVImageBufferTransferFunction_Linear;
+    case 13: return kCVImageBufferTransferFunction_sRGB;
+    case 14: return kCVImageBufferTransferFunction_ITU_R_2020;
+    case 16: return kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ;
+    case 17: return kCVImageBufferTransferFunction_SMPTE_ST_428_1;
+    case 18: return kCVImageBufferTransferFunction_ITU_R_2100_HLG;
+    default: return 0;
+    }
+}
+const void *CVYCbCrMatrixGetStringForIntegerCodePoint(int c) {
+    switch (c) {
+    case 1: return kCVImageBufferYCbCrMatrix_ITU_R_709_2;
+    case 6: return kCVImageBufferYCbCrMatrix_ITU_R_601_4;
+    case 7: return kCVImageBufferYCbCrMatrix_SMPTE_240M_1995;
+    case 9: return kCVImageBufferYCbCrMatrix_ITU_R_2020;
+    default: return 0;
+    }
+}
+
 u8 CVIsCompressedPixelFormatAvailable(u32 fmt) { (void)fmt; return 0; }
 id CVPixelFormatDescriptionCreateWithPixelFormatType(void *alloc, u32 fmt) { (void)alloc; (void)fmt; return 0; }
 

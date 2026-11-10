@@ -12,6 +12,7 @@
  */
 #ifndef FI_BEHAVIOR_INC
 #define FI_BEHAVIOR_INC
+#include <stdint.h>
 
 #define FI_MAGIC_STYLE 0xF15E0001u
 #define FI_MAGIC_PERSON 0xF1504E01u

@@ -14,6 +14,7 @@ char *strrchr(const char *s, int c);
 id objc_retain(id o);
 void objc_release(id o);
 id objc_autorelease(id o);
+int cx_fdprintf(int fd, const char *fmt, ...);
 
 typedef struct { cx_class_t *isa; id path; id string; BOOL file; } nsurl_t;
 #define URL(o) ((nsurl_t *)(o))
@@ -435,27 +436,42 @@ cx_class_t NSLocale_c __asm__("OBJC_CLASS_$_NSLocale");
 cx_class_t NSLocale_m __asm__("OBJC_METACLASS_$_NSLocale");
 cx_class_t NSAppleEventManager_c __asm__("OBJC_CLASS_$_NSAppleEventManager");
 cx_class_t NSAppleEventManager_m __asm__("OBJC_METACLASS_$_NSAppleEventManager");
+static int loc_en(void) { return cx_locale_id()[0] == 'e'; }
 static id loc_langs(id cls, SEL c) {
     (void)cls; (void)c;
-    static id a;
-    if (!a) {
-        a = MSG0(id, (id)cx_class_named("NSMutableArray"), "array");
-        MSG(void, a, "addObject:", cx_str("pt-BR"));
-        MSG(void, a, "addObject:", cx_str("en"));
-        a = objc_retain(a);
+    static id pt, en;
+    id *slot = loc_en() ? &en : &pt;
+    if (!*slot) {
+        id a = MSG0(id, (id)cx_class_named("NSMutableArray"), "array");
+        if (loc_en()) {
+            MSG(void, a, "addObject:", cx_str("en-US"));
+            MSG(void, a, "addObject:", cx_str("en"));
+            MSG(void, a, "addObject:", cx_str("pt-BR"));
+        } else {
+            MSG(void, a, "addObject:", cx_str("pt-BR"));
+            MSG(void, a, "addObject:", cx_str("pt"));
+            MSG(void, a, "addObject:", cx_str("en-US"));
+        }
+        *slot = objc_retain(a);
     }
-    return a;
+    return *slot;
 }
 static id loc_current(id cls, SEL c) { (void)c; static id l; if (!l) l = cx_alloc_instance((cx_class_t *)cls); return l; }
-static id loc_ident(id self, SEL c) { (void)self; (void)c; return cx_str("pt_BR"); }
-static id loc_lang(id self, SEL c) { (void)self; (void)c; return cx_str("pt"); }
-static id loc_country(id self, SEL c) { (void)self; (void)c; return cx_str("BR"); }
+static id loc_ident(id self, SEL c) {
+    (void)self; (void)c;
+    static int logged;
+    const char *id = cx_locale_id();
+    if (!logged) { logged = 1; cx_fdprintf(2, "locale: NSLocale %s\n", id); }
+    return cx_str(id);
+}
+static id loc_lang(id self, SEL c) { (void)self; (void)c; return cx_str(loc_en() ? "en" : "pt"); }
+static id loc_country(id self, SEL c) { (void)self; (void)c; return cx_str(loc_en() ? "US" : "BR"); }
 static id loc_object(id self, SEL c, id key) {
     (void)self; (void)c;
     const char *k = c_str(key);
-    if (!strncmp(k, "kCFLocaleLanguageCode", 21) || !strncmp(k, "languageCode", 12)) return cx_str("pt");
-    if (!strncmp(k, "kCFLocaleCountryCode", 20) || !strncmp(k, "countryCode", 11)) return cx_str("BR");
-    return cx_str("pt_BR");
+    if (!strncmp(k, "kCFLocaleLanguageCode", 21) || !strncmp(k, "languageCode", 12)) return cx_str(loc_en() ? "en" : "pt");
+    if (!strncmp(k, "kCFLocaleCountryCode", 20) || !strncmp(k, "countryCode", 11)) return cx_str(loc_en() ? "US" : "BR");
+    return cx_str(cx_locale_id());
 }
 static id aem_shared(id cls, SEL c) { (void)c; static id m; if (!m) m = cx_alloc_instance((cx_class_t *)cls); return m; }
 static void aem_set(id self, SEL c, id h, SEL s, u32 cls, u32 ev) { (void)self; (void)c; (void)h; (void)s; (void)cls; (void)ev; }
@@ -498,8 +514,8 @@ static id app_next_event(id self, SEL c, u64 mask, id date, id mode, BOOL dequeu
     return 0;
 }
 static id b_res_loc(id self, SEL c, id name, id type, id dir, id loc) {
-    (void)c; (void)loc;
-    return MSG(id, self, "pathForResource:ofType:inDirectory:", name, type, dir);
+    (void)c;
+    return cx_bundle_localized(self, name, type, dir, loc);
 }
 /* NSDistributedNotificationCenter: sem notificações entre processos; usa o centro local */
 cx_class_t NSDistributedNotificationCenter_c __asm__("OBJC_CLASS_$_NSDistributedNotificationCenter");
@@ -508,7 +524,11 @@ static id dnc_default(id cls, SEL c) { (void)cls; (void)c; return ws_center(0, 0
 static id b_pref_locs(id self, SEL c) {
     (void)self; (void)c;
     static id a;
-    if (!a) { a = MSG0(id, (id)cx_class_named("NSMutableArray"), "array"); MSG(void, a, "addObject:", cx_str("en")); a = objc_retain(a); }
+    if (!a) {
+        a = MSG0(id, (id)cx_class_named("NSMutableArray"), "array");
+        MSG(void, a, "addObject:", cx_str(loc_en() ? "en" : "pt_BR"));
+        a = objc_retain(a);
+    }
     return a;
 }
 
@@ -561,8 +581,6 @@ void cx_darwin_init(void) {
     cx_foundation_more_init();                  /* o resto do Foundation (classes e símbolos que os apps importam) */
     extern void cx_coreml_init(void);
     cx_coreml_init();                           /* MLDictionaryFeatureProvider (voz do OpenBot) */
-    extern void cx_openbot_gap_init(void);
-    cx_openbot_gap_init();
     extern void **cx_tsd(void);
     cx_tsd();                                   /* GS da thread principal antes do código do app */
     extern int cx_main_tid;

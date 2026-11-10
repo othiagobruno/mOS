@@ -1,5 +1,5 @@
-/* OpenBot 0.66.0: o que o machocheck ainda marcava em sistema, fora de DNS (#73)
- * e das funções em openbot_pure.c. Constantes são CFString. gap_stub devolve 0. */
+/* O que o machocheck do OpenBot ainda marca em sistema depois da main.
+ * DNS (#73) e o unwinding C++ ficam nas outras frentes. gap_stub devolve 0. */
 #include "foundation.h"
 #include "libc.h"
 extern char cx_cfconst_isa[] __asm__("__CFConstantStringClassReference");
@@ -10,65 +10,19 @@ typedef struct { void *isa; unsigned long long flags; const char *s; unsigned lo
 GAPCF(kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly, "kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly")
 GAPCF(kCFCopyStringSetCallBacks, "kCFCopyStringSetCallBacks")
 GAPCF(kCFTypeBagCallBacks, "kCFTypeBagCallBacks")
-GAPCF(kCMFormatDescriptionExtensionKey_MetadataKeyTable, "kCMFormatDescriptionExtensionKey_MetadataKeyTable")
-GAPCF(kCMMetadataFormatDescriptionKey_ConformingDataTypes, "kCMMetadataFormatDescriptionKey_ConformingDataTypes")
-GAPCF(kCMMetadataFormatDescriptionKey_DataType, "kCMMetadataFormatDescriptionKey_DataType")
-GAPCF(kCMMetadataFormatDescriptionKey_DataTypeNamespace, "kCMMetadataFormatDescriptionKey_DataTypeNamespace")
-GAPCF(kCMMetadataFormatDescriptionKey_LanguageTag, "kCMMetadataFormatDescriptionKey_LanguageTag")
-GAPCF(kCMMetadataFormatDescriptionKey_LocalID, "kCMMetadataFormatDescriptionKey_LocalID")
-GAPCF(kCMMetadataFormatDescriptionKey_Namespace, "kCMMetadataFormatDescriptionKey_Namespace")
-GAPCF(kCMMetadataFormatDescriptionKey_SetupData, "kCMMetadataFormatDescriptionKey_SetupData")
-GAPCF(kCMMetadataFormatDescriptionKey_StructuralDependency, "kCMMetadataFormatDescriptionKey_StructuralDependency")
-GAPCF(kCMMetadataFormatDescriptionKey_Value, "kCMMetadataFormatDescriptionKey_Value")
-GAPCF(kCMMetadataFormatDescriptionMetadataSpecificationKey_DataType, "kCMMetadataFormatDescriptionMetadataSpecificationKey_DataType")
-GAPCF(kCMMetadataFormatDescriptionMetadataSpecificationKey_ExtendedLanguageTag, "kCMMetadataFormatDescriptionMetadataSpecificationKey_ExtendedLanguageTag")
-GAPCF(kCMMetadataFormatDescriptionMetadataSpecificationKey_Identifier, "kCMMetadataFormatDescriptionMetadataSpecificationKey_Identifier")
-GAPCF(kCMMetadataFormatDescriptionMetadataSpecificationKey_SetupData, "kCMMetadataFormatDescriptionMetadataSpecificationKey_SetupData")
-GAPCF(kCMMetadataFormatDescriptionMetadataSpecificationKey_StructuralDependency, "kCMMetadataFormatDescriptionMetadataSpecificationKey_StructuralDependency")
-GAPCF(kCMMetadataFormatDescription_StructuralDependencyKey_DependencyIsInvalidFlag, "kCMMetadataFormatDescription_StructuralDependencyKey_DependencyIsInvalidFlag")
 GAPCF(kCGImageDestinationLossyCompressionQuality, "kCGImageDestinationLossyCompressionQuality")
-GAPCF(kCMFormatDescriptionExtension_VerbatimSampleDescription, "kCMFormatDescriptionExtension_VerbatimSampleDescription")
-typedef struct { long long v; int scale; int flags; } gap_cmtime_t;
-const gap_cmtime_t kCMTimeIndefinite = {0, 0, 3};
-GAPCF(kCVImageBufferChromaLocation_Bottom, "kCVImageBufferChromaLocation_Bottom")
-GAPCF(kCVImageBufferChromaLocation_BottomLeft, "kCVImageBufferChromaLocation_BottomLeft")
-GAPCF(kCVImageBufferChromaLocation_Center, "kCVImageBufferChromaLocation_Center")
-GAPCF(kCVImageBufferChromaLocation_Left, "kCVImageBufferChromaLocation_Left")
-GAPCF(kCVImageBufferChromaLocation_Top, "kCVImageBufferChromaLocation_Top")
-GAPCF(kCVImageBufferChromaLocation_TopLeft, "kCVImageBufferChromaLocation_TopLeft")
-GAPCF(kCVImageBufferPixelAspectRatioHorizontalSpacingKey, "kCVImageBufferPixelAspectRatioHorizontalSpacingKey")
-GAPCF(kCVImageBufferPixelAspectRatioKey, "kCVImageBufferPixelAspectRatioKey")
-GAPCF(kCVImageBufferPixelAspectRatioVerticalSpacingKey, "kCVImageBufferPixelAspectRatioVerticalSpacingKey")
-GAPCF(kVTCompressionPropertyKey_DataRateLimits, "kVTCompressionPropertyKey_DataRateLimits")
-GAPCF(kVTCompressionPropertyKey_MaxH264SliceBytes, "kVTCompressionPropertyKey_MaxH264SliceBytes")
-GAPCF(kVTCompressionPropertyKey_MoreFramesAfterEnd, "kVTCompressionPropertyKey_MoreFramesAfterEnd")
-GAPCF(kVTCompressionPropertyKey_MoreFramesBeforeStart, "kVTCompressionPropertyKey_MoreFramesBeforeStart")
-GAPCF(kVTCompressionPropertyKey_PixelAspectRatio, "kVTCompressionPropertyKey_PixelAspectRatio")
-GAPCF(kVTCompressionPropertyKey_Quality, "kVTCompressionPropertyKey_Quality")
-GAPCF(kVTProfileLevel_H264_Baseline_1_3, "kVTProfileLevel_H264_Baseline_1_3")
-GAPCF(kVTProfileLevel_H264_Baseline_3_0, "kVTProfileLevel_H264_Baseline_3_0")
-GAPCF(kVTProfileLevel_H264_Baseline_3_1, "kVTProfileLevel_H264_Baseline_3_1")
-GAPCF(kVTProfileLevel_H264_Baseline_3_2, "kVTProfileLevel_H264_Baseline_3_2")
-GAPCF(kVTProfileLevel_H264_Baseline_4_1, "kVTProfileLevel_H264_Baseline_4_1")
-GAPCF(kVTProfileLevel_H264_High_5_0, "kVTProfileLevel_H264_High_5_0")
-GAPCF(kVTProfileLevel_H264_Main_3_0, "kVTProfileLevel_H264_Main_3_0")
-GAPCF(kVTProfileLevel_H264_Main_3_1, "kVTProfileLevel_H264_Main_3_1")
-GAPCF(kVTProfileLevel_H264_Main_3_2, "kVTProfileLevel_H264_Main_3_2")
-GAPCF(kVTProfileLevel_H264_Main_4_0, "kVTProfileLevel_H264_Main_4_0")
-GAPCF(kVTProfileLevel_H264_Main_4_1, "kVTProfileLevel_H264_Main_4_1")
-GAPCF(kVTProfileLevel_H264_Main_5_0, "kVTProfileLevel_H264_Main_5_0")
-
+GAPCF(AVNumberOfChannelsKey, "AVNumberOfChannelsKey")
 size_t CGImageGetWidth(void *img);
 size_t CGImageGetHeight(void *img);
 size_t CGImageGetBytesPerRow(void *img);
 void *CGImageGetDataProvider(void *img);
 void *CGDataProviderCopyData(void *p);
 const unsigned char *CFDataGetBytePtr(void *d);
-long CFDataGetLength(void *d);
 void CFRelease(void *o);
 int open(const char *path, int flags, ...);
 long write(int fd, const void *b, unsigned long n);
 int close(int fd);
+
 static unsigned gap_crc(const unsigned char *s, unsigned long n) {
     unsigned c = 0xffffffffu; unsigned long i; int k;
     for (i = 0; i < n; i++) { c ^= s[i]; for (k = 0; k < 8; k++) c = (c >> 1) ^ (0xEDB88320u & (0u - (c & 1))); }
@@ -91,10 +45,10 @@ static int gap_png(const unsigned char *px, int w, int h, int bpr, unsigned char
     row = (unsigned long)w * 4ul + 1ul; rawn = row * (unsigned long)h;
     raw = malloc(rawn); if (!raw) return -1;
     for (y = 0; y < (unsigned long)h; y++) {
-        unsigned char *r = raw + y * row; r[0] = 0;
+        unsigned char *r = raw + y * row; const unsigned char *src = px + y * (unsigned long)bpr;
+        r[0] = 0;
         for (x = 0; x < (unsigned long)w; x++) {
-            const unsigned char *q = px + y * (unsigned long)bpr + x * 4ul;
-            unsigned char *d = r + 1 + x * 4ul;
+            unsigned char *d = r + 1 + x * 4ul; const unsigned char *q = src + x * 4ul;
             d[0] = q[2]; d[1] = q[1]; d[2] = q[0]; d[3] = q[3];
         }
     }
@@ -102,7 +56,8 @@ static int gap_png(const unsigned char *px, int w, int h, int bpr, unsigned char
     z = malloc(zcap); if (!z) { free(raw); return -1; }
     z[0] = 0x78; z[1] = 0x01; zo = 2; off = 0;
     while (off < rawn) {
-        unsigned long chunk = rawn - off; int last; if (chunk > 65535ul) chunk = 65535ul;
+        unsigned long chunk = rawn - off; int last;
+        if (chunk > 65535ul) chunk = 65535ul;
         last = off + chunk == rawn;
         z[zo++] = (unsigned char)last; z[zo++] = (unsigned char)chunk; z[zo++] = (unsigned char)(chunk >> 8);
         z[zo++] = (unsigned char)(chunk ^ 0xffu); z[zo++] = (unsigned char)((chunk >> 8) ^ 0xffu);
@@ -149,22 +104,8 @@ int CGImageDestinationFinalize(void *dst) {
     if (write(fd, png, pn) != (long)pn) { close(fd); free(png); return 0; }
     close(fd); free(png); return 1;
 }
-int AudioHardwareCreateProcessTap(void *desc, unsigned *out) { (void)desc; if (out) *out = 0; return 1852797029; }
-int AudioHardwareDestroyProcessTap(unsigned tap) { (void)tap; return 1852797029; }
 
-cx_class_t AVCaptureScreenInput_c __asm__("OBJC_CLASS_$_AVCaptureScreenInput");
-cx_class_t AVCaptureScreenInput_m __asm__("OBJC_METACLASS_$_AVCaptureScreenInput");
-void cx_openbot_gap_init(void) {
-    cx_class_t *obj;
-    if (cx_class_named("AVCaptureScreenInput")) return;
-    obj = cx_class_named("NSObject");
-    cx_define_class(&AVCaptureScreenInput_c, &AVCaptureScreenInput_m, "AVCaptureScreenInput", obj, 0);
-}
-
-/* gap_stub: símbolo presente, sem o comportamento do macOS. */
-long CVPixelBufferFillExtendedPixels(void) { return 0; }
-long CVPixelBufferGetExtendedPixels(void) { return 0; }
-long CVPixelBufferPoolGetTypeID(void) { return 0; }
+/* gap_stub */
 long CFAttributedStringGetLength(void) { return 0; }
 long CFAttributedStringGetString(void) { return 0; }
 long CFAttributedStringGetTypeID(void) { return 0; }
@@ -241,60 +182,6 @@ long CFUUIDCreateFromString(void) { return 0; }
 long CFWriteStreamGetTypeID(void) { return 0; }
 long CFXMLCreateStringByEscapingEntities(void) { return 0; }
 long CFXMLCreateStringByUnescapingEntities(void) { return 0; }
-long CMBlockBufferCopyDataBytes(void) { return 0; }
-long CMBlockBufferIsEmpty(void) { return 0; }
-long CMFormatDescriptionGetExtensions(void) { return 0; }
-long CMFormatDescriptionGetMediaType(void) { return 0; }
-long CMMetadataFormatDescriptionCreateByMergingMetadataFormatDescriptions(void) { return 0; }
-long CMMetadataFormatDescriptionCreateWithKeys(void) { return 0; }
-long CMMetadataFormatDescriptionCreateWithMetadataFormatDescriptionAndMetadataSpecifications(void) { return 0; }
-long CMMetadataFormatDescriptionCreateWithMetadataSpecifications(void) { return 0; }
-long CMMetadataFormatDescriptionGetIdentifiers(void) { return 0; }
-long CMMetadataFormatDescriptionGetKeyWithLocalID(void) { return 0; }
-long CMSampleBufferCopyPCMDataIntoAudioBufferList(void) { return 0; }
-long CMSampleBufferCreateCopyWithNewTiming(void) { return 0; }
-long CMSampleBufferCreateReadyWithImageBuffer(void) { return 0; }
-long CMSampleBufferDataIsReady(void) { return 0; }
-long CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(void) { return 0; }
-long CMSampleBufferGetDecodeTimeStamp(void) { return 0; }
-long CMSampleBufferGetDuration(void) { return 0; }
-long CMSampleBufferGetOutputPresentationTimeStamp(void) { return 0; }
-long CMSampleBufferGetSampleSize(void) { return 0; }
-long CMSampleBufferGetSampleTimingInfo(void) { return 0; }
-long CMSampleBufferGetTotalSampleSize(void) { return 0; }
-long CMSampleBufferInvalidate(void) { return 0; }
-long CMSampleBufferIsValid(void) { return 0; }
-long CMSampleBufferMakeDataReady(void) { return 0; }
-long CMSampleBufferSetOutputPresentationTimeStamp(void) { return 0; }
-long IOSurfacePropertyKeyAllocSize(void) { return 0; }
-long IOSurfacePropertyKeyBytesPerElement(void) { return 0; }
-long IOSurfacePropertyKeyBytesPerRow(void) { return 0; }
-long IOSurfacePropertyKeyHeight(void) { return 0; }
-long IOSurfacePropertyKeyPixelFormat(void) { return 0; }
-long IOSurfacePropertyKeyPlaneBytesPerElement(void) { return 0; }
-long IOSurfacePropertyKeyPlaneBytesPerRow(void) { return 0; }
-long IOSurfacePropertyKeyPlaneElementHeight(void) { return 0; }
-long IOSurfacePropertyKeyPlaneElementWidth(void) { return 0; }
-long IOSurfacePropertyKeyPlaneHeight(void) { return 0; }
-long IOSurfacePropertyKeyPlaneInfo(void) { return 0; }
-long IOSurfacePropertyKeyPlaneOffset(void) { return 0; }
-long IOSurfacePropertyKeyPlaneSize(void) { return 0; }
-long IOSurfacePropertyKeyPlaneWidth(void) { return 0; }
-long IOSurfacePropertyKeyWidth(void) { return 0; }
-long AVCaptureDeviceTypeBuiltInMicrophone(void) { return 0; }
-long AVFileTypeMPEG4(void) { return 0; }
-long AVFileTypeQuickTimeMovie(void) { return 0; }
-long AVVideoCodecTypeH264(void) { return 0; }
-long AVVideoCodecTypeHEVC(void) { return 0; }
-long AVVideoScalingModeResizeAspect(void) { return 0; }
-long CVColorPrimariesGetStringForIntegerCodePoint(void) { return 0; }
-long CVTransferFunctionGetStringForIntegerCodePoint(void) { return 0; }
-long CVYCbCrMatrixGetStringForIntegerCodePoint(void) { return 0; }
-long VTCompressionSessionGetPixelBufferPool(void) { return 0; }
-long VTCompressionSessionPrepareToEncodeFrames(void) { return 0; }
-long VTCopySupportedPropertyDictionaryForEncoder(void) { return 0; }
-long VTRegisterProfessionalVideoWorkflowVideoEncoders(void) { return 0; }
-long AVNumberOfChannelsKey(void) { return 0; }
 long gap_sw_0(void) __asm__("$s10Foundation22_convertNSErrorToErrorys0E0_pSo0C0CSgF");
 long gap_sw_0(void) { return 0; }
 long gap_sw_1(void) __asm__("$s10Foundation3URLV15fileURLWithPathACSSh_tcfC");

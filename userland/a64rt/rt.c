@@ -535,8 +535,9 @@ static void mos_svc(rt_thread_t *T) {
  * file_actions). A attr começa com psa_flags (short). Cada file action tem 1040 bytes:
  * tipo em +0, fd em +4, open (oflag +8, mode +12, path +14), dup2 (novo fd +8), chdir (path +8).
  * O contêiner é { int alloc; int count; ações... }. FILEPORT_DUP2 não tem porta Mach aqui.
- * SETSIGDEF, SETSIGMASK, RESETIDS e START_SUSPENDED são lidos e ignorados (START_SUSPENDED
- * cruza a suspensão de processo, outra frente). Não há commpage: o endereço do Darwin arm64
+ * SETSIGDEF, SETSIGMASK e RESETIDS são lidos e ignorados. START_SUSPENDED (0x80) vai em
+ * mos_spawn_vec_t.flags; o kernel (proc_hold) deixa o filho parado até um SIGCONT.
+ * Não há commpage: o endereço do Darwin arm64
  * (0xFFFFFC000) cai no mapa de identidade do kernel, abaixo de USER_BASE. */
 #define PSFA_OPEN 0
 #define PSFA_CLOSE 1
@@ -612,6 +613,7 @@ static long spawn_fill(const void *adesc, u64 argv, u64 envp, mos_spawn_vec_t *v
         if (flags & 0x0002) v->flags |= MOS_SPAWN_SETPGROUP;
         if (flags & 0x0400) v->flags |= MOS_SPAWN_SETSID;
         if (flags & 0x4000) v->flags |= MOS_SPAWN_CLOEXEC_DEFAULT;
+        if (flags & 0x0080) v->flags |= MOS_SPAWN_START_SUSPENDED;
         if (flags & 0x0040) *setexec = 1;
     }
     if (!hdr[3] || hdr[2] < 8) return 0;
