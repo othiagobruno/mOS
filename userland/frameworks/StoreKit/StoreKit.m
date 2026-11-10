@@ -52,7 +52,7 @@ typedef NS_ENUM(NSInteger, SKPaymentTransactionState) {
 
 @interface SKProductsRequest : NSObject
 @property (assign) id delegate;
-- (instancetype)initWithProductIdentifiers:(NSSet *)productIdentifiers;
+- (instancetype)initWithProductIdentifiers:(id)productIdentifiers;
 - (void)start;
 - (void)cancel;
 @end
@@ -69,7 +69,7 @@ typedef NS_ENUM(NSInteger, SKPaymentTransactionState) {
 @end
 
 @interface NSBundle (MOSStoreKit)
-- (NSURL *)appStoreReceiptURL;
+- (id)appStoreReceiptURL;
 @end
 
 static void bind_tx(int tx);
@@ -257,5 +257,5 @@ static void on_req(void *ctx, int err) {
 @end
 
 @implementation NSBundle (MOSStoreKit)
-- (NSURL *)appStoreReceiptURL { return nil; }
+- (id)appStoreReceiptURL { return nil; }
 @end

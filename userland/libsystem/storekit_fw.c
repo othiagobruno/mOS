@@ -321,6 +321,27 @@ int cx_storekit_verify_receipt(const void *bytes, size_t n, char *err, size_t ca
     return sk_verify(bytes, n, err, cap);
 }
 
+void sk2_throw_network(void *frame) { sk_core_throw_frame((sk2_frame *)frame); }
+
+#if defined(__x86_64__)
+__asm__(
+".text\n"
+".globl \"$s8StoreKit03AppA0O4syncyyYaKFZ\"\n"
+"\"$s8StoreKit03AppA0O4syncyyYaKFZ\":\n"
+".globl \"$s8StoreKit03AppA0O4syncyyYaKFZTu\"\n"
+"\"$s8StoreKit03AppA0O4syncyyYaKFZTu\":\n"
+".globl \"$s8StoreKit7ProductV8products3forSayACGx_tYaKSlRzSS7ElementRtzlFZ\"\n"
+"\"$s8StoreKit7ProductV8products3forSayACGx_tYaKSlRzSS7ElementRtzlFZ\":\n"
+".globl \"$s8StoreKit7ProductV8products3forSayACGx_tYaKSlRzSS7ElementRtzlFZTu\"\n"
+"\"$s8StoreKit7ProductV8products3forSayACGx_tYaKSlRzSS7ElementRtzlFZTu\":\n"
+".globl \"$s8StoreKit7ProductV8purchase7optionsAC14PurchaseResultOShyAC0F6OptionVG_tYaKF\"\n"
+"\"$s8StoreKit7ProductV8purchase7optionsAC14PurchaseResultOShyAC0F6OptionVG_tYaKF\":\n"
+".globl \"$s8StoreKit7ProductV8purchase7optionsAC14PurchaseResultOShyAC0F6OptionVG_tYaKFTu\"\n"
+"\"$s8StoreKit7ProductV8purchase7optionsAC14PurchaseResultOShyAC0F6OptionVG_tYaKFTu\":\n"
+"  movq %r14, %rdi\n"
+"  jmp sk2_throw_network\n"
+);
+#endif
 void sk2_products_for(int n_ids, sk2_cont cont, void *ctx) { sk_core_products(n_ids, cont, ctx); }
 void sk2_purchase(const char *pid, sk2_cont cont, void *ctx) { sk_core_purchase(pid, cont, ctx); }
 void sk2_appstore_sync(sk2_cont cont, void *ctx) { sk_core_sync(cont, ctx); }

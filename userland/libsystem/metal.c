@@ -1280,6 +1280,7 @@ typedef struct mcb {
     int npres, cappres;
     id enc;
     double t0, t1;
+    unsigned gpu_fence;
 } mcb_t;
 typedef struct menc {
     MHDR;
@@ -1383,6 +1384,64 @@ static void cb_present(id s, SEL c, id d) {
 }
 static void cb_present_t(id s, SEL c, id d, double t) { (void)t; cb_present(s, c, d); }
 static void cb_enqueue(id s, SEL c) { (void)c; mcb_t *cb = (mcb_t *)s; if (cb->status < 1) cb->status = 1; }
+
+/* Um C_DISPATCH vira lote BIND/SHADER/DISPATCH. Sem cap virgl/venus devolve 0
+ * e o chamador executa o interpretador. Com o cap, o lote já foi na syscall. */
+static int dispatch_on_device(mcb_t *cb, cmd_t *c) {
+    cstate_t *st;
+    mos_gpu_bind_in_t binds[5];
+    mos_gpu_compute_in_t job;
+    const u32 *sp = 0;
+    u32 sn = 0;
+    u32 g[3], t[3];
+    unsigned nb = 0, fen = 0;
+    int on = 0, i;
+    if (!c || c->k != C_DISPATCH || !c->c.st || !c->c.st->pipe || !c->c.st->pipe->fn) return 0;
+    st = c->c.st;
+    g[0] = c->c.g[0]; g[1] = c->c.g[1]; g[2] = c->c.g[2];
+    if (c->c.indirect) {
+        u32 *a = (u32 *)(c->c.indirect->p + c->c.indoff);
+        if (!a) return 0;
+        g[0] = a[0]; g[1] = a[1]; g[2] = a[2];
+    }
+    t[0] = c->c.t[0] ? c->c.t[0] : 1;
+    t[1] = c->c.t[1] ? c->c.t[1] : 1;
+    t[2] = c->c.t[2] ? c->c.t[2] : 1;
+    for (i = 0; i < 31; i++) {
+        bind_t *b = &st->b[i];
+        if (b->bytes) {
+            if (!b->nbytes || nb == 5) return 0;
+            binds[nb].bytes = b->bytes;
+            binds[nb].length = (unsigned)b->nbytes;
+            binds[nb].offset = 0;
+            binds[nb].range = (unsigned)b->nbytes;
+            binds[nb].slot = (unsigned)i;
+            nb++;
+        } else if (b->obj) {
+            mbuf_t *m = (mbuf_t *)b->obj;
+            if (!m->p || b->off >= m->len || nb == 5) return 0;
+            binds[nb].bytes = m->p;
+            binds[nb].length = (unsigned)m->len;
+            binds[nb].offset = (unsigned)b->off;
+            binds[nb].range = (unsigned)(m->len - b->off);
+            binds[nb].slot = (unsigned)i;
+            nb++;
+        }
+    }
+    if (!nb) return 0;
+    msl_fn_spirv(st->pipe->fn, &sp, &sn);
+    memset(&job, 0, sizeof job);
+    job.shader = sp;
+    job.shader_len = sn * 4u;
+    job.local_x = t[0]; job.local_y = t[1]; job.local_z = t[2];
+    job.groups_x = g[0]; job.groups_y = g[1]; job.groups_z = g[2];
+    job.binds = binds;
+    job.nbind = nb;
+    if (mos_gpu_compute_submit(&job, &fen, &on)) return 0;
+    if (fen) cb->gpu_fence = fen;
+    return on;
+}
+
 static void cb_commit(id s, SEL c) {
     (void)c;
     mcb_t *cb = (mcb_t *)s;
@@ -1392,7 +1451,10 @@ static void cb_commit(id s, SEL c) {
     objc_retain(s);
     gpu_lock();
     cb->t0 = now_s();
-    for (int i = 0; i < cb->n; i++) mx_exec_cmd(cb->cmds[i]);
+    for (int i = 0; i < cb->n; i++) {
+        if (dispatch_on_device(cb, cb->cmds[i])) continue;
+        mx_exec_cmd(cb->cmds[i]);
+    }
     cb->t1 = now_s();
     gpu_unlock();
     cb->status = 3;
@@ -1404,6 +1466,16 @@ static void cb_commit(id s, SEL c) {
     cb->nsh = cb->nch = 0;
     cb_release_refs(cb);
     objc_release(s);
+}
+static void cb_wait_completed(id s, SEL c) {
+    mcb_t *cb = (mcb_t *)s;
+    mos_gpu_fence_t fen;
+    (void)c;
+    if (cb->status < 2 || !cb->gpu_fence) return;
+    memset(&fen, 0, sizeof fen);
+    fen.fence = cb->gpu_fence;
+    fen.timeout_ms = ~0u;
+    mos_gpu_op(MOS_GPU_FENCE_WAIT, &fen, sizeof fen);
 }
 static void cb_signal(id s, SEL c, id ev, u64 v) {
     (void)c;
@@ -1495,6 +1567,7 @@ static void bind_set(menc_t *e, bind_t *b, id buf, u64 off) {
     b->obj = buf;
     b->off = off;
     b->bytes = 0;
+    b->nbytes = 0;
 }
 static void bind_bytes(menc_t *e, bind_t *b, const void *p, u64 n) {
     void *cp = cb_alloc(e->cb, n + 16);
@@ -1502,6 +1575,7 @@ static void bind_bytes(menc_t *e, bind_t *b, const void *p, u64 n) {
     b->obj = 0;
     b->off = 0;
     b->bytes = cp;
+    b->nbytes = n;
 }
 static void re_pipe(id s, SEL c, id p) { (void)c; cb_retain(RE(s)->cb, p); RE(s)->r.pipe = (mrpipe_t *)p; RE(s)->rdirty = 1; }
 static void re_vbuf(id s, SEL c, id b, u64 off, u64 i) { (void)c; if (i < 31) { bind_set(RE(s), &RE(s)->r.vb[i], b, off); RE(s)->rdirty = 1; } }
@@ -2746,7 +2820,7 @@ void cx_metal_init(void) {
     M(MCB, "dealloc", cb_dealloc); M(MCB, "status", cb_status); M(MCB, "commandQueue", cb_queue); M(MCB, "error", ret_nil);
     M(MCB, "retainedReferences", ret_yes); M(MCB, "errorOptions", ret_zero); M(MCB, "logs", ret_empty_arr);
     M(MCB, "kernelStartTime", cb_t0); M(MCB, "kernelEndTime", cb_t1); M(MCB, "GPUStartTime", cb_t0); M(MCB, "GPUEndTime", cb_t1);
-    M(MCB, "enqueue", cb_enqueue); M(MCB, "commit", cb_commit); M(MCB, "waitUntilScheduled", noop); M(MCB, "waitUntilCompleted", noop);
+    M(MCB, "enqueue", cb_enqueue); M(MCB, "commit", cb_commit); M(MCB, "waitUntilScheduled", noop); M(MCB, "waitUntilCompleted", cb_wait_completed);
     M(MCB, "addScheduledHandler:", cb_add_sched); M(MCB, "addCompletedHandler:", cb_add_done);
     M(MCB, "presentDrawable:", cb_present); M(MCB, "presentDrawable:atTime:", cb_present_t);
     M(MCB, "presentDrawable:afterMinimumDuration:", cb_present_t);

@@ -1706,7 +1706,6 @@ void $sSC11CKErrorCodeLeV8CloudKitE17retryAfterSecondsSdSgvg(void) {}
 void $sSC11CKErrorCodeLeV8CloudKitE21partialErrorsByItemIDSDys11AnyHashableVs5Error_pGSgvg(void) {}
 void $sSD10FoundationE26_forceBridgeFromObjectiveC_6resultySo12NSDictionaryC_SDyxq_GSgztFZ(void) {}
 void $sSD10FoundationE34_conditionallyBridgeFromObjectiveC_6resultSbSo12NSDictionaryC_SDyxq_GSgztFZ(void) {}
-void $sSD10FoundationE36_unconditionallyBridgeFromObjectiveCySDyxq_GSo12NSDictionaryCSgFZ(void) {}
 void $sSD10startIndexSD0B0Vyxq__Gvg(void) {}
 void $sSD11descriptionSSvg(void) {}
 void $sSD11removeValue6forKeyq_Sgx_tF(void) {}
@@ -1951,12 +1950,7 @@ void $sSRyxGSTsMc(void) {}
 void $sSRyxGSksMc(void) {}
 void $sSRyxGSlsMc(void) {}
 void $sSS10FoundationE10contentsOf12usedEncodingSSAA3URLVh_SSAAE0E0VztKcfC(void) {}
-void $sSS10FoundationE10contentsOf8encodingSSAA3URLVh_SSAAE8EncodingVtKcfC(void) {}
-void $sSS10FoundationE10contentsOfSSAA3URLVh_tKcfC(void) {}
 void $sSS10FoundationE14contentsOfFile12usedEncodingS2Sh_SSAAE0F0VztKcfC(void) {}
-void $sSS10FoundationE14contentsOfFile8encodingS2Sh_SSAAE8EncodingVtKcfC(void) {}
-void $sSS10FoundationE14contentsOfFileS2Sh_tKcfC(void) {}
-void $sSS10FoundationE14utf16CodeUnits5countSSSPys6UInt16VG_SitcfC(void) {}
 void $sSS10FoundationE17LocalizationValueV13stringLiteralACSS_tcfC(void) {}
 void $sSS10FoundationE17LocalizationValueV19StringInterpolationV06appendE0_9specifieryx_SStAA18_FormatSpecifiableRzlF(void) {}
 void $sSS10FoundationE17LocalizationValueV19StringInterpolationV06appendE0yySSF(void) {}
@@ -1965,22 +1959,9 @@ void $sSS10FoundationE17LocalizationValueV19StringInterpolationV15literalCapacit
 void $sSS10FoundationE17LocalizationValueV19StringInterpolationVMa(void) {}
 void $sSS10FoundationE17LocalizationValueV19stringInterpolationA2C06StringE0V_tcfC(void) {}
 void $sSS10FoundationE17LocalizationValueVMa(void) {}
-void $sSS10FoundationE4data5using20allowLossyConversionAA4DataVSgSSAAE8EncodingV_SbtF(void) {}
-void $sSS10FoundationE4data8encodingSSSgAA4DataVh_SSAAE8EncodingVtcfC(void) {}
 void $sSS10FoundationE5bytes8encodingSSSgxh_SSAAE8EncodingVtcSTRzs5UInt8V7ElementRtzlufC(void) {}
-void $sSS10FoundationE6format6locale9argumentsS2Sh_AA6LocaleVSghSays7CVarArg_pGhtcfC(void) {}
-void $sSS10FoundationE6format6locale_S2Sh_AA6LocaleVSghs7CVarArg_pdtcfC(void) {}
-void $sSS10FoundationE6format9argumentsS2Sh_Says7CVarArg_pGhtcfC(void) {}
-void $sSS10FoundationE6format_S2Sh_s7CVarArg_pdtcfC(void) {}
-void $sSS10FoundationE7cString8encodingSSSgSPys4Int8VG_SSAAE8EncodingVtcfC(void) {}
 void $sSS10FoundationE8EncodingV10macOSRomanACvgZ(void) {}
-void $sSS10FoundationE8EncodingV13nonLossyASCIIACvgZ(void) {}
 void $sSS10FoundationE8EncodingV2eeoiySbAC_ACtFZ(void) {}
-void $sSS10FoundationE8EncodingV5asciiACvgZ(void) {}
-void $sSS10FoundationE8EncodingV7unicodeACvgZ(void) {}
-void $sSS10FoundationE8EncodingV8rawValueACSu_tcfC(void) {}
-void $sSS10FoundationE8EncodingV8rawValueSuvg(void) {}
-void $sSS10FoundationE8EncodingV9isoLatin1ACvgZ(void) {}
 void $sSS10FoundationE8EncodingVMn(void) {}
 void $sSS10FoundationE8EncodingVSQAAMc(void) {}
 void $sSS10FoundationE8EncodingVs23CustomStringConvertibleAAMc(void) {}
@@ -5065,7 +5046,6 @@ void _swiftEmptyDictionarySingleton(void) {}
 void _swiftEmptySetSingleton(void) {}
 void _swiftImmortalRefCount(void) {}
 void _swift_stdlib_bridgeErrorToNSError(void) {}
-void _swift_stdlib_operatingSystemVersion(void) {}
 void _swift_stdlib_reportUnimplementedInitializer(void) {}
 void _swift_stdlib_reportUnimplementedInitializerInFile(void) {}
 void _swift_stdlib_strtod_clocale(void) {}
@@ -5177,9 +5157,7 @@ void setstate(void) {}
 void sinhl(void) {}
 void strtoll_l(void) {}
 void strtoull_l(void) {}
-void swift_allocBox(void) {}
 void swift_allocEmptyBox(void) {}
-void swift_allocError(void) {}
 void swift_allocateGenericClassMetadata(void) {}
 void swift_allocateGenericValueMetadata(void) {}
 void swift_arrayDestroy(void) {}
@@ -5191,7 +5169,6 @@ void swift_asyncLet_finish(void) {}
 void swift_asyncLet_get(void) {}
 void swift_asyncLet_get_throwing(void) {}
 void swift_beginAccess(void) {}
-void swift_checkMetadataState(void) {}
 void swift_conformsToProtocol(void) {}
 void swift_conformsToProtocol2(void) {}
 void swift_continuation_resume(void) {}
@@ -5202,8 +5179,6 @@ void swift_defaultActor_deallocate(void) {}
 void swift_defaultActor_destroy(void) {}
 void swift_defaultActor_initialize(void) {}
 void swift_deletedAsyncMethodErrorTu(void) {}
-void swift_deletedMethodError(void) {}
-void swift_dynamicCast(void) {}
 void swift_dynamicCastClass(void) {}
 void swift_dynamicCastClassUnconditional(void) {}
 void swift_dynamicCastMetatype(void) {}
@@ -5216,8 +5191,6 @@ void swift_dynamicCastUnknownClass(void) {}
 void swift_dynamicCastUnknownClassUnconditional(void) {}
 void swift_endAccess(void) {}
 void swift_errorInMain(void) {}
-void swift_errorRelease(void) {}
-void swift_errorRetain(void) {}
 void swift_getAssociatedConformanceWitness(void) {}
 void swift_getAssociatedTypeWitness(void) {}
 void swift_getAtKeyPath(void) {}
@@ -5258,7 +5231,6 @@ void swift_getTypeByMangledNameInContext(void) {}
 void swift_getTypeByMangledNameInContext2(void) {}
 void swift_getTypeByMangledNameInContextInMetadataState(void) {}
 void swift_getTypeByMangledNameInContextInMetadataState2(void) {}
-void swift_getWitnessTable(void) {}
 void swift_initClassMetadata2(void) {}
 void swift_initEnumMetadataMultiPayload(void) {}
 void swift_initEnumMetadataSingleCase(void) {}
@@ -5279,7 +5251,6 @@ void swift_lookUpClassMethod(void) {}
 void swift_makeBoxUnique(void) {}
 void swift_modifyAtReferenceWritableKeyPath(void) {}
 void swift_modifyAtWritableKeyPath(void) {}
-void swift_once(void) {}
 void swift_projectBox(void) {}
 void swift_readAtKeyPath(void) {}
 void swift_setAtReferenceWritableKeyPath(void) {}
@@ -5322,7 +5293,6 @@ void swift_unknownObjectWeakLoadStrong(void) {}
 void swift_unknownObjectWeakTakeAssign(void) {}
 void swift_unknownObjectWeakTakeInit(void) {}
 void swift_updateClassMetadata2(void) {}
-void swift_willThrow(void) {}
 void swift_willThrowTypedImpl(void) {}
 void sys_nerr(void) {}
 void syscall(void) {}
