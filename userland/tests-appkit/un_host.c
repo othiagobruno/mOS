@@ -69,6 +69,17 @@ int main(void) {
     check(cx_un_banner_visible() == 0, "o clique recolhe o banner");
     check(cx_un_click_token(sink_token) == 0, "segundo clique no mesmo token não repete");
 
+    cx_un_stage_info("conversa=42");
+    check(cx_un_add("com-info", "Aviso", 0, "texto", 0, 0) == CX_UN_OK, "pedido com userInfo é aceito");
+    check(strcmp(cx_un_info("com-info"), "conversa=42") == 0, "o userInfo permanece depois da entrega");
+    cx_un_stage_info("nao-deve-vazar");
+    check(cx_un_add("sem-usar", "X", 0, "y", 5, 0) == CX_UN_OK, "o userInfo staged vai para o pedido seguinte");
+    check(strcmp(cx_un_info("sem-usar"), "nao-deve-vazar") == 0, "pedido pendente guarda o userInfo");
+    check(cx_un_info("ausente")[0] == 0, "identificador desconhecido não tem userInfo");
+    cx_un_remove_delivered("com-info");
+    cx_un_remove_pending("sem-usar");
+    check(cx_un_banner_visible() == 0, "remover a entregue recolhe o banner do userInfo");
+
     present_opts = 0;
     check(cx_un_add("mudo", "Silêncio", 0, "x", 0, 0) == CX_UN_OK, "willPresent pode recusar o banner");
     check(cx_un_banner_visible() == 0 && cx_un_delivered_has("mudo") == 1, "sem opção de banner não há cartão");

@@ -29,11 +29,11 @@ $triple = 'arm64-apple-macos11-elf'
 $cflags = @("--target=$triple", '-mcpu=apple-m1', '-O2', '-g0', '-ffreestanding', '-fno-stack-protector', '-fno-builtin',
     '-fPIC', '-ffixed-x18', '-fsigned-char', '-fno-common', '-funwind-tables',
     '-Wall', '-Wno-unused-parameter', '-Wno-incompatible-library-redeclaration', '-Wno-builtin-requires-header',
-    '-Wno-unknown-warning-option', "-isystem", $inc, "-I$ls\kshim")
+    '-Wno-unknown-warning-option', "-isystem", $inc, "-I$ls\kshim", "-I$root\userland\third_party\h264bsd")
 
 # os .S x86 tem versao *_arm64.S; os *_arm64.S ficam fora do build x86 por #if defined(__aarch64__)
 $x86only = @('objc_msg.S', 'objc_tramp.S', 'sigjmp.S', 'start.S', 'tlv.S')
-$src = Get-ChildItem "$ls\*" -Include *.c, *.S | Where-Object { $x86only -notcontains $_.Name } | ForEach-Object FullName
+$src = @(Get-ChildItem "$ls\*" -Include *.c, *.S | Where-Object { $x86only -notcontains $_.Name } | ForEach-Object FullName) + @(Get-ChildItem "$root\userland\third_party\h264bsd\*.c" | ForEach-Object FullName)
 
 function Run-Pool($items, $mkargs) {
     $running = @(); $fail = 0
