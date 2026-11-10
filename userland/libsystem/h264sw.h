@@ -1,5 +1,5 @@
-/* Codec H.264 Constrained Baseline em C (I_PCM, só intra). Sem HEVC.
- * Tabelas VLC: ver o aviso BSD no h264sw.c (OpenH264 / Cisco). O restante é do mOS (MIT). */
+/* H.264: decodificador Baseline (h264bsd, Apache-2.0) e codificador intra I_PCM.
+ * HEVC não entra. Tabelas VLC do codificador: OpenH264 / Cisco, BSD-2. O resto é MIT. */
 #pragma once
 #include <stdint.h>
 
@@ -22,6 +22,8 @@ int h264_decode_avcc(const uint8_t *sps, int sps_n, const uint8_t *pps, int pps_
                      uint8_t *y, uint8_t *u, uint8_t *v, int sy, int su, int sv,
                      int *w, int *h);
 int h264_sps_wh(const uint8_t *nal, int n, int *w, int *h);
+/* Annex B inteiro. *yuv é I420 concatenado (o chamador dá free). */
+int h264_bsd_decode_all(const uint8_t *bytes, int n, uint8_t **yuv, int *frames, int *w, int *h);
 
 void h264_bgra_to_i420(const uint8_t *bgra, int w, int h, int sb,
                        uint8_t *y, uint8_t *u, uint8_t *v, int sy, int su, int sv);

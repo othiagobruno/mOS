@@ -13,6 +13,7 @@ void *calloc(unsigned long n, unsigned long s);
 void *realloc(void *p, unsigned long n);
 void free(void *p);
 void *memcpy(void *d, const void *s, unsigned long n);
+int memcmp(const void *a, const void *b, unsigned long n);
 void *memset(void *d, int c, unsigned long n);
 int memcmp(const void *a, const void *b, unsigned long n);
 unsigned long strlen(const char *s);

@@ -4,7 +4,7 @@
  *  - Accelerate/vDSP: implementado de verdade (o WebAudio do Chromium faz convolução, FFT real e
  *    filtros biquad com ele). FFT real com o empacotamento e a escala da Apple (direta multiplica por 2).
  *  - CoreMedia: CMTime aqui; bloco, formato e sample buffer em openbot_cm.c.
- *  - VideoToolbox: H.264 em software (I_PCM). HEVC devolve -12906/-12908. A cópia de pixel está em openbot_vt.c.
+ *  - VideoToolbox: H.264 Baseline em software (h264bsd). O codificador ainda é I_PCM. HEVC é stub (-12906/-12908).
  *  - CoreAudio/AudioToolbox/CoreMIDI: nenhum dispositivo/componente (áudio do Chromium fica mudo).
  *  - CUPS: nenhuma impressora. GSS/Kerberos: sem credenciais (autenticação Negotiate falha limpa).
  *  - UniformTypeIdentifiers: objetos UTType com identificador, extensão e MIME.
@@ -169,11 +169,16 @@ typedef struct {
     void *enc_ref;
     vt_dec_fn dec;
     void *dec_ref;
+    void *dec_st;
 } vts_t;
 static cx_class_t VTS_c, VTS_m;
 static int vts_ready;
+int h264_bsd_open(void **out);
+void h264_bsd_close(void *p);
+int h264_bsd_feed(void *p, const u8 *bytes, int n, u8 *y, u8 *u, u8 *v, int sy, int su, int sv, int *ow, int *oh);
 static void vts_dealloc(id s, SEL c) {
-    (void)s;
+    vts_t *v = (vts_t *)s;
+    if (v && v->dec_st) { h264_bsd_close(v->dec_st); v->dec_st = 0; }
     IMP sup = cx_lookup(cx_class_named("NSObject"), c);
     if (sup) ((void (*)(id, SEL))sup)(s, c);
 }
@@ -280,8 +285,24 @@ OSStatus VTDecompressionSessionDecodeFrame(void *s, void *sb, u32 flags, void *r
     if (h264_sps_wh(sps, (int)sps_n, &w, &h) || w < 2 || h < 2 || w > 4096 || h > 4096) return kVTCouldNotFindVideoDecoderErr;
     u8 *y = malloc((size_t)w * h), *u = malloc((size_t)w * h / 4), *v2 = malloc((size_t)w * h / 4);
     if (!y || !u || !v2) { free(y); free(u); free(v2); return kVTCouldNotFindVideoDecoderErr; }
-    int rc = h264_decode_avcc(sps, (int)sps_n, pps, (int)pps_n, (const u8 *)data, (int)dlen, y, u, v2, w, w / 2, w / 2, &w, &h);
-    if (rc || w < 2 || h < 2) { free(y); free(u); free(v2); return kVTCouldNotFindVideoDecoderErr; }
+    if (!v->dec_st && h264_bsd_open(&v->dec_st)) { free(y); free(u); free(v2); return kVTCouldNotFindVideoDecoderErr; }
+    {
+        int off = 0, n = 0;
+        u8 *b = malloc(dlen + sps_n + pps_n + 64);
+        if (!b) { free(y); free(u); free(v2); return kVTCouldNotFindVideoDecoderErr; }
+        b[n++] = 0; b[n++] = 0; b[n++] = 0; b[n++] = 1; memcpy(b + n, sps, sps_n); n += (int)sps_n;
+        b[n++] = 0; b[n++] = 0; b[n++] = 0; b[n++] = 1; memcpy(b + n, pps, pps_n); n += (int)pps_n;
+        while (off + 4 <= (int)dlen) {
+            int len = ((u8)data[off] << 24) | ((u8)data[off+1] << 16) | ((u8)data[off+2] << 8) | (u8)data[off+3];
+            off += 4;
+            if (len <= 0 || off + len > (int)dlen) { free(b); free(y); free(u); free(v2); return kVTCouldNotFindVideoDecoderErr; }
+            b[n++] = 0; b[n++] = 0; b[n++] = 0; b[n++] = 1; memcpy(b + n, data + off, (size_t)len); n += len;
+            off += len;
+        }
+        int rc = h264_bsd_feed(v->dec_st, b, n, y, u, v2, w, w / 2, w / 2, &w, &h);
+        free(b);
+        if (rc || w < 2 || h < 2) { free(y); free(u); free(v2); return kVTCouldNotFindVideoDecoderErr; }
+    }
     void *img = 0;
     if (CVPixelBufferCreate(0, (u64)w, (u64)h, 0x42475241u, 0, &img) != 0 || !img) {
         free(y); free(u); free(v2);
@@ -295,7 +316,12 @@ OSStatus VTDecompressionSessionDecodeFrame(void *s, void *sb, u32 flags, void *r
     objc_release((id)img);
     return 0;
 }
-void VTDecompressionSessionInvalidate(void *s) { vts_t *v = vts_as(s, VT_DEC); if (v) v->dead = 1; }
+void VTDecompressionSessionInvalidate(void *s) {
+    vts_t *v = vts_as(s, VT_DEC);
+    if (!v) return;
+    if (v->dec_st) { h264_bsd_close(v->dec_st); v->dec_st = 0; }
+    v->dead = 1;
+}
 
 OSStatus VTCompressionSessionCreate(void *a, i32 w, i32 h, u32 codec, id spec, id src, void *ca, void *cb, void *ref, void **out) {
     (void)a; (void)spec; (void)src; (void)ca;
