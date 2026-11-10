@@ -22,7 +22,10 @@
  *    para código não assinado). O rendezvous do Chromium está em modo "só validar", então isso não o bloqueia.
  *  - SecTrust: avaliação devolve "não confiável"; o Chromium/Electron usa o próprio verificador (Chrome Root
  *    Store). As confianças do SecureTransport (securetransport.c), já validadas pelo kernel, avaliam como válidas.
- *  - SecKey, SecIdentity, PKCS12 e transforms: errSecUnimplemented / NULL. O SecureTransport é real: securetransport.c.
+ *  - SecIdentityCreateWithCertificate acha um item kSecClassIdentity ("idnt") cujo segredo é o DER do
+ *    certificado. SecItemAdd dessa classe grava o DER e, em kSecAttrGeneric, os bytes da chave privada.
+ *    SecIdentityCopyPrivateKey devolve esses bytes num CFData. SecKey (assinar, cifrar) continua
+ *    errSecUnimplemented. PKCS12 e transforms também. O SecureTransport é real: securetransport.c.
  *  - Authorization: criar/liberar funciona; pedir direitos = errAuthorizationDenied.
  * Os stubs antigos de chrome.c/mach.c/darwin.c que este arquivo substitui foram tirados de lá.
  */
@@ -361,6 +364,8 @@ static void parse_query(id_ q, query_t *x) {
     for (int i = 0; i < NFIELD; i++) x->f[i] = CFDictionaryGetValue(q, (id_)*field_key[i]);
 }
 static int is_password_class(const char *c) { return !strcmp(c, "genp") || !strcmp(c, "inet"); }
+static int is_identity_class(const char *c) { return !strcmp(c, "idnt"); }
+static int is_stored_class(const char *c) { return is_password_class(c) || is_identity_class(c); }
 static int matches(kitem_t *it, query_t *x) {
     if (!it->used || strcmp(it->cls, x->cls)) return 0;
     for (int i = 0; i < NFIELD; i++) {
@@ -439,7 +444,7 @@ OSStatus SecItemCopyMatching(id_ query, id_ *result) {
     lock(); load();
     parse_query(query, &x);
     if (!x.cls[0]) { unlock(); return errSecParam; }
-    if (!is_password_class(x.cls)) { unlock(); return errSecItemNotFound; }   /* sem chaves/certificados guardados */
+    if (!is_stored_class(x.cls)) { unlock(); return errSecItemNotFound; }
     int rd = flag(query, kSecReturnData), ra = flag(query, kSecReturnAttributes), rr = flag(query, kSecReturnRef);
     int rp = flag(query, kSecReturnPersistentRef);
     id_ lim = CFDictionaryGetValue(query, K_(kSecMatchLimit));
@@ -470,8 +475,21 @@ OSStatus SecItemAdd(id_ attrs, id_ *result) {
     lock(); load();
     parse_query(attrs, &x);
     if (!x.cls[0]) { unlock(); return errSecParam; }
-    if (!is_password_class(x.cls)) { unlock(); return errSecUnimplemented; }   /* chaves/certificados: ainda não */
-    for (int i = 0; i < nitems; i++) if (same_identity(&items[i], x.cls, &x)) { unlock(); return errSecDuplicateItem; }
+    if (!is_stored_class(x.cls)) { unlock(); return errSecUnimplemented; }   /* chaves e certificados soltos: ainda não */
+    u32 idn = 0;
+    const u8 *idb = val_bytes(CFDictionaryGetValue(attrs, K_(kSecValueData)), &idn);
+    if (is_identity_class(x.cls)) {
+        if (!idb || idn < 2 || idb[0] != 0x30) { unlock(); return errSecParam; }
+        for (int i = 0; i < nitems; i++) {
+            kitem_t *it = &items[i];
+            if (it->used && is_identity_class(it->cls) && it->dlen == idn && it->data && !memcmp(it->data, idb, idn)) {
+                unlock();
+                return errSecDuplicateItem;
+            }
+        }
+    } else {
+        for (int i = 0; i < nitems; i++) if (same_identity(&items[i], x.cls, &x)) { unlock(); return errSecDuplicateItem; }
+    }
     kitem_t *it = new_item();
     if (!it) { unlock(); return errSecAllocate; }
     memcpy(it->cls, x.cls, 5);
@@ -498,7 +516,7 @@ OSStatus SecItemUpdate(id_ query, id_ changes) {
     lock(); load();
     parse_query(query, &x);
     if (!x.cls[0]) { unlock(); return errSecParam; }
-    if (!is_password_class(x.cls)) { unlock(); return errSecItemNotFound; }
+    if (!is_stored_class(x.cls)) { unlock(); return errSecItemNotFound; }
     parse_query(changes, &c);
     id_ nd = CFDictionaryGetValue(changes, K_(kSecValueData));
     int n = 0;
@@ -520,7 +538,7 @@ OSStatus SecItemDelete(id_ query) {
     lock(); load();
     parse_query(query, &x);
     if (!x.cls[0]) { unlock(); return errSecParam; }
-    if (!is_password_class(x.cls)) { unlock(); return errSecItemNotFound; }
+    if (!is_stored_class(x.cls)) { unlock(); return errSecItemNotFound; }
     int n = 0;
     for (int i = 0; i < nitems; i++) if (matches(&items[i], &x)) { free_item(&items[i]); n++; }
     OSStatus st = n ? save() : errSecItemNotFound;
@@ -793,8 +811,57 @@ OSStatus SecKeyRawSign(id_ k, u32 pad, const u8 *d, size_t dl, u8 *sig, size_t *
 OSStatus SecKeyRawVerify(id_ k, u32 pad, const u8 *d, size_t dl, const u8 *sig, size_t sl) { (void)k; (void)pad; (void)d; (void)dl; (void)sig; (void)sl; return errSecUnimplemented; }
 OSStatus SecKeyEncrypt(id_ k, u32 pad, const u8 *p, size_t pl, u8 *c, size_t *cl) { (void)k; (void)pad; (void)p; (void)pl; (void)c; if (cl) *cl = 0; return errSecUnimplemented; }
 OSStatus SecKeyDecrypt(id_ k, u32 pad, const u8 *c, size_t cl, u8 *p, size_t *pl) { (void)k; (void)pad; (void)c; (void)cl; (void)p; if (pl) *pl = 0; return errSecUnimplemented; }
-OSStatus SecIdentityCopyCertificate(id_ ident, id_ *cert) { (void)ident; if (cert) *cert = 0; return errSecUnimplemented; }
-OSStatus SecIdentityCopyPrivateKey(id_ ident, id_ *key) { (void)ident; if (key) *key = 0; return errSecUnimplemented; }
+static kitem_t *identity_from_ref(id_ ref) {
+    kitem_t *it = item_from_ref(ref);
+    return it && is_identity_class(it->cls) ? it : 0;
+}
+OSStatus SecIdentityCreateWithCertificate(void *kc, id_ cert, id_ *ident) {
+    (void)kc;
+    if (ident) *ident = 0;
+    if (!cert || CFGetTypeID(cert) != CFDataGetTypeID()) return errSecParam;
+    const u8 *b = CFDataGetBytePtr(cert);
+    long n = CFDataGetLength(cert);
+    if (!b || n < 2 || b[0] != 0x30) return errSecParam;
+    lock(); load();
+    kitem_t *found = 0;
+    for (int i = 0; i < nitems; i++) {
+        kitem_t *it = &items[i];
+        if (!it->used || !is_identity_class(it->cls)) continue;
+        if (it->dlen == (u32)n && it->data && !memcmp(it->data, b, (size_t)n)) { found = it; break; }
+    }
+    id_ ref = found ? item_ref(found) : 0;
+    unlock();
+    if (!found) return errSecItemNotFound;
+    if (ident) *ident = ref;
+    else if (ref) CFRelease(ref);
+    return errSecSuccess;
+}
+OSStatus SecIdentityCopyCertificate(id_ ident, id_ *cert) {
+    if (cert) *cert = 0;
+    lock(); load();
+    kitem_t *it = identity_from_ref(ident);
+    id_ c = it && it->data && it->dlen ? cx_data_new(it->data, it->dlen) : 0;
+    unlock();
+    if (!it) return errSecParam;
+    if (!c) return errSecItemNotFound;
+    if (cert) *cert = c;
+    else CFRelease(c);
+    return errSecSuccess;
+}
+/* A chave é o CFData de kSecAttrGeneric. Não é um SecKey: SecKeyCreateSignature continua sem implementação. */
+OSStatus SecIdentityCopyPrivateKey(id_ ident, id_ *key) {
+    if (key) *key = 0;
+    lock(); load();
+    kitem_t *it = identity_from_ref(ident);
+    int has = it && it->f[F_GENA] && it->fl[F_GENA];
+    id_ k = has ? cx_data_new(it->f[F_GENA], it->fl[F_GENA]) : 0;
+    unlock();
+    if (!it) return errSecParam;
+    if (!k) return errSecItemNotFound;
+    if (key) *key = k;
+    else CFRelease(k);
+    return errSecSuccess;
+}
 id_ SecIdentityCopyPreferred(id_ name, id_ usage, id_ names) { (void)name; (void)usage; (void)names; return 0; }
 OSStatus SecIdentitySetPreferred(id_ ident, id_ name, id_ usage) { (void)ident; (void)name; (void)usage; return errSecUnimplemented; }
 OSStatus SecPKCS12Import(id_ data, id_ opts, id_ *items_) { (void)data; (void)opts; if (items_) *items_ = 0; return errSecUnimplemented; }

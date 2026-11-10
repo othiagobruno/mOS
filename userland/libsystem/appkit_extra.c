@@ -28,6 +28,7 @@ void *memcpy(void *d, const void *s, size_t n);
 int strcmp(const char *a, const char *b);
 const u32 *cx_nsimage_pixels(id img, int *w, int *h);
 u32 cx_menu_item_action(id item);
+void cx_menu_tab_forget(id item);
 id objc_retain(id o);
 void objc_release(id o);
 id objc_autorelease(id o);
@@ -189,9 +190,9 @@ static void status_publish(id it) {
     menu = (id)cx_sb_menu(it);
     cnt = menu ? MSG0(i64, menu, "numberOfItems") : 0;
     if (cnt < 0) cnt = 0;
-    if (cnt > 16) cnt = 16;
+    if (cnt > 64) cnt = 64; /* SB_MENU_MAX */
     nitems = (u32)cnt;
-    need = 28 + tlen + nitems * (12 + 80) + iw * ih * 4 + 8;
+    need = 28 + tlen + nitems * (12 + 80 + 4 + 16 * (12 + 80)) + iw * ih * 4 + 8;
     b = malloc(need);
     if (!b) { free(pix); return; }
     wr32(b, &n, token);
@@ -208,14 +209,43 @@ static void status_publish(id it) {
         int sep = item && MSG0(BOOL, item, "isSeparatorItem");
         int en = item && MSG0(BOOL, item, "isEnabled");
         id lab = item ? MSG0(id, item, "title") : 0;
-        const char *ls = lab && cx_is_str(lab) ? cx_cstr(lab) : "";
+        id attr = item ? MSG0(id, item, "attributedTitle") : 0;
+        id plain = 0, sub = 0;
+        const char *ls;
         u32 llen = 0, act = sep ? 0 : cx_menu_item_action(item), mf = (en ? 0u : 1u) | (sep ? 2u : 0u);
+        i64 nsub = 0, s;
+        if ((!lab || !cx_is_str(lab) || !cx_cstr(lab)[0]) && attr) plain = MSG0(id, attr, "string");
+        ls = plain && cx_is_str(plain) ? cx_cstr(plain) : (lab && cx_is_str(lab) ? cx_cstr(lab) : "");
+        if (item && MSG0(i64, item, "state") == 1) mf |= 4u;
+        sub = item ? MSG0(id, item, "submenu") : 0;
+        if (sub) { nsub = MSG0(i64, sub, "numberOfItems"); if (nsub > 16) nsub = 16; if (nsub < 0) nsub = 0; if (nsub) mf |= 8u; }
         while (ls[llen] && llen < 79) llen++;
         wr32(b, &n, act);
         wr32(b, &n, mf);
         wr32(b, &n, llen);
         if (llen) memcpy(b + n, ls, llen);
         n += llen;
+        if (!nsub) continue;
+        wr32(b, &n, (u32)nsub);
+        for (s = 0; s < nsub; s++) {
+            id ch = MSG(id, sub, "itemAtIndex:", (u64)s);
+            int csep = ch && MSG0(BOOL, ch, "isSeparatorItem");
+            id ct = ch ? MSG0(id, ch, "title") : 0;
+            id ca = ch ? MSG0(id, ch, "attributedTitle") : 0;
+            id cp = 0;
+            const char *cl;
+            u32 clen = 0, cmf = 0, cact = csep ? 0 : cx_menu_item_action(ch);
+            if ((!ct || !cx_is_str(ct) || !cx_cstr(ct)[0]) && ca) cp = MSG0(id, ca, "string");
+            cl = cp && cx_is_str(cp) ? cx_cstr(cp) : (ct && cx_is_str(ct) ? cx_cstr(ct) : "");
+            if (ch && !MSG0(BOOL, ch, "isEnabled")) cmf |= 1u;
+            if (ch && MSG0(i64, ch, "state") == 1) cmf |= 4u;
+            while (cl[clen] && clen < 79) clen++;
+            wr32(b, &n, cact);
+            wr32(b, &n, cmf);
+            wr32(b, &n, clen);
+            if (clen) memcpy(b + n, cl, clen);
+            n += clen;
+        }
     }
     if (pix && iw && ih) { memcpy(b + n, pix, iw * ih * 4); n += iw * ih * 4; }
     SYS4(GUI_DEVICE, DEV_STATUS, SB_SET, b, n);
@@ -232,8 +262,8 @@ static void sbb_open_menu(id it) {
         MSG(void, del, "menuWillOpen:", menu);
 }
 
-void cx_status_kernel_click(unsigned id) {
-    id it = (id)cx_sb_by_token((int)id);
+void cx_status_kernel_click(unsigned tok) {
+    id it = (id)cx_sb_by_token((int)tok);
     if (!it) return;
     sbb_open_menu(it);
     status_publish(it);
@@ -281,9 +311,21 @@ static id sb_item(id self, SEL c, double len) {
     status_publish(it);
     return objc_autorelease(it);
 }
+static void sb_forget_menu(id menu) {
+    i64 n, i;
+    if (!menu) return;
+    n = MSG0(i64, menu, "numberOfItems");
+    for (i = 0; i < n; i++) {
+        id item = MSG(id, menu, "itemAtIndex:", (u64)i);
+        id sub = item ? MSG0(id, item, "submenu") : 0;
+        cx_menu_tab_forget(item);
+        if (sub) sb_forget_menu(sub);
+    }
+}
 static void sb_remove(id self, SEL c, id it) {
     int token;
     (void)self; (void)c;
+    sb_forget_menu((id)cx_sb_menu(it));
     token = cx_sb_id(it);
     if (cx_sb_unregister(it)) {
         if (token) SYS3(GUI_DEVICE, DEV_STATUS, SB_REMOVE, token);

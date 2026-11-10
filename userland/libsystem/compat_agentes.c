@@ -8,7 +8,8 @@
  *  - ptrace: só PT_DENY_ATTACH (o resto: EPERM, não há depurador no mOS);
  *  - memccpy, ctime_r, nice, __floattidf/__floatuntidf (int128 -> double, do compiler-rt);
  *  - CFTimeZoneCopyDefault, CTFontDescriptorCreateWithNameAndSize;
- *  - FSEvents: as variantes por dispositivo e as consultas do fluxo (o fluxo de cli.c nunca dispara);
+ *  - FSEvents: o fluxo que entrega eventos é fsevents.c. Aqui ficam o atalho por dispositivo
+ *    (um volume só) e as consultas que não têm journal;
  *  - IOHIDManager (sem dispositivos HID), classes vazias de MapKit/Contacts em vscode_fwclasses.c;
  *  - SecTrustSettingsSet/RemoveTrustSettings: o mOS não grava confiança do usuário (errSecUnimplemented).
  */
@@ -123,19 +124,15 @@ id_ CTFontDescriptorCreateWithNameAndSize(id_ name, double size) {
     return CTFontDescriptorCreateWithAttributes(d);
 }
 
-/* ---- FSEvents (o fluxo é o de cli.c) */
+/* ---- FSEvents: entrega em fsevents.c. O mOS tem um volume (st_dev 0x1000002), então o device é ignorado. */
 void *FSEventStreamCreate(void *alloc, void *cb, void *ctx, id_ paths, u64 since, double latency, u32 flags);
 void *FSEventStreamCreateRelativeToDevice(void *alloc, void *cb, void *ctx, long dev, id_ paths, u64 since, double latency,
                                           u32 flags) {
-    (void)dev;
+    (void)dev; /* STUB de volume: não há UUID nem journal por dispositivo */
     return FSEventStreamCreate(alloc, cb, ctx, paths, since, latency, flags);
 }
-id_ CFArrayCreateMutable(void *alloc, long cap, const void *cb);
-id_ CFStringCreateWithCString(void *alloc, const char *s, u32 enc);
-id_ FSEventStreamCopyPathsBeingWatched(void *s) { (void)s; return CFArrayCreateMutable(0, 0, 0); }
-id_ FSEventStreamCopyDescription(void *s) { (void)s; return CFStringCreateWithCString(0, "FSEventStream (mOS: sem eventos)", 0x08000100); }
-id_ FSEventsCopyUUIDForDevice(long dev) { (void)dev; return 0; }
-u64 FSEventsGetLastEventIdForDeviceBeforeTime(long dev, double t) { (void)dev; (void)t; return 0; }
+id_ FSEventsCopyUUIDForDevice(long dev) { (void)dev; return 0; } /* STUB: o VFS não tem UUID de volume */
+u64 FSEventsGetLastEventIdForDeviceBeforeTime(long dev, double t) { (void)dev; (void)t; return 0; } /* STUB: sem journal */
 
 /* ---- DiskArbitration: os dicionários de filtro prontos (CFDictionaryRef). NULL = "todos os discos", o que o
  * DARegister*Callback do mOS faria de qualquer forma (ele nunca chama de volta: não há discos removíveis) */

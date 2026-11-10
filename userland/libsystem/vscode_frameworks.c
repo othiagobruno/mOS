@@ -233,11 +233,7 @@ void *CGEventTapCreate(int tap, int place, int opts, u64 mask, void *cb, void *i
 void CGEventTapEnable(void *tap, u8 enable) { (void)tap; (void)enable; }
 /* captura de tela: sem permissão (o macOS devolve NULL nesse caso) */
 void *CGWindowListCreateImageFromArray(cg_rect_t r, id arr, u32 img) { (void)r; (void)arr; (void)img; return 0; }
-void *CGDisplayStreamCreate(u32 d, size_t w, size_t h, int fmt, id props, void *handler) { (void)d; (void)w; (void)h; (void)fmt; (void)props; (void)handler; return 0; }
-void *CGDisplayStreamGetRunLoopSource(void *s) { (void)s; return 0; }
-int CGDisplayStreamStart(void *s) { (void)s; return 1001; /* kCGErrorFailure */ }
-int CGDisplayStreamStop(void *s) { (void)s; return 0; }
-const cg_rect_t *CGDisplayStreamUpdateGetRects(void *u, int type, size_t *count) { (void)u; (void)type; if (count) *count = 0; return 0; }
+/* CGDisplayStream: cgdisplaystream.c, quadros reais via DEV_SCREEN_CAPTURE. */
 /* kCGWindowListOptionOnScreenOnly=1, AboveWindow=2, BelowWindow=4, IncludingWindow=8 */
 extern const void *kCGWindowNumber, *kCGWindowOwnerPID, *kCGWindowOwnerName, *kCGWindowName;
 extern const void *kCGWindowBounds, *kCGWindowLayer, *kCGWindowIsOnscreen;
@@ -540,7 +536,7 @@ OSStatus LSOpenFromURLSpec(const ls_spec_t *spec, id *launched) {
 }
 /* LSCopyDefaultApplicationURLForURL e as outras consultas de quem abre o quê: openurl.c */
 /* LSSetDefaultHandlerForURLScheme: openurl.c (banco do Launch Services no kernel) */
-u8 FSEventStreamSetExclusionPaths(void *s, id paths) { (void)s; (void)paths; return 1; }
+/* FSEventStreamSetExclusionPaths: fsevents.c */
 /* Apple Events: registro aceito; não há outro app para conversar */
 typedef struct { u32 type; void *data; } ae_desc_t;
 OSStatus AEInstallEventHandler(u32 cls_, u32 id_, void *handler, i64 refcon, u8 sys) { (void)cls_; (void)id_; (void)handler; (void)refcon; (void)sys; return 0; }

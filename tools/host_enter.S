@@ -1,6 +1,40 @@
-/* mOS — entra no código de usuário (System V) a partir do Windows e volta no exit (tools/machotest.c) */
+/* mOS — entra no código de usuário (System V) e volta no exit (tools/machotest.c).
+ * Windows x64: rcx = entrada, rdx = rdi do app, r8 = rsp do app.
+ * Linux SysV:  rdi = entrada, rsi = rdi do app, rdx = rsp do app. */
     .text
     .globl host_enter
+#if defined(__linux__)
+host_enter:
+    push %rbp
+    push %rbx
+    push %r12
+    push %r13
+    push %r14
+    push %r15
+    mov %rsp, host_saved_rsp(%rip)
+    mov %rdi, %rax
+    mov %rsi, %rdi
+    mov %rdx, %rsp
+    jmp *%rax
+
+    .globl host_exit
+host_exit:
+    mov host_saved_rsp(%rip), %rsp
+    pop %r15
+    pop %r14
+    pop %r13
+    pop %r12
+    pop %rbx
+    pop %rbp
+    ret
+
+    .globl host_jump
+host_jump:
+    mov %rdi, %rax
+    mov %rsi, %rdi
+    mov %rdx, %rsp
+    jmp *%rax
+#else
 host_enter:                     /* rcx = entrada, rdx = rdi do app, r8 = rsp do app */
     push %rbp
     push %rbx
@@ -55,6 +89,7 @@ host_jump:
     mov %rdx, %rdi
     mov %r8, %rsp
     jmp *%rcx
+#endif
 
     .data
     .globl host_saved_rsp
