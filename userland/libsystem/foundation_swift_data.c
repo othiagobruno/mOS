@@ -30,7 +30,12 @@ void objc_release(id o);
 #include "libc.h"
 id objc_retain(id o);
 void objc_release(id o);
-extern cx_class_t NSData_c, NSURL_c, NSArray_c, NSMutableArray_c, NSDictionary_c, NSMutableDictionary_c;
+extern cx_class_t NSData_c __asm__("OBJC_CLASS_$_NSData");
+extern cx_class_t NSURL_c __asm__("OBJC_CLASS_$_NSURL");
+extern cx_class_t NSArray_c __asm__("OBJC_CLASS_$_NSArray");
+extern cx_class_t NSMutableArray_c __asm__("OBJC_CLASS_$_NSMutableArray");
+extern cx_class_t NSDictionary_c __asm__("OBJC_CLASS_$_NSDictionary");
+extern cx_class_t NSMutableDictionary_c __asm__("OBJC_CLASS_$_NSMutableDictionary");
 #endif
 
 typedef struct { uint64_t w0, w1; } swstr;
@@ -409,7 +414,7 @@ id fdn_array_from_ns(id a) {
     buf->cap = n;
     for (i = 0; i < n; i++)
         ((id *)buf->el)[i] = MSG(id, a, "objectAtIndex:", (long)i);
-    return buf;
+    return (id)buf;
 }
 
 static id fdn_set_pair(id d, id key, id val) {
