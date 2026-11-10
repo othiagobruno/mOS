@@ -201,17 +201,37 @@ static long threadctl_getstate(long tid, u64 out) {
 
 static void fork_child(rt_thread_t *T) {
     g_tlock = 0;
-    for (int i = 0; i < RT_MAX_THREADS; i++)
-        if (g_threads[i] && g_threads[i] != T) g_threads[i]->state = 0;   /* as outras threads não existem no filho */
+    u64 now = (u64)RS0(SYS_TIME);
+    for (int i = 0; i < RT_MAX_THREADS; i++) {
+        rt_thread_t *O = g_threads[i];
+        if (!O || O == T || !O->state) continue;
+        /* só a thread que chamou fork existe no filho; a pilha do host das outras pode ser reusada depois da carência */
+        O->state = 0;
+        O->pend = 0;
+        O->fault_pending = 0;
+        O->cpu.excl_valid = 0;
+        O->freed_ms = now;
+    }
     T->tid = RS0(SYS_GETTID);
-    rt_sig_fork_child();
-    /* no filho as páginas protegidas pelo JIT viraram COW (o kernel não avisa quando a cópia é quebrada): todas as
-     * traduções saem e voltam, já protegidas de novo, na próxima execução. Antes, o JIT solta travas e estado das
-     * threads que não existem no filho. */
+    T->pend = 0;                       /* POSIX: o filho não herda sinal pendente */
+    T->fault_pending = 0;
+    T->in_guest = 0;
+    T->cpu.excl_valid = 0;             /* a exceção do fork limpa o monitor local */
+    rt_sig_fork_child();               /* disposição e sigaltstack já vieram na cópia; solta a trava */
 #ifdef A64_HAVE_JIT
+    /* cache JIT copiado (COW). O kernel mantém PTE_JWP e entrega SIGBUS na primeira escrita de cada lado,
+     * então a rede de SMC continua sem esvaziar o código já traduzido. */
     a64_jit_fork_child(&T->cpu);
 #endif
-    a64_invalidate(0, ~0ULL);
+}
+
+/* fork e vfork (o vfork do mOS é um fork de verdade: o filho tem espaço próprio). O monitor exclusivo
+ * sai antes da syscall, para o pai e a cópia do filho nascerem limpos. */
+static long rt_do_fork(rt_thread_t *T) {
+    T->cpu.excl_valid = 0;
+    long r = RS0(SYS_FORK);
+    if (r == 0) fork_child(T);
+    return r;
 }
 
 /* diagnóstico para a frente JIT (com MOS_A64_DEBUG / A64RT_DIR/depurar): as instruções que o código gerado manda ao
@@ -273,9 +293,7 @@ static void mos_svc(rt_thread_t *T) {
         if (a == MOS_THR_GETSTATE) { c->x[0] = (u64)threadctl_getstate((long)b, d); return; }
         break;
     case SYS_FORK:
-        r = RS0(SYS_FORK);
-        if (r == 0) fork_child(T);
-        c->x[0] = (u64)r;
+        c->x[0] = (u64)rt_do_fork(T);
         return;
     }
     if (rt_debug > 1) rt_log("a64rt[%d]: svc %ld (%lx, %lx, %lx, %lx) pc=%lx\n", (int)T->tid, n, a, b, d, e, c->pc - 4);
@@ -321,6 +339,7 @@ static void darwin_svc(rt_thread_t *T) {
     case 1: RS1(SYS_EXIT, c->x[0]); for (;;) {}
     case 3: r = RS3(SYS_READ, c->x[0], c->x[1], c->x[2]); break;
     case 4: r = RS3(SYS_WRITE, c->x[0], c->x[1], c->x[2]); break;
+    case 2: case 66: r = rt_do_fork(T); break;         /* fork e vfork (vfork = fork com espaço próprio) */
     case 20: r = RS0(SYS_GETPID); break;
     case 37: r = RS2(SYS_SIGKILL, c->x[0], sig_darwin_to_mos((int)c->x[1])); break;
     case 372: r = RS0(SYS_GETTID); break;              /* thread_selfid */
