@@ -740,3 +740,9 @@ int uncaught1(void) __asm__("_ZSt18uncaught_exceptionv");
 int uncaught1(void) { return g_uncaught > 0; }
 int uncaughtn(void) __asm__("_ZSt19uncaught_exceptionsv");
 int uncaughtn(void) { return g_uncaught; }
+
+/* unw_alias.S salta para este nome. O libunwind do zig não entra mais no link do x86_64. */
+int __unw_getcontext(void *ctx) {
+    if (ctx) memset(ctx, 0, 2048);
+    return 0;
+}
