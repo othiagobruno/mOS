@@ -1,9 +1,17 @@
+/* Freestanding: o SQLite inclui <ctype.h>. Sem a libc do host. */
 #pragma once
-#define isspace(c) ((c)==' '||(c)=='\t'||(c)=='\n'||(c)=='\r'||(c)=='\f'||(c)=='\v')
-#define isdigit(c) ((c)>='0'&&(c)<='9')
-#define isalpha(c) (((c)|32)>='a'&&((c)|32)<='z')
-#define isalnum(c) (isalpha(c)||isdigit(c))
-#define isxdigit(c) (isdigit(c)||(((c)|32)>='a'&&((c)|32)<='f'))
-#define tolower(c) (isalpha(c)?((c)|32):(c))
-#define toupper(c) (isalpha(c)?((c)&~32):(c))
-#define isprint(c) ((c)>=32&&(c)<127)
+static inline int isspace(int c) {
+    return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f';
+}
+static inline int isdigit(int c) { return c >= '0' && c <= '9'; }
+static inline int isalpha(int c) { return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'); }
+static inline int isalnum(int c) { return isalpha(c) || isdigit(c); }
+static inline int isxdigit(int c) {
+    return isdigit(c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+}
+static inline int islower(int c) { return c >= 'a' && c <= 'z'; }
+static inline int isupper(int c) { return c >= 'A' && c <= 'Z'; }
+static inline int tolower(int c) { return isupper(c) ? c - 'A' + 'a' : c; }
+static inline int toupper(int c) { return islower(c) ? c - 'a' + 'A' : c; }
+static inline int isprint(int c) { return c >= 0x20 && c <= 0x7e; }
+static inline int iscntrl(int c) { return (c >= 0 && c < 0x20) || c == 0x7f; }

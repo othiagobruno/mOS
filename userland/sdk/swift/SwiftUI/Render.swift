@@ -104,6 +104,13 @@ func place(_ n: Node, _ x: Double, _ y: Double, _ w: Double, _ h: Double) {
     case .zstack:
         for c in n.children {
             if c.kind == .tap { place(c, x, y, w, h); continue }   // área clicável cobre o conjunto
+            if c.placeholder == "popover" {
+                var px = 0.0, py = 0.0, pw = 0.0, ph = 0.0
+                let aw = min(80.0, w), ah = min(24.0, h)
+                mos_sui_popover_frame(x, y, aw, ah, 160, 72, x, y, w, h, &px, &py, &pw, &ph)
+                place(c, px, py, pw, ph)
+                continue
+            }
             let s = size(c, w, h)
             let cw = flexible(c, vertical: false) ? w : min(s.0, w), ch = flexible(c, vertical: true) ? h : min(s.1, h)
             place(c, x + (w - cw) / 2, y + (h - ch) / 2, cw, ch)

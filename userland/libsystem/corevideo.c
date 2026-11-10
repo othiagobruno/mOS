@@ -196,6 +196,9 @@ extern u64 IOSurfaceGetPlaneCount(id), IOSurfaceGetWidthOfPlane(id, u64), IOSurf
 extern u32 IOSurfaceGetPixelFormat(id);
 extern int IOSurfaceLock(id, u32, u32 *), IOSurfaceUnlock(id, u32, u32 *);
 extern const void *kIOSurfaceWidth, *kIOSurfaceHeight, *kIOSurfacePixelFormat, *kIOSurfaceBytesPerElement;
+extern const void *kIOSurfacePlaneInfo, *kIOSurfacePlaneWidth, *kIOSurfacePlaneHeight;
+extern const void *kIOSurfacePlaneBytesPerElement, *kIOSurfacePlaneBytesPerRow, *kIOSurfacePlaneOffset;
+extern const void *kIOSurfacePlaneSize, *kIOSurfacePlaneElementWidth, *kIOSurfacePlaneElementHeight;
 
 u64 CVPixelBufferGetTypeID(void) { return 0x2C0; }
 static u64 pb_typeid(id self, SEL c) { (void)self; (void)c; return CVPixelBufferGetTypeID(); }
@@ -222,11 +225,35 @@ int CVPixelBufferCreateWithIOSurface(void *alloc, id surf, id attrs, cvpb_t **ou
     *out = pb_wrap(surf);
     return kCVReturnSuccess;
 }
+static id plane_dict(u32 w, u32 h, u32 bpe, u32 ew, u32 eh, u64 bpr, u64 off) {
+    id d = MSG0(id, (id)cx_class_named("NSMutableDictionary"), "dictionary");
+    MSG(void, d, "setObject:forKey:", cx_num_i(w), (id)kIOSurfacePlaneWidth);
+    MSG(void, d, "setObject:forKey:", cx_num_i(h), (id)kIOSurfacePlaneHeight);
+    MSG(void, d, "setObject:forKey:", cx_num_i(bpe), (id)kIOSurfacePlaneBytesPerElement);
+    MSG(void, d, "setObject:forKey:", cx_num_i(ew), (id)kIOSurfacePlaneElementWidth);
+    MSG(void, d, "setObject:forKey:", cx_num_i(eh), (id)kIOSurfacePlaneElementHeight);
+    MSG(void, d, "setObject:forKey:", cx_num_i((i64)bpr), (id)kIOSurfacePlaneBytesPerRow);
+    MSG(void, d, "setObject:forKey:", cx_num_i((i64)off), (id)kIOSurfacePlaneOffset);
+    MSG(void, d, "setObject:forKey:", cx_num_i((i64)(bpr * h)), (id)kIOSurfacePlaneSize);
+    return d;
+}
 static id surf_props(u32 w, u32 h, u32 fmt) {
     id d = MSG0(id, (id)cx_class_named("NSMutableDictionary"), "dictionary");
     MSG(void, d, "setObject:forKey:", cx_num_i(w), (id)kIOSurfaceWidth);
     MSG(void, d, "setObject:forKey:", cx_num_i(h), (id)kIOSurfaceHeight);
     MSG(void, d, "setObject:forKey:", cx_num_i(fmt), (id)kIOSurfacePixelFormat);
+    if ((fmt == 0x34323076 || fmt == 0x34323066) && (w & 1) == 0 && (h & 1) == 0) {
+        u64 ybpr = (w + 63u) & ~63u;
+        u64 uvbpr = (w + 63u) & ~63u;
+        id y = plane_dict(w, h, 1, 1, 1, ybpr, 0);
+        id uv = plane_dict(w / 2, h / 2, 2, 2, 1, uvbpr, ybpr * h);
+        id arr = MSG0(id, (id)cx_class_named("NSMutableArray"), "array");
+        if (arr && y && uv) {
+            MSG(void, arr, "addObject:", y);
+            MSG(void, arr, "addObject:", uv);
+            MSG(void, d, "setObject:forKey:", arr, (id)kIOSurfacePlaneInfo);
+        }
+    }
     return d;
 }
 int CVPixelBufferCreate(void *alloc, u64 w, u64 h, u32 fmt, id attrs, cvpb_t **out) {

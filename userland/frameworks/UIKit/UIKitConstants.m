@@ -28,6 +28,10 @@ const CGFloat UIWindowLevelStatusBar = 1000;
 const CGFloat UIWindowLevelAlert = 2000;
 const CGFloat UINavigationControllerHideShowBarDuration = 0.33;
 const NSUInteger UIBackgroundTaskInvalid = 0;
+/* UIUserInterfaceIdiom: Mac é 5 (Catalyst "Optimized for Mac"). Apps importam o símbolo. */
+const NSInteger UIUserInterfaceIdiomUnspecified = -1, UIUserInterfaceIdiomPhone = 0, UIUserInterfaceIdiomPad = 1,
+                UIUserInterfaceIdiomTV = 2, UIUserInterfaceIdiomCarPlay = 3, UIUserInterfaceIdiomMac = 5,
+                UIUserInterfaceIdiomVision = 6;
 
 const CGFloat UIFontWeightUltraLight = -0.8, UIFontWeightThin = -0.6, UIFontWeightLight = -0.4, UIFontWeightRegular = 0,
               UIFontWeightMedium = 0.23, UIFontWeightSemibold = 0.3, UIFontWeightBold = 0.4, UIFontWeightHeavy = 0.56,

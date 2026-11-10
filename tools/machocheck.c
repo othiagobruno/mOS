@@ -7,10 +7,9 @@
  * imagem Mach-O x86_64 (chained fixups ou dyld_info) e os exports (export trie), e resolve
  * cada import como o mOS resolveria: primeiro nas imagens do proprio bundle, depois no
  * libSystem.mos (mesma regra de nomes do kernel/compat/macho.c: tira o "_" e a variante "$...").
- * --disco aponta a libc++, as libswift*, a libunwind, a libz e o CryptoKit do build ou da
- * imagem (um diretorio vasculhado, ou o arquivo em si). Os exports entram na resolucao, como
- * o carregador le /usr/lib/libc++.1.dylib, /usr/lib/swift/libswift*.dylib, /usr/lib/libz.1.dylib
- * e /System/Library/Frameworks/CryptoKit.framework/Versions/A/CryptoKit do disco, e como o
+ * --disco aponta a libc++, as libswift*, a libunwind, a libz, a libcurl, a libcompression
+ * e o CryptoKit do build ou da imagem (um diretorio vasculhado, ou o arquivo em si).
+ * Os exports entram na resolucao, como o carregador le essas bibliotecas do disco, e como o
  * libunwind entra no libSystem quando os objetos de build/libunwind-x86 sao ligados.
  * A libz nao e reimplementada aqui: vale a dylib do build-zlib.ps1. O CryptoKit vale o
  * framework compilado de userland/frameworks/CryptoKit, nao a trie de tools/ckhost/mkexports.py.
@@ -224,9 +223,9 @@ static int load_libsystem(const char *path) {
 }
 
 /* ---------------------------------------------------------------- bibliotecas que o carregador le do disco */
-static set_t disk_cxx, disk_swift, disk_unwind, disk_z, disk_ck, swift_lidas;
-static u32 cxx_files, swift_files, uw_files, z_files, ck_files;
-static u32 cxx_syms, swift_syms, uw_syms, z_syms, ck_syms;
+static set_t disk_cxx, disk_swift, disk_unwind, disk_z, disk_ck, disk_usr, swift_lidas;
+static u32 cxx_files, swift_files, uw_files, z_files, ck_files, usr_files;
+static u32 cxx_syms, swift_syms, uw_syms, z_syms, ck_syms, usr_syms;
 static int disco_faltou;
 static dev_t seen_dev[8192];
 static ino_t seen_ino[8192];
@@ -237,7 +236,7 @@ static int sufixo(const char *s, const char *suf) {
     return n >= m && !memcmp(s + n - m, suf, m);
 }
 
-/* 1 = libc++, 2 = Swift, 3 = libunwind, 4 = libz, 5 = CryptoKit, 0 = outro */
+/* 1 = libc++, 2 = Swift, 3 = libunwind, 4 = libz, 5 = CryptoKit, 6 = libcurl/libcompression */
 static int kind_de(const char *path) {
     const char *b = strrchr(path, '/');
     b = b ? b + 1 : path;
@@ -249,6 +248,7 @@ static int kind_de(const char *path) {
     if (!strcmp(b, "libz.1.dylib") || !strcmp(b, "libz.dylib")) return 4;
     /* binario do framework, install name .../CryptoKit.framework/Versions/A/CryptoKit */
     if (!strcmp(b, "CryptoKit")) return 5;
+    if (!strcmp(b, "libcurl.4.dylib") || !strcmp(b, "libcompression.dylib")) return 6;
     return 0;
 }
 
@@ -466,6 +466,7 @@ static void carrega_kind(const char *path, int kind) {
     else if (kind == 3) { dest = &disk_unwind; cnt = &uw_syms; files = &uw_files; }
     else if (kind == 4) { dest = &disk_z; cnt = &z_syms; files = &z_files; }
     else if (kind == 5) { dest = &disk_ck; cnt = &ck_syms; files = &ck_files; }
+    else if (kind == 6) { dest = &disk_usr; cnt = &usr_syms; files = &usr_files; }
     if (carrega_exports(path, dest, cnt)) {
         (*files)++;
         if (kind == 2) set_add(&swift_lidas, strrchr(path, '/') ? strrchr(path, '/') + 1 : path);
@@ -502,7 +503,7 @@ static void carrega_disco(const char *path) {
     if (stat(path, &st)) { fprintf(stderr, "disco: caminho inexistente: %s\n", path); disco_faltou = 1; return; }
     if (S_ISREG(st.st_mode)) {
         int k = kind_de(path);
-        if (!k) { fprintf(stderr, "disco: %s nao e libc++, libswift*, libunwind, libz nem CryptoKit\n", path); disco_faltou = 1; return; }
+        if (!k) { fprintf(stderr, "disco: %s nao e libc++, libswift*, libunwind, libz, libcurl, libcompression nem CryptoKit\n", path); disco_faltou = 1; return; }
         carrega_kind(path, k);
         return;
     }
@@ -512,7 +513,7 @@ static void carrega_disco(const char *path) {
 
 static int no_disco(const char *mname) {
     return set_has(&disk_cxx, mname) || set_has(&disk_swift, mname) || set_has(&disk_unwind, mname)
-        || set_has(&disk_z, mname) || set_has(&disk_ck, mname);
+        || set_has(&disk_z, mname) || set_has(&disk_ck, mname) || set_has(&disk_usr, mname);
 }
 
 /* mesma regra do ls_lookup do kernel */
@@ -532,6 +533,11 @@ static int in_libsystem(const char *mname) {
  * Security, CFNetwork, SystemConfiguration, CoreServices, IOKit e LocalAuthentication). */
 static int sys_ok(const char *n) {
     if (!strcmp(n, "(flat/self)")) return 1;
+    if (!strncmp(n, "/System/iOSSupport", 18)) n += 18;
+    if (!strncmp(n, "/usr/lib/swift/libswift", 22)) return 1;
+    if (!strcmp(n, "/usr/lib/libz.1.dylib") || !strcmp(n, "/usr/lib/libcurl.4.dylib") ||
+        !strcmp(n, "/usr/lib/libcompression.dylib") || !strcmp(n, "/usr/lib/libsqlite3.dylib") ||
+        !strcmp(n, "/usr/lib/libxml2.2.dylib")) return 1;
     if (set_has(&swift_lidas, strrchr(n, '/') ? strrchr(n, '/') + 1 : n)) return 1;
     static const char *ok[] = {
         "/usr/lib/libSystem.B.dylib", "/usr/lib/libSystem.dylib", "/usr/lib/libc.dylib",
@@ -540,6 +546,7 @@ static int sys_ok(const char *n) {
         "/usr/lib/libresolv.9.dylib", "/usr/lib/libicucore.A.dylib",
         "/usr/lib/libbz2.1.0.dylib", "/usr/lib/libxar.1.dylib",
         "/usr/lib/libc++.1.dylib", "/usr/lib/libc++abi.dylib",
+        "/usr/lib/libz.1.dylib", "/usr/lib/libcurl.4.dylib", "/usr/lib/libcompression.dylib",
     };
     static const char *fw[] = {
         "/usr/lib/libobjc.A.dylib", "/System/Library/Frameworks/Foundation.framework/",
@@ -589,6 +596,66 @@ static int sys_ok(const char *n) {
         "/System/Library/Frameworks/QuickLookUI.framework/",
         "/System/Library/Frameworks/StoreKit.framework/",
         "/System/Library/Frameworks/CoreData.framework/",
+        "/System/Library/Frameworks/WebKit.framework/",
+        "/System/Library/Frameworks/ImageIO.framework/",
+        "/System/Library/Frameworks/CryptoKit.framework/",
+        "/System/Library/Frameworks/UIKit.framework/",
+        "/System/Library/Frameworks/SwiftUI.framework/",
+        "/System/Library/Frameworks/Combine.framework/",
+        "/System/Library/Frameworks/Contacts.framework/",
+        "/System/Library/Frameworks/Photos.framework/",
+        "/System/Library/Frameworks/DeviceCheck.framework/",
+        "/System/Library/Frameworks/Intents.framework/",
+        "/System/Library/Frameworks/BackgroundTasks.framework/",
+        "/System/Library/Frameworks/CoreMotion.framework/",
+        "/System/Library/Frameworks/CoreTelephony.framework/",
+        "/System/Library/Frameworks/EventKit.framework/",
+        "/System/Library/Frameworks/MediaToolbox.framework/",
+        "/System/Library/Frameworks/NaturalLanguage.framework/",
+        "/System/Library/Frameworks/OSLog.framework/",
+        "/System/Library/Frameworks/AVKit.framework/",
+        "/System/Library/Frameworks/CoreAudioKit.framework/",
+        "/System/Library/Frameworks/EventKitUI.framework/",
+        "/System/Library/Frameworks/IntentsUI.framework/",
+        "/System/Library/Frameworks/MapKit.framework/",
+        "/System/Library/Frameworks/MessageUI.framework/",
+        "/System/Library/Frameworks/MobileCoreServices.framework/",
+        "/System/Library/Frameworks/PDFKit.framework/",
+        "/System/Library/Frameworks/PassKit.framework/",
+        "/System/Library/Frameworks/QuickLook.framework/",
+        "/System/Library/Frameworks/Social.framework/",
+        "/System/Library/Frameworks/VisionKit.framework/",
+        "/System/Library/Frameworks/WidgetKit.framework/",
+        "/System/Library/Frameworks/Virtualization.framework/",
+        "/System/Library/Frameworks/CoreSpotlight.framework/",
+        "/System/Library/Frameworks/vmnet.framework/",
+        "/System/Library/Frameworks/ColorSync.framework/",
+        "/System/Library/Frameworks/ScriptingBridge.framework/",
+        "/System/Library/Frameworks/ExtensionKit.framework/",
+        "/System/Library/Frameworks/Charts.framework/",
+        "/System/Library/Frameworks/ARKit.framework/",
+        "/System/Library/Frameworks/PushKit.framework/",
+        "/System/Library/Frameworks/WatchConnectivity.framework/",
+        "/System/Library/Frameworks/ReplayKit.framework/",
+        "/System/Library/Frameworks/_Translation_SwiftUI.framework/",
+        "/System/Library/Frameworks/AdServices.framework/",
+        "/System/Library/Frameworks/NetworkExtension.framework/",
+        "/System/Library/Frameworks/Symbols.framework/",
+        "/System/Library/Frameworks/Speech.framework/",
+        "/System/Library/Frameworks/LinkPresentation.framework/",
+        "/System/Library/Frameworks/FoundationModels.framework/",
+        "/System/Library/Frameworks/CallKit.framework/",
+        "/System/Library/Frameworks/ContactsUI.framework/",
+        "/System/Library/Frameworks/PhotosUI.framework/",
+        "/System/Library/Frameworks/MetricKit.framework/",
+        "/System/Library/Frameworks/CloudKit.framework/",
+        "/System/Library/Frameworks/Translation.framework/",
+        "/System/Library/Frameworks/SceneKit.framework/",
+        "/System/Library/Frameworks/AppIntents.framework/",
+        "/System/Library/Frameworks/ExtensionFoundation.framework/",
+        "/System/Library/Frameworks/MetalPerformanceShaders.framework/",
+        "/System/Library/PrivateFrameworks/AccessibilityPlatformTranslation.framework/",
+        "/Library/Developer/PrivateFrameworks/CoreSimulator.framework/",
         "/System/Library/Frameworks/SafariServices.framework/",
         "/System/Library/Frameworks/ScreenCaptureKit.framework/",
         "/System/Library/Frameworks/SecurityInterface.framework/",
@@ -794,9 +861,9 @@ static int uso(void) {
             "     machocheck --sym <libSystem.mos> <endereco hex>\n"
             "     machocheck --refs <imagem> <endereco hex>\n"
             "--disco: diretorio (ou arquivo) da libc++, das libswift*, da libunwind,\n"
-            "         da libz.1.dylib e do CryptoKit.framework do build ou da imagem.\n"
+            "         da libz, da libcurl, da libcompression e do CryptoKit do build ou da imagem.\n"
             "         Ex.: build/libcxx, build/swift/objc/dylib, build/libunwind-x86,\n"
-            "         build/zlib-x86_64/libz.1.dylib, esp/mOS\n");
+            "         build/zlib-x86_64/libz.1.dylib, build/curl-x86_64, esp/mOS\n");
     return 2;
 }
 
@@ -836,6 +903,7 @@ int main(int argc, char **argv) {
         printf("  unwind: %u arquivo(s), %u simbolos\n", uw_files, uw_syms);
         printf("  libz: %u arquivo(s), %u simbolos\n", z_files, z_syms);
         printf("  CryptoKit: %u arquivo(s), %u simbolos\n", ck_files, ck_syms);
+        printf("  curl/compression: %u arquivo(s), %u simbolos\n", usr_files, usr_syms);
     }
     printf("Imagens Mach-O x86_64 no bundle: %d (exports do bundle: %u)\n\n", nimgs, bundle_exports.n);
     set_t sysdylibs = {0};

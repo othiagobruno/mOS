@@ -39,7 +39,7 @@ CFCONST(kVTProfileLevel_H264_Main_5_0, "H264_Main_5_0")
 #define kVTPropertyNotSupportedErr (-12900)
 
 void *VTCompressionSessionGetPixelBufferPool(void *s) { (void)s; return 0; }
-int VTCompressionSessionPrepareToEncodeFrames(void *s) { (void)s; return kVTCouldNotFindVideoEncoderErr; }
+int VTCompressionSessionPrepareToEncodeFrames(void *s) { (void)s; return 0; }
 int VTCopySupportedPropertyDictionaryForEncoder(int w, int h, u32 codec, id spec, id *props, id *ident) {
     (void)w; (void)h; (void)codec; (void)spec;
     if (props) *props = 0;
