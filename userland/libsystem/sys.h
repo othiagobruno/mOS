@@ -9,13 +9,29 @@ typedef unsigned char u8;
 typedef unsigned short u16;
 typedef unsigned int u32;
 typedef unsigned long long u64;
+typedef unsigned char uint8_t;
+typedef unsigned short uint16_t;
+typedef unsigned int uint32_t;
+typedef unsigned long long uint64_t;
+typedef signed char int8_t;
+typedef short int16_t;
+typedef int int32_t;
+typedef long long int64_t;
+typedef unsigned long uintptr_t;
+typedef long intptr_t;
 typedef signed char i8;
 typedef short i16;
 typedef int i32;
 typedef long long i64;
 typedef unsigned long size_t;
+#ifndef MOS_SSIZE_T_DEFINED
+#define MOS_SSIZE_T_DEFINED
 typedef long ssize_t;
+#endif
+#ifndef MOS_OFF_T_DEFINED
+#define MOS_OFF_T_DEFINED
 typedef long off_t;
+#endif
 typedef unsigned long usize;
 
 #include "../../kernel/include/syscall.h"

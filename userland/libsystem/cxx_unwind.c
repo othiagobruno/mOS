@@ -106,7 +106,7 @@ static u64 enc_read(u8 enc, const u8 **p, u64 base) {
 
 #if UW_NATIVE
 struct uw_ctx {
-    u64 r[17]; const u8 *lsda; u64 region;
+    u64 r[17]; const u8 *lsda; u64 region, cfa, text_base, data_base;
     int (*pers)(int, int, u64, void *, struct uw_ctx *);
     u32 compact_enc; u64 compact_func; int have_compact; int fp_fallback;
     const u8 *fde, *eh; u64 eh_len;
@@ -204,7 +204,6 @@ static int cfi_step(const u8 *cie, const u8 *cie_end, const u8 *fde_init, const 
     }
     if (pc < loc || pc >= loc + range) return 0;
     c->region = loc;
-    if (!apply) return 1;
     enum { SAME, UNDEF, OFF, REG, VAL };
     u8 how[17], cfa_reg = 7; u64 offv[17]; int64_t cfa_off = 8;
     for (int i = 0; i < 17; i++) { how[i] = SAME; offv[i] = 0; }
@@ -244,6 +243,8 @@ static int cfi_step(const u8 *cie, const u8 *cie_end, const u8 *fde_init, const 
         }
     }
     u64 cfa = c->r[cfa_reg] + (u64)cfa_off;
+    c->cfa = cfa;
+    if (!apply) return 1;
     u64 nr[17];
     memcpy(nr, c->r, sizeof nr);
     for (int i = 0; i < 17; i++) {
@@ -477,6 +478,17 @@ static int lookup_compact(u64 pc, const u8 *base, const u8 *sec, struct uw_ctx *
     c->compact_enc = enc;
     c->compact_func = func;
     c->have_compact = (enc & X64_MODE) != X64_DWARF;
+    if (c->have_compact) {
+        u32 mode = enc & X64_MODE;
+        if (mode == X64_RBP) c->cfa = c->r[6] + 16;
+        else if (mode == X64_IMMD || mode == X64_IND) {
+            u32 stack_enc = (enc >> 16) & 0xff;
+            u32 adj = (enc >> 13) & 7;
+            u32 stack = stack_enc * 8;
+            if (mode == X64_IND) stack = *(u32 *)(func + stack_enc) + 8 * adj;
+            c->cfa = c->r[7] + stack;
+        }
+    }
     if ((enc & X64_MODE) == X64_DWARF && eh) *fde_hint = eh + (enc & 0x00ffffffu);
     (void)next_fn;
     return 1;
@@ -491,6 +503,7 @@ static int load_frame(struct uw_ctx *c) {
     struct dyld_uw info;
     memset(&info, 0, sizeof info);
     if (_dyld_find_unwind_sections && _dyld_find_unwind_sections((void *)pc, &info)) {
+        c->text_base = c->data_base = (u64)info.mh;
         const u8 *hint = 0;
         int k = 0;
         if (info.compact) k = lookup_compact(look, (const u8 *)info.mh, (const u8 *)info.compact, c, &hint, (const u8 *)info.dwarf);
@@ -519,6 +532,7 @@ static int load_frame(struct uw_ctx *c) {
     }
     const u8 *eh = 0, *gh = 0; u64 el = 0, gl = 0;
     if (elf_eh(look, &eh, &el, &gh, &gl)) {
+    c->text_base = c->data_base = (u64)__ehdr_start;
     const u8 *fde = hdr_fde(gh, look);
     if (fde && fde_match(fde, (const u8 *)__ehdr_start, (u64)(_end - __ehdr_start), look, c, 0)) {
         c->fde = fde; c->eh = (const u8 *)__ehdr_start; c->eh_len = (u64)(_end - __ehdr_start);
@@ -528,6 +542,7 @@ static int load_frame(struct uw_ctx *c) {
     u64 rbp = c->r[6], rsp = c->r[7];
     if (!rbp || (rbp & 7) || rbp < rsp || rbp - rsp > 0x100000) return 0;
     c->fp_fallback = 1;
+    c->cfa = rbp + 16;
     return 1;
 }
 
@@ -581,6 +596,32 @@ static void unwind_loop(void *exc, int resume) {
 
 int _Unwind_RaiseException(struct uw_exc *e) { unwind_loop(e, 0); return UR_END; }
 void _Unwind_Resume(struct uw_exc *e) { unwind_loop(e, 1); }
+
+void _Unwind_DeleteException(struct uw_exc *e) {
+    if (e && e->cleanup) e->cleanup(1, e);
+}
+
+u64 _Unwind_GetCFA(void *p) { return ((struct uw_ctx *)p)->cfa; }
+u64 _Unwind_GetDataRelBase(void *p) { return ((struct uw_ctx *)p)->data_base; }
+u64 _Unwind_GetTextRelBase(void *p) { return ((struct uw_ctx *)p)->text_base; }
+u64 _Unwind_GetIPInfo(void *p, int *before) {
+    if (before) *before = 0;
+    return ((struct uw_ctx *)p)->r[16];
+}
+
+int _Unwind_Backtrace(int (*cb)(void *, void *), void *arg) {
+    struct uw_ctx cur;
+    memset(&cur, 0, sizeof cur);
+    cx_uw_capture(cur.r);
+    for (int guard = 0; guard < 128; guard++) {
+        if (!cur.r[16] || !load_frame(&cur)) return 5;
+        int rc = cb(&cur, arg);
+        if (rc) return rc;
+        u64 ip0 = cur.r[16];
+        if (!step_frame(&cur) || cur.r[16] == ip0) return 5;
+    }
+    return 5;
+}
 
 #else
 int _Unwind_RaiseException(void *);

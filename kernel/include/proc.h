@@ -92,6 +92,12 @@ typedef struct thread {
     /* thread_suspend do Mach (SYS_THREADCTL): > 0 = suspensa. O escalonador não a escolhe e tira da CPU a que estiver
      * rodando; o coletor do JavaScriptCore suspende as outras threads para ler pilha e registradores */
     u16 suspend;
+    /* filas por núcleo (proc/sched.c): qos 0..4 = classes Darwin; affinity 0 = qualquer CPU */
+    u8 qos;
+    u8 on_rq;
+    u8 rq_cpu;
+    u64 affinity;
+    struct thread *rq_next;
 } thread_t;
 
 /* sessão de terminal: entrada (stdin) e saída (stdout/stderr) de um grupo de processos */
@@ -143,6 +149,9 @@ struct process {
      * a própria sessão. ctty = terminal de controle da sessão (NULL = nenhum) */
     int pgid, sid;
     struct pty *ctty;
+    /* travas da tabela de páginas, 16 faixas de 2 MiB (VA>>21). depth 0 = livre. */
+    struct { volatile u32 lk; int owner; int depth; u64 fl; } vmreg[16];
+    u16 pcid;               /* 1..4095 com PCID; 0 = ainda sem (o escalonador atribui) */
 };
 
 /* ---- portas Mach entre processos (proc/machipc.c) */
@@ -187,6 +196,9 @@ void      thread_exit(void) NORETURN;           /* threads do kernel */
 u64       sched_irq_exit(int_frame_t *f, bool timer);   /* devolve o frame a restaurar */
 u64       sched_switch(int_frame_t *f);         /* a thread atual bloqueou/saiu: escolhe outra */
 void      sched_make_ready(thread_t *t);
+void      sched_set_qos(thread_t *t, unsigned darwin_qos);
+void      sched_set_affinity(thread_t *t, u64 cpu_mask);
+u16       sched_alloc_pcid(void);
 thread_t *sched_threads(void);
 
 /* ---- processos (proc/process.c) */
@@ -227,6 +239,8 @@ bool      elf_load(process_t *p, const u8 *img, usize len, u64 *entry, char *err
 /* ---- memória de usuário (proc/process.c) */
 bool      uvm_map(process_t *p, u64 va, u64 len);       /* páginas de 4 KiB, zeradas, U|RW */
 u64      *uvm_pte(process_t *p, u64 va);               /* NULL se não mapeado */
+bool      gpu_user_map(process_t *p, u64 va, u64 phys, u64 len, int rw);
+bool      gpu_user_unmap(process_t *p, u64 va, u64 len);
 bool      uvm_copy_out(process_t *p, u64 va, const void *src, usize len);
 bool      uvm_copy_in(process_t *p, void *dst, u64 va, usize len);
 

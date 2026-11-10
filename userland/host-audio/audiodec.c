@@ -22,7 +22,6 @@
  */
 #include "sys.h"
 #include "libc.h"
-#include <stdint.h>
 
 #define MINIMP3_IMPLEMENTATION
 #define MINIMP3_NO_SIMD
