@@ -63,7 +63,9 @@ extension CGColor {
     @_alwaysEmitIntoClient public var alpha: CGFloat { CGColorGetAlpha(self) }
     @_alwaysEmitIntoClient public var colorSpace: CGColorSpace? { CGColorGetColorSpace(self)?.takeUnretainedValue() }
     @_alwaysEmitIntoClient public var numberOfComponents: Int { Int(CGColorGetNumberOfComponents(self)) }
-    @_alwaysEmitIntoClient public var components: [CGFloat]? {
+    // Símbolo de dylib (ABI estável). O OpenBot importa este getter de libswiftCoreGraphics;
+    // @_alwaysEmitIntoClient não o exportava.
+    public var components: [CGFloat]? {
         guard let p = CGColorGetComponents(self) else { return nil }
         return Array(UnsafeBufferPointer(start: p, count: numberOfComponents))
     }

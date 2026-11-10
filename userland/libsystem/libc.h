@@ -1,6 +1,10 @@
 /* mOS libSystem — declarações internas compartilhadas entre libc.c e stdio.c */
 #pragma once
 #include <stdarg.h>
+#include <stddef.h>
+#include <stdint.h>
+typedef long ssize_t;
+typedef long off_t;
 
 extern int cx_errno;
 extern char **environ;
