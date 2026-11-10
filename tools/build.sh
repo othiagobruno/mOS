@@ -113,6 +113,10 @@ else
     exit 1
 fi
 
+echo "==> libc++ (LLVM, dylib Mach-O)"
+export ZIG
+bash "$ROOT/tools/build-libcxx.sh"
+
 echo "==> libunwind ($ZIG)"
 UWO="$OUT/libunwind-x86"
 mkdir -p "$UWO"
@@ -324,6 +328,8 @@ fi
 
 echo "==> apps oficiais em /Aplicativos"
 bash "$ROOT/tools/stage-apps-oficiais.sh" "$OUT"
+mkdir -p "$ESP/mOS/usr/lib"
+cp -f "$ROOT/build/libcxx/libc++.1.dylib" "$ESP/mOS/usr/lib/libc++.1.dylib"
 
 KEY=${MOS_CHAVE_ATUALIZACAO:-$ROOT/tools/chave-atualizacao.semente}
 REV=$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo local)
