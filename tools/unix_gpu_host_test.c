@@ -66,19 +66,20 @@ int main(void) {
     r = host_unix_read(fds[1], buf, 8);
     if (r != 1 || buf[0] != 'Y') die("resto", r);
 
+    unlink("/tmp/ux");
     int lfd = (int)host_unix_op(MOS_UNIX_SOCKET, 1, 1 | 0x800, 0);
     if (lfd < 0) die("socket", lfd);
     unsigned char sun[16];
     memset(sun, 0, sizeof sun);
-    sun[0] = 8; sun[1] = 1;
-    memcpy(sun + 2, "/tmp/ux", 6);
-    r = host_unix_op(MOS_UNIX_BIND, (unsigned)lfd, (unsigned long long)sun, 8);
+    sun[0] = 9; sun[1] = 1;
+    memcpy(sun + 2, "/tmp/ux", 7);
+    r = host_unix_op(MOS_UNIX_BIND, (unsigned)lfd, (unsigned long long)sun, 9);
     if (r) die("bind", r);
     r = host_unix_op(MOS_UNIX_LISTEN, (unsigned)lfd, 4, 0);
     if (r) die("listen", r);
     int cfd = (int)host_unix_op(MOS_UNIX_SOCKET, 1, 1, 0);
     if (cfd < 0) die("csock", cfd);
-    r = host_unix_op(MOS_UNIX_CONNECT, (unsigned)cfd, (unsigned long long)sun, 8);
+    r = host_unix_op(MOS_UNIX_CONNECT, (unsigned)cfd, (unsigned long long)sun, 9);
     if (r) die("connect", r);
     int afd = (int)host_unix_op(MOS_UNIX_ACCEPT, (unsigned)lfd, 0, 0);
     if (afd < 0) die("accept", afd);
