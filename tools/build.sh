@@ -219,6 +219,16 @@ if [ -d "$ROOT/userland/cli-macos" ]; then
     done
 fi
 
+echo "==> a64rt (tradutor dos binários darwin-arm64)"
+A64SRC=()
+while IFS= read -r f; do A64SRC+=("$f"); done < <(find "$ROOT/userland/a64" "$ROOT/userland/a64rt" -type f \( -name '*.c' -o -name '*.S' \) | sort)
+mkdir -p "$ESP/mOS/Sistema/Biblioteca/a64"
+"$ZIG" cc -target x86_64-freestanding-none -O2 -g0 -ffreestanding -fno-stack-protector -nostdlib -static -no-pie -fpie \
+    -mcx16 -Wall -Wno-unused-function -Wno-unused-parameter -fno-strict-aliasing \
+    -DA64_RUNTIME_MOS -DA64_HAVE_JIT -I"$ROOT/userland/a64" -I"$ROOT/userland/a64rt" \
+    -Wl,--image-base=0x400041000000 -Wl,-e,_start \
+    "${A64SRC[@]}" -o "$ESP/mOS/Sistema/Biblioteca/a64/a64rt.mos"
+
 echo "==> libswift"
 if [ -f "$ROOT/build/universal-swift/usr/lib/swift/libswiftCore.dylib" ]; then
     cp -a "$ROOT/build/universal-swift/." "$ESP/mOS/"
