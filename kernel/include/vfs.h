@@ -8,6 +8,7 @@ typedef struct vnode {
     u8 *data;
     usize size, cap;
     u64 mtime;          /* ms desde o boot (ou 0 = arquivo do pendrive) */
+    unsigned mode;      /* permissão; bit 0x10000 = foi gravada (open/chmod) */
     struct vnode *parent, *child, *next;
     void *ext;          /* nó de um sistema de arquivos externo (ex.: volume .dmg), carregado sob demanda */
     bool dirty;         /* alterado e ainda não gravado no disco do sistema (fs/persist.c) */

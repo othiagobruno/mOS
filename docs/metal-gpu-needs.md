@@ -27,8 +27,10 @@ continua o interpretador de `mtlexec.c`.
 Quando `MOS_GPU_CAP_VIRGL` ou `MOS_GPU_CAP_VENUS` estiver ligado, o `-commit`
 de um compute pode chamar `MOS_GPU_SUBMIT` com `MOS_GPU_SUBMIT_3D`. O lote é
 o da revisão 2: cabeçalho, tabela de handles, relocs e os comandos
-`BIND` / `SHADER` / `DISPATCH` em `mos_gpu.h`. Sem o cap o kernel valida e
-sinaliza a fence, e não executa o shader.
+`BIND` / `SHADER` / `DISPATCH` em `mos_gpu.h`. Com o cap, a fence só sobe no
+IRQ do virtio-gpu. Sem o cap o kernel valida e sinaliza a fence, e não
+executa o shader. O Venus desses três comandos sai com contagem de palavras
+na frente de cada um.
 
 ## O que o teste de host cobre
 
