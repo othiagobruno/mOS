@@ -59,7 +59,7 @@ static u32 seq_id = 1;
 
 static u32 caps_now(void) {
 #ifdef MOS_GPU_HOST
-    return host_caps;
+    return host_caps | MOS_GPU_CAP_IOSURF;
 #else
     u32 c = virtio_gpu_caps() | MOS_GPU_CAP_IOSURF;
     if (gpu_kms_available()) c |= MOS_GPU_CAP_KMS;
@@ -148,15 +148,16 @@ i64 gpu_syscall(process_t *p, u64 op, u64 user, u64 len, thread_t *self, int *bl
         int e = rd(p, &in, user, len, sizeof in);
         if (e) return e;
         if (in.kind != MOS_GPU_CTX_VIRGL && in.kind != MOS_GPU_CTX_VENUS) return -MOS_EINVAL;
-        if (in.kind == MOS_GPU_CTX_VIRGL && !(caps_now() & MOS_GPU_CAP_VIRGL)) return -MOS_ENXIO;
-        if (in.kind == MOS_GPU_CTX_VENUS && !(caps_now() & MOS_GPU_CAP_VENUS)) return -MOS_ENXIO;
         ctx_t *c = 0;
         for (int i = 0; i < GPU_N; i++) if (!ctxs[i].used) { c = &ctxs[i]; break; }
         if (!c) return -MOS_ENOMEM;
         u32 id = seq_id++;
 #ifndef MOS_GPU_HOST
-        e = virtio_gpu_ctx(id, in.kind, 1);
-        if (e) return e;
+        if ((in.kind == MOS_GPU_CTX_VIRGL && (caps_now() & MOS_GPU_CAP_VIRGL)) ||
+            (in.kind == MOS_GPU_CTX_VENUS && (caps_now() & MOS_GPU_CAP_VENUS))) {
+            e = virtio_gpu_ctx(id, in.kind, 1);
+            if (e) return e;
+        }
 #endif
         c->used = 1; c->pid = pid; c->id = id; c->kind = in.kind;
         in.ctx = id;
@@ -187,7 +188,7 @@ i64 gpu_syscall(process_t *p, u64 op, u64 user, u64 len, thread_t *self, int *bl
         if (!dma_alloc((usize)in.size, &phys)) return -MOS_ENOMEM;
         u32 id = seq_id++;
 #ifndef MOS_GPU_HOST
-        if (in.ctx) {
+        if (in.ctx && (caps_now() & (MOS_GPU_CAP_VIRGL | MOS_GPU_CAP_VENUS))) {
             e = virtio_gpu_bo(in.ctx, id, in.size, 1);
             if (e) { pmm_free(phys, in.size / 4096); return e; }
         }
@@ -291,8 +292,14 @@ i64 gpu_syscall(process_t *p, u64 op, u64 user, u64 len, thread_t *self, int *bl
         e = rd(p, tmp, in.cmds, in.cmd_bytes, in.cmd_bytes);
         if (e) return e;
 #ifndef MOS_GPU_HOST
-        e = virtio_gpu_submit(c->id, tmp, in.cmd_bytes, in.fence);
-        if (e) return e;
+        {
+            int hw = (c->kind == MOS_GPU_CTX_VENUS && (caps_now() & MOS_GPU_CAP_VENUS)) ||
+                     (c->kind == MOS_GPU_CTX_VIRGL && (caps_now() & MOS_GPU_CAP_VIRGL));
+            if (hw) {
+                e = virtio_gpu_submit(c->id, tmp, in.cmd_bytes, in.fence);
+                if (e) return e;
+            }
+        }
 #else
         (void)c;
         (void)tmp;
