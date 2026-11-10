@@ -168,9 +168,37 @@ elseif (Test-Path "$root\build\swift\objc\dylib\usr\lib\swift\libswiftCore.dylib
 if ($swiftSrc) {
     Copy-Item -Recurse -Force "$swiftSrc\*" "$esp\mOS\"
     Write-Host "Swift na imagem a partir de $swiftSrc (o FS da VM é RAM; a imagem cresce ~110 MB)" -ForegroundColor Yellow
-} elseif (-not (Test-Path "$esp\mOS\usr\lib\swift\libswiftCore.dylib")) {
-    Write-Host 'aviso: sem libswiftCore.dylib nem SwiftUI.framework; apps Swift e módulos .node que ligam libswiftCore não carregam. Compile a cadeia ou use -ComSwift quando os slices já existirem.' -ForegroundColor Yellow
+} else {
+    Write-Host 'aviso: sem a cadeia Swift compilada; a imagem leva stubs libswift* (não é o runtime).' -ForegroundColor Yellow
 }
+# L15: as libswift* medidas entram sempre. Dylib que a cadeia já copiou não é trocada por stub.
+# O mesmo passo no Linux é tools/stage-libswift.sh. O carregador resolve os nomes em macho.c
+# (revisão do Kernel).
+$stubName = if (Test-MosWindows) { 'gen-libswift-stubs.exe' } else { 'gen-libswift-stubs' }
+$stubGen = Join-Path $root (Join-Path $OutDir $stubName)
+if (Test-MosWindows) {
+    & $zig cc -O2 -target x86_64-windows-gnu "$root\tools\gen-libswift-stubs.c" -o $stubGen
+} else {
+    $cc = $null
+    foreach ($c in @('cc', 'gcc', 'clang')) {
+        $g = Get-Command $c -ErrorAction SilentlyContinue
+        if ($g) { $cc = $g.Source; break }
+    }
+    if (-not $cc) { Write-Host 'gen-libswift-stubs: não há cc, gcc nem clang' -ForegroundColor Red; exit 1 }
+    & $cc -O2 "$root/tools/gen-libswift-stubs.c" -o $stubGen
+}
+if ($LASTEXITCODE -ne 0) { Write-Host 'gen-libswift-stubs FAILED' -ForegroundColor Red; exit 1 }
+$stubOut = "$root\$OutDir\libswift-stubs"
+if (Test-Path $stubOut) { Remove-Item -Recurse -Force $stubOut }
+New-Item -ItemType Directory -Force $stubOut, "$esp\mOS\usr\lib\swift" | Out-Null
+& $stubGen $stubOut "$root\tools\libswift-stub-exports.txt"
+if ($LASTEXITCODE -ne 0) { Write-Host 'stubs libswift FAILED' -ForegroundColor Red; exit 1 }
+$nSwiftStub = 0
+foreach ($f in Get-ChildItem "$stubOut\*.dylib") {
+    $dst = "$esp\mOS\usr\lib\swift\$($f.Name)"
+    if (-not (Test-Path -LiteralPath $dst)) { Copy-Item $f.FullName $dst; $nSwiftStub++ }
+}
+Write-Host "libswift na imagem: $nSwiftStub stub(s); dylib já presente foi mantida"
 # ferramentas de linha de comando do macOS em Mach-O (userland\cli-macos\<nome>.c -> /usr/bin/<nome>): open(1)
 New-Item -ItemType Directory -Force "$esp\mOS\usr\bin" | Out-Null
 foreach ($c in Get-ChildItem "$root\userland\cli-macos" -Filter *.c -ErrorAction SilentlyContinue) {
