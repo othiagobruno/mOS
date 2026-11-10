@@ -28,7 +28,8 @@ void *calloc(size_t n, size_t m);
 void free(void *p);
 void abort(void);
 
-#if defined(__x86_64__)
+/* tools/build.sh liga o libunwind do LLVM. Os _Unwind_* ficam lá. */
+#if defined(__x86_64__) && !defined(MOS_LINK_LIBUNWIND)
 #define UW_NATIVE 1
 #else
 #define UW_NATIVE 0

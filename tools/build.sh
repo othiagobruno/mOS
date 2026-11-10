@@ -157,6 +157,8 @@ done
 "$ZIG" cc -target x86_64-freestanding-none -O2 -g0 -ffreestanding -fno-stack-protector -fno-builtin -nostdlib -static -no-pie \
     -fpie -mno-red-zone -Wall -Wno-unused-parameter -Wno-incompatible-library-redeclaration -Wno-builtin-requires-header \
     -I"$ROOT/userland/libsystem/kshim" \
+    -I"$ROOT/kernel/include" \
+    -DMOS_LINK_LIBUNWIND \
     -Wl,--image-base=0x400000100000 -Wl,-e,cx_start -Wl,--no-gc-sections \
     "${LS_SRC[@]}" "$UWO"/libunwind.cpp.o "$UWO"/UnwindLevel1.c.o "$UWO"/UnwindLevel1-gcc-ext.c.o \
     "$UWO"/UnwindRegistersSave.S.o "$UWO"/UnwindRegistersRestore.S.o \
