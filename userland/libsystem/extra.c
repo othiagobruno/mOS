@@ -407,6 +407,13 @@ int pthread_mutexattr_init(void *a) { ((long *)a)[0] = 0x4D545841L; ((int *)a)[2
 int pthread_mutexattr_settype(void *a, int t) { if (t < 0 || t > 2) return 22; ((int *)a)[2] = t; return 0; }
 int pthread_mutexattr_gettype(const void *a, int *t) { if (t) *t = ((const int *)a)[2]; return 0; }
 int pthread_mutexattr_destroy(void *a) { (void)a; return 0; }
+/* PTHREAD_PROCESS_SHARED fica gravado. O mutex vale neste processo: o futex do kernel não atravessa processo. */
+int pthread_mutexattr_setpshared(void *a, int p) {
+    if (!a || (p != 0 && p != 1)) return 22;
+    ((int *)a)[3] = p;
+    return 0;
+}
+int pthread_mutexattr_getpshared(const void *a, int *p) { if (p && a) *p = ((const int *)a)[3]; return a ? 0 : 22; }
 int pthread_cond_init(void *c, const void *a) { (void)a; ((volatile int *)((char *)c + 8))[0] = 0; ((volatile int *)((char *)c + 8))[1] = 0; return 0; }
 int pthread_cond_destroy(void *c) { (void)c; return 0; }
 /* pthread_cond_t do macOS tem 48 bytes ({long sig; char opaque[40]}): int em +8 = sequência (cada signal/broadcast
