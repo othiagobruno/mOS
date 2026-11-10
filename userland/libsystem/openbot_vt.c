@@ -22,6 +22,12 @@ CFCONST(kVTCompressionPropertyKey_MaxH264SliceBytes, "MaxH264SliceBytes")
 CFCONST(kVTCompressionPropertyKey_MoreFramesBeforeStart, "MoreFramesBeforeStart")
 CFCONST(kVTCompressionPropertyKey_MoreFramesAfterEnd, "MoreFramesAfterEnd")
 CFCONST(kVTCompressionPropertyKey_PixelAspectRatio, "PixelAspectRatio")
+CFCONST(kVTCompressionPropertyKey_AllowOpenGOP, "AllowOpenGOP")
+CFCONST(kVTCompressionPropertyKey_H264EntropyMode, "H264EntropyMode")
+CFCONST(kVTH264EntropyMode_CABAC, "CABAC")
+CFCONST(kVTPixelTransferPropertyKey_DestinationColorPrimaries, "DestinationColorPrimaries")
+CFCONST(kVTPixelTransferPropertyKey_DestinationTransferFunction, "DestinationTransferFunction")
+CFCONST(kVTPixelTransferPropertyKey_DestinationYCbCrMatrix, "DestinationYCbCrMatrix")
 CFCONST(kVTProfileLevel_H264_Baseline_1_3, "H264_Baseline_1_3")
 CFCONST(kVTProfileLevel_H264_Baseline_3_0, "H264_Baseline_3_0")
 CFCONST(kVTProfileLevel_H264_Baseline_3_1, "H264_Baseline_3_1")
@@ -39,7 +45,7 @@ CFCONST(kVTProfileLevel_H264_Main_5_0, "H264_Main_5_0")
 #define kVTPropertyNotSupportedErr (-12900)
 
 void *VTCompressionSessionGetPixelBufferPool(void *s) { (void)s; return 0; }
-int VTCompressionSessionPrepareToEncodeFrames(void *s) { (void)s; return kVTCouldNotFindVideoEncoderErr; }
+int VTCompressionSessionPrepareToEncodeFrames(void *s) { (void)s; return 0; }
 int VTCopySupportedPropertyDictionaryForEncoder(int w, int h, u32 codec, id spec, id *props, id *ident) {
     (void)w; (void)h; (void)codec; (void)spec;
     if (props) *props = 0;

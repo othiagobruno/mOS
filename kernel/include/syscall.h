@@ -22,7 +22,7 @@ enum {
     SYS_FILESIZE,      /* (path) -> tamanho */
     SYS_CPUS,          /* () -> núcleos ativos */
     SYS_KILL,          /* (pid) -> 0                               o processo sai com -9 */
-    SYS_OPEN,          /* (path, flags) -> fd                      flags O_* abaixo */
+    SYS_OPEN,          /* (path, flags, mode) -> fd               mode vale com O_CREAT (0 = 0644) */
     SYS_CLOSE,         /* (fd) -> 0 */
     SYS_READ,          /* (fd, buf, len) -> bytes                  fd 0 = sem entrada (0 = EOF) */
     SYS_LSEEK,         /* (fd, off, whence) -> nova posição        SEEK_SET/CUR/END */
@@ -88,7 +88,18 @@ enum {
     SYS_MACH_PORT = 81,     /* (op, u64 args[8]) -> kern_return_t           direitos e atributos (MACH_OP_* abaixo) */
     SYS_MACH_BOOTSTRAP = 82,/* (op, nome, u32 *porta) -> código do bootstrap  registro global de serviços */
     SYS_MACH_VM = 83,       /* (op, u64 args[8]) -> kern_return_t           entradas de memória compartilhada */
-    SYS_MACH_LAST = 95
+    SYS_MACH_LAST = 95,
+    /* 96: aio POSIX. op em rdi: 1 leitura, 2 escrita, 3 erro, 4 retorno, 5 fsync, 6 suspende (um passo).
+     * rsi = ponteiro do aiocb no processo. Não bloqueia: a conclusão sai em pcache_tick/aio_pump. */
+    SYS_AIO = 96,
+    SYS_VFORK = 97,    /* () -> pid no pai, 0 no filho. O pai dorme até exec ou _exit; o pml4 é o mesmo. */
+    SYS_CHMOD = 98,    /* (path, mode) -> 0. O stat devolve esse mode. */
+    SYS_GETUID = 99,   /* () -> uid real */
+    SYS_GETEUID = 100, /* () -> uid efetivo */
+    SYS_GETGID = 101,  /* () -> gid real */
+    SYS_GETEGID = 102, /* () -> gid efetivo */
+    SYS_SETEUID = 103, /* (uid) -> 0 | -MOS_EPERM. Só real, efetivo ou saved. */
+    SYS_SETEGID = 104, /* (gid) -> 0 | -MOS_EPERM. */
 };
 
 #define MOS_DESK_BANNER 1
@@ -115,6 +126,9 @@ enum {
     MOS_THR_STOPPED,       /* (tid) -> 1 parada fora da CPU, 0 ainda rodando */
     MOS_THR_GETSTATE,      /* (tid, u64 regs[21]) -> 0 | -MOS_EBUSY   x86_thread_state64_t: rax rbx rcx rdx rdi rsi rbp
                             * rsp r8..r15 rip rflags cs fs gs, do frame salvo da thread */
+    MOS_THR_SETQOS,        /* (tid, classe Darwin) -> 0 | -ESRCH     QOS_CLASS_* (0x21..0x09); fila e fatia */
+    MOS_THR_AFFINITY,      /* (tid, máscara de CPUs) -> 0            bit i = núcleo i; 0 = qualquer um */
+    MOS_THR_ROFILE,        /* (va, u64 id_off[2]) -> 1 se a página é código de arquivo sem escrita */
 };
 #define MOS_MUNMAP_KEEP    0x4B454550u   /* 'KEEP' */
 #define MOS_MUNMAP_DISCARD 0x44495343u   /* 'DISC' */
@@ -124,6 +138,7 @@ enum {
 #define MOS_SPAWN_FA_CLOSE 2
 #define MOS_SPAWN_FA_OPEN  3
 #define MOS_SPAWN_FA_CHDIR 4
+#define MOS_SPAWN_FA_FILEPORT 5             /* a = fd destino, b = nome da porta Mach no pai */
 #define MOS_SPAWN_CLOEXEC_DEFAULT 0x4000u   /* o filho começa sem os fds do pai; só as ações abrem */
 #define MOS_SPAWN_SETPGROUP 0x0002u          /* (valores do macOS) o filho vira líder de um grupo de processos novo */
 #define MOS_SPAWN_SETSID    0x0400u          /* o filho começa uma sessão nova, sem terminal de controle (node-pty) */
@@ -139,6 +154,9 @@ typedef struct {
     unsigned long long acts;     /* mos_spawn_fa_t[nacts] no pai */
     unsigned int nacts;
     unsigned int flags;
+    unsigned int sigdef;    /* bits no número do mOS; extra & 1 = POSIX_SPAWN_SETSIGDEF */
+    unsigned int sigmask;   /* extra & 2 = POSIX_SPAWN_SETSIGMASK */
+    unsigned int extra;     /* 1 sigdef, 2 sigmask, 4 RESETIDS */
 } mos_spawn_vec_t;
 
 /* SYS_MACH_MSG: os argumentos do mach_msg não cabem nos 5 registradores */
@@ -529,6 +547,7 @@ typedef struct {
     unsigned long long is_dir; /* 0 arquivo, 1 pasta, 2/3 pipe (leitura/escrita), 4 /dev/null, 5 terminal (SYS_TTY),
                                 * 6 socket AF_UNIX (só no fstat do descritor; o stat do caminho continua 0) */
     long long mtime;          /* segundos desde 1970 (0 = desconhecido) */
+    unsigned mode;            /* permissão (12 bits). 0 no struct zerado de pipe não entra no st_mode. */
 } mos_stat_t;
 
 /* SYS_LS: o banco do Launch Services fica no kernel (kernel/compat/launchsvc.c); o libSystem (openurl.c) faz as

@@ -11,9 +11,11 @@ void *realloc(void *p, size_t n);
 void free(void *p);
 void *memset(void *d, int c, size_t n);
 void *memcpy(void *d, const void *s, size_t n);
+int memcmp(const void *a, const void *b, size_t n);
 id objc_retain(id o);
 void objc_release(id o);
 void cx_objc_boot(unsigned long long sects, unsigned long long n);
+int h264_sps_wh(const u8 *nal, int n, int *w, int *h);
 
 typedef struct { i64 value; i32 timescale; u32 flags; i64 epoch; } cm_time_t;
 typedef struct { cm_time_t duration, presentationTimeStamp, decodeTimeStamp; } cm_timing_t;
@@ -209,6 +211,15 @@ int CMBlockBufferAppendMemoryBlock(void *b, void *mem, size_t len, void *ba, con
     x->len += n;
     return 0;
 }
+int CMBlockBufferAccessDataBytes(void *b, size_t off, size_t len, void *tmpAlloc, char **ptr) {
+    (void)tmpAlloc;
+    bb_t *x = as_bb(b);
+    if (!x || off > x->len) return CM_BAD_BLOCK;
+    if (!len) len = x->len - off;
+    if (len > x->len - off) return CM_BAD_BLOCK;
+    if (ptr) *ptr = (char *)(x->data ? x->data + off : 0);
+    return 0;
+}
 int CMBlockBufferGetDataPointer(void *b, size_t off, size_t *lenAt, size_t *total, char **ptr) {
     bb_t *x = as_bb(b);
     if (!x || off > x->len) return CM_BAD_BLOCK;
@@ -298,6 +309,12 @@ int CMVideoFormatDescriptionCreateFromH264ParameterSets(void *a, size_t n, const
     if (!out || !n || !p || !s) return CM_BAD_FMT;
     fd_t *f = fd_new(0x76696465, 0x61766331 /* avc1 */);
     if (!f || fd_store_sets(f, n, p, s, nal)) { if (f) objc_release((id)f); return CM_BAD_FMT; }
+    for (size_t i = 0; i < n; i++) {
+        if (!p[i] || s[i] < 1 || (p[i][0] & 31) != 7) continue;
+        int sw = 0, sh = 0;
+        if (h264_sps_wh(p[i], (int)s[i], &sw, &sh) == 0) { f->w = sw; f->h = sh; }
+        break;
+    }
     *out = f;
     return 0;
 }
@@ -460,6 +477,30 @@ int CMSampleBufferCreate(void *a, void *db, u8 ready, void *cb, void *ref, void 
     *out = s;
     return 0;
 }
+/* PCM s16 estéreo intercalado do AVCapture. O bloco copia os bytes; não há quadro de vídeo aqui. */
+void *cx_cm_audio_sample(const short *pcm, unsigned frames, double rate) {
+    if (!pcm || !frames) return 0;
+    void *bb = 0;
+    size_t nbytes = (size_t)frames * 4;
+    if (CMBlockBufferCreateWithMemoryBlock(0, (void *)pcm, nbytes, 0, 0, 0, nbytes, 0, &bb) || !bb) return 0;
+    cm_timing_t timing;
+    memset(&timing, 0, sizeof timing);
+    i32 scale = rate > 0 && rate < 200000 ? (i32)(rate + 0.5) : 48000;
+    timing.duration.value = (i64)frames;
+    timing.duration.timescale = scale;
+    timing.duration.flags = 1;
+    timing.presentationTimeStamp.timescale = scale;
+    timing.presentationTimeStamp.flags = 1;
+    timing.decodeTimeStamp = timing.presentationTimeStamp;
+    size_t sz = nbytes;
+    void *out = 0;
+    if (CMSampleBufferCreate(0, bb, 1, 0, 0, 0, (long)frames, 1, &timing, 1, &sz, &out)) {
+        objc_release((id)bb);
+        return 0;
+    }
+    objc_release((id)bb);
+    return out;
+}
 int CMSampleBufferCreateForImageBuffer(void *a, void *img, u8 ready, void *cb, void *ref, void *fd, const void *t, void **out) {
     (void)cb; (void)ref;
     if (!out || !img) return CM_BAD_SAMPLE;
@@ -477,6 +518,34 @@ int CMSampleBufferCreateForImageBuffer(void *a, void *img, u8 ready, void *cb, v
         if (s) s->image = objc_retain((id)img);
     }
     return rc;
+}
+int CMFormatDescriptionEqual(void *a, void *b) {
+    fd_t *x = as_fd(a), *y = as_fd(b);
+    if (x == y) return 1;
+    if (!x || !y) return 0;
+    if (x->media != y->media || x->subtype != y->subtype || x->w != y->w || x->h != y->h) return 0;
+    if (x->np != y->np || x->nal != y->nal) return 0;
+    for (size_t i = 0; i < x->np; i++) {
+        if (x->psz[i] != y->psz[i]) return 0;
+        if (x->psz[i] && memcmp(x->pset + x->poff[i], y->pset + y->poff[i], x->psz[i])) return 0;
+    }
+    return 1;
+}
+int CMSampleBufferCreateReady(void *a, void *db, void *fd, long ns, long nt, const void *t, long nsz, const size_t *sz, void **out) {
+    return CMSampleBufferCreate(a, db, 1, 0, 0, fd, ns, nt, t, nsz, sz, out);
+}
+int CMTextFormatDescriptionCreateFromBigEndianTextDescriptionData(void *a, const u8 *data, size_t n, void **out, u32 *subtype) {
+    (void)a;
+    if (!out || !data || n < 8) return CM_BAD_FMT;
+    u32 fmt = ((u32)data[4] << 24) | ((u32)data[5] << 16) | ((u32)data[6] << 8) | data[7];
+    fd_t *f = fd_new(0x74657874 /* text */, fmt);
+    if (!f) return CM_BAD_FMT;
+    const u8 *p = data;
+    size_t sz = n;
+    if (fd_store_sets(f, 1, &p, &sz, 0)) { objc_release((id)f); return CM_BAD_FMT; }
+    if (subtype) *subtype = fmt;
+    *out = f;
+    return 0;
 }
 int CMSampleBufferCreateReadyWithImageBuffer(void *a, void *img, void *fd, const void *timing, void **out) {
     return CMSampleBufferCreateForImageBuffer(a, img, 1, 0, 0, fd, timing, out);

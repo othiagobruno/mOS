@@ -38,6 +38,7 @@ blkdev_t *blk_slice(blkdev_t *parent, u64 off, u64 size) {
 
 void blk_release(blkdev_t *d) {
     if (!d) return;
+    if (!d->parent) pcache_drop(d);
     if (d->release) d->release(d);
     kfree(d);
 }

@@ -411,6 +411,7 @@ typedef struct CATransform3D {
     UIWindow *_uiWindow;
     UITouch *_touch;                /* o toque em curso (botão do mouse apertado) */
     NSArray *_touchGestures;        /* os gestos que estão acompanhando o toque */
+    UIView *_hoverView;             /* view sob o ponteiro (sem botão) */
 }
 @end
 

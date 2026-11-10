@@ -17,6 +17,8 @@ while [ $# -gt 0 ]; do
 done
 mkdir -p "$OUT"
 cd "$ROOT"
+gcc -O2 -Wall -Wextra -I kernel/include tools/cred_host.c kernel/proc/cred.c -o /tmp/cred_host
+/tmp/cred_host
 
 kind_of() {
     local b
@@ -151,7 +153,7 @@ done
 echo "==> libSystem.mos"
 # x86_64: _Unwind_* fica em cxx_unwind.c. UnwindLevel1.c repete esses nomes; o resto do libunwind fica.
 LS_SRC=()
-for f in "$ROOT"/userland/libsystem/*.c "$ROOT"/userland/libsystem/*.S; do
+for f in "$ROOT"/userland/libsystem/*.c "$ROOT"/userland/libsystem/*.S "$ROOT"/userland/third_party/h264bsd/*.c; do
     [ -f "$f" ] || continue
     # sqlite3.c pede assert.h/stdio.h. Compila com o shim, fora do -I do resto.
     case "$f" in
@@ -159,8 +161,9 @@ for f in "$ROOT"/userland/libsystem/*.c "$ROOT"/userland/libsystem/*.S; do
     esac
     LS_SRC+=("$f")
 done
-# audiodec.c inclui stdlib/math do decodificador de terceiros. Fica fora do glob
-# e entra com cabeçalhos mínimos, para o -I não trocar o stdint do resto do libSystem.
+# audiodec.c e o SQLite usam o shim de host-audio, fora do -I do resto.
+# Raise/Resume/GetIP, os seis _Unwind extras e __unw_getcontext ficam em cxx_unwind.c.
+# Sem UnwindLevel1.c, sem UnwindLevel1-gcc-ext.c e sem UnwindRegistersSave.S.
 "$ZIG" cc -target x86_64-freestanding-none -O2 -g0 -ffreestanding -fno-stack-protector -fno-builtin -nostdlib \
     -fpie -mno-red-zone -Wall -Wno-unused-parameter -Wno-incompatible-library-redeclaration -Wno-builtin-requires-header \
     -I"$ROOT/userland/host-audio/shim" -I"$ROOT/userland/libsystem" \
@@ -170,13 +173,13 @@ done
     -Wno-unused-function -Wno-unused-variable -Wno-unreachable-code \
     -I"$ROOT/userland/host-audio/shim" -I"$ROOT/userland/libsystem" \
     -c "$ROOT/userland/libsystem/sqlite3_mos.c" -o "$OUT/sqlite3_mos.o"
-# UnwindLevel1.c, UnwindLevel1-gcc-ext.c e UnwindRegistersSave.S repetem cxx_unwind.c.
+# UnwindLevel1.c, UnwindLevel1-gcc-ext.c, UnwindRegistersSave.S e libunwind.cpp repetem cxx_unwind.c.
 "$ZIG" cc -target x86_64-freestanding-none -O2 -g0 -ffreestanding -fno-stack-protector -fno-builtin -nostdlib -static -no-pie \
     -fpie -mno-red-zone -Wall -Wno-unused-parameter -Wno-incompatible-library-redeclaration -Wno-builtin-requires-header \
-    -I"$ROOT/userland/libsystem/kshim" -I"$ROOT/userland/libsystem/fsinc" -I"$ROOT/kernel/include" \
+    -I"$ROOT/userland/libsystem/kshim" -I"$ROOT/userland/libsystem/fsinc" -I"$ROOT/kernel/include" -I"$ROOT/userland/third_party/h264bsd" \
+    -isystem "$ZIGDIR/lib/include" \
     -Wl,--image-base=0x400000100000 -Wl,-e,cx_start -Wl,--no-gc-sections \
-    "${LS_SRC[@]}" "$OUT/audiodec.o" "$OUT/sqlite3_mos.o" "$UWO"/libunwind.cpp.o \
-    "$UWO"/UnwindRegistersRestore.S.o \
+    "${LS_SRC[@]}" "$OUT/audiodec.o" "$OUT/sqlite3_mos.o" \
     -o "$OUT/libSystem.mos"
 python3 "$ROOT/tools/patch-ehframe.py" "$OUT/libSystem.mos"
 HASH=$(sha256sum "$OUT/libSystem.mos" | cut -c1-16)
@@ -236,6 +239,16 @@ if [ -d "$ROOT/userland/cli-macos" ]; then
     done
 fi
 
+echo "==> a64rt (tradutor dos binários darwin-arm64)"
+A64SRC=()
+while IFS= read -r f; do A64SRC+=("$f"); done < <(find "$ROOT/userland/a64" "$ROOT/userland/a64rt" -type f \( -name '*.c' -o -name '*.S' \) | sort)
+mkdir -p "$ESP/mOS/Sistema/Biblioteca/a64"
+"$ZIG" cc -target x86_64-freestanding-none -O2 -g0 -ffreestanding -fno-stack-protector -nostdlib -static -no-pie -fpie \
+    -mcx16 -Wall -Wno-unused-function -Wno-unused-parameter -fno-strict-aliasing \
+    -DA64_RUNTIME_MOS -DA64_HAVE_JIT -I"$ROOT/userland/a64" -I"$ROOT/userland/a64rt" \
+    -Wl,--image-base=0x400041000000 -Wl,-e,_start \
+    "${A64SRC[@]}" -o "$ESP/mOS/Sistema/Biblioteca/a64/a64rt.mos"
+
 echo "==> libswift"
 # Runtime real (swift-6.4.2) quando a toolchain e o fonte estão em .tools/. Sem isso, o stage completa com stub.
 if [ -f "$ROOT/tools/build-libswift-real.sh" ]; then
@@ -247,6 +260,56 @@ elif [ -f "$ROOT/build/swift/objc/dylib/usr/lib/swift/libswiftCore.dylib" ]; the
     cp -a "$ROOT/build/swift/objc/dylib/." "$ESP/mOS/"
 fi
 sh "$ROOT/tools/stage-libswift.sh" "$ESP/mOS/usr/lib/swift"
+
+echo "==> Virtualization.framework"
+VZSRC="$ROOT/userland/frameworks/Virtualization/Virtualization.m"
+VZOUT="$OUT/vz"
+VZDIR="$ESP/mOS/System/Library/Frameworks/Virtualization.framework/Versions/A"
+mkdir -p "$VZOUT" "$VZDIR"
+vz_one() {
+    "$ZIG" cc -target "$1" -O2 -shared -x objective-c -I"$ROOT/userland/sdk/include" -I"$ROOT/userland/frameworks/Virtualization" \
+        -Wno-objc-root-class -Wno-objc-method-access "$VZSRC" -o "$2" \
+        -Wl,-install_name,/System/Library/Frameworks/Virtualization.framework/Versions/A/Virtualization \
+        -Wl,-undefined,dynamic_lookup
+}
+if vz_one x86_64-macos "$VZOUT/Virtualization.x86" && vz_one aarch64-macos "$VZOUT/Virtualization.arm"; then
+    python3 - "$VZDIR/Virtualization" "$VZOUT/Virtualization.x86" "$VZOUT/Virtualization.arm" <<'PY'
+import pathlib, struct, sys
+out, *srcs = sys.argv[1:]
+slices = []
+for p in srcs:
+    b = pathlib.Path(p).read_bytes()
+    if struct.unpack_from("<I", b, 0)[0] != 0xFEEDFACF:
+        raise SystemExit(p + " nao e Mach-O fino")
+    cpu, sub = struct.unpack_from("<II", b, 4)
+    align = 14 if cpu == 0x0100000C else 12
+    slices.append((cpu, sub, align, b))
+off = 8 + 20 * len(slices)
+parts = []
+for cpu, sub, align, b in slices:
+    a = 1 << align
+    if off % a:
+        off += a - (off % a)
+    parts.append((cpu, sub, align, off, b))
+    off += len(b)
+buf = bytearray()
+def be(v):
+    buf.extend(struct.pack(">I", v & 0xFFFFFFFF))
+be(0xCAFEBABE); be(len(parts))
+for cpu, sub, align, o, b in parts:
+    be(cpu); be(sub); be(o); be(len(b)); be(align)
+for cpu, sub, align, o, b in parts:
+    if len(buf) < o:
+        buf.extend(b"\0" * (o - len(buf)))
+    buf.extend(b)
+pathlib.Path(out).write_bytes(buf)
+PY
+else
+    echo "aviso: Virtualization.framework não compilou" >&2
+fi
+
+echo "==> apps oficiais em /Aplicativos"
+bash "$ROOT/tools/stage-apps-oficiais.sh" "$OUT"
 
 KEY=${MOS_CHAVE_ATUALIZACAO:-$ROOT/tools/chave-atualizacao.semente}
 REV=$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo local)

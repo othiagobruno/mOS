@@ -6,12 +6,14 @@
  * no mapa identidade) e a liga à saída de vídeo. A partir daí, apresentar um quadro não copia pixel
  * nenhum na CPU: só envia TRANSFER_TO_HOST_2D + RESOURCE_FLUSH do retângulo sujo.
  *
- * Transporte: virtio 1.x moderno sobre PCI (capacidades de fabricante 0x09: common, notify, device),
- * uma fila de controle (split ring), sem interrupções: cada lote é enviado e esperado por polling.
+ * Transporte: virtio 1.x moderno sobre PCI (capacidades de fabricante 0x09: common, notify, ISR, device).
+ * A fila pede interrupção (MSI-X, senão MSI, senão INTx). Quem espera uma fence 3D volta antes da
+ * resposta; o IRQ é que a sinaliza. O caminho 2D ainda espera o mesmo IRQ antes de seguir.
  * Qualquer falha antes da troca de saída mantém o framebuffer do UEFI, como antes.
  */
 #include "gpu.h"
 #include "gfx.h"
+#include "syscall.h"
 
 /* ---- comandos e respostas (virtio_gpu.h) */
 enum {
@@ -39,16 +41,20 @@ typedef struct PACKED { u64 addr; u32 len; u16 flags, next; } vq_desc_t;
 typedef struct PACKED { u16 flags, idx; u16 ring[VQ_MAX]; } vq_avail_t;
 typedef struct PACKED { u16 flags, idx; struct PACKED { u32 id, len; } ring[VQ_MAX]; } vq_used_t;
 
-static volatile u8 *common, *notify, *devcfg;
+static volatile u8 *common, *notify, *devcfg, *isr;
 static u32 outs[MAX_DISPLAYS - 1];       /* saída virtio de cada monitor extra (monitor k = outs[k-1]) */
 static int nouts;
 static u32 notify_mul;
 static vq_desc_t *desc;
 static vq_avail_t *avail;
 static volatile vq_used_t *used;
-static u16 qsize, avail_idx;
+static u16 qsize, avail_idx, used_cons;
+static int irq_mode;                    /* 1 MSI-X, 2 MSI, 3 INTx */
+typedef struct { u16 head; int pid; u32 fence; volatile int *done; int live; } fly_t;
+static fly_t fly[8];
 static u8 *cmd; static u64 cmd_phys;
 static bool ready, scanout_on, broken;
+static u32 feats;                       /* bits de recurso da GPU (word 0): VIRGL, BLOB, CONTEXT_INIT */
 static const u32 *bound_px;              /* superfície presa ao recurso */
 static int res_w, res_h;
 
@@ -60,7 +66,88 @@ static inline void w16(u32 o, u16 v) { mmio_w16(common, o, v); }
 static inline void w32(u32 o, u32 v) { mmio_w32(common, o, v); }
 static inline void w64(u32 o, u64 v) { w32(o, (u32)v); w32(o + 4, (u32)(v >> 32)); }
 
-/* envia n comandos (cada um: pedido de rlen[i] bytes já escrito em cmd + i*SLOT) e espera todos */
+static int fly_live(void) {
+    for (int i = 0; i < 8; i++) if (fly[i].live) return 1;
+    return 0;
+}
+
+static void reap(void) {
+    if (!used) return;
+    u64 fl = irq_save();
+    if (isr) (void)mmio_r8(isr, 0);
+    while (used_cons != used->idx) {
+        u32 id = used->ring[used_cons % qsize].id;
+        used_cons++;
+        for (int i = 0; i < 8; i++) {
+            if (!fly[i].live || fly[i].head != id) continue;
+            int pid = fly[i].pid;
+            u32 fence = fly[i].fence;
+            volatile int *done = fly[i].done;
+            fly[i].live = 0;
+            if (fence) gpu_fence_from_irq(pid, fence);
+            if (done) *done = 1;
+        }
+    }
+    irq_restore(fl);
+}
+
+static void gpu_msi(void) { reap(); }
+static void gpu_irq(int_frame_t *f) { (void)f; reap(); }
+
+static int arm_msix(pci_dev_t *pd) {
+    u8 off = pci_read(pd, 0x34) & 0xFC;
+    for (int g = 0; off && g < 48; g++) {
+        u32 w = pci_read(pd, off);
+        u8 next = (w >> 8) & 0xFC, id = w & 0xFF;
+        if (id == 0x11) {
+            u32 toff = pci_read(pd, (u8)(off + 4));
+            u8 bir = (u8)(toff & 7);
+            u64 bar = bir < 6 ? pci_bar_addr(pd, bir) : 0;
+            if (!bar) return 0;
+            u64 tbl = bar + (toff & ~7u);
+            vmm_map_mmio(tbl, 16);
+            volatile u32 *e = (volatile u32 *)tbl;
+            e[0] = 0xFEE00000u;
+            e[1] = 0;
+            e[2] = 0xE0;
+            e[3] = 0;
+            u32 mc = ((w >> 16) & 0x3FFFu) | (1u << 15);
+            pci_write(pd, off, (w & 0xFFFF) | (mc << 16));
+            pci_write(pd, 0x04, pci_read(pd, 0x04) | (1u << 10));
+            msi_add_handler(gpu_msi);
+            return 1;
+        }
+        off = next;
+    }
+    return 0;
+}
+
+static int arm_msi(pci_dev_t *pd) {
+    u8 off = pci_read(pd, 0x34) & 0xFC;
+    for (int g = 0; off && g < 48; g++) {
+        u32 w = pci_read(pd, off);
+        u8 next = (w >> 8) & 0xFC, id = w & 0xFF;
+        if (id == 0x05) {
+            u16 mc = (u16)(w >> 16);
+            int is64 = (mc & (1u << 7)) != 0;
+            pci_write(pd, (u8)(off + 4), 0xFEE00000u);
+            if (is64) {
+                pci_write(pd, (u8)(off + 8), 0);
+                pci_write(pd, (u8)(off + 12), 0xE0);
+            } else pci_write(pd, (u8)(off + 8), 0xE0);
+            mc = (u16)((mc & ~(7u << 1)) | 1u);
+            mc = (u16)((mc & ~0x70u) | 1u);
+            pci_write(pd, off, (w & 0xFFFF) | ((u32)mc << 16));
+            pci_write(pd, 0x04, pci_read(pd, 0x04) | (1u << 10));
+            msi_add_handler(gpu_msi);
+            return 1;
+        }
+        off = next;
+    }
+    return 0;
+}
+
+/* envia n comandos (cada um: pedido de rlen[i] bytes já escrito em cmd + i*SLOT) e espera o IRQ */
 static bool submit(int n, const u32 *rlen) {
     for (int i = 0; i < n; i++) {
         vq_desc_t *d0 = &desc[2 * i], *d1 = &desc[2 * i + 1];
@@ -69,13 +156,34 @@ static bool submit(int n, const u32 *rlen) {
         memset(cmd + i * SLOT + RESP, 0, sizeof(hdr_t));
         avail->ring[(avail_idx + i) % qsize] = (u16)(2 * i);
     }
+    volatile int done[MAX_BATCH];
+    for (u64 spin = 0; fly_live(); spin++) {
+        if (spin > 400000000ull) { kprintf("virtio-gpu: a GPU não respondeu, desligando\n"); broken = true; return false; }
+        reap();
+        __asm__ volatile("pause");
+    }
+    for (int i = 0; i < n; i++) {
+        done[i] = 0;
+        for (int s = 0; s < 8; s++) if (!fly[s].live) {
+            fly[s].head = (u16)(2 * i);
+            fly[s].pid = 0;
+            fly[s].fence = 0;
+            fly[s].done = &done[i];
+            fly[s].live = 1;
+            break;
+        }
+    }
     __asm__ volatile("mfence" ::: "memory");
     avail_idx += (u16)n;
     *(volatile u16 *)((u8 *)avail + 2) = avail_idx;   /* avail->idx (offset 2), sem endereço de campo packed */
     __asm__ volatile("mfence" ::: "memory");
     mmio_w16(notify, 0, 0);                          /* fila 0 */
-    for (u64 spin = 0; used->idx != avail_idx; spin++) {
+    for (u64 spin = 0;; spin++) {
+        int all = 1;
+        for (int i = 0; i < n; i++) if (!done[i]) all = 0;
+        if (all) break;
         if (spin > 400000000ull) { kprintf("virtio-gpu: a GPU não respondeu, desligando\n"); broken = true; return false; }
+        reap();
         __asm__ volatile("pause");
     }
     for (int i = 0; i < n; i++) {
@@ -115,6 +223,7 @@ bool virtio_gpu_probe(gpu_info_t *g) {
                 volatile u8 *a = (volatile u8 *)(base + off);
                 if (type == 1) common = a;
                 else if (type == 2) { notify = a; notify_mul = pci_read(d, p + 16); }
+                else if (type == 3) isr = a;
                 else if (type == 4) devcfg = a;
             }
         }
@@ -125,9 +234,15 @@ bool virtio_gpu_probe(gpu_info_t *g) {
     w8(0x14, 0);                                    /* reset */
     for (int i = 0; i < 1000000 && c8(0x14); i++) __asm__ volatile("pause");
     w8(0x14, 1); w8(0x14, 1 | 2);                   /* ACKNOWLEDGE | DRIVER */
+    w32(0x00, 0);
+    u32 dev0 = c32(0x04);
+    feats = 0;
+    if (dev0 & 1) feats |= 1;                       /* VIRTIO_GPU_F_VIRGL */
+    if (dev0 & (1u << 3)) feats |= 1u << 3;         /* RESOURCE_BLOB (venus) */
+    if (dev0 & (1u << 4)) feats |= 1u << 4;         /* CONTEXT_INIT (venus) */
     w32(0x00, 1);
     if (!(c32(0x04) & 1)) { kprintf("virtio-gpu: sem VIRTIO_F_VERSION_1\n"); w8(0x14, 0x80); return false; }
-    w32(0x08, 0); w32(0x0C, 0);                     /* nenhum recurso opcional (sem virgl/EDID por ora) */
+    w32(0x08, 0); w32(0x0C, feats);
     w32(0x08, 1); w32(0x0C, 1);                     /* VERSION_1 */
     w8(0x14, 1 | 2 | 8);
     if (!(c8(0x14) & 8)) { kprintf("virtio-gpu: recursos recusados\n"); w8(0x14, 0x80); return false; }
@@ -137,7 +252,9 @@ bool virtio_gpu_probe(gpu_info_t *g) {
     qsize = MIN(max, (u16)VQ_MAX);
     if (qsize < 2 * MAX_BATCH) { kprintf("virtio-gpu: fila pequena demais (%u)\n", max); w8(0x14, 0x80); return false; }
     w16(0x18, qsize);
-    w16(0x1A, 0xFFFF);                              /* sem vetor MSI-X */
+    irq_mode = arm_msix(d) ? 1 : arm_msi(d) ? 2 : 3;
+    if (irq_mode == 3 && d->irq < 16) irq_install(d->irq, gpu_irq);
+    w16(0x1A, irq_mode == 1 ? 0 : 0xFFFF);          /* vetor 0 da MSI-X, ou nenhum */
     u64 dp, ap, up;
     desc = dma_alloc(4096, &dp);
     avail = dma_alloc(4096, &ap);
@@ -146,7 +263,7 @@ bool virtio_gpu_probe(gpu_info_t *g) {
     if (!desc || !avail || !used || !cmd) { w8(0x14, 0x80); return false; }
     w64(0x20, dp); w64(0x28, ap); w64(0x30, up);
     notify += (u32)c16(0x1E) * notify_mul;
-    avail->flags = 1;                               /* sem interrupções: polling */
+    avail->flags = 0;                               /* pede interrupção a cada used */
     w16(0x1C, 1);
     w8(0x14, 1 | 2 | 4 | 8);                        /* DRIVER_OK */
     ready = true;
@@ -157,7 +274,8 @@ bool virtio_gpu_probe(gpu_info_t *g) {
     display_info_t *di = (display_info_t *)(cmd + RESP);
     g->mode_w = di->pm[0].r.w; g->mode_h = di->pm[0].r.h;
     u32 nscan = devcfg ? MIN(mmio_r32(devcfg, 8), 16u) : 1;   /* virtio_gpu_config.num_scanouts */
-    kprintf("gpu: virtio-gpu pronto (fila de %u, %u saída(s), saída 0 %s %ux%u); a apresentação passa a ser sem cópia\n", qsize,
+    kprintf("gpu: virtio-gpu pronto (fila de %u, %s, %u saída(s), saída 0 %s %ux%u); a apresentação passa a ser sem cópia\n", qsize,
+            irq_mode == 1 ? "MSI-X" : irq_mode == 2 ? "MSI" : "INTx",
             nscan, di->pm[0].enabled ? "ligada" : "desligada", di->pm[0].r.w, di->pm[0].r.h);
 
     /* monitores extras: as saídas 1.. que o host diz estarem ligadas */
@@ -238,4 +356,101 @@ bool gpu_present(const u32 *px, int w, int h, int x, int y, int rw, int rh) {
     f->id = res_id;
     u32 lens[2] = { sizeof *t, sizeof *f };
     return submit(2, lens);
+}
+
+u32 virtio_gpu_caps(void) {
+    u32 c = 0;
+    if (!ready || broken) return 0;
+    if (feats & 1) c |= MOS_GPU_CAP_VIRGL;
+    if ((feats & (1u << 3)) && (feats & (1u << 4))) c |= MOS_GPU_CAP_VENUS;
+    return c;
+}
+
+static int xmit(void *pkt, u32 n) {
+    if (!ready || broken || n > RESP - 16) return -MOS_EINVAL;
+    memcpy(cmd, pkt, n);
+    u32 len = n;
+    if (!submit(1, &len)) return -MOS_EIO;
+    return 0;
+}
+
+int virtio_gpu_ctx(unsigned id, unsigned kind, int create) {
+    if (!ready || broken) return -MOS_ENXIO;
+    if (create && kind == MOS_GPU_CTX_VENUS && !(virtio_gpu_caps() & MOS_GPU_CAP_VENUS)) return -MOS_ENXIO;
+    if (create && kind == MOS_GPU_CTX_VIRGL && !(feats & 1)) return -MOS_ENXIO;
+    u8 pkt[128];
+    memset(pkt, 0, sizeof pkt);
+    hdr_t *h = (hdr_t *)pkt;
+    h->type = create ? 0x0200 : 0x0201;
+    if (create) {
+        u32 *w = (u32 *)(pkt + sizeof *h);
+        w[0] = 4;                                      /* nlen do nome curto */
+        w[1] = kind == MOS_GPU_CTX_VENUS ? 4u : 1u;    /* context_init: venus=4, virgl=1 */
+        memcpy(pkt + sizeof *h + 8, kind == MOS_GPU_CTX_VENUS ? "ven" : "v3d", 4);
+    }
+    h->ctx = id;
+    return xmit(pkt, create ? (u32)(sizeof *h + 8 + 64) : (u32)sizeof *h);
+}
+
+int virtio_gpu_bo(unsigned ctx, unsigned id, unsigned long long size, int create) {
+    if (!ready || broken) return -MOS_ENXIO;
+    if (!create) {
+        u8 pkt[32];
+        memset(pkt, 0, sizeof pkt);
+        ((hdr_t *)pkt)->type = CMD_RESOURCE_UNREF;
+        *(u32 *)(pkt + sizeof(hdr_t)) = id;
+        return xmit(pkt, sizeof(hdr_t) + 4);
+    }
+    u8 pkt[64];
+    memset(pkt, 0, sizeof pkt);
+    hdr_t *h = (hdr_t *)pkt;
+    h->type = 0x0204;                                  /* RESOURCE_CREATE_3D */
+    h->ctx = ctx;
+    u32 *w = (u32 *)(pkt + sizeof *h);
+    w[0] = id;
+    w[1] = 0;                                          /* PIPE_BUFFER */
+    w[2] = 1;                                          /* B8G8R8A8 */
+    w[3] = 0;
+    w[4] = (u32)(size > 0xFFFFFFFFull ? 0xFFFFFFFFu : size);
+    w[5] = 1; w[6] = 1; w[7] = 1; w[8] = 0; w[9] = 0; w[10] = 0;
+    int rc = xmit(pkt, sizeof *h + 11 * 4);
+    if (rc) return rc;
+    memset(pkt, 0, sizeof pkt);
+    h = (hdr_t *)pkt;
+    h->type = 0x0202;                                  /* CTX_ATTACH_RESOURCE */
+    h->ctx = ctx;
+    *(u32 *)(pkt + sizeof *h) = id;
+    return xmit(pkt, sizeof *h + 8);
+}
+
+int virtio_gpu_submit(unsigned ctx, const void *cmds, unsigned n, int pid, unsigned fence_id) {
+    if (!ready || broken) return -MOS_ENXIO;
+    if (!cmds || !n || n > 400) return -MOS_EINVAL;
+    for (u64 spin = 0; fly_live(); spin++) {
+        if (spin > 400000000ull) return -MOS_EIO;
+        reap();
+        __asm__ volatile("pause");
+    }
+    u8 *pkt = cmd;
+    memset(pkt, 0, RESP);
+    hdr_t *h = (hdr_t *)pkt;
+    h->type = 0x0207;                                  /* SUBMIT_3D */
+    h->ctx = ctx;
+    if (fence_id) { h->flags = 1; h->fence = fence_id; }
+    u32 *w = (u32 *)(pkt + sizeof *h);
+    w[0] = n;
+    memcpy(pkt + sizeof *h + 8, cmds, n);
+    u32 len = (u32)(sizeof *h + 8 + n);
+    vq_desc_t *d0 = &desc[0], *d1 = &desc[1];
+    d0->addr = cmd_phys; d0->len = len; d0->flags = 1; d0->next = 1;
+    d1->addr = cmd_phys + RESP; d1->len = SLOT - RESP; d1->flags = 2; d1->next = 0;
+    memset(cmd + RESP, 0, sizeof(hdr_t));
+    avail->ring[avail_idx % qsize] = 0;
+    fly[0].head = 0; fly[0].pid = pid; fly[0].fence = fence_id; fly[0].done = 0; fly[0].live = 1;
+    __asm__ volatile("mfence" ::: "memory");
+    avail_idx++;
+    *(volatile u16 *)((u8 *)avail + 2) = avail_idx;
+    __asm__ volatile("mfence" ::: "memory");
+    mmio_w16(notify, 0, 0);
+    return 0;                                          /* a fence sobe no IRQ, não aqui */
 }

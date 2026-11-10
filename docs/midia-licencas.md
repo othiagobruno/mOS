@@ -9,7 +9,7 @@ O repositório é MIT. Só entra decodificador com licença compatível, e só o
 | AAC | fdk-aac seria a escolha BSD | — | não vendida | Reconhecido (ADTS e `mp4a`), sem PCM. FAAD2 é GPL e foi rejeitado. |
 | Opus | libopus seria a escolha BSD-3 | — | não vendida | Reconhecido (Ogg `OpusHead` e CAF `opus`), sem PCM. |
 
-Não há decodificador de H.264/HEVC. VideoToolbox devolve o erro da Apple. Não se contorna FairPlay nem outro DRM.
+O decodificador H.264 Baseline (CAVLC, intra 4x4 e 16x16, P-slice, deblocking) é o [h264bsd](https://github.com/oneam/h264bsd) (Apache-2.0, Android Open Source) em `userland/third_party/h264bsd/`, com a casca `h264bsd_glue.c`. O codificador em `h264sw.c` continua I_PCM: o residual CAVLC próprio não passa no ffmpeg. Não há x264, x265, libde265 nem libavcodec no fonte. HEVC é stub: VideoToolbox devolve -12906/-12908. Não se contorna FairPlay nem outro DRM.
 
 A permissão de microfone e câmera não está nesta frente. O contrato é o símbolo fraco
 

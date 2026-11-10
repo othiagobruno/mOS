@@ -1,7 +1,9 @@
 # ABI de GPU (rascunho estável)
 
 Contrato entre o kernel do mOS e o Metal da Sistemas. O Metal é quem consome.
-Este documento e `kernel/include/mos_gpu.h` são a fonte. `MOS_GPU_ABI` vale 1.
+Este documento e `kernel/include/mos_gpu.h` são a fonte. `MOS_GPU_ABI` vale 2.
+As estruturas de syscall são as da revisão 1. A revisão 2 define o lote de
+`MOS_GPU_SUBMIT`.
 
 A syscall é `SYS_GPU` (62). O primeiro rascunho dizia 61; a `main` já usava
 61 para `SYS_UNIX`. Os códigos `MOS_GPU_*` não mudaram. Convenção: `int 0x80`,
@@ -20,10 +22,10 @@ a GPU usa esta syscall.
 
 ## Consulta
 
-`MOS_GPU_INFO` preenche `mos_gpu_info_t`: `abi`, `caps` (`MOS_GPU_CAP_VIRGL`,
-`VENUS`, `KMS`, `IOSURF`), identificadores PCI e um nome curto. Sem GPU, a
-chamada tem sucesso, `caps` fica 0 e `name` descreve só o framebuffer do
-firmware.
+`MOS_GPU_INFO` preenche `mos_gpu_info_t`: `abi` (`MOS_GPU_ABI`, agora 2),
+`caps` (`MOS_GPU_CAP_VIRGL`, `VENUS`, `KMS` e, com a IOSurface compartilhada,
+`IOSURF`), identificadores PCI e um nome curto. Sem GPU 3D, `VIRGL` e `VENUS`
+ficam desligados. `IOSURF` permanece enquanto essa superfície existir.
 
 ## Contexto
 
@@ -61,16 +63,59 @@ transporte fica para uma revisão que só acrescente campos no fim).
 `MOS_GPU_FENCE_DESTROY` acorda quem espera com `-MOS_ENOENT` se a fence
 sumir durante a espera; quem já observou `seq` não é afetado.
 
-`MOS_GPU_SUBMIT` envia `cmd_bytes` a partir de `cmds` para o contexto.
-`MOS_GPU_SUBMIT_3D` marca fluxo virgl ou venus, conforme o `kind` do
-contexto. `fence` 0 não sinaliza; outro valor pede que a fence seja
-sinalizada quando a GPU concluir o lote. A syscall volta quando o lote foi
-aceito, não quando a GPU terminou. Comando maior que o limite do dispositivo
-ou contexto errado devolve `-MOS_EINVAL`.
+`MOS_GPU_SUBMIT` envia `cmd_bytes` a partir de `cmds`. Com `MOS_GPU_SUBMIT_3D`
+o buffer é um lote da revisão 2 (`MOS_GPU_ABI` 2). Cabe em 400 bytes.
+Lote vazio, maior que isso, contexto errado ou lote inválido devolve
+`-MOS_EINVAL`. Handle da tabela que o processo não tem devolve `-MOS_ENOENT`.
+A fence só incrementa `seq` depois da validação. Falha não sinaliza.
 
-O formato dos bytes em `cmds` é o do dispositivo: virgl (cabeçalho de
-comando do virtio-gpu 3D) ou venus (fluxo Venus). O kernel não interpreta
-shader. Rejeita lote vazio e contexto destruído.
+O lote é little-endian e múltiplo de 4, nesta ordem:
+
+1. `mos_gpu_batch_hdr_t`: `version` = `MOS_GPU_BATCH_VER` (1), `kind` igual ao
+   do contexto, `bytes` igual a `cmd_bytes`, `ncmd` (1..8), `nbo` (0..8),
+   `nreloc` (0..8), `pad0` e `pad1` zero.
+2. `nbo` handles `u32` do processo (a tabela do próprio lote).
+3. `nreloc` vezes `mos_gpu_reloc_t`: `cmd` é o índice do comando, `off` é um
+   byte alinhado dentro dele (a partir do cabeçalho de 16 bytes do comando),
+   `bo_index` é índice na tabela, `bo_off` cabe no BO. A palavra de 32 bits
+   nesse `off` tem de ser o próprio `bo_index`.
+4. Comandos. Cada um começa com `mos_gpu_cmd_hdr_t` (`op`, `bytes` do comando
+   inteiro, `virgl`, `venus`). `bytes` é múltiplo de 4. A soma termina no fim
+   do lote.
+
+Compute mínimo:
+
+| op | carga | virgl | venus |
+|---|---|---|---|
+| `MOS_GPU_CMD_BIND` (1) | `mos_gpu_bind_t`: slot 0..31, índice, offset, range > 0 | `MOS_GPU_VIRGL_SET_SHADER_BUFFERS` (32) | `MOS_GPU_VENUS_BIND` (1) |
+| `MOS_GPU_CMD_SHADER` (2) | `mos_gpu_shader_t`: shader num BO, local size > 0 nos três eixos | `MOS_GPU_VIRGL_BIND_SHADER` (31) | `MOS_GPU_VENUS_SHADER` (2) |
+| `MOS_GPU_CMD_DISPATCH` (3) | `mos_gpu_dispatch_t`: grupos 1..65535 | `MOS_GPU_VIRGL_LAUNCH_GRID` (35) | `MOS_GPU_VENUS_DISPATCH` (3) |
+
+No lote virgl o campo `venus` é 0 e `virgl` é o número da tabela. No lote
+venus é o contrário. Outro opcode é `-MOS_EINVAL`. O kernel não lê o shader.
+Os números virgl são os de `SET_SHADER_BUFFERS`, `BIND_SHADER` e
+`LAUNCH_GRID` do protocolo virgl. O venus desta revisão é o subconjunto da
+tabela, não o fluxo `vn_cs` completo.
+
+Sem o cap virgl ou venus, o lote válido só sinaliza a fence. Com o cap, o que
+vai para o `SUBMIT_3D` do virtio-gpu é a tradução, não o lote cru. Virgl sai
+como `VIRGL_CMD0`: `SET_SHADER_BUFFERS` (tipo compute, slot, um recurso, handle
+do BO, offset, range), `BIND_SHADER` (handle, tipo compute) e `LAUNCH_GRID`
+(tamanho local do último shader, ou 1,1,1, e a grade do dispatch). Venus sai
+como um comando por vez: um `u32` com a quantidade de palavras seguintes, o
+opcode `MOS_GPU_VENUS_*` e os campos, com o handle do BO no lugar do índice.
+`BIND` tem 5 palavras depois da conta (opcode, slot, handle, offset, range),
+`SHADER` tem 7 (opcode, handle, offset, tamanho, local x/y/z) e `DISPATCH`
+tem 4 (opcode e a grade). É o compute que o Metal grava: bind, shader e
+dispatch. O shader em si não é executado.
+`fence` 0 não sinaliza. Com o cap do `kind` ligado, o `SUBMIT_3D` entra na fila
+e a syscall volta sem mexer na fence. O IRQ (MSI-X, MSI ou INTx) é que
+incrementa `seq` e acorda todo mundo que espera essa fence. Sem o cap, o
+lote válido sinaliza a fence na hora, porque não há dispositivo. Vários
+waiters na mesma fence acordam juntos. `FENCE_WAIT` com `seq` ainda em 0 e
+`timeout_ms` diferente de 0 bloqueia a thread (`wait_pid` -12) até o sinal,
+a destruição (`-MOS_ENOENT`) ou o prazo (`-MOS_ETIMEDOUT`). `timeout_ms` 0
+devolve `-MOS_EAGAIN` na hora.
 
 ## IOSurface na memória da GPU
 

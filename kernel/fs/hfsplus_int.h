@@ -21,6 +21,9 @@ typedef struct {
     u32 cat_root, ext_root, attr_root;
     u32 priv_dir;            /* "\0\0\0\0HFS+ Private Data" (hard links) */
     u8 *node;                /* buffer de nó */
+    struct { int tree; u32 idx; u32 len; u64 stamp; u8 *data; } ncache[8];
+    u64 nclock;
+    struct { u32 id; u8 ft; bool used; fork_t f; } ecache[8];
     bool own_dev;            /* dev é um slice criado aqui (wrapper HFS) */
     u64 cache_ino;           /* último arquivo decmpfs descomprimido */
     u8 *cache;

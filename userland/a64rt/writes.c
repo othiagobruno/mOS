@@ -18,7 +18,7 @@ typedef long long i64;
 typedef unsigned long long usize;
 #include "../../kernel/include/compat_gui.h"
 
-_Static_assert(sizeof(mos_stat_t) == 24, "stat");
+_Static_assert(sizeof(mos_stat_t) == 32, "stat");
 _Static_assert(sizeof(mos_procinfo_t) == 64, "procinfo");
 _Static_assert(sizeof(mos_sigaction_t) == 24, "sigaction");
 _Static_assert(sizeof(mos_sigstack_t) == 24, "sigstack");
@@ -427,30 +427,41 @@ int a64rt_guest_writes(long nr, a64rt_u64 x0, a64rt_u64 x1, a64rt_u64 x2, a64rt_
         web_spans(x0, x2, x3, ret, peek, ctx, &s);
         break;
     case SYS_UNIX:
-        /* x0 = operação. Quatro intervalos no máximo (touch_writes): o payload vem primeiro. */
+        /* x0 = operação. O payload (iovecs do recvmsg, valor do getsockopt, os dois fds
+         * do socketpair) vem antes do cabeçalho, para o JIT ver o que o UnixStream leu. */
         if (ret < 0) break;
-        if ((x0 == MOS_UNIX_ACCEPT || x0 == MOS_UNIX_SOCKNAME || x0 == MOS_UNIX_PEERNAME)) {
-            if (x2) push(o, &n, max, x2, 108);
-            if (x3) push(o, &n, max, x3, 4);
+        if (x0 == MOS_UNIX_ACCEPT || x0 == MOS_UNIX_SOCKNAME || x0 == MOS_UNIX_PEERNAME) {
+            if (x2) push(&s, x2, 108);
+            if (x3) push(&s, x3, 4);
         } else if (x0 == MOS_UNIX_PAIR && x3) {
-            push(o, &n, max, x3, 8);
+            push(&s, x3, 8);
         } else if (x0 == MOS_UNIX_GETSOCKOPT && x2 && peek) {
             struct { int level, name; unsigned len, pad; a64rt_u64 val; } g;
-            push(o, &n, max, x2, sizeof g);
+            push(&s, x2, sizeof g);
             if (peek(ctx, x2, &g, sizeof g) && g.val && g.len && g.len <= 256)
-                push(o, &n, max, g.val, g.len);
+                push(&s, g.val, g.len);
         } else if (x0 == MOS_UNIX_RECVMSG && x2 && peek) {
             struct { a64rt_u64 name; unsigned namelen, pad; a64rt_u64 iov; int iovlen, pad2;
                      a64rt_u64 control; unsigned controllen; int flags; } h;
-            struct { a64rt_u64 base, len; } iv;
-            if (!peek(ctx, x2, &h, 48)) break;
-            if (ret > 0 && h.iov && h.iovlen > 0 && peek(ctx, h.iov, &iv, sizeof iv) && iv.base && iv.len) {
-                a64rt_u64 k = (a64rt_u64)ret < iv.len ? (a64rt_u64)ret : iv.len;
-                push(o, &n, max, iv.base, k);
+            struct { a64rt_u64 base, len; } ivs[8];
+            if (!peek(ctx, x2, &h, 48)) { s.overflow = 1; break; }
+            if (ret > 0 && h.iov && h.iovlen > 0) {
+                int nio = h.iovlen > 8 ? 8 : h.iovlen;
+                if (h.iovlen > 8) s.overflow = 1;
+                if (!peek(ctx, h.iov, ivs, (a64rt_u64)nio * sizeof ivs[0])) s.overflow = 1;
+                else {
+                    a64rt_u64 left = (a64rt_u64)ret;
+                    for (int i = 0; i < nio && left; i++) {
+                        if (!ivs[i].base || !ivs[i].len) continue;
+                        a64rt_u64 k = left < ivs[i].len ? left : ivs[i].len;
+                        push(&s, ivs[i].base, k);
+                        left -= k;
+                    }
+                }
             }
-            push(o, &n, max, x2, 48);
-            if (h.name && h.namelen) push(o, &n, max, h.name, h.namelen < 108 ? h.namelen + 1 : 108);
-            if (h.control && h.controllen && h.controllen <= 512) push(o, &n, max, h.control, h.controllen);
+            push(&s, x2, 48);
+            if (h.name && h.namelen) push(&s, h.name, h.namelen < 108 ? h.namelen + 1 : 108);
+            if (h.control && h.controllen && h.controllen <= 512) push(&s, h.control, h.controllen);
         }
         break;
     default:

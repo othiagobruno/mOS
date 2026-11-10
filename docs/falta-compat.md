@@ -55,8 +55,8 @@ um sinal inventado. Não houve teste em VM nem em hardware: o anel de captura n�
 dispositivos vazia; `startRunning` com câmera concedida fica `isRunning` sem quadro. Sem FairPlay.
 `AVCaptureScreenInput` só muda o portão para `kTCCServiceScreenCapture`; não fabrica quadro.
 A captura contínua (`SCStream`, `CGDisplayStream`) lê `DEV_SCREEN_CAPTURE` depois de `cx_tcc_preflight` e
-embrulha o ARGB em IOSurface, CVPixelBuffer e CMSampleBuffer. Codificar e decodificar H.264/HEVC no
-VideoToolbox continua -12906/-12908. `VTPixelTransferSession` copia o buffer quando formato e tamanho coincidem.
+embrulha o ARGB em IOSurface, CVPixelBuffer e CMSampleBuffer. H.264 no VideoToolbox é software
+(decodificador Baseline via h264bsd; codificador ainda I_PCM; BGRA ou NV12; sample AVCC). HEVC continua stub, -12906/-12908. `VTPixelTransferSession` copia o buffer quando formato e tamanho coincidem.
 
 ## 4. `.metallib` (AIR) — opcodes emitidos e conferidos no host contra o fonte
 

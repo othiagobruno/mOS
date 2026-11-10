@@ -990,10 +990,10 @@ int getppid(void) {
     cached_pid = me; cached_ppid = pp; cached_ms = now;
     return pp;
 }
-unsigned getuid(void) { return 501; }
-unsigned geteuid(void) { return 501; }
-unsigned getgid(void) { return 20; }
-unsigned getegid(void) { return 20; }
+unsigned getuid(void) { long r = SYS0(SYS_GETUID); return r < 0 ? 501 : (unsigned)r; }
+unsigned geteuid(void) { long r = SYS0(SYS_GETEUID); return r < 0 ? 501 : (unsigned)r; }
+unsigned getgid(void) { long r = SYS0(SYS_GETGID); return r < 0 ? 20 : (unsigned)r; }
+unsigned getegid(void) { long r = SYS0(SYS_GETEGID); return r < 0 ? 20 : (unsigned)r; }
 char *getcwd(char *b, size_t n) {
     if (!b) return strdup(cx_cwd);
     if (strlen(cx_cwd) >= n) { cx_errno = CX_ERANGE; return 0; }
@@ -1012,7 +1012,21 @@ int chdir(const char *path) {
     return 0;
 }
 int access(const char *path, int mode) { mos_stat_t st; (void)mode; PATH(p, path); return ret_errno(SYS2(SYS_STAT, p, &st)) < 0 ? -1 : 0; }
-int fsync(int fd) { (void)fd; return 0; }
+int fsync(int fd) {
+    struct { int aio_fildes; int aio_pad; long long aio_offset; volatile void *aio_buf;
+             unsigned long long aio_nbytes; int aio_reqprio; int aio_lio_opcode; } cb;
+    memset(&cb, 0, sizeof cb);
+    cb.aio_fildes = fd;
+    long r = SYS2(96, 5, &cb);
+    if (r < 0) return (int)ret_errno(r);
+    for (int i = 0; i < 64; i++) {
+        long e = SYS2(96, 3, &cb);
+        if (e == 0) { SYS2(96, 4, &cb); return 0; }
+        if (e != 36) return e < 0 ? (int)ret_errno(e) : -1;
+        SYS1(96, 6);
+    }
+    return 0;
+}
 /* dup/dup2 de verdade (SYS_DUP2): o bash redireciona com eles. Os fds 0-2 do console não existem
  * na tabela do kernel; duplicá-los continua sendo aceito sem efeito, como antes. */
 int dup2(int a, int b) {
@@ -1378,6 +1392,7 @@ static void to_mac_stat(const mos_stat_t *s, mac_stat_t *m) {
     memset(m, 0, sizeof *m);
     /* is_dir: 0 arquivo, 1 pasta, 2/3 pipe, 4 dispositivo, 5 terminal, 6 socket AF_UNIX */
     m->st_mode = s->is_dir == 6 ? 0140666 : s->is_dir == 5 ? 0020620 : s->is_dir == 4 ? 0020666 : s->is_dir >= 2 ? 0010600 : s->is_dir ? 0040755 : 0100644;
+    if (s->mode) m->st_mode = (unsigned short)((m->st_mode & ~07777) | (s->mode & 07777));
     m->st_dev = 0x1000002;      /* um só volume; o st_ino (hash do caminho) separa os arquivos */
     m->st_nlink = 1;
     m->st_uid = 501;
