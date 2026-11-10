@@ -343,17 +343,23 @@ static const void *vt_numpunct[10] = {0, 0, (void *)np_noop, (void *)np_noop, (v
                                       (void *)np_thousands, (void *)np_grouping, (void *)np_true, (void *)np_false};
 /* facet {vptr; long owners (shared_count)}: nunca é liberado */
 static struct { void **vt; long owners; char dp, ts; } numpunct_c = {(void **)&vt_numpunct[2], 0x3fffffff, '.', ','};
-static struct { long refs; } locale_imp = {1};
+struct { long refs; } cx_locale_imp = {1};
 
+void *cx_locale_classic_imp(void) { return &cx_locale_imp; }
 void locale_ctor(void **l) __asm__("_ZNSt3__16localeC1Ev");
-void locale_ctor(void **l) { *l = &locale_imp; }
+void locale_ctor(void **l) { *l = &cx_locale_imp; }
 void locale_copy(void **l, void *const *o) __asm__("_ZNSt3__16localeC1ERKS0_");
 void locale_copy(void **l, void *const *o) { *l = *o; }
 void locale_dtor(void **l) __asm__("_ZNSt3__16localeD1Ev");
 void locale_dtor(void **l) { (void)l; }
+extern const void *cx_locale_facet(void *id);
 const void *locale_use_facet(void *const *l, void *id) __asm__("_ZNKSt3__16locale9use_facetERNS0_2idE");
 const void *locale_use_facet(void *const *l, void *id) {
+    const void *f;
     (void)l;
-    if (id != (void *)numpunct_char_id) cxx_fatal("std::bad_cast", "locale::use_facet: só numpunct<char> existe no mOS");
-    return &numpunct_c;
+    if (id == (void *)numpunct_char_id) return &numpunct_c;
+    f = cx_locale_facet(id);
+    if (f) return f;
+    cxx_fatal("std::bad_cast", "locale::use_facet");
+    return 0;
 }
