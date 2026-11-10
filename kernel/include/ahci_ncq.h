@@ -26,3 +26,17 @@ void ahci_tag_put(ahci_tags_t *t, int tag);
 
 /* Register H2D de 20 bytes: READ/WRITE FPDMA QUEUED. `count` 0 = 65536 setores. */
 void ahci_fpdma_fis(u8 *fis, int write, u64 lba, u16 count, u8 tag);
+
+/* Vários FPDMA em voo. `ci` é o registrador de comandos ainda ativos; a interrupção
+ * (ou a leitura dele) marca pronta a tag cujo bit já caiu. */
+typedef struct {
+    u32 posted;
+    u32 done;
+    u8 ntags;
+} ahci_batch_t;
+
+void ahci_batch_init(ahci_batch_t *b, int ntags);
+int  ahci_batch_post(ahci_batch_t *b, int tag); /* 0, ou -1 se a tag não cabe ou já está em voo */
+void ahci_batch_irq(ahci_batch_t *b, u32 ci);
+u32  ahci_batch_pending(const ahci_batch_t *b);
+void ahci_batch_release(ahci_batch_t *b, int tag);

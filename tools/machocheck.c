@@ -247,7 +247,8 @@ static int kind_de(const char *path) {
     /* /usr/lib/libz.1.dylib da imagem (tools/build-zlib.ps1). Nao e simbolo do libSystem. */
     if (!strcmp(b, "libz.1.dylib") || !strcmp(b, "libz.dylib")) return 4;
     /* binario do framework, install name .../CryptoKit.framework/Versions/A/CryptoKit */
-    if (!strcmp(b, "CryptoKit")) return 5;
+    /* binário do framework: .../CryptoKit ou .../CoreImage (tools/build-coreimage.sh) */
+    if (!strcmp(b, "CryptoKit") || !strcmp(b, "CoreImage")) return 5;
     if (!strcmp(b, "libcurl.4.dylib") || !strcmp(b, "libcompression.dylib")) return 6;
     return 0;
 }
@@ -503,7 +504,7 @@ static void carrega_disco(const char *path) {
     if (stat(path, &st)) { fprintf(stderr, "disco: caminho inexistente: %s\n", path); disco_faltou = 1; return; }
     if (S_ISREG(st.st_mode)) {
         int k = kind_de(path);
-        if (!k) { fprintf(stderr, "disco: %s nao e libc++, libswift*, libunwind, libz, libcurl, libcompression nem CryptoKit\n", path); disco_faltou = 1; return; }
+        if (!k) { fprintf(stderr, "disco: %s nao e libc++, libswift*, libunwind, libz, libcurl, libcompression, CryptoKit nem CoreImage\n", path); disco_faltou = 1; return; }
         carrega_kind(path, k);
         return;
     }
@@ -902,7 +903,7 @@ int main(int argc, char **argv) {
         printf("  Swift: %u arquivo(s), %u simbolos\n", swift_files, swift_syms);
         printf("  unwind: %u arquivo(s), %u simbolos\n", uw_files, uw_syms);
         printf("  libz: %u arquivo(s), %u simbolos\n", z_files, z_syms);
-        printf("  CryptoKit: %u arquivo(s), %u simbolos\n", ck_files, ck_syms);
+        printf("  CryptoKit/CoreImage: %u arquivo(s), %u simbolos\n", ck_files, ck_syms);
         printf("  curl/compression: %u arquivo(s), %u simbolos\n", usr_files, usr_syms);
     }
     printf("Imagens Mach-O x86_64 no bundle: %d (exports do bundle: %u)\n\n", nimgs, bundle_exports.n);

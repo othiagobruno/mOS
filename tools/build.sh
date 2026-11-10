@@ -165,6 +165,9 @@ cc -O1 -fno-omit-frame-pointer -funwind-tables -rdynamic \
     -ldl -o "$OUT/unw_hosttest"
 "$OUT/unw_hosttest"
 
+echo "==> runtime Swift do Grok (teste de host)"
+bash "$ROOT/tools/swift-rt-grok-teste.sh" "$ZIG" "$OUT/swift-rt-grok"
+
 echo "==> libSystem.mos"
 # x86_64: _Unwind_* fica em cxx_unwind.c. UnwindLevel1.c repete esses nomes; o resto do libunwind fica.
 LS_SRC=()
@@ -188,6 +191,32 @@ done
     -Wno-unused-function -Wno-unused-variable -Wno-unreachable-code \
     -I"$ROOT/userland/host-audio/shim" -I"$ROOT/userland/libsystem" \
     -c "$ROOT/userland/libsystem/sqlite3_mos.c" -o "$OUT/sqlite3_mos.o"
+# compression.c do #135 entra no ELF. MOS_LIBSYSTEM usa o cz_raw_* de compression_z.c
+# (já na lista) em vez de incluir o .c de novo. LZMA/Brotli ficam na dylib.
+comp_one() {
+    "$ZIG" cc -target x86_64-freestanding-none -O2 -g0 -ffreestanding -fno-stack-protector -fno-builtin -nostdlib \
+        -fpie -mno-red-zone -Wall -Wno-unused-parameter -Wno-incompatible-library-redeclaration -Wno-builtin-requires-header \
+        -Wno-unused-function \
+        -I"$ROOT/userland/libsystem/kshim" -I"$ROOT/userland/libsystem" -I"$ROOT/userland/third_party/zlib" \
+        -I"$ROOT/userland/third_party/lz4" -I"$ROOT/userland/third_party/lzfse" \
+        -isystem "$ZIGDIR/lib/include" \
+        "$@" || return 1
+}
+comp_one -DMOS_LIBSYSTEM -c "$ROOT/userland/frameworks/libcompression/compression.c" -o "$OUT/compression.o"
+for pair in \
+    lz4.c:lz4.o lz4hc.c:lz4hc.o lz4frame.c:lz4frame.o xxhash.c:xxhash.o
+do
+    src="${pair%%:*}"; obj="${pair##*:}"
+    comp_one -c "$ROOT/userland/third_party/lz4/$src" -o "$OUT/$obj"
+done
+for pair in \
+    lzfse_decode.c:lzfse_decode.o lzfse_decode_base.c:lzfse_decode_base.o \
+    lzfse_encode.c:lzfse_encode.o lzfse_encode_base.c:lzfse_encode_base.o lzfse_fse.c:lzfse_fse.o \
+    lzvn_decode_base.c:lzvn_decode_base.o lzvn_encode_base.c:lzvn_encode_base.o
+do
+    src="${pair%%:*}"; obj="${pair##*:}"
+    comp_one -c "$ROOT/userland/third_party/lzfse/$src" -o "$OUT/$obj"
+done
 # UnwindLevel1.c, UnwindLevel1-gcc-ext.c, UnwindRegistersSave.S e libunwind.cpp repetem cxx_unwind.c.
 "$ZIG" cc -target x86_64-freestanding-none -O2 -g0 -ffreestanding -fno-stack-protector -fno-builtin -nostdlib -static -no-pie \
     -fpie -mno-red-zone -Wall -Wno-unused-parameter -Wno-incompatible-library-redeclaration -Wno-builtin-requires-header \
@@ -195,6 +224,9 @@ done
     -isystem "$ZIGDIR/lib/include" \
     -Wl,--image-base=0x400000100000 -Wl,-e,cx_start -Wl,--no-gc-sections \
     "${LS_SRC[@]}" "$OUT/audiodec.o" "$OUT/sqlite3_mos.o" \
+    "$OUT/compression.o" "$OUT/lz4.o" "$OUT/lz4hc.o" "$OUT/lz4frame.o" "$OUT/xxhash.o" \
+    "$OUT/lzfse_decode.o" "$OUT/lzfse_decode_base.o" "$OUT/lzfse_encode.o" \
+    "$OUT/lzfse_encode_base.o" "$OUT/lzfse_fse.o" "$OUT/lzvn_decode_base.o" "$OUT/lzvn_encode_base.o" \
     -o "$OUT/libSystem.mos"
 python3 "$ROOT/tools/patch-ehframe.py" "$OUT/libSystem.mos"
 HASH=$(sha256sum "$OUT/libSystem.mos" | cut -c1-16)
@@ -215,6 +247,9 @@ fi
 
 echo "==> overlay Darwin (teste de host)"
 bash "$ROOT/tools/darwin-swift-teste.sh" "$ZIG" "$OUT/darwin-swift"
+
+echo "==> String, Array e Dictionary (teste de host)"
+bash "$ROOT/tools/string-fdn-teste.sh" "$ZIG" "$OUT/string-fdn"
 
 echo "==> kernel"
 mapfile -t KSRC < <(find "$ROOT/kernel" -type f \( -name '*.c' -o -name '*.S' \) | sort)
@@ -266,6 +301,13 @@ mkdir -p "$ESP/mOS/Sistema/Biblioteca/a64"
     -DA64_RUNTIME_MOS -DA64_HAVE_JIT -I"$ROOT/userland/a64" -I"$ROOT/userland/a64rt" \
     -Wl,--image-base=0x400041000000 -Wl,-e,_start \
     "${A64SRC[@]}" -o "$ESP/mOS/Sistema/Biblioteca/a64/a64rt.mos"
+
+echo "==> /usr/lib (libc++ do LLVM e zlib 1.3.2; não são stub)"
+MOS_ZIG="$ZIG" sh "$ROOT/tools/build-libcxx.sh" "$ROOT/build/libcxx"
+MOS_ZIG="$ZIG" sh "$ROOT/tools/build-libz.sh"
+mkdir -p "$ESP/mOS/usr/lib"
+cp -f "$ROOT/build/libcxx/libc++.1.dylib" "$ESP/mOS/usr/lib/libc++.1.dylib"
+cp -f "$ROOT/build/zlib-x86_64/libz.1.dylib" "$ESP/mOS/usr/lib/libz.1.dylib"
 
 echo "==> libswift"
 # Runtime real (swift-6.4.2) quando a toolchain e o fonte estão em .tools/. Sem isso, o stage completa com stub.
@@ -326,6 +368,59 @@ else
     echo "aviso: Virtualization.framework não compilou" >&2
 fi
 
+echo "==> StoreKit.framework"
+SKSRC="$ROOT/userland/frameworks/StoreKit/StoreKit.m"
+SKOUT="$OUT/storekit"
+SKDIR="$ESP/mOS/System/Library/Frameworks/StoreKit.framework/Versions/A"
+mkdir -p "$SKOUT" "$SKDIR"
+sk_one() {
+    "$ZIG" cc -target "$1" -O2 -shared -x objective-c -I"$ROOT/userland/sdk/include" \
+        -Wno-objc-root-class -Wno-objc-method-access "$SKSRC" -o "$2" \
+        -Wl,-install_name,/System/Library/Frameworks/StoreKit.framework/Versions/A/StoreKit \
+        -Wl,-undefined,dynamic_lookup
+}
+if sk_one x86_64-macos "$SKOUT/StoreKit.x86" && sk_one aarch64-macos "$SKOUT/StoreKit.arm"; then
+    python3 - "$SKDIR/StoreKit" "$SKOUT/StoreKit.x86" "$SKOUT/StoreKit.arm" <<'PY'
+import pathlib, struct, sys
+out, *srcs = sys.argv[1:]
+slices = []
+for p in srcs:
+    b = pathlib.Path(p).read_bytes()
+    if struct.unpack_from("<I", b, 0)[0] != 0xFEEDFACF:
+        raise SystemExit(p + " nao e Mach-O fino")
+    cpu, sub = struct.unpack_from("<II", b, 4)
+    align = 14 if cpu == 0x0100000C else 12
+    slices.append((cpu, sub, align, b))
+off = 8 + 20 * len(slices)
+parts = []
+for cpu, sub, align, b in slices:
+    a = 1 << align
+    if off % a:
+        off += a - (off % a)
+    parts.append((cpu, sub, align, off, b))
+    off += len(b)
+buf = bytearray()
+def be(v):
+    buf.extend(struct.pack(">I", v & 0xFFFFFFFF))
+parts_n = len(parts)
+buf.extend(struct.pack(">II", 0xCAFEBABE, parts_n))
+for cpu, sub, align, o, b in parts:
+    buf.extend(struct.pack(">IIIII", cpu & 0xFFFFFFFF, sub & 0xFFFFFFFF, o & 0xFFFFFFFF, len(b) & 0xFFFFFFFF, align & 0xFFFFFFFF))
+for cpu, sub, align, o, b in parts:
+    if len(buf) < o:
+        buf.extend(b"\0" * (o - len(buf)))
+    buf.extend(b)
+pathlib.Path(out).write_bytes(buf)
+PY
+    echo "StoreKit.framework ok"
+else
+    echo "StoreKit.framework não compilou" >&2
+    exit 1
+fi
+
+echo "==> CoreImage.framework"
+bash "$ROOT/tools/build-coreimage.sh" "$ZIG" "$ESP/mOS"
+
 echo "==> apps oficiais em /Aplicativos"
 bash "$ROOT/tools/stage-apps-oficiais.sh" "$OUT"
 mkdir -p "$ESP/mOS/usr/lib"
@@ -343,3 +438,4 @@ rm -f "$OUT/mOS.img"
 "$OUT/mkimg" "$OUT/mOS.img" "$ESP" "$MIB" --live-overlay "$ROOT/root-live" --key "$KEY" --manifest-out "$OUT/manifesto.txt" --versao "$VER"
 echo "OK: $OUT/mOS.img"
 ls -lh "$OUT/BOOTX64.EFI" "$OUT/mOS.img"
+python3 "$ROOT/tools/verificar-imagem-apps.py" "$ESP"

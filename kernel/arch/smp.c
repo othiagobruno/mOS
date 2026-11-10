@@ -25,6 +25,8 @@
 typedef struct PACKED { char sig[4]; u32 len; u8 rev, sum; char oem[6], table[8]; u32 oemrev, creator, crev; } sdt_t;
 
 static volatile u8 *lapic;
+static u64 lapic_base;
+static int x2apic_on;
 static u8 apic_ids[MAX_CPUS];
 static int ncpus_found, ncpus_online = 1;
 static u32 bsp_id;
@@ -192,6 +194,8 @@ static u64 bsp_cr0, bsp_cr4, bsp_efer, bsp_xcr0;
 static u8 cpu_apic[MAX_CPUS];
 
 u8 smp_apic_id(int cpu) { return cpu >= 0 && cpu < MAX_CPUS ? cpu_apic[cpu] : 0; }
+u64 smp_lapic_base(void) { return lapic_base; }
+int smp_x2apic(void) { return x2apic_on; }
 
 /* IPI fixo para um núcleo (proc/sched.c: TLB shootdown e threads mortas) */
 void smp_send_ipi(int cpu, u8 vec) {
@@ -273,6 +277,8 @@ void smp_init(void) {
     if (!lbase) return;
     vmm_map_mmio(lbase, 0x1000);
     lapic = (volatile u8 *)lbase;
+    lapic_base = lbase;
+    x2apic_on = (rdmsr_(0x1B) & (1ull << 10)) != 0;
     g_lapic_eoi = lbase + LAPIC_EOI;
     bsp_id = lr(LAPIC_ID) >> 24;
     cpu_apic[0] = (u8)bsp_id;

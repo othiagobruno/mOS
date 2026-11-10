@@ -29,11 +29,15 @@ $triple = 'arm64-apple-macos11-elf'
 $cflags = @("--target=$triple", '-mcpu=apple-m1', '-O2', '-g0', '-ffreestanding', '-fno-stack-protector', '-fno-builtin',
     '-fPIC', '-ffixed-x18', '-fsigned-char', '-fno-common', '-funwind-tables',
     '-Wall', '-Wno-unused-parameter', '-Wno-incompatible-library-redeclaration', '-Wno-builtin-requires-header',
-    '-Wno-unknown-warning-option', "-isystem", $inc, "-I$ls\kshim", "-I$root\userland\third_party\h264bsd")
+    '-Wno-unknown-warning-option', '-Wno-unused-function', "-isystem", $inc, "-I$ls\kshim", "-I$root\userland\third_party\h264bsd",
+    "-I$root\userland\third_party\zlib", "-I$root\userland\third_party\lz4", "-I$root\userland\third_party\lzfse", '-DMOS_LIBSYSTEM')
 
 # os .S x86 tem versao *_arm64.S; os *_arm64.S ficam fora do build x86 por #if defined(__aarch64__)
 $x86only = @('objc_msg.S', 'objc_tramp.S', 'sigjmp.S', 'start.S', 'tlv.S')
 $src = @(Get-ChildItem "$ls\*" -Include *.c, *.S | Where-Object { $x86only -notcontains $_.Name } | ForEach-Object FullName) + @(Get-ChildItem "$root\userland\third_party\h264bsd\*.c" | ForEach-Object FullName)
+$src += "$root\userland\frameworks\libcompression\compression.c"
+$src += @('lz4.c','lz4hc.c','lz4frame.c','xxhash.c') | ForEach-Object { "$root\userland\third_party\lz4\$_" }
+$src += @('lzfse_decode.c','lzfse_decode_base.c','lzfse_encode.c','lzfse_encode_base.c','lzfse_fse.c','lzvn_decode_base.c','lzvn_encode_base.c') | ForEach-Object { "$root\userland\third_party\lzfse\$_" }
 
 function Run-Pool($items, $mkargs) {
     $running = @(); $fail = 0

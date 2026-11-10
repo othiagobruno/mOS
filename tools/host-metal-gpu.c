@@ -1,7 +1,13 @@
 /* Caminho CAMetalLayer → IOSurface da ABI, no host.
  * A syscall 62 cai em gpu_syscall (kernel/dev/gpu_abi.c, MOS_GPU_HOST).
  * Os .c do libSystem compilam com -I tools/hostinc para não misturar o
- * stdint do Linux com os typedefs de sys.h. Sem QEMU.
+ * stdint do Linux com os typedefs de sys.h. Sem QEMU e sem GPU real.
+ *
+ *   gcc -std=c11 -O1 -D_GNU_SOURCE -I userland/libsystem -c tools/host-metal-gpu.c
+ *   gcc -std=c11 -O1 -D_GNU_SOURCE -DMOS_LIBSYS_SYSCALL -I tools/hostinc -I userland/libsystem \
+ *       -c tools/host-spirv.c userland/libsystem/gpucall.c userland/libsystem/mtlshader.c \
+ *       userland/libsystem/mtlexec.c userland/libsystem/mslspirv.c
+ *   gcc -o host-metal-gpu host-metal-gpu.o host-spirv.o gpucall.o mtlshader.o mtlexec.o mslspirv.o -lm
  */
 #define MOS_GPU_HOST 1
 #include "../kernel/include/mos_gpu.h"
@@ -15,6 +21,7 @@ int mos_gpu_op(unsigned op, void *st, unsigned n);
 int mos_gpu_bind_iosurface(unsigned w, unsigned h, unsigned stride, void **px, unsigned *id, unsigned *bo);
 void mos_gpu_unbind_iosurface(unsigned id, unsigned bo);
 void host_spirv_test(int *fails);
+void host_compute_test(int *fails);
 
 static process_t proc = {.pid = 7};
 
@@ -57,6 +64,7 @@ static void test_layer(void) {
 int main(void) {
     test_layer();
     host_spirv_test(&fails);
+    host_compute_test(&fails);
     if (fails) { printf("%d falhas\n", fails); return 1; }
     printf("host-metal-gpu ok\n");
     return 0;
