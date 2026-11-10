@@ -1,5 +1,5 @@
 /* Liga um cx_tcc_request forte e confere que cx_media_tcc deixa de ser -1.
- * clang -std=c11 -O1 -o /tmp/audiodec_tcc tools/audiodec_tcc_test.c userland/libsystem/audiodec.c -lm
+ * clang -std=c11 -O1 -o /tmp/audiodec_tcc tools/audiodec_tcc_test.c userland/host-audio/audiodec.c -lm
  */
 #include <stdio.h>
 int cx_tcc_request(const char *service) { return service && service[0] == 'k' ? 1 : 0; }

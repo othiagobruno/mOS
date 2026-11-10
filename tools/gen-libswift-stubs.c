@@ -14,7 +14,7 @@
 #include <stdint.h>
 
 #define MAX_DY 32
-#define MAX_SYM 128
+#define MAX_SYM 512
 #define MAX_NAME 160
 #define MAX_NODES 8192
 #define MAX_KIDS 16384
@@ -96,8 +96,8 @@ static void assign(int node, uint32_t *cursor) {
 static void write_node(uint8_t *buf, int node, uint32_t stub_off) {
     uint8_t *p = buf + node_off[node];
     int i, nk = kid_n[node];
-    kid_t tmp[256];
-    if (nk > 256) nk = 256;
+    kid_t tmp[1024];
+    if (nk > 1024) nk = 1024;
     for (i = 0; i < nk; i++) tmp[i] = kids[kid_head[node] + i];
     qsort(tmp, (size_t)nk, sizeof tmp[0], cmp_kid);
     if (term[node]) {

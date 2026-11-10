@@ -25,6 +25,6 @@ size_t compression_encode_buffer(uint8_t *dst, size_t dn, const uint8_t *src, si
 size_t compression_decode_buffer(uint8_t *dst, size_t dn, const uint8_t *src, size_t sn, void *scratch, compression_algorithm a) {
     (void)dst; (void)dn; (void)src; (void)sn; (void)scratch; (void)a; warn(); return 0;
 }
-int compression_stream_init(compression_stream *s, int op, compression_algorithm a) { (void)s; (void)op; (void)a; warn(); return COMPRESSION_STATUS_ERROR; }
-int compression_stream_process(compression_stream *s, int flags) { (void)s; (void)flags; return COMPRESSION_STATUS_ERROR; }
-int compression_stream_destroy(compression_stream *s) { (void)s; return 0; }
+/* zlib 1.3.2, o mesmo código do libSystem (compression_z.c). */
+#define CZ_HOST 1
+#include "../../libsystem/compression_z.c"

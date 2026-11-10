@@ -24,16 +24,11 @@ typedef size_t usize;
 
 /* contagem de alocações vivas para achar vazamentos (tools/dmgtest.c) */
 extern long long g_live_allocs, g_live_bytes;
-#ifdef _WIN32
-#include <malloc.h>
-#define host_usable_size(p) _msize(p)
-#else
-#include <malloc.h>
-#define host_usable_size(p) malloc_usable_size(p)
-#endif
 #if defined(_WIN32)
+#include <malloc.h>
 static inline size_t mos_usable(void *p) { return _msize(p); }
 #else
+#include <malloc.h>
 extern size_t malloc_usable_size(void *);
 static inline size_t mos_usable(void *p) { return malloc_usable_size(p); }
 #endif

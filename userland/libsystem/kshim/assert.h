@@ -1,3 +1,3 @@
 #pragma once
-/* Freestanding. Não avalia o argumento: o sqlite chama funções de debug dentro do assert. */
-#define assert(cond) ((void)0)
+/* Freestanding. O SQLite chama funções que só existem com SQLITE_DEBUG. */
+#define assert(c) ((void)0)

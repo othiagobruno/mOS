@@ -1173,10 +1173,10 @@ int fi_dec_from_locale(const char *s, const char *locale, void *out, int *is_nil
 
 void fi_dec_locale_entry(unsigned long long w0, unsigned long long w1, const void *locale, void *out) {
     char buf[80], loc[8];
-    int is_nil = 1;
+    int vazio = 1;
     fi_read_locale(locale, loc, sizeof loc);
     if (fi_read_small(w0, w1, buf, sizeof buf) < 0) buf[0] = 0;
-    fi_dec_from_locale(buf, loc, out, &is_nil);
+    fi_dec_from_locale(buf, loc, out, &vazio);
 }
 
 fi_swstr fi_meas_format(const void *meas) {

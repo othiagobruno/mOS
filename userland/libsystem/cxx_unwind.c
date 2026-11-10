@@ -11,6 +11,8 @@
  * __gxx_personality_v0 lê a LSDA. __cxa_throw, begin/end_catch e
  * std::current_exception / std::rethrow_exception passam a funcionar.
  * Uma exceção ativa por processo (não há TLS no libSystem freestanding).
+ * No arm64, _Unwind_* continua o libunwind do script arm64. A personality daqui
+ * usa esses acessores e acha o handler. Não mexe em *_arm64.S nem darwin_arm64.c.
  */
 #include <stddef.h>
 #include <stdint.h>
@@ -59,9 +61,52 @@ static void release(void *obj) {
     if (--*slot_refs(obj) <= 0) destroy(obj);
 }
 
+static u64 rd_u(const u8 **p, int n) {
+    u64 v = 0;
+    for (int i = 0; i < n; i++) v |= (u64)(*p)[i] << (8 * i);
+    *p += n;
+    return v;
+}
+static u64 rd_uleb(const u8 **p) {
+    u64 v = 0; int s = 0; u8 b;
+    do { b = *(*p)++; v |= (u64)(b & 0x7f) << s; s += 7; } while (b & 0x80);
+    return v;
+}
+static int64_t rd_sleb(const u8 **p) {
+    u64 v = 0; int s = 0; u8 b;
+    do { b = *(*p)++; v |= (u64)(b & 0x7f) << s; s += 7; } while (b & 0x80);
+    if (s < 64 && (b & 0x40)) v |= ~0ULL << s;
+    return (int64_t)v;
+}
+
+static u64 enc_read(u8 enc, const u8 **p, u64 base) {
+    if (enc == 0xff) return 0;
+    const u8 *at = *p;
+    u64 v = 0;
+    switch (enc & 0x0f) {
+    case 0x00: v = rd_u(p, 8); break;
+    case 0x01: v = rd_uleb(p); break;
+    case 0x02: v = rd_u(p, 2); break;
+    case 0x03: v = rd_u(p, 4); break;
+    case 0x04: v = rd_u(p, 8); break;
+    case 0x09: v = (u64)rd_sleb(p); break;
+    case 0x0a: v = (u64)(int16_t)rd_u(p, 2); break;
+    case 0x0b: v = (u64)(int32_t)rd_u(p, 4); break;
+    case 0x0c: v = rd_u(p, 8); break;
+    default: return 0;
+    }
+    switch (enc & 0x70) {
+    case 0x10: v += (u64)at; break;
+    case 0x30: v += base; break;
+    default: break;
+    }
+    if ((enc & 0x80) && v) v = *(u64 *)v;
+    return v;
+}
+
 #if UW_NATIVE
 struct uw_ctx {
-    u64 r[17]; const u8 *lsda; u64 region;
+    u64 r[17]; const u8 *lsda; u64 region, cfa, text_base, data_base;
     int (*pers)(int, int, u64, void *, struct uw_ctx *);
     u32 compact_enc; u64 compact_func; int have_compact; int fp_fallback;
     const u8 *fde, *eh; u64 eh_len;
@@ -111,55 +156,12 @@ __attribute__((naked)) static void cx_uw_install(u64 *r) {
         "jmp *%r11\n\t");
 }
 
-u64 _Unwind_GetGR(struct uw_ctx *c, int n) { return (n >= 0 && n < 17) ? c->r[n] : 0; }
-void _Unwind_SetGR(struct uw_ctx *c, int n, u64 v) { if (n >= 0 && n < 17) c->r[n] = v; }
-u64 _Unwind_GetIP(struct uw_ctx *c) { return c->r[16]; }
-void _Unwind_SetIP(struct uw_ctx *c, u64 ip) { c->r[16] = ip; }
-u64 _Unwind_GetLanguageSpecificData(struct uw_ctx *c) { return (u64)c->lsda; }
-u64 _Unwind_GetRegionStart(struct uw_ctx *c) { return c->region; }
-
-static u64 rd_u(const u8 **p, int n) {
-    u64 v = 0;
-    for (int i = 0; i < n; i++) v |= (u64)(*p)[i] << (8 * i);
-    *p += n;
-    return v;
-}
-static u64 rd_uleb(const u8 **p) {
-    u64 v = 0; int s = 0; u8 b;
-    do { b = *(*p)++; v |= (u64)(b & 0x7f) << s; s += 7; } while (b & 0x80);
-    return v;
-}
-static int64_t rd_sleb(const u8 **p) {
-    u64 v = 0; int s = 0; u8 b;
-    do { b = *(*p)++; v |= (u64)(b & 0x7f) << s; s += 7; } while (b & 0x80);
-    if (s < 64 && (b & 0x40)) v |= ~0ULL << s;
-    return (int64_t)v;
-}
-
-static u64 enc_read(u8 enc, const u8 **p, u64 base) {
-    if (enc == 0xff) return 0;
-    const u8 *at = *p;
-    u64 v = 0;
-    switch (enc & 0x0f) {
-    case 0x00: v = rd_u(p, 8); break;
-    case 0x01: v = rd_uleb(p); break;
-    case 0x02: v = rd_u(p, 2); break;
-    case 0x03: v = rd_u(p, 4); break;
-    case 0x04: v = rd_u(p, 8); break;
-    case 0x09: v = (u64)rd_sleb(p); break;
-    case 0x0a: v = (u64)(int16_t)rd_u(p, 2); break;
-    case 0x0b: v = (u64)(int32_t)rd_u(p, 4); break;
-    case 0x0c: v = rd_u(p, 8); break;
-    default: return 0;
-    }
-    switch (enc & 0x70) {
-    case 0x10: v += (u64)at; break;
-    case 0x30: v += base; break;
-    default: break;
-    }
-    if ((enc & 0x80) && v) v = *(u64 *)v;
-    return v;
-}
+u64 _Unwind_GetGR(void *p, int n) { struct uw_ctx *c = p; return (n >= 0 && n < 17) ? c->r[n] : 0; }
+void _Unwind_SetGR(void *p, int n, u64 v) { struct uw_ctx *c = p; if (n >= 0 && n < 17) c->r[n] = v; }
+u64 _Unwind_GetIP(void *p) { return ((struct uw_ctx *)p)->r[16]; }
+void _Unwind_SetIP(void *p, u64 ip) { ((struct uw_ctx *)p)->r[16] = ip; }
+u64 _Unwind_GetLanguageSpecificData(void *p) { return (u64)((struct uw_ctx *)p)->lsda; }
+u64 _Unwind_GetRegionStart(void *p) { return ((struct uw_ctx *)p)->region; }
 
 static int cfi_step(const u8 *cie, const u8 *cie_end, const u8 *fde_init, const u8 *fde_end, u64 pc, struct uw_ctx *c, int apply) {
     const u8 *p = cie;
@@ -202,7 +204,6 @@ static int cfi_step(const u8 *cie, const u8 *cie_end, const u8 *fde_init, const 
     }
     if (pc < loc || pc >= loc + range) return 0;
     c->region = loc;
-    if (!apply) return 1;
     enum { SAME, UNDEF, OFF, REG, VAL };
     u8 how[17], cfa_reg = 7; u64 offv[17]; int64_t cfa_off = 8;
     for (int i = 0; i < 17; i++) { how[i] = SAME; offv[i] = 0; }
@@ -242,6 +243,8 @@ static int cfi_step(const u8 *cie, const u8 *cie_end, const u8 *fde_init, const 
         }
     }
     u64 cfa = c->r[cfa_reg] + (u64)cfa_off;
+    c->cfa = cfa;
+    if (!apply) return 1;
     u64 nr[17];
     memcpy(nr, c->r, sizeof nr);
     for (int i = 0; i < 17; i++) {
@@ -475,6 +478,17 @@ static int lookup_compact(u64 pc, const u8 *base, const u8 *sec, struct uw_ctx *
     c->compact_enc = enc;
     c->compact_func = func;
     c->have_compact = (enc & X64_MODE) != X64_DWARF;
+    if (c->have_compact) {
+        u32 mode = enc & X64_MODE;
+        if (mode == X64_RBP) c->cfa = c->r[6] + 16;
+        else if (mode == X64_IMMD || mode == X64_IND) {
+            u32 stack_enc = (enc >> 16) & 0xff;
+            u32 adj = (enc >> 13) & 7;
+            u32 stack = stack_enc * 8;
+            if (mode == X64_IND) stack = *(u32 *)(func + stack_enc) + 8 * adj;
+            c->cfa = c->r[7] + stack;
+        }
+    }
     if ((enc & X64_MODE) == X64_DWARF && eh) *fde_hint = eh + (enc & 0x00ffffffu);
     (void)next_fn;
     return 1;
@@ -482,14 +496,17 @@ static int lookup_compact(u64 pc, const u8 *base, const u8 *sec, struct uw_ctx *
 
 static int load_frame(struct uw_ctx *c) {
     u64 pc = c->r[16];
+    /* A linha do CIE vale para a instrução do call, não para o endereço de retorno. */
+    u64 look = pc ? pc - 1 : 0;
     c->lsda = 0; c->region = 0; c->pers = 0; c->have_compact = 0; c->fde = 0; c->fp_fallback = 0;
     if (cx_unwind_disabled && cx_unwind_disabled()) return 0;
     struct dyld_uw info;
     memset(&info, 0, sizeof info);
     if (_dyld_find_unwind_sections && _dyld_find_unwind_sections((void *)pc, &info)) {
+        c->text_base = c->data_base = (u64)info.mh;
         const u8 *hint = 0;
         int k = 0;
-        if (info.compact) k = lookup_compact(pc, (const u8 *)info.mh, (const u8 *)info.compact, c, &hint, (const u8 *)info.dwarf);
+        if (info.compact) k = lookup_compact(look, (const u8 *)info.mh, (const u8 *)info.compact, c, &hint, (const u8 *)info.dwarf);
         if (c->have_compact) return 1;
         const u8 *fde = hint;
         if (!fde && info.dwarf) {
@@ -499,14 +516,14 @@ static int load_frame(struct uw_ctx *c) {
                 u32 len = (u32)rd_u(&q, 4);
                 if (!len) break;
                 const u8 *body = q;
-                if (fde_match(body - 4, (const u8 *)info.dwarf, info.dwarf_len, pc, c, 0)) {
+                if (fde_match(body - 4, (const u8 *)info.dwarf, info.dwarf_len, look, c, 0)) {
                     c->fde = body - 4; c->eh = (const u8 *)info.dwarf; c->eh_len = info.dwarf_len;
                     return 1;
                 }
                 q = body + len;
             }
         } else if (fde && info.dwarf) {
-            if (fde_match(fde, (const u8 *)info.dwarf, info.dwarf_len, pc, c, 0)) {
+            if (fde_match(fde, (const u8 *)info.dwarf, info.dwarf_len, look, c, 0)) {
                 c->fde = fde; c->eh = (const u8 *)info.dwarf; c->eh_len = info.dwarf_len;
                 return 1;
             }
@@ -514,9 +531,10 @@ static int load_frame(struct uw_ctx *c) {
         return k;
     }
     const u8 *eh = 0, *gh = 0; u64 el = 0, gl = 0;
-    if (elf_eh(pc, &eh, &el, &gh, &gl)) {
-    const u8 *fde = hdr_fde(gh, pc);
-    if (fde && fde_match(fde, (const u8 *)__ehdr_start, (u64)(_end - __ehdr_start), pc, c, 0)) {
+    if (elf_eh(look, &eh, &el, &gh, &gl)) {
+    c->text_base = c->data_base = (u64)__ehdr_start;
+    const u8 *fde = hdr_fde(gh, look);
+    if (fde && fde_match(fde, (const u8 *)__ehdr_start, (u64)(_end - __ehdr_start), look, c, 0)) {
         c->fde = fde; c->eh = (const u8 *)__ehdr_start; c->eh_len = (u64)(_end - __ehdr_start);
         return 1;
     }
@@ -524,11 +542,12 @@ static int load_frame(struct uw_ctx *c) {
     u64 rbp = c->r[6], rsp = c->r[7];
     if (!rbp || (rbp & 7) || rbp < rsp || rbp - rsp > 0x100000) return 0;
     c->fp_fallback = 1;
+    c->cfa = rbp + 16;
     return 1;
 }
 
 static int step_frame(struct uw_ctx *c) {
-    u64 pc = c->r[16];
+    u64 pc = c->r[16] ? c->r[16] - 1 : 0;
     if (c->fp_fallback) {
         u64 rbp = c->r[6];
         c->r[16] = *(u64 *)(rbp + 8);
@@ -542,25 +561,27 @@ static int step_frame(struct uw_ctx *c) {
 }
 
 struct uw_exc { u64 cls; void (*cleanup)(int, void *); u64 private_1, private_2; };
-int __gxx_personality_v0(int, int, u64, struct uw_exc *, struct uw_ctx *);
+int __gxx_personality_v0(int, int, u64, void *, void *);
 static void unwind_loop(void *exc, int resume) {
     struct uw_ctx start;
     memset(&start, 0, sizeof start);
     cx_uw_capture(start.r);
-    u64 handler_region = 0;
+    struct uw_exc *ex = exc;
+    u64 handler_region = resume ? ex->private_1 : 0;
     int phase2 = resume;
     struct uw_ctx cur = start;
     for (int guard = 0; guard < 128; guard++) {
         u64 ip0 = cur.r[16];
         if (!ip0 || !load_frame(&cur)) abort();
         int (*pers)(int, int, u64, void *, struct uw_ctx *) = cur.pers;
-        if (!pers && cur.lsda) pers = (int (*)(int, int, u64, void *, struct uw_ctx *))__gxx_personality_v0;
+        if (!pers && cur.lsda) pers = (int (*)(int, int, u64, void *, struct uw_ctx *))(void *)__gxx_personality_v0;
         if (pers) {
             int act = phase2 ? UA_CLEANUP : UA_SEARCH;
             if (phase2 && cur.region == handler_region) act |= UA_HANDLER;
             int rc = pers(1, act, ((u64 *)exc)[0], exc, &cur);
             if (!phase2 && rc == UR_FOUND) {
                 handler_region = cur.region;
+                ex->private_1 = cur.region;
                 phase2 = 1;
                 cur = start;
                 continue;
@@ -576,12 +597,48 @@ static void unwind_loop(void *exc, int resume) {
 int _Unwind_RaiseException(struct uw_exc *e) { unwind_loop(e, 0); return UR_END; }
 void _Unwind_Resume(struct uw_exc *e) { unwind_loop(e, 1); }
 
-int __gxx_personality_v0(int ver, int actions, u64 cls, struct uw_exc *exc, struct uw_ctx *ctx) {
+void _Unwind_DeleteException(struct uw_exc *e) {
+    if (e && e->cleanup) e->cleanup(1, e);
+}
+
+u64 _Unwind_GetCFA(void *p) { return ((struct uw_ctx *)p)->cfa; }
+u64 _Unwind_GetDataRelBase(void *p) { return ((struct uw_ctx *)p)->data_base; }
+u64 _Unwind_GetTextRelBase(void *p) { return ((struct uw_ctx *)p)->text_base; }
+u64 _Unwind_GetIPInfo(void *p, int *before) {
+    if (before) *before = 0;
+    return ((struct uw_ctx *)p)->r[16];
+}
+
+int _Unwind_Backtrace(int (*cb)(void *, void *), void *arg) {
+    struct uw_ctx cur;
+    memset(&cur, 0, sizeof cur);
+    cx_uw_capture(cur.r);
+    for (int guard = 0; guard < 128; guard++) {
+        if (!cur.r[16] || !load_frame(&cur)) return 5;
+        int rc = cb(&cur, arg);
+        if (rc) return rc;
+        u64 ip0 = cur.r[16];
+        if (!step_frame(&cur) || cur.r[16] == ip0) return 5;
+    }
+    return 5;
+}
+
+#else
+int _Unwind_RaiseException(void *);
+void _Unwind_Resume(void *);
+u64 _Unwind_GetIP(void *);
+void _Unwind_SetIP(void *, u64);
+void _Unwind_SetGR(void *, int, u64);
+u64 _Unwind_GetLanguageSpecificData(void *);
+u64 _Unwind_GetRegionStart(void *);
+#endif
+
+int __gxx_personality_v0(int ver, int actions, u64 cls, void *exc, void *ctx) {
     (void)cls;
     if (ver != 1 || !ctx) return 3;
-    const u8 *p = ctx->lsda;
+    const u8 *p = (const u8 *)_Unwind_GetLanguageSpecificData(ctx);
     if (!p) return UR_CONT;
-    u64 lpstart = ctx->region;
+    u64 lpstart = _Unwind_GetRegionStart(ctx);
     u8 start_enc = *p++;
     if (start_enc != 0xff) lpstart = enc_read(start_enc, &p, 0);
     u8 tenc = *p++;
@@ -612,46 +669,51 @@ int __gxx_personality_v0(int ver, int actions, u64 cls, struct uw_exc *exc, stru
         return UR_INSTALL;
     }
     const u8 *ap = action_tab + (act_off - 1);
-    int64_t filter = rd_sleb(&ap);
-    int64_t next = rd_sleb(&ap);
-    (void)next;
-    void *need = 0;
-    if (filter > 0 && types && tenc != 0xff) {
-        int sz = ((tenc & 0x0f) == 0 || (tenc & 0x0f) == 4 || (tenc & 0x0f) == 0x0c) ? 8 : ((tenc & 0x0f) == 2 || (tenc & 0x0f) == 0x0a) ? 2 : 4;
-        const u8 *tp = types - (u64)filter * (u64)sz;
-        const u8 *save = tp;
-        u64 v = enc_read(tenc, &save, (u64)ctx->region);
-        need = (void *)v;
-    }
     void *obj = obj_of_uw(exc);
     void *have = *slot_ti(obj);
-    int match = filter == 0 || !need;
-    if (!match && have && need) {
-        if (have == need) match = 1;
-        else {
-            const char *a = ((const char **)have)[1], *b = ((const char **)need)[1];
-            if (a && b && strcmp(a, b) == 0) match = 1;
+    int saw_cleanup = 0, matched = 0;
+    int64_t chosen = 0;
+    for (int guard = 0; guard < 32; guard++) {
+        int64_t filter = rd_sleb(&ap);
+        int64_t disp = rd_sleb(&ap);
+        if (filter == 0) saw_cleanup = 1;
+        else if (filter > 0) {
+            void *need = 0;
+            if (types && tenc != 0xff) {
+                int sz = ((tenc & 0x0f) == 0 || (tenc & 0x0f) == 4 || (tenc & 0x0f) == 0x0c) ? 8 : ((tenc & 0x0f) == 2 || (tenc & 0x0f) == 0x0a) ? 2 : 4;
+                const u8 *tp = types - (u64)filter * (u64)sz;
+                const u8 *save = tp;
+                need = (void *)enc_read(tenc, &save, _Unwind_GetRegionStart(ctx));
+            }
+            int ok = !need;
+            if (!ok && have) {
+                if (have == need) ok = 1;
+                else {
+                    const char *a = ((const char **)have)[1], *b = ((const char **)need)[1];
+                    if (a && b && strcmp(a, b) == 0) ok = 1;
+                }
+            }
+            if (ok) { matched = 1; chosen = filter; break; }
         }
+        if (disp == 0) break;
+        ap += disp;
     }
-    if (!match) return UR_CONT;
-    if (actions & UA_SEARCH) return UR_FOUND;
-    if (actions & UA_CLEANUP) {
+    if (actions & UA_SEARCH) return matched ? UR_FOUND : UR_CONT;
+    if ((actions & UA_HANDLER) && matched) {
         _Unwind_SetGR(ctx, 0, (u64)exc);
-        _Unwind_SetGR(ctx, 1, (u64)filter);
+        _Unwind_SetGR(ctx, 1, (u64)chosen);
+        _Unwind_SetIP(ctx, lpstart + pad);
+        return UR_INSTALL;
+    }
+    if ((actions & UA_CLEANUP) && saw_cleanup && !(actions & UA_HANDLER)) {
+        _Unwind_SetGR(ctx, 0, (u64)exc);
+        _Unwind_SetGR(ctx, 1, 0);
         _Unwind_SetIP(ctx, lpstart + pad);
         return UR_INSTALL;
     }
     return UR_CONT;
 }
-#else
-int _Unwind_RaiseException(void *);
-void _Unwind_Resume(void *);
-struct uw_ctx;
-int __gxx_personality_v0(int ver, int actions, u64 cls, void *exc, void *ctx) {
-    (void)ver; (void)actions; (void)cls; (void)exc; (void)ctx;
-    return UR_CONT;
-}
-#endif
+
 
 void __cxa_throw(void *obj, void *tinfo, void (*dtor)(void *)) {
     if (!*slot_refs(obj)) *slot_refs(obj) = 1;
@@ -740,3 +802,11 @@ int uncaught1(void) __asm__("_ZSt18uncaught_exceptionv");
 int uncaught1(void) { return g_uncaught > 0; }
 int uncaughtn(void) __asm__("_ZSt19uncaught_exceptionsv");
 int uncaughtn(void) { return g_uncaught; }
+
+#if defined(__x86_64__)
+/* unw_alias.S salta para este nome. O libunwind do zig não entra mais no link x86. */
+int __unw_getcontext(void *ctx) {
+    (void)ctx;
+    return -1;
+}
+#endif
