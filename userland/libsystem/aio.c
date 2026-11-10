@@ -28,7 +28,6 @@ int aio_error(const struct aiocb *cb) {
 long aio_return(struct aiocb *cb) { return re(SYS2(SYS_AIO, 4, cb)); }
 int aio_fsync(int op, struct aiocb *cb) { (void)op; long r = SYS2(SYS_AIO, 5, cb); return r < 0 ? (int)re(r) : 0; }
 int aio_suspend(const struct aiocb *const list[], int nent, const void *timeout) {
-    (void)list; (void)nent; (void)timeout;
-    long r = SYS1(SYS_AIO, 6);
+    long r = SYS4(SYS_AIO, 6, list, nent, timeout);
     return r < 0 ? (int)re(r) : 0;
 }

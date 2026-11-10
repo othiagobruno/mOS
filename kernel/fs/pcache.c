@@ -6,6 +6,9 @@
  */
 #include "fs.h"
 #include "syscall.h"
+#ifndef MOS_HOST_TEST
+#include "proc.h"
+#endif
 
 #define PG 4096u
 #define HT 1024
@@ -498,18 +501,93 @@ i64 aio_return(struct aiocb *cb) {
     return r;
 }
 
-int aio_suspend(const struct aiocb *const list[], int nent, const void *timeout) {
-    (void)timeout;
-    for (int spin = 0; spin < 64; spin++) {
-        int pend = 0;
-        for (int i = 0; i < nent; i++) {
-            job_t *j = list[i] ? job_by_pos(list[i]) : NULL;
-            if (j && !j->done) pend++;
+#ifdef MOS_HOST_TEST
+u64 aio_host_ms;
+int aio_host_intr;
+static u64 aio_now(void) { return aio_host_ms; }
+static void aio_slice(void) { aio_host_ms += 1; }
+static int aio_interrupted(void) { return aio_host_intr; }
+#else
+static u64 aio_now(void) { return timer_ticks(); }
+static void aio_slice(void) { sleep_ms(1); }
+static int aio_interrupted(void) {
+    thread_t *t = thread_current();
+    if (!t) return 0;
+    if (t->sig_pending) return 1;
+    if (t->proc && t->proc->sig_pending) return 1;
+    return 0;
+}
+#endif
+
+/* timeout NULL espera; {0,0} não bloqueia. Prazo vencido = -EAGAIN. Sinal = -EINTR. */
+static int aio_timed(const void *timeout, i64 *limit_ms) {
+    *limit_ms = -1;
+    if (!timeout) return 0;
+    const struct { i64 tv_sec; i64 tv_nsec; } *ts = timeout;
+    if (ts->tv_sec < 0 || ts->tv_nsec < 0 || ts->tv_nsec >= 1000000000LL) return -MOS_EINVAL;
+    *limit_ms = ts->tv_sec * 1000 + ts->tv_nsec / 1000000;
+    return 0;
+}
+
+static int aio_wait(int (*pending)(void *ctx), void *ctx, const void *timeout) {
+    i64 limit = -1;
+    int bad = aio_timed(timeout, &limit);
+    if (bad) return bad;
+    u64 start = aio_now();
+    for (;;) {
+        if (!pending(ctx)) return 0;
+        if (aio_interrupted()) {
+#ifdef MOS_HOST_TEST
+            aio_host_intr = 0;
+#endif
+            return -MOS_EINTR;
         }
-        if (!pend) return 0;
+        if (limit >= 0 && (i64)(aio_now() - start) >= limit) return -MOS_EAGAIN;
+        if (limit == 0) return -MOS_EAGAIN;
         aio_pump();
+        if (!pending(ctx)) return 0;
+        aio_slice();
     }
-    return -1;
+}
+
+typedef struct { const struct aiocb *const *list; int nent; } sus_posix_t;
+static int posix_pending(void *ctx) {
+    sus_posix_t *s = ctx;
+    if (!s->list || s->nent <= 0) return 0;
+    int waiting = 0, finished = 0;
+    for (int i = 0; i < s->nent; i++) {
+        if (!s->list[i]) continue;
+        job_t *j = job_by_pos(s->list[i]);
+        if (!j || j->done) finished++;
+        else waiting++;
+    }
+    if (finished || !waiting) return 0;
+    return 1;
+}
+
+int aio_suspend(const struct aiocb *const list[], int nent, const void *timeout) {
+    sus_posix_t s = { list, nent };
+    return aio_wait(posix_pending, &s, timeout);
+}
+
+typedef struct { const u64 *keys; int nent; } sus_mem_t;
+static int mem_pending(void *ctx) {
+    sus_mem_t *s = ctx;
+    if (!s->keys || s->nent <= 0) return 0;
+    int waiting = 0, finished = 0;
+    for (int i = 0; i < s->nent; i++) {
+        if (!s->keys[i]) continue;
+        job_t *j = job_by_key(s->keys[i]);
+        if (!j || j->done) finished++;
+        else waiting++;
+    }
+    if (finished || !waiting) return 0;
+    return 1;
+}
+
+int aio_suspend_mem(const u64 *keys, int nent, const void *timeout) {
+    sus_mem_t s = { keys, nent };
+    return aio_wait(mem_pending, &s, timeout);
 }
 
 int aio_mem_submit(u64 key, int write, u8 *mem, u64 memlen, u64 off, u64 n, u8 *bounce, void *ubuf) {
