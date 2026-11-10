@@ -734,6 +734,32 @@ void *CGImageRetain(void *img) { if (as_kind(img, CGK_IM)) objc_retain((id)img);
 size_t CGImageGetWidth(void *img) { cgobj_t *o = as_kind(img, CGK_IM); return o ? o->w : 0; }
 size_t CGImageGetHeight(void *img) { cgobj_t *o = as_kind(img, CGK_IM); return o ? o->h : 0; }
 size_t CGImageGetBytesPerRow(void *img) { cgobj_t *o = as_kind(img, CGK_IM); return o ? o->bpr : 0; }
+
+int cgimage_crop(const uint8_t *src, uint32_t sw, uint32_t sh, uint32_t sbpr, uint32_t byte_pp,
+                 double x, double y, double w, double h,
+                 uint8_t **dst, uint32_t *dw, uint32_t *dh, uint32_t *dbpr);
+/* Interseção do retângulo integral com a imagem. bits, bytesPerRow, bitmapInfo e o espaço
+ * (CGImageGetColorSpace) continuam os da origem. NULL se a interseção é vazia. */
+void *CGImageCreateWithImageInRect(void *img, CGRect rect) {
+    cgobj_t *o = as_kind(img, CGK_IM);
+    uint8_t *data = 0;
+    uint32_t w = 0, h = 0, bpr = 0;
+    if (!o || !o->data) return 0;
+    if (!cgimage_crop(o->data, o->w, o->h, o->bpr, o->bpp, rect.origin.x, rect.origin.y,
+                      rect.size.width, rect.size.height, &data, &w, &h, &bpr))
+        return 0;
+    cgobj_t *n = cg_new(&IM_c, CGK_IM);
+    if (!n) { free(data); return 0; }
+    n->data = data;
+    n->w = w;
+    n->h = h;
+    n->bpr = bpr;
+    n->bpp = o->bpp;
+    n->info = o->info;
+    n->owns = 1;
+    n->cb_size = o->cb_size;
+    return n;
+}
 int cx_cgimage_src(const void *img, const u8 **px, long *bpr, int *w, int *h, int *premul) {
     cgobj_t *o = as_kind(img, CGK_IM);
     if (!o || !o->data) return 0;
