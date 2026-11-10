@@ -149,6 +149,31 @@ static void scan_mac_apps(void) {
         mac_apps[nmac++] = a;
         kprintf("apps: app do macOS \"%s\" (%s)\n", nm, path);
     }
+    /* Executável solto (o Codex CLI entra como /Aplicativos/Codex CLI/codex, sem .app).
+     * Não é bundle: o Launch Services não o registra. O atalho do Launchpad aponta para o binário. */
+    for (vnode_t *c = d && d->dir ? d->child : NULL; c && nmac < MAX_MAC_APPS; c = c->next) {
+        usize l = strlen(c->name);
+        vnode_t *bin = NULL;
+        int nbin = 0;
+        if (!c->dir || (l > 4 && !strcasecmp(c->name + l - 4, ".app"))) continue;
+        for (vnode_t *f = c->child; f; f = f->next)
+            if (!f->dir && f->data && macho_is_macho(f->data, f->size)) { bin = f; nbin++; }
+        if (nbin != 1 || !bin) continue;
+        char path[300];
+        snprintf(path, sizeof path, "/Aplicativos/%s/%s", c->name, bin->name);
+        bool known = false;
+        for (int i = 0; i < nmac; i++) if (!strcmp(mac_apps[i]->exec + 4, path)) known = true;
+        if (known) continue;
+        mac_pid[nmac] = 0;
+        app_t *a = kcalloc(1, sizeof(app_t));
+        char *nm = kmalloc(128), *ex = kmalloc(310);
+        if (!a || !nm || !ex) break;
+        snprintf(nm, 128, "%s", c->name);
+        snprintf(ex, 310, "mac:%s", path);
+        a->name = nm; a->exec = ex; a->draw_icon = mac_icon; a->launch = mac_launch;
+        mac_apps[nmac++] = a;
+        kprintf("apps: executável do macOS \"%s\" (%s)\n", nm, path);
+    }
 }
 
 void apps_register_all(void) {

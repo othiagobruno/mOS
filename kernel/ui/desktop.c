@@ -2695,21 +2695,24 @@ static bool cc_mouse(int x, int y, int buttons, bool lp, bool lr) {
     return true;
 }
 
-/* ============================================================ Launchpad (grade de apps) */
-static app_t *lp_apps[32];
-static int lp_n;
+/* ============================================================ Launchpad (grade de apps)
+ * Os apps do sistema já passam de 32. A grade antiga cortava nesse número, então todo .app de
+ * /Aplicativos (registrado depois, em registry.c) ficava fora do Launchpad e da busca dele. */
+#define LP_MAX 192
+static app_t *lp_apps[LP_MAX];
+static int lp_n, lp_page;
 
 static void lp_filter(void) {
     lp_n = 0;
-    char lq[64];
+    char lq[96];
     int k = 0;
-    for (; lp_q[k] && k < 63; k++) lq[k] = (char)tolower(lp_q[k]);
+    for (; lp_q[k] && k < 95; k++) lq[k] = (char)tolower(lp_q[k]);
     lq[k] = 0;
-    for (int i = 0; i < apps_count() && lp_n < (int)ARRAY_LEN(lp_apps); i++) {
+    for (int i = 0; i < apps_count() && lp_n < LP_MAX; i++) {
         app_t *a = apps_get(i);
-        char ln[64];
+        char ln[96];
         int j = 0;
-        for (; a->name[j] && j < 63; j++) ln[j] = (char)tolower(a->name[j]);
+        for (; a->name[j] && j < 95; j++) ln[j] = (char)tolower(a->name[j]);
         ln[j] = 0;
         if (!lq[0] || strstr(ln, lq)) lp_apps[lp_n++] = a;
     }
@@ -2720,6 +2723,7 @@ void desktop_toggle_launcher(void) {
     lp_open = !lp_open;
     lp_q[0] = 0;
     lp_hover = -1;
+    lp_page = 0;
     lp_t0 = 1;
     lp_animating = true;
     cc_open = false;
@@ -2729,7 +2733,7 @@ void desktop_toggle_launcher(void) {
     wm_damage_all();
 }
 
-typedef struct { int isz, cw, ch, cols, x0, y0; } lp_grid_t;
+typedef struct { int isz, cw, ch, cols, rows, x0, y0; } lp_grid_t;
 static rect_t lp_search_rect(void) { int w = MIN(320, SW - 48); return rect_make((SW - w) / 2, MENUBAR_H + 28, w, 34); }
 static lp_grid_t lp_grid(void) {
     lp_grid_t g;
@@ -2739,15 +2743,24 @@ static lp_grid_t lp_grid(void) {
     g.ch = g.isz + 46;
     int dock_h = dock_base + 40;
     g.cols = CLAMP((SW - 80) / g.cw, 3, 7);
-    int rows_fit = MAX(1, (SH - (lp_search_rect().y + 80) - dock_h) / g.ch);
-    while (g.cols < 9 && (lp_n + g.cols - 1) / g.cols > rows_fit && (g.cols + 1) * g.cw < SW - 40) g.cols++;
-    int rows = MAX(1, (lp_n + g.cols - 1) / g.cols);
+    g.rows = MAX(1, (SH - (lp_search_rect().y + 80) - dock_h - 28) / g.ch);
+    int shown = lp_n - lp_page * g.cols * g.rows;
+    if (shown < 0) shown = 0;
+    if (shown > g.cols * g.rows) shown = g.cols * g.rows;
+    int rows = MAX(1, (shown + g.cols - 1) / g.cols);
     g.x0 = (SW - g.cols * g.cw) / 2;
-    int avail = SH - (lp_search_rect().y + 50) - dock_h;
+    int avail = SH - (lp_search_rect().y + 50) - dock_h - 28;
     g.y0 = lp_search_rect().y + 50 + MAX(0, (avail - rows * g.ch) / 3);
     return g;
 }
+static int lp_per_page(lp_grid_t *g) { return g->cols * g->rows; }
+static int lp_pages(lp_grid_t *g) { int per = lp_per_page(g); return per ? (lp_n + per - 1) / per : 1; }
 static rect_t lp_cell(lp_grid_t *g, int i) { return rect_make(g->x0 + (i % g->cols) * g->cw, g->y0 + (i / g->cols) * g->ch, g->cw, g->ch); }
+static rect_t lp_dot_rect(int page, int pages) {
+    int gap = 16, y = SH - (dock_base + 40) - 22;
+    int x0 = SW / 2 - (pages * gap) / 2;
+    return rect_make(x0 + page * gap - 8, y - 8, 16, 16);
+}
 
 static void draw_launcher(surface_t *s) {
     if (!lp_open) return;
@@ -2767,10 +2780,13 @@ static void draw_launcher(surface_t *s) {
     if (!lp_q[0]) text_draw(s, fr, 15, sr.x + 38, sr.y + 23, RGBA(255, 255, 255, 150), "Buscar Apps");
     else if ((timer_ticks() / 500) % 2 == 0) gfx_fill(s, sr.x + 39 + tw, sr.y + 9, 2, 17, RGB(255, 255, 255));
     lp_grid_t g = lp_grid();
+    int per = lp_per_page(&g), pages = lp_pages(&g);
+    if (lp_page >= pages) lp_page = pages > 0 ? pages - 1 : 0;
+    int begin = lp_page * per;
     /* entrada: grade escala de 92% para 100% */
     float sc = 0.92f + 0.08f * k;
-    for (int i = 0; i < lp_n; i++) {
-        rect_t c = lp_cell(&g, i);
+    for (int i = begin; i < lp_n && i < begin + per; i++) {
+        rect_t c = lp_cell(&g, i - begin);
         int isz = (int)(g.isz * sc);
         int ix = c.x + (c.w - isz) / 2, iy = c.y + (int)((g.isz - isz) / 2) + 4;
         if (i == lp_hover) glass_capsule_fill(s, c.x + 6, c.y - 4, c.w - 12, c.h, 20, RGBA(255, 255, 255, 30), 120);
@@ -2782,16 +2798,27 @@ static void draw_launcher(surface_t *s) {
         text_draw_ellipsis(s, fm, 13, c.x + (c.w - nw) / 2, c.y + g.isz + 26, c.w - 8, RGB(255, 255, 255), n);
     }
     if (!lp_n) text_draw_center(s, fm, 16, rect_make(0, SH / 2 - 20, SW, 40), RGBA(255, 255, 255, 180), "Nenhum resultado");
+    for (int p = 0; p < pages && pages > 1; p++) {
+        rect_t d = lp_dot_rect(p, pages);
+        gfx_round_rect(s, d.x + 4, d.y + 4, 8, 8, 4, p == lp_page ? RGB(255, 255, 255) : RGBA(255, 255, 255, 90));
+    }
 }
 
 static bool lp_key(input_event_t *e) {
     int len = (int)strlen(lp_q);
     if (e->key == KEY_ESC) desktop_toggle_launcher();
     else if (e->key == KEY_ENTER) { if (lp_n) { app_t *a = lp_apps[lp_hover >= 0 ? lp_hover : 0]; desktop_toggle_launcher(); app_launch(a); } }
-    else if (e->key == KEY_BACKSPACE) { if (len) { lp_q[utf8_prev(lp_q, len)] = 0; lp_filter(); } }
-    else if (e->key == KEY_RIGHT) lp_hover = MIN(lp_hover + 1, lp_n - 1);
-    else if (e->key == KEY_LEFT) lp_hover = MAX(lp_hover - 1, 0);
-    else if (e->key >= 32 && e->key < 0x100 && !(e->mods & (MOD_CMD | MOD_CTRL)) && len < 56) { len += utf8_encode((u32)e->key, lp_q + len); lp_q[len] = 0; lp_filter(); }
+    else if (e->key == KEY_BACKSPACE) { if (len) { lp_q[utf8_prev(lp_q, len)] = 0; lp_page = 0; lp_filter(); } }
+    else if (e->key == KEY_RIGHT || e->key == KEY_LEFT) {
+        lp_grid_t g = lp_grid();
+        int per = lp_per_page(&g), pages = lp_pages(&g);
+        int begin = lp_page * per, end = MIN(lp_n, begin + per) - 1;
+        if (e->key == KEY_RIGHT && lp_hover >= end && lp_page + 1 < pages) { lp_page++; lp_hover = lp_page * per; }
+        else if (e->key == KEY_LEFT && lp_hover <= begin && lp_page > 0) { lp_page--; lp_hover = MIN(lp_n, lp_page * per + per) - 1; }
+        else if (e->key == KEY_RIGHT) lp_hover = MIN(lp_hover + 1, lp_n - 1);
+        else lp_hover = MAX(lp_hover - 1, 0);
+    }
+    else if (e->key >= 32 && e->key < 0x100 && !(e->mods & (MOD_CMD | MOD_CTRL)) && len < 56) { len += utf8_encode((u32)e->key, lp_q + len); lp_q[len] = 0; lp_page = 0; lp_filter(); }
     wm_damage_all();
     return true;
 }
@@ -2800,8 +2827,17 @@ static bool lp_mouse(int x, int y, bool lp, bool lr) {
     if (!lp_open) return false;
     if (y < MENUBAR_H || rect_contains(rect_make(dock_r.x - 10, dock_r.y - 60, dock_r.w + 20, dock_r.h + 70), x, y)) return false;
     lp_grid_t g = lp_grid();
+    int per = lp_per_page(&g), pages = lp_pages(&g);
+    if (lp_page >= pages) lp_page = pages > 0 ? pages - 1 : 0;
+    for (int p = 0; p < pages && pages > 1; p++) {
+        if (rect_contains(lp_dot_rect(p, pages), x, y)) {
+            if (lp && lp_page != p) { lp_page = p; lp_hover = -1; wm_damage_all(); }
+            return true;
+        }
+    }
+    int begin = lp_page * per;
     int h = -1;
-    for (int i = 0; i < lp_n; i++) if (rect_contains(lp_cell(&g, i), x, y)) h = i;
+    for (int i = begin; i < lp_n && i < begin + per; i++) if (rect_contains(lp_cell(&g, i - begin), x, y)) h = i;
     if (h != lp_hover) { lp_hover = h; wm_damage_all(); }
     if (lr && h >= 0) { app_t *a = lp_apps[h]; desktop_toggle_launcher(); a->bounce = 1; app_launch(a); }
     else if (lp && h < 0 && !rect_contains(lp_search_rect(), x, y)) desktop_toggle_launcher();
