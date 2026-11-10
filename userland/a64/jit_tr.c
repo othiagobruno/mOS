@@ -1293,6 +1293,18 @@ static void xmon_post(T *t) {
     if (!t->b.ovf) { x_patch32(j0, t->b.p); x_patch32(j2, t->b.p); }
 }
 
+/* xmon_pre gasta rax/rcx/rdx. Se o endereço do store está neles (índice estendido),
+ * o store de depois escreveria no lugar errado. Segura o endereço num reg do cache. */
+static int xo_uses_tmp(xo m) {
+    return m.base == XAX || m.base == XCX || m.base == XDX || m.idx == XAX || m.idx == XCX || m.idx == XDX;
+}
+static xo ea_hold(T *t, xo m) {
+    if (!xo_uses_tmp(m)) return m;
+    int h = rtmp(t);
+    x_lea(B, 1, h, m);
+    return XM(h, 0);
+}
+
 /* acesso de um registrador inteiro: size 0..3, kind 0 store, 1 load zx, 2 load sx64, 3 load sx32 */
 static void ld_int(T *t, int hd, xo m, int size, int kind) {
     fp_mark(t);
@@ -1308,6 +1320,7 @@ static void ld_int(T *t, int hd, xo m, int size, int kind) {
     }
 }
 static void st_int(T *t, int rt, xo m, int size) {
+    m = ea_hold(t, m);
     xmon_pre(t, m, 1 << size);
     if (rt == 31) {
         fp_mark(t);
@@ -1336,6 +1349,7 @@ static void ld_vec_tmp(T *t, int x, xo m, int bytes) {
     }
 }
 static void st_vec(T *t, int vt, xo m, int bytes) {
+    m = ea_hold(t, m);
     xmon_pre(t, m, bytes);
     xo v = XM(RCPU, OFF_V(vt));
     switch (bytes) {
