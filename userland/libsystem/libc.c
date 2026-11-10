@@ -990,10 +990,10 @@ int getppid(void) {
     cached_pid = me; cached_ppid = pp; cached_ms = now;
     return pp;
 }
-unsigned getuid(void) { return 501; }
-unsigned geteuid(void) { return 501; }
-unsigned getgid(void) { return 20; }
-unsigned getegid(void) { return 20; }
+unsigned getuid(void) { long r = SYS0(SYS_GETUID); return r < 0 ? 501 : (unsigned)r; }
+unsigned geteuid(void) { long r = SYS0(SYS_GETEUID); return r < 0 ? 501 : (unsigned)r; }
+unsigned getgid(void) { long r = SYS0(SYS_GETGID); return r < 0 ? 20 : (unsigned)r; }
+unsigned getegid(void) { long r = SYS0(SYS_GETEGID); return r < 0 ? 20 : (unsigned)r; }
 char *getcwd(char *b, size_t n) {
     if (!b) return strdup(cx_cwd);
     if (strlen(cx_cwd) >= n) { cx_errno = CX_ERANGE; return 0; }
@@ -1393,6 +1393,7 @@ static void to_mac_stat(const mos_stat_t *s, mac_stat_t *m) {
     memset(m, 0, sizeof *m);
     /* is_dir: 0 arquivo, 1 pasta, 2/3 pipe, 4 dispositivo, 5 terminal, 6 socket AF_UNIX */
     m->st_mode = s->is_dir == 6 ? 0140666 : s->is_dir == 5 ? 0020620 : s->is_dir == 4 ? 0020666 : s->is_dir >= 2 ? 0010600 : s->is_dir ? 0040755 : 0100644;
+    if (s->mode) m->st_mode = (unsigned short)((m->st_mode & ~07777) | (s->mode & 07777));
     m->st_dev = 0x1000002;      /* um só volume; o st_ino (hash do caminho) separa os arquivos */
     m->st_nlink = 1;
     m->st_uid = 501;

@@ -16,6 +16,7 @@ typedef unsigned long usize;
 #define MOS_ENXIO 6
 #define MOS_EIO 5
 #define MOS_EAGAIN 35
+#define MOS_ETIMEDOUT 60
 typedef struct { int pid; u64 mmap_next; } process_t;
 typedef struct { int state, wait_pid; u64 futex_va, wake_at, wait_status; } thread_t;
 static void *dma_alloc(usize n, u64 *phys) {
@@ -111,15 +112,78 @@ static void wake_fence(int pid, u32 id, i64 rax, u32 seq) {
         w->state = TH_READY;
     }
 }
+#else
+enum { TH_READY = 0, TH_WAITING = 3, HOST_NW = 4 };
+static thread_t *host_ws[HOST_NW];
+static int host_wp[HOST_NW];
+static i64 host_rax[HOST_NW];
+static i64 host_wake_rax;
+static thread_t *host_done_th[HOST_NW];
+static i64 host_done_rax[HOST_NW];
+static void host_drop(thread_t *t, i64 rax) {
+    for (int i = 0; i < HOST_NW; i++) if (host_ws[i] == t) {
+        host_rax[i] = rax;
+        host_wake_rax = rax;
+        t->state = TH_READY;
+        t->wait_pid = 0;
+        t->futex_va = 0;
+        t->wake_at = 0;
+        host_ws[i] = 0;
+    }
+    for (int i = 0; i < HOST_NW; i++) if (!host_done_th[i] || host_done_th[i] == t) {
+        host_done_th[i] = t;
+        host_done_rax[i] = rax;
+        break;
+    }
+}
+static void wake_fence(int pid, u32 id, i64 rax, u32 seq) {
+    for (int i = 0; i < HOST_NW; i++) {
+        thread_t *t = host_ws[i];
+        if (!t || host_wp[i] != pid || t->wait_pid != -12 || t->futex_va != id) continue;
+        if (rax == 0 && t->wait_status) memcpy((void *)(uintptr_t)(t->wait_status + 12), &seq, 4);
+        host_drop(t, rax);
+    }
+}
+void gpu_host_fence_expire(void) {
+    for (int i = 0; i < HOST_NW; i++) {
+        thread_t *t = host_ws[i];
+        if (!t || t->wait_pid != -12 || !t->wake_at) continue;
+        host_drop(t, -MOS_ETIMEDOUT);
+    }
+}
+i64 gpu_host_wake_rax(void) { return host_wake_rax; }
+i64 gpu_host_waiter_rax(thread_t *t) {
+    for (int i = 0; i < HOST_NW; i++) if (host_done_th[i] == t) return host_done_rax[i];
+    return 0;
+}
+#endif
+
+static void signal_fence(int pid, u32 id);
+void gpu_fence_from_irq(int pid, unsigned id) { signal_fence(pid, (u32)id); }
+
+#ifdef MOS_GPU_HOST
+static struct { int pid; u32 id; int live; } host_q[8];
+void gpu_host_irq(void) {
+    for (int i = 0; i < 8; i++) if (host_q[i].live) {
+        int pid = host_q[i].pid;
+        u32 id = host_q[i].id;
+        host_q[i].live = 0;
+        gpu_fence_from_irq(pid, id);
+    }
+}
+static int host_post(int pid, u32 id) {
+    for (int i = 0; i < 8; i++) if (!host_q[i].live) {
+        host_q[i].pid = pid; host_q[i].id = id; host_q[i].live = 1; return 0;
+    }
+    return -MOS_EBUSY;
+}
 #endif
 
 static void signal_fence(int pid, u32 id) {
     fen_t *f = fen_of(pid, id);
     if (!f) return;
     f->seq++;
-#ifndef MOS_GPU_HOST
     wake_fence(pid, id, 0, f->seq);
-#endif
 }
 
 static int batch_u32(const u8 *b, u32 n, u32 off, u32 *out) {
@@ -200,6 +264,69 @@ static int batch_ok(int pid, u32 ctx_kind, const u8 *b, u32 n) {
         bo = bo_of(pid, handles[r.bo_index]);
         if (!bo || r.bo_off >= bo->size) return bo ? -MOS_EINVAL : -MOS_ENOENT;
     }
+    return 0;
+}
+
+static int put32(u8 *o, u32 *n, u32 cap, u32 v) {
+    if (!o || *n + 4 > cap) return -MOS_EINVAL;
+    memcpy(o + *n, &v, 4);
+    *n += 4;
+    return 0;
+}
+
+int gpu_batch_translate(int pid, u32 kind, const void *src, u32 n, void *dst, u32 cap, u32 *out_n) {
+    const u8 *b = src;
+    u8 *o = dst;
+    mos_gpu_batch_hdr_t h;
+    u32 handles[MOS_GPU_BATCH_MAX_BO];
+    u32 off, pos, i, on = 0, lx = 1, ly = 1, lz = 1;
+    int e = batch_ok(pid, kind, b, n);
+    if (e) return e;
+    memcpy(&h, b, sizeof h);
+    off = (u32)sizeof h;
+    for (i = 0; i < h.nbo; i++) memcpy(&handles[i], b + off + i * 4u, 4);
+    pos = off + h.nbo * 4u + h.nreloc * (u32)sizeof(mos_gpu_reloc_t);
+    for (i = 0; i < h.ncmd; i++) {
+        mos_gpu_cmd_hdr_t c;
+        memcpy(&c, b + pos, sizeof c);
+        if (c.op == MOS_GPU_CMD_BIND) {
+            mos_gpu_bind_t bd;
+            u32 res;
+            memcpy(&bd, b + pos + sizeof c, sizeof bd);
+            res = handles[bd.bo_index];
+            if (kind == MOS_GPU_CTX_VIRGL) {
+                if (put32(o, &on, cap, 32u | (6u << 16)) || put32(o, &on, cap, 3) || put32(o, &on, cap, bd.slot) ||
+                    put32(o, &on, cap, 1) || put32(o, &on, cap, res) || put32(o, &on, cap, bd.offset) || put32(o, &on, cap, bd.range))
+                    return -MOS_EINVAL;
+            } else if (put32(o, &on, cap, 5) || put32(o, &on, cap, MOS_GPU_VENUS_BIND) || put32(o, &on, cap, bd.slot) ||
+                       put32(o, &on, cap, res) || put32(o, &on, cap, bd.offset) || put32(o, &on, cap, bd.range))
+                return -MOS_EINVAL;
+        } else if (c.op == MOS_GPU_CMD_SHADER) {
+            mos_gpu_shader_t sh;
+            u32 res;
+            memcpy(&sh, b + pos + sizeof c, sizeof sh);
+            res = handles[sh.bo_index];
+            lx = sh.local_x; ly = sh.local_y; lz = sh.local_z;
+            if (kind == MOS_GPU_CTX_VIRGL) {
+                if (put32(o, &on, cap, 31u | (2u << 16)) || put32(o, &on, cap, res) || put32(o, &on, cap, 3)) return -MOS_EINVAL;
+            } else if (put32(o, &on, cap, 7) || put32(o, &on, cap, MOS_GPU_VENUS_SHADER) || put32(o, &on, cap, res) ||
+                       put32(o, &on, cap, sh.offset) || put32(o, &on, cap, sh.length) || put32(o, &on, cap, lx) ||
+                       put32(o, &on, cap, ly) || put32(o, &on, cap, lz))
+                return -MOS_EINVAL;
+        } else {
+            mos_gpu_dispatch_t d;
+            memcpy(&d, b + pos + sizeof c, sizeof d);
+            if (kind == MOS_GPU_CTX_VIRGL) {
+                if (put32(o, &on, cap, 35u | (8u << 16)) || put32(o, &on, cap, lx) || put32(o, &on, cap, ly) || put32(o, &on, cap, lz) ||
+                    put32(o, &on, cap, d.x) || put32(o, &on, cap, d.y) || put32(o, &on, cap, d.z) || put32(o, &on, cap, 0) || put32(o, &on, cap, 0))
+                    return -MOS_EINVAL;
+            } else if (put32(o, &on, cap, 4) || put32(o, &on, cap, MOS_GPU_VENUS_DISPATCH) || put32(o, &on, cap, d.x) ||
+                       put32(o, &on, cap, d.y) || put32(o, &on, cap, d.z))
+                return -MOS_EINVAL;
+        }
+        pos += c.bytes;
+    }
+    if (out_n) *out_n = on;
     return 0;
 }
 
@@ -374,19 +501,33 @@ i64 gpu_syscall(process_t *p, u64 op, u64 user, u64 len, thread_t *self, int *bl
         if (e) return e;
         e = batch_ok(pid, c->kind, tmp, in.cmd_bytes);
         if (e) return e;
-#ifndef MOS_GPU_HOST
         {
-            int hw = (c->kind == MOS_GPU_CTX_VENUS && (caps_now() & MOS_GPU_CAP_VENUS)) ||
-                     (c->kind == MOS_GPU_CTX_VIRGL && (caps_now() & MOS_GPU_CAP_VIRGL));
-            if (hw) {
-                e = virtio_gpu_submit(c->id, tmp, in.cmd_bytes, in.fence);
-                if (e) return e;
+            u8 dev[GPU_CMD_MAX];
+            u32 dn = 0;
+            e = gpu_batch_translate(pid, c->kind, tmp, in.cmd_bytes, dev, sizeof dev, &dn);
+            if (e) return e;
+#ifndef MOS_GPU_HOST
+            {
+                int hw = (c->kind == MOS_GPU_CTX_VENUS && (caps_now() & MOS_GPU_CAP_VENUS)) ||
+                         (c->kind == MOS_GPU_CTX_VIRGL && (caps_now() & MOS_GPU_CAP_VIRGL));
+                if (hw) {
+                    e = virtio_gpu_submit(c->id, dev, dn, pid, in.fence);
+                    if (e) return e;
+                    return 0; /* fence no IRQ */
+                }
             }
-        }
 #else
-        (void)c;
-        (void)tmp;
+            if (in.fence && ((c->kind == MOS_GPU_CTX_VENUS && (caps_now() & MOS_GPU_CAP_VENUS)) ||
+                             (c->kind == MOS_GPU_CTX_VIRGL && (caps_now() & MOS_GPU_CAP_VIRGL)))) {
+                e = host_post(pid, in.fence);
+                if (e) return e;
+                (void)dev; (void)dn;
+                return 0; /* gpu_host_irq sinaliza */
+            }
+            (void)dev;
+            (void)dn;
 #endif
+        }
         if (in.fence) signal_fence(pid, in.fence);
         return 0;
     }
@@ -422,10 +563,23 @@ i64 gpu_syscall(process_t *p, u64 op, u64 user, u64 len, thread_t *self, int *bl
             in.seq = f->seq;
             return wr(p, user, &in, sizeof in);
         }
-#ifdef MOS_GPU_HOST
-        return -MOS_EAGAIN;
-#else
         if (!in.timeout_ms || !self) return -MOS_EAGAIN;
+#ifdef MOS_GPU_HOST
+        {
+            int slot = -1;
+            for (int i = 0; i < HOST_NW; i++) if (!host_ws[i]) { slot = i; break; }
+            if (slot < 0) return -MOS_EBUSY;
+            self->wait_pid = -12;
+            self->futex_va = f->id;
+            self->wait_status = user;
+            self->wake_at = in.timeout_ms == ~0u ? 0 : 1;
+            self->state = TH_WAITING;
+            host_ws[slot] = self;
+            host_wp[slot] = pid;
+        }
+        if (blocked) *blocked = 1;
+        return 0;
+#else
         self->wait_pid = -12;
         self->futex_va = f->id;
         self->wait_status = user;
@@ -441,9 +595,7 @@ i64 gpu_syscall(process_t *p, u64 op, u64 user, u64 len, thread_t *self, int *bl
         if (e) return e;
         fen_t *f = fen_of(pid, in.fence);
         if (!f) return -MOS_ENOENT;
-#ifndef MOS_GPU_HOST
         wake_fence(pid, f->id, -MOS_ENOENT, f->seq);
-#endif
         f->used = 0;
         return 0;
     }
