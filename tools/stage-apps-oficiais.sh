@@ -92,7 +92,7 @@ EOF
         "$ROOT/kernel/fs/dfs.c" "$ROOT/kernel/fs/dmg.c" "$ROOT/kernel/fs/hfsplus.c" \
         "$ROOT/kernel/fs/hfsplus_wr.c" \
         "$ROOT/kernel/fs/inflate.c" "$ROOT/kernel/fs/lzfse.c" "$ROOT/kernel/fs/xz.c" \
-        "$ROOT/kernel/fs/fat.c" -o "$DMG"
+        "$ROOT/kernel/fs/fat.c" "$ROOT/kernel/fs/pcache.c" -o "$DMG"
 fi
 
 stage_one() {
