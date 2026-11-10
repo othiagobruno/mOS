@@ -149,6 +149,7 @@ for f in libunwind.cpp UnwindLevel1.c UnwindLevel1-gcc-ext.c UnwindRegistersSave
 done
 
 echo "==> libSystem.mos"
+# x86_64: _Unwind_* fica em cxx_unwind.c. UnwindLevel1.c repete esses nomes; o resto do libunwind fica.
 LS_SRC=()
 for f in "$ROOT"/userland/libsystem/*.c "$ROOT"/userland/libsystem/*.S; do
     [ -f "$f" ] || continue
