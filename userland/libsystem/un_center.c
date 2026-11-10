@@ -7,7 +7,7 @@
 #endif
 #include "un_center.h"
 
-enum { UN_CAP = 24, UN_ID = 64, UN_TITLE = 96, UN_BODY = 160 };
+enum { UN_CAP = 24, UN_ID = 64, UN_TITLE = 96, UN_BODY = 160, UN_INFO = 192 };
 
 typedef struct {
     int used, pending, delivered, repeats, token;
@@ -15,7 +15,10 @@ typedef struct {
     char ident[UN_ID];
     char title[UN_TITLE];
     char body[UN_BODY];
+    char info[UN_INFO];
 } un_req_t;
+
+static char g_stage_info[UN_INFO];
 
 static un_req_t g_req[UN_CAP];
 static int g_auth;
@@ -103,6 +106,19 @@ void cx_un_reset(void) {
     g_ctx = 0;
     g_sink_ctx = 0;
     g_busy = 0;
+    g_stage_info[0] = 0;
+}
+
+void cx_un_stage_info(const char *info) {
+    scopy(g_stage_info, UN_INFO, info);
+}
+
+const char *cx_un_info(const char *ident) {
+    for (int i = 0; i < UN_CAP; i++) {
+        if (!g_req[i].used || !same(g_req[i].ident, ident)) continue;
+        if (g_req[i].pending || g_req[i].delivered) return g_req[i].info;
+    }
+    return "";
 }
 
 void cx_un_set_auth(int status) { g_auth = status; }
@@ -138,6 +154,9 @@ int cx_un_add(const char *ident, const char *title, const char *subtitle, const 
               double interval, int repeats) {
     un_req_t *r;
     char shown[UN_BODY];
+    char info[UN_INFO];
+    scopy(info, UN_INFO, g_stage_info);
+    g_stage_info[0] = 0;
     if (g_auth != CX_UN_AUTHORIZED) return CX_UN_ERR_DENIED;
     if (!ident) return CX_UN_ERR_BAD;
     cx_un_flush();
@@ -152,6 +171,7 @@ int cx_un_add(const char *ident, const char *title, const char *subtitle, const 
     scopy(r->ident, UN_ID, ident);
     scopy(r->title, UN_TITLE, title);
     scopy(r->body, UN_BODY, shown);
+    scopy(r->info, UN_INFO, info);
     r->repeats = repeats ? 1 : 0;
     r->interval = interval > 0 ? interval : 0;
     if (r->interval <= 0) {
