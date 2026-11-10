@@ -90,6 +90,12 @@ int main(void) {
     cx_status_reset();
     check(cx_act_policy() == CX_ACT_REGULAR && cx_act_lsuielement() == 0 && cx_act_hides_dock() == 0,
           "app nasce regular, com Dock");
+    check(cx_act_note_lsuielement(1) == 1 && cx_act_hides_dock() == 1 && cx_act_lsuielement() == 1,
+          "LSUIElement no Info.plist esconde o Dock sem setActivationPolicy");
+    cx_status_reset();
+    check(cx_act_set_policy(CX_ACT_REGULAR) == 1 && cx_act_note_lsuielement(1) == 0 && cx_act_hides_dock() == 0,
+          "setActivationPolicy explícito não é sobrescrito pelo plist");
+    cx_status_reset();
     check(cx_act_set_policy(CX_ACT_ACCESSORY) == 1, "aceita a política accessory");
     check(cx_act_lsuielement() == 1 && cx_act_hides_dock() == 1 && cx_act_active() == 1,
           "LSUIElement esconde o Dock e continua ativo");

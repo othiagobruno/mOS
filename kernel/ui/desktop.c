@@ -246,7 +246,9 @@ enum { ACT_ABOUT = 1001, ACT_PREFS, ACT_ACTIVITY, ACT_FORCEQUIT, ACT_RESTART, AC
 #define ACT_STATUS_PICK 73000     /* + índice do item no pacote publicado */
 static int status_pid;
 static u32 status_id;
-static u32 status_act[SB_MENU_MAX];
+static u32 status_act[SB_MENU_MAX + SB_SUB_MAX];
+static menu_item_t status_sub_items[SB_MENU_MAX][16];
+static menu_t status_sub_menu[SB_MENU_MAX];
 void glyph_focus_moon(surface_t *s, int x, int y, int sz, u32 c);
 #include "power.h"
 /* bateria da barra: contorno arredondado, carga proporcional (vermelha abaixo de 20%, verde carregando),
@@ -614,13 +616,36 @@ static void open_status_menu(int pid, u32 id, int notify) {
     M.x = gx;
     M.y = MENUBAR_H + 4;
     cc_open = false;
-    for (i = 0; i < n && i < SB_MENU_MAX; i++) {
-        u32 act = 0;
-        int dis = 0, sep = 0;
-        const char *lab = sb_menu_label(pid, id, i, &act, &dis, &sep);
-        status_act[i] = act;
-        if (sep || !lab || !lab[0]) add_sep();
-        else add_item(lab, NULL, ACT_STATUS_PICK + i, dis != 0, false);
+    {
+        int subbase = 0;
+        for (i = 0; i < n && i < SB_MENU_MAX; i++) {
+            u32 act = 0;
+            int dis = 0, sep = 0, nsub, s, ns;
+            const char *lab = sb_menu_label(pid, id, i, &act, &dis, &sep);
+            status_act[i] = act;
+            if (sep || !lab || !lab[0]) { add_sep(); continue; }
+            add_item(lab, NULL, ACT_STATUS_PICK + i, dis != 0, sb_menu_checked(pid, id, i) != 0);
+            nsub = sb_menu_sub_count(pid, id, i);
+            ns = nsub > 16 ? 16 : nsub;
+            if (ns <= 0 || subbase + ns > SB_SUB_MAX) continue;
+            for (s = 0; s < ns; s++) {
+                u32 sa = 0;
+                int sd = 0, sc = 0;
+                const char *sl = sb_menu_sub(pid, id, i, s, &sa, &sd, &sc);
+                menu_item_t *it = &status_sub_items[i][s];
+                memset(it, 0, sizeof *it);
+                it->label = sl && sl[0] ? sl : NULL;
+                it->action = ACT_STATUS_PICK + SB_MENU_MAX + subbase + s;
+                it->disabled = sd != 0;
+                it->checked = sc != 0;
+                status_act[SB_MENU_MAX + subbase + s] = sa;
+            }
+            status_sub_menu[i].title = NULL;
+            status_sub_menu[i].items = status_sub_items[i];
+            status_sub_menu[i].count = ns;
+            M.items[M.n - 1].submenu = &status_sub_menu[i];
+            subbase += ns;
+        }
     }
     menu_layout();
     wm_damage_all();
@@ -1062,7 +1087,7 @@ static void dock_empty_trash_cb(int button, void *ctx) {
 }
 
 static void run_action(int act) {
-    if (act >= ACT_STATUS_PICK && act < ACT_STATUS_PICK + SB_MENU_MAX) {
+    if (act >= ACT_STATUS_PICK && act < ACT_STATUS_PICK + SB_MENU_MAX + SB_SUB_MAX) {
         compat_gui_status_pick(status_pid, status_id, status_act[act - ACT_STATUS_PICK]);
         return;
     }
