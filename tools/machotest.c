@@ -8,7 +8,7 @@
  *
  * No Linux, zig cc ou clang:
  *   zig cc -target x86_64-linux-gnu -O2 -std=gnu11 -DMOS_HOST_TEST -fno-strict-aliasing \
- *       -Ikernel/include -Itools tools/machotest.c tools/host_unix.c tools/host_gpu.c \
+ *       -Ikernel/include -Itools tools/machotest.c tools/host_unix.c tools/host_gpu.c tools/host_qos.c \
  *       tools/host_enter.S kernel/compat/macho.c \
  *       -o build/machotest -pthread
  * No Windows o comando continua o de docs/porte-vscode.md (zig cc -target x86_64-windows-gnu).
@@ -40,6 +40,7 @@
 #include <stddef.h>
 #endif
 #include "host_unix.h"
+#include "host_qos.h"
 long host_gpu_op(unsigned long long op, unsigned long long user, unsigned long long len, int *blocked);
 #include <stdio.h>
 #include <stdlib.h>
@@ -1113,9 +1114,11 @@ static long long do_syscall(u64 n, u64 a, u64 b, u64 c, u64 d) {
 #else
         if (pthread_create(&thread_handles[tid], NULL, thread_main, s) != 0) { free(s); return -MOS_ENOMEM; }
 #endif
+        host_thr_add((int)tid);
         return tid;
     }
     case SYS_THREAD_EXIT:
+        host_thr_dead((int)my_tid);
 #ifdef _WIN32
         ExitThread((DWORD)a);
 #else
@@ -1205,6 +1208,7 @@ static void ux_hooks(void) {
     static int once;
     if (once) return;
     once = 1;
+    host_thr_boot();
     host_unix_hooks hk = { ux_alloc, ux_slot, ux_set_slot, ux_dup, ux_parent, ux_touch, ux_unlink };
     host_unix_set_hooks(&hk);
 }
@@ -1508,6 +1512,9 @@ static long long do_syscall_locked(u64 n, u64 a, u64 b, u64 c, u64 d) {
         return rename(hp, hp2) ? -MOS_ENOENT : 0;
     }
     case SYS_UNIX: return host_unix_op(a, b, c, d);
+    case SYS_THREADCTL:
+        if (a == MOS_THR_SETQOS) return host_thr_setqos((int)b, (int)my_tid, (unsigned)c);
+        break;
     case SYS_GPU: {
         int blocked = 0;
         long gr = host_gpu_op(a, b, c, &blocked);
