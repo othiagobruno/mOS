@@ -134,7 +134,9 @@ void vDSP_fft_zrip(void *setup, const dsp_split_t *c, vstride ic, unsigned long 
 /* ================================================================ CoreMedia */
 typedef struct { i64 value; i32 timescale; u32 flags; i64 epoch; } cm_time_t;
 #define kCMTimeFlags_Valid 1u
-cm_time_t CMTimeMake(i64 value, i32 timescale) { cm_time_t t = {value, timescale, kCMTimeFlags_Valid, 0}; return t; }
+cm_time_t CMTimeMake(i64 value, i32 timescale);
+cm_time_t CMTimeMakeWithSeconds(double seconds, i32 timescale);
+cm_time_t CMTimeSubtract(cm_time_t a, cm_time_t b);
 double CMTimeGetSeconds(cm_time_t t) {
     if (!(t.flags & kCMTimeFlags_Valid) || !t.timescale) return __builtin_nan("");
     return (double)t.value / (double)t.timescale;
@@ -147,8 +149,7 @@ u64 CMClockConvertHostTimeToSystemUnits(cm_time_t t) {
 OSStatus CMIOObjectGetPropertyData(u32 obj, const void *addr, u32 qs, const void *q, u32 sz, u32 *used, void *data) { (void)obj; (void)addr; (void)qs; (void)q; (void)sz; (void)data; if (used) *used = 0; return 0x77686F3F; /* kCMIOHardwareUnknownPropertyError 'who?' */ }
 
 /* ================================================================ VideoToolbox
- * H.264 em software (I_PCM, h264sw.c): CVPixelBuffer BGRA ou NV12 entra e sai,
- * CMSampleBuffer em AVCC com o format description avc1. HEVC continua -12906/-12908:
+ * H.264: decodificador Baseline (h264bsd) e codificador I_PCM. HEVC é stub (-12906/-12908):
  * não há par encoder/decoder permissivo que caiba aqui. Sem FairPlay.
  * VTIsHardwareDecodeSupported continua 0. */
 #define kVTCouldNotFindVideoDecoderErr (-12906)
@@ -334,10 +335,9 @@ OSStatus VTCompressionSessionCreate(void *a, i32 w, i32 h, u32 codec, id spec, i
     *out = s;
     return 0;
 }
-OSStatus VTCompressionSessionEncodeFrame(void *s, void *img, cm_time_t pts, cm_time_t dur, id props, void *ref, u32 *info) {
-    (void)props;
-    if (info) *info = 0;
-    vts_t *v = vts_as(s, VT_ENC);
+typedef struct { void *isa; int flags, reserved; void (*invoke)(void *block, OSStatus st, u32 flags, void *sb); } vt_out_blk;
+static OSStatus vt_encode_one(vts_t *v, void *img, cm_time_t pts, cm_time_t dur, void *ref, void **sb_out) {
+    if (sb_out) *sb_out = 0;
     if (!v || !img) return kVTCouldNotFindVideoEncoderErr;
     int w = (int)CVPixelBufferGetWidth(img), h = (int)CVPixelBufferGetHeight(img);
     if (w < 2 || h < 2 || (w & 1) || (h & 1)) return kVTCouldNotFindVideoEncoderErr;
@@ -371,11 +371,40 @@ OSStatus VTCompressionSessionEncodeFrame(void *s, void *img, cm_time_t pts, cm_t
     int crc = CMSampleBufferCreate(0, bb, 1, 0, 0, fd, 1, 1, &tm, 1, &sample_n, &sb);
     objc_release((id)bb); objc_release((id)fd); h264_au_free(&au);
     if (crc || !sb) return kVTCouldNotFindVideoEncoderErr;
+    (void)ref;
+    if (sb_out) *sb_out = sb;
+    return 0;
+}
+OSStatus VTCompressionSessionEncodeFrame(void *s, void *img, cm_time_t pts, cm_time_t dur, id props, void *ref, u32 *info) {
+    (void)props;
+    if (info) *info = 0;
+    vts_t *v = vts_as(s, VT_ENC);
+    void *sb = 0;
+    OSStatus st = vt_encode_one(v, img, pts, dur, ref, &sb);
+    if (st) return st;
     if (v->enc) v->enc(v->enc_ref, ref, 0, 0, sb);
     objc_release((id)sb);
     return 0;
 }
+OSStatus VTCompressionSessionEncodeFrameWithOutputHandler(void *s, void *img, cm_time_t pts, cm_time_t dur, id props, u32 *info, void *handler) {
+    (void)props;
+    if (info) *info = 0;
+    vts_t *v = vts_as(s, VT_ENC);
+    vt_out_blk *blk = handler;
+    if (!blk || !blk->invoke) return kVTCouldNotFindVideoEncoderErr;
+    void *sb = 0;
+    OSStatus st = vt_encode_one(v, img, pts, dur, 0, &sb);
+    if (st) { blk->invoke(handler, st, 0, 0); return st; }
+    blk->invoke(handler, 0, 0, sb);
+    objc_release((id)sb);
+    return 0;
+}
 OSStatus VTCompressionSessionCompleteFrames(void *s, cm_time_t until) { (void)s; (void)until; return 0; }
+OSStatus VTSessionSetProperties(void *s, id props) {
+    if (!vts_as(s, VT_ENC) && !vts_as(s, VT_DEC)) return kVTPropertyNotSupportedErr;
+    (void)props;
+    return 0;
+}
 void VTCompressionSessionInvalidate(void *s) { vts_t *v = vts_as(s, VT_ENC); if (v) v->dead = 1; }
 OSStatus VTSessionSetProperty(void *s, id key, id val) { (void)s; (void)key; (void)val; return 0; }
 OSStatus VTSessionCopyProperty(void *s, id key, void *a, void *out) { (void)s; (void)key; (void)a; if (out) *(void **)out = 0; return kVTPropertyNotSupportedErr; }

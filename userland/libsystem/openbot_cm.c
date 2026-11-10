@@ -11,6 +11,7 @@ void *realloc(void *p, size_t n);
 void free(void *p);
 void *memset(void *d, int c, size_t n);
 void *memcpy(void *d, const void *s, size_t n);
+int memcmp(const void *a, const void *b, size_t n);
 id objc_retain(id o);
 void objc_release(id o);
 void cx_objc_boot(unsigned long long sects, unsigned long long n);
@@ -208,6 +209,15 @@ int CMBlockBufferAppendMemoryBlock(void *b, void *mem, size_t len, void *ba, con
     if (n && mem) memcpy(x->data + x->len, (u8 *)mem + off, n);
     else if (n) memset(x->data + x->len, 0, n);
     x->len += n;
+    return 0;
+}
+int CMBlockBufferAccessDataBytes(void *b, size_t off, size_t len, void *tmpAlloc, char **ptr) {
+    (void)tmpAlloc;
+    bb_t *x = as_bb(b);
+    if (!x || off > x->len) return CM_BAD_BLOCK;
+    if (!len) len = x->len - off;
+    if (len > x->len - off) return CM_BAD_BLOCK;
+    if (ptr) *ptr = (char *)(x->data ? x->data + off : 0);
     return 0;
 }
 int CMBlockBufferGetDataPointer(void *b, size_t off, size_t *lenAt, size_t *total, char **ptr) {
@@ -484,6 +494,34 @@ int CMSampleBufferCreateForImageBuffer(void *a, void *img, u8 ready, void *cb, v
         if (s) s->image = objc_retain((id)img);
     }
     return rc;
+}
+int CMFormatDescriptionEqual(void *a, void *b) {
+    fd_t *x = as_fd(a), *y = as_fd(b);
+    if (x == y) return 1;
+    if (!x || !y) return 0;
+    if (x->media != y->media || x->subtype != y->subtype || x->w != y->w || x->h != y->h) return 0;
+    if (x->np != y->np || x->nal != y->nal) return 0;
+    for (size_t i = 0; i < x->np; i++) {
+        if (x->psz[i] != y->psz[i]) return 0;
+        if (x->psz[i] && memcmp(x->pset + x->poff[i], y->pset + y->poff[i], x->psz[i])) return 0;
+    }
+    return 1;
+}
+int CMSampleBufferCreateReady(void *a, void *db, void *fd, long ns, long nt, const void *t, long nsz, const size_t *sz, void **out) {
+    return CMSampleBufferCreate(a, db, 1, 0, 0, fd, ns, nt, t, nsz, sz, out);
+}
+int CMTextFormatDescriptionCreateFromBigEndianTextDescriptionData(void *a, const u8 *data, size_t n, void **out, u32 *subtype) {
+    (void)a;
+    if (!out || !data || n < 8) return CM_BAD_FMT;
+    u32 fmt = ((u32)data[4] << 24) | ((u32)data[5] << 16) | ((u32)data[6] << 8) | data[7];
+    fd_t *f = fd_new(0x74657874 /* text */, fmt);
+    if (!f) return CM_BAD_FMT;
+    const u8 *p = data;
+    size_t sz = n;
+    if (fd_store_sets(f, 1, &p, &sz, 0)) { objc_release((id)f); return CM_BAD_FMT; }
+    if (subtype) *subtype = fmt;
+    *out = f;
+    return 0;
 }
 int CMSampleBufferCreateReadyWithImageBuffer(void *a, void *img, void *fd, const void *timing, void **out) {
     return CMSampleBufferCreateForImageBuffer(a, img, 1, 0, 0, fd, timing, out);
