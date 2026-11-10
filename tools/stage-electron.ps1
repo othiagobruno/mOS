@@ -8,7 +8,8 @@
 # só app.asar (+ app.asar.unpacked até -MaxModuloMiB por arquivo) ou a pasta app (apps sem asar, como o Cursor).
 # -CaLog liga /Sistema/Biblioteca/ca-log: o QuartzCore registra no log serial (com -Diagnostico) cada IOSurface posto num
 # layer, cada CAContext publicado e cada quadro composto na janela, com a contagem de pixels visíveis.
-# Módulos .node em Swift (ligam libswiftCore) ficam de fora, porque o mOS ainda não tem esse runtime; -ComSwift os copia.
+# Módulos .node que ligam libswiftCore entram quando -ComSwift está ligado ou quando libswiftCore.dylib já está no esp
+# (ou em build\universal-swift / build\swift\objc\dylib, e aí este script copia a cadeia para o esp).
 # -SubstituirApp <pasta> troca o código do app (Resources/app) por um teste, ex.: tools\testdata\electron-wcv.
 param([Parameter(Mandatory = $true)][string]$App, [string]$OutDir = 'build-electron', [int]$SizeMiB = 768,
       [switch]$Autostart, [switch]$Diagnostico, [switch]$CaLog, [int]$MaxModuloMiB = 16,
@@ -53,6 +54,17 @@ $App = (Get-Item -LiteralPath $App).FullName
 $src = Join-Path $App 'Contents'
 $esp = Join-Path $root "$OutDir\esp"
 if (-not (Test-Path "$esp\mOS")) { Write-Host "rode antes: .\build.ps1 -OutDir $OutDir" -ForegroundColor Red; exit 1 }
+$swiftCore = "$esp\mOS\usr\lib\swift\libswiftCore.dylib"
+if (-not (Test-Path -LiteralPath $swiftCore)) {
+    $swiftSrc = $null
+    if (Test-Path "$root\build\universal-swift\usr\lib\swift\libswiftCore.dylib") { $swiftSrc = "$root\build\universal-swift" }
+    elseif (Test-Path "$root\build\swift\objc\dylib\usr\lib\swift\libswiftCore.dylib") { $swiftSrc = "$root\build\swift\objc\dylib" }
+    if ($swiftSrc) {
+        Copy-Item -Recurse -Force "$swiftSrc\*" "$esp\mOS\"
+        Write-Host "Swift copiado para o esp a partir de $swiftSrc" -ForegroundColor Yellow
+    }
+}
+$temSwift = (Test-Path -LiteralPath $swiftCore) -or $ComSwift
 $exe = $null
 $plText = [IO.File]::ReadAllText("$src\Info.plist")
 if ($plText -match '<key>CFBundleExecutable</key>\s*<string>([^<]+)</string>') { $exe = $Matches[1] }
@@ -122,7 +134,7 @@ foreach ($d in $extra) {
         # módulo nativo em Swift (liga /usr/lib/swift/libswiftCore.dylib): o mOS ainda não tem o runtime Swift desses
         # addons, e o dyld ligaria centenas de símbolos ausentes a 0 (o computer_use.node do Claude caía na 1ª chamada).
         # Fora da imagem o require falha e o app segue sem o módulo, como já trata.
-        if ($f.Extension -eq '.node' -and -not $ComSwift) {
+        if ($f.Extension -eq '.node' -and -not $temSwift) {
             $head = New-Object byte[] ([Math]::Min(262144, $f.Length))
             $fs = [IO.File]::OpenRead('\\?\' + $f.FullName); [void]$fs.Read($head, 0, $head.Length); $fs.Close()
             if ([Text.Encoding]::ASCII.GetString($head).Contains('/usr/lib/swift/libswiftCore.dylib')) { Write-Host "  sem $($f.Name) (Swift)" -ForegroundColor DarkYellow; continue }

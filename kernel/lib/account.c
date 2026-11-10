@@ -245,9 +245,9 @@ bool account_create(const char *name, const char *full, const char *pw, bool adm
     a.admin = admin;
     if (!set_password(&a, pw)) ERR(ERR_NO_RNG);
     if (!save(name, &a)) ERR("Não foi possível gravar a conta.");
-    static const char *sub[] = {"Mesa", "Documentos", "Downloads", "Imagens", "Música", ".Lixeira"};
-    char p[96];
-    for (u32 i = 0; i < ARRAY_LEN(sub); i++) { snprintf(p, sizeof p, "/Users/%s/%s", name, sub[i]); vfs_mkdir(p); }
+    char home[96];
+    snprintf(home, sizeof home, "/Users/%s", name);
+    account_ensure_dirs(home);
     kprintf("contas: criada \"%s\" (%s)%s\n", name, a.full, admin ? ", administrador" : "");
     return true;
 }
@@ -284,7 +284,7 @@ bool account_set_current(const char *name) {
     snprintf(cur_name, sizeof cur_name, "%s", name);
     snprintf(cur_full, sizeof cur_full, "%s", a.full);
     snprintf(cur_home, sizeof cur_home, "/Users/%s", name);
-    vfs_mkdir(cur_home);
+    account_ensure_dirs(cur_home);
     kprintf("contas: sessão de \"%s\" (%s)\n", cur_name, cur_home);
     return true;
 }
@@ -292,6 +292,20 @@ bool account_set_current(const char *name) {
 const char *account_current(void) { return cur_name; }
 const char *account_fullname(void) { return cur_full; }
 const char *account_home(void) { return cur_home; }
+
+void account_ensure_dirs(const char *home) {
+    static const char *sub[] = {
+        "Mesa", "Documentos", "Downloads", "Imagens", "Música", ".Lixeira",
+        "Library", "Library/Preferences", "Library/Application Support",
+        "Library/Logs", "Library/Saved Application State", "Library/Caches",
+        "Library/LaunchAgents"};
+    char p[192];
+    if (!home || !home[0]) return;
+    for (u32 i = 0; i < ARRAY_LEN(sub); i++) {
+        snprintf(p, sizeof p, "%s/%s", home, sub[i]);
+        vfs_mkdir(p);
+    }
+}
 
 /* ------------------------------------------------------------ autoteste (build.ps1 -Tests) */
 void account_selftest(void) {
@@ -310,6 +324,8 @@ void account_selftest(void) {
     T(account_set_password("ana", "segredo123", "nova-senha", err, sizeof err), "trocar senha");
     T(account_verify("ana", "nova-senha") && !account_verify("ana", "segredo123"), "nova senha vale");
     T(account_set_current("ana") && !strcmp(account_home(), "/Users/ana") && vfs_lookup("/Users/ana/Documentos"), "sessão da ana");
+    T(vfs_lookup("/Users/ana/Library/Preferences") && vfs_lookup("/Users/ana/Library/Application Support")
+      && vfs_lookup("/Users/ana/Library/LaunchAgents"), "pastas de preferências e agentes");
     T(!account_delete("ana", true, err, sizeof err), "não apaga a conta em uso");
     T(account_set_current(ACCOUNT_DEFAULT), "volta ao visitante");
     T(account_delete("ana", true, err, sizeof err) && !account_exists("ana") && !vfs_lookup("/Users/ana"), "apagar ana");

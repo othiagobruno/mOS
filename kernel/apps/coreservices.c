@@ -10,6 +10,8 @@
 #include "kit.h"
 #include "web.h"
 #include "fs.h"
+#include "launchsvc.h"
+#include "vfs.h"
 
 void finder_open_path(const char *path);
 
@@ -154,14 +156,51 @@ static void zip_expand(const char *path) {
     }
 }
 
+static int ends_pkg(const char *name) {
+    usize n = name ? strlen(name) : 0;
+    return n > 4 && (!strcasecmp(name + n - 4, ".pkg") || (n > 5 && !strcasecmp(name + n - 5, ".mpkg")));
+}
+
+static void install_apps_in(const char *dir) {
+    vnode_t *d = vfs_lookup(dir);
+    char path[512];
+    if (!d || !d->dir) return;
+    for (vnode_t *c = d->child; c; c = c->next) {
+        usize n = strlen(c->name);
+        if (!c->dir || n < 5 || strcasecmp(c->name + n - 4, ".app")) continue;
+        snprintf(path, sizeof path, "%s/%s", dir, c->name);
+        ls_install_app(path);
+    }
+}
+
 void diskimage_open_file(const char *path) {
     vnode_t *n = vfs_lookup(path);
     if (!n) return;
     char msg[300];
+    if (ends_pkg(n->name)) {
+        notify("Pacote do Instalador", "O mOS não extrai .pkg/.mpkg (xar/bom) e não contorna FairPlay. Copie o .app para Aplicativos.");
+        return;
+    }
+    char before[8][64];
+    int nb = 0;
+    vnode_t *vols = vfs_lookup("/Volumes");
+    if (vols) for (vnode_t *v = vols->child; v && nb < 8; v = v->next) snprintf(before[nb++], 64, "%s", v->name);
     if (vfs_mount_file(n) > 0) {
         snprintf(msg, sizeof msg, "\"%s\" montado", n->name);
-        notify(msg, "Disponível em Volumes, na barra lateral do Arquivos.");
-        vnode_t *vols = vfs_lookup("/Volumes");
+        notify(msg, "Disponível em Volumes. Apps novos do volume vão para Aplicativos, menos os da App Store.");
+        vols = vfs_lookup("/Volumes");
+        if (vols) for (vnode_t *v = vols->child; v; v = v->next) {
+            int known = 0;
+            char p[400], sub[480];
+            for (int i = 0; i < nb; i++) if (!strcmp(before[i], v->name)) known = 1;
+            if (known || !v->dir) continue;
+            snprintf(p, sizeof p, "/Volumes/%s", v->name);
+            install_apps_in(p);
+            snprintf(sub, sizeof sub, "%s/Applications", p);
+            install_apps_in(sub);
+            snprintf(sub, sizeof sub, "%s/Aplicativos", p);
+            install_apps_in(sub);
+        }
         if (vols && vols->child) finder_open_path("/Volumes");
     } else {
         notify("Não foi possível abrir a imagem", n->name);

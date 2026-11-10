@@ -10,6 +10,7 @@
 #include "account.h"
 #include "vfs.h"
 #include "install.h"
+#include "launchsvc.h"
 
 static int n_ok, n_bad;
 #define CHECK(c, what) do { if (c) n_ok++; else { n_bad++; kprintf("unit: FALHOU %s (linha %d)\n", what, __LINE__); } } while (0)
@@ -378,6 +379,95 @@ static void test_no_hw_rng(void) {
     account_delete("leg2", true, err, sizeof err);
 }
 
+static void write_plist(const char *path, const char *id, const char *exe, const char *scheme) {
+    char b[700];
+    snprintf(b, sizeof b,
+             "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+             "<plist version=\"1.0\"><dict>\n"
+             "<key>CFBundleIdentifier</key><string>%s</string>\n"
+             "<key>CFBundleExecutable</key><string>%s</string>\n"
+             "<key>CFBundleURLTypes</key><array><dict>\n"
+             "<key>CFBundleURLSchemes</key><array><string>%s</string></array>\n"
+             "</dict></array></dict></plist>\n",
+             id, exe, scheme);
+    vfs_write_file(path, b, strlen(b));
+}
+
+static void test_launch_runtime(void) {
+    ls_app_t *a;
+    vnode_t *n;
+    char *p;
+    int r0;
+    const char *pref =
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<plist version=\"1.0\"><dict><key>LSHandlers</key><array><dict>"
+        "<key>LSHandlerURLScheme</key><string>moslsregressx</string><key>LSHandlerRoleAll</key><string>com.mos.lsregressB</string>"
+        "</dict></array></dict></plist>\n";
+    CHECK(vfs_lookup("/Users/Visitante/Library/Preferences") && vfs_lookup("/Users/Visitante/Library/Application Support")
+          && vfs_lookup("/Users/Visitante/Library/LaunchAgents"), "Visitante nasce com Library");
+    ls_init();
+    write_plist("/Aplicativos/LsA.app/Contents/Info.plist", "com.mos.lsregressA", "LsA", "moslsregressx");
+    write_plist("/Aplicativos/LsB.app/Contents/Info.plist", "com.mos.lsregressB", "LsB", "moslsregressx");
+    vfs_write_file("/Aplicativos/LsA.app/Contents/MacOS/LsA", "AAAA", 4);
+    vfs_write_file("/Aplicativos/LsB.app/Contents/MacOS/LsB", "BBBB", 4);
+    ls_rescan();
+    CHECK(ls_app_by_id("com.mos.lsregressA") && ls_app_by_id("com.mos.lsregressB"), "dois bundles registrados");
+    a = ls_default_for_scheme("moslsregressx");
+    CHECK(a && !strcmp(ls_app_id(a), "com.mos.lsregressA"), "sem escolha, o primeiro registrado abre o esquema");
+    r0 = ls_test_reparses();
+    ls_test_poke();
+    ls_tick();
+    CHECK(ls_test_reparses() == r0, "ls_tick sem mudança não relê o bundle");
+    n = vfs_lookup("/Aplicativos/LsA.app/Contents/Info.plist");
+    p = n && n->data ? strstr((char *)n->data, "com.mos.lsregressA") : NULL;
+    CHECK(p != NULL, "plist de LsA está no VFS");
+    if (p) p[strlen("com.mos.lsregressA") - 1] = 'C';   /* mesmo tamanho, mesmo mtime */
+    ls_test_poke();
+    ls_tick();
+    CHECK(ls_test_reparses() > r0, "mesmo tamanho de Info.plist com outro conteúdo é relido");
+    CHECK(ls_app_by_id("com.mos.lsregressC") && !ls_app_by_id("com.mos.lsregressA"), "o identificador novo substitui o antigo");
+    r0 = ls_test_reparses();
+    n = vfs_lookup("/Aplicativos/LsA.app/Contents/MacOS/LsA");
+    if (n && n->data && n->size) n->data[0] = 'Z';
+    ls_test_poke();
+    ls_tick();
+    CHECK(ls_test_reparses() > r0, "byte do executável, mesmo tamanho, entra no carimbo");
+    char prefpath[512];
+    snprintf(prefpath, sizeof prefpath, "%s", home_sub("/Library/Preferences/com.apple.LaunchServices/com.apple.launchservices.secure.plist"));
+    vfs_write_file(prefpath, pref, strlen(pref));
+    ls_test_poke();
+    ls_tick();
+    a = ls_default_for_scheme("moslsregressx");
+    CHECK(a && !strcmp(ls_app_id(a), "com.mos.lsregressB"), "escolha do usuário relida quando o plist muda");
+    n = vfs_lookup(prefpath);
+    p = n && n->data ? strstr((char *)n->data, "com.mos.lsregressB") : NULL;
+    if (p) p[strlen("com.mos.lsregressB") - 1] = 'C';
+    a = ls_default_for_scheme("moslsregressx");
+    CHECK(a && !strcmp(ls_app_id(a), "com.mos.lsregressC"), "carimbo do plist de escolhas vê o byte trocado");
+    vfs_mkdir("/tmp/fw/Demo.framework/Versions/A");
+    vfs_write_file("/tmp/fw/Demo.framework/Versions/A/Demo", "MACH", 4);
+    vfs_write_file("/tmp/fw/Demo.framework/Versions/Current", "A\n", 2);
+    vfs_write_file("/tmp/fw/Demo.framework/Demo", "Versions/A/Demo", 15);
+    n = vfs_lookup("/tmp/fw/Demo.framework/Versions/Current/Demo");
+    CHECK(n && n->size == 4 && n->data && !memcmp(n->data, "MACH", 4), "texto Current dentro de .framework segue para A");
+    vfs_mkdir("/tmp/fp/Store.app/Contents/SC_Info");
+    vfs_write_file("/tmp/fp/Store.app/Contents/Info.plist", "x", 1);
+    CHECK(ls_install_app("/tmp/fp/Store.app") == -2, "app com SC_Info não é copiado");
+    CHECK(!vfs_lookup("/Aplicativos/Store.app"), "FairPlay não deixa resíduo em Aplicativos");
+    write_plist("/tmp/vol/Ok.app/Contents/Info.plist", "com.mos.okinstall", "Ok", "mosokinstall");
+    vfs_write_file("/tmp/vol/Ok.app/Contents/MacOS/Ok", "bin", 3);
+    CHECK(ls_install_app("/tmp/vol/Ok.app") == 1, "bundle copiado de um volume para Aplicativos");
+    CHECK(ls_install_app("/tmp/vol/Ok.app") == 0, "segunda instalação não sobrescreve");
+    CHECK(ls_app_by_id("com.mos.okinstall") != NULL, "app instalado entra no Launch Services");
+    vfs_delete(vfs_lookup("/Aplicativos/LsA.app"));
+    vfs_delete(vfs_lookup("/Aplicativos/LsB.app"));
+    vfs_delete(vfs_lookup("/Aplicativos/Ok.app"));
+    vfs_delete(vfs_lookup(prefpath));
+    ls_rescan();
+    ls_test_poke();
+    ls_tick();
+    CHECK(!ls_app_by_id("com.mos.lsregressC") && !ls_app_by_id("com.mos.okinstall"), "apps de teste saem do banco");
+}
+
 void unit_tests_run(void) {
     kprintf("unit: ===== testes de unidade (build MOS_UNIT_TESTS) =====\n");
     test_crypto();
@@ -389,6 +479,7 @@ void unit_tests_run(void) {
     test_accounts();
     test_payload_policy();
     test_no_hw_rng();
+    test_launch_runtime();
     kprintf("unit: RESUMO: %d verificações ok, %d FALHA(S) — %s\n", n_ok, n_bad, n_bad ? "REPROVADO" : "APROVADO");
 }
 #endif

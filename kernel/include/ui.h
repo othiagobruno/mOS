@@ -283,6 +283,7 @@ app_t *apps_find(const char *exec);
 app_t *apps_shortcut_for(app_t *proxy);   /* atalho de /Aplicativos dono das janelas de um processo */
 void   app_launch(app_t *a);
 void   app_quit(app_t *a);
+void   app_force_quit(app_t *a);   /* SIGKILL no processo macOS; apps do kernel seguem o encerrar normal */
 
 /* ícones desenhados vetorialmente */
 surface_t *icon_for(app_t *a, int size);

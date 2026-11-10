@@ -194,6 +194,36 @@ void persist_enable(void) {
     kprintf("persist: gravação no disco do sistema %s (estado %s)\n", enabled ? "LIGADA" : "DESLIGADA", sysstate_name());
 }
 
+/* Arquivos e pastas criados na RAM antes da gravação existir (mtime != 0, ou dirty). O que veio do
+ * disco ou do payload entra com mtime 0 e não é reescrito. Não chame de persist_enable: isso gravaria
+ * a árvore inteira do sistema por cima da imagem. */
+void persist_capture_existing(void) {
+    vnode_t **st;
+    int cap = 64, n = 0;
+    if (!enabled) return;
+    st = kmalloc(sizeof(vnode_t *) * (usize)cap);
+    if (!st) return;
+    st[n++] = vfs_root();
+    while (n) {
+        vnode_t *v = st[--n];
+        if (v != vfs_root() && (v->dir ? v->mtime != 0 : (v->mtime != 0 || v->dirty))) persist_mark(v);
+        if (!v->dir) continue;
+        for (vnode_t *c = v->child; c; c = c->next) {
+            if (n >= cap) {
+                int nc = cap * 2;
+                vnode_t **ns = kmalloc(sizeof(vnode_t *) * (usize)nc);
+                if (!ns) { kfree(st); return; }
+                memcpy(ns, st, sizeof(vnode_t *) * (usize)n);
+                kfree(st);
+                st = ns;
+                cap = nc;
+            }
+            st[n++] = c;
+        }
+    }
+    kfree(st);
+}
+
 /* Consentimento explícito do usuário (assistente) para o live gravar no próprio pendrive USB. */
 bool persist_consent_live(void) {
     const origin_t *o = origin_get();
@@ -203,6 +233,7 @@ bool persist_consent_live(void) {
     enabled = true;
     sys_state = SYS_LIVE_PERSIST;
     vfs_write_file(STATE_FILE, "LIVE_PERSISTENTE\n", 17);
+    persist_capture_existing();   /* arquivos criados na RAM antes do consentimento (preferências, apps) */
     persist_sync();
     kprintf("persist: live PERSISTENTE ativado por consentimento: gravando em %s\n", storage_disk_name(sys_disk));
     return true;

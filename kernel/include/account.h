@@ -21,6 +21,7 @@ bool        account_set_current(const char *name);                         /* mu
 const char *account_current(void);                                         /* nome da conta em uso */
 const char *account_fullname(void);
 const char *account_home(void);                                            /* "/Users/<nome>" */
+void        account_ensure_dirs(const char *home);                         /* Mesa, Documentos e ~/Library/{Preferences,Application Support,...} */
 bool        account_is_admin(const char *name);
 u32         account_kdf_iterations(void);                                  /* PBKDF2: iterações calibradas neste hardware */
 bool        account_password_ok(const char *pw, char *err, usize errlen);  /* regra do assistente: 8 a 60 caracteres */

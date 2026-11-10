@@ -979,7 +979,7 @@ static void run_action(int act) {
         break;
     }
     case ACT_ACTIVITY: app_launch(apps_find("atividade")); break;
-    case ACT_FORCEQUIT: if (a && strcmp(a->exec, "arquivos")) app_quit(a); break;
+    case ACT_FORCEQUIT: if (a && strcmp(a->exec, "arquivos")) app_force_quit(a); break;
     case ACT_RESTART: desktop_shutdown_dialog(1); break;
     case ACT_SHUTDOWN: desktop_shutdown_dialog(0); break;
     case ACT_LOCK: login_logout(); break;

@@ -23,6 +23,10 @@ id CFDictionaryCreateMutable(void *alloc, long cap, const void *kcb, const void 
 void CFDictionarySetValue(id d, id key, id val);
 id CFDictionaryGetValue(id d, id key);
 u8 CFNumberGetValue(id n, long type, void *out);
+char *getenv(const char *n);
+int strncmp(const char *a, const char *b, size_t n);
+int fputs(const char *s, FILE_ *f);
+int fputc(int c, FILE_ *f);
 id CFNumberCreate(void *alloc, long type, const void *p);
 size_t CGDisplayPixelsWide(u32 d);
 size_t CGDisplayPixelsHigh(u32 d);
@@ -412,10 +416,41 @@ OSStatus UCKeyTranslate(const void *layout, u16 code, u16 action, u32 mods, u32 
     if (len) *len = 0;
     return -50;   /* paramErr: sem layout uchr */
 }
-/* itens de login: lista vazia, inserções aceitas sem efeito */
+/* Itens de login: uma linha (caminho absoluto) em ~/Library/Preferences/com.mos.loginitems.
+ * O init (launchd) lê esse arquivo e inicia o programa. O snapshot continua vazio: a lista
+ * viva é o arquivo, não um objeto CF. Remover um item ainda não reescreve o arquivo. */
+static const char *login_url_path(id url) {
+    const char *s;
+    if (!url) return 0;
+    if (cx_responds(object_getClass(url), sel_registerName("path"))) {
+        id p = MSG0(id, url, "path");
+        if (cx_is_str(p) && ((nsstr_t *)p)->s && ((nsstr_t *)p)->s[0] == '/') return ((nsstr_t *)p)->s;
+    }
+    s = cx_cstr(url);
+    if (s && s[0] == '/') return s;
+    if (s && !strncmp(s, "file://", 7)) return s + 7;
+    return 0;
+}
+static void login_item_remember(const char *path) {
+    char file[400];
+    const char *home = getenv("HOME");
+    FILE_ *f;
+    if (!path || path[0] != '/') return;
+    if (!home || !home[0]) home = "/Users/Visitante";
+    snprintf(file, sizeof file, "%s/Library/Preferences/com.mos.loginitems", home);
+    f = fopen(file, "a");
+    if (!f) return;
+    fputs(path, f);
+    fputc('\n', f);
+    fclose(f);
+}
 id LSSharedFileListCreate(void *alloc, id type, id opts) { (void)alloc; (void)type; (void)opts; return token(); }
 id LSSharedFileListCopySnapshot(id list, u32 *seed) { (void)list; if (seed) *seed = 1; return empty_array(); }
-id LSSharedFileListInsertItemURL(id list, id after, id name, void *icon, id url, id props, id remove) { (void)list; (void)after; (void)name; (void)icon; (void)url; (void)props; (void)remove; return 0; }
+id LSSharedFileListInsertItemURL(id list, id after, id name, void *icon, id url, id props, id remove) {
+    (void)list; (void)after; (void)name; (void)icon; (void)props; (void)remove;
+    login_item_remember(login_url_path(url));
+    return token();
+}
 OSStatus LSSharedFileListItemRemove(id list, id item) { (void)list; (void)item; return 0; }
 id LSSharedFileListItemCopyResolvedURL(id item, u32 flags, id *err) { (void)item; (void)flags; if (err) *err = 0; return 0; }
 id LSSharedFileListItemCopyProperty(id item, id name) { (void)item; (void)name; return 0; }

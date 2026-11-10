@@ -21,6 +21,7 @@
 #undef SYS_OPEN
 #endif
 #include "syscall.h"           /* SYS_DYLD / MOS_DYLD_* (dlopen em tempo de execução) e errno */
+#include "fwlink.h"            /* symlink de .framework gravado como texto */
 #include "../../userland/a64rt/a64rt_abi.h"   /* processos arm64: runtime do tradutor (docs/tradutor-arm64.md) */
 
 #define LIBSYSTEM_BASE (USER_BASE + 0x00100000ULL)
@@ -629,13 +630,16 @@ static i64 sleb(const u8 **p, const u8 *end) {
 }
 
 /* ================================================================ arquivos das dependências */
+static void path_dir(const char *p, char *out, usize cap);
+static void path_norm(char *p, usize cap);
+static const u8 *dep_follow(const char *path, usize *len, int depth);
 #ifdef MOS_HOST_TEST
 const u8 *host_read_file(const char *path, usize *len);   /* tools/machotest.c */
-static const u8 *dep_read(const char *path, usize *len) { return host_read_file(path, len); }
+static const u8 *dep_read_raw(const char *path, usize *len) { return host_read_file(path, len); }
 static bool dyld_tolerant(void) { return getenv("MACHOTEST_TOLERANT") != NULL; }
 #else
 #include "vfs.h"
-static const u8 *dep_read(const char *path, usize *len) {
+static const u8 *dep_read_raw(const char *path, usize *len) {
     vnode_t *v = vfs_lookup(path);
     if (!v || v->dir || !v->data || !v->size) return NULL;
     *len = v->size;
@@ -646,6 +650,7 @@ static const u8 *dep_read(const char *path, usize *len) {
 #define DYLD_TOLERANT_FLAG "/Sistema/Biblioteca/dyld-experimental"
 static bool dyld_tolerant(void) { return vfs_lookup(DYLD_TOLERANT_FLAG) != NULL; }
 #endif
+static const u8 *dep_read(const char *path, usize *len) { return dep_follow(path, len, 0); }
 
 /* ================================================================ estado do carregamento */
 typedef struct {
@@ -1254,6 +1259,28 @@ static void path_norm(char *p, usize cap) {
     }
     if (o >= cap) o = cap - 1;
     p[o] = 0;
+}
+
+/* Symlink de .framework gravado como texto ("A", "Versions/Current/Electron Framework").
+ * Link quebrado devolve NULL para o locate() ainda tentar Versions/A. */
+static const u8 *dep_follow(const char *path, usize *len, int depth) {
+    const u8 *d = dep_read_raw(path, len);
+    char tgt[512], dir[400], next[520];
+    usize n2 = 0;
+    const u8 *d2;
+    if (!d || !path || depth >= 8) return d;
+    if (!strstr(path, ".framework")) return d;
+    if (!fwlink_target(d, *len, tgt, sizeof tgt)) return d;
+    if (tgt[0] == '/') snprintf(next, sizeof next, "%s", tgt);
+    else {
+        path_dir(path, dir, sizeof dir);
+        snprintf(next, sizeof next, "%s/%s", dir, tgt);
+    }
+    path_norm(next, sizeof next);
+    d2 = dep_follow(next, &n2, depth + 1);
+    if (!d2) return NULL;
+    *len = n2;
+    return d2;
 }
 
 static void path_subst(const char *s, const char *loader, const char *exe, char *out, usize cap) {

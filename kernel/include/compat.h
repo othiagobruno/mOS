@@ -60,3 +60,8 @@ bool macho_is_macho(const u8 *data, usize len);   /* magic Mach-O de 64 bits ou 
 struct app;
 struct app *compat_gui_app_for_pid(int pid);
 int compat_gui_pid_of(struct app *a);   /* pid do processo dono de um app proxy (0 se não for) */
+/* Encerrar: GEV_QUIT, 3 s, SIGTERM, 2 s, SIGKILL. force != 0 vai ao SIGKILL.
+ * O segundo pedido no mesmo pid sobe um estágio. proc_signal/proc_kill já existem (proc.h); process.c não muda. */
+void compat_gui_request_quit(int pid, int force);
+void compat_gui_quit_tick(void);        /* prazos; chame do loop do desktop */
+int  compat_gui_quit_pending(int pid);  /* 1 enquanto o pid está na escalação (watch trata -15 como esperado) */

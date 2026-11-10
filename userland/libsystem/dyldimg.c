@@ -98,4 +98,15 @@ void cx_dyld_notify_add(u32 first, u32 n) {
         for (int k = 0; k < nadd_cbs; k++) add_cbs[k](h, slide_of(h));
     }
 }
-void _dyld_register_func_for_remove_image(void (*fn)(const void *mh, i64 slide)) { (void)fn; }
+/* O kernel não desmapeia imagem (MOS_DYLD_CLOSE só tira uma referência). O callback fica guardado
+ * para cx_dyld_notify_remove, que ainda não é chamado no dlclose. Sem isto o registro era no-op. */
+typedef void (*rem_fn)(const void *mh, i64 slide);
+static rem_fn rem_cbs[32];
+static int nrem_cbs;
+void _dyld_register_func_for_remove_image(void (*fn)(const void *mh, i64 slide)) {
+    if (fn && nrem_cbs < 32) rem_cbs[nrem_cbs++] = fn;
+}
+void cx_dyld_notify_remove(const void *mh, i64 slide) {
+    if (!mh) return;
+    for (int k = 0; k < nrem_cbs; k++) rem_cbs[k](mh, slide);
+}

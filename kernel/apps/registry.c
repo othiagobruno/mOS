@@ -2,6 +2,7 @@
 #include "apps.h"
 #include "compat.h"
 #include "launchsvc.h"
+#include "syscall.h"
 
 static app_t *all_apps[] = {
     &app_arquivos, &app_horizonte, &app_terminal, &app_notas, &app_editor, &app_calculadora, &app_calendario,
@@ -82,10 +83,11 @@ static void watch_add(int pid, const char *name) {
 static void watch_tick(void) {
     for (int i = 0; i < (int)ARRAY_LEN(watch); i++) {
         if (!watch[i].pid || proc_alive(watch[i].pid)) continue;
+        int pending = compat_gui_quit_pending(watch[i].pid);
         int code = proc_exit_code(watch[i].pid);
         watch[i].pid = 0;
-        /* 0: saiu normalmente; -9: encerrado pelo usuário (Forçar Encerrar, ⌘Q); -1000: sumiu da tabela */
-        if (code == 0 || code == -9 || code == -1000) continue;
+        /* 0: saiu normalmente; -9: SIGKILL (forçar); -15: SIGTERM da escalação; -1000: sumiu da tabela */
+        if (code == 0 || code == -9 || code == -1000 || (pending && code == -MOS_SIGTERM)) continue;
         const char *why = code == 134 ? " (abort)" : code == 139 || code == -11 ? " (falha de segmentação)" : "";
         char title[120], msg[200];
         snprintf(title, sizeof title, "\"%s\" fechou inesperadamente.", watch[i].name);
@@ -98,6 +100,7 @@ static void watch_tick(void) {
 /* a cada quadro: o atalho fica "rodando" (bolinha no Dock) enquanto o processo tiver janelas */
 void apps_refresh_mac(void) {
     watch_tick();
+    compat_gui_quit_tick();
     ls_tick();
     extern window_t *wm_nth(int);
     for (int i = 0; i < nmac; i++) {
@@ -111,7 +114,7 @@ void apps_refresh_mac(void) {
             }
         }
         bool on =mac_pid[i] > 0 && compat_gui_app_for_pid(mac_pid[i]) != NULL;
-        if (mac_apps[i]->running != on) { mac_apps[i]->running = on; wm_damage(desktop_dock_rect()); }
+        if (mac_apps[i]->running != on) { mac_apps[i]->running = on; if (g_screen) wm_damage(desktop_dock_rect()); }
     }
 }
 
@@ -160,7 +163,7 @@ void apps_register_all(void) {
 }
 
 /* launchsvc.c: /Aplicativos mudou (app instalado ou apagado) */
-void apps_sync_mac(void) { scan_mac_apps(); wm_damage_all(); }
+void apps_sync_mac(void) { scan_mac_apps(); if (g_screen) wm_damage_all(); }
 
 /* launchsvc.c: inicia um .app com argumentos (URL para o navegador); pid ou -1 */
 int apps_run_mac(const char *bundle, const char *args) {
@@ -204,12 +207,35 @@ void app_launch(app_t *a) {
     sound_click();
 }
 
-void app_quit(app_t *a) {
+static int mac_pid_of(app_t *a) {
+    for (int i = 0; i < nmac; i++) if (mac_apps[i] == a) return mac_pid[i];
+    return 0;
+}
+
+static void app_quit_mode(app_t *a, int force) {
+    int pid;
     if (!a) return;
-    if (a->on_quit) a->on_quit(a);
+    /* Atalho de /Aplicativos: as janelas são do processo, não deste app_t. Pedir o encerramento
+     * e deixar a bolinha até o processo sair (apps_refresh_mac). */
+    if (!strncmp(a->exec, "mac:", 4)) {
+        pid = mac_pid_of(a);
+        if (pid > 0 && proc_alive(pid)) { compat_gui_request_quit(pid, force); return; }
+        a->running = false;
+        return;
+    }
+    if (!strcmp(a->exec, "macapp")) {
+        pid = compat_gui_pid_of(a);
+        if (pid > 0 && proc_alive(pid)) compat_gui_request_quit(pid, force);
+        return;
+    }
+    if (!strcmp(a->exec, "horizonte")) horizonte_motor_parar(force);
+    else if (a->on_quit) a->on_quit(a);
     wm_close_app(a);
     if (strcmp(a->exec, "arquivos")) a->running = false;
 }
+
+void app_quit(app_t *a) { app_quit_mode(a, 0); }
+void app_force_quit(app_t *a) { app_quit_mode(a, 1); }
 
 /* Argumentos que o sistema acrescenta ao abrir um .app pela interface ou pelo Launch Services (Launchpad, Dock,
  * Arquivos, openURL:, open). O Chromium no mOS roda sem processo de GPU (não há GPU: o compositor desenha por software

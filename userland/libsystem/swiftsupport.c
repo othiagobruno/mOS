@@ -5,6 +5,7 @@
  */
 #include "foundation.h"
 #include "libc.h"
+#include "dladdr_trie.h"
 
 typedef unsigned __int128 u128;
 typedef __int128 i128;
@@ -108,51 +109,8 @@ const void *_dyld_get_image_header(u32 i);
 const char *_dyld_get_image_name(u32 i);
 const void *_dyld_get_image_header_containing_address(const void *addr);
 
-static u64 cx_uleb(const u8 **p, const u8 *end) {
-    u64 v = 0; int s = 0;
-    while (*p < end && s <= 56) {
-        u8 b = *(*p)++;
-        v |= (u64)(b & 0x7f) << s;
-        if (!(b & 0x80)) break;
-        s += 7;
-    }
-    return v;
-}
 static const u8 *image_trie(const void *hdr, u32 *tsz, u64 *slide) {
-    const u32 *mh = hdr;
-    if (!mh || mh[0] != 0xFEEDFACFu) return 0;
-    const u8 *p = (const u8 *)hdr + 32;
-    u32 ncmds = mh[4];
-    u64 text_vm = 0, trie_off = 0, trie_sz = 0;
-    u64 seg[8][4];
-    int ns = 0;
-    for (u32 i = 0; i < ncmds && i < 80; i++) {
-        if (p + 8 > (const u8 *)hdr + 32768) break;
-        u32 cmd = *(const u32 *)p, sz = *(const u32 *)(p + 4);
-        if (sz < 8) break;
-        if (cmd == 0x19 && ns < 8 && sz >= 72) {
-            seg[ns][0] = *(const u64 *)(p + 24);
-            seg[ns][1] = *(const u64 *)(p + 32);
-            seg[ns][2] = *(const u64 *)(p + 40);
-            seg[ns][3] = *(const u64 *)(p + 48);
-            if (!strncmp((const char *)p + 8, "__TEXT", 6)) text_vm = seg[ns][0];
-            ns++;
-        }
-        if (cmd == 0x80000033u && sz >= 16) { trie_off = *(const u32 *)(p + 8); trie_sz = *(const u32 *)(p + 12); }
-        if ((cmd == 0x22 || cmd == 0x80000022u) && !trie_off && sz >= 48) {
-            trie_off = *(const u32 *)(p + 40);
-            trie_sz = *(const u32 *)(p + 44);
-        }
-        p += sz;
-    }
-    if (!text_vm || !trie_off || !trie_sz) return 0;
-    *slide = (u64)hdr - text_vm;
-    for (int i = 0; i < ns; i++) {
-        if (trie_off < seg[i][2] || trie_off + trie_sz > seg[i][2] + seg[i][3]) continue;
-        *tsz = (u32)trie_sz;
-        return (const u8 *)hdr + (seg[i][0] - text_vm) + (trie_off - seg[i][2]);
-    }
-    return 0;
+    return dlt_image(hdr, tsz, slide);
 }
 /* ---- tabela de símbolos por imagem para o dladdr (endereço -> nome), a partir da export trie */
 typedef struct { u64 addr; u32 name; } dl_ent_t;
@@ -172,35 +130,7 @@ static void dl_add(dl_tab_t *t, u64 addr, const char *name, int nl) {
     t->e[t->n].addr = addr; t->e[t->n].name = t->nlen; t->n++;
     t->nlen += (u32)nl + 1;
 }
-/* como trie_near, mas guarda todos os símbolos com endereço (trie nova: deslocamento a partir do cabeçalho;
- * antiga: vmaddr sem slide, reconhecida por ser >= o vmaddr do __TEXT) */
-static void trie_collect(const u8 *base, const u8 *end, const u8 *p, char *name, int nl, int depth,
-                         u64 hdr, u64 slide, u64 text_vm, dl_tab_t *t) {
-    if (depth > 64 || p < base || p >= end || nl > 180) return;
-    u64 tsz = cx_uleb(&p, end);
-    if (tsz && p + tsz <= end && nl > 0) {
-        const u8 *q = p;
-        u64 flags = cx_uleb(&q, end);
-        if (!(flags & 0x18)) {
-            u64 raw = cx_uleb(&q, end);
-            u64 addr = (text_vm && raw >= text_vm) ? raw + slide : hdr + raw;
-            if (raw && addr >= hdr) dl_add(t, addr, name, nl);
-        }
-        p += tsz;
-    }
-    if (p >= end) return;
-    u8 nc = *p++;
-    for (u8 i = 0; i < nc && p < end; i++) {
-        char child[192];
-        int n2 = nl;
-        memcpy(child, name, (size_t)n2);
-        while (p < end && *p && n2 < 180) child[n2++] = (char)*p++;
-        while (p < end && *p) p++;
-        if (p < end) p++;
-        u64 off = cx_uleb(&p, end);
-        if (off && base + off < end) trie_collect(base, end, base + off, child, n2, depth + 1, hdr, slide, text_vm, t);
-    }
-}
+static void dl_sink(void *ctx, unsigned long long addr, const char *name, int nl) { dl_add((dl_tab_t *)ctx, addr, name, nl); }
 void qsort(void *base, size_t n, size_t sz, int (*cmp)(const void *, const void *));
 static int dl_cmp(const void *x, const void *y) {
     u64 a = ((const dl_ent_t *)x)->addr, b = ((const dl_ent_t *)y)->addr;
@@ -219,7 +149,7 @@ static dl_tab_t *dl_table(const void *h) {
         if (trie && tsz) {
             char name[192];
             u64 text_vm = (u64)h - slide;
-            trie_collect(trie, trie + tsz, trie, name, 0, 0, (u64)h, slide, text_vm, &nt);
+            dlt_collect(trie, trie + tsz, trie, name, 0, 0, (u64)h, slide, text_vm, dl_sink, &nt);
             if (nt.n) qsort(nt.e, nt.n, sizeof *nt.e, dl_cmp);
         }
         dl_tabs[dl_ntabs] = nt;
