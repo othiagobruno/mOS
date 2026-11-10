@@ -1,2 +1,3 @@
+/* Freestanding. O SQLite chama funções que só existem com SQLITE_DEBUG. */
 #pragma once
-#define assert(x) ((void)0)
+#define assert(c) ((void)0)
