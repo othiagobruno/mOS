@@ -17,7 +17,6 @@ id CTLineGetGlyphRuns(id line);
 id CTLineCreateJustifiedLine(id line, double factor, double width);
 double CTLineGetTrailingWhitespaceWidth(id line);
 double CTLineGetOffsetForStringIndex(id line, long idx, double *secondary);
-id CTFramesetterCreateWithAttributedString(id astr);
 id CTFramesetterCreateFrame(id fs, ct_range_t range, void *path, id attrs);
 id CTFrameGetLines(id frame);
 ct_range_t CTFrameGetStringRange(id frame);
@@ -62,7 +61,7 @@ int main(void) {
     expect("offset 0", off == 0 && sec > 0);
     just = CTLineCreateJustifiedLine(line, 1, w * 2);
     expect("justificada mais larga", just && CTLineGetTypographicBounds(just, 0, 0, 0) > w + 1);
-    fs = CTFramesetterCreateWithAttributedString(astr);
+    fs = astr;
     frame = CTFramesetterCreateFrame(fs, zr, 0, 0);
     fr = CTFrameGetStringRange(frame);
     expect("frame cobre a string", frame && fr.len >= 4);

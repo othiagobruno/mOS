@@ -1621,20 +1621,6 @@ id CTTypesetterCreateWithAttributedStringAndOptions(id astr, id opts) {
     (void)opts;
     return CTTypesetterCreateWithAttributedString(astr);
 }
-id CTFramesetterCreateWithAttributedString(id astr) {
-    id ts, o;
-    ct_fs_t *f;
-    ct_lines_init();
-    ts = CTTypesetterCreateWithAttributedString(astr);
-    if (!ts || !ct_lines_ready) { objc_release(ts); return 0; }
-    f = calloc(1, sizeof *f);
-    if (!f) { objc_release(ts); return 0; }
-    f->ts = ts;
-    o = cx_alloc_instance(&CTFramesetter_c);
-    if (!o) { objc_release(ts); free(f); return 0; }
-    *(void **)((u8 *)o + 8) = f;
-    return o;
-}
 static void ct_path_box(void *path, double *w, double *h) {
     typedef struct { double x, y; } pt_t;
     typedef struct { void *isa; u64 cfinfo; u8 *types; pt_t *pts; u64 n, cap, npts, ptcap; pt_t start, cur; } view_t;
@@ -1657,16 +1643,23 @@ static void ct_path_box(void *path, double *w, double *h) {
     if (*h < 1) *h = 1;
 }
 id CTFramesetterCreateFrame(id fs, ct_range_t range, void *path, id attrs) {
-    ct_fs_t *f = ct_state(fs);
+    ct_fs_t *owned = 0;
+    id ts;
     ct_ts_t *t;
     ct_frame_t *fr;
     id o, arr;
     double maxw, maxh, y, usedh;
     long pos, fit_end;
     (void)attrs;
-    if (!f || !f->ts) return 0;
-    t = ct_state(f->ts);
+    ct_lines_init();
+    if (fs && object_getClass(fs) == &CTFramesetter_c) {
+        owned = ct_state(fs);
+        ts = owned ? owned->ts : 0;
+    } else ts = CTTypesetterCreateWithAttributedString(fs);
+    if (!ts) return 0;
+    t = ct_state(ts);
     if (!t) return 0;
+    if (!t) { if (!owned) objc_release(ts); return 0; }
     if (range.loc == 0 && range.len == 0) { range.loc = 0; range.len = t->utf16; }
     if (range.loc < 0) range.loc = 0;
     if (range.len < 0) range.len = 0;
@@ -1692,7 +1685,7 @@ id CTFramesetterCreateFrame(id fs, ct_range_t range, void *path, id attrs) {
         if (pos + br > range.loc + range.len) br = range.loc + range.len - pos;
         rr.loc = pos;
         rr.len = br;
-        line = CTTypesetterCreateLine(f->ts, rr);
+        line = CTTypesetterCreateLine(ts, rr);
         lb = ct_state(line);
         lh = lb ? lb->ascent + lb->descent + lb->leading : 16;
         if (usedh > 0 && usedh + lh > maxh + 1e-6 && path) { objc_release(line); break; }
@@ -1726,8 +1719,10 @@ id CTFramesetterCreateFrame(id fs, ct_range_t range, void *path, id attrs) {
         objc_release(fr->astr);
         free(fr->origins);
         free(fr);
+        if (!owned) objc_release(ts);
         return 0;
     }
+    if (!owned) objc_release(ts);
     *(void **)((u8 *)o + 8) = fr;
     return o;
 }
