@@ -108,8 +108,8 @@ rolagem, tabelas, coleções e navegação; ainda sem modais nem animações).
   - Keychain de senhas de verdade: `SecItemAdd/CopyMatching/Update/Delete` (classes `genp`/`inet`, `kSecReturnData/Attributes/Ref`,
     `kSecMatchLimitOne/All`, duplicata = `errSecDuplicateItem`) e a API antiga `SecKeychainFindGenericPassword/AddGenericPassword/
     ItemModifyAttributesAndData/ItemDelete/ItemFreeContent`, que é a do OSCrypt do Chromium. Os itens ficam em
-    `$HOME/Library/Keychains/mos-keychain.txt`, gravado por arquivo temporário + `rename`. **Sem criptografia**: o mOS ainda não
-    tem senha de sessão.
+    `$HOME/Library/Keychains/mos-keychain.txt`, gravado por arquivo temporário + `rename`. A versão 2 do arquivo é ciphertext
+    (HMAC em modo contador + MAC). A chave sai do nome de login, não de uma senha de sessão.
   - Assinatura de código: todo código é "não assinado" (`errSecCSUnsigned`). `SecCodeCopySelf`/`GuestWithAttributes`/
     `StaticCodeCreateWithPath` criam os objetos. `SecCodeCopySigningInformation` devolve um dicionário sem identidade, como o macOS faz.
   - SecTrust guarda a cadeia, mas avalia como "não confiável". `SecTrustSettingsCopy*` devolve `errSecNoTrustSettings`.
