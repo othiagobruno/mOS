@@ -216,6 +216,9 @@ fi
 echo "==> overlay Darwin (teste de host)"
 bash "$ROOT/tools/darwin-swift-teste.sh" "$ZIG" "$OUT/darwin-swift"
 
+echo "==> String, Array e Dictionary (teste de host)"
+bash "$ROOT/tools/string-fdn-teste.sh" "$ZIG" "$OUT/string-fdn"
+
 echo "==> kernel"
 mapfile -t KSRC < <(find "$ROOT/kernel" -type f \( -name '*.c' -o -name '*.S' \) | sort)
 "$ZIG" cc -target x86_64-uefi-msvc -O2 -g0 -ffreestanding -fno-stack-protector -fno-stack-check -mno-stack-arg-probe \
