@@ -136,7 +136,18 @@ static int at_ok(int fd, const char *p) {
     return 0;
 }
 const char *cx_at_path(int dirfd, const char *p, char *buf, size_t cap);   /* posixmore.c: dirfd -> caminho (SYS_FDPATH) */
-int openat(int fd, const char *p, int flags, ...) { char t[1024]; const char *q = cx_at_path(fd, p, t, sizeof t); return q ? open(q, flags, 0644) : -1; }
+int openat(int fd, const char *p, int flags, ...) {
+    unsigned mode = 0666;
+    if (flags & 0x200) { /* O_CREAT do macOS: o terceiro argumento é o mode, como no open variádico */
+        __builtin_va_list ap;
+        __builtin_va_start(ap, flags);
+        mode = __builtin_va_arg(ap, unsigned);
+        __builtin_va_end(ap);
+    }
+    char t[1024];
+    const char *q = cx_at_path(fd, p, t, sizeof t);
+    return q ? open(q, flags, mode) : -1;
+}
 int unlinkat(int fd, const char *p, int flag) {
     char t[1024];
     const char *q = cx_at_path(fd, p, t, sizeof t);
