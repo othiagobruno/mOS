@@ -96,7 +96,11 @@ typedef struct {
     u32  ss;                     /* bytes por setor lógico */
     bool lba48;
     bool ncq;
+    int intr;                    /* 1 = conclusão pelo MSI; 0 = lê CI */
+    volatile u32 irq;
+    volatile u32 tfes;
     ahci_tags_t tags;
+    ahci_batch_t batch;
     char model[41], serial[21], fw[9];
     char desc[96];
     blkdev_t dev;
@@ -221,6 +225,97 @@ static bool issue(ahci_disk_t *d, u8 cmd, u64 lba, u16 count, u32 bytes, bool wr
     return issue_at(d, cmd, lba, count, d->buf_phys, bytes, write, 0, false);
 }
 
+static int irqs_enabled(void) {
+    u64 f;
+    __asm__ volatile("pushfq; popq %0" : "=r"(f));
+    return (f & 0x200) != 0;
+}
+
+/* Monta o slot e publica o bit. Não espera. NCQ pode acumular vários antes da campainha. */
+static bool stage_at(ahci_disk_t *d, u8 cmd, u64 lba, u16 count, u64 phys, u32 bytes, bool write, int tag, bool ncq) {
+    int p = d->port;
+    u32 bit = 1u << tag;
+    if (tag < 0 || tag > 31) return false;
+    if (!ncq && !wait_clear(p, P_TFD, TFD_BSY | TFD_DRQ, 1000)) { recover_port(p); return false; }
+    if (pr(p, P_CI) & bit) return false;
+    cmd_hdr_t *h = (cmd_hdr_t *)(d->ctl + OFF_CLB) + tag;
+    u8 *ct = d->ctl + OFF_CT + tag * CT_STRIDE;
+    u64 ct_phys = d->ctl_phys + OFF_CT + (u64)tag * CT_STRIDE;
+    memset(h, 0, sizeof(*h));
+    memset(ct, 0, CT_STRIDE);
+    h->flags = 5 | (write ? 0x40 : 0);
+    h->prdtl = bytes ? 1 : 0;
+    h->ctba = (u32)ct_phys;
+    h->ctbau = (u32)(ct_phys >> 32);
+    if (bytes) {
+        prd_t *prd = (prd_t *)(ct + 0x80);
+        prd->dba = (u32)phys;
+        prd->dbau = (u32)(phys >> 32);
+        prd->dbc = (bytes - 1) | 0x80000000u;
+    }
+    if (ncq) ahci_fpdma_fis(ct, write, lba, count, (u8)tag);
+    else {
+        u8 *f = ct;
+        f[0] = 0x27; f[1] = 0x80; f[2] = cmd; f[7] = 0x40;
+        f[4] = (u8)lba; f[5] = (u8)(lba >> 8); f[6] = (u8)(lba >> 16);
+        f[8] = (u8)(lba >> 24); f[9] = (u8)(lba >> 32); f[10] = (u8)(lba >> 40);
+        f[12] = (u8)count; f[13] = (u8)(count >> 8);
+    }
+    if (ahci_batch_post(&d->batch, tag)) return false;
+    __asm__ volatile("mfence" ::: "memory");
+    if (ncq) pw(p, P_SACT, bit);
+    pw(p, P_CI, bit);
+    return true;
+}
+
+static void ahci_reap(ahci_disk_t *d) {
+    int p = d->port;
+    u32 is = pr(p, P_IS);
+    if (is) pw(p, P_IS, is);
+    if (is & IS_TFES) d->tfes = 1;
+    ahci_batch_irq(&d->batch, pr(p, P_CI));
+}
+
+static void ahci_on_irq(void) {
+    if (!abar) return;
+    u32 is = hr(HBA_IS);
+    if (is) hw(HBA_IS, is);
+    for (int i = 0; i < ndisks; i++) {
+        ahci_disk_t *d = disks[i];
+        if (!d || !(is & (1u << d->port))) continue;
+        d->irq = 1;
+        ahci_reap(d);
+    }
+}
+
+static bool wait_batch(ahci_disk_t *d, u32 mask) {
+    int p = d->port;
+    u64 end = timer_ticks() + CMD_TIMEOUT_MS;
+    for (;;) {
+        ahci_reap(d);
+        if (d->tfes) {
+            kprintf("ahci: NCQ falhou (porta %d, TFD %08x)\n", p, pr(p, P_TFD));
+            d->tfes = 0;
+            recover_port(p);
+            return false;
+        }
+        if ((ahci_batch_pending(&d->batch) & mask) == 0)
+            return !(pr(p, P_TFD) & TFD_ERR);
+        if (timer_ticks() > end) {
+            kprintf("ahci: NCQ expirou (porta %d)\n", p);
+            recover_port(p);
+            return false;
+        }
+        if (d->intr) {
+            int on = irqs_enabled();
+            if (!on) sti();
+            if (!d->irq) hlt_raw();
+            d->irq = 0;
+            if (!on) cli();
+        } else __asm__ volatile("pause");
+    }
+}
+
 /* ---- E/S por setores */
 #define DIRECT_MAX (4u << 20)                        /* teto de um PRD; LBA48 conta até 65536 setores */
 
@@ -234,45 +329,120 @@ static bool rw_sectors(ahci_disk_t *d, u64 lba, u64 n, u8 *data, bool write) {
         ((hba_cap & CAP_S64A) || (u64)data + total <= (1ull << 32))) {
         u32 maxd = MIN(DIRECT_MAX / d->ss, 65536u);
         while (n) {
-            u32 c = (u32)MIN(n, (u64)maxd);
-            u32 bytes = c * d->ss;
-            u16 cnt = (u16)(c == 65536 ? 0 : c);
-            int tag = 0;
-            bool ncq = d->ncq;
-            if (ncq) {
-                tag = ahci_tag_get(&d->tags);
-                if (tag < 0) return false;
+            int tags[AHCI_NCQ_TAGS];
+            u32 cs[AHCI_NCQ_TAGS];
+            int m = 0;
+            u32 mask = 0;
+            u64 lb = lba;
+            u8 *p = data;
+            u64 left = n;
+            int win = d->ncq ? d->tags.ntags : 1;
+            while (left && m < win) {
+                u32 c = (u32)MIN(left, (u64)maxd);
+                int tag = 0;
+                if (d->ncq) {
+                    tag = ahci_tag_get(&d->tags);
+                    if (tag < 0) break;
+                }
+                u16 cnt = (u16)(c == 65536 ? 0 : c);
+                u8 cmd = d->ncq ? (write ? ATA_WRITE_FPDMA : ATA_READ_FPDMA)
+                                : (write ? ATA_WRITE_DMA_EXT : ATA_READ_DMA_EXT);
+                if (!stage_at(d, cmd, lb, cnt, (u64)p, c * d->ss, write, tag, d->ncq)) {
+                    if (d->ncq) ahci_tag_put(&d->tags, tag);
+                    break;
+                }
+                tags[m] = tag;
+                cs[m] = c;
+                mask |= 1u << tag;
+                m++;
+                lb += c;
+                left -= c;
+                p += c * d->ss;
+                if (!d->ncq) break;
             }
-            u8 cmd = ncq ? (write ? ATA_WRITE_FPDMA : ATA_READ_FPDMA)
-                         : (write ? ATA_WRITE_DMA_EXT : ATA_READ_DMA_EXT);
-            bool ok = issue_at(d, cmd, lba, cnt, (u64)data, bytes, write, tag, ncq);
-            if (ncq) ahci_tag_put(&d->tags, tag);
-            if (!ok) return false;
-            lba += c; n -= c; data += bytes;
+            if (!m) return false;
+            if (!wait_batch(d, mask)) {
+                for (int i = 0; i < m; i++) {
+                    if (d->ncq) ahci_tag_put(&d->tags, tags[i]);
+                    ahci_batch_release(&d->batch, tags[i]);
+                }
+                return false;
+            }
+            for (int i = 0; i < m; i++) {
+                if (d->ncq) ahci_tag_put(&d->tags, tags[i]);
+                ahci_batch_release(&d->batch, tags[i]);
+            }
+            u64 step = 0;
+            for (int i = 0; i < m; i++) step += cs[i];
+            lba += step;
+            n -= step;
+            data += step * d->ss;
         }
         return true;
     }
-    u32 max = BOUNCE_BYTES / d->ss;
+    int win = d->ncq ? d->tags.ntags : 1;
+    if (win < 1) win = 1;
+    u32 slice = BOUNCE_BYTES / (u32)win;
+    slice = (slice / d->ss) * d->ss;
+    if (!slice) return false;
     while (n) {
-        u32 c = (u32)MIN(n, (u64)max);
-        u32 bytes = c * d->ss;
-        if (write) memcpy(d->buf, data, bytes);
-        {
-            u16 cnt = (u16)(c == 65536 ? 0 : c);
+        int tags[AHCI_NCQ_TAGS];
+        u32 cs[AHCI_NCQ_TAGS];
+        u8 *src[AHCI_NCQ_TAGS];
+        int m = 0;
+        u32 mask = 0;
+        u64 lb = lba;
+        u8 *p = data;
+        u64 left = n;
+        while (left && m < win) {
+            u32 c = (u32)MIN(left, (u64)(slice / d->ss));
             int tag = 0;
-            bool ncq = d->ncq;
-            if (ncq) {
+            if (d->ncq) {
                 tag = ahci_tag_get(&d->tags);
-                if (tag < 0) return false;
+                if (tag < 0) break;
             }
-            u8 cmd = ncq ? (write ? ATA_WRITE_FPDMA : ATA_READ_FPDMA)
-                         : (write ? ATA_WRITE_DMA_EXT : ATA_READ_DMA_EXT);
-            bool ok = issue_at(d, cmd, lba, cnt, d->buf_phys, bytes, write, tag, ncq);
-            if (ncq) ahci_tag_put(&d->tags, tag);
-            if (!ok) return false;
+            u32 bytes = c * d->ss;
+            u8 *bounce = d->buf + (u64)m * (BOUNCE_BYTES / (u32)win);
+            if (write) memcpy(bounce, p, bytes);
+            u16 cnt = (u16)c;
+            u8 cmd = d->ncq ? (write ? ATA_WRITE_FPDMA : ATA_READ_FPDMA)
+                            : (write ? ATA_WRITE_DMA_EXT : ATA_READ_DMA_EXT);
+            u64 phys = d->buf_phys + (u64)m * (BOUNCE_BYTES / (u32)win);
+            if (!stage_at(d, cmd, lb, cnt, phys, bytes, write, tag, d->ncq)) {
+                if (d->ncq) ahci_tag_put(&d->tags, tag);
+                break;
+            }
+            tags[m] = tag;
+            cs[m] = c;
+            src[m] = p;
+            mask |= 1u << tag;
+            m++;
+            lb += c;
+            left -= c;
+            p += bytes;
+            if (!d->ncq) break;
         }
-        if (!write) memcpy(data, d->buf, bytes);
-        lba += c; n -= c; data += bytes;
+        if (!m) return false;
+        if (!wait_batch(d, mask)) {
+            for (int i = 0; i < m; i++) {
+                if (d->ncq) ahci_tag_put(&d->tags, tags[i]);
+                ahci_batch_release(&d->batch, tags[i]);
+            }
+            return false;
+        }
+        if (!write) {
+            for (int i = 0; i < m; i++)
+                memcpy(src[i], d->buf + (u64)i * (BOUNCE_BYTES / (u32)win), cs[i] * d->ss);
+        }
+        for (int i = 0; i < m; i++) {
+            if (d->ncq) ahci_tag_put(&d->tags, tags[i]);
+            ahci_batch_release(&d->batch, tags[i]);
+        }
+        u64 step = 0;
+        for (int i = 0; i < m; i++) step += cs[i];
+        lba += step;
+        n -= step;
+        data += step * d->ss;
     }
     return true;
 }
@@ -353,6 +523,7 @@ static bool identify(ahci_disk_t *d) {
     int depth = d->ncq ? ((id[75] & 0x1F) + 1) : 1;
     if (depth > AHCI_NCQ_TAGS) depth = AHCI_NCQ_TAGS;
     ahci_tags_init(&d->tags, depth);
+    ahci_batch_init(&d->batch, depth);
     if ((id[106] & 0xC000) == 0x4000 && (id[106] & (1u << 12))) {
         u32 words = (u32)id[117] | (u32)id[118] << 16;
         if (words >= 256 && words <= 8192) d->ss = words * 2;

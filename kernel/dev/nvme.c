@@ -32,8 +32,8 @@
 
 #define QDEPTH       32
 #define NVME_MAX_IOQ 8
-#define MSI_ADDR     0xFEE00000ull
 #define MSI_VECTOR   0xE0
+#define NVME_WIN     8
 #define BOUNCE_BYTES (128u << 10)
 #define ADMIN_TIMEOUT_MS 5000
 #define IO_TIMEOUT_MS    10000
@@ -73,6 +73,9 @@ struct nvme_ctrl {
     volatile u32 irq_pending;
     bool sgl;
     u16 cid;
+    nvme_flights_t flight;
+    int granted;                /* filas de E/S que o controlador concedeu */
+    u32 qd;
     u8  *buf;   u64 buf_phys;   /* bounce de DMA */
     u64 *prpl;  u64 prpl_phys;  /* lista de PRP do bounce (página única) */
     u64 *dprpl; u64 dprpl_phys; /* lista de PRP para DMA direto no buffer de quem chamou */
@@ -110,9 +113,80 @@ static queue_t *ioq(nvme_ctrl_t *c) {
     return &c->io[i];
 }
 
+static int irqs_enabled(void) {
+    u64 f;
+    __asm__ volatile("pushfq; popq %0" : "=r"(f));
+    return (f & 0x200) != 0;
+}
+
+static void reap_q(nvme_ctrl_t *c, queue_t *q) {
+    for (;;) {
+        volatile cqe_t *e = &q->cq[q->head];
+        if ((e->status & 1) != q->phase) break;
+        u16 st = (u16)(e->status >> 1);
+        u16 cid = e->cid;
+        u32 dw0 = e->dw0;
+        q->head = (u16)((q->head + 1) % q->depth);
+        if (!q->head) q->phase ^= 1;
+        ring_cq(c, q);
+        nvme_flight_complete(&c->flight, q->qid, cid, st, dw0);
+    }
+}
+
+static void reap_io(nvme_ctrl_t *c) {
+    u64 f = irq_save();
+    for (int i = 0; i < c->nio; i++) reap_q(c, &c->io[i]);
+    irq_restore(f);
+}
+
 static void nvme_on_irq(void) {
-    for (int i = 0; i < nctrls; i++)
-        if (ctrls[i]) ctrls[i]->irq_pending = 1;
+    for (int i = 0; i < nctrls; i++) {
+        if (!ctrls[i]) continue;
+        ctrls[i]->irq_pending = 1;
+        reap_io(ctrls[i]);
+    }
+}
+
+static int post_io(nvme_ctrl_t *c, queue_t *q, sqe_t *cmd) {
+    if (!q || ((q->tail + 1) % q->depth) == q->head) return -1;
+    int s = nvme_flight_claim(&c->flight, q->qid);
+    if (s < 0) return -1;
+    u16 cid = c->flight.slot[s].cid;
+    cmd->cdw[0] = (cmd->cdw[0] & 0xFFFF) | ((u32)cid << 16);
+    q->sq[q->tail] = *cmd;
+    q->tail = (u16)((q->tail + 1) % q->depth);
+    return s;
+}
+
+/* Espera os slots. Com MSI/MSI-X, dorme até a interrupção colher os CQE; senão lê a fase. */
+static int wait_slots(nvme_ctrl_t *c, int *slots, int n) {
+    u64 end = timer_ticks() + IO_TIMEOUT_MS;
+    for (;;) {
+        reap_io(c);
+        int left = 0, bad = 0;
+        for (int i = 0; i < n; i++) {
+            nvme_flight_slot_t *s = &c->flight.slot[slots[i]];
+            if (!s->done) left++;
+            else if (s->status) bad = 1;
+        }
+        if (!left) {
+            for (int i = 0; i < n; i++) nvme_flight_release(&c->flight, slots[i]);
+            return bad ? -1 : 0;
+        }
+        if (rr(c, R_CSTS) & CSTS_CFS) { kprintf("nvme%d: falha fatal do controlador\n", c->idx); return -1; }
+        if (timer_ticks() > end) {
+            reap_io(c);
+            kprintf("nvme%d: %d comando(s) expiraram\n", c->idx, left);
+            return -1;
+        }
+        if (c->intr) {
+            int on = irqs_enabled();
+            if (!on) sti();
+            if (!c->irq_pending) hlt_raw();
+            c->irq_pending = 0;
+            if (!on) cli();
+        } else __asm__ volatile("pause");
+    }
 }
 
 /* envia um comando e espera a conclusão; devolve o campo de status (0 = sucesso) ou -1 em timeout */
@@ -183,28 +257,82 @@ static bool identify(nvme_ctrl_t *c, u32 cns, u32 nsid) {
 /* ---- E/S direto no buffer de quem chamou (memória identidade = física, contígua): sem bounce e sem
  * memcpy, comandos de até dmax bytes. PRP1 = endereço (alinhado a 4 bytes); demais páginas em PRP2
  * ou numa lista de PRP. */
-static bool rw_direct(nvme_ns_t *ns, u64 lba, u64 n, u8 *data, bool write) {
+/* Vários comandos na mesma fila, um toque de campainha, conclusão pela interrupção (ou pela fase). */
+static bool rw_window(nvme_ns_t *ns, u64 lba, u64 n, u8 *data, bool write, bool direct) {
     nvme_ctrl_t *c = ns->c;
-    u32 maxb = c->dmax / ns->ss;
+    if (!c->nio) return false;
+    queue_t *q = ioq(c);
+    /* 8 KiB cabe em PRP1+PRP2: vários comandos não compartilham a lista de PRP. */
+    u32 chunk = 8192;
+    u32 cap = direct ? c->dmax : c->max_xfer;
+    if (chunk > cap) chunk = cap;
+    if (!direct && chunk > BOUNCE_BYTES / NVME_WIN) chunk = BOUNCE_BYTES / NVME_WIN;
+    chunk = (chunk / ns->ss) * ns->ss;
+    if (!chunk) return false;
+    u32 maxb = chunk / ns->ss;
     while (n) {
-        u32 k = (u32)MIN(n, (u64)maxb);
-        u64 addr = (u64)data, bytes = (u64)k * ns->ss;
-        u64 first = addr & ~4095ULL, npages = ((addr & 4095) + bytes + 4095) / 4096;
-        sqe_t cmd = {0};
-        cmd.cdw[0] = write ? IO_WRITE : IO_READ;
-        cmd.cdw[1] = ns->nsid;
-        (void)first; (void)npages;
-        if (c->sgl && (addr & 4095)) {
-            if (!set_sgl(&cmd, addr, (u32)bytes)) return false;
-        } else if (!set_prp(&cmd, addr, (u32)bytes, c->dprpl, c->dprpl_phys)) return false;
-        cmd.cdw[10] = (u32)lba;
-        cmd.cdw[11] = (u32)(lba >> 32);
-        cmd.cdw[12] = k - 1;
-        int st = submit(c, ioq(c), &cmd, IO_TIMEOUT_MS, NULL);
-        if (st) { kprintf("nvme%d: %s lba %llu falhou (status %x)\n", c->idx, write ? "escrita" : "leitura", lba, st); return false; }
-        lba += k; n -= k; data += bytes;
+        int slots[NVME_WIN];
+        u32 ks[NVME_WIN];
+        u8 *src[NVME_WIN];
+        int m = 0;
+        u64 lb = lba;
+        u8 *p = data;
+        u64 left = n;
+        while (left && m < NVME_WIN) {
+            u32 k = (u32)MIN(left, (u64)maxb);
+            u32 bytes = k * ns->ss;
+            u64 addr = direct ? (u64)p : c->buf_phys + (u64)m * (BOUNCE_BYTES / NVME_WIN);
+            u64 first = addr & ~4095ULL, last = (addr + bytes - 1) & ~4095ULL;
+            int spans = (int)((last - first) / 4096) + 1;
+            if (spans > 2 && m) break;
+            u64 *list = c->dprpl;
+            u64 list_phys = c->dprpl_phys;
+            if (!direct) {
+                if (write) memcpy(c->buf + (u64)m * (BOUNCE_BYTES / NVME_WIN), p, bytes);
+                list = c->prpl;
+                list_phys = c->prpl_phys;
+            }
+            sqe_t cmd = {0};
+            cmd.cdw[0] = write ? IO_WRITE : IO_READ;
+            cmd.cdw[1] = ns->nsid;
+            if (direct && c->sgl && (addr & 4095)) {
+                if (!set_sgl(&cmd, addr, bytes)) break;
+            } else if (!set_prp(&cmd, addr, bytes, list, list_phys)) break;
+            cmd.cdw[10] = (u32)lb;
+            cmd.cdw[11] = (u32)(lb >> 32);
+            cmd.cdw[12] = k - 1;
+            int s = post_io(c, q, &cmd);
+            if (s < 0) break;
+            slots[m] = s;
+            ks[m] = k;
+            src[m] = p;
+            m++;
+            lb += k;
+            left -= k;
+            p += bytes;
+        }
+        if (!m) return false;
+        __asm__ volatile("mfence" ::: "memory");
+        ring_sq(c, q);
+        if (wait_slots(c, slots, m)) {
+            kprintf("nvme%d: %s lba %llu falhou\n", c->idx, write ? "escrita" : "leitura", lba);
+            return false;
+        }
+        if (!write && !direct) {
+            for (int i = 0; i < m; i++)
+                memcpy(src[i], c->buf + (u64)i * (BOUNCE_BYTES / NVME_WIN), ks[i] * ns->ss);
+        }
+        u64 step = 0;
+        for (int i = 0; i < m; i++) step += ks[i];
+        lba += step;
+        n -= step;
+        data += step * ns->ss;
     }
     return true;
+}
+
+static bool rw_direct(nvme_ns_t *ns, u64 lba, u64 n, u8 *data, bool write) {
+    return rw_window(ns, lba, n, data, write, true);
 }
 
 /* ---- E/S por blocos (até max_xfer por comando) */
@@ -214,24 +342,7 @@ static bool rw_blocks(nvme_ns_t *ns, u64 lba, u64 n, u8 *data, bool write) {
     if (write && !storage_write_ok(&ns->dev, lba * ns->ss, n * ns->ss)) return false;
     if (c->dprpl && !((u64)data & 3) && pmm_is_ram((u64)data, n * ns->ss) && n * ns->ss >= 4096)
         return rw_direct(ns, lba, n, data, write);
-    u32 maxb = c->max_xfer / ns->ss;
-    while (n) {
-        u32 k = (u32)MIN(n, (u64)maxb);
-        u32 bytes = k * ns->ss;
-        if (write) memcpy(c->buf, data, bytes);
-        sqe_t cmd = {0};
-        cmd.cdw[0] = write ? IO_WRITE : IO_READ;
-        cmd.cdw[1] = ns->nsid;
-        if (!set_prp(&cmd, c->buf_phys, bytes, c->prpl, c->prpl_phys)) return false;
-        cmd.cdw[10] = (u32)lba;
-        cmd.cdw[11] = (u32)(lba >> 32);
-        cmd.cdw[12] = k - 1;
-        int st = submit(c, ioq(c), &cmd, IO_TIMEOUT_MS, NULL);
-        if (st) { kprintf("nvme%d: %s lba %llu falhou (status %x)\n", c->idx, write ? "escrita" : "leitura", lba, st); return false; }
-        if (!write) memcpy(data, c->buf, bytes);
-        lba += k; n -= k; data += bytes;
-    }
-    return true;
+    return rw_window(ns, lba, n, data, write, false);
 }
 
 /* ---- blkdev (deslocamentos em bytes, qualquer alinhamento) */
@@ -497,6 +608,9 @@ static bool setup(pci_dev_t *pd) {
         if (submit(c, &c->admin, &cmd, ADMIN_TIMEOUT_MS, NULL)) { kprintf("nvme%d: criar SQ %u falhou\n", c->idx, q + 1); kfree(c); return false; }
     }
     c->nio = (int)want;
+    c->granted = (int)want;
+    c->qd = qd;
+    nvme_flights_init(&c->flight, (int)qd > 1 ? (int)qd - 1 : 1);
 
     kprintf("nvme%d: %s, série %s, fw %s, NVMe %u.%u, %u namespace(s), %d fila(s) de E/S, %s, até %u KiB por comando\n",
             c->idx, c->model, c->serial, c->fw, vs >> 16, (vs >> 8) & 0xFF, nn, c->nio,
