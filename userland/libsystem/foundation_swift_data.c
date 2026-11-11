@@ -7,8 +7,8 @@
  *   0x40 slice: Range<Int32> + __DataStorage (byte alto 0x40)
  *   0x80 large: RangeReference + __DataStorage (byte alto 0x80)
  *   0xC0 vazio
- * String pequena: 16 bytes, último 0xE0|n. String grande nossa: ponteiro em w0 e
- * w1 = 0x80<<56 | n. URL é um ponteiro para NSURL.
+ * String pequena: 16 bytes, último 0xE0|n. String grande: a forma imortal de literal
+ * (fdn_pack). URL é um ponteiro para NSURL (fdn_url.c).
  */
 #include <stdint.h>
 #include <string.h>
@@ -293,24 +293,32 @@ swstr fdn_small(const char *s, int n) {
     if (n > 15) n = 15;
     if (s && n) memcpy(b, s, (size_t)n);
     b[15] = (unsigned char)(0xE0 | n);
+    for (int i = 0; i < n; i++)
+        if (b[i] >= 0x80) { b[15] = (unsigned char)(0xA0 | n); break; }   /* pequena não ASCII: bit 62 zerado */
     memcpy(&r.w0, b, 8);
     memcpy(&r.w1, b + 8, 8);
     return r;
 }
 
+/*
+ * Maior que 15 bytes: a forma imortal de literal da String (countAndFlags = n | ASCII/NFC/tail-allocated,
+ * objeto = (bytes - 32) | 0x8000...), a mesma de fdn_str_make em fdn_tipos.c. Os bytes nunca são liberados.
+ */
 swstr fdn_pack(const char *s, int n) {
-    struct { int64_t n; char b[]; } *h;
+    char *h;
     swstr r;
+    int ascii = 1, i;
     if (!s) n = 0;
     if (n < 0) n = (int)strlen(s);
     if (n <= 15) return fdn_small(s, n);
-    h = malloc(sizeof *h + (size_t)n + 1);
+    for (i = 0; i < n; i++)
+        if ((unsigned char)s[i] >= 0x80) { ascii = 0; break; }
+    h = malloc((size_t)n + 1);
     if (!h) return fdn_small(s, 15);
-    h->n = n;
-    memcpy(h->b, s, (size_t)n);
-    h->b[n] = 0;
-    r.w0 = (uint64_t)(uintptr_t)h;
-    r.w1 = (0x80ULL << 56) | (uint64_t)n;
+    memcpy(h, s, (size_t)n);
+    h[n] = 0;
+    r.w0 = (uint64_t)n | (ascii ? 0xD000000000000000ULL : 0x1000000000000000ULL);
+    r.w1 = ((uint64_t)(uintptr_t)h - 32u) | 0x8000000000000000ULL;
     return r;
 }
 
@@ -318,18 +326,28 @@ int fdn_unpack(swstr s, char *buf, int cap) {
     unsigned char b[16];
     memcpy(b, &s.w0, 8);
     memcpy(b + 8, &s.w1, 8);
-    if ((b[15] & 0xF0) == 0xE0) {
+    if ((b[15] & 0xB0) == 0xA0) {   /* pequena: bit 61, ASCII ou não */
         int n = b[15] & 0x0F;
         if (n >= cap) n = cap - 1;
         if (n > 0) memcpy(buf, b, (size_t)n);
         buf[n] = 0;
         return n;
     }
-    if ((s.w1 >> 56) == 0x80 && s.w0) {
-        struct { int64_t n; char b[]; } *h = (void *)(uintptr_t)s.w0;
-        int n = (int)h->n;
+    if (!(s.w1 & (1ULL << 62)) && (s.w0 & 0x1000000000000000ULL)) {
+        /* nativa ou literal: os bytes ficam 32 depois do endereço do objeto */
+        const char *p = (const char *)(uintptr_t)((s.w1 & 0x0FFFFFFFFFFFFFFFULL) + 32u);
+        int n = (int)(s.w0 & 0x0000FFFFFFFFFFFFULL);
         if (n >= cap) n = cap - 1;
-        if (n > 0) memcpy(buf, h->b, (size_t)n);
+        if (n > 0) memcpy(buf, p, (size_t)n);
+        buf[n] = 0;
+        return n;
+    }
+    if (s.w1 & (1ULL << 62)) {
+        /* ponte de NSString */
+        const char *p = cx_cstr((id)(uintptr_t)(s.w1 & 0x0FFFFFFFFFFFFFFFULL));
+        int n = p ? (int)strlen(p) : 0;
+        if (n >= cap) n = cap - 1;
+        if (n > 0) memcpy(buf, p, (size_t)n);
         buf[n] = 0;
         return n;
     }
@@ -647,25 +665,7 @@ __asm__(
 "\"$s10Foundation22_convertNSErrorToErrorys0E0_pSo0C0CSgF\":\n"
 "  movq %rsi, %rsi\n"
 "  jmp fdn_error_from_ns\n"
-".globl \"$s10Foundation3URLV15fileURLWithPathACSSh_tcfC\"\n"
-"\"$s10Foundation3URLV15fileURLWithPathACSSh_tcfC\":\n"
-"  movq %r13, %rdx\n"
-"  jmp fdn_url_init_path_sw\n"
-".globl \"$s10Foundation3URLV19_bridgeToObjectiveCSo5NSURLCyF\"\n"
-"\"$s10Foundation3URLV19_bridgeToObjectiveCSo5NSURLCyF\":\n"
-"  movq %r13, %rdi\n"
-"  jmp fdn_bridge_url\n"
-".globl \"$s10Foundation3URLV36_unconditionallyBridgeFromObjectiveCyACSo5NSURLCSgFZ\"\n"
-"\"$s10Foundation3URLV36_unconditionallyBridgeFromObjectiveCyACSo5NSURLCSgFZ\":\n"
-"  jmp fdn_url_from_ns\n"
-".globl \"$s10Foundation3URLV4pathSSvg\"\n"
-"\"$s10Foundation3URLV4pathSSvg\":\n"
-"  movq %r13, %rdi\n"
-"  jmp fdn_url_path\n"
-".globl \"$s10Foundation3URLVMa\"\n"
-"\"$s10Foundation3URLVMa\":\n"
-"  call fdn_url_metadata\n"
-"  ret\n"
+/* URL (inits, pontes, path, metadata): fdn_url.c e fdn_meta.S */
 ".globl \"$sSS10FoundationE19_bridgeToObjectiveCSo8NSStringCyF\"\n"
 "\"$sSS10FoundationE19_bridgeToObjectiveCSo8NSStringCyF\":\n"
 "  movq %r13, %rdi\n"
