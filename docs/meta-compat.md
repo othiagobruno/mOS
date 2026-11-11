@@ -23,8 +23,8 @@ Os 12 apps abaixo chegam a **N4**: N3 três vezes seguidas, inclusive depois de 
 | 11 | OpenBot | `OpenBot-0.66.0-x64.zip` | Electron |
 | 12 | Setapp | `Setapp.zip` 4.0.0 universal (dl.devmate.com) | AppKit + WebKit, agentes de launchd |
 
-URLs e SHA-256: os 9 primeiros pacotes do `tools/stage-apps-oficiais.sh` mais Antigravity, Postico e Setapp, que só o
-placar lista por enquanto (`EXTRAS` em `tools/meta/placar.py`, SHA-256 medido no download oficial de 10 nov. 2026).
+URLs e SHA-256: os 12 pacotes estão no `tools/stage-apps-oficiais.sh` (Antigravity, Postico e Setapp com o SHA-256
+medido no download oficial de 10 nov. 2026).
 
 **Fora do 100%**, de propósito: FairPlay e apps da Mac App Store; iCloud, APNs, Sign in with Apple e compras; vídeo com DRM.
 Quando um roteiro N3 passa por um desses (ex.: notificação push), o passo é marcado como fora e não conta.

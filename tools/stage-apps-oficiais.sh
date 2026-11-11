@@ -1,8 +1,9 @@
 #!/bin/bash
-# Copia para esp/mOS/Aplicativos os apps oficiais citados em docs/l22-qemu-arm64.md
-# e o OpenBot de docs/compat-open-usage.md. O SHA-256 do pacote é conferido antes
-# de extrair. Cada .app entra pelo tools/stage-image.sh --sem-imagem (a mesma lista
-# de arquivos do stage de teste). O Codex CLI não é um .app: o binário Mach-O vai
+# Copia para esp/mOS/Aplicativos os apps oficiais citados em docs/l22-qemu-arm64.md,
+# o OpenBot de docs/compat-open-usage.md e Antigravity, Postico e Setapp (docs/meta-compat.md).
+# O SHA-256 do pacote é conferido antes de extrair. Cada .app Electron entra pelo
+# tools/stage-image.sh --sem-imagem (a mesma lista de arquivos do stage de teste); os AppKit
+# (WhatsApp, Postico, Setapp) entram inteiros. O Codex CLI não é um .app: o binário Mach-O vai
 # para /Aplicativos/Codex CLI/codex.
 # Uso: tools/stage-apps-oficiais.sh <OutDir>     OutDir já tem esp/ (tools/build.sh)
 set -euo pipefail
@@ -51,6 +52,14 @@ fetch "https://github.com/openai/codex/releases/download/rust-v0.167.0/codex-aar
     "$DL/codex-cli.tar.gz" 4b22a2a971be2791c3e31f912f3e77a88ebd64a65812a7289ccba65dd6425fe9
 fetch "https://github.com/nightly-labs/openbot/releases/download/v0.66.0/OpenBot-0.66.0-x64.zip" \
     "$DL/OpenBot.zip" 473091aac28ccab16be5921c9477f6deef8f2d9523d6c87962c99581821f817f
+# Antigravity, Postico e Setapp (docs/meta-compat.md, apps 4, 9 e 12): SHA-256 medido no download oficial
+# de 10 nov. 2026. O Postico é o 2.3.5 (9817), para onde releases.eggerapps.at/postico2/download aponta.
+fetch "https://storage.googleapis.com/antigravity-public/antigravity-hub/2.31.0-6379060755038208/darwin-x64/Antigravity.dmg" \
+    "$DL/Antigravity.dmg" f9d2699fd1307a44eae396f7463fc118f04554dc84d4ae56d95c487f1f050c56
+fetch "https://downloads.eggerapps.at/postico/postico-9817.dmg" \
+    "$DL/Postico.dmg" 34ec7730de0796c008e0caf9f366629a3043c5813c79f749e47d22084afb6e0f
+fetch "https://dl.devmate.com/com.setapp.DesktopClient/Setapp.zip" \
+    "$DL/Setapp.zip" a124004ba0c6555e8bb05904a65e78b7d32a8eaa069b304f8e9a78e4e859735a
 
 unzip_app() {
     local zip=$1 name=$2
@@ -154,6 +163,27 @@ extrair_dmg "$DL/Slack.dmg" slack
 APP=$(find "$DL/x-slack" -name 'Slack.app' -type d | head -1)
 if [ -z "$APP" ]; then echo "stage-apps: Slack.app não saiu do dmg" >&2; tail -20 /tmp/slack-dmg.txt >&2; exit 1; fi
 stage_one "$APP"
+
+extrair_dmg "$DL/Antigravity.dmg" antigravity
+APP=$(find "$DL/x-antigravity" -name 'Antigravity.app' -type d | head -1)
+if [ -z "$APP" ]; then echo "stage-apps: Antigravity.app não saiu do dmg" >&2; exit 1; fi
+stage_one "$APP"
+
+# Postico e Setapp são AppKit, não Electron: o bundle entra inteiro (frameworks, plug-ins, agentes de
+# launchd do Setapp), como o do WhatsApp abaixo.
+copiar_bundle() {
+    local app=$1
+    local dest="$MOS/Aplicativos/$(basename "$app")"
+    rm -rf "$dest"
+    cp -a "$app" "$dest"
+    python3 "$ROOT/tools/extrair-framework.py" --reparar "$dest" >/dev/null || true
+}
+extrair_dmg "$DL/Postico.dmg" postico
+APP=$(find "$DL/x-postico" -name 'Postico 2.app' -type d | head -1)
+if [ -z "$APP" ]; then echo "stage-apps: Postico 2.app não saiu do dmg" >&2; exit 1; fi
+copiar_bundle "$APP"
+APP=$(unzip_app "$DL/Setapp.zip" setapp)
+copiar_bundle "$APP"
 
 mkdir -p "$DL/x-codex" "$MOS/Aplicativos/Codex CLI"
 tar -xzf "$DL/codex-cli.tar.gz" -C "$DL/x-codex"
