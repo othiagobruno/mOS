@@ -575,9 +575,12 @@ enum {
     MOS_LS_OPEN,               /* key = caminho ou URL, key2 = app (identificador, ou caminho se flags & 1) ou vazio -> 0 */
     MOS_LS_KIND_OF_FILE,       /* key = caminho -> out = "Imagem PNG" */
 };
+#ifndef MOS_URL_MAX
+#define MOS_URL_MAX 8192   /* a mesma de net.h: URL inteira (OAuth do Google passa de 1 KiB depois do 302) */
+#endif
 typedef struct {
     unsigned int roles, flags;
-    char key[1024], key2[512], key3[256];
+    char key[MOS_URL_MAX], key2[512], key3[256];   /* key: caminho ou URL inteira; acima do limite o pedido falha */
     char out[8192];
 } mos_ls_req_t;
 

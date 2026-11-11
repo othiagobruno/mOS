@@ -754,6 +754,26 @@ static void a_sort_sel(id self, SEL c, SEL s) { (void)c; nsarr_t *r = (nsarr_t *
 static id a_sorted_sel(id self, SEL c, SEL s) { id a = a_mcopy(self, c); a_sort_sel(a, c, s); return a; }
 static void *sort_blk;
 static int sort_cmp_blk(const void *a, const void *b) { i64 (*inv)(void *, id, id) = *(void **)((u8 *)sort_blk + 16); return (int)inv(sort_blk, *(id *)a, *(id *)b); }
+/* -indexOfObject:inSortedRange:options:usingComparator: busca binária; o bloco compara
+ * (objeto procurado, elemento), como no GNUstep. Opções: FirstEqual 1<<8, LastEqual 1<<9,
+ * InsertionIndex 1<<10. Usa -count/-objectAtIndex: para valer também em subclasses. */
+static u64 a_bsearch_cmp(id self, SEL c, id obj, u64 loc, u64 len, u64 opts, void *blk) {
+    (void)c;
+    const u64 NOTFOUND = 0x7fffffffffffffffULL;
+    if (!blk) return NOTFOUND;
+    i64 (*inv)(void *, id, id) = *(void **)((u8 *)blk + 16);
+    u64 n = MSG0(u64, self, "count");
+    if (loc > n || len > n - loc) return NOTFOUND;
+    u64 lo = loc, hi = loc + len;                         /* primeiro >= obj */
+    while (lo < hi) { u64 m = lo + (hi - lo) / 2; if (inv(blk, obj, MSG(id, self, "objectAtIndex:", m)) > 0) lo = m + 1; else hi = m; }
+    u64 first = lo;
+    lo = first; hi = loc + len;                           /* primeiro > obj */
+    while (lo < hi) { u64 m = lo + (hi - lo) / 2; if (inv(blk, obj, MSG(id, self, "objectAtIndex:", m)) >= 0) lo = m + 1; else hi = m; }
+    u64 after = lo;
+    if (opts & (1u << 10)) return (opts & (1u << 9)) ? after : first;
+    if (first == after) return NOTFOUND;
+    return (opts & (1u << 9)) ? after - 1 : first;
+}
 static id a_sorted_cmp(id self, SEL c, void *blk) { id a = a_mcopy(self, c); nsarr_t *r = (nsarr_t *)a; sort_blk = blk; qsort(r->items, r->n, sizeof(id), sort_cmp_blk); return a; }
 
 /* ================================================================ NSDictionary */
@@ -1687,7 +1707,7 @@ void cx_foundation_init(void) {
     M(NSArray, "firstObject", a_first); M(NSArray, "lastObject", a_last); M(NSArray, "containsObject:", a_contains); M(NSArray, "indexOfObject:", a_index_of);
     M(NSArray, "componentsJoinedByString:", a_join); M(NSArray, "description", a_description); M(NSArray, "countByEnumeratingWithState:objects:count:", a_fast);
     M(NSArray, "arrayByAddingObject:", a_adding); M(NSArray, "copy", a_copy); M(NSArray, "mutableCopy", a_mcopy);
-    M(NSArray, "enumerateObjectsUsingBlock:", a_enum_block); M(NSArray, "sortedArrayUsingSelector:", a_sorted_sel); M(NSArray, "sortedArrayUsingComparator:", a_sorted_cmp);
+    M(NSArray, "enumerateObjectsUsingBlock:", a_enum_block); M(NSArray, "sortedArrayUsingSelector:", a_sorted_sel); M(NSArray, "sortedArrayUsingComparator:", a_sorted_cmp); M(NSArray, "indexOfObject:inSortedRange:options:usingComparator:", a_bsearch_cmp);
     M(NSMutableArray, "addObject:", a_add); M(NSMutableArray, "addObjectsFromArray:", a_add_all); M(NSMutableArray, "insertObject:atIndex:", a_insert);
     M(NSMutableArray, "removeObjectAtIndex:", a_remove_at); M(NSMutableArray, "removeLastObject", a_remove_last); M(NSMutableArray, "removeAllObjects", a_remove_all);
     M(NSMutableArray, "removeObjectsInRange:", a_remove_range);

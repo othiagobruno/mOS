@@ -12,7 +12,9 @@ enum {
     AX_OP_PRESS = 4,
     AX_OP_NOTE = 5,
     AX_OP_SUB = 6,
-    AX_OP_REPLY = 7
+    AX_OP_REPLY = 7,
+    AX_OP_SETTABLE = 8,     /* AXUIElementIsAttributeSettable: resposta AX_PAY_I32 */
+    AX_OP_AT = 9            /* AXUIElementCopyElementAtPosition no app: px, py; resposta é um elemento (axremote.h) */
 };
 
 enum {

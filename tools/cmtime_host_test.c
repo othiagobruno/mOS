@@ -60,6 +60,20 @@ static void expect(int ok, const char *m) { if (!ok) { fprintf(stderr, "FALHOU %
 static int num(cm_time_t t, i64 v, i32 s) { return (t.flags & 1) && t.value == v && t.timescale == s; }
 static double gnow;
 static double nowfn(void) { return gnow; }
+int CMBufferQueueInstallTriggerWithIntegerThreshold(void *q, void (*fn)(void *, void *), void *refcon, i32 cond, i64 threshold, void **token);
+int CMBufferQueueRemoveTrigger(void *q, void *token);
+i64 CMBufferQueueGetBufferCount(void *q);
+void *CMBufferQueueGetHead(void *q);
+cm_time_t CMBufferQueueGetFirstPresentationTimeStamp(void *q);
+int CMTimeRangeEqual(cm_range_t a, cm_range_t b);
+cm_range_t CMTimeRangeFromTimeToTime(cm_time_t start, cm_time_t end);
+cm_time_t CMTimeMapTimeFromRangeToRange(cm_time_t t, cm_range_t from, cm_range_t to);
+cm_time_t CMTimeMapDurationFromRangeToRange(cm_time_t d, cm_range_t from, cm_range_t to);
+cm_time_t CMClockMakeHostTimeFromSystemUnits(unsigned long long units);
+static int disparos;
+static void gatilho(void *ref, void *tok) { (void)tok; disparos += ref ? *(int *)ref : 1; }
+typedef struct { unsigned version; void *refcon; void *gd, *gp, *gdur, *ready; int (*compare)(void *, void *, void *); void *note; } qcb_t;
+static cm_time_t pts_de(void *buf, void *ref) { (void)ref; return CMTimeMake(*(int *)buf, 10); }
 int main(void) {
     cm_time_t bad = CMTimeMake(1, 0);
     expect(!(bad.flags & 1), "timescale 0 invalido");
@@ -160,6 +174,40 @@ int main(void) {
     expect(cm_timing_copy(src_t, 2, 0, 0, &need) == 0 && need == 2, "timing precisa");
     expect(cm_timing_copy(src_t, 2, dst, 1, &need) != 0, "timing curto");
     expect(cm_timing_copy(src_t, 2, dst, 2, &need) == 0 && dst[1].duration.value == 2, "timing copia");
+    /* gatilhos por contagem, cabeça, menor PTS */
+    {
+        int um = 1, items[3] = {30, 10, 20};
+        void *q2 = 0, *tk = 0;
+        qcb_t cb;
+        memset(&cb, 0, sizeof cb);
+        cb.gp = (void *)pts_de;
+        expect(CMBufferQueueCreate(0, 0, &cb, &q2) == 0, "fila com callbacks");
+        expect(CMBufferQueueInstallTriggerWithIntegerThreshold(q2, gatilho, &um, 11, 1, &tk) == 0 && tk, "gatilho > 1");
+        CMBufferQueueEnqueue(q2, &items[0]);
+        expect(disparos == 0, "1 item não dispara");
+        CMBufferQueueEnqueue(q2, &items[1]);
+        expect(disparos == 1, "2 itens disparam uma vez");
+        CMBufferQueueEnqueue(q2, &items[2]);
+        expect(disparos == 1, "continua acima: não redispara");
+        expect(CMBufferQueueGetBufferCount(q2) == 3 && CMBufferQueueGetHead(q2) == &items[0], "contagem e cabeça");
+        cm_time_t first = CMBufferQueueGetFirstPresentationTimeStamp(q2);
+        expect(CMTimeCompare(first, CMTimeMake(10, 10)) == 0, "menor PTS");
+        expect(CMBufferQueueRemoveTrigger(q2, tk) == 0 && CMBufferQueueRemoveTrigger(q2, tk) != 0, "remove gatilho");
+    }
+    {
+        cm_range_t a = CMTimeRangeMake(CMTimeMake(1, 1), CMTimeMake(2, 1));
+        cm_range_t b = CMTimeRangeFromTimeToTime(CMTimeMake(10, 10), CMTimeMake(30, 10));
+        expect(CMTimeRangeEqual(a, b), "faixa igual em escalas diferentes");
+        expect(!CMTimeRangeEqual(a, CMTimeRangeMake(CMTimeMake(1, 1), CMTimeMake(3, 1))), "faixa diferente");
+        cm_range_t from = CMTimeRangeMake(CMTimeMake(0, 1), CMTimeMake(10, 1));
+        cm_range_t to = CMTimeRangeMake(CMTimeMake(100, 1), CMTimeMake(20, 1));
+        cm_time_t m = CMTimeMapTimeFromRangeToRange(CMTimeMake(5, 1), from, to);
+        expect(fabs(CMTimeGetSeconds(m) - 110.0) < 1e-6, "mapeia tempo 5 -> 110");
+        cm_time_t d = CMTimeMapDurationFromRangeToRange(CMTimeMake(3, 1), from, to);
+        expect(fabs(CMTimeGetSeconds(d) - 6.0) < 1e-6, "mapeia duração 3 -> 6");
+        cm_time_t h = CMClockMakeHostTimeFromSystemUnits(1500000000ULL);
+        expect(fabs(CMTimeGetSeconds(h) - 1.5) < 1e-9, "unidades do host -> 1,5 s");
+    }
     if (fail) { fprintf(stderr, "%d falhas\n", fail); return 1; }
     printf("PASSOU\n");
     return 0;

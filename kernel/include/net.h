@@ -105,11 +105,17 @@ const char *tls_error(tls_conn_t *c);
 int  tls_copy_peer_chain(const tls_conn_t *c, u8 *buf, u32 cap);
 
 /* HTTP/1.1 cliente assíncrono (http:// e https://) */
+#ifndef MOS_URL_MAX
+/* Maior URL aceita pelo cliente HTTP, pelo Launch Services e pelo Horizonte. O pedido de OAuth do Google (Antigravity)
+ * passa de 600 bytes e o 302 dele, com o continue= codificado duas vezes, passa de 1 KiB. Acima disto o pedido falha
+ * ("URL longa demais"): cortar em silêncio mandava ao Google um scope truncado (invalid_scope, "invalid=[http]"). */
+#define MOS_URL_MAX 8192
+#endif
 typedef struct http_req {
-    char url[512];
+    char url[MOS_URL_MAX];
     int status;               /* código HTTP */
     char content_type[96];
-    char location[512];       /* redirecionamento final seguido */
+    char location[MOS_URL_MAX]; /* redirecionamento final seguido */
     u8 *body;
     u32 body_len;
     char error[128];

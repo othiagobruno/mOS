@@ -183,8 +183,9 @@ link_one() {
 }
 
 echo "==> libswiftCore"
-# shellcheck disable=SC2046
-link_one libswiftCore "$objc/swiftCore.o" $(find "$objc/runtime" -name '*.o')
+# lista em array: o caminho do repo pode ter espaço ("Área de trabalho")
+mapfile -t RTOBJS < <(find "$objc/runtime" -name '*.o' | sort)
+link_one libswiftCore "$objc/swiftCore.o" "${RTOBJS[@]}"
 if ! grep -a -q '_swift_allocObject' "$dest/libswiftCore.dylib"; then
     echo "libswiftCore sem _swift_allocObject" >&2
     exit 1
@@ -348,7 +349,8 @@ if ! grep -a -q '_\$sSo9MTLBufferP5MetalE14didModifyRangeyySnySiGF' "$dest/libsw
     exit 1
 fi
 # shellcheck disable=SC2046
-link_one libswift_Concurrency "$out/_Concurrency.o" $(find "$out" -name '_Concurrency_*.o')
+mapfile -t CCOBJS < <(find "$out" -name '_Concurrency_*.o' | sort)
+link_one libswift_Concurrency "$out/_Concurrency.o" "${CCOBJS[@]}"
 for m in XPC QuartzCore IOKit OSLog Spatial CoreAudio CoreImage CoreMIDI QuickLookUI simd; do
     link_one "libswift$m" "$out/$m.o"
 done

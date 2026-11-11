@@ -372,10 +372,6 @@ void *CGDataProviderCreateWithCFData(id data) {
     objc_retain(data);
     return CGDataProviderCreateWithData(data, MSG0(const void *, data, "bytes"), (size_t)MSG0(u64, data, "length"), prov_release);
 }
-void *CGPDFDocumentCreateWithProvider(void *p) { (void)p; return 0; }
-size_t CGPDFDocumentGetNumberOfPages(void *d) { (void)d; return 0; }
-void *CGPDFDocumentGetPage(void *d, size_t n) { (void)d; (void)n; return 0; }
-cg_rect_t CGPDFPageGetBoxRect(void *p, int box) { (void)p; (void)box; cg_rect_t r = {0, 0, 0, 0}; return r; }
 int CGPDFPageGetRotationAngle(void *p) { (void)p; return 0; }
 
 /* ================================================================ IOKit */
@@ -572,12 +568,7 @@ OSStatus AEGetParamDesc(const ae_desc_t *ev, u32 key, u32 type, ae_desc_t *out) 
 OSStatus AESendMessage(const ae_desc_t *ev, ae_desc_t *reply, i32 mode, long timeout) { (void)ev; (void)mode; (void)timeout; if (reply) { reply->type = 0x6E756C6C; reply->data = 0; } return -1708; /* errAEEventNotHandled */ }
 
 /* ================================================================ SystemConfiguration */
-typedef struct { long version; void *info; void *retain, *release, *desc; } sc_ctx_t;
-id SCNetworkReachabilityCreateWithAddress(void *alloc, const void *addr) { (void)alloc; (void)addr; return token(); }
-u8 SCNetworkReachabilityGetFlags(id r, u32 *flags) { (void)r; if (flags) *flags = 2; /* kSCNetworkReachabilityFlagsReachable */ return 1; }
-u8 SCNetworkReachabilitySetCallback(id r, void *cb, sc_ctx_t *ctx) { (void)r; (void)cb; (void)ctx; return 1; }
-u8 SCNetworkReachabilityScheduleWithRunLoop(id r, void *rl, id mode) { (void)r; (void)rl; (void)mode; return 1; }
-u8 SCNetworkReachabilityUnscheduleFromRunLoop(id r, void *rl, id mode) { (void)r; (void)rl; (void)mode; return 1; }
+/* SCNetworkReachability*: wa_net.c */
 id SCDynamicStoreKeyCreateProxies(void *alloc) { (void)alloc; return objc_retain(cx_str("State:/Network/Global/Proxies")); }
 
 /* ================================================================ Security (Keychain antigo, SSL legado) */

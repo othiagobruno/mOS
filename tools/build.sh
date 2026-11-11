@@ -26,6 +26,18 @@ gcc -O2 -Wall -Wextra -DMOS_HOST_TEST -I kernel/include -I tools tools/resto_hos
 gcc -O2 -Wall -Wextra -DMOS_HOST_TEST -I kernel/include -I tools tools/r8169_host.c kernel/dev/r8169.c \
     -o /tmp/r8169_host
 /tmp/r8169_host
+# URL longa no cliente HTTP do kernel (OAuth do Google no Antigravity: invalid_scope com o scope cortado)
+gcc -std=gnu11 -DMOS_HOST_TEST -I kernel/include -I tools tools/http_url_longa_host.c kernel/net/http.c -o /tmp/http_url_longa
+/tmp/http_url_longa > /tmp/http_url_longa.log || { cat /tmp/http_url_longa.log; exit 1; }
+tail -1 /tmp/http_url_longa.log
+# computer use: AX entre processos (reserva AF_UNIX, páginas, elemento único) e CGEventPostToPid só no pid alvo
+gcc -std=gnu11 -Wall -Wextra -pthread -I userland/libsystem userland/libsystem/axproto.c userland/libsystem/axtransport.c \
+    userland/libsystem/axunix.c userland/libsystem/axremote.c tools/axremote_host.c -o /tmp/axremote_host
+/tmp/axremote_host > /tmp/axremote_host.log || { cat /tmp/axremote_host.log; exit 1; }
+tail -1 /tmp/axremote_host.log
+gcc -std=c11 -Wall -Wextra -I userland/libsystem userland/libsystem/cgpid.c tools/cgpid_host.c -o /tmp/cgpid_host
+/tmp/cgpid_host > /tmp/cgpid_host.log || { cat /tmp/cgpid_host.log; exit 1; }
+tail -1 /tmp/cgpid_host.log
 
 kind_of() {
     local b
@@ -361,6 +373,14 @@ mkdir -p "$ESP/mOS/usr/lib" "$ESP/mOS/usr/share/zlib" "$ESP/mOS/usr/share/curl"
 cp -f "$ROOT/build/libcxx/libc++.1.dylib" "$ESP/mOS/usr/lib/libc++.1.dylib"
 cp -f "$ROOT/build/zlib-x86_64/libz.1.dylib" "$ESP/mOS/usr/lib/libz.1.dylib"
 cp -f "$ROOT/build/sqlite/libsqlite3.dylib" "$ESP/mOS/usr/lib/libsqlite3.dylib"
+# libxml2 2.13.8 (MIT): o WhatsApp liga htmlReadMemory, xmlReadMemory e xmlXPath* em /usr/lib/libxml2.2.dylib.
+if MOS_ZIG="$ZIG" bash "$ROOT/tools/build-libxml2.sh" "$ROOT/build/libxml2/libxml2.2.dylib"; then
+    mkdir -p "$ESP/mOS/usr/share/libxml2"
+    cp -f "$ROOT/build/libxml2/libxml2.2.dylib" "$ESP/mOS/usr/lib/libxml2.2.dylib"
+    cp -f "$ROOT/.tools/libxml2-2.13.8/Copyright" "$ESP/mOS/usr/share/libxml2/Copyright"
+else
+    echo "aviso: libxml2 não compilou; /usr/lib/libxml2.2.dylib fica de fora" >&2
+fi
 cp -f "$ROOT/build/curl-x86_64/libcurl.4.dylib" "$ESP/mOS/usr/lib/libcurl.4.dylib"
 cp -f "$ROOT/build/zlib-x86_64/LICENSE" "$ESP/mOS/usr/share/zlib/LICENSE"
 cp -f "$ROOT/build/curl-x86_64/COPYING" "$ESP/mOS/usr/share/curl/COPYING"
@@ -375,6 +395,12 @@ echo "==> libswift"
 # Runtime real (swift-6.4.2) quando a toolchain e o fonte estão em .tools/. Sem isso, o stage completa com stub.
 if [ -f "$ROOT/tools/build-libswift-real.sh" ]; then
     bash "$ROOT/tools/build-libswift-real.sh" || echo "aviso: build-libswift-real.sh falhou; o que faltar continua stub" >&2
+fi
+# Frameworks ObjC do mOS (UIKit do Catalyst, CoreData, ImageIO...) e o Combine (OpenCombine como módulo
+# "Combine") na mesma raiz das dylibs Swift; o cp -a abaixo leva tudo para a imagem.
+MOS_ZIG="$ZIG" bash "$ROOT/tools/build-frameworks-objc.sh" || echo "aviso: algum framework ObjC não compilou" >&2
+if [ -f "$ROOT/build/swift/objc/dylib/usr/lib/swift/libswiftCore.dylib" ]; then
+    MOS_ZIG="$ZIG" bash "$ROOT/tools/build-swift-combine.sh" || echo "aviso: Combine.framework não compilou" >&2
 fi
 if [ -f "$ROOT/build/universal-swift/usr/lib/swift/libswiftCore.dylib" ]; then
     cp -a "$ROOT/build/universal-swift/." "$ESP/mOS/"
