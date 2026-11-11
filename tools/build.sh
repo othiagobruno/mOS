@@ -514,6 +514,43 @@ fi
 echo "==> CoreImage.framework"
 bash "$ROOT/tools/build-coreimage.sh" "$ZIG" "$ESP/mOS"
 
+# WebKit.framework do mOS (userland/frameworks/WebKit): WKWebView sobre o motor web do sistema e o WebKit
+# legado (WebView, WebPreferences, WebArchive...). O mesmo que o build.ps1 põe na imagem.
+echo "==> WebKit.framework"
+WKDIR="$ESP/mOS/System/Library/Frameworks/WebKit.framework/Versions/A"
+mkdir -p "$WKDIR"
+"$ZIG" cc -target x86_64-macos -O2 -shared -x objective-c -I"$ROOT/userland/sdk/include" \
+    -Wno-objc-root-class -Wno-objc-method-access "$ROOT/userland/frameworks/WebKit/WebKit.m" -o "$WKDIR/WebKit" \
+    -Wl,-install_name,/System/Library/Frameworks/WebKit.framework/Versions/A/WebKit \
+    -Wl,-undefined,dynamic_lookup
+echo "WebKit.framework ok"
+
+# CryptoKit.framework: o Swift de userland/frameworks/CryptoKit compilado com evolução de biblioteca
+# (tools/build-cryptokit-macho.sh), como o build.ps1 faz. Precisa do swift-frontend 6.4.2 oficial
+# (SWIFT_FRONTEND, SWIFTC ou .tools/swift-6.4.2); sem ele o framework fica de fora desta imagem.
+echo "==> CryptoKit.framework"
+CKFE=${SWIFT_FRONTEND:-${SWIFTC:-}}
+if [ -z "$CKFE" ]; then
+    for c in "$ROOT/.tools/swift-6.4.2/usr/bin/swift-frontend" "$ROOT"/.tools/swift/*/usr/bin/swift-frontend; do
+        if [ -x "$c" ]; then CKFE=$c; break; fi
+    done
+fi
+if [ -n "$CKFE" ] && [ -x "$CKFE" ]; then
+    if SWIFT_FRONTEND="$CKFE" MOS_ZIG="$ZIG" sh "$ROOT/tools/build-cryptokit-macho.sh" "$OUT/cryptokit-macho" \
+            > "$OUT/cryptokit-macho.log" 2>&1; then
+        CKDIR="$ESP/mOS/System/Library/Frameworks/CryptoKit.framework/Versions/A"
+        mkdir -p "$CKDIR"
+        cp -f "$OUT/cryptokit-macho/CryptoKit" "$CKDIR/CryptoKit"
+        echo "CryptoKit.framework na imagem"
+    else
+        grep -m8 -E 'error:' "$OUT/cryptokit-macho.log" >&2 || true
+        echo "CryptoKit.framework não compilou (log em $OUT/cryptokit-macho.log)" >&2
+        exit 1
+    fi
+else
+    echo "aviso: sem swift-frontend 6.4.2; CryptoKit.framework fica de fora desta imagem" >&2
+fi
+
 echo "==> apps oficiais em /Aplicativos"
 bash "$ROOT/tools/stage-apps-oficiais.sh" "$OUT"
 mkdir -p "$ESP/mOS/usr/lib"

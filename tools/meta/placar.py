@@ -53,17 +53,9 @@ APPS = [
     ("setapp", "Setapp 4.0.0", "Setapp.zip", "zip", "Setapp.app", None, "Setapp.app"),
 ]
 
-# Fora do stage-apps-oficiais.sh. SHA-256 medido no download oficial de 10 nov. 2026.
-EXTRAS = {
-    "Antigravity.dmg": ("https://storage.googleapis.com/antigravity-public/antigravity-hub/2.31.0-6379060755038208/darwin-x64/Antigravity.dmg",
-                        "f9d2699fd1307a44eae396f7463fc118f04554dc84d4ae56d95c487f1f050c56"),
-    # para onde aponta releases.eggerapps.at/postico2/download (302): Postico 2.3.5 (9817).
-    # O 9820 da mesma página é "Postico 2.3 dev", não o release.
-    "Postico.dmg": ("https://downloads.eggerapps.at/postico/postico-9817.dmg",
-                    "34ec7730de0796c008e0caf9f366629a3043c5813c79f749e47d22084afb6e0f"),
-    "Setapp.zip": ("https://dl.devmate.com/com.setapp.DesktopClient/Setapp.zip",
-                   "a124004ba0c6555e8bb05904a65e78b7d32a8eaa069b304f8e9a78e4e859735a"),
-}
+# Pacotes fora do tools/stage-apps-oficiais.sh: URL e SHA-256 conferido, como os do stage. Antigravity,
+# Postico e Setapp entraram no stage em 11 nov. 2026; hoje não há nenhum.
+EXTRAS = {}
 
 MAGIC = (b"\xcf\xfa\xed\xfe", b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca", b"\xfe\xed\xfa\xcf")
 

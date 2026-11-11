@@ -275,18 +275,14 @@ static void cg_put_num(id d, const void *key, long long v) {
     CFDictionarySetValue(d, (id)key, n);
     if (n) objc_release(n);
 }
-id CGWindowListCopyWindowInfo(u32 opt, u32 rel) {
-    /* No macOS recente a lista das janelas dos outros apps exige gravação de tela. Sem a concessão do TCC, vazia. */
-    if (!cx_tcc_preflight("kTCCServiceScreenCapture")) return empty_array();
-    gui_cgwindow_t all[48];
-    int n = 0, rel_i = -1;
+/* janelas do window server (da frente para o fundo) que passam pelo filtro de opções do CGWindowList */
+static int cg_window_select(u32 opt, u32 rel, gui_cgwindow_t *all, int *sel) {
+    int n = 0, rel_i = -1, got = 0;
     for (int i = 0; i < 48; i++) {
         if (!cx_cg_window_at(i, &all[n])) break;
         if (rel && all[n].number == rel) rel_i = n;
         n++;
     }
-    id tmp[48];
-    int got = 0;
     for (int i = 0; i < n && got < 48; i++) {
         gui_cgwindow_t *w = &all[i];
         int on = opt & 1;
@@ -300,29 +296,99 @@ id CGWindowListCopyWindowInfo(u32 opt, u32 rel) {
             if (rel_i < 0 || i < rel_i) continue;
             if (i == rel_i && !(opt & 8)) continue;
         }
-        id d = CFDictionaryCreateMutable(0, 8, 0, 0);
-        cg_put_num(d, kCGWindowNumber, (long long)w->number);
-        cg_put_num(d, kCGWindowOwnerPID, w->pid);
-        cg_put_num(d, kCGWindowLayer, w->layer);
-        cg_put_num(d, kCGWindowSharingState, 1);   /* kCGWindowSharingReadOnly: o compositor deixa ler os pixels */
-        CFDictionarySetValue(d, (id)kCGWindowIsOnscreen, (id)(w->onscreen ? kCFBooleanTrue : kCFBooleanFalse));
-        id owner = cx_str(w->owner);
-        id name = cx_str(w->name);
-        CFDictionarySetValue(d, (id)kCGWindowOwnerName, owner);
-        CFDictionarySetValue(d, (id)kCGWindowName, name);
-        objc_release(owner);
-        objc_release(name);
-        cg_rect_t b = {(double)w->x, (double)w->y, (double)w->w, (double)w->h};
-        id bounds = CGRectCreateDictionaryRepresentation(b);
-        CFDictionarySetValue(d, (id)kCGWindowBounds, bounds);
-        objc_release(bounds);
-        tmp[got++] = d;
+        if ((opt & 8) && !(opt & 6) && rel && i != rel_i) continue;
+        sel[got++] = i;
     }
+    return got;
+}
+static id cg_window_dict(const gui_cgwindow_t *w) {
+    id d = CFDictionaryCreateMutable(0, 8, 0, 0);
+    cg_put_num(d, kCGWindowNumber, (long long)w->number);
+    cg_put_num(d, kCGWindowOwnerPID, w->pid);
+    cg_put_num(d, kCGWindowLayer, w->layer);
+    cg_put_num(d, kCGWindowSharingState, 1);   /* kCGWindowSharingReadOnly: o compositor deixa ler os pixels */
+    CFDictionarySetValue(d, (id)kCGWindowIsOnscreen, (id)(w->onscreen ? kCFBooleanTrue : kCFBooleanFalse));
+    id owner = cx_str(w->owner);
+    id name = cx_str(w->name);
+    CFDictionarySetValue(d, (id)kCGWindowOwnerName, owner);
+    CFDictionarySetValue(d, (id)kCGWindowName, name);
+    objc_release(owner);
+    objc_release(name);
+    cg_rect_t b = {(double)w->x, (double)w->y, (double)w->w, (double)w->h};
+    id bounds = CGRectCreateDictionaryRepresentation(b);
+    CFDictionarySetValue(d, (id)kCGWindowBounds, bounds);
+    objc_release(bounds);
+    return d;
+}
+id CGWindowListCopyWindowInfo(u32 opt, u32 rel) {
+    /* No macOS recente a lista das janelas dos outros apps exige gravação de tela. Sem a concessão do TCC, vazia. */
+    if (!cx_tcc_preflight("kTCCServiceScreenCapture")) return empty_array();
+    gui_cgwindow_t all[48];
+    int sel[48];
+    id tmp[48];
+    int got = cg_window_select(opt, rel, all, sel);
+    for (int i = 0; i < got; i++) tmp[i] = cg_window_dict(&all[sel[i]]);
     id arr = CFArrayCreate(0, tmp, got, 0);
     for (int i = 0; i < got; i++) objc_release(tmp[i]);
     return arr;
 }
-id CGWindowListCreateDescriptionFromArray(id arr) { (void)arr; return empty_array(); }
+/* CGWindowListCreate devolve um CFArray de CGWindowID crus (callbacks NULL: os valores não são objetos).
+ * Os CFArray do mOS são NSArray; este é uma subclasse que guarda os números e responde count e
+ * objectAtIndex:, o que CFArrayGetCount e CFArrayGetValueAtIndex usam. */
+static cx_class_t WinIDArray_c, WinIDArray_m;
+typedef struct { u32 n; u32 ids[48]; } winid_arr_t;
+static winid_arr_t *winid_of(id a) { return (winid_arr_t *)((u8 *)a + sizeof(void *)); }
+static u64 winid_count(id self, SEL c) { (void)c; return winid_of(self)->n; }
+static id winid_at(id self, SEL c, u64 i) {
+    (void)c;
+    winid_arr_t *s = winid_of(self);
+    return i < s->n ? (id)(uintptr_t)s->ids[i] : 0;
+}
+static int winid_ready;
+static int winid_is(id a) { return a && winid_ready && object_getClass(a) == &WinIDArray_c; }
+/* Os números de janela não dependem de gravação de tela no macOS (só nome e conteúdo dependem). */
+id CGWindowListCreate(u32 opt, u32 rel) {
+    if (!winid_ready) {
+        cx_class_t *sup = cx_class_named("NSArray");
+        if (!sup) return 0;
+        cx_define_class(&WinIDArray_c, &WinIDArray_m, "__NSCFWindowIDArray", sup, (u32)sizeof(winid_arr_t));
+        cx_add_method(&WinIDArray_c, "count", (void *)winid_count);
+        cx_add_method(&WinIDArray_c, "objectAtIndex:", (void *)winid_at);
+        winid_ready = 1;
+    }
+    gui_cgwindow_t all[48];
+    int sel[48];
+    int got = cg_window_select(opt, rel, all, sel);
+    id a = cx_alloc_instance(&WinIDArray_c);
+    if (!a) return 0;
+    winid_arr_t *s = winid_of(a);
+    for (int i = 0; i < got; i++) s->ids[s->n++] = all[sel[i]].number;
+    return a;
+}
+/* descrição das janelas pedidas (array de CGWindowID crus, como o de CGWindowListCreate), na mesma regra
+ * de permissão do CGWindowListCopyWindowInfo; número que não é mais janela fica de fora */
+id CGWindowListCreateDescriptionFromArray(id arr) {
+    if (!arr || !cx_tcc_preflight("kTCCServiceScreenCapture")) return empty_array();
+    gui_cgwindow_t all[48];
+    int n = 0;
+    for (int i = 0; i < 48; i++) {
+        if (!cx_cg_window_at(i, &all[n])) break;
+        n++;
+    }
+    id tmp[48];
+    int got = 0;
+    long c = winid_is(arr) ? (long)winid_of(arr)->n : (long)MSG0(u64, arr, "count");
+    for (long k = 0; k < c && got < 48; k++) {
+        u32 wid = winid_is(arr) ? winid_of(arr)->ids[k] : (u32)(uintptr_t)MSG(id, arr, "objectAtIndex:", (u64)k);
+        for (int i = 0; i < n; i++)
+            if (all[i].number == wid) { tmp[got++] = cg_window_dict(&all[i]); break; }
+    }
+    id out = CFArrayCreate(0, tmp, got, 0);
+    for (int i = 0; i < got; i++) objc_release(tmp[i]);
+    return out;
+}
+/* nível da janela de proteção das telas capturadas (CGDisplayCapture): o máximo, kCGMaximumWindowLevelKey */
+int CGShieldingWindowLevel(void) { return CGWindowLevelForKey(14); }
 size_t CGDisplayModeGetWidth(void *m) { (void)m; return CGDisplayPixelsWide(CGMainDisplayID()); }
 size_t CGDisplayModeGetHeight(void *m) { (void)m; return CGDisplayPixelsHigh(CGMainDisplayID()); }
 u32 CGDisplayIDToOpenGLDisplayMask(u32 d) { (void)d; return 1; }

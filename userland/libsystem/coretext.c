@@ -788,30 +788,223 @@ static void cgfont_init_cls(void) {
     cgfont_ready = 1;
 }
 void *CGDataProviderCopyData(void *p);
-void *CGFontCreateWithDataProvider(void *prov) {
-    id data;
-    const u8 *b;
-    long n;
+/* CGFont com uma cópia dos bytes sfnt; fid = face do kernel já conhecida (peso 0..3 ou fonte registrada) ou -1 */
+static id cgfont_from_bytes(const u8 *b, long n, int fid) {
     cgf_t *g;
     id o;
     cgfont_init_cls();
-    if (!cgfont_ready || !prov) return 0;
-    data = (id)CGDataProviderCopyData(prov);
-    b = data ? CFDataGetBytePtr(data) : 0;
-    n = data ? CFDataGetLength(data) : 0;
-    if (!b || n < 12 || n > (8 << 20)) { objc_release(data); return 0; }
+    if (!cgfont_ready || !b || n < 12 || n > (8 << 20)) return 0;
     g = calloc(1, sizeof *g);
-    if (!g) { objc_release(data); return 0; }
+    if (!g) return 0;
     g->b = malloc((size_t)n);
-    if (!g->b) { free(g); objc_release(data); return 0; }
+    if (!g->b) { free(g); return 0; }
     memcpy(g->b, b, (size_t)n);
     g->n = n;
-    g->fid = -1;
-    objc_release(data);
+    g->fid = fid;
     o = cx_alloc_instance(&CGFont_c);
     if (!o) { free(g->b); free(g); return 0; }
     *(void **)((u8 *)o + 8) = g;
     return o;
+}
+void *CGFontCreateWithDataProvider(void *prov) {
+    id data;
+    const u8 *b;
+    long n;
+    id o;
+    if (!prov) return 0;
+    data = (id)CGDataProviderCopyData(prov);
+    b = data ? CFDataGetBytePtr(data) : 0;
+    n = data ? CFDataGetLength(data) : 0;
+    o = cgfont_from_bytes(b, n, -1);
+    objc_release(data);
+    return o;
+}
+
+/* ---- CGFont a partir de uma face do kernel, e leitura das tabelas sfnt do CGFont */
+static u32 cgf_rd32(const u8 *p) { return (u32)p[0] << 24 | (u32)p[1] << 16 | (u32)p[2] << 8 | p[3]; }
+static u32 cgf_rd16(const u8 *p) { return (u32)p[0] << 8 | p[1]; }
+static void cgf_wr32(u8 *p, u32 v) { p[0] = (u8)(v >> 24); p[1] = (u8)(v >> 16); p[2] = (u8)(v >> 8); p[3] = (u8)v; }
+static void cgf_wr16(u8 *p, u32 v) { p[0] = (u8)(v >> 8); p[1] = (u8)v; }
+/* tabela 'tag' de um arquivo sfnt (ou da primeira fonte de uma coleção 'ttcf'); 0 se não existe */
+static const u8 *cgf_table(const u8 *b, long n, u32 tag, long *len) {
+    long base = 0;
+    if (!b || n < 12) return 0;
+    if (cgf_rd32(b) == 0x74746366u) {                         /* 'ttcf' */
+        if (n < 16) return 0;
+        base = (long)cgf_rd32(b + 12);
+        if (base < 0 || base + 12 > n) return 0;
+    }
+    u32 nt = cgf_rd16(b + base + 4);
+    for (u32 i = 0; i < nt; i++) {
+        long r = base + 12 + (long)i * 16;
+        if (r + 16 > n) break;
+        if (cgf_rd32(b + r) != tag) continue;
+        long off = (long)cgf_rd32(b + r + 8), l = (long)cgf_rd32(b + r + 12);
+        if (off < 0 || l < 0 || off + l > n) return 0;
+        *len = l;
+        return b + off;
+    }
+    return 0;
+}
+static u32 cgf_checksum(const u8 *p, long n) {
+    u32 s = 0;
+    for (long i = 0; i < n; i += 4) {
+        u8 w[4] = {0, 0, 0, 0};
+        for (int k = 0; k < 4 && i + k < n; k++) w[k] = p[i + k];
+        s += cgf_rd32(w);
+    }
+    return s;
+}
+/* O kernel entrega as tabelas da face uma a uma (GUI_FONT/GF_TABLE). Remonta o arquivo sfnt: diretório
+ * com as tabelas em ordem de tag, cada uma alinhada a 4 bytes e com o checksum. */
+static id cgfont_from_kernel_face(int w) {
+    static const u32 tags[] = {0x43464620u /* CFF  */, 0x4744454Fu /* GDEF */, 0x47504F53u /* GPOS */, 0x47535542u /* GSUB */,
+                               0x4F532F32u /* OS/2 */, 0x636D6170u /* cmap */, 0x63767420u /* cvt  */, 0x6670676Du /* fpgm */,
+                               0x67617370u /* gasp */, 0x676C7966u /* glyf */, 0x68656164u /* head */, 0x68686561u /* hhea */,
+                               0x686D7478u /* hmtx */, 0x6B65726Eu /* kern */, 0x6C6F6361u /* loca */, 0x6D617870u /* maxp */,
+                               0x6E616D65u /* name */, 0x706F7374u /* post */, 0x70726570u /* prep */};
+    enum { NT = sizeof tags / sizeof tags[0] };
+    long len[NT], total, off;
+    u32 nt = 0, cff = 0;
+    if (!font_live()) return 0;
+    total = 12;
+    for (u32 i = 0; i < NT; i++) {
+        long l = SYS5(GUI_FONT, GF_TABLE, w, tags[i], 0, 0);
+        len[i] = (l > 0 && l <= (8 << 20)) ? l : 0;
+        if (!len[i]) continue;
+        nt++;
+        if (tags[i] == 0x43464620u) cff = 1;
+        total += 16 + ((len[i] + 3) & ~3L);
+    }
+    if (!nt || total > (8 << 20)) return 0;
+    u8 *f = calloc(1, (size_t)total);
+    if (!f) return 0;
+    u32 es = 0;
+    while ((2u << es) <= nt) es++;
+    cgf_wr32(f, cff ? 0x4F54544Fu /* 'OTTO' */ : 0x00010000u);
+    cgf_wr16(f + 4, nt);
+    cgf_wr16(f + 6, (1u << es) * 16);
+    cgf_wr16(f + 8, es);
+    cgf_wr16(f + 10, nt * 16 - (1u << es) * 16);
+    off = 12 + (long)nt * 16;
+    u32 r = 0;
+    for (u32 i = 0; i < NT; i++) {
+        if (!len[i]) continue;
+        long got = SYS5(GUI_FONT, GF_TABLE, w, tags[i], f + off, len[i]);
+        if (got <= 0) { free(f); return 0; }
+        if (got < len[i]) len[i] = got;
+        u8 *rec = f + 12 + (long)r * 16;
+        cgf_wr32(rec, tags[i]);
+        cgf_wr32(rec + 4, cgf_checksum(f + off, len[i]));
+        cgf_wr32(rec + 8, (u32)off);
+        cgf_wr32(rec + 12, (u32)len[i]);
+        off += (len[i] + 3) & ~3L;
+        r++;
+    }
+    id o = cgfont_from_bytes(f, off, w);
+    free(f);
+    return o;
+}
+static id cgfont_from_face(int w) {
+    if (is_user(w)) {
+        int i = w - USER_BASE;
+        if (user_bytes[i] && user_nbytes[i] > 0) return cgfont_from_bytes(user_bytes[i], user_nbytes[i], w);
+    }
+    if ((w >= 0 && w <= 3) || is_user(w)) return cgfont_from_kernel_face(w);
+    return 0;
+}
+/* Nome PostScript ou nome completo de uma fonte registrada (CTFontManagerRegister*) e, para o resto, a
+ * mesma resolução do NSFont/CTFontCreateWithName do mOS: todo nome do sistema é uma face da fonte do kernel. */
+void *CGFontCreateWithFontName(id name) {
+    const char *n = name && cx_is_str(name) ? cx_cstr(name) : 0;
+    if (!n || !n[0]) return 0;
+    for (int i = 0; i < USER_MAX; i++)
+        if (user_bytes[i] && (!strcmp(unames[i].ps, n) || !strcmp(unames[i].full, n))) return cgfont_from_face(USER_BASE + i);
+    id f = MSG(id, cls("NSFont"), "fontWithName:size:", name, 12.0);
+    return f ? cgfont_from_face(fweight(f)) : 0;
+}
+/* O ATSFontRef do mOS é o número da face no kernel (o "peso" do GUI_FONT: 0..3 ou o id de uma fonte
+ * registrada). Referência que não é uma face conhecida não vira fonte, como um ATSFontRef inválido. */
+void *CGFontCreateWithPlatformFont(void *platformFontReference) {
+    if (!platformFontReference) return 0;
+    return cgfont_from_face((int)*(const u32 *)platformFontReference);
+}
+void *CGFontRetain(void *font) { return font ? (void *)objc_retain((id)font) : 0; }
+static cgf_t *cgf_of(void *font) {
+    if (!font || !cgfont_ready || object_getClass((id)font) != &CGFont_c) return 0;
+    cgf_t *g = ct_state((id)font);
+    return g && g->b ? g : 0;
+}
+/* 'maxp'.numGlyphs; um CTFont/NSFont no lugar do CGFont responde pela própria contagem */
+size_t CGFontGetNumberOfGlyphs(void *font) {
+    cgf_t *g = cgf_of(font);
+    long l = 0;
+    if (!g) return font ? (size_t)CTFontGetGlyphCount((id)font) : 0;
+    const u8 *t = cgf_table(g->b, g->n, 0x6D617870u, &l);
+    return t && l >= 6 ? cgf_rd16(t + 4) : 0;
+}
+/* nameID 6 da tabela 'name' */
+id CGFontCopyPostScriptName(void *font) {
+    cgf_t *g = cgf_of(font);
+    long l = 0;
+    char ps[128];
+    if (!g) return font ? CTFontCopyPostScriptName((id)font) : 0;
+    const u8 *t = cgf_table(g->b, g->n, 0x6E616D65u, &l);
+    if (!t) return 0;
+    name_entry(t, l, 6, ps, (int)sizeof ps);
+    return ps[0] ? objc_retain(cx_str(ps)) : 0;
+}
+/* os 258 nomes do conjunto padrão do Macintosh ('post' formatos 1 e 2) */
+static const char *const mac_glyph_names[258] = {
+    ".notdef", ".null", "nonmarkingreturn", "space", "exclam", "quotedbl", "numbersign", "dollar", "percent",
+    "ampersand", "quotesingle", "parenleft", "parenright", "asterisk", "plus", "comma", "hyphen", "period", "slash",
+    "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "colon", "semicolon", "less",
+    "equal", "greater", "question", "at", "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O",
+    "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z", "bracketleft", "backslash", "bracketright", "asciicircum",
+    "underscore", "grave", "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r",
+    "s", "t", "u", "v", "w", "x", "y", "z", "braceleft", "bar", "braceright", "asciitilde", "Adieresis", "Aring",
+    "Ccedilla", "Eacute", "Ntilde", "Odieresis", "Udieresis", "aacute", "agrave", "acircumflex", "adieresis", "atilde",
+    "aring", "ccedilla", "eacute", "egrave", "ecircumflex", "edieresis", "iacute", "igrave", "icircumflex", "idieresis",
+    "ntilde", "oacute", "ograve", "ocircumflex", "odieresis", "otilde", "uacute", "ugrave", "ucircumflex", "udieresis",
+    "dagger", "degree", "cent", "sterling", "section", "bullet", "paragraph", "germandbls", "registered", "copyright",
+    "trademark", "acute", "dieresis", "notequal", "AE", "Oslash", "infinity", "plusminus", "lessequal", "greaterequal",
+    "yen", "mu", "partialdiff", "summation", "product", "pi", "integral", "ordfeminine", "ordmasculine", "Omega", "ae",
+    "oslash", "questiondown", "exclamdown", "logicalnot", "radical", "florin", "approxequal", "Delta", "guillemotleft",
+    "guillemotright", "ellipsis", "nonbreakingspace", "Agrave", "Atilde", "Otilde", "OE", "oe", "endash", "emdash",
+    "quotedblleft", "quotedblright", "quoteleft", "quoteright", "divide", "lozenge", "ydieresis", "Ydieresis",
+    "fraction", "currency", "guilsinglleft", "guilsinglright", "fi", "fl", "daggerdbl", "periodcentered",
+    "quotesinglbase", "quotedblbase", "perthousand", "Acircumflex", "Ecircumflex", "Aacute", "Edieresis", "Egrave",
+    "Iacute", "Icircumflex", "Idieresis", "Igrave", "Oacute", "Ocircumflex", "apple", "Ograve", "Uacute",
+    "Ucircumflex", "Ugrave", "dotlessi", "circumflex", "tilde", "macron", "breve", "dotaccent", "ring", "cedilla",
+    "hungarumlaut", "ogonek", "caron", "Lslash", "lslash", "Scaron", "scaron", "Zcaron", "zcaron", "brokenbar", "Eth",
+    "eth", "Yacute", "yacute", "Thorn", "thorn", "minus", "multiply", "onesuperior", "twosuperior", "threesuperior",
+    "onehalf", "onequarter", "threequarters", "franc", "Gbreve", "gbreve", "Idotaccent", "Scedilla", "scedilla",
+    "Cacute", "cacute", "Ccaron", "ccaron", "dcroat",
+};
+_Static_assert(sizeof mac_glyph_names / sizeof mac_glyph_names[0] == 258, "conjunto padrão do Macintosh");
+/* Nome do glifo pela tabela 'post': formato 1 (ordem padrão do Macintosh) e 2 (índice padrão ou string
+ * Pascal própria). Formato 3 (sem nomes, o comum em CFF/OTF) e glifo fora da fonte: NULL, como a Apple. */
+id CGFontCopyGlyphNameForGlyph(void *font, u16 glyph) {
+    cgf_t *g = cgf_of(font);
+    long l = 0;
+    if (!g) return 0;
+    const u8 *t = cgf_table(g->b, g->n, 0x706F7374u, &l);
+    if (!t || l < 32) return 0;
+    u32 fmt = cgf_rd32(t);
+    if (fmt == 0x00010000u) return glyph < 258 ? objc_retain(cx_str(mac_glyph_names[glyph])) : 0;
+    if (fmt != 0x00020000u || l < 34) return 0;
+    u32 ng = cgf_rd16(t + 32);
+    if (glyph >= ng || 34 + (long)ng * 2 > l) return 0;
+    u32 idx = cgf_rd16(t + 34 + glyph * 2);
+    if (idx < 258) return objc_retain(cx_str(mac_glyph_names[idx]));
+    idx -= 258;
+    const u8 *p = t + 34 + (long)ng * 2, *end = t + l;
+    for (u32 k = 0; k < idx; k++) {
+        if (p >= end) return 0;
+        p += 1 + *p;
+    }
+    if (p >= end || p + 1 + *p > end) return 0;
+    return objc_retain(cx_str_n((const char *)p + 1, *p));
 }
 int CTFontManagerRegisterGraphicsFont(void *font, id *error) {
     cgf_t *g;

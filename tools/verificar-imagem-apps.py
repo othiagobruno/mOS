@@ -33,6 +33,9 @@ APPS = (
     "WhatsApp.app/Contents/MacOS/WhatsApp",
     "OpenBot.app/Contents/MacOS/OpenBot",
     "Codex CLI/codex",
+    "Antigravity.app/Contents/MacOS/Antigravity",
+    "Postico 2.app/Contents/MacOS/Postico",
+    "Setapp.app/Contents/MacOS/Setapp",
 )
 # Compilados de fonte neste build. libswift* gerada por gen-libswift-stubs.c
 # não entra nesta lista: o teste só a classifica.

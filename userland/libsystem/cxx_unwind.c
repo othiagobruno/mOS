@@ -531,6 +531,63 @@ static int step_sig(struct uw_ctx *c) {
     return 1;
 }
 
+/* FDEs registrados em tempo de execução (__register_frame, uw_register.c): código gerado por JIT (V8, o
+ * wasm do Chromium, LLVM ORC) descreve as próprias funções com um FDE solto, como o libunwind da Apple
+ * aceita. Cada entrada guarda o FDE e o intervalo [CIE, fim do FDE] que fde_match usa como limite. */
+enum { UW_DYN_MAX = 4096 };
+static struct { const u8 *fde, *lo; u64 len; } uw_dyn[UW_DYN_MAX];
+static u32 uw_dyn_n;
+static int uw_dyn_lock;
+static void uw_dyn_acquire(void) { while (__atomic_exchange_n(&uw_dyn_lock, 1, __ATOMIC_ACQUIRE)) {} }
+static void uw_dyn_release(void) { __atomic_store_n(&uw_dyn_lock, 0, __ATOMIC_RELEASE); }
+/* 0 = registrou; -1 = não é um FDE (CIE, tamanho 0 ou 64 bits) ou a tabela encheu */
+int mos_uw_dyn_add(const void *p) {
+    const u8 *fde = p, *q = p;
+    if (!fde) return -1;
+    u32 len = (u32)rd_u(&q, 4);
+    if (!len || len == 0xffffffffu) return -1;
+    u32 id = (u32)rd_u(&q, 4);
+    if (!id) return -1;
+    const u8 *cie = (fde + 4) - id;
+    const u8 *cq = cie;
+    u32 clen = (u32)rd_u(&cq, 4);
+    if (!clen || clen == 0xffffffffu) return -1;
+    const u8 *lo = cie < fde ? cie : fde;
+    const u8 *hi_f = fde + 4 + len, *hi_c = cie + 4 + clen;
+    const u8 *hi = hi_f > hi_c ? hi_f : hi_c;
+    int r = -1;
+    uw_dyn_acquire();
+    for (u32 i = 0; i < uw_dyn_n; i++) if (uw_dyn[i].fde == fde) { r = 0; goto out; }
+    if (uw_dyn_n < UW_DYN_MAX) {
+        uw_dyn[uw_dyn_n].fde = fde;
+        uw_dyn[uw_dyn_n].lo = lo;
+        uw_dyn[uw_dyn_n].len = (u64)(hi - lo);
+        uw_dyn_n++;
+        r = 0;
+    }
+out:
+    uw_dyn_release();
+    return r;
+}
+void mos_uw_dyn_remove(const void *fde) {
+    uw_dyn_acquire();
+    for (u32 i = 0; i < uw_dyn_n; i++)
+        if (uw_dyn[i].fde == fde) { uw_dyn[i] = uw_dyn[--uw_dyn_n]; break; }
+    uw_dyn_release();
+}
+static int uw_dyn_find(u64 look, struct uw_ctx *c) {
+    int ok = 0;
+    uw_dyn_acquire();
+    for (u32 i = 0; i < uw_dyn_n && !ok; i++) {
+        if (fde_match(uw_dyn[i].fde, uw_dyn[i].lo, uw_dyn[i].len, look, c, 0)) {
+            c->fde = uw_dyn[i].fde; c->eh = uw_dyn[i].lo; c->eh_len = uw_dyn[i].len;
+            ok = 1;
+        }
+    }
+    uw_dyn_release();
+    return ok;
+}
+
 static int load_frame(struct uw_ctx *c) {
     u64 pc = c->r[16];
     /* A linha do CIE vale para a instrução do call, não para o endereço de retorno. */
@@ -576,6 +633,7 @@ static int load_frame(struct uw_ctx *c) {
         return note_sig(c);
     }
     }
+    if (uw_dyn_n && uw_dyn_find(look, c)) return note_sig(c);
     u64 rbp = c->r[6], rsp = c->r[7];
     if (!rbp || (rbp & 7) || rbp < rsp || rbp - rsp > 0x100000) return 0;
     c->fp_fallback = 1;
