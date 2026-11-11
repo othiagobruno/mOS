@@ -287,10 +287,12 @@ int sendfile(int fd, int s, off_t off, off_t *len, void *hdtr, int flags) {
     if (len) *len = done;
     return 0;
 }
-/* scandir com o struct dirent de 64 bits do macOS (o readdir do mOS já devolve esse layout) */
+/* scandir com o struct dirent de 64 bits do macOS (o readdir do mOS já devolve esse layout). Exportado como
+ * "scandir": o import x86_64 scandir$INODE64 cai nele pela regra de variante do carregador, e o arm64 (que só tem
+ * o dirent de 64 bits) importa o nome sem sufixo. */
 typedef struct { u64 ino; u64 seekoff; u16 reclen; u16 namlen; u8 type; char name[1024]; } vs_dirent_t;
 int scandir64(const char *dir, vs_dirent_t ***out, int (*sel)(const vs_dirent_t *),
-              int (*cmp)(const vs_dirent_t **, const vs_dirent_t **)) __asm__("scandir$INODE64");
+              int (*cmp)(const vs_dirent_t **, const vs_dirent_t **)) __asm__("scandir");
 int scandir64(const char *dir, vs_dirent_t ***out, int (*sel)(const vs_dirent_t *),
               int (*cmp)(const vs_dirent_t **, const vs_dirent_t **)) {
     void *d = opendir(dir);
@@ -312,12 +314,13 @@ int scandir64(const char *dir, vs_dirent_t ***out, int (*sel)(const vs_dirent_t 
     *out = v;
     return n;
 }
-/* getmntinfo: um só sistema de arquivos montado em "/" (statfs64 de 2168 bytes do macOS) */
+/* getmntinfo: um só sistema de arquivos montado em "/" (statfs64 de 2168 bytes do macOS). Mesmo esquema de nome
+ * do scandir: getmntinfo$INODE64 (x86_64) e getmntinfo (arm64) chegam aqui. */
 typedef struct {
     u32 bsize; i32 iosize; u64 blocks, bfree, bavail, files, ffree; u64 fsid; u32 owner, type, flags, fssubtype;
     char fstypename[16]; char mntonname[1024]; char mntfromname[1024]; u32 reserved[8];
 } vs_statfs_t;
-int getmntinfo64(vs_statfs_t **mp, int flags) __asm__("getmntinfo$INODE64");
+int getmntinfo64(vs_statfs_t **mp, int flags) __asm__("getmntinfo");
 int getmntinfo64(vs_statfs_t **mp, int flags) {
     (void)flags;
     static vs_statfs_t fs;
