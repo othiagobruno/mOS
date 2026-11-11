@@ -54,10 +54,17 @@ Meta: os seis apps 100% funcionais no mOS. Este arquivo lista só o que falta. O
 
 ## Antigravity
 
-- **O OAuth do Google volta com `invalid_scope` ("invalid=[http]").** O escopo chega corrompido ao Google. O pedido não
-  passa pelo `ls_open_c`: o diagnóstico `/Sistema/Biblioteca/abrir-url-completo` não registrou nada. O 302 aparece no
-  cliente HTTP do kernel (`net/http.c`). Falta achar quem abre a URL (o `language_server` em Go, o `/usr/bin/open` ou
-  outro caminho do Electron) e onde o `scope` se perde.
+- **OAuth do Google com `invalid_scope` ("invalid=[http]"): causa achada e corrigida no host (10 nov.).** O pedido
+  é montado pelo `language_server` (Go; os escopos `cloud-platform`, `userinfo.email`, `userinfo.profile`, `cclog` e
+  `experimentsandconfigs` estão nas strings do binário 2.29.0) e tem ~650 bytes. O cliente HTTP do kernel
+  (`kernel/net/http.c`, usado pelo motor próprio do Horizonte) guardava a URL em 512 bytes, e o `Location` do 302
+  também: o `scope` chegava cortado no meio de `https%3A…`, e o último token virava `http`/`https`. O Launch Services e
+  o Horizonte cortavam em 1 KiB, e o 302 do Google (com `continue=` codificado duas vezes) passa disso. Agora a URL vai
+  até `MOS_URL_MAX` (8 KiB) em toda a cadeia (`openurl.c` → `SYS_LS` → `defer` → Horizonte → `http.c`), no heap, e
+  acima disso o pedido falha com "URL longa demais" em vez de sair cortado. Teste: `tools/http_url_longa_host.c` (no
+  `tools/build.sh`). Falta na VM: clicar "Continue with Google" e ver a tela de conta do Google (o login é do usuário).
+  O diagnóstico `abrir-url-completo` não ter registrado nada continua sem explicação; vale olhar o log do kernel
+  (`http: 302 → …`, agora com o tamanho) na próxima rodada.
 - O `cable_ble_scanner` (Swift, opcional) não liga.
 
 ## Grok Bot

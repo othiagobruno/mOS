@@ -20,11 +20,13 @@ typedef struct {
     u8  *req_body;
     u32  req_len;
     /* URL atual */
-    char cur[512];
+    char cur[MOS_URL_MAX];
     bool https;
     char host[256];
     u16  port;
-    char path[1024];
+    char path[MOS_URL_MAX];
+    char scratch[MOS_URL_MAX];   /* Location recebido e o próximo endereço (fora da pilha de 32 KiB) */
+    char next[MOS_URL_MAX];
     /* conexão */
     int  phase;
     u32  ip;
@@ -84,7 +86,7 @@ static bool url_parse(const char *url, bool *https, char *host, u16 *port, char 
     static const char hex[] = "0123456789ABCDEF";
     for (; *p && *p != '#'; p++) {
         u8 c = (u8)*p;
-        if (o + 4 >= 1024) { snprintf(err, errn, "URL longa demais"); return false; }
+        if (o + 4 >= MOS_URL_MAX) { snprintf(err, errn, "URL longa demais"); return false; }
         if (c <= 0x20 || c >= 0x7F || c == '"' || c == '<' || c == '>') {
             path[o++] = '%'; path[o++] = hex[c >> 4]; path[o++] = hex[c & 15];
         } else path[o++] = (char)c;
@@ -99,35 +101,34 @@ static void host_port(hp_t *p, char *out, usize n) {
     else snprintf(out, n, "%s:%u", p->host, p->port);
 }
 
-/* resolve um Location relativo à URL atual */
-static void resolve_location(hp_t *p, const char *loc, char *out, usize n) {
+/* resolve um Location relativo à URL atual; false se o resultado não cabe em n (nada é cortado) */
+static bool resolve_location(hp_t *p, const char *loc, char *out, usize n) {
     while (*loc == ' ') loc++;
     const char *scheme = p->https ? "https" : "http";
     char hp[280];
     host_port(p, hp, sizeof hp);
     const char *sch = strstr(loc, "://");
     const char *slash = strchr(loc, '/');
+    int w;
     if (sch && slash && sch < slash) {
-        snprintf(out, n, "%s", loc);    /* absoluto (esquema://...) */
+        w = snprintf(out, n, "%s", loc);    /* absoluto (esquema://...) */
     } else if (!strncasecmp(loc, "http://", 7) || !strncasecmp(loc, "https://", 8)) {
-        snprintf(out, n, "%s", loc);
+        w = snprintf(out, n, "%s", loc);
     } else if (loc[0] == '/' && loc[1] == '/') {
-        snprintf(out, n, "%s:%s", scheme, loc);
+        w = snprintf(out, n, "%s:%s", scheme, loc);
     } else if (loc[0] == '/') {
-        snprintf(out, n, "%s://%s%s", scheme, hp, loc);
+        w = snprintf(out, n, "%s://%s%s", scheme, hp, loc);
     } else {
-        char base[1024];
-        strncpy(base, p->path, sizeof base - 1);
-        base[sizeof base - 1] = 0;
-        char *q = strchr(base, '?');
-        if (loc[0] == '?') { if (q) *q = 0; }
-        else {
-            if (q) *q = 0;
-            char *sl = strrchr(base, '/');
-            if (sl) sl[1] = 0; else strcpy(base, "/");
+        /* relativo: o diretório (ou o caminho sem a consulta, para "?...") do caminho atual */
+        const char *path = p->path, *q = strchr(path, '?');
+        usize bl = q ? (usize)(q - path) : strlen(path);
+        if (loc[0] != '?') {
+            while (bl && path[bl - 1] != '/') bl--;
+            if (!bl) { path = "/"; bl = 1; }
         }
-        snprintf(out, n, "%s://%s%s%s", scheme, hp, base, loc);
+        w = snprintf(out, n, "%s://%s%.*s%s", scheme, hp, (int)bl, path, loc);
     }
+    return w >= 0 && (usize)w < n;
 }
 
 /* =================================================================== transporte (TCP ou TLS) */
@@ -155,8 +156,8 @@ static void touch(hp_t *p) { p->deadline = timer_ticks() + HTTP_TIMEOUT_MS; }
 
 static bool start_url(http_req_t *r, const char *url) {
     hp_t *p = r->priv;
-    strncpy(p->cur, url, sizeof p->cur - 1);
-    p->cur[sizeof p->cur - 1] = 0;
+    if (strlen(url) >= sizeof p->cur) { snprintf(r->error, sizeof r->error, "URL longa demais"); r->state = -1; return false; }
+    if (p->cur != url) memmove(p->cur, url, strlen(url) + 1);
     if (!url_parse(url, &p->https, p->host, &p->port, p->path, r->error, sizeof r->error)) { r->state = -1; return false; }
     xp_close(p);
     kfree(p->out); p->out = NULL;
@@ -177,24 +178,27 @@ static bool start_url(http_req_t *r, const char *url) {
     /* monta a requisição */
     char hp[280];
     host_port(p, hp, sizeof hp);
-    char head[2048];
+    usize hcap = strlen(p->path) + strlen(hp) + strlen(p->req_ct) + 512;
+    char *head = kmalloc(hcap);
+    if (!head) { snprintf(r->error, sizeof r->error, "sem memória"); r->state = -1; return false; }
     int hl;
     bool has_body = !strcmp(p->method, "POST");
     if (has_body)
-        hl = snprintf(head, sizeof head,
+        hl = snprintf(head, hcap,
                       "%s %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: " HTTP_USER_AGENT "\r\nAccept: */*\r\n"
                       "Accept-Encoding: identity\r\nConnection: close\r\nContent-Type: %s\r\nContent-Length: %u\r\n\r\n",
                       p->method, p->path, hp, p->req_ct[0] ? p->req_ct : "application/octet-stream", p->req_len);
     else
-        hl = snprintf(head, sizeof head,
+        hl = snprintf(head, hcap,
                       "%s %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: " HTTP_USER_AGENT "\r\nAccept: */*\r\n"
                       "Accept-Encoding: identity\r\nConnection: close\r\n\r\n",
                       p->method, p->path, hp);
-    if (hl < 0 || hl >= (int)sizeof head) { snprintf(r->error, sizeof r->error, "URL longa demais"); r->state = -1; return false; }
+    if (hl < 0 || (usize)hl >= hcap) { kfree(head); snprintf(r->error, sizeof r->error, "URL longa demais"); r->state = -1; return false; }
     u32 bl = has_body ? p->req_len : 0;
     p->out = kmalloc((usize)hl + bl);
-    if (!p->out) { snprintf(r->error, sizeof r->error, "sem memória"); r->state = -1; return false; }
+    if (!p->out) { kfree(head); snprintf(r->error, sizeof r->error, "sem memória"); r->state = -1; return false; }
     memcpy(p->out, head, hl);
+    kfree(head);
     if (bl) memcpy(p->out + hl, p->req_body, bl);
     p->out_len = (u32)hl + bl;
     p->out_off = 0;
@@ -208,20 +212,26 @@ static http_req_t *req_new(const char *url, const char *method) {
     if (!p) { kfree(r); return NULL; }
     r->priv = p;
     p->sock = -1;
-    strncpy(r->url, url ? url : "", sizeof r->url - 1);
     strcpy(p->method, method);
+    if (url && strlen(url) >= sizeof r->url) {          /* recusa em vez de cortar: o servidor veria outra URL */
+        snprintf(r->url, sizeof r->url, "%.200s…", url);
+        snprintf(r->error, sizeof r->error, "URL longa demais (%u bytes, máximo %u)", (unsigned)strlen(url), (unsigned)MOS_URL_MAX - 1);
+        r->state = -1;
+        return r;
+    }
+    snprintf(r->url, sizeof r->url, "%s", url ? url : "");
     return r;
 }
 
 http_req_t *http_get(const char *url) {
     http_req_t *r = req_new(url, "GET");
-    if (r) start_url(r, r->url);
+    if (r && !r->state) start_url(r, r->url);
     return r;
 }
 
 http_req_t *http_post(const char *url, const char *content_type, const void *body, u32 len) {
     http_req_t *r = req_new(url, "POST");
-    if (!r) return NULL;
+    if (!r || r->state) return r;
     hp_t *p = r->priv;
     if (content_type) strncpy(p->req_ct, content_type, sizeof p->req_ct - 1);
     if (len) {
@@ -292,7 +302,7 @@ static void finish(http_req_t *r) {
     hp_t *p = r->priv;
     xp_close(p);
     if (!r->body) { r->body = kmalloc(1); if (r->body) r->body[0] = 0; }
-    strncpy(r->location, p->cur, sizeof r->location - 1);
+    snprintf(r->location, sizeof r->location, "%s", p->cur);
     p->phase = P_DONE;
     r->state = 1;
 }
@@ -386,7 +396,9 @@ static int on_header(http_req_t *r, u32 end) {
         return 0;
     }
     r->status = status;
-    char location[512] = "";
+    char *location = p->scratch;
+    location[0] = 0;
+    bool loc_long = false;
     p->content_length = -1;
     p->chunked = false;
     char *line = strchr(h, '\n');
@@ -411,20 +423,24 @@ static int on_header(http_req_t *r, u32 end) {
                 strncpy(r->content_type, val, sizeof r->content_type - 1);
                 r->content_type[sizeof r->content_type - 1] = 0;
             } else if (!strcasecmp(name, "Location")) {
-                strncpy(location, val, sizeof location - 1);
+                usize vl = strlen(val);
+                if (vl >= sizeof p->scratch) loc_long = true;
+                else memcpy(location, val, vl + 1);
             }
         }
         line = nl;
     }
     if (p->chunked) p->content_length = -1;
 
-    bool redirect = (status == 301 || status == 302 || status == 303 || status == 307 || status == 308) && location[0];
+    bool is_redir = status == 301 || status == 302 || status == 303 || status == 307 || status == 308;
+    if (is_redir && loc_long) return fail(r, "redirecionamento %d com URL longa demais", status);
+    bool redirect = is_redir && location[0];
     if (redirect) {
         if (p->redirects >= HTTP_MAX_REDIR) return fail(r, "redirecionamentos em excesso");
         p->redirects++;
-        char next[512];
-        resolve_location(p, location, next, sizeof next);
-        kprintf("http: %d → %s\n", status, next);
+        char *next = p->next;
+        if (!resolve_location(p, location, next, sizeof p->next)) return fail(r, "redirecionamento %d com URL longa demais", status);
+        kprintf("http: %d → %.160s%s (%u bytes)\n", status, next, strlen(next) > 160 ? "…" : "", (unsigned)strlen(next));
         if (status == 303 || ((status == 301 || status == 302) && !strcmp(p->method, "POST"))) {
             strcpy(p->method, "GET");
             kfree(p->req_body); p->req_body = NULL; p->req_len = 0;

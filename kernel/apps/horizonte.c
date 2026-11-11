@@ -17,17 +17,26 @@ enum { M_NEWWIN = 1, M_NEWTAB, M_OPENLOC, M_CLOSETAB, M_RELOAD, M_ZOOMIN, M_ZOOM
        M_JS, M_JSCON,
        M_FAV0 = 50 };
 
-typedef struct { char url[1024]; int scroll; } hent_t;
+/* URLs da aba: até MOS_URL_MAX (net.h), sem corte. O histórico guarda cópias no heap (48 entradas de 8 KiB por aba
+ * seriam 384 KiB). Locais de URL ficam no heap: a pilha do kernel tem 32 KiB. */
+#define HZ_URL MOS_URL_MAX
+typedef struct { char *url; int scroll; } hent_t;
+static void hent_set(hent_t *h, const char *url) {
+    char *n = strdup(url ? url : "");
+    if (!n) return;                      /* sem memória: a entrada antiga continua */
+    kfree(h->url);
+    h->url = n;
+}
 
 typedef struct tab {
-    char url[1024];
+    char url[HZ_URL];
     char title[160];
     doc_t *doc;
     hent_t hist[HIST];
     int nhist, hpos;
     /* carregamento */
     http_req_t *req;
-    char req_url[1024];
+    char req_url[HZ_URL];
     bool req_record;
     int req_scroll;
     u64 load_t0;
@@ -121,12 +130,12 @@ typedef struct bwin {
     window_t *w;
     tab_t *tabs[MAX_TABS];
     int ntabs, cur;
-    char addr[1024];
+    char addr[HZ_URL];
     char status[600];
     node_t *hover_link;
     node_t *press_link;
     /* ações adiadas para depois da pintura */
-    char nav_url[1024];
+    char nav_url[HZ_URL];
     int nav_kind;            /* 1 navegar, 2 nova aba */
     node_t *submit_form;
     ctrl_t *submitter;
@@ -468,11 +477,17 @@ static doc_t *doc_dir_listing(vnode_t *dir, const char *path, const char *url) {
 }
 
 /* ============================================================ navegação */
+static void normalize_into(char *tmp, char *out, int cap);
 static void normalize_input(const char *in, char *out, int cap) {
     while (isspace(*in)) in++;
-    char tmp[1024];
-    strncpy(tmp, in, sizeof tmp - 1);
-    tmp[sizeof tmp - 1] = 0;
+    out[0] = 0;
+    if (strlen(in) >= (usize)cap) return;   /* longa demais: nada (nunca uma URL cortada) */
+    char *tmp = strdup(in);
+    if (!tmp) return;
+    normalize_into(tmp, out, cap);
+    kfree(tmp);
+}
+static void normalize_into(char *tmp, char *out, int cap) {
     int l = (int)strlen(tmp);
     while (l && isspace(tmp[l - 1])) tmp[--l] = 0;
     char sch[16];
@@ -501,11 +516,19 @@ static void normalize_input(const char *in, char *out, int cap) {
 }
 
 static void push_history(tab_t *t, const char *url) {
-    if (t->nhist && t->hpos >= 0 && !strcmp(t->hist[t->hpos].url, url)) return;
-    if (t->hpos < t->nhist - 1) t->nhist = t->hpos + 1;
-    if (t->nhist == HIST) { memmove(t->hist, t->hist + 1, sizeof(hent_t) * (HIST - 1)); t->nhist--; }
-    strncpy(t->hist[t->nhist].url, url, sizeof t->hist[0].url - 1);
-    t->hist[t->nhist].url[sizeof t->hist[0].url - 1] = 0;
+    if (t->nhist && t->hpos >= 0 && t->hist[t->hpos].url && !strcmp(t->hist[t->hpos].url, url)) return;
+    if (t->hpos < t->nhist - 1) {
+        for (int i = t->hpos + 1; i < t->nhist; i++) { kfree(t->hist[i].url); t->hist[i].url = NULL; }
+        t->nhist = t->hpos + 1;
+    }
+    if (t->nhist == HIST) {
+        kfree(t->hist[0].url);
+        memmove(t->hist, t->hist + 1, sizeof(hent_t) * (HIST - 1));
+        t->hist[HIST - 1].url = NULL;
+        t->nhist--;
+    }
+    hent_set(&t->hist[t->nhist], url);
+    if (!t->hist[t->nhist].url) return;
     t->hist[t->nhist].scroll = 0;
     t->hpos = t->nhist++;
 }
@@ -522,7 +545,7 @@ static void commit(tab_t *t, doc_t *d, const char *url, bool record, int scroll)
     if (fr && *fr) { strncpy(t->frag, fr, sizeof t->frag - 1); t->frag[sizeof t->frag - 1] = 0; }
     else t->frag[0] = 0;
     if (record) push_history(t, url);
-    else if (t->nhist && t->hpos >= 0) { strncpy(t->hist[t->hpos].url, url, sizeof t->hist[0].url - 1); }
+    else if (t->nhist && t->hpos >= 0) hent_set(&t->hist[t->hpos], url);
     /* JavaScript: executa os scripts da página (os externos continuam no tick) */
     if (d && !t->about && js_enabled) t->js = js_page_new(d, url, 0, 0);
     if (!t->title[0]) {
@@ -610,10 +633,16 @@ static void start_request(tab_t *t, const char *url, bool record, int scroll, co
     if (!t->req) show_error(t, url, "Não foi possível iniciar a conexão.", NULL, record);
 }
 
+static void tab_navigate_url(bwin_t *b, tab_t *t, const char *url, bool record);
 static void tab_navigate(bwin_t *b, tab_t *t, const char *input, bool record) {
-    char url[1024];
-    normalize_input(input, url, sizeof url);
-    if (!url[0]) return;
+    char *url = kmalloc(HZ_URL);
+    if (!url) return;
+    normalize_input(input, url, HZ_URL);
+    if (url[0]) tab_navigate_url(b, t, url, record);
+    else if (input && strlen(input) >= HZ_URL) show_error(t, "about:blank", "O endereço é longo demais.", NULL, record);
+    kfree(url);
+}
+static void tab_navigate_url(bwin_t *b, tab_t *t, const char *url, bool record) {
     /* mesma página, só muda o fragmento */
     if (t->doc && url_same_doc(url, t->url) && url_fragment(url) && !t->req) {
         const char *fr = url_fragment(url);
@@ -640,6 +669,7 @@ static void tab_go_history(bwin_t *b, tab_t *t, int delta) {
     hent_t *h = &t->hist[np];
     cancel_load(t);
     if (b) b->w->ui.focus = 0;
+    if (!h->url) return;
     if (t->doc && url_same_doc(h->url, t->url)) {
         strncpy(t->url, h->url, sizeof t->url - 1);
         t->scroll = h->scroll;
@@ -657,16 +687,21 @@ static void tab_reload(bwin_t *b, tab_t *t) {
 }
 
 /* conclusão de uma requisição principal */
+static void finish_request_at(tab_t *t, http_req_t *r, int st, char *url);
 static void finish_request(tab_t *t) {
     http_req_t *r = t->req;
     int st = http_poll(r);
     if (st == 0) return;
-    char url[1024];
-    strncpy(url, r->location[0] ? r->location : t->req_url, sizeof url - 1);
-    url[sizeof url - 1] = 0;
+    char *url = kmalloc(HZ_URL);
+    if (!url) { http_free(r); t->req = NULL; return; }
+    finish_request_at(t, r, st, url);
+    kfree(url);
+}
+static void finish_request_at(tab_t *t, http_req_t *r, int st, char *url) {
+    snprintf(url, HZ_URL, "%s", r->location[0] ? r->location : t->req_url);
     /* preserva o fragmento pedido */
     const char *fr = url_fragment(t->req_url);
-    if (fr && !strchr(url, '#') && strlen(url) + strlen(fr) + 2 < sizeof url) { strcat(url, "#"); strcat(url, fr); }
+    if (fr && !strchr(url, '#') && strlen(url) + strlen(fr) + 2 < HZ_URL) { strcat(url, "#"); strcat(url, fr); }
     bool record = t->req_record;
     int scroll = t->req_scroll;
     t->req = NULL;
@@ -962,6 +997,7 @@ static void tab_free(tab_t *t) {
     css_cancel(t);
     if (t->js) { js_page_free(t->js); t->js = NULL; }
     if (t->doc) doc_free(t->doc);
+    for (int i = 0; i < HIST; i++) kfree(t->hist[i].url);
     kfree(t);
 }
 
@@ -1263,9 +1299,8 @@ static void paint(window_t *w, ui_t *u) {
         tab_t *x = b->tabs[i];
         if (x->about && x->about_dark != T.dark && !x->req) {
             int sc = x->scroll;
-            char url[1024];
-            strcpy(url, x->url);
-            load_local(x, url, false, sc);
+            char *url = strdup(x->url);
+            if (url) { load_local(x, url, false, sc); kfree(url); }
         }
     }
     /* atalhos de teclado */
@@ -1491,10 +1526,9 @@ static void tick(app_t *a) {
                 bool rl = false;
                 const char *nu = js_page_take_nav(t->js, &rl);
                 if (nu) {
-                    char url[1024];
-                    strncpy(url, nu, sizeof url - 1);
-                    url[sizeof url - 1] = 0;
-                    if (rl) tab_reload(b, t); else tab_navigate(b, t, url, true);
+                    char *url = strdup(nu);
+                    if (rl) tab_reload(b, t); else if (url) tab_navigate(b, t, url, true);
+                    kfree(url);
                     changed = true;
                 }
             }
