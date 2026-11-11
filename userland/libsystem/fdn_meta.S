@@ -68,6 +68,7 @@ fdn_struct "$s10Foundation12CharacterSetVMn", "$s10FoundationMXM", "CharacterSet
 fdn_struct "$s10Foundation12DateIntervalVMn", "$s10FoundationMXM", "DateInterval", "$s10Foundation12DateIntervalVMa", fdn_md_dint, fdn_vwt_pod16
 fdn_struct "$s10Foundation9IndexPathVMn", "$s10FoundationMXM", "IndexPath", "$s10Foundation9IndexPathVMa", fdn_md_ipath, fdn_vwt_box
 fdn_struct "$s10Foundation12URLQueryItemVMn", "$s10FoundationMXM", "URLQueryItem", "$s10Foundation12URLQueryItemVMa", fdn_md_qitem, fdn_vwt_box
+fdn_struct "$s10Foundation13URLComponentsVMn", "$s10FoundationMXM", "URLComponents", "$s10Foundation13URLComponentsVMa", fdn_md_ucomp, fdn_vwt_box
 fdn_struct "$s10Foundation12NotificationVMn", "$s10FoundationMXM", "Notification", "$s10Foundation12NotificationVMa", fdn_md_note, fdn_vwt_obj
 
 /* enum sem payload: NumPayloadCasesAndPayloadSizeOffset = 0, NumEmptyCases; metadata kind 0x201. */

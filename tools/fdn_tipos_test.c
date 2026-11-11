@@ -809,6 +809,79 @@ int main(void) {
         CHECK(v.w0 == 0 && v.w1 == 0, "value nil");
     }
 
+    /* ---- URLComponents */
+    {
+        SW void uc_init(OUT void **o) __asm__("$s10Foundation13URLComponentsVACycfC");
+        SW void uc_init_s(OUT void **o, uint64_t a, uint64_t b) __asm__("$s10Foundation13URLComponentsV6stringACSgSSh_tcfC");
+        SW void uc_init_url(OUT void **o, void *const *u, _Bool r) __asm__("$s10Foundation13URLComponentsV3url23resolvingAgainstBaseURLACSgAA0G0Vh_SbtcfC");
+        SW fdn_str uc_string(void *const *s CTX) __asm__("$s10Foundation13URLComponentsV6stringSSSgvg");
+        SW void uc_url(OUT void **o, void *const *s CTX) __asm__("$s10Foundation13URLComponentsV3urlAA3URLVSgvg");
+        SW fdn_str uc_host(void *const *s CTX) __asm__("$s10Foundation13URLComponentsV4hostSSSgvg");
+        SW fdn_str uc_user(void *const *s CTX) __asm__("$s10Foundation13URLComponentsV4userSSSgvg");
+        SW fdn_str uc_path(void *const *s CTX) __asm__("$s10Foundation13URLComponentsV4pathSSvg");
+        SW fdn_str uc_pe_path(void *const *s CTX) __asm__("$s10Foundation13URLComponentsV18percentEncodedPathSSvg");
+        SW fdn_str uc_query(void *const *s CTX) __asm__("$s10Foundation13URLComponentsV5querySSSgvg");
+        SW fdn_str uc_pe_query(void *const *s CTX) __asm__("$s10Foundation13URLComponentsV19percentEncodedQuerySSSgvg");
+        SW fdn_str uc_fragment(void *const *s CTX) __asm__("$s10Foundation13URLComponentsV8fragmentSSSgvg");
+        typedef struct { long v; _Bool none; } oi2;
+        SW oi2 uc_port(void *const *s CTX) __asm__("$s10Foundation13URLComponentsV4portSiSgvg");
+        SW void uc_set_scheme(uint64_t a, uint64_t b, void **s CTX) __asm__("$s10Foundation13URLComponentsV6schemeSSSgvs");
+        SW void uc_set_host(uint64_t a, uint64_t b, void **s CTX) __asm__("$s10Foundation13URLComponentsV4hostSSSgvs");
+        SW void uc_set_path(uint64_t a, uint64_t b, void **s CTX) __asm__("$s10Foundation13URLComponentsV4pathSSvs");
+        SW void uc_set_query(uint64_t a, uint64_t b, void **s CTX) __asm__("$s10Foundation13URLComponentsV5querySSSgvs");
+        SW void uc_set_port(long v, _Bool none, void **s CTX) __asm__("$s10Foundation13URLComponentsV4portSiSgvs");
+        void *c = 0, *d = 0, *u = 0;
+        uint8_t opt[9];
+        fdn_str s = fdn_str_make("https://ana:x@exemplo.com.br:8080/caminho%20com/espa%C3%A7o?q=um%20dois&b=2#topo", -1);
+        uc_init_s((void **)opt, s.w0, s.w1);
+        CHECK(opt[8] == 0, "URLComponents(string:)");
+        memcpy(&c, opt, 8);
+        str_eq(uc_host(&c), "exemplo.com.br", "host");
+        str_eq(uc_user(&c), "ana", "user");
+        str_eq(uc_path(&c), "/caminho com/espaço", "path decodificado");
+        str_eq(uc_pe_path(&c), "/caminho%20com/espa%C3%A7o", "percentEncodedPath");
+        str_eq(uc_query(&c), "q=um dois&b=2", "query");
+        str_eq(uc_pe_query(&c), "q=um%20dois&b=2", "percentEncodedQuery");
+        str_eq(uc_fragment(&c), "topo", "fragment");
+        CHECK(uc_port(&c).v == 8080 && !uc_port(&c).none, "port");
+        str_eq(uc_string(&c), "https://ana:x@exemplo.com.br:8080/caminho%20com/espa%C3%A7o?q=um%20dois&b=2#topo", "string ida e volta");
+        s = fdn_str_make("http://a b.com", -1);
+        uc_init_s((void **)opt, s.w0, s.w1);
+        CHECK(opt[8] == 1, "espaço = nil");
+        uc_init(&d);
+        s = fdn_str_make("https", 5); uc_set_scheme(s.w0, s.w1, &d);
+        s = fdn_str_make("api.exemplo.com", -1); uc_set_host(s.w0, s.w1, &d);
+        s = fdn_str_make("/v1/busca", -1); uc_set_path(s.w0, s.w1, &d);
+        s = fdn_str_make("termo=café com leite", -1); uc_set_query(s.w0, s.w1, &d);
+        str_eq(uc_string(&d), "https://api.exemplo.com/v1/busca?termo=caf%C3%A9%20com%20leite", "montado pelos setters");
+        uc_set_port(443, 0, &d);
+        str_eq(uc_string(&d), "https://api.exemplo.com:443/v1/busca?termo=caf%C3%A9%20com%20leite", "port setter");
+        uc_set_port(0, 1, &d);
+        uc_set_query(0, 0, &d);
+        str_eq(uc_string(&d), "https://api.exemplo.com/v1/busca", "nil limpa");
+        uc_url((void **)opt, &d);
+        CHECK(opt[8] == 0, "url some");
+        memcpy(&u, opt, 8);
+        CHECK(!strcmp(((furl *)u)->abs, "https://api.exemplo.com/v1/busca"), "url texto");
+        uc_init_url((void **)opt, &u, 0);
+        CHECK(opt[8] == 0, "init(url:)");
+        memcpy(&c, opt, 8);
+        str_eq(uc_host(&c), "api.exemplo.com", "host do URL");
+        /* copy-on-write: a cópia muda, o original não */
+        {
+            void *e = 0;
+            fdn_vwt_box.init_copy(&e, &c, 0);
+            s = fdn_str_make("outro.com", -1);
+            uc_set_host(s.w0, s.w1, &e);
+            str_eq(uc_host(&e), "outro.com", "cópia mudou");
+            str_eq(uc_host(&c), "api.exemplo.com", "original igual");
+        }
+        s = fdn_str_make("relativo", -1);
+        uc_set_path(s.w0, s.w1, &c);
+        fdn_str z = uc_string(&c);
+        CHECK(z.w0 == 0 && z.w1 == 0, "caminho sem / com host = nil");
+    }
+
     printf("fdn_tipos: %d/%d\n", total - falhas, total);
     return falhas ? 1 : 0;
 }

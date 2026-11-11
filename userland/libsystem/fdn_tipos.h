@@ -100,3 +100,9 @@ void fdn_box_release(void *b);
 void *fdn_query_item_new(const char *name, const char *value);
 const char *fdn_query_item_name(void *q);
 const char *fdn_query_item_value(void *q);
+
+/* URLComponents (fdn_urlcomp.c) */
+int fdn_urlcomp_parse(const char *s, void **out);
+char *fdn_urlcomp_string(const void *u);
+char *fdn_pct_encode(int comp, const char *s);
+char *fdn_pct_decode(const char *s);
