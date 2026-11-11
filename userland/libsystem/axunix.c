@@ -212,7 +212,17 @@ static int unix_listen(void (*fn)(int, const void *, int, void *), void *ctx) {
     return 0;
 }
 
+/* uma espera por vez: g_wait é um só (duas threads pedindo ao mesmo tempo trocariam as respostas) */
+static volatile int g_call_lock;
+static int unix_call_locked(int pid, const void *req, int n, void *reply, int cap, int *out_n);
 static int unix_call(int pid, const void *req, int n, void *reply, int cap, int *out_n) {
+    int r;
+    while (__sync_lock_test_and_set(&g_call_lock, 1)) usleep(100);
+    r = unix_call_locked(pid, req, n, reply, cap, out_n);
+    __sync_lock_release(&g_call_lock);
+    return r;
+}
+static int unix_call_locked(int pid, const void *req, int n, void *reply, int cap, int *out_n) {
     int i;
     if (out_n) *out_n = 0;
     if (unix_listen(g_fn, g_ctx) != 0) return 61;
@@ -246,3 +256,5 @@ static const cx_ax_transport g_unix_ax = {
 };
 
 void cx_ax_unix_bind(void) { cx_ax_transport_bind(&g_unix_ax); }
+/* o vtable em si: reserva do xpc-mach (axremote.c) e o segundo listen do servidor (axserver.c) */
+const cx_ax_transport *cx_ax_unix_transport(void) { return &g_unix_ax; }
