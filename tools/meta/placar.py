@@ -285,7 +285,9 @@ def rodar_machocheck(mc, libsys, discos, app_dir, arch, saida):
 def commit():
     try:
         h = subprocess.run(["git", "-C", ROOT, "rev-parse", "--short", "HEAD"], capture_output=True, text=True).stdout.strip()
-        sujo = subprocess.run(["git", "-C", ROOT, "status", "--porcelain", "--untracked-files=no"], capture_output=True, text=True).stdout.strip()
+        sujo = subprocess.run(["git", "-C", ROOT, "status", "--porcelain", "--untracked-files=no"], capture_output=True, text=True).stdout
+        # o tools/build.sh reescreve o caminho do libSystem.mos neste arquivo: não é mudança de fonte
+        sujo = [l for l in sujo.splitlines() if l.strip() and not l.endswith("kernel/compat/libsystem_blob.S")]
         return h + ("+mudanças locais" if sujo else "")
     except Exception:
         return "?"
