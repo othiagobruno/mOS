@@ -311,6 +311,9 @@ bash "$ROOT/tools/runtime-block-task-teste.sh" "$ZIG" "$OUT/runtime-block-task"
 echo "==> String, Array e Dictionary (teste de host)"
 bash "$ROOT/tools/string-fdn-teste.sh" "$ZIG" "$OUT/string-fdn"
 
+echo "==> Date, UUID, erros e Notification do Foundation Swift (teste de host)"
+bash "$ROOT/tools/fdn-tipos-teste.sh" "$ZIG" "$OUT/fdn-tipos"
+
 echo "==> kernel"
 mapfile -t KSRC < <(find "$ROOT/kernel" -type f \( -name '*.c' -o -name '*.S' \) | sort)
 "$ZIG" cc -target x86_64-uefi-msvc -O2 -g0 -ffreestanding -fno-stack-protector -fno-stack-check -mno-stack-arg-probe \
