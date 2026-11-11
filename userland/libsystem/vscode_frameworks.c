@@ -372,10 +372,6 @@ void *CGDataProviderCreateWithCFData(id data) {
     objc_retain(data);
     return CGDataProviderCreateWithData(data, MSG0(const void *, data, "bytes"), (size_t)MSG0(u64, data, "length"), prov_release);
 }
-void *CGPDFDocumentCreateWithProvider(void *p) { (void)p; return 0; }
-size_t CGPDFDocumentGetNumberOfPages(void *d) { (void)d; return 0; }
-void *CGPDFDocumentGetPage(void *d, size_t n) { (void)d; (void)n; return 0; }
-cg_rect_t CGPDFPageGetBoxRect(void *p, int box) { (void)p; (void)box; cg_rect_t r = {0, 0, 0, 0}; return r; }
 int CGPDFPageGetRotationAngle(void *p) { (void)p; return 0; }
 
 /* ================================================================ IOKit */

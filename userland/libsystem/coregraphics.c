@@ -14,6 +14,7 @@
 #include "foundation.h"
 #include "libc.h"
 #include "cg_blend.h"
+#include "cg_raster.h"
 
 double sqrt(double), sin(double), cos(double), atan2(double, double), fabs(double), floor(double), ceil(double);
 id objc_retain(id o);
@@ -615,6 +616,25 @@ void *CGColorGetColorSpace(const void *c) {
 #define CGK_BM 0xC6B10001u
 #define CGK_IM 0xC6B10002u
 #define CGK_PR 0xC6B10003u
+/* Estado de desenho do CGBitmapContext além do CTM/recorte retangular (coregraphics_bm.inc). */
+typedef struct {
+    u32 stroke; double lw, miter, phase, dash[16]; int ndash, cap, join; double galpha; int aa;
+    double sdx, sdy, sblur; u32 scolor; int pattern;
+    u8 *mask;
+} cg_bmx_gs;
+typedef struct {
+    cgr_poly path;               /* no espaço do dispositivo */
+    u32 stroke;                  /* ARGB não pré-multiplicado */
+    double lw, miter, phase, dash[16];
+    int ndash, cap, join, aa;
+    double galpha;
+    double sdx, sdy, sblur; u32 scolor;           /* sombra: guardada, ainda não desenhada */
+    u8 *mask;                    /* cobertura do recorte por pixel; NULL = só o retângulo */
+    u32 *tile; int tw, th, pattern_on; double pdx, pdy;   /* padrão de preenchimento, pré-multiplicado */
+    void *fill_space;
+    u8 *layer_data[4]; double layer_alpha[4]; int layer_owns[4]; int nlayer;
+    cg_bmx_gs gs[8]; int gsp;
+} cg_bmx_t;
 typedef struct {
     cx_class_t *isa;
     u32 kind;
@@ -635,7 +655,12 @@ typedef struct {
     void *cb_info;
     void (*rel_cb)(void *, const void *, size_t);
     u64 cb_size;
+    cg_bmx_t *gx;                            /* só bitmap: path, traço, máscara, padrão, camadas */
 } cgobj_t;
+static void bmx_free(cgobj_t *o);
+static void bmx_save(cgobj_t *o);
+static void bmx_restore(cgobj_t *o);
+static u32 fill_src(cgobj_t *o, int x, int y);
 static cx_class_t BM_c, BM_m, IM_c, IM_m, PR_c, PR_m;
 static int cg_ready;
 extern void cx_object_free(id o);
@@ -645,6 +670,10 @@ static void cg_dealloc(id self, SEL c) {
     cgobj_t *o = (cgobj_t *)self;
     if (o->kind == CGK_PR && o->rel_cb) o->rel_cb(o->cb_info, o->data, (size_t)o->cb_size);
     if (o->kind == CGK_IM && o->cb_info) objc_release((id)o->cb_info);
+    if (o->kind == CGK_BM) {
+        bmx_free(o);
+        if (o->rel_cb) ((void (*)(void *, void *))(void *)o->rel_cb)(o->cb_info, o->data);   /* CGBitmapContextCreateWithData */
+    }
     if (o->owns) free(o->data);
     o->data = 0;
     o->kind = 0;
@@ -737,6 +766,7 @@ void *CGImageCreate(size_t w, size_t h, size_t bpc, size_t bpp, size_t bpr, cons
     cgobj_t *o = cg_new(&IM_c, CGK_IM);
     if (!o) return 0;
     o->w = (u32)w; o->h = (u32)h; o->bpr = (u32)w * 4; o->bpp = 4; o->info = info; o->owns = 1;
+    o->blend = (u8)(intent & 0xFF);          /* imagem não usa blend: guarda o rendering intent */
     o->data = malloc((size_t)o->bpr * h);
     if (!o->data) { objc_release((id)o); return 0; }
     u32 ainfo = info & 31;
@@ -865,6 +895,11 @@ static void store_px(u8 *dp, u32 info, u32 argb) {
 static void blend_at(cgobj_t *o, int x, int y, u32 src) {
     int mode = o->blend;
     if (x < o->cl || y < o->ct || x >= o->cr || y >= o->cbt) return;
+    if (o->gx && o->gx->mask) {                /* recorte por path: a fonte vale só na cobertura */
+        u32 k = o->gx->mask[(size_t)y * o->w + x];
+        if (!k) return;
+        if (k < 255) src = (((src >> 24) * k / 255) << 24) | ((((src >> 16) & 255) * k / 255) << 16) | ((((src >> 8) & 255) * k / 255) << 8) | ((src & 255) * k / 255);
+    }
     if (mode != 1 && mode != 16 && !(src >> 24)) return;
     u8 *dp = o->data + (size_t)y * o->bpr + (size_t)x * o->bpp;
     if (o->bpp == 1) {
@@ -899,6 +934,7 @@ int cx_bitmap_draw_glyph(void *ctx, double x, double y, const u8 *alpha, int gw,
     int oy = (int)floor(py) + top;
     u32 fill = o->fill ? o->fill : cx_cg_fill_argb();
     if (!fill) fill = 0xFF000000;
+    if (o->gx && o->gx->galpha < 1) fill = ((u32)((fill >> 24) * o->gx->galpha + 0.5) << 24) | (fill & 0xFFFFFF);
     /* itálico sintético: o Skia (SkScalerContext_Mac) põe a inclinação na matriz de texto (c = 0,25 para o
      * font-style: italic de uma fonte sem face itálica). Cada linha do glifo anda c/d px por px de altura acima
      * da linha de base, com a cobertura dividida entre os dois pixels vizinhos. */
@@ -958,6 +994,7 @@ int cx_bm_save(const void *c) {
     o->fillstk[o->gsp] = o->fill;
     o->blendstk[o->gsp] = o->blend;
     o->gsp++;
+    bmx_save(o);
     return 1;
 }
 int cx_bm_restore(const void *c) {
@@ -972,6 +1009,7 @@ int cx_bm_restore(const void *c) {
     o->cl = o->cstk[o->gsp][0]; o->ct = o->cstk[o->gsp][1]; o->cr = o->cstk[o->gsp][2]; o->cbt = o->cstk[o->gsp][3];
     o->fill = o->fillstk[o->gsp];
     o->blend = o->blendstk[o->gsp];
+    bmx_restore(o);
     return 1;
 }
 static void dev_box(cgobj_t *o, double x, double y, double w, double h, int *x0, int *y0, int *x1, int *y1) {
@@ -1002,9 +1040,8 @@ int cx_bm_fill_rect(const void *c, double x, double y, double w, double h) {
     int x0, y0, x1, y1;
     dev_box(o, x, y, w, h, &x0, &y0, &x1, &y1);
     clamp_box(o, &x0, &y0, &x1, &y1);
-    u32 fill = o->fill ? o->fill : 0xFF000000u;
     for (int py = y0; py < y1; py++)
-        for (int px = x0; px < x1; px++) blend_at(o, px, py, fill);
+        for (int px = x0; px < x1; px++) blend_at(o, px, py, fill_src(o, px, py));   /* pré-multiplicada, como o blend espera */
     return 1;
 }
 int cx_bm_clear_rect(const void *c, double x, double y, double w, double h) {
@@ -1035,6 +1072,7 @@ void CGContextResetClip(void *c) {
     cgobj_t *o = as_kind(c, CGK_BM);
     if (!o) return;
     o->cl = 0; o->ct = 0; o->cr = (i32)o->w; o->cbt = (i32)o->h;
+    if (o->gx) { free(o->gx->mask); o->gx->mask = 0; }
 }
 void *CGBitmapContextCreateImage(void *c) {
     cgobj_t *o = as_kind(c, CGK_BM);
@@ -1107,3 +1145,5 @@ void *CGDataProviderCopyData(void *p) {
     if (!o || !o->data) return 0;
     return CFDataCreate(0, o->data, (long)o->cb_size);
 }
+
+#include "coregraphics_bm.inc"
