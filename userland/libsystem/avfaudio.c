@@ -277,67 +277,6 @@ static void buf_dealloc(id s, SEL c) {
 /* os quadros [from, from+n) em estéreo float */
 static void buf_read_stereo(avbuf_t *b, u32 from, u32 n, float *out) { cx_buf_to_stereo(&FMT(b->fmt)->d, b->abl, from, n, out); }
 
-/* ================================================================ AVAudioConverter
- * Conversão de formato PCM sem reamostragem: mesma taxa e mesmo número de canais, entre float32/int16/int32,
- * planos não-intercalados (o AVAudioPCMBuffer padrão). O helper "Computer Use" converte o PCM do microfone assim.
- * Reamostragem (taxas diferentes) e intercalado não têm caminho real: convertToBuffer devolve erro. */
-cx_class_t AVAudioConverter_c __asm__("OBJC_CLASS_$_AVAudioConverter"), AVAudioConverter_m __asm__("OBJC_METACLASS_$_AVAudioConverter");
-typedef struct { cx_class_t *isa; id in, out; } avconv_t;
-#define CNV(o) ((avconv_t *)(o))
-static id conv_init(id s, SEL c, id from, id to) {
-    (void)c;
-    if (!from || !to) return 0;
-    setobj(&CNV(s)->in, from);
-    setobj(&CNV(s)->out, to);
-    return s;
-}
-static id conv_in(id s, SEL c) { (void)c; return CNV(s)->in; }
-static id conv_out(id s, SEL c) { (void)c; return CNV(s)->out; }
-static double rd_sample(const void *plane, u32 i, u32 cf) {
-    if (cf == CF_F32) return ((const float *)plane)[i];
-    if (cf == CF_I16) return ((const short *)plane)[i] / 32768.0;
-    if (cf == CF_I32) return ((const int *)plane)[i] / 2147483648.0;
-    return 0;
-}
-static void wr_sample(void *plane, u32 i, u32 cf, double v) {
-    if (v > 1) v = 1; else if (v < -1) v = -1;
-    if (cf == CF_F32) ((float *)plane)[i] = (float)v;
-    else if (cf == CF_I16) ((short *)plane)[i] = (short)(v * 32767.0);
-    else if (cf == CF_I32) ((int *)plane)[i] = (int)(v * 2147483647.0);
-}
-/* AVAudioConverterOutputStatus: 0 haveData, 1 inputRanDry, 2 endOfStream, 3 error */
-static long conv_simple(id s, SEL c, id outb, id *err, void *blk) {
-    (void)c; (void)blk;
-    avbuf_t *o = BUF(outb);
-    avfmt_t *fi = FMT(CNV(s)->in), *fo = FMT(CNV(s)->out);
-    if (!o) { set_err(err, -50, "buffer de saída nulo"); return 3; }
-    if (fi->d.mSampleRate != fo->d.mSampleRate || fi->d.mChannelsPerFrame != fo->d.mChannelsPerFrame || fi->inter || fo->inter) {
-        set_err(err, -1, "conversão sem reamostragem: mesma taxa, mesmos canais e não-intercalado");
-        return 3;
-    }
-    return 0;   /* parâmetros ok; a forma com bloco de entrada é convert_with_input abaixo */
-}
-static long conv_with_input(id s, SEL c, id outb, id *err, void *blk) {
-    long pre = conv_simple(s, c, outb, err, blk);
-    if (pre) return pre;
-    avbuf_t *o = BUF(outb);
-    avfmt_t *fi = FMT(CNV(s)->in), *fo = FMT(CNV(s)->out);
-    u32 ch = fi->d.mChannelsPerFrame, cfi = fi->common, cfo = fo->common;
-    /* o bloco de entrada: (count, outStatus*) -> AVAudioPCMBuffer* */
-    long status = 1;   /* AVAudioConverterInputStatus_HaveData o app grava em *outStatus */
-    id inb = blk ? ((id (*)(void *, long, long *))BLK_FN(blk))(blk, (long)o->cap, &status) : 0;
-    if (!inb || status == 2) { if (err) *err = 0; return 2; }   /* endOfStream */
-    if (status == 0) return 1;                                   /* inputRanDry: sem dados agora */
-    avbuf_t *in = BUF(inb);
-    u32 n = in->len < o->cap ? in->len : o->cap;
-    for (u32 cidx = 0; cidx < ch; cidx++)
-        for (u32 i = 0; i < n; i++) wr_sample(o->planes[cidx], i, cfo, rd_sample(in->planes[cidx], i, cfi));
-    o->len = n;
-    buf_update_abl(o);
-    if (err) *err = 0;
-    return 0;
-}
-
 /* ================================================================ AVAudioTime */
 typedef struct { cx_class_t *isa; double st, rate; u64 host; BOOL svalid, hvalid; } avtime_t;
 cx_class_t AVAudioTime_c __asm__("OBJC_CLASS_$_AVAudioTime"), AVAudioTime_m __asm__("OBJC_METACLASS_$_AVAudioTime");
@@ -1955,11 +1894,6 @@ void cx_avfaudio_init(void) {
     M(AVAudioPCMBuffer, "setFrameLength:", buf_set_len); M(AVAudioPCMBuffer, "floatChannelData", buf_float);
     M(AVAudioPCMBuffer, "int16ChannelData", buf_i16); M(AVAudioPCMBuffer, "int32ChannelData", buf_i32);
     M(AVAudioPCMBuffer, "stride", buf_stride); M(AVAudioBuffer, "format", buf_format);
-    K(&AVAudioConverter_c, &AVAudioConverter_m, "AVAudioConverter", obj, sizeof(avconv_t) - 8);
-    M(AVAudioConverter, "initFromFormat:toFormat:", conv_init);
-    M(AVAudioConverter, "inputFormat", conv_in); M(AVAudioConverter, "outputFormat", conv_out);
-    M(AVAudioConverter, "convertToBuffer:error:withInputFromBlock:", conv_with_input);
-    M(AVAudioConverter, "convertToBuffer:fromBuffer:error:", conv_simple);
     M(AVAudioBuffer, "audioBufferList", buf_abl); M(AVAudioBuffer, "mutableAudioBufferList", buf_abl);
     M(AVAudioBuffer, "dealloc", buf_dealloc);
 
