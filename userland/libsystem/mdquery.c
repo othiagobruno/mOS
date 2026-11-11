@@ -45,7 +45,7 @@ static long long cx_file_size(const char *path) {
 
 /* constantes (os valores são os nomes, como no macOS) */
 #define MDK(sym) static nsstr_t sym##_o = { &NSConstantString_c, 0, (char *)#sym, sizeof(#sym) - 1 }; id sym = (id)&sym##_o;
-extern cx_class_t NSConstantString_c;
+extern cx_class_t NSConstantString_c __asm__("__CFConstantStringClassReference");
 MDK(kMDItemCFBundleIdentifier) MDK(kMDItemDisplayName) MDK(kMDItemPath) MDK(kMDItemFSName) MDK(kMDItemContentType)
 MDK(kMDItemContentTypeTree) MDK(kMDItemKind) MDK(kMDItemFSSize)
 MDK(kMDQueryDidFinishNotification) MDK(kMDQueryDidUpdateNotification) MDK(kMDQueryProgressNotification)
