@@ -37,7 +37,9 @@ CDSTR(NSUpdatedObjectsKey, "updated")
 CDSTR(NSDeletedObjectsKey, "deleted")
 CDSTR(NSManagedObjectContextObjectsDidChangeNotification, "NSManagedObjectContextObjectsDidChangeNotification")
 
-#define CDCLASS(N) cx_class_t N##_c __asm__("OBJC_CLASS_$_" #N); static cx_class_t N##_m __asm__("OBJC_METACLASS_$_" #N);
+/* A metaclasse também é exportada: uma subclasse Swift/ObjC de NSManagedObject
+ * no app liga OBJC_METACLASS_$_NSManagedObject como superclasse da sua metaclasse. */
+#define CDCLASS(N) cx_class_t N##_c __asm__("OBJC_CLASS_$_" #N); cx_class_t N##_m __asm__("OBJC_METACLASS_$_" #N);
 CDCLASS(NSEntityDescription)
 CDCLASS(NSManagedObjectModel)
 CDCLASS(NSPersistentStoreCoordinator)
@@ -47,6 +49,7 @@ CDCLASS(NSManagedObjectContext)
 CDCLASS(NSManagedObject)
 CDCLASS(NSFetchRequest)
 CDCLASS(NSPersistentContainer)
+CDCLASS(NSMergePolicy)
 
 typedef struct {
     id key;
@@ -58,6 +61,7 @@ typedef struct {
     int changed, deleted;
     unsigned limit, offset, result_type;
     id coord, ctx, model, stores, view;
+    id merge;                          /* NSManagedObjectContext.mergePolicy */
 } cd_box;
 
 static cd_box *boxes;
@@ -439,6 +443,21 @@ static void pc_load(id self, SEL c, void *blk) {
 }
 static id desc_type(id self, SEL c) { (void)self; (void)c; return NSSQLiteStoreType; }
 
+/* NSMergePolicy: o tipo fica logo depois do isa (NSMergePolicyType: erro 0,
+ * propriedade da loja 1, propriedade do objeto 2, sobrescrever 3, desfazer 4).
+ * As cinco globais são instâncias únicas, como na Apple, e o contexto começa
+ * com NSErrorMergePolicy. A loja do mOS tem um escritor só, então o conflito
+ * que a política resolveria não acontece; o tipo é guardado e devolvido. */
+typedef struct { void *isa; unsigned long type; } cd_merge;
+id NSErrorMergePolicy, NSMergeByPropertyStoreTrumpMergePolicy, NSMergeByPropertyObjectTrumpMergePolicy,
+   NSOverwriteMergePolicy, NSRollbackMergePolicy;
+static id merge_init_type(id self, SEL c, unsigned long ty) { (void)c; if (self) ((cd_merge *)self)->type = ty > 4 ? 0 : ty; return self; }
+static unsigned long merge_type(id self, SEL c) { (void)c; return self ? ((cd_merge *)self)->type : 0; }
+static id merge_new(unsigned long ty) { id m = cx_alloc_instance(&NSMergePolicy_c); return merge_init_type(m, 0, ty); }
+static id ctx_merge(id self, SEL c) { (void)c; cd_box *b = box_of(self); return b && b->merge ? b->merge : NSErrorMergePolicy; }
+static void ctx_set_merge(id self, SEL c, id p) { (void)c; cd_box *b = box_of(self); if (b) b->merge = p; }
+static int merge_resolve(id self, SEL c, id list, id *err) { (void)self; (void)c; (void)list; if (err) *err = 0; return 1; }
+
 static void def(cx_class_t *c, cx_class_t *m, const char *name) {
     cx_define_class(c, m, name, cx_class_named("NSObject"), 0);
     cx_mark_stub_class(c);
@@ -454,6 +473,19 @@ void cx_coredata_init(void) {
     def(&NSManagedObject_c, &NSManagedObject_m, "NSManagedObject");
     def(&NSFetchRequest_c, &NSFetchRequest_m, "NSFetchRequest");
     def(&NSPersistentContainer_c, &NSPersistentContainer_m, "NSPersistentContainer");
+    cx_define_class(&NSMergePolicy_c, &NSMergePolicy_m, "NSMergePolicy", cx_class_named("NSObject"), sizeof(unsigned long));
+    cx_add_method(&NSMergePolicy_c, "initWithMergeType:", (void *)merge_init_type);
+    cx_add_method(&NSMergePolicy_c, "mergeType", (void *)merge_type);
+    cx_add_method(&NSMergePolicy_c, "resolveConflicts:error:", (void *)merge_resolve);
+    cx_add_method(&NSMergePolicy_c, "resolveOptimisticLockingVersionConflicts:error:", (void *)merge_resolve);
+    cx_add_method(&NSMergePolicy_c, "resolveConstraintConflicts:error:", (void *)merge_resolve);
+    NSErrorMergePolicy = merge_new(0);
+    NSMergeByPropertyStoreTrumpMergePolicy = merge_new(1);
+    NSMergeByPropertyObjectTrumpMergePolicy = merge_new(2);
+    NSOverwriteMergePolicy = merge_new(3);
+    NSRollbackMergePolicy = merge_new(4);
+    cx_add_method(&NSManagedObjectContext_c, "mergePolicy", (void *)ctx_merge);
+    cx_add_method(&NSManagedObjectContext_c, "setMergePolicy:", (void *)ctx_set_merge);
 
     cx_add_cmethod(&NSEntityDescription_c, "entityForName:inManagedObjectContext:", (void *)ent_for_name);
     cx_add_cmethod(&NSEntityDescription_c, "insertNewObjectForEntityForName:inManagedObjectContext:", (void *)ent_insert);

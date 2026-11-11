@@ -236,7 +236,7 @@ static int sufixo(const char *s, const char *suf) {
     return n >= m && !memcmp(s + n - m, suf, m);
 }
 
-/* 1 = libc++, 2 = Swift, 3 = libunwind, 4 = libz, 5 = CryptoKit, 6 = libcurl/libcompression */
+/* 1 = libc++, 2 = Swift, 3 = libunwind, 4 = libz, 5 = CryptoKit, 6 = libcurl/libcompression/libsqlite3 */
 static int kind_de(const char *path) {
     const char *b = strrchr(path, '/');
     b = b ? b + 1 : path;
@@ -249,7 +249,8 @@ static int kind_de(const char *path) {
     /* binario do framework, install name .../CryptoKit.framework/Versions/A/CryptoKit */
     /* binário do framework: .../CryptoKit ou .../CoreImage (tools/build-coreimage.sh) */
     if (!strcmp(b, "CryptoKit") || !strcmp(b, "CoreImage")) return 5;
-    if (!strcmp(b, "libcurl.4.dylib") || !strcmp(b, "libcompression.dylib")) return 6;
+    /* /usr/lib/libsqlite3.dylib (o amálgama do tools/build.sh) e /usr/lib/libxml2.2.dylib (tools/build-libxml2.sh) da imagem. */
+    if (!strcmp(b, "libcurl.4.dylib") || !strcmp(b, "libcompression.dylib") || !strcmp(b, "libsqlite3.dylib") || !strcmp(b, "libxml2.2.dylib")) return 6;
     return 0;
 }
 
@@ -504,7 +505,7 @@ static void carrega_disco(const char *path) {
     if (stat(path, &st)) { fprintf(stderr, "disco: caminho inexistente: %s\n", path); disco_faltou = 1; return; }
     if (S_ISREG(st.st_mode)) {
         int k = kind_de(path);
-        if (!k) { fprintf(stderr, "disco: %s nao e libc++, libswift*, libunwind, libz, libcurl, libcompression, CryptoKit nem CoreImage\n", path); disco_faltou = 1; return; }
+        if (!k) { fprintf(stderr, "disco: %s nao e libc++, libswift*, libunwind, libz, libcurl, libcompression, libsqlite3, libxml2, CryptoKit nem CoreImage\n", path); disco_faltou = 1; return; }
         carrega_kind(path, k);
         return;
     }

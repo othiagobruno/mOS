@@ -71,6 +71,7 @@ typedef struct {
     char *name;
     id name_str;
     id addrs;
+    id names;                     /* CFHostGetNames: [nome], dono o próprio host */
     int did, cancel, scheduled;
     long last_type;
     cf_err err;
@@ -205,6 +206,7 @@ static void cfhost_dealloc(id self, SEL c) {
         clear_client(h);
         objc_release(h->name_str);
         objc_release(h->addrs);
+        if (h->names) objc_release(h->names);
         free(h->name);
         free(h);
         set_slot(self, 0);
@@ -464,3 +466,13 @@ void cx_cfhost_init(void) {
     cx_add_method(&NSHost_c, "localizedName", (void *)nsh_localized);
     cx_add_method(&NSHost_c, "isEqualToHost:", (void *)nsh_eq);
 }
+
+/* CFHostGetNames: o host criado por nome já sabe o nome; o array é do host ("Get"). */
+id CFHostGetNames(id host, BOOL *resolved) {
+    cfhost_t *h = slot(host);
+    if (resolved) *resolved = h && h->name_str ? YES : NO;
+    if (!h || !h->name_str) return 0;
+    if (!h->names) h->names = objc_retain(MSG(id, (id)cx_class_named("NSArray"), "arrayWithObject:", h->name_str));
+    return h->names;
+}
+id CFHostCopyNameString(id host) { cfhost_t *h = slot(host); return h && h->name_str ? objc_retain(h->name_str) : 0; }

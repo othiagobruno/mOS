@@ -424,7 +424,10 @@ double CMSyncGetRelativeRate(void *of, void *relative) {
 }
 
 typedef struct { unsigned version; void *refcon; void *gd, *gp, *gdur, *ready; int (*compare)(void *, void *, void *); void *note; } cm_qcb_t;
-typedef struct { void **item; int n, cap; cm_qcb_t cb; } cm_q_t;
+/* gatilhos: CMBufferQueueInstallTriggerWithIntegerThreshold (contagem) e os sem limiar */
+typedef struct { void (*fn)(void *refcon, void *token); void *refcon; i32 cond; i64 threshold; int used, armed; } cm_trig_t;
+typedef struct { void **item; int n, cap; cm_qcb_t cb; cm_trig_t trig[8]; } cm_q_t;
+static void q_fire(cm_q_t *q, int changed_count, int reset);
 int CMBufferQueueCreate(void *a, int capacity, const void *callbacks, void **out) {
     (void)a; (void)capacity;
     if (!out) return -12757;
@@ -453,6 +456,7 @@ int CMBufferQueueEnqueue(void *q_, void *buf) {
     q->item[at] = buf;
     q->n++;
     q_retain(buf);
+    q_fire(q, 1, 0);
     return 0;
 }
 void *CMBufferQueueDequeueAndRetain(void *q_) {
@@ -461,12 +465,14 @@ void *CMBufferQueueDequeueAndRetain(void *q_) {
     void *b = q->item[0];
     memmove(q->item, q->item + 1, (size_t)(q->n - 1) * sizeof(void *));
     q->n--;
+    q_fire(q, 1, 0);
     return b;
 }
 int CMBufferQueueReset(void *q_) {
     cm_q_t *q = q_;
     if (!q) return -12757;
     q->n = 0;
+    q_fire(q, 1, 1);
     return 0;
 }
 static int cmp_unspec(void *a, void *b, void *ref) { (void)a; (void)b; (void)ref; return 0; }
@@ -475,6 +481,92 @@ const void *CMBufferQueueGetCallbacksForUnsortedSampleBuffers(void) {
     cb.version = 0;
     cb.compare = cmp_unspec;
     return &cb;
+}
+
+/* Condições do CMBufferQueueTriggerCondition usadas com limiar inteiro, mais "reset" (9) e
+ * "dados prontos" (7). O gatilho dispara na transição (estava falso, ficou verdadeiro). */
+enum { CMQ_DATA_READY = 7, CMQ_RESET = 9, CMQ_COUNT_LESS = 10, CMQ_COUNT_GREATER = 11 };
+static int q_cond(cm_q_t *q, cm_trig_t *g) {
+    switch (g->cond) {
+    case CMQ_COUNT_LESS: return q->n < g->threshold;
+    case CMQ_COUNT_GREATER: return q->n > g->threshold;
+    case CMQ_DATA_READY: return q->n > 0;
+    default: return 0;
+    }
+}
+static void q_fire(cm_q_t *q, int changed_count, int reset) {
+    (void)changed_count;
+    for (int i = 0; i < 8; i++) {
+        cm_trig_t *g = &q->trig[i];
+        if (!g->used) continue;
+        if (g->cond == CMQ_RESET) { if (reset && g->fn) g->fn(g->refcon, g); continue; }
+        int now = q_cond(q, g);
+        if (now && !g->armed && g->fn) g->fn(g->refcon, g);
+        g->armed = now;
+    }
+}
+int CMBufferQueueInstallTriggerWithIntegerThreshold(void *q_, void (*fn)(void *, void *), void *refcon, i32 cond, i64 threshold, void **token) {
+    cm_q_t *q = q_;
+    if (!q || !fn) return -12757;
+    for (int i = 0; i < 8; i++) {
+        cm_trig_t *g = &q->trig[i];
+        if (g->used) continue;
+        g->fn = fn; g->refcon = refcon; g->cond = cond; g->threshold = threshold; g->used = 1;
+        g->armed = q_cond(q, g);
+        if (token) *token = g;
+        return 0;
+    }
+    return -12757;
+}
+int CMBufferQueueRemoveTrigger(void *q_, void *token) {
+    cm_q_t *q = q_;
+    if (!q || !token) return -12757;
+    for (int i = 0; i < 8; i++) if (&q->trig[i] == token && q->trig[i].used) { memset(&q->trig[i], 0, sizeof q->trig[i]); return 0; }
+    return -12757;
+}
+i64 CMBufferQueueGetBufferCount(void *q_) { cm_q_t *q = q_; return q ? q->n : 0; }
+/* GetHead não transfere posse (o Dequeue é que retém). */
+void *CMBufferQueueGetHead(void *q_) { cm_q_t *q = q_; return q && q->n ? q->item[0] : 0; }
+/* o menor PTS da fila, pela callback getPresentationTimeStamp; kCMTimeInvalid se não houver */
+cm_time_t CMBufferQueueGetFirstPresentationTimeStamp(void *q_) {
+    cm_q_t *q = q_;
+    cm_time_t best = {0, 0, 0, 0};
+    cm_time_t (*gp)(void *, void *) = q ? (cm_time_t (*)(void *, void *))q->cb.gp : 0;
+    if (!q || !gp) return best;
+    for (int i = 0; i < q->n; i++) {
+        cm_time_t t = gp(q->item[i], q->cb.refcon);
+        if (!is_valid(t)) continue;
+        if (!is_valid(best) || CMTimeCompare(t, best) < 0) best = t;
+    }
+    return best;
+}
+
+/* ---- CMTimeRange: igualdade, construção pelo fim e mapeamento entre faixas ---- */
+int CMTimeRangeEqual(cm_range_t a, cm_range_t b) {
+    return is_valid(a.start) == is_valid(b.start) && is_valid(a.duration) == is_valid(b.duration) &&
+           CMTimeCompare(a.start, b.start) == 0 && CMTimeCompare(a.duration, b.duration) == 0;
+}
+cm_range_t CMTimeRangeFromTimeToTime(cm_time_t start, cm_time_t end) {
+    return CMTimeRangeMake(start, CMTimeSubtract(end, start));
+}
+/* t' = to.start + (t - from.start) * to.duration / from.duration, na escala de to.start */
+cm_time_t CMTimeMapTimeFromRangeToRange(cm_time_t t, cm_range_t from, cm_range_t to) {
+    double fd = CMTimeGetSeconds(from.duration), td = CMTimeGetSeconds(to.duration);
+    if (!is_num(t) || !is_num(from.start) || !is_num(to.start) || fd == 0 || is_nan(fd) || is_nan(td)) return indef();
+    double off = CMTimeGetSeconds(CMTimeSubtract(t, from.start)) * td / fd;
+    i32 scale = to.start.timescale > 0 ? to.start.timescale : (to.duration.timescale > 0 ? to.duration.timescale : 600);
+    return CMTimeAdd(to.start, CMTimeMakeWithSeconds(off, scale));
+}
+cm_time_t CMTimeMapDurationFromRangeToRange(cm_time_t d, cm_range_t from, cm_range_t to) {
+    double fd = CMTimeGetSeconds(from.duration), td = CMTimeGetSeconds(to.duration);
+    if (!is_num(d) || fd == 0 || is_nan(fd) || is_nan(td)) return indef();
+    i32 scale = to.duration.timescale > 0 ? to.duration.timescale : (d.timescale > 0 ? d.timescale : 600);
+    return CMTimeMakeWithSeconds(CMTimeGetSeconds(d) * td / fd, scale);
+}
+/* tempo do relógio do host a partir de unidades do mach_absolute_time */
+cm_time_t CMClockMakeHostTimeFromSystemUnits(unsigned long long units) {
+    /* o mach_timebase_info do mOS é 1/1 (nanossegundos) */
+    return CMTimeMake((i64)units, 1000000000);
 }
 
 typedef struct { i32 width, height; } cm_dim_t;
