@@ -51,7 +51,9 @@ public struct OSSignpostID: Equatable, Comparable, Hashable {
     public init(_ value: UInt64) { rawValue = value }
     /// um identificador novo e único no processo (o os_signpost_id_generate da Apple também é por processo)
     public init(log: OSLog) {
-        repeat { rawValue = UInt64(bitPattern: Int64(_mosSignpostNext.add())) } while rawValue == 0 || rawValue == ~0
+        var v: UInt64
+        repeat { v = UInt64(bitPattern: Int64(_mosSignpostNext.add())) } while v == 0 || v == ~0
+        rawValue = v
     }
     public init(log: OSLog, object: AnyObject) { rawValue = UInt64(UInt(bitPattern: ObjectIdentifier(object).hashValue)) }
     public static var exclusive: OSSignpostID { OSSignpostID(0xEEEE_B0B5_B2B2_EEEE) }
