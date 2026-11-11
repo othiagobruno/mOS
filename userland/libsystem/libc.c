@@ -524,6 +524,20 @@ char *strerror(int e) {
     case CX_EROFS: return "Read-only file system";
     case CX_ERANGE: return "Result too large";
     case CX_ENOSYS: return "Function not implemented";
+    case 18: return "Cross-device link";                  /* EXDEV */
+    case 36: return "Operation now in progress";          /* EINPROGRESS */
+    case 45: return "Operation not supported";            /* ENOTSUP */
+    case 48: return "Address already in use";             /* EADDRINUSE */
+    case 49: return "Can't assign requested address";     /* EADDRNOTAVAIL */
+    case 51: return "Network is unreachable";             /* ENETUNREACH */
+    case 54: return "Connection reset by peer";           /* ECONNRESET */
+    case 57: return "Socket is not connected";            /* ENOTCONN */
+    case 60: return "Operation timed out";                /* ETIMEDOUT */
+    case 61: return "Connection refused";                 /* ECONNREFUSED */
+    case 62: return "Too many levels of symbolic links";  /* ELOOP */
+    case 63: return "File name too long";                 /* ENAMETOOLONG */
+    case 65: return "No route to host";                   /* EHOSTUNREACH */
+    case 66: return "Directory not empty";                /* ENOTEMPTY: o Codex CLI mostrava "Unknown error (os error 66)" */
     }
     return "Unknown error";
 }
@@ -1558,7 +1572,13 @@ int fstat(int fd, mac_stat_t *m) {
 typedef struct {
     u64 d_ino, d_seekoff; u16 d_reclen, d_namlen; u8 d_type; char d_name[1024];
 } mac_dirent_t;
-typedef struct { char path[1024]; long index; mac_dirent_t ent; int fd1; } cx_dir_t;   /* fd1 = fd + 1 (0: ainda sem fd) */
+#include "dirsnap.inc"
+/* fd1 = fd + 1 (0: ainda sem fd). snap: os nomes lidos no primeiro readdir (dirsnap.inc); rewinddir tira outro */
+typedef struct { char path[1024]; long index; mac_dirent_t ent; int fd1; ds_snap_t snap; } cx_dir_t;
+static int dir_list_sys(void *ctx, const char *dir, long idx, char *name, int cap) {
+    (void)ctx;
+    return (int)SYS4(SYS_READDIR, dir, idx, name, cap);
+}
 
 cx_dir_t *opendir(const char *path) {
     mos_stat_t st;
@@ -1575,7 +1595,10 @@ cx_dir_t *opendir(const char *path) {
 }
 mac_dirent_t *readdir(cx_dir_t *d) {
     mos_stat_t st = {0};
-    if (SYS4(SYS_READDIR, d->path, d->index, d->ent.d_name, sizeof d->ent.d_name) != 1) return 0;
+    if (!d->snap.ready) ds_fill(&d->snap, dir_list_sys, 0, d->path);
+    const char *nm = ds_get(&d->snap, d->index);
+    if (!nm) return 0;
+    strlcpy(d->ent.d_name, nm, sizeof d->ent.d_name);
     char full[2048];
     strlcpy(full, d->path, sizeof full);
     if (full[strlen(full) - 1] != '/') strlcat(full, "/", sizeof full);
@@ -1589,7 +1612,7 @@ mac_dirent_t *readdir(cx_dir_t *d) {
     d->ent.d_type = st.is_dir ? 4 : 8;
     return &d->ent;
 }
-int closedir(cx_dir_t *d) { if (d->fd1) SYS1(SYS_CLOSE, d->fd1 - 1); free(d); return 0; }
+int closedir(cx_dir_t *d) { if (d->fd1) SYS1(SYS_CLOSE, d->fd1 - 1); ds_free(&d->snap); free(d); return 0; }
 /* dirfd: abre a pasta na primeira vez (o kernel aceita open de pasta só para leitura) */
 int dirfd(cx_dir_t *d) {
     if (!d->fd1) { long fd = SYS2(SYS_OPEN, d->path, 0); if (fd < 0) { cx_errno = (int)-fd; return -1; } d->fd1 = (int)fd + 1; }
@@ -1605,7 +1628,7 @@ cx_dir_t *fdopendir(int fd) {
 }
 long telldir(cx_dir_t *d) { return d->index; }
 void seekdir(cx_dir_t *d, long pos) { d->index = pos; }
-void rewinddir(cx_dir_t *d) { d->index = 0; }
+void rewinddir(cx_dir_t *d) { d->index = 0; ds_free(&d->snap); }   /* o próximo readdir relê a pasta */
 
 /* ================================================================ tempo */
 typedef struct { long tv_sec; int tv_usec; } mac_timeval_t;

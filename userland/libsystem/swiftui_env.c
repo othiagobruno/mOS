@@ -31,6 +31,7 @@ typedef struct {
     void *foregroundColor;
     void *symbolRenderingMode;
     void *tintColor;
+    int controlActiveState;   /* key 0, active 1, inactive 2 */
 } sui_values;
 
 typedef struct {
@@ -106,6 +107,27 @@ void *$s7SwiftUI17EnvironmentValuesV4fontAA4FontVSgvg(void) { return sui_vals()-
 void $s7SwiftUI17EnvironmentValuesV4fontAA4FontVSgvs(void *v) { sui_vals()->font = v; sui_put((void *)$s7SwiftUI17EnvironmentValuesV4fontAA4FontVSgvg, (uint64_t)(uintptr_t)v); }
 void *$s7SwiftUI17EnvironmentValuesV4fontAA4FontVSgvpMV(void) { return &sui_vals()->font; }
 
+/* Objetos @Observable no ambiente: a chave é o metadado do tipo. environment(_:) grava,
+ * @Environment(T.self) cria o wrapper com essa chave e wrappedValue lê pela tabela. */
+void *$s7SwiftUI11EnvironmentVyACyxGxmcRlzC11Observation10ObservableRzlufC(void *type, void *meta, void *wt) {
+    sui_env *e = (sui_env *)calloc(1, sizeof *e);
+    (void)meta; (void)wt;
+    if (!e) return 0;
+    e->isa = &$s7SwiftUI11EnvironmentVMn;
+    e->key = type;
+    return e;
+}
+
+/* environment<T: AnyObject & Observable>(_ object: T?): nil tira o objeto; a view continua a mesma. */
+typedef struct { uint32_t kind; const char *name; } sui_opaque_env;
+sui_opaque_env $s7SwiftUI4ViewPAAE11environmentyQrqd__SgRld__C11Observation10ObservableRd__lFQOMQ = { 92, "environment" };
+void *$s7SwiftUI4ViewPAAE11environmentyQrqd__SgRld__C11Observation10ObservableRd__lF(void *object, void *meta, void *wt) {
+    void *self = sui_r13();
+    (void)wt;
+    if (meta) sui_put(meta, (uint64_t)(uintptr_t)object);
+    return self;
+}
+
 void *$s7SwiftUI11EnvironmentVyACyxGs7KeyPathCyAA0C6ValuesVxGcfC(void *keyPath) {
     sui_env *e = (sui_env *)calloc(1, sizeof *e);
     if (!e) return 0;
@@ -153,6 +175,8 @@ SUI_ENV_PTR($s7SwiftUI17EnvironmentValuesV11accentColorAA0F0VSg, accentColor)
 SUI_ENV_PTR($s7SwiftUI17EnvironmentValuesV15foregroundColorAA0F0VSg, foregroundColor)
 SUI_ENV_PTR($s7SwiftUI17EnvironmentValuesV19symbolRenderingModeAA06SymbolfG0VSg, symbolRenderingMode)
 SUI_ENV_PTR($s7SwiftUI17EnvironmentValuesV9tintColorAA0F0VSg, tintColor)
+/* A janela do mOS que hospeda a view é a janela principal: key enquanto ninguém grava outro valor. */
+SUI_ENV_INT($s7SwiftUI17EnvironmentValuesV18controlActiveStateAA07ControlfG0O, controlActiveState)
 
 /* lineSpacing: CGFloat em xmm0. */
 double $s7SwiftUI17EnvironmentValuesV11lineSpacing12CoreGraphics7CGFloatVvg(void) { return sui_vals()->lineSpacing; }

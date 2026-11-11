@@ -23,6 +23,9 @@ gcc -O2 -Wall -Wextra -DMOS_HOST_TEST -I kernel/include -I tools tools/resto_hos
     kernel/proc/cred.c kernel/proc/fdshare.c kernel/proc/fileport.c kernel/mm/commpage.c kernel/mm/swap.c \
     -o /tmp/resto_host
 /tmp/resto_host
+gcc -O2 -Wall -Wextra -DMOS_HOST_TEST -I kernel/include -I tools tools/r8169_host.c kernel/dev/r8169.c \
+    -o /tmp/r8169_host
+/tmp/r8169_host
 
 kind_of() {
     local b
@@ -347,12 +350,26 @@ mkdir -p "$ESP/mOS/Sistema/Biblioteca/a64"
     -Wl,--image-base=0x400041000000 -Wl,-e,_start \
     "${A64SRC[@]}" -o "$ESP/mOS/Sistema/Biblioteca/a64/a64rt.mos"
 
-echo "==> /usr/lib (libc++ do LLVM e zlib 1.3.2; não são stub)"
+echo "==> /usr/lib (libc++ do LLVM, zlib 1.3.2, SQLite e libcurl 8.23.0; não são stub)"
+# O mesmo do build.ps1: libsqlite3 (WhatsApp, Core Data), libz e libcurl (/usr/lib/libcurl.4.dylib, sem
+# libcurl.dylib) e o bundle de CAs em /usr/share/curl/cacert.pem (CURL_CA_BUNDLE de tools/libcurl/curl_config.h).
 MOS_ZIG="$ZIG" bash "$ROOT/tools/build-libcxx.sh" "$ROOT/build/libcxx"
 MOS_ZIG="$ZIG" sh "$ROOT/tools/build-libz.sh"
-mkdir -p "$ESP/mOS/usr/lib"
+MOS_ZIG="$ZIG" sh "$ROOT/tools/build-sqlite.sh"
+MOS_ZIG="$ZIG" bash "$ROOT/tools/build-libcurl.sh"
+mkdir -p "$ESP/mOS/usr/lib" "$ESP/mOS/usr/share/zlib" "$ESP/mOS/usr/share/curl"
 cp -f "$ROOT/build/libcxx/libc++.1.dylib" "$ESP/mOS/usr/lib/libc++.1.dylib"
 cp -f "$ROOT/build/zlib-x86_64/libz.1.dylib" "$ESP/mOS/usr/lib/libz.1.dylib"
+cp -f "$ROOT/build/sqlite/libsqlite3.dylib" "$ESP/mOS/usr/lib/libsqlite3.dylib"
+cp -f "$ROOT/build/curl-x86_64/libcurl.4.dylib" "$ESP/mOS/usr/lib/libcurl.4.dylib"
+cp -f "$ROOT/build/zlib-x86_64/LICENSE" "$ESP/mOS/usr/share/zlib/LICENSE"
+cp -f "$ROOT/build/curl-x86_64/COPYING" "$ESP/mOS/usr/share/curl/COPYING"
+cp -f "$ROOT/build/curl-x86_64/LICENSE.mbedtls" "$ESP/mOS/usr/share/curl/LICENSE.mbedtls"
+cp -f "$ROOT/assets/certs/cacert.pem" "$ESP/mOS/usr/share/curl/cacert.pem"
+
+echo "==> git (/usr/bin/git, /usr/libexec/git-core; do fonte, com a libz e a libcurl acima)"
+MOS_ZIG="$ZIG" bash "$ROOT/tools/build-git.sh"
+cp -a "$ROOT/build/git-x86_64/mos/." "$ESP/mOS/"
 
 echo "==> libswift"
 # Runtime real (swift-6.4.2) quando a toolchain e o fonte estão em .tools/. Sem isso, o stage completa com stub.

@@ -689,6 +689,32 @@ void *CGDataProviderCreateWithData(void *info, const void *data, size_t size, vo
     return o;
 }
 void CGDataProviderRelease(void *p) { if (as_kind(p, CGK_PR)) objc_release((id)p); }
+/* CGDataProviderCreateWithURL: lê o arquivo inteiro (só file://); o provedor é dono do buffer. */
+u8 CFURLGetFileSystemRepresentation(id url, u8 resolve, u8 *buf, long max);
+static void cg_free_bytes(void *info, const void *data, size_t size) { (void)info; (void)size; free((void *)data); }
+void *CGDataProviderCreateWithURL(id url) {
+    char path[1024];
+    if (!url || !CFURLGetFileSystemRepresentation(url, 1, (u8 *)path, (long)sizeof path)) return 0;
+    FILE_ *f = fopen(path, "rb");
+    if (!f) return 0;
+    size_t cap = 64 * 1024, n = 0;
+    u8 *buf = malloc(cap);
+    while (buf) {
+        size_t got = fread(buf + n, 1, cap - n, f);
+        n += got;
+        if (n < cap) break;
+        if (cap >= (256u << 20)) { free(buf); buf = 0; break; }   /* mesmo teto dos bitmaps: nada de arquivo gigante na memória */
+        u8 *nb = realloc(buf, cap * 2);
+        if (!nb) { free(buf); buf = 0; break; }
+        buf = nb;
+        cap *= 2;
+    }
+    fclose(f);
+    if (!buf || !n) { free(buf); return 0; }
+    void *p = CGDataProviderCreateWithData(0, buf, n, cg_free_bytes);
+    if (!p) free(buf);
+    return p;
+}
 void *CGDataProviderRetain(void *p) { if (as_kind(p, CGK_PR)) objc_retain((id)p); return p; }
 
 static u32 px_argb(const u8 *s, u32 info) {
@@ -1003,6 +1029,12 @@ void CGContextClipToRect(void *c, CGRect rect) {
     dev_box(o, rect.origin.x, rect.origin.y, rect.size.width, rect.size.height, &x0, &y0, &x1, &y1);
     clamp_box(o, &x0, &y0, &x1, &y1);
     o->cl = x0; o->ct = y0; o->cr = x1; o->cbt = y1;
+}
+/* CGContextResetClip: volta ao bitmap inteiro (o recorte do CGContextClipToRect some). */
+void CGContextResetClip(void *c) {
+    cgobj_t *o = as_kind(c, CGK_BM);
+    if (!o) return;
+    o->cl = 0; o->ct = 0; o->cr = (i32)o->w; o->cbt = (i32)o->h;
 }
 void *CGBitmapContextCreateImage(void *c) {
     cgobj_t *o = as_kind(c, CGK_BM);

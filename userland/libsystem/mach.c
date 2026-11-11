@@ -613,6 +613,14 @@ kern_return_t IOObjectRetain(mach_port_t o) { (void)o; return KERN_SUCCESS; }
 mach_port_t IOIteratorNext(mach_port_t it) { (void)it; return 0; }
 void *IORegistryEntryCreateCFProperty(mach_port_t e, void *key, void *alloc, u32 opts) { (void)e; (void)key; (void)alloc; (void)opts; return 0; }
 mach_port_t kIOMasterPortDefault = 0, kIOMainPortDefault = 0;
+/* A porta principal do IOKit é a padrão (0): as chamadas acima a aceitam como MACH_PORT_NULL. */
+kern_return_t IOMainPort(mach_port_t bootstrap, mach_port_t *main_port) {
+    (void)bootstrap;
+    if (!main_port) return KERN_INVALID_ARGUMENT;
+    *main_port = kIOMainPortDefault;
+    return KERN_SUCCESS;
+}
+kern_return_t IOMasterPort(mach_port_t bootstrap, mach_port_t *main_port) { return IOMainPort(bootstrap, main_port); }
 
 /* SIP (System Integrity Protection): o mOS não tem; configuração "nada ativo" */
 int csr_get_active_config(u32 *config) { if (config) *config = 0; return 0; }

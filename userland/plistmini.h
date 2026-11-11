@@ -1,6 +1,6 @@
-/* mOS — leitor mínimo de plist XML para os programas nativos (launchd lê os .plist de LaunchDaemons/LaunchAgents,
- * configd lê as preferências de rede). Árvore de nós numa arena (px_alloc); sem plist binário (os plists do
- * launchd são XML; o libSystem lê os binários dos apps pelo CoreFoundation). */
+/* mOS — leitor mínimo de plist XML e binário (bplist00) para os programas nativos (launchd lê os .plist de
+ * LaunchDaemons/LaunchAgents, configd lê as preferências de rede). Árvore de nós numa arena (px_alloc). O libSystem
+ * lê os plists dos apps pelo CoreFoundation. */
 #pragma once
 
 enum { PN_NONE, PN_DICT, PN_ARRAY, PN_STRING, PN_INT, PN_REAL, PN_TRUE, PN_FALSE, PN_DATA, PN_DATE };
@@ -135,7 +135,139 @@ static pnode_t *px_value(pxml_t *x, int depth) {
     if (t == PN_INT && n->str) n->num = atoi(n->str);
     return n;
 }
+/* ---- plist binário (bplist00), como o launchd da Apple aceita em LaunchAgents/LaunchDaemons.
+ * Trailer de 32 bytes: 6 livres, tamanho do offset, tamanho da referência, nº de objetos, objeto do topo e
+ * início da tabela de offsets (inteiros big-endian). Marcador: tipo no nibble alto, tamanho no baixo (0xF =
+ * tamanho num inteiro a seguir). Strings UTF-16 viram UTF-8. Real e data guardam a parte inteira em num.
+ * Tudo é conferido contra o tamanho do arquivo; ciclo ou profundidade > 32 é erro. */
+typedef struct { const unsigned char *b; usize len, offs; unsigned osz, rsz; u64 nobj; int err; unsigned visits; } pbin_t;
+static u64 pb_be(const unsigned char *p, unsigned n) { u64 v = 0; while (n--) v = (v << 8) | *p++; return v; }
+static int pb_off(pbin_t *x, u64 ref, usize *at) {
+    if (ref >= x->nobj) return 0;
+    usize o = x->offs + (usize)ref * x->osz;
+    if (o + x->osz > x->len - 32) return 0;
+    u64 v = pb_be(x->b + o, x->osz);
+    if (v < 8 || v >= x->offs) return 0;
+    *at = (usize)v;
+    return 1;
+}
+/* tamanho do objeto em *at (após o marcador); *at avança para o conteúdo */
+static int pb_count(pbin_t *x, usize *at, unsigned lo, u64 *n) {
+    if (lo != 0xF) { *n = lo; return 1; }
+    if (*at >= x->offs) return 0;
+    unsigned m = x->b[*at];
+    if ((m >> 4) != 1 || (m & 0xF) > 3) return 0;
+    unsigned w = 1u << (m & 0xF);
+    if (*at + 1 + w > x->offs) return 0;
+    *n = pb_be(x->b + *at + 1, w);
+    *at += 1 + w;
+    return 1;
+}
+static pnode_t *pb_obj(pbin_t *x, u64 ref, int depth);
+static char *pb_utf16(const unsigned char *p, u64 n) {
+    char *d = px_alloc((usize)n * 3 + 1);
+    if (!d) return 0;
+    usize o = 0;
+    for (u64 i = 0; i < n; i++) {
+        unsigned c = (unsigned)pb_be(p + i * 2, 2);
+        if (c >= 0xD800 && c < 0xDC00 && i + 1 < n) {
+            unsigned c2 = (unsigned)pb_be(p + (i + 1) * 2, 2);
+            if (c2 >= 0xDC00 && c2 < 0xE000) { c = 0x10000 + ((c - 0xD800) << 10) + (c2 - 0xDC00); i++; }
+        }
+        if (c < 0x80) d[o++] = (char)c;
+        else if (c < 0x800) { d[o++] = (char)(0xC0 | (c >> 6)); d[o++] = (char)(0x80 | (c & 0x3F)); }
+        else if (c < 0x10000) { d[o++] = (char)(0xE0 | (c >> 12)); d[o++] = (char)(0x80 | ((c >> 6) & 0x3F)); d[o++] = (char)(0x80 | (c & 0x3F)); }
+        else {
+            if (o + 4 > (usize)n * 3) break;
+            d[o++] = (char)(0xF0 | (c >> 18)); d[o++] = (char)(0x80 | ((c >> 12) & 0x3F));
+            d[o++] = (char)(0x80 | ((c >> 6) & 0x3F)); d[o++] = (char)(0x80 | (c & 0x3F));
+        }
+    }
+    d[o] = 0;
+    return d;
+}
+static pnode_t *pb_obj(pbin_t *x, u64 ref, int depth) {
+    usize at;
+    /* referências repetidas formam um DAG: o teto de visitas impede a explosão de um arquivo hostil */
+    if (depth > 32 || ++x->visits > 65536 || !pb_off(x, ref, &at)) { x->err = 1; return 0; }
+    unsigned m = x->b[at++], hi = m >> 4, lo = m & 0xF;
+    pnode_t *n = 0;
+    u64 cnt;
+    switch (hi) {
+    case 0x0:
+        if (m == 0x08) return px_new(PN_FALSE);
+        if (m == 0x09) return px_new(PN_TRUE);
+        x->err = 1; return 0;
+    case 0x1: {                                         /* inteiro de 1, 2, 4, 8 (ou 16) bytes */
+        unsigned w = 1u << lo;
+        if (lo > 4 || at + w > x->offs) { x->err = 1; return 0; }
+        if (!(n = px_new(PN_INT))) return 0;
+        u64 v = pb_be(x->b + at + (w > 8 ? w - 8 : 0), w > 8 ? 8 : w);
+        n->num = (i64)v;                                /* 1, 2 e 4 bytes sem sinal; 8 com sinal */
+        return n;
+    }
+    case 0x2: case 0x3: {                               /* real e data: a parte inteira do double */
+        unsigned w = hi == 3 ? 8 : 1u << lo;
+        if ((w != 4 && w != 8) || at + w > x->offs) { x->err = 1; return 0; }
+        if (!(n = px_new(hi == 3 ? PN_DATE : PN_REAL))) return 0;
+        if (w == 8) { union { u64 u; double d; } c; c.u = pb_be(x->b + at, 8); n->num = (i64)c.d; }
+        else { union { unsigned u; float f; } c; c.u = (unsigned)pb_be(x->b + at, 4); n->num = (i64)c.f; }
+        return n;
+    }
+    case 0x4: case 0x5: case 0x6: {
+        if (!pb_count(x, &at, lo, &cnt)) { x->err = 1; return 0; }
+        u64 bytes = hi == 6 ? cnt * 2 : cnt;
+        if (cnt > x->len || at + bytes > x->offs) { x->err = 1; return 0; }
+        if (!(n = px_new(hi == 4 ? PN_DATA : PN_STRING))) return 0;
+        if (hi == 4) { n->num = (i64)cnt; return n; }
+        if (hi == 5) {
+            char *d = px_alloc((usize)cnt + 1);
+            if (!d) return 0;
+            for (u64 i = 0; i < cnt; i++) d[i] = (char)x->b[at + i];
+            d[cnt] = 0;
+            n->str = d;
+        } else n->str = pb_utf16(x->b + at, cnt);
+        return n;
+    }
+    case 0xA: case 0xD: {
+        if (!pb_count(x, &at, lo, &cnt)) { x->err = 1; return 0; }
+        u64 refs = hi == 0xD ? cnt * 2 : cnt;
+        if (cnt > x->nobj || at + refs * x->rsz > x->offs) { x->err = 1; return 0; }
+        if (!(n = px_new(hi == 0xD ? PN_DICT : PN_ARRAY))) return 0;
+        pnode_t **tail = &n->child;
+        for (u64 i = 0; i < cnt; i++) {
+            u64 vr = pb_be(x->b + at + (usize)((hi == 0xD ? cnt + i : i) * x->rsz), x->rsz);
+            pnode_t *v = pb_obj(x, vr, depth + 1);
+            if (!v) { x->err = 1; return n; }
+            if (hi == 0xD) {
+                pnode_t *k = pb_obj(x, pb_be(x->b + at + (usize)(i * x->rsz), x->rsz), depth + 1);
+                if (!k || k->type != PN_STRING) { x->err = 1; return n; }
+                v->key = k->str;
+            }
+            *tail = v;
+            tail = &v->next;
+        }
+        return n;
+    }
+    }
+    x->err = 1;                                          /* UID (0x8) e set (0xC) não aparecem em plist de launchd */
+    return 0;
+}
+static pnode_t *plist_parse_binary(const unsigned char *b, usize len) {
+    if (len < 8 + 1 + 32 || memcmp(b, "bplist00", 8)) return 0;
+    const unsigned char *t = b + len - 32;
+    pbin_t x = { b, len, 0, t[6], t[7], pb_be(t + 8, 8), 0, 0 };
+    u64 top = pb_be(t + 16, 8), offs = pb_be(t + 24, 8);
+    if (x.osz < 1 || x.osz > 8 || x.rsz < 1 || x.rsz > 8 || offs < 9 || offs >= len - 32 || x.nobj == 0
+        || x.nobj > (len - 32 - offs) / x.osz)
+        return 0;
+    x.offs = (usize)offs;
+    pnode_t *n = pb_obj(&x, top, 0);
+    return x.err ? 0 : n;
+}
+
 static pnode_t *plist_parse(const char *txt, usize len) {
+    if (len >= 8 && !memcmp(txt, "bplist00", 8)) return plist_parse_binary((const unsigned char *)txt, len);
     pxml_t x = { txt, txt + len, 0 };
     pnode_t *n = px_value(&x, 0);
     return x.err && !n ? 0 : n;

@@ -21,21 +21,11 @@ fi
 DL=$OUT/apps-dl
 mkdir -p "$DL" "$MOS/Aplicativos" "$MOS/usr/lib" "$MOS/usr/lib/swift"
 
+# download com SHA-256 conferido (curl, wget ou python3: tools/baixar.sh)
+. "$ROOT/tools/baixar.sh"
 fetch() {
-    local url=$1 dest=$2 want=$3
-    if [ -f "$dest" ] && [ "$(sha256sum "$dest" | awk '{print $1}')" = "$want" ]; then
-        echo "cache ok $(basename "$dest")"
-        return 0
-    fi
-    echo "baixando $(basename "$dest")"
-    curl -fL --retry 3 -o "$dest.partial" "$url"
-    mv "$dest.partial" "$dest"
-    local got
-    got=$(sha256sum "$dest" | awk '{print $1}')
-    if [ "$got" != "$want" ]; then
-        echo "stage-apps: SHA-256 de $(basename "$dest") é $got, esperado $want" >&2
-        exit 1
-    fi
+    baixar "$1" "$2" "$3" || exit 1
+    echo "ok $(basename "$2")"
 }
 
 # Versões e hashes: docs/l22-qemu-arm64.md, exceto onde o comentário diz o contrário.
@@ -139,9 +129,14 @@ PY
 APP=$(unzip_app "$DL/Claude.zip" claude)
 stage_one "$APP"
 APP=$(unzip_app "$DL/Cursor.zip" cursor)
-# git do Homebrew (bottle Intel, sha256 do manifesto do ghcr.io conferido pelo fetch-bottles.sh) com pcre2 e gettext
-bash "$ROOT/tools/fetch-bottles.sh" git gettext -d "$DL/brew"
-stage_one "$APP" --cursor-extras --bottles "$DL/brew"
+# git: o do build (tools/build-git.sh, /usr/bin/git Mach-O). Sem ele, o bottle Intel do Homebrew (sha256 do
+# manifesto do ghcr.io conferido pelo fetch-bottles.sh) com pcre2 e gettext.
+if [ "$(head -c 4 "$MOS/usr/bin/git" 2>/dev/null | od -An -tx1 | tr -d ' \n')" = cffaedfe ]; then
+    stage_one "$APP" --cursor-extras
+else
+    bash "$ROOT/tools/fetch-bottles.sh" git gettext -d "$DL/brew"
+    stage_one "$APP" --cursor-extras --bottles "$DL/brew"
+fi
 extrair_dmg "$DL/Grok.dmg" grok
 APP=$(find "$DL/x-grok" -name 'Grok Bot.app' -type d | head -1)
 if [ -z "$APP" ]; then echo "stage-apps: Grok Bot.app não saiu do dmg" >&2; exit 1; fi

@@ -77,3 +77,24 @@ int cx_sm_unpublish_file(int daemon, const char *plist_path) {
     free(buf);
     return rc;
 }
+
+/* jobs de SMJobSubmit (smjob.c): fora dos diretórios que o launchd varre, então não voltam no boot */
+static void sm_job_dir(char *out, size_t cap) {
+    snprintf(out, cap, "%s/Library/Application Support/com.mos.smjob", sm_home());
+}
+
+int cx_sm_job_write(const char *label, const void *bytes, size_t n, char *path, size_t cap) {
+    char dir[512], name[200];
+    if (!sm_label_ok(label) || !bytes || !path) return -1;
+    sm_job_dir(dir, sizeof dir);
+    if (sm_copy_plist(dir, label, (const char *)bytes, n) != 0) return -1;
+    sm_plist_name(label, name, sizeof name);
+    snprintf(path, cap, "%s/%s", dir, name);
+    return 0;
+}
+
+int cx_sm_job_remove(const char *label) {
+    char dir[512];
+    sm_job_dir(dir, sizeof dir);
+    return sm_remove_plist(dir, label);
+}

@@ -489,6 +489,9 @@ static void net_poll_body(void) {
 }
 
 void net_init(void) {
-    if (!e1000_probe()) rtl8139_probe();
+    /* cada driver procura o próprio chip; o r8169 não depende de e1000/rtl8139 terem achado algo */
+    bool intel = e1000_probe();
+    r8169_probe();
+    if (!intel) rtl8139_probe();
     if (!g_netdev) kprintf("net: nenhuma placa de rede com fio; aguardando outra interface (Wi-Fi/USB)\n");
 }
