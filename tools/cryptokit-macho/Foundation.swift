@@ -28,7 +28,7 @@ public struct Data: DataProtocol, ContiguousBytes, Equatable, Sendable {
     public func withUnsafeBytes<R>(_ body: (UnsafeRawBufferPointer) throws -> R) rethrows -> R {
         try body(UnsafeRawBufferPointer())
     }
-    public func makeIterator() -> Iterator { Iterator() }
+    public func makeIterator() -> Iterator { Iterator(_elements: Array<UInt8>()) }
     public static func + (lhs: Data, rhs: Data) -> Data { Data() }
     public static func == (lhs: Data, rhs: Data) -> Bool { Bool() }
 }

@@ -138,16 +138,23 @@ public struct String: ExpressibleByStringLiteral, Sequence, Equatable {
     public init(stringLiteral value: String) {}
     public init(_builtinStringLiteral start: Builtin.RawPointer, utf8CodeUnitCount: Builtin.Word, isASCII: Builtin.Int1) {}
     public mutating func append(_ c: Character) {}
-    public func makeIterator() -> Iterator { Iterator() }
+    public func makeIterator() -> Iterator { Iterator(_elements: Array<Character>()) }
     public subscript(i: Int) -> Character { Character() }
 }
-public struct Array<T>: Sequence {
-    public struct Iterator: IteratorProtocol {
-        public typealias Element = T
-        public init() {}
-        public mutating func next() -> T? { Optional<T>.none }
-    }
+// Como na stdlib: o iterador do Array é IndexingIterator<Array<Element>> (o mangling do Digest.makeIterator
+// que os apps importam é s16IndexingIteratorVySays5UInt8VGG).
+public struct IndexingIterator<Elements: Collection>: IteratorProtocol {
+    public typealias Element = Elements.Element
+    public init(_elements: Elements) {}
+    public mutating func next() -> Elements.Element? { Optional<Elements.Element>.none }
+}
+public struct Array<T>: Collection {
+    public typealias Iterator = IndexingIterator<Array<T>>
     public typealias Element = T
+    public typealias Index = Int
+    public var startIndex: Int { Int() }
+    public var endIndex: Int { Int() }
+    public func index(after i: Int) -> Int { i }
     public init() {}
     public init(repeating: T, count: Int) {}
     public init<S: Sequence>(_ s: S) where S.Element == T {}
@@ -158,7 +165,7 @@ public struct Array<T>: Sequence {
     public var isEmpty: Bool { Bool() }
     public func prefix(_ n: Int) -> Array<T> { Array() }
     public func map<U>(_ body: (T) -> U) -> Array<U> { Array<U>() }
-    public func makeIterator() -> Iterator { Iterator() }
+    public func makeIterator() -> Iterator { Iterator(_elements: self) }
     public subscript(i: Int) -> T { get { _elem() } set {} }
     public subscript(bounds: Range<Int>) -> Array<T> { Array() }
     public subscript(bounds: PartialRangeFrom<Int>) -> Array<T> { Array() }
@@ -188,7 +195,7 @@ public struct UnsafeRawBufferPointer: Sequence {
     public var _n: Builtin.Int64
     public init() { _p = Builtin.zeroInitializer(); _n = Builtin.zeroInitializer() }
     public init(p: Builtin.RawPointer, n: Builtin.Int64) { _p = p; _n = n }
-    public func makeIterator() -> Iterator { Iterator() }
+    public func makeIterator() -> Iterator { Iterator(_elements: Array<UInt8>()) }
     public var baseAddress: UnsafeRawPointer? { Optional(UnsafeRawPointer(_p)) }
     public var count: Int { Int() }
 }

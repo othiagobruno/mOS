@@ -43,7 +43,10 @@ PY
   -module-name CryptoKit -import-underlying-module -enable-library-evolution \
   -I "$ROOT/userland/frameworks/CryptoKit/include" -I "$OUT" \
   -o "$OUT/CryptoKit.o" "$ROOT/userland/frameworks/CryptoKit/CryptoKit.swift"
-"$ZIG" cc -target x86_64-macos-none -shared -o "$OUT/CryptoKit" "$OUT/CryptoKit.o" "$OUT/Foundation.o" \
+# Foundation.o não entra no dylib: o Data dele é o stub de tools/cryptokit-macho (struct vazia, corpos de
+# mentira), e exportá-lo daqui faria o carregador ligar os imports de Foundation dos apps a esse stub. Os
+# símbolos $s10Foundation que o CryptoKit usa são resolvidos em tempo de carga (dynamic_lookup), no libSystem.
+"$ZIG" cc -target x86_64-macos-none -shared -o "$OUT/CryptoKit" "$OUT/CryptoKit.o" \
   -Wl,-install_name,/System/Library/Frameworks/CryptoKit.framework/Versions/A/CryptoKit \
   -Wl,-undefined,dynamic_lookup
 echo "$OUT/CryptoKit"
