@@ -37,6 +37,7 @@ int kCIFormatARGB8 = MOS_CI_ARGB8;
 int kCIFormatBGRA8 = MOS_CI_BGRA8;
 int kCIFormatRGBA8 = MOS_CI_RGBA8;
 int kCIFormatABGR8 = MOS_CI_ABGR8;
+int kCIFormatRGBAh = MOS_CI_RGBAh;
 
 NSString *const kCIInputImageKey = @"inputImage";
 NSString *const kCIInputBackgroundImageKey = @"inputBackgroundImage";
@@ -50,6 +51,21 @@ NSString *const kCIInputTransformKey = @"inputTransform";
 NSString *const kCIOutputImageKey = @"outputImage";
 NSString *const kCIContextCacheIntermediates = @"kCIContextCacheIntermediates";
 NSString *const kCIImageColorSpace = @"kCIImageColorSpace";
+NSString *const kCIInputExtentKey = @"inputExtent";
+NSString *const kCIInputMaskImageKey = @"inputMaskImage";
+NSString *const kCIInputIntensityKey = @"inputIntensity";
+NSString *const kCIInputColorKey = @"inputColor";
+NSString *const kCIInputEVKey = @"inputEV";
+NSString *const kCIImageProperties = @"properties";
+NSString *const kCIImageApplyOrientationProperty = @"kCIImageApplyOrientationProperty";
+NSString *const kCIImageToneMapHDRtoSDR = @"kCIImageToneMapHDRtoSDR";
+/* opções do CIContext: o renderizador do mOS é um só (CPU, 8 bits); estas chaves são aceitas e guardadas */
+NSString *const kCIContextWorkingFormat = @"working_format";
+NSString *const kCIContextWorkingColorSpace = @"working_color_space";
+NSString *const kCIContextOutputColorSpace = @"output_color_space";
+NSString *const kCIContextOutputPremultiplied = @"output_premultiplied";
+NSString *const kCIContextUseSoftwareRenderer = @"software_renderer";
+NSString *const kCIContextName = @"name";
 
 extern int cx_cgimage_src(const void *img, const uint8_t **px, long *bpr, int *w, int *h, int *premul);
 extern void *CGDataProviderCreateWithData(void *info, const void *data, size_t size, void (*release)(void *, const void *, size_t));
@@ -374,6 +390,19 @@ int mos_coreimage_real(void) { return 0xC1; }
 - (void)render:(CIImage *)im toBitmap:(void *)data rowBytes:(long)rb bounds:(CGRect)bounds format:(int)format colorSpace:(id)cs;
 @end
 
+/* binary16 de um valor em [0, 1] (o que o CIContext escreve): sem NaN nem infinito */
+static uint16_t half_of(double v) {
+    if (v <= 0) return 0;
+    if (v >= 65504) return 0x7BFF;
+    int e = 0;
+    double m = frexp(v, &e);                    /* v = m * 2^e, m em [0,5, 1) */
+    int he = e - 1 + 15;
+    if (he <= 0) return (uint16_t)lround(v * 16777216.0);   /* subnormal: v / 2^-24 */
+    unsigned frac = (unsigned)lround((m * 2 - 1) * 1024);
+    if (frac == 1024) { frac = 0; he++; }
+    return (uint16_t)(he << 10 | frac);
+}
+
 static void free_bytes(void *info, const void *data, size_t size) {
     (void)info; (void)size;
     free((void *)data);
@@ -425,6 +454,12 @@ static void free_bytes(void *info, const void *data, size_t size) {
             uint32_t p = tmp[(size_t)row * (size_t)w + (size_t)col];
             uint8_t A = (uint8_t)(p >> 24), R = (uint8_t)(p >> 16), G = (uint8_t)(p >> 8), B = (uint8_t)p;
             uint8_t *o = d + (size_t)col * 4u;
+            if (format == MOS_CI_RGBAh) {
+                uint16_t *hf = (uint16_t *)((uint8_t *)data + (long)row * rb) + (size_t)col * 4u;
+                hf[0] = half_of(R * A / 255.0 / 255.0); hf[1] = half_of(G * A / 255.0 / 255.0);
+                hf[2] = half_of(B * A / 255.0 / 255.0); hf[3] = half_of(A / 255.0);
+                continue;
+            }
             if (format == MOS_CI_BGRA8) { o[0] = B; o[1] = G; o[2] = R; o[3] = A; }
             else if (format == MOS_CI_RGBA8) { o[0] = R; o[1] = G; o[2] = B; o[3] = A; }
             else if (format == MOS_CI_ABGR8) { o[0] = A; o[1] = B; o[2] = G; o[3] = R; }
@@ -432,5 +467,146 @@ static void free_bytes(void *info, const void *data, size_t size) {
         }
     }
     free(tmp);
+}
+@end
+
+/* ---------------------------------------------------------------- CIFeature e QR
+ * Não há detector de rosto nem leitor de QR no mOS: o CIDetector não acha nada. As classes de resultado
+ * existem e guardam o que recebem (o app também cria CIQRCodeDescriptor para gerar código). */
+@interface CIFeature : NSObject {
+   @public
+    CGRect bounds;
+    NSString *type;
+}
+- (CGRect)bounds;
+- (NSString *)type;
+@end
+@implementation CIFeature
+- (void)dealloc { [type release]; [super dealloc]; }
+- (CGRect)bounds { return bounds; }
+- (NSString *)type { return type; }
+@end
+
+@interface CIFaceFeature : CIFeature
+@end
+@implementation CIFaceFeature
+- (BOOL)hasLeftEyePosition { return NO; }
+- (BOOL)hasRightEyePosition { return NO; }
+- (BOOL)hasMouthPosition { return NO; }
+- (BOOL)hasFaceAngle { return NO; }
+- (BOOL)hasSmile { return NO; }
+- (BOOL)leftEyeClosed { return NO; }
+- (BOOL)rightEyeClosed { return NO; }
+- (BOOL)hasTrackingID { return NO; }
+- (BOOL)hasTrackingFrameCount { return NO; }
+@end
+
+/* CIQRCodeErrorCorrectionLevel: L 'L', M 'M', Q 'Q', H 'H' */
+@interface CIQRCodeDescriptor : NSObject {
+    NSData *payload;
+    long version;
+    unsigned char mask;
+    long level;
+}
+@end
+@implementation CIQRCodeDescriptor
+- (instancetype)initWithPayload:(NSData *)p symbolVersion:(long)v maskPattern:(unsigned char)m errorCorrectionLevel:(long)l {
+    if (!p || v < 1 || v > 40 || m > 7 || (l != 'L' && l != 'M' && l != 'Q' && l != 'H')) { [self release]; return nil; }
+    self = [super init];
+    if (self) { payload = [p retain]; version = v; mask = m; level = l; }
+    return self;
+}
++ (instancetype)descriptorWithPayload:(NSData *)p symbolVersion:(long)v maskPattern:(unsigned char)m errorCorrectionLevel:(long)l {
+    return [[[self alloc] initWithPayload:p symbolVersion:v maskPattern:m errorCorrectionLevel:l] autorelease];
+}
+- (void)dealloc { [payload release]; [super dealloc]; }
+- (NSData *)errorCorrectedPayload { return payload; }
+- (long)symbolVersion { return version; }
+- (unsigned char)maskPattern { return mask; }
+- (long)errorCorrectionLevel { return level; }
+@end
+
+@interface CIQRCodeFeature : CIFeature {
+   @public
+    NSString *message;
+    CIQRCodeDescriptor *descriptor;
+    CGPoint corners[4];
+}
+@end
+@implementation CIQRCodeFeature
+- (void)dealloc { [message release]; [descriptor release]; [super dealloc]; }
+- (NSString *)messageString { return message; }
+- (CIQRCodeDescriptor *)symbolDescriptor { return descriptor; }
+- (CGPoint)topLeft { return corners[0]; }
+- (CGPoint)topRight { return corners[1]; }
+- (CGPoint)bottomLeft { return corners[2]; }
+- (CGPoint)bottomRight { return corners[3]; }
+@end
+
+/* ---------------------------------------------------------------- CIKernel
+ * O mOS não compila a linguagem de kernel do CoreImage nem Metal: as fábricas devolvem nil, como a Apple
+ * faz quando o código do kernel não compila. Quem pede kernel cai no caminho sem efeito do app. */
+@interface CIKernel : NSObject
+@end
+@implementation CIKernel
++ (instancetype)kernelWithString:(NSString *)s { (void)s; return nil; }
++ (NSArray *)kernelsWithString:(NSString *)s { (void)s; return nil; }
++ (instancetype)kernelWithFunctionName:(NSString *)n fromMetalLibraryData:(NSData *)d error:(id *)e { (void)n; (void)d; if (e) *e = nil; return nil; }
++ (NSArray *)kernelNamesFromMetalLibraryData:(NSData *)d { (void)d; return [NSArray array]; }
+- (NSString *)name { return nil; }
+@end
+@interface CIColorKernel : CIKernel
+@end
+@implementation CIColorKernel
+@end
+
+/* ---------------------------------------------------------------- CIRenderDestination para bitmap */
+@interface CIRenderDestination : NSObject {
+   @public
+    void *data;
+    long w, h, rb;
+    int format;
+    BOOL flipped;
+    long alphaMode;
+}
+@end
+@implementation CIRenderDestination
+- (instancetype)initWithBitmapData:(void *)d width:(unsigned long)width height:(unsigned long)height bytesPerRow:(unsigned long)bpr format:(int)f {
+    if (!d || !width || !height) { [self release]; return nil; }
+    self = [super init];
+    if (self) { data = d; w = (long)width; h = (long)height; rb = (long)bpr; format = f; alphaMode = 1; }
+    return self;
+}
+- (BOOL)isFlipped { return flipped; }
+- (void)setFlipped:(BOOL)v { flipped = v; }
+- (long)alphaMode { return alphaMode; }
+- (void)setAlphaMode:(long)v { alphaMode = v; }
+- (unsigned long)width { return (unsigned long)w; }
+- (unsigned long)height { return (unsigned long)h; }
+@end
+
+/* a tarefa já está pronta quando volta: o render é síncrono */
+@interface CIRenderTask : NSObject
+@end
+@implementation CIRenderTask
+- (id)waitUntilCompletedAndReturnError:(id *)e { if (e) *e = nil; return nil; }
+@end
+
+@implementation CIContext (MOSRenderDestination)
+- (CIRenderTask *)startTaskToRender:(CIImage *)im toDestination:(CIRenderDestination *)dst error:(id *)e {
+    if (e) *e = nil;
+    if (!im || !dst) return nil;
+    CGRect b = [im extent];
+    CGRect r = CGRectMake(b.origin.x, b.origin.y, (double)dst->w, (double)dst->h);
+    [self render:im toBitmap:dst->data rowBytes:dst->rb bounds:r format:dst->format colorSpace:nil];
+    if (dst->flipped) {                          /* origem embaixo: troca as linhas */
+        uint8_t *tmp = malloc((size_t)dst->rb);
+        for (long y = 0; tmp && y < dst->h / 2; y++) {
+            uint8_t *a = (uint8_t *)dst->data + y * dst->rb, *z = (uint8_t *)dst->data + (dst->h - 1 - y) * dst->rb;
+            memcpy(tmp, a, (size_t)dst->rb); memcpy(a, z, (size_t)dst->rb); memcpy(z, tmp, (size_t)dst->rb);
+        }
+        free(tmp);
+    }
+    return [[[CIRenderTask alloc] init] autorelease];
 }
 @end
