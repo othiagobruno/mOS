@@ -198,6 +198,11 @@ static int rep_materialize(const uint8_t *r, const uint8_t **out, int64_t *n, ui
     }
 }
 
+/* bytes de um Data sem copiar (o inline vai para tmp, 14 bytes); 0 se a representação é inválida */
+int fdn_rep_view(const uint8_t r[16], const uint8_t **out, int64_t *n, uint8_t tmp[14]) {
+    return rep_materialize(r, out, n, tmp, 14);
+}
+
 void fdn_rep_from_bytes(uint8_t r[16], const void *bytes, int64_t n) {
     if (n <= 0) { rep_clear(r); return; }
     if (n <= 14) { rep_set_inline(r, (const uint8_t *)bytes, (int)n); return; }
