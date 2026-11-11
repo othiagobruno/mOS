@@ -63,6 +63,7 @@ static unsigned dhcp_dns(void) { return 0; }
 #else
 #include "sys.h"
 void *malloc(size_t n);
+void *calloc(size_t n, size_t s);
 void free(void *p);
 void *memset(void *d, int c, size_t n);
 void *memcpy(void *d, const void *s, size_t n);
@@ -250,8 +251,9 @@ int mos_res_nsearch(void) { if (!R.inited) res_ninit(0); return R.nsearch; }
 const char *mos_res_search(int i) { return i >= 0 && i < R.nsearch ? R.search[i] : ""; }
 
 int dn_expand(const u8 *msg, const u8 *eom, const u8 *src, char *dst, int dstsiz) {
+    /* consumed: bytes do nome em src até o primeiro ponteiro (inclusive os 2 dele) ou até o 0 final */
     const u8 *p = src;
-    int out = 0, jumps = 0, consumed = 0, first = 1;
+    int out = 0, jumps = 0, consumed = -1;
     if (!msg || !eom || !src || !dst || dstsiz < 1 || src < msg || src >= eom) return -1;
     for (;;) {
         if (p >= eom) return -1;
@@ -259,16 +261,15 @@ int dn_expand(const u8 *msg, const u8 *eom, const u8 *src, char *dst, int dstsiz
         if ((l & 0xC0) == 0xC0) {
             if (p + 1 >= eom) return -1;
             int off = ((l & 0x3F) << 8) | p[1];
-            if (!first) consumed += 2;
+            if (consumed < 0) consumed = (int)(p - src) + 2;
             if (jumps++ > 16 || msg + off >= eom) return -1;
             p = msg + off;
-            first = 0;
             continue;
         }
         if (!l) {
-            if (first) consumed = (int)(p - src) + 1;
+            if (consumed < 0) consumed = (int)(p - src) + 1;
             dst[out] = 0;
-            return consumed ? consumed : (int)(p + 1 - src);
+            return consumed;
         }
         if ((l & 0xC0) || p + 1 + l > eom) return -1;
         if (out && out + 1 < dstsiz) dst[out++] = '.';
@@ -277,8 +278,6 @@ int dn_expand(const u8 *msg, const u8 *eom, const u8 *src, char *dst, int dstsiz
             dst[out++] = (char)p[1 + i];
         }
         p += 1 + l;
-        if (first) consumed = (int)(p - src);
-        first = 0;
     }
 }
 
@@ -458,5 +457,199 @@ int DNSServiceGetAddrInfo(void **sd, u32 flags, u32 iface, u32 proto, const char
         memcpy(sa + 8, ip6, 16);
         cb(sd ? *sd : 0, 0, 0, 0, host, sa, 60, ctx);
     }
+    return 0;
+}
+
+/* ---- res_9_mkquery e a API dns_util.h (dns_parse_packet / dns_free_reply) ----
+ * O WhatsApp monta a consulta com res_9_mkquery e lê a resposta com dns_parse_packet.
+ * As structs seguem o dns_util.h da Apple; os dados de cada registro vão por tipo
+ * (A, AAAA, NS/CNAME/PTR, MX, TXT, SRV; o resto como bytes crus). */
+int res_9_mkquery(int op, const char *dname, int cls, int type, const u8 *data, int datalen, const u8 *newrr, u8 *buf, int buflen) {
+    (void)data; (void)datalen; (void)newrr;
+    if (op != 0 || !dname || !buf || cls < 0) return -1;            /* só QUERY */
+    int n = build_query(buf, buflen, dname, type);
+    if (n < 0) return -1;
+    static u16 xid = 0x4d51;
+    xid = (u16)(xid * 1103515245u + 12345u);
+    buf[0] = (u8)(xid >> 8); buf[1] = (u8)xid;
+    buf[n - 2] = (u8)(cls >> 8); buf[n - 1] = (u8)cls;
+    return n;
+}
+int res_mkquery(int op, const char *dname, int cls, int type, const u8 *data, int datalen, const u8 *newrr, u8 *buf, int buflen) {
+    return res_9_mkquery(op, dname, cls, type, data, datalen, newrr, buf, buflen);
+}
+
+typedef struct { u16 xid, flags, qdcount, ancount, nscount, arcount; } dns_header_t;
+typedef struct { char *name; u16 dnstype, dnsclass; } dns_question_t;
+typedef struct { u8 b[4]; } dns_in_addr_t;
+typedef struct { u8 b[16]; } dns_in6_addr_t;
+typedef struct { dns_in_addr_t addr; } dns_address_record_t;
+typedef struct { dns_in6_addr_t addr; } dns_in6_address_record_t;
+typedef struct { char *name; } dns_domain_name_record_t;
+typedef struct { u16 preference; char *name; } dns_MX_record_t;
+typedef struct { u32 string_count; char **strings; } dns_TXT_record_t;
+typedef struct { u16 priority, weight, port; char *target; } dns_SRV_record_t;
+typedef struct { u16 length; char *data; } dns_raw_resource_record_t;
+typedef struct { char *name; u16 dnstype, dnsclass; u32 ttl; void *data; } dns_resource_record_t;
+typedef struct {
+    u32 status;
+    dns_header_t *header;
+    dns_question_t **question;
+    dns_resource_record_t **answer, **authority, **additional;
+    void *server;
+} dns_reply_t;
+
+static char *dns_dup(const char *s) { size_t n = strlen(s); char *d = malloc(n + 1); if (d) memcpy(d, s, n + 1); return d; }
+static int dns_name(const u8 *msg, const u8 *eom, const u8 **p, char **out) {
+    char tmp[256];
+    int n = dn_expand(msg, eom, *p, tmp, sizeof tmp);
+    if (n < 0) return -1;
+    *p += n;
+    *out = dns_dup(tmp);
+    return *out ? 0 : -1;
+}
+static u16 rd16(const u8 *p) { return (u16)((p[0] << 8) | p[1]); }
+static u32 rd32(const u8 *p) { return ((u32)p[0] << 24) | ((u32)p[1] << 16) | ((u32)p[2] << 8) | p[3]; }
+
+static void dns_free_rr(dns_resource_record_t *r) {
+    if (!r) return;
+    if (r->data) {
+        switch (r->dnstype) {
+        case 2: case 5: case 12: free(((dns_domain_name_record_t *)r->data)->name); break;
+        case 15: free(((dns_MX_record_t *)r->data)->name); break;
+        case 33: free(((dns_SRV_record_t *)r->data)->target); break;
+        case 16: {
+            dns_TXT_record_t *t = r->data;
+            for (u32 i = 0; i < t->string_count; i++) free(t->strings[i]);
+            free(t->strings);
+            break;
+        }
+        case 1: case 28: break;
+        default: free(((dns_raw_resource_record_t *)r->data)->data); break;
+        }
+        free(r->data);
+    }
+    free(r->name);
+    free(r);
+}
+static dns_resource_record_t *dns_parse_rr(const u8 *msg, const u8 *eom, const u8 **pp) {
+    const u8 *p = *pp;
+    dns_resource_record_t *r = calloc(1, sizeof *r);
+    if (!r) return 0;
+    if (dns_name(msg, eom, &p, &r->name) || p + 10 > eom) goto bad;
+    r->dnstype = rd16(p); r->dnsclass = rd16(p + 2); r->ttl = rd32(p + 4);
+    u16 rdlen = rd16(p + 8);
+    p += 10;
+    if (p + rdlen > eom) goto bad;
+    const u8 *rd = p, *end = p + rdlen;
+    switch (r->dnstype) {
+    case 1:
+        if (rdlen != 4 || !(r->data = calloc(1, sizeof(dns_address_record_t)))) goto bad;
+        memcpy(r->data, rd, 4);
+        break;
+    case 28:
+        if (rdlen != 16 || !(r->data = calloc(1, sizeof(dns_in6_address_record_t)))) goto bad;
+        memcpy(r->data, rd, 16);
+        break;
+    case 2: case 5: case 12: {
+        dns_domain_name_record_t *d = calloc(1, sizeof *d);
+        const u8 *q = rd;
+        if (!(r->data = d) || dns_name(msg, eom, &q, &d->name)) goto bad;
+        break;
+    }
+    case 15: {
+        dns_MX_record_t *m = calloc(1, sizeof *m);
+        const u8 *q = rd + 2;
+        if (!(r->data = m) || rdlen < 3) goto bad;
+        m->preference = rd16(rd);
+        if (dns_name(msg, eom, &q, &m->name)) goto bad;
+        break;
+    }
+    case 33: {
+        dns_SRV_record_t *s = calloc(1, sizeof *s);
+        const u8 *q = rd + 6;
+        if (!(r->data = s) || rdlen < 7) goto bad;
+        s->priority = rd16(rd); s->weight = rd16(rd + 2); s->port = rd16(rd + 4);
+        if (dns_name(msg, eom, &q, &s->target)) goto bad;
+        break;
+    }
+    case 16: {
+        dns_TXT_record_t *t = calloc(1, sizeof *t);
+        if (!(r->data = t)) goto bad;
+        for (const u8 *q = rd; q < end; q += 1 + *q) t->string_count++;
+        t->strings = calloc(t->string_count ? t->string_count : 1, sizeof(char *));
+        if (!t->strings) goto bad;
+        u32 i = 0;
+        for (const u8 *q = rd; q < end && i < t->string_count; q += 1 + *q, i++) {
+            u8 l = *q;
+            if (q + 1 + l > end) { t->string_count = i; break; }
+            t->strings[i] = malloc((size_t)l + 1);
+            if (!t->strings[i]) { t->string_count = i; goto bad; }
+            memcpy(t->strings[i], q + 1, l);
+            t->strings[i][l] = 0;
+        }
+        break;
+    }
+    default: {
+        dns_raw_resource_record_t *w = calloc(1, sizeof *w);
+        if (!(r->data = w)) goto bad;
+        w->length = rdlen;
+        w->data = malloc(rdlen ? rdlen : 1);
+        if (!w->data) goto bad;
+        memcpy(w->data, rd, rdlen);
+        break;
+    }
+    }
+    *pp = end;
+    return r;
+bad:
+    dns_free_rr(r);
+    return 0;
+}
+static dns_resource_record_t **dns_parse_section(const u8 *msg, const u8 *eom, const u8 **p, u16 n) {
+    dns_resource_record_t **v = calloc((size_t)n + 1, sizeof *v);
+    if (!v) return 0;
+    for (u16 i = 0; i < n; i++) {
+        v[i] = dns_parse_rr(msg, eom, p);
+        if (!v[i]) { for (u16 k = 0; k < i; k++) dns_free_rr(v[k]); free(v); return 0; }
+    }
+    return v;
+}
+void dns_free_reply(dns_reply_t *r) {
+    if (!r) return;
+    if (r->question) { for (u32 i = 0; r->question[i]; i++) { free(r->question[i]->name); free(r->question[i]); } free(r->question); }
+    dns_resource_record_t **s[3] = {r->answer, r->authority, r->additional};
+    for (int k = 0; k < 3; k++) if (s[k]) { for (u32 i = 0; s[k][i]; i++) dns_free_rr(s[k][i]); free(s[k]); }
+    free(r->header);
+    free(r->server);
+    free(r);
+}
+dns_reply_t *dns_parse_packet(const char *buf, u32 len) {
+    const u8 *msg = (const u8 *)buf, *eom, *p;
+    dns_reply_t *r;
+    if (!buf || len < 12) return 0;
+    eom = msg + len;
+    r = calloc(1, sizeof *r);
+    if (!r || !(r->header = calloc(1, sizeof *r->header))) { free(r); return 0; }
+    r->header->xid = rd16(msg); r->header->flags = rd16(msg + 2);
+    r->header->qdcount = rd16(msg + 4); r->header->ancount = rd16(msg + 6);
+    r->header->nscount = rd16(msg + 8); r->header->arcount = rd16(msg + 10);
+    p = msg + 12;
+    r->question = calloc((size_t)r->header->qdcount + 1, sizeof *r->question);
+    if (!r->question) goto bad;
+    for (u16 i = 0; i < r->header->qdcount; i++) {
+        dns_question_t *q = calloc(1, sizeof *q);
+        if (!q) goto bad;
+        r->question[i] = q;
+        if (dns_name(msg, eom, &p, &q->name) || p + 4 > eom) goto bad;
+        q->dnstype = rd16(p); q->dnsclass = rd16(p + 2);
+        p += 4;
+    }
+    if (!(r->answer = dns_parse_section(msg, eom, &p, r->header->ancount))) goto bad;
+    if (!(r->authority = dns_parse_section(msg, eom, &p, r->header->nscount))) goto bad;
+    if (!(r->additional = dns_parse_section(msg, eom, &p, r->header->arcount))) goto bad;
+    return r;
+bad:
+    dns_free_reply(r);
     return 0;
 }
