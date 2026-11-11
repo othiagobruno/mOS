@@ -645,6 +645,45 @@ static id ae_with_role(id k, SEL c, id role, ax_rect_t frame, id label, id paren
     pset(e, "accessibilityRole", role); pset(e, "accessibilityLabel", label); pset(e, "accessibilityParent", parent);
     return e;
 }
+/* NSAccessibilityRemoteUIElement: o Chromium (ui::RemoteAccessibility) troca entre o processo do navegador e o do
+ * renderer um token opaco que identifica o elemento de acessibilidade local, e o lado de lá o abre com
+ * -initWithRemoteToken:. O token do mOS são 16 bytes: "mOSa", o pid e o endereço do elemento. Sem árvore de
+ * acessibilidade entre processos no mOS, o elemento remoto guarda o token, o pid e o elemento, quando é deste
+ * processo. O Chromium monta o vetor do token com o NSData e não aceita nil. */
+#define AX_TOKEN_LEN 16
+int getpid(void);
+static id rui_token_for(id k, SEL c, id element) {
+    (void)k; (void)c;
+    unsigned char b[AX_TOKEN_LEN] = {'m', 'O', 'S', 'a'};
+    int pid = getpid();
+    u64 e = (u64)element;
+    memcpy(b + 4, &pid, 4);
+    memcpy(b + 8, &e, 8);
+    return MSG(id, cls("NSData"), "dataWithBytes:length:", (const void *)b, (u64)AX_TOKEN_LEN);
+}
+static void rui_register_pid(id k, SEL c, int pid) { (void)k; (void)c; (void)pid; }   /* aceita qualquer pid */
+static id rui_init_token(id self, SEL c, id token) {
+    (void)c;
+    if (!token || MSG0(u64, token, "length") != AX_TOKEN_LEN) { objc_release(self); return 0; }
+    const unsigned char *b = MSG0(const unsigned char *, token, "bytes");
+    if (b[0] != 'm' || b[1] != 'O' || b[2] != 'S' || b[3] != 'a') { objc_release(self); return 0; }
+    int pid;
+    u64 e;
+    memcpy(&pid, b + 4, 4);
+    memcpy(&e, b + 8, 8);
+    pset(self, "remoteToken", token);
+    pset(self, "remotePid", cx_num_i(pid));
+    if (pid == getpid() && e) pset(self, "localElement", (id)e);
+    return self;
+}
+static id rui_token(id self, SEL c) { (void)c; return pget(self, "remoteToken"); }
+static int rui_pid(id self, SEL c) { (void)c; return (int)pget_i(self, "remotePid", 0); }
+static id rui_window(id self, SEL c) { (void)c; return pget(self, "windowUIElement"); }
+static void rui_set_window(id self, SEL c, id v) { (void)c; pset(self, "windowUIElement", v); }
+static id rui_top(id self, SEL c) { (void)c; return pget(self, "topLevelUIElement"); }
+static void rui_set_top(id self, SEL c, id v) { (void)c; pset(self, "topLevelUIElement", v); }
+static id rui_children(id self, SEL c) { (void)c; id l = pget(self, "localElement"); return l ? MSG0(id, l, "accessibilityChildren") : 0; }
+
 static id aca_init_name(id self, SEL c, id name, id target, SEL sel) { (void)c; (void)target; (void)sel; pset(self, "title", name); return self; }
 
 /* ---- registro */
@@ -789,6 +828,17 @@ void cx_appkit_extra_init(void) {
     CM(NSAccessibilityElement, "accessibilityElementWithRole:frame:label:parent:", ae_with_role);
     REG_PROP(NSAccessibilityElement, accessibilityLabel, setAccessibilityLabel); REG_PROP(NSAccessibilityElement, accessibilityRole, setAccessibilityRole);
     REG_PROP(NSAccessibilityElement, accessibilityParent, setAccessibilityParent);
+    CM(NSAccessibilityRemoteUIElement, "remoteTokenForLocalUIElement:", rui_token_for);
+    CM(NSAccessibilityRemoteUIElement, "registerRemoteUIProcessIdentifier:", rui_register_pid);
+    IM(NSAccessibilityRemoteUIElement, "initWithRemoteToken:", rui_init_token);
+    IM(NSAccessibilityRemoteUIElement, "remoteToken", rui_token);
+    IM(NSAccessibilityRemoteUIElement, "processIdentifier", rui_pid);
+    IM(NSAccessibilityRemoteUIElement, "windowUIElement", rui_window);
+    IM(NSAccessibilityRemoteUIElement, "setWindowUIElement:", rui_set_window);
+    IM(NSAccessibilityRemoteUIElement, "topLevelUIElement", rui_top);
+    IM(NSAccessibilityRemoteUIElement, "setTopLevelUIElement:", rui_set_top);
+    IM(NSAccessibilityRemoteUIElement, "accessibilityChildren", rui_children);
+    REG_PROP(NSAccessibilityRemoteUIElement, accessibilityParent, setAccessibilityParent);
     IM(NSAccessibilityCustomAction, "initWithName:target:selector:", aca_init_name); REG_PROP(NSAccessibilityCustomAction, title, setTitle);
     (void)vc_init_nib; (void)vc_load; (void)vc_view; (void)g_representedObject; (void)s_representedObject;
     (void)ret_self; (void)noop1; (void)memset; (void)strcmp;

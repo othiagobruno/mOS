@@ -2138,9 +2138,35 @@ static void bop_main(id s, SEL c) {
 }
 static id q_main(id cls, SEL c) { (void)c; static id s; if (!s) s = cx_alloc_instance((cx_class_t *)cls); return s; }
 static void *op_thread(void *op) { op_start((id)op, 0); rel((id)op); return 0; }
+/* a fila guarda as operações ainda não terminadas (BOX->a, NSMutableArray sob o trinco BOX->fl):
+ * -operations, -operationCount e -cancelAllOperations as enxergam */
+static void q_track(id s, id op) {
+    spin_lock((volatile int *)&BOX(s)->fl);
+    if (!BOX(s)->a) BOX(s)->a = MSG0(id, MSG0(id, (id)&NSMutableArray_c, "alloc"), "init");
+    id arr = BOX(s)->a;
+    for (long i = MSG0(long, arr, "count") - 1; i >= 0; i--)
+        if (MSG0(BOOL, MSG(id, arr, "objectAtIndex:", (unsigned long)i), "isFinished")) MSG(void, arr, "removeObjectAtIndex:", (unsigned long)i);
+    if (op) MSG(void, arr, "addObject:", op);
+    spin_unlock((volatile int *)&BOX(s)->fl);
+}
+static id q_ops(id s, SEL c) {
+    (void)c;
+    q_track(s, 0);
+    spin_lock((volatile int *)&BOX(s)->fl);
+    id r = MSG(id, (id)&NSArray_c, "arrayWithArray:", BOX(s)->a);
+    spin_unlock((volatile int *)&BOX(s)->fl);
+    return r;
+}
+static long q_count(id s, SEL c) { return MSG0(long, q_ops(s, c), "count"); }
+static void q_cancel_all(id s, SEL c) {
+    id ops = q_ops(s, c);
+    long n = MSG0(long, ops, "count");
+    for (long i = 0; i < n; i++) MSG0(void, MSG(id, ops, "objectAtIndex:", (unsigned long)i), "cancel");
+}
 static void q_add(id s, SEL c, id op) {
-    (void)s; (void)c;
+    (void)c;
     if (!op) return;
+    q_track(s, op);
     retain(op);
     unsigned long tid = 0;
     if (pthread_create(&tid, 0, op_thread, op)) { op_start(op, c); rel(op); }
@@ -2889,6 +2915,7 @@ void cx_foundation_more_init(void) {
     DEF(&NSCondition_c, &NSCondition_m, "NSCondition", ob, BEX);
     CM(NSCondition, "alloc", lock_alloc); M(NSCondition, "lock", lk_lock); M(NSCondition, "unlock", lk_unlock);
     M(NSCondition, "wait", cond_wait); M(NSCondition, "signal", cond_signal); M(NSCondition, "broadcast", cond_bcast);
+    M(NSCondition, "name", get_a); M(NSCondition, "setName:", set_a);
     DEF(&NSConditionLock_c, &NSConditionLock_m, "NSConditionLock", ob, BEX);
     CM(NSConditionLock, "alloc", lock_alloc);
     M(NSConditionLock, "initWithCondition:", condlock_init); M(NSConditionLock, "lock", lk_lock); M(NSConditionLock, "unlock", lk_unlock);
@@ -3084,6 +3111,8 @@ void cx_foundation_more_init(void) {
     M(NSOperationQueue, "addOperation:", q_add); M(NSOperationQueue, "addOperationWithBlock:", q_add_block);
     M(NSOperationQueue, "setMaxConcurrentOperationCount:", noop); M(NSOperationQueue, "setSuspended:", noop);
     M(NSOperationQueue, "waitUntilAllOperationsAreFinished", noop);
+    M(NSOperationQueue, "operations", q_ops); M(NSOperationQueue, "operationCount", q_count);
+    M(NSOperationQueue, "cancelAllOperations", q_cancel_all);
 
     DEF(&NSProgress_c, &NSProgress_m, "NSProgress", ob, BEX);
     CM(NSProgress, "progressWithTotalUnitCount:", prog_with); CM(NSProgress, "discreteProgressWithTotalUnitCount:", prog_with);
