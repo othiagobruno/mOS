@@ -42,6 +42,7 @@ CFCONST(SCStreamFrameInfoScaleFactor, "SCStreamFrameInfoScaleFactor")
 CFCONST(SCStreamFrameInfoContentScale, "SCStreamFrameInfoContentScale")
 CFCONST(SCStreamFrameInfoContentRect, "SCStreamFrameInfoContentRect")
 CFCONST(SCStreamFrameInfoDirtyRects, "SCStreamFrameInfoDirtyRects")
+CFCONST(SCStreamFrameInfoBoundingRect, "SCStreamFrameInfoBoundingRect")   /* área com conteúdo: o quadro inteiro */
 
 int cx_cap_allowed(void) { return cx_tcc_preflight("kTCCServiceScreenCapture") == 1; }
 
@@ -132,6 +133,7 @@ int cx_cap_wrap(const unsigned *px, int w, int h, long long pts_us, id *surf_out
     CMSetAttachment(sb, (id)SCStreamFrameInfoContentScale, one, 1);
     CMSetAttachment(sb, (id)SCStreamFrameInfoContentRect, rect, 1);
     CMSetAttachment(sb, (id)SCStreamFrameInfoDirtyRects, dirty, 1);
+    CMSetAttachment(sb, (id)SCStreamFrameInfoBoundingRect, rect, 1);
     if (status) objc_release(status);
     if (dtime) objc_release(dtime);
     if (one) objc_release(one);

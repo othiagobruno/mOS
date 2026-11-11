@@ -585,6 +585,7 @@ void cx_appkit_input_init(void) {
     { extern void cx_slack_frameworks_init(void); cx_slack_frameworks_init(); }   /* slack_frameworks.c */
     if (cx_corebluetooth_init) cx_corebluetooth_init();   /* corebluetooth.c */
     cx_framework_classes_init(); /* vscode_fwclasses.c: classes de frameworks ausentes */
+    { extern void cx_agentes_classes_init(void); cx_agentes_classes_init(); }   /* agentes_classes.c: EventKit/Intents/ScriptingBridge/OSLog/AVFAudio do ChatGPT desktop */
     { extern void cx_userspace_services_init(void); cx_userspace_services_init(); }
     { extern void cx_usernotifications_init(void); cx_usernotifications_init(); }   /* usernotifications.c: addNotificationRequest, delegate, banner */
     { extern void cx_la_init(void); cx_la_init(); }                                 /* la_fw.c: LAContext sem biometria */

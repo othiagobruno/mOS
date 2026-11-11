@@ -389,6 +389,13 @@ int res_9_nsearch(void *state, const char *name, int cls, int type, u8 *ans, int
 int res_9_search(const char *name, int cls, int type, u8 *ans, int anslen) {
     return res_search(name, cls, type, ans, anslen);
 }
+/* libresolv.9 com o prefixo res_9_ (resolv.h do macOS): a mesma consulta e a mesma expansão de nome */
+int res_9_nquery(void *state, const char *name, int cls, int type, u8 *ans, int anslen) {
+    return res_nquery(state, name, cls, type, ans, anslen);
+}
+int res_9_dn_expand(const u8 *msg, const u8 *eom, const u8 *src, char *dst, int dstsiz) {
+    return dn_expand(msg, eom, src, dst, dstsiz);
+}
 
 static int first_addr(const u8 *msg, int n, int type, u8 *out, int outlen) {
     if (n < 12) return 0;
