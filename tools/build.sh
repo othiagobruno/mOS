@@ -361,6 +361,14 @@ mkdir -p "$ESP/mOS/usr/lib" "$ESP/mOS/usr/share/zlib" "$ESP/mOS/usr/share/curl"
 cp -f "$ROOT/build/libcxx/libc++.1.dylib" "$ESP/mOS/usr/lib/libc++.1.dylib"
 cp -f "$ROOT/build/zlib-x86_64/libz.1.dylib" "$ESP/mOS/usr/lib/libz.1.dylib"
 cp -f "$ROOT/build/sqlite/libsqlite3.dylib" "$ESP/mOS/usr/lib/libsqlite3.dylib"
+# libxml2 2.13.8 (MIT): o WhatsApp liga htmlReadMemory, xmlReadMemory e xmlXPath* em /usr/lib/libxml2.2.dylib.
+if MOS_ZIG="$ZIG" bash "$ROOT/tools/build-libxml2.sh" "$ROOT/build/libxml2/libxml2.2.dylib"; then
+    mkdir -p "$ESP/mOS/usr/share/libxml2"
+    cp -f "$ROOT/build/libxml2/libxml2.2.dylib" "$ESP/mOS/usr/lib/libxml2.2.dylib"
+    cp -f "$ROOT/.tools/libxml2-2.13.8/Copyright" "$ESP/mOS/usr/share/libxml2/Copyright"
+else
+    echo "aviso: libxml2 não compilou; /usr/lib/libxml2.2.dylib fica de fora" >&2
+fi
 cp -f "$ROOT/build/curl-x86_64/libcurl.4.dylib" "$ESP/mOS/usr/lib/libcurl.4.dylib"
 cp -f "$ROOT/build/zlib-x86_64/LICENSE" "$ESP/mOS/usr/share/zlib/LICENSE"
 cp -f "$ROOT/build/curl-x86_64/COPYING" "$ESP/mOS/usr/share/curl/COPYING"
@@ -375,6 +383,12 @@ echo "==> libswift"
 # Runtime real (swift-6.4.2) quando a toolchain e o fonte estão em .tools/. Sem isso, o stage completa com stub.
 if [ -f "$ROOT/tools/build-libswift-real.sh" ]; then
     bash "$ROOT/tools/build-libswift-real.sh" || echo "aviso: build-libswift-real.sh falhou; o que faltar continua stub" >&2
+fi
+# Frameworks ObjC do mOS (UIKit do Catalyst, CoreData, ImageIO...) e o Combine (OpenCombine como módulo
+# "Combine") na mesma raiz das dylibs Swift; o cp -a abaixo leva tudo para a imagem.
+MOS_ZIG="$ZIG" bash "$ROOT/tools/build-frameworks-objc.sh" || echo "aviso: algum framework ObjC não compilou" >&2
+if [ -f "$ROOT/build/swift/objc/dylib/usr/lib/swift/libswiftCore.dylib" ]; then
+    MOS_ZIG="$ZIG" bash "$ROOT/tools/build-swift-combine.sh" || echo "aviso: Combine.framework não compilou" >&2
 fi
 if [ -f "$ROOT/build/universal-swift/usr/lib/swift/libswiftCore.dylib" ]; then
     cp -a "$ROOT/build/universal-swift/." "$ESP/mOS/"

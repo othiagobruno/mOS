@@ -60,3 +60,38 @@ Na hora de commitar, o `appkit.c` e o `appkit_nib.inc` podem ter trechos de outr
 - **Ponte NSString→String** (`swift_bridge("Swift.String")`): só existe na cópia do SDK que o SwiftUI usa. Levar ao `Foundation.h` da variante ObjC muda a importação de todos os overlays e precisa de reteste.
 - **`dladdr` com tabela por imagem** (`swiftsupport.c`): ainda não foi retestado no VS Code nem no Electron.
 - **`build/libSystem.mos` compartilhado:** só é refeito quando o `vscode_libc.c` de outra sessão compila.
+
+## Estado em 10 nov. 2026 (Linux, harness de host)
+
+Apps oficiais: Postico 2.3.5 (`postico-9817.dmg` de releases.eggerapps.at, SHA-256
+`34ec7730de0796c008e0caf9f366629a3043c5813c79f749e47d22084afb6e0f`) e WhatsApp 2.26.45.13 (o zip de
+`tools/stage-apps-oficiais.sh`).
+
+**Runtime Swift real.** `tools/build-libswift-real.sh` ligava a `libswiftCore` com a lista de objetos sem aspas:
+com o repo em "Área de trabalho", o link quebrava (`error: /home/thiago/Área: unrecognized file extension`) e a
+imagem saía com as 24 `libswift*` stub. Com as listas em array, sai o runtime real: `libswiftCore` (8,8 MB),
+`_Concurrency`, `Dispatch`, `Darwin`, `ObjectiveC`, `CoreFoundation`, `CoreGraphics`, `Metal` e os módulos pequenos.
+`MOS_SWIFT_SKIP_CORE=1` reaproveita a stdlib e o runtime C++ já compilados.
+
+**Na imagem pelo `tools/build.sh`:** os frameworks ObjC do mOS (o UIKit do Catalyst, CoreData com o overlay Swift
+etc., `tools/build-frameworks-objc.sh`), o Combine.framework (OpenCombine 0.14.0 como módulo `Combine`,
+`tools/build-swift-combine.sh`) e a libxml2 2.13.8 (`tools/build-libxml2.sh`, `/usr/lib/libxml2.2.dylib`).
+
+**machocheck** (mesma pasta: runtime Swift real, Combine, frameworks, libc++, libz, libsqlite3, libxml2):
+
+| | libSystem antes | libSystem depois |
+|---|---|---|
+| Postico 2.3.5 | 0 | 0 |
+| WhatsApp 2.26.45.13 | 809 | 556 |
+
+Sem os frameworks e o Combine na pasta, o WhatsApp media 1.641. Dos 556: StoreKit 2 em Swift (157), interface
+(ImageIO, CoreGraphics, Photos, CoreImage: com o Dev de Interface), classes de Intents, AVFoundation, CloudKit,
+PassKit, Vision, WidgetKit em Swift (13) e CryptoKit (48). O machocheck não mede as `libswift*` que não existem
+no disco (`libswiftFoundation`, `libswiftUIKit`, `libswiftAVFoundation`...).
+
+**Harness (Postico):** carrega 26 imagens com o runtime real e cai no primeiro `Optional<URL>`:
+`__swift_instantiateConcreteTypeFromMangledName` devolve nulo porque `$s10Foundation3URLVMn` é um stub vazio
+(`sys_zerados.c`). O próximo marco dos dois apps é o Foundation em Swift de verdade (swift-foundation compilado
+como módulo `Foundation`, como no `tools/build-swift-foundation-objc.ps1`, que ainda não tem porte Linux).
+O mesmo vale para o overlay do UIKit (`libswiftUIKit`), a StoreKit 2 e o CryptoKit com a stdlib real
+(o `tools/build-cryptokit-macho.sh` liga contra um módulo Swift mínimo, que não casa com o runtime real).
