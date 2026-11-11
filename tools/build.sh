@@ -23,6 +23,11 @@ gcc -O2 -Wall -Wextra -DMOS_HOST_TEST -I kernel/include -I tools tools/resto_hos
     kernel/proc/cred.c kernel/proc/fdshare.c kernel/proc/fileport.c kernel/mm/commpage.c kernel/mm/swap.c \
     -o /tmp/resto_host
 /tmp/resto_host
+# o que o ChatGPT desktop pedia (Spotlight, chave P-256 em PEM, inversa de CATransform3D)
+gcc -std=c11 -Wall -Wextra -I userland/libsystem -DCK_PEM_HOST userland/libsystem/mdq_core.c userland/libsystem/ck_pem.c \
+    userland/libsystem/catransform_inv.c tools/agentes_host.c -o /tmp/agentes_host
+/tmp/agentes_host > /tmp/agentes_host.log || { cat /tmp/agentes_host.log; exit 1; }
+tail -1 /tmp/agentes_host.log
 gcc -O2 -Wall -Wextra -DMOS_HOST_TEST -I kernel/include -I tools tools/r8169_host.c kernel/dev/r8169.c \
     -o /tmp/r8169_host
 /tmp/r8169_host
