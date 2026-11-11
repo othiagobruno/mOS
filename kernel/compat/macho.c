@@ -1019,7 +1019,12 @@ static int export_is_stub(mach_t *mo, u64 vm) {
     for (int i = 0; i < mo->nsegs; i++) {
         seg_t *s = &mo->segs[i];
         if (s->zero || vm < s->vmaddr || vm + 2 > s->vmaddr + s->filesize) continue;
-        const u8 *p = mo->m + s->fileoff + (vm - s->vmaddr);
+        /* depois do image_persist, mo->m guarda só os comandos de carga e a trie (mo->len): o __TEXT não está
+         * mais aqui. Um dlopen que liga contra uma imagem já carregada (o .node contra o Electron Framework) lia
+         * fora do buffer. A marca só serve ao relatório de stubs; fora do buffer, não é stub conhecido. */
+        u64 fo = s->fileoff + (vm - s->vmaddr);
+        if (fo + 2 > mo->len) return 0;
+        const u8 *p = mo->m + fo;
         return p[0] == 0xC3 && p[1] == 0xCC;
     }
     return 0;

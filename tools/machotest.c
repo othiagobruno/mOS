@@ -803,8 +803,15 @@ typedef struct {
     u32 qsize[HMSG_N];
     int qh, qn;
     int memfd;
-    u64 memsz;
+    u64 memsz, memoff;      /* entrada sobre parte de outro memfd (entrada feita de um endereço mapeado) */
+    u32 memprot;            /* VM_PROT_* da entrada (perm & 7): só-leitura recusa mapa gravável */
 } hport_t;
+/* mapeamentos de entradas (MACH_VM_MAP): MACH_VM_MAKE_ENTRY de um endereço já mapeado reusa o mesmo memfd,
+ * como o kernel reusa as mesmas páginas (o ReadOnlySharedMemoryRegion do Chromium escreve na entrada
+ * gravável e manda a entrada só-leitura feita do endereço dela) */
+#define HMAP_N 4096
+static struct { u64 at, sz, off; int memfd; } hmaps[HMAP_N];
+static int hmap_n;
 static hport_t hports[HPORT_N];
 static u32 hname_next = 0x11000;
 static int said_construct;
@@ -946,6 +953,15 @@ static long mach_port_op(u64 op, u64 ap) {
         a[2] = a[0];
         return KERN_OK;
     }
+    case MACH_OP_PEEK: {       /* como kernel/proc/machipc.c: fila vazia (ou porta sem fila) = KERN_FAILURE (5) */
+        hport_t *p = hport_get((u32)a[0]);
+        if (!p || !p->qn) return 5;
+        const u8 *m = p->qdata[p->qh];
+        a[1] = p->qsize[p->qh];
+        a[2] = p->seqno;
+        a[3] = p->qsize[p->qh] >= 24 ? rd32u(m + 20) : 0;   /* msgh_id */
+        return KERN_OK;
+    }
     case MACH_OP_GET_SPECIAL:
         if (a[0] == 4) {
             if (!hport_get(0x303)) { hport_t *b = hport_new(0x303, HT_SEND); if (b) b->srefs = 1; }
@@ -1050,13 +1066,27 @@ static long mach_vm_op(u64 op, u64 ap) {
     }
     if (op == MACH_VM_MAKE_ENTRY) {
         u64 sz = a[0];
+        if (getenv("MACHOTEST_DEBUG")) fprintf(stderr, "[vm] entrada sz=0x%llx end=0x%llx perm=0x%llx pai=0x%llx\n",
+            (unsigned long long)a[0], (unsigned long long)a[1], (unsigned long long)a[2], (unsigned long long)a[3]);
         if (!sz || sz > (256ull << 20)) return KERN_SHORT;
         sz = (sz + 0xFFFULL) & ~0xFFFULL;
         hport_t *p = hport_new(0, HT_SEND);
         if (!p) return KERN_SHORT;
         p->srefs = 1;
         p->memsz = sz;
+        p->memprot = (u32)(a[2] & 7);
 #ifndef _WIN32
+        if (!(a[2] & 0x20000) && a[1]) {                 /* sem MAP_MEM_NAMED_CREATE: as páginas do endereço a1 */
+            for (int i = hmap_n - 1; i >= 0; i--) {
+                if (a[1] < hmaps[i].at || a[1] + a[0] > hmaps[i].at + hmaps[i].sz) continue;
+                p->memfd = dup(hmaps[i].memfd);
+                p->memoff = hmaps[i].off + (a[1] - hmaps[i].at);
+                if (p->memfd < 0) { hport_free_slot(p); return KERN_SHORT; }
+                a[4] = p->name;
+                a[5] = sz;
+                return KERN_OK;
+            }
+        }
         p->memfd = memfd_create("mos-mach", 0);
         if (p->memfd < 0 || ftruncate(p->memfd, (off_t)sz) != 0) { hport_free_slot(p); return KERN_SHORT; }
 #else
@@ -1068,7 +1098,13 @@ static long mach_vm_op(u64 op, u64 ap) {
     }
     if (op == MACH_VM_MAP) {
         hport_t *p = hport_get((u32)a[3]);
+        if (getenv("MACHOTEST_DEBUG")) fprintf(stderr, "[vm] map obj=0x%llx at=0x%llx sz=0x%llx fl=0x%llx off=0x%llx prot=0x%llx porta=%s memsz=0x%llx\n",
+            (unsigned long long)a[3], (unsigned long long)a[0], (unsigned long long)a[1], (unsigned long long)a[2],
+            (unsigned long long)a[4], (unsigned long long)a[5], p ? "sim" : "não", p ? (unsigned long long)p->memsz : 0ULL);
         if (!p || !p->memsz) return KERN_INVAL_ARG;
+        /* como kernel/proc/machipc.c: pedir escrita numa entrada só-leitura é KERN_INVALID_RIGHT. O Chromium confere
+         * isso (CheckPlatformHandlePermissionsCorrespond) e dá CHECK se o mapa gravável passar. */
+        if (((a[5] | a[6]) & 7) & ~p->memprot) return KERN_INVAL_RIGHT;
         u64 sz = a[1] ? a[1] : p->memsz;
         u64 at = a[0];
         if ((a[2] & 1) || !at) {
@@ -1079,10 +1115,12 @@ static long mach_vm_op(u64 op, u64 ap) {
         if (!uvm_map(&g_proc, at, sz)) return KERN_NO_SPACE_;
 #ifndef _WIN32
         if (p->memfd >= 0) {
-            int prot = PROT_READ | PROT_WRITE;
+            int prot = PROT_READ | ((a[5] & 2) || (!a[5] && (p->memprot & 2)) ? PROT_WRITE : 0);
             if (a[5] & 4) prot |= PROT_EXEC;
-            void *r = mmap((void *)at, (size_t)sz, prot, MAP_SHARED | MAP_FIXED, p->memfd, (off_t)a[4]);
+            u64 foff = p->memoff + a[4];
+            void *r = mmap((void *)at, (size_t)sz, prot, MAP_SHARED | MAP_FIXED, p->memfd, (off_t)foff);
             if (r == MAP_FAILED) return KERN_NO_SPACE_;
+            if (hmap_n < HMAP_N) { hmaps[hmap_n].at = at; hmaps[hmap_n].sz = sz; hmaps[hmap_n].off = foff; hmaps[hmap_n].memfd = dup(p->memfd); if (hmaps[hmap_n].memfd >= 0) hmap_n++; }
         }
 #endif
         a[0] = at;
@@ -1289,6 +1327,23 @@ static long long do_syscall_locked(u64 n, u64 a, u64 b, u64 c, u64 d) {
         if (!strcmp(hfd[a].gpath, "/dev/null")) return 0;
         return host_pread_fd(fileno(hfd[a].fp), (void *)b, (unsigned long)c, (unsigned long)d);
     }
+#ifndef _WIN32
+    case SYS_FTRUNCATE:        /* (fd, tamanho): o -shm do SQLite em WAL e os índices do disk_cache */
+        if (a >= MAXFD || hfd[a].kind != HFD_FILE || !hfd[a].fp) return -MOS_EBADF;
+        if (hfd[a].acc == 0) return -MOS_EINVAL;
+        fflush(hfd[a].fp);
+        return ftruncate(fileno(hfd[a].fp), (off_t)b) ? -MOS_EINVAL : 0;
+    case SYS_PWRITE: {
+        /* como o SYS_PREAD: deslocamento em r10, a posição do fd não muda (fs.writeFile do Node usa pwrite) */
+        if (a >= MAXFD || !hfd[a].kind) return -MOS_EBADF;
+        if (hfd[a].kind != HFD_FILE) return -MOS_ESPIPE;
+        if (hfd[a].acc == 0 || !hfd[a].fp) return -MOS_EBADF;
+        if (!strcmp(hfd[a].gpath, "/dev/null")) return (long long)c;
+        fflush(hfd[a].fp);                       /* o FILE* pode ter escrita pendente antes desta posição */
+        ssize_t w = pwrite(fileno(hfd[a].fp), (const void *)b, (size_t)c, (off_t)d);
+        return w < 0 ? -MOS_EINVAL : (long long)w;
+    }
+#endif
     case SYS_GETUID:
     case SYS_GETEUID:
     case SYS_GETGID:
@@ -1569,6 +1624,11 @@ static long long do_syscall_locked(u64 n, u64 a, u64 b, u64 c, u64 d) {
         return stat(hp, &dst) == 0 && S_ISDIR(dst.st_mode) ? 0 : -MOS_ENOENT;
     }
     case SYS_UNLINK: host_path(a, hp, sizeof hp); return remove(hp) ? -MOS_ENOENT : 0;
+#ifndef _WIN32
+    case SYS_FCHMOD:           /* (fd, mode) */
+        if (a >= MAXFD || hfd[a].kind != HFD_FILE || !hfd[a].fp) return -MOS_EBADF;
+        return fchmod(fileno(hfd[a].fp), (mode_t)(b & 07777)) ? -MOS_EINVAL : 0;
+#endif
     case SYS_CHMOD: {
         /* o kernel guarda o mode e o stat o devolve; aqui vai para o arquivo do host (o Codex CLI faz chmod 0700
          * na pasta dos aliases de ~/.codex/tmp/arg0) */
@@ -1587,6 +1647,39 @@ static long long do_syscall_locked(u64 n, u64 a, u64 b, u64 c, u64 d) {
         return rename(hp, hp2) ? -MOS_ENOENT : 0;
     }
     case SYS_UNIX: return host_unix_op(a, b, c, d);
+#ifndef _WIN32
+    case SYS_AIO: {
+        /* userland/libsystem/aio.c e o fsync do libc.c: op em a, aiocb* em b. O harness conclui na hora (o kernel
+         * enfileira): 1 read, 2 write, 5 fsync guardam o resultado; 3 = erro (0 pronto), 4 = retorno, 6 = suspend. */
+        static struct { u64 cb; long long ret; int err; } aio_done[64];
+        struct hcb { int fd; int pad; long long off; void *buf; unsigned long long n; int prio, op; } *cb = (struct hcb *)b;
+        if (a == 6) return 0;
+        if (!cb) return -MOS_EINVAL;
+        int slot = -1;
+        for (int i = 0; i < 64; i++) if (aio_done[i].cb == b) { slot = i; break; }
+        if (a == 3) return slot < 0 ? -MOS_EINVAL : aio_done[slot].err;
+        if (a == 4) {
+            if (slot < 0) return -MOS_EINVAL;
+            long long r = aio_done[slot].err ? -aio_done[slot].err : aio_done[slot].ret;
+            aio_done[slot].cb = 0;
+            return r;
+        }
+        if (a != 1 && a != 2 && a != 5) break;
+        if ((u64)cb->fd >= MAXFD || hfd[cb->fd].kind != HFD_FILE || !hfd[cb->fd].fp) return -MOS_EBADF;
+        int hf = fileno(hfd[cb->fd].fp);
+        long long r;
+        fflush(hfd[cb->fd].fp);
+        if (a == 1) r = pread(hf, cb->buf, (size_t)cb->n, (off_t)cb->off);
+        else if (a == 2) r = pwrite(hf, cb->buf, (size_t)cb->n, (off_t)cb->off);
+        else r = fsync(hf);
+        if (slot < 0) for (int i = 0; i < 64; i++) if (!aio_done[i].cb) { slot = i; break; }
+        if (slot < 0) return -MOS_EAGAIN;
+        aio_done[slot].cb = b;
+        aio_done[slot].ret = r < 0 ? -1 : r;
+        aio_done[slot].err = r < 0 ? MOS_EIO : 0;
+        return 0;
+    }
+#endif
     case SYS_NET:
         /* as raízes da Mozilla que o kernel embute (kernel/arch/certs.S): o mesmo assets/certs/cacert.pem,
          * lido de MACHOTEST_CACERT ou do diretório atual (a raiz do repositório) */
