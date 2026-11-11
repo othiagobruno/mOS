@@ -105,3 +105,25 @@ sem corpo. Dos 566 de sistema, 418 são nomes Swift dos overlays (`Combine` 189,
 - Os 12 nomes Mach do agente chegando por `NSXPCConnection initWithMachServiceName:`.
 - `SetappUpdater` disparando pelo `StartInterval`.
 - Login, catálogo e instalação de app: exigem conta e os símbolos Swift acima.
+
+## Ausentes do N1: Combine, libswift* e o resto do Setapp (11 nov. 2026)
+
+**Por que o Combine faltava com o Combine na imagem.** Não era ABI nem versão do OpenCombine: a máquina que mede o
+placar não tinha `curl` nem o `swift-frontend` 6.4.2. Sem o frontend, `build-libswift-real.sh` só avisava e as
+`libswift*` ficavam stub (marcador `STUB mOS libswift`, que o placar não conta); `build-swift-combine.sh` nem rodava
+(o `build.sh` só o chama com o `libswiftCore` real); sem `curl`, a libxml2 e o zip do OpenCombine não baixavam. E os
+frameworks ObjC de `build/swift/objc/dylib` (WebKit, ImageIO, CoreData...) só iam para o `esp` junto com o
+`libswiftCore` real. Com a toolchain (`tools/fetch-swift-toolchain.sh`, SHA-256 conferido, chamado pelo `build.sh`
+fora do CI) e os downloads por `tools/baixar.sh`, o Combine (OpenCombine 0.14.0 com os nomes da Apple), o
+`libswiftCore` 6.4.2 e a libxml2 entram e os ausentes deles caem de uma vez. O stdlib 6.4.2 exporta os nomes estáveis
+que o Setapp pede: os 93 de `libswiftCore` eram todos efeito do stub.
+
+O que foi implementado para o resto, e como cada um responde quando o mOS não tem o serviço, está no PR
+(`meta/n1-combine-setapp`). Resumo das falhas honestas: `clock_alarm` e `thread_terminate` de outra thread
+(`KERN_NOT_SUPPORTED`), `AVAssetImageGenerator` (sem demultiplexador de vídeo: erro -11838), lista de favoritos do
+`LSSharedFileList` (vazia, inserir falha), `FIFinderSyncController.isExtensionEnabled` (NO), `CBUserIdentity
+authenticateWithPassword:` (NO), `sec_protocol_metadata_get_negotiated_protocol` (NULL).
+
+O que ficou: `SwiftUI.framework` (o build é `tools/build-swiftui-objc.ps1`, só Windows), `libswiftNetwork` (o Network
+do mOS é só o `nw_path_monitor`; um overlay com `NWConnection`/`NWListener` precisa de um backend `nw_*` real),
+`NSURLSessionWebSocketTask` e os nomes de Foundation/CryptoKit (outras frentes).
