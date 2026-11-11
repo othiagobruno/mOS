@@ -61,7 +61,9 @@ void cx_add_cmethod(cx_class_t *cls, const char *sel, void *imp);
 CLS(EKRecurrenceRule) CLS(EKRecurrenceEnd) CLS(EKRecurrenceDayOfWeek) CLS(EKAlarm) CLS(EKStructuredLocation)
 CLS(EKParticipant) CLS(EKAttendee) CLS(INPerson) CLS(INPersonHandle) CLS(INImage) CLS(INFile)
 CLS(INSendMessageAttachment) CLS(INSendMessageIntent) CLS(INInteraction) CLS(SBObject) CLS(SBApplication)
-CLS(OSLogStore) CLS(AVAudioApplication) CLS(EKEventStore)
+CLS(OSLogStore) CLS(AVAudioApplication)
+/* EKEventStore: o símbolo é do vscode_fwclasses.c (classe vazia); aqui só ganha os métodos */
+extern cx_class_t EKEventStore_c __asm__("OBJC_CLASS_$_EKEventStore"); extern cx_class_t EKEventStore_m __asm__("OBJC_METACLASS_$_EKEventStore");
 #define PAIR(n) { if (!strcmp(name, #n)) { if (meta_out) *meta_out = &n##_m; return &n##_c; } }
 static cx_class_t *pair_by_name(const char *name, cx_class_t **meta_out) {
     PAIR(EKRecurrenceRule) PAIR(EKRecurrenceEnd) PAIR(EKRecurrenceDayOfWeek) PAIR(EKAlarm) PAIR(EKStructuredLocation)
@@ -175,8 +177,8 @@ static signed char ava_set_muted(id self, SEL c, signed char m, id *err) {
 void cx_agentes_classes_extra(void) {
     cx_class_t *m = 0, *c;
     c = pair_by_name("EKEventStore", &m);
-    if (c && m && !cx_class_named("EKEventStore")) {
-        cx_define_class(c, m, "EKEventStore", cx_class_named("NSObject"), (u32)sizeof(void *));
+    if (c && m) {
+        if (!cx_class_named("EKEventStore")) cx_define_class(c, m, "EKEventStore", cx_class_named("NSObject"), (u32)sizeof(void *));
         cx_add_method(c, "init", (void *)ek_store_init);
         cx_add_cmethod(c, "authorizationStatusForEntityType:", (void *)ek_auth_status);
         cx_add_method(c, "requestAccessToEntityType:completion:", (void *)ek_request);

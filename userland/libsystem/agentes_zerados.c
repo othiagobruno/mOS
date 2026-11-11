@@ -20,11 +20,11 @@ typedef struct { void *isa; u64 flags; const char *s; u64 n; } az_const_t;
 #define AZK(var, text) static az_const_t var##_s = {cx_cfconst_isa, 0x7c8, text, sizeof(text) - 1}; const void *var = &var##_s;
 AZK(kUTTypeVolume, "public.volume")
 AZK(kUTTypeXML, "public.xml")
-AZK(AVLayerVideoGravityResizeAspect, "AVLayerVideoGravityResizeAspect")
+
 AZK(kODAttributeTypeJPEGPhoto, "dsAttrTypeStandard:JPEGPhoto")
 AZK(kODAttributeTypePicture, "dsAttrTypeStandard:Picture")
 AZK(kVTCompressionPropertyKey_PreserveAlphaChannel, "PreserveAlphaChannel")
-AZK(kVTCompressionPropertyKey_TargetQualityForAlpha, "TargetQualityForAlpha")
+
 AZK(AVAudioApplicationInputMuteStateChangeNotification, "AVAudioApplicationInputMuteStateChangeNotification")
 AZK(AVAudioApplicationMuteStateKey, "AVAudioApplicationMuteStateKey")
 

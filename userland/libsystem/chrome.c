@@ -409,7 +409,7 @@ id_ SCNetworkInterfaceGetHardwareAddressString(void *i) { (void)i; return 0; }
 
 /* ---- LaunchServices / Spotlight */
 /* LSRegisterURL: openurl.c */
-void *MDItemCreate(void *alloc, id_ path) { (void)alloc; (void)path; return 0; }
+/* MDItemCreate: mdquery.c */
 Boolean MDItemSetAttribute(void *item, id_ name, id_ value) { (void)item; (void)name; (void)value; return 0; }
 
 /* ---- Network.framework: Bonjour e parâmetros TLS (nenhum objeto é criado; os setters ignoram NULL) */
