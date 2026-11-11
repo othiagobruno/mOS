@@ -40,11 +40,10 @@ json.dump([
 PY
 "$FE" -frontend -c -target x86_64-apple-macosx14.0 -nostdimport -parse-stdlib -parse-as-library \
   -explicit-swift-module-map-file "$OUT/mods.json" \
-  -module-name CryptoKit -import-underlying-module \
+  -module-name CryptoKit -import-underlying-module -enable-library-evolution \
   -I "$ROOT/userland/frameworks/CryptoKit/include" -I "$OUT" \
   -o "$OUT/CryptoKit.o" "$ROOT/userland/frameworks/CryptoKit/CryptoKit.swift"
 "$ZIG" cc -target x86_64-macos-none -shared -o "$OUT/CryptoKit" "$OUT/CryptoKit.o" "$OUT/Foundation.o" \
   -Wl,-install_name,/System/Library/Frameworks/CryptoKit.framework/Versions/A/CryptoKit \
-  -Wl,-undefined,dynamic_lookup \
-  -Wl,-u,_\$s9CryptoKit12HashFunctionPxycfCTj
+  -Wl,-undefined,dynamic_lookup
 echo "$OUT/CryptoKit"
