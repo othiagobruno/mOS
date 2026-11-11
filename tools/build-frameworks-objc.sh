@@ -56,9 +56,9 @@ for fw in "$ROOT"/userland/frameworks/*/; do
             if ls "$fw"iface/*.swift >/dev/null 2>&1; then
                 mkdir -p "$TMP/iface-$name"
                 for i in "$fw"iface/*.swift; do
-                    "$FE" -frontend -emit-module -target x86_64-apple-macos26 -resource-dir "$RES" -parse-as-library \
+                    "$FE" -frontend -emit-module -target x86_64-apple-macos26 -resource-dir "$RES" -parse-as-library -O \
                         -module-name "$(basename "$i" .swift)" -enable-library-evolution -I "$OBJC" -I "$OBJC/overlays" \
-                        -module-cache-path "$OBJC/modcache" -o "$TMP/iface-$name/$(basename "$i" .swift).swiftmodule" "$i" 2>>"$so.err"
+                        -I "$ROOT/.tools/swift-src/stdlib/public/SwiftShims/swift/shims" -module-cache-path "$OBJC/modcache" -o "$TMP/iface-$name/$(basename "$i" .swift).swiftmodule" "$i" 2>>"$so.err"
                 done
                 inc+=(-I "$TMP/iface-$name")
             fi

@@ -26,7 +26,7 @@ public final class _MOSAppExtensionListener: NSObject, NSXPCListenerDelegate {
     /// liga o ouvinte de serviço e não volta (o -resume do serviceListener entra no laço principal)
     public static func run(_ accept: @escaping (NSXPCConnection) -> Bool) -> Never {
         let d = _MOSAppExtensionListener(accept)
-        let l = NSXPCListener.service()
+        guard let l = NSXPCListener.service() else { fatalError("ExtensionFoundation[mOS]: sem ouvinte de serviço XPC") }
         l.delegate = d
         l.resume()
         withExtendedLifetime(d) {}
