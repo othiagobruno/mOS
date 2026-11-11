@@ -194,7 +194,7 @@ Como repetir o que já está scriptado. Os resultados são os últimos publicado
 
 ## Limitações conhecidas
 
-- Hardware real: som, USB, Bluetooth, SATA, NVMe, rede e a instalação foram ensaiados no QEMU/OVMF, não numa máquina física. Wi-Fi real depende de driver por chipset (`kernel/wifi/`); o que existe foi exercitado com rádio simulado. WPA3 não entra. Bluetooth LE/clássico não rodou num adaptador: o QEMU não emula um.
+- Hardware real: som, USB, Bluetooth, SATA, NVMe, rede e a instalação foram ensaiados no QEMU/OVMF, não numa máquina física. O driver da Realtek RTL8111/8168 (`kernel/dev/r8169.c`) passou só no teste de host `tools/r8169_host.c`, contra um 8168H simulado; o QEMU não emula esse chip e ele ainda não subiu no PC real. Wi-Fi real depende de driver por chipset (`kernel/wifi/`); o que existe foi exercitado com rádio simulado. WPA3 não entra. Bluetooth LE/clássico não rodou num adaptador: o QEMU não emula um.
 - Sem GPU. O desenho pesado usa todos os núcleos (`par_for` em `kernel/arch/smp.c`) e SSE2. O número ~2,3× em 4 núcleos é o que o README anterior atribuía ao log `bench:` de `.\build.ps1 -Tests`; não foi remediado aqui.
 - Página presente no x86 é legível. Não há `PROT_NONE` na PTE. Não há swap ([docs/mm-shared.md](docs/mm-shared.md)).
 - Volumes `.dmg` são só leitura. FAT/HFS+ de outros discos aparecem em `/Volumes` só leitura até um consentimento por volume. Partição EFI, disco do sistema e HFS+ com journal pendente continuam recusados.

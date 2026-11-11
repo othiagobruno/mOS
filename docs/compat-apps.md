@@ -190,8 +190,8 @@ O que cada grupo faz, separado:
   `https://auth.openai.com/api/accounts/deviceauth/usercode` responde. `codex login` (sem `--device-auth`) sobe um
   servidor em `localhost` e imprime o URL. Entrar com a conta e o polling até o token ficam para o Thiago: esta
   medição não autentica. O `connect` de `AF_UNIX` dentro do processo ainda devolve `ECONNREFUSED` (`sockets.c`);
-  o `login` e o `login status` do fonte 0.167.0 não passam por aí. No harness, o processo para em
-  "failed to create UnixStream" porque o machotest não emula `socketpair`; na VM o par é um pipe do kernel.
+  o `login` e o `login status` do fonte 0.167.0 não passam por aí. No harness (`tools/machotest.c`) o CLI
+  roda `--version`, o `apply_patch` de ponta a ponta e o login por API key: ver [compat-codex-cli.md](compat-codex-cli.md).
 - **XPC** (`userland/libsystem/xpc.c`). O modelo de objetos inteiro: null, bool, int64, uint64, double, date, data, string,
   uuid, fd, array, dictionary e error, com `xpc_copy`, `xpc_equal`, `xpc_hash`, `xpc_copy_description` e os `apply` com blocos.
   São objetos ObjC da classe `OS_xpc_object`, então ARC/`objc_release` funcionam. `XPC_BOOL_*` e `XPC_ERROR_*` são estáticos e
@@ -615,6 +615,7 @@ O pedido escreveu "Open Bot" sem URL. Há mais de um produto com nome parecido (
 - **AppKit (esta frente).** Funcional no modelo: a `NSStatusBar` guarda até 32 itens, `removeStatusItem:` tira o item, o clique no botão (ou `popUpStatusItemMenu:`) abre o menu e avisa `menuWillOpen:`, item oculto não abre, o `NSPopover` respeita applicationDefined / transient / semitransient, e `setActivationPolicy:` grava regular, accessory (`LSUIElement`, sem Dock) e prohibited (recusa `activate`). O desenho do ícone na faixa do sistema continua stub: o kernel não tem a barra.
 - **Kernel.** Tradutor/JIT para o que for binário nativo, e o desenho da barra de menus. Sem comando de blend, como no marco anterior. Não há bundle para traduzir.
 - **Sistemas.** Keychain do Usagebar, iCloud e contas do app da loja, `SMAppService` (já existe em memória no libSystem; o `SMLoginItemSetEnabled` do ServiceManagement ainda é stub). Nada disso foi chamado contra um serviço real.
+- **Setapp medido (10 nov. 2026).** O zip 165 oficial, os helpers, o launchd e o ServiceManagement estão em [compat-setapp.md](compat-setapp.md). O Setapp não usa `SMAppService`; sobe os helpers por `/bin/launchctl load` com plists bplist00.
 - **Storage.** Loader, dyld, VFS, XPC e os launch agents `com.setapp.DesktopClient.SetappAgent`, `SetappLauncher` e `SetappUpdater`. O login do Setapp é no navegador com código por e-mail ([artigo de suporte](https://support.setapp.com/hc/en-us/articles/360013944440-Sign-in-and-out-of-Setapp-on-a-Mac)); não foi feito. FairPlay do app da loja não foi contornado.
 
 ## Cursor, Grok Bot e o desktop do ChatGPT/Codex (10 nov. 2026)

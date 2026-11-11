@@ -186,6 +186,7 @@ static sui_desc sui_d_search = { SUI_K_MODIFIER, "SearchableModifier" };
 static sui_desc sui_d_gesture = { SUI_K_MODIFIER, "GestureModifier" };
 static sui_desc sui_d_submit = { SUI_K_MODIFIER, "SubmitModifier" };
 static sui_desc sui_d_exit = { SUI_K_MODIFIER, "ExitCommandModifier" };
+static sui_desc sui_d_tabitem = { SUI_K_MODIFIER, "_TraitWritingModifier<TabItemTraitKey>" };
 
 /* Descritores de tipo opaco (some View) de cada modificador. */
 #define SUI_OPQ(sym, nm) sui_opaque sym = { SUI_K_PROTO, nm };
@@ -210,6 +211,9 @@ SUI_OPQ($s7SwiftUI4ViewPAAE21disableAutocorrectionyQrSbSgFQOMQ, "disableAutocorr
 SUI_OPQ($s7SwiftUI4ViewPAAE29navigationBarTitleDisplayModeyQrAA010NavigationE4ItemV0fgH0OFQOMQ, "navigationBarTitleDisplayMode")
 SUI_OPQ($s7SwiftUI4ViewPAAE4helpyQrAA18LocalizedStringKeyVFQOMQ, "help")
 SUI_OPQ($s7SwiftUI4ViewPAAE4helpyQrAA4TextVFQOMQ, "help")
+SUI_OPQ($s7SwiftUI4ViewPAAE4helpyQrqd__SyRd__lFQOMQ, "help")
+SUI_OPQ($s7SwiftUI4ViewPAAE7tabItemyQrqd__yXEAaBRd__lFQOMQ, "tabItem")
+SUI_OPQ($s7SwiftUI4ViewPAAE9lineLimit_13reservesSpaceQrSi_SbtFQOMQ, "lineLimit")
 SUI_OPQ($s7SwiftUI4ViewPAAE5alert11isPresented7contentQrAA7BindingVySbG_AA5AlertVyXEtFQOMQ, "alert")
 SUI_OPQ($s7SwiftUI4ViewPAAE5alert_11isPresented7actions7messageQrAA18LocalizedStringKeyV_AA7BindingVySbGqd__yXEqd_0_yXEtAaBRd__AaBRd_0_r0_lFQOMQ, "alert")
 SUI_OPQ($s7SwiftUI4ViewPAAE5sheet11isPresented9onDismiss7contentQrAA7BindingVySbG_yycSgqd__yctAaBRd__lFQOMQ, "sheet")
@@ -374,6 +378,22 @@ void *$s7SwiftUI4ViewPAAE9lineLimityQrSiSgF(int64_t n, int is_nil) {
     SUI_BEGIN(&$s7SwiftUI30_EnvironmentKeyWritingModifierVMn, SUI_OP_LINELIMIT);
     m->u[0] = (uint64_t)n;
     m->u[1] = (uint64_t)(is_nil & 1);
+    SUI_END;
+}
+
+/* lineLimit(_:reservesSpace:): limite fixo; u[2] = 1 quando a altura das linhas fica reservada. */
+void *$s7SwiftUI4ViewPAAE9lineLimit_13reservesSpaceQrSi_SbtF(int64_t n, int reserves) {
+    SUI_BEGIN(&$s7SwiftUI30_EnvironmentKeyWritingModifierVMn, SUI_OP_LINELIMIT);
+    m->u[0] = (uint64_t)(n < 1 ? 1 : n);
+    m->u[1] = 0;
+    m->u[2] = (uint64_t)(reserves & 1);
+    SUI_END;
+}
+
+/* tabItem { rótulo }: a closure monta o rótulo da aba quando o TabView pede. */
+void *$s7SwiftUI4ViewPAAE7tabItemyQrqd__yXEAaBRd__lF(void *fn, void *ctx) {
+    SUI_BEGIN(&sui_d_tabitem, SUI_OP_TABITEM);
+    m->fn = sui_mkfn(fn, ctx);
     SUI_END;
 }
 
@@ -559,6 +579,13 @@ SUI_ENV_PTR($s7SwiftUI4ViewPAAE18accessibilityLabelyAA15ModifiedContentVyxAA31Ac
 SUI_ENV_PTR($s7SwiftUI4ViewPAAE20accessibilityElement8childrenQrAA26AccessibilityChildBehaviorV_tF, &$s7SwiftUI31AccessibilityAttachmentModifierVMn, SUI_OP_A11Y_ELEMENT)
 
 /* accessibilityLabel<S: StringProtocol>: guarda a String (dois words) copiada. */
+/* help<S: StringProtocol>: a String (dois words) copiada em p[1], como no accessibilityLabel genérico. */
+void *$s7SwiftUI4ViewPAAE4helpyQrqd__SyRd__lF(const uint64_t *s) {
+    SUI_BEGIN(&$s7SwiftUI31AccessibilityAttachmentModifierVMn, SUI_OP_HELP);
+    m->p[1] = s ? sui_strdup2(s[0], s[1]) : 0;
+    SUI_END;
+}
+
 void *$s7SwiftUI4ViewPAAE18accessibilityLabelyAA15ModifiedContentVyxAA31AccessibilityAttachmentModifierVGqd__SyRd__lF(const uint64_t *s) {
     SUI_BEGIN(&$s7SwiftUI31AccessibilityAttachmentModifierVMn, SUI_OP_A11Y_LABEL);
     m->p[1] = s ? sui_strdup2(s[0], s[1]) : 0;

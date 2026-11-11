@@ -1271,7 +1271,14 @@ static long long do_syscall_locked(u64 n, u64 a, u64 b, u64 c, u64 d) {
         if (a < MAXFD && hfd[a].kind == HFD_UNIX) return host_unix_read((int)a, (void *)b, c);
         if (a < MAXFD && (hfd[a].kind == HFD_PR || hfd[a].kind == HFD_PW || hfd[a].kind == HFD_RW))
             return pipe_io(1, (int)a, b, c);
-        if (a == 0 && hfd[a].kind == HFD_NONE) return 0;
+        if (a == 0 && hfd[a].kind == HFD_NONE) {
+            /* MACHOTEST_STDIN=1: o fd 0 do app lê o stdin do host ("printf chave | codex login --with-api-key").
+             * Sem a variável continua fim de arquivo, para o teste não parar esperando o terminal. */
+#ifndef _WIN32
+            if (getenv("MACHOTEST_STDIN")) { ssize_t n = read(0, (void *)b, (size_t)c); return n < 0 ? -MOS_EIO : n; }
+#endif
+            return 0;
+        }
         if (a < MAXFD && hfd[a].kind == HFD_FILE && hfd[a].fp) return (long long)fread((void *)b, 1, (size_t)c, hfd[a].fp);
         return -MOS_EBADF;
     case SYS_PREAD: {
@@ -1536,19 +1543,43 @@ static long long do_syscall_locked(u64 n, u64 a, u64 b, u64 c, u64 d) {
         return 0;
 #endif
     }
-    case SYS_MKDIR:
+    case SYS_MKDIR: {
+        /* o mesmo contrato do kernel (vfs_mkdir = walk com create_dirs): cria os pais que faltam, pasta que já existe
+         * é sucesso e qualquer outra falha é ENOENT. Com o mkdir do host, pai ausente virava EEXIST e o
+         * create_dir_all do Rust (Codex CLI: ~/.codex/tmp/arg0) desistia com "File exists". */
         host_path(a, hp, sizeof hp);
+        size_t rl = g_root ? strlen(g_root) : 0;
+        for (char *c = strlen(hp) > rl ? hp + rl + 1 : hp + strlen(hp); *c; c++) {
+            if (*c != '/' && *c != '\\') continue;
+            char sv = *c;
+            *c = 0;
 #ifdef _WIN32
-        return _mkdir(hp) ? -MOS_EEXIST : 0;
+            _mkdir(hp);
 #else
-        return mkdir(hp, 0755) ? -MOS_EEXIST : 0;
+            mkdir(hp, 0755);
 #endif
-#ifndef _WIN32
-    case SYS_CHMOD:            /* (path, mode): o stat devolve esse mode, como no kernel (process.c) */
-        host_path(a, hp, sizeof hp);
-        return chmod(hp, (mode_t)(b & 07777)) ? -MOS_ENOENT : 0;
+            *c = sv;
+        }
+        struct stat dst;
+#ifdef _WIN32
+        _mkdir(hp);
+#else
+        mkdir(hp, 0755);
 #endif
+        return stat(hp, &dst) == 0 && S_ISDIR(dst.st_mode) ? 0 : -MOS_ENOENT;
+    }
     case SYS_UNLINK: host_path(a, hp, sizeof hp); return remove(hp) ? -MOS_ENOENT : 0;
+    case SYS_CHMOD: {
+        /* o kernel guarda o mode e o stat o devolve; aqui vai para o arquivo do host (o Codex CLI faz chmod 0700
+         * na pasta dos aliases de ~/.codex/tmp/arg0) */
+        struct stat cst;
+        host_path(a, hp, sizeof hp);
+        if (stat(hp, &cst)) return -MOS_ENOENT;
+#ifndef _WIN32
+        chmod(hp, (mode_t)(b & 07777));
+#endif
+        return 0;
+    }
     case SYS_RENAME: {
         char hp2[4096];
         host_path(a, hp, sizeof hp);

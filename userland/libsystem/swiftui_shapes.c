@@ -246,6 +246,16 @@ sui_conf $s7SwiftUI6CircleVAA4ViewAAMc = { (void *)sui_shape_body, "View" };
 sui_conf $s7SwiftUI6CircleVAA5ShapeAAMc = { (void *)sui_circle_path, "Shape" };
 sui_conf $s7SwiftUI6CircleVAA15InsettableShapeAAMc = { (void *)sui_circle_path, "InsettableShape" };
 sui_desc $s7SwiftUI7CapsuleVMn = { SUI_K_STRUCT, "Capsule" };
+void *$s7SwiftUI7CapsuleVMa(void) { return &$s7SwiftUI7CapsuleVMn; }
+/* Capsule: retângulo com raio de metade do lado menor (o estilo circular ou contínuo não muda o traçado). */
+static void *sui_capsule_path(double x, double y, double w, double h) {
+    sui_path *p = sui_path_new();
+    double r = (w < h ? w : h) / 2;
+    if (p) sui_round_rect(p, x, y, w, h, r, r);
+    return p;
+}
+sui_conf $s7SwiftUI7CapsuleVAA4ViewAAMc = { (void *)sui_shape_body, "View" };
+sui_conf $s7SwiftUI7CapsuleVAA5ShapeAAMc = { (void *)sui_capsule_path, "Shape" };
 sui_desc $s7SwiftUI7EllipseVMn = { SUI_K_STRUCT, "Ellipse" };
 
 /* ---- Visões de forma: fill, stroke, strokeBorder e body ---- */
@@ -254,6 +264,10 @@ typedef struct { const sui_desc *isa; void *shape; void *style; double width; ui
 sui_desc $s7SwiftUI10_ShapeViewVMn = { SUI_K_STYLE, "_ShapeView" };
 sui_conf $s7SwiftUI10_ShapeViewVyxq_GAA0D0AAMc = { (void *)sui_shape_body, "View" };
 sui_desc $s7SwiftUI15StrokeShapeViewVMn = { SUI_K_STYLE, "StrokeShapeView" };
+sui_desc $s7SwiftUI21StrokeBorderShapeViewVMn = { SUI_K_STYLE, "StrokeBorderShapeView" };
+/* background(_:in:) com forma insetável: o modificador que guarda a forma e o estilo. */
+sui_desc $s7SwiftUI34_InsettableBackgroundShapeModifierVMn = { SUI_K_MODIFIER, "_InsettableBackgroundShapeModifier" };
+sui_conf $s7SwiftUI34_InsettableBackgroundShapeModifierVyxq_GAA04ViewF0AAMc = { (void *)sui_shape_body, "ViewModifier" };
 sui_desc $s7SwiftUI13_StrokedShapeVMn = { SUI_K_STYLE, "_StrokedShape" };
 
 static void *sui_shape_body(void) { return 0; }
@@ -279,7 +293,7 @@ void *$s7SwiftUI5ShapePAAE6stroke_9lineWidthQrqd___12CoreGraphics7CGFloatVtAA0C5
 
 /* strokeBorder: o traço fica dentro da forma (flag 4). */
 void *$s7SwiftUI15InsettableShapePAAE12strokeBorder_9lineWidth11antialiasedQrqd___12CoreGraphics7CGFloatVSbtAA0D5StyleRd__lF(void *content, double width, int aa) {
-    return sui_shapeview(&$s7SwiftUI15StrokeShapeViewVMn, sui_self(), content, width < 0 ? 0 : width, 4 | ((uint64_t)(aa & 1) << 1));
+    return sui_shapeview(&$s7SwiftUI21StrokeBorderShapeViewVMn, sui_self(), content, width < 0 ? 0 : width, 4 | ((uint64_t)(aa & 1) << 1));
 }
 
 /* body de toda Shape: _ShapeView<Self, ForegroundStyle> preenchendo com a cor do primeiro plano. */

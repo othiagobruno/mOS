@@ -10,7 +10,8 @@
  *  2. plists do launchd (XML) em /System/Library/LaunchDaemons, /Library/LaunchDaemons, /Library/LaunchAgents,
  *     /Users/<nome>/Library/LaunchAgents e /Sistema/Biblioteca/LaunchDaemons: Label, Program, ProgramArguments,
  *     MachServices, RunAtLoad, KeepAlive, EnvironmentVariables, WorkingDirectory, StandardInPath (padrão
- *     /dev/null, como no launchd), StandardOutPath, StandardErrorPath, Disabled.
+ *     /dev/null, como no launchd), StandardOutPath, StandardErrorPath, Disabled, StartInterval e ThrottleInterval.
+ *     KeepAlive aceita o dicionário com SuccessfulExit e Crashed (launchjob.inc).
  *
  * MachServices: cada nome é reservado no bootstrap do kernel (MACH_BS_RESERVE): o launchd guarda o direito de
  * receber num conjunto de portas e, quando chega a primeira mensagem, inicia o job (ativação sob demanda). O
@@ -22,6 +23,8 @@
 #include "mos.h"
 #include "svcnative.h"
 #include "plistmini.h"
+#define LJ_PLIST 1
+#include "launchjob.inc"
 #define LI_LOGIC_ONLY 1
 #define LI_SYNC 1
 #include "loginitem.inc"
@@ -55,7 +58,7 @@ static int snprintf(char *d, usize n, const char *fmt, const char *a) {
 #define MAX_JOBS 64
 #define MAX_ARGS 16
 #define MAX_ENV  16
-#define MAX_SVC  8
+#define MAX_SVC  16   /* o SetappAgent publica 12 nomes */
 
 typedef struct {
     int used, legacy;
@@ -65,7 +68,10 @@ typedef struct {
     char env[MAX_ENV][192]; int envc;
     char svc[MAX_SVC][128]; unsigned port[MAX_SVC]; int nsvc;
     char in[192], out[192], err[192], wd[192];   /* in: StandardInPath / Entrada= */
-    int keep, runatload, delay_ms;
+    unsigned keep;                        /* LJ_KEEP_* (launchjob.inc); legado e login item: LJ_KEEP_ALWAYS */
+    int runatload, delay_ms;
+    unsigned interval_s, throttle_s;      /* StartInterval, ThrottleInterval */
+    u64 next_interval;
     volatile int pid;
     int restarts, last_status, crashes;
     u64 last_start, restart_at;
@@ -251,7 +257,7 @@ static void load_legacy(const char *path, const char *fname) {
             v[n] = 0;
             if (kl == 8 && !strncmp(l, "Programa", 8)) scopy(j->prog, v, sizeof j->prog);
             else if (kl == 10 && !strncmp(l, "Argumentos", 10)) scopy(j->args, v, sizeof j->args);
-            else if (kl == 10 && !strncmp(l, "ManterVivo", 10)) j->keep = !strcmp(v, "sim");
+            else if (kl == 10 && !strncmp(l, "ManterVivo", 10)) j->keep = !strcmp(v, "sim") ? LJ_KEEP_ALWAYS : 0;
             else if (kl == 8 && !strncmp(l, "AtrasoMs", 8)) j->delay_ms = atoi(v);
             else if (kl == 7 && !strncmp(l, "Entrada", 7)) scopy(j->in, v, sizeof j->in);
         }
@@ -268,7 +274,6 @@ static job_t *load_plist(const char *path, const char **why) {
     i64 len = read_file(path, filebuf, sizeof filebuf - 1);
     if (len <= 0) return 0;
     filebuf[len] = 0;
-    if (len >= 6 && !memcmp(filebuf, "bplist", 6)) { *why = "plist binário não suportado"; return 0; }
     pnode_t *root = plist_parse(filebuf, (usize)len);
     job_t *j = 0;
     const char *label = plist_str(root, "Label");
@@ -306,8 +311,12 @@ static job_t *load_plist(const char *path, const char **why) {
     scopy(j->in, plist_str(root, "StandardInPath"), sizeof j->in);
     scopy(j->out, plist_str(root, "StandardOutPath"), sizeof j->out);
     scopy(j->err, plist_str(root, "StandardErrorPath"), sizeof j->err);
-    j->keep = plist_bool(root, "KeepAlive", 0);
-    j->runatload = plist_bool(root, "RunAtLoad", 0);
+    lj_policy_t pol;
+    lj_read_plist(root, &pol);
+    j->keep = pol.keep;
+    j->runatload = pol.runatload;
+    j->interval_s = pol.interval_s;
+    j->throttle_s = pol.throttle_s;
     *why = 0;
 out:
     plist_free(root);
@@ -424,7 +433,7 @@ static void load_loginitems(const char *path) {
         li_slots[nslot].pid = jobs[i].pid;
         li_slots[nslot].last_start = jobs[i].last_start ? 1 : 0;
         li_slots[nslot].runatload = jobs[i].runatload;
-        li_slots[nslot].keep = jobs[i].keep;
+        li_slots[nslot].keep = jobs[i].keep != 0;
         li_copy(li_slots[nslot].path, LI_PATH, jobs[i].prog);
         li_copy(li_slots[nslot].label, (int)sizeof li_slots[nslot].label, jobs[i].label);
         nslot++;
@@ -437,7 +446,7 @@ static void load_loginitems(const char *path) {
             if (li_slots[s].used && li_eq(li_slots[s].path, jobs[i].prog)) { found = 1; break; }
         if (found) {
             jobs[i].runatload = li_slots[s].runatload;
-            jobs[i].keep = li_slots[s].keep;
+            jobs[i].keep = li_slots[s].keep ? LJ_KEEP_ALWAYS : 0;
             continue;
         }
         if (jobs[i].runatload || jobs[i].keep || jobs[i].pid <= 0)
@@ -459,7 +468,7 @@ static void load_loginitems(const char *path) {
         scopy(j->argv[0], li_slots[s].path, sizeof j->argv[0]);
         j->argc = 1;
         j->runatload = li_slots[s].runatload;
-        j->keep = li_slots[s].keep;
+        j->keep = li_slots[s].keep ? LJ_KEEP_ALWAYS : 0;
     }
 }
 
@@ -493,7 +502,7 @@ static void scan_user_jobs(int autostart) {
     u64 now = time_ms();
     for (int i = 0; i < MAX_JOBS; i++) {
         job_t *j = &jobs[i];
-        if (!j->used || j->pid || j->last_start || !(j->runatload || j->keep)) continue;
+        if (!j->used || j->pid || j->last_start || !(j->runatload || (j->keep & LJ_KEEP_ALWAYS))) continue;
         if (j->delay_ms) {
             if (!j->restart_at) j->restart_at = now + (u64)j->delay_ms;
             continue;   /* o laço principal inicia quando o atraso vence */
@@ -541,6 +550,16 @@ static void handle_ctl(unsigned char *msg, unsigned len) {
     job_t *j = s1[0] ? job_find(s1) : 0;
     switch (b->op) {
     case LC_LIST:
+        if (s1[0]) {
+            /* launchctl list RÓTULO: o dicionário do job, ou 113 como no macOS */
+            if (!j) { code = 113; tput("Could not find service \""); tput(s1); tput("\" in domain for port"); break; }
+            const char *names[MAX_SVC];
+            for (int i = 0; i < j->nsvc; i++) names[i] = j->svc[i];
+            int w = lj_fmt_list_one(txt, (int)sizeof txt, j->label, j->prog[0] ? j->prog : j->argc ? j->argv[0] : "",
+                                    j->pid, j->last_status, names, j->nsvc);
+            tn = w > 0 ? (usize)w : 0;
+            break;
+        }
         tput("PID\tStatus\tLabel\n");
         for (int i = 0; i < MAX_JOBS; i++) {
             if (!jobs[i].used) continue;
@@ -551,9 +570,15 @@ static void handle_ctl(unsigned char *msg, unsigned len) {
     case LC_LOAD: {
         const char *why;
         job_t *n = load_plist(s1, &why);
+        /* o laço de 5 s pode ter lido o plist de ~/Library/LaunchAgents antes do "launchctl load" do app:
+         * o mesmo arquivo já carregado não é erro (o launchctl do macOS também sai com 0) */
+        if (!n && !strcmp(why, "já carregado")) {
+            for (int i = 0; i < MAX_JOBS; i++) if (jobs[i].used && !strcmp(jobs[i].src, s1)) n = &jobs[i];
+            if (n) { n = 0; break; }
+        }
         if (!n) { code = 17; tput(why); break; }
         reserve(n);
-        if (n->runatload || n->keep) start(n);
+        if (n->runatload || (n->keep & LJ_KEEP_ALWAYS)) start(n);
         break;
     }
     case LC_UNLOAD: case LC_REMOVE:
@@ -621,9 +646,12 @@ static int reaper(void *arg) {
             print("launchd: %s (pid %d) terminou com código %d\n", j->label, (i64)pid, (i64)code);
             u64 ran = time_ms() - j->last_start;
             if (ran < 10000) j->crashes++; else j->crashes = 0;
-            if (j->keep) {
+            if (j->keep && lj_keep_restart(j->keep, code)) {
                 if (ran < 10000 && ++j->restarts >= 5) { print("launchd: %s reiniciou demais, desistindo\n", j->label); j->keep = 0; }
-                else j->restart_at = time_ms() + 1000;
+                else {
+                    u64 d = lj_restart_delay_ms(j->throttle_s, ran);
+                    j->restart_at = time_ms() + (d ? d : 1);   /* 0 em restart_at quer dizer "sem reinício" */
+                }
             }
             break;
         }
@@ -655,7 +683,7 @@ void _start(const char *arg) {
     print("launchd: %d job(s)\n", (i64)n);
 
     lock();
-    for (int i = 0; i < MAX_JOBS; i++) if (jobs[i].used && !jobs[i].delay_ms && (jobs[i].runatload || jobs[i].keep)) start(&jobs[i]);
+    for (int i = 0; i < MAX_JOBS; i++) if (jobs[i].used && !jobs[i].delay_ms && (jobs[i].runatload || (jobs[i].keep & LJ_KEEP_ALWAYS))) start(&jobs[i]);
     u64 t0 = time_ms();
     for (int i = 0; i < MAX_JOBS; i++) if (jobs[i].used && jobs[i].delay_ms) jobs[i].restart_at = t0 + (u64)jobs[i].delay_ms;
     unlock();
@@ -677,7 +705,9 @@ void _start(const char *arg) {
         u64 now = time_ms();
         for (int i = 0; i < MAX_JOBS; i++) {
             job_t *j = &jobs[i];
-            if (!j->used || j->pid) continue;
+            if (!j->used) continue;
+            if (lj_interval_tick(now, &j->next_interval, j->interval_s, j->pid != 0)) { start(j); continue; }
+            if (j->pid) continue;
             if (j->restart_at && now >= j->restart_at) { start(j); continue; }
             if (wants_start(j)) {
                 /* sob demanda; quem morre logo ao subir espera um pouco antes da próxima tentativa */

@@ -60,7 +60,11 @@ typedef struct {
 } cvts_t;                                    /* CVTimeStamp (80 bytes) */
 typedef struct { i64 value; i32 scale, flags; } cvtime_t;
 typedef int (*cvcb_t)(void *link, const cvts_t *now, const cvts_t *out, u64 fin, u64 *fout, void *ctx);
-typedef struct { cx_class_t *isa; cvcb_t cb; void *ctx; volatile int running; u32 display; i64 frame; } cvlink_t;
+typedef struct { cx_class_t *isa; cvcb_t cb; void *ctx; volatile int running; u32 display; i64 frame; void *handler; } cvlink_t;
+/* CVDisplayLinkOutputHandler: bloco (link, now, outputTime, flagsIn, flagsOut) -> CVReturn */
+typedef struct { void *isa; int flags, reserved; int (*invoke)(void *blk, void *link, const cvts_t *now, const cvts_t *out, u64 fin, u64 *fout); } cvblock_t;
+void *_Block_copy(const void *b);
+void _Block_release(const void *b);
 
 cx_class_t CVDisplayLink_c __asm__("OBJC_CLASS_$_CVDisplayLink");
 cx_class_t CVDisplayLink_m __asm__("OBJC_METACLASS_$_CVDisplayLink");
@@ -103,7 +107,7 @@ static void *link_thread(void *arg) {
         cvlink_t *run[MAX_LINKS];
         int n = 0;
         L_lock();
-        for (int i = 0; i < MAX_LINKS; i++) if (links[i] && links[i]->running && links[i]->cb) { run[n++] = links[i]; objc_retain((id)links[i]); }
+        for (int i = 0; i < MAX_LINKS; i++) if (links[i] && links[i]->running && (links[i]->cb || links[i]->handler)) { run[n++] = links[i]; objc_retain((id)links[i]); }
         L_unlock();
         u64 now = mach_absolute_time();
         for (int i = 0; i < n; i++) {
@@ -116,7 +120,8 @@ static void *link_thread(void *arg) {
             { extern int cx_ca_diag(void); if (cx_ca_diag() && (l->frame <= 3 || l->frame % 600 == 0)) cx_fdprintf(2, "[ca] CVDisplayLink %p: disparo %llu\n", (void *)l, (unsigned long long)l->frame); }
             g_in_cb = l;
             __sync_synchronize();
-            if (l->running) l->cb(l, &a, &b, 0, &fo, l->ctx);
+            if (l->running && l->cb) l->cb(l, &a, &b, 0, &fo, l->ctx);
+            else if (l->running && l->handler) { cvblock_t *h = (cvblock_t *)l->handler; if (h->invoke) h->invoke(h, l, &a, &b, 0, &fo); }
             g_in_cb = 0;
             objc_release((id)l);
         }
@@ -124,6 +129,7 @@ static void *link_thread(void *arg) {
     return 0;
 }
 static void link_dealloc(id self, SEL c) {
+    if (((cvlink_t *)self)->handler) { _Block_release(((cvlink_t *)self)->handler); ((cvlink_t *)self)->handler = 0; }
     L_lock();
     for (int i = 0; i < MAX_LINKS; i++) if (links[i] == (cvlink_t *)self) links[i] = 0;
     L_unlock();
@@ -146,7 +152,26 @@ int CVDisplayLinkCreateWithCGDisplays(u32 *displays, long n, cvlink_t **out) { r
 int CVDisplayLinkCreateWithActiveCGDisplays(cvlink_t **out) { return CVDisplayLinkCreateWithCGDisplay(1, out); }
 cvlink_t *CVDisplayLinkRetain(cvlink_t *l) { if (l) objc_retain((id)l); return l; }
 void CVDisplayLinkRelease(cvlink_t *l) { if (l) { l->running = 0; wait_callback(l); objc_release((id)l); } }
-int CVDisplayLinkSetOutputCallback(cvlink_t *l, cvcb_t cb, void *ctx) { if (!l) return kCVReturnInvalidArgument; l->cb = cb; l->ctx = ctx; return kCVReturnSuccess; }
+int CVDisplayLinkSetOutputCallback(cvlink_t *l, cvcb_t cb, void *ctx) {
+    if (!l) return kCVReturnInvalidArgument;
+    void *old = l->handler;
+    if (old) { wait_callback(l); l->handler = 0; _Block_release(old); }
+    l->cb = cb;
+    l->ctx = ctx;
+    return kCVReturnSuccess;
+}
+/* Versão com bloco: substitui o callback de função (o macOS guarda um só dos dois). */
+int CVDisplayLinkSetOutputHandler(cvlink_t *l, void *handler) {
+    if (!l) return kCVReturnInvalidArgument;
+    void *nb = handler ? _Block_copy(handler) : 0;
+    wait_callback(l);
+    void *old = l->handler;
+    l->handler = nb;
+    l->cb = 0;
+    l->ctx = 0;
+    if (old) _Block_release(old);
+    return kCVReturnSuccess;
+}
 int CVDisplayLinkStart(cvlink_t *l) {
     if (!l) return kCVReturnInvalidArgument;
     { extern int cx_ca_diag(void); if (cx_ca_diag()) cx_fdprintf(2, "[ca] CVDisplayLinkStart %p (tela %u, callback %p)\n", (void *)l, l->display, (void *)l->cb); }

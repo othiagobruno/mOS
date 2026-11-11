@@ -24,6 +24,10 @@ jobs:
         run: gcc -O2 -Wall -Wextra -Wno-incompatible-library-redeclaration -I kernel/include tools/btrtl_host.c kernel/bt/btrtl.c kernel/bt/vendor.c kernel/bt/btintel.c -o /tmp/btrtl_host && /tmp/btrtl_host firmware
       - name: teste de host do BLE (dois enlaces, passkey, reconexão)
         run: gcc -O1 -Wall -Wextra -Wno-unused-parameter -Wno-incompatible-library-redeclaration -I kernel/include tools/ble_host.c kernel/bt/ble.c kernel/bt/smp_crypto.c kernel/bt/p256.c kernel/bt/hid_parse.c kernel/wifi/wpa.c -o /tmp/ble_host && /tmp/ble_host
+      - name: teste de host do launchd (KeepAlive, StartInterval, bplist do Setapp)
+        run: gcc -std=c11 -O1 -Wall -Wextra -Iuserland -Ikernel/include tools/launchjobtest.c -o /tmp/launchjobtest && /tmp/launchjobtest
+      - name: teste de host do ServiceManagement (SMJob*, launchctl list RÓTULO)
+        run: gcc -std=c11 -O1 -Wall -Wextra -Wno-unused-function -Ikernel/include tools/smjobtest.c -o /tmp/smjobtest && /tmp/smjobtest
       - name: testes de unwind no host
         run: tools/cxx_unwind_host.sh
       - name: tools/build.sh
@@ -32,6 +36,10 @@ jobs:
         run: python3 tools/corpus/harness.py hosttest --lib /tmp/mos-linux-build/libSystem.mos --disco /tmp/mos-linux-build/libunwind-x86
       - name: teste de host do Virtualization
         run: sh tools/test-vz.sh
+      - name: teste de host do readdir (retrato da pasta)
+        run: gcc -std=c11 -O1 -Wall -Wextra tools/dirsnap_host.c -o /tmp/dirsnap_host && /tmp/dirsnap_host
+      - name: Codex CLI oficial no machotest (versão, apply_patch, login por API key falsa)
+        run: bash tools/codex-cli-harness.sh /tmp/mos-linux-build/libSystem.mos
       - name: machotest (Linux)
         run: |
           zig cc -target x86_64-linux-gnu -O2 -std=gnu11 -DMOS_HOST_TEST -fno-strict-aliasing -Ikernel/include -Itools \
@@ -40,4 +48,4 @@ jobs:
       - name: teste de host do /usr/bin/security
         run: MOS_ZIG=zig bash tools/test-security-cli.sh /tmp/mos-linux-build/libSystem.mos /tmp/machotest
       - name: teste de host do git da imagem
-        run: bash tools/test-git-image.sh /tmp/mos-linux-build/libSystem.mos /tmp/machotest /tmp/mos-linux-build/apps-dl/brew
+        run: bash tools/fetch-bottles.sh git gettext -d /tmp/brew && bash tools/test-git-image.sh /tmp/mos-linux-build/libSystem.mos /tmp/machotest /tmp/brew

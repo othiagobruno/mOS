@@ -40,7 +40,8 @@ Meta: os seis apps 100% funcionais no mOS. Este arquivo lista só o que falta. O
 
 ## Cursor
 
-- Git na imagem: `tools/stage-git.sh` põe o git 2.55.0 do Homebrew (bottle Intel) em `/usr/local/opt/git`, com
+- Git na imagem: o `tools/build.sh` compila o git do fonte (`tools/build-git.sh`, `/usr/bin/git`). Sem ele, o
+  `--cursor-extras` usa o bottle: `tools/stage-git.sh` põe o git 2.55.0 do Homebrew (bottle Intel) em `/usr/local/opt/git`, com
   `/usr/bin/git` e `/usr/local/bin/git` como link do mOS. Os ~150 hardlinks de `libexec/git-core` viram `#mOS-link:`:
   a raiz fica com 27 MiB, não 619 MiB. Entram `libpcre2-8.0.dylib` e `libintl.8.dylib` (`@@HOMEBREW_PREFIX@@`).
   `tools/stage-apps-oficiais.sh` baixa `git gettext` (`fetch-bottles.sh`) e passa `--bottles` ao Cursor. Teste de

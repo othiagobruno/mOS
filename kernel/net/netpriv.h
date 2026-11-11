@@ -80,3 +80,4 @@ void net_on_configured(void);
 /* drivers */
 bool e1000_probe(void);
 bool rtl8139_probe(void);
+bool r8169_probe(void);     /* dev/r8169.c: RTL8111/8168, RTL810x */

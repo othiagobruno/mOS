@@ -243,11 +243,16 @@ if [ "$CURSOR" = 1 ]; then
         echo "stage-image: $BIN/security ausente (rode tools/build.sh, que compila userland/cli-macos/security.c)" >&2
         exit 1
     fi
-    if [ -z "$BOTTLES" ]; then
-        echo "stage-image: --cursor-extras precisa de --bottles <dir> com o git (tools/fetch-bottles.sh git gettext -d <dir>)" >&2
-        exit 1
+    # git: o tools/build.sh já põe o git compilado do fonte (tools/build-git.sh) em /usr/bin/git. Só sem ele entra o
+    # bottle do Homebrew (tools/stage-git.sh).
+    e_macho() { [ -f "$1" ] && [ "$(head -c 4 "$1" | od -An -tx1 | tr -d ' \n')" = cffaedfe ]; }
+    if ! e_macho "$BIN/git"; then
+        if [ -z "$BOTTLES" ]; then
+            echo "stage-image: sem /usr/bin/git do build; --cursor-extras precisa de --bottles <dir> (tools/fetch-bottles.sh git gettext -d <dir>)" >&2
+            exit 1
+        fi
+        bash "$ROOT/tools/stage-git.sh" "$BOTTLES" "$MOS"
     fi
-    bash "$ROOT/tools/stage-git.sh" "$BOTTLES" "$MOS"
 fi
 
 OVT=$OUTABS/overlay-teste
