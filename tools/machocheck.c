@@ -233,7 +233,10 @@ static int load_libsystem(const char *path) {
 }
 
 /* ---------------------------------------------------------------- bibliotecas que o carregador le do disco */
-static set_t disk_cxx, disk_swift, disk_unwind, disk_z, disk_ck, disk_usr, swift_lidas;
+static set_t disk_cxx, disk_swift, disk_unwind, disk_z, disk_ck, disk_usr, disk_fw, swift_lidas;
+/* --disco-todo: todo dylib Mach-O da arvore do --disco entra (frameworks do mOS na imagem) */
+static int g_disco_todo;
+static u32 fw_files, fw_syms;
 static u32 cxx_files, swift_files, uw_files, z_files, ck_files, usr_files;
 static u32 cxx_syms, swift_syms, uw_syms, z_syms, ck_syms, usr_syms;
 static int disco_faltou;
@@ -479,6 +482,7 @@ static void carrega_kind(const char *path, int kind) {
     else if (kind == 4) { dest = &disk_z; cnt = &z_syms; files = &z_files; }
     else if (kind == 5) { dest = &disk_ck; cnt = &ck_syms; files = &ck_files; }
     else if (kind == 6) { dest = &disk_usr; cnt = &usr_syms; files = &usr_files; }
+    else if (kind == 7) { dest = &disk_fw; cnt = &fw_syms; files = &fw_files; }
     if (carrega_exports(path, dest, cnt)) {
         (*files)++;
         if (kind == 2) set_add(&swift_lidas, strrchr(path, '/') ? strrchr(path, '/') + 1 : path);
@@ -504,6 +508,13 @@ static void anda_disco(const char *dir, int depth) {
             anda_disco(p, depth + 1);
         } else if (S_ISREG(st.st_mode)) {
             int k = kind_de(p);
+            if (!k && g_disco_todo && st.st_size >= 32) {
+                FILE *mf = fopen(p, "rb");
+                u8 mg[4] = {0};
+                if (mf) { if (fread(mg, 1, 4, mf) != 4) mg[0] = 0; fclose(mf); }
+                u32 be = be32(mg), le = rd32(mg);
+                if (be == 0xCAFEBABE || be == 0xCAFEBABF || le == 0xFEEDFACF) k = 7;
+            }
             if (k) carrega_kind(p, k);
         }
     }
@@ -525,7 +536,7 @@ static void carrega_disco(const char *path) {
 
 static int no_disco(const char *mname) {
     return set_has(&disk_cxx, mname) || set_has(&disk_swift, mname) || set_has(&disk_unwind, mname)
-        || set_has(&disk_z, mname) || set_has(&disk_ck, mname) || set_has(&disk_usr, mname);
+        || set_has(&disk_z, mname) || set_has(&disk_ck, mname) || set_has(&disk_usr, mname) || set_has(&disk_fw, mname);
 }
 
 /* mesma regra do ls_lookup do kernel */
@@ -868,7 +879,7 @@ static void grava_cat(FILE *rep, const char *cat, u32 n) {
 
 static int uso(void) {
     fprintf(stderr,
-            "uso: machocheck [--arch x86_64|arm64] [--resolvidos ARQ] [--disco DIR]... <libSystem.mos> <Pasta.app> [relatorio.txt]\n"
+            "uso: machocheck [--arch x86_64|arm64] [--disco-todo] [--resolvidos ARQ] [--disco DIR]... <libSystem.mos> <Pasta.app> [relatorio.txt]\n"
             "     machocheck --calls <imagem> <endereco hex>\n"
             "     machocheck --sym <libSystem.mos> <endereco hex>\n"
             "     machocheck --refs <imagem> <endereco hex>\n"
@@ -877,6 +888,7 @@ static int uso(void) {
             "         Ex.: build/libcxx, build/swift/objc/dylib, build/libunwind-x86,\n"
             "         build/zlib-x86_64/libz.1.dylib, build/curl-x86_64, esp/mOS\n"
             "--arch: fatia lida no bundle (padrao x86_64). arm64 mede o slice que o tradutor roda.\n"
+            "--disco-todo: todo dylib Mach-O das arvores do --disco entra (frameworks do mOS na imagem).\n"
             "--resolvidos: grava os nomes (sem o _) que so o libSystem.mos resolveu, um por linha.\n");
     return 2;
 }
@@ -899,6 +911,7 @@ int main(int argc, char **argv) {
             else return uso();
             continue;
         }
+        if (!strcmp(argv[i], "--disco-todo")) { g_disco_todo = 1; continue; }
         if (!strcmp(argv[i], "--resolvidos")) {
             if (i + 1 >= argc) return uso();
             respath = argv[++i];
@@ -932,6 +945,7 @@ int main(int argc, char **argv) {
         printf("  libz: %u arquivo(s), %u simbolos\n", z_files, z_syms);
         printf("  CryptoKit/CoreImage: %u arquivo(s), %u simbolos\n", ck_files, ck_syms);
         printf("  curl/compression: %u arquivo(s), %u simbolos\n", usr_files, usr_syms);
+        if (g_disco_todo) printf("  outros dylibs/frameworks: %u arquivo(s), %u simbolos\n", fw_files, fw_syms);
     }
     printf("Imagens Mach-O %s no bundle: %d (exports do bundle: %u)\n\n", g_arch, nimgs, bundle_exports.n);
     set_t resolvidos = {0};

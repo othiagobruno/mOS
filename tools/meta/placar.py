@@ -226,9 +226,11 @@ def disco_real(build, esp):
     os.makedirs(d)
     reais, stubs = [], []
     base = os.path.join(esp, "mOS")
-    for sub in ("usr/lib", "Sistema/Biblioteca/Frameworks"):
-        top = os.path.join(base, sub)
-        for dp, _, fn in os.walk(top):
+    # a imagem inteira menos os apps: usr/lib, /System/Library/Frameworks, iOSSupport, Sistema/Biblioteca...
+    for dp, dn, fn in os.walk(base):
+        if dp == base:
+            dn[:] = [d for d in dn if d not in ("Aplicativos", "Users")]
+        if True:
             for n in fn:
                 p = os.path.join(dp, n)
                 if os.path.islink(p) or not os.path.isfile(p) or os.path.getsize(p) < 32:
@@ -253,7 +255,7 @@ def disco_real(build, esp):
 def rodar_machocheck(mc, libsys, discos, app_dir, arch, saida):
     rep = os.path.join(saida, "ausentes.txt")
     res = os.path.join(saida, "resolvidos.txt")
-    cmd = [mc, "--arch", arch, "--resolvidos", res]
+    cmd = [mc, "--arch", arch, "--disco-todo", "--resolvidos", res]
     for d in discos:
         cmd += ["--disco", d]
     cmd += [libsys, app_dir, rep]
