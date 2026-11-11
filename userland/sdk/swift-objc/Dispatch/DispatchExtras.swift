@@ -147,6 +147,11 @@ public struct DispatchData: RandomAccessCollection {
         pointer.update(from: p, count: Swift.min(count, self.count))
     }
 
+    public func copyBytes(to pointer: UnsafeMutableRawBufferPointer, count: Int) {
+        guard let dst = pointer.baseAddress, count > 0, let p = _mos_cfdata_bytes(__wrapped) else { return }
+        dst.copyMemory(from: p, byteCount: Swift.min(count, self.count, pointer.count))
+    }
+
     public mutating func append(_ other: DispatchData) {
         var all = [UInt8](self)
         all.append(contentsOf: other)

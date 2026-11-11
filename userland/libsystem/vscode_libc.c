@@ -527,6 +527,13 @@ kern_return_t thread_resume(mach_port_t t) {
     return SYS3(SYS_THREADCTL, MOS_THR_RESUME, tid, 0) < 0 ? KERN_FAILURE : KERN_SUCCESS;
 }
 kern_return_t thread_abort_safely(mach_port_t t) { (void)t; return KERN_NOT_SUPPORTED; }
+/* thread_terminate: a própria thread sai como no pthread_exit; outra thread o kernel do mOS não sabe matar */
+kern_return_t thread_terminate(mach_port_t t) {
+    long tid = port_tid(t);
+    if (tid < 0) return KERN_INVALID_ARGUMENT;
+    if (tid == SYS0(SYS_GETTID)) { SYS1(SYS_THREAD_EXIT, 0); for (;;) {} }
+    return KERN_NOT_SUPPORTED;
+}
 kern_return_t thread_get_register_pointer_values(mach_port_t t, usize *sp, usize *len, usize *vals) {
     (void)t; (void)sp; (void)vals;
     if (len) *len = 0;
@@ -615,6 +622,8 @@ kern_return_t clock_get_time(mach_port_t clock, vs_mach_ts_t *t) {
     t->tv_nsec = (i32)ts.tv_nsec;
     return KERN_SUCCESS;
 }
+/* clock_alarm pede ao serviço de relógio uma mensagem Mach na hora marcada; o mOS não tem esse serviço */
+kern_return_t clock_alarm(mach_port_t clock, int type, vs_mach_ts_t t, mach_port_t reply) { (void)clock; (void)type; (void)t; (void)reply; return KERN_NOT_SUPPORTED; }
 struct vs_mstats { size_t bytes_total, chunks_used, bytes_used, chunks_free, bytes_free; };
 struct vs_mstats mstats(void) { struct vs_mstats m; memset(&m, 0, sizeof m); return m; }
 void *getsectdata(const char *seg, const char *sect, unsigned long *size) { (void)seg; (void)sect; if (size) *size = 0; return 0; }
@@ -644,7 +653,38 @@ int pthread_condattr_setpshared(void *a, int p) {
     return 0;
 }
 int pthread_condattr_getpshared(const void *a, int *p) { if (!a) return 22; if (p) *p = ((const int *)a)[1]; return 0; }
-int pthread_setcancelstate(int st, int *old) { (void)st; if (old) *old = 0; return 0; }
+/* Cancelamento adiado: pthread_cancel marca a thread e ela sai (PTHREAD_CANCELED) no próximo pthread_testcancel com o
+ * cancelamento ligado. As outras funções que no macOS são pontos de cancelamento (read, sleep, cond_wait...) não olham a
+ * marca. Tabela fixa de tids: com ela cheia, pthread_cancel devolve EAGAIN em vez de perder o pedido. */
+#define CX_CANCEL_MAX 128
+static volatile long cancel_pend[CX_CANCEL_MAX];         /* tid + 1 com cancelamento pedido */
+static volatile long cancel_off[CX_CANCEL_MAX];          /* tid + 1 com PTHREAD_CANCEL_DISABLE */
+static int tid_tem(volatile long *tab, long tid) { for (int i = 0; i < CX_CANCEL_MAX; i++) if (tab[i] == tid + 1) return i; return -1; }
+static int tid_poe(volatile long *tab, long tid) {
+    if (tid_tem(tab, tid) >= 0) return 0;
+    for (int i = 0; i < CX_CANCEL_MAX; i++) if (__sync_bool_compare_and_swap(&tab[i], 0, tid + 1)) return 0;
+    return 35;                                           /* EAGAIN */
+}
+static void tid_tira(volatile long *tab, long tid) { int i = tid_tem(tab, tid); if (i >= 0) __sync_bool_compare_and_swap(&tab[i], tid + 1, 0); }
+int pthread_setcancelstate(int st, int *old) {
+    long me = SYS0(SYS_GETTID);
+    if (st != 0 && st != 1) return 22;                   /* macOS: PTHREAD_CANCEL_ENABLE 1, DISABLE 0 */
+    if (old) *old = tid_tem(cancel_off, me) >= 0 ? 0 : 1;
+    if (st == 0) return tid_poe(cancel_off, me);
+    tid_tira(cancel_off, me);
+    return 0;
+}
+int pthread_cancel(unsigned long t) {
+    long tid = cx_pthread_tid((void *)t);
+    if (tid <= 0) return 3;                              /* ESRCH */
+    return tid_poe(cancel_pend, tid);
+}
+void pthread_testcancel(void) {
+    long me = SYS0(SYS_GETTID);
+    if (tid_tem(cancel_pend, me) < 0 || tid_tem(cancel_off, me) >= 0) return;
+    tid_tira(cancel_pend, me);
+    pthread_exit((void *)1);                             /* PTHREAD_CANCELED */
+}
 /* quadro de pilha: [rbp] = rbp anterior, [rbp+8] = endereço de retorno */
 usize pthread_stack_frame_decode_np(usize frame, usize *ret) {
     usize *f = (usize *)frame;

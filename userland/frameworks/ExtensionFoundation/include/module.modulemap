@@ -1,0 +1,5 @@
+// mOS — módulo clang ExtensionFoundation mínimo (NSXPCConnection) para compilar o ExtensionFoundation.swift
+module ExtensionFoundation [system] {
+    header "ExtensionFoundation_mos.h"
+    export *
+}

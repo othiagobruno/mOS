@@ -15,11 +15,10 @@ DL="$ROOT/.tools/dl/libxml2-$VER.tar.xz"
 SRC="$ROOT/.tools/libxml2-$VER"
 OUT=${1:-$ROOT/build/libxml2/libxml2.2.dylib}
 mkdir -p "$ROOT/.tools/dl" "$(dirname "$OUT")"
-if [ ! -f "$DL" ] || [ "$(sha256sum "$DL" | cut -d' ' -f1)" != "$SHA" ]; then
-    curl -fL --retry 3 -o "$DL.partial" "https://download.gnome.org/sources/libxml2/2.13/libxml2-$VER.tar.xz"
-    mv "$DL.partial" "$DL"
-fi
-[ "$(sha256sum "$DL" | cut -d' ' -f1)" = "$SHA" ] || { echo "build-libxml2: SHA-256 não confere" >&2; exit 1; }
+# curl, wget ou python3: a máquina de build pode não ter curl (sem ele a imagem saía sem libxml2)
+. "$ROOT/tools/baixar.sh"
+baixar "https://download.gnome.org/sources/libxml2/2.13/libxml2-$VER.tar.xz" "$DL" "$SHA" \
+    || { echo "build-libxml2: download ou SHA-256 falhou" >&2; exit 1; }
 WRAP=$(mktemp -d)
 trap 'rm -rf "$WRAP"' EXIT
 printf '#!/bin/sh\nexec "%s" cc -target x86_64-macos "$@"\n' "$ZIG" > "$WRAP/cc"

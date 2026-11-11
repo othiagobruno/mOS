@@ -231,6 +231,69 @@ id_ CFBundleCopyInfoDictionaryInDirectory(id_ url) {
     }
     return 0;
 }
+/* CFBundleCopyInfoDictionaryForURL: diretório de bundle -> o Info.plist dele; arquivo -> o Info.plist embutido na
+ * seção __TEXT,__info_plist do Mach-O (a fatia x86_64 de um universal), como o CF faz com ferramentas de linha de comando */
+int strcmp(const char *a, const char *b);
+int strncmp(const char *a, const char *b, size_t n);
+static unsigned rd32(const unsigned char *p, int be) { return be ? (unsigned)p[0] << 24 | p[1] << 16 | p[2] << 8 | p[3] : (unsigned)p[3] << 24 | p[2] << 16 | p[1] << 8 | p[0]; }
+static unsigned long long rd64(const unsigned char *p) { return (unsigned long long)rd32(p + 4, 0) << 32 | rd32(p, 0); }
+static int plist_embutido(const unsigned char *b, unsigned long n, unsigned long *off, unsigned long *len) {
+    if (n < 32) return 0;
+    unsigned m = rd32(b, 1);
+    if (m == 0xCAFEBABEu && n >= 8) {                         /* universal: procura a fatia x86_64 */
+        unsigned k = rd32(b + 4, 1);
+        for (unsigned i = 0; i < k && i < 32 && 8 + (i + 1) * 20 <= n; i++) {
+            const unsigned char *a = b + 8 + i * 20;
+            if (rd32(a, 1) != 0x01000007u) continue;
+            unsigned long o = rd32(a + 8, 1), s = rd32(a + 12, 1);
+            if (o + s > n) return 0;
+            if (!plist_embutido(b + o, s, off, len)) return 0;
+            *off += o;
+            return 1;
+        }
+        return 0;
+    }
+    if (rd32(b, 0) != 0xFEEDFACFu) return 0;
+    unsigned ncmds = rd32(b + 16, 0);
+    unsigned long p = 32;
+    for (unsigned i = 0; i < ncmds && p + 8 <= n; i++) {
+        unsigned cmd = rd32(b + p, 0), sz = rd32(b + p + 4, 0);
+        if (sz < 8 || p + sz > n) return 0;
+        if (cmd == 0x19 && !strcmp((const char *)b + p + 8, "__TEXT")) {     /* LC_SEGMENT_64 */
+            unsigned ns = rd32(b + p + 64, 0);
+            for (unsigned j = 0; j < ns && p + 72 + (j + 1) * 80 <= p + sz; j++) {
+                const unsigned char *s = b + p + 72 + j * 80;
+                if (strncmp((const char *)s, "__info_plist", 16)) continue;
+                unsigned long so = rd32(s + 48, 0), sl = (unsigned long)rd64(s + 40);
+                if (so + sl > n) return 0;
+                *off = so;
+                *len = sl;
+                return 1;
+            }
+        }
+        p += sz;
+    }
+    return 0;
+}
+id_ CFBundleCopyInfoDictionaryForURL(id_ url) {
+    if (!url) return 0;
+    id_ path = ((id_(*)(id_, id_))objc_msgSend)(url, sel_registerName("path"));
+    if (!path) return 0;
+    signed char dir = 0;
+    id_ fm = ((id_(*)(id_, id_))objc_msgSend)(objc_getClass("NSFileManager"), sel_registerName("defaultManager"));
+    if (!((signed char(*)(id_, id_, id_, signed char *))objc_msgSend)(fm, sel_registerName("fileExistsAtPath:isDirectory:"), path, &dir))
+        return 0;
+    if (dir) return CFBundleCopyInfoDictionaryInDirectory(url);
+    id_ data = ((id_(*)(id_, id_, id_))objc_msgSend)(objc_getClass("NSData"), sel_registerName("dataWithContentsOfFile:"), path);
+    if (!data) return 0;
+    const unsigned char *b = ((const unsigned char *(*)(id_, id_))objc_msgSend)(data, sel_registerName("bytes"));
+    unsigned long n = ((unsigned long (*)(id_, id_))objc_msgSend)(data, sel_registerName("length")), off = 0, len = 0;
+    if (!b || !plist_embutido(b, n, &off, &len) || !len) return 0;
+    id_ sub = ((id_(*)(id_, id_, const void *, unsigned long))objc_msgSend)(objc_getClass("NSData"), sel_registerName("dataWithBytes:length:"), b + off, len);
+    id_ d = ((id_(*)(id_, id_, id_, unsigned long, void *, void *))objc_msgSend)(objc_getClass("NSPropertyListSerialization"),
+        sel_registerName("propertyListWithData:options:format:error:"), sub, 0, 0, 0);
+    return d ? ((id_(*)(id_, id_))objc_msgSend)(d, sel_registerName("retain")) : 0;
+}
 /* nome IANA -> CFStringEncoding (os que o mOS converte); desconhecido: kCFStringEncodingInvalidId */
 const char *cx_cstr(id_ s);
 int strcasecmp(const char *a, const char *b);

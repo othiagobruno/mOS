@@ -366,3 +366,134 @@ static void cd_fail(id *error, NSString *msg) {
 - (id)existingObjectWithID:(id)oid error:(id *)error { return [_objects containsObject:oid] ? oid : nil; }
 - (id)objectWithID:(id)oid { return oid; }
 @end
+
+/* ---- migração (NSMigrationManager, NSMappingModel, NSEntityMigrationPolicy, NSPropertyMapping)
+ * A loja do mOS guarda objetos e atributos por nome (mos_object/mos_attr), sem esquema compilado: não há .cdm para
+ * carregar. +mappingModelFromBundles:... devolve nil (nenhum modelo de mapeamento compilado); o inferido é um modelo
+ * vazio, que basta porque os atributos seguem pelo nome. migrateStoreFromURL:... copia a loja de origem para o
+ * destino (a mesma tabela serve aos dois modelos) e informa o progresso 1.0. */
+id objc_msgSend(id, SEL, ...);
+int strcmp(const char *a, const char *b);
+
+@interface NSPropertyMapping : NSObject {
+    id _name, _value, _userInfo;
+}
+- (id)name;
+- (void)setName:(id)n;
+- (id)valueExpression;
+- (void)setValueExpression:(id)v;
+- (id)userInfo;
+- (void)setUserInfo:(id)u;
+@end
+@implementation NSPropertyMapping
+- (id)name { return _name; }
+- (void)setName:(id)n { id c = [n copy]; [_name release]; _name = c; }
+- (id)valueExpression { return _value; }
+- (void)setValueExpression:(id)v { [v retain]; [_value release]; _value = v; }
+- (id)userInfo { return _userInfo; }
+- (void)setUserInfo:(id)u { [u retain]; [_userInfo release]; _userInfo = u; }
+- (void)dealloc { [_name release]; [_value release]; [_userInfo release]; [super dealloc]; }
+@end
+
+@interface NSMappingModel : NSObject {
+    id _entityMappings;
+}
++ (id)mappingModelFromBundles:(id)bundles forSourceModel:(id)source destinationModel:(id)destination;
++ (id)inferredMappingModelForSourceModel:(id)source destinationModel:(id)destination error:(id *)error;
+- (id)initWithContentsOfURL:(id)url;
+- (id)entityMappings;
+- (void)setEntityMappings:(id)e;
+- (id)entityMappingsByName;
+@end
+@implementation NSMappingModel
++ (id)mappingModelFromBundles:(id)bundles forSourceModel:(id)source destinationModel:(id)destination { return nil; }
++ (id)inferredMappingModelForSourceModel:(id)source destinationModel:(id)destination error:(id *)error {
+    if (error) *error = nil;
+    NSMappingModel *m = [[[self alloc] init] autorelease];
+    [m setEntityMappings:[NSArray array]];
+    return m;
+}
+- (id)initWithContentsOfURL:(id)url { [self release]; return nil; }      /* sem formato .cdm no mOS */
+- (id)entityMappings { return _entityMappings; }
+- (void)setEntityMappings:(id)e { [e retain]; [_entityMappings release]; _entityMappings = e; }
+- (id)entityMappingsByName {
+    NSMutableDictionary *d = [NSMutableDictionary dictionary];
+    NSUInteger n = [_entityMappings count];
+    for (NSUInteger i = 0; i < n; i++) {
+        id e = [_entityMappings objectAtIndex:i];
+        id k = [e valueForKey:@"name"];
+        if (k) [d setObject:e forKey:k];
+    }
+    return d;
+}
+- (void)dealloc { [_entityMappings release]; [super dealloc]; }
+@end
+
+@interface NSMigrationManager : NSObject {
+    id _src, _dst, _mapping, _userInfo;
+    float _progress;
+    BOOL _cancelled;
+}
+- (instancetype)initWithSourceModel:(id)source destinationModel:(id)destination;
+- (BOOL)migrateStoreFromURL:(id)srcURL type:(id)srcType options:(id)srcOpts withMappingModel:(id)mapping
+           toDestinationURL:(id)dstURL destinationType:(id)dstType destinationOptions:(id)dstOpts error:(id *)error;
+- (id)sourceModel;
+- (id)destinationModel;
+- (id)mappingModel;
+- (float)migrationProgress;
+- (id)userInfo;
+- (void)setUserInfo:(id)u;
+- (void)cancelMigrationWithError:(id)error;
+@end
+@implementation NSMigrationManager
+- (instancetype)initWithSourceModel:(id)source destinationModel:(id)destination {
+    if ((self = [super init])) { _src = [source retain]; _dst = [destination retain]; }
+    return self;
+}
+- (void)dealloc { [_src release]; [_dst release]; [_mapping release]; [_userInfo release]; [super dealloc]; }
+- (id)sourceModel { return _src; }
+- (id)destinationModel { return _dst; }
+- (id)mappingModel { return _mapping; }
+- (float)migrationProgress { return _progress; }
+- (id)userInfo { return _userInfo; }
+- (void)setUserInfo:(id)u { [u retain]; [_userInfo release]; _userInfo = u; }
+- (void)cancelMigrationWithError:(id)error { _cancelled = YES; }
+- (BOOL)migrateStoreFromURL:(id)srcURL type:(id)srcType options:(id)srcOpts withMappingModel:(id)mapping
+           toDestinationURL:(id)dstURL destinationType:(id)dstType destinationOptions:(id)dstOpts error:(id *)error {
+    [mapping retain]; [_mapping release]; _mapping = mapping;
+    if (_cancelled) { cd_fail(error, @"migração cancelada"); return NO; }
+    if ([dstType isEqual:NSInMemoryStoreType] || [srcType isEqual:NSInMemoryStoreType]) { _progress = 1; if (error) *error = nil; return YES; }
+    const char *s = cd_path(srcURL), *d = cd_path(dstURL);
+    if (!s || !d) { cd_fail(error, @"URL de loja inválida"); return NO; }
+    if (strcmp(s, d)) {
+        id fm = [NSFileManager defaultManager];
+        id sp = [NSString stringWithUTF8String:s], dp = [NSString stringWithUTF8String:d];
+        ((BOOL (*)(id, SEL, id, id *))objc_msgSend)(fm, @selector(removeItemAtPath:error:), dp, (id *)0);
+        BOOL ok = ((BOOL (*)(id, SEL, id, id, id *))objc_msgSend)(fm, @selector(copyItemAtPath:toPath:error:), sp, dp, error);
+        if (!ok) { cd_fail(error, @"não foi possível copiar a loja para o destino"); return NO; }
+    }
+    _progress = 1;
+    if (error) *error = nil;
+    return YES;
+}
+@end
+
+@interface NSEntityMigrationPolicy : NSObject
+- (BOOL)beginEntityMapping:(id)mapping manager:(NSMigrationManager *)manager error:(id *)error;
+- (BOOL)createDestinationInstancesForSourceInstance:(id)sInstance entityMapping:(id)mapping manager:(NSMigrationManager *)manager error:(id *)error;
+- (BOOL)endInstanceCreationForEntityMapping:(id)mapping manager:(NSMigrationManager *)manager error:(id *)error;
+- (BOOL)createRelationshipsForDestinationInstance:(id)dInstance entityMapping:(id)mapping manager:(NSMigrationManager *)manager error:(id *)error;
+- (BOOL)endRelationshipCreationForEntityMapping:(id)mapping manager:(NSMigrationManager *)manager error:(id *)error;
+- (BOOL)performCustomValidationForEntityMapping:(id)mapping manager:(NSMigrationManager *)manager error:(id *)error;
+- (BOOL)endEntityMapping:(id)mapping manager:(NSMigrationManager *)manager error:(id *)error;
+@end
+/* a política padrão da Apple: cada etapa dá certo sem fazer nada; subclasses sobrescrevem a que precisam */
+@implementation NSEntityMigrationPolicy
+- (BOOL)beginEntityMapping:(id)mapping manager:(NSMigrationManager *)manager error:(id *)error { return YES; }
+- (BOOL)createDestinationInstancesForSourceInstance:(id)sInstance entityMapping:(id)mapping manager:(NSMigrationManager *)manager error:(id *)error { return YES; }
+- (BOOL)endInstanceCreationForEntityMapping:(id)mapping manager:(NSMigrationManager *)manager error:(id *)error { return YES; }
+- (BOOL)createRelationshipsForDestinationInstance:(id)dInstance entityMapping:(id)mapping manager:(NSMigrationManager *)manager error:(id *)error { return YES; }
+- (BOOL)endRelationshipCreationForEntityMapping:(id)mapping manager:(NSMigrationManager *)manager error:(id *)error { return YES; }
+- (BOOL)performCustomValidationForEntityMapping:(id)mapping manager:(NSMigrationManager *)manager error:(id *)error { return YES; }
+- (BOOL)endEntityMapping:(id)mapping manager:(NSMigrationManager *)manager error:(id *)error { return YES; }
+@end

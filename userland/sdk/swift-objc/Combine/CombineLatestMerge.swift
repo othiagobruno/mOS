@@ -492,6 +492,10 @@ extension Publishers.MergeMany: Equatable where Upstream: Equatable {
 }
 
 extension Publisher {
+    /// mesmo tipo dos dois lados: MergeMany, como no Combine da Apple
+    public func merge(with other: Self) -> Publishers.MergeMany<Self> {
+        Publishers.MergeMany(self, other)
+    }
     public func merge<P: Publisher>(with other: P) -> Publishers.Merge<Self, P> where Failure == P.Failure, Output == P.Output {
         Publishers.Merge(self, other)
     }

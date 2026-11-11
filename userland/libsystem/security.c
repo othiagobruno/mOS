@@ -829,6 +829,10 @@ OSStatus SecCodeCopySigningInformation(id_ code, u32 flags, id_ *info) {
     return errSecSuccess;
 }
 OSStatus SecRequirementCreateWithString(id_ text, u32 flags, id_ *req) { (void)flags; if (!req) return errSecParam; *req = text ? CFRetain(text) : 0; return text ? errSecSuccess : errSecParam; }
+OSStatus SecRequirementCreateWithStringAndErrors(id_ text, u32 flags, id_ *errors, id_ *req) {
+    if (errors) *errors = 0;
+    return SecRequirementCreateWithString(text, flags, req);
+}
 OSStatus SecRequirementCreateWithData(id_ data, u32 flags, id_ *req) { (void)flags; if (!req) return errSecParam; *req = data ? CFRetain(data) : 0; return data ? errSecSuccess : errSecParam; }
 OSStatus SecRequirementCopyData(id_ req, u32 flags, id_ *data) {
     (void)flags;
@@ -902,6 +906,9 @@ OSStatus SecTrustCreateWithCertificates(id_ certs, id_ policies, id_ *trust) {
     *trust = arr;
     return errSecSuccess;
 }
+u64 CFArrayGetTypeID(void);
+/* o SecTrust do mOS é o CFArray dos certificados (acima): CFGetTypeID(trust) == SecTrustGetTypeID() */
+u64 SecTrustGetTypeID(void) { return CFArrayGetTypeID(); }
 long SecTrustGetCertificateCount(id_ trust) { return trust ? CFArrayGetCount(trust) : 0; }
 id_ SecTrustGetCertificateAtIndex(id_ trust, long i) { return trust && i >= 0 && i < CFArrayGetCount(trust) ? CFArrayGetValueAtIndex(trust, i) : 0; }
 id_ SecTrustCopyCertificateChain(id_ trust) {
@@ -1095,12 +1102,99 @@ id_ SecVerifyTransformCreate(id_ key, id_ sig, id_ *err) { (void)key; (void)sig;
 id_ SecTransformCreateGroupTransform(void) { return 0; }
 id_ SecTransformCreateReadTransformWithReadStream(id_ stream) { (void)stream; return 0; }
 id_ SecTransformConnectTransforms(id_ a, id_ an, id_ b, id_ bn, id_ grp, id_ *err) { (void)a; (void)an; (void)b; (void)bn; (void)grp; if (err) *err = 0; return 0; }
-Boolean SecTransformSetAttribute(id_ t, id_ k, id_ v, id_ *err) { (void)t; (void)k; (void)v; if (err) *err = 0; return 0; }
-id_ SecTransformExecute(id_ t, id_ *err) { (void)t; if (err) *err = 0; return 0; }
+
+/* SecEncodeTransform/SecDecodeTransform em Base64 e Base32 (RFC 4648). O transform é um CFMutableDictionary com os
+ * atributos (INPUT, EncodeType/DecodeType) e a marca "mOS.transform"; SecTransformExecute roda a conversão sobre o
+ * CFData de INPUT. Outros tipos (zlib) e os transforms de digest/assinatura devolvem NULL com o CFError. */
+id_ CFErrorCreate(void *alloc, id_ domain, long code, id_ info);
+static cfconst_t tr_marca_cs = {cx_cfconst_isa, 0x7c8, "mOS.transform", 13};
+static cfconst_t tr_dom_cs = {cx_cfconst_isa, 0x7c8, "com.apple.security.transforms.error", 35};
+static void tr_erro(id_ *err, long code) { if (err) *err = CFErrorCreate(0, (id_)&tr_dom_cs, code, 0); }
+static int tr_tipo(id_ t) {                             /* 64, 32 ou 0 */
+    if (t && CFEqual(t, K_(kSecBase64Encoding))) return 64;
+    if (t && CFEqual(t, K_(kSecBase32Encoding))) return 32;
+    return 0;
+}
+static id_ tr_novo(id_ attr, id_ type, id_ *err) {
+    if (err) *err = 0;
+    if (!tr_tipo(type)) { tr_erro(err, errSecUnimplemented); return 0; }
+    id_ d = CFDictionaryCreateMutable(0, 0, 0, 0);
+    CFDictionarySetValue(d, (id_)&tr_marca_cs, attr);
+    CFDictionarySetValue(d, attr, type);
+    return d;
+}
+u64 CFDictionaryGetTypeID(void);
+u64 CFArrayGetTypeID(void);
+#define errSecDecode (-26275)
+static int tr_eh(id_ t) { return t && CFGetTypeID(t) == CFDictionaryGetTypeID() && CFDictionaryGetValue(t, (id_)&tr_marca_cs) != 0; }
+id_ SecEncodeTransformCreate(id_ type, id_ *err) { return tr_novo(K_(kSecEncodeTypeAttribute), type, err); }
+id_ SecDecodeTransformCreate(id_ type, id_ *err) { return tr_novo(K_(kSecDecodeTypeAttribute), type, err); }
+Boolean SecTransformSetAttribute(id_ t, id_ k, id_ v, id_ *err) {
+    if (err) *err = 0;
+    if (!tr_eh(t) || !k) { tr_erro(err, errSecParam); return 0; }
+    CFDictionarySetValue(t, k, v);
+    return 1;
+}
+static const char b64a[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+static const char b32a[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+static int dval(const char *alfa, int c) {
+    for (int i = 0; alfa[i]; i++) if (alfa[i] == c) return i;
+    if (alfa == b32a && c >= 'a' && c <= 'z') return c - 'a';
+    return -1;
+}
+static id_ tr_codifica(const u8 *in, long n, int bits) {
+    id_ out = CFDataCreateMutable(0, 0);
+    const char *alfa = bits == 64 ? b64a : b32a;
+    int w = bits == 64 ? 6 : 5, grupo = bits == 64 ? 4 : 8;
+    unsigned long acc = 0;
+    int nb = 0;
+    long emitidos = 0;
+    for (long i = 0; i < n; i++) {
+        acc = acc << 8 | in[i];
+        nb += 8;
+        while (nb >= w) { u8 c = (u8)alfa[(acc >> (nb - w)) & ((1u << w) - 1)]; CFDataAppendBytes(out, &c, 1); emitidos++; nb -= w; }
+    }
+    if (nb) { u8 c = (u8)alfa[(acc << (w - nb)) & ((1u << w) - 1)]; CFDataAppendBytes(out, &c, 1); emitidos++; }
+    while (emitidos % grupo) { u8 c = '='; CFDataAppendBytes(out, &c, 1); emitidos++; }
+    return out;
+}
+static id_ tr_decodifica(const u8 *in, long n, int bits) {
+    id_ out = CFDataCreateMutable(0, 0);
+    const char *alfa = bits == 64 ? b64a : b32a;
+    int w = bits == 64 ? 6 : 5;
+    unsigned long acc = 0;
+    int nb = 0;
+    for (long i = 0; i < n; i++) {
+        int c = in[i];
+        if (c == '=') break;
+        if (c == ' ' || c == '\n' || c == '\r' || c == '\t') continue;
+        int v = dval(alfa, c);
+        if (v < 0) { CFRelease(out); return 0; }
+        acc = acc << w | (unsigned)v;
+        nb += w;
+        if (nb >= 8) { u8 b = (u8)(acc >> (nb - 8)); CFDataAppendBytes(out, &b, 1); nb -= 8; }
+    }
+    return out;
+}
+id_ SecTransformExecute(id_ t, id_ *err) {
+    if (err) *err = 0;
+    if (!tr_eh(t)) { tr_erro(err, errSecParam); return 0; }
+    id_ attr = CFDictionaryGetValue(t, (id_)&tr_marca_cs);
+    int bits = tr_tipo(CFDictionaryGetValue(t, attr));
+    id_ in = CFDictionaryGetValue(t, K_(kSecTransformInputAttributeName));
+    if (!in || CFGetTypeID(in) != CFDataGetTypeID()) { tr_erro(err, errSecParam); return 0; }
+    const u8 *b = CFDataGetBytePtr(in);
+    long n = CFDataGetLength(in);
+    id_ r = CFEqual(attr, K_(kSecEncodeTypeAttribute)) ? tr_codifica(b, n, bits) : tr_decodifica(b, n, bits);
+    if (!r) tr_erro(err, errSecDecode);
+    return r;
+}
 
 /* ================================================================ sec_protocol (Network.framework)
  * O SecureTransport (SSL*) e as raízes do sistema (SecTrustSettingsCopy*) estão em securetransport.c. */
 void *sec_trust_copy_ref(void *t) { (void)t; return 0; }
+/* o Network do mOS não expõe metadados de TLS (nw_*): sem objeto, sem protocolo ALPN negociado */
+const char *sec_protocol_metadata_get_negotiated_protocol(void *m) { (void)m; return 0; }
 void sec_protocol_options_set_verify_block(void *o, void *b, void *q) { (void)o; (void)b; (void)q; }
 void sec_protocol_options_append_tls_ciphersuite(void *o, int s) { (void)o; (void)s; }
 void sec_protocol_options_add_pre_shared_key(void *o, void *psk, void *id) { (void)o; (void)psk; (void)id; }

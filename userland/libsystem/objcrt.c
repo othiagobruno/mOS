@@ -394,6 +394,21 @@ int objc_getClassList(cx_class_t **buf, int cap) {
     for (int i = 0; buf && i < cap && (u32)i < n; i++) buf[i] = all[i];
     return (int)n;
 }
+/* nomes das classes cuja imagem (class_getImageName, dladdr) é `image`; lista terminada em NULL, o chamador dá free */
+const char *class_getImageName(cx_class_t *c);
+const char *class_getName(cx_class_t *c);
+const char **objc_copyClassNamesForImage(const char *image, u32 *count) {
+    cx_class_t **all;
+    u32 n = image ? cx_class_list(&all) : 0, k = 0;
+    const char **out = calloc(n + 1, sizeof *out);
+    for (u32 i = 0; out && i < n; i++) {
+        const char *img = class_getImageName(all[i]);
+        if (img && !strcmp(img, image)) out[k++] = class_getName(all[i]);
+    }
+    if (count) *count = out ? k : 0;
+    if (out && !k) { free(out); out = 0; }
+    return out;
+}
 void objc_disposeClassPair(cx_class_t *c) { (void)c; }      /* a classe fica (pode haver instâncias vivas) */
 id objc_constructInstance(cx_class_t *c, void *bytes) {
     if (!c || !bytes) return 0;

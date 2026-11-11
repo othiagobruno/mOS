@@ -128,7 +128,7 @@ KNV(NSTextCheckingCityKey, "City") KNV(NSTextCheckingCountryKey, "Country") KNV(
 KNV(NSTextCheckingStreetKey, "Street") KNV(NSTextCheckingZIPKey, "ZIP")
 KNS(NSUbiquityIdentityDidChangeNotification) KNS(NSUndoManagerDidCloseUndoGroupNotification)
 KNS(NSUndoManagerDidRedoChangeNotification) KNS(NSUndoManagerDidUndoChangeNotification)
-KNS(NSURLAuthenticationMethodClientCertificate) KNS(NSURLAuthenticationMethodHTTPBasic)
+KNS(NSURLAuthenticationMethodClientCertificate) KNS(NSURLAuthenticationMethodHTTPBasic) KNS(NSURLAuthenticationMethodHTTPDigest)
 KNS(NSURLAuthenticationMethodNegotiate) KNS(NSURLAuthenticationMethodNTLM) KNS(NSURLAuthenticationMethodServerTrust)
 KNS(NSURLErrorDomain) KNV(NSURLErrorFailingURLErrorKey, "NSErrorFailingURLKey")
 KNV(NSURLErrorFailingURLStringErrorKey, "NSErrorFailingURLStringKey") KNS(NSURLErrorKey)

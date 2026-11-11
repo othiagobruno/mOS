@@ -23,6 +23,56 @@ extension OS_os_log {
 /// OSLog(subsystem:category:) do SDK; aqui uma função, porque a classe só existe para o runtime
 public func _mosOSLog(subsystem: String, category: String) -> OSLog { os_log_create(subsystem, category) }
 
+// MARK: - OSLog.Category e OSLog(subsystem:category: Category)
+
+extension OS_os_log {
+    /// categorias especiais do SDK (o rawValue é o nome que o os_log_create recebe)
+    public struct Category {
+        public let rawValue: String
+        public init(rawValue: String) { self.rawValue = rawValue }
+        public static var pointsOfInterest: Category { Category(rawValue: "PointsOfInterest") }
+        public static var dynamicTracing: Category { Category(rawValue: "DynamicTracing") }
+        public static var dynamicStackTracing: Category { Category(rawValue: "DynamicStackTracing") }
+    }
+
+    /// OSLog(subsystem:category:) com uma Category. O OS_os_log é a classe do libSystem (sem init designado que o
+    /// Swift enxergue), então o inicializador é este método com o nome do inicializador da Apple: a convenção é a
+    /// mesma (argumentos, o metatipo em self, objeto +1 na volta).
+    @_silgen_name("$sSo9OS_os_logC0B0E9subsystem8categoryABSS_AbCE8CategoryVtcfC")
+    public static func _mosMake(subsystem: String, category: Category) -> OSLog {
+        os_log_create(subsystem, category.rawValue)
+    }
+}
+
+// MARK: - OSSignpostID
+
+public struct OSSignpostID: Equatable, Comparable, Hashable {
+    public let rawValue: UInt64
+    public init(_ value: UInt64) { rawValue = value }
+    /// um identificador novo e único no processo (o os_signpost_id_generate da Apple também é por processo)
+    public init(log: OSLog) {
+        var v: UInt64
+        repeat { v = UInt64(bitPattern: Int64(_mosSignpostNext.add())) } while v == 0 || v == ~0
+        rawValue = v
+    }
+    public init(log: OSLog, object: AnyObject) { rawValue = UInt64(UInt(bitPattern: ObjectIdentifier(object).hashValue)) }
+    public static var exclusive: OSSignpostID { OSSignpostID(0xEEEE_B0B5_B2B2_EEEE) }
+    public static var invalid: OSSignpostID { OSSignpostID(~0) }
+    public static var null: OSSignpostID { OSSignpostID(0) }
+    public static func < (a: OSSignpostID, b: OSSignpostID) -> Bool { a.rawValue < b.rawValue }
+}
+
+internal final class _MOSCounter {
+    private var value: Int = 0
+    private let mutex: UnsafeMutablePointer<pthread_mutex_t> = {
+        let m = UnsafeMutablePointer<pthread_mutex_t>.allocate(capacity: 1)
+        pthread_mutex_init(m, nil)
+        return m
+    }()
+    func add() -> Int { pthread_mutex_lock(mutex); value += 1; let v = value; pthread_mutex_unlock(mutex); return v }
+}
+internal let _mosSignpostNext = _MOSCounter()
+
 /// Formata no estilo do os_log: %{public}/%{private} somem; cada especificador consome um argumento,
 /// impresso pela descrição Swift dele (cobre %d %s %@ %f %ld %lu %x...).
 @usableFromInline

@@ -414,8 +414,33 @@ static void l_display(id self, SEL c) {
     if (d && d != s->host_view && cx_responds(object_getClass(d), sel_registerName("displayLayer:"))) MSG(void, d, "displayLayer:", self);
 }
 static void l_display_if_needed(id self, SEL c) { if (ls(self)->needs_display) l_display(self, c); }
+/* layoutManager e constraints (CAConstraintLayoutManager, caconstraint.c): objetos associados da camada */
+void objc_setAssociatedObject(id o, const void *key, id value, int policy);
+id objc_getAssociatedObject(id o, const void *key);
+static const char k_layout_mgr = 0, k_constraints = 0;
+static id l_layout_mgr(id self, SEL c) { (void)c; return objc_getAssociatedObject(self, &k_layout_mgr); }
+static void l_set_layout_mgr(id self, SEL c, id m) { (void)c; objc_setAssociatedObject(self, &k_layout_mgr, m, 1); }
+static id l_constraints(id self, SEL c) { (void)c; return objc_getAssociatedObject(self, &k_constraints); }
+static void l_set_constraints(id self, SEL c, id a) {
+    (void)c;
+    id m = a ? MSG0(id, a, "mutableCopy") : 0;
+    objc_setAssociatedObject(self, &k_constraints, m, 1);
+    if (m) objc_release(m);
+}
+static void l_add_constraint(id self, SEL c, id k) {
+    (void)c;
+    if (!k) return;
+    id m = objc_getAssociatedObject(self, &k_constraints);
+    if (!m) {
+        m = MSG0(id, (id)cx_class_named("NSMutableArray"), "array");
+        objc_setAssociatedObject(self, &k_constraints, m, 1);
+    }
+    MSG(void, m, "addObject:", k);
+}
 static void l_layout_if_needed(id self, SEL c) {
     (void)c;
+    id lm = objc_getAssociatedObject(self, &k_layout_mgr);
+    if (lm && cx_responds(object_getClass(lm), sel_registerName("layoutSublayersOfLayer:"))) MSG(void, lm, "layoutSublayersOfLayer:", self);
     id d = ls(self)->delegate;
     if (d && cx_responds(object_getClass(d), sel_registerName("layoutSublayersOfLayer:"))) MSG(void, d, "layoutSublayersOfLayer:", self);
 }
@@ -1445,7 +1470,8 @@ void cx_quartzcore_init(void) {
     LM("setDrawsAsynchronously:", l_noop_b); LM("setAllowsGroupOpacity:", l_noop_b); LM("setAllowsEdgeAntialiasing:", l_noop_b);
     LM("setShouldRasterize:", l_noop_b); LM("setNeedsDisplayOnBoundsChange:", l_noop_b); LM("setDoubleSided:", l_noop_b);
     LM("setWantsExtendedDynamicRangeContent:", l_noop_b); LM("setContentsOpaque:", l_noop_b);
-    LM("setRasterizationScale:", l_noop_d); LM("setMinificationFilterBias:", l_noop_d); LM("setLayoutManager:", l_noop_o);
+    LM("setRasterizationScale:", l_noop_d); LM("setMinificationFilterBias:", l_noop_d); LM("setLayoutManager:", l_set_layout_mgr); LM("layoutManager", l_layout_mgr);
+    LM("constraints", l_constraints); LM("setConstraints:", l_set_constraints); LM("addConstraint:", l_add_constraint);
     LM("setContentsMultiplyColor:", l_noop_o); LM("setEDRMetadata:", l_noop_o);
     LM("setNeedsDisplay", l_set_needs_display); LM("setNeedsDisplayInRect:", l_set_needs_display_rect);
     LM("setContentsChanged", l_set_needs_display);   /* privado: o Chromium avisa que o IOSurface mudou no lugar */
@@ -1460,6 +1486,8 @@ void cx_quartzcore_init(void) {
     LM("removeFromSuperlayer", l_remove_from_super); LM("replaceSublayer:with:", l_replace);
     LM("convertPoint:toLayer:", l_convert_to); LM("convertPoint:fromLayer:", l_convert_from);
     LM("convertRect:toLayer:", l_convert_rect_to); LM("convertRect:fromLayer:", l_convert_rect_from);
+
+    { void cx_caconstraint_init(void); cx_caconstraint_init(); }
 
     cx_define_class(&CALayerHost_c, &CALayerHost_m, "CALayerHost", &CALayer_c, 0);
     cx_add_method(&CALayerHost_c, "contextId", (void *)lh_cid);

@@ -27,7 +27,12 @@ for fw in "$ROOT"/userland/frameworks/*/; do
     [ "$name" = CryptoKit ] && continue
     if [ -n "$ONLY" ] && ! printf ',%s,' "$ONLY" | grep -q ",$name,"; then continue; fi
     objs=()
+    swobjs=()
     bad=0
+    # swift-overlay-path: o overlay Swift vai numa dylib à parte (ex.: /usr/lib/swift/libswiftNaturalLanguage.dylib,
+    # como no macOS), não dentro do framework
+    swdylib=
+    [ -f "$fw/swift-overlay-path" ] && swdylib=$(grep -m1 '^/' "$fw/swift-overlay-path" | tr -d '\r')
     for f in "$fw"*.m "$fw"*.c; do
         [ -f "$f" ] || continue
         base=$(basename "$f")
@@ -44,12 +49,27 @@ for fw in "$ROOT"/userland/frameworks/*/; do
     if ls "$fw"*.swift >/dev/null 2>&1; then
         if [ -x "$FE" ] && [ -d "$OBJC/Swift.swiftmodule" ] && [ -d "$RES" ] && [ "$bad" = 0 ]; then
             so="$TMP/${name}_swift.o"
+            # iface/X.swift: só a interface de um módulo X que o overlay importa e que não existe aqui (ex.: o View do
+            # SwiftUI para o ExtensionKit); vira um .swiftmodule temporário e não é ligado
+            inc=(-I "$fw/include")
+            for d in "$ROOT"/userland/frameworks/*/include; do [ "$d" = "$fw/include" ] || inc+=(-I "$d"); done
+            if ls "$fw"iface/*.swift >/dev/null 2>&1; then
+                mkdir -p "$TMP/iface-$name"
+                for i in "$fw"iface/*.swift; do
+                    "$FE" -frontend -emit-module -target x86_64-apple-macos26 -resource-dir "$RES" -parse-as-library -O \
+                        -module-name "$(basename "$i" .swift)" -enable-library-evolution -I "$OBJC" -I "$OBJC/overlays" \
+                        -I "$ROOT/.tools/swift-src/stdlib/public/SwiftShims/swift/shims" -module-cache-path "$OBJC/modcache" -o "$TMP/iface-$name/$(basename "$i" .swift).swiftmodule" "$i" 2>>"$so.err"
+                done
+                inc+=(-I "$TMP/iface-$name")
+            fi
             if "$FE" -frontend -c -target x86_64-apple-macos26 -resource-dir "$RES" -module-name "$name" -parse-as-library -O \
-                    -enable-library-evolution -import-underlying-module -I "$fw/include" -I "$OBJC" -I "$OBJC/overlays" \
+                    -enable-library-evolution -import-underlying-module "${inc[@]}" -I "$OBJC" -I "$OBJC/overlays" \
                     -I "$ROOT/.tools/swift-src/stdlib/public/SwiftShims/swift/shims" -module-cache-path "$OBJC/modcache" \
                     -Xcc "-isystem$OBJC/sdk/include" -Xcc -Wno-nullability-completeness -Xcc -DMOS_SWIFT_OBJC=1 \
                     -emit-module-path "$TMP/$name.swiftmodule" -o "$so" "$fw"*.swift 2>"$so.err"; then
-                objs+=("$so")
+                if [ -n "$swdylib" ]; then swobjs+=("$so"); else objs+=("$so"); fi
+                # o módulo fica visível para os frameworks seguintes (o ExtensionKit importa o ExtensionFoundation)
+                cp -f "$TMP/$name.swiftmodule" "$OBJC/overlays/$name.swiftmodule" 2>/dev/null || true
             else
                 grep -m8 -E ':[0-9]+:[0-9]+: error: |<unknown>:0: error: ' "$so.err" | sed 's/^/  /' >&2
                 bad=1
@@ -76,6 +96,17 @@ for fw in "$ROOT"/userland/frameworks/*/; do
         echo "$name: link FALHOU" >&2
         fails=$((fails + 1))
         continue
+    fi
+    if [ ${#swobjs[@]} -gt 0 ]; then
+        mkdir -p "$(dirname "$DST$swdylib")"
+        if ! "$ZIG" cc -target "$TARGET" -shared -o "$DST$swdylib" "-Wl,-install_name,$swdylib" -Wl,-undefined,dynamic_lookup \
+                "${swobjs[@]}" 2>"$TMP/$name.swlink"; then
+            head -8 "$TMP/$name.swlink" | sed 's/^/  /' >&2
+            echo "$name: link do overlay Swift FALHOU" >&2
+            fails=$((fails + 1))
+        else
+            echo "$name: overlay Swift -> $swdylib"
+        fi
     fi
     for a in "${alias[@]}"; do
         mkdir -p "$(dirname "$DST$a")"

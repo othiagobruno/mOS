@@ -401,8 +401,13 @@ cp -a "$ROOT/build/git-x86_64/mos/." "$ESP/mOS/"
 
 echo "==> libswift"
 # Runtime real (swift-6.4.2) quando a toolchain e o fonte estão em .tools/. Sem isso, o stage completa com stub.
+# Fora do CI, baixa a toolchain e o fonte (SHA-256 conferido) se faltarem: sem eles a imagem saía com as
+# libswift* stub e sem Combine.framework. MOS_SWIFT_FETCH=0 desliga; no CI só com MOS_SWIFT_FETCH=1.
+if [ "${MOS_SWIFT_FETCH:-}" = 1 ] || { [ -z "${MOS_SWIFT_FETCH:-}" ] && [ -z "${CI:-}" ]; }; then
+    bash "$ROOT/tools/fetch-swift-toolchain.sh" || echo "aviso: toolchain Swift 6.4.2 não baixou; as libswift* continuam stub" >&2
+fi
 if [ -f "$ROOT/tools/build-libswift-real.sh" ]; then
-    bash "$ROOT/tools/build-libswift-real.sh" || echo "aviso: build-libswift-real.sh falhou; o que faltar continua stub" >&2
+    MOS_ZIG="$ZIG" bash "$ROOT/tools/build-libswift-real.sh" || echo "aviso: build-libswift-real.sh falhou; o que faltar continua stub" >&2
 fi
 # Frameworks ObjC do mOS (UIKit do Catalyst, CoreData, ImageIO...) e o Combine (OpenCombine como módulo
 # "Combine") na mesma raiz das dylibs Swift; o cp -a abaixo leva tudo para a imagem.
@@ -412,7 +417,9 @@ if [ -f "$ROOT/build/swift/objc/dylib/usr/lib/swift/libswiftCore.dylib" ]; then
 fi
 if [ -f "$ROOT/build/universal-swift/usr/lib/swift/libswiftCore.dylib" ]; then
     cp -a "$ROOT/build/universal-swift/." "$ESP/mOS/"
-elif [ -f "$ROOT/build/swift/objc/dylib/usr/lib/swift/libswiftCore.dylib" ]; then
+elif [ -d "$ROOT/build/swift/objc/dylib" ]; then
+    # os frameworks ObjC (UIKit, WebKit, CoreData, ImageIO...) entram mesmo sem o libswiftCore real;
+    # antes só iam junto com ele e, sem toolchain Swift, a imagem ficava sem nenhum
     cp -a "$ROOT/build/swift/objc/dylib/." "$ESP/mOS/"
 fi
 sh "$ROOT/tools/stage-libswift.sh" "$ESP/mOS/usr/lib/swift"

@@ -2186,4 +2186,5 @@ void cx_avfaudio_init(void) {
     M(AVContentKeySession, "processContentKeyRequest:", ckey_process);
     M(AVContentKeySession, "makeSecureTokenForExpirationDateOfPersistableContentKey:error:", ckey_token);
     { extern void cx_avkit_init(void); cx_avkit_init(); }
+    { extern void cx_avimagegen_init(void); cx_avimagegen_init(); }
 }
