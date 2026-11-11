@@ -332,3 +332,135 @@ uint32_t gio_image_px(void *image, int x, int y) {
     if (!b || x < 0 || y < 0 || x >= b->w || y >= b->h) return 0;
     return b->px[y * b->w + x];
 }
+
+/* ---------------------------------------------------------------- fonte por URL, estado, tipos, cópia de fonte */
+#ifndef GIO_HOST
+extern char gio_cfconst_isa[] __asm__("__CFConstantStringClassReference");
+typedef struct { void *isa; unsigned long long flags; const char *s; unsigned long long n; } gio_const_t;
+/* constante CFString de verdade (não depende de nenhuma chamada de ImageIO antes da leitura) */
+static gio_const_t gio_max_px_box = {(void *)gio_cfconst_isa, 0x7c8, "kCGImageDestinationImageMaxPixelSize",
+                                     sizeof("kCGImageDestinationImageMaxPixelSize") - 1};
+const void *kCGImageDestinationImageMaxPixelSize = &gio_max_px_box;
+
+unsigned char CFURLGetFileSystemRepresentation(void *url, unsigned char resolve, unsigned char *buf, long max);
+void *CFDataCreate(void *alloc, const unsigned char *b, long n);
+void CFRelease(void *o);
+void *CFArrayCreate(void *alloc, void **vals, long n, const void *cb);
+int open(const char *path, int flags, ...);
+long read(int fd, void *b, unsigned long n);
+int close(int fd);
+int gap_dest_wants_jpeg(void *dst);
+void gap_dest_take_encoded(void *dst, unsigned char *enc, unsigned long n);
+
+/* lê o arquivo inteiro (até 256 MiB) e cria a fonte como CGImageSourceCreateWithData */
+void *CGImageSourceCreateWithURL(void *url, void *opts) {
+    char path[1024];
+    unsigned char *buf = 0;
+    unsigned long n = 0, cap = 0;
+    void *data, *src;
+    int fd;
+    if (!url || !CFURLGetFileSystemRepresentation(url, 1, (unsigned char *)path, (long)sizeof path)) return 0;
+    fd = open(path, 0);
+    if (fd < 0) return 0;
+    for (;;) {
+        long r;
+        if (n == cap) {
+            unsigned long nc = cap ? cap * 2 : 65536;
+            unsigned char *nb;
+            if (nc > (256ul << 20)) break;
+            nb = realloc(buf, nc);
+            if (!nb) break;
+            buf = nb;
+            cap = nc;
+        }
+        r = read(fd, buf + n, cap - n);
+        if (r <= 0) break;
+        n += (unsigned long)r;
+    }
+    close(fd);
+    data = n ? CFDataCreate(0, buf, (long)n) : 0;
+    free(buf);
+    if (!data) return 0;
+    src = CGImageSourceCreateWithData(data, opts);
+    CFRelease(data);
+    return src;
+}
+
+/* PNG e JPEG têm uma imagem; a primária é a 0 */
+unsigned long CGImageSourceGetPrimaryImageIndex(void *src) {
+    (void)src;
+    return 0;
+}
+
+/* CGImageSourceStatus: Complete 0, Incomplete -1, ReadingHeader -2, UnknownType -3, InvalidData -4 */
+int CGImageSourceGetStatusAtIndex(void *src, unsigned long index) {
+    gio_src *s = src;
+    if (!s || s->magic != GIO_MAGIC) return -4;
+    if (!mos_img_uti(s->bytes, s->n)) return -3;
+    if (!s->ok || index != 0) return -4;
+    return 0;
+}
+
+/* os tipos que este ImageIO decodifica */
+void *CGImageSourceCopyTypeIdentifiers(void) {
+    void *v[2];
+    void *a;
+    v[0] = CFStringCreateWithCString(0, "public.png", 0x08000100);
+    v[1] = CFStringCreateWithCString(0, "public.jpeg", 0x08000100);
+    a = CFArrayCreate(0, v, 2, 0);
+    CFRelease(v[0]);
+    CFRelease(v[1]);
+    return a;
+}
+
+/* Copia a imagem 'index' da fonte para o destino, sem passar por um CGImage do app. Com
+ * kCGImageDestinationImageMaxPixelSize a aresta maior é reduzida (amostragem do vizinho mais próximo,
+ * a mesma da miniatura). Destino de CFData (CGImageDestinationCreateWithData) recodifica aqui; destino de
+ * URL guarda o arquivo codificado para o CGImageDestinationFinalize gravar. */
+void CGImageDestinationAddImageFromSource(void *dst, void *src, unsigned long index, void *props) {
+    gio_src *s = src;
+    int w, h, nw, nh, x, y, edge;
+    long maxe;
+    uint32_t *px;
+    if (!dst || !s || s->magic != GIO_MAGIC || !s->ok || index != 0) return;
+    gio_keys();
+    w = s->img.w;
+    h = s->img.h;
+    edge = w > h ? w : h;
+    maxe = gio_num(props, (void *)kCGImageDestinationImageMaxPixelSize, edge);
+    if (maxe < 1) maxe = edge;
+    nw = w;
+    nh = h;
+    if (edge > maxe) {
+        nw = (int)((long)w * maxe / edge);
+        nh = (int)((long)h * maxe / edge);
+        if (nw < 1) nw = 1;
+        if (nh < 1) nh = 1;
+    }
+    px = malloc((unsigned long)nw * (unsigned long)nh * 4);
+    if (!px) return;
+    for (y = 0; y < nh; y++) {
+        int sy = y * h / nh;
+        for (x = 0; x < nw; x++) px[y * nw + x] = s->img.px[sy * w + x * w / nw];
+    }
+    if (*(unsigned *)dst == GIO_MAGIC) {
+        gio_image b;
+        b.w = nw;
+        b.h = nh;
+        b.px = px;
+        gio_destination_add(dst, &b, props);
+    } else {
+        unsigned char *enc = 0;
+        size_t en = 0;
+        int q = 85, bad;
+        void *qv = props ? CFDictionaryGetValue(props, kCGImageDestinationLossyCompressionQuality) : 0;
+        double dq = 0;
+        if (qv && CFNumberGetValue(qv, 13 /* kCFNumberDoubleType */, &dq) && dq > 0 && dq <= 1) q = (int)(dq * 100 + 0.5);
+        if (q < 1) q = 1;
+        bad = gap_dest_wants_jpeg(dst) ? mos_img_encode_jpeg(px, nw, nh, q, &enc, &en)
+                                       : mos_img_encode_png(px, nw, nh, &enc, &en);
+        if (!bad) gap_dest_take_encoded(dst, enc, (unsigned long)en);
+    }
+    free(px);
+}
+#endif

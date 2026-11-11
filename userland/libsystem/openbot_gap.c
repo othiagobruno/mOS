@@ -75,22 +75,46 @@ static int gap_png(const unsigned char *px, int w, int h, int bpr, unsigned char
     gap_chunk(png, &off, "IEND", 0, 0);
     free(z); *out = png; *n = off; return 0;
 }
-typedef struct { id url; id img; } gap_dest;
+/* destino de URL: um CGImage do app (gravado como PNG no Finalize) ou um arquivo já codificado por
+ * CGImageDestinationAddImageFromSource (grok_imageio.c), no tipo pedido na criação */
+typedef struct { id url; id img; unsigned char *enc; unsigned long encn; int jpeg; } gap_dest;
 void *CGImageDestinationCreateWithURL(id url, id type, unsigned long count, id opts) {
-    gap_dest *d; (void)type; (void)count; (void)opts;
-    d = calloc(1, sizeof *d); if (!d) return 0; d->url = url; return d;
+    gap_dest *d; const char *t; (void)count; (void)opts;
+    d = calloc(1, sizeof *d); if (!d) return 0; d->url = url;
+    t = type && cx_is_str(type) ? cx_cstr(type) : 0;
+    d->jpeg = t && strstr(t, "jpeg") != 0;
+    return d;
+}
+int gap_dest_wants_jpeg(void *dst) { gap_dest *d = dst; return d ? d->jpeg : 0; }
+void gap_dest_take_encoded(void *dst, unsigned char *enc, unsigned long n) {
+    gap_dest *d = dst;
+    if (!d) { free(enc); return; }
+    free(d->enc);
+    d->enc = enc;
+    d->encn = n;
+    d->img = 0;
 }
 extern void gio_destination_add(void *dst, void *image, void *props);
 extern int gio_destination_finish(void *dst);
 void CGImageDestinationAddImage(void *dst, id img, id props) {
     gap_dest *d = dst;
     if (dst && *(unsigned *)dst == 0x47494f31u) { gio_destination_add(dst, img, props); return; }
-    (void)props; if (d) d->img = img;
+    (void)props; if (d) { d->img = img; free(d->enc); d->enc = 0; d->encn = 0; }
 }
 int CGImageDestinationFinalize(void *dst) {
     gap_dest *d = dst; int w, h, bpr, fd; void *prov, *data; const unsigned char *px;
     if (dst && *(unsigned *)dst == 0x47494f31u) return gio_destination_finish(dst);
     unsigned char *png; unsigned long pn; id path; const char *c;
+    if (d && d->enc && d->url) {
+        path = MSG0(id, d->url, "path");
+        c = path ? cx_cstr(path) : 0;
+        if (!c) return 0;
+        fd = open(c, 577, 0644);
+        if (fd < 0) return 0;
+        if (write(fd, d->enc, d->encn) != (long)d->encn) { close(fd); return 0; }
+        close(fd);
+        return 1;
+    }
     if (!d || !d->img || !d->url) return 0;
     w = (int)CGImageGetWidth(d->img); h = (int)CGImageGetHeight(d->img); bpr = (int)CGImageGetBytesPerRow(d->img);
     prov = CGImageGetDataProvider(d->img);
