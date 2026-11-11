@@ -170,7 +170,10 @@ def main():
         data = open(p, "rb").read()
         fs = dict(fatias(data))
         if CPU_X86_64 not in fs:
-            bad("sem fatia x86_64: " + rel)
+            cpus = ", ".join("0x%08x" % c for c in fs) or "nenhuma"
+            bad("sem fatia x86_64: %s (%d bytes, início %s, fatias %s%s)" % (
+                rel, len(data), data[:16].hex(), cpus,
+                ", link simbólico para " + os.readlink(p) if os.path.islink(p) else ""))
             return
         ident, deps = comandos(fs[CPU_X86_64])
         if quer_id and ident != quer_id:
