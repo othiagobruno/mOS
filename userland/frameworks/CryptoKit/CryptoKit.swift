@@ -77,17 +77,8 @@ extension Digest {
     }
 }
 
-/* Thunk que o Grok chama (FTj). O genérico lê o slot da tabela de testemunhas
- * e chama o método daquele tipo: SHA256 e MD5 não compartilham o mesmo corpo. */
-@_silgen_name("$s9CryptoKit12HashFunctionPxycfCTj")
-public func ckHashFunctionInit<H: HashFunction>(_: H.Type) -> H { H() }
-@_silgen_name("$s9CryptoKit12HashFunctionP6update13bufferPointerySW_tFTj")
-public func ckHashFunctionUpdate<H: HashFunction>(_ h: inout H, _ buffer: UnsafeRawBufferPointer) {
-    h.update(bufferPointer: buffer)
-}
-@_silgen_name("$s9CryptoKit12HashFunctionP8finalize6DigestQzyFTj")
-public func ckHashFunctionFinalize<H: HashFunction>(_ h: H) -> H.Digest { h.finalize() }
-
+/* Os thunks de despacho do protocolo (FTj) que o Grok e o VS Code chamam saem do próprio compilador:
+ * o módulo é compilado com -enable-library-evolution, como o CryptoKit da Apple. */
 public protocol HashFunction: Sendable {
     associatedtype Digest: CryptoKit.Digest
     static var blockByteCount: Int { get }
