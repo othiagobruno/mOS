@@ -23,11 +23,10 @@ src="$ocdir/Sources"
 if [ ! -d "$src/OpenCombine" ]; then
     zip="$root/.tools/dl/OpenCombine-$OCVER.zip"
     mkdir -p "$root/.tools/dl" "$root/.tools/openswiftui/deps"
-    if [ ! -f "$zip" ] || [ "$(sha256sum "$zip" | cut -d' ' -f1)" != "$OCSHA" ]; then
-        curl -fL --retry 3 -o "$zip.partial" "https://github.com/OpenCombine/OpenCombine/archive/refs/tags/$OCVER.zip"
-        mv "$zip.partial" "$zip"
-    fi
-    [ "$(sha256sum "$zip" | cut -d' ' -f1)" = "$OCSHA" ] || { echo "build-swift-combine: SHA-256 do OpenCombine não confere" >&2; exit 1; }
+    # curl, wget ou python3 (tools/baixar.sh): a máquina de build pode não ter curl
+    . "$root/tools/baixar.sh"
+    baixar "https://github.com/OpenCombine/OpenCombine/archive/refs/tags/$OCVER.zip" "$zip" "$OCSHA" \
+        || { echo "build-swift-combine: download ou SHA-256 do OpenCombine falhou" >&2; exit 1; }
     (cd "$root/.tools/openswiftui/deps" && unzip -q -o "$zip")
 fi
 shims="$root/.tools/swift-src/stdlib/public/SwiftShims/swift/shims"
@@ -115,3 +114,34 @@ mkdir -p "$dir"
     -Wl,-install_name,/System/Library/Frameworks/Combine.framework/Versions/A/Combine -Wl,-undefined,dynamic_lookup \
     "$ov/Combine.o" "$ov/Combine_COpenCombineHelpers.o"
 echo "Combine.framework: ok ($(( $(wc -c < "$dir/Combine") / 1024 )) KB)"
+
+# O Dispatch da Apple importa o Combine e traz DispatchQueue: Scheduler (SchedulerTimeType, schedule(after:...)):
+# o Setapp e o WhatsApp importam esses nomes de libswiftDispatch. Recompila o overlay Dispatch com
+# userland/sdk/swift-objc/Dispatch/Combine e religa a dylib (o .ps1 faz o mesmo com build-swift-overlays-objc.ps1).
+# O Dispatch.swiftmodule de $ov fica o sem Combine: o próximo build do Combine importa o Dispatch, e o
+# módulo novo (que importa o Combine) faria um ciclo.
+sdk="$root/userland/sdk/swift-objc"
+dest="$objc/dylib/usr/lib/swift"
+if [ -f "$dest/libswiftDispatch.dylib" ]; then
+    mkdir -p "$tmp/dispatch"
+    "$fe" -frontend -c -target x86_64-apple-macos26 -resource-dir "$res" \
+        -module-name Dispatch -parse-as-library -swift-version 5 -O \
+        -enable-library-evolution -I "$objc" -I "$ov" -module-cache-path "$objc/modcache" \
+        -I "$shims" -disable-implicit-concurrency-module-import -disable-implicit-string-processing-module-import \
+        -Xcc "-isystem$inc" -Xcc -Wno-nullability-completeness -Xcc -DMOS_SWIFT_OBJC=1 \
+        -emit-module-path "$tmp/dispatch/Dispatch.swiftmodule" -o "$tmp/dispatch/Dispatch.o" \
+        -module-link-name swiftDispatch -autolink-force-load -import-underlying-module \
+        "$sdk"/Dispatch/*.swift "$sdk"/Dispatch/Combine/*.swift > "$tmp/Dispatch.log" 2>&1 || {
+        grep -E ':[0-9]+:[0-9]+: error: |<unknown>:0: error: ' "$tmp/Dispatch.log" | head -25
+        echo "Dispatch+Combine: FALHOU" >&2
+        exit 1
+    }
+    "$zig" c++ -target x86_64-macos -shared -o "$tmp/dispatch/libswiftDispatch.dylib" \
+        -Wl,-install_name,/usr/lib/swift/libswiftDispatch.dylib -Wl,-undefined,dynamic_lookup "$tmp/dispatch/Dispatch.o"
+    grep -a -q '_$sSo17OS_dispatch_queueC8DispatchE17SchedulerTimeTypeVMn' "$tmp/dispatch/libswiftDispatch.dylib" || {
+        echo "Dispatch+Combine: libswiftDispatch sem DispatchQueue.SchedulerTimeType" >&2
+        exit 1
+    }
+    mv -f "$tmp/dispatch/libswiftDispatch.dylib" "$dest/libswiftDispatch.dylib"
+    echo "libswiftDispatch: religada com DispatchQueue: Scheduler"
+fi
