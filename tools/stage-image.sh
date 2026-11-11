@@ -237,9 +237,18 @@ if [ "$CURSOR" = 1 ]; then
     OPT=$MOS/usr/local/opt/git
     mkdir -p "$BIN" "$MOS/usr/local/bin" "$OPT/bin"
     cp -f "$ROOT/tools/brew-shims/which" "$BIN/which"
-    cp -f "$ROOT/tools/brew-shims/security" "$BIN/security"
-    chmod +x "$BIN/which" "$BIN/security"
-    if [ -n "$BOTTLES" ] && [ -f "$BOTTLES/git/bin/git" ]; then
+    chmod +x "$BIN/which"
+    # O tools/build.sh já pôs o security (userland/cli-macos) e o git do fonte como Mach-O x86_64.
+    # Os shims de tools/brew-shims só entram onde não há binário de verdade.
+    e_macho() { [ -f "$1" ] && [ "$(head -c 4 "$1" | od -An -tx1 | tr -d ' \n')" = cffaedfe ]; }
+    if ! e_macho "$BIN/security"; then
+        cp -f "$ROOT/tools/brew-shims/security" "$BIN/security"
+        chmod +x "$BIN/security"
+    fi
+    if e_macho "$BIN/git" && { [ -z "$BOTTLES" ] || [ ! -f "$BOTTLES/git/bin/git" ]; }; then
+        printf '%s' '#mOS-link:/usr/bin/git' > "$OPT/bin/git"
+        printf '%s' '#mOS-link:/usr/bin/git' > "$MOS/usr/local/bin/git"
+    elif [ -n "$BOTTLES" ] && [ -f "$BOTTLES/git/bin/git" ]; then
         cp -f "$BOTTLES/git/bin/git" "$OPT/bin/git"
         chmod +x "$OPT/bin/git"
         if [ -d "$BOTTLES/git/libexec/git-core" ]; then
@@ -260,8 +269,10 @@ if [ "$CURSOR" = 1 ]; then
         cp -f "$ROOT/tools/brew-shims/git" "$OPT/bin/git"
         chmod +x "$OPT/bin/git"
     fi
-    printf '%s' '#mOS-link:/usr/local/opt/git/bin/git' > "$MOS/usr/local/bin/git"
-    printf '%s' '#mOS-link:/usr/local/opt/git/bin/git' > "$BIN/git"
+    if ! e_macho "$BIN/git" || { [ -n "$BOTTLES" ] && [ -f "$BOTTLES/git/bin/git" ]; }; then
+        printf '%s' '#mOS-link:/usr/local/opt/git/bin/git' > "$MOS/usr/local/bin/git"
+    fi
+    e_macho "$BIN/git" || printf '%s' '#mOS-link:/usr/local/opt/git/bin/git' > "$BIN/git"
 fi
 
 OVT=$OUTABS/overlay-teste
