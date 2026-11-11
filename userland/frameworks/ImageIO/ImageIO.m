@@ -19,6 +19,7 @@
  */
 #import <Foundation/Foundation.h>
 #include "imageio_codec.h"
+#include "imageio_exif.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -49,6 +50,58 @@ CFSTR_DEF(kCGImageSourceShouldCache, "kCGImageSourceShouldCache")
 CFSTR_DEF(kCGImageSourceShouldCacheImmediately, "kCGImageSourceShouldCacheImmediately")
 CFSTR_DEF(kCGImageSourceCreateThumbnailWithTransform, "kCGImageSourceCreateThumbnailWithTransform")
 CFSTR_DEF(kCGImageDestinationLossyCompressionQuality, "kCGImageDestinationLossyCompressionQuality")
+/* dicionários e chaves de metadados, com os mesmos textos do ImageIO da Apple */
+CFSTR_DEF(kCGImagePropertyExifDictionary, "{Exif}")
+CFSTR_DEF(kCGImagePropertyTIFFDictionary, "{TIFF}")
+CFSTR_DEF(kCGImagePropertyGIFDictionary, "{GIF}")
+CFSTR_DEF(kCGImagePropertyPNGDictionary, "{PNG}")
+CFSTR_DEF(kCGImagePropertyWebPDictionary, "{WebP}")
+CFSTR_DEF(kCGImagePropertyHEICSDictionary, "{HEICS}")
+CFSTR_DEF(kCGImagePropertyIPTCDictionary, "{IPTC}")
+CFSTR_DEF(kCGImagePropertyMakerAppleDictionary, "{MakerApple}")
+CFSTR_DEF(kCGImagePropertyTIFFMake, "Make")
+CFSTR_DEF(kCGImagePropertyTIFFModel, "Model")
+CFSTR_DEF(kCGImagePropertyTIFFSoftware, "Software")
+CFSTR_DEF(kCGImagePropertyTIFFDateTime, "DateTime")
+CFSTR_DEF(kCGImagePropertyTIFFOrientation, "Orientation")
+CFSTR_DEF(kCGImagePropertyExifExposureTime, "ExposureTime")
+CFSTR_DEF(kCGImagePropertyExifFNumber, "FNumber")
+CFSTR_DEF(kCGImagePropertyExifISOSpeedRatings, "ISOSpeedRatings")
+CFSTR_DEF(kCGImagePropertyExifDateTimeOriginal, "DateTimeOriginal")
+CFSTR_DEF(kCGImagePropertyExifDateTimeDigitized, "DateTimeDigitized")
+CFSTR_DEF(kCGImagePropertyExifOffsetTimeOriginal, "OffsetTimeOriginal")
+CFSTR_DEF(kCGImagePropertyExifShutterSpeedValue, "ShutterSpeedValue")
+CFSTR_DEF(kCGImagePropertyExifApertureValue, "ApertureValue")
+CFSTR_DEF(kCGImagePropertyExifExposureBiasValue, "ExposureBiasValue")
+CFSTR_DEF(kCGImagePropertyExifMeteringMode, "MeteringMode")
+CFSTR_DEF(kCGImagePropertyExifFlash, "Flash")
+CFSTR_DEF(kCGImagePropertyExifFocalLength, "FocalLength")
+CFSTR_DEF(kCGImagePropertyExifMakerNote, "MakerNote")
+CFSTR_DEF(kCGImagePropertyExifColorSpace, "ColorSpace")
+CFSTR_DEF(kCGImagePropertyExifPixelXDimension, "PixelXDimension")
+CFSTR_DEF(kCGImagePropertyExifPixelYDimension, "PixelYDimension")
+CFSTR_DEF(kCGImagePropertyExifSensingMethod, "SensingMethod")
+CFSTR_DEF(kCGImagePropertyExifWhiteBalance, "WhiteBalance")
+CFSTR_DEF(kCGImagePropertyExifSceneCaptureType, "SceneCaptureType")
+CFSTR_DEF(kCGImagePropertyExifLensSpecification, "LensSpecification")
+CFSTR_DEF(kCGImagePropertyExifLensMake, "LensMake")
+CFSTR_DEF(kCGImagePropertyExifLensModel, "LensModel")
+CFSTR_DEF(kCGImagePropertyGIFDelayTime, "DelayTime")
+CFSTR_DEF(kCGImagePropertyGIFUnclampedDelayTime, "UnclampedDelayTime")
+CFSTR_DEF(kCGImagePropertyGIFLoopCount, "LoopCount")
+CFSTR_DEF(kCGImagePropertyHEICSDelayTime, "DelayTime")
+CFSTR_DEF(kCGImagePropertyHEICSUnclampedDelayTime, "UnclampedDelayTime")
+CFSTR_DEF(kCGImagePropertyWebPDelayTime, "DelayTime")
+CFSTR_DEF(kCGImagePropertyWebPUnclampedDelayTime, "UnclampedDelayTime")
+CFSTR_DEF(kCGImagePropertyAPNGUnclampedDelayTime, "UnclampedDelayTime")
+CFSTR_DEF(kCGImagePropertyIPTCExtDigitalSourceType, "DigitalSourceType")
+CFSTR_DEF(kCGImagePropertyGroups, "Groups")
+CFSTR_DEF(kCGImagePropertyGroupType, "GroupType")
+CFSTR_DEF(kCGImagePropertyGroupTypeStereoPair, "StereoPair")
+CFSTR_DEF(kCGImageAuxiliaryDataInfoMetadata, "kCGImageAuxiliaryDataInfoMetadata")
+CFSTR_DEF(kCGImageAuxiliaryDataTypeHDRGainMap, "kCGImageAuxiliaryDataTypeHDRGainMap")
+CFSTR_DEF(kCGImageSourceTypeIdentifierHint, "kCGImageSourceTypeIdentifierHint")
+CFSTR_DEF(kCGImageSourceShouldAllowFloat, "kCGImageSourceShouldAllowFloat")
 static CFSTR_DEF(kMosUTTypePNG, "public.png")
 static CFSTR_DEF(kMosUTTypeJPEG, "public.jpeg")
 
@@ -70,6 +123,12 @@ extern void *CFNumberCreate(void *alloc, long type, const void *p);
 extern unsigned char CFNumberGetValue(void *n, long type, void *out);
 extern unsigned char CFBooleanGetValue(void *b);
 extern unsigned char CFURLGetFileSystemRepresentation(void *url, unsigned char resolve, uint8_t *buf, long max);
+extern void *CFDictionaryCreateMutable(void *alloc, long cap, const void *kcb, const void *vcb);
+extern void CFDictionarySetValue(void *d, const void *k, const void *v);
+extern void *CFStringCreateWithCString(void *alloc, const char *s, uint32_t enc);
+extern void *CFArrayCreate(void *alloc, const void **vals, long n, const void *cb);
+extern void *CFDataCreate(void *alloc, const uint8_t *b, long n);
+extern void *CFRetain(void *o);
 
 /* kCGImageAlphaFirst: o CoreGraphics do mOS lê B,G,R,A, que é 0xAARRGGBB em little-endian */
 enum { kAlphaFirst = 4, kCFNumberSInt64 = 4 };
@@ -87,6 +146,8 @@ static void limit_once(const char *what) {
     mos_img_t img;
     int tried;
     const char *uti;
+    mos_exif exif;
+    int exif_state;              /* 0 ainda não lido, 1 achou, -1 não há */
 }
 @end
 
@@ -201,16 +262,58 @@ static CGImageRef make_image(MOSCGImageSource *s, CFDictionaryRef opts, int thum
     return img;
 }
 
+static const mos_exif *exif_of(MOSCGImageSource *s) {
+    if (!s) return NULL;
+    if (!s->exif_state) s->exif_state = mos_exif_parse(s->bytes, s->nbytes, &s->exif) == 0 ? 1 : -1;
+    return s->exif_state > 0 ? &s->exif : NULL;
+}
+enum { kCFNumberFloat64 = 13 };
+static void *cf_str(const char *s) { return CFStringCreateWithCString(0, s, 0x08000100 /* UTF-8 */); }
+static void *cf_num(double v) { return CFNumberCreate(0, kCFNumberFloat64, &v); }
+/* valor de uma entrada EXIF como o ImageIO da Apple entrega: texto, número, array de números ou dados */
+static void *exif_value(const mos_exif_entry *e) {
+    if (e->kind == EXIF_STR) return cf_str(e->str);
+    if (e->kind == EXIF_BYTES) return CFDataCreate(0, e->bytes, (long)e->nbytes);
+    if (e->nnum == 1 && e->tag != 0x8827 && e->tag != 0xA432) return cf_num(e->num[0]);
+    const void *v[4];
+    for (int i = 0; i < e->nnum; i++) v[i] = cf_num(e->num[i]);
+    void *a = CFArrayCreate(0, v, e->nnum, 0);
+    for (int i = 0; i < e->nnum; i++) CFRelease((void *)v[i]);
+    return a;
+}
+static void *exif_dict(const mos_exif *x, int ifd) {
+    void *d = CFDictionaryCreateMutable(0, 0, 0, 0);
+    for (int i = 0; x && i < x->n; i++) {
+        if (x->e[i].ifd != ifd) continue;
+        void *k = cf_str(mos_exif_name(ifd, x->e[i].tag)), *v = exif_value(&x->e[i]);
+        if (k && v) CFDictionarySetValue(d, k, v);
+        if (k) CFRelease(k);
+        if (v) CFRelease(v);
+    }
+    return d;
+}
+
 static CFDictionaryRef props(MOSCGImageSource *s) {
     if (!ensure(s)) return NULL;
     long long w = s->img.w, h = s->img.h, ori = 1, alpha = s->img.has_alpha ? 1 : 0;
+    const mos_exif *x = exif_of(s);
+    const mos_exif_entry *oe = x ? mos_exif_find(x, EXIF_IFD_TIFF, 0x0112) : NULL;
+    if (oe && oe->kind == EXIF_NUM && oe->num[0] >= 1 && oe->num[0] <= 8) ori = (long long)oe->num[0];
     void *nw = CFNumberCreate(0, kCFNumberSInt64, &w);
     void *nh = CFNumberCreate(0, kCFNumberSInt64, &h);
     void *no = CFNumberCreate(0, kCFNumberSInt64, &ori);
     void *na = CFNumberCreate(0, kCFNumberSInt64, &alpha);
     const void *keys[] = { kCGImagePropertyPixelWidth, kCGImagePropertyPixelHeight, kCGImagePropertyOrientation, kCGImagePropertyHasAlpha };
     const void *vals[] = { nw, nh, no, na };
-    void *d = CFDictionaryCreate(0, keys, vals, 4, 0, 0);
+    void *d = CFDictionaryCreateMutable(0, 0, 0, 0);
+    for (int i = 0; i < 4; i++) if (vals[i]) CFDictionarySetValue(d, keys[i], vals[i]);
+    if (x) {
+        void *tiff = exif_dict(x, EXIF_IFD_TIFF), *ex = exif_dict(x, EXIF_IFD_EXIF);
+        CFDictionarySetValue(d, kCGImagePropertyTIFFDictionary, tiff);
+        CFDictionarySetValue(d, kCGImagePropertyExifDictionary, ex);
+        CFRelease(tiff);
+        CFRelease(ex);
+    }
     if (nw) CFRelease(nw);
     if (nh) CFRelease(nh);
     if (no) CFRelease(no);
@@ -233,6 +336,30 @@ CGImageSourceRef CGImageSourceCreateWithData(CFTypeRef data, CFDictionaryRef opt
     long n = data ? CFDataGetLength((void *)data) : 0;
     if (!p || n <= 0) return NULL;
     return (CGImageSourceRef)source_new(copy_data(p, (size_t)n), (size_t)n, 1);
+}
+
+/* provedor: os bytes são copiados (o provedor pode sumir antes da fonte) */
+CGImageSourceRef CGImageSourceCreateWithDataProvider(void *provider, CFDictionaryRef opts) {
+    void *data = provider ? CGDataProviderCopyData(provider) : NULL;
+    if (!data) return NULL;
+    CGImageSourceRef s = CGImageSourceCreateWithData(data, opts);
+    CFRelease(data);
+    return s;
+}
+
+/* CGImageSourceStatus: 0 Complete, -3 UnknownType, -4 InvalidData */
+int CGImageSourceGetStatusAtIndex(CGImageSourceRef src, size_t i) {
+    MOSCGImageSource *s = as_src(src);
+    if (!s || !s->uti) return -3;
+    if (i != 0) return -4;
+    return ensure(s) ? 0 : -4;
+}
+int CGImageSourceGetStatus(CGImageSourceRef src) { return CGImageSourceGetStatusAtIndex(src, 0); }
+
+/* PNG e JPEG baseline do mOS não carregam mapa de ganho HDR nem profundidade: NULL, como a Apple sem o dado */
+CFDictionaryRef CGImageSourceCopyAuxiliaryDataInfoAtIndex(CGImageSourceRef src, size_t i, CFStringRef type) {
+    (void)src; (void)i; (void)type;
+    return NULL;
 }
 
 size_t CGImageSourceGetCount(CGImageSourceRef src) {
@@ -385,4 +512,77 @@ Boolean CGImageDestinationFinalize(CGImageDestinationRef dest) {
     }
     free(png);
     return ok ? 1 : 0;
+}
+
+/* ---------------------------------------------------------------- CGImageMetadata sobre o EXIF lido
+ * Caminhos no formato XMP do ImageIO: "exif:DateTimeOriginal", "tiff:Make". A fonte fica retida porque as
+ * entradas apontam para os bytes dela. */
+@interface MOSCGImageMetadata : NSObject {
+   @public
+    MOSCGImageSource *src;
+}
+@end
+@implementation MOSCGImageMetadata
+- (void)dealloc { [src release]; [super dealloc]; }
+@end
+@interface MOSCGImageMetadataTag : NSObject {
+   @public
+    void *value;
+}
+@end
+@implementation MOSCGImageMetadataTag
+- (void)dealloc { if (value) CFRelease(value); [super dealloc]; }
+@end
+
+unsigned long CGImageMetadataGetTypeID(void) { return 0x2B0; }
+unsigned long CGImageMetadataTagGetTypeID(void) { return 0x2B1; }
+
+void *CGImageSourceCopyMetadataAtIndex(CGImageSourceRef src, size_t i, CFDictionaryRef o) {
+    (void)o;
+    MOSCGImageSource *s = as_src(src);
+    if (!s || i != 0 || !exif_of(s)) return NULL;
+    MOSCGImageMetadata *m = [[MOSCGImageMetadata alloc] init];
+    if (m) m->src = [s retain];
+    return m;
+}
+
+static const mos_exif_entry *meta_find(void *meta, const char *path) {
+    MOSCGImageMetadata *m = meta;
+    if (!m || ![(id)m isKindOfClass:[MOSCGImageMetadata class]] || !path) return NULL;
+    int ifd;
+    if (!strncmp(path, "exif:", 5)) ifd = EXIF_IFD_EXIF;
+    else if (!strncmp(path, "tiff:", 5)) ifd = EXIF_IFD_TIFF;
+    else return NULL;
+    const mos_exif *x = exif_of(m->src);
+    for (int k = 0; x && k < x->n; k++)
+        if (x->e[k].ifd == ifd && !strcmp(mos_exif_name(ifd, x->e[k].tag), path + 5)) return &x->e[k];
+    return NULL;
+}
+static const char *path_c(CFStringRef path) { return path ? [(NSString *)path UTF8String] : NULL; }
+
+CFStringRef CGImageMetadataCopyStringValueWithPath(void *meta, void *parent, CFStringRef path) {
+    (void)parent;
+    const mos_exif_entry *e = meta_find(meta, path_c(path));
+    if (!e) return NULL;
+    if (e->kind == EXIF_STR) return (CFStringRef)cf_str(e->str);
+    if (e->kind == EXIF_BYTES) return NULL;
+    char buf[160];
+    size_t at = 0;
+    for (int i = 0; i < e->nnum && at < sizeof buf - 24; i++)
+        at += (size_t)snprintf(buf + at, sizeof buf - at, i ? ", %g" : "%g", e->num[i]);
+    buf[at] = 0;
+    return (CFStringRef)cf_str(buf);
+}
+void *CGImageMetadataCopyTagWithPath(void *meta, void *parent, CFStringRef path) {
+    (void)parent;
+    const mos_exif_entry *e = meta_find(meta, path_c(path));
+    if (!e) return NULL;
+    MOSCGImageMetadataTag *t = [[MOSCGImageMetadataTag alloc] init];
+    if (t) t->value = exif_value(e);
+    return t;
+}
+void *CGImageMetadataTagCopyValue(void *tag) {
+    MOSCGImageMetadataTag *t = tag;
+    if (!t || ![(id)t isKindOfClass:[MOSCGImageMetadataTag class]] || !t->value) return NULL;
+    return CFRetain(t->value);
 }

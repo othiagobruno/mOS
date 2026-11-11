@@ -17,7 +17,8 @@ enum {
     MOS_CI_ARGB8 = 0,
     MOS_CI_BGRA8 = 1,
     MOS_CI_RGBA8 = 2,
-    MOS_CI_ABGR8 = 3
+    MOS_CI_ABGR8 = 3,
+    MOS_CI_RGBAh = 4                /* 4 × half float (binary16), R G B A, pré-multiplicado */
 };
 
 mos_ci *mos_ci_bitmap(const uint32_t *px, int w, int h, double ox, double oy);
