@@ -596,6 +596,7 @@ K(kCFProxyPortNumberKey, "kCFProxyPortNumberKey") K(kCFProxyAutoConfigurationURL
 K(kCFProxyAutoConfigurationJavaScriptKey, "kCFProxyAutoConfigurationJavaScriptKey")
 K(kSCPropNetProxiesHTTPEnable, "HTTPEnable") K(kSCPropNetProxiesHTTPProxy, "HTTPProxy") K(kSCPropNetProxiesHTTPPort, "HTTPPort")
 K(kSCPropNetProxiesHTTPSEnable, "HTTPSEnable") K(kSCPropNetProxiesHTTPSProxy, "HTTPSProxy") K(kSCPropNetProxiesHTTPSPort, "HTTPSPort")
+K(kCFNetworkProxiesSOCKSEnable, "SOCKSEnable") K(kCFNetworkProxiesProxyAutoDiscoveryEnable, "ProxyAutoDiscoveryEnable")
 K(kSCDynamicStoreUseSessionKeys, "UseSessionKeys")
 K(NSPasteboardTypeHTML, "public.html") K(NSPasteboardTypeTIFF, "public.tiff")
 K(NSPasteboardURLReadingFileURLsOnlyKey, "NSPasteboardURLReadingFileURLsOnlyKey")
@@ -660,6 +661,16 @@ id_ CFURLCreateWithBytes(void *alloc, const u8 *bytes, long len, u32 enc, id_ ba
     return u ? objc_retain(u) : 0;
 }
 id_ CFURLCopyAbsoluteURL(id_ u) { return u ? CFRetain(u) : 0; }
+/* a mesma URL resolvida contra a base (absoluteURL); o modo de compatibilidade (RFC 1808) não muda nada aqui */
+id_ CFURLCreateAbsoluteURLWithBytes(void *alloc, const u8 *bytes, long len, u32 enc, id_ base, u8 compat) {
+    (void)compat;
+    id_ u = CFURLCreateWithBytes(alloc, bytes, len, enc, base);
+    if (!u) return 0;
+    id_ a = MSG0(id_, u, "absoluteURL");
+    if (a) a = objc_retain(a);
+    CFRelease(u);
+    return a;
+}
 id_ CFURLCreateFilePathURL(void *alloc, id_ u, id_ *err) { (void)alloc; if (err) *err = 0; return u ? CFRetain(u) : 0; }
 id_ CFURLCreateFileReferenceURL(void *alloc, id_ u, id_ *err) { (void)alloc; if (err) *err = 0; return u ? CFRetain(u) : 0; }
 id_ CFURLCreateCopyAppendingPathComponent(void *alloc, id_ u, id_ comp, unsigned char dir) {

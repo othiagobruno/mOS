@@ -1,0 +1,6 @@
+// mOS — módulo clang ExtensionKit vazio: o ExtensionKit da Apple é só Swift, e o build-frameworks-objc.sh compila com
+// -import-underlying-module
+module ExtensionKit [system] {
+    header "ExtensionKit_mos.h"
+    export *
+}

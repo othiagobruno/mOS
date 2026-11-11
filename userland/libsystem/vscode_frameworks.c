@@ -518,20 +518,32 @@ static id login_file_url(const char *path) {
     u = MSG(id, cls("NSURL"), "fileURLWithPath:", cx_str(path));
     return u ? objc_retain(u) : 0;
 }
-id LSSharedFileListCreate(void *alloc, id type, id opts) { (void)alloc; (void)type; (void)opts; return token(); }
+/* Só a lista de itens de login tem armazenamento. A de favoritos (kLSSharedFileListFavoriteItems, a barra lateral do
+ * Finder) não existe no mOS: a lista vem vazia e inserir nela falha, em vez de virar item de login. */
+static id g_fav_list;
+id LSSharedFileListCreate(void *alloc, id type, id opts) {
+    (void)alloc; (void)opts;
+    const char *t = type ? cx_cstr(type) : 0;
+    if (t && !strcmp(t, "com.apple.LSSharedFileList.FavoriteItems")) {
+        if (!g_fav_list) g_fav_list = token();
+        return objc_retain(g_fav_list);
+    }
+    return token();
+}
 id LSSharedFileListCopySnapshot(id list, u32 *seed) {
-    (void)list;
+    if (list && list == g_fav_list) { if (seed) *seed = 1; return objc_retain(MSG0(id, cls("NSArray"), "array")); }
     return cx_login_snapshot(seed);
 }
 id LSSharedFileListInsertItemURL(id list, id after, id name, void *icon, id url, id props, id remove) {
+    if (list && list == g_fav_list) return 0;
     const char *path = login_url_path(url);
-    (void)list; (void)after; (void)name; (void)icon; (void)props; (void)remove;
+    (void)after; (void)name; (void)icon; (void)props; (void)remove;
     if (cx_login_add(path) != 0) return 0;
     return login_file_url(path);
 }
 OSStatus LSSharedFileListItemRemove(id list, id item) {
+    if (list && list == g_fav_list) return -43;                /* fnfErr: não há item de favorito */
     const char *path = login_url_path(item);
-    (void)list;
     return cx_login_remove(path) == 0 ? 0 : -50;
 }
 id LSSharedFileListItemCopyResolvedURL(id item, u32 flags, id *err) {

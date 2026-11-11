@@ -33,6 +33,9 @@ cx_class_t AVPictureInPictureController_c __asm__("OBJC_CLASS_$_AVPictureInPictu
 cx_class_t AVPictureInPictureController_m __asm__("OBJC_METACLASS_$_AVPictureInPictureController");
 cx_class_t AVRoutePickerView_c __asm__("OBJC_CLASS_$_AVRoutePickerView");
 cx_class_t AVRoutePickerView_m __asm__("OBJC_METACLASS_$_AVRoutePickerView");
+cx_class_t AVPlayerView_c __asm__("OBJC_CLASS_$_AVPlayerView");
+cx_class_t AVPlayerView_m __asm__("OBJC_METACLASS_$_AVPlayerView");
+static const char k_style = 0, k_gravity = 0, k_fullscreen = 0;
 
 static id pvc_init(id s, SEL c) {
     (void)c;
@@ -98,6 +101,18 @@ static int route_count(id s, SEL c) { (void)s; (void)c; return avk_route_count()
 static id route_port(id s, SEL c, int i) { (void)s; (void)c; const char *p = avk_route_port(i); return p ? cx_str(p) : 0; }
 static id route_name(id s, SEL c, int i) { (void)s; (void)c; const char *p = avk_route_name(i); return p ? cx_str(p) : 0; }
 
+/* AVPlayerView (AppKit): a NSView que mostra um AVPlayer. Guarda o player e as opções de apresentação; a reprodução
+ * é a do AVPlayer de avfaudio.c (o mOS não tem AVPlayerLayer, então o quadro de vídeo não é desenhado na view). */
+static long pv_style(id s, SEL c) { (void)c; id n = objc_getAssociatedObject(s, &k_style); return n ? MSG0(long, n, "longValue") : 1; }
+static void pv_set_style(id s, SEL c, long v) { (void)c; objc_setAssociatedObject(s, &k_style, cx_num_i(v), 1); }
+static id pv_gravity(id s, SEL c) { (void)c; id g = objc_getAssociatedObject(s, &k_gravity); return g ? g : cx_str("AVLayerVideoGravityResizeAspect"); }
+static void pv_set_gravity(id s, SEL c, id g) { (void)c; objc_setAssociatedObject(s, &k_gravity, g, 3); }
+static BOOL pv_fullscreen(id s, SEL c) { (void)c; id n = objc_getAssociatedObject(s, &k_fullscreen); return n && MSG0(int, n, "intValue") ? YES : NO; }
+static void pv_set_fullscreen(id s, SEL c, BOOL v) { (void)c; objc_setAssociatedObject(s, &k_fullscreen, cx_num_i(v ? 1 : 0), 1); }
+static BOOL pv_ready(id s, SEL c) { (void)c; return pvc_player(s, 0) ? YES : NO; }
+static BOOL pv_no(id s, SEL c) { (void)s; (void)c; return NO; }
+static void pv_set_ignored_b(id s, SEL c, BOOL v) { (void)s; (void)c; (void)v; }
+
 void cx_avkit_init(void) {
     cx_class_t *obj = cx_class_named("NSObject");
     if (!AVPlayerViewController_c.vtable)
@@ -128,4 +143,19 @@ void cx_avkit_init(void) {
     cx_add_method(&AVRoutePickerView_c, "numberOfRoutes", (void *)route_count);
     cx_add_method(&AVRoutePickerView_c, "routePortAtIndex:", (void *)route_port);
     cx_add_method(&AVRoutePickerView_c, "routeNameAtIndex:", (void *)route_name);
+    if (!AVPlayerView_c.vtable)
+        cx_define_class(&AVPlayerView_c, &AVPlayerView_m, "AVPlayerView", super_named("NSView", "UIView"), 0);
+    cx_add_method(&AVPlayerView_c, "player", (void *)pvc_player);
+    cx_add_method(&AVPlayerView_c, "setPlayer:", (void *)pvc_set_player);
+    cx_add_method(&AVPlayerView_c, "controlsStyle", (void *)pv_style);
+    cx_add_method(&AVPlayerView_c, "setControlsStyle:", (void *)pv_set_style);
+    cx_add_method(&AVPlayerView_c, "videoGravity", (void *)pv_gravity);
+    cx_add_method(&AVPlayerView_c, "setVideoGravity:", (void *)pv_set_gravity);
+    cx_add_method(&AVPlayerView_c, "showsFullScreenToggleButton", (void *)pv_fullscreen);
+    cx_add_method(&AVPlayerView_c, "setShowsFullScreenToggleButton:", (void *)pv_set_fullscreen);
+    cx_add_method(&AVPlayerView_c, "isReadyForDisplay", (void *)pv_ready);
+    cx_add_method(&AVPlayerView_c, "allowsPictureInPicturePlayback", (void *)pv_no);
+    cx_add_method(&AVPlayerView_c, "setAllowsPictureInPicturePlayback:", (void *)pv_set_ignored_b);
+    cx_add_method(&AVPlayerView_c, "updatesNowPlayingInfoCenter", (void *)pv_no);
+    cx_add_method(&AVPlayerView_c, "setUpdatesNowPlayingInfoCenter:", (void *)pv_set_ignored_b);
 }

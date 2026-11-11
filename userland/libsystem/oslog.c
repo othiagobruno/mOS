@@ -242,7 +242,7 @@ void closelog(void) { sl_ident[0] = 0; sl_opt = 0; }
 int setlogmask(int mask) { int old = sl_mask; if (mask) sl_mask = mask; return old; }
 
 /* ---------------------------------------------------------------- asl(3) (obsoleto, mas ainda importado) */
-typedef struct { char magic[4]; int n; char *k[32], *v[32]; } aslmsg_t;
+typedef struct { char magic[4]; int n; char *k[32], *v[32]; unsigned op[32]; } aslmsg_t;
 typedef struct { char magic[4]; char ident[64]; int opts, filter; } aslclient_t;
 void *asl_open(const char *ident, const char *facility, unsigned opts) {
     (void)facility;
@@ -256,15 +256,18 @@ void *asl_open(const char *ident, const char *facility, unsigned opts) {
 }
 void asl_close(void *c) { free(c); }
 void *asl_new(unsigned type) { (void)type; aslmsg_t *m = calloc(1, sizeof *m); if (m) memcpy(m->magic, "aslm", 4); return m; }
-int asl_set(void *msg, const char *key, const char *val) {
+/* asl_set_query: o mesmo par chave/valor, com o operador de comparação (ASL_QUERY_OP_*) que o asl_search usa */
+int asl_set_query(void *msg, const char *key, const char *val, unsigned op) {
     aslmsg_t *m = msg;
-    if (!m || !key) return -1;
-    for (int i = 0; i < m->n; i++) if (!strcmp(m->k[i], key)) { free(m->v[i]); m->v[i] = strdup(val ? val : ""); return 0; }
+    if (!m || !key || memcmp(m->magic, "aslm", 4)) return -1;
+    for (int i = 0; i < m->n; i++) if (!strcmp(m->k[i], key)) { free(m->v[i]); m->v[i] = strdup(val ? val : ""); m->op[i] = op; return 0; }
     if (m->n == 32) return -1;
     m->k[m->n] = strdup(key);
-    m->v[m->n++] = strdup(val ? val : "");
+    m->v[m->n] = strdup(val ? val : "");
+    m->op[m->n++] = op;
     return 0;
 }
+int asl_set(void *msg, const char *key, const char *val) { return asl_set_query(msg, key, val, 1 /* ASL_QUERY_OP_EQUAL */); }
 const char *asl_get(void *msg, const char *key) {
     aslmsg_t *m = msg;
     if (!m || !key || memcmp(m->magic, "aslm", 4)) return 0;
@@ -278,7 +281,13 @@ void asl_free(void *msg) {
     if (!memcmp(m->magic, "aslm", 4)) for (int i = 0; i < m->n; i++) { free(m->k[i]); free(m->v[i]); }
     free(m);
 }
-void asl_release(void *o) { if (o && !memcmp(o, "aslm", 4)) asl_free(o); else if (o && !memcmp(o, "aslc", 4)) asl_close(o); }
+void aslresponse_free(void *r);
+void asl_release(void *o) {
+    if (o && !memcmp(o, "aslm", 4)) asl_free(o);
+    else if (o && !memcmp(o, "aslc", 4)) asl_close(o);
+    else if (o && !memcmp(o, "aslr", 4)) aslresponse_free(o);
+}
+static void asl_guarda(void *client, void *msg, int level, const char *texto);
 int asl_vlog(void *client, void *msg, int level, const char *fmt, va_list ap) {
     aslclient_t *c = client;
     char b[2048], f2[512];
@@ -288,6 +297,7 @@ int asl_vlog(void *client, void *msg, int level, const char *fmt, va_list ap) {
     const char *fac = asl_get(msg, "Facility");
     if (c && c->ident[0] && !sender) sender = c->ident;
     send_log(prio_type(level), 1u | (unsigned)(level & 7) << 8, fac ? fac : "", sender ? sender : "", b, (size_t)(n < (int)sizeof b ? n : (int)sizeof b - 1));
+    asl_guarda(c, msg, level, b);
     if (c && (c->opts & 1 /* ASL_OPT_STDERR */)) { write(2, b, strlen(b)); write(2, "\n", 1); }
     return 0;
 }
@@ -302,3 +312,121 @@ int asl_set_filter(void *client, int f) { aslclient_t *c = client; int old = c ?
 int asl_add_log_file(void *client, int fd) { (void)client; (void)fd; return 0; }
 int asl_add_output_file(void *client, int fd, const char *mf, const char *tf, int filter, int encoding) { (void)client; (void)fd; (void)mf; (void)tf; (void)filter; (void)encoding; return 0; }
 int asl_remove_log_file(void *client, int fd) { (void)client; (void)fd; return 0; }
+
+/* asl_search: o banco do ASL no mOS é o do processo. As últimas ASL_GUARDA mensagens que ele mandou por asl_log/asl_send
+ * ficam aqui (chaves Time, PID, Sender, Facility, Level, Message, ASLMessageID) e a consulta compara cada chave com o
+ * operador do asl_set_query. As mensagens de outros processos estão no store do logd (`log show`), fora do alcance. */
+#define ASL_GUARDA 256
+static aslmsg_t *asl_store[ASL_GUARDA];
+static unsigned long asl_next_id = 1;
+static volatile int asl_lk;
+typedef struct { char magic[4]; int n, i; aslmsg_t **m; } aslresp_t;
+static aslmsg_t *asl_copia(const aslmsg_t *s) {
+    aslmsg_t *d = calloc(1, sizeof *d);
+    if (!d) return 0;
+    memcpy(d->magic, "aslm", 4);
+    for (int i = 0; i < s->n; i++) { d->k[i] = strdup(s->k[i]); d->v[i] = strdup(s->v[i]); d->op[i] = s->op[i]; }
+    d->n = s->n;
+    return d;
+}
+static void asl_guarda(void *client, void *msg, int level, const char *texto) {
+    aslclient_t *c = client;
+    aslmsg_t *m = asl_new(0);
+    if (!m) return;
+    if (msg && !memcmp(msg, "aslm", 4)) {
+        aslmsg_t *s = msg;
+        for (int i = 0; i < s->n; i++) asl_set(m, s->k[i], s->v[i]);
+    }
+    char b[32];
+    snprintf(b, sizeof b, "%ld", (long)time(0)); asl_set(m, "Time", b);
+    snprintf(b, sizeof b, "%d", getpid()); asl_set(m, "PID", b);
+    snprintf(b, sizeof b, "%d", level & 7); asl_set(m, "Level", b);
+    if (!asl_get(m, "Sender")) asl_set(m, "Sender", c && c->ident[0] ? c->ident : getprogname());
+    if (!asl_get(m, "Facility")) asl_set(m, "Facility", "user");
+    asl_set(m, "Message", texto);
+    while (__sync_lock_test_and_set(&asl_lk, 1)) sched_yield();
+    snprintf(b, sizeof b, "%lu", asl_next_id); asl_set(m, "ASLMessageID", b);
+    aslmsg_t *velha = asl_store[asl_next_id % ASL_GUARDA];
+    asl_store[asl_next_id % ASL_GUARDA] = m;
+    asl_next_id++;
+    __sync_lock_release(&asl_lk);
+    asl_free(velha);
+}
+static int asl_lower(int ch) { return ch >= 'A' && ch <= 'Z' ? ch + 32 : ch; }
+static int asl_ncmp(const char *a, const char *b, size_t n, int fold) {
+    for (size_t i = 0; i < n; i++) {
+        int x = (unsigned char)a[i], y = (unsigned char)b[i];
+        if (fold) { x = asl_lower(x); y = asl_lower(y); }
+        if (x != y || !x) return x - y;
+    }
+    return 0;
+}
+int regcomp(void *re, const char *pat, int flags);
+int regexec(const void *re, const char *s, size_t n, void *pm, int ef);
+void regfree(void *re);
+static int asl_casa(const char *v, const char *q, unsigned op) {
+    unsigned rel = op & 7, fold = op & 0x10;
+    if (rel == 7) return 1;                                   /* ASL_QUERY_OP_TRUE: só a chave existir */
+    int r;
+    if (op & 0x80) {                                          /* NUMERIC */
+        long a = atoi(v), b = atoi(q);
+        r = a < b ? -1 : a > b;
+    } else if (op & 0x100) {                                  /* REGEX (ERE) */
+        long re[8];
+        if (regcomp(re, q, 1 | (fold ? 2 : 0) | 4 /* EXTENDED|ICASE|NOSUB */)) return 0;
+        r = regexec(re, v, 0, 0, 0) ? 1 : 0;
+        regfree(re);
+    } else {
+        size_t lv = strlen(v), lq = strlen(q);
+        switch (op & 0x60) {
+        case 0x20: r = lv >= lq ? asl_ncmp(v, q, lq, fold) : 1; break;                 /* PREFIX */
+        case 0x40: r = lv >= lq ? asl_ncmp(v + lv - lq, q, lq, fold) : 1; break;       /* SUFFIX */
+        case 0x60: r = 1; for (size_t i = 0; lv >= lq && i <= lv - lq; i++) if (!asl_ncmp(v + i, q, lq, fold)) { r = 0; break; } break;
+        default: r = asl_ncmp(v, q, (lv > lq ? lv : lq) + 1, fold);
+        }
+    }
+    switch (rel) {
+    case 1: return r == 0;
+    case 2: return r > 0;
+    case 3: return r >= 0;
+    case 4: return r < 0;
+    case 5: return r <= 0;
+    case 6: return r != 0;
+    default: return r == 0;
+    }
+}
+void *asl_search(void *client, void *query) {
+    (void)client;
+    aslmsg_t *q = query && !memcmp(query, "aslm", 4) ? query : 0;
+    aslresp_t *r = calloc(1, sizeof *r);
+    if (!r) return 0;
+    memcpy(r->magic, "aslr", 4);
+    r->m = calloc(ASL_GUARDA, sizeof *r->m);
+    if (!r->m) { free(r); return 0; }
+    while (__sync_lock_test_and_set(&asl_lk, 1)) sched_yield();
+    unsigned long ini = asl_next_id > ASL_GUARDA ? asl_next_id - ASL_GUARDA : 1;
+    for (unsigned long id = ini; id < asl_next_id; id++) {
+        aslmsg_t *m = asl_store[id % ASL_GUARDA];
+        int ok = m != 0;
+        for (int i = 0; ok && q && i < q->n; i++) {
+            const char *v = asl_get(m, q->k[i]);
+            ok = v && asl_casa(v, q->v[i], q->op[i] ? q->op[i] : 1);
+        }
+        if (ok && (r->m[r->n] = asl_copia(m))) r->n++;
+    }
+    __sync_lock_release(&asl_lk);
+    return r;
+}
+void *asl_next(void *resp) {
+    aslresp_t *r = resp;
+    if (!r || memcmp(r->magic, "aslr", 4) || r->i >= r->n) return 0;
+    return r->m[r->i++];
+}
+void *aslresponse_next(void *resp) { return asl_next(resp); }
+void aslresponse_free(void *resp) {
+    aslresp_t *r = resp;
+    if (!r || memcmp(r->magic, "aslr", 4)) return;
+    for (int i = 0; i < r->n; i++) asl_free(r->m[i]);
+    free(r->m);
+    free(r);
+}

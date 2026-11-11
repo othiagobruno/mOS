@@ -1,0 +1,5 @@
+// mOS — módulo clang NaturalLanguage mínimo para compilar o overlay Swift (NaturalLanguage.swift) com os nomes da Apple
+module NaturalLanguage [system] {
+    header "NaturalLanguage_mos.h"
+    export *
+}

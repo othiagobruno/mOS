@@ -585,6 +585,14 @@ OSStatus SecTrustSettingsCopyCertificates(int domain, id *certs) {
     }
     return errSecSuccess;
 }
+/* SecTrustCopyAnchorCertificates: as mesmas raízes do sistema (as âncoras padrão do SecTrust) */
+OSStatus SecTrustCopyAnchorCertificates(id *anchors) {
+    if (!anchors) return errSecParam;
+    *anchors = 0;
+    OSStatus r = SecTrustSettingsCopyCertificates(kSecTrustSettingsDomainSystem, anchors);
+    if (r == errSecNoTrustSettings) { *anchors = CFArrayCreateMutable(0, 0, 0); return errSecSuccess; }
+    return r;
+}
 /* raiz do sistema sem ajuste específico = array vazio ("confiar como raiz"), o que o rustls-native-certs espera */
 OSStatus SecTrustSettingsCopyTrustSettings(id cert, int domain, id *settings) {
     if (settings) *settings = 0;

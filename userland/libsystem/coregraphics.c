@@ -983,6 +983,15 @@ CGAffineTransform CGContextGetCTM(void *c) {
     t.a = o->ca; t.b = o->cb; t.c = o->cc; t.d = o->cd; t.tx = o->cu; t.ty = o->cv;
     return t;
 }
+/* espaço do usuário -> dispositivo: no contexto de bitmap do mOS a CTM já é a transformação até os pixels */
+CGSize CGContextConvertSizeToDeviceSpace(void *c, CGSize s) { return CGSizeApplyAffineTransform(s, CGContextGetCTM(c)); }
+CGSize CGContextConvertSizeToUserSpace(void *c, CGSize s) {
+    CGAffineTransform t = CGContextGetCTM(c);
+    double det = t.a * t.d - t.b * t.c;
+    if (det == 0) return s;
+    CGAffineTransform inv = {t.d / det, -t.b / det, -t.c / det, t.a / det, 0, 0};
+    return CGSizeApplyAffineTransform(s, inv);
+}
 int cx_bm_save(const void *c) {
     cgobj_t *o = as_kind(c, CGK_BM);
     if (!o || o->gsp >= 8) return o ? 1 : 0;

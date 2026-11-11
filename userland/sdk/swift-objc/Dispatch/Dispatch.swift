@@ -36,6 +36,9 @@ internal let _mos_run_closure: @convention(c) (UnsafeMutableRawPointer?) -> Void
 @_silgen_name("dispatch_semaphore_wait") internal func _mos_sema_wait(_ s: DispatchSemaphore, _ t: UInt64) -> Int
 @_silgen_name("dispatch_semaphore_signal") internal func _mos_sema_signal(_ s: DispatchSemaphore) -> Int
 @_silgen_name("dispatch_time") internal func _mos_time(_ when: UInt64, _ delta: Int64) -> UInt64
+@_silgen_name("dispatch_queue_attr_make_with_qos_class") internal func _mos_attr_qos(_ a: UnsafeRawPointer?, _ qos: qos_class_t, _ rel: Int32) -> UnsafeRawPointer?
+@_silgen_name("dispatch_walltime") internal func _mos_walltime(_ when: UnsafePointer<timespec>?, _ delta: Int64) -> UInt64
+@_silgen_name("dispatch_queue_get_qos_class") internal func _mos_queue_qos(_ q: DispatchQueue, _ prio: UnsafeMutablePointer<Int32>?) -> qos_class_t
 @_silgen_name("dispatch_suspend") internal func _mos_suspend(_ o: DispatchObject)
 @_silgen_name("dispatch_resume") internal func _mos_resume(_ o: DispatchObject)
 @_silgen_name("dispatch_activate") internal func _mos_activate(_ o: DispatchObject)
@@ -205,6 +208,11 @@ public struct DispatchTime: Comparable {
 
     public var uptimeNanoseconds: UInt64 { rawValue == ~0 ? ~0 : rawValue }
 
+    public func advanced(by n: DispatchTimeInterval) -> DispatchTime { self + n }
+    public func distance(to other: DispatchTime) -> DispatchTimeInterval {
+        let a = uptimeNanoseconds, b = other.uptimeNanoseconds
+        return b >= a ? .nanoseconds(Int(clamping: b - a)) : .nanoseconds(-Int(clamping: a - b))
+    }
     public static func < (a: DispatchTime, b: DispatchTime) -> Bool { a.rawValue < b.rawValue }
     public static func == (a: DispatchTime, b: DispatchTime) -> Bool { a.rawValue == b.rawValue }
 }
@@ -214,6 +222,11 @@ public struct DispatchWallTime: Comparable {
     public static func now() -> DispatchWallTime { DispatchWallTime(rawValue: _mos_time(~1, 0)) }
     public static var distantFuture: DispatchWallTime { DispatchWallTime(rawValue: ~0) }
     fileprivate init(rawValue: dispatch_time_t) { self.rawValue = rawValue }
+    /// tempo de parede absoluto: o dispatch_walltime(&ts, 0) do libdispatch
+    public init(timespec: timespec) {
+        var ts = timespec
+        rawValue = _mos_walltime(&ts, 0)
+    }
     public static func < (a: DispatchWallTime, b: DispatchWallTime) -> Bool { a.rawValue < b.rawValue }
     public static func == (a: DispatchWallTime, b: DispatchWallTime) -> Bool { a.rawValue == b.rawValue }
 }
@@ -279,6 +292,13 @@ extension DispatchQueue {
 
     public class var main: DispatchQueue { _mos_main_queue() }
 
+    /// QoS com que a fila foi criada (dispatch_queue_get_qos_class)
+    public var qos: DispatchQoS {
+        var rel: Int32 = 0
+        let cls = _mos_queue_qos(self, &rel)
+        return DispatchQoS(qosClass: DispatchQoS.QoSClass(rawValue: cls) ?? .unspecified, relativePriority: Int(rel))
+    }
+
     public class func global(qos: DispatchQoS.QoSClass = .default) -> DispatchQueue {
         _mos_global_queue(qos._priority, 0)
     }
@@ -296,9 +316,10 @@ extension DispatchQueue {
                             autoreleaseFrequency: AutoreleaseFrequency = .inherit, target: DispatchQueue? = nil) {
         // DISPATCH_QUEUE_CONCURRENT é &_dispatch_queue_attr_concurrent; o dispatch do mOS só distingue nulo (serial)
         // de não nulo, então qualquer endereço estável serve
-        let attr: __OS_dispatch_queue_attr? = attributes.contains(.concurrent)
-            ? unsafeBitCast(UnsafeRawPointer(_mos_concurrent_attr), to: __OS_dispatch_queue_attr.self) : nil
-        self.init(__label: label, attr: attr)
+        var attr: UnsafeRawPointer? = attributes.contains(.concurrent) ? UnsafeRawPointer(_mos_concurrent_attr) : nil
+        // a QoS vai no atributo (dispatch_queue_attr_make_with_qos_class) e a fila a guarda (DispatchQueue.qos)
+        if qos.qosClass != .unspecified { attr = _mos_attr_qos(attr, qos.qosClass.rawValue, Int32(qos.relativePriority)) }
+        self.init(__label: label, attr: attr.map { unsafeBitCast($0, to: __OS_dispatch_queue_attr.self) })
         if let target { _mos_set_target(self, target) }
     }
 
@@ -479,6 +500,16 @@ extension DispatchSourceTimer {
                          leeway: DispatchTimeInterval = .nanoseconds(0)) {
         let iv: UInt64 = interval == .never ? ~0 : UInt64(interval._nanoseconds)
         _mos_source_set_timer(_mos_src(self), deadline.rawValue, iv, UInt64(leeway._nanoseconds))
+    }
+
+    public func schedule(wallDeadline: DispatchWallTime, repeating interval: DispatchTimeInterval = .never,
+                         leeway: DispatchTimeInterval = .nanoseconds(0)) {
+        let iv: UInt64 = interval == .never ? ~0 : UInt64(interval._nanoseconds)
+        _mos_source_set_timer(_mos_src(self), wallDeadline.rawValue, iv, UInt64(leeway._nanoseconds))
+    }
+
+    public func schedule(wallDeadline: DispatchWallTime, repeating interval: Double, leeway: DispatchTimeInterval = .nanoseconds(0)) {
+        _mos_source_set_timer(_mos_src(self), wallDeadline.rawValue, UInt64(interval * 1_000_000_000), UInt64(leeway._nanoseconds))
     }
 
     public func schedule(deadline: DispatchTime, repeating interval: Double, leeway: DispatchTimeInterval = .nanoseconds(0)) {

@@ -42,11 +42,15 @@ static int cx_diag_dispatch(void) { static int on = -1; if (on < 0) on = access(
 extern char OS_dispatch_queue_main_c[] __asm__("OBJC_CLASS_$_OS_dispatch_queue_main"), OS_dispatch_queue_global_c[] __asm__("OBJC_CLASS_$_OS_dispatch_queue_global"),
     OS_dispatch_queue_serial_c[] __asm__("OBJC_CLASS_$_OS_dispatch_queue_serial"), OS_dispatch_queue_concurrent_c[] __asm__("OBJC_CLASS_$_OS_dispatch_queue_concurrent"),
     OS_dispatch_group_c[] __asm__("OBJC_CLASS_$_OS_dispatch_group"), OS_dispatch_source_c[] __asm__("OBJC_CLASS_$_OS_dispatch_source");
-typedef struct cx_queue { void *isa; u64 magic; char *label; int serial; } cx_queue_t;
+typedef struct cx_queue { void *isa; u64 magic; char *label; int serial; unsigned qos; int qos_rel; } cx_queue_t;
+/* atributo com QoS (dispatch_queue_attr_make_with_qos_class): o atributo de base (NULL = serial, ou o concorrente) e a
+ * classe; dispatch_queue_create guarda a classe na fila para o dispatch_queue_get_qos_class */
+typedef struct { void *isa; u64 magic; void *base; unsigned qos; int rel; } cx_qattr_t;
+#define QAMAGIC 0x6D4F535141747472ull
 #define QMAGIC 0x6D4F5351756575ull
-cx_queue_t _dispatch_main_q = {OS_dispatch_queue_main_c, QMAGIC, "com.apple.main-thread", 1};   /* dispatch_get_main_queue() = &_dispatch_main_q */
-static cx_queue_t global_q[4] = {{OS_dispatch_queue_global_c, QMAGIC, "com.apple.root.default-qos", 0}, {OS_dispatch_queue_global_c, QMAGIC, "com.apple.root.user-initiated-qos", 0},
-                                 {OS_dispatch_queue_global_c, QMAGIC, "com.apple.root.utility-qos", 0}, {OS_dispatch_queue_global_c, QMAGIC, "com.apple.root.background-qos", 0}};
+cx_queue_t _dispatch_main_q = {OS_dispatch_queue_main_c, QMAGIC, "com.apple.main-thread", 1, 0x21, 0};   /* dispatch_get_main_queue() = &_dispatch_main_q */
+static cx_queue_t global_q[4] = {{OS_dispatch_queue_global_c, QMAGIC, "com.apple.root.default-qos", 0, 0x15, 0}, {OS_dispatch_queue_global_c, QMAGIC, "com.apple.root.user-initiated-qos", 0, 0x19, 0},
+                                 {OS_dispatch_queue_global_c, QMAGIC, "com.apple.root.utility-qos", 0, 0x11, 0}, {OS_dispatch_queue_global_c, QMAGIC, "com.apple.root.background-qos", 0, 0x09, 0}};
 
 extern volatile int cx_dispatch_main_used;   /* abaixo, junto do mq_push */
 void *dispatch_get_main_queue(void) { cx_dispatch_main_used = 1; return &_dispatch_main_q; }
@@ -55,6 +59,13 @@ void *dispatch_get_global_queue(long priority, unsigned long flags) {
     return &global_q[priority > 0 ? 1 : priority == 0 ? 0 : priority == -2 ? 2 : 3];
 }
 void *dispatch_queue_create(const char *label, void *attr) {
+    unsigned qos = 0;
+    int rel = 0;
+    if (attr && ((cx_qattr_t *)attr)->magic == QAMAGIC) {
+        qos = ((cx_qattr_t *)attr)->qos;
+        rel = ((cx_qattr_t *)attr)->rel;
+        attr = ((cx_qattr_t *)attr)->base;
+    }
     cx_queue_t *q = malloc(sizeof *q);
     if (!q) return 0;
     if (cx_diag_dispatch()) cx_fdprintf(2, "dispatch[diag]: fila \"%s\" em %llx\n", label ? label : "", (unsigned long long)(u64)q);
@@ -62,6 +73,8 @@ void *dispatch_queue_create(const char *label, void *attr) {
     q->magic = QMAGIC;
     q->label = strdup(label ? label : "");
     q->serial = attr == 0;
+    q->qos = qos;
+    q->qos_rel = rel;
     return q;
 }
 void *dispatch_queue_create_with_target$V2(const char *label, void *attr, void *target) { (void)target; return dispatch_queue_create(label, attr); }
@@ -71,7 +84,32 @@ void *cx_dispatch_current(void);
 /* como no macOS: fora de um bloco de fila, a thread principal está na fila principal e as outras numa fila global
  * (antes devolvia a principal em qualquer thread — um objeto fila principal onde o chamador esperava outra fila) */
 void *dispatch_get_current_queue(void) { void *q = cx_dispatch_current(); return q ? q : &global_q[0]; }
-void *dispatch_queue_attr_make_with_qos_class(void *attr, unsigned qos, int prio) { (void)qos; (void)prio; return attr; }
+extern char OS_dispatch_queue_attr_c[] __asm__("OBJC_CLASS_$_OS_dispatch_queue_attr");
+void *dispatch_queue_attr_make_with_qos_class(void *attr, unsigned qos, int prio) {
+    if (attr && ((cx_qattr_t *)attr)->magic == QAMAGIC) attr = ((cx_qattr_t *)attr)->base;
+    if (!qos) return attr;
+    /* poucas combinações distintas num processo: cada uma é criada uma vez e fica (o atributo não tem release) */
+    static cx_qattr_t *tab[64];
+    static volatile int lk;
+    while (__sync_lock_test_and_set(&lk, 1)) SYS0(SYS_YIELD);
+    cx_qattr_t *r = 0;
+    for (int i = 0; i < 64 && tab[i] && !r; i++)
+        if (tab[i]->base == attr && tab[i]->qos == qos && tab[i]->rel == prio) r = tab[i];
+    for (int i = 0; i < 64 && !r; i++)
+        if (!tab[i] && (tab[i] = malloc(sizeof *r))) {
+            r = tab[i];
+            r->isa = OS_dispatch_queue_attr_c; r->magic = QAMAGIC; r->base = attr; r->qos = qos; r->rel = prio;
+        }
+    __sync_lock_release(&lk);
+    return r ? r : attr;
+}
+/* classe de QoS da fila: a das globais e da principal, a do atributo nas criadas (0 = QOS_CLASS_UNSPECIFIED) */
+unsigned dispatch_queue_get_qos_class(void *q, int *rel) {
+    cx_queue_t *c = q ? q : &_dispatch_main_q;
+    if (c->magic != QMAGIC) { if (rel) *rel = 0; return 0; }
+    if (rel) *rel = c->qos_rel;
+    return c->qos;
+}
 void *dispatch_queue_attr_make_with_autorelease_frequency(void *attr, unsigned long f) { (void)f; return attr; }
 
 /* ---- fila principal de verdade: trabalho para a thread principal é enfileirado e executado pelo

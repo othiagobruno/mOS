@@ -720,6 +720,28 @@ size_t regerror(int code, const mac_regex_t *re, char *buf, size_t len) {
     return n;
 }
 
+/* regncomp/regnexec (extensão do macOS): padrão e texto com tamanho explícito. Cópia terminada em NUL e o mesmo motor;
+ * um NUL no meio do texto encerra a busca ali. */
+int regncomp(mac_regex_t *re, const char *pat, size_t len, int flags) {
+    char *c = malloc(len + 1);
+    if (!c) return REG_ESPACE;
+    memcpy(c, pat, len);
+    c[len] = 0;
+    int r = regcomp(re, c, flags);
+    if (!r) re->re_endp = pat + (re->re_endp - c);
+    free(c);
+    return r;
+}
+int regnexec(const mac_regex_t *re, const char *str, size_t len, size_t nmatch, mac_regmatch_t *pm, int eflags) {
+    char *c = malloc(len + 1);
+    if (!c) return REG_ESPACE;
+    memcpy(c, str, len);
+    c[len] = 0;
+    int r = regexec(re, c, nmatch, pm, eflags);
+    free(c);
+    return r;
+}
+
 /* ------------------------------------------------------------ diversos */
 int mkfifo(const char *path, unsigned short mode) { (void)path; (void)mode; cx_errno = 45; return -1; }   /* ENOTSUP: sem FIFOs nomeados */
 void sync(void) {}
@@ -786,6 +808,54 @@ void setutxent(void) {}
 void endutxent(void) {}
 void *getutxent(void) { return 0; }            /* sem registro de logins (who/users ficam vazios) */
 int utmpxname(const char *f) { (void)f; return 0; }
+/* o histórico de logins (wtmp) também não existe: a leitura acaba na primeira chamada, como um arquivo vazio */
+int setutxent_wtmp(int dir) { (void)dir; return 1; }
+void endutxent_wtmp(void) {}
+void *getutxent_wtmp(void) { return 0; }
+
+/* ether_ntoa(3): "x:x:x:x:x:x" em hexadecimal sem zero à esquerda, como o libinfo do macOS */
+char *ether_ntoa(const unsigned char *e) {
+    static char b[18];
+    static const char hx[] = "0123456789abcdef";
+    int o = 0;
+    for (int i = 0; i < 6; i++) {
+        if (e[i] >= 16) b[o++] = hx[e[i] >> 4];
+        b[o++] = hx[e[i] & 15];
+        if (i < 5) b[o++] = ':';
+    }
+    b[o] = 0;
+    return b;
+}
+
+/* mkpath_np: mkdir -p. Volta 0 ou o errno (não -1); EEXIST quando o último componente já existe */
+int mkdir(const char *p, unsigned short mode);
+int mkpath_np(const char *path, unsigned short mode) {
+    if (!path || !*path) return 2;
+    size_t n = strlen(path);
+    char *b = malloc(n + 1);
+    if (!b) return 12;
+    memcpy(b, path, n + 1);
+    while (n > 1 && b[n - 1] == '/') b[--n] = 0;
+    int r = 0;
+    for (char *s = b + 1; ; s++) {
+        if (*s != '/' && *s) continue;
+        char c = *s;
+        *s = 0;
+        if (mkdir(b, c ? 0777 : mode) != 0) {
+            r = cx_errno;
+            if (r == 17 && c) r = 0;                   /* componente intermediário já existe */
+        } else r = 0;
+        if (!c || (r && r != 17)) break;
+        *s = '/';
+    }
+    free(b);
+    return r;
+}
+
+/* acl_set_fd_np: ACL_TYPE_EXTENDED (0x100) e de acesso; ACL default não existe (mesma regra do acl_set_file) */
+int acl_set_fd_np(int fd, void *a, int t) { if (t == 1) { cx_errno = 45; return -1; } return acl_set_fd(fd, a); }
+int sched_yield(void);
+void pthread_yield_np(void) { sched_yield(); }
 
 /* *at(): AT_FDCWD (-2) ou caminho absoluto; um dirfd de verdade vira o caminho dele (SYS_FDPATH) */
 const char *cx_at_path(int dirfd, const char *p, char *buf, size_t cap) {   /* também usado por foundationsys.c e extra.c */
