@@ -665,6 +665,23 @@ O computer use destes três apps precisa de captura, lista de janelas, injeção
 ### O que é stub
 
 - **AX de outro processo.** `_AXUIElementCreateWithRemoteToken` aceita o token `mAX1` (12 bytes: marca, pid, número da janela) e, com a janela na lista do compositor, devolve título, posição e tamanho sem IPC. A árvore de views, os children, o `PerformAction` e a lista de ações (`AXActionNames`) atravessam `cx_xpc_peer_call` quando `cx_xpc_peer_ready` responde. O vínculo é `cx_ax_bind_xpc` (`xpc-mach`, `xpctransport.h` do PR #49). Se `cx_xpc_peer_ready` falha, o vtable passa a ser `af-unix`: `SOCK_DGRAM` em `/tmp/mos-ax/<pid>`. Se o call devolve 60 ou 61, a resposta continua `-25204`. No Mach, o servidor escuta `com.mos.xpc.peer.<pid>` pelo `xpc.c`. No AF_UNIX, cada processo faz bind em `/tmp/mos-ax/<pid>`.
+- **AX entre processos: o que mudou em 10 nov.** (`axremote.c`, testes `tools/axremote_host.c` e `tools/cgpid_host.c`)
+  - Transporte com reserva: o servidor escuta no xpc-mach **e** no AF_UNIX e responde pelo fio por onde o pedido
+    chegou; o cliente tenta o vinculado e, se der 60/61, o AF_UNIX. Antes, um lado no xpc-mach e o outro só no
+    AF_UNIX davam -25204.
+  - Páginas: `AXChildren` passa de 12 filhos e `AXValue`/`AXTitle` de 95 bytes (a resposta diz o total em `len`;
+    teto de 512 filhos e 64 KiB). Elemento único (`AXFocusedUIElement`, `AXFocusedWindow`, `AXMainWindow`,
+    `AXParent`) atravessa o fio; antes voltava -25205.
+  - Atributos novos: `AXWindows`, `AXMainWindow`, `AXFocusedWindow` (app), `AXFocusedApplication` (system-wide),
+    `AXParent`; o `AXFocusedUIElement` do system-wide pergunta ao processo da frente. `IsAttributeSettable` e
+    `_AXUIElementGetWindow` de outro processo respondem (antes -25204 fixo). `AXUIElementCopyElementAtPosition` no
+    system-wide acha o dono da janela sob o ponto na lista do compositor e pergunta a ele (`AX_OP_AT`).
+  - A tabela de ids do servidor cresce: com o teto de 96, o 97º elemento devolvia -25202.
+  - O AF_UNIX serializa as chamadas: duas threads pedindo ao mesmo tempo trocavam as respostas.
+- **`CGEventPostToPid` (10 nov.).** O evento dirigido não passa mais pelos taps de outros processos (antes ia ao tap
+  local e ao fan-out de todos, como um `CGEventPost`); o tap local só entra quando o alvo é o próprio processo. Os
+  campos `kCGEventTargetUnixProcessID` (40) e `kCGEventSourceUnixProcessID` (41) existem. O kernel já entregava na
+  fila do pid (`input_to_pid`); os pacotes saem de `cgpid.c`. Caractere fora do Latin-1 continua sem entrega.
 - **`SCStream`.** `startCaptureWithCompletionHandler:` entrega um quadro (`CMSampleBuffer` com `CVPixelBuffer` BGRA e as chaves `SCStreamFrameInfo*`) da área do filtro. Sem a concessão, o bloco recebe erro e não há pixel. Não há quadro seguinte nem áudio. `CGDisplayStream` continua ausente.
 - **`SCShareableContent` acima/abaixo de uma janela âncora.** Entra o recorte on-screen. A janela âncora não filtra a lista.
 - **Computer use real do Grok Bot, do Claude Desktop e do ChatGPT.** Exigiria login e um `libSystem.mos` medido de novo com `tools/machocheck.c`. Não foi feito.

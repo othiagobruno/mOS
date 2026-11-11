@@ -310,8 +310,49 @@ OSStatus VTDecompressionSessionDecodeFrame(void *s, void *sb, u32 flags, void *r
     h264_i420_to_bgra(y, u, v2, w, h, w, w / 2, w / 2, CVPixelBufferGetBaseAddress(img), (int)CVPixelBufferGetBytesPerRow(img));
     CVPixelBufferUnlockBaseAddress(img, 0);
     free(y); free(u); free(v2);
+    v->w = w; v->h = h;                                  /* dimensões do último quadro (CopyBlackPixelBuffer) */
     if (v->dec) v->dec(v->dec_ref, ref, 0, 0, img, CMTimeMake(0, 1), CMTimeMake(0, 1));
     objc_release((id)img);
+    return 0;
+}
+/* DecodeFrameWithOutputHandler: o mesmo decodificador, com a saída num bloco
+ * ^(OSStatus, VTDecodeInfoFlags, CVImageBuffer, CMTime pts, CMTime duração). */
+typedef struct { void *isa; int flags, reserved; void (*invoke)(void *, OSStatus, u32, void *, cm_time_t, cm_time_t); } vt_dec_blk;
+static void vt_blk_tramp(void *ref, void *frame_ref, OSStatus st, u32 info, void *img, cm_time_t pts, cm_time_t dur) {
+    vt_dec_blk *b = frame_ref;
+    (void)ref;
+    if (b && b->invoke) b->invoke(b, st, info, img, pts, dur);
+}
+OSStatus VTDecompressionSessionDecodeFrameWithOutputHandler(void *s, void *sb, u32 flags, u32 *info, void *handler) {
+    vts_t *v = vts_as(s, VT_DEC);
+    if (!v || !handler) return kVTCouldNotFindVideoDecoderErr;
+    vt_dec_fn fn = v->dec;
+    void *r = v->dec_ref;
+    v->dec = vt_blk_tramp;
+    v->dec_ref = 0;
+    OSStatus st = VTDecompressionSessionDecodeFrame(s, sb, flags, handler, info);
+    v->dec = fn;
+    v->dec_ref = r;
+    return st;
+}
+/* A decodificação do mOS é síncrona: quando DecodeFrame volta, o quadro já saiu. */
+OSStatus VTDecompressionSessionWaitForAsynchronousFrames(void *s) { return vts_as(s, VT_DEC) ? 0 : kVTCouldNotFindVideoDecoderErr; }
+OSStatus VTDecompressionSessionFinishDelayedFrames(void *s) { return VTDecompressionSessionWaitForAsynchronousFrames(s); }
+/* Quadro preto BGRA do tamanho do último decodificado (16x16 antes do primeiro). */
+OSStatus VTDecompressionSessionCopyBlackPixelBuffer(void *s, void **out) {
+    vts_t *v = vts_as(s, VT_DEC);
+    void *img = 0;
+    int w, h;
+    if (out) *out = 0;
+    if (!v || !out) return kVTCouldNotFindVideoDecoderErr;
+    w = v->w > 1 ? v->w : 16; h = v->h > 1 ? v->h : 16;
+    if (CVPixelBufferCreate(0, (u64)w, (u64)h, 0x42475241u, 0, &img) != 0 || !img) return kVTCouldNotFindVideoDecoderErr;
+    CVPixelBufferLockBaseAddress(img, 0);
+    u8 *p = CVPixelBufferGetBaseAddress(img);
+    size_t bpr = CVPixelBufferGetBytesPerRow(img);
+    for (int yy = 0; yy < h; yy++) for (int xx = 0; xx < w; xx++) { u8 *q = p + (size_t)yy * bpr + (size_t)xx * 4; q[0] = q[1] = q[2] = 0; q[3] = 255; }
+    CVPixelBufferUnlockBaseAddress(img, 0);
+    *out = img;
     return 0;
 }
 void VTDecompressionSessionInvalidate(void *s) {
@@ -624,6 +665,7 @@ UT(UTTypeDiskImage, "public.disk-image") UT(UTTypeURL, "public.url") UT(UTTypeFi
 UT(UTTypeVCard, "public.vcard") UT(UTTypeFont, "public.font") UT(UTTypeEPUB, "org.idpf.epub-container")
 UT(UTTypeCompositeContent, "public.composite-content") UT(UTTypeDatabase, "public.database") UT(UTTypeSymbolicLink, "public.symlink")
 UT(UTTypeAliasFile, "com.apple.alias-file") UT(UTTypeMessage, "public.message") UT(UTTypeEmailMessage, "public.email-message")
+UT(UTTypeContact, "public.contact") UT(UTTypeHEIF, "public.heif")
 
 int cx_ls_conforms(const char *a, const char *b);
 int cx_ls_type_for_tag(const char *cls_, const char *tag, const char *conf, char *out, size_t cap);

@@ -452,10 +452,14 @@ static void scheme_add(ls_app_t *a, const char *s) {
 
 /* ---------------- apps do sistema */
 static void open_in_browser(const char *target) {
-    char url[1100];
-    if (target[0] == '/') snprintf(url, sizeof url, "file://%s", target); else snprintf(url, sizeof url, "%s", target);
-    if (horizonte_motor_abrir(url)) return;     /* o motor Chromium do Horizonte (mais abaixo) */
-    horizonte_legado_abrir(url);                /* sem o motor: o motor próprio do Horizonte */
+    /* no heap: a URL inteira (até MOS_URL_MAX) não cabe na pilha de 32 KiB nem pode ser cortada */
+    usize n = strlen(target) + 8;
+    char *url = kmalloc(n);
+    if (!url) return;
+    if (target[0] == '/') snprintf(url, n, "file://%s", target); else snprintf(url, n, "%s", target);
+    if (!horizonte_motor_abrir(url))            /* o motor Chromium do Horizonte (mais abaixo) */
+        horizonte_legado_abrir(url);            /* sem o motor: o motor próprio do Horizonte */
+    kfree(url);
 }
 
 /* tipos que seguem o navegador (os mesmos que ls_set_default_browser grava) */
@@ -1292,9 +1296,13 @@ static bool deliver(ls_app_t *a, const char *url, bool web) {
     if (!pid) {
         /* o navegador recebe a URL na linha de comando (o Chrome abre as URLs do argv) */
         bool argv = web && ls_app_is_browser(a);
-        char args[1200] = "";
-        if (argv) snprintf(args, sizeof args, "\"%s\"", url);
+        usize an = argv ? strlen(url) + 3 : 1;
+        char *args = kmalloc(an);
+        if (!args) return false;
+        args[0] = 0;
+        if (argv) snprintf(args, an, "\"%s\"", url);
         pid = apps_run_mac(a->path, args);
+        kfree(args);
         if (pid < 0) return false;
         if (argv) {
             kprintf("ls: %s abre no %s (iniciado com a URL)\n", shown, a->name);
@@ -1444,11 +1452,12 @@ static bool open_webloc(const char *path) {
     vnode_t *v = vfs_lookup(path);
     pl_t *root = v && !v->dir && v->data ? pl_parse(v->data, v->size) : NULL;
     const char *u = pl_str(root, "URL");
-    char url[1100] = "", sch[48];
-    if (u) snprintf(url, sizeof url, "%s", u);
+    char sch[48];
+    char *url = u ? strdup(u) : NULL;
     pl_free(root);
-    if (!ls_url_scheme(url, sch, sizeof sch) || !strcmp(sch, "file")) return false;
-    return ls_open(url, NULL);
+    bool ok = url && ls_url_scheme(url, sch, sizeof sch) && strcmp(sch, "file") && ls_open(url, NULL);
+    kfree(url);
+    return ok;
 }
 
 bool ls_open(const char *target, ls_app_t *with) {
@@ -1505,7 +1514,7 @@ void ls_test_poke(void) { last_check = timer_ticks() - 2000; }
 #endif
 
 /* pedidos dos apps (syscall): a interface (alertas, janelas, processos novos) só muda no loop principal */
-typedef struct { u8 kind; bool used; char target[1024]; char app[128]; } defer_t;   /* 0 abrir, 1 esquema padrão */
+typedef struct { u8 kind; bool used; char target[MOS_URL_MAX]; char app[128]; } defer_t;   /* URL inteira, sem corte */   /* 0 abrir, 1 esquema padrão */
 static defer_t dq[8];
 static volatile int dq_lock;
 
@@ -1525,12 +1534,18 @@ static bool defer(u8 kind, const char *target, ls_app_t *a) {
 static void run_deferred(void) {
     for (u32 i = 0; i < ARRAY_LEN(dq); i++) {
         if (!dq[i].used) continue;
-        defer_t d = dq[i];
+        /* o alvo vai para o heap (até MOS_URL_MAX); copiar o defer_t inteiro estouraria a pilha de 32 KiB */
+        u8 kind = dq[i].kind;
+        char app[sizeof dq[i].app];
+        memcpy(app, dq[i].app, sizeof app);
+        char *target = strdup(dq[i].target);
         dq[i].used = false;
-        ls_app_t *a = d.app[0] ? ls_app_by_id(d.app) : NULL;
-        if (d.kind == 1) { if (a) ls_request_default_for_scheme(d.target, a); }
-        else if (d.target[0]) { if (!ls_open(d.target, a)) kprintf("ls: não foi possível abrir o pedido de um app\n"); }
+        if (!target) continue;
+        ls_app_t *a = app[0] ? ls_app_by_id(app) : NULL;
+        if (kind == 1) { if (a) ls_request_default_for_scheme(target, a); }
+        else if (target[0]) { if (!ls_open(target, a)) kprintf("ls: não foi possível abrir o pedido de um app\n"); }
         else if (a) launch_app(a);
+        kfree(target);
     }
 }
 /* o pedido tem quem atenda? (a resposta da syscall; a abertura vem depois) */

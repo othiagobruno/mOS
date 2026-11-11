@@ -750,3 +750,88 @@ int CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(void *s, size_t *nee
     if (blockOut) *blockOut = objc_retain((id)b->data);
     return 0;
 }
+
+/* ---- WhatsApp (machocheck, 10 nov. 2026): anexos, cópia, áudio de AudioBufferList,
+ * CMTime/CMTimeRange em dicionário ---- */
+u64 CMFormatDescriptionGetTypeID(void) { return 0x2C1; }
+u64 CMSampleBufferGetTypeID(void) { return 0x2C2; }
+id CVBufferGetAttachment(void *buf, id key, u32 *mode);
+/* CMGetAttachment: anexos de sample buffer e extensões de descrição; num CVBuffer, os dele. */
+id CMGetAttachment(void *target, id key, u32 *mode) {
+    sb_t *b = as_sb(target);
+    fd_t *f = as_fd(target);
+    if (mode) *mode = 1;                                  /* kCMAttachmentMode_ShouldPropagate */
+    if (!key) return 0;
+    if (b) { id d = b->attach ? MSG(id, b->attach, "firstObject") : 0; return d ? MSG(id, d, "objectForKey:", key) : 0; }
+    if (f) return f->ext ? MSG(id, f->ext, "objectForKey:", key) : 0;
+    return target ? CVBufferGetAttachment(target, key, mode) : 0;
+}
+/* Cópia rasa: mesmos dados, imagem e descrição (retidos), timing e tamanhos copiados. */
+int CMSampleBufferCreateCopy(void *a, void *src, void **out) {
+    sb_t *s = as_sb(src), *d;
+    (void)a;
+    if (!s || !out) return CM_BAD_SAMPLE;
+    if (CMSampleBufferCreate(0, s->data, (u8)s->ready, 0, 0, s->fmt, s->ns, s->times ? s->ns : 0, s->times, s->sizes ? s->ns : 0, s->sizes, out)) return CM_BAD_SAMPLE;
+    d = as_sb(*out);
+    if (s->image) d->image = objc_retain(s->image);
+    if (s->attach) d->attach = objc_retain(MSG0(id, s->attach, "mutableCopy"));
+    d->opt = s->opt; d->has_opt = s->has_opt;
+    if (s->pkts && s->npkts > 0 && (d->pkts = malloc((size_t)s->npkts * 16)) != 0) { memcpy(d->pkts, s->pkts, (size_t)s->npkts * 16); d->npkts = s->npkts; }
+    return 0;
+}
+/* AudioBufferList { u32 n; AudioBuffer b[n] } com AudioBuffer { u32 canais; u32 bytes; void *dados }:
+ * os buffers (intercalados ou não) viram um bloco só, na ordem. */
+typedef struct { u32 channels, bytes; void *data; } cm_abuf_t;
+int CMSampleBufferSetDataBufferFromAudioBufferList(void *sbuf, void *bba, void *bbma, u32 flags, const void *abl) {
+    sb_t *s = as_sb(sbuf);
+    const u8 *l = abl;
+    void *bb = 0;
+    size_t total = 0;
+    u32 n;
+    (void)bba; (void)bbma; (void)flags;
+    if (!s || !l) return CM_BAD_SAMPLE;
+    if (s->data) return -12735;                            /* kCMSampleBufferError_BufferHasNoSampleSizes: já tem dados */
+    n = *(const u32 *)l;
+    const cm_abuf_t *ab = (const cm_abuf_t *)(l + 8);
+    for (u32 i = 0; i < n; i++) total += ab[i].bytes;
+    if (CMBlockBufferCreateEmpty(0, (u32)total, 0, &bb) || !bb) return CM_BAD_SAMPLE;
+    for (u32 i = 0; i < n; i++)
+        if (ab[i].bytes && CMBlockBufferAppendMemoryBlock(bb, ab[i].data, ab[i].bytes, 0, 0, 0, ab[i].bytes, 0)) {
+            objc_release((id)bb);
+            return CM_BAD_SAMPLE;
+        }
+    (void)total;
+    s->data = bb;
+    s->ready = 1;
+    return 0;
+}
+int CMAudioSampleBufferCreateWithPacketDescriptions(void *a, void *db, u8 ready, void *cb, void *ref, void *fd, long ns, cm_time_t pts, const void *pkts, void **out) {
+    int rc = CMAudioSampleBufferCreateReadyWithPacketDescriptions(a, db, fd, ns, pts, pkts, out);
+    sb_t *s = !rc && out ? as_sb(*out) : 0;
+    (void)cb; (void)ref;
+    if (s) s->ready = ready ? 1 : 0;
+    return rc;
+}
+/* chaves de kCMTimeValueKey etc. ("value", "timescale", "flags", "epoch") e da faixa ("start", "duration") */
+id CMTimeCopyAsDictionary(cm_time_t t, void *alloc) {
+    id d = MSG0(id, (id)cx_class_named("NSMutableDictionary"), "new");
+    (void)alloc;
+    if (!d) return 0;
+    MSG(void, d, "setObject:forKey:", cx_num_i(t.value), cx_str("value"));
+    MSG(void, d, "setObject:forKey:", cx_num_i(t.timescale), cx_str("timescale"));
+    MSG(void, d, "setObject:forKey:", cx_num_i(t.flags), cx_str("flags"));
+    MSG(void, d, "setObject:forKey:", cx_num_i(t.epoch), cx_str("epoch"));
+    return d;
+}
+typedef struct { cm_time_t start, duration; } cm_range_wa_t;
+id CMTimeRangeCopyAsDictionary(cm_range_wa_t r, void *alloc) {
+    id d = MSG0(id, (id)cx_class_named("NSMutableDictionary"), "new");
+    id s = CMTimeCopyAsDictionary(r.start, alloc), u = CMTimeCopyAsDictionary(r.duration, alloc);
+    if (d && s && u) {
+        MSG(void, d, "setObject:forKey:", s, cx_str("start"));
+        MSG(void, d, "setObject:forKey:", u, cx_str("duration"));
+    }
+    if (s) objc_release(s);
+    if (u) objc_release(u);
+    return d;
+}

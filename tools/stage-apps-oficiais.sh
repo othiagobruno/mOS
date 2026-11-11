@@ -129,7 +129,14 @@ PY
 APP=$(unzip_app "$DL/Claude.zip" claude)
 stage_one "$APP"
 APP=$(unzip_app "$DL/Cursor.zip" cursor)
-stage_one "$APP" --cursor-extras
+# git: o do build (tools/build-git.sh, /usr/bin/git Mach-O). Sem ele, o bottle Intel do Homebrew (sha256 do
+# manifesto do ghcr.io conferido pelo fetch-bottles.sh) com pcre2 e gettext.
+if [ "$(head -c 4 "$MOS/usr/bin/git" 2>/dev/null | od -An -tx1 | tr -d ' \n')" = cffaedfe ]; then
+    stage_one "$APP" --cursor-extras
+else
+    bash "$ROOT/tools/fetch-bottles.sh" git gettext -d "$DL/brew"
+    stage_one "$APP" --cursor-extras --bottles "$DL/brew"
+fi
 extrair_dmg "$DL/Grok.dmg" grok
 APP=$(find "$DL/x-grok" -name 'Grok Bot.app' -type d | head -1)
 if [ -z "$APP" ]; then echo "stage-apps: Grok Bot.app não saiu do dmg" >&2; exit 1; fi

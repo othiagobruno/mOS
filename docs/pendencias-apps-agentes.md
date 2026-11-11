@@ -40,16 +40,31 @@ Meta: os seis apps 100% funcionais no mOS. Este arquivo lista só o que falta. O
 
 ## Cursor
 
-- Git na imagem: o `git` do Homebrew tem 619 MiB e ainda não está no stage.
-- `/usr/bin/security` não existe.
+- Git na imagem: o `tools/build.sh` compila o git do fonte (`tools/build-git.sh`, `/usr/bin/git`). Sem ele, o
+  `--cursor-extras` usa o bottle: `tools/stage-git.sh` põe o git 2.55.0 do Homebrew (bottle Intel) em `/usr/local/opt/git`, com
+  `/usr/bin/git` e `/usr/local/bin/git` como link do mOS. Os ~150 hardlinks de `libexec/git-core` viram `#mOS-link:`:
+  a raiz fica com 27 MiB, não 619 MiB. Entram `libpcre2-8.0.dylib` e `libintl.8.dylib` (`@@HOMEBREW_PREFIX@@`).
+  `tools/stage-apps-oficiais.sh` baixa `git gettext` (`fetch-bottles.sh`) e passa `--bottles` ao Cursor. Teste de
+  host: `tools/test-git-image.sh` (version, init, add, commit, log, status, diff, branch no machotest).
+- `/usr/bin/security`: Mach-O de `userland/cli-macos/security.c` (o `tools/build.sh` compila). `find-certificate -a -p`
+  devolve as 118 raízes da Mozilla do kernel (o `@vscode/proxy-agent` do Cursor e do VS Code chama exatamente isso);
+  `find/add/delete-generic-password` usam o Keychain do mOS. Teste de host: `tools/test-security-cli.sh`.
+- Falta provar na VM: o Cursor chamando os dois (painel Source Control com um repositório, proxy-agent sem erro no log).
 - O login (usuário).
 
 ## Antigravity
 
-- **O OAuth do Google volta com `invalid_scope` ("invalid=[http]").** O escopo chega corrompido ao Google. O pedido não
-  passa pelo `ls_open_c`: o diagnóstico `/Sistema/Biblioteca/abrir-url-completo` não registrou nada. O 302 aparece no
-  cliente HTTP do kernel (`net/http.c`). Falta achar quem abre a URL (o `language_server` em Go, o `/usr/bin/open` ou
-  outro caminho do Electron) e onde o `scope` se perde.
+- **OAuth do Google com `invalid_scope` ("invalid=[http]"): causa achada e corrigida no host (10 nov.).** O pedido
+  é montado pelo `language_server` (Go; os escopos `cloud-platform`, `userinfo.email`, `userinfo.profile`, `cclog` e
+  `experimentsandconfigs` estão nas strings do binário 2.29.0) e tem ~650 bytes. O cliente HTTP do kernel
+  (`kernel/net/http.c`, usado pelo motor próprio do Horizonte) guardava a URL em 512 bytes, e o `Location` do 302
+  também: o `scope` chegava cortado no meio de `https%3A…`, e o último token virava `http`/`https`. O Launch Services e
+  o Horizonte cortavam em 1 KiB, e o 302 do Google (com `continue=` codificado duas vezes) passa disso. Agora a URL vai
+  até `MOS_URL_MAX` (8 KiB) em toda a cadeia (`openurl.c` → `SYS_LS` → `defer` → Horizonte → `http.c`), no heap, e
+  acima disso o pedido falha com "URL longa demais" em vez de sair cortado. Teste: `tools/http_url_longa_host.c` (no
+  `tools/build.sh`). Falta na VM: clicar "Continue with Google" e ver a tela de conta do Google (o login é do usuário).
+  O diagnóstico `abrir-url-completo` não ter registrado nada continua sem explicação; vale olhar o log do kernel
+  (`http: 302 → …`, agora com o tamanho) na próxima rodada.
 - O `cable_ble_scanner` (Swift, opcional) não liga.
 
 ## Grok Bot

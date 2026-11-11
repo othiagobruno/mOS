@@ -15,6 +15,9 @@
 #include "ax_token.h"
 #include "axproto.h"
 #include "axtransport.h"
+#include "axremote.h"
+#include "sys.h"
+#include "../../kernel/include/compat_gui.h"
 
 int cx_tcc_preflight(const char *service);
 int getpid(void);
@@ -35,6 +38,10 @@ int snprintf(char *b, size_t n, const char *fmt, ...);
 void *memset(void *d, int c, size_t n);
 void cx_ax_bind_xpc(void);
 int cx_ax_wire_status(int rc);
+void *realloc(void *p, size_t n);
+void *malloc(size_t n);
+void free(void *p);
+id cx_ax_application(int pid);
 
 enum {
     AXK_APP = 1,
@@ -76,8 +83,11 @@ static void ax_boot(void) {
     cx_ax_bind_xpc();
 }
 
-static struct { id obj; int kind, id; } g_tab[96];
-static int g_ntab, g_seq = 1000;
+/* objeto <-> id do elemento (o id viaja no ax_msg; cx_ax_find volta ao objeto). Cresce sob demanda: com o teto
+ * fixo de 96, o 97º elemento ganhava um id que não era guardado e o outro processo recebia -25202 nele. */
+typedef struct { id obj; int kind, id; } ax_tab_t;
+static ax_tab_t *g_tab;
+static int g_ntab, g_ctab, g_seq = 1000;
 
 static int id_for(id obj, int kind) {
     int idn = 0;
@@ -85,7 +95,14 @@ static int id_for(id obj, int kind) {
     for (int i = 0; i < g_ntab; i++) if (g_tab[i].obj == obj) return g_tab[i].id;
     if (kind == AXK_WIN) idn = cx_appkit_window_number(obj);
     if (idn <= 0) idn = g_seq++;
-    if (g_ntab < 96) { g_tab[g_ntab].obj = obj; g_tab[g_ntab].kind = kind; g_tab[g_ntab].id = idn; g_ntab++; }
+    if (g_ntab == g_ctab) {
+        int nc = g_ctab ? g_ctab * 2 : 256;
+        ax_tab_t *nt = realloc(g_tab, (size_t)nc * sizeof *nt);
+        if (!nt) return idn;
+        g_tab = nt;
+        g_ctab = nc;
+    }
+    g_tab[g_ntab].obj = obj; g_tab[g_ntab].kind = kind; g_tab[g_ntab].id = idn; g_ntab++;
     return idn;
 }
 
@@ -111,6 +128,13 @@ static axel_t *ax_of(id e) {
     ax_boot();
     if (!e || e->isa != &ax_c) return 0;
     return (axel_t *)e;
+}
+
+int cx_ax_is_element(id e) { return ax_of(e) != 0; }
+
+static int front_pid(void) {
+    long pid = (long)SYS4(GUI_DEVICE, DEV_FRONT_PID, 0, 0, 0);
+    return pid > 0 ? (int)pid : 0;
 }
 
 static int ax_gate(void) {
@@ -289,7 +313,7 @@ static int remote_roundtrip(axel_t *e, int op, const char *name, const char *str
     if (!out) return AX_CANT;
     memset(out, 0, sizeof *out);
     /* ready falho, ou call 60/61, continuam -25204. */
-    if (!e || !cx_ax_transport_ready() || !t || !t->call) return AX_CANT;
+    if (!e || (!(t && t->call) && !cx_ax_transport_fallback())) return AX_CANT;
     memset(&req, 0, sizeof req);
     req.op = op;
     req.pid = e->pid;
@@ -303,12 +327,10 @@ static int remote_roundtrip(axel_t *e, int op, const char *name, const char *str
     if (str) {
         snprintf(req.str, sizeof req.str, "%s", str);
         req.pay = AX_PAY_STR;
-    } else if (name && !strcmp(name, "AXRangeForPosition")) req.pay = AX_PAY_RANGE;
-    n = ax_msg_encode(&req, buf, (int)sizeof buf);
-    if (n < 0) return AX_CANT;
-    rc = t->call(e->pid, buf, n, rbuf, (int)sizeof rbuf, &rn);
-    if (cx_ax_wire_status(rc)) return AX_CANT;
-    if (ax_msg_decode(rbuf, rn, out) != 0) return AX_CANT;
+    } else if (op == AX_OP_AT || (name && !strcmp(name, "AXRangeForPosition"))) req.pay = AX_PAY_RANGE;   /* px, py só viajam com RANGE */
+    (void)buf; (void)rbuf; (void)n; (void)rn; (void)rc;
+    /* o fio vinculado, e o AF_UNIX de reserva se o outro lado só tiver ele (axremote.c) */
+    if (cx_ax_call(e->pid, &req, out) != 0) return AX_CANT;
     return out->status;
 }
 
@@ -331,6 +353,8 @@ static id msg_value(axel_t *e, const ax_msg *m, const char *attr) {
         long rg[2] = {m->loc, m->len};
         return AXValueCreate(4, rg);
     }
+    if (m->pay == AX_PAY_KIDS && m->loc == AX_SINGLE)      /* um elemento só (AXFocusedUIElement, AXParent...) */
+        return m->nkids > 0 ? ax_handle(m->kid_kind[0], e->pid, m->kid_id[0]) : 0;
     if (m->pay == AX_PAY_KIDS) {
         id tmp[AX_KIDS_MAX];
         int n = m->nkids;
@@ -344,10 +368,45 @@ static id msg_value(axel_t *e, const ax_msg *m, const char *attr) {
     return 0;
 }
 
+static id kids_array(axel_t *e, const int *kinds, const int *ids, int n) {
+    id *tmp = n ? (id *)malloc((size_t)n * sizeof(id)) : 0;
+    int got = 0;
+    for (int i = 0; tmp && i < n; i++) if ((tmp[got] = ax_handle(kinds[i], e->pid, ids[i]))) got++;
+    id arr = CFArrayCreate(0, tmp, got, 0);
+    for (int i = 0; i < got; i++) objc_release(tmp[i]);
+    free(tmp);
+    return arr;
+}
 static int remote_copy(axel_t *e, const char *name, id *v) {
     ax_msg out;
     int st = remote_roundtrip(e, AX_OP_COPY, name, 0, 0, 0, 0, 0, &out);
     if (st) return st;
+    /* lista ou texto maiores que um ax_msg: junta as páginas (axremote.h) */
+    if (out.pay == AX_PAY_KIDS && out.loc != AX_SINGLE && out.len > out.nkids) {
+        ax_msg req;
+        int *kinds = malloc(2 * AX_PAGE_KIDS_MAX * sizeof(int)), *ids = kinds ? kinds + AX_PAGE_KIDS_MAX : 0;
+        int n = 0;
+        if (!kinds) return AX_CANT;
+        memset(&req, 0, sizeof req);
+        req.op = AX_OP_COPY; req.pid = e->pid; req.kind = e->kind; req.id = e->elem_id;
+        snprintf(req.name, sizeof req.name, "%s", name);
+        st = cx_ax_call_kids(e->pid, &req, kinds, ids, AX_PAGE_KIDS_MAX, &n, 0);
+        if (!st && v) *v = kids_array(e, kinds, ids, n);
+        free(kinds);
+        return st;
+    }
+    if (out.pay == AX_PAY_STR && out.len > (int)strlen(out.str)) {
+        ax_msg req;
+        char *buf = malloc(AX_PAGE_STR_MAX);
+        if (!buf) return AX_CANT;
+        memset(&req, 0, sizeof req);
+        req.op = AX_OP_COPY; req.pid = e->pid; req.kind = e->kind; req.id = e->elem_id;
+        snprintf(req.name, sizeof req.name, "%s", name);
+        st = cx_ax_call_str(e->pid, &req, buf, AX_PAGE_STR_MAX, 0);
+        if (!st && v) *v = cx_str(buf);
+        free(buf);
+        return st;
+    }
     if (v) *v = msg_value(e, &out, name);
     return AX_OK;
 }
@@ -364,6 +423,41 @@ int cx_ax_copy(id elem, id attr, id *v) {
             (!strcmp(name, "AXRole") || !strcmp(name, "AXRoleDescription") || !strcmp(name, "AXTitle") ||
              !strcmp(name, "AXPosition") || !strcmp(name, "AXSize"))))
         return remote_copy(e, name, v);
+    /* system-wide: o app da frente e o foco dele, mesmo que seja outro processo (o caso do computer use) */
+    if (e->kind == AXK_SYS && !strcmp(name, "AXFocusedApplication")) {
+        int fp = front_pid();
+        if (!fp) return AX_NOVAL;
+        if (v) *v = cx_ax_application(fp);
+        return AX_OK;
+    }
+    if (e->kind == AXK_SYS && !strcmp(name, "AXFocusedUIElement")) {
+        int fp = front_pid();
+        if (fp && fp != getpid()) {
+            axel_t *app = (axel_t *)cx_ax_application(fp);
+            int st = app ? remote_copy(app, name, v) : AX_CANT;
+            if (app) objc_release((id)app);
+            return st;
+        }
+    }
+    if (e->kind == AXK_APP && !strcmp(name, "AXWindows")) { if (v) *v = children_of(e); return AX_OK; }
+    if (e->kind == AXK_APP && (!strcmp(name, "AXMainWindow") || !strcmp(name, "AXFocusedWindow"))) {
+        id app = nsapp();
+        id w = app ? MSG0(id, app, name[2] == 'M' ? "mainWindow" : "keyWindow") : 0;
+        if (!w) return AX_NOVAL;
+        if (v) *v = wrap_obj(w);
+        return AX_OK;
+    }
+    if (!strcmp(name, "AXParent")) {
+        id p = 0;
+        if (e->kind == AXK_WIN) { if (v) *v = cx_ax_application(getpid()); return AX_OK; }
+        if (e->kind != AXK_VIEW || !e->obj) return AX_NOVAL;
+        id w = MSG(BOOL, e->obj, "respondsToSelector:", sel_registerName("window")) ? MSG0(id, e->obj, "window") : 0;
+        if (w && MSG0(id, w, "contentView") == e->obj) p = w;
+        else if (MSG(BOOL, e->obj, "respondsToSelector:", sel_registerName("superview"))) p = MSG0(id, e->obj, "superview");
+        if (!p) return AX_NOVAL;
+        if (v) *v = wrap_obj(p);
+        return AX_OK;
+    }
     if (!strcmp(name, "AXRole")) { if (v) *v = cx_str(role_of(e)); return AX_OK; }
     if (!strcmp(name, "AXRoleDescription")) { if (v) *v = cx_str(role_desc(role_of(e))); return AX_OK; }
     if (!strcmp(name, "AXTitle")) {
@@ -458,11 +552,18 @@ int cx_ax_names(id elem, id *names) {
     int g = ax_gate();
     if (g) return g;
     if (!ax_of(elem)) return AX_BAD_ELEM;
-    const char *list[] = {"AXRole", "AXRoleDescription", "AXTitle", "AXValue", "AXPosition", "AXSize", "AXChildren", "AXFocused", "AXWindow"};
-    id tmp[9];
-    for (int i = 0; i < 9; i++) tmp[i] = cx_str(list[i]);
-    if (names) *names = CFArrayCreate(0, tmp, 9, 0);
-    for (int i = 0; i < 9; i++) objc_release(tmp[i]);
+    axel_t *e = ax_of(elem);
+    static const char *base[] = {"AXRole", "AXRoleDescription", "AXTitle", "AXValue", "AXPosition", "AXSize", "AXChildren",
+                                 "AXFocused", "AXWindow", "AXParent", "AXEnabled"};
+    static const char *app[] = {"AXRole", "AXRoleDescription", "AXTitle", "AXChildren", "AXWindows", "AXMainWindow",
+                                "AXFocusedWindow", "AXFocusedUIElement"};
+    static const char *sys[] = {"AXRole", "AXRoleDescription", "AXChildren", "AXFocusedApplication", "AXFocusedUIElement"};
+    const char **list = e->kind == AXK_APP ? app : e->kind == AXK_SYS ? sys : base;
+    int n = e->kind == AXK_APP ? 8 : e->kind == AXK_SYS ? 5 : 11;
+    id tmp[11];
+    for (int i = 0; i < n; i++) tmp[i] = cx_str(list[i]);
+    if (names) *names = CFArrayCreate(0, tmp, n, 0);
+    for (int i = 0; i < n; i++) objc_release(tmp[i]);
     return AX_OK;
 }
 
@@ -585,7 +686,12 @@ int cx_ax_settable(id elem, id attr, unsigned char *settable) {
     if (g) return g;
     axel_t *e = ax_of(elem);
     if (!e || !attr) return e ? AX_BADARG : AX_BAD_ELEM;
-    if (ax_remote(e)) return AX_CANT;
+    if (ax_remote(e)) {
+        ax_msg out;
+        int st = remote_roundtrip(e, AX_OP_SETTABLE, cx_cstr(attr), 0, 0, 0, 0, 0, &out);
+        if (!st && settable) *settable = (unsigned char)(out.pay == AX_PAY_I32 && out.i);
+        return st;
+    }
     const char *name = cx_cstr(attr);
     int on = 0;
     if (e->kind == AXK_VIEW && e->obj && !strcmp(name, "AXValue")) {
@@ -606,7 +712,16 @@ int cx_ax_window(id elem, unsigned *wid) {
         if (wid) *wid = e->wid;
         return AX_OK;
     }
-    if (ax_remote(e)) return AX_CANT;
+    if (ax_remote(e)) {
+        /* o id de uma janela é o número dela (id_for), então AXWindow do outro lado já diz o número */
+        ax_msg out;
+        if (e->kind == AXK_WIN) { if (wid) *wid = (unsigned)e->elem_id; return AX_OK; }
+        int st = remote_roundtrip(e, AX_OP_COPY, "AXWindow", 0, 0, 0, 0, 0, &out);
+        if (st) return st;
+        if (out.pay != AX_PAY_KIDS || out.nkids < 1) return AX_NOVAL;
+        if (wid) *wid = (unsigned)out.kid_id[0];
+        return AX_OK;
+    }
     id w = 0;
     if (e->kind == AXK_WIN) w = e->obj;
     else if (e->kind == AXK_VIEW && e->obj) w = MSG0(id, e->obj, "window");
@@ -644,11 +759,34 @@ id _AXUIElementCreateWithRemoteToken(id data) {
     return e;
 }
 
+static int win_at(int i, ax_win_t *o) {
+    gui_cgwindow_t w;
+    if (!cx_cg_window_at(i, &w)) return 0;
+    o->number = w.number; o->pid = w.pid; o->layer = w.layer; o->onscreen = w.onscreen;
+    o->x = w.x; o->y = w.y; o->w = w.w; o->h = w.h;
+    return 1;
+}
 int cx_ax_at(id app, float x, float y, id *out) {
-    (void)app;
     if (out) *out = 0;
     int g = ax_gate();
     if (g) return g;
+    /* system-wide ou app de outro processo: a janela sob o ponto (lista do compositor) diz quem responde */
+    axel_t *ae = ax_of(app);
+    int owner = 0;
+    if (ae && (ae->kind == AXK_SYS || ax_remote(ae))) {
+        unsigned wid = 0;
+        if (!ax_window_owner_at(win_at, (int)x, (int)y, &owner, &wid)) owner = 0;
+        if (ae->kind != AXK_SYS && owner != ae->pid) return AX_NOVAL;   /* o ponto não é deste app */
+    }
+    if (owner && owner != getpid()) {
+        axel_t *target = (axel_t *)cx_ax_application(owner);
+        ax_msg rep;
+        int st = target ? remote_roundtrip(target, AX_OP_AT, "", 0, 0, 0, (int)x, (int)y, &rep) : AX_CANT;
+        if (!st && out) *out = msg_value(target, &rep, 0);
+        if (target) objc_release((id)target);
+        if (!st && out && !*out) st = AX_NOVAL;
+        return st;
+    }
     id wins = 0;
     id ns = nsapp();
     if (ns) wins = MSG0(id, ns, "orderedWindows");

@@ -79,7 +79,13 @@ static id cls(const char *n) { return (id)cx_class_named(n); }
 static long ls_call(int op, mos_ls_req_t *rq) { return cx_syscall(SYS_LS, op, (long)rq, 0, 0, 0); }
 
 static mos_ls_req_t *rq_new(const char *k, const char *k2, const char *k3) {
-    mos_ls_req_t *rq = calloc(1, sizeof *rq);
+    mos_ls_req_t *rq;
+    /* chave maior que o pedido: falha em vez de cortar (um scope cortado chega ao Google como invalid_scope) */
+    if ((k && strlen(k) >= sizeof rq->key) || (k2 && strlen(k2) >= sizeof rq->key2) || (k3 && strlen(k3) >= sizeof rq->key3)) {
+        cx_fdprintf(2, "[abrir-url] pedido recusado: %u bytes passam do limite do Launch Services\n", (unsigned)(k ? strlen(k) : 0));
+        return 0;
+    }
+    rq = calloc(1, sizeof *rq);
     if (!rq) return 0;
     if (k) snprintf(rq->key, sizeof rq->key, "%s", k);
     if (k2) snprintf(rq->key2, sizeof rq->key2, "%s", k2);

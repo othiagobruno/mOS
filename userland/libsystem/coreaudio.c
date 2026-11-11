@@ -1196,6 +1196,8 @@ typedef void (*aqout_blockfn)(void *blk, void *q, aqbuf_t *b);
 typedef void (*aqprop_fn)(void *ud, void *q, u32 id);
 #define AQ_MAXBUF 64
 #define AQ_MAGIC 0x41515545u
+#define AQ_TAP_MAX_FRAMES 4096
+struct aqtap;
 typedef struct aq {
     u32 magic;
     asbd_t fmt;
@@ -1219,6 +1221,7 @@ typedef struct aq {
     int spawning;
     int free_on_exit;
     unsigned long ithread;
+    struct aqtap *tap;           /* AudioQueueProcessingTapNew */
 } aq_t;
 
 static aq_t *aq_of(void *q) { aq_t *a = q; return a && a->magic == AQ_MAGIC && !a->disposed ? a : 0; }
@@ -1407,11 +1410,88 @@ OSStatus AudioQueueFreeBuffer(void *q_, aqbuf_t *b) {
         }
     return -66687;   /* kAudioQueueErr_InvalidBuffer */
 }
+/* ---- AudioQueueProcessingTap: a callback do app processa cada buffer de saída antes de ele
+ * entrar na fila. Ela pede o áudio original com AudioQueueProcessingTapGetSourceAudio (o buffer
+ * que está sendo enfileirado) e devolve o resultado em ioData, que volta para o buffer. */
+typedef void (*aqtap_fn)(void *client, void *tap, u32 frames, void *ts, u32 *flags, u32 *out_frames, ablist_t *io);
+typedef struct aqtap { u32 magic; aq_t *q; aqtap_fn cb; void *client; u32 flags; aqbuf_t *cur; } aqtap_t;
+#define AQTAP_MAGIC 0x41515450u
+static void aq_tap_run(aq_t *q, aqbuf_t *b) {
+    aqtap_t *t = q->tap;
+    u32 bpf = q->fmt.mBytesPerFrame ? q->fmt.mBytesPerFrame : 4;
+    u32 frames = b->mAudioDataByteSize / bpf, out = frames, fl = 0;
+    u8 *scratch;
+    ablist_t io;
+    if (!t || !t->cb || !frames) return;
+    scratch = malloc(b->mAudioDataByteSize);
+    if (!scratch) return;
+    memset(&io, 0, sizeof io);
+    io.mNumberBuffers = 1;
+    io.mBuffers[0].mNumberChannels = q->fmt.mChannelsPerFrame ? q->fmt.mChannelsPerFrame : 2;
+    io.mBuffers[0].mDataByteSize = b->mAudioDataByteSize;
+    io.mBuffers[0].mData = scratch;
+    t->cur = b;
+    t->cb(t->client, t, frames, 0, &fl, &out, &io);
+    t->cur = 0;
+    if (out > frames) out = frames;
+    if (io.mBuffers[0].mData && io.mBuffers[0].mDataByteSize) {
+        u32 n = out * bpf;
+        if (n > io.mBuffers[0].mDataByteSize) n = io.mBuffers[0].mDataByteSize;
+        memcpy(b->mAudioData, io.mBuffers[0].mData, n);
+        b->mAudioDataByteSize = n;
+    }
+    free(scratch);
+}
+OSStatus AudioQueueProcessingTapNew(void *q_, aqtap_fn cb, void *client, u32 flags, u32 *max_frames, asbd_t *fmt, void **out) {
+    aq_t *q = aq_of(q_);
+    aqtap_t *t;
+    if (out) *out = 0;
+    if (!q || !cb || !out) return -50;
+    if (q->tap) return -66678;                             /* kAudioQueueErr_InvalidTapContext: um tap por fila */
+    t = calloc(1, sizeof *t);
+    if (!t) return -108;
+    t->magic = AQTAP_MAGIC; t->q = q; t->cb = cb; t->client = client; t->flags = flags;
+    q->tap = t;
+    if (max_frames) *max_frames = AQ_TAP_MAX_FRAMES;
+    if (fmt) *fmt = q->fmt;
+    *out = t;
+    return 0;
+}
+OSStatus AudioQueueProcessingTapDispose(void *tap) {
+    aqtap_t *t = tap;
+    if (!t || t->magic != AQTAP_MAGIC) return -50;
+    if (t->q && t->q->tap == t) t->q->tap = 0;
+    t->magic = 0;
+    free(t);
+    return 0;
+}
+/* o áudio de origem é o do buffer sendo enfileirado; frames a mais saem em silêncio */
+OSStatus AudioQueueProcessingTapGetSourceAudio(void *tap, u32 frames, void *ts, u32 *flags, u32 *out_frames, ablist_t *io) {
+    aqtap_t *t = tap;
+    (void)ts;
+    if (flags) *flags = 0;
+    if (out_frames) *out_frames = 0;
+    if (!t || t->magic != AQTAP_MAGIC || !io || !t->cur) return -50;
+    u32 bpf = t->q->fmt.mBytesPerFrame ? t->q->fmt.mBytesPerFrame : 4;
+    u32 have = t->cur->mAudioDataByteSize / bpf, n = frames < have ? frames : have;
+    for (u32 i = 0; i < io->mNumberBuffers && i < 1; i++) {
+        u32 cap = io->mBuffers[i].mDataByteSize / bpf;
+        if (!io->mBuffers[i].mData) io->mBuffers[i].mData = t->cur->mAudioData, cap = have;
+        if (n > cap) n = cap;
+        if (io->mBuffers[i].mData != t->cur->mAudioData) memcpy(io->mBuffers[i].mData, t->cur->mAudioData, n * bpf);
+        if (cap > n) memset((u8 *)io->mBuffers[i].mData + n * bpf, 0, (cap - n) * bpf);
+        io->mBuffers[i].mDataByteSize = n * bpf;
+    }
+    if (out_frames) *out_frames = n;
+    return 0;
+}
+
 OSStatus AudioQueueEnqueueBuffer(void *q_, aqbuf_t *b, u32 npd, const aspd_t *pd) {
     (void)npd; (void)pd;
     aq_t *q = aq_of(q_);
     if (!q || !b) return -66687;
     if (b->mAudioDataByteSize > b->mAudioDataBytesCapacity) return -66682;
+    if (q->tap && !q->input) aq_tap_run(q, b);
     pthread_mutex_lock(q->lock);
     if (q->n >= AQ_MAXBUF) { pthread_mutex_unlock(q->lock); return -66679; }
     q->ring[(q->head + q->n) % AQ_MAXBUF] = b;
