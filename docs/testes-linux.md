@@ -143,6 +143,16 @@ Onde cada app chega (libSystem com os seletores de `tools/test-electron-m3.sh`):
 
 O conteúdo da janela, o terminal, as extensões e o login só se provam na VM, onde os Helpers sobem.
 
+## Semáforos Mach (contrato do XNU, comparado com o Darling)
+
+```bash
+bash tools/test-machsem.sh
+```
+
+Compila `userland/tests-machsem/main.c` como Mach-O x86_64 (`build/machsemteste`) e roda no `machotest`. O placar é `machsem: 41/41 ok`. Os valores esperados são os do `sync_sema.c` do XNU, que o Darling roda no darlingserver: `KERN_NOT_WAITING` = 48, `KERN_TERMINATED` = 37 para quem espera num semáforo destruído, `KERN_INVALID_VALUE` = 18 para nsec fora de [0, 1e9), `KERN_INVALID_NAME` = 15 e `KERN_INVALID_CAPABILITY` = 20 para nomes errados. O mesmo binário roda no Darling com `darling shell ./machsemteste`, e as linhas `ok` têm de sair iguais.
+
+O `~/.local/bin/zig` em symlink não acha `lib/libc/include/any-darwin-any` no `tools/build.sh`: use `MOS_ZIG` com o caminho real do binário.
+
 ## O que não rodou
 
 | Script | Motivo |

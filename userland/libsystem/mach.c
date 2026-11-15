@@ -367,73 +367,277 @@ kern_return_t host_kernel_version(mach_port_t host, char *ver) {
     return KERN_SUCCESS;
 }
 
-/* ---- semáforos Mach (contador + espera cooperativa; o mOS tem threads preemptivas).
- * semaphore_t é um nome de porta de 32 bits: SEM_BASE + índice numa tabela. */
+/* ---- semáforos Mach. semaphore_t é um nome de porta de 32 bits: SEM_BASE + índice numa tabela.
+ *
+ * Contrato (o do XNU, conferido com o Darling, que roda o sync_sema.c do XNU no darlingserver):
+ *   - count > 0 são créditos guardados; quem espera só existe com count == 0. signal sem ninguém esperando
+ *     guarda um crédito; signal_all e signal_thread sem ninguém esperando não guardam nada.
+ *   - a fila de espera é FIFO e cada signal acorda exatamente o primeiro da fila (não há corrida pelo crédito).
+ *   - destroy acorda toda a fila com KERN_TERMINATED; wait num semáforo já destruído também é KERN_TERMINATED.
+ *   - timeout {0,0} não bloqueia; nsec fora de [0, 1e9) é KERN_INVALID_VALUE.
+ *   - nome nulo ou desconhecido é KERN_INVALID_NAME; porta que existe mas não é semáforo é KERN_INVALID_CAPABILITY.
+ * Cada thread que espera põe na fila um nó que vive na própria pilha e dorme no futex do campo state. */
 #define SEM_BASE 0x20000u
 #define MAX_SEMS 1024
-typedef struct { volatile int count; int used; volatile int waiters; } cx_sem_t;
-/* futex do kernel (extra.c): quem espera dorme no contador em vez de girar com SYS_YIELD */
+#define KERN_RESOURCE_SHORTAGE   6
+#define KERN_INVALID_NAME        15
+#define KERN_INVALID_VALUE       18
+#define KERN_INVALID_CAPABILITY  20
+#define KERN_TERMINATED          37
+#define KERN_NOT_WAITING         48
+#define KERN_OPERATION_TIMED_OUT 49
+#define MIG_SEND_INVALID_DEST    0x10000003   /* MACH_SEND_INVALID_DEST: chamada MIG com a task nula */
+#define MIG_SEND_INVALID_RIGHT   0x10000007   /* MACH_SEND_INVALID_RIGHT: chamada MIG com um nome que não existe */
+#define SYNC_POLICY_MAX          7
+
+enum { SW_WAITING = 0, SW_AWAKENED = 1, SW_TERMINATED = 2 };
+typedef struct sem_waiter { struct sem_waiter *next; u32 tid; volatile int state; } sem_waiter_t;
+typedef struct { volatile int lock; volatile int used; int count; sem_waiter_t *head, *tail; } cx_sem_t;
+
+/* futex do kernel (extra.c) */
 int cx_futex_wait(volatile int *w, int expected, long ms);
 int cx_futex_wake(volatile int *w, int n);
 static cx_sem_t sems[MAX_SEMS];
-static cx_sem_t *sem_of(mach_port_t name) {
+
+static void sem_lock(cx_sem_t *s) {
+    while (__sync_lock_test_and_set(&s->lock, 1))
+        while (s->lock) {
+#if defined(__aarch64__)
+            __asm__ volatile("yield");
+#else
+            __builtin_ia32_pause();
+#endif
+        }
+}
+static void sem_unlock(cx_sem_t *s) { __sync_lock_release(&s->lock); }
+
+/* nome -> semáforo vivo; *kr recebe o erro do XNU quando não é */
+static cx_sem_t *sem_lookup(mach_port_t name, kern_return_t *kr) {
     u32 i = name - SEM_BASE;
-    return name >= SEM_BASE && i < MAX_SEMS && sems[i].used ? &sems[i] : 0;
+    if (name >= SEM_BASE && i < MAX_SEMS && sems[i].used) return &sems[i];
+    if (name == 0 || name == 0xFFFFFFFFu || (name >= SEM_BASE && i < MAX_SEMS)) { *kr = KERN_INVALID_NAME; return 0; }
+    u32 type = 0;
+    *kr = (name == TASK_PORT || name == HOST_PORT || (name >= THREAD_BASE && name < SEM_BASE) ||
+           mach_port_type(TASK_PORT, name, &type) == KERN_SUCCESS) ? KERN_INVALID_CAPABILITY : KERN_INVALID_NAME;
+    return 0;
 }
-kern_return_t semaphore_create(mach_port_t task, mach_port_t *sem, int policy, int value) {
-    (void)task; (void)policy;
-    for (u32 i = 0; i < MAX_SEMS; i++)
-        if (!__sync_lock_test_and_set(&sems[i].used, 1)) { sems[i].count = value; sems[i].waiters = 0; *sem = SEM_BASE + i; return KERN_SUCCESS; }
-    return KERN_FAILURE;
+
+static void sem_push(cx_sem_t *s, sem_waiter_t *w) {
+    w->next = 0;
+    if (s->tail) s->tail->next = w; else s->head = w;
+    s->tail = w;
 }
-kern_return_t semaphore_destroy(mach_port_t task, mach_port_t sem) { (void)task; cx_sem_t *s = sem_of(sem); if (s) s->used = 0; return KERN_SUCCESS; }
-kern_return_t semaphore_signal(mach_port_t sem) {
-    cx_sem_t *s = sem_of(sem);
-    if (!s) return KERN_INVALID_ARGUMENT;
-    __sync_fetch_and_add(&s->count, 1);
-    if (s->waiters) cx_futex_wake(&s->count, 1);
+/* tira w da fila; 1 se estava nela */
+static int sem_unlink_waiter(cx_sem_t *s, sem_waiter_t *w) {
+    sem_waiter_t *prev = 0;
+    for (sem_waiter_t *it = s->head; it; prev = it, it = it->next) {
+        if (it != w) continue;
+        if (prev) prev->next = it->next; else s->head = it->next;
+        if (s->tail == it) s->tail = prev;
+        return 1;
+    }
+    return 0;
+}
+/* acorda um nó já fora da fila. Depois do store o nó pode sumir da pilha do dono: o wake só usa o endereço. */
+static void sem_wake(sem_waiter_t *w, int state) {
+    volatile int *addr = &w->state;
+    __atomic_store_n(addr, state, __ATOMIC_RELEASE);
+    cx_futex_wake(addr, 1);
+}
+
+/* sinaliza com o semáforo travado; destrava antes de voltar. tid != 0: só aquela thread.
+ * all: a fila inteira. prepost: guarda crédito se ninguém espera. */
+static kern_return_t sem_signal_locked(cx_sem_t *s, u32 tid, int all, int prepost) {
+    if (!s->used) { sem_unlock(s); return KERN_TERMINATED; }
+    if (tid) {
+        sem_waiter_t *w = s->head;
+        while (w && w->tid != tid) w = w->next;
+        if (!w) { sem_unlock(s); return KERN_NOT_WAITING; }
+        sem_unlink_waiter(s, w);
+        sem_unlock(s);
+        sem_wake(w, SW_AWAKENED);
+        return KERN_SUCCESS;
+    }
+    sem_waiter_t *w = s->head;
+    if (!w) {
+        if (prepost) s->count++;
+        sem_unlock(s);
+        return all ? KERN_SUCCESS : KERN_NOT_WAITING;
+    }
+    if (all) {
+        s->head = s->tail = 0;
+        sem_unlock(s);
+        while (w) { sem_waiter_t *n = w->next; sem_wake(w, SW_AWAKENED); w = n; }
+        return KERN_SUCCESS;
+    }
+    s->head = w->next;
+    if (!s->head) s->tail = 0;
+    sem_unlock(s);
+    sem_wake(w, SW_AWAKENED);
     return KERN_SUCCESS;
 }
-/* como no XNU: acorda quem está esperando agora e não deixa crédito para quem vier depois */
-kern_return_t semaphore_signal_all(mach_port_t sem) {
-    cx_sem_t *s = sem_of(sem);
-    if (!s) return KERN_INVALID_ARGUMENT;
-    int w = s->waiters;
-    if (w > 0) { __sync_fetch_and_add(&s->count, w); cx_futex_wake(&s->count, 0x7FFFFFFF); }
-    return KERN_SUCCESS;
-}
-static int sem_try(cx_sem_t *s) {
-    int c = s->count;
-    return c > 0 && __sync_bool_compare_and_swap(&s->count, c, c - 1);
-}
-/* espera até conseguir uma unidade; ms < 0 = sem prazo. 0 = conseguiu, 49 = KERN_OPERATION_TIMED_OUT */
-static kern_return_t sem_wait_ms(cx_sem_t *s, long ms) {
+
+/* ms: -1 sem prazo, 0 não bloqueia. sig: semáforo a sinalizar depois de entrar na fila (wait_signal), ou 0. */
+static kern_return_t sem_wait_full(cx_sem_t *s, cx_sem_t *sig, long ms) {
+    sem_waiter_t me = {0, (u32)SYS0(SYS_GETTID), SW_WAITING};
+    kern_return_t kr;
+    int queued = 0;
+    sem_lock(s);
+    if (!s->used) kr = KERN_TERMINATED;
+    else if (s->count > 0) { s->count--; kr = KERN_SUCCESS; }
+    else if (ms == 0) kr = KERN_OPERATION_TIMED_OUT;
+    else { sem_push(s, &me); queued = 1; kr = KERN_SUCCESS; }
+    sem_unlock(s);
+
+    if (sig) {
+        sem_lock(sig);
+        if (sem_signal_locked(sig, 0, 0, 1) == KERN_TERMINATED && queued) {
+            /* o semáforo que íamos sinalizar morreu: sai da espera; se já fomos acordados, vale o acordar */
+            sem_lock(s);
+            int still = sem_unlink_waiter(s, &me);
+            sem_unlock(s);
+            if (still) return KERN_TERMINATED;
+            queued = 0;
+            while (__atomic_load_n(&me.state, __ATOMIC_ACQUIRE) == SW_WAITING) cx_futex_wait(&me.state, SW_WAITING, -1);
+            return me.state == SW_AWAKENED ? KERN_SUCCESS : KERN_TERMINATED;
+        }
+    }
+    if (!queued) return kr;
+
     u64 end = ms < 0 ? 0 : (u64)SYS0(SYS_TIME) + (u64)ms;
     for (;;) {
-        if (sem_try(s)) return KERN_SUCCESS;
+        int st = __atomic_load_n(&me.state, __ATOMIC_ACQUIRE);
+        if (st != SW_WAITING) return st == SW_AWAKENED ? KERN_SUCCESS : KERN_TERMINATED;
         long left = -1;
-        if (ms >= 0) {
+        if (ms > 0) {
             u64 now = (u64)SYS0(SYS_TIME);
-            if (now >= end) return 49;
+            if (now >= end) {
+                sem_lock(s);
+                int still = sem_unlink_waiter(s, &me);
+                sem_unlock(s);
+                if (still) return KERN_OPERATION_TIMED_OUT;
+                continue;   /* acordaram a gente junto do prazo: o state já vai mudar */
+            }
             left = (long)(end - now);
         }
-        __sync_fetch_and_add(&s->waiters, 1);
-        int c = s->count;
-        if (c <= 0) cx_futex_wait(&s->count, c, left);
-        __sync_fetch_and_sub(&s->waiters, 1);
+        cx_futex_wait(&me.state, SW_WAITING, left);
     }
 }
+
+/* mach_timespec_t -> ms (arredonda para cima: 1 ns de prazo não vira "não bloqueia"); -1 se inválido */
+static long sem_ts_ms(u32 sec, int nsec) {
+    if (nsec < 0 || nsec >= 1000000000) return -1;
+    return (long)sec * 1000 + (nsec + 999999) / 1000000;
+}
+
+kern_return_t semaphore_create(mach_port_t task, mach_port_t *sem, int policy, int value) {
+    if (task == 0) return MIG_SEND_INVALID_DEST;
+    if (!sem) return KERN_INVALID_ARGUMENT;
+    *sem = 0;
+    if (value < 0 || policy < 0 || policy > SYNC_POLICY_MAX) return KERN_INVALID_ARGUMENT;
+    for (u32 i = 0; i < MAX_SEMS; i++) {
+        cx_sem_t *s = &sems[i];
+        if (s->used) continue;
+        sem_lock(s);
+        if (!s->used) {
+            s->count = value; s->head = s->tail = 0; s->used = 1;
+            sem_unlock(s);
+            *sem = SEM_BASE + i;
+            return KERN_SUCCESS;
+        }
+        sem_unlock(s);
+    }
+    return KERN_RESOURCE_SHORTAGE;
+}
+kern_return_t semaphore_destroy(mach_port_t task, mach_port_t sem) {
+    if (task == 0) return MIG_SEND_INVALID_DEST;
+    if (sem == 0) return KERN_INVALID_ARGUMENT;
+    kern_return_t kr;
+    cx_sem_t *s = sem_lookup(sem, &kr);
+    if (!s) return kr == KERN_INVALID_NAME ? MIG_SEND_INVALID_RIGHT : KERN_INVALID_ARGUMENT;
+    sem_lock(s);
+    if (!s->used) { sem_unlock(s); return MIG_SEND_INVALID_RIGHT; }
+    sem_waiter_t *w = s->head;
+    s->head = s->tail = 0;
+    s->count = 0;
+    s->used = 0;
+    sem_unlock(s);
+    while (w) { sem_waiter_t *n = w->next; sem_wake(w, SW_TERMINATED); w = n; }
+    return KERN_SUCCESS;
+}
+
+kern_return_t semaphore_signal(mach_port_t sem) {
+    kern_return_t kr;
+    cx_sem_t *s = sem_lookup(sem, &kr);
+    if (!s) return kr;
+    sem_lock(s);
+    kr = sem_signal_locked(s, 0, 0, 1);
+    return kr == KERN_NOT_WAITING ? KERN_SUCCESS : kr;
+}
+kern_return_t semaphore_signal_all(mach_port_t sem) {
+    kern_return_t kr;
+    cx_sem_t *s = sem_lookup(sem, &kr);
+    if (!s) return kr;
+    sem_lock(s);
+    return sem_signal_locked(s, 0, 1, 0);
+}
+/* thread == MACH_PORT_NULL: acorda o primeiro da fila, sem guardar crédito. KERN_NOT_WAITING volta como está. */
+kern_return_t semaphore_signal_thread(mach_port_t sem, mach_port_t thread) {
+    u32 tid = 0;
+    if (thread) {
+        if (thread < THREAD_BASE || thread >= SEM_BASE) return KERN_INVALID_ARGUMENT;
+        tid = thread - THREAD_BASE;
+    }
+    kern_return_t kr;
+    cx_sem_t *s = sem_lookup(sem, &kr);
+    if (!s) return kr;
+    sem_lock(s);
+    return sem_signal_locked(s, tid, 0, 0);
+}
 kern_return_t semaphore_wait(mach_port_t sem) {
-    cx_sem_t *s = sem_of(sem);
-    if (!s) return KERN_INVALID_ARGUMENT;
-    return sem_wait_ms(s, -1);
+    kern_return_t kr;
+    cx_sem_t *s = sem_lookup(sem, &kr);
+    return s ? sem_wait_full(s, 0, -1) : kr;
+}
+static kern_return_t sem_timedwait_parts(mach_port_t sem, u32 sec, int nsec) {
+    long ms = sem_ts_ms(sec, nsec);
+    if (ms < 0) return KERN_INVALID_VALUE;
+    kern_return_t kr;
+    cx_sem_t *s = sem_lookup(sem, &kr);
+    return s ? sem_wait_full(s, 0, ms) : kr;
 }
 /* mach_timespec_t {unsigned sec; int nsec} passado por valor (cabe em um registrador) */
 kern_return_t semaphore_timedwait(mach_port_t sem, u64 ts) {
-    cx_sem_t *s = sem_of(sem);
-    if (!s) return KERN_INVALID_ARGUMENT;
-    u64 ms = (ts & 0xFFFFFFFFu) * 1000ull + (u64)((ts >> 32) & 0xFFFFFFFFu) / 1000000ull;
-    return sem_wait_ms(s, (long)ms);
+    return sem_timedwait_parts(sem, (u32)ts, (int)(u32)(ts >> 32));
+}
+static kern_return_t sem_wait_signal_ms(mach_port_t wait_sem, mach_port_t signal_sem, long ms) {
+    kern_return_t kr;
+    cx_sem_t *sig = sem_lookup(signal_sem, &kr);
+    if (!sig) return kr;
+    cx_sem_t *s = sem_lookup(wait_sem, &kr);
+    if (!s) return kr;
+    return sem_wait_full(s, sig, ms);
+}
+kern_return_t semaphore_wait_signal(mach_port_t wait_sem, mach_port_t signal_sem) {
+    return sem_wait_signal_ms(wait_sem, signal_sem, -1);
+}
+kern_return_t semaphore_timedwait_signal(mach_port_t wait_sem, mach_port_t signal_sem, u64 ts) {
+    long ms = sem_ts_ms((u32)ts, (int)(u32)(ts >> 32));
+    if (ms < 0) return KERN_INVALID_VALUE;
+    return sem_wait_signal_ms(wait_sem, signal_sem, ms);
+}
+
+/* as traps que o libsystem_kernel exporta com o mesmo contrato (o timeout vem em duas partes) */
+kern_return_t semaphore_signal_trap(mach_port_t sem) { return semaphore_signal(sem); }
+kern_return_t semaphore_signal_all_trap(mach_port_t sem) { return semaphore_signal_all(sem); }
+kern_return_t semaphore_signal_thread_trap(mach_port_t sem, mach_port_t thread) { return semaphore_signal_thread(sem, thread); }
+kern_return_t semaphore_wait_trap(mach_port_t sem) { return semaphore_wait(sem); }
+kern_return_t semaphore_timedwait_trap(mach_port_t sem, u32 sec, int nsec) { return sem_timedwait_parts(sem, sec, nsec); }
+kern_return_t semaphore_wait_signal_trap(mach_port_t w, mach_port_t s) { return semaphore_wait_signal(w, s); }
+kern_return_t semaphore_timedwait_signal_trap(mach_port_t w, mach_port_t s, u32 sec, int nsec) {
+    long ms = sem_ts_ms(sec, nsec);
+    if (ms < 0) return KERN_INVALID_VALUE;
+    return sem_wait_signal_ms(w, s, ms);
 }
 
 /* ---- pthreads que faltavam (o mutex do mOS não tem protocolo; o rwlock fica em extra.c, estado zerado aqui) */
