@@ -1035,6 +1035,7 @@ int chdir(const char *path) {
     if (ret_errno(SYS2(SYS_STAT, rp, &st)) < 0) return -1;
     if (!st.is_dir) { cx_errno = CX_ENOTDIR; return -1; }
     strlcpy(cx_cwd, p, sizeof cx_cwd);
+    SYS1(SYS_CHDIR, rp);                                 /* o kernel guarda a pasta do processo: fork e posix_spawn herdam dele */
     return 0;
 }
 int access(const char *path, int mode) { mos_stat_t st; (void)mode; PATH(p, path); return ret_errno(SYS2(SYS_STAT, p, &st)) < 0 ? -1 : 0; }
@@ -1849,8 +1850,18 @@ int __fpclassifyd(double x) {
 }
 
 /* ================================================================ inicialização */
+/* A pasta inicial é a do kernel (a do pai, ou a do file action chdir do posix_spawn). O PWD do ambiente só vale
+ * quando aponta para a mesma pasta (é o caminho lógico, com links); senão é resto do pai e o kernel ganha. */
 void cx_libc_init(void) {
     ctype_init();
+    char k[1024];
+    long kn = SYS2(SYS_GETCWD, k, sizeof k);
     const char *pwd = getenv("PWD");
-    if (pwd && pwd[0] == '/') strlcpy(cx_cwd, pwd, sizeof cx_cwd);
+    if (pwd && pwd[0] == '/') {
+        char rp[1024];
+        strlcpy(rp, pwd, sizeof rp);
+        for (int hop = 0; hop < 8 && link_step(rp, sizeof rp, 0); hop++) {}
+        if (kn <= 0 || !strcmp(rp, k) || !strcmp(pwd, k)) { strlcpy(cx_cwd, pwd, sizeof cx_cwd); return; }
+    }
+    if (kn > 0 && k[0] == '/') strlcpy(cx_cwd, k, sizeof cx_cwd);
 }

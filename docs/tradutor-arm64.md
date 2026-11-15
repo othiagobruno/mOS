@@ -243,6 +243,13 @@ build/a64rt-test/run.sh <mach-o arm64> [args]       # machotest (MOS_A64_ENGINE,
 .\build.ps1 -OutDir build-a64; .\tools\build-a64rt-teste.ps1 -OutDir build-a64 [-Real <binário>]
 .\run.ps1 -Headless -Memory 1536 -Image build-a64/mOS.img -Serial build-a64/serial.log -Accel whpx
 ```
+Na VM a partir do Linux (15 nov.): `tools/build.sh --out build/linux-a64` e `tools/a64rt-teste-vm.sh build/linux-a64`
+(ESP sem `/Aplicativos`, QEMU com KVM, jobs do launchd no boot): `tests-a64rt` 0 falhas e `abi.mm` 0 falhas, com o
+interpretador e com o JIT (4 de 4). Para chegar lá: o kernel não escreve mais na página COW da pilha do host na troca
+de contexto (pânico no fork), o pipe manda SIGPIPE, o `SYS_VFORK` do libSystem arm64 vira fork no runtime, o libSystem
+pega a pasta do kernel (file action chdir do posix_spawn) e o `chdir` avisa o kernel, e o teste usa
+`pthread_jit_write_protect_np` como no macOS. Neste host o QEMU às vezes para no OVMF ou cai; o script refaz a partida.
+
 No Linux (sem VM): `tools/a64rt-testes.sh` compila o machotest, o `a64rt.mos`, o libSystem arm64
 (`tools/build-libsystem-arm64.sh`) e roda `tests-a64libsys/abi.mm` (critério: `libsys-abi: 0 falhas`, 40 verificações
 em 15 nov., interpretador e JIT) e `tests-a64rt` como informativo: o machotest do Linux não emula `alarm`, `fork`,

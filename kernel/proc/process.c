@@ -2066,6 +2066,7 @@ static void pipe_service(pipe_t *pp) {
         if (w && w->state == TH_WAITING) {
             i64 n = pipe_try_write(pp, w->proc, w->read_buf, w->read_len);
             if (n != -EAGAIN_) { ((int_frame_t *)w->frame)->rax = (u64)n; w->state = TH_READY; pp->wwait = NULL; }
+            if (n == -MOS_EPIPE && w->proc && !w->proc->exited) proc_signal(w->proc->pid, MOS_SIGPIPE);
         } else pp->wwait = NULL;
     }
 }
@@ -2158,6 +2159,8 @@ static u64 pipe_op(int_frame_t *f, thread_t *t, pipe_t *pp, bool rd, u64 buf, u6
     if (n != -EAGAIN_) {
         pipe_service(pp);
         f->rax = (u64)n;
+        /* POSIX: write num pipe sem leitor dá EPIPE e SIGPIPE (o socket unix já fazia, kernel/net/unix.c) */
+        if (!rd && n == -MOS_EPIPE && t->proc && !t->proc->exited) proc_signal(t->proc->pid, MOS_SIGPIPE);
         return (u64)f;
     }
     if (rd ? pp->rwait != NULL : pp->wwait != NULL) { f->rax = (u64)-MOS_EINVAL; return (u64)f; }   /* um por vez */

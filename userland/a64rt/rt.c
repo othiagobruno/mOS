@@ -512,6 +512,7 @@ static void mos_svc(rt_thread_t *T) {
         }
         break;
     case SYS_FORK:
+    case SYS_VFORK:                    /* o vfork do libSystem arm64 (posixmore.c) também vira fork: ver rt_do_fork */
         c->x[0] = (u64)rt_do_fork(T);
         return;
     }

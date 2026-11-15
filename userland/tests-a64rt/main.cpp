@@ -464,9 +464,13 @@ static void teste_smc(void) {
     typedef int (*fn_t)(void);
     fn_t f = (fn_t)p;
     int soma = 0;
+    // Como no macOS: a thread nasce com MAP_JIT protegido contra escrita (pthread_jit_write_protect_np(1)); o JIT
+    // libera a escrita, grava e protege de novo antes de executar. Sem isso a escrita é falta (num Mac também).
     for (int i = 1; i <= 50; i++) {                    // reescreve o mesmo código 50 vezes, com invalidação
+        pthread_jit_write_protect_np(0);
         p[0] = 0x52800000u | ((unsigned)i << 5);       // mov w0, #i
         p[1] = 0xd65f03c0u;                            // ret
+        pthread_jit_write_protect_np(1);
         sys_icache_invalidate(p, 8);
         soma += f();
     }
@@ -474,7 +478,9 @@ static void teste_smc(void) {
     int ok = 1;
     for (int i = 1; i <= 20; i++) {                    // sem invalidação: só a rede de segurança do JIT (ou o interpretador)
         for (int k = 0; k < 3; k++) if (f() != (k ? i : i - 1 ? i - 1 : 50)) {}
+        pthread_jit_write_protect_np(0);
         p[0] = 0x52800000u | ((unsigned)(100 + i) << 5);
+        pthread_jit_write_protect_np(1);
         if (f() != 100 + i) ok = 0;
     }
     CHECK("código reescrito sem invalidar (proteção de página)", ok);
@@ -622,19 +628,25 @@ static void teste_fork(void) {
     unsigned *pag = (unsigned *)mmap(0, 16384, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANON | MAP_JIT, -1, 0);
     if (pag == (unsigned *)MAP_FAILED) CHECK("mmap para o fork com código reescrito", 0);
     else {
+        pthread_jit_write_protect_np(0);    // MAP_JIT como no macOS: libera a escrita, grava, protege antes de executar
         pag[0] = 0x52800000u | (7u << 5);   // mov w0, #7
         pag[1] = 0xd65f03c0u;               // ret
+        pthread_jit_write_protect_np(1);
         int (*fn)(void) = (int (*)(void))pag;
         int warm = fn() == 7;
         for (int i = 0; i < 500 && warm; i++) if (fn() != 7) warm = 0;
         pid = warm ? fork() : -1;
         if (pid == 0) {
+            pthread_jit_write_protect_np(0);
             pag[0] = 0x52800000u | (9u << 5);   // sem sys_icache_invalidate: a proteção da página tem de pegar
+            pthread_jit_write_protect_np(1);
             _exit(fn() == 9 ? 0 : 1);
         }
         int vivo = pid > 0 && filho_ok(pid, 0);
         int pai_antigo = fn() == 7;
+        pthread_jit_write_protect_np(0);
         pag[0] = 0x52800000u | (4u << 5);
+        pthread_jit_write_protect_np(1);
         int pai_novo = fn() == 4;
         munmap(pag, 16384);
         CHECK("fork com código aquecido: o filho não vaza a escrita e os dois lados vêem o código novo",
