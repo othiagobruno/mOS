@@ -195,6 +195,17 @@ static volatile u8 *tramp;
 static u64 bsp_cr0, bsp_cr4, bsp_efer, bsp_xcr0;
 static u8 cpu_apic[MAX_CPUS];
 
+/* como smp_send_ipi, com modo de entrega NMI: chega mesmo com as interrupções do alvo desligadas */
+void smp_send_nmi(int cpu) {
+    if (!lapic || cpu < 0 || cpu >= ncpus_online) return;
+    __asm__ volatile("mfence" ::: "memory");
+    u64 f = irq_save();
+    for (int i = 0; i < 100000 && (lr(LAPIC_ICRLO) & (1u << 12)); i++) __asm__ volatile("pause");
+    lw(LAPIC_ICRHI, (u32)cpu_apic[cpu] << 24);
+    lw(LAPIC_ICRLO, 0x4400);                                   /* NMI, asserção, destino físico */
+    irq_restore(f);
+}
+
 u8 smp_apic_id(int cpu) { return cpu >= 0 && cpu < MAX_CPUS ? cpu_apic[cpu] : 0; }
 u64 smp_lapic_base(void) { return lapic_base; }
 int smp_x2apic(void) { return x2apic_on; }

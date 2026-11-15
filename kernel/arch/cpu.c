@@ -95,6 +95,11 @@ void irq_install(int irq, irq_handler_t h) {
 }
 
 extern void panic_screen(const char *msg, int_frame_t *f);
+volatile u32 g_irqoff[MAX_CPUS];
+extern bool app_guard_fault(int_frame_t *f);
+extern bool app_guard_watchdog(int_frame_t *f);
+extern bool app_guard_nmi(int_frame_t *f, bool nested);
+extern void app_guard_ap_tick(void);
 /* proc/: troca de contexto, syscalls e falhas de processos (fracos = kernel sem processos) */
 __attribute__((weak)) u64 sched_irq_exit(int_frame_t *f, bool timer) { (void)timer; return (u64)f; }
 __attribute__((weak)) u64 proc_syscall(int_frame_t *f) { f->rax = (u64)-1; return (u64)f; }
@@ -162,6 +167,7 @@ static int pic_irq(int_frame_t *f) {
  * 0xF0 = temporizador do LAPIC (fatia nos APs), 0xF2 = IPI de "olhe o escalonador/TLB" (proc/sched.c). */
 u64 isr_dispatch(int_frame_t *f) {
     if (sched_nested()) {           /* interrupção no meio da espera pela trava grande: só o mínimo */
+        if (f->vector == 2 && app_guard_nmi(f, true)) return (u64)f;   /* NMI do watchdog de apps: agora não */
         if (f->vector < 32) exc_panic(f);
         if (f->vector == 0xE0) { msi_dispatch(); return (u64)f; }
         if (f->vector == 0xF0 || f->vector == 0xF2) lapic_eoi();
@@ -179,12 +185,13 @@ u64 isr_dispatch(int_frame_t *f) {
         r = (u64)f;
     } else if (f->vector == 0xF0 || f->vector == 0xF2) {
         lapic_eoi();
+        if (f->vector == 0xF0 && this_cpu()) app_guard_ap_tick();   /* vigia o núcleo 0 (app travado com IF=0) */
         r = sched_ktry() ? sched_irq_exit(f, this_cpu() != 0 || f->vector == 0xF2) : (u64)f;
     } else if (f->vector == 0xFF) {
         r = (u64)f;                                           /* espúria: sem EOI */
     } else if (f->vector < 32) {
+        if (f->vector == 2 && app_guard_nmi(f, false)) return sched_kexit((u64)f);   /* NMI do watchdog de apps */
         if ((f->cs & 3) != 3 || f->vector == 8 || f->vector == 2 || f->vector == 18) {
-            extern bool app_guard_fault(int_frame_t *f);
             if ((f->cs & 3) != 3 && app_guard_fault(f)) return sched_kexit((u64)f);   /* app do sistema caiu: só ele (ui/appguard.c) */
             exc_panic(f);
         }
@@ -195,7 +202,6 @@ u64 isr_dispatch(int_frame_t *f) {
         if (!r) r = proc_fault(f, cr2);                       /* só o processo morre */
     } else {
         int irq = pic_irq(f);
-        extern bool app_guard_watchdog(int_frame_t *f);
         if (irq == 0 && app_guard_watchdog(f)) return sched_kexit((u64)f);   /* app do sistema travado: só ele (ui/appguard.c) */
         r = sched_ktry() ? sched_irq_exit(f, irq == 0) : (u64)f;
     }
