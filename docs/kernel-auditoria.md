@@ -68,11 +68,12 @@ Falham `sleep 100 ms` e trechos do `teste-sh` (Ctrl+C no `spin`): dependem de pr
 
 ## Pontos abertos, por prioridade
 
-1. **fd guarda só o caminho** (`struct fdent.path`, sem vnode). `SYS_READ` refaz `vfs_lookup` a cada chamada. Arquivo apagado com o fd aberto dá `ENOENT`; `rename` por cima faz o fd ler o arquivo novo. SQLite (journal), git e o salvar atômico dos editores dependem do contrário. Pede vnode com contagem de referência e órfão até o último `close`.
+1. ~~**fd guarda só o caminho**~~ — resolvido sem trocar o fd por vnode: arquivo apagado (ou substituído por `rename`) enquanto um fd ou um `mmap` o usa vai para `/tmp/.orfaos/N`; fds e faixas do `lazy.c` passam a apontar para lá e `orphan_gc` apaga no último `close`/`munmap`/saída. `rename` também atualiza as faixas mapeadas. Teste: `userland/orfaoteste.c` (main: 6 FALHA(S), inclusive `mmap` lendo zeros; agora TODOS OK). Sobra: o `SYS_READ` ainda refaz `vfs_lookup` por chamada, e o fileport (machipc) guarda uma cópia do caminho que não acompanha.
 2. **Trava grande (BKL)** e varreduras O(threads) sob ela: `sweep_ready` em todo `next_ready`, `wake_sleepers` a cada tique, `SYS_FUTEX_WAKE` percorre todas as threads do sistema. Com Electron (centenas de threads) isso é custo por troca de contexto. Próximo passo medido: fila de futex por (processo, endereço) e lista de dormentes ordenada por prazo.
-3. **Futex só privado**: a chave é `(proc, va)`. Um `pthread_mutex` com `PTHREAD_PROCESS_SHARED` numa página `MAP_SHARED` não acorda o outro processo.
+3. ~~**Futex só privado**~~ — resolvido: numa página compartilhada de verdade (`PTE_SHARED`, ou sem COW e com mais de um dono) a chave do futex inclui o endereço físico. Teste em `mmshared.c` (main: wake 0 e o filho sai por ETIMEDOUT; agora acorda).
 4. **Outros frames grandes no kernel** (`-fstack-usage`): `pkgextract.c:add_component` 32 936 bytes (roda na thread do desktop, pilha de boot de 1 MiB; numa thread do kernel estouraria), `launchsvc.c` 6 KiB em quatro funções, `web/layout.c:layout_block` 6,4 KiB com recursão.
 5. **Página anônima nasce RWX** (`SYS_MMAP b = 3` sem prot). Só o `mprotect` liga o NX.
+5b. **persist carrega o disco inteiro na RAM**: com `-m 512` e a ESP completa (464 MB) falta memória para o `app.asar` de 130 MB. O log agora diz "sem memória" com o tamanho e o livre; carregar sob demanda continua aberto.
 6. **KVM nesta máquina**: com `-accel kvm` o OVMF 4M trava antes do `BdsDxe` na maioria das partidas (3 de 3 com 80 s); quando passa, o mOS sobe em 2 s e o autoteste passa. É do ambiente (Ryzen R2544, OVMF do Ubuntu), não do kernel, mas impede rodar a suíte rápida aqui.
 7. `tools/build.sh` não fecha a imagem sem rede: depois do kernel ele baixa o `Claude.zip` (`downloads.claude.ai`) e para se o download falha. O kernel e o libSystem saem antes disso.
 
