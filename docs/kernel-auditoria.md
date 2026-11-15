@@ -49,7 +49,12 @@ Teste: `userland/parateste.c` ganhou um `SYS_SPAWNVEC` com 48 ações (47 `CLOSE
 ### 3. Menores
 
 - `copy_str_in` copiava um byte por `uvm_copy_in` (quatro níveis de tabela por byte de caminho). Agora copia por trecho de página.
-- `tools/build.sh`: `ZIGDIR` sai do binário real (`readlink -f`). Com `~/.local/bin/zig` como link, o script procurava `lib/` em `~/.local` e parava em "libunwind: falta any-darwin-any".
+- `tools/build.sh`, `tools/build-libcxx.sh` e `tools/swift-rt-grok-teste.sh`: a pasta do zig sai do binário real (`readlink -f`). Com `~/.local/bin/zig` como link, procuravam `lib/` em `~/.local` e paravam em "libunwind: falta any-darwin-any" / "libcxx do zig ausente".
+- `ahci.c:stage_at`: com NCQ, o tag só é reusado com PxCI e PxSACT limpos (mesma regra do `ahci_reap` do PR #231). Hoje o reuso já é protegido pelo lote e pelo `recover_port` nos caminhos de erro; é uma defesa a mais.
+
+### Revisão do PR #231 (disco), depois do merge
+
+`ahci_reap` com `PxCI | PxSACT`, página do `pcache` nascendo com `stamp`, `evict_one` pulando `valid == 0`, política no `blk_write` e `blk_flush` no `storage_revoke_write`: corretos. Os caminhos de falha e de prazo do NCQ (`wait_batch`) passam por `recover_port`, que limpa PxCI e PxSACT antes de o tag voltar. Única sobra: página criada por um `load_run` cuja leitura falhou fica com `valid == 0` e agora não sai mais pelo `evict_one`; é reaproveitada na próxima leitura do mesmo deslocamento, então o custo é no máximo uma janela de leitura antecipada por erro de disco.
 
 ## Pontos abertos, por prioridade
 
@@ -59,7 +64,7 @@ Teste: `userland/parateste.c` ganhou um `SYS_SPAWNVEC` com 48 ações (47 `CLOSE
 4. **Outros frames grandes no kernel** (`-fstack-usage`): `pkgextract.c:add_component` 32 936 bytes (roda na thread do desktop, pilha de boot de 1 MiB; numa thread do kernel estouraria), `launchsvc.c` 6 KiB em quatro funções, `web/layout.c:layout_block` 6,4 KiB com recursão.
 5. **Página anônima nasce RWX** (`SYS_MMAP b = 3` sem prot). Só o `mprotect` liga o NX.
 6. **KVM nesta máquina**: com `-accel kvm` o OVMF 4M trava antes do `BdsDxe` na maioria das partidas (3 de 3 com 80 s); quando passa, o mOS sobe em 2 s e o autoteste passa. É do ambiente (Ryzen R2544, OVMF do Ubuntu), não do kernel, mas impede rodar a suíte rápida aqui.
-7. O README ainda dá o build Linux como PR #34 aberto; `tools/build.sh` já está na `main`.
+7. `tools/build.sh` não fecha a imagem sem rede: depois do kernel ele baixa o `Claude.zip` (`downloads.claude.ai`) e para se o download falha. O kernel e o libSystem saem antes disso.
 
 ## Como repetir
 
