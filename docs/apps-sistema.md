@@ -15,7 +15,8 @@ desktop através de [`ui/appguard.c`](../kernel/ui/appguard.c). Uma exceção de
 as janelas fecham (o `on_close` roda, protegido, para o app soltar os ponteiros), o `on_quit` não roda e aparece o aviso
 "App encerrado". Um `tick` com o app fechado que cai duas vezes deixa de rodar com o app fechado; na terceira, deixa de
 rodar até reiniciar. Um callback que passa de 10 s sem voltar (laço infinito) é encerrado do mesmo jeito, com o aviso
-"não respondeu"; com interrupções desligadas ele não é pego.
+"não respondeu". Com as interrupções desligadas, um AP vigia pelo HPET e manda um NMI ao núcleo 0 (o app é encerrado do
+mesmo jeito); travado dentro de uma seção crítica do kernel, vira tela de pânico com o nome do app.
 
 ## Inventário
 

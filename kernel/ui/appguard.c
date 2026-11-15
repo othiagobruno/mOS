@@ -3,18 +3,23 @@
  * Os apps do próprio desktop rodam no ring 0, no laço do BSP. Sem isto, uma exceção de CPU dentro de um
  * paint, tick, tecla ou menu de um app cai em exc_panic e derruba o sistema inteiro.
  *
- * app_guard_run marca um ponto de retorno (__builtin_setjmp) e chama o código do app. Se a CPU levantar
+ * app_guard_run marca um ponto de retorno (kjmp_set, arch/kjmp.S) e chama o código do app. Se a CPU levantar
  * uma exceção recuperável no BSP enquanto essa guarda está ativa, isr_dispatch chama app_guard_fault, que
- * troca o RIP do frame por um trampolim; o iret cai no trampolim, que faz __builtin_longjmp até a guarda.
+ * troca o RIP do frame por um trampolim; o iret cai no trampolim, que faz kjmp_go até a guarda. Um callback
+ * que passa de 10 s é tirado do mesmo jeito pelo tique do PIT; com as interrupções desligadas o PIT não chega,
+ * e um AP que vigia pelo HPET manda um NMI ao núcleo 0 (app_guard_ap_tick / app_guard_nmi).
  * O app é marcado e encerrado depois, no topo do laço do desktop (app_guard_reap): as janelas fecham (o
  * on_close de cada uma roda, protegido, para o app soltar os ponteiros) e o on_quit não roda.
  *
  * Só se recupera quando é seguro desfazer a pilha:
  *  - núcleo 0 (o laço do desktop) e código do kernel (CPL 0);
- *  - interrupções ligadas no momento da falha: todo spinlock do kernel é irqsave, então IF=1 garante que
- *    nenhum deles está preso neste núcleo;
+ *  - nenhuma seção irq_save aberta neste núcleo (g_irqoff[0] == 0): todo spinlock do kernel passa por irq_save,
+ *    então nenhum está preso e nenhuma estrutura protegida está no meio de uma alteração. Exceção e PIT exigem
+ *    também IF=1; o NMI aceita IF=0 (desligado pelo próprio app) e religa as interrupções na volta;
  *  - fora de par_for: o trabalho fica na pilha do BSP e os outros núcleos ainda podem lê-lo;
- *  - só #DE, #BR, #UD, #NM, #GP, #PF, #MF, #AC e #XM. NMI, #DF, #MC e o resto continuam em pânico.
+ *  - exceções: só #DE, #BR, #UD, #NM, #GP, #PF, #MF, #AC e #XM. #DF, #MC e NMI de hardware continuam em pânico.
+ * App travado com IF=0 dentro de uma seção crítica do kernel não pode ser desfeito: vira tela de pânico com o nome
+ * dele (antes congelava sem aviso).
  * Vazamento de memória do app que caiu é aceito: o estado dele é descartado, não liberado. */
 #include "ui.h"
 #include "apps.h"
@@ -30,11 +35,17 @@ typedef struct guard {
     app_t *app;
     struct guard *prev;
     u64 t0;                              /* timer_ticks() na entrada: o watchdog mede o tempo sem voltar */
+    u64 t0_ns;                           /* hpet_ns() na entrada: com IF=0 o PIT para e só o HPET anda */
+    bool if_on;                          /* interrupções ligadas na entrada (o NMI as religa ao voltar) */
 } guard_t;
 
 static guard_t *volatile cur;
 static guard_t *volatile landing;        /* a guarda para onde o trampolim saltou */
-static volatile int fault_vec;          /* -1 = não respondeu (watchdog) */
+static volatile int fault_vec;          /* -1 = não respondeu (watchdog); -2 = idem, com interrupções desligadas */
+/* o que o vigia num AP lê sem mexer na pilha do núcleo 0 (a guarda vive nela e pode sumir a qualquer momento) */
+static volatile u64 watch_t0_ns, watch_serial, nmi_for_serial;
+static volatile bool nmi_pending;
+static u64 guard_serial;
 static u64 hang_ms = 10000;
 static volatile u64 fault_rip, fault_cr2;
 
@@ -75,7 +86,7 @@ bool app_guard_fault(int_frame_t *f) {
     default: return false;
     }
     if (!(f->rflags & 0x200)) return false;          /* IF=0: pode haver spinlock preso */
-    if (par_busy()) return false;
+    if (g_irqoff[0] || par_busy()) return false;     /* seção irq_save aberta (o AHCI faz sti/hlt dentro de uma) */
     u64 cr2;
     __asm__ volatile("mov %%cr2,%0" : "=r"(cr2));
     fault_vec = (int)f->vector; fault_rip = f->rip; fault_cr2 = cr2;
@@ -90,9 +101,48 @@ bool app_guard_fault(int_frame_t *f) {
  * CPL 0, IF=1 no ponto interrompido (nenhum spinlock preso) e fora de par_for. true = o frame volta à guarda */
 bool app_guard_watchdog(int_frame_t *f) {
     guard_t *g = cur;
-    if (!g || this_cpu() != 0 || (f->cs & 3) || !(f->rflags & 0x200) || par_busy()) return false;
+    if (!g || this_cpu() != 0 || (f->cs & 3) || !(f->rflags & 0x200) || g_irqoff[0] || par_busy()) return false;
     if (timer_ticks() - g->t0 < hang_ms) return false;
     fault_vec = -1; fault_rip = f->rip; fault_cr2 = 0;
+    f->rsp = ((f->rsp - 512) & ~15ULL) - 8;
+    f->rip = (u64)guard_trampoline;
+    return true;
+}
+
+/* Tique do LAPIC num AP. Se a guarda do núcleo 0 passou do limite + 3 s (o tique do PIT não pegou: interrupções
+ * desligadas no núcleo 0), manda um NMI para ele, uma vez por guarda. */
+void app_guard_ap_tick(void) {
+    u64 serial = watch_serial, t0 = watch_t0_ns;
+    if (!serial || !t0 || nmi_for_serial == serial) return;
+    u64 now = hpet_ns();
+    if (!now || now < t0 || now - t0 < (hang_ms + 3000) * 1000000ULL) return;
+    u64 expect = nmi_for_serial;
+    if (!__atomic_compare_exchange_n(&nmi_for_serial, &expect, serial, false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)) return;
+    if (watch_serial != serial) return;                /* a guarda acabou enquanto isso */
+    nmi_pending = true;
+    smp_send_nmi(0);
+}
+
+/* NMI no núcleo 0. false = não foi o vigia (NMI de hardware: segue para o pânico). Se foi: com g_irqoff[0] == 0 o
+ * IF=0 é do próprio app e a pilha pode ser desfeita como numa exceção (as interrupções voltam ligadas). Dentro de
+ * uma seção irq_save/spinlock não dá: mostra a tela de pânico com o nome do app em vez de congelar mudo. */
+bool app_guard_nmi(int_frame_t *f, bool nested) {
+    if (!nmi_pending) return false;
+    nmi_pending = false;
+    guard_t *g = cur;
+    if (nested || (f->cs & 3) || !g || this_cpu() != 0) { nmi_for_serial = 0; return true; }   /* agora não: tenta de novo */
+    u64 now = hpet_ns();
+    if (!now || now - g->t0_ns < hang_ms * 1000000ULL) return true;
+    if (g_irqoff[0] || par_busy()) {
+        char msg[160];
+        snprintf(msg, sizeof msg, "%s travou com as interrupções desligadas dentro de uma seção crítica do kernel", g->app->name);
+        kprintf("appguard: %s (RIP=0x%llx); não dá para recuperar\n", msg, f->rip);
+        extern void panic_screen(const char *msg, int_frame_t *f);
+        panic_screen(msg, f);
+        for (;;) { cli(); hlt_raw(); }
+    }
+    fault_vec = -2; fault_rip = f->rip; fault_cr2 = 0;
+    if (g->if_on) f->rflags |= 0x200;
     f->rsp = ((f->rsp - 512) & ~15ULL) - 8;
     f->rip = (u64)guard_trampoline;
     return true;
@@ -105,14 +155,19 @@ bool app_guard_run(app_t *a, void (*fn)(void *ctx), void *ctx) {
     g.app = a;
     g.prev = cur;
     g.t0 = timer_ticks();
+    g.t0_ns = hpet_ns();
+    { u64 fl; __asm__ volatile("pushfq; popq %0" : "=r"(fl)); g.if_on = (fl & 0x200) != 0; }
+    u64 prev_t0 = watch_t0_ns, prev_serial = watch_serial;
     if (kjmp_set(&g.jb)) {
         guard_t *me = landing;                        /* lido do global: nada de local depois do salto */
         landing = NULL;
         cur = me->prev;
+        watch_t0_ns = me->prev ? me->prev->t0_ns : 0;
+        watch_serial = me->prev ? ++guard_serial : 0;
         extern char __ImageBase;
         if (fault_vec < 0)
-            kprintf("appguard: \"%s\" não respondeu por %llu ms (RIP=base+0x%llx); o app será encerrado\n",
-                    me->app->name, hang_ms, fault_rip - (u64)&__ImageBase);
+            kprintf("appguard: \"%s\" não respondeu por %llu ms%s (RIP=base+0x%llx); o app será encerrado\n",
+                    me->app->name, hang_ms, fault_vec == -2 ? " com as interrupções desligadas (NMI)" : "", fault_rip - (u64)&__ImageBase);
         else
             kprintf("appguard: \"%s\" falhou (vetor %d em RIP=base+0x%llx, CR2=0x%llx); o app será encerrado\n",
                     me->app->name, fault_vec, fault_rip - (u64)&__ImageBase, fault_cr2);
@@ -122,8 +177,12 @@ bool app_guard_run(app_t *a, void (*fn)(void *ctx), void *ctx) {
         return false;
     }
     cur = &g;
+    watch_t0_ns = g.t0_ns;
+    watch_serial = ++guard_serial;
     fn(ctx);
     cur = g.prev;
+    watch_t0_ns = prev_t0;
+    watch_serial = prev_t0 ? prev_serial : 0;
     return true;
 }
 
@@ -152,6 +211,7 @@ void app_guard_reap(void) {
             /* tick com o app fechado (alarmes etc.) que cai de novo fica desligado até reiniciar */
             if (c && *c >= 2) { a->always_tick = false; if (*c >= 3) a->tick = NULL; }
         }
+        wm_damage(desktop_dock_rect());              /* a bolinha do app some do Dock */
         snprintf(body, sizeof body, hung ? "%s não respondeu por %llu s e foi encerrado. O resto do sistema continua."
                                          : "%s parou de funcionar e foi encerrado. O resto do sistema continua.", a->name, hang_ms / 1000);
         notify("App encerrado", body);
