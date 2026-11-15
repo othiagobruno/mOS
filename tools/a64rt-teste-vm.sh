@@ -2,13 +2,17 @@
 # Tradutor arm64 no QEMU do mOS a partir do Linux: o mesmo do tools/build-a64rt-teste.ps1 (userland/tests-a64rt e
 # userland/tests-a64libsys/abi.mm com os dois motores, por jobs do launchd no boot), sobre a ESP de tools/build.sh.
 #   tools/build.sh --out build/linux-a64
-#   tools/a64rt-teste-vm.sh build/linux-a64 [segundos]     # padrão 900 s de QEMU
+#   tools/a64rt-teste-vm.sh build/linux-a64 [segundos [binário arm64 [argumentos...]]]   # padrão 900 s de QEMU
+# Com um binário (Mach-O arm64 ou universal), ele também roda forçado em arm64 (MOS_ARCH=arm64), como o -Real do .ps1;
+# a saída dele fica no serial entre as linhas do launchd de com.mos.a64teste.real.
 # Saída: build/linux-a64/a64-serial.log; o script resume as linhas "a64rt-teste: N falhas" e "libsys-abi: N falhas".
 # KVM quando /dev/kvm abre para o usuário; senão TCG (bem mais lento).
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 OUT=$(cd "${1:?uso: tools/a64rt-teste-vm.sh <dir do tools/build.sh> [segundos]}" && pwd)
 SECS=${2:-900}
+REAL=${3:-}
+REALARGS=("${@:4}")
 ZIG=${MOS_ZIG:-$(command -v zig || true)}
 [ -n "$ZIG" ] || { echo "zig: defina MOS_ZIG" >&2; exit 1; }
 [ -d "$OUT/esp/mOS" ] && [ -x "$OUT/mkimg" ] || { echo "rode antes: tools/build.sh --out $1" >&2; exit 1; }
@@ -65,6 +69,12 @@ for m in interp jit; do
     job "com.mos.a64teste.$m" /Sistema/Programas/a64teste/a64rt-teste "MOS_A64_ENGINE=$m" "A64RT_TESTE_SPAWN=$SPAWN"
     job "com.mos.a64teste.abi-$m" /Sistema/Programas/a64teste/libsys-abi-arm64 "MOS_A64_ENGINE=$m"
 done
+if [ -n "$REAL" ]; then
+    cp -f "$REAL" "$T/real"
+    args=""; for x in "${REALARGS[@]}"; do args+="<string>$x</string>"; done
+    job com.mos.a64teste.real /Sistema/Programas/a64teste/real MOS_ARCH=arm64 HOME=/Users/Visitante
+    sed -i "s|<array><string>/Sistema/Programas/a64teste/real</string></array>|<array><string>/Sistema/Programas/a64teste/real</string>$args</array>|" "$LD/com.mos.a64teste.real.plist"
+fi
 
 OVT=$OUT/overlay-teste
 rm -rf "$OVT"
@@ -84,7 +94,8 @@ cp -f /usr/share/OVMF/OVMF_VARS_4M.fd "$OUT/ovmf-vars-a64.fd"
 # sem VMX/SVM no convidado: com -cpu max o OVMF configura o IA32_FEATURE_CONTROL em cada núcleo e trava (run.ps1)
 echo "QEMU (${ACC[1]}, até ${SECS}s): $SER"
 conta() { local n; n=$(grep -ac "$1" "$SER" 2>/dev/null); echo "${n:-0}"; }
-fim() { [ "$(conta 'a64rt-teste: [0-9]* falhas')" -ge 2 ] && [ "$(conta 'libsys-abi: [0-9]* falhas')" -ge 2 ]; }
+fim() { [ "$(conta 'a64rt-teste: [0-9]* falhas')" -ge 2 ] && [ "$(conta 'libsys-abi: [0-9]* falhas')" -ge 2 ] &&
+        { [ -z "$REAL" ] || [ "$(conta 'com.mos.a64teste.real (pid [0-9]*) terminou')" -ge 1 ]; }; }
 # Neste host o QEMU com KVM às vezes para no OVMF (o serial fica nos ~113 bytes do firmware) ou cai com SIGSEGV antes
 # do mOS: sem 1 KiB de serial em 120 s, a partida é refeita (até 3 vezes).
 for tent in 1 2 3; do
@@ -106,6 +117,10 @@ for tent in 1 2 3; do
     [ $subiu = 1 ] && break
 done
 grep -aE '(a64rt-teste|libsys-abi): [0-9]+ falhas|FALHA' "$SER" | head -40
+if [ -n "$REAL" ]; then
+    echo "--- $(basename "$REAL") ${REALARGS[*]} (arm64):"
+    tr -d '\000' < "$SER" | awk '/com.mos.a64teste.real iniciado/{f=1} f{print} /com.mos.a64teste.real \(pid [0-9]*\) terminou/{exit}' | grep -av '^proc: \|^mach: \|^macho: ' | head -30
+fi
 n=$(grep -aEc '(a64rt-teste|libsys-abi): 0 falhas' "$SER")
 echo "a64rt-teste-vm: $n de 4 execuções sem falha"
 [ "$n" -eq 4 ]
