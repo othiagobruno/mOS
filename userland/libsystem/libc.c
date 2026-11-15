@@ -1635,17 +1635,36 @@ void rewinddir(cx_dir_t *d) { d->index = 0; ds_free(&d->snap); }   /* o próximo
 typedef struct { long tv_sec; int tv_usec; } mac_timeval_t;
 typedef struct { long tv_sec; long tv_nsec; } mac_timespec_t;
 
-long time(long *t) { long v = SYS0(SYS_UNIXTIME); if (t) *t = v; return v; }
+/* hora real em ms: segundos do relógio (SYS_UNIXTIME) na primeira leitura + o tempo desde o boot (SYS_TIME) que passou
+ * depois. Juntar os segundos do relógio com SYS_TIME % 1000 fazia a hora voltar até 1 s na virada do segundo (os dois
+ * não viram juntos). A base só é refeita se o relógio e o tempo desde o boot se afastarem mais de 2 s. */
+static u64 realtime_ms(void) {
+    static volatile long base_sec = -1;
+    static volatile u64 base_ms;
+    u64 ms = (u64)SYS0(SYS_TIME);
+    long sec = SYS0(SYS_UNIXTIME);
+    long bs = base_sec;
+    u64 bm = base_ms;
+    long long have = bs < 0 ? 0 : (long long)bs * 1000 + (long long)(ms - bm), want = (long long)sec * 1000;
+    if (bs < 0 || have - want > 2000 || want - have > 2000) {
+        base_ms = ms;
+        base_sec = sec;
+        return (u64)sec * 1000;
+    }
+    return (u64)have;
+}
+/* time() na mesma base do gettimeofday: os dois nunca discordam do segundo */
+long time(long *t) { long v = (long)(realtime_ms() / 1000); if (t) *t = v; return v; }
 int gettimeofday(mac_timeval_t *tv, void *tz) {
     (void)tz;
-    u64 ms = (u64)SYS0(SYS_TIME);
-    if (tv) { tv->tv_sec = SYS0(SYS_UNIXTIME); tv->tv_usec = (int)(ms % 1000) * 1000; }
+    u64 rt = realtime_ms();
+    if (tv) { tv->tv_sec = (long)(rt / 1000); tv->tv_usec = (int)(rt % 1000) * 1000; }
     return 0;
 }
 int clock_gettime(int clk, mac_timespec_t *ts) {
-    u64 ms = (u64)SYS0(SYS_TIME);
-    if (clk == 0) { ts->tv_sec = SYS0(SYS_UNIXTIME); ts->tv_nsec = (long)(ms % 1000) * 1000000; }
-    else { ts->tv_sec = (long)(ms / 1000); ts->tv_nsec = (long)(ms % 1000) * 1000000; }
+    u64 ms = clk == 0 ? realtime_ms() : (u64)SYS0(SYS_TIME);
+    ts->tv_sec = (long)(ms / 1000);
+    ts->tv_nsec = (long)(ms % 1000) * 1000000;
     return 0;
 }
 u64 clock_gettime_nsec_np(int clk) { mac_timespec_t t; clock_gettime(clk, &t); return (u64)t.tv_sec * 1000000000ull + (u64)t.tv_nsec; }
