@@ -40,7 +40,12 @@ static bool line_matches(const char *name) {
 
 bool xtrace_on(process_t *p) {
     if (cfg_state < 0) { cfg = vfs_lookup("/Sistema/Biblioteca/diag-xtrace"); cfg_state = cfg != NULL; }
-    return cfg_state == 1 && p && line_matches(p->name);
+    if (cfg_state != 1 || !p) return false;
+    /* com o rastreio ligado, o vnode é buscado de novo a cada syscall: apagar ou recriar o arquivo com o sistema
+     * rodando liberaria o vnode guardado, e line_matches leria memória já liberada. Desligado, o custo segue zero. */
+    cfg = vfs_lookup("/Sistema/Biblioteca/diag-xtrace");
+    if (!cfg) { cfg_state = 0; return false; }
+    return line_matches(p->name);
 }
 
 void xtrace_log(process_t *p, int tid, u64 nr, u64 a, u64 b, u64 c, i64 res, bool blocked) {
