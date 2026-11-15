@@ -10,6 +10,13 @@ Para registrar um app: acrescente `&app_x` em `all_apps[]` ([registry.c](../kern
 [apps.h](../kernel/include/apps.h). `app_t.always_tick` faz o `tick` rodar com o app fechado (alarmes, lembretes,
 alertas do Calendário, Mail).
 
+Os callbacks de um app (`paint`, `tick`, `on_key`, `on_menu`, `launch`, `on_quit`, `on_close`) são chamados pelo
+desktop através de [`ui/appguard.c`](../kernel/ui/appguard.c). Uma exceção de CPU dentro deles encerra só aquele app:
+as janelas fecham (o `on_close` roda, protegido, para o app soltar os ponteiros), o `on_quit` não roda e aparece o aviso
+"App encerrado". Um `tick` com o app fechado que cai duas vezes deixa de rodar com o app fechado; na terceira, deixa de
+rodar até reiniciar. Um callback que passa de 10 s sem voltar (laço infinito) é encerrado do mesmo jeito, com o aviso
+"não respondeu"; com interrupções desligadas ele não é pego.
+
 ## Inventário
 
 | macOS | mOS | O que funciona | Dados |
