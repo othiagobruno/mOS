@@ -251,6 +251,7 @@ static void boom_ud(void *c) { (void)c; __asm__ volatile("ud2"); }
 static void boom_de(void *c) { volatile int z = 0; *(volatile int *)c = 7 / z; }
 static void fine(void *c) { *(int *)c = 42; }
 static void spin(void *c) { (void)c; for (;;) __asm__ volatile("pause"); }
+static void x87_mess(void *c) { (void)c; u16 cw = 0x0C7F; __asm__ volatile("fldcw %0" :: "m"(cw)); __asm__ volatile("ud2"); }
 static void nested(void *c) { static app_t inner = { .name = "interno", .exec = "interno" }; *(int *)c = app_guard_run(&inner, boom_ud, NULL) ? 1 : 2; }
 
 void appguard_tests_run(int *ok, int *bad) {
@@ -278,8 +279,16 @@ void appguard_tests_run(int *ok, int *bad) {
     CHK(ndead == 1 && dead_hung[0], "appguard: o motivo fica registrado como \"não respondeu\"");
     hang_ms = keep;
     ndead = 0;
+    {   /* a palavra de controle do x87 volta ao valor de antes do app (ABI Win64) */
+        u16 before, after;
+        __asm__ volatile("fnstcw %0" : "=m"(before));
+        CHK(!app_guard_run(&test_app, x87_mess, NULL), "appguard: app que mexe no x87 e cai volta false");
+        __asm__ volatile("fnstcw %0" : "=m"(after));
+        CHK(before == after, "appguard: palavra de controle do x87 restaurada");
+        ndead = 0;
+    }
     CHK(cur == NULL, "appguard: nenhuma guarda fica pendurada");
-    CHK(app_guard_crashes(&test_app) == 5, "appguard: contagem de falhas por app");
+    CHK(app_guard_crashes(&test_app) == 6, "appguard: contagem de falhas por app");
     ndead = 0;
     memset(track, 0, sizeof track);
 #undef CHK

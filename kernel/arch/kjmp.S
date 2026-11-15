@@ -1,6 +1,6 @@
 /* mOS — kjmp_set / kjmp_go: setjmp/longjmp do kernel (convenção Microsoft x64).
  * Buffer (kjmp_buf_t, 256 bytes, alinhado a 16): rbx rbp rdi rsi r12 r13 r14 r15 rsp rip, depois xmm6..xmm15
- * (preservados pelo chamado no ABI Win64) e o MXCSR. Usado por ui/appguard.c. */
+ * (preservados pelo chamado no ABI Win64), o MXCSR e a palavra de controle do x87 (também preservada). Usado por ui/appguard.c. */
     .text
 
     .globl kjmp_set
@@ -28,6 +28,7 @@ kjmp_set:                       /* (rcx = buf) -> 0; volta de novo com o valor d
     movdqu %xmm14, 208(%rcx)
     movdqu %xmm15, 224(%rcx)
     stmxcsr 240(%rcx)
+    fnstcw 244(%rcx)
     xor %eax, %eax
     ret
 
@@ -52,6 +53,7 @@ kjmp_go:                        /* (rcx = buf, edx = valor != 0): não volta */
     movdqu 208(%rcx), %xmm14
     movdqu 224(%rcx), %xmm15
     ldmxcsr 240(%rcx)
+    fldcw 244(%rcx)
     mov %edx, %eax
     test %eax, %eax
     jnz 1f
