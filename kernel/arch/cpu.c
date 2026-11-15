@@ -183,7 +183,11 @@ u64 isr_dispatch(int_frame_t *f) {
     } else if (f->vector == 0xFF) {
         r = (u64)f;                                           /* espúria: sem EOI */
     } else if (f->vector < 32) {
-        if ((f->cs & 3) != 3 || f->vector == 8 || f->vector == 2 || f->vector == 18) exc_panic(f);
+        if ((f->cs & 3) != 3 || f->vector == 8 || f->vector == 2 || f->vector == 18) {
+            extern bool app_guard_fault(int_frame_t *f);
+            if ((f->cs & 3) != 3 && app_guard_fault(f)) return sched_kexit((u64)f);   /* app do sistema caiu: só ele (ui/appguard.c) */
+            exc_panic(f);
+        }
         u64 cr2;
         __asm__ volatile("mov %%cr2,%0" : "=r"(cr2));
         sched_klock();
@@ -191,6 +195,8 @@ u64 isr_dispatch(int_frame_t *f) {
         if (!r) r = proc_fault(f, cr2);                       /* só o processo morre */
     } else {
         int irq = pic_irq(f);
+        extern bool app_guard_watchdog(int_frame_t *f);
+        if (irq == 0 && app_guard_watchdog(f)) return sched_kexit((u64)f);   /* app do sistema travado: só ele (ui/appguard.c) */
         r = sched_ktry() ? sched_irq_exit(f, irq == 0) : (u64)f;
     }
     return sched_kexit(r);

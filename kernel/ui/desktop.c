@@ -1102,7 +1102,7 @@ static void run_action(int act) {
             int pane = act == ACT_NET_PREFS ? 3 : act == ACT_BT_PREFS ? 4 : act == ACT_SND_PREFS ? 2 : act == ACT_DATE_PREFS ? 5 : -1;
             app_launch(p);
             if (pane >= 0) prefs_open_pane(pane);
-            if (act == ACT_APP_PREFS && a && a != p && a->on_menu) { a->on_menu(a, ACT_APP_PREFS); }
+            if (act == ACT_APP_PREFS && a && a != p && a->on_menu) { app_guard_menu(a, ACT_APP_PREFS); }
         }
         break;
     }
@@ -1117,7 +1117,7 @@ static void run_action(int act) {
         for (int i = 0;; i++) { extern window_t *wm_nth(int); window_t *w = wm_nth(i); if (!w) break; w->needs_paint = true; }
         break;
     }
-    case ACT_APP_ABOUT: if (a) { if (a->on_menu) a->on_menu(a, ACT_APP_ABOUT); else desktop_show_about(); } break;
+    case ACT_APP_ABOUT: if (a) { if (a->on_menu) app_guard_menu(a, ACT_APP_ABOUT); else desktop_show_about(); } break;
     case ACT_APP_QUIT: if (a) app_quit(a); break;
     case ACT_APP_HIDE: if (a) { extern window_t *wm_nth(int); for (int i = 0;; i++) { window_t *w = wm_nth(i); if (!w) break; if (w->app == a) wm_minimize(w); } } break;
     case ACT_WIN_MIN: if (f) wm_minimize(f); break;
@@ -1176,7 +1176,7 @@ static void run_action(int act) {
             window_t *w = wm_nth(act - ACT_WIN_N);
             if (w) { if (w->minimized) { w->minimized = false; w->anim_dir = 1; w->anim = 0; } wm_focus(w); }
         } else if (a && a->on_menu && act > 0) {
-            a->on_menu(a, act);
+            app_guard_menu(a, act);
         }
     }
 }
@@ -3224,7 +3224,7 @@ static bool dispatch_menu_shortcut(app_t *a, input_event_t *e) {
         for (int i = 0; i < m->count; i++) {
             menu_item_t *it = &m->items[i];
             if (!it->label || !it->shortcut || it->disabled || it->action <= 0) continue;
-            if (shortcut_matches(it->shortcut, e->mods, e->key)) { a->on_menu(a, it->action); return true; }
+            if (shortcut_matches(it->shortcut, e->mods, e->key)) { app_guard_menu(a, it->action); return true; }
         }
     }
     return false;
@@ -3822,7 +3822,11 @@ void desktop_run(void) {
                     SW, SH, us[0], us[1], par_cpus(), us[1] ? us[0] / us[1] : 0, us[1] ? us[0] * 10 / us[1] % 10 : 0);
         }
     }
-    u64 last_frame = 0;
+    /* ritmo de quadro: no período do monitor (vsync medido da Intel; senão 60 Hz), contado em ns pelo HPET.
+     * O antigo "≥ 15 ms desde o último" dava ~64 qps contra 60 Hz: um quadro repetido a cada ~16 (tremida). */
+    u64 last_frame = 0, next_ns = 0;
+    u32 hz = gpu_refresh_hz();
+    u64 period_ns = 1000000000ULL / (hz >= 30 && hz <= 240 ? hz : 60);
     for (;;) {
         input_event_t e;
         int n = 0;
@@ -3838,11 +3842,18 @@ void desktop_run(void) {
         persist_tick();
         for (int i = 0; i < apps_count(); i++) {
             app_t *a = apps_get(i);
-            if ((a->running || a->always_tick) && a->tick) a->tick(a);
+            if ((a->running || a->always_tick) && a->tick) app_guard_tick(a);
         }
+        app_guard_reap();                         /* apps que levantaram exceção: fecham aqui, fora da pilha deles */
         desktop_tick();
-        u64 now = timer_ticks();
-        if (now - last_frame >= 15) {
+        u64 now = timer_ticks(), ns = hpet_ns();
+        if (ns) {
+            if (ns >= next_ns) {
+                /* atrasou mais de um quadro (composição pesada): recomeça a grade em vez de compor em rajada */
+                next_ns = ns - next_ns > period_ns ? ns + period_ns : next_ns + period_ns;
+                wm_compose();
+            }
+        } else if (now - last_frame >= 16) {
             last_frame = now;
             wm_compose();
         }

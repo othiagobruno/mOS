@@ -204,6 +204,7 @@ int    smp_x2apic(void);
 typedef void (*par_fn_t)(void *ctx, int begin, int end, int cpu);
 void   par_for(int n, int grain, par_fn_t fn, void *ctx);
 int    par_cpus(void);
+bool   par_busy(void);
 void   par_set_enabled(bool on);       /* false: tudo serial no BSP (para medir o ganho) */
 u64    hpet_ns(void);                  /* relógio de alta resolução (0 sem HPET) */
 

@@ -228,7 +228,7 @@ void app_launch(app_t *a) {
         return;
     }
     a->running = true;
-    if (a->launch) a->launch(a);
+    if (a->launch) app_guard_launch(a);
     sound_click();
 }
 
@@ -254,7 +254,7 @@ static void app_quit_mode(app_t *a, int force) {
         return;
     }
     if (!strcmp(a->exec, "horizonte")) horizonte_motor_parar(force);
-    else if (a->on_quit) a->on_quit(a);
+    else if (a->on_quit) app_guard_quit(a);
     wm_close_app(a);
     if (strcmp(a->exec, "arquivos")) a->running = false;
 }
