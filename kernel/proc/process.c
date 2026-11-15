@@ -237,6 +237,11 @@ bool uvm_map(process_t *p, u64 va, u64 len) {
 #define PTE_COW (1ULL << 9)
 #define PTE_JWP (1ULL << 10)   /* JIT arm64: página de código traduzido, sem escrita (uvm_jit_wprotect) */
 #define PTE_SHARED (1ULL << 11) /* MAP_SHARED: a mesma página física nos dois lados, sem COW */
+/* Página compartilhada cuja proteção máxima não tem escrita (arquivo aberto só para leitura, entrada Mach
+ * só-leitura, BO de GPU só-leitura). Bit 53: ignorado pelo hardware numa PTE presente (o 52 é a marca de swap
+ * numa PTE ausente, mm/swap.c). mprotect não devolve a escrita e o kernel não escreve nela por uvm_copy_out. */
+#define PTE_NOW (1ULL << 53)
+#define UVM_PROT_MAYW 8         /* em prot de uvm_map_shared / lazy: a escrita pode ser ligada depois */
 #define PTE_NX (1ULL << 63)     /* só vale com EFER.NXE (mm/memory.c); o mapa do kernel não usa este bit */
 static u16 *pref;
 static u64 pref_n;
@@ -351,13 +356,14 @@ void uvm_page_get(u64 phys) {
     page_ref_inc(phys);
 }
 void uvm_page_put(u64 phys) { page_put(phys); }
-bool uvm_map_phys(process_t *p, u64 va, u64 phys, bool rw) {
+/* rw: UVM_PHYS_W grava agora; UVM_PHYS_MAYW a escrita pode vir depois (mprotect). Sem os dois: PTE_NOW. */
+bool uvm_map_phys(process_t *p, u64 va, u64 phys, int rw) {
     if (!pref_ready()) return false;
     u64 *e = walk(p, va & ~0xFFFULL, true);
     if (!e) return false;
     if (*e & PTE_P) { page_put(*e & PTE_ADDR); p->mem_pages--; }
     uvm_page_get(phys);
-    *e = (phys & PTE_ADDR) | PTE_P | PTE_U | (rw ? PTE_RW : 0);
+    *e = (phys & PTE_ADDR) | PTE_P | PTE_U | ((rw & UVM_PHYS_W) ? PTE_RW : 0) | (rw ? 0 : PTE_NOW);
     p->mem_pages++;
     vm_flush(p, va);
     return true;
@@ -528,6 +534,7 @@ bool uvm_map_shared(process_t *p, u64 va, u64 phys, u8 prot) {
     page_ref_inc(phys);
     u64 bits = PTE_P | PTE_U | PTE_SHARED;
     if (prot & 2) bits |= PTE_RW;
+    else if (!(prot & UVM_PROT_MAYW)) bits |= PTE_NOW;
     if (!(prot & 4)) bits |= PTE_NX;
     *e = (phys & PTE_ADDR) | bits;
     p->mem_pages++;
@@ -585,6 +592,7 @@ bool uvm_protect(process_t *p, u64 va, u64 len, u8 prot) {
                     *e = (*e | PTE_RW) & ~PTE_JWP;
                 }
             } else if (!(*e & PTE_COW)) {
+                if ((prot & 2) && (*e & PTE_NOW)) { ok = false; break; }   /* proteção máxima sem escrita */
                 if (prot & 2) *e |= PTE_RW;
                 else *e &= ~PTE_RW;
             }
@@ -670,7 +678,8 @@ int uvm_alias_map(process_t *p, u64 *dst_io, u64 src, u64 len) {
         if (!e) { alias_drop(p, dst, done); return -MOS_ENOMEM; }
         if ((*e & PTE_COW) && !cow_break(p, e, sva)) { alias_drop(p, dst, done); return -MOS_ENOMEM; }
         e = uvm_pte(p, sva);
-        if (!e || !uvm_map_phys(p, dst + i, *e & PTE_ADDR, true)) {
+        /* origem só-leitura de vez (PTE_NOW): o apelido também, senão seria a escrita que a origem recusa */
+        if (!e || !uvm_map_phys(p, dst + i, *e & PTE_ADDR, (*e & PTE_NOW) ? 0 : UVM_PHYS_W)) {
             alias_drop(p, dst, done);
             return -MOS_ENOMEM;
         }
@@ -695,6 +704,10 @@ bool uvm_copy_out(process_t *p, u64 va, const void *src, usize len) {
         if (!e && lazy_fault(p, va)) e = uvm_pte(p, va);
         if (!e) return false;
         if ((*e & PTE_COW) && !cow_break(p, e, va)) return false;   /* o kernel também respeita o COW */
+        /* página só-leitura que outro espaço também enxerga (MAP_SHARED, memória Mach, cache do JIT, BO de GPU):
+         * escrever aqui mudaria o arquivo ou a memória de outro processo. EFAULT, como o copyout do XNU.
+         * Só-leitura privada (texto, JWP) continua: o carregador e o tracepoint escrevem nela. */
+        if (!(*e & PTE_RW) && ((*e & (PTE_SHARED | PTE_NOW)) || page_refs(*e & PTE_ADDR) > 1)) return false;
         usize k = MIN(len, 4096 - (va & 0xFFF));
         memcpy((u8 *)((*e & PTE_ADDR) + (va & 0xFFF)), s, k);
         va += k; s += k; len -= k;
@@ -715,10 +728,15 @@ bool uvm_copy_in(process_t *p, void *dst, u64 va, usize len) {
     return true;
 }
 
+/* um trecho por página, não um byte por vez: cada uvm_copy_in anda os quatro níveis da tabela de páginas.
+ * O trecho não passa do fim da página onde está o byte, então não toca página que a string não toca. */
 static bool copy_str_in(process_t *p, char *dst, u64 va, usize cap) {
-    for (usize i = 0; i < cap; i++) {
-        if (!uvm_copy_in(p, &dst[i], va + i, 1)) return false;
-        if (!dst[i]) return true;
+    if (!cap) return false;
+    for (usize i = 0; i < cap; ) {
+        usize k = MIN(cap - i, 4096 - ((va + i) & 0xFFF));
+        if (!uvm_copy_in(p, &dst[i], va + i, k)) return false;
+        for (usize j = 0; j < k; j++) if (!dst[i + j]) return true;
+        i += k;
     }
     dst[cap - 1] = 0;
     return true;
@@ -2726,20 +2744,26 @@ static u64 proc_syscall_(int_frame_t *f) {
         if (strchr(path, '/') && path[0] != '/') { char rel[256]; memcpy(rel, path, sizeof rel); snprintf(path, sizeof path, "%s/%s", p->cwd, rel); }
         char **argv = NULL; int argc = 0;
         char **env = NULL; int envc = 0;
-        mos_spawn_fa_t acts[MOS_SPAWN_FA_MAX];
+        /* as ações vão para o heap: 48 × 276 bytes na pilha entravam no frame de proc_syscall_ e toda syscall
+         * reservava ~14 KiB dos 32 KiB da pilha do kernel (KSTACK_SIZE, sem página de guarda) */
+        mos_spawn_fa_t *acts = NULL;
         int nacts = 0;
         if (v.argv && !(argv = copy_user_vec(p, v.argv, &argc))) { r = -MOS_EFAULT; break; }
         if (v.envp && !(env = copy_user_vec(p, v.envp, &envc))) { free_vec(argv, argc); r = -MOS_EFAULT; break; }
         if (v.nacts && v.acts) {
             nacts = v.nacts > MOS_SPAWN_FA_MAX ? MOS_SPAWN_FA_MAX : (int)v.nacts;
+            acts = kmalloc(sizeof(mos_spawn_fa_t) * (usize)nacts);
+            if (!acts) { free_vec(argv, argc); free_vec(env, envc); r = -MOS_ENOMEM; break; }
             if (!uvm_copy_in(p, acts, v.acts, sizeof(mos_spawn_fa_t) * (usize)nacts)) {
-                free_vec(argv, argc); free_vec(env, envc); r = -MOS_EFAULT; break;
+                kfree(acts); free_vec(argv, argc); free_vec(env, envc); r = -MOS_EFAULT; break;
             }
+            for (int i = 0; i < nacts; i++) acts[i].path[sizeof acts[i].path - 1] = 0;   /* veio do ring 3 */
         }
-        if (!exec_resolve(path, sizeof path, &argv, &argc)) { free_vec(argv, argc); free_vec(env, envc); r = -MOS_ENOENT; break; }
+        if (!exec_resolve(path, sizeof path, &argv, &argc)) { kfree(acts); free_vec(argv, argc); free_vec(env, envc); r = -MOS_ENOENT; break; }
         p->spawn_sigdef = v.sigdef; p->spawn_sigmask = v.sigmask; p->spawn_extra = v.extra;
         r = proc_spawn_in(path, NULL, p->tty, argv, argc, env, envc, nacts ? acts : NULL, nacts, v.flags);
         p->spawn_extra = 0;
+        kfree(acts);
         free_vec(argv, argc);
         free_vec(env, envc);
         if (r < 0) r = -MOS_ENOENT;
@@ -3283,7 +3307,8 @@ static u64 proc_syscall_(int_frame_t *f) {
                 vnode_t *v = vfs_lookup(p->fds[c].path);
                 if (!v) { r = -MOS_ENOENT; break; }
                 if (v->dir) { r = -MOS_EINVAL; break; }
-                if (!lazy_add_shared_file(p, at, len, p->fds[c].path, foff, prot)) { r = -MOS_ENOMEM; MMAP_NOMEM_LOG(); break; }
+                u8 maxw = (p->fds[c].flags & (MOS_O_WRONLY | MOS_O_RDWR)) ? 8 : 0;   /* UVM_PROT_MAYW */
+                if (!lazy_add_shared_file(p, at, len, p->fds[c].path, foff, prot | maxw)) { r = -MOS_ENOMEM; MMAP_NOMEM_LOG(); break; }
             } else if (!lazy_add_shared_anon(p, at, len, prot)) { r = -MOS_ENOMEM; MMAP_NOMEM_LOG(); break; }
             p->mmap_next += len + 4096;
             r = (i64)at;
@@ -3312,7 +3337,8 @@ static u64 proc_syscall_(int_frame_t *f) {
             if (v->dir) { r = -MOS_EINVAL; break; }
             mm_release_span(p, at, len);
             if (!(b == 8 ? lazy_add_file(p, at, len, p->fds[fd].path, foff)
-                         : lazy_add_shared_file(p, at, len, p->fds[fd].path, foff, prot))) {
+                         : lazy_add_shared_file(p, at, len, p->fds[fd].path, foff,
+                                                prot | ((p->fds[fd].flags & (MOS_O_WRONLY | MOS_O_RDWR)) ? UVM_PROT_MAYW : 0)))) {
                 r = -MOS_ENOMEM; MMAP_NOMEM_LOG(); break;
             }
             if (at >= USER_MMAP_BASE && end + 4096 > p->mmap_next) p->mmap_next = end + 4096;
@@ -3324,11 +3350,11 @@ static u64 proc_syscall_(int_frame_t *f) {
         /* b = 7: prot (r8) nas PTEs de [c, c+len) e na faixa que a falta consulta. Sem o bit 4 a página fica NX.
          * Página que ainda não existe só fica registrada; a falta aplica o prot. PROT_NONE (0) não desmapeia. */
         if (b == 7) {
-            extern bool lazy_protect(process_t *p, u64 va, u64 len, u8 prot);
+            extern int lazy_protect(process_t *p, u64 va, u64 len, u8 prot);
             u64 at = c & ~0xFFFULL, end = (c + a + 0xFFF) & ~0xFFFULL;
             if (!a) { r = 0; break; }
             if (at < USER_BASE || end > USER_END || end < at) { r = -MOS_EINVAL; break; }
-            r = lazy_protect(p, at, end - at, (u8)(f->r8 & 7)) ? 0 : -MOS_ENOMEM;
+            r = lazy_protect(p, at, end - at, (u8)(f->r8 & 7));
             break;
         }
         if (b == 2) {

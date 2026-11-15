@@ -312,6 +312,74 @@ void _start(const char *arg) {
         unlink("/tmp/mm-fixed.bin");
     }
 
+    /* ---- proteção máxima: arquivo aberto só para leitura não vira gravável por mprotect nem por read() ---- */
+    {
+        static char ro[4096], src[64], back[8];
+        fill(ro, sizeof ro, 'r');
+        fill(src, sizeof src, 'W');
+        write_file("/tmp/mm-ro.bin", ro, sizeof ro);
+        write_file("/tmp/mm-src.bin", src, sizeof src);
+        int fd = open("/tmp/mm-ro.bin", MOS_O_RDONLY);
+        volatile unsigned char *m = (volatile unsigned char *)mmap_fd(4096, MM_FILE, fd, 0, PROT_R);
+        int ok = fd >= 0 && (i64)m > 0 && m[0] == 'r';
+        CHECK(ok, "MAP_SHARED só leitura de fd O_RDONLY (mapa %d)", (i64)m);
+        i64 pr = ok ? sys5(SYS_MMAP, 4096, MM_PROT, (u64)m, 0, PROT_RW) : -1;
+        CHECK(pr == -MOS_EACCES, "mprotect(PROT_WRITE) sem escrita no fd: EACCES (%d)", pr);
+        fault_page = m;
+        fault_kind = 2;
+        int st = ok ? child_fault(fault_body) : -1;
+        CHECK(st == 100 + MOS_SIGBUS, "escrita na página continua faltando (filho %d)", (i64)st);
+        int sfd = open("/tmp/mm-src.bin", MOS_O_RDONLY);
+        i64 rn = ok && sfd >= 0 ? read(sfd, (void *)m, 16) : 0;
+        CHECK(rn == -MOS_EFAULT && m[0] == 'r', "read() para dentro do mapa só leitura: EFAULT (%d, %u)", rn, ok ? m[0] : 0);
+        if (sfd >= 0) close(sfd);
+        if (ok) munmap((void *)m, 4096);
+        if (fd >= 0) close(fd);
+        read_file("/tmp/mm-ro.bin", back, sizeof back);
+        CHECK(back[0] == 'r', "o arquivo só leitura ficou como estava (%u)", (unsigned)back[0]);
+
+        fd = open("/tmp/mm-ro.bin", MOS_O_RDWR);   /* controle: fd com escrita, mapa nasce só leitura */
+        m = (volatile unsigned char *)mmap_fd(4096, MM_FILE, fd, 0, PROT_R);
+        ok = fd >= 0 && (i64)m > 0;
+        pr = ok ? sys5(SYS_MMAP, 4096, MM_PROT, (u64)m, 0, PROT_RW) : -1;
+        if (pr == 0) m[0] = 'w';
+        i64 sy = pr == 0 ? sys3(SYS_MUNMAP, (u64)m, 4096, MOS_MUNMAP_SYNC) : -1;
+        read_file("/tmp/mm-ro.bin", back, sizeof back);
+        CHECK(pr == 0 && sy == 0 && back[0] == 'w', "fd O_RDWR: mprotect liga a escrita e grava (%d, %u)", pr, (unsigned)back[0]);
+        if (ok) munmap((void *)m, 4096);
+        if (fd >= 0) close(fd);
+        unlink("/tmp/mm-ro.bin");
+        unlink("/tmp/mm-src.bin");
+    }
+
+    /* ---- entrada Mach só leitura (max = R): o mapa não ganha escrita (Chromium confere isso) ---- */
+    {
+        volatile unsigned char *a = (volatile unsigned char *)mmap_fd(4096, MM_ANON, -1, 0, PROT_RW);
+        int ok = (i64)a > 0;
+        if (ok) a[0] = 77;
+        u64 args[8] = {4096, (u64)a, PROT_R, 0, 0, 0, 0, 0};
+        i64 kr = ok ? sys3(SYS_MACH_VM, 1, (u64)args, 0) : -1;   /* MACH_VM_MAKE_ENTRY */
+        i64 hole = sys3(SYS_MMAP, 4096, 3, 0);
+        if (hole > 0) munmap((void *)hole, 4096);
+        u64 map[8] = {hole > 0 ? (u64)hole : 0, 4096, 0, args[4], 0, PROT_R, PROT_R, 0};
+        i64 kr2 = kr == 0 && hole > 0 ? sys3(SYS_MACH_VM, 2, (u64)map, 0) : -1;
+        volatile unsigned char *v = (volatile unsigned char *)map[0];
+        int mapped = kr2 == 0 && v[0] == 77;
+        CHECK(mapped, "mach_vm_map só leitura mostra a página (kr %d/%d)", kr, kr2);
+        i64 pr = mapped ? sys5(SYS_MMAP, 4096, MM_PROT, (u64)v, 0, PROT_RW) : -1;
+        CHECK(pr == -MOS_EACCES, "mprotect(PROT_WRITE) na entrada só leitura: EACCES (%d)", pr);
+        static char src[16];
+        fill(src, sizeof src, 'X');
+        write_file("/tmp/mm-src2.bin", src, sizeof src);
+        int sfd = open("/tmp/mm-src2.bin", MOS_O_RDONLY);
+        i64 rn = mapped && sfd >= 0 ? read(sfd, (void *)v, 8) : 0;
+        CHECK(rn == -MOS_EFAULT && a[0] == 77, "read() para a entrada só leitura: EFAULT e o original intacto (%d, %u)", rn, ok ? a[0] : 0);
+        if (sfd >= 0) close(sfd);
+        unlink("/tmp/mm-src2.bin");
+        if (mapped) munmap((void *)v, 4096);
+        if (ok) munmap((void *)a, 4096);
+    }
+
     print(fails ? "mmshared: %d FALHA(S)\n" : "mmshared: TODOS OS TESTES OK\n", (i64)fails);
     exit(fails);
 }

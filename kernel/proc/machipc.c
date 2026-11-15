@@ -722,7 +722,7 @@ static u64 map_ool(process_t *p, kmem_t *m) {
     u64 at = p->mmap_next;
     if (at + len > USER_END) return 0;
     for (u64 i = 0; i < m->npages; i++)
-        if (!uvm_map_phys(p, at + i * 4096, m->pages[i], true)) return 0;
+        if (!uvm_map_phys(p, at + i * 4096, m->pages[i], UVM_PHYS_W)) return 0;
     p->mmap_next += len + 4096;
     return at;
 }
@@ -1509,7 +1509,8 @@ static u32 vm_op(mspace_t *sp, u32 op, u64 *a) {
                 sp->proc->mmap_next = at + bytes + 4096;
         }
         for (u64 i = 0; i < npages; i++)                  /* as MESMAS páginas físicas: memória compartilhada */
-            if (!uvm_map_phys(sp->proc, at + i * 4096, m->pages[pfirst + i], rw)) return KERN_NO_SPACE;
+            if (!uvm_map_phys(sp->proc, at + i * 4096, m->pages[pfirst + i],
+                              (rw ? UVM_PHYS_W : 0) | ((e->port->mprot & 2) ? UVM_PHYS_MAYW : 0))) return KERN_NO_SPACE;
         a[0] = at + (start & 0xFFF);
         return KERN_SUCCESS;
     }

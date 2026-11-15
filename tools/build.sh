@@ -119,7 +119,8 @@ pick_zig() {
 }
 
 ZIG=$(pick_zig)
-ZIGDIR=$(dirname "$ZIG")
+# o zig do PATH pode ser um link (~/.local/bin/zig -> .../zig-x86_64-linux-0.17.1/zig): lib/ fica ao lado do binário real
+ZIGDIR=$(dirname "$(readlink -f "$ZIG")")
 if [ ! -d "$ZIGDIR/lib/libunwind" ]; then
     ZIGDIR=$(dirname "$ZIGDIR")
 fi
