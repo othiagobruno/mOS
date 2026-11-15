@@ -573,6 +573,35 @@ static void test_jit_mt(void) {
     if (jit_cell != (a64_u64)n * 2) fail("jit contador com duas threads");
 }
 
+/* Vida de thread: o runtime zera o a64_cpu de cada thread nova (thread_init) e, na saída, chama
+ * a64_xmon_release. Os gates têm de voltar para o conjunto: com 4096 vagas, a thread 4097 ficava sem
+ * gate e todo STXR dela falhava para sempre (laço LDXR/STXR sem fim). E uma thread que sai no meio de
+ * um store (inflight = 1) não pode deixar o LDXR das outras esperando. */
+static void test_thread_churn(void) {
+    _Alignas(16) a64_u64 cell[2] = { 5, 0 };
+    a64_cpu c;
+    int bad = 0;
+    for (int t = 0; t < 3 * A64_XMON_MAX / 2; t++) {
+        cpu_clear(&c);
+        c.x[1] = (a64_u64)(uintptr_t)&cell[0];
+        c.x[2] = 7;
+        c.x[3] = (a64_u64)t;
+        if (step(&c, I_LDXR) != A64_NEXT || step(&c, I_STXR) != A64_NEXT || c.x[2] != 0 || cell[0] != (a64_u64)t) bad++;
+        a64_xmon_release(&c);
+    }
+    if (bad) { fprintf(stderr, "  %d de %d threads com STXR falhando\n", bad, 3 * A64_XMON_MAX / 2); fail("gates não voltam no fim da thread"); }
+
+    cpu_clear(&c);                                    /* store interrompido: prepare sem note_end */
+    a64_xmon_bind(&c);
+    a64_xmon_prepare(&c, (a64_u64)(uintptr_t)&cell[1], 8);
+    a64_xmon_release(&c);
+    a64_cpu o;
+    cpu_clear(&o);
+    o.x[1] = (a64_u64)(uintptr_t)&cell[0];
+    if (step(&o, I_LDXR) != A64_NEXT) fail("ldxr depois de thread que saiu no meio do store");
+    a64_xmon_release(&o);
+}
+
 int main(void) {
     struct sigaction sa;
     memset(&sa, 0, sizeof sa);
@@ -586,6 +615,7 @@ int main(void) {
     test_invalidate();
     test_lse_values();
     test_fork();
+    test_thread_churn();
     test_aba_threads();
     test_message();
     test_counter();

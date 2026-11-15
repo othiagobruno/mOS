@@ -341,7 +341,7 @@ void rt_thread_main(rt_thread_t *T) {
 static __attribute__((noreturn)) void thread_exit(rt_thread_t *T, long code) {
     u32 all = ~0u;
     RS4(SYS_SIG, MOS_SIGOP_MASK, MOS_SIG_SETMASK, &all, 0);   /* nada entra nesta pilha depois de liberada */
-    a64_xmon_invalidate(&T->cpu);                             /* solta a reserva e a vaga no contador global */
+    a64_xmon_release(&T->cpu);                                /* solta a reserva e devolve o gate (thread_init zera o cpu) */
 #ifdef A64_HAVE_JIT
     if (T->cpu.jit) a64_jit_thread_exit(&T->cpu);
 #endif
