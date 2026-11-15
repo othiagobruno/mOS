@@ -91,7 +91,7 @@ Write-Host ("Combine: ok ({0:N0} KB, {1} fontes)" -f ((Get-Item "$ov\Combine.o")
 # ---- Combine.framework
 $dir = "$objc\dylib\System\Library\Frameworks\Combine.framework\Versions\A"
 New-Item -ItemType Directory -Force $dir | Out-Null
-$log = & $zig c++ -target $ZigTarget -shared -o "$dir\Combine" '-Wl,-install_name,/System/Library/Frameworks/Combine.framework/Versions/A/Combine' '-Wl,-undefined,dynamic_lookup' "$ov\Combine.o" "$ov\Combine_COpenCombineHelpers.o" 2>&1 | ForEach-Object { "$_" }
+$log = & $zig c++ -target $ZigTarget -shared -o "$dir\Combine" '-Wl,-install_name,/System/Library/Frameworks/Combine.framework/Versions/A/Combine' '-Wl,-undefined,dynamic_lookup' "$ov\Combine.o" "$ov\Combine_COpenCombineHelpers.o" "$objc\dylib\usr\lib\swift\libswiftCore.dylib" 2>&1 | ForEach-Object { "$_" }
 if ($LASTEXITCODE -ne 0) { $log | Select-Object -First 8 | ForEach-Object { "  $_" }; Write-Host 'Combine.framework: link FALHOU' -ForegroundColor Red; exit 1 }
 Write-Host ("Combine.framework: ok ({0:N0} KB)" -f ((Get-Item "$dir\Combine").Length / 1KB))
 

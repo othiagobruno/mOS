@@ -40,6 +40,6 @@ Write-Host ("UIKit (Swift): ok ({0:N0} KB, {1} fontes)" -f ((Get-Item "$out\uiki
 
 $dir = "$objc\dylib\System\iOSSupport\usr\lib\swift"
 New-Item -ItemType Directory -Force $dir | Out-Null
-$log = & $zig c++ -target $ZigTarget -shared -o "$dir\libswiftUIKit.dylib" '-Wl,-install_name,/System/iOSSupport/usr/lib/swift/libswiftUIKit.dylib' '-Wl,-undefined,dynamic_lookup' "$out\uikit\UIKit.o" 2>&1 | ForEach-Object { "$_" }
+$log = & $zig c++ -target $ZigTarget -shared -o "$dir\libswiftUIKit.dylib" '-Wl,-install_name,/System/iOSSupport/usr/lib/swift/libswiftUIKit.dylib' '-Wl,-undefined,dynamic_lookup' "$out\uikit\UIKit.o" "$objc\dylib\usr\lib\swift\libswiftCore.dylib" 2>&1 | ForEach-Object { "$_" }
 if ($LASTEXITCODE -ne 0) { $log | Select-Object -First 8 | ForEach-Object { "  $_" }; Write-Host 'libswiftUIKit: link FALHOU' -ForegroundColor Red; exit 1 }
 Write-Host ("libswiftUIKit: ok ({0:N0} KB) -> /System/iOSSupport/usr/lib/swift/libswiftUIKit.dylib" -f ((Get-Item "$dir\libswiftUIKit.dylib").Length / 1KB))

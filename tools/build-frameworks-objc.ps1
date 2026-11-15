@@ -53,7 +53,11 @@ foreach ($fw in Get-ChildItem "$root\userland\frameworks" -Directory) {
         $dir = $dst + (Split-Path $install -Parent).Replace('/', '\'); $file = Split-Path $install -Leaf
     }
     New-Item -ItemType Directory -Force $dir | Out-Null
-    $log = & $zig cc -target $ZigTarget -shared -o "$dir\$file" "-Wl,-install_name,$install" '-Wl,-undefined,dynamic_lookup' @objs 2>&1 | ForEach-Object { "$_" }
+    # com overlay Swift, o libswiftCore real entra no link (ligação por ordinal): em busca plana os swift_* iam para os do
+    # libSystem, o runtime sem ObjC (docs/swift-runtime-real.md)
+    $core = "$objc\dylib\usr\lib\swift\libswiftCore.dylib"
+    $deps = @(if ($sw -and (Test-Path $core)) { $core })
+    $log = & $zig cc -target $ZigTarget -shared -o "$dir\$file" "-Wl,-install_name,$install" '-Wl,-undefined,dynamic_lookup' @objs @deps 2>&1 | ForEach-Object { "$_" }
     if ($LASTEXITCODE -ne 0) { $log | Select-Object -First 8 | ForEach-Object { "  $_" }; Write-Host "${name}: link FALHOU" -ForegroundColor Red; $fails++; continue }
     foreach ($a in $alias) {
         $ad = $dst + (Split-Path $a -Parent).Replace('/', '\')
