@@ -57,6 +57,8 @@ void gfx_line(surface_t *s, float x0, float y0, float x1, float y1, float t, u32
 void gfx_grad_v(surface_t *s, int x, int y, int w, int h, u32 top, u32 bottom);
 void gfx_grad_h(surface_t *s, int x, int y, int w, int h, u32 left, u32 right);
 void gfx_shadow(surface_t *s, int x, int y, int w, int h, float r, float blur, int alpha, int dy);
+/* igual a gfx_shadow, bit a bit, com a máscara guardada por (w, h, r, blur, alpha, dy): para sombras que se repetem a cada quadro */
+void gfx_shadow_cached(surface_t *s, int x, int y, int w, int h, float r, float blur, int alpha, int dy);
 void gfx_polygon(surface_t *s, const float *xy, int n, u32 c); /* preenchimento AA, regra não-zero */
 
 void gfx_blit(surface_t *d, const surface_t *src, int dx, int dy);            /* opaco */
