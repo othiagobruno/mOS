@@ -25,6 +25,7 @@
 #include "fwlink.h"            /* symlink de .framework gravado como texto */
 #include "libswift_image.h"    /* libswift* da imagem; revisão do Kernel no uso em link_abs_dep */
 #include "../../userland/a64rt/a64rt_abi.h"   /* processos arm64: runtime do tradutor (docs/tradutor-arm64.md) */
+#include "chained_ptr.h"         /* formatos de ponteiro encadeado */
 
 #define LIBSYSTEM_BASE (USER_BASE + 0x00100000ULL)
 #define IMAGE_BASE   (USER_BASE + 0x01000000ULL)
@@ -1233,13 +1234,15 @@ static bool run_chained(load_t *L) {
         if (ss + 22 > hend) { ok = false; break; }
         u16 page_size = rd16(ss + 4), fmt = rd16(ss + 6), page_count = rd16(ss + 20);
         u64 seg_off = rd64(ss + 8);
-        /* 2 = DYLD_CHAINED_PTR_64, 6 = _64_OFFSET (passo de 4 bytes); arm64e (passo de 8): 1 = ARM64E (rebase por vmaddr),
-         * 12 = ARM64E_USERLAND, 13 = ARM64E_USERLAND24 (rebase por deslocamento, bind com ordinal de 24 bits). Os
-         * ponteiros autenticados viram ponteiros puros: o PAC do tradutor é a identidade (docs/tradutor-arm64.md).
-         * Nenhum binário dos apps-alvo neste repositório pede um formato fora desta lista. */
-        bool e64 = fmt == 1 || fmt == 12 || fmt == 13;
-        if (fmt != 2 && fmt != 6 && !e64) { snprintf(L->err, L->errlen, "formato de ponteiro encadeado %u não suportado", fmt); ok = false; break; }
+        /* Formatos e desenho de bits em chained_ptr.h (1, 2, 6, 9, 12). Os ponteiros autenticados viram ponteiros
+         * puros: o PAC do tradutor é a identidade (docs/tradutor-arm64.md). */
+        if (!chptr_supported(fmt)) {
+            snprintf(L->err, L->errlen, "formato de ponteiro encadeado %u não suportado%s", fmt,
+                     fmt == CHPTR_ARM64E_SHARED_CACHE ? " (só existe no cache compartilhado)" : "");
+            ok = false; break;
+        }
         if (L->report_only) continue;
+        u32 stride = chptr_stride(fmt);
         for (u16 pg = 0; ok && pg < page_count; pg++) {
             u16 start = rd16(ss + 22 + pg * 2);
             if (start == 0xFFFF) continue;
@@ -1247,43 +1250,23 @@ static bool run_chained(load_t *L) {
             for (int guard = 0; guard < 100000; guard++) {
                 u64 *slot = slot_at(L, va);
                 if (!slot) { snprintf(L->err, L->errlen, "fixup fora da imagem"); ok = false; break; }
-                u64 v = *slot, next;
-                if (e64) {
-                    bool auth = v >> 63, bind = (v >> 62) & 1;
-                    next = (v >> 51) & 0x7FF;
-                    if (bind) {
-                        u32 ord = (u32)(fmt == 13 ? (v & 0xFFFFFF) : (v & 0xFFFF));
-                        i64 add = auth ? 0 : ((i64)(((v >> 32) & 0x7FFFF) << 45) >> 45);   /* addend de 19 bits com sinal */
-                        if (ord >= imports_count) { snprintf(L->err, L->errlen, "ordinal de import inválido"); ok = false; break; }
-                        *slot = targets[ord] ? targets[ord] + (u64)add : 0;
-                    } else if (auth) {
-                        *slot = L->I->hdr + (v & 0xFFFFFFFFULL);                         /* runtimeOffset */
-                    } else {
-                        u64 target = v & 0x7FFFFFFFFFFULL, high8 = (v >> 43) & 0xFF;
-                        *slot = (fmt == 1 ? target + (u64)L->slide : L->I->hdr + target) | (high8 << 56);
-                    }
-                    if (!next) break;
-                    va += next * 8;
-                    continue;
-                }
-                next = (v >> 51) & 0xFFF;
-                if (v >> 63) {
-                    u32 ord = (u32)(v & 0xFFFFFF);
-                    i64 add = (i64)((v >> 24) & 0xFF);
-                    if (ord >= imports_count) { snprintf(L->err, L->errlen, "ordinal de import inválido"); ok = false; break; }
-                    *slot = targets[ord] ? targets[ord] + (u64)add : 0;
+                chptr_t c = chptr_decode(fmt, *slot);
+                if (c.bind) {
+                    if (c.ordinal >= imports_count) { snprintf(L->err, L->errlen, "ordinal de import inválido"); ok = false; break; }
+                    *slot = targets[c.ordinal] ? targets[c.ordinal] + (u64)c.addend : 0;
+                } else if (chptr_is_arm64e(fmt)) {
+                    *slot = (c.target_is_vmaddr ? c.target + (u64)L->slide : L->I->hdr + c.target) | c.high8;
                 } else {
                     /* DYLD_CHAINED_PTR_64: alvo é vmaddr; _64_OFFSET: deslocamento a partir do cabeçalho.
                      * Alvo fora da imagem = valor absoluto que o linker do zig codificou como rebase (ex.:
                      * __swiftImmortalRefCount = 0x80000004ffffffff no contador dos objetos estáticos do Swift):
                      * vai como está, sem slide (o ld64 da Apple nem gera rebase para símbolo absoluto). */
-                    u64 target = v & 0xFFFFFFFFFULL, high8 = (v >> 36) & 0xFF;
-                    bool inside = fmt == 2 ? (target >= mo->vmin && target <= mo->vmax) : target <= mo->vmax - mo->vmin;
-                    u64 addr = !inside ? target : fmt == 2 ? target + (u64)L->slide : L->I->hdr + target;
-                    *slot = addr | (high8 << 56);
+                    bool inside = c.target_is_vmaddr ? (c.target >= mo->vmin && c.target <= mo->vmax) : c.target <= mo->vmax - mo->vmin;
+                    u64 addr = !inside ? c.target : c.target_is_vmaddr ? c.target + (u64)L->slide : L->I->hdr + c.target;
+                    *slot = addr | c.high8;
                 }
-                if (!next) break;
-                va += next * 4;
+                if (!c.next) break;
+                va += (u64)c.next * stride;
             }
         }
     }
