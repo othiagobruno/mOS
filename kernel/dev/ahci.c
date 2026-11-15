@@ -274,7 +274,12 @@ static void ahci_reap(ahci_disk_t *d) {
     u32 is = pr(p, P_IS);
     if (is) pw(p, P_IS, is);
     if (is & IS_TFES) d->tfes = 1;
-    ahci_batch_irq(&d->batch, pr(p, P_CI));
+    /* NCQ: o bit de PxCI cai quando o disco ACEITA o comando; os dados só estão no buffer quando o bit de PxSACT
+     * cai (Set Device Bits). Olhar só PxCI dava a leitura por pronta antes do DMA: vinha o conteúdo anterior do
+     * buffer (o FAT do persist lia lixo e o boot chegava a cair). Ativo = PxCI | PxSACT. */
+    u32 live = pr(p, P_CI);
+    if (d->ncq) live |= pr(p, P_SACT);
+    ahci_batch_irq(&d->batch, live);
 }
 
 static void ahci_on_irq(void) {
