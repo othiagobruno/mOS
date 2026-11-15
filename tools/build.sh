@@ -377,6 +377,9 @@ mkdir -p "$ESP/mOS/Sistema/Biblioteca/a64"
     -DA64_RUNTIME_MOS -DA64_HAVE_JIT -I"$ROOT/userland/a64" -I"$ROOT/userland/a64rt" \
     -Wl,--image-base=0x400041000000 -Wl,-e,_start \
     "${A64SRC[@]}" -o "$ESP/mOS/Sistema/Biblioteca/a64/a64rt.mos"
+echo "==> libSystem arm64 (tools/build-libsystem-arm64.sh)"
+"$ROOT/tools/build-libsystem-arm64.sh"
+cp -f "$ROOT/build/libSystem-arm64.mos" "$ESP/mOS/Sistema/Biblioteca/a64/libSystem.mos"
 
 echo "==> /usr/lib (libc++ do LLVM, zlib 1.3.2, SQLite e libcurl 8.23.0; não são stub)"
 # O mesmo do build.ps1: libsqlite3 (WhatsApp, Core Data), libz e libcurl (/usr/lib/libcurl.4.dylib, sem

@@ -4,7 +4,14 @@ Estado em 08/11. O JIT executa toda instrução (nativa ou via interpretador) e,
 rodada validada, não tinha nenhuma divergência interp × JIT no fuzzing (todos os 93 grupos, K=8)
 nem na suíte (39 testes ELF no placar do TESTES). Nada está commitado.
 
-## 1. Em andamento: código escrito, ainda NÃO compilado nem testado
+## 1. Feito em 15 nov. (estava escrito e não testado)
+
+Compilado e testado no harness Linux: `tools/a64tests/jit_rcpc2.S` e `jit_rcpc2_fault.S` (LDAPUR/STLUR de todos os
+tamanhos, com sinal, SP e WZR; falha ao atravessar 16 bytes; CRC32/CRC32C B/H/W/X contra valores calculados bit a bit;
+PACIA/AUTIA/XPACI/PACDB/AUTDZB identidade), e `tools/a64fuzz_host.c` em `ls.rcpc_unscaled`, `dp.1src` e `dp.2src` sem
+divergência. O texto abaixo é o registro de 08/11.
+
+### Registro de 08/11
 
 A última build foi interrompida. Estas mudanças estão no disco sem verificação:
 

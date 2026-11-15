@@ -180,6 +180,10 @@ if (-not (Test-Path "$vzdir\Virtualization")) {
 $a64 = "$esp\mOS\Sistema\Biblioteca\a64"
 & "$root\tools\build-a64rt.ps1"
 if ($LASTEXITCODE -ne 0) { Write-Host 'aviso: a64rt.mos não compilou; apps arm64 ficam sem o tradutor' -ForegroundColor Yellow }
+# o libSystem arm64 é compilado aqui, não só copiado: um build\libSystem-arm64.mos velho não tem os símbolos novos
+Remove-Item "$root\build\libSystem-arm64.mos" -Force -ErrorAction SilentlyContinue
+& "$root\tools\build-libsystem-arm64.ps1"
+if ($LASTEXITCODE -ne 0) { Write-Host 'aviso: libSystem-arm64.mos não compilou; apps arm64 ficam sem o libSystem' -ForegroundColor Yellow }
 if ((Test-Path "$root\build\a64rt.mos") -and (Test-Path "$root\build\libSystem-arm64.mos")) {
     New-Item -ItemType Directory -Force $a64 | Out-Null
     Copy-Item "$root\build\a64rt.mos" "$a64\a64rt.mos" -Force

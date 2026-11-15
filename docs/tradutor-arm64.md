@@ -214,15 +214,15 @@ próprias `0x4D00..`, ucontext/mcontext64 do Darwin arm64, ESR, tabela de sysctl
   stubs de símbolo ausente em arm64. O runtime `/Sistema/Biblioteca/a64/a64rt.mos` entra em `A64RT_BASE` (montado
   uma vez, cópia na escrita) com uma pilha do host de 1 MiB alinhada; a thread começa nele com `rdi = a64rt_boot_t*`.
 
-  **Formatos de ponteiro encadeado.** `run_chained` aceita 2 (`DYLD_CHAINED_PTR_64`), 6 (`_64_OFFSET`), 1 (`ARM64E`,
-  rebase por vmaddr) e, no mesmo desenho de 8 bytes, 12 (ordinal de bind de 16 bits) e 13 (ordinal de 24 bits). O
-  comentário no código chama 12 de `ARM64E_USERLAND` e 13 de `ARM64E_USERLAND24`. A enum pública da Apple numera 9 como
-  `DYLD_CHAINED_PTR_ARM64E_USERLAND` e 12 como `DYLD_CHAINED_PTR_ARM64E_USERLAND24`; o formato 9 não é aceito. Não há
-  outro caso implementado: este repositório não contém os Mach-O de Codex, Cursor, Antigravity, Grok Bot, Postico,
-  WhatsApp, Chrome, Slack ou VS Code, e nenhum documento daqui registra falha de carga por um formato fora de
-  {2, 6, 1, 12, 13}. O zig 0.17.1, que gera os dylibs de teste, emite `LC_DYLD_INFO_ONLY` em `x86_64-macos` e
-  `aarch64-macos` (também com ponteiro global e import) e recusa `-Wl,-fixup_chains`. Isso não é compatibilidade com
-  todo binário da Apple.
+  **Formatos de ponteiro encadeado.** A decodificação está em `kernel/compat/chained_ptr.h`, com os números da enum
+  pública do dyld: 2 (`DYLD_CHAINED_PTR_64`, rebase por vmaddr), 6 (`_64_OFFSET`), 1 (`ARM64E`: rebase comum por
+  vmaddr, autenticado por deslocamento), 9 (`ARM64E_USERLAND`: todo rebase por deslocamento, bind com ordinal de 16
+  bits) e 12 (`ARM64E_USERLAND24`: como o 9, ordinal de 24 bits). O 13 (`ARM64E_SHARED_CACHE`) tem outro desenho e só
+  existe no cache compartilhado; ele e os formatos de kernel/firmware são recusados com mensagem. Até 15 nov. o código
+  recusava o 9, lia o ordinal do 12 com 16 bits e tratava o 13 como se fosse o 12. Teste: `tools/chained_ptr_test.c`
+  (41 casos, valores montados com bitfields; com a regra antiga 3 falham). Ponta a ponta no machotest do Linux só o
+  formato 2 (`ld64.lld -fixup_chains`, x86_64): o lld não gera chained fixups de arm64e. Nos 2,9 GB de apps de
+  `build/corpus` não há slice arm64e; todos os arm64 usam o 6.
 - **Runtime (`userland/a64rt`, `tools/build-a64rt.ps1`).** Laço `a64_run` por thread (o `rt_thread_t` mora na base
   da pilha do host: `rsp & ~(1 MiB-1)`); `svc #0x4d4f` → `int 0x80` 1:1; `svc #0x80` Darwin cru (exit/read/write/
   getpid/kill/thread_selfid/TSD; o resto SIGSYS); threads (`SYS_THREAD_CREATE` com estado guest, TPIDRRO pelo
@@ -243,13 +243,24 @@ build/a64rt-test/run.sh <mach-o arm64> [args]       # machotest (MOS_A64_ENGINE,
 .\build.ps1 -OutDir build-a64; .\tools\build-a64rt-teste.ps1 -OutDir build-a64 [-Real <binário>]
 .\run.ps1 -Headless -Memory 1536 -Image build-a64/mOS.img -Serial build-a64/serial.log -Accel whpx
 ```
+No Linux (sem VM): `tools/a64rt-testes.sh` compila o machotest, o `a64rt.mos`, o libSystem arm64
+(`tools/build-libsystem-arm64.sh`) e roda `tests-a64libsys/abi.mm` (critério: `libsys-abi: 0 falhas`, 40 verificações
+em 15 nov., interpretador e JIT) e `tests-a64rt` como informativo: o machotest do Linux não emula `alarm`, `fork`,
+SIGPIPE nem a entrega do pendente ao desbloquear, e o teste para no `read` que espera o SIGALRM.
+
 `userland/tests-a64rt/main.cpp` (zig c++ -target aarch64-macos): threads, mutex, thread_local, sinais (raise,
 máscara, pendentes, pthread_kill, SIGSEGV com far/esr e mcontext alterado, brk, udf, sigaltstack), exceções C++
 (também dentro de thread), uname/sysctl, página de 16 KiB (`pagina`), posix_spawn arm64→x86_64 e arm64→arm64.
 
 ## libSystem e bibliotecas do sistema em arm64 (frente LIBSYS)
 
-**Forma do build.** `tools/build-libsystem-arm64.ps1` → `build/libSystem-arm64.mos`, no MESMO formato do blob x86
+**Forma do build.** `tools/build-libsystem-arm64.ps1` (Windows) e `tools/build-libsystem-arm64.sh` (Linux) →
+`build/libSystem-arm64.mos`; o `build.ps1` e o `tools/build.sh` passaram a compilá-lo (antes o `build.ps1` só copiava
+um arquivo que já estivesse em `build/`, e o build arm64 não compilava na `main` desde os fontes novos: 44 arquivos).
+Os grupos e os `-I` são os do libSystem x86 do `tools/build.sh`; os fontes com a convenção Swift do x86_64 escrita à
+mão (`swiftui_*.c`, `string_fdn.c`, `foundation_swift_data.c`, `combine_link.c`, `combine_meta.*`) ficam fora do arm64:
+lá esses tipos vêm das bibliotecas Swift arm64. O `.sh` rodou em 15 nov.; o `.ps1` recebeu as mesmas mudanças e não
+foi executado (este Linux não tem PowerShell). O blob sai no MESMO formato do x86
 (ELF64 static-pie ligado em 0, só relocações RELATIVE no `DT_RELA`, `.symtab` com os mesmos nomes sem o `_` do Mach-O,
 entrada `cx_start`), com `e_machine = EM_AARCH64` e `R_AARCH64_RELATIVE` (1027). O build.ps1 o põe em
 `/Sistema/Biblioteca/a64/libSystem.mos`. O ponto central é o **triplo `arm64-apple-macos11-elf`**: o clang e o LLVM
@@ -359,6 +370,11 @@ Arquivos: `jit_core.c` (cache, despachante, threads, invalidação, recuperaçã
   do host (LRU); flags no EFLAGS em modo ADD (CF = C) ou SUB (CF = !C). Acessos à memória e
   instruções do interpretador contam como leitura de flags (estado exato em falha/saída).
 - **Exclusivos e LSE** (`jit_atom.h`, `a64_xmon.c`): `LDXR`/`LDXP`/`STXR`/`STXP`/`CLREX` caem no interpretador, que arma uma época no intervalo exato (não um CAS do valor). `CAS`/`CASP`/`LDADD`/`SWP` e o restante do LSE continuam nativos (`lock cmpxchg`/`xadd`/`xchg`, laço de `cmpxchg`) e avisam o monitor em todo store. `LDAPR` é load. Alinhamento (atravessar 16 bytes) e SA0 como no INT, pelo caminho lento.
+  Cada thread tem um gate do monitor (`A64_XMON_MAX` = 4096). No fim da thread o runtime chama `a64_xmon_release`, que
+  solta a reserva e devolve o gate; a thread seguinte (o `thread_init` zera o `a64_cpu`) reusa um gate livre. Até 15 nov.
+  os gates não voltavam: depois de 4096 threads criadas no processo, a seguinte ficava sem monitor e todo `STXR` dela
+  falhava para sempre (laço LDXR/STXR sem fim). Teste: `test_thread_churn` em `tools/a64xmon_host.c` (6144 threads em
+  sequência; antes 2058 falhavam e o teste travava).
 - **FP** (`jit_simd.h`): escalar S/D e vetorial 4S/2S/2D com SSE/FMA3 só quando FPCR = RN e FZ = 0, sem flag do x86 além de PE e com resultado (cada lane) normal, finito e não-NaN; senão a instrução inteira vai ao interpretador. PE → IXC. FCMP/FCCMP: sem NaN (ucomis) e FZ = 0, NZCV montado direto em `reserved[14]`; FCSEL é seleção de bits. FCVTZS/ZU com faixa conferida nos bits (cvtt trunca como o ARM), SCVTF/UCVTF em RN, FCVT S↔D. FABS/FNEG/FMOV são operações de bits. MXCSR do host fica em 0x1F80.
 - **Chamada leve**: SIMD/FP sem emissão nativa que só toca registradores V e FPCR/FPSR chama `a64_interp_exec` direto (`jit_h_exec`), gravando os GPRs sujos e descartando só os voláteis da ABI; UDF vai ao caminho lento. Ficam fora as classes que escrevem GPR ou NZCV.
 - **Estatística do interpretador**: `a64_jit_fbstat(1)` + `a64_jit_fbstat_dump` (o runtime liga com `MOS_A64_DEBUG`; no harness `A64JIT_FBSTAT=1`) contam por classe de codificação o que ainda vai ao interpretador — é o guia para a próxima emissão nativa.
@@ -386,6 +402,16 @@ Arquivos: `jit_core.c` (cache, despachante, threads, invalidação, recuperaçã
   `a64_jit_thread_exit` ao fim da thread (ver `a64.h`).
 - **Depuração** (Windows): `A64JIT_STATS=1`, `A64JIT_NONATIVE=1`, `A64JIT_MAXINSNS=n`,
   `A64JIT_NOWP=1`, `A64JIT_FBLOG=1` (lista o que vai ao interpretador).
+
+Harness Linux (15 nov.): `tools/a64host-testes.sh` compila `tools/a64host.c` e os ELF de `tools/a64tests` e exige a
+mesma saída nos dois motores e o código esperado (0, ou 139/132 nos testes de FAULT/UDF): **55/55**.
+`tools/a64fuzz_host.c` é o fuzzing interp × JIT sem oráculo (lotes de `fz.h`, os grupos do `a64fuzz.c` menos os que leem
+contadores): 87 grupos com K=1 (sementes 11 e 23, 3000 casos) e 88 com K=6/K=8, **0 divergências** depois das três
+correções abaixo. Achados e corrigidos em `jit_simd.h`: o 3same de FP half não olhava o bit 15 (3same_extra não
+alocado virava FMUL/FADD 4H), e o despacho escalar não olhava o bit 24 (por elemento e deslocamento por imediato
+viravam USHL Dd ou SCVTF). Cada um tem um teste que dá UDF nos dois motores (`jit_3same_extra_udf`,
+`jit_udf_escalar_shift`, `jit_udf_escalar_elem`). `jit_rcpc2` / `jit_rcpc2_fault` cobrem LDAPUR/STLUR, CRC32/CRC32C e o
+PAC identidade; uma cópia com a emissão sabotada falha no JIT e passa no interpretador, ou seja, o caminho nativo roda.
 
 Testes: `jit_fault_{mid,sub,pair,ldp,q,ld1}` (falha no meio do bloco, STP/LDP/LDP Q/ST1
 parciais), `jit_sa0`, `jit_ldar`, `jit_pairs`, `jit_smc` (IC IVAU e só rede de segurança),

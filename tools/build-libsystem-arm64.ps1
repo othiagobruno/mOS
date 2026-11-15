@@ -26,30 +26,44 @@ New-Item -ItemType Directory -Force $obj | Out-Null
 if ($Jobs -le 0) { $Jobs = [Environment]::ProcessorCount }
 
 $triple = 'arm64-apple-macos11-elf'
-$cflags = @("--target=$triple", '-mcpu=apple-m1', '-O2', '-g0', '-ffreestanding', '-fno-stack-protector', '-fno-builtin',
+# Grupos e -I do libSystem x86 (tools/build.sh): o math.h do kshim só entra na compressão (nos .S ele quebra o
+# montador); o SQLite e o audiodec usam o shim de host-audio e não podem ver __APPLE__/TARGET_OS_MAC (o x86 compila
+# com x86_64-freestanding-none); a ABI continua a do triplo Darwin. Mesmo build em tools/build-libsystem-arm64.sh.
+$base = @("--target=$triple", '-mcpu=apple-m1', '-O2', '-g0', '-ffreestanding', '-fno-stack-protector', '-fno-builtin', '-nostdlibinc',
     '-fPIC', '-ffixed-x18', '-fsigned-char', '-fno-common', '-funwind-tables',
     '-Wall', '-Wno-unused-parameter', '-Wno-incompatible-library-redeclaration', '-Wno-builtin-requires-header',
-    '-Wno-unknown-warning-option', '-Wno-unused-function', "-isystem", $inc, "-I$ls\kshim", "-I$root\userland\third_party\h264bsd",
-    "-I$ls\kshim\xz-config",
-    "-I$root\userland\third_party\zlib", "-I$root\userland\third_party\lz4", "-I$root\userland\third_party\lzfse",
-    "-I$root\userland\third_party\xz", "-I$root\userland\third_party\xz\src\liblzma\api",
-    "-I$root\userland\third_party\xz\src\liblzma\common", "-I$root\userland\third_party\xz\src\liblzma\check",
-    "-I$root\userland\third_party\xz\src\liblzma\lz", "-I$root\userland\third_party\xz\src\liblzma\rangecoder",
-    "-I$root\userland\third_party\xz\src\liblzma\lzma", "-I$root\userland\third_party\xz\src\liblzma\delta",
-    "-I$root\userland\third_party\xz\src\liblzma\simple", "-I$root\userland\third_party\xz\src\common",
-    "-I$root\userland\third_party\brotli\c\include",
-    '-include', "$ls\kshim\math.h",
-    '-DHAVE_CONFIG_H', '-DTUKLIB_SYMBOL_PREFIX=lzma_', '-DMOS_LIBSYSTEM')
+    '-Wno-unknown-warning-option', '-Wno-unused-function')
+$tp = "$root\userland\third_party"
+$fl = @{
+    ls = @("-I$ls\kshim", "-I$ls\fsinc", "-I$root\kernel\include", "-I$tp\h264bsd", '-isystem', $inc)
+    shim = @('-U__APPLE__', '-U__MACH__', '-UTARGET_OS_MAC', '-UTARGET_OS_OSX', '-DTARGET_OS_MAC=0', '-DTARGET_OS_OSX=0',
+        '-Wno-unused-variable', '-Wno-unreachable-code', "-I$root\userland\host-audio\shim", "-I$ls", '-isystem', $inc)
+    comp = @('-Wno-unused-variable', '-DHAVE_CONFIG_H', '-DTUKLIB_SYMBOL_PREFIX=lzma_',
+        "-I$ls\kshim", "-I$ls\kshim\xz-config", "-I$ls", "-I$tp\zlib", "-I$tp\lz4", "-I$tp\lzfse",
+        "-I$tp\xz", "-I$tp\xz\src\liblzma\api", "-I$tp\xz\src\liblzma\common", "-I$tp\xz\src\liblzma\check",
+        "-I$tp\xz\src\liblzma\lz", "-I$tp\xz\src\liblzma\rangecoder", "-I$tp\xz\src\liblzma\lzma",
+        "-I$tp\xz\src\liblzma\delta", "-I$tp\xz\src\liblzma\simple", "-I$tp\xz\src\common",
+        "-I$tp\brotli\c\include", '-include', "$ls\kshim\math.h", '-isystem', $inc)
+}
+$fl.compls = $fl.comp + @('-DMOS_LIBSYSTEM')   # compression.c usa o cz_raw_* de compression_z.c
 
-# os .S x86 tem versao *_arm64.S; os *_arm64.S ficam fora do build x86 por #if defined(__aarch64__)
-$x86only = @('objc_msg.S', 'objc_tramp.S', 'sigjmp.S', 'start.S', 'tlv.S')
-$src = @(Get-ChildItem "$ls\*" -Include *.c, *.S | Where-Object { $x86only -notcontains $_.Name } | ForEach-Object FullName) + @(Get-ChildItem "$root\userland\third_party\h264bsd\*.c" | ForEach-Object FullName)
-$src += "$root\userland\frameworks\libcompression\compression.c"
-$src += @('lz4.c','lz4hc.c','lz4frame.c','xxhash.c') | ForEach-Object { "$root\userland\third_party\lz4\$_" }
-$src += @('lzfse_decode.c','lzfse_decode_base.c','lzfse_encode.c','lzfse_encode_base.c','lzfse_fse.c','lzvn_decode_base.c','lzvn_encode_base.c') | ForEach-Object { "$root\userland\third_party\lzfse\$_" }
+# os .S x86 tem versao *_arm64.S. Os fontes com a convenção Swift do x86_64 escrita à mão (self em r13, String em
+# rax/rdx, xmm) ficam fora: no processo arm64 esses tipos vêm das bibliotecas Swift arm64 (build-swift-arm64.ps1).
+$x86only = @('objc_msg.S', 'objc_tramp.S', 'sigjmp.S', 'start.S', 'tlv.S',
+    'string_fdn.c', 'foundation_swift_data.c', 'combine_link.c', 'combine_meta.c', 'combine_meta.S')
+$items = @()
+function Add-Src($g, $f) { $script:items += [pscustomobject]@{ g = $g; f = $f } }
+Get-ChildItem "$ls\*" -Include *.c, *.S | Where-Object { $x86only -notcontains $_.Name -and $_.Name -notlike 'swiftui_*.c' } | ForEach-Object {
+    Add-Src $(if ($_.Name -eq 'sqlite3_mos.c') { 'shim' } else { 'ls' }) $_.FullName }
+Get-ChildItem "$tp\h264bsd\*.c" | ForEach-Object { Add-Src 'ls' $_.FullName }
+Add-Src 'shim' "$root\userland\host-audio\audiodec.c"
+Add-Src 'compls' "$root\userland\frameworks\libcompression\compression.c"
+@('lz4.c','lz4hc.c','lz4frame.c','xxhash.c') | ForEach-Object { Add-Src 'comp' "$tp\lz4\$_" }
+@('lzfse_decode.c','lzfse_decode_base.c','lzfse_encode.c','lzfse_encode_base.c','lzfse_fse.c','lzvn_decode_base.c','lzvn_encode_base.c') | ForEach-Object { Add-Src 'comp' "$tp\lzfse\$_" }
 $skip = @('crc_clmul_consts_gen.c','crc32_small.c','crc64_small.c','tuklib_exit.c','tuklib_mbstr_fw.c','tuklib_mbstr_nonprint.c','tuklib_mbstr_width.c','tuklib_mbstr_wrap.c','tuklib_open_stdxxx.c','tuklib_progname.c','stream_decoder_mt.c','stream_encoder_mt.c')
-$src += Get-ChildItem "$root\userland\third_party\xz\src\liblzma","$root\userland\third_party\xz\src\common" -Recurse -Filter *.c | Where-Object { $skip -notcontains $_.Name } | ForEach-Object FullName
-$src += Get-ChildItem "$root\userland\third_party\brotli\c\common","$root\userland\third_party\brotli\c\dec","$root\userland\third_party\brotli\c\enc" -Filter *.c | ForEach-Object FullName
+Get-ChildItem "$tp\xz\src\liblzma","$tp\xz\src\common" -Recurse -Filter *.c | Where-Object { $skip -notcontains $_.Name } | ForEach-Object { Add-Src 'comp' $_.FullName }
+Get-ChildItem "$tp\brotli\c\common","$tp\brotli\c\dec","$tp\brotli\c\enc" -Filter *.c | ForEach-Object { Add-Src 'comp' $_.FullName }
+$src = @($items | ForEach-Object f)
 
 function Run-Pool($items, $mkargs) {
     $running = @(); $fail = 0
@@ -61,10 +75,11 @@ function Run-Pool($items, $mkargs) {
             if ($running.Count -ge $Jobs) { Start-Sleep -Milliseconds 40 }
         }
         $a = & $mkargs $it
-        $log = "$obj\" + [IO.Path]::GetFileName($it) + '.log'
+        $nm = if ($it -is [string]) { $it } else { $it.f }
+        $log = "$obj\" + [IO.Path]::GetFileName($nm) + '.log'
         $p = Start-Process -FilePath $zig -ArgumentList $a -NoNewWindow -PassThru -RedirectStandardError $log -RedirectStandardOutput "$log.out"
         $null = $p.Handle   # sem isto o ExitCode volta vazio no PowerShell 5.1
-        $running += [pscustomobject]@{ p = $p; log = $log; name = [IO.Path]::GetFileName($it) }
+        $running += [pscustomobject]@{ p = $p; log = $log; name = [IO.Path]::GetFileName($nm) }
     }
     foreach ($d in $running) { $d.p.WaitForExit(); if ($d.p.ExitCode -ne 0) { $fail++ }; Show-Log $d }
     return $fail
@@ -89,7 +104,7 @@ function Edit-Symtab($file, $fn) {
     return $n
 }
 
-$fail = Run-Pool $src { param($f) @('clang') + ($cflags | ForEach-Object { if ($_ -match ' ') { Q $_ } else { $_ } }) + @('-c', (Q $f), '-o', (Q ("$obj\" + [IO.Path]::GetFileName($f) + '.o'))) }
+$fail = Run-Pool $items { param($it) @('clang') + (($base + $fl[$it.g]) | ForEach-Object { if ($_ -match ' ') { Q $_ } else { $_ } }) + @('-c', (Q $it.f), '-o', (Q ("$obj\" + [IO.Path]::GetFileName($it.f) + '.o'))) }
 if ($fail) { Write-Host "libSystem-arm64: $fail arquivo(s) com erro" -ForegroundColor Red; exit 1 }
 
 # compiler-rt do zig para arm64 (o mesmo que o zig cc liga no libSystem x86: __udivti3, __extendhfsf2..., e a libm que o
