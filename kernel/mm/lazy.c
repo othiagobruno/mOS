@@ -538,6 +538,39 @@ int lazy_protect(process_t *p, u64 va, u64 len, u8 prot) {
     return uvm_protect(p, s, e - s, prot) ? 0 : -MOS_EACCES;
 }
 
+/* rename ou unlink de um arquivo mapeado (process.c): as faixas e o cache de MAP_SHARED seguem o arquivo para o
+ * caminho novo. from pode ser uma pasta: o que está dentro dela muda junto. */
+static char *path_moved(const char *fp, const char *from, usize fl, const char *to) {
+    if (strncmp(fp, from, fl) || (fp[fl] && fp[fl] != '/')) return NULL;
+    usize tl = strlen(to), rest = strlen(fp + fl);
+    char *n = kmalloc(tl + rest + 1);
+    if (!n) return NULL;
+    memcpy(n, to, tl);
+    memcpy(n + tl, fp + fl, rest + 1);
+    return n;
+}
+void lazy_rename_path(const char *from, const char *to) {
+    usize fl = strlen(from);
+    u64 fl_irq = spin_lock_irqsave(&lazy_lock);
+    for (u32 i = 0; i < nlz; i++) {
+        char *n = lz[i].path ? path_moved(lz[i].path, from, fl, to) : NULL;
+        if (n) { kfree(lz[i].path); lz[i].path = n; }
+    }
+    for (u32 i = 0; i < nfc; i++) {
+        char *n = path_moved(fc[i].path, from, fl, to);
+        if (n) { kfree(fc[i].path); fc[i].path = n; }
+    }
+    spin_unlock_irqrestore(&lazy_lock, fl_irq);
+}
+/* algum processo ainda mapeia este arquivo (MAP_PRIVATE ou MAP_SHARED)? */
+bool lazy_path_in_use(const char *path) {
+    bool hit = false;
+    u64 fl = spin_lock_irqsave(&lazy_lock);
+    for (u32 i = 0; i < nlz && !hit; i++) hit = lz[i].path && !strcmp(lz[i].path, path);
+    spin_unlock_irqrestore(&lazy_lock, fl);
+    return hit;
+}
+
 void lazy_exit(process_t *p) {
     lazy_sync(p, USER_BASE, USER_END - USER_BASE, 1);
     u64 fl = spin_lock_irqsave(&lazy_lock);
