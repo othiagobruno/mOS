@@ -55,6 +55,37 @@ extension NSArray: ExpressibleByArrayLiteral {
     }
 }
 
+extension NSArray {
+    public convenience init(array anArray: __shared NSArray) {
+        let objs = (anArray as Sequence).map { _mosObject($0) }
+        self.init(objects: objs, count: objs.count)
+    }
+}
+
+extension NSDictionary {
+    public convenience init(dictionary otherDictionary: __shared NSDictionary) {
+        var ks: [NSCopying] = [], vs: [AnyObject] = []
+        for (k, v) in otherDictionary { ks.append(unsafeBitCast(_mosObject(k), to: NSCopying.self)); vs.append(_mosObject(v)) }
+        self.init(objects: vs, forKeys: ks, count: vs.count)
+    }
+}
+
+extension NSSet: ExpressibleByArrayLiteral {
+    public required convenience init(arrayLiteral elements: Any...) {
+        let objs = elements.map { _mosObject($0) }
+        self.init(objects: objs, count: objs.count)
+    }
+
+    public convenience init(set anSet: __shared NSSet) {
+        let objs = (anSet as Sequence).map { _mosObject($0) }
+        self.init(objects: objs, count: objs.count)
+    }
+}
+
+extension NSString {
+    public convenience init(string aString: __shared NSString) { self.init(string: _mosString(aString)) }
+}
+
 extension NSDictionary: ExpressibleByDictionaryLiteral {
     public required convenience init(dictionaryLiteral elements: (Any, Any)...) {
         let ks = elements.map { unsafeBitCast(_mosObject($0.0), to: NSCopying.self) }
@@ -98,10 +129,12 @@ extension NSArray: Sequence {
 }
 
 extension NSDictionary: Sequence {
-    public struct Iterator: IteratorProtocol {
+    /// classe, como na Apple (o nome mangled leva C, não V)
+    final public class Iterator: IteratorProtocol {
         var it: NSFastEnumerationIterator
         let dict: NSDictionary
-        public mutating func next() -> (key: Any, value: Any)? {
+        init(it: NSFastEnumerationIterator, dict: NSDictionary) { self.it = it; self.dict = dict }
+        public func next() -> (key: Any, value: Any)? {
             guard let k = it.next() else { return nil }
             return (key: k, value: dict.object(forKey: k as AnyObject) as Any)
         }

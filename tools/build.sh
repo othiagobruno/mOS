@@ -409,16 +409,17 @@ fi
 if [ -f "$ROOT/tools/build-libswift-real.sh" ]; then
     MOS_ZIG="$ZIG" bash "$ROOT/tools/build-libswift-real.sh" || echo "aviso: build-libswift-real.sh falhou; o que faltar continua stub" >&2
 fi
-# Foundation Swift real (swift-foundation, libswiftFoundation/_StringProcessing/UniformTypeIdentifiers): sem ele
-# URL, Data, Date... dos apps caem nos stubs zerados do libSystem
-if [ -f "$ROOT/build/swift/objc/dylib/usr/lib/swift/libswiftCore.dylib" ]; then
-    MOS_ZIG="$ZIG" bash "$ROOT/tools/build-swift-foundation-objc.sh" || echo "aviso: Foundation Swift não compilou; continua o stub" >&2
-fi
 # Frameworks ObjC do mOS (UIKit do Catalyst, CoreData, ImageIO...) e o Combine (OpenCombine como módulo
 # "Combine") na mesma raiz das dylibs Swift; o cp -a abaixo leva tudo para a imagem.
 MOS_ZIG="$ZIG" bash "$ROOT/tools/build-frameworks-objc.sh" || echo "aviso: algum framework ObjC não compilou" >&2
 if [ -f "$ROOT/build/swift/objc/dylib/usr/lib/swift/libswiftCore.dylib" ]; then
     MOS_ZIG="$ZIG" bash "$ROOT/tools/build-swift-combine.sh" || echo "aviso: Combine.framework não compilou" >&2
+fi
+# Foundation Swift real (swift-foundation; libswiftFoundation, _StringProcessing, UniformTypeIdentifiers, Observation):
+# sem ele URL, Data, Date... dos apps caem nos stubs zerados do libSystem. Depois do Combine: com o módulo Combine o
+# swift-foundation conforma JSONEncoder/JSONDecoder a TopLevelEncoder/Decoder, como na Apple, e liga o Combine.framework
+if [ -f "$ROOT/build/swift/objc/dylib/usr/lib/swift/libswiftCore.dylib" ]; then
+    MOS_ZIG="$ZIG" bash "$ROOT/tools/build-swift-foundation-objc.sh" || echo "aviso: Foundation Swift não compilou; continua o stub" >&2
 fi
 if [ -f "$ROOT/build/universal-swift/usr/lib/swift/libswiftCore.dylib" ]; then
     cp -a "$ROOT/build/universal-swift/." "$ESP/mOS/"

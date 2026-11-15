@@ -75,7 +75,7 @@ Build-Mod '_FoundationRefs' @(Get-ChildItem "$sfs\_FoundationRefs" -Recurse -Fil
 # passa a valer com MOS_NS_OPTIONS, apontando para os tipos do módulo clang _MOSNSOptions
 # (userland\sdk\swift-objc\sdk\Foundation\NSFoundationOptions.h). Leitura/gravação em UTF-8 pelo .NET (PowerShell 5.1).
 $aliases = [ordered]@{ 'NSData.ReadingOptions' = 'NSDataReadingOptions'; 'NSData.WritingOptions' = 'NSDataWritingOptions'
-                       'NSData.Base64EncodingOptions' = 'NSDataBase64EncodingOptions'; 'NSData.Base64DecodingOptions' = 'NSDataBase64DecodingOptions'
+                       'NSData.Base64EncodingOptions' = 'NSDataBase64EncodingOptions'; 'NSData.Base64DecodingOptions' = 'NSDataBase64DecodingOptions'; 'NSData.SearchOptions' = 'NSDataSearchOptions'
                        'NSString.CompareOptions' = 'NSStringCompareOptions'
                        'NSURL.BookmarkResolutionOptions' = 'NSURLBookmarkResolutionOptions'; 'NSURL.BookmarkCreationOptions' = 'NSURLBookmarkCreationOptions' }
 $prep = "$objc\foundation-src\FoundationEssentials"

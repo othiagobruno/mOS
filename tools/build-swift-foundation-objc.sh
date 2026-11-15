@@ -70,6 +70,10 @@ if [ ! -d "$res/shims" ]; then
     [ -d "$tc/clang" ] && ln -sfn "$tc/clang" "$res/clang"
     find "$tc/shims" -maxdepth 1 -type f ! -name 'module.modulemap' -exec cp {} "$res/shims/" \;
 fi
+# cache de módulos próprio e limpo: dois .pcm do mesmo módulo com flags diferentes dão "module X is defined in both"
+rm -rf "$objc/modcache-foundation"
+# os cabeçalhos do Foundation ObjC e do UTType (o build-libswift-real.sh os copia; aqui de novo, para valer a última versão)
+cp -a "$root/userland/sdk/swift-objc/sdk/Foundation" "$root/userland/sdk/swift-objc/sdk/UniformTypeIdentifiers" "$inc/"
 fails=0
 
 # build_mod NOME LINGUAGEM EVOLUÇÃO(1/0) -- extras... -- fontes...
@@ -209,6 +213,7 @@ base, prep = sys.argv[1], sys.argv[2]
 aliases = {'NSData.ReadingOptions': 'NSDataReadingOptions', 'NSData.WritingOptions': 'NSDataWritingOptions',
            'NSData.Base64EncodingOptions': 'NSDataBase64EncodingOptions',
            'NSData.Base64DecodingOptions': 'NSDataBase64DecodingOptions',
+           'NSData.SearchOptions': 'NSDataSearchOptions',
            'NSString.CompareOptions': 'NSStringCompareOptions',
            'NSURL.BookmarkResolutionOptions': 'NSURLBookmarkResolutionOptions',
            'NSURL.BookmarkCreationOptions': 'NSURLBookmarkCreationOptions'}
@@ -289,15 +294,26 @@ PY
         -D DATA_LEGACY_ABI -D MOS_NS_OPTIONS -D MOS_NSERROR -- "${f[@]}"
 fi
 
+llvm_nm_u() { "$(dirname "$fe")/llvm-nm" -u "$1" 2>/dev/null | awk '{print $NF}'; }
+
 # ---- dylibs, como no tools/link-swift-dylibs-objc.ps1. Uma dylib passada ao link vira LC_LOAD_DYLIB: o
 # libswiftFoundation carrega o _StringProcessing (Regex) mesmo quando o app não o pede.
 dest="$objc/dylib/usr/lib/swift"
 mkdir -p "$dest"
+# As dylibs base do runtime real entram no link: os swift_* e os $s... delas viram ligação em dois níveis (ordinal da
+# dylib). Só com -undefined dynamic_lookup eles ficavam em busca plana, e o carregador do mOS acha antes os 209 swift_*
+# do libSystem (outro runtime, o do caminho sem ObjC): swift_bridgeObjectRetain dava proteção geral no URL(string:) e
+# swift_getGenericMetadata devolvia nulo para Regex<...>. O dynamic_lookup fica para o libSystem e o libobjc.
+base_dylibs=()
+for b in libswiftCore libswift_Concurrency libswiftDarwin libswiftObjectiveC libswiftCoreFoundation libswiftCoreGraphics \
+         libswiftDispatch libswiftos; do
+    [ -f "$dest/$b.dylib" ] && base_dylibs+=("$dest/$b.dylib")
+done
 link_dylib() {
     local name=$1
     shift
     if "$zig" c++ -target x86_64-macos -shared -o "$dest/$name.dylib" \
-        -Wl,-install_name,/usr/lib/swift/$name.dylib -Wl,-undefined,dynamic_lookup "$@"; then
+        -Wl,-install_name,/usr/lib/swift/$name.dylib -Wl,-undefined,dynamic_lookup "$@" "${base_dylibs[@]}"; then
         echo "$name: $(wc -c < "$dest/$name.dylib") bytes"
     else
         echo "$name: FALHOU no link"
@@ -318,6 +334,15 @@ if [ $fails -eq 0 ] && [ -f "$out/Foundation.o" ]; then
         [ -f "$out/$m.o" ] && objs+=("$out/$m.o")
     done
     [ -f "$dest/libswift_StringProcessing.dylib" ] && objs+=("$dest/libswift_StringProcessing.dylib" "$dest/libswift_RegexParser.dylib")
+    # com o módulo Combine (tools/build-swift-combine.sh) o swift-foundation importa TopLevelEncoder/Decoder dele: o
+    # Combine.framework entra como LC_LOAD_DYLIB, senão esses símbolos ficam nulos no carregador
+    cmb="$objc/dylib/System/Library/Frameworks/Combine.framework/Versions/A/Combine"
+    if grep -q '7Combine15TopLevel' <(llvm_nm_u "$out/Foundation.o"); then
+        [ -f "$cmb" ] || { echo "libswiftFoundation: o Foundation.o usa o Combine e falta $cmb" >&2; fails=$((fails + 1)); }
+        # o zig reconhece a dylib pelo sufixo; o LC_LOAD_DYLIB sai com o install name do Combine
+        ln -sfn "$cmb" "$out/Combine.dylib"
+        objs+=("$out/Combine.dylib")
+    fi
     link_dylib libswiftFoundation "${objs[@]}"
 fi
 

@@ -118,7 +118,7 @@ Stubs vazios alcançados (a métrica do `tools/meta/placar.py`), mesmo
 | App | Antes | Depois | Só Foundation Swift |
 |---|---|---|---|
 | Postico 2.3.5 | 209 | 9 | 181 → 0 |
-| WhatsApp 2.26.45.13 | 1509 | 963 | 717 → 225 |
+| WhatsApp 2.26.45.13 | 1509 | 912 | 717 → 174 |
 | OpenBot 0.66.0 | 9 | 1 | 0 → 0 |
 
 O "depois" inclui a `libswiftos.dylib`: o `build-libswift-real.sh` compilava o
@@ -127,7 +127,56 @@ Os 9 do Postico: 6 de `View`/`ViewModifier` (`_makeView`, `_makeViewList`,
 `_viewListCount`), que dependem do SwiftUI.framework (ainda sem porte Linux do
 `build-swiftui-objc.ps1`), e 3 de `exception_raise*` (servidor MIG de exceções Mach).
 
-Não houve boot: nenhum app foi aberto com essas dylibs na VM.
+No WhatsApp, os 174 que sobram de "Foundation" são em boa parte extensões de
+outros módulos sobre tipos do Foundation (UIKit, Network, CloudKit, AVFoundation)
+e API de classes ObjC que o SDK ainda não declara (`NSScanner`, `NSProgress`,
+`NSBundle`, `URLSession` assíncrono). As que entraram nesta rodada, com o nome
+mangled conferido contra o binário: `IndexSet.RangeView`/`shift`/`filteredIndexSet`,
+`NSIndexSet: Sequence`, `URLResourceValues` (tamanhos, volume, `fileResourceIdentifier`),
+`URL.checkResourceIsReachable`, `Data.range(of:options:in:)` (`NSDataSearchOptions`),
+`Calendar` (nomes de dia/mês em pt e en), `Locale.components(fromIdentifier:)`,
+`isoCurrencyCodes`, `FileHandle` (`readToEnd`, `read(upToCount:)`, `offset`,
+`seekToEnd`), `NSRange` (faixas de String, `intersection`, `Hashable`, ponte com
+`NSValue`), a ponte `CGPoint`/`CGSize`/`CGRect` ↔ `NSValue`, os inicializadores de
+cópia de `NSArray`/`NSDictionary`/`NSSet`/`NSString` e `NSDictionary.Iterator`
+como classe (era struct: o nome mangled levava V no lugar de C).
+
+## Ligação em dois níveis contra o libswiftCore
+
+O libSystem exporta 209 `swift_*` de outro runtime (o do caminho sem ObjC). Uma
+dylib ligada só com `-undefined dynamic_lookup` deixa os `swift_*` em busca plana,
+e o carregador os acha primeiro no libSystem. Na VM isso deu:
+
+- `URL(string:)` no `libswiftFoundation`: proteção geral em
+  `swift_bridgeObjectRetain` do libSystem;
+- `Regex<AnyRegexOutput>` do `_StringProcessing`: `swift_getGenericMetadata` do
+  libSystem devolveu nulo, e `__swift_instantiateConcreteTypeFromMangledName`
+  caiu lendo `[nulo-8]`.
+
+Agora o `libswiftCore.dylib` entra no link (vira `LC_LOAD_DYLIB` e ligação por
+ordinal) no `link_one` do `build-libswift-real.sh`, no Combine e no Dispatch do
+`build-swift-combine.sh`, nas overlays Swift do `build-frameworks-objc.sh` e em
+todas as dylibs do `build-swift-foundation-objc.sh` (que ligam também Darwin,
+ObjectiveC, CoreFoundation, CoreGraphics, Dispatch, `_Concurrency` e os). Conferir:
+`llvm-objdump-21 --macho --bind --lazy-bind <dylib> | grep flat-namespace | grep -c ' _swift_'`
+dá 0. O Combine.framework também entra no link do `libswiftFoundation` e do
+`libswiftDispatch`, que importam `$s7Combine...`: sem ele, 23 símbolos ficavam
+nulos ("símbolo(s) ausente(s)" no serial).
+
+## Teste na VM (`tools/fdnprobe.sh`)
+
+`tools/fdnprobe.sh <OutDir de um tools/build.sh> <saída>` gera uma imagem de
+teste com dois serviços do launchd: `fdnprobe` (URL, URLComponents, Data, JSON,
+plist, UUID, Date, Calendar, CharacterSet, IndexSet, NSRange, FileManager;
+imprime `FDN-OK n/m`) e `rxprobe` (Regex; `RX-OK n/m`). Em 15 nov., QEMU com
+KVM e OVMF, os dois boots antes da correção acima registraram as duas quedas
+descritas. Depois da correção, o QEMU desta máquina deixou de dar boot até com
+uma imagem feita só da esp do build, sem os testes: com KVM o OVMF para antes do
+`BdsDxe`; com TCG o kernel diz "a partição de origem não é FAT com \mOS\" e
+fica com 0 programas. O `fsck.vfat` passa na partição. Então **não há resultado
+`FDN-OK` registrado** para esta versão. O QEMU precisa de `TMPDIR` fora do
+`/tmp`: com `snapshot=on`, a sobreposição vai para lá, e a cota cheia também
+produziu a mensagem acima.
 
 ## QEMU
 

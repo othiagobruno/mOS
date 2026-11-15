@@ -95,6 +95,15 @@ typedef NSUInteger NSStringEncoding;
 
 /* ---- NSValue / NSNumber */
 @interface NSValue : NSObject <NSCopying, NSSecureCoding>
+/* as do libSystem (coreanimation.c): faixa e geometria, para as pontes de NSRange e CGPoint/CGSize/CGRect */
++ (NSValue *)valueWithRange:(NSRange)range;
+@property (readonly) NSRange rangeValue;
++ (NSValue *)valueWithPoint:(CGPoint)point;
++ (NSValue *)valueWithSize:(CGSize)size;
++ (NSValue *)valueWithRect:(CGRect)rect;
+@property (readonly) CGPoint pointValue;
+@property (readonly) CGSize sizeValue;
+@property (readonly) CGRect rectValue;
 @end
 
 @interface NSNumber : NSValue
@@ -391,5 +400,12 @@ typedef NS_OPTIONS(NSUInteger, NSFileManagerItemReplacementOptions) {
 - (void)undo;
 @property (readonly) BOOL canUndo;
 @end
+
+/* ---- NSPathUtilities: funções C do libSystem (foundation.c, foundation_more.c) */
+FOUNDATION_EXPORT NSString *NSUserName(void);
+FOUNDATION_EXPORT NSString *NSFullUserName(void);
+FOUNDATION_EXPORT NSString *NSHomeDirectory(void);
+FOUNDATION_EXPORT NSString * _Nullable NSHomeDirectoryForUser(NSString * _Nullable userName);
+FOUNDATION_EXPORT NSString *NSTemporaryDirectory(void);
 
 NS_ASSUME_NONNULL_END
