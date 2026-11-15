@@ -37,6 +37,8 @@ typedef struct a64_xmon_gate {
     a64_u64 epoch;       /* 32: só cresce */
     a64_u64 sw;          /* 40: reserved[8] visto no LDXR */
     a64_u64 raddr;       /* 48: endereço da reserva; addr/len são o store em curso */
+    a64_u32 freed;       /* 56: 1 = devolvido por a64_xmon_release, pode ser tomado por outra thread */
+    a64_u32 pad;         /* 60 */
 } a64_xmon_gate;
 
 _Static_assert(offsetof(a64_xmon_gate, len) == 8, "gate");
@@ -48,6 +50,7 @@ _Static_assert(offsetof(a64_xmon_gate, size) == 28, "gate");
 _Static_assert(offsetof(a64_xmon_gate, epoch) == 32, "gate");
 _Static_assert(offsetof(a64_xmon_gate, sw) == 40, "gate");
 _Static_assert(offsetof(a64_xmon_gate, raddr) == 48, "gate");
+_Static_assert(offsetof(a64_xmon_gate, freed) == 56, "gate");
 
 enum {
     A64_XMON_SW = 8,
@@ -66,6 +69,8 @@ void a64_xmon_load(a64_cpu *c, a64_u64 addr, a64_u32 n, a64_u64 *lo, a64_u64 *hi
 int  a64_xmon_store(a64_cpu *c, a64_u64 addr, a64_u32 n, a64_u64 lo, a64_u64 hi);
 void a64_xmon_clrex(a64_cpu *c);
 void a64_xmon_invalidate(a64_cpu *c);
+/* fim da thread: solta a reserva e devolve o gate (o a64_cpu pode ser zerado e reusado depois) */
+void a64_xmon_release(a64_cpu *c);
 void a64_xmon_fork_child(a64_cpu *self);
 
 #if defined(A64_RUNTIME_MOS)

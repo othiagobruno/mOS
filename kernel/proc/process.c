@@ -2066,6 +2066,7 @@ static void pipe_service(pipe_t *pp) {
         if (w && w->state == TH_WAITING) {
             i64 n = pipe_try_write(pp, w->proc, w->read_buf, w->read_len);
             if (n != -EAGAIN_) { ((int_frame_t *)w->frame)->rax = (u64)n; w->state = TH_READY; pp->wwait = NULL; }
+            if (n == -MOS_EPIPE && w->proc && !w->proc->exited) proc_signal(w->proc->pid, MOS_SIGPIPE);
         } else pp->wwait = NULL;
     }
 }
@@ -2158,6 +2159,8 @@ static u64 pipe_op(int_frame_t *f, thread_t *t, pipe_t *pp, bool rd, u64 buf, u6
     if (n != -EAGAIN_) {
         pipe_service(pp);
         f->rax = (u64)n;
+        /* POSIX: write num pipe sem leitor dá EPIPE e SIGPIPE (o socket unix já fazia, kernel/net/unix.c) */
+        if (!rd && n == -MOS_EPIPE && t->proc && !t->proc->exited) proc_signal(t->proc->pid, MOS_SIGPIPE);
         return (u64)f;
     }
     if (rd ? pp->rwait != NULL : pp->wwait != NULL) { f->rax = (u64)-MOS_EINVAL; return (u64)f; }   /* um por vez */
@@ -2669,14 +2672,20 @@ static void trace_zig_fs(process_t *p, u64 nr, u64 a, u64 b, u64 c, i64 res) {
         kprintf("zigfs %d: sys %llu %s b=%llx -> %lld\n", p->pid, nr, s, b, res);
     }
 }
+bool xtrace_on(process_t *p);
+void xtrace_log(process_t *p, int tid, u64 nr, u64 a, u64 b, u64 c, i64 res, bool blocked);
 u64 proc_syscall(int_frame_t *f) {
     static int trace_zig = -1;
     if (trace_zig < 0) trace_zig = vfs_lookup("/Sistema/Biblioteca/rastrear-arquivos-zig") != NULL;
-    process_t *tp = trace_zig && thread_current() ? thread_current()->proc : NULL;
+    thread_t *ct = thread_current();
+    process_t *tp = trace_zig && ct ? ct->proc : NULL;
     bool tr = tp && !strcmp(tp->name, "zig") && (f->cs & 3) == 3;
+    /* rastreio por processo (proc/xtrace.c, /Sistema/Biblioteca/diag-xtrace) */
+    process_t *xp = ct && (f->cs & 3) == 3 && xtrace_on(ct->proc) ? ct->proc : NULL;
     u64 nr = f->rax, a = f->rdi, b = f->rsi, c = f->rdx;
     u64 r = proc_syscall_(f);
     if (tr) trace_zig_fs(tp, nr, a, b, c, (i64)f->rax);
+    if (xp) xtrace_log(xp, ct->id, nr, a, b, c, (i64)f->rax, (int_frame_t *)r != f);
     return ((int_frame_t *)r)->cs & 3 ? proc_signal_check((int_frame_t *)r) : r;
 }
 static u64 proc_syscall_(int_frame_t *f) {

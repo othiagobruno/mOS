@@ -37,11 +37,23 @@ void a64_xmon_bind(a64_cpu *c) {
     a64_xmon_tls = c;
 #endif
     if (c->reserved[A64_XMON_GATE]) return;
-    a64_u32 i = __atomic_fetch_add(&gate_used, 1, __ATOMIC_RELAXED);
-    if (i >= A64_XMON_MAX) return;
-    a64_xmon_gate *g = &gates[i];
+    /* gate devolvido por uma thread que saiu; a época continua de onde parou (só cresce) */
+    a64_xmon_gate *g = 0;
+    a64_u32 i, n = __atomic_load_n(&gate_used, __ATOMIC_ACQUIRE);
+    if (n > A64_XMON_MAX) n = A64_XMON_MAX;
+    for (i = 0; i < n; i++) {
+        a64_u32 one = 1;
+        if (__atomic_load_n(&gates[i].freed, __ATOMIC_RELAXED) &&
+            __atomic_compare_exchange_n(&gates[i].freed, &one, 0, 0, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED)) { g = &gates[i]; break; }
+    }
+    if (!g) {
+        i = __atomic_fetch_add(&gate_used, 1, __ATOMIC_RELAXED);
+        if (i >= A64_XMON_MAX) return;
+        g = &gates[i];
+        g->epoch = 0;
+    }
     g->addr = 0; g->len = 0; g->inflight = 0; g->held = 0; g->suppressed = 0;
-    g->armed = 0; g->size = 0; g->epoch = 0; g->sw = 0; g->raddr = 0;
+    g->armed = 0; g->size = 0; g->sw = 0; g->raddr = 0;
     c->reserved[A64_XMON_SLOT] = (a64_u64)i + 1;
     __atomic_store_n(&c->reserved[A64_XMON_GATE], (a64_u64)(uintptr_t)g, __ATOMIC_RELEASE);
 }
@@ -283,6 +295,22 @@ void a64_xmon_invalidate(a64_cpu *c) {
 }
 
 void a64_xmon_clrex(a64_cpu *c) { a64_xmon_invalidate(c); }
+
+/* O gate só volta com armed = 0 e inflight = 0 (drop_locked, com a trava): quem percorre a tabela
+ * (bump_locked, wait_quiet) vê um gate parado. Sem isto cada thread nova tomava um gate e, depois de
+ * A64_XMON_MAX threads criadas no processo, a seguinte ficava sem monitor (STXR sempre falha). */
+void a64_xmon_release(a64_cpu *c) {
+    if (!c) return;
+    a64_xmon_gate *g = a64_xmon_gate_of(c);
+    a64_xmon_invalidate(c);
+    if (!g) return;
+    c->reserved[A64_XMON_GATE] = 0;
+    c->reserved[A64_XMON_SLOT] = 0;
+#if !defined(A64_RUNTIME_MOS)
+    if (a64_xmon_tls == c) a64_xmon_tls = 0;
+#endif
+    __atomic_store_n(&g->freed, 1, __ATOMIC_RELEASE);
+}
 
 void a64_xmon_fork_child(a64_cpu *self) {
     __builtin_memset(gates, 0, sizeof gates);

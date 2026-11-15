@@ -25,6 +25,7 @@
 #include <unistd.h>
 #include <sys/mman.h>
 #include "../userland/a64/a64.h"
+#include "../userland/a64/a64_xmon.h"
 #include "a64oracle/fz.h"
 
 static int g_trace, g_count, g_tempo;
@@ -275,12 +276,14 @@ static int fuzz_main(int engine, a64_u64 budget, const char *inpath, const char 
         at[n] = FZ_END_INSN;
         a64_invalidate(FZ_CODE_VA + FZ_CASE_OFF, 4ull * (n + 1));
         fz_fill((volatile uint64_t *)(uintptr_t)FZ_SCR_VA, k->scr_seed);
+        a64_xmon_release(c);              /* cada caso é uma thread nova, como no runtime (thread_exit) */
         st_to_cpu(c, &k->st);
         c->pc = FZ_CODE_VA + FZ_CASE_OFF;
         int rr;
         g_faulted = 0;
         g_fault_addr = 0;
         if (sigsetjmp(g_jb, 1) != 0) {
+            a64_xmon_invalidate(c);       /* a exceção derruba a reserva e o store em curso (userland/a64rt/sig.c) */
             rr = A64_EXIT_FAULT;
             c->exit_info = g_fault_addr;
             c->exit_insn = 0;

@@ -148,6 +148,40 @@ int proc_listpids(u32 type, u32 info, void *buf, int bytes) {
     return (n < cap ? n : cap) * (int)sizeof(int);
 }
 int proc_listallpids(void *buf, int bytes) { return proc_listpids(1, 0, buf, bytes) / (int)sizeof(int); }   /* em pids */
+/* proc_listpidspath: os processos (do filtro de proc_listpids) que usam o caminho — arquivo aberto, pasta atual ou
+ * o executável. Com PROC_LISTPIDSPATH_PATH_IS_VOLUME (1) vale qualquer caminho dentro daquele volume (prefixo).
+ * O mOS só enxerga os descritores do próprio processo; dos outros conta o executável. Volta em bytes, como o libproc. */
+char *realpath(const char *path, char *out);
+int strncmp(const char *a, const char *b, size_t n);
+char *getcwd(char *b, size_t n);
+static int path_hits(const char *want, const char *have, int volume) {
+    size_t n = strlen(want);
+    if (!volume) return !strcmp(want, have);
+    return !strncmp(want, have, n) && (have[n] == 0 || have[n] == '/' || (n && want[n - 1] == '/'));
+}
+int proc_listpidspath(u32 type, u32 info, const char *path, u32 pathflags, void *buf, int bytes) {
+    char want[1024], have[1024], canon[1024];
+    if (!path || !realpath(path, want)) return -1;
+    int volume = (pathflags & 1) != 0;
+    static int all[2048];
+    int k = proc_listpids(type, info, all, sizeof all) / (int)sizeof(int);
+    int n = 0, cap = buf ? bytes / (int)sizeof(int) : 0, *out = buf, me = getpid();
+    for (int i = 0; i < k; i++) {
+        int hit = 0;
+        if (all[i] == me) {
+            for (int fd = 0; fd < 1024 && !hit; fd++)
+                if (SYS3(SYS_FDPATH, fd, have, sizeof have) >= 0 &&
+                    path_hits(want, realpath(have, canon) ? canon : have, volume)) hit = 1;
+            if (!hit && getcwd(have, sizeof have) && path_hits(want, realpath(have, canon) ? canon : have, volume)) hit = 1;
+        }
+        if (!hit && proc_pidpath(all[i], have, sizeof have) > 0 && path_hits(want, realpath(have, canon) ? canon : have, volume)) hit = 1;
+        if (!hit) continue;
+        if (n < cap) out[n] = all[i];
+        n++;
+    }
+    if (!buf) return n * (int)sizeof(int);
+    return (n < cap ? n : cap) * (int)sizeof(int);
+}
 /* proc_pidinfo: PROC_PIDTBSDINFO (3, proc_bsdinfo, 136 bytes), PROC_PIDTASKINFO (4, proc_taskinfo, 96),
  * PROC_PIDTASKALLINFO (2, as duas, 232) e PROC_PIDT_SHORTBSDINFO (13, proc_bsdshortinfo, 64), pela lista do
  * kernel (nome curto, estado, memória e CPU). Os outros sabores: ENOTSUP, 0. Devolve os bytes escritos. */
@@ -273,33 +307,49 @@ int fsctl(const char *p, unsigned long req, void *data, unsigned opts) {
     cx_errno = CX_ENOTSUP;
     return -1;
 }
-int fsetattrlist(int fd, void *al, void *buf, size_t n, unsigned opts) {
-    (void)opts;
+/* setattrlist e parentes (o contrato do XNU, o mesmo do Darling): bitmapcount diferente de 5 é EINVAL; bit
+ * fora do que dá para gravar também é EINVAL. Os valores vêm na ordem dos bits: CRTIME, MODTIME, CHGTIME,
+ * ACCTIME (timespec de 16 bytes) e ACCESSMASK (4 bytes). O volume guarda o modo (cx_perm_set, o stat devolve);
+ * horários não persistem neste FAT, então o pedido é aceito como no futimes. */
+static int setattrlist_path(const char *path, const void *al, const void *buf, size_t n) {
     typedef struct { unsigned short bitmapcount, reserved; unsigned common, vol, dir, file, fork; } al_t;
     const al_t *a = al;
-    char path[1024];
-    if (!a || !buf) { cx_errno = CX_EFAULT; return -1; }
+    char st[144];
+    if (!a || !buf || !path) { cx_errno = CX_EFAULT; return -1; }
     if (a->bitmapcount != 5) { cx_errno = CX_EINVAL; return -1; }
-    if (SYS3(SYS_FDPATH, fd, path, sizeof path) < 0) { cx_errno = CX_EBADF; return -1; }
-    /* bits que o FAT guarda de verdade: modo (cx_perm_set, o stat devolve). Horários: futimes é no-op
-     * (o volume não persiste tempo); o pedido é aceito. Qualquer outro bit continua ENOTSUP. */
     const unsigned supported = 0x200u | 0x400u | 0x800u | 0x1000u | 0x20000u;
-    if (a->vol || a->dir || a->file || a->fork || (a->common & ~supported)) { cx_errno = CX_ENOTSUP; return -1; }
+    if (a->vol || a->dir || a->file || a->fork || (a->common & ~supported)) { cx_errno = CX_EINVAL; return -1; }
+    if (stat(path, st) < 0) return -1;
     const unsigned char *p = buf;
     size_t off = 0;
     unsigned mode = 0;
-    int saw_mode = 0, saw_time = 0;
+    int saw_mode = 0;
     for (unsigned bit = 1; bit; bit <<= 1) {
         if (!(a->common & bit)) continue;
         size_t sz = bit == 0x20000u ? 4 : 16;
-        if (off + sz > n) { cx_errno = CX_ERANGE; return -1; }
+        if (off + sz > n) { cx_errno = CX_EINVAL; return -1; }
         if (bit == 0x20000u) { memcpy(&mode, p + off, 4); saw_mode = 1; }
-        else saw_time = 1;
         off += sz;
     }
     if (saw_mode) cx_perm_set(path, mode & 07777);
-    if (saw_time) futimes(fd, 0);
     return 0;
+}
+int fsetattrlist(int fd, void *al, void *buf, size_t n, unsigned opts) {
+    (void)opts;
+    char path[1024];
+    if (SYS3(SYS_FDPATH, fd, path, sizeof path) < 0) { cx_errno = CX_EBADF; return -1; }
+    return setattrlist_path(path, al, buf, n);
+}
+int setattrlistat(int dirfd, const char *p, void *al, void *buf, size_t n, unsigned opts) {
+    (void)opts;
+    char tp[1024];
+    if (!p) { cx_errno = CX_EFAULT; return -1; }
+    const char *full = cx_at_path(dirfd, p, tp, sizeof tp);
+    return full ? setattrlist_path(full, al, buf, n) : -1;
+}
+int setattrlist(const char *p, void *al, void *buf, size_t n, unsigned opts) {
+    (void)opts;
+    return setattrlist_path(p, al, buf, n);
 }
 
 #define CP_MAGIC 0x43504653u

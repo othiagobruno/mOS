@@ -12,4 +12,11 @@
 #undef HAVE_PTHREAD_PRIO_INHERIT
 #undef TUKLIB_CPUCORES_SCHED_GETAFFINITY
 #undef TUKLIB_PHYSMEM_SYSCONF
+/* o config.h gerado é do x86_64: no libSystem arm64 o CRC por CLMUL e o cpuid não existem */
+#if defined(__aarch64__)
+#undef HAVE_USABLE_CLMUL
+#undef HAVE_IMMINTRIN_H
+#undef HAVE__MM_MOVEMASK_EPI8
+#undef HAVE_CPUID_H
+#endif
 #endif

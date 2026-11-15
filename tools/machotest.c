@@ -2290,6 +2290,10 @@ int main(int argc, char **argv) {
     u64 entry, rsp, rdi;
     char err[256];
     if (!macho_load(&g_proc, m, ml, arg, &entry, &rsp, &rdi, err, sizeof err)) { fprintf(stderr, "macho_load: %s\n", err); return 3; }
+    /* 64 KiB do cache de blocos do JIT entre processos (A64RT_JIT_SHARE), como o jitshare_map do kernel
+     * (kernel/proc/process.c): o rt_main do a64rt lê o magic ali. Aqui o processo é um só, então é memória comum. */
+    if (uvm_map(&g_proc, A64RT_JIT_SHARE, 0x10000) && *(volatile u64 *)(uintptr_t)A64RT_JIT_SHARE == 0)
+        *(volatile u64 *)(uintptr_t)A64RT_JIT_SHARE = 0x4A49545348415245ULL;   /* JIT_SHARE_MAGIC */
     script = getenv("MACHOTEST_EVENTS");
     brk_cur = g_proc.brk;
     brk_limit = brk_cur + (512ull << 20);

@@ -41,6 +41,11 @@ Executor do harness: `build/a64rt-test/apps.sh`. Raízes em `build/a64rt-test/ro
 - Caminho de falha (tabela de threads cheia, ou mmap sem o modo 3, alinhado a 4 KiB): solta o bloco inteiro a
   partir da base crua (`a64rt_hstack_plan` em `userland/a64rt/writes.c`, usado por `alloc_hstack`). Antes o
   `rt_free` ia no ponteiro alinhado, que pode ser o meio da faixa. O harness Linux cobre o plano; a VM não.
+- 15 nov., achados no host que podem pesar nessa rodada (nenhum confirmado na VM): (a) os gates do monitor exclusivo
+  não voltavam no fim da thread; depois de 4096 threads criadas, todo `STXR` da thread nova falhava para sempre. Corrigido
+  com `a64_xmon_release` no `thread_exit` (`tools/a64xmon_host.c`, `test_thread_churn`). (b) O `build.ps1` só copiava um
+  `build\libSystem-arm64.mos` que já existisse e o build arm64 não compilava na `main`; uma imagem nova levava um
+  libSystem arm64 velho. Agora o `build.ps1` e o `tools/build.sh` compilam o libSystem arm64.
 - Mesmo antes de cair, o app não abriu janela em 15 min. Medir onde gasta o tempo:
   - estatísticas do JIT na saída (`/Sistema/Biblioteca/a64/depurar` já está na imagem `build-a64e`);
   - volume de SIGBUS da rede de SMC; o JIT já passou a marcar páginas voláteis depois de 2 invalidações.

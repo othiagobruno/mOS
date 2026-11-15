@@ -1035,6 +1035,7 @@ int chdir(const char *path) {
     if (ret_errno(SYS2(SYS_STAT, rp, &st)) < 0) return -1;
     if (!st.is_dir) { cx_errno = CX_ENOTDIR; return -1; }
     strlcpy(cx_cwd, p, sizeof cx_cwd);
+    SYS1(SYS_CHDIR, rp);                                 /* o kernel guarda a pasta do processo: fork e posix_spawn herdam dele */
     return 0;
 }
 int access(const char *path, int mode) { mos_stat_t st; (void)mode; PATH(p, path); return ret_errno(SYS2(SYS_STAT, p, &st)) < 0 ? -1 : 0; }
@@ -1634,17 +1635,36 @@ void rewinddir(cx_dir_t *d) { d->index = 0; ds_free(&d->snap); }   /* o próximo
 typedef struct { long tv_sec; int tv_usec; } mac_timeval_t;
 typedef struct { long tv_sec; long tv_nsec; } mac_timespec_t;
 
-long time(long *t) { long v = SYS0(SYS_UNIXTIME); if (t) *t = v; return v; }
+/* hora real em ms: segundos do relógio (SYS_UNIXTIME) na primeira leitura + o tempo desde o boot (SYS_TIME) que passou
+ * depois. Juntar os segundos do relógio com SYS_TIME % 1000 fazia a hora voltar até 1 s na virada do segundo (os dois
+ * não viram juntos). A base só é refeita se o relógio e o tempo desde o boot se afastarem mais de 2 s. */
+static u64 realtime_ms(void) {
+    static volatile long base_sec = -1;
+    static volatile u64 base_ms;
+    u64 ms = (u64)SYS0(SYS_TIME);
+    long sec = SYS0(SYS_UNIXTIME);
+    long bs = base_sec;
+    u64 bm = base_ms;
+    long long have = bs < 0 ? 0 : (long long)bs * 1000 + (long long)(ms - bm), want = (long long)sec * 1000;
+    if (bs < 0 || have - want > 2000 || want - have > 2000) {
+        base_ms = ms;
+        base_sec = sec;
+        return (u64)sec * 1000;
+    }
+    return (u64)have;
+}
+/* time() na mesma base do gettimeofday: os dois nunca discordam do segundo */
+long time(long *t) { long v = (long)(realtime_ms() / 1000); if (t) *t = v; return v; }
 int gettimeofday(mac_timeval_t *tv, void *tz) {
     (void)tz;
-    u64 ms = (u64)SYS0(SYS_TIME);
-    if (tv) { tv->tv_sec = SYS0(SYS_UNIXTIME); tv->tv_usec = (int)(ms % 1000) * 1000; }
+    u64 rt = realtime_ms();
+    if (tv) { tv->tv_sec = (long)(rt / 1000); tv->tv_usec = (int)(rt % 1000) * 1000; }
     return 0;
 }
 int clock_gettime(int clk, mac_timespec_t *ts) {
-    u64 ms = (u64)SYS0(SYS_TIME);
-    if (clk == 0) { ts->tv_sec = SYS0(SYS_UNIXTIME); ts->tv_nsec = (long)(ms % 1000) * 1000000; }
-    else { ts->tv_sec = (long)(ms / 1000); ts->tv_nsec = (long)(ms % 1000) * 1000000; }
+    u64 ms = clk == 0 ? realtime_ms() : (u64)SYS0(SYS_TIME);
+    ts->tv_sec = (long)(ms / 1000);
+    ts->tv_nsec = (long)(ms % 1000) * 1000000;
     return 0;
 }
 u64 clock_gettime_nsec_np(int clk) { mac_timespec_t t; clock_gettime(clk, &t); return (u64)t.tv_sec * 1000000000ull + (u64)t.tv_nsec; }
@@ -1849,8 +1869,18 @@ int __fpclassifyd(double x) {
 }
 
 /* ================================================================ inicialização */
+/* A pasta inicial é a do kernel (a do pai, ou a do file action chdir do posix_spawn). O PWD do ambiente só vale
+ * quando aponta para a mesma pasta (é o caminho lógico, com links); senão é resto do pai e o kernel ganha. */
 void cx_libc_init(void) {
     ctype_init();
+    char k[1024];
+    long kn = SYS2(SYS_GETCWD, k, sizeof k);
     const char *pwd = getenv("PWD");
-    if (pwd && pwd[0] == '/') strlcpy(cx_cwd, pwd, sizeof cx_cwd);
+    if (pwd && pwd[0] == '/') {
+        char rp[1024];
+        strlcpy(rp, pwd, sizeof rp);
+        for (int hop = 0; hop < 8 && link_step(rp, sizeof rp, 0); hop++) {}
+        if (kn <= 0 || !strcmp(rp, k) || !strcmp(pwd, k)) { strlcpy(cx_cwd, pwd, sizeof cx_cwd); return; }
+    }
+    if (kn > 0 && k[0] == '/') strlcpy(cx_cwd, k, sizeof cx_cwd);
 }

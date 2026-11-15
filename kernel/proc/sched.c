@@ -488,7 +488,11 @@ static void a64_xmon_on_switch(thread_t *from, int_frame_t *f) {
     if (sp < USER_BASE || sp >= USER_END) return;
     u64 base = sp & ~0xFFFFFULL;
     if (base < USER_BASE || base + 968 > USER_END) return;
-    if (!uvm_pte(from->proc, base)) return;
+    /* Só com a página gravável: depois do fork a base da pilha do host é COW (só leitura) e a escrita do kernel
+     * aqui era #PF de escrita no núcleo (pânico no fork de processo arm64). Pular é seguro: o fork já derruba a
+     * reserva dos dois lados (userland/a64rt/rt.c) e a primeira escrita da thread copia a página. */
+    u64 *pte = uvm_pte(from->proc, base);
+    if (!pte || !(*pte & 2ULL)) return;                 /* PTE_RW */
     volatile u64 *hdr = (volatile u64 *)base;
     if (hdr[0] != 0x4441455254343641ULL || hdr[1] != base) return;
     *(volatile u32 *)(base + 860) = 0;

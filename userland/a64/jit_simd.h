@@ -2318,6 +2318,7 @@ static int s_shift_scalar(T *t, a64_u32 w) {
 /* Escalar AdvSIMD (op0 0x5/0x7): só o que tem forma de uma lane de 64, ou SCVTF da mesma largura. */
 static int s_scalar_simd(T *t, a64_u32 w) {
     if (BIT(w, 24) && BIT(w, 10) && !BIT(w, 23) && BITS(w, 22, 19) != 0) return s_shift_scalar(t, w);
+    if (BIT(w, 24)) return 0;           /* por elemento e deslocamento por imediato: o resto fica com o interpretador */
     if (BIT(w, 21) && BIT(w, 10)) {
         int size = (int)BITS(w, 23, 22), op = (int)BITS(w, 15, 11);
         if (op == 0x08 && size == 3)
@@ -2370,7 +2371,7 @@ static int tr_simd(T *t, a64_u32 w) {
     }
     if (BIT(w, 10)) {
         if (!BIT(w, 15) && BITS(w, 23, 21) == 0) return s_copy(t, w);
-        if (BIT(w, 22) && !BIT(w, 21) && !BIT(w, 14)) {   /* FP half vetorial (3same) */
+        if (BIT(w, 22) && !BIT(w, 21) && !BIT(w, 15) && !BIT(w, 14)) {   /* FP half vetorial (3same; bit 15 = 1 é 3same_extra) */
             int q = (int)BIT(w, 30), u = (int)BIT(w, 29), a = (int)BIT(w, 23), op = (int)BITS(w, 13, 11);
             int lanes = q ? 8 : 4, n = (int)BITS(w, 9, 5), m = (int)BITS(w, 20, 16), d = (int)(w & 31);
             if (!u && op == 2) return s_f16(t, a ? 0x5C : 0x58, lanes, d, n, m);

@@ -859,7 +859,73 @@ static u64 mono_ms(void) {
     extern u64 clock_gettime_nsec_np(int clk);
     return clock_gettime_nsec_np(6) / 1000000;              /* CLOCK_MONOTONIC (macOS) */
 }
+static kern_return_t mach_msg_inner(mach_msg_header_t *msg, int option, u32 send_size, u32 rcv_size, mach_port_t rcv_name, u32 timeout, mach_port_t notify);
+/* ---- rastreio Mach/MIG (a parte de mensagens do xtrace; as syscalls ficam no kernel, kernel/proc/xtrace.c).
+ * Liga com /Sistema/Biblioteca/diag-xtrace: uma parte do nome do processo por linha, vazio = todos. Cada mach_msg
+ * sai no stderr com o id e o nome da rotina MIG (resposta = id da rotina + 100). Tabela: mig_nomes.inc. */
+typedef struct { int id; const char *name; } mig_name_t;
+static const mig_name_t mig_names[] = {
+#include "mig_nomes.inc"
+};
+static const char *mig_name(int id, int *reply) {
+    *reply = 0;
+    for (int pass = 0; pass < 2; pass++) {
+        int want = pass ? id - 100 : id, lo = 0, hi = (int)(sizeof mig_names / sizeof mig_names[0]) - 1;
+        while (lo <= hi) {
+            int mid = (lo + hi) / 2;
+            if (mig_names[mid].id == want) { *reply = pass; return mig_names[mid].name; }
+            if (mig_names[mid].id < want) lo = mid + 1; else hi = mid - 1;
+        }
+    }
+    return "?";
+}
+char *strstr(const char *h, const char *n);
+int cx_xtrace_mach(void) {
+    static int on = -1;
+    if (on >= 0) return on;
+    on = 0;
+    int fd = open("/Sistema/Biblioteca/diag-xtrace", 0);
+    if (fd < 0) return on;
+    char cfg[1024], exe[1024];
+    long n = read(fd, cfg, sizeof cfg - 1);
+    close(fd);
+    cfg[n > 0 ? n : 0] = 0;
+    u32 sz = sizeof exe;
+    extern int _NSGetExecutablePath(char *buf, u32 *size);
+    if (_NSGetExecutablePath(exe, &sz) != 0) exe[0] = 0;
+    const char *bn = exe;
+    for (const char *q = exe; *q; q++) if (*q == '/') bn = q + 1;
+    int any = 0;
+    for (char *s = cfg; *s;) {
+        char *e = s;
+        while (*e && *e != '\n' && *e != '\r') e++;
+        char c = *e;
+        *e = 0;
+        if (*s) { any = 1; if (strstr(bn, s)) on = 1; }
+        if (!c) break;
+        s = e + 1;
+    }
+    if (!any) on = 1;
+    return on;
+}
+static void xtrace_msg(const char *what, const mach_msg_header_t *m, u32 size, kern_return_t r) {
+    extern int cx_fdprintf(int fd, const char *fmt, ...);
+    int reply;
+    const char *n = mig_name(m->id, &reply);
+    cx_fdprintf(2, "[xtrace-mach %ld:%ld] %s id=%d %s%s remote=0x%x local=0x%x %u bytes = 0x%x\n",
+                SYS0(SYS_GETPID), SYS0(SYS_GETTID), what, m->id, n, reply ? " (resposta)" : "", m->remote, m->local,
+                size, (unsigned)r);
+}
 kern_return_t mach_msg(mach_msg_header_t *msg, int option, u32 send_size, u32 rcv_size, mach_port_t rcv_name, u32 timeout, mach_port_t notify) {
+    if (msg && cx_xtrace_mach() && (option & MACH_SEND_MSG)) xtrace_msg("envio", msg, send_size, 0);
+    kern_return_t xr = mach_msg_inner(msg, option, send_size, rcv_size, rcv_name, timeout, notify);
+    if (msg && cx_xtrace_mach() && (option & MACH_RCV_MSG)) {
+        if (xr == KERN_SUCCESS) xtrace_msg("recebeu", msg, msg->size, xr);
+        else { extern int cx_fdprintf(int fd, const char *fmt, ...); cx_fdprintf(2, "[xtrace-mach %ld:%ld] recepção em 0x%x = 0x%x\n", SYS0(SYS_GETPID), SYS0(SYS_GETTID), rcv_name, (unsigned)xr); }
+    }
+    return xr;
+}
+static kern_return_t mach_msg_inner(mach_msg_header_t *msg, int option, u32 send_size, u32 rcv_size, mach_port_t rcv_name, u32 timeout, mach_port_t notify) {
     mos_mach_msg_args_t a = {(u64)msg, (u32)option, send_size, rcv_size, rcv_name, timeout, notify};
     u64 t0 = (option & MACH_RCV_TIMEOUT) ? mono_ms() : 0;
     kern_return_t r = (kern_return_t)cx_syscall(SYS_MACH_MSG, (long)&a, 0, 0, 0, 0);
@@ -950,6 +1016,76 @@ kern_return_t mach_port_destruct(mach_port_t task, mach_port_t name, int delta, 
     (void)task; (void)guard;
     u64 a[8] = {name, (u64)(long)delta, 0, 0, 0, 0, 0, 0};
     return (kern_return_t)mach_port(MACH_OP_DESTRUCT, a);
+}
+/* mach_port_destroy: some com todos os direitos desse nome (RECEIVE incluído) */
+kern_return_t mach_port_destroy(mach_port_t task, mach_port_t name) {
+    (void)task;
+    u64 a[8] = {name, 0, 0, 0, 0, 0, 0, 0};
+    return (kern_return_t)mach_port(MACH_OP_DESTROY, a);
+}
+
+/* mach_port_get_attributes: o contrato do XNU (osfmk/ipc/mach_port.c, o mesmo no Darling).
+ * count menor que o do flavor: KERN_FAILURE. Nome nulo: LIMITS_INFO volta com *count = 0 e DNREQUESTS_SIZE com 0;
+ * RECEIVE_STATUS e INFO_EXT são KERN_INVALID_RIGHT. Nome sem RECEIVE: KERN_INVALID_RIGHT; nome que não existe:
+ * KERN_INVALID_NAME. mps_pset diz só se a porta está num conjunto (o XNU não vaza o nome). */
+#define MACH_PORT_LIMITS_INFO     1
+#define MACH_PORT_RECEIVE_STATUS  2
+#define MACH_PORT_DNREQUESTS_SIZE 3
+#define MACH_PORT_INFO_EXT        7
+#define MPS_COUNT     10   /* MACH_PORT_RECEIVE_STATUS_COUNT */
+#define MPIE_COUNT    17   /* MACH_PORT_INFO_EXT_COUNT: status + boost + 6 reservados */
+#define KERN_INVALID_RIGHT 17
+static kern_return_t receive_status(mach_port_t name, u32 *st) {
+    u32 type = 0;
+    kern_return_t kr = mach_port_type(TASK_PORT, name, &type);
+    if (kr != KERN_SUCCESS) return kr;
+    if (!(type & 0x20000u)) return KERN_INVALID_RIGHT;           /* MACH_PORT_TYPE_RECEIVE */
+    u64 a[8] = {name, 0, 0, 0, 0, 0, 0, 0};
+    kr = (kern_return_t)mach_port(MACH_OP_STATUS, a);
+    if (kr != KERN_SUCCESS) return kr;
+    /* a1 msgcount, a2 seqno, a3 qlimit, a4 srights, a5 sorights, a6 mscount, a7 em conjunto */
+    st[0] = (u32)a[7]; st[1] = (u32)a[2]; st[2] = (u32)a[6]; st[3] = (u32)a[3]; st[4] = (u32)a[1];
+    st[5] = (u32)a[5]; st[6] = a[4] > 0; st[7] = 0; st[8] = 0; st[9] = 0;
+    return KERN_SUCCESS;
+}
+kern_return_t mach_port_get_attributes(mach_port_t task, mach_port_t name, int flavor, int *info, u32 *count) {
+    (void)task;
+    if (!info || !count) return KERN_INVALID_ARGUMENT;
+    u32 st[MPS_COUNT];
+    kern_return_t kr;
+    int valid = name != 0 && name != 0xFFFFFFFFu;
+    switch (flavor) {
+    case MACH_PORT_LIMITS_INFO:
+        if (*count < 1) return KERN_FAILURE;
+        if (!valid) { *count = 0; return KERN_SUCCESS; }
+        if ((kr = receive_status(name, st)) != KERN_SUCCESS) return kr;
+        info[0] = (int)st[3];
+        *count = 1;
+        return KERN_SUCCESS;
+    case MACH_PORT_RECEIVE_STATUS:
+        if (*count < MPS_COUNT) return KERN_FAILURE;
+        if (!valid) return KERN_INVALID_RIGHT;
+        if ((kr = receive_status(name, st)) != KERN_SUCCESS) return kr;
+        for (int i = 0; i < MPS_COUNT; i++) info[i] = (int)st[i];
+        *count = MPS_COUNT;
+        return KERN_SUCCESS;
+    case MACH_PORT_DNREQUESTS_SIZE:
+        if (*count < 1) return KERN_FAILURE;
+        info[0] = 0;
+        if (!valid) return KERN_SUCCESS;
+        if ((kr = receive_status(name, st)) != KERN_SUCCESS) return kr;
+        *count = 1;
+        return KERN_SUCCESS;
+    case MACH_PORT_INFO_EXT:
+        if (*count < MPIE_COUNT) return KERN_FAILURE;
+        if (!valid) return KERN_INVALID_RIGHT;
+        if ((kr = receive_status(name, st)) != KERN_SUCCESS) return kr;
+        for (int i = 0; i < MPIE_COUNT; i++) info[i] = i < MPS_COUNT ? (int)st[i] : 0;
+        *count = MPIE_COUNT;
+        return KERN_SUCCESS;
+    default:
+        return KERN_INVALID_ARGUMENT;
+    }
 }
 
 /* ---- bootstrap (o "launchd" do mOS) e portas especiais da task.
