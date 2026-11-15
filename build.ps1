@@ -297,6 +297,17 @@ if ($LASTEXITCODE -ne 0) {
         # sinais POSIX (tratadores, máscaras, sigsuspend, sigaltstack, EINTR/SA_RESTART, SIGCHLD): o "teste" também o chama
         & $zig cc -target x86_64-macos -O1 "$root\userland\tests-signals\main.c" -o "$pdir\sinaisteste" "-Wl,-undefined,dynamic_lookup" 2>&1 | ForEach-Object { "$_" }
         if ($LASTEXITCODE -ne 0) { Write-Host "sinaisteste FAILED" -ForegroundColor Red; exit 1 }
+        # semáforos e traps Mach (mk_timer, clock_sleep, mach_port_get_attributes) com o contrato do XNU: o "teste" também os chama
+        & $zig cc -target x86_64-macos -O1 "$root\userland\tests-machsem\main.c" -o "$pdir\machsemteste" "-Wl,-undefined,dynamic_lookup" 2>&1 | ForEach-Object { "$_" }
+        if ($LASTEXITCODE -ne 0) { Write-Host "machsemteste FAILED" -ForegroundColor Red; exit 1 }
+        & $zig cc -target x86_64-macos -O1 -Wno-deprecated-declarations "$root\userland\tests-machtraps\main.c" -o "$pdir\machtrapsteste" "-Wl,-undefined,dynamic_lookup" 2>&1 | ForEach-Object { "$_" }
+        if ($LASTEXITCODE -ne 0) { Write-Host "machtrapsteste FAILED" -ForegroundColor Red; exit 1 }
+        # IPC POSIX nomeado (shm_open, sem_open entre processos), getattrlist/setattrlist e abort_with_reason
+        & $zig cc -target x86_64-macos -O1 -Wno-deprecated-declarations "$root\userland\tests-posixipc\main.c" -o "$pdir\posixipcteste" "-Wl,-undefined,dynamic_lookup" 2>&1 | ForEach-Object { "$_" }
+        if ($LASTEXITCODE -ne 0) { Write-Host "posixipcteste FAILED" -ForegroundColor Red; exit 1 }
+        # os casos dos testes do Darling: F_GETPATH, morte por sinal, libproc, __thread e execl de si mesmo
+        & $zig cc -target x86_64-macos -O1 "$root\userland\tests-darwinmisc\main.c" -o "$pdir\darwinmiscteste" "-Wl,-undefined,dynamic_lookup" 2>&1 | ForEach-Object { "$_" }
+        if ($LASTEXITCODE -ne 0) { Write-Host "darwinmiscteste FAILED" -ForegroundColor Red; exit 1 }
         # simulated Wi-Fi radio + access point (kernel/wifi/sim.c); boot with run.ps1 -NoNet to test it end to end
         Set-Content -Path "$esp\mOS\Sistema\Biblioteca\wifi-simulado" -Value 'mOS-Teste' -Encoding ascii
     }

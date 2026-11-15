@@ -151,6 +151,23 @@ bash tools/test-machsem.sh
 
 Compila `userland/tests-machsem/main.c` como Mach-O x86_64 (`build/machsemteste`) e roda no `machotest`. O placar é `machsem: 41/41 ok`. Os valores esperados são os do `sync_sema.c` do XNU, que o Darling roda no darlingserver: `KERN_NOT_WAITING` = 48, `KERN_TERMINATED` = 37 para quem espera num semáforo destruído, `KERN_INVALID_VALUE` = 18 para nsec fora de [0, 1e9), `KERN_INVALID_NAME` = 15 e `KERN_INVALID_CAPABILITY` = 20 para nomes errados. O mesmo binário roda no Darling com `darling shell ./machsemteste`, e as linhas `ok` têm de sair iguais.
 
+### Traps Mach, IPC POSIX e casos do Darling
+
+| Script | Teste | No harness do Linux |
+|---|---|---|
+| `tools/test-machtraps.sh` | `mk_timer_*`, `mach_wait_until`, `clock_sleep`, `mach_reply_port`, `mach_port_destroy`, `mach_port_get_attributes` | parcial: o `machotest` emula as portas sem `MACH_OP_DESTROY`, com outros bits de tipo e sem trocar o cabeçalho na recepção |
+| `tools/test-posixipc.sh` | `shm_open`, `sem_open` entre processos, `getattrlist`/`setattrlist`, `abort_with_reason` | até o primeiro `fork` (o `machotest` não tem `fork`) |
+| — | `userland/tests-darwinmisc`: `F_GETPATH`, morte por sinal, `proc_listpidspath`, `__thread`, `execl` de si mesmo | não roda (usa `fork`) |
+
+Os três também entram na imagem com `build.ps1 -Tests` e o `teste` do boot os chama: no QEMU valem contra o `machipc.c` e o `fork` de verdade.
+
+## Rastreio (a ideia do xtrace do Darling)
+
+Crie `/Sistema/Biblioteca/diag-xtrace` com uma parte do nome do processo por linha (vazio = todos). Sem o arquivo nada muda.
+
+- Kernel (`kernel/proc/xtrace.c`): cada syscall do processo sai no log serial como `xtrace <processo> <pid>:<tid> <nome>(a, b, c) = <resultado>`. Os nomes vêm de `kernel/proc/xtrace_nomes.inc`; rode `python3 tools/gerar-xtrace-nomes.py` quando entrar syscall nova.
+- libSystem (`mach.c`): cada `mach_msg` sai no stderr como `[xtrace-mach pid:tid] envio|recebeu id=<msgh_id> <rotina MIG>`. A tabela `userland/libsystem/mig_nomes.inc` sai de `tools/gerar-mig-nomes.py <osfmk>` (só ids e nomes das rotinas públicas).
+
 O `~/.local/bin/zig` em symlink não acha `lib/libc/include/any-darwin-any` no `tools/build.sh`: use `MOS_ZIG` com o caminho real do binário.
 
 ## O que não rodou

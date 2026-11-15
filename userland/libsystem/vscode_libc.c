@@ -744,41 +744,7 @@ int __ulock_wake(u32 op, void *addr, u64 wake_value) {
     if (addr && ulock_private32(op, addr)) cx_futex_wake((volatile int *)addr, (op & (ULF_WAKE_ALL | ULF_WAKE_THREAD)) ? 0x7FFFFFFF : 1);
     return 0;
 }
-typedef struct vs_sem { char name[64]; volatile int value; struct vs_sem *next; } vs_sem_t;
-static vs_sem_t *sems;
-static volatile int sem_lock;
-static void sl_lock(void) { while (__atomic_exchange_n(&sem_lock, 1, __ATOMIC_ACQUIRE)) sched_yield(); }
-static void sl_unlock(void) { __atomic_store_n(&sem_lock, 0, __ATOMIC_RELEASE); }
-void *sem_open(const char *name, int oflag, ...) {
-    unsigned value = 0;
-    if (oflag & 0x200 /* O_CREAT */) { va_list ap; va_start(ap, oflag); (void)va_arg(ap, int); value = va_arg(ap, unsigned); va_end(ap); }
-    sl_lock();
-    for (vs_sem_t *s = sems; s; s = s->next)
-        if (!strcmp(s->name, name)) {
-            sl_unlock();
-            if ((oflag & 0x200) && (oflag & 0x800 /* O_EXCL */)) { set_errno(17); return (void *)-1; }
-            return s;
-        }
-    if (!(oflag & 0x200)) { sl_unlock(); set_errno(E_NOENT); return (void *)-1; }
-    vs_sem_t *s = calloc(1, sizeof *s);
-    if (!s) { sl_unlock(); return (void *)-1; }
-    strlcpy(s->name, name, sizeof s->name);
-    s->value = (int)value;
-    s->next = sems;
-    sems = s;
-    sl_unlock();
-    return s;
-}
-int sem_close(void *s) { (void)s; return 0; }
-int sem_post(void *p) { vs_sem_t *s = p; __atomic_add_fetch(&s->value, 1, __ATOMIC_RELEASE); return 0; }
-int sem_wait(void *p) {
-    vs_sem_t *s = p;
-    for (;;) {
-        int v = __atomic_load_n(&s->value, __ATOMIC_ACQUIRE);
-        if (v > 0 && __atomic_compare_exchange_n(&s->value, &v, v - 1, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) return 0;
-        sched_yield();
-    }
-}
+/* sem_open e os outros semáforos POSIX nomeados: posix_ipc.c */
 
 /* ================================================================ OSAtomic (libkern) e libatomic */
 i32 OSAtomicAdd32(i32 v, volatile i32 *p) { return __atomic_add_fetch(p, v, __ATOMIC_RELAXED); }

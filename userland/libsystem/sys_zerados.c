@@ -4830,7 +4830,6 @@ void lgammaf_r(void) {}
 void lgammal_r(void) {}
 void lldiv(void) {}
 void log1pl(void) {}
-void mach_port_get_attributes(void) {}
 void mach_port_guard(void) {}
 void mach_port_set_mscount(void) {}
 void mach_port_unguard(void) {}

@@ -2672,14 +2672,20 @@ static void trace_zig_fs(process_t *p, u64 nr, u64 a, u64 b, u64 c, i64 res) {
         kprintf("zigfs %d: sys %llu %s b=%llx -> %lld\n", p->pid, nr, s, b, res);
     }
 }
+bool xtrace_on(process_t *p);
+void xtrace_log(process_t *p, int tid, u64 nr, u64 a, u64 b, u64 c, i64 res, bool blocked);
 u64 proc_syscall(int_frame_t *f) {
     static int trace_zig = -1;
     if (trace_zig < 0) trace_zig = vfs_lookup("/Sistema/Biblioteca/rastrear-arquivos-zig") != NULL;
-    process_t *tp = trace_zig && thread_current() ? thread_current()->proc : NULL;
+    thread_t *ct = thread_current();
+    process_t *tp = trace_zig && ct ? ct->proc : NULL;
     bool tr = tp && !strcmp(tp->name, "zig") && (f->cs & 3) == 3;
+    /* rastreio por processo (proc/xtrace.c, /Sistema/Biblioteca/diag-xtrace) */
+    process_t *xp = ct && (f->cs & 3) == 3 && xtrace_on(ct->proc) ? ct->proc : NULL;
     u64 nr = f->rax, a = f->rdi, b = f->rsi, c = f->rdx;
     u64 r = proc_syscall_(f);
     if (tr) trace_zig_fs(tp, nr, a, b, c, (i64)f->rax);
+    if (xp) xtrace_log(xp, ct->id, nr, a, b, c, (i64)f->rax, (int_frame_t *)r != f);
     return ((int_frame_t *)r)->cs & 3 ? proc_signal_check((int_frame_t *)r) : r;
 }
 static u64 proc_syscall_(int_frame_t *f) {

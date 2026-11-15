@@ -208,6 +208,22 @@ void _start(const char *arg) {
         int st3 = spawn("sinaisteste", 0);
         CHECK(st3 > 0 && wait(st3) == 0, "sinaisteste (Mach-O): tratadores, máscaras, sigsuspend, sigaltstack, EINTR/SA_RESTART");
     }
+    if (file_size("/Sistema/Programas/machsemteste") > 0) {   /* Mach-O: semáforos Mach (userland/tests-machsem) */
+        int ms = spawn("machsemteste", 0);
+        CHECK(ms > 0 && wait(ms) == 0, "machsemteste (Mach-O): semáforos Mach com o contrato do XNU");
+    }
+    if (file_size("/Sistema/Programas/machtrapsteste") > 0) {   /* Mach-O: mk_timer, clock_sleep, atributos (userland/tests-machtraps) */
+        int mt = spawn("machtrapsteste", 0);
+        CHECK(mt > 0 && wait(mt) == 0, "machtrapsteste (Mach-O): mk_timer, mach_wait_until, clock_sleep e mach_port_get_attributes");
+    }
+    if (file_size("/Sistema/Programas/posixipcteste") > 0) {   /* Mach-O: shm_open, sem_open, getattrlist (userland/tests-posixipc) */
+        int pi = spawn("posixipcteste", 0);
+        CHECK(pi > 0 && wait(pi) == 0, "posixipcteste (Mach-O): shm_open, sem_open entre processos, getattrlist/setattrlist e abort_with_reason");
+    }
+    if (file_size("/Sistema/Programas/darwinmiscteste") > 0) {   /* Mach-O: casos dos testes do Darling (userland/tests-darwinmisc) */
+        int dm = spawn("darwinmiscteste", 0);
+        CHECK(dm > 0 && wait(dm) == 0, "darwinmiscteste (Mach-O): F_GETPATH, sinais, libproc, __thread e execl");
+    }
     if (file_size("/Sistema/Programas/unixipc") > 0) {   /* ELF: AF_UNIX entre processos (userland/unixipc.c) */
         int ux = spawn("unixipc", 0);
         CHECK(ux > 0 && wait(ux) == 0, "unixipc: bind/listen/accept, send/recv e SCM_RIGHTS");
