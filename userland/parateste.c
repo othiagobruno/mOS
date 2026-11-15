@@ -107,7 +107,7 @@ static void teste_spawn_suspenso(void) {
 static void teste_spawn_acoes(void) {
     static mos_spawn_fa_t acts[MOS_SPAWN_FA_MAX];
     static char back[32];
-    char *av[] = { "seq", "3", 0 };
+    char *av[] = { "seq", 0 };   /* ELF: o _start não recebe argv[1] pelo SPAWNVEC; seq sem argumento vai de 1 a 10 */
     mos_spawn_vec_t v;
     unlink("/tmp/fa.txt");
     memset(acts, 0, sizeof acts);
@@ -131,7 +131,7 @@ static void teste_spawn_acoes(void) {
     int w = pid > 0 ? waitpid(pid, &st, 0) : -1;
     i64 n = read_file("/tmp/fa.txt", back, sizeof back - 1);
     back[n > 0 ? n : 0] = 0;
-    CHECK(pid > 0 && w == pid && st == 0 && n == 6 && !memcmp(back, "1\n2\n3\n", 6),
+    CHECK(pid > 0 && w == pid && st == 0 && n == 21 && !memcmp(back, "1\n2\n3\n", 6) && !memcmp(back + 18, "10\n", 3),
           "spawn com %d ações: stdout do filho no arquivo (pid %d, status 0x%x, %d bytes)",
           (i64)MOS_SPAWN_FA_MAX, (i64)pid, (i64)(u64)(unsigned)st, n);
     unlink("/tmp/fa.txt");

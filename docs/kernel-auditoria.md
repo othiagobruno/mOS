@@ -56,6 +56,16 @@ Teste: `userland/parateste.c` ganhou um `SYS_SPAWNVEC` com 48 ações (47 `CLOSE
 
 `ahci_reap` com `PxCI | PxSACT`, página do `pcache` nascendo com `stamp`, `evict_one` pulando `valid == 0`, política no `blk_write` e `blk_flush` no `storage_revoke_write`: corretos. Os caminhos de falha e de prazo do NCQ (`wait_batch`) passam por `recover_port`, que limpa PxCI e PxSACT antes de o tag voltar. Única sobra: página criada por um `load_run` cuja leitura falhou fica com `valid == 0` e agora não sai mais pelo `evict_one`; é reaproveitada na próxima leitura do mesmo deslocamento, então o custo é no máximo uma janela de leitura antecipada por erro de disco.
 
+## Suíte completa na VM (TCG, este ramo rebaseado em 7e3d471)
+
+ESP mínima com o kernel e o libSystem do `tools/build.sh`, os ELF de `userland/` e os três Mach-O do `-Tests`:
+`posixteste` TODOS OK, `sinaisteste` TODOS OK, `dispatchteste` 30/30, `unixipc` TODOS OK, `mmshared` TODOS OK,
+`smpteste` OK, `parateste` TODOS OK (rodado à parte depois de acertar o teste de spawn: o ELF não recebe `argv[1]`
+pelo `SYS_SPAWNVEC`), 193 linhas `ok` no `teste`. Sem `panic` nem marca de pilha estourada.
+
+Falham `sleep 100 ms` e trechos do `teste-sh` (Ctrl+C no `spin`): dependem de prazo de relógio e falham também na
+`main` sob TCG com o host carregado (variam de rodada para rodada: `sleep` 101 ms no KVM, 1440 a 30754 ms no TCG).
+
 ## Pontos abertos, por prioridade
 
 1. **fd guarda só o caminho** (`struct fdent.path`, sem vnode). `SYS_READ` refaz `vfs_lookup` a cada chamada. Arquivo apagado com o fd aberto dá `ENOENT`; `rename` por cima faz o fd ler o arquivo novo. SQLite (journal), git e o salvar atômico dos editores dependem do contrário. Pede vnode com contagem de referência e órfão até o último `close`.
