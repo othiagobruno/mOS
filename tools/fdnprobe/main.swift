@@ -59,4 +59,19 @@ t("file.exists", fm.fileExists(atPath: tmp.path))
 try? fm.removeItem(at: tmp)
 t("file.remove", !fm.fileExists(atPath: tmp.path))
 
+let sc = Scanner(string: "  abc 42 3.5 x")
+t("scanner.chars", sc.scanCharacters(from: .letters) == "abc")
+t("scanner.int", sc.scanInt() == 42)
+t("scanner.double", sc.scanDouble() == 3.5)
+t("scanner.upto", sc.scanUpToString("zz") == "x")
+
+let qi = URLQueryItem(name: "q", value: "1")
+t("bridge.queryitem", URLQueryItem._unconditionallyBridgeFromObjectiveC(qi._bridgeToObjectiveC()) == qi)
+let uc = URLComponents(string: "https://h.com/p?a=b")!
+t("bridge.urlcomponents", URLComponents._unconditionallyBridgeFromObjectiveC(uc._bridgeToObjectiveC()).host == "h.com")
+let nsc = CharacterSet.decimalDigits._bridgeToObjectiveC()
+t("bridge.charset.objc", nsc.characterIsMember(0x35) && !nsc.characterIsMember(0x41))
+t("bridge.charset.volta", CharacterSet._unconditionallyBridgeFromObjectiveC(nsc).contains("7"))
+t("bridge.calendar", Calendar._unconditionallyBridgeFromObjectiveC(Calendar(identifier: .gregorian)._bridgeToObjectiveC()).identifier == .gregorian)
+
 print("FDN-OK \(ok)/\(total)")

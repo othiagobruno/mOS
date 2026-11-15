@@ -401,6 +401,38 @@ typedef NS_OPTIONS(NSUInteger, NSFileManagerItemReplacementOptions) {
 @property (readonly) BOOL canUndo;
 @end
 
+/* ---- NSScanner do libSystem (foundation_more.c): a posição é em bytes UTF-8 da string */
+__attribute__((swift_name("Scanner")))
+@interface NSScanner : NSObject
++ (instancetype)scannerWithString:(NSString *)string;
+- (instancetype)initWithString:(NSString *)string;
+@property (readonly, copy) NSString *string;
+@property NSUInteger scanLocation;
+@property (readonly, getter=isAtEnd) BOOL atEnd;
+@end
+
+/* ---- classes do libSystem para as pontes de URLComponents, URLQueryItem, Calendar e CharacterSet */
+@interface NSURLQueryItem : NSObject <NSCopying, NSSecureCoding>
++ (instancetype)queryItemWithName:(NSString *)name value:(nullable NSString *)value;
+@property (readonly) NSString *name;
+@property (nullable, readonly) NSString *value;
+@end
+
+@interface NSURLComponents : NSObject <NSCopying>
++ (nullable instancetype)componentsWithString:(NSString *)URLString;
+@property (nullable, copy) NSString *string;
+@end
+
+@interface NSCalendar : NSObject <NSCopying, NSSecureCoding>
+- (nullable instancetype)initWithCalendarIdentifier:(NSString *)ident;
+@property (readonly, copy) NSString *calendarIdentifier;
+@property (copy) NSTimeZone *timeZone;
+@end
+
+@interface NSCharacterSet : NSObject <NSCopying, NSMutableCopying, NSSecureCoding>
+- (BOOL)characterIsMember:(unichar)aCharacter;
+@end
+
 /* ---- NSPathUtilities: funções C do libSystem (foundation.c, foundation_more.c) */
 FOUNDATION_EXPORT NSString *NSUserName(void);
 FOUNDATION_EXPORT NSString *NSFullUserName(void);
