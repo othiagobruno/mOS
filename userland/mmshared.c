@@ -380,6 +380,26 @@ void _start(const char *arg) {
         if (ok) munmap((void *)a, 4096);
     }
 
+    /* ---- futex entre processos numa página MAP_SHARED: o FUTEX_WAKE do pai acorda o filho ---- */
+    {
+        volatile unsigned *w = (volatile unsigned *)mmap_fd(4096, MM_ANON, -1, 0, PROT_RW);
+        int ok = (i64)w > 0;
+        if (ok) { w[0] = 0; w[1] = 0; }
+        int fk = ok ? fork() : -1;
+        if (fk == 0) {
+            w[1] = 1;                                                     /* "estou esperando" */
+            i64 r = sys3(SYS_FUTEX_WAIT, (u64)&w[0], 0, 3000);          /* até 3 s */
+            exit(r == 0 && w[0] == 1 ? 70 : r == -60 ? 71 : 72);       /* 71 = ETIMEDOUT: ninguém acordou */
+        }
+        while (ok && fk > 0 && !w[1]) sleep_ms(10);
+        sleep_ms(100);                                                    /* o filho já está dentro do FUTEX_WAIT */
+        i64 woke = 0;
+        if (ok && fk > 0) { w[0] = 1; woke = sys3(SYS_FUTEX_WAKE, (u64)&w[0], 1, 0); }
+        int st = fk > 0 ? wait(fk) : -1;
+        CHECK(woke == 1 && st == 70, "futex entre processos em MAP_SHARED: o wake do pai acorda o filho (%d, filho %d)", woke, (i64)st);
+        if (ok) munmap((void *)w, 4096);
+    }
+
     print(fails ? "mmshared: %d FALHA(S)\n" : "mmshared: TODOS OS TESTES OK\n", (i64)fails);
     exit(fails);
 }

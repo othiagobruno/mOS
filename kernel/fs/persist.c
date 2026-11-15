@@ -124,7 +124,14 @@ static void load_entry(void *ctx, const char *name, bool is_dir, u64 size) {
     if (size > MAX_LOAD) { kprintf("persist: %s grande demais (%llu MB), ignorado\n", vp, size >> 20); return; }
     u64 len = 0;
     u8 *data = fat_read_file(sys, fp, &len);
-    if (!data) { kprintf("persist: erro ao ler %s\n", fp); return; }
+    if (!data) {   /* o persist põe o disco inteiro na RAM: com pouca memória o que falta é RAM, não o disco */
+        u64 livre = pmm_free_pages() * 4096ull;
+        if (livre < size + (8ull << 20))
+            kprintf("persist: sem memória para %s (%llu KiB; livres %llu MiB)\n", fp, (unsigned long long)(size >> 10),
+                    (unsigned long long)(livre >> 20));
+        else kprintf("persist: erro ao ler %s\n", fp);
+        return;
+    }
     vnode_t *v = vfs_create(vp);
     if (!v) { kfree(data); return; }
     if (v->cap) kfree(v->data);

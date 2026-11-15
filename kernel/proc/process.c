@@ -874,6 +874,7 @@ __attribute__((weak)) i64 compat_gui_syscall(process_t *p, u64 n, u64 a, u64 b, 
 
 void proc_reap(process_t *p) { (void)p; }
 
+static void orphan_gc(void);
 static void fd_close(process_t *p, int fd);
 static void spawn_finish_cred(process_t *child, thread_t *cur);
 
@@ -966,7 +967,7 @@ static void finish(process_t *p, int code) {
     { extern void net_user_exit(process_t *p); net_user_exit(p); }   /* conexões TCP do processo (kernel/net/usersock.c) */
     { extern void webview_user_exit(process_t *p); webview_user_exit(p); }   /* vistas do WKWebView (kernel/web/webview.c) */
     { extern void audio_stream_proc_exit(int pid); audio_stream_proc_exit(p->pid); }   /* streams de áudio (kernel/dev/sound.c) */
-    { extern void lazy_exit(process_t *p); lazy_exit(p); }           /* faixas de memória sob demanda (kernel/mm/lazy.c) */
+    { extern void lazy_exit(process_t *p); lazy_exit(p); orphan_gc(); }           /* faixas de memória sob demanda (kernel/mm/lazy.c) */
     for (process_t *c = procs; c; c = c->next) if (c->ppid == p->pid) c->ppid = 0;   /* órfãos */
     int parent = p->ppid;
     bool reported = false;
@@ -2088,6 +2089,7 @@ static void pipe_refs_drop(pipe_t *pp, pipe_t *pp2, u8 kind) {
 
 static void fd_close(process_t *p, int fd) {
     if (!p->fds[fd].used) return;
+    bool orphan = p->fds[fd].kind == FD_FILE && !strncmp(p->fds[fd].path, "/tmp/.orfaos/", 13);
     if (p->fds[fd].kind == FD_UNIX) unix_put((int)p->fds[fd].off);
     pipe_t *pp = p->fds[fd].pipe, *pp2 = p->fds[fd].pipe2;
     struct pty *ty = p->fds[fd].pty;
@@ -2098,6 +2100,7 @@ static void fd_close(process_t *p, int fd) {
     p->fds[fd].pipe2 = NULL;
     p->fds[fd].pty = NULL;
     if (ty) pty_fd_ref(ty, tm, -1);                   /* depois de soltar o fd: o par pode ser liberado aqui */
+    if (orphan) orphan_gc();                          /* era o último a ler um arquivo já apagado? */
 }
 
 static void fd_copy(process_t *dst, int dfd, process_t *src, int sfd) {
@@ -2215,6 +2218,55 @@ static void rename_fix_fds(const char *from, const char *to) {
         }
     }
     irq_restore(irq);
+}
+
+/* ---- arquivo apagado com fd aberto ou mapeado (POSIX: o conteúdo vive até o último close/munmap)
+ * O fd guarda o caminho, não o vnode. Sem isto, unlink (ou rename por cima) de um arquivo aberto dava ENOENT no
+ * próximo read, ou o fd passava a ler o arquivo novo criado no mesmo nome: journal do SQLite, git, salvar atômico
+ * dos editores, arquivos temporários do Chromium. O vnode vai para /tmp/.orfaos/N (fora do persist, como todo
+ * /tmp), os fds e os mapas passam a apontar para lá, e orphan_gc o apaga quando ninguém mais o usa. */
+#define ORPHAN_DIR "/tmp/.orfaos"
+extern void lazy_rename_path(const char *from, const char *to);
+extern bool lazy_path_in_use(const char *path);
+static u32 orphan_seq;
+
+static bool fd_path_open(const char *path) {
+    for (process_t *q = procs; q; q = q->next) {
+        if (q->exited) continue;
+        for (int i = 0; i < PROC_MAX_FDS; i++)
+            if (q->fds[i].used && q->fds[i].kind == FD_FILE && !q->fds[i].pipe && !q->fds[i].pty &&
+                !strcmp(q->fds[i].path, path)) return true;
+    }
+    return false;
+}
+
+static bool file_in_use(const char *path) { return fd_path_open(path) || lazy_path_in_use(path); }
+
+/* true = v foi para a pasta dos órfãos (o chamador não o apaga); false = ninguém o usa, ou não dá para mover */
+static bool orphan_if_open(vnode_t *v, const char *path) {
+    if (!v || v->dir || v->ext || vfs_is_read_only(v) || !strncmp(path, ORPHAN_DIR "/", sizeof ORPHAN_DIR)) return false;
+    if (!file_in_use(path)) return false;
+    vnode_t *od = vfs_mkdir(ORPHAN_DIR);
+    if (!od) return false;
+    char nm[24], to[64];
+    snprintf(nm, sizeof nm, "%u", ++orphan_seq);
+    snprintf(to, sizeof to, ORPHAN_DIR "/%s", nm);
+    if (!vfs_move(v, od, nm)) return false;
+    rename_fix_fds(path, to);
+    lazy_rename_path(path, to);
+    return true;
+}
+
+/* apaga os órfãos que nenhum fd e nenhum mapa usam mais (close, munmap, saída de processo) */
+static void orphan_gc(void) {
+    vnode_t *od = vfs_lookup(ORPHAN_DIR);
+    if (!od || !od->child) return;
+    for (vnode_t *c = od->child, *nx; c; c = nx) {
+        nx = c->next;
+        char fp[64];
+        snprintf(fp, sizeof fp, ORPHAN_DIR "/%s", c->name);
+        if (!file_in_use(fp)) vfs_delete(c);
+    }
 }
 
 /* ftruncate: o SQLite (journal TRUNCATE, encolher o banco) precisa; sem isso o commit do perfil do Chrome falhava */
@@ -2537,7 +2589,7 @@ static i64 proc_exec(int_frame_t *f, thread_t *t, process_t *p, char *path, char
     p->main = t;
     drop_pipe_waiters(p, t);
     compat_gui_proc_exit(p);
-    { extern void lazy_exit(process_t *p); lazy_exit(p); }
+    { extern void lazy_exit(process_t *p); lazy_exit(p); orphan_gc(); }
     /* troca o espaço de endereçamento com np (que está no heap) e libera o antigo por ele. Nada de process_t
      * na pilha: com PROC_MAX_FDS = 256 a struct passa de 64 KiB e um "process_t old = {0}" aqui zerava a
      * memória abaixo da pilha do kernel (blocos do heap com magic 0, kfree inválido e pânico). */
@@ -2591,6 +2643,15 @@ static i64 proc_exec(int_frame_t *f, thread_t *t, process_t *p, char *path, char
     return 0;
 }
 
+/* futex numa página que outro processo também mapeia (MAP_SHARED, memória Mach): a chave passa a ser o endereço
+ * físico, senão um pthread_mutex/cond PROCESS_SHARED (Chromium, Electron) esperava para sempre pelo FUTEX_WAKE do
+ * outro lado. Página COW fica privada: pai e filho do fork só dividem a cópia, não a palavra. */
+static u64 futex_shared_key(process_t *p, u64 va) {
+    u64 *e = uvm_pte(p, va);
+    if (!e || (*e & PTE_COW)) return 0;
+    if (!(*e & PTE_SHARED) && page_refs(*e & PTE_ADDR) <= 1) return 0;
+    return (*e & PTE_ADDR) | (va & 0xFFF);
+}
 static u64 proc_syscall_(int_frame_t *f);
 /* a syscall pode bloquear e trocar de thread: a thread que volta ao ring 3 (talvez acordada por um sinal, com
  * rax = -EINTR) passa pela entrega de sinais, que também decide se a syscall interrompida é refeita */
@@ -2677,6 +2738,7 @@ static u64 proc_syscall_(int_frame_t *f) {
         if (cur != (u32)b) { r = -MOS_EAGAIN; break; }
         if (!c) { r = -MOS_ETIMEDOUT; break; }
         t->futex_va = a;
+        t->futex_phys = futex_shared_key(p, a);
         t->wake_at = c == ~0ULL ? 0 : timer_ticks() + c;    /* o prazo é do escalonador (wake_sleepers) */
         t->wait_pid = -8;
         t->state = TH_WAITING;
@@ -2685,8 +2747,10 @@ static u64 proc_syscall_(int_frame_t *f) {
     }
     case SYS_FUTEX_WAKE: {
         i64 n = 0;
+        u64 key = futex_shared_key(p, a);
         for (thread_t *w = sched_threads(); w && n < (i64)(b ? b : 1); w = w->next) {
-            if (w->state != TH_WAITING || w->wait_pid != -8 || w->proc != p || w->futex_va != a) continue;
+            if (w->state != TH_WAITING || w->wait_pid != -8) continue;
+            if (!(w->proc == p && w->futex_va == a) && !(key && w->futex_phys == key)) continue;
             ((int_frame_t *)w->frame)->rax = 0;
             w->futex_va = 0;
             w->wake_at = 0;
@@ -3200,7 +3264,7 @@ static u64 proc_syscall_(int_frame_t *f) {
     case SYS_UNLINK: {
         if (!copy_path(p, path, a)) { r = -MOS_EFAULT; break; }
         vnode_t *v = vfs_lookup(path);
-        r = !v ? -MOS_ENOENT : vfs_delete(v) ? 0 : -MOS_EINVAL;
+        r = !v ? -MOS_ENOENT : (orphan_if_open(v, path) || vfs_delete(v)) ? 0 : -MOS_EINVAL;
         if (r == 0) unix_unbind(path);
         break;
     }
@@ -3221,11 +3285,11 @@ static u64 proc_syscall_(int_frame_t *f) {
             if (old->dir && !v->dir) { r = -MOS_EISDIR; break; }
             if (!old->dir && v->dir) { r = -MOS_ENOTDIR; break; }
             if (old->dir && old->child) { r = -MOS_ENOTEMPTY; break; }
-            if (!vfs_delete(old)) { r = -MOS_EINVAL; break; }
+            if (!orphan_if_open(old, to_full) && !vfs_delete(old)) { r = -MOS_EINVAL; break; }
             unix_unbind(to_full);
         }
         r = vfs_move(v, np, slash + 1) ? 0 : -MOS_EINVAL;
-        if (r == 0) { rename_fix_fds(path, to_full); unix_rename(path, to_full); }
+        if (r == 0) { rename_fix_fds(path, to_full); lazy_rename_path(path, to_full); unix_rename(path, to_full); }
         break;
     }
 
@@ -3441,6 +3505,7 @@ static u64 proc_syscall_(int_frame_t *f) {
             }
         }
         if (ng) { smp_tlb_shootdown((u64)p->pml4); for (int k = 0; k < ng; k++) page_put(gone[k]); }
+        orphan_gc();                                    /* o mapa era o último uso de um arquivo já apagado? */
         /* liberar o topo devolve os endereços: o V8 e o PartitionAlloc reservam, aparam e soltam regiões
          * de gigabytes em laço, e sem isso o espaço de usuário se esgotava em poucos segundos */
         {

@@ -74,6 +74,7 @@ typedef struct thread {
     u32 mach_rsize, mach_opt;
     bool mach_peek;         /* MACH_OP_WAIT: só espera haver mensagem */
     u64 futex_va;           /* TH_WAITING com wait_pid = -8: palavra do SYS_FUTEX_WAIT (prazo em wake_at; 0 = sem) */
+    u64 futex_phys;         /* idem, endereço físico quando a página é compartilhada entre processos (0 = privada) */
     /* leitura/escrita esperando num pseudoterminal (proc/pty.c): wait_pid = -9, TH_WAITING (ou TH_SLEEPING com
      * prazo, VTIME), buffer em read_buf/read_len. Zerado na entrada de toda syscall: a espera nunca sobrevive a ela. */
     struct pty *pty_wait;
