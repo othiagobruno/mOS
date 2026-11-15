@@ -42,7 +42,57 @@ public struct IndexSet: Equatable, Hashable, BidirectionalCollection, SetAlgebra
 
     public func contains(_ v: Int) -> Bool { _ranges.contains { $0.contains(v) } }
     public func contains(integersIn r: Range<Int>) -> Bool { r.isEmpty || _ranges.contains { $0.lowerBound <= r.lowerBound && r.upperBound <= $0.upperBound } }
-    public var rangeView: [Range<Int>] { _ranges }
+    /// as faixas contíguas, em ordem (IndexSet.RangeView da Apple)
+    public var rangeView: RangeView { RangeView(_ranges: _ranges) }
+    /// as faixas que cruzam `range`, cortadas a ele
+    public func rangeView(of range: Range<Int>) -> RangeView {
+        RangeView(_ranges: _ranges.compactMap { r in
+            let lo = Swift.max(r.lowerBound, range.lowerBound), hi = Swift.min(r.upperBound, range.upperBound)
+            return lo < hi ? lo..<hi : nil
+        })
+    }
+
+    public struct RangeView: Equatable, BidirectionalCollection, Sendable {
+        public typealias Index = Int
+        public typealias Element = Range<IndexSet.Element>
+        internal var _ranges: [Range<Int>]
+        public var startIndex: Int { 0 }
+        public var endIndex: Int { _ranges.count }
+        public subscript(i: Int) -> Range<IndexSet.Element> { _ranges[i] }
+        public subscript(bounds: Range<Int>) -> Slice<RangeView> { Slice(base: self, bounds: bounds) }
+        public func index(after i: Int) -> Int { i + 1 }
+        public func index(before i: Int) -> Int { i - 1 }
+        public func makeIterator() -> IndexingIterator<RangeView> { IndexingIterator(_elements: self) }
+        public static func == (a: RangeView, b: RangeView) -> Bool { a._ranges == b._ranges }
+    }
+
+    public func makeIterator() -> IndexingIterator<IndexSet> { IndexingIterator(_elements: self) }
+
+    /// desloca os índices >= `startingAt` por `delta`; com delta negativo, o que cairia antes de startingAt some
+    public mutating func shift(startingAt integer: Int, by delta: Int) {
+        if delta == 0 { return }
+        var out = IndexSet()
+        for r in _ranges {
+            if r.upperBound <= integer { out._add(r); continue }
+            let lo = Swift.max(r.lowerBound, integer)
+            if r.lowerBound < integer { out._add(r.lowerBound..<integer) }
+            var nlo = lo + delta, nhi = r.upperBound + delta
+            if delta < 0 { nlo = Swift.max(nlo, integer); nhi = Swift.max(nhi, integer) }
+            out._add(nlo..<nhi)
+        }
+        self = out
+    }
+
+    public func filteredIndexSet(includeInteger: (Int) throws -> Bool) rethrows -> IndexSet {
+        var out = IndexSet()
+        for i in self where try includeInteger(i) { out.insert(i) }
+        return out
+    }
+    public func filteredIndexSet(in range: Range<Int>, includeInteger: (Int) throws -> Bool) rethrows -> IndexSet {
+        var out = IndexSet()
+        for r in rangeView(of: range) { for i in r where try includeInteger(i) { out.insert(i) } }
+        return out
+    }
 
     internal mutating func _add(_ r: Range<Int>) {
         if r.isEmpty { return }
@@ -126,4 +176,14 @@ extension IndexSet: _ObjectiveCBridgeable {
     public static func _conditionallyBridgeFromObjectiveC(_ x: NSIndexSet, result: inout IndexSet?) -> Bool { result = _mosIndexSet(x); return true }
     @_effects(readonly)
     public static func _unconditionallyBridgeFromObjectiveC(_ source: NSIndexSet?) -> IndexSet { source.map(_mosIndexSet) ?? IndexSet() }
+}
+
+/// NSIndexSet como Sequence (o NSIndexSetIterator da Apple); percorre pela ponte para IndexSet
+public struct NSIndexSetIterator: IteratorProtocol {
+    internal var _it: IndexingIterator<IndexSet>
+    public mutating func next() -> Int? { _it.next() }
+}
+
+extension NSIndexSet: Sequence {
+    public func makeIterator() -> NSIndexSetIterator { NSIndexSetIterator(_it: IndexSet._mosIndexSet(self).makeIterator()) }
 }

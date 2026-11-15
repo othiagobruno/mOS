@@ -86,18 +86,107 @@ nessa medição. Antes: 53 no VS Code e 230 no OpenBot.
 vira `NSRange` e chama `-didModifyRange:`. O `build-libswift-real.sh` recusa o
 dylib se esse nome não estiver no binário.
 
-O overlay `UniformTypeIdentifiers/UTType.swift` não compila sem o módulo
-Foundation. O erro exato:
+## Foundation Swift real (`tools/build-swift-foundation-objc.sh`)
+
+Porte para Linux do `.ps1` de mesmo nome; o `tools/build.sh` o chama logo depois
+do runtime. Sai em `build/swift/objc/dylib/usr/lib/swift`:
+
+| Dylib | Conteúdo |
+|---|---|
+| `libswiftFoundation.dylib` (9,6 MB) | FoundationEssentials como módulo `Foundation` (292 fontes com os de `userland/sdk/swift-objc/Foundation`), `_FoundationRefs`, `_FoundationCShims`, Synchronization, swift-collections 1.7.3 |
+| `libswift_StringProcessing.dylib`, `libswift_RegexParser.dylib` | swift-experimental-string-processing 6.4.2 (Regex; o FoundationEssentials importa 37 símbolos dele) |
+| `libswiftUniformTypeIdentifiers.dylib` | `UTType.swift`, que só compila com o módulo Foundation acima |
+| `libswiftObservation.dylib` | OpenObservation (MIT, commit `b030e44d6471`) com o nome do módulo da Apple |
+
+Fontes fixadas por SHA-256 no script (baixa se faltarem). O swift-foundation é o
+commit `d53ce9ce2a15` do main: a tag 6.4.2 não tem `CharacterSet` nem
+`_FoundationRefs` no Essentials. Esse commit já traz `trimmingCharacters(in:)`,
+`components(separatedBy:)`, `rangeOfCharacter(from:…)` e o percent encoding em
+`StringProtocol`; as cópias do `StringAPI.swift` saíram (mesmo nome mangled).
+
+Diferenças do caminho do Windows, todas no script:
+- `-Xcc -nostdlibinc`: sem isso o `<threads.h>`, que o Darwin não tem, vinha do
+  `/usr/include` do Linux.
+- Cópia do `_FoundationCShims` com os `kOSThermalPressureLevel*` trocados pelos
+  valores do cabeçalho público: o cabeçalho já entrou pelo módulo Darwin e o
+  enum ficava invisível no módulo do shim.
+- Cache de módulos próprio (`modcache-foundation`).
+
+Stubs vazios alcançados (a métrica do `tools/meta/placar.py`), mesmo
+`libSystem.mos`, sem e com as quatro dylibs acima, medidos em 15 nov. no host:
+
+| App | Antes | Depois | Só Foundation Swift |
+|---|---|---|---|
+| Postico 2.3.5 | 209 | 9 | 181 → 0 |
+| WhatsApp 2.26.45.13 | 1509 | 912 | 717 → 174 |
+| OpenBot 0.66.0 | 9 | 1 | 0 → 0 |
+
+O "depois" inclui a `libswiftos.dylib`: o `build-libswift-real.sh` compilava o
+overlay `os` e não o ligava, e o `os_log(_:dso:log:_:_:)` dos apps caía no stub.
+Os 9 do Postico: 6 de `View`/`ViewModifier` (`_makeView`, `_makeViewList`,
+`_viewListCount`), que dependem do SwiftUI.framework (ainda sem porte Linux do
+`build-swiftui-objc.ps1`), e 3 de `exception_raise*` (servidor MIG de exceções Mach).
+
+No WhatsApp, os 174 que sobram de "Foundation" são em boa parte extensões de
+outros módulos sobre tipos do Foundation (UIKit, Network, CloudKit, AVFoundation)
+e API de classes ObjC que o SDK ainda não declara (`NSScanner`, `NSProgress`,
+`NSBundle`, `URLSession` assíncrono). As que entraram nesta rodada, com o nome
+mangled conferido contra o binário: `IndexSet.RangeView`/`shift`/`filteredIndexSet`,
+`NSIndexSet: Sequence`, `URLResourceValues` (tamanhos, volume, `fileResourceIdentifier`),
+`URL.checkResourceIsReachable`, `Data.range(of:options:in:)` (`NSDataSearchOptions`),
+`Calendar` (nomes de dia/mês em pt e en), `Locale.components(fromIdentifier:)`,
+`isoCurrencyCodes`, `FileHandle` (`readToEnd`, `read(upToCount:)`, `offset`,
+`seekToEnd`), `NSRange` (faixas de String, `intersection`, `Hashable`, ponte com
+`NSValue`), a ponte `CGPoint`/`CGSize`/`CGRect` ↔ `NSValue`, os inicializadores de
+cópia de `NSArray`/`NSDictionary`/`NSSet`/`NSString` e `NSDictionary.Iterator`
+como classe (era struct: o nome mangled levava V no lugar de C).
+
+## Ligação em dois níveis contra o libswiftCore
+
+O libSystem exporta 209 `swift_*` de outro runtime (o do caminho sem ObjC). Uma
+dylib ligada só com `-undefined dynamic_lookup` deixa os `swift_*` em busca plana,
+e o carregador os acha primeiro no libSystem. Na VM isso deu:
+
+- `URL(string:)` no `libswiftFoundation`: proteção geral em
+  `swift_bridgeObjectRetain` do libSystem;
+- `Regex<AnyRegexOutput>` do `_StringProcessing`: `swift_getGenericMetadata` do
+  libSystem devolveu nulo, e `__swift_instantiateConcreteTypeFromMangledName`
+  caiu lendo `[nulo-8]`.
+
+Agora o `libswiftCore.dylib` entra no link (vira `LC_LOAD_DYLIB` e ligação por
+ordinal) no `link_one` do `build-libswift-real.sh`, no Combine e no Dispatch do
+`build-swift-combine.sh`, nas overlays Swift do `build-frameworks-objc.sh` e em
+todas as dylibs do `build-swift-foundation-objc.sh` (que ligam também Darwin,
+ObjectiveC, CoreFoundation, CoreGraphics, Dispatch, `_Concurrency` e os). Conferir:
+`llvm-objdump-21 --macho --bind --lazy-bind <dylib> | grep flat-namespace | grep -c ' _swift_'`
+dá 0. O Combine.framework também entra no link do `libswiftFoundation` e do
+`libswiftDispatch`, que importam `$s7Combine...`: sem ele, 23 símbolos ficavam
+nulos ("símbolo(s) ausente(s)" no serial).
+
+## Teste na VM (`tools/fdnprobe.sh`)
+
+`tools/fdnprobe.sh <OutDir de um tools/build.sh> <saída>` gera uma imagem de
+teste com dois serviços do launchd: `fdnprobe` (URL, URLComponents, Data, JSON,
+plist, UUID, Date, Calendar, CharacterSet, IndexSet, NSRange, FileManager;
+imprime `FDN-OK n/m`) e `rxprobe` (Regex; `RX-OK n/m`). Em 15 nov., QEMU com
+KVM e OVMF, os dois boots antes da correção acima registraram as duas quedas
+descritas. Depois da correção, mesma imagem, KVM com `-cpu host -smp 1 -m 512`:
 
 ```
-UTType.swift:175:11: error: cannot find type 'URLResourceValues' in scope
-UTType.swift:8:66: error: value of type 'String' has no member '_bridgeToObjectiveC'
-UTType.swift:9:71: error: type 'String' has no member '_unconditionallyBridgeFromObjectiveC'
+FDN-OK 25/25
+RX-OK 2/2
+launchd: com.mos.teste.fdnprobe (pid 2) terminou com código 0
+launchd: com.mos.teste.rxprobe (pid 3) terminou com código 0
 ```
 
-`swift-foundation` e `swift-collections` 1.7.3 foram clonados em
-`.tools/openswiftui/deps`, mas `tools/build-swift-foundation-objc.ps1` não rodou
-até o fim nesta VM. Sem esse módulo os 19 + 8 símbolos não foram inventados.
+Com `-smp 2` (KVM ou TCG) esta máquina deixou de dar boot, inclusive com uma
+imagem feita só da esp do build: com KVM o OVMF para antes do `BdsDxe`; com TCG
+o kernel diz "a partição de origem não é FAT com \mOS\". No boot bom com 1
+núcleo, o `persist` ainda registra "erro ao ler" em sete arquivos (fontes,
+`stderr-serial`, `estado-sistema`), e o `fsck.vfat` passa na partição. Isso é do
+caminho AHCI/FAT do kernel e não foi investigado aqui. O QEMU precisa de
+`TMPDIR` fora do `/tmp`: com `snapshot=on`, a sobreposição vai para lá, e a cota
+cheia dá a mesma mensagem de partição.
 
 ## QEMU
 

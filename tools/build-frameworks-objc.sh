@@ -99,8 +99,13 @@ for fw in "$ROOT"/userland/frameworks/*/; do
     fi
     if [ ${#swobjs[@]} -gt 0 ]; then
         mkdir -p "$(dirname "$DST$swdylib")"
+        # o libswiftCore real em dois níveis, quando existe: em busca plana os swift_* iam para os do libSystem
+        swcore=()
+        [ -f "$ROOT/build/swift/objc/dylib/usr/lib/swift/libswiftCore.dylib" ] && \
+            ! grep -a -q 'STUB mOS libswift' "$ROOT/build/swift/objc/dylib/usr/lib/swift/libswiftCore.dylib" && \
+            swcore=("$ROOT/build/swift/objc/dylib/usr/lib/swift/libswiftCore.dylib")
         if ! "$ZIG" cc -target "$TARGET" -shared -o "$DST$swdylib" "-Wl,-install_name,$swdylib" -Wl,-undefined,dynamic_lookup \
-                "${swobjs[@]}" 2>"$TMP/$name.swlink"; then
+                "${swobjs[@]}" "${swcore[@]}" 2>"$TMP/$name.swlink"; then
             head -8 "$TMP/$name.swlink" | sed 's/^/  /' >&2
             echo "$name: link do overlay Swift FALHOU" >&2
             fails=$((fails + 1))

@@ -5,6 +5,7 @@
 # build/swift/objc/dylib, que o carregador lê do disco antes do libSystem.
 #
 # Antes: tools/build-libswift-real.sh (Swift.swiftmodule, Dispatch e o resource dir em /tmp/mos-swift-resdir).
+# O libswiftCore entra no link em dois níveis (ver o link_one do build-libswift-real.sh).
 # Fonte: OpenCombine 0.14.0 (tag do GitHub, SHA-256 conferido) em .tools/openswiftui/deps/OpenCombine-0.14.0.
 #   tools/build-swift-combine.sh
 set -euo pipefail
@@ -112,7 +113,7 @@ dir="$objc/dylib/System/Library/Frameworks/Combine.framework/Versions/A"
 mkdir -p "$dir"
 "$zig" c++ -target x86_64-macos -shared -o "$dir/Combine" \
     -Wl,-install_name,/System/Library/Frameworks/Combine.framework/Versions/A/Combine -Wl,-undefined,dynamic_lookup \
-    "$ov/Combine.o" "$ov/Combine_COpenCombineHelpers.o"
+    "$ov/Combine.o" "$ov/Combine_COpenCombineHelpers.o" "$objc/dylib/usr/lib/swift/libswiftCore.dylib"
 echo "Combine.framework: ok ($(( $(wc -c < "$dir/Combine") / 1024 )) KB)"
 
 # O Dispatch da Apple importa o Combine e traz DispatchQueue: Scheduler (SchedulerTimeType, schedule(after:...)):
@@ -136,8 +137,13 @@ if [ -f "$dest/libswiftDispatch.dylib" ]; then
         echo "Dispatch+Combine: FALHOU" >&2
         exit 1
     }
+    # (o zig reconhece a dylib pelo sufixo; o LC_LOAD_DYLIB sai com o install name do Combine)
+    ln -sfn "$dir/Combine" "$tmp/dispatch/Combine.dylib"
+    # o Combine.framework entra como LC_LOAD_DYLIB: sem ele os $s7Combine... do Scheduler ficavam nulos no carregador
+    # quando o app não pedia o Combine (o Foundation Swift real liga o Dispatch em todo processo)
     "$zig" c++ -target x86_64-macos -shared -o "$tmp/dispatch/libswiftDispatch.dylib" \
-        -Wl,-install_name,/usr/lib/swift/libswiftDispatch.dylib -Wl,-undefined,dynamic_lookup "$tmp/dispatch/Dispatch.o"
+        -Wl,-install_name,/usr/lib/swift/libswiftDispatch.dylib -Wl,-undefined,dynamic_lookup "$tmp/dispatch/Dispatch.o" \
+        "$tmp/dispatch/Combine.dylib" "$dest/libswiftCore.dylib"
     grep -a -q '_$sSo17OS_dispatch_queueC8DispatchE17SchedulerTimeTypeVMn' "$tmp/dispatch/libswiftDispatch.dylib" || {
         echo "Dispatch+Combine: libswiftDispatch sem DispatchQueue.SchedulerTimeType" >&2
         exit 1

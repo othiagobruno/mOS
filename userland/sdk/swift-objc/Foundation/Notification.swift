@@ -67,6 +67,8 @@ public struct URLRequest: Hashable, Equatable, CustomStringConvertible {
     public var allHTTPHeaderFields: [String: String]?
     public var mainDocumentURL: URL?
     public var httpShouldHandleCookies = true
+    /// o cliente HTTP do mOS não fala HTTP/3: a dica fica guardada e não muda a conexão
+    public var assumesHTTP3Capable = false
 
     public init(url: URL, cachePolicy: CachePolicy = .useProtocolCachePolicy, timeoutInterval: Double = 60.0) {
         self.url = url

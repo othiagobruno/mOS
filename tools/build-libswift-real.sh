@@ -173,8 +173,12 @@ fi
 link_one() {
     name=$1
     shift
+    # as overlays ligam o libswiftCore em dois níveis: em busca plana os swift_* delas iam para os do libSystem (o
+    # runtime do caminho sem ObjC), que não sabem lidar com objetos do runtime real
+    dep_core=()
+    [ "$name" != libswiftCore ] && dep_core=("$dest/libswiftCore.dylib")
     "$zig" c++ -target x86_64-macos -shared -o "$dest/$name.dylib" \
-        -Wl,-install_name,/usr/lib/swift/$name.dylib -Wl,-undefined,dynamic_lookup "$@"
+        -Wl,-install_name,/usr/lib/swift/$name.dylib -Wl,-undefined,dynamic_lookup "$@" "${dep_core[@]}"
     if grep -a -q 'STUB mOS libswift' "$dest/$name.dylib"; then
         echo "$name ainda tem a marca de stub" >&2
         exit 1
@@ -343,6 +347,8 @@ link_one libswiftObjectiveC "$out/ObjectiveC.o"
 link_one libswiftCoreFoundation "$out/CoreFoundation.o"
 link_one libswiftCoreGraphics "$out/CoreGraphics.o"
 link_one libswiftDispatch "$out/Dispatch.o"
+# o overlay os (os_log, OSLogType.fault...) era compilado e nunca ligado: os apps caíam no stub do libSystem
+link_one libswiftos "$out/os.o"
 link_one libswiftMetal "$out/Metal.o" "$out/mos_mtl_modify.o"
 if ! grep -a -q '_\$sSo9MTLBufferP5MetalE14didModifyRangeyySnySiGF' "$dest/libswiftMetal.dylib"; then
     echo "libswiftMetal sem MTLBuffer.didModifyRange" >&2

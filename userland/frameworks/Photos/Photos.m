@@ -253,7 +253,7 @@ static id ph_error(long code, const char *what) {
 }
 static id file_url(const char *path) { return [(id)objc_getClass("NSURL") fileURLWithPath:[NSString stringWithUTF8String:path]]; }
 /* invoca um bloco ObjC: o ponteiro da função fica em +16 */
-#define BLK(b, T) (*(T *)((char *)(b) + 16))
+#define BLK(b, T) (*(__typeof__(T) *)((char *)(b) + 16))   /* T é tipo de ponteiro de função: o __typeof__ deixa pôr o * depois */
 static id blk_copy(id b) { extern void *_Block_copy(const void *); return b ? (id)_Block_copy(b) : nil; }
 static void blk_release(id b) { extern void _Block_release(const void *); if (b) _Block_release(b); }
 

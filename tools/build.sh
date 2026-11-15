@@ -426,6 +426,12 @@ MOS_ZIG="$ZIG" bash "$ROOT/tools/build-frameworks-objc.sh" || echo "aviso: algum
 if [ -f "$ROOT/build/swift/objc/dylib/usr/lib/swift/libswiftCore.dylib" ]; then
     MOS_ZIG="$ZIG" bash "$ROOT/tools/build-swift-combine.sh" || echo "aviso: Combine.framework não compilou" >&2
 fi
+# Foundation Swift real (swift-foundation; libswiftFoundation, _StringProcessing, UniformTypeIdentifiers, Observation):
+# sem ele URL, Data, Date... dos apps caem nos stubs zerados do libSystem. Depois do Combine: com o módulo Combine o
+# swift-foundation conforma JSONEncoder/JSONDecoder a TopLevelEncoder/Decoder, como na Apple, e liga o Combine.framework
+if [ -f "$ROOT/build/swift/objc/dylib/usr/lib/swift/libswiftCore.dylib" ]; then
+    MOS_ZIG="$ZIG" bash "$ROOT/tools/build-swift-foundation-objc.sh" || echo "aviso: Foundation Swift não compilou; continua o stub" >&2
+fi
 if [ -f "$ROOT/build/universal-swift/usr/lib/swift/libswiftCore.dylib" ]; then
     cp -a "$ROOT/build/universal-swift/." "$ESP/mOS/"
 elif [ -d "$ROOT/build/swift/objc/dylib" ]; then

@@ -42,6 +42,11 @@ typedef MOS_OPTIONS(NSUInteger, NSDataBase64DecodingOptions) {
     NSDataBase64DecodingIgnoreUnknownCharacters MOS_SN(ignoreUnknownCharacters) = 1UL << 0,
 };
 
+typedef MOS_OPTIONS(NSUInteger, NSDataSearchOptions) {
+    NSDataSearchBackwards MOS_SN(backwards) = 1UL << 0,
+    NSDataSearchAnchored MOS_SN(anchored) = 1UL << 1,
+};
+
 /* ---- NSString */
 typedef MOS_OPTIONS(NSUInteger, NSStringCompareOptions) {
     NSCaseInsensitiveSearch MOS_SN(caseInsensitive) = 1,

@@ -44,6 +44,18 @@ public struct URLResourceValues {
     public var creationDate: Date? { get { _get("NSURLCreationDateKey") } set { _set("NSURLCreationDateKey", newValue) } }
     public var contentModificationDate: Date? { get { _get("NSURLContentModificationDateKey") } set { _set("NSURLContentModificationDateKey", newValue) } }
     public var typeIdentifier: String? { _get("NSURLTypeIdentifierKey") }
+    public var contentAccessDate: Date? { _get("NSURLContentAccessDateKey") }
+    public var fileAllocatedSize: Int? { _get("NSURLFileAllocatedSizeKey") }
+    public var totalFileSize: Int? { _get("NSURLTotalFileSizeKey") }
+    public var totalFileAllocatedSize: Int? { _get("NSURLTotalFileAllocatedSizeKey") }
+    /// o par (dispositivo, inode) como NSNumber: identifica o arquivo enquanto o volume estiver montado
+    public var fileResourceIdentifier: (NSCopying & NSSecureCoding & NSObjectProtocol)? { _get("NSURLFileResourceIdentifierKey") as NSNumber? }
+    /// o mOS não tem backup; o valor fica só no URLResourceValues
+    public var isExcludedFromBackup: Bool? { get { _get("NSURLIsExcludedFromBackupKey") } set { _set("NSURLIsExcludedFromBackupKey", newValue) } }
+    public var volumeTotalCapacity: Int? { _get("NSURLVolumeTotalCapacityKey") }
+    public var volumeAvailableCapacity: Int? { _get("NSURLVolumeAvailableCapacityKey") }
+    /// sem purga de cache no mOS: é o mesmo espaço livre do volume
+    public var volumeAvailableCapacityForImportantUsage: Int64? { _get("NSURLVolumeAvailableCapacityForImportantUsageKey") }
 }
 
 extension URL {
@@ -78,7 +90,33 @@ extension URL {
         if let d = attrs[.creationDate] as? Date { v._set("NSURLCreationDateKey", d) }
         if let d = attrs[.modificationDate] as? Date { v._set("NSURLContentModificationDateKey", d) }
         v._set("NSURLTypeIdentifierKey", isDir ? "public.folder" : _mosUTI(pathExtension))
+        if let d = attrs[.modificationDate] as? Date { v._set("NSURLContentAccessDateKey", d) }
+        if let n = v.fileSize {
+            let alloc = (n + 4095) / 4096 * 4096   // blocos de 4 KiB, como no FAT/HFS+ do mOS
+            v._set("NSURLTotalFileSizeKey", n)
+            v._set("NSURLFileAllocatedSizeKey", alloc)
+            v._set("NSURLTotalFileAllocatedSizeKey", alloc)
+        }
+        let dev = (attrs[.systemNumber] as? UInt).map(UInt64.init) ?? 0
+        let ino = (attrs[.systemFileNumber] as? UInt64) ?? 0
+        if ino != 0 { v._set("NSURLFileResourceIdentifierKey", NSNumber(value: (dev << 48) ^ ino)) }
+        if let fs = try? fm.attributesOfFileSystem(forPath: p) {
+            let total = (fs[.systemSize] as? UInt64) ?? (fs[.systemSize] as? Int).map(UInt64.init)
+            let free = (fs[.systemFreeSize] as? UInt64) ?? (fs[.systemFreeSize] as? Int).map(UInt64.init)
+            if let total { v._set("NSURLVolumeTotalCapacityKey", Int(clamping: total)) }
+            if let free {
+                v._set("NSURLVolumeAvailableCapacityKey", Int(clamping: free))
+                v._set("NSURLVolumeAvailableCapacityForImportantUsageKey", Int64(clamping: free))
+            }
+        }
         return v
+    }
+
+    /// para URL de arquivo: verdadeiro se o item existe; senão lança o erro de leitura do Cocoa
+    public func checkResourceIsReachable() throws -> Bool {
+        guard isFileURL else { throw CocoaError(.fileReadUnsupportedScheme) }
+        if FileManager.default.fileExists(atPath: path) { return true }
+        throw CocoaError(.fileReadNoSuchFile, userInfo: [NSURLErrorKey: self])
     }
 
     /// o mOS ainda não guarda atributos extras (extensão oculta, datas): aceita e não muda nada
