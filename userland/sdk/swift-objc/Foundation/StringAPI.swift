@@ -126,47 +126,8 @@ extension StringProtocol {
         _mosCompare(String(self), String(string), [.caseInsensitive, .numeric])
     }
 
-    public func trimmingCharacters(in set: CharacterSet) -> String {
-        let s = unicodeScalars
-        var lo = s.startIndex, hi = s.endIndex
-        while lo < hi && set.contains(s[lo]) { lo = s.index(after: lo) }
-        while hi > lo && set.contains(s[s.index(before: hi)]) { hi = s.index(before: hi) }
-        var v = String.UnicodeScalarView(); v.append(contentsOf: s[lo..<hi]); return String(v)
-    }
-
-    public func components(separatedBy separator: CharacterSet) -> [String] {
-        var out: [String] = []
-        var cur = String.UnicodeScalarView()
-        for u in unicodeScalars {
-            if separator.contains(u) { out.append(String(cur)); cur = String.UnicodeScalarView() } else { cur.append(u) }
-        }
-        out.append(String(cur))
-        return out
-    }
-
-    public func rangeOfCharacter(from aSet: CharacterSet, options mask: String.CompareOptions = [],
-                                 range aRange: Range<Index>? = nil) -> Range<Index>? {
-        let r = aRange ?? startIndex..<endIndex
-        let s = unicodeScalars
-        if mask.contains(.backwards) {
-            var i = r.upperBound
-            while i > r.lowerBound {
-                let p = s.index(before: i)
-                if aSet.contains(s[p]) { return p..<i }
-                if mask.contains(.anchored) { return nil }
-                i = p
-            }
-            return nil
-        }
-        var i = r.lowerBound
-        while i < r.upperBound {
-            let n = s.index(after: i)
-            if aSet.contains(s[i]) { return i..<n }
-            if mask.contains(.anchored) { return nil }
-            i = n
-        }
-        return nil
-    }
+    // trimmingCharacters(in:), components(separatedBy:) e rangeOfCharacter(from:options:range:) vêm do
+    // StringProtocol+Essentials.swift do swift-foundation (main desde d53ce9ce2a15), com o mesmo nome mangled
 
     public func replacingOccurrences<Target: StringProtocol, Replacement: StringProtocol>(
         of target: Target, with replacement: Replacement, options: String.CompareOptions = [], range searchRange: Range<Index>? = nil
@@ -234,15 +195,7 @@ extension StringProtocol {
         return d.map { CChar(bitPattern: $0) } + [0]
     }
 
-    public func addingPercentEncoding(withAllowedCharacters allowedCharacters: CharacterSet) -> String? {
-        let string = String(self)
-        if allowedCharacters.hasIdenticalSwiftStorage(to: .urlPathAllowed) { return URLEncoder.percentEncode(path: string) }
-        if allowedCharacters.hasIdenticalSwiftStorage(to: .urlHostAllowed) { return URLEncoder.percentEncode(host: string) }
-        let mask = URLComponentAllowedMask(rawValue: allowedCharacters.asciiAllowedMask)
-        return URLEncoder.percentEncode(string: string, component: mask, skipAlreadyEncoded: false)
-    }
-
-    public var removingPercentEncoding: String? { URLEncoder.percentDecode(string: String(self)) }
+    // addingPercentEncoding(withAllowedCharacters:) e removingPercentEncoding vêm do URLEncoder.swift do swift-foundation
 
     // normalização Unicode: a stdlib compara já normalizado; o texto sai como está (o mOS ainda não tem as tabelas)
     public var decomposedStringWithCanonicalMapping: String { String(self) }

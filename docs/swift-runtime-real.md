@@ -86,18 +86,41 @@ nessa medição. Antes: 53 no VS Code e 230 no OpenBot.
 vira `NSRange` e chama `-didModifyRange:`. O `build-libswift-real.sh` recusa o
 dylib se esse nome não estiver no binário.
 
-O overlay `UniformTypeIdentifiers/UTType.swift` não compila sem o módulo
-Foundation. O erro exato:
+## Foundation Swift real (`tools/build-swift-foundation-objc.sh`)
 
-```
-UTType.swift:175:11: error: cannot find type 'URLResourceValues' in scope
-UTType.swift:8:66: error: value of type 'String' has no member '_bridgeToObjectiveC'
-UTType.swift:9:71: error: type 'String' has no member '_unconditionallyBridgeFromObjectiveC'
-```
+Porte para Linux do `.ps1` de mesmo nome; o `tools/build.sh` o chama logo depois
+do runtime. Sai em `build/swift/objc/dylib/usr/lib/swift`:
 
-`swift-foundation` e `swift-collections` 1.7.3 foram clonados em
-`.tools/openswiftui/deps`, mas `tools/build-swift-foundation-objc.ps1` não rodou
-até o fim nesta VM. Sem esse módulo os 19 + 8 símbolos não foram inventados.
+| Dylib | Conteúdo |
+|---|---|
+| `libswiftFoundation.dylib` (9,6 MB) | FoundationEssentials como módulo `Foundation` (292 fontes com os de `userland/sdk/swift-objc/Foundation`), `_FoundationRefs`, `_FoundationCShims`, Synchronization, swift-collections 1.7.3 |
+| `libswift_StringProcessing.dylib`, `libswift_RegexParser.dylib` | swift-experimental-string-processing 6.4.2 (Regex; o FoundationEssentials importa 37 símbolos dele) |
+| `libswiftUniformTypeIdentifiers.dylib` | `UTType.swift`, que só compila com o módulo Foundation acima |
+
+Fontes fixadas por SHA-256 no script (baixa se faltarem). O swift-foundation é o
+commit `d53ce9ce2a15` do main: a tag 6.4.2 não tem `CharacterSet` nem
+`_FoundationRefs` no Essentials. Esse commit já traz `trimmingCharacters(in:)`,
+`components(separatedBy:)`, `rangeOfCharacter(from:…)` e o percent encoding em
+`StringProtocol`; as cópias do `StringAPI.swift` saíram (mesmo nome mangled).
+
+Diferenças do caminho do Windows, todas no script:
+- `-Xcc -nostdlibinc`: sem isso o `<threads.h>`, que o Darwin não tem, vinha do
+  `/usr/include` do Linux.
+- Cópia do `_FoundationCShims` com os `kOSThermalPressureLevel*` trocados pelos
+  valores do cabeçalho público: o cabeçalho já entrou pelo módulo Darwin e o
+  enum ficava invisível no módulo do shim.
+- Cache de módulos próprio (`modcache-foundation`).
+
+Stubs vazios alcançados (a métrica do `tools/meta/placar.py`), mesmo
+`libSystem.mos`, sem e com as quatro dylibs acima, medidos em 15 nov. no host:
+
+| App | Antes | Depois | Só Foundation Swift |
+|---|---|---|---|
+| Postico 2.3.5 | 209 | 17 | 181 → 0 |
+| WhatsApp 2.26.45.13 | 1509 | 981 | 717 → 225 |
+| OpenBot 0.66.0 | 9 | 1 | 0 → 0 |
+
+Não houve boot: nenhum app foi aberto com essas dylibs na VM.
 
 ## QEMU
 
