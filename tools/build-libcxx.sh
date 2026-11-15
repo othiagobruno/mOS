@@ -13,7 +13,7 @@ if [ -z "$ZIG" ] || [ ! -x "$ZIG" ]; then
     echo "build-libcxx: zig não encontrado" >&2
     exit 1
 fi
-ZIGDIR=$(dirname "$ZIG")
+ZIGDIR=$(dirname "$(readlink -f "$ZIG")")
 if [ ! -d "$ZIGDIR/lib/libcxx/src" ]; then
     ZIGDIR=$(dirname "$ZIGDIR")
 fi

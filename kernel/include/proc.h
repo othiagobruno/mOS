@@ -188,7 +188,9 @@ int       proc_job_signal(process_t *p, thread_t *th, int sig);
 void      proc_hold(process_t *p);
 
 /* páginas físicas compartilhadas entre espaços (memória Mach, proc/process.c) */
-bool      uvm_map_phys(process_t *p, u64 va, u64 phys, bool rw);  /* mais uma referência à página */
+#define UVM_PHYS_W    1   /* uvm_map_phys: grava agora */
+#define UVM_PHYS_MAYW 2   /* uvm_map_phys: o mprotect pode ligar a escrita; sem W nem MAYW a página fica só-leitura de vez */
+bool      uvm_map_phys(process_t *p, u64 va, u64 phys, int rw);  /* mais uma referência à página */
 void      uvm_page_get(u64 phys);
 void      uvm_page_put(u64 phys);
 

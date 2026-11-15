@@ -102,11 +102,47 @@ static void teste_spawn_suspenso(void) {
           (i64)(u64)(unsigned)st, marca);
 }
 
+/* SYS_SPAWNVEC com o máximo de ações (MOS_SPAWN_FA_MAX): a última abre /tmp/fa.txt como stdout do filho.
+ * As outras fecham fds livres e trazem path sem NUL (256 bytes 'x'): o kernel não pode ler além do campo. */
+static void teste_spawn_acoes(void) {
+    static mos_spawn_fa_t acts[MOS_SPAWN_FA_MAX];
+    static char back[32];
+    char *av[] = { "seq", 0 };   /* ELF: o _start não recebe argv[1] pelo SPAWNVEC; seq sem argumento vai de 1 a 10 */
+    mos_spawn_vec_t v;
+    unlink("/tmp/fa.txt");
+    memset(acts, 0, sizeof acts);
+    for (int i = 0; i < MOS_SPAWN_FA_MAX - 1; i++) {
+        acts[i].kind = MOS_SPAWN_FA_CLOSE;
+        acts[i].a = 100 + i;
+        memset(acts[i].path, 'x', sizeof acts[i].path);
+    }
+    mos_spawn_fa_t *o = &acts[MOS_SPAWN_FA_MAX - 1];
+    o->kind = MOS_SPAWN_FA_OPEN;
+    o->a = 1;
+    o->flags = MOS_O_WRONLY | MOS_O_CREAT | MOS_O_TRUNC;
+    o->mode = 0644;
+    memcpy(o->path, "/tmp/fa.txt", 12);
+    memset(&v, 0, sizeof v);
+    v.argv = (u64)av;
+    v.acts = (u64)acts;
+    v.nacts = MOS_SPAWN_FA_MAX;
+    int pid = (int)sys3(SYS_SPAWNVEC, (u64)"seq", (u64)&v, 0);
+    int st = -1;
+    int w = pid > 0 ? waitpid(pid, &st, 0) : -1;
+    i64 n = read_file("/tmp/fa.txt", back, sizeof back - 1);
+    back[n > 0 ? n : 0] = 0;
+    CHECK(pid > 0 && w == pid && st == 0 && n == 21 && !memcmp(back, "1\n2\n3\n", 6) && !memcmp(back + 18, "10\n", 3),
+          "spawn com %d ações: stdout do filho no arquivo (pid %d, status 0x%x, %d bytes)",
+          (i64)MOS_SPAWN_FA_MAX, (i64)pid, (i64)(u64)(unsigned)st, n);
+    unlink("/tmp/fa.txt");
+}
+
 void _start(const char *arg) {
     (void)arg;
     print("parateste: pid %d\n", (i64)getpid());
     teste_sinais();
     teste_spawn_suspenso();
+    teste_spawn_acoes();
     print(fails ? "parateste: %d FALHA(S)\n" : "parateste: TODOS OS TESTES OK\n", (i64)fails);
     exit(fails ? 1 : 0);
 }

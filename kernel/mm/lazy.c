@@ -28,6 +28,7 @@
 #include "kernel.h"
 #include "proc.h"
 #include "vfs.h"
+#include "syscall.h"
 
 bool uvm_map(process_t *p, u64 va, u64 len);
 u64 *uvm_pte(process_t *p, u64 va);
@@ -38,11 +39,14 @@ bool uvm_protect(process_t *p, u64 va, u64 len, u8 prot);
 i64 file_store_at(const char *path, u64 off, const void *src, u64 len);
 
 #define LAZY_SHARED 1u
+#define LAZY_MAYW   8u    /* = UVM_PROT_MAYW de process.c */
 
 /* path = NULL: anônima (zeros); senão a página va vem do arquivo, no deslocamento foff + (va - start).
  * LAZY_SHARED: a página física é do cache (arquivo ou anônimo), não uma cópia privada. shid identifica o
  * objeto anônimo; foff é o deslocamento nele, e um recorte no início soma em foff (a página não troca de
- * número). prot 0 = a falta deixa a página RWX, como o mmap antigo. */
+ * número). prot 0 = a falta deixa a página RWX, como o mmap antigo. Na compartilhada, LAZY_MAYW (8) em prot diz
+ * que a escrita pode ser ligada depois (fd aberto para escrita, ou anônima): sem ele o mprotect(PROT_WRITE) é
+ * EACCES e a PTE nasce com PTE_NOW (process.c). */
 typedef struct {
     int pid;
     u64 start, end;
@@ -137,7 +141,8 @@ bool lazy_add_shared_file(process_t *p, u64 va, u64 len, const char *path, u64 f
     if (e <= s || !path) return false;
     char *pc = dup_path(path);
     if (!pc) return false;
-    if (!prot) prot = 1;
+    if (!(prot & 7)) prot |= 1;
+    if (prot & 2) prot |= LAZY_MAYW;
     u64 fl = spin_lock_irqsave(&lazy_lock);
     bool ok = nlz < caplz || grow();
     if (ok) lz[nlz++] = (lazy_t){p->pid, s, e, pc, foff, LAZY_SHARED, 0, prot};
@@ -149,7 +154,8 @@ bool lazy_add_shared_file(process_t *p, u64 va, u64 len, const char *path, u64 f
 bool lazy_add_shared_anon(process_t *p, u64 va, u64 len, u8 prot) {
     u64 s = va & ~0xFFFULL, e = (va + len + 0xFFF) & ~0xFFFULL;
     if (e <= s) return false;
-    if (!prot) prot = 1;
+    if (!(prot & 7)) prot |= 1;
+    prot |= LAZY_MAYW;                               /* objeto anônimo: ninguém tem fd só-leitura dele */
     u64 fl = spin_lock_irqsave(&lazy_lock);
     bool ok = nlz < caplz || grow();
     u32 id = next_shid++;
@@ -507,20 +513,29 @@ void lazy_remove(process_t *p, u64 va, u64 len) {
     spin_unlock_irqrestore(&lazy_lock, fl);
 }
 
-bool lazy_protect(process_t *p, u64 va, u64 len, u8 prot) {
+/* 0, -MOS_ENOMEM, ou -MOS_EACCES: escrita pedida numa faixa compartilhada cuja proteção máxima não a tem
+ * (arquivo aberto só para leitura). Nada muda nesse caso, como o mprotect do XNU com max_protection. */
+int lazy_protect(process_t *p, u64 va, u64 len, u8 prot) {
     u64 s = va & ~0xFFFULL, e = (va + len + 0xFFF) & ~0xFFFULL;
-    if (!p || e <= s) return true;
+    if (!p || e <= s) return 0;
     u64 fl = spin_lock_irqsave(&lazy_lock);
+    if (prot & 2)
+        for (u32 i = 0; i < nlz; i++)
+            if (lz[i].pid == p->pid && (lz[i].flags & LAZY_SHARED) && !(lz[i].prot & LAZY_MAYW) &&
+                e > lz[i].start && s < lz[i].end) {
+                spin_unlock_irqrestore(&lazy_lock, fl);
+                return -MOS_EACCES;
+            }
     punch_prot(p, s, e);
     bool ok = npv < cappv || grow_pv();
     if (ok) pv[npv++] = (pov_t){p->pid, s, e, prot};
     for (u32 i = 0; i < nlz; i++) {
         if (lz[i].pid != p->pid || !(lz[i].flags & LAZY_SHARED)) continue;
-        if (s <= lz[i].start && e >= lz[i].end) lz[i].prot = prot;
+        if (s <= lz[i].start && e >= lz[i].end) lz[i].prot = (u8)((lz[i].prot & LAZY_MAYW) | (prot & 7));
     }
     spin_unlock_irqrestore(&lazy_lock, fl);
-    if (!ok) return false;
-    return uvm_protect(p, s, e - s, prot);
+    if (!ok) return -MOS_ENOMEM;
+    return uvm_protect(p, s, e - s, prot) ? 0 : -MOS_EACCES;
 }
 
 void lazy_exit(process_t *p) {
