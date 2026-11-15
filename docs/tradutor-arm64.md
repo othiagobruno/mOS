@@ -248,7 +248,9 @@ Na VM a partir do Linux (15 nov.): `tools/build.sh --out build/linux-a64` e `too
 interpretador e com o JIT (4 de 4). Para chegar lá: o kernel não escreve mais na página COW da pilha do host na troca
 de contexto (pânico no fork), o pipe manda SIGPIPE, o `SYS_VFORK` do libSystem arm64 vira fork no runtime, o libSystem
 pega a pasta do kernel (file action chdir do posix_spawn) e o `chdir` avisa o kernel, e o teste usa
-`pthread_jit_write_protect_np` como no macOS. Neste host o QEMU às vezes para no OVMF ou cai; o script refaz a partida.
+`pthread_jit_write_protect_np` como no macOS. Neste host o QEMU às vezes para no OVMF ou cai; o script refaz a partida. Com um terceiro argumento, o script roda também um
+binário arm64 real (`MOS_ARCH=arm64`), como o `-Real` do `.ps1`. Pelas regras do time a VM com imagem completa só roda
+no build final (`/home/thiago/OpenBot/Shared/mos-time/build-final.sh`); o Codex CLI arm64 fica para essa rodada.
 
 No Linux (sem VM): `tools/a64rt-testes.sh` compila o machotest, o `a64rt.mos`, o libSystem arm64
 (`tools/build-libsystem-arm64.sh`) e roda `tests-a64libsys/abi.mm` (critério: `libsys-abi: 0 falhas`, 40 verificações
@@ -266,8 +268,9 @@ máscara, pendentes, pthread_kill, SIGSEGV com far/esr e mcontext alterado, brk,
 um arquivo que já estivesse em `build/`, e o build arm64 não compilava na `main` desde os fontes novos: 44 arquivos).
 Os grupos e os `-I` são os do libSystem x86 do `tools/build.sh`; os fontes com a convenção Swift do x86_64 escrita à
 mão (`swiftui_*.c`, `string_fdn.c`, `foundation_swift_data.c`, `combine_link.c`, `combine_meta.*`) ficam fora do arm64:
-lá esses tipos vêm das bibliotecas Swift arm64. O `.sh` rodou em 15 nov.; o `.ps1` recebeu as mesmas mudanças e não
-foi executado (este Linux não tem PowerShell). O blob sai no MESMO formato do x86
+lá esses tipos vêm das bibliotecas Swift arm64. O `.sh` rodou em 15 nov. O `.ps1` rodou no PowerShell 7.7 do Linux, numa cópia com `\` trocado por `/` e o
+`Resolve-MosZig` apontando para o zig local: o blob saiu com os mesmos 16469 símbolos globais, 0 indefinidos e 12453
+`R_AARCH64_RELATIVE` do `.sh`. Não rodou no Windows. O blob sai no MESMO formato do x86
 (ELF64 static-pie ligado em 0, só relocações RELATIVE no `DT_RELA`, `.symtab` com os mesmos nomes sem o `_` do Mach-O,
 entrada `cx_start`), com `e_machine = EM_AARCH64` e `R_AARCH64_RELATIVE` (1027). O build.ps1 o põe em
 `/Sistema/Biblioteca/a64/libSystem.mos`. O ponto central é o **triplo `arm64-apple-macos11-elf`**: o clang e o LLVM
