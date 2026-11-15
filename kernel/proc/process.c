@@ -2643,6 +2643,15 @@ static i64 proc_exec(int_frame_t *f, thread_t *t, process_t *p, char *path, char
     return 0;
 }
 
+/* futex numa página que outro processo também mapeia (MAP_SHARED, memória Mach): a chave passa a ser o endereço
+ * físico, senão um pthread_mutex/cond PROCESS_SHARED (Chromium, Electron) esperava para sempre pelo FUTEX_WAKE do
+ * outro lado. Página COW fica privada: pai e filho do fork só dividem a cópia, não a palavra. */
+static u64 futex_shared_key(process_t *p, u64 va) {
+    u64 *e = uvm_pte(p, va);
+    if (!e || (*e & PTE_COW)) return 0;
+    if (!(*e & PTE_SHARED) && page_refs(*e & PTE_ADDR) <= 1) return 0;
+    return (*e & PTE_ADDR) | (va & 0xFFF);
+}
 static u64 proc_syscall_(int_frame_t *f);
 /* a syscall pode bloquear e trocar de thread: a thread que volta ao ring 3 (talvez acordada por um sinal, com
  * rax = -EINTR) passa pela entrega de sinais, que também decide se a syscall interrompida é refeita */
@@ -2729,6 +2738,7 @@ static u64 proc_syscall_(int_frame_t *f) {
         if (cur != (u32)b) { r = -MOS_EAGAIN; break; }
         if (!c) { r = -MOS_ETIMEDOUT; break; }
         t->futex_va = a;
+        t->futex_phys = futex_shared_key(p, a);
         t->wake_at = c == ~0ULL ? 0 : timer_ticks() + c;    /* o prazo é do escalonador (wake_sleepers) */
         t->wait_pid = -8;
         t->state = TH_WAITING;
@@ -2737,8 +2747,10 @@ static u64 proc_syscall_(int_frame_t *f) {
     }
     case SYS_FUTEX_WAKE: {
         i64 n = 0;
+        u64 key = futex_shared_key(p, a);
         for (thread_t *w = sched_threads(); w && n < (i64)(b ? b : 1); w = w->next) {
-            if (w->state != TH_WAITING || w->wait_pid != -8 || w->proc != p || w->futex_va != a) continue;
+            if (w->state != TH_WAITING || w->wait_pid != -8) continue;
+            if (!(w->proc == p && w->futex_va == a) && !(key && w->futex_phys == key)) continue;
             ((int_frame_t *)w->frame)->rax = 0;
             w->futex_va = 0;
             w->wake_at = 0;
