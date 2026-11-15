@@ -93,7 +93,11 @@ static blkdev_t *ram_new(u64 mib) {
     d->size = mib << 20; d->read = ram_read; d->write = ram_write; d->ctx = r; d->lbs = 512;
     return d;
 }
-static void ram_free(blkdev_t *d) { kfree(((ram_t *)d->ctx)->mem); kfree(d->ctx); kfree(d); }
+/* o page cache (fs/pcache.c) fica entre os testes e a RAM do disco: some com o disco e precisa ser esvaziado
+ * quando um teste mexe direto em mem (senão a próxima leitura devolve a página antiga) */
+static void ram_free(blkdev_t *d) { pcache_drop(d); kfree(((ram_t *)d->ctx)->mem); kfree(d->ctx); kfree(d); }
+static void ram_sync(blkdev_t *d) { blk_flush(d); pcache_drop(d); }
+static bool scan(blkdev_t *d, ptable_t *t) { pcache_drop(d); return partscan(d, t); }
 static void put32(u8 *p, u32 v) { p[0] = (u8)v; p[1] = (u8)(v >> 8); p[2] = (u8)(v >> 16); p[3] = (u8)(v >> 24); }
 static void put64(u8 *p, u64 v) { put32(p, (u32)v); put32(p + 4, (u32)(v >> 32)); }
 
@@ -113,39 +117,40 @@ static void test_partscan(void) {
     ptable_t *t = kmalloc(sizeof *t);
     u8 *mem = ((ram_t *)d->ctx)->mem;
     u64 nsec = d->size / 512;
-    CHECK(partscan(d, t) && t->kind == PT_NONE && !t->whole_volume, "disco em branco => PT_NONE");
+    CHECK(scan(d, t) && t->kind == PT_NONE && !t->whole_volume, "disco em branco => PT_NONE");
     u64 off = 0, size = 0;
     CHECK(gpt_create_single_esp(d, "teste", &off, &size) && off == 1048576, "gpt_create_single_esp em disco RAM");
-    CHECK(partscan(d, t) && t->kind == PT_GPT && t->n == 1 && t->backup_ok && t->p[0].esp && t->p[0].first == 2048, "GPT criada é lida e validada (inclui backup)");
+    ram_sync(d);                                   /* o GPT gravado vai para mem antes de o teste mexer nela */
+    CHECK(scan(d, t) && t->kind == PT_GPT && t->n == 1 && t->backup_ok && t->p[0].esp && t->p[0].first == 2048, "GPT criada é lida e validada (inclui backup)");
     CHECK(t->p[0].number == 1 && (t->p[0].last - t->p[0].first + 1) * 512 == size, "geometria da partição confere com o retorno");
     u8 snap1[32]; memcpy(snap1, t->snap, 32);
-    CHECK(partscan(d, t) && !memcmp(snap1, t->snap, 32), "resumo (snap) estável entre leituras");
+    CHECK(scan(d, t) && !memcmp(snap1, t->snap, 32), "resumo (snap) estável entre leituras");
     /* CRC das entradas */
     mem[1024 + 40] ^= 0x01;
-    CHECK(partscan(d, t) && t->kind == PT_BAD, "CRC de entradas errado => PT_BAD");
+    CHECK(scan(d, t) && t->kind == PT_BAD, "CRC de entradas errado => PT_BAD");
     mem[1024 + 40] ^= 0x01;
     /* cabeçalho */
     mem[512 + 20] ^= 0x01;
-    CHECK(partscan(d, t) && t->kind == PT_BAD, "CRC de cabeçalho errado => PT_BAD");
+    CHECK(scan(d, t) && t->kind == PT_BAD, "CRC de cabeçalho errado => PT_BAD");
     mem[512 + 20] ^= 0x01;
-    CHECK(partscan(d, t) && t->kind == PT_GPT, "restaurado volta a ser válido");
+    CHECK(scan(d, t) && t->kind == PT_GPT, "restaurado volta a ser válido");
     /* backup ausente: o primário é válido, mas o backup_ok fica falso */
     u8 save[512]; memcpy(save, mem + (nsec - 1) * 512, 512);
     memset(mem + (nsec - 1) * 512, 0, 512);
-    CHECK(partscan(d, t) && t->kind == PT_GPT && !t->backup_ok, "sem cabeçalho de backup => backup_ok falso");
+    CHECK(scan(d, t) && t->kind == PT_GPT && !t->backup_ok, "sem cabeçalho de backup => backup_ok falso");
     memcpy(mem + (nsec - 1) * 512, save, 512);
     /* sobreposição: duas entradas que se cruzam */
     u8 *e = mem + 1024;
     memcpy(e + 128, e, 128);                       /* a 2ª entrada é cópia da 1ª */
     e[128 + 16] ^= 0xFF;                           /* GUID único diferente */
     gpt_fix(mem, nsec);
-    CHECK(partscan(d, t) && t->kind == PT_BAD, "partições sobrepostas => PT_BAD");
+    CHECK(scan(d, t) && t->kind == PT_BAD, "partições sobrepostas => PT_BAD");
     memset(e + 128, 0, 128);
     gpt_fix(mem, nsec);
     /* partição fora dos limites usáveis */
     put64(e + 40, nsec);                           /* last além do disco */
     gpt_fix(mem, nsec);
-    CHECK(partscan(d, t) && t->kind == PT_BAD, "partição fora do disco => PT_BAD");
+    CHECK(scan(d, t) && t->kind == PT_BAD, "partição fora do disco => PT_BAD");
     ram_free(d);
 
     /* MBR */
@@ -154,17 +159,17 @@ static void test_partscan(void) {
     mem[510] = 0x55; mem[511] = 0xAA;
     mem[446 + 4] = 0xEF; put32(mem + 446 + 8, 2048); put32(mem + 446 + 12, 40000);
     put32(mem + 440, 0x12345678);
-    CHECK(partscan(d, t) && t->kind == PT_MBR && t->n == 1 && t->p[0].esp && t->mbr_sig == 0x12345678, "MBR com uma partição 0xEF");
+    CHECK(scan(d, t) && t->kind == PT_MBR && t->n == 1 && t->p[0].esp && t->mbr_sig == 0x12345678, "MBR com uma partição 0xEF");
     mem[446 + 16 + 4] = 0x05; put32(mem + 446 + 16 + 8, 50000); put32(mem + 446 + 16 + 12, 10000);
-    CHECK(partscan(d, t) && t->kind == PT_MBR && t->has_extended, "MBR com partição estendida é sinalizada");
+    CHECK(scan(d, t) && t->kind == PT_MBR && t->has_extended, "MBR com partição estendida é sinalizada");
     mem[446 + 32 + 4] = 0x83; put32(mem + 446 + 32 + 8, 3000); put32(mem + 446 + 32 + 12, 5000);   /* cruza a 1ª */
-    CHECK(partscan(d, t) && t->kind == PT_BAD, "MBR com partições sobrepostas => PT_BAD");
+    CHECK(scan(d, t) && t->kind == PT_BAD, "MBR com partições sobrepostas => PT_BAD");
     memset(mem + 446 + 32, 0, 16);
     mem[446 + 16] = 0x42;
-    CHECK(partscan(d, t) && t->kind == PT_BAD, "MBR com byte de estado inválido => PT_BAD");
+    CHECK(scan(d, t) && t->kind == PT_BAD, "MBR com byte de estado inválido => PT_BAD");
     memset(mem + 446 + 16, 0, 16);
     mem[446 + 4] = 0xEE;
-    CHECK(partscan(d, t) && t->kind == PT_BAD, "MBR protetor (0xEE) sem GPT => PT_BAD");
+    CHECK(scan(d, t) && t->kind == PT_BAD, "MBR protetor (0xEE) sem GPT => PT_BAD");
     ram_free(d);
     kfree(t);
 }
@@ -287,6 +292,8 @@ static void test_policy(void) {
             CHECK(blk_read(d, off, b, 4096) && !memcmp(a, b, 4096), "o conteúdo permaneceu idêntico");
             storage_revoke_write(d, off, 4096);
             CHECK(!blk_write(d, off, a, 4096), "depois de revogar, a escrita volta a ser recusada");
+            pcache_tick();
+            CHECK(blk_flush(d), "nada pendente no cache depois de revogar (a escrita aceita já foi gravada)");
         }
         tested++;
     }
@@ -483,6 +490,7 @@ void unit_tests_run(void) {
     test_no_hw_rng();
     test_launch_runtime();
     ls_open_tests_run(&n_ok, &n_bad);
+    { extern void appguard_tests_run(int *ok, int *bad); appguard_tests_run(&n_ok, &n_bad); }
     kprintf("unit: RESUMO: %d verificações ok, %d FALHA(S) — %s\n", n_ok, n_bad, n_bad ? "REPROVADO" : "APROVADO");
 }
 #endif

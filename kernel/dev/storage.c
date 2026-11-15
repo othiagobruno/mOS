@@ -47,6 +47,7 @@ bool storage_grant_write(blkdev_t *disk, u64 off, u64 len) {
 }
 
 void storage_revoke_write(blkdev_t *disk, u64 off, u64 len) {
+    if (disk) blk_flush(disk);    /* o que o cache ainda guarda para esta faixa vai antes de ela fechar */
     for (int i = 0; i < ngrants; i++)
         if (grants[i].disk == disk && grants[i].off == off && grants[i].len == len) {
             grants[i] = grants[--ngrants];

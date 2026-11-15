@@ -432,6 +432,124 @@ static void shadow_rows(void *c, int b, int e, int cpu) {
     }
 }
 
+/* Sombra das janelas com cache. A conta de shadow_rows só usa diferenças entre coordenadas que são múltiplos
+ * de 0,5 (exatas em float), então a máscara de alfa depende só de (w, h, r, blur, alpha, dy) e pode ser reposta
+ * em qualquer posição inteira com o mesmo resultado, bit a bit. A máscara é gerada uma vez rodando a própria
+ * gfx_shadow sobre uma superfície transparente; a cada quadro só se mistura o anel (o miolo, coberto pela
+ * janela, fica de fora pela faixa vazia de cada linha). tools/compositor_bench_host.c confere a igualdade. */
+typedef struct {
+    int w, h, alpha, dy, blur10, r10, mw, mh;
+    u8 *m;                 /* mw*mh alfas */
+    u16 *z0, *z1;          /* por linha: faixa [z0, z1) só de zeros (o miolo), para pular sem ler */
+    usize bytes;
+    u64 used;
+} shadow_ent_t;
+#define SHADOW_CACHE_N 16
+#define SHADOW_CACHE_BYTES (48u << 20)
+static shadow_ent_t shc[SHADOW_CACHE_N];
+static u64 shc_clock;
+static usize shc_bytes;
+
+static void shc_drop(shadow_ent_t *e) {
+    shc_bytes -= e->bytes;
+    kfree(e->m); kfree(e->z0); kfree(e->z1);
+    memset(e, 0, sizeof *e);
+}
+
+static shadow_ent_t *shc_get(int w, int h, float r, float blur, int alpha, int dy) {
+    int b10 = (int)(blur * 10 + 0.5f), r10 = (int)(r * 10 + 0.5f);
+    if ((float)b10 / 10 != blur || (float)r10 / 10 != r) return NULL;   /* só valores com 1 casa: a chave é exata */
+    for (int i = 0; i < SHADOW_CACHE_N; i++) {
+        shadow_ent_t *e = &shc[i];
+        if (e->m && e->w == w && e->h == h && e->alpha == alpha && e->dy == dy && e->blur10 == b10 && e->r10 == r10) {
+            e->used = ++shc_clock;
+            return e;
+        }
+    }
+    int b = (int)fceil(blur);
+    int mw = w + 2 * b, mh = h + 2 * b;
+    if (mw <= 0 || mh <= 0 || mw > 65535 || mh > 16384) return NULL;
+    usize need = (usize)mw * mh + (usize)mh * 4;
+    if (need > SHADOW_CACHE_BYTES / 2) return NULL;
+    /* abre espaço: tira as menos usadas até caber e sobrar uma vaga */
+    for (;;) {
+        shadow_ent_t *lru = NULL, *free_slot = NULL;
+        for (int i = 0; i < SHADOW_CACHE_N; i++) {
+            if (!shc[i].m) { if (!free_slot) free_slot = &shc[i]; continue; }
+            if (!lru || shc[i].used < lru->used) lru = &shc[i];
+        }
+        if (free_slot && shc_bytes + need <= SHADOW_CACHE_BYTES) break;
+        if (!lru) return NULL;
+        shc_drop(lru);
+    }
+    surface_t *t = surface_new(mw, mh);
+    shadow_ent_t ne = { w, h, alpha, dy, b10, r10, mw, mh, kmalloc((usize)mw * mh), kmalloc((usize)mh * 2), kmalloc((usize)mh * 2), need, ++shc_clock };
+    if (!t || !t->px || !ne.m || !ne.z0 || !ne.z1) {
+        surface_free(t); kfree(ne.m); kfree(ne.z0); kfree(ne.z1);
+        return NULL;
+    }
+    memset(t->px, 0, (usize)mw * mh * 4);
+    gfx_shadow(t, b, b - dy, w, h, r, blur, alpha, dy);   /* fx = fy = b: a máscara começa em (0, 0) */
+    for (int j = 0; j < mh; j++) {
+        const u32 *src = t->px + (usize)j * t->stride;
+        u8 *dst = ne.m + (usize)j * mw;
+        int best0 = 0, best1 = 0, run0 = -1;
+        for (int i = 0; i <= mw; i++) {
+            u8 a = i < mw ? (u8)(src[i] >> 24) : 1;
+            if (i < mw) dst[i] = a;
+            if (!a) { if (run0 < 0) run0 = i; }
+            else if (run0 >= 0) { if (i - run0 > best1 - best0) { best0 = run0; best1 = i; } run0 = -1; }
+        }
+        ne.z0[j] = (u16)best0; ne.z1[j] = (u16)best1;
+    }
+    surface_free(t);
+    for (int i = 0; i < SHADOW_CACHE_N; i++)
+        if (!shc[i].m) { shc[i] = ne; shc_bytes += need; return &shc[i]; }
+    kfree(ne.m); kfree(ne.z0); kfree(ne.z1);
+    return NULL;
+}
+
+typedef struct { surface_t *s; const shadow_ent_t *e; rect_t rc; int x0, y0; } shc_job_t;
+static void shc_rows(void *c, int b, int e_, int cpu) {
+    shc_job_t *J = c;
+    const shadow_ent_t *e = J->e;
+    rect_t rc = J->rc;
+    for (int j = rc.y + b; j < rc.y + e_; j++) {
+        int mj = j - J->y0;
+        const u8 *m = e->m + (usize)mj * e->mw - J->x0;     /* m[i] = alfa do pixel absoluto i */
+        u32 *row = J->s->px + (usize)j * J->s->stride;
+        int z0 = J->x0 + e->z0[mj], z1 = J->x0 + e->z1[mj];
+        int x1 = rc.x + rc.w;
+        for (int i = rc.x; i < x1;) {
+            if (i >= z0 && i < z1) { i = z1; continue; }
+            int end = i < z0 ? MIN(z0, x1) : x1;
+            /* 4 pixels por vez: preto com alfa a sobre o destino (blend4 é bit a bit igual a blend_px) */
+            for (; i + 4 <= end; i += 4) {
+                u32 a4; memcpy(&a4, m + i, 4);
+                if (!a4) continue;
+                __m128i av = _mm_cvtsi32_si128((int)a4);
+                av = _mm_unpacklo_epi8(_mm_setzero_si128(), av);            /* a em bytes 1,3,5,7 */
+                av = _mm_unpacklo_epi16(_mm_setzero_si128(), av);           /* a no byte 3 de cada pixel */
+                __m128i dv = _mm_loadu_si128((const __m128i *)(row + i));
+                _mm_storeu_si128((__m128i *)(row + i), blend4(dv, av));
+            }
+            for (; i < end; i++) { u32 a = m[i]; if (a) row[i] = blend_px(row[i], a << 24); }
+        }
+    }
+}
+
+void gfx_shadow_cached(surface_t *s, int x, int y, int w, int h, float r, float blur, int alpha, int dy) {
+    int b = (int)fceil(blur);
+    int x0 = x + s->ox - b, y0 = y + s->oy + dy - b;
+    rect_t rc = rect_intersect(rect_make(x0, y0, w + 2 * b, h + 2 * b), s->clip);
+    if (rect_empty(rc)) return;
+    shadow_ent_t *e = alpha > 0 ? shc_get(w, h, r, blur, alpha, dy) : NULL;
+    if (!e) { gfx_shadow(s, x, y, w, h, r, blur, alpha, dy); return; }
+    shc_job_t J = { s, e, rc, x0, y0 };
+    /* o miolo não conta no trabalho: só o anel tem pixels */
+    par_rows(MIN(rc.w, 4 * b + 64), rc.h, shc_rows, &J);
+}
+
 /* ============================================================ rasterizador de área (font-rs) */
 /* finito (nem NaN nem infinito), pelos bits: não depende de como o compilador trata NaN */
 static inline bool fin_(float f) { u32 b; memcpy(&b, &f, 4); return (b & 0x7F800000u) != 0x7F800000u; }
@@ -751,7 +869,89 @@ static void glass_down_rows(void *c, int jb, int je, int cpu);
 static void glass_sat_rows(void *c, int jb, int je, int cpu);
 static void glass_comp_rows(void *c, int jb, int je, int cpu);
 
+/* Cache do vidro. O resultado em dr depende só dos pixels de S (o fundo lido, que contém dr), da geometria e
+ * dos parâmetros. Quando o compositor refaz uma região que toca o vidro sem que nada atrás dele tenha mudado
+ * (cursor de texto piscando, digitação, botão sob o mouse na própria janela), o fundo tem o mesmo hash e o
+ * resultado guardado é copiado: lê ~1 MB em vez de subamostrar, desfocar e compor. A chave junta um hash de 64
+ * bits do fundo, a geometria e o glass_t inteiro. */
+typedef struct { u64 key; rect_t dr; u32 *px; usize bytes; u64 used; } glass_ent_t;
+#define GLASS_CACHE_N 8
+#define GLASS_CACHE_BYTES (32u << 20)
+static glass_ent_t gcache[GLASS_CACHE_N];
+static usize gcache_bytes;
+static u64 gcache_clock;
+static void glass_render(surface_t *s, float x, float y, float w, float h, float r, const glass_t *g);
+
+static inline u64 mix64(u64 h, u64 v) { h ^= v; h *= 0x9E3779B97F4A7C15ULL; return h ^ (h >> 29); }
+static u64 hash_rect(const surface_t *s, rect_t S, u64 h) {
+    for (int j = 0; j < S.h; j++) {
+        const u32 *row = s->px + (usize)(S.y + j) * s->stride + S.x;
+        u64 a = 0x243F6A8885A308D3ULL ^ (u64)j, b = 0x13198A2E03707344ULL;
+        int i = 0;
+        for (; i + 4 <= S.w; i += 4) {
+            u64 p0, p1;
+            memcpy(&p0, row + i, 8); memcpy(&p1, row + i + 2, 8);
+            a = (a ^ p0) * 0x9E3779B97F4A7C15ULL; a ^= a >> 32;
+            b = (b ^ p1) * 0xC2B2AE3D27D4EB4FULL; b ^= b >> 31;
+        }
+        for (; i < S.w; i++) a = (a ^ row[i]) * 0x9E3779B97F4A7C15ULL;
+        h = mix64(h, a ^ (b << 1));
+    }
+    return h;
+}
+static u64 hash_bytes(const void *p, usize n, u64 h) {
+    const u8 *b = p;
+    for (usize i = 0; i < n; i++) h = (h ^ b[i]) * 0x100000001B3ULL;
+    return h;
+}
+
 void gfx_glass(surface_t *s, float x, float y, float w, float h, float r, const glass_t *g) {
+    if (w <= 2 || h <= 2) return;
+    float maxr = (w < h ? w : h) / 2;
+    float xa = x + s->ox, ya = y + s->oy;
+    int x0 = (int)ffloor(xa), y0 = (int)ffloor(ya), x1 = (int)fceil(xa + w), y1 = (int)fceil(ya + h);
+    rect_t dr = rect_intersect(rect_make(x0, y0, x1 - x0, y1 - y0), s->clip);
+    int m = GLASS_REACH(g);
+    rect_t S = rect_intersect(rect_make(x0 - m, y0 - m, x1 - x0 + 2 * m, y1 - y0 + 2 * m), rect_make(0, 0, s->w, s->h));
+    usize bytes = (usize)dr.w * dr.h * 4;
+    if (rect_empty(dr) || rect_empty(S) || dr.w * dr.h < 4096 || bytes > GLASS_CACHE_BYTES / 4) { glass_render(s, x, y, w, h, r, g); return; }
+    float geo[6] = { xa, ya, w, h, r > maxr ? maxr : r, 0 };
+    int rc[8] = { dr.x, dr.y, dr.w, dr.h, S.x, S.y, S.w, S.h };
+    u64 key = hash_bytes(geo, sizeof geo, 0xCBF29CE484222325ULL);
+    key = hash_bytes(rc, sizeof rc, key);
+    key = hash_bytes(g, sizeof *g, key);
+    key = hash_rect(s, S, key);
+    for (int i = 0; i < GLASS_CACHE_N; i++) {
+        glass_ent_t *e = &gcache[i];
+        if (!e->px || e->key != key || e->dr.x != dr.x || e->dr.y != dr.y || e->dr.w != dr.w || e->dr.h != dr.h) continue;
+        e->used = ++gcache_clock;
+        for (int j = 0; j < dr.h; j++) memcpy(s->px + (usize)(dr.y + j) * s->stride + dr.x, e->px + (usize)j * dr.w, (usize)dr.w * 4);
+        return;
+    }
+    glass_render(s, x, y, w, h, r, g);
+    /* guarda o resultado: tira as menos usadas até caber */
+    glass_ent_t *slot = NULL;
+    for (;;) {
+        glass_ent_t *lru = NULL;
+        slot = NULL;
+        for (int i = 0; i < GLASS_CACHE_N; i++) {
+            if (!gcache[i].px) { if (!slot) slot = &gcache[i]; continue; }
+            if (!lru || gcache[i].used < lru->used) lru = &gcache[i];
+        }
+        if (slot && gcache_bytes + bytes <= GLASS_CACHE_BYTES) break;
+        if (!lru) return;
+        gcache_bytes -= lru->bytes;
+        kfree(lru->px);
+        memset(lru, 0, sizeof *lru);
+    }
+    u32 *px = kmalloc(bytes);
+    if (!px) return;
+    for (int j = 0; j < dr.h; j++) memcpy(px + (usize)j * dr.w, s->px + (usize)(dr.y + j) * s->stride + dr.x, (usize)dr.w * 4);
+    *slot = (glass_ent_t){ key, dr, px, bytes, ++gcache_clock };
+    gcache_bytes += bytes;
+}
+
+static void glass_render(surface_t *s, float x, float y, float w, float h, float r, const glass_t *g) {
     if (w <= 2 || h <= 2) return;
     float maxr = (w < h ? w : h) / 2;
     if (r > maxr) r = maxr;

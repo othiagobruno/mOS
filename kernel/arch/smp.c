@@ -135,6 +135,8 @@ u64 g_lapic_eoi;                                               /* endereço do r
 static bool par_off;                                          /* par_set_enabled(false): tudo no BSP (medições) */
 int par_cpus(void) { return ap_ready && !par_off ? ncpus_online : 1; }   /* limita os índices `cpu` entregues */
 void par_set_enabled(bool on) { par_off = !on; }
+/* um par_for está em andamento (o trabalho vive na pilha de quem chamou): ui/appguard.c não desfaz essa pilha */
+bool par_busy(void) { return __atomic_load_n(&par_lock, __ATOMIC_SEQ_CST) != 0; }
 
 static void run_job(job_t *j, int cpu) {
     for (;;) {

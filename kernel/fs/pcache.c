@@ -8,6 +8,12 @@
 #include "syscall.h"
 #ifndef MOS_HOST_TEST
 #include "proc.h"
+#include "storage.h"
+/* disco físico: a política de escrita vale já na entrada do cache. Com writeback, a recusa do driver só viria
+ * no flush, sem erro para quem gravou, e a página ficaria suja para sempre (sem poder ser despejada) */
+static bool policy_ok(blkdev_t *root, u64 abs, u64 len) { return storage_disk_index(root) < 0 || storage_write_ok(root, abs, len); }
+#else
+static bool policy_ok(blkdev_t *root, u64 abs, u64 len) { (void)root; (void)abs; (void)len; return true; }
 #endif
 
 #define PG 4096u
@@ -133,9 +139,10 @@ static void free_page(page_t *p) {
 
 static bool evict_one(void) {
     page_t *best = NULL;
+    /* valid == 0: página criada por quem está carregando agora (load_run guarda o ponteiro); não pode sair */
     for (int i = 0; i < HT; i++)
         for (page_t *p = ht[i]; p; p = p->hnext)
-            if (!p->dirty && (!best || p->stamp < best->stamp)) best = p;
+            if (!p->dirty && p->valid && (!best || p->stamp < best->stamp)) best = p;
     if (best) { free_page(best); return true; }
     if (!dirty_head) return false;
     if (!write_page(dirty_head)) return false;
@@ -151,6 +158,7 @@ static page_t *new_page(blkdev_t *r, u64 off) {
     p->root = r;
     p->off = off;
     p->data = d;
+    p->stamp = ++clockn;          /* nasce como a mais recente: com stamp 0 ela era a primeira a ser despejada */
     u32 h = hash(r, off);
     p->hnext = ht[h];
     ht[h] = p;
@@ -297,11 +305,11 @@ bool blk_read(blkdev_t *d, u64 off, void *buf, u64 len) {
 }
 
 bool blk_write(blkdev_t *d, u64 off, const void *buf, u64 len) {
-    if (!d || !blk_writable(d) || off > d->size || len > d->size - off) return false;
+    if (!d || off > d->size || len > d->size - off) return false;
     if (!len) return true;
     u64 abs;
     blkdev_t *root = root_of(d, off, &abs);
-    if (!root->write) return false;
+    if (!root->write || !policy_ok(root, abs, len) || !blk_writable(d)) return false;
     const u8 *in = buf;
     u64 fl = irq_lock();
     bool ok = true;

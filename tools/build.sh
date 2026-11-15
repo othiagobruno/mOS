@@ -314,6 +314,13 @@ bash "$ROOT/tools/string-fdn-teste.sh" "$ZIG" "$OUT/string-fdn"
 echo "==> Date, UUID, erros e Notification do Foundation Swift (teste de host)"
 bash "$ROOT/tools/fdn-tipos-teste.sh" "$ZIG" "$OUT/fdn-tipos"
 
+echo "==> compositor: sombra em cache igual à direta e tempo por quadro (teste de host)"
+"$ZIG" cc -O2 -ffreestanding -fno-builtin -mno-red-zone -fshort-wchar -I"$ROOT/kernel/include" -I"$ROOT" -std=gnu11 -w \
+    -c "$ROOT/kernel/gfx/gfx.c" -o "$OUT/gfx_host.o"
+"$ZIG" cc -O2 -I"$ROOT/kernel/include" -I"$ROOT" -std=gnu11 -w "$ROOT/tools/compositor_bench_host.c" "$OUT/gfx_host.o" -lm \
+    -o "$OUT/compositor_bench_host"
+"$OUT/compositor_bench_host" 10
+
 echo "==> kernel"
 mapfile -t KSRC < <(find "$ROOT/kernel" -type f \( -name '*.c' -o -name '*.S' \) | sort)
 "$ZIG" cc -target x86_64-uefi-msvc -O2 -g0 -ffreestanding -fno-stack-protector -fno-stack-check -mno-stack-arg-probe \
