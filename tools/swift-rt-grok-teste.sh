@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 ZIG=${1:-$(command -v zig)}
 OUT=${2:-/tmp/mos-swift-rt-grok}
-ZIGDIR=$(cd "$(dirname "$ZIG")" && pwd)
+ZIGDIR=$(dirname "$(readlink -f "$ZIG")")
 mkdir -p "$OUT"
 "$ZIG" cc -target x86_64-freestanding-none -O2 -g0 -ffreestanding -fno-stack-protector -fno-builtin -nostdlib \
     -fpie -mno-red-zone -Wall -Wno-unused-parameter -Wno-incompatible-library-redeclaration -Wno-builtin-requires-header \

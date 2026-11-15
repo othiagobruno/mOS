@@ -29,6 +29,7 @@
 #include "smp_perf.h"
 
 #define KSTACK_SIZE (32u << 10)
+#define KSTACK_CANARY 0x4B53544B43414E41ULL   /* "ANACKTSK": fundo da pilha do kernel (kstack_check) */
 #define PEND_FLUSH   1u        /* recarregar o CR3 antes de voltar ao ring 3 */
 #define PEND_RESCHED 2u        /* a thread atual pode ter morrido: passar pelo escalonador */
 #define VEC_KICK     0xF2
@@ -323,6 +324,7 @@ static thread_t *new_thread(const char *name, process_t *p) {
     t->kstack = kmalloc(KSTACK_SIZE);
     if (!t->kstack) { kfree(t); return NULL; }
     t->kstack_top = ((u64)t->kstack + KSTACK_SIZE) & ~15ULL;
+    ((u64 *)t->kstack)[0] = ((u64 *)t->kstack)[1] = KSTACK_CANARY;
     t->id = next_tid++;
     strncpy(t->name, name, sizeof t->name - 1);
     t->proc = p;
@@ -493,8 +495,17 @@ static void a64_xmon_on_switch(thread_t *from, int_frame_t *f) {
     (*(volatile u64 *)(base + 960))++;
 }
 
+/* A pilha do kernel é um bloco de kmalloc sem página de guarda: um estouro escreveria no cabeçalho do heap e o
+ * erro apareceria longe dali. A marca no fundo é conferida a cada troca: estourou, para aqui com o nome da thread. */
+static void kstack_check(const thread_t *t) {
+    if (t && t->kstack && (((const u64 *)t->kstack)[0] != KSTACK_CANARY || ((const u64 *)t->kstack)[1] != KSTACK_CANARY))
+        panic("pilha do kernel estourou: thread %d \"%s\" (pid %d), %u KiB", t->id, t->name,
+              t->proc ? t->proc->pid : -1, KSTACK_SIZE >> 10);
+}
+
 static u64 switch_to(pcpu_t *c, int_frame_t *f, thread_t *to) {
     thread_t *from = c->cur;
+    kstack_check(from);
     if (to != from) a64_xmon_on_switch(from, f);
     if (to == from) { from->state = TH_RUNNING; return (u64)f; }
     account(c);

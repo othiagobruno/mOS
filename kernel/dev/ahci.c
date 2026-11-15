@@ -238,7 +238,8 @@ static bool stage_at(ahci_disk_t *d, u8 cmd, u64 lba, u16 count, u64 phys, u32 b
     u32 bit = 1u << tag;
     if (tag < 0 || tag > 31) return false;
     if (!ncq && !wait_clear(p, P_TFD, TFD_BSY | TFD_DRQ, 1000)) { recover_port(p); return false; }
-    if (pr(p, P_CI) & bit) return false;
+    /* NCQ: o tag só está livre quando os dois bits caíram (PxCI cai na aceitação, PxSACT na conclusão, ver ahci_reap) */
+    if ((pr(p, P_CI) | (ncq ? pr(p, P_SACT) : 0)) & bit) return false;
     cmd_hdr_t *h = (cmd_hdr_t *)(d->ctl + OFF_CLB) + tag;
     u8 *ct = d->ctl + OFF_CT + tag * CT_STRIDE;
     u64 ct_phys = d->ctl_phys + OFF_CT + (u64)tag * CT_STRIDE;
@@ -274,7 +275,12 @@ static void ahci_reap(ahci_disk_t *d) {
     u32 is = pr(p, P_IS);
     if (is) pw(p, P_IS, is);
     if (is & IS_TFES) d->tfes = 1;
-    ahci_batch_irq(&d->batch, pr(p, P_CI));
+    /* NCQ: o bit de PxCI cai quando o disco ACEITA o comando; os dados só estão no buffer quando o bit de PxSACT
+     * cai (Set Device Bits). Olhar só PxCI dava a leitura por pronta antes do DMA: vinha o conteúdo anterior do
+     * buffer (o FAT do persist lia lixo e o boot chegava a cair). Ativo = PxCI | PxSACT. */
+    u32 live = pr(p, P_CI);
+    if (d->ncq) live |= pr(p, P_SACT);
+    ahci_batch_irq(&d->batch, live);
 }
 
 static void ahci_on_irq(void) {

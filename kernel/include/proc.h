@@ -74,6 +74,7 @@ typedef struct thread {
     u32 mach_rsize, mach_opt;
     bool mach_peek;         /* MACH_OP_WAIT: só espera haver mensagem */
     u64 futex_va;           /* TH_WAITING com wait_pid = -8: palavra do SYS_FUTEX_WAIT (prazo em wake_at; 0 = sem) */
+    u64 futex_phys;         /* idem, endereço físico quando a página é compartilhada entre processos (0 = privada) */
     /* leitura/escrita esperando num pseudoterminal (proc/pty.c): wait_pid = -9, TH_WAITING (ou TH_SLEEPING com
      * prazo, VTIME), buffer em read_buf/read_len. Zerado na entrada de toda syscall: a espera nunca sobrevive a ela. */
     struct pty *pty_wait;
@@ -188,7 +189,9 @@ int       proc_job_signal(process_t *p, thread_t *th, int sig);
 void      proc_hold(process_t *p);
 
 /* páginas físicas compartilhadas entre espaços (memória Mach, proc/process.c) */
-bool      uvm_map_phys(process_t *p, u64 va, u64 phys, bool rw);  /* mais uma referência à página */
+#define UVM_PHYS_W    1   /* uvm_map_phys: grava agora */
+#define UVM_PHYS_MAYW 2   /* uvm_map_phys: o mprotect pode ligar a escrita; sem W nem MAYW a página fica só-leitura de vez */
+bool      uvm_map_phys(process_t *p, u64 va, u64 phys, int rw);  /* mais uma referência à página */
 void      uvm_page_get(u64 phys);
 void      uvm_page_put(u64 phys);
 

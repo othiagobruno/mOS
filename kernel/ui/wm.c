@@ -309,8 +309,8 @@ static void destroy(window_t *w) {
 
 void wm_close(window_t *w) {
     if (!w || w->closing) return;
-    if (w->on_close_request && w->on_close_request(w)) return;
-    if (w->on_close) w->on_close(w);
+    if (w->on_close_request && app_guard_close_request(w)) return;
+    if (w->on_close) app_guard_close(w);
     if (w->tab_group) tab_leave(w);
     if (w->fullscreen && space_win == w) space_switch(NULL, -1);   /* fechar em tela cheia volta para a mesa */
     w->closing = true;
@@ -707,7 +707,7 @@ void wm_tab_step(int dir) {
 static void tab_new(window_t *src) {
     if (!src->app || !src->app->launch) return;
     tab_pending_src = src;
-    src->app->launch(src->app);
+    app_guard_launch(src->app);
     tab_pending_src = NULL;
 }
 
@@ -819,7 +819,12 @@ static void paint_window(window_t *w) {
     if (w->paint) {
         u->nfl = 0;
         u->kfocus_rect = rect_make(0, 0, 0, 0);
-        w->paint(w, u);
+        if (!app_guard_paint(w, u)) {             /* o app caiu: a janela fecha no app_guard_reap */
+            s->ox = s->oy = 0;
+            surface_reset_clip(s);
+            u->overlay_fn = NULL;
+            return;
+        }
         /* navegação por teclado (Tab/⇧Tab) e anel de foco do controle selecionado */
         { extern void ui_focus_navigate(ui_t *u); extern void ui_focus_draw(ui_t *u); ui_focus_navigate(u); ui_focus_draw(u); }
         /* sobreposições adiadas: popover (com entrada própria) e dica de ferramenta, por cima de tudo */
@@ -827,8 +832,9 @@ static void paint_window(window_t *w) {
             void (*fn)(struct ui *) = u->overlay_fn;
             u->overlay_fn = NULL;
             u->in_overlay = true;
-            fn(u);
+            bool alive = app_guard_run(w->app, (void (*)(void *))fn, u);
             u->in_overlay = false;
+            if (!alive) { s->ox = s->oy = 0; surface_reset_clip(s); return; }
         }
         if (u->tip_on) { extern void ui_draw_tooltip(ui_t *u); ui_draw_tooltip(u); u->tip_on = false; }
         /* o bloqueio pedido neste quadro (popover/folha) vale a partir do próximo; se ninguém pediu, some */
@@ -1391,8 +1397,10 @@ void wm_compose(void) {
             if (rect_empty(rect_intersect(rect_make(r.x - SHADOW_M, r.y - SHADOW_M + 10, r.w + 2 * SHADOW_M, r.h + 2 * SHADOW_M), D))) continue;
             bool f = w == focused;
             int sh_a = (f ? (T.dark ? 170 : 85) : (T.dark ? 120 : 46)) * alpha / 255;
-            gfx_shadow(s, r.x, r.y, r.w, r.h, WIN_RADIUS, f ? 40 : 22, sh_a, f ? 16 : 7);
-            if (!f) gfx_shadow(s, r.x, r.y, r.w, r.h, WIN_RADIUS, 3, T.dark ? 60 : 24, 1);
+            /* parada: a máscara da sombra vem do cache; em fade o alfa muda a cada quadro e o cache só giraria */
+            void (*shadow)(surface_t *, int, int, int, int, float, float, int, int) = alpha == 255 ? gfx_shadow_cached : gfx_shadow;
+            shadow(s, r.x, r.y, r.w, r.h, WIN_RADIUS, f ? 40 : 22, sh_a, f ? 16 : 7);
+            if (!f) shadow(s, r.x, r.y, r.w, r.h, WIN_RADIUS, 3, T.dark ? 60 : 24, 1);
             rect_t sp;
             if (!unified(w) && sidebar_panel(w, &sp)) {
                 /* vidro da barra lateral, escalado junto com a janela nas animações */
@@ -1729,7 +1737,7 @@ bool wm_handle_event(input_event_t *e) {
         if (desktop_handle_event(e)) return true;
         window_t *w = wm_focused();
         if (!w) return false;
-        if (w->on_key) w->on_key(w, e);
+        if (w->on_key && !app_guard_key(w, e)) return true;
         ui_t *u = &w->ui;
         u->key = e->key;
         u->mods = e->mods;

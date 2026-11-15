@@ -221,7 +221,50 @@ static void vsync_init(gpu_info_t *g) {
             'A' + vs_pipe, vs_hz, lo, hi, vs_lines);
 }
 
+/* Sem vsync da Intel (AMD, NVIDIA, framebuffer do UEFI em qualquer placa): o bit 3 da porta VGA 0x3DA
+ * (Input Status #1) acende durante o retraço vertical nas placas que ainda decodificam a faixa VGA. Ele só é
+ * usado se a medição no boot fizer sentido: 30..240 retraços por segundo e o bit aceso numa fração pequena do
+ * tempo (1%..20%). Porta sem decodificação lê 0xFF fixo; o QEMU (VGA padrão) alterna o bit a cada leitura. Nos
+ * dois casos a medição reprova e nada muda. */
+static bool vga_vs;
+static u32 vga_hz;
+static inline bool vga_retrace(void) { return (inb(0x3DA) & 8) != 0; }
+
+static void vga_vsync_init(void) {
+    if (vs_on || vga_vs) return;
+    int ff = 0;
+    for (int i = 0; i < 64; i++) if (inb(0x3DA) == 0xFF) ff++;
+    if (ff == 64) { kprintf("gpu: vsync VGA indisponível (porta 0x3DA não decodificada)\n"); return; }
+    u64 t0 = timer_ticks();
+    u32 edges = 0, reads = 0, on = 0;
+    bool prev = vga_retrace();
+    while (timer_ticks() - t0 < 100 && reads < 2000000) {
+        bool r = vga_retrace();
+        reads++;
+        if (r) on++;
+        if (r && !prev) edges++;
+        prev = r;
+    }
+    u64 dt = timer_ticks() - t0;
+    u32 hz = dt ? (u32)((u64)edges * 1000 / dt) : 0;
+    u32 duty = reads ? (u32)((u64)on * 100 / reads) : 0;
+    vga_vs = hz >= 30 && hz <= 240 && duty >= 1 && duty <= 20;
+    if (vga_vs) vga_hz = hz;
+    kprintf("gpu: vsync VGA %s (%u retraços/s, bit aceso %u%% do tempo, %u leituras)\n",
+            vga_vs ? "ligado" : "desligado: medição sem sentido", hz, duty, reads);
+}
+
 void gpu_vsync_wait(void) {
+    if (!vs_on && vga_vs) {
+        u64 now = timer_ticks();
+        if (vs_last_ms && now - vs_last_ms < 5) return;
+        /* espera o começo do próximo retraço; limite por leituras (funciona com interrupções desligadas) */
+        u32 i = 0;
+        while (vga_retrace() && i < 100000) i++;
+        while (!vga_retrace() && i < 100000) i++;
+        vs_last_ms = timer_ticks();
+        return;
+    }
     if (!vs_on) return;
     u64 now = timer_ticks();
     if (vs_last_ms && now - vs_last_ms < 5) return;  /* mesma composição: os outros retângulos vão juntos */
@@ -234,8 +277,8 @@ void gpu_vsync_wait(void) {
     vs_last_ms = timer_ticks();
 }
 
-bool gpu_vsync_active(void) { return vs_on; }
-u32 gpu_refresh_hz(void) { return vs_hz; }
+bool gpu_vsync_active(void) { return vs_on || vga_vs; }
+u32 gpu_refresh_hz(void) { return vs_on ? vs_hz : vga_hz; }
 
 /* ------------------------------------------------------------ AMD */
 static void amd_probe(gpu_info_t *g) {
@@ -273,7 +316,7 @@ void gpu_init(void) {
         else if (d->vendor == 0x8086) intel_probe(g);
         else amd_probe(g);
     }
-    if (!ngpus) { kprintf("gpu: nenhuma GPU Intel, AMD ou virtio\n"); return; }
+    if (!ngpus) { kprintf("gpu: nenhuma GPU Intel, AMD ou virtio\n"); vga_vsync_init(); return; }
 
     /* quem mostra o framebuffer do UEFI: a GPU cuja abertura é a mais próxima abaixo dele */
     u64 fb = (u64)g_boot->fb.fb, best = ~0ull;
@@ -285,6 +328,7 @@ void gpu_init(void) {
     }
     if (owner) owner->display = true;
     if (owner && owner->vendor == 0x8086) { vsync_init(owner); intel_ports(owner); }
+    vga_vsync_init();                                    /* sai sozinho se o vsync da Intel já ligou */
     gpu_info_t *m = owner ? owner : &gpus[0];
     snprintf(summary, sizeof summary, "%s %s (%s)%s", m->maker, m->family, m->arch,
              ngpus > 1 ? (owner ? " + outra GPU" : " + outras GPUs") : "");

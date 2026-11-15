@@ -257,6 +257,20 @@ int  desktop_dock_top(void);
 rect_t desktop_dock_rect(void);
 void desktop_rebuild_wallpaper(void);
 void notify(const char *title, const char *body);
+
+/* ui/appguard.c: callbacks de app protegidos. false = o app levantou exceção de CPU e será encerrado no
+ * próximo app_guard_reap (o chamador não deve mais usar a janela nem o estado do app neste caminho) */
+bool app_guard_run(struct app *a, void (*fn)(void *ctx), void *ctx);
+bool app_guard_tick(struct app *a);
+bool app_guard_launch(struct app *a);
+bool app_guard_quit(struct app *a);
+bool app_guard_menu(struct app *a, int act);
+bool app_guard_paint(window_t *w, ui_t *u);
+bool app_guard_key(window_t *w, input_event_t *e);
+bool app_guard_close(window_t *w);
+bool app_guard_close_request(window_t *w);
+void app_guard_reap(void);
+int  app_guard_crashes(struct app *a);
 void notify_tagged(const char *title, const char *body, int pid, int token);
 int notify_banner_hit(int x, int y, int *pid, int *token);
 void desktop_open_menu(int index);

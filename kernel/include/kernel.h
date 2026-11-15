@@ -166,8 +166,23 @@ static inline void mmio_w16(volatile void *base, u32 off, u16 v) { *(volatile u1
 static inline u16  mmio_r16(volatile void *base, u32 off) { return *(volatile u16 *)((u8 *)base + off); }
 static inline void mmio_w8(volatile void *base, u32 off, u8 v) { *(volatile u8 *)((u8 *)base + off) = v; }
 static inline u8   mmio_r8(volatile void *base, u32 off) { return *(volatile u8 *)((u8 *)base + off); }
-static inline u64  irq_save(void) { u64 f; __asm__ volatile("pushfq; popq %0; cli" : "=r"(f) :: "memory"); return f; }
-static inline void irq_restore(u64 f) { if (f & 0x200) sti(); }
+/* g_irqoff[cpu]: quantas seções irq_save (spinlocks inclusive) estão abertas neste núcleo. O watchdog de apps
+ * (ui/appguard.c) só desfaz a pilha de um app travado com IF=0 quando é zero: aí o IF=0 veio do próprio app,
+ * não de uma estrutura do kernel no meio de uma alteração. */
+#define MAX_CPUS 64
+static inline int this_cpu(void) { u16 s; __asm__ volatile("str %0" : "=r"(s)); return s >= 0x28 ? (s - 0x28) >> 4 : 0; }
+extern volatile u32 g_irqoff[MAX_CPUS];
+static inline u64  irq_save(void) {
+    u64 f;
+    __asm__ volatile("pushfq; popq %0; cli" : "=r"(f) :: "memory");
+    g_irqoff[this_cpu()]++;
+    return f;
+}
+static inline void irq_restore(u64 f) {
+    volatile u32 *d = &g_irqoff[this_cpu()];
+    if (*d) (*d)--;
+    if (f & 0x200) sti();
+}
 
 /* trava de giro (SMP): também desliga as interrupções do núcleo que a segura */
 typedef struct { volatile u32 v; } spinlock_t;
@@ -186,12 +201,11 @@ static inline void spin_unlock_irqrestore(spinlock_t *l, u64 f) { __atomic_store
  * no kernel vindo do usuário (syscall, falta, temporizador) a pega. O desktop a segura o tempo todo e só a
  * solta em cpu_idle() (todo hlt() da thread 0 com interrupções ligadas) — o mesmo ponto em que o modelo
  * antigo deixava threads de usuário rodarem; fora dali, syscalls continuam "com o desktop parado". */
-#define MAX_CPUS 64
-static inline int this_cpu(void) { u16 s; __asm__ volatile("str %0" : "=r"(s)); return s >= 0x28 ? (s - 0x28) >> 4 : 0; }
 void   cpu_tss_init(int cpu, u64 ist_top);      /* AP: descritor do TSS próprio + ltr */
 bool   bkl_held(void);                          /* este núcleo segura a trava grande */
 void   smp_tlb_shootdown(u64 cr3);              /* invalida o TLB dos OUTROS núcleos com esse CR3 (com a BKL) */
 void   smp_send_ipi(int cpu, u8 vec);
+void   smp_send_nmi(int cpu);                  /* NMI para um núcleo (watchdog de apps travados com IF=0) */
 u8     smp_apic_id(int cpu);
 int    smp_cpu_count(void);                    /* núcleos ativos (BSP + APs) */
 u64    smp_lapic_base(void);                   /* base física do MADT; 0 se o SMP não achou LAPIC */
@@ -204,6 +218,7 @@ int    smp_x2apic(void);
 typedef void (*par_fn_t)(void *ctx, int begin, int end, int cpu);
 void   par_for(int n, int grain, par_fn_t fn, void *ctx);
 int    par_cpus(void);
+bool   par_busy(void);
 void   par_set_enabled(bool on);       /* false: tudo serial no BSP (para medir o ganho) */
 u64    hpet_ns(void);                  /* relógio de alta resolução (0 sem HPET) */
 

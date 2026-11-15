@@ -38,12 +38,7 @@ O kernel é ligado com `zig cc -target x86_64-uefi-msvc` (`-O2`, `-ffreestanding
 
 ### Linux
 
-Não há, na `main`, um script que monte o `mOS.img` inteiro. O alvo do kernel é o mesmo do `build.ps1`. O `tools/mkimg.c` é C de host; o ensaio documentado em [docs/instalacao-runtime.md](docs/instalacao-runtime.md) (PR #6, árvore de 3 arquivos, 32 MiB, sem a imagem do desktop) é:
-
-```bash
-gcc -O2 -o /tmp/mkimg tools/mkimg.c
-/tmp/mkimg /tmp/mos-fw.img /tmp/mos-fw-tree 32
-```
+O `tools/build.sh` (PR #34, mergeado em 10 nov.) segue a mesma ordem do `build.ps1`: libSystem, kernel UEFI com as mesmas flags, programas de userland, `mkimg` nativo e o `build/mOS.img` (`tools/build.sh [--out DIR] [--jobs N]`). Ele também roda os testes de host, inclusive o do compositor (`tools/compositor_bench_host.c`). O zig é o ELF do host (`MOS_ZIG`, `PATH` ou `.tools/zig-*`). As imagens de teste com apps de terceiros saem do `tools/stage-image.sh` ([docs/staging-linux.md](docs/staging-linux.md)).
 
 O que já está na `main` e rodou em Linux são harnesses de host. Eles não sobem o kernel:
 
@@ -59,7 +54,6 @@ O que já está na `main` e rodou em Linux são harnesses de host. Eles não sob
 | AIR | comando no topo de `tools/airlower_test.c` (PR #31) | 0 falhas no diferencial contra o fonte; sem `.metallib` de app |
 | Preferências, TCC, formato | `tools/prefstest.c`, `tcctest.c`, `fmttest.c` e os vizinhos (PR #8) | 72/72, 18/18, 94/94 no gcc 13 |
 
-O build e o stage da imagem no Linux estão no PR #34, aberto e não mergeado. Ver [Em andamento](#em-andamento).
 
 ## Rodar no QEMU com OVMF
 
@@ -190,12 +184,19 @@ Como repetir o que já está scriptado. Os resultados são os últimos publicado
 | WebKit | `.\build.ps1 -OutDir build-wk`, `.\tools\build-webkittest.ps1 -OutDir build-wk`, `.\run.ps1 -Headless -Image build-wk\mOS.img`. Procurar `webkit:` no serial | [docs/falta-compat.md](docs/falta-compat.md) registra **55/55** no QEMU. O `userland/tests-webkit/main.m` da `main` tem casos a mais (recusa de histórico, `loadData`, `WebArchive`) acrescentados no PR #24, e esse PR **não** rodou a VM | O 55/55 é anterior a esses casos. O fonte imprime `webkit: N/M ok`; o N atual não foi medido de novo |
 | Rede / TLS / XPC | `tools/build-nettest.ps1`, `build-tlstest-app.ps1`, `build-nettest6.ps1`, `build-xpctest.ps1`, `build-udptest.ps1` | TCP 16/16, TLS 16/16, IPv6 11/11, XPC 24/24 no `machotest`, UDP 34/34 no QEMU | [docs/compat-apps.md](docs/compat-apps.md), [docs/ipv6.md](docs/ipv6.md), [docs/falta-compat.md](docs/falta-compat.md). O checklist ainda diz "falta UDP" numa linha antiga; o `falta-compat.md` é o que traz o 34/34 |
 | Tradutor na VM | `userland/tests-a64rt`, `userland/tests-a64libsys` | 21/21 nos dois motores (QEMU WHPX, 4 CPUs, e `machotest`); `tests-a64libsys` 36/36 | [docs/tradutor-arm64.md](docs/tradutor-arm64.md), 8 nov. App SwiftUI ARM64 de ponta a ponta continua de fora |
+| Compositor | `tools/build.sh` roda `tools/compositor_bench_host.c` (o comando está no topo do arquivo) | `ok sombra em cache igual à direta (4 recortes, frio e quente)`; sombras de 4 janelas a 1440×900 em 1 núcleo: ~11 ms direto, ~1,5 ms em cache (gcc/clang/zig no Linux, 15 nov.). No QEMU, a mesma sessão com Lembretes e Calculadora deu 0 pixels de diferença contra a `main` | Não roda no `build.ps1`, só no `tools/build.sh` |
+| Falha de app do desktop | `.\build.ps1 -UnitTests` (casos em `kernel/ui/appguard.c`) | `unit: RESUMO: 160 verificações ok, 0 FALHA(S) — APROVADO` no QEMU/KVM do Linux, 15 nov., com os 13 casos da guarda (`#GP`, `#PF`, `#UD`, divisão por zero, guarda aninhada, laço infinito pego pelo watchdog). Com um patch local de teste na Calculadora: um paint com `#GP` fecha só ela e o app reabre; um paint em laço infinito é encerrado depois de 10 s com o aviso "não respondeu"; um paint com `cli` e laço infinito é encerrado pelo NMI do vigia (log "com as interrupções desligadas (NMI)") e a bolinha do Dock some | Antes deste PR o mesmo build dava 9 falhas de partição e de política de escrita (page cache, abaixo) |
 | Áudio | `tools/build-audiotest.ps1` (VM); `tools/audiodec_test.c` (host, precisa de ffmpeg) | 42/42 no QEMU é resultado antigo e **não** foi reexecutado. MP3 (minimp3) e ALAC 16 bits passaram no host; o ALAC bate bit a bit com o ffmpeg no seno de teste do doc | [docs/falta-compat.md](docs/falta-compat.md), [docs/midia-licencas.md](docs/midia-licencas.md). AAC e Opus são reconhecidos e não viram PCM |
 
 ## Limitações conhecidas
 
 - Hardware real: som, USB, Bluetooth, SATA, NVMe, rede e a instalação foram ensaiados no QEMU/OVMF, não numa máquina física. O driver da Realtek RTL8111/8168 (`kernel/dev/r8169.c`) passou só no teste de host `tools/r8169_host.c`, contra um 8168H simulado; o QEMU não emula esse chip e ele ainda não subiu no PC real. Wi-Fi real depende de driver por chipset (`kernel/wifi/`); o que existe foi exercitado com rádio simulado. WPA3 não entra. Bluetooth LE/clássico não rodou num adaptador: o QEMU não emula um.
-- Sem GPU. O desenho pesado usa todos os núcleos (`par_for` em `kernel/arch/smp.c`) e SSE2. O número ~2,3× em 4 núcleos é o que o README anterior atribuía ao log `bench:` de `.\build.ps1 -Tests`; não foi remediado aqui.
+- Sem GPU. O desenho pesado usa todos os núcleos (`par_for` em `kernel/arch/smp.c`) e SSE2. O número ~2,3× em 4 núcleos é o que o README anterior atribuía ao log `bench:` de `.\build.ps1 -Tests`; não foi remediado aqui. A sombra das janelas vem de um cache de máscaras (`gfx_shadow_cached`), bit a bit igual à conta direta; no teste de host, a 1440×900 em 1 núcleo, as sombras de 4 janelas passaram de ~11 ms para ~1,5 ms por quadro. O vidro (`gfx_glass`) guarda o resultado com a chave num hash de 64 bits do fundo que ele lê: quando nada atrás dele mudou (cursor piscando, digitação, botão sob o mouse) a composição custa ~0,9 ms em vez de ~13 ms para uma barra lateral de 220×600. Fundo diferente recalcula.
+- Ritmo de quadro: o desktop compõe no período do monitor, contado pelo HPET (o Hz medido pelo vsync da Intel, senão 60 Hz). O vsync da Intel lê os registradores do pipe. Nas outras placas (AMD, NVIDIA, framebuffer do UEFI) o mOS tenta o bit de retraço da porta VGA `0x3DA` e só o usa se a medição no boot der 30–240 retraços por segundo com o bit aceso entre 1% e 20% do tempo. No QEMU a medição reprova (o VGA padrão alterna o bit a cada leitura; com `VGA.retrace=precise` a porta lê `0xFF`) e a cópia segue sem esperar. Em hardware real o caminho que liga ainda não foi visto funcionando; sem ele, a cópia pode rasgar.
+- Os apps do próprio desktop (`kernel/apps`) rodam no ring 0. Uma exceção de CPU dentro de um callback deles (paint, tick, tecla, menu, abrir, fechar) encerra só aquele app, com o aviso "App encerrado" (`kernel/ui/appguard.c`). Um callback que passa de 10 s sem voltar (laço infinito) é interrompido pelo tique do PIT e encerrado do mesmo jeito, com o aviso "não respondeu". Com as interrupções desligadas o PIT não chega: um AP vigia pelo HPET e, 3 s depois do limite, manda um NMI ao núcleo 0, que encerra o app do mesmo jeito e religa as interrupções. Toda recuperação exige o núcleo 0, nenhuma seção `irq_save`/spinlock aberta nele (`g_irqoff`) e estar fora de `par_for`. Um app travado dentro de uma seção crítica do kernel não pode ser desfeito: vira tela de pânico com o nome dele. A memória do app que caiu não é devolvida.
+- O vsync dos chips de display da AMD (DCN) não é lido: o endereço dos registradores muda por chip (tabela de descoberta de IP) e não há placa AMD para testar. Nessas placas vale o caminho da porta VGA acima.
+- `build.ps1` fora do Windows: o passo do kernel roda igual no `pwsh` 7.7 do Linux (185 fontes, sem avisos, a imagem dá boot), mas o `tools/build-libsystem.ps1` usa caminhos com `\` e `"-isystem", (...)`, que só funcionam no PowerShell do Windows. No Linux o caminho é o `tools/build.sh`.
+- Disco (AHCI com NCQ): até 15 nov. o driver dava uma leitura por pronta quando o bit de `PxCI` caía, que no NCQ só indica que o disco aceitou o comando. Os dados vinham do buffer anterior: o `persist` lia o FAT do pendrive com lixo, ou desistia ("não é FAT com \\mOS\\: sistema só na RAM"), e às vezes o boot caía. Agora a conclusão olha `PxCI | PxSACT`. O page cache (`kernel/fs/pcache.c`) também deixou de despejar a página que ainda estava carregando, e a escrita fora da faixa liberada é recusada na hora, não no writeback.
 - Página presente no x86 é legível. Não há `PROT_NONE` na PTE. Não há swap ([docs/mm-shared.md](docs/mm-shared.md)).
 - Volumes `.dmg` são só leitura. FAT/HFS+ de outros discos aparecem em `/Volumes` só leitura até um consentimento por volume. Partição EFI, disco do sistema e HFS+ com journal pendente continuam recusados.
 - Keychain e preferências gravam arquivo sem criptografia. Quem lê o disco lê a senha.
@@ -219,11 +220,7 @@ O que os docs da `main` ainda deixam aberto, em seguida do que já tem teste:
 
 ## Em andamento
 
-PRs abertos, não mergeados. O conteúdo deles não está na `main` e não entra nas tabelas acima.
-
-- **[#34](https://github.com/othiagobruno/mOS/pull/34)** — build e stage no Linux (`tools/build.sh`, `tools/stage-image.sh`). Ainda em review.
-
-Os PRs #26, #29, #30, #31, #32 e #33 já foram mergeados em 10 nov. 2026. O estado deles está nas seções de compatibilidade e de testes, não aqui.
+Os PRs #26, #29, #30, #31, #32, #33 e #34 (build no Linux) já foram mergeados em 10 nov. 2026. O estado deles está nas seções de compatibilidade e de testes, não aqui.
 
 ## Licença
 

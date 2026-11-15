@@ -28,6 +28,7 @@
 #include "kernel.h"
 #include "proc.h"
 #include "vfs.h"
+#include "syscall.h"
 
 bool uvm_map(process_t *p, u64 va, u64 len);
 u64 *uvm_pte(process_t *p, u64 va);
@@ -38,11 +39,14 @@ bool uvm_protect(process_t *p, u64 va, u64 len, u8 prot);
 i64 file_store_at(const char *path, u64 off, const void *src, u64 len);
 
 #define LAZY_SHARED 1u
+#define LAZY_MAYW   8u    /* = UVM_PROT_MAYW de process.c */
 
 /* path = NULL: anônima (zeros); senão a página va vem do arquivo, no deslocamento foff + (va - start).
  * LAZY_SHARED: a página física é do cache (arquivo ou anônimo), não uma cópia privada. shid identifica o
  * objeto anônimo; foff é o deslocamento nele, e um recorte no início soma em foff (a página não troca de
- * número). prot 0 = a falta deixa a página RWX, como o mmap antigo. */
+ * número). prot 0 = a falta deixa a página RWX, como o mmap antigo. Na compartilhada, LAZY_MAYW (8) em prot diz
+ * que a escrita pode ser ligada depois (fd aberto para escrita, ou anônima): sem ele o mprotect(PROT_WRITE) é
+ * EACCES e a PTE nasce com PTE_NOW (process.c). */
 typedef struct {
     int pid;
     u64 start, end;
@@ -137,7 +141,8 @@ bool lazy_add_shared_file(process_t *p, u64 va, u64 len, const char *path, u64 f
     if (e <= s || !path) return false;
     char *pc = dup_path(path);
     if (!pc) return false;
-    if (!prot) prot = 1;
+    if (!(prot & 7)) prot |= 1;
+    if (prot & 2) prot |= LAZY_MAYW;
     u64 fl = spin_lock_irqsave(&lazy_lock);
     bool ok = nlz < caplz || grow();
     if (ok) lz[nlz++] = (lazy_t){p->pid, s, e, pc, foff, LAZY_SHARED, 0, prot};
@@ -149,7 +154,8 @@ bool lazy_add_shared_file(process_t *p, u64 va, u64 len, const char *path, u64 f
 bool lazy_add_shared_anon(process_t *p, u64 va, u64 len, u8 prot) {
     u64 s = va & ~0xFFFULL, e = (va + len + 0xFFF) & ~0xFFFULL;
     if (e <= s) return false;
-    if (!prot) prot = 1;
+    if (!(prot & 7)) prot |= 1;
+    prot |= LAZY_MAYW;                               /* objeto anônimo: ninguém tem fd só-leitura dele */
     u64 fl = spin_lock_irqsave(&lazy_lock);
     bool ok = nlz < caplz || grow();
     u32 id = next_shid++;
@@ -507,20 +513,62 @@ void lazy_remove(process_t *p, u64 va, u64 len) {
     spin_unlock_irqrestore(&lazy_lock, fl);
 }
 
-bool lazy_protect(process_t *p, u64 va, u64 len, u8 prot) {
+/* 0, -MOS_ENOMEM, ou -MOS_EACCES: escrita pedida numa faixa compartilhada cuja proteção máxima não a tem
+ * (arquivo aberto só para leitura). Nada muda nesse caso, como o mprotect do XNU com max_protection. */
+int lazy_protect(process_t *p, u64 va, u64 len, u8 prot) {
     u64 s = va & ~0xFFFULL, e = (va + len + 0xFFF) & ~0xFFFULL;
-    if (!p || e <= s) return true;
+    if (!p || e <= s) return 0;
     u64 fl = spin_lock_irqsave(&lazy_lock);
+    if (prot & 2)
+        for (u32 i = 0; i < nlz; i++)
+            if (lz[i].pid == p->pid && (lz[i].flags & LAZY_SHARED) && !(lz[i].prot & LAZY_MAYW) &&
+                e > lz[i].start && s < lz[i].end) {
+                spin_unlock_irqrestore(&lazy_lock, fl);
+                return -MOS_EACCES;
+            }
     punch_prot(p, s, e);
     bool ok = npv < cappv || grow_pv();
     if (ok) pv[npv++] = (pov_t){p->pid, s, e, prot};
     for (u32 i = 0; i < nlz; i++) {
         if (lz[i].pid != p->pid || !(lz[i].flags & LAZY_SHARED)) continue;
-        if (s <= lz[i].start && e >= lz[i].end) lz[i].prot = prot;
+        if (s <= lz[i].start && e >= lz[i].end) lz[i].prot = (u8)((lz[i].prot & LAZY_MAYW) | (prot & 7));
     }
     spin_unlock_irqrestore(&lazy_lock, fl);
-    if (!ok) return false;
-    return uvm_protect(p, s, e - s, prot);
+    if (!ok) return -MOS_ENOMEM;
+    return uvm_protect(p, s, e - s, prot) ? 0 : -MOS_EACCES;
+}
+
+/* rename ou unlink de um arquivo mapeado (process.c): as faixas e o cache de MAP_SHARED seguem o arquivo para o
+ * caminho novo. from pode ser uma pasta: o que está dentro dela muda junto. */
+static char *path_moved(const char *fp, const char *from, usize fl, const char *to) {
+    if (strncmp(fp, from, fl) || (fp[fl] && fp[fl] != '/')) return NULL;
+    usize tl = strlen(to), rest = strlen(fp + fl);
+    char *n = kmalloc(tl + rest + 1);
+    if (!n) return NULL;
+    memcpy(n, to, tl);
+    memcpy(n + tl, fp + fl, rest + 1);
+    return n;
+}
+void lazy_rename_path(const char *from, const char *to) {
+    usize fl = strlen(from);
+    u64 fl_irq = spin_lock_irqsave(&lazy_lock);
+    for (u32 i = 0; i < nlz; i++) {
+        char *n = lz[i].path ? path_moved(lz[i].path, from, fl, to) : NULL;
+        if (n) { kfree(lz[i].path); lz[i].path = n; }
+    }
+    for (u32 i = 0; i < nfc; i++) {
+        char *n = path_moved(fc[i].path, from, fl, to);
+        if (n) { kfree(fc[i].path); fc[i].path = n; }
+    }
+    spin_unlock_irqrestore(&lazy_lock, fl_irq);
+}
+/* algum processo ainda mapeia este arquivo (MAP_PRIVATE ou MAP_SHARED)? */
+bool lazy_path_in_use(const char *path) {
+    bool hit = false;
+    u64 fl = spin_lock_irqsave(&lazy_lock);
+    for (u32 i = 0; i < nlz && !hit; i++) hit = lz[i].path && !strcmp(lz[i].path, path);
+    spin_unlock_irqrestore(&lazy_lock, fl);
+    return hit;
 }
 
 void lazy_exit(process_t *p) {
