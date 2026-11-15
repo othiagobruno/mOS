@@ -4793,9 +4793,6 @@ void dispatch_queue_attr_make_initially_inactive(void) {}
 void endfsent(void) {}
 void erfcl(void) {}
 void erfl(void) {}
-void exception_raise(void) {}
-void exception_raise_state(void) {}
-void exception_raise_state_identity(void) {}
 void expm1l(void) {}
 void flsl(void) {}
 void fmaxf(void) {}
