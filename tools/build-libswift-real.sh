@@ -343,6 +343,8 @@ link_one libswiftObjectiveC "$out/ObjectiveC.o"
 link_one libswiftCoreFoundation "$out/CoreFoundation.o"
 link_one libswiftCoreGraphics "$out/CoreGraphics.o"
 link_one libswiftDispatch "$out/Dispatch.o"
+# o overlay os (os_log, OSLogType.fault...) era compilado e nunca ligado: os apps caíam no stub do libSystem
+link_one libswiftos "$out/os.o"
 link_one libswiftMetal "$out/Metal.o" "$out/mos_mtl_modify.o"
 if ! grep -a -q '_\$sSo9MTLBufferP5MetalE14didModifyRangeyySnySiGF' "$dest/libswiftMetal.dylib"; then
     echo "libswiftMetal sem MTLBuffer.didModifyRange" >&2

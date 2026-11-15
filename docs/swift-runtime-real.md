@@ -96,6 +96,7 @@ do runtime. Sai em `build/swift/objc/dylib/usr/lib/swift`:
 | `libswiftFoundation.dylib` (9,6 MB) | FoundationEssentials como módulo `Foundation` (292 fontes com os de `userland/sdk/swift-objc/Foundation`), `_FoundationRefs`, `_FoundationCShims`, Synchronization, swift-collections 1.7.3 |
 | `libswift_StringProcessing.dylib`, `libswift_RegexParser.dylib` | swift-experimental-string-processing 6.4.2 (Regex; o FoundationEssentials importa 37 símbolos dele) |
 | `libswiftUniformTypeIdentifiers.dylib` | `UTType.swift`, que só compila com o módulo Foundation acima |
+| `libswiftObservation.dylib` | OpenObservation (MIT, commit `b030e44d6471`) com o nome do módulo da Apple |
 
 Fontes fixadas por SHA-256 no script (baixa se faltarem). O swift-foundation é o
 commit `d53ce9ce2a15` do main: a tag 6.4.2 não tem `CharacterSet` nem
@@ -116,9 +117,15 @@ Stubs vazios alcançados (a métrica do `tools/meta/placar.py`), mesmo
 
 | App | Antes | Depois | Só Foundation Swift |
 |---|---|---|---|
-| Postico 2.3.5 | 209 | 17 | 181 → 0 |
-| WhatsApp 2.26.45.13 | 1509 | 981 | 717 → 225 |
+| Postico 2.3.5 | 209 | 9 | 181 → 0 |
+| WhatsApp 2.26.45.13 | 1509 | 963 | 717 → 225 |
 | OpenBot 0.66.0 | 9 | 1 | 0 → 0 |
+
+O "depois" inclui a `libswiftos.dylib`: o `build-libswift-real.sh` compilava o
+overlay `os` e não o ligava, e o `os_log(_:dso:log:_:_:)` dos apps caía no stub.
+Os 9 do Postico: 6 de `View`/`ViewModifier` (`_makeView`, `_makeViewList`,
+`_viewListCount`), que dependem do SwiftUI.framework (ainda sem porte Linux do
+`build-swiftui-objc.ps1`), e 3 de `exception_raise*` (servidor MIG de exceções Mach).
 
 Não houve boot: nenhum app foi aberto com essas dylibs na VM.
 

@@ -32,7 +32,10 @@ SP_SHA=8452bfdeac7f1afb9fe91faeba34f09ad46eb8e3085d345d3839f9ad4b69032b
 sfroot=${MOS_SF_SRC:-$deps/swift-foundation-$SF_REV}
 scroot="$deps/swift-collections-1.7.3"
 sproot="$deps/swift-experimental-string-processing-swift-6.4.2-RELEASE"
-if [ ! -d "$sfroot/Sources" ] || [ ! -d "$scroot/Sources" ] || [ ! -d "$sproot/Sources" ]; then
+OO_REV=b030e44d6471cf1d760137e5da6805cf57aa885b
+OO_SHA=d8b4f7805aa611f73ecbc81447c5f5ca381b74feae0b57bd5f7def2a760b50d5
+ooroot="$deps/OpenObservation-$OO_REV"
+if [ ! -d "$sfroot/Sources" ] || [ ! -d "$scroot/Sources" ] || [ ! -d "$sproot/Sources" ] || [ ! -d "$ooroot/Sources" ]; then
     # shellcheck source=tools/baixar.sh
     . "$root/tools/baixar.sh"
     mkdir -p "$deps/dl"
@@ -44,6 +47,7 @@ if [ ! -d "$sfroot/Sources" ] || [ ! -d "$scroot/Sources" ] || [ ! -d "$sproot/S
     pega https://github.com/apple/swift-collections/archive/refs/tags/1.7.3.tar.gz swift-collections-1.7.3.tar.gz "$SC_SHA" "$scroot"
     pega https://github.com/swiftlang/swift-experimental-string-processing/archive/refs/tags/swift-6.4.2-RELEASE.tar.gz \
         swift-experimental-string-processing-6.4.2.tar.gz "$SP_SHA" "$sproot"
+    pega "https://github.com/OpenSwiftUIProject/OpenObservation/archive/$OO_REV.tar.gz" "OpenObservation-$OO_REV.tar.gz" "$OO_SHA" "$ooroot"
 fi
 if [ ! -x "${zig:-/}" ] || [ ! -x "${fe:-/}" ] || [ ! -d "$sfroot/Sources" ] || [ ! -d "$scroot/Sources" ]; then
     echo "build-swift-foundation-objc: falta zig, swift-frontend 6.4.2, swift-foundation ou swift-collections 1.7.3" >&2
@@ -318,11 +322,21 @@ if [ $fails -eq 0 ] && [ -f "$out/Foundation.o" ]; then
 fi
 
 # ---- UniformTypeIdentifiers: o struct UTType sobre a classe ObjC do libSystem. Importa o Foundation acima.
-if [ $fails -eq 0 ] && [ -f "$out/Foundation.swiftmodule" ] || [ -d "$out/Foundation.swiftmodule" ]; then
+if [ $fails -eq 0 ] && { [ -f "$out/Foundation.swiftmodule" ] || [ -d "$out/Foundation.swiftmodule" ]; }; then
     mapfile -t f < <(find "$root/userland/sdk/swift-objc/UniformTypeIdentifiers" -maxdepth 1 -name '*.swift' | sort)
     if build_mod UniformTypeIdentifiers 5 1 -- -import-underlying-module -autolink-force-load -- "${f[@]}" &&
         want UniformTypeIdentifiers; then
         link_dylib libswiftUniformTypeIdentifiers "$out/UniformTypeIdentifiers.o" "$dest/libswiftFoundation.dylib"
+    fi
+fi
+
+# ---- Observation: o OpenObservation (MIT, porte do Observation da Apple) com o nome do módulo da Apple, em Swift
+# puro, como em tools/build-swift-overlays-objc.ps1 (ObservationRegistrar, Observable, withObservationTracking).
+# Sem o plugin de macros: o @Observable dos apps já vem expandido no binário.
+if [ -d "$ooroot/Sources/OpenObservation" ]; then
+    mapfile -t f < <(find "$ooroot/Sources/OpenObservation" -maxdepth 1 -name '*.swift' | sort)
+    if build_mod Observation 5 1 -- -autolink-force-load -- "${f[@]}" && want Observation; then
+        link_dylib libswiftObservation "$out/Observation.o"
     fi
 fi
 exit $fails
