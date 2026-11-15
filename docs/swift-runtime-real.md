@@ -170,13 +170,23 @@ teste com dois serviços do launchd: `fdnprobe` (URL, URLComponents, Data, JSON,
 plist, UUID, Date, Calendar, CharacterSet, IndexSet, NSRange, FileManager;
 imprime `FDN-OK n/m`) e `rxprobe` (Regex; `RX-OK n/m`). Em 15 nov., QEMU com
 KVM e OVMF, os dois boots antes da correção acima registraram as duas quedas
-descritas. Depois da correção, o QEMU desta máquina deixou de dar boot até com
-uma imagem feita só da esp do build, sem os testes: com KVM o OVMF para antes do
-`BdsDxe`; com TCG o kernel diz "a partição de origem não é FAT com \mOS\" e
-fica com 0 programas. O `fsck.vfat` passa na partição. Então **não há resultado
-`FDN-OK` registrado** para esta versão. O QEMU precisa de `TMPDIR` fora do
-`/tmp`: com `snapshot=on`, a sobreposição vai para lá, e a cota cheia também
-produziu a mensagem acima.
+descritas. Depois da correção, mesma imagem, KVM com `-cpu host -smp 1 -m 512`:
+
+```
+FDN-OK 25/25
+RX-OK 2/2
+launchd: com.mos.teste.fdnprobe (pid 2) terminou com código 0
+launchd: com.mos.teste.rxprobe (pid 3) terminou com código 0
+```
+
+Com `-smp 2` (KVM ou TCG) esta máquina deixou de dar boot, inclusive com uma
+imagem feita só da esp do build: com KVM o OVMF para antes do `BdsDxe`; com TCG
+o kernel diz "a partição de origem não é FAT com \mOS\". No boot bom com 1
+núcleo, o `persist` ainda registra "erro ao ler" em sete arquivos (fontes,
+`stderr-serial`, `estado-sistema`), e o `fsck.vfat` passa na partição. Isso é do
+caminho AHCI/FAT do kernel e não foi investigado aqui. O QEMU precisa de
+`TMPDIR` fora do `/tmp`: com `snapshot=on`, a sobreposição vai para lá, e a cota
+cheia dá a mesma mensagem de partição.
 
 ## QEMU
 

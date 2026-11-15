@@ -86,9 +86,10 @@ mib=$(( (mib + 15) / 16 * 16 ))
 "$src/mkimg" "$out/mOS.img" "$esp" "$mib" --test-overlay "$ovt"
 echo "OK: $out/mOS.img (${mib} MiB)"
 cat << EOF
-Para rodar (OVMF do Ubuntu; o QEMU não desliga sozinho):
+Para rodar (OVMF do Ubuntu; o QEMU não desliga sozinho; TMPDIR fora do /tmp, que recebe a sobreposição do
+snapshot; com 2 núcleos o boot travou nesta máquina, com 1 passou):
   cp /usr/share/OVMF/OVMF_VARS_4M.fd $out/vars.fd
-  timeout 240 qemu-system-x86_64 -machine q35 -m 1024 -cpu max -smp 2 \\
+  TMPDIR=$out timeout 240 qemu-system-x86_64 -accel kvm -machine q35 -m 512 -cpu host -smp 1 \\
     -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \\
     -drive if=pflash,format=raw,file=$out/vars.fd -drive file=$out/mOS.img,format=raw,if=ide,snapshot=on \\
     -display none -serial file:$out/serial.log -nic none -no-reboot
