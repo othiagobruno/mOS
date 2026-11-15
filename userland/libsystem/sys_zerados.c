@@ -1808,33 +1808,6 @@ void CC_SHA224(void) {}
 void CC_SHA224_Final(void) {}
 void CC_SHA224_Init(void) {}
 void CC_SHA224_Update(void) {}
-void NSLocaleCalendar(void) {}
-void NSLocaleCountryCode(void) {}
-void NSLocaleCurrencyCode(void) {}
-void NSLocaleCurrencySymbol(void) {}
-void NSLocaleIdentifier(void) {}
-void NSLocaleScriptCode(void) {}
-void NSLocaleVariantCode(void) {}
-void NSMallocException(void) {}
-void NSPresentationIntentAttributeName(void) {}
-void NSStreamFileCurrentOffsetKey(void) {}
-void NSStringTransformLatinToArabic(void) {}
-void NSStringTransformToLatin(void) {}
-void NSURLContentAccessDateKey(void) {}
-void NSURLFileAllocatedSizeKey(void) {}
-void NSURLFileResourceIdentifierKey(void) {}
-void NSURLIsHiddenKey(void) {}
-void NSURLIsUbiquitousItemKey(void) {}
-void NSURLLinkCountKey(void) {}
-void NSURLTotalFileAllocatedSizeKey(void) {}
-void NSURLTotalFileSizeKey(void) {}
-void NSURLUbiquitousItemDownloadingStatusCurrent(void) {}
-void NSURLUbiquitousItemDownloadingStatusDownloaded(void) {}
-void NSURLUbiquitousItemDownloadingStatusKey(void) {}
-void NSURLUbiquitousItemIsDownloadingKey(void) {}
-void NSURLVolumeAvailableCapacityForImportantUsageKey(void) {}
-void NSURLVolumeAvailableCapacityKey(void) {}
-void NSURLVolumeTotalCapacityKey(void) {}
 void NXGetArchInfoFromCpuType(void) {}
 void NXGetLocalArchInfo(void) {}
 void *OBJC_CLASS_$_NSOutputStream;
@@ -1845,7 +1818,6 @@ void *OBJC_METACLASS_$_SwiftNativeNSObject;
 void *OBJC_METACLASS_$__TtCs12_SwiftObject;
 void SecTaskCopyTeamIdentifier(void) {}
 void SecTaskCreateWithAuditToken(void) {}
-void __CFStringMakeConstantString(void) {}
 void __ashlti3(void) {}
 void __invert_f3(void) {}
 void __lshrti3(void) {}
@@ -1876,7 +1848,6 @@ void fminf(void) {}
 void getfsent(void) {}
 void hypotl(void) {}
 void initstate(void) {}
-void *kCFErrorLocalizedFailureReasonKey;
 void *kCFNetworkProxiesExceptionsList;
 void *kCFNetworkProxiesHTTPEnable;
 void *kCFNetworkProxiesHTTPPort;
@@ -1896,9 +1867,6 @@ void *kCFStreamPropertySOCKSVersion;
 void *kCFStreamPropertyShouldCloseNativeSocket;
 void *kCFStreamPropertySocketNativeHandle;
 void *kCFStreamSocketSOCKSVersion5;
-void *kCFStringTransformToLatin;
-void *kCFURLContentAccessDateKey;
-void *kCFURLFileSizeKey;
 void lgammaf_r(void) {}
 void lgammal_r(void) {}
 void lldiv(void) {}
