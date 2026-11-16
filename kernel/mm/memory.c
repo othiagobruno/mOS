@@ -61,12 +61,13 @@ static void bm_fill(u64 p, u64 n, bool set) {
 
 /* varre o bitmap uma palavra (64 páginas) por vez: pula palavras cheias, engole palavras vazias
  * e, dentro de uma palavra mista, salta direto para o próximo bit livre/ocupado */
-static u64 pmm_find(u64 from, u64 pages) {
+static u64 pmm_find_lim(u64 from, u64 pages, u64 lim) {
     u64 run = 0, start = 0;
-    for (u64 p = from; p < max_pages;) {
+    if (lim > max_pages) lim = max_pages;
+    for (u64 p = from; p < lim;) {
         u64 w = bitmap[p >> 6] >> (p & 63);                    /* bits de p até o fim da palavra */
         u64 left = 64 - (p & 63);
-        if (p + left > max_pages) left = max_pages - p;
+        if (p + left > lim) left = lim - p;
         if (w & 1) {                                          /* ocupado: pula a sequência de 1s */
             u64 ones = ~w ? (u64)__builtin_ctzll(~w) : 64;
             if (ones > left) ones = left;
@@ -82,6 +83,20 @@ static u64 pmm_find(u64 from, u64 pages) {
         p += zeros;
     }
     return ~0ULL;
+}
+static u64 pmm_find(u64 from, u64 pages) { return pmm_find_lim(from, pages, max_pages); }
+
+/* [s, s+pages) inteiro abaixo de `limit` (endereço físico); 0 = não há. Para DMA de 32 bits (dma_alloc32). Procura
+ * do começo da RAM, sem o hint, e não mexe no hint: as alocações comuns continuam de onde estavam. */
+u64 pmm_alloc_below(u64 pages, u64 limit) {
+    if (!pages || limit < 4096) return 0;
+    u64 f = spin_lock_irqsave(&pmm_lock);
+    u64 s = pmm_find_lim(256, pages, limit / 4096);
+    if (s == ~0ULL) { spin_unlock_irqrestore(&pmm_lock, f); return 0; }
+    bm_fill(s, pages, true);
+    free_count -= pages;
+    spin_unlock_irqrestore(&pmm_lock, f);
+    return s * 4096;
 }
 
 u64 pmm_alloc(u64 pages) {
@@ -481,6 +496,17 @@ void *krealloc(void *p, usize n) {
 }
 
 usize heap_used(void) { return used_bytes; }
+
+/* como dma_alloc, com o bloco inteiro abaixo de 4 GiB (placas com endereço de DMA de 32 bits: RTL8821CE).
+ * Libera com pmm_free(phys, páginas). NULL = não há bloco contíguo livre abaixo de 4 GiB. */
+void *dma_alloc32(usize bytes, u64 *phys) {
+    u64 n = ALIGN_UP(bytes ? bytes : 1, 4096) / 4096;
+    u64 p = pmm_alloc_below(n, 4ULL << 30);
+    if (!p) return NULL;
+    memset((void *)p, 0, n * 4096);
+    if (phys) *phys = p;
+    return (void *)p;
+}
 
 void *dma_alloc(usize bytes, u64 *phys) {
     u64 p = pmm_alloc(ALIGN_UP(bytes, 4096) / 4096);
