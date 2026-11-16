@@ -294,7 +294,7 @@ typedef struct {
 #define MOS_DESK_ACT_FOREGROUND  4u
 #define MOS_DESK_FLAG_DISMISS    1u    /* avisar quando o usuário fechar (evento action = -2) */
 #define MOS_DESK_FLAG_SILENT     2u    /* sem som */
-typedef struct { u64 title, subtitle, body, actions; int token; unsigned flags; } mos_desk_banner_t;   /* int/unsigned: o userland (mos.h) não define i32/u32 */
+typedef struct { unsigned long long title, subtitle, body, actions; int token; unsigned flags; } mos_desk_banner_t;   /* tipos do C: há quem inclua sem mos.h */
 
 /* MOS_DESK_TAKE_EX. action: -1 clique no corpo, -2 fechado pelo usuário (com MOS_DESK_FLAG_DISMISS), 0..3 botão;
  * text: o que foi digitado (ação com MOS_DESK_ACT_TEXT). */
