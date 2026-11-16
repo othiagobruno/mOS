@@ -6,7 +6,8 @@
  *
  * Todas ficam na superclasse certa, com símbolo exportado. As que o Electron chama de fato têm o
  * comportamento de um Mac sem o recurso:
- *   NSOpenPanel/NSSavePanel: o diálogo é cancelado (NSModalResponseCancel); o Electron devolve "canceled".
+ *   NSOpenPanel/NSSavePanel: só a hierarquia e as propriedades; o painel de verdade (janela, navegação, tipos,
+ *   delegate) é registrado depois por appkit_panel.c e substitui runModal/begin*/URL/URLs daqui.
  *   NSStatusBar/NSStatusItem: a barra guarda o item e publica ícone, título e menu no
  *   window server (DEV_STATUS). O clique do kernel volta como GEV_STATUS e abre o menu.
  *   NSAnimation: termina na hora (progresso 1, animationDidEnd:). NSAnimationContext: grupos imediatos.
@@ -118,7 +119,7 @@ static id ps_mcopy(id self, SEL c) {
 }
 static id ps_copy(id self, SEL c) { (void)c; return objc_retain(self); }
 
-/* ---- painéis de abrir/salvar: cancelados */
+/* ---- painéis de abrir/salvar: base (appkit_panel.c registra a implementação real por cima) */
 static id panel_new(id k, SEL c) { (void)c; return objc_autorelease(new_inst(k)); }
 static i64 panel_run(id self, SEL c) { (void)self; (void)c; return 0; /* NSModalResponseCancel */ }
 static void panel_begin(id self, SEL c, void *blk) { (void)self; (void)c; if (blk) ((ax_block_t *)blk)->invoke(blk, (i64)0); }

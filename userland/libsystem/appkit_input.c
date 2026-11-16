@@ -592,6 +592,7 @@ void cx_appkit_input_init(void) {
     { extern void cx_contacts_init(void); cx_contacts_init(); }                     /* contacts_fw.c: agenda local */
     { extern void cx_appkit_docktile_init(void); cx_appkit_docktile_init(); }       /* appkit_docktile.c: NSDockTile */
     cx_appkit_extra_init();     /* appkit_extra.c: painéis, barra de status, NSAnimation, NSParagraphStyle... */
+    { extern void cx_appkit_panel_init(void); cx_appkit_panel_init(); }   /* appkit_panel.c: NSOpenPanel/NSSavePanel reais */
     { extern void cx_nsrunning_init(void); cx_nsrunning_init(); }   /* nsrunningapp.c */
     { extern void cx_ax_server_start(void); cx_ax_server_start(); } /* axserver.c: árvore AX pronta para o transporte */
     cx_tracking_init();         /* hover: NSTrackingArea e mouseEntered/Exited/Moved */
