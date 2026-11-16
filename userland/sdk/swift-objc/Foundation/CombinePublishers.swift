@@ -403,14 +403,14 @@ extension RunLoop: Scheduler {
                          _ action: @escaping () -> Void) {
         let t = Timer(fire: date.date._bridgeToObjectiveC(), interval: 0, repeats: false) { _ in action() }
         t.tolerance = tolerance.magnitude
-        add(t, forMode: RunLoop.Mode.defaultRunLoopMode)
+        add(t, forMode: RunLoop.Mode.default)
     }
 
     public func schedule(after date: SchedulerTimeType, interval: SchedulerTimeType.Stride, tolerance: SchedulerTimeType.Stride,
                          options: SchedulerOptions?, _ action: @escaping () -> Void) -> Cancellable {
         let t = Timer(fire: date.date._bridgeToObjectiveC(), interval: interval.magnitude, repeats: true) { _ in action() }
         t.tolerance = tolerance.magnitude
-        add(t, forMode: RunLoop.Mode.defaultRunLoopMode)
+        add(t, forMode: RunLoop.Mode.default)
         return AnyCancellable { t.invalidate() }
     }
 }

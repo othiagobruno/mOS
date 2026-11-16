@@ -81,7 +81,8 @@ extension Calendar: _ObjectiveCBridgeable {
 
 // MARK: - CharacterSet
 
-/// NSCharacterSet que responde pelo CharacterSet Swift (o -characterIsMember: do libSystem só conhece os prontos)
+/// NSCharacterSet que responde pelo CharacterSet Swift (o NSScanner e o resto do libSystem perguntam por
+/// -characterIsMember:/-longCharacterIsMember:, e o -bitmapRepresentation devolve o conjunto inteiro)
 internal final class _MOSSwiftCharacterSet: NSCharacterSet {
     let _set: CharacterSet
     init(_ set: CharacterSet) { _set = set; super.init() }
@@ -89,6 +90,11 @@ internal final class _MOSSwiftCharacterSet: NSCharacterSet {
         guard let u = Unicode.Scalar(UInt32(c)) else { return false }
         return _set.contains(u)
     }
+    override func longCharacterIsMember(_ c: UTF32Char) -> Bool {
+        guard let u = Unicode.Scalar(c) else { return false }
+        return _set.contains(u)
+    }
+    override var bitmapRepresentation: NSData { _set.bitmapRepresentation._bridgeToObjectiveC() }
 }
 
 extension CharacterSet: _ObjectiveCBridgeable {
@@ -97,16 +103,9 @@ extension CharacterSet: _ObjectiveCBridgeable {
     public func _bridgeToObjectiveC() -> NSCharacterSet { _MOSSwiftCharacterSet(self) }
     public static func _forceBridgeFromObjectiveC(_ x: NSCharacterSet, result: inout CharacterSet?) {
         if let s = x as? _MOSSwiftCharacterSet { result = s._set; return }
-        // conjunto do libSystem: lido no plano básico (é onde estão os prontos: espaço, fim de linha...)
-        var cs = CharacterSet()
-        var lo: UInt32? = nil
-        for v in UInt32(0)...0xFFFF {
-            let m = (v < 0xD800 || v > 0xDFFF) && x.characterIsMember(unichar(v))
-            if m, lo == nil { lo = v }
-            if !m, let l = lo { cs.insert(charactersIn: Unicode.Scalar(l)!...Unicode.Scalar(v - 1)!); lo = nil }
-        }
-        if let l = lo { cs.insert(charactersIn: Unicode.Scalar(l)!...Unicode.Scalar(0xFFFF)!) }
-        result = cs
+        // conjunto do libSystem: o bitmap do NSCharacterSet tem os 17 planos (mesmo formato do CharacterSet)
+        let b = x.bitmapRepresentation
+        result = CharacterSet(bitmapRepresentation: Data(bytes: b.bytes, count: Int(b.length)))
     }
     public static func _conditionallyBridgeFromObjectiveC(_ x: NSCharacterSet, result: inout CharacterSet?) -> Bool {
         _forceBridgeFromObjectiveC(x, result: &result); return true

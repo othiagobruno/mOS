@@ -1,6 +1,7 @@
-// mOS — overlay Foundation: a API Swift do Scanner da Apple (Scanner.swift do Foundation: currentIndex, scanString,
-// scanCharacters(from:)...). Em Swift sobre a string do NSScanner do libSystem; a posição dele é em bytes UTF-8
-// (scanLocation), então currentIndex converte pela visão utf8. Como na Apple, os métodos pulam os espaços do início.
+// mOS — overlay Foundation: a API Swift do Scanner da Apple (currentIndex, scanString, scanCharacters(from:),
+// scanInt(representation:)...) sobre o NSScanner do libSystem (userland/libsystem/fdn_scanner.c). Toda a lógica
+// (charactersToBeSkipped, caseSensitive, locale, posição em UTF-16, falha sem mover) está do lado ObjC, então os
+// métodos novos e os antigos (scanString(_:into:)...) se comportam igual, como no macOS.
 
 extension Scanner {
     public enum NumberRepresentation {
@@ -10,110 +11,120 @@ extension Scanner {
 
     private var _s: String { _mosString(string) }
 
+    /// Conjunto pulado antes de cada leitura (padrão: espaços e quebras de linha; nil = não pula nada).
+    public var charactersToBeSkipped: CharacterSet? {
+        get { __charactersToBeSkipped.map { CharacterSet._unconditionallyBridgeFromObjectiveC($0) } }
+        set { __charactersToBeSkipped = newValue.map { $0._bridgeToObjectiveC() } }
+    }
+
     public var currentIndex: String.Index {
         get {
-            let s = _s, u = s.utf8
-            let off = Swift.min(Int(scanLocation), u.count)
-            return u.index(u.startIndex, offsetBy: off)
+            let s = _s
+            return String.Index(utf16Offset: Swift.min(Int(scanLocation), s.utf16.count), in: s)
         }
         set {
             let s = _s
-            scanLocation = s.utf8.distance(from: s.utf8.startIndex, to: newValue)
+            scanLocation = s.utf16.distance(from: s.utf16.startIndex, to: newValue)
         }
     }
 
-    private func _skipSpaces() {
-        let s = _s
-        var i = currentIndex
-        while i < s.endIndex, s[i].isWhitespace { i = s.index(after: i) }
-        currentIndex = i
-    }
+    public func scanDecimal(_ dcm: UnsafeMutablePointer<Decimal>?) -> Bool { __scanDecimal(dcm) }
+
+    // MARK: - texto
 
     public func scanString(_ searchString: String) -> String? {
-        _skipSpaces()
-        let s = _s
-        guard s[currentIndex...].hasPrefix(searchString) else { return nil }
-        let end = s.index(currentIndex, offsetBy: searchString.count)
-        let r = String(s[currentIndex..<end])
-        currentIndex = end
-        return r
+        var r: NSString? = nil
+        return scanString(_mosNSString(searchString), into: &r) ? r.map(_mosString) : nil
     }
 
     public func scanUpToString(_ substring: String) -> String? {
-        _skipSpaces()
-        let s = _s
-        let start = currentIndex
-        guard start < s.endIndex else { return nil }
-        let end = s[start...].range(of: substring)?.lowerBound ?? s.endIndex
-        guard end > start else { return nil }
-        currentIndex = end
-        return String(s[start..<end])
+        var r: NSString? = nil
+        return scanUpTo(_mosNSString(substring), into: &r) ? r.map(_mosString) : nil
     }
 
     public func scanCharacters(from set: CharacterSet) -> String? {
-        _skipSpaces()
-        let s = _s
-        let start = currentIndex
-        var i = start
-        while i < s.endIndex, s[i].unicodeScalars.allSatisfy({ set.contains($0) }) { i = s.index(after: i) }
-        guard i > start else { return nil }
-        currentIndex = i
-        return String(s[start..<i])
+        var r: NSString? = nil
+        return scanCharacters(from: set._bridgeToObjectiveC(), into: &r) ? r.map(_mosString) : nil
     }
 
     public func scanUpToCharacters(from set: CharacterSet) -> String? {
-        _skipSpaces()
-        let s = _s
-        let start = currentIndex
-        var i = start
-        while i < s.endIndex, !s[i].unicodeScalars.contains(where: { set.contains($0) }) { i = s.index(after: i) }
-        guard i > start else { return nil }
-        currentIndex = i
-        return String(s[start..<i])
+        var r: NSString? = nil
+        return scanUpToCharacters(from: set._bridgeToObjectiveC(), into: &r) ? r.map(_mosString) : nil
     }
 
+    /// Um Character inteiro (grafema), depois de pular charactersToBeSkipped.
     public func scanCharacter() -> Character? {
-        _skipSpaces()
         let s = _s
-        guard currentIndex < s.endIndex else { return nil }
-        let c = s[currentIndex]
-        currentIndex = s.index(after: currentIndex)
+        let loc = Int(_mos_skippedLocation())
+        guard loc < s.utf16.count else { return nil }
+        let rest = s[String.Index(utf16Offset: loc, in: s)...]
+        guard let c = rest.first else { return nil }
+        let end = rest.index(after: rest.startIndex)
+        scanLocation = s.utf16.distance(from: s.utf16.startIndex, to: end)
         return c
     }
 
+    // MARK: - números
+
     public func scanInt(representation: NumberRepresentation = .decimal) -> Int? {
-        _skipSpaces()
-        let s = _s
-        var i = currentIndex
-        var txt = ""
-        if i < s.endIndex, s[i] == "-" || s[i] == "+" { txt.append(s[i]); i = s.index(after: i) }
-        if representation == .hexadecimal, s[i...].lowercased().hasPrefix("0x") { i = s.index(i, offsetBy: 2) }
-        while i < s.endIndex, representation == .decimal ? s[i].isASCII && s[i].isNumber : s[i].isHexDigit {
-            txt.append(s[i]); i = s.index(after: i)
+        switch representation {
+        case .decimal:
+            var v = 0
+            return scanInt(&v) ? v : nil
+        case .hexadecimal:
+            var v: UInt64 = 0
+            return scanHexInt64(&v) ? Int(truncatingIfNeeded: v) : nil
         }
-        guard let v = Int(txt, radix: representation == .decimal ? 10 : 16) else { return nil }
-        currentIndex = i
-        return v
+    }
+
+    public func scanInt32(representation: NumberRepresentation = .decimal) -> Int32? {
+        switch representation {
+        case .decimal:
+            var v: Int32 = 0
+            return scanInt32(&v) ? v : nil
+        case .hexadecimal:
+            var v: UInt32 = 0
+            return scanHexInt32(&v) ? Int32(bitPattern: v) : nil
+        }
+    }
+
+    public func scanInt64(representation: NumberRepresentation = .decimal) -> Int64? {
+        switch representation {
+        case .decimal:
+            var v: Int64 = 0
+            return scanInt64(&v) ? v : nil
+        case .hexadecimal:
+            var v: UInt64 = 0
+            return scanHexInt64(&v) ? Int64(bitPattern: v) : nil
+        }
+    }
+
+    public func scanUInt64(representation: NumberRepresentation = .decimal) -> UInt64? {
+        var v: UInt64 = 0
+        switch representation {
+        case .decimal: return scanUnsignedLongLong(&v) ? v : nil
+        case .hexadecimal: return scanHexInt64(&v) ? v : nil
+        }
+    }
+
+    public func scanFloat(representation: NumberRepresentation = .decimal) -> Float? {
+        var v: Float = 0
+        switch representation {
+        case .decimal: return scanFloat(&v) ? v : nil
+        case .hexadecimal: return scanHexFloat(&v) ? v : nil
+        }
     }
 
     public func scanDouble(representation: NumberRepresentation = .decimal) -> Double? {
-        _skipSpaces()
-        if representation == .hexadecimal { return scanInt(representation: .hexadecimal).map(Double.init) }
-        let s = _s
-        var i = currentIndex
-        var txt = ""
-        var seenDigit = false, seenDot = false, seenExp = false
-        while i < s.endIndex {
-            let c = s[i]
-            if c.isASCII && c.isNumber { seenDigit = true }
-            else if (c == "-" || c == "+") && (txt.isEmpty || txt.last == "e" || txt.last == "E") {}
-            else if c == "." && !seenDot && !seenExp { seenDot = true }
-            else if (c == "e" || c == "E") && seenDigit && !seenExp { seenExp = true }
-            else { break }
-            txt.append(c); i = s.index(after: i)
+        var v: Double = 0
+        switch representation {
+        case .decimal: return scanDouble(&v) ? v : nil
+        case .hexadecimal: return scanHexDouble(&v) ? v : nil
         }
-        guard seenDigit, let v = Double(txt) else { return nil }
-        currentIndex = i
-        return v
+    }
+
+    public func scanDecimal() -> Decimal? {
+        var v = Decimal()
+        return scanDecimal(&v) ? v : nil
     }
 }

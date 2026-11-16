@@ -41,7 +41,7 @@ CLASS(NSMutableURLRequest) CLASS(NSNetService) CLASS(NSNetServiceBrowser)
 
 CLASS(NSPipe) CLASS(NSPointerArray) CLASS(NSPredicate) CLASS(NSProgress) CLASS(NSPropertyListSerialization)
 CLASS(NSProxy) CLASS(NSPurgeableData) CLASS(NSRecursiveLock) CLASS(NSRegularExpression)
-CLASS(NSScanner) CLASS(NSScriptClassDescription) CLASS(NSScriptCommand)
+CLASS(NSScriptClassDescription) CLASS(NSScriptCommand)
 CLASS(NSSecureUnarchiveFromDataTransformer) CLASS(NSSortDescriptor) CLASS(NSTask) CLASS(NSTextCheckingResult)
 CLASS(NSUniqueIDSpecifier) 
 
@@ -648,84 +648,7 @@ static id date_format(double unix_s, const char *pat) {
 }
 /* NSDateFormatter e os outros formatters estão em fdn_formatters.c (ICU) */
 
-/* ---------------------------------------------------------------- scanner */
-static id sc_init(id s, SEL c, id str) { (void)c; BOX(s)->a = retain(str); BOX(s)->i = 0; return s; }
-static id sc_with(id cls, SEL c, id str) { return ar(sc_init(cx_alloc_instance((cx_class_t *)cls), c, str)); }
-static BOOL sc_end(id s, SEL c) { (void)c; return (u64)BOX(s)->i >= strlen(cs(BOX(s)->a)); }
-static void sc_skip(id s) {
-    const char *p = cs(BOX(s)->a);
-    u64 i = (u64)BOX(s)->i, n = strlen(p);
-    while (i < n && (p[i] == ' ' || p[i] == '\t' || p[i] == '\n' || p[i] == '\r')) i++;
-    BOX(s)->i = (i64)i;
-}
-static BOOL sc_scan_str(id s, SEL c, id needle, id *out) {
-    (void)c;
-    sc_skip(s);
-    const char *p = cs(BOX(s)->a), *q = cs(needle);
-    u64 i = (u64)BOX(s)->i;
-    u64 L = strlen(q);
-    if (strncmp(p + i, q, L)) { if (out) *out = 0; return NO; }
-    BOX(s)->i = (i64)(i + L);
-    if (out) *out = ar(copystr(p + i, L));
-    return YES;
-}
-static BOOL sc_scan_upto(id s, SEL c, id needle, id *out) {
-    (void)c;
-    const char *p = cs(BOX(s)->a);
-    u64 i = (u64)BOX(s)->i;
-    const char *f = strstr(p + i, cs(needle));
-    u64 e = f ? (u64)(f - p) : strlen(p);
-    if (out) *out = ar(copystr(p + i, e - i));
-    BOX(s)->i = (i64)e;
-    return f != 0;
-}
-static BOOL sc_scan_int(id s, SEL c, int *out) {
-    (void)c;
-    sc_skip(s);
-    const char *p = cs(BOX(s)->a) + BOX(s)->i;
-    char *e = 0;
-    long v = strtol(p, &e, 10);
-    if (e == p) return NO;
-    BOX(s)->i += e - p;
-    if (out) *out = (int)v;
-    return YES;
-}
-static BOOL sc_scan_ll(id s, SEL c, long long *out) {
-    (void)c;
-    sc_skip(s);
-    const char *p = cs(BOX(s)->a) + BOX(s)->i;
-    char *e = 0;
-    long long v = strtoll(p, &e, 10);
-    if (e == p) return NO;
-    BOX(s)->i += e - p;
-    if (out) *out = v;
-    return YES;
-}
-static BOOL sc_scan_dec(id s, SEL c, nsdec_t *out) {
-    (void)c;
-    sc_skip(s);
-    const char *p = cs(BOX(s)->a) + BOX(s)->i;
-    nsdec_t d;
-    int n = fdn_dec_parse(&d, p, ".");
-    if (!n) return NO;
-    BOX(s)->i += n;
-    if (out) *out = d;
-    return YES;
-}
-static BOOL sc_scan_d(id s, SEL c, double *out) {
-    (void)c;
-    sc_skip(s);
-    const char *p = cs(BOX(s)->a) + BOX(s)->i;
-    char *e = 0;
-    double v = strtod(p, &e);
-    if (e == p) return NO;
-    BOX(s)->i += e - p;
-    if (out) *out = v;
-    return YES;
-}
-static u64 sc_loc(id s, SEL c) { (void)c; return (u64)BOX(s)->i; }
-static void sc_setloc(id s, SEL c, u64 i) { (void)c; BOX(s)->i = (i64)i; }
-static id sc_string(id s, SEL c) { (void)c; return BOX(s)->a; }
+/* NSScanner está em fdn_scanner.c (UTF-16, charactersToBeSkipped, caseSensitive, locale) */
 
 /* ---------------------------------------------------------------- expressão regular (retrocesso) */
 static int re_class(const char **pp, int ch, int fold) {
@@ -2191,12 +2114,6 @@ void cx_foundation_more_init(void) {
     M(NSConditionLock, "condition", condlock_cond);
 
 
-    DEF(&NSScanner_c, &NSScanner_m, "NSScanner", ob, BEX);
-    CM(NSScanner, "scannerWithString:", sc_with); CM(NSScanner, "alloc", lock_alloc);
-    M(NSScanner, "initWithString:", sc_init); M(NSScanner, "isAtEnd", sc_end);
-    M(NSScanner, "scanString:intoString:", sc_scan_str); M(NSScanner, "scanUpToString:intoString:", sc_scan_upto);
-    M(NSScanner, "scanInt:", sc_scan_int); M(NSScanner, "scanLongLong:", sc_scan_ll); M(NSScanner, "scanDouble:", sc_scan_d); M(NSScanner, "scanDecimal:", sc_scan_dec);
-    M(NSScanner, "scanLocation", sc_loc); M(NSScanner, "setScanLocation:", sc_setloc); M(NSScanner, "string", sc_string);
 
     DEF(&NSRegularExpression_c, &NSRegularExpression_m, "NSRegularExpression", ob, BEX);
     CM(NSRegularExpression, "regularExpressionWithPattern:options:error:", re_with);

@@ -26,6 +26,12 @@ fi
 L="$ROOT/userland/libsystem"
 gcc -O1 -Wall -DFDN_ICU_HOST -I"$L" "$L/fdn_icu.c" "$L/fdn_i18n_core.c" "$ROOT/tools/fdn_i18n_test.c" -ldl -lm -o "$OUT/fdn_i18n_test"
 gcc -O1 -Wall -DFDN_ICU_HOST -I"$L" "$L/fdn_icu.c" "$L/fdn_charset_core.c" "$ROOT/tools/fdn_charset_test.c" -ldl -o "$OUT/fdn_charset_test"
+# NSString (busca, comparação, caixa) e NSScanner, em UTF-16 sobre a ICU
+gcc -O1 -Wall -DFDN_ICU_HOST -I"$L" "$L/fdn_icu.c" "$L/fdn_text_core.c" "$ROOT/tools/fdn_text_test.c" -ldl -o "$OUT/fdn_text_test"
+"$OUT/fdn_text_test"
+gcc -O1 -Wall -DFDN_ICU_HOST -I"$L" "$L/fdn_icu.c" "$L/fdn_text_core.c" "$L/fdn_scanner_core.c" "$ROOT/tools/fdn_scanner_test.c" \
+    -ldl -lm -o "$OUT/fdn_scanner_test"
+"$OUT/fdn_scanner_test"
 "$OUT/fdn_charset_test"
 gcc -O1 -Wall -Wno-format-truncation -DFDN_ICU_HOST -I"$L" "$L/fdn_icu.c" "$L/fdn_i18n_core.c" "$L/fdn_fmt_core.c" \
     "$ROOT/tools/fdn_fmt_test.c" -ldl -lm -o "$OUT/fdn_fmt_test"
