@@ -31,8 +31,8 @@ Legenda: ✅ pronto com teste de host · 🔧 em andamento · ⬜ não começou.
 | A4 | SCI (IRQ 9 da FADT, ELCR em nível), PM1 status/enable, botão de energia fixo → diálogo de desligar, GPEs de tempo de execução (`_Lxx/_Exx`, sem os de `_PRW`), EC (portas do `_CRS`/ECDT, `_Qxx`), trava global da FACS | ✅ código; ⬜ hardware | `acpi_poll()` no laço do desktop; GPE `_L08/_L19` avaliados no harness |
 | A5 | Suspensão S3: `_PTS(3)`, FACS waking vector, trampolim de 16 bits, salvar/restaurar CPU, LAPIC, PCI e drivers, `_WAK(3)` | ⬜ | só no hardware; harness para a sequência |
 | A6 | s2idle de reserva (`hlt` em todos os núcleos, wake por GPE) | ⬜ | |
-| A7 | Térmica: Tctl do Zen pelo SMN 0x59800 (o `_TMP` do TZ01 só lê 4 bits de `CM00`), `_CRT` a cada 5 s com desligamento crítico; falta limitação passiva por P-state | 🔧 | `_TMP/_CRT/_PSV` avaliados no harness (90 °C / 50 °C) |
-| A8 | P-states: `_PSS/_PCT` (FFixedHW → MSR 0xC0010062 PStateCtl) e CPPC (`_CPC`, se existir) | ⬜ | |
+| A7 | Térmica: Tctl do Zen pelo SMN 0x59800; crítico = zona em `_CRT` ou Tctl > 105 °C; passivo pela fórmula `_TC1/_TC2/_PSV` a cada `_TSP`, baixando o teto de P-state | ✅ código; ⬜ hardware | `_TMP/_CRT/_PSV/_TC1/_TC2/_TSP` avaliados no harness |
+| A8 | P-states `kernel/dev/cpufreq.c`: `_PSS/_PCT/_PPC` (FFixedHW → MSR 0xC0010062 por núcleo; APs no tique do LAPIC), carga por MPERF/TSC, sobe ≥ 70 %, desce ≤ 30 %. Sem `_PSS`, lê 0xC0010064.. O R2544 não tem `_CPC` (CPPC) | ✅ código; ⬜ hardware | harness: `_PCT[0]` = FFixedHW 64 bits 0xC0010062 e controle = índice; MSRs lidos no PC: P0 FID 0x86/DID 8 = 3350, P1 2000, P2 1600 MHz |
 | A9 | `_PRT` (roteamento de IRQ PCI) e IOAPIC pela MADT | ⬜ | |
 | U1 | xHCI 15e0/15e1: interrupções MSI, USB 3.x, quirks AMD, suspensão/retomada | ⬜ | |
 | U2 | Hubs Genesys (USB2 e USB3 SuperSpeed) | ⬜ | |

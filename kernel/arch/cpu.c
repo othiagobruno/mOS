@@ -171,7 +171,7 @@ u64 isr_dispatch(int_frame_t *f) {
         if (f->vector == 2 && app_guard_nmi(f, true)) return (u64)f;   /* NMI do watchdog de apps: agora não */
         if (f->vector < 32) exc_panic(f);
         if (f->vector == 0xE0) { msi_dispatch(); return (u64)f; }
-        if (f->vector == 0xF0 || f->vector == 0xF2) lapic_eoi();
+        if (f->vector == 0xF0 || f->vector == 0xF2) { lapic_eoi(); if (f->vector == 0xF0) cpufreq_ap_tick(); }
         else if (f->vector != 0xFF) pic_irq(f);
         return (u64)f;
     }
@@ -189,6 +189,7 @@ u64 isr_dispatch(int_frame_t *f) {
     } else if (f->vector == 0xF0 || f->vector == 0xF2) {
         lapic_eoi();
         if (f->vector == 0xF0 && this_cpu()) app_guard_ap_tick();   /* vigia o núcleo 0 (app travado com IF=0) */
+        if (f->vector == 0xF0) cpufreq_ap_tick();                   /* P-state e carga deste núcleo (dev/cpufreq.c) */
         r = sched_ktry() ? sched_irq_exit(f, this_cpu() != 0 || f->vector == 0xF2) : (u64)f;
     } else if (f->vector == 0xFF) {
         r = (u64)f;                                           /* espúria: sem EOI */

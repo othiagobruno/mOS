@@ -478,20 +478,24 @@ void acpi_poll(void) {
         gpe_wr(i, true, g_gpe_enabled[i] & ~g_pending_gpe[i]);
         irq_restore(f2);
     }
-    /* térmica: a cada 5 s; acima do _CRT desliga já */
+    cpufreq_poll();
+    /* térmica a cada 5 s (ACPI 11.1.4): zona em _CRT ou acima, ou o Tctl do Zen além de 105 °C, desliga já */
     static u64 last_t;
     u64 now = timer_ticks();
     if (now - last_t >= 5000) {
         last_t = now;
-        int t = cpu_temp_dC();
-        int crit = 0;
-        for (int i = 0; i < g_ntz; i++) {
-            u64 c = 0;
-            if (aml_eval_int(g_tz[i], "_CRT", &c) == AML_OK && c > 2732) { int cd = (int)c - 2732; if (!crit || cd < crit) crit = cd; }
+        const char *why = NULL;
+        int t = 0, crit = 0;
+        for (int i = 0; i < g_ntz && !why; i++) {
+            u64 k = 0, c = 0;
+            if (aml_eval_int(g_tz[i], "_TMP", &k) == AML_OK && aml_eval_int(g_tz[i], "_CRT", &c) == AML_OK && c > 2732 && k >= c) {
+                t = (int)k - 2732; crit = (int)c - 2732; why = "zona térmica";
+            }
         }
-        if (!crit) crit = 1050;   /* Tctl máximo do Raven: 105 °C */
-        if (t > crit) {
-            kprintf("ACPI: temperatura crítica %d.%d °C (limite %d.%d): desligando\n", t / 10, t % 10, crit / 10, crit % 10);
+        int tc = cpu_temp_dC();
+        if (!why && tc > 1050) { t = tc; crit = 1050; why = "Tctl da CPU"; }
+        if (why) {
+            kprintf("ACPI: temperatura crítica (%s) %d.%d °C, limite %d.%d: desligando\n", why, t / 10, t % 10, crit / 10, crit % 10);
             extern void persist_sync(void);
             persist_sync();
             acpi_poweroff();
@@ -659,6 +663,7 @@ void acpi_init(void) {
         }
         irq_install(F.sci, sci_irq);
     }
+    cpufreq_init();
     kprintf("ACPI: %d tabelas AML, %u nós, %u erros; SCI %u, PM1a 0x%llx, GPE0 0x%llx/%u, S3 %s, S5 %s, reset %s 0x%llx, %d zonas térmicas, CPU %d °C\n",
             F.ntables, aml_node_count(), aml_errors(), F.sci, F.pm1a_cnt.addr, F.gpe0.addr, F.gpe0_len,
             F.slp_ok[3] ? "ok" : "não", F.slp_ok[5] ? "ok" : "não",
