@@ -1,6 +1,6 @@
 /* mOS — Streams do motor web: carrega a implementação em JS (web_stream.js, embutida em web_stream_js.h) na primeira vez
- * que a página usa ReadableStream, WritableStream, TransformStream e companhia, e liga Response.body, Request.body e
- * Blob.stream() a ela. */
+ * que a página usa ReadableStream, WritableStream, TransformStream e companhia (CompressionStream e DecompressionStream
+ * usam o deflate de web_zlib.c), e liga Response.body, Request.body e Blob.stream() a ela. */
 #include "js_int.h"
 #include "web.h"
 #include "web_stream_js.h"
@@ -11,7 +11,8 @@
 static const char *names[] = { "ReadableStream", "ReadableStreamDefaultReader", "ReadableStreamBYOBReader", "ReadableStreamDefaultController",
                                "ReadableByteStreamController", "WritableStream", "WritableStreamDefaultWriter", "WritableStreamDefaultController",
                                "TransformStream", "TransformStreamDefaultController", "CountQueuingStrategy", "ByteLengthQueuingStrategy",
-                               "TextEncoderStream", "TextDecoderStream" };
+                               "TextEncoderStream", "TextDecoderStream",
+                               "CompressionStream", "DecompressionStream" };
 
 /* objeto {tags, fromBytes} do reino atual; avalia a fonte na primeira vez */
 static jsv bundle(void) {
@@ -24,8 +25,8 @@ static jsv bundle(void) {
     if (!sc) return js_throw_err(E_SYNTAX, "streams: %s", err ? err->d : "erro de sintaxe");
     jsv fn = js_run_script(sc);
     if (fn == JS_EXC) return JS_EXC;
-    jsv a = jv_obj(g);
-    jsv b = js_call(fn, JS_UNDEF, 1, &a);
+    jsv a[2] = { jv_obj(g), js_zlib_natives() };
+    jsv b = js_call(fn, JS_UNDEF, 2, a);
     if (b == JS_EXC) return JS_EXC;
     js_defprop(g, k, b, PF_NOENUM);
     /* troca os acessores preguiçosos pelos construtores de verdade */

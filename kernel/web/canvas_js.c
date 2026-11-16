@@ -288,11 +288,11 @@ NATIVE(path2d_addpath) {
 
 /* ============================================================ estado e propriedades do contexto */
 enum { P_CANVAS, P_ALPHA, P_OP, P_FILL, P_STROKE, P_LW, P_CAP, P_JOIN, P_MITER, P_DASHOFF, P_SHX, P_SHY, P_SHBLUR, P_SHCOLOR,
-       P_FONT, P_ALIGN, P_BASELINE, P_DIR, P_SMOOTH, P_SMOOTHQ, P_LETTER, P_COUNT };
+       P_FONT, P_ALIGN, P_BASELINE, P_DIR, P_SMOOTH, P_SMOOTHQ, P_LETTER, P_FILTER, P_COUNT };
 static const char *prop_names[P_COUNT] = { "canvas", "globalAlpha", "globalCompositeOperation", "fillStyle", "strokeStyle",
     "lineWidth", "lineCap", "lineJoin", "miterLimit", "lineDashOffset", "shadowOffsetX", "shadowOffsetY", "shadowBlur",
     "shadowColor", "font", "textAlign", "textBaseline", "direction", "imageSmoothingEnabled", "imageSmoothingQuality",
-    "letterSpacing" };
+    "letterSpacing", "filter" };
 static const char *caps[] = { "butt", "round", "square" }, *joins[] = { "miter", "round", "bevel" };
 static const char *aligns[] = { "start", "end", "left", "right", "center" };
 static const char *baselines[] = { "alphabetic", "top", "hanging", "middle", "ideographic", "bottom" };
@@ -314,7 +314,10 @@ NATIVE(ctx_get) {
     cstate_t *st = &c->st;
     char buf[64];
     switch (self->u.nat.magic) {
-    case P_CANVAS: return js_dom_wrapv(X.p, X.o->u.host.node);
+    case P_CANVAS: {
+        jsv owner = js_arr_get(X.refs, 2);   /* OffscreenCanvas dono do contexto */
+        return jv_isobj(owner) ? owner : js_dom_wrapv(X.p, X.o->u.host.node);
+    }
     case P_ALPHA: return fmt_num(st->alpha);
     case P_OP: return jv_str(js_strz(canvas_op_names[st->op]));
     case P_FILL: case P_STROKE: {
@@ -338,6 +341,7 @@ NATIVE(ctx_get) {
     case P_DIR: return jv_str(js_strz(dirs[st->rtl]));
     case P_SMOOTH: return jv_bool(st->smooth);
     case P_SMOOTHQ: return jv_str(js_strz(quals[st->smoothq]));
+    case P_FILTER: return jv_str(js_strz(st->filter));
     case P_LETTER: {
         snprintf(buf, sizeof buf, "%.4f", (double)st->letter);
         int L = (int)strlen(buf);
@@ -405,6 +409,7 @@ NATIVE(ctx_set) {
     case P_BASELINE: if ((k = pick(sv, baselines, 6)) >= 0) st->baseline = (u8)k; break;
     case P_DIR: if ((k = pick(sv, dirs, 3)) >= 0) st->rtl = (u8)k; break;
     case P_SMOOTHQ: if ((k = pick(sv, quals, 3)) >= 0) st->smoothq = (u8)k; break;
+    case P_FILTER: canvas_set_filter(st, s->d, elem_color(&X)); break;
     case P_LETTER: {
         const char *q = s->d;
         float f;
@@ -638,9 +643,10 @@ NATIVE(pat_settransform) {
 /* origem de imagem: <img> carregada ou <canvas>. -1 exceção, 0 nada a desenhar, 1 ok */
 typedef struct { const u32 *px; int w, h, stride; surface_t *own; } isrc_t;
 
+static node_t *offscreen_node(jsv v);
 static int image_source(ctx_t *X, jsv v, isrc_t *S) {
     memset(S, 0, sizeof *S);
-    node_t *n = jv_iscls(v, CL_NODE) ? jv_o(v)->u.host.node : NULL;
+    node_t *n = jv_iscls(v, CL_NODE) ? jv_o(v)->u.host.node : offscreen_node(v);
     if (!n || n->type != N_ELEM || (n->tag != T_IMG && n->tag != T_CANVAS && n->tag != T_SVG)) {
         if (jv_iscls(v, CL_HOST) && has_proto(jv_o(v), J.realm->p_imgbitmap)) {
             cpat_t *b = blob_of(v);   /* ImageBitmap: pixels no mesmo formato do padrão */
@@ -648,7 +654,7 @@ static int image_source(ctx_t *X, jsv v, isrc_t *S) {
             S->px = b->px; S->w = b->w; S->h = b->h; S->stride = b->w;
             return 1;
         }
-        js_throw_err(E_TYPE, "origem de imagem inválida (esperado <img>, <canvas> ou ImageBitmap)");
+        js_throw_err(E_TYPE, "origem de imagem inválida (esperado <img>, <canvas>, OffscreenCanvas ou ImageBitmap)");
         return -1;
     }
     if (n->tag == T_CANVAS) {
@@ -1105,6 +1111,7 @@ NATIVE(cv_getcontext) {
     if (!id) return JS_EXC;
     jsobj *w = jv_o(thisv);
     jsprop *pr = js_ownprop(w, K_CTX);
+    if (pr && pr->v == JS_TRUE) return js_throw_dom("InvalidStateError", "o canvas foi passado para um OffscreenCanvas");
     if (strcmp(id->d, "2d")) {
         /* outros tipos de contexto ainda não existem neste motor: null, como a especificação manda */
         return JS_NULL;
@@ -1187,6 +1194,154 @@ NATIVE(cv_toblob) {
     task->u.nat.data2 = blob;
     js_page_add_timer(jv_o(thisv)->u.host.page, jv_obj(task), 0);
     return JS_UNDEF;
+}
+
+/* ============================================================ OffscreenCanvas */
+static node_t *offscreen_node(jsv v) {
+    if (!jv_iscls(v, CL_HOST) || !J.realm->p_offcanvas || !has_proto(jv_o(v), J.realm->p_offcanvas)) return NULL;
+    return jv_o(v)->u.host.node;
+}
+static node_t *this_offscreen(jsv thisv) {
+    node_t *n = offscreen_node(thisv);
+    if (!n) js_throw_err(E_TYPE, "Invocação ilegal: não é um OffscreenCanvas");
+    return n;
+}
+
+static jsobj *new_offscreen(js_page_t *p, node_t *n) {
+    jsobj *o = js_newobj_cls(CL_HOST, J.realm->p_offcanvas);
+    o->u.host.page = p;
+    o->u.host.node = n;
+    return o;
+}
+
+static u32 dim_arg(jsv v, bool *ok) {   /* [EnforceRange] unsigned long long */
+    double d = js_tonum(v);
+    *ok = !js_pending() && d == d && d >= 0 && d < 2147483648.0;
+    return *ok ? (u32)d : 0;
+}
+
+NATIVE(oc_ctor) {
+    UNUSED_ARGS;
+    if (!(flags & NF_NEW)) return js_throw_err(E_TYPE, "O construtor OffscreenCanvas exige 'new'");
+    if (argc < 2) return js_throw_err(E_TYPE, "OffscreenCanvas: são necessários largura e altura");
+    bool ok1, ok2;
+    u32 w = dim_arg(ARG(0), &ok1), h = dim_arg(ARG(1), &ok2);
+    if (js_pending()) return JS_EXC;
+    if (!ok1 || !ok2) return js_throw_err(E_TYPE, "OffscreenCanvas: tamanho inválido");
+    js_page_t *p = js_cur_page();
+    if (!p) return js_throw_err(E_TYPE, "OffscreenCanvas sem janela");
+    node_t *n = canvas_detached(js_page_doc(p), (int)w, (int)h);
+    if (!n) return js_throw_err(E_RANGE, "sem memória");
+    return jv_obj(new_offscreen(p, n));
+}
+
+/* magic 0 width 1 height (get); 2 width 3 height (set) */
+NATIVE(oc_size) {
+    UNUSED_ARGS;
+    node_t *n = this_offscreen(thisv);
+    if (!n) return JS_EXC;
+    int w, h, m = self->u.nat.magic;
+    canvas_size_attrs(n, &w, &h);
+    if (m < 2) return jv_int(m ? h : w);
+    bool ok;
+    u32 v = dim_arg(ARG(0), &ok);
+    if (js_pending()) return JS_EXC;
+    if (!ok) return js_throw_err(E_TYPE, "OffscreenCanvas: tamanho inválido");
+    js_page_t *p = jv_o(thisv)->u.host.page;
+    canvas_set_dims(js_page_doc(p), n, m == 2 ? (int)v : w, m == 3 ? (int)v : h);
+    jsv ctx = js_getk(thisv, K_CTX);
+    if (jv_isobj(ctx) && jv_isobj(jv_o(ctx)->u.host.extra)) { jsobj *refs = jv_o(jv_o(ctx)->u.host.extra); js_arr_set(refs, 0, JS_UNDEF); js_arr_set(refs, 1, JS_UNDEF); }
+    js_page_repaint(p);
+    return JS_UNDEF;
+}
+
+NATIVE(oc_getcontext) {
+    UNUSED_ARGS;
+    node_t *n = this_offscreen(thisv);
+    if (!n) return JS_EXC;
+    if (argc < 1) return js_throw_err(E_TYPE, "getContext: é necessário o tipo");
+    jsstr *id = js_tostr(ARG(0));
+    if (!id) return JS_EXC;
+    jsobj *w = jv_o(thisv);
+    jsprop *pr = js_ownprop(w, K_CTX);
+    if (strcmp(id->d, "2d")) {
+        if (strcmp(id->d, "webgl") && strcmp(id->d, "webgl2") && strcmp(id->d, "bitmaprenderer"))
+            return js_throw_err(E_TYPE, "getContext: tipo de contexto desconhecido '%s'", id->d);
+        return JS_NULL;
+    }
+    if (pr && jv_isobj(pr->v)) return pr->v;
+    js_page_t *p = w->u.host.page;
+    canvas2d_t *c = canvas_of(js_page_doc(p), n, true);
+    if (!c) return js_throw_err(E_RANGE, "sem memória para o canvas");
+    if (jv_isobj(ARG(1))) {
+        jsv a = js_getn(ARG(1), "alpha");
+        if (js_pending()) return JS_EXC;
+        if (a != JS_UNDEF && !js_truthy(a)) { c->opaque = true; canvas_resize(c, c->w, c->h); }
+    }
+    jsobj *o = js_newobj_cls(CL_HOST, J.realm->p_ctx2d);
+    o->u.host.page = p;
+    o->u.host.node = n;
+    jsobj *refs = js_newarr(0);
+    js_arr_push(refs, JS_UNDEF);
+    js_arr_push(refs, JS_UNDEF);
+    js_arr_push(refs, thisv);
+    o->u.host.extra = jv_obj(refs);
+    js_defprop(w, K_CTX, jv_obj(o), PF_NOENUM);
+    return jv_obj(o);
+}
+
+/* convertToBlob({type, quality}): PNG (outros tipos caem em PNG, como manda a especificação) */
+NATIVE(oc_toblob) {
+    UNUSED_ARGS;
+    node_t *n = this_offscreen(thisv);
+    if (!n) return JS_EXC;
+    jsobj *pr = js_promise_new();
+    js_page_t *p = jv_o(thisv)->u.host.page;
+    canvas2d_t *c = canvas_of(js_page_doc(p), n, true);
+    if (!c || !c->s || !c->w || !c->h) { js_promise_reject(pr, js_catch_dom("IndexSizeError", "convertToBlob: canvas com tamanho zero")); return jv_obj(pr); }
+    usize len = 0;
+    u8 *png = canvas_png(c, &len);
+    if (!png) { js_promise_reject(pr, js_catch_dom("EncodingError", "convertToBlob: falha ao codificar")); return jv_obj(pr); }
+    jsobj *b = js_blob_new(png, (u32)len, "image/png");
+    kfree(png);
+    if (!b) return JS_EXC;
+    js_promise_resolve(pr, jv_obj(b));
+    return jv_obj(pr);
+}
+
+static jsobj *new_bitmap(int w, int h, cpat_t **out);
+/* transferToImageBitmap: o bitmap vai para um ImageBitmap e o canvas fica transparente */
+NATIVE(oc_transfer) {
+    UNUSED_ARGS;
+    node_t *n = this_offscreen(thisv);
+    if (!n) return JS_EXC;
+    js_page_t *p = jv_o(thisv)->u.host.page;
+    jsprop *ctxp = js_ownprop(jv_o(thisv), K_CTX);
+    if (!ctxp || !jv_isobj(ctxp->v)) return js_throw_dom("InvalidStateError", "transferToImageBitmap: o OffscreenCanvas ainda não tem contexto");
+    canvas2d_t *c = canvas_of(js_page_doc(p), n, true);
+    if (!c || !c->s || !c->w || !c->h) return js_throw_dom("InvalidStateError", "transferToImageBitmap: canvas com tamanho zero");
+    cpat_t *b;
+    jsobj *o = new_bitmap(c->w, c->h, &b);
+    if (!o) return JS_EXC;
+    for (int y = 0; y < c->h; y++) {
+        memcpy(b->px + (usize)y * c->w, c->s->px + (usize)y * c->s->stride, (usize)c->w * 4);
+        memset(c->s->px + (usize)y * c->s->stride, 0, (usize)c->w * 4);
+    }
+    if (c->opaque) for (int y = 0; y < c->h; y++) for (int x = 0; x < c->w; x++) c->s->px[(usize)y * c->s->stride + x] = 0xFF000000u;
+    js_page_repaint(p);
+    return jv_obj(o);
+}
+
+/* HTMLCanvasElement.transferControlToOffscreen: o OffscreenCanvas desenha no próprio elemento */
+NATIVE(cv_transfer) {
+    UNUSED_ARGS;
+    node_t *n = this_canvas(thisv);
+    if (!n) return JS_EXC;
+    jsobj *w = jv_o(thisv);
+    jsprop *pr = js_ownprop(w, K_CTX);
+    if (pr && (jv_isobj(pr->v) || pr->v == JS_TRUE)) return js_throw_dom("InvalidStateError", "transferControlToOffscreen: o canvas já tem contexto");
+    js_defprop(w, K_CTX, JS_TRUE, PF_NOENUM);
+    return jv_obj(new_offscreen(w->u.host.page, n));
 }
 
 /* ============================================================ ImageBitmap */
@@ -1328,6 +1483,7 @@ void js_canvas_init(jsrealm *r) {
     js_defnative(cp, "getContext", cv_getcontext, 1, 0);
     js_defnative(cp, "toDataURL", cv_todataurl, 0, 0);
     js_defnative(cp, "toBlob", cv_toblob, 1, 0);
+    js_defnative(cp, "transferControlToOffscreen", cv_transfer, 0, 0);
     iface(g, "HTMLCanvasElement", cp, NULL, 0);
     /* CanvasRenderingContext2D */
     r->p_ctx2d = js_newobj(op);
@@ -1375,6 +1531,15 @@ void js_canvas_init(jsrealm *r) {
     r->p_cpat = js_newobj(op);
     js_defnative(r->p_cpat, "setTransform", pat_settransform, 0, 0);
     iface(g, "CanvasPattern", r->p_cpat, NULL, 0);
+    /* OffscreenCanvas */
+    r->p_offcanvas = js_newobj(op);
+    jsobj *ocp = r->p_offcanvas;
+    js_defaccessor(ocp, js_intern("width", -1), jv_obj(js_newnative(oc_size, "width", 0, 0)), jv_obj(js_newnative(oc_size, "width", 1, 2)), 0);
+    js_defaccessor(ocp, js_intern("height", -1), jv_obj(js_newnative(oc_size, "height", 0, 1)), jv_obj(js_newnative(oc_size, "height", 1, 3)), 0);
+    js_defnative(ocp, "getContext", oc_getcontext, 1, 0);
+    js_defnative(ocp, "convertToBlob", oc_toblob, 0, 0);
+    js_defnative(ocp, "transferToImageBitmap", oc_transfer, 0, 0);
+    iface(g, "OffscreenCanvas", ocp, oc_ctor, 2);
     /* ImageBitmap e createImageBitmap */
     r->p_imgbitmap = js_newobj(op);
     js_defgetter(r->p_imgbitmap, "width", bm_get, 0);

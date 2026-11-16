@@ -429,7 +429,19 @@ static void esc(sbuf_t *sb, const char *s, int n, bool attr) {
     }
 }
 
+/* elementos de documento XML: o fragmento vira XML (mesmo namespace do pai, salvo <svg>) */
+static void xml_adopt(node_t *n, const char *uri) {
+    for (node_t *c = n->first; c; c = c->next) {
+        if (c->type != N_ELEM) continue;
+        if (c->ns == 1 && c->tag == T_SVG) continue;
+        c->ns = 2;
+        c->nsuri = uri;
+        xml_adopt(c, uri);
+    }
+}
+
 static void serialize(sbuf_t *sb, node_t *n, bool outer) {
+    if (n->type == N_ELEM && n->ns == 2 && outer) { node_xml(n, sb); return; }   /* elemento de documento XML */
     if (n->type == N_TEXT) {
         bool raw = n->parent && n->parent->type == N_ELEM && (n->parent->tag == T_SCRIPT || n->parent->tag == T_STYLE);
         if (raw) sb_putn(sb, n->text, n->len); else esc(sb, n->text, n->len, false);
@@ -583,7 +595,7 @@ static node_t *next_el(node_t *n) { for (n = n->next; n; n = n->next) if (n->typ
 
 static bool match_simple(csimple *c, node_t *n) {
     if (n->type != N_ELEM) return false;
-    if (c->tag[0] && strcmp(c->tag, n->name)) return false;
+    if (c->tag[0] && (n->ns ? strcasecmp(c->tag, n->name) : strcmp(c->tag, n->name))) return false;   /* XML: o seletor vem em minúsculas */
     if (c->id[0]) { const char *v = node_attr(n, "id"); if (!v || strcmp(v, c->id)) return false; }
     for (int i = 0; i < c->ncls; i++) if (!has_class(n, c->cls[i])) return false;
     for (int i = 0; i < c->nat; i++) {
@@ -1975,7 +1987,9 @@ static jsv node_get(jsobj *o, jsstr *k, bool *found) {
         if (keyis(k, "title")) return jv_str(js_strz(d->title));
         if (keyis(k, "URL") || keyis(k, "documentURI")) return jv_str(js_strz(p->url));
         if (keyis(k, "location")) return jv_obj(p->location);
-        if (keyis(k, "readyState")) return jv_str(js_strz(p->loaded ? "complete" : p->dcl ? "interactive" : "loading"));
+        if (keyis(k, "readyState")) return jv_str(js_strz(p->loaded || d->xml ? "complete" : p->dcl ? "interactive" : "loading"));
+        if (keyis(k, "contentType")) return jv_str(js_strz(d->ctype[0] ? d->ctype : "text/html"));
+        if (keyis(k, "xmlVersion")) return d->xml ? jv_str(js_strz("1.0")) : JS_NULL;
         if (keyis(k, "nodeName")) return jv_str(js_strz("#document"));
         if (keyis(k, "defaultView")) return jv_obj(p->realm->global);
         if (keyis(k, "cookie")) return jv_str(js_strz(p->cookie));
@@ -2006,8 +2020,16 @@ static jsv node_get(jsobj *o, jsstr *k, bool *found) {
         return JS_UNDEF;
     }
     /* elementos */
-    if ((keyis(k, "tagName") || keyis(k, "nodeName")) && n->ns == 1) return jv_str(js_strz(n->name));   /* SVG: caixa original */
-    if (keyis(k, "namespaceURI")) return jv_str(js_strz(n->ns == 1 ? "http://www.w3.org/2000/svg" : "http://www.w3.org/1999/xhtml"));
+    if ((keyis(k, "tagName") || keyis(k, "nodeName")) && n->ns) return jv_str(js_strz(n->name));   /* SVG e XML: caixa original */
+    if (keyis(k, "namespaceURI")) {
+        if (n->nsuri) return *n->nsuri ? jv_str(js_strz(n->nsuri)) : JS_NULL;
+        return jv_str(js_strz(n->ns == 1 ? "http://www.w3.org/2000/svg" : "http://www.w3.org/1999/xhtml"));
+    }
+    if (n->ns == 2 && (keyis(k, "localName") || keyis(k, "prefix"))) {
+        const char *c = strchr(n->name, ':');
+        if (keyis(k, "prefix")) return c ? jv_str(js_strn(n->name, (int)(c - n->name))) : JS_NULL;
+        return jv_str(js_strz(c ? c + 1 : n->name));
+    }
     if (keyis(k, "tagName") || keyis(k, "nodeName")) {
         char up[64];
         int i = 0;
@@ -2141,8 +2163,9 @@ static int node_set(jsobj *o, jsstr *k, jsv v) {
         remove_children(p, n);
         if (n->tag == T_SCRIPT || n->tag == T_STYLE || n->tag == T_TEXTAREA) {
             if (s->len) { node_t *t = new_text(d, s->d, (int)s->len); if (t) insert_before(n, t, NULL); }
-        } else if (n->ns == 1) {
-            html_svg_fragment(d, n, s->d, (int)s->len, &d->node_count);   /* conteúdo SVG é XML */
+        } else if (n->ns) {
+            html_svg_fragment(d, n, s->d, (int)s->len, &d->node_count);   /* conteúdo SVG e XML é XML */
+            if (n->ns == 2) xml_adopt(n, n->nsuri);
             for (node_t *c = n->first; c; c = c->next) js_mo_child(n, c, NULL, c->prev, c->next);
         } else {
             html_parse_fragment(d, n, s->d, (int)s->len);
@@ -2908,7 +2931,7 @@ NATIVE(el_attr) {
     if (!k) return JS_EXC;
     char low[64];
     int i = 0;
-    for (; i < (int)k->len && i < 63; i++) low[i] = (char)tolower((u8)k->d[i]);
+    for (; i < (int)k->len && i < 63; i++) low[i] = n->ns ? k->d[i] : (char)tolower((u8)k->d[i]);   /* SVG/XML: caixa original */
     low[i] = 0;
     switch (self->u.nat.magic) {
     case 0: { const char *v = node_attr(n, low); return v ? jv_str(js_strz(v)) : JS_NULL; }
@@ -3482,6 +3505,8 @@ static bool pump_nets(js_page_t *p) {
 /* ============================================================ montagem do reino */
 static jsv domparser_ctor(jsv thisv, int argc, jsv *argv, jsobj *self, int flags);
 static jsv domparser_parse(jsv thisv, int argc, jsv *argv, jsobj *self, int flags);
+static jsv xmlser_ctor(jsv thisv, int argc, jsv *argv, jsobj *self, int flags);
+static jsv xmlser_str(jsv thisv, int argc, jsv *argv, jsobj *self, int flags);
 
 void js_dom_init(jsrealm *r) {
     js_page_t *p = r->page;
@@ -3687,21 +3712,60 @@ void js_dom_init(jsrealm *r) {
     js_stream_init(r);  /* ReadableStream e companhia (carregados na primeira vez) */
     jsobj *dpp = js_newobj(op);
     js_defnative(dpp, "parseFromString", domparser_parse, 2, 0);
+    jsobj *xsp = js_newobj(op);
+    js_defnative(xsp, "serializeToString", xmlser_str, 1, 0);
+    js_defn(g, "XMLSerializer", jv_obj(js_newctor(xmlser_ctor, "XMLSerializer", 0, xsp)), PF_NOENUM);
     js_defn(g, "DOMParser", jv_obj(js_newctor(domparser_ctor, "DOMParser", 0, dpp)), PF_NOENUM);
     js_canvas_init(r);
 }
 
-/* HTML → Document separado (DOMParser, XHR responseType "document") */
+/* tipo MIME de XML: text/xml, application/xml ou terminado em +xml */
+bool js_mime_is_xml(const char *m) {
+    usize n = strlen(m);
+    return !strcmp(m, "text/xml") || !strcmp(m, "application/xml") || (n > 4 && !strcmp(m + n - 4, "+xml"));
+}
+
+/* HTML ou XML → Document separado (DOMParser, XHR responseType "document", responseXML) */
 jsv js_dom_parse_document(const char *url, jsstr *src, const char *mime) {
     js_page_t *p = cur_page();
     if (!p) return JS_NULL;
-    (void)mime;
     if (p->nxdocs >= (int)ARRAY_LEN(p->xdocs)) return js_throw_err(E_RANGE, "documentos demais criados por DOMParser nesta página");
-    doc_t *d = doc_parse(src->d, src->len, url && *url ? url : p->url);
+    bool xml = mime && js_mime_is_xml(mime);
+    doc_t *d = xml ? xml_parse_doc(src->d, (int)src->len, url && *url ? url : p->url) : doc_parse(src->d, src->len, url && *url ? url : p->url);
+    if (d) snprintf(d->ctype, sizeof d->ctype, "%s", mime && *mime ? mime : "text/html");
     if (!d) return js_throw_err(E_RANGE, "sem memória para o documento");
     p->xdocs[p->nxdocs++] = d;
     jsobj *o = wrap(p, d->root);
     return o ? jv_obj(o) : JS_NULL;
+}
+
+/* XMLSerializer.serializeToString: XML; elemento HTML de cima ganha o xmlns do XHTML */
+NATIVE(xmlser_ctor) {
+    UNUSED_ARGS;
+    if (!(flags & NF_NEW)) return js_throw_err(E_TYPE, "O construtor XMLSerializer exige 'new'");
+    return jv_obj(js_newobj(jv_isobj(thisv) && jv_o(thisv)->proto ? jv_o(thisv)->proto : J.realm->p_object));
+}
+NATIVE(xmlser_str) {
+    UNUSED_ARGS;
+    node_t *n = node_of(ARG(0));
+    if (!n) return js_throw_err(E_TYPE, "serializeToString: o argumento precisa ser um Node");
+    sbuf_t sb = { 0 };
+    if (n->type == N_DOC) { for (node_t *c = n->first; c; c = c->next) node_xml(c, &sb); }
+    else {
+        node_xml(n, &sb);
+        if (n->type == N_ELEM && n->ns == 0 && sb.p && !node_attr(n, "xmlns")) {
+            int at = 1 + (int)strlen(n->name);
+            sbuf_t o = { 0 };
+            sb_putn(&o, sb.p, at);
+            sb_puts(&o, " xmlns=\"http://www.w3.org/1999/xhtml\"");
+            sb_putn(&o, sb.p + at, sb.len - at);
+            sb_free(&sb);
+            sb = o;
+        }
+    }
+    jsv r = jv_str(js_strn(sb.p ? sb.p : "", sb.len));
+    sb_free(&sb);
+    return r;
 }
 
 NATIVE(domparser_ctor) {

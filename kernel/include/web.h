@@ -74,7 +74,8 @@ typedef struct node {
     int ay;                /* posição y (para âncoras), -1 se desconhecida */
     frame_t *frame;        /* <iframe>: documento filho (kernel/web/frame.c) */
     struct canvas2d *canvas; /* <canvas>: bitmap e estado 2D (kernel/web/canvas.c) */
-    u8 ns;                 /* 0 HTML, 1 SVG (nomes e atributos com a caixa original) */
+    u8 ns;                 /* 0 HTML, 1 SVG, 2 outro XML (nomes e atributos com a caixa original) */
+    const char *nsuri;     /* documento XML: namespace do elemento ("" = nenhum; NULL = o padrão de ns) */
     u8 svgdirty;           /* <svg> inline mudado pelo JS: re-serializar e redesenhar */
     int index;             /* ordem no documento */
 } node_t;
@@ -88,6 +89,9 @@ const char *html_tag_name(int tag);
 /* SVG inline: subárvore XML (nomes/atributos como vieram) sob parent; counter = contador de índices de nós */
 struct doc;
 void html_svg_fragment(struct doc *d, node_t *parent, const char *src, int len, int *counter);
+/* documento XML (DOMParser, responseXML): namespaces, entidades predefinidas e numéricas, CDATA; dados mal formados
+ * viram um documento com <parsererror> (como no navegador) */
+struct doc *xml_parse_doc(const char *src, int len, const char *url);
 void node_xml(node_t *n, sbuf_t *out);   /* serializa uma subárvore SVG como XML */
 
 /* ============================================================ CSS */
@@ -261,8 +265,11 @@ typedef struct doc {
     /* iframes (kernel/web/frame.c) */
     frame_t *frames;
     struct js_page *frames_js;  /* página JS deste documento, dona dos iframes */
+    struct frame_policy *fpolicy;  /* anfitrião decide as navegações dos iframes (herdado pelos documentos filhos) */
     int frame_depth;            /* 0 = documento principal */
     bool transparent;           /* iframe: sem fundo declarado, a tela fica transparente */
+    bool xml;                   /* documento XML (DOMParser/responseXML): nomes com caixa, sem body/head */
+    char ctype[48];             /* document.contentType */
     int ctrl_base;              /* ids dos controles no ui_t (0 = 100000); cada iframe tem a sua faixa */
     struct canvas2d *canvases;  /* bitmaps dos <canvas> (kernel/web/canvas.c) */
 } doc_t;
@@ -317,6 +324,12 @@ void    frame_load(frame_t *f, const char *url, const char *post, int post_len, 
 bool    form_build(doc_t *d, node_t *form, ctrl_t *submitter, char *url, int cap, sbuf_t *body);
 u8     *frame_data_url(const char *url, usize *len, char *mime, int mcap);
 enum { FRAME_CUR_ARROW = 1, FRAME_CUR_HAND, FRAME_CUR_TEXT };
+/* política de navegação dos iframes: fn devolve 1 = segue agora, 2 = perguntou (frame_policy_reply responde depois),
+ * 0 = ocupado (pergunta de novo no próximo pump) */
+typedef struct frame_policy { int (*fn)(void *ctx, frame_t *f, const char *url, int kind); void *ctx; } frame_policy_t;
+void    frame_policy_reply(frame_t *f, bool allow);
+bool    frames_contains(doc_t *root, frame_t *f);
+const char *frame_current_url(frame_t *f);
 int     frame_cursor(doc_t *d, int x, int y);              /* 0 = fora de iframe */
 bool    frames_take_popup(doc_t *d, char *out, int cap);  /* window.open de algum iframe */
 int     frame_sandbox(frame_t *f);                         /* JS_SB_* do documento do iframe */

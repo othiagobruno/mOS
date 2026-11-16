@@ -104,11 +104,47 @@ WEB_HOST_CASE(plat_crypto_simetrico) {
           "S.importKey('raw',te.encode('pw'),'PBKDF2',false,['deriveKey']).then(function(pk){ return S.deriveKey({name:'PBKDF2',hash:'SHA-256',salt:te.encode('s'),iterations:2},pk,{name:'AES-GCM',length:128},true,['encrypt']) })"
           ".then(function(dk){ r.push('derivada:'+dk.algorithm.name+dk.algorithm.length) });",
           "hmac:1024|derivada:AES-GCM128|embrulho:true");
-    ASYNC("S.importKey('raw',new Uint8Array(24),'AES-GCM',false,['encrypt']).catch(function(e){r.push(e.name)});"
+    ASYNC("S.importKey('raw',new Uint8Array(20),'AES-GCM',false,['encrypt']).catch(function(e){r.push(e.name)});"
           "S.generateKey({name:'AES-GCM',length:128},false,['sign']).catch(function(e){r.push(e.name)});"
           "S.importKey('raw',new Uint8Array(16),'AES-GCM',false,['encrypt']).then(function(k){ return S.exportKey('raw',k) }).catch(function(e){r.push(e.name)});"
           "S.importKey('raw',te.encode('k'),{name:'HMAC',hash:'SHA-256'},false,['verify']).then(function(k){ return S.sign('HMAC',k,te.encode('x')) }).catch(function(e){r.push(e.name)});",
-          "NotSupportedError|SyntaxError|InvalidAccessError|InvalidAccessError");
+          "DataError|SyntaxError|InvalidAccessError|InvalidAccessError");
+    close2(&g);
+}
+
+/* AES-CBC, AES-KW, AES-192 e GCM com IV de qualquer tamanho e tag curta (vetores do pacote cryptography/OpenSSL e
+ * da RFC 3394) */
+WEB_HOST_CASE(plat_crypto_aes) {
+    pg2_t g = open2();
+    ASYNC("var iv=new Uint8Array(16).map(function(_,i){return 16+i}); S.importKey('raw',new Uint8Array(24).map(function(_,i){return i}),'AES-CBC',true,['encrypt','decrypt']).then(function(k){"
+          " return S.encrypt({name:'AES-CBC',iv:iv},k,te.encode('mOS cifra em blocos: 123456789012345')).then(function(c){ r.push(hex(c)); return S.decrypt({name:'AES-CBC',iv:iv},k,c) })"
+          ".then(function(p){ r.push(new TextDecoder().decode(p)); return S.exportKey('jwk',k) }).then(function(j){ r.push(j.alg+':'+k.algorithm.length) }) })",
+          "e817495516f1f4563c797659a4b690b1c1d6d9c45ec6c0470b24caa600b068c389618a0655e9ebb1d7e18dafea34e7e8|mOS cifra em blocos: 123456789012345|A192CBC:192");
+    ASYNC("var iv=new Uint8Array(16).map(function(_,i){return 16+i}); S.importKey('raw',new Uint8Array(32).map(function(_,i){return 100+i}),'AES-CBC',false,['encrypt','decrypt']).then(function(k){"
+          " return S.encrypt({name:'AES-CBC',iv:iv},k,new Uint8Array(0)).then(function(c){ r.push(hex(c)); var bad=new Uint8Array(c); bad[15]^=1; return S.decrypt({name:'AES-CBC',iv:iv},k,bad) }) }).catch(function(e){ r.push(e.name) })",
+          "08d2bd0b8c324259659323c916820567|OperationError");
+    /* AES-KW: RFC 3394 4.1 e chave de 256 bits embrulhando 256 bits; encrypt direto é recusado */
+    ASYNC("Promise.all([S.importKey('raw',new Uint8Array(16).map(function(_,i){return i}),'AES-KW',false,['wrapKey','unwrapKey']),"
+          " S.importKey('raw',unhex('00112233445566778899AABBCCDDEEFF'),'AES-GCM',true,['encrypt'])]).then(function(v){"
+          " return S.wrapKey('raw',v[1],v[0],'AES-KW').then(function(w){ r.push(hex(w)); return S.unwrapKey('raw',w,v[0],'AES-KW','AES-GCM',true,['encrypt']) })"
+          ".then(function(k){ return S.exportKey('raw',k) }).then(function(raw){ r.push(hex(raw)); return S.encrypt('AES-KW',v[0],new Uint8Array(16)) }) }).catch(function(e){ r.push(e.name) })",
+          "1fa68b0a8112b447aef34bd8fb5a7b829d3e862371d2cfe5|00112233445566778899aabbccddeeff|InvalidAccessError");
+    ASYNC("Promise.all([S.importKey('raw',new Uint8Array(32).map(function(_,i){return i}),'AES-KW',false,['wrapKey','unwrapKey']),"
+          " S.importKey('raw',new Uint8Array(32).map(function(_,i){return 200+i}),'AES-CBC',true,['encrypt'])]).then(function(v){ return S.wrapKey('raw',v[1],v[0],'AES-KW').then(function(w){ r.push(hex(w));"
+          " var bad=new Uint8Array(w); bad[3]^=1; return S.unwrapKey('raw',bad,v[0],'AES-KW','AES-CBC',true,['encrypt']) }) }).catch(function(e){ r.push(e.name) })",
+          "ae1f5c4903aa6b0ed126e192d386858e62232df11eba66bf977e0d4f5acfa47541f0a6ff3cb849ed|OperationError");
+    /* GCM: chave de 192, IV de 60 bytes, AAD; IV de 8 bytes; tag de 96 bits é o começo da de 128 */
+    ASYNC("S.importKey('raw',new Uint8Array(24).map(function(_,i){return i}),'AES-GCM',false,['encrypt','decrypt']).then(function(k){ var iv=new Uint8Array(60).map(function(_,i){return i});"
+          " return S.encrypt({name:'AES-GCM',iv:iv,additionalData:te.encode('aad')},k,te.encode('texto do gcm com iv longo')).then(function(c){ r.push(hex(c));"
+          " return S.decrypt({name:'AES-GCM',iv:iv,additionalData:te.encode('aad')},k,c) }).then(function(p){ r.push(new TextDecoder().decode(p)) }) })",
+          "ea199270d43dd300597f3914d8e4fed60becad162ef3576eb0178d42e2bf1e522e35d1fed3594d11dd|texto do gcm com iv longo");
+    ASYNC("S.importKey('raw',new Uint8Array(16).map(function(_,i){return i}),'AES-GCM',false,['encrypt','decrypt']).then(function(k){ var iv=new Uint8Array(8).map(function(_,i){return i}), x=new Uint8Array(33).fill(120);"
+          " return Promise.all([S.encrypt({name:'AES-GCM',iv:iv},k,x), S.encrypt({name:'AES-GCM',iv:iv,tagLength:96},k,x)]).then(function(v){ r.push(hex(v[0])); r.push(hex(v[1])===hex(v[0]).slice(0,(33+12)*2));"
+          " return S.decrypt({name:'AES-GCM',iv:iv,tagLength:96},k,v[1]) }).then(function(p){ r.push(p.byteLength); return S.encrypt({name:'AES-GCM',iv:iv,tagLength:100},k,x) }) }).catch(function(e){ r.push(e.name) })",
+          "bf33570d8aae2a34cf80b59ddd4a34f4126851696f34951e25c6fee5168fec09160ba1631c72a6cec19aadc72831e9f3ad|true|33|OperationError");
+    ASYNC("S.generateKey({name:'AES-KW',length:128},true,['encrypt']).catch(function(e){ r.push(e.name); return S.generateKey({name:'AES-KW',length:192},true,['wrapKey','unwrapKey']) })"
+          ".then(function(k){ r.push(k.algorithm.name+k.algorithm.length+':'+k.usages.join('+')) })",
+          "SyntaxError|AES-KW192:wrapKey+unwrapKey");
     close2(&g);
 }
 

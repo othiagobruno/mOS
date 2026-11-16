@@ -418,3 +418,76 @@ WEB_HOST_CASE(svg_dom_js) {
     doc_free(d);
     surface_free(s);
 }
+
+/* filtros que faltavam: sub-região, turbulência, convolução, deslocamento, iluminação, ladrilho e imagem */
+WEB_HOST_CASE(svg_filtros_2) {
+#define SVG40 "<svg xmlns='http://www.w3.org/2000/svg' width='40' height='40'>"
+#define FU "filterUnits='userSpaceOnUse' x='0' y='0' width='40' height='40'"
+    /* sub-região: o flood só pinta o quadrado pedido */
+    surface_t *s = R(SVG40 "<filter id='f' " FU "><feFlood flood-color='blue' x='10' y='10' width='10' height='10'/></filter>"
+                     "<rect width='40' height='40' fill='red' filter='url(#f)'/></svg>", 40, 40);
+    PX(s, 15, 15, 0xFF0000FFu, 2); PX(s, 5, 5, 0, 2); PX(s, 25, 25, 0, 2);
+    surface_free(s);
+    /* turbulência: ruído variado, determinístico pelo seed, diferente com outro seed; fractalNoise fica perto do meio */
+    const char *tb = SVG40 "<filter id='t' " FU "><feTurbulence baseFrequency='0.1' numOctaves='2' seed='%d' type='%s'/></filter>"
+                     "<rect width='40' height='40' filter='url(#t)'/></svg>";
+    char b1[512], b2[512], b3[512];
+    snprintf(b1, sizeof b1, tb, 3, "turbulence");
+    snprintf(b2, sizeof b2, tb, 3, "turbulence");
+    snprintf(b3, sizeof b3, tb, 9, "fractalNoise");
+    surface_t *t1 = R(b1, 40, 40), *t2 = R(b2, 40, 40), *t3 = R(b3, 40, 40);
+    int distinct = 0, same = 1, diff = 0;
+    for (int i = 1; i < 40 * 40; i++) {
+        if (t1->px[i] != t1->px[i - 1]) distinct++;
+        if (t1->px[i] != t2->px[i]) same = 0;
+        if (t1->px[i] != t3->px[i]) diff++;
+    }
+    CHECK(distinct > 1000 && same && diff > 1000, "turbulência: distintos %d, igual %d, diferentes %d", distinct, same, diff);
+    u32 fa = P(t3, 20, 20) >> 24;
+    CHECK(fa > 40 && fa < 220, "fractalNoise: alfa no meio %u", fa);
+    surface_free(t1); surface_free(t2); surface_free(t3);
+    /* convolução identidade não muda; 3×3 de média suaviza a borda */
+    s = R(SVG40 "<filter id='c' " FU "><feConvolveMatrix order='3' kernelMatrix='0 0 0 0 1 0 0 0 0'/></filter>"
+          "<rect x='10' y='10' width='20' height='20' fill='red' filter='url(#c)'/></svg>", 40, 40);
+    PX(s, 15, 15, 0xFFFF0000u, 1); PX(s, 5, 5, 0, 1);
+    surface_free(s);
+    s = R(SVG40 "<filter id='c' " FU "><feConvolveMatrix order='3' kernelMatrix='1 1 1 1 1 1 1 1 1'/></filter>"
+          "<rect x='10' y='10' width='20' height='20' fill='black' filter='url(#c)'/></svg>", 40, 40);
+    u32 ce = P(s, 10, 20) >> 24, cm = P(s, 20, 20) >> 24;
+    CHECK(ce > 120 && ce < 220 && cm == 255, "convolução de média: borda %u meio %u", ce, cm);
+    surface_free(s);
+    /* deslocamento: mapa cinza neutro não move; mapa com R=1 move scale/2 para a direita */
+    s = R(SVG40 "<filter id='d' " FU "><feFlood flood-color='rgb(255,128,128)' result='m'/><feDisplacementMap in='SourceGraphic' in2='m' scale='20' xChannelSelector='R' yChannelSelector='G'/></filter>"
+          "<rect x='10' y='10' width='10' height='10' fill='red' filter='url(#d)'/></svg>", 40, 40);
+    PX(s, 15, 15, 0, 2); PX(s, 5, 15, 0xFFFF0000u, 2);
+    surface_free(s);
+    /* iluminação difusa de cima (elevação 90): superfície plana fica com a cor da luz */
+    s = R(SVG40 "<filter id='l' " FU "><feDiffuseLighting lighting-color='#ff8000' surfaceScale='1' diffuseConstant='1'><feDistantLight azimuth='0' elevation='90'/></feDiffuseLighting></filter>"
+          "<rect width='40' height='40' fill='black' filter='url(#l)'/></svg>", 40, 40);
+    PX(s, 20, 20, 0xFFFF8000u, 2);
+    surface_free(s);
+    /* especular com luz pontual alta: brilho máximo no centro, menor na borda */
+    s = R(SVG40 "<filter id='l' " FU "><feSpecularLighting specularExponent='20' lighting-color='white'><fePointLight x='20' y='20' z='30'/></feSpecularLighting></filter>"
+          "<rect width='40' height='40' fill='black' filter='url(#l)'/></svg>", 40, 40);
+    u32 sc = P(s, 20, 20) >> 24, sb = P(s, 2, 2) >> 24;
+    CHECK(sc > 200 && sb < sc, "especular: centro %u borda %u", sc, sb);
+    surface_free(s);
+    /* ladrilho: quadrado 10×10 (verde em cima à esquerda) repetido */
+    s = R(SVG40 "<filter id='t' " FU "><feFlood flood-color='lime' x='0' y='0' width='5' height='5' result='a'/>"
+          "<feOffset in='a' dx='0' dy='0' x='0' y='0' width='10' height='10' result='b'/><feTile in='b'/></filter>"
+          "<rect width='40' height='40' filter='url(#t)'/></svg>", 40, 40);
+    PX(s, 2, 2, 0xFF00FF00u, 2); PX(s, 22, 32, 0xFF00FF00u, 2); PX(s, 7, 7, 0, 2); PX(s, 27, 17, 0, 2);
+    surface_free(s);
+    /* imagem data: (PNG azul 2×2) ocupando a sub-região, e elemento por #id */
+    s = R(SVG40 "<filter id='i' " FU "><feImage x='10' y='10' width='20' height='20' preserveAspectRatio='none' "
+          "href='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAEElEQVR4nGNgYPj/H4KhDAA/0gf5tBJPzQAAAABJRU5ErkJggg=='/></filter>"
+          "<rect width='40' height='40' fill='red' filter='url(#i)'/></svg>", 40, 40);
+    PX(s, 20, 20, 0xFF0000FFu, 2); PX(s, 5, 5, 0, 2);
+    surface_free(s);
+    s = R(SVG40 "<defs><circle id='bola' cx='20' cy='20' r='8' fill='lime'/></defs><filter id='i' " FU "><feImage href='#bola'/></filter>"
+          "<rect width='40' height='40' fill='red' filter='url(#i)'/></svg>", 40, 40);
+    PX(s, 20, 20, 0xFF00FF00u, 2); PX(s, 3, 3, 0, 2);
+    surface_free(s);
+#undef FU
+#undef SVG40
+}

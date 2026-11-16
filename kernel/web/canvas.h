@@ -59,6 +59,11 @@ extern const char *const canvas_op_names[OP_COUNT];
 enum { CTA_START, CTA_END, CTA_LEFT, CTA_RIGHT, CTA_CENTER };
 enum { TB_ALPHABETIC, TB_TOP, TB_HANGING, TB_MIDDLE, TB_IDEOGRAPHIC, TB_BOTTOM };
 
+/* ctx.filter: funções de filtro do CSS, na ordem */
+enum { CF_BLUR, CF_BRIGHT, CF_CONTRAST, CF_GRAY, CF_HUE, CF_INVERT, CF_OPACITY, CF_SAT, CF_SEPIA, CF_SHADOW };
+typedef struct { u8 kind; float v, x, y; u32 color; } cfilt_t;
+#define CANVAS_MAX_FILTERS 12
+
 typedef struct {
     mat_t m;
     float alpha;
@@ -79,6 +84,9 @@ typedef struct {
     u8 smoothq;                     /* 0 low, 1 medium, 2 high */
     float letter;                   /* letterSpacing (px) */
     u8 *clip;                       /* máscara W×H (NULL = sem recorte), kmalloc por estado */
+    char filter[160];               /* ctx.filter como foi dado ("none" = sem filtro) */
+    cfilt_t flt[CANVAS_MAX_FILTERS];
+    int nflt;
 } cstate_t;
 
 typedef struct canvas2d {
@@ -95,6 +103,8 @@ typedef struct canvas2d {
 
 canvas2d_t *canvas_of(doc_t *d, node_t *n, bool create);   /* bitmap de um <canvas> (300×150 padrão) */
 void canvas_size_attrs(node_t *n, int *w, int *h);
+node_t *canvas_detached(doc_t *d, int w, int h);           /* nó <canvas> fora do DOM (OffscreenCanvas) */
+void canvas_set_dims(doc_t *d, node_t *n, int w, int h);  /* troca width/height (atributos) e recria o bitmap */
 void canvas_resize(canvas2d_t *c, int w, int h);           /* novo bitmap transparente e estado inicial */
 void canvas_free_all(doc_t *d);
 void canvas_state_init(cstate_t *st);
@@ -125,4 +135,5 @@ u8 *canvas_png(canvas2d_t *c, usize *len);
 u8 *png_encode_rgba(const u8 *rgba, int w, int h, usize *len);
 /* cor CSS de canvas: false se inválida; current = cor do elemento <canvas> */
 bool canvas_parse_color(const char *s, u32 current, u32 *out);
+bool canvas_set_filter(cstate_t *st, const char *s, u32 current);   /* false = valor inválido (o filtro não muda) */
 void canvas_color_str(u32 c, char *out, int cap);
