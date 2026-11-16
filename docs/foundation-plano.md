@@ -35,6 +35,15 @@ Atualizado a cada PR da frente.
 - Lado ObjC: as classes existem pelo nome, mas várias só têm o caminho que um app já pediu. Exemplo:
   `+[NSLocale localeWithLocaleIdentifier:]` ignora o identificador e devolve o locale atual.
 
+## Caminho do lado Swift (depois do PR #232)
+
+O `libswiftFoundation.dylib` real (swift-foundation, Apache 2.0, `tools/build-swift-foundation-objc.sh`) mais os fontes
+de `userland/sdk/swift-objc/Foundation` dão os nomes mangled da Apple; o carregador os prefere aos stubs de
+`sys_zerados.c`. Então a API Swift que falta entra como fonte Swift nessa pasta (não como C/assembly à mão), e um stub
+só sai de `sys_zerados.c` quando o dylib exporta o nome. A medida por app é a dos "stubs alcançados" de
+`tools/meta/placar.py`. O lado ObjC (`NS*` em C no libSystem) continua sendo o que esse Swift chama por baixo.
+Compilar o dylib é trabalho pesado: só dentro de `flock /tmp/mos-pesado.lock` (`mos-regras-de-ram.md`).
+
 ## Fora da frente (combinado com o dono)
 
 - `kCFNetwork*`, `kCFStream*` (proxy, SOCKS, socket nativo), `NSURLSession`/`URLSession` async, WebSocket: Patricia.
