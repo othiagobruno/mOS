@@ -33,17 +33,29 @@ Legenda: ✅ pronto com teste de host · 🔶 escrito, sem teste no hardware · 
 | # | Fase | Estado | Teste |
 |---|---|---|---|
 | F0 | Escolha e validação do firmware: variante (Raven/Picasso/Raven2 pelo rev_id do NBIO), RLC AM4 e "kicker", cabeçalhos gfx v1, rlc v2.0/v2.1, sdma v1, gpu_info v1 (`ucode.c`) | ✅ parte lógica | `tools/amdgpu_host.c` com os 23 blobs reais |
-| F0b | Bases dos IPs, MMIO do BAR5, leitura do rev_id e do estado deixado pela UEFI | ⬜ | — |
+| F0b | MMIO do BAR5, rev_id do NBIO, variante e RLC no hardware, faixa da VRAM na MMHUB (`amdgpu.c`) | ✅ escrito e testado no host | `tools/amdgpu_hw_host.c` (Picasso simulado) |
 | F1 | EDID 1.3/1.4, CTA-861 (DTD, SVD/VIC, HDMI VSDB e VICs HDMI, HF-VSDB/HF-SCDB, Y420 VDB/CMDB, FreeSync), DisplayID 1.x tipo I e 2.x tipo VII, DMT, CVT 1.2 e CVT-RB (`edid.c`) | ✅ parte lógica | `tools/amdgpu_host.c`: 34 modos do monitor real, preferido 5120x1440@60 como no Linux; CVT igual ao `cvt` do X. Leitura do EDID pelo DDC/AUX fica na F4 |
 | F2 | VBIOS: VFCT do ACPI ou ROM do BAR, tabelas ATOM (master data/command), interpretador ATOM | ⬜ | VBIOS real (precisa de um dump com root) |
 | F3 | SMU10 (MP1): caixa de mensagens, PowerUpGfx/Sdma, dispclk/dppclk/dcfclk/socclk mínimos | ⬜ | simulador de mailbox |
-| F4 | DCN 1.0: HPD, DDC/I2C por hardware, AUX DP, OTG/OPTC, HUBP (superfície linear BGRA), DPP, MPC, OPP/FMT, DIG + PHY por ATOM, HDMI (AVI infoframe, SCDC/scrambling > 340 MHz), DP (treino de link), DLG/TTU/watermarks para 1 plano, troca de resolução, várias saídas, page flip e vblank | ⬜ | modelo de registradores no host |
+| F4a | Display sem trocar o modo: leitura do timing de cada OTG e do plano de cada HUBP deixados pela UEFI, conferência com o framebuffer do GOP, vsync pelo OTG (vblank, posição, contador, taxa medida), troca de superfície no vblank (BGRA/RGBA linear, trava do OTG, confirmação por EARLIEST_INUSE), buffer duplo da tela do compositor na VRAM (WC), HPD, alocador de VRAM | ✅ escrito e testado no host | `tools/amdgpu_hw_host.c`: 190/190 (timing de 25+ modos ida e volta, 40 quadros com áreas sujas aleatórias iguais à superfície, travamento da troca volta ao GOP) |
+| F4b | Troca de modo e outras saídas: DDC/I2C e AUX por hardware (EDID ao vivo), DCCG/PLL, DIG + PHY por ATOM, HDMI (AVI, SCDC), DP (treino de link), DPP/MPC/OPP, watermarks, várias saídas | ⬜ | — |
 | F5 | GMC v9: gfxhub + mmhub, GART do sistema, VMID 1..15 com tabelas de 4 níveis, alocador de VRAM e GTT, BOs da ABI | ⬜ | host |
 | F6 | IH (OSSSYS 4.1): anel de interrupções, MSI, fontes vblank/pageflip/HPD/EOP/SDMA | ⬜ | host |
 | F7 | SDMA 4.1: microcódigo, anel, copy/fill linear, fences; cópia do compositor pela GPU | ⬜ | host |
 | F8 | GFX9: RLC, CP (PFP/CE/ME/MEC), golden registers do Picasso/Raven2, CSB, anel GFX, IBs, fences EOP, fila de compute (HQD) | ⬜ | host |
 | F9 | 3D para Metal/OpenGL: contexto AMD na ABI (`docs/gpu-abi.md`), IB PM4 do usuário com VM por processo, biblioteca PM4 no userland, backend GCN (GFX9) para os shaders do Otavio | ⬜ | host + combinar com o Otavio |
 | F10 | Integração: `gpu_present`/`gpu_vsync_wait`/`gpu_kms_set` na AMD, Sobre/Monitores, build final | ⬜ | build final |
+
+## O que já roda no boot (sem build ainda: confere no build final)
+
+`gpu_init` → `amd_probe` → `amdgpu_probe`: lê tudo, liga o vsync pelo OTG e marca a AMD como dona da tela.
+`fb_flush` → `gpu_present` → `amdgpu_present`: buffer duplo com troca no vblank; se a troca travar, volta
+sozinho ao GOP (com o quadro atual) e o compositor segue com a cópia direta. `MOS_GPU_KMS_SET` troca a
+superfície no vblank se for do mesmo tamanho; outro tamanho devolve `-MOS_EINVAL` até a F4b.
+
+Pendência com o Gustavo (memória virtual): `gpu_user_map` conta referência por página e `gpu_user_unmap`
+chama `page_put`, que faria `pmm_free` de páginas da VRAM. Por isso BOs `MOS_GPU_BO_GPU` continuam em RAM;
+para mapear VRAM em processos falta um mapeamento de dispositivo sem refcount (pedido feito a ele).
 
 ## Ordem de bring-up no boot
 

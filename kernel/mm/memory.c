@@ -182,6 +182,13 @@ void vmm_map_mmio(u64 phys, u64 size) {
     __asm__ volatile("mov %%cr3,%%rax; mov %%rax,%%cr3" ::: "rax", "memory");
 }
 
+/* memória de vídeo fora do framebuffer do GOP (VRAM da GPU AMD, kernel/dev/amdgpu): write-combining (PAT1),
+ * como o próprio framebuffer no paging_init. Faixa em páginas de 2 MiB; só para BAR de memória de vídeo. */
+void vmm_map_wc(u64 phys, u64 size) {
+    for (u64 a = ALIGN_DOWN(phys, 0x200000); a < phys + size; a += 0x200000) map_2m(a, PG_PWT);
+    __asm__ volatile("mov %%cr3,%%rax; mov %%rax,%%cr3" ::: "rax", "memory");
+}
+
 void paging_init(void) {
     pml4 = (u64 *)pmm_alloc(1);
     memset(pml4, 0, 4096);

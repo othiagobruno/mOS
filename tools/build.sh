@@ -53,6 +53,11 @@ tail -1 /tmp/amdgpu_host.log
 gcc -O1 -Wall -DMOS_LIBSYS_SYSCALL -I userland/libsystem -c userland/libsystem/sysctl.c -o /tmp/sysctl_ls.o
 gcc -O1 -Wall tools/sysctl_host.c /tmp/sysctl_ls.o -o /tmp/sysctl_host
 /tmp/sysctl_host | tail -1
+# GPU AMD: estado do display, vsync, troca no vblank, buffer duplo e VRAM contra um Picasso simulado
+gcc -O2 -Wall -Wextra -DMOS_HOST_TEST -I kernel/dev/amdgpu -I tools tools/amdgpu_hw_host.c kernel/dev/amdgpu/amdgpu.c \
+    kernel/dev/amdgpu/edid.c kernel/dev/amdgpu/ucode.c -o /tmp/amdgpu_hw_host
+/tmp/amdgpu_hw_host > /tmp/amdgpu_hw_host.log || { cat /tmp/amdgpu_hw_host.log; exit 1; }
+tail -1 /tmp/amdgpu_hw_host.log
 # URL longa no cliente HTTP do kernel (OAuth do Google no Antigravity: invalid_scope com o scope cortado)
 gcc -std=gnu11 -DMOS_HOST_TEST -I kernel/include -I tools tools/http_url_longa_host.c kernel/net/http.c -o /tmp/http_url_longa
 /tmp/http_url_longa > /tmp/http_url_longa.log || { cat /tmp/http_url_longa.log; exit 1; }

@@ -340,7 +340,7 @@ static bool bind_screen(const u32 *px, int w, int h) {
     return true;
 }
 
-bool gpu_present(const u32 *px, int w, int h, int x, int y, int rw, int rh) {
+bool virtio_gpu_present(const u32 *px, int w, int h, int x, int y, int rw, int rh) {
     if (!ready || broken || !px || rw <= 0 || rh <= 0) return false;
     if (!scanout_on || rebind || px != bound_px || w != res_w || h != res_h) {
         if (!pmm_is_ram((u64)px, (u64)w * h * 4) || !bind_screen(px, w, h)) { if (!scanout_on) broken = true; return false; }

@@ -26,7 +26,8 @@ typedef struct {
     bool        surf_match;     /* Intel: a superfície do plano é exatamente o framebuffer do UEFI */
     int         ext_plugged;    /* Intel: monitores externos com sinal de presença (hotplug) */
     int         ext_driven;     /* Intel: portas externas que o firmware deixou ligadas (espelho) */
-    char        ports[96];      /* Intel: resumo das portas externas com monitor ("HDMI/DP B, USB-C 1") */
+    char        ports[96];      /* Intel: resumo das portas externas com monitor ("HDMI/DP B, USB-C 1"); AMD: "HPD n" */
+    u32         vram_mb;        /* AMD Raven: VRAM reservada pela UEFI */
 } gpu_info_t;
 
 void              gpu_init(void);
@@ -37,13 +38,15 @@ const char       *gpu_summary(void);   /* para "Sobre este mOS" */
  * O desktop mostra como notificação quando fica pronto e o Sobre, na aba Monitores. */
 const char       *gpu_display_notice(void);
 
-/* vsync (Intel): espera o retorno vertical antes da cópia para a tela. Não faz nada se não houver
+/* vsync (Intel pelo pipe, AMD pelo OTG, VGA 0x3DA de reserva): espera o retorno vertical antes da cópia para a tela. Não faz nada se não houver
  * GPU Intel mostrando a tela ou se a autoverificação do boot falhou. Chamado por fb_flush. */
 void              gpu_vsync_wait(void);
 
-/* apresentação pela GPU (virtio-gpu por enquanto): mostra o retângulo (x, y, rw, rh) da superfície
- * px (w x h, stride = w) sem cópia na CPU. false = sem GPU apta; quem chama copia para o framebuffer. */
+/* apresentação pela GPU: mostra o retângulo (x, y, rw, rh) da superfície px (w x h, stride = w).
+ * AMD: buffer duplo na VRAM com troca no vblank (dev/amdgpu); virtio-gpu: recurso preso à superfície.
+ * false = sem GPU apta; quem chama copia para o framebuffer. */
 bool              gpu_present(const u32 *px, int w, int h, int x, int y, int rw, int rh);
+bool              virtio_gpu_present(const u32 *px, int w, int h, int x, int y, int rw, int rh);
 bool              virtio_gpu_probe(gpu_info_t *g);   /* dev/virtio_gpu.c */
 /* virtio-gpu 3D (virgl / venus). 0 = ok; senão -MOS_*. Sem dispositivo: -MOS_ENXIO. */
 u32               virtio_gpu_caps(void);             /* MOS_GPU_CAP_VIRGL / VENUS */
@@ -51,7 +54,7 @@ int               virtio_gpu_ctx(unsigned id, unsigned kind, int create);
 int               virtio_gpu_bo(unsigned ctx, unsigned id, unsigned long long size, int create);
 int               virtio_gpu_submit(unsigned ctx, const void *cmds, unsigned n, int pid, unsigned fence_id);
 void              gpu_fence_from_irq(int pid, unsigned fence); /* dev/gpu_abi.c, chamado no IRQ */
-/* KMS: framebuffer e modo. Intel Gen9+ programa o pipe; AMD só troca o modo acompanhado. */
+/* KMS: framebuffer e modo. Intel Gen9+ programa o pipe; AMD troca a superfície no vblank (mesmo modo). */
 int               gpu_kms_available(void);
 int               gpu_kms_set(unsigned connector, unsigned w, unsigned h, unsigned stride, unsigned format, unsigned long long surf_phys);
 void              gpu_displays_changed(void);        /* o arranjo dos monitores mudou: religar as saídas */

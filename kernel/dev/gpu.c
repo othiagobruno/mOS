@@ -12,13 +12,19 @@
  *   PLANE_STRIDE 0x70188               Gen9+: unidades de 64 bytes; antes: bytes
  *   PLANE_SURF 0x7019C                 endereço da superfície na GTT global
  * Config PCI: GGC 0x50 (memória roubada e GTT), BDSM 0x5C (Gen11+: 0xC0, 64 bits).
+ *
+ * AMD família Raven (Raven/Picasso/Raven2): driver nativo em dev/amdgpu (estado do display, vsync pelo OTG,
+ * troca de quadro no vblank, buffer duplo na VRAM). As outras AMD só são identificadas.
  */
 #include "gpu.h"
+#include "gfx.h"
 #include "syscall.h"
+#include "amdgpu/amdgpu.h"
 
 #define MAX_GPUS 4
 
 static gpu_info_t gpus[MAX_GPUS];
+static amdgpu_t amd_dev;                 /* Raven/Picasso/Raven2 (dev/amdgpu) */
 static int ngpus;
 static char summary[128] = "Framebuffer UEFI (nenhuma GPU Intel ou AMD reconhecida)";
 
@@ -255,6 +261,8 @@ static void vga_vsync_init(void) {
 }
 
 void gpu_vsync_wait(void) {
+    amdgpu_t *amd = amdgpu_main();
+    if (amd && amd->vsync_ok) { amdgpu_vblank_wait(amd); return; }
     if (!vs_on && vga_vs) {
         u64 now = timer_ticks();
         if (vs_last_ms && now - vs_last_ms < 5) return;
@@ -277,8 +285,28 @@ void gpu_vsync_wait(void) {
     vs_last_ms = timer_ticks();
 }
 
-bool gpu_vsync_active(void) { return vs_on || vga_vs; }
-u32 gpu_refresh_hz(void) { return vs_on ? vs_hz : vga_hz; }
+bool gpu_vsync_active(void) {
+    amdgpu_t *amd = amdgpu_main();
+    return (amd && amd->vsync_ok) || vs_on || vga_vs;
+}
+u32 gpu_refresh_hz(void) {
+    amdgpu_t *amd = amdgpu_main();
+    if (amd && amd->vsync_ok) return (amd->refresh_mhz + 500) / 1000;
+    return vs_on ? vs_hz : vga_hz;
+}
+
+/* AMD: buffer duplo na VRAM; virtio-gpu: recurso preso à superfície; senão quem chama copia */
+bool gpu_present(const u32 *px, int w, int h, int x, int y, int rw, int rh) {
+    amdgpu_t *amd = amdgpu_main();
+    if (amd && !amd->scr_failed) {
+        rect_t o;
+        if (!display_scanout(0, &o)) o = rect_make(0, 0, (int)g_boot->fb.width, (int)g_boot->fb.height);
+        if (amd->pipe >= 0 && o.w == amd->otg[amd->pipe].hactive && o.h == amd->otg[amd->pipe].vactive &&
+            amdgpu_present(amd, px, w, h, o.x, o.y, x, y, rw, rh))
+            return true;
+    }
+    return virtio_gpu_present(px, w, h, x, y, rw, rh);
+}
 
 /* ------------------------------------------------------------ AMD */
 static void amd_probe(gpu_info_t *g) {
@@ -297,6 +325,23 @@ static void amd_probe(gpu_info_t *g) {
     g->pipe = -1;
     kprintf("gpu: AMD %04x rev %02x — %s, %s%s; VRAM visível 0x%llx, registradores 0x%llx\n", d->device,
             pci_read(d, 0x08) & 0xFF, g->family, g->arch, g->guessed ? " (estimada pelo ID)" : "", g->aperture, g->mmio);
+    if (amd_dev.ready || (d->device != 0x15D8 && d->device != 0x15DD)) return;
+    framebuffer_t *fb = &g_boot->fb;
+    if (!amdgpu_probe(&amd_dev, d, (u64)fb->fb, fb->width, fb->height, fb->pitch)) return;
+    if (amd_dev.pipe >= 0) {
+        const amd_otg_timing_t *t = &amd_dev.otg[amd_dev.pipe];
+        g->pipe = amd_dev.pipe;
+        g->mode_w = t->hactive; g->mode_h = t->vactive;
+        g->stride = amd_dev.plane[amd_dev.pipe].pitch_px * 4;
+        g->surf_match = amd_dev.uefi_match;
+    }
+    for (int i = 0; i < AMD_NUM_HPD; i++) {
+        if (!(amd_dev.hpd_mask >> i & 1)) continue;
+        char pn[16];
+        snprintf(pn, sizeof pn, "HPD %d", i);
+        plugged(g, pn);
+    }
+    g->vram_mb = (u32)(amd_dev.vram_size >> 20);
 }
 
 /* ------------------------------------------------------------ comum */
@@ -328,6 +373,13 @@ void gpu_init(void) {
     }
     if (owner) owner->display = true;
     if (owner && owner->vendor == 0x8086) { vsync_init(owner); intel_ports(owner); }
+    if (owner && owner->vendor == 0x1002 && amd_dev.ready && owner->pci == amd_dev.pci) {
+        amdgpu_set_main(&amd_dev);
+        if (owner->ext_plugged > 1)
+            snprintf(notice, sizeof notice, "Monitores em %s. O mOS mostra a tela no monitor que a UEFI ligou; ligar as outras saídas da %s ainda depende do PHY e do PLL no driver da AMD.",
+                     owner->ports, owner->family);
+        if (notice[0]) kprintf("gpu: %s\n", notice);
+    }
     vga_vsync_init();                                    /* sai sozinho se o vsync da Intel já ligou */
     gpu_info_t *m = owner ? owner : &gpus[0];
     snprintf(summary, sizeof summary, "%s %s (%s)%s", m->maker, m->family, m->arch,
@@ -338,7 +390,7 @@ void gpu_init(void) {
 int gpu_kms_available(void) {
     for (int i = 0; i < ngpus; i++) {
         if (gpus[i].vendor == 0x8086 && gpus[i].gen >= 9 && gpus[i].pipe >= 0 && intel_regs) return 1;
-        if (gpus[i].vendor == 0x1002 && gpus[i].aperture) return 1;
+        if (gpus[i].vendor == 0x1002 && amdgpu_main() && gpus[i].pci == amdgpu_main()->pci && gpus[i].pipe >= 0) return 1;
     }
     return 0;
 }
@@ -371,11 +423,19 @@ int gpu_kms_set(unsigned connector, unsigned w, unsigned h, unsigned stride, uns
         kprintf("gpu: modo Intel pipe %c agora %ux%u stride %u\n", 'A' + (int)pipe, w, h, stride);
         return 0;
     }
-    if (g->vendor == 0x1002 && g->aperture) {
-        if (surf_phys && (surf_phys < g->aperture)) return -MOS_EINVAL;
-        g->mode_w = w; g->mode_h = h; g->stride = stride;
-        kprintf("gpu: modo AMD registrado %ux%u stride %u (sem PLL)\n", w, h, stride);
-        return 0;
+    amdgpu_t *amd = amdgpu_main();
+    if (g->vendor == 0x1002 && amd && g->pci == amd->pci && amd->pipe >= 0) {
+        const amd_otg_timing_t *t = &amd->otg[amd->pipe];
+        /* outro tamanho é troca de modo (PLL, PHY, watermarks): ainda não existe neste driver */
+        if (w != t->hactive || h != t->vactive) return -MOS_EINVAL;
+        if (!surf_phys) {                                /* framebuffer do firmware: o compositor continua dono da tela */
+            if (amd->scr_on) return 0;
+            return amdgpu_flip(amd, 0, w, h, stride, format, true);
+        }
+        if (amd->scr_on) return -MOS_EBUSY;              /* a tela está no buffer duplo do compositor */
+        int e = amdgpu_flip(amd, surf_phys, w, h, stride, format, true);
+        if (!e) { g->stride = stride; kprintf("gpu: AMD mostra a superfície 0x%llx (%ux%u stride %u)\n", surf_phys, w, h, stride); }
+        return e;
     }
     return -MOS_ENOENT;
 }
