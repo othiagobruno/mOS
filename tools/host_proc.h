@@ -17,6 +17,8 @@ typedef struct process {
     char **spawn_env;
     int spawn_envc;
     void *tty;              /* sessão do Terminal (no harness: nenhuma) */
+    u64 args_va, args_len;  /* bloco de argv/env do processo, como kernel/include/proc.h (proc/darwin.c) */
+    int args_argc, args_envc;
 } process_t;
 
 #define USER_END        (USER_BASE + 8 * 0x8000000000ULL)   /* como kernel/include/proc.h: 8 entradas do PML4 (4 TiB) */
