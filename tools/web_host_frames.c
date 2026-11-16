@@ -191,3 +191,54 @@ WEB_HOST_CASE(frames_permissoes) {
     EQ("r.join()", "true,false,true,false,true");
     close_page(&g);
 }
+
+/* política de navegação dos iframes (decidePolicyForNavigationAction com targetFrame de iframe) */
+static frame_t *pol_f;
+static char pol_url[1024];
+static int pol_kind, pol_calls, pol_answer;
+static int pol_fn(void *ctx, frame_t *f, const char *url, int kind) {
+    (void)ctx;
+    pol_f = f;
+    snprintf(pol_url, sizeof pol_url, "%s", url);
+    pol_kind = kind;
+    pol_calls++;
+    return pol_answer;
+}
+
+WEB_HOST_CASE(frames_politica) {
+    fg_t g = { 0 };
+    const char *html = "<html><body><iframe id=f src='filho.html'></iframe><script>var f=document.getElementById('f');</script></body></html>";
+    frame_policy_t fp = { pol_fn, NULL };
+    pol_calls = 0;
+    pol_answer = 0;   /* ocupado: pergunta de novo */
+    g.d = doc_parse(html, strlen(html), "http://teste/iframe/pai.html");
+    g.d->fpolicy = &fp;
+    g.s = surface_new(300, 400);
+    g.js = js_page_new2(g.d, "http://teste/iframe/pai.html", 300, 400, NULL, NULL);
+    frames_set_owner_js(g.d, g.js);
+    tick(&g, 3);
+    CHECK(pol_calls >= 2 && !strcmp(pol_url, "http://teste/iframe/filho.html") && pol_kind == -1, "ocupado: %d %s %d", pol_calls, pol_url, pol_kind);
+    EQ("String(f.contentDocument)", "null");
+    pol_answer = 2;   /* pergunta ao app */
+    int c0 = pol_calls;
+    tick(&g, 5);
+    CHECK(pol_calls == c0 + 1, "perguntou uma vez só: %d", pol_calls - c0);
+    EQ("String(f.contentDocument)", "null");
+    frame_policy_reply(pol_f, true);
+    tick(&g, 10);
+    EQ("f.contentDocument.getElementById('t').textContent", "filho");
+    /* navegação pelo JS do filho, negada: fica no documento */
+    run(&g, "f.contentWindow.location.href='outro.html'");
+    tick(&g, 3);
+    CHECK(!strcmp(pol_url, "http://teste/iframe/outro.html") && pol_kind == -1, "pedido do filho: %s %d", pol_url, pol_kind);
+    frame_policy_reply(pol_f, false);
+    tick(&g, 10);
+    EQ("/filho\\.html$/.test(f.contentWindow.location.href)", "true");
+    /* liberado na hora: segue sem esperar */
+    pol_answer = 1;
+    run(&g, "f.contentWindow.location.href='outro.html'");
+    tick(&g, 10);
+    EQ("/outro\\.html$/.test(f.contentWindow.location.href)", "true");
+    CHECK(frames_contains(g.d, pol_f), "o iframe está no documento");
+    close_page(&g);
+}

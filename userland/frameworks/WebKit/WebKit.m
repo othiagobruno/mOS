@@ -953,6 +953,7 @@ static WKFrameInfo *wk_frame(WKWebView *wv, NSString *url, BOOL main) {
     WKNavigation *_nav;          /* navegação em andamento */
     WKNavigation *_pendingNav;   /* criada por load*, à espera do START */
     int _reqSeq;                 /* identifica a decisão pendente */
+    BOOL _reqSubframe;           /* a decisão pendente é de um iframe */
     WKBackForwardList *_bfl;
     double _pageZoom, _magnification;
     BOOL _drawsBackground;
@@ -1254,18 +1255,27 @@ static int wk_mods(NSEvent *e) {
 }
 
 - (WKNavigationAction *)_mosAction:(NSString *)url kind:(int)kind {
+    return [self _mosAction:url kind:kind frame:nil];
+}
+
+/* frame: URL atual do iframe que navega (nil = quadro principal) */
+- (WKNavigationAction *)_mosAction:(NSString *)url kind:(int)kind frame:(NSString *)frame {
     WKNavigationAction *a = [[[WKNavigationAction alloc] init] autorelease];
     NSURL *u = [NSURL URLWithString:url];
     a->_r = [(u ? [NSURLRequest requestWithURL:u] : [[[NSURLRequest alloc] init] autorelease]) retain];
     a->_t = (WKNavigationType)kind;
-    a->_src = [wk_frame(self, [_URL absoluteString], YES) retain];
-    a->_dst = [wk_frame(self, url, YES) retain];
+    a->_src = [wk_frame(self, frame ?: [_URL absoluteString], frame == nil) retain];
+    a->_dst = [wk_frame(self, frame ?: url, frame == nil) retain];
     return a;
 }
 
 - (void)_mosDecide:(BOOL)allow seq:(int)seq url:(NSString *)url {
     if (seq != _reqSeq || _closed) return;
     _reqSeq++;
+    if (_reqSubframe) {   /* iframe: o kernel carrega ou descarta; não mexe na navegação do quadro principal */
+        if (wk_sys(MOS_WEB_DECIDE, _wid, allow ? 1 : 0, 0) == -MOS_EBUSY) { _reqSeq--; [self _mosAfterDialog:^{ [self _mosDecide:allow seq:seq url:url]; }]; }
+        return;
+    }
     NSURL *u = [NSURL URLWithString:url];
     id sh = u ? [_config urlSchemeHandlerForURLScheme:[u scheme]] : nil;
     if (allow && sh) {
@@ -1280,7 +1290,8 @@ static int wk_mods(NSEvent *e) {
 - (void)_mosNavRequest:(mos_web_info_t *)I {
     int seq = ++_reqSeq;
     NSString *url = wk_cstr(I->req_url);
-    WKNavigationAction *act = [self _mosAction:url kind:I->req_kind];
+    _reqSubframe = I->req_subframe != 0;
+    WKNavigationAction *act = [self _mosAction:url kind:I->req_kind frame:_reqSubframe ? wk_cstr(I->req_frame) : nil];
     id d = _navigationDelegate;
     __block BOOL called = NO;
     if (d && [d respondsToSelector:@selector(webView:decidePolicyForNavigationAction:preferences:decisionHandler:)]) {

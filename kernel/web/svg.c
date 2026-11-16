@@ -315,6 +315,7 @@ typedef struct {
     char mk_start[64], mk_mid[64], mk_end[64]; /* marcadores (herdados) */
     u32 flood_color;                           /* feFlood/feDropShadow (não herdados) */
     float flood_op;
+    u32 light_color;                           /* lighting-color (não herdado) */
     u8 mask_alpha;                             /* mask-type: alpha */
 } sst_t;
 
@@ -438,6 +439,7 @@ static void apply_prop(ctx_t *C, sst_t *st, const sst_t *par, const char *k, int
     else if (K("marker")) { url_ref(v, st->mk_start); strcpy(st->mk_mid, st->mk_start); strcpy(st->mk_end, st->mk_start); }
     else if (K("flood-color")) { if (!strncasecmp(v, "currentcolor", 12)) st->flood_color = st->color; else { u32 c; if (css_color(v, &c)) st->flood_color = c; } }
     else if (K("flood-opacity")) st->flood_op = parse_op(v);
+    else if (K("lighting-color")) { if (!strncasecmp(v, "currentcolor", 12)) st->light_color = st->color; else { u32 c; if (css_color(v, &c)) st->light_color = c; } }
     else if (K("mask-type")) st->mask_alpha = !strncmp(v, "alpha", 5);
     else if (K("stop-color")) { if (!strncasecmp(v, "currentcolor", 12)) st->stop_color = st->color; else { u32 c; if (css_color(v, &c)) st->stop_color = c; } }
     else if (K("stop-opacity")) st->stop_op = parse_op(v);
@@ -472,6 +474,7 @@ static const char *presentation[] = {
     "stroke-linecap", "stroke-linejoin", "stroke-dasharray", "stroke-dashoffset", "fill-rule", "clip-rule", "display",
     "visibility", "font-size", "font-weight", "text-anchor", "clip-path", "stop-color", "stop-opacity",
     "mask", "filter", "marker", "marker-start", "marker-mid", "marker-end", "flood-color", "flood-opacity", "mask-type",
+    "lighting-color",
 };
 
 /* seletor composto simples casa com o elemento? ("tag", ".a", "#i", "tag.a.b", "*") */
@@ -565,6 +568,7 @@ static void compute_style(ctx_t *C, const xel_t *n, const sst_t *par, sst_t *st)
     st->mask[0] = st->filter[0] = 0;
     st->flood_color = 0xFF000000u;
     st->flood_op = 1;
+    st->light_color = 0xFFFFFFFFu;
     st->mask_alpha = 0;
     st->none = false;
     st->stop_color = 0xFF000000u;
@@ -1026,7 +1030,8 @@ static u8 *clip_mask(ctx_t *C, const char *id, const sst_t *st, mat_t ctm, const
 
 static int b64v(char c) { return c >= 'A' && c <= 'Z' ? c - 'A' : c >= 'a' && c <= 'z' ? c - 'a' + 26 : c >= '0' && c <= '9' ? c - '0' + 52 : c == '+' || c == '-' ? 62 : c == '/' || c == '_' ? 63 : -1; }
 
-static void draw_image(ctx_t *C, xel_t *n, const sst_t *st, const mat_t *ctm) {
+/* rect: caixa no espaço do usuário (NULL = atributos x/y/width/height do elemento) */
+static void draw_image_at(ctx_t *C, xel_t *n, const sst_t *st, const mat_t *ctm, const float *rect) {
     const char *h = xattr(n, "href");
     if (!h || strncmp(h, "data:", 5)) return;
     const char *comma = strchr(h, ',');
@@ -1054,6 +1059,7 @@ static void draw_image(ctx_t *C, xel_t *n, const sst_t *st, const mat_t *ctm) {
     float fs = st->font_size;
     float x = parse_len(xattr(n, "x"), C->vw, fs, 0), y = parse_len(xattr(n, "y"), C->vh, fs, 0);
     float w = parse_len(xattr(n, "width"), C->vw, fs, (float)img->w), hh = parse_len(xattr(n, "height"), C->vh, fs, (float)img->h);
+    if (rect) { x = rect[0]; y = rect[1]; w = rect[2]; hh = rect[3]; }
     char vb[64];
     snprintf(vb, sizeof vb, "0 0 %d %d", img->w, img->h);
     bool ok;
@@ -1066,6 +1072,7 @@ static void draw_image(ctx_t *C, xel_t *n, const sst_t *st, const mat_t *ctm) {
     if (dw > 0 && dh > 0) gfx_blit_scaled(C->s, img, dx, dy, dw, dh, (int)(255 * st->opacity));
     surface_free(img);
 }
+static void draw_image(ctx_t *C, xel_t *n, const sst_t *st, const mat_t *ctm) { draw_image_at(C, n, st, ctm, NULL); }
 
 /* ================================================================ texto */
 /* glifo com matriz completa: m leva o espaço do glifo (unidades do usuário, origem na caneta, y para baixo) ao canvas */
@@ -1323,6 +1330,20 @@ static void fx_region(ctx_t *C, xel_t *e, const char *unit_attr, const float *bb
         r[0] = parse_len(gattr(C, e, "x"), C->vw, 16, -0.1f * C->vw); r[1] = parse_len(gattr(C, e, "y"), C->vh, 16, -0.1f * C->vh);
         r[2] = parse_len(gattr(C, e, "width"), C->vw, 16, 1.2f * C->vw); r[3] = parse_len(gattr(C, e, "height"), C->vh, 16, 1.2f * C->vh);
     }
+}
+
+/* caixa em pixels (inteiros, recortada ao canvas) de um retângulo do usuário */
+static void rect_px(const mat_t *m, const float *r, int W, int H, int *o) {
+    float xs[4], ys[4];
+    mapp(m, r[0], r[1], &xs[0], &ys[0]);
+    mapp(m, r[0] + r[2], r[1], &xs[1], &ys[1]);
+    mapp(m, r[0] + r[2], r[1] + r[3], &xs[2], &ys[2]);
+    mapp(m, r[0], r[1] + r[3], &xs[3], &ys[3]);
+    float x0 = xs[0], x1 = xs[0], y0 = ys[0], y1 = ys[0];
+    for (int i = 1; i < 4; i++) { x0 = MIN(x0, xs[i]); x1 = MAX(x1, xs[i]); y0 = MIN(y0, ys[i]); y1 = MAX(y1, ys[i]); }
+    int a = (int)ffloor(x0 + 0.5f), b = (int)ffloor(y0 + 0.5f), c = (int)ffloor(x1 + 0.5f), d = (int)ffloor(y1 + 0.5f);
+    a = CLAMP(a, 0, W); c = CLAMP(c, 0, W); b = CLAMP(b, 0, H); d = CLAMP(d, 0, H);
+    o[0] = a; o[1] = b; o[2] = c - a; o[3] = d - b;
 }
 
 /* cobertura de um retângulo do usuário no canvas */
@@ -1592,7 +1613,318 @@ static u32 fe_blend_px(const char *mode, u32 a, u32 b) {
     return ra > 0 ? repre(r[0] / ra, r[1] / ra, r[2] / ra, ra) : 0;
 }
 
-typedef struct { char name[32]; u32 *img; } fres_t;
+/* ---------------- feTurbulence (ruído de Perlin do SVG 1.1, com o gerador de Park–Miller e stitchTiles) */
+#define TB_SIZE 0x100
+#define TB_MASK 0xff
+#define TB_N 0x1000
+typedef struct { int lat[TB_SIZE + TB_SIZE + 2]; double grad[4][TB_SIZE + TB_SIZE + 2][2]; } turb_t;
+typedef struct { int w, h, wrapx, wrapy; } stitch_t;
+static long tb_rand(long s) {   /* Park–Miller: a = 16807, m = 2^31 − 1 */
+    s = 16807 * (s % 127773) - 2836 * (s / 127773);
+    if (s <= 0) s += 2147483647;
+    return s;
+}
+static void tb_init(turb_t *T, long seed) {
+    if (seed <= 0) seed = -(seed % (2147483647 - 1)) + 1;
+    if (seed > 2147483647 - 1) seed = 2147483647 - 1;
+    for (int k = 0; k < 4; k++)
+        for (int i = 0; i < TB_SIZE; i++) {
+            T->lat[i] = i;
+            for (int j = 0; j < 2; j++) T->grad[k][i][j] = (double)(((seed = tb_rand(seed)) % (TB_SIZE + TB_SIZE)) - TB_SIZE) / TB_SIZE;
+            double s = fsqrt((float)(T->grad[k][i][0] * T->grad[k][i][0] + T->grad[k][i][1] * T->grad[k][i][1]));
+            if (s > 0) { T->grad[k][i][0] /= s; T->grad[k][i][1] /= s; }
+        }
+    for (int i = TB_SIZE - 1; i > 0; i--) {
+        int k = T->lat[i], j = (int)((seed = tb_rand(seed)) % TB_SIZE);
+        T->lat[i] = T->lat[j];
+        T->lat[j] = k;
+    }
+    for (int i = 0; i < TB_SIZE + 2; i++) {
+        T->lat[TB_SIZE + i] = T->lat[i];
+        for (int k = 0; k < 4; k++) for (int j = 0; j < 2; j++) T->grad[k][TB_SIZE + i][j] = T->grad[k][i][j];
+    }
+}
+static double s_curve(double t) { return t * t * (3. - 2. * t); }
+static double lerpd(double t, double a, double b) { return a + t * (b - a); }
+static double tb_noise2(const turb_t *T, int ch, double vx, double vy, const stitch_t *st) {
+    double t = vx + TB_N;
+    int bx0 = ((int)t) & TB_MASK, bx1 = (bx0 + 1) & TB_MASK;
+    double rx0 = t - (long)t, rx1 = rx0 - 1.0;
+    t = vy + TB_N;
+    int by0 = ((int)t) & TB_MASK, by1 = (by0 + 1) & TB_MASK;
+    double ry0 = t - (long)t, ry1 = ry0 - 1.0;
+    if (st) {
+        if (bx0 >= st->wrapx) bx0 -= st->w;
+        if (bx1 >= st->wrapx) bx1 -= st->w;
+        if (by0 >= st->wrapy) by0 -= st->h;
+        if (by1 >= st->wrapy) by1 -= st->h;
+    }
+    bx0 &= TB_MASK; bx1 &= TB_MASK; by0 &= TB_MASK; by1 &= TB_MASK;
+    int i = T->lat[bx0], j = T->lat[bx1];
+    int b00 = T->lat[i + by0], b10 = T->lat[j + by0], b01 = T->lat[i + by1], b11 = T->lat[j + by1];
+    double sx = s_curve(rx0), sy = s_curve(ry0);
+    const double *q = T->grad[ch][b00];
+    double u = rx0 * q[0] + ry0 * q[1];
+    q = T->grad[ch][b10];
+    double v = rx1 * q[0] + ry0 * q[1];
+    double a = lerpd(sx, u, v);
+    q = T->grad[ch][b01];
+    u = rx0 * q[0] + ry1 * q[1];
+    q = T->grad[ch][b11];
+    v = rx1 * q[0] + ry1 * q[1];
+    double b = lerpd(sx, u, v);
+    return lerpd(sy, a, b);
+}
+static double tb_turb(const turb_t *T, int ch, double px, double py, double fx, double fy, int oct, bool fractal, bool stitch,
+                      double tx, double ty, double tw, double th) {
+    stitch_t S, *sp = NULL;
+    if (stitch) {
+        if (fx != 0) { double lo = ffloor((float)(tw * fx)) / tw, hi = fceil((float)(tw * fx)) / tw; fx = lo > 0 && fx / lo < hi / fx ? lo : hi; }
+        if (fy != 0) { double lo = ffloor((float)(th * fy)) / th, hi = fceil((float)(th * fy)) / th; fy = lo > 0 && fy / lo < hi / fy ? lo : hi; }
+        S.w = (int)(tw * fx + 0.5);
+        S.wrapx = (int)(tx * fx + TB_N + S.w);
+        S.h = (int)(th * fy + 0.5);
+        S.wrapy = (int)(ty * fy + TB_N + S.h);
+        sp = &S;
+    }
+    double sum = 0, vx = px * fx, vy = py * fy, ratio = 1;
+    for (int o = 0; o < oct; o++) {
+        double n = tb_noise2(T, ch, vx, vy, sp);
+        sum += (fractal ? n : (n < 0 ? -n : n)) / ratio;
+        vx *= 2; vy *= 2; ratio *= 2;
+        if (sp) { S.w *= 2; S.wrapx = 2 * S.wrapx - TB_N; S.h *= 2; S.wrapy = 2 * S.wrapy - TB_N; }
+    }
+    return sum;
+}
+/* ruído no espaço do usuário: cada pixel volta pela inversa da CTM */
+static void fe_turbulence(ctx_t *C, u32 *img, xel_t *e, const mat_t *ctm, const float *reg) {
+    float fx = 0, fy;
+    const char *q = xattr(e, "baseFrequency");
+    if (q) parse_f(&q, &fx);
+    fy = fx;
+    if (q) parse_f(&q, &fy);
+    if (fx < 0 || fy < 0) return;
+    int oct = (int)frac_len(xattr(e, "numOctaves"), 1);
+    if (oct > 12) oct = 12;
+    float seedf = frac_len(xattr(e, "seed"), 0);
+    long seed = (long)(seedf < 0 ? -ffloor(-seedf + 0.5f) : ffloor(seedf + 0.5f));
+    const char *ty = xattr(e, "type"), *sti = xattr(e, "stitchTiles");
+    bool fractal = ty && !strcmp(ty, "fractalNoise"), stitch = sti && !strcmp(sti, "stitch");
+    turb_t *T = kmalloc(sizeof(turb_t));
+    if (!T) return;
+    tb_init(T, seed);
+    mat_t inv;
+    if (!minv(*ctm, &inv)) { kfree(T); return; }
+    for (int y = 0; y < C->H; y++)
+        for (int x = 0; x < C->W; x++) {
+            float ux, uy;
+            mapp(&inv, x + 0.5f, y + 0.5f, &ux, &uy);
+            float c[4];
+            for (int ch = 0; ch < 4; ch++) {
+                double v = oct > 0 ? tb_turb(T, ch, ux, uy, fx, fy, oct, fractal, stitch, reg[0], reg[1], reg[2], reg[3]) : 0;
+                v = fractal ? (v * 255 + 255) / 2 : v * 255;
+                c[ch] = (float)(v < 0 ? 0 : v > 255 ? 255 : v) / 255.0f;
+            }
+            img[(usize)y * C->W + x] = repre(c[0], c[1], c[2], c[3]);
+        }
+    kfree(T);
+}
+
+/* ---------------- feConvolveMatrix */
+static void fe_convolve(ctx_t *C, u32 *img, xel_t *e) {
+    int W = C->W, H = C->H;
+    float ox = 3, oy;
+    const char *q = xattr(e, "order");
+    if (q) parse_f(&q, &ox);
+    oy = ox;
+    if (q) parse_f(&q, &oy);
+    int Ox = (int)ox, Oy = (int)oy;
+    if (Ox < 1 || Oy < 1 || Ox > 15 || Oy > 15 || ox != Ox || oy != Oy) return;
+    float k[225];
+    int nk = 0;
+    q = xattr(e, "kernelMatrix");
+    while (q && nk < Ox * Oy && parse_f(&q, &k[nk])) nk++;
+    if (nk != Ox * Oy) { memset(img, 0, (usize)W * H * 4); return; }   /* matriz errada: transparente */
+    float sum = 0;
+    for (int i = 0; i < nk; i++) sum += k[i];
+    float div = frac_len(xattr(e, "divisor"), sum == 0 ? 1 : sum), bias = frac_len(xattr(e, "bias"), 0);
+    if (div == 0) div = 1;
+    int tx = (int)frac_len(xattr(e, "targetX"), (float)(Ox / 2)), tyy = (int)frac_len(xattr(e, "targetY"), (float)(Oy / 2));
+    if (tx < 0 || tx >= Ox || tyy < 0 || tyy >= Oy) return;
+    const char *em = xattr(e, "edgeMode"), *pa = xattr(e, "preserveAlpha");
+    int mode = !em || !strcmp(em, "duplicate") ? 0 : !strcmp(em, "wrap") ? 1 : 2;
+    bool keep_a = pa && !strcmp(pa, "true");
+    u32 *o = fimg_new(C);
+    if (!o) return;
+    for (int y = 0; y < H; y++)
+        for (int x = 0; x < W; x++) {
+            float acc[4] = { 0, 0, 0, 0 };
+            for (int j = 0; j < Oy; j++)
+                for (int i = 0; i < Ox; i++) {
+                    int sx = x - tx + i, sy = y - tyy + j;
+                    if (sx < 0 || sx >= W || sy < 0 || sy >= H) {
+                        if (mode == 2) continue;
+                        if (mode == 0) { sx = sx < 0 ? 0 : sx >= W ? W - 1 : sx; sy = sy < 0 ? 0 : sy >= H ? H - 1 : sy; }
+                        else { sx = ((sx % W) + W) % W; sy = ((sy % H) + H) % H; }
+                    }
+                    u32 p = img[(usize)sy * W + sx];
+                    float kv = k[(Oy - 1 - j) * Ox + (Ox - 1 - i)];   /* o kernel é girado 180° (convolução) */
+                    if (keep_a) {
+                        float r, g, b, a;
+                        unpre(p, &r, &g, &b, &a);
+                        acc[0] += r * kv; acc[1] += g * kv; acc[2] += b * kv;
+                    } else
+                        for (int c = 0; c < 4; c++) acc[c] += ((p >> (16 - 8 * (c < 3 ? c : -1))) & 255) / 255.0f * kv;
+                }
+            u32 src = img[(usize)y * W + x];
+            if (keep_a) {
+                float a = (src >> 24) / 255.0f;
+                o[(usize)y * W + x] = repre(acc[0] / div + bias, acc[1] / div + bias, acc[2] / div + bias, a);
+            } else {
+                /* pré-multiplicado: o bias também é multiplicado pelo alfa resultante */
+                float a = clamp01(acc[3] / div + bias);
+                float r = clamp01(acc[0] / div + bias * a), g = clamp01(acc[1] / div + bias * a), b = clamp01(acc[2] / div + bias * a);
+                if (r > a) r = a;
+                if (g > a) g = a;
+                if (b > a) b = a;
+                o[(usize)y * W + x] = (u32)(a * 255 + 0.5f) << 24 | (u32)(r * 255 + 0.5f) << 16 | (u32)(g * 255 + 0.5f) << 8 | (u32)(b * 255 + 0.5f);
+            }
+        }
+    memcpy(img, o, (usize)W * H * 4);
+    kfree(o);
+}
+
+/* ---------------- feDisplacementMap */
+static int chan_sel(const char *v) { return !v || !strcmp(v, "A") ? 3 : !strcmp(v, "R") ? 0 : !strcmp(v, "G") ? 1 : 2; }
+static void fe_displace(ctx_t *C, u32 *img, const u32 *map, xel_t *e, float scx, float scy) {
+    int W = C->W, H = C->H;
+    float sc = frac_len(xattr(e, "scale"), 0);
+    int xs = chan_sel(xattr(e, "xChannelSelector")), ys = chan_sel(xattr(e, "yChannelSelector"));
+    u32 *o = fimg_new(C);
+    if (!o) return;
+    for (int y = 0; y < H; y++)
+        for (int x = 0; x < W; x++) {
+            float c[4];
+            unpre(map[(usize)y * W + x], &c[0], &c[1], &c[2], &c[3]);
+            int sx = (int)ffloor(x + sc * scx * (c[xs] - 0.5f) + 0.5f), sy = (int)ffloor(y + sc * scy * (c[ys] - 0.5f) + 0.5f);
+            if (sx >= 0 && sx < W && sy >= 0 && sy < H) o[(usize)y * W + x] = img[(usize)sy * W + sx];
+        }
+    memcpy(img, o, (usize)W * H * 4);
+    kfree(o);
+}
+
+/* ---------------- feDiffuseLighting / feSpecularLighting (normais de Sobel, luz distante, pontual e spot) */
+static void fe_lighting(ctx_t *C, u32 *img, xel_t *e, bool specular, u32 lcolor, const mat_t *ctm, float scx) {
+    int W = C->W, H = C->H;
+    float ss = frac_len(xattr(e, "surfaceScale"), 1);
+    float kc = frac_len(xattr(e, specular ? "specularConstant" : "diffuseConstant"), 1);
+    float sexp = frac_len(xattr(e, "specularExponent"), 1);
+    if (specular && (sexp < 1 || sexp > 128)) sexp = sexp < 1 ? 1 : 128;
+    xel_t *L = NULL;
+    for (xel_t *c = e->first; c && !L; c = c->next)
+        if (c->name && (!strcmp(c->name, "feDistantLight") || !strcmp(c->name, "fePointLight") || !strcmp(c->name, "feSpotLight"))) L = c;
+    u32 *o = fimg_new(C);
+    if (!o) return;
+    float lr = ((lcolor >> 16) & 255) / 255.0f, lg = ((lcolor >> 8) & 255) / 255.0f, lb = (lcolor & 255) / 255.0f;
+    int kind = !L ? -1 : !strcmp(L->name, "feDistantLight") ? 0 : !strcmp(L->name, "fePointLight") ? 1 : 2;
+    float az = 0, el = 0, lx = 0, ly = 0, lz = 0, px = 0, py = 0, pz = 0, spe = 1, cone = -1;
+    if (kind == 0) { az = frac_len(xattr(L, "azimuth"), 0) * PI_F / 180; el = frac_len(xattr(L, "elevation"), 0) * PI_F / 180; }
+    else if (kind > 0) {
+        /* posição da luz no espaço do canvas (z escala como x) */
+        float ux = frac_len(xattr(L, "x"), 0), uy = frac_len(xattr(L, "y"), 0);
+        mapp(ctm, ux, uy, &lx, &ly);
+        lz = frac_len(xattr(L, "z"), 0) * scx;
+        if (kind == 2) {
+            float tx = frac_len(xattr(L, "pointsAtX"), 0), ty = frac_len(xattr(L, "pointsAtY"), 0);
+            mapp(ctm, tx, ty, &px, &py);
+            pz = frac_len(xattr(L, "pointsAtZ"), 0) * scx;
+            spe = frac_len(xattr(L, "specularExponent"), 1);
+            const char *lc = xattr(L, "limitingConeAngle");
+            if (lc) cone = fcos(fabs_(frac_len(lc, 90)) * PI_F / 180);
+        }
+    }
+#define AL(X, Y) ((float)(img[(usize)((Y) < 0 ? 0 : (Y) >= H ? H - 1 : (Y)) * W + ((X) < 0 ? 0 : (X) >= W ? W - 1 : (X))] >> 24) / 255.0f)
+    for (int y = 0; y < H; y++)
+        for (int x = 0; x < W; x++) {
+            float nx = -ss / 4 * ((AL(x + 1, y - 1) + 2 * AL(x + 1, y) + AL(x + 1, y + 1)) - (AL(x - 1, y - 1) + 2 * AL(x - 1, y) + AL(x - 1, y + 1)));
+            float ny = -ss / 4 * ((AL(x - 1, y + 1) + 2 * AL(x, y + 1) + AL(x + 1, y + 1)) - (AL(x - 1, y - 1) + 2 * AL(x, y - 1) + AL(x + 1, y - 1)));
+            float nl = sqrtf_(nx * nx + ny * ny + 1);
+            nx /= nl; ny /= nl;
+            float nz = 1 / nl;
+            float Lx = 0, Ly = 0, Lz = 1, cr = lr, cg = lg, cb = lb;
+            if (kind == 0) { Lx = fcos(az) * fcos(el); Ly = fsin(az) * fcos(el); Lz = fsin(el); }
+            else if (kind > 0) {
+                float z = ss * AL(x, y) * scx;
+                Lx = lx - (x + 0.5f); Ly = ly - (y + 0.5f); Lz = lz - z;
+                float ll = sqrtf_(Lx * Lx + Ly * Ly + Lz * Lz);
+                if (ll > 0) { Lx /= ll; Ly /= ll; Lz /= ll; }
+                if (kind == 2) {
+                    float Sx = px - lx, Sy = py - ly, Sz = pz - lz, sl = sqrtf_(Sx * Sx + Sy * Sy + Sz * Sz);
+                    if (sl > 0) { Sx /= sl; Sy /= sl; Sz /= sl; }
+                    float m = -(Lx * Sx + Ly * Sy + Lz * Sz);
+                    float f = m <= 0 || (cone >= 0 && m < cone) ? 0 : fpow(m, spe);
+                    cr *= f; cg *= f; cb *= f;
+                }
+            }
+            float f;
+            if (!specular) f = kc * (nx * Lx + ny * Ly + nz * Lz);
+            else {
+                float hx = Lx, hy = Ly, hz = Lz + 1, hl = sqrtf_(hx * hx + hy * hy + hz * hz);
+                float d = hl > 0 ? (nx * hx + ny * hy + nz * hz) / hl : 0;
+                f = d > 0 ? kc * fpow(d, sexp) : 0;
+            }
+            if (f < 0) f = 0;
+            float r = clamp01(f * cr), g = clamp01(f * cg), b = clamp01(f * cb);
+            float a = specular ? MAX(r, MAX(g, b)) : 1;
+            o[(usize)y * W + x] = specular ? repre(a > 0 ? r / a : 0, a > 0 ? g / a : 0, a > 0 ? b / a : 0, a) : repre(r, g, b, 1);
+        }
+#undef AL
+    memcpy(img, o, (usize)W * H * 4);
+    kfree(o);
+}
+
+/* ---------------- feTile: repete a sub-região da entrada */
+static void fe_tile(ctx_t *C, u32 *img, const int *ir) {
+    int W = C->W, H = C->H, tx = ir[0], ty = ir[1], tw = ir[2], th = ir[3];
+    if (tw <= 0 || th <= 0) return;
+    u32 *o = fimg_new(C);
+    if (!o) return;
+    for (int y = 0; y < H; y++)
+        for (int x = 0; x < W; x++) {
+            int sx = tx + ((x - tx) % tw + tw) % tw, sy = ty + ((y - ty) % th + th) % th;
+            if (sx >= 0 && sx < W && sy >= 0 && sy < H) o[(usize)y * W + x] = img[(usize)sy * W + sx];
+        }
+    memcpy(img, o, (usize)W * H * 4);
+    kfree(o);
+}
+
+/* ---------------- feImage: imagem data: ou elemento (#id) desenhado na sub-região */
+static void fe_image(ctx_t *C, u32 *img, xel_t *e, const sst_t *st, const mat_t *ctm, const float *sub) {
+    const char *h = xattr(e, "href");
+    if (!h) return;
+    surface_t *tmp = surface_new(C->W, C->H);
+    if (!tmp || !tmp->px) { surface_free(tmp); return; }
+    memset(tmp->px, 0, (usize)tmp->stride * tmp->h * 4);   /* surface_new não zera */
+    surface_t *saved = C->s;
+    u8 *savedclip = C->clipm;
+    C->s = tmp;
+    C->clipm = NULL;
+    if (h[0] == '#') {
+        xel_t *t = by_id(C, h);
+        if (t && C->depth < 8) { C->depth++; render_node(C, t, st, *ctm); C->depth--; }
+    } else {
+        /* imagem ocupa a sub-região, com preserveAspectRatio */
+        sst_t s2 = *st;
+        s2.opacity = 1;
+        draw_image_at(C, e, &s2, ctm, sub);
+    }
+    C->s = saved;
+    C->clipm = savedclip;
+    for (int y = 0; y < C->H; y++) memcpy(img + (usize)y * C->W, tmp->px + (usize)y * tmp->stride, (usize)C->W * 4);
+    surface_free(tmp);
+}
+
+typedef struct { char name[32]; u32 *img; int rect[4]; } fres_t;
 
 static u32 *fe_input(ctx_t *C, const char *in, u32 *src, u32 *last, fres_t *res, int nres) {
     u32 *o = fimg_new(C);
@@ -1607,6 +1939,14 @@ static u32 *fe_input(ctx_t *C, const char *in, u32 *src, u32 *last, fres_t *res,
         if (!found) memcpy(o, last ? last : src, n * 4);
     }
     return o;
+}
+
+/* sub-região (em pixels) do resultado de nome in (ou do último) */
+static void fe_input_rect(const char *in, fres_t *res, int nres, const int *last_rect, const int *full, int *out) {
+    memcpy(out, last_rect ? last_rect : full, sizeof(int) * 4);
+    if (in && *in && strcmp(in, "SourceGraphic") && strcmp(in, "SourceAlpha"))
+        for (int i = nres - 1; i >= 0; i--) if (!strcmp(res[i].name, in)) { memcpy(out, res[i].rect, sizeof(int) * 4); return; }
+    if (in && (!strcmp(in, "SourceGraphic") || !strcmp(in, "SourceAlpha"))) memcpy(out, full, sizeof(int) * 4);
 }
 
 /* aplica <filter> à camada (W×H) do elemento; devolve a nova camada (ou a mesma) */
@@ -1627,6 +1967,9 @@ static void apply_filter(ctx_t *C, surface_t *ls, const char *id, const sst_t *s
     fres_t res[16];
     int nres = 0;
     u32 *last = NULL;
+    int full[4], last_rect[4], *lastr = NULL;
+    bool last_stored = true;
+    rect_px(ctm, reg, W, H, full);
     for (xel_t *e = f->first; e; e = e->next) {
         if (!e->name || strncmp(e->name, "fe", 2)) continue;
         const char *nm = e->name;
@@ -1634,6 +1977,19 @@ static void apply_filter(ctx_t *C, surface_t *ls, const char *id, const sst_t *s
         sst_t es;
         compute_style(C, e, st, &es);
         float scx = pobb ? bb[2] * ux : ux, scy = pobb ? bb[3] * uy : uy;
+        /* sub-região do primitivo: x/y/width/height (em primitiveUnits); o resto vem da região do filtro */
+        float sub[4] = { reg[0], reg[1], reg[2], reg[3] };
+        bool has_sub = false;
+        static const char *sa[4] = { "x", "y", "width", "height" };
+        for (int i = 0; i < 4; i++) {
+            const char *v = xattr(e, sa[i]);
+            if (!v) continue;
+            has_sub = true;
+            if (pobb) sub[i] = (i & 1 ? bb[3] : bb[2]) * frac_len(v, 0) + (i < 2 ? bb[i] : 0);
+            else sub[i] = parse_len(v, i & 1 ? C->vh : C->vw, 16, sub[i]);
+        }
+        int srect[4];
+        rect_px(ctm, sub, W, H, srect);
         if (!strcmp(nm, "feFlood")) {
             img = fimg_new(C);
             if (img) { u32 c = premul(es.flood_color, es.flood_op); for (usize i = 0; i < n; i++) img[i] = c; }
@@ -1692,15 +2048,40 @@ static void apply_filter(ctx_t *C, surface_t *ls, const char *id, const sst_t *s
                     kfree(sh);
                 }
             }
-            /* outros primitivos (turbulência, iluminação, convolução, imagem) passam a entrada adiante */
+            else if (!strcmp(nm, "feConvolveMatrix")) fe_convolve(C, img, e);
+            else if (!strcmp(nm, "feDiffuseLighting") || !strcmp(nm, "feSpecularLighting"))
+                fe_lighting(C, img, e, nm[2] == 'S', es.light_color, ctm, scx);
+            else if (!strcmp(nm, "feTile")) {
+                int ir[4];
+                fe_input_rect(xattr(e, "in"), res, nres, lastr, full, ir);
+                fe_tile(C, img, ir);
+            } else if (!strcmp(nm, "feDisplacementMap")) {
+                u32 *map = fe_input(C, xattr(e, "in2"), src, last, res, nres);
+                if (map) { fe_displace(C, img, map, e, scx, scy); kfree(map); }
+            } else if (!strcmp(nm, "feTurbulence")) {
+                memset(img, 0, n * 4);
+                fe_turbulence(C, img, e, ctm, sub);
+            } else if (!strcmp(nm, "feImage")) {
+                memset(img, 0, n * 4);
+                fe_image(C, img, e, st, ctm, sub);
+            }
         }
         if (!img) break;
         if (cov) for (usize i = 0; i < n; i++) if (cov[i] != 255) img[i] = mul_px(img[i], cov[i]);
+        if (has_sub) {
+            u8 *sc = rect_cov(C, sub, ctm);
+            if (sc) { for (usize i = 0; i < n; i++) if (sc[i] != 255) img[i] = mul_px(img[i], sc[i]); kfree(sc); }
+        }
         const char *rn = xattr(e, "result");
-        if (nres < 16) { snprintf(res[nres].name, sizeof res[nres].name, "%s", rn ? rn : ""); res[nres].img = img; nres++; }
+        if (last && !last_stored) kfree(last);   /* resultado que não coube na lista: só o último vale */
+        last_stored = nres < 16;
+        if (last_stored) { snprintf(res[nres].name, sizeof res[nres].name, "%s", rn ? rn : ""); res[nres].img = img; memcpy(res[nres].rect, srect, sizeof srect); nres++; }
         last = img;
+        memcpy(last_rect, srect, sizeof srect);
+        lastr = last_rect;
     }
     if (last) for (int y = 0; y < H; y++) memcpy(ls->px + (usize)y * ls->stride, last + (usize)y * W, (usize)W * 4);
+    if (last && !last_stored) kfree(last);
     for (int i = 0; i < nres; i++) kfree(res[i].img);
     kfree(src);
     kfree(cov);

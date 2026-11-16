@@ -313,3 +313,59 @@ WEB_HOST_CASE(canvas_lixo) {
     EQ("typeof c.fillRect", "function");
     cg_close(&g);
 }
+
+WEB_HOST_CASE(canvas_filter) {
+    cg_t g = cg_open(PAGE, 400, 300);
+    EQ("c.filter", "none");
+    EQ("c.filter='grayscale(100%) blur(2px)'; c.filter", "grayscale(100%) blur(2px)");
+    EQ("c.filter='url(#x)'; c.filter", "grayscale(100%) blur(2px)");          /* inválido: não muda */
+    EQ("c.filter='blur(-1px)'; c.filter+'|'; c.filter='nada(1)'; c.filter", "grayscale(100%) blur(2px)");
+    EQ("c.save(); c.filter='invert(1)'; c.restore(); c.filter", "grayscale(100%) blur(2px)");
+    /* cor: grayscale do vermelho puro (luminância 0.2126) */
+    EQ("c.reset(); c.filter='grayscale(1)'; c.fillStyle='#f00'; c.fillRect(0,0,10,10); " PX(5, 5), "54,54,54,255");
+    EQ("c.reset(); c.filter='invert(100%)'; c.fillStyle='#fff'; c.fillRect(0,0,10,10); " PX(5, 5), "0,0,0,255");
+    EQ("c.reset(); c.filter='opacity(0.5)'; c.fillStyle='#00f'; c.fillRect(0,0,10,10); " PX(5, 5), "0,0,255,128");
+    EQ("c.reset(); c.filter='brightness(0.5)'; c.fillStyle='#fff'; c.fillRect(0,0,10,10); " PX(5, 5), "128,128,128,255");
+    EQ("c.reset(); c.filter='sepia(1)'; c.fillStyle='#fff'; c.fillRect(0,0,10,10); " PX(5, 5), "255,255,239,255");
+    EQ("c.reset(); c.filter='hue-rotate(180deg)'; c.fillStyle='#f00'; c.fillRect(0,0,10,10); var p=c.getImageData(5,5,1,1).data; (p[0]<20 && p[1]>100 && p[2]>100)+''", "true");
+    /* desfoque: borda suavizada, centro intacto, vaza para fora do retângulo */
+    EQ("c.reset(); c.filter='blur(3px)'; c.fillStyle='#000'; c.fillRect(20,10,30,30); var a=c.getImageData(35,25,1,1).data[3], b=c.getImageData(20,25,1,1).data[3], o=c.getImageData(17,25,1,1).data[3]; [a, b>90&&b<170, o>0&&o<90].join()",
+       "255,true,true");
+    /* drop-shadow: sombra azul deslocada por baixo da forma */
+    EQ("c.reset(); c.filter='drop-shadow(10px 5px 0 blue)'; c.fillStyle='red'; c.fillRect(10,10,20,20); [" PX(15, 15) "," PX(35, 25) "," PX(45, 45) "].join('|')",
+       "255,0,0,255|0,0,255,255|0,0,0,0");
+    EQ("c.reset(); c.filter='drop-shadow(rgb(0, 128, 0) 4px 4px)'; c.fillStyle='#000'; c.fillRect(0,0,10,10); " PX(12, 12), "0,128,0,255");
+    /* drawImage e texto também passam pelo filtro */
+    EQ("c.reset(); var o=document.createElement('canvas'); o.width=o.height=10; var oc=o.getContext('2d'); oc.fillStyle='#f00'; oc.fillRect(0,0,10,10);"
+       "c.filter='grayscale(1)'; c.drawImage(o,0,0); " PX(5, 5), "54,54,54,255");
+    cg_close(&g);
+}
+
+WEB_HOST_CASE(canvas_offscreen) {
+    cg_t g = cg_open(PAGE, 400, 300);
+    EQ("var oc=new OffscreenCanvas(20,10), ox=oc.getContext('2d'); [oc.width, oc.height, ox.canvas===oc, oc.getContext('2d')===ox, Object.prototype.toString.call(oc), oc instanceof OffscreenCanvas].join()",
+       "20,10,true,true,[object OffscreenCanvas],true");
+    EQ("try{ OffscreenCanvas(1,1) }catch(e){ e instanceof TypeError }", "true");
+    EQ("try{ oc.getContext('xyz') }catch(e){ e instanceof TypeError }", "true");
+    EQ("String(oc.getContext('webgl'))", "null");
+    /* desenhar no offscreen e usar como origem no canvas da página */
+    EQ("ox.fillStyle='#0f0'; ox.fillRect(0,0,20,10); c.reset(); c.drawImage(oc,5,5); " PX(10, 10) "+'|'+" PX(30, 30), "0,255,0,255|0,0,0,0");
+    EQ("c.reset(); c.fillStyle=c.createPattern(oc,'repeat'); c.fillRect(0,0,50,50); " PX(45, 45), "0,255,0,255");
+    /* transferToImageBitmap: ImageBitmap com o desenho e o offscreen limpo */
+    EQ("var bm=oc.transferToImageBitmap(); [bm.width, bm.height, Array.from(ox.getImageData(3,3,1,1).data).join(' ')].join()", "20,10,0 0 0 0");
+    EQ("c.reset(); c.drawImage(bm,0,0); " PX(3, 3), "0,255,0,255");
+    /* mudar o tamanho zera o bitmap e o estado */
+    EQ("ox.fillStyle='red'; oc.width=7; [oc.width, ox.fillStyle, ox.getImageData(0,0,1,1).data[3]].join()", "7,#000000,0");
+    /* convertToBlob: PNG que volta pelo createImageBitmap */
+    run(&g, "window.res=''; ox.fillStyle='#00f'; ox.fillRect(0,0,7,10); oc.convertToBlob().then(function(b){ res=b.type+':'+(b.size>20); return createImageBitmap(b) }).then(function(i){ res+=':'+i.width+'x'+i.height })");
+    for (int i = 0; i < 10; i++) js_page_tick(g.js);
+    EQ("res", "image/png:true:7x10");
+    /* transferControlToOffscreen: o elemento mostra o que o offscreen desenha */
+    run(&g, "var oc2=d.transferControlToOffscreen(), o2=oc2.getContext('2d'); o2.fillStyle='#f0f'; o2.fillRect(0,0,300,150);");
+    cg_paint(&g);
+    CHECK(spx(&g, 150, 120) == 0xFF00FF, "elemento transferido: %06x", spx(&g, 150, 120));
+    EQ("try{ d.getContext('2d') }catch(e){ e.name }", "InvalidStateError");
+    EQ("try{ d.transferControlToOffscreen() }catch(e){ e.name }", "InvalidStateError");
+    EQ("oc2.width+'x'+oc2.height", "300x150");
+    cg_close(&g);
+}

@@ -242,7 +242,7 @@ typedef struct jsrealm {
     jsobj *p_mutobs, *p_mutrec, *p_resizeobs, *p_interobs, *p_domrect;   /* web_obs.c */
     jsobj *p_msgport, *p_msgchannel, *p_msgevent, *p_cryptokey;   /* web_plat.c, web_crypto.c */
     jsobj *p_headers, *p_formdata, *p_request, *p_abortsig, *p_abortctl, *p_xhrup;   /* web_fetch.c */
-    jsobj *p_blob, *p_file, *p_freader, *p_progress, *p_url, *p_usp, *p_imgbitmap;   /* web_blob.c, web_url.c */
+    jsobj *p_blob, *p_file, *p_freader, *p_progress, *p_url, *p_usp, *p_imgbitmap, *p_offcanvas;   /* web_blob.c, web_url.c */
     jsobj *p_domexc, *p_canvas, *p_ctx2d, *p_cgrad, *p_cpat, *p_path2d, *p_imgdata, *p_tmetrics, *p_dommatrix;
     u32 jobpos;
     struct js_page *page;
@@ -579,6 +579,8 @@ void   js_blob_init(jsrealm *r);
 void   js_url_init(jsrealm *r);
 void   js_blob_url_statics(jsobj *url_ctor);
 bool   js_blob_bytes(jsv v, const u8 **d, u32 *n, const char **type);
+jsv    js_zlib_natives(void);
+bool   js_mime_is_xml(const char *m);   /* text/xml, application/xml, *+xml */   /* web_zlib.c: {init, push, end} para CompressionStream/DecompressionStream */
 jsobj *js_blob_new(const u8 *d, u32 n, const char *type);
 jsv    js_blob_from_url(const char *url);
 bool   web_url_parse(const char *in, const char *base, char *out, int cap);

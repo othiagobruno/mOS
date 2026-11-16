@@ -1,8 +1,9 @@
 /* mOS — WHATWG Streams do motor web (implementação própria a partir da especificação): ReadableStream (padrão e
  * bytes, leitores padrão e BYOB, tee, pipeTo/pipeThrough, iteração assíncrona, from), WritableStream, TransformStream,
- * estratégias de fila, TextEncoderStream e TextDecoderStream. Embutido em web_stream_js.h por tools/gen_stream_js.py;
+ * estratégias de fila, TextEncoderStream, TextDecoderStream, CompressionStream e DecompressionStream (o deflate é nativo:
+ * web_zlib.c, recebido em Z). Embutido em web_stream_js.h por tools/gen_stream_js.py;
  * avaliado na primeira vez que a página usa um destes nomes. */
-(function (G) {
+(function (G, Z) {
   'use strict';
   var P = Promise, resolved = function (v) { return P.resolve(v); }, rejected = function (e) { return P.reject(e); };
   var noop = function () {};
@@ -552,9 +553,12 @@
       cancel: function (reason) { self.writable[K].state === 'writable' && wsStartErroring(self.writable[K], reason); return promiseCall(transformer, 'cancel', [reason]).then(noop); }
     }, rStrategy || { highWaterMark: 0 });
     t.rctrl = readableCtrl;
+    /* transform que falha erra os dois lados (TransformStreamError) */
     function doTransform(chunk) {
-      if (typeof transformer.transform === 'function') return promiseCall(transformer, 'transform', [chunk, tc]);
-      try { tc.enqueue(chunk); return resolved(); } catch (e) { return rejected(e); }
+      var p;
+      if (typeof transformer.transform === 'function') p = promiseCall(transformer, 'transform', [chunk, tc]);
+      else { try { tc.enqueue(chunk); p = resolved(); } catch (e) { p = rejected(e); } }
+      return p.then(undefined, function (e) { try { rctrl.error(e); } catch (x) {} throw e; });
     }
     this.writable = new WritableStream({
       start: function () { return started.promise; },
@@ -665,12 +669,40 @@
   }
   function isStream(v) { return v instanceof ReadableStream; }
 
+  /* CompressionStream / DecompressionStream: gzip, deflate (zlib) e deflate-raw */
+  function zstream(compress, self, format) {
+    var h = Z.init(String(format), compress);
+    var ts = new TransformStream({
+      transform: function (chunk, c) {
+        var o = Z.push(h, chunk);
+        if (o.length) c.enqueue(o);
+      },
+      flush: function (c) {
+        var o = Z.end(h);
+        if (o.length) c.enqueue(o);
+      }
+    });
+    self.readable = ts.readable;
+    self.writable = ts.writable;
+  }
+  function CompressionStream(format) {
+    if (!(this instanceof CompressionStream)) throw typeError("Construtor CompressionStream precisa de 'new'");
+    if (arguments.length < 1) throw typeError('CompressionStream: é preciso o formato');
+    zstream(true, this, format);
+  }
+  function DecompressionStream(format) {
+    if (!(this instanceof DecompressionStream)) throw typeError("Construtor DecompressionStream precisa de 'new'");
+    if (arguments.length < 1) throw typeError('DecompressionStream: é preciso o formato');
+    zstream(false, this, format);
+  }
+
   var tags = { ReadableStream: ReadableStream, ReadableStreamDefaultReader: ReadableStreamDefaultReader, ReadableStreamBYOBReader: ReadableStreamBYOBReader,
                ReadableStreamDefaultController: ReadableStreamDefaultController, ReadableByteStreamController: ReadableByteStreamController,
                WritableStream: WritableStream, WritableStreamDefaultWriter: WritableStreamDefaultWriter,
                WritableStreamDefaultController: WritableStreamDefaultController, TransformStream: TransformStream,
                TransformStreamDefaultController: TransformStreamDefaultController, CountQueuingStrategy: CountQueuingStrategy,
-               ByteLengthQueuingStrategy: ByteLengthQueuingStrategy, TextEncoderStream: TextEncoderStream, TextDecoderStream: TextDecoderStream };
+               ByteLengthQueuingStrategy: ByteLengthQueuingStrategy, TextEncoderStream: TextEncoderStream, TextDecoderStream: TextDecoderStream,
+               CompressionStream: CompressionStream, DecompressionStream: DecompressionStream };
   Object.keys(tags).forEach(function (n) {
     var f = tags[n];
     Object.defineProperty(f.prototype, 'constructor', { value: f, writable: true, configurable: true });

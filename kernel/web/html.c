@@ -902,3 +902,267 @@ void node_xml(node_t *n, sbuf_t *o) {
     sb_puts(o, n->name);
     sb_putc(o, '>');
 }
+/* ============================================================ documento XML */
+#define XNS_XML "http://www.w3.org/XML/1998/namespace"
+#define XNS_XMLNS "http://www.w3.org/2000/xmlns/"
+#define XNS_SVG "http://www.w3.org/2000/svg"
+
+typedef struct {
+    const char *s, *p, *e;
+    doc_t *d;
+    int count;
+    char err[200];
+    sbuf_t tmp;
+    /* prefixos ligados: pilha (prefixo, uri, profundidade) */
+    struct { const char *pre; int pl; const char *uri; int depth; } bind[128];
+    int nb;
+} xp_t;
+
+static bool xerr(xp_t *X, const char *m) { if (!X->err[0]) snprintf(X->err, sizeof X->err, "%s", m); return false; }
+
+static bool xname_start(u8 c) { return isalpha(c) || c == '_' || c == ':' || c >= 0x80; }
+static bool xname_char(u8 c) { return xname_start(c) || isdigit(c) || c == '-' || c == '.'; }
+
+/* texto com entidades XML (as 5 predefinidas e as numéricas); entidade desconhecida é erro */
+static bool xdecode(xp_t *X, const char *a, const char *b, bool attr) {
+    X->tmp.len = 0;
+    for (const char *q = a; q < b;) {
+        if (*q == '<' && attr) return xerr(X, "'<' no valor de atributo");
+        if (*q != '&') {
+            char c = *q++;
+            if (attr && (c == '\t' || c == '\n' || c == '\r')) c = ' ';   /* normalização de atributo */
+            sb_putc(&X->tmp, c);
+            continue;
+        }
+        const char *semi = q + 1;
+        while (semi < b && *semi != ';' && semi - q < 12) semi++;
+        if (semi >= b || *semi != ';') return xerr(X, "referência de entidade sem ';'");
+        const char *nm = q + 1;
+        int nl = (int)(semi - nm);
+        u32 cp = 0;
+        if (nl > 1 && nm[0] == '#') {
+            bool hex = nm[1] == 'x';
+            for (const char *t = nm + 1 + hex; t < semi; t++) {
+                int v = isdigit((u8)*t) ? *t - '0' : hex && ((*t >= 'a' && *t <= 'f') || (*t >= 'A' && *t <= 'F')) ? (tolower((u8)*t) - 'a' + 10) : -1;
+                if (v < 0 || cp > 0x10FFFF) return xerr(X, "referência de caractere inválida");
+                cp = cp * (hex ? 16 : 10) + (u32)v;
+            }
+            if (!cp || cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF)) return xerr(X, "referência de caractere inválida");
+        } else if (nl == 2 && !strncmp(nm, "lt", 2)) cp = '<';
+        else if (nl == 2 && !strncmp(nm, "gt", 2)) cp = '>';
+        else if (nl == 3 && !strncmp(nm, "amp", 3)) cp = '&';
+        else if (nl == 4 && !strncmp(nm, "quot", 4)) cp = '"';
+        else if (nl == 4 && !strncmp(nm, "apos", 4)) cp = '\'';
+        else return xerr(X, "entidade não definida");
+        char u[4];
+        int k = cp < 0x80 ? (u[0] = (char)cp, 1) : cp < 0x800 ? (u[0] = (char)(0xC0 | cp >> 6), u[1] = (char)(0x80 | (cp & 63)), 2)
+              : cp < 0x10000 ? (u[0] = (char)(0xE0 | cp >> 12), u[1] = (char)(0x80 | ((cp >> 6) & 63)), u[2] = (char)(0x80 | (cp & 63)), 3)
+              : (u[0] = (char)(0xF0 | cp >> 18), u[1] = (char)(0x80 | ((cp >> 12) & 63)), u[2] = (char)(0x80 | ((cp >> 6) & 63)), u[3] = (char)(0x80 | (cp & 63)), 4);
+        sb_putn(&X->tmp, u, k);
+        q = semi + 1;
+    }
+    return true;
+}
+
+/* uri do prefixo (pl = 0: o padrão); NULL = não ligado */
+static const char *xlookup(xp_t *X, const char *pre, int pl) {
+    if (pl == 3 && !strncmp(pre, "xml", 3)) return XNS_XML;
+    if (pl == 5 && !strncmp(pre, "xmlns", 5)) return XNS_XMLNS;
+    for (int i = X->nb - 1; i >= 0; i--) if (X->bind[i].pl == pl && (!pl || !strncmp(X->bind[i].pre, pre, (usize)pl))) return X->bind[i].uri;
+    return pl ? NULL : "";
+}
+
+static bool xbody(xp_t *X, node_t *parent, int depth, const char *end_name, int end_len);
+
+/* elemento a partir de '<' */
+static bool xelement(xp_t *X, node_t *parent, int depth) {
+    if (depth > 512) return xerr(X, "aninhamento profundo demais");
+    const char *q = X->p + 1, *ns = q;
+    if (q >= X->e || !xname_start((u8)*q)) return xerr(X, "nome de elemento inválido");
+    while (q < X->e && xname_char((u8)*q)) q++;
+    int nl = (int)(q - ns);
+    node_t *n = xnode(X->d, N_ELEM, &X->count);
+    if (!n) return xerr(X, "memória insuficiente");
+    n->name = arena_strndup(&X->d->arena, ns, nl);
+    int nb0 = X->nb;
+    bool selfclose = false;
+    /* atributos (os xmlns primeiro ligam prefixos para o próprio elemento) */
+    for (;;) {
+        const char *w = q;
+        while (q < X->e && (*q == ' ' || *q == '\t' || *q == '\n' || *q == '\r')) q++;
+        if (q >= X->e) return xerr(X, "fim do documento dentro de uma marca");
+        if (*q == '>') { q++; break; }
+        if (*q == '/') { if (q + 1 < X->e && q[1] == '>') { selfclose = true; q += 2; break; } return xerr(X, "'/' fora do lugar"); }
+        if (w == q) return xerr(X, "falta espaço entre atributos");
+        const char *an = q;
+        if (!xname_start((u8)*q)) return xerr(X, "nome de atributo inválido");
+        while (q < X->e && xname_char((u8)*q)) q++;
+        int anl = (int)(q - an);
+        while (q < X->e && isspace((u8)*q)) q++;
+        if (q >= X->e || *q != '=') return xerr(X, "atributo sem valor");
+        q++;
+        while (q < X->e && isspace((u8)*q)) q++;
+        if (q >= X->e || (*q != '"' && *q != '\'')) return xerr(X, "valor de atributo sem aspas");
+        char qt = *q++;
+        const char *vs = q;
+        while (q < X->e && *q != qt) q++;
+        if (q >= X->e) return xerr(X, "valor de atributo sem fim");
+        if (!xdecode(X, vs, q, true)) return false;
+        q++;
+        for (int i = 0; i < n->nattrs; i++)
+            if ((int)strlen(n->attrs[i].name) == anl && !strncmp(n->attrs[i].name, an, (usize)anl)) return xerr(X, "atributo repetido");
+        xattr_add(X->d, n, an, anl, X->tmp.p ? X->tmp.p : "", X->tmp.len);
+        bool def = anl == 5 && !strncmp(an, "xmlns", 5), pre = anl > 6 && !strncmp(an, "xmlns:", 6);
+        if ((def || pre) && X->nb < (int)ARRAY_LEN(X->bind)) {
+            if (pre && !X->tmp.len) return xerr(X, "prefixo ligado a namespace vazio");
+            X->bind[X->nb].pre = pre ? n->attrs[n->nattrs - 1].name + 6 : "";
+            X->bind[X->nb].pl = pre ? anl - 6 : 0;
+            X->bind[X->nb].uri = n->attrs[n->nattrs - 1].value;
+            X->bind[X->nb].depth = depth;
+            X->nb++;
+        }
+    }
+    /* namespace do elemento e checagem dos prefixos dos atributos */
+    const char *colon = NULL;
+    for (int i = 0; i < nl && !colon; i++) if (ns[i] == ':') colon = ns + i;
+    const char *uri = xlookup(X, ns, colon ? (int)(colon - ns) : 0);
+    if (!uri) return xerr(X, "prefixo de namespace não declarado");
+    for (int i = 0; i < n->nattrs; i++) {
+        const char *an = n->attrs[i].name, *c = strchr(an, ':');
+        if (c && strncmp(an, "xmlns:", 6) && !xlookup(X, an, (int)(c - an))) return xerr(X, "prefixo de atributo não declarado");
+    }
+    n->nsuri = uri;
+    bool svg = !strcmp(uri, XNS_SVG);
+    n->ns = svg ? 1 : 2;
+    n->tag = (u16)(svg && !strcmp(colon ? colon + 1 : n->name, "svg") ? T_SVG : T_UNKNOWN);
+    append(parent, n);
+    X->p = q;
+    if (!selfclose && !xbody(X, n, depth + 1, ns, nl)) return false;
+    X->nb = nb0;
+    return true;
+}
+
+/* conteúdo até </end_name> (end_name NULL: nível do documento) */
+static bool xbody(xp_t *X, node_t *parent, int depth, const char *end_name, int end_len) {
+    bool seen_root = false;
+    while (X->p < X->e) {
+        const char *p = X->p;
+        if (*p != '<') {
+            const char *q = p;
+            while (q < X->e && *q != '<') q++;
+            if (!end_name) {
+                for (const char *t = p; t < q; t++) if (!isspace((u8)*t)) return xerr(X, "texto fora do elemento raiz");
+            } else {
+                for (const char *t = p; t + 2 < q; t++) if (t[0] == ']' && t[1] == ']' && t[2] == '>') return xerr(X, "']]>' no texto");
+                if (!xdecode(X, p, q, false)) return false;
+                node_t *t = xnode(X->d, N_TEXT, &X->count);
+                if (!t) return xerr(X, "memória insuficiente");
+                t->text = arena_strndup(&X->d->arena, X->tmp.p ? X->tmp.p : "", X->tmp.len);
+                t->len = X->tmp.len;
+                append(parent, t);
+            }
+            X->p = q;
+            continue;
+        }
+        if (X->e - p >= 4 && !strncmp(p, "<!--", 4)) {
+            const char *q = p + 4;
+            while (q + 3 <= X->e && strncmp(q, "-->", 3)) { if (q[0] == '-' && q[1] == '-') return xerr(X, "'--' dentro de comentário"); q++; }
+            if (q + 3 > X->e) return xerr(X, "comentário sem fim");
+            X->p = q + 3;
+            continue;
+        }
+        if (X->e - p >= 9 && !strncmp(p, "<![CDATA[", 9)) {
+            if (!end_name) return xerr(X, "CDATA fora do elemento raiz");
+            const char *q = p + 9;
+            while (q + 3 <= X->e && strncmp(q, "]]>", 3)) q++;
+            if (q + 3 > X->e) return xerr(X, "CDATA sem fim");
+            node_t *t = xnode(X->d, N_TEXT, &X->count);
+            if (!t) return xerr(X, "memória insuficiente");
+            t->text = arena_strndup(&X->d->arena, p + 9, (int)(q - p - 9));
+            t->len = (int)(q - p - 9);
+            append(parent, t);
+            X->p = q + 3;
+            continue;
+        }
+        if (X->e - p >= 2 && p[1] == '?') {
+            const char *q = p + 2;
+            while (q + 2 <= X->e && strncmp(q, "?>", 2)) q++;
+            if (q + 2 > X->e) return xerr(X, "instrução de processamento sem fim");
+            if (q - p >= 5 && !strncmp(p + 2, "xml", 3) && (isspace((u8)p[5]) || p[5] == '?') && (p != X->s || end_name))
+                return xerr(X, "declaração XML fora do começo");
+            X->p = q + 2;
+            continue;
+        }
+        if (X->e - p >= 9 && !strncmp(p, "<!DOCTYPE", 9)) {
+            if (end_name || seen_root) return xerr(X, "DOCTYPE fora do lugar");
+            const char *q = p + 9;
+            int br = 0;
+            char qt = 0;
+            for (; q < X->e; q++) {
+                if (qt) { if (*q == qt) qt = 0; continue; }
+                if (*q == '"' || *q == '\'') qt = *q;
+                else if (*q == '[') br++;
+                else if (*q == ']') br--;
+                else if (*q == '>' && br <= 0) break;
+            }
+            if (q >= X->e) return xerr(X, "DOCTYPE sem fim");
+            X->p = q + 1;
+            continue;
+        }
+        if (X->e - p >= 2 && p[1] == '/') {
+            if (!end_name) return xerr(X, "marca de fim sem abertura");
+            const char *q = p + 2, *ns = q;
+            while (q < X->e && xname_char((u8)*q)) q++;
+            if ((int)(q - ns) != end_len || strncmp(ns, end_name, (usize)end_len)) return xerr(X, "marca de fim não corresponde à abertura");
+            while (q < X->e && isspace((u8)*q)) q++;
+            if (q >= X->e || *q != '>') return xerr(X, "marca de fim mal formada");
+            X->p = q + 1;
+            return true;
+        }
+        if (!end_name && seen_root) return xerr(X, "mais de um elemento raiz");
+        if (!xelement(X, parent, depth)) return false;
+        seen_root = true;
+    }
+    if (end_name) return xerr(X, "elemento sem marca de fim");
+    if (!seen_root) return xerr(X, "nenhum elemento raiz");
+    return true;
+}
+
+doc_t *xml_parse_doc(const char *src, int len, const char *url) {
+    doc_t *d = doc_parse("", 0, url);
+    if (!d) return NULL;
+    d->root->first = d->root->last = NULL;
+    d->html = d->head = d->body = NULL;
+    xp_t *X = kcalloc(1, sizeof(xp_t));
+    if (!X) { doc_free(d); return NULL; }
+    X->s = X->p = src;
+    X->e = src + len;
+    if (X->e - X->p >= 3 && (u8)X->p[0] == 0xEF && (u8)X->p[1] == 0xBB && (u8)X->p[2] == 0xBF) X->s = X->p += 3;
+    X->d = d;
+    X->count = d->node_count;
+    bool ok = xbody(X, d->root, 0, NULL, 0);
+    if (!ok) {
+        /* como no navegador: o documento é só o <parsererror> com a mensagem, linha e coluna */
+        int line = 1, col = 1;
+        for (const char *t = src; t < X->p && t < X->e; t++) { if (*t == '\n') { line++; col = 1; } else col++; }
+        d->root->first = d->root->last = NULL;
+        node_t *pe = xnode(d, N_ELEM, &X->count);
+        if (pe) {
+            pe->name = "parsererror";
+            pe->ns = 2;
+            pe->nsuri = "http://www.mozilla.org/newlayout/xml/parsererror.xml";
+            pe->tag = T_UNKNOWN;
+            append(d->root, pe);
+            char m[400];
+            int ml = snprintf(m, sizeof m, "Erro de XML: %s\nLocal: %s\nLinha %d, coluna %d", X->err[0] ? X->err : "documento mal formado", url, line, col);
+            node_t *t = xnode(d, N_TEXT, &X->count);
+            if (t) { t->text = arena_strndup(&d->arena, m, ml); t->len = ml; append(pe, t); }
+        }
+    }
+    for (node_t *c = d->root->first; c; c = c->next) if (c->type == N_ELEM) { d->html = c; break; }
+    d->node_count = X->count;
+    d->xml = true;
+    sb_free(&X->tmp);
+    kfree(X);
+    return d;
+}

@@ -922,6 +922,9 @@ typedef struct {
     unsigned int bg;             /* cor de fundo da página (0xAARRGGBB) */
     char mime[64];
     char newwin[1024];           /* MOS_WEB_EV_NEWWIN: o link target=_blank (entregue uma vez, depois some) */
+    int req_subframe;            /* MOS_WEB_EV_NAVREQ: a navegação é de um iframe (targetFrame.isMainFrame = NO) */
+    int pad2;
+    char req_frame[1024];        /* URL atual do iframe que vai navegar */
 } mos_web_info_t;
 typedef struct {
     unsigned long long src;      /* const char* */

@@ -167,9 +167,10 @@ static bool hkdf_any(int h, const u8 *ikm, u32 il, const u8 *salt, u32 sl, const
 }
 
 /* ============================================================ algoritmos */
-enum { A_NONE, A_SHA, A_HMAC, A_AESGCM, A_AESCTR, A_PBKDF2, A_HKDF, A_ECDSA, A_ECDH, A_ED25519, A_X25519, A_RSAPKCS1, A_RSAPSS };
+enum { A_NONE, A_SHA, A_HMAC, A_AESGCM, A_AESCTR, A_PBKDF2, A_HKDF, A_ECDSA, A_ECDH, A_ED25519, A_X25519, A_RSAPKCS1, A_RSAPSS, A_AESCBC, A_AESKW };
 static const char *alg_names[] = { "", "SHA", "HMAC", "AES-GCM", "AES-CTR", "PBKDF2", "HKDF", "ECDSA", "ECDH", "Ed25519", "X25519",
-                                   "RSASSA-PKCS1-v1_5", "RSA-PSS" };
+                                   "RSASSA-PKCS1-v1_5", "RSA-PSS", "AES-CBC", "AES-KW" };
+static bool is_aes(int a) { return a == A_AESGCM || a == A_AESCTR || a == A_AESCBC || a == A_AESKW; }
 
 typedef struct {
     int alg, hash, curve;     /* curve: EC_P256/EC_P384 */
@@ -270,7 +271,8 @@ static jsobj *key_new(const char *type, bool extractable, jsobj *alg, jsobj *usa
 static const char *allowed_usages(int alg, const char *type) {
     switch (alg) {
     case A_HMAC: return "sign verify";
-    case A_AESGCM: case A_AESCTR: return "encrypt decrypt wrapKey unwrapKey";
+    case A_AESGCM: case A_AESCTR: case A_AESCBC: return "encrypt decrypt wrapKey unwrapKey";
+    case A_AESKW: return "wrapKey unwrapKey";
     case A_PBKDF2: case A_HKDF: return "deriveKey deriveBits";
     case A_ECDSA: case A_ED25519: case A_RSAPKCS1: case A_RSAPSS: return !strcmp(type, "private") ? "sign" : "verify";
     case A_ECDH: case A_X25519: return !strcmp(type, "private") ? "deriveKey deriveBits" : "";
@@ -395,7 +397,7 @@ static bool pair_usages(jsv list, int alg, jsobj **pub, jsobj **priv) {
 static jsv gen_key(algo_t *a, bool ext, jsv usages) {
     bool ok;
     switch (a->alg) {
-    case A_HMAC: case A_AESGCM: case A_AESCTR: {
+    case A_HMAC: case A_AESGCM: case A_AESCTR: case A_AESCBC: case A_AESKW: {
         u32 bits;
         if (a->alg == A_HMAC) {
             if (!a->hash) { js_throw_err(E_TYPE, "HMAC precisa de hash"); return JS_EXC; }
@@ -403,7 +405,7 @@ static jsv gen_key(algo_t *a, bool ext, jsv usages) {
             if (bits % 8) return dom_err("OperationError", "comprimento de HMAC precisa ser múltiplo de 8");
         } else {
             bits = a->length;
-            if (bits != 128 && bits != 256) return dom_err(bits == 192 ? "NotSupportedError" : "OperationError", "AES: comprimento %u não suportado", bits);
+            if (bits != 128 && bits != 192 && bits != 256) return dom_err("OperationError", "AES: comprimento %u não suportado", bits);
         }
         jsobj *u = usages_for(usages, a->alg, "secret", &ok);
         if (!ok) return JS_EXC;
@@ -467,7 +469,7 @@ static jsv import_key(const char *fmt, jsv data, algo_t *a, bool ext, jsv usages
     if (!is_jwk && !buffer_source(data, &raw)) return JS_EXC;
     jsv result = JS_EXC;
     switch (a->alg) {
-    case A_HMAC: case A_AESGCM: case A_AESCTR: case A_PBKDF2: case A_HKDF: {
+    case A_HMAC: case A_AESGCM: case A_AESCTR: case A_AESCBC: case A_AESKW: case A_PBKDF2: case A_HKDF: {
         if (strcmp(fmt, "raw") && !is_jwk) { result = dom_err("NotSupportedError", "%s só aceita raw ou jwk", alg_names[a->alg]); break; }
         if (is_jwk) {
             if (a->alg == A_PBKDF2 || a->alg == A_HKDF) { result = dom_err("NotSupportedError", "%s só aceita raw", alg_names[a->alg]); break; }
@@ -477,8 +479,8 @@ static jsv import_key(const char *fmt, jsv data, algo_t *a, bool ext, jsv usages
         }
         if ((a->alg == A_PBKDF2 || a->alg == A_HKDF) && ext) { result = dom_err("SyntaxError", "%s não pode ser extraível", alg_names[a->alg]); break; }
         u32 bits = raw.n * 8;
-        if (a->alg == A_AESGCM || a->alg == A_AESCTR) {
-            if (raw.n != 16 && raw.n != 32) { result = dom_err(raw.n == 24 ? "NotSupportedError" : "DataError", "AES: chave de %u bytes", raw.n); break; }
+        if (is_aes(a->alg)) {
+            if (raw.n != 16 && raw.n != 24 && raw.n != 32) { result = dom_err("DataError", "AES: chave de %u bytes", raw.n); break; }
         }
         if (a->alg == A_HMAC) {
             if (!a->hash) { js_throw_err(E_TYPE, "HMAC precisa de hash"); break; }
@@ -487,7 +489,7 @@ static jsv import_key(const char *fmt, jsv data, algo_t *a, bool ext, jsv usages
         }
         jsobj *u = usages_for(usages, a->alg, "secret", &ok);
         if (!ok) break;
-        result = jv_obj(key_new("secret", ext, alg_object(a->alg, a->alg == A_HMAC ? a->hash : 0, (a->alg == A_HMAC || a->alg == A_AESGCM || a->alg == A_AESCTR) ? bits : 0, 0),
+        result = jv_obj(key_new("secret", ext, alg_object(a->alg, a->alg == A_HMAC ? a->hash : 0, (a->alg == A_HMAC || is_aes(a->alg)) ? bits : 0, 0),
                                 u, raw.d, raw.n, NULL, 0));
         break;
     }
@@ -687,8 +689,8 @@ static jsv export_key(const char *fmt, jsv key) {
             js_defn(j, "k", jv_str(b64url(sec, sn)), 0);
             char an[16];
             if (alg == A_HMAC) snprintf(an, sizeof an, "HS%d", key_hash(x) == H_SHA1 ? 1 : (int)hlen(key_hash(x)) * 8);
-            else snprintf(an, sizeof an, "A%u%s", sn * 8, alg == A_AESGCM ? "GCM" : "CTR");
-            if (alg == A_HMAC || alg == A_AESGCM || alg == A_AESCTR) js_defn(j, "alg", jv_str(js_strz(an)), 0);
+            else snprintf(an, sizeof an, "A%u%s", sn * 8, alg == A_AESGCM ? "GCM" : alg == A_AESCTR ? "CTR" : alg == A_AESCBC ? "CBC" : "KW");
+            if (alg == A_HMAC || is_aes(alg)) js_defn(j, "alg", jv_str(js_strz(an)), 0);
         } else if (alg == A_ECDSA || alg == A_ECDH) {
             u32 B = (pn - 1) / 2;
             js_defn(j, "kty", jv_str(js_strz("EC")), 0);
@@ -867,12 +869,92 @@ NATIVE(sc_sign) {
     return resolve(pr, r);
 }
 
+/* --------------------------------------------------------- AES (FIPS 197): 128/192/256, cifra e decifra */
+typedef struct { u32 rk[60]; int nr; } waes_t;
+static u8 sbox[256], isbox[256];
+static void aes_tables(void) {
+    if (sbox[0]) return;
+    u8 p = 1, q = 1;
+    do {   /* gerador 3 e inverso: S-box pela definição (inverso multiplicativo + transformação afim) */
+        p = (u8)(p ^ (p << 1) ^ (p & 0x80 ? 0x1B : 0));
+        q ^= (u8)(q << 1); q ^= (u8)(q << 2); q ^= (u8)(q << 4); if (q & 0x80) q ^= 0x09;
+        u8 x = (u8)(q ^ (q << 1 | q >> 7) ^ (q << 2 | q >> 6) ^ (q << 3 | q >> 5) ^ (q << 4 | q >> 4));
+        sbox[p] = (u8)(x ^ 0x63);
+    } while (p != 1);
+    sbox[0] = 0x63;
+    for (int i = 0; i < 256; i++) isbox[sbox[i]] = (u8)i;
+}
+static u8 xt(u8 x) { return (u8)(x << 1 ^ (x & 0x80 ? 0x1B : 0)); }
+static u8 gmul(u8 a, u8 b) { u8 r = 0; while (b) { if (b & 1) r ^= a; a = xt(a); b >>= 1; } return r; }
+
+static void waes_setkey(waes_t *k, const u8 *key, u32 n) {
+    aes_tables();
+    int nk = (int)n / 4;
+    k->nr = nk + 6;
+    int tot = 4 * (k->nr + 1);
+    for (int i = 0; i < nk; i++) k->rk[i] = (u32)key[4 * i] << 24 | (u32)key[4 * i + 1] << 16 | (u32)key[4 * i + 2] << 8 | key[4 * i + 3];
+    u8 rc = 1;
+    for (int i = nk; i < tot; i++) {
+        u32 t = k->rk[i - 1];
+        if (i % nk == 0) {
+            t = t << 8 | t >> 24;
+            t = (u32)sbox[t >> 24] << 24 | (u32)sbox[(t >> 16) & 255] << 16 | (u32)sbox[(t >> 8) & 255] << 8 | sbox[t & 255];
+            t ^= (u32)rc << 24;
+            rc = xt(rc);
+        } else if (nk > 6 && i % nk == 4)
+            t = (u32)sbox[t >> 24] << 24 | (u32)sbox[(t >> 16) & 255] << 16 | (u32)sbox[(t >> 8) & 255] << 8 | sbox[t & 255];
+        k->rk[i] = k->rk[i - nk] ^ t;
+    }
+}
+static void addrk(u8 st[16], const u32 *rk) { for (int c = 0; c < 4; c++) for (int r = 0; r < 4; r++) st[4 * c + r] ^= (u8)(rk[c] >> (24 - 8 * r)); }
+static void waes_enc(const waes_t *k, const u8 in[16], u8 out[16]) {
+    u8 st[16];
+    memcpy(st, in, 16);
+    addrk(st, k->rk);
+    for (int rd = 1; rd <= k->nr; rd++) {
+        for (int i = 0; i < 16; i++) st[i] = sbox[st[i]];
+        u8 t[16];
+        for (int c = 0; c < 4; c++) for (int r = 0; r < 4; r++) t[4 * c + r] = st[4 * ((c + r) & 3) + r];
+        if (rd != k->nr)
+            for (int c = 0; c < 4; c++) {
+                u8 *a = t + 4 * c, a0 = a[0], a1 = a[1], a2 = a[2], a3 = a[3];
+                a[0] = (u8)(xt(a0) ^ xt(a1) ^ a1 ^ a2 ^ a3);
+                a[1] = (u8)(a0 ^ xt(a1) ^ xt(a2) ^ a2 ^ a3);
+                a[2] = (u8)(a0 ^ a1 ^ xt(a2) ^ xt(a3) ^ a3);
+                a[3] = (u8)(xt(a0) ^ a0 ^ a1 ^ a2 ^ xt(a3));
+            }
+        memcpy(st, t, 16);
+        addrk(st, k->rk + 4 * rd);
+    }
+    memcpy(out, st, 16);
+}
+static void waes_dec(const waes_t *k, const u8 in[16], u8 out[16]) {
+    u8 st[16];
+    memcpy(st, in, 16);
+    addrk(st, k->rk + 4 * k->nr);
+    for (int rd = k->nr - 1; rd >= 0; rd--) {
+        u8 t[16];
+        for (int c = 0; c < 4; c++) for (int r = 0; r < 4; r++) t[4 * ((c + r) & 3) + r] = st[4 * c + r];
+        for (int i = 0; i < 16; i++) st[i] = isbox[t[i]];
+        addrk(st, k->rk + 4 * rd);
+        if (rd)
+            for (int c = 0; c < 4; c++) {
+                u8 *a = st + 4 * c, a0 = a[0], a1 = a[1], a2 = a[2], a3 = a[3];
+                a[0] = (u8)(gmul(a0, 14) ^ gmul(a1, 11) ^ gmul(a2, 13) ^ gmul(a3, 9));
+                a[1] = (u8)(gmul(a0, 9) ^ gmul(a1, 14) ^ gmul(a2, 11) ^ gmul(a3, 13));
+                a[2] = (u8)(gmul(a0, 13) ^ gmul(a1, 9) ^ gmul(a2, 14) ^ gmul(a3, 11));
+                a[3] = (u8)(gmul(a0, 11) ^ gmul(a1, 13) ^ gmul(a2, 9) ^ gmul(a3, 14));
+            }
+    }
+    memcpy(out, st, 16);
+}
+
 /* --------------------------------------------------------- encrypt / decrypt */
-static void ctr_xor(const aes_ctx *k, const u8 ctr0[16], u32 len_bits, const u8 *in, u8 *out, u32 n) {
+static void ctr_xor(const waes_t *k, const u8 ctr0[16], u32 len_bits, const u8 *in, u8 *out, u32 n) {
     u8 ctr[16], ks[16];
     memcpy(ctr, ctr0, 16);
     for (u32 off = 0; off < n; off += 16) {
-        aes_encrypt_block(k, ctr, ks);
+        waes_enc(k, ctr, ks);
         for (u32 i = 0; i < 16 && off + i < n; i++) out[off + i] = in[off + i] ^ ks[i];
         /* incrementa só os len_bits de baixo do contador */
         for (int i = 15, bits = (int)len_bits; i >= 0 && bits > 0; i--, bits -= 8) {
@@ -884,63 +966,205 @@ static void ctr_xor(const aes_ctx *k, const u8 ctr0[16], u32 len_bits, const u8 
     }
 }
 
-static jsv crypt(algo_t *a, jsv key, bytes_t *data, bool dec) {
+/* GCM (NIST SP 800-38D): GHASH em GF(2^128), IV de qualquer tamanho, tag de 32 a 128 bits */
+static void gf_mul(u8 x[16], const u8 h[16]) {
+    u8 z[16] = { 0 }, v[16];
+    memcpy(v, h, 16);
+    for (int i = 0; i < 128; i++) {
+        if (x[i / 8] >> (7 - i % 8) & 1) for (int j = 0; j < 16; j++) z[j] ^= v[j];
+        bool lsb = v[15] & 1;
+        for (int j = 15; j > 0; j--) v[j] = (u8)(v[j] >> 1 | v[j - 1] << 7);
+        v[0] >>= 1;
+        if (lsb) v[0] ^= 0xE1;
+    }
+    memcpy(x, z, 16);
+}
+static void ghash_up(u8 y[16], const u8 h[16], const u8 *d, usize n) {
+    for (usize off = 0; off < n; off += 16) {
+        for (usize i = 0; i < 16 && off + i < n; i++) y[i] ^= d[off + i];
+        gf_mul(y, h);
+    }
+}
+static void ghash_len(u8 y[16], const u8 h[16], u64 abits, u64 cbits) {
+    u8 l[16];
+    for (int i = 0; i < 8; i++) { l[i] = (u8)(abits >> (56 - 8 * i)); l[8 + i] = (u8)(cbits >> (56 - 8 * i)); }
+    ghash_up(y, h, l, 16);
+}
+static void inc32(u8 b[16]) { for (int i = 15; i >= 12; i--) if (++b[i]) break; }
+/* cifra/decifra GCM; tag calculada sobre o texto cifrado */
+static void gcm_run(const waes_t *k, const u8 *iv, usize ivn, const u8 *ad, usize adn, const u8 *in, usize n, u8 *out, bool dec, u8 tag[16]) {
+    u8 h[16] = { 0 }, j0[16] = { 0 }, y[16] = { 0 }, ctr[16], ks[16];
+    waes_enc(k, h, h);
+    if (ivn == 12) { memcpy(j0, iv, 12); j0[15] = 1; }
+    else { ghash_up(j0, h, iv, ivn); ghash_len(j0, h, 0, (u64)ivn * 8); }
+    memcpy(ctr, j0, 16);
+    ghash_up(y, h, ad, adn);
+    if (dec) ghash_up(y, h, in, n);
+    for (usize off = 0; off < n; off += 16) {
+        inc32(ctr);
+        waes_enc(k, ctr, ks);
+        for (usize i = 0; i < 16 && off + i < n; i++) out[off + i] = in[off + i] ^ ks[i];
+    }
+    if (!dec) ghash_up(y, h, out, n);
+    ghash_len(y, h, (u64)adn * 8, (u64)n * 8);
+    waes_enc(k, j0, ks);
+    for (int i = 0; i < 16; i++) tag[i] = y[i] ^ ks[i];
+}
+
+/* AES-KW (RFC 3394) */
+static bool kw_wrap(const waes_t *k, const u8 *p, u32 n, u8 *out) {   /* out: n + 8 */
+    u32 m = n / 8;
+    u8 a[8], b[16];
+    memset(a, 0xA6, 8);
+    memcpy(out + 8, p, n);
+    for (u32 j = 0; j < 6; j++)
+        for (u32 i = 1; i <= m; i++) {
+            memcpy(b, a, 8);
+            memcpy(b + 8, out + 8 * i, 8);
+            waes_enc(k, b, b);
+            u64 t = (u64)m * j + i;
+            memcpy(a, b, 8);
+            for (int q = 0; q < 8; q++) a[7 - q] ^= (u8)(t >> (8 * q));
+            memcpy(out + 8 * i, b + 8, 8);
+        }
+    memcpy(out, a, 8);
+    return true;
+}
+static bool kw_unwrap(const waes_t *k, const u8 *c, u32 n, u8 *out) {   /* out: n − 8 */
+    u32 m = n / 8 - 1;
+    u8 a[8], b[16];
+    memcpy(a, c, 8);
+    u8 *r = kmalloc(n);
+    if (!r) return false;
+    memcpy(r, c, n);
+    for (int j = 5; j >= 0; j--)
+        for (u32 i = m; i >= 1; i--) {
+            u64 t = (u64)m * (u32)j + i;
+            for (int q = 0; q < 8; q++) a[7 - q] ^= (u8)(t >> (8 * q));
+            memcpy(b, a, 8);
+            memcpy(b + 8, r + 8 * i, 8);
+            waes_dec(k, b, b);
+            memcpy(a, b, 8);
+            memcpy(r + 8 * i, b + 8, 8);
+        }
+    bool ok = true;
+    for (int i = 0; i < 8; i++) if (a[i] != 0xA6) ok = false;
+    if (ok) memcpy(out, r + 8, n - 8);
+    secure_zero(r, n);
+    kfree(r);
+    return ok;
+}
+
+/* wrap: chamada por wrapKey/unwrapKey (o AES-KW só serve para isso) */
+static jsv crypt_ex(algo_t *a, jsv key, bytes_t *data, bool dec, bool wrap) {
     jsobj *x = key_x(key);
     if (!x) { js_throw_err(E_TYPE, "CryptoKey esperada"); return JS_EXC; }
     int alg = key_alg(x);
     if (alg != a->alg) return dom_err("InvalidAccessError", "a chave é de %s, não de %s", alg_names[alg], alg_names[a->alg]);
-    if (!has_usage(x, dec ? "decrypt" : "encrypt") && !has_usage(x, dec ? "unwrapKey" : "wrapKey"))
-        return dom_err("InvalidAccessError", "a chave não permite %s", dec ? "decrypt" : "encrypt");
+    if (!has_usage(x, wrap ? (dec ? "unwrapKey" : "wrapKey") : (dec ? "decrypt" : "encrypt")))
+        return dom_err("InvalidAccessError", "a chave não permite %s", wrap ? (dec ? "unwrapKey" : "wrapKey") : (dec ? "decrypt" : "encrypt"));
+    if (alg == A_AESKW && !wrap) return dom_err("InvalidAccessError", "AES-KW só embrulha chaves (wrapKey/unwrapKey)");
+    if (!is_aes(alg)) return dom_err("InvalidAccessError", "%s não cifra", alg_names[alg]);
     const u8 *sec; u32 sn;
     key_bytes(x, K_SECRET, &sec, &sn);
+    waes_t k;
+    waes_setkey(&k, sec, sn);
+    jsv r = JS_EXC;
     if (alg == A_AESGCM) {
         jsv ivv = js_getn(a->obj, "iv"), adv = js_getn(a->obj, "additionalData"), tlv = js_getn(a->obj, "tagLength");
-        if (js_pending()) return JS_EXC;
+        if (js_pending()) goto out;
         bytes_t iv = { 0 }, ad = { 0 };
-        if (!buffer_source(ivv, &iv)) return JS_EXC;
-        if (adv != JS_UNDEF && !buffer_source(adv, &ad)) { bfree(&iv); return JS_EXC; }
+        if (!buffer_source(ivv, &iv)) goto out;
+        if (adv != JS_UNDEF && !buffer_source(adv, &ad)) { bfree(&iv); goto out; }
         int tl = tlv == JS_UNDEF ? 128 : js_toint32(tlv);
-        jsv r = JS_EXC;
-        if (iv.n != 12) r = dom_err("NotSupportedError", "AES-GCM no mOS usa IV de 12 bytes");
-        else if (tl != 128) r = dom_err("NotSupportedError", "AES-GCM no mOS usa tag de 128 bits");
+        u32 tb = (u32)tl / 8;
+        if (tl != 32 && tl != 64 && tl != 96 && tl != 104 && tl != 112 && tl != 120 && tl != 128) r = dom_err("OperationError", "AES-GCM: tagLength inválido");
+        else if (!iv.n) r = dom_err("OperationError", "AES-GCM: IV vazio");
+        else if (!dec) {
+            u8 *o = kmalloc(data->n + tb), tag[16];
+            if (o) { gcm_run(&k, iv.d, iv.n, ad.d, ad.n, data->d, data->n, o, false, tag); memcpy(o + data->n, tag, tb); r = to_abuf(o, data->n + tb); kfree(o); }
+        } else if (data->n < tb) r = dom_err("OperationError", "dados cifrados curtos demais");
         else {
-            aes_gcm_ctx g;
-            aes_gcm_init(&g, sec, sn);
-            if (!dec) {
-                u8 *out = kmalloc(data->n + 16);
-                if (out) { aes_gcm_seal(&g, iv.d, ad.d, ad.n, data->d, data->n, out, out + data->n); r = to_abuf(out, data->n + 16); kfree(out); }
-            } else if (data->n < 16) r = dom_err("OperationError", "dados cifrados curtos demais");
-            else {
-                u8 *out = kmalloc(data->n);
-                if (out) {
-                    if (aes_gcm_open(&g, iv.d, ad.d, ad.n, data->d, data->n - 16, out, data->d + data->n - 16)) r = dom_err("OperationError", "a autenticação AES-GCM falhou");
-                    else r = to_abuf(out, data->n - 16);
-                    kfree(out);
-                }
+            u32 cn = data->n - tb;
+            u8 *o = kmalloc(cn ? cn : 1), tag[16];
+            if (o) {
+                gcm_run(&k, iv.d, iv.n, ad.d, ad.n, data->d, cn, o, true, tag);
+                u8 diff = 0;
+                for (u32 i = 0; i < tb; i++) diff |= tag[i] ^ data->d[cn + i];
+                r = diff ? dom_err("OperationError", "a autenticação AES-GCM falhou") : to_abuf(o, cn);
+                secure_zero(o, cn);
+                kfree(o);
             }
-            secure_zero(&g, sizeof g);
         }
         bfree(&iv); bfree(&ad);
-        return r;
-    }
-    if (alg == A_AESCTR) {
+    } else if (alg == A_AESCTR) {
         jsv cv = js_getn(a->obj, "counter");
-        if (js_pending()) return JS_EXC;
+        if (js_pending()) goto out;
         bytes_t c = { 0 };
-        if (!buffer_source(cv, &c)) return JS_EXC;
+        if (!buffer_source(cv, &c)) goto out;
         u32 lb = a->length;
-        if (c.n != 16 || lb < 1 || lb > 128) { bfree(&c); return dom_err("OperationError", "AES-CTR: counter de 16 bytes e length de 1 a 128"); }
-        aes_ctx k;
-        aes_setkey(&k, sec, sn);
-        u8 *out = kmalloc(data->n ? data->n : 1);
-        jsv r = JS_EXC;
-        if (out) { ctr_xor(&k, c.d, lb, data->d, out, data->n); r = to_abuf(out, data->n); kfree(out); }
-        secure_zero(&k, sizeof k);
+        if (c.n != 16 || lb < 1 || lb > 128) r = dom_err("OperationError", "AES-CTR: counter de 16 bytes e length de 1 a 128");
+        else {
+            u8 *o = kmalloc(data->n ? data->n : 1);
+            if (o) { ctr_xor(&k, c.d, lb, data->d, o, data->n); r = to_abuf(o, data->n); kfree(o); }
+        }
         bfree(&c);
-        return r;
+    } else if (alg == A_AESCBC) {
+        jsv ivv = js_getn(a->obj, "iv");
+        if (js_pending()) goto out;
+        bytes_t iv = { 0 };
+        if (!buffer_source(ivv, &iv)) goto out;
+        if (iv.n != 16) r = dom_err("OperationError", "AES-CBC: IV de 16 bytes");
+        else if (!dec) {
+            u32 pad = 16 - data->n % 16, n = data->n + pad;
+            u8 *o = kmalloc(n), prev[16], blk[16];
+            if (o) {
+                memcpy(prev, iv.d, 16);
+                for (u32 off = 0; off < n; off += 16) {
+                    for (int i = 0; i < 16; i++) blk[i] = (u8)((off + (u32)i < data->n ? data->d[off + i] : (u8)pad) ^ prev[i]);
+                    waes_enc(&k, blk, o + off);
+                    memcpy(prev, o + off, 16);
+                }
+                r = to_abuf(o, n);
+                kfree(o);
+            }
+        } else if (!data->n || data->n % 16) r = dom_err("OperationError", "AES-CBC: tamanho do texto cifrado inválido");
+        else {
+            u8 *o = kmalloc(data->n);
+            if (o) {
+                const u8 *prev = iv.d;
+                for (u32 off = 0; off < data->n; off += 16) {
+                    waes_dec(&k, data->d + off, o + off);
+                    for (int i = 0; i < 16; i++) o[off + i] ^= prev[i];
+                    prev = data->d + off;
+                }
+                u8 pad = o[data->n - 1];
+                bool ok = pad >= 1 && pad <= 16;
+                for (u32 i = 0; ok && i < pad; i++) if (o[data->n - 1 - i] != pad) ok = false;
+                r = ok ? to_abuf(o, data->n - pad) : dom_err("OperationError", "AES-CBC: preenchimento inválido");
+                secure_zero(o, data->n);
+                kfree(o);
+            }
+        }
+        bfree(&iv);
+    } else {   /* AES-KW */
+        if (data->n % 8 || data->n < (dec ? 24u : 16u)) r = dom_err(dec ? "OperationError" : "DataError", "AES-KW: os dados precisam ter múltiplos de 8 bytes (pelo menos %u)", dec ? 24 : 16);
+        else {
+            u32 on = dec ? data->n - 8 : data->n + 8;
+            u8 *o = kmalloc(on);
+            if (o) {
+                if (dec ? kw_unwrap(&k, data->d, data->n, o) : kw_wrap(&k, data->d, data->n, o)) r = to_abuf(o, on);
+                else r = dom_err("OperationError", "AES-KW: a verificação da integridade falhou");
+                secure_zero(o, on);
+                kfree(o);
+            }
+        }
     }
-    return dom_err("InvalidAccessError", "%s não cifra", alg_names[alg]);
+out:
+    secure_zero(&k, sizeof k);
+    return r;
 }
+static jsv crypt(algo_t *a, jsv key, bytes_t *data, bool dec) { return crypt_ex(a, key, data, dec, false); }
 
 NATIVE(sc_crypt) {
     UNUSED_ARGS;
@@ -1046,7 +1270,7 @@ NATIVE(sc_derivekey) {
     algo_t a, d;
     if (!norm_alg(ARG(0), &a) || !norm_alg(ARG(2), &d)) return reject_pending(pr);
     u32 bits;
-    if (d.alg == A_AESGCM || d.alg == A_AESCTR) bits = d.length;
+    if (is_aes(d.alg)) bits = d.length;
     else if (d.alg == A_HMAC) bits = d.length ? d.length : (d.hash ? hblock(d.hash) * 8 : 0);
     else if (d.alg == A_HKDF || d.alg == A_PBKDF2) bits = 0xFFFFFFFFu;
     else { dom_err("NotSupportedError", "deriveKey: alvo %s não suportado", alg_names[d.alg]); return reject_pending(pr); }
@@ -1076,7 +1300,7 @@ NATIVE(sc_wrap) {
         if (txt == JS_EXC || !jv_isstr(txt)) return reject_pending(pr);
         bset(&data, (const u8 *)jv_s(txt)->d, jv_s(txt)->len);
     } else if (!buffer_source(ex, &data)) return reject_pending(pr);
-    jsv r = crypt(&a, ARG(2), &data, false);
+    jsv r = crypt_ex(&a, ARG(2), &data, false, true);
     bfree(&data);
     if (r == JS_EXC) return reject_pending(pr);
     return resolve(pr, r);
@@ -1092,7 +1316,7 @@ NATIVE(sc_unwrap) {
     if (!wx || !has_usage(wx, "unwrapKey")) { dom_err("InvalidAccessError", "a chave de desembrulho não permite unwrapKey"); return reject_pending(pr); }
     bytes_t data = { 0 };
     if (!buffer_source(ARG(1), &data)) return reject_pending(pr);
-    jsv plain = crypt(&a, ARG(2), &data, true);
+    jsv plain = crypt_ex(&a, ARG(2), &data, true, true);
     bfree(&data);
     if (plain == JS_EXC) return reject_pending(pr);
     jsv kd = plain;

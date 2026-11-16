@@ -248,6 +248,46 @@ void canvas_size_attrs(node_t *n, int *w, int *h) {
     }
 }
 
+node_t *canvas_detached(doc_t *d, int w, int h) {
+    node_t *n = arena_alloc(&d->arena, sizeof(node_t));
+    attr_t *a = arena_alloc(&d->arena, sizeof(attr_t) * 2);
+    if (!n || !a) return NULL;
+    n->type = N_ELEM;
+    n->tag = T_CANVAS;
+    n->name = "canvas";
+    n->ay = -1;
+    n->attrs = a;
+    n->acap = 2;
+    canvas_set_dims(d, n, w, h);
+    return n;
+}
+
+void canvas_set_dims(doc_t *d, node_t *n, int w, int h) {
+    const char *names[2] = { "width", "height" };
+    int v[2] = { w, h };
+    for (int i = 0; i < 2; i++) {
+        char buf[16];
+        int l = snprintf(buf, sizeof buf, "%d", v[i]);
+        int k = -1;
+        for (int j = 0; j < n->nattrs; j++) if (!strcmp(n->attrs[j].name, names[i])) k = j;
+        if (k < 0) {
+            if (n->nattrs == n->acap) {
+                int nc = n->acap ? n->acap * 2 : 2;
+                attr_t *na = arena_alloc(&d->arena, sizeof(attr_t) * (usize)nc);
+                if (!na) return;
+                if (n->attrs) memcpy(na, n->attrs, sizeof(attr_t) * (usize)n->nattrs);
+                n->attrs = na;
+                n->acap = nc;
+            }
+            k = n->nattrs++;
+            n->attrs[k].name = (char *)names[i];
+        }
+        n->attrs[k].value = arena_strndup(&d->arena, buf, l);
+    }
+    if (n->canvas) canvas_resize(n->canvas, w, h);
+    d->need_layout = true;
+}
+
 void canvas_state_init(cstate_t *st) {
     memset(st, 0, sizeof *st);
     st->m = MID;
@@ -260,6 +300,7 @@ void canvas_state_init(cstate_t *st) {
     st->cap = CAP_BUTT;
     st->join = JOIN_MITER;
     strcpy(st->font, "10px sans-serif");
+    strcpy(st->filter, "none");
     st->fsize = 10;
     st->fweight = 400;
     st->align = CTA_START;
@@ -685,8 +726,160 @@ static void box_blur(u8 *a, u8 *tmp, int w, int h, int r, bool horiz) {
     memcpy(a, tmp, (usize)w * h);
 }
 
-/* desenha a camada como sombra (desfocada, colorida e deslocada) ou como a forma */
+/* ================================================================ ctx.filter */
+/* caixas da gaussiana de desvio σ (até 128) */
+static int sigma_boxes(float sigma, int boxes[3]) {
+    boxes[0] = boxes[1] = boxes[2] = 0;
+    if (sigma > 128) sigma = 128;
+    if (!(sigma > 0)) return 0;
+    float wi = sqrtf_(12 * sigma * sigma / 3 + 1);
+    int wl = (int)ffloor(wi);
+    if (!(wl & 1)) wl--;
+    int wu = wl + 2;
+    float mi = (12 * sigma * sigma - 3 * wl * wl - 12 * wl - 9) / (-4.0f * wl - 4);
+    int m = (int)(mi + (mi >= 0 ? 0.5f : -0.5f));
+    int pad = 0;
+    for (int i = 0; i < 3; i++) { boxes[i] = ((i < m ? wl : wu) - 1) / 2; pad += boxes[i]; }
+    return pad;
+}
+
+/* desfoque gaussiano dos 4 canais (pré-multiplicados) */
+static void blur_rgba(u32 *px, int w, int h, float sigma) {
+    int boxes[3];
+    if (!sigma_boxes(sigma, boxes)) return;
+    usize n = (usize)w * h;
+    u8 *pl = kmalloc(n), *tmp = kmalloc(n);
+    if (!pl || !tmp) { kfree(pl); kfree(tmp); return; }
+    for (int ch = 0; ch < 4; ch++) {
+        int sh = ch * 8;
+        for (usize i = 0; i < n; i++) pl[i] = (u8)(px[i] >> sh);
+        for (int i = 0; i < 3; i++) if (boxes[i] > 0) { box_blur(pl, tmp, w, h, boxes[i], true); box_blur(pl, tmp, w, h, boxes[i], false); }
+        for (usize i = 0; i < n; i++) px[i] = (px[i] & ~(0xFFu << sh)) | (u32)pl[i] << sh;
+    }
+    /* pré-multiplicado: cor nunca acima do alfa */
+    for (usize i = 0; i < n; i++) {
+        u32 a = px[i] >> 24, r = (px[i] >> 16) & 255, g = (px[i] >> 8) & 255, b = px[i] & 255;
+        if (r > a) r = a;
+        if (g > a) g = a;
+        if (b > a) b = a;
+        px[i] = a << 24 | r << 16 | g << 8 | b;
+    }
+    kfree(pl);
+    kfree(tmp);
+}
+
+/* matriz de cor 3×3 + deslocamento sobre cores não pré-multiplicadas (as funções de cor do CSS) */
+static void color_matrix(u32 *px, usize n, const float m[12], float opa) {
+    for (usize i = 0; i < n; i++) {
+        u32 p = px[i], a = p >> 24;
+        if (!a) continue;
+        float fa = a / 255.0f;
+        float r = ((p >> 16) & 255) / 255.0f / fa, g = ((p >> 8) & 255) / 255.0f / fa, b = (p & 255) / 255.0f / fa;
+        float nr = clampf(m[0] * r + m[1] * g + m[2] * b + m[3], 0, 1);
+        float ng = clampf(m[4] * r + m[5] * g + m[6] * b + m[7], 0, 1);
+        float nb = clampf(m[8] * r + m[9] * g + m[10] * b + m[11], 0, 1);
+        float na = clampf(fa * opa, 0, 1);
+        px[i] = (u32)(na * 255 + 0.5f) << 24 | (u32)(nr * na * 255 + 0.5f) << 16 | (u32)(ng * na * 255 + 0.5f) << 8 | (u32)(nb * na * 255 + 0.5f);
+    }
+}
+
+static void filter_matrix(const cfilt_t *f, float m[12], float *opa) {
+    static const float id[12] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0 };
+    memcpy(m, id, sizeof id);
+    *opa = 1;
+    float v = f->v, s = 1 - v;
+    switch (f->kind) {
+    case CF_BRIGHT: m[0] = m[5] = m[10] = v; break;
+    case CF_CONTRAST: m[0] = m[5] = m[10] = v; m[3] = m[7] = m[11] = 0.5f - 0.5f * v; break;
+    case CF_INVERT: m[0] = m[5] = m[10] = 1 - 2 * v; m[3] = m[7] = m[11] = v; break;
+    case CF_OPACITY: *opa = v; break;
+    case CF_GRAY: {
+        float g[12] = { 0.2126f + 0.7874f * s, 0.7152f - 0.7152f * s, 0.0722f - 0.0722f * s, 0,
+                        0.2126f - 0.2126f * s, 0.7152f + 0.2848f * s, 0.0722f - 0.0722f * s, 0,
+                        0.2126f - 0.2126f * s, 0.7152f - 0.7152f * s, 0.0722f + 0.9278f * s, 0 };
+        memcpy(m, g, sizeof g);
+        break;
+    }
+    case CF_SEPIA: {
+        float g[12] = { 0.393f + 0.607f * s, 0.769f - 0.769f * s, 0.189f - 0.189f * s, 0,
+                        0.349f - 0.349f * s, 0.686f + 0.314f * s, 0.168f - 0.168f * s, 0,
+                        0.272f - 0.272f * s, 0.534f - 0.534f * s, 0.131f + 0.869f * s, 0 };
+        memcpy(m, g, sizeof g);
+        break;
+    }
+    case CF_SAT: {
+        float g[12] = { 0.213f + 0.787f * v, 0.715f - 0.715f * v, 0.072f - 0.072f * v, 0,
+                        0.213f - 0.213f * v, 0.715f + 0.285f * v, 0.072f - 0.072f * v, 0,
+                        0.213f - 0.213f * v, 0.715f - 0.715f * v, 0.072f + 0.928f * v, 0 };
+        memcpy(m, g, sizeof g);
+        break;
+    }
+    case CF_HUE: {
+        float a = v * PI_F / 180, co = fcos(a), si = fsin(a);
+        float g[12] = { 0.213f + co * 0.787f - si * 0.213f, 0.715f - co * 0.715f - si * 0.715f, 0.072f - co * 0.072f + si * 0.928f, 0,
+                        0.213f - co * 0.213f + si * 0.143f, 0.715f + co * 0.285f + si * 0.140f, 0.072f - co * 0.072f - si * 0.283f, 0,
+                        0.213f - co * 0.213f - si * 0.787f, 0.715f - co * 0.715f + si * 0.715f, 0.072f + co * 0.928f + si * 0.072f, 0 };
+        memcpy(m, g, sizeof g);
+        break;
+    }
+    }
+}
+
+/* aplica a lista de filtros: devolve uma camada nova (maior, se há desfoque ou sombra) em *out */
+static bool filter_layer(const cstate_t *st, const layer_t *L, layer_t *out) {
+    int pad = 0;
+    for (int i = 0; i < st->nflt; i++) {
+        const cfilt_t *f = &st->flt[i];
+        int b[3];
+        if (f->kind == CF_BLUR) pad += sigma_boxes(f->v, b) * 2 + 2;
+        if (f->kind == CF_SHADOW) pad += sigma_boxes(f->v / 2, b) * 2 + 2 + (int)(fabs_(f->x) + fabs_(f->y));
+    }
+    if (pad > 2048) pad = 2048;
+    int w = L->w + 2 * pad, h = L->h + 2 * pad;
+    if (w <= 0 || h <= 0 || (u64)w * h > (64u << 20)) return false;
+    u32 *px = kcalloc((usize)w * h, 4);
+    if (!px) return false;
+    for (int y = 0; y < L->h; y++) memcpy(px + (usize)(y + pad) * w + pad, L->px + (usize)y * L->w, (usize)L->w * 4);
+    usize n = (usize)w * h;
+    for (int i = 0; i < st->nflt; i++) {
+        const cfilt_t *f = &st->flt[i];
+        if (f->kind == CF_BLUR) { blur_rgba(px, w, h, f->v); continue; }
+        if (f->kind == CF_SHADOW) {
+            /* sombra: alfa desfocado, colorido, deslocado, por baixo da imagem */
+            u32 *sp = kcalloc(n, 4);
+            if (!sp) continue;
+            int dx = (int)ffloor(f->x + 0.5f), dy = (int)ffloor(f->y + 0.5f);
+            u32 col = premul(f->color, 1.0f);
+            for (int y = 0; y < h; y++) {
+                int sy = y - dy;
+                if (sy < 0 || sy >= h) continue;
+                for (int x = 0; x < w; x++) {
+                    int sx = x - dx;
+                    if (sx >= 0 && sx < w) sp[(usize)y * w + x] = mul_px(col, px[(usize)sy * w + sx] >> 24);
+                }
+            }
+            blur_rgba(sp, w, h, f->v / 2);
+            for (usize k = 0; k < n; k++) px[k] = over(sp[k], px[k]);
+            kfree(sp);
+            continue;
+        }
+        float m[12], opa;
+        filter_matrix(f, m, &opa);
+        color_matrix(px, n, m, opa);
+    }
+    *out = (layer_t){ L->x - pad, L->y - pad, w, h, px };
+    return true;
+}
+
+/* desenha a camada como sombra (desfocada, colorida e deslocada) ou como a forma; com ctx.filter, filtrada antes */
+static void draw_layer_raw(canvas2d_t *c, layer_t *L, bool shadow);
 static void draw_layer(canvas2d_t *c, layer_t *L, bool shadow) {
+    layer_t F;
+    if (c->st.nflt && filter_layer(&c->st, L, &F)) { draw_layer_raw(c, &F, shadow); kfree(F.px); return; }
+    draw_layer_raw(c, L, shadow);
+}
+
+static void draw_layer_raw(canvas2d_t *c, layer_t *L, bool shadow) {
     cstate_t *st = &c->st;
     if (!shadow) { composite(c, L, st->op, st->alpha); return; }
     if (L->w <= 0 || L->h <= 0) return;
@@ -1498,4 +1691,122 @@ void canvas_color_str(u32 c, char *out, int cap) {
         }
     }
     snprintf(out, cap, "rgba(%u, %u, %u, %s)", r, g, b, ab);
+}
+
+/* ================================================================ ctx.filter: análise */
+static bool cf_num(const char **pp, float *v, bool pct_ok) {
+    const char *q = *pp;
+    while (isspace((u8)*q)) q++;
+    if (!rs_parse_f(&q, v)) return false;
+    if (*q == '%') { if (!pct_ok) return false; *v /= 100; q++; }
+    *pp = q;
+    return true;
+}
+static bool cf_len(const char **pp, float *v) {
+    const char *q = *pp;
+    while (isspace((u8)*q)) q++;
+    if (!rs_parse_f(&q, v)) return false;
+    if (!strncmp(q, "px", 2)) q += 2;
+    else if (*v != 0) return false;   /* comprimento sem unidade só vale 0 */
+    *pp = q;
+    return true;
+}
+static bool cf_angle(const char **pp, float *v) {
+    const char *q = *pp;
+    while (isspace((u8)*q)) q++;
+    if (!rs_parse_f(&q, v)) return false;
+    if (!strncmp(q, "deg", 3)) q += 3;
+    else if (!strncmp(q, "grad", 4)) { *v *= 0.9f; q += 4; }
+    else if (!strncmp(q, "rad", 3)) { *v *= 180 / PI_F; q += 3; }
+    else if (!strncmp(q, "turn", 4)) { *v *= 360; q += 4; }
+    else if (*v != 0) return false;
+    *pp = q;
+    return true;
+}
+
+bool canvas_set_filter(cstate_t *st, const char *s, u32 current) {
+    const char *q = s;
+    while (isspace((u8)*q)) q++;
+    if (!strcmp(q, "none")) { st->nflt = 0; strcpy(st->filter, "none"); return true; }
+    static const struct { const char *n; int k; float def; bool clamp1; } fn[] = {
+        { "blur", CF_BLUR, 0, 0 }, { "brightness", CF_BRIGHT, 1, 0 }, { "contrast", CF_CONTRAST, 1, 0 }, { "grayscale", CF_GRAY, 1, 1 },
+        { "hue-rotate", CF_HUE, 0, 0 }, { "invert", CF_INVERT, 1, 1 }, { "opacity", CF_OPACITY, 1, 1 }, { "saturate", CF_SAT, 1, 0 },
+        { "sepia", CF_SEPIA, 1, 1 }, { "drop-shadow", CF_SHADOW, 0, 0 },
+    };
+    cfilt_t fl[CANVAS_MAX_FILTERS];
+    int n = 0;
+    while (*q) {
+        if (n == CANVAS_MAX_FILTERS) return false;
+        int k = -1;
+        usize nl = 0;
+        for (u32 i = 0; i < ARRAY_LEN(fn); i++) {
+            usize l = strlen(fn[i].n);
+            if (!strncmp(q, fn[i].n, l) && q[l] == '(') { k = (int)i; nl = l; break; }
+        }
+        if (k < 0) return false;   /* url(#…) e funções desconhecidas: o valor todo é inválido */
+        q += nl + 1;
+        const char *close = strchr(q, ')');
+        if (!close) return false;
+        cfilt_t *f = &fl[n];
+        memset(f, 0, sizeof *f);
+        f->kind = (u8)fn[k].k;
+        f->v = fn[k].def;
+        const char *a = q;
+        while (isspace((u8)*a)) a++;
+        if (f->kind == CF_SHADOW) {
+            /* drop-shadow(<cor>? <x> <y> <desfoque>? <cor>?) */
+            /* a cor pode ter parênteses (rgb(...)): o fechamento certo é o que equilibra */
+            char buf[128];
+            int depth = 0;
+            const char *e = q;
+            for (; *e; e++) { if (*e == '(') depth++; else if (*e == ')') { if (!depth) break; depth--; } }
+            if (!*e) return false;
+            usize al = (usize)(e - a);
+            if (al >= sizeof buf) return false;
+            memcpy(buf, a, al);
+            buf[al] = 0;
+            close = e;
+            float nums[3];
+            int nn = 0;
+            char colbuf[96] = "";
+            const char *t = buf;
+            while (*t) {
+                while (isspace((u8)*t)) t++;
+                if (!*t) break;
+                float v;
+                const char *t2 = t;
+                if ((isdigit((u8)*t) || *t == '-' || *t == '+' || *t == '.') && cf_len(&t2, &v)) { if (nn == 3) return false; nums[nn++] = v; t = t2; continue; }
+                /* cor: até o fim ou até um número depois dela */
+                const char *cs = t;
+                int d2 = 0;
+                while (*t && (d2 || !isspace((u8)*t))) { if (*t == '(') d2++; else if (*t == ')') d2--; t++; }
+                usize cl = (usize)(t - cs);
+                if (colbuf[0] || cl >= sizeof colbuf) return false;
+                memcpy(colbuf, cs, cl);
+                colbuf[cl] = 0;
+            }
+            if (nn < 2) return false;
+            f->x = nums[0];
+            f->y = nums[1];
+            f->v = nn > 2 ? nums[2] : 0;
+            if (f->v < 0) return false;
+            f->color = current;
+            if (colbuf[0] && !canvas_parse_color(colbuf, current, &f->color)) return false;
+        } else if (a != close) {
+            const char *t = a;
+            bool ok = f->kind == CF_BLUR ? cf_len(&t, &f->v) : f->kind == CF_HUE ? cf_angle(&t, &f->v) : cf_num(&t, &f->v, true);
+            while (isspace((u8)*t)) t++;
+            if (!ok || t != close) return false;
+            if (f->kind != CF_HUE && f->v < 0) return false;
+            if (fn[k].clamp1 && f->v > 1) f->v = 1;
+        }
+        n++;
+        q = close + 1;
+        while (isspace((u8)*q)) q++;
+    }
+    if (!n) return false;
+    memcpy(st->flt, fl, sizeof(cfilt_t) * (usize)n);
+    st->nflt = n;
+    snprintf(st->filter, sizeof st->filter, "%s", s);
+    return true;
 }

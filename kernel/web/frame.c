@@ -38,6 +38,9 @@ struct frame {
     /* histórico do iframe: documentos e entradas de pushState/fragmento (gen = documento que as criou) */
     struct { char url[1024]; int gen, sid; } hist[FRAME_HIST];
     int nh, hp, gen, trav;      /* trav: entrada a abrir na próxima carga (-1 = navegação nova) */
+    char asked[1024];           /* navegação à espera da política do anfitrião */
+    int verdict;                /* resposta: 1 permite, -1 nega, 0 nenhuma */
+    int nav_kind;               /* WKNavigationType da navegação pedida (0 link, 1 formulário, 2 histórico, 3 recarga, -1 outra) */
     struct frame *next;
 };
 
@@ -297,6 +300,31 @@ static void hist_push(frame_t *f, const char *url, int sid) {
     f->hist[f->hp].sid = sid;
 }
 
+/* o anfitrião decide a navegação do iframe (decidePolicyForNavigationAction com targetFrame de iframe):
+ * 1 segue, 0 espera a resposta (ou o anfitrião ocupado), -1 negada */
+static int policy_check(frame_t *f, const char *url) {
+    frame_policy_t *fp = f->owner->fpolicy;
+    if (!fp || !fp->fn || !url || !strncmp(url, "about:", 6) || !strncmp(url, "javascript:", 11)) return 1;
+    if (f->verdict && !strcmp(f->asked, url)) {
+        int v = f->verdict;
+        f->verdict = 0;
+        f->asked[0] = 0;
+        return v;
+    }
+    if (f->asked[0] && !strcmp(f->asked, url)) return 0;
+    int r = fp->fn(fp->ctx, f, url, f->nav_kind);
+    if (r == 1) return 1;
+    if (r == 2) { snprintf(f->asked, sizeof f->asked, "%s", url); f->verdict = 0; }
+    return 0;
+}
+
+void frame_policy_reply(frame_t *f, bool allow) { if (f && f->asked[0]) f->verdict = allow ? 1 : -1; }
+const char *frame_current_url(frame_t *f) { return f ? f->url : ""; }
+bool frames_contains(doc_t *root, frame_t *f) {
+    for (frame_t *q = root ? root->frames : NULL; q; q = q->next) if (q == f || (q->doc && frames_contains(q->doc, f))) return true;
+    return false;
+}
+
 static void set_doc(frame_t *f, doc_t *d, const char *url) {
     for (int i = 0; i < f->ncss; i++) if (f->css[i].req) http_free(f->css[i].req);
     f->ncss = 0;
@@ -316,6 +344,8 @@ static void set_doc(frame_t *f, doc_t *d, const char *url) {
     } else hist_push(f, url, -1);
     f->trav = -1;
     f->sbox = sandbox_flags(f);
+    d->fpolicy = f->owner->fpolicy;
+    f->nav_kind = -1;
     static int seq;
     d->transparent = true;
     d->frame_depth = f->depth;
@@ -360,19 +390,24 @@ static void start_load(frame_t *f, const char *url) {
     set_doc(f, NULL, url);
 }
 
-static void frame_begin(frame_t *f) {
-    f->started = true;
+/* primeira carga pelos atributos; false se a política ainda não respondeu */
+static bool frame_begin(frame_t *f) {
     const char *sd = node_attr(f->el, "srcdoc");
     if (sd) {
         doc_t *d = doc_parse(sd, strlen(sd), "about:srcdoc");
         if (d) snprintf(d->base, sizeof d->base, "%s", f->owner->base);
+        f->started = true;
         set_doc(f, d, "about:srcdoc");
-        return;
+        return true;
     }
     const char *src = node_attr(f->el, "src");
     char url[1024] = "about:blank";
     if (src && *src) url_resolve(f->owner->base, src, url, sizeof url);
-    start_load(f, url);
+    int r = policy_check(f, url);
+    if (r == 0) return false;   /* tenta de novo no próximo pump */
+    f->started = true;
+    if (r > 0) start_load(f, url);
+    return true;
 }
 
 static frame_t *find_frame(doc_t *d, node_t *el) {
@@ -396,6 +431,7 @@ static void scan(doc_t *d, node_t *n, js_page_t *js) {
                 f->w = 300; f->h = 150; f->zoom = d->zoom > 0 ? d->zoom : 1;
                 f->hp = -1;
                 f->trav = -1;
+                f->nav_kind = -1;
                 f->next = d->frames;
                 d->frames = f;
                 c->frame = f;
@@ -450,6 +486,7 @@ static void frame_go(frame_t *f, int idx) {
     }
     f->trav = idx;
     snprintf(f->pending, sizeof f->pending, "%s", f->hist[idx].url);
+    f->nav_kind = 2;   /* voltar/avançar */
 }
 
 static void hist_ops(frame_t *f) {
@@ -475,8 +512,14 @@ bool frames_pump(doc_t *d) {
     }
     for (frame_t *f = d->frames; f; f = f->next) {
         if (!f->el->parent) continue;                       /* removido do DOM */
-        if (!f->started) { frame_begin(f); changed = true; }
-        if (f->pending[0]) {
+        if (!f->started && frame_begin(f)) changed = true;
+        int pr = f->pending[0] ? policy_check(f, f->pending) : 1;
+        if (pr < 0) {   /* negada: a navegação some */
+            f->pending[0] = 0;
+            f->trav = -1;
+            if (f->pend_post) { kfree(f->pend_post); f->pend_post = NULL; }
+        }
+        if (f->pending[0] && pr > 0) {
             char u[1024];
             snprintf(u, sizeof u, "%s", f->pending);
             f->pending[0] = 0;
@@ -522,7 +565,8 @@ bool frames_pump(doc_t *d) {
                 char u[1024];
                 url_resolve(f->doc->base, nav, u, sizeof u);
                 snprintf(f->pending, sizeof f->pending, "%s", u);
-            } else if (rl) { snprintf(f->pending, sizeof f->pending, "%s", f->url); f->trav = f->hp; }
+                f->nav_kind = -1;
+            } else if (rl) { snprintf(f->pending, sizeof f->pending, "%s", f->url); f->trav = f->hp; f->nav_kind = 3; }
             int sc = js_page_take_scroll(f->js);
             if (sc >= 0) { f->scroll = sc; changed = true; }
             node_t *sf = js_page_take_submit(f->js);   /* form.submit() no filho */
@@ -642,6 +686,7 @@ int frame_input(frame_t *f, int kind, int x, int y, int wheel, char *out_url, in
         return true;
     }
     snprintf(f->pending, sizeof f->pending, "%s", url);
+    f->nav_kind = 0;   /* link */
     return true;
 }
 
@@ -668,6 +713,7 @@ void frame_navigate(node_t *el, const char *url) {
     char u[1024];
     url_resolve(f->owner->base, url && *url ? url : "about:blank", u, sizeof u);
     snprintf(f->pending, sizeof f->pending, "%s", u);
+    f->nav_kind = -1;
     f->started = true;
 }
 
@@ -707,6 +753,7 @@ void frame_load(frame_t *f, const char *url, const char *post, int post_len, con
         if (f->pend_post) { memcpy(f->pend_post, post, (usize)post_len); f->pend_post[post_len] = 0; f->pend_post_len = post_len; }
         snprintf(f->pend_ctype, sizeof f->pend_ctype, "%s", ctype && *ctype ? ctype : "application/x-www-form-urlencoded");
     }
+    f->nav_kind = 1;   /* formulário */
     f->started = true;
 }
 

@@ -1529,6 +1529,23 @@ NATIVE(xhr_timeout_task) {
     return JS_UNDEF;
 }
 
+/* tipo MIME da resposta (overrideMimeType ou Content-Type), sem parâmetros, em minúsculas */
+static void xhr_mime(jsobj *x, char *type, int cap) {
+    type[0] = 0;
+    jsv mime = SLOT(x, X_MIME);
+    const char *src = jv_isstr(mime) ? jv_s(mime)->d : NULL;
+    const char *raw = jv_s(SLOT(x, X_RESPHDRS))->d;
+    for (const char *p = raw; !src && *p;) {
+        const char *e = strstr(p, "\r\n");
+        if (!strncasecmp(p, "content-type:", 13)) { src = p + 13; while (*src == ' ') src++; break; }
+        p = e ? e + 2 : p + strlen(p);
+    }
+    if (!src) return;
+    int k = 0;
+    while (src[k] && src[k] != ';' && src[k] != '\r' && src[k] != ' ' && k < cap - 1) { type[k] = (char)tolower((u8)src[k]); k++; }
+    type[k] = 0;
+}
+
 static jsv xhr_response(jsobj *x, bool text_only) {
     jsv bytes = SLOT(x, X_RESPBYTES);
     const char *rt = jv_s(SLOT(x, X_RTYPE))->d;
@@ -1563,10 +1580,17 @@ static jsv xhr_response(jsobj *x, bool text_only) {
         jsstr *s = js_utf8_decode(d, n, false, &bad);
         r = s ? js_json_parse(s, JS_UNDEF) : JS_NULL;
         if (r == JS_EXC) { js_catch(); r = JS_NULL; }
-    } else if (!strcmp(rt, "document")) {
+    } else if (!strcmp(rt, "document") || !strcmp(rt, "\x01xml")) {
         bool bad;
         jsstr *s = js_utf8_decode(d, n, false, &bad);
-        r = s ? js_dom_parse_document(jv_s(SLOT(x, X_RESPURL))->d, s, "text/html") : JS_NULL;
+        /* HTML só com responseType "document"; XML (ou tipo desconhecido) pelo parser de XML; responseXML com
+         * responseType "" só para tipos XML */
+        char mt[160];
+        xhr_mime(x, mt, sizeof mt);
+        bool html = !strcmp(mt, "text/html"), xml = js_mime_is_xml(mt) || !mt[0];
+        bool via_xml = rt[0] == 1;   /* responseXML com responseType "" */
+        if (via_xml ? !xml : !(html || xml)) r = JS_NULL;
+        else r = s ? js_dom_parse_document(jv_s(SLOT(x, X_RESPURL))->d, s, html ? "text/html" : mt[0] ? mt : "application/xml") : JS_NULL;
         if (r == JS_EXC) { js_catch(); r = JS_NULL; }
     }
     SET(x, X_CACHE, r);
@@ -1598,7 +1622,7 @@ NATIVE(xhr_get) {
         if (*rt && strcmp(rt, "document")) return js_throw_dom("InvalidStateError", "responseXML só vale com responseType '' ou 'document'");
         if (js_toint32(SLOT(x, X_STATE)) != 4) return JS_NULL;
         jsv saved = SLOT(x, X_RTYPE);
-        SET(x, X_RTYPE, S("document"));
+        SET(x, X_RTYPE, *jv_s(saved)->d ? saved : S("\x01xml"));
         jsv r = xhr_response(x, false);
         SET(x, X_RTYPE, saved);
         if (!*jv_s(saved)->d) SET(x, X_CACHE, JS_UNDEF);

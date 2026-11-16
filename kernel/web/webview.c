@@ -91,6 +91,8 @@ typedef struct webview {
     int pend_post_len;
     char pend_ctype[64];
     int pend_hist;               /* 2 = voltar/avançar: índice de destino */
+    frame_t *pend_frame;         /* a navegação pendente é deste iframe */
+    frame_policy_t fpol;         /* política dos iframes (documento principal e filhos apontam para cá) */
     /* scripts e mensagens */
     char handlers[WV_HANDLERS][64];
     int nhandlers;
@@ -513,7 +515,37 @@ static void hist_attach(webview_t *w) {
     js_page_set_hist_len(w->js, w->nhist);
 }
 
+/* descarta a decisão pendente; um iframe que perguntou recebe "não" (não fica esperando para sempre) */
+static void pend_drop(webview_t *w) {
+    if (w->pend_frame && w->doc && frames_contains(w->doc, w->pend_frame)) frame_policy_reply(w->pend_frame, false);
+    w->pend_frame = NULL;
+    w->pend = false;
+}
+
+/* iframe quer navegar: com a política ligada, o app decide (MOS_WEB_EV_NAVREQ com req_subframe) */
+static int wv_frame_policy(void *ctx, frame_t *f, const char *url, int kind) {
+    webview_t *w = ctx;
+    if (!w->policy) return 1;
+    if (w->pend) return 0;   /* outra decisão em curso: o iframe pergunta de novo depois */
+    kfree(w->pend_post);
+    w->pend_post = NULL;
+    w->pend_post_len = 0;
+    wv_strcpy(w->pend_url, url, sizeof w->pend_url);
+    w->pend_ctype[0] = 0;
+    w->pend_kind = kind;
+    w->pend_record = false;
+    w->pend_hist = -1;
+    w->pend_frame = f;
+    w->pend = true;
+    w->events |= MOS_WEB_EV_NAVREQ;
+    return 2;
+}
+
 static void commit(webview_t *w, doc_t *d, const char *url, bool record, int scroll, const char *mime, int status) {
+    w->fpol.fn = wv_frame_policy;
+    w->fpol.ctx = w;
+    if (d) d->fpolicy = &w->fpol;
+    if (w->pend_frame) pend_drop(w);   /* o iframe da pergunta vai embora com o documento */
     set_doc(w, d);
     if (d) {
         css_find(w, d->root);
@@ -700,6 +732,7 @@ static void navigate(webview_t *w, const char *url, bool record, int kind, const
         w->pend_kind = kind;
         w->pend_record = record;
         w->pend_hist = hist_target;
+        w->pend_frame = NULL;
         w->pend = true;
         w->events |= MOS_WEB_EV_NAVREQ;
         return;
@@ -1410,7 +1443,7 @@ static i64 wv_dispatch(void *arg) {
             char *html = copy_in_str(p, L.html, (usize)L.html_len, 64u << 20);
             if (!html) return -MOS_ENOMEM;
             cancel_load(w);
-            w->pend = false;
+            pend_drop(w);
             begin(w);
             const char *mime = L.mime[0] ? L.mime : "text/html;charset=utf-8";
             doc_t *d = doc_by_mime((u8 *)html, (usize)L.html_len, base, mime);
@@ -1486,7 +1519,12 @@ static i64 wv_dispatch(void *arg) {
         if (!I) return -MOS_ENOMEM;
         wv_strcpy(I->url, w->url, sizeof I->url);
         wv_strcpy(I->title, w->title, sizeof I->title);
-        if (w->pend) { wv_strcpy(I->req_url, w->pend_url, sizeof I->req_url); I->req_kind = w->pend_kind; }
+        if (w->pend) {
+            wv_strcpy(I->req_url, w->pend_url, sizeof I->req_url);
+            I->req_kind = w->pend_kind;
+            I->req_subframe = w->pend_frame != NULL;
+            wv_strcpy(I->req_frame, w->pend_frame ? frame_current_url(w->pend_frame) : w->url, sizeof I->req_frame);
+        }
         wv_strcpy(I->newwin, w->newwin_url, sizeof I->newwin);
         w->newwin_url[0] = 0;
         I->nav_seq = w->nav_seq;
@@ -1610,7 +1648,7 @@ static i64 wv_dispatch(void *arg) {
             return 0;
         case MOS_WEB_GO_STOP:
             if (w->req) { cancel_load(w); fail(w, "cancelado", -999); }   /* NSURLErrorCancelled */
-            w->pend = false;
+            pend_drop(w);
             return 0;
         }
         return -MOS_EINVAL;
@@ -1685,6 +1723,13 @@ static i64 wv_dispatch(void *arg) {
     case MOS_WEB_DECIDE: {
         if (!w->pend) return -MOS_EINVAL;
         w->pend = false;
+        if (w->pend_frame) {   /* resposta para um iframe (se ele ainda existe) */
+            frame_t *f = w->pend_frame;
+            w->pend_frame = NULL;
+            if (w->doc && frames_contains(w->doc, f)) frame_policy_reply(f, a != 0);
+            w->dirty = true;
+            return 0;
+        }
         if (!a) { kfree(w->pend_post); w->pend_post = NULL; return 0; }
         char *post = w->pend_post;
         int plen = w->pend_post_len;
