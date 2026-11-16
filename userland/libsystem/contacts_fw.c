@@ -215,13 +215,20 @@ static long store_auth(id cls, SEL c, long entity) {
 
 typedef struct { void *isa; int flags, reserved; void (*invoke)(void *, BOOL, id); } acc_blk_t;
 
+void cx_tcc_request_async(const char *service, void (*cb)(int granted, void *ctx), void *ctx);
+void *_Block_copy(const void *b);
+void _Block_release(const void *b);
+/* o bloco volta depois da escolha no diálogo do TCC (ou na hora, se já houver), numa fila global, como no macOS */
+static void store_access_done(int granted, void *ctx) {
+    acc_blk_t *b = ctx;
+    (void)granted;
+    if (b->invoke) b->invoke(b, cx_cn_auth() == CX_CN_AUTHORIZED ? YES : NO, cx_cn_auth() == CX_CN_AUTHORIZED ? 0 : cn_error());
+    _Block_release(b);
+}
 static void store_request_access(id self, SEL c, long entity, void *block) {
-    acc_blk_t *b = block;
-    int st;
     (void)self; (void)c; (void)entity;
-    st = cx_tcc_request("kTCCServiceAddressBook");
-    (void)st;
-    if (b && b->invoke) b->invoke(block, cx_cn_auth() == CX_CN_AUTHORIZED ? YES : NO, cx_cn_auth() == CX_CN_AUTHORIZED ? 0 : cn_error());
+    if (!block) { cx_tcc_request("kTCCServiceAddressBook"); return; }
+    cx_tcc_request_async("kTCCServiceAddressBook", store_access_done, _Block_copy(block));
 }
 
 static id store_enumerate(id self, SEL c, id request, id *error, void *block) {

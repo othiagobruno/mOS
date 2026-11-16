@@ -222,8 +222,9 @@ __asm__(
     /* dados com endereço absoluto: fora do .rodata (relocação RELATIVE do static-pie) */
     ".data\n"
     ".p2align 3\n"
+    ".globl ck_error_proto_slot\n"
     "ck_error_proto_slot:\n"
-    "  .quad \"$ss5ErrorMp\"\n"
+    "  .quad 0\n"
     /* witness table: descritor, _domain, _code, _userInfo, _getEmbeddedNSError (ordem dos requisitos de Error) */
     "ck_wt_asn1:\n"
     "  .quad ck_conf_asn1\n"
@@ -260,7 +261,18 @@ extern const void *const ck_wt_asn1[5];
 static void ck_errbox_destroy(void *o) { swift_deallocObject(o, 56, 7); }
 static const struct { void (*destroy)(void *); const void *vwt; void (*destroy_ls)(void *); } ck_errbox_md = {
     ck_errbox_destroy, &vw_err, ck_errbox_destroy};
+/* O protocolo Error é o descritor do libswiftCore real ($ss5ErrorMp). O libSystem é ligado sozinho (static-pie) e na
+ * busca plana vem antes das dylibs, então o endereço é resolvido na primeira vez que um erro sai daqui, e não no link. */
+extern const void *ck_error_proto_slot;
+void *dlsym(void *h, const char *name);
+static void ck_error_proto_resolve(void) {
+    if (!__atomic_load_n(&ck_error_proto_slot, __ATOMIC_ACQUIRE)) {
+        const void *p = dlsym((void *)-2, "$ss5ErrorMp");   /* RTLD_DEFAULT */
+        if (p) __atomic_store_n(&ck_error_proto_slot, p, __ATOMIC_RELEASE);
+    }
+}
 static void *throw_asn1(u8 code, const char *why) {
+    ck_error_proto_resolve();
     if (why) {
         static const char p[] = "CryptoKit (mOS): ";
         write(2, p, sizeof p - 1);

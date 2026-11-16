@@ -6,7 +6,7 @@
  * AppKit, SwiftUI, UIKit, vídeo, Core Data, unwind, TLS e DNS.
  * Nome que a libswift real (build/swift/objc/dylib/usr/lib/swift, tools/build-libswift-real.sh)
  * exporta não fica aqui: na busca plana o libSystem vem antes das dylibs e o stub esconderia o
- * runtime de verdade. $ss5ErrorMp fica porque ck_p256_swift.c (CryptoKit) aponta para ele.
+ * runtime de verdade. O $ss5ErrorMp do CryptoKit é resolvido em execução (ck_p256_swift.c).
  */
 void $s10Accelerate6vImageO7OptionsV7noFlagsAEvgZ(void) {}
 void $s10Accelerate6vImageO7OptionsVMa(void) {}
@@ -66,7 +66,6 @@ void $s10Foundation3URLV10AsyncBytesVMa(void) {}
 void $s10Foundation3URLV13resourceBytesAC05AsyncD0Vvg(void) {}
 void $s10Foundation3URLV27applicationSupportDirectoryACvgZ(void) {}
 void $s10Foundation4DataV6append10contentsOfySays5UInt8VG_tF(void) {}
-void $s10Foundation4DateV8CloudKit21CKRecordValueProtocolADWP(void) {}
 void $s11Compression12OutputFilterC5writeyyxSgK10Foundation12DataProtocolRzlFTj(void) {}
 void $s11Compression12OutputFilterC8finalizeyyKFTj(void) {}
 void $s11Compression12OutputFilterCMa(void) {}
@@ -416,10 +415,6 @@ void $s9CoreAudio013UnsafeMutableB17BufferListPointerVySo0bE0VSicir(void) {}
 void $s9CoreAudio013UnsafeMutableB17BufferListPointerVySo0bE0VSicis(void) {}
 void $s9CoreMedia15CMTIME_IS_VALIDySbSo6CMTimeaF(void) {}
 void $s9CoreMedia17CMTIME_IS_NUMERICySbSo6CMTimeaF(void) {}
-void $sSC11CKErrorCodeLeV8CloudKitE12clientRecordSo8CKRecordCSgvg(void) {}
-void $sSC11CKErrorCodeLeV8CloudKitE12serverRecordSo8CKRecordCSgvg(void) {}
-void $sSC11CKErrorCodeLeV8CloudKitE17retryAfterSecondsSdSgvg(void) {}
-void $sSC11CKErrorCodeLeV8CloudKitE21partialErrorsByItemIDSDys11AnyHashableVs5Error_pGSgvg(void) {}
 void $sSK17_StringProcessingSs11SubSequenceRtzrlE6starts4withSbqd___tAA14RegexComponentRd__lF(void) {}
 void $sSS10FoundationE17LocalizationValueV19StringInterpolationV06appendE0_9specifieryx_SStAA18_FormatSpecifiableRzlF(void) {}
 void $sSS10FoundationE17LocalizationValueV19StringInterpolationV06appendE0yySSF(void) {}
@@ -428,30 +423,22 @@ void $sSS10FoundationE17LocalizationValueV19StringInterpolationV15literalCapacit
 void $sSS10FoundationE17LocalizationValueV19StringInterpolationVMa(void) {}
 void $sSS10FoundationE17LocalizationValueV19stringInterpolationA2C06StringE0V_tcfC(void) {}
 void $sSS17_StringProcessing14RegexComponent0C7BuilderMc(void) {}
-void $sSS8CloudKit21CKRecordValueProtocolAAWP(void) {}
-void $sSayxG8CloudKit21CKRecordValueProtocolA2bCRzlMc(void) {}
 void $sSayxGs7CVarArg10FoundationMc(void) {}
 void $sSci10Foundations5UInt8V7ElementRtzrlE5linesAA17AsyncLineSequenceVyxGvg(void) {}
 void $sShyxGs7CVarArg10FoundationMc(void) {}
 void $sSi10Foundation18_FormatSpecifiableAAWP(void) {}
-void $sSi8CloudKit21CKRecordValueProtocolAAWP(void) {}
 void $sSl17_StringProcessingE14trimmingPrefix5while11SubSequenceQzSb7ElementQzKXE_tKF(void) {}
 void $sSm17_StringProcessingSQ7ElementRpzrlE7replace_4with15maxReplacementsyqd___qd_0_SitSlRd__SlRd_0_ABQyd__ACRSABQyd_0_AGRSr0_lF(void) {}
 void $sSm17_StringProcessingSQ7ElementRpzrlE9replacing_4with15maxReplacementsxqd___qd_0_SitSlRd__SlRd_0_ABQyd__ACRSABQyd_0_AGRSr0_lF(void) {}
 void $sSm17_StringProcessingSs11SubSequenceRtzrlE9replacing_4with15maxReplacementsxqd_0__qd__SitSlRd__AA14RegexComponentRd_0_SJ7ElementRtd__r0_lF(void) {}
 void $sSo10CGColorRefa12CoreGraphicsE5blackABvgZ(void) {}
 void $sSo10CGColorRefa12CoreGraphicsE5clearABvgZ(void) {}
-void $sSo10CKDatabaseC8CloudKitE17modifyRecordZones6saving8deletingSDySo14CKRecordZoneIDCs6ResultOySo0iJ0Cs5Error_pGG11saveResults_SDyAhJyytsAM_pGG06deleteO0tSayALG_SayAHGtYaKF(void) {}
-void $sSo10CKDatabaseC8CloudKitE17modifyRecordZones6saving8deletingSDySo14CKRecordZoneIDCs6ResultOySo0iJ0Cs5Error_pGG11saveResults_SDyAhJyytsAM_pGG06deleteO0tSayALG_SayAHGtYaKFTu(void) {}
-void $sSo10CKRecordIDC8CloudKitE10recordName04zoneB0ABSS_So0a4ZoneB0CtcfC(void) {}
 void $sSo10NSProgressC10FoundationE14fileTotalCountSiSgvs(void) {}
 void $sSo10NSProgressC10FoundationE18fileCompletedCountSiSgvg(void) {}
 void $sSo10NSProgressC10FoundationE18fileCompletedCountSiSgvs(void) {}
 void $sSo10NSProgressC10FoundationE22estimatedTimeRemainingSdSgvg(void) {}
 void $sSo10NSProgressC10FoundationE22estimatedTimeRemainingSdSgvs(void) {}
 void $sSo10OSLogStoreC0A0E10getEntries4with2at8matchings11AnySequenceVySo0A5EntryCGSo0A17EnumeratorOptionsV_So0A8PositionCSgSo11NSPredicateCSgtKF(void) {}
-void $sSo11CKContainerC8CloudKitE14configuredWith13configuration5group4bodyxSo24CKOperationConfigurationCSg_So0I5GroupCSgxABYaKXEtYaKlF(void) {}
-void $sSo11CKContainerC8CloudKitE14configuredWith13configuration5group4bodyxSo24CKOperationConfigurationCSg_So0I5GroupCSgxABYaKXEtYaKlFTu(void) {}
 void $sSo11CMTimeRangea9CoreMediaE12containsTimeySbSo0A0aF(void) {}
 void $sSo11CMTimeRangea9CoreMediaE12intersectionyA2BF(void) {}
 void $sSo11CMTimeRangea9CoreMediaE12isIndefiniteSbvg(void) {}
@@ -511,8 +498,6 @@ void $sSo13vImage_BufferV10AccelerateE02cgA06format5flagsABSo10CGImageRefa_So01v
 void $sSo13vImage_BufferV10AccelerateE13createCGImage6format5flagsSo0E3RefaSo01va1_E6FormatV_AC01vA0O7OptionsVtKF(void) {}
 void $sSo13vImage_BufferV10AccelerateE4freeyyF(void) {}
 void $sSo13vImage_BufferV10AccelerateE5width6height12bitsPerPixelABSi_Sis6UInt32VtKcfC(void) {}
-void $sSo14CKNotificationC8CloudKitE14subscriptionIDSSSgvg(void) {}
-void $sSo14CKRecordZoneIDC8CloudKitE8zoneName05ownerG0ABSS_SStcfC(void) {}
 void $sSo14OS_dispatch_ioC8DispatchE10CloseFlagsV4stopAEvgZ(void) {}
 void $sSo14OS_dispatch_ioC8DispatchE10CloseFlagsVMa(void) {}
 void $sSo14OS_dispatch_ioC8DispatchE10CloseFlagsVMn(void) {}
@@ -571,8 +556,6 @@ void $sSo20NSNotificationCenterC10FoundationE9PublisherVMa(void) {}
 void $sSo20NSNotificationCenterC10FoundationE9PublisherVMn(void) {}
 void $sSo20NSNotificationCenterC10FoundationE9publisher3for6objectAbCE9PublisherVSo0A4Namea_yXlSgtF(void) {}
 void $sSo20vImage_CGImageFormatV10AccelerateE02cgA0ABSgSo0B3Refa_tcfC(void) {}
-void $sSo22CKDatabaseSubscriptionC8CloudKitE10recordTypeSSSgvs(void) {}
-void $sSo22CKDatabaseSubscriptionC8CloudKitE14subscriptionIDABSS_tcfC(void) {}
 void $sSo22CMFormatDescriptionRefa9CoreMediaE016audioStreamBasicB0So05AudioghB0VSgvg(void) {}
 void $sSo22CMFormatDescriptionRefa9CoreMediaE0E7SubTypeV11enhancedAC3AEvgZ(void) {}
 void $sSo22CMFormatDescriptionRefa9CoreMediaE0E7SubTypeV4h264AEvgZ(void) {}
@@ -605,15 +588,6 @@ void $sSo22NSManagedObjectContextC8CoreDataE5count3forSiSo14NSFetchRequestCyxG_t
 void $sSo22NSManagedObjectContextC8CoreDataE5fetchySayxGSo14NSFetchRequestCyxGKSo0gH6ResultRzlF(void) {}
 void $sSo22NSManagedObjectContextC8CoreDataE7perform8schedule_xAbCE17ScheduledTaskTypeO_xyKctYaKlF(void) {}
 void $sSo22NSManagedObjectContextC8CoreDataE7perform8schedule_xAbCE17ScheduledTaskTypeO_xyKctYaKlFTu(void) {}
-void $sSo23CKFetchRecordsOperationC8CloudKitE05fetchB11ResultBlockys0G0Oyyts5Error_pGcSgvs(void) {}
-void $sSo23CKFetchRecordsOperationC8CloudKitE11desiredKeysSaySSGSgvs(void) {}
-void $sSo23CKFetchRecordsOperationC8CloudKitE20perRecordResultBlockySo10CKRecordIDC_s0H0OySo0J0Cs5Error_pGtcSgvs(void) {}
-void $sSo23CKRecordKeyValueSettingP8CloudKitEyAC0aC8Protocol_pSgSScis(void) {}
-void $sSo23CKRecordKeyValueSettingP8CloudKitEyqd__SgSScAC0aC8ProtocolRd__luig(void) {}
-void $sSo24CKModifyRecordsOperationC8CloudKitE06modifyB11ResultBlockys0G0Oyyts5Error_pGcSgvs(void) {}
-void $sSo24CKModifyRecordsOperationC8CloudKitE13recordsToSave09recordIDsG6DeleteABSaySo8CKRecordCGSg_SaySo0L2IDCGSgtcfC(void) {}
-void $sSo24CKModifyRecordsOperationC8CloudKitE18perRecordSaveBlockySo10CKRecordIDC_s6ResultOySo0J0Cs5Error_pGtcSgvs(void) {}
-void $sSo24CKModifyRecordsOperationC8CloudKitE20perRecordDeleteBlockySo10CKRecordIDC_s6ResultOyyts5Error_pGtcSgvs(void) {}
 void $sSo25NSURLSessionWebSocketTaskC10FoundationE4send_17completionHandleryAbCE7MessageO_ys5Error_pSgctF(void) {}
 void $sSo25NSURLSessionWebSocketTaskC10FoundationE7MessageO4datayAeC4DataVcAEmFWC(void) {}
 void $sSo25NSURLSessionWebSocketTaskC10FoundationE7MessageO6stringyAESScAEmFWC(void) {}
@@ -621,17 +595,7 @@ void $sSo25NSURLSessionWebSocketTaskC10FoundationE7MessageOMa(void) {}
 void $sSo25NSURLSessionWebSocketTaskC10FoundationE7MessageOMn(void) {}
 void $sSo25NSURLSessionWebSocketTaskC10FoundationE7receive17completionHandleryys6ResultOyAbCE7MessageOs5Error_pGc_tF(void) {}
 void $sSo27OS_dispatch_source_data_addP8DispatchE0E00D0ySu_tF(void) {}
-void $sSo28CKModifyRecordZonesOperationC8CloudKitE03perB13ZoneSaveBlockySo08CKRecordH2IDC_s6ResultOySo0kH0Cs5Error_pGtcSgvs(void) {}
-void $sSo28CKModifyRecordZonesOperationC8CloudKitE06modifybC11ResultBlockys0H0Oyyts5Error_pGcSgvs(void) {}
-void $sSo28CKModifyRecordZonesOperationC8CloudKitE06recordC6ToSave0g7ZoneIDsH6DeleteABSaySo08CKRecordJ0CGSg_SaySo0mJ2IDCGSgtcfC(void) {}
 void $sSo29AVAsynchronousKeyValueLoadingP12AVFoundationE6status2ofAC15AVAsyncPropertyC6StatusOyxqd___GAGyxqd__G_tlF(void) {}
-void $sSo31CKFetchDatabaseChangesOperationC8CloudKitE05fetchbC11ResultBlockys0H0OySo19CKServerChangeTokenC06serverkL0_Sb10moreComingts5Error_pGcSgvs(void) {}
-void $sSo33CKFetchRecordZoneChangesOperationC8CloudKitE05fetchbcD11ResultBlockys0I0Oyyts5Error_pGcSgvs(void) {}
-void $sSo33CKFetchRecordZoneChangesOperationC8CloudKitE06recordC16FetchResultBlockySo08CKRecordC2IDC_s0J0OySo19CKServerChangeTokenC06serveroP0_10Foundation4DataVSg06clientopS0Sb10moreComingts5Error_pGtcSgvs(void) {}
-void $sSo33CKFetchRecordZoneChangesOperationC8CloudKitE06recordC3IDs016configurationsBybC2IDABSaySo08CKRecordcL0CGSg_SDyAGSo0abcD13ConfigurationCGSgtcfC(void) {}
-void $sSo33CKFetchRecordZoneChangesOperationC8CloudKitE21recordWasChangedBlockySo10CKRecordIDC_s6ResultOySo0L0Cs5Error_pGtcSgvs(void) {}
-void $sSo33CKFetchRecordZoneChangesOperationC8CloudKitE27recordWithIDWasDeletedBlockySo10CKRecordIDC_SStcSgvs(void) {}
-void $sSo37CKFetchRecordZoneChangesConfigurationC8CloudKitE25previousServerChangeToken12resultsLimit11desiredKeysABSo08CKServerjK0CSg_SiSgSaySSGSgtcfC(void) {}
 void $sSo6CMTimea9CoreMediaE12convertScale_6methodABs5Int32V_So0A14RoundingMethodVtF(void) {}
 void $sSo6CMTimea9CoreMediaE12isIndefiniteSbvg(void) {}
 void $sSo6CMTimea9CoreMediaE18isNegativeInfinitySbvg(void) {}
@@ -659,11 +623,6 @@ void $sSo7NSTimerC10FoundationE14TimerPublisherC7connect7Combine11Cancellable_py
 void $sSo7NSTimerC10FoundationE14TimerPublisherCMa(void) {}
 void $sSo7NSTimerC10FoundationE14TimerPublisherCMn(void) {}
 void $sSo7NSTimerC10FoundationE7publish5every9tolerance2on2in7optionsAbCE14TimerPublisherCSd_SdSgSo9NSRunLoopCSo0kL4ModeaAnCE16SchedulerOptionsVSgtFZ(void) {}
-void $sSo8CKRecordC8CloudKitE10recordType0D2IDABSS_So0aF0CtcfC(void) {}
-void $sSo8CKRecordC8CloudKitE10recordTypeSSvg(void) {}
-void $sSo8CKRecordC8CloudKitE7allKeysSaySSGyF(void) {}
-void $sSo8CKRecordC8CloudKitEySo0A5Value_pSgSScig(void) {}
-void $sSo8CKRecordC8CloudKitEySo0A5Value_pSgSScis(void) {}
 void $sSo8NSObjectC10FoundationE26KeyValueObservingPublisherVMn(void) {}
 void $sSo8NSObjectC10FoundationE26KeyValueObservingPublisherVy_xq_G7Combine0F0ACMc(void) {}
 void $sSo8NSObjectCs23CustomStringConvertible10FoundationMc(void) {}
@@ -688,7 +647,6 @@ void $sSo9WKWebViewC6WebKitE19callAsyncJavaScript_9arguments2inAF17completionHan
 void $sSy10FoundationE12commonPrefix4with7optionsSSqd___So22NSStringCompareOptionsVtSyRd__lF(void) {}
 void $sSy10FoundationE17applyingTransform_7reverseSSSgSo08NSStringC0a_SbtF(void) {}
 void $sSy12RegexBuilderSs11SubSequenceRtzrlE5split9separator9maxSplits25omittingEmptySubsequencesSaySsGSS_SiSbtF(void) {}
-void $ss5ErrorMp(void) {}
 void $ss8DurationV10FoundationE15TimeFormatStyleV7PatternV12minuteSecond17padMinuteToLength017fractionalSecondsL0015roundFractionalN0AGSi_Sis25FloatingPointRoundingRuleOtFZ(void) {}
 void $ss8DurationV10FoundationE15TimeFormatStyleV7PatternVMa(void) {}
 void $ss8DurationV10FoundationE15TimeFormatStyleVAC0dE0ACMc(void) {}

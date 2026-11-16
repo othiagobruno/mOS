@@ -41,11 +41,19 @@ static long auth_status(id cls, SEL c, id type) {
     if (p < 0) return 0;
     return p == 1 ? 3 : 2;
 }
+void cx_tcc_request_async(const char *service, void (*cb)(int granted, void *ctx), void *ctx);
+void *_Block_copy(const void *b);
+void _Block_release(const void *b);
+static void access_done(int granted, void *blk) {
+    void *inv = *(void **)((u8 *)blk + 16);
+    ((void (*)(void *, u8))inv)(blk, granted ? 1 : 0);
+    _Block_release(blk);
+}
+/* requestAccessForMediaType: o bloco volta depois da escolha no diálogo do TCC, numa fila global (como no macOS) */
 static void request_access(id cls, SEL c, id type, void *blk) {
     (void)cls; (void)c;
-    if (!blk) return;
-    void *inv = *(void **)((u8 *)blk + 16);
-    ((void (*)(void *, u8))inv)(blk, cx_media_tcc(svc_for(type)) == 1);
+    if (!blk) { cx_media_tcc(svc_for(type)); return; }
+    cx_tcc_request_async(svc_for(type), access_done, _Block_copy(blk));
 }
 
 typedef struct { cx_class_t *isa; int kind; int position; char uid[20]; } avdev_t;

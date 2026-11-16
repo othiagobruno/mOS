@@ -117,6 +117,12 @@ static void tcc_glyph_ax(surface_t *s, float x, float y, float sz, u32 c) {
     gfx_polygon(s, xy, 3, c);
 }
 
+/* cadeado: o ícone dos outros serviços de privacidade */
+static void tcc_glyph_privacy(surface_t *s, float x, float y, float sz, u32 c) {
+    gfx_round_rect_stroke(s, x + sz * 0.30f, y + sz * 0.10f, sz * 0.40f, sz * 0.46f, sz * 0.20f, 1.9f, c);
+    gfx_round_rect(s, x + sz * 0.18f, y + sz * 0.40f, sz * 0.64f, sz * 0.48f, sz * 0.10f, c);
+}
+
 static int tcc_hit(tcc_lay L, int x, int y) {
     if (rect_contains(L.deny, x, y)) return 0;
     if (rect_contains(L.allow, x, y)) return 1;
@@ -200,6 +206,8 @@ void tcc_prompt_draw(surface_t *s, int sw, int sh) {
         tcc_glyph_screen(s, L.icon.x, L.icon.y, 36, T.accent);
     else if (Ui.view.kind == TCC_PROMPT_KIND_AX)
         tcc_glyph_ax(s, L.icon.x, L.icon.y, 36, T.accent);
+    else
+        tcc_glyph_privacy(s, L.icon.x, L.icon.y, 36, T.accent);
     text_draw(s, fm, 11, L.icon.x + 48, L.icon.y + 14, T.glass_text2, Ui.view.eyebrow);
     text_wrap(s, fb, 15, L.title, 20, T.glass_text, Ui.view.title, true);
     text_wrap(s, fr, 13, L.message, 18, T.glass_text, Ui.view.message, true);

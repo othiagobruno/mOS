@@ -1,4 +1,6 @@
-/* Política do diálogo de permissão da Interface (gravação de tela e acessibilidade).
+/* Política do diálogo de permissão da Interface: todos os serviços do TCC que os apps pedem (tela, acessibilidade,
+ * câmera, microfone, contatos, agenda, lembretes, fotos, pastas, disco, rede local, Bluetooth, monitoramento de
+ * teclado, automação de outro app via Apple Events, notificações...).
  * Não abre arquivo e não desenha: quem inclui lê decisions.txt, mostra o diálogo e
  * grava a escolha. O miolo de cx_tcc_decide (tcc.c) é tcc_decide; este arquivo só
  * diz qual pedido vira diálogo e qual botão vira granted 1 ou 0.
@@ -6,7 +8,7 @@
  * Estados iguais aos de tcc_core.inc: 0 ausente, 1 denied, 2 granted, 3 pending.
  * cx_tcc_state devolve 3 quando o prompt deve aparecer.
  *
- * O incluinte fornece strlen, strcmp, strncmp, strstr, strrchr, snprintf, memcpy.
+ * O incluinte fornece strlen, strcmp, strncmp, strstr, strchr, strrchr, snprintf, memcpy.
  */
 enum {
     TCC_PROMPT_MISSING = 0,
@@ -14,7 +16,8 @@ enum {
     TCC_PROMPT_GRANTED = 2,
     TCC_PROMPT_PENDING = 3
 };
-enum { TCC_PROMPT_KIND_NONE = 0, TCC_PROMPT_KIND_SCREEN = 1, TCC_PROMPT_KIND_AX = 2 };
+/* SCREEN e AX têm desenho próprio em tcc_prompt.c; os demais usam o ícone genérico de privacidade */
+enum { TCC_PROMPT_KIND_NONE = 0, TCC_PROMPT_KIND_SCREEN = 1, TCC_PROMPT_KIND_AX = 2, TCC_PROMPT_KIND_OTHER = 3 };
 enum { TCC_PROMPT_SAME = 0, TCC_PROMPT_OPENED = 1, TCC_PROMPT_CLOSED = 2 };
 enum { TCC_PROMPT_KEY_ENTER = 10, TCC_PROMPT_KEY_ESC = 0x1b };
 enum { TCC_PROMPT_CAP = 64 };
@@ -69,9 +72,50 @@ static int tcc_prompt_tok_ok(const char *s) {
     return 1;
 }
 
+/* O texto de cada serviço segue o pedido do macOS ("“App” gostaria de acessar ..."); o de Apple Events traz o app
+ * alvo no próprio nome do serviço: kTCCServiceAppleEvents+<bundle do alvo>. */
+typedef struct { const char *service, *what, *detail; } tcc_prompt_text;
+static const tcc_prompt_text tcc_prompt_texts[] = {
+    {"kTCCServiceCamera", "acessar a câmera", "O app poderá gravar vídeo e tirar fotos."},
+    {"kTCCServiceMicrophone", "acessar o microfone", "O app poderá gravar o som deste computador."},
+    {"kTCCServiceAddressBook", "acessar seus contatos", "O app poderá ler e alterar os contatos."},
+    {"kTCCServiceCalendar", "acessar sua agenda", "O app poderá ler e alterar os eventos do Calendário."},
+    {"kTCCServiceReminders", "acessar seus lembretes", "O app poderá ler e alterar os lembretes."},
+    {"kTCCServicePhotos", "acessar suas fotos", "O app poderá ver e alterar a fototeca."},
+    {"kTCCServicePhotosAdd", "adicionar itens às suas fotos", "O app poderá gravar fotos e vídeos na fototeca."},
+    {"kTCCServiceSystemPolicyDesktopFolder", "acessar os arquivos da pasta Mesa", "O app poderá ler e gravar o que está na Mesa."},
+    {"kTCCServiceSystemPolicyDocumentsFolder", "acessar os arquivos da pasta Documentos", "O app poderá ler e gravar o que está em Documentos."},
+    {"kTCCServiceSystemPolicyDownloadsFolder", "acessar os arquivos da pasta Transferências", "O app poderá ler e gravar o que está em Transferências."},
+    {"kTCCServiceSystemPolicyRemovableVolumes", "acessar os arquivos de um volume removível", "O app poderá ler e gravar em pendrives e discos externos."},
+    {"kTCCServiceSystemPolicyNetworkVolumes", "acessar os arquivos de um volume de rede", "O app poderá ler e gravar em compartilhamentos de rede."},
+    {"kTCCServiceSystemPolicyAllFiles", "acessar todo o disco", "O app poderá ler os dados de outros apps, a Mail, as mensagens e os ajustes."},
+    {"kTCCServiceListenEvent", "receber as teclas digitadas em qualquer app", "O app poderá monitorar o teclado e o mouse fora dele."},
+    {"kTCCServicePostEvent", "controlar este computador", "O app poderá mandar cliques e teclas para outros apps."},
+    {"kTCCServiceBluetoothAlways", "usar o Bluetooth", "O app poderá procurar e se conectar a acessórios Bluetooth."},
+    {"kTCCServiceLocation", "usar a sua localização", "O app poderá saber onde este computador está."},
+    {"kTCCServiceSpeechRecognition", "usar o reconhecimento de fala", "O app poderá transformar o que você fala em texto."},
+    {"kTCCServiceMediaLibrary", "acessar a biblioteca de músicas e vídeos", "O app poderá ver as músicas, os filmes e as listas."},
+    {"kTCCServiceLocalNetwork", "encontrar e se conectar a dispositivos da rede local", "O app poderá ver outros computadores e aparelhos desta rede."},
+    {"kTCCServiceFocusStatus", "saber se você está em foco", "O app poderá ver se as notificações estão silenciadas."},
+    {"kTCCServiceWillow", "acessar os dados da Casa", "O app poderá ver e controlar os acessórios da casa."},
+    {"kTCCServiceSiri", "usar a Siri", "O app poderá receber pedidos feitos por voz."},
+    {"kTCCServiceAppleEvents", "controlar outro app", "O app poderá mandar comandos e ler dados do outro app."},
+    {"userNotifications", "enviar notificações", "As notificações podem ter alertas, sons e indicadores no ícone."},
+};
+static const tcc_prompt_text *tcc_prompt_text_for(const char *service) {
+    if (!service) return 0;
+    for (unsigned i = 0; i < sizeof tcc_prompt_texts / sizeof tcc_prompt_texts[0]; i++) {
+        unsigned n = (unsigned)strlen(tcc_prompt_texts[i].service);
+        if (!strncmp(service, tcc_prompt_texts[i].service, n) && (service[n] == 0 || (service[n] == '+' && service[n + 1])))
+            return &tcc_prompt_texts[i];
+    }
+    return 0;
+}
+
 static int tcc_prompt_kind(const char *service) {
     if (service && !strcmp(service, TCC_PROMPT_SCREEN)) return TCC_PROMPT_KIND_SCREEN;
     if (service && !strcmp(service, TCC_PROMPT_AX)) return TCC_PROMPT_KIND_AX;
+    if (tcc_prompt_text_for(service)) return TCC_PROMPT_KIND_OTHER;
     return TCC_PROMPT_KIND_NONE;
 }
 
@@ -110,12 +154,27 @@ static int tcc_prompt_fill(tcc_prompt_view *v, const char *bundle, const char *s
                  "O pedido de %s está pendente, então a imagem da tela não sai. "
                  "Permitir guarda a concessão neste computador. Negar deixa a captura fechada.",
                  b);
-    } else {
+    } else if (kind == TCC_PROMPT_KIND_AX) {
         snprintf(v->title, sizeof v->title, "%s quer controlar a interface do mOS", app);
         snprintf(v->message, sizeof v->message,
                  "O pedido de %s está pendente, então a árvore da interface continua fechada. "
                  "Permitir guarda a concessão neste computador. Negar deixa a acessibilidade bloqueada.",
                  b);
+    } else {
+        const tcc_prompt_text *t = tcc_prompt_text_for(s);
+        const char *plus = strchr(s, '+');
+        if (plus) {                                    /* Apple Events: "“A” gostaria de controlar “B”." */
+            char target[96];
+            tcc_prompt_app_name(target, (int)sizeof target, plus + 1);
+            snprintf(v->title, sizeof v->title, "\xe2\x80\x9c%s\xe2\x80\x9d gostaria de controlar \xe2\x80\x9c%s\xe2\x80\x9d", app, target);
+            snprintf(v->message, sizeof v->message,
+                     "Permitir o controle dá a %s acesso aos documentos e aos dados de %s e às ações dele. "
+                     "A escolha fica neste computador e pode ser desfeita com tccutil reset AppleEvents.", app, target);
+        } else {
+            snprintf(v->title, sizeof v->title, "\xe2\x80\x9c%s\xe2\x80\x9d gostaria de %s", app, t->what);
+            snprintf(v->message, sizeof v->message, "%s A escolha fica neste computador e pode ser desfeita com tccutil reset.", t->detail);
+        }
+        if (!strcmp(s, "userNotifications")) snprintf(v->deny, sizeof v->deny, "%s", "N\xc3\xa3o Permitir");
     }
     return 0;
 }

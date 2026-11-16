@@ -138,10 +138,19 @@ static void call_status_block(void *blk, long st) {
     inv = *(void (**)(void *, long))((unsigned char *)blk + 16);
     if (inv) inv(blk, st);
 }
+void cx_tcc_request_async(const char *service, void (*cb)(int granted, void *ctx), void *ctx);
+void *_Block_copy(const void *b);
+void _Block_release(const void *b);
+static void ph_request_done(int granted, void *blk) {
+    (void)granted;
+    call_status_block(blk, auth_now());
+    _Block_release(blk);
+}
+/* requestAuthorization: o bloco volta com o estado depois da escolha no diálogo do TCC */
 static void ph_request(id cls, SEL c, void *blk) {
     (void)cls; (void)c;
-    cx_tcc_request(kPhotosService);
-    call_status_block(blk, auth_now());
+    if (!blk) { cx_tcc_request(kPhotosService); return; }
+    cx_tcc_request_async(kPhotosService, ph_request_done, _Block_copy(blk));
 }
 static void ph_request_level(id cls, SEL c, long level, void *blk) {
     (void)level;

@@ -53,7 +53,18 @@ for fw in "$ROOT"/userland/frameworks/*/; do
             objs+=("$o")
         fi
     done
-    if ls "$fw"*.swift >/dev/null 2>&1; then
+    # swift-needs: módulos Swift que o overlay importa e que saem de outro passo do build (ex.: o Foundation de
+    # build-swift-foundation-objc.sh, que roda depois deste). Sem eles o framework sai só com a parte ObjC/C;
+    # tools/build.sh chama este script de novo, só com esses frameworks, depois do Foundation.
+    missing=
+    if [ -f "$fw/swift-needs" ]; then
+        for m in $(grep -v '^#' "$fw/swift-needs" | tr -d '\r'); do
+            [ -e "$OBJC/overlays/$m.swiftmodule" ] || missing="$missing $m"
+        done
+    fi
+    if ls "$fw"*.swift >/dev/null 2>&1 && [ -n "$missing" ]; then
+        echo "$name: aviso: overlay Swift adiado (falta o módulo$missing); só a parte ObjC/C por enquanto" >&2
+    elif ls "$fw"*.swift >/dev/null 2>&1; then
         if [ -x "$FE" ] && [ -d "$OBJC/Swift.swiftmodule" ] && [ -d "$RES" ] && [ "$bad" = 0 ]; then
             so="$TMP/${name}_swift.o"
             # iface/X.swift: só a interface de um módulo X que o overlay importa e que não existe aqui (ex.: o View do

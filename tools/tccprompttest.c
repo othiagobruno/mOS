@@ -102,7 +102,21 @@ int main(void) {
     CHECK(TCC_PROMPT_KEY_ENTER == 10);
     CHECK(TCC_PROMPT_KEY_ESC == 0x1b);
     CHECK(!strcmp(TCC_PROMPT_FILE, "/Users/Visitante/Library/Application Support/com.mos.tcc/decisions.txt"));
-    CHECK(tcc_prompt_kind("userNotifications") == TCC_PROMPT_KIND_NONE);
+    CHECK(tcc_prompt_kind("userNotifications") == TCC_PROMPT_KIND_OTHER);
+    CHECK(tcc_prompt_kind("kTCCServiceCamera") == TCC_PROMPT_KIND_OTHER);
+    CHECK(tcc_prompt_kind("kTCCServiceAppleEvents+com.apple.finder") == TCC_PROMPT_KIND_OTHER);
+    CHECK(tcc_prompt_kind("kTCCServiceAppleEvents+") == TCC_PROMPT_KIND_NONE);
+    CHECK(tcc_prompt_kind("kTCCServiceCameraX") == TCC_PROMPT_KIND_NONE);
+    CHECK(tcc_prompt_kind("kTCCServiceInventado") == TCC_PROMPT_KIND_NONE);
+    {
+        tcc_prompt_view v;
+        CHECK(tcc_prompt_fill(&v, "com.exemplo.zoomzoom", "kTCCServiceCamera") == 0);
+        CHECK(strstr(v.title, "Zoomzoom") && strstr(v.title, "acessar a c\xc3\xa2mera"));
+        CHECK(tcc_prompt_fill(&v, "com.exemplo.script", "kTCCServiceAppleEvents+com.apple.finder") == 0);
+        CHECK(strstr(v.title, "controlar") && strstr(v.title, "Finder"));
+        CHECK(tcc_prompt_fill(&v, "com.exemplo.app", "userNotifications") == 0);
+        CHECK(strstr(v.title, "enviar notifica") && !strcmp(v.deny, "N\xc3\xa3o Permitir"));
+    }
     CHECK(tcc_prompt_kind(TCC_PROMPT_SCREEN) == TCC_PROMPT_KIND_SCREEN);
     CHECK(tcc_prompt_kind(TCC_PROMPT_AX) == TCC_PROMPT_KIND_AX);
     CHECK(tcc_prompt_granted(0) == 0 && tcc_prompt_granted(1) == 1 && tcc_prompt_granted(2) == -1);
@@ -189,17 +203,21 @@ int main(void) {
         fila.hover = fila.pressed = -1;
         load_ui(p2, &fila);
         CHECK(fila.open && fila.view.kind == TCC_PROMPT_KIND_SCREEN);
-        CHECK(strcmp(fila.view.service, "userNotifications") != 0);
         click(p2, &fila, 0);
         load_ui(p2, &fila);
         CHECK(fila.open && fila.view.kind == TCC_PROMPT_KIND_AX);
         CHECK(fila.hover == -1);
         click(p2, &fila, 1);
         load_ui(p2, &fila);
-        CHECK(!fila.open);
+        /* o terceiro pedido (notificações) também vira diálogo, na ordem do arquivo */
+        CHECK(fila.open && !strcmp(fila.view.service, "userNotifications"));
         CHECK(CGPreflightScreenCaptureAccess_arquivo(p2, b) == 0);
         CHECK(AXIsProcessTrusted_arquivo(p2, b) == 1);
         CHECK(tcc_state_at(p2, b, "userNotifications") == TCC_PENDING);
+        click(p2, &fila, 1);
+        load_ui(p2, &fila);
+        CHECK(!fila.open);
+        CHECK(tcc_state_at(p2, b, "userNotifications") == TCC_GRANTED);
         memset(&de_novo, 0, sizeof de_novo);
         load_ui(p2, &de_novo);
         CHECK(!de_novo.open);
