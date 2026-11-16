@@ -15,6 +15,11 @@ o boot só acontecem no fim (`build-final.sh`).
 | Saídas | DP-1, DP-2, DP-3, HDMI-A-1 (VBIOS: DP DDC1/HPD1, HDMI DDC2/HPD2 em UNIPHY0 link B, DP DDC3/HPD3 e DDC4/HPD4; conferido no HPD2 vivo). Monitor no HDMI, preferido 5120x1440 (EDID em `tools/testdata/amdgpu/edid-hdmi-thiago.bin`) |
 | IP discovery | GC 9.1.0 (`0x2000`, `0xA000`), SDMA0 4.1.0 (`0x1260`), MMHUB 9.1.0 (`0x1A000`), DMU/DCN 1.0.0 (`0x12`, `0xC0`, `0x34C0`), NBIF 7.0.0 (`0x0`, `0x14`, `0xD20`, `0x10400`), OSSSYS 4.1.0 (`0x10A0`), MP0/MP1 10.0.0 (`0x16000`), HDP 4.1.0 (`0xF20`), SMUIO 10.0.0 (`0x16800`), THM 10.0.0 (`0x16600`), ATHUB 9.1.0 (`0xC20`), DF 2.1.0 (`0x7000`), UVD/VCN 1.0.0 (`0x7800`, `0x7E00`) |
 
+Estado vivo do caminho HDMI (debugfs do amdgpu, só leitura, 16 nov. 2026): `OTG0_OTG_CONTROL` 0x80010311 (ligado,
+H_TOTAL 5400, V_TOTAL 1485: 5120x1440@60); `DIG1_DIG_FE_CNTL` 0x01000100 (FE ligado, fonte OTG0); `DIG1_DIG_BE_CNTL`
+0x10030200 (modo HDMI, FE do DIGB); `DIG1_HDMI_CONTROL` 0x0001001F; `PHYPLLB_PIXCLK_RESYNC_CNTL` 0x101 (PHY B);
+OTG1..3 desligados. Coerente com o VBIOS: HDMI = UNIPHY0 link B, DIG1.
+
 As bases estão em dwords; registrador = base do segmento + deslocamento do header, vezes 4 em bytes.
 Tudo cabe nos 512 KiB do BAR5, sem acesso indireto.
 
