@@ -465,6 +465,7 @@ void gl_clear_target(gl_ctx_t *C, GLbitfield mask) {
         for (int i = 0; i < T.ncolor; i++) clear_color(C, &T, i, v, 0);
     }
     if (mask & (GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT)) clear_ds(C, &T, !!(mask & GL_DEPTH_BUFFER_BIT), C->clear_d, !!(mask & GL_STENCIL_BUFFER_BIT), C->clear_s);
+    if (mask & GL_ACCUM_BUFFER_BIT) { void gl_accum_clear(gl_ctx_t *C); gl_accum_clear(C); }
 }
 void glClear(GLbitfield mask) {
     GLC();

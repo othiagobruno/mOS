@@ -340,6 +340,8 @@ typedef struct gl_ctx {
     u64 samples_passed, prims_generated, prims_written;
     void *ffp_state;           /* gl_ffp.c: matrizes derivadas e texturas do draw */
     void *glsl_state;          /* gl_glsl.c */
+    void *eval_state;          /* gl_eval.c: avaliadores */
+    float *accum; int accum_w, accum_h;   /* buffer de acumulação (RGBA float) */
     /* dono (CGL) */
     void *cgl;
     char ext_str[2048];
