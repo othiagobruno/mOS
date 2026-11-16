@@ -37,8 +37,8 @@ Legenda: ✅ pronto com teste de host · 🔧 em andamento · ⬜ não começou.
 | U1 | xHCI 15e0/15e1: interrupções MSI, USB 3.x, quirks AMD, suspensão/retomada | ⬜ | |
 | U2 | Hubs Genesys (USB2 e USB3 SuperSpeed) | ⬜ | |
 | U3 | HID: Satechi 0c45:7016 (teclas de mídia, consumer page), mouse Sunplus | ⬜ | |
-| S1 | AHCI 7901: NCQ, TRIM (DATA SET MANAGEMENT), cache flush, suspensão | ⬜ | |
-| H1 | HDA multi-controlador: 15e3 (analógico) + 15de (HDMI/DP, ELD, canais) | ⬜ | |
+| S1 | AHCI 7901: NCQ (já na main), TRIM por DATA SET MANAGEMENT (IDENTIFY 169/105/69), `blkdev_t.discard` + `blk_discard()` através das partições, com a política de escrita; FLUSH CACHE EXT | ✅ código; ⬜ hardware | `tools/disktest.c` (empacotamento das faixas, 48 bits, 64 por bloco): `disktest: ok` |
+| H1 | HDA: 15e3 com ALC269VC (fone 0x15 com HP+EAPD, microfone 0x18; snoop do FCH no reg. 0x42) + 15de HDMI/DP em `kernel/dev/hda_hdmi.c` (controlador próprio sem snoop, `clflush`, pin sense, ELD, conversor digital, espelho da mesma mistura) | ✅ código; ⬜ hardware | só sintaxe; codecs conferidos no `/proc/asound` do PC (ALC269VC, ATI aa01, monitor PG-CFCFS49U com LPCM 2 canais) |
 | H2 | ACP 15e2 (co-processador de áudio; DMIC) | ⬜ | |
 | R1 | RTC: século pelo índice da FADT (0x32), 12 h corrigido, escrita (`rtc_set_utc`), alarme (`rtc_alarm_set_utc`) | ✅ código; ⬜ hardware | só sintaxe (`zig cc -fsyntax-only`) |
 | I1 | IOMMU AMD-Vi pela IVRS (tabela de dispositivos, remapeamento DMA) | ⬜ | |

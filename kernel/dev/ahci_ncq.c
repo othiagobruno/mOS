@@ -76,3 +76,14 @@ void ahci_fpdma_fis(u8 *f, int write, u64 lba, u16 count, u8 tag) {
     f[11] = (u8)(count >> 8);
     f[12] = (u8)(tag << 3);
 }
+
+u32 ahci_dsm_pack(u64 *e, u32 max, u64 *first, u64 end) {
+    u32 k = 0;
+    while (*first < end && k < max) {
+        u64 n = end - *first;
+        if (n > 0xFFFF) n = 0xFFFF;
+        e[k++] = (*first & 0xFFFFFFFFFFFFull) | (n << 48);
+        *first += n;
+    }
+    return k;
+}

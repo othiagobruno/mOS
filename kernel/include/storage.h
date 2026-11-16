@@ -28,6 +28,9 @@ bool        storage_grant_write(blkdev_t *disk, u64 off, u64 len);   /* disk = d
 void        storage_revoke_write(blkdev_t *disk, u64 off, u64 len);  /* revoga só a faixa liberada exatamente assim */
 void        storage_revoke_all(void);
 bool        storage_write_ok(blkdev_t *root, u64 off, u64 len);      /* chamado pelos drivers */
+/* descarta (TRIM) a faixa de uma partição ou disco: sobe pelos pais somando base, respeita a política de
+ * escrita e devolve false se o disco não suporta (quem chama segue normal: TRIM é só uma dica ao SSD) */
+bool        blk_discard(blkdev_t *d, u64 off, u64 len);
 u64         storage_denied_writes(void);                             /* tentativas recusadas desde o boot */
 int         storage_grant_count(void);
 int         storage_disk_count(void);

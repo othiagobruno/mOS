@@ -25,6 +25,7 @@ typedef struct blkdev {
     bool (*read)(struct blkdev *d, u64 off, void *buf, u64 len);
     bool (*write)(struct blkdev *d, u64 off, const void *buf, u64 len); /* NULL = somente leitura */
     bool (*flush)(struct blkdev *d);                                    /* opcional */
+    bool (*discard)(struct blkdev *d, u64 off, u64 len);                /* opcional: TRIM/UNMAP; os dados da faixa somem */
     void (*release)(struct blkdev *d);
     void *ctx;
     u64 base;                                              /* deslocamento (partições) */
