@@ -3,7 +3,7 @@
 Símbolos que os apps do corpus importam e o mOS não exporta, na frente de Plugins (flat lookup: o símbolo vem do app que carrega o plugin, não do mOS) (`TIME.md`).
 Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/harness.py donos`.
 
-**661** símbolos distintos.
+**674** símbolos distintos.
 
 | biblioteca | símbolo | apps | exemplos |
 |---|---|---:|---|
@@ -147,11 +147,15 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | self) | `_PyUnicode_FromFormat` | 2 | lm-studio, obs |
 | self) | `_PyUnicode_FromStringAndSize` | 2 | lm-studio, virtualbox |
 | self) | `_PyUnicode_InternFromString` | 2 | lm-studio, obs |
+| self) | `_SLSMainConnectionID` | 2 | bettertouchtool, hammerspoon |
+| self) | `_SLSSetWindowListWorkspace` | 2 | bettertouchtool, hammerspoon |
+| self) | `_SLSSpaceSetCompatID` | 2 | bettertouchtool, hammerspoon |
 | self) | `__PyDict_NewPresized` | 2 | lm-studio, sourcetree |
 | self) | `__PyObject_GetDictPtr` | 2 | lm-studio, sourcetree |
 | self) | `__PyObject_New` | 2 | obs, sourcetree |
 | self) | `__Py_FalseStruct` | 2 | lm-studio, virtualbox |
 | self) | `__Py_NotImplementedStruct` | 2 | lm-studio, obs |
+| self) | `_ALCALSCopyALSServiceClient` | 1 | bettertouchtool |
 | self) | `_CRYPTO_memcmp` | 1 | mongodb-compass |
 | self) | `_ERR_clear_error` | 1 | mongodb-compass |
 | self) | `_ERR_error_string_n` | 1 | mongodb-compass |
@@ -190,6 +194,8 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | self) | `_OBJC_CLASS_$_ASCredentialServiceIdentifier` | 1 | bitwarden |
 | self) | `_OBJC_CLASS_$_ASPasswordCredentialIdentity` | 1 | bitwarden |
 | self) | `_OBJC_CLASS_$_ASSettingsHelper` | 1 | bitwarden |
+| self) | `_OBJC_CLASS_$_CBBlueLightClient` | 1 | bettertouchtool |
+| self) | `_OBJC_CLASS_$_SKReceiptRefreshRequest` | 1 | termius |
 | self) | `_OSSL_PARAM_construct_utf8_string` | 1 | mongodb-compass |
 | self) | `_PyArg_ValidateKeywordArguments` | 1 | lm-studio |
 | self) | `_PyBuffer_IsContiguous` | 1 | sourcetree |
@@ -367,16 +373,22 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | self) | `_Py_MakePendingCalls` | 1 | virtualbox |
 | self) | `_Py_VaBuildValue` | 1 | virtualbox |
 | self) | `_Py_Version` | 1 | lm-studio |
+| self) | `_SLPSPostEventRecordTo` | 1 | bettertouchtool |
 | self) | `_SLSCopyManagedDisplaySpaces` | 1 | hammerspoon |
 | self) | `_SLSCopySpacesForWindows` | 1 | hammerspoon |
 | self) | `_SLSCopyWindowsWithOptionsAndTags` | 1 | hammerspoon |
 | self) | `_SLSGetActiveSpace` | 1 | hammerspoon |
-| self) | `_SLSMainConnectionID` | 1 | hammerspoon |
 | self) | `_SLSMoveWindowsToManagedSpace` | 1 | hammerspoon |
-| self) | `_SLSSetWindowListWorkspace` | 1 | hammerspoon |
+| self) | `_SLSShowSpaces` | 1 | bettertouchtool |
+| self) | `_SLSSpaceAddWindowsAndRemoveFromSpaces` | 1 | bettertouchtool |
+| self) | `_SLSSpaceCreate` | 1 | bettertouchtool |
 | self) | `_SLSSpaceGetType` | 1 | hammerspoon |
-| self) | `_SLSSpaceSetCompatID` | 1 | hammerspoon |
+| self) | `_SLSSpaceSetAbsoluteLevel` | 1 | bettertouchtool |
 | self) | `_SetSystemUIMode` | 1 | deluge |
+| self) | `_WacomMTGetAttachedDeviceIDs` | 1 | bettertouchtool |
+| self) | `_WacomMTInitialize` | 1 | bettertouchtool |
+| self) | `_WacomMTRegisterAttachCallback` | 1 | bettertouchtool |
+| self) | `_WacomMTRegisterFingerReadCallback` | 1 | bettertouchtool |
 | self) | `__PyArg_ParseTupleAndKeywords_SizeT` | 1 | sourcetree |
 | self) | `__PyArg_ParseTuple_SizeT` | 1 | sourcetree |
 | self) | `__PyByteArray_empty_string` | 1 | lm-studio |
@@ -394,6 +406,7 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | self) | `__PyUnicode_Ready` | 1 | lm-studio |
 | self) | `__Py_BuildValue_SizeT` | 1 | sourcetree |
 | self) | `__Py_ZeroStruct` | 1 | sourcetree |
+| self) | `__SLPSSetFrontProcessWithOptions` | 1 | bettertouchtool |
 | self) | `__Z10add_friendP9tree_nodeS0_b` | 1 | emacs-app |
 | self) | `__Z10build_declj9tree_codeP9tree_nodeS1_` | 1 | emacs-app |
 | self) | `__Z10get_typeidP9tree_nodei` | 1 | emacs-app |

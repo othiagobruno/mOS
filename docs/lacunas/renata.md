@@ -3,20 +3,21 @@
 Símbolos que os apps do corpus importam e o mOS não exporta, na frente de Renata (BSD/Mach/XPC) (`TIME.md`).
 Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/harness.py donos`.
 
-**36** símbolos distintos.
+**37** símbolos distintos.
 
 | biblioteca | símbolo | apps | exemplos |
 |---|---|---:|---|
-| libSystem.B.dylib | `_os_activity_scope_enter` | 18 | audacity, bitwarden, calibre, db-browser-for-sqlite |
-| libSystem.B.dylib | `_os_activity_scope_leave` | 18 | audacity, bitwarden, calibre, db-browser-for-sqlite |
+| libSystem.B.dylib | `_os_activity_scope_enter` | 22 | audacity, bitwarden, calibre, db-browser-for-sqlite |
+| libSystem.B.dylib | `_os_activity_scope_leave` | 22 | audacity, bitwarden, calibre, db-browser-for-sqlite |
+| libSystem.B.dylib | `_posix_spawnattr_getflags` | 6 | homebrew-app, kitty, macpacker, openclaw |
 | libSystem.B.dylib | `_bootstrap_parent` | 4 | brave-browser, google-chrome, iterm2, microsoft-edge |
 | libSystem.B.dylib | `_mach_vm_write` | 4 | calibre, gimp, kitty, sublime-text |
-| libSystem.B.dylib | `_posix_spawnattr_getflags` | 4 | kitty, openclaw, orbstack, thaw |
-| libSystem.B.dylib | `_bootstrap_create_server` | 2 | steam, vlc |
-| libSystem.B.dylib | `_bootstrap_create_service` | 2 | steam, vlc |
-| libSystem.B.dylib | `_bootstrap_subset` | 2 | steam, vlc |
-| libSystem.B.dylib | `_mig_strncpy` | 2 | hex-fiend, xquartz |
-| libSystem.B.dylib | `_posix_spawnattr_set_qos_class_np` | 2 | openclaw, thaw |
+| libSystem.B.dylib | `_posix_spawnattr_set_qos_class_np` | 4 | homebrew-app, macpacker, openclaw, thaw |
+| libSystem.B.dylib | `_bootstrap_create_server` | 3 | android-file-transfer, steam, vlc |
+| libSystem.B.dylib | `_bootstrap_create_service` | 3 | android-file-transfer, steam, vlc |
+| libSystem.B.dylib | `_bootstrap_subset` | 3 | android-file-transfer, steam, vlc |
+| libSystem.B.dylib | `_mig_strncpy` | 3 | hex-fiend, proxyman, xquartz |
+| libSystem.B.dylib | `_dyld_image_path_containing_address` | 2 | cmux, supacode |
 | libSystem.B.dylib | `_xpc_shmem_create` | 2 | orbstack, virtualbox |
 | libSystem.B.dylib | `_xpc_shmem_map` | 2 | orbstack, virtualbox |
 | libSystem.B.dylib | `__dyld_bind_fully_image_containing_address` | 1 | inkscape |
@@ -27,7 +28,6 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | libSystem.B.dylib | `_dyld_image_for_each_segment_info` | 1 | android-studio |
 | libSystem.B.dylib | `_dyld_image_get_installname` | 1 | android-studio |
 | libSystem.B.dylib | `_dyld_image_header_containing_address` | 1 | utm |
-| libSystem.B.dylib | `_dyld_image_path_containing_address` | 1 | cmux |
 | libSystem.B.dylib | `_dyld_shared_cache_copy_uuid` | 1 | android-studio |
 | libSystem.B.dylib | `_dyld_shared_cache_file_path` | 1 | android-studio |
 | libSystem.B.dylib | `_dyld_shared_cache_for_each_image` | 1 | android-studio |
@@ -43,3 +43,4 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | libSystem.B.dylib | `_posix_spawnattr_getsigdefault` | 1 | orbstack |
 | libSystem.B.dylib | `_posix_spawnattr_getsigmask` | 1 | orbstack |
 | libSystem.B.dylib | `_posix_spawnattr_setarchpref_np` | 1 | utm |
+| libSystem.B.dylib | `_xpc_add_bundle` | 1 | bettertouchtool |

@@ -727,6 +727,7 @@ DONOS = {
     "felipe": "Felipe (Wi-Fi, Bluetooth, Ethernet)",
     "igor": "Igor (sem dono claro: triagem)",
     "plugin": "Plugins (flat lookup: o símbolo vem do app que carrega o plugin, não do mOS)",
+    "app": "Bibliotecas do próprio app (Qt, R...: o bundle não resolveu a dele, não é lacuna do mOS)",
 }
 FW_DONO = {
     "Foundation": "eduardo", "CoreFoundation": "eduardo", "CoreData": "eduardo", "libswiftFoundation.dylib": "eduardo",
@@ -766,7 +767,25 @@ FW_DONO = {
     "DeveloperToolsSupport": "ricardo", "CoreTransferable": "ricardo", "_AppIntents_SwiftUI": "ricardo",
     "AppIntents": "natalia", "VisionKit": "isabela", "Accessibility": "beatriz",
     "libswift_StringProcessing.dylib": "fernanda", "libswiftSynchronization.dylib": "fernanda",
+    # triagem do corpus de 250 apps (frameworks da Apple que caíam em "sem dono"), pelos escopos do TIME.md
+    "ImageCaptureCore": "isabela", "ReplayKit": "isabela", "QTKit": "isabela", "iTunesLibrary": "isabela",
+    "MetricKit": "natalia", "OSLog": "natalia", "DirectoryService": "natalia", "PassKit": "natalia",
+    "StoreFoundation": "natalia", "CommerceKit": "natalia", "PackageKit": "natalia", "Collaboration": "natalia",
+    "Automator": "natalia", "login": "natalia", "ScreenTime": "natalia", "PushKit": "natalia", "CoreAnalytics": "natalia",
+    "AdServices": "natalia", "EventKitUI": "natalia", "FinderSync": "natalia", "ExtensionKit": "natalia",
+    "LinkPresentation": "natalia", "MessageUI": "natalia", "WatchConnectivity": "natalia", "SidecarCore": "natalia",
+    "NaturalLanguage": "eduardo", "ExceptionHandling": "eduardo",
+    "CoreML": "otavio", "SceneKit": "otavio", "GameplayKit": "otavio", "MetalFX": "otavio",
+    "ParavirtualizedGraphics": "thais", "CoreBrightness": "thais",
+    "JavaRuntimeSupport": "beatriz", "InputMethodKit": "beatriz", "CoreUI": "beatriz",
+    "Photos": "ricardo", "MapKit": "ricardo",
+    "vmnet": "patricia", "NetworkStatistics": "patricia", "LDAP": "patricia",
+    "MultitouchSupport": "larissa", "PCSC": "larissa", "IOUSBHost": "larissa", "CoreMotion": "larissa",
+    "Virtualization": "larissa", "MachineSettings": "larissa", "BezelServices": "camila",
+    "FSKit": "vinicius", "NetFS": "vinicius",
 }
+# bibliotecas que vêm dentro do próprio app (Qt, R, LetsMove): o símbolo falta porque o bundle não resolveu a
+# biblioteca dele (@rpath), não por falta no mOS. Ficam à parte, como os plugins.
 # imports flat/self: o símbolo é resolvido no processo que carrega a imagem (plugin). Só os do sistema têm dono.
 PREFIXO_FLAT = (("eduardo", ("_CF", "_NS")), ("mariana", ("_CG", "_CT")), ("leonardo", ("__ZNSt3__", "___cxa_")),
                 ("fernanda", ("_swift_", "_dispatch_", "_objc_")))
@@ -823,6 +842,8 @@ def dono_de(lib: str, sym: str, origem: str) -> str:
         return "plugin"
     if fw in FW_DONO:
         return FW_DONO[fw]
+    if fw == "R" or fw == "LetsMove" or (fw.startswith("Qt") and fw[2:3].isupper()):
+        return "app"
     if fw.startswith("libswift"):
         alvo = fw[len("libswift"):].split(".")[0]
         if alvo in FW_DONO:

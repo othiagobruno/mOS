@@ -7,7 +7,7 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 
 | biblioteca | símbolo | apps | exemplos |
 |---|---|---:|---|
-| CoreDisplay.framework | `_CoreDisplay_DisplayCreateInfoDictionary` | 3 | betterdisplay, iina, monitorcontrol |
+| CoreDisplay.framework | `_CoreDisplay_DisplayCreateInfoDictionary` | 4 | betterdisplay, iina, monitorcontrol, stremio |
 | DisplayServices.framework | `_DisplayServicesGetBrightness` | 2 | betterdisplay, monitorcontrol |
 | DisplayServices.framework | `_DisplayServicesSetBrightness` | 2 | betterdisplay, monitorcontrol |
 | DisplayServices.framework | `_DisplayServicesAmbientLightCompensationEnabled` | 1 | betterdisplay |

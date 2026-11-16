@@ -2119,26 +2119,28 @@
       "nome": "AnyDesk",
       "licenca": "não declarada no cask; download público do autor, usado só para medir (não redistribuído)",
       "url": "https://download.anydesk.com/anydesk.dmg",
-      "sha256": null,
+      "sha256": "b2ce747fc441e4d4331c26c0d0b562b22090d6fd08fa86db6d086dc8b5197db1",
       "cask": "anydesk",
       "versao": "9.8.1",
       "tipo": "app",
       "homepage": "https://anydesk.com/",
       "rank_brew_365d": 198,
-      "instalacoes_365d": 19094
+      "instalacoes_365d": 19094,
+      "sha256_fixado_em": "2026-11-16"
     },
     {
       "id": "google-gemini",
       "nome": "Gemini",
       "licenca": "não declarada no cask; download público do autor, usado só para medir (não redistribuído)",
       "url": "https://dl.google.com/release2/j33ro/release/Gemini.dmg",
-      "sha256": null,
+      "sha256": "1e870b6ab205282c7307886746c8bef7b3a8842c1b4c19047826344807469bfb",
       "cask": "google-gemini",
       "versao": "1.141.3.1394",
       "tipo": "app",
       "homepage": "https://gemini.google/",
       "rank_brew_365d": 200,
-      "instalacoes_365d": 18882
+      "instalacoes_365d": 18882,
+      "sha256_fixado_em": "2026-11-16"
     },
     {
       "id": "wechat",
@@ -2591,7 +2593,7 @@
       "nome": "Termius",
       "licenca": "não declarada no cask; download público do autor, usado só para medir (não redistribuído)",
       "url": "https://autoupdate.termius.com/mac/Termius.dmg",
-      "sha256": null,
+      "sha256": "d77ab0a99b9947dd777650ab247b3e414c133555863cf96b402315db5665a8cf",
       "cask": "termius",
       "versao": "10.4.1",
       "tipo": "app",
@@ -2599,7 +2601,8 @@
       "rank_brew_365d": 260,
       "instalacoes_365d": 14680,
       "url_arm64": "https://autoupdate.termius.com/mac-arm64/Termius.dmg",
-      "sha256_arm64": null
+      "sha256_arm64": null,
+      "sha256_fixado_em": "2026-11-16"
     },
     {
       "id": "grandperspective",
@@ -2755,7 +2758,7 @@
       "nome": "OnyX",
       "licenca": "não declarada no cask; download público do autor, usado só para medir (não redistribuído)",
       "url": "https://www.titanium-software.fr/download/26/OnyX.dmg",
-      "sha256": null,
+      "sha256": "66a0c45de7e9e6f2af14922b56a32322ba98717055460a9b91f61281e25783c5",
       "cask": "onyx",
       "versao": "5.1.2",
       "tipo": "app",
@@ -2763,7 +2766,8 @@
       "rank_brew_365d": 272,
       "instalacoes_365d": 13314,
       "url_arm64": "https://www.titanium-software.fr/download/27/OnyX.dmg",
-      "sha256_arm64": null
+      "sha256_arm64": null,
+      "sha256_fixado_em": "2026-11-16"
     },
     {
       "id": "fluidvoice",
@@ -3572,13 +3576,14 @@
       "nome": "DaisyDisk",
       "licenca": "não declarada no cask; download público do autor, usado só para medir (não redistribuído)",
       "url": "https://daisydiskapp.com/download/DaisyDisk.zip",
-      "sha256": null,
+      "sha256": "45ef4639f2b4dc6a206f8129d62b54266eb42fde2abc67d7823aa92e0f064257",
       "cask": "daisydisk",
       "versao": "4.34.2",
       "tipo": "app",
       "homepage": "https://daisydiskapp.com/",
       "rank_brew_365d": 362,
-      "instalacoes_365d": 8316
+      "instalacoes_365d": 8316,
+      "sha256_fixado_em": "2026-11-16"
     },
     {
       "id": "displaylink",
@@ -3842,13 +3847,14 @@
       "nome": "libNDI",
       "licenca": "não declarada no cask; download público do autor, usado só para medir (não redistribuído)",
       "url": "https://downloads.ndi.tv/SDK/NDI_SDK_Mac/libNDI_for_Mac.pkg",
-      "sha256": null,
+      "sha256": "939d73d8456dcb1b64c609cdf36d8bb365a55d4329fab040241202492b993dce",
       "cask": "libndi",
       "versao": "latest",
       "tipo": "pkg",
       "homepage": "https://ndi.video/",
       "rank_brew_365d": 394,
-      "instalacoes_365d": 7270
+      "instalacoes_365d": 7270,
+      "sha256_fixado_em": "2026-11-16"
     },
     {
       "id": "macdown-3000",

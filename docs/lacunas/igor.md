@@ -3,78 +3,138 @@
 Símbolos que os apps do corpus importam e o mOS não exporta, na frente de Igor (sem dono claro: triagem) (`TIME.md`).
 Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/harness.py donos`.
 
-**547** símbolos distintos.
+**733** símbolos distintos.
 
 | biblioteca | símbolo | apps | exemplos |
 |---|---|---:|---|
-| ImageCaptureCore.framework | `_ICDownloadsDirectoryURL` | 9 | adobe-acrobat-reader, bruno, calibre, headlamp |
-| ImageCaptureCore.framework | `_ICOverwrite` | 9 | adobe-acrobat-reader, bruno, calibre, headlamp |
-| ImageCaptureCore.framework | `_ICSaveAsFilename` | 9 | adobe-acrobat-reader, bruno, calibre, headlamp |
-| ImageCaptureCore.framework | `_ICSavedFilename` | 9 | adobe-acrobat-reader, bruno, calibre, headlamp |
-| ImageCaptureCore.framework | `_ICTransportTypeMassStorage` | 9 | adobe-acrobat-reader, bruno, calibre, headlamp |
-| ImageCaptureCore.framework | `_OBJC_CLASS_$_ICCameraDevice` | 9 | adobe-acrobat-reader, bruno, calibre, headlamp |
-| ImageCaptureCore.framework | `_OBJC_CLASS_$_ICCameraFile` | 9 | adobe-acrobat-reader, bruno, calibre, headlamp |
-| ImageCaptureCore.framework | `_OBJC_CLASS_$_ICDeviceBrowser` | 9 | adobe-acrobat-reader, bruno, calibre, headlamp |
-| JavaRuntimeSupport.framework | `_JRSUIControlCreate` | 6 | android-studio, cyberduck, dbeaver-community, intellij-idea |
-| JavaRuntimeSupport.framework | `_JRSUIControlDraw` | 6 | android-studio, cyberduck, dbeaver-community, intellij-idea |
-| JavaRuntimeSupport.framework | `_JRSUIControlGetHitPart` | 6 | android-studio, cyberduck, dbeaver-community, intellij-idea |
-| JavaRuntimeSupport.framework | `_JRSUIControlGetScrollBarOffsetFor` | 6 | android-studio, cyberduck, dbeaver-community, intellij-idea |
-| JavaRuntimeSupport.framework | `_JRSUIControlGetScrollBarPartBounds` | 6 | android-studio, cyberduck, dbeaver-community, intellij-idea |
-| JavaRuntimeSupport.framework | `_JRSUIControlRelease` | 6 | android-studio, cyberduck, dbeaver-community, intellij-idea |
-| JavaRuntimeSupport.framework | `_JRSUIControlSetAlignmentHorizontal` | 6 | android-studio, cyberduck, dbeaver-community, intellij-idea |
-| JavaRuntimeSupport.framework | `_JRSUIControlSetAlignmentVertical` | 6 | android-studio, cyberduck, dbeaver-community, intellij-idea |
-| JavaRuntimeSupport.framework | `_JRSUIControlSetAnimating` | 6 | android-studio, cyberduck, dbeaver-community, intellij-idea |
-| JavaRuntimeSupport.framework | `_JRSUIControlSetDirection` | 6 | android-studio, cyberduck, dbeaver-community, intellij-idea |
-| JavaRuntimeSupport.framework | `_JRSUIControlSetOrientation` | 6 | android-studio, cyberduck, dbeaver-community, intellij-idea |
-| JavaRuntimeSupport.framework | `_JRSUIControlSetScrollBarPart` | 6 | android-studio, cyberduck, dbeaver-community, intellij-idea |
-| JavaRuntimeSupport.framework | `_JRSUIControlSetSegmentPosition` | 6 | android-studio, cyberduck, dbeaver-community, intellij-idea |
-| JavaRuntimeSupport.framework | `_JRSUIControlSetShowArrows` | 6 | android-studio, cyberduck, dbeaver-community, intellij-idea |
-| JavaRuntimeSupport.framework | `_JRSUIControlSetSize` | 6 | android-studio, cyberduck, dbeaver-community, intellij-idea |
-| JavaRuntimeSupport.framework | `_JRSUIControlSetState` | 6 | android-studio, cyberduck, dbeaver-community, intellij-idea |
-| JavaRuntimeSupport.framework | `_JRSUIControlSetValueByKey` | 6 | android-studio, cyberduck, dbeaver-community, intellij-idea |
-| JavaRuntimeSupport.framework | `_JRSUIControlSetVariant` | 6 | android-studio, cyberduck, dbeaver-community, intellij-idea |
-| JavaRuntimeSupport.framework | `_JRSUIControlSetWidget` | 6 | android-studio, cyberduck, dbeaver-community, intellij-idea |
-| JavaRuntimeSupport.framework | `_JRSUIControlSetWindowType` | 6 | android-studio, cyberduck, dbeaver-community, intellij-idea |
-| JavaRuntimeSupport.framework | `_JRSUIControlShouldScrollToClick` | 6 | android-studio, cyberduck, dbeaver-community, intellij-idea |
-| JavaRuntimeSupport.framework | `_JRSUIGetKey` | 6 | android-studio, cyberduck, dbeaver-community, intellij-idea |
-| JavaRuntimeSupport.framework | `_JRSUIRendererCreate` | 6 | android-studio, cyberduck, dbeaver-community, intellij-idea |
-| MetricKit.framework | `_OBJC_CLASS_$_MXMetricManager` | 6 | cloudflare-warp, hammerspoon, microsoft-teams, tableplus |
-| JavaRuntimeSupport.framework | `_JRSFontAlignStyleForFractionalMeasurement` | 5 | android-studio, dbeaver-community, intellij-idea, jetbrains-toolbox |
-| JavaRuntimeSupport.framework | `_JRSFontCreateFallbackFontForCharacters` | 5 | android-studio, dbeaver-community, intellij-idea, jetbrains-toolbox |
-| JavaRuntimeSupport.framework | `_JRSFontGetBoundingBoxesForGlyphsAndStyle` | 5 | android-studio, dbeaver-community, intellij-idea, jetbrains-toolbox |
-| JavaRuntimeSupport.framework | `_JRSFontGetRenderingStyleForHints` | 5 | android-studio, dbeaver-community, intellij-idea, jetbrains-toolbox |
-| JavaRuntimeSupport.framework | `_JRSFontSetRenderingStyleOnContext` | 5 | android-studio, dbeaver-community, intellij-idea, jetbrains-toolbox |
-| JavaRuntimeSupport.framework | `_JRSFontStyleUsesFractionalMetrics` | 5 | android-studio, dbeaver-community, intellij-idea, jetbrains-toolbox |
-| MetricKit.framework | `_OBJC_CLASS_$_MXCPUExceptionDiagnostic` | 4 | cloudflare-warp, hammerspoon, tableplus, tailscale-app |
-| MetricKit.framework | `_OBJC_CLASS_$_MXCrashDiagnostic` | 4 | cloudflare-warp, hammerspoon, tableplus, tailscale-app |
-| MetricKit.framework | `_OBJC_CLASS_$_MXDiagnosticPayload` | 4 | cloudflare-warp, hammerspoon, tableplus, tailscale-app |
-| MetricKit.framework | `_OBJC_CLASS_$_MXDiskWriteExceptionDiagnostic` | 4 | cloudflare-warp, hammerspoon, tableplus, tailscale-app |
-| MetricKit.framework | `_OBJC_CLASS_$_MXHangDiagnostic` | 4 | cloudflare-warp, hammerspoon, tableplus, tailscale-app |
+| ImageCaptureCore.framework | `_ICDownloadsDirectoryURL` | 12 | adobe-acrobat-reader, another-redis-desktop-manager, antigravity-ide, battery |
+| ImageCaptureCore.framework | `_ICOverwrite` | 12 | adobe-acrobat-reader, another-redis-desktop-manager, antigravity-ide, battery |
+| ImageCaptureCore.framework | `_ICSaveAsFilename` | 12 | adobe-acrobat-reader, another-redis-desktop-manager, antigravity-ide, battery |
+| ImageCaptureCore.framework | `_ICSavedFilename` | 12 | adobe-acrobat-reader, another-redis-desktop-manager, antigravity-ide, battery |
+| ImageCaptureCore.framework | `_ICTransportTypeMassStorage` | 12 | adobe-acrobat-reader, another-redis-desktop-manager, antigravity-ide, battery |
+| ImageCaptureCore.framework | `_OBJC_CLASS_$_ICCameraDevice` | 12 | adobe-acrobat-reader, another-redis-desktop-manager, antigravity-ide, battery |
+| ImageCaptureCore.framework | `_OBJC_CLASS_$_ICCameraFile` | 12 | adobe-acrobat-reader, another-redis-desktop-manager, antigravity-ide, battery |
+| ImageCaptureCore.framework | `_OBJC_CLASS_$_ICDeviceBrowser` | 12 | adobe-acrobat-reader, another-redis-desktop-manager, antigravity-ide, battery |
+| MetricKit.framework | `_OBJC_CLASS_$_MXMetricManager` | 10 | cleanshot, cloudflare-warp, duckduckgo, hammerspoon |
+| NaturalLanguage.framework | `_OBJC_CLASS_$_NLLanguageRecognizer` | 9 | bettertouchtool, easydict, fluidvoice, macwhisper |
+| MetricKit.framework | `_OBJC_CLASS_$_MXCrashDiagnostic` | 8 | cleanshot, cloudflare-warp, duckduckgo, hammerspoon |
+| MetricKit.framework | `_OBJC_CLASS_$_MXDiagnosticPayload` | 8 | cleanshot, cloudflare-warp, duckduckgo, hammerspoon |
+| OSLog.framework | `_OBJC_CLASS_$_OSLogEntryLog` | 8 | bartender, duckduckgo, linearmouse, macpacker |
+| JavaRuntimeSupport.framework | `_JRSUIControlCreate` | 7 | android-studio, cryptomator, cyberduck, dbeaver-community |
+| JavaRuntimeSupport.framework | `_JRSUIControlDraw` | 7 | android-studio, cryptomator, cyberduck, dbeaver-community |
+| JavaRuntimeSupport.framework | `_JRSUIControlGetHitPart` | 7 | android-studio, cryptomator, cyberduck, dbeaver-community |
+| JavaRuntimeSupport.framework | `_JRSUIControlGetScrollBarOffsetFor` | 7 | android-studio, cryptomator, cyberduck, dbeaver-community |
+| JavaRuntimeSupport.framework | `_JRSUIControlGetScrollBarPartBounds` | 7 | android-studio, cryptomator, cyberduck, dbeaver-community |
+| JavaRuntimeSupport.framework | `_JRSUIControlRelease` | 7 | android-studio, cryptomator, cyberduck, dbeaver-community |
+| JavaRuntimeSupport.framework | `_JRSUIControlSetAlignmentHorizontal` | 7 | android-studio, cryptomator, cyberduck, dbeaver-community |
+| JavaRuntimeSupport.framework | `_JRSUIControlSetAlignmentVertical` | 7 | android-studio, cryptomator, cyberduck, dbeaver-community |
+| JavaRuntimeSupport.framework | `_JRSUIControlSetAnimating` | 7 | android-studio, cryptomator, cyberduck, dbeaver-community |
+| JavaRuntimeSupport.framework | `_JRSUIControlSetDirection` | 7 | android-studio, cryptomator, cyberduck, dbeaver-community |
+| JavaRuntimeSupport.framework | `_JRSUIControlSetOrientation` | 7 | android-studio, cryptomator, cyberduck, dbeaver-community |
+| JavaRuntimeSupport.framework | `_JRSUIControlSetScrollBarPart` | 7 | android-studio, cryptomator, cyberduck, dbeaver-community |
+| JavaRuntimeSupport.framework | `_JRSUIControlSetSegmentPosition` | 7 | android-studio, cryptomator, cyberduck, dbeaver-community |
+| JavaRuntimeSupport.framework | `_JRSUIControlSetShowArrows` | 7 | android-studio, cryptomator, cyberduck, dbeaver-community |
+| JavaRuntimeSupport.framework | `_JRSUIControlSetSize` | 7 | android-studio, cryptomator, cyberduck, dbeaver-community |
+| JavaRuntimeSupport.framework | `_JRSUIControlSetState` | 7 | android-studio, cryptomator, cyberduck, dbeaver-community |
+| JavaRuntimeSupport.framework | `_JRSUIControlSetValueByKey` | 7 | android-studio, cryptomator, cyberduck, dbeaver-community |
+| JavaRuntimeSupport.framework | `_JRSUIControlSetVariant` | 7 | android-studio, cryptomator, cyberduck, dbeaver-community |
+| JavaRuntimeSupport.framework | `_JRSUIControlSetWidget` | 7 | android-studio, cryptomator, cyberduck, dbeaver-community |
+| JavaRuntimeSupport.framework | `_JRSUIControlSetWindowType` | 7 | android-studio, cryptomator, cyberduck, dbeaver-community |
+| JavaRuntimeSupport.framework | `_JRSUIControlShouldScrollToClick` | 7 | android-studio, cryptomator, cyberduck, dbeaver-community |
+| JavaRuntimeSupport.framework | `_JRSUIGetKey` | 7 | android-studio, cryptomator, cyberduck, dbeaver-community |
+| JavaRuntimeSupport.framework | `_JRSUIRendererCreate` | 7 | android-studio, cryptomator, cyberduck, dbeaver-community |
+| MetricKit.framework | `_OBJC_CLASS_$_MXHangDiagnostic` | 7 | cleanshot, cloudflare-warp, hammerspoon, macwhisper |
+| NaturalLanguage.framework | `_OBJC_CLASS_$_NLTokenizer` | 7 | easydict, fluidvoice, markedit, raycast |
+| CoreML.framework | `_OBJC_CLASS_$_MLFeatureDescription` | 6 | fluidvoice, macwhisper, openclaw, opensuperwhisper |
+| JavaRuntimeSupport.framework | `_JRSFontAlignStyleForFractionalMeasurement` | 6 | android-studio, cryptomator, dbeaver-community, intellij-idea |
+| JavaRuntimeSupport.framework | `_JRSFontCreateFallbackFontForCharacters` | 6 | android-studio, cryptomator, dbeaver-community, intellij-idea |
+| JavaRuntimeSupport.framework | `_JRSFontGetBoundingBoxesForGlyphsAndStyle` | 6 | android-studio, cryptomator, dbeaver-community, intellij-idea |
+| JavaRuntimeSupport.framework | `_JRSFontGetRenderingStyleForHints` | 6 | android-studio, cryptomator, dbeaver-community, intellij-idea |
+| JavaRuntimeSupport.framework | `_JRSFontSetRenderingStyleOnContext` | 6 | android-studio, cryptomator, dbeaver-community, intellij-idea |
+| JavaRuntimeSupport.framework | `_JRSFontStyleUsesFractionalMetrics` | 6 | android-studio, cryptomator, dbeaver-community, intellij-idea |
+| MetricKit.framework | `_OBJC_CLASS_$_MXCPUExceptionDiagnostic` | 6 | cleanshot, cloudflare-warp, hammerspoon, proxyman |
+| MetricKit.framework | `_OBJC_CLASS_$_MXDiskWriteExceptionDiagnostic` | 6 | cleanshot, cloudflare-warp, hammerspoon, proxyman |
+| FinderSync.framework | `_OBJC_CLASS_$_FIFinderSync` | 5 | bettertouchtool, keka, macpacker, nextcloud |
+| FinderSync.framework | `_OBJC_CLASS_$_FIFinderSyncController` | 5 | bettertouchtool, keka, macpacker, nextcloud |
+| FinderSync.framework | `_OBJC_METACLASS_$_FIFinderSync` | 5 | bettertouchtool, keka, macpacker, nextcloud |
+| CoreML.framework | `_OBJC_CLASS_$_MLArrayBatchProvider` | 4 | fluidvoice, macwhisper, opensuperwhisper, voiceink |
+| NaturalLanguage.framework | `_OBJC_CLASS_$_NLTagger` | 4 | fluidvoice, openclaw, superwhisper, voiceink |
 | vmnet.framework | `_vmnet_interface_set_event_callback` | 4 | docker-desktop, orbstack, utm, virtualbox |
 | vmnet.framework | `_vmnet_max_packet_size_key` | 4 | docker-desktop, orbstack, utm, virtualbox |
 | vmnet.framework | `_vmnet_operation_mode_key` | 4 | docker-desktop, orbstack, utm, virtualbox |
 | vmnet.framework | `_vmnet_read` | 4 | docker-desktop, orbstack, utm, virtualbox |
 | vmnet.framework | `_vmnet_start_interface` | 4 | docker-desktop, orbstack, utm, virtualbox |
 | vmnet.framework | `_vmnet_write` | 4 | docker-desktop, orbstack, utm, virtualbox |
-| NaturalLanguage.framework | `_OBJC_CLASS_$_NLLanguageRecognizer` | 3 | markedit, raycast, whatsapp |
-| NaturalLanguage.framework | `_OBJC_CLASS_$_NLTokenizer` | 3 | markedit, raycast, whatsapp |
+| CoreML.framework | `_OBJC_CLASS_$_MLModelAsset` | 3 | macwhisper, microsoft-teams, voiceink |
+| NaturalLanguage.framework | `_NLLanguageFrench` | 3 | easydict, fluidvoice, superwhisper |
+| NaturalLanguage.framework | `_NLLanguageGerman` | 3 | easydict, fluidvoice, superwhisper |
+| NaturalLanguage.framework | `_NLLanguagePortuguese` | 3 | easydict, fluidvoice, superwhisper |
+| NaturalLanguage.framework | `_NLLanguageSpanish` | 3 | easydict, fluidvoice, superwhisper |
+| NaturalLanguage.framework | `_NLTagNoun` | 3 | fluidvoice, openclaw, superwhisper |
+| NaturalLanguage.framework | `_NLTagOrganizationName` | 3 | openclaw, superwhisper, voiceink |
+| NaturalLanguage.framework | `_NLTagPersonalName` | 3 | openclaw, superwhisper, voiceink |
+| NaturalLanguage.framework | `_NLTagPlaceName` | 3 | openclaw, superwhisper, voiceink |
+| NaturalLanguage.framework | `_NLTagVerb` | 3 | fluidvoice, openclaw, superwhisper |
+| NaturalLanguage.framework | `_OBJC_CLASS_$_NLEmbedding` | 3 | bettertouchtool, fluidvoice, whatsapp |
 | Photos.framework | `_OBJC_CLASS_$_PHImageRequestOptions` | 3 | gemini, localsend, whatsapp |
+| Photos.framework | `_OBJC_CLASS_$_PHLivePhoto` | 3 | applite, supacode, whatsapp |
 | vmnet.framework | `_vmnet_allocate_mac_address_key` | 3 | orbstack, utm, virtualbox |
 | vmnet.framework | `_vmnet_interface_id_key` | 3 | docker-desktop, orbstack, virtualbox |
 | vmnet.framework | `_vmnet_mtu_key` | 3 | docker-desktop, orbstack, utm |
 | vmnet.framework | `_vmnet_stop_interface` | 3 | orbstack, utm, virtualbox |
+| AdServices.framework | `_OBJC_CLASS_$_AAAttribution` | 2 | bartender, whatsapp |
+| Automator.framework | `_OBJC_CLASS_$_AMWorkflow` | 2 | bbedit, bettertouchtool |
 | Collaboration.framework | `_OBJC_CLASS_$_CBIdentity` | 2 | anydesk, sourcetree |
 | Collaboration.framework | `_OBJC_CLASS_$_CBIdentityAuthority` | 2 | anydesk, sourcetree |
 | CoreML.framework | `_MLModelCreatorDefinedKey` | 2 | microsoft-teams, openclaw |
-| FinderSync.framework | `_OBJC_CLASS_$_FIFinderSync` | 2 | keka, pearcleaner |
-| FinderSync.framework | `_OBJC_CLASS_$_FIFinderSyncController` | 2 | keka, pearcleaner |
-| FinderSync.framework | `_OBJC_METACLASS_$_FIFinderSync` | 2 | keka, pearcleaner |
+| IOUSBHost.framework | `_OBJC_CLASS_$_IOUSBHostDevice` | 2 | orbstack, sfm |
 | LDAP.framework | `_ldap_count_entries` | 2 | adobe-acrobat-reader, tableplus |
 | LDAP.framework | `_ldap_result` | 2 | adobe-acrobat-reader, tableplus |
 | LDAP.framework | `_ldap_unbind` | 2 | adobe-acrobat-reader, tableplus |
 | LinkPresentation.framework | `_OBJC_CLASS_$_LPLinkMetadata` | 2 | vorssaint, whatsapp |
+| LinkPresentation.framework | `_OBJC_CLASS_$_LPMetadataProvider` | 2 | duckduckgo, raycast |
 | MapKit.framework | `_OBJC_CLASS_$_MKPolylineRenderer` | 2 | raycast, tableplus |
-| OSLog.framework | `_OBJC_CLASS_$_OSLogEntryLog` | 2 | linearmouse, protonvpn |
+| MultitouchSupport.framework | `_MTDeviceCreateList` | 2 | bettertouchtool, middleclick |
+| MultitouchSupport.framework | `_MTDeviceStart` | 2 | bettertouchtool, middleclick |
+| MultitouchSupport.framework | `_MTDeviceStop` | 2 | bettertouchtool, middleclick |
+| MultitouchSupport.framework | `_MTRegisterContactFrameCallback` | 2 | bettertouchtool, middleclick |
+| MultitouchSupport.framework | `_MTUnregisterContactFrameCallback` | 2 | bettertouchtool, middleclick |
+| NaturalLanguage.framework | `_NLLanguageArabic` | 2 | easydict, superwhisper |
+| NaturalLanguage.framework | `_NLLanguageBulgarian` | 2 | easydict, superwhisper |
+| NaturalLanguage.framework | `_NLLanguageCatalan` | 2 | easydict, superwhisper |
+| NaturalLanguage.framework | `_NLLanguageCroatian` | 2 | easydict, superwhisper |
+| NaturalLanguage.framework | `_NLLanguageCzech` | 2 | easydict, superwhisper |
+| NaturalLanguage.framework | `_NLLanguageDanish` | 2 | easydict, superwhisper |
+| NaturalLanguage.framework | `_NLLanguageDutch` | 2 | easydict, superwhisper |
+| NaturalLanguage.framework | `_NLLanguageFinnish` | 2 | easydict, superwhisper |
+| NaturalLanguage.framework | `_NLLanguageGreek` | 2 | easydict, superwhisper |
+| NaturalLanguage.framework | `_NLLanguageHebrew` | 2 | easydict, superwhisper |
+| NaturalLanguage.framework | `_NLLanguageHindi` | 2 | easydict, superwhisper |
+| NaturalLanguage.framework | `_NLLanguageHungarian` | 2 | easydict, superwhisper |
+| NaturalLanguage.framework | `_NLLanguageIndonesian` | 2 | easydict, superwhisper |
+| NaturalLanguage.framework | `_NLLanguageItalian` | 2 | easydict, superwhisper |
+| NaturalLanguage.framework | `_NLLanguageJapanese` | 2 | easydict, superwhisper |
+| NaturalLanguage.framework | `_NLLanguageKorean` | 2 | easydict, superwhisper |
+| NaturalLanguage.framework | `_NLLanguageMalay` | 2 | easydict, superwhisper |
+| NaturalLanguage.framework | `_NLLanguageNorwegian` | 2 | easydict, superwhisper |
+| NaturalLanguage.framework | `_NLLanguagePolish` | 2 | easydict, superwhisper |
+| NaturalLanguage.framework | `_NLLanguageRomanian` | 2 | easydict, superwhisper |
+| NaturalLanguage.framework | `_NLLanguageRussian` | 2 | easydict, superwhisper |
+| NaturalLanguage.framework | `_NLLanguageSimplifiedChinese` | 2 | easydict, superwhisper |
+| NaturalLanguage.framework | `_NLLanguageSlovak` | 2 | easydict, superwhisper |
+| NaturalLanguage.framework | `_NLLanguageSwedish` | 2 | easydict, superwhisper |
+| NaturalLanguage.framework | `_NLLanguageThai` | 2 | easydict, superwhisper |
+| NaturalLanguage.framework | `_NLLanguageTraditionalChinese` | 2 | easydict, superwhisper |
+| NaturalLanguage.framework | `_NLLanguageTurkish` | 2 | easydict, superwhisper |
+| NaturalLanguage.framework | `_NLLanguageUkrainian` | 2 | easydict, superwhisper |
+| NaturalLanguage.framework | `_NLLanguageVietnamese` | 2 | easydict, superwhisper |
+| NaturalLanguage.framework | `_NLTagAdjective` | 2 | fluidvoice, openclaw |
+| NaturalLanguage.framework | `_NLTagAdverb` | 2 | fluidvoice, openclaw |
+| NaturalLanguage.framework | `_NLTagPronoun` | 2 | openclaw, superwhisper |
+| NaturalLanguage.framework | `_NLTagPunctuation` | 2 | fluidvoice, openclaw |
+| NaturalLanguage.framework | `_NLTagSchemeLexicalClass` | 2 | fluidvoice, superwhisper |
+| NaturalLanguage.framework | `_NLTagSchemeNameType` | 2 | superwhisper, voiceink |
+| NaturalLanguage.framework | `_NLTagSchemeNameTypeOrLexicalClass` | 2 | openclaw, superwhisper |
 | PCSC.framework | `_SCardBeginTransaction` | 2 | keepassxc, windows-app |
 | PCSC.framework | `_SCardConnect` | 2 | keepassxc, windows-app |
 | PCSC.framework | `_SCardDisconnect` | 2 | keepassxc, windows-app |
@@ -98,12 +158,14 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | Photos.framework | `_OBJC_CLASS_$_PHCollectionList` | 2 | localsend, whatsapp |
 | Photos.framework | `_OBJC_CLASS_$_PHContentEditingInputRequestOptions` | 2 | localsend, whatsapp |
 | Photos.framework | `_OBJC_CLASS_$_PHImageManager` | 2 | gemini, whatsapp |
-| Photos.framework | `_OBJC_CLASS_$_PHLivePhoto` | 2 | applite, whatsapp |
 | Photos.framework | `_OBJC_CLASS_$_PHVideoRequestOptions` | 2 | localsend, whatsapp |
 | Photos.framework | `_PHImageCancelledKey` | 2 | localsend, whatsapp |
 | Photos.framework | `_PHImageErrorKey` | 2 | localsend, whatsapp |
 | Photos.framework | `_PHImageManagerMaximumSize` | 2 | localsend, whatsapp |
 | Photos.framework | `_PHImageResultIsDegradedKey` | 2 | localsend, whatsapp |
+| Photos.framework | `_PHLivePhotoInfoCancelledKey` | 2 | applite, supacode |
+| Photos.framework | `_PHLivePhotoInfoErrorKey` | 2 | applite, supacode |
+| Photos.framework | `_PHLivePhotoInfoIsDegradedKey` | 2 | applite, supacode |
 | Virtualization.framework | `_OBJC_CLASS_$_VZSingleDirectoryShare` | 2 | docker-desktop, orbstack |
 | Virtualization.framework | `_OBJC_CLASS_$_VZVirtioConsoleDeviceSerialPortConfiguration` | 2 | docker-desktop, orbstack |
 | vmnet.framework | `_vmnet_enable_isolation_key` | 2 | orbstack, utm |
@@ -112,7 +174,7 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | vmnet.framework | `_vmnet_shared_interface_name_key` | 2 | utm, virtualbox |
 | vmnet.framework | `_vmnet_start_address_key` | 2 | utm, virtualbox |
 | vmnet.framework | `_vmnet_subnet_mask_key` | 2 | utm, virtualbox |
-| AdServices.framework | `_OBJC_CLASS_$_AAAttribution` | 1 | whatsapp |
+| Automator.framework | `_OBJC_CLASS_$_AMWorkflowController` | 1 | bettertouchtool |
 | BezelServices.framework | `_ALCALSCopyALSServiceClient` | 1 | betterdisplay |
 | CommerceKit.framework | `_CKDownloadDirectory` | 1 | pearcleaner |
 | CommerceKit.framework | `_OBJC_CLASS_$_CKDownloadQueue` | 1 | pearcleaner |
@@ -121,8 +183,6 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | CoreBrightness.framework | `_OBJC_CLASS_$_CBBlueLightClient` | 1 | betterdisplay |
 | CoreBrightness.framework | `_OBJC_CLASS_$_CBTrueToneClient` | 1 | betterdisplay |
 | CoreML.framework | `_MLModelDescriptionKey` | 1 | openclaw |
-| CoreML.framework | `_OBJC_CLASS_$_MLFeatureDescription` | 1 | openclaw |
-| CoreML.framework | `_OBJC_CLASS_$_MLModelAsset` | 1 | microsoft-teams |
 | CoreMotion.framework | `_OBJC_CLASS_$_CMAltimeter` | 1 | whatsapp |
 | CoreMotion.framework | `_OBJC_CLASS_$_CMMotionManager` | 1 | whatsapp |
 | CoreUI.framework | `_CUIDraw` | 1 | zotero |
@@ -151,6 +211,8 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | DirectoryService.framework | `_dsOpenDirService` | 1 | virtualbox |
 | DirectoryService.framework | `_dsReleaseContinueData` | 1 | virtualbox |
 | EventKitUI.framework | `_OBJC_CLASS_$_EKEventEditViewController` | 1 | whatsapp |
+| ExceptionHandling.framework | `_NSStackTraceKey` | 1 | r-app |
+| ExceptionHandling.framework | `_OBJC_CLASS_$_NSExceptionHandler` | 1 | r-app |
 | ExtensionKit.framework | `_OBJC_CLASS_$_EXAppExtensionBrowserViewController` | 1 | cmux |
 | ExtensionKit.framework | `_OBJC_CLASS_$_EXHostViewController` | 1 | cmux |
 | FSKit.framework | `_OBJC_CLASS_$_FSClient` | 1 | fuse-t |
@@ -171,15 +233,34 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | GameplayKit.framework | `_OBJC_CLASS_$_GKNoise` | 1 | shottr |
 | GameplayKit.framework | `_OBJC_CLASS_$_GKNoiseMap` | 1 | shottr |
 | GameplayKit.framework | `_OBJC_CLASS_$_GKPerlinNoiseSource` | 1 | shottr |
-| IOUSBHost.framework | `_OBJC_CLASS_$_IOUSBHostDevice` | 1 | orbstack |
+| IOUSBHost.framework | `_IOUSBHostDefaultControlCompletionTimeout` | 1 | sfm |
+| IOUSBHost.framework | `_IOUSBHostDevicePropertyKeyCurrentConfiguration` | 1 | sfm |
+| IOUSBHost.framework | `_IOUSBHostDevicePropertyKeySerialNumberString` | 1 | sfm |
+| IOUSBHost.framework | `_IOUSBHostMatchingPropertyKeyDeviceClass` | 1 | sfm |
+| IOUSBHost.framework | `_IOUSBHostMatchingPropertyKeyDeviceProtocol` | 1 | sfm |
+| IOUSBHost.framework | `_IOUSBHostMatchingPropertyKeyDeviceReleaseNumber` | 1 | sfm |
+| IOUSBHost.framework | `_IOUSBHostMatchingPropertyKeyDeviceSubClass` | 1 | sfm |
+| IOUSBHost.framework | `_IOUSBHostMatchingPropertyKeyProductID` | 1 | sfm |
+| IOUSBHost.framework | `_IOUSBHostMatchingPropertyKeySpeed` | 1 | sfm |
+| IOUSBHost.framework | `_IOUSBHostMatchingPropertyKeyVendorID` | 1 | sfm |
+| IOUSBHost.framework | `_IOUSBHostPropertyKeyLocationID` | 1 | sfm |
+| IOUSBHost.framework | `_OBJC_CLASS_$_IOUSBHostCIDeviceStateMachine` | 1 | sfm |
+| IOUSBHost.framework | `_OBJC_CLASS_$_IOUSBHostCIEndpointStateMachine` | 1 | sfm |
+| IOUSBHost.framework | `_OBJC_CLASS_$_IOUSBHostControllerInterface` | 1 | sfm |
+| IOUSBHost.framework | `_OBJC_CLASS_$_IOUSBHostInterface` | 1 | sfm |
+| InputMethodKit.framework | `_OBJC_CLASS_$_IMKInputController` | 1 | squirrel-app |
+| InputMethodKit.framework | `_OBJC_CLASS_$_IMKServer` | 1 | squirrel-app |
+| InputMethodKit.framework | `_OBJC_METACLASS_$_IMKInputController` | 1 | squirrel-app |
 | LDAP.framework | `_ldap_bind_s` | 1 | adobe-acrobat-reader |
 | LDAP.framework | `_ldap_count_values_len` | 1 | adobe-acrobat-reader |
 | LDAP.framework | `_ldap_initialize` | 1 | adobe-acrobat-reader |
 | LDAP.framework | `_ldap_search_ext` | 1 | adobe-acrobat-reader |
 | LDAP.framework | `_ldap_search_st` | 1 | tableplus |
 | LDAP.framework | `_ldap_simple_bind` | 1 | tableplus |
-| LinkPresentation.framework | `_OBJC_CLASS_$_LPMetadataProvider` | 1 | raycast |
+| LetsMove.framework | `_PFMoveToApplicationsFolderIfNecessary` | 1 | bettertouchtool |
+| MachineSettings.framework | `_getEVSHandle` | 1 | bettertouchtool |
 | MapKit.framework | `_OBJC_CLASS_$_MKGeodesicPolyline` | 1 | raycast |
+| MapKit.framework | `_OBJC_CLASS_$_MKMapCameraZoomRange` | 1 | bartender |
 | MapKit.framework | `_OBJC_CLASS_$_MKPolygon` | 1 | tableplus |
 | MapKit.framework | `_OBJC_CLASS_$_MKPolygonRenderer` | 1 | tableplus |
 | MapKit.framework | `_OBJC_CLASS_$_MKPolyline` | 1 | tableplus |
@@ -190,8 +271,36 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | MetalFX.framework | `_OBJC_CLASS_$_MTLFXSpatialScalerDescriptor` | 1 | utm |
 | MetalFX.framework | `_OBJC_CLASS_$_MTLFXTemporalScalerDescriptor` | 1 | utm |
 | MetricKit.framework | `_OBJC_CLASS_$_MXHistogramBucket` | 1 | microsoft-teams |
-| NaturalLanguage.framework | `_NLTagAdjective` | 1 | openclaw |
-| NaturalLanguage.framework | `_NLTagAdverb` | 1 | openclaw |
+| MetricKit.framework | `_OBJC_CLASS_$_MXMetricPayload` | 1 | duckduckgo |
+| MultitouchSupport.framework | `_MTActuationActuate` | 1 | bettertouchtool |
+| MultitouchSupport.framework | `_MTActuationCreateFromDictionary` | 1 | bettertouchtool |
+| MultitouchSupport.framework | `_MTActuatorClose` | 1 | bettertouchtool |
+| MultitouchSupport.framework | `_MTActuatorGetSystemActuationsEnabled` | 1 | bettertouchtool |
+| MultitouchSupport.framework | `_MTActuatorOpen` | 1 | bettertouchtool |
+| MultitouchSupport.framework | `_MTActuatorSetSystemActuationsEnabled` | 1 | bettertouchtool |
+| MultitouchSupport.framework | `_MTDeviceGetFamilyID` | 1 | bettertouchtool |
+| MultitouchSupport.framework | `_MTDeviceGetMTActuator` | 1 | bettertouchtool |
+| MultitouchSupport.framework | `_MTDeviceGetSensorSurfaceDimensions` | 1 | bettertouchtool |
+| MultitouchSupport.framework | `_MTDeviceGetService` | 1 | bettertouchtool |
+| MultitouchSupport.framework | `_MTDeviceGetSystemForceResponseEnabled` | 1 | bettertouchtool |
+| MultitouchSupport.framework | `_MTDeviceIsBuiltIn` | 1 | bettertouchtool |
+| MultitouchSupport.framework | `_MTDeviceRelease` | 1 | middleclick |
+| MultitouchSupport.framework | `_MTDeviceSetSurfaceOrientation` | 1 | bettertouchtool |
+| MultitouchSupport.framework | `_MTDeviceSetSystemForceResponseEnabled` | 1 | bettertouchtool |
+| MultitouchSupport.framework | `_MTDeviceSupportsForce` | 1 | bettertouchtool |
+| MultitouchSupport.framework | `_MTRegisterButtonStateCallback` | 1 | bettertouchtool |
+| MultitouchSupport.framework | `_MTUnregisterButtonStateCallback` | 1 | bettertouchtool |
+| MultitouchSupport.framework | `_mt_CreateSavedNameForDevice` | 1 | bettertouchtool |
+| NaturalLanguage.framework | `_NLLanguageBengali` | 1 | easydict |
+| NaturalLanguage.framework | `_NLLanguageBurmese` | 1 | easydict |
+| NaturalLanguage.framework | `_NLLanguageGeorgian` | 1 | easydict |
+| NaturalLanguage.framework | `_NLLanguageKhmer` | 1 | easydict |
+| NaturalLanguage.framework | `_NLLanguageLao` | 1 | easydict |
+| NaturalLanguage.framework | `_NLLanguageMongolian` | 1 | easydict |
+| NaturalLanguage.framework | `_NLLanguagePersian` | 1 | easydict |
+| NaturalLanguage.framework | `_NLLanguageTamil` | 1 | easydict |
+| NaturalLanguage.framework | `_NLLanguageTelugu` | 1 | easydict |
+| NaturalLanguage.framework | `_NLLanguageUrdu` | 1 | easydict |
 | NaturalLanguage.framework | `_NLTagClassifier` | 1 | openclaw |
 | NaturalLanguage.framework | `_NLTagCloseParenthesis` | 1 | openclaw |
 | NaturalLanguage.framework | `_NLTagCloseQuote` | 1 | openclaw |
@@ -200,28 +309,18 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | NaturalLanguage.framework | `_NLTagDeterminer` | 1 | openclaw |
 | NaturalLanguage.framework | `_NLTagIdiom` | 1 | openclaw |
 | NaturalLanguage.framework | `_NLTagInterjection` | 1 | openclaw |
-| NaturalLanguage.framework | `_NLTagNoun` | 1 | openclaw |
 | NaturalLanguage.framework | `_NLTagNumber` | 1 | openclaw |
 | NaturalLanguage.framework | `_NLTagOpenParenthesis` | 1 | openclaw |
 | NaturalLanguage.framework | `_NLTagOpenQuote` | 1 | openclaw |
-| NaturalLanguage.framework | `_NLTagOrganizationName` | 1 | openclaw |
 | NaturalLanguage.framework | `_NLTagOtherPunctuation` | 1 | openclaw |
 | NaturalLanguage.framework | `_NLTagOtherWord` | 1 | openclaw |
 | NaturalLanguage.framework | `_NLTagParagraphBreak` | 1 | openclaw |
 | NaturalLanguage.framework | `_NLTagParticle` | 1 | openclaw |
-| NaturalLanguage.framework | `_NLTagPersonalName` | 1 | openclaw |
-| NaturalLanguage.framework | `_NLTagPlaceName` | 1 | openclaw |
 | NaturalLanguage.framework | `_NLTagPreposition` | 1 | openclaw |
-| NaturalLanguage.framework | `_NLTagPronoun` | 1 | openclaw |
-| NaturalLanguage.framework | `_NLTagPunctuation` | 1 | openclaw |
-| NaturalLanguage.framework | `_NLTagSchemeNameTypeOrLexicalClass` | 1 | openclaw |
 | NaturalLanguage.framework | `_NLTagSentenceTerminator` | 1 | openclaw |
-| NaturalLanguage.framework | `_NLTagVerb` | 1 | openclaw |
 | NaturalLanguage.framework | `_NLTagWhitespace` | 1 | openclaw |
 | NaturalLanguage.framework | `_NLTagWord` | 1 | openclaw |
 | NaturalLanguage.framework | `_NLTagWordJoiner` | 1 | openclaw |
-| NaturalLanguage.framework | `_OBJC_CLASS_$_NLEmbedding` | 1 | whatsapp |
-| NaturalLanguage.framework | `_OBJC_CLASS_$_NLTagger` | 1 | openclaw |
 | NetFS.framework | `_NetFSMountURLSync` | 1 | adobe-acrobat-reader |
 | NetworkStatistics.framework | `_NStatManagerAddAllTCP` | 1 | lulu |
 | NetworkStatistics.framework | `_NStatManagerAddAllUDP` | 1 | lulu |
@@ -241,6 +340,7 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | NetworkStatistics.framework | `_kNStatSrcKeyTCPState` | 1 | lulu |
 | NetworkStatistics.framework | `_kNStatSrcKeyTxBytes` | 1 | lulu |
 | NetworkStatistics.framework | `_kNStatSrcKeyUUID` | 1 | lulu |
+| OSLog.framework | `_OBJC_CLASS_$_OSLogEntry` | 1 | teamviewer |
 | PCSC.framework | `_SCardCancel` | 1 | windows-app |
 | PCSC.framework | `_SCardControl132` | 1 | windows-app |
 | PCSC.framework | `_SCardGetAttrib` | 1 | windows-app |
@@ -279,9 +379,6 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | Photos.framework | `_OBJC_METACLASS_$_PHFetchResultChangeDetails` | 1 | whatsapp |
 | Photos.framework | `_PHImageResultIsInCloudKey` | 1 | whatsapp |
 | Photos.framework | `_PHImageResultRequestIDKey` | 1 | localsend |
-| Photos.framework | `_PHLivePhotoInfoCancelledKey` | 1 | applite |
-| Photos.framework | `_PHLivePhotoInfoErrorKey` | 1 | applite |
-| Photos.framework | `_PHLivePhotoInfoIsDegradedKey` | 1 | applite |
 | Photos.framework | `_PHPhotosErrorDomain` | 1 | whatsapp |
 | PushKit.framework | `_OBJC_CLASS_$_PKPushRegistry` | 1 | whatsapp |
 | QTKit.framework | `_OBJC_CLASS_$_QTMovieModernizer` | 1 | adobe-acrobat-reader |
@@ -513,6 +610,94 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | QtTest.framework | `__ZNK24QAbstractItemModelTester20failureReportingModeEv` | 1 | calibre |
 | QtTest.framework | `__ZNK24QAbstractItemModelTester5modelEv` | 1 | calibre |
 | QtTest.framework | `__ZTI24QAbstractItemModelTester` | 1 | calibre |
+| R.framework | `_CADDDR` | 1 | r-app |
+| R.framework | `_CADDR` | 1 | r-app |
+| R.framework | `_CADR` | 1 | r-app |
+| R.framework | `_CAR` | 1 | r-app |
+| R.framework | `_CDR` | 1 | r-app |
+| R.framework | `_INTEGER` | 1 | r-app |
+| R.framework | `_LENGTH` | 1 | r-app |
+| R.framework | `_LOGICAL` | 1 | r-app |
+| R.framework | `_REAL` | 1 | r-app |
+| R.framework | `_R_BlankString` | 1 | r-app |
+| R.framework | `_R_CHAR` | 1 | r-app |
+| R.framework | `_R_Consolefile` | 1 | r-app |
+| R.framework | `_R_GlobalEnv` | 1 | r-app |
+| R.framework | `_R_InputHandlers` | 1 | r-app |
+| R.framework | `_R_Interactive` | 1 | r-app |
+| R.framework | `_R_NaInt` | 1 | r-app |
+| R.framework | `_R_NaReal` | 1 | r-app |
+| R.framework | `_R_NaString` | 1 | r-app |
+| R.framework | `_R_NamesSymbol` | 1 | r-app |
+| R.framework | `_R_NilValue` | 1 | r-app |
+| R.framework | `_R_Outputfile` | 1 | r-app |
+| R.framework | `_R_ParseVector` | 1 | r-app |
+| R.framework | `_R_ProtectWithIndex` | 1 | r-app |
+| R.framework | `_R_ReplDLLdo1` | 1 | r-app |
+| R.framework | `_R_ReplDLLinit` | 1 | r-app |
+| R.framework | `_R_Reprotect` | 1 | r-app |
+| R.framework | `_R_SignalHandlers` | 1 | r-app |
+| R.framework | `_R_alloc` | 1 | r-app |
+| R.framework | `_R_checkActivity` | 1 | r-app |
+| R.framework | `_R_getEmbeddingDllInfo` | 1 | r-app |
+| R.framework | `_R_registerRoutines` | 1 | r-app |
+| R.framework | `_R_runHandlers` | 1 | r-app |
+| R.framework | `_R_strtod` | 1 | r-app |
+| R.framework | `_R_tryEval` | 1 | r-app |
+| R.framework | `_Rf_EncodeElement` | 1 | r-app |
+| R.framework | `_Rf_PrintDefaults` | 1 | r-app |
+| R.framework | `_Rf_ScalarInteger` | 1 | r-app |
+| R.framework | `_Rf_allocVector` | 1 | r-app |
+| R.framework | `_Rf_asInteger` | 1 | r-app |
+| R.framework | `_Rf_asLogical` | 1 | r-app |
+| R.framework | `_Rf_coerceVector` | 1 | r-app |
+| R.framework | `_Rf_duplicate` | 1 | r-app |
+| R.framework | `_Rf_error` | 1 | r-app |
+| R.framework | `_Rf_errorcall` | 1 | r-app |
+| R.framework | `_Rf_getAttrib` | 1 | r-app |
+| R.framework | `_Rf_initialize_R` | 1 | r-app |
+| R.framework | `_Rf_install` | 1 | r-app |
+| R.framework | `_Rf_isInteger` | 1 | r-app |
+| R.framework | `_Rf_isLogical` | 1 | r-app |
+| R.framework | `_Rf_isNull` | 1 | r-app |
+| R.framework | `_Rf_isString` | 1 | r-app |
+| R.framework | `_Rf_isVector` | 1 | r-app |
+| R.framework | `_Rf_length` | 1 | r-app |
+| R.framework | `_Rf_lengthgets` | 1 | r-app |
+| R.framework | `_Rf_mkChar` | 1 | r-app |
+| R.framework | `_Rf_onintr` | 1 | r-app |
+| R.framework | `_Rf_protect` | 1 | r-app |
+| R.framework | `_Rf_setAttrib` | 1 | r-app |
+| R.framework | `_Rf_str2type` | 1 | r-app |
+| R.framework | `_Rf_translateCharUTF8` | 1 | r-app |
+| R.framework | `_Rf_unprotect` | 1 | r-app |
+| R.framework | `_Rf_warning` | 1 | r-app |
+| R.framework | `_SET_STRING_ELT` | 1 | r-app |
+| R.framework | `_SET_VECTOR_ELT` | 1 | r-app |
+| R.framework | `_STRING_ELT` | 1 | r-app |
+| R.framework | `_SaveAction` | 1 | r-app |
+| R.framework | `_TAG` | 1 | r-app |
+| R.framework | `_TYPEOF` | 1 | r-app |
+| R.framework | `_VECTOR_ELT` | 1 | r-app |
+| R.framework | `_ptr_CocoaSystem` | 1 | r-app |
+| R.framework | `_ptr_R_Busy` | 1 | r-app |
+| R.framework | `_ptr_R_ChooseFile` | 1 | r-app |
+| R.framework | `_ptr_R_ClearerrConsole` | 1 | r-app |
+| R.framework | `_ptr_R_EditFile` | 1 | r-app |
+| R.framework | `_ptr_R_EditFiles` | 1 | r-app |
+| R.framework | `_ptr_R_FlushConsole` | 1 | r-app |
+| R.framework | `_ptr_R_ProcessEvents` | 1 | r-app |
+| R.framework | `_ptr_R_ReadConsole` | 1 | r-app |
+| R.framework | `_ptr_R_ResetConsole` | 1 | r-app |
+| R.framework | `_ptr_R_ShowFiles` | 1 | r-app |
+| R.framework | `_ptr_R_ShowMessage` | 1 | r-app |
+| R.framework | `_ptr_R_WriteConsole` | 1 | r-app |
+| R.framework | `_ptr_R_WriteConsoleEx` | 1 | r-app |
+| R.framework | `_ptr_R_loadhistory` | 1 | r-app |
+| R.framework | `_ptr_R_savehistory` | 1 | r-app |
+| R.framework | `_ptr_do_dataentry` | 1 | r-app |
+| R.framework | `_ptr_do_selectlist` | 1 | r-app |
+| R.framework | `_setup_Rmainloop` | 1 | r-app |
 | ReplayKit.framework | `_OBJC_CLASS_$_RPSystemBroadcastPickerView` | 1 | whatsapp |
 | SceneKit.framework | `_OBJC_CLASS_$_SCNAction` | 1 | telegram |
 | SceneKit.framework | `_OBJC_CLASS_$_SCNMaterial` | 1 | telegram |
@@ -525,6 +710,7 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | SceneKit.framework | `_SCNParticlePropertyColor` | 1 | telegram |
 | SceneKit.framework | `_SCNParticlePropertyOpacity` | 1 | telegram |
 | SceneKit.framework | `_SCNParticlePropertySize` | 1 | telegram |
+| ScreenTime.framework | `_OBJC_CLASS_$_STWebHistory` | 1 | duckduckgo |
 | SidecarCore.framework | `_OBJC_CLASS_$_SidecarDevice` | 1 | betterdisplay |
 | SidecarCore.framework | `_OBJC_CLASS_$_SidecarDisplayConfig` | 1 | betterdisplay |
 | SidecarCore.framework | `_OBJC_CLASS_$_SidecarDisplayManager` | 1 | betterdisplay |

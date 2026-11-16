@@ -3,18 +3,22 @@
 Símbolos que os apps do corpus importam e o mOS não exporta, na frente de Vinicius (arquivos e volumes) (`TIME.md`).
 Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/harness.py donos`.
 
-**42** símbolos distintos.
+**44** símbolos distintos.
 
 | biblioteca | símbolo | apps | exemplos |
 |---|---|---:|---|
-| DiskArbitration.framework | `_DADiskCreateFromVolumePath` | 5 | appcleaner, mounty, prusaslicer, raspberry-pi-imager |
+| DiskArbitration.framework | `_DADiskCreateFromVolumePath` | 7 | appcleaner, bbedit, daisydisk, mounty |
 | DiskArbitration.framework | `_DADiskGetBSDName` | 5 | hex-fiend, mounty, raspberry-pi-imager, stats |
+| DiskArbitration.framework | `_kDADiskDescriptionDeviceProtocolKey` | 4 | daisydisk, prusaslicer, raspberry-pi-imager, stats |
+| DiskArbitration.framework | `_kDADiskDescriptionMediaNameKey` | 4 | daisydisk, hex-fiend, raspberry-pi-imager, stats |
 | DiskArbitration.framework | `_DAUnregisterCallback` | 3 | hex-fiend, raspberry-pi-imager, spotify |
-| DiskArbitration.framework | `_kDADiskDescriptionDeviceProtocolKey` | 3 | prusaslicer, raspberry-pi-imager, stats |
-| DiskArbitration.framework | `_kDADiskDescriptionMediaNameKey` | 3 | hex-fiend, raspberry-pi-imager, stats |
 | DiskArbitration.framework | `_DAUnregisterApprovalCallback` | 2 | spotify, virtualbox |
+| DiskArbitration.framework | `_kDADiskDescriptionBusPathKey` | 2 | daisydisk, raspberry-pi-imager |
+| DiskArbitration.framework | `_kDADiskDescriptionDeviceInternalKey` | 2 | daisydisk, raspberry-pi-imager |
 | DiskArbitration.framework | `_kDADiskDescriptionMediaEjectableKey` | 2 | prusaslicer, raspberry-pi-imager |
 | DiskArbitration.framework | `_kDADiskDescriptionMediaWritableKey` | 2 | raspberry-pi-imager, stats |
+| DiskArbitration.framework | `_kDADiskDescriptionVolumeKindKey` | 2 | bbedit, stats |
+| DiskArbitration.framework | `_kDADiskDescriptionVolumeNetworkKey` | 2 | bbedit, hex-fiend |
 | libSystem.B.dylib | `_getfsstat64` | 2 | docker-desktop, orbstack |
 | DiskArbitration.framework | `_DAApprovalSessionCreate` | 1 | spotify |
 | DiskArbitration.framework | `_DAApprovalSessionScheduleWithRunLoop` | 1 | spotify |
@@ -23,15 +27,13 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | DiskArbitration.framework | `_DARegisterDiskUnmountApprovalCallback` | 1 | spotify |
 | DiskArbitration.framework | `_DASessionSetDispatchQueue` | 1 | vorssaint |
 | DiskArbitration.framework | `_kDADiskDescriptionBusNameKey` | 1 | hex-fiend |
-| DiskArbitration.framework | `_kDADiskDescriptionBusPathKey` | 1 | raspberry-pi-imager |
-| DiskArbitration.framework | `_kDADiskDescriptionDeviceInternalKey` | 1 | raspberry-pi-imager |
 | DiskArbitration.framework | `_kDADiskDescriptionMediaBlockSizeKey` | 1 | raspberry-pi-imager |
 | DiskArbitration.framework | `_kDADiskDescriptionMediaEncryptedKey` | 1 | stats |
 | DiskArbitration.framework | `_kDADiskDescriptionMediaIconKey` | 1 | raspberry-pi-imager |
+| DiskArbitration.framework | `_kDADiskDescriptionMediaKindKey` | 1 | daisydisk |
 | DiskArbitration.framework | `_kDADiskDescriptionMediaUUIDKey` | 1 | stats |
 | DiskArbitration.framework | `_kDADiskDescriptionMediaWholeKey` | 1 | hex-fiend |
-| DiskArbitration.framework | `_kDADiskDescriptionVolumeKindKey` | 1 | stats |
-| DiskArbitration.framework | `_kDADiskDescriptionVolumeNetworkKey` | 1 | hex-fiend |
+| libSystem.B.dylib | `_fs_snapshot_list` | 1 | daisydisk |
 | libarchive.2.dylib | `_archive_entry_clear` | 1 | utm |
 | libarchive.2.dylib | `_archive_entry_free` | 1 | utm |
 | libarchive.2.dylib | `_archive_entry_new` | 1 | utm |
