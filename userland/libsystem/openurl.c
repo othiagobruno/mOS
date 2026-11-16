@@ -58,11 +58,6 @@ int mach_msg(void *msg, int option, u32 send_size, u32 rcv_size, u32 rcv_name, u
 #define OU_MSG_ID  0x6d4f5355            /* 'mOSU' (o kernel manda com o mesmo id) */
 #define OU_MAX_URL 16384
 #define MSG_RCV  0x2
-#define FOURCC(a, b, c, d) (((u32)(a) << 24) | ((u32)(b) << 16) | ((u32)(c) << 8) | (u32)(d))
-#define K_GURL FOURCC('G', 'U', 'R', 'L')   /* kInternetEventClass e kAEGetURL */
-#define K_AEVT FOURCC('a', 'e', 'v', 't')   /* kCoreEventClass */
-#define K_ODOC FOURCC('o', 'd', 'o', 'c')   /* kAEOpenDocuments */
-#define K_DIRECT FOURCC('-', '-', '-', '-') /* keyDirectObject */
 
 typedef struct { u32 bits, size, remote, local, voucher; int id; } ou_hdr_t;
 typedef struct { ou_hdr_t h; u32 len; char url[OU_MAX_URL]; u8 trailer[64]; } ou_msg_t;
@@ -312,6 +307,20 @@ int cx_open_target(const char *target, const char *app, int by_ident, int timeou
     if (r != 0 && !have) cx_fdprintf(2, "No application knows how to open %s.\n", target);
     return r;
 }
+
+/* para appleevents.c e applescript.c: app pelo nome ("TextEdit") ou pelo CFBundleIdentifier */
+int cx_ls_app_lookup(const char *key, int by_id, char *bundle, size_t bc, char *path, size_t pc, char *name, size_t nc) {
+    ls_line_t a;
+    if (!key || !key[0]) return -1;
+    if (key[0] == '/') { if (!app_from_path(key, &a)) return -1; }
+    else if (ls_one(by_id ? MOS_LS_APP_BY_ID : MOS_LS_APP_BY_NAME, key, 0, &a) <= 0) return -1;
+    if (bundle && bc) snprintf(bundle, bc, "%s", a.id);
+    if (path && pc) snprintf(path, pc, "%s", a.path);
+    if (name && nc) snprintf(name, nc, "%s", a.name);
+    return 0;
+}
+/* inicia (ou traz para a frente) o app, sem documento */
+int cx_ls_launch_app(const char *bundle) { return bundle && bundle[0] ? ls_open_c("", bundle, 0) : -1; }
 
 /* ================================================================ NSWorkspace */
 static BOOL ws_open_url(id self, SEL c, id u) { (void)self; (void)c; return open_url_c(url_c(u)) == 0; }
@@ -691,45 +700,9 @@ u8 UTTypeEqual(id a, id b) { return a && b && cx_is_str(a) && cx_is_str(b) && !s
 u8 UTTypeIsDynamic(id uti) { return uti && cx_is_str(uti) && !strncmp(cx_cstr(uti), "dyn.", 4); }
 u8 UTTypeIsDeclared(id uti) { return uti && cx_is_str(uti) && cx_ls_type_info(cx_cstr(uti), 0, 0, 0, 0) && !UTTypeIsDynamic(uti); }
 
-/* ================================================================ recepção: Apple Events */
-typedef struct { u32 cls, ev; id h; SEL s; } aeh_t;
-static aeh_t g_aeh[16];
-static int g_naeh;
-static id g_cur_event;
-static cx_class_t URLEvent_c, URLEvent_m;
-static u32 g_ev_off;                          /* onde fica a URL (NSString) na instância */
-
-static void aem_set(id self, SEL c, id h, SEL s, u32 cls, u32 ev) {
-    (void)self; (void)c;
-    for (int i = 0; i < g_naeh; i++)
-        if (g_aeh[i].cls == cls && g_aeh[i].ev == ev) { g_aeh[i].h = h; g_aeh[i].s = s; return; }
-    if (g_naeh < (int)(sizeof g_aeh / sizeof g_aeh[0])) g_aeh[g_naeh++] = (aeh_t){cls, ev, h, s};
-}
-static void aem_remove(id self, SEL c, u32 cls, u32 ev) {
-    (void)self; (void)c;
-    for (int i = 0; i < g_naeh; i++)
-        if (g_aeh[i].cls == cls && g_aeh[i].ev == ev) { g_aeh[i] = g_aeh[--g_naeh]; return; }
-}
-static id aem_current(id self, SEL c) { (void)self; (void)c; return g_cur_event; }
-
-static id *ev_slot(id e) { return (id *)((u8 *)e + g_ev_off); }
-static id ev_param(id self, SEL c, u32 kw) {
-    (void)c;
-    if (kw != K_DIRECT || !*ev_slot(self)) return 0;
-    return MSG(id, (id)cx_class_named("NSAppleEventDescriptor"), "descriptorWithString:", *ev_slot(self));
-}
-static u32 ev_gurl(id self, SEL c) { (void)self; (void)c; return K_GURL; }
-static u32 ev_type(id self, SEL c) { (void)self; (void)c; return FOURCC('a', 'e', 'v', 't'); }
-static id ev_nil(id self, SEL c, u32 kw) { (void)self; (void)c; (void)kw; return 0; }
-static i64 ev_count(id self, SEL c) { (void)self; (void)c; return 1; }
-static id ev_str(id self, SEL c) { (void)self; (void)c; return 0; }
-static void ev_dealloc(id self, SEL c) {
-    (void)c;
-    if (*ev_slot(self)) objc_release(*ev_slot(self));
-    void (*sup)(id, SEL) = (void (*)(id, SEL))cx_lookup(cx_class_named("NSAppleEventDescriptor"), sel_registerName("dealloc"));
-    if (sup) sup(self, sel_registerName("dealloc"));
-}
-
+/* ================================================================ recepção: Apple Events (appleevents.c) */
+int cx_ae_deliver(int is_doc, const char *const *urls, int n);
+void cx_ae_listen(void);
 
 /* -[NSApplication delegate] recebendo documentos: o caminho moderno (openURLs:), o de vários (openFiles:) e o antigo */
 static int deliver_docs(id url_obj_, const char *path) {
@@ -753,94 +726,29 @@ static int deliver_docs(id url_obj_, const char *path) {
     return 0;
 }
 
-/* kAEOpenDocuments como no macOS: o parâmetro direto ('----') é uma lista ('list') de typeFileURL ('furl');
- * cada item responde fileURLValue, stringValue e data. Instâncias com o mesmo espaço extra do MOSURLAppleEvent
- * (g_ev_off): o evento e a lista guardam um NSArray de URLs (texto), o item guarda a URL. */
-static cx_class_t DocEvent_c, DocEvent_m, DescList_c, DescList_m, FileDesc_c, FileDesc_m;
-static id desc_new(cx_class_t *c, id payload) {
-    id d = cx_alloc_instance(c);
-    *ev_slot(d) = objc_retain(payload);
-    return d;
-}
-static u32 de_class(id self, SEL c) { (void)self; (void)c; return K_AEVT; }
-static u32 de_id(id self, SEL c) { (void)self; (void)c; return K_ODOC; }
-static u32 de_type(id self, SEL c) { (void)self; (void)c; return K_AEVT; }
-static id de_param(id self, SEL c, u32 kw) {
-    (void)c;
-    if (kw != K_DIRECT || !*ev_slot(self)) return 0;
-    return MSG0(id, desc_new(&DescList_c, *ev_slot(self)), "autorelease");
-}
-static i64 de_zero(id self, SEL c) { (void)self; (void)c; return 0; }
-static u32 dl_type(id self, SEL c) { (void)self; (void)c; return FOURCC('l', 'i', 's', 't'); }
-static i64 dl_count(id self, SEL c) { (void)c; id a = *ev_slot(self); return a ? (i64)MSG0(u64, a, "count") : 0; }
-static id dl_at(id self, SEL c, i64 i) {          /* índices de Apple Event começam em 1 */
-    (void)c;
-    id a = *ev_slot(self);
-    if (!a || i < 1 || i > (i64)MSG0(u64, a, "count")) return 0;
-    return MSG0(id, desc_new(&FileDesc_c, MSG(id, a, "objectAtIndex:", (u64)(i - 1))), "autorelease");
-}
-static u32 fd_type(id self, SEL c) { (void)self; (void)c; return FOURCC('f', 'u', 'r', 'l'); }
-static id fd_url(id self, SEL c) { (void)c; id s = *ev_slot(self); return s ? MSG(id, cls("NSURL"), "URLWithString:", s) : 0; }
-static id fd_str(id self, SEL c) { (void)c; return *ev_slot(self); }
-static id fd_data(id self, SEL c) {
-    (void)c;
-    const char *s = *ev_slot(self) ? cx_cstr(*ev_slot(self)) : "";
-    return MSG(id, cls("NSData"), "dataWithBytes:length:", s, (u64)strlen(s));
-}
-static id fd_coerce(id self, SEL c, u32 t) { (void)c; (void)t; return self; }
-
-/* com tratador de 'aevt'/'odoc' registrado: ele recebe (no macOS ele substitui o tratador padrão do AppKit) */
-static int deliver_odoc(const char *url) {
-    for (int i = 0; i < g_naeh; i++) {
-        if (g_aeh[i].cls != K_AEVT || g_aeh[i].ev != K_ODOC || !g_aeh[i].h) continue;
-        id list = MSG(id, cls("NSArray"), "arrayWithObject:", cx_str(url));
-        id e = desc_new(&DocEvent_c, list);
-        id prev = g_cur_event;
-        g_cur_event = e;
-        ((void (*)(id, SEL, id, id))objc_msgSend)(g_aeh[i].h, g_aeh[i].s, e, (id)0);
-        g_cur_event = prev;
-        objc_release(e);
-        return 1;
-    }
-    return 0;
-}
-
-static int deliver_event(u32 cls_, u32 ev, id payload) {
-    for (int i = 0; i < g_naeh; i++) {
-        if (g_aeh[i].cls != cls_ || g_aeh[i].ev != ev || !g_aeh[i].h) continue;
-        id e = cx_alloc_instance(&URLEvent_c);
-        *ev_slot(e) = objc_retain(payload);
-        id prev = g_cur_event;
-        g_cur_event = e;
-        ((void (*)(id, SEL, id, id))objc_msgSend)(g_aeh[i].h, g_aeh[i].s, e, (id)0);
-        g_cur_event = prev;
-        objc_release(e);
-        return 1;
-    }
-    return 0;
-}
-
 /* na thread principal: a URL ou o documento chega ao app como no macOS */
+/* sem tratador de Apple Event no app: o delegate (openURLs:, openFiles:, openFile:) ou o NSDocumentController.
+ * Também é o tratador padrão de 'odoc' e 'GURL' do appleevents.c. 0 = entregue */
+int cx_openurl_deliver_default(const char *url) {
+    id u = MSG(id, cls("NSURL"), "URLWithString:", cx_str(url));
+    if (!strncmp(url, "file:", 5)) return deliver_docs(u, path_c(u)) ? 0 : -1;
+    id app = MSG0(id, cls("NSApplication"), "sharedApplication");
+    id d = app ? MSG0(id, app, "delegate") : 0;
+    if (d && u && responds(d, "application:openURLs:")) {
+        id one = MSG(id, cls("NSArray"), "arrayWithObject:", u);
+        MSG(void, d, "application:openURLs:", app, one);
+        return 0;
+    }
+    return -1;
+}
+
 static void deliver_main(void *ctx) {
     char *url = ctx;
     void *pool = objc_autoreleasePoolPush();
-    id u = MSG(id, cls("NSURL"), "URLWithString:", cx_str(url));
-    int done = 0, doc = !strncmp(url, "file:", 5);
-    if (doc) {
-        done = deliver_odoc(url);
-        if (!done) done = deliver_docs(u, path_c(u));
-    } else {
-        { extern int cx_webauth_offer_url(const char *url); cx_webauth_offer_url(url); }
-        done = deliver_event(K_GURL, K_GURL, cx_str(url));
-        if (!done) {
-            id app = MSG0(id, cls("NSApplication"), "sharedApplication");
-            id d = app ? MSG0(id, app, "delegate") : 0;
-            if (d && u && responds(d, "application:openURLs:")) {
-                { id one = MSG(id, cls("NSArray"), "arrayWithObject:", u); MSG(void, d, "application:openURLs:", app, one); }
-                done = 1;
-            }
-        }
-    }
+    int doc = !strncmp(url, "file:", 5);
+    if (!doc) { extern int cx_webauth_offer_url(const char *url); cx_webauth_offer_url(url); }
+    const char *one[1] = {url};
+    int done = cx_ae_deliver(doc, one, 1) || cx_openurl_deliver_default(url) == 0;
     ou_log(done ? (doc ? "documento recebido" : "recebida") : "recebida sem tratador no app", url, 0);
     objc_autoreleasePoolPop(pool);
     free(url);
@@ -869,6 +777,7 @@ void cx_openurl_listen(void) {
     static int started;
     if (started) return;
     for (int i = 1; NXArgv && i < NXArgc; i++) if (NXArgv[i] && !strncmp(NXArgv[i], "--type=", 7)) return;   /* helper do Chromium */
+    cx_ae_listen();                                    /* Apple Events entre apps: com.mos.ae.<bundle> e .pid.<pid> */
     id mb = MSG0(id, cls("NSBundle"), "mainBundle");
     id ident = mb ? MSG0(id, mb, "bundleIdentifier") : 0;
     if (!ident || !cx_is_str(ident) || !cx_cstr(ident)[0]) return;
@@ -924,45 +833,4 @@ void cx_openurl_init(void) {
     }
     cx_class_t *fm = cx_class_named("NSFileManager");
     if (fm && !cx_responds(fm, sel_registerName("displayNameAtPath:"))) cx_add_method(fm, "displayNameAtPath:", (void *)fm_display_name);
-    cx_class_t *aem = cx_class_named("NSAppleEventManager");
-    if (aem) {
-        cx_add_method(aem, "setEventHandler:andSelector:forEventClass:andEventID:", (void *)aem_set);
-        cx_add_method(aem, "removeEventHandlerForEventClass:andEventID:", (void *)aem_remove);
-        cx_add_method(aem, "currentAppleEvent", (void *)aem_current);
-    }
-    cx_class_t *aed = cx_class_named("NSAppleEventDescriptor");
-    if (aed) {
-        g_ev_off = (cx_instance_size(aed) + 7) & ~7u;
-        cx_define_class(&URLEvent_c, &URLEvent_m, "MOSURLAppleEvent", aed, 8 + (g_ev_off - cx_instance_size(aed)));
-        cx_add_method(&URLEvent_c, "paramDescriptorForKeyword:", (void *)ev_param);
-        cx_add_method(&URLEvent_c, "attributeDescriptorForKeyword:", (void *)ev_nil);
-        cx_add_method(&URLEvent_c, "eventClass", (void *)ev_gurl);
-        cx_add_method(&URLEvent_c, "eventID", (void *)ev_gurl);
-        cx_add_method(&URLEvent_c, "descriptorType", (void *)ev_type);
-        cx_add_method(&URLEvent_c, "numberOfItems", (void *)ev_count);
-        cx_add_method(&URLEvent_c, "stringValue", (void *)ev_str);
-        cx_add_method(&URLEvent_c, "dealloc", (void *)ev_dealloc);
-        u32 extra = 8 + (g_ev_off - cx_instance_size(aed));
-        cx_define_class(&DocEvent_c, &DocEvent_m, "MOSOpenDocumentsAppleEvent", aed, extra);
-        cx_add_method(&DocEvent_c, "eventClass", (void *)de_class);
-        cx_add_method(&DocEvent_c, "eventID", (void *)de_id);
-        cx_add_method(&DocEvent_c, "descriptorType", (void *)de_type);
-        cx_add_method(&DocEvent_c, "paramDescriptorForKeyword:", (void *)de_param);
-        cx_add_method(&DocEvent_c, "attributeDescriptorForKeyword:", (void *)ev_nil);
-        cx_add_method(&DocEvent_c, "numberOfItems", (void *)de_zero);
-        cx_add_method(&DocEvent_c, "dealloc", (void *)ev_dealloc);
-        cx_define_class(&DescList_c, &DescList_m, "MOSAEDescList", aed, extra);
-        cx_add_method(&DescList_c, "descriptorType", (void *)dl_type);
-        cx_add_method(&DescList_c, "numberOfItems", (void *)dl_count);
-        cx_add_method(&DescList_c, "descriptorAtIndex:", (void *)dl_at);
-        cx_add_method(&DescList_c, "dealloc", (void *)ev_dealloc);
-        cx_define_class(&FileDesc_c, &FileDesc_m, "MOSAEFileURLDescriptor", aed, extra);
-        cx_add_method(&FileDesc_c, "descriptorType", (void *)fd_type);
-        cx_add_method(&FileDesc_c, "fileURLValue", (void *)fd_url);
-        cx_add_method(&FileDesc_c, "stringValue", (void *)fd_str);
-        cx_add_method(&FileDesc_c, "data", (void *)fd_data);
-        cx_add_method(&FileDesc_c, "coerceToDescriptorType:", (void *)fd_coerce);
-        cx_add_method(&FileDesc_c, "numberOfItems", (void *)de_zero);
-        cx_add_method(&FileDesc_c, "dealloc", (void *)ev_dealloc);
-    }
 }

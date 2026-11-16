@@ -435,8 +435,7 @@ long vImageBoxConvolve_Planar8(const vimg_t *src, const vimg_t *dst, void *tmp, 
     return 0;
 }
 
-/* ---- AppleEvents: automação de outro app não autorizada (errAEEventNotPermitted), como sem a permissão no Mac */
-int AEDeterminePermissionToAutomateTarget(const void *target, u32 cls, u32 id_, u8 ask) { (void)target; (void)cls; (void)id_; (void)ask; return -1743; }
+/* AEDeterminePermissionToAutomateTarget: appleevents.c (TCC kTCCServiceAppleEvents+<alvo>) */
 /* ---- VideoToolbox: sem conversão de CVPixelBuffer para CGImage (kVTParameterErr) */
 int VTCreateCGImageFromCVPixelBuffer(void *pb, void *opts, void **out) { (void)pb; (void)opts; if (out) *out = 0; return -12902; }
 /* SQLite real: sqlite3_open_v2, sqlite3_exec e sqlite3_close vêm do amalgama

@@ -623,16 +623,7 @@ OSStatus LSOpenFromURLSpec(const ls_spec_t *spec, id *launched) {
 /* LSCopyDefaultApplicationURLForURL e as outras consultas de quem abre o quê: openurl.c */
 /* LSSetDefaultHandlerForURLScheme: openurl.c (banco do Launch Services no kernel) */
 /* FSEventStreamSetExclusionPaths: fsevents.c */
-/* Apple Events: registro aceito; não há outro app para conversar */
-typedef struct { u32 type; void *data; } ae_desc_t;
-OSStatus AEInstallEventHandler(u32 cls_, u32 id_, void *handler, i64 refcon, u8 sys) { (void)cls_; (void)id_; (void)handler; (void)refcon; (void)sys; return 0; }
-OSStatus AERemoveEventHandler(u32 cls_, u32 id_, void *handler, u8 sys) { (void)cls_; (void)id_; (void)handler; (void)sys; return 0; }
-OSStatus AEDisposeDesc(ae_desc_t *d) { if (d) { d->type = 0x6E756C6C; /* 'null' */ d->data = 0; } return 0; }
-OSStatus AECreateDesc(u32 type, const void *data, long size, ae_desc_t *out) { (void)data; (void)size; if (out) { out->type = type; out->data = 0; } return 0; }
-OSStatus AECreateAppleEvent(u32 cls_, u32 id_, const ae_desc_t *target, i16 ret, i32 tx, ae_desc_t *out) { (void)cls_; (void)id_; (void)target; (void)ret; (void)tx; if (out) { out->type = 0x61657674; /* 'aevt' */ out->data = 0; } return 0; }
-OSStatus AEPutParamDesc(ae_desc_t *ev, u32 key, const ae_desc_t *d) { (void)ev; (void)key; (void)d; return 0; }
-OSStatus AEGetParamDesc(const ae_desc_t *ev, u32 key, u32 type, ae_desc_t *out) { (void)ev; (void)key; (void)type; if (out) { out->type = 0x6E756C6C; out->data = 0; } return -1701; /* errAEDescNotFound */ }
-OSStatus AESendMessage(const ae_desc_t *ev, ae_desc_t *reply, i32 mode, long timeout) { (void)ev; (void)mode; (void)timeout; if (reply) { reply->type = 0x6E756C6C; reply->data = 0; } return -1708; /* errAEEventNotHandled */ }
+/* Apple Events (AEInstallEventHandler, AECreateAppleEvent, AESendMessage...): appleevents.c */
 
 /* ================================================================ SystemConfiguration */
 /* SCNetworkReachability*: wa_net.c */

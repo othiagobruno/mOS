@@ -59,7 +59,8 @@ login items, CloudKit/iCloud sem crash. Cada item só vira ✅ com teste de host
 | 5 TCC | ✅ diálogo, pedidos e painel (16 nov.; painel "Permissões dos apps" da Camila, PR #366) | `tools/tccprompttest.c` **134/134**, `tools/tccutiltest.sh` **8/8** |
 | 11 CloudKit/iCloud | ✅ código e nomes (16 nov.); não executado em VM | `CloudKit.m` compila para Mach-O (170 classes); overlay `CloudKit.swift` compilado contra o Foundation Swift real: os **41/41** nomes mangled que os apps pedem saem dele |
 | 7 Spotlight | ✅ (16 nov.); não executado em VM | `tools/agentes_host.c` **39/39** (predicado com `$time.*` e `InRange`), `tools/mdclitest.sh` **18/18** (mdfind, mdls, mdutil) |
-| 4, 6, 8–10, 12 | a fazer | — |
+| 8 Apple Events, AppleScript, osascript | ✅ (16 nov.); não executado em VM | `tools/astest.c` **118/118** sob ASan (descritores, API C `AEDesc`, linguagem), `tools/osascripttest.sh` **18/18** |
+| 4, 6, 9, 10, 12 | a fazer | — |
 
 ## Fase 1 — o que entrou (15 nov.)
 
@@ -146,3 +147,34 @@ login items, CloudKit/iCloud sem crash. Cada item só vira ✅ com teste de host
   vazios (o mOS não agrupa).
 - `/usr/bin/mdfind`, `/usr/bin/mdls`, `/usr/bin/mdutil` (`userland/cli-macos`). Não há índice persistente: cada
   busca lê o disco (até 50 000 itens); `mdutil -E` só informa isso.
+
+## Fase 8 — Apple Events, AppleScript e osascript (16 nov.)
+
+- **Descritores** (`ae_core.inc`): escalares, listas, registros e eventos com atributos; coerções (texto ↔ números,
+  `utf8`/`utxt`/`TEXT`, lista de um item, booleanos, `furl`, `ldt `); fio próprio (`'mOSE'`) entre processos.
+- **API C** (`ae_capi.inc`): `AEDesc` com o layout da Apple (12 bytes, `pack(2)`), `AECreateDesc`, `AEDisposeDesc`,
+  `AEDuplicateDesc`, `AECoerceDesc`/`AECoercePtr`, listas (`AECreateList`, `AEPutPtr`, `AEPutDesc`, `AEGetNthPtr`,
+  `AEGetNthDesc`, `AECountItems`, `AEDeleteItem`), registros e parâmetros (`AEPutParamPtr`, `AEGetParamDesc`,
+  `AESizeOfParam`, `AEDeleteParam`, `AE*KeyDesc`), atributos (`evcl`, `evid`, `rtid`, `tran`, `addr` e livres),
+  `AECreateAppleEvent` (returnID automático) e `CreateObjSpecifier` (registro `'obj '`).
+- **Entre apps** (`appleevents.c`): cada app atende `com.mos.ae.<bundle>` e `com.mos.ae.pid.<pid>` (pelo
+  `cx_openurl_listen`); `AESend`/`AESendMessage` mandam pelo Mach e esperam a resposta (`kAEWaitReply`, timeout em
+  ticks, `kNoTimeOut`); alvo fechado é aberto pelo Launch Services (menos `quit`). Tratador no fio principal:
+  `AEInstallEventHandler`, `-[NSAppleEventManager setEventHandler:...]` (com curinga `****`), padrões do AppKit
+  (`oapp`, `rapp`, `actv`, `quit`, `odoc`, `GURL`). `openurl.c` entrega documentos e URLs pelo mesmo caminho (as
+  classes falsas `MOSURLAppleEvent` e companhia saíram).
+- **Automação (TCC)**: mandar para outro app pede `kTCCServiceAppleEvents+<alvo>`; sem escolha abre o diálogo e o
+  envio espera; `kAENeverInteract` dá `-1744`, negado dá `-1743`; `AEDeterminePermissionToAutomateTarget` real.
+- **NSAppleEventDescriptor** completo (fábricas de texto, número, booleano, enum, tipo, data, arquivo, bundle, pid,
+  lista, registro, evento; acessores; `sendEventWithOptions:timeout:error:`; `aeDesc`).
+- **AppleScript** (`as_interp.inc`): a linguagem que scripts e apps usam, com `property`, `global`/`local`,
+  `on run argv`, handlers; `applescript.c` liga ao sistema (Apple Events, `NSAlert` para `display dialog`/`alert` e
+  `choose from list`, banner para `display notification`, `/bin/sh -c`, CGEvents com Acessibilidade, NSPasteboard,
+  Launch Services). `NSAppleScript` (fonte, `compileAndReturnError:`, `executeAndReturnError:`,
+  `executeAppleEvent:error:` com `psbr`/`snam`) e `NSUserAppleScriptTask`.
+- **`/usr/bin/osascript`** (`cli-macos/osascript.c`): `-e` repetido, arquivo ou entrada padrão, argumentos,
+  `-s h|s|e|o`, `-i`, erros no formato do macOS; TCC o vê como `com.mos.osascript`.
+- Limites: `.scpt` compilado (binário) não roda (erro claro); só AppleScript (`-l JavaScript` dá erro); dicionários
+  de script (`sdef`) dos apps não são lidos — comandos próprios de um app (fora de abrir/ativar/sair/abrir
+  documento/URL) chegam como erro `-1708`.
+
