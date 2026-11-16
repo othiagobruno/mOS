@@ -11,61 +11,6 @@ void *memset(void *d, int c, size_t n);
 void *malloc(size_t n);
 void free(void *p);
 
-typedef int wchar_t_;
-typedef struct { u32 pending; int need; } cx_mbstate_t;   /* cabe no mbstate_t do macOS (128 bytes) */
-
-/* decodifica um caractere UTF-8; devolve bytes usados, 0 para o NUL, -1 inválido, -2 incompleto */
-static long utf8_dec(wchar_t_ *out, const unsigned char *s, size_t n) {
-    if (!n) return -2;
-    unsigned c = s[0];
-    int len = c < 0x80 ? 1 : (c & 0xE0) == 0xC0 ? 2 : (c & 0xF0) == 0xE0 ? 3 : (c & 0xF8) == 0xF0 ? 4 : 0;
-    if (!len) return -1;
-    if ((size_t)len > n) return -2;
-    unsigned v = len == 1 ? c : c & (0x3F >> (len - 1));
-    for (int i = 1; i < len; i++) {
-        if ((s[i] & 0xC0) != 0x80) return -1;
-        v = v << 6 | (s[i] & 0x3F);
-    }
-    if (out) *out = (wchar_t_)v;
-    return v ? len : 0;
-}
-
-int mbtowc(wchar_t_ *pwc, const char *s, size_t n) {
-    if (!s) return 0;                               /* UTF-8 não tem estado */
-    long r = utf8_dec(pwc, (const unsigned char *)s, n);
-    return r < 0 ? -1 : (int)r;
-}
-int mbtowc_l(wchar_t_ *pwc, const char *s, size_t n, void *loc) { (void)loc; return mbtowc(pwc, s, n); }
-
-size_t mbrtowc(wchar_t_ *pwc, const char *s, size_t n, void *ps) {
-    (void)ps;
-    if (!s) return 0;
-    long r = utf8_dec(pwc, (const unsigned char *)s, n);
-    return r == -1 ? (size_t)-1 : r == -2 ? (size_t)-2 : (size_t)r;
-}
-size_t mbrtowc_l(wchar_t_ *pwc, const char *s, size_t n, void *ps, void *loc) { (void)loc; return mbrtowc(pwc, s, n, ps); }
-int mblen(const char *s, size_t n) { return mbtowc(0, s, n); }
-int mblen_l(const char *s, size_t n, void *loc) { (void)loc; return mblen(s, n); }
-size_t mbrlen(const char *s, size_t n, void *ps) { return mbrtowc(0, s, n, ps); }
-size_t mbrlen_l(const char *s, size_t n, void *ps, void *loc) { (void)loc; return mbrlen(s, n, ps); }
-
-int wctomb(char *s, wchar_t_ wc) {
-    if (!s) return 0;
-    unsigned v = (unsigned)wc;
-    if (v < 0x80) { s[0] = (char)v; return 1; }
-    if (v < 0x800) { s[0] = (char)(0xC0 | v >> 6); s[1] = (char)(0x80 | (v & 0x3F)); return 2; }
-    if (v < 0x10000) { s[0] = (char)(0xE0 | v >> 12); s[1] = (char)(0x80 | ((v >> 6) & 0x3F)); s[2] = (char)(0x80 | (v & 0x3F)); return 3; }
-    if (v < 0x110000) {
-        s[0] = (char)(0xF0 | v >> 18); s[1] = (char)(0x80 | ((v >> 12) & 0x3F));
-        s[2] = (char)(0x80 | ((v >> 6) & 0x3F)); s[3] = (char)(0x80 | (v & 0x3F));
-        return 4;
-    }
-    return -1;
-}
-int wctomb_l(char *s, wchar_t_ wc, void *loc) { (void)loc; return wctomb(s, wc); }
-size_t wcrtomb(char *s, wchar_t_ wc, void *ps) { (void)ps; char b[4]; int r = wctomb(s ? s : b, wc); return r < 0 ? (size_t)-1 : (size_t)r; }
-size_t wcrtomb_l(char *s, wchar_t_ wc, void *ps, void *loc) { (void)loc; return wcrtomb(s, wc, ps); }
-int mbsinit(const void *ps) { (void)ps; return 1; }
 
 /* ---- diagnóstico do porte (/Sistema/Biblioteca/dyld-registrar): o carregador liga os stubs de
  * funções ausentes a esta função, que avisa uma vez por nome e devolve 0 */
