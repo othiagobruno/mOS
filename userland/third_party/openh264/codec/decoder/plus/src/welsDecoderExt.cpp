@@ -935,11 +935,14 @@ DECODING_STATE CWelsDecoder::FlushFrame (unsigned char** ppDst,
     }
   }
   if (bEndOfStreamFlag && m_sReoderingStatus.iNumOfPicts > 0) {
+    /* mOS: sem threads o pool é o do contexto (m_pPicBuff só existe com threads); com NULL o refcount do quadro
+     * entregue não voltava e, depois do flush, o pool esgotava (PrefetchPic ERROR) */
+    PWelsDecoderContext pCtx = m_iThreadCount <= 1 ? m_pDecThrCtx[0].pCtx : NULL;
     if (!m_sReoderingStatus.bHasBSlice) {
-      ReleaseBufferedReadyPictureNoReorder (NULL, ppDst, pDstInfo);
+      ReleaseBufferedReadyPictureNoReorder (pCtx, ppDst, pDstInfo);
     }
     else {
-      ReleaseBufferedReadyPictureReorder (NULL, ppDst, pDstInfo, true);
+      ReleaseBufferedReadyPictureReorder (pCtx, ppDst, pDstInfo, true);
     }
   }
   return dsErrorFree;

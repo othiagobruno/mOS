@@ -254,8 +254,9 @@ void glGetInternalformativ(GLenum target, GLenum ifmt, GLenum p, GLsizei bs, GLi
     int ok;
     gl_ifmt_to_mtl(ifmt, &ok);
     if (bs <= 0 || !v) return;
-    if (p == GL_NUM_SAMPLE_COUNTS) { v[0] = ok ? 4 : 0; return; }
-    if (p == GL_SAMPLES) { static const GLint s[4] = {8, 4, 2, 1}; for (int i = 0; i < bs && i < 4; i++) v[i] = s[i]; return; }
+    /* multiamostra com 2, 4 e 8 amostras (em ordem decrescente, como pede a especificação) */
+    if (p == GL_NUM_SAMPLE_COUNTS) { v[0] = ok ? 3 : 0; return; }
+    if (p == GL_SAMPLES) { static const GLint s[3] = {8, 4, 2}; if (ok) for (int i = 0; i < bs && i < 3; i++) v[i] = s[i]; return; }
     GLERR(GL_INVALID_ENUM, );
 }
 void glTextureBarrierNV(void) {}
@@ -263,12 +264,14 @@ void glMemoryBarrier(GLbitfield b) { (void)b; }
 void glReleaseShaderCompiler(void) {}
 void glClampColor(GLenum target, GLenum clamp) { (void)target; (void)clamp; }
 void glClampColorARB(GLenum target, GLenum clamp) { (void)target; (void)clamp; }
-/* uma amostra por pixel, no centro */
+/* posição da amostra i no framebuffer de desenho atual (padrão D3D/Metal, mtltex.c) */
 void glGetMultisamplefv(GLenum p, GLuint i, GLfloat *v) {
     GLC();
     if (p != GL_SAMPLE_POSITION) GLERR(GL_INVALID_ENUM, );
-    if (i > 0) GLERR(GL_INVALID_VALUE, );
-    v[0] = v[1] = 0.5f;
+    gl_target_t T;
+    int n = gl_resolve_target(C, 1, &T) ? T.samples : 1;
+    if (i >= (GLuint)(n > 1 ? n : 1)) GLERR(GL_INVALID_VALUE, );
+    mx_sample_pos(n, (int)i, v);
 }
 void glProgramParameteriARB(GLuint p, GLenum q, GLint v) { glProgramParameteri(p, q, v); }
 void glProgramParameteriEXT(GLuint p, GLenum q, GLint v) { glProgramParameteri(p, q, v); }

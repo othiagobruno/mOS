@@ -18,6 +18,8 @@ O decodificador original não sai bit-exato em fluxos Main/High com quadros B. C
   L1; num quadro B (b-pyramid) um B_8x8 usa L1 em sub-blocos sem essa flag, e o colZeroFlag saía errado.
 - `decoder.cpp` — o pool de quadros era `num_ref_frames + 2`, sem os quadros B que esperam a saída: com 6 referências e
   b-pyramid strict acabava a memória. Agora segue o DPB do padrão (max_dec_frame_buffering ou MaxDpbMbs do nível).
+- `welsDecoderExt.cpp` — `FlushFrame` sem threads liberava os quadros com contexto nulo e o refcount deles não voltava:
+  depois do flush (fim de fluxo, seek) o pool esgotava. Agora usa o contexto da única thread.
 - `welsDecoderExt.{h,cpp}` — `m_bOutputDecodeOrder`: entrega cada quadro logo depois de decodificado (ordem de
   decodificação, como o VideoToolbox sem `kVTDecodeFrame_EnableTemporalProcessing`).
 

@@ -425,6 +425,85 @@ static void t_geometry(void) {
     gl_ctx_destroy(C);
 }
 
+
+/* multiamostra no GLSL: sombreamento por amostra (gl_SampleID), texelFetch de sampler2DMS, gl_SampleMask e centroid */
+static void t_msaa_glsl(void) {
+    gl_ctx_t *C = gl_ctx_create(0, 1, 4, 1, 8, 8, 1, 1, 1, 1);
+    gl_ctx_make_current(C);
+    char log[1024];
+    const char *vs = "#version 410 core\nlayout(location = 0) in vec2 pos;\ncentroid out float cu; out float u;\n"
+                     "void main() { cu = pos.x / 8.0; u = pos.x / 8.0; gl_Position = vec4(pos / 4.0 - 1.0, 0.0, 1.0); }\n";
+    const char *fs_id = "#version 410 core\nout vec4 c;\nvoid main() { c = vec4(float(gl_SampleID) / 3.0, 0.0, 0.0, 1.0); }\n";
+    const char *fs_rd = "#version 410 core\nuniform sampler2DMS t; uniform int s;\nout vec4 c;\n"
+                        "void main() { ivec2 sz = textureSize(t); c = texelFetch(t, ivec2(gl_FragCoord.xy), s); if (sz.x != 8) c = vec4(0.0, 1.0, 0.0, 1.0); }\n";
+    const char *fs_mask = "#version 410 core\nout vec4 c;\nvoid main() { gl_SampleMask[0] = 1; c = vec4(1.0); }\n";
+    const char *fs_cen = "#version 410 core\ncentroid in float cu; in float u; uniform int which;\nout vec4 c;\n"
+                         "void main() { c = vec4(which == 1 ? cu : u, 0.0, 0.0, 1.0); }\n";
+    GLuint p_id = prog(vs, fs_id, log, sizeof log), p_rd = prog(vs, fs_rd, log, sizeof log), p_mask = prog(vs, fs_mask, log, sizeof log), p_cen = prog(vs, fs_cen, log, sizeof log);
+    CHECK(p_id && p_rd && p_mask && p_cen, "programas de multiamostra compilam");
+    if (!p_id || !p_rd || !p_mask || !p_cen) { gl_ctx_destroy(C); return; }
+    GLuint vao, vbo;
+    glGenVertexArrays(1, &vao);
+    glBindVertexArray(vao);
+    glGenBuffers(1, &vbo);
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    float full[] = {0, 0, 8, 0, 8, 8, 0, 0, 8, 8, 0, 8, /* borda em x = 2.4 */ 0, 0, 2.4f, 0, 2.4f, 8, 0, 0, 2.4f, 8, 0, 8};
+    glBufferData(GL_ARRAY_BUFFER, sizeof full, full, GL_STATIC_DRAW);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, 0);
+    glEnableVertexAttribArray(0);
+    GLuint mt, fb;
+    glGenTextures(1, &mt);
+    glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, mt);
+    glTexImage2DMultisample(GL_TEXTURE_2D_MULTISAMPLE, 4, GL_RGBA8, 8, 8, GL_TRUE);
+    glGenFramebuffers(1, &fb);
+    glBindFramebuffer(GL_FRAMEBUFFER, fb);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D_MULTISAMPLE, mt, 0);
+    CHECK(glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE, "FBO com textura 4x");
+    glClearColor(0, 0, 0, 1);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glUseProgram(p_id);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+    /* lê de volta cada amostra com texelFetch */
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glUseProgram(p_rd);
+    glUniform1i(glGetUniformLocation(p_rd, "t"), 0);
+    u8 o[4];
+    for (int smp = 0; smp < 4; smp++) {
+        glUniform1i(glGetUniformLocation(p_rd, "s"), smp);
+        glDrawArrays(GL_TRIANGLES, 0, 6);
+        px(3, 3, o);
+        CHECK(near(o[0], smp * 85, 1) && o[1] == 0, "gl_SampleID %d por texelFetch: %d %d", smp, o[0], o[1]);
+    }
+    /* gl_SampleMask = 1: só a amostra 0; o blit resolve em 1/4 */
+    glBindFramebuffer(GL_FRAMEBUFFER, fb);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glUseProgram(p_mask);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, fb);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+    glBlitFramebuffer(0, 0, 8, 8, 0, 0, 8, 8, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    px(3, 3, o);
+    CHECK(near(o[0], 64, 1), "gl_SampleMask[0] = 1: %d", o[0]);
+    /* centroid: o centro do pixel 2 (2.5) fica fora da borda 2.4; a amostra 0 (2.375) está dentro */
+    for (int which = 0; which < 2; which++) {
+        glBindFramebuffer(GL_FRAMEBUFFER, fb);
+        glClear(GL_COLOR_BUFFER_BIT);
+        glUseProgram(p_cen);
+        glUniform1i(glGetUniformLocation(p_cen, "which"), which);
+        glDrawArrays(GL_TRIANGLES, 6, 6);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glUseProgram(p_rd);
+        glUniform1i(glGetUniformLocation(p_rd, "s"), 0);
+        glDrawArrays(GL_TRIANGLES, 0, 6);
+        px(2, 3, o);
+        if (which) CHECK(near(o[0], 76, 1), "centroid na amostra coberta: %d", o[0]);
+        else CHECK(near(o[0], 80, 1), "sem centroid: valor do centro %d", o[0]);
+    }
+    CHECK(glGetError() == GL_NO_ERROR, "sem erro (GLSL multisample)");
+    gl_ctx_destroy(C);
+}
+
 void gl_glsl_host_tests(int *fails, int *checks) {
     F = fails;
     K = checks;
@@ -435,4 +514,5 @@ void gl_glsl_host_tests(int *fails, int *checks) {
     t_bindable();
     t_derivatives();
     t_geometry();
+    t_msaa_glsl();
 }

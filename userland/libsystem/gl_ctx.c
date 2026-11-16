@@ -146,21 +146,24 @@ static void tex_defaults(gl_ctx_t *C) {
         for (int u = 0; u < GLX_UNITS; u++) C->tex[u][i] = C->tex_default[i];
     }
 }
-static void fb_alloc(msl_tex_t *t, int fmt, int w, int h) {
+/* ns > 1: uma fatia por amostra (mtlshader.h) */
+static void fb_alloc_n(msl_tex_t *t, int fmt, int w, int h, int ns) {
     int bpp = mx_bpp(fmt);
     free(t->data);
     memset(t, 0, sizeof *t);
     t->fmt = fmt;
-    t->type = MSL_TEX_2D;
+    t->type = ns > 1 ? MSL_TEX_2D_MS : MSL_TEX_2D;
     t->w = w > 0 ? w : 1;
     t->h = h > 0 ? h : 1;
     t->d = 1;
     t->levels = 1;
-    t->slices = 1;
+    t->slices = ns > 1 ? ns : 1;
+    t->samples = ns > 1 ? ns : 0;
     t->lbpr[0] = (u64)t->w * bpp;
     t->lslice[0] = t->lbpr[0] * t->h;
-    t->data = calloc(1, t->lslice[0]);
+    t->data = calloc((size_t)t->slices, t->lslice[0]);
 }
+static void fb_alloc(msl_tex_t *t, int fmt, int w, int h) { fb_alloc_n(t, fmt, w, h, 0); }
 void gl_fb_resize(gl_ctx_t *C, int w, int h) {
     if (w < 1) w = 1;
     if (h < 1) h = 1;
@@ -168,14 +171,41 @@ void gl_fb_resize(gl_ctx_t *C, int w, int h) {
     int first = !C->fb_back.data;
     C->fb_w = w;
     C->fb_h = h;
-    fb_alloc(&C->fb_back, 70, w, h);
-    if (C->fb_double) fb_alloc(&C->fb_front, 70, w, h);
-    if (C->fb_has_depth || C->fb_has_stencil) fb_alloc(&C->fb_depth, 260, w, h);
+    int ns = C->fb_samples > 1 ? C->fb_samples : 0;
+    fb_alloc_n(&C->fb_back, 70, w, h, ns);
+    if (C->fb_double) fb_alloc_n(&C->fb_front, 70, w, h, ns);
+    if (C->fb_has_depth || C->fb_has_stencil) fb_alloc_n(&C->fb_depth, 260, w, h, ns);
     if (first) {
         /* viewport e scissor seguem o primeiro tamanho do drawable, como no macOS */
         C->vp[0] = C->vp[1] = 0; C->vp[2] = w; C->vp[3] = h;
         C->sc[0] = C->sc[1] = 0; C->sc[2] = w; C->sc[3] = h;
     }
+}
+/* framebuffer padrão multisample (kCGLPFASampleBuffers/kCGLPFASamples): realoca com n amostras */
+void gl_ctx_set_samples(gl_ctx_t *C, int n) {
+    n = n > 1 ? mx_samples_ok(n > 8 ? 8 : n) : 0;
+    if (n == C->fb_samples) return;
+    C->fb_samples = n;
+    int w = C->fb_w, h = C->fb_h;
+    C->fb_w = 0;   /* força a realocação (viewport e scissor ficam como estão) */
+    gl_fb_resize(C, w, h);
+}
+/* resolve (média das amostras) do framebuffer padrão para C->fb_res, no formato da fonte */
+const msl_tex_t *gl_fb_resolved(gl_ctx_t *C, const msl_tex_t *src) {
+    if (!src || mx_nsamp(src) <= 1) return src;
+    msl_tex_t *r = &C->fb_res;
+    if (r->fmt != src->fmt || r->w != src->w || r->h != src->h || !r->data) fb_alloc(r, src->fmt, src->w, src->h);
+    if (!r->data) return src;
+    const pf_t *p = mx_pf(src->fmt);
+    mx_srgb_init();
+    for (int y = 0; y < src->h; y++)
+        for (int x = 0; x < src->w; x++) {
+            if (mx_isdepth(src->fmt) || mx_hasstencil(src->fmt)) { memcpy(mx_texel(r, x, y, 0, 0, 0), mx_texel(src, x, y, 0, 0, 0), p ? p->bpp : 4); continue; }
+            double v[4];
+            mx_resolve_texel(src, x, y, 0, v);
+            msl_tex_store(r, x, y, 0, 0, 0, v);
+        }
+    return r;
 }
 gl_ctx_t *gl_ctx_create(gl_ctx_t *share, int core, int major, int minor, int w, int h, int depth, int stencil, int dbl, int alpha) {
     gl_ctx_t *C = calloc(1, sizeof *C);
@@ -222,6 +252,7 @@ gl_ctx_t *gl_ctx_create(gl_ctx_t *share, int core, int major, int minor, int w, 
     C->point_origin = GL_UPPER_LEFT;
     C->logic_op = GL_COPY;
     C->samp_cov = 1;
+    C->samp_mask = 0xffffffffu;
     C->provoke = GL_LAST_VERTEX_CONVENTION;
     for (int i = 0; i < 8; i++) C->hint[i] = GL_DONT_CARE;
     C->pk_align = C->up_align = 4;
@@ -248,7 +279,7 @@ void gl_ctx_destroy(gl_ctx_t *C) {
     if (!C) return;
     if (gl_cur() == C) gl_ctx_make_current(0);
     gl_debug_free(C);
-    free(C->fb_back.data); free(C->fb_front.data); free(C->fb_depth.data);
+    free(C->fb_back.data); free(C->fb_front.data); free(C->fb_depth.data); free(C->fb_res.data);
     for (int i = 0; i < 11; i++) gl_tex_free(C->tex_default[i]);
     for (u32 i = 1; i < C->vaos.n; i++) free(C->vaos.v ? C->vaos.v[i] : 0);
     for (u32 i = 1; i < C->fbos.n; i++) free(C->fbos.v ? C->fbos.v[i] : 0);
@@ -265,11 +296,11 @@ void gl_ctx_destroy(gl_ctx_t *C) {
 void gl_ctx_swap(gl_ctx_t *C) {
     if (!C->fb_double) return;
     /* no macOS o conteúdo do back buffer depois da troca é indefinido; copiar mantém o desenho incremental dos apps antigos */
-    memcpy(C->fb_front.data, C->fb_back.data, C->fb_back.lslice[0]);
+    memcpy(C->fb_front.data, C->fb_back.data, C->fb_back.lslice[0] * (u64)mx_nsamp(&C->fb_back));
 }
 void gl_ctx_size(gl_ctx_t *C, int *w, int *h) { *w = C->fb_w; *h = C->fb_h; }
 void gl_ctx_read_bgra(gl_ctx_t *C, u8 *dst, u64 dbpr, int w, int h) {
-    msl_tex_t *s = C->fb_double ? &C->fb_front : &C->fb_back;
+    const msl_tex_t *s = gl_fb_resolved(C, C->fb_double ? &C->fb_front : &C->fb_back);
     if (w > s->w) w = s->w;
     if (h > s->h) h = s->h;
     for (int y = 0; y < h; y++) {
@@ -417,7 +448,7 @@ void glPointParameterfARB(GLenum p, GLfloat v) { glPointParameterf(p, v); }
 void glPointParameterfvARB(GLenum p, const GLfloat *v) { glPointParameterfv(p, v); }
 void glLogicOp(GLenum op) { GLC(); if (op < GL_CLEAR || op > GL_SET) GLERR(GL_INVALID_ENUM, ); C->logic_op = op; }
 void glSampleCoverage(GLfloat v, GLboolean inv) { GLC(); C->samp_cov = c01(v); C->samp_inv = inv != 0; }
-void glSampleMaski(GLuint i, GLbitfield m) { (void)i; (void)m; }
+void glSampleMaski(GLuint i, GLbitfield m) { GLC(); if (i >= 1) GLERR(GL_INVALID_VALUE, ); C->samp_mask = m; }
 void glMinSampleShading(GLfloat v) { GLC(); C->min_sample_shading = c01(v); }
 void glProvokingVertex(GLenum m) { GLC(); if (m != GL_FIRST_VERTEX_CONVENTION && m != GL_LAST_VERTEX_CONVENTION) GLERR(GL_INVALID_ENUM, ); C->provoke = m; }
 void glProvokingVertexEXT(GLenum m) { glProvokingVertex(m); }
@@ -678,8 +709,14 @@ static int get_any(gl_ctx_t *C, GLenum p, gv_t *g) {
     case GL_MAX_DUAL_SOURCE_DRAW_BUFFERS: I1(1); return 1;
     case GL_MAX_SAMPLES: case GL_MAX_COLOR_TEXTURE_SAMPLES: case GL_MAX_DEPTH_TEXTURE_SAMPLES: case GL_MAX_INTEGER_SAMPLES: I1(8); return 1;
     case GL_MAX_SAMPLE_MASK_WORDS: I1(1); return 1;
-    case GL_SAMPLES: I1(0); return 1;
-    case GL_SAMPLE_BUFFERS: I1(0); return 1;
+    case GL_SAMPLES: case GL_SAMPLE_BUFFERS: {
+        /* do framebuffer de desenho atual */
+        gl_target_t T;
+        int n = gl_resolve_target(C, 1, &T) ? T.samples : 1;
+        I1(p == GL_SAMPLES ? (n > 1 ? n : 0) : n > 1);
+        return 1;
+    }
+    case GL_SAMPLE_MASK_VALUE: I1(C->samp_mask); return 1;
     case GL_MAX_ELEMENTS_VERTICES: case GL_MAX_ELEMENTS_INDICES: I1(1048575); return 1;
     case GL_MAX_TEXTURE_LOD_BIAS: { float f = 16; gfv(g, 1, &f); return 1; }
     case GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT: { float f = 16; gfv(g, 1, &f); return 1; }
@@ -883,7 +920,7 @@ static int get_idx(gl_ctx_t *C, GLenum p, GLuint i, gv_t *g) {
     if (p == GL_TRANSFORM_FEEDBACK_BUFFER_START && i < GLX_XFB) { I1(C->xfb->off[i]); return 1; }
     if (p == GL_TRANSFORM_FEEDBACK_BUFFER_SIZE && i < GLX_XFB) { I1(C->xfb->size[i]); return 1; }
     if ((p == GL_VIEWPORT || p == GL_SCISSOR_BOX || p == GL_DEPTH_RANGE) && i < 16) return get_any(C, p, g);
-    if (p == GL_SAMPLE_MASK_VALUE && i == 0) { I1(0xffffffffu); return 1; }
+    if (p == GL_SAMPLE_MASK_VALUE && i == 0) { I1(C->samp_mask); return 1; }
     return 0;
 }
 void glGetIntegerv(GLenum p, GLint *out) {

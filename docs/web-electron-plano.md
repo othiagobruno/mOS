@@ -76,8 +76,22 @@ Cada item fecha com teste de host (`tools/web_host.sh`) ou, quando depende da VM
    gaussiano, `drawImage` de `<img>`/`<canvas>` com suavização e filtro de área na redução, texto com fonte CSS,
    alinhamento, linha de base, `maxWidth`, `letterSpacing` e transformação, `strokeText`, `measureText` completo,
    `ImageData`/`getImageData`/`putImageData`, `toDataURL` em PNG com deflate próprio, `DOMException`).
-   Teste: `tools/web_host_canvas.c` (9 casos, 105 verificações; ASan/UBSan limpos). Falta: `toBlob` (sem `Blob`
-   no motor), `createImageBitmap`, `OffscreenCanvas` e `filter`.
+   Teste: `tools/web_host_canvas.c` (9 casos, 105 verificações; ASan/UBSan limpos). Falta: `OffscreenCanvas` e
+   `filter`.
+6b. ✅ **HTMLImageElement no JS** (`js_dom.c`, `layout.c`): `new Image()`, imagem pedida pelo `src`/`srcset` mesmo
+   fora do documento, eventos load/error para cada elemento (propriedade, `addEventListener` e atributo), `complete`,
+   `naturalWidth/Height`, `width/height` (exibido, atributo ou natural), `currentSrc`, `srcset`/`sizes`/
+   `crossOrigin`/`decoding`/`loading`, `decode()`, `src=""` como imagem quebrada, e o `load` da janela esperando as
+   imagens do documento. Teste: `tools/web_host_img.c` (4 casos, 19 verificações).
+6c. ✅ **Blob, File, FileReader, URL e URLSearchParams** (`web_blob.c`, `web_url.c`; fora do prefixo `js_` para não
+   entrar no JavaScriptCore.framework, que não tem DOM): Blob com partes de texto/ArrayBuffer/views/Blob, `slice`,
+   `text`/`arrayBuffer`/`bytes`; File com nome e `lastModified`; FileReader com os quatro modos, codificação, eventos
+   em tarefa e `abort`; `URL.createObjectURL`/`revokeObjectURL` com `blob:` valendo em `<img>` e `fetch`;
+   `Response.arrayBuffer()`/`blob()`; `canvas.toBlob`; `createImageBitmap` (canvas, `<img>`, Blob, ImageData,
+   ImageBitmap; recorte, `resizeWidth/Height`, `flipY`) e `ImageBitmap.close`. URL do WHATWG: esquemas especiais e
+   opacos, credenciais, IPv4 (hexa/octal), IPv6 comprimido, punycode, `.`/`..`, conjuntos de escape, resolução
+   relativa, `origin`, setters, `canParse`/`parse`; URLSearchParams completo e ligado ao `URL.searchParams`.
+   Teste: `tools/web_host_blob.c`.
 7. **WebGL 1/2** sobre o OpenGL do mOS (frente do Otavio) com reserva por software.
 8. **`<video>`/`<audio>`**: o motor publica o elemento; o `WebKit.framework` decodifica com AVFoundation/
    VideoToolbox (frente da Isabela) e devolve quadros e relógio ao motor; controles nativos desenhados pela vista.

@@ -730,6 +730,7 @@ void doc_free(doc_t *d) {
         surface_free(im->surf);
         surface_free(im->scaled);
         if (im->svg) kfree(im->svg);
+        if (im->own) kfree(im->own);
         kfree(im);
     }
     for (int i = 0; i < d->nctrls; i++) kfree(d->ctrls[i]->buf);

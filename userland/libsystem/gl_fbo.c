@@ -49,13 +49,16 @@ void glRenderbufferStorageMultisample(GLenum target, GLsizei samples, GLenum ifm
     GLenum base = gl_ifmt_base(ifmt);
     if (!ok || base == GL_ALPHA || base == GL_LUMINANCE || base == GL_LUMINANCE_ALPHA || base == GL_INTENSITY) GLERR(GL_INVALID_ENUM, );
     gl_rb_t *r = C->rb;
+    /* GL_RENDERBUFFER_SAMPLES fica >= o pedido, no próximo número suportado (2, 4, 8) */
+    int ns = samples ? mx_samples_ok(samples < 2 ? 2 : samples) : 0;
     free(r->data);
-    i64 bytes = (i64)w * h * mx_bpp(fmt);
+    i64 bytes = (i64)w * h * mx_bpp(fmt) * (ns ? ns : 1);
     r->data = bytes ? calloc(1, (size_t)bytes) : 0;
     if (bytes && !r->data) GLERR(GL_OUT_OF_MEMORY, );
-    r->ifmt = ifmt; r->fmt = fmt; r->w = w; r->h = h; r->samples = samples;
+    r->ifmt = ifmt; r->fmt = fmt; r->w = w; r->h = h; r->samples = ns;
     memset(&r->mt, 0, sizeof r->mt);
-    r->mt.data = r->data; r->mt.fmt = fmt; r->mt.type = MSL_TEX_2D; r->mt.w = w; r->mt.h = h; r->mt.d = 1; r->mt.levels = 1; r->mt.slices = 1;
+    r->mt.data = r->data; r->mt.fmt = fmt; r->mt.type = ns ? MSL_TEX_2D_MS : MSL_TEX_2D; r->mt.w = w; r->mt.h = h; r->mt.d = 1; r->mt.levels = 1;
+    r->mt.slices = ns ? ns : 1; r->mt.samples = ns;
     r->mt.lbpr[0] = (u64)w * mx_bpp(fmt); r->mt.lslice[0] = r->mt.lbpr[0] * h;
 }
 void glRenderbufferStorage(GLenum t, GLenum f, GLsizei w, GLsizei h) { glRenderbufferStorageMultisample(t, 0, f, w, h); }
@@ -199,27 +202,41 @@ static int att_image(gl_ctx_t *C, const gl_att_t *a, msl_tex_t *out, int *ifmt_o
     if (ifmt_out) *ifmt_out = (int)t->lv[a->level < 16 ? a->level : 0].ifmt;
     return gl_tex_image(t, a->level, a->layer, out, 0);
 }
+/* GL_TEXTURE_FIXED_SAMPLE_LOCATIONS do anexo (renderbuffer conta como fixo) */
+static int att_fixed(gl_ctx_t *C, const gl_att_t *a) {
+    if (a->type != GL_TEXTURE) return 1;
+    gl_tex_t *t = gl_names_get(&C->sh->texs, a->name);
+    return !t || t->lv[0].ns <= 1 || t->fixed_loc;
+}
 static GLenum fbo_status(gl_ctx_t *C, gl_fbo_t *f) {
     if (!f) return GL_FRAMEBUFFER_COMPLETE;
-    int any = 0, w = -1, h = -1;
+    int any = 0, w = -1, h = -1, ns = -1, fixed = -1;
     msl_tex_t m;
     int ifmt;
+    /* todos os anexos com o mesmo número de amostras e o mesmo GL_TEXTURE_FIXED_SAMPLE_LOCATIONS */
+#define MS_SAME(a) do { int n_ = mx_nsamp(&m), fx_ = att_fixed(C, (a)); \
+        if ((ns >= 0 && n_ != ns) || (fixed >= 0 && fx_ != fixed)) { return GL_FRAMEBUFFER_INCOMPLETE_MULTISAMPLE; } \
+        ns = n_; fixed = fx_; } while (0)
     for (int i = 0; i < GLX_DRAW; i++) {
         if (!f->color[i].type) continue;
         if (!att_image(C, &f->color[i], &m, &ifmt)) return GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT;
         if (mx_isdepth(m.fmt) || m.fmt == 253) return GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT;
         any = 1;
+        MS_SAME(&f->color[i]);
         if (w < 0 || m.w < w) w = m.w;
         if (h < 0 || m.h < h) h = m.h;
     }
     if (f->depth.type) {
         if (!att_image(C, &f->depth, &m, &ifmt) || !mx_isdepth(m.fmt)) return GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT;
         any = 1;
+        MS_SAME(&f->depth);
     }
     if (f->stencil.type) {
         if (!att_image(C, &f->stencil, &m, &ifmt) || !mx_hasstencil(m.fmt)) return GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT;
         any = 1;
+        MS_SAME(&f->stencil);
     }
+#undef MS_SAME
     if (!any && !(f->def_w && f->def_h)) return GL_FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT;
     for (int i = 0; i < GLX_DRAW; i++) {
         GLenum b = f->draw_buf[i];
@@ -366,6 +383,7 @@ int gl_resolve_target(gl_ctx_t *C, int draw, gl_target_t *T) {
         T->ncolor = n;
         if (C->fb_has_depth) T->depth = &C->fb_depth;
         if (C->fb_has_stencil) T->stencil = &C->fb_depth;
+        T->samples = C->fb_samples > 1 ? C->fb_samples : 1;
         return 1;
     }
     if (fbo_status(C, f) != GL_FRAMEBUFFER_COMPLETE) return 0;
@@ -389,6 +407,10 @@ int gl_resolve_target(gl_ctx_t *C, int draw, gl_target_t *T) {
     if (!any) { w = f->def_w; h = f->def_h; }
     T->w = w;
     T->h = h;
+    T->samples = 1;
+    for (int i = 0; i < T->ncolor; i++) if (T->color[i]) T->samples = mx_nsamp(T->color[i]);
+    if (T->depth) T->samples = mx_nsamp(T->depth);
+    if (T->stencil) T->samples = mx_nsamp(T->stencil);
     for (int i = 0; i < T->ncolor; i++) if (T->color[i]) {
         const pf_t *p = mx_pf(T->color[i]->fmt);
         T->srgb[i] = p && (p->fl & PF_SRGB);
@@ -396,24 +418,33 @@ int gl_resolve_target(gl_ctx_t *C, int draw, gl_target_t *T) {
     }
     return 1;
 }
+/* fonte das cópias (glCopyTex*, glCopyPixels): o framebuffer padrão multisample entra resolvido;
+ * um FBO multisample não pode ser lido assim (GL_INVALID_OPERATION) */
 int gl_read_source(gl_ctx_t *C, msl_tex_t **src) {
     static gl_target_t T;
     if (!gl_resolve_target(C, 0, &T)) { *src = 0; return 0; }
     *src = T.color[0];
+    if (*src && T.samples > 1) {
+        if (C->read_fbo) { *src = 0; return 0; }
+        *src = (msl_tex_t *)gl_fb_resolved(C, *src);
+    }
     return 1;
 }
 
 /* ================================================================ clear */
-static void stencil_write(msl_tex_t *t, int x, int y, u32 v, u32 mask) {
-    u8 *q = mx_texel(t, x, y, 0, 0, 0);
+static void stencil_write_s(msl_tex_t *t, int x, int y, int smp, u32 v, u32 mask) {
+    u8 *q = mx_texel(t, x, y, 0, smp, 0);
     u8 *s = t->fmt == 260 ? q + 4 : t->fmt == 253 ? q : 0;
     if (s) *s = (u8)((*s & ~mask) | (v & mask));
 }
-static void depth_write(msl_tex_t *t, int x, int y, double d) {
-    u8 *q = mx_texel(t, x, y, 0, 0, 0);
+static void depth_write_s(msl_tex_t *t, int x, int y, int smp, double d) {
+    u8 *q = mx_texel(t, x, y, 0, smp, 0);
     if (t->fmt == 260 || t->fmt == 252) { float f = (float)d; memcpy(q, &f, 4); }
     else if (t->fmt == 250) { u16 v = (u16)(mx_cl01(d) * 65535 + 0.5); memcpy(q, &v, 2); }
 }
+/* todas as amostras do pixel */
+static void stencil_write(msl_tex_t *t, int x, int y, u32 v, u32 mask) { for (int s = 0; s < mx_nsamp(t); s++) stencil_write_s(t, x, y, s, v, mask); }
+static void depth_write(msl_tex_t *t, int x, int y, double d) { for (int s = 0; s < mx_nsamp(t); s++) depth_write_s(t, x, y, s, d); }
 static void clear_rect(gl_ctx_t *C, gl_target_t *T, int *x0, int *y0, int *x1, int *y1) {
     *x0 = 0; *y0 = 0; *x1 = T->w; *y1 = T->h;
     if (gl_is_on(C, GL_SCISSOR_TEST)) {
@@ -439,14 +470,15 @@ static void clear_color(gl_ctx_t *C, gl_target_t *T, int i, const double v[4], i
     int full = m[0] && m[1] && m[2] && m[3];
     if (full) mx_encode(p, px, c);
     for (int y = y0; y < y1; y++)
-        for (int x = x0; x < x1; x++) {
-            u8 *q = mx_texel(t, x, y, 0, 0, 0);
-            if (full) { memcpy(q, px, bpp); continue; }
-            double o[4];
-            mx_decode(p, q, o);
-            for (int k = 0; k < 4; k++) if (m[k]) o[k] = c[k];
-            mx_encode(p, q, o);
-        }
+        for (int x = x0; x < x1; x++)
+            for (int smp = 0; smp < mx_nsamp(t); smp++) {
+                u8 *q = mx_texel(t, x, y, 0, smp, 0);
+                if (full) { memcpy(q, px, bpp); continue; }
+                double o[4];
+                mx_decode(p, q, o);
+                for (int k = 0; k < 4; k++) if (m[k]) o[k] = c[k];
+                mx_encode(p, q, o);
+            }
 }
 static void clear_ds(gl_ctx_t *C, gl_target_t *T, int depth, double d, int stencil, int s) {
     int x0, y0, x1, y1;
@@ -513,18 +545,32 @@ void glReadPixels(GLint x, GLint y, GLsizei w, GLsizei h, GLenum f, GLenum ty, v
     if (f == GL_DEPTH_COMPONENT) src = T.depth;
     else if (f == GL_STENCIL_INDEX || f == GL_DEPTH_STENCIL) src = T.stencil ? T.stencil : T.depth;
     if (!src) GLERR(GL_INVALID_OPERATION, );
+    if (T.samples > 1) {
+        /* FBO multisample: precisa de glBlitFramebuffer antes; o framebuffer padrão é resolvido aqui */
+        if (C->read_fbo) GLERR(GL_INVALID_OPERATION, );
+        src = (msl_tex_t *)gl_fb_resolved(C, src);
+    }
     gl_pack_pixels(C, src, 0, 0, x, y, w, h, f, ty, dst, 1);
 }
 void glReadnPixels(GLint x, GLint y, GLsizei w, GLsizei h, GLenum f, GLenum t, GLsizei bs, void *d) { (void)bs; glReadPixels(x, y, w, h, f, t, d); }
 
 /* ================================================================ blit */
-static double rd(const msl_tex_t *t, int x, int y, double o[4]) { msl_tex_load(t, x, y, 0, 0, 0, o); return o[0]; }
+/* multiamostra: fonte com N amostras é resolvida (média na cor; amostra 0 em profundidade, estêncil e inteiros);
+ * destino com N amostras recebe o valor em todas; as duas com o mesmo N copiam amostra a amostra */
 void glBlitFramebuffer(GLint sx0, GLint sy0, GLint sx1, GLint sy1, GLint dx0, GLint dy0, GLint dx1, GLint dy1, GLbitfield mask, GLenum filter) {
     GLC();
+    if (mask & ~(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT)) GLERR(GL_INVALID_VALUE, );
     if (filter != GL_NEAREST && filter != GL_LINEAR) GLERR(GL_INVALID_ENUM, );
     if ((mask & (GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT)) && filter != GL_NEAREST) GLERR(GL_INVALID_OPERATION, );
     gl_target_t S, D;
     if (!gl_resolve_target(C, 0, &S) || !gl_resolve_target(C, 1, &D)) GLERR(GL_INVALID_FRAMEBUFFER_OPERATION, );
+    int sms = S.samples > 1, dms = D.samples > 1;
+    if (sms || dms) {
+        int sw = sx1 - sx0, sh = sy1 - sy0, dw = dx1 - dx0, dh = dy1 - dy0;
+        if ((sw < 0 ? -sw : sw) != (dw < 0 ? -dw : dw) || (sh < 0 ? -sh : sh) != (dh < 0 ? -dh : dh)) GLERR(GL_INVALID_OPERATION, );
+        if (sms && dms && S.samples != D.samples) GLERR(GL_INVALID_OPERATION, );
+    }
+    int same = sms && dms;   /* cópia amostra a amostra */
     int dxa = dx0 < dx1 ? dx0 : dx1, dxb = dx0 < dx1 ? dx1 : dx0, dya = dy0 < dy1 ? dy0 : dy1, dyb = dy0 < dy1 ? dy1 : dy0;
     double scx = (double)(sx1 - sx0) / (dx1 - dx0 ? dx1 - dx0 : 1), scy = (double)(sy1 - sy0) / (dy1 - dy0 ? dy1 - dy0 : 1);
     int scis = gl_is_on(C, GL_SCISSOR_TEST);
@@ -540,7 +586,8 @@ void glBlitFramebuffer(GLint sx0, GLint sy0, GLint sx1, GLint sy1, GLint dx0, GL
             if (mask & GL_COLOR_BUFFER_BIT && S.color[0]) {
                 double v[4] = {0, 0, 0, 1};
                 msl_tex_t *s = S.color[0];
-                if (filter == GL_LINEAR) {
+                int have = 1;
+                if (filter == GL_LINEAR && !sms) {
                     double ux = fx - 0.5, uy = fy - 0.5;
                     int x0 = (int)floor(ux), y0 = (int)floor(uy);
                     double ax = ux - x0, ay = uy - y0, acc[4] = {0, 0, 0, 0};
@@ -552,31 +599,38 @@ void glBlitFramebuffer(GLint sx0, GLint sy0, GLint sx1, GLint sy1, GLint dx0, GL
                             if (px >= s->w) px = s->w - 1;
                             if (py >= s->h) py = s->h - 1;
                             double t[4], wgt = (i ? ax : 1 - ax) * (j ? ay : 1 - ay);
-                            rd(s, px, py, t);
+                            msl_tex_load(s, px, py, 0, 0, 0, t);
                             for (int k = 0; k < 4; k++) acc[k] += wgt * t[k];
                         }
                     for (int k = 0; k < 4; k++) v[k] = acc[k];
-                } else if (ix >= 0 && iy >= 0 && ix < s->w && iy < s->h) rd(s, ix, iy, v);
-                else continue;
-                for (int i = 0; i < D.ncolor; i++) {
+                } else if (ix >= 0 && iy >= 0 && ix < s->w && iy < s->h) { if (!same) mx_resolve_texel(s, ix, iy, 0, v); }
+                else have = 0;
+                if (have) for (int i = 0; i < D.ncolor; i++) {
                     msl_tex_t *d = D.color[i];
                     if (!d) continue;
-                    double o[4];
-                    msl_tex_load(d, x, y, 0, 0, 0, o);
-                    for (int k = 0; k < 4; k++) if (C->cmask[i][k]) o[k] = v[k];
-                    msl_tex_store(d, x, y, 0, 0, 0, o);
+                    for (int smp = 0; smp < mx_nsamp(d); smp++) {
+                        double o[4];
+                        if (same) msl_tex_load(s, ix, iy, 0, smp, 0, v);
+                        msl_tex_load(d, x, y, 0, smp, 0, o);
+                        for (int k = 0; k < 4; k++) if (C->cmask[i][k]) o[k] = v[k];
+                        msl_tex_store(d, x, y, 0, smp, 0, o);
+                    }
                 }
             }
             if (ix < 0 || iy < 0 || ix >= S.w || iy >= S.h) continue;
             if ((mask & GL_DEPTH_BUFFER_BIT) && S.depth && D.depth) {
-                double v[4];
-                rd(S.depth, ix, iy, v);
-                depth_write(D.depth, x, y, v[0]);
+                for (int smp = 0; smp < mx_nsamp(D.depth); smp++) {
+                    double v[4];
+                    msl_tex_load(S.depth, ix, iy, 0, same ? smp : 0, 0, v);
+                    depth_write_s(D.depth, x, y, smp, v[0]);
+                }
             }
             if ((mask & GL_STENCIL_BUFFER_BIT) && S.stencil && D.stencil) {
-                u8 *q = mx_texel(S.stencil, ix, iy, 0, 0, 0);
-                u32 s = S.stencil->fmt == 260 ? q[4] : q[0];
-                stencil_write(D.stencil, x, y, s, C->swmask[0] & 0xff);
+                for (int smp = 0; smp < mx_nsamp(D.stencil); smp++) {
+                    u8 *q = mx_texel(S.stencil, ix, iy, 0, same ? smp : 0, 0);
+                    u32 sv = S.stencil->fmt == 260 ? q[4] : q[0];
+                    stencil_write_s(D.stencil, x, y, smp, sv, C->swmask[0] & 0xff);
+                }
             }
         }
     }

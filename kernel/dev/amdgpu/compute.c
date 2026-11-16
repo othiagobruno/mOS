@@ -207,19 +207,22 @@ static bool cwait(amdgpu_t *a, u32 seq) {
     return false;
 }
 
-static u32 csubmit(amdgpu_t *a, u64 ib_mc, u32 ndw) {
+static u32 csubmit(amdgpu_t *a, u64 ib_mc, u32 ndw, u32 vmid) {
     if (!ndw || ndw > 0xFFFFFu || (ib_mc & 3) || !croom(a, 4 + 8)) return 0;
     cput(a, PM4_TYPE3(PM4_INDIRECT_BUFFER, 2));
     cput(a, (u32)ib_mc);
     cput(a, (u32)(ib_mc >> 32) & 0xFFFFu);
-    cput(a, PM4_IB_VALID | ndw);                     /* VMID 0 */
+    cput(a, PM4_IB_VALID | ndw | vmid << 24);
     u32 seq = cfence(a);
     ccommit(a);
     a->comp_ibs++;
     return seq;
 }
 
-u32 amdgpu_compute_submit(amdgpu_t *a, u64 ib_mc, u32 ndw) { return a && a->comp_ok ? csubmit(a, ib_mc, ndw) : 0; }
+u32 amdgpu_compute_submit(amdgpu_t *a, u64 ib_mc, u32 ndw) { return a && a->comp_ok ? csubmit(a, ib_mc, ndw, 0) : 0; }
+u32 amdgpu_compute_submit_vm(amdgpu_t *a, amd_vm_t *vm, u64 ib_va, u32 ndw) {
+    return a && a->comp_ok && vm && vm->vmid ? csubmit(a, ib_va, ndw, vm->vmid) : 0;
+}
 bool amdgpu_compute_wait(amdgpu_t *a, u32 seq) { return a && a->comp_ok && cwait(a, seq); }
 u32 amdgpu_compute_done(amdgpu_t *a) { return a && a->comp_ok ? a->cwb_cpu[4] : 0; }
 
@@ -267,7 +270,7 @@ bool amdgpu_compute_init(amdgpu_t *a) {
         ib[2] = (u32)dst; ib[3] = (u32)(dst >> 32);
         ib[4] = 0xC0FFEE00u;
         WMB();
-        u32 seq = csubmit(a, amdgpu_vram_to_mc(a, aux + AUX_IB), 5);
+        u32 seq = csubmit(a, amdgpu_vram_to_mc(a, aux + AUX_IB), 5, 0);
         ok = seq && cwait(a, seq) && a->cwb_cpu[8] == 0xC0FFEE00u;
         if (!ok) kprintf("amdgpu: a fila de compute não executou o IB (writeback 0x%x, fence %u de %u)\n", a->cwb_cpu[8], a->cwb_cpu[4], seq);
     }

@@ -45,6 +45,16 @@ typedef struct {
 #define AMD_VRAM_CHUNK  (64u * 1024u)
 #define AMD_VRAM_CHUNKS 4096u            /* 256 MiB visíveis pela CPU */
 
+#define AMD_VM_MAX_CHUNKS 64u            /* 64 x 16 tabelas de 4 KiB = até 2 GiB mapeados por processo */
+typedef struct {
+    u32           vmid;               /* 1..15; 0 = livre */
+    u64           root;               /* PDB2, endereço no BAR0 */
+    u64           chunk[AMD_VM_MAX_CHUNKS];
+    u16           used[AMD_VM_MAX_CHUNKS];
+    u32           nchunks, tables;
+    u64           pages;
+} amd_vm_t;
+
 typedef struct {
     bool          ready;
     pci_dev_t    *pci;
@@ -112,6 +122,9 @@ typedef struct {
     u32           cring_dw, comp_seq;
     u64           cwptr;                 /* dwords, cresce sem dar a volta (o CP aplica a máscara) */
     u64           comp_timeouts, comp_eops, comp_ibs;
+    /* VMs dos processos (vm.c): índice = VMID */
+    u32           vmid_used;
+    amd_vm_t      vms[16];
     /* VRAM livre: blocos de 64 KiB a partir do começo do BAR0 */
     u32           vram_lo, vram_hi;      /* faixa alocável, em blocos */
     u8            vram_used[AMD_VRAM_CHUNKS / 8];
@@ -169,6 +182,8 @@ bool       amdgpu_sdma_wait(amdgpu_t *a, u32 seq);
 u32        amdgpu_sdma_done(amdgpu_t *a);
 
 void      *amdgpu_vram_cpu(const amdgpu_t *a, u64 bar_phys);
+/* invalida as TLBs das duas hubs para os VMIDs da máscara (bit n = VMID n) */
+void       amdgpu_tlb_flush(amdgpu_t *a, u32 vmid_mask);
 /* programa reg = (reg & ~and_mask) | (or_mask & and_mask); and_mask 0xFFFFFFFF escreve or_mask direto */
 void       amdgpu_golden(amdgpu_t *a, u32 reg, u32 and_mask, u32 or_mask);
 
@@ -181,6 +196,19 @@ bool       amdgpu_gfx_init(amdgpu_t *a);
 u32        amdgpu_gfx_submit(amdgpu_t *a, u64 ib_mc, u32 ndw);
 bool       amdgpu_gfx_wait(amdgpu_t *a, u32 seq);
 u32        amdgpu_gfx_done(amdgpu_t *a);
+/* VM por processo (vm.c). flags AMD_VM_*. phys: endereço no BAR0 com AMD_VM_VRAM, físico da RAM sem. */
+#define AMD_VM_VRAM  0x1u
+#define AMD_VM_WRITE 0x2u
+#define AMD_VM_EXEC  0x4u
+amd_vm_t  *amdgpu_vm_create(amdgpu_t *a);
+void       amdgpu_vm_destroy(amdgpu_t *a, amd_vm_t *vm);
+int        amdgpu_vm_map(amdgpu_t *a, amd_vm_t *vm, u64 va, u64 phys, u64 size, u32 flags);
+void       amdgpu_vm_unmap(amdgpu_t *a, amd_vm_t *vm, u64 va, u64 size);
+u64        amdgpu_vm_lookup(amdgpu_t *a, amd_vm_t *vm, u64 va, u64 *pte_out);
+/* IB no espaço da VM (VA do processo), no anel GFX ou na fila de compute */
+u32        amdgpu_gfx_submit_vm(amdgpu_t *a, amd_vm_t *vm, u64 ib_va, u32 ndw);
+u32        amdgpu_compute_submit_vm(amdgpu_t *a, amd_vm_t *vm, u64 ib_va, u32 ndw);
+
 /* Compute: MEC1 com a HQD do pipe 0, fila 0, MQD na VRAM e doorbell no BAR2. Chamado por amdgpu_gfx_init
  * depois do anel GFX. Mesma convenção de IB e fence do anel GFX. */
 bool       amdgpu_compute_init(amdgpu_t *a);

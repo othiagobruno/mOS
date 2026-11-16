@@ -3,7 +3,7 @@
  * linhas a cada leitura da posição e conta quadros, a trava de atualização responde no bit de status, e o
  * endereço novo do plano só vale (EARLIEST_INUSE) no vblank depois de soltar a trava.
  * Rodar da raiz:
- *   gcc -O2 -Wall -Wextra -DMOS_HOST_TEST -I kernel/dev/amdgpu -I tools tools/amdgpu_hw_host.c kernel/dev/amdgpu/engine.c kernel/dev/amdgpu/irq.c kernel/dev/amdgpu/gfx.c kernel/dev/amdgpu/compute.c \
+ *   gcc -O2 -Wall -Wextra -DMOS_HOST_TEST -I kernel/dev/amdgpu -I tools tools/amdgpu_hw_host.c kernel/dev/amdgpu/engine.c kernel/dev/amdgpu/irq.c kernel/dev/amdgpu/gfx.c kernel/dev/amdgpu/compute.c kernel/dev/amdgpu/vm.c \
  *       kernel/dev/amdgpu/amdgpu.c kernel/dev/amdgpu/edid.c kernel/dev/amdgpu/ucode.c -o /tmp/amdgpu_hw && /tmp/amdgpu_hw */
 #include "amdgpu.h"
 #include "regs.h"
@@ -62,12 +62,33 @@ static u8 *mc_ptr_h(int hub, u64 mc, bool write) {
     u64 ge = ((u64)regs[hv(hub, R_VM_CTX0_PT_END_HI) / 4] << 44) | ((u64)regs[hv(hub, R_VM_CTX0_PT_END_LO) / 4] << 12) | 0xFFF;
     if (!(regs[hv(hub, R_VM_CONTEXT0_CNTL) / 4] & CTX0_ENABLE) || mc < gs || mc > ge) { (*faults)++; return NULL; }
     u64 pt = ((u64)regs[hv(hub, R_VM_CTX0_PT_BASE_HI) / 4] << 32) | regs[hv(hub, R_VM_CTX0_PT_BASE_LO) / 4];
-    u64 *tbl = amd_host_phys(CARVE + (pt - fb0));
+    if (!(pt & 1)) { (*faults)++; return NULL; }                 /* base física com o bit de válido */
+    u64 *tbl = amd_host_phys(pt & AMD_PTE_ADDR_MASK);
     u64 pte = tbl[(mc - gs) >> 12];
     if (!(pte & AMD_PTE_VALID) || !(pte & AMD_PTE_SYSTEM) || (write && !(pte & AMD_PTE_WRITE))) { (*faults)++; return NULL; }
     return (u8 *)(uintptr_t)((pte & AMD_PTE_ADDR_MASK) + (mc & 0xFFF));
 }
 static u8 *mc_ptr(u64 mc, bool write) { return mc_ptr_h(0, mc, write); }
+/* VMID 1..15 na GFXHUB: tabelas de 4 níveis com endereços físicos; PTE da VRAM aponta para o carve-out */
+static u64 vm_walks, vm_faults;
+static u8 *vm_ptr(u32 vmid, u64 va, bool write) {
+    if (!vmid) return mc_ptr_h(1, va, write);
+    vm_walks++;
+    u32 cntl = regs[GFXHUB_VM(R_VM_CTX_CNTL(vmid)) / 4];
+    u64 end = (((u64)regs[GFXHUB_VM(R_VM_CTX_PT_END_HI(vmid)) / 4] << 32) | regs[GFXHUB_VM(R_VM_CTX_PT_END_LO(vmid)) / 4]) << 12 | 0xFFF;
+    u64 e = ((u64)regs[GFXHUB_VM(R_VM_CTX_PT_BASE_HI(vmid)) / 4] << 32) | regs[GFXHUB_VM(R_VM_CTX_PT_BASE_LO(vmid)) / 4];
+    if (!(cntl & CTX0_ENABLE) || (cntl & CTX0_DEPTH_MASK) != CTX_DEPTH_4LEVEL || va > end) { vm_faults++; return NULL; }
+    for (int lvl = 3; lvl >= 0; lvl--) {
+        if (!(e & 1)) { vm_faults++; return NULL; }
+        u64 *t = amd_host_phys(e & AMD_PTE_ADDR_MASK);
+        e = t[(va >> (12 + 9 * lvl)) & 511];
+    }
+    if (!(e & AMD_PTE_VALID) || !(e & AMD_PTE_READ) || (write && !(e & AMD_PTE_WRITE))) { vm_faults++; return NULL; }
+    u64 pa = (e & AMD_PTE_ADDR_MASK) + (va & 0xFFF);
+    if (e & AMD_PTE_SYSTEM) return (u8 *)(uintptr_t)pa;
+    if (pa < CARVE || pa >= CARVE + (256ull << 20)) { vm_faults++; return NULL; }
+    return amd_host_phys(pa);
+}
 static void mc_xfer(u64 dst, u64 src, u64 n, bool fill, u32 val) {
     while (n) {
         u64 step = 4096 - (dst & 0xFFF);
@@ -179,7 +200,8 @@ static bool cp_can_run(void) {
     return !cp_dead && smu_gfx_on && (regs[R_RLC_CNTL / 4] & RLC_ENABLE_F32) && uc_ok(&uc_rlc) && uc_ok(&uc_pfp) &&
            uc_ok(&uc_ce) && uc_ok(&uc_me) && !(regs[R_CP_ME_CNTL / 4] & (CP_ME_HALT_ALL | CP_ME_RESET_ALL));
 }
-static void mem_w32(u64 mc, u32 v) { u8 *d = mc_ptr_h(1, mc, true); if (d) memcpy(d, &v, 4); }
+static u32 cur_vmid;
+static void mem_w32(u64 mc, u32 v) { u8 *d = vm_ptr(cur_vmid, mc, true); if (d) memcpy(d, &v, 4); }
 /* executa n dwords de PM4 em buf (anel com máscara, ou IB linear com mask = 0xFFFFFFFF) */
 static void cp_exec(const u32 *buf, u32 pos, u32 end, u32 mask, int depth) {
     #define P(k) buf[(pos + (k)) & mask]
@@ -222,11 +244,19 @@ static void cp_exec(const u32 *buf, u32 pos, u32 end, u32 mask, int depth) {
         }
         case PM4_INDIRECT_BUFFER: {
             u64 ib = ((u64)(P(2) & 0xFFFF) << 32) | (P(1) & ~3u);
-            u32 ctl = P(3), ndw = ctl & 0xFFFFF;
-            const u32 *ip = (const u32 *)mc_ptr_h(1, ib, false);
-            if (depth || (ctl >> 24) || !ip || ((ib & 0xFFF) + ndw * 4 > 4096 && ib < ((u64)regs[GFXHUB_MC(R_MC_VM_FB_LOCATION_BASE) / 4] << 24))) { cp_bad++; break; }
+            u32 ctl = P(3), ndw = ctl & 0xFFFFF, vmid = (ctl >> 24) & 0xF;
+            static u32 ibuf[1 << 16];
+            if (depth || ndw > (1u << 16)) { cp_bad++; break; }
+            bool ok = true;
+            for (u32 i = 0; i < ndw && ok; i++) {            /* busca dword a dword pela VM do IB */
+                const u8 *q = vm_ptr(vmid, ib + 4ull * i, false);
+                if (q) memcpy(&ibuf[i], q, 4); else ok = false;
+            }
+            if (!ok) { cp_bad++; break; }
             cp_ibs++;
-            cp_exec(ip, 0, ndw, 0xFFFFFFFFu, depth + 1);
+            cur_vmid = vmid;
+            cp_exec(ibuf, 0, ndw, 0xFFFFFFFFu, depth + 1);
+            cur_vmid = 0;
             break;
         }
         default: printf("FALHOU: pacote PM4 desconhecido 0x%x\n", op); total++; cp_bad++; break;
@@ -927,6 +957,61 @@ static void test_gfx(void) {
     CHECK(a->comp_eops == a->comp_seq && cp_bad == 0 && db_rings == 301, "EOP de compute pelo ME 1 (%llu de %u)", a->comp_eops, a->comp_seq);
     CHECK(!amdgpu_compute_submit(a, 2, 4), "IB desalinhado recusado");
     amdgpu_vram_free(a, vb, 64 * 1024);
+
+    /* VM por processo */
+    u64 vfree0 = amdgpu_vram_free_bytes(a);
+    amd_vm_t *vm = amdgpu_vm_create(a);
+    CHECK(vm && vm->vmid == 1 && (regs[R_VM_CTX_CNTL(1) / 4] & (CTX0_ENABLE | CTX0_DEPTH_MASK)) == (CTX0_ENABLE | CTX_DEPTH_4LEVEL) &&
+          (regs[GFXHUB_VM(R_VM_CTX_CNTL(15)) / 4] & CTX_FAULT_DEFAULTS) == CTX_FAULT_DEFAULTS &&
+          regs[GFXHUB_VM(R_VM_CTX_PT_BASE_LO(1)) / 4] == (u32)((CARVE + (vm->root - 0xE0000000ull)) | 1) &&
+          regs[R_VM_CTX_PT_BASE_LO(1) / 4] == regs[GFXHUB_VM(R_VM_CTX_PT_BASE_LO(1)) / 4] && regs[R_VM_CTX_PT_END_LO(1) / 4] == 0xFFFFFFFFu, "VM 1 criada");
+    CHECK((regs[R_VM_CTX0_PT_BASE_LO / 4] & 1) && (regs[R_VM_CTX0_PT_BASE_LO / 4] & ~0xFFFu) >= (u32)CARVE, "base da GART é física");
+    u64 bo = amdgpu_vram_alloc(a, 8u << 20);
+    u32 *ram2 = aligned_alloc(4096, 2 * 4096), *ibr = aligned_alloc(4096, 4096);
+    memset(ram2, 0, 2 * 4096);
+    const u64 VA_BO = 0x100000000ull, VA_RAM = 0x7FFF00000000ull, VA_IB = 0x200000ull;
+    CHECK(!amdgpu_vm_map(a, vm, VA_BO, bo, 8u << 20, AMD_VM_VRAM | AMD_VM_WRITE) &&
+          !amdgpu_vm_map(a, vm, VA_RAM, (u64)(uintptr_t)ram2, 8192, AMD_VM_WRITE) &&
+          !amdgpu_vm_map(a, vm, VA_IB, (u64)(uintptr_t)ibr, 4096, AMD_VM_EXEC), "mapas da VM");
+    CHECK(vm->pages == 2048 + 2 + 1 && vm->tables == 1 + (2 + 4) + 3 + 2, "tabelas de 4 níveis (%u)", vm->tables);
+    u64 pte = 0;
+    CHECK(amdgpu_vm_lookup(a, vm, VA_BO + 0x123456, &pte) == CARVE + (bo - 0xE0000000ull) + 0x123456 && !(pte & AMD_PTE_SYSTEM) && (pte & AMD_PTE_WRITE) &&
+          amdgpu_vm_lookup(a, vm, VA_RAM + 4100, &pte) == (u64)(uintptr_t)ram2 + 4100 && (pte & (AMD_PTE_SYSTEM | AMD_PTE_SNOOPED)) == (AMD_PTE_SYSTEM | AMD_PTE_SNOOPED) &&
+          !amdgpu_vm_lookup(a, vm, VA_BO + (8u << 20), NULL), "tradução pela CPU");
+    CHECK(amdgpu_vm_map(a, vm, VA_BO + 4096, bo, 4096, AMD_VM_VRAM) == -MOS_EINVAL && amdgpu_vm_map(a, vm, 0x5000, bo + 1, 4096, AMD_VM_VRAM) == -MOS_EINVAL &&
+          amdgpu_vm_map(a, vm, 0x5000, 0x1000, 4096, AMD_VM_VRAM) == -MOS_EINVAL && amdgpu_vm_map(a, vm, 1ull << 48, bo, 4096, AMD_VM_VRAM) == -MOS_EINVAL,
+          "sobreposição, desalinhado, VRAM alheia e fora dos 48 bits recusados");
+    k = 0;
+    u64 targets[3] = {VA_BO + (8u << 20) - 4, VA_RAM + 4096 + 8, VA_BO};
+    for (u32 i = 0; i < 3; i++) {
+        ibr[k++] = PM4_TYPE3(PM4_WRITE_DATA, 3); ibr[k++] = PM4_WD_DST_MEM;
+        ibr[k++] = (u32)targets[i]; ibr[k++] = (u32)(targets[i] >> 32); ibr[k++] = 0x51D0 + i;
+    }
+    u64 w0 = vm_walks;
+    s = amdgpu_gfx_submit_vm(a, vm, VA_IB, k);
+    u32 *bop = (u32 *)amd_host_phys(bo);
+    CHECK(s && amdgpu_gfx_wait(a, s) && bop[(8u << 18) - 1] == 0x51D0 && ram2[1026] == 0x51D1 && bop[0] == 0x51D2 && vm_faults == 0 && vm_walks > w0,
+          "IB do processo no anel GFX pela VM 1");
+    ibr[4] = 0x7777; ibr[9] = 0x8888; ibr[14] = 0x9999;
+    s = amdgpu_compute_submit_vm(a, vm, VA_IB, k);
+    CHECK(s && amdgpu_compute_wait(a, s) && bop[0] == 0x9999 && ram2[1026] == 0x8888 && vm_faults == 0, "IB do processo na fila de compute");
+    amdgpu_vm_unmap(a, vm, VA_RAM, 8192);
+    ibr[9] = 0xBAD;
+    s = amdgpu_gfx_submit_vm(a, vm, VA_IB, k);
+    CHECK(s && amdgpu_gfx_wait(a, s) && ram2[1026] == 0x8888 && vm_faults == 1 && vm->pages == 2049, "página desmapeada vira falta");
+    ibr[1] = PM4_WD_DST_MEM; ibr[2] = (u32)VA_IB; ibr[3] = (u32)(VA_IB >> 32);   /* escrever no próprio IB: só leitura */
+    s = amdgpu_gfx_submit_vm(a, vm, VA_IB, 5);
+    CHECK(s && amdgpu_gfx_wait(a, s) && vm_faults == 2, "IB só de leitura recusa escrita");
+    CHECK(!amdgpu_gfx_submit_vm(a, NULL, VA_IB, 5) && !amdgpu_compute_submit_vm(a, NULL, VA_IB, 5), "sem VM não envia");
+    amd_vm_t *more[15]; int nm = 0;
+    while (nm < 15 && (more[nm] = amdgpu_vm_create(a))) nm++;
+    CHECK(nm == 14 && more[13]->vmid == 15 && a->vmid_used == 0xFFFE, "15 VMIDs, o 16º recusado");
+    for (int i = 0; i < nm; i++) amdgpu_vm_destroy(a, more[i]);
+    amdgpu_vm_destroy(a, vm);
+    amdgpu_vram_free(a, bo, 8u << 20);
+    CHECK(a->vmid_used == 0 && regs[GFXHUB_VM(R_VM_CTX_PT_BASE_LO(1)) / 4] == 0 && amdgpu_vram_free_bytes(a) == vfree0, "VMs destruídas devolvem a VRAM");
+    free(ram2); free(ibr);
+
     u64 free_ok = amdgpu_vram_free_bytes(a), mec_bytes = a->mec_bytes;
     /* MEC morto: só o compute fica de fora, e a VRAM dele volta */
     mec_dead = true;
