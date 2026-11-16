@@ -856,7 +856,9 @@ static void parse_attrs(P_t *P, attr_t *a) {
                 }
             if (!found) {
                 if (!strcmp(s, "flat")) a->interp = MSL_INTERP_FLAT;
-                else if (strstr(s, "no_perspective")) a->interp = MSL_INTERP_NOPERSP;
+                else if (strstr(s, "no_perspective")) a->interp = MSL_INTERP_NOPERSP | (!strncmp(s, "centroid_", 9) ? MSL_INTERP_CENTROID : !strncmp(s, "sample_", 7) ? MSL_INTERP_SAMPLE : 0);
+                else if (!strcmp(s, "centroid_perspective")) a->interp = MSL_INTERP_PERSP | MSL_INTERP_CENTROID;
+                else if (!strcmp(s, "sample_perspective")) a->interp = MSL_INTERP_PERSP | MSL_INTERP_SAMPLE;
                 else if (!strcmp(s, "vertex")) a->stage = MSL_VERTEX;
                 else if (!strcmp(s, "fragment")) a->stage = MSL_FRAGMENT;
                 else if (!strcmp(s, "kernel")) a->stage = MSL_KERNEL;
@@ -2156,6 +2158,11 @@ int msl_fn_stagein(msl_fn_t *f, const msl_field_t **fields, int *size) { *fields
 u32 msl_fn_tgstatic(msl_fn_t *f) { return f->tgstatic; }
 int msl_fn_barrier(msl_fn_t *f) { return f->barrier; }
 int msl_fn_discards(msl_fn_t *f) { return f->discard; }
+int msl_fn_has_param(msl_fn_t *f, int attr) {
+    if (!f) return 0;
+    for (int i = 0; i < f->np; i++) if (f->params[i]->attr == attr) return 1;
+    return 0;
+}
 int msl_fn_spirv(msl_fn_t *f, const u32 **words, u32 *nwords) {
     if (!f || !f->spirv) return 0;
     if (words) *words = f->spirv;

@@ -1342,7 +1342,7 @@ void msl_run(msl_fn_t *f, msl_ctx_t *c, void *out) {
         case A_SIMD_SIZE: { u32 one = 1; put_u32s(p, slot, &one, 1); break; }
         case A_SAMPLE_ID: put_u32s(p, slot, &c->sample_id, 1); break;
         case A_PRIMITIVE_ID: put_u32s(p, slot, &c->primitive_id, 1); break;
-        case A_SAMPLE_MASK: { u32 m = 1; put_u32s(p, slot, &m, 1); break; }
+        case A_SAMPLE_MASK: { u32 m = c->sample_mask ? c->sample_mask : 1; put_u32s(p, slot, &m, 1); break; }
         case A_FRONT_FACING: if (IS_NUM(t)) { reg_t r = {1, 1}; r.i[0] = c->front_facing; store(t, &r, slot); } break;
         case A_POSITION: if (IS_NUM(t)) { reg_t r = {4, 0}; for (int j = 0; j < 4; j++) r.d[j] = c->fragpos[j]; store(t, &r, slot); } break;
         case A_POINT_COORD: if (IS_NUM(t)) { reg_t r = {2, 0}; r.d[0] = c->point_coord[0]; r.d[1] = c->point_coord[1]; store(t, &r, slot); } break;

@@ -19,6 +19,7 @@
  * recebe o device (metal_gate.c): sem ele o processo sai na partida. MOS_METAL=1 força, MOS_METAL=0 desliga.
  */
 #include "metalint.h"
+#include "mtltex.h"
 #include "metal_gate.h"
 #include "gpucall.h"
 
@@ -608,7 +609,9 @@ static BOOL dv_family(id s, SEL c, i64 f) {
     return f == 3001 || f == 3002 || f == 3003 || f == 2001 || f == 2002 || f == 1001;
 }
 static BOOL dv_fset(id s, SEL c, u64 f) { (void)s; (void)c; return f >= 10000 && f <= 10005; }
-static BOOL dv_samples(id s, SEL c, u64 n) { (void)s; (void)c; return n == 1 || n == 4; }
+static BOOL dv_samples(id s, SEL c, u64 n) { (void)s; (void)c; return n == 1 || n == 2 || n == 4 || n == 8; }
+/* posições padrão das amostras (as mesmas do GL, mtltex.c); MTLSamplePosition = {float x, y} */
+static void dv_def_spos(id s, SEL c, float *pos, u64 n) { (void)s; (void)c; if (pos) for (u64 i = 0; i < n; i++) mx_sample_pos((int)n, (int)i, pos + 2 * i); }
 static u64 dv_lin_align(id s, SEL c, u64 f) { (void)s; (void)c; (void)f; return 16; }
 static u64 dv_tier(id s, SEL c) { (void)s; (void)c; return 0; }
 static void dv_sample_ts(id s, SEL c, u64 *cpu, u64 *gpu) { (void)s; (void)c; u64 t = mach_absolute_time(); if (cpu) *cpu = t; if (gpu) *gpu = t; }
@@ -688,6 +691,9 @@ static int tex_from_desc(mtex_t *t, id desc) {
     if (t->levels < 1) t->levels = 1;
     if (t->levels > 16) t->levels = 16;
     if (t->arrlen < 1 || (t->type != MSL_TEX_1D_ARRAY && t->type != MSL_TEX_2D_ARRAY && t->type != MSL_TEX_CUBE_ARRAY && t->type != MSL_TEX_2D_MS_ARRAY)) t->arrlen = 1;
+    /* multiamostra: só texturas 2D MS, com 2, 4 ou 8 amostras (as fatias do msl_tex_t guardam cada uma) */
+    if (t->type == MSL_TEX_2D_MS || t->type == MSL_TEX_2D_MS_ARRAY) { if (t->samples < 1 || mx_samples_ok(t->samples) != t->samples) return 0; t->levels = 1; }
+    else t->samples = 1;
     if (!mx_bpp(t->fmt)) return 0;
     return 1;
 }
@@ -1098,6 +1104,8 @@ static id make_rpipe(id d, id *err) {
     p->raster = (int)dget(d, "rasterizationEnabled");
     p->samples = (int)dget(d, "rasterSampleCount");
     p->a2c = (int)dget(d, "alphaToCoverageEnabled");
+    p->a2one = (int)dget(d, "alphaToOneEnabled");
+    p->fmask = -1;
     for (int i = 0; i < 8; i++) {
         id ca = darr_at(d, "colorAttachments", i);
         cattach_t *a = &p->ca[i];
@@ -1140,12 +1148,14 @@ static id make_rpipe(id d, id *err) {
         for (int i = 0; i < p->nfin; i++) {
             const msl_field_t *fi = &p->fin[i];
             p->fmap[i] = -1;
-            p->finterp[i] = fi->interp;
+            p->finterp[i] = fi->interp & 0xF;
+            if (fi->interp & MSL_INTERP_CENTROID) p->centroid |= 1u << i;
+            if (fi->interp & MSL_INTERP_SAMPLE) p->per_sample = 1;
             if (fi->attr == A_POSITION) { p->fmap[i] = -2; continue; }
             for (int j = 0; j < p->nvout; j++)
                 if (!strcmp(fkey(fi), fkey(&p->vout[j]))) {
                     p->fmap[i] = j;
-                    int vi = p->vout[j].interp;
+                    int vi = p->vout[j].interp & 0xF;
                     if (vi == MSL_INTERP_FLAT || fi->interp == MSL_INTERP_FLAT) p->finterp[i] = MSL_INTERP_FLAT;
                     else if (vi == MSL_INTERP_NOPERSP) p->finterp[i] = MSL_INTERP_NOPERSP;
                     break;
@@ -1154,8 +1164,10 @@ static id make_rpipe(id d, id *err) {
         for (int i = 0; i < p->nfout; i++) {
             if (p->fout[i].attr == A_COLOR && p->fout[i].idx >= 0 && p->fout[i].idx < 8) p->fcolor[p->fout[i].idx] = i;
             if (p->fout[i].attr == A_DEPTH) p->fdepth = i;
+            if (p->fout[i].attr == A_SAMPLE_MASK) p->fmask = i;
         }
         p->discards = msl_fn_discards(p->ffn);
+        if (msl_fn_has_param(p->ffn, A_SAMPLE_ID)) p->per_sample = 1;
     }
     id l = (id)dget(d, "label");
     if (l) o_set_label((id)p, 0, l);
@@ -1559,8 +1571,8 @@ static void read_att(mcb_t *cb, id a, attach_t *t, int kind) {
     t->rslice = (int)dget(a, "resolveSlice");
     t->rplane = (int)dget(a, "resolveDepthPlane");
     if (kind == 0) t->cc = dgetc(a, "clearColor");
-    if (kind == 1) t->cd = dgetd(a, "clearDepth");
-    if (kind == 2) t->cs = (u32)dget(a, "clearStencil");
+    if (kind == 1) { t->cd = dgetd(a, "clearDepth"); t->rfilter = (int)dget(a, "depthResolveFilter"); }
+    if (kind == 2) { t->cs = (u32)dget(a, "clearStencil"); t->rfilter = (int)dget(a, "stencilResolveFilter"); }
     cb_retain(cb, (id)t->tex);
     cb_retain(cb, (id)t->resolve);
 }
@@ -2774,7 +2786,7 @@ void cx_metal_init(void) {
     M(MDev, "shouldMaximizeConcurrentCompilation", ret_no); M(MDev, "setShouldMaximizeConcurrentCompilation:", noop);
     M(MDev, "minimumLinearTextureAlignmentForPixelFormat:", dv_lin_align); M(MDev, "minimumTextureBufferAlignmentForPixelFormat:", dv_lin_align);
     M(MDev, "counterSets", ret_empty_arr); M(MDev, "sampleTimestamps:gpuTimestamp:", dv_sample_ts); M(MDev, "architecture", dv_arch);
-    M(MDev, "getDefaultSamplePositions:count:", noop);
+    M(MDev, "getDefaultSamplePositions:count:", dv_def_spos);
     M(MDev, "newBufferWithLength:options:", dv_newbuf); M(MDev, "newBufferWithBytes:length:options:", dv_newbuf_bytes);
     M(MDev, "newBufferWithBytesNoCopy:length:options:deallocator:", dv_newbuf_nocopy);
     M(MDev, "newTextureWithDescriptor:", dv_newtex); M(MDev, "newTextureWithDescriptor:iosurface:plane:", dv_newtex_surf);
