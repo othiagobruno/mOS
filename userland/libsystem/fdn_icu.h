@@ -197,6 +197,7 @@ enum { UDAT_FULL = 0, UDAT_LONG = 1, UDAT_MEDIUM = 2, UDAT_SHORT = 3, UDAT_RELAT
     X(uregex_groupCount, int32_t, (void *, UErrorCode *)) \
     X(uregex_setRegion, void, (void *, int32_t, int32_t, UErrorCode *)) \
     X(uregex_replaceAll, int32_t, (void *, const UChar *, int32_t, UChar *, int32_t, UErrorCode *)) \
+    X(uregex_reset, void, (void *, int32_t, UErrorCode *)) \
     X(uregex_lookingAt, UBool, (void *, int32_t, UErrorCode *)) \
     X(uregex_matches, UBool, (void *, int32_t, UErrorCode *)) \
     X(uregex_useAnchoringBounds, void, (void *, UBool, UErrorCode *)) \

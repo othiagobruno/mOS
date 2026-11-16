@@ -19,6 +19,8 @@ static void cased(const char *w, int kind, const char *s, const char *loc, const
     if (!strcmp(u, want)) ok++; else { bad++; printf("FALHOU caixa %s: %s (queria %s)\n", w, u, want); }
     free(a); free(r); free(u);
 }
+static int digit(void *c, uint32_t x) { (void)c; return x >= '0' && x <= '9'; }
+static int emoji(void *c, uint32_t x) { (void)c; return x == 0x1F600; }
 static int nseg; static int seg(void *c, int32_t a, int32_t b) { (void)c; (void)a; (void)b; nseg++; return 0; }
 int main(void) {
     find("simples", "hello world", "world", 0, 6, 5);
@@ -61,6 +63,48 @@ int main(void) {
     if (!strcmp(u, "acao")) ok++; else { bad++; printf("FALHOU fold: %s\n", u); } free(s); free(f); free(u);
     s = U("Привет", &n); f = tx_transform(s, n, "Any-Latin", 0, &m); u = f ? fdn_utf8_dup(f, m) : strdup("(nil)");
     if (!strcmp(u, "Privet")) ok++; else { bad++; printf("FALHOU translit: %s\n", u); } free(s); free(f); free(u);
+    /* partes do NSString: unidade UTF-16 sobre UTF-8 */
+    { const char *t = "a\xf0\x9f\x98\x80" "b"; UChar ch = 0; size_t tot = 0;
+      eq("u8 a", tx_utf8_unit_at(t, strlen(t), 0, &ch, &tot) && ch == 'a', 1);
+      eq("u8 alto", tx_utf8_unit_at(t, strlen(t), 1, &ch, &tot) && ch == 0xD83D, 1);
+      eq("u8 baixo", tx_utf8_unit_at(t, strlen(t), 2, &ch, &tot) && ch == 0xDE00, 1);
+      eq("u8 b", tx_utf8_unit_at(t, strlen(t), 3, &ch, &tot) && ch == 'b', 1);
+      eq("u8 fora", tx_utf8_unit_at(t, strlen(t), 4, &ch, &tot), 0); eq("u8 total", (long)tot, 4); }
+    /* rangeOfCharacterFromSet */
+    { int32_t l, m; s = U("ab\xf0\x9f\x98\x80" "c1", &n);
+      eq("set dígito", tx_find_set(s, 0, n, 0, digit, 0, &l, &m) && l == 5 && m == 1, 1);
+      eq("set astral", tx_find_set(s, 0, n, 0, emoji, 0, &l, &m) && l == 2 && m == 2, 1);
+      eq("set astral trás", tx_find_set(s, 0, n, TX_BACKWARDS, emoji, 0, &l, &m) && l == 2 && m == 2, 1);
+      eq("set âncora falha", tx_find_set(s, 0, n, TX_ANCHORED, digit, 0, &l, &m), 0);
+      eq("set âncora trás", tx_find_set(s, 0, n, TX_ANCHORED | TX_BACKWARDS, digit, 0, &l, &m) && l == 5, 1);
+      free(s); }
+    /* enumerate */
+    { int cnt; int32_t *v; s = U("um\ndois\r\ntres", &n);
+      v = tx_enum(s, n, 0, n, 0, "", &cnt); eq("linhas", cnt, 3);
+      eq("linha 2", v[4] == 3 && v[5] == 7 && v[6] == 3 && v[7] == 9, 1); eq("última", v[8] == 9 && v[9] == 13 && v[11] == 13, 1); free(v);
+      v = tx_enum(s, n, 3, 7, 0, "", &cnt); eq("linhas na faixa", cnt == 1 && v[0] == 3 && v[1] == 7, 1); free(v); free(s);
+      s = U("Oi, tudo bem?", &n); v = tx_enum(s, n, 0, n, 3, "pt", &cnt); eq("palavras", cnt, 3);
+      eq("palavra 1 envolve", v[0] == 0 && v[1] == 2 && v[2] == 0 && v[3] == 4, 1);
+      eq("palavra 3 envolve fim", v[8] == 9 && v[9] == 12 && v[10] == 9 && v[11] == 13, 1); free(v); free(s);
+      s = U("ae\xcc\x81" "b", &n); v = tx_enum(s, n, 0, n, 2, "", &cnt); eq("grafemas", cnt, 3); eq("grafema é", v[4] == 1 && v[5] == 3, 1); free(v); free(s); }
+    /* replace */
+    { int32_t on, k; UChar *t, *p, *o; int32_t tn, pn; char *uu;
+      s = U("a-b-c", &n); t = U("-", &tn); p = U("+-", &pn);
+      o = tx_replace(s, n, 0, n, t, tn, p, pn, 0, &on, &k); uu = fdn_utf8_dup(o, on);
+      eq("troca todas", k, 2); eq("troca texto", strcmp(uu, "a+-b+-c"), 0); free(o); free(uu);
+      o = tx_replace(s, n, 2, 3, t, tn, p, pn, 0, &on, &k); uu = fdn_utf8_dup(o, on);
+      eq("troca na faixa", k == 1 && !strcmp(uu, "a-b+-c"), 1); free(o); free(uu);
+      o = tx_replace(s, n, 0, n, t, tn, p, pn, TX_ANCHORED | TX_BACKWARDS, &on, &k); eq("âncora trás sem fim", k, 0); free(o);
+      free(s); free(t); free(p);
+      s = U("ABC abc", &n); t = U("b", &tn); p = U("_", &pn);
+      o = tx_replace(s, n, 0, n, t, tn, p, pn, TX_CASE, &on, &k); uu = fdn_utf8_dup(o, on);
+      eq("troca sem caixa", k == 2 && !strcmp(uu, "A_C a_c"), 1); free(o); free(uu); free(s); free(t); free(p);
+      s = U("x12y345", &n); t = U("([0-9]+)", &tn); p = U("<$1>", &pn);
+      o = tx_replace(s, n, 0, n, t, tn, p, pn, TX_REGEX, &on, &k); uu = fdn_utf8_dup(o, on);
+      eq("regex $1", k == 2 && !strcmp(uu, "x<12>y<345>"), 1); free(o); free(uu);
+      o = tx_replace(s, n, 3, 4, t, tn, p, pn, TX_REGEX, &on, &k); uu = fdn_utf8_dup(o, on);
+      if (k == 1 && !strcmp(uu, "x12y<345>")) ok++; else { bad++; printf("FALHOU regex faixa: %d %s\n", k, uu); } free(o); free(uu);
+      free(s); free(t); free(p); }
     printf("fdn_text: %d/%d\n", ok, ok + bad);
     return bad != 0;
 }

@@ -27,4 +27,16 @@ int tx_segments(const UChar *s, int32_t n, int kind, const char *locale, int (*f
 /* transliteração da ICU (NSStringTransform* são ids da ICU) */
 UChar *tx_transform(const UChar *s, int32_t n, const char *id, int reverse, int32_t *on);
 
+/* partes do NSString (fdn_string.c) */
+/* unidade UTF-16 idx de um texto UTF-8 sem converter tudo; 0 fora do fim (total = tamanho em UTF-16) */
+int tx_utf8_unit_at(const char *s, size_t n, size_t idx, UChar *out, size_t *total);
+/* rangeOfCharacterFromSet: em [a, e) com TX_BACKWARDS/TX_ANCHORED; has(ctx, escalar) */
+int tx_find_set(const UChar *u, int32_t a, int32_t e, unsigned opts, int (*has)(void *, uint32_t), void *ctx, int32_t *loc, int32_t *len);
+/* segmentos do enumerateSubstringsInRange: kind 0 linhas, 1 parágrafos, 2/5/6 grafemas, 3 palavras, 4 frases;
+ * devolve 4 int32 por item: início e fim da substring, início e fim da faixa envolvente (malloc) */
+int32_t *tx_enum(const UChar *u, int32_t n, int32_t a0, int32_t e0, int kind, const char *locale, int *count);
+/* troca as ocorrências de t por p em [loc, loc+len) com as opções (TX_REGEX: modelo $1 da ICU); malloc */
+UChar *tx_replace(const UChar *u, int32_t n, int32_t loc, int32_t len, const UChar *t, int32_t tn,
+                  const UChar *p, int32_t pn, unsigned opts, int32_t *on, int32_t *count);
+
 #endif
