@@ -34,7 +34,7 @@ CLASS(NSExpression) CLASS(NSFileCoordinator) CLASS(NSFileHandle) CLASS(NSHashTab
 CLASS(NSHTTPURLResponse) CLASS(NSIndexPath)
 CLASS(NSItemProvider) CLASS(NSJSONSerialization)
 CLASS(NSKeyedArchiver) CLASS(NSKeyedUnarchiver) CLASS(NSLinguisticTagger) CLASS(NSLock)
-CLASS(NSMachBootstrapServer) CLASS(NSMachPort) CLASS(NSMapTable) CLASS(NSMeasurementFormatter)
+CLASS(NSMachBootstrapServer) CLASS(NSMachPort) CLASS(NSMapTable) 
 CLASS(NSMetadataItem) CLASS(NSMetadataQuery) CLASS(NSMutableAttributedString) CLASS(NSMutableCharacterSet)
 CLASS(NSMutableIndexSet) CLASS(NSMutableURLRequest) CLASS(NSNetService) CLASS(NSNetServiceBrowser)
 
@@ -42,8 +42,8 @@ CLASS(NSPipe) CLASS(NSPointerArray) CLASS(NSPredicate) CLASS(NSProgress) CLASS(N
 CLASS(NSProxy) CLASS(NSPurgeableData) CLASS(NSRecursiveLock) CLASS(NSRegularExpression)
 CLASS(NSScanner) CLASS(NSScriptClassDescription) CLASS(NSScriptCommand)
 CLASS(NSSecureUnarchiveFromDataTransformer) CLASS(NSSortDescriptor) CLASS(NSTask) CLASS(NSTextCheckingResult)
-CLASS(NSUniqueIDSpecifier) CLASS(NSUnitAngle) CLASS(NSUnitDuration)
-CLASS(NSUnitInformationStorage) CLASS(NSUnitLength)
+CLASS(NSUniqueIDSpecifier) 
+
 CLASS(NSURLComponents)
 CLASS(NSURLQueryItem) CLASS(NSURLRequest) CLASS(NSURLResponse)
 
@@ -713,12 +713,6 @@ static id date_format(double unix_s, const char *pat) {
     return s;
 }
 /* NSDateFormatter e os outros formatters estão em fdn_formatters.c (ICU) */
-static id meas_string(id s, SEL c, id m) {
-    (void)s; (void)c;
-    char b[64];
-    cx_snprintf(b, sizeof b, "%g", m ? dval(m) : 0);
-    return ar(ns(b));
-}
 
 /* ---------------------------------------------------------------- scanner */
 static id sc_init(id s, SEL c, id str) { (void)c; BOX(s)->a = retain(str); BOX(s)->i = 0; return s; }
@@ -2012,9 +2006,7 @@ static void at_rotate(id s, SEL c, double deg) {
 static pt_t at_pt(id s, SEL c, pt_t p) { (void)c; pt_t r = {p.x * BOX(s)->d + (double)BOX(s)->i / 1000.0, p.y * BOX(s)->f + (double)BOX(s)->j / 1000.0}; return r; }
 static sz_t at_sz(id s, SEL c, sz_t z) { (void)c; sz_t r = {z.w * BOX(s)->d, z.h * BOX(s)->f}; return r; }
 
-static id unit_with(id cls, SEL c, id sym, double k) { (void)c; box_t *o = (box_t *)cx_alloc_instance((cx_class_t *)cls); o->a = retain(sym); o->d = k; return ar((id)o); }
-static id unit_base(id cls, SEL c, const char *sym, double k) { return unit_with(cls, c, ns(sym), k); }
-static id unit_symbol(id s, SEL c) { (void)c; return BOX(s)->a; }
+/* NSUnit, NSDimension, NSMeasurement e NSMeasurementFormatter estão em fdn_units.c */
 
 static id note_alloc(id cls, SEL c) { (void)c; return cx_alloc_instance((cx_class_t *)cls); }
 static void set_a(id s, SEL c, id v) { (void)c; rel(BOX(s)->a); BOX(s)->a = retain(v); }
@@ -2312,12 +2304,6 @@ static void noop(id s, SEL c) { (void)s; (void)c; }
 static id fh_stdin(id cls, SEL c) { return fh_std(cls, c, 0); }
 static id fh_stdout(id cls, SEL c) { return fh_std(cls, c, 1); }
 static id fh_stderr(id cls, SEL c) { return fh_std(cls, c, 2); }
-static id meter_len(id cls, SEL c) { return unit_base(cls, c, "m", 1); }
-static id meter_km(id cls, SEL c) { return unit_base(cls, c, "km", 1000); }
-static id unit_sec(id cls, SEL c) { return unit_base(cls, c, "s", 1); }
-static id unit_deg(id cls, SEL c) { return unit_base(cls, c, "°", 1); }
-static id unit_byte(id cls, SEL c) { return unit_base(cls, c, "B", 1); }
-static id unit_kb(id cls, SEL c) { return unit_base(cls, c, "kB", 1000); }
 
 void cx_foundation_more_init(void) {
     cx_class_t *ob = &NSObject_c;
@@ -2365,8 +2351,6 @@ void cx_foundation_more_init(void) {
     M(NSConditionLock, "lockWhenCondition:", condlock_lockwhen); M(NSConditionLock, "unlockWithCondition:", condlock_unlockwith);
     M(NSConditionLock, "condition", condlock_cond);
 
-    DEF(&NSMeasurementFormatter_c, &NSMeasurementFormatter_m, "NSMeasurementFormatter", cx_class_named("NSFormatter"), 0);
-    M(NSMeasurementFormatter, "stringFromMeasurement:", meas_string); M(NSMeasurementFormatter, "stringFromUnit:", meas_string);
 
     DEF(&NSScanner_c, &NSScanner_m, "NSScanner", ob, BEX);
     CM(NSScanner, "scannerWithString:", sc_with); CM(NSScanner, "alloc", lock_alloc);
@@ -2533,15 +2517,6 @@ void cx_foundation_more_init(void) {
     M(NSAffineTransform, "translateXBy:yBy:", at_translate); M(NSAffineTransform, "scaleXBy:yBy:", at_scale);
     M(NSAffineTransform, "rotateByDegrees:", at_rotate); M(NSAffineTransform, "transformPoint:", at_pt);
     M(NSAffineTransform, "transformSize:", at_sz);
-    DEF(&NSUnitLength_c, &NSUnitLength_m, "NSUnitLength", ob, BEX);
-    CM(NSUnitLength, "meters", meter_len); CM(NSUnitLength, "kilometers", meter_km); M(NSUnitLength, "symbol", unit_symbol);
-    DEF(&NSUnitDuration_c, &NSUnitDuration_m, "NSUnitDuration", ob, BEX);
-    CM(NSUnitDuration, "seconds", unit_sec); M(NSUnitDuration, "symbol", unit_symbol);
-    DEF(&NSUnitAngle_c, &NSUnitAngle_m, "NSUnitAngle", ob, BEX);
-    CM(NSUnitAngle, "degrees", unit_deg); M(NSUnitAngle, "symbol", unit_symbol);
-    DEF(&NSUnitInformationStorage_c, &NSUnitInformationStorage_m, "NSUnitInformationStorage", ob, BEX);
-    CM(NSUnitInformationStorage, "bytes", unit_byte); CM(NSUnitInformationStorage, "kilobytes", unit_kb);
-    M(NSUnitInformationStorage, "symbol", unit_symbol);
 
     DEF(&NSUserNotification_c, &NSUserNotification_m, "NSUserNotification", ob, BEX);
     CM(NSUserNotification, "alloc", note_alloc);
