@@ -729,6 +729,14 @@ if [ -n "$CKFE" ] && [ -x "$CKFE" ]; then
         CKDIR="$ESP/mOS/System/Library/Frameworks/CryptoKit.framework/Versions/A"
         mkdir -p "$CKDIR"
         cp -f "$OUT/cryptokit-macho/CryptoKit" "$CKDIR/CryptoKit"
+        # fatia arm64 (processo arm64 do tradutor): o mesmo script com MOS_ARCH=arm64
+        if SWIFT_FRONTEND="$CKFE" MOS_ZIG="$ZIG" MOS_ARCH=arm64 sh "$ROOT/tools/build-cryptokit-macho.sh" "$OUT/cryptokit-macho-arm64" \
+                > "$OUT/cryptokit-macho-arm64.log" 2>&1; then
+            python3 -I "$ROOT/tools/lipo-mos.py" -o "$CKDIR/CryptoKit" "$OUT/cryptokit-macho/CryptoKit" "$OUT/cryptokit-macho-arm64/CryptoKit"
+        else
+            grep -m8 -E 'error:' "$OUT/cryptokit-macho-arm64.log" >&2 || true
+            echo "CryptoKit.framework arm64 não compilou (log em $OUT/cryptokit-macho-arm64.log)" >&2
+        fi
         echo "CryptoKit.framework na imagem"
     else
         grep -m8 -E 'error:' "$OUT/cryptokit-macho.log" >&2 || true
