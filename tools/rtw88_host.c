@@ -155,12 +155,31 @@ static void test_fw(const char *path) {
     CHECK(!rtw_fw_parse(buf, n - 1, &fw, err, sizeof err), "firmware truncado é recusado");
 }
 
+/* referência: debugfs tx_pwr_tbl do Linux neste PC, canal 42, 80 MHz, FCC (colunas byr e lmt) */
+static void test_power(void) {
+    static rtw_pwr_t p;
+    rtw_pwr_init(&p, &rtw8821c_bb_pg_type0, &rtw8821c_txpwr_lmt_type0, RTW_REGD_FCC);
+    static const struct { u8 rate; i8 byr, lmt; } ref[] = {
+        {0x04, 8, 5}, {0x08, 6, 5}, {0x09, 4, 5}, {0x0A, 2, 5}, {0x0B, 0, 5},
+        {0x0C, 10, -2}, {0x0F, 8, -2}, {0x10, 6, -2}, {0x11, 4, -2}, {0x12, 2, -2}, {0x13, 0, -2},
+        {0x2C, 10, -5}, {0x2F, 8, -5}, {0x30, 6, -5}, {0x31, 4, -5}, {0x32, 2, -5}, {0x33, 0, -5}, {0x34, -2, -5}, {0x35, -4, -5},
+    };
+    int bad = 0;
+    for (u32 i = 0; i < ARRAY_LEN(ref); i++) {
+        i8 b = p.byr5[ref[i].rate], l = rtw_pwr_limit(&p, 1, 2, ref[i].rate, 42, 36);
+        if (b != ref[i].byr || l != ref[i].lmt) { bad++; printf("     taxa 0x%02x: por taxa %d (Linux %d), limite %d (Linux %d)\n", ref[i].rate, b, ref[i].byr, l, ref[i].lmt); }
+    }
+    CHECK(!bad, "potência: por taxa e limite FCC do canal 42/80 MHz iguais aos do Linux (%u taxas)", (unsigned)ARRAY_LEN(ref));
+    CHECK(rtw_ch_group(42, 0x04) == 0 && rtw_ch_group(149, 0x04) == 10 && rtw_ch_group(14, 0x00) == 5, "potência: grupos de canal");
+}
+
 int main(int argc, char **argv) {
     if (argc > 2) load_fixture(argv[2]);
     test_cond();
     test_tables();
     test_pwr();
     test_efuse();
+    test_power();
     test_fw(argc > 1 ? argv[1] : "firmware/rtw88/rtw8821c_fw.bin");
     printf(g_fail ? "rtw88: %d FALHA(S)\n" : "rtw88: ok\n", g_fail);
     return g_fail != 0;

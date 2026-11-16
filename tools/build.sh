@@ -42,8 +42,12 @@ gcc -O2 -Wall -Wextra -DMOS_HOST_TEST -I kernel/include -I tools tools/r8169_hos
 /tmp/r8169_host
 # RTL8821CE: tabelas da Realtek contra o estado real do chip, energia, eFuse e firmware (docs/rede-hardware.md)
 gcc -O1 -Wall -Wextra -DMOS_HOST_TEST -I tools -I kernel/include -I kernel/wifi/rtw88 tools/rtw88_host.c \
-    kernel/wifi/rtw88/rtw_core.c kernel/wifi/rtw88/rtw8821c_table.c -o /tmp/rtw88_host
+    kernel/wifi/rtw88/rtw_core.c kernel/wifi/rtw88/rtw_pwr.c kernel/wifi/rtw88/rtw8821c_table.c -o /tmp/rtw88_host
 /tmp/rtw88_host firmware/rtw88/rtw8821c_fw.bin tools/rtw88-fixture/bb_8821ce_linux.txt | tail -1
+gcc -O1 -Wall -Wextra -DMOS_HOST_TEST -I tools -I kernel/include -I kernel/wifi/rtw88 tools/rtw88_chip_host.c \
+    kernel/wifi/rtw88/rtw8821c.c kernel/wifi/rtw88/rtw_core.c kernel/wifi/rtw88/rtw_pwr.c \
+    kernel/wifi/rtw88/rtw8821c_table.c -o /tmp/rtw88_chip
+/tmp/rtw88_chip firmware/rtw88/rtw8821c_fw.bin 2>/dev/null | tail -1
 # GPU AMD (Raven/Picasso/Raven2): EDID real do monitor do Thiago e cabeçalhos do firmware/amdgpu
 gcc -O2 -Wall -Wextra -DMOS_HOST_TEST -I kernel/dev/amdgpu tools/amdgpu_host.c kernel/dev/amdgpu/edid.c \
     kernel/dev/amdgpu/ucode.c -o /tmp/amdgpu_host

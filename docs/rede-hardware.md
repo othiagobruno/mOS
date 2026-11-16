@@ -34,14 +34,14 @@ kernel/wifi/rtw88/        driver RTL8821CE que implementa wifi_radio_t
 
 ### Wi-Fi RTL8821CE — não existia driver (só identificação da placa)
 1. [x] Firmware no repositório (`firmware/rtw88/rtw8821c_fw.bin` + licença) e parser do cabeçalho.
-2. [~] Energia (sequências prontas e testadas; falta ligar no PCIe real): sequências carddis→cardemu→act e o caminho inverso; eFuse físico → mapa lógico (MAC, RFE, cristal, potência).
-3. [ ] Download do firmware (DDMA, `MCUFWDL`, checksum, `WINTINI_RDY`).
-4. [ ] Init do MAC: TRX, FIFO/páginas, RQPN, LLT, filtros RX, EDCA, `rtw8821c_mac_init`.
-5. [ ] PCIe: anéis com buffer descriptor (TX 16 B, RX 8 B), descritores TX 48 B / RX 24 B, H2C por anel.
-6. [ ] PHY: carga das tabelas MAC/BB/AGC/RF com condições; cristal; `set_channel` 2,4/5 GHz, 20/40/80 MHz; potência por taxa.
-7. [ ] Firmware: H2C (media status, RA, general info, phydm info, IQK), C2H (relatório de TX, RA), LPS sem PG.
-8. [ ] Coex com o BT: init do PTA, chave de antena por RFE, tabela e TDMA por estado do BT.
-9. [ ] Testes de host: tabelas contra o estado do chip no Linux, energia contra um chip simulado, TX/RX/H2C.
+2. [x] Energia: sequências carddis→cardemu→act e o caminho inverso; eFuse físico → mapa lógico (MAC, RFE, cristal, potência).
+3. [x] Download do firmware (DDMA, `MCUFWDL`, checksum, `WINTINI_RDY`).
+4. [x] Init do MAC: TRX, FIFO/páginas, RQPN, LLT, filtros RX, EDCA, `rtw8821c_mac_init`.
+5. [x] PCIe: anéis com buffer descriptor (TX 16 B, RX 8 B), descritores TX 48 B / RX 24 B, H2C por anel.
+6. [x] PHY: carga das tabelas MAC/BB/AGC/RF com condições; cristal; `set_channel` 2,4/5 GHz, 20/40/80 MHz; potência por taxa.
+7. [x] Firmware: H2C (media status, RA, general info, phydm info, IQK), C2H (relatório de TX, RA), LPS sem PG.
+8. [x] Coex com o BT: init do PTA, chave de antena por RFE, tabela e TDMA por estado do BT.
+9. [x] Testes de host: tabelas contra o estado do chip no Linux, energia contra um chip simulado, TX/RX/H2C.
 
 ### Pilha 802.11 (`kernel/wifi/ieee80211.c`)
 10. [ ] HT/VHT na associação (IEs de capacidade), A-MPDU RX (ADDBA, reordenação), QoS data.
@@ -77,8 +77,35 @@ gcc -O1 -Wall -Wextra -DMOS_HOST_TEST -I tools -I kernel/include -I kernel/wifi/
     /tmp/rtw88_host firmware/rtw88/rtw8821c_fw.bin tools/rtw88-fixture/bb_8821ce_linux.txt
 ```
 
-Ainda **não** existe o rádio registrado no `wifi_init`: o PCIe, o download do firmware e a troca de canal
-são os próximos itens (2 a 8 da lista acima).
+### Driver (`kernel/wifi/rtw88/rtw8821c.c`, `rtw_pwr.c`)
+
+`wifi_rtw_probe` acha o 10ec:c821, mapeia o BAR2, desliga o timeout de conclusão do PCIe e sobe o chip:
+energia → firmware (só para ler o eFuse) → eFuse → desliga → energia → firmware → filas/LLT/fila de H2C →
+MAC → tabelas de BB/AGC/RF → H2C de informação geral e de PHY → coex. Registra o rádio `Realtek RTL8821CE`
+na pilha, que passa a usá-lo no lugar do simulado.
+
+- Canal: 2,4 e 5 GHz em 20/40/80 MHz (`set_chan(primário, central, largura)`), com a chave de RF, os filtros
+  de CCK do canal 14, o subcanal primário e a potência por taxa recalculada (regulador FCC, o do Brasil).
+- TX: filas de gestão, BE, alta (broadcast) e H2C; quadros de gestão a 1/6 Mb/s fixos; dados unicast com a taxa
+  escolhida pelo firmware (RA) a partir da máscara da associação (VHT MCS0-9, HT MCS0-7, legado).
+- RX: anel de 64 buffers de 11,4 KiB, etiqueta de RX conferida, FCS tirado, RSSI da PHY (OFDM e CCK), C2H do
+  firmware (relatório de RA) separado.
+- Associação: BSSID/AID/tipo de rede, H2C de mídia e de RA, filtro de dados da própria BSS, canal para o AFH
+  do BT, IQK pelo firmware.
+- Coex (RFE 0 deste PC, antenas separadas): 5 GHz e 2,4 GHz em "free run"; antena compartilhada (outras
+  placas) com a tabela do PTA.
+- LPS do firmware sem PG (`powersave`). Se o firmware não sair do LPS (o mesmo `failed to leave lps state` do
+  Linux deste PC), o driver limpa o TCR e desliga o LPS na sessão.
+- Vigia a cada 2 s: ganho inicial (IGI) pelo RSSI e RSSI para o firmware.
+
+Teste do driver inteiro contra um chip simulado (`tools/rtw88_chip_host.c`, também no `tools/build.sh`):
+**32/32** — o firmware chega byte a byte à DMEM/IMEM/EMEM pela fila de beacon + DDMA; MAC e RFE do eFuse;
+CR/RCR; H2C pelo anel; canal 42/80 MHz no RF, BB e MAC; potência gravada igual à do Linux neste PC
+(OFDM 42/41/39/37, MCS 31, VHT 28); probe request pela fila de gestão com checksum certo; beacon de RX com
+RSSI; C2H consumido; associação com RA ARFR1 AC 1SS/80 MHz/SGI; LPS entra, sai e o caso travado.
+
+Só o hardware prova: que o firmware sobe (`rtw88: pronto` no log), a varredura em 5 GHz e a associação.
+A pilha ainda chama só `set_channel` (20 MHz) e não chama `bss`/`powersave`: isso entra com o item 10.
 
 DMA de 32 bits: o RTL8821CE só endereça abaixo de 4 GiB e o PC tem 16 GB (2 GB reservados para a GPU,
 14 GB visíveis ao sistema). O driver usa `dma_alloc32` (Gustavo, PR #249), alocado na subida do driver.
