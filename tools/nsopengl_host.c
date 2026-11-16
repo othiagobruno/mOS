@@ -3,7 +3,7 @@
  *   zig cc -g -O1 -fno-sanitize=all -ffreestanding -fno-builtin -w -Iuserland/libsystem/kshim \
  *     -Iuserland/libsystem/fsinc -Ikernel/include -Iuserland/libsystem \
  *     -c userland/libsystem/appkit_nsopengl.c -o /tmp/nsgl-lib.o
- *   for f in gl_ctx gl_buf gl_tex gl_fbo gl_raster gl_ffp gl_misc gl_eval gl_arbprog gl_glsl gl_glsl_tr gl_glsl_pre mtltex mtlshader mtlexec mslspirv; do
+ *   for f in gl_ctx gl_buf gl_tex gl_fbo gl_raster gl_ffp gl_misc gl_eval gl_arbprog gl_glsl gl_glsl_tr gl_glsl_pre corevideo mtltex mtlshader mtlexec mslspirv; do
  *     zig cc -g -O1 -fno-sanitize=all -ffreestanding -fno-builtin -w -Iuserland/libsystem/kshim -Iuserland/libsystem/fsinc \
  *       -Ikernel/include -Iuserland/libsystem -c userland/libsystem/$f.c -o /tmp/nsgl-$f.o; done
  *   zig cc -g -O1 -fno-sanitize=all -Iuserland/libsystem -w tools/nsopengl_host.c tools/ctline_host_stubs.c \
@@ -93,10 +93,26 @@ unsigned long long IOSurfaceGetBytesPerRow(void *s) { return (unsigned long long
 unsigned long long IOSurfaceGetBytesPerRowOfPlane(void *s, unsigned long long i) { (void)i; return IOSurfaceGetBytesPerRow(s); }
 unsigned long long IOSurfaceGetWidth(void *s) { return (unsigned long long)((surf_t *)s)->w; }
 unsigned long long IOSurfaceGetHeight(void *s) { return (unsigned long long)((surf_t *)s)->h; }
+unsigned long long IOSurfaceGetAllocSize(void *s) { return IOSurfaceGetBytesPerRow(s) * IOSurfaceGetHeight(s); }
+unsigned long long IOSurfaceGetWidthOfPlane(void *s, unsigned long long i) { (void)i; return IOSurfaceGetWidth(s); }
+unsigned long long IOSurfaceGetHeightOfPlane(void *s, unsigned long long i) { (void)i; return IOSurfaceGetHeight(s); }
+unsigned long long IOSurfaceGetPlaneCount(void *s) { (void)s; return 0; }
+unsigned IOSurfaceGetPixelFormat(void *s) { (void)s; return 0x42475241; }
 int IOSurfaceLock(void *s, unsigned o, unsigned *seed) { (void)s; (void)o; (void)seed; return 0; }
 int IOSurfaceUnlock(void *s, unsigned o, unsigned *seed) { (void)s; (void)o; (void)seed; return 0; }
 unsigned _dyld_image_count(void) { return 0; }
 int cx_fdprintf(int fd, const char *fmt, ...) { (void)fd; (void)fmt; return 0; }
+void cx_metal_init(void) {}
+/* o que o corevideo.c usa do IOSurface/CF e o harness não tem */
+char cx_cfstr_isa[64] __asm__("__CFConstantStringClassReference");
+const void *kIOSurfacePlaneElementHeight, *kIOSurfacePlaneBytesPerRow, *kIOSurfacePlaneOffset, *kIOSurfacePlaneSize,
+    *kIOSurfacePlaneBytesPerElement, *kIOSurfacePlaneElementWidth, *kIOSurfacePlaneHeight, *kIOSurfacePlaneInfo, *kIOSurfacePlaneWidth;
+void *_Block_copy(const void *b) { return (void *)b; }
+void _Block_release(const void *b) { (void)b; }
+void *CGColorSpaceCreateDeviceRGB(void) { return 0; }
+int cx_ca_diag(void) { return 0; }
+IMP cx_lookup(cx_class_t *c, SEL sel) { return (IMP)cx_msg_lookup(c, sel); }
+unsigned long long mach_absolute_time(void) { return 0; }
 const char *_dyld_get_image_name(unsigned i) { (void)i; return 0; }
 typedef struct { cx_class_t *isa; id contents; } layer_t;
 static void layer_set(id self, SEL c, id v) { (void)c; ((layer_t *)self)->contents = v; }
@@ -260,6 +276,60 @@ int main(void) {
         glClear(0x4000);
         CGLFlushDrawable(cctx);
         expect("offscreen recebe o quadro (BGRA)", buf[2] == 255 && buf[0] == 0 && buf[3] == 255);
+    }
+    /* opções globais do NSOpenGL/CGL */
+    {
+        extern void NSOpenGLSetOption(int, int), NSOpenGLGetOption(int, int *), NSOpenGLGetVersion(int *, int *);
+        int v = -1, ma = 0, mi = 0;
+        NSOpenGLGetOption(501, &v);
+        expect("NSOpenGLGOFormatCacheSize padrão 5", v == 5);
+        NSOpenGLSetOption(503, 1);
+        NSOpenGLGetOption(503, &v);
+        expect("NSOpenGLGORetainRenderers guardado", v == 1);
+        NSOpenGLGetOption(77, &v);
+        expect("opção inválida devolve 0", v == 0);
+        NSOpenGLGetVersion(&ma, &mi);
+        expect("NSOpenGLGetVersion", ma == 1 && mi >= 0);
+    }
+    /* CVOpenGLTextureCache: 2vuy (Cb Y0 Cr Y1) e 420v viram textura retangular BGRA */
+    {
+        extern cx_class_t CVPixelBuffer_c __asm__("OBJC_CLASS_$_CVPixelBuffer");
+        extern cx_class_t CVPixelBuffer_m __asm__("OBJC_METACLASS_$_CVPixelBuffer");
+        extern void cx_corevideo_gl_init(void);
+        if (!CVPixelBuffer_c.vtable) cx_define_class(&CVPixelBuffer_c, &CVPixelBuffer_m, "CVPixelBuffer", cx_class_named("NSObject"), 160);
+        cx_corevideo_gl_init();
+        extern int CVPixelBufferCreateWithBytes(void *, unsigned long long, unsigned long long, unsigned, void *, unsigned long long, void *, void *, id, void **);
+        extern int CVPixelBufferCreateWithPlanarBytes(void *, unsigned long long, unsigned long long, unsigned, void *, unsigned long long, unsigned long long, void **, unsigned long long *, unsigned long long *, unsigned long long *, void *, void *, id, void **);
+        extern int CVOpenGLTextureCacheCreate(void *, id, void *, void *, id, void **);
+        extern int CVOpenGLTextureCacheCreateTextureFromImage(void *, void *, void *, id, void **);
+        extern unsigned CVOpenGLTextureGetName(void *), CVOpenGLTextureGetTarget(void *);
+        void glBindTexture(unsigned t, unsigned n);
+        void glGetTexImage(unsigned t, int l, unsigned f, unsigned ty, void *p);
+        /* 2 pixels: Y=235 (branco) e Y=16 (preto) com croma neutro */
+        static unsigned char yuv[4] = {128, 235, 128, 16};
+        void *pb = 0, *cache = 0, *tex = 0;
+        expect("CVPixelBufferCreateWithBytes 2vuy", CVPixelBufferCreateWithBytes(0, 2, 1, 0x32767579, yuv, 4, 0, 0, 0, &pb) == 0 && pb);
+        expect("CVOpenGLTextureCacheCreate", CVOpenGLTextureCacheCreate(0, 0, cctx, pix, 0, &cache) == 0 && cache);
+        expect("textura a partir do buffer", CVOpenGLTextureCacheCreateTextureFromImage(0, cache, pb, 0, &tex) == 0 && tex);
+        unsigned name = CVOpenGLTextureGetName(tex);
+        expect("textura retangular com nome", name != 0 && CVOpenGLTextureGetTarget(tex) == 0x84F5);
+        unsigned char back[8] = {0};
+        CGLSetCurrentContext(cctx);
+        glBindTexture(0x84F5, name);
+        glGetTexImage(0x84F5, 0, 0x80E1, 0x1401, back);
+        expect("2vuy -> BGRA branco e preto", back[0] >= 250 && back[1] >= 250 && back[2] >= 250 && back[4] <= 3 && back[5] <= 3);
+        /* 420v 2x2: Y de 128 e croma Cr alto (vermelho) */
+        static unsigned char Y[4] = {128, 128, 128, 128}, CbCr[2] = {128, 240};
+        void *planes[2] = {Y, CbCr};
+        unsigned long long pw[2] = {2, 1}, ph[2] = {2, 1}, pr[2] = {2, 2};
+        void *pb2 = 0, *tex2 = 0;
+        expect("CVPixelBufferCreateWithPlanarBytes", CVPixelBufferCreateWithPlanarBytes(0, 2, 2, 0x34323076, 0, 0, 2, planes, pw, ph, pr, 0, 0, 0, &pb2) == 0 && pb2);
+        expect("textura do 420v", CVOpenGLTextureCacheCreateTextureFromImage(0, cache, pb2, 0, &tex2) == 0 && tex2);
+        CGLSetCurrentContext(cctx);
+        glBindTexture(0x84F5, CVOpenGLTextureGetName(tex2));
+        unsigned char b2[16] = {0};
+        glGetTexImage(0x84F5, 0, 0x80E1, 0x1401, b2);
+        expect("420v -> R alto, G baixo, B neutro", b2[2] > 200 && b2[1] < 60 && b2[0] > 110 && b2[0] < 150 && b2[12 + 2] > 200);
     }
     CGLSetCurrentContext(0);
     CGLReleaseContext(cctx);

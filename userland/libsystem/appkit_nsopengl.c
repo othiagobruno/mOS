@@ -432,11 +432,26 @@ int CGLTexImageIOSurface2D(void *ctx, u32 target, u32 ifmt, int w, int h, u32 fm
     return r ? kCGLNoError : kCGLBadValue;
 }
 void CGLGetVersion(int *major, int *minor) { if (major) *major = 1; if (minor) *minor = 2; }
-static int g_opts[16];
-int CGLSetOption(int opt, int val) { if (opt < 0 || opt >= 16) return kCGLBadEnumeration; g_opts[opt] = val; return kCGLNoError; }
-int CGLGetOption(int opt, int *val) { if (opt < 0 || opt >= 16) return kCGLBadEnumeration; if (!val) return kCGLBadAddress; *val = g_opts[opt]; return kCGLNoError; }
+/* opções globais: kCGLGOFormatCacheSize (501) .. kCGLGOUseBuildCache (506), as mesmas do NSOpenGLGlobalOption */
+static int g_opts[8] = {0, 5};
+static int gopt_ok(int opt) { return opt >= 501 && opt <= 507; }
+int CGLSetOption(int opt, int val) {
+    if (!gopt_ok(opt)) return kCGLBadEnumeration;
+    if (opt == 502 || opt == 504) return kCGLNoError; /* limpar cache / reiniciar: não há cache de formatos nem renderers carregados */
+    g_opts[opt - 500] = val;
+    return kCGLNoError;
+}
+int CGLGetOption(int opt, int *val) {
+    if (!gopt_ok(opt)) return kCGLBadEnumeration;
+    if (!val) return kCGLBadAddress;
+    *val = g_opts[opt - 500];
+    return kCGLNoError;
+}
 int CGLSetGlobalOption(int opt, const int *val) { return val ? CGLSetOption(opt, *val) : kCGLBadAddress; }
 int CGLGetGlobalOption(int opt, int *val) { return CGLGetOption(opt, val); }
+void NSOpenGLSetOption(int opt, int val) { CGLSetOption(opt, val); }
+void NSOpenGLGetOption(int opt, int *val) { if (CGLGetOption(opt, val) != kCGLNoError && val) *val = 0; }
+void NSOpenGLGetVersion(int *major, int *minor) { CGLGetVersion(major, minor); }
 const char *CGLErrorString(int err) {
     switch (err) {
     case kCGLNoError: return "no error";

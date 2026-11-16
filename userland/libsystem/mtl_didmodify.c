@@ -30,3 +30,28 @@ __asm__(
     "  jmp mos_mtl_did_modify_sysv\n"
 );
 #endif
+
+/*
+ * MTLRenderCommandEncoder.setVertexBuffers(_:offsets:range:) do overlay Swift:
+ * _$sSo23MTLRenderCommandEncoderP5MetalE16setVertexBuffers_7offsets5rangeySaySo9MTLBuffer_pSgG_SaySiGSnySiGtF.
+ * rdi = [MTLBuffer?], rsi = [Int] (objetos Array do Swift: elementos a partir de +32), rdx/rcx = Range<Int>,
+ * self em r13. Vira -setVertexBuffers:offsets:withRange:, como a versão do Objective-C.
+ */
+extern void objc_msgSend_vb(id self, SEL sel, const id *b, const unsigned long *o, nsrange_t r) __asm__("objc_msgSend");
+void mos_mtl_set_vbufs_sysv(const char *bufs, const char *offs, long lower, long upper, id self_) {
+    nsrange_t r;
+    if (!self_ || !bufs || !offs || upper < lower) return;
+    r.location = (unsigned long)lower;
+    r.length = (unsigned long)(upper - lower);
+    objc_msgSend_vb(self_, sel_registerName("setVertexBuffers:offsets:withRange:"), (const id *)(bufs + 32),
+                    (const unsigned long *)(offs + 32), r);
+}
+
+#if defined(__x86_64__)
+__asm__(
+    ".globl \"$sSo23MTLRenderCommandEncoderP5MetalE16setVertexBuffers_7offsets5rangeySaySo9MTLBuffer_pSgG_SaySiGSnySiGtF\"\n"
+    "\"$sSo23MTLRenderCommandEncoderP5MetalE16setVertexBuffers_7offsets5rangeySaySo9MTLBuffer_pSgG_SaySiGSnySiGtF\":\n"
+    "  movq %r13, %r8\n"
+    "  jmp mos_mtl_set_vbufs_sysv\n"
+);
+#endif
