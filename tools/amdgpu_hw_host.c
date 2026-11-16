@@ -3,7 +3,7 @@
  * linhas a cada leitura da posição e conta quadros, a trava de atualização responde no bit de status, e o
  * endereço novo do plano só vale (EARLIEST_INUSE) no vblank depois de soltar a trava.
  * Rodar da raiz:
- *   gcc -O2 -Wall -Wextra -DMOS_HOST_TEST -I kernel/dev/amdgpu -I tools tools/amdgpu_hw_host.c kernel/dev/amdgpu/engine.c \
+ *   gcc -O2 -Wall -Wextra -DMOS_HOST_TEST -I kernel/dev/amdgpu -I tools tools/amdgpu_hw_host.c kernel/dev/amdgpu/engine.c kernel/dev/amdgpu/irq.c \
  *       kernel/dev/amdgpu/amdgpu.c kernel/dev/amdgpu/edid.c kernel/dev/amdgpu/ucode.c -o /tmp/amdgpu_hw && /tmp/amdgpu_hw */
 #include "amdgpu.h"
 #include "regs.h"
@@ -75,6 +75,39 @@ static void mc_xfer(u64 dst, u64 src, u64 n, bool fill, u32 val) {
         dst += step; src += step; n -= step;
     }
 }
+/* IH simulado: entradas de 32 bytes no anel em RAM (endereço de barramento = ponteiro do teste) */
+static u32 ih_w;            /* bytes */
+static bool ih_ovf;
+static u64 ih_pushed, hpd_acks;
+static amdgpu_t *msi_target;   /* entrega da MSI: o driver esvazia o anel logo depois de cada entrada */
+static int in_msi;
+static void ih_push(u32 client, u32 src, u32 ctx) {
+    u32 c = regs[R_IH_RB_CNTL / 4];
+    if (!(c & IH_RB_ENABLE) || (c & IH_MC_SPACE_MASK) != IH_MC_SPACE_BUS) return;
+    u32 bytes = 4u << ((c & IH_RB_SIZE_MASK) >> IH_RB_SIZE_SHIFT);
+    u32 *ring = (u32 *)(uintptr_t)(((u64)(regs[R_IH_RB_BASE_HI / 4] & 0xFF) << 40) | ((u64)regs[R_IH_RB_BASE / 4] << 8));
+    u32 *e = ring + ih_w / 4;
+    memset(e, 0, 32);
+    e[0] = client | src << 8; e[1] = (u32)ih_pushed; e[4] = ctx;
+    ih_w = (ih_w + 32) & (bytes - 1);
+    if (ih_w == regs[R_IH_RB_RPTR / 4]) ih_ovf = true;   /* alcançou o leitor: as mais antigas se perdem */
+    ih_pushed++;
+    u32 wv = ih_w | (ih_ovf ? IH_WPTR_RB_OVERFLOW : 0);
+    regs[R_IH_RB_WPTR / 4] = wv;
+    if (c & IH_WPTR_WB_ENABLE) {
+        u32 *wb = (u32 *)(uintptr_t)(((u64)regs[R_IH_RB_WPTR_ADDR_HI / 4] << 32) | regs[R_IH_RB_WPTR_ADDR_LO / 4]);
+        *wb = wv;
+    }
+    if (msi_target && (c & IH_ENABLE_INTR) && !in_msi) { in_msi = 1; amdgpu_irq_process(msi_target); in_msi = 0; }
+}
+static void hpd_set(int i, bool on) {
+    bool was = regs[R_DC_HPD_INT_STATUS(i) / 4] & DC_HPD_SENSE;
+    if (on) regs[R_DC_HPD_INT_STATUS(i) / 4] |= DC_HPD_SENSE; else regs[R_DC_HPD_INT_STATUS(i) / 4] &= ~DC_HPD_SENSE;
+    u32 h = regs[R_DC_HPD_INT_CONTROL(i) / 4];
+    bool rising = h & DC_HPD_INT_POLARITY;
+    if ((h & DC_HPD_INT_EN) && was != on && on == rising) ih_push(IH_CLIENT_DCE, IH_SRC_DC_HPD, (u32)i);
+}
+
 static void sdma_run(void) {
     u32 rb = regs[R_SDMA_GFX_RB_CNTL / 4];
     if (sdma_dead || !smu_sdma_on || (regs[R_SDMA_F32_CNTL / 4] & SDMA_F32_HALT) || !(rb & SDMA_RB_ENABLE) ||
@@ -96,7 +129,10 @@ static void sdma_run(void) {
             u32 cnt = RD(3) + 1; u64 a = ((u64)RD(2) << 32) | RD(1);
             for (u32 k = 0; k < cnt; k++) { u8 *d = mc_ptr(a + 4 * k, true); u32 v = RD(4 + k); if (d) memcpy(d, &v, 4); }
             len = 4 + cnt;
-        } else if (op == SDMA_OP_TRAP) len = 2;
+        } else if (op == SDMA_OP_TRAP) {
+            if (regs[R_SDMA_CNTL / 4] & SDMA_CNTL_TRAP_ENABLE) ih_push(IH_CLIENT_SDMA0, IH_SRC_SDMA_TRAP, 0);
+            len = 2;
+        }
         else { printf("FALHOU: pacote SDMA desconhecido 0x%x\n", h); total++; break; }
         sdma_packets++;
         rp = (rp + len) & (dw - 1);
@@ -131,6 +167,14 @@ static bool engine_wreg(u32 off, u32 v) {
         ucode_words++; return true;
     }
     if (off == R_SDMA_GFX_RB_WPTR) { regs[off / 4] = v; sdma_run(); return true; }
+    if (off == R_IH_RB_CNTL) {
+        regs[off / 4] = v & ~IH_WPTR_OVERFLOW_CLEAR;
+        if (v & IH_WPTR_OVERFLOW_CLEAR) { ih_ovf = false; regs[R_IH_RB_WPTR / 4] &= ~IH_WPTR_RB_OVERFLOW; }
+        return true;
+    }
+    if (off == R_IH_RB_WPTR) { regs[off / 4] = v; ih_w = v & IH_WPTR_OFFSET_MASK; return true; }
+    for (int i = 0; i < AMD_NUM_HPD; i++)
+        if (off == R_DC_HPD_INT_CONTROL(i)) { if (v & DC_HPD_INT_ACK) hpd_acks++; regs[off / 4] = v & ~DC_HPD_INT_ACK; return true; }
     if (off == R_SDMA_GFX_RB_RPTR) { regs[off / 4] = v; return true; }
     return false;
 }
@@ -198,6 +242,7 @@ const u8 *amd_host_fw(const char *name, u64 *len) {
     return b;
 }
 u64 amd_host_ram_page(void) { return (u64)(uintptr_t)aligned_alloc(4096, 4096); }
+u64 amd_host_ram_alloc(u64 bytes) { return (u64)(uintptr_t)aligned_alloc(4096, (bytes + 4095) & ~4095ull); }
 void vmm_map_wc(u64 phys, u64 size) { wc_lo = phys; wc_len = size; }
 u64 timer_ticks(void) { return now_ms++; }
 void sleep_ms(u64 ms) {
@@ -468,7 +513,8 @@ static bool engines_up(void) {
     amd_ucode_t uc;
     if (!fw || amd_ucode_parse(fw, (usize)n, UC_KIND_SDMA, &uc)) return false;
     ucode_ref = uc.ucode; ucode_ref_dw = uc.ucode_dwords;
-    smu_sdma_on = false; ucode_loaded_ver = 0; sdma_faults = 0;
+    smu_sdma_on = false; ucode_loaded_ver = 0; sdma_faults = 0; ih_w = 0; ih_ovf = false; ih_pushed = 0; hpd_acks = 0;
+    msi_target = &eng;
     return amdgpu_engines_init(&eng);
 }
 static u8 *bar_ptr(u64 bar) { return amd_host_phys(bar); }
@@ -542,6 +588,37 @@ static void test_engines(void) {
     CHECK(sdma_faults == 2, "só as duas faltas provocadas (%llu)", sdma_faults);
     CHECK(!amdgpu_sdma_fill(a, amdgpu_vram_to_mc(a, b1) + 2, 0, 4) && !amdgpu_sdma_fill(a, amdgpu_vram_to_mc(a, b1), 0, 6), "fill desalinhado");
     CHECK(!amdgpu_engines_init(a) || a->sdma_ok, "segunda chamada não refaz");
+
+    /* IH: um trap por fence, HPD, estouro e fonte desconhecida */
+    amdgpu_irq_process(a);
+    u32 c = regs[R_IH_RB_CNTL / 4];
+    CHECK(a->ih_ok && (c & (IH_RB_ENABLE | IH_ENABLE_INTR | IH_WPTR_WB_ENABLE | IH_MC_SNOOP | IH_RPTR_REARM)) ==
+          (IH_RB_ENABLE | IH_ENABLE_INTR | IH_WPTR_WB_ENABLE | IH_MC_SNOOP | IH_RPTR_REARM) && (c & IH_MC_SPACE_MASK) == IH_MC_SPACE_BUS &&
+          ((c & IH_RB_SIZE_MASK) >> IH_RB_SIZE_SHIFT) == 14, "IH ligado (0x%x)", c);
+    CHECK(a->sdma_traps == a->sdma_seq && a->ih_overflows == 0 && a->ih_unknown == 0, "traps %llu de %u fences", a->sdma_traps, a->sdma_seq);
+    CHECK(regs[R_IH_RB_RPTR / 4] == ih_w, "rptr do IH em dia");
+    CHECK((regs[R_DC_HPD_INT_CONTROL(4) / 4] & (DC_HPD_INT_EN | DC_HPD_INT_POLARITY)) == DC_HPD_INT_EN &&
+          (regs[R_DC_HPD_INT_CONTROL(1) / 4] & (DC_HPD_INT_EN | DC_HPD_INT_POLARITY)) == (DC_HPD_INT_EN | DC_HPD_INT_POLARITY), "polaridade inicial do HPD");
+    amdgpu_hpd_take(a);
+    hpd_set(1, true);
+    CHECK(amdgpu_irq_process(a) == 0 && a->hpd_mask == 0x12 && amdgpu_hpd_take(a) == 0x2 && amdgpu_hpd_take(a) == 0, "monitor plugado no HPD 1");
+    CHECK(!(regs[R_DC_HPD_INT_CONTROL(1) / 4] & DC_HPD_INT_POLARITY), "espera a saída agora");
+    hpd_set(4, false);
+    CHECK(amdgpu_irq_process(a) == 0 && a->hpd_mask == 0x2 && amdgpu_hpd_take(a) == 0x10 && a->hpd_events == 2, "HDMI desplugado");
+    hpd_set(4, false);
+    CHECK(amdgpu_irq_process(a) == 0, "sem mudança, sem interrupção");
+    ih_push(0x1B, 77, 0);
+    CHECK(amdgpu_irq_process(a) == 0 && a->ih_unknown == 1, "fonte desconhecida contada");
+    msi_target = NULL;                                  /* interrupções paradas: o anel enche */
+    for (int k = 0; k < 2500; k++) ih_push(IH_CLIENT_SDMA0, IH_SRC_SDMA_TRAP, 0);   /* anel de 2048 entradas */
+    u64 t0 = a->sdma_traps;
+    u32 got = amdgpu_irq_process(a);
+    CHECK(a->ih_overflows == 1 && got > 0 && got < 2048 && a->sdma_traps == t0 + got && !(regs[R_IH_RB_WPTR / 4] & IH_WPTR_RB_OVERFLOW),
+          "estouro do IH (%u entradas lidas)", got);
+    msi_target = a;
+    hpd_set(4, true);
+    CHECK(a->hpd_mask == 0x12 && amdgpu_irq_process(a) == 0 && a->hpd_mask == 0x12 && regs[R_IH_RB_RPTR / 4] == ih_w, "anel volta ao normal depois do estouro");
+    CHECK(hpd_acks >= 3 + 6, "ACKs do HPD");
 
     /* falhas: SMU mudo, SDMA morto */
     smu_alive = false;

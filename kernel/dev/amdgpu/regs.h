@@ -243,3 +243,48 @@
 #define SDMA_OP_CONST_FILL 11u
 #define SDMA_HDR(op, sub)  ((u32)(op) | (u32)(sub) << 8)
 #define SDMA_COPY_MAX      (1u << 22)       /* bytes por pacote COPY_LINEAR / CONST_FILL */
+
+/* ------------------------------------------------------------ interrupções (irq.c) */
+#define AMD_OSSSYS_BASE0 0x10A0u
+#define OSS_REG(off)     AMD_SEG(AMD_OSSSYS_BASE0, off)
+#define R_IH_RB_CNTL                  OSS_REG(0x0080)
+#define R_IH_RB_BASE                  OSS_REG(0x0081)
+#define R_IH_RB_BASE_HI               OSS_REG(0x0082)
+#define R_IH_RB_RPTR                  OSS_REG(0x0083)
+#define R_IH_RB_WPTR                  OSS_REG(0x0084)
+#define R_IH_RB_WPTR_ADDR_HI          OSS_REG(0x0085)
+#define R_IH_RB_WPTR_ADDR_LO          OSS_REG(0x0086)
+#define R_IH_DOORBELL_RPTR            OSS_REG(0x0087)
+#define   IH_RB_ENABLE                0x1u
+#define   IH_RB_SIZE_SHIFT            1
+#define   IH_RB_SIZE_MASK             0x3Eu
+#define   IH_RB_GPU_TS_ENABLE         0x80u
+#define   IH_WPTR_WB_ENABLE           0x100u
+#define   IH_WPTR_OVERFLOW_ENABLE     0x10000u
+#define   IH_ENABLE_INTR              0x20000u
+#define   IH_MC_SNOOP                 0x100000u
+#define   IH_RPTR_REARM               0x200000u
+#define   IH_MC_RO                    0x400000u
+#define   IH_MC_VMID_MASK             0x0F000000u
+#define   IH_MC_SPACE_MASK            0x70000000u
+#define   IH_MC_SPACE_BUS             (1u << 28)     /* endereço de barramento (físico, sem a MMHUB) */
+#define   IH_WPTR_OVERFLOW_CLEAR      0x80000000u
+#define   IH_WPTR_RB_OVERFLOW         0x1u
+#define   IH_WPTR_OFFSET_MASK         0x3FFFCu
+#define   IH_DOORBELL_ENABLE          0x10000000u
+#define R_NBIO_INTERRUPT_CNTL         NBIF_REG(0x00F1)
+#define R_NBIO_INTERRUPT_CNTL2        NBIF_REG(0x00F2)  /* página de leitura falsa >> 8 */
+#define   NBIO_IH_DUMMY_RD_OVERRIDE   0x1u
+#define   NBIO_IH_REQ_NONSNOOP_EN     0x8u
+#define R_DC_HPD_INT_CONTROL(i)       DCN_REG(0x1F15 + (i) * 8u)
+#define   DC_HPD_INT_STATUS           0x1u
+#define   DC_HPD_INT_ACK              0x1u
+#define   DC_HPD_INT_POLARITY         0x100u    /* 1 = interrompe quando o sinal sobe (monitor plugado) */
+#define   DC_HPD_INT_EN               0x10000u
+#define   SDMA_CNTL_TRAP_ENABLE       0x1u
+/* entrada do IH: 8 dwords. dw0 = cliente[7:0] | fonte[15:8] | anel[23:16] | vmid[27:24]; dw4.. = dados */
+#define IH_CLIENT_DCE     0x04u
+#define IH_CLIENT_SDMA0   0x08u
+#define IH_SRC_SDMA_TRAP  224u
+#define IH_SRC_DC_HPD     9u          /* contexto (dw4) 0..5 = HPD1..6 */
+#define AMD_IH_RING_BYTES (64u * 1024u)
