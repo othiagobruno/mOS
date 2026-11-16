@@ -74,7 +74,7 @@ python3 -I tools/verificar-imagem-arm64.py --relatorio <esp>  # lacunas de uma E
 | 1. Ferramentas | pronto, `tools/arm64-imagem-teste.sh`: 11 verificações ok |
 | 2. `/usr/lib` universal | pronto no `tools/build.sh`: libc++, libz, libsqlite3, libcurl e libxml2 com x86_64 + arm64 (`MOS_ARCH=arm64` nos scripts). As quatro fatias arm64 novas compilaram neste Linux; libicucore e libcompression ficam com o libSystem (`libsystem_dylib_ok`) |
 | 3. Swift arm64 | a fazer |
-| 4. Frameworks arm64 | a fazer |
+| 4. Frameworks arm64 | parte ObjC/C pronta no `tools/build.sh` (`MOS_ARCH=arm64` no `build-frameworks-objc.sh` e no `build-coreimage.sh`, `lipo-mos.py --arvore` na ESP): 19 frameworks compilaram em arm64 aqui (AudioToolbox, CloudKit, Collaboration, CoreData, CoreImage, FinderSync, NaturalLanguage, Photos, PhotosUI, QuickLookUI, SecurityInterface, ServiceManagement, StoreKit, UIKit, Virtualization, WebKit...). Falta o que é Swift: ExtensionFoundation, ExtensionKit, overlays de CoreData/NaturalLanguage, Combine e CryptoKit (dependem do item 3) |
 | 5. swiftcc arm64 no libSystem | a fazer |
 | 6. Verificador no build | a fazer (entra quando 2–5 fecharem, senão o build para) |
 | 7. Build final | a fazer |

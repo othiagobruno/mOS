@@ -34,6 +34,17 @@ if "${LIPO[@]}" -o "$T/dup" "$T/liba.u" "$T/liba-aarch64.dylib" 2>/dev/null; the
 "${LIPO[@]}" -o "$T/liba.u2" "$T/liba.u" > /dev/null
 cmp -s "$T/liba.u" "$T/liba.u2" && ok "reempacotar um universal dá o mesmo arquivo" || falha "reempacotar"
 
+# --arvore: a árvore arm64 entra como fatia nos arquivos de mesmo caminho; quem já tem arm64 fica igual
+mkdir -p "$T/r/usr/lib" "$T/a/usr/lib"
+cp "$T/liba-x86_64.dylib" "$T/r/usr/lib/libmosa.dylib"
+cp "$T/liba-aarch64.dylib" "$T/a/usr/lib/libmosa.dylib"
+"${LIPO[@]}" --arvore "$T/r" "$T/a" > /dev/null
+[ "$("${LIPO[@]}" --archs "$T/r/usr/lib/libmosa.dylib")" = "x86_64 arm64" ] && ok "--arvore junta a fatia arm64" || falha "--arvore"
+"${LIPO[@]}" --arvore "$T/r" "$T/a" > /dev/null
+[ "$("${LIPO[@]}" --archs "$T/r/usr/lib/libmosa.dylib")" = "x86_64 arm64" ] && ok "--arvore de novo não duplica" || falha "--arvore 2x"
+cp "$T/liba-aarch64.dylib" "$T/a/usr/lib/libso-arm.dylib"
+if "${LIPO[@]}" --arvore "$T/r" "$T/a" > /dev/null 2>&1; then falha "--arvore aceitou arquivo sem par"; else ok "--arvore acusa arquivo sem par x86_64"; fi
+
 # ESP mínima
 esp() {
     rm -rf "$T/esp"; mkdir -p "$T/esp/mOS/Sistema/Biblioteca/a64" "$T/esp/mOS/usr/lib" "$T/esp/mOS/Aplicativos/X.app"
