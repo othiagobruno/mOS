@@ -137,6 +137,8 @@ static int smj_find_login_helper(const char *ident, char *path, size_t cap) {
     return -1;
 }
 
+int cx_smj_login_helper(const char *ident, char *path, size_t cap) { return smj_find_login_helper(ident, path, cap); }
+
 u8 SMLoginItemSetEnabled(id ident, u8 enabled) {
     const char *s = ident && cx_is_str(ident) ? cx_cstr(ident) : 0;
     char path[1200];

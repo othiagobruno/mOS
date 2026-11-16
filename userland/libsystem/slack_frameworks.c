@@ -192,59 +192,104 @@ int cx_sm_remember(const char *key, int status);
 int cx_sm_recall(const char *key);
 int cx_sm_publish_file(int daemon, const char *plist_path);
 int cx_sm_unpublish_file(int daemon, const char *plist_path);
+int cx_login_add(const char *path);
+int cx_login_remove(const char *path);
+int cx_login_has(const char *path);
+int cx_smj_login_helper(const char *ident, char *path, size_t cap);    /* smjob.c */
+int cx_open_target(const char *target, const char *app, int by_ident, int timeout_ms);
 static void sm_key(smapp_t *m, char *out, size_t cap) {
     snprintf(out, cap, "%s:%s", m->cat[0] ? m->cat : "main", m->ident ? cx_cstr(m->ident) : "");
 }
-static i64 sm_status(id s, SEL c) {
-    (void)c;
-    char key[300];
-    sm_key((smapp_t *)s, key, sizeof key);
-    int disk = cx_sm_recall(key);
-    if (disk >= 0) ((smapp_t *)s)->status = disk;
-    return ((smapp_t *)s)->status;      /* 0 notRegistered, 1 enabled, 3 notFound */
+/* SMAppServiceStatus: 0 notRegistered, 1 enabled, 2 requiresApproval, 3 notFound */
+enum { SM_NOT_REG = 0, SM_ENABLED = 1, SM_NEEDS_OK = 2, SM_NOT_FOUND = 3 };
+/* SMAppServiceErrorDomain (= NSOSStatusErrorDomain no macOS) e os kSMError* */
+enum { kSMErrorInternalFailure = 2, kSMErrorInvalidSignature = 3, kSMErrorJobNotFound = 6, kSMErrorJobPlistNotFound = 8,
+       kSMErrorInvalidPlist = 10, kSMErrorLaunchDeniedByUser = 11 };
+static id sm_error(long code, const char *msg) {
+    id ui = MSG(id, cls("NSDictionary"), "dictionaryWithObject:forKey:", cx_str(msg), cx_str("NSLocalizedDescription"));
+    return MSG(id, cls("NSError"), "errorWithDomain:code:userInfo:", cx_str("SMAppServiceErrorDomain"), code, ui);
 }
-/* agente/daemon: o plist em Contents/Library/LaunchAgents|LaunchDaemons do app vai ao launchd (launchctl load)
- * e uma cópia fica em ~/Library/LaunchAgents ou /Library/LaunchDaemons para o próximo boot. */
+/* o que o serviço aponta: o .app (principal ou ajudante de Contents/Library/LoginItems) ou o plist do agente/daemon */
 int cx_launchd_cmd(unsigned op, const char *arg, char *out, unsigned cap);
-static BOOL sm_plist_path(smapp_t *m, char *path, size_t cap) {
+static BOOL sm_target(smapp_t *m, char *path, size_t cap) {
     id b = MSG0(id, (id)cx_class_named("NSBundle"), "mainBundle");
     id bp = b ? MSG0(id, b, "bundlePath") : 0;
-    if (!bp || !m->ident) return NO;
+    if (!bp) return NO;
+    if (!strcmp(m->cat, "main")) { snprintf(path, cap, "%s", cx_cstr(bp)); return YES; }
+    if (!strcmp(m->cat, "login")) return m->ident && cx_smj_login_helper(cx_cstr(m->ident), path, cap) == 0;
+    if (!m->ident) return NO;
     snprintf(path, cap, "%s/Contents/Library/%s/%s", cx_cstr(bp), m->kind == 2 ? "LaunchDaemons" : "LaunchAgents", cx_cstr(m->ident));
-    return YES;
+    return access(path, 0) == 0;
+}
+static i64 sm_status(id s, SEL c) {
+    (void)c;
+    smapp_t *m = (smapp_t *)s;
+    char path[1200], key[300];
+    if (!sm_target(m, path, sizeof path)) return m->status = SM_NOT_FOUND;
+    /* app e ajudante: a verdade é a lista de login items (o usuário pode tirar nos Ajustes) */
+    if (!m->kind) return m->status = cx_login_has(path) ? SM_ENABLED : SM_NOT_REG;
+    sm_key(m, key, sizeof key);
+    int disk = cx_sm_recall(key);
+    return m->status = disk == SM_ENABLED ? SM_ENABLED : SM_NOT_REG;
 }
 static BOOL sm_register(id s, SEL c, id *err) {
     (void)c;
     smapp_t *m = (smapp_t *)s;
     if (err) *err = 0;
-    char path[1024], out[256];
-    char key[300];
+    char path[1200], out[256], key[300];
     sm_key(m, key, sizeof key);
-    if (m->kind && sm_plist_path(m, path, sizeof path)) {
+    if (!sm_target(m, path, sizeof path)) {
+        m->status = SM_NOT_FOUND;
+        if (err) *err = sm_error(m->kind ? kSMErrorJobPlistNotFound : kSMErrorJobNotFound,
+                                 m->kind ? "O plist do serviço não está em Contents/Library." : "O app ajudante não está em Contents/Library/LoginItems.");
+        return NO;
+    }
+    if (!m->kind) {
+        if (cx_login_add(path) != 0) { if (err) *err = sm_error(kSMErrorInternalFailure, "Não foi possível gravar a lista de itens de login."); return NO; }
+    } else {
+        out[0] = 0;
         int r = cx_launchd_cmd(2 /* LC_LOAD */, path, out, sizeof out);
-        if (r != 0 && !strstr(out, "carregado")) { m->status = 3; cx_sm_remember(key, 3); return NO; }
+        if (r != 0 && !strstr(out, "carregado")) {
+            if (err) *err = sm_error(kSMErrorInvalidPlist, out[0] ? out : "O launchd recusou o plist.");
+            return NO;
+        }
         cx_sm_publish_file(m->kind == 2, path);
     }
-    m->status = 1;
-    cx_sm_remember(key, 1);
+    m->status = SM_ENABLED;
+    cx_sm_remember(key, SM_ENABLED);
     return YES;
 }
 static BOOL sm_unregister(id s, SEL c, id *err) {
     (void)c;
     smapp_t *m = (smapp_t *)s;
     if (err) *err = 0;
-    char path[1024], key[300];
+    char path[1200], key[300];
     sm_key(m, key, sizeof key);
-    if (m->kind && sm_plist_path(m, path, sizeof path)) {
+    if (!sm_target(m, path, sizeof path)) {
+        if (err) *err = sm_error(kSMErrorJobNotFound, "O serviço não existe neste app.");
+        return NO;
+    }
+    if (!m->kind) cx_login_remove(path);
+    else {
         cx_launchd_cmd(3 /* LC_UNLOAD */, path, 0, 0);
         cx_sm_unpublish_file(m->kind == 2, path);
     }
-    m->status = 0;
-    cx_sm_remember(key, 0);
+    m->status = SM_NOT_REG;
+    cx_sm_remember(key, SM_NOT_REG);
     return YES;
 }
-static void sm_unregister_cb(id s, SEL c, void *done) { sm_unregister(s, c, 0); call_blk1(done, 0); }
-static void sm_open_settings(id k, SEL c) { (void)k; (void)c; }
+static void sm_unregister_cb(id s, SEL c, void *done) { id err = 0; sm_unregister(s, c, &err); call_blk1(done, err); }
+/* item de login antigo (LSSharedFileList/SMLoginItemSetEnabled) num caminho qualquer */
+static i64 sm_legacy_status(id k, SEL c, id url) {
+    (void)k; (void)c;
+    id p = url ? MSG0(id, url, "path") : 0;
+    return p && cx_is_str(p) && cx_login_has(cx_cstr(p)) ? SM_ENABLED : SM_NOT_REG;
+}
+/* Ajustes > Geral > Itens de Início */
+static void sm_open_settings(id k, SEL c) {
+    (void)k; (void)c;
+    cx_open_target("x-apple.systempreferences:com.apple.LoginItems-Settings.extension", 0, 0, 5000);
+}
 
 /* ================================================================ CoreSpotlight: índice local */
 cx_class_t CSSearchableIndex_c __asm__("OBJC_CLASS_$_CSSearchableIndex"), CSSearchableIndex_m __asm__("OBJC_METACLASS_$_CSSearchableIndex");
@@ -392,6 +437,7 @@ void cx_slack_frameworks_init(void) {
     AC(&SMAppService_c, "openSystemSettingsLoginItems", sm_open_settings);
     A(&SMAppService_c, "status", sm_status); A(&SMAppService_c, "registerAndReturnError:", sm_register);
     A(&SMAppService_c, "unregisterAndReturnError:", sm_unregister); A(&SMAppService_c, "unregisterWithCompletionHandler:", sm_unregister_cb);
+    AC(&SMAppService_c, "statusForLegacyURL:", sm_legacy_status);
 
     K(&CSSearchableIndex_c, &CSSearchableIndex_m, "CSSearchableIndex", obj, (u32)(sizeof(csindex_t) - 8));
     AC(&CSSearchableIndex_c, "defaultSearchableIndex", cs_default); AC(&CSSearchableIndex_c, "isIndexingAvailable", cs_available);
