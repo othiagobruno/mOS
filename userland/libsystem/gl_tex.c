@@ -1175,6 +1175,8 @@ void gl_tex_sampler(gl_ctx_t *C, gl_tex_t *t, gl_samp_t *s, msl_samp_t *o) {
     o->lodmin = minl < 0 ? 0 : minl;
     o->lodmax = maxl;
     o->lodbias = (s ? s->lod_bias : 0) + t->lod_bias;
+    o->aniso = s ? s->aniso : t->aniso;
+    if (o->aniso > 16) o->aniso = 16;   /* GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT */
     o->bcustom = 1;
     const float *b = s ? s->border : t->border;
     for (int i = 0; i < 4; i++) o->bcol[i] = b[i];

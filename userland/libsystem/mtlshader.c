@@ -1481,6 +1481,7 @@ static msl_samp_t *parse_sampler_args(P_t *P) {
             }
             expect(P, ")");
             if (!strcmp(v, "lod_clamp")) { s->lodmin = (float)x[0]; s->lodmax = (float)x[1]; }
+            else if (!strcmp(v, "max_anisotropy")) s->aniso = (float)x[0];
         } else if (accept(P, "=")) {
             /* coord = normalized, filter = linear... */
             char *b = qual_name(P);

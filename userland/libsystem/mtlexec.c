@@ -728,7 +728,8 @@ static void tex_call(node_t *n, fr_t *fr, reg_t *r) {
         int nc = tt->tex == MSL_TEX_1D || tt->tex == MSL_TEX_1D_ARRAY ? 1 : (tt->tex == MSL_TEX_3D || tt->tex == MSL_TEX_CUBE || tt->tex == MSL_TEX_CUBE_ARRAY) ? 3 : 2;
         msl_deriv_t *D = fr->ctx->deriv;
         int implicit = !(n->d && (n->d->bi == B_LEVEL || n->d->bi == B_GRAD));
-        double ilod = 0;
+        double ilod = 0, axis[2] = {0, 0};
+        int an = 0;
         if (implicit && D && D->mode) {
             /* lod implícita: maior variação da coordenada em texels entre o pixel e os vizinhos */
             int k = D->k++;
@@ -744,11 +745,30 @@ static void tex_call(node_t *n, fr_t *fr, reg_t *r) {
                 }
                 double m = ax > ay ? ax : ay;
                 ilod = m > 0 ? 0.5 * log2(m) : -1000;
+                /* anisotropia: N amostras ao longo do eixo maior da pegada, lod pelo eixo maior / N */
+                if (s->aniso > 1 && nc2 == 2 && m == m && m > 0 && m < 1e30 && t->levels > 1) {
+                    double mj = sqrt(m), mn = sqrt(ax > ay ? ay : ax);
+                    int N = mn > 0 ? (int)ceil(mj / mn) : (int)s->aniso;
+                    if (N > (int)s->aniso) N = (int)s->aniso;
+                    if (N > 1) {
+                        an = N;
+                        for (int i = 0; i < 2; i++) axis[i] = ax >= ay ? D->v[0][k][i] - cd[i] : D->v[1][k][i] - cd[i];
+                        ilod = log2(mj / N);
+                    }
+                }
             }
         }
         if (n->d && n->d->bi == B_BIAS) lod += s->lodbias + ilod;
         else if (!(n->d && n->d->bi == B_LEVEL)) lod = s->lodbias + ilod;
-        msl_tex_sample(t, s, cd, nc, slice, lod, out);
+        if (an > 1 && m == T_SAMPLE) {
+            double acc[4] = {0, 0, 0, 0};
+            for (int j = 0; j < an; j++) {
+                double f = (j + 0.5) / an - 0.5, c2[4] = {cd[0] + axis[0] * f, cd[1] + axis[1] * f, cd[2], cd[3]}, o2[4];
+                msl_tex_sample(t, s, c2, nc, slice, lod, o2);
+                for (int i = 0; i < 4; i++) acc[i] += o2[i];
+            }
+            for (int i = 0; i < 4; i++) out[i] = acc[i] / an;
+        } else msl_tex_sample(t, s, cd, nc, slice, lod, out);
         if (m == T_SAMPLE_CMP) {
             reg_t ref;
             ev(n->v[ai < n->nv ? ai : n->nv - 1], fr, &ref);

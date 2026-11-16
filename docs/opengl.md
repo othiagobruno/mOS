@@ -42,12 +42,12 @@ gcc -std=gnu11 -O1 -w -fno-builtin -I tools/hostinc -I $L -o /tmp/gl_host tools/
     $L/gl_glsl_tr.c $L/gl_glsl_pre.c $L/mtltex.c $L/mtlshader.c $L/mtlexec.c $L/mslspirv.c -lm -lpthread && /tmp/gl_host
 ```
 
-Resultado registrado (16 nov.): `gl_host: 126/126 ok`. Confere clear/scissor, cobertura exata de um triângulo
+Resultado registrado (16 nov.): `gl_host: 132/132 ok`. Confere clear/scissor, cobertura exata de um triângulo
 (496 pixels em 32×32), gradiente, flat, depth, stencil, blending, textura nearest/modulate/luminância, BGRA, DXT1,
 FBO + blit + renderbuffer, lista de exibição, luz difusa, fog, seleção, arrays de cliente, VBO/EBO, VAO do APPLE com
 buffer apagado, GLSL 4.10 core (atributos, uniforms, `out`, função com `out`, erro de compilação no log), textura +
 `discard` + UBO std140 (offsets e tamanho), GLSL 1.10 compat (`ftransform`, `gl_Color`, `gl_TexCoord`), MRT com
-`gl_FragData`, transform feedback com query, avaliador 2D com cor, `glGetMap`, `glAccum`, programas ARB (vp com `state.matrix.mvp`, fp com `TEX`, `program.local`, `KIL`, `MUL_SAT`, erro de sintaxe com posição), `EXT_bindable_uniform`, `dFdx`/`dFdy`/`fwidth` com valor conhecido, nível de mipmap escolhido pela lod implícita, geometry shader (ponto → quadrado com cor interpolada, triângulos com bloco e `gl_PrimitiveIDIn`, erro de modo incompatível), pontilhado de linha (padrão, fator, contador contínuo no strip e reiniciado em `GL_LINES`) e de polígono (`LSB_FIRST`, `glGetPolygonStipple`, `glPopAttrib`, lista de exibição), depuração (rótulos KHR/EXT apagados com o objeto, erros do GL no log, controle por id herdado pelos grupos, push/pop, callback, marcadores do EXT). Também roda no `tools/build.sh`.
+`gl_FragData`, transform feedback com query, avaliador 2D com cor, `glGetMap`, `glAccum`, programas ARB (vp com `state.matrix.mvp`, fp com `TEX`, `program.local`, `KIL`, `MUL_SAT`, erro de sintaxe com posição), `EXT_bindable_uniform`, `dFdx`/`dFdy`/`fwidth` com valor conhecido, nível de mipmap escolhido pela lod implícita, geometry shader (ponto → quadrado com cor interpolada, triângulos com bloco e `gl_PrimitiveIDIn`, erro de modo incompatível), pontilhado de linha (padrão, fator, contador contínuo no strip e reiniciado em `GL_LINES`) e de polígono (`LSB_FIRST`, `glGetPolygonStipple`, `glPopAttrib`, lista de exibição), depuração (rótulos KHR/EXT apagados com o objeto, erros do GL no log, controle por id herdado pelos grupos, push/pop, callback, marcadores do EXT), anisotropia (pegada 16×4: nível 4 sem, nível 2 com 4×, na fixed function e no GLSL). Também roda no `tools/build.sh`.
 
 `tools/nsopengl_host.c` (objetos compilados com as flags do libSystem): `CGLChoosePixelFormat`, contexto legado (2.1)
 e core (4.1), `flushBuffer` pondo o quadro BGRA no layer da view, `CGLSetOffScreen`, opções globais (`NSOpenGLGetOption`/`SetOption`/`GetVersion`), `CVOpenGLTextureCache` com `2vuy` e `420v`
@@ -70,7 +70,10 @@ Não houve VM nem app real nesta entrega: nada aqui diz que um app OpenGL espec�
   mipmap (ou filtros min e mag diferentes), o fragmento roda antes nos vizinhos x+1 e y+1 (varyings pelas derivadas
   analíticas do raster) e cada chamada usa a diferença; a lod implícita do `texture()` sai disso. Custa 3 execuções
   por pixel nesses shaders. Uma derivada cujo argumento depende de outra derivada usa 0 no vizinho.
-- Uma amostra por pixel (MSAA guarda uma amostra; o resolve é cópia). Sem anisotropia real.
+- Uma amostra por pixel (MSAA guarda uma amostra; o resolve é cópia).
+- Anisotropia (`EXT_texture_filter_anisotropic`, até 16×) em texturas 2D com mipmap: N = razão dos eixos da pegada (limitada
+  ao máximo), N amostras ao longo do eixo maior e lod pelo eixo maior / N. Vale também para o Metal (`maxAnisotropy`,
+  `max_anisotropy(n)` no MSL).
 - Subrotinas do GLSL e binários de programa não existem (`GL_NUM_PROGRAM_BINARY_FORMATS` = 0).
 - Desempenho de CPU com o interpretador: UI, ferramentas e cenas simples; jogos pesados ficam lentos.
 - Processos do Chromium/Electron continuam sem OpenGL (a CGL recusa o pixel format): eles usam o Metal/SwiftShader.

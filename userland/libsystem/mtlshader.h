@@ -47,6 +47,7 @@ typedef struct msl_samp {
     int bcustom;               /* 1: bcol é a cor de borda (GL_TEXTURE_BORDER_COLOR) */
     float bcol[4];
     float lodbias;
+    float aniso;               /* anisotropia máxima (0 ou 1 = desligada) */
 } msl_samp_t;
 /* aplica o swizzle da textura a um texel já lido */
 void msl_tex_swizzle(const msl_tex_t *t, double v[4]);

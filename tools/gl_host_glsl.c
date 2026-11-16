@@ -326,6 +326,24 @@ static void t_derivatives(void) {
     glDrawArrays(GL_TRIANGLES, 0, 6);
     px(5, 5, o);
     CHECK(o[0] == 255 && o[1] == 0, "magnificação usa o nível 0 %d %d %d", o[0], o[1], o[2]);
+    /* anisotropia: pegada de 16x4 texels; sem ela nível 4 (verde), com 4x nível 2 (azul) */
+    const char *fs3 = "#version 330\nin vec2 uv;\nuniform sampler2D t;\nout vec4 o;\nvoid main() { o = texture(t, vec2(uv.x * 2.0, uv.y * 0.5)); }\n";
+    GLuint p3 = prog(vs, fs3, log, sizeof log);
+    CHECK(p3 != 0, "programa anisotrópico liga");
+    static u8 lv[64 * 64 * 4];
+    for (int l = 0, w = 64; w >= 1; l++, w /= 2) {
+        for (int i = 0; i < w * w; i++) { lv[i * 4] = l == 2 || l == 4 ? 0 : 255; lv[i * 4 + 1] = l == 4 ? 255 : 0; lv[i * 4 + 2] = l == 2 ? 255 : 0; lv[i * 4 + 3] = 255; }
+        glTexImage2D(GL_TEXTURE_2D, l, GL_RGBA8, w, w, 0, GL_RGBA, GL_UNSIGNED_BYTE, lv);
+    }
+    glUseProgram(p3);
+    glViewport(0, 0, 8, 8);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+    px(4, 4, o);
+    CHECK(o[1] == 255 && o[2] == 0, "sem anisotropia: nível 4 (%d %d %d)", o[0], o[1], o[2]);
+    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT, 4);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+    px(4, 4, o);
+    CHECK(o[2] == 255 && o[1] == 0, "anisotropia 4x: nível 2 (%d %d %d)", o[0], o[1], o[2]);
     gl_ctx_destroy(C);
 }
 
