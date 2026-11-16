@@ -1268,6 +1268,9 @@ static int url_split(const char *s, char *scheme, char *host, int *port, const c
     *path = slash ? slash : "/";
     return 1;
 }
+static void req_ext_copy(id dst, id src);
+static void resp_parse_ct(id s, id ct);
+static id hdr_value(id dict, id field);
 static id req_with(id cls, SEL c, id url) { (void)c; box_t *o = (box_t *)cx_alloc_instance((cx_class_t *)cls); o->a = retain(url); o->b = ns("GET"); o->c = mutdict(); return ar((id)o); }
 static id req_url(id s, SEL c) { (void)c; return BOX(s)->a; }
 static id req_method(id s, SEL c) { (void)c; return BOX(s)->b; }
@@ -1308,15 +1311,15 @@ static id req_init_url(id s, SEL c, id url) {
     return s;
 }
 static id req_init_url_pt(id s, SEL c, id url, u64 policy, double timeout) {
-    (void)policy;
     req_init_url(s, c, url);
     BOX(s)->d = timeout > 0 ? timeout : 60;
+    BOX(s)->fl = (int)policy;
     return s;
 }
 static id req_with_pt(id cls, SEL c, id url, u64 policy, double timeout) {
     id r = req_with(cls, c, url);
     BOX(r)->d = timeout > 0 ? timeout : 60;
-    (void)policy;
+    BOX(r)->fl = (int)policy;
     return r;
 }
 static double req_timeout(id s, SEL c) {
@@ -1340,6 +1343,7 @@ static id req_copy_as(id s, cx_class_t *cls) {
     o->e = retain(BOX(s)->e);
     o->d = BOX(s)->d;
     o->fl = BOX(s)->fl;
+    req_ext_copy((id)o, s);
     return (id)o;
 }
 static id req_copy(id s, SEL c) { (void)c; return req_copy_as(s, (cx_class_t *)object_getClass(s)); }
@@ -1351,12 +1355,226 @@ static void req_set_body(id s, SEL c, id d) { (void)c; rel(BOX(s)->e); BOX(s)->e
 static id resp_make(id url, int status, id headers, long long len) {
     box_t *o = (box_t *)cx_alloc_instance(&NSHTTPURLResponse_c);
     o->a = retain(url); o->i = status; o->b = retain(headers); o->j = len;
+    resp_parse_ct((id)o, headers ? hdr_value(headers, ns("Content-Type")) : 0);
     return (id)o;
 }
 static id resp_url(id s, SEL c) { (void)c; return BOX(s)->a; }
 static long resp_status(id s, SEL c) { (void)c; return (long)BOX(s)->i; }
 static id resp_headers(id s, SEL c) { (void)c; return BOX(s)->b; }
 static long long resp_len(id s, SEL c) { (void)c; return BOX(s)->j; }
+
+/* ---- NSURLRequest: o resto das propriedades (box: a URL, b método, c cabeçalhos, e corpo, d prazo, fl política,
+ * p extensão abaixo) e os cabeçalhos sem diferença de caixa, como no macOS */
+typedef struct {
+    int cookies, cellular, expensive, constrained, pipelining, http3, dnssec;
+    u64 service, attribution;
+    id stream, main_doc;
+} req_ext_t;
+static void box_dealloc(id s, SEL c);
+static req_ext_t *rx(id s) {
+    req_ext_t *x = (req_ext_t *)BOX(s)->p;
+    if (!x) {
+        x = calloc(1, sizeof *x);
+        if (!x) return 0;
+        x->cookies = x->cellular = x->expensive = x->constrained = 1;
+        BOX(s)->p = x;
+    }
+    return x;
+}
+/* chave já presente no dicionário com outra caixa (nil se não há) */
+static id hdr_key(id dict, id field) {
+    if (!dict || !field) return 0;
+    id keys = MSG0(id, dict, "allKeys");
+    u64 n = keys ? MSG0(u64, keys, "count") : 0;
+    const char *f = cs(field);
+    for (u64 i = 0; i < n; i++) {
+        id k = MSG(id, keys, "objectAtIndex:", i);
+        if (k && !strcasecmp(cs(k), f)) return k;
+    }
+    return 0;
+}
+static id hdr_value(id dict, id field) { id k = hdr_key(dict, field); return k ? MSG(id, dict, "objectForKey:", k) : 0; }
+static id req_value_for(id s, SEL c, id field) { (void)c; return hdr_value(BOX(s)->c, field); }
+static void req_set_value(id s, SEL c, id v, id field) {
+    (void)c;
+    if (!field) return;
+    if (!BOX(s)->c) BOX(s)->c = mutdict();
+    id old = hdr_key(BOX(s)->c, field);
+    if (old) MSG(void, BOX(s)->c, "removeObjectForKey:", old);
+    if (v) MSG(void, BOX(s)->c, "setObject:forKey:", v, field);
+}
+static void req_add_value(id s, SEL c, id v, id field) {
+    if (!v || !field) return;
+    id cur = hdr_value(BOX(s)->c, field);
+    if (!cur) { req_set_value(s, c, v, field); return; }
+    char *j = 0;
+    const char *a = cs(cur), *b = cs(v);
+    size_t n = strlen(a) + strlen(b) + 3;
+    j = malloc(n);
+    if (!j) return;
+    cx_snprintf(j, n, "%s,%s", a, b);
+    id joined = ns(j);
+    free(j);
+    req_set_value(s, c, joined, hdr_key(BOX(s)->c, field));
+}
+static void req_set_all_headers(id s, SEL c, id d) {
+    (void)c;
+    rel(BOX(s)->c);
+    BOX(s)->c = mutdict();
+    id keys = d ? MSG0(id, d, "allKeys") : 0;
+    u64 n = keys ? MSG0(u64, keys, "count") : 0;
+    for (u64 i = 0; i < n; i++) {
+        id k = MSG(id, keys, "objectAtIndex:", i);
+        req_set_value(s, c, MSG(id, d, "objectForKey:", k), k);
+    }
+}
+#define RXB(get, set, f) \
+    static BOOL req_g_##get(id s, SEL c) { (void)c; req_ext_t *x = rx(s); return x ? (BOOL)x->f : NO; } \
+    static void req_s_##get(id s, SEL c, BOOL v) { (void)c; req_ext_t *x = rx(s); if (x) x->f = v ? 1 : 0; }
+RXB(cookies, setHTTPShouldHandleCookies, cookies) RXB(cellular, setAllowsCellularAccess, cellular)
+RXB(expensive, setAllowsExpensiveNetworkAccess, expensive) RXB(constrained, setAllowsConstrainedNetworkAccess, constrained)
+RXB(pipelining, setHTTPShouldUsePipelining, pipelining) RXB(http3, setAssumesHTTP3Capable, http3)
+RXB(dnssec, setRequiresDNSSECValidation, dnssec)
+#undef RXB
+static u64 req_service(id s, SEL c) { (void)c; req_ext_t *x = rx(s); return x ? x->service : 0; }
+static void req_set_service(id s, SEL c, u64 v) { (void)c; req_ext_t *x = rx(s); if (x) x->service = v; }
+static u64 req_attribution(id s, SEL c) { (void)c; req_ext_t *x = rx(s); return x ? x->attribution : 0; }
+static void req_set_attribution(id s, SEL c, u64 v) { (void)c; req_ext_t *x = rx(s); if (x) x->attribution = v; }
+static id req_stream(id s, SEL c) { (void)c; req_ext_t *x = rx(s); return x ? x->stream : 0; }
+static void req_set_stream(id s, SEL c, id v) {
+    (void)c;
+    req_ext_t *x = rx(s);
+    if (!x) return;
+    id o = x->stream; x->stream = retain(v); rel(o);
+    /* corpo e stream se excluem, como no macOS */
+    if (v) { rel(BOX(s)->e); BOX(s)->e = 0; }
+}
+static id req_main_doc(id s, SEL c) { (void)c; req_ext_t *x = rx(s); return x ? x->main_doc : 0; }
+static void req_set_main_doc(id s, SEL c, id v) { (void)c; req_ext_t *x = rx(s); if (!x) return; id o = x->main_doc; x->main_doc = retain(v); rel(o); }
+static void req_ext_copy(id dst, id src) {
+    req_ext_t *a = (req_ext_t *)BOX(src)->p;
+    if (!a) return;
+    req_ext_t *b = rx(dst);
+    if (!b) return;
+    *b = *a;
+    b->stream = retain(a->stream);
+    b->main_doc = retain(a->main_doc);
+}
+static void req_dealloc(id s, SEL c) {
+    req_ext_t *x = (req_ext_t *)BOX(s)->p;
+    if (x) { rel(x->stream); rel(x->main_doc); free(x); BOX(s)->p = 0; }
+    box_dealloc(s, c);
+}
+static BOOL req_equal(id s, SEL c, id o) {
+    (void)c;
+    if (s == o) return YES;
+    if (!o || !cx_is_subclass(object_getClass(o), &NSURLRequest_c)) return NO;
+    if (!MSG(BOOL, BOX(s)->a, "isEqual:", BOX(o)->a)) return NO;
+    if (strcmp(cs(BOX(s)->b), cs(BOX(o)->b))) return NO;
+    id ha = BOX(s)->c, hb = BOX(o)->c;
+    if ((ha ? MSG0(u64, ha, "count") : 0) != (hb ? MSG0(u64, hb, "count") : 0)) return NO;
+    if (ha && hb && !MSG(BOOL, ha, "isEqualToDictionary:", hb)) return NO;
+    if ((BOX(s)->e != 0) != (BOX(o)->e != 0) || (BOX(s)->e && !MSG(BOOL, BOX(s)->e, "isEqual:", BOX(o)->e))) return NO;
+    return BOX(s)->d == BOX(o)->d && BOX(s)->fl == BOX(o)->fl;
+}
+static u64 req_hash(id s, SEL c) { (void)c; return BOX(s)->a ? MSG0(u64, BOX(s)->a, "hash") : 0; }
+static BOOL req_secure(id k, SEL c) { (void)k; (void)c; return YES; }
+
+/* ---- NSURLResponse / NSHTTPURLResponse (box: a URL, b cabeçalhos, c MIME, e codificação, i status, j tamanho,
+ * p versão HTTP) */
+static void resp_parse_ct(id s, id ct) {
+    char mime[128] = "", enc[64] = "";
+    const char *v = ct ? cs(ct) : "";
+    int k = 0;
+    while (*v == ' ') v++;
+    while (*v && *v != ';' && *v != ' ' && k < 127) { char ch = *v++; mime[k++] = (char)(ch >= 'A' && ch <= 'Z' ? ch + 32 : ch); }
+    mime[k] = 0;
+    const char *cp = strstr(v, "charset=");
+    if (!cp) cp = strstr(v, "Charset=");
+    if (!cp) cp = strstr(v, "CHARSET=");
+    if (cp) {
+        cp += 8;
+        if (*cp == '"') cp++;
+        k = 0;
+        while (*cp && *cp != ';' && *cp != '"' && *cp != ' ' && k < 63) { char ch = *cp++; enc[k++] = (char)(ch >= 'A' && ch <= 'Z' ? ch + 32 : ch); }
+        enc[k] = 0;
+    }
+    rel(BOX(s)->c); rel(BOX(s)->e);
+    BOX(s)->c = mime[0] ? retain(ns(mime)) : 0;
+    BOX(s)->e = enc[0] ? retain(ns(enc)) : 0;
+}
+static id hresp_init(id s, SEL c, id url, i64 status, id version, id fields) {
+    (void)c;
+    rel(BOX(s)->a); BOX(s)->a = retain(url);
+    BOX(s)->i = status;
+    id d = mutdict();
+    id keys = fields ? MSG0(id, fields, "allKeys") : 0;
+    u64 n = keys ? MSG0(u64, keys, "count") : 0;
+    for (u64 i = 0; i < n; i++) {
+        id k = MSG(id, keys, "objectAtIndex:", i);
+        id v = MSG(id, fields, "objectForKey:", k);
+        MSG(void, d, "setObject:forKey:", v, k);
+    }
+    rel(BOX(s)->b); BOX(s)->b = d;
+    if (BOX(s)->p) rel((id)BOX(s)->p);
+    BOX(s)->p = retain(version ? version : ns("HTTP/1.1"));
+    id cl = hdr_value(d, ns("Content-Length"));
+    BOX(s)->j = cl ? (i64)strtoll(cs(cl), 0, 10) : -1;
+    resp_parse_ct(s, hdr_value(d, ns("Content-Type")));
+    return s;
+}
+static id resp_init_mime(id s, SEL c, id url, id mime, i64 len, id enc) {
+    (void)c;
+    rel(BOX(s)->a); BOX(s)->a = retain(url);
+    rel(BOX(s)->c); BOX(s)->c = retain(mime);
+    rel(BOX(s)->e); BOX(s)->e = retain(enc);
+    BOX(s)->j = len;
+    return s;
+}
+static id hresp_value_for(id s, SEL c, id f) { (void)c; return hdr_value(BOX(s)->b, f); }
+static id resp_suggested(id s, SEL c) {
+    (void)c;
+    id cd = BOX(s)->b ? hdr_value(BOX(s)->b, ns("Content-Disposition")) : 0;
+    if (cd) {
+        const char *v = cs(cd), *f = strstr(v, "filename=");
+        if (f) {
+            char name[256];
+            int k = 0;
+            f += 9;
+            int q = *f == '"';
+            if (q) f++;
+            while (*f && k < 255 && (q ? *f != '"' : (*f != ';' && *f != ' '))) name[k++] = *f++;
+            name[k] = 0;
+            const char *slash = strrchr(name, '/');
+            if (name[0]) return ns(slash ? slash + 1 : name);
+        }
+    }
+    id last = BOX(s)->a ? MSG0(id, BOX(s)->a, "lastPathComponent") : 0;
+    if (last && cs(last)[0] && strcmp(cs(last), "/")) return last;
+    return ns("Unknown");
+}
+static id hresp_s_status_string(id k, SEL c, i64 code) {
+    (void)k; (void)c;
+    static const struct { int code; const char *s; } t[] = {
+        {100, "continue"}, {101, "switching protocols"}, {200, "no error"}, {201, "created"}, {202, "accepted"},
+        {203, "non-authoritative information"}, {204, "no content"}, {205, "reset content"}, {206, "partial content"},
+        {300, "multiple choices"}, {301, "moved permanently"}, {302, "found"}, {303, "see other"}, {304, "not modified"},
+        {305, "needs proxy"}, {307, "temporarily redirected"}, {308, "permanently redirected"}, {400, "bad request"},
+        {401, "unauthorized"}, {402, "payment required"}, {403, "forbidden"}, {404, "not found"},
+        {405, "method not allowed"}, {406, "unacceptable"}, {407, "proxy authentication required"},
+        {408, "request timed out"}, {409, "conflict"}, {410, "no longer exists"}, {411, "length required"},
+        {412, "precondition failed"}, {413, "request too large"}, {414, "requested URL too long"},
+        {415, "unsupported media type"}, {416, "requested range not satisfiable"}, {417, "expectation failed"},
+        {422, "unprocessable entity"}, {429, "too many requests"}, {500, "internal server error"},
+        {501, "unimplemented"}, {502, "bad gateway"}, {503, "service unavailable"}, {504, "gateway timed out"},
+        {505, "unsupported version"},
+    };
+    for (size_t i = 0; i < sizeof t / sizeof t[0]; i++) if (t[i].code == code) return ns(t[i].s);
+    return ns(code < 200 ? "informational" : code < 300 ? "success" : code < 400 ? "redirected" : code < 500 ? "client error" : "server error");
+}
+static id resp_copy(id s, SEL c) { (void)c; return retain(s); }
+static id resp_copy_zone(id s, SEL c, void *z) { (void)z; return resp_copy(s, c); }
+static void resp_dealloc(id s, SEL c) { if (BOX(s)->p) { rel((id)BOX(s)->p); BOX(s)->p = 0; } box_dealloc(s, c); }
 
 typedef struct { int flags, family, socktype, protocol; unsigned addrlen; char *canon; void *addr; void *next; } ai_t;
 int getaddrinfo(const char *, const char *, const ai_t *, ai_t **);
@@ -2859,11 +3077,33 @@ void cx_foundation_more_init(void) {
     M(NSMutableURLRequest, "setHTTPMethod:", req_set_method); M(NSMutableURLRequest, "setValue:forHTTPHeaderField:", req_set_header);
     M(NSMutableURLRequest, "setHTTPBody:", req_set_body); M(NSMutableURLRequest, "setURL:", set_a);
     M(NSMutableURLRequest, "setCachePolicy:", req_set_policy); M(NSURLRequest, "cachePolicy", req_policy);
+    M(NSURLRequest, "valueForHTTPHeaderField:", req_value_for); M(NSMutableURLRequest, "setValue:forHTTPHeaderField:", req_set_value);
+    M(NSMutableURLRequest, "addValue:forHTTPHeaderField:", req_add_value); M(NSMutableURLRequest, "setAllHTTPHeaderFields:", req_set_all_headers);
+    M(NSURLRequest, "HTTPShouldHandleCookies", req_g_cookies); M(NSMutableURLRequest, "setHTTPShouldHandleCookies:", req_s_cookies);
+    M(NSURLRequest, "allowsCellularAccess", req_g_cellular); M(NSMutableURLRequest, "setAllowsCellularAccess:", req_s_cellular);
+    M(NSURLRequest, "allowsExpensiveNetworkAccess", req_g_expensive); M(NSMutableURLRequest, "setAllowsExpensiveNetworkAccess:", req_s_expensive);
+    M(NSURLRequest, "allowsConstrainedNetworkAccess", req_g_constrained); M(NSMutableURLRequest, "setAllowsConstrainedNetworkAccess:", req_s_constrained);
+    M(NSURLRequest, "HTTPShouldUsePipelining", req_g_pipelining); M(NSMutableURLRequest, "setHTTPShouldUsePipelining:", req_s_pipelining);
+    M(NSURLRequest, "assumesHTTP3Capable", req_g_http3); M(NSMutableURLRequest, "setAssumesHTTP3Capable:", req_s_http3);
+    M(NSURLRequest, "requiresDNSSECValidation", req_g_dnssec); M(NSMutableURLRequest, "setRequiresDNSSECValidation:", req_s_dnssec);
+    M(NSURLRequest, "networkServiceType", req_service); M(NSMutableURLRequest, "setNetworkServiceType:", req_set_service);
+    M(NSURLRequest, "attribution", req_attribution); M(NSMutableURLRequest, "setAttribution:", req_set_attribution);
+    M(NSURLRequest, "HTTPBodyStream", req_stream); M(NSMutableURLRequest, "setHTTPBodyStream:", req_set_stream);
+    M(NSURLRequest, "mainDocumentURL", req_main_doc); M(NSMutableURLRequest, "setMainDocumentURL:", req_set_main_doc);
+    M(NSURLRequest, "isEqual:", req_equal); M(NSURLRequest, "hash", req_hash); M(NSURLRequest, "dealloc", req_dealloc);
+    CM(NSURLRequest, "supportsSecureCoding", req_secure);
     DEF(&NSURLResponse_c, &NSURLResponse_m, "NSURLResponse", ob, BEX);
     M(NSURLResponse, "URL", resp_url); M(NSURLResponse, "expectedContentLength", resp_len);
     M(NSURLResponse, "MIMEType", get_c); M(NSURLResponse, "textEncodingName", get_e);
     DEF(&NSHTTPURLResponse_c, &NSHTTPURLResponse_m, "NSHTTPURLResponse", &NSURLResponse_c, 0);
     M(NSHTTPURLResponse, "statusCode", resp_status); M(NSHTTPURLResponse, "allHeaderFields", resp_headers);
+    M(NSHTTPURLResponse, "initWithURL:statusCode:HTTPVersion:headerFields:", hresp_init);
+    M(NSHTTPURLResponse, "valueForHTTPHeaderField:", hresp_value_for);
+    CM(NSHTTPURLResponse, "localizedStringForStatusCode:", hresp_s_status_string);
+    M(NSURLResponse, "initWithURL:MIMEType:expectedContentLength:textEncodingName:", resp_init_mime);
+    M(NSURLResponse, "suggestedFilename", resp_suggested);
+    M(NSURLResponse, "copy", resp_copy); M(NSURLResponse, "copyWithZone:", resp_copy_zone); M(NSURLResponse, "dealloc", resp_dealloc);
+    CM(NSURLResponse, "supportsSecureCoding", req_secure);
 
     DEF(&NSURLSessionTask_c, &NSURLSessionTask_m, "NSURLSessionTask", ob, BEX);
     M(NSURLSessionTask, "resume", task_resume); M(NSURLSessionTask, "cancel", task_cancel);
