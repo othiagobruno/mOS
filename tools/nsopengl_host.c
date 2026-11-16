@@ -361,7 +361,10 @@ int main(void) {
         expect("420v -> R alto, G baixo, B neutro", b2[2] > 200 && b2[1] < 60 && b2[0] > 110 && b2[0] < 150 && b2[12 + 2] > 200);
     }
     {
-        /* CVDisplayLink com a taxa do monitor de cada link */
+        /* CVDisplayLink com a taxa do monitor de cada link. A classe vem do cx_corevideo_init no libSystem, que puxa o
+         * Metal (fora deste teste): aqui ela é definida direto, com espaço de sobra para o cvlink_t */
+        extern cx_class_t CVDisplayLink_c __asm__("OBJC_CLASS_$_CVDisplayLink"), CVDisplayLink_m __asm__("OBJC_METACLASS_$_CVDisplayLink");
+        cx_define_class(&CVDisplayLink_c, &CVDisplayLink_m, "CVDisplayLink", cx_class_named("NSObject"), 256);
         void *l1 = 0, *l2 = 0, *la = 0;
         expect("CVDisplayLink no monitor de 144 Hz", CVDisplayLinkCreateWithCGDisplay(2, &l2) == 0 && l2);
         cvtime_host_t t = CVDisplayLinkGetNominalOutputVideoRefreshPeriod(l2);

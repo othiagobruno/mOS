@@ -130,7 +130,7 @@ static void run_render(id enc, micb_t *b, u64 i) {
             if (m->used[1] >> k & 1) MSG(void, enc, "setFragmentBuffer:offset:atIndex:", m->buf[1][k], m->off[1][k], k);
         }
     if (m->kind == 1) MSG(void, enc, "drawPrimitives:vertexStart:vertexCount:instanceCount:baseInstance:", m->prim, m->start, m->count, m->inst, m->binst);
-    else ((void (*)(id, SEL, u64, u64, u64, id, u64, u64, i64, u64))objc_msgSend)(enc, S("drawIndexedPrimitives:indexCount:indexType:indexBuffer:indexBufferOffset:instanceCount:baseVertex:baseInstance:"),
+    else ((void (*)(id, SEL, u64, u64, u64, id, u64, u64, i64, u64))objc_msgSend)(enc, sel_registerName("drawIndexedPrimitives:indexCount:indexType:indexBuffer:indexBufferOffset:instanceCount:baseVertex:baseInstance:"),
                                                                                     m->prim, m->count, m->itype, m->ib, m->ioff, m->inst, m->bvert, m->binst);
 }
 static void run_compute(id enc, micb_t *b, u64 i) {
@@ -140,7 +140,7 @@ static void run_compute(id enc, micb_t *b, u64 i) {
     if (!b->inh_pipe && m->pipe) MSG(void, enc, "setComputePipelineState:", m->pipe);
     if (!b->inh_buf) for (u64 k = 0; k < 31; k++) if (m->used[2] >> k & 1) MSG(void, enc, "setBuffer:offset:atIndex:", m->buf[2][k], m->off[2][k], k);
     for (u64 k = 0; k < 31; k++) if (m->tglen[k]) MSG(void, enc, "setThreadgroupMemoryLength:atIndex:", m->tglen[k], k);
-    ((void (*)(id, SEL, isz_t, isz_t))objc_msgSend)(enc, S(m->kind == 3 ? "dispatchThreadgroups:threadsPerThreadgroup:" : "dispatchThreads:threadsPerThreadgroup:"), m->g, m->t);
+    ((void (*)(id, SEL, isz_t, isz_t))objc_msgSend)(enc, sel_registerName(m->kind == 3 ? "dispatchThreadgroups:threadsPerThreadgroup:" : "dispatchThreads:threadsPerThreadgroup:"), m->g, m->t);
 }
 static void enc_exec(id enc, id icb, nsrange_t r, int compute) {
     micb_t *b = (micb_t *)icb;

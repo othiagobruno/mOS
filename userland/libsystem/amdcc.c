@@ -303,7 +303,7 @@ static val_t var_val(cc_t *C, node_t *n) {
     if (v->attr == A_TPIG || v->attr == A_TPITG || v->attr == A_TGPIG || v->attr == A_TPTG || v->attr == A_TPG || v->attr == A_TIITG)
         return thread_pos(C, v->attr, ncomp(v->t));
     loc_t *l = loc_of(C, v);
-    if (!l) { FAIL(C, "variável não suportada (global, array ou ponteiro)"); return (val_t){0, 1, K_INT}; }
+    if (!l) { char m[96]; snprintf(m, sizeof m, "variável não suportada: %s (attr %d, where %d)", v->name ? v->name : "?", v->attr, v->where); FAIL(C, m); return (val_t){0, 1, K_INT}; }
     if (l->sref >= 0) {   /* referência constant: valor uniforme em SGPRs */
         val_t r = {valloc(C, l->n), l->n, l->k};
         for (int i = 0; i < l->n; i++) amd_vop1(&C->A, AMD_V_MOV_B32, (unsigned)(r.v + i), AMD_S(l->sref + i), 0);
@@ -487,6 +487,10 @@ static void stmt(cc_t *C, node_t *s) {
     case S_NOP: break;
     case S_EXPR: expr(C, s->a); C->vtop = vmark; break;
     case S_BLOCK: {
+        /* "int a = 1, b;" chega como um bloco só de declarações: não é escopo, as variáveis continuam vivas */
+        int only_decl = s->nv > 0;
+        for (int i = 0; i < s->nv; i++) if (!s->v[i] || s->v[i]->op != S_DECL) only_decl = 0;
+        if (only_decl) { for (int i = 0; i < s->nv && !C->fail; i++) stmt(C, s->v[i]); return; }
         int nl = C->nloc;
         for (int i = 0; i < s->nv && !C->fail; i++) stmt(C, s->v[i]);
         C->nloc = nl;
