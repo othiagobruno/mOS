@@ -37,6 +37,15 @@ struct js_page {
     jsobj *imgdec;              /* img.decode() pendentes: [elemento, promessa, ...] */
     bool img_scan;              /* <img> do documento já registrados para o load da janela */
     doc_t *xdocs[64];           /* documentos de DOMParser e XHR document, vivos até a página fechar */
+    /* History API: estados por id (vetor JS); com anfitrião (WebView), as entradas ficam no histórico dele */
+    jsobj *hstates;
+    int hcur;                   /* id do estado atual (-1 = estado nulo) */
+    bool hhost, hscroll_manual;
+    int hlen;                   /* tamanho do histórico informado pelo anfitrião */
+    struct { char url[1024]; int sid; } hl[64];   /* histórico local (iframes, sem anfitrião) */
+    int hln, hlpos;
+    struct { int op, arg; char url[1024]; } hops[8];   /* 1 push, 2 replace, 3 go */
+    int nhops;
     int nxdocs;
     jtimer_t *timers;
     int ntimers, ctimers, next_timer;
@@ -179,6 +188,7 @@ void js_mark_page(js_page_t *p) {
     gc_mark_ptr(p->session);
     gc_mark_ptr(p->keep);
     gc_mark_ptr(p->imgdec);
+    gc_mark_ptr(p->hstates);
     for (int i = 0; i < p->ntimers; i++) { gc_mark_val(p->timers[i].fn); gc_mark_ptr(p->timers[i].args); }
     for (int i = 0; i < p->nnets; i++) gc_mark_ptr(p->nets[i].target);
     for (int i = 0; i < p->nscripts; i++) gc_mark_val(p->scripts[i].job);
@@ -679,6 +689,7 @@ static jsv query(js_page_t *p, node_t *root, jsv selv, bool all) {
 }
 
 /* ============================================================ geometria */
+static void page_navigate(js_page_t *p, const char *rel, bool replace);
 typedef struct { int x0, y0, x1, y1; bool any; } rect_acc;
 
 static void acc_add(rect_acc *r, int x, int y, int w, int h) {
@@ -2173,15 +2184,15 @@ static int location_set(jsobj *o, jsstr *k, jsv v) {
     js_page_t *p = o->u.host.page;
     jsstr *s = js_tostr(v);
     if (!s) return -1;
-    if (keyis(k, "href")) { url_resolve(p->doc->base, s->d, p->nav, sizeof p->nav); p->nav_pending = true; return 1; }
+    if (keyis(k, "href")) { page_navigate(p, s->d, false); return 1; }
     if (keyis(k, "hash")) {
-        char base[1024];
+        char base[1024], u[1100];
         strncpy(base, p->url, sizeof base - 1);
         base[sizeof base - 1] = 0;
         char *h = strchr(base, '#');
         if (h) *h = 0;
-        snprintf(p->nav, sizeof p->nav, "%s%s%s", base, s->d[0] == '#' ? "" : "#", s->d);
-        p->nav_pending = true;
+        snprintf(u, sizeof u, "%s%s%s", base, s->d[0] == '#' ? "" : "#", s->d);
+        page_navigate(p, u, false);
         return 1;
     }
     if (keyis(k, "search")) {
@@ -2198,6 +2209,211 @@ static int location_set(jsobj *o, jsstr *k, jsv v) {
     return 1;
 }
 
+/* ============================================================ History API e navegação por fragmento */
+static bool same_doc_url(const char *a, const char *b) {
+    const char *ha = strchr(a, '#'), *hb = strchr(b, '#');
+    usize la = ha ? (usize)(ha - a) : strlen(a), lb = hb ? (usize)(hb - b) : strlen(b);
+    return la == lb && !strncmp(a, b, la);
+}
+
+static void hist_op(js_page_t *p, int op, int arg, const char *url) {
+    if (p->nhops < (int)ARRAY_LEN(p->hops)) {
+        p->hops[p->nhops].op = op;
+        p->hops[p->nhops].arg = arg;
+        snprintf(p->hops[p->nhops].url, sizeof p->hops[0].url, "%s", url ? url : "");
+        p->nhops++;
+    }
+}
+
+/* entrada nova (push) ou trocada (replace) no histórico */
+/* histórico local começa com a entrada do documento; chamar antes de trocar p->url */
+static void hist_init(js_page_t *p) {
+    if (p->hhost || p->hln) return;
+    snprintf(p->hl[0].url, sizeof p->hl[0].url, "%s", p->url);
+    p->hl[0].sid = -1;
+    p->hln = 1;
+    p->hlpos = 0;
+}
+
+static void hist_record(js_page_t *p, const char *url, int sid, bool replace) {
+    if (p->hhost) { hist_op(p, replace ? 2 : 1, sid, url); return; }
+    hist_init(p);
+    if (!replace) {
+        p->hln = p->hlpos + 1;   /* descarta as entradas à frente */
+        if (p->hln == (int)ARRAY_LEN(p->hl)) { memmove(p->hl, p->hl + 1, sizeof p->hl[0] * (ARRAY_LEN(p->hl) - 1)); p->hln--; p->hlpos--; }
+        p->hlpos = p->hln++;
+    }
+    snprintf(p->hl[p->hlpos].url, sizeof p->hl[0].url, "%s", url);
+    p->hl[p->hlpos].sid = sid;
+}
+
+/* rola até a âncora do fragmento (id ou name) */
+static void scroll_to_fragment(js_page_t *p, const char *url) {
+    const char *h = strchr(url, '#');
+    if (!h || !h[1]) { p->scroll_req = 0; return; }
+    char frag[256];
+    url_decode_path(h + 1, frag, sizeof frag);
+    node_t *n = NULL, *byname = NULL;
+    for (node_t *c = p->doc->root; c && !n; ) {
+        if (c->type == N_ELEM) {
+            const char *v = node_attr(c, "id");
+            if (v && !strcmp(v, frag)) n = c;
+            else if (!byname && c->tag == T_A && (v = node_attr(c, "name")) && !strcmp(v, frag)) byname = c;
+        }
+        if (c->first) c = c->first;
+        else { while (c && !c->next) c = c->parent; if (c) c = c->next; }
+    }
+    if (!n) n = byname;
+    if (!n) return;
+    rect_acc r = node_rect(p, n);
+    if (r.any) p->scroll_req = r.y0;
+}
+
+/* tarefa: popstate e/ou hashchange; data = [estado, url antiga, url nova, popstate?] */
+NATIVE(hist_task) {
+    UNUSED_ARGS;
+    js_page_t *p = cur_page();
+    if (!p) return JS_UNDEF;
+    jsobj *a = jv_o(self->u.nat.data);
+    jsv state = js_arr_get(a, 0), ou = js_arr_get(a, 1), nu = js_arr_get(a, 2);
+    if (js_truthy(js_arr_get(a, 3))) {
+        jsobj *ev = new_event(p, js_intern("popstate", -1), false);
+        js_defprop(ev, js_intern("state", -1), state, 0);
+        js_defprop(ev, js_intern("hasUAVisualTransition", -1), JS_FALSE, 0);
+        dispatch(p, NULL, ev);
+    }
+    const char *o = jv_isstr(ou) ? jv_s(ou)->d : "", *n = jv_isstr(nu) ? jv_s(nu)->d : "";
+    const char *ho = strchr(o, '#'), *hn = strchr(n, '#');
+    if (same_doc_url(o, n) && strcmp(ho ? ho : "", hn ? hn : "")) {
+        jsobj *ev = new_event(p, js_intern("hashchange", -1), false);
+        js_defprop(ev, js_intern("oldURL", -1), ou, 0);
+        js_defprop(ev, js_intern("newURL", -1), nu, 0);
+        dispatch(p, NULL, ev);
+    }
+    js_run_jobs();
+    p->dirty = true;
+    return JS_UNDEF;
+}
+
+static void hist_events(js_page_t *p, const char *old, const char *nu, jsv state, bool pop) {
+    jsv a[4] = { state, jv_str(js_strz(old)), jv_str(js_strz(nu)), jv_bool(pop) };
+    jsobj *t = js_newnative(hist_task, "historico", 0, 0);
+    t->u.nat.data = jv_obj(js_arr_from(a, 4));
+    add_timer(p, jv_obj(t), 0, false, 0, NULL);
+}
+
+static jsv state_of(js_page_t *p, int sid) {
+    if (sid < 0 || !p->hstates || (u32)sid >= p->hstates->alen) return JS_NULL;
+    jsv c = js_structured_clone(js_arr_get(p->hstates, (u32)sid));
+    if (c == JS_EXC) { js_catch(); return JS_NULL; }
+    return c;
+}
+
+/* volta/avança para uma entrada do mesmo documento: URL, estado e eventos */
+void js_page_hist_restore(js_page_t *p, const char *url, int sid) {
+    if (!p) return;
+    jsrealm *saved = J.realm;
+    J.realm = p->realm;
+    char old[1024];
+    snprintf(old, sizeof old, "%s", p->url);
+    snprintf(p->url, sizeof p->url, "%s", url);
+    p->hcur = sid;
+    if (strchr(url, '#') && sid < 0) scroll_to_fragment(p, url);
+    hist_events(p, old, url, state_of(p, sid), true);
+    J.realm = saved;
+}
+
+/* navegação pedida pelo script: fragmento do mesmo documento não recarrega */
+static void page_navigate(js_page_t *p, const char *rel, bool replace) {
+    char url[1024];
+    url_resolve(p->doc->base, rel, url, sizeof url);
+    if (strchr(url, '#') && same_doc_url(url, p->url)) {
+        char old[1024];
+        snprintf(old, sizeof old, "%s", p->url);
+        if (!strcmp(old, url)) { scroll_to_fragment(p, url); return; }
+        hist_init(p);
+        snprintf(p->url, sizeof p->url, "%s", url);
+        p->hcur = -1;
+        hist_record(p, url, -1, replace);
+        scroll_to_fragment(p, url);
+        hist_events(p, old, url, JS_NULL, true);
+        return;
+    }
+    snprintf(p->nav, sizeof p->nav, "%s", url);
+    p->nav_pending = true;
+}
+
+static bool hist_same_origin(js_page_t *p, const char *url) {
+    usize n = strlen(p->origin);
+    if (!strcmp(p->origin, "null") || !n) return same_doc_url(url, p->url);
+    return !strncmp(url, p->origin, n) && (url[n] == '/' || url[n] == 0 || url[n] == '?' || url[n] == '#');
+}
+
+/* magic: 0 pushState 1 replaceState 2 go 3 back 4 forward 5 length 6 state 7 scrollRestoration(get) 8 (set) */
+NATIVE(hist_method) {
+    UNUSED_ARGS;
+    js_page_t *p = cur_page();
+    if (!p) return JS_UNDEF;
+    int m = self->u.nat.magic;
+    switch (m) {
+    case 0: case 1: {
+        if (argc < 2) return js_throw_err(E_TYPE, "%s: são necessários 2 argumentos", m ? "replaceState" : "pushState");
+        jsv st = js_structured_clone(ARG(0));
+        if (st == JS_EXC) return JS_EXC;
+        char url[1024];
+        snprintf(url, sizeof url, "%s", p->url);
+        if (!jv_isnullish(ARG(2))) {
+            jsstr *u = js_tostr(ARG(2));
+            if (!u) return JS_EXC;
+            if (!web_url_parse(u->d, p->url, url, sizeof url)) return js_throw_dom("SecurityError", "history: URL inválido");
+            if (!hist_same_origin(p, url)) return js_throw_dom("SecurityError", "history: o URL precisa ser da mesma origem");
+        }
+        if (!p->hstates) p->hstates = js_newarr(0);
+        js_arr_push(p->hstates, st);
+        int sid = (int)p->hstates->alen - 1;
+        hist_init(p);
+        snprintf(p->url, sizeof p->url, "%s", url);
+        p->hcur = sid;
+        hist_record(p, url, sid, m == 1);
+        return JS_UNDEF;
+    }
+    case 2: case 3: case 4: {
+        int delta = m == 3 ? -1 : m == 4 ? 1 : (argc ? js_toint32(ARG(0)) : 0);
+        if (js_pending()) return JS_EXC;
+        if (!delta) { p->nav_pending = true; p->nav_reload = true; snprintf(p->nav, sizeof p->nav, "%s", p->url); return JS_UNDEF; }
+        if (p->hhost) { hist_op(p, 3, delta, NULL); return JS_UNDEF; }
+        if (!p->hln) return JS_UNDEF;
+        int t = p->hlpos + delta;
+        if (t < 0 || t >= p->hln) return JS_UNDEF;
+        p->hlpos = t;
+        js_page_hist_restore(p, p->hl[t].url, p->hl[t].sid);
+        return JS_UNDEF;
+    }
+    case 5: return jv_int(p->hhost ? (p->hlen > 0 ? p->hlen : 1) : (p->hln ? p->hln : 1));
+    case 6: return state_of(p, p->hcur);
+    case 7: return jv_str(js_strz(p->hscroll_manual ? "manual" : "auto"));
+    case 8: {
+        jsstr *v = js_tostr(ARG(0));
+        if (!v) return JS_EXC;
+        if (!strcmp(v->d, "manual")) p->hscroll_manual = true; else if (!strcmp(v->d, "auto")) p->hscroll_manual = false;
+        return JS_UNDEF;
+    }
+    }
+    return JS_UNDEF;
+}
+
+void js_page_set_history_host(js_page_t *p, bool host) { if (p) p->hhost = host; }
+void js_page_set_hist_len(js_page_t *p, int n) { if (p) p->hlen = n; }
+bool js_page_take_hist_op(js_page_t *p, int *op, int *arg, char *url, int cap) {
+    if (!p || !p->nhops) return false;
+    *op = p->hops[0].op;
+    *arg = p->hops[0].arg;
+    snprintf(url, (usize)cap, "%s", p->hops[0].url);
+    memmove(p->hops, p->hops + 1, sizeof p->hops[0] * (usize)(p->nhops - 1));
+    p->nhops--;
+    return true;
+}
+
 NATIVE(loc_method) {
     UNUSED_ARGS;
     js_page_t *p = cur_page();
@@ -2207,8 +2423,7 @@ NATIVE(loc_method) {
     if (op == 3) return jv_str(js_strz(p->url));
     jsstr *s = js_tostr(ARG(0));
     if (!s) return JS_EXC;
-    url_resolve(p->doc->base, s->d, p->nav, sizeof p->nav);
-    p->nav_pending = true;
+    page_navigate(p, s->d, op == 1);   /* assign / replace */
     return JS_UNDEF;
 }
 
@@ -2761,8 +2976,7 @@ NATIVE(w_setlocation) {
     if (!p) return JS_UNDEF;
     jsstr *s = js_tostr(ARG(0));
     if (!s) return JS_EXC;
-    url_resolve(p->doc->base, s->d, p->nav, sizeof p->nav);
-    p->nav_pending = true;
+    page_navigate(p, s->d, false);
     return JS_UNDEF;
 }
 
@@ -3115,11 +3329,19 @@ void js_dom_init(jsrealm *r) {
     js_defn(nav, "cookieEnabled", JS_TRUE, 0);
     js_defn(nav, "onLine", jv_bool(net_configured()), 0);
     js_defn(g, "navigator", jv_obj(nav), PF_NOENUM);
-    jsobj *hist = js_newobj(op);
-    js_defnative(hist, "pushState", w_noop, 3, 0);
-    js_defnative(hist, "replaceState", w_noop, 3, 0);
-    js_defn(hist, "length", jv_int(1), 0);
-    js_defn(g, "history", jv_obj(hist), PF_NOENUM);
+    jsobj *hp = js_newobj(op);
+    js_defnative(hp, "pushState", hist_method, 2, 0);
+    js_defnative(hp, "replaceState", hist_method, 2, 1);
+    js_defnative(hp, "go", hist_method, 0, 2);
+    js_defnative(hp, "back", hist_method, 0, 3);
+    js_defnative(hp, "forward", hist_method, 0, 4);
+    js_defgetter(hp, "length", hist_method, 5);
+    js_defgetter(hp, "state", hist_method, 6);
+    js_defaccessor(hp, js_intern("scrollRestoration", -1), jv_obj(js_newnative(hist_method, "scrollRestoration", 0, 7)),
+                   jv_obj(js_newnative(hist_method, "scrollRestoration", 1, 8)), 0);
+    js_defprop(hp, A[A_sym_toStringTag], jv_str(js_intern("History", -1)), PF_NOENUM | PF_RO);
+    js_defn(g, "History", jv_obj(js_newctor(w_noop, "History", 0, hp)), PF_NOENUM);
+    js_defn(g, "history", jv_obj(js_newobj(hp)), PF_NOENUM);
     jsobj *sp = js_newobj(op);
     js_defnative(sp, "getItem", stor_op, 1, 0);
     js_defnative(sp, "setItem", stor_op, 2, 1);
@@ -3337,6 +3559,7 @@ js_page_t *js_page_new2(doc_t *d, const char *url, int vw, int vh, void (*init)(
     p->vw = vw;
     p->vh = vh;
     p->scroll_req = -1;
+    p->hcur = -1;
     p->t0 = timer_ticks();
     p->next = pages;
     pages = p;
