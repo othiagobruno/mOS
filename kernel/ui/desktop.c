@@ -5,6 +5,8 @@
 #include "vfs.h"
 #include "gpu.h"
 #include "dockbadge.h"
+#include "syscall.h"
+#include "compat.h"
 
 /* ---- coordenadas
  * O desktop (barra de menus, Dock, menus, Busca, notificações...) trabalha no sistema do monitor principal,
@@ -338,7 +340,8 @@ enum { ACT_DOCK_KEEP = 6001, ACT_DOCK_LOGIN, ACT_DOCK_SHOW, ACT_DOCK_HIDE, ACT_D
        ACT_DOCK_RESTORE, ACT_DOCK_CLOSEWIN };
 
 /* ============================================================ notificações */
-typedef struct { char title[64], body[160]; u64 t0; app_t *app; int pid, token; } notif_t;
+typedef struct { char title[32]; u32 opts; } nact_t;          /* ação: MOS_DESK_ACT_* em opts */
+typedef struct { char title[64], subtitle[96], body[256]; u64 t0; app_t *app; int pid, token; nact_t act[4]; int nact; u32 flags; } notif_t;
 static notif_t notifs[16]; /* histórico (a Central de Notificações mostra todas) */
 static void nc_toggle(void);
 static bool nc_visible(void);
@@ -1846,9 +1849,9 @@ static void draw_desktop_icons(surface_t *s, rect_t D) {
 bool g_notify_dnd;          /* Ajustes > Notificações: Não Perturbe */
 bool g_notify_sound = true; /* tocar som ao chegar notificação */
 int  g_notify_count;        /* total recebido desde o boot (inclusive silenciadas) */
-static void notify_put(const char *title, const char *body, int pid, int token) {
+static notif_t *notify_put(const char *title, const char *body, int pid, int token, bool silent) {
     g_notify_count++;
-    if (g_notify_dnd) { kprintf("Notificação (silenciada): %s — %s\n", title, body ? body : ""); return; }
+    if (g_notify_dnd) { kprintf("Notificação (silenciada): %s — %s\n", title, body ? body : ""); return NULL; }
     if (nnotif == ARRAY_LEN(notifs)) { memmove(notifs, notifs + 1, sizeof(notif_t) * (ARRAY_LEN(notifs) - 1)); nnotif--; }
     notif_t *n = &notifs[nnotif++];
     memset(n, 0, sizeof *n);
@@ -1857,57 +1860,217 @@ static void notify_put(const char *title, const char *body, int pid, int token) 
     n->t0 = timer_ticks();
     n->pid = pid;
     n->token = token;
-    if (g_notify_sound) sound_alert();
-    wm_damage(rect_make(SW - 380, MENUBAR_H, 380, 120));
+    if (g_notify_sound && !silent) sound_alert();
+    wm_damage(rect_make(SW - 400, MENUBAR_H, 400, 260));
     kprintf("Notificação: %s — %s\n", title ? title : "", body ? body : "");
+    return n;
 }
 
-void notify(const char *title, const char *body) { notify_put(title, body, 0, 0); }
+void notify(const char *title, const char *body) { notify_put(title, body, 0, 0, false); }
 
 void notify_tagged(const char *title, const char *body, int pid, int token) {
-    notify_put(title, body, pid, token > 0 ? token : 1);
+    notify_put(title, body, pid, token > 0 ? token : 1, false);
 }
 
-/* O banner flutuante ocupa o canto superior direito por ~5,5 s. O clique só vale
- * para um aviso marcado com token (veio de um app). */
+/* UNUserNotificationCenter (deskbridge.c, MOS_DESK_BANNER_EX): subtítulo e até 4 ações "título\topções" */
+void notify_tagged_ex(const char *title, const char *subtitle, const char *body, const char *actions, int pid, int token, u32 flags) {
+    notif_t *n = notify_put(title, body, pid, token > 0 ? token : 1, (flags & MOS_DESK_FLAG_SILENT) != 0);
+    if (!n) return;
+    strncpy(n->subtitle, subtitle ? subtitle : "", sizeof n->subtitle - 1);
+    n->flags = flags;
+    for (const char *p = actions ? actions : ""; *p && n->nact < 4;) {
+        const char *e = p;
+        while (*e && *e != '\n') e++;
+        const char *tab = p;
+        while (tab < e && *tab != '\t') tab++;
+        int tl = (int)(tab - p);
+        if (tl > 0) {
+            nact_t *a = &n->act[n->nact++];
+            snprintf(a->title, sizeof a->title, "%.*s", MIN(tl, (int)sizeof a->title - 1), p);
+            a->opts = tab < e ? (u32)strtol(tab + 1, NULL, 10) : 0;
+        }
+        p = *e ? e + 1 : e;
+    }
+}
+
+/* ---- ações, resposta em texto e fechar: o mesmo desenho e o mesmo clique no banner e na Central */
+static struct { bool on; int pid, token, act; char buf[256]; int len; } RP;   /* campo de resposta aberto */
+static int notif_find(int pid, int token) {
+    for (int i = 0; i < nnotif; i++) if (notifs[i].pid == pid && notifs[i].token == token) return i;
+    return -1;
+}
+static bool rp_on(const notif_t *n) { return RP.on && n->token > 0 && RP.pid == n->pid && RP.token == n->token; }
+
+typedef struct { rect_t close, btn[4], field, send; int h, text_y; } nlay_t;
+static void notif_layout(const notif_t *n, int x, int y, int w, int base_h, nlay_t *L) {
+    memset(L, 0, sizeof *L);
+    int h = base_h + (n->subtitle[0] ? 18 : 0);
+    L->text_y = y;
+    L->close = n->token > 0 ? rect_make(x - 7, y - 7, 22, 22) : rect_make(0, 0, 0, 0);
+    if (n->nact) {
+        int gap = 8, bw = (w - 24 - gap * (n->nact - 1)) / n->nact;
+        for (int i = 0; i < n->nact; i++) L->btn[i] = rect_make(x + 12 + i * (bw + gap), y + h, bw, 28);
+        h += 38;
+    }
+    if (rp_on(n)) {
+        L->field = rect_make(x + 12, y + h, w - 24 - 80, 30);
+        L->send = rect_make(x + w - 12 - 72, y + h, 72, 30);
+        h += 40;
+    }
+    L->h = h;
+}
+
+static void notif_draw_extras(surface_t *s, const notif_t *n, const nlay_t *L) {
+    font_t *fm = font_get(FONT_MEDIUM), *fr = font_get(FONT_REGULAR);
+    u32 fill = T.dark ? RGBA(255, 255, 255, 30) : RGBA(0, 0, 0, 16);
+    for (int i = 0; i < n->nact; i++) {
+        gfx_round_rect(s, L->btn[i].x, L->btn[i].y, L->btn[i].w, L->btn[i].h, 8, fill);
+        u32 c = (n->act[i].opts & MOS_DESK_ACT_DESTRUCTIVE) ? RGB(255, 69, 58) : T.glass_text;
+        text_draw_center(s, fm, 12.5f, L->btn[i], c, n->act[i].title);
+    }
+    if (rp_on(n)) {
+        rect_t f = L->field;
+        gfx_round_rect(s, f.x, f.y, f.w, f.h, 8, T.dark ? RGBA(0, 0, 0, 90) : RGBA(255, 255, 255, 200));
+        gfx_round_rect_stroke(s, f.x, f.y, f.w, f.h, 8, 1.5f, T.accent);
+        int bl = f.y + f.h / 2 + 5;
+        if (RP.len) text_draw_ellipsis(s, fr, 13, f.x + 10, bl, f.w - 22, T.glass_text, RP.buf);
+        else text_draw(s, fr, 13, f.x + 10, bl, T.glass_text2, "Responder…");
+        int cx = f.x + 10 + MIN(f.w - 22, text_width(fr, 13, RP.buf));
+        if ((timer_ticks() / 500) % 2 == 0) gfx_fill(s, cx, f.y + 7, 1, f.h - 14, T.glass_text);
+        gfx_round_rect(s, L->send.x, L->send.y, L->send.w, L->send.h, 8, T.accent);
+        text_draw_center(s, fm, 12.5f, L->send, RGB(255, 255, 255), "Enviar");
+    }
+    if (n->token > 0) {   /* fechar: círculo no canto, como no macOS */
+        rect_t c = L->close;
+        gfx_circle(s, c.x + c.w / 2.0f, c.y + c.h / 2.0f, c.w / 2.0f, T.dark ? RGB(70, 70, 74) : RGB(244, 244, 246));
+        gfx_line(s, c.x + 7, c.y + 7, c.x + c.w - 7, c.y + c.h - 7, 1.6f, T.text2);
+        gfx_line(s, c.x + c.w - 7, c.y + 7, c.x + 7, c.y + c.h - 7, 1.6f, T.text2);
+    }
+}
+
+/* remove a entrada i (banner e Central) */
+static void notif_drop(int i) {
+    if (i < 0 || i >= nnotif) return;
+    if (rp_on(&notifs[i])) RP.on = false;
+    memmove(notifs + i, notifs + i + 1, sizeof(notif_t) * (usize)(nnotif - i - 1));
+    nnotif--;
+    wm_damage_all();
+}
+
+int notify_remove(int pid, int token) {
+    int n = 0;
+    for (int i = nnotif - 1; i >= 0; i--)
+        if (notifs[i].pid == pid && notifs[i].token > 0 && (!token || notifs[i].token == token)) { notif_drop(i); n++; }
+    return n;
+}
+
+static void notif_open_app(const notif_t *n) {
+    app_t *a = n->pid > 0 ? compat_gui_app_for_pid(n->pid) : NULL;
+    if (a) wm_bring_app(a);
+}
+
+static void rp_send(void) {
+    int i = notif_find(RP.pid, RP.token);
+    RP.on = false;
+    if (i < 0) return;
+    notif_t *n = &notifs[i];
+    desk_event_enqueue(n->pid, n->token, RP.act, RP.buf);
+    if (RP.act >= 0 && RP.act < n->nact && (n->act[RP.act].opts & MOS_DESK_ACT_FOREGROUND)) notif_open_app(n);
+    notif_drop(i);
+}
+
+/* clique numa notificação já desenhada com o layout L (banner ou cartão da Central). true = tratado */
+static bool notif_click(int i, const nlay_t *L, rect_t card, int x, int y) {
+    notif_t *n = &notifs[i];
+    if (n->token <= 0) return false;
+    if (rect_contains(L->close, x, y)) {
+        if (n->flags & MOS_DESK_FLAG_DISMISS) desk_event_enqueue(n->pid, n->token, MOS_DESK_EV_DISMISS, NULL);
+        notif_drop(i);
+        return true;
+    }
+    for (int k = 0; k < n->nact; k++) if (rect_contains(L->btn[k], x, y)) {
+        if (n->act[k].opts & MOS_DESK_ACT_TEXT) {
+            RP.on = true; RP.pid = n->pid; RP.token = n->token; RP.act = k; RP.len = 0; RP.buf[0] = 0;
+            n->t0 = timer_ticks();
+            wm_damage_all();
+            return true;
+        }
+        desk_event_enqueue(n->pid, n->token, k, NULL);
+        if (n->act[k].opts & MOS_DESK_ACT_FOREGROUND) notif_open_app(n);
+        notif_drop(i);
+        return true;
+    }
+    if (rp_on(n)) {
+        if (rect_contains(L->send, x, y)) { rp_send(); return true; }
+        if (rect_contains(L->field, x, y)) return true;
+    }
+    if (rect_contains(card, x, y)) {
+        desk_event_enqueue(n->pid, n->token, MOS_DESK_EV_CLICK, NULL);
+        n->t0 = timer_ticks() - 60000;       /* o banner some; a entrada fica na Central */
+        wm_damage(rect_make(SW - 400, MENUBAR_H, 400, 260));
+        return true;
+    }
+    return false;
+}
+
+/* teclado do campo de resposta: true = consumida */
+static bool rp_key(input_event_t *e) {
+    if (!RP.on || e->type != EV_KEY_DOWN) return false;
+    if (e->key == KEY_ESC) { RP.on = false; wm_damage_all(); return true; }
+    if (e->key == KEY_ENTER) { rp_send(); return true; }
+    if (e->key == KEY_BACKSPACE) {
+        while (RP.len > 0 && ((u8)RP.buf[RP.len - 1] & 0xC0) == 0x80) RP.len--;   /* continuação UTF-8 */
+        if (RP.len > 0) RP.len--;
+        RP.buf[RP.len] = 0;
+    } else if (e->key >= 32 && e->key != 127 && e->key < 0x110000 && !(e->mods & (MOD_CMD | MOD_CTRL))) {
+        char u[8];
+        int k = utf8_encode((u32)e->key, u);
+        if (RP.len + k < (int)sizeof RP.buf) { memcpy(RP.buf + RP.len, u, (usize)k); RP.len += k; RP.buf[RP.len] = 0; }
+    } else return kbd_key_is_modifier(e->key) ? false : true;
+    int i = notif_find(RP.pid, RP.token);
+    if (i >= 0) notifs[i].t0 = timer_ticks();
+    wm_damage_all();
+    return true;
+}
+
+/* o banner desenhado por último (para o clique usar o mesmo layout) */
+static struct { bool on; int idx; nlay_t L; rect_t card; } BN;
+static u64 notif_life(const notif_t *n) { return n->nact ? 9000 : 5500; }
+
 int notify_banner_hit(int x, int y, int *pid, int *token) {
-    u64 now;
-    int i, w, h, x0, y0;
-    if (nc_visible() || nnotif <= 0) return 0;
-    now = timer_ticks();
-    for (i = nnotif - 1; i >= 0; i--) if (now - notifs[i].t0 < 5500) break;
-    if (i < 0 || notifs[i].token <= 0) return 0;
-    w = MIN(350, SW - 24);
-    h = 72;
-    x0 = SW - w - 12;
-    y0 = MENUBAR_H + 10;
-    if (x < x0 || y < y0 || x >= x0 + w || y >= y0 + h) return 0;
-    if (pid) *pid = notifs[i].pid;
-    if (token) *token = notifs[i].token;
-    notifs[i].t0 = now - 6000;
-    wm_damage(rect_make(SW - 400, MENUBAR_H, 400, 120));
+    if (nc_visible() || !BN.on || BN.idx < 0 || BN.idx >= nnotif) return 0;
+    notif_t *n = &notifs[BN.idx];
+    if (n->token <= 0 || !rect_contains(BN.card, x, y)) return 0;
+    if (pid) *pid = n->pid;
+    if (token) *token = n->token;
     return 1;
 }
 
 static void draw_notifications(surface_t *s) {
+    BN.on = false;
     if (nc_visible()) return; /* com a Central aberta, os avisos flutuantes ficam recolhidos */
     u64 now = timer_ticks();
     int shown = 0;
     for (int i = nnotif - 1; i >= 0 && shown < 1; i--) {
         notif_t *n = &notifs[i];
-        u64 age = now - n->t0;
-        if (age > 5500) continue;
-        float slide = age < 300 ? 1 - (age / 300.0f) : age > 5200 ? (age - 5200) / 300.0f : 0;
+        if (rp_on(n)) n->t0 = now - 400;         /* respondendo: o banner fica */
+        u64 age = now - n->t0, life = notif_life(n);
+        if (age > life) continue;
+        float slide = age < 300 ? 1 - (age / 300.0f) : age > life - 300 ? (age - (life - 300)) / 300.0f : 0;
         slide = slide * slide;
-        int w = MIN(350, SW - 24), h = 72;
+        int w = MIN(350, SW - 24);
         int x = SW - w - 12 + (int)(slide * (w + 20)), y = MENUBAR_H + 10;
+        nlay_t L;
+        notif_layout(n, x, y, w, 72, &L);
+        int h = L.h;
+        BN.on = true; BN.idx = i; BN.L = L; BN.card = rect_make(x, y, w, h);
         /* pilha: se há outra notificação recente, um cartão menor aparece por baixo */
         int stacked = 0;
-        for (int j = 0; j < nnotif; j++) if (j != i && now - notifs[j].t0 < 5500) stacked++;
+        for (int j = 0; j < nnotif; j++) if (j != i && now - notifs[j].t0 < notif_life(&notifs[j])) stacked++;
         if (stacked) glass_panel(s, x + 18, y + 12, w - 36, h, 22, GLASS_REGULAR);
         glass_panel(s, x, y, w, h, 24, GLASS_REGULAR);
         /* ícone do app: quadrado arredondado claro (escuro no modo escuro) com o logotipo */
-        float ix = x + 14, iy = y + (h - 36) / 2.0f;
+        float ix = x + 14, iy = y + 18;
         if (T.dark) gfx_round_rect_grad(s, ix, iy, 36, 36, 9, RGB(58, 58, 62), RGB(36, 36, 40));
         else gfx_round_rect_grad(s, ix, iy, 36, 36, 9, RGB(255, 255, 255), RGB(236, 236, 240));
         gfx_specular_rim(s, ix, iy, 36, 36, 9, T.dark ? 60 : 140);
@@ -1916,7 +2079,10 @@ static void draw_notifications(surface_t *s) {
         int tw = text_width(fr, 12.5f, "agora");
         text_draw(s, fr, 12.5f, x + w - 18 - tw, y + 26, T.glass_text2, "agora");
         text_draw_ellipsis(s, fb, 14, x + 62, y + 30, w - 62 - tw - 30, T.glass_text, n->title);
-        text_draw_ellipsis(s, fr, 13.5f, x + 62, y + 50, w - 80, T.glass_text, n->body);
+        int by = y + 50;
+        if (n->subtitle[0]) { text_draw_ellipsis(s, font_get(FONT_SEMIBOLD), 13, x + 62, by, w - 80, T.glass_text, n->subtitle); by += 18; }
+        text_draw_ellipsis(s, fr, 13.5f, x + 62, by, w - 80, T.glass_text, n->body);
+        notif_draw_extras(s, n, &L);
         shown++;
     }
 }
@@ -2263,6 +2429,8 @@ static int nc_weekday(int y, int m, int d) {
 }
 
 static rect_t nc_clear_btn;
+static struct { int idx; nlay_t L; rect_t card; } nc_cards[16];   /* cartões desenhados (o clique usa o mesmo layout) */
+static int nc_ncards;
 
 static void draw_notification_center(surface_t *s) {
     if (!NC.open) return;
@@ -2285,9 +2453,13 @@ static void draw_notification_center(surface_t *s) {
     }
     y += 32;
     u64 now = timer_ticks();
+    nc_ncards = 0;
     for (int i = nnotif - 1; i >= 0 && y < r.y + r.h - 340; i--) {
         notif_t *n = &notifs[i];
-        rect_t c = rect_make(r.x, y, r.w, 64);
+        nlay_t L;
+        notif_layout(n, r.x, y, r.w, 64, &L);
+        rect_t c = rect_make(r.x, y, r.w, L.h);
+        if (nc_ncards < 16) { nc_cards[nc_ncards].idx = i; nc_cards[nc_ncards].L = L; nc_cards[nc_ncards].card = c; nc_ncards++; }
         nc_card(s, c, 18);
         float ix = c.x + 12, iy = c.y + 14;
         gfx_round_rect_grad(s, ix, iy, 36, 36, 9, T.dark ? RGB(58, 58, 62) : RGB(255, 255, 255), T.dark ? RGB(36, 36, 40) : RGB(236, 236, 240));
@@ -2298,8 +2470,11 @@ static void draw_notification_center(surface_t *s) {
         int ww = text_width(fr, 12, when);
         text_draw(s, fr, 12, c.x + c.w - 14 - ww, c.y + 22, T.glass_text2, when);
         text_draw_ellipsis(s, fb, 13.5f, c.x + 58, c.y + 26, c.w - 58 - ww - 24, T.glass_text, n->title);
-        text_draw_ellipsis(s, fr, 13, c.x + 58, c.y + 45, c.w - 72, T.glass_text, n->body);
-        y += 72;
+        int by = c.y + 45;
+        if (n->subtitle[0]) { text_draw_ellipsis(s, font_get(FONT_SEMIBOLD), 12.5f, c.x + 58, by, c.w - 72, T.glass_text, n->subtitle); by += 18; }
+        text_draw_ellipsis(s, fr, 13, c.x + 58, by, c.w - 72, T.glass_text, n->body);
+        notif_draw_extras(s, n, &L);
+        y += L.h + 8;
     }
     /* --- widgets: relógio e calendário (lado a lado), sempre na parte de baixo do painel */
     int wy = y + 8; /* widgets logo abaixo das notificações */
@@ -2342,7 +2517,9 @@ static bool nc_mouse(int x, int y, bool lp) {
     if (!NC.open || NC.closing) return false;
     rect_t r = nc_rect();
     if (!lp) return rect_contains(r, x, y);
-    if (rect_contains(nc_clear_btn, x, y)) { nnotif = 0; wm_damage_all(); return true; }
+    if (rect_contains(nc_clear_btn, x, y)) { nnotif = 0; RP.on = false; wm_damage_all(); return true; }
+    for (int k = 0; k < nc_ncards; k++)
+        if (nc_cards[k].idx < nnotif && notif_click(nc_cards[k].idx, &nc_cards[k].L, nc_cards[k].card, x, y)) return true;
     if (rect_contains(r, x, y)) return true;
     if (y >= MENUBAR_H) { nc_toggle(); return true; }
     return false;
@@ -3349,6 +3526,7 @@ static bool desktop_handle_event_local(input_event_t *e) {
             else if (e->key == KEY_ESC) alert_finish(0);
             return true;
         }
+        if (rp_key(e)) return true;                  /* campo de resposta de uma notificação */
         if (AS.open && e->key == KEY_ESC) { app_switcher_finish(false); return true; }
         if (SC.open) {
             if (e->key == KEY_ESC) { SC.open = false; wm_damage_all(); }
@@ -3487,15 +3665,8 @@ static bool desktop_handle_event_local(input_event_t *e) {
     bool rp = (e->buttons & 2) && !(last_buttons & 2);
     last_buttons = e->buttons;
 
-    /* banner de um app: o clique entrega o token para o delegate (deskbridge.c) */
-    if (lp) {
-        int bpid = 0, btok = 0;
-        if (notify_banner_hit(x, y, &bpid, &btok)) {
-            extern void desk_banner_enqueue(int pid, int token);
-            desk_banner_enqueue(bpid, btok);
-            return true;
-        }
-    }
+    /* banner de um app: clique no corpo, botões de ação, resposta e fechar (deskbridge.c entrega ao app) */
+    if (lp && !nc_visible() && BN.on && BN.idx >= 0 && BN.idx < nnotif && notif_click(BN.idx, &BN.L, BN.card, x, y)) return true;
 
     /* ícone do Dock sendo arrastado: reordena ao vivo; puxado para fora do Dock, remove */
     if (DD.active) {

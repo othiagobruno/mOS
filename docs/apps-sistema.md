@@ -18,6 +18,11 @@ rodar até reiniciar. Um callback que passa de 10 s sem voltar (laço infinito) 
 "não respondeu". Com as interrupções desligadas, um AP vigia pelo HPET e manda um NMI ao núcleo 0 (o app é encerrado do
 mesmo jeito); travado dentro de uma seção crítica do kernel, vira tela de pânico com o nome do app.
 
+Notificações dos apps (UNUserNotificationCenter, `SYS_DESKTOP` em `kernel/ui/deskbridge.c`): `MOS_DESK_BANNER_EX` traz
+subtítulo, até 4 ações (destrutiva, com campo de texto, abre o app) e as opções avisar ao fechar / sem som;
+`MOS_DESK_TAKE_EX` devolve clique no corpo (-1), fechado (-2) ou o botão (0..3) com o texto digitado; `MOS_DESK_REMOVE`
+tira as do app do banner e da Central. Os botões, o campo de resposta e o fechar funcionam no banner e na Central.
+
 Ajustes > Privacidade e Segurança > Permissões dos apps: lê o registro do TCC (`decisions.txt`, via
 `kernel/ui/tcc_prompt_core.inc`) e mostra, por serviço (câmera, microfone, contatos, arquivos, automação, notificações,
 gravação de tela, acessibilidade…), cada app com um interruptor concedido/negado e "Remover" (apaga a linha, como o
