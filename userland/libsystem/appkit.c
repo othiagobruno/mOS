@@ -3311,24 +3311,42 @@ static i64 al_run(id self, SEL c) {
     (void)c;
     alertst_t *s = al(self);
     if (!((nsarr_t *)s->buttons)->n) al_add_button(self, 0, cx_str("OK"));
-    double W = 420;
+    /* de baixo para cima: botões, "Não perguntar novamente", accessoryView, texto informativo, mensagem (como o
+     * NSAlert do Cocoa; antes o accessoryView e o checkbox de supressão não entravam na janela) */
+    NSSize acc = {0, 0};
+    if (s->accessory) acc = vs(s->accessory)->frame.s;
+    double W = acc.w + 40 > 420 ? acc.w + 40 : 420;
     NSSize ms = text_size(cx_cstr(s->message), 13, 3);
     double infoh = 0;
-    if (s->info) { NSSize is = text_size(cx_cstr(s->info), 12, 0); infoh = (is.w / (W - 40) + 1) * (is.h + 2); }
-    double H = 70 + ms.h + infoh + 40;
+    if (s->info) { NSSize is = text_size(cx_cstr(s->info), 12, 0); infoh = (double)((int)(is.w / (W - 40)) + 1) * (is.h + 2); }
+    double sup_h = s->shows_suppress ? 28 : 0, acc_h = s->accessory ? acc.h + 12 : 0;
+    double H = 20 + 24 + 14 + sup_h + acc_h + (s->info ? infoh + 8 : 0) + ms.h + 4 + 20;
     id w = w_init(MSG0(id, &NSWindow_c, "alloc"), 0, r_make(0, 0, W, H), 1, 2, NO);
     w_set_title(w, 0, cx_str(""));
     id cv = ws(w)->content;
-    id msg = tf_label((id)&NSTextField_c, 0, s->message);
-    vs(msg)->font = ft_make(13, 3, 0);
-    v_set_frame(msg, 0, r_make(20, H - 20 - ms.h - 4, W - 40, ms.h + 4));
-    v_add_sub(cv, 0, msg);
+    double y = 16 + 24 + 14;
+    if (s->shows_suppress) {
+        id sb = al_suppress(self, 0);
+        v_set_frame(sb, 0, r_make(20, y, W - 40, 20));
+        v_add_sub(cv, 0, sb);
+        y += sup_h;
+    }
+    if (s->accessory) {
+        v_set_frame(s->accessory, 0, r_make(20, y, acc.w, acc.h));
+        v_add_sub(cv, 0, s->accessory);
+        y += acc_h;
+    }
     if (s->info) {
         id inf = tf_label((id)&NSTextField_c, 0, s->info);
         vs(inf)->font = ft_make(12, 0, 0);
-        v_set_frame(inf, 0, r_make(20, 56, W - 40, infoh));
+        v_set_frame(inf, 0, r_make(20, y, W - 40, infoh));
         v_add_sub(cv, 0, inf);
+        y += infoh + 8;
     }
+    id msg = tf_label((id)&NSTextField_c, 0, s->message);
+    vs(msg)->font = ft_make(13, 3, 0);
+    v_set_frame(msg, 0, r_make(20, y, W - 40, ms.h + 4));
+    v_add_sub(cv, 0, msg);
     nsarr_t *bs = (nsarr_t *)s->buttons;
     double x = W - 20;
     for (u64 i = 0; i < bs->n; i++) {
@@ -3341,6 +3359,9 @@ static i64 al_run(id self, SEL c) {
     }
     keep(&s->window, w);
     i64 r = modal_loop(w);
+    /* o accessoryView e o checkbox são do alerta: saem da janela para o app poder ler o valor e reusar */
+    if (s->accessory) v_remove(s->accessory, 0);
+    if (s->suppress) v_remove(s->suppress, 0);
     if (ws(w)->visible) close_window(w, NO);
     return r;
 }
