@@ -628,6 +628,15 @@ SIM_DONO = (
 SIM_ANTES = (("patricia", ("_SCPreferences", "_SCDynamicStore", "_SCNetwork", "_kSCProp", "_kSCDynamicStore", "_kSCEnt")),
              # Core Image mora no QuartzCore no macOS, mas é a frente de mídia (Otavio)
              ("isabela", ("_OBJC_CLASS_$_CI", "_OBJC_METACLASS_$_CI", "_kCI")),
+             # display, eventos e WindowServer do CoreGraphics são do desktop/window server (Mariana)
+             ("camila", ("_CGDisplay", "_CGGetDisplay", "_CGSetDisplay", "_CGCaptureAllDisplays", "_CGReleaseAllDisplays",
+                         "_CGBeginDisplayConfiguration", "_CGCompleteDisplayConfiguration", "_CGCancelDisplayConfiguration",
+                         "_CGConfigureDisplay", "_CGAcquireDisplayFadeReservation", "_CGReleaseDisplayFadeReservation",
+                         "_CGEvent", "_CGGetLastMouseDelta", "_CGWarpMouseCursorPosition", "_CGAssociateMouseAndMouseCursor",
+                         "_CGS", "_kCGDisplay", "_CGMainDisplayID", "_CGGetActiveDisplayList", "_CGGetOnlineDisplayList",
+                         "_CGRegisterScreenRefreshCallback", "_CGShieldingWindow", "_CGWindowLevelForKey",
+                         "_CGGetDisplaysWith", "_CGRestorePermanentDisplayConfiguration", "_CGPreflightScreenCaptureAccess",
+                         "_CGRequestScreenCaptureAccess", "_CGPreflightListenEventAccess", "_CGRequestListenEventAccess")),
              # NSOpenGL* fica no AppKit, mas é OpenGL (Beatriz)
              ("otavio", ("_NSOpenGL", "_OBJC_CLASS_$_NSOpenGL", "_OBJC_METACLASS_$_NSOpenGL")))
 
@@ -865,6 +874,9 @@ def cmd_hosttest(args: argparse.Namespace) -> None:
         ("QuartzCore.framework", "_kCIInputImageKey", "sistema", "isabela"),
         ("QuartzCore.framework", "_OBJC_CLASS_$_CALayer", "sistema", "otavio"),
         ("AppKit.framework", "_NSOpenGLGetVersion", "sistema", "otavio"),
+        ("CoreGraphics.framework", "_CGDisplayModeGetWidth", "sistema", "camila"),
+        ("CoreGraphics.framework", "_CGEventTapCreateForPid", "sistema", "camila"),
+        ("CoreGraphics.framework", "_CGContextClipToRects", "sistema", "mariana"),
         ("Charts.framework", "_$s6Charts9ChartViewV", "Swift", "ricardo"),
         ("AppIntents.framework", "_$s10AppIntents0A6IntentP", "Swift", "natalia"),
         ("IOKit.framework", "_IOServiceGetMatchingService", "sistema", "larissa"),
