@@ -35,6 +35,10 @@ tail -1 /tmp/agentes_host.log
 gcc -O2 -Wall -Wextra -DMOS_HOST_TEST -I kernel/include -I tools tools/r8169_host.c kernel/dev/r8169.c \
     -o /tmp/r8169_host
 /tmp/r8169_host
+# RTL8821CE: tabelas da Realtek contra o estado real do chip, energia, eFuse e firmware (docs/rede-hardware.md)
+gcc -O1 -Wall -Wextra -DMOS_HOST_TEST -I tools -I kernel/include -I kernel/wifi/rtw88 tools/rtw88_host.c \
+    kernel/wifi/rtw88/rtw_core.c kernel/wifi/rtw88/rtw8821c_table.c -o /tmp/rtw88_host
+/tmp/rtw88_host firmware/rtw88/rtw8821c_fw.bin tools/rtw88-fixture/bb_8821ce_linux.txt | tail -1
 # URL longa no cliente HTTP do kernel (OAuth do Google no Antigravity: invalid_scope com o scope cortado)
 gcc -std=gnu11 -DMOS_HOST_TEST -I kernel/include -I tools tools/http_url_longa_host.c kernel/net/http.c -o /tmp/http_url_longa
 /tmp/http_url_longa > /tmp/http_url_longa.log || { cat /tmp/http_url_longa.log; exit 1; }
