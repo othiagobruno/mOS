@@ -120,20 +120,9 @@ build_mod() {
     echo "$name: ok ($(( $(stat -c %s "$out/$name.o") / 1024 )) KB, ${#files[@]} fontes)"
 }
 
-# ---- Synchronization (Atomic, Mutex, _Cell): o módulo do próprio swift-src 6.4.2 (Apache 2.0), com a ABI da Apple,
-# em libswiftSynchronization.dylib (os apps importam Mutex/_Cell dela). O Foundation e o SwiftUI ligam nela.
-stdav=()
-for kv in 5.0=10.14.4 5.1=10.15 5.2=10.15.4 5.3=11.0 5.4=11.3 5.5=12.0 5.6=12.3 5.7=13.0 5.8=13.3 5.9=14.0 5.10=14.4 6.0=15.0 6.1=15.4 6.2=26.0 6.3=26.4 6.4=27.0; do
-    stdav+=(-define-availability "SwiftStdlib ${kv%%=*}:macOS ${kv#*=}, iOS 99, watchOS 99, tvOS 99, visionOS 99")
-done
-sy="$src/stdlib/public/Synchronization"
-mkdir -p "$out/syncgen"
-for g in AtomicIntegers AtomicStorage; do python3 "$src/utils/gyb.py" -D CMAKE_SIZEOF_VOID_P=8 -o "$out/syncgen/$g.swift" "$sy/Atomics/$g.swift.gyb"; done
-f=("$sy"/Atomics/{Atomic,AtomicBool,AtomicFloats,AtomicLazyReference,AtomicMemoryOrderings,AtomicOptional,AtomicPointers,AtomicRepresentable,WordPair}.swift
-   "$sy/Cell.swift" "$out/syncgen/AtomicIntegers.swift" "$out/syncgen/AtomicStorage.swift" "$sy/Mutex/DarwinImpl.swift" "$sy/Mutex/Mutex.swift")
-build_mod Synchronization 5 1 -- -autolink-force-load -enable-builtin-module -enable-experimental-feature RawLayout \
-    -enable-experimental-feature StaticExclusiveOnly -enable-experimental-feature Extern -strict-memory-safety \
-    -library-level api "${stdav[@]}" -- "${f[@]}"
+# ---- Synchronization (Atomic/Mutex) do mOS
+mapfile -t f < <(find "$root/userland/sdk/openswiftui/swift/Synchronization" -name '*.swift' | sort)
+build_mod Synchronization 5 1 -- -parse-stdlib -enable-experimental-feature RawLayout -- "${f[@]}"
 
 # ---- swift-collections 1.7.3
 sc="$scroot/Sources"
@@ -358,11 +347,6 @@ link_dylib() {
         fails=$((fails + 1))
     fi
 }
-# libswiftSynchronization: antes das outras (o Foundation liga nela)
-if [ $fails -eq 0 ] && [ -f "$out/Synchronization.o" ]; then
-    link_dylib libswiftSynchronization "$out/Synchronization.o"
-    base_dylibs+=("$dest/libswiftSynchronization.dylib")
-fi
 if [ $fails -eq 0 ] && [ -f "$out/_RegexParser.o" ] && [ -f "$out/_StringProcessing.o" ]; then
     link_dylib libswift_RegexParser "$out/_RegexParser.o"
     link_dylib libswift_StringProcessing "$out/_StringProcessing.o" "$out"/_CUnicode_*.o "$dest/libswift_RegexParser.dylib"
@@ -387,7 +371,7 @@ fi
 if [ $fails -eq 0 ] && [ -f "$out/Foundation.o" ]; then
     objs=()
     for c in "$out"/_FoundationCShims_*.o; do [ -f "$c" ] && objs+=("$c"); done
-    for m in Foundation _FoundationRefs InternalCollectionsUtilities SpanPreview \
+    for m in Foundation _FoundationRefs Synchronization InternalCollectionsUtilities SpanPreview \
              BasicContainers DequeModule OrderedCollections _RopeModule; do
         [ -f "$out/$m.o" ] && objs+=("$out/$m.o")
     done
@@ -424,17 +408,13 @@ if [ $fails -eq 0 ] && [ -f "$out/System.o" ] && [ -f "$dest/libswiftFoundation.
     fi
 fi
 
-# ---- Observation: o módulo do próprio swift-src 6.4.2 (Apache 2.0), com a ABI da Apple: ObservationRegistrar, Observable,
-# withObservationTracking e o Observations (AsyncSequence do Swift 6.2) que o OpenObservation não tinha. O TLS da
-# transação (ThreadLocal.cpp do original usa a camada de threads do runtime) sai de userland/sdk/swift-objc/Observation.
+# ---- Observation: o OpenObservation (MIT, porte do Observation da Apple) com o nome do módulo da Apple, em Swift
+# puro, como em tools/build-swift-overlays-objc.ps1 (ObservationRegistrar, Observable, withObservationTracking).
 # Sem o plugin de macros: o @Observable dos apps já vem expandido no binário.
-obs="$src/stdlib/public/Observation/Sources/Observation"
-if [ -d "$obs" ]; then
-    f=("$obs"/{ContinuousObservation,Locking,Observable,ObservationRegistrar,ObservationTracking,Observations,ThreadLocal}.swift)
-    if build_mod Observation 5 1 -- -autolink-force-load -enable-experimental-feature Macros \
-            -enable-experimental-feature ExtensionMacros -library-level api "${stdav[@]}" -- "${f[@]}" && want Observation; then
-        "$zig" cc -target x86_64-macos -O2 -c "$root/userland/sdk/swift-objc/Observation/ThreadLocal.c" -o "$out/Observation_tls.o" &&
-            link_dylib libswiftObservation "$out/Observation.o" "$out/Observation_tls.o"
+if [ -d "$ooroot/Sources/OpenObservation" ]; then
+    mapfile -t f < <(find "$ooroot/Sources/OpenObservation" -maxdepth 1 -name '*.swift' | sort)
+    if build_mod Observation 5 1 -- -autolink-force-load -- "${f[@]}" && want Observation; then
+        link_dylib libswiftObservation "$out/Observation.o"
     fi
 fi
 exit $fails
