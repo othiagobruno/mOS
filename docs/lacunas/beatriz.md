@@ -3,7 +3,7 @@
 Símbolos que os apps do corpus importam e o mOS não exporta, na frente de Beatriz (AppKit) (`TIME.md`).
 Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/harness.py donos`.
 
-**100** símbolos distintos.
+**96** símbolos distintos.
 
 | biblioteca | símbolo | apps | exemplos |
 |---|---|---:|---|
@@ -69,10 +69,6 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | AppKit.framework | `_OBJC_METACLASS_$_NSObjectController` | 1 | alt-tab |
 | AppKit.framework | `_OBJC_METACLASS_$_NSSliderCell` | 1 | vlc |
 | AppKit.framework | `_OBJC_METACLASS_$_NSStepperCell` | 1 | vlc |
-| ApplicationServices.framework | `_CGAcquireDisplayFadeReservation` | 1 | vlc |
-| ApplicationServices.framework | `_CGDisplayFade` | 1 | vlc |
-| ApplicationServices.framework | `_CGReleaseDisplayFadeReservation` | 1 | vlc |
-| ApplicationServices.framework | `_CGSCreateRegisteredCursorImage` | 1 | vlc |
 | ApplicationServices.framework | `_GetCurrentProcess` | 1 | firefox |
 | ApplicationServices.framework | `_GetNextProcess` | 1 | vlc |
 | ApplicationServices.framework | `_PMPrinterPrintWithFile` | 1 | firefox |

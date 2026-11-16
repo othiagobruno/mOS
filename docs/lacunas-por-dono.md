@@ -15,12 +15,12 @@ Corpus: **300** apps no manifesto; **10** medidos com Mach-O; **0** falharam na 
 | Leonardo (runtime C/C++) | 552 | 7 | [lacunas/leonardo.md](lacunas/leonardo.md) |
 | Ricardo (SwiftUI, Combine, UIKit) | 138 | 2 | [lacunas/ricardo.md](lacunas/ricardo.md) |
 | Natalia (serviços e segurança) | 120 | 6 | [lacunas/natalia.md](lacunas/natalia.md) |
-| Beatriz (AppKit) | 100 | 10 | [lacunas/beatriz.md](lacunas/beatriz.md) |
+| Beatriz (AppKit) | 96 | 10 | [lacunas/beatriz.md](lacunas/beatriz.md) |
 | Isabela (mídia) | 55 | 4 | [lacunas/isabela.md](lacunas/isabela.md) |
-| Mariana (CG, Core Text, ImageIO, PDFKit) | 38 | 7 | [lacunas/mariana.md](lacunas/mariana.md) |
+| Camila (desktop e window server) | 39 | 7 | [lacunas/camila.md](lacunas/camila.md) |
 | Fabio (WebKit/Electron) | 15 | 6 | [lacunas/fabio.md](lacunas/fabio.md) |
 | Fernanda (Swift runtime, Dispatch) | 21 | 4 | [lacunas/fernanda.md](lacunas/fernanda.md) |
-| Camila (desktop e window server) | 17 | 1 | [lacunas/camila.md](lacunas/camila.md) |
+| Mariana (CG, Core Text, ImageIO, PDFKit) | 20 | 5 | [lacunas/mariana.md](lacunas/mariana.md) |
 | Patricia (rede para apps) | 6 | 3 | [lacunas/patricia.md](lacunas/patricia.md) |
 | Larissa (plataforma: IOKit, USB, áudio HW) | 6 | 3 | [lacunas/larissa.md](lacunas/larissa.md) |
 | Otavio (OpenGL, Metal, Core Animation) | 7 | 3 | [lacunas/otavio.md](lacunas/otavio.md) |
@@ -28,15 +28,15 @@ Corpus: **300** apps no manifesto; **10** medidos com Mach-O; **0** falharam na 
 
 ## Por app
 
-| app | arch | total | eduardo | leonardo | ricardo | natalia | beatriz | isabela | mariana | fabio | fernanda | camila | patricia | larissa | otavio | renata |
+| app | arch | total | eduardo | leonardo | ricardo | natalia | beatriz | isabela | camila | fabio | fernanda | mariana | patricia | larissa | otavio | renata |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| iterm2 | x86_64 | 848 | 601 | 29 | 65 | 71 | 38 | 7 | 10 | 14 | 10 | 0 | 0 | 2 | 0 | 1 |
+| iterm2 | x86_64 | 848 | 601 | 29 | 65 | 71 | 38 | 7 | 2 | 14 | 10 | 8 | 0 | 2 | 0 | 1 |
 | inkscape | x86_64 | 470 | 0 | 461 | 0 | 3 | 1 | 0 | 1 | 0 | 0 | 0 | 3 | 0 | 0 | 1 |
-| alt-tab | x86_64 | 255 | 192 | 9 | 0 | 8 | 12 | 0 | 12 | 3 | 2 | 17 | 0 | 0 | 0 | 0 |
-| rectangle | x86_64 | 199 | 103 | 0 | 73 | 3 | 2 | 0 | 3 | 5 | 10 | 0 | 0 | 0 | 0 | 0 |
-| mos | x86_64 | 156 | 107 | 24 | 0 | 0 | 14 | 0 | 4 | 4 | 0 | 0 | 0 | 0 | 3 | 0 |
-| vlc | x86_64 | 120 | 14 | 18 | 0 | 32 | 25 | 19 | 0 | 1 | 2 | 0 | 0 | 3 | 3 | 3 |
-| firefox | x86_64 | 119 | 22 | 19 | 0 | 13 | 30 | 19 | 10 | 0 | 0 | 0 | 3 | 2 | 1 | 0 |
+| alt-tab | x86_64 | 255 | 192 | 9 | 0 | 8 | 12 | 0 | 27 | 3 | 2 | 2 | 0 | 0 | 0 | 0 |
+| rectangle | x86_64 | 199 | 103 | 0 | 73 | 3 | 2 | 0 | 0 | 5 | 10 | 3 | 0 | 0 | 0 | 0 |
+| mos | x86_64 | 156 | 107 | 24 | 0 | 0 | 14 | 0 | 3 | 4 | 0 | 1 | 0 | 0 | 3 | 0 |
+| vlc | x86_64 | 120 | 14 | 18 | 0 | 32 | 21 | 19 | 4 | 1 | 2 | 0 | 0 | 3 | 3 | 3 |
+| firefox | x86_64 | 119 | 22 | 19 | 0 | 13 | 30 | 19 | 3 | 0 | 0 | 7 | 3 | 2 | 1 | 0 |
 | gimp | x86_64 | 109 | 0 | 93 | 0 | 0 | 1 | 10 | 1 | 0 | 0 | 0 | 3 | 0 | 0 | 1 |
 | hiddenbar | x86_64 | 35 | 34 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | keepingyouawake | x86_64 | 5 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 4 | 0 | 0 | 0 | 0 | 0 | 0 |
