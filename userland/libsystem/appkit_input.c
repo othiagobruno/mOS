@@ -605,6 +605,8 @@ void cx_appkit_input_init(void) {
     { extern void cx_appkit_public_init(void); cx_appkit_public_init(); }     /* appkit_public.c: stepper, combo, level, path, AX, cadeia */
     { extern void cx_appkit_electron_init(void); cx_appkit_electron_init(); } /* appkit_electron.c: AppKit que o Claude e o ChatGPT importam */
     { extern void cx_appkit_apps_ui_init(void); cx_appkit_apps_ui_init(); }   /* appkit_apps_ui.c: texto, grade, folha (Postico e Setapp) */
+    { extern void cx_appkit_menupop_init(void); cx_appkit_menupop_init(); }   /* appkit_menupop.c: menu flutuante, menu de contexto, validação */
+    { extern void cx_appkit_controls_init(void); cx_appkit_controls_init(); } /* appkit_controls.c: NSPopUpButton, NSSegmentedControl */
     cx_class_t *resp = cx_class_named("NSResponder");
     cx_class_t *view = cx_class_named("NSView");
     cx_class_t *obj = cx_class_named("NSObject");

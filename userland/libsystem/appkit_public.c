@@ -1,6 +1,7 @@
 /*
  * Classes públicas do AppKit que os apps alvo chamam e o mOS ainda tratava como vazio:
- *   NSStepper, NSComboBox, NSLevelIndicator, NSPathControl — desenho, mouse e target/action.
+ *   NSStepper, NSComboBox, NSLevelIndicator, NSPathControl — desenho, mouse e target/action. O NSComboBox abre a
+ *   lista pelo menu flutuante (appkit_menupop.c) e aceita fonte de dados (usesDataSource).
  *   NSResponder tryToPerform:with: / noResponderFor: / insertText: sobem a cadeia
  *   (view → superview → janela → NSApp).
  *   NSAccessibility em NSView, NSControl, NSWindow e NSApplication (papel, rótulo,
@@ -86,6 +87,9 @@ typedef struct { pt_t o; sz_t s; } rc_t;
 void NSRectFill(rc_t r);
 
 static cx_class_t *cl(const char *n) { return cx_class_named(n); }
+/* struct de 32 bytes volta pela memória: no x86_64 o objc_msgSend comum trataria o ponteiro de retorno como self */
+id objc_msgSend_stret(id self, SEL op, ...);
+static rc_t msg_rect(id o, const char *sel) { return ((rc_t (*)(id, SEL))objc_msgSend_stret)(o, sel_registerName(sel)); }
 static BOOL responds(id o, const char *s) { return o && cx_responds(object_getClass(o), sel_registerName(s)); }
 static id next_resp(id self) { return responds(self, "nextResponder") ? MSG0(id, self, "nextResponder") : 0; }
 
@@ -173,7 +177,7 @@ static id step_init(id self, SEL c, rc_t f) {
 static void step_mouse(id self, SEL c, id e) {
     (void)c; (void)e;
     if (responds(self, "isEnabled") && !MSG0(BOOL, self, "isEnabled")) return;
-    rc_t b = MSG0(rc_t, self, "bounds");
+    rc_t b = msg_rect(self, "bounds");
     pt_t p = e && responds(e, "locationInWindow") ? MSG0(pt_t, e, "locationInWindow") : (pt_t){0, 0};
     pt_t local = responds(self, "convertPoint:fromView:") ? MSG(pt_t, self, "convertPoint:fromView:", p, (id)0) : p;
     int up = local.y >= b.s.h / 2;
@@ -237,16 +241,150 @@ static id combo_object(id self, SEL c) {
     if (i < 0 || (u64)i >= MSG0(u64, items, "count")) return 0;
     return MSG(id, items, "objectAtIndex:", (u64)i);
 }
-static void combo_mouse(id self, SEL c, id e) {
-    (void)c; (void)e;
-    u64 n = MSG0(u64, combo_items(self), "count");
-    if (!n) return;
-    i64 i = combo_index(self, 0);
-    combo_select(self, 0, (i64)(((i < 0 ? 0 : i) + 1) % (i64)n));
-    fire_action(self);
+/* fonte de dados (usesDataSource): numberOfItemsInComboBox: / comboBox:objectValueForItemAtIndex: */
+static BOOL combo_uses_ds(id self) { return pget_i(self, "usesDS", 0) != 0; }
+static char k_combo_ds;
+static id combo_ds(id self) { return objc_getAssociatedObject(self, &k_combo_ds); }   /* fraco, como no Cocoa */
+static i64 combo_n(id self) {
+    if (combo_uses_ds(self)) { id d = combo_ds(self); return responds(d, "numberOfItemsInComboBox:") ? MSG(i64, d, "numberOfItemsInComboBox:", self) : 0; }
+    return (i64)MSG0(u64, combo_items(self), "count");
 }
-static BOOL combo_completes(id s, SEL c) { (void)s; (void)c; return YES; }
-static void combo_set_completes(id s, SEL c, BOOL v) { (void)s; (void)c; (void)v; }
+static id combo_value_at(id self, SEL c, i64 i) {
+    (void)c;
+    if (i < 0 || i >= combo_n(self)) return 0;
+    if (combo_uses_ds(self)) { id d = combo_ds(self); return responds(d, "comboBox:objectValueForItemAtIndex:") ? MSG(id, d, "comboBox:objectValueForItemAtIndex:", self, i) : 0; }
+    return MSG(id, combo_items(self), "objectAtIndex:", (u64)i);
+}
+static id combo_desc(id v) { return !v ? cx_str("") : cx_is_str(v) ? v : responds(v, "description") ? MSG0(id, v, "description") : cx_str(""); }
+static void combo_notify(id self) {
+    id nc = MSG0(id, (id)cl("NSNotificationCenter"), "defaultCenter");
+    id d = responds(self, "delegate") ? MSG0(id, self, "delegate") : 0;
+    id n = MSG(id, (id)cl("NSNotification"), "notificationWithName:object:", cx_str("NSComboBoxSelectionDidChangeNotification"), self);
+    if (responds(d, "comboBoxSelectionDidChange:")) MSG(void, d, "comboBoxSelectionDidChange:", n);
+    if (nc) MSG(void, nc, "postNotification:", n);
+}
+static void combo_select_any(id self, i64 i) {
+    if (i < 0 || i >= combo_n(self)) { pset(self, "index", cx_num_i(-1)); return; }
+    pset(self, "index", cx_num_i(i));
+    if (responds(self, "setStringValue:")) MSG(void, self, "setStringValue:", combo_desc(combo_value_at(self, 0, i)));
+    mark_view(self);
+}
+static void combo_select_m(id self, SEL c, i64 i) { (void)c; combo_select_any(self, i); }
+static void combo_add_many(id self, SEL c, id arr) { u64 n = arr ? MSG0(u64, arr, "count") : 0; for (u64 i = 0; i < n; i++) combo_add(self, c, MSG(id, arr, "objectAtIndex:", i)); }
+static void combo_insert(id self, SEL c, id v, i64 at) {
+    (void)c;
+    id a = combo_items(self);
+    u64 n = MSG0(u64, a, "count");
+    if (!v) return;
+    if (at < 0) at = 0;
+    if ((u64)at > n) at = (i64)n;
+    MSG(void, a, "insertObject:atIndex:", v, (u64)at);
+    i64 s = pget_i(self, "index", -1);
+    if (s >= at) pset(self, "index", cx_num_i(s + 1));
+}
+static void combo_remove_at(id self, SEL c, i64 i) {
+    (void)c;
+    id a = combo_items(self);
+    if (i < 0 || (u64)i >= MSG0(u64, a, "count")) return;
+    MSG(void, a, "removeObjectAtIndex:", (u64)i);
+    i64 s = pget_i(self, "index", -1);
+    pset(self, "index", cx_num_i(s == i ? -1 : s > i ? s - 1 : s));
+}
+static i64 combo_index_of(id self, SEL c, id v) {
+    (void)c;
+    i64 n = combo_n(self);
+    for (i64 i = 0; i < n; i++) { id x = combo_value_at(self, 0, i); if (x == v || (x && v && MSG(BOOL, x, "isEqual:", v))) return i; }
+    return -1;
+}
+static void combo_remove_value(id self, SEL c, id v) { combo_remove_at(self, c, combo_index_of(self, 0, v)); }
+static void combo_select_value(id self, SEL c, id v) { (void)c; combo_select_any(self, combo_index_of(self, 0, v)); }
+static void combo_deselect(id self, SEL c, i64 i) { (void)c; if (pget_i(self, "index", -1) == i) pset(self, "index", cx_num_i(-1)); }
+static id combo_values(id self, SEL c) {
+    (void)c;
+    id a = MSG0(id, (id)cl("NSMutableArray"), "array");
+    i64 n = combo_n(self);
+    for (i64 i = 0; i < n; i++) { id v = combo_value_at(self, 0, i); if (v) MSG(void, a, "addObject:", v); }
+    return a;
+}
+static i64 combo_count_any(id self, SEL c) { (void)c; return combo_n(self); }
+static i64 combo_visible(id s, SEL c) { (void)c; return pget_i(s, "visible", 5); }
+static void combo_set_visible(id s, SEL c, i64 v) { (void)c; pset(s, "visible", cx_num_i(v)); }
+static double combo_item_h(id s, SEL c) { (void)c; id v = pget(s, "itemH"); return v ? MSG0(double, v, "doubleValue") : 19; }
+static void combo_set_item_h(id s, SEL c, double v) { (void)c; pset(s, "itemH", cx_num_d(v)); }
+static BOOL combo_get_uses_ds(id s, SEL c) { (void)c; return combo_uses_ds(s); }
+static void combo_set_uses_ds(id s, SEL c, BOOL b) { (void)c; pset(s, "usesDS", cx_num_i(b)); }
+static id combo_get_ds(id s, SEL c) { (void)c; return combo_ds(s); }
+static void combo_set_ds(id s, SEL c, id d) { (void)c; objc_setAssociatedObject(s, &k_combo_ds, d, 0); }
+static BOOL combo_bordered(id s, SEL c) { (void)c; return pget_i(s, "btnBorder", 1) != 0; }
+static void combo_set_bordered(id s, SEL c, BOOL b) { (void)c; pset(s, "btnBorder", cx_num_i(b)); mark_view(s); }
+static void combo_reload(id s, SEL c) { (void)c; mark_view(s); }
+static void combo_noop_i(id s, SEL c, i64 i) { (void)s; (void)c; (void)i; }
+/* -completedString: o primeiro item que começa com o texto (sem caixa) */
+static id combo_completed(id self, SEL c, id str) {
+    (void)c;
+    const char *p = str ? cx_cstr(str) : "";
+    size_t pl = strlen(p);
+    if (!pl) return 0;
+    i64 n = combo_n(self);
+    id d = combo_ds(self);
+    if (combo_uses_ds(self) && responds(d, "comboBox:completedString:")) return MSG(id, d, "comboBox:completedString:", self, str);
+    for (i64 i = 0; i < n; i++) {
+        const char *x = cx_cstr(combo_desc(combo_value_at(self, 0, i)));
+        size_t k = 0;
+        while (k < pl && x[k] && ((x[k] | 32) == (p[k] | 32) || x[k] == p[k])) k++;
+        if (k == pl) return combo_desc(combo_value_at(self, 0, i));
+    }
+    return 0;
+}
+/* clique: na seta abre a lista (menu flutuante); no texto, edita como NSTextField */
+typedef struct { double x, y; } cpt_t;
+id cx_menu_popup_choose(id menu, int pos, cpt_t pt, int mode, double min_w, double font_size, id from_view);
+id objc_msgSend_stret(id self, SEL op, ...);
+static void combo_mouse(id self, SEL c, id e) {
+    rc_t b = msg_rect(self, "bounds");
+    pt_t p = e && responds(e, "locationInWindow") ? MSG0(pt_t, e, "locationInWindow") : (pt_t){0, 0};
+    pt_t local = MSG(pt_t, self, "convertPoint:fromView:", p, (id)0);
+    if (local.x < b.o.x + b.s.w - 20) {
+        SEL s = sel_registerName("mouseDown:");
+        ((void (*)(id, SEL, id))class_getMethodImplementation(cl("NSTextField"), s))(self, s, e);
+        return;
+    }
+    i64 n = combo_n(self);
+    if (!n || (responds(self, "isEnabled") && !MSG0(BOOL, self, "isEnabled"))) return;
+    id nc = MSG0(id, (id)cl("NSNotificationCenter"), "defaultCenter");
+    if (nc) MSG(void, nc, "postNotificationName:object:", cx_str("NSComboBoxWillPopUpNotification"), self);
+    id d = responds(self, "delegate") ? MSG0(id, self, "delegate") : 0;
+    id note = MSG(id, (id)cl("NSNotification"), "notificationWithName:object:", cx_str("NSComboBoxWillPopUpNotification"), self);
+    if (responds(d, "comboBoxWillPopUp:")) MSG(void, d, "comboBoxWillPopUp:", note);
+    id menu = MSG(id, MSG0(id, (id)cl("NSMenu"), "alloc"), "initWithTitle:", cx_str(""));
+    MSG(void, menu, "setAutoenablesItems:", (BOOL)NO);
+    i64 cur = pget_i(self, "index", -1);
+    for (i64 i = 0; i < n && i < 500; i++) {
+        id it = MSG(id, MSG0(id, (id)cl("NSMenuItem"), "alloc"), "initWithTitle:action:keyEquivalent:", combo_desc(combo_value_at(self, 0, i)), (SEL)0, cx_str(""));
+        MSG(void, it, "setTag:", i);
+        if (i == cur) MSG(void, it, "setState:", (i64)1);
+        MSG(void, menu, "addItem:", it);
+        objc_release(it);
+    }
+    BOOL flipped = MSG0(BOOL, self, "isFlipped");
+    pt_t corner = {b.o.x, flipped ? b.o.y + b.s.h : b.o.y};
+    pt_t w = MSG(pt_t, self, "convertPoint:toView:", corner, (id)0);
+    id win = MSG0(id, self, "window");
+    rc_t sr = win ? ((rc_t (*)(id, SEL, rc_t))objc_msgSend_stret)(win, sel_registerName("convertRectToScreen:"), (rc_t){{w.x, w.y}, {0, 0}}) : (rc_t){{w.x, w.y}, {0, 0}};
+    id font = responds(self, "font") ? MSG0(id, self, "font") : 0;
+    double fs = font ? MSG0(double, font, "pointSize") : 0;
+    id ch = cx_menu_popup_choose(menu, -1, (cpt_t){sr.o.x, sr.o.y}, 1, b.s.w, fs, self);
+    if (d && responds(d, "comboBoxWillDismiss:")) MSG(void, d, "comboBoxWillDismiss:", note);
+    if (ch) {
+        combo_select_any(self, MSG0(i64, ch, "tag"));
+        combo_notify(self);
+        fire_action(self);
+    }
+    objc_release(menu);
+    (void)c;
+}
+static BOOL combo_completes(id s, SEL c) { (void)c; return pget_i(s, "completes", 0) != 0; }
+static void combo_set_completes(id s, SEL c, BOOL v) { (void)c; pset(s, "completes", cx_num_i(v)); }
 static void combo_draw(id self, SEL c, rc_t r) {
     SEL s = sel_registerName("drawRect:");
     ((void (*)(id, SEL, rc_t))class_getMethodImplementation(cl("NSTextField"), s))(self, s, r);
@@ -336,7 +474,7 @@ static void path_mouse(id self, SEL c, id e) {
     char parts[32][CX_PATH_PART];
     int n = cx_path_split(cx_cstr(pget(self, "path")), parts, 32);
     if (!n) return;
-    rc_t b = MSG0(rc_t, self, "bounds");
+    rc_t b = msg_rect(self, "bounds");
     pt_t p = e && responds(e, "locationInWindow") ? MSG0(pt_t, e, "locationInWindow") : (pt_t){0, 0};
     pt_t local = responds(self, "convertPoint:fromView:") ? MSG(pt_t, self, "convertPoint:fromView:", p, (id)0) : p;
     double w = b.s.w > 0 ? b.s.w : 1;
@@ -415,7 +553,7 @@ static id ax_parent(id self, SEL c) {
 }
 static rc_t ax_frame(id self, SEL c) {
     (void)c;
-    if (responds(self, "frame")) return MSG0(rc_t, self, "frame");
+    if (responds(self, "frame")) return msg_rect(self, "frame");
     rc_t z = {{0, 0}, {0, 0}};
     return z;
 }
@@ -495,6 +633,32 @@ void cx_appkit_public_init(void) {
     cx_add_method(&NSComboBox_c, "mouseDown:", (void *)combo_mouse);
     cx_add_method(&NSComboBox_c, "completes", (void *)combo_completes);
     cx_add_method(&NSComboBox_c, "setCompletes:", (void *)combo_set_completes);
+    cx_add_method(&NSComboBox_c, "itemObjectValueAtIndex:", (void *)combo_value_at);
+    cx_add_method(&NSComboBox_c, "objectValues", (void *)combo_values);
+    cx_add_method(&NSComboBox_c, "addItemsWithObjectValues:", (void *)combo_add_many);
+    cx_add_method(&NSComboBox_c, "insertItemWithObjectValue:atIndex:", (void *)combo_insert);
+    cx_add_method(&NSComboBox_c, "removeItemAtIndex:", (void *)combo_remove_at);
+    cx_add_method(&NSComboBox_c, "removeItemWithObjectValue:", (void *)combo_remove_value);
+    cx_add_method(&NSComboBox_c, "indexOfItemWithObjectValue:", (void *)combo_index_of);
+    cx_add_method(&NSComboBox_c, "selectItemWithObjectValue:", (void *)combo_select_value);
+    cx_add_method(&NSComboBox_c, "deselectItemAtIndex:", (void *)combo_deselect);
+    cx_add_method(&NSComboBox_c, "selectItemAtIndex:", (void *)combo_select_m);
+    cx_add_method(&NSComboBox_c, "numberOfItems", (void *)combo_count_any);
+    cx_add_method(&NSComboBox_c, "numberOfVisibleItems", (void *)combo_visible);
+    cx_add_method(&NSComboBox_c, "setNumberOfVisibleItems:", (void *)combo_set_visible);
+    cx_add_method(&NSComboBox_c, "itemHeight", (void *)combo_item_h);
+    cx_add_method(&NSComboBox_c, "setItemHeight:", (void *)combo_set_item_h);
+    cx_add_method(&NSComboBox_c, "usesDataSource", (void *)combo_get_uses_ds);
+    cx_add_method(&NSComboBox_c, "setUsesDataSource:", (void *)combo_set_uses_ds);
+    cx_add_method(&NSComboBox_c, "dataSource", (void *)combo_get_ds);
+    cx_add_method(&NSComboBox_c, "setDataSource:", (void *)combo_set_ds);
+    cx_add_method(&NSComboBox_c, "isButtonBordered", (void *)combo_bordered);
+    cx_add_method(&NSComboBox_c, "setButtonBordered:", (void *)combo_set_bordered);
+    cx_add_method(&NSComboBox_c, "reloadData", (void *)combo_reload);
+    cx_add_method(&NSComboBox_c, "noteNumberOfItemsChanged", (void *)combo_reload);
+    cx_add_method(&NSComboBox_c, "scrollItemAtIndexToTop:", (void *)combo_noop_i);
+    cx_add_method(&NSComboBox_c, "scrollItemAtIndexToVisible:", (void *)combo_noop_i);
+    cx_add_method(&NSComboBox_c, "completedString:", (void *)combo_completed);
     cx_add_method(&NSComboBox_c, "drawRect:", (void *)combo_draw);
 
     def(&NSLevelIndicator_c, &NSLevelIndicator_m, "NSLevelIndicator", "NSControl");
