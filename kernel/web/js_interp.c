@@ -1307,6 +1307,21 @@ static NOINL int exec_forin(jsnode *n, jsenv *env) {
     return CMP_NORMAL;
 }
 
+/* IteratorClose / AsyncIteratorClose: saída abrupta do for-of chama iterator.return(); com exceção pendente, a
+ * original prevalece. Devolve -1 se lançou. */
+static int iter_close(jsv it, bool async, bool throwing) {
+    jsv exc = throwing ? js_catch() : JS_UNDEF;
+    jsv f = js_getk(it, js_intern("return", -1));
+    if (f == JS_EXC) { if (throwing) { js_catch(); js_throw(exc); } return -1; }
+    if (jv_isnullish(f)) { if (throwing) js_throw(exc); return throwing ? -1 : 0; }
+    jsv r = js_iscallable(f) ? js_call(f, it, 0, NULL) : js_throw_err(E_TYPE, "iterator.return não é uma função");
+    if (async && r != JS_EXC) r = js_await(r);
+    if (throwing) { if (r == JS_EXC) js_catch(); js_throw(exc); return -1; }
+    if (r == JS_EXC) return -1;
+    if (!jv_isobj(r)) { js_throw_err(E_TYPE, "o resultado de iterator.return() não é um objeto"); return -1; }
+    return 0;
+}
+
 static NOINL int exec_forof(jsnode *n, jsenv *env) {
     jsstr *mylabel = pending_label;
     pending_label = NULL;
@@ -1343,12 +1358,12 @@ static NOINL int exec_forof(jsnode *n, jsenv *env) {
             }
             int err;
             jsenv *be = iter_bind(n, env, x, &err);
-            if (err) return -1;
+            if (err) { iter_close(it, asy, true); return -1; }
             int r = exec(n->d, be);
-            if (r < 0) return -1;
+            if (r < 0) { iter_close(it, asy, true); return -1; }
             int c = loop_ctl(r, mylabel);
-            if (c == 1) break;
-            if (c == 2) return r;
+            if (c == 1) { if (iter_close(it, asy, false) < 0) return -1; break; }
+            if (c == 2) { if (iter_close(it, asy, false) < 0) return -1; return r; }
         }
         return CMP_NORMAL;
     }
@@ -1378,12 +1393,12 @@ static NOINL int exec_forof(jsnode *n, jsenv *env) {
         if (!s) break;
         int err;
         jsenv *be = iter_bind(n, env, x, &err);
-        if (err) return -1;
+        if (err) { iter_close(it, false, true); return -1; }
         int r = exec(n->d, be);
-        if (r < 0) return -1;
+        if (r < 0) { iter_close(it, false, true); return -1; }
         int c = loop_ctl(r, mylabel);
-        if (c == 1) break;
-        if (c == 2) return r;
+        if (c == 1) { if (iter_close(it, false, false) < 0) return -1; break; }
+        if (c == 2) { if (iter_close(it, false, false) < 0) return -1; return r; }
     }
     return CMP_NORMAL;
 }
