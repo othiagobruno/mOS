@@ -16,8 +16,7 @@ void objc_release(id o);
 typedef struct { long version; void *retain, *release, *desc, *equal, *hash; } cf_cb_t;
 const cf_cb_t kCFTypeDictionaryKeyCallBacks = {0}, kCFTypeDictionaryValueCallBacks = {0};
 const cf_cb_t kCFCopyStringDictionaryKeyCallBacks = {0};
-const cf_cb_t kCFTypeArrayCallBacks = {0}, kCFTypeSetCallBacks = {0};
-const cf_cb_t kCFCopyStringSetCallBacks = {0};
+const cf_cb_t kCFTypeArrayCallBacks = {0};   /* kCFTypeSetCallBacks e kCFCopyStringSetCallBacks: fdn_set.c */
 const cf_cb_t kCFTypeBagCallBacks = {0};
 
 /* ---- identificadores de tipo (os mesmos números do CF da Apple) */

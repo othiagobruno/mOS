@@ -1878,10 +1878,10 @@ void cx_foundation_init(void) {
     cx_define_class(&NSValue_c, &NSValue_m, "NSValue", &NSObject_c, 32);
     cx_define_class(&NSError_c, &NSError_m, "NSError", &NSObject_c, 0);
     M(NSError, "localizedDescription", err_desc); M(NSError, "description", err_desc);
-    cx_define_class(&NSSet_c, &NSSet_m, "NSSet", &NSArray_c, 0);
-    cx_define_class(&NSMutableSet_c, &NSMutableSet_m, "NSMutableSet", &NSMutableArray_c, 0);
-    CM(NSSet, "set", a_array_ar); CM(NSSet, "setWithArray:", a_with_array_ar); CM(NSSet, "setWithObjects:", a_with_objs); CM(NSSet, "setWithObject:", a_with_obj_ar);
-    M(NSSet, "allObjects", a_copy); M(NSSet, "anyObject", a_first); M(NSSet, "member:", a_first);
+    /* NSSet é filho de NSObject (tabela hash); os métodos estão em fdn_set.c */
+    cx_define_class(&NSSet_c, &NSSet_m, "NSSet", &NSObject_c, sizeof(nsset_t) - 8);
+    cx_define_class(&NSMutableSet_c, &NSMutableSet_m, "NSMutableSet", &NSSet_c, 0);
+    { extern void cx_fdn_set_init(void); cx_fdn_set_init(); }
     cx_define_class(&NSNull_c, &NSNull_m, "NSNull", &NSObject_c, 0);
     CM(NSNull, "null", g_singleton); M(NSNull, "description", null_desc);
     cx_define_class(&NSException_c, &NSException_m, "NSException", &NSObject_c, sizeof(nsexc_t) - 8);

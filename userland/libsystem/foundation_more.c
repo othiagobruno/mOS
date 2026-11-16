@@ -29,7 +29,7 @@ int pipe(int *fds);
 #define CLASS(N) cx_class_t N##_c __asm__("OBJC_CLASS_$_" #N); cx_class_t N##_m __asm__("OBJC_METACLASS_$_" #N);
 CLASS(NSAffineTransform) CLASS(NSAppleEventDescriptor) CLASS(NSAssertionHandler) 
 CLASS(NSBundleResourceRequest) CLASS(NSComparisonPredicate)
-CLASS(NSCompoundPredicate) CLASS(NSCondition) CLASS(NSConditionLock) CLASS(NSCountedSet) CLASS(NSDataDetector)
+CLASS(NSCompoundPredicate) CLASS(NSCondition) CLASS(NSConditionLock) CLASS(NSDataDetector)
 
 CLASS(NSExpression) CLASS(NSFileCoordinator) CLASS(NSFileHandle) CLASS(NSHashTable)
 CLASS(NSHTTPURLResponse) CLASS(NSIndexPath)
@@ -1906,13 +1906,6 @@ static u64 iset_last(id s, SEL c) {
     return m;
 }
 
-static id cset_add(id s, SEL c, id o) { (void)c; if (o) cx_arr_add(s, o); return 0; }
-static u64 cset_count_of(id s, SEL c, id o) {
-    (void)c;
-    u64 n = MSG0(u64, s, "count"), k = 0;
-    for (u64 i = 0; i < n; i++) if (MSG(BOOL, MSG(id, s, "objectAtIndex:", i), "isEqual:", o)) k++;
-    return k;
-}
 
 static id ht_alloc(id cls, SEL c) { (void)c; box_t *o = (box_t *)cx_alloc_instance((cx_class_t *)cls); cxmap_t *m = map_new(); m->magic = HASH_MAGIC; o->p = m; return (id)o; }
 static void ht_add(id s, SEL c, id o) { (void)c; NSHashInsertKnownAbsent(BOX(s)->p, o); retain(o); }
@@ -2426,8 +2419,7 @@ void cx_foundation_more_init(void) {
     M(NSMutableIndexSet, "addIndex:", iset_add); M(NSMutableIndexSet, "addIndexesInRange:", iset_addrange);
     M(NSMutableIndexSet, "removeIndex:", iset_remove); M(NSMutableIndexSet, "containsIndex:", iset_has);
     M(NSMutableIndexSet, "count", iset_count); M(NSMutableIndexSet, "firstIndex", iset_first); M(NSMutableIndexSet, "lastIndex", iset_last);
-    DEF(&NSCountedSet_c, &NSCountedSet_m, "NSCountedSet", &NSMutableSet_c, 0);
-    M(NSCountedSet, "addObject:", cset_add); M(NSCountedSet, "countForObject:", cset_count_of);
+    /* NSCountedSet: fdn_set.c */
     DEF(&NSHashTable_c, &NSHashTable_m, "NSHashTable", ob, BEX);
     CM(NSHashTable, "weakObjectsHashTable", ht_alloc); CM(NSHashTable, "alloc", ht_alloc);
     M(NSHashTable, "addObject:", ht_add); M(NSHashTable, "removeObject:", ht_remove); M(NSHashTable, "member:", ht_member);

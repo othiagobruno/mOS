@@ -224,59 +224,7 @@ id CFUUIDGetConstantUUIDWithBytes(void *alloc, u8 b0, u8 b1, u8 b2, u8 b3, u8 b4
     return u;
 }
 
-/* ================================================================ CFSet (sobre NSMutableSet) */
-id CFSetCreateMutable(void *alloc, long cap, const void *cb) { (void)alloc; (void)cap; (void)cb; return objc_retain(MSG0(id, cls("NSMutableSet"), "set")); }
-void CFSetAddValue(id s, id v) {
-    if (!s || !v) return;
-    if (MSG(BOOL, s, "containsObject:", v)) return;
-    MSG(void, s, "addObject:", v);
-}
-id CFSetCreate(void *alloc, const id *vals, long n, const void *cb) {
-    id s = CFSetCreateMutable(alloc, n, cb);
-    for (long i = 0; i < n; i++) CFSetAddValue(s, vals[i]);
-    return s;
-}
-long CFSetGetCount(id s) { return s ? (long)MSG0(u64, s, "count") : 0; }
-void CFSetGetValues(id s, id *out);
-u64 CFSetGetTypeID(void) { return 17; }
-u8 CFSetContainsValue(id s, id v) { return s && v && MSG(BOOL, s, "containsObject:", v); }
-id CFSetGetValue(id s, id v) { return CFSetContainsValue(s, v) ? v : 0; }
-u8 CFSetGetValueIfPresent(id s, id v, id *out) {
-    id g = CFSetGetValue(s, v);
-    if (out) *out = g;
-    return g != 0;
-}
-long CFSetGetCountOfValue(id s, id v) { return CFSetContainsValue(s, v) ? 1 : 0; }
-void CFSetRemoveValue(id s, id v) { if (s && v) MSG(void, s, "removeObject:", v); }
-void CFSetRemoveAllValues(id s) { if (s) MSG0(void, s, "removeAllObjects"); }
-void CFSetReplaceValue(id s, id v) { if (CFSetContainsValue(s, v)) { CFSetRemoveValue(s, v); CFSetAddValue(s, v); } }
-void CFSetSetValue(id s, id v) { if (!s || !v) return; CFSetRemoveValue(s, v); CFSetAddValue(s, v); }
-id CFSetCreateCopy(void *alloc, id s) {
-    long n = CFSetGetCount(s);
-    id *v = n > 0 ? calloc((size_t)n, sizeof *v) : 0;
-    if (v) CFSetGetValues(s, v);
-    id c = CFSetCreate(alloc, v, n, 0);
-    free(v);
-    return c;
-}
-id CFSetCreateMutableCopy(void *alloc, long cap, id s) {
-    (void)cap;
-    id m = CFSetCreateMutable(alloc, 0, 0);
-    long n = CFSetGetCount(s);
-    id *v = n > 0 ? calloc((size_t)n, sizeof *v) : 0;
-    if (v) {
-        CFSetGetValues(s, v);
-        for (long i = 0; i < n; i++) CFSetAddValue(m, v[i]);
-        free(v);
-    }
-    return m;
-}
-void CFSetGetValues(id s, id *out) {
-    if (!s || !out) return;
-    id a = MSG0(id, s, "allObjects");
-    nsarr_t *r = (nsarr_t *)a;
-    for (u64 i = 0; a && i < r->n; i++) out[i] = r->items[i];
-}
+/* CFSet: fdn_set.c (tabela hash, callbacks do CF) */
 
 /* ================================================================ CFString */
 static const char *utf8(id s) { return s ? cx_cstr(s) : ""; }
