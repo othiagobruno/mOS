@@ -121,3 +121,4 @@ u16  sae_confirm(sae_t *s, u8 out[32]);
 bool sae_check_confirm(const sae_t *s, u16 peer_sc, const u8 conf[32]);
 void wpa_kdf_sha256(const u8 *key, usize klen, const char *label, const u8 *ctx, usize clen, u8 *out, usize bits);
 void aes_cmac(const u8 key[16], const u8 *m, usize len, u8 out[16]);   /* kernel/bt/smp_crypto.c */
+void wifi_radio_lost(void);                 /* driver: o enlace caiu por baixo (S3) */

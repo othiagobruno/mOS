@@ -136,6 +136,8 @@ const u8 *r8169_firmware(const char *name, u32 *len) {
 }
 int r8169_phy_fw(const u8 *d, u32 size, char *ver, int verlen);
 
+static const pm_ops_t *pmops;
+void pm_register(const pm_ops_t *o) { pmops = o; }
 static netdev_t *registered;
 void net_register_device(netdev_t *d) { registered = d; }
 
@@ -326,6 +328,24 @@ int main(void) {
     CHECK(strstr(logbuf, "cabo desconectado") != NULL, "queda de link não registrada");
     CHECK(foreign == 0, "%d acessos fora do BAR2 no fim", foreign);
 
+    /* ---- repouso S3: a placa perde tudo; o resume refaz MAC, PHY e anéis */
+    CHECK(pmops && (pmops->flags & PM_RESTORES_NET) && pmops->suspend && pmops->resume, "registro no pm.c com PM_RESTORES_NET");
+    if (pmops) {
+        CHECK(pmops->suspend(3) == 0 && regs[0x37] == 0, "suspend(3) para TX e RX");
+        CHECK(!registered->send(small, 20), "nada sai durante o repouso");
+        int resets_before = resets;
+        u8 mac_keep[6]; memcpy(mac_keep, regs, 6);
+        memset(regs, 0, 0x100);                           /* energia caiu: registradores zerados */
+        memcpy(regs, mac_keep, 6);                        /* o MAC volta do eFuse */
+        s32(0x40, 0x541u << 20);
+        regs[0xD3] = 0x80 | 0x02;
+        memset(ephy, 0, sizeof ephy);
+        pmops->resume(3);
+        CHECK(resets == resets_before + 1 && regs[0x37] == 0x0C, "resume(3): reset e TX/RX ligados de novo");
+        CHECK(ephy[0x05] == 0x2089 && r32(0x44) != 0 && r32(0x20) == (u32)(uptr)tx, "resume(3): EPHY, RxConfig e anel de TX reprogramados (mesma memória)");
+        CHECK(registered->send(small, 20) && tx[0].opts1 == (OWN | FS | LS | 60), "depois do repouso o envio recomeça do início do anel");
+        CHECK(strstr(logbuf, "de volta do repouso") != NULL, "log da volta");
+    }
     printf("r8169_host: %d/%d ok\n", pass, total);
     return pass == total ? 0 : 1;
 }

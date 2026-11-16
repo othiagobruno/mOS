@@ -17,6 +17,7 @@
 #else
 #include "kernel.h"
 #include "kernel/net/netpriv.h"
+#include "pm.h"
 #endif
 
 /* ---------- registradores ---------- */
@@ -147,6 +148,9 @@ static struct {
     u8 *txbuf[TX_DESC];
     u32 rx_cur, tx_cur;
     char name[64];
+    pci_dev_t *pd;
+    u8 mac[6];
+    bool own_mac, asleep;
 } R;
 
 static netdev_t r8169_dev;
@@ -427,7 +431,7 @@ static void watch_link(void) {
 static bool r8169_link_up(void) { return R.mmio && (reg_r8(R_PHYSTATUS) & PHY_LINK); }
 
 static bool r8169_send(const void *frame, u16 len) {
-    if (!R.mmio || len == 0 || len > FRAME_MAX) return false;
+    if (!R.mmio || R.asleep || len == 0 || len > FRAME_MAX) return false;
     u32 i = R.tx_cur;
     volatile r8169_desc_t *d = &R.tx[i];
     if (d->opts1 & D_OWN) return false;              /* anel cheio: o NIC ainda não mandou este */
@@ -450,7 +454,7 @@ static void rx_give_back(u32 i) {
 }
 
 static int r8169_recv(void *frame, u16 max) {
-    if (!R.mmio) return 0;
+    if (!R.mmio || R.asleep) return 0;
     watch_link();
     u16 st = reg_r16(R_INTRSTATUS);
     if (st) reg_w16(R_INTRSTATUS, st);   /* polling: só limpa (RDU/FIFO cheio voltam sozinhos com descritores livres) */
@@ -471,12 +475,17 @@ static int r8169_recv(void *frame, u16 max) {
 }
 
 /* ---------- inicialização ---------- */
+static u64 rx_pa, tx_pa;
+static u8 *rx_pool, *tx_pool;
 static bool setup_rings(void) {
-    u64 rxa, txa;
-    R.rx = dma_alloc(sizeof(r8169_desc_t) * RX_DESC, &rxa);   /* páginas: alinhamento de 256 garantido */
-    R.tx = dma_alloc(sizeof(r8169_desc_t) * TX_DESC, &txa);
-    u8 *rxpool = dma_alloc(BUF_SIZE * RX_DESC, NULL);
-    u8 *txpool = dma_alloc(BUF_SIZE * TX_DESC, NULL);
+    if (!R.rx) {                                     /* primeira vez: aloca; depois do S3 só reprograma */
+        R.rx = dma_alloc(sizeof(r8169_desc_t) * RX_DESC, &rx_pa);   /* páginas: alinhamento de 256 garantido */
+        R.tx = dma_alloc(sizeof(r8169_desc_t) * TX_DESC, &tx_pa);
+        rx_pool = dma_alloc(BUF_SIZE * RX_DESC, NULL);
+        tx_pool = dma_alloc(BUF_SIZE * TX_DESC, NULL);
+    }
+    u64 rxa = rx_pa, txa = tx_pa;
+    u8 *rxpool = rx_pool, *txpool = tx_pool;
     if (!R.rx || !R.tx || !rxpool || !txpool || (rxa & 0xFF) || (txa & 0xFF)) return false;
     for (u32 i = 0; i < RX_DESC; i++) {
         R.rxbuf[i] = rxpool + i * BUF_SIZE;
@@ -554,6 +563,10 @@ static bool mac_valid(const u8 *m) {
     return !zero && !ones && !(m[0] & 1);
 }
 
+static bool chip_up(bool first);
+static int r8169_suspend(int st);
+static void r8169_resume(int st);
+static const pm_ops_t r8169_pm;
 bool r8169_probe(void) {
     pci_dev_t *pd = NULL;
     for (int i = 0; i < pci_count() && !pd; i++) {
@@ -575,7 +588,24 @@ bool r8169_probe(void) {
     kprintf("r8169: %s (XID 0x%03x) %04x:%04x em %02x:%02x.%x, MMIO BAR%d 0x%llx\n", R.model->name, R.xid,
             pd->vendor, pd->device, pd->bus, pd->dev, pd->fn, bi, bar);
     if (R.xid == 0xFCF) { kprintf("r8169: registradores ilegíveis (0xFFFFFFFF)\n"); R.mmio = NULL; return false; }
+    R.pd = pd;
+    if (!chip_up(true)) return false;
+    snprintf(R.name, sizeof R.name, "Realtek %s (r8169)", R.model->name);
+    r8169_dev.name = R.name;
+    r8169_dev.send = r8169_send;
+    r8169_dev.recv = r8169_recv;
+    r8169_dev.link_up = r8169_link_up;
+    memcpy(r8169_dev.mac, R.mac, 6);
+    kprintf("r8169: MAC %02x:%02x:%02x:%02x:%02x:%02x, link %s\n",
+            R.mac[0], R.mac[1], R.mac[2], R.mac[3], R.mac[4], R.mac[5], r8169_link_up() ? "ativo" : "aguardando");
+    net_register_device(&r8169_dev);
+    pm_register(&r8169_pm);
+    return true;
+}
 
+/* do reset ao MAC ligado: na subida e de novo depois do S3 (a placa volta sem energia) */
+static bool chip_up(bool first) {
+    pci_dev_t *pd = R.pd;
     reg_w16(R_INTRMASK, 0);
     reg_w16(R_INTRSTATUS, 0xFFFF);
     if (R.model->flags & F_G) {
@@ -588,12 +618,16 @@ bool r8169_probe(void) {
     reg_w8(R_CHIPCMD, CMD_RESET);
     int t = 0;
     for (; t < 100 && (reg_r8(R_CHIPCMD) & CMD_RESET); t++) sleep_ms(1);
-    if (reg_r8(R_CHIPCMD) & CMD_RESET) { kprintf("r8169: reset não terminou\n"); R.mmio = NULL; return false; }
+    if (reg_r8(R_CHIPCMD) & CMD_RESET) { kprintf("r8169: reset não terminou\n"); if (first) R.mmio = NULL; return false; }
+    if (first) kprintf("r8169: reset em %d ms\n", t);
 
-    u8 mac[6];
-    for (int i = 0; i < 6; i++) mac[i] = reg_r8(R_IDR0 + i);
-    bool own_mac = !mac_valid(mac);
-    if (own_mac) {
+    u8 *mac = R.mac;
+    bool own_mac;
+    if (first) {
+        for (int i = 0; i < 6; i++) mac[i] = reg_r8(R_IDR0 + i);
+        own_mac = R.own_mac = !mac_valid(mac);
+    } else own_mac = R.own_mac;
+    if (own_mac && first) {
         u32 r = rand32();
         mac[0] = 0x02; mac[1] = 0x6D; mac[2] = 0x4F;
         mac[3] = (u8)r; mac[4] = (u8)(r >> 8); mac[5] = (u8)(r >> 16);
@@ -630,7 +664,7 @@ bool r8169_probe(void) {
     if (!setup_rings()) {
         reg_w8(R_CFG9346, CFG_LOCK);
         kprintf("r8169: sem memória DMA\n");
-        R.mmio = NULL;
+        if (first) R.mmio = NULL;
         return false;
     }
     reg_w8(R_CFG9346, CFG_LOCK);
@@ -654,18 +688,26 @@ bool r8169_probe(void) {
     } else {
         kprintf("r8169: PHY não respondeu\n");
     }
-
-    snprintf(R.name, sizeof R.name, "Realtek %s (r8169)", R.model->name);
-    r8169_dev.name = R.name;
-    r8169_dev.send = r8169_send;
-    r8169_dev.recv = r8169_recv;
-    r8169_dev.link_up = r8169_link_up;
-    memcpy(r8169_dev.mac, mac, 6);
-    kprintf("r8169: MAC %02x:%02x:%02x:%02x:%02x:%02x, reset em %d ms, link %s\n",
-            mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], t, r8169_link_up() ? "ativo" : "aguardando");
-    net_register_device(&r8169_dev);
+    last_phys = 0xFF;
     return true;
 }
+
+/* ---------- repouso (dev/pm.c): no S3 a placa perde energia e volta zerada; no s2idle fica como está */
+static int r8169_suspend(int st) {
+    if (st != 3 || !R.mmio) return 0;
+    R.asleep = true;
+    reg_w8(R_CHIPCMD, 0);                                    /* para TX e RX antes de a energia cair */
+    for (int i = 0; i < 20 && (reg_r8(R_TXPOLL) & TXPOLL_NPQ); i++) sleep_ms(1);
+    reg_w16(R_INTRMASK, 0);
+    return 0;
+}
+static void r8169_resume(int st) {
+    if (st != 3 || !R.mmio) return;
+    bool ok = chip_up(false);
+    R.asleep = false;
+    kprintf(ok ? "r8169: de volta do repouso\n" : "r8169: não voltou do repouso\n");
+}
+static const pm_ops_t r8169_pm = {"Ethernet Realtek", PM_RESTORES_NET, r8169_suspend, r8169_resume, NULL};
 
 #ifndef MOS_HOST_TEST
 #include "vfs.h"
