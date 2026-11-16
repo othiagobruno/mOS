@@ -105,6 +105,12 @@ int  vfs_may_create(vnode_t *d, bool dir, int euid, int egid);
 void vfs_acl_inherit(vnode_t *n, vnode_t *dir);                     /* nó novo: ACEs herdáveis da pasta */
 bool vfs_filesec_valid(const u8 *d, u64 n);
 bool vfs_in_group(u32 gid, int euid, int egid);
+/* ---- operações do macOS (kernel/lib/vfsops.c); mos_statfs_t em syscall.h */
+int  vfs_statfs(vnode_t *v, void *mos_statfs);
+vnode_t *vfs_by_ino(u64 ino);
+int  vfs_clone(vnode_t *src, const char *dst, u32 flags, int euid, int egid);
+int  vfs_exchange(vnode_t *a, vnode_t *b);
+int  vfs_swap(vnode_t *a, vnode_t *b);
 void vfs_guid_user(u8 g[16], u32 uid);
 void vfs_guid_group(u8 g[16], u32 gid);
 int  vfs_guid_id(const u8 g[16], u32 *id);                          /* 1 usuário, 2 grupo, 0 outro */     /* a data, com a hora do boot quando desconhecida */

@@ -4,7 +4,7 @@ set -e
 cd "$(dirname "$0")/.."
 D=$(mktemp -d)
 F="-O1 -g -fsanitize=address,undefined"
-for f in kernel/lib/vfs.c kernel/lib/vfsmeta.c kernel/lib/vfsperm.c kernel/lib/vfsevents.c kernel/proc/cred.c tools/fsevents_kernel_glue.c; do
+for f in kernel/lib/vfs.c kernel/lib/vfsmeta.c kernel/lib/vfsperm.c kernel/lib/vfsevents.c kernel/lib/vfsops.c kernel/proc/cred.c tools/fsevents_kernel_glue.c; do
     gcc $F -DMOS_HOST_TEST -Itools/vfsmeta_host -Ikernel/include -Itools -c "$f" -o "$D/$(basename "$f").o"
 done
 gcc $F -Wno-builtin-declaration-mismatch -Ikernel/include -Iuserland/libsystem -c tools/fsevents_kernel_test.c -o "$D/t.o"

@@ -1068,3 +1068,22 @@ int fat_probe(blkdev_t *dev, const char *source, const char *fmt) {
     if (fs->rw) kprintf("fat: \"%s\" (FAT%d) gravável\n", m->volname, fs->type);
     return 1;
 }
+
+/* espaço do volume (statfs/getattrlist): total e livre em bytes. A contagem livre varre a FAT (o FSInfo do FAT32 pode
+ * estar desatualizado) e fica guardada por 5 s. */
+bool fat_space(fatfs_t *fs, u64 *total, u64 *freeb) {
+    static fatfs_t *last_fs;
+    static u64 last_ms, last_free;
+    if (!fs) return false;
+    if (total) *total = (u64)fs->nclus * fs->clus;
+    if (!freeb) return true;
+    extern u64 timer_ticks(void) __attribute__((weak));
+    u64 now = timer_ticks ? timer_ticks() : 0;
+    if (last_fs != fs || !last_ms || now - last_ms > 5000) {
+        u64 n = 0;
+        for (u32 c = 2; c < fs->nclus + 2; c++) if (fat_get(fs, c) == 0) n++;
+        last_fs = fs; last_ms = now ? now : 1; last_free = n;
+    }
+    *freeb = last_free * fs->clus;
+    return true;
+}

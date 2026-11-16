@@ -196,8 +196,6 @@ int mkdirat(int fd, const char *p, unsigned short mode) {
     const char *q = cx_at_path(fd, p, t, sizeof t);   /* o GNU tar cria as pastas com mkdirat(dirfd, ...) */
     return q ? mkdir(q, mode) : -1;
 }
-int cx_getattrlist(const char *p, void *al, void *buf, size_t sz, unsigned opts);   /* posixmore.c: capacidades do volume */
-int getattrlist(const char *p, void *al, void *buf, size_t sz, unsigned opts) { return cx_getattrlist(p, al, buf, sz, opts); }
 char *_dirhelper(int which, char *buf, size_t len) { (void)which; (void)buf; (void)len; return 0; }
 
 /* O Chromium suspende o filho só para registrar as portas do rendezvous e depois retoma.

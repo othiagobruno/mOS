@@ -2632,6 +2632,18 @@ static i64 fsmeta_syscall(process_t *p, int op, u64 ureq) {
         kfree(ev);
         return r;
     }
+    if (op == MOS_FSM_FSGETPATH) {                  /* fsgetpath: inode -> caminho */
+        vnode_t *t = vfs_by_ino(rq.a);
+        if (!t) return -MOS_ENOENT;
+        char *pp = kmalloc(1024);
+        if (!pp) return -MOS_ENOMEM;
+        vfs_path(t, pp, 1024);
+        usize n = strlen(pp) + 1;
+        i64 r = (i64)n;
+        if (rq.buf) { if (rq.size < n) r = -MOS_ERANGE; else if (!uvm_copy_out(p, rq.buf, pp, n)) r = -MOS_EFAULT; }
+        kfree(pp);
+        return r;
+    }
     if (rq.fd >= 0) {
         if (fd_get(p, (u64)rq.fd) < 0) return -MOS_EBADF;
         if (p->fds[rq.fd].kind != FD_FILE || !p->fds[rq.fd].path[0] || p->fds[rq.fd].pty) return -MOS_EBADF;
@@ -2685,6 +2697,62 @@ static i64 fsmeta_syscall(process_t *p, int op, u64 ureq) {
     case MOS_FSM_ACCESS:                             /* access(2) usa os ids reais; faccessat(AT_EACCESS) os efetivos */
         return rq.opts & 1 ? vfs_fsmeta(v, op, &rq, NULL, NULL, p->euid, p->egid)
                            : vfs_fsmeta(v, op, &rq, NULL, NULL, p->uid, p->gid);
+    case MOS_FSM_STATFS: {
+        mos_statfs_t *sf = kmalloc(sizeof *sf);
+        if (!sf) return -MOS_ENOMEM;
+        i64 r2 = vfs_statfs(v, sf);
+        if (!r2 && !uvm_copy_out(p, rq.buf, sf, MIN(rq.size, sizeof *sf))) r2 = -MOS_EFAULT;
+        kfree(sf);
+        return r2;
+    }
+    case MOS_FSM_RENAMEX:
+    case MOS_FSM_CLONE:
+    case MOS_FSM_EXCHANGE: {
+        char to[256];
+        if (!copy_path(p, to, rq.name)) return -MOS_EFAULT;
+        if (rq.fd >= 0) return -MOS_EINVAL;
+        vnode_t *d = vfs_lookup(to);
+        if (op == MOS_FSM_CLONE) {
+            if (d) return -MOS_EEXIST;
+            char par[256];
+            strncpy(par, to, sizeof par - 1); par[sizeof par - 1] = 0;
+            char *sl = strrchr(par, '/');
+            if (sl) { if (sl == par) sl[1] = 0; else *sl = 0; }
+            vnode_t *pd = sl ? vfs_lookup_dir(par) : NULL;
+            if (!pd) return -MOS_ENOENT;
+            if (vfs_is_read_only(pd)) return -MOS_EROFS;
+            int e = vfs_may_create(pd, v->dir, p->euid, p->egid);
+            if (e) return e;
+            if (vfs_access(v, 4, p->euid, p->egid)) return -MOS_EACCES;
+            return vfs_clone(v, to, (u32)rq.a, p->euid, p->egid);
+        }
+        if (op == MOS_FSM_EXCHANGE) {
+            if (!d) return -MOS_ENOENT;
+            if (vfs_access(v, 6, p->euid, p->egid) || vfs_access(d, 6, p->euid, p->egid)) return -MOS_EACCES;
+            return vfs_exchange(v, d);
+        }
+        /* RENAMEX: RENAME_SWAP 2, RENAME_EXCL 4 (juntos: EINVAL) */
+        if ((rq.a & 6) == 6 || (rq.a & ~6ull)) return -MOS_EINVAL;
+        if (rq.a & 4) {
+            if (d) return -MOS_EEXIST;
+            return 1;                                 /* o libSystem faz o rename comum (destino não existe) */
+        }
+        if (rq.a & 2) {
+            if (!d) return -MOS_ENOENT;
+            if (vfs_no_unlink(v) || vfs_no_unlink(d)) return -MOS_EPERM;
+            int e = vfs_may_delete(v, p->euid, p->egid);
+            if (!e) e = vfs_may_delete(d, p->euid, p->egid);
+            if (e) return e;
+            e = vfs_swap(v, d);
+            if (!e) {                                  /* os fds de cada um seguem o próprio arquivo */
+                char tmp[256];
+                snprintf(tmp, sizeof tmp, "/tmp/.mos-swap-fd-%d", p->pid);
+                rename_fix_fds(path, tmp); rename_fix_fds(to, path); rename_fix_fds(tmp, to);
+            }
+            return e;
+        }
+        return 1;                                     /* sem flags: rename comum */
+    }
     case MOS_FSM_GETACL: {
         mos_fsmeta_t q = rq;
         i64 need = vfs_fsmeta(v, op, &q, NULL, NULL, p->euid, p->egid);

@@ -481,3 +481,11 @@ static bool meta_save(void) {
     kfree(buf);
     return ok;
 }
+
+/* statfs/getattrlist do volume do sistema (kernel/lib/vfsops.c) */
+bool persist_space(u64 *total, u64 *avail, char *label, usize cap) {
+    if (!sys) return false;
+    if (!fat_space(sys, total, avail)) return false;
+    if (label && cap) { strncpy(label, fat_label(sys), cap - 1); label[cap - 1] = 0; }
+    return true;
+}

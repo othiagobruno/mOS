@@ -226,8 +226,6 @@ int fchmodat(int dfd, const char *p, unsigned short mode, int flag) {
     return r;
 }
 int mknod(const char *p, unsigned short mode, int dev) { (void)p; (void)mode; (void)dev; set_errno(E_PERM); return -1; }
-/* o clonefile do APFS: sem CoW aqui; quem chama (VS Code, Chromium) copia o arquivo */
-int clonefile(const char *src, const char *dst, u32 flags) { (void)src; (void)dst; (void)flags; set_errno(E_NOTSUP); return -1; }
 /* msync: extra.c (grava de volta os mapeamentos MAP_SHARED) */
 int munlock(const void *a, size_t n) { (void)a; (void)n; return 0; }
 int mincore(const void *a, size_t n, char *vec) {
@@ -305,25 +303,7 @@ int scandir64(const char *dir, vs_dirent_t ***out, int (*sel)(const vs_dirent_t 
     *out = v;
     return n;
 }
-/* getmntinfo: um só sistema de arquivos montado em "/" (statfs64 de 2168 bytes do macOS). Mesmo esquema de nome
- * do scandir: getmntinfo$INODE64 (x86_64) e getmntinfo (arm64) chegam aqui. */
-typedef struct {
-    u32 bsize; i32 iosize; u64 blocks, bfree, bavail, files, ffree; u64 fsid; u32 owner, type, flags, fssubtype;
-    char fstypename[16]; char mntonname[1024]; char mntfromname[1024]; u32 reserved[8];
-} vs_statfs_t;
-int getmntinfo64(vs_statfs_t **mp, int flags) __asm__("getmntinfo");
-int getmntinfo64(vs_statfs_t **mp, int flags) {
-    (void)flags;
-    static vs_statfs_t fs;
-    memset(&fs, 0, sizeof fs);
-    fs.bsize = 4096; fs.iosize = 65536; fs.blocks = 1u << 20; fs.bfree = fs.bavail = 1u << 19;
-    fs.files = 1u << 20; fs.ffree = 1u << 19; fs.type = 0x1c; fs.flags = 0x00001000 /* MNT_LOCAL */;
-    strlcpy(fs.fstypename, "msdos", sizeof fs.fstypename);
-    strlcpy(fs.mntonname, "/", sizeof fs.mntonname);
-    strlcpy(fs.mntfromname, "/dev/disk0s1", sizeof fs.mntfromname);
-    *mp = &fs;
-    return 1;
-}
+/* getmntinfo: attrlist.c (um por volume) */
 void *fopen(const char *p, const char *m);
 int mkstemp(char *t);
 int unlink(const char *p);

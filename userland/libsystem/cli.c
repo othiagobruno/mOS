@@ -142,38 +142,7 @@ int ftruncate(int fd, long len) {
     return 0;
 }
 /* fdopendir: libc.c (o caminho do fd vem do SYS_FDPATH) */
-/* fclonefileat: o FAT não tem clone (COW). O conteúdo é copiado byte a byte para um arquivo novo.
- * Destino existente -> EEXIST, como o clonefile. CLONE_NOFOLLOW não muda o fd, que já está aberto. */
-int fclonefileat(int src, int dirfd, const char *dst, unsigned flags) {
-    (void)flags;
-    if (!dst) { cx_errno = CX_EINVAL; return -1; }
-    char sp[1024], dp[1024];
-    if (SYS3(SYS_FDPATH, src, sp, sizeof sp) < 0) { cx_errno = CX_EBADF; return -1; }
-    const char *full = cx_at_path(dirfd, dst, dp, sizeof dp);
-    if (!full) return -1;
-    char st[144];
-    if (stat(full, st) == 0) { cx_errno = CX_EEXIST; return -1; }
-    int in = open(sp, 0);
-    if (in < 0) return -1;
-    int out = open(full, MAC_O_WRONLY | MAC_O_CREAT | MAC_O_EXCL, 0644);
-    if (out < 0) { close(in); return -1; }
-    char buf[16384];
-    int rc = 0;
-    for (;;) {
-        ssize_t n = read(in, buf, sizeof buf);
-        if (n < 0) { rc = -1; break; }
-        if (n == 0) break;
-        for (ssize_t o = 0; o < n;) {
-            ssize_t w = write(out, buf + o, (size_t)(n - o));
-            if (w <= 0) { rc = -1; break; }
-            o += w;
-        }
-        if (rc) break;
-    }
-    close(in);
-    close(out);
-    return rc;
-}
+/* clonefile, clonefileat, fclonefileat: attrlist.c (cópia com metadados no kernel) */
 /* fsctl: o caminho é conferido. Opcode de clone/snapshot não existe neste FAT; ENOTSUP é o que o
  * macOS devolve para um opcode que o volume não implementa. */
 int fsctl(const char *p, unsigned long req, void *data, unsigned opts) {
@@ -184,50 +153,7 @@ int fsctl(const char *p, unsigned long req, void *data, unsigned opts) {
     cx_errno = CX_ENOTSUP;
     return -1;
 }
-/* setattrlist e parentes (o contrato do XNU, o mesmo do Darling): bitmapcount diferente de 5 é EINVAL; bit
- * fora do que dá para gravar também é EINVAL. Os valores vêm na ordem dos bits: CRTIME, MODTIME, CHGTIME,
- * ACCTIME (timespec de 16 bytes) e ACCESSMASK (4 bytes). O volume guarda o modo (cx_perm_set, o stat devolve);
- * horários não persistem neste FAT, então o pedido é aceito como no futimes. */
-static int setattrlist_path(const char *path, const void *al, const void *buf, size_t n) {
-    typedef struct { unsigned short bitmapcount, reserved; unsigned common, vol, dir, file, fork; } al_t;
-    const al_t *a = al;
-    char st[144];
-    if (!a || !buf || !path) { cx_errno = CX_EFAULT; return -1; }
-    if (a->bitmapcount != 5) { cx_errno = CX_EINVAL; return -1; }
-    const unsigned supported = 0x200u | 0x400u | 0x800u | 0x1000u | 0x20000u;
-    if (a->vol || a->dir || a->file || a->fork || (a->common & ~supported)) { cx_errno = CX_EINVAL; return -1; }
-    if (stat(path, st) < 0) return -1;
-    const unsigned char *p = buf;
-    size_t off = 0;
-    unsigned mode = 0;
-    int saw_mode = 0;
-    for (unsigned bit = 1; bit; bit <<= 1) {
-        if (!(a->common & bit)) continue;
-        size_t sz = bit == 0x20000u ? 4 : 16;
-        if (off + sz > n) { cx_errno = CX_EINVAL; return -1; }
-        if (bit == 0x20000u) { memcpy(&mode, p + off, 4); saw_mode = 1; }
-        off += sz;
-    }
-    if (saw_mode) cx_perm_set(path, mode & 07777);
-    return 0;
-}
-int fsetattrlist(int fd, void *al, void *buf, size_t n, unsigned opts) {
-    (void)opts;
-    char path[1024];
-    if (SYS3(SYS_FDPATH, fd, path, sizeof path) < 0) { cx_errno = CX_EBADF; return -1; }
-    return setattrlist_path(path, al, buf, n);
-}
-int setattrlistat(int dirfd, const char *p, void *al, void *buf, size_t n, unsigned opts) {
-    (void)opts;
-    char tp[1024];
-    if (!p) { cx_errno = CX_EFAULT; return -1; }
-    const char *full = cx_at_path(dirfd, p, tp, sizeof tp);
-    return full ? setattrlist_path(full, al, buf, n) : -1;
-}
-int setattrlist(const char *p, void *al, void *buf, size_t n, unsigned opts) {
-    (void)opts;
-    return setattrlist_path(p, al, buf, n);
-}
+/* setattrlist, fsetattrlist, setattrlistat: attrlist.c */
 
 #define CP_MAGIC 0x43504653u
 typedef struct {
@@ -311,13 +237,7 @@ void cx_copyfile_note(void *p, int src_fd, const char *src, int dst_fd, const ch
     if (copied >= 0) { s->copied = copied; s->cloned = 0; }
 }
 
-/* getfsstat$INODE64: o carregador casa com getfsstat. Um volume, o mesmo de statfs. */
-int getfsstat(void *buf, int bufsize, int flags) {
-    (void)flags;
-    if (!buf) return 1;
-    if (bufsize < 2168) return 0;
-    return statfs("/", buf) < 0 ? -1 : 1;
-}
+/* getfsstat, getmntinfo, statfs, fstatfs: attrlist.c (um por volume) */
 
 /* ACL: acl.c (kauth_filesec no kernel, SYS_FSMETA) */
 
