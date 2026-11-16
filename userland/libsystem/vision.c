@@ -1095,7 +1095,11 @@ static BOOL run_requests(const luma_t *l, id requests, id *err) {
         case RQ_BARCODE: run_barcodes(r, &sub, results); break;
         case RQ_FEATURE: run_feature(&sub, results); break;
         case RQ_RECT: run_rects(r, &sub, results); break;
-        default: break;                                             /* faces, texto, retângulos, classificação: sem modelo */
+        default: {                                                  /* vision_more.c: contornos, saliência, alinhamento, rastreamento */
+            extern int cx_vision_more_run(id q, const u8 *y, int w, int h, id results);
+            cx_vision_more_run(q, sub.y, sub.w, sub.h, results);   /* faces, texto, humanos, classificação: sem modelo, sem resultado */
+            break;
+        }
         }
         luma_free(&owned);
         setobj(&r->results, results);
@@ -1103,6 +1107,19 @@ static BOOL run_requests(const luma_t *l, id requests, id *err) {
     }
     return YES;
 }
+
+/* ---- para vision_more.c */
+id cx_vision_obs_new(cx_class_t *k, rc_t box) { return obs_new(k, box); }
+unsigned cx_vision_obs_size(void) { return (unsigned)sizeof(vnobs_t); }
+unsigned cx_vision_req_size(void) { return (unsigned)sizeof(vnreq_t); }
+id cx_vision_req_init(id s, void *completion) { return req_init_kind(s, 0, completion); }
+int cx_vision_luma(void *img, int is_pb, int *w, int *h, u8 **y) {
+    luma_t l = {0};
+    if (!img || !(is_pb ? luma_from_pixelbuffer(&l, img) : luma_from_cgimage(&l, img))) return -1;
+    *w = l.w; *h = l.h; *y = l.y;
+    return 0;
+}
+void cx_vision_set_results(id q, id results) { setobj(&RQ(q)->results, results); }
 
 /* ---- VNImageRequestHandler */
 typedef struct { void *isa; luma_t l; id error; } vnhandler_t;
@@ -1243,6 +1260,7 @@ void cx_vision_init(void) {
     cx_class_t *sq = &VNSequenceRequestHandler_c;
     A(sq, "performRequests:onCGImage:error:", sq_cg); A(sq, "performRequests:onCVPixelBuffer:error:", sq_pb);
     A(sq, "performRequests:onCGImage:orientation:error:", sq_cg_o); A(sq, "performRequests:onCVPixelBuffer:orientation:error:", sq_pb_o);
+    { extern void cx_vision_more_init(void); cx_vision_more_init(); }   /* vision_more.c: contornos, saliência, alinhamento, rastreamento */
 }
 
 /* ================================================================ autoteste: gera um QR e um EAN-13 e lê de volta
