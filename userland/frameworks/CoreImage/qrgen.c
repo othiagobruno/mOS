@@ -234,3 +234,19 @@ int mos_qr_encode(const uint8_t *msg, int len, int level, int version, int mask,
     free(dat); free(all); free(g);
     return v;
 }
+
+/* para o leitor (qrread.c): módulos de função da versão (padrões, formato, versão) e a divisão em blocos */
+int mos_qr_layout(int v, int lvl, uint8_t *fn, int *nblocks, int *ecc_per_block, int *raw_codewords) {
+    if (v < 1 || v > 40 || lvl < 0 || lvl > 3) return -1;
+    grid *g = calloc(1, sizeof *g);
+    if (!g) return -1;
+    g->n = v * 4 + 17;
+    draw_functions(g, v, lvl);
+    if (fn) memcpy(fn, g->fn, (size_t)g->n * g->n);
+    if (nblocks) *nblocks = NUM_BLOCKS[lvl][v];
+    if (ecc_per_block) *ecc_per_block = ECC_PER_BLOCK[lvl][v];
+    if (raw_codewords) *raw_codewords = raw_modules(v) / 8;
+    int n = g->n;
+    free(g);
+    return n;
+}
