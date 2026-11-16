@@ -25,10 +25,11 @@ typedef struct { double w, h; } NSSize;
 typedef struct { NSPoint o; NSSize s; } NSRect;
 
 #define CLASS(N) cx_class_t N##_c __asm__("OBJC_CLASS_$_" #N); cx_class_t N##_m __asm__("OBJC_METACLASS_$_" #N);
+extern cx_class_t NSAttributedString_c __asm__("OBJC_CLASS_$_NSAttributedString");   /* fdn_astr.c */
 CLASS(NSResponder) CLASS(NSApplication) CLASS(NSWindow) CLASS(NSView) CLASS(NSControl) CLASS(NSButton) CLASS(NSScroller)
 CLASS(NSTextField) CLASS(NSSlider) CLASS(NSProgressIndicator) CLASS(NSBox) CLASS(NSStackView) CLASS(NSImageView)
 CLASS(NSColor) CLASS(NSFont) CLASS(NSBezierPath) CLASS(NSEvent) CLASS(NSMenu) CLASS(NSMenuItem) CLASS(NSAlert)
-CLASS(NSScreen) CLASS(NSGraphicsContext) CLASS(NSCursor) CLASS(NSWorkspace) CLASS(NSImage) CLASS(NSAttributedString)
+CLASS(NSScreen) CLASS(NSGraphicsContext) CLASS(NSCursor) CLASS(NSWorkspace) CLASS(NSImage) 
 CLASS(NSRunningApplication) CLASS(NSSound) CLASS(NSPanel) CLASS(NSScrollView) CLASS(NSTextView) CLASS(NSClipView)
 CLASS(NSWindowTab)
 CLASS(NSVisualEffectView) CLASS(NSLayoutConstraint) CLASS(NSColorWell) CLASS(NSTableView) CLASS(NSTableColumn) CLASS(NSTableCellView)
@@ -568,13 +569,10 @@ static void str_draw_in(id self, SEL c, NSRect r, id attrs) {
     draw_wrapped(cx_cstr(self), x, y, w, h, size, weight, color, 0);
 }
 
-/* NSAttributedString mínimo: string + atributos uniformes */
-typedef struct { id str, attrs; } astr_t;
-static id as_init(id self, SEL c, id s, id attrs) { (void)c; astr_t *a = calloc(1, sizeof *a); a->str = objc_retain(s); a->attrs = objc_retain(attrs); ST(self) = a; return self; }
-static id as_init1(id self, SEL c, id s) { return as_init(self, c, s, 0); }
-static id as_string(id self, SEL c) { (void)c; return ((astr_t *)ST(self))->str; }
-static void as_draw_at(id self, SEL c, NSPoint pt) { (void)c; astr_t *a = ST(self); draw_str_at(cx_cstr(a->str), pt, a->attrs); }
-static NSSize as_size(id self, SEL c) { astr_t *a = ST(self); return str_size(a->str, c, a->attrs); }
+/* NSAttributedString é do Foundation (fdn_astr.c); aqui só o desenho, pelos atributos do primeiro caractere */
+static id as_attrs0(id self) { id s = MSG0(id, self, "string"); return s && MSG0(u64, s, "length") ? MSG(id, self, "attributesAtIndex:effectiveRange:", (u64)0, (void *)0) : 0; }
+static void as_draw_at(id self, SEL c, NSPoint pt) { (void)c; draw_str_at(cx_cstr(MSG0(id, self, "string")), pt, as_attrs0(self)); }
+static NSSize as_size(id self, SEL c) { return str_size(MSG0(id, self, "string"), c, as_attrs0(self)); }
 
 /* ================================================================ NSGraphicsContext / CoreGraphics */
 static id gc_current(id cls, SEL c) { (void)c; static id g; if (!g) g = cx_alloc_instance((cx_class_t *)cls); return g; }
@@ -6071,9 +6069,7 @@ void cx_appkit_init(void) {
     cx_add_method(&NSString_c, "drawAtPoint:withAttributes:", (void *)str_draw_at);
     cx_add_method(&NSString_c, "drawInRect:withAttributes:", (void *)str_draw_in);
     cx_add_method(&NSString_c, "sizeWithAttributes:", (void *)str_size);
-    DEF(NSAttributedString, NSObject);
-    M(NSAttributedString, "initWithString:attributes:", as_init); M(NSAttributedString, "initWithString:", as_init1);
-    M(NSAttributedString, "string", as_string); M(NSAttributedString, "drawAtPoint:", as_draw_at); M(NSAttributedString, "size", as_size);
+    M(NSAttributedString, "drawAtPoint:", as_draw_at); M(NSAttributedString, "size", as_size);   /* categoria do AppKit */
 
     DEF(NSGraphicsContext, NSObject);
     CM(NSGraphicsContext, "currentContext", gc_current); CM(NSGraphicsContext, "saveGraphicsState", gc_save); CM(NSGraphicsContext, "restoreGraphicsState", gc_restore);

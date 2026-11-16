@@ -1171,6 +1171,7 @@ void cx_objc_boot(u64 sects, u64 n) {
     if (!objc_ready) {
         objc_ready = 1;
         cx_foundation_init();
+        { extern void cx_fdn_astr_init(void); cx_fdn_astr_init(); }   /* fdn_astr.c: NSAttributedString/NSMutableAttributedString (antes do AppKit, que põe o desenho) */
         { extern void cx_fdn_i18n_init(void); cx_fdn_i18n_init(); }   /* fdn_i18n.c: NSLocale, NSTimeZone, NSCalendar, NSDateComponents (ICU) */
         { extern void cx_fdn_formatters_init(void); cx_fdn_formatters_init(); }   /* fdn_formatters.c: NSDateFormatter, NSNumberFormatter e os outros (ICU) */
         { extern void cx_fdn_operation_init(void); cx_fdn_operation_init(); }   /* fdn_operation.c: NSOperation e NSOperationQueue (libdispatch) */
