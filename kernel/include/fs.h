@@ -122,6 +122,11 @@ bool decmpfs_header(const u8 *xattr, u64 xlen, u32 *type, u64 *size);
 
 /* ---------------------------------------------------------------- DMG (UDIF) */
 blkdev_t *dmg_open(const u8 *data, u64 size, char *err, usize errlen);
+/* imagem gravável (crua ou UDIF UDRW): data passa a ser da imagem (liberada no release); a cada flush com mudanças
+ * o arquivo inteiro, com os CRC32 do UDIF já corrigidos, vai para sink(arg, ...). NULL se o formato só pode ser
+ * lido (UDZO/ULFO/...): aí use dmg_open. arg é liberado (kfree) junto com a imagem. */
+typedef bool (*dmg_sink_t)(void *arg, const u8 *img, u64 size);
+blkdev_t *dmg_open_rw(u8 *data, u64 size, dmg_sink_t sink, void *arg, char *err, usize errlen);
 const char *dmg_format_name(blkdev_t *d);
 
 /* ---------------------------------------------------------------- VFS */
@@ -218,6 +223,7 @@ void     dfs_path(dnode_t *n, char *buf, usize len);
 dmount_t *dfs_mounts(void);
 int      dfs_mount_memory(const u8 *data, u64 size, const char *path); /* nº de volumes */
 int      dfs_mount_buffer(u8 *data, u64 size, const char *path);       /* assume a posse (kfree no fim) */
+int      dfs_mount_buffer_rw(u8 *data, u64 size, const char *path, dmg_sink_t sink, void *arg); /* gravável se o formato deixar */
 dmount_t *dfs_find_source(const char *path);     /* volume já montado a partir desta imagem */
 void     dfs_publish_new(dmount_t *before);       /* vfs_bridge.c: mostra em /Volumes os montados após "before" */
 int      dfs_mount_image(dnode_t *file);         /* nº de volumes montados */

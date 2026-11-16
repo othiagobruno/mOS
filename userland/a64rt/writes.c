@@ -373,7 +373,7 @@ int a64rt_guest_writes(long nr, a64rt_u64 x0, a64rt_u64 x1, a64rt_u64 x2, a64rt_
         break;
     case SYS_IMGATTACH:                                            /* caminhos em x1; o kernel cabe em 1024 */
         if (ret > 0 && x1 && x2) {
-            a64rt_u64 cap = x2 < 1024 ? x2 : 1024;
+            a64rt_u64 cap = (x2 & 0xFFFFFFFFull) < 1024 ? (x2 & 0xFFFFFFFFull) : 1024;   /* bit 62 = -readonly */
             push(&s, x1, cap);
         }
         break;

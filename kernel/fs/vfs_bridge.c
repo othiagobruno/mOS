@@ -233,29 +233,55 @@ bool vfs_eject(vnode_t *vol) {
 static bool is_image(const char *name);
 
 /* monta uma imagem aberta pelo usuário (ex.: duplo clique num .dmg); retorna nº de volumes */
-int vfs_mount_file(vnode_t *f) {
+/* imagem montada para leitura e escrita: o dmg.c entrega o arquivo inteiro (CRCs já corrigidos) a cada flush, e
+ * ele substitui o conteúdo do .dmg de origem, que segue o caminho normal de gravação (persistência do pendrive ou o
+ * volume gravável onde ele está). arg = caminho do .dmg. */
+static bool image_sink(void *arg, const u8 *img, u64 size) {
+    vnode_t *f = vfs_lookup((const char *)arg);
+    if (!f || f->dir) { kprintf("dfs: imagem %s sumiu; as mudanças do volume não foram gravadas\n", (const char *)arg); return false; }
+    u8 *nd = kmalloc(size + 1);
+    if (!nd) return false;
+    memcpy(nd, img, size);
+    nd[size] = 0;
+    dnode_t *d = f->ext;                                /* conteúdo novo é só da RAM até o volume de origem gravar */
+    if (d && d->in_lru && d->vn == f) lru_unlink(d);
+    f->ext = NULL;
+    if (f->cap) kfree(f->data);
+    f->data = nd;
+    f->size = size;
+    f->cap = size + 1;
+    vfs_touch(f, VT_MOD);
+    persist_mark(f);
+    return true;
+}
+
+int vfs_mount_file_ex(vnode_t *f, bool readonly) {
     if (!f || f->dir || !is_image(f->name)) return 0;
     char path[1024];
     vfs_path(f, path, sizeof(path));
     if (dfs_find_source(path)) return 0; /* já montada */
     dmount_t *before = dfs_mounts();
+    /* gravável como no macOS (UDRW/crua), salvo -readonly ou .dmg num volume que só pode ser lido */
+    bool rw = !readonly && (!f->ext || vfs_ext_writable(f));
     int n;
     if (f->ext) {
         u64 len = 0;                                        /* .dmg dentro de outro volume */
         u8 *data = dfs_read_all(f->ext, 512ull << 20, &len);
-        n = data ? dfs_mount_buffer(data, len, path) : 0;
-    } else if (f->cap == 0 && f->data) {
+        n = !data ? 0 : rw ? dfs_mount_buffer_rw(data, len, path, image_sink, strdup(path)) : dfs_mount_buffer(data, len, path);
+    } else if (f->cap == 0 && f->data && !rw) {
         n = dfs_mount_memory(f->data, f->size, path);       /* memória do pendrive: fixa */
     } else {
-        /* arquivo criado/alterado nesta sessão: pode ser realocado, então usa uma cópia */
+        /* arquivo criado/alterado nesta sessão (pode ser realocado) ou montado gravável: usa uma cópia */
         u8 *copy = f->size ? kmalloc(f->size) : NULL;
         if (!copy) return 0;
         memcpy(copy, f->data, f->size);
-        n = dfs_mount_buffer(copy, f->size, path);
+        n = rw ? dfs_mount_buffer_rw(copy, f->size, path, image_sink, strdup(path)) : dfs_mount_buffer(copy, f->size, path);
     }
     if (n) dfs_publish_new(before);
     return n;
 }
+
+int vfs_mount_file(vnode_t *f) { return vfs_mount_file_ex(f, false); }
 
 static bool is_image(const char *name) {
     usize n = strlen(name);
