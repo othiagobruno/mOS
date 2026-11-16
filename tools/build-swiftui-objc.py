@@ -9,16 +9,17 @@
 #   tools/build-swiftui-objc.py                    tudo (Src, Native, Deps, Core, UI, Link)
 #   tools/build-swiftui-objc.py --from Core        a partir de uma etapa
 #   tools/build-swiftui-objc.py --only UI --typecheck
-#   MOS_SWIFT_ARCH=arm64 tools/build-swiftui-objc.py   fatia arm64 (build/swift-arm64)
+#   MOS_ARCH=arm64 tools/build-swiftui-objc.py     fatia arm64 (build/swift/objc-arm64, como build-swift-combine.sh)
 import argparse, hashlib, os, re, shutil, subprocess, sys, tarfile, time, urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-ARCH = os.environ.get('MOS_SWIFT_ARCH', 'x86_64')
+ARCH = os.environ.get('MOS_ARCH', 'x86_64')
 if ARCH not in ('x86_64', 'arm64'):
     sys.exit('arquitetura desconhecida: %s (x86_64 ou arm64)' % ARCH)
 TRIPLE = '%s-apple-macos26' % ARCH
 ZIGT = 'aarch64-macos' if ARCH == 'arm64' else 'x86_64-macos'
-SWB = os.path.join(ROOT, 'build', 'swift' + ('-arm64' if ARCH == 'arm64' else ''))
+SWB = os.path.join(ROOT, 'build', 'swift')
+SFX = '-arm64' if ARCH == 'arm64' else ''
 
 # commits do main de cada repositório em 7 nov. 2026 (o porte do Windows de 8 nov. usou o main da época)
 REPOS = {
@@ -47,11 +48,11 @@ ZIG = find_tool('MOS_ZIG', [shutil.which('zig')])
 FE = find_tool('SWIFTC', [os.path.join(ROOT, '.tools/swift-6.4.2/usr/bin/swift-frontend')])
 SWSRC = os.environ.get('SWIFT_SRC', os.path.join(ROOT, '.tools', 'swift-src'))
 RES = '/tmp/mos-swift-resdir'
-OBJC = os.path.join(SWB, 'objc')
+OBJC = os.path.join(SWB, 'objc' + SFX)
 OV = os.path.join(OBJC, 'overlays')
 INC = os.path.join(OBJC, 'sdk', 'include')
 SUI = os.path.join(OBJC, 'swiftui')
-NAT = os.path.join(SWB, 'openswiftui')       # objetos C/C++ da variante nativa
+NAT = os.path.join(SWB, 'openswiftui' + SFX)  # objetos C/C++ da variante nativa
 NSDK = os.path.join(ROOT, 'userland', 'sdk', 'openswiftui')
 MINE = os.path.join(ROOT, 'userland', 'sdk', 'swift-objc', 'SwiftUI')
 SHIM = os.path.join(NSDK, 'include')
@@ -158,7 +159,7 @@ def stage_native():
     build_files('Compute', files, inc + ['-std=c11'], inc + CXX)
     # OpenRenderBox (C/C++): paths, cores, animação
     s = os.path.join(DEPS, 'OpenRenderBox-main', 'Sources')
-    inc = ['-I' + SHIM, '-include', os.path.join(SHIM, 'mos_openswiftui_prelude.h'), '-include', os.path.join(SHIM, 'mos_orb_cgpath.h'), '-I' + s + '/OpenRenderBoxCxx',
+    inc = ['-I' + SHIM, '-include', os.path.join(SHIM, 'mos_openswiftui_prelude.h'), '-I' + s + '/OpenRenderBoxCxx',
            '-I' + s + '/OpenRenderBoxCxx/include', '-I' + s + '/OpenRenderBoxShimsCxx/include', '-I' + oag,
            '-isystem' + oag + '/SwiftCorelibs/include', '-isystem' + os.path.join(ROOT, 'userland', 'sdk', 'include'), '-fblocks',
            '-DOPENRENDERBOX', '-DOPENRENDERBOX_CF_CGTYPES', '-DOPENRENDERBOX_MOS']
@@ -237,6 +238,16 @@ def prepare_sdk():
               'NSNotification=Foundation.Notification', 'NSURLRequest=Foundation.URLRequest', 'NSIndexPath=Foundation.IndexPath']:
         k, v = b.split('=')
         t = re.sub(r'(?m)^@interface %s([ <])' % k, lambda m: '__attribute__((swift_bridge("%s"))) @interface %s%s' % (v, k, m.group(1)), t)
+    # nomes Swift da Apple para os modos do RunLoop (RunLoop.Mode.default/.common), que este Foundation.h ainda não dá
+    for c, n in (('NSDefaultRunLoopMode', 'default'), ('NSRunLoopCommonModes', 'common')):
+        t = t.replace('FOUNDATION_EXPORT NSRunLoopMode const %s;' % c, 'FOUNDATION_EXPORT NSRunLoopMode const %s NS_SWIFT_NAME(RunLoop.Mode.%s);' % (c, n))
+    t = t.replace('- (BOOL)runMode:(NSRunLoopMode)mode beforeDate:(NSDate *)limitDate;',
+                  '- (BOOL)runMode:(NSRunLoopMode)mode beforeDate:(NSDate *)limitDate NS_SWIFT_NAME(run(mode:before:));')
+    # NSCalendar.Unit: o import-as-member só vale no módulo da classe, então o NS_OPTIONS entra no Foundation.h
+    if 'NSCalendarUnit)' not in t:
+        # o texto entra inline: não se pode dar #include dentro do assume_nonnull do Foundation.h
+        cu = open(os.path.join(MINE, 'sdk', 'Foundation', 'NSCalendarUnit.h')).read().split('#pragma once\n', 1)[1]
+        t = re.sub(r'(?m)^(@interface NSCalendar\b)', lambda m: cu + m.group(1), t, count=1)
     open(fh, 'w').write(t)
     shutil.copy(os.path.join(MINE, 'sdk', 'Foundation', 'NSFoundationSwiftUI.h'), os.path.join(SINC, 'Foundation'))
     mm = open(mmf).read()
@@ -429,12 +440,21 @@ OSUI_DEFS = ['OPENSWIFTUI', 'OPENSWIFTUI_RELEASE_2024', 'OPENSWIFTUI_SUPPORT_202
              'OPENSWIFTUI_COMPUTE', 'OPENSWIFTUI_MOS', 'OPENSWIFTUI_MOS_OBJC', 'OPENSWIFTUI_XCFRAMEWORK_BUILD']
 
 
+def availability_names():
+    # todos os OpenSwiftUI_<versão> que os fontes citam (o Package.swift do OpenSwiftUI os define por versão do SDK)
+    names = set()
+    for d in (OSUI, SDKSWIFT, MINE):
+        for p in swift_files(d):
+            names.update(re.findall(r'\bOpenSwiftUI_((?:[A-Za-z]+_)?v\d+(?:_\d+)?)\b', open(p, encoding='utf-8', errors='replace').read()))
+    return sorted(names)
+
+
 def osui_flags():
     f = ['-I', os.path.join(SDKSWIFT, 'COpenSwiftUI'), '-I', SPIINC, '-I', CMP + '/ComputeCxx/include', '-I', ORBINC,
          '-I', os.path.join(SDKSWIFT, 'CoreText', 'include'), '-I', os.path.join(ROOT, 'userland', 'sdk', 'swift', 'MOSBridge')]
     for a in ['-I' + SPIINC, '-I' + ORBINC, '-I' + CMP + '/Platform/include', '-I' + CMP + '/ComputeCxx/include',
               '-I' + os.path.join(SDKSWIFT, 'CoreText', 'include'), '-DOPENSWIFTUI', '-DOPENSWIFTUI_MOS', '-DOPENSWIFTUI_CF_CGTYPES',
-              '-DOPENRENDERBOX_CF_CGTYPES', '-DOPENSWIFTUI_LINK_COREUI=0']:
+              '-DOPENRENDERBOX_CF_CGTYPES', '-DOPENRENDERBOX_MOS', '-DOPENSWIFTUI_LINK_COREUI=0']:
         f += ['-Xcc', a]
     for d in OSUI_DEFS:
         f += ['-D', d]
@@ -442,8 +462,7 @@ def osui_flags():
         f += ['-enable-upcoming-feature', ft]
     f += ['-package-name', 'OpenSwiftUI', '-module-abi-name', 'SwiftUI', '-experimental-spi-only-imports', '-unavailable-decl-optimization=stub']
     minv = 'macOS 10.15, iOS 13.0, tvOS 13.0, watchOS 6.0, visionOS 1.0'
-    for v in ['v1_0', 'v1_4', 'v2_0', 'macOS_v2_0', 'v2_1', 'v2_3', 'v3_0', 'iOS_v3_0', 'macOS_v3_0', 'v3_2', 'v3_4', 'v4_0', 'iOS_v4_0',
-              'watchOS_v4_0', 'v4_1', 'v4_4', 'v5_0', 'v5_1', 'v5_2', 'v5_4', 'v5_5', 'v6_0', 'v7_0', 'v8_0']:
+    for v in availability_names():
         f += ['-define-availability', 'OpenSwiftUI_%s:%s' % (v, minv)]
     f += ['-define-availability', '_distantFuture:macOS 99.0, iOS 99.0, tvOS 99.0, watchOS 99.0, visionOS 99.0']
     return f

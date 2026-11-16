@@ -193,30 +193,12 @@ extension NSRange {
         let lo = Swift.min(location, other.location), hi = Swift.max(upperBound, other.upperBound)
         return NSRange(location: lo, length: hi - lo)
     }
-    @_alwaysEmitIntoClient public func intersection(_ other: NSRange) -> NSRange? {
-        let lo = Swift.max(location, other.location), hi = Swift.min(upperBound, other.upperBound)
-        return hi >= lo ? NSRange(location: lo, length: hi - lo) : nil
-    }
     @_alwaysEmitIntoClient public init(_ range: Range<Int>) { self.init(location: range.lowerBound, length: range.count) }
-    @_alwaysEmitIntoClient public init<R: RangeExpression>(_ region: R, in target: some StringProtocol) where R.Bound == String.Index {
-        let r = region.relative(to: target)
-        let u = target.utf16
-        self.init(location: u.distance(from: u.startIndex, to: r.lowerBound), length: u.distance(from: r.lowerBound, to: r.upperBound))
-    }
 }
 extension Range where Bound == Int {
     @_alwaysEmitIntoClient public init?(_ range: NSRange) {
         guard range.location != NSNotFound else { return nil }
         self = range.location ..< range.location + range.length
-    }
-}
-extension Range where Bound == String.Index {
-    @_alwaysEmitIntoClient public init?(_ range: NSRange, in string: some StringProtocol) {
-        let u = string.utf16
-        guard range.location != NSNotFound, range.location + range.length <= u.count else { return nil }
-        let lo = u.index(u.startIndex, offsetBy: range.location), hi = u.index(lo, offsetBy: range.length)
-        guard let l = String.Index(lo, within: string), let h = String.Index(hi, within: string) else { return nil }
-        self = l ..< h
     }
 }
 
@@ -229,8 +211,4 @@ extension Data: ReferenceConvertible { public typealias ReferenceType = NSData }
 extension Date: ReferenceConvertible { public typealias ReferenceType = NSDate }
 extension URL: ReferenceConvertible { public typealias ReferenceType = NSURL }
 
-// Hashable do NSRange (overlay da Apple: $sSo8_NSRangeVSH10FoundationMc)
-extension NSRange: Hashable {
-    public static func == (lhs: NSRange, rhs: NSRange) -> Bool { lhs.location == rhs.location && lhs.length == rhs.length }
-    public func hash(into hasher: inout Hasher) { hasher.combine(location); hasher.combine(length) }
-}
+// NSRange(_:in:), Range(_:in:), intersection e Hashable vêm do Foundation desta variante (RangeNumberFile.swift)

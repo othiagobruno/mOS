@@ -93,7 +93,8 @@ typedef NS_ENUM(NSInteger, NSPopoverBehavior) {
 @property NSPopoverBehavior behavior;
 @property (strong) NSView *contentView;
 @property (readonly, getter=isShown) BOOL shown;
-- (void)showRelativeToRect:(NSRect)positioningRect ofView:(NSView *)positioningView preferredEdge:(NSRectEdge)preferredEdge;
+- (void)showRelativeToRect:(NSRect)positioningRect ofView:(NSView *)positioningView preferredEdge:(NSRectEdge)preferredEdge
+    NS_SWIFT_NAME(show(relativeTo:of:preferredEdge:));
 - (void)close;
 @end
 

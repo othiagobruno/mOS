@@ -96,25 +96,6 @@ NS_SWIFT_NAME(ISO8601DateFormatter) @interface NSISO8601DateFormatter : NSFormat
 @property (null_resettable, copy) NSTimeZone *timeZone;
 @end
 
-typedef NS_OPTIONS(NSUInteger, NSCalendarUnit) {
-    NSCalendarUnitEra = (1UL << 1),
-    NSCalendarUnitYear = (1UL << 2),
-    NSCalendarUnitMonth = (1UL << 3),
-    NSCalendarUnitDay = (1UL << 4),
-    NSCalendarUnitHour = (1UL << 5),
-    NSCalendarUnitMinute = (1UL << 6),
-    NSCalendarUnitSecond = (1UL << 7),
-    NSCalendarUnitWeekday = (1UL << 9),
-    NSCalendarUnitWeekdayOrdinal = (1UL << 10),
-    NSCalendarUnitQuarter = (1UL << 11),
-    NSCalendarUnitWeekOfMonth = (1UL << 12),
-    NSCalendarUnitWeekOfYear = (1UL << 13),
-    NSCalendarUnitYearForWeekOfYear = (1UL << 14),
-    NSCalendarUnitNanosecond = (1UL << 15),
-    NSCalendarUnitCalendar = (1UL << 20),
-    NSCalendarUnitTimeZone = (1UL << 21),
-} NS_SWIFT_NAME(NSCalendar.Unit);
-
 /* NSCalendar, NSRunLoop e NSTimer vêm do Foundation.h desta variante (PR #368); aqui só o que ele não declara */
 @interface NSCalendar (MOSSwiftUI)
 @property (class, readonly, copy) NSCalendar *currentCalendar;

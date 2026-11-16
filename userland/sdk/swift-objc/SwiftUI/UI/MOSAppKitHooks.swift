@@ -7,9 +7,9 @@
 // MOSPopoverRequest.edge: 0 topo, 1 base, 2 início, 3 fim.
 // anchor pode vir .zero quando a view ainda não publicou o quadro global.
 #if !OPENSWIFTUI_SWIFTUI_RENDERER
-import AppKit
-import CoreGraphics
-import Foundation
+public import AppKit        // tipos do AppKit na API pública dos ganchos (InternalImportsByDefault)
+public import CoreGraphics
+public import Foundation
 
 public struct MOSPopoverRequest {
     public var anchor: CGRect

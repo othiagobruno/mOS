@@ -552,6 +552,10 @@ fi
 if [ -e "$ROOT/build/swift/objc/overlays/Foundation.swiftmodule" ]; then
     MOS_ZIG="$ZIG" bash "$ROOT/tools/build-swift-uikit-objc.sh" || echo "aviso: libswiftUIKit não compilou" >&2
 fi
+# SwiftUI.framework (OpenSwiftUI e dependências fixados por commit e SHA-256): depois do Foundation e do Combine acima
+if [ -e "$ROOT/build/swift/objc/overlays/Foundation.swiftmodule" ]; then
+    MOS_ZIG="$ZIG" python3 "$ROOT/tools/build-swiftui-objc.py" || echo "aviso: SwiftUI.framework não compilou" >&2
+fi
 if [ -f "$ROOT/build/universal-swift/usr/lib/swift/libswiftCore.dylib" ]; then
     cp -a "$ROOT/build/universal-swift/." "$ESP/mOS/"
 elif [ -d "$ROOT/build/swift/objc/dylib" ]; then
@@ -757,6 +761,7 @@ rm -rf "$A64FW/System"
 if [ -f "$A64FW/usr/lib/swift/libswiftCore.dylib" ]; then
     MOS_ZIG="$ZIG" MOS_ARCH=arm64 bash "$ROOT/tools/build-swift-combine.sh" || echo "aviso: Combine arm64 não compilou" >&2
     MOS_ZIG="$ZIG" MOS_ARCH=arm64 bash "$ROOT/tools/build-swift-foundation-objc.sh" || echo "aviso: Foundation Swift arm64 não compilou" >&2
+    MOS_ZIG="$ZIG" MOS_ARCH=arm64 python3 "$ROOT/tools/build-swiftui-objc.py" || echo "aviso: SwiftUI.framework arm64 não compilou" >&2
 fi
 MOS_ZIG="$ZIG" MOS_ARCH=arm64 bash "$ROOT/tools/build-frameworks-objc.sh" "$A64FW" || echo "aviso: algum framework arm64 não compilou" >&2
 bash "$ROOT/tools/build-coreimage.sh" "$ZIG" "$A64FW" arm64
