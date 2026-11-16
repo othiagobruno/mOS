@@ -73,6 +73,7 @@ typedef struct node {
     img_t *img;            /* imagem associada (<img>) */
     int ay;                /* posição y (para âncoras), -1 se desconhecida */
     frame_t *frame;        /* <iframe>: documento filho (kernel/web/frame.c) */
+    struct canvas2d *canvas; /* <canvas>: bitmap e estado 2D (kernel/web/canvas.c) */
     int index;             /* ordem no documento */
 } node_t;
 
@@ -249,7 +250,13 @@ typedef struct doc {
     int frame_depth;            /* 0 = documento principal */
     bool transparent;           /* iframe: sem fundo declarado, a tela fica transparente */
     int ctrl_base;              /* ids dos controles no ui_t (0 = 100000); cada iframe tem a sua faixa */
+    struct canvas2d *canvases;  /* bitmaps dos <canvas> (kernel/web/canvas.c) */
 } doc_t;
+
+/* <canvas> (kernel/web/canvas.c): tamanho intrínseco (atributos width/height) e bitmap atual (NULL se vazio) */
+void       canvas_intrinsic(node_t *n, int *w, int *h);
+surface_t *canvas_surface(node_t *n);
+void       canvas_free_all(doc_t *d);
 
 doc_t *doc_parse(const char *html, usize len, const char *url);
 void   html_parse_fragment(doc_t *d, node_t *parent, const char *html, int len);  /* innerHTML */

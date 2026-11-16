@@ -132,7 +132,8 @@ static jsobj *wrap(js_page_t *p, node_t *n) {
         h = (h + 1) & m;
     }
     jsrealm *r = p->realm;
-    jsobj *o = js_newobj_cls(CL_NODE, n->type == N_DOC ? r->p_doc : n->type == N_TEXT ? r->p_text : r->p_elem);
+    jsobj *o = js_newobj_cls(CL_NODE, n->type == N_DOC ? r->p_doc : n->type == N_TEXT ? r->p_text :
+                                      n->tag == T_CANVAS && r->p_canvas ? r->p_canvas : r->p_elem);
     o->u.host.page = p;
     o->u.host.node = n;
     o->u.host.extra = JS_UNDEF;
@@ -274,7 +275,7 @@ static node_t *new_text(doc_t *d, const char *s, int len) {
     return n;
 }
 
-static void set_attr(js_page_t *p, node_t *n, const char *name, const char *val, int vlen) {
+static void set_attr0(js_page_t *p, node_t *n, const char *name, const char *val, int vlen) {
     doc_t *d = p->doc;
     if (n->tag == T_IFRAME && (!strcmp(name, "src") || !strcmp(name, "srcdoc"))) frame_navigate(n, NULL);
     for (int i = 0; i < n->nattrs; i++) {
@@ -299,12 +300,19 @@ static void set_attr(js_page_t *p, node_t *n, const char *name, const char *val,
     page_dirty(p, n);
 }
 
+static void set_attr(js_page_t *p, node_t *n, const char *name, const char *val, int vlen) {
+    set_attr0(p, n, name, val, vlen);
+    /* <canvas>: width/height recriam o bitmap (mesmo com o mesmo valor) */
+    if (n->tag == T_CANVAS && (!strcmp(name, "width") || !strcmp(name, "height"))) js_canvas_attr_changed(p, n);
+}
+
 static void remove_attr(js_page_t *p, node_t *n, const char *name) {
     for (int i = 0; i < n->nattrs; i++) {
         if (!strcmp(n->attrs[i].name, name)) {
             memmove(&n->attrs[i], &n->attrs[i + 1], sizeof(attr_t) * (usize)(n->nattrs - i - 1));
             n->nattrs--;
             page_dirty(p, n);
+            if (n->tag == T_CANVAS && (!strcmp(name, "width") || !strcmp(name, "height"))) js_canvas_attr_changed(p, n);
             return;
         }
     }
@@ -3193,7 +3201,15 @@ void js_dom_init(jsrealm *r) {
     js_defn(scr, "width", jv_int(1280), 0);
     js_defn(scr, "height", jv_int(800), 0);
     js_defn(g, "screen", jv_obj(scr), PF_NOENUM);
+    js_canvas_init(r);
 }
+
+/* ponte para o Canvas 2D (canvas_js.c) */
+jsv js_dom_wrapv(js_page_t *p, node_t *n) { return wrapv(p, n); }
+doc_t *js_page_doc(js_page_t *p) { return p ? p->doc : NULL; }
+void js_page_repaint(js_page_t *p) { if (p) p->dirty = true; }
+js_page_t *js_cur_page(void) { return cur_page(); }
+node_t *js_page_focus(js_page_t *p) { return p ? p->focus : NULL; }
 
 /* ============================================================ interface pública */
 static void page_origin(const char *url, char *out, int cap) {
