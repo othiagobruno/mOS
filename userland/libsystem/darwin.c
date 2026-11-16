@@ -583,8 +583,49 @@ char *sandbox_extension_issue_file(const char *ext_class, const char *path, u32 
     (void)ext_class; (void)flags;
     return strdup(path ? path : "");                           /* "token" da extensão: o próprio caminho */
 }
-long sandbox_extension_consume(const char *token) { (void)token; return 1; }
-int sandbox_extension_release(long handle) { (void)handle; return 0; }
+/* extensões: o token é "<classe>;<alvo>" (o macOS dá um texto opaco assinado; quem recebe só o repassa ao consume).
+ * O consume devolve um handle positivo novo a cada chamada; release com handle inválido dá EINVAL, como no macOS.
+ * Nada é negado no mOS, então a extensão só registra o que foi pedido (docs/darwin-bsd-mach.md, F10). */
+static volatile long sb_next_handle = 1;
+static char *sb_token(const char *cls, const char *what) {
+    size_t a = cls ? strlen(cls) : 0, b = what ? strlen(what) : 0;
+    char *t = malloc(a + b + 2);
+    if (!t) return 0;
+    if (a) memcpy(t, cls, a);
+    t[a] = ';';
+    if (b) memcpy(t + a + 1, what, b);
+    t[a + b + 1] = 0;
+    return t;
+}
+char *sandbox_extension_issue_mach(const char *ext_class, const char *name, u32 flags) { (void)flags; return name ? sb_token(ext_class, name) : 0; }
+char *sandbox_extension_issue_generic(const char *ext_class, u32 flags) { (void)flags; return sb_token(ext_class, ""); }
+char *sandbox_extension_issue_file_to_process(const char *ext_class, const char *path, u32 flags, const u32 *tok) { (void)tok; return sandbox_extension_issue_file(ext_class, path, flags); }
+char *sandbox_extension_issue_mach_to_process(const char *ext_class, const char *name, u32 flags, const u32 *tok) { (void)tok; return sandbox_extension_issue_mach(ext_class, name, flags); }
+int sandbox_issue_fs_extension(const char *path, u64 flags, char **token) { if (!path || !token) { cx_errno = CX_EINVAL; return -1; } *token = sb_token("com.apple.app-sandbox.read-write", path); (void)flags; return *token ? 0 : -1; }
+long sandbox_extension_consume(const char *token) { if (!token) { cx_errno = CX_EINVAL; return -1; } return __sync_fetch_and_add(&sb_next_handle, 1); }
+int sandbox_extension_release(long handle) { if (handle <= 0 || handle >= sb_next_handle) { cx_errno = CX_EINVAL; return -1; } return 0; }
+int sandbox_extension_release_file(long handle, const char *path) { (void)path; return sandbox_extension_release(handle); }
+int sandbox_extension_update_file(long handle, const char *path) { (void)path; return handle > 0 ? 0 : -1; }
+/* audit token: pid no índice 5 */
+int sandbox_check_by_audit_token(const u32 *tok, const char *op, int type, ...) {
+    if (!tok) { cx_errno = CX_EINVAL; return -1; }
+    return sandbox_check((int)tok[5], op, type);
+}
+int sandbox_check_by_uniqueid(u32 uid, u64 uniqueid, const char *op, int type, ...) { (void)uid; (void)uniqueid; (void)op; (void)type; return 0; }
+/* contêiner: só existe para um processo em sandbox de app; o mOS não troca o HOME, então nenhum processo tem um
+ * (o macOS devolve erro para quem não está em contêiner) */
+int sandbox_container_path_for_pid(int pid, char *buf, size_t size) { (void)pid; if (buf && size) buf[0] = 0; cx_errno = CX_ESRCH; return -1; }
+int sandbox_container_path_for_audit_token(const u32 *tok, char *buf, size_t size) { return sandbox_container_path_for_pid(tok ? (int)tok[5] : 0, buf, size); }
+/* atributos de spawn: guardados para o filho (o mOS não aplica o perfil; o helper só pergunta sandbox_check) */
+typedef struct { char profile[128]; char container[128]; u32 flags; } sb_spawnattrs_t;
+void sandbox_spawnattrs_init(void *a) { if (a) memset(a, 0, sizeof(sb_spawnattrs_t)); }
+int sandbox_spawnattrs_setprofilename(void *a, const char *n) { if (!a || !n) return CX_EINVAL; strlcpy(((sb_spawnattrs_t *)a)->profile, n, 128); return 0; }
+int sandbox_spawnattrs_setcontainer(void *a, const char *c) { if (!a || !c) return CX_EINVAL; strlcpy(((sb_spawnattrs_t *)a)->container, c, 128); return 0; }
+int sandbox_note(const char *note) { (void)note; return 0; }
+int sandbox_suspend(int pid) { (void)pid; return 0; }
+int sandbox_unsuspend(void) { return 0; }
+int sandbox_query_approval_policy_for_path(const char *op, const char *path, char **out) { (void)op; (void)path; if (out) *out = 0; return 0; }
+int sandbox_query_user_intent_for_process_with_audit_token(const char *op, const u32 *tok, int *out) { (void)op; (void)tok; if (out) *out = 1; return 0; }
 
 /* csops: o binário não é assinado (sem CS_VALID, igual ao SecCode). ADHOC + GET_TASK_ALLOW +
  * DEBUGGED deixam o V8 e o Crashpad seguirem sem tratar o processo como inválido. */

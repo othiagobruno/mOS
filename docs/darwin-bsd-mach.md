@@ -92,7 +92,18 @@ Nos 28 bundles do corpus local (Firefox, GIMP, Inkscape, iTerm2, Rectangle, VLC 
 | F7 (parte 1) | **pronto** (15 nov.): IPC System V (`sysv_ipc.c`), `oslock.c`, `pid_suspend/resume` | `tools/sysv_ipc_host.c` 35/35 entre processos reais (fork); `tools/oslock_host.c` 9/9 com 4 threads |
 | F6 | **pronto** (15 nov.): `userland/libsystem/kqueue.c`, gancho de sinais em `libc.c`, `MOS_DW_EXITSTATUS` | `tools/kqueue_host.c` 33/33 (kernel falso) |
 | F9 (parte 1) | **pronto** (15 nov.): `userland/libsystem/launchdata.c`, `MOS_LAUNCHD_MACHSERVICES` no `init.c` | `tools/launchdata_host.c` 14/14 |
-| F3, F4, F5, F7 (resto), F8, F9 (resto), F10 | a fazer | — |
+| F10 | **pronto** (15 nov.): sandbox em `userland/libsystem/darwin.c` | `tools/sandbox_host.c` 11/11 |
+| F3, F4, F5, F7 (resto), F8, F9 (resto) | a fazer | — |
+
+### F10 em detalhe
+
+- Política: o mOS não nega nada a um app (é a escolha da frente: "sandbox ignorável sem quebrar apps"). O que o app
+  pergunta tem resposta coerente: `sandbox_check(pid, NULL)` diz "em sandbox" depois de `sandbox_init/apply` ou num
+  helper do Chromium sem `--no-sandbox`; toda operação é permitida; `sandbox_check_by_audit_token`;
+  extensões (`issue_file/mach/generic/to_process`, `sandbox_issue_fs_extension`) dão token `<classe>;<alvo>`,
+  `consume` dá handle novo, `release` com handle inválido dá EINVAL; `sandbox_container_path_for_pid` dá erro
+  (nenhum processo tem contêiner: o HOME não muda); `sandbox_spawnattrs_*`, `sandbox_note`, `suspend/unsuspend`,
+  `query_approval_policy`.
 
 ### F9 (parte 1) em detalhe
 
