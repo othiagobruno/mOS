@@ -205,6 +205,7 @@ static void page_dirty(js_page_t *p, node_t *n) {
     d->need_layout = true;
     p->dirty = true;
     for (node_t *a = n; a; a = a->parent) {
+        if (a->type == N_ELEM && a->tag == T_SVG && a->ns) a->svgdirty = 1;   /* SVG inline: redesenha da subárvore */
         if (a->type == N_ELEM && (a->tag == T_STYLE || a->tag == T_LINK)) { if (d->sheet) { css_free(d->sheet); d->sheet = NULL; } }
         if (a->type == N_ELEM && a->tag == T_BUTTON && a->ctrl) {
             sbuf_t t = {0};
@@ -1738,6 +1739,8 @@ static jsv node_get(jsobj *o, jsstr *k, bool *found) {
         return JS_UNDEF;
     }
     /* elementos */
+    if ((keyis(k, "tagName") || keyis(k, "nodeName")) && n->ns == 1) return jv_str(js_strz(n->name));   /* SVG: caixa original */
+    if (keyis(k, "namespaceURI")) return jv_str(js_strz(n->ns == 1 ? "http://www.w3.org/2000/svg" : "http://www.w3.org/1999/xhtml"));
     if (keyis(k, "tagName") || keyis(k, "nodeName")) {
         char up[64];
         int i = 0;
@@ -1871,6 +1874,9 @@ static int node_set(jsobj *o, jsstr *k, jsv v) {
         remove_children(p, n);
         if (n->tag == T_SCRIPT || n->tag == T_STYLE || n->tag == T_TEXTAREA) {
             if (s->len) { node_t *t = new_text(d, s->d, (int)s->len); if (t) insert_before(n, t, NULL); }
+        } else if (n->ns == 1) {
+            html_svg_fragment(d, n, s->d, (int)s->len, &d->node_count);   /* conteúdo SVG é XML */
+            for (node_t *c = n->first; c; c = c->next) js_mo_child(n, c, NULL, c->prev, c->next);
         } else {
             html_parse_fragment(d, n, s->d, (int)s->len);
             for (node_t *c = n->first; c; c = c->next) js_mo_child(n, c, NULL, c->prev, c->next);   /* o parser liga direto */
@@ -2658,6 +2664,27 @@ NATIVE(img_decode) {
     return jv_obj(pr);
 }
 
+/* createElementNS: SVG guarda nome e atributos com a caixa original */
+NATIVE(doc_create_ns) {
+    UNUSED_ARGS;
+    js_page_t *p = page_of(thisv);
+    if (!p) return JS_NULL;
+    jsstr *ns = jv_isnullish(ARG(0)) ? NULL : js_tostr(ARG(0));
+    jsstr *q = js_tostr(ARG(1));
+    if (!q) return JS_EXC;
+    if (ns && !strcmp(ns->d, "http://www.w3.org/2000/svg")) {
+        node_t *n = new_node(p->doc, N_ELEM);
+        if (!n) return JS_NULL;
+        const char *nm = strchr(q->d, ':') ? strchr(q->d, ':') + 1 : q->d;
+        n->name = arena_strndup(&p->doc->arena, nm, (int)strlen(nm));
+        n->tag = (u16)(!strcasecmp(nm, "svg") ? T_SVG : T_UNKNOWN);
+        n->ns = 1;
+        return wrapv(p, n);
+    }
+    node_t *n = new_elem(p->doc, q->d, (int)q->len);
+    return wrapv(p, n);
+}
+
 NATIVE(doc_write) {
     UNUSED_ARGS;
     js_page_t *p = cur_page();
@@ -2981,6 +3008,7 @@ void js_dom_init(jsrealm *r) {
     js_defnative(dp, "createTextNode", doc_create, 1, 1);
     js_defnative(dp, "createDocumentFragment", doc_create, 0, 2);
     js_defnative(dp, "createComment", doc_create, 1, 3);
+    js_defnative(dp, "createElementNS", doc_create_ns, 2, 0);
     js_defnative(dp, "getElementsByName", el_bytag, 1, 2);
     js_defnative(dp, "write", doc_write, 1, 0);
     js_defnative(dp, "writeln", doc_write, 1, 1);

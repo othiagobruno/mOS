@@ -609,7 +609,14 @@ static void parse(parser_t *P) {
             }
             n->text = arena_strndup(&P->d->arena, tag_start, (int)(after - tag_start));
             n->len = (int)(after - tag_start);
+            n->ns = 1;
             handle_start(P, n, false);
+            /* os filhos viram nós do DOM (XML: nomes e atributos com a caixa original) */
+            if (!selfclose) {
+                const char *ie = after;
+                for (const char *z = after - 1; z > p; z--) if (z[0] == '<' && z[1] == '/' && !strncasecmp(z + 2, "svg", 3)) { ie = z; break; }
+                if (ie > p) html_svg_fragment(P->d, n, p, (int)(ie - p), &P->count);
+            }
             if (P->sp > 2 && top(P) == n) P->sp--;
             p = after;
             continue;
@@ -762,3 +769,136 @@ void html_parse_fragment(doc_t *d, node_t *parent, const char *html, int len) {
 }
 
 const char *html_tag_name(int tag) { return tag > 0 && tag < T_COUNT ? tag_names[tag] : NULL; }
+
+/* ============================================================ SVG inline como XML */
+static node_t *xnode(doc_t *d, int type, int *counter) {
+    node_t *n = arena_alloc(&d->arena, sizeof(node_t));
+    if (!n) return NULL;
+    n->type = (u8)type;
+    n->ay = -1;
+    n->index = (*counter)++;
+    n->ns = 1;
+    return n;
+}
+
+static void xattr_add(doc_t *d, node_t *n, const char *name, int nl, const char *val, int vl) {
+    if (n->nattrs == n->acap) {
+        int nc = n->acap ? n->acap * 2 : 4;
+        attr_t *na = arena_alloc(&d->arena, sizeof(attr_t) * (usize)nc);
+        if (!na) return;
+        if (n->attrs) memcpy(na, n->attrs, sizeof(attr_t) * (usize)n->nattrs);
+        n->attrs = na;
+        n->acap = nc;
+    }
+    n->attrs[n->nattrs].name = arena_strndup(&d->arena, name, nl);
+    n->attrs[n->nattrs].value = arena_strndup(&d->arena, val, vl);
+    n->nattrs++;
+}
+
+void html_svg_fragment(doc_t *d, node_t *parent, const char *s, int len, int *counter) {
+    const char *p = s, *e = s + len;
+    node_t *stack[256];
+    int sp = 0;
+    stack[sp++] = parent;
+    sbuf_t tmp = { 0 };
+    while (p < e) {
+        if (*p != '<') {
+            const char *q = p;
+            while (q < e && *q != '<') q++;
+            tmp.len = 0;
+            put_decoded(&tmp, p, q, false);
+            node_t *t = xnode(d, N_TEXT, counter);
+            if (t) { t->text = arena_strndup(&d->arena, tmp.p ? tmp.p : "", tmp.len); t->len = tmp.len; append(stack[sp - 1], t); }
+            p = q;
+            continue;
+        }
+        if (p + 4 <= e && !strncmp(p, "<!--", 4)) { const char *q = p + 4; while (q + 3 <= e && strncmp(q, "-->", 3)) q++; p = q + 3 <= e ? q + 3 : e; continue; }
+        if (p + 9 <= e && !strncmp(p, "<![CDATA[", 9)) {
+            const char *q = p + 9;
+            while (q + 3 <= e && strncmp(q, "]]>", 3)) q++;
+            node_t *t = xnode(d, N_TEXT, counter);
+            if (t) { t->text = arena_strndup(&d->arena, p + 9, (int)(q - p - 9)); t->len = (int)(q - p - 9); append(stack[sp - 1], t); }
+            p = q + 3 <= e ? q + 3 : e;
+            continue;
+        }
+        if (p + 1 < e && (p[1] == '?' || p[1] == '!')) { while (p < e && *p != '>') p++; if (p < e) p++; continue; }
+        if (p + 1 < e && p[1] == '/') {
+            const char *q = p + 2, *ns = q;
+            while (q < e && *q != '>' && !isspace((u8)*q)) q++;
+            int nl = (int)(q - ns);
+            /* fecha até o elemento com esse nome */
+            for (int k = sp - 1; k > 0; k--) if (stack[k]->name && (int)strlen(stack[k]->name) == nl && !strncmp(stack[k]->name, ns, (usize)nl)) { sp = k; break; }
+            while (q < e && *q != '>') q++;
+            p = q < e ? q + 1 : e;
+            continue;
+        }
+        /* abertura */
+        const char *q = p + 1, *ns = q;
+        while (q < e && !isspace((u8)*q) && *q != '>' && *q != '/') q++;
+        int nl = (int)(q - ns);
+        if (!nl) { p++; continue; }
+        node_t *n = xnode(d, N_ELEM, counter);
+        if (!n) break;
+        char low[64];
+        int k = 0;
+        for (int i = 0; i < nl && k < 63; i++) low[k++] = (char)tolower((u8)ns[i]);
+        low[k] = 0;
+        /* <svg> aninhado fica como T_SVG; os outros não viram elementos HTML (title, style, a...) */
+        n->tag = (u16)(!strcmp(low, "svg") ? T_SVG : T_UNKNOWN);
+        n->name = arena_strndup(&d->arena, ns, nl);
+        bool selfclose = false;
+        for (;;) {
+            while (q < e && isspace((u8)*q)) q++;
+            if (q >= e) break;
+            if (*q == '>') { q++; break; }
+            if (*q == '/') { selfclose = true; q++; continue; }
+            const char *an = q;
+            while (q < e && !isspace((u8)*q) && *q != '=' && *q != '>' && *q != '/') q++;
+            int anl = (int)(q - an);
+            while (q < e && isspace((u8)*q)) q++;
+            const char *vs = q, *ve = q;
+            if (q < e && *q == '=') {
+                q++;
+                while (q < e && isspace((u8)*q)) q++;
+                if (q < e && (*q == '"' || *q == '\'')) { char qt = *q++; vs = q; while (q < e && *q != qt) q++; ve = q; if (q < e) q++; }
+                else { vs = q; while (q < e && !isspace((u8)*q) && *q != '>') q++; ve = q; }
+            }
+            if (anl) { tmp.len = 0; put_decoded(&tmp, vs, ve, true); xattr_add(d, n, an, anl, tmp.p ? tmp.p : "", tmp.len); }
+        }
+        append(stack[sp - 1], n);
+        if (!selfclose && sp < 256) stack[sp++] = n;
+        p = q;
+    }
+    sb_free(&tmp);
+}
+
+static void xml_esc(sbuf_t *o, const char *s, int n, bool attr) {
+    for (int i = 0; i < n; i++) {
+        char c = s[i];
+        if (c == '&') sb_puts(o, "&amp;");
+        else if (c == '<') sb_puts(o, "&lt;");
+        else if (c == '>' && !attr) sb_puts(o, "&gt;");
+        else if (c == '"' && attr) sb_puts(o, "&quot;");
+        else sb_putc(o, c);
+    }
+}
+
+void node_xml(node_t *n, sbuf_t *o) {
+    if (n->type == N_TEXT) { if (n->text) xml_esc(o, n->text, n->len, false); return; }
+    if (n->type != N_ELEM || !n->name) { for (node_t *c = n->first; c; c = c->next) node_xml(c, o); return; }
+    sb_putc(o, '<');
+    sb_puts(o, n->name);
+    for (int i = 0; i < n->nattrs; i++) {
+        sb_putc(o, ' ');
+        sb_puts(o, n->attrs[i].name);
+        sb_puts(o, "=\"");
+        xml_esc(o, n->attrs[i].value, (int)strlen(n->attrs[i].value), true);
+        sb_putc(o, '"');
+    }
+    if (!n->first) { sb_puts(o, "/>"); return; }
+    sb_putc(o, '>');
+    for (node_t *c = n->first; c; c = c->next) node_xml(c, o);
+    sb_puts(o, "</");
+    sb_puts(o, n->name);
+    sb_putc(o, '>');
+}

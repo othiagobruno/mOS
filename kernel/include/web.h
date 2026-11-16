@@ -74,6 +74,8 @@ typedef struct node {
     int ay;                /* posição y (para âncoras), -1 se desconhecida */
     frame_t *frame;        /* <iframe>: documento filho (kernel/web/frame.c) */
     struct canvas2d *canvas; /* <canvas>: bitmap e estado 2D (kernel/web/canvas.c) */
+    u8 ns;                 /* 0 HTML, 1 SVG (nomes e atributos com a caixa original) */
+    u8 svgdirty;           /* <svg> inline mudado pelo JS: re-serializar e redesenhar */
     int index;             /* ordem no documento */
 } node_t;
 
@@ -83,6 +85,10 @@ node_t *node_by_id(node_t *root, const char *id);
 void    node_text_content(node_t *n, sbuf_t *out);
 int     tag_lookup(const char *name);
 const char *html_tag_name(int tag);
+/* SVG inline: subárvore XML (nomes/atributos como vieram) sob parent; counter = contador de índices de nós */
+struct doc;
+void html_svg_fragment(struct doc *d, node_t *parent, const char *src, int len, int *counter);
+void node_xml(node_t *n, sbuf_t *out);   /* serializa uma subárvore SVG como XML */
 
 /* ============================================================ CSS */
 enum { U_NONE, U_PX, U_PCT, U_AUTO };

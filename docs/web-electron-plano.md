@@ -130,7 +130,10 @@ Cada item fecha com teste de host (`tools/web_host.sh`) ou, quando depende da VM
    texto por glifo com a matriz inteira (girado, rotate, gradiente e padrão no texto) e `<textPath>`; conteúdo de
    marcador, padrão e máscara herda dos próprios ancestrais. Teste: casos svg_padrao_mascara, svg_filtros e
    svg_marcadores_texto em `tools/web_host_svg.c`. Falta: feTurbulence, feImage, feTile, feConvolveMatrix,
-   feDisplacementMap e iluminação; sub-região de primitivo; recorte do marcador; filhos do `<svg>` no DOM do JS.
+   feDisplacementMap e iluminação; sub-região de primitivo; recorte do marcador.
+6j. ✅ **SVG inline no DOM** (`html.c`, `layout.c`, `js_dom.c`): os filhos do `<svg>` viram nós (XML, com a caixa dos
+   nomes e atributos), com `namespaceURI`, `tagName` como no navegador, `createElementNS` e `innerHTML` em XML;
+   qualquer mudança pelo JS re-serializa a subárvore e redesenha. Teste: caso svg_dom_js em `tools/web_host_svg.c`.
 7. **WebGL 1/2** sobre o OpenGL do mOS (frente do Otavio) com reserva por software.
 8. **`<video>`/`<audio>`**: o motor publica o elemento; o `WebKit.framework` decodifica com AVFoundation/
    VideoToolbox (frente da Isabela) e devolve quadros e relógio ao motor; controles nativos desenhados pela vista.
