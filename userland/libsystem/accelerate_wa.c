@@ -125,20 +125,56 @@ void vDSP_zvmags(const dsp_split_t *a, vstride ia, float *c, vstride ic, vlen n)
     for (vlen i = 0; i < n; i++) { float r = a->realp[i * ia], im = a->imagp[i * ia]; c[i * ic] = r * r + im * im; }
 }
 
-typedef struct { unsigned long n; int dir; } dft_setup_t;
+typedef struct { unsigned long n; int dir, real; } dft_setup_t;   /* real: setup do zrop */
 void *vDSP_DFT_zop_CreateSetup(void *prev, vlen length, int direction) {
     (void)prev;
     if (!length) return 0;
     dft_setup_t *s = malloc(sizeof *s);
     if (!s) return 0;
-    s->n = length; s->dir = direction;
+    s->n = length; s->dir = direction; s->real = 0;
     return s;
+}
+/* DFT real de N pontos: entrada e saída como no vDSP_fft_zrip (pares em Ir, ímpares em Ii; realp[0] = DC,
+ * imagp[0] = Nyquist, direta multiplicada por 2). N par. */
+void *vDSP_DFT_zrop_CreateSetup(void *prev, vlen length, int direction) {
+    (void)prev;
+    if (!length || (length & 1)) return 0;
+    dft_setup_t *s = malloc(sizeof *s);
+    if (!s) return 0;
+    s->n = length; s->dir = direction; s->real = 1;
+    return s;
+}
+static void dft_real(const dft_setup_t *s, const float *ir, const float *ii, float *ore, float *oim) {
+    unsigned long n = s->n, h = n / 2;
+    double *x = malloc(sizeof(double) * n), *xr = malloc(sizeof(double) * n), *xi = malloc(sizeof(double) * n);
+    if (!x || !xr || !xi) { free(x); free(xr); free(xi); return; }
+    if (s->dir >= 0) {
+        for (unsigned long k = 0; k < h; k++) { x[2 * k] = ir[k]; x[2 * k + 1] = ii[k]; }
+        for (unsigned long k = 0; k <= h; k++) {
+            double sr = 0, si = 0;
+            for (unsigned long t = 0; t < n; t++) { double a = -2.0 * PI * (double)(k * t % n) / (double)n; sr += x[t] * cos(a); si += x[t] * sin(a); }
+            xr[k] = sr; xi[k] = si;
+        }
+        ore[0] = (float)(2 * xr[0]); oim[0] = (float)(2 * xr[h]);
+        for (unsigned long k = 1; k < h; k++) { ore[k] = (float)(2 * xr[k]); oim[k] = (float)(2 * xi[k]); }
+    } else {
+        xr[0] = ir[0]; xi[0] = 0; xr[h] = ii[0]; xi[h] = 0;
+        for (unsigned long k = 1; k < h; k++) { xr[k] = ir[k]; xi[k] = ii[k]; xr[n - k] = ir[k]; xi[n - k] = -ii[k]; }
+        for (unsigned long t = 0; t < n; t++) {
+            double sr = 0;
+            for (unsigned long k = 0; k < n; k++) { double a = 2.0 * PI * (double)(k * t % n) / (double)n; sr += xr[k] * cos(a) - xi[k] * sin(a); }
+            x[t] = sr;
+        }
+        for (unsigned long k = 0; k < h; k++) { ore[k] = (float)x[2 * k]; oim[k] = (float)x[2 * k + 1]; }
+    }
+    free(x); free(xr); free(xi);
 }
 void vDSP_DFT_DestroySetup(void *setup) { free(setup); }
 /* Direção +1: expoente negativo (análise). Sem escala: ida e volta multiplicam por N. */
 void vDSP_DFT_Execute(void *setup, const float *ir, const float *ii, float *ore, float *oim) {
     dft_setup_t *s = setup;
     if (!s || !ir || !ii || !ore || !oim) return;
+    if (s->real) { dft_real(s, ir, ii, ore, oim); return; }
     unsigned long n = s->n;
     double sign = s->dir >= 0 ? -1.0 : 1.0;
     for (unsigned long k = 0; k < n; k++) {
