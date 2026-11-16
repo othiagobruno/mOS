@@ -100,7 +100,13 @@ struct msl_lib {
     u8 *gmem;
     int gsize, gcap;
     arena_blk_t *arena;
+    var_t **globs;            /* globais do programa, na ordem de declaração (o GLSL do OpenGL lê daqui) */
+    int nglob;
 };
+/* flags de msl_compile2 */
+enum { MSL_FLAG_GLSL = 1 };
+char *msl_preprocess(const char *src, u64 n, const char *defines, char *err, int errn);
+msl_lib_t *msl_compile2(const char *src, u64 n, const char *defines, char *err, int errn, int flags);
 void *msl_alloc(msl_lib_t *l, u64 n);
 
 /* funções embutidas */

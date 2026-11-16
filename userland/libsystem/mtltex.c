@@ -201,6 +201,7 @@ static int addr_i(int mode, int i, int n, int *border) {
     }
 }
 static void border_col(const msl_samp_t *s, double o[4]) {
+    if (s->bcustom) { for (int i = 0; i < 4; i++) o[i] = s->bcol[i]; return; }
     o[0] = o[1] = o[2] = s->border == 2 ? 1 : 0;
     o[3] = s->border ? 1 : 0;
     if (s->addr[0] == 4) o[3] = 0;
@@ -289,3 +290,12 @@ void msl_tex_sample(const msl_tex_t *t, const msl_samp_t *s, const double *coord
     for (int i = 0; i < 4; i++) out[i] = a[i] + (b[i] - a[i]) * f;
 }
 
+
+void msl_tex_swizzle(const msl_tex_t *t, double v[4]) {
+    if (!t->swizzle || t->swizzle == 0x05040302u) return;
+    double s[4] = {v[0], v[1], v[2], v[3]};
+    for (int i = 0; i < 4; i++) {
+        u32 c = (t->swizzle >> (8 * i)) & 0xff;
+        v[i] = c == 0 ? 0 : c == 1 ? 1 : c >= 2 && c <= 5 ? s[c - 2] : s[i];
+    }
+}

@@ -706,11 +706,14 @@ static void tex_call(node_t *n, fr_t *fr, reg_t *r) {
             for (int i = 0; i < 4; i++) {
                 int xx = px[i] < 0 ? 0 : px[i] >= w ? w - 1 : px[i], yy = py[i] < 0 ? 0 : py[i] >= h ? h - 1 : py[i];
                 msl_tex_load(t, xx, yy, 0, slice, 0, out);
+                msl_tex_swizzle(t, out);
                 if (r->isint) r->i[i] = d2i(out[comp]); else r->d[i] = out[comp];
             }
             return;
         }
         int nc = tt->tex == MSL_TEX_1D || tt->tex == MSL_TEX_1D_ARRAY ? 1 : (tt->tex == MSL_TEX_3D || tt->tex == MSL_TEX_CUBE || tt->tex == MSL_TEX_CUBE_ARRAY) ? 3 : 2;
+        if (n->d && n->d->bi == B_BIAS) lod += s->lodbias;
+        else if (!(n->d && n->d->bi == B_LEVEL)) lod = s->lodbias;
         msl_tex_sample(t, s, cd, nc, slice, lod, out);
         if (m == T_SAMPLE_CMP) {
             reg_t ref;
@@ -731,6 +734,7 @@ static void tex_call(node_t *n, fr_t *fr, reg_t *r) {
             r->d[0] = pass;
             return;
         }
+        msl_tex_swizzle(t, out);
         r->isint = IS_INTK(ty_scal(n->t));
         r->n = tt->depth ? 1 : 4;
         for (int i = 0; i < r->n; i++) { if (r->isint) r->i[i] = d2i(out[i]); else r->d[i] = rnd(ty_scal(n->t), out[i]); }
@@ -764,6 +768,7 @@ static void tex_call(node_t *n, fr_t *fr, reg_t *r) {
             return;
         }
         msl_tex_load(t, x, y, z, slice, lvl, px);
+        msl_tex_swizzle(t, px);
         r->isint = IS_INTK(ty_scal(n->t));
         r->n = tt->depth ? 1 : 4;
         for (int i = 0; i < r->n; i++) { if (r->isint) r->i[i] = d2i(px[i]); else r->d[i] = rnd(ty_scal(n->t), px[i]); }

@@ -14,6 +14,7 @@ void msl_tex_load(const msl_tex_t *t, int x, int y, int z, int slice, int lvl, d
     (void)t; (void)x; (void)y; (void)z; (void)slice; (void)lvl;
     out[0] = out[1] = out[2] = out[3] = 0;
 }
+void msl_tex_swizzle(const msl_tex_t *t, double v[4]) { (void)t; (void)v; }
 void msl_tex_store(const msl_tex_t *t, int x, int y, int z, int slice, int lvl, const double in[4]) {
     (void)t; (void)x; (void)y; (void)z; (void)slice; (void)lvl; (void)in;
 }

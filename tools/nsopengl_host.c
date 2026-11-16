@@ -3,8 +3,11 @@
  *   zig cc -g -O1 -fno-sanitize=all -ffreestanding -fno-builtin -w -Iuserland/libsystem/kshim \
  *     -Iuserland/libsystem/fsinc -Ikernel/include -Iuserland/libsystem \
  *     -c userland/libsystem/appkit_nsopengl.c -o /tmp/nsgl-lib.o
+ *   for f in gl_ctx gl_buf gl_tex gl_fbo gl_raster gl_ffp gl_misc gl_glsl gl_glsl_tr gl_glsl_pre mtltex mtlshader mtlexec mslspirv; do
+ *     zig cc -g -O1 -fno-sanitize=all -ffreestanding -fno-builtin -w -Iuserland/libsystem/kshim -Iuserland/libsystem/fsinc \
+ *       -Ikernel/include -Iuserland/libsystem -c userland/libsystem/$f.c -o /tmp/nsgl-$f.o; done
  *   zig cc -g -O1 -fno-sanitize=all -Iuserland/libsystem -w tools/nsopengl_host.c tools/ctline_host_stubs.c \
- *     /tmp/nsgl-lib.o userland/libsystem/objc_msg.S -lpthread -o /tmp/nsopengl && /tmp/nsopengl
+ *     /tmp/nsgl-*.o userland/libsystem/objc_msg.S -lpthread -lm -o /tmp/nsopengl && /tmp/nsopengl
  * O que o arquivo pede e o harness não tem (objetos associados, NSValue, NSView, NSColor, NSRectFill) está aqui.
  */
 #include <stdio.h>
@@ -75,6 +78,40 @@ static int prepared, reshaped;
 static void app_prepare(id s, SEL c) { (void)s; (void)c; prepared++; }
 static void app_reshape(id s, SEL c) { (void)s; (void)c; reshaped++; }
 
+/* IOSurface, NSNumber, NSDictionary e CALayer mínimos: o flushBuffer copia o quadro para o contents do layer */
+typedef struct { cx_class_t *isa; long v; } num_t;
+static cx_class_t Num_c, Num_m, Dict_c, Dict_m, Surf_c, Surf_m, Layer_c, Layer_m;
+id cx_num_i(long long v) { num_t *n = (num_t *)cx_alloc_instance(&Num_c); n->v = (long)v; return (id)n; }
+typedef struct { cx_class_t *isa; long w, h; } dict_t;
+static id dict_make(id cls, SEL c, id *vals, id *keys, unsigned long long n) { (void)c; (void)keys; (void)n; dict_t *d = (dict_t *)cx_alloc_instance((cx_class_t *)cls); d->w = ((num_t *)vals[0])->v; d->h = ((num_t *)vals[1])->v; return (id)d; }
+const void *kIOSurfaceWidth = "w", *kIOSurfaceHeight = "h", *kIOSurfaceBytesPerElement = "b", *kIOSurfacePixelFormat = "f";
+typedef struct { cx_class_t *isa; long w, h; unsigned char *px; } surf_t;
+void *IOSurfaceCreate(id props) { dict_t *d = (dict_t *)props; surf_t *s = (surf_t *)cx_alloc_instance(&Surf_c); s->w = d->w; s->h = d->h; s->px = calloc(1, (size_t)(d->w * d->h * 4)); return s; }
+void *IOSurfaceGetBaseAddress(void *s) { return ((surf_t *)s)->px; }
+void *IOSurfaceGetBaseAddressOfPlane(void *s, unsigned long long i) { (void)i; return ((surf_t *)s)->px; }
+unsigned long long IOSurfaceGetBytesPerRow(void *s) { return (unsigned long long)((surf_t *)s)->w * 4; }
+unsigned long long IOSurfaceGetBytesPerRowOfPlane(void *s, unsigned long long i) { (void)i; return IOSurfaceGetBytesPerRow(s); }
+unsigned long long IOSurfaceGetWidth(void *s) { return (unsigned long long)((surf_t *)s)->w; }
+unsigned long long IOSurfaceGetHeight(void *s) { return (unsigned long long)((surf_t *)s)->h; }
+int IOSurfaceLock(void *s, unsigned o, unsigned *seed) { (void)s; (void)o; (void)seed; return 0; }
+int IOSurfaceUnlock(void *s, unsigned o, unsigned *seed) { (void)s; (void)o; (void)seed; return 0; }
+unsigned _dyld_image_count(void) { return 0; }
+int cx_fdprintf(int fd, const char *fmt, ...) { (void)fd; (void)fmt; return 0; }
+const char *_dyld_get_image_name(unsigned i) { (void)i; return 0; }
+typedef struct { cx_class_t *isa; id contents; } layer_t;
+static void layer_set(id self, SEL c, id v) { (void)c; ((layer_t *)self)->contents = v; }
+static void layer_opaque(id self, SEL c, BOOL b) { (void)self; (void)c; (void)b; }
+static id the_layer;
+static BOOL view_wants(id s, SEL c) { (void)s; (void)c; return the_layer != 0; }
+static void view_set_wants(id s, SEL c, BOOL b) { (void)s; (void)c; if (b && !the_layer) the_layer = cx_alloc_instance(&Layer_c); }
+static id view_layer(id s, SEL c) { (void)s; (void)c; return the_layer; }
+static id view_window(id s, SEL c) { (void)s; (void)c; return 0; }
+void glClearColor(float r, float g, float b, float a);
+int CGLSetOffScreen(void *ctx, int w, int h, int rowbytes, void *base);
+int CGLFlushDrawable(void *ctx);
+void glClear(unsigned m);
+const unsigned char *glGetString(unsigned n);
+
 static int fails;
 static void expect(const char *name, int ok) { if (!ok) { printf("FALHOU %s\n", name); fails++; } else printf("ok %s\n", name); }
 
@@ -96,6 +133,17 @@ int main(void) {
     cx_add_method(&View_c, "bounds", (void *)view_bounds);
     cx_add_method(&View_c, "setNeedsDisplay:", (void *)view_needs);
     cx_add_method(&View_c, "dealloc", (void *)col_fill);
+    cx_add_method(&View_c, "wantsLayer", (void *)view_wants);
+    cx_add_method(&View_c, "setWantsLayer:", (void *)view_set_wants);
+    cx_add_method(&View_c, "layer", (void *)view_layer);
+    cx_add_method(&View_c, "window", (void *)view_window);
+    cx_define_class(&Num_c, &Num_m, "NSNumber", cx_class_named("NSObject"), 8);
+    cx_define_class(&Dict_c, &Dict_m, "NSDictionary", cx_class_named("NSObject"), 16);
+    cx_add_cmethod(&Dict_c, "dictionaryWithObjects:forKeys:count:", (void *)dict_make);
+    cx_define_class(&Surf_c, &Surf_m, "IOSurfaceHost", cx_class_named("NSObject"), 24);
+    cx_define_class(&Layer_c, &Layer_m, "CALayerHost", cx_class_named("NSObject"), 8);
+    cx_add_method(&Layer_c, "setContents:", (void *)layer_set);
+    cx_add_method(&Layer_c, "setOpaque:", (void *)layer_opaque);
     cx_define_class(&Col_c, &Col_m, "NSColor", cx_class_named("NSObject"), 8);
     cx_add_cmethod(&Col_c, "colorWithCalibratedWhite:alpha:", (void *)col_white);
     cx_add_method(&Col_c, "setFill", (void *)col_fill);
@@ -105,7 +153,12 @@ int main(void) {
     {
         void *pix = 0;
         int n = 7, v = 0;
-        expect("CGLChoosePixelFormat continua recusando", CGLChoosePixelFormat(0, &pix, &n) == 10002 && !pix && n == 0);
+        static const int a[] = {5, 12, 24, 0};
+        expect("CGLChoosePixelFormat aceita fora do Chromium", CGLChoosePixelFormat(a, &pix, &n) == 0 && pix && n == 1);
+        expect("profundidade do formato escolhido", CGLDescribePixelFormat(pix, 0, 12, &v) == 0 && v == 24);
+        static const int bad[] = {99, 0x2100, 0};
+        void *p2 = 0;
+        expect("perfil inexistente recusado", CGLChoosePixelFormat(bad, &p2, &n) == 10002 && !p2);
     }
     static const unsigned attrs[] = {5 /* DoubleBuffer */, 12 /* Depth */, 24, 13 /* Stencil */, 8, 99 /* Profile */, 0x3200, 0};
     id pf = MSG(id, MSG0(id, (id)cx_class_named("NSOpenGLPixelFormat"), "alloc"), "initWithAttributes:", attrs);
@@ -183,9 +236,33 @@ int main(void) {
     expect("prepareOpenGL uma vez e reshape", prepared == 1 && reshaped == 1);
     MSG(void, view, "drawRect:", fr);
     expect("drawRect: não repete prepareOpenGL e pinta", prepared == 1 && fills == 1);
-    int before = ((view_t *)view)->needs;
+    MSG0(void, vc, "makeCurrentContext");
+    expect("contexto do perfil legado é GL 2.1", glGetString(0x1F02) && !strncmp((const char *)glGetString(0x1F02), "2.1", 3));
+    glClearColor(0, 0, 1, 1);
+    glClear(0x4000);
     MSG0(void, vc, "flushBuffer");
-    expect("flushBuffer pede redesenho da view", ((view_t *)view)->needs == before + 1);
+    layer_t *L = (layer_t *)the_layer;
+    surf_t *S = L ? (surf_t *)L->contents : 0;
+    expect("flushBuffer põe o quadro no layer da view", S && S->w == 400 && S->h == 300);
+    expect("pixels BGRA do clear azul", S && S->px[0] == 255 && S->px[1] == 0 && S->px[2] == 0 && S->px[3] == 255);
+    fills = 0;
+    MSG(void, view, "drawRect:", fr);
+    expect("depois do primeiro quadro o drawRect: não pinta por cima", fills == 0);
+    /* contexto 3.2 core */
+    void *cctx = 0;
+    expect("contexto core", CGLCreateContext(pix, 0, &cctx) == 0 && cctx);
+    CGLSetCurrentContext(cctx);
+    expect("perfil core é GL 4.1", glGetString(0x1F02) && !strncmp((const char *)glGetString(0x1F02), "4.1", 3));
+    {
+        unsigned char buf[16 * 8 * 4];
+        expect("CGLSetOffScreen", CGLSetOffScreen(cctx, 16, 8, 64, buf) == 0);
+        glClearColor(1, 0, 0, 1);
+        glClear(0x4000);
+        CGLFlushDrawable(cctx);
+        expect("offscreen recebe o quadro (BGRA)", buf[2] == 255 && buf[0] == 0 && buf[3] == 255);
+    }
+    CGLSetCurrentContext(0);
+    CGLReleaseContext(cctx);
 
     printf("nsopengl: %s (%d falhas)\n", fails ? "FALHOU" : "ok", fails);
     return fails ? 1 : 0;

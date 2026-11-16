@@ -12,6 +12,7 @@ desenhar ou calcular rodam sem mudança de código, só que mais devagar que num
 | Arquivo | O que faz |
 |---|---|
 | `userland/libsystem/metal.c` | API: `MTLCreateSystemDefaultDevice`, device, buffers, texturas (memória própria, IOSurface ou buffer; views), samplers, depth/stencil, bibliotecas e funções, pipelines de render e compute, heaps, fences e eventos (`MTLSharedEvent` com listeners), fila, command buffers e os três encoders; todos os descritores (`MTLRenderPassDescriptor`, `MTLRenderPipelineDescriptor`, `MTLVertexDescriptor`... com propriedades genéricas, `copy` e arrays indexados); `MTLCaptureManager` (sem captura); `CAMetalLayer` com drawables; `MTKView` |
+| `userland/libsystem/mtltex.c` | Formatos de pixel e amostragem (também usados pelo OpenGL por software); swizzle de textura (`MTLTextureSwizzle`) e cor de borda arbitrária |
 | `userland/libsystem/metalexec.c` | Execução: formatos de pixel (8/16/32 bits, half, float, sRGB, BGRA, 10:10:10:2, 11:11:10, 9:9:9:5, 5:6:5, depth16/32, stencil8, depth32+stencil8, BGRA10_XR), amostragem (nearest/linear, mipmaps, endereçamento, borda, cubemap, 3D), rasterizador, compute e blit |
 | `userland/libsystem/mtlshader.c` | Compilador de MSL: pré-processador, lexer, parser com tipos, layout de memória do Metal |
 | `userland/libsystem/mtlexec.c` | Interpretador da árvore de MSL; fibras para `threadgroup_barrier` |
