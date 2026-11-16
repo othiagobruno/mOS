@@ -816,6 +816,9 @@ enum {
     MOS_LS_APP_BY_PATH,        /* key = caminho do .app (registra se preciso) -> out = uma linha */
     MOS_LS_OPEN,               /* key = caminho ou URL, key2 = app (identificador, ou caminho se flags & 1) ou vazio -> 0 */
     MOS_LS_KIND_OF_FILE,       /* key = caminho -> out = "Imagem PNG" */
+    MOS_LS_DUMP,               /* roles = índice do app (0..) -> out = ficha do app (lsregister -dump); resultado = total de apps */
+    MOS_LS_UNREGISTER,         /* key = caminho do .app -> 0 (lsregister -u); volta no próximo rescan se ainda estiver numa pasta vigiada */
+    MOS_LS_RESCAN,             /* -> número de apps (lsregister -r / -kill: relê as pastas de apps) */
 };
 #ifndef MOS_URL_MAX
 #define MOS_URL_MAX 8192   /* a mesma de net.h: URL inteira (OAuth do Google passa de 1 KiB depois do 302) */

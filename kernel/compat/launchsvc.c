@@ -1684,6 +1684,34 @@ i64 ls_syscall(process_t *p, u64 op, u64 ureq) {
         r = can_open(rq->key, a) && defer(0, rq->key, a) ? 0 : -1;
         break;
     }
+    case MOS_LS_DUMP: {
+        ls_app_t *a = ls_app_at((int)rq->roles);
+        r = ls_app_count();
+        if (!a) break;
+        sb_printf(&b, "bundle id:      %s\npath:           %s\nname:           %s\nexecutable:     %s\n", a->id, a->path[0] ? a->path : "(app do sistema)",
+                  a->name, a->builtin ? "(embutido)" : a->exe);
+        for (int i = 0; i < a->nschemes; i++) sb_printf(&b, "claimed schemes: %s:\n", a->schemes[i]);
+        static const char *const roles_txt[] = {"None", "Viewer", "Editor", "Shell", "All"};
+        for (int i = 0; i < a->nclaims; i++) {
+            const claim_t *c = &a->claims[i];
+            sb_printf(&b, "claim:          %s%s%s (%s, rank %u)\n", c->uti ? c->uti : "", c->uti && c->ext[0] ? " ." : (c->ext[0] ? "." : ""), c->ext,
+                      roles_txt[c->role < 5 ? c->role : 4], c->rank);
+        }
+        break;
+    }
+    case MOS_LS_UNREGISTER: {
+        ls_app_t *a = NULL;
+        for (int i = 0; i < napps; i++) if (!apps[i]->gone && !apps[i]->builtin && !strcmp(apps[i]->path, rq->key)) a = apps[i];
+        if (!a) { r = -MOS_ENOENT; break; }
+        a->gone = true;
+        claims_clear(a);
+        types_drop_owner(a);
+        ls_gen++;
+        kprintf("ls: %s desregistrado (lsregister -u)\n", a->name);
+        r = 0;
+        break;
+    }
+    case MOS_LS_RESCAN: ls_rescan(); r = ls_app_count(); break;
     default: r = -MOS_EINVAL;
     }
     usize len = b.p ? MIN((usize)b.len, sizeof rq->out - 1) : 0;

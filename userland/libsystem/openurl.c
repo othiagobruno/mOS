@@ -319,6 +319,17 @@ int cx_ls_app_lookup(const char *key, int by_id, char *bundle, size_t bc, char *
     if (name && nc) snprintf(name, nc, "%s", a.name);
     return 0;
 }
+/* SPI do lsregister (cli-macos/lsregister.c): uma operação MOS_LS_* crua; a saída de texto em out */
+_Static_assert(MOS_LS_APP_BY_PATH == 16 && MOS_LS_DUMP == 19 && MOS_LS_UNREGISTER == 20 && MOS_LS_RESCAN == 21, "números do lsregister.c");
+long cx_ls_raw(int op, const char *key, unsigned roles, char *out, size_t cap) {
+    mos_ls_req_t *rq = rq_new(key ? key : "", 0, 0);
+    if (!rq) return -1;
+    rq->roles = roles;
+    long r = ls_call(op, rq);
+    if (out && cap) snprintf(out, cap, "%s", rq->out);
+    free(rq);
+    return r;
+}
 /* inicia (ou traz para a frente) o app, sem documento */
 int cx_ls_launch_app(const char *bundle) { return bundle && bundle[0] ? ls_open_c("", bundle, 0) : -1; }
 
