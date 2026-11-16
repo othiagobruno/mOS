@@ -91,7 +91,19 @@ Nos 28 bundles do corpus local (Firefox, GIMP, Inkscape, iTerm2, Rectangle, VLC 
 | F2 | **pronto** (15 nov.): `userland/libsystem/procinfo.c`, `task_info`/`thread_info`/`host_info` em `mach.c`, `MOS_DW_FDS`/`MOS_DW_CWD` no kernel | `tools/procinfo_host.c`: 50/50 (kernel falso). Não rodou no QEMU |
 | F7 (parte 1) | **pronto** (15 nov.): IPC System V (`sysv_ipc.c`), `oslock.c`, `pid_suspend/resume` | `tools/sysv_ipc_host.c` 35/35 entre processos reais (fork); `tools/oslock_host.c` 9/9 com 4 threads |
 | F6 | **pronto** (15 nov.): `userland/libsystem/kqueue.c`, gancho de sinais em `libc.c`, `MOS_DW_EXITSTATUS` | `tools/kqueue_host.c` 33/33 (kernel falso) |
-| F3, F4, F5, F7 (resto), F8, F9, F10 | a fazer | — |
+| F9 (parte 1) | **pronto** (15 nov.): `userland/libsystem/launchdata.c`, `MOS_LAUNCHD_MACHSERVICES` no `init.c` | `tools/launchdata_host.c` 14/14 |
+| F3, F4, F5, F7 (resto), F8, F9 (resto), F10 | a fazer | — |
+
+### F9 (parte 1) em detalhe
+
+- O launchd do mOS já existia (`userland/init.c`, `launchctl`, ativação sob demanda, `docs/servicos.md`). Faltava a
+  API cliente: `launch_data_*` inteiro (dicionário, array com buraco, fd, porta, inteiro, real, bool, string, opaco,
+  errno, cópia profunda), `launch_msg("CheckIn")` com Label e as portas dos MachServices (o launchd passa os nomes em
+  `MOS_LAUNCHD_MACHSERVICES`; as portas vêm do `bootstrap_check_in`), `GetJob` do próprio job, `launch_activate_socket`,
+  `vproc_transaction_*`, `vproc_standby_*`, `vproc_swap_integer` (IS_MANAGED, TRANSACTIONS_ENABLED).
+- Limites: o launchd do mOS não abre `Sockets` do plist (activate_socket dá ENOENT/ESRCH, como um job sem a chave);
+  pedidos de administração por `launch_msg` (GetJobs, SubmitJob) dão EPERM: o caminho é o `launchctl` (protocolo LC_*).
+  Falta da F9: `StartCalendarInterval`, `WatchPaths`, `QueueDirectories`, `Sockets` no `init.c`.
 
 ### F6 em detalhe
 

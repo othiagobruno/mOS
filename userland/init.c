@@ -171,8 +171,11 @@ static void start(job_t *j) {
         int n = 0, e = 0;
         for (int i = 0; i < j->argc; i++) argv[n++] = j->argv[i];
         argv[n] = 0;
-        static char xsn[192];
+        static char xsn[192], msv[1024];
         cat2(xsn, sizeof xsn, "XPC_SERVICE_NAME=", j->label);
+        /* MachServices do job, separados por ':': o launch_msg("CheckIn") do libSystem (launchdata.c) devolve as portas */
+        scopy(msv, "MOS_LAUNCHD_MACHSERVICES=", sizeof msv);
+        for (int k = 0; k < j->nsvc; k++) { if (k) cat2(msv, sizeof msv, msv, ":"); cat2(msv, sizeof msv, msv, j->svc[k]); }
         for (usize i = 0; i < sizeof base_env / sizeof *base_env; i++) {
             int over = 0;
             for (int k = 0; k < j->envc; k++) {
@@ -184,6 +187,7 @@ static void start(job_t *j) {
         }
         for (int k = 0; k < j->envc; k++) envp[e++] = j->env[k];
         envp[e++] = xsn;
+        envp[e++] = msv;
         envp[e] = 0;
         mos_spawn_fa_t acts[4];
         int na = 0;
