@@ -2,6 +2,7 @@
  *   gcc -std=gnu11 -Wall -Wextra -DMNET_HOST -I userland/libsystem userland/libsystem/mnet_*.c \
  *       tools/mnet_host_test.c -lz -l:libbrotlidec.so.1 -o /tmp/mnet_host_test && /tmp/mnet_host_test
  */
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -586,6 +587,151 @@ static void t_h2_curl(void) {
     mnet_h2_free(&sv); mnet_buf_free(&ps.body);
 }
 
+/* ---- WebSocket (RFC 6455, RFC 7692) */
+typedef struct { mnet_buf_t got; int op, n_msgs, closed, code, pings, pongs; } wsr_t;
+static int ws_msg(void *c, int op, const uint8_t *d, size_t n) { wsr_t *r = c; r->op = op; r->n_msgs++; r->got.n = 0; mnet_buf_put(&r->got, d, n); mnet_buf_putc(&r->got, 0); r->got.n--; return 0; }
+static void ws_cls(void *c, int code, const char *why) { (void)why; wsr_t *r = c; r->closed++; r->code = code; }
+static void ws_ping(void *c, const uint8_t *d, size_t n) { (void)d; (void)n; ((wsr_t *)c)->pings++; }
+static void ws_pong(void *c, const uint8_t *d, size_t n) { (void)d; (void)n; ((wsr_t *)c)->pongs++; }
+static void ws_rand(void *c, uint8_t *b, size_t n) { (void)c; for (size_t i = 0; i < n; i++) b[i] = (uint8_t)(rand() & 0xff); }
+static void ws_setup(mnet_ws_t *w, wsr_t *r, int srv) {
+    mnet_buf_free(&r->got);
+    memset(w, 0, sizeof *w); memset(r, 0, sizeof *r);
+    w->ctx = r; w->on_message = ws_msg; w->on_close = ws_cls; w->on_ping = ws_ping; w->on_pong = ws_pong; w->random = ws_rand;
+    mnet_ws_init(w, srv);
+}
+static void ws_pump(mnet_ws_t *a, mnet_ws_t *b) {
+    for (int k = 0; k < 4; k++) {
+        if (a->out.n) { mnet_buf_t t = a->out; memset(&a->out, 0, sizeof a->out); mnet_ws_feed(b, t.p, t.n); mnet_buf_free(&t); }
+        if (b->out.n) { mnet_buf_t t = b->out; memset(&b->out, 0, sizeof b->out); mnet_ws_feed(a, t.p, t.n); mnet_buf_free(&t); }
+    }
+}
+static void t_ws(void) {
+    uint8_t h[20]; char hx[41];
+    mnet_sha1("abc", 3, h); for (int i = 0; i < 20; i++) sprintf(hx + 2 * i, "%02x", h[i]);
+    CHECKS(hx, "a9993e364706816aba3e25717850c26c9cd0d89d");
+    const char *m56 = "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq";
+    mnet_sha1(m56, strlen(m56), h); for (int i = 0; i < 20; i++) sprintf(hx + 2 * i, "%02x", h[i]);
+    CHECKS(hx, "84983e441c3bd26ebaae4aa1f95129e5e54670f1");
+    char acc[29]; mnet_ws_accept("dGhlIHNhbXBsZSBub25jZQ==", acc);
+    CHECKS(acc, "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=");
+    /* §5.7: "Hello" sem máscara (servidor -> cliente), com máscara (cliente -> servidor), fragmentado, ping */
+    mnet_ws_t w; wsr_t r = {{0}, 0, 0, 0, 0, 0, 0};
+    ws_setup(&w, &r, 0);
+    const uint8_t f1[] = {0x81, 0x05, 'H', 'e', 'l', 'l', 'o'};
+    CHECK(mnet_ws_feed(&w, f1, sizeof f1) == 7 && r.n_msgs == 1 && r.op == 1 && !strcmp((char *)r.got.p, "Hello"));
+    const uint8_t f3[] = {0x01, 0x03, 'H', 'e', 'l', 0x89, 0x05, 'H', 'e', 'l', 'l', 'o', 0x80, 0x02, 'l', 'o'};
+    for (size_t i = 0; i < sizeof f3; i++) mnet_ws_feed(&w, f3 + i, 1);          /* byte a byte, ping no meio */
+    CHECK(r.n_msgs == 2 && !strcmp((char *)r.got.p, "Hello") && r.pings == 1);
+    CHECK(w.out.n == 2 + 4 + 5 && w.out.p[0] == 0x8a && w.out.p[1] == (0x80 | 5));  /* pong mascarado */
+    mnet_ws_free(&w);
+    ws_setup(&w, &r, 1);
+    const uint8_t f2[] = {0x81, 0x85, 0x37, 0xfa, 0x21, 0x3d, 0x7f, 0x9f, 0x4d, 0x51, 0x58};
+    CHECK(mnet_ws_feed(&w, f2, sizeof f2) == 11 && !strcmp((char *)r.got.p, "Hello"));
+    CHECK(mnet_ws_feed(&w, f1, sizeof f1) < 0 && w.close_code == 1002);              /* cliente sem máscara */
+    mnet_ws_free(&w);
+    /* RFC 7692 §7.2.3: "Hello" comprimido, e o segundo com contexto */
+    ws_setup(&w, &r, 0); w.deflate = 1;
+    const uint8_t c1[] = {0xc1, 0x07, 0xf2, 0x48, 0xcd, 0xc9, 0xc9, 0x07, 0x00}, c2[] = {0xc1, 0x05, 0xf2, 0x00, 0x11, 0x00, 0x00};
+    CHECK(mnet_ws_feed(&w, c1, sizeof c1) == 9 && !strcmp((char *)r.got.p, "Hello"));
+    CHECK(mnet_ws_feed(&w, c2, sizeof c2) == 7 && !strcmp((char *)r.got.p, "Hello") && r.n_msgs == 2);
+    mnet_ws_free(&w);
+    /* erros */
+    const uint8_t bad_utf[] = {0x81, 0x02, 0xc3, 0x28}, bad_code[] = {0x88, 0x02, 0x03, 0xed}, rsv[] = {0xa1, 0x00},
+                  big_ping[] = {0x89, 0x7e, 0x00, 0x7e}, cont0[] = {0x80, 0x00}, op3[] = {0x83, 0x00};
+    const uint8_t *bads[] = {bad_utf, bad_code, rsv, big_ping, cont0, op3};
+    size_t blen[] = {4, 4, 2, 4, 2, 2}; int codes[] = {1007, 1002, 1002, 1002, 1002, 1002};
+    for (int i = 0; i < 6; i++) { ws_setup(&w, &r, 0); CHECK(mnet_ws_feed(&w, bads[i], blen[i]) < 0 && w.close_code == codes[i]); mnet_ws_free(&w); }
+    /* handshake e ida e volta com deflate, mensagem de 1 MiB e close */
+    mnet_ws_t cl, sv; wsr_t rc = {{0}, 0, 0, 0, 0, 0, 0}, rs = {{0}, 0, 0, 0, 0, 0, 0};
+    ws_setup(&cl, &rc, 0); ws_setup(&sv, &rs, 1);
+    uint8_t rnd[16] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}; char key[25];
+    mnet_ws_key(rnd, key);
+    mnet_buf_t rq = {0};
+    mnet_ws_request(&rq, "/chat", "exemplo.com", "https://exemplo.com", key, "v2.chat, v1.chat", 0, 1);
+    /* o servidor lê o pedido como cabeçalhos */
+    mnet_hdrs_t hh = {0};
+    char *line = strstr((char *)rq.p, "\r\n") + 2;
+    while (*line && strncmp(line, "\r\n", 2)) { char *e = strstr(line, "\r\n"), *col = strchr(line, ':'); mnet_hdrs_add(&hh, line, (size_t)(col - line), col + 2, (size_t)(e - col - 2)); line = e + 2; }
+    const char *sup[] = {"v1.chat", 0};
+    mnet_buf_t resp = {0}; char *sproto = 0, *cproto = 0;
+    CHECK(mnet_ws_server_accept(&sv, &hh, sup, &resp, &sproto) == 0 && sproto && !strcmp(sproto, "v1.chat") && sv.deflate);
+    mnet_h1_t p = {0}; mnet_h1_init(&p, 0);
+    mnet_h1_feed(&p, resp.p, resp.n);
+    const char *why = 0;
+    CHECK(mnet_ws_client_accept(&cl, &p, key, "v2.chat, v1.chat", &cproto, &why) == 0 && cproto && !strcmp(cproto, "v1.chat") && cl.deflate);
+    mnet_h1_free(&p); mnet_hdrs_free(&hh); mnet_buf_free(&rq); mnet_buf_free(&resp); free(sproto); free(cproto);
+    size_t big = 1u << 20;
+    char *blob = malloc(big + 1);
+    for (size_t i = 0; i < big; i++) blob[i] = "abcdefgh ç"[i % 10] == (char)0xc3 ? 'x' : "abcdefgh x"[i % 10];
+    blob[big] = 0;
+    for (int k = 0; k < 3; k++) { mnet_ws_send(&cl, MNET_WS_TEXT, blob, big); ws_pump(&cl, &sv); }
+    CHECK(rs.n_msgs == 3 && rs.got.n == big && !memcmp(rs.got.p, blob, big));
+    mnet_ws_send(&sv, MNET_WS_BINARY, "\x00\x01\x02", 3); mnet_ws_ping(&sv, "p", 1); ws_pump(&cl, &sv);
+    CHECK(rc.n_msgs == 1 && rc.op == 2 && rc.got.n == 3 && rc.pings == 1 && rs.pongs == 1);
+    mnet_ws_close(&cl, 1000, "tchau"); ws_pump(&cl, &sv);
+    CHECK(rs.closed == 1 && rs.code == 1000 && rc.closed == 1 && rc.code == 1000 && cl.close_recv && sv.close_sent);
+    free(blob);
+    mnet_ws_free(&cl); mnet_ws_free(&sv); mnet_buf_free(&rc.got); mnet_buf_free(&rs.got); mnet_buf_free(&r.got);
+}
+
+/* servidor WebSocket do mnet contra o cliente WebSocket do Node (undici) */
+static void t_ws_node(void) {
+    if (system("node -e 'process.exit(typeof WebSocket===\"function\"?0:1)' 2>/dev/null")) { printf("  (sem node com WebSocket: interoperabilidade não testada)\n"); return; }
+    int ls = socket(AF_INET, SOCK_STREAM, 0), one = 1;
+    setsockopt(ls, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
+    struct sockaddr_in a; memset(&a, 0, sizeof a);
+    a.sin_family = AF_INET; a.sin_addr.s_addr = htonl(0x7f000001);
+    bind(ls, (struct sockaddr *)&a, sizeof a); listen(ls, 1);
+    socklen_t al = sizeof a; getsockname(ls, (struct sockaddr *)&a, &al);
+    char js[900];
+    snprintf(js, sizeof js,
+             "const w=new WebSocket('ws://127.0.0.1:%d/eco',['v1.chat']);let n=0;"
+             "w.onopen=()=>{w.send('olá mOS');w.send(new Uint8Array(100000).fill(7));};"
+             "w.onmessage=async e=>{n++;const v=typeof e.data==='string'?e.data:(await e.data.arrayBuffer()).byteLength;"
+             "console.log('msg',v);if(n==2)w.close(1000,'fim');};"
+             "w.onclose=e=>{console.log('close',e.code,w.protocol,w.extensions);};w.onerror=e=>console.log('erro');",
+             ntohs(a.sin_port));
+    FILE *jf = fopen("/tmp/mnet_ws_node.js", "w"); fputs(js, jf); fclose(jf);
+    pid_t pid = fork();
+    if (!pid) { int fd = open("/tmp/mnet_ws_node.out", O_WRONLY | O_CREAT | O_TRUNC, 0644); dup2(fd, 1); execlp("timeout", "timeout", "20", "node", "/tmp/mnet_ws_node.js", (char *)0); _exit(127); }
+    int fd = accept(ls, 0, 0);
+    mnet_h1_t rq = {0};
+    uint8_t buf[65536];
+    /* lê o pedido como se fosse uma resposta HTTP: troca a primeira linha */
+    mnet_buf_t head = {0};
+    while (!strstr(head.p ? (char *)head.p : "", "\r\n\r\n")) { long k = read(fd, buf, sizeof buf); if (k <= 0) break; mnet_buf_put(&head, buf, (size_t)k); }
+    mnet_hdrs_t hh = {0};
+    char *line = strstr((char *)head.p, "\r\n") + 2;
+    while (*line && strncmp(line, "\r\n", 2)) { char *e = strstr(line, "\r\n"), *col = strchr(line, ':'); if (col && col < e) mnet_hdrs_add(&hh, line, (size_t)(col - line), col + 2, (size_t)(e - col - 2)); line = e + 2; }
+    (void)rq;
+    mnet_ws_t sv; wsr_t rs = {{0}, 0, 0, 0, 0, 0, 0}; ws_setup(&sv, &rs, 1);
+    const char *sup[] = {"v1.chat", 0};
+    mnet_buf_t resp = {0}; char *proto = 0;
+    CHECK(mnet_ws_server_accept(&sv, &hh, sup, &resp, &proto) == 0);
+    int had_ext = mnet_hdrs_get(&hh, "sec-websocket-extensions") != 0;
+    (void)!write(fd, resp.p, resp.n);
+    int echoed = 0;
+    for (int it = 0; it < 200 && !rs.closed; it++) {
+        long k = read(fd, buf, sizeof buf);
+        if (k <= 0) break;
+        mnet_ws_feed(&sv, buf, (size_t)k);
+        while (rs.n_msgs > echoed) { mnet_ws_send(&sv, rs.op, rs.got.p, rs.got.n); echoed++; }
+        if (sv.out.n) { (void)!write(fd, sv.out.p, sv.out.n); sv.out.n = 0; }
+    }
+    if (sv.out.n) (void)!write(fd, sv.out.p, sv.out.n);
+    close(fd); close(ls);
+    int st; waitpid(pid, &st, 0);
+    char out[512] = {0};
+    FILE *f = fopen("/tmp/mnet_ws_node.out", "r"); size_t on = f ? fread(out, 1, sizeof out - 1, f) : 0; if (f) fclose(f); out[on] = 0;
+    printf("  node: %s", out);
+    CHECK(strstr(out, "msg olá mOS") && strstr(out, "msg 100000") && strstr(out, "close 1000 v1.chat"));
+    CHECK(!had_ext || sv.deflate);
+    if (had_ext) CHECK(strstr(out, "permessage-deflate") != 0);
+    unlink("/tmp/mnet_ws_node.js"); unlink("/tmp/mnet_ws_node.out");
+    mnet_ws_free(&sv); mnet_buf_free(&rs.got); mnet_buf_free(&resp); mnet_buf_free(&head); mnet_hdrs_free(&hh); free(proto);
+}
+
 int main(void) {
     t_h1();
     t_dates();
@@ -594,6 +740,8 @@ int main(void) {
     t_url();
     t_cache();
     t_decode();
+    t_ws();
+    t_ws_node();
     t_h2();
     t_h2_curl();
     printf("mnet: %d/%d ok\n", checks - fails, checks);

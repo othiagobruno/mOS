@@ -310,3 +310,58 @@ int mnet_cache_must_revalidate(const mnet_hdrs_t *resp);
 int mnet_cache_validators(const mnet_hdrs_t *stored, mnet_hdrs_t *req);
 void mnet_cache_merge_304(mnet_hdrs_t *stored, const mnet_hdrs_t *r304);
 char *mnet_cache_vary_key(const mnet_hdrs_t *resp, const mnet_hdrs_t *req);
+
+/* ---- SHA-1 (só para o Sec-WebSocket-Accept) e base64 */
+void mnet_sha1(const void *d, size_t n, uint8_t out[20]);
+size_t mnet_b64(const uint8_t *d, size_t n, char *out);              /* out: 4*ceil(n/3)+1 */
+
+/* ---- WebSocket (RFC 6455) com permessage-deflate (RFC 7692). Sem E/S: feed recebe, out guarda o que enviar. */
+enum { MNET_WS_CONT = 0, MNET_WS_TEXT = 1, MNET_WS_BINARY = 2, MNET_WS_CLOSE = 8, MNET_WS_PING = 9, MNET_WS_PONG = 10 };
+typedef struct mnet_ws {
+    int is_server;
+    /* permessage-deflate negociado */
+    int deflate, my_no_ctx, peer_no_ctx, my_bits, peer_bits;
+    void *zin, *zout;
+    mnet_buf_t in, msg, out;
+    int msg_op, msg_rsv1, in_msg;
+    int close_sent, close_recv, close_code;
+    char close_reason[124];
+    size_t max_msg;                    /* 0 = 64 MiB */
+    const char *err;
+    void *ctx;
+    int (*on_message)(void *ctx, int opcode, const uint8_t *d, size_t n);   /* != 0 aborta (1011) */
+    void (*on_ping)(void *ctx, const uint8_t *d, size_t n);                 /* o pong já é enfileirado */
+    void (*on_pong)(void *ctx, const uint8_t *d, size_t n);
+    void (*on_close)(void *ctx, int code, const char *reason);
+    void (*random)(void *ctx, uint8_t *b, size_t n);                        /* máscara do cliente */
+} mnet_ws_t;
+void mnet_ws_key(const uint8_t rnd[16], char out[25]);
+void mnet_ws_accept(const char *key, char out[29]);
+/* pedido de upgrade do cliente; protocols = "chat, superchat" ou NULL */
+int mnet_ws_request(mnet_buf_t *o, const char *target, const char *host, const char *origin, const char *key,
+                    const char *protocols, const mnet_hdrs_t *extra, int offer_deflate);
+/* confere o 101 e aplica a extensão negociada; *proto recebe o subprotocolo (malloc) ou NULL; 0 ok, -1 recusado */
+int mnet_ws_client_accept(mnet_ws_t *ws, const mnet_h1_t *resp, const char *key, const char *protocols, char **proto, const char **why);
+/* lado servidor: valida o pedido (cabeçalhos) e monta a resposta 101 escolhendo subprotocolo e deflate */
+int mnet_ws_server_accept(mnet_ws_t *ws, const mnet_hdrs_t *req, const char *const *supported_protocols, mnet_buf_t *resp, char **proto);
+int mnet_ws_init(mnet_ws_t *ws, int is_server);
+void mnet_ws_free(mnet_ws_t *ws);
+int mnet_ws_send(mnet_ws_t *ws, int opcode, const void *d, size_t n);       /* mensagem inteira (texto/binário) */
+int mnet_ws_ping(mnet_ws_t *ws, const void *d, size_t n);
+int mnet_ws_close(mnet_ws_t *ws, int code, const char *reason);
+long mnet_ws_feed(mnet_ws_t *ws, const uint8_t *d, size_t n);                /* -1: erro, o close já foi enfileirado */
+int mnet_utf8_valid(const uint8_t *d, size_t n);
+
+/* ---- WebSocket cliente sobre o transporte (ws:// e wss://, cookies, proxy CONNECT/SOCKS, tempo) */
+typedef struct {
+    mnet_client_t *c;
+    void *conn;
+    mnet_ws_t ws;
+    char *protocol;          /* subprotocolo aceito (malloc) */
+    mnet_resp_t resp;        /* a resposta 101 (ou o erro do servidor) */
+} mnet_wsconn_t;
+/* q->url é ws:// ou wss://; protocols separados por vírgula. 0 ok (w pronto) ou MNET_E_*; w->resp guarda a resposta */
+int mnet_ws_open(mnet_client_t *c, const mnet_req_t *q, const char *protocols, mnet_wsconn_t *w, char *msg, size_t msglen);
+int mnet_wsconn_flush(mnet_wsconn_t *w, int timeout_ms);       /* manda w->ws.out; 0 ok, -1 erro, -2 tempo */
+long mnet_wsconn_poll(mnet_wsconn_t *w, int timeout_ms);       /* lê uma vez e alimenta: >0 bytes, 0 nada (tempo), -1 fim/erro */
+void mnet_wsconn_free(mnet_wsconn_t *w);

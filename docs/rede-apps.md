@@ -83,7 +83,8 @@ flowchart TD
 | 3. HTTP/2 | codec pronto (`mnet_h2.c`); ainda não ligado a API pública | `tools/mnet_host_test.c`: 9 MiB por janelas, 103 + 200 + trailers, CONTINUATION, PING, RST, GOAWAY, erros; servidor h2c do mnet contra o `curl --http2-prior-knowledge` do host (nghttp2): 201 e 64 KB de corpo |
 | 4a. Motor do cliente | pronto (`mnet_client.c`, `mnet_decode.c`, `mnet_url.c`); ainda não ligado ao NSURLSession | `tools/mnet_client_test.c`: 22/22 contra `tools/mnet_http_servidor.py` (keep-alive, 5 redirects, laço, 303, 307 com corpo, delegate recusando redirect, gzip, chunked, cookies no redirect, tempo esgotado, erros); com `rede`: 35/35, HTTP/2 real por ALPN sobre o TLS do mOS em google, cloudflare, github e example.com, reuso de conexão, certificado vencido recusado |
 | 4b. NSURLSession novo | escrito e compilado (`nsurlsession.c`, `urlsession_io.c`, `mnet_cache.c`); o antigo saiu de `foundation_more.c` (combinado com o Eduardo, que acrescentou a API de `NSURLRequest`/`NSHTTPURLResponse` no PR #316) | regras de cache: `mnet_host_test` 736/736; motor por baixo: `mnet_client_test` 35/35. As classes ObjC **não** rodaram: não há harness de host com o runtime ObjC; o primeiro teste delas é o build final |
-| 5–10 | não iniciado | — |
+| 5. WebSocket | núcleo (`mnet_ws.c`) e cliente sobre o transporte (`mnet_ws_open`) testados; `NSURLSessionWebSocketTask`/`NSURLSessionWebSocketMessage` escritos e compilados (não executados) | `mnet_host_test` 761/761: SHA-1, Sec-WebSocket-Accept e quadros da RFC 6455 §5.7, exemplos da RFC 7692 §7.2.3, erros 1002/1007, ida e volta com deflate e 3 × 1 MiB, close; servidor do mnet contra o cliente WebSocket do Node. `mnet_client_test rede` 38/38: `wss://echo.websocket.org` sobre o TLS do mOS |
+| 6–10 | não iniciado | — |
 
 ### Etapa 1 — o que está no código
 
@@ -161,3 +162,17 @@ Ainda não ligado a nenhuma API pública: isso entra nas etapas 2–4.
   cache, desafio com `sender`), em cima de uma sessão própria.
 - **Fora (por enquanto)**: `NSURLSessionWebSocketTask` e `NSURLSessionStreamTask` (etapa 5), multiplexação HTTP/2 de
   vários pedidos numa conexão, APIs Swift `async` (`URLSession.data(for:)` etc.) que ficam na ponte Swift.
+
+### Etapa 5 — WebSocket
+
+- `mnet_ws.c`: handshake (chave, `Sec-WebSocket-Accept` com SHA-1 próprio, subprotocolo, validação do 101), quadros com
+  máscara do cliente, fragmentação, ping/pong automático, close com eco e códigos válidos, UTF-8 do texto e do motivo,
+  limite de mensagem (1009), permessage-deflate com janelas e `no_context_takeover` nos dois sentidos. Também o lado
+  servidor (para `NWListener` e testes).
+- `mnet_ws_open` (em `mnet_client.c`): `ws://`/`wss://` pelo mesmo transporte do HTTP (TLS com ALPN http/1.1, proxy
+  CONNECT/SOCKS, cookies, Origin), quadros que chegam junto do 101.
+- `NSURLSessionWebSocketTask`: `webSocketTaskWithURL:`/`:protocols:`/`WithRequest:` (http(s) vira ws(s)), `sendMessage`,
+  `receiveMessage` (fila nos dois sentidos), `sendPing` com o pong, `cancelWithCloseCode:reason:` esperando o eco,
+  `closeCode`/`closeReason`, `maximumMessageSize` (1 MiB), delegate `didOpenWithProtocol:` e `didCloseWithCode:reason:`,
+  erro POSIX 57 para leituras pendentes depois do fechamento. WebSocket sobre HTTP/2 (RFC 8441) não é oferecido.
+- Falta: os símbolos Swift de `URLSessionWebSocketTask.Message` (`sys_zerados.c`), com a ponte Swift.

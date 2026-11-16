@@ -634,3 +634,115 @@ int mnet_fetch(mnet_client_t *c, const mnet_req_t *q, mnet_resp_t *r, char *msg,
     if (ret == MNET_E_CANCELLED) setmsg(&j, "cancelado");
     return ret;
 }
+
+/* ---------------------------------------------------------------- WebSocket cliente */
+int mnet_ws_open(mnet_client_t *c, const mnet_req_t *q, const char *protocols, mnet_wsconn_t *w, char *msg, size_t msglen) {
+    mnet_ws_t keep = w->ws;                                       /* callbacks já preenchidos pelo chamador */
+    memset(w, 0, sizeof *w);
+    w->ws = keep;
+    w->c = c;
+    if (msg && msglen) msg[0] = 0;
+    job_t j = {0};
+    j.c = c; j.q = q; j.r = &w->resp; j.msg = msg; j.msglen = msglen;
+    j.idle_ms = q->timeout_ms > 0 ? q->timeout_ms : 60000;
+    mnet_url_t u, px; int have_px = 0;
+    if (mnet_url_parse(q->url, &u)) { setmsg(&j, "URL inválida"); return MNET_E_BAD_URL; }
+    int tls;
+    if (!strcmp(u.scheme, "ws")) tls = 0;
+    else if (!strcmp(u.scheme, "wss")) tls = 1;
+    else { mnet_url_free(&u); setmsg(&j, "esquema não suportado"); return MNET_E_UNSUPPORTED; }
+    /* o transporte é o do http/https correspondente */
+    memcpy(u.scheme, tls ? "https" : "http", tls ? 6 : 5);
+    if (!u.port_explicit) u.port = tls ? 443 : 80;
+    if (q->proxy && *q->proxy) { if (mnet_url_parse(q->proxy, &px)) { mnet_url_free(&u); return MNET_E_BAD_URL; } have_px = 1; }
+    mnet_req_t q1 = *q;
+    q1.http1_only = 1;                                            /* WebSocket sobre HTTP/2 (RFC 8441) não é oferecido */
+    j.q = &q1;
+    mnet_h2_t *h2 = 0;
+    int r = open_conn(&j, &u, have_px ? &px : 0, &w->conn, &h2);
+    if (h2) { mnet_h2_free(h2); free(h2); }
+    if (r) { mnet_url_free(&u); if (have_px) mnet_url_free(&px); return r; }
+    uint8_t rnd[16];
+    if (w->ws.random) w->ws.random(w->ws.ctx, rnd, 16);
+    else { long long t = c->io->now_ms(c->io->env); for (int i = 0; i < 16; i++) rnd[i] = (uint8_t)(t >> (i % 8 * 8)) ^ (uint8_t)(i * 37); }
+    char key[25];
+    mnet_ws_key(rnd, key);
+    mnet_hdrs_t h = {0};
+    int ae;
+    build_headers(&j, &u, "GET", &h, &ae);
+    mnet_hdrs_del(&h, "accept-encoding");
+    char *auth = mnet_url_authority(&u);
+    /* Origin padrão: o próprio servidor em http(s) */
+    char origin[300];
+    {
+        mnet_buf_t ob = {0};
+        mnet_buf_puts(&ob, tls ? "https://" : "http://"); mnet_buf_puts(&ob, auth);
+        size_t l = ob.n < sizeof origin - 1 ? ob.n : sizeof origin - 1;
+        memcpy(origin, ob.p, l); origin[l] = 0;
+        mnet_buf_free(&ob);
+    }
+    const char *org = mnet_hdrs_get(&h, "origin");
+    mnet_buf_t o = {0};
+    mnet_ws_request(&o, u.target, auth, org ? 0 : origin, key, protocols, &h, 1);
+    free(auth); mnet_hdrs_free(&h);
+    r = wr(&j, w->conn, o.p, o.n);
+    mnet_buf_free(&o);
+    if (r) { mnet_url_free(&u); if (have_px) mnet_url_free(&px); return r == -2 ? MNET_E_TIMEOUT : MNET_E_LOST; }
+    mnet_h1_t p = {0};
+    mnet_h1_init(&p, 0);
+    uint8_t buf[4096];
+    int ret = 0;
+    long used = 0, k = 0;
+    while (!p.head_done) {
+        k = rd(&j, w->conn, buf, sizeof buf);
+        if (k == -3) { ret = MNET_E_CANCELLED; break; }
+        if (k == -2) { setmsg(&j, "tempo esgotado"); ret = MNET_E_TIMEOUT; break; }
+        if (k <= 0) { setmsg(&j, "a conexão caiu no handshake"); ret = MNET_E_LOST; break; }
+        used = mnet_h1_feed(&p, buf, (size_t)k);
+        if (used < 0) { setmsg(&j, p.err ? p.err : "resposta inválida"); ret = MNET_E_BAD_RESPONSE; break; }
+    }
+    if (!ret) {
+        w->resp.status = p.status;
+        w->resp.version = 11;
+        for (int i = 0; i < p.hdrs.n; i++) mnet_hdrs_add(&w->resp.hdrs, p.hdrs.v[i].name, strlen(p.hdrs.v[i].name), p.hdrs.v[i].value, strlen(p.hdrs.v[i].value));
+        w->resp.url = mnet_strndup(q->url, strlen(q->url));
+        head_ready(&j, 0);                                        /* Set-Cookie do 101 */
+        const char *why = 0;
+        if (mnet_ws_client_accept(&w->ws, &p, key, protocols, &w->protocol, &why)) { setmsg(&j, why); ret = MNET_E_BAD_RESPONSE; }
+    }
+    if (!ret) {
+        mnet_ws_init(&w->ws, 0);
+        if (used < k) mnet_ws_feed(&w->ws, buf + used, (size_t)(k - used));   /* quadros que vieram junto do 101 */
+    }
+    mnet_h1_free(&p);
+    mnet_url_free(&u);
+    if (have_px) mnet_url_free(&px);
+    if (ret) { c->io->close(c->io->env, w->conn); w->conn = 0; }
+    return ret;
+}
+int mnet_wsconn_flush(mnet_wsconn_t *w, int tmo) {
+    size_t off = 0;
+    while (off < w->ws.out.n) {
+        long k = w->c->io->write(w->c->io->env, w->conn, w->ws.out.p + off, w->ws.out.n - off, tmo);
+        if (k == -2) { mnet_buf_consume(&w->ws.out, off); return -2; }
+        if (k <= 0) return -1;
+        off += (size_t)k;
+    }
+    w->ws.out.n = 0;
+    return 0;
+}
+long mnet_wsconn_poll(mnet_wsconn_t *w, int tmo) {
+    uint8_t buf[32768];
+    long k = w->c->io->read(w->c->io->env, w->conn, buf, sizeof buf, tmo);
+    if (k == -2) return 0;
+    if (k <= 0) return -1;
+    if (mnet_ws_feed(&w->ws, buf, (size_t)k) < 0) { mnet_wsconn_flush(w, 1000); return -1; }
+    return k;
+}
+void mnet_wsconn_free(mnet_wsconn_t *w) {
+    if (w->conn) w->c->io->close(w->c->io->env, w->conn);
+    w->conn = 0;
+    mnet_ws_free(&w->ws);
+    free(w->protocol); w->protocol = 0;
+    mnet_resp_free(&w->resp);
+}

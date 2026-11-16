@@ -76,6 +76,7 @@ typedef struct { void *isa; int flags, reserved; void *invoke; void *desc; } blk
 static void call_v(void *b) { if (b) ((void (*)(void *))BLK(b)->invoke)(b); }
 static void call_1(void *b, id a) { if (b) ((void (*)(void *, id))BLK(b)->invoke)(b, a); }
 
+static void call_2_(void *b, id a, id c) { if (b) ((void (*)(void *, id, id))BLK(b)->invoke)(b, a, c); }
 static void call_3(void *b, id a, id c, id d) { if (b) ((void (*)(void *, id, id, id))BLK(b)->invoke)(b, a, c, d); }
 /* bloco nosso que o app chama (completionHandler dos métodos do delegate). Global: Block_copy devolve o mesmo. */
 extern char _NSConcreteGlobalBlock[];
@@ -237,6 +238,7 @@ CLASS(NSURLSession) CLASS(NSURLSessionConfiguration) CLASS(NSURLSessionTask) CLA
 CLASS(NSURLSessionUploadTask) CLASS(NSURLSessionDownloadTask) CLASS(NSURLSessionStreamTask)
 CLASS(NSURLSessionTaskMetrics) CLASS(NSURLSessionTaskTransactionMetrics)
 CLASS(NSURLConnection) CLASS(NSURLProtocol) CLASS(MOSURLProtocolClient)
+CLASS(NSURLSessionWebSocketTask) CLASS(NSURLSessionWebSocketMessage)
 #define DEF(N, super) cx_define_class(&N##_c, &N##_m, #N, (super), (u32)(sizeof(N##_t) - 8))
 #define M(N, s, f) cx_add_method(&N##_c, s, (void *)(f))
 #define CM(N, s, f) cx_add_cmethod(&N##_c, s, (void *)(f))
@@ -1080,6 +1082,17 @@ static char *cfg_proxy_for(id cfg, const char *scheme) {
 
 /* ================================================================ sessão e tarefas */
 typedef struct task task_t;
+typedef struct wsq { id msg; void *blk; struct wsq *next; } wsq_t;
+typedef struct wsx {
+    wsq_t *send_head, *send_tail;      /* mensagens a mandar + blocos de conclusão */
+    wsq_t *recv_head, *recv_tail;      /* mensagens recebidas ainda sem leitor */
+    wsq_t *wait_head, *wait_tail;      /* receiveMessage esperando mensagem */
+    wsq_t *pong_head, *pong_tail;      /* sendPing esperando pong */
+    int pings_pending;
+    int close_code, want_close; id close_reason, my_reason; long max_msg;
+    char *protocols;
+    int open, done;
+} wsx_t;
 typedef struct {
     cx_class_t *isa;
     id cfg, delegate, op_queue, desc;
@@ -1089,7 +1102,7 @@ typedef struct {
     unsigned long next_id;
 } NSURLSession_t;
 #define SS(o) ((NSURLSession_t *)(o))
-enum { T_DATA, T_UPLOAD, T_DOWNLOAD, T_STREAM };
+enum { T_DATA, T_UPLOAD, T_DOWNLOAD, T_STREAM, T_WS };
 enum { ST_RUNNING, ST_SUSPENDED, ST_CANCELING, ST_COMPLETED };
 struct task {
     cx_class_t *isa;
@@ -1111,6 +1124,7 @@ struct task {
     void *suspend_sem;
     id protocol_obj;                   /* NSURLProtocol do app atendendo esta tarefa */
     int cache_hit;
+    struct wsx *wsx;                   /* NSURLSessionWebSocketTask */
     task_t *next;
 };
 typedef task_t NSURLSessionTask_t;
@@ -1118,6 +1132,7 @@ typedef task_t NSURLSessionDataTask_t;
 typedef task_t NSURLSessionUploadTask_t;
 typedef task_t NSURLSessionDownloadTask_t;
 typedef task_t NSURLSessionStreamTask_t;
+typedef task_t NSURLSessionWebSocketTask_t;
 #define TK(o) ((task_t *)(o))
 
 static void *sess_queue(id s) {
@@ -1160,7 +1175,7 @@ static void reply_wait(reply_t *r) { dispatch_semaphore_wait(r->sem, DISPATCH_TI
 
 /* ---- objetos das tarefas */
 static id task_alloc_kind(id sess, int kind, id req) {
-    cx_class_t *k = kind == T_UPLOAD ? &NSURLSessionUploadTask_c : kind == T_DOWNLOAD ? &NSURLSessionDownloadTask_c :
+    cx_class_t *k = kind == T_WS ? &NSURLSessionWebSocketTask_c : kind == T_UPLOAD ? &NSURLSessionUploadTask_c : kind == T_DOWNLOAD ? &NSURLSessionDownloadTask_c :
                     kind == T_STREAM ? &NSURLSessionStreamTask_c : &NSURLSessionDataTask_c;
     task_t *t = (task_t *)cx_alloc_instance(k);
     t->kind = kind;
@@ -1184,6 +1199,11 @@ static void task_dealloc(id s, SEL c) {
     for (int i = 0; i < t->nreplies; i++) { rel(t->replies[i]->obj); dispatch_release(t->replies[i]->sem); free(t->replies[i]); }
     free(t->replies);
     if (t->suspend_sem) dispatch_release(t->suspend_sem);
+    if (t->wsx) {
+        wsq_t **qs[4] = {&t->wsx->send_head, &t->wsx->recv_head, &t->wsx->wait_head, &t->wsx->pong_head};
+        for (int i = 0; i < 4; i++) for (wsq_t *e = *qs[i], *n; e; e = n) { n = e->next; rel(e->msg); if (e->blk) _Block_release(e->blk); free(e); }
+        rel(t->wsx->close_reason); rel(t->wsx->my_reason); free(t->wsx->protocols); free(t->wsx);
+    }
     IMP sup = cx_lookup(&NSObject_c, c); if (sup) ((void (*)(id, SEL))sup)(s, c);
 }
 static unsigned long task_ident(id s, SEL c) { (void)c; return TK(s)->ident; }
@@ -1768,8 +1788,10 @@ static int serve_cached(task_t *t, job_t *j, cache_ent_t *e) {
     return 1;
 }
 
+static void *ws_main(void *arg);
 static void *task_main(void *arg) {
     task_t *t = arg;
+    if (t->kind == T_WS) return ws_main(arg);
     void *pool = objc_autoreleasePoolPush();
     job_t *j = calloc(1, sizeof *j);
     j->t = t;
@@ -2258,6 +2280,244 @@ static void conn_send_async(id k, SEL c, id req, id queue, void *h) {
     rel(sess);
 }
 
+/* ================================================================ NSURLSessionWebSocketTask */
+typedef struct { cx_class_t *isa; long type; id data, string; } NSURLSessionWebSocketMessage_t;
+#define WM(o) ((NSURLSessionWebSocketMessage_t *)(o))
+static id wm_init_data(id s, SEL c, id d) { (void)c; WM(s)->type = 0; WM(s)->data = retain(MSG0(id, d, "copy")); rel(WM(s)->data); return s; }
+static id wm_init_str(id s, SEL c, id t) { (void)c; WM(s)->type = 1; WM(s)->string = retain(MSG0(id, t, "copy")); rel(WM(s)->string); return s; }
+static long wm_type(id s, SEL c) { (void)c; return WM(s)->type; }
+static id wm_data(id s, SEL c) { (void)c; return WM(s)->data; }
+static id wm_string(id s, SEL c) { (void)c; return WM(s)->string; }
+static void wm_dealloc(id s, SEL c) { rel(WM(s)->data); rel(WM(s)->string); IMP sup = cx_lookup(&NSObject_c, c); if (sup) ((void (*)(id, SEL))sup)(s, c); }
+static id wm_new(int type, const uint8_t *d, size_t n) {
+    id m = cx_alloc_instance(&NSURLSessionWebSocketMessage_c);
+    if (type == MNET_WS_TEXT) { WM(m)->type = 1; WM(m)->string = cx_str_n((const char *)d, n); }
+    else { WM(m)->type = 0; WM(m)->data = retain(data_bytes(d, n)); }
+    return m;
+}
+
+static void q_push(wsq_t **h, wsq_t **t, id msg, void *blk) {
+    wsq_t *e = calloc(1, sizeof *e);
+    e->msg = retain(msg); e->blk = blk ? _Block_copy(blk) : 0;
+    if (*t) (*t)->next = e; else *h = e;
+    *t = e;
+}
+static wsq_t *q_pop(wsq_t **h, wsq_t **t) { wsq_t *e = *h; if (e) { *h = e->next; if (!*h) *t = 0; } return e; }
+static wsx_t *wsx_of(task_t *t) { if (!t->wsx) t->wsx = calloc(1, sizeof(wsx_t)); return t->wsx; }
+static id s_ws_any(id s, id req, id protocols) {
+    id t = mk_task(s, T_WS, req, 0);
+    wsx_t *x = wsx_of(TK(t));
+    x->max_msg = 1 << 20;                                       /* padrão do macOS: 1 MiB */
+    u64 n = protocols ? MSG0(u64, protocols, "count") : 0;
+    mnet_buf_t b = {0};
+    for (u64 i = 0; i < n; i++) { if (i) mnet_buf_put(&b, ", ", 2); mnet_buf_puts(&b, cs(MSG(id, protocols, "objectAtIndex:", i))); }
+    x->protocols = (char *)b.p;
+    return t;
+}
+static id s_ws_url(id s, SEL c, id u) { (void)c; return s_ws_any(s, req_for_url(u), 0); }
+static id s_ws_url_p(id s, SEL c, id u, id p) { (void)c; return s_ws_any(s, req_for_url(u), p); }
+static id s_ws_req(id s, SEL c, id r) {
+    (void)c;
+    id p = MSG(id, r, "valueForHTTPHeaderField:", ar(ns("Sec-WebSocket-Protocol")));
+    id arr = 0;
+    if (p) arr = MSG(id, p, "componentsSeparatedByString:", ar(ns(",")));
+    id t = s_ws_any(s, r, 0);
+    if (arr) {
+        mnet_buf_t b = {0}; u64 n = MSG0(u64, arr, "count");
+        for (u64 i = 0; i < n; i++) {
+            const char *v = cs(MSG(id, arr, "objectAtIndex:", i));
+            while (*v == ' ') v++;
+            if (b.n) mnet_buf_put(&b, ", ", 2);
+            mnet_buf_puts(&b, v);
+        }
+        free(TK(t)->wsx->protocols); TK(t)->wsx->protocols = (char *)b.p;
+    }
+    return t;
+}
+static id ws_err(int code, const char *txt) {
+    id info = mutdict(); dset(info, "NSLocalizedDescription", ar(ns(txt)));
+    id e = MSG(id, cls("NSError"), "errorWithDomain:code:userInfo:", ar(ns("NSPOSIXErrorDomain")), (long)code, info);
+    rel(info);
+    return retain(e);
+}
+static void ws_send(id self, SEL c, id msg, void *blk) {
+    (void)c;
+    task_t *t = TK(self);
+    wsx_t *x = wsx_of(t);
+    LK(); q_push(&x->send_head, &x->send_tail, msg, blk); ULK();
+}
+static void ws_receive(id self, SEL c, void *blk) {
+    (void)c;
+    task_t *t = TK(self);
+    wsx_t *x = wsx_of(t);
+    LK(); q_push(&x->wait_head, &x->wait_tail, 0, blk); ULK();
+}
+static void ws_ping(id self, SEL c, void *blk) {
+    (void)c;
+    wsx_t *x = wsx_of(TK(self));
+    LK(); q_push(&x->pong_head, &x->pong_tail, 0, blk); x->pings_pending++; ULK();
+}
+static void ws_cancel_close(id self, SEL c, long code, id reason) {
+    (void)c;
+    task_t *t = TK(self);
+    wsx_t *x = wsx_of(t);
+    LK(); x->want_close = (int)(code ? code : 1000); rel(x->my_reason); x->my_reason = retain(reason); ULK();
+    if (!t->started) task_cancel(self, 0);
+}
+static long ws_close_code(id s, SEL c) { (void)c; return TK(s)->wsx ? TK(s)->wsx->close_code : 0; }
+static id ws_close_reason(id s, SEL c) { (void)c; return TK(s)->wsx ? TK(s)->wsx->close_reason : 0; }
+static long ws_max(id s, SEL c) { (void)c; return wsx_of(TK(s))->max_msg; }
+static void ws_set_max(id s, SEL c, long v) { (void)c; wsx_of(TK(s))->max_msg = v; }
+/* eventos na fila do delegate */
+typedef struct { task_t *t; void *blk; id a, b; long code; int kind; } wsev_t;
+static void wsev_run(void *p) {
+    wsev_t *e = p;
+    task_t *t = e->t;
+    switch (e->kind) {
+    case 0: call_1(e->blk, e->a); break;                                     /* send concluído (erro ou nil) */
+    case 1: call_2_(e->blk, e->a, e->b); break;                              /* receive: mensagem, erro */
+    case 2: call_1(e->blk, e->a); break;                                     /* pong */
+    case 3: { id d = task_delegate_for(t, "URLSession:webSocketTask:didOpenWithProtocol:");
+              if (d) MSG(void, d, "URLSession:webSocketTask:didOpenWithProtocol:", t->session, (id)t, e->a); break; }
+    case 4: { id d = task_delegate_for(t, "URLSession:webSocketTask:didCloseWithCode:reason:");
+              if (d) MSG(void, d, "URLSession:webSocketTask:didCloseWithCode:reason:", t->session, (id)t, e->code, e->a); break; }
+    }
+    if (e->blk) _Block_release(e->blk);
+    rel(e->a); rel(e->b);
+    free(e);
+}
+static void wsev(task_t *t, int kind, void *blk, id a, id b, long code) {
+    wsev_t *e = calloc(1, sizeof *e);
+    e->t = t; e->kind = kind; e->blk = blk; e->a = retain(a); e->b = retain(b); e->code = code;
+    on_queue(t->session, wsev_run, e, 0);
+}
+typedef struct { task_t *t; wsx_t *x; } wsctx_t;
+static int wsc_msg(void *c, int op, const uint8_t *d, size_t n) {
+    wsctx_t *w = c;
+    id m = wm_new(op, d, n);
+    LK();
+    wsq_t *wait = q_pop(&w->x->wait_head, &w->x->wait_tail);
+    if (!wait) q_push(&w->x->recv_head, &w->x->recv_tail, m, 0);
+    ULK();
+    if (wait) { wsev(w->t, 1, wait->blk, m, 0, 0); free(wait); }
+    rel(m);
+    w->t->recv += (long long)n;
+    return 0;
+}
+static void wsc_pong(void *c, const uint8_t *d, size_t n) {
+    (void)d; (void)n;
+    wsctx_t *w = c;
+    LK(); wsq_t *e = q_pop(&w->x->pong_head, &w->x->pong_tail); ULK();
+    if (e) { wsev(w->t, 2, e->blk, 0, 0, 0); free(e); }
+}
+static void wsc_close(void *c, int code, const char *why) {
+    wsctx_t *w = c;
+    w->x->close_code = code;
+    rel(w->x->close_reason);
+    w->x->close_reason = why && *why ? retain(data_bytes(why, strlen(why))) : 0;
+}
+static void wsc_rand(void *c, uint8_t *b, size_t n) { (void)c; arc4random_buf(b, n); }
+static void *ws_main(void *arg) {
+    task_t *t = arg;
+    void *pool = objc_autoreleasePoolPush();
+    wsx_t *x = wsx_of(t);
+    creq_t rq; creq_from(&rq, t->cur_req, CF(SS(t->session)->cfg)->headers);
+    /* http(s):// também é aceito, como no macOS */
+    char *url = rq.url;
+    if (!strncmp(url, "http://", 7) || !strncmp(url, "https://", 8)) {
+        mnet_buf_t b = {0}; mnet_buf_puts(&b, url[4] == 's' ? "wss" : "ws"); mnet_buf_puts(&b, strchr(url, ':')); free(rq.url); rq.url = url = (char *)b.p;
+    }
+    wsctx_t ctx = {t, x};
+    mnet_wsconn_t w; memset(&w, 0, sizeof w);
+    w.ws.ctx = &ctx; w.ws.on_message = wsc_msg; w.ws.on_pong = wsc_pong; w.ws.on_close = wsc_close; w.ws.random = wsc_rand;
+    w.ws.max_msg = x->max_msg > 0 ? (size_t)x->max_msg : 0;
+    mnet_req_t q = {0};
+    q.url = url; q.hdrs = &rq.hdrs; q.timeout_ms = (int)((rq.timeout > 0 ? rq.timeout : CF(SS(t->session)->cfg)->t_req) * 1000);
+    q.cancel = &t->cancel;
+    id store = CF(SS(t->session)->cfg)->cookies;
+    q.no_cookies = !CF(SS(t->session)->cfg)->set_cookies || !store || object_getClass(store) != &NSHTTPCookieStorage_c;
+    if (!q.no_cookies) q.jar = CS(store)->jar;
+    char *px = cfg_proxy_for(SS(t->session)->cfg, strncmp(url, "wss", 3) ? "http" : "https");
+    q.proxy = px;
+    char msg[200];
+    int r = mnet_ws_open(cx_mnet_client(), &q, x->protocols, &w, msg, sizeof msg);
+    free(px);
+    if (w.resp.status) { id resp = make_response(url, w.resp.status, 11, &w.resp.hdrs); LK(); rel(t->response); t->response = resp; ULK(); }
+    if (r) {
+        int code = r == MNET_E_BAD_RESPONSE && w.resp.status && w.resp.status != 101 ? MNET_E_BAD_RESPONSE : r;
+        t->error = url_error(code, msg, MSG0(id, t->cur_req, "URL"));
+    } else {
+        x->open = 1;
+        wsev(t, 3, 0, w.protocol ? ar(ns(w.protocol)) : 0, 0, 0);
+        int alive = 1;
+        while (alive) {
+            /* envios pendentes */
+            for (;;) {
+                LK(); wsq_t *e = q_pop(&x->send_head, &x->send_tail); ULK();
+                if (!e) break;
+                int ok = 0;
+                if (!w.ws.close_sent) {
+                    if (WM(e->msg)->type == 1) { const char *s = cs(WM(e->msg)->string); ok = !mnet_ws_send(&w.ws, MNET_WS_TEXT, s, strlen(s)); }
+                    else { id d = WM(e->msg)->data; ok = !mnet_ws_send(&w.ws, MNET_WS_BINARY, d ? MSG0(const void *, d, "bytes") : "", d ? (size_t)MSG0(u64, d, "length") : 0); }
+                    if (ok) ok = !mnet_wsconn_flush(&w, q.timeout_ms);
+                    if (ok) t->sent += WM(e->msg)->type == 1 ? (long long)strlen(cs(WM(e->msg)->string)) : (long long)MSG0(u64, WM(e->msg)->data, "length");
+                }
+                wsev(t, 0, e->blk, ok ? 0 : ar(ws_err(57, "Socket is not connected")), 0, 0);
+                rel(e->msg); free(e);
+            }
+            LK(); int pings = x->pings_pending; x->pings_pending = 0; int wc = x->want_close; ULK();
+            while (pings-- > 0) mnet_ws_ping(&w.ws, "mOS", 3);
+            if ((wc || t->cancel) && !w.ws.close_sent) {
+                const char *why = x->my_reason ? (const char *)MSG0(const void *, x->my_reason, "bytes") : 0;
+                char rb[124] = {0};
+                if (why) { size_t l = (size_t)MSG0(u64, x->my_reason, "length"); if (l > 123) l = 123; memcpy(rb, why, l); }
+                mnet_ws_close(&w.ws, wc ? wc : 1001, rb);
+            }
+            if (w.ws.out.n && mnet_wsconn_flush(&w, q.timeout_ms) == -1) break;
+            if (w.ws.close_recv) break;
+            long k = mnet_wsconn_poll(&w, 100);
+            if (k < 0) { if (!w.ws.close_recv && !w.ws.close_sent) t->error = url_error(MNET_E_LOST, w.ws.err, MSG0(id, t->cur_req, "URL")); break; }
+            if (w.ws.close_sent && !w.ws.close_recv) {
+                static const int grace = 3000;                    /* espera o eco do close */
+                long long t0 = cx_mnet_io()->now_ms(0);
+                while (!w.ws.close_recv && cx_mnet_io()->now_ms(0) - t0 < grace) if (mnet_wsconn_poll(&w, 100) < 0) break;
+                break;
+            }
+        }
+        if (w.ws.out.n) mnet_wsconn_flush(&w, 1000);
+        if (!x->close_code) x->close_code = w.ws.close_code ? w.ws.close_code : 1006;
+        wsev(t, 4, 0, x->close_reason, 0, x->close_code);
+        if (t->cancel && !t->error) t->error = url_error(MNET_E_CANCELLED, 0, MSG0(id, t->cur_req, "URL"));
+    }
+    /* quem ainda espera mensagem recebe erro */
+    for (;;) {
+        LK(); wsq_t *e = q_pop(&x->wait_head, &x->wait_tail); ULK();
+        if (!e) break;
+        wsev(t, 1, e->blk, 0, ar(ws_err(57, "Socket is not connected")), 0);
+        free(e);
+    }
+    mnet_wsconn_free(&w);
+    creq_free(&rq);
+    t->state = ST_COMPLETED;
+    on_queue(t->session, ev_complete, t, 0);
+    objc_autoreleasePoolPop(pool);
+    return 0;
+}
+static void cx_ws_register(void) {
+    cx_class_t *ob = &NSObject_c;
+    DEF(NSURLSessionWebSocketTask, &NSURLSessionTask_c);
+    M(NSURLSessionWebSocketTask, "sendMessage:completionHandler:", ws_send);
+    M(NSURLSessionWebSocketTask, "receiveMessageWithCompletionHandler:", ws_receive);
+    M(NSURLSessionWebSocketTask, "sendPingWithPongReceiveHandler:", ws_ping);
+    M(NSURLSessionWebSocketTask, "cancelWithCloseCode:reason:", ws_cancel_close);
+    M(NSURLSessionWebSocketTask, "closeCode", ws_close_code); M(NSURLSessionWebSocketTask, "closeReason", ws_close_reason);
+    M(NSURLSessionWebSocketTask, "maximumMessageSize", ws_max); M(NSURLSessionWebSocketTask, "setMaximumMessageSize:", ws_set_max);
+    DEF(NSURLSessionWebSocketMessage, ob);
+    M(NSURLSessionWebSocketMessage, "initWithData:", wm_init_data); M(NSURLSessionWebSocketMessage, "initWithString:", wm_init_str);
+    M(NSURLSessionWebSocketMessage, "type", wm_type); M(NSURLSessionWebSocketMessage, "data", wm_data);
+    M(NSURLSessionWebSocketMessage, "string", wm_string); M(NSURLSessionWebSocketMessage, "dealloc", wm_dealloc);
+}
+
 /* ================================================================ registro */
 static BOOL yes_(id s, SEL c) { (void)s; (void)c; return YES; }
 void cx_urlsession_init(void) {
@@ -2386,6 +2646,8 @@ void cx_urlsession_init(void) {
     M(NSURLSession, "invalidateAndCancel", s_invalidate_cancel); M(NSURLSession, "finishTasksAndInvalidate", s_finish_invalidate);
     M(NSURLSession, "resetWithCompletionHandler:", s_reset); M(NSURLSession, "flushWithCompletionHandler:", s_flush);
     M(NSURLSession, "dealloc", sess_dealloc);
+    M(NSURLSession, "webSocketTaskWithURL:", s_ws_url); M(NSURLSession, "webSocketTaskWithURL:protocols:", s_ws_url_p);
+    M(NSURLSession, "webSocketTaskWithRequest:", s_ws_req);
 
     DEF(NSURLSessionTask, ob);
     M(NSURLSessionTask, "taskIdentifier", task_ident); M(NSURLSessionTask, "originalRequest", task_orig);
@@ -2405,6 +2667,7 @@ void cx_urlsession_init(void) {
     DEF(NSURLSessionDownloadTask, &NSURLSessionTask_c);
     M(NSURLSessionDownloadTask, "cancelByProducingResumeData:", dl_cancel_resume);
     DEF(NSURLSessionStreamTask, &NSURLSessionTask_c);
+    cx_ws_register();
     DEF(NSURLSessionTaskMetrics, ob);
     M(NSURLSessionTaskMetrics, "transactionMetrics", metrics_tx); M(NSURLSessionTaskMetrics, "taskInterval", metrics_interval);
     M(NSURLSessionTaskMetrics, "redirectCount", metrics_redirects);

@@ -212,6 +212,33 @@ static void local(void) {
     pclose(srv);
 }
 
+/* WebSocket real: wss://echo.websocket.org (o eco manda uma saudação e depois repete) */
+typedef struct { int n; mnet_buf_t last; } wse_t;
+static int wse_msg(void *c, int op, const uint8_t *d, size_t n) { (void)op; wse_t *e = c; e->n++; e->last.n = 0; mnet_buf_put(&e->last, d, n); mnet_buf_putc(&e->last, 0); e->last.n--; return 0; }
+static void wse_rand(void *c, uint8_t *b, size_t n) { (void)c; FILE *f = fopen("/dev/urandom", "rb"); if (f) { if (fread(b, 1, n, f) != n) memset(b, 7, n); fclose(f); } }
+static void ws_rede(mnet_client_t *cl) {
+    mnet_wsconn_t w; memset(&w, 0, sizeof w);
+    wse_t e = {0, {0}};
+    w.ws.ctx = &e; w.ws.on_message = wse_msg; w.ws.random = wse_rand;
+    mnet_req_t q = {0};
+    q.url = "wss://echo.websocket.org/"; q.timeout_ms = 15000;
+    char msg[200];
+    int r = mnet_ws_open(cl, &q, 0, &w, msg, sizeof msg);
+    printf("  wss://echo.websocket.org -> %d status %d deflate %d %s\n", r, w.resp.status, w.ws.deflate, msg);
+    CHECK(r == 0 && w.resp.status == 101);
+    if (!r) {
+        const char *txt = "olá do mOS sobre TLS";
+        mnet_ws_send(&w.ws, MNET_WS_TEXT, txt, strlen(txt));
+        mnet_wsconn_flush(&w, 5000);
+        for (int i = 0; i < 50 && !(e.last.p && !strcmp((char *)e.last.p, txt)); i++) if (mnet_wsconn_poll(&w, 300) < 0) break;
+        CHECK(e.last.p && !strcmp((char *)e.last.p, txt));
+        mnet_ws_close(&w.ws, 1000, "fim"); mnet_wsconn_flush(&w, 5000);
+        for (int i = 0; i < 20 && !w.ws.close_recv; i++) if (mnet_wsconn_poll(&w, 300) < 0) break;
+        CHECK(w.ws.close_recv);
+    }
+    mnet_wsconn_free(&w); mnet_buf_free(&e.last);
+}
+
 static void rede(void) {
     FILE *f = fopen("assets/certs/cacert.pem", "rb");
     if (!f) { printf("  sem assets/certs/cacert.pem\n"); fails++; return; }
@@ -232,6 +259,7 @@ static void rede(void) {
             mnet_resp_free(&r); mnet_buf_free(&c.body);
         }
     }
+    ws_rede(&cl);
     col_t c = {0}; mnet_resp_t r;
     CHECK(get(&cl, "GET", "https://expired.badssl.com/", 0, &c, &r, 15000, 0) == MNET_E_TLS);
     mnet_resp_free(&r); mnet_buf_free(&c.body);
