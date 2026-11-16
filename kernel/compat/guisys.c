@@ -96,7 +96,7 @@ static void proxy_paint(window_t *w, ui_t *u) {
     if (u->pressed && u->inside) { e.type = GEV_MOUSE_DOWN; e.clicks = u->dblclick ? 2 : 1; push(g->ga, &e); u->active = 1; }
     if (u->released) { e.type = GEV_MOUSE_UP; e.clicks = 1; push(g->ga, &e); }
     if (u->rpressed && u->inside) { e.type = GEV_RIGHT_DOWN; push(g->ga, &e); }
-    if (u->wheel && u->inside) { e.type = GEV_SCROLL; e.w = u->wheel; push(g->ga, &e); }
+    if ((u->wheel || u->wheel_x) && u->inside) { e.type = GEV_SCROLL; e.w = u->wheel; e.h = u->wheel_x; push(g->ga, &e); e.h = 0; }
     if ((u->mx != g->lmx || u->my != g->lmy) && (u->inside || u->down)) {
         e.type = GEV_MOUSE_MOVE; e.clicks = 0; push(g->ga, &e);
     }

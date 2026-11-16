@@ -18,7 +18,7 @@ void input_push(input_event_t *e) {
     /* agrega movimentos consecutivos do mouse para não lotar a fila */
     if (e->type == EV_MOUSE && qhead != qtail) {
         input_event_t *last = &queue[(qhead - 1) % QSIZE];
-        if (last->type == EV_MOUSE && last->buttons == e->buttons && !last->dz && !e->dz) {
+        if (last->type == EV_MOUSE && last->buttons == e->buttons && !last->dz && !e->dz && !last->dw && !e->dw) {
             last->dx += e->dx; last->dy += e->dy;
             irq_restore(f);
             return;
@@ -27,7 +27,7 @@ void input_push(input_event_t *e) {
     /* posição absoluta (tablet USB): só a mais recente importa */
     if (e->type == EV_MOUSE_ABS && qhead != qtail) {
         input_event_t *last = &queue[(qhead - 1) % QSIZE];
-        if (last->type == EV_MOUSE_ABS && last->buttons == e->buttons && !last->dz && !e->dz) {
+        if (last->type == EV_MOUSE_ABS && last->buttons == e->buttons && !last->dz && !e->dz && !last->dw && !e->dw) {
             last->dx = e->dx; last->dy = e->dy;
             irq_restore(f);
             return;

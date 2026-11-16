@@ -100,6 +100,7 @@ typedef struct ui {
     int mx, my;              /* mouse em coordenadas do conteúdo */
     bool inside, down, pressed, released, rpressed, dblclick;
     int wheel;
+    int wheel_x;             /* rolagem horizontal deste quadro (input_event_t.dw; positiva = direita) */
     u32 hot, active, focus;
     i32 key;                 /* tecla pressionada neste quadro (0 se nenhuma) */
     u16 mods;

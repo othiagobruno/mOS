@@ -451,6 +451,11 @@ pressed_done:
         if (F.drag != 4) F.dirty = true;
         F.drag = 0;
     }
+    if (in && u->wheel_x) {                       /* roda lateral: anda pelo quadro na horizontal */
+        F.ox += u->wheel_x * 24 / F.zoom;
+        F.dirty = true;
+        u->wheel_x = 0;
+    }
     if (in && u->wheel) {
         float nz = CLAMP(F.zoom * (u->wheel > 0 ? 1.1f : 1 / 1.1f), 0.2f, 4.0f);
         /* zoom em torno do ponteiro */
