@@ -241,8 +241,9 @@ static void emit_exit(T *t, a64_u64 target) {   /* regs na memória, flags em re
     x_jmp_to(B, jit_g.g_link);
 }
 
-#ifdef _WIN32
+#if defined(_WIN32) || defined(A64_HOST_TOOL)
 #include <stdio.h>
+/* A64JIT_FBLOG=1 (harness): cada instrução que a tradução manda ao interpretador */
 static void fb_log(T *t, a64_u32 w) { if (jit_g.fblog) fprintf(stderr, "[jit] interp %016llx: %08x\n", (unsigned long long)t->pc, w); }
 #else
 static void fb_log(T *t, a64_u32 w) { (void)t; (void)w; }
@@ -1700,7 +1701,7 @@ static int tr_insn(T *t, a64_u32 w) {
     case 0x5: case 0xD: return tr_dpreg(t, w);
     case 0x7: case 0xF:
         if (tr_simd(t, w)) return 1;
-        if (light_ok(w) && !jit_g.nonative) { emit_light(t, w); return 1; }
+        if (light_ok(w) && !jit_g.nonative) { fb_log(t, w); emit_light(t, w); return 1; }
         return 0;
     default: return 0;                  /* 0..3: UDF/SVE/SME: o interpretador decide */
     }
