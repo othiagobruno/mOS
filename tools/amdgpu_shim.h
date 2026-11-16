@@ -21,4 +21,5 @@ void vmm_map_wc(u64 phys, u64 size);
 #define MOS_EIO 5
 const u8 *amd_host_fw(const char *name, u64 *len);
 u64  amd_host_ram_page(void);
-u64  amd_host_ram_alloc(u64 bytes);      /* RAM alinhada a 4 KiB; o endereço vale como físico */
+u64  amd_host_ram_alloc(u64 bytes);
+void amd_host_doorbell(u32 dw_index, u64 v);  /* escrita de 64 bits num doorbell do BAR2 */      /* RAM alinhada a 4 KiB; o endereço vale como físico */

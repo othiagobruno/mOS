@@ -102,6 +102,16 @@ typedef struct {
     volatile u32 *gring_cpu, *gwb_cpu;   /* gwb[0] = rptr (dwords), gwb[4] = última fence, gwb[8] = teste */
     u32           gring_dw, gring_wptr, gfx_seq;
     u64           gfx_timeouts, gfx_eops, gfx_faults, gfx_ibs, gfx_idle_irqs;
+    /* compute (compute.c): MEC1 pipe 0 fila 0, doorbells no BAR2 */
+    bool          comp_ok;
+    u32           mec_fw_version;
+    u64           db_phys;
+    volatile u8  *db;
+    u64           mec_phys, mec_bytes, caux_phys, cring_phys, cring_mc, cwb_mc, mqd_mc;
+    volatile u32 *cring_cpu, *cwb_cpu;   /* cwb[0] = rptr (dwords), cwb[2..3] = wptr, cwb[4] = fence, cwb[8] = teste */
+    u32           cring_dw, comp_seq;
+    u64           cwptr;                 /* dwords, cresce sem dar a volta (o CP aplica a máscara) */
+    u64           comp_timeouts, comp_eops, comp_ibs;
     /* VRAM livre: blocos de 64 KiB a partir do começo do BAR0 */
     u32           vram_lo, vram_hi;      /* faixa alocável, em blocos */
     u8            vram_used[AMD_VRAM_CHUNKS / 8];
@@ -171,6 +181,12 @@ bool       amdgpu_gfx_init(amdgpu_t *a);
 u32        amdgpu_gfx_submit(amdgpu_t *a, u64 ib_mc, u32 ndw);
 bool       amdgpu_gfx_wait(amdgpu_t *a, u32 seq);
 u32        amdgpu_gfx_done(amdgpu_t *a);
+/* Compute: MEC1 com a HQD do pipe 0, fila 0, MQD na VRAM e doorbell no BAR2. Chamado por amdgpu_gfx_init
+ * depois do anel GFX. Mesma convenção de IB e fence do anel GFX. */
+bool       amdgpu_compute_init(amdgpu_t *a);
+u32        amdgpu_compute_submit(amdgpu_t *a, u64 ib_mc, u32 ndw);
+bool       amdgpu_compute_wait(amdgpu_t *a, u32 seq);
+u32        amdgpu_compute_done(amdgpu_t *a);
 /* Monta o preâmbulo de clear state (CSB) em buf (NULL = só conta). Devolve o tamanho em dwords. Lógica pura. */
 u32        amdgpu_gfx_csb(u32 *buf);
 

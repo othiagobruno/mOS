@@ -402,6 +402,39 @@
 #define R_VGT_INDEX_TYPE                     GC_REG(0x0C243)
 #define R_SCRATCH_REG0                       GC_REG(0x0C040)
 #define R_CP_MEC_CNTL                        GC_REG(0x0208D)
+#define R_CP_MEC_ME1_UCODE_ADDR              GC_REG(0x0F81A)
+#define R_CP_MEC_ME1_UCODE_DATA              GC_REG(0x0F81B)
+#define R_CP_CPC_IC_BASE_LO                  GC_REG(0x030B9)
+#define R_CP_CPC_IC_BASE_HI                  GC_REG(0x030BA)
+#define R_CP_CPC_IC_BASE_CNTL                GC_REG(0x030BB)
+#define R_CP_HQD_ACTIVE                      GC_REG(0x03247)
+#define R_CP_HQD_VMID                        GC_REG(0x03248)
+#define R_CP_HQD_PERSISTENT_STATE            GC_REG(0x03249)
+#define R_CP_HQD_PQ_BASE                     GC_REG(0x0324D)
+#define R_CP_HQD_PQ_BASE_HI                  GC_REG(0x0324E)
+#define R_CP_HQD_PQ_RPTR                     GC_REG(0x0324F)
+#define R_CP_HQD_PQ_RPTR_REPORT_ADDR         GC_REG(0x03250)
+#define R_CP_HQD_PQ_RPTR_REPORT_ADDR_HI      GC_REG(0x03251)
+#define R_CP_HQD_PQ_WPTR_POLL_ADDR           GC_REG(0x03252)
+#define R_CP_HQD_PQ_WPTR_POLL_ADDR_HI        GC_REG(0x03253)
+#define R_CP_HQD_PQ_DOORBELL_CONTROL         GC_REG(0x03254)
+#define R_CP_HQD_PQ_CONTROL                  GC_REG(0x03256)
+#define R_CP_HQD_IB_CONTROL                  GC_REG(0x0325A)
+#define R_CP_HQD_DEQUEUE_REQUEST             GC_REG(0x0325D)
+#define R_CP_HQD_EOP_BASE_ADDR               GC_REG(0x0326A)
+#define R_CP_HQD_EOP_BASE_ADDR_HI            GC_REG(0x0326B)
+#define R_CP_HQD_EOP_CONTROL                 GC_REG(0x0326C)
+#define R_CP_HQD_QUANTUM                     GC_REG(0x0324C)
+#define R_CP_HQD_PQ_WPTR_LO                  GC_REG(0x0327B)
+#define R_CP_HQD_PQ_WPTR_HI                  GC_REG(0x0327C)
+#define R_CP_MQD_BASE_ADDR                   GC_REG(0x03245)
+#define R_CP_MQD_BASE_ADDR_HI                GC_REG(0x03246)
+#define R_CP_MQD_CONTROL                     GC_REG(0x03267)
+#define R_CP_PQ_WPTR_POLL_CNTL               GC_REG(0x03083)
+#define R_CP_MEC_DOORBELL_RANGE_LOWER        GC_REG(0x0305C)
+#define R_CP_MEC_DOORBELL_RANGE_UPPER        GC_REG(0x0305D)
+#define R_CP_PQ_STATUS                       GC_REG(0x030B8)
+#define R_CP_ME1_PIPE0_INT_CNTL              GC_REG(0x03085)
 #define   GRBM_READ_TIMEOUT_MASK      0xFFu
 #define   GRBM_GUI_ACTIVE             0x80000000u
 #define   GRBM_SOFT_RESET_RLC         0x4u
@@ -433,7 +466,6 @@
 #define   CP_ME_HALT_ALL              0x15000000u    /* CE, PFP e ME parados */
 #define   CP_ME_RESET_ALL             0x003F0000u    /* pipes 0 e 1 de CE, PFP e ME */
 #define   CP_ME_ICACHE_INV            0x00000150u
-#define   CP_MEC_HALT_BOTH            0x50000000u
 #define   CP_RB_BUFSZ_SHIFT           0
 #define   CP_RB_BLKSZ_SHIFT           8
 #define   CP_RB_DOORBELL_EN           0x40000000u
@@ -473,6 +505,70 @@
 #define   PM4_DATA_SEL_32             (1u << 29)
 #define   PM4_INT_SEL_WAIT            (2u << 24)      /* interrompe depois que o dado foi escrito */
 /* IH: fim de pipe (fence) e faltas do CP */
+/* compute: MEC1, pipe 0, fila 0, programada direto nos registradores da HQD (como o KFD faz no hqd_load) */
+#define   GRBM_GFX_CNTL_MEID_SHIFT    2
+#define   CP_MEC_RESET_ALL            0x503F0010u    /* ME1/ME2 parados, pipes em reset, icache invalidado */
+#define   CP_HQD_EOP_SIZE_MASK        0x3Fu
+#define   CP_HQD_PQ_QUEUE_SIZE_MASK   0x3Fu
+#define   CP_HQD_PQ_RPTR_BLOCK_SHIFT  8
+#define   CP_HQD_PQ_RPTR_BLOCK_MASK   0x3F00u
+#define   CP_HQD_PQ_UNORD_DISPATCH    0x10000000u
+#define   CP_HQD_PQ_ROQ_IB_FLIP       0x20000000u
+#define   CP_HQD_PQ_PRIV_STATE        0x40000000u
+#define   CP_HQD_PQ_KMD_QUEUE         0x80000000u
+#define   CP_HQD_DB_OFFSET_SHIFT      2
+#define   CP_HQD_DB_OFFSET_MASK       0x0FFFFFFCu
+#define   CP_HQD_DB_SOURCE            0x10000000u
+#define   CP_HQD_DB_EN                0x40000000u
+#define   CP_HQD_DB_HIT               0x80000000u
+#define   CP_HQD_PRELOAD_MASK         0x0003FF00u
+#define   CP_HQD_MIN_IB_AVAIL_MASK    0x00300000u
+#define   CP_HQD_QUANTUM_MASK         0x00003F11u
+#define   CP_PQ_STATUS_DOORBELL_EN    0x2u
+#define   CP_PQ_WPTR_POLL_EN          0x80000000u
+#define AMD_MEC_HPD_BYTES   4096u                    /* buffer de EOP por fila */
+#define AMD_COMP_RING_BYTES (64u * 1024u)
+#define AMD_DB_KIQ          0x00u                    /* índices de doorbell de 64 bits (layout da Vega10) */
+#define AMD_DB_MEC_RING0    0x03u
+#define AMD_DB_USERQ_END    0x8Au
+/* MQD (struct v9_mqd, 512 dwords): índices em dwords */
+#define MQD_DW                       512u
+#define MQD_header                     0
+#define MQD_pipelinestat_enable       11
+#define MQD_thread_mgmt_se0           23
+#define MQD_thread_mgmt_se1           24
+#define MQD_thread_mgmt_se2           26
+#define MQD_thread_mgmt_se3           27
+#define MQD_misc_reserved             32
+#define MQD_thread_mgmt_se4           39
+#define MQD_dyn_cu_mask_lo           126
+#define MQD_dyn_cu_mask_hi           127
+#define MQD_mqd_base_lo              128
+#define MQD_mqd_base_hi              129
+#define MQD_hqd_active               130
+#define MQD_hqd_vmid                 131
+#define MQD_persistent_state         132
+#define MQD_quantum                  135
+#define MQD_pq_base_lo               136
+#define MQD_pq_base_hi               137
+#define MQD_pq_rptr                  138
+#define MQD_rptr_report_lo           139
+#define MQD_rptr_report_hi           140
+#define MQD_wptr_poll_lo             141
+#define MQD_wptr_poll_hi             142
+#define MQD_pq_doorbell_control      143
+#define MQD_pq_control               145
+#define MQD_ib_control               149
+#define MQD_dequeue_request          152
+#define MQD_mqd_control              162
+#define MQD_eop_base_lo              165
+#define MQD_eop_base_hi              166
+#define MQD_eop_control              167
+#define MQD_pq_wptr_lo               182
+#define MQD_pq_wptr_hi               183
+#define MQD_DYN_CU_MASK_BYTES        2056u           /* deslocamento da máscara dinâmica de CUs na alocação */
+#define R_RCC_DOORBELL_APER_EN        NBIF_REG(0x00C0)
+#define   DOORBELL_APER_EN            0x1u
 #define IH_CLIENT_GRBM_CP        0x14u
 #define IH_SRC_CP_EOP            181u
 #define IH_SRC_CP_PRIV_REG       184u
