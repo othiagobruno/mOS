@@ -113,7 +113,24 @@ static plan_t plan_for(const char *preset, const avx_info *in) {
     p.ok = 0; p.why = "Preset desconhecido.";
     return p;
 }
-static int probe_asset(id asset, avx_info *inf) { const char *p = asset_path(asset); return p && !avx_probe(p, inf) ? 0 : -1; }
+int cx_avcomposition_is(id a);
+int cx_avcomposition_info(id a, int *has_video, int *has_audio, double *dur);
+int cx_avcomposition_export(id a, const char *out, int container, int fast, double start, double dur, int want, avx_ctl *ctl, const char **why);
+typedef struct { double w, h; } xsz_t;
+/* composição: o que dá para saber antes de copiar (codec e configuração só no avx_compose) */
+static int probe_asset(id asset, avx_info *inf) {
+    if (cx_avcomposition_is(asset)) {
+        *inf = (avx_info){0};
+        cx_avcomposition_info(asset, &inf->has_video, &inf->has_audio, &inf->duration);
+        inf->vcodec = 0x61766331; inf->acodec = 0x6d703461;
+        inf->video_copyable = inf->audio_copyable = inf->audio_is_aac = 1;
+        xsz_t z = ((xsz_t (*)(id, SEL))objc_msgSend)(asset, sel_registerName("naturalSize"));
+        inf->width = (int)z.w; inf->height = (int)z.h;
+        return 0;
+    }
+    const char *p = asset_path(asset);
+    return p && !avx_probe(p, inf) ? 0 : -1;
+}
 
 static id xs_init(id s, SEL c, id asset, id preset) {
     (void)c;
@@ -227,7 +244,8 @@ static void *export_thread(void *arg) {
     avx_info inf;
     plan_t p = {0};
     int k = x->ftype ? container_of(cx_cstr(x->ftype)) : -1;
-    if (!in || avx_probe(in, &inf)) fail(s, -11800, "O asset não pôde ser lido.");
+    int is_comp = cx_avcomposition_is(x->asset);
+    if ((!in && !is_comp) || probe_asset(x->asset, &inf)) fail(s, -11800, "O asset não pôde ser lido.");
     else if (!(p = plan_for(cx_cstr(x->preset), &inf)).ok) fail(s, -11820, p.why);
     else if (x->vcomp) fail(s, -11820, "videoComposition ainda não é aplicado pelo mOS ao exportar.");
     else if (x->audiomix) fail(s, -11820, "audioMix ainda não é aplicado pelo mOS ao exportar.");
@@ -242,7 +260,8 @@ static void *export_thread(void *arg) {
         double start = secs(x->range.start), dur = -1;
         cmtime_t d = x->range.duration;
         if ((d.flags & 1) && !(d.flags & 0x1c) && d.timescale > 0) dur = secs(d);   /* sem +inf/-inf/indefinido */
-        int rc = avx_passthrough(in, out, k, x->fast, start, dur, p.want, &x->ctl, &why);
+        int rc = is_comp ? cx_avcomposition_export(x->asset, out, k, x->fast, start, dur, p.want, &x->ctl, &why)
+                         : avx_passthrough(in, out, k, x->fast, start, dur, p.want, &x->ctl, &why);
         if (rc == AVX_ERR_CANCEL) x->status = X_CANCELLED;
         else if (rc) fail(s, -11820, why ? why : "A exportação falhou.");
         else x->status = X_COMPLETED;

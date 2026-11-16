@@ -1333,7 +1333,7 @@ static cmtime_t asset_duration(id s, SEL c) { (void)c; return asset_ok(s) ? cm_s
 static BOOL asset_playable(id s, SEL c) { (void)c; return asset_ok(s); }
 /* faixas: a de áudio (se o CoreAudio abriu o arquivo) e a de vídeo (se avvideo.c abriu) */
 extern id AVMediaTypeAudio, AVMediaTypeVideo;
-typedef struct { cx_class_t *isa; double dur, rate; u32 ch; int video, w, h, rot; double fps; i32 id_; } avtrack_t;
+typedef struct { cx_class_t *isa; double dur, rate; u32 ch; int video, w, h, rot; double fps; i32 id_; id asset; } avtrack_t;   /* asset: fraco */
 cx_class_t AVAssetTrack_c __asm__("OBJC_CLASS_$_AVAssetTrack"), AVAssetTrack_m __asm__("OBJC_METACLASS_$_AVAssetTrack");
 #define TRK(o) ((avtrack_t *)(o))
 static id track_media(id s, SEL c) { (void)c; return TRK(s)->video ? AVMediaTypeVideo : AVMediaTypeAudio; }
@@ -1358,6 +1358,7 @@ static cgaffine_t track_transform(id s, SEL c) {
     return t;
 }
 static i32 track_id(id s, SEL c) { (void)c; return TRK(s)->id_; }
+static id track_asset(id s, SEL c) { (void)c; return TRK(s)->asset; }
 static id asset_tracks(id s, SEL c) {
     (void)c;
     id arr = MSG0(id, cls("NSMutableArray"), "array");
@@ -1365,7 +1366,7 @@ static id asset_tracks(id s, SEL c) {
     avf_track_t info;
     if (AST(s)->has_vid) {
         avtrack_t *t = (avtrack_t *)cx_alloc_instance(&AVAssetTrack_c);
-        t->video = 1; t->w = AST(s)->vw; t->h = AST(s)->vh; t->rot = AST(s)->vrot; t->fps = AST(s)->vfps; t->dur = AST(s)->vdur; t->id_ = 1;
+        t->video = 1; t->w = AST(s)->vw; t->h = AST(s)->vh; t->rot = AST(s)->vrot; t->fps = AST(s)->vfps; t->dur = AST(s)->vdur; t->id_ = 1; t->asset = s;
         MSG(void, arr, "addObject:", (id)t);
         objc_release((id)t);
     }
@@ -1375,6 +1376,7 @@ static id asset_tracks(id s, SEL c) {
         t->rate = info.rate;
         t->ch = info.channels;
         t->id_ = AST(s)->has_vid ? 2 : 1;
+        t->asset = s;
         MSG(void, arr, "addObject:", (id)t);
         objc_release((id)t);
     }
@@ -2299,7 +2301,7 @@ void cx_avfaudio_init(void) {
     M(AVAssetTrack, "isPlayable", track_yes); M(AVAssetTrack, "isEnabled", track_yes);
     M(AVAssetTrack, "isDecodable", track_yes);
     M(AVAssetTrack, "naturalSize", track_size); M(AVAssetTrack, "nominalFrameRate", track_fps);
-    M(AVAssetTrack, "preferredTransform", track_transform); M(AVAssetTrack, "trackID", track_id);
+    M(AVAssetTrack, "preferredTransform", track_transform); M(AVAssetTrack, "trackID", track_id); M(AVAssetTrack, "asset", track_asset);
     K(&AVURLAsset_c, &AVURLAsset_m, "AVURLAsset", &AVAsset_c, 0);
     CM(AVAsset, "assetWithURL:", asset_with_url); CM(AVURLAsset, "URLAssetWithURL:options:", asset_with_url_opts);
     M(AVURLAsset, "initWithURL:options:", asset_init); M(AVURLAsset, "URL", asset_url);
@@ -2323,6 +2325,7 @@ void cx_avfaudio_init(void) {
     { extern void cx_avwriter_init(void); cx_avwriter_init(); }   /* AVAssetWriter: avwriter.c */
     { extern void cx_avexport_init(void); cx_avexport_init(); }   /* AVAssetExportSession: avexport_objc.c */
     { extern void cx_avmetadata_init(void); cx_avmetadata_init(); }   /* AVMetadataItem: avmetadata.c */
+    { extern void cx_avcomposition_init(void); cx_avcomposition_init(); }   /* AVMutableComposition: avcomposition.c */
     { extern void cx_mediaplayer_init(void); cx_mediaplayer_init(); }   /* MediaPlayer: mediaplayer.c (antes da casca do vscode_fwclasses) */
     K(&AVPlayerItem_c, &AVPlayerItem_m, "AVPlayerItem", obj, sizeof(avitem_t) - 8);
     CM(AVPlayerItem, "playerItemWithURL:", item_with_url); CM(AVPlayerItem, "playerItemWithAsset:", item_with_asset);

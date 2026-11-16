@@ -301,3 +301,16 @@ int avx_compose(const char *out, int container, int faststart, const avx_ctrack 
     free(buf);
     return rc;
 }
+
+/* índice da 1ª faixa do tipo pedido (AVX_VIDEO/AVX_AUDIO) num arquivo; -1 se não há */
+int avx_track_index(const char *path, int media) {
+    mp4_file m;
+    void *f = 0;
+    if (open_in(path, &f, &m)) return -1;
+    int r = -1;
+    uint32_t want = media == AVX_VIDEO ? MP4_FOURCC('v', 'i', 'd', 'e') : MP4_FOURCC('s', 'o', 'u', 'n');
+    for (uint32_t i = 0; i < m.ntracks; i++) if (m.t[i].handler == want && m.t[i].nsamples) { r = (int)i; break; }
+    mp4_close(&m);
+    fclose(f);
+    return r;
+}
