@@ -2934,7 +2934,11 @@ NATIVE(el_attr) {
     for (; i < (int)k->len && i < 63; i++) low[i] = n->ns ? k->d[i] : (char)tolower((u8)k->d[i]);   /* SVG/XML: caixa original */
     low[i] = 0;
     switch (self->u.nat.magic) {
-    case 0: { const char *v = node_attr(n, low); return v ? jv_str(js_strz(v)) : JS_NULL; }
+    case 0: {
+        const char *v = node_attr(n, low);
+        if (!v && n->ns) { for (int j = 0; low[j]; j++) low[j] = (char)tolower((u8)low[j]); v = node_attr(n, low); }   /* <svg> do parser HTML */
+        return v ? jv_str(js_strz(v)) : JS_NULL;
+    }
     case 1: {
         jsstr *v = js_tostr(ARG(1));
         if (!v) return JS_EXC;
