@@ -57,8 +57,8 @@ kernel/wifi/rtw88/        driver RTL8821CE que implementa wifi_radio_t
 18. [ ] Coex com o Wi-Fi do lado BT (o firmware BT recebe o estado do Wi-Fi pelo PTA/mailbox).
 
 ### Ethernet RTL8168H (`kernel/dev/r8169.c`)
-19. [ ] Firmware de PHY `rtl_nic/rtl8168h-2.fw` (formato e aplicação).
-20. [ ] Tabela EPHY e ajustes de `rtl_hw_start_8168h_1` que hoje ficam de fora; renegociação e queda/volta de link.
+19. [x] Firmware de PHY `rtl_nic/rtl8168h-2.fw` (no repositório com a licença; interpretador próprio das 211 ações; recusa soma errada e saltos fora da lista).
+20. [x] Afinação do PHY do 8168H, tabela EPHY e `rtl_hw_start_8168h_1` inteiro; link acompanhado (velocidade/duplex e queda no log). Fora: latência de entrada no ASPM (config PCI 0x70F; ASPM desligado). Teste `tools/r8169_host.c`: 61/61.
 
 ## Pronto, com teste
 

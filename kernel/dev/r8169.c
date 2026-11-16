@@ -7,11 +7,11 @@
  * rtl_hw_init_8168g, rtl_init_rxcfg, rtl_set_rx_mode, rtl_eri_write, r8168_mac_ocp_write,
  * r8168_phy_ocp_write). Nada foi copiado: só os endereços e a ordem dos passos.
  *
- * Fica de fora, de propósito:
- *  - firmware de PHY (rtl_nic/rtl8168h-2.fw): é opcional no Linux (só corrige afinação) e aqui não é usado;
- *  - tabela de EPHY (afinação do PCIe), ajustes de EEE e os demais MAC OCP de rtl_hw_start_8168h_1:
- *    o enlace PCIe já está de pé quando lemos os registradores, e um valor errado ali o derrubaria;
- *  - o MAC de reserva em 0x19E0 (MAC0_BKP): fora da janela de 4 KiB que nem todo BAR cobre. */
+ * No 8168H (XID 0x541, o do PC do Thiago) entram também, na ordem do Linux: o firmware do PHY
+ * rtl_nic/rtl8168h-2.fw (interpretado aqui; o formato é uma lista de ações de 32 bits), a afinação do PHY
+ * (rtl8168h_2_hw_phy_config) e o rtl_hw_start_8168h_1 inteiro (EPHY, FIFO, pausa, ERI e MAC OCP).
+ * Fica de fora: a latência de entrada no ASPM (config PCI 0x70F, espaço estendido que o pci.c do mOS não
+ * escreve; o ASPM fica desligado de qualquer forma) e o MAC de reserva em 0x19E0. */
 #ifdef MOS_HOST_TEST
 #include "r8169_shim.h"
 #else
@@ -34,6 +34,10 @@
 #define R_CONFIG2    0x53
 #define R_CONFIG5    0x56
 #define R_PHYAR      0x60
+#define R_CONFIG3    0x54
+#define R_EPHYAR     0x80
+#define R_DLLPR      0xD0
+#define R_MISC_1     0xF2
 #define R_PHYSTATUS  0x6C
 #define R_PMCH       0x6F
 #define R_ERIDR      0x70
@@ -194,6 +198,25 @@ static void eri_modify(u32 addr, u32 clear, u32 set) {
     if (eri_read(addr, &v)) eri_write(addr, (v & ~clear) | set);
 }
 
+/* escrita com máscara de bytes (bits 12-15 do ERIAR): 0x1 = só o byte 0, 0x3 = bytes 0-1 */
+static bool eri_write_m(u32 addr, u32 mask, u32 val) {
+    reg_w32(R_ERIDR, val);
+    reg_w32(R_ERIAR, ERIAR_FLAG | (mask << 12) | addr);
+    if (wait32(R_ERIAR, ERIAR_FLAG, false)) return true;
+    kprintf("r8169: ERI 0x%x: escrita sem resposta\n", addr);
+    return false;
+}
+
+/* ---------- EPHY: PHY do enlace PCIe (rtl_ephy_write/read) */
+static void ephy_write(u32 reg, u16 v) {
+    reg_w32(R_EPHYAR, 0x80000000u | (reg & 0x1F) << 16 | v);
+    if (!wait32(R_EPHYAR, 0x80000000u, false)) kprintf("r8169: EPHY 0x%x: escrita sem resposta\n", reg);
+}
+static u16 ephy_read(u32 reg) {
+    reg_w32(R_EPHYAR, (reg & 0x1F) << 16);
+    return wait32(R_EPHYAR, 0x80000000u, true) ? (u16)reg_r32(R_EPHYAR) : 0xFFFF;
+}
+
 /* ---------- MAC OCP (r8168_mac_ocp_write/read): síncrono, sem bit de espera */
 static void mac_ocp_write(u32 reg, u16 v) { reg_w32(R_OCPDR, 0x80000000u | (reg << 15) | v); }
 static u16 mac_ocp_read(u32 reg) { reg_w32(R_OCPDR, reg << 15); return (u16)reg_r32(R_OCPDR); }
@@ -222,7 +245,185 @@ static bool phy_write(u32 reg, u16 v) {
     return wait32(R_PHYAR, 0x80000000u, false);
 }
 
+/* ---------- PHY por páginas (8168G+): escrever a página no registrador 0x1F muda a base OCP; nas páginas
+ * diferentes da padrão os registradores 0x10-0x17 ficam em base + 2·(r - 0x10) */
+#define OCP_STD 0xA400u
+static u32 ocp_base = OCP_STD, mcu_base;
+
+static void gphy_write(u32 addr, u16 v) {
+    reg_w32(R_GPHY_OCP, 0x80000000u | (addr << 15) | v);
+    wait32(R_GPHY_OCP, 0x80000000u, false);
+}
+static u16 gphy_read(u32 addr) {
+    reg_w32(R_GPHY_OCP, addr << 15);
+    return wait32(R_GPHY_OCP, 0x80000000u, true) ? (u16)reg_r32(R_GPHY_OCP) : 0xFFFF;
+}
+static void mdio_write(u32 reg, u16 v) {
+    if (reg == 0x1F) { ocp_base = v ? (u32)v << 4 : OCP_STD; return; }
+    gphy_write(ocp_base + (ocp_base != OCP_STD ? reg - 0x10 : reg) * 2, v);
+}
+static u16 mdio_read(u32 reg) {
+    if (reg == 0x1F) return ocp_base == OCP_STD ? 0 : (u16)(ocp_base >> 4);
+    return gphy_read(ocp_base + (ocp_base != OCP_STD ? reg - 0x10 : reg) * 2);
+}
+static void mcu_write(u32 reg, u16 v) { if (reg == 0x1F) { mcu_base = (u32)v << 4; return; } mac_ocp_write(mcu_base + reg, v); }
+static u16 mcu_read(u32 reg) { return reg == 0x1F ? 0 : mac_ocp_read(mcu_base + reg); }
+
+static u16 phy_rp(u32 page, u32 reg) { mdio_write(0x1F, (u16)page); u16 v = mdio_read(reg); mdio_write(0x1F, 0); return v; }
+static void phy_wp(u32 page, u32 reg, u16 v) { mdio_write(0x1F, (u16)page); mdio_write(reg, v); mdio_write(0x1F, 0); }
+static void phy_mp(u32 page, u32 reg, u16 clr, u16 set) {
+    mdio_write(0x1F, (u16)page);
+    mdio_write(reg, (u16)((mdio_read(reg) & ~clr) | set));
+    mdio_write(0x1F, 0);
+}
+static void phy_param(u16 parm, u16 mask, u16 val) {          /* r8168g_phy_param: página 0xA43, 0x13 endereço, 0x14 dado */
+    mdio_write(0x1F, 0x0A43);
+    mdio_write(0x13, parm);
+    mdio_write(0x14, (u16)((mdio_read(0x14) & ~mask) | val));
+    mdio_write(0x1F, 0);
+}
+
+/* ---------- firmware do PHY (arquivos rtl_nic)
+ * Cabeçalho (magic 0): 4 bytes zerados, versão (32 bytes), início e número de ações (LE32), soma de todos
+ * os bytes = 0. Cada ação: bits 31-28 operação, 27-16 registrador/salto, 15-0 dado. O "registrador" vai
+ * para o PHY por páginas ou, depois de "trocar o MDIO", para o MCU do MAC. */
+enum { FW_READ, FW_OR, FW_AND, FW_BJMPN, FW_MDIO, FW_CLRCNT = 7, FW_WRITE, FW_CNT_EQ_SKIP, FW_EQ_SKIPN, FW_NEQ_SKIPN,
+       FW_WRITE_PREV, FW_SKIPN, FW_DELAY };
+
+int r8169_phy_fw(const u8 *d, u32 size, char *ver, int verlen) {
+    if (size < 4) return -1;
+    u32 start = 0, n = 0;
+    if (!(d[0] | d[1] | d[2] | d[3])) {
+        if (size < 45) return -1;
+        u8 sum = 0;
+        for (u32 i = 0; i < size; i++) sum = (u8)(sum + d[i]);
+        if (sum) return -2;
+        start = (u32)d[36] | (u32)d[37] << 8 | (u32)d[38] << 16 | (u32)d[39] << 24;
+        n = (u32)d[40] | (u32)d[41] << 8 | (u32)d[42] << 16 | (u32)d[43] << 24;
+        if (start > size || n > (size - start) / 4) return -1;
+        snprintf(ver, (usize)verlen, "%.32s", (const char *)d + 4);
+    } else {
+        if (size % 4) return -1;
+        n = size / 4;
+        snprintf(ver, (usize)verlen, "sem cabeçalho");
+    }
+    const u8 *code = d + start;
+    #define ACT(i) ((u32)code[4 * (i)] | (u32)code[4 * (i) + 1] << 8 | (u32)code[4 * (i) + 2] << 16 | (u32)code[4 * (i) + 3] << 24)
+    for (u32 i = 0; i < n; i++) {                              /* confere os saltos antes de rodar */
+        u32 a = ACT(i), op = a >> 28, r = (a >> 16) & 0xFFF, v = a & 0xFFFF;
+        switch (op) {
+        case FW_READ: case FW_OR: case FW_AND: case FW_CLRCNT: case FW_WRITE: case FW_WRITE_PREV: case FW_DELAY: break;
+        case FW_MDIO: if (v > 1) return -3; break;
+        case FW_BJMPN: if (r > i) return -3; break;
+        case FW_CNT_EQ_SKIP: if (i + 2 >= n) return -3; break;
+        case FW_EQ_SKIPN: case FW_NEQ_SKIPN: case FW_SKIPN: if (i + 1 + r >= n) return -3; break;
+        default: return -3;
+        }
+    }
+    bool mcu = false;
+    u32 pre = 0, cnt = 0, steps = 0;
+    for (u32 i = 0; i < n; i++) {
+        if (++steps > 200000) return -4;                     /* laço que não termina: o PHY não responde */
+        u32 a = ACT(i), op = a >> 28, r = (a >> 16) & 0xFFF, v = a & 0xFFFF;
+        switch (op) {
+        case FW_READ: pre = mcu ? mcu_read(r) : mdio_read(r); cnt++; break;
+        case FW_OR: pre |= v; break;
+        case FW_AND: pre &= v; break;
+        case FW_BJMPN: i -= r + 1; break;
+        case FW_MDIO: mcu = v != 0; break;
+        case FW_CLRCNT: cnt = 0; break;
+        case FW_WRITE: if (mcu) mcu_write(r, (u16)v); else mdio_write(r, (u16)v); break;
+        case FW_CNT_EQ_SKIP: if (cnt == v) i++; break;
+        case FW_EQ_SKIPN: if (pre == v) i += r; break;
+        case FW_NEQ_SKIPN: if (pre != v) i += r; break;
+        case FW_WRITE_PREV: if (mcu) mcu_write(r, (u16)pre); else mdio_write(r, (u16)pre); break;
+        case FW_SKIPN: i += r; break;
+        case FW_DELAY: sleep_ms(v); break;
+        }
+    }
+    #undef ACT
+    ocp_base = OCP_STD;                                        /* um firmware não volta a base sozinho */
+    for (int k = 0; k < 12 && (mdio_read(0) & 0x8000); k++) sleep_ms(50);   /* reset do PHY em andamento */
+    return (int)n;
+}
+
+const u8 *r8169_firmware(const char *name, u32 *len);
+
+/* rtl8168h_2_hw_phy_config */
+static void phy_config_8168h(void) {
+    u32 len = 0;
+    const u8 *fw = r8169_firmware("rtl_nic/rtl8168h-2.fw", &len);
+    char ver[40] = "";
+    if (!fw) kprintf("r8169: firmware do PHY rtl_nic/rtl8168h-2.fw não encontrado; seguindo sem ele\n");
+    else {
+        int r = r8169_phy_fw(fw, len, ver, sizeof ver);
+        if (r < 0) kprintf("r8169: firmware do PHY recusado (erro %d)\n", r);
+        else kprintf("r8169: firmware do PHY %s aplicado (%d ações)\n", ver, r);
+    }
+    phy_param(0x808A, 0x003F, 0x000A);                         /* parâmetro de estimativa de canal */
+    phy_param(0x0811, 0x0000, 0x0800);                         /* R-tune e PGA-retune */
+    phy_mp(0x0A42, 0x16, 0x0000, 0x0002);
+    phy_mp(0x0A44, 0x11, 0, 1u << 11);                         /* 10 Mb/s do GPHY */
+    /* deslocamento do bias do ADC, do eFuse do MAC */
+    mac_ocp_write(0xDD02, 0x807D);
+    u16 d1 = mac_ocp_read(0xDD02), d2 = mac_ocp_read(0xDD00);
+    u16 ioff = (u16)(((d2 >> 1) & 0x7FF8) | (d2 & 7) | ((d1 & 0x80) ? 0x8000 : 0));
+    if (ioff != 0xFFFF) phy_wp(0x0BCF, 0x16, ioff);
+    u16 rl = phy_rp(0x0BCD, 0x16) & 0xF;                       /* nível do filtro passa-baixas de TX */
+    u16 rlen = rl > 3 ? (u16)(rl - 3) : 0;
+    phy_wp(0x0BCD, 0x17, (u16)(rlen | rlen << 4 | rlen << 8 | rlen << 12));
+    phy_mp(0x0A44, 0x11, 1u << 7, 0);                          /* PFM do PHY desligado */
+    phy_mp(0x0A43, 0x10, 1u << 0, 0);                          /* PLL do 10M não desliga */
+    phy_mp(0x0A43, 0x10, 1u << 2, 0);                          /* ALDPS desligado */
+    phy_mp(0x0A43, 0x11, 0, 1u << 4);                          /* EEE do PHY */
+}
+
+/* rtl_hw_start_8168h_1 (com o MAC destravado pelo Cfg9346) */
+static void hw_start_8168h(void) {
+    static const struct { u8 reg; u16 mask, bits; } eph[] = {
+        {0x1E, 0x0800, 0x0001}, {0x1D, 0x0000, 0x0800}, {0x05, 0xFFFF, 0x2089},
+        {0x06, 0xFFFF, 0x5881}, {0x04, 0xFFFF, 0x854A}, {0x01, 0xFFFF, 0x068B},
+    };
+    for (u32 i = 0; i < ARRAY_LEN(eph); i++) ephy_write(eph[i].reg, (u16)((ephy_read(eph[i].reg) & ~eph[i].mask) | eph[i].bits));
+    eri_write(0xC8, (0x08u << 16) | 0x02);                     /* FIFO RX estático/dinâmico */
+    eri_write(0xE8, (0x10u << 16) | 0x06);                     /* FIFO TX */
+    eri_write_m(0xCC, 0x1, 0x38);                              /* limiares de pausa */
+    eri_write_m(0xD0, 0x1, 0x48);
+    eri_modify(0xDC, 1, 0);                                    /* reinicia o filtro de pacotes */
+    eri_modify(0xDC, 0, 1);
+    eri_modify(0xDC, 0, 0x001C);
+    eri_write_m(0x5F0, 0x3, 0x4F87);
+    reg_w32(R_MISC, reg_r32(R_MISC) & ~MISC_RXDV_GATE);
+    eri_write_m(0xC0, 0x3, 0x0000);
+    eri_write_m(0xB8, 0x3, 0x0000);
+    reg_w8(R_DLLPR, reg_r8(R_DLLPR) & (u8)~(1u << 6));          /* PFM */
+    reg_w8(R_MISC_1, reg_r8(R_MISC_1) & (u8)~(1u << 6));        /* PFM em D3cold */
+    reg_w8(R_DLLPR, reg_r8(R_DLLPR) & (u8)~(1u << 7));          /* economia do TX a 10M */
+    eri_modify(0x1B0, 1u << 12, 0);
+    reg_w8(R_CONFIG3, reg_r8(R_CONFIG3) & (u8)~(1u << 1));      /* L2/L3 desligado (reset PCI durante L2) */
+    u16 saw = phy_rp(0x0C42, 0x13) & 0x3FFF;
+    if (saw) mac_ocp_modify(0xD412, 0x0FFF, (u16)((16000000 / saw) & 0x0FFF));
+    mac_ocp_modify(0xE056, 0x00F0, 0x0000);
+    mac_ocp_modify(0xE052, 0x6000, 0x8008);
+    mac_ocp_modify(0xE0D6, 0x01FF, 0x017F);
+    mac_ocp_modify(0xD420, 0x0FFF, 0x047F);
+    mac_ocp_write(0xE63E, 0x0001);
+    mac_ocp_write(0xE63E, 0x0000);
+    mac_ocp_write(0xC094, 0x0000);
+    mac_ocp_write(0xC09E, 0x0000);
+}
+
 /* ---------- netdev ---------- */
+static u8 last_phys = 0xFF;
+static void watch_link(void) {
+    u8 ps = reg_r8(R_PHYSTATUS);
+    if ((ps & 0x1F) == (last_phys & 0x1F)) return;
+    bool was = last_phys != 0xFF && (last_phys & PHY_LINK);
+    last_phys = ps;
+    if (ps & PHY_LINK)
+        kprintf("r8169: link ativo, %s Mb/s, %s\n", (ps & 0x10) ? "1000" : (ps & 0x08) ? "100" : "10", (ps & 0x01) ? "full duplex" : "half duplex");
+    else if (was) kprintf("r8169: cabo desconectado\n");
+}
 static bool r8169_link_up(void) { return R.mmio && (reg_r8(R_PHYSTATUS) & PHY_LINK); }
 
 static bool r8169_send(const void *frame, u16 len) {
@@ -250,6 +451,7 @@ static void rx_give_back(u32 i) {
 
 static int r8169_recv(void *frame, u16 max) {
     if (!R.mmio) return 0;
+    watch_link();
     u16 st = reg_r16(R_INTRSTATUS);
     if (st) reg_w16(R_INTRSTATUS, st);   /* polling: só limpa (RDU/FIFO cheio voltam sozinhos com descritores livres) */
     for (int n = 0; n < RX_DESC; n++) {
@@ -398,6 +600,8 @@ bool r8169_probe(void) {
         kprintf("r8169: MAC não encontrado, usando endereço local\n");
     }
 
+    if (R.xid == 0x541) phy_config_8168h();               /* firmware e afinação do PHY antes de ligar o MAC */
+
     reg_w8(R_CFG9346, CFG_UNLOCK);
     if (own_mac) {
         reg_w32(R_IDR0 + 4, mac[4] | (mac[5] << 8));
@@ -410,8 +614,10 @@ bool r8169_probe(void) {
 
     reg_w8(R_MAXTXPKT, (R.model->flags & F_EVL) ? 0x27 : 0x3F);
     reg_w16(R_CPLUSCMD, reg_r16(R_CPLUSCMD) & ~(CPLUS_RXCSUM | CPLUS_RXVLAN));   /* sem checksum nem VLAN no RX */
-    if (R.model->flags & F_G) {
-        /* o mínimo de rtl_hw_start_8168g/8168h_1 para RX e TX: FIFOs, filtro de pacotes reiniciado, RXDV gate aberto */
+    if (R.xid == 0x541) {
+        hw_start_8168h();
+    } else if (R.model->flags & F_G) {
+        /* o mínimo de rtl_hw_start_8168g para RX e TX: FIFOs, filtro de pacotes reiniciado, RXDV gate aberto */
         eri_write(0xC8, (0x08u << 16) | 0x02);
         eri_write(0xE8, (0x10u << 16) | 0x06);
         eri_modify(0xDC, 1, 0);
@@ -460,3 +666,15 @@ bool r8169_probe(void) {
     net_register_device(&r8169_dev);
     return true;
 }
+
+#ifndef MOS_HOST_TEST
+#include "vfs.h"
+const u8 *r8169_firmware(const char *name, u32 *len) {
+    char path[96];
+    snprintf(path, sizeof path, "/Sistema/Firmware/%s", name);
+    vnode_t *v = vfs_lookup(path);
+    if (!v || !v->data) return NULL;
+    *len = (u32)v->size;
+    return v->data;
+}
+#endif
