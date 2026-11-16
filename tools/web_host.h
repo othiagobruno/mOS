@@ -8,4 +8,5 @@ extern int web_host_ok, web_host_fail;
 #define CHECK(c, ...) do { if (c) web_host_ok++; else { web_host_fail++; host_printf("FALHOU %s:%d: ", __FILE__, __LINE__); \
     host_printf(__VA_ARGS__); host_printf("\n"); } } while (0)
 void web_host_register(const char *name, void (*fn)(void));
+void host_sleep_ms(int ms);
 #define WEB_HOST_CASE(fn) static void fn(void); __attribute__((constructor)) static void reg_##fn(void) { web_host_register(#fn, fn); } static void fn(void)

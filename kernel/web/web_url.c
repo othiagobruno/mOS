@@ -1082,6 +1082,11 @@ NATIVE(usp_method) {
     return JS_UNDEF;
 }
 
+jsstr *js_usp_string(jsv v) {
+    if (!jv_iscls(v, CL_HOST) || !J.realm->p_usp || !has_proto(jv_o(v), J.realm->p_usp) || !jv_isobj(jv_o(v)->u.host.extra)) return NULL;
+    return form_serialize(jv_o(js_arr_get(jv_o(jv_o(v)->u.host.extra), 0)));
+}
+
 /* ============================================================ registro */
 void js_url_init(jsrealm *r) {
     jsobj *g = r->global, *op = r->p_object;

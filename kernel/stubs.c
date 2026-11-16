@@ -45,9 +45,10 @@ __attribute__((weak)) http_req_t *http_get(const char *url) {
     return r;
 }
 __attribute__((weak)) int http_poll(http_req_t *r) { return -1; }
-__attribute__((weak)) void http_free(http_req_t *r) { if (r) { kfree(r->body); kfree(r); } }
+__attribute__((weak)) void http_free(http_req_t *r) { if (r) { kfree(r->body); kfree(r->headers); kfree(r); } }
 
 __attribute__((weak)) http_req_t *http_post(const char *u, const char *ct, const void *b, u32 l) { return http_get(u); }
+__attribute__((weak)) http_req_t *http_request(const char *u, const char *m, const char *h, const void *b, u32 l, int rd) { return http_get(u); }
 __attribute__((weak)) float http_progress(http_req_t *r) { return 0; }
 __attribute__((weak)) void net_register_device(netdev_t *d) {}
 __attribute__((weak)) bool udp_bind(u16 p, udp_handler_t h) { return false; }

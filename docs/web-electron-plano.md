@@ -92,6 +92,13 @@ Cada item fecha com teste de host (`tools/web_host.sh`) ou, quando depende da VM
    opacos, credenciais, IPv4 (hexa/octal), IPv6 comprimido, punycode, `.`/`..`, conjuntos de escape, resolução
    relativa, `origin`, setters, `canParse`/`parse`; URLSearchParams completo e ligado ao `URL.searchParams`.
    Teste: `tools/web_host_blob.c`.
+6d. ✅ **Fetch, XMLHttpRequest e DOMParser** (`web_fetch.c`; cliente HTTP do kernel com método e cabeçalhos livres e
+   cabeçalhos da resposta em `http_request`): Headers (guarda, combinação, `getSetCookie`, Set-Cookie oculto),
+   Request e Response completos com corpo binário, `clone`, `Response.json/error/redirect`, FormData (de `<form>`,
+   multipart de ida e volta), fetch com http(s), data:, blob:, file:, redirect follow/error/manual, AbortController/
+   AbortSignal (`abort`, `timeout`, `any`), XMLHttpRequest com eventos de progresso, `upload`, `responseType`
+   (json, arraybuffer, blob, document), cabeçalhos, síncrono, `abort` e `timeout`; DOMParser.
+   Teste: `tools/web_host_fetch.c` (6 casos). Falta: `Response.body`/ReadableStream (Streams).
 7. **WebGL 1/2** sobre o OpenGL do mOS (frente do Otavio) com reserva por software.
 8. **`<video>`/`<audio>`**: o motor publica o elemento; o `WebKit.framework` decodifica com AVFoundation/
    VideoToolbox (frente da Isabela) e devolve quadros e relógio ao motor; controles nativos desenhados pela vista.
