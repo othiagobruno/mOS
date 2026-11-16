@@ -654,6 +654,8 @@ id cx_netstream_new_input(mnet_stream_t *m, void *ext, const cx_stream_ext_t *op
     return s;
 }
 
+id cx_netstream_new_output(mnet_stream_t *m) { return new_out(m); }      /* +1 */
+
 /* ---------------------------------------------------------------- CFReadStream / CFWriteStream */
 u64 CFReadStreamGetTypeID(void) { return 38; }
 u64 CFWriteStreamGetTypeID(void) { return 39; }

@@ -181,6 +181,21 @@ static void t_pair(void) {
     CHECK(mnet_stream_status(r) == MNET_SS_AT_END);
     mnet_stream_free(r); mnet_stream_free(w);
 
+    /* leitura com prazo */
+    mnet_stream_pair(64, &r, &w);
+    mnet_stream_open(r); mnet_stream_open(w);
+    struct timespec t0, t1;
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    CHECK(mnet_stream_read_wait(r, b, 8, 120) == -2);
+    clock_gettime(CLOCK_MONOTONIC, &t1);
+    long ms = (t1.tv_sec - t0.tv_sec) * 1000 + (t1.tv_nsec - t0.tv_nsec) / 1000000;
+    CHECK(ms >= 100 && ms < 1000);
+    mnet_stream_write(w, (const uint8_t *)"abc", 3);
+    CHECK(mnet_stream_read_wait(r, b, 8, 120) == 3);
+    mnet_stream_close(w);
+    CHECK(mnet_stream_read_wait(r, b, 8, 120) == 0);
+    mnet_stream_free(r); mnet_stream_free(w);
+
     /* leitor fecha: o escritor recebe EPIPE */
     mnet_stream_pair(16, &r, &w);
     mnet_stream_open(r); mnet_stream_open(w);

@@ -23,6 +23,11 @@
 #include <stdio.h>
 typedef pthread_mutex_t ms_mutex_t;
 typedef pthread_cond_t ms_cond_t;
+typedef struct timespec ms_ts_t;
+#define MS_REALTIME CLOCK_REALTIME
+#define TS_SEC(t) (t).tv_sec
+#define TS_NSEC(t) (t).tv_nsec
+#include <time.h>
 #define O_RD O_RDONLY
 #define O_WR_NEW (O_WRONLY | O_CREAT | O_TRUNC)
 #define O_WR_APP (O_WRONLY | O_CREAT | O_APPEND)
@@ -36,6 +41,12 @@ int pthread_mutex_unlock(void *m);
 int pthread_mutex_destroy(void *m);
 int pthread_cond_init(void *c, const void *a);
 int pthread_cond_wait(void *c, void *m);
+int pthread_cond_timedwait(void *c, void *m, const void *abstime);
+typedef struct { long long sec, nsec; } ms_ts_t;
+int clock_gettime(int clk, ms_ts_t *t);
+#define MS_REALTIME 0
+#define TS_SEC(t) (t).sec
+#define TS_NSEC(t) (t).nsec
 int pthread_cond_broadcast(void *c);
 int pthread_cond_destroy(void *c);
 int pthread_create(unsigned long *t, const void *attr, void *(*fn)(void *), void *arg);
@@ -753,4 +764,26 @@ int mnet_stream_peer_gone(mnet_stream_t *w) {
     int gone = !w->sh->rd || w->sh->r_closed;
     ulk(w->sh);
     return gone;
+}
+/* leitura com prazo (NSURLSessionStreamTask readData...timeout:): >0 bytes, 0 fim, -1 erro, -2 prazo (<= 0 = sem prazo) */
+long mnet_stream_read_wait(mnet_stream_t *s, uint8_t *b, size_t n, int timeout_ms) {
+    if (!s || timeout_ms <= 0 || !s->sh || (s->kind != K_SOCK_IN && s->kind != K_PAIR_IN)) return mnet_stream_read(s, b, n);
+    ms_shared_t *h = s->sh;
+    ms_ts_t until;
+    clock_gettime(MS_REALTIME, &until);
+    long long ns = (long long)TS_NSEC(until) + (long long)(timeout_ms % 1000) * 1000000LL;
+    TS_SEC(until) += timeout_ms / 1000 + ns / 1000000000LL;
+    TS_NSEC(until) = ns % 1000000000LL;
+    lk(h);
+    for (;;) {
+        int st = refresh(s);
+        if (st != MNET_SS_OPEN && st != MNET_SS_OPENING) break;
+        if (h->buf.n || (s->kind == K_PAIR_IN ? h->w_closed : h->rx_eof)) break;
+        if (pthread_cond_timedwait(&h->cv, &h->mu, &until) != 0) {
+            st = refresh(s);
+            if (!h->buf.n && st == MNET_SS_OPEN && !(s->kind == K_PAIR_IN ? h->w_closed : h->rx_eof)) { ulk(h); return -2; }
+        }
+    }
+    ulk(h);
+    return mnet_stream_read(s, b, n);                                  /* agora não bloqueia */
 }

@@ -429,6 +429,7 @@ void mnet_stream_close(mnet_stream_t *s);
 void mnet_stream_free(mnet_stream_t *s);
 long mnet_stream_read(mnet_stream_t *s, uint8_t *b, size_t n);               /* bloqueia como o CFReadStreamRead */
 long mnet_stream_write(mnet_stream_t *s, const uint8_t *b, size_t n);
+long mnet_stream_read_wait(mnet_stream_t *s, uint8_t *b, size_t n, int timeout_ms);   /* -2: prazo */
 int mnet_stream_status(mnet_stream_t *s);
 int mnet_stream_has_bytes(mnet_stream_t *s);
 int mnet_stream_has_space(mnet_stream_t *s);
