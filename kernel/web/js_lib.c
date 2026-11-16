@@ -904,6 +904,8 @@ static jsobj *new_iter(jsv target, int kind) {
     return it;
 }
 
+jsobj *js_new_arr_iter(jsv target, int kind) { return new_iter(target, kind); }
+
 NATIVE(arrp_iterator) {
     UNUSED_ARGS;
     jsv o = js_toobj(thisv);
@@ -2318,5 +2320,6 @@ void js_lib_init(jsrealm *r) {
     js_defnative(g, "eval", g_eval, 1, 0);
 
     js_lib2_init(r);
+    js_typed_init(r);
     js_bigint_init(r);
 }

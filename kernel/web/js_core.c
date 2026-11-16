@@ -80,6 +80,7 @@ static void mark_obj(jsobj *o) {
     case CL_GEN: js_coro_mark_owner(o); break;
     case CL_BOOLEAN: case CL_NUMBER: case CL_STRING: case CL_SYMBOL: case CL_BIGINT: gc_mark_val(o->u.prim); break;
     case CL_MODULE: js_module_mark(o); break;
+    case CL_TYPED: case CL_DATAVIEW: gc_mark_ptr(o->u.ta.buffer); break;
     case CL_NODE: case CL_STYLE: case CL_CLASSLIST: case CL_EVENT: case CL_STORAGE: case CL_LOCATION: case CL_DATASET: case CL_HOST:
         gc_mark_val(o->u.host.extra);
         break;
@@ -193,6 +194,10 @@ static void free_obj(gch_t *h) {
         if (o->cls == CL_REGEXP && o->u.re.prog) rx_unref(o->u.re.prog);
         if (o->cls == CL_GEN) js_coro_free(o->u.gen.co);
         if (o->cls == CL_MODULE) js_module_free(o);
+        if (o->cls == CL_ARRAYBUFFER && o->u.buf.data) {
+            if (o->u.buf.dealloc) o->u.buf.dealloc(o->u.buf.data, o->u.buf.dctx);
+            else if (!o->u.buf.detached) kfree(o->u.buf.data);
+        }
         break;
     }
     case GT_ENV: {
@@ -777,6 +782,11 @@ jsv js_get_with_this(jsv o, jsstr *k, jsv thisv) {
     }
     for (int depth = 0; ob && depth < 10000; ob = ob->proto, depth++) {
         switch (ob->cls) {
+        case CL_TYPED: {
+            /* índice inteiro canônico: sempre o elemento (ou undefined), nunca o protótipo */
+            if (js_str_isindex(k, &idx)) return js_typed_get(ob, idx);
+            break;
+        }
         case CL_ARRAY: case CL_ARGUMENTS:
             if (k == A[A_length] || (k->len == 6 && js_str_eq(k, A[A_length]))) return jv_int((int)ob->alen);
             if (js_str_isindex(k, &idx)) {
@@ -848,6 +858,7 @@ jsv js_get(jsv o, jsv key) {
         if (jv_isobj(o)) {
             jsobj *ob = jv_o(o);
             if ((ob->cls == CL_ARRAY || ob->cls == CL_ARGUMENTS) && i < ob->alen && ob->arr[i] != JS_HOLE) return ob->arr[i];
+            if (ob->cls == CL_TYPED) return js_typed_get(ob, i);
         } else if (jv_isstr(o) && !jv_s(o)->sym) {
             jsstr *s = jv_s(o);
             return i < s->ulen ? str_char(s, i) : JS_UNDEF;
@@ -861,6 +872,9 @@ jsv js_get(jsv o, jsv key) {
 static int set_on(jsobj *ob, jsstr *k, jsv v, jsv recv) {
     u32 idx;
     switch (ob->cls) {
+    case CL_TYPED:
+        if (js_str_isindex(k, &idx)) return js_typed_set(ob, idx, v) < 0 ? -1 : 0;
+        break;
     case CL_ARRAY:
         if (js_str_eq(k, A[A_length])) {
             double d = js_tonum(v);
@@ -933,6 +947,7 @@ int js_set(jsv o, jsv key, jsv v) {
             js_arr_set(ob, i, v);
             return 0;
         }
+        if (ob->cls == CL_TYPED) return js_typed_set(ob, i, v);
     }
     jsstr *k = js_tokey(key);
     if (!k) return -1;
@@ -952,6 +967,7 @@ int js_has(jsv o, jsv key) {
             if (js_str_eq(k, A[A_length])) return 1;
             if (js_str_isindex(k, &idx) && idx < ob->alen && ob->arr[idx] != JS_HOLE) return 1;
         }
+        if (ob->cls == CL_TYPED && js_str_isindex(k, &idx)) return idx < js_typed_length(ob);
         if (ob->cls == CL_STRING) {
             jsstr *s = jv_s(ob->u.prim);
             if (js_str_eq(k, A[A_length])) return 1;
@@ -997,6 +1013,8 @@ jsobj *js_keylist(jsobj *o, bool only_enum, bool include_proto) {
         u32 start = first ? out->alen : 0;
         if (ob->cls == CL_ARRAY || ob->cls == CL_ARGUMENTS) {
             for (u32 i = 0; i < ob->alen; i++) if (ob->arr[i] != JS_HOLE) js_arr_push(out, jv_str(idx_str(i)));
+        } else if (ob->cls == CL_TYPED) {
+            for (u32 i = 0, n = js_typed_length(ob); i < n; i++) js_arr_push(out, jv_str(idx_str(i)));
         } else if (ob->cls == CL_STRING) {
             jsstr *s = jv_s(ob->u.prim);
             for (u32 i = 0; i < s->ulen; i++) js_arr_push(out, jv_str(idx_str(i)));
@@ -1472,6 +1490,8 @@ void js_mark_realm(jsrealm *r) {
                     &r->p_text, &r->p_event, &r->p_style, &r->p_classlist, &r->p_storage, &r->p_location, &r->jobs};
     for (u32 i = 0; i < ARRAY_LEN(ps); i++) gc_mark_ptr(*ps[i]);
     for (int i = 0; i < E_COUNT; i++) { gc_mark_ptr(r->p_err[i]); gc_mark_ptr(r->c_err[i]); }
+    gc_mark_ptr(r->p_abuf); gc_mark_ptr(r->p_dview); gc_mark_ptr(r->p_typed);
+    for (int i = 0; i < 11; i++) gc_mark_ptr(r->p_ta[i]);
     gc_mark_ptr(r->p_asyncgen); gc_mark_ptr(r->p_bigint); gc_mark_ptr(r->modules); gc_mark_ptr(r->modjobs);
     gc_mark_ptr(r->glex);
 }

@@ -61,6 +61,12 @@ Cada item fecha com teste de host (`tools/web_host.sh`) ou, quando depende da VM
    `tools/web_host_dialog.c` (4 casos: confirm/prompt/alert em sequência com outra página rodando JS e o coletor
    no meio, página fechada, async e geradores). As corrotinas do motor (`js_gen.c`) passaram a rodar também no
    host (`sysv_abi`), então geradores e async agora têm teste. Na VM: caso 14b do `tests-webkit` (build final).
+5b. ✅ **ArrayBuffer, typed arrays, DataView, TextEncoder/TextDecoder** no motor (`kernel/web/js_typed.c`): os 11
+   tipos (inclusive Uint8Clamped e BigInt64/BigUint64), construtores por tamanho/buffer/vetor/iterável, `from`/`of`,
+   `set`, `subarray` (mesma memória), `slice`, `fill`, `map`/`filter`/`sort` do mesmo tipo, iteradores, métodos de
+   leitura do Array, índices inteiros no núcleo (`js_core.c`), DataView com as duas ordens de bytes, UTF-8 do WHATWG
+   no TextDecoder (`fatal`, BOM). Base do JavaScriptCore (`JSObjectMakeTypedArrayWithBytesNoCopy`) e do canvas.
+   Teste: `tools/web_host_typed.c` (33 expressões).
 6. **Canvas 2D** (`<canvas>`, `getContext('2d')`, caminhos, texto, imagens, `getImageData`/`toDataURL`).
 7. **WebGL 1/2** sobre o OpenGL do mOS (frente do Otavio) com reserva por software.
 8. **`<video>`/`<audio>`**: o motor publica o elemento; o `WebKit.framework` decodifica com AVFoundation/
@@ -86,6 +92,7 @@ Cada item fecha com teste de host (`tools/web_host.sh`) ou, quando depende da VM
 ## Diário
 
 - 15 nov.: harness de host do motor (`tools/web_host.sh`, 5/5).
+- 16 nov.: typed arrays (`typed_arrays`): 248/248.
 - 16 nov.: diálogos bloqueantes (`dialogo_bloqueante`, `dialogo_pagina_fechada`, `dialogo_em_async`, `geradores_e_async`): 215/215.
 - 16 nov.: formulários em iframes (`iframe_formularios`): 199/199.
 - 16 nov.: iframes parte 1 (`iframe_src_pintura_js`, `iframe_clique_rodinha_src`, `iframe_aninhado_e_limites`): 188/188.
