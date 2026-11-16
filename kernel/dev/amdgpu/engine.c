@@ -1,4 +1,4 @@
-/* mOS — motores da GPU AMD família Raven: SMU 10 (mensagens), GMC da MMHUB 1.0 (aberturas, GART do contexto 0)
+/* mOS — motores da GPU AMD família Raven: SMU 10 (mensagens), GMC da MMHUB 1.0 e da GFXHUB 1.0 (aberturas, GART do contexto 0)
  * e SDMA 4.1 (anel, cópia, preenchimento, fences). Ver amdgpu.h. Testado no host contra um SDMA simulado que
  * executa os pacotes (tools/amdgpu_hw_host.c).
  *
@@ -77,15 +77,77 @@ static bool smu_init(amdgpu_t *a) {
 }
 
 /* ------------------------------------------------------------ GMC (MMHUB 1.0) */
-static void gmc_invalidate(amdgpu_t *a) {
-    /* semáforo do motor 17 (MMHUB fora da Raven1), pedido para o VMID 0, espera o ACK, solta */
-    bool sem = a->variant != AMD_RAVEN;
-    if (sem) for (u32 n = 0; n < SPIN_MAX && !(RR(a, R_VM_INV_ENG17_SEM) & 1); n++) CPU_RELAX();
-    WR(a, R_VM_INV_ENG17_REQ, INV_REQ_VMID0 | INV_REQ_L2_PTES | INV_REQ_L2_PDE0 | INV_REQ_L2_PDE1 | INV_REQ_L2_PDE2 | INV_REQ_L1_PTES);
+/* As duas hubs (MMHUB: display, SDMA, IH; GFXHUB: CP e shaders) têm o mesmo conjunto de registradores em
+ * lugares diferentes. hub 0 = MMHUB, 1 = GFXHUB. */
+static u32 HV(int hub, u32 r) { return hub ? GFXHUB_VM(r) : r; }
+static u32 HM(int hub, u32 r) { return hub ? GFXHUB_MC(r) : r; }
+
+static void hub_invalidate(amdgpu_t *a, int hub) {
+    /* semáforo do motor 17 só na MMHUB fora da Raven1; pedido para o VMID 0, espera o ACK, solta */
+    bool sem = !hub && a->variant != AMD_RAVEN;
+    if (sem) for (u32 n = 0; n < SPIN_MAX && !(RR(a, HV(hub, R_VM_INV_ENG17_SEM)) & 1); n++) CPU_RELAX();
+    WR(a, HV(hub, R_VM_INV_ENG17_REQ), INV_REQ_VMID0 | INV_REQ_L2_PTES | INV_REQ_L2_PDE0 | INV_REQ_L2_PDE1 | INV_REQ_L2_PDE2 | INV_REQ_L1_PTES);
     u32 n = 0;
-    while (!(RR(a, R_VM_INV_ENG17_ACK) & INV_REQ_VMID0) && n < SPIN_MAX) { n++; CPU_RELAX(); }
-    if (sem) WR(a, R_VM_INV_ENG17_SEM, 0);
+    while (!(RR(a, HV(hub, R_VM_INV_ENG17_ACK)) & INV_REQ_VMID0) && n < SPIN_MAX) { n++; CPU_RELAX(); }
+    if (sem) WR(a, HV(hub, R_VM_INV_ENG17_SEM), 0);
     if (n >= SPIN_MAX) a->gmc_timeouts++;
+}
+
+static void gmc_invalidate(amdgpu_t *a) {
+    hub_invalidate(a, 0);
+    if (a->gfxhub_ok) hub_invalidate(a, 1);
+}
+
+/* aberturas, TLB L1, cache L2 e contexto 0 (a GART) de uma hub */
+static void hub_setup(amdgpu_t *a, int hub, u64 pt, u64 scratch_phys) {
+    WR(a, HV(hub, R_VM_CTX0_PT_BASE_LO), (u32)pt);
+    WR(a, HV(hub, R_VM_CTX0_PT_BASE_HI), (u32)(pt >> 32));
+    WR(a, HV(hub, R_VM_CTX0_PT_START_LO), (u32)(a->gart_start >> 12));
+    WR(a, HV(hub, R_VM_CTX0_PT_START_HI), (u32)(a->gart_start >> 44));
+    u64 gend = a->gart_start + a->gart_size - 1;
+    WR(a, HV(hub, R_VM_CTX0_PT_END_LO), (u32)(gend >> 12));
+    WR(a, HV(hub, R_VM_CTX0_PT_END_HI), (u32)(gend >> 44));
+
+    /* abertura do sistema = a faixa da VRAM; AGP desligado (fundo acima do topo) */
+    WR(a, HM(hub, R_MC_VM_AGP_BASE), 0);
+    WR(a, HM(hub, R_MC_VM_AGP_BOT), 0xFFFFFF);
+    WR(a, HM(hub, R_MC_VM_AGP_TOP), 0);
+    WR(a, HM(hub, R_MC_VM_SYS_APERTURE_LOW), (u32)(a->fb_start >> 18));
+    WR(a, HM(hub, R_MC_VM_SYS_APERTURE_HIGH), (u32)(a->variant == AMD_RAVEN2 ? (a->fb_top >> 18) + 1 : a->fb_top >> 18));
+    WR(a, HM(hub, R_MC_VM_SYS_APERTURE_DEF_LSB), (u32)(scratch_phys >> 12));
+    WR(a, HM(hub, R_MC_VM_SYS_APERTURE_DEF_MSB), (u32)(scratch_phys >> 44));
+    WR(a, HV(hub, R_VM_L2_FAULT_DEF_LO), (u32)(a->dummy_page >> 12));
+    WR(a, HV(hub, R_VM_L2_FAULT_DEF_HI), (u32)(a->dummy_page >> 44));
+
+    u32 t = RR(a, HM(hub, R_MC_VM_MX_L1_TLB_CNTL));
+    t |= L1_TLB_ENABLE | L1_TLB_ADV_DRIVER_MODEL | L1_TLB_ATC_EN;
+    t = (t & ~(3u << 3)) | L1_TLB_SYS_ACCESS_MODE_3;
+    t &= ~L1_TLB_SYS_APERTURE_UNMAPPED;
+    t = (t & ~L1_TLB_MTYPE_MASK) | L1_TLB_MTYPE_UC;
+    WR(a, HM(hub, R_MC_VM_MX_L1_TLB_CNTL), t);
+
+    t = RR(a, HV(hub, R_VM_L2_CNTL));
+    t |= L2_ENABLE_CACHE | L2_ENABLE_FRAG;
+    t &= ~(L2_PDE0_TAG_GEN_MODE | L2_PDE_FAULT_CLASS | L2_IDENT_FRAG_MASK);
+    t = (t & ~L2_CTX1_IDENT_MODE_MASK) | L2_CTX1_IDENT_MODE_1;
+    WR(a, HV(hub, R_VM_L2_CNTL), t);
+    WR(a, HV(hub, R_VM_L2_CNTL2), RR(a, HV(hub, R_VM_L2_CNTL2)) | L2_CNTL2_INV_L1_TLBS | L2_CNTL2_INV_L2_CACHE);
+    t = (L2_CNTL3_DEFAULT & ~(L2_CNTL3_BANK_MASK | L2_CNTL3_BIGK_MASK)) | 12u | 9u << L2_CNTL3_BIGK_SHIFT;
+    WR(a, HV(hub, R_VM_L2_CNTL3), t);
+    WR(a, HV(hub, R_VM_L2_CNTL4), L2_CNTL4_DEFAULT & ~L2_CNTL4_PHYS_MASK);
+
+    t = RR(a, HV(hub, R_VM_CONTEXT0_CNTL));
+    t |= CTX0_ENABLE;
+    t &= ~(CTX0_DEPTH_MASK | CTX0_BLOCK_MASK | CTX0_RETRY_FAULT);
+    WR(a, HV(hub, R_VM_CONTEXT0_CNTL), t);
+
+    WR(a, HV(hub, R_VM_L2_CTX1_IDENT_LOW_LO), 0xFFFFFFFFu);
+    WR(a, HV(hub, R_VM_L2_CTX1_IDENT_LOW_HI), 0x0000000Fu);
+    WR(a, HV(hub, R_VM_L2_CTX1_IDENT_HIGH_LO), 0);
+    WR(a, HV(hub, R_VM_L2_CTX1_IDENT_HIGH_HI), 0);
+    WR(a, HV(hub, R_VM_L2_CTX_IDENT_PHYS_LO), 0);
+    WR(a, HV(hub, R_VM_L2_CTX_IDENT_PHYS_HI), 0);
+    hub_invalidate(a, hub);
 }
 
 static bool gmc_init(amdgpu_t *a) {
@@ -110,55 +172,10 @@ static bool gmc_init(amdgpu_t *a) {
     a->dummy_page = dummy;
 
     u64 pt = vram_mc(a, tbl);
-    WR(a, R_VM_CTX0_PT_BASE_LO, (u32)pt);
-    WR(a, R_VM_CTX0_PT_BASE_HI, (u32)(pt >> 32));
-    WR(a, R_VM_CTX0_PT_START_LO, (u32)(a->gart_start >> 12));
-    WR(a, R_VM_CTX0_PT_START_HI, (u32)(a->gart_start >> 44));
-    u64 gend = a->gart_start + a->gart_size - 1;
-    WR(a, R_VM_CTX0_PT_END_LO, (u32)(gend >> 12));
-    WR(a, R_VM_CTX0_PT_END_HI, (u32)(gend >> 44));
-
-    /* abertura do sistema = a faixa da VRAM; AGP desligado (fundo acima do topo) */
-    WR(a, R_MC_VM_AGP_BASE, 0);
-    WR(a, R_MC_VM_AGP_BOT, 0xFFFFFF);
-    WR(a, R_MC_VM_AGP_TOP, 0);
-    WR(a, R_MC_VM_SYS_APERTURE_LOW, (u32)(a->fb_start >> 18));
-    WR(a, R_MC_VM_SYS_APERTURE_HIGH, (u32)(a->variant == AMD_RAVEN2 ? (a->fb_top >> 18) + 1 : a->fb_top >> 18));
     u64 sp = a->fb_phys + (scratch - a->bar0);
-    WR(a, R_MC_VM_SYS_APERTURE_DEF_LSB, (u32)(sp >> 12));
-    WR(a, R_MC_VM_SYS_APERTURE_DEF_MSB, (u32)(sp >> 44));
-    WR(a, R_VM_L2_FAULT_DEF_LO, (u32)(dummy >> 12));
-    WR(a, R_VM_L2_FAULT_DEF_HI, (u32)(dummy >> 44));
-
-    u32 t = RR(a, R_MC_VM_MX_L1_TLB_CNTL);
-    t |= L1_TLB_ENABLE | L1_TLB_ADV_DRIVER_MODEL | L1_TLB_ATC_EN;
-    t = (t & ~(3u << 3)) | L1_TLB_SYS_ACCESS_MODE_3;
-    t &= ~L1_TLB_SYS_APERTURE_UNMAPPED;
-    t = (t & ~L1_TLB_MTYPE_MASK) | L1_TLB_MTYPE_UC;
-    WR(a, R_MC_VM_MX_L1_TLB_CNTL, t);
-
-    t = RR(a, R_VM_L2_CNTL);
-    t |= L2_ENABLE_CACHE | L2_ENABLE_FRAG;
-    t &= ~(L2_PDE0_TAG_GEN_MODE | L2_PDE_FAULT_CLASS | L2_IDENT_FRAG_MASK);
-    t = (t & ~L2_CTX1_IDENT_MODE_MASK) | L2_CTX1_IDENT_MODE_1;
-    WR(a, R_VM_L2_CNTL, t);
-    WR(a, R_VM_L2_CNTL2, RR(a, R_VM_L2_CNTL2) | L2_CNTL2_INV_L1_TLBS | L2_CNTL2_INV_L2_CACHE);
-    t = (L2_CNTL3_DEFAULT & ~(L2_CNTL3_BANK_MASK | L2_CNTL3_BIGK_MASK)) | 12u | 9u << L2_CNTL3_BIGK_SHIFT;
-    WR(a, R_VM_L2_CNTL3, t);
-    WR(a, R_VM_L2_CNTL4, L2_CNTL4_DEFAULT & ~L2_CNTL4_PHYS_MASK);
-
-    t = RR(a, R_VM_CONTEXT0_CNTL);
-    t |= CTX0_ENABLE;
-    t &= ~(CTX0_DEPTH_MASK | CTX0_BLOCK_MASK | CTX0_RETRY_FAULT);
-    WR(a, R_VM_CONTEXT0_CNTL, t);
-
-    WR(a, R_VM_L2_CTX1_IDENT_LOW_LO, 0xFFFFFFFFu);
-    WR(a, R_VM_L2_CTX1_IDENT_LOW_HI, 0x0000000Fu);
-    WR(a, R_VM_L2_CTX1_IDENT_HIGH_LO, 0);
-    WR(a, R_VM_L2_CTX1_IDENT_HIGH_HI, 0);
-    WR(a, R_VM_L2_CTX_IDENT_PHYS_LO, 0);
-    WR(a, R_VM_L2_CTX_IDENT_PHYS_HI, 0);
-    gmc_invalidate(a);
+    hub_setup(a, 0, pt, sp);                 /* MMHUB */
+    hub_setup(a, 1, pt, sp);                 /* GFXHUB: o CP enxerga a mesma GART */
+    a->gfxhub_ok = true;
     kprintf("amdgpu: GART de %llu MiB em MC 0x%llx (tabela na VRAM MC 0x%llx)\n", a->gart_size >> 20, a->gart_start, pt);
     return true;
 }
@@ -170,10 +187,11 @@ static void gart_mark(amdgpu_t *a, u32 i, bool on) {
 }
 
 /* Liga n páginas de RAM (endereços físicos de 4 KiB, contíguos a partir de phys) a uma faixa nova da GART.
- * Devolve o endereço MC da faixa, ou 0. */
+ * Devolve o endereço MC da faixa, ou 0. A página 0 da GART nunca é entregue: com a GART em MC 0, o endereço 0
+ * seria ambíguo com a falha. */
 u64 amdgpu_gart_map(amdgpu_t *a, u64 phys, u32 npages, bool writable) {
     if (!a || !a->gmc_ok || !npages || (phys & 0xFFF)) return 0;
-    for (u32 s = 0; s + npages <= AMD_GART_PAGES;) {
+    for (u32 s = 1; s + npages <= AMD_GART_PAGES;) {
         u32 k = 0;
         while (k < npages && !gart_used(a, s + k)) k++;
         if (k < npages) { s += k + 1; continue; }
@@ -199,10 +217,11 @@ void amdgpu_gart_unmap(amdgpu_t *a, u64 mc, u32 npages) {
 }
 
 /* ------------------------------------------------------------ SDMA 4.1 */
-static void golden(amdgpu_t *a, u32 reg, u32 and_mask, u32 or_mask) {
+void amdgpu_golden(amdgpu_t *a, u32 reg, u32 and_mask, u32 or_mask) {
     u32 v = and_mask == 0xFFFFFFFFu ? or_mask : (RR(a, reg) & ~and_mask) | (or_mask & and_mask);
     WR(a, reg, v);
 }
+#define golden amdgpu_golden
 
 static u32 ring_rptr(amdgpu_t *a) { return a->wb_cpu[0] >> 2; }   /* writeback em bytes */
 
@@ -304,6 +323,7 @@ u32 amdgpu_sdma_fill(amdgpu_t *a, u64 dst_mc, u32 value, u64 bytes) {
 }
 
 u64 amdgpu_vram_to_mc(const amdgpu_t *a, u64 bar_phys) { return vram_mc(a, bar_phys); }
+void *amdgpu_vram_cpu(const amdgpu_t *a, u64 bar_phys) { return vram_cpu(a, bar_phys); }
 
 static bool sdma_init(amdgpu_t *a) {
     char name[32];
@@ -403,5 +423,7 @@ bool amdgpu_engines_init(amdgpu_t *a) {
     a->gmc_ok = gmc_init(a);
     if (!a->gmc_ok) return false;
     if (!amdgpu_ih_init(a)) kprintf("amdgpu: sem IH; fences seguem por polling\n");
-    return sdma_init(a);
+    bool sdma = sdma_init(a);
+    a->gfx_ok = amdgpu_gfx_init(a);          /* motor 3D: independe do SDMA */
+    return sdma;
 }
