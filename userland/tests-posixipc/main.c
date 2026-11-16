@@ -109,8 +109,9 @@ int main(void) {
     EXPECT(getattrlist(f1, &al, &fbuf, sizeof fbuf, 0), 0, "getattrlist ATTR_CMN_FNDRINFO");
     int zero = 1; for (int i = 0; i < 32; i++) if (fbuf.finfo[i]) zero = 0;
     EXPECT(zero && fbuf.len == 36, 1, "Finder Info zerado (36 bytes)");
-    al.commonattr = ATTR_CMN_NAME;
+    al.commonattr = 0; al.fileattr = 0x80000000u;          /* bit de arquivo que o XNU não define */
     EXPECT(RE(getattrlist(f1, &al, &fbuf, sizeof fbuf, 0)), -(1000 + EINVAL), "getattrlist atributo sem suporte");
+    al.fileattr = 0;
     al.commonattr = ATTR_CMN_FNDRINFO; al.bitmapcount = 4;
     EXPECT(RE(getattrlist(f1, &al, &fbuf, sizeof fbuf, 0)), -(1000 + EINVAL), "getattrlist bitmapcount 4");
     al.bitmapcount = ATTR_BIT_MAP_COUNT;
@@ -132,14 +133,22 @@ int main(void) {
     sl.bitmapcount = ATTR_BIT_MAP_COUNT;
     EXPECT(RE(setattrlist("/tmp/mos-attr-teste/nao-existe", &sl, &mode, sizeof mode, 0)), -(1000 + ENOENT), "setattrlist num arquivo que não existe");
 
-    printf("sem suporte nestes volumes\n");
+    printf("getattrlistbulk e exchangedata\n");
     char big[256];
     al.commonattr = ATTR_CMN_RETURNED_ATTRS | ATTR_CMN_NAME;
     int dfd = open(dir, O_RDONLY);
-    EXPECT(RE(getattrlistbulk(dfd, &al, big, sizeof big, 0)), -(1000 + ENOTSUP), "getattrlistbulk");
-    EXPECT(RE(exchangedata(f1, f1, 0)), -(1000 + ENOTSUP), "exchangedata");
+    EXPECT(RE(getattrlistbulk(dfd, &al, big, sizeof big, 0)), 1, "getattrlistbulk: a única entrada");
+    EXPECT(RE(getattrlistbulk(dfd, &al, big, sizeof big, 0)), 0, "getattrlistbulk: fim");
+    al.commonattr = ATTR_CMN_NAME;
+    EXPECT(RE(getattrlistbulk(dfd, &al, big, sizeof big, 0)), -(1000 + EINVAL), "getattrlistbulk sem ATTR_CMN_RETURNED_ATTRS");
+    EXPECT(RE(exchangedata(f1, f1, 0)), -(1000 + EINVAL), "exchangedata do mesmo arquivo");
+    char f2[128]; snprintf(f2, sizeof f2, "%s/b", dir);
+    ff = open(f2, O_WRONLY | O_CREAT | O_TRUNC, 0644); if (ff >= 0) { write(ff, "yy", 2); close(ff); }
+    EXPECT(RE(exchangedata(f1, f2, 0)), 0, "exchangedata entre dois arquivos");
+    struct stat s1; stat(f1, &s1);
+    EXPECT(s1.st_size, 2, "o conteúdo trocou");
     close(dfd);
-    unlink(f1); rmdir(dir);
+    unlink(f1); unlink(f2); rmdir(dir);
 
     printf("abort_with_reason\n");
     c = fork();

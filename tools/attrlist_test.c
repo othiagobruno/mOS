@@ -175,6 +175,12 @@ int main(void) {
     CHECK(clonefile("/Users/Visitante/at/f.txt", "/Users/Visitante/at/g.txt", 0) == -1 && cx_errno == 17);
     CHECK(exchangedata("/Users/Visitante/at/s1", "/Users/Visitante/at/s2", 0) == 0);
     CHECK(cx_statx("/Users/Visitante/at/s1", -1, &x) == 0 && x.size == 1);
+    /* setattrlist num caminho que não existe: ENOENT (antes saía -1 com errno 0); exchangedata do mesmo: EINVAL */
+    al_t sm = {5, 0, 0x20000, 0, 0, 0, 0};
+    u32 md = 0600;
+    cx_errno = 0;
+    CHECK(setattrlist("/Users/Visitante/at/nao-existe", &sm, &md, 4, 0) == -1 && cx_errno == 2);
+    CHECK(exchangedata("/Users/Visitante/at/s1", "/Users/Visitante/at/s1", 0) == -1 && cx_errno == 22);
     /* fsgetpath */
     char fp[256];
     CHECK(fsgetpath(fp, sizeof fp, 0, x.ino) == (long)strlen("/Users/Visitante/at/s1") + 1 && !strcmp(fp, "/Users/Visitante/at/s1"));

@@ -130,8 +130,7 @@ int vfs_clone(vnode_t *s, const char *dst, u32 flags, int euid, int egid) {
 
 /* ------------------------------------------------------------------ exchangedata */
 int vfs_exchange(vnode_t *a, vnode_t *b) {
-    if (!a || !b || a->dir || b->dir) return -MOS_EINVAL;
-    if (a == b) return 0;
+    if (!a || !b || a->dir || b->dir || a == b) return -MOS_EINVAL;   /* o xnu recusa o mesmo arquivo */
     if (vfs_is_read_only(a) || vfs_is_read_only(b)) return -MOS_EROFS;
     if (vfs_immutable(a) || vfs_immutable(b)) return -MOS_EPERM;
     u8 *d = a->data; usize sz = a->size, cap = a->cap;
