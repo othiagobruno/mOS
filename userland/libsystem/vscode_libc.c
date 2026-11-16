@@ -718,6 +718,13 @@ int pthread_setcancelstate(int st, int *old) {
     tid_tira(cancel_off, me);
     return 0;
 }
+/* tipo de cancelamento (deferido 2 / assíncrono 0): o mOS só cancela em pontos (deferido), então guarda o valor
+ * para devolver mas trata tudo como deferido. Devolve o antigo (padrão: deferido). */
+int pthread_setcanceltype(int type, int *old) {
+    if (type != 0 && type != 2) return 22;               /* PTHREAD_CANCEL_ASYNCHRONOUS 0, DEFERRED 2 */
+    if (old) *old = 2;
+    return 0;
+}
 int pthread_cancel(unsigned long t) {
     long tid = cx_pthread_tid((void *)t);
     if (tid <= 0) return 3;                              /* ESRCH */
@@ -801,6 +808,42 @@ i32 OSAtomicOr32Barrier(u32 m, volatile u32 *p) { return (i32)__atomic_or_fetch(
 int OSAtomicCompareAndSwap32Barrier(i32 o, i32 n, volatile i32 *p) { return __atomic_compare_exchange_n(p, &o, n, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST); }
 int OSAtomicCompareAndSwapPtrBarrier(void *o, void *n, void *volatile *p) { return __atomic_compare_exchange_n(p, &o, n, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST); }
 void OSMemoryBarrier(void) { __atomic_thread_fence(__ATOMIC_SEQ_CST); }
+/* variantes que os apps do corpus (firefox, obs, thunderbird, vlc) importam: add32/64 com barreira, CAS de int/long/
+ * ptr/64 com barreira, test-and-set/clear e o OSSpinLock */
+i32 OSAtomicAdd32Barrier(i32 v, volatile i32 *p) { return __atomic_add_fetch(p, v, __ATOMIC_SEQ_CST); }
+i64 OSAtomicAdd64(i64 v, volatile i64 *p) { return __atomic_add_fetch(p, v, __ATOMIC_RELAXED); }
+i64 OSAtomicAdd64Barrier(i64 v, volatile i64 *p) { return __atomic_add_fetch(p, v, __ATOMIC_SEQ_CST); }
+i64 OSAtomicIncrement64(volatile i64 *p) { return __atomic_add_fetch(p, 1, __ATOMIC_RELAXED); }
+i64 OSAtomicIncrement64Barrier(volatile i64 *p) { return __atomic_add_fetch(p, 1, __ATOMIC_SEQ_CST); }
+i64 OSAtomicDecrement64(volatile i64 *p) { return __atomic_sub_fetch(p, 1, __ATOMIC_RELAXED); }
+i64 OSAtomicDecrement64Barrier(volatile i64 *p) { return __atomic_sub_fetch(p, 1, __ATOMIC_SEQ_CST); }
+int OSAtomicCompareAndSwapIntBarrier(int o, int n, volatile int *p) { return __atomic_compare_exchange_n(p, &o, n, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST); }
+int OSAtomicCompareAndSwapInt(int o, int n, volatile int *p) { return __atomic_compare_exchange_n(p, &o, n, 0, __ATOMIC_RELAXED, __ATOMIC_RELAXED); }
+int OSAtomicCompareAndSwapLongBarrier(long o, long n, volatile long *p) { return __atomic_compare_exchange_n(p, &o, n, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST); }
+int OSAtomicCompareAndSwapLong(long o, long n, volatile long *p) { return __atomic_compare_exchange_n(p, &o, n, 0, __ATOMIC_RELAXED, __ATOMIC_RELAXED); }
+int OSAtomicCompareAndSwap64Barrier(i64 o, i64 n, volatile i64 *p) { return __atomic_compare_exchange_n(p, &o, n, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST); }
+int OSAtomicCompareAndSwap64(i64 o, i64 n, volatile i64 *p) { return __atomic_compare_exchange_n(p, &o, n, 0, __ATOMIC_RELAXED, __ATOMIC_RELAXED); }
+int OSAtomicCompareAndSwapPtr(void *o, void *n, void *volatile *p) { return __atomic_compare_exchange_n(p, &o, n, 0, __ATOMIC_RELAXED, __ATOMIC_RELAXED); }
+i32 OSAtomicAnd32(u32 m, volatile u32 *p) { return (i32)__atomic_and_fetch(p, m, __ATOMIC_RELAXED); }
+i32 OSAtomicOr32(u32 m, volatile u32 *p) { return (i32)__atomic_or_fetch(p, m, __ATOMIC_RELAXED); }
+i32 OSAtomicXor32(u32 m, volatile u32 *p) { return (i32)__atomic_xor_fetch(p, m, __ATOMIC_RELAXED); }
+i32 OSAtomicXor32Barrier(u32 m, volatile u32 *p) { return (i32)__atomic_xor_fetch(p, m, __ATOMIC_SEQ_CST); }
+/* bit n (ordem big-endian por byte, como no libkern): devolve o valor antigo do bit */
+static int os_bit(u32 n, volatile void *addr, int set, int barrier) {
+    volatile u8 *b = (volatile u8 *)addr + (n >> 3);
+    u8 mask = (u8)(0x80 >> (n & 7));
+    u8 old = set ? __atomic_fetch_or(b, mask, barrier ? __ATOMIC_SEQ_CST : __ATOMIC_RELAXED)
+                 : __atomic_fetch_and(b, (u8)~mask, barrier ? __ATOMIC_SEQ_CST : __ATOMIC_RELAXED);
+    return (old & mask) != 0;
+}
+int OSAtomicTestAndSet(u32 n, volatile void *a) { return os_bit(n, a, 1, 0); }
+int OSAtomicTestAndSetBarrier(u32 n, volatile void *a) { return os_bit(n, a, 1, 1); }
+int OSAtomicTestAndClear(u32 n, volatile void *a) { return os_bit(n, a, 0, 0); }
+int OSAtomicTestAndClearBarrier(u32 n, volatile void *a) { return os_bit(n, a, 0, 1); }
+/* OSSpinLock (int32: 0 livre): giro simples, como a libkern. OSSpinLockTry devolve true se travou */
+void OSSpinLockLock(volatile i32 *l) { while (__atomic_exchange_n(l, 1, __ATOMIC_ACQUIRE)) while (*l) __asm__ __volatile__("" ::: "memory"); }
+void OSSpinLockUnlock(volatile i32 *l) { __atomic_store_n(l, 0, __ATOMIC_RELEASE); }
+int OSSpinLockTry(volatile i32 *l) { return __atomic_exchange_n(l, 1, __ATOMIC_ACQUIRE) == 0; }
 /* __atomic_load/__atomic_store genéricos (objetos de tamanho qualquer): uma trava global */
 static volatile int ga_lock;
 void vs_atomic_load(size_t n, void *src, void *dst, int order) __asm__("__atomic_load");
@@ -832,10 +875,7 @@ int memset_s(void *s, size_t smax, int c, size_t n) {
 
 /* ================================================================ números aleatórios */
 int rand_r(unsigned *seed) { *seed = *seed * 1103515245u + 12345u; return (int)((*seed >> 16) & 0x7FFF); }
-static u64 rand48_x = 0x1234ABCD330Eull;
-static u32 rand48_next(void) { rand48_x = (rand48_x * 0x5DEECE66Dull + 0xB) & 0xFFFFFFFFFFFFull; return (u32)(rand48_x >> 16); }
-void srand48(long s) { rand48_x = ((u64)(u32)s << 16 | 0x330E) & 0xFFFFFFFFFFFFull; }
-long mrand48(void) { return (long)(i32)rand48_next(); }
+/* gerador da família drand48 (srand48/drand48/lrand48/mrand48/erand48/nrand48/jrand48/seed48/lcong48): rand48.c */
 
 /* ================================================================ matemática */
 long timezone = 0;     /* o mOS roda em UTC */
