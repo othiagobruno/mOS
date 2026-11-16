@@ -227,7 +227,7 @@ static void th_detach(id cls, SEL c, SEL sel, id target, id arg) {
  * dizia ser a principal e o Chromium montava um MessagePumpNSApplication ([NSApp run]) em threads
  * secundárias, levando trabalho do V8 para a thread errada. */
 #define TSD_THREAD_OBJ 101
-extern int cx_main_tid;
+int cx_main_tid;   /* thread principal do processo, atribuída no cx_darwin_init (abaixo): a única definição */
 static int on_main_thread(void) { return !cx_main_tid || (int)SYS0(SYS_GETTID) == cx_main_tid; }
 static id main_thread_obj;
 static id th_main_obj(id cls, SEL c) {
