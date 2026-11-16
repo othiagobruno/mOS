@@ -19,6 +19,7 @@ caminho: a aceleração pela Radeon Vega do Thiago depende do driver da frente 1
 | `gl_ffp.c` | Fixed function: matrizes, `glBegin/glEnd`, arrays de cliente (no VAO), luz completa, texgen, texenv/combine, fog, raster pos, `glDrawPixels`/`glBitmap`/`glCopyPixels`, seleção, `glPushAttrib`, listas de exibição |
 | `gl_glsl*.c` | GLSL 1.10–4.10: tradução para o dialeto do compilador de MSL, prelúdio com tipos, funções embutidas e todas as funções de textura, link, uniforms, blocos std140, embutidas do compat, programas separáveis e pipelines, `ARB_shader_objects` |
 | `gl_eval.c` | Avaliadores (`glMap*`, `glEval*`, `glMapGrid*`, `GL_AUTO_NORMAL`) e buffer de acumulação (`glAccum`) |
+| `gl_arbprog.c` | `ARB_vertex_program`/`ARB_fragment_program`: o assembly vira GLSL 1.20 compat (todas as instruções, vínculos `vertex.*`/`fragment.*`/`result.*`/`state.*`, `program.env/local`, endereçamento relativo, `TEX/TXB/TXP`, `KIL`, `_SAT`, opções de fog e posição invariante) |
 | `gl_misc.c` | Queries, sync, `APPLE_fence`, objetos de transform feedback, renderização condicional |
 | `mtltex.c` | Formatos de pixel e amostragem, divididos com o Metal |
 | `appkit_nsopengl.c` | CGL e NSOpenGL ligados ao contexto GL: framebuffer do tamanho da view, `flushBuffer` → IOSurface BGRA no `contents` do layer, `CGLSetOffScreen`, `kCGLCPSurfaceBackingSize` |
@@ -36,16 +37,16 @@ textura + sampler preenchido a cada draw com a unidade escolhida por `glUniform1
 ```
 L=userland/libsystem
 gcc -std=gnu11 -O1 -w -fno-builtin -I tools/hostinc -I $L -o /tmp/gl_host tools/gl_host.c tools/gl_host_glsl.c \
-    $L/gl_ctx.c $L/gl_buf.c $L/gl_tex.c $L/gl_fbo.c $L/gl_raster.c $L/gl_ffp.c $L/gl_misc.c $L/gl_eval.c $L/gl_glsl.c \
+    $L/gl_ctx.c $L/gl_buf.c $L/gl_tex.c $L/gl_fbo.c $L/gl_raster.c $L/gl_ffp.c $L/gl_misc.c $L/gl_eval.c $L/gl_arbprog.c $L/gl_glsl.c \
     $L/gl_glsl_tr.c $L/gl_glsl_pre.c $L/mtltex.c $L/mtlshader.c $L/mtlexec.c $L/mslspirv.c -lm -lpthread && /tmp/gl_host
 ```
 
-Resultado registrado (16 nov.): `gl_host: 73/73 ok`. Confere clear/scissor, cobertura exata de um triângulo
+Resultado registrado (16 nov.): `gl_host: 83/83 ok`. Confere clear/scissor, cobertura exata de um triângulo
 (496 pixels em 32×32), gradiente, flat, depth, stencil, blending, textura nearest/modulate/luminância, BGRA, DXT1,
 FBO + blit + renderbuffer, lista de exibição, luz difusa, fog, seleção, arrays de cliente, VBO/EBO, VAO do APPLE com
 buffer apagado, GLSL 4.10 core (atributos, uniforms, `out`, função com `out`, erro de compilação no log), textura +
 `discard` + UBO std140 (offsets e tamanho), GLSL 1.10 compat (`ftransform`, `gl_Color`, `gl_TexCoord`), MRT com
-`gl_FragData`, transform feedback com query, avaliador 2D com cor, `glGetMap`, `glAccum`. Também roda no `tools/build.sh`.
+`gl_FragData`, transform feedback com query, avaliador 2D com cor, `glGetMap`, `glAccum`, programas ARB (vp com `state.matrix.mvp`, fp com `TEX`, `program.local`, `KIL`, `MUL_SAT`, erro de sintaxe com posição), `EXT_bindable_uniform`. Também roda no `tools/build.sh`.
 
 `tools/nsopengl_host.c` (objetos compilados com as flags do libSystem): `CGLChoosePixelFormat`, contexto legado (2.1)
 e core (4.1), `flushBuffer` pondo o quadro BGRA no layer da view, `CGLSetOffScreen`. Resultado: 0 falhas.
@@ -54,8 +55,7 @@ Não houve VM nem app real nesta entrega: nada aqui diz que um app OpenGL espec�
 
 ## Cobertura
 
-1203 comandos do GL 1.0–4.1 e das extensões que o macOS anuncia estão em `tools/gl_cmds.txt`. Exportados: **1179**; faltam 24: `GL_ARB_vertex_program` (shaders em assembly, 21 comandos) e
-`GL_EXT_bindable_uniform` (3).
+1203 comandos do GL 1.0–4.1 e das extensões que o macOS anuncia estão em `tools/gl_cmds.txt`. Exportados: **1203 de 1203** (conferido com `nm` nos objetos compilados como no libSystem).
 
 ## Limites conhecidos
 

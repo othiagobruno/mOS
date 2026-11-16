@@ -394,6 +394,73 @@ static void t_eval_accum(void) {
     gl_ctx_destroy(C);
 }
 
+static void t_arb_programs(void) {
+    gl_ctx_t *C = mk(0, 8, 8);
+    const char *vp =
+        "!!ARBvp1.0\n"
+        "PARAM mvp[4] = { state.matrix.mvp };\n"
+        "ATTRIB p = vertex.position;\n"
+        "TEMP t;\n"
+        "DP4 result.position.x, mvp[0], p;\n"
+        "DP4 result.position.y, mvp[1], p;\n"
+        "DP4 result.position.z, mvp[2], p;\n"
+        "DP4 result.position.w, mvp[3], p;\n"
+        "MOV result.color, vertex.color;\n"
+        "MOV result.texcoord[0], vertex.texcoord[0];\n"
+        "END\n";
+    const char *fp =
+        "!!ARBfp1.0\n"
+        "PARAM k = program.local[0];\n"
+        "TEMP t, c;\n"
+        "TEX t, fragment.texcoord[0], texture[0], 2D;\n"
+        "SUB c, fragment.texcoord[0].x, 0.75;\n"
+        "KIL -c.x;\n"
+        "MUL_SAT result.color, t, k;\n"
+        "END\n";
+    GLuint ids[2];
+    glGenProgramsARB(2, ids);
+    glBindProgramARB(GL_VERTEX_PROGRAM_ARB, ids[0]);
+    glProgramStringARB(GL_VERTEX_PROGRAM_ARB, GL_PROGRAM_FORMAT_ASCII_ARB, (GLsizei)strlen(vp), vp);
+    GLint pos = 0;
+    glGetIntegerv(GL_PROGRAM_ERROR_POSITION_ARB, &pos);
+    CHECK(pos == -1, "vp aceito (erro %d: %s)", pos, glGetString(GL_PROGRAM_ERROR_STRING_ARB));
+    glBindProgramARB(GL_FRAGMENT_PROGRAM_ARB, ids[1]);
+    glProgramStringARB(GL_FRAGMENT_PROGRAM_ARB, GL_PROGRAM_FORMAT_ASCII_ARB, (GLsizei)strlen(fp), fp);
+    glGetIntegerv(GL_PROGRAM_ERROR_POSITION_ARB, &pos);
+    CHECK(pos == -1, "fp aceito (erro %d: %s)", pos, glGetString(GL_PROGRAM_ERROR_STRING_ARB));
+    glProgramLocalParameter4fARB(GL_FRAGMENT_PROGRAM_ARB, 0, 1, 0.5f, 2, 1);
+    GLuint tex;
+    glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    u8 img[4] = {200, 200, 100, 255};
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, img);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glEnable(GL_VERTEX_PROGRAM_ARB);
+    glEnable(GL_FRAGMENT_PROGRAM_ARB);
+    glClearColor(0, 0, 0, 1);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glBegin(GL_QUADS);
+    glTexCoord2f(0, 0); glVertex2f(-1, -1);
+    glTexCoord2f(1, 0); glVertex2f(1, -1);
+    glTexCoord2f(1, 1); glVertex2f(1, 1);
+    glTexCoord2f(0, 1); glVertex2f(-1, 1);
+    glEnd();
+    u8 o[4];
+    px(1, 4, o);
+    CHECK(o[0] == 200 && o[1] == 100 && o[2] == 200, "ARB fp: textura * local, saturado %d %d %d", o[0], o[1], o[2]);
+    px(7, 4, o);
+    CHECK(o[0] == 0 && o[1] == 0, "ARB fp: KIL depois de 0.75 %d %d %d", o[0], o[1], o[2]);
+    CHECK(glGetError() == GL_NO_ERROR, "ARB sem erro GL");
+    const char *bad = "!!ARBvp1.0\nMOV result.position, nada;\nEND\n";
+    glProgramStringARB(GL_VERTEX_PROGRAM_ARB, GL_PROGRAM_FORMAT_ASCII_ARB, (GLsizei)strlen(bad), bad);
+    glGetIntegerv(GL_PROGRAM_ERROR_POSITION_ARB, &pos);
+    CHECK(glGetError() == GL_INVALID_OPERATION && pos > 0, "erro de sintaxe com posição %d", pos);
+    GLint len = 0;
+    glGetProgramivARB(GL_VERTEX_PROGRAM_ARB, GL_PROGRAM_LENGTH_ARB, &len);
+    CHECK(len == (GLint)strlen(vp), "o programa anterior continua (%d)", len);
+    gl_ctx_destroy(C);
+}
+
 void gl_glsl_host_tests(int *fails, int *checks);
 int main(void) {
     t_clear_and_state();
@@ -404,6 +471,7 @@ int main(void) {
     t_lists_and_lighting();
     t_arrays();
     t_eval_accum();
+    t_arb_programs();
     gl_glsl_host_tests(&fails, &checks);
     printf("gl_host: %d/%d ok\n", checks - fails, checks);
     return fails != 0;

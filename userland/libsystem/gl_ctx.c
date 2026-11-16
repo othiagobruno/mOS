@@ -75,7 +75,7 @@ static const GLenum caps[] = {
     GL_MAP1_TEXTURE_COORD_3, GL_MAP1_TEXTURE_COORD_4, GL_MAP2_TEXTURE_COORD_1, GL_MAP2_TEXTURE_COORD_2,
     GL_MAP2_TEXTURE_COORD_3, GL_MAP2_TEXTURE_COORD_4, GL_MAP1_INDEX, GL_MAP2_INDEX, GL_VERTEX_PROGRAM_POINT_SIZE,
     GL_CLIP_PLANE0, GL_CLIP_PLANE1, GL_CLIP_PLANE2, GL_CLIP_PLANE3, GL_CLIP_PLANE4, GL_CLIP_PLANE5,
-    GL_STENCIL_TEST_TWO_SIDE_EXT, GL_DEBUG_OUTPUT, GL_DEBUG_OUTPUT_SYNCHRONOUS,
+    GL_STENCIL_TEST_TWO_SIDE_EXT, GL_DEBUG_OUTPUT, GL_DEBUG_OUTPUT_SYNCHRONOUS, GL_VERTEX_PROGRAM_ARB, GL_FRAGMENT_PROGRAM_ARB,
     0};
 /* capacidades por unidade de textura (compat): bit = base + unidade */
 static int tex_cap(GLenum cap) {
@@ -248,6 +248,7 @@ void gl_ctx_destroy(gl_ctx_t *C) {
     free(C->imv);
     free(C->ext_list);
     { void gl_eval_free(gl_ctx_t *C); gl_eval_free(C); }
+    { void gl_arb_free(gl_ctx_t *C); gl_arb_free(C); }
     share_free(C);
     free(C);
 }
@@ -461,7 +462,7 @@ void glSwapAPPLE(void) {}
 /* ================================================================ strings */
 static const char *g_ext_compat[] = {
     "GL_ARB_color_buffer_float", "GL_ARB_depth_buffer_float", "GL_ARB_depth_clamp", "GL_ARB_depth_texture",
-    "GL_ARB_draw_buffers", "GL_ARB_draw_elements_base_vertex", "GL_ARB_draw_instanced", "GL_ARB_fragment_program_shadow",
+    "GL_ARB_draw_buffers", "GL_ARB_draw_elements_base_vertex", "GL_ARB_draw_instanced", "GL_ARB_fragment_program_shadow", "GL_EXT_bindable_uniform",
     "GL_ARB_fragment_shader", "GL_ARB_framebuffer_object", "GL_ARB_framebuffer_sRGB", "GL_ARB_half_float_pixel",
     "GL_ARB_half_float_vertex", "GL_ARB_instanced_arrays", "GL_ARB_multisample", "GL_ARB_multitexture",
     "GL_ARB_occlusion_query", "GL_ARB_pixel_buffer_object", "GL_ARB_point_parameters", "GL_ARB_point_sprite",
@@ -471,7 +472,7 @@ static const char *g_ext_compat[] = {
     "GL_ARB_texture_env_combine", "GL_ARB_texture_env_crossbar", "GL_ARB_texture_env_dot3", "GL_ARB_texture_float",
     "GL_ARB_texture_mirrored_repeat", "GL_ARB_texture_non_power_of_two", "GL_ARB_texture_rectangle", "GL_ARB_texture_rg",
     "GL_ARB_transpose_matrix", "GL_ARB_vertex_array_bgra", "GL_ARB_vertex_blend", "GL_ARB_vertex_buffer_object",
-    "GL_ARB_vertex_shader", "GL_ARB_window_pos", "GL_EXT_abgr", "GL_EXT_bgra", "GL_EXT_blend_color",
+    "GL_ARB_vertex_shader", "GL_ARB_window_pos", "GL_ARB_vertex_program", "GL_ARB_fragment_program", "GL_ARB_fragment_program_shadow", "GL_EXT_bindable_uniform", "GL_EXT_abgr", "GL_EXT_bgra", "GL_EXT_blend_color",
     "GL_EXT_blend_equation_separate", "GL_EXT_blend_func_separate", "GL_EXT_blend_minmax", "GL_EXT_blend_subtract",
     "GL_EXT_clip_volume_hint", "GL_EXT_debug_label", "GL_EXT_debug_marker", "GL_EXT_draw_buffers2", "GL_EXT_draw_range_elements",
     "GL_EXT_fog_coord", "GL_EXT_framebuffer_blit", "GL_EXT_framebuffer_multisample", "GL_EXT_framebuffer_multisample_blit_scaled",
@@ -529,6 +530,7 @@ const GLubyte *glGetString(GLenum name) {
     case GL_RENDERER: return (const GLubyte *)"mOS Software Renderer";
     case GL_VERSION: return (const GLubyte *)(C->profile_core ? "4.1 mOS-1.0" : "2.1 mOS-1.0");
     case GL_SHADING_LANGUAGE_VERSION: return (const GLubyte *)(C->profile_core ? "4.10" : "1.20");
+    case GL_PROGRAM_ERROR_STRING_ARB: { extern const char *gl_arb_error_string(gl_ctx_t *); return (const GLubyte *)gl_arb_error_string(C); }
     case GL_EXTENSIONS:
         if (C->profile_core) GLERR(GL_INVALID_ENUM, 0);   /* core: só glGetStringi */
         ext_build(C);
@@ -566,6 +568,7 @@ static void gmat(gv_t *g, const mstack_t *s) { gfv(g, 16, s->s[s->top].m); }
 static int get_any(gl_ctx_t *C, GLenum p, gv_t *g) {
     if (p >= GL_LIGHT0 && p <= GL_LIGHT7) { gb(g, 1, (u8[]){(u8)C->light[p - GL_LIGHT0].on}); return 1; }
     switch (p) {
+    case GL_PROGRAM_ERROR_POSITION_ARB: { extern int gl_arb_error_pos(gl_ctx_t *); I1(gl_arb_error_pos(C)); return 1; }
     case GL_MAJOR_VERSION: I1(C->profile_core ? 4 : 2); return 1;
     case GL_MINOR_VERSION: I1(C->profile_core ? 1 : 1); return 1;
     case GL_CONTEXT_PROFILE_MASK: I1(C->profile_core ? GL_CONTEXT_CORE_PROFILE_BIT : GL_CONTEXT_COMPATIBILITY_PROFILE_BIT); return 1;
@@ -966,7 +969,7 @@ gl_buf_t **gl_buf_slot(gl_ctx_t *C, GLenum t) {
     case GL_COPY_WRITE_BUFFER: return &C->b_copy_w;
     case GL_PIXEL_PACK_BUFFER: return &C->b_pack;
     case GL_PIXEL_UNPACK_BUFFER: return &C->b_unpack;
-    case GL_UNIFORM_BUFFER: return &C->b_ubo;
+    case GL_UNIFORM_BUFFER: case GL_UNIFORM_BUFFER_EXT: return &C->b_ubo;
     case GL_TEXTURE_BUFFER: return &C->b_tbo;
     case GL_TRANSFORM_FEEDBACK_BUFFER: return &C->b_xfb;
     case GL_DRAW_INDIRECT_BUFFER: return &C->b_indirect;

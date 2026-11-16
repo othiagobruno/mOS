@@ -171,6 +171,7 @@ typedef struct gl_prog {
     char *fbind_name[16]; int fbind_loc[16], fbind_idx[16]; int nfbind;
     char **xfb_names; int nxfb_names; GLenum xfb_mode;
     void *priv;                /* estado do último link (gl_glsl.c) */
+    void *priv_shaders;        /* programas internos: os shaders são do próprio programa */
 } gl_prog_t;
 
 typedef struct gl_query { u32 name; GLenum target; u64 result; int active, avail; } gl_query_t;
@@ -273,6 +274,8 @@ typedef struct gl_ctx {
     gl_samp_t *samp[GLX_UNITS];
     gl_rb_t *rb;
     gl_prog_t *prog;
+    gl_prog_t *arb_prog;       /* ARB_vertex/fragment_program do draw atual (gl_arbprog.c) */
+    void *arb_state;
     gl_xfb_t xfb0, *xfb;
     gl_query_t *q_active[8];
     /* estado */

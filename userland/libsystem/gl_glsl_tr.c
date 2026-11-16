@@ -66,7 +66,7 @@ static void ob_tok(ob_t *o, const gt_t *t) {
 /* ---- palavras */
 static const char *QUALS[] = {"uniform", "in", "out", "inout", "attribute", "varying", "buffer", "flat", "smooth", "noperspective",
                               "centroid", "sample", "patch", "invariant", "precise", "highp", "mediump", "lowp", "shared",
-                              "coherent", "volatile", "restrict", "readonly", "writeonly", 0};
+                              "coherent", "volatile", "restrict", "readonly", "writeonly", "bindable", 0};
 static const char *RENAME[] = {"vertex", "fragment", "kernel", "device", "constant", "thread", "threadgroup", "sampler", "half", "using",
                                "namespace", "template", "typename", "static", "inline", "auto", "array", "atomic", "vec", "matrix",
                                "packed", "char", "uchar", "short", "ushort", "long", "ulong", "size_t", "ptrdiff_t", "constexpr",

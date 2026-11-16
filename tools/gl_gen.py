@@ -6,7 +6,7 @@ import sys, re, xml.etree.ElementTree as ET
 root = ET.parse(sys.argv[1]).getroot()
 VERS = ['1.0','1.1','1.2','1.3','1.4','1.5','2.0','2.1','3.0','3.1','3.2','3.3','4.0','4.1']
 EXTS = ['GL_ARB_vertex_buffer_object','GL_ARB_shader_objects','GL_ARB_vertex_shader','GL_ARB_fragment_shader',
-        'GL_ARB_vertex_program','GL_EXT_framebuffer_object','GL_EXT_framebuffer_blit','GL_EXT_framebuffer_multisample',
+        'GL_ARB_vertex_program','GL_ARB_fragment_program','GL_ARB_fragment_program_shadow','GL_EXT_framebuffer_object','GL_EXT_framebuffer_blit','GL_EXT_framebuffer_multisample',
         'GL_ARB_texture_rectangle','GL_EXT_texture_compression_s3tc','GL_EXT_texture_filter_anisotropic',
         'GL_APPLE_vertex_array_object','GL_APPLE_fence','GL_APPLE_flush_buffer_range','GL_APPLE_client_storage',
         'GL_APPLE_ycbcr_422','GL_APPLE_texture_range','GL_APPLE_row_bytes','GL_APPLE_element_array',
