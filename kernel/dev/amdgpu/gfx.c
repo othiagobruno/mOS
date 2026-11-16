@@ -383,7 +383,7 @@ static bool cp_resume(amdgpu_t *a) {
     put_ucode(a, R_CP_CE_UCODE_ADDR, R_CP_CE_UCODE_DATA, 0, &ce);
     put_ucode(a, R_CP_ME_RAM_WADDR, R_CP_ME_RAM_DATA, 0, &me);
     a->pfp_fw_version = pfp.ucode_version; a->ce_fw_version = ce.ucode_version; a->me_fw_version = me.ucode_version;
-    WR(a, R_CP_MEC_CNTL, CP_MEC_HALT_BOTH);       /* compute parado até a fila de compute subir */
+    WR(a, R_CP_MEC_CNTL, CP_MEC_RESET_ALL);       /* compute parado até a fila de compute subir (compute.c) */
 
     /* anel 0 */
     WR(a, R_CP_RB_WPTR_DELAY, 0);
@@ -510,6 +510,8 @@ bool amdgpu_gfx_init(amdgpu_t *a) {
         kprintf("amdgpu: motor 3D desligado; tela e SDMA seguem\n");
         return false;
     }
+    a->gfx_ok = true;
+    if (!amdgpu_compute_init(a)) kprintf("amdgpu: sem fila de compute; o anel GFX segue\n");
     kprintf("amdgpu: GFX 9 no ar: %u CUs (máscara 0x%x), GB_ADDR_CONFIG 0x%x, PFP 0x%x CE 0x%x ME 0x%x RLC 0x%x\n",
             a->cu_count, a->cu_mask, a->gb_addr_config, a->pfp_fw_version, a->ce_fw_version, a->me_fw_version, a->rlc_fw_version);
     return true;
