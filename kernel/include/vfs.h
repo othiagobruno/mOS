@@ -74,7 +74,40 @@ bool vfs_xattr_copy(vnode_t *dst, const vnode_t *src);
 bool vfs_immutable(vnode_t *n);                    /* uchg/schg: não pode mudar conteúdo, nome nem metadados */
 bool vfs_append_only(vnode_t *n);                  /* uappnd/sappnd: só acrescentar */
 bool vfs_no_unlink(vnode_t *n);                    /* imutável, append-only ou sunlnk: não pode apagar/renomear */
-i64  vfs_time_ns(const vnode_t *n, int which);     /* a data, com a hora do boot quando desconhecida */
+i64  vfs_time_ns(const vnode_t *n, int which);
+
+/* ---- permissões e ACL (kernel/lib/vfsperm.c). Direitos e ACEs com os valores do xnu (sys/kauth.h). */
+#define VFS_XATTR_SECURITY "com.apple.system.Security"   /* kauth_filesec em big-endian; escondido do listxattr */
+#define VFS_ACE_PERMIT 1
+#define VFS_ACE_DENY   2
+#define VFS_ACE_INHERITED         (1u << 4)
+#define VFS_ACE_FILE_INHERIT      (1u << 5)
+#define VFS_ACE_DIRECTORY_INHERIT (1u << 6)
+#define VFS_ACE_LIMIT_INHERIT     (1u << 7)
+#define VFS_ACE_ONLY_INHERIT      (1u << 8)
+#define VFS_KR_READ_DATA       (1u << 1)    /* = LIST_DIRECTORY */
+#define VFS_KR_WRITE_DATA      (1u << 2)    /* = ADD_FILE */
+#define VFS_KR_EXECUTE         (1u << 3)    /* = SEARCH */
+#define VFS_KR_DELETE          (1u << 4)
+#define VFS_KR_APPEND_DATA     (1u << 5)    /* = ADD_SUBDIRECTORY */
+#define VFS_KR_DELETE_CHILD    (1u << 6)
+#define VFS_KR_READ_ATTRIBUTES (1u << 7)
+#define VFS_KR_WRITE_ATTRIBUTES (1u << 8)
+#define VFS_KR_READ_EXTATTR    (1u << 9)
+#define VFS_KR_WRITE_EXTATTR   (1u << 10)
+#define VFS_KR_READ_SECURITY   (1u << 11)
+#define VFS_KR_WRITE_SECURITY  (1u << 12)
+#define VFS_KR_TAKE_OWNERSHIP  (1u << 13)
+int  vfs_authorize(vnode_t *v, u32 rights, int euid, int egid);   /* 0, -EACCES ou -EPERM */
+int  vfs_access(vnode_t *v, int rwx, int euid, int egid);          /* rwx: 4 ler, 2 escrever, 1 executar/buscar */
+int  vfs_may_delete(vnode_t *n, int euid, int egid);               /* unlink/rmdir/rename (sticky incluso) */
+int  vfs_may_create(vnode_t *d, bool dir, int euid, int egid);
+void vfs_acl_inherit(vnode_t *n, vnode_t *dir);                     /* nó novo: ACEs herdáveis da pasta */
+bool vfs_filesec_valid(const u8 *d, u64 n);
+bool vfs_in_group(u32 gid, int euid, int egid);
+void vfs_guid_user(u8 g[16], u32 uid);
+void vfs_guid_group(u8 g[16], u32 gid);
+int  vfs_guid_id(const u8 g[16], u32 *id);                          /* 1 usuário, 2 grupo, 0 outro */     /* a data, com a hora do boot quando desconhecida */
 void persist_meta_mark(void);
 
 /* núcleo do SYS_FSMETA (syscall.h): rq e kbuf já no kernel; name = nome do xattr (ou NULL) */

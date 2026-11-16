@@ -274,11 +274,11 @@ int setitimer(int which, const cx_itimerval_t *nv, cx_itimerval_t *ov) {
 int getitimer(int which, cx_itimerval_t *v) { return setitimer(which, 0, v); }
 int getrusage(int who, void *ru) { (void)who; memset(ru, 0, 144); return 0; }
 const char *cx_at_path(int dirfd, const char *p, char *buf, size_t cap);
+int cx_access(const char *path, int mode, int eff, int follow);   /* libc.c: checagem do kernel (POSIX + ACL) */
 int faccessat(int fd, const char *path, int mode, int flag) {
-    (void)flag;
     char t[1024];
     const char *q = cx_at_path(fd, path, t, sizeof t);   /* AT_FDCWD (-2), absoluto ou relativo ao dirfd */
-    return q ? access(q, mode) : -1;
+    return q ? cx_access(q, mode, (flag & 0x10) != 0, !(flag & 0x20)) : -1;   /* AT_EACCESS, AT_SYMLINK_NOFOLLOW */
 }
 int fpurge(void *f) { (void)f; return 0; }
 typedef struct { long tv_sec; int tv_usec; } cx_tv_t;
@@ -788,14 +788,6 @@ float __extendhfsf2(unsigned short h) {
 }
 
 /* ACL de acesso no processo (cli.c). ACL default de diretório não existe no FAT: ENOENT/ENOTSUP. */
-void *cx_acl_get_path(const char *path, int follow);
-int cx_acl_set_path(const char *path, void *a, int follow);
-void *acl_get_fd(int fd);
-int acl_set_fd(int fd, void *a);
-void *acl_get_file(const char *p, int t) { if (t == 1) { cx_errno = 2; return 0; } return cx_acl_get_path(p, 1); }
-void *acl_get_link_np(const char *p, int t) { if (t == 1) { cx_errno = 2; return 0; } return cx_acl_get_path(p, 0); }
-void *acl_get_fd_np(int fd, int t) { if (t == 1) { cx_errno = 2; return 0; } return acl_get_fd(fd); }
-int acl_set_file(const char *p, int t, void *a) { if (t == 1) { cx_errno = 45; return -1; } return cx_acl_set_path(p, a, 1); }
 
 int clock_getres(int clk, cx_ts_t *ts) { (void)clk; if (ts) { ts->tv_sec = 0; ts->tv_nsec = 1000000; } return 0; }   /* relógio do kernel: 1 ms */
 int clock_settime(int clk, const cx_ts_t *ts) { (void)clk; (void)ts; cx_errno = 1; return -1; }
@@ -851,7 +843,6 @@ int mkpath_np(const char *path, unsigned short mode) {
 }
 
 /* acl_set_fd_np: ACL_TYPE_EXTENDED (0x100) e de acesso; ACL default não existe (mesma regra do acl_set_file) */
-int acl_set_fd_np(int fd, void *a, int t) { if (t == 1) { cx_errno = 45; return -1; } return acl_set_fd(fd, a); }
 int sched_yield(void);
 void pthread_yield_np(void) { sched_yield(); }
 
@@ -1083,9 +1074,6 @@ int optreset;                                    /* getopt do BSD: o getopt_long
 int getopt_long(int argc, char *const argv[], const char *s, const void *lo, int *idx);
 int getopt(int argc, char *const argv[], const char *s) { return getopt_long(argc, argv, s, 0, 0); }
 /* openlog/closelog: oslog.c */
-int acl_delete_def_file(const char *p) { (void)p; cx_errno = 45; return -1; }
-void *acl_from_text(const char *t) { (void)t; cx_errno = 45; return 0; }
-char *acl_to_text(void *a, long *len) { (void)a; if (len) *len = 0; cx_errno = 45; return 0; }
 
 /* alphasort: dirent do macOS ($INODE64) tem o nome no byte 21 */
 int alphasort(const void *a, const void *b) {

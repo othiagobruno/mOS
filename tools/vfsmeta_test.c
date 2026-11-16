@@ -4,7 +4,7 @@
  * volta do \mOS\.vfsmeta (persistência no disco do sistema).
  *
  *   gcc -O1 -g -DMOS_HOST_TEST -Itools/vfsmeta_host -Ikernel/include -Itools tools/vfsmeta_test.c \
- *       kernel/lib/vfs.c kernel/lib/vfsmeta.c kernel/proc/cred.c -o /tmp/vfsmeta_test && /tmp/vfsmeta_test
+ *       kernel/lib/vfs.c kernel/lib/vfsmeta.c kernel/lib/vfsperm.c kernel/proc/cred.c -o /tmp/vfsmeta_test && /tmp/vfsmeta_test
  */
 #include "vfs_host_kernel.h"
 #include "vfs.h"
@@ -43,6 +43,123 @@ static bool track_all(void *ctx, vnode_t *v, char *vp, usize cap) {
     return strncmp(vp, "/tmp", 4) != 0;
 }
 static vnode_t *lookup(void *ctx, const char *p) { (void)ctx; return vfs_lookup(p); }
+
+
+/* kauth_filesec big-endian com n ACEs (guid, flags, direitos) */
+static u64 mkfsec(u8 *out, int n, const u32 *kind_id, const u32 *flags, const u32 *rights) {
+    memset(out, 0, 44 + 24 * n);
+    out[0] = 0x01; out[1] = 0x2c; out[2] = 0xc1; out[3] = 0x6d;
+    out[36] = 0; out[37] = 0; out[38] = 0; out[39] = (u8)n;
+    for (int i = 0; i < n; i++) {
+        u8 *a = out + 44 + 24 * i;
+        if (kind_id[2 * i] == 1) vfs_guid_user(a, kind_id[2 * i + 1]); else vfs_guid_group(a, kind_id[2 * i + 1]);
+        a[16] = (u8)(flags[i] >> 24); a[17] = (u8)(flags[i] >> 16); a[18] = (u8)(flags[i] >> 8); a[19] = (u8)flags[i];
+        a[20] = (u8)(rights[i] >> 24); a[21] = (u8)(rights[i] >> 16); a[22] = (u8)(rights[i] >> 8); a[23] = (u8)rights[i];
+    }
+    return 44 + 24 * (u64)n;
+}
+
+static void test_perms(void) {
+    vnode_t *f = vfs_write_file("/Users/Visitante/p.txt", "x", 1);
+    f->mode = 0x10000u | 0600;
+    CHECK(vfs_access(f, 4, 501, 20) == 0 && vfs_access(f, 2, 501, 20) == 0);
+    CHECK(vfs_access(f, 4, 502, 20) == -13);                     /* EACCES */
+    CHECK(vfs_access(f, 4 | 2, 0, 0) == 0);                       /* root */
+    CHECK(vfs_access(f, 1, 0, 0) == -13);                         /* root não executa sem bit x */
+    f->mode = 0x10000u | 0640;
+    CHECK(vfs_access(f, 4, 502, 20) == 0 && vfs_access(f, 2, 502, 20) == -13);
+    CHECK(vfs_access(f, 4, 502, 99) == -13);                      /* fora do grupo staff */
+    /* ACL: nega escrita ao dono, permite leitura a 502 fora do grupo */
+    u8 fs[44 + 24 * 4];
+    u32 ki[] = {1, 501, 1, 502}, fl[] = {VFS_ACE_DENY, VFS_ACE_PERMIT}, rt[] = {VFS_KR_WRITE_DATA, VFS_KR_READ_DATA};
+    u64 n = mkfsec(fs, 2, ki, fl, rt);
+    mos_fsmeta_t rq = {0};
+    rq.size = n;
+    CHECK(vfs_fsmeta(f, MOS_FSM_SETACL, &rq, NULL, fs, 502, 20) == -1);   /* EPERM: não é o dono */
+    CHECK(vfs_fsmeta(f, MOS_FSM_SETACL, &rq, NULL, fs, 501, 20) == 0);
+    CHECK(vfs_access(f, 2, 501, 20) == -13 && vfs_access(f, 4, 501, 20) == 0);
+    CHECK(vfs_access(f, 4, 502, 99) == 0);
+    /* escondida do listxattr/getxattr; GETACL devolve o filesec */
+    rq = (mos_fsmeta_t){0};
+    CHECK(vfs_fsmeta(f, MOS_FSM_LISTXATTR, &rq, NULL, NULL, 501, 20) == 0);
+    char b[512];
+    rq.size = sizeof b;
+    CHECK(vfs_fsmeta(f, MOS_FSM_GETXATTR, &rq, VFS_XATTR_SECURITY, b, 501, 20) == -93);
+    CHECK(vfs_fsmeta(f, MOS_FSM_GETACL, &rq, NULL, b, 501, 20) == (i64)n && !memcmp(b, fs, n));
+    rq.size = 3;
+    CHECK(vfs_fsmeta(f, MOS_FSM_SETACL, &rq, NULL, fs, 501, 20) == -22);   /* filesec inválido */
+    rq.size = 1;
+    CHECK(vfs_fsmeta(f, MOS_FSM_SETXATTR, &rq, VFS_XATTR_SECURITY, "x", 501, 20) == -1);
+    rq.size = 0;
+    CHECK(vfs_fsmeta(f, MOS_FSM_SETACL, &rq, NULL, NULL, 501, 20) == 0);    /* tira */
+    CHECK(vfs_access(f, 2, 501, 20) == 0);
+    /* ACL dá WRITE_SECURITY a 502: pode trocar a ACL e o modo */
+    u32 ki2[] = {1, 502}, fl2[] = {VFS_ACE_PERMIT}, rt2[] = {VFS_KR_WRITE_SECURITY | VFS_KR_WRITE_ATTRIBUTES};
+    n = mkfsec(fs, 1, ki2, fl2, rt2);
+    rq.size = n;
+    CHECK(vfs_fsmeta(f, MOS_FSM_SETACL, &rq, NULL, fs, 501, 20) == 0);
+    CHECK(vfs_authorize(f, VFS_KR_WRITE_SECURITY, 502, 99) == 0 && vfs_authorize(f, VFS_KR_WRITE_SECURITY, 503, 99) == -1);
+    /* utimes(NULL) por quem escreve; datas explícitas só dono/WRITE_ATTRIBUTES */
+    f->mode = 0x10000u | 0666;
+    rq = (mos_fsmeta_t){0};
+    rq.a = VT_ATIME | VT_MTIME; rq.b = VT_ATIME | VT_MTIME;
+    CHECK(vfs_fsmeta(f, MOS_FSM_SETTIMES, &rq, NULL, NULL, 503, 99) == 0);
+    rq.b = 0;
+    CHECK(vfs_fsmeta(f, MOS_FSM_SETTIMES, &rq, NULL, NULL, 503, 99) == -1);
+    CHECK(vfs_fsmeta(f, MOS_FSM_SETTIMES, &rq, NULL, NULL, 502, 99) == 0);  /* pela ACL */
+    /* ACCESS */
+    rq = (mos_fsmeta_t){0};
+    f->mode = 0x10000u | 0400;
+    rq.a = 2;
+    CHECK(vfs_fsmeta(f, MOS_FSM_ACCESS, &rq, NULL, NULL, 501, 20) == -13);
+    rq.a = 4;
+    CHECK(vfs_fsmeta(f, MOS_FSM_ACCESS, &rq, NULL, NULL, 501, 20) == 0);
+
+    /* sticky em /tmp: só o dono apaga */
+    vnode_t *tmp = vfs_lookup("/tmp");
+    CHECK(tmp && (tmp->mode & 01777) == 01777 && tmp->uid == 0);
+    vnode_t *t = vfs_write_file("/tmp/de502", "y", 1);
+    t->uid = 502;
+    CHECK(vfs_may_delete(t, 501, 20) == -1);                    /* EPERM */
+    CHECK(vfs_may_delete(t, 502, 20) == 0 && vfs_may_delete(t, 0, 0) == 0);
+    CHECK(vfs_may_create(tmp, false, 503, 99) == 0);
+    /* pasta 0755 de outro: não cria nem apaga dentro */
+    vnode_t *d = vfs_mkdir("/Users/Visitante/alheia");
+    d->uid = 502; d->mode = 0x10000u | 0755;
+    vnode_t *g = vfs_write_file("/Users/Visitante/alheia/g", "", 0);
+    CHECK(vfs_may_create(d, false, 501, 20) == -13 && vfs_may_delete(g, 501, 20) == -13);
+    /* ACL DELETE no arquivo vale mesmo sem escrever na pasta */
+    u32 ki3[] = {1, 501}, fl3[] = {VFS_ACE_PERMIT}, rt3[] = {VFS_KR_DELETE};
+    n = mkfsec(fs, 1, ki3, fl3, rt3);
+    vfs_xattr_set(g, VFS_XATTR_SECURITY, fs, n, 0, 0);
+    CHECK(vfs_may_delete(g, 501, 20) == 0);
+    /* ACL DELETE_CHILD na pasta */
+    u32 rt4[] = {VFS_KR_DELETE_CHILD | VFS_KR_EXECUTE | VFS_KR_WRITE_DATA};
+    n = mkfsec(fs, 1, ki3, fl3, rt4);
+    vfs_xattr_set(d, VFS_XATTR_SECURITY, fs, n, 0, 0);
+    CHECK(vfs_may_create(d, false, 501, 20) == 0);
+    vfs_xattr_remove(d, VFS_XATTR_SECURITY);
+
+    /* herança: arquivo pega FILE_INHERIT; subpasta guarda as duas e marca ONLY_INHERIT na que só vale p/ arquivo */
+    u32 ki5[] = {1, 503, 2, 80}, fl5[] = {VFS_ACE_PERMIT | VFS_ACE_FILE_INHERIT, VFS_ACE_PERMIT | VFS_ACE_DIRECTORY_INHERIT};
+    u32 rt5[] = {VFS_KR_READ_DATA, VFS_KR_EXECUTE};
+    n = mkfsec(fs, 2, ki5, fl5, rt5);
+    vfs_xattr_set(d, VFS_XATTR_SECURITY, fs, n, 0, 0);
+    vnode_t *h = vfs_write_file("/Users/Visitante/alheia/herdado", "z", 1);
+    vxattr_t *hx = vfs_xattr_find(h, VFS_XATTR_SECURITY);
+    CHECK(hx && hx->len == 44 + 24);
+    h->mode = 0x10000u | 0600;
+    CHECK(vfs_access(h, 4, 503, 99) == 0);
+    CHECK(hx && (hx->val[44 + 19] & VFS_ACE_INHERITED));
+    vnode_t *sd = vfs_mkdir("/Users/Visitante/alheia/sub");
+    vxattr_t *sx = vfs_xattr_find(sd, VFS_XATTR_SECURITY);
+    CHECK(sx && sx->len == 44 + 48);
+    sd->mode = 0x10000u | 0700;
+    CHECK(vfs_access(sd, 4, 503, 99) == -13);                  /* a ACE de arquivo virou só-herança na pasta */
+    vnode_t *neto = vfs_write_file("/Users/Visitante/alheia/sub/neto", "n", 1);
+    neto->mode = 0x10000u | 0600;
+    CHECK(vfs_access(neto, 4, 503, 99) == 0);                  /* e continua descendo */
+}
 
 int main(void) {
     vfs_init();
@@ -220,6 +337,7 @@ int main(void) {
     CHECK(g_live_allocs == before);
     CHECK(meta_marks > 0);
 
+    test_perms();
     printf("vfsmeta: %d verificações, %d falha(s)\n", checks, fails);
     return fails != 0;
 }
