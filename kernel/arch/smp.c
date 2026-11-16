@@ -10,6 +10,7 @@
  * aqui o LAPIC (EOI, IPIs, temporizador calibrado) e o HPET.
  */
 #include "proc.h"
+#include "pm.h"
 
 #define LAPIC_ID    0x020
 #define LAPIC_VER   0x030
@@ -148,11 +149,24 @@ static void run_job(job_t *j, int cpu) {
 
 static inline bool job_pending(u32 seen) { return __atomic_load_n(&cur_job, __ATOMIC_SEQ_CST) && job_posted != seen; }
 
+/* S3: o escalonador pediu este AP fora de linha (sched_cpu_offline_begin). Já está na thread ociosa, sem trava: para o
+ * temporizador e fica em cli/hlt até o INIT-SIPI do smp_cpus_online. */
+extern bool sched_cpu_down_requested(int cpu);
+static volatile u8 ap_parked[MAX_CPUS];
+static void ap_maybe_park(int cpu) {
+    if (!sched_cpu_down_requested(cpu)) return;
+    cli();
+    lw(LAPIC_LVT_T, 0x10000);                                   /* temporizador mascarado */
+    __atomic_store_n(&ap_parked[cpu], 1, __ATOMIC_SEQ_CST);
+    for (;;) __asm__ volatile("cli; hlt");
+}
+
 NORETURN static void ap_loop(int cpu) {
     u32 seen = 0;
     for (;;) {
+        ap_maybe_park(cpu);
         for (int spin = 0; spin < AP_SPIN; spin++) {
-            if (!job_pending(seen)) { __asm__ volatile("pause"); continue; }
+            if (!job_pending(seen)) { if (!(spin & 1023)) ap_maybe_park(cpu); __asm__ volatile("pause"); continue; }
             __atomic_add_fetch(&ap_busy, 1, __ATOMIC_SEQ_CST);
             job_t *j = __atomic_load_n(&cur_job, __ATOMIC_SEQ_CST);
             if (j && j->id != seen) { seen = j->id; run_job(j, cpu); spin = 0; }
@@ -226,6 +240,11 @@ static inline u64 rdmsr_(u32 m) { u32 lo, hi; __asm__ volatile("rdmsr" : "=a"(lo
 static inline void wrmsr_(u32 m, u64 v) { __asm__ volatile("wrmsr" :: "c"(m), "a"((u32)v), "d"((u32)(v >> 32))); }
 
 extern void sched_ap_init(int cpu);
+extern void sched_cpu_online(int cpu);
+static volatile int ap_reboot_idx = -1;          /* >= 0: o AP que acorda é este índice voltando do S3 */
+static volatile int ap_reboot_done = -1;
+static u64 ap_stack_top[MAX_CPUS];
+static u8 *ap_ist[MAX_CPUS];
 
 static void ap_entry(void) {
     /* GDT e IDT do kernel */
@@ -245,26 +264,102 @@ static void ap_entry(void) {
     u32 mxcsr = 0x1F80;
     __asm__ volatile("fninit; ldmxcsr %0" :: "m"(mxcsr));
     lapic_enable();
-    int cpu = __atomic_add_fetch(&ncpus_online, 1, __ATOMIC_SEQ_CST) - 1;
+    int reboot = __atomic_load_n(&ap_reboot_idx, __ATOMIC_SEQ_CST);
+    int cpu = reboot >= 0 ? reboot : __atomic_add_fetch(&ncpus_online, 1, __ATOMIC_SEQ_CST) - 1;
     if (cpu >= MAX_CPUS) for (;;) __asm__ volatile("cli; hlt");
     cpu_apic[cpu] = (u8)(lr(LAPIC_ID) >> 24);
+    if (reboot < 0) ap_stack_top[cpu] = *(volatile u64 *)(tramp + 0xF38);
     /* TSS próprio: rsp0 das threads de usuário que este núcleo roda e pilha IST para NMI/falta dupla */
-    u8 *ist = kmalloc(16384);
+    if (!ap_ist[cpu]) ap_ist[cpu] = kmalloc(16384);
+    u8 *ist = ap_ist[cpu];
     cpu_tss_init(cpu, ist ? (((u64)ist + 16384) & ~15ULL) : 0);
     wrmsr_(0xC0000101, 0);                                     /* GS de usuário: a troca de contexto define */
-    sched_ap_init(cpu);
+    if (reboot >= 0) sched_cpu_online(cpu);
+    else sched_ap_init(cpu);
     /* fatia do escalonador neste núcleo: temporizador do LAPIC periódico, 1 ms, vetor 0xF0 */
     if (lapic_hz) {
         lw(LAPIC_TDCR, 0x3);                                   /* divide por 16 */
         lw(LAPIC_LVT_T, 0x20000 | 0xF0);
         lw(LAPIC_TICR, (u32)MAX(lapic_hz / 16 / 1000, 1));
     }
-    __atomic_add_fetch(&ap_ready, 1, __ATOMIC_SEQ_CST);
+    if (reboot >= 0) __atomic_store_n(&ap_reboot_done, cpu, __ATOMIC_SEQ_CST);
+    else __atomic_add_fetch(&ap_ready, 1, __ATOMIC_SEQ_CST);
     ap_loop(cpu);
 }
 
 /* O trampolim precisa de uma página abaixo de 1 MiB (o SIPI só aponta para lá). O PMM nunca
  * entrega o 1º MiB, então qualquer página livre ali, segundo o mapa do UEFI, é nossa. */
+/* conteúdo do trampolim: escrito de novo antes de cada religada (o firmware pode usar a memória baixa no S3) */
+static u64 tramp_cr3;
+static void tramp_fill(void) {
+    u64 page = (u64)tramp;
+    memset((void *)tramp, 0, 4096);
+    memcpy((void *)tramp, ap_tramp_start, ap_tramp_end - ap_tramp_start);
+    static const u64 gdt[4] = {0, 0x00CF9A000000FFFFULL, 0x00CF92000000FFFFULL, 0x00AF9A000000FFFFULL};
+    memcpy((void *)(tramp + 0xF00), gdt, sizeof gdt);
+    *(volatile u16 *)(tramp + 0xF20) = sizeof gdt - 1;
+    *(volatile u32 *)(tramp + 0xF22) = (u32)page + 0xF00;
+    *(volatile u32 *)(tramp + 0xF30) = (u32)tramp_cr3;
+    *(volatile u64 *)(tramp + 0xF40) = (u64)ap_entry;
+    *(volatile u32 *)(tramp + 0xF48) = (u32)page + (u32)(ap_tramp_pm32 - ap_tramp_start);
+    *(volatile u16 *)(tramp + 0xF4C) = 0x08;
+    *(volatile u32 *)(tramp + 0xF50) = (u32)page + (u32)(ap_tramp_lm64 - ap_tramp_start);
+    *(volatile u16 *)(tramp + 0xF54) = 0x18;
+}
+
+/* ------------------------------------------------------------ S3: APs fora de linha e de volta (dev/pm.c)
+ * offline: o BSP, com IRQs ligadas, pede cada AP fora do escalonador e espera todos estacionarem (1 s). Se algum não
+ * estacionar, desfaz: os que pararam voltam por INIT-SIPI e os outros só saem do going_down. online: INIT-SIPI de novo,
+ * um por vez, com o mesmo índice de CPU, a mesma pilha de partida e o mesmo IST. */
+extern void sched_cpu_offline_begin(int cpu);
+extern void sched_cpu_offline_cancel(int cpu);
+static bool ap_restart(int cpu) {
+    if (!tramp || !ap_stack_top[cpu]) return false;
+    tramp_fill();
+    *(volatile u64 *)(tramp + 0xF38) = ap_stack_top[cpu];
+    __atomic_store_n(&ap_reboot_done, -1, __ATOMIC_SEQ_CST);
+    __atomic_store_n(&ap_reboot_idx, cpu, __ATOMIC_SEQ_CST);
+    u32 before = *(volatile u32 *)(tramp + 0xF58);
+    ipi(cpu_apic[cpu], 0x4500);                                /* INIT */
+    udelay(10000);
+    for (int k = 0; k < 2 && *(volatile u32 *)(tramp + 0xF58) == before; k++) {
+        ipi(cpu_apic[cpu], 0x4600 | (u32)((u64)tramp >> 12));  /* STARTUP */
+        udelay(200);
+    }
+    u64 until = timer_ticks() + 500;
+    while (__atomic_load_n(&ap_reboot_done, __ATOMIC_SEQ_CST) != cpu && timer_ticks() < until) __asm__ volatile("pause");
+    bool ok = __atomic_load_n(&ap_reboot_done, __ATOMIC_SEQ_CST) == cpu;
+    __atomic_store_n(&ap_reboot_idx, -1, __ATOMIC_SEQ_CST);
+    if (ok) __atomic_store_n(&ap_parked[cpu], 0, __ATOMIC_SEQ_CST);
+    else kprintf("smp: o núcleo %d não voltou do repouso (estágio %u)\n", cpu, tramp[0xF5C]);
+    return ok;
+}
+static void smp_cpus_online(void) {
+    for (int cpu = 1; cpu < ncpus_online; cpu++)
+        if (__atomic_load_n(&ap_parked[cpu], __ATOMIC_SEQ_CST)) ap_restart(cpu);
+}
+static bool smp_cpus_offline(void) {
+    int n = ncpus_online;
+    if (n < 2) return true;
+    for (int cpu = 1; cpu < n; cpu++) { __atomic_store_n(&ap_parked[cpu], 0, __ATOMIC_SEQ_CST); sched_cpu_offline_begin(cpu); }
+    wake_aps();
+    u64 until = timer_ticks() + 1000;
+    bool all = false;
+    while (!all && timer_ticks() < until) {
+        all = true;
+        for (int cpu = 1; cpu < n; cpu++) if (!__atomic_load_n(&ap_parked[cpu], __ATOMIC_SEQ_CST)) all = false;
+        if (!all) __asm__ volatile("pause");
+    }
+    if (all) { kprintf("smp: %d núcleo(s) fora de linha para o repouso\n", n - 1); return true; }
+    for (int cpu = 1; cpu < n; cpu++) {
+        if (__atomic_load_n(&ap_parked[cpu], __ATOMIC_SEQ_CST)) ap_restart(cpu);
+        else sched_cpu_offline_cancel(cpu);
+    }
+    kprintf("smp: algum núcleo não estacionou em 1 s; repouso sem S3\n");
+    return false;
+}
+static const pm_cpu_hotplug_t smp_hotplug = {smp_cpus_offline, smp_cpus_online};
+
 static u64 low_page(void) {
     for (u32 i = 0; i < g_boot->region_count; i++) {
         mem_region_t *r = &g_boot->regions[i];
@@ -315,18 +410,9 @@ void smp_init(void) {
     bsp_efer = rdmsr_(0xC0000080);
     if (bsp_cr4 & (1ULL << 18)) { u32 lo, hi; __asm__ volatile("xgetbv" : "=a"(lo), "=d"(hi) : "c"(0)); bsp_xcr0 = (u64)hi << 32 | lo; }
     tramp = (volatile u8 *)page;
-    memset((void *)tramp, 0, 4096);
-    memcpy((void *)tramp, ap_tramp_start, ap_tramp_end - ap_tramp_start);
-    static const u64 gdt[4] = {0, 0x00CF9A000000FFFFULL, 0x00CF92000000FFFFULL, 0x00AF9A000000FFFFULL};
-    memcpy((void *)(tramp + 0xF00), gdt, sizeof gdt);
-    *(volatile u16 *)(tramp + 0xF20) = sizeof gdt - 1;
-    *(volatile u32 *)(tramp + 0xF22) = (u32)page + 0xF00;
-    *(volatile u32 *)(tramp + 0xF30) = (u32)cr3;
-    *(volatile u64 *)(tramp + 0xF40) = (u64)ap_entry;
-    *(volatile u32 *)(tramp + 0xF48) = (u32)page + (u32)(ap_tramp_pm32 - ap_tramp_start);
-    *(volatile u16 *)(tramp + 0xF4C) = 0x08;
-    *(volatile u32 *)(tramp + 0xF50) = (u32)page + (u32)(ap_tramp_lm64 - ap_tramp_start);
-    *(volatile u16 *)(tramp + 0xF54) = 0x18;
+    tramp_cr3 = cr3;
+    tramp_fill();
+    pm_register_cpu_hotplug(&smp_hotplug);
 
     u64 t0 = timer_ticks();
     for (int i = 0; i < ncpus_found; i++) {

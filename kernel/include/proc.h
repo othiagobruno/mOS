@@ -224,6 +224,13 @@ thread_t *kthread_create(const char *name, void (*fn)(void *), void *arg);
 void kthread_sleep(u64 ms);   /* thread do kernel fora da CPU por ms (sched.c) */
 void      thread_exit(void) NORETURN;           /* threads do kernel */
 u64       sched_irq_exit(int_frame_t *f, bool timer);   /* devolve o frame a restaurar */
+u64       sched_irq_exit_nobkl(int_frame_t *f);         /* tique de AP sem a trava grande (sem reap nem sinais) */
+void      sched_mark_dead(thread_t *t);                 /* TH_DEAD sob a trava do escalonador */
+void      sched_lock_public(void);                      /* trava do escalonador (ordem: a grande antes) */
+void      sched_unlock_public(void);
+u64       sched_switch_locked(int_frame_t *f);          /* troca com a trava do escalonador já pega; consome o nível */
+void      sched_nobkl_enter(void);                      /* syscall sem a trava grande: kick/shootdown esperam */
+void      sched_nobkl_leave(void);
 u64       sched_switch(int_frame_t *f);         /* a thread atual bloqueou/saiu: escolhe outra */
 void      sched_make_ready(thread_t *t);
 void      sched_set_qos(thread_t *t, unsigned darwin_qos);

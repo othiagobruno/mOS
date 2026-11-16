@@ -113,6 +113,7 @@ __attribute__((weak)) bool sched_ktry(void) { return true; }
 __attribute__((weak)) u64 sched_dead_check(int_frame_t *f) { (void)f; return 0; }
 __attribute__((weak)) u64 sched_kexit(u64 r) { return r; }
 __attribute__((weak)) u64 proc_syscall_fast(int_frame_t *f) { (void)f; return 0; }
+__attribute__((weak)) u64 sched_irq_exit_nobkl(int_frame_t *f) { return (u64)f; }
 __attribute__((weak)) void sched_post(void) {}
 
 static void exc_panic(int_frame_t *f) {
@@ -190,7 +191,8 @@ u64 isr_dispatch(int_frame_t *f) {
         lapic_eoi();
         if (f->vector == 0xF0 && this_cpu()) app_guard_ap_tick();   /* vigia o núcleo 0 (app travado com IF=0) */
         if (f->vector == 0xF0) cpufreq_ap_tick();                   /* P-state e carga deste núcleo (dev/cpufreq.c) */
-        r = sched_ktry() ? sched_irq_exit(f, this_cpu() != 0 || f->vector == 0xF2) : (u64)f;
+        if (sched_ktry()) r = sched_irq_exit(f, this_cpu() != 0 || f->vector == 0xF2);
+        else r = sched_irq_exit_nobkl(f);                            /* AP com a trava grande ocupada: escalona sem ela */
     } else if (f->vector == 0xFF) {
         r = (u64)f;                                           /* espúria: sem EOI */
     } else if (f->vector < 32) {

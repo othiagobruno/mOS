@@ -41,6 +41,8 @@ typedef struct {
     volatile u32 pending;
     volatile u32 in_user;      /* 1 = rodando (ou a caminho do) ring 3 */
     volatile u8 release;       /* sched_post solta a trava */
+    volatile u8 release_sched; /* sched_post solta a trava do escalonador (sched_lk) */
+    volatile u32 in_nobkl;     /* no kernel sem a trava grande, ainda usando a memória do processo (futex, tique do AP) */
     volatile u8 spinning;      /* esperando a trava com interrupções abertas (BSP) */
     bool online;
     thread_t *rq_h[32], *rq_t[32]; /* baldes de prioridade (efetiva / 4): o 31 corre primeiro */
@@ -71,6 +73,43 @@ static inline bool bkl_try_(int me) {
 }
 static inline void bkl_drop(void) { __atomic_store_n(&bkl_owner, -1, __ATOMIC_RELEASE); }
 bool bkl_held(void) { return __atomic_load_n(&bkl_owner, __ATOMIC_RELAXED) == this_cpu(); }
+
+/* ------------------------------------------------------------ trava do escalonador
+ * Filas, estados de thread (pronta, morta), a lista de threads, prazos e filas de futex. Ordem: a trava grande antes
+ * desta, nunca o contrário. Reentrante no mesmo núcleo (contador) e sempre com IF = 0. Quem troca de thread não solta
+ * aqui: sched_defer marca e o sched_post solta já na pilha da thread nova, como a trava grande — senão outro núcleo
+ * pegaria a thread anterior enquanto este ainda usa a pilha dela. */
+static volatile int sl_owner = -1;
+static int sl_depth;
+static u64 sl_flags;
+static void sched_lk(void) {
+    int me = this_cpu();
+    if (__atomic_load_n(&sl_owner, __ATOMIC_RELAXED) == me) { sl_depth++; return; }
+    u64 fl = irq_save();
+    for (;;) {
+        int e = -1;
+        if (__atomic_compare_exchange_n(&sl_owner, &e, me, false, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED)) break;
+        while (__atomic_load_n(&sl_owner, __ATOMIC_RELAXED) != -1) __asm__ volatile("pause");
+    }
+    sl_depth = 1;
+    sl_flags = fl;
+}
+static void sched_unlk(void) {
+    if (--sl_depth) return;
+    u64 fl = sl_flags;
+    __atomic_store_n(&sl_owner, -1, __ATOMIC_RELEASE);
+    irq_restore(fl);
+}
+/* fim de quem pode ter trocado de pilha: o nível de fora fica para o sched_post */
+static void sched_defer(void);
+void sched_lock_public(void) { sched_lk(); }
+void sched_unlock_public(void) { sched_unlk(); }
+u64 sched_switch(int_frame_t *f);
+/* quem já tem a trava do escalonador troca de thread: o nível dele também fica para o sched_post */
+u64 sched_switch_locked(int_frame_t *f) { u64 r = sched_switch(f); sched_defer(); return r; }
+/* syscall sem a trava grande (process.c): a partir daqui o kick e o shootdown esperam este núcleo sair */
+void sched_nobkl_enter(void) { __atomic_store_n(&me_pc()->in_nobkl, 1, __ATOMIC_SEQ_CST); }
+void sched_nobkl_leave(void) { __atomic_store_n(&me_pc()->in_nobkl, 0, __ATOMIC_SEQ_CST); }
 
 static int have_pcid, have_invpcid;
 static u8 pcid_cached[MAX_CPUS][512];   /* 4096 bits: este núcleo já carregou o PCID */
@@ -215,6 +254,54 @@ void sched_ap_init(int cpu) {
     while (old < n && !__atomic_compare_exchange_n(&ncpu, &old, n, false, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED)) {}
 }
 
+/* ------------------------------------------------------------ núcleos fora de linha (S3, dev/pm.c via arch/smp.c)
+ * going_down: o AP sai do escalonador. A fila dele vai para os outros (pick_cpu pula quem não está online), a thread
+ * que ele roda volta à fila no próximo tique (o IPI 0xF2 adianta) e o laço ocioso do AP estaciona em cli/hlt. */
+static volatile u8 going_down[MAX_CPUS];
+bool sched_cpu_down_requested(int cpu) { return cpu > 0 && cpu < MAX_CPUS && going_down[cpu]; }
+static void rq_put(thread_t *t);
+static void rq_unlink(thread_t *t);
+void sched_cpu_offline_begin(int cpu) {
+    if (cpu <= 0 || cpu >= MAX_CPUS) return;
+    sched_lk();
+    going_down[cpu] = 1;
+    __atomic_store_n(&pc[cpu].online, false, __ATOMIC_SEQ_CST);
+    thread_t *mv = NULL;
+    for (int q = 0; q < 32; q++)
+        while (pc[cpu].rq_h[q]) { thread_t *t = pc[cpu].rq_h[q]; rq_unlink(t); t->rq_next = mv; mv = t; }
+    while (mv) { thread_t *t = mv; mv = t->rq_next; t->rq_next = NULL; rq_put(t); }
+    sched_unlk();
+    smp_send_ipi(cpu, VEC_KICK);
+}
+/* o AP não chegou a estacionar (offline falhou): volta como estava */
+void sched_cpu_offline_cancel(int cpu) {
+    if (cpu <= 0 || cpu >= MAX_CPUS) return;
+    sched_lk();
+    going_down[cpu] = 0;
+    __atomic_store_n(&pc[cpu].online, true, __ATOMIC_SEQ_CST);
+    sched_unlk();
+}
+/* o AP religado (INIT-SIPI depois do S3) volta com o mesmo índice, na própria thread ociosa */
+void sched_cpu_online(int cpu) {
+    if (cpu <= 0 || cpu >= MAX_CPUS || !pc[cpu].idle) return;
+    sched_lk();
+    pcpu_t *c = &pc[cpu];
+    c->cur = c->idle;
+    c->idle->state = TH_RUNNING;
+    c->last_user = NULL;
+    c->cr3 = read_cr3();
+    c->slice_start = c->last_account = timer_ticks();
+    c->pending = 0;
+    c->in_user = 0;
+    c->in_nobkl = 0;
+    c->release = c->release_sched = 0;
+    c->flush_pcid = 0;
+    pcid_clear_all(cpu);
+    going_down[cpu] = 0;
+    __atomic_store_n(&c->online, true, __ATOMIC_SEQ_CST);
+    sched_unlk();
+}
+
 /* a thread está em execução em algum núcleo */
 static bool on_cpu(const thread_t *t) {
     for (int i = 0; i < ncpu; i++) if (pc[i].cur == t) return true;
@@ -286,38 +373,54 @@ static void rq_put(thread_t *t) {
     if (cpu && cpu != this_cpu() && pc[cpu].online && pc[cpu].cur == pc[cpu].idle) smp_send_ipi(cpu, VEC_KICK);
 }
 void sched_make_ready(thread_t *t) {
-    if (t->state == TH_DEAD || t->state == TH_RUNNING) return;
-    t->state = TH_READY;
-    rq_put(t);
+    sched_lk();
+    if (t->state != TH_DEAD && t->state != TH_RUNNING) { t->state = TH_READY; rq_put(t); }
+    sched_unlk();
 }
 /* acordar de uma espera: pronta e na fila. A thread atual (yield) também: o switch_to não a perde. */
 void sched_wake(thread_t *t) {
-    if (!t || t->state == TH_DEAD) return;
-    t->state = TH_READY;
-    rq_put(t);
+    if (!t) return;
+    sched_lk();
+    if (t->state != TH_DEAD) { t->state = TH_READY; rq_put(t); }
+    sched_unlk();
+}
+/* morta: o escalonador não a escolhe mais; reap a libera quando nenhum núcleo a roda */
+void sched_mark_dead(thread_t *t) {
+    if (!t) return;
+    sched_lk();
+    t->state = TH_DEAD;
+    rq_unlink(t);
+    futexq_remove(t);
+    sched_unlk();
 }
 void sched_set_qos(thread_t *t, unsigned darwin_qos) {
     if (!t) return;
+    sched_lk();
     rq_unlink(t);
     t->qos = (u8)smp_qos_from_darwin(darwin_qos);
     t->base_pri = (u8)smp_qos_base_pri(t->qos);
     t->pri_fixed = 0;
     if (t->state == TH_READY) rq_put(t);
+    sched_unlk();
 }
 /* thread_policy_set / pthread_setschedparam: prioridade Mach. fixed = sem decaimento (THREAD_PRECEDENCE, FIFO). */
 void sched_set_priority(thread_t *t, unsigned pri, bool fixed) {
     if (!t) return;
     if (pri > 127) pri = 127;
+    sched_lk();
     rq_unlink(t);
     t->base_pri = (u8)(pri ? pri : 1);
     t->pri_fixed = fixed;
     if (t->state == TH_READY) rq_put(t);
+    sched_unlk();
 }
 void sched_set_affinity(thread_t *t, u64 cpu_mask) {
     if (!t) return;
+    sched_lk();
     t->affinity = cpu_mask;
     rq_unlink(t);
     if (t->state == TH_READY) rq_put(t);
+    sched_unlk();
 }
 
 /* thread_suspend (SYS_THREADCTL, process.c): t já tem suspend > 0. Se estiver rodando em outro núcleo, o IPI de
@@ -367,12 +470,12 @@ static thread_t *new_thread(const char *name, process_t *p) {
 }
 
 static void link_thread(thread_t *t) {
-    u64 fl = irq_save();
+    sched_lk();
     t->state = TH_READY;
     t->next = threads->next;                    /* depois da thread 0 */
     threads->next = t;
     rq_put(t);
-    irq_restore(fl);
+    sched_unlk();
 }
 
 static void kthread_start(void *arg, void (*fn)(void *)) {
@@ -415,23 +518,41 @@ thread_t *uthread_clone(process_t *p, const int_frame_t *src) {
 }
 
 /* libera threads mortas que nenhum núcleo está rodando (a atual de cada um ainda está na pilha dela) */
+/* Chamado com a trava do escalonador (nível 1) e a grande. Tira as mortas da lista sob a do escalonador e só depois,
+ * sem ela, libera processo e pilha: proc_thread_exited pode esperar outro núcleo (shootdown), que talvez esteja
+ * esperando esta trava. A lista já não as tem, então ninguém mais as vê. */
 static void reap(void) {
+    thread_t *dead = NULL;
     for (thread_t **pp = &threads->next; *pp;) {
         thread_t *t = *pp;
         if (t->state == TH_DEAD && !on_cpu(t)) {
-            extern bool kheap_live(const void *p);
-            if (!kheap_live(t) || !kheap_live(t->kstack))   /* diagnóstico do kfree duplo (docs/porte-brew.md) */
-                kprintf("reap: thread %d \"%s\" (pid %d) já liberada: t=%p vivo=%d kstack=%p vivo=%d\n", t->id, t->name,
-                        t->proc ? t->proc->pid : -1, t, kheap_live(t), t->kstack, kheap_live(t->kstack));
             *pp = t->next;
             rq_unlink(t);
             futexq_remove(t);
             for (int i = 0; i < ncpu; i++) if (pc[i].last_user == t) pc[i].last_user = NULL;
-            if (t->proc) proc_thread_exited(t);
-            kfree(t->kstack);
-            kfree(t);
+            t->next = dead;
+            dead = t;
         } else pp = &t->next;
     }
+    if (!dead) return;
+    int depth = sl_depth;
+    u64 fl = sl_flags;
+    sl_depth = 1;
+    sched_unlk();                               /* solta de vez (o nível de fora volta logo abaixo) */
+    while (dead) {
+        thread_t *t = dead;
+        dead = t->next;
+        extern bool kheap_live(const void *p);
+        if (!kheap_live(t) || !kheap_live(t->kstack))   /* diagnóstico do kfree duplo (docs/porte-brew.md) */
+            kprintf("reap: thread %d \"%s\" (pid %d) já liberada: t=%p vivo=%d kstack=%p vivo=%d\n", t->id, t->name,
+                    t->proc ? t->proc->pid : -1, t, kheap_live(t), t->kstack, kheap_live(t->kstack));
+        if (t->proc) proc_thread_exited(t);
+        kfree(t->kstack);
+        kfree(t);
+    }
+    sched_lk();
+    sl_depth = depth;
+    sl_flags = fl;
 }
 
 static void account(pcpu_t *c) {
@@ -461,6 +582,7 @@ static void wake_sleepers(void) {
     last_scan = now;
     u64 due = ~0ULL;
     for (thread_t *t = threads; t; t = t->next) {
+        if ((t->state == TH_SLEEPING || t->state == TH_WAITING) && on_cpu(t)) { due = due > now + 1 ? now + 1 : due; continue; }   /* ainda bloqueando */
         if (t->state == TH_SLEEPING) {
             if (now >= t->wake_at) { t->state = TH_READY; rq_put(t); }
             else if (t->wake_at < due) due = t->wake_at;
@@ -623,23 +745,41 @@ static u64 switch_to(pcpu_t *c, int_frame_t *f, thread_t *to) {
 static u64 irq_exit(int_frame_t *f, bool timer);
 __attribute__((weak)) u64 proc_signal_check(int_frame_t *f) { return (u64)f; }
 
+static bool exit_has_bkl;   /* irq_exit desta vez tem a trava grande (reap e sinais só com ela) */
 u64 sched_irq_exit(int_frame_t *f, bool timer) {
+    sched_lk();
+    exit_has_bkl = true;
     u64 r = irq_exit(f, timer);
+    sched_defer();
     /* voltando para código de usuário: entrega sinais pendentes (ex.: Ctrl+C num laço infinito) */
     if (((int_frame_t *)r)->cs & 3) r = proc_signal_check((int_frame_t *)r);
     return r;
 }
+/* tique de um AP com a trava grande ocupada por outro núcleo: escalona só com a trava do escalonador (sem reap nem
+ * sinais, que precisam da grande). Antes a thread de usuário seguia rodando até a trava grande vagar. */
+u64 sched_irq_exit_nobkl(int_frame_t *f) {
+    if (this_cpu() == 0) return (u64)f;
+    pcpu_t *c = me_pc();
+    __atomic_store_n(&c->in_nobkl, 1, __ATOMIC_SEQ_CST);
+    sched_lk();
+    exit_has_bkl = false;
+    u64 r = irq_exit(f, true);
+    sched_defer();
+    return r;
+}
 
 static u64 irq_exit(int_frame_t *f, bool timer) {
+    bool exit_bkl = exit_has_bkl;               /* lido sob a trava: o reap solta e pega de novo */
     int me = this_cpu();
     pcpu_t *c = &pc[me];
     thread_t *cur = c->cur;
+    if (me && going_down[me]) return cur == c->idle ? (u64)f : switch_to(c, f, c->idle);   /* saindo de linha */
     if (!timer || (!threads->next && cur == c->idle)) return (u64)f;   /* nenhuma outra thread */
     wake_sleepers();
     if (me == 0 && cur == &thread0) {
         /* o desktop só cede quando a interrupção o pegou num hlt (ocioso); o hlt tem 1 byte */
         if ((f->cs & 3) || *(u8 *)(f->rip - 1) != 0xF4) return (u64)f;
-        reap();
+        if (exit_bkl) reap();
         thread_t *t = next_ready(0, c->last_user);
         return t ? switch_to(c, f, t) : (u64)f;
     }
@@ -652,7 +792,7 @@ static u64 irq_exit(int_frame_t *f, bool timer) {
     if (!higher && cur->state == TH_RUNNING && !thread_parked(cur) &&
         timer_ticks() - c->slice_start < (u64)(cur->qos == 0 ? 8 : cur->qos == 1 ? 6 : cur->qos == 3 ? 2 : cur->qos == 4 ? 1 : SCHED_SLICE_MS))
         return (u64)f;
-    reap();
+    if (exit_bkl) reap();
     if (me == 0) return switch_to(c, f, &thread0);   /* fim da fatia: o desktop roda */
     thread_t *t = next_ready(me, cur);
     if (!t) t = cur->state == TH_RUNNING && !thread_parked(cur) ? cur : c->idle;
@@ -663,11 +803,14 @@ static u64 irq_exit(int_frame_t *f, bool timer) {
 u64 sched_switch(int_frame_t *f) {
     int me = this_cpu();
     pcpu_t *c = &pc[me];
+    sched_lk();
     if (c->cur->state == TH_SLEEPING || c->cur->state == TH_WAITING) due_dirty = 1;   /* talvez com prazo novo */
     wake_sleepers();
     thread_t *t = next_ready(me, c->cur);
     if (!t || t == c->cur) t = c->cur->state == TH_RUNNING && !thread_parked(c->cur) ? c->cur : c->idle;
-    return switch_to(c, f, t);
+    u64 r = switch_to(c, f, t);
+    sched_defer();
+    return r;
 }
 
 /* thread do kernel dorme `ms` sem ocupar o núcleo: sai da CPU no próximo tique (irq_exit vê que não está RUNNING) e
@@ -675,19 +818,17 @@ u64 sched_switch(int_frame_t *f) {
 void kthread_sleep(u64 ms) {
     thread_t *t = thread_current();
     if (t == &thread0 || t->proc || t->id < 0) { sleep_ms(ms); return; }
-    u64 fl = irq_save();
+    sched_lk();
     t->wake_at = timer_ticks() + (ms ? ms : 1);
     t->state = TH_SLEEPING;
     due_dirty = 1;
-    irq_restore(fl);
+    sched_unlk();
     while (__atomic_load_n(&t->state, __ATOMIC_ACQUIRE) == TH_SLEEPING) hlt();
 }
 
 /* threads do kernel encerram por aqui: marca como morta e entra num hlt até o escalonador trocar */
 void thread_exit(void) {
-    cli();
-    me_pc()->cur->state = TH_DEAD;
-    sti();
+    sched_mark_dead(me_pc()->cur);
     for (;;) hlt();   /* a próxima interrupção de timer troca de thread (fim de fatia) */
 }
 
@@ -709,7 +850,7 @@ u64 sched_dead_check(int_frame_t *f) {
     /* só a morta sai aqui. Uma suspensa (thread_suspend) não: isto roda na entrada da syscall, antes dela, e a thread
      * voltaria depois com rax = o número da syscall no lugar do resultado (o sampler do Chromium derrubava o Codex). Ela
      * sai da CPU em sched_kexit, na volta ao ring 3, ou no irq_exit. */
-    return c->cur->state == TH_DEAD ? sched_switch(f) : 0;
+    return __atomic_load_n(&c->cur->state, __ATOMIC_ACQUIRE) == TH_DEAD ? sched_switch(f) : 0;
 }
 
 /* decide o que fazer com a trava antes de voltar para o frame r */
@@ -722,7 +863,9 @@ u64 sched_kexit(u64 r) {
         if ((f->cs & 3) && c->cur->proc && (c->cur->suspend || c->cur->proc->stopped)) {
             /* thread_suspend (SYS_THREADCTL) ou processo parado (SIGSTOP): a syscall ou a falta já terminou; sai da
              * CPU antes de voltar ao usuário. O frame salvo é o que o thread_get_state lê no caso do suspend. */
-            if (!held) sched_klock();
+            /* com a trava do escalonador por soltar (troca sem a grande, num AP), pegar a grande agora inverteria a
+             * ordem das travas: a troca só precisa da do escalonador */
+            if (!held && !(me && c->release_sched)) sched_klock();
             r = sched_switch(f);
             continue;
         }
@@ -733,15 +876,19 @@ u64 sched_kexit(u64 r) {
                 __atomic_store_n(&c->in_user, 0, __ATOMIC_SEQ_CST);
                 flush_if_pending(c);
                 if (pend & PEND_RESCHED) {
-                    sched_klock();
+                    /* daqui em diante não toca na memória do processo: quem espera no kick pode seguir */
+                    __atomic_store_n(&c->in_nobkl, 0, __ATOMIC_SEQ_CST);
+                    if (!(me && c->release_sched)) sched_klock();
                     u64 d = sched_dead_check(f);
                     if (d) r = d;
                 }
                 continue;
             }
             if (held) c->release = 1;
+            __atomic_store_n(&c->in_nobkl, 0, __ATOMIC_SEQ_CST);   /* in_user já vale 1: o kick segue vendo este núcleo */
             return r;
         }
+        __atomic_store_n(&c->in_nobkl, 0, __ATOMIC_SEQ_CST);
         if (is_kidle(c, c->cur)) { if (held) c->release = 1; return r; }
         if (!held) sched_klock();               /* thread do kernel (ou o desktop fora do hlt): roda com a trava */
         return r;
@@ -751,7 +898,17 @@ u64 sched_kexit(u64 r) {
 /* isr_common, já na pilha da thread que vai rodar */
 void sched_post(void) {
     pcpu_t *c = me_pc();
+    if (c->release_sched) {
+        c->release_sched = 0;
+        sl_depth = 0;
+        __atomic_store_n(&sl_owner, -1, __ATOMIC_RELEASE);
+        irq_restore(0);                          /* só desconta o irq_save do sched_lk; o iretq decide o IF */
+    }
     if (c->release) { c->release = 0; bkl_drop(); }
+}
+static void sched_defer(void) {
+    if (sl_depth > 1) { sl_depth--; return; }
+    me_pc()->release_sched = 1;
 }
 
 /* ------------------------------------------------------------ IPIs para outros núcleos */
@@ -768,7 +925,8 @@ static void kick_wait_marked(int cpu, u32 bit, int fire) {
     pcpu_t *c = &pc[cpu];
     if (fire && __atomic_load_n(&c->in_user, __ATOMIC_SEQ_CST)) smp_send_ipi(cpu, VEC_KICK);
     if (!fire) return;
-    for (u64 spins = 0; __atomic_load_n(&c->in_user, __ATOMIC_SEQ_CST) && (__atomic_load_n(&c->pending, __ATOMIC_SEQ_CST) & bit);
+    for (u64 spins = 0; (__atomic_load_n(&c->in_user, __ATOMIC_SEQ_CST) || __atomic_load_n(&c->in_nobkl, __ATOMIC_SEQ_CST)) &&
+                        (__atomic_load_n(&c->pending, __ATOMIC_SEQ_CST) & bit);
          spins++) {
         __asm__ volatile("pause");
         if (spins == 200000000ULL) { kprintf("smp: núcleo %d não respondeu ao IPI (pendente %u)\n", cpu, c->pending); break; }
@@ -802,7 +960,8 @@ void smp_tlb_shootdown(u64 cr3) {
     for (i = 0; i < n; i++)
         if ((mask & (1ULL << i)) && __atomic_load_n(&pc[i].in_user, __ATOMIC_SEQ_CST)) smp_send_ipi(i, VEC_KICK);
     for (i = 0; i < n; i++)
-        if ((mask & (1ULL << i)) && __atomic_load_n(&pc[i].in_user, __ATOMIC_SEQ_CST)) kick_wait_marked(i, PEND_FLUSH, 1);
+        if ((mask & (1ULL << i)) && (__atomic_load_n(&pc[i].in_user, __ATOMIC_SEQ_CST) || __atomic_load_n(&pc[i].in_nobkl, __ATOMIC_SEQ_CST)))
+            kick_wait_marked(i, PEND_FLUSH, 1);
 }
 
 /* threads de p foram marcadas TH_DEAD (fim do processo, execve): tira dos outros núcleos as que estão rodando
