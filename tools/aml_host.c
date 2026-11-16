@@ -239,6 +239,15 @@ int main(int argc, char **argv) {
             if (!aml_find(c, objs[k])) continue;
             int r = aml_eval_path(c, objs[k], NULL, 0, &v);
             check(r == AML_OK, objs[k]);
+            if (r == AML_OK && k == 0 && v.type == AML_PKG && v.b->el[0].type == AML_BUF) {
+                const u8 *d = v.b->el[0].b->d; u64 addr = 0;
+                for (int q = 0; q < 8; q++) addr |= (u64)d[7 + q] << (8 * q);
+                printf("  _PCT[0]: espaço 0x%02x, %u bits, 0x%llx\n", d[3], d[4], (unsigned long long)addr);
+                check(d[0] == 0x82 && (d[3] != 0x7F || addr == 0xC0010062), "_PCT FFixedHW em PStateCtl");
+            }
+            if (r == AML_OK && k == 1 && v.type == AML_PKG) {
+                for (u32 q = 0; q < v.b->len; q++) { u64 ctl = 0; aml_val_to_int(&v.b->el[q].b->el[4], &ctl); check(ctl == q, "_PSS controle = índice do P-state"); }
+            }
             if (r == AML_OK) { show(objs[k], &v, 2); aml_val_free(&v); }
         }
         break;

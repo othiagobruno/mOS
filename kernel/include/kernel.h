@@ -257,6 +257,11 @@ void   acpi_init(void);
 void   acpi_poweroff(void);
 void   acpi_reboot(void);
 void   acpi_poll(void);                 /* laço principal: GPEs, EC, botão de energia, térmica */
+void   cpufreq_init(void);              /* P-states pelo _PSS/_PCT (dev/cpufreq.c) */
+void   cpufreq_poll(void);
+void   cpufreq_ap_tick(void);           /* tique do LAPIC de cada AP */
+int    cpufreq_current_mhz(void);
+int    cpufreq_states(u32 *mhz, int max);
 bool   acpi_ready(void);
 const char *acpi_status(void);
 const void *acpi_find_table(const char *sig, int nth);
