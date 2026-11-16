@@ -162,3 +162,66 @@ bool p256_ecdh(const u8 priv_le[32], const u8 px_le[32], const u8 py_le[32], u8 
 }
 
 bool p256_on_curve(const u8 x_le[32], const u8 y_le[32]) { fe x, y; load(&x, x_le); load(&y, y_le); return on_curve(&x, &y); }
+
+/* ============================================================ API de baixo nível (WPA3-SAE do Wi-Fi, kernel/wifi/sae.c)
+ * Mesmo formato interno (8 palavras little-endian). A multiplicação escalar desta API é de tempo constante
+ * na escolha dos bits (soma sempre feita e selecionada sem desvio), porque o SAE multiplica segredos. */
+#include "p256.h"
+_Static_assert(sizeof(p256_fe) == sizeof(fe), "p256_fe");
+void p256_fe_mul(p256_fe *r, const p256_fe *a, const p256_fe *b) { fmul((fe *)r, (const fe *)a, (const fe *)b); }
+void p256_fe_add(p256_fe *r, const p256_fe *a, const p256_fe *b) { fadd((fe *)r, (const fe *)a, (const fe *)b); }
+void p256_fe_sub(p256_fe *r, const p256_fe *a, const p256_fe *b) { fsub((fe *)r, (const fe *)a, (const fe *)b); }
+void p256_fe_inv(p256_fe *r, const p256_fe *a) { finv((fe *)r, (const fe *)a); }
+const p256_fe *p256_prime(void) { return (const p256_fe *)&P; }
+const p256_fe *p256_b(void) { return (const p256_fe *)&B; }
+const p256_fe *p256_gx(void) { return (const p256_fe *)&GX; }
+const p256_fe *p256_gy(void) { return (const p256_fe *)&GY; }
+int p256_fe_cmp(const p256_fe *a, const p256_fe *b) { return cmp((const fe *)a, (const fe *)b); }
+bool p256_fe_is_zero(const p256_fe *a) { return is_zero((const fe *)a); }
+
+void p256_fe_pow(p256_fe *r, const p256_fe *a, const u32 e[8]) {
+    fe acc = {{1}}, base = *(const fe *)a;
+    for (int i = 255; i >= 0; i--) {
+        fmul(&acc, &acc, &acc);
+        fe t;
+        fmul(&t, &acc, &base);
+        u32 m = (u32)0 - ((e[i / 32] >> (i % 32)) & 1);
+        for (int k = 0; k < 8; k++) acc.v[k] = (acc.v[k] & ~m) | (t.v[k] & m);
+    }
+    *(fe *)r = acc;
+}
+
+bool p256_on_curve_fe(const p256_fe *x, const p256_fe *y) {
+    if (cmp((const fe *)x, &P) >= 0 || cmp((const fe *)y, &P) >= 0) return false;
+    return on_curve((const fe *)x, (const fe *)y);
+}
+
+static void jsel(jp *r, const jp *a, u32 bit) {             /* r = bit ? a : r, sem desvio */
+    u32 m = (u32)0 - (bit & 1);
+    for (int k = 0; k < 8; k++) {
+        r->x.v[k] = (r->x.v[k] & ~m) | (a->x.v[k] & m);
+        r->y.v[k] = (r->y.v[k] & ~m) | (a->y.v[k] & m);
+        r->z.v[k] = (r->z.v[k] & ~m) | (a->z.v[k] & m);
+    }
+}
+
+bool p256_pt_mul(p256_fe *ox, p256_fe *oy, const u32 k[8], const p256_fe *x, const p256_fe *y) {
+    jp acc = {0}, base = {*(const fe *)x, *(const fe *)y, {{1}}};
+    for (int i = 255; i >= 0; i--) {
+        dbl(&acc, &acc);
+        jp t;
+        add_pt(&t, &acc, &base);
+        jsel(&acc, &t, (k[i / 32] >> (i % 32)) & 1);
+    }
+    if (is_zero(&acc.z)) return false;                     /* ponto no infinito */
+    to_affine((fe *)ox, (fe *)oy, &acc);
+    return true;
+}
+
+bool p256_pt_add(p256_fe *ox, p256_fe *oy, const p256_fe *ax, const p256_fe *ay, const p256_fe *bx, const p256_fe *by) {
+    jp a = {*(const fe *)ax, *(const fe *)ay, {{1}}}, b = {*(const fe *)bx, *(const fe *)by, {{1}}}, r;
+    add_pt(&r, &a, &b);
+    if (is_zero(&r.z)) return false;
+    to_affine((fe *)ox, (fe *)oy, &r);
+    return true;
+}
