@@ -5,7 +5,7 @@
  *    filtros biquad com ele). FFT real com o empacotamento e a escala da Apple (direta multiplica por 2).
  *  - CoreMedia: CMTime aqui; bloco, formato e sample buffer em openbot_cm.c.
  *  - VideoToolbox: H.264 Baseline em software (h264bsd). O codificador ainda é I_PCM. HEVC é stub (-12906/-12908).
- *  - CoreAudio/AudioToolbox/CoreMIDI: nenhum dispositivo/componente (áudio do Chromium fica mudo).
+ *  - CoreAudio/AudioToolbox: coreaudio.c; CoreMIDI: coremidi.c.
  *  - CUPS: nenhuma impressora. GSS/Kerberos: sem credenciais (autenticação Negotiate falha limpa).
  *  - UniformTypeIdentifiers: objetos UTType com identificador, extensão e MIME.
  *  - ServiceManagement: itens de login aceitos; sem launchd para jobs.
@@ -451,31 +451,7 @@ OSStatus VTSessionCopySupportedPropertyDictionary(void *s, id *out) { (void)s; i
 
 /* CoreAudio, AudioUnit, AudioQueue, AudioConverter, AudioFile e AudioServices: coreaudio.c */
 
-/* ================================================================ CoreMIDI: nenhuma porta */
-OSStatus MIDIClientCreate(id name, void *cb, void *ref, u32 *out) { (void)name; (void)cb; (void)ref; if (out) *out = 1; return 0; }
-OSStatus MIDIClientDispose(u32 c) { (void)c; return 0; }
-OSStatus MIDIInputPortCreate(u32 c, id name, void *cb, void *ref, u32 *out) { (void)c; (void)name; (void)cb; (void)ref; if (out) *out = 2; return 0; }
-OSStatus MIDIOutputPortCreate(u32 c, id name, u32 *out) { (void)c; (void)name; if (out) *out = 3; return 0; }
-OSStatus MIDIPortConnectSource(u32 p, u32 s, void *ref) { (void)p; (void)s; (void)ref; return -10830; /* kMIDIObjectNotFound */ }
-unsigned long MIDIGetNumberOfSources(void) { return 0; }
-unsigned long MIDIGetNumberOfDestinations(void) { return 0; }
-u32 MIDIGetSource(unsigned long i) { (void)i; return 0; }
-u32 MIDIGetDestination(unsigned long i) { (void)i; return 0; }
-OSStatus MIDISend(u32 port, u32 dest, const void *list) { (void)port; (void)dest; (void)list; return -10830; }
-OSStatus MIDIObjectGetIntegerProperty(u32 o, id p, i32 *v) { (void)o; (void)p; if (v) *v = 0; return -10830; }
-OSStatus MIDIObjectGetStringProperty(u32 o, id p, id *v) { (void)o; (void)p; if (v) *v = 0; return -10830; }
-/* MIDIPacketList: {u32 numPackets; MIDIPacket packet[]}, MIDIPacket: {u64 timeStamp; u16 length; u8 data[]} (packed) */
-void *MIDIPacketListInit(void *list) { u8 *l = list; *(u32 *)l = 0; return l + 4; }
-void *MIDIPacketListAdd(void *list, unsigned long size, void *cur, u64 time, unsigned long n, const u8 *data) {
-    u8 *l = list, *p = cur;
-    if (p + 10 + n > l + size) return 0;
-    memcpy(p, &time, 8);
-    u16 len = (u16)n;
-    memcpy(p + 8, &len, 2);
-    memcpy(p + 10, data, n);
-    (*(u32 *)l)++;
-    return p;
-}
+/* CoreMIDI: coremidi.c */
 
 /* ================================================================ CUPS: nenhuma impressora */
 typedef struct { char *name, *instance; int is_default, num_options; void *options; } cups_dest_t;
