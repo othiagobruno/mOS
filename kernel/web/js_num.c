@@ -485,7 +485,11 @@ bool m_isfinite(double x) { return ((dbits(x) >> 52) & 0x7FF) != 0x7FF; }
 
 double m_sqrt(double x) {
     double r;
+#if defined(__aarch64__)
+    __asm__("fsqrt %d0, %d1" : "=w"(r) : "w"(x));
+#else
     __asm__("sqrtsd %1, %0" : "=x"(r) : "x"(x));
+#endif
     return r;
 }
 

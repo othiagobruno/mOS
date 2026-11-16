@@ -53,7 +53,7 @@ $x86only = @('objc_msg.S', 'objc_tramp.S', 'sigjmp.S', 'start.S', 'tlv.S',
     'combine_link.c', 'combine_meta.c', 'combine_meta.S')
 $items = @()
 function Add-Src($g, $f) { $script:items += [pscustomobject]@{ g = $g; f = $f } }
-Get-ChildItem "$ls\*" -Include *.c, *.S | Where-Object { $x86only -notcontains $_.Name -and $_.Name -notlike 'swiftui_*.c' } | ForEach-Object {
+Get-ChildItem "$ls\*" -Include *.c, *.S | Where-Object { $x86only -notcontains $_.Name -and ($_.Name -notlike 'swiftui_*.c' -or $_.Name -eq 'swiftui_geom.c') }   # swiftui_geom.c: C puro (mos_sui_*) | ForEach-Object {
     Add-Src $(if ($_.Name -eq 'sqlite3_mos.c') { 'shim' } else { 'ls' }) $_.FullName }
 Add-Src 'shim' "$root\userland\host-audio\audiodec.c"
 Add-Src 'compls' "$root\userland\frameworks\libcompression\compression.c"

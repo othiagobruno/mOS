@@ -75,7 +75,7 @@ static void error_at(parser *P, int line, const char *fmt, ...) {
 
 static bool stack_ok(parser *P) {
     uptr sp;
-    __asm__ volatile("movq %%rsp, %0" : "=r"(sp));
+    JS_GET_SP(sp);
     if ((P->stack_top && P->stack_top - sp > 400u * 1024) || (J.stack_base && J.stack_limit && J.stack_base - sp > J.stack_limit)) {
         error_at(P, P->t.line, "Aninhamento profundo demais");
         return false;
@@ -2086,7 +2086,7 @@ jsscript *js_parse_ex(const char *src, int len, const char *name, int line0, boo
     sc->realm = J.realm;
     parser *P = kcalloc(1, sizeof(parser));
     if (!P) { if (err) *err = js_strz("memória insuficiente"); return NULL; }
-    __asm__ volatile("movq %%rsp, %0" : "=r"(P->stack_top));
+    JS_GET_SP(P->stack_top);
     P->s = src;
     P->len = len;
     P->line = line0 > 0 ? line0 : 1;

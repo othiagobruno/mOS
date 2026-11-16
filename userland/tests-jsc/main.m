@@ -113,6 +113,16 @@ int main(void) {
         /* Promise e microtarefas */
         [c evaluateScript:@"var r = 0; Promise.resolve(7).then(function(x) { r = x })"];
         check([c[@"r"] toInt32] == 7, "microtarefas depois do script", nil);
+        /* corrotinas (troca de pilha em asm, por arquitetura) e o coletor conservador (registradores salvos + pilha) */
+        v = [c evaluateScript:@"function* g(n) { var s = 0; for (var i = 0; i < n; i++) s += yield i * 1.5; return s }"
+                               " var it = g(4), o = it.next(), t = 0; while (!o.done) { t += o.value; o = it.next(2) } t + '|' + o.value"];
+        check([[v toString] isEqualToString:@"9|8"], "gerador: yield, next(v) e return", [v toString]);
+        v = [c evaluateScript:@"var keep = []; for (var k = 0; k < 20000; k++) { var a = { k: k, s: 'x' + k }; if (k % 1000 == 0) keep.push(a) }"
+                               " var gs = []; for (var k = 0; k < 50; k++) { var q = g(3); q.next(); gs.push(q) }"
+                               " keep.length + '|' + keep[19].s + '|' + gs[49].next(5).value"];
+        check([[v toString] isEqualToString:@"20|x19000|1.5"], "coletor com corrotinas vivas", [v toString]);
+        v = [c evaluateScript:@"var ar = 0; async function f(x) { var y = await x; return y + 1 } f(41).then(function(z) { ar = z }); 1"];
+        check([c[@"ar"] toInt32] == 42, "async/await", [c[@"ar"] toString]);
         [conta release];
         [c release];
     }

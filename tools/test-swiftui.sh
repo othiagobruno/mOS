@@ -4,18 +4,24 @@
 # Apple contra /System/Library/Frameworks/SwiftUI.framework de build/swift/objc/dylib e roda no build/machotest com essa
 # árvore como raiz do VFS. Placar: "swiftui: N/N ok".
 # Antes: tools/build-swiftui-objc.py (e o que ele pede), build/machotest e build/libSystem.mos (docs/testes-linux.md).
+# MOS_ARCH=arm64: compila e liga o mesmo teste arm64 contra build/swift/objc-arm64 e para aí; ele roda na VM pelo
+# tradutor: tools/a64rt-teste-vm.sh <dir do build.sh> 900 build/swiftobjctest/swiftui-arm64/SwiftUITest
 set -uo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
 zig=${MOS_ZIG:-$(command -v zig || true)}
 fe=${SWIFTC:-$root/.tools/swift-6.4.2/usr/bin/swift-frontend}
-objc="$root/build/swift/objc"
+arch=${MOS_ARCH:-x86_64}
+case "$arch" in x86_64) sfx=""; zt=x86_64-macos ;; arm64) sfx="-arm64"; zt=aarch64-macos ;; *) echo "MOS_ARCH: x86_64 ou arm64" >&2; exit 2 ;; esac
+objc="$root/build/swift/objc$sfx"
 dy="$objc/dylib"
 sw="$dy/usr/lib/swift"
 sui="$objc/swiftui"
 fw="$dy/System/Library/Frameworks/SwiftUI.framework/Versions/A/SwiftUI"
 cmb="$dy/System/Library/Frameworks/Combine.framework/Versions/A/Combine"
-t="$root/build/swiftobjctest/swiftui"
-for f in "$root/build/machotest" "$root/build/libSystem.mos" "$fe" "$sw/libswiftCore.dylib" "$sw/libswiftFoundation.dylib" "$fw" \
+t="$root/build/swiftobjctest/swiftui$sfx"
+host=("$root/build/machotest" "$root/build/libSystem.mos")
+[ "$arch" = arm64 ] && host=()
+for f in "${host[@]}" "$fe" "$sw/libswiftCore.dylib" "$sw/libswiftFoundation.dylib" "$fw" \
          "$sui/OpenSwiftUI/OpenSwiftUI.rsp"; do
     [ -e "$f" ] || { echo "test-swiftui: falta $f" >&2; exit 2; }
 done
@@ -52,8 +58,13 @@ for b in libswiftCore libswift_Concurrency libswiftDarwin libswiftObjectiveC lib
          libswiftDispatch libswiftFoundation libswift_StringProcessing libswiftObservation; do
     [ -f "$sw/$b.dylib" ] && libs+=("$sw/$b.dylib")
 done
-"$zig" cc -target x86_64-macos -o "$t/SwiftUITest" "$t/SwiftUITest.o" "${libs[@]}" -Wl,-undefined,dynamic_lookup \
+"$zig" cc -target "$zt" -o "$t/SwiftUITest" "$t/SwiftUITest.o" "${libs[@]}" -Wl,-undefined,dynamic_lookup \
     >> "$t/compilacao.txt" 2>&1 || { tail -20 "$t/compilacao.txt" >&2; echo "link FALHOU" >&2; exit 1; }
+if [ "$arch" = arm64 ]; then
+    file "$t/SwiftUITest" 2>/dev/null || ls -l "$t/SwiftUITest"
+    echo "test-swiftui arm64: ligado em $t/SwiftUITest (rode na VM com tools/a64rt-teste-vm.sh)"
+    exit 0
+fi
 export MACHOTEST_WATCHDOG="${MACHOTEST_WATCHDOG:-30000}"
 "$root/build/machotest" "$root/build/libSystem.mos" "$dy" "$t/SwiftUITest" > "$t/saida.txt" 2>&1
 code=$?

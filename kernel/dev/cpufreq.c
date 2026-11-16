@@ -47,6 +47,8 @@ static bool cpuid_amd_zen(bool *aperf) {
     *aperf = c & 1;                            /* APERF/MPERF */
     __asm__ volatile("cpuid" : "=a"(a), "=b"(b), "=c"(c), "=d"(d) : "a"(1));
     u32 fam = ((a >> 8) & 0xF) + ((a >> 20) & 0xFF);
+    /* sob hipervisor (CPUID.1:ECX[31], ex.: QEMU -cpu max num Ryzen) as MSRs de P-state dão #GP: só o _PSS do ACPI */
+    if (c & (1u << 31)) return false;
     return amd && fam >= 0x17;
 }
 static bool g_zen, g_aperf;

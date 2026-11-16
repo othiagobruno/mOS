@@ -10,6 +10,13 @@
 #include "web.h"
 #include "js.h"
 
+/* ponteiro de pilha atual: o motor também roda arm64 no JavaScriptCore.framework (processo arm64 do tradutor) */
+#if defined(__aarch64__)
+#define JS_GET_SP(v) __asm__ volatile("mov %0, sp" : "=r"(v))
+#else
+#define JS_GET_SP(v) __asm__ volatile("movq %%rsp, %0" : "=r"(v))
+#endif
+
 typedef u64 jsv;
 
 #define JS_TAG_SPEC  0xFFF9000000000000ull

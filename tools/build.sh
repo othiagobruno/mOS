@@ -711,18 +711,21 @@ echo "WebKit.framework ok"
 # JavaScriptCore.framework do mOS (userland/frameworks/JavaScriptCore): o motor JS do sistema (kernel/web/js_*.c, sem o
 # DOM) no processo do app, com a API C (jsc_api.c) e a ObjC (JSC.m) do JavaScriptCore por cima
 echo "==> JavaScriptCore.framework"
-JSCDIR="$ESP/mOS/System/Library/Frameworks/JavaScriptCore.framework/Versions/A"
-JSCOBJ="$OUT/jsc-obj"
-mkdir -p "$JSCDIR" "$JSCOBJ"
-for f in $(ls "$ROOT"/kernel/web/js_*.c | grep -v /js_dom.c) "$ROOT/kernel/web/util.c" "$ROOT/userland/frameworks/JavaScriptCore/jsc_api.c"; do
-    "$ZIG" cc -target x86_64-macos -O2 -std=gnu11 -w -fno-builtin -fno-stack-protector -fvisibility=hidden \
-        -I"$ROOT/kernel/include" -I"$ROOT" -c "$f" -o "$JSCOBJ/$(basename "$f" .c).o"
-done
-"$ZIG" cc -target x86_64-macos -O2 -c -x objective-c -I"$ROOT/userland/sdk/include" -Wno-objc-root-class -Wno-objc-method-access \
-    "$ROOT/userland/frameworks/JavaScriptCore/JSC.m" -o "$JSCOBJ/JSC.o"
-"$ZIG" cc -target x86_64-macos -shared "$JSCOBJ"/*.o -o "$JSCDIR/JavaScriptCore" \
-    -Wl,-install_name,/System/Library/Frameworks/JavaScriptCore.framework/Versions/A/JavaScriptCore \
-    -Wl,-undefined,dynamic_lookup
+# jsc_build <alvo do zig> <raiz>: o framework em <raiz>/System/Library/Frameworks (x86_64 na ESP, arm64 na árvore arm64)
+jsc_build() {
+    local zt=$1 dir="$2/System/Library/Frameworks/JavaScriptCore.framework/Versions/A" obj="$OUT/jsc-obj-$1" f
+    rm -rf "$obj"; mkdir -p "$dir" "$obj"
+    for f in $(ls "$ROOT"/kernel/web/js_*.c | grep -v /js_dom.c) "$ROOT/kernel/web/util.c" "$ROOT/userland/frameworks/JavaScriptCore/jsc_api.c"; do
+        "$ZIG" cc -target "$zt" -O2 -std=gnu11 -w -fno-builtin -fno-stack-protector -fvisibility=hidden \
+            -I"$ROOT/kernel/include" -I"$ROOT" -c "$f" -o "$obj/$(basename "$f" .c).o" || return 1
+    done
+    "$ZIG" cc -target "$zt" -O2 -c -x objective-c -I"$ROOT/userland/sdk/include" -Wno-objc-root-class -Wno-objc-method-access \
+        "$ROOT/userland/frameworks/JavaScriptCore/JSC.m" -o "$obj/JSC.o" || return 1
+    "$ZIG" cc -target "$zt" -shared "$obj"/*.o -o "$dir/JavaScriptCore" \
+        -Wl,-install_name,/System/Library/Frameworks/JavaScriptCore.framework/Versions/A/JavaScriptCore \
+        -Wl,-undefined,dynamic_lookup
+}
+jsc_build x86_64-macos "$ESP/mOS" || { echo "JavaScriptCore.framework não compilou" >&2; exit 1; }
 echo "JavaScriptCore.framework ok"
 
 # SafariServices.framework (userland/frameworks/SafariServices): a API das extensões do Safari num sistema sem Safari
@@ -804,8 +807,28 @@ if [ -f "$A64FW/usr/lib/swift/libswiftCore.dylib" ]; then
     MOS_ZIG="$ZIG" MOS_ARCH=arm64 python3 "$ROOT/tools/build-swiftui-objc.py" || echo "aviso: SwiftUI.framework arm64 não compilou" >&2
 fi
 MOS_ZIG="$ZIG" MOS_ARCH=arm64 bash "$ROOT/tools/build-frameworks-objc.sh" "$A64FW" || echo "aviso: algum framework arm64 não compilou" >&2
+# overlays Swift do UIKit/PhotosUI do Catalyst (/System/iOSSupport/usr/lib/swift) e o JavaScriptCore, fatia arm64
+if [ -e "$ROOT/build/swift/objc-arm64/overlays/Foundation.swiftmodule" ]; then
+    MOS_ZIG="$ZIG" MOS_ARCH=arm64 bash "$ROOT/tools/build-swift-uikit-objc.sh" || echo "aviso: libswiftUIKit arm64 não compilou" >&2
+fi
+jsc_build aarch64-macos "$A64FW" || echo "aviso: JavaScriptCore.framework arm64 não compilou" >&2
 bash "$ROOT/tools/build-coreimage.sh" "$ZIG" "$A64FW" arm64
 "${LIPO[@]}" --arvore "$ESP/mOS" "$A64FW" || echo "aviso: fatia arm64 sem par x86_64 na ESP (verificar-imagem-arm64.py lista)" >&2
+# libswift* sem nenhum símbolo exportado (AppKit, UIKit, WebKit, CoreData, Network...): só existem para o LC_LOAD_DYLIB
+# do app achar o arquivo. A fatia arm64 é a mesma dylib vazia, com o mesmo install_name, feita pelo zig.
+A64VAZ="$OUT/libswift-vazias-arm64"
+rm -rf "$A64VAZ"; mkdir -p "$A64VAZ/usr/lib/swift"
+: > "$OUT/libswift-vazia.c"
+for nome in $(awk '/^libswift.*\.dylib$/{if(d!=""&&n==0)print d; d=$0; n=0; next} /^[_$]/{n++} END{if(d!=""&&n==0)print d}' \
+        "$ROOT/tools/libswift-stub-exports.txt"); do
+    dst="$ESP/mOS/usr/lib/swift/$nome"
+    [ -f "$dst" ] || continue
+    python3 -I -B -c 'import sys; sys.path.insert(0, sys.argv[2]); import importlib; L = importlib.import_module("lipo-mos")
+sys.exit(0 if any(c == L.CPU_ARM64 for c, _, _, _ in L.slices(open(sys.argv[1], "rb").read())) else 1)' "$dst" "$ROOT/tools" && continue
+    "$ZIG" cc -target aarch64-macos -O2 -shared "$OUT/libswift-vazia.c" -o "$A64VAZ/usr/lib/swift/$nome" \
+        -Wl,-install_name,/usr/lib/swift/$nome || echo "aviso: $nome arm64 não ligou" >&2
+done
+"${LIPO[@]}" --arvore "$ESP/mOS" "$A64VAZ" || echo "aviso: libswift vazias arm64 não entraram" >&2
 
 KEY=${MOS_CHAVE_ATUALIZACAO:-$ROOT/tools/chave-atualizacao.semente}
 REV=$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo local)
@@ -820,5 +843,5 @@ rm -f "$OUT/mOS.img"
 echo "OK: $OUT/mOS.img"
 ls -lh "$OUT/BOOTX64.EFI" "$OUT/mOS.img"
 python3 "$ROOT/tools/verificar-imagem-apps.py" "$ESP"
-# o que ainda falta para o processo arm64 (docs/runtime-arm64-plano.md); vira obrigatório quando a lista zerar
-python3 -I "$ROOT/tools/verificar-imagem-arm64.py" --relatorio "$ESP"
+# processo arm64 (docs/runtime-arm64-plano.md): toda biblioteca do sistema com fatia arm64 e dependências arm64 resolvidas
+python3 -I "$ROOT/tools/verificar-imagem-arm64.py" "$ESP" || { echo "imagem sem o runtime arm64 completo (lista acima)" >&2; exit 1; }
