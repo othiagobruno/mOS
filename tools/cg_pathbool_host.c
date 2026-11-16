@@ -24,7 +24,9 @@ void *CGPathCreateCopyBySymmetricDifferenceOfPath(const void *a, const void *b, 
 void *CGPathCreateCopyByNormalizing(const void *p, int eo);
 void *CGPathCreateCopyByFlattening(const void *p, double t);
 void *CGPathCreateCopyOfLineByIntersectingPath(const void *l, const void *r, int eo);
+void *CGPathCreateCopyOfLineBySubtractingPath(const void *l, const void *r, int eo);
 int CGPathIntersectsPath(const void *a, const void *b, int eo);
+int CGPathIsEmpty(const void *p);
 void *CGPathCreateSeparateComponents(const void *p, int eo);
 int CGPathContainsPoint(const void *p, const void *m, CGPoint pt, int eo);
 #define W 200
@@ -90,6 +92,34 @@ int main(void) {
         CHECK(e < 0.003, m);
         CGPathRelease(r);
     }
+    /* quadrados sobrepostos (pedido do SwiftUI): A = 2 quadrados no mesmo sentido que se cruzam (o miolo some no par-ímpar),
+     * B = quadrado que corta os dois e tem uma borda coincidente com A; cada operação nas duas regras + pontos de controle */
+    void *sqA = CGPathCreateMutable(), *sqB = CGPathCreateMutable();
+    CGPathAddRect(sqA, NULL, (CGRect){{20, 20}, {80, 80}});
+    CGPathAddRect(sqA, NULL, (CGRect){{60, 60}, {80, 80}});
+    CGPathAddRect(sqB, NULL, (CGRect){{100, 30}, {80, 60}});      /* x=100 coincide com a borda direita do 1º quadrado */
+    for (int eo = 0; eo < 2; eo++)
+        for (int op = 0; op < 4; op++) {
+            char m[160];
+            void *r = fn[op](sqA, sqB, eo);
+            double e = mismatch(sqA, sqB, eo, r, op);
+            /* (80,80): miolo de A (dentro só na não nula); (120,70): só B+2º quadrado; (150,40): só B; (40,40): só A */
+            CGPoint pts[4] = {{80, 80}, {120, 70}, {150, 40}, {40, 40}};
+            int inA[4] = {!eo, 1, 0, 1}, inB[4] = {0, 1, 1, 0}, okp = 1;
+            for (int k = 0; k < 4; k++) {
+                int want = op == 0 ? (inA[k] || inB[k]) : op == 1 ? (inA[k] && inB[k]) : op == 2 ? (inA[k] && !inB[k]) : (inA[k] != inB[k]);
+                if ((CGPathContainsPoint(r, 0, pts[k], 0) != 0) != want) okp = 0;
+            }
+            snprintf(m, sizeof m, "quadrados sobrepostos %s, %s (%.3f%%, pontos %s)", opn[op], eo ? "par-ímpar" : "não nula", e * 100, okp ? "ok" : "errados");
+            CHECK(e < 0.003 && okp, m);
+            CGPathRelease(r);
+        }
+    void *sq1 = CGPathCreateMutable(), *sq2 = CGPathCreateMutable();
+    CGPathAddRect(sq1, NULL, (CGRect){{0, 0}, {100, 100}});
+    CGPathAddRect(sq2, NULL, (CGRect){{50, 50}, {100, 100}});
+    void *u = CGPathCreateCopyByUnioningPath(sq1, sq2, 0), *in = CGPathCreateCopyByIntersectingPath(sq1, sq2, 1);
+    CGRect bu = CGPathGetBoundingBox(u), bi = CGPathGetBoundingBox(in);
+    CHECK(bu.origin.x == 0 && bu.size.width == 150 && bi.origin.x == 50 && bi.origin.y == 50 && bi.size.width == 50 && bi.size.height == 50, "quadrados: caixa da união 0..150 e da interseção 50..100 exatas");
     void *empty = CGPathCreateMutable();
     void *nrm = CGPathCreateCopyByNormalizing(star, 1);
     CHECK(mismatch(star, empty, 1, nrm, 0) < 0.003 && !CGPathContainsPoint(nrm, 0, (CGPoint){100, 100}, 0), "normalizar a estrela par-ímpar: o centro fica de fora mesmo na regra não nula");
@@ -108,6 +138,9 @@ int main(void) {
     void *cut = CGPathCreateCopyOfLineByIntersectingPath(ln, circ, 0);
     CGRect bb = CGPathGetBoundingBox(cut);
     CHECK(bb.origin.x > 19 && bb.origin.x < 22 && bb.origin.x + bb.size.width > 128 && bb.origin.x + bb.size.width < 131, "linha recortada pelo círculo");
+    void *rest = CGPathCreateCopyOfLineBySubtractingPath(ln, circ, 0);
+    CGRect br = CGPathGetBoundingBox(rest);
+    CHECK(br.origin.x == 0 && br.size.width == 200 && !CGPathContainsPoint(rest, 0, (CGPoint){75, 75}, 0) && CGPathIsEmpty(CGPathCreateCopyOfLineByIntersectingPath(rest, circ, 0)), "linha menos o círculo: sobram as duas pontas, nada dentro do círculo");
     printf("%d falha(s)\n", fails);
     return fails ? 1 : 0;
 }
