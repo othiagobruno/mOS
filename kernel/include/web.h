@@ -123,6 +123,7 @@ typedef struct style {
     u8 shadow;
     u8 border_attr;                /* <table border> (bordas nas células) */
     float cellpad;                 /* cellpadding (-1 = não definido) */
+    u8 clip_overflow;              /* overflow diferente de visible (IntersectionObserver recorta por ele) */
 } style_t;
 
 typedef struct sheet sheet_t;

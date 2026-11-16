@@ -99,3 +99,28 @@ WEB_HOST_CASE(obs_intersection) {
     EQ("try{new IntersectionObserver(function(){},{rootMargin:'5em'})}catch(e){e.name}", "SyntaxError");
     og_close(&g);
 }
+
+/* MutationObserver: nó tirado de subárvore observada continua observado até a entrega (registro transitório) */
+WEB_HOST_CASE(obs_mutation_transitorio) {
+    og_t g = og_open("<html><body><div id=a><p id=f><b id=n>x</b></p></div><script>var r=[];"
+                     "var a=document.getElementById('a'), f=document.getElementById('f'), n=document.getElementById('n');</script></body></html>");
+    run(&g, "var mo=new MutationObserver(function(rs){ r.push(rs.map(function(m){ return m.type+':'+m.target.id+(m.attributeName?':'+m.attributeName:'') }).join(',')) });"
+            "mo.observe(a,{subtree:true,childList:true,attributes:true}); a.removeChild(f); n.setAttribute('title','1'); f.appendChild(document.createElement('i'));");
+    tick(&g, 1);
+    EQ("r.join('|')", "childList:a,attributes:n:title,childList:f");
+    run(&g, "r=[]; n.setAttribute('title','2');");
+    tick(&g, 1);
+    EQ("r.length", "0");
+    og_close(&g);
+}
+
+/* IntersectionObserver: ancestral com overflow hidden recorta (o alvo fora da caixa dele não intersecta) */
+WEB_HOST_CASE(obs_intersection_overflow) {
+    og_t g = og_open("<html><body style='margin:0'><div id=c style='overflow:hidden;height:50px'><div style='height:100px'></div>"
+                     "<div id=t style='height:20px'></div></div><div id=u style='height:20px'></div><script>var r=[];</script></body></html>");
+    run(&g, "var io=new IntersectionObserver(function(es){ es.forEach(function(e){ r.push(e.target.id+':'+e.isIntersecting) }) });"
+            "io.observe(document.getElementById('t')); io.observe(document.getElementById('u'));");
+    tick(&g, 3);
+    EQ("r.sort().join('|')", "t:false|u:true");
+    og_close(&g);
+}
