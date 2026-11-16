@@ -15,6 +15,7 @@ enum {
     A_VID, A_IID, A_BASE_VERTEX, A_BASE_INSTANCE, A_TPIG, A_TPITG, A_TGPIG, A_TPTG, A_TPG, A_TGPG, A_TIITG,
     A_POINT_SIZE, A_DEPTH, A_FRONT_FACING, A_POINT_COORD, A_SAMPLE_ID, A_THREADGROUP, A_CLIP_DISTANCE,
     A_RT_INDEX, A_SIMD_LANE, A_SIMD_GROUP, A_SIMD_SIZE, A_SAMPLE_MASK, A_PRIMITIVE_ID, A_VIEWPORT_INDEX,
+    A_ARG_ID,                  /* [[id(n)]] de um membro de argument buffer */
 };
 enum { MSL_INTERP_PERSP = 0, MSL_INTERP_FLAT = 1, MSL_INTERP_NOPERSP = 2 };
 /* bits extras do msl_field_t.interp: [[centroid_*]] e [[sample_*]] (multiamostra); o modo fica em interp & 0xF */

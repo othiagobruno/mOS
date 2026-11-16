@@ -62,7 +62,10 @@ typedef struct {
 } cvts_t;                                    /* CVTimeStamp (80 bytes) */
 typedef struct { i64 value; i32 scale, flags; } cvtime_t;
 typedef int (*cvcb_t)(void *link, const cvts_t *now, const cvts_t *out, u64 fin, u64 *fout, void *ctx);
-typedef struct { cx_class_t *isa; cvcb_t cb; void *ctx; volatile int running; u32 display; i64 frame; void *handler; } cvlink_t;
+typedef struct { cx_class_t *isa; cvcb_t cb; void *ctx; volatile int running; u32 display; i64 frame; void *handler;
+                 u32 period_us;      /* período do modo de vídeo do monitor do link */
+                 u64 next_host;      /* próximo disparo (mach_absolute_time, ns) */
+} cvlink_t;
 /* CVDisplayLinkOutputHandler: bloco (link, now, outputTime, flagsIn, flagsOut) -> CVReturn */
 typedef struct { void *isa; int flags, reserved; int (*invoke)(void *blk, void *link, const cvts_t *now, const cvts_t *out, u64 fin, u64 *fout); } cvblock_t;
 void *_Block_copy(const void *b);
@@ -71,18 +74,30 @@ void _Block_release(const void *b);
 cx_class_t CVDisplayLink_c __asm__("OBJC_CLASS_$_CVDisplayLink");
 cx_class_t CVDisplayLink_m __asm__("OBJC_METACLASS_$_CVDisplayLink");
 
-#define PERIOD_US 16667
+#define PERIOD_US 16667           /* 60 Hz quando o monitor não informa a taxa */
 #define MAX_LINKS 32
+/* período do monitor pelo modo de vídeo atual (CoreGraphics) */
+void *CGDisplayCopyDisplayMode(u32 d);
+double CGDisplayModeGetRefreshRate(void *mode);
+void CGDisplayModeRelease(void *mode);
+int CGGetActiveDisplayList(u32 max, u32 *ids, u32 *count);
+static u32 display_period_us(u32 d) {
+    void *m = CGDisplayCopyDisplayMode(d);
+    double hz = m ? CGDisplayModeGetRefreshRate(m) : 0;
+    if (m) CGDisplayModeRelease(m);
+    if (!(hz >= 1 && hz <= 1000)) return PERIOD_US;
+    return (u32)(1e6 / hz + 0.5);
+}
 static cvlink_t *links[MAX_LINKS];
 static volatile int llock, thread_up;
 static void L_lock(void) { while (__sync_lock_test_and_set(&llock, 1)) SYS0(SYS_YIELD); }
 static void L_unlock(void) { __sync_lock_release(&llock); }
 
-static void stamp(cvts_t *t, i64 frame, u64 host) {
+static void stamp(cvts_t *t, i64 frame, u64 host, u32 period) {
     memset(t, 0, sizeof *t);
     t->videoTimeScale = 1000000;
-    t->videoRefreshPeriod = PERIOD_US;
-    t->videoTime = frame * PERIOD_US;
+    t->videoRefreshPeriod = period;
+    t->videoTime = frame * (i64)period;
     t->hostTime = host;
     t->rateScalar = 1;
     /* VideoTimeValid | HostTimeValid | VideoRefreshPeriodValid | RateScalarValid (sem SMPTE: os campos dele são zero).
@@ -101,23 +116,34 @@ static void wait_callback(cvlink_t *l) {
     if (!g_link_tid || pthread_self() == g_link_tid) return;
     while (g_in_cb == l) SYS0(SYS_YIELD);
 }
+/* uma thread para todos os links; cada um dispara no ritmo do seu monitor (next_host += period) */
 static void *link_thread(void *arg) {
     (void)arg;
     g_link_tid = pthread_self();
     for (;;) {
-        usleep(PERIOD_US);
         cvlink_t *run[MAX_LINKS];
         int n = 0;
+        u64 now = mach_absolute_time(), wake = now + PERIOD_US * 1000ull;
         L_lock();
-        for (int i = 0; i < MAX_LINKS; i++) if (links[i] && links[i]->running && (links[i]->cb || links[i]->handler)) { run[n++] = links[i]; objc_retain((id)links[i]); }
+        for (int i = 0; i < MAX_LINKS; i++) {
+            cvlink_t *l = links[i];
+            if (!l || !l->running || !(l->cb || l->handler)) continue;
+            if (!l->next_host) l->next_host = now + (u64)l->period_us * 1000ull;
+            if (l->next_host <= now) { run[n++] = l; objc_retain((id)l); }
+            else if (l->next_host < wake) wake = l->next_host;
+        }
         L_unlock();
-        u64 now = mach_absolute_time();
         for (int i = 0; i < n; i++) {
             cvts_t a, b;
             cvlink_t *l = run[i];
+            u64 per = (u64)l->period_us * 1000ull;
             l->frame++;
-            stamp(&a, l->frame, now);
-            stamp(&b, l->frame + 1, now + PERIOD_US * 1000ull);
+            stamp(&a, l->frame, now, l->period_us);
+            stamp(&b, l->frame + 1, now + per, l->period_us);
+            /* próximo vsync; atrasado demais, pula os quadros perdidos em vez de disparar em rajada */
+            l->next_host += per;
+            if (l->next_host <= now) l->next_host = now + per;
+            if (l->next_host < wake) wake = l->next_host;
             u64 fo = 0;
             { extern int cx_ca_diag(void); if (cx_ca_diag() && (l->frame <= 3 || l->frame % 600 == 0)) cx_fdprintf(2, "[ca] CVDisplayLink %p: disparo %llu\n", (void *)l, (unsigned long long)l->frame); }
             g_in_cb = l;
@@ -127,6 +153,8 @@ static void *link_thread(void *arg) {
             g_in_cb = 0;
             objc_release((id)l);
         }
+        now = mach_absolute_time();
+        if (wake > now) usleep((unsigned)((wake - now) / 1000ull));
     }
     return 0;
 }
@@ -142,6 +170,7 @@ int CVDisplayLinkCreateWithCGDisplay(u32 display, cvlink_t **out) {
     if (!out) return kCVReturnInvalidArgument;
     cvlink_t *l = (cvlink_t *)cx_alloc_instance(&CVDisplayLink_c);
     l->display = display;
+    l->period_us = display_period_us(display);
     L_lock();
     int ok = 0;
     for (int i = 0; i < MAX_LINKS; i++) if (!links[i]) { links[i] = l; ok = 1; break; }
@@ -151,7 +180,12 @@ int CVDisplayLinkCreateWithCGDisplay(u32 display, cvlink_t **out) {
     return kCVReturnSuccess;
 }
 int CVDisplayLinkCreateWithCGDisplays(u32 *displays, long n, cvlink_t **out) { return CVDisplayLinkCreateWithCGDisplay(n > 0 && displays ? displays[0] : 1, out); }
-int CVDisplayLinkCreateWithActiveCGDisplays(cvlink_t **out) { return CVDisplayLinkCreateWithCGDisplay(1, out); }
+int CVDisplayLinkCreateWithActiveCGDisplays(cvlink_t **out) {
+    /* o link começa no monitor principal (o primeiro da lista ativa) */
+    u32 ids[8], n = 0;
+    if (CGGetActiveDisplayList(8, ids, &n) != 0 || !n) ids[0] = 1;
+    return CVDisplayLinkCreateWithCGDisplay(ids[0], out);
+}
 cvlink_t *CVDisplayLinkRetain(cvlink_t *l) { if (l) objc_retain((id)l); return l; }
 void CVDisplayLinkRelease(cvlink_t *l) { if (l) { l->running = 0; wait_callback(l); objc_release((id)l); } }
 int CVDisplayLinkSetOutputCallback(cvlink_t *l, cvcb_t cb, void *ctx) {
@@ -177,6 +211,7 @@ int CVDisplayLinkSetOutputHandler(cvlink_t *l, void *handler) {
 int CVDisplayLinkStart(cvlink_t *l) {
     if (!l) return kCVReturnInvalidArgument;
     { extern int cx_ca_diag(void); if (cx_ca_diag()) cx_fdprintf(2, "[ca] CVDisplayLinkStart %p (tela %u, callback %p)\n", (void *)l, l->display, (void *)l->cb); }
+    l->next_host = mach_absolute_time() + (u64)l->period_us * 1000ull;
     l->running = 1;
     if (!__sync_lock_test_and_set(&thread_up, 1)) {
         unsigned long t;
@@ -188,13 +223,18 @@ int CVDisplayLinkStart(cvlink_t *l) {
 int CVDisplayLinkStop(cvlink_t *l) { if (!l) return kCVReturnInvalidArgument; l->running = 0; wait_callback(l); return kCVReturnSuccess; }
 u8 CVDisplayLinkIsRunning(cvlink_t *l) { return l && l->running; }
 u32 CVDisplayLinkGetCurrentCGDisplay(cvlink_t *l) { return l ? l->display : 0; }
-int CVDisplayLinkSetCurrentCGDisplay(cvlink_t *l, u32 d) { if (!l) return kCVReturnInvalidArgument; l->display = d; return kCVReturnSuccess; }
-cvtime_t CVDisplayLinkGetNominalOutputVideoRefreshPeriod(cvlink_t *l) { (void)l; cvtime_t t = {PERIOD_US, 1000000, 0}; return t; }
+int CVDisplayLinkSetCurrentCGDisplay(cvlink_t *l, u32 d) {
+    if (!l) return kCVReturnInvalidArgument;
+    l->display = d;
+    l->period_us = display_period_us(d);   /* outro monitor, outra taxa */
+    return kCVReturnSuccess;
+}
+cvtime_t CVDisplayLinkGetNominalOutputVideoRefreshPeriod(cvlink_t *l) { cvtime_t t = {l ? l->period_us : PERIOD_US, 1000000, 0}; return t; }
 cvtime_t CVDisplayLinkGetOutputVideoLatency(cvlink_t *l) { (void)l; cvtime_t t = {0, 1000000, 0}; return t; }
-double CVDisplayLinkGetActualOutputVideoRefreshPeriod(cvlink_t *l) { (void)l; return PERIOD_US / 1e6; }
+double CVDisplayLinkGetActualOutputVideoRefreshPeriod(cvlink_t *l) { return (l ? l->period_us : PERIOD_US) / 1e6; }
 int CVDisplayLinkGetCurrentTime(cvlink_t *l, cvts_t *out) {
     if (!l || !out) return kCVReturnInvalidArgument;
-    stamp(out, l->frame, mach_absolute_time());
+    stamp(out, l->frame, mach_absolute_time(), l->period_us);
     return kCVReturnSuccess;
 }
 u64 CVGetCurrentHostTime(void) { return mach_absolute_time(); }

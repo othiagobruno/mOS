@@ -247,8 +247,10 @@ static id l_init_with(id self, SEL c, id other) {
 }
 static id l_layer(id cls, SEL c) { (void)c; id l = MSG0(id, MSG0(id, cls, "alloc"), "init"); return objc_autorelease(l); }
 static void l_remove_sub(id parent, id child);
+static void emitter_forget(id l);
 static void l_dealloc(id self, SEL c) {
     lst_t *s = LST(self);
+    emitter_forget(self);
     if (s) {
         for (u32 i = 0; i < s->nsub; i++) { ls(s->sub[i])->super = 0; objc_release(s->sub[i]); }
         free(s->sub);
@@ -411,7 +413,10 @@ static void l_display(id self, SEL c) {
     lst_t *s = ls(self);
     s->needs_display = NO;
     id d = s->delegate;
-    if (d && d != s->host_view && cx_responds(object_getClass(d), sel_registerName("displayLayer:"))) MSG(void, d, "displayLayer:", self);
+    if (d && d != s->host_view && cx_responds(object_getClass(d), sel_registerName("displayLayer:"))) { MSG(void, d, "displayLayer:", self); return; }
+    /* drawInContext: da subclasse ou drawLayer:inContext: do delegate (coreanimation.c) */
+    extern int ca_layer_draw_content(id l, id host_view);
+    ca_layer_draw_content(self, s->host_view);
 }
 static void l_display_if_needed(id self, SEL c) { if (ls(self)->needs_display) l_display(self, c); }
 /* layoutManager e constraints (CAConstraintLayoutManager, caconstraint.c): objetos associados da camada */
@@ -649,8 +654,7 @@ static id tx_value(id cls, SEL c, id k) { (void)cls; (void)c; (void)k; return 0;
 static void tx_lock(id cls, SEL c) { (void)cls; (void)c; }
 
 /* ================================================================ composição por software */
-/* sx = ax + bx*lx + cx*ly; sy = ay + cy*lx + by*ly. cx e cy são a rotação/cisalhamento. */
-typedef struct { double ax, bx, ay, by, cx, cy; } map_t;
+#include "qcmap.h"
 typedef struct { int x0, y0, x1, y1; } clip_t;
 
 static u32 *cv;                         /* buffer ARGB pré-multiplicado da área visível da view */
@@ -658,39 +662,17 @@ static int cvx, cvy, cvw, cvh;
 static size_t cvcap;
 static BOOL touched;
 
-static map_t child_map(map_t p, lst_t *c) {
+static map_t child_map(map_t p, lst_t *c, const double *post) {
     double w = c->bounds.s.w, h = c->bounds.s.h;
-    double a = c->tf.m[0], b = c->tf.m[1], tc = c->tf.m[4], d = c->tf.m[5];
-    double tx = c->tf.m[12], ty = c->tf.m[13];
-    if (a == 0 && b == 0 && tc == 0 && d == 0) { a = 1; d = 1; }
     double yb = c->flipped ? -1 : 1;
     double vxk = -(c->bounds.o.x + c->anchor.x * w);
     double vyk = c->flipped ? (c->bounds.o.y + h - c->anchor.y * h) : -(c->bounds.o.y + c->anchor.y * h);
-    double px0 = c->pos.x + tx + a * vxk + tc * vyk;
-    double py0 = c->pos.y + ty + b * vxk + d * vyk;
-    double al = a, cl = tc * yb, bl = b, dl = d * yb;
-    map_t m;
-    m.ax = p.ax + p.bx * px0 + p.cx * py0;
-    m.ay = p.ay + p.cy * px0 + p.by * py0;
-    m.bx = p.bx * al + p.cx * bl;
-    m.cx = p.bx * cl + p.cx * dl;
-    m.cy = p.cy * al + p.by * bl;
-    m.by = p.cy * cl + p.by * dl;
-    return m;
+    return qc_child(p, c->tf.m, c->pos.x, c->pos.y, vxk, vyk, yb, post);
 }
-static map_t apply_stf(map_t p, T3 t) {
-    double a = t.m[0], b = t.m[1], c = t.m[4], d = t.m[5], tx = t.m[12], ty = t.m[13];
-    if (a == 0 && b == 0 && c == 0 && d == 0) { a = 1; d = 1; }
-    map_t m;
-    m.ax = p.ax + p.bx * tx + p.cx * ty;
-    m.ay = p.ay + p.cy * tx + p.by * ty;
-    m.bx = p.bx * a + p.cx * b;
-    m.cx = p.bx * c + p.cx * d;
-    m.cy = p.cy * a + p.by * b;
-    m.by = p.cy * c + p.by * d;
-    return m;
-}
-static int map_shear(map_t m) { return m.cx != 0 || m.cy != 0; }
+/* sublayerTransform em volta do âncora (no espaço dos bounds), como no Core Animation; entra como o "post" 4x4 de
+ * cada sublayer, para a profundidade de um transform 3D do filho encontrar a perspectiva (m34) do pai */
+static void stf_about(lst_t *L, double *r) { qc_t3_about(r, L->stf.m, L->bounds.o.x + L->anchor.x * L->bounds.s.w, L->bounds.o.y + L->anchor.y * L->bounds.s.h); }
+static int map_shear(map_t m) { return m.cx != 0 || m.cy != 0 || !qc_is_affine(m); }
 static clip_t clip_and(clip_t a, double x0, double y0, double x1, double y1) {
     int ix0 = (int)(x0 + 0.5), iy0 = (int)(y0 + 0.5), ix1 = (int)(x1 + 0.5), iy1 = (int)(y1 + 0.5);
     if (ix0 > a.x0) a.x0 = ix0;
@@ -713,7 +695,21 @@ static u32 color_of(id col) {
     return o;
 }
 /* dst = src + dst * (1 - a_src), tudo pré-multiplicado */
+/* tom da instância do CAReplicatorLayer (0..256 por canal; 256 = sem mudança) */
+static u32 g_tint_r = 256, g_tint_g = 256, g_tint_b = 256;
+static int g_tint_on;
+static inline u32 tint(u32 s) {
+    u32 r = ((s >> 16) & 255) * g_tint_r >> 8, g = ((s >> 8) & 255) * g_tint_g >> 8, b = (s & 255) * g_tint_b >> 8;
+    return (s & 0xFF000000u) | r << 16 | g << 8 | b;
+}
+static int g_additive;   /* CAEmitterLayer com renderMode additive: soma em vez de cobrir */
 static inline u32 over(u32 s, u32 d) {
+    if (g_tint_on) s = tint(s);
+    if (g_additive) {
+        u32 r = 0;
+        for (int sh = 0; sh < 32; sh += 8) { u32 v = (s >> sh & 255) + (d >> sh & 255); r |= (v > 255 ? 255 : v) << sh; }
+        return r;
+    }
     u32 a = s >> 24;
     if (a == 255) return s;
     if (a == 0) return d;
@@ -890,19 +886,15 @@ static int cmp_z(const void *a, const void *b) {
     double za = ls(*(id *)a)->z, zb = ls(*(id *)b)->z;
     return za < zb ? -1 : za > zb;
 }
-static void map_point(map_t m, double lx, double ly, double *sx, double *sy) {
-    *sx = m.ax + m.bx * lx + m.cx * ly;
-    *sy = m.ay + m.cy * lx + m.by * ly;
-}
+static int map_point(map_t m, double lx, double ly, double *sx, double *sy) { return qc_map_point(m, lx, ly, sx, sy); }
 /* o buffer foi desenhado com `loc` (eixos retos). Cada pixel da tela volta à coordenada do layer e amostra. */
 static void splat_affine(const u32 *src, int sw, int sh, map_t loc, map_t sc, clip_t k,
-                         double lx0, double ly0, double lx1, double ly1) {
+                         double lx0, double ly0, double lx1, double ly1, float op) {
     if (!cv || !src || sw < 1 || sh < 1) return;
     double xs[4], ys[4];
-    map_point(sc, lx0, ly0, &xs[0], &ys[0]);
-    map_point(sc, lx1, ly0, &xs[1], &ys[1]);
-    map_point(sc, lx0, ly1, &xs[2], &ys[2]);
-    map_point(sc, lx1, ly1, &xs[3], &ys[3]);
+    /* um canto atrás do observador (W <= 0): o plano vira de costas, nada a desenhar */
+    if (!map_point(sc, lx0, ly0, &xs[0], &ys[0]) || !map_point(sc, lx1, ly0, &xs[1], &ys[1]) ||
+        !map_point(sc, lx0, ly1, &xs[2], &ys[2]) || !map_point(sc, lx1, ly1, &xs[3], &ys[3])) return;
     double minx = xs[0], maxx = xs[0], miny = ys[0], maxy = ys[0];
     for (int i = 1; i < 4; i++) {
         if (xs[i] < minx) minx = xs[i];
@@ -913,16 +905,19 @@ static void splat_affine(const u32 *src, int sw, int sh, map_t loc, map_t sc, cl
     clip_t c = clip_and(k, minx, miny, maxx, maxy);
     c = clip_and(c, cvx, cvy, cvx + cvw, cvy + cvh);
     if (c.x0 >= c.x1 || c.y0 >= c.y1) return;
-    double det = sc.bx * sc.by - sc.cx * sc.cy;
-    if (det < 1e-8 && det > -1e-8) return;
-    double inv = 1.0 / det;
+    double hm[9], hi[9];
+    qc_to_mat(sc, hm);
+    if (!qc_mat_inv(hi, hm)) return;
     touched = YES;
     for (int y = c.y0; y < c.y1; y++) {
         u32 *row = cv + (size_t)(y - cvy) * cvw - cvx;
         for (int x = c.x0; x < c.x1; x++) {
-            double dx = x + 0.5 - sc.ax, dy = y + 0.5 - sc.ay;
-            double lx = (sc.by * dx - sc.cx * dy) * inv;
-            double ly = (-sc.cy * dx + sc.bx * dy) * inv;
+            /* tela -> plano do layer pela inversa da homografia (perspectiva incluída) */
+            double X = x + 0.5, Y = y + 0.5;
+            double lw = hi[6] * X + hi[7] * Y + hi[8];
+            if (lw == 0) continue;
+            double lx = (hi[0] * X + hi[1] * Y + hi[2]) / lw;
+            double ly = (hi[3] * X + hi[4] * Y + hi[5]) / lw;
             if (lx < lx0 || lx > lx1 || ly < ly0 || ly > ly1) continue;
             double bu = loc.ax + loc.bx * lx + loc.cx * ly;
             double bv = loc.ay + loc.cy * lx + loc.by * ly;
@@ -940,11 +935,152 @@ static void splat_affine(const u32 *src, int sw, int sh, map_t loc, map_t sc, cl
                 if (v > 255) v = 255;
                 p |= v << (ch * 8);
             }
+            if (op < 0.999f) p = scale_px(p, (u32)(op * 255 + 0.5f));
             if (p >> 24) row[x] = over(p, row[x]);
         }
     }
 }
 static int xform_once, mask_once;
+static void render(id l, map_t m, clip_t k, float op, int depth, BOOL skip_bg);
+/* ---- CAReplicatorLayer: os sublayers saem instanceCount vezes; a instância i usa instanceTransform^i (em volta do
+ * centro do layer), instanceColor mais i * os deslocamentos de cor, e o alfa da cor com i * instanceAlphaOffset */
+u64 mtl_dget(id o, const char *name);
+float mtl_dgetf(id o, const char *name);
+void mtl_dgetv(id o, const char *name, double *out, int n);
+double mtl_dgetd(id o, const char *name);
+double sin(double), cos(double);
+static int is_replicator(id l) {
+    static cx_class_t *rc;
+    if (!rc) rc = cx_class_named("CAReplicatorLayer");
+    for (cx_class_t *c = l ? l->isa : 0; c; c = c->super) if (c == rc) return 1;
+    return 0;
+}
+static void render_replicas(id l, lst_t *L, id *subs, u32 n, map_t sm, const double *stfc, clip_t kk, float op, int depth) {
+    u64 cnt = mtl_dget(l, "instanceCount");
+    if (cnt > 4096) cnt = 4096;
+    T3 it;
+    mtl_dgetv(l, "instanceTransform", it.m, 16);
+    id ic = (id)mtl_dget(l, "instanceColor");
+    double cr = 1, cg = 1, cb = 1, ca = 1;
+    if (ic) { qcolor_t *q = (qcolor_t *)ic; cr = q->r; cg = q->g; cb = q->b; ca = q->a; }
+    double dr = mtl_dgetf(l, "instanceRedOffset"), dg = mtl_dgetf(l, "instanceGreenOffset"), db = mtl_dgetf(l, "instanceBlueOffset"),
+           da = mtl_dgetf(l, "instanceAlphaOffset");
+    double cx = L->bounds.o.x + L->bounds.s.w * 0.5, cy = L->bounds.o.y + L->bounds.s.h * 0.5;
+    T3 pw = CATransform3DIdentity;
+    u32 otr = g_tint_r, otg = g_tint_g, otb = g_tint_b;
+    int oon = g_tint_on;
+    for (u64 i = 0; i < cnt; i++) {
+        double r = qc_replica_chan(cr, dr, i), g = qc_replica_chan(cg, dg, i), b = qc_replica_chan(cb, db, i), a = qc_replica_chan(ca, da, i);
+        /* tom acumulado com o de um replicador de fora */
+        g_tint_r = otr * (u32)(r * 256 + 0.5) >> 8; g_tint_g = otg * (u32)(g * 256 + 0.5) >> 8; g_tint_b = otb * (u32)(b * 256 + 0.5) >> 8;
+        g_tint_on = oon || g_tint_r != 256 || g_tint_g != 256 || g_tint_b != 256;
+        double post[16];
+        qc_t3_about(post, pw.m, cx, cy);
+        qc_t3_mul(post, post, stfc);
+        if (a > 0) for (u32 j = 0; j < n; j++) render(subs[j], child_map(sm, ls(subs[j]), post), kk, op * (float)a, depth + 1, NO);
+        qc_t3_mul(pw.m, pw.m, it.m);
+    }
+    g_tint_r = otr; g_tint_g = otg; g_tint_b = otb; g_tint_on = oon;
+}
+/* ---- CAEmitterLayer: simulação em caemit.c; estado por layer, avançado pelo relógio a cada desenho */
+#include "caemit.h"
+typedef struct { id layer; caemit_t st; double last; } emstate_t;
+static emstate_t emst[32];
+static int is_emitter(id l) {
+    static cx_class_t *ec;
+    if (!ec) ec = cx_class_named("CAEmitterLayer");
+    for (cx_class_t *c = l ? l->isa : 0; c; c = c->super) if (c == ec) return 1;
+    return 0;
+}
+static void emitter_forget(id l) { for (int i = 0; i < 32; i++) if (emst[i].layer == l) { caemit_free(&emst[i].st); emst[i].layer = 0; } }
+static int name_is(id s, const char *n) { return s && !strcmp(cx_cstr(s), n); }
+static void render_emitter(id l, map_t m, clip_t k, float op) {
+    emstate_t *E = 0;
+    for (int i = 0; i < 32 && !E; i++) if (emst[i].layer == l) E = &emst[i];
+    for (int i = 0; i < 32 && !E; i++) if (!emst[i].layer) { E = &emst[i]; memset(E, 0, sizeof *E); E->layer = l; caemit_seed(&E->st, (unsigned)mtl_dget(l, "seed")); }
+    if (!E) return;
+    caemit_layer_t P;
+    memset(&P, 0, sizeof P);
+    double v2[2] = {0, 0};
+    mtl_dgetv(l, "emitterPosition", v2, 2); P.px = v2[0]; P.py = v2[1];
+    v2[0] = v2[1] = 0;
+    mtl_dgetv(l, "emitterSize", v2, 2); P.w = v2[0]; P.h = v2[1];
+    id sh = (id)mtl_dget(l, "emitterShape"), md = (id)mtl_dget(l, "emitterMode");
+    P.shape = name_is(sh, "line") ? CAEMIT_LINE : name_is(sh, "rectangle") || name_is(sh, "cuboid") ? CAEMIT_RECT :
+              name_is(sh, "circle") || name_is(sh, "sphere") ? CAEMIT_CIRCLE : CAEMIT_POINT;
+    P.mode = name_is(md, "points") ? CAEMIT_POINTS : name_is(md, "outline") ? CAEMIT_OUTLINE : CAEMIT_SURFACE;
+    P.birth = mtl_dgetf(l, "birthRate"); P.life = mtl_dgetf(l, "lifetime"); P.vel = mtl_dgetf(l, "velocity");
+    P.scale = mtl_dgetf(l, "scale"); P.spin = mtl_dgetf(l, "spin");
+    id cells = (id)mtl_dget(l, "emitterCells");
+    u64 nc = cells ? MSG0(u64, cells, "count") : 0;
+    if (nc > CAEMIT_MAX_CELLS) nc = CAEMIT_MAX_CELLS;
+    caemit_cell_t C[CAEMIT_MAX_CELLS];
+    id cobj[CAEMIT_MAX_CELLS];
+    for (u64 i = 0; i < nc; i++) {
+        id c = MSG(id, cells, "objectAtIndex:", i);
+        caemit_cell_t *x = &C[i];
+        memset(x, 0, sizeof *x);
+        cobj[i] = c;
+        if (!mtl_dget(c, "enabled")) continue;   /* célula desligada: não nasce nada */
+        x->birth = mtl_dgetf(c, "birthRate"); x->life = mtl_dgetf(c, "lifetime"); x->lifer = mtl_dgetf(c, "lifetimeRange");
+        x->lon = mtl_dgetd(c, "emissionLongitude"); x->range = mtl_dgetd(c, "emissionRange");
+        x->vel = mtl_dgetd(c, "velocity"); x->velr = mtl_dgetd(c, "velocityRange");
+        x->ax = mtl_dgetd(c, "xAcceleration"); x->ay = mtl_dgetd(c, "yAcceleration");
+        x->scale = mtl_dgetd(c, "scale"); x->scaler = mtl_dgetd(c, "scaleRange"); x->scales = mtl_dgetd(c, "scaleSpeed");
+        x->spin = mtl_dgetd(c, "spin"); x->spinr = mtl_dgetd(c, "spinRange");
+        id col = (id)mtl_dget(c, "color");
+        if (col) { qcolor_t *q = (qcolor_t *)col; x->col[0] = q->r; x->col[1] = q->g; x->col[2] = q->b; x->col[3] = q->a; }
+        else x->col[0] = x->col[1] = x->col[2] = x->col[3] = 1;
+        static const char *rn[4] = {"redRange", "greenRange", "blueRange", "alphaRange"}, *sn[4] = {"redSpeed", "greenSpeed", "blueSpeed", "alphaSpeed"};
+        for (int j = 0; j < 4; j++) { x->colr[j] = mtl_dgetf(c, rn[j]); x->cols[j] = mtl_dgetf(c, sn[j]); }
+    }
+    double now = CACurrentMediaTime();
+    double dt = E->last > 0 ? now - E->last : 0;
+    E->last = now;
+    caemit_step(&E->st, &P, C, (int)nc, dt);
+    /* imagens das células em ARGB pré-multiplicado, uma vez por quadro */
+    u32 *img[CAEMIT_MAX_CELLS];
+    int iw[CAEMIT_MAX_CELLS], ih[CAEMIT_MAX_CELLS];
+    double ics[CAEMIT_MAX_CELLS];
+    for (u64 i = 0; i < nc; i++) {
+        img[i] = 0;
+        src_t s;
+        if (!get_src((id)mtl_dget(cobj[i], "contents"), &s) || s.w <= 0 || s.h <= 0 || s.w > 1024 || s.h > 1024) continue;
+        img[i] = malloc((size_t)s.w * s.h * 4);
+        if (!img[i]) continue;
+        iw[i] = s.w; ih[i] = s.h;
+        double cs = mtl_dgetd(cobj[i], "contentsScale");
+        ics[i] = cs > 0 ? cs : 1;
+        for (int y = 0; y < s.h; y++) {
+            const u32 *r = (const u32 *)(s.px + (long)y * s.bpr);
+            for (int x2 = 0; x2 < s.w; x2++) img[i][(size_t)y * s.w + x2] = s.premul ? r[x2] : premul(r[x2], 1);
+        }
+    }
+    int add = name_is((id)mtl_dget(l, "renderMode"), "additive");
+    int oadd = g_additive;
+    u32 otr = g_tint_r, otg = g_tint_g, otb = g_tint_b;
+    int oon = g_tint_on;
+    g_additive = add;
+    /* oldestFirst e unordered: na ordem de nascimento (a mais velha embaixo); oldestLast: a mais velha por cima */
+    int rev = name_is((id)mtl_dget(l, "renderMode"), "oldestLast");
+    for (int n = 0; n < E->st.n; n++) {
+        caemit_p_t *p = &E->st.p[rev ? E->st.n - 1 - n : n];
+        if (p->cell >= (int)nc || !img[p->cell] || p->scale <= 0 || p->c[3] <= 0) continue;
+        double c = cos(p->rot), sn = sin(p->rot), sc = p->scale;
+        double T[16] = {c * sc, sn * sc, 0, 0, -sn * sc, c * sc, 0, 0, 0, 0, 1, 0, p->x, p->y, 0, 1};
+        map_t pm = qc_apply(m, T);
+        double w = iw[p->cell] / ics[p->cell], h = ih[p->cell] / ics[p->cell], cs = ics[p->cell];
+        map_t loc = {w / 2 * cs, cs, h / 2 * cs, -cs, 0, 0, 0, 0, 0};   /* linha 0 da imagem em cima */
+        g_tint_r = otr * (u32)(p->c[0] * 256 + 0.5f) >> 8; g_tint_g = otg * (u32)(p->c[1] * 256 + 0.5f) >> 8; g_tint_b = otb * (u32)(p->c[2] * 256 + 0.5f) >> 8;
+        g_tint_on = oon || g_tint_r != 256 || g_tint_g != 256 || g_tint_b != 256;
+        splat_affine(img[p->cell], iw[p->cell], ih[p->cell], loc, pm, k, -w / 2, -h / 2, w / 2, h / 2, op * p->c[3]);
+    }
+    g_additive = oadd;
+    g_tint_r = otr; g_tint_g = otg; g_tint_b = otb; g_tint_on = oon;
+    for (u64 i = 0; i < nc; i++) free(img[i]);
+    /* enquanto houver partícula ou nascimento, o próximo quadro é pedido */
+    if (E->st.n || P.birth > 0) layer_dirty(l);
+}
 static void render(id l, map_t m, clip_t k, float op, int depth, BOOL skip_bg) {
     lst_t *L = ls(l);
     if (L->hidden || depth > 64) return;
@@ -971,7 +1107,7 @@ static void render(id l, map_t m, clip_t k, float op, int depth, BOOL skip_bg) {
             render(l, loc, (clip_t){0, 0, bw, bh}, op_in, depth, skip_bg);
             cv = ocv; cvx = ocx; cvy = ocy; cvw = ocw; cvh = och; touched = ot;
             splat_affine(buf, bw, bh, loc, m, k, L->bounds.o.x, L->bounds.o.y,
-                         L->bounds.o.x + L->bounds.s.w, L->bounds.o.y + L->bounds.s.h);
+                         L->bounds.o.x + L->bounds.s.w, L->bounds.o.y + L->bounds.s.h, 1);
             free(buf);
             return;
         }
@@ -986,7 +1122,7 @@ static void render(id l, map_t m, clip_t k, float op, int depth, BOOL skip_bg) {
             mask_once = 1;
             render(l, m, k, op_in, depth, skip_bg);
             cv = mb; touched = NO;
-            render(L->mask, child_map(m, ls(L->mask)), k, 1, depth + 1, NO);
+            render(L->mask, child_map(m, ls(L->mask), 0), k, 1, depth + 1, NO);
             cv = ocv; cvx = ocx; cvy = ocy; cvw = ocw; cvh = och; touched = ot;
             for (size_t i = 0; i < n; i++) {
                 u32 a = mb[i] >> 24;
@@ -1025,6 +1161,7 @@ static void render(id l, map_t m, clip_t k, float op, int depth, BOOL skip_bg) {
     }
     if (!skip_bg && L->bgc) fill(k, rx0, ry0, rx1, ry1, premul(color_of(L->bgc), op));
     if (L->contents) draw_contents(L, k, rx0, ry0, rx1, ry1, m.by < 0, op);
+    if (is_emitter(l)) render_emitter(l, m, L->masks ? clip_and(k, rx0, ry0, rx1, ry1) : k, op);
     if (L->border_w > 0 && L->borderc) {
         u32 bc = premul(color_of(L->borderc), op);
         double b = L->border_w;
@@ -1038,7 +1175,7 @@ static void render(id l, map_t m, clip_t k, float op, int depth, BOOL skip_bg) {
     /* CALayerHost: árvore do mesmo processo, ou o quadro publicado por outro */
     if (L->host_layer && L->ctx_id) {
         id hl = ctx_lookup_layer(L->ctx_id);
-        if (hl && hl != l) render(hl, child_map(m, ls(hl)), kk, op, depth + 1, NO);
+        if (hl && hl != l) render(hl, child_map(m, ls(hl), 0), kk, op, depth + 1, NO);
         else if (!hl) {
             src_t rem;
             if (ca_frame(L->ctx_id, &rem)) blit(kk, &rem, 0, 0, rem.w, rem.h, rx0, ry0, rx1, ry1, op);
@@ -1054,8 +1191,10 @@ static void render(id l, map_t m, clip_t k, float op, int depth, BOOL skip_bg) {
             if (any_z) {                        /* ordem estável por zPosition */
                 for (u32 i = 1; i < n; i++) for (u32 j = i; j > 0 && cmp_z(&subs[j - 1], &subs[j]) > 0; j--) { id t = subs[j]; subs[j] = subs[j - 1]; subs[j - 1] = t; }
             }
-            map_t sm = apply_stf(m, L->stf);
-            for (u32 i = 0; i < n; i++) render(subs[i], child_map(sm, ls(subs[i])), kk, op, depth + 1, NO);
+            double stfc[16];
+            stf_about(L, stfc);
+            if (is_replicator(l)) render_replicas(l, L, subs, n, m, stfc, kk, op, depth);
+            else for (u32 i = 0; i < n; i++) render(subs[i], child_map(m, ls(subs[i]), stfc), kk, op, depth + 1, NO);
             if (subs != tmp) free(subs);
         }
     }
@@ -1111,6 +1250,8 @@ static void render_layer_to(id layer, u32 *px, int w, int h) {
     render(layer, m, k, 1, 0, NO);
     cv = ocv; cvx = ocx; cvy = ocy; cvw = ocw; cvh = och;
 }
+/* CARenderer (coreanimation.c): a árvore num buffer ARGB pré-multiplicado, linha 0 embaixo */
+void qc_render_layer_to(id layer, u32 *px, int w, int h) { if (layer && px) render_layer_to(layer, px, w, h); }
 static void tree_extent(id l, int depth, double *w, double *h) {
     if (!l || depth > 32) return;
     lst_t *s = ls(l);

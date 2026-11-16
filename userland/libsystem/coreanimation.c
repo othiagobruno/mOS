@@ -17,7 +17,7 @@
  *  - CAReplicatorLayer, CATiledLayer, CAEmitterLayer/CAEmitterCell: as propriedades existem (o desenho é o
  *    do CALayer comum: réplicas e partículas não são geradas).
  *  - CADisplayLink (+displayLinkWithTarget:selector: e -[NSView/NSWindow/NSScreen displayLinkWithTarget:selector:]).
- *  - CARenderer (sem desenho), CATransform3DMakeRotation/Rotate, CAFrameRateRange, constantes kCA*.
+ *  - CARenderer (desenha a árvore numa textura Metal ou num contexto CGL), CATransform3DMakeRotation/Rotate, CAFrameRateRange, constantes kCA*.
  * As propriedades usam o mecanismo genérico do metal.c (mtl_def_desc).
  */
 #include "metalint.h"
@@ -242,7 +242,7 @@ static const pspec_t ps_cell[] = {{"name", 'o'}, {"enabled", 'b', 1}, {"birthRat
 static const pspec_t ps_dlink[] = {{"timestamp", 'd'}, {"targetTimestamp", 'd'}, {"duration", 'd', 0, 1.0 / 60}, {"paused", 'b'},
                                    {"preferredFramesPerSecond", 'u'}, {"frameInterval", 'u', 1},
                                    {"_target", 'o'}, {"_sel", 'u'}, {"_valid", 'b', 1}, {"_scheduled", 'b'}, P_END};
-static const pspec_t ps_renderer[] = {{"layer", 'o'}, {"bounds", 'p'}, {"_boundsSize", 'p'}, {"_texture", 'o'}, P_END};
+static const pspec_t ps_renderer[] = {{"layer", 'o'}, {"bounds", 'p'}, {"_boundsSize", 'p'}, {"_boundsOrigin", 'p'}, {"_texture", 'o'}, {"_cgl", 'u'}, P_END};
 static const pspec_t ps_none[] = {P_END};
 
 /* ================================================================ timing */
@@ -1240,6 +1240,63 @@ static void cl_set_bounds(id s, SEL c, CGR r) { IMP i = cx_lookup(&CALayer_c, c)
 static void cl_set_scale(id s, SEL c, double v) { IMP i = cx_lookup(&CALayer_c, c); if (i) ((void (*)(id, SEL, double))i)(s, c, v); mark_dirty(s); }
 static void cl_set_flip(id s, SEL c, BOOL v) { IMP i = cx_lookup(&CALayer_c, c); if (i) ((void (*)(id, SEL, BOOL))i)(s, c, v); mark_dirty(s); }
 static void cl_display(id s, SEL c) { (void)c; render_content(s); }
+
+/* ---- CALayer genérico: drawInContext: (subclasse) ou drawLayer:inContext: (delegate), num IOSurface do tamanho do
+ * layer em pixels (bounds * contentsScale). O contexto tem a origem e a escala do layer, com y para cima como no
+ * macOS (e para baixo se a geometria está invertida). CATiledLayer desenha bloco a bloco (tileSize, em pixels) com o
+ * recorte de cada bloco, como o macOS faz nas suas threads de blocos. */
+void CGContextSaveGState(void *c);
+void CGContextRestoreGState(void *c);
+void CGContextClipToRect(void *c, CGR r);
+void CGContextScaleCTM(void *c, double x, double y);
+void CGContextTranslateCTM(void *c, double x, double y);
+static void ca_default_draw(id l, SEL c, void *ctx) {
+    (void)c;
+    id d = MSG0(id, l, "delegate");
+    if (d && responds(d, "drawLayer:inContext:")) MSG(void, d, "drawLayer:inContext:", l, ctx);
+}
+/* 1 = desenhou; 0 = o layer não tem desenho próprio */
+int ca_layer_draw_content(id l, id host_view) {
+    id d = MSG0(id, l, "delegate");
+    IMP mine = cx_lookup(l->isa, S("drawInContext:"));
+    int own = mine && mine != (IMP)ca_default_draw;
+    int del = d && d != host_view && responds(d, "drawLayer:inContext:");
+    if (!own && !del) return 0;
+    CGR b;
+    double sc;
+    int w, h;
+    if (!layer_px(l, &b, &sc, &w, &h)) return 0;
+    IOSurfaceRef surf = surface_for(l, w, h);
+    if (!surf) return 0;
+    IOSurfaceLock(surf, 0, 0);
+    u8 *px = IOSurfaceGetBaseAddress(surf);
+    u64 bpr = IOSurfaceGetBytesPerRow(surf);
+    memset(px, 0, bpr * (u64)h);
+    void *ctx = CGBitmapContextCreate(px, (size_t)w, (size_t)h, 8, (size_t)bpr, 0, 0x2002);
+    if (ctx) {
+        /* pontos do layer -> pixels do bitmap (origem embaixo) */
+        CGContextScaleCTM(ctx, sc, sc);
+        if (layer_flipped(l)) { CGContextTranslateCTM(ctx, 0, b.s.h); CGContextScaleCTM(ctx, 1, -1); }
+        CGContextTranslateCTM(ctx, -b.o.x, -b.o.y);
+        if (is_kind(l, &CATiledLayer_c)) {
+            double ts[2] = {256, 256};
+            mtl_dgetv(l, "tileSize", ts, 2);
+            double tw = (ts[0] > 0 ? ts[0] : 256) / sc, th = (ts[1] > 0 ? ts[1] : 256) / sc;
+            for (double y = b.o.y; y < b.o.y + b.s.h; y += th)
+                for (double x = b.o.x; x < b.o.x + b.s.w; x += tw) {
+                    CGContextSaveGState(ctx);
+                    CGR t = {{x, y}, {tw, th}};
+                    CGContextClipToRect(ctx, t);
+                    MSG(void, l, "drawInContext:", ctx);
+                    CGContextRestoreGState(ctx);
+                }
+        } else MSG(void, l, "drawInContext:", ctx);
+        CGContextRelease(ctx);
+    }
+    IOSurfaceUnlock(surf, 0, 0);
+    present_surface(l, surf);
+    return 1;
+}
 static id shape_init(id s, SEL c);
 static id cl_init_shape(id s, SEL c) {
     IMP i = cx_lookup(&CALayer_c, c);
@@ -1290,17 +1347,77 @@ static void dl_invalidate(id s, SEL c) { (void)c; u64 z = 0; mtl_dsetv(s, "_vali
 static void dl_remove(id s, SEL c, id rl, id mode) { (void)rl; (void)mode; dl_invalidate(s, c); }
 static float dl_maxfps(id s, SEL c) { (void)s; (void)c; return 60; }
 
-/* ================================================================ CARenderer (sem desenho) */
+/* ================================================================ CARenderer
+ * A árvore do layer sai pelo compositor do QuartzCore (quartzcore.c) num buffer do tamanho de bounds e vai para o
+ * destino: a textura Metal (replaceRegion, linha 0 em cima) ou o framebuffer do contexto CGL (glDrawPixels com
+ * composição pré-multiplicada, linha 0 embaixo como no GL). */
+void qc_render_layer_to(id layer, u32 *px, int w, int h);
 static id rd_with_tex(id cls, SEL c, id tex, id opts) {
     (void)c; (void)opts;
     id r = MSG0(id, MSG0(id, cls, "alloc"), "init");
     mtl_dseto(r, "_texture", tex);
+    if (tex) { double v[2] = {(double)MSG0(u64, tex, "width"), (double)MSG0(u64, tex, "height")}; mtl_dsetv(r, "_boundsSize", v, 2); }
     return objc_autorelease(r);
 }
+static id rd_with_cgl(id cls, SEL c, void *cgl, id opts) {
+    (void)c; (void)opts;
+    id r = MSG0(id, MSG0(id, cls, "alloc"), "init");
+    u64 cv = (u64)(uintptr_t)cgl;
+    mtl_dsetv(r, "_cgl", (const double *)&cv, 1);   /* propriedade u64: grava os 8 bytes */
+    return objc_autorelease(r);
+}
+static void rd_set_dest(id s, SEL c, id tex) { (void)c; mtl_dseto(s, "_texture", tex); }
+typedef struct { u64 x, y, z, w, h, d; } rd_region_t;
+void *CGLGetCurrentContext(void);
+int CGLSetCurrentContext(void *ctx);
+void glPushAttrib(unsigned m);
+void glPopAttrib(void);
+void glEnable(unsigned c);
+void glDisable(unsigned c);
+void glBlendFunc(unsigned s, unsigned d);
+void glWindowPos2i(int x, int y);
+void glDrawPixels(int w, int h, unsigned f, unsigned t, const void *p);
+static void rd_render(id s, SEL c) {
+    (void)c;
+    id layer = (id)mtl_dget(s, "layer");
+    double sz[2] = {0, 0}, org[2] = {0, 0};
+    mtl_dgetv(s, "_boundsSize", sz, 2);
+    mtl_dgetv(s, "_boundsOrigin", org, 2);
+    int w = (int)(sz[0] + 0.5), h = (int)(sz[1] + 0.5);
+    if (!layer || w <= 0 || h <= 0 || w > 16384 || h > 16384) return;
+    u32 *px = malloc((size_t)w * h * 4);
+    if (!px) return;
+    qc_render_layer_to(layer, px, w, h);
+    id tex = (id)mtl_dget(s, "_texture");
+    void *cgl = (void *)(uintptr_t)mtl_dget(s, "_cgl");
+    if (tex) {
+        /* textura: linha 0 é a de cima; o buffer do compositor tem a linha 0 embaixo (y do layer para cima) */
+        u32 *flip = malloc((size_t)w * h * 4);
+        if (flip) {
+            for (int y = 0; y < h; y++) memcpy(flip + (size_t)y * w, px + (size_t)(h - 1 - y) * w, (size_t)w * 4);
+            rd_region_t rg = {0, 0, 0, (u64)w, (u64)h, 1};
+            ((void (*)(id, SEL, rd_region_t, u64, const void *, u64))objc_msgSend)(tex, S("replaceRegion:mipmapLevel:withBytes:bytesPerRow:"), rg, 0, flip, (u64)w * 4);
+            free(flip);
+        }
+    } else if (cgl) {
+        void *old = CGLGetCurrentContext();
+        if (old != cgl) CGLSetCurrentContext(cgl);
+        glPushAttrib(0x00004000u | 0x00000400u);          /* GL_COLOR_BUFFER_BIT | GL_PIXEL_MODE_BIT */
+        glEnable(0x0BE2);                                 /* GL_BLEND */
+        glBlendFunc(1, 0x0303);                           /* ONE, ONE_MINUS_SRC_ALPHA: o buffer é pré-multiplicado */
+        glWindowPos2i((int)org[0], (int)org[1]);
+        glDrawPixels(w, h, 0x80E1 /* GL_BGRA */, 0x8367 /* GL_UNSIGNED_INT_8_8_8_8_REV */, px);
+        glPopAttrib();
+        if (old != cgl) CGLSetCurrentContext(old);
+    }
+    free(px);
+}
 static void rd_noop(id s, SEL c) { (void)s; (void)c; }
+static void rd_noop_r(id s, SEL c, CGR r) { (void)s; (void)c; (void)r; }
+static void rd_begin(id s, SEL c, double t, void *ts) { (void)s; (void)c; (void)t; (void)ts; }
 static double rd_next(id s, SEL c) { (void)s; (void)c; return CACurrentMediaTime() + 1.0 / 60; }
 static CGR rd_bounds(id s, SEL c) { (void)c; CGR r = {{0, 0}, {0, 0}}; double v[2]; mtl_dgetv(s, "_boundsSize", v, 2); r.s.w = v[0]; r.s.h = v[1]; return r; }
-static void rd_set_bounds(id s, SEL c, CGR r) { (void)c; double v[2] = {r.s.w, r.s.h}; mtl_dsetv(s, "_boundsSize", v, 2); }
+static void rd_set_bounds(id s, SEL c, CGR r) { (void)c; double v[2] = {r.s.w, r.s.h}, o[2] = {r.o.x, r.o.y}; mtl_dsetv(s, "_boundsSize", v, 2); mtl_dsetv(s, "_boundsOrigin", o, 2); }
 static double tl_fade(id cls, SEL c) { (void)cls; (void)c; return 0.25; }
 static id an_new(id cls, SEL c) { (void)c; return objc_autorelease(MSG0(id, MSG0(id, cls, "alloc"), "init")); }
 static id an_kp(id cls, SEL c, id kp) { (void)c; id a = an_new(cls, c); mtl_dseto(a, "keyPath", kp); return a; }
@@ -1368,6 +1485,7 @@ void cx_coreanimation_init(void) {
     mtl_def_desc(&CAShapeLayer_c, &CAShapeLayer_m, "CAShapeLayer", ps_shape, &CALayer_c, content_changed);
     mtl_def_desc(&CAGradientLayer_c, &CAGradientLayer_m, "CAGradientLayer", ps_grad, &CALayer_c, content_changed);
     mtl_def_desc(&CATextLayer_c, &CATextLayer_m, "CATextLayer", ps_text, &CALayer_c, content_changed);
+    cx_add_method(&CALayer_c, "drawInContext:", (void *)ca_default_draw);
     cx_class_t *content[3] = {&CAShapeLayer_c, &CAGradientLayer_c, &CATextLayer_c};
     for (int i = 0; i < 3; i++) {
         cx_add_method(content[i], "setBounds:", (void *)cl_set_bounds);
@@ -1408,11 +1526,12 @@ void cx_coreanimation_init(void) {
     /* CARenderer */
     mtl_def_desc(&CARenderer_c, &CARenderer_m, "CARenderer", ps_renderer, ob, 0);
     cx_add_cmethod(&CARenderer_c, "rendererWithMTLTexture:options:", (void *)rd_with_tex);
-    cx_add_method(&CARenderer_c, "beginFrameAtTime:timeStamp:", (void *)rd_noop);
-    cx_add_method(&CARenderer_c, "addUpdateRect:", (void *)rd_noop);
-    cx_add_method(&CARenderer_c, "render", (void *)rd_noop);
+    cx_add_cmethod(&CARenderer_c, "rendererWithCGLContext:options:", (void *)rd_with_cgl);
+    cx_add_method(&CARenderer_c, "beginFrameAtTime:timeStamp:", (void *)rd_begin);
+    cx_add_method(&CARenderer_c, "addUpdateRect:", (void *)rd_noop_r);
+    cx_add_method(&CARenderer_c, "render", (void *)rd_render);
     cx_add_method(&CARenderer_c, "endFrame", (void *)rd_noop);
-    cx_add_method(&CARenderer_c, "setDestination:", (void *)rd_noop);
+    cx_add_method(&CARenderer_c, "setDestination:", (void *)rd_set_dest);
     cx_add_method(&CARenderer_c, "nextFrameTime", (void *)rd_next);
     cx_add_method(&CARenderer_c, "updateBounds", (void *)rd_bounds);
     cx_add_method(&CARenderer_c, "bounds", (void *)rd_bounds);

@@ -3027,6 +3027,13 @@ void cx_metal_init(void) {
     { void cx_coreanimation_init(void); cx_coreanimation_init(); }
 
     /* o device */
+    /* indirect command buffers (metal_icb.c) */
+    { void mtl_icb_register(cx_class_t *, cx_class_t *, cx_class_t *, cx_class_t *, cx_class_t *, cx_class_t *, cx_class_t *);
+      mtl_icb_register(&MObj_c, &MDev_c, &MREnc_c, &MCEnc_c, &MBEnc_c, &MRPipe_c, &MCPipe_c); }
+    /* argument encoders (metal_argenc.c) */
+    { void mtl_argenc_register(cx_class_t *, cx_class_t *, cx_class_t *); mtl_argenc_register(&MObj_c, &MDev_c, &MFunc_c); }
+    /* binary archives (metal_archive.c) */
+    { void mtl_archive_register(cx_class_t *, cx_class_t *); mtl_archive_register(&MObj_c, &MDev_c); }
     mdev_t *d = (mdev_t *)cx_alloc_instance(&MDev_c);
     d->name = cx_str("mOS Software GPU");
     d->dev = (id)d;

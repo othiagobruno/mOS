@@ -114,6 +114,20 @@ void *CGColorSpaceCreateDeviceRGB(void) { return 0; }
 int cx_ca_diag(void) { return 0; }
 IMP cx_lookup(cx_class_t *c, SEL sel) { return (IMP)cx_msg_lookup(c, sel); }
 unsigned long long mach_absolute_time(void) { return 0; }
+/* CoreGraphics de mentira: monitor 1 a 60 Hz e monitor 2 a 144 Hz (o CVDisplayLink lê o período daqui) */
+void *CGDisplayCopyDisplayMode(unsigned d) { return (void *)(unsigned long)d; }
+double CGDisplayModeGetRefreshRate(void *m) { return (unsigned long)m == 2 ? 144.0 : (unsigned long)m == 1 ? 60.0 : 0; }
+void CGDisplayModeRelease(void *m) { (void)m; }
+int CGGetActiveDisplayList(unsigned max, unsigned *ids, unsigned *count) { if (max >= 2) { ids[0] = 1; ids[1] = 2; } *count = 2; return 0; }
+typedef struct { long long value; int scale, flags; } cvtime_host_t;
+cvtime_host_t CVDisplayLinkGetNominalOutputVideoRefreshPeriod(void *l);
+double CVDisplayLinkGetActualOutputVideoRefreshPeriod(void *l);
+int CVDisplayLinkCreateWithCGDisplay(unsigned d, void **out);
+int CVDisplayLinkCreateWithActiveCGDisplays(void **out);
+int CVDisplayLinkSetCurrentCGDisplay(void *l, unsigned d);
+unsigned CVDisplayLinkGetCurrentCGDisplay(void *l);
+int CVDisplayLinkGetCurrentTime(void *l, void *ts);
+void CVDisplayLinkRelease(void *l);
 const char *_dyld_get_image_name(unsigned i) { (void)i; return 0; }
 typedef struct { cx_class_t *isa; id contents; } layer_t;
 static void layer_set(id self, SEL c, id v) { (void)c; ((layer_t *)self)->contents = v; }
@@ -345,6 +359,22 @@ int main(void) {
         unsigned char b2[16] = {0};
         glGetTexImage(0x84F5, 0, 0x80E1, 0x1401, b2);
         expect("420v -> R alto, G baixo, B neutro", b2[2] > 200 && b2[1] < 60 && b2[0] > 110 && b2[0] < 150 && b2[12 + 2] > 200);
+    }
+    {
+        /* CVDisplayLink com a taxa do monitor de cada link */
+        void *l1 = 0, *l2 = 0, *la = 0;
+        expect("CVDisplayLink no monitor de 144 Hz", CVDisplayLinkCreateWithCGDisplay(2, &l2) == 0 && l2);
+        cvtime_host_t t = CVDisplayLinkGetNominalOutputVideoRefreshPeriod(l2);
+        expect("período nominal 1/144 s", t.value == 6944 && t.scale == 1000000);
+        double ap = CVDisplayLinkGetActualOutputVideoRefreshPeriod(l2);
+        expect("período real 1/144 s", ap > 0.00694 && ap < 0.00695);
+        unsigned char ts[80];
+        expect("CVTimeStamp com o período do monitor", CVDisplayLinkGetCurrentTime(l2, ts) == 0 && *(long long *)(ts + 32) == 6944);
+        expect("troca para o monitor de 60 Hz", CVDisplayLinkSetCurrentCGDisplay(l2, 1) == 0 && CVDisplayLinkGetCurrentCGDisplay(l2) == 1 &&
+               CVDisplayLinkGetNominalOutputVideoRefreshPeriod(l2).value == 16667);
+        expect("monitor sem taxa: 60 Hz", CVDisplayLinkCreateWithCGDisplay(9, &l1) == 0 && CVDisplayLinkGetNominalOutputVideoRefreshPeriod(l1).value == 16667);
+        expect("ativos: começa no principal", CVDisplayLinkCreateWithActiveCGDisplays(&la) == 0 && CVDisplayLinkGetCurrentCGDisplay(la) == 1);
+        CVDisplayLinkRelease(l1); CVDisplayLinkRelease(l2); CVDisplayLinkRelease(la);
     }
     CGLSetCurrentContext(0);
     CGLReleaseContext(cctx);
