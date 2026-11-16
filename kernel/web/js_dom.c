@@ -230,6 +230,7 @@ static bool contains_style(node_t *n) {
 static void detach(node_t *n) {
     node_t *par = n->parent;
     if (!par) return;
+    js_mo_child(par, NULL, n, n->prev, n->next);
     if (n->prev) n->prev->next = n->next; else par->first = n->next;
     if (n->next) n->next->prev = n->prev; else par->last = n->prev;
     n->parent = n->prev = n->next = NULL;
@@ -249,6 +250,7 @@ static void insert_before(node_t *par, node_t *n, node_t *ref) {
         if (ref->prev) ref->prev->next = n; else par->first = n;
         ref->prev = n;
     }
+    js_mo_child(par, n, NULL, n->prev, n->next);
 }
 
 static node_t *new_node(doc_t *d, int type) {
@@ -297,7 +299,8 @@ static void set_attr0(js_page_t *p, node_t *n, const char *name, const char *val
     if (n->tag == T_IFRAME && (!strcmp(name, "src") || !strcmp(name, "srcdoc"))) frame_navigate(n, NULL);
     for (int i = 0; i < n->nattrs; i++) {
         if (!strcmp(n->attrs[i].name, name)) {
-            if ((int)strlen(n->attrs[i].value) == vlen && !memcmp(n->attrs[i].value, val, (usize)vlen)) return;
+            if ((int)strlen(n->attrs[i].value) == vlen && !memcmp(n->attrs[i].value, val, (usize)vlen)) { js_mo_attr(n, name, n->attrs[i].value); return; }
+            js_mo_attr(n, name, n->attrs[i].value);
             n->attrs[i].value = arena_strndup(&d->arena, val, vlen);
             page_dirty(p, n);
             return;
@@ -311,6 +314,7 @@ static void set_attr0(js_page_t *p, node_t *n, const char *name, const char *val
         n->attrs = na;
         n->acap = nc;
     }
+    js_mo_attr(n, name, NULL);
     n->attrs[n->nattrs].name = arena_strndup(&d->arena, name, (int)strlen(name));
     n->attrs[n->nattrs].value = arena_strndup(&d->arena, val, vlen);
     n->nattrs++;
@@ -328,6 +332,7 @@ static void set_attr(js_page_t *p, node_t *n, const char *name, const char *val,
 static void remove_attr(js_page_t *p, node_t *n, const char *name) {
     for (int i = 0; i < n->nattrs; i++) {
         if (!strcmp(n->attrs[i].name, name)) {
+            js_mo_attr(n, name, n->attrs[i].value);
             memmove(&n->attrs[i], &n->attrs[i + 1], sizeof(attr_t) * (usize)(n->nattrs - i - 1));
             n->nattrs--;
             page_dirty(p, n);
@@ -347,16 +352,19 @@ static void remove_children(js_page_t *p, node_t *n) {
 
 static void set_text(js_page_t *p, node_t *n, jsstr *s) {
     if (n->type == N_TEXT) {
+        js_mo_data(n, n->text ? n->text : "");
         n->text = arena_strndup(&p->doc->arena, s->d, (int)s->len);
         n->len = (int)s->len;
         page_dirty(p, n->parent ? n->parent : n);
         return;
     }
+    js_mo_batch(1);   /* um registro só, como nos navegadores */
     remove_children(p, n);
     if (s->len) {
         node_t *t = new_text(p->doc, s->d, (int)s->len);
         if (t) insert_before(n, t, NULL);
     }
+    js_mo_batch(-1);
     page_dirty(p, n);
 }
 
@@ -1859,10 +1867,15 @@ static int node_set(jsobj *o, jsstr *k, jsv v) {
     if (keyis(k, "innerHTML")) {
         jsstr *s = jv_isnullish(v) ? A[A_empty] : js_tostr(v);
         if (!s) return -1;
+        js_mo_batch(1);
         remove_children(p, n);
         if (n->tag == T_SCRIPT || n->tag == T_STYLE || n->tag == T_TEXTAREA) {
             if (s->len) { node_t *t = new_text(d, s->d, (int)s->len); if (t) insert_before(n, t, NULL); }
-        } else html_parse_fragment(d, n, s->d, (int)s->len);
+        } else {
+            html_parse_fragment(d, n, s->d, (int)s->len);
+            for (node_t *c = n->first; c; c = c->next) js_mo_child(n, c, NULL, c->prev, c->next);   /* o parser liga direto */
+        }
+        js_mo_batch(-1);
         for (node_t *c = n->first; c; c = c->next) after_insert(p, c);
         page_dirty(p, n);
         return 1;
@@ -1875,8 +1888,10 @@ static int node_set(jsobj *o, jsstr *k, jsv v) {
         if (!tmp) return 1;
         html_parse_fragment(d, tmp, s->d, (int)s->len);
         node_t *par = n->parent;
+        js_mo_batch(1);
         while (tmp->first) { node_t *c = tmp->first; insert_before(par, c, n); after_insert(p, c); }
         detach(n);
+        js_mo_batch(-1);
         page_dirty(p, par);
         return 1;
     }
@@ -3097,6 +3112,7 @@ void js_dom_init(jsrealm *r) {
     js_url_init(r);
     js_fetch_init(r);   /* fetch, Headers, Request, Response, FormData, AbortController, XMLHttpRequest */
     js_plat_init(r);    /* structuredClone, MessageChannel, crypto */
+    js_obs_init(r);     /* MutationObserver, ResizeObserver, IntersectionObserver */
     jsobj *dpp = js_newobj(op);
     js_defnative(dpp, "parseFromString", domparser_parse, 2, 0);
     js_defn(g, "DOMParser", jv_obj(js_newctor(domparser_ctor, "DOMParser", 0, dpp)), PF_NOENUM);
@@ -3209,6 +3225,35 @@ node_t *js_page_focus(js_page_t *p) { return p ? p->focus : NULL; }
 int js_page_add_timer(js_page_t *p, jsv fn, double ms) { return p ? add_timer(p, fn, ms, false, 0, NULL) : 0; }
 const char *js_page_origin(js_page_t *p) { return p ? p->origin : "null"; }
 
+static box_t *find_box(box_t *b, node_t *n, int depth) {
+    if (!b || depth > 300) return NULL;
+    if (b->node == n) return b;
+    for (box_t *c = b->first; c; c = c->next) { box_t *r = find_box(c, n, depth + 1); if (r) return r; }
+    if (b->kind == B_LINES) for (int i = 0; i < b->nfrags; i++) if (b->frags[i].atom) { box_t *r = find_box(b->frags[i].atom, n, depth + 1); if (r) return r; }
+    return NULL;
+}
+
+bool js_node_geom(js_page_t *p, node_t *n, float g[10]) {
+    if (!p || !n || !is_connected(p, n)) return false;
+    rect_acc r = node_rect(p, n);
+    if (!r.any) return false;
+    g[0] = (float)r.x0; g[1] = (float)r.y0; g[2] = (float)(r.x1 - r.x0); g[3] = (float)(r.y1 - r.y0);
+    box_t *b = find_box(p->doc->rootbox, n, 0);
+    float l = 0, t = 0, rr = 0, bt = 0;
+    g[8] = b ? b->p[3] : 0; g[9] = b ? b->p[0] : 0;   /* padding esquerdo e de cima */
+    if (b) { l = b->b[3] + b->p[3]; t = b->b[0] + b->p[0]; rr = b->b[1] + b->p[1]; bt = b->b[2] + b->p[2]; }
+    g[4] = g[0] + l; g[5] = g[1] + t;
+    g[6] = g[2] - l - rr; g[7] = g[3] - t - bt;
+    if (g[6] < 0) g[6] = 0;
+    if (g[7] < 0) g[7] = 0;
+    return true;
+}
+
+void js_page_viewport_rect(js_page_t *p, int *x, int *y, int *w, int *h) {
+    *x = 0; *y = p ? p->scroll : 0;
+    *w = p && p->vw ? p->vw : 1024; *h = p && p->vh ? p->vh : 640;
+}
+
 /* ============================================================ interface pública */
 static void page_origin(const char *url, char *out, int cap) {
     char host[256];
@@ -3299,6 +3344,8 @@ bool js_page_tick(js_page_t *p) {
     run_timers(p);
     if (p->nnets) pump_nets(p);
     web_fetch_pump(p);
+    js_run_jobs();
+    web_obs_tick(p);   /* ResizeObserver e IntersectionObserver, depois do layout */
     js_run_jobs();
     gc_maybe();
     J.realm = saved;
