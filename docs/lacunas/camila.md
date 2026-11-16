@@ -3,11 +3,10 @@
 Símbolos que os apps do corpus importam e o mOS não exporta, na frente de Camila (desktop e window server) (`TIME.md`).
 Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/harness.py donos`.
 
-**18** símbolos distintos.
+**17** símbolos distintos.
 
 | biblioteca | símbolo | apps | exemplos |
 |---|---|---:|---|
-| OSD.framework | `_OBJC_CLASS_$_OSDManager` | 1 | monitorcontrol |
 | SkyLight.framework | `_SLPSPostEventRecordTo` | 1 | alt-tab |
 | SkyLight.framework | `_SLSRegisterConnectionNotifyProc` | 1 | alt-tab |
 | SkyLight.framework | `_SLSRequestNotificationsForWindows` | 1 | alt-tab |
