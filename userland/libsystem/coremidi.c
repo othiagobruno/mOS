@@ -725,3 +725,44 @@ OSStatus MIDIFlushOutput(u32 dest) {
     return d && d->type == O_DEST ? 0 : kMIDIUnknownEndpoint;
 }
 OSStatus MIDIRestart(void) { return 0; }
+
+/* ---- entidades e dispositivos: o mOS ainda não tem MIDI de hardware, então não há dispositivo nem entidade (como um Mac
+ * sem nada ligado); os endpoints virtuais não pertencem a entidade nenhuma */
+unsigned long MIDIDeviceGetNumberOfEntities(u32 dev) { (void)dev; return 0; }
+u32 MIDIDeviceGetEntity(u32 dev, unsigned long i) { (void)dev; (void)i; return 0; }
+unsigned long MIDIEntityGetNumberOfSources(u32 ent) { (void)ent; return 0; }
+unsigned long MIDIEntityGetNumberOfDestinations(u32 ent) { (void)ent; return 0; }
+u32 MIDIEntityGetSource(u32 ent, unsigned long i) { (void)ent; (void)i; return 0; }
+u32 MIDIEntityGetDestination(u32 ent, unsigned long i) { (void)ent; (void)i; return 0; }
+OSStatus MIDIEntityGetDevice(u32 ent, u32 *dev) { (void)ent; if (dev) *dev = 0; return kMIDIObjectNotFound; }
+/* MIDIObjectGetProperties: name, uniqueID, as propriedades definidas e o protocolo (deep não muda: sem filhos) */
+void *CFDictionaryCreateMutable(void *a, long cap, const void *kcb, const void *vcb);
+void CFDictionarySetValue(void *d, const void *k, const void *v);
+void *CFNumberCreate(void *a, long type, const void *v);
+void CFRelease(const void *o);
+extern const char kCFTypeDictionaryKeyCallBacks[], kCFTypeDictionaryValueCallBacks[];
+OSStatus MIDIObjectGetProperties(u32 ref, id *out, u8 deep) {
+    (void)deep;
+    if (!out) return kParamErr;
+    *out = 0;
+    mlock();
+    mobj_t *o = find(ref);
+    if (!o) { munlock(); return kMIDIObjectNotFound; }
+    void *d = CFDictionaryCreateMutable(0, 0, kCFTypeDictionaryKeyCallBacks, kCFTypeDictionaryValueCallBacks);
+    if (!d) { munlock(); return -108; }
+    if (o->name) CFDictionarySetValue(d, cx_str("name"), o->name);
+    if (o->type >= O_SOURCE) {
+        void *n = CFNumberCreate(0, 3 /* kCFNumberSInt32Type */, &o->uniq);
+        CFDictionarySetValue(d, cx_str("uniqueID"), n);
+        CFRelease(n);
+        if (o->proto) { void *p = CFNumberCreate(0, 3, &o->proto); CFDictionarySetValue(d, cx_str("protocol"), p); CFRelease(p); }
+    }
+    for (u32 i = 0; i < o->nprops; i++) {
+        mprop_t *p = &o->props[i];
+        if (p->is_str) { if (p->s) CFDictionarySetValue(d, cx_str(p->key), p->s); }
+        else { void *n = CFNumberCreate(0, 3, &p->v); CFDictionarySetValue(d, cx_str(p->key), n); CFRelease(n); }
+    }
+    munlock();
+    *out = d;
+    return 0;
+}

@@ -95,6 +95,18 @@ typedef struct blk { void *isa; int flags, res; void (*invoke)(struct blk *, con
 static void inv_pkts(blk_t *b, const void *l, void *conn) { read_pkts(l, b->c, conn); }
 static void inv_evts(blk_t *b, const void *l, void *conn) { read_evts(l, b->c, conn); }
 
+/* CF mínimo para o MIDIObjectGetProperties (dicionário de chaves cx_str) */
+typedef struct { const char *k[32]; void *v[32]; int n; } fdict;
+typedef struct { int v; } fnum;
+const char kCFTypeDictionaryKeyCallBacks[1], kCFTypeDictionaryValueCallBacks[1];
+void *CFDictionaryCreateMutable(void *a, long c, const void *k, const void *v) { (void)a; (void)c; (void)k; (void)v; return calloc(1, sizeof(fdict)); }
+void CFDictionarySetValue(void *d, const void *k, const void *v) { fdict *f = d; f->k[f->n] = cx_cstr((id)k); f->v[f->n++] = (void *)v; }
+void *CFNumberCreate(void *a, long t, const void *v) { (void)a; (void)t; fnum *n = malloc(sizeof *n); n->v = *(const int *)v; return n; }
+void CFRelease(const void *o) { (void)o; }
+static void *fget(fdict *d, const char *k) { for (int i = 0; i < d->n; i++) if (!strcmp(d->k[i], k)) return d->v[i]; return 0; }
+unsigned long MIDIDeviceGetNumberOfEntities(u32), MIDIEntityGetNumberOfSources(u32);
+u32 MIDIDeviceGetEntity(u32, unsigned long), MIDIEntityGetSource(u32, unsigned long);
+OSStatus MIDIEntityGetDevice(u32, u32 *), MIDIObjectGetProperties(u32, id *, unsigned char);
 int main(void) {
     u32 ca, cb, src, src2, pin, pblk, pu1, pu2, pout, dst;
     CHECK(MIDIClientCreate(cx_str("A"), notify, 0, &ca) == 0, "cliente A");
@@ -110,6 +122,15 @@ int main(void) {
     u32 found = 0;
     CHECK(MIDIObjectGetIntegerProperty(src, kMIDIPropertyUniqueID, &uid) == 0 && uid != 0, "uniqueID");
     CHECK(MIDIObjectFindByUniqueID(uid, &found, &ty) == 0 && found == src && ty == 2, "FindByUniqueID");
+    {
+        id props = 0;
+        MIDIObjectSetIntegerProperty(src, cx_str("receiveChannels"), 3);
+        CHECK(MIDIObjectGetProperties(src, &props, 1) == 0 && props && !strcmp(cx_cstr(fget(props, "name")), "Teclado") &&
+              ((fnum *)fget(props, "uniqueID"))->v == uid && ((fnum *)fget(props, "receiveChannels"))->v == 3, "MIDIObjectGetProperties");
+        u32 dv = 1;
+        CHECK(MIDIDeviceGetNumberOfEntities(0) == 0 && MIDIDeviceGetEntity(0, 0) == 0 && MIDIEntityGetNumberOfSources(0) == 0 &&
+              MIDIEntityGetSource(0, 0) == 0 && MIDIEntityGetDevice(0, &dv) == -10842 && dv == 0, "sem dispositivo de hardware: sem entidades");
+    }
     printf("coremidi ok fonte virtual: enumeração, nome, uniqueID %d, notificações\n", uid);
 
     cap_t c_in = {0}, c_blk = {0}, c_u1 = {0}, c_u2 = {0}, c_dst = {0};
