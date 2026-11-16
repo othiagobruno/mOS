@@ -30,6 +30,13 @@ foreach ($fw in Get-ChildItem "$root\userland\frameworks" -Directory) {
         if ($LASTEXITCODE -ne 0) { $log | Select-String 'error' | Select-Object -First 8 | ForEach-Object { "  $_" }; $bad = $true } else { $objs += $o }
     }
     $sw = @(Get-ChildItem $fw.FullName -Filter *.swift | ForEach-Object FullName)
+    # swift-needs: módulos Swift de outro passo do build (ex.: o Foundation); sem eles, só a parte ObjC/C
+    $missing = @()
+    if (Test-Path "$($fw.FullName)\swift-needs") {
+        $missing = @(Get-Content "$($fw.FullName)\swift-needs" | Where-Object { $_ -and -not $_.StartsWith('#') } |
+            Where-Object { -not (Test-Path "$objc\overlays\$($_.Trim()).swiftmodule") })
+    }
+    if ($sw -and $missing) { Write-Host "${name}: aviso: overlay Swift adiado (falta $($missing -join ', ')); só ObjC/C" -ForegroundColor Yellow; $sw = @() }
     if ($sw -and -not $bad) {
         $o = "$tmp\${name}_swift.o"
         $log = & "$($tc.FullName)\usr\bin\swift-frontend.exe" -frontend -c -target $SwiftTriple -module-name $name -parse-as-library -O `

@@ -56,7 +56,9 @@ login items, CloudKit/iCloud sem crash. Cada item só vira ✅ com teste de host
 | 1 SecKey | ✅ (15 nov.); falta ECIES e OAEP+AESGCM | `gcc -O2 -DMOS_HOST_TEST -Itools -Ikernel/include tools/seckeytest.c kernel/net/crypto.c kernel/net/pk.c -o /tmp/seckeytest`, `/tmp/seckeytest self` → ok; `python3 -I tools/seckeytest.py /tmp/seckeytest` → **225/225** contra o OpenSSL 3.5.5 (RSA 1024/2048/3072, EC P-256/384/521) |
 | 3 CommonCrypto | ✅ (15 nov.) | `python3 -I tools/cctest.py` → **512/512** contra OpenSSL/hashlib (AES ECB/CBC/CFB/CFB8/CTR/OFB/XTS/GCM, DES, 3DES, RC2, RC4, Blowfish, MD2/MD4/MD5/SHA-1/2, HMAC, PBKDF2) |
 | 2 Certificados, confiança, PKCS#12, Keychain de chaves | ✅ (15 nov.) | `python3 -I tools/seccerttest.py` → **59/59** (PKCS#12 de 6 variantes do cryptography e do `openssl pkcs12`, PEM, nomes, cadeia); SecKey agora **231/231** |
-| 4–12 | a fazer | — |
+| 5 TCC | ✅ diálogo e pedidos (16 nov.); falta o painel de Privacidade nos Ajustes | `tools/tccprompttest.c` **134/134**, `tools/tccutiltest.sh` **8/8** |
+| 11 CloudKit/iCloud | ✅ código e nomes (16 nov.); não executado em VM | `CloudKit.m` compila para Mach-O (170 classes); overlay `CloudKit.swift` compilado contra o Foundation Swift real: os **41/41** nomes mangled que os apps pedem saem dele |
+| 4, 6–10, 12 | a fazer | — |
 
 ## Fase 1 — o que entrou (15 nov.)
 
@@ -102,3 +104,29 @@ login items, CloudKit/iCloud sem crash. Cada item só vira ✅ com teste de host
   Arquivos antigos continuam legíveis (campos novos opcionais). `kSecAttrIsPermanent` grava as duas metades.
 - Limites: sem busca de intermediários/OCSP pela rede (AIA); `CopyNormalized*` não normaliza maiúsculas; sem
   exportar PKCS#12/PKCS#7.
+
+## Fase 5 — TCC (16 nov.)
+
+- Diálogo para todos os serviços (tabela em `kernel/ui/tcc_prompt_core.inc`), inclusive Apple Events por app alvo
+  (`kTCCServiceAppleEvents+<bundle>`) e notificações ("Não Permitir"/"Permitir"); ícone de cadeado para os serviços
+  sem desenho próprio. Doc: `docs/tcc-prompt.md`.
+- `cx_tcc_request_async` (`tcc.c`): o bloco de `requestAccessForMediaType:`, `CNContactStore requestAccess…`,
+  `PHPhotoLibrary requestAuthorization:` e `UNUserNotificationCenter requestAuthorization…` volta depois da escolha
+  (antes voltava na hora com "não"; o das notificações nunca voltava).
+- `/usr/bin/tccutil reset` (`userland/cli-macos/tccutil.c`).
+
+## Fase 11 — CloudKit e iCloud (16 nov.)
+
+- `userland/frameworks/CloudKit/CloudKit.m` (substitui o `CloudKit.c` vazio): contêiner "sem conta"
+  (`accountStatus` = `CKAccountStatusNoAccount` sem erro), bancos, todas as operações `CK*Operation` terminando com
+  `CKErrorNotAuthenticated` no bloco de conclusão (e depois o `completionBlock`), objetos locais completos (CKRecord
+  com valores, `changedKeys`, `encryptedValues`, cópia, `encodeSystemFieldsWithCoder:`; IDs com igualdade e hash;
+  zonas, referências, assets, consultas, assinaturas, compartilhamento, `CKNotification` a partir do payload).
+- `CloudKit.swift`: o overlay da Apple (subscripts, `CKRecordValueProtocol` e conformidades, `CKError` com
+  `clientRecord`/`serverRecord`/`retryAfterSeconds`/`partialErrorsByItemID`, inits, blocos `…ResultBlock` com `Result`,
+  `modifyRecordZones` async, `configuredWith`). Os 41 stubs saíram de `sys_zerados.c`.
+- Build: `swift-needs` (Foundation) adia o overlay na 1ª passada de `build-frameworks-objc.sh`; `tools/build.sh`
+  recompila esses frameworks depois do Foundation Swift.
+- `userland/libsystem/icloud.c`: `NSUbiquitousKeyValueStore` local (~/Library/SyncedPreferences, limites da Apple,
+  aviso de cota) e `NSFileManager` sem contêiner (erro 4353).
+- Limite honesto: nada disso rodou num app ainda (precisa do build final). CKSyncEngine não existe.

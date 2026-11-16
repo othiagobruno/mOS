@@ -523,6 +523,11 @@ fi
 if [ -f "$ROOT/build/swift/objc/dylib/usr/lib/swift/libswiftCore.dylib" ]; then
     MOS_ZIG="$ZIG" bash "$ROOT/tools/build-swift-foundation-objc.sh" || echo "aviso: Foundation Swift não compilou; continua o stub" >&2
 fi
+# frameworks cujo overlay Swift importa o Foundation acima (arquivo swift-needs, ex.: CloudKit): segunda passada
+if [ -e "$ROOT/build/swift/objc/overlays/Foundation.swiftmodule" ]; then
+    precisa=$(cd "$ROOT/userland/frameworks" && grep -l . */swift-needs 2>/dev/null | cut -d/ -f1 | paste -sd, -)
+    [ -n "$precisa" ] && { MOS_ZIG="$ZIG" bash "$ROOT/tools/build-frameworks-objc.sh" "" "$precisa" || echo "aviso: overlay Swift de $precisa não compilou" >&2; }
+fi
 # overlay Swift do UIKit do Catalyst (/System/iOSSupport/usr/lib/swift/libswiftUIKit.dylib): importa o Foundation acima
 if [ -e "$ROOT/build/swift/objc/overlays/Foundation.swiftmodule" ]; then
     MOS_ZIG="$ZIG" bash "$ROOT/tools/build-swift-uikit-objc.sh" || echo "aviso: libswiftUIKit não compilou" >&2

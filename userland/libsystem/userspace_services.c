@@ -1,7 +1,7 @@
 /*
  * UserNotifications: autorização local no mesmo arquivo do TCC (serviço
- * "userNotifications"). Não há APNs. O completion do request só roda quando a
- * Interface chama cx_un_decide.
+ * "userNotifications"). Não há APNs. O completion do request volta depois da escolha no diálogo do TCC
+ * (cx_tcc_request_async, tcc.c).
  *
  * StoreKit, QuickLookUI, Core Data, Photos e os quatro frameworks do WhatsApp estão em storekit_fw.c,
  * quicklook_fw.c, coredata_fw.c e photos_fw.c. O init daqui só os registra,
@@ -25,7 +25,6 @@ int cx_tcc_request(const char *service);
 int cx_tcc_state(const char *service);
 int cx_tcc_decide(const char *bundle, const char *service, int granted);
 
-static void *g_un_block;
 
 static id g_un;
 static id un_current_real(id cls, SEL c) {
@@ -34,11 +33,19 @@ static id un_current_real(id cls, SEL c) {
     return g_un;
 }
 
+void cx_tcc_request_async(const char *service, void (*cb)(int granted, void *ctx), void *ctx);
+typedef struct { void *isa; int flags; int reserved; void (*invoke)(void *, int, id); } un_blk_t;
+static void un_request_done(int granted, void *blk) {
+    un_blk_t *b = blk;
+    if (b->invoke) b->invoke(blk, granted ? 1 : 0, 0);
+    _Block_release(blk);
+}
+/* requestAuthorizationWithOptions: o diálogo "enviar notificações" é o do TCC (kernel/ui/tcc_prompt.c); o bloco
+ * volta com a escolha, ou na hora se ela já existe */
 static void un_request(id self, SEL c, unsigned long opts, void *block) {
     (void)self; (void)c; (void)opts;
-    cx_tcc_request("userNotifications");
-    if (g_un_block) _Block_release(g_un_block);
-    g_un_block = block ? _Block_copy(block) : 0;
+    if (!block) { cx_tcc_request("userNotifications"); return; }
+    cx_tcc_request_async("userNotifications", un_request_done, _Block_copy(block));
 }
 
 static long un_auth(id self, SEL c) {
@@ -49,13 +56,8 @@ static long un_auth(id self, SEL c) {
     return 0;              /* notDetermined, inclusive pending */
 }
 
-void cx_un_decide(int granted) {
-    cx_tcc_decide(0, "userNotifications", granted);
-    if (!g_un_block) return;
-    typedef struct { void *isa; int flags; int reserved; void (*invoke)(void *, int, id); } un_blk_t;
-    un_blk_t *b = (un_blk_t *)g_un_block;
-    if (b->invoke) b->invoke(g_un_block, granted ? 1 : 0, 0);
-}
+/* decisão vinda do próprio processo (testes): o bloco pendente volta pelo acompanhamento de cx_tcc_request_async */
+void cx_un_decide(int granted) { cx_tcc_decide(0, "userNotifications", granted); }
 
 void cx_userspace_services_init(void) {
     cx_storekit_init();
