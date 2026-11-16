@@ -469,9 +469,22 @@ void CGImageSourceRemoveCacheAtIndex(void *src, size_t i) {
 /* PNG/JPEG/GIF/TIFF/BMP/WebP não trazem mapa de ganho, profundidade ou matte: NULL, como o ImageIO sem o dado */
 void *CGImageSourceCopyAuxiliaryDataInfoAtIndex(void *src, size_t i, const void *type) { (void)src; (void)i; (void)type; return 0; }
 
-static void *make_cgimage(const u32 *px, int w, int h, int alpha) {
+void *CGColorSpaceCreateWithICCData(void *data);
+int CGColorSpaceGetModel(const void *s);
+static void *make_cgimage_icc(const u32 *px, int w, int h, int alpha, const u8 *icc, size_t nicc);
+static void *make_cgimage(const u32 *px, int w, int h, int alpha) { return make_cgimage_icc(px, w, h, alpha, 0, 0); }
+/* com perfil ICC RGB embutido, o CGImage leva esse espaço (o CoreGraphics converte para sRGB ao desenhar).
+ * CMYK e cinza já saem do decodificador como RGB do dispositivo: o perfil deles não se aplica a estes pixels. */
+static void *make_cgimage_icc(const u32 *px, int w, int h, int alpha, const u8 *icc, size_t nicc) {
     void *prov = CGDataProviderCreateWithData(0, px, (size_t)w * (size_t)h * 4, 0);
-    void *cs = CGColorSpaceCreateDeviceRGB();
+    void *cs = 0;
+    if (icc && nicc >= 132) {
+        void *d = CFDataCreate(0, icc, (long)nicc);
+        cs = d ? CGColorSpaceCreateWithICCData(d) : 0;
+        if (d) CFRelease(d);
+        if (cs && CGColorSpaceGetModel(cs) != 1) { CGColorSpaceRelease(cs); cs = 0; }
+    }
+    if (!cs) cs = CGColorSpaceCreateDeviceRGB();
     void *img = prov ? CGImageCreate((size_t)w, (size_t)h, 8, 32, (size_t)w * 4, cs, (alpha ? 4u : 6u) | 0x2000u, prov, 0, 1, 0) : 0;
     if (prov) CGDataProviderRelease(prov);
     if (cs) CGColorSpaceRelease(cs);
@@ -489,7 +502,7 @@ void *CGImageSourceCreateImageAtIndex(void *src, size_t i, void *opts) {
         free(r);
         return img;
     }
-    void *img = make_cgimage(f->px, f->w, f->h, f->has_alpha);
+    void *img = make_cgimage_icc(f->px, f->w, f->h, f->has_alpha, s->img.icc, s->img.icc_n);
     if (img) cx_cgimage_set_uti(img, uti_cfstr(s->img.uti));
     return img;
 }

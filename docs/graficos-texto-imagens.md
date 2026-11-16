@@ -39,7 +39,7 @@ Cada passo fecha com teste de host em `tools/` e PR mergeado na `main`.
 5. ✅ **CGContext completo** (passo 3 abaixo): sombra desenhada (blur gaussiano), os 28 blend modes, interpolação
    na `CGContextDrawImage` com transformação, `CGBitmapContextGetColorSpace`, contextos 16 bits/float,
    `CGContextDrawTiledImage`, `CGContextClipToMask`, glifos e modos de texto.
-6. **ColorSync e espaços de cor**: perfis ICC (leitura, `CGColorSpaceCreateWithICCData`,
+6. ✅ **ColorSync e espaços de cor** (passo 4 abaixo): perfis ICC (leitura, `CGColorSpaceCreateWithICCData`,
    `CGColorSpaceCopyICCData`), matriz/TRC e LUT, conversão sRGB/P3/Gray/CMYK, `CGColorConverter`,
    `ColorSyncProfile*`/`ColorSyncTransform*`.
 7. **PDF**: parser (xref, xref stream, object stream, Flate/LZW/ASCII85/ASCIIHex/RunLength/DCT),
@@ -154,3 +154,35 @@ invisível), todas ok. Limites: `CGFontCreateCopyWithVariations` devolve os mesm
 kernel desenha a instância padrão); `CGFontCanCreatePostScriptSubset` responde não; as métricas de CGFont não
 têm teste de host (o harness do Core Text precisa de runtime ObjC completo); a intenção de renderização não muda
 pixel (o mOS desenha em sRGB até o passo de ColorSync).
+
+### Passo 4 — ColorSync, ICC e espaços de cor (PR de 16 nov. 2026)
+
+- **Motor** (`colorsync.c`/`colorsync.h`): perfis ICC v2/v4 — matriz/TRC (`curv` gama e tabela, `para` 0..4),
+  cinza (`kTRC`), LUTs `lut8`/`lut16` (`mft1`/`mft2`) e `lutAtoB`/`lutBtoA` (`mAB `/`mBA `), PCS XYZ ou Lab,
+  intenção por tabela (A2B0/1/2), interpolação tetraédrica (3 entradas; 4 entradas com o primeiro eixo linear),
+  Bradford. Perfis padrão gerados a partir das normas (IEC 61966-2-1, SMPTE EG 432-1, Adobe RGB (1998), ITU-R
+  BT.709/2020/2100 PQ e HLG, ACEScg, ROMM, lineares, cinza 2.2, Lab, CMYK genérico), gravador ICC v2 com ID MD5.
+- **ColorSync**: `ColorSyncProfileCreate/CreateWithName/CreateWithURL/CreateMutable/SetTag/RemoveTag/SetHeader/
+  CopyData/CopyHeader/CopyTag/ContainsTag/CopyDescriptionString/GetMD5/GetURL/Verify/CreateDeviceProfile`,
+  `ColorSyncTransformCreate/Convert` (8, 16, half, 32 bits e float; os 7 layouts de alfa; ordem de bytes),
+  `ColorSyncCreateCodeFragment`, as constantes `kColorSync*`.
+- **CGColorSpace**: `CreateWithICCData`, `CreateICCBased`, `CopyICCData` (gerado para os de nome), `DeviceCMYK`,
+  `CreateLab`, `CreateIndexed` + `GetColorTable(Count)`, `CreateCalibratedRGB/Gray` de verdade (antes devolviam
+  sRGB), `CreateWithPlatformColorSpace`, `Create/CopyPropertyList`, `IsHDR`, `CreateExtended/Linearized/
+  ExtendedLinearized/CopyWithStandardRange`, modelos CMYK/Lab/XYZ pelo nome, `CGColorConversionInfoCreate*`.
+- **CGColor em qualquer espaço**: subclasse do NSColor do mOS (o AppKit continua lendo r,g,b,a em sRGB) que guarda
+  espaço e componentes originais — `CGColorCreate` respeita o espaço, `GetNumberOfComponents/GetComponents/
+  GetColorSpace` devolvem os do espaço, `CreateGenericGray` (2 componentes), `CreateGenericCMYK`,
+  `CreateGenericGrayGamma2_2`, `CreateWithPattern/GetPattern` (cor de padrão vale em `SetFill/StrokeColorWithColor`),
+  `CreateCopyByMatchingToColorSpace` de verdade (antes devolvia a mesma cor).
+- **Imagens**: pixel de espaço não sRGB (ICC embutido de PNG/JPEG/TIFF/WebP, P3, Adobe RGB, calibrado, Lab,
+  indexado com base convertível) vira sRGB ao entrar no CGImage; `CGImageGetDataProvider` agora devolve o provedor
+  original (antes, os pixels internos em ARGB, num layout que não batia com o bitmapInfo).
+
+Testes: `tools/colorsync_host.py` (binário `tools/colorsync_host.c`) — 15 perfis contra o LittleCMS 2.17
+(ghostscript e colord do sistema: sRGB, Adobe 98, ROMM, sGray, dois CMYK de LUT, FOGRA45, ColorMatch, e os 6 que o
+mOS grava, lidos de volta pelo LittleCMS): pior diferença 1,23/255 (cores dentro do gamut, colorimétrico relativo,
+LittleCMS sem device link otimizado); `colorsync_host self` 11/11; `tools/cg_context_test.c` 70/70.
+Limites: o contexto de bitmap não converte para o próprio espaço (desenha em sRGB mesmo num contexto P3); fora do
+gamut o recorte é por canal (sem mapeamento perceptual); sem compensação de ponto preto; perfil CMYK/cinza embutido
+em JPEG não se aplica (o decodificador já entrega RGB).

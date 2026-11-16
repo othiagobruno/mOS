@@ -3,7 +3,8 @@
  *   zig cc -g -O1 -fno-sanitize=all -ffreestanding -fno-builtin -w -Iuserland/libsystem/kshim -Iuserland/libsystem/fsinc \
  *     -Ikernel/include -Iuserland/libsystem -c userland/libsystem/coregraphics.c -o /tmp/cg-lib.o
  *   zig cc -std=gnu11 -O1 -w -D_DEFAULT_SOURCE -Iuserland/libsystem tools/cg_context_test.c /tmp/cg-lib.o \
- *     userland/libsystem/cg_raster.c userland/libsystem/cgimage_crop.c -lm -o /tmp/cg_context_test && /tmp/cg_context_test
+ *     userland/libsystem/cg_raster.c userland/libsystem/cgimage_crop.c -DCS_HOST userland/libsystem/colorsync.c -lm \
+ *     -o /tmp/cg_context_test && /tmp/cg_context_test
  */
 #include <math.h>
 #include <stdint.h>
@@ -30,6 +31,7 @@ static mcls *cls_info(void *k) {
 }
 void *cx_class_named(const char *name) {
     for (int i = 0; i < nclasses; i++) if (!strcmp(classes[i]->name, name)) return classes[i];
+    if (!strcmp(name, "NSColor")) { extern mcls color_cls; return &color_cls; }
     if (!strcmp(name, "NSObject")) {
         static mcls ns = {"NSObject", 0, 8, {{0, 0}}, 0};
         classes[nclasses++] = &ns;
@@ -86,7 +88,7 @@ void objc_release(void *o) {
     free(h);
 }
 /* NSColor do mOS: {isa, r, g, b, a} */
-static mcls color_cls = {"NSColor", 0, 40, {{0, 0}}, 0};
+mcls color_cls = {"NSColor", 0, 40, {{0, 0}}, 0};
 void *cx_color(double r, double g, double b, double a) { double *o = alloc_of(&color_cls); o[1] = r; o[2] = g; o[3] = b; o[4] = a; return o; }
 const char *cx_cstr(void *s) { return s ? *(const char **)((char *)s + 16) : ""; }
 char __CFConstantStringClassReference[64];
@@ -95,7 +97,8 @@ static mcls arr_cls = {"CFArray", 0, 80, {{0, 0}}, 0};
 static void *array(int n, void **v) { void **o = alloc_of(&arr_cls); o[1] = (void *)(intptr_t)n; for (int i = 0; i < n; i++) o[2 + i] = v[i]; return o; }
 long CFArrayGetCount(void *a) { return a ? (long)(intptr_t)((void **)a)[1] : 0; }
 void *CFArrayGetValueAtIndex(void *a, long i) { return ((void **)a)[2 + i]; }
-void *CFDataCreate(void *al, const uint8_t *b, long n) { (void)al; (void)b; (void)n; return 0; }
+void *CFDataCreate_(const uint8_t *b, long n);
+void *CFDataCreate(void *al, const uint8_t *b, long n) { (void)al; return b ? CFDataCreate_(b, n) : 0; }
 static const char *url_path;
 uint8_t CFURLGetFileSystemRepresentation(void *url, uint8_t r, uint8_t *buf, long max) { (void)url; (void)r; snprintf((char *)buf, (size_t)max, "%s", url_path); return 1; }
 uint32_t cx_cg_fill_argb(void) { return 0xFF000000u; }
@@ -150,6 +153,13 @@ static void addpath_el(void *c, const void *e0) {
 void CGContextAddPath(void *c, const void *p) { CGPathApply(p, c, addpath_el); }
 void *cx_str(const char *s) { (void)s; return (void *)1; }
 int mos_img_decode(const uint8_t *d, size_t n, void *o) { (void)d; (void)n; (void)o; return -1; }
+const uint8_t *cx_colorsync_profile_bytes(const void *p, size_t *n) { (void)p; *n = 0; return 0; }
+/* CFData mínimo para o ICC: {isa, bytes, len} */
+static mcls data_cls = {"CFData", 0, 24, {{0, 0}}, 0};
+void *CFDataCreate_(const uint8_t *b, long n) { void **o = alloc_of(&data_cls); uint8_t *c = malloc((size_t)n); memcpy(c, b, (size_t)n); o[1] = c; o[2] = (void *)(intptr_t)n; return o; }
+const uint8_t *CFDataGetBytePtr(void *d) { return ((void **)d)[1]; }
+long CFDataGetLength(void *d) { return (long)(intptr_t)((void **)d)[2]; }
+int cx_is_str(void *o) { return o && *(void **)o == (void *)__CFConstantStringClassReference; }
 /* CTFont falsa: cada glifo é um bloco de 4x4 px na posição, avanço 5 */
 static mcls font_cls = {"FakeCTFont", 0, 16, {{0, 0}}, 0};
 static int drawn_glyphs;
@@ -571,6 +581,83 @@ int main(void) {
         CGContextShowGlyphsAtPoint(tc, 40, 40, gl, 3);
         CHECK(fabs(coverage(tc) - 48) < 1, "modo invisível não pinta");
         CGContextRelease(tc);
+    }
+
+    /* ===== espaços de cor e ColorSync (16 nov. 2026) ===== */
+    {
+        void *CGColorCreateGenericGray(double, double);
+        void *CGColorCreateGenericCMYK(double, double, double, double, double);
+        size_t CGColorGetNumberOfComponents(const void *);
+        const double *CGColorGetComponents(const void *);
+        void *CGColorGetColorSpace(const void *);
+        int CGColorSpaceGetModel(const void *);
+        void *gg = CGColorCreateGenericGray(0.25, 0.5);
+        CHECK(CGColorGetNumberOfComponents(gg) == 2 && CGColorGetComponents(gg)[0] == 0.25 && CGColorGetComponents(gg)[1] == 0.5, "cor cinza: 2 componentes (cinza, alfa)");
+        CHECK(CGColorSpaceGetModel(CGColorGetColorSpace(gg)) == 0, "cor cinza no espaço cinza");
+        void *ck = CGColorCreateGenericCMYK(1, 0, 0, 0, 1);
+        double *rgba = (double *)((char *)ck + 8);
+        CHECK(CGColorGetNumberOfComponents(ck) == 5 && rgba[0] < 0.05 && rgba[1] > 0.95 && rgba[2] > 0.95, "CMYK ciano: 5 componentes, sRGB (0,1,1)");
+        /* P3: verde puro sai mais saturado que o sRGB consegue (recortado), branco fica branco */
+        void *CGColorSpaceCreateWithName(const void *);
+        extern const void *kCGColorSpaceDisplayP3, *kCGColorSpaceGenericCMYK;
+        void *CGColorCreate(const void *, const double *);
+        void *p3 = CGColorSpaceCreateWithName(kCGColorSpaceDisplayP3);
+        double pg[4] = {0, 1, 0, 1}, pw[4] = {1, 1, 1, 1};
+        double *g3 = (double *)((char *)CGColorCreate(p3, pg) + 8), *w3 = (double *)((char *)CGColorCreate(p3, pw) + 8);
+        CHECK(g3[0] < 0.01 && g3[1] > 0.99 && g3[2] < 0.01 && w3[0] > 0.998 && w3[2] > 0.998, "cor no P3 convertida para sRGB");
+        /* ICC: espaço com nome → bytes → espaço de novo, mesmo modelo */
+        void *CGColorSpaceCopyICCData(void *);
+        void *CGColorSpaceCreateWithICCData(void *);
+        void *icc = CGColorSpaceCopyICCData(p3);
+        void *p3b = icc ? CGColorSpaceCreateWithICCData(icc) : 0;
+        CHECK(icc && CFDataGetLength(icc) > 300 && p3b && CGColorSpaceGetModel(p3b) == 1, "CopyICCData do P3 e CreateWithICCData de volta");
+        double *g4 = p3b ? (double *)((char *)CGColorCreate(p3b, pg) + 8) : 0;
+        CHECK(g4 && fabs(g4[0] - g3[0]) < 0.003 && fabs(g4[1] - g3[1]) < 0.003, "o P3 lido do ICC converte igual ao P3 com nome");
+        /* imagem num espaço não sRGB: pixel P3 (0,255,0) desenha como verde do sRGB recortado */
+        uint8_t p3px[4] = {0, 255, 0, 255};
+        void *pp = CGDataProviderCreateWithData(0, p3px, 4, 0);
+        void *pimg = CGImageCreate(1, 1, 8, 32, 4, p3, 5 /* SkipLast */, pp, 0, 0, 0);
+        void *pc = ctx();
+        CGRect one = {{0, 0}, {64, 64}};
+        CGContextDrawImage(pc, one, pimg);
+        CHECK(px(pc, 3, 3)[0] < 3 && px(pc, 3, 3)[1] == 255 && px(pc, 3, 3)[3] == 255, "imagem P3 entra no contexto convertida");
+        CGContextRelease(pc);
+        /* imagem CMYK 8 bits (DeviceCMYK sem perfil): ciano puro */
+        void *cmyk = CGColorSpaceCreateWithName(kCGColorSpaceGenericCMYK);
+        uint8_t cpx[4] = {255, 0, 0, 0};
+        void *cp2 = CGDataProviderCreateWithData(0, cpx, 4, 0);
+        void *cimg = CGImageCreate(1, 1, 8, 32, 4, cmyk, 0, cp2, 0, 0, 0);
+        void *cc = ctx();
+        CGContextDrawImage(cc, one, cimg);
+        CHECK(cimg && px(cc, 3, 3)[0] < 8 && px(cc, 3, 3)[1] > 247 && px(cc, 3, 3)[2] > 247, "imagem CMYK: ciano vira (0,255,255)");
+        CGContextRelease(cc);
+        /* indexada: tabela de 2 cores, 1 bit por pixel */
+        void *CGColorSpaceCreateIndexed(void *, size_t, const uint8_t *);
+        void *CGColorSpaceCreateDeviceRGB(void);
+        uint8_t tab[6] = {255, 0, 0, 0, 0, 255}, ib[1] = {0x40};       /* 0 vermelho, 1 azul: 0100 */
+        void *ix = CGColorSpaceCreateIndexed(CGColorSpaceCreateDeviceRGB(), 1, tab);
+        void *ip = CGDataProviderCreateWithData(0, ib, 1, 0);
+        void *iimg = CGImageCreate(4, 1, 1, 1, 1, ix, 0, ip, 0, 0, 0);
+        void *ic = ctx();
+        CGRect r41 = {{0, 0}, {4, 1}};
+        CGContextSetInterpolationQuality(ic, 1);
+        CGContextDrawImage(ic, r41, iimg);
+        CHECK(iimg && px(ic, 0, 63)[0] == 255 && px(ic, 1, 63)[2] == 255 && px(ic, 2, 63)[0] == 255, "imagem indexada de 1 bit pela tabela");
+        CGContextRelease(ic);
+        /* Lab: L=100 a=0 b=0 é branco */
+        void *CGColorSpaceCreateLab(const double *, const double *, const double *);
+        double wp[3] = {0.9642, 1, 0.8249}, rng[4] = {-128, 127, -128, 127}, lc[4] = {100, 0, 0, 1};
+        void *lab = CGColorSpaceCreateLab(wp, 0, rng);
+        double *lw = (double *)((char *)CGColorCreate(lab, lc) + 8);
+        CHECK(lab && CGColorSpaceGetModel(lab) == 3 && lw[0] > 0.998 && lw[1] > 0.998 && lw[2] > 0.998, "cor Lab L=100 → branco");
+        /* CopyByMatching: vermelho sRGB no cinza dá a luminância */
+        void *CGColorCreateCopyByMatchingToColorSpace(void *, int, void *, void *);
+        void *CGColorSpaceCreateDeviceGray(void);
+        void *redc = cx_color(1, 0, 0, 1);
+        void *mg = CGColorCreateCopyByMatchingToColorSpace(CGColorSpaceCreateDeviceGray(), 0, redc, 0);
+        void *CGImageGetDataProvider(void *);
+        CHECK(CGImageGetDataProvider(pimg) == pp, "CGImageGetDataProvider devolve o provedor original");
+        CHECK(mg && CGColorGetNumberOfComponents(mg) == 2 && CGColorGetComponents(mg)[0] > 0.3 && CGColorGetComponents(mg)[0] < 0.6, "CopyByMatching sRGB → cinza");
     }
     if (fails) { fprintf(stderr, "cg_context: %d falhas\n", fails); return 1; }
     printf("cg_context: ok (0 falhas)\n");

@@ -110,6 +110,8 @@ const double *CGColorGetComponents(const void *c) { return ((const col_t *)c)->c
 long cx_consumer_put(void *c, const void *b, size_t n) { CFDataAppendBytes(c, b, (long)n); return (long)n; }
 void cx_object_free(id o) { free(o); }
 void cx_cgimage_set_uti(void *img, const void *uti) { (void)img; (void)uti; }
+void *CGColorSpaceCreateWithICCData(void *d) { (void)d; return 0; }
+int CGColorSpaceGetModel(const void *s) { (void)s; return 1; }
 cx_class_t *cx_class_named(const char *n) { return !strcmp(n, "NSObject") ? &ns_c : 0; }
 cx_class_t *cx_define_class(cx_class_t *c, cx_class_t *m, const char *n, cx_class_t *s, u32 extra) { (void)m; (void)s; (void)extra; c->name = n; return c; }
 static size_t inst_size(cx_class_t *c) { return !strcmp(c->name, "CGImageSource") ? 1024 : 1024; }

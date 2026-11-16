@@ -214,6 +214,8 @@ typedef struct {
     const double *decode;
     const u8 *table; int ntable; int tcomp;   /* indexado: tabela de cores (tcomp componentes por entrada) */
     int table_model;
+    void (*xf)(const void *ctx, const double *in, double *rgb);   /* espaço que precisa do ColorSync */
+    const void *xfctx;
 } unpack_t;
 
 /* amostra k (posição física) do pixel x da linha, normalizada a 0..1 */
@@ -285,7 +287,8 @@ static void unpack_row(const unpack_t *u, const u8 *row, size_t w, u32 *out, int
             for (int k = 0; k < u->tcomp && k < 4; k++) raw[k] = u->table[idx * u->tcomp + k] / 255.0;
             model = u->table_model;
         }
-        if (model == 0) r = g = b = raw[0];
+        if (u->xf) { double o3[3]; u->xf(u->xfctx, raw, o3); r = o3[0]; g = o3[1]; b = o3[2]; }
+        else if (model == 0) r = g = b = raw[0];
         else if (model == 2) {
             r = (1 - raw[0]) * (1 - raw[3]); g = (1 - raw[1]) * (1 - raw[3]); b = (1 - raw[2]) * (1 - raw[3]);
         } else { r = raw[0]; g = raw[1]; b = raw[2]; }
