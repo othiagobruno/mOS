@@ -207,16 +207,7 @@ kern_return_t task_identity_token_get_task_port(unsigned tok, int flavor, unsign
 /* mach_port_insert_member agora é implementado de verdade em mach.c (portas Mach no kernel, conjuntos
  * de portas); o stub que ficava aqui foi removido para não duplicar o símbolo. */
 
-/* ---- launchd (API antiga launch_msg): não há launchd */
-void *launch_data_alloc(int type) { (void)type; return 0; }
-void launch_data_free(void *d) { (void)d; }
-void *launch_data_new_string(const char *s) { (void)s; return 0; }
-Boolean launch_data_dict_insert(void *d, void *v, const char *k) { (void)d; (void)v; (void)k; return 0; }
-void *launch_data_dict_lookup(void *d, const char *k) { (void)d; (void)k; return 0; }
-int launch_data_get_type(void *d) { (void)d; return 0; }
-int launch_data_get_errno(void *d) { (void)d; return ENOSYS_; }
-long long launch_data_get_integer(void *d) { (void)d; return 0; }
-void *launch_msg(void *req) { (void)req; SET_ERRNO(ENOSYS_); return 0; }
+/* ---- launchd (launch_data_*, launch_msg, vproc_*): launchdata.c */
 
 /* ---- libbz2: o Chrome só descomprime (relatórios/pacotes); sem a biblioteca, avisa "erro de configuração" */
 int BZ2_bzDecompressInit(void *s, int verbosity, int small) { (void)s; (void)verbosity; (void)small; return -9; }   /* BZ_CONFIG_ERROR */
