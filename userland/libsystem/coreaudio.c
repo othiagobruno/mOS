@@ -785,14 +785,46 @@ OSStatus AudioDeviceDestroyIOProcID(u32 d, void *pid) {
     if (b) _Block_release(b);
     return 0;
 }
+/* API antiga (AudioDeviceAddIOProc): a própria IOProc é o identificador; aqui ela ganha um IOProcID */
+typedef struct { u32 dev; void *proc, *pid; } legacy_proc_t;
+static legacy_proc_t g_legacy[MAX_IOPROCS];
+static void *legacy_pid(u32 d, void *pid) {
+    if (!pid || ioproc_of(pid)) return pid;
+    for (int i = 0; i < MAX_IOPROCS; i++) if (g_legacy[i].proc == pid && g_legacy[i].dev == d) return g_legacy[i].pid;
+    return pid;
+}
+OSStatus AudioDeviceAddIOProc(u32 d, void *proc, void *ctx) {
+    if (!proc) return kAudioHardwareIllegalOperationError;
+    for (int i = 0; i < MAX_IOPROCS; i++) if (g_legacy[i].proc == proc && g_legacy[i].dev == d) return kAudioHardwareIllegalOperationError;
+    for (int i = 0; i < MAX_IOPROCS; i++)
+        if (!g_legacy[i].proc) {
+            void *pid = 0;
+            OSStatus rc = AudioDeviceCreateIOProcID(d, proc, ctx, &pid);
+            if (rc) return rc;
+            g_legacy[i].dev = d; g_legacy[i].proc = proc; g_legacy[i].pid = pid;
+            return 0;
+        }
+    return kAudioHardwareIllegalOperationError;
+}
+OSStatus AudioDeviceRemoveIOProc(u32 d, void *proc) {
+    for (int i = 0; i < MAX_IOPROCS; i++)
+        if (g_legacy[i].proc == proc && g_legacy[i].dev == d) {
+            OSStatus rc = AudioDeviceDestroyIOProcID(d, g_legacy[i].pid);
+            g_legacy[i].proc = 0; g_legacy[i].pid = 0;
+            return rc;
+        }
+    return kAudioHardwareIllegalOperationError;
+}
 OSStatus AudioDeviceStart(u32 d, void *pid) {
     if (d != DEV_OUT) return kAudioHardwareBadObjectError;
+    pid = legacy_pid(d, pid);
     if (pid) { ioproc_t *p = ioproc_of(pid); if (!p) return kAudioHardwareIllegalOperationError; p->started = 1; }
     dev_engine_update();
     return 0;
 }
 OSStatus AudioDeviceStop(u32 d, void *pid) {
     if (d != DEV_OUT) return kAudioHardwareBadObjectError;
+    pid = legacy_pid(d, pid);
     if (pid) { ioproc_t *p = ioproc_of(pid); if (p) p->started = 0; }
     dev_engine_update();
     return 0;
@@ -3064,3 +3096,56 @@ static u64 mul_div(u64 v, u64 m, u64 dv) {
 }
 u64 AudioConvertHostTimeToNanos(u64 t) { u64 n, d; host_tb(&n, &d); return mul_div(t, n, d); }
 u64 AudioConvertNanosToHostTime(u64 ns) { u64 n, d; host_tb(&n, &d); return mul_div(ns, d, n); }
+
+/* ---- propriedades pela API antiga (AudioDevice/AudioHardware/AudioStream...Property): o mesmo AudioObject, com o
+ * escopo de entrada/saída do isInput e o canal como elemento (cai no escopo global se o específico não existe) */
+static paddr_t legacy_addr(u32 prop, u32 ch, int input) { paddr_t a = {prop, input ? FCC('i', 'n', 'p', 't') : FCC('o', 'u', 't', 'p'), ch}; return a; }
+OSStatus AudioDeviceGetPropertyInfo(u32 d, u32 ch, u8 input, u32 prop, u32 *size, u8 *writable) {
+    paddr_t a = legacy_addr(prop, ch, input);
+    u32 sz = 0;
+    OSStatus rc = AudioObjectGetPropertyDataSize(d, &a, 0, 0, &sz);
+    if (rc) { a.mScope = FCC('g', 'l', 'o', 'b'); rc = AudioObjectGetPropertyDataSize(d, &a, 0, 0, &sz); }
+    if (rc) return rc;
+    if (size) *size = sz;
+    if (writable) { u8 w = 0; AudioObjectIsPropertySettable(d, &a, &w); *writable = w; }
+    return 0;
+}
+OSStatus AudioDeviceGetProperty(u32 d, u32 ch, u8 input, u32 prop, u32 *size, void *data) {
+    paddr_t a = legacy_addr(prop, ch, input);
+    OSStatus rc = AudioObjectGetPropertyData(d, &a, 0, 0, size, data);
+    if (rc) { a.mScope = FCC('g', 'l', 'o', 'b'); rc = AudioObjectGetPropertyData(d, &a, 0, 0, size, data); }
+    return rc;
+}
+OSStatus AudioDeviceSetProperty(u32 d, const void *when, u32 ch, u8 input, u32 prop, u32 size, const void *data) {
+    (void)when;   /* aplica já */
+    paddr_t a = legacy_addr(prop, ch, input);
+    OSStatus rc = AudioObjectSetPropertyData(d, &a, 0, 0, size, data);
+    if (rc) { a.mScope = FCC('g', 'l', 'o', 'b'); rc = AudioObjectSetPropertyData(d, &a, 0, 0, size, data); }
+    return rc;
+}
+OSStatus AudioHardwareGetPropertyInfo(u32 prop, u32 *size, u8 *writable) {
+    paddr_t a = {prop, FCC('g', 'l', 'o', 'b'), 0};
+    u32 sz = 0;
+    OSStatus rc = AudioObjectGetPropertyDataSize(1, &a, 0, 0, &sz);
+    if (rc) return rc;
+    if (size) *size = sz;
+    if (writable) { u8 w = 0; AudioObjectIsPropertySettable(1, &a, &w); *writable = w; }
+    return 0;
+}
+OSStatus AudioHardwareGetProperty(u32 prop, u32 *size, void *data) {
+    paddr_t a = {prop, FCC('g', 'l', 'o', 'b'), 0};
+    return AudioObjectGetPropertyData(1, &a, 0, 0, size, data);
+}
+OSStatus AudioStreamGetProperty(u32 stream, u32 ch, u32 prop, u32 *size, void *data) {
+    paddr_t a = {prop, FCC('g', 'l', 'o', 'b'), ch};
+    return AudioObjectGetPropertyData(stream, &a, 0, 0, size, data);
+}
+/* os ouvintes seguem o AudioObjectAddPropertyListener do mOS (as propriedades do dispositivo não mudam sozinhas) */
+OSStatus AudioDeviceAddPropertyListener(u32 d, u32 ch, u8 input, u32 prop, void *proc, void *ctx) {
+    paddr_t a = legacy_addr(prop, ch, input);
+    return AudioObjectAddPropertyListener(d, &a, proc, ctx);
+}
+OSStatus AudioDeviceRemovePropertyListener(u32 d, u32 ch, u8 input, u32 prop, void *proc) {
+    paddr_t a = legacy_addr(prop, ch, input);
+    return AudioObjectRemovePropertyListener(d, &a, proc, 0);
+}

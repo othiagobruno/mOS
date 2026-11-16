@@ -96,3 +96,36 @@ int VTPixelTransferSessionTransferImage(void *s, void *src, void *dst) {
     CVPixelBufferUnlockBaseAddress(dst, 0);
     return rc;
 }
+
+/* ---- lacunas do corpus: perfis H.264, chaves de decodificação e a lista de codificadores */
+CFCONST(kVTProfileLevel_H264_Baseline_4_0, "H264_Baseline_4_0") CFCONST(kVTProfileLevel_H264_Baseline_4_2, "H264_Baseline_4_2")
+CFCONST(kVTProfileLevel_H264_Baseline_5_0, "H264_Baseline_5_0") CFCONST(kVTProfileLevel_H264_Baseline_5_1, "H264_Baseline_5_1")
+CFCONST(kVTProfileLevel_H264_Baseline_5_2, "H264_Baseline_5_2") CFCONST(kVTProfileLevel_H264_High_3_0, "H264_High_3_0")
+CFCONST(kVTProfileLevel_H264_High_3_1, "H264_High_3_1") CFCONST(kVTProfileLevel_H264_High_3_2, "H264_High_3_2")
+CFCONST(kVTProfileLevel_H264_High_4_0, "H264_High_4_0") CFCONST(kVTProfileLevel_H264_High_4_1, "H264_High_4_1")
+CFCONST(kVTProfileLevel_H264_High_4_2, "H264_High_4_2") CFCONST(kVTProfileLevel_H264_High_5_1, "H264_High_5_1")
+CFCONST(kVTProfileLevel_H264_High_5_2, "H264_High_5_2") CFCONST(kVTProfileLevel_H264_Main_4_2, "H264_Main_4_2")
+CFCONST(kVTProfileLevel_H264_Main_5_1, "H264_Main_5_1") CFCONST(kVTProfileLevel_H264_Main_5_2, "H264_Main_5_2")
+CFCONST(kVTDecompressionPropertyKey_UsingHardwareAcceleratedVideoDecoder, "UsingHardwareAcceleratedVideoDecoder")
+CFCONST(kVTDecompressionPropertyKey_RealTime, "RealTime")
+CFCONST(kVTCompressionPropertyKey_ConstantBitRate, "ConstantBitRate")
+CFCONST(kVTH264EntropyMode_CAVLC, "CAVLC")
+CFCONST(kVTVideoEncoderList_CodecType, "CodecType") CFCONST(kVTVideoEncoderList_DisplayName, "DisplayName")
+CFCONST(kVTVideoEncoderList_EncoderID, "EncoderID") CFCONST(kVTVideoEncoderList_IsHardwareAccelerated, "IsHardwareAccelerated")
+CFCONST(kVTVideoEncoderSpecification_EncoderID, "EncoderID")
+/* um codificador: H.264 em software (OpenH264) */
+id objc_retain(id o);
+int VTCopyVideoEncoderList(id options, id *out) {
+    (void)options;
+    if (!out) return -12902;
+    id d = MSG0(id, (id)cx_class_named("NSMutableDictionary"), "dictionary");
+    MSG(void, d, "setObject:forKey:", cx_num_i(0x61766331), cx_str("CodecType"));
+    MSG(void, d, "setObject:forKey:", cx_str("H.264"), cx_str("CodecName"));
+    MSG(void, d, "setObject:forKey:", cx_str("mOS H.264 (OpenH264)"), cx_str("DisplayName"));
+    MSG(void, d, "setObject:forKey:", cx_str("com.mos.openh264"), cx_str("EncoderID"));
+    MSG(void, d, "setObject:forKey:", cx_str("mOS"), cx_str("EncoderName"));
+    id no = MSG(id, (id)cx_class_named("NSNumber"), "numberWithBool:", (BOOL)0);
+    MSG(void, d, "setObject:forKey:", no, cx_str("IsHardwareAccelerated"));
+    *out = objc_retain(MSG(id, (id)cx_class_named("NSArray"), "arrayWithObject:", d));
+    return 0;
+}
