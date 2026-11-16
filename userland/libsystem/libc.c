@@ -916,7 +916,16 @@ int close(int fd) {
 off_t lseek(int fd, off_t off, int wh) { return ret_errno(SYS3(SYS_LSEEK, fd, off, wh)); }
 /* diretório atual: mantido no próprio processo (PWD), usado para caminhos relativos */
 static char cx_cwd[1024] = "/";
+int cx_file_ref_resolve(const char *in, char *out, size_t cap);   /* bookmark.c: /.file/id=<vol>.<inode> */
+static const char *cx_path_raw(const char *in, char *out, size_t cap);
 const char *cx_path(const char *in, char *out, size_t cap) {
+    if (in && in[0] == '/' && in[1] == '.' && !strncmp(in, "/.file/id=", 10)) {   /* URL de referência de arquivo */
+        char real[1024];
+        if (cx_file_ref_resolve(in, real, sizeof real) > 0) return cx_path_raw(real, out, cap);
+    }
+    return cx_path_raw(in, out, cap);
+}
+static const char *cx_path_raw(const char *in, char *out, size_t cap) {
     if (!in) return in;
     if (in[0] == '/') { strlcpy(out, in, cap); return out; }
     size_t n = strlcpy(out, cx_cwd, cap);
@@ -967,6 +976,7 @@ int open(const char *path, int flags, ...) {
     if (fd >= 0) acc_set(fd, flags & 3);
     /* O_CREAT grava o mode (com a umask 022, como o mkdir). Arquivo que já existia não muda de modo. */
     if (fd >= 0 && created) cx_perm_set(p, mode & 0777 & ~022u);
+    if (fd >= 0 && created) { extern void cx_qtn_on_create(const char *path); cx_qtn_on_create(p); }   /* qtn_proc_apply_to_self (quarantine.c) */
     return fd;
 }
 int creat(const char *path, int mode) { return open(path, 0x0601, mode); }
