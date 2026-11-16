@@ -13,6 +13,8 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -85,13 +87,25 @@ def compile_machocheck() -> Path:
     return out
 
 
+def sete_zip() -> str:
+    """7z do sistema, ou o 7zz oficial (7-zip.org, LGPL) em ~/.tools/7zip quando o Ubuntu não tem p7zip."""
+    for nome in ("7z", "7zz"):
+        achado = shutil.which(nome)
+        if achado:
+            return achado
+    local = Path.home() / ".tools" / "7zip" / "7zz"
+    if local.is_file():
+        return str(local)
+    raise SystemExit("falta o 7z: instale p7zip-full ou ponha o 7zz em ~/.tools/7zip")
+
+
 def extrai_7z(archive: Path, dest: Path) -> None:
     """O 7z do Ubuntu devolve 2 quando o DMG tem um alias para /Applications.
 
     Esse aviso não apaga o .app. Outro status, ou um 2 com erro diferente, continua falha.
     """
     proc = subprocess.run(
-        ["7z", "x", "-y", f"-o{dest}", str(archive)],
+        [sete_zip(), "x", "-y", f"-o{dest}", str(archive)],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,
         text=True,
@@ -99,9 +113,10 @@ def extrai_7z(archive: Path, dest: Path) -> None:
     if proc.returncode == 0:
         return
     linhas = [ln.strip() for ln in proc.stderr.splitlines() if ln.strip()]
+    # alias para /Applications no dmg, e os links Versions/Current dos .framework que o 7zz 25 recusa seguir
+    # ("Dangerous link via another link was ignored"): os binários reais ficam em Versions/A e são medidos
     so_alias = bool(linhas) and all(
-        ln.startswith("ERROR: Dangerous link path was ignored")
-        or ln.startswith("ERROR: Dangerous symbolic link path was ignored")
+        ln.startswith("ERROR: Dangerous ") and "link" in ln and "ignored" in ln
         for ln in linhas
     )
     tem_arquivo = any(p.is_file() for p in dest.rglob("*"))
@@ -116,8 +131,11 @@ def extract(archive: Path, dest: Path) -> None:
         shutil.rmtree(dest)
     dest.mkdir(parents=True)
     name = archive.name.lower()
-    if name.endswith(".pkg"):
-        raise SystemExit(f"{archive.name}: pacote .pkg fora do corpus")
+    if name.endswith(".baixado"):
+        name += detecta_formato(archive)
+    if name.endswith(".pkg") or name.endswith(".mpkg"):
+        extrai_pkg(archive, dest)
+        return
     if name.endswith(".zip") or name.endswith(".dmg") or name.endswith(".tar.bz2") or name.endswith(".tbz"):
         extrai_7z(archive, dest)
         return
@@ -130,6 +148,27 @@ def extract(archive: Path, dest: Path) -> None:
             tf.extractall(dest)
         return
     raise SystemExit(f"arquivo não suportado: {archive.name}")
+
+
+def extrai_pkg(archive: Path, dest: Path) -> None:
+    """Pacote do instalador: xar com um ou mais Payload (cpio com gzip). Cada Payload vira uma pasta ao lado dele.
+
+    O instalador do mOS (kernel/apps/pkgextract.c) é outro caminho; aqui só interessa chegar ao .app para medir.
+    Payload em pbzx (pacotes da Apple) não é aberto pelo 7z e fica sem .app, o que a varredura registra.
+    """
+    extrai_7z(archive, dest)
+    for _volta in range(3):
+        pendentes = [p for p in dest.rglob("*") if p.is_file() and (p.name in ("Payload", "Payload~") or p.suffix == ".cpio")]
+        if not pendentes:
+            break
+        for payload in pendentes:
+            alvo = payload.parent / (payload.name.rstrip("~") + ".d")
+            alvo.mkdir(exist_ok=True)
+            proc = subprocess.run([sete_zip(), "x", "-y", f"-o{alvo}", str(payload)],
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+            payload.unlink()
+            if proc.returncode not in (0, 2):
+                print(f"7z: {payload.relative_to(dest)} não abriu ({proc.returncode})", flush=True)
 
 
 def find_app(root: Path) -> Path | None:
@@ -153,11 +192,42 @@ def find_app(root: Path) -> Path | None:
     return apps[0]
 
 
+def nome_do_arquivo(app: dict, url: str) -> str:
+    """Nome local do download. URLs como .../stable ou download?plataforma=... não terminam em extensão."""
+    base = url.rstrip("/").split("/")[-1].split("?")[0] or app["id"]
+    if not any(base.lower().endswith(x) for x in (".dmg", ".zip", ".pkg", ".mpkg", ".tar.gz", ".tgz", ".tar.xz", ".tar.bz2", ".tbz")):
+        base = app["id"] + "." + {"pkg": "pkg"}.get(app.get("tipo", ""), "baixado")
+    return base
+
+
+def detecta_formato(archive: Path) -> str:
+    """Extensão de um download sem extensão conhecida, pelo cabeçalho (zip, xar, gzip, xz, bzip2; o resto é dmg)."""
+    with archive.open("rb") as f:
+        cab = f.read(8)
+    if cab[:2] == b"PK":
+        return ".zip"
+    if cab[:4] == b"xar!":
+        return ".pkg"
+    if cab[:2] == b"\x1f\x8b":
+        return ".tar.gz"
+    if cab[:6] == b"\xfd7zXZ\x00":
+        return ".tar.xz"
+    if cab[:3] == b"BZh":
+        return ".tar.bz2"
+    return ".dmg"
+
+
 def fetch_one(app: dict) -> Path:
     dest_dir = CACHE / app["id"]
     dest_dir.mkdir(parents=True, exist_ok=True)
-    filename = app["url"].rstrip("/").split("/")[-1].split("?")[0]
-    archive = dest_dir / filename
+    archive = dest_dir / nome_do_arquivo(app, app["url"])
+    if app.get("sha256") is None:
+        # cask com sha256 no_check: o primeiro download fixa o hash; scan --fixar grava no manifesto
+        if not archive.is_file():
+            print(f"baixando {app['id']} (hash a fixar)", flush=True)
+            download(app["url"], archive)
+        app["sha256"] = sha256_file(archive)
+        app["sha256_fixado_em"] = time.strftime("%Y-%m-%d")
     digest = ""
     for tentativa in range(1, 4):
         if not archive.is_file() or sha256_file(archive) != app["sha256"]:
@@ -172,24 +242,45 @@ def fetch_one(app: dict) -> Path:
         raise SystemExit(f"{app['id']}: sha256 {digest} != {app['sha256']} depois de 3 tentativas")
     extracted = dest_dir / "extracted"
     marker = dest_dir / "extracted.ok"
-    if not marker.is_file():
+    if not marker.is_file() or marker.read_text(encoding="utf-8") != digest:
         extract(archive, extracted)
         marker.write_text(digest, encoding="utf-8")
     return extracted
 
 
-def run_one(mc: Path, lib: Path, disco: Path, app: dict) -> Path:
+def imagens_no_log(texto: str) -> int:
+    for line in texto.splitlines():
+        if line.startswith("Imagens Mach-O"):
+            return int(line.split(":")[1].split("(")[0].strip())
+    return 0
+
+
+def roda_machocheck(mc: Path, lib: Path, discos: list[Path], bundle: Path, report: Path, arch: str) -> str:
+    cmd = [str(mc), "--arch", arch]
+    for d in discos:
+        cmd += ["--disco", str(d)]
+    cmd += [str(lib), str(bundle), str(report)]
+    proc = subprocess.run(cmd, text=True, capture_output=True)
+    if proc.returncode != 0:
+        raise SystemExit(f"machocheck saiu {proc.returncode}\n{proc.stderr[-500:]}")
+    return proc.stdout + proc.stderr
+
+
+def run_one(mc: Path, lib: Path, disco, app: dict, lib_arm64: Path | None = None, discos_arm64=None) -> Path:
+    """Mede a fatia x86_64; um app só-arm64 (0 imagens x86_64) é medido na fatia arm64 com o libSystem arm64."""
+    discos = disco if isinstance(disco, list) else [disco]
     extracted = fetch_one(app)
     bundle = find_app(extracted)
     if bundle is None:
         raise SystemExit(f"{app['id']}: nenhum .app no arquivo")
     report = CACHE / app["id"] / "relatorio.txt"
     log = CACHE / app["id"] / "machocheck.txt"
-    cmd = [str(mc), "--disco", str(disco), str(lib), str(bundle), str(report)]
-    proc = subprocess.run(cmd, text=True, capture_output=True)
-    log.write_text(proc.stdout + proc.stderr, encoding="utf-8")
-    if proc.returncode != 0:
-        raise SystemExit(f"{app['id']}: machocheck saiu {proc.returncode}\n{proc.stderr[-500:]}")
+    texto = roda_machocheck(mc, lib, discos, bundle, report, "x86_64")
+    arch = "x86_64"
+    if imagens_no_log(texto) == 0 and lib_arm64 is not None and lib_arm64.is_file():
+        texto = roda_machocheck(mc, lib_arm64, discos_arm64 or [], bundle, report, "arm64")
+        arch = "arm64"
+    log.write_text(f"# arch {arch} bundle {bundle.relative_to(extracted)}\n" + texto, encoding="utf-8")
     return log
 
 
@@ -225,6 +316,22 @@ def cmd_fetch(args: argparse.Namespace) -> None:
         print("ok", app["id"], flush=True)
 
 
+def grava_manifesto(man: dict) -> None:
+    MANIFEST.write_text(json.dumps(man, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
+def limpa_binarios(app_id: str) -> None:
+    """Apaga o download e a extração; ficam machocheck.txt e relatorio.txt (o que o relatório de lacunas lê)."""
+    d = CACHE / app_id
+    for p in d.iterdir() if d.is_dir() else []:
+        if p.name in ("machocheck.txt", "relatorio.txt", "medido.sha256"):
+            continue
+        if p.is_dir():
+            shutil.rmtree(p, ignore_errors=True)
+        else:
+            p.unlink()
+
+
 def cmd_scan(args: argparse.Namespace) -> None:
     man = load_manifest()
     apps = man["apps"]
@@ -234,17 +341,55 @@ def cmd_scan(args: argparse.Namespace) -> None:
     elif args.gate:
         want = set(man["gate_ids"])
         apps = [a for a in apps if a["id"] in want]
-    zig = ensure_zig()
-    lib, disco = build_libsystem(zig)
+    if args.lib:
+        # libSystem já compilado (REGRAS do time: o build do projeto só roda na fila final)
+        lib = Path(args.lib)
+        discos = [Path(d) for d in (args.disco or [])]
+        if not lib.is_file():
+            raise SystemExit(f"--lib {lib} não existe")
+    else:
+        zig = ensure_zig()
+        lib, d0 = build_libsystem(zig)
+        discos = [d0]
+    lib_a = Path(args.lib_arm64) if getattr(args, "lib_arm64", None) else None
+    discos_a = [Path(d) for d in (getattr(args, "disco_arm64", None) or [])]
     mc = compile_machocheck()
     summary = {}
+    arq_falhas = CACHE / "falhas.json"
+    falhas = json.loads(arq_falhas.read_text(encoding="utf-8")) if arq_falhas.is_file() else {}
     for app in apps:
-        log = run_one(mc, lib, disco, app)
-        summary[app["id"]] = parse_summary(log.read_text(encoding="utf-8"))
+        falhas.pop(app["id"], None)
+        medido = CACHE / app["id"] / "medido.sha256"
+        if getattr(args, "continuar", False) and app.get("sha256") and medido.is_file() \
+                and medido.read_text().strip() == app["sha256"] and (CACHE / app["id"] / "machocheck.txt").is_file():
+            log = CACHE / app["id"] / "machocheck.txt"
+        else:
+            try:
+                log = run_one(mc, lib, discos, app, lib_a, discos_a)
+                medido.write_text(app["sha256"] + "\n")
+            except (SystemExit, OSError, urllib.error.URLError, tarfile.TarError, ValueError) as e:
+                if not getattr(args, "tolerante", False):
+                    raise
+                falhas[app["id"]] = " | ".join(str(e).splitlines())[-400:] if str(e) else type(e).__name__
+                print("FALHA", app["id"], falhas[app["id"]], flush=True)
+                if getattr(args, "limpar", False):
+                    limpa_binarios(app["id"])
+                continue
+            finally:
+                if getattr(args, "fixar", False):
+                    grava_manifesto(man)
+        texto = log.read_text(encoding="utf-8")
+        summary[app["id"]] = parse_summary(texto)
+        summary[app["id"]]["arch"] = texto.split()[2] if texto.startswith("# arch") else "x86_64"
+        summary[app["id"]]["imagens"] = imagens_no_log(texto)
         print(app["id"], summary[app["id"]], flush=True)
+        if getattr(args, "limpar", False):
+            limpa_binarios(app["id"])
     out = Path(args.summary) if args.summary else CACHE / "summary.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+    arq_falhas.write_text(json.dumps(falhas, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    print(f"medidos {len(summary)}, falhas {len(falhas)}", flush=True)
 
 
 def framework_de(lib: str) -> str:
@@ -349,6 +494,179 @@ def cmd_gaps(args: argparse.Namespace) -> None:
     print("gaps", out, "apps", len(usados))
 
 
+# ------------------------------------------------------------------ lacunas por dono (TIME.md)
+DONOS = {
+    "leonardo": "Leonardo (runtime C/C++)", "fernanda": "Fernanda (Swift runtime, Dispatch)",
+    "eduardo": "Eduardo (Foundation/CoreFoundation)", "beatriz": "Beatriz (AppKit)",
+    "ricardo": "Ricardo (SwiftUI, Combine, UIKit)", "mariana": "Mariana (CG, Core Text, ImageIO, PDFKit)",
+    "otavio": "Otavio (OpenGL, Metal, Core Animation)", "isabela": "Isabela (mídia)", "fabio": "Fabio (WebKit/Electron)",
+    "natalia": "Natalia (serviços e segurança)", "patricia": "Patricia (rede para apps)", "renata": "Renata (BSD/Mach/XPC)",
+    "vinicius": "Vinicius (arquivos e volumes)", "larissa": "Larissa (plataforma: IOKit, USB, áudio HW)",
+    "sergio": "Sergio (runtime arm64)", "igor": "Igor (sem dono claro: triagem)",
+}
+FW_DONO = {
+    "Foundation": "eduardo", "CoreFoundation": "eduardo", "CoreData": "eduardo", "libswiftFoundation.dylib": "eduardo",
+    "AppKit": "beatriz", "Carbon": "beatriz", "ApplicationServices": "beatriz", "HIToolbox": "beatriz", "Cocoa": "beatriz",
+    "QuickLook": "beatriz", "QuickLookUI": "beatriz", "QuickLookThumbnailing": "beatriz", "UniformTypeIdentifiers": "natalia",
+    "SwiftUI": "ricardo", "Combine": "ricardo", "UIKit": "ricardo", "PhotosUI": "ricardo", "libswiftCombine.dylib": "ricardo",
+    "SwiftUICore": "ricardo", "Observation": "fernanda", "libswiftObservation.dylib": "fernanda",
+    "CoreGraphics": "mariana", "CoreText": "mariana", "ImageIO": "mariana", "PDFKit": "mariana", "ColorSync": "mariana",
+    "libswiftCoreGraphics.dylib": "mariana", "Quartz": "mariana",
+    "OpenGL": "otavio", "Metal": "otavio", "MetalKit": "otavio", "QuartzCore": "otavio", "IOSurface": "otavio",
+    "CoreVideo": "otavio", "MetalPerformanceShaders": "otavio", "GLKit": "otavio", "libswiftMetal.dylib": "otavio",
+    "AVFoundation": "isabela", "CoreMedia": "isabela", "VideoToolbox": "isabela", "AudioToolbox": "isabela",
+    "CoreAudio": "isabela", "AVKit": "isabela", "ScreenCaptureKit": "isabela", "CoreImage": "isabela", "CoreMIDI": "isabela",
+    "AudioUnit": "isabela", "MediaPlayer": "isabela", "Accelerate": "isabela", "vImage": "isabela", "vecLib": "isabela",
+    "libswiftAVFoundation.dylib": "isabela", "CoreAudioKit": "isabela", "Speech": "isabela", "Vision": "isabela",
+    "WebKit": "fabio", "JavaScriptCore": "fabio",
+    "Security": "natalia", "CryptoKit": "natalia", "LocalAuthentication": "natalia", "UserNotifications": "natalia",
+    "ServiceManagement": "natalia", "CoreServices": "natalia", "LaunchServices": "natalia", "CloudKit": "natalia",
+    "AuthenticationServices": "natalia", "StoreKit": "natalia", "CoreSpotlight": "natalia", "OSAKit": "natalia",
+    "ScriptingBridge": "natalia", "AppleScriptObjC": "natalia", "SecurityInterface": "natalia", "libcommonCrypto.dylib": "natalia",
+    "CoreLocation": "natalia", "Contacts": "natalia", "EventKit": "natalia", "Intents": "natalia", "Sparkle": "natalia",
+    "Network": "patricia", "CFNetwork": "patricia", "SystemConfiguration": "patricia", "libcurl.4.dylib": "patricia",
+    "libswiftNetwork.dylib": "patricia", "NetworkExtension": "patricia", "GSS": "patricia", "Kerberos": "patricia",
+    "libresolv.9.dylib": "patricia", "MultipeerConnectivity": "patricia",
+    "DiskArbitration": "vinicius", "libcompression.dylib": "vinicius", "libarchive.2.dylib": "vinicius",
+    "IOKit": "larissa", "IOBluetooth": "larissa", "CoreBluetooth": "larissa", "CoreWLAN": "larissa", "Hypervisor": "larissa",
+    "libswiftCore.dylib": "fernanda", "libswift_Concurrency.dylib": "fernanda", "libswiftDispatch.dylib": "fernanda",
+    "libswiftDarwin.dylib": "fernanda", "libswiftos.dylib": "fernanda", "libswiftObjectiveC.dylib": "fernanda",
+    "libobjc.A.dylib": "fernanda",
+    "libc++.1.dylib": "leonardo", "libc++abi.dylib": "leonardo", "libunwind.dylib": "leonardo",
+}
+PREFIXO_LIBSYSTEM = (
+    ("renata", ("_mach_", "_task_", "_thread_", "_host_", "_vm_", "_kevent", "_proc_", "_sysctl", "_xpc_", "_launch_",
+                "_bootstrap_", "_sandbox_", "_ptrace", "_posix_spawn", "_audit", "_csops", "_notify_", "_os_log",
+                "_os_activity", "_os_signpost", "_os_unfair", "_semaphore_", "_mig_", "_NDR_", "_kqueue", "_pid_",
+                "_responsibility", "_libproc", "_getattrlist", "_dyld_", "__dyld", "_NSGetExecutablePath")),
+    ("fernanda", ("_dispatch_", "__dispatch")),
+    ("vinicius", ("_copyfile", "_fsctl", "_fsetattrlist", "_setattrlist", "_getxattr", "_setxattr", "_listxattr",
+                  "_removexattr", "_fgetxattr", "_fsetxattr", "_acl_", "_clonefile", "_fclonefileat", "_FSEvent",
+                  "_statfs", "_getfsstat", "_fs_", "_searchfs", "_exchangedata", "_getdirentriesattr")),
+    ("patricia", ("_dns_", "_DNSService", "_res_", "_nw_", "_getaddrinfo_async", "_SCDynamic", "_TXTRecord")),
+    ("natalia", ("_CC_", "_CCCrypt", "_CCHmac", "_CCKey", "_CCRandom", "_SecRandom", "_CCDigest")),
+)
+SIM_DONO = (
+    ("leonardo", ("__ZNSt3__", "__ZTVNSt3__", "__ZTINSt3__", "__ZTSNSt3__", "___cxa_", "__Unwind_", "_unw_", "___gxx")),
+    ("ricardo", ("_$s7SwiftUI", "_$s7Combine", "_$s5UIKit")),
+    ("eduardo", ("_$s10Foundation", "_$s20FoundationEssentials")),
+    ("fernanda", ("_$s", "_swift_", "__swift", "_$S")),
+)
+
+
+def dono_de(lib: str, sym: str, origem: str) -> str:
+    fw = framework_de(lib)
+    if fw.endswith(".framework"):
+        fw = fw[: -len(".framework")]          # o relatório do machocheck grava "AppKit.framework"
+    if fw in FW_DONO:
+        return FW_DONO[fw]
+    if fw.startswith("libswift"):
+        alvo = fw[len("libswift"):].split(".")[0]
+        if alvo in FW_DONO:
+            return FW_DONO[alvo]
+    for dono, pre in SIM_DONO:
+        if sym.startswith(pre):
+            return dono
+    if fw in ("libSystem.B.dylib", "libSystem.dylib") or fw.startswith("libsystem_"):
+        for dono, pre in PREFIXO_LIBSYSTEM:
+            if sym.startswith(pre):
+                return dono
+        return "leonardo"
+    if origem == "libc++" or origem == "unwind":
+        return "leonardo"
+    if origem == "Swift":
+        return "fernanda"
+    if fw.endswith(".dylib"):
+        # bibliotecas abertas que o macOS traz em /usr/lib (ncurses, expat, bz2, xslt, cups, iconv, sqlite, Tcl/Tk)
+        return "leonardo"
+    if fw in ("Tcl", "Tk"):
+        return "leonardo"
+    return "igor"
+
+
+def le_relatorios(man: dict):
+    """[(app_id, arch, [(lib, sym, origem)])] dos apps já medidos."""
+    out = []
+    for app in man["apps"]:
+        rep = CACHE / app["id"] / "relatorio.txt"
+        log = CACHE / app["id"] / "machocheck.txt"
+        if not rep.is_file() or not log.is_file():
+            continue
+        texto = log.read_text(encoding="utf-8", errors="replace")
+        if imagens_no_log(texto) == 0:
+            continue
+        arch = texto.split()[2] if texto.startswith("# arch") else "x86_64"
+        cat, itens = "", []
+        for line in rep.read_text(encoding="utf-8", errors="replace").splitlines():
+            if line.startswith("# ausentes "):
+                cat = line.split()[2].rstrip(":")
+                continue
+            if "\t" in line and cat:
+                lib, sym = line.split("\t", 1)
+                itens.append((lib, sym, cat))
+        out.append((app, arch, itens))
+    return out
+
+
+def cmd_donos(args: argparse.Namespace) -> None:
+    man = load_manifest()
+    dados = le_relatorios(man)
+    por_dono: dict[str, dict[tuple[str, str], set[str]]] = {}
+    por_app: dict[str, dict[str, int]] = {}
+    for app, _arch, itens in dados:
+        cont: dict[str, set[str]] = {}
+        for lib, sym, origem in itens:
+            d = dono_de(lib, sym, origem)
+            por_dono.setdefault(d, {}).setdefault((framework_de(lib), sym), set()).add(app["id"])
+            cont.setdefault(d, set()).add(sym)
+        por_app[app["id"]] = {d: len(v) for d, v in cont.items()}
+    falhas_p = CACHE / "falhas.json"
+    falhas = json.loads(falhas_p.read_text(encoding="utf-8")) if falhas_p.is_file() else {}
+    medidos = {a["id"] for a, _, _ in dados}
+    pendentes = [a["id"] for a in man["apps"] if a["id"] not in medidos and a["id"] not in falhas]
+    ordem = sorted(por_dono, key=lambda d: -sum(len(v) for v in por_dono[d].values()))
+    out_dir = Path(args.dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for velho in out_dir.glob("*.md"):
+        velho.unlink()                         # dono que zerou não fica com um arquivo antigo
+    L = ["# Lacunas do corpus por dono", "",
+         "Gerado por `python3 tools/corpus/harness.py donos` a partir dos relatórios do `machocheck` de cada app",
+         "(`tools/corpus/varrer-tudo.sh`, libSystem já compilado, sem rodar o build). Cada símbolo ausente vai para a frente",
+         "do `TIME.md` dona da biblioteca que o app importa (tabela `FW_DONO` e prefixos em `tools/corpus/harness.py`).",
+         "A medida é estática: um símbolo resolvido não quer dizer que a função funciona, e um app com 0 ausentes pode não abrir.",
+         "",
+         f"Corpus: **{len(man['apps'])}** apps no manifesto; **{len(dados)}** medidos com Mach-O; **{len(falhas)}** falharam na"
+         f" medição (lista no fim); **{len(pendentes)}** ainda não medidos.", "",
+         "| dono | símbolos distintos | apps afetados | arquivo |", "|---|---:|---:|---|"]
+    for d in ordem:
+        apps_d = set().union(*por_dono[d].values())
+        L.append(f"| {DONOS.get(d, d)} | {len(por_dono[d])} | {len(apps_d)} | [lacunas/{d}.md](lacunas/{d}.md) |")
+    L += ["", "## Por app", "", "| app | arch | total | " + " | ".join(ordem) + " |",
+          "|---|---|---:|" + "---:|" * len(ordem)]
+    arch_de = {a["id"]: arch for a, arch, _ in dados}
+    for app_id, c in sorted(por_app.items(), key=lambda kv: -sum(kv[1].values())):
+        L.append(f"| {app_id} | {arch_de[app_id]} | {sum(c.values())} | " + " | ".join(str(c.get(d, 0)) for d in ordem) + " |")
+    if falhas:
+        L += ["", "## Falharam na medição", "", "| app | motivo |", "|---|---|"]
+        for k, v in sorted(falhas.items()):
+            L.append(f"| {k} | {v.replace('|', '/')[:200]} |")
+    if pendentes:
+        L += ["", "## Ainda não medidos", "", ", ".join(pendentes)]
+    (out_dir.parent / "lacunas-por-dono.md").write_text("\n".join(L) + "\n", encoding="utf-8")
+    for d in ordem:
+        mapa = por_dono[d]
+        R = [f"# Lacunas de {DONOS.get(d, d)}", "",
+             f"Símbolos que os apps do corpus importam e o mOS não exporta, na frente de {DONOS.get(d, d)} (`TIME.md`).",
+             "Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/harness.py donos`.", "",
+             f"**{len(mapa)}** símbolos distintos.", "", "| biblioteca | símbolo | apps | exemplos |", "|---|---|---:|---|"]
+        for (fw, sym), ids in sorted(mapa.items(), key=lambda kv: (-len(kv[1]), kv[0])):
+            R.append(f"| {fw} | `{sym}` | {len(ids)} | {', '.join(sorted(ids)[:4])} |")
+        (out_dir / f"{d}.md").write_text("\n".join(R) + "\n", encoding="utf-8")
+    print(f"donos: {len(dados)} apps, {len(ordem)} donos, {out_dir.parent / 'lacunas-por-dono.md'}")
+
+
+
+
 def contas_que_subiram(baseline: dict, atual: dict, ids: list[str]) -> list[str]:
     """Apps cujo número de símbolos distintos ausentes passou da baseline."""
     subiu = []
@@ -360,12 +678,12 @@ def contas_que_subiram(baseline: dict, atual: dict, ids: list[str]) -> list[str]
     return subiu
 
 
-def cmd_gate(_: argparse.Namespace) -> None:
+def cmd_gate(args: argparse.Namespace) -> None:
     man = load_manifest()
     baseline_path = Path(__file__).resolve().parent / "baseline.json"
     baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
     summary_path = CACHE / "gate-summary.json"
-    ns = argparse.Namespace(ids=None, gate=True, summary=str(summary_path))
+    ns = argparse.Namespace(ids=None, gate=True, summary=str(summary_path), lib=args.lib, disco=args.disco)
     cmd_scan(ns)
     got = json.loads(summary_path.read_text(encoding="utf-8"))
     subiu = contas_que_subiram(baseline, got, man["gate_ids"])
@@ -424,6 +742,25 @@ def cmd_hosttest(args: argparse.Namespace) -> None:
     if ruim != ["a"]:
         raise SystemExit(f"o gate não apontou só o app que piorou: {ruim}")
 
+    for lib_, sym_, orig_, esperado in (
+        ("/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit", "_NSBeep", "sistema", "beatriz"),
+        ("/usr/lib/libSystem.B.dylib", "_dispatch_after", "sistema", "fernanda"),
+        ("/usr/lib/libSystem.B.dylib", "_mach_port_allocate", "sistema", "renata"),
+        ("/usr/lib/libSystem.B.dylib", "_copyfile", "sistema", "vinicius"),
+        ("/usr/lib/libSystem.B.dylib", "_strlcpy", "sistema", "leonardo"),
+        ("/usr/lib/libc++.1.dylib", "__ZNSt3__14coutE", "libc++", "leonardo"),
+        ("/usr/lib/swift/libswiftCore.dylib", "_swift_retain", "Swift", "fernanda"),
+        ("/usr/lib/swift/libswiftFoundation.dylib", "_$s10Foundation4DataV", "Swift", "eduardo"),
+        ("/System/Library/Frameworks/SwiftUI.framework/Versions/A/SwiftUI", "_$s7SwiftUI4ViewMp", "Swift", "ricardo"),
+        ("/System/Library/Frameworks/Metal.framework/Versions/A/Metal", "_MTLCreateSystemDefaultDevice", "sistema", "otavio"),
+        ("/System/Library/PrivateFrameworks/Algo.framework/Algo", "_Algo", "sistema", "igor"),
+        ("AppKit.framework", "_NSBeep", "sistema", "beatriz"),
+        ("libncurses.5.4.dylib", "_initscr", "sistema", "leonardo"),
+    ):
+        if dono_de(lib_, sym_, orig_) != esperado:
+            raise SystemExit(f"dono_de({sym_}) = {dono_de(lib_, sym_, orig_)}, esperado {esperado}")
+    print("hosttest donos: mapa de frentes ok")
+
     lib = Path(args.lib)
     disco = Path(args.disco)
     if not lib.is_file() or not disco.is_dir():
@@ -475,13 +812,26 @@ def main() -> None:
     s = sub.add_parser("scan")
     s.add_argument("--gate", action="store_true")
     s.add_argument("--summary")
+    s.add_argument("--lib", help="libSystem.mos já compilado (não roda tools/build.sh)")
+    s.add_argument("--disco", action="append", help="libc++/libswift*/libunwind/libz/libcurl do build (repetível)")
+    s.add_argument("--lib-arm64", help="libSystem-arm64.mos para apps sem fatia x86_64")
+    s.add_argument("--disco-arm64", action="append")
+    s.add_argument("--fixar", action="store_true", help="grava no manifesto o sha256 dos casks no_check")
+    s.add_argument("--limpar", action="store_true", help="apaga download e extração depois de medir")
+    s.add_argument("--continuar", action="store_true", help="pula o app já medido com o mesmo sha256")
+    s.add_argument("--tolerante", action="store_true", help="registra a falha do app em falhas.json e segue")
     s.add_argument("ids", nargs="*")
     s.set_defaults(func=cmd_scan)
     g = sub.add_parser("gate")
+    g.add_argument("--lib")
+    g.add_argument("--disco", action="append")
     g.set_defaults(func=cmd_gate)
     gaps = sub.add_parser("gaps")
     gaps.add_argument("--out", default=str(ROOT / "docs" / "compat-gaps.md"))
     gaps.set_defaults(func=cmd_gaps)
+    dn = sub.add_parser("donos")
+    dn.add_argument("--dir", default=str(ROOT / "docs" / "lacunas"))
+    dn.set_defaults(func=cmd_donos)
     h = sub.add_parser("hosttest")
     h.add_argument("--lib", required=True)
     h.add_argument("--disco", required=True)

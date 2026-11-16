@@ -36,3 +36,11 @@ bool origin_parse_devpath(const u8 *dp, usize len, devpath_t *out);
 bool origin_phys_match(const diskphys_t *disk, const diskphys_t *want);
 void origin_resolve(void);                 /* uma vez, depois dos drivers de armazenamento (antes do vfs_init) */
 const origin_t *origin_get(void);
+
+/* Caminho do carregador EFI no volume do sistema, no formato do FAT ("/EFI/mOS/BOOTX64.EFI"). Lido dos nós de arquivo do
+ * LoadedImage->FilePath. Só vale um .EFI direto sob /EFI/<pasta>/, ASCII, sem "..": qualquer outra coisa (caminho ausente,
+ * Unicode, outra pasta) devolve false e o padrão "/EFI/BOOT/BOOTX64.EFI". A atualização troca ESTE arquivo: numa ESP
+ * compartilhada com o Ubuntu o \EFI\BOOT\BOOTX64.EFI é o shim dele e nunca pode ser sobrescrito. */
+#define ORIGIN_LOADER_DEFAULT "/EFI/BOOT/BOOTX64.EFI"
+bool origin_parse_loader_path(const u8 *fp, usize len, char *out, usize cap);
+const char *origin_loader_path(void);

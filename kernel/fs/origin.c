@@ -145,3 +145,15 @@ void origin_resolve(void) {
     kprintf("origem: CONFIÁVEL — %s (%s), partição %d [%llu, +%llu)\n", storage_disk_name(cand),
             org.bus == PHYS_USB ? "USB" : org.bus == PHYS_NVME ? "NVMe" : "SATA", org.part_number, org.part_off, org.part_size);
 }
+
+const char *origin_loader_path(void) {
+    static char path[128];
+    static bool done;
+    if (!done) {
+        done = true;
+        if (!origin_parse_loader_path(g_boot->loader_fp, g_boot->loader_fp_len, path, sizeof path))
+            snprintf(path, sizeof path, "%s", ORIGIN_LOADER_DEFAULT);
+        kprintf("origem: carregador EFI %s\n", path);
+    }
+    return path;
+}
