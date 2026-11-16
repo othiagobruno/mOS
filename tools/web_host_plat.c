@@ -176,7 +176,34 @@ WEB_HOST_CASE(plat_crypto_assimetrico) {
           " return Promise.all([S.verify('RSASSA-PKCS1-v1_5',k[0],unhex('39a47dc61efa9b8613a9115c772f6baf3973ea24ccd4c5ff7c7213cdeb89f05761010b5ade9df3905c26e335bdf74d1ea0eb7344b9e81c7a3b6ee688bf2431317e2a9bb7876dcf4a21ab965476a7321cd6ee20bbaa689983ca7880e8c7aec1981aad59576a418baa74bd5c4a9b26907c358e02e00c2fbddac3ef72dacaead408'),m), S.verify('RSASSA-PKCS1-v1_5',k[0],unhex('39a47dc61efa9b8613a9115c772f6baf3973ea24ccd4c5ff7c7213cdeb89f05761010b5ade9df3905c26e335bdf74d1ea0eb7344b9e81c7a3b6ee688bf2431317e2a9bb7876dcf4a21ab965476a7321cd6ee20bbaa689983ca7880e8c7aec1981aad59576a418baa74bd5c4a9b26907c358e02e00c2fbddac3ef72dacaead408'),te.encode('x')),"
           "  S.verify({name:'RSA-PSS',saltLength:32},k[1],unhex('842f76a68d0e2361dde077102ea9f6f0547d0c34a2c1ce0b676cb3a3f077d6ccfd3a410a6c2fca4541cb0ee35355f5455767bf18f9f3143e4c206637d4688eaa8cee555dc6a85daef89e190d57335ac50302d31f81795cf909d1dfde25da8a5bcc9edb00536895a8eaffcb139486ed114b13ae314a4a3fa6df51cb4760407433'),m), k[0].algorithm.modulusLength, S.exportKey('jwk',k[0]).then(function(j){return j.kty+j.e})]) }).then(function(v){ r.push(v.join()) })",
           "true,false,true,1024,RSAAQAB");
-    /* RSA: só verificação; geração recusada com mensagem clara */
-    ASYNC("S.generateKey({name:'RSASSA-PKCS1-v1_5',modulusLength:2048,publicExponent:new Uint8Array([1,0,1]),hash:'SHA-256'},true,['sign','verify']).catch(function(e){r.push(e.name)})", "NotSupportedError");
+    /* RSA: uso inválido para o par é recusado */
+    ASYNC("S.generateKey({name:'RSASSA-PKCS1-v1_5',modulusLength:1024,publicExponent:new Uint8Array([1,0,1]),hash:'SHA-256'},true,['encrypt']).catch(function(e){r.push(e.name)})", "SyntaxError");
+    close2(&g);
+}
+
+/* RSA: chave privada pkcs8 do pacote cryptography (OpenSSL) — assinatura PKCS#1 v1.5 determinística igual, OAEP com
+ * rótulo decifrado; geração (PSS e OAEP) com ida e volta e exportação jwk/pkcs8 que volta pela importação */
+WEB_HOST_CASE(plat_crypto_rsa) {
+    pg2_t g = open2();
+    run(&g, "var PK8='30820277020100300d06092a864886f70d0101010500048202613082025d02010002818100a4e9496fd7ab9a4e963c8389cb370e4ee51a0567ecdb85149a66fc2260d5e6525d8f328cd17f9ff5ff339f550d966b3953d90eaf010340263481e655cec21b1453529d7b7c4f1a3422ab3c55f4d5d3604c0a7108b0bce0b35f33b7862f4ab06327845158112a91b1b31b813570a45e328092c2858f816c9d281a32066b4b82330203010001028180095ee8395ebbf58cb9a4bea4b9d36b10b89bfdeaa5dee37504410ddab63df15484d47a3ede38ae52402a22c7a67a01a5c449f537a48b16be1505bc9ceb9ec403104334018d1b789559c8154d8f4ef8b76cf80b8c0f5859e7eff90e8038a3f22ace77502cb8d4cb82d50f64e340f69c82ffd3ca2e382233eceb92f0e784174141024100dae3b222112600ac76b10c09df950879a5fcedc2d21f819573e3a6b3b11ca4691851dcde0c9831c594bd1de0470288472a0f4e6d907930808dbe916913e2aaeb024100c0ded0a00299b8f539370549d758fd0e67653199433a052e49d5cebda76a12a972dddb506d81da4f9ea0cc30bd2a1ef3905751dbe49b110050acb62b28bfa3d9024100ba4b84b69de5bc390ca3cedd305f856113b6db1d2efd05ab0f8137c643fd5ea8dbbc00c133f2ec997ee81e5f5dd077f02989f1742abc1a5daf45fc3874663c9502404f3b79c3322e4a805b27d2415a795144188fc6c76a89ac552eb9e9fb998a06ee9ba4ae9324d98280d0eec7d381f28ad28e4a80f36fbf90456bdef7db551b1d490241008d099e8b2f66a863d3512665ee813ea963a1d4656c0bde66fa18b8aea04f4fd4e09891142cfaf6ce1d1f8bf9c556107af1b3b388709adcef5553477515e936a9';"
+            "var SIG='57fc353860258f7537350b3345450ac9ed3c1e2c9eb3a29657ad37f33d3415b86d29db15362e37a03a3819bb90dfddb86ec571b6d08b678f3f1769cd8c6633af93d34f35fc515e3dc867a95fca45cad1fe5f14b09ff061369293a91a3ef9a225024bb65b3d828c4d30fbf496f1ac9c2a95f11e7cf110ce3562cdbdfcddd63aed';"
+            "var OAEP='52930a63deb443ddd5f07e7b68f337c8e58abad83d70be824a91de714ea6eb5a5b4e3567111c5a02c8bf8e14c7999ff32fb11d10906fb653781325bd6c0936c16e24b64b41786effb5c5f19c9e8bbb978d095078264ffca59cca7f12f3332849c545dc66d5aaa50a6163f660b9984b1f0a5c1664422df8420125c05764377c71';");
+    ASYNC("S.importKey('pkcs8',unhex(PK8),{name:'RSASSA-PKCS1-v1_5',hash:'SHA-256'},true,['sign']).then(function(k){ r.push(k.type+':'+k.algorithm.modulusLength);"
+          " return S.sign('RSASSA-PKCS1-v1_5',k,te.encode('assinado no mOS')) }).then(function(s){ r.push(hex(s)===SIG) })",
+          "private:1024|true");
+    ASYNC("S.importKey('pkcs8',unhex(PK8),{name:'RSA-OAEP',hash:'SHA-256'},false,['decrypt']).then(function(k){"
+          " return S.decrypt({name:'RSA-OAEP',label:te.encode('rotulo')},k,unhex(OAEP)) }).then(function(p){ r.push(new TextDecoder().decode(p)) })",
+          "segredo OAEP");
+    ASYNC("S.generateKey({name:'RSA-PSS',modulusLength:1024,publicExponent:new Uint8Array([1,0,1]),hash:'SHA-256'},true,['sign','verify']).then(function(kp){"
+          " r.push(kp.publicKey.algorithm.modulusLength+':'+Array.from(kp.privateKey.algorithm.publicExponent).join('.'));"
+          " return S.sign({name:'RSA-PSS',saltLength:32},kp.privateKey,te.encode('pss')).then(function(s){ return S.verify({name:'RSA-PSS',saltLength:32},kp.publicKey,s,te.encode('pss')) })"
+          ".then(function(v){ r.push('pss:'+v); return S.exportKey('pkcs8',kp.privateKey) })"
+          ".then(function(p8){ return S.importKey('pkcs8',p8,{name:'RSA-PSS',hash:'SHA-256'},true,['sign']) })"
+          ".then(function(k2){ return S.exportKey('jwk',k2) }).then(function(j){ r.push(j.alg+':'+(typeof j.d)+':'+(typeof j.qi)) }) }).catch(function(e){ r.push('erro:'+e.name+':'+e.message) })",
+          "1024:1.0.1|pss:true|PS256:string:string");
+    ASYNC("S.generateKey({name:'RSA-OAEP',modulusLength:1024,publicExponent:new Uint8Array([1,0,1]),hash:'SHA-1'},false,['encrypt','decrypt']).then(function(kp){"
+          " return S.encrypt('RSA-OAEP',kp.publicKey,te.encode('ida e volta')).then(function(c){ r.push(c.byteLength); return S.decrypt('RSA-OAEP',kp.privateKey,c) }) })"
+          ".then(function(p){ r.push(new TextDecoder().decode(p)) }).catch(function(e){ r.push('erro:'+e.name+':'+e.message) })",
+          "128|ida e volta");
     close2(&g);
 }

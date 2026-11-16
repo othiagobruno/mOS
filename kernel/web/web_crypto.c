@@ -4,6 +4,7 @@
  * e pkcs8; generateKey, importKey, exportKey, sign, verify, encrypt, decrypt, deriveBits, deriveKey, wrapKey e
  * unwrapKey. As operações devolvem promessas, como a especificação manda. */
 #include "js_int.h"
+#include "web_rsa.h"
 #include "web.h"
 #include "crypto.h"
 #include "x509.h"
@@ -167,14 +168,18 @@ static bool hkdf_any(int h, const u8 *ikm, u32 il, const u8 *salt, u32 sl, const
 }
 
 /* ============================================================ algoritmos */
-enum { A_NONE, A_SHA, A_HMAC, A_AESGCM, A_AESCTR, A_PBKDF2, A_HKDF, A_ECDSA, A_ECDH, A_ED25519, A_X25519, A_RSAPKCS1, A_RSAPSS, A_AESCBC, A_AESKW };
+enum { A_NONE, A_SHA, A_HMAC, A_AESGCM, A_AESCTR, A_PBKDF2, A_HKDF, A_ECDSA, A_ECDH, A_ED25519, A_X25519, A_RSAPKCS1, A_RSAPSS, A_AESCBC, A_AESKW, A_RSAOAEP };
 static const char *alg_names[] = { "", "SHA", "HMAC", "AES-GCM", "AES-CTR", "PBKDF2", "HKDF", "ECDSA", "ECDH", "Ed25519", "X25519",
-                                   "RSASSA-PKCS1-v1_5", "RSA-PSS", "AES-CBC", "AES-KW" };
+                                   "RSASSA-PKCS1-v1_5", "RSA-PSS", "AES-CBC", "AES-KW", "RSA-OAEP" };
+static bool is_rsa(int a) { return a == A_RSAPKCS1 || a == A_RSAPSS || a == A_RSAOAEP; }
 static bool is_aes(int a) { return a == A_AESGCM || a == A_AESCTR || a == A_AESCBC || a == A_AESKW; }
 
 typedef struct {
     int alg, hash, curve;     /* curve: EC_P256/EC_P384 */
     u32 length;               /* bits (AES, HMAC, deriveBits) */
+    u32 modbits;              /* RSA: modulusLength */
+    u8 pubexp[8];             /* RSA: publicExponent (big-endian) */
+    u32 pel;
     jsv obj;                  /* objeto original */
 } algo_t;
 
@@ -197,7 +202,18 @@ static bool norm_alg(jsv v, algo_t *a) {
     if (!a->alg) { dom_err("NotSupportedError", "algoritmo não suportado: %s", s->d); return false; }
     if (!jv_isobj(v)) return true;
     jsv hv = js_getn(v, "hash"), lv = js_getn(v, "length"), cv = js_getn(v, "namedCurve");
+    jsv mv = js_getn(v, "modulusLength"), ev = js_getn(v, "publicExponent");
     if (js_pending()) return false;
+    if (mv != JS_UNDEF) { double d = js_tonum(mv); if (js_pending()) return false; a->modbits = d > 0 && d < 1e6 ? (u32)d : 0; }
+    if (jv_iscls(ev, CL_TYPED)) {
+        jsobj *t = jv_o(ev);
+        u32 n = js_typed_length(t);
+        const u8 *b = t->u.ta.buffer->u.buf.data + t->u.ta.off;
+        while (n && !*b) { b++; n--; }   /* zeros à esquerda */
+        if (n > sizeof a->pubexp) { dom_err("OperationError", "publicExponent grande demais"); return false; }
+        memcpy(a->pubexp, b, n);
+        a->pel = n;
+    }
     if (hv != JS_UNDEF) {
         algo_t ha;
         if (!norm_alg(hv, &ha)) return false;
@@ -216,7 +232,7 @@ static bool norm_alg(jsv v, algo_t *a) {
 }
 
 /* ============================================================ CryptoKey */
-enum { K_TYPE, K_EXTRACT, K_ALG, K_USAGES, K_SECRET, K_PUBLIC, K_RSAN, K_RSAE, K_NSLOTS };
+enum { K_TYPE, K_EXTRACT, K_ALG, K_USAGES, K_SECRET, K_PUBLIC, K_RSAN, K_RSAE, K_RSAD, K_RSAP, K_RSAQ, K_RSADP, K_RSADQ, K_RSAQI, K_NSLOTS };
 static jsobj *key_x(jsv v) {
     if (!jv_iscls(v, CL_HOST) || !has_proto(jv_o(v), J.realm->p_cryptokey) || !jv_isobj(jv_o(v)->u.host.extra)) return NULL;
     return jv_o(jv_o(v)->u.host.extra);
@@ -260,7 +276,9 @@ static jsobj *alg_object(int alg, int hash, u32 length, int curve) {
 static jsobj *key_new(const char *type, bool extractable, jsobj *alg, jsobj *usages, const u8 *secret, u32 sn, const u8 *pub, u32 pn) {
     jsobj *k = js_newobj_cls(CL_HOST, J.realm->p_cryptokey);
     k->u.host.page = js_cur_page();
-    jsv s[K_NSLOTS] = { jv_str(js_strz(type)), jv_bool(extractable), jv_obj(alg), jv_obj(usages), JS_NULL, JS_NULL, JS_NULL, JS_NULL };
+    jsv s[K_NSLOTS];
+    for (int i = 0; i < K_NSLOTS; i++) s[i] = JS_NULL;
+    s[K_TYPE] = jv_str(js_strz(type)); s[K_EXTRACT] = jv_bool(extractable); s[K_ALG] = jv_obj(alg); s[K_USAGES] = jv_obj(usages);
     if (secret) s[K_SECRET] = to_abuf(secret, sn);
     if (pub) s[K_PUBLIC] = to_abuf(pub, pn);
     k->u.host.extra = jv_obj(js_arr_from(s, K_NSLOTS));
@@ -275,6 +293,7 @@ static const char *allowed_usages(int alg, const char *type) {
     case A_AESKW: return "wrapKey unwrapKey";
     case A_PBKDF2: case A_HKDF: return "deriveKey deriveBits";
     case A_ECDSA: case A_ED25519: case A_RSAPKCS1: case A_RSAPSS: return !strcmp(type, "private") ? "sign" : "verify";
+    case A_RSAOAEP: return !strcmp(type, "private") ? "decrypt unwrapKey" : "encrypt wrapKey";
     case A_ECDH: case A_X25519: return !strcmp(type, "private") ? "deriveKey deriveBits" : "";
     }
     return "";
@@ -302,6 +321,47 @@ static jsobj *usages_for(jsv list, int alg, const char *type, bool *ok) {
     for (int k = 0; k < 8; k++) if (want[k]) js_arr_push(out, jv_str(js_strz(order[k])));
     *ok = true;
     return out;
+}
+
+/* RSA: componentes da chave nos slots; algoritmo com modulusLength/publicExponent */
+static const u8 *const *rsa_fields(const wrsa_key_t *k, const u32 **lens) {
+    static const u8 *f[8];
+    static u32 l[8];
+    const u8 *ff[8] = { k->n, k->e, k->d, k->p, k->q, k->dp, k->dq, k->qi };
+    u32 ll[8] = { k->nl, k->el, k->dl, k->pl, k->ql, k->dpl, k->dql, k->qil };
+    memcpy(f, ff, sizeof f);
+    memcpy(l, ll, sizeof l);
+    *lens = l;
+    return f;
+}
+static const int rsa_slots[8] = { K_RSAN, K_RSAE, K_RSAD, K_RSAP, K_RSAQ, K_RSADP, K_RSADQ, K_RSAQI };
+static jsv to_abuf(const u8 *d, u32 n);
+static jsobj *rsa_key(const char *type, bool ext, int alg, int hash, jsobj *usages, const wrsa_key_t *k) {
+    jsobj *algo = alg_object(alg, hash, 0, 0);
+    js_defn(algo, "modulusLength", jv_int((int)rsa_modulus_bits(k->n, k->nl)), 0);
+    jsv pe = to_abuf(k->e, k->el);
+    js_defn(algo, "publicExponent", jv_obj(js_typed_new(TA_UINT8, jv_o(pe), 0, k->el)), 0);
+    jsobj *key = key_new(type, ext, algo, usages, NULL, 0, NULL, 0);
+    const u32 *ls;
+    const u8 *const *fs = rsa_fields(k, &ls);
+    int nf = !strcmp(type, "private") ? 8 : 2;
+    for (int i = 0; i < nf; i++) if (fs[i]) js_arr_set(jv_o(key->u.host.extra), rsa_slots[i], to_abuf(fs[i], ls[i]));
+    return key;
+}
+/* chave (só ponteiros, sem cópia) a partir dos slots */
+static bool rsa_load(jsobj *x, wrsa_key_t *k) {
+    memset(k, 0, sizeof *k);
+    u8 **f[8] = { &k->n, &k->e, &k->d, &k->p, &k->q, &k->dp, &k->dq, &k->qi };
+    u32 *l[8] = { &k->nl, &k->el, &k->dl, &k->pl, &k->ql, &k->dpl, &k->dql, &k->qil };
+    bool all = true;
+    for (int i = 0; i < 8; i++) {
+        const u8 *d; u32 n;
+        if (key_bytes(x, rsa_slots[i], &d, &n)) { *f[i] = (u8 *)d; *l[i] = n; } else if (i < 2) return false; else all = false;
+    }
+    (void)all;
+    /* o módulo em nl bytes exatos (sem zero à esquerda) */
+    while (k->nl > 1 && !k->n[0]) { k->n++; k->nl--; }
+    return true;
 }
 
 /* ============================================================ DER mínimo (spki / pkcs8) */
@@ -384,10 +444,13 @@ static bool pair_usages(jsv list, int alg, jsobj **pub, jsobj **priv) {
     for (u32 i = 0; i < n; i++) {
         jsstr *u = js_tostr(js_getidx(list, i));
         if (!u) return false;
-        bool sig = alg == A_ECDSA || alg == A_ED25519;
+        bool sig = alg == A_ECDSA || alg == A_ED25519 || alg == A_RSAPKCS1 || alg == A_RSAPSS;
+        bool oaep = alg == A_RSAOAEP;
         if (sig && !strcmp(u->d, "sign")) js_arr_push(*priv, jv_str(u));
         else if (sig && !strcmp(u->d, "verify")) js_arr_push(*pub, jv_str(u));
-        else if (!sig && (!strcmp(u->d, "deriveKey") || !strcmp(u->d, "deriveBits"))) js_arr_push(*priv, jv_str(u));
+        else if (oaep && (!strcmp(u->d, "decrypt") || !strcmp(u->d, "unwrapKey"))) js_arr_push(*priv, jv_str(u));
+        else if (oaep && (!strcmp(u->d, "encrypt") || !strcmp(u->d, "wrapKey"))) js_arr_push(*pub, jv_str(u));
+        else if (!sig && !oaep && (!strcmp(u->d, "deriveKey") || !strcmp(u->d, "deriveBits"))) js_arr_push(*priv, jv_str(u));
         else { dom_err("SyntaxError", "uso '%s' não vale para %s", u->d, alg_names[alg]); return false; }
     }
     if (!(*priv)->alen) { dom_err("SyntaxError", "generateKey: a chave privada precisa de algum uso"); return false; }
@@ -437,7 +500,18 @@ static jsv gen_key(algo_t *a, bool ext, jsv usages) {
         secure_zero(priv, sizeof priv);
         return make_pair(kpub, kpriv);
     }
-    case A_RSAPKCS1: case A_RSAPSS: return dom_err("NotSupportedError", "geração de chaves RSA ainda não existe no mOS (só verificação)");
+    case A_RSAPKCS1: case A_RSAPSS: case A_RSAOAEP: {
+        if (!a->hash) { js_throw_err(E_TYPE, "%s precisa de hash", alg_names[a->alg]); return JS_EXC; }
+        if (!a->pel) { js_throw_err(E_TYPE, "%s precisa de publicExponent", alg_names[a->alg]); return JS_EXC; }
+        if (a->modbits < 512 || a->modbits > 4096 || a->modbits % 16) return dom_err("OperationError", "modulusLength %u não suportado", a->modbits);
+        jsobj *pu, *pv;
+        if (!pair_usages(usages, a->alg, &pu, &pv)) return JS_EXC;
+        wrsa_key_t k;
+        if (!wrsa_generate(a->modbits, a->pubexp, a->pel, &k)) return dom_err("OperationError", "falha ao gerar a chave RSA");
+        jsobj *kpub = rsa_key("public", true, a->alg, a->hash, pu, &k), *kpriv = rsa_key("private", ext, a->alg, a->hash, pv, &k);
+        wrsa_free(&k);
+        return make_pair(kpub, kpriv);
+    }
     }
     return dom_err("NotSupportedError", "generateKey não vale para %s", alg_names[a->alg]);
 }
@@ -610,13 +684,49 @@ static jsv import_key(const char *fmt, jsv data, algo_t *a, bool ext, jsv usages
         secure_zero(seed, sizeof seed);
         break;
     }
-    case A_RSAPKCS1: case A_RSAPSS: {
-        if (!a->hash || a->hash == H_SHA1) { result = dom_err("NotSupportedError", "RSA: hash SHA-256/384/512 obrigatório"); break; }
+    case A_RSAPKCS1: case A_RSAPSS: case A_RSAOAEP: {
+        if (!a->hash) { js_throw_err(E_TYPE, "%s precisa de hash", alg_names[a->alg]); break; }
         bytes_t n = { 0 }, e = { 0 };
+        /* privada: jwk com d/p/q/dp/dq/qi ou pkcs8 (RSAPrivateKey) */
+        bool priv_jwk = is_jwk && jv_isstr(jwk_str(data, "d"));
+        if (priv_jwk || !strcmp(fmt, "pkcs8")) {
+            bytes_t f[8] = { { 0 } };
+            bool okf = true;
+            if (priv_jwk) {
+                jsv kty = jwk_str(data, "kty");
+                if (!jv_isstr(kty) || strcmp(jv_s(kty)->d, "RSA")) { result = dom_err("DataError", "JWK precisa de kty 'RSA'"); break; }
+                static const char *names[8] = { "n", "e", "d", "p", "q", "dp", "dq", "qi" };
+                for (int i = 0; i < 8 && okf; i++) okf = jwk_bytes(data, names[i], &f[i]);
+            } else {
+                der_t d = { raw.d, raw.d + raw.n };
+                u8 t; const u8 *v; u32 l;
+                okf = der_next(&d, &t, &v, &l) && t == 0x30;
+                der_t s2 = { v, v + l };
+                okf = okf && der_next(&s2, &t, &v, &l) && t == 0x02;          /* versão */
+                okf = okf && der_next(&s2, &t, &v, &l) && t == 0x30;          /* AlgorithmIdentifier */
+                if (okf) { der_t ai = { v, v + l }; const u8 *oid; u32 ol; okf = der_next(&ai, &t, &oid, &ol) && t == 0x06 && ol == sizeof OID_RSA && !memcmp(oid, OID_RSA, ol); }
+                okf = okf && der_next(&s2, &t, &v, &l) && t == 0x04;          /* OCTET STRING */
+                if (okf) {
+                    der_t pk = { v, v + l };
+                    okf = der_next(&pk, &t, &v, &l) && t == 0x30;
+                    der_t rk = { v, v + l };
+                    okf = okf && der_next(&rk, &t, &v, &l) && t == 0x02;      /* versão */
+                    for (int i = 0; i < 8 && okf; i++) {
+                        okf = der_next(&rk, &t, &v, &l) && t == 0x02 && l;
+                        if (okf) { while (l > 1 && !v[0]) { v++; l--; } bset(&f[i], v, l); }
+                    }
+                }
+            }
+            if (!okf) { for (int i = 0; i < 8; i++) bfree(&f[i]); if (!js_pending()) dom_err("DataError", "chave privada RSA inválida"); result = JS_EXC; break; }
+            wrsa_key_t k = { f[0].d, f[1].d, f[2].d, f[3].d, f[4].d, f[5].d, f[6].d, f[7].d, f[0].n, f[1].n, f[2].n, f[3].n, f[4].n, f[5].n, f[6].n, f[7].n };
+            jsobj *u = usages_for(usages, a->alg, "private", &ok);
+            if (ok) result = jv_obj(rsa_key("private", ext, a->alg, a->hash, u, &k));
+            for (int i = 0; i < 8; i++) { if (f[i].d) secure_zero(f[i].d, f[i].n); bfree(&f[i]); }
+            break;
+        }
         if (is_jwk) {
             jsv kty = jwk_str(data, "kty");
             if (!jv_isstr(kty) || strcmp(jv_s(kty)->d, "RSA")) { result = dom_err("DataError", "JWK precisa de kty 'RSA'"); break; }
-            if (jv_isstr(jwk_str(data, "d"))) { result = dom_err("NotSupportedError", "chave privada RSA ainda não existe no mOS (só verificação)"); break; }
             if (!jwk_bytes(data, "n", &n) || !jwk_bytes(data, "e", &e)) { bfree(&n); bfree(&e); break; }
         } else if (!strcmp(fmt, "spki")) {
             der_t d = { raw.d, raw.d + raw.n };
@@ -634,7 +744,7 @@ static jsv import_key(const char *fmt, jsv data, algo_t *a, bool ext, jsv usages
             const u8 *nv, *ev; u32 nl, el;
             if (!der_next(&rk, &t, &nv, &nl) || t != 0x02 || !der_next(&rk, &t, &ev, &el) || t != 0x02) { result = dom_err("DataError", "n/e inválidos"); break; }
             bset(&n, nv, nl); bset(&e, ev, el);
-        } else { result = dom_err("NotSupportedError", "RSA: só spki ou jwk públicos"); break; }
+        } else { result = dom_err("NotSupportedError", "RSA: spki, pkcs8 ou jwk"); break; }
         jsobj *u = usages_for(usages, a->alg, "public", &ok);
         if (!ok) { bfree(&n); bfree(&e); break; }
         jsobj *algo = alg_object(a->alg, a->hash, 0, 0);
@@ -703,13 +813,21 @@ static jsv export_key(const char *fmt, jsv key) {
             js_defn(j, "crv", jv_str(js_strz(alg_names[alg])), 0);
             js_defn(j, "x", jv_str(b64url(pub, pn)), 0);
             if (!strcmp(type, "private")) js_defn(j, "d", jv_str(b64url(sec, sn)), 0);
-        } else if (alg == A_RSAPKCS1 || alg == A_RSAPSS) {
-            const u8 *n, *e; u32 nl, el;
-            key_bytes(x, K_RSAN, &n, &nl);
-            key_bytes(x, K_RSAE, &e, &el);
+        } else if (is_rsa(alg)) {
+            static const char *names[8] = { "n", "e", "d", "p", "q", "dp", "dq", "qi" };
             js_defn(j, "kty", jv_str(js_strz("RSA")), 0);
-            js_defn(j, "n", jv_str(b64url(n, nl)), 0);
-            js_defn(j, "e", jv_str(b64url(e, el)), 0);
+            int nf = !strcmp(type, "private") ? 8 : 2;
+            for (int i = 0; i < nf; i++) {
+                const u8 *d; u32 l;
+                if (key_bytes(x, rsa_slots[i], &d, &l)) js_defn(j, names[i], jv_str(b64url(d, l)), 0);
+            }
+            int h = key_hash(x);
+            char an[24];
+            int hb = h == H_SHA1 ? 1 : (int)hlen(h) * 8;
+            if (alg == A_RSAPKCS1) snprintf(an, sizeof an, "RS%d", hb == 1 ? 1 : hb);
+            else if (alg == A_RSAPSS) snprintf(an, sizeof an, "PS%d", hb);
+            else snprintf(an, sizeof an, hb == 1 ? "RSA-OAEP" : "RSA-OAEP-%d", hb);
+            js_defn(j, "alg", jv_str(js_strz(an)), 0);
         } else return dom_err("NotSupportedError", "jwk não vale para %s", alg_names[alg]);
         js_defn(j, "key_ops", jv_obj(ops), 0);
         js_defn(j, "ext", JS_TRUE, 0);
@@ -718,7 +836,7 @@ static jsv export_key(const char *fmt, jsv key) {
     if (!strcmp(fmt, "spki")) {
         if (strcmp(type, "public")) return dom_err("InvalidAccessError", "spki só vale para chaves públicas");
         sbuf_t body = { 0 }, o = { 0 };
-        if (alg == A_RSAPKCS1 || alg == A_RSAPSS) {
+        if (is_rsa(alg)) {
             const u8 *n, *e; u32 nl, el;
             key_bytes(x, K_RSAN, &n, &nl);
             key_bytes(x, K_RSAE, &e, &el);
@@ -760,7 +878,25 @@ static jsv export_key(const char *fmt, jsv key) {
         u8 zero = 0, one = 1;
         der_put(&body, 0x02, &zero, 1);
         der_algid(&body, alg, key_curve(x));
-        if (alg == A_ECDSA || alg == A_ECDH) {
+        if (is_rsa(alg)) {
+            /* RSAPrivateKey: versão 0, n, e, d, p, q, dp, dq, qi (INTEGERs positivos) */
+            sbuf_t rk = { 0 };
+            der_put(&rk, 0x02, &zero, 1);
+            for (int i = 0; i < 8; i++) {
+                const u8 *d; u32 l;
+                if (!key_bytes(x, rsa_slots[i], &d, &l)) { d = &zero; l = 1; }
+                u8 *t = kmalloc(l + 1);
+                if (!t) continue;
+                u32 tl = 0;
+                if (d[0] & 0x80) t[tl++] = 0;
+                memcpy(t + tl, d, l);
+                der_put(&rk, 0x02, t, tl + l);
+                secure_zero(t, tl + l);
+                kfree(t);
+            }
+            der_put(&inner, 0x30, (const u8 *)rk.p, (u32)rk.len);
+            sb_free(&rk);
+        } else if (alg == A_ECDSA || alg == A_ECDH) {
             sbuf_t ec = { 0 }, bit = { 0 }, tagged = { 0 };
             der_put(&ec, 0x02, &one, 1);
             der_put(&ec, 0x04, sec, sn);
@@ -793,6 +929,7 @@ NATIVE(sc_export) {
 }
 
 /* --------------------------------------------------------- sign / verify */
+static jsv rsa_sign(jsobj *x, int alg, int h, const u8 *dg, int salt);
 static jsv sign_verify(algo_t *a, jsv key, bytes_t *data, bytes_t *sig, bool verify) {
     jsobj *x = key_x(key);
     if (!x) { js_throw_err(E_TYPE, "CryptoKey esperada"); return JS_EXC; }
@@ -837,7 +974,20 @@ static jsv sign_verify(algo_t *a, jsv key, bytes_t *data, bytes_t *sig, bool ver
         return jv_bool(ed25519_verify(sig->d, data->d, data->n, pub) == 1);
     }
     case A_RSAPKCS1: case A_RSAPSS: {
-        if (!verify) return dom_err("NotSupportedError", "assinatura RSA ainda não existe no mOS (só verificação)");
+        if (!verify) {
+            int h = key_hash(x);
+            u8 dg[64];
+            digest(h, data->d, data->n, dg);
+            int salt = -1;
+            if (alg == A_RSAPSS) {
+                jsv sl = js_getn(a->obj, "saltLength");
+                if (js_pending()) return JS_EXC;
+                if (sl == JS_UNDEF) { js_throw_err(E_TYPE, "RSA-PSS precisa de saltLength"); return JS_EXC; }
+                salt = js_toint32(sl);
+                if (salt < 0 || salt > 512) return dom_err("OperationError", "saltLength inválido");
+            }
+            return rsa_sign(x, alg, h, dg, salt);
+        }
         const u8 *n, *e; u32 nl, el;
         key_bytes(x, K_RSAN, &n, &nl);
         key_bytes(x, K_RSAE, &e, &el);
@@ -947,6 +1097,123 @@ static void waes_dec(const waes_t *k, const u8 in[16], u8 out[16]) {
             }
     }
     memcpy(out, st, 16);
+}
+
+/* --------------------------------------------------------- RSA: codificações */
+static void mgf1(int h, const u8 *seed, u32 sl, u8 *mask, u32 ml) {
+    u32 hl = hlen(h), done = 0;
+    u8 buf[512 + 4], dg[64];
+    for (u32 c = 0; done < ml; c++) {
+        memcpy(buf, seed, sl);
+        buf[sl] = (u8)(c >> 24); buf[sl + 1] = (u8)(c >> 16); buf[sl + 2] = (u8)(c >> 8); buf[sl + 3] = (u8)c;
+        digest(h, buf, sl + 4, dg);
+        for (u32 i = 0; i < hl && done < ml; i++) mask[done++] = dg[i];
+    }
+}
+static const u8 DI_SHA1[] = { 0x30, 0x21, 0x30, 0x09, 0x06, 0x05, 0x2b, 0x0e, 0x03, 0x02, 0x1a, 0x05, 0x00, 0x04, 0x14 };
+static const u8 DI_SHA256[] = { 0x30, 0x31, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01, 0x05, 0x00, 0x04, 0x20 };
+static const u8 DI_SHA384[] = { 0x30, 0x41, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x02, 0x05, 0x00, 0x04, 0x30 };
+static const u8 DI_SHA512[] = { 0x30, 0x51, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x03, 0x05, 0x00, 0x04, 0x40 };
+
+/* assinatura RSA (EMSA-PKCS1-v1_5 ou EMSA-PSS) com a chave privada */
+static jsv rsa_sign(jsobj *x, int alg, int h, const u8 *dg, int salt) {
+    wrsa_key_t k;
+    if (!rsa_load(x, &k) || !k.p) return dom_err("OperationError", "chave RSA privada incompleta");
+    u32 nl = k.nl, hl = hlen(h);
+    u8 *em = kmalloc(nl), *sig = kmalloc(nl);
+    if (!em || !sig) { kfree(em); kfree(sig); return JS_EXC; }
+    jsv r = JS_EXC;
+    if (alg == A_RSAPKCS1) {
+        const u8 *di = h == H_SHA1 ? DI_SHA1 : h == H_SHA256 ? DI_SHA256 : h == H_SHA384 ? DI_SHA384 : DI_SHA512;
+        u32 dil = h == H_SHA1 ? sizeof DI_SHA1 : sizeof DI_SHA256;
+        u32 tl = dil + hl;
+        if (nl < tl + 11) { r = dom_err("OperationError", "módulo RSA pequeno demais"); goto out; }
+        em[0] = 0; em[1] = 1;
+        memset(em + 2, 0xFF, nl - tl - 3);
+        em[nl - tl - 1] = 0;
+        memcpy(em + nl - tl, di, dil);
+        memcpy(em + nl - hl, dg, hl);
+    } else {
+        u32 bits = rsa_modulus_bits(k.n, k.nl) - 1, eml = (bits + 7) / 8;
+        if (salt < 0) salt = (int)hl;
+        if (eml < hl + (u32)salt + 2) { r = dom_err("OperationError", "saltLength grande demais para o módulo"); goto out; }
+        u8 mp[8 + 64 + 512], H[64], st[512];
+        memset(mp, 0, 8);
+        memcpy(mp + 8, dg, hl);
+        crypto_random(st, (usize)salt);
+        memcpy(mp + 8 + hl, st, (usize)salt);
+        digest(h, mp, 8 + hl + (u32)salt, H);
+        u32 dbl = eml - hl - 1;
+        u8 *db = em + (nl - eml);
+        memset(em, 0, nl);
+        db[dbl - (u32)salt - 1] = 1;
+        memcpy(db + dbl - (u32)salt, st, (usize)salt);
+        u8 mask[512];
+        mgf1(h, H, hl, mask, dbl);
+        for (u32 i = 0; i < dbl; i++) db[i] ^= mask[i];
+        db[0] &= (u8)(0xFF >> (8 * eml - bits));
+        memcpy(db + dbl, H, hl);
+        db[dbl + hl] = 0xBC;
+    }
+    if (!wrsa_private(&k, em, nl, sig)) r = dom_err("OperationError", "falha na operação RSA");
+    else r = to_abuf(sig, nl);
+out:
+    secure_zero(em, nl);
+    kfree(em);
+    kfree(sig);
+    return r;
+}
+
+/* RSA-OAEP (RFC 8017 7.1) */
+static jsv rsa_oaep(jsobj *x, int h, jsv labelv, bytes_t *data, bool dec) {
+    wrsa_key_t k;
+    if (!rsa_load(x, &k)) return dom_err("OperationError", "chave RSA inválida");
+    bytes_t L = { 0 };
+    if (labelv != JS_UNDEF && !buffer_source(labelv, &L)) return JS_EXC;
+    u32 nl = k.nl, hl = hlen(h);
+    u8 lh[64];
+    digest(h, L.d ? L.d : (const u8 *)"", L.n, lh);
+    bfree(&L);
+    u8 *em = kcalloc(nl, 1), *o = kmalloc(nl);
+    if (!em || !o) { kfree(em); kfree(o); return JS_EXC; }
+    jsv r = JS_EXC;
+    u8 mask[512];
+    if (!dec) {
+        if (data->n > nl - 2 * hl - 2) { r = dom_err("OperationError", "mensagem longa demais para RSA-OAEP"); goto out; }
+        u8 *seed = em + 1, *db = em + 1 + hl;
+        u32 dbl = nl - hl - 1;
+        memcpy(db, lh, hl);
+        db[dbl - data->n - 1] = 1;
+        memcpy(db + dbl - data->n, data->d, data->n);
+        crypto_random(seed, hl);
+        mgf1(h, seed, hl, mask, dbl);
+        for (u32 i = 0; i < dbl; i++) db[i] ^= mask[i];
+        mgf1(h, db, dbl, mask, hl);
+        for (u32 i = 0; i < hl; i++) seed[i] ^= mask[i];
+        if (!wrsa_public(k.n, nl, k.e, k.el, em, nl, o)) r = dom_err("OperationError", "falha na operação RSA");
+        else r = to_abuf(o, nl);
+    } else {
+        if (!k.p) { r = dom_err("InvalidAccessError", "decrypt precisa da chave privada"); goto out; }
+        if (data->n != nl || nl < 2 * hl + 2 || !wrsa_private(&k, data->d, data->n, em)) { r = dom_err("OperationError", "falha ao decifrar RSA-OAEP"); goto out; }
+        u8 *seed = em + 1, *db = em + 1 + hl;
+        u32 dbl = nl - hl - 1;
+        mgf1(h, db, dbl, mask, hl);
+        for (u32 i = 0; i < hl; i++) seed[i] ^= mask[i];
+        mgf1(h, seed, hl, mask, dbl);
+        for (u32 i = 0; i < dbl; i++) db[i] ^= mask[i];
+        u8 bad = em[0];
+        for (u32 i = 0; i < hl; i++) bad |= db[i] ^ lh[i];
+        u32 i = hl;
+        while (i < dbl && !db[i]) i++;
+        if (i >= dbl || db[i] != 1) bad |= 1;
+        if (bad) r = dom_err("OperationError", "falha ao decifrar RSA-OAEP");
+        else r = to_abuf(db + i + 1, dbl - i - 1);
+    }
+out:
+    secure_zero(em, nl);
+    kfree(em);
+    kfree(o);
+    return r;
 }
 
 /* --------------------------------------------------------- encrypt / decrypt */
@@ -1064,6 +1331,12 @@ static jsv crypt_ex(algo_t *a, jsv key, bytes_t *data, bool dec, bool wrap) {
     if (!has_usage(x, wrap ? (dec ? "unwrapKey" : "wrapKey") : (dec ? "decrypt" : "encrypt")))
         return dom_err("InvalidAccessError", "a chave não permite %s", wrap ? (dec ? "unwrapKey" : "wrapKey") : (dec ? "decrypt" : "encrypt"));
     if (alg == A_AESKW && !wrap) return dom_err("InvalidAccessError", "AES-KW só embrulha chaves (wrapKey/unwrapKey)");
+    if (alg == A_RSAOAEP) {
+        jsv lv = js_getn(a->obj, "label");
+        if (js_pending()) return JS_EXC;
+        if (dec != !strcmp(key_type(x), "private")) return dom_err("InvalidAccessError", "RSA-OAEP: cifra com a pública e decifra com a privada");
+        return rsa_oaep(x, key_hash(x), lv, data, dec);
+    }
     if (!is_aes(alg)) return dom_err("InvalidAccessError", "%s não cifra", alg_names[alg]);
     const u8 *sec; u32 sn;
     key_bytes(x, K_SECRET, &sec, &sn);
