@@ -26,7 +26,7 @@ int gl_unit_on(gl_ctx_t *C, int unit, GLenum cap);
 /* ================================================================ estado de um programa ligado */
 typedef struct { const char *name; int off, size; ty_t *t; } gv_t;   /* global de um estágio */
 typedef struct { char *name; int loc, n, off; ty_t *t; int base; GLenum gltype; int builtin; } pa_t;
-typedef struct { char *name; int off[2], size, slot, nslots, interp; } pv_t;
+typedef struct { char *name; int off[2], size, slot, nslots, interp, aux; } pv_t;
 typedef struct { char *name; int loc, index, off, n; ty_t *t; int isint; } po_t;
 typedef struct {
     char *name;
@@ -50,8 +50,8 @@ typedef struct {
     int compat;
     /* embutidas */
     int b_pos, b_psize, b_clip, b_vid, b_iid, b_clipvert;
-    int b_coord, b_front, b_pcoord, b_depth, b_pid, b_fcolor, b_fdata;
-    int w_psize, w_clip, w_clipvert, w_depth, w_fcolor, w_fdata, discards;
+    int b_coord, b_front, b_pcoord, b_depth, b_pid, b_fcolor, b_fdata, b_sid, b_spos, b_smaskin, b_smask;
+    int w_psize, w_clip, w_clipvert, w_depth, w_fcolor, w_fdata, discards, w_smask, per_sample;
     int c_vertex, c_normal, c_color, c_scolor, c_fog, c_mtc[8];
     int c_out[13], c_in[13];   /* slots do compat: deslocamentos no VS (saída) e no FS (entrada) */
     pa_t attr[GLX_ATTR * 2]; int nattr;
@@ -740,6 +740,10 @@ static int link_prog(gl_ctx_t *C, gl_prog_t *p) {
     g->b_coord = g_off(FL, "gl_FragCoord"); g->b_front = g_off(FL, "gl_FrontFacing"); g->b_pcoord = g_off(FL, "gl_PointCoord");
     g->b_depth = g_off(FL, "gl_FragDepth"); g->b_pid = g_off(FL, "gl_PrimitiveID"); g->b_fcolor = g_off(FL, "gl_FragColor");
     g->b_fdata = g_off(FL, "gl_FragData");
+    g->b_sid = g_off(FL, "gl_SampleID"); g->b_spos = g_off(FL, "gl_SamplePosition");
+    g->b_smaskin = g_off(FL, "gl_SampleMaskIn"); g->b_smask = g_off(FL, "gl_SampleMask");
+    g->w_smask = uses(g->fsrc_user, "gl_SampleMask");
+    g->per_sample = uses(g->fsrc_user, "gl_SampleID") || uses(g->fsrc_user, "gl_SamplePosition");
     g->w_psize = uses(g->vsrc_user, "gl_PointSize");
     g->w_clip = uses(g->vsrc_user, "gl_ClipDistance");
     g->w_clipvert = uses(g->vsrc_user, "gl_ClipVertex");
@@ -829,6 +833,8 @@ static int link_prog(gl_ctx_t *C, gl_prog_t *p) {
         pv->nslots = ns;
         int k = fv.t->k == K_ARRAY ? ty_scal(fv.t->e->k == K_ARRAY ? fv.t->e->e : fv.t->e) : fv.t->k == K_STRUCT ? K_FLOAT : ty_scal(fv.t);
         pv->interp = IS_INTK(k) ? MSL_INTERP_FLAT : d->interp != MSL_INTERP_PERSP ? d->interp : vd->interp;
+        pv->aux = d->aux ? d->aux : vd->aux;
+        if (pv->aux == 2) g->per_sample = 1;   /* entrada 'sample': sombreamento por amostra */
         slot += ns;
     }
     g->nslots = slot;
@@ -1634,6 +1640,10 @@ static void fs_load(gl_ctx_t *C, pg_t *g, gl_frag_t *f, int nb) {
     if (g->b_pcoord >= 0) memcpy(L->gmem + g->b_pcoord, f->pcoord, 8);
     if (g->b_pid >= 0) { i32 v = (i32)f->prim_id; memcpy(L->gmem + g->b_pid, &v, 4); }
     if (g->b_depth >= 0) memcpy(L->gmem + g->b_depth, &f->coord[2], 4);
+    if (g->b_sid >= 0) { i32 v = f->sample_id; memcpy(L->gmem + g->b_sid, &v, 4); }
+    if (g->b_spos >= 0) memcpy(L->gmem + g->b_spos, f->sample_pos, 8);
+    if (g->b_smaskin >= 0) { i32 v = (i32)f->mask_in; memcpy(L->gmem + g->b_smaskin, &v, 4); }
+    if (g->b_smask >= 0) { i32 v = -1; memcpy(L->gmem + g->b_smask, &v, 4); }
 }
 static int g_need_deriv;
 static void glsl_fs(gl_ctx_t *C, gl_frag_t *f) {
@@ -1686,6 +1696,7 @@ static void glsl_fs(gl_ctx_t *C, gl_frag_t *f) {
         }
     }
     if (g->w_depth) memcpy(&f->depth, L->gmem + g->b_depth, 4);
+    if (g->w_smask && g->b_smask >= 0) memcpy(&f->mask_out, L->gmem + g->b_smask, 4);
 }
 /* geometry shader: roda sobre um primitivo de entrada e manda as saídas ao raster */
 void gl_raster_gs_emit(gl_ctx_t *C, GLenum outprim, gl_vtx_t *v, const u8 *cut, int n);
@@ -1923,6 +1934,10 @@ void gl_glsl_stage(gl_ctx_t *C) {
     for (int i = 0; i < GLX_VAR; i++) S->interp[i] = MSL_INTERP_PERSP;
     if (g->compat && C->shade == GL_FLAT) for (int i = 0; i < 4; i++) S->interp[i] = MSL_INTERP_FLAT;
     for (int i = 0; i < g->nvar; i++) for (int k = 0; k < g->var[i].nslots; k++) S->interp[g->var[i].slot + k] = (u8)g->var[i].interp;
+    S->centroid = 0;
+    for (int i = 0; i < g->nvar; i++) if (g->var[i].aux == 1) for (int k = 0; k < g->var[i].nslots; k++) S->centroid |= 1u << (g->var[i].slot + k);
+    S->per_sample = g->per_sample;
+    S->writes_mask = g->w_smask;
     /* derivadas: o shader pede dFdx/dFdy/fwidth ou amostra textura com mipmap / filtros min e mag diferentes */
     g_need_deriv = uses(g->fsrc_user, "dFdx") || uses(g->fsrc_user, "dFdy") || uses(g->fsrc_user, "fwidth") ||
                    uses(g->fsrc_user, "dFdxFine") || uses(g->fsrc_user, "dFdyFine") || uses(g->fsrc_user, "dFdxCoarse") ||

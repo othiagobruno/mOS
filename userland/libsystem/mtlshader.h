@@ -38,6 +38,8 @@ typedef struct msl_tex {
     u64 lbpr[16];              /* bytes por linha de cada nível */
     u64 lslice[16];            /* bytes por fatia (slice) de cada nível */
     u32 swizzle;               /* MTLTextureSwizzleChannels (r | g<<8 | b<<16 | a<<24); 0 = identidade */
+    int samples;               /* multiamostra: 0 ou 1 = uma amostra. Com N > 1 a amostra s da camada l fica na
+                                  fatia l*N + s (slices = camadas*N), e o mesmo vale para o framebuffer do GL */
 } msl_tex_t;
 typedef struct msl_samp {
     int minf, magf, mipf;      /* 0 nearest, 1 linear; mip: 0 sem, 1 nearest, 2 linear */

@@ -692,8 +692,8 @@ static void tex_call(node_t *n, fr_t *fr, reg_t *r) {
         else if (m == T_GET_H) v = t->h >> lvl;
         else if (m == T_GET_D) v = t->d >> lvl;
         else if (m == T_GET_MIPS) v = t->levels;
-        else if (m == T_GET_SAMPLES) v = 1;
-        else v = t->type == MSL_TEX_CUBE_ARRAY ? t->slices / 6 : t->slices;
+        else if (m == T_GET_SAMPLES) v = (t->samples > 1 ? t->samples : 1);
+        else v = t->type == MSL_TEX_CUBE_ARRAY ? t->slices / 6 : t->slices / (t->samples > 1 ? t->samples : 1);
         r->i[0] = v < 1 ? 1 : v;
         return;
     }
@@ -803,8 +803,15 @@ static void tex_call(node_t *n, fr_t *fr, reg_t *r) {
         int x = (int)ri(&c, 0), y = c.n > 1 ? (int)ri(&c, 1) : 0, z = c.n > 2 ? (int)ri(&c, 2) : 0, slice = 0;
         int nx = ci + 1;
         if ((array || tt->tex == MSL_TEX_CUBE) && n->nv > nx) { reg_t sr; ev(n->v[nx], fr, &sr); slice = (int)ri(&sr, 0); nx++; }
-        if (n->nv > nx && tt->tex != MSL_TEX_2D_MS) { reg_t lr; ev(n->v[nx], fr, &lr); lvl = (int)ri(&lr, 0); }
+        int ms = tt->tex == MSL_TEX_2D_MS || tt->tex == MSL_TEX_2D_MS_ARRAY, smp = 0, ns = (t->samples > 1 ? t->samples : 1);
+        if (n->nv > nx) { reg_t lr; ev(n->v[nx], fr, &lr); if (ms) smp = (int)ri(&lr, 0); else lvl = (int)ri(&lr, 0); }
         if (lvl < 0 || lvl >= t->levels) lvl = 0;
+        if (ms) {
+            /* amostra s da camada l na fatia l*N + s (mtlshader.h) */
+            if (ns == 1) smp = 0;   /* textura alocada com uma amostra: todas as amostras são ela */
+            if (smp < 0 || smp >= ns || slice < 0 || slice >= (t->slices ? t->slices : 1) / ns) slice = -1;
+            else slice = slice * ns + smp;
+        }
         int w = t->w >> lvl, h = t->h >> lvl, d = t->d >> lvl;
         if (w < 1) w = 1;
         if (h < 1) h = 1;

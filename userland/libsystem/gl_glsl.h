@@ -9,6 +9,7 @@ typedef struct {
     char *name;               /* nome da global no MSL (a instância, nos blocos) */
     char *block;              /* bloco de interface: nome do bloco */
     int storage, loc, index, interp, rowmajor, arr, has_inst;
+    int aux;                  /* 1 centroid, 2 sample (interpolação em multiamostra) */
     char *type, *dims;        /* texto do tipo e das dimensões (o geometry shader gera as cópias de EmitVertex) */
 } gl_decl_t;
 typedef struct {

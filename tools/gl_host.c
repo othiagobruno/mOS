@@ -674,6 +674,166 @@ static void t_aniso_ffp(void) {
     gl_ctx_destroy(C);
 }
 
+
+/* multiamostra: renderbuffers de 4 amostras, completude, resolve no blit, cobertura, máscara, alfa->cobertura, linha e o
+ * framebuffer padrão multisample. A borda em x = 2.6 cobre 2 das 4 amostras do pixel 2 (x = 0.375, 0.875, 0.125, 0.625). */
+void glGetInternalformativ(GLenum target, GLenum ifmt, GLenum p, GLsizei bs, GLint *v);
+static void quad_x(float x1) { glBegin(GL_QUADS); glVertex2f(0, 0); glVertex2f(x1, 0); glVertex2f(x1, 8); glVertex2f(0, 8); glEnd(); }
+static void ms_resolve(GLuint ms, GLuint one) {
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, ms);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, one);
+    glBlitFramebuffer(0, 0, 8, 8, 0, 0, 8, 8, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, one);
+}
+static void t_msaa(void) {
+    gl_ctx_t *C = mk(0, 8, 8);
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
+    glOrtho(0, 8, 0, 8, -1, 1);
+    GLint v = 0;
+    glGetInternalformativ(GL_RENDERBUFFER, GL_RGBA8, GL_NUM_SAMPLE_COUNTS, 1, &v);
+    CHECK(v == 3, "GL_NUM_SAMPLE_COUNTS %d", v);
+    GLuint fb[2], rb[3], tex;
+    glGenFramebuffers(2, fb);
+    glGenRenderbuffers(3, rb);
+    glBindRenderbuffer(GL_RENDERBUFFER, rb[0]);
+    glRenderbufferStorageMultisample(GL_RENDERBUFFER, 3, GL_RGBA8, 8, 8);
+    glGetRenderbufferParameteriv(GL_RENDERBUFFER, GL_RENDERBUFFER_SAMPLES, &v);
+    CHECK(v == 4, "3 amostras pedidas viram 4 (%d)", v);
+    glBindRenderbuffer(GL_RENDERBUFFER, rb[1]);
+    glRenderbufferStorageMultisample(GL_RENDERBUFFER, 4, GL_DEPTH_COMPONENT24, 8, 8);
+    glBindRenderbuffer(GL_RENDERBUFFER, rb[2]);
+    glRenderbufferStorageMultisample(GL_RENDERBUFFER, 2, GL_DEPTH_COMPONENT24, 8, 8);
+    glBindFramebuffer(GL_FRAMEBUFFER, fb[0]);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, rb[0]);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, rb[2]);
+    CHECK(glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_INCOMPLETE_MULTISAMPLE, "4 e 2 amostras: incompleto");
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, rb[1]);
+    CHECK(glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE, "FBO 4x completo");
+    glGetIntegerv(GL_SAMPLES, &v);
+    CHECK(v == 4, "GL_SAMPLES %d", v);
+    glGetIntegerv(GL_SAMPLE_BUFFERS, &v);
+    CHECK(v == 1, "GL_SAMPLE_BUFFERS %d", v);
+    GLfloat sp[2];
+    glGetMultisamplefv(GL_SAMPLE_POSITION, 0, sp);
+    CHECK(sp[0] == 0.375f && sp[1] == 0.125f, "posição da amostra 0: %g %g", sp[0], sp[1]);
+    glGetMultisamplefv(GL_SAMPLE_POSITION, 4, sp);
+    CHECK(glGetError() == GL_INVALID_VALUE, "amostra 4 de 4: erro");
+    glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 8, 8, 0, GL_RGBA, GL_UNSIGNED_BYTE, 0);
+    glBindFramebuffer(GL_FRAMEBUFFER, fb[1]);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
+    u8 o[4];
+    /* borda: 2 de 4 amostras */
+    glBindFramebuffer(GL_FRAMEBUFFER, fb[0]);
+    glClearColor(0, 0, 0, 1);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    glColor3f(1, 0, 0);
+    quad_x(2.6f);
+    px(2, 0, o);
+    CHECK(glGetError() == GL_INVALID_OPERATION, "glReadPixels de FBO multisample: erro");
+    ms_resolve(fb[0], fb[1]);
+    px(1, 0, o); CHECK(o[0] == 255, "pixel coberto %d", o[0]);
+    px(2, 0, o); CHECK(near(o[0], 128, 1), "borda com 2 de 4 amostras %d", o[0]);
+    px(3, 0, o); CHECK(o[0] == 0, "pixel fora %d", o[0]);
+    /* sem GL_MULTISAMPLE: o centro (2.5) decide e todas as amostras recebem */
+    glBindFramebuffer(GL_FRAMEBUFFER, fb[0]);
+    glDisable(GL_MULTISAMPLE);
+    glClear(GL_COLOR_BUFFER_BIT);
+    quad_x(2.6f);
+    glEnable(GL_MULTISAMPLE);
+    ms_resolve(fb[0], fb[1]);
+    px(2, 0, o); CHECK(o[0] == 255, "sem GL_MULTISAMPLE: centro coberto %d", o[0]);
+    /* GL_SAMPLE_COVERAGE 0.5, normal e invertido */
+    for (int inv = 0; inv < 2; inv++) {
+        glBindFramebuffer(GL_FRAMEBUFFER, fb[0]);
+        glClear(GL_COLOR_BUFFER_BIT);
+        glEnable(GL_SAMPLE_COVERAGE);
+        glSampleCoverage(0.5f, (GLboolean)inv);
+        quad_x(8);
+        if (inv) { glColor3f(0, 1, 0); glSampleCoverage(0.5f, GL_FALSE); quad_x(8); glColor3f(1, 0, 0); }
+        glDisable(GL_SAMPLE_COVERAGE);
+        ms_resolve(fb[0], fb[1]);
+        px(5, 5, o);
+        if (!inv) CHECK(near(o[0], 128, 1), "cobertura 0.5: %d", o[0]);
+        else CHECK(near(o[0], 128, 1) && near(o[1], 128, 1), "cobertura 0.5 invertida completa a outra metade: %d %d", o[0], o[1]);
+    }
+    /* GL_SAMPLE_MASK */
+    glBindFramebuffer(GL_FRAMEBUFFER, fb[0]);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glEnable(GL_SAMPLE_MASK);
+    glSampleMaski(0, 1);
+    glGetIntegeri_v(GL_SAMPLE_MASK_VALUE, 0, &v);
+    CHECK(v == 1, "GL_SAMPLE_MASK_VALUE %d", v);
+    quad_x(8);
+    glDisable(GL_SAMPLE_MASK);
+    glSampleMaski(0, ~0u);
+    ms_resolve(fb[0], fb[1]);
+    px(5, 5, o); CHECK(near(o[0], 64, 1), "máscara 1 de 4: %d", o[0]);
+    /* alfa -> cobertura: alfa 0.5 cobre 2 amostras */
+    glBindFramebuffer(GL_FRAMEBUFFER, fb[0]);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glEnable(GL_SAMPLE_ALPHA_TO_COVERAGE);
+    glColor4f(1, 0, 0, 0.5f);
+    quad_x(8);
+    glDisable(GL_SAMPLE_ALPHA_TO_COVERAGE);
+    ms_resolve(fb[0], fb[1]);
+    px(5, 5, o); CHECK(near(o[0], 128, 1), "alfa 0.5 -> 2 amostras: %d", o[0]);
+    /* profundidade por amostra: rampa em z cruza o plano z = 0 dentro do pixel 4 */
+    glBindFramebuffer(GL_FRAMEBUFFER, fb[0]);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    glEnable(GL_DEPTH_TEST);
+    glColor3f(0, 0, 1);
+    quad_x(8);   /* z = 0 (0.5 na janela) */
+    glColor3f(1, 0, 0);
+    glBegin(GL_QUADS);   /* z na janela vai de 0 em x = 0 a 1 em x = 9: na frente até x = 4.5 (amostras 4.375 e 4.125) */
+    glVertex3f(0, 0, 1); glVertex3f(9, 0, -1); glVertex3f(9, 8, -1); glVertex3f(0, 8, 1);
+    glEnd();
+    glDisable(GL_DEPTH_TEST);
+    ms_resolve(fb[0], fb[1]);
+    px(4, 0, o); CHECK(near(o[0], 128, 1) && near(o[2], 128, 1), "profundidade em cada amostra: %d %d", o[0], o[2]);
+    /* linha de largura 1 em y = 3: metade das amostras das linhas 2 e 3 */
+    glBindFramebuffer(GL_FRAMEBUFFER, fb[0]);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glColor3f(1, 1, 1);
+    glBegin(GL_LINES); glVertex2f(0, 3); glVertex2f(8, 3); glEnd();
+    ms_resolve(fb[0], fb[1]);
+    u8 o2[4];
+    px(4, 2, o); px(4, 3, o2);
+    CHECK(near(o[0], 128, 1) && near(o2[0], 128, 1), "linha multisample: %d %d", o[0], o2[0]);
+    /* textura multisample */
+    GLuint mt;
+    glGenTextures(1, &mt);
+    glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, mt);
+    glTexImage2DMultisample(GL_TEXTURE_2D_MULTISAMPLE, 16, GL_RGBA8, 8, 8, GL_TRUE);
+    CHECK(glGetError() == GL_INVALID_OPERATION, "16 amostras: acima do máximo");
+    glTexImage2DMultisample(GL_TEXTURE_2D_MULTISAMPLE, 8, GL_RGBA8, 8, 8, GL_FALSE);
+    glGetTexLevelParameteriv(GL_TEXTURE_2D_MULTISAMPLE, 0, GL_TEXTURE_SAMPLES, &v);
+    CHECK(v == 8, "GL_TEXTURE_SAMPLES %d", v);
+    glGetTexLevelParameteriv(GL_TEXTURE_2D_MULTISAMPLE, 0, GL_TEXTURE_FIXED_SAMPLE_LOCATIONS, &v);
+    CHECK(v == 0, "GL_TEXTURE_FIXED_SAMPLE_LOCATIONS %d", v);
+    glBindFramebuffer(GL_FRAMEBUFFER, fb[1]);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D_MULTISAMPLE, mt, 0);
+    CHECK(glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE, "FBO com textura 8x");
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    /* framebuffer padrão multisample (kCGLPFASamples 4) */
+    gl_ctx_set_samples(C, 4);
+    glGetIntegerv(GL_SAMPLES, &v);
+    CHECK(v == 4, "framebuffer padrão: GL_SAMPLES %d", v);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glColor3f(1, 0, 0);
+    quad_x(2.6f);
+    px(2, 0, o); CHECK(near(o[0], 128, 1), "framebuffer padrão resolvido no glReadPixels: %d", o[0]);
+    glFlush();
+    static u8 bgra[8 * 8 * 4];
+    gl_ctx_swap(C);
+    gl_ctx_read_bgra(C, bgra, 32, 8, 8);
+    CHECK(near(bgra[(7 * 8 + 2) * 4 + 2], 128, 1), "resolve na apresentação: %d", bgra[(7 * 8 + 2) * 4 + 2]);
+    CHECK(glGetError() == GL_NO_ERROR, "sem erro no fim");
+    gl_ctx_destroy(C);
+}
+
 void gl_glsl_host_tests(int *fails, int *checks);
 int main(void) {
     t_clear_and_state();
@@ -688,6 +848,7 @@ int main(void) {
     t_stipple();
     t_debug();
     t_aniso_ffp();
+    t_msaa();
     gl_glsl_host_tests(&fails, &checks);
     printf("gl_host: %d/%d ok\n", checks - fails, checks);
     return fails != 0;

@@ -62,12 +62,14 @@ typedef struct {
     u8 *data;                  /* w*h*d*bpp */
     u8 *cdata;                 /* imagem comprimida original (glGetCompressedTexImage) */
     i64 csize;
+    int ns;                    /* amostras por pixel (texturas multisample; 0 = uma); data tem w*h*d*ns texels */
 } gl_level_t;
 typedef struct gl_tex {
     u32 name;
     GLenum target;
     gl_level_t lv[16];
     int immutable, imm_levels;
+    int fixed_loc;             /* GL_TEXTURE_FIXED_SAMPLE_LOCATIONS */
     /* parâmetros de amostragem */
     GLenum min_f, mag_f, wrap[3], cmp_mode, cmp_func;
     float min_lod, max_lod, lod_bias, border[4], aniso;
@@ -125,6 +127,7 @@ typedef struct {
     int w, h, ncolor;
     int srgb[GLX_DRAW], isint[GLX_DRAW];
     int ybottom;               /* 1: a linha 0 do msl_tex_t é a de baixo (framebuffer padrão e texturas GL) */
+    int samples;               /* amostras por pixel de todos os anexos (1 = sem multiamostra) */
 } gl_target_t;
 
 /* ---- VAO */
@@ -235,6 +238,10 @@ typedef struct {
     int discard;
     u32 prim_id;
     float dx[GLX_VAR][4], dy[GLX_VAR][4];   /* derivadas em x e y dos slots em gl_stage_t.dmask */
+    int sample_id;             /* gl_SampleID (sombreamento por amostra; 0 fora dele) */
+    float sample_pos[2];       /* gl_SamplePosition */
+    u32 mask_in;               /* gl_SampleMaskIn: amostras cobertas */
+    u32 mask_out;              /* gl_SampleMask escrito pelo shader (S->writes_mask) */
 } gl_frag_t;
 
 struct gl_ctx;
@@ -253,6 +260,9 @@ typedef struct {
     void *self;
     void (*gs)(struct gl_ctx *C, gl_vtx_t **in, int n, u32 prim);   /* geometry shader (0 = não há) */
     GLenum gs_in;              /* primitivo de entrada do GS */
+    int per_sample;            /* o fragment shader lê gl_SampleID/gl_SamplePosition: roda uma vez por amostra */
+    int writes_mask;           /* o fragment shader escreve gl_SampleMask */
+    u32 centroid;              /* slots com interpolação centroid */
 } gl_stage_t;
 
 /* ---- contexto */
@@ -264,6 +274,8 @@ typedef struct gl_ctx {
     /* framebuffer padrão (back e front; linha 0 embaixo) */
     msl_tex_t fb_back, fb_front, fb_depth;
     int fb_w, fb_h, fb_double, fb_has_depth, fb_has_stencil, fb_alpha;
+    int fb_samples;            /* framebuffer padrão multisample (kCGLPFASamples); fb_res recebe o resolve */
+    msl_tex_t fb_res;
     gl_names_t vaos, fbos, queries, xfbs;
     gl_vao_t vao0, *vao;
     gl_fbo_t *draw_fbo, *read_fbo;
@@ -300,6 +312,7 @@ typedef struct gl_ctx {
     GLenum point_origin;
     GLenum logic_op;
     float samp_cov; int samp_inv;
+    u32 samp_mask;             /* glSampleMaski(0, m) */
     GLenum provoke;
     u32 restart_idx;
     GLenum hint[8];
@@ -384,6 +397,8 @@ void gl_unpack_pixels(gl_ctx_t *C, int w, int h, int d, GLenum format, GLenum ty
 void gl_pack_pixels(gl_ctx_t *C, const msl_tex_t *t, int lvl, int layer, int x, int y, int w, int h, GLenum format, GLenum type, void *dst, int ybottom);
 int gl_resolve_target(gl_ctx_t *C, int draw, gl_target_t *T);
 void gl_fb_resize(gl_ctx_t *C, int w, int h);
+void gl_ctx_set_samples(gl_ctx_t *C, int n);   /* CGL: framebuffer padrão com n amostras */
+const msl_tex_t *gl_fb_resolved(gl_ctx_t *C, const msl_tex_t *src);   /* resolve do framebuffer padrão multisample */
 const u8 *gl_buf_ptr(gl_ctx_t *C, gl_buf_t *b, const void *ptr_or_off, i64 need);
 
 /* rasterizador (gl_raster.c) */
