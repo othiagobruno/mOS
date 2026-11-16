@@ -61,13 +61,7 @@ K(kSecCFErrorResourceAltered, "SecCSResourceAltered") K(kSecCFErrorResourceMissi
 K(kSecCodeInfoCertificates, "certificates") K(kSecCodeInfoMainExecutable, "main-executable")
 K(kSecCodeInfoPList, "info-plist") K(kSecCodeInfoUnique, "unique")
 K(kSecCodeSignerEntitlements, "entitlements") K(kSecCodeSignerFlags, "flags") K(kSecCodeSignerIdentity, "signer")
-/* DiskArbitration */
-K(kDADiskDescriptionDeviceModelKey, "DADeviceModel") K(kDADiskDescriptionDeviceRevisionKey, "DADeviceRevision")
-K(kDADiskDescriptionDeviceVendorKey, "DADeviceVendor") K(kDADiskDescriptionMediaBSDNameKey, "DAMediaBSDName")
-K(kDADiskDescriptionMediaRemovableKey, "DAMediaRemovable") K(kDADiskDescriptionMediaSizeKey, "DAMediaSize")
-K(kDADiskDescriptionVolumeNameKey, "DAVolumeName") K(kDADiskDescriptionVolumePathKey, "DAVolumePath")
-K(kDADiskDescriptionVolumeUUIDKey, "DAVolumeUUID")
-/* kDADiskDescriptionMatchVolumeMountable e WatchVolumePath são CFDictionary/CFArray: ficam nil (o loader dá 0) */
+/* DiskArbitration: diskarb.c */
 /* CoreServices / LaunchServices / Spotlight */
 K(_kLSOpenOptionBackgroundLaunchKey, "LSBackgroundLaunch")
 K(kLSQuarantineDataURLKey, "LSQuarantineDataURL") K(kLSQuarantineOriginURLKey, "LSQuarantineOriginURL")
@@ -347,25 +341,6 @@ OSStatus AuthorizationRightSet(void *a, const char *right, id_ rules, id_ desc, 
     return errAuthorizationDenied;
 }
 Boolean SMJobBless(id_ domain, id_ label, void *auth, id_ *err) { (void)domain; (void)label; (void)auth; if (err) *err = 0; return 0; }
-
-/* ---- DiskArbitration: sem sessão (o Chrome trata NULL como "não disponível") */
-void *DASessionCreate(void *alloc) { (void)alloc; return 0; }
-void DASessionScheduleWithRunLoop(void *s, void *rl, id_ mode) { (void)s; (void)rl; (void)mode; }
-void DASessionUnscheduleFromRunLoop(void *s, void *rl, id_ mode) { (void)s; (void)rl; (void)mode; }
-void *DADiskCreateFromBSDName(void *alloc, void *s, const char *name) { (void)alloc; (void)s; (void)name; return 0; }
-id_ DADiskCopyDescription(void *d) { (void)d; return 0; }
-unsigned DADiskCopyIOMedia(void *d) { (void)d; return 0; }
-void *DADiskCopyWholeDisk(void *d) { (void)d; return 0; }
-void DADiskClaim(void *d, unsigned o, void *rel, void *relctx, void *cb, void *ctx) { (void)d; (void)o; (void)rel; (void)relctx; (void)cb; (void)ctx; }
-void DADiskUnclaim(void *d) { (void)d; }
-void DADiskEject(void *d, unsigned o, void *cb, void *ctx) { (void)d; (void)o; (void)cb; (void)ctx; }
-void DADiskUnmount(void *d, unsigned o, void *cb, void *ctx) { (void)d; (void)o; (void)cb; (void)ctx; }
-void *DADissenterCreate(void *alloc, int status, id_ str) { (void)alloc; (void)status; (void)str; return 0; }
-int DADissenterGetStatus(void *d) { (void)d; return 0; }
-id_ DADissenterGetStatusString(void *d) { (void)d; return 0; }
-void DARegisterDiskAppearedCallback(void *s, id_ match, void *cb, void *ctx) { (void)s; (void)match; (void)cb; (void)ctx; }
-void DARegisterDiskDisappearedCallback(void *s, id_ match, void *cb, void *ctx) { (void)s; (void)match; (void)cb; (void)ctx; }
-void DARegisterDiskDescriptionChangedCallback(void *s, id_ match, id_ watch, void *cb, void *ctx) { (void)s; (void)match; (void)watch; (void)cb; (void)ctx; }
 
 /* ---- IOKit: conexões com drivers (IOUserClient) não existem */
 #define kIOReturnUnsupported ((kern_return_t)0xE00002C7)

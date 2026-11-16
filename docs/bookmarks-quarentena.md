@@ -48,3 +48,15 @@ Fase 9 de `docs/arquivos-volumes-plano.md`.
 `sh tools/attrlist_test.sh` (71 verificações; inclui criar/resolver bookmark, mover e renomear com `isStale`,
 apagado, corrompido, alias ida e volta, URL de referência com caminho dentro, quarentena gravada e lida).
 `zig cc -target x86_64-macos -fsyntax-only userland/cli-macos/xattr.c`.
+
+# DiskArbitration (`userland/libsystem/diskarb.c`)
+
+O framework sobre os volumes reais (`getfsstat`/`statfs`): `DASessionCreate`, `DADiskCreateFromBSDName` (aceita
+`/dev/diskN`, `/dev/rdiskN`), `DADiskCreateFromVolumePath` (o ponto de montagem), `DADiskGetBSDName`,
+`DADiskCopyWholeDisk`, `DADiskCopyDescription` com as chaves da Apple (Volume*, Media*, Device*: nome, tipo de fs,
+caminho, tamanho, gravável, removível, protocolo "SATA"/"USB"/"Disk Image"), `DADiskUnmount`/`DADiskEject`
+(`SYS_IMGDETACH`; o volume do sistema dá `kDAReturnNotPermitted`), `DADiskMount` (já montado), `DADiskRename`
+(`kDAReturnUnsupported`), `DADissenter*`, os filtros `kDADiskDescriptionMatch*` e os callbacks de disco que
+aparece (os existentes ao agendar, depois os novos) e some, entregues na fila da sessão (vigia de 1 s).
+Nomes BSD: o sistema é `disk0s1`; cada volume de `/Volumes` é `disk<N>s1` (N >= 2) enquanto estiver montado.
+Sem IOKit: `DADiskCopyIOMedia`/`DADiskCreateFromIOMedia` devolvem 0. Teste: `sh tools/diskarb_test.sh` (21).
