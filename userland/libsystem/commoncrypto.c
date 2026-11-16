@@ -163,8 +163,13 @@ int uuid_parse(const char *in, u8_ *u) {
     return in[36] ? -1 : 0;
 }
 
-/* ---- execinfo: o mOS ainda não desenrola a pilha do processo */
-int backtrace(void **buffer, int size) { (void)buffer; (void)size; return 0; }
+/* ---- execinfo: desenrola a pilha pelos ponteiros de frame (backtrace_from_fp, libc_bsd.c), a partir do frame
+ * deste próprio backtrace — o primeiro endereço devolvido é o retorno para quem chamou, como no macOS/glibc. */
+int backtrace_from_fp(void *startfp, void **array, int size);
+int backtrace(void **buffer, int size) {
+    if (size <= 0) return 0;
+    return backtrace_from_fp(__builtin_frame_address(0), buffer, size);
+}
 char **backtrace_symbols(void *const *buffer, int size) { (void)buffer; (void)size; return 0; }
 void backtrace_symbols_fd(void *const *buffer, int size, int fd) { (void)buffer; (void)size; (void)fd; }
 void backtrace_image_offsets(void *const *array, void *image_offsets, int size) { (void)array; (void)image_offsets; (void)size; }

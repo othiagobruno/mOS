@@ -28,13 +28,14 @@ Este documento separa o que está pronto e testado do que falta. "Teste de host"
    `wcstod`/`wcstold`.
 3. **long double no stdio.** `strtold`/`strtold_l`/`wcstold` reduzem a double e o `printf("%Lf")` converte para double
    (`stdio.c`). Plano: `floatscan` e conversão de 80 bits exatas (algoritmo do musl, MIT).
-4. **Stubs C de `sys_zerados.c` desta frente** (todos `void f(void) {}`): `strtoll_l`, `strtoull_l`, `lldiv`, `flsl`,
-   `timingsafe_bcmp`, `initstate`, `setstate`, `vasprintf_l`, `__ashlti3`, `__lshrti3`, `sys_nerr` (é variável),
-   `syscall`, `backtrace_from_fp`, `backtrace_async`, `NXGetArchInfoFromCpuType`, `NXGetLocalArchInfo`,
-   `malloc_logger`, `__syscall_logger`, `os_unfair_lock_assert_not_owner`, `os_proc_available_memory`,
-   `pthread_fchdir_np`, `pthread_from_mach_thread_np`, `pthread_get_qos_class_np`, `pthread_introspection_hook_install`,
-   `__pthread_workqueue_setkill`, `posix_spawnattr_setexceptionports_np`, `open_dprotected_np`, `xattr_name_with_flags`,
-   `matrix_identity_*`. (Os de libm saíram neste turno.) Os de `getfsent`/`vm_read`/`mach_*` vão aos donos.
+4. **Stubs C de `sys_zerados.c` desta frente.** **Feito** (`userland/libsystem/libc_bsd.c` + `swiftsupport.c`,
+   teste `tools/libc_bsd_hosttest.sh` 37/37): o gerador `random`/`srandom`/`initstate`/`setstate` da BSD (porte do
+   musl, substitui o atalho para `rand()`), `ffs`/`ffsl`/`ffsll`/`fls`/`flsl`/`flsll`, `lldiv`, `timingsafe_bcmp`,
+   `NXGetArchInfoFromCpuType`/`NXGetLocalArchInfo`, `backtrace_from_fp`/`backtrace_async` (e o `backtrace` de
+   `commoncrypto.c`, que devolvia 0, agora anda pelos ponteiros de frame), `syscall`, `sys_nerr`, `vasprintf_l`,
+   `strtoll_l`/`strtoull_l`, `open_dprotected_np`, `xattr_name_with_flags`, os `*_np` de pthread/posix_spawn, os
+   ganchos `malloc_logger`/`__syscall_logger`, e `__ashlti3`/`__lshrti3`/`__ashrti3`. Falta ainda: `matrix_identity_*`
+   e `__invert_f*` (SIMD; mais perto da Accelerate). Os de `getfsent`/`vm_read`/`mach_*` vão aos donos.
 5. **libc++ fallback.** `libcxx.c`/`cxxabi.c` só valem sem a dylib no disco; o `__cxa_throw` de lá ainda aborta.
    Plano: com a dylib sempre na imagem, tirar o caminho de reserva ou fazê-lo chamar o motor de exceção real.
 6. **Unwind `-O1`/`-O2`.** Bateria de casos (frame pointer omitido, `-fomit-frame-pointer`, funções folha, tail call,
