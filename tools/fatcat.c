@@ -9,6 +9,9 @@
  */
 #include "fs.h"
 #include <time.h>
+#ifndef _WIN32
+#define _fseeki64 fseeko   /* no Linux/macOS o fseek de 64 bits é o fseeko */
+#endif
 
 long long g_live_allocs, g_live_bytes;
 void rtc_now(datetime_t *dt) {
@@ -18,6 +21,11 @@ void rtc_now(datetime_t *dt) {
     dt->hour = m->tm_hour; dt->minute = m->tm_min; dt->second = m->tm_sec; dt->weekday = m->tm_wday;
 }
 u32 rand32(void) { return (u32)rand() << 16 ^ (u32)rand(); }
+/* sem o page cache do kernel (fs/pcache.c): leitura e escrita diretas no arquivo de imagem */
+bool blk_read(blkdev_t *d, u64 off, void *buf, u64 len) { return d->read(d, off, buf, len); }
+bool blk_write(blkdev_t *d, u64 off, const void *buf, u64 len) { return d->write && d->write(d, off, buf, len); }
+bool blk_flush(blkdev_t *d) { return !d->flush || d->flush(d); }
+
 dmount_t *dfs_attach(const dfs_ops_t *o, blkdev_t *d, const char *v, const char *s, const char *f, void *p, u64 r) { return NULL; }
 dnode_t *dfs_new_child(dnode_t *dir, const char *name, u8 type, u64 size) { return NULL; }
 

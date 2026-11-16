@@ -88,6 +88,8 @@ typedef struct hfs_wr {
     u64 jstart, jend;
     txent_t *tx;
     int ntx, captx;
+    struct { u32 start, count; } trim[64];   /* blocos soltos nesta transação: TRIM depois do tx_commit */
+    int ntrim;
 } hfs_wr_t;
 
 /* ================================================================ utilidades */
@@ -371,10 +373,42 @@ static void bm_set(hfs_wr_t *w, u32 b, bool v) {
     w->bm_dirty[(b >> 3) / w->h->bs] = 1;
 }
 
+static void trim_note(hfs_wr_t *w, u32 start, u32 count) {
+    for (int i = 0; i < w->ntrim; i++) {
+        if (w->trim[i].start + w->trim[i].count == start) { w->trim[i].count += count; return; }
+        if (start + count == w->trim[i].start) { w->trim[i].start = start; w->trim[i].count += count; return; }
+    }
+    if (w->ntrim < (int)ARRAY_LEN(w->trim)) { w->trim[w->ntrim].start = start; w->trim[w->ntrim].count = count; w->ntrim++; return; }
+    u32 lo = start, hi = start + count;                    /* cheia: uma faixa só que cubra tudo (conferida no bitmap) */
+    for (int i = 0; i < w->ntrim; i++) { lo = MIN(lo, w->trim[i].start); hi = MAX(hi, w->trim[i].start + w->trim[i].count); }
+    w->ntrim = 1; w->trim[0].start = lo; w->trim[0].count = hi - lo;
+}
 static void blocks_mark(hfs_wr_t *w, u32 start, u32 count, bool used) {
     for (u32 i = 0; i < count; i++) bm_set(w, start + i, used);
     put32(w->vh + 48, be32(w->vh + 48) + (used ? -count : count));
     w->vh_dirty = true;
+    if (!used && count) trim_note(w, start, count);
+}
+#ifdef MOS_HOST_TEST
+bool (*hfs_discard_hook)(blkdev_t *d, u64 off, u64 len);   /* tools/voltest.c */
+static bool hfs_discard(blkdev_t *d, u64 off, u64 len) { return hfs_discard_hook ? hfs_discard_hook(d, off, len) : false; }
+#else
+bool blk_discard(blkdev_t *d, u64 off, u64 len);
+static bool hfs_discard(blkdev_t *d, u64 off, u64 len) { return blk_discard(d, off, len); }
+#endif
+/* TRIM (blk_discard) dos blocos soltos, só depois que o bitmap novo está no disco e só dos que seguem livres */
+static void trim_flush(hfs_wr_t *w) {
+    u32 bs = w->h->bs;
+    for (int i = 0; i < w->ntrim; i++) {
+        u32 end = MIN(w->trim[i].start + w->trim[i].count, w->total_blocks), run = 0;
+        for (u32 b = w->trim[i].start; b <= end; b++) {
+            bool fr = b < end && !bm_get(w, b);
+            if (fr) { run++; continue; }
+            if (run) hfs_discard(w->h->dev, (u64)(b - run) * bs, (u64)run * bs);
+            run = 0;
+        }
+    }
+    w->ntrim = 0;
 }
 
 /* maior trecho livre começando exatamente em b (até max) */
@@ -614,7 +648,8 @@ static bool tx_commit(hfs_wr_t *w) {
     if (ok) {
         memset(w->bm_dirty, 0, w->bm_pages);
         w->vh_dirty = false;
-    } else kprintf("hfs+: falha ao gravar a transação\n");
+        if (w->ntrim) trim_flush(w);                       /* a transação (bitmap incluso) já está no lugar */
+    } else { kprintf("hfs+: falha ao gravar a transação\n"); w->ntrim = 0; }
     tx_clear(w);
     nodes_drop(w);
     return ok;
@@ -622,6 +657,7 @@ static bool tx_commit(hfs_wr_t *w) {
 
 /* desfaz uma operação que falhou no meio: nada ainda foi para o disco além de dados em blocos livres */
 static void tx_abort(hfs_wr_t *w) {
+    w->ntrim = 0;                                          /* o que seria solto continua em uso no disco */
     tx_clear(w);
     nodes_drop(w);
     u8 vh[512];

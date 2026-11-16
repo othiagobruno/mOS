@@ -94,9 +94,20 @@ Limitações conhecidas:
 - O VFS do mOS compara nomes com diferença de maiúsculas e o FAT/HFS+ sem: criar `A.txt` ao lado de
   `a.txt` pelo VFS substitui o mesmo arquivo no disco.
 
+## TRIM (blk_discard)
+
+Blocos soltos (apagar, truncar, substituir) viram `blk_discard()` no SSD (`kernel/dev/storage.c`, ATA DATA SET
+MANAGEMENT no AHCI), juntando faixas contíguas. Nunca antes da hora: o FAT anota os clusters em `free_chain` e só
+descarta em `fat_sync`, depois que a FAT nova foi gravada e só os que continuam livres; o HFS+ anota em
+`blocks_mark` e descarta no fim do `tx_commit` (journal, bitmap e B-trees já no lugar), só o que o bitmap ainda dá
+como livre; `tx_abort` esquece a lista. Uma queda antes do flush nunca deixa arquivo apontando para bloco zerado.
+Teste: `tools/fattrim_test.c` (FAT: descarte só de cluster livre na FAT do disco, depois da FAT gravada, vizinhos e
+reaproveitados intactos) e o `voltest` com o descarte zerando os bytes (210 verificações + `volimg check` + a queda
+simulada em 29 pontos).
+
 ## Testes
 
-Ferramentas no host (Windows, sem WSL/fsck): `tools/volimg.c` é independente dos drivers do kernel
+Ferramentas no host (Windows, sem WSL/fsck; também no Linux com gcc, ver abaixo): `tools/volimg.c` é independente dos drivers do kernel
 (formata, verifica e lê); `tools/voltest.c` roda os drivers reais (`dfs` + `fat.c` + `hfsplus*.c`).
 
 ```
@@ -115,6 +126,18 @@ voltest c.img --crash build/volimg.exe   # corta a energia depois de k escritas 
                               # gravar+renomear; a cada k remonta, confere atomicidade e roda o check
 volimg ls t.img 4 | volimg cat t.img 4 "/caminho"
 ```
+
+No Linux:
+
+```
+S="kernel/fs/apfs.c kernel/fs/blkdev.c kernel/fs/bzip2.c kernel/fs/dfs.c kernel/fs/dmg.c kernel/fs/hfsplus.c kernel/fs/hfsplus_wr.c kernel/fs/inflate.c kernel/fs/lzfse.c kernel/fs/xz.c kernel/fs/fat.c"
+gcc -O1 -D_FILE_OFFSET_BITS=64 tools/volimg.c -o /tmp/volimg
+gcc -O1 -D_FILE_OFFSET_BITS=64 -DMOS_HOST_TEST -Ikernel/include -Itools tools/voltest.c $S -o /tmp/voltest
+gcc -O1 -DMOS_HOST_TEST -Ikernel/include -Itools tools/fattrim_test.c $S -o /tmp/fattrim
+gcc -O1 -D_FILE_OFFSET_BITS=64 -DMOS_HOST_TEST -Ikernel/include -Itools tools/fatcat.c kernel/fs/fat.c -o /tmp/fatcat
+```
+
+O `voltest`, o `fatcat` e o `fattrim_test` usam `blk_read`/`blk_write` diretos (sem o `fs/pcache.c`).
 
 No QEMU (`run.ps1`/`qemu-test.ps1` sem `-Persist` usam `-snapshot`: as escritas não chegam ao arquivo):
 
