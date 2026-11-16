@@ -1251,7 +1251,8 @@ static void ffp_fs(gl_ctx_t *C, gl_frag_t *f) {
         double c[3] = {tc[0] / q, tc[1] / q, tc[2] / q};
         if (T->mt->type == MSL_TEX_CUBE) { c[0] = tc[0]; c[1] = tc[1]; c[2] = tc[2]; }
         /* lod pela derivada da coordenada em texels */
-        double lod = 0;
+        double lod = 0, axis[2] = {0, 0};
+        int an = 0;
         if (T->mt->levels > 1 || T->s.minf != T->s.magf) {
             double ax = 0, ay = 0;
             for (int k = 0; k < T->nc && k < 3; k++) {
@@ -1262,6 +1263,16 @@ static void ffp_fs(gl_ctx_t *C, gl_frag_t *f) {
             }
             double rho2 = ax > ay ? ax : ay;
             lod = rho2 > 0 ? 0.5 * __builtin_log2(rho2) : -1000;
+            /* anisotropia: N amostras no eixo maior da pegada, lod pelo eixo maior / N */
+            if (T->s.aniso > 1 && T->nc == 2 && T->mt->levels > 1 && rho2 > 0 && rho2 < 1e30) {
+                double mj = __builtin_sqrt(rho2), mn = __builtin_sqrt(ax > ay ? ay : ax);
+                an = mn > 0 ? (int)__builtin_ceil(mj / mn) : (int)T->s.aniso;
+                if (an > (int)T->s.aniso) an = (int)T->s.aniso;
+                if (an > 1) {
+                    for (int k = 0; k < 2; k++) axis[k] = (ax >= ay ? f->dx[S_TEX0 + u][k] : f->dy[S_TEX0 + u][k]) / q;
+                    lod = __builtin_log2(mj / an);
+                }
+            }
             lod += C->te[u].lod_bias + T->s.lodbias;
         }
         double out[4];
@@ -1283,6 +1294,14 @@ static void ffp_fs(gl_ctx_t *C, gl_frag_t *f) {
             default: pass = 1;
             }
             out[0] = pass; out[1] = out[2] = 0; out[3] = 1;
+        } else if (an > 1) {
+            double acc[4] = {0, 0, 0, 0};
+            for (int j = 0; j < an; j++) {
+                double fr = (j + 0.5) / an - 0.5, c2[3] = {c[0] + axis[0] * fr, c[1] + axis[1] * fr, c[2]}, o2[4];
+                msl_tex_sample(T->mt, &T->s, c2, T->nc, 0, lod, o2);
+                for (int k = 0; k < 4; k++) acc[k] += o2[k];
+            }
+            for (int k = 0; k < 4; k++) out[k] = acc[k] / an;
         } else msl_tex_sample(T->mt, &T->s, c, T->nc, 0, lod, out);
         msl_tex_swizzle(T->mt, out);
         for (int k = 0; k < 4; k++) texu[u][k] = (float)out[k];

@@ -637,6 +637,43 @@ static void t_debug(void) {
     gl_ctx_destroy(C);
 }
 
+/* anisotropia na fixed function: pegada 4:1 */
+static void t_aniso_ffp(void) {
+    gl_ctx_t *C = mk(0, 8, 8);
+    GLfloat mx = 0;
+    glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, &mx);
+    CHECK(mx == 16, "GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT %g", mx);
+    GLuint tex;
+    glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    static u8 lv[64 * 64 * 4];
+    for (int l = 0, w = 64; w >= 1; l++, w /= 2) {
+        for (int i = 0; i < w * w; i++) { lv[i * 4] = l == 2 || l == 4 ? 0 : 255; lv[i * 4 + 1] = l == 4 ? 255 : 0; lv[i * 4 + 2] = l == 2 ? 255 : 0; lv[i * 4 + 3] = 255; }
+        glTexImage2D(GL_TEXTURE_2D, l, GL_RGBA8, w, w, 0, GL_RGBA, GL_UNSIGNED_BYTE, lv);
+    }
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glEnable(GL_TEXTURE_2D);
+    glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
+    glOrtho(0, 8, 0, 8, -1, 1);
+    u8 o[4];
+    for (int pass = 0; pass < 2; pass++) {
+        if (pass) glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT, 4);
+        glBegin(GL_QUADS);
+        glTexCoord2f(0, 0); glVertex2f(0, 0);
+        glTexCoord2f(2, 0); glVertex2f(8, 0);
+        glTexCoord2f(2, 0.5f); glVertex2f(8, 8);
+        glTexCoord2f(0, 0.5f); glVertex2f(0, 8);
+        glEnd();
+        px(4, 4, o);
+        if (!pass) CHECK(o[1] == 255 && o[2] == 0, "fixed function sem anisotropia: nível 4 (%d %d %d)", o[0], o[1], o[2]);
+        else CHECK(o[2] == 255 && o[1] == 0, "fixed function com 4x: nível 2 (%d %d %d)", o[0], o[1], o[2]);
+    }
+    gl_ctx_destroy(C);
+}
+
 void gl_glsl_host_tests(int *fails, int *checks);
 int main(void) {
     t_clear_and_state();
@@ -650,6 +687,7 @@ int main(void) {
     t_arb_programs();
     t_stipple();
     t_debug();
+    t_aniso_ffp();
     gl_glsl_host_tests(&fails, &checks);
     printf("gl_host: %d/%d ok\n", checks - fails, checks);
     return fails != 0;

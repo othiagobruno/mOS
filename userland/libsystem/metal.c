@@ -826,6 +826,7 @@ static id dv_newsamp(id s, SEL c, id d) {
         m->s.compare = (int)dget(d, "compareFunction");
         m->s.lodmin = dgetf(d, "lodMinClamp");
         m->s.lodmax = dgetf(d, "lodMaxClamp");
+        m->s.aniso = (float)dget(d, "maxAnisotropy");
         id l = (id)dget(d, "label");
         if (l) o_set_label((id)m, 0, l);
     } else { m->s.normalized = 1; m->s.lodmax = 3.4e38f; }
