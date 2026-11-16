@@ -366,8 +366,7 @@ id_ CFURLCreateAbsoluteURLWithBytes(void *alloc, const u8 *bytes, long len, u32 
     CFRelease(u);
     return a;
 }
-id_ CFURLCreateFilePathURL(void *alloc, id_ u, id_ *err) { (void)alloc; if (err) *err = 0; return u ? CFRetain(u) : 0; }
-id_ CFURLCreateFileReferenceURL(void *alloc, id_ u, id_ *err) { (void)alloc; if (err) *err = 0; return u ? CFRetain(u) : 0; }
+/* CFURLCreateFilePathURL, CFURLCreateFileReferenceURL: bookmark.c (/.file/id=) */
 id_ CFURLCreateCopyAppendingPathComponent(void *alloc, id_ u, id_ comp, unsigned char dir) {
     (void)alloc;
     if (!u || !comp) return 0;

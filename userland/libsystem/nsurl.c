@@ -678,6 +678,7 @@ void cx_darwin_init(void) {
     { extern void cx_quartzcore_init(void); cx_quartzcore_init(); }   /* IOSurface/CALayer (quartzcore.c) */
     { extern void cx_electron_compat_init(void); cx_electron_compat_init(); }   /* KVC, envios adiados... (electron_compat.c) */
     { extern void cx_openurl_init(void); cx_openurl_init(); }   /* openURL:, LaunchServices e kAEGetURL entre apps (openurl.c) */
+    { extern void cx_bookmark_init(void); cx_bookmark_init(); }   /* bookmarks, alias, fileReferenceURL (bookmark.c) */
 }
 
 /* ---- CFURL (CFURLRef = NSURL*); regra Create/Copy: +1 */

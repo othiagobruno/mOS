@@ -53,3 +53,11 @@ long kchmod(const char *p, unsigned m) {
     v->mode = (m & 07777) | 0x10000u;
     return 0;
 }
+
+long vfs_read_all(const char *p, void *buf, long cap) {
+    vnode_t *v = vfs_lookup(p);
+    if (!v || v->dir) return -1;
+    long n = (long)v->size < cap ? (long)v->size : cap;
+    if (n) memcpy(buf, v->data, (size_t)n);
+    return n;
+}

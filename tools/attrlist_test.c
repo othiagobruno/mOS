@@ -28,6 +28,26 @@ static long fdoff[64];
 long lseek(int fd, long off, int wh) { if (wh == 0) fdoff[fd] = off; else if (wh == 1) fdoff[fd] += off; return fdoff[fd]; }
 int rename(const char *a, const char *b) { (void)a; (void)b; return 0; }
 int geteuid(void) { return 501; }
+int getuid(void) { return 501; }
+const char *getlogin(void) { return "visitante"; }
+/* E/S de arquivo do bookmark.c/quarantine.c (compilados com -Dopen=t_open...) indo para o VFS do kernel */
+long vfs_read_all(const char *p, void *buf, long cap);
+static struct { char path[512]; unsigned char *b; long n, off; int wr, used; } tf[8];
+int t_open(const char *p, int flags, ...) {
+    for (int i = 0; i < 8; i++) if (!tf[i].used) {
+        memset(&tf[i], 0, sizeof tf[i]); tf[i].used = 1; strlcpy(tf[i].path, p, sizeof tf[i].path);
+        tf[i].wr = (flags & 3) != 0;
+        if (!tf[i].wr) { tf[i].b = malloc(1 << 20); tf[i].n = vfs_read_all(p, tf[i].b, 1 << 20); if (tf[i].n < 0) { free(tf[i].b); tf[i].used = 0; return -1; } }
+        else tf[i].b = malloc(1 << 20);
+        return 100 + i;
+    }
+    return -1;
+}
+long t_read(int fd, void *b, size_t n) { int i = fd - 100; long k = tf[i].n - tf[i].off; if (k > (long)n) k = (long)n; memcpy(b, tf[i].b + tf[i].off, (size_t)k); tf[i].off += k; return k; }
+long t_write(int fd, const void *b, size_t n) { int i = fd - 100; memcpy(tf[i].b + tf[i].n, b, n); tf[i].n += (long)n; return (long)n; }
+int t_close(int fd) { int i = fd - 100; if (tf[i].wr) vfs_write_file(tf[i].path, tf[i].b, (size_t)tf[i].n); free(tf[i].b); tf[i].used = 0; return 0; }
+long t_time(long *t) { (void)t; return 1700000000; }
+void t_rand(void *b, size_t n) { for (size_t i = 0; i < n; i++) ((unsigned char *)b)[i] = (unsigned char)(i * 37 + 11); }
 int getegid(void) { return 20; }
 
 int getattrlist(const char *p, void *al, void *buf, size_t n, unsigned opt);
@@ -159,6 +179,76 @@ int main(void) {
     char fp[256];
     CHECK(fsgetpath(fp, sizeof fp, 0, x.ino) == (long)strlen("/Users/Visitante/at/s1") + 1 && !strcmp(fp, "/Users/Visitante/at/s1"));
     CHECK(fsgetpath(fp, 3, 0, x.ino) == -1 && cx_errno == 34);
+    /* ---- bookmarks */
+    {
+        long cx_book_create(const char *path, unsigned opts, int was_ref, u8 **out);
+        int cx_book_resolve(const u8 *d, long n, unsigned opts, char *out, size_t cap, int *stale);
+        int cx_alias_write(const u8 *d, long n, const char *path);
+        long cx_alias_read(const char *path, u8 **out);
+        int cx_alias_is(const char *abs);
+        int cx_file_ref_path(const char *abs, char *out, size_t cap);
+        int cx_file_ref_resolve(const char *in, char *out, size_t cap);
+        int vfs_move(vnode_t *n, vnode_t *np, const char *newname);
+        vnode_t *vfs_lookup(const char *path);
+        int vfs_delete(vnode_t *n);
+        vfs_write_file("/Users/Visitante/Documentos/rel.txt", "r", 1);
+        u8 *bk = 0;
+        long bn = cx_book_create("/Users/Visitante/Documentos/rel.txt", 1u << 11, 0, &bk);
+        CHECK(bn > 100 && !memcmp(bk, "book", 4) && g32(bk + 4) == (u32)bn && g32(bk + 8) == 0x10040000u && g32(bk + 12) == 48);
+        char out[1024]; int stale = -1;
+        CHECK(cx_book_resolve(bk, bn, 0, out, sizeof out, &stale) == 0 && !strcmp(out, "/Users/Visitante/Documentos/rel.txt") && stale == 0);
+        /* mover e renomear: acha pelo inode e marca como velho */
+        vfs_move(vfs_lookup("/Users/Visitante/Documentos/rel.txt"), vfs_lookup("/Users/Visitante"), "movido.txt");
+        CHECK(cx_book_resolve(bk, bn, 0, out, sizeof out, &stale) == 0 && !strcmp(out, "/Users/Visitante/movido.txt") && stale == 1);
+        /* apagado: ENOENT */
+        vfs_delete(vfs_lookup("/Users/Visitante/movido.txt"));
+        CHECK(cx_book_resolve(bk, bn, 0, out, sizeof out, &stale) == -1 && cx_errno == 2);
+        /* corrompido: EINVAL */
+        u8 bad[64]; memcpy(bad, bk, 64); bad[0] = 'x';
+        CHECK(cx_book_resolve(bad, 64, 0, out, sizeof out, &stale) == -1 && cx_errno == 22);
+        CHECK(cx_book_resolve(bk, 40, 0, out, sizeof out, &stale) == -1);
+        free(bk);
+        /* alias do Finder: bookmark no conteúdo + FinderInfo alis/MACS com kIsAlias */
+        vfs_write_file("/Users/Visitante/alvo.app/Contents/x", "", 0);
+        bn = cx_book_create("/Users/Visitante/alvo.app", 0, 0, &bk);
+        CHECK(bn > 0 && cx_alias_write(bk, bn, "/Users/Visitante/Atalho") == 0);
+        CHECK(cx_alias_is("/Users/Visitante/Atalho") && !cx_alias_is("/Users/Visitante/alvo.app"));
+        u8 *rb = 0;
+        long rn = cx_alias_read("/Users/Visitante/Atalho", &rb);
+        CHECK(rn == bn && !memcmp(rb, bk, (size_t)bn));
+        CHECK(cx_book_resolve(rb, rn, 0, out, sizeof out, &stale) == 0 && !strcmp(out, "/Users/Visitante/alvo.app"));
+        free(rb); free(bk);
+        /* URL de referência */
+        char ref[128], back[1024];
+        CHECK(cx_file_ref_path("/Users/Visitante/alvo.app", ref, sizeof ref) == 0 && !strncmp(ref, "/.file/id=", 10));
+        CHECK(cx_file_ref_resolve(ref, back, sizeof back) == 1 && !strcmp(back, "/Users/Visitante/alvo.app"));
+        strlcat(ref, "/Contents/x", sizeof ref);
+        CHECK(cx_file_ref_resolve(ref, back, sizeof back) == 1 && !strcmp(back, "/Users/Visitante/alvo.app/Contents/x"));
+        CHECK(cx_file_ref_resolve("/Users/x", back, sizeof back) == 0);
+    }
+    /* ---- quarentena */
+    {
+        void *_qtn_file_alloc(void); void _qtn_file_free(void *);
+        int _qtn_file_init_with_path(void *, const char *); int _qtn_file_apply_to_path(void *, const char *);
+        int _qtn_file_set_flags(void *, u32); u32 _qtn_file_get_flags(void *);
+        int _qtn_file_set_agent_name(void *, const char *); const char *_qtn_file_get_agent_name(void *);
+        long _qtn_file_get_timestamp(void *); const char *_qtn_file_get_identifier(void *);
+        vfs_write_file("/Users/Visitante/Downloads/app.dmg", "d", 1);
+        void *q = _qtn_file_alloc();
+        CHECK(_qtn_file_init_with_path(q, "/Users/Visitante/Downloads/app.dmg") == -1);   /* não está em quarentena */
+        _qtn_file_set_flags(q, 0x83);
+        _qtn_file_set_agent_name(q, "Navegador");
+        CHECK(_qtn_file_apply_to_path(q, "/Users/Visitante/Downloads/app.dmg") == 0);
+        char v[256];
+        long vn = getxattr("/Users/Visitante/Downloads/app.dmg", "com.apple.quarantine", v, sizeof v - 1, 0, 0);
+        CHECK(vn > 20);
+        if (vn > 0) { v[vn] = 0; CHECK(!strncmp(v, "0083;6553f100;Navegador;", 24)); }
+        void *q2 = _qtn_file_alloc();
+        CHECK(_qtn_file_init_with_path(q2, "/Users/Visitante/Downloads/app.dmg") == 0);
+        CHECK(_qtn_file_get_flags(q2) == 0x83 && !strcmp(_qtn_file_get_agent_name(q2), "Navegador"));
+        CHECK(_qtn_file_get_timestamp(q2) == 1700000000 && strlen(_qtn_file_get_identifier(q2)) == 36);
+        _qtn_file_free(q); _qtn_file_free(q2);
+    }
     printf("attrlist: %d verificações, %d falha(s)\n", checks, fails);
     return fails != 0;
 }
