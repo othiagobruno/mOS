@@ -122,7 +122,8 @@ typedef struct { long long value; int timescale; unsigned flags; long long epoch
 typedef struct { void *isa; unsigned fmt; int w, h; unsigned char *base[3]; unsigned long long bpr[3]; int np; } pb_t;
 typedef struct { void *isa; pb_t *pb; cmt_t pts; } sb_t;
 static char PBC, SBC;
-cmt_t CMClockGetTime(void *c) { (void)c; cmt_t t = {42, 1000000000, 1, 0}; return t; }
+static volatile long long clk = 1000000000;
+cmt_t CMClockGetTime(void *c) { (void)c; cmt_t t = {__atomic_add_fetch(&clk, 33333333, __ATOMIC_RELAXED), 1000000000, 1, 0}; return t; }
 void *CMClockGetHostTimeClock(void) { return (void *)1; }
 int CMVideoFormatDescriptionCreate(void *a, unsigned cc, int w, int h, void *e, void **o) { (void)a; (void)e; *o = cx_num_i((long long)cc << 32 | (unsigned)(w * 10000 + h)); return 0; }
 int CMVideoFormatDescriptionCreateForImageBuffer(void *a, void *img, void **o) { pb_t *p = img; return CMVideoFormatDescriptionCreate(a, p->fmt, p->w, p->h, 0, o); }
@@ -175,7 +176,46 @@ void cx_cm_audio_sample_dummy(void);
 void *cx_cm_audio_sample(const short *pcm, unsigned frames, double rate) { (void)pcm; (void)rate; return cx_num_i(frames); }
 int avf_device_kinds(int *out, int cap) { if (cap > 0) out[0] = 1; return 1; }
 int avf_cap_start(int mic, int cam, int *err) { (void)cam; *err = 0; return mic; }
-unsigned avf_cap_pull(int running, short *dst, unsigned frames, int *err) { (void)running; (void)dst; (void)frames; *err = 0; return 0; }
+static volatile int mic_on;
+unsigned avf_cap_pull(int running, short *dst, unsigned frames, int *err) { (void)running; *err = 0; if (!mic_on) return 0; memset(dst, 0, frames * 4); return frames; }
+int CMSampleBufferCreateCopyWithNewTiming(void *a, void *src, long nt, const void *t, void **o) {
+    (void)a; (void)nt; sb_t *s = calloc(1, sizeof *s); s->isa = &SBC; s->pb = src; memcpy(&s->pts, (const char *)t + sizeof(cmt_t), sizeof(cmt_t)); *o = s; return 0;
+}
+const char *cx_audio_url_path(void *url) { return url ? cx_cstr(url) : 0; }
+
+/* AVAssetWriter falso: guarda o que o AVCaptureMovieFileOutput pede */
+static char AWC[256], AWM[256], AIC[256], AIM[256], APC[256], APM[256];
+typedef struct { void *isa; void *url; const char *type; int started, finished; cmt_t start; } aw_t;
+typedef struct { void *isa; const char *media; dict_t *settings; int appended, finished; } ai_t;
+static aw_t *last_aw; static ai_t *last_vin, *last_ain;
+static cmt_t vpts[64]; static int nvpts; static unsigned vfmt; static int vw;
+static void *aw_with(void *k, const char *c, void *url, void *type, void **err) { (void)k; (void)c; (void)err; aw_t *w = cx_alloc_instance(AWC); w->url = url; w->type = cx_cstr(type); last_aw = w; return w; }
+static signed char aw_yes(void *s, const char *c, void *x) { (void)s; (void)c; (void)x; return 1; }
+static void aw_add(aw_t *w, const char *c, ai_t *in) { (void)w; (void)c; if (!strcmp(in->media, "vide")) last_vin = in; else last_ain = in; }
+static signed char aw_start(aw_t *w, const char *c) { (void)c; w->started = 1; return 1; }
+static void aw_session(aw_t *w, const char *c, cmt_t t) { (void)c; w->start = t; }
+static signed char aw_finish(aw_t *w, const char *c) { (void)c; FILE *f = fopen(cx_cstr(w->url), "wb"); if (f) { fwrite("12345678", 1, 8, f); fclose(f); } w->finished = 1; return 1; }
+static void *ai_with(void *k, const char *c, void *media, dict_t *st) { (void)k; (void)c; ai_t *i = cx_alloc_instance(AIC); i->media = cx_cstr(media); i->settings = st; return i; }
+static signed char ai_ready(ai_t *i, const char *c) { (void)i; (void)c; return 1; }
+static signed char ai_append(ai_t *i, const char *c, void *sb) { (void)c; (void)sb; i->appended++; return 1; }
+static void ai_mark(ai_t *i, const char *c) { (void)c; i->finished = 1; }
+static void ai_noop(void *i, const char *c, signed char v) { (void)i; (void)c; (void)v; }
+static void *ap_with(void *k, const char *c, void *in, void *at) { (void)k; (void)c; (void)in; (void)at; return cx_alloc_instance(APC); }
+static signed char ap_append(void *a, const char *c, pb_t *pb, cmt_t t) { (void)a; (void)c; if (nvpts < 64) vpts[nvpts++] = t; vfmt = pb->fmt; vw = pb->w; return 1; }
+static void fake_writer_classes(void) {
+    cx_define_class(AWC, AWM, "AVAssetWriter", &NSObj, 64);
+    cx_add_method(AWC, "assetWriterWithURL:fileType:error:", (void *)aw_with);
+    cx_add_method(AWC, "canAddInput:", (void *)aw_yes); cx_add_method(AWC, "addInput:", (void *)aw_add);
+    cx_add_method(AWC, "startWriting", (void *)aw_start); cx_add_method(AWC, "startSessionAtSourceTime:", (void *)aw_session);
+    cx_add_method(AWC, "finishWriting", (void *)aw_finish);
+    cx_define_class(AIC, AIM, "AVAssetWriterInput", &NSObj, 64);
+    cx_add_method(AIC, "assetWriterInputWithMediaType:outputSettings:", (void *)ai_with);
+    cx_add_method(AIC, "isReadyForMoreMediaData", (void *)ai_ready); cx_add_method(AIC, "appendSampleBuffer:", (void *)ai_append);
+    cx_add_method(AIC, "markAsFinished", (void *)ai_mark); cx_add_method(AIC, "setExpectsMediaDataInRealTime:", (void *)ai_noop);
+    cx_define_class(APC, APM, "AVAssetWriterInputPixelBufferAdaptor", &NSObj, 16);
+    cx_add_method(APC, "assetWriterInputPixelBufferAdaptorWithAssetWriterInput:sourcePixelBufferAttributes:", (void *)ap_with);
+    cx_add_method(APC, "appendPixelBuffer:withPresentationTime:", (void *)ap_append);
+}
 int cx_media_tcc(const char *s) { (void)s; return 1; }
 int cx_tcc_preflight(const char *s) { (void)s; return 1; }
 void cx_tcc_request_async(const char *s, void (*cb)(int, void *), void *ctx) { (void)s; cb(1, ctx); }
@@ -186,7 +226,7 @@ void dispatch_async_f(void *q, void *ctx, void (*fn)(void *)) { (void)q; fn(ctx)
 static gui_camera_info_t cam;
 static int cam_open, cam_reads, cam_frames_left, cam_gone, opens, closes;
 static unsigned long long open_wh, open_fi;
-static unsigned char frame[64];
+static unsigned char frame[1024];
 static int frame_len;
 long cx_syscall(long n, long a, long b, long c, long d, long e) {
     (void)e;
@@ -223,6 +263,11 @@ static void d_out(void *s, const char *c, void *out, sb_t *sb, void *conn) { (vo
 static void d_drop(void *s, const char *c, void *out, sb_t *sb, void *conn) { (void)s; (void)c; (void)out; (void)sb; (void)conn; got_drops++; }
 static void d_photo(void *s, const char *c, void *out, void *photo, void *err) { (void)s; (void)c; (void)out; (void)err; last_photo = photo; got_photo++; }
 static void d_finish(void *s, const char *c, void *out, void *rs, void *err) { (void)s; (void)c; (void)out; (void)rs; (void)err; got_finish++; }
+static volatile int rec_started, rec_finished, rec_paused, rec_resumed; static long rec_err;
+static void d_rstart(void *s, const char *c, void *o, void *u, void *cs) { (void)s; (void)c; (void)o; (void)u; (void)cs; rec_started++; }
+static void d_rfinish(void *s, const char *c, void *o, void *u, void *cs, num_t *e) { (void)s; (void)c; (void)o; (void)u; (void)cs; rec_err = e ? e->v : 0; rec_finished++; }
+static void d_rpause(void *s, const char *c, void *o, void *u, void *cs) { (void)s; (void)c; (void)o; (void)u; (void)cs; rec_paused++; }
+static void d_rresume(void *s, const char *c, void *o, void *u, void *cs) { (void)s; (void)c; (void)o; (void)u; (void)cs; rec_resumed++; }
 
 static int fails, total;
 static void expect(int c, const char *m) { total++; if (!c) { printf("FALHOU: %s\n", m); fails++; } }
@@ -232,12 +277,13 @@ static void wait_for(volatile int *v, int n) { for (int i = 0; i < 2000 && *v < 
 static int posted_has(const char *n) { for (int i = 0; i < nposted; i++) if (!strcmp(posted[i], n)) return 1; return 0; }
 
 int main(void) {
-    /* câmera: YUY2 4x2 a 30 qps e MJPEG 8x4 de 30 a 5 qps */
+    /* câmera: YUY2 4x2 a 30 qps, MJPEG 32x16 de 30 a 5 qps e YUY2 16x16 */
     snprintf(cam.name, sizeof cam.name, "Webcam de Teste");
     snprintf(cam.path, sizeof cam.path, "3");
-    cam.vid = 0x046d; cam.pid = 0x0825; cam.nmode = 2;
+    cam.vid = 0x046d; cam.pid = 0x0825; cam.nmode = 3;
+    cam.mode[2] = (gui_camera_mode_t){0x32595559, 16, 16, 333333, 333333, 333333, 512};
     cam.mode[0] = (gui_camera_mode_t){0x32595559, 4, 2, 333333, 333333, 333333, 16};
-    cam.mode[1] = (gui_camera_mode_t){0x47504a4d, 8, 4, 333333, 2000000, 333333, 4096};
+    cam.mode[1] = (gui_camera_mode_t){0x47504a4d, 32, 16, 333333, 2000000, 333333, 4096};
     /* YUY2 4x2: branco, preto | vermelho, cinza; segunda linha igual */
     unsigned char y[16] = {235, 128, 16, 128, 81, 90, 126, 240, 235, 128, 16, 128, 81, 90, 126, 240};
     memcpy(frame, y, 16); frame_len = 16;
@@ -247,6 +293,11 @@ int main(void) {
     cx_add_method(DELC, "captureOutput:didDropSampleBuffer:fromConnection:", (void *)d_drop);
     cx_add_method(DELC, "captureOutput:didFinishProcessingPhoto:error:", (void *)d_photo);
     cx_add_method(DELC, "captureOutput:didFinishCaptureForResolvedSettings:error:", (void *)d_finish);
+    cx_add_method(DELC, "captureOutput:didStartRecordingToOutputFileAtURL:fromConnections:", (void *)d_rstart);
+    cx_add_method(DELC, "captureOutput:didFinishRecordingToOutputFileAtURL:fromConnections:error:", (void *)d_rfinish);
+    cx_add_method(DELC, "captureOutput:didPauseRecordingToOutputFileAtURL:fromConnections:", (void *)d_rpause);
+    cx_add_method(DELC, "captureOutput:didResumeRecordingToOutputFileAtURL:fromConnections:", (void *)d_rresume);
+    fake_writer_classes();
     void *del = cx_alloc_instance(DELC);
     cx_avcapture_init();
 
@@ -260,7 +311,7 @@ int main(void) {
            CCALL(AVCaptureDevice_c, "deviceWithUniqueID:", void *, cx_str("uvc-3-046d0825")) == dev, "o mesmo objeto em toda consulta");
     expect(CALL(dev, "hasMediaType:", signed char, vide) && !CALL(dev, "hasMediaType:", signed char, soun) && CALL(dev, "transportType", int) == 0x75736220, "mídia e transporte USB");
     arr_t *fmts = CALL(dev, "formats", arr_t *);
-    expect(fmts->n == 2, "dois formatos");
+    expect(fmts->n == 3, "três formatos");
     arr_t *rr = CALL(fmts->it[1], "videoSupportedFrameRateRanges", arr_t *);
     double maxr = CALL(rr->it[0], "maxFrameRate", double), minr = CALL(rr->it[0], "minFrameRate", double);
     expect(maxr > 29.9 && maxr < 30.1 && minr > 4.9 && minr < 5.1, "faixa de 5 a 30 qps");
@@ -292,7 +343,7 @@ int main(void) {
     expect(got_frames == 1 && last_sb && last_sb->pb->fmt == 0x42475241 && last_sb->pb->w == 4 && last_sb->pb->h == 2, "delegate recebe BGRA 4x2");
     unsigned char *px = last_sb->pb->base[0];
     expect(px[0] == 255 && px[1] == 255 && px[2] == 255 && px[4] == 0 && px[10] >= 250 && px[9] <= 5, "pixels convertidos (branco, preto, vermelho)");
-    expect(last_sb->pts.value == 42 && posted_has("AVCaptureSessionDidStartRunningNotification"), "pts no relógio do host e aviso de início");
+    expect(last_sb->pts.timescale == 1000000000 && last_sb->pts.value > 1000000000 && posted_has("AVCaptureSessionDidStartRunningNotification"), "pts no relógio do host e aviso de início");
 
     /* espelho e saída nativa (2vuy) */
     void *conn = CALL(out, "connectionWithMediaType:", void *, vide);
@@ -328,9 +379,9 @@ int main(void) {
     CALL(sess, "stopRunning", void);
     expect(!CALL(sess, "isRunning", signed char) && closes == 1 && !cam_open && posted_has("AVCaptureSessionDidStopRunningNotification"), "stopRunning fecha a câmera");
 
-    /* MJPEG pelo preset: 1280x720 (o mais perto é o 8x4) e decodificação */
+    /* MJPEG pelo preset: 1280x720 (o mais perto é o 32x16) e decodificação */
     CALL(sess, "setSessionPreset:", void, cx_str("AVCaptureSessionPreset1280x720"));
-    unsigned char jf[8] = {0xFF, 0xD8, 8, 4, 10, 20, 30, 255};
+    unsigned char jf[8] = {0xFF, 0xD8, 32, 16, 10, 20, 30, 255};
     memcpy(frame, jf, 8); frame_len = 8;
     dict_t *st2 = f_dict(0, 0);
     f_dset(st2, 0, cx_num_i(0x34323076), (void *)kCVPixelBufferPixelFormatTypeKey);
@@ -339,9 +390,9 @@ int main(void) {
     int before = got_frames;
     cam_frames_left = 1;
     CALL(sess, "startRunning", void);
-    expect(opens == 2 && (unsigned)open_fi == 0x47504a4d && open_wh == (8ull | 4ull << 32), "preset escolhe o MJPEG 8x4");
+    expect(opens == 2 && (unsigned)open_fi == 0x47504a4d && open_wh == (32ull | 16ull << 32), "preset escolhe o MJPEG 32x16");
     wait_for(&got_frames, before + 1);
-    expect(got_frames == before + 1 && last_sb->pb->fmt == 0x34323076 && last_sb->pb->np == 2 && last_sb->pb->w == 8, "MJPEG decodificado vira 420v");
+    expect(got_frames == before + 1 && last_sb->pb->fmt == 0x34323076 && last_sb->pb->np == 2 && last_sb->pb->w == 32, "MJPEG decodificado vira 420v");
 
     /* câmera desligada no meio */
     cam_gone = 1;
@@ -349,6 +400,69 @@ int main(void) {
     expect(posted_has("AVCaptureDeviceWasDisconnectedNotification") && posted_has("AVCaptureSessionRuntimeErrorNotification"), "desconexão avisa");
     CALL(sess, "stopRunning", void);
     expect(CCALL(AVCaptureDevice_c, "devicesWithMediaType:", arr_t *, vide)->n == 0 && !CALL(dev, "isConnected", signed char), "some da lista");
+
+    /* gravação: câmera 16x16 + microfone em MOV */
+    cam_gone = 0;
+    fmts = CALL(dev, "formats", arr_t *);
+    void *sess2 = cx_alloc_instance(AVCaptureSession_c);
+    CALL(sess2, "init", void *);
+    CALL(dev, "lockForConfiguration:", signed char, (void *)0);
+    CALL(dev, "setActiveFormat:", void, fmts->it[2]);
+    CALL(sess2, "addInput:", void, CCALL(AVCaptureDeviceInput_c, "deviceInputWithDevice:error:", void *, dev, (void **)0));
+    CALL(sess2, "addInput:", void, CCALL(AVCaptureDeviceInput_c, "deviceInputWithDevice:error:", void *, mics->it[0], (void **)0));
+    void *mfo = cx_alloc_instance(cx_class_named("AVCaptureMovieFileOutput"));
+    CALL(sess2, "addOutput:", void, mfo);
+    unsigned char big[512]; for (int i = 0; i < 512; i++) big[i] = (unsigned char)(i & 1 ? 128 : 100);
+    memcpy(frame, big, 512); frame_len = 512;
+    char path[64]; snprintf(path, sizeof path, "/tmp/mos_avcap_%d.mov", (int)getpid()); unlink(path);
+    void *url = cx_str(path);
+    mic_on = 1;
+    CALL(sess2, "startRunning", void);
+    expect(CALL(sess2, "isRunning", signed char) && (unsigned)open_fi == 0x32595559 && open_wh == (16ull | 16ull << 32), "sessão 16x16 com microfone");
+    CALL(mfo, "startRecordingToOutputFileURL:recordingDelegate:", void, url, del);
+    expect(CALL(mfo, "isRecording", signed char), "isRecording logo depois do pedido");
+    cam_frames_left = 3;
+    wait_for(&rec_started, 1);
+    for (int i = 0; i < 2000 && nvpts < 3; i++) usleep(1000);
+    expect(rec_started == 1 && last_aw && !strcmp(last_aw->type, "com.apple.quicktime-movie") && last_vin && last_ain, "escritor MOV com vídeo e áudio");
+    void *wk = cx_str("Width"), *hk = cx_str("Height"), *ck = cx_str("AVVideoCodecKey");
+    expect(last_vin && ((num_t *)f_dget(last_vin->settings, 0, wk))->v == 16 && ((num_t *)f_dget(last_vin->settings, 0, hk))->v == 16 &&
+           !strcmp(cx_cstr(f_dget(last_vin->settings, 0, ck)), "avc1"), "H.264 16x16");
+    expect(nvpts == 3 && vfmt == 0x34323076 && vw == 16 && vpts[0].value == last_aw->start.value && vpts[2].value > vpts[1].value, "três quadros 420v a partir do início da sessão");
+    for (int i = 0; i < 2000 && (!last_ain || last_ain->appended < 2); i++) usleep(1000);
+    expect(last_ain && last_ain->appended >= 2, "áudio LPCM entra no arquivo");
+    /* pausa: os quadros parados não entram e o tempo parado some */
+    CALL(mfo, "pauseRecording", void);
+    cam_frames_left = 1;
+    wait_for(&rec_paused, 1);
+    for (int i = 0; i < 300 && cam_frames_left; i++) usleep(1000);
+    int before_pause = nvpts;
+    usleep(50000);
+    CALL(mfo, "resumeRecording", void);
+    cam_frames_left = 1;
+    wait_for(&rec_resumed, 1);
+    for (int i = 0; i < 2000 && nvpts < before_pause + 1; i++) usleep(1000);
+    double gap = (double)(vpts[nvpts - 1].value - vpts[before_pause - 1].value) / 1e9;
+    expect(rec_paused == 1 && rec_resumed == 1 && before_pause == 3 && nvpts == 4 && gap < 0.2, "pausa e volta sem buraco");
+    CALL(mfo, "stopRecording", void);
+    cam_frames_left = 1;
+    wait_for(&rec_finished, 1);
+    long long fsz = CALL(mfo, "recordedFileSize", long long);
+    expect(rec_finished == 1 && rec_err == 0 && last_aw->finished && last_vin->finished && last_ain->finished && fsz == 8 && !CALL(mfo, "isRecording", signed char), "stopRecording fecha o arquivo");
+    /* o mesmo arquivo de novo: AVErrorFileAlreadyExists */
+    CALL(mfo, "startRecordingToOutputFileURL:recordingDelegate:", void, url, del);
+    expect(rec_finished == 2 && rec_err == -11823, "arquivo existente é recusado");
+    /* limite de duração: termina sozinho com -11810 e o arquivo fica */
+    unlink(path);
+    cmt_t lim = {2, 30, 1, 0};
+    ((void (*)(void *, const char *, cmt_t))imp(*(void **)mfo, "setMaxRecordedDuration:"))(mfo, "", lim);
+    CALL(mfo, "startRecordingToOutputFileURL:recordingDelegate:", void, url, del);
+    cam_frames_left = 8;
+    wait_for(&rec_finished, 3);
+    expect(rec_finished == 3 && rec_err == -11810 && last_aw->finished, "maxRecordedDuration para com AVErrorMaximumDurationReached");
+    CALL(sess2, "stopRunning", void);
+    mic_on = 0;
+    unlink(path);
 
     printf("avcapture: %d/%d ok\n", total - fails, total);
     return fails != 0;
