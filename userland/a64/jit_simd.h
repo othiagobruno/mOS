@@ -379,7 +379,10 @@ static int s_misc_x(T *t, a64_u32 w, int sc) {
     if (op == 0x1D && !(size & 2)) return s_scvtf(t, q, u, size, n, d, 0);
     {
         int key = (u << 6) | ((size >> 1) << 5) | op;
-        if (key == 0x58) return 0;                 /* FRINTA vetorial → interpretador */
+        if (key == 0x58) return s_frint_vec(t, q, size, 4, n, d);   /* FRINTA */
+        if (key == 0x1E || key == 0x5E || key == 0x1F || key == 0x5F) {   /* FRINT32Z/X FRINT64Z/X */
+            return s_frint_vec_x(t, q, size, (key & 0x40) ? -1 : 3, n, d, ((key & 1) ? 64 : 32) << 8 | 1);   /* os quatro levantam IXC */
+        }
         if (key == 0x59) return s_frint_vec_x(t, q, size, -1, n, d, 1);   /* FRINTX */
         if (key == 0x7F && !(size == 3 && !q)) return fpv_core(t, 0x51, 0, size & 1, q, d, n, n, -1);   /* FSQRT */
         if (key == 0x18 || key == 0x19 || key == 0x38 || key == 0x39 || key == 0x79)
@@ -1827,17 +1830,23 @@ static void s_fround(T *t, int dbl, int packed, int x, int mode) {   /* x = arre
     x_movdqa_ld(B, 3, XR(x));
     xop3(B, XF_66, 0x3A, op[kind], x, XR(x)); xe8(B, 3);   /* x = trunc */
     xop2(B, sd, 0x5C, 3, XR(x));                   /* xmm3 = resto (exato) */
-    s_const(t, 4, dbl ? 0x3FE0000000000000ull : 0x3F0000003F000000ull);   /* 0,5 */
-    x_movdqa_ld(B, 5, XR(4));
-    xop2(B, ps, 0xC2, 5, XR(3)); xe8(B, 2);        /* xmm5 = 0,5 <= resto */
-    s_const(t, 4, dbl ? 0x3FF0000000000000ull : 0x3F8000003F800000ull);   /* 1,0 */
-    xop2(B, ps, 0x54, 5, XR(4));                    /* andps */
-    xop2(B, sd, 0x58, x, XR(5));                    /* x += 1 */
-    s_const(t, 4, dbl ? 0xBFE0000000000000ull : 0xBF000000BF000000ull);   /* -0,5 */
-    xop2(B, ps, 0xC2, 3, XR(4)); xe8(B, 2);        /* xmm3 = resto <= -0,5 */
+    /* delta = copysign(1, resto) onde |resto| >= 0,5; o resultado só troca nessas lanes (somar +0
+     * nas outras mudaria -0 em +0: FRINTA(-0,3) = -0) */
+    x_movdqa_ld(B, 4, XR(3));
+    s_const(t, 5, dbl ? 0x7FFFFFFFFFFFFFFFull : 0x7FFFFFFF7FFFFFFFull);
+    xop2(B, ps, 0x54, 4, XR(5));                    /* |resto| */
+    s_const(t, 5, dbl ? 0x3FE0000000000000ull : 0x3F0000003F000000ull);
+    xop2(B, ps, 0xC2, 5, XR(4)); xe8(B, 2);        /* xmm5 = 0,5 <= |resto| */
+    s_const(t, 4, dbl ? 0x8000000000000000ull : 0x8000000080000000ull);
+    xop2(B, ps, 0x54, 3, XR(4));                    /* sinal do resto */
     s_const(t, 4, dbl ? 0x3FF0000000000000ull : 0x3F8000003F800000ull);
-    xop2(B, ps, 0x54, 3, XR(4));
-    xop2(B, sd, 0x5C, x, XR(3));                    /* x -= 1 */
+    xop2(B, ps, 0x56, 4, XR(3));                    /* ±1 */
+    xop2(B, ps, 0x54, 4, XR(5));
+    xop2(B, ps, 0x58, 4, XR(x));                    /* x ± 1 */
+    xop2(B, ps, 0x54, 4, XR(5));
+    xop2(B, ps, 0x55, 5, XR(x));                    /* andnps: x onde não muda */
+    xop2(B, ps, 0x56, 5, XR(4));
+    x_movdqa_ld(B, x, XR(5));
 }
 static int s_fcvt_vec_f(T *t, int q, int dbl, int u, int mode, int n, int d, int sc, int fbits);
 static int s_fcvt_vec(T *t, int q, int dbl, int u, int mode, int n, int d, int sc) { return s_fcvt_vec_f(t, q, dbl, u, mode, n, d, sc, 0); }
@@ -2990,8 +2999,12 @@ static int s_scvtf(T *t, int q, int u, int size, int n, int d, int scalar) {
 /* mode: 0 par, 1 chão, 2 teto, 3 trunca, -1 = FPCR. FRINTN/M/P/Z/I não levantam IXC. */
 static int s_frint_vec_x(T *t, int q, int size, int mode, int n, int d, int ixc);
 static int s_frint_vec(T *t, int q, int size, int mode, int n, int d) { return s_frint_vec_x(t, q, size, mode, n, d, 0); }
-/* ixc: FRINTX (o PE do round vira IXC) */
+static void s_fround(T *t, int dbl, int packed, int x, int mode);
+/* ixc: bit 0 = FRINTX (o PE do round vira IXC); bits 8.. = 32/64 para FRINT32/FRINT64 (resultado
+ * fora da faixa → interpretador) */
 static int s_frint_vec_x(T *t, int q, int size, int mode, int n, int d, int ixc) {
+    int lim = ixc >> 8;
+    ixc &= 1;
     if (!jit_g.sse41) return 0;
     int dbl = size & 1;
     if (dbl && !q) return 0;
@@ -3002,7 +3015,18 @@ static int s_frint_vec_x(T *t, int q, int size, int mode, int n, int d, int ixc)
     mx_clean(t);
     if (q) s_ld(t, 0, n); else x_movq_ld(B, 0, VO(n));
     if (mode < 0) s_round_fpcr(t, kind);
+    else if (mode == 4) s_fround(t, dbl, 1, 0, 4);  /* FRINTA: empate longe do zero */
     else s_round_packed(t, kind, 0, 0, mode);
+    if (lim) {                                      /* |r| >= 2^31 / 2^63: o ARM dá o mínimo e IOC */
+        int ps = dbl ? XF_66 : 0, e = lim - 1;
+        x_movdqa_ld(B, 1, XR(0));
+        s_const(t, 2, dbl ? 0x7FFFFFFFFFFFFFFFull : 0x7FFFFFFF7FFFFFFFull); xop2(B, ps, 0x54, 1, XR(2));
+        s_const(t, 2, dbl ? (a64_u64)(1023 + e) << 52 : ((a64_u64)(127 + e) << 23) * 0x100000001ull);
+        xop2(B, ps, 0xC2, 1, XR(2)); xe8(B, 5);     /* cmpnlt: |r| >= limite (ou NaN) */
+        xop2(B, XF_66, 0xD7, XAX, XR(1));
+        x_test_ri(B, 0, XR(XAX), q ? 0xFFFF : 0xFF);
+        slow_if(t, CC_NE);
+    }
     xop2(B, 0, 0xAE, 3, XM(XSP, 0));
     x_test8_mi(B, XM(XSP, 0), 0x1F);
     slow_if(t, CC_NE);
