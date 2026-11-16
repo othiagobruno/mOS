@@ -58,7 +58,7 @@ fetch "https://storage.googleapis.com/antigravity-public/antigravity-hub/2.31.0-
     "$DL/Antigravity.dmg" f9d2699fd1307a44eae396f7463fc118f04554dc84d4ae56d95c487f1f050c56
 fetch "https://downloads.eggerapps.at/postico/postico-9817.dmg" \
     "$DL/Postico.dmg" 34ec7730de0796c008e0caf9f366629a3043c5813c79f749e47d22084afb6e0f
-fetch "https://dl.devmate.com/com.setapp.DesktopClient/Setapp.zip" \
+fetch "https://dl.devmate.com/com.setapp.DesktopClient/165/1794245125/Setapp-165.zip" \
     "$DL/Setapp.zip" a124004ba0c6555e8bb05904a65e78b7d32a8eaa069b304f8e9a78e4e859735a
 
 unzip_app() {

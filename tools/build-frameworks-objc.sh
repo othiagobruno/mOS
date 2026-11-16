@@ -32,6 +32,8 @@ for fw in "$ROOT"/userland/frameworks/*/; do
     [ "$name" = libcompression ] && continue
     # o CryptoKit tem build próprio (tools/build-cryptokit-macho.sh, módulos Swift mínimos)
     [ "$name" = CryptoKit ] && continue
+    # o JavaScriptCore compila com o motor kernel/web/js_*.c (tools/build.sh, "==> JavaScriptCore.framework")
+    [ "$name" = JavaScriptCore ] && continue
     if [ -n "$ONLY" ] && ! printf ',%s,' "$ONLY" | grep -q ",$name,"; then continue; fi
     objs=()
     swobjs=()
