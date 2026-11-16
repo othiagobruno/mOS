@@ -136,7 +136,17 @@ def extract(archive: Path, dest: Path) -> None:
     if name.endswith(".pkg") or name.endswith(".mpkg"):
         extrai_pkg(archive, dest)
         return
-    if name.endswith(".zip") or name.endswith(".dmg") or name.endswith(".tar.bz2") or name.endswith(".tbz"):
+    if name.endswith(".dmg"):
+        try:
+            extrai_7z(archive, dest)
+        except SystemExit as e:
+            # APFS que o 7z não lê (Google Drive): ele acha um xar no meio da imagem e dá CRC errado
+            print(f"7z não abriu {archive.name} ({str(e).splitlines()[0]}); usando o leitor de dmg do mOS", flush=True)
+            shutil.rmtree(dest)
+            dest.mkdir(parents=True)
+            extrai_dmg_mos(archive, dest)
+        return
+    if name.endswith(".zip") or name.endswith(".tar.bz2") or name.endswith(".tbz"):
         extrai_7z(archive, dest)
         return
     if name.endswith(".tar.gz") or name.endswith(".tgz"):
@@ -148,6 +158,38 @@ def extract(archive: Path, dest: Path) -> None:
             tf.extractall(dest)
         return
     raise SystemExit(f"arquivo não suportado: {archive.name}")
+
+
+DMG_HOST_STUBS = """#include <stdint.h>
+typedef struct { int year, month, day, hour, minute, second, weekday; } datetime_t;
+void rtc_now(datetime_t *dt) { if (dt) { dt->year = 2026; dt->month = 1; dt->day = 1; } }
+void rtc_now_utc(datetime_t *dt) { rtc_now(dt); }
+uint32_t rand32(void) { return 1; }
+"""
+DMG_FONTES = ("apfs", "blkdev", "bzip2", "dfs", "dmg", "hfsplus", "hfsplus_wr", "pcache", "inflate", "lzfse", "xz", "fat")
+
+
+def compile_dmgtest() -> Path:
+    """tools/dmgtest.c com os drivers de imagem do kernel (kernel/fs): UDIF, HFS+ e APFS, no host."""
+    out = ROOT / "build" / "dmgtest"
+    stubs = ROOT / "build" / "dmghost.c"
+    fontes = [ROOT / "tools" / "dmgtest.c"] + [ROOT / "kernel" / "fs" / f"{n}.c" for n in DMG_FONTES]
+    if out.is_file() and all(out.stat().st_mtime >= p.stat().st_mtime for p in fontes):
+        return out
+    out.parent.mkdir(parents=True, exist_ok=True)
+    stubs.write_text(DMG_HOST_STUBS, encoding="utf-8")
+    subprocess.check_call(["cc", "-O2", "-w", "-DMOS_HOST_TEST", "-I", str(ROOT / "kernel" / "include"), "-I", str(ROOT / "tools"),
+                           *map(str, fontes), str(stubs), "-o", str(out)])
+    return out
+
+
+def extrai_dmg_mos(archive: Path, dest: Path) -> None:
+    """Extrai o dmg com os drivers do kernel do mOS; cada volume vira uma pasta em dest."""
+    proc = subprocess.run([str(compile_dmgtest()), str(archive), str(dest)],
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, errors="replace")
+    if proc.returncode != 0:
+        fim = [ln for ln in proc.stdout.splitlines() if ln.startswith("==")][-1:]
+        raise SystemExit(f"dmg do mOS saiu {proc.returncode} em {archive.name}: {' '.join(fim)} {proc.stderr[-300:]}")
 
 
 def extrai_pkg(archive: Path, dest: Path) -> None:
@@ -187,18 +229,18 @@ def tem_macho(root: Path) -> bool:
     return False
 
 
-ANINHADOS = (".dmg", ".pkg", ".mpkg", ".zip")
+ANINHADOS = (".dmg", ".pkg", ".mpkg", ".zip", ".tar.gz", ".tgz", ".tar.xz", ".tar.bz2", ".tbz")
 
 
 def acha_alvo(extracted: Path) -> Path | None:
-    """O que medir: o maior .app; senão abre o .dmg/.pkg/.zip que veio dentro (Steam: dmg no zip; Karabiner: pkg no
+    """O que medir: o maior .app; senão abre o .dmg/.pkg/.zip que veio dentro (Steam: tar.gz no zip; Karabiner: pkg no
     dmg) e procura de novo; senão a própria pasta, quando tem Mach-O (JDK, SDK do .NET, drivers de áudio e plugins de
     linha de comando são distribuídos em .pkg sem .app, e o que roda são esses binários)."""
     for _volta in range(3):
         bundle = find_app(extracted)
         if bundle is not None:
             return bundle
-        internos = [p for p in extracted.rglob("*") if p.is_file() and p.suffix.lower() in ANINHADOS
+        internos = [p for p in extracted.rglob("*") if p.is_file() and p.name.lower().endswith(ANINHADOS)
                     and not p.name.startswith("._")]
         if not internos:
             break
