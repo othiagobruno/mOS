@@ -66,6 +66,47 @@ uint16_t uvc_parse_vc_version(const uint8_t *d, uint32_t len) {
     }
     return 0;
 }
+void uvc_parse_units(const uint8_t *d, uint32_t len, uvc_units *u) {
+    u->ct_id = u->pu_id = 0; u->ct_bm = u->pu_bm = 0;
+    for (uint32_t o = 0; o + 3 <= len;) {
+        uint8_t bl = d[o];
+        if (bl < 3 || o + bl > len) break;
+        const uint8_t *p = d + o;
+        o += bl;
+        if (p[1] != CS_INTERFACE) continue;
+        if (p[2] == 0x02 && bl >= 15 && le16(p + 4) == 0x0201 && !u->ct_id) {   /* INPUT_TERMINAL do tipo câmera */
+            u->ct_id = p[3];
+            for (int i = 0; i < p[14] && i < 4 && 15 + i < bl; i++) u->ct_bm |= (uint32_t)p[15 + i] << (8 * i);
+        } else if (p[2] == 0x05 && bl >= 8 && !u->pu_id) {                         /* PROCESSING_UNIT */
+            u->pu_id = p[3];
+            for (int i = 0; i < p[7] && i < 4 && 8 + i < bl; i++) u->pu_bm |= (uint32_t)p[8 + i] << (8 * i);
+        }
+    }
+}
+/* UVC 1.5, tabelas 3-6 (Camera Terminal) e 3-8 (Processing Unit), seletores A.9.4 e A.9.5 */
+static const uvc_ctl_def CTL[UVC_CTL_COUNT] = {
+    [UVC_CTL_BRIGHTNESS] = {0, 0x02, 0, 2, 1}, [UVC_CTL_CONTRAST] = {0, 0x03, 1, 2, 0}, [UVC_CTL_HUE] = {0, 0x06, 2, 2, 1},
+    [UVC_CTL_SATURATION] = {0, 0x07, 3, 2, 0}, [UVC_CTL_SHARPNESS] = {0, 0x08, 4, 2, 0}, [UVC_CTL_GAMMA] = {0, 0x09, 5, 2, 0},
+    [UVC_CTL_WB_TEMP] = {0, 0x0A, 6, 2, 0}, [UVC_CTL_WB_AUTO] = {0, 0x0B, 12, 1, 0}, [UVC_CTL_BACKLIGHT] = {0, 0x01, 8, 2, 0},
+    [UVC_CTL_GAIN] = {0, 0x04, 9, 2, 0}, [UVC_CTL_POWERLINE] = {0, 0x05, 10, 1, 0},
+    [UVC_CTL_AE_MODE] = {1, 0x02, 1, 1, 0}, [UVC_CTL_EXPOSURE] = {1, 0x04, 3, 4, 0}, [UVC_CTL_FOCUS] = {1, 0x06, 5, 2, 0},
+    [UVC_CTL_FOCUS_AUTO] = {1, 0x08, 17, 1, 0}, [UVC_CTL_ZOOM] = {1, 0x0B, 9, 2, 0},
+};
+const uvc_ctl_def *uvc_ctl(int id) { return id >= 0 && id < UVC_CTL_COUNT ? &CTL[id] : 0; }
+int uvc_ctl_supported(const uvc_units *u, int id) {
+    const uvc_ctl_def *d = uvc_ctl(id);
+    if (!d) return 0;
+    if (d->camera_terminal) return u->ct_id && (u->ct_bm >> d->bit & 1);
+    return u->pu_id && (u->pu_bm >> d->bit & 1);
+}
+int32_t uvc_ctl_decode(const uvc_ctl_def *d, const uint8_t *b) {
+    if (d->size == 1) return d->is_signed ? (int8_t)b[0] : b[0];
+    if (d->size == 2) return d->is_signed ? (int16_t)le16(b) : (int32_t)le16(b);
+    return (int32_t)le32(b);
+}
+void uvc_ctl_encode(const uvc_ctl_def *d, int32_t v, uint8_t *b) {
+    for (int i = 0; i < d->size; i++) b[i] = (uint8_t)((uint32_t)v >> (8 * i));
+}
 int uvc_probe_len(uint16_t bcd) { return bcd >= 0x0150 ? 48 : bcd >= 0x0110 ? 34 : 26; }
 void uvc_probe_pack(const uvc_probe *p, uint8_t *b, int len) {
     for (int i = 0; i < len; i++) b[i] = 0;

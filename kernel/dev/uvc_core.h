@@ -29,6 +29,18 @@ typedef struct { uint8_t nformat; uvc_format format[UVC_MAX_FORMATS]; uint8_t te
 int uvc_parse_vs(const uint8_t *extra, uint32_t len, uvc_stream_info *out);
 /* bcdUVC do cabeçalho da VideoControl (0 se não achou) */
 uint16_t uvc_parse_vc_version(const uint8_t *extra, uint32_t len);
+/* unidades de controle da VideoControl: Camera Terminal e Processing Unit (ids e bitmaps bmControls) */
+typedef struct { uint8_t ct_id, pu_id; uint32_t ct_bm, pu_bm; } uvc_units;
+void uvc_parse_units(const uint8_t *extra, uint32_t len, uvc_units *out);
+/* controles que o mOS expõe (gui_camera_ctrl_t.id em compat_gui.h) */
+enum { UVC_CTL_BRIGHTNESS, UVC_CTL_CONTRAST, UVC_CTL_HUE, UVC_CTL_SATURATION, UVC_CTL_SHARPNESS, UVC_CTL_GAMMA,
+       UVC_CTL_WB_TEMP, UVC_CTL_WB_AUTO, UVC_CTL_BACKLIGHT, UVC_CTL_GAIN, UVC_CTL_POWERLINE,
+       UVC_CTL_AE_MODE, UVC_CTL_EXPOSURE, UVC_CTL_FOCUS, UVC_CTL_FOCUS_AUTO, UVC_CTL_ZOOM, UVC_CTL_COUNT };
+typedef struct { uint8_t camera_terminal, selector, bit, size, is_signed; } uvc_ctl_def;
+const uvc_ctl_def *uvc_ctl(int id);
+int uvc_ctl_supported(const uvc_units *u, int id);   /* bit do bmControls ligado */
+int32_t uvc_ctl_decode(const uvc_ctl_def *d, const uint8_t *b);
+void uvc_ctl_encode(const uvc_ctl_def *d, int32_t v, uint8_t *b);
 /* tamanho do bloco PROBE/COMMIT pela versão: 26 (1.0), 34 (1.1), 48 (1.5) */
 int uvc_probe_len(uint16_t bcd);
 typedef struct {

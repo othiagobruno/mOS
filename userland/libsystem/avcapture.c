@@ -311,6 +311,52 @@ static void dev_set_max_dur(id s, SEL c, cmt_t t) {
     d->max_dur = dur_of(iv ? iv : d->mode[d->active].max_interval);
 }
 
+/* ---------------------------------------------------------------- controles UVC (DEV_CAMERA_CTRL) */
+enum { CTL_WB_AUTO = 7, CTL_AE_MODE = 11, CTL_FOCUS = 13, CTL_FOCUS_AUTO = 14 };   /* UVC_CTL_* de kernel/dev/uvc_core.h */
+static int cam_ctrl(avdev_t *d, int ctl, int set, int value, gui_camera_ctrl_t *out) {
+    gui_camera_ctrl_t q;
+    memset(&q, 0, sizeof q);
+    q.id = (unsigned)ctl; q.set = (unsigned)set; q.value = value;
+    if (d->kind != KIND_CAM || d->cam < 0) return -1;
+    long r = DEV_OP(DEV_CAMERA_CTRL, d->cam, &q, 0);
+    if (out) *out = q;
+    return r < 0 || !q.supported ? -1 : 0;
+}
+/* exposição: 0 Locked = AE manual (1), 2 ContinuousAutoExposure = AE automático (2) ou prioridade de abertura (8) */
+static BOOL dev_exp_supported(id s, SEL c, i64 mode) {
+    (void)c;
+    gui_camera_ctrl_t q;
+    if (cam_ctrl(DEV(s), CTL_AE_MODE, 0, 0, &q)) return NO;
+    if (mode == 0) return (q.res & 1) ? YES : NO;
+    if (mode == 2) return (q.res & (2 | 8)) ? YES : NO;
+    return NO;
+}
+static i64 dev_exp_mode(id s, SEL c) { (void)c; gui_camera_ctrl_t q; return cam_ctrl(DEV(s), CTL_AE_MODE, 0, 0, &q) ? 2 : q.cur == 1 ? 0 : 2; }
+static void dev_set_exp_mode(id s, SEL c, i64 mode) {
+    (void)c;
+    gui_camera_ctrl_t q;
+    if (cam_ctrl(DEV(s), CTL_AE_MODE, 0, 0, &q)) return;
+    if (mode == 0 && (q.res & 1)) cam_ctrl(DEV(s), CTL_AE_MODE, 1, 1, 0);
+    else if (mode == 2) cam_ctrl(DEV(s), CTL_AE_MODE, 1, (q.res & 8) ? 8 : 2, 0);
+}
+/* foco: 0 Locked = foco automático desligado, 2 ContinuousAutoFocus = ligado */
+static BOOL dev_focus_supported(id s, SEL c, i64 mode) {
+    (void)c;
+    gui_camera_ctrl_t q;
+    int autof = !cam_ctrl(DEV(s), CTL_FOCUS_AUTO, 0, 0, &q), manual = !cam_ctrl(DEV(s), CTL_FOCUS, 0, 0, 0);
+    return (mode == 0 && (autof || manual)) || (mode == 2 && autof) ? YES : NO;
+}
+static i64 dev_focus_mode(id s, SEL c) { (void)c; gui_camera_ctrl_t q; return cam_ctrl(DEV(s), CTL_FOCUS_AUTO, 0, 0, &q) ? 0 : q.cur ? 2 : 0; }
+static void dev_set_focus_mode(id s, SEL c, i64 mode) { (void)c; if (mode == 0 || mode == 2) cam_ctrl(DEV(s), CTL_FOCUS_AUTO, 1, mode == 2, 0); }
+/* balanço de branco: 0 Locked = automático desligado, 2 ContinuousAutoWhiteBalance = ligado */
+static BOOL dev_wb_supported(id s, SEL c, i64 mode) {
+    (void)c;
+    int autow = !cam_ctrl(DEV(s), CTL_WB_AUTO, 0, 0, 0);
+    return (mode == 0 || mode == 2) && autow ? YES : NO;
+}
+static i64 dev_wb_mode(id s, SEL c) { (void)c; gui_camera_ctrl_t q; return cam_ctrl(DEV(s), CTL_WB_AUTO, 0, 0, &q) ? 2 : q.cur ? 2 : 0; }
+static void dev_set_wb_mode(id s, SEL c, i64 mode) { (void)c; if (mode == 0 || mode == 2) cam_ctrl(DEV(s), CTL_WB_AUTO, 1, mode == 2, 0); }
+
 #define FMT(o) ((avfmt_t *)(o))
 static void *fmt_desc(id s, SEL c) { (void)c; return FMT(s)->fd; }
 static id fmt_media(id s, SEL c) { (void)s; (void)c; return cx_str("vide"); }
@@ -1521,6 +1567,18 @@ void cx_avcapture_init(void) {
     add("AVCaptureDevice", "lockForConfiguration:", (void *)dev_lock, 0);
     add("AVCaptureDevice", "unlockForConfiguration", (void *)dev_unlock, 0);
     add("AVCaptureDevice", "formats", (void *)dev_formats, 0);
+    add("AVCaptureDevice", "isExposureModeSupported:", (void *)dev_exp_supported, 0);
+    add("AVCaptureDevice", "exposureMode", (void *)dev_exp_mode, 0);
+    add("AVCaptureDevice", "setExposureMode:", (void *)dev_set_exp_mode, 0);
+    add("AVCaptureDevice", "isFocusModeSupported:", (void *)dev_focus_supported, 0);
+    add("AVCaptureDevice", "focusMode", (void *)dev_focus_mode, 0);
+    add("AVCaptureDevice", "setFocusMode:", (void *)dev_set_focus_mode, 0);
+    add("AVCaptureDevice", "isWhiteBalanceModeSupported:", (void *)dev_wb_supported, 0);
+    add("AVCaptureDevice", "whiteBalanceMode", (void *)dev_wb_mode, 0);
+    add("AVCaptureDevice", "setWhiteBalanceMode:", (void *)dev_set_wb_mode, 0);
+    add("AVCaptureDevice", "isAdjustingFocus", (void *)dev_no, 0);
+    add("AVCaptureDevice", "isAdjustingExposure", (void *)dev_no, 0);
+    add("AVCaptureDevice", "isAdjustingWhiteBalance", (void *)dev_no, 0);
     add("AVCaptureDevice", "activeFormat", (void *)dev_active_format, 0);
     add("AVCaptureDevice", "setActiveFormat:", (void *)dev_set_active_format, 0);
     add("AVCaptureDevice", "activeVideoMinFrameDuration", (void *)dev_min_dur, 0);

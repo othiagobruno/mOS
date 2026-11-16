@@ -26,6 +26,8 @@ typedef struct {
     usb_dev_t *d;
     usb_iface_t *it;
     uint16_t bcd;
+    uvc_units units;
+    u8 vc_num;
     uvc_stream_info si;
     int open_pid;
     bool bulk;
@@ -66,6 +68,15 @@ static bool uvc_probe_iface(usb_dev_t *d, usb_iface_t *it) {
     memset(c, 0, sizeof *c);
     if (!x || uvc_parse_vs(x, n, &c->si) != 0) { kprintf("UVC: [%s] interface %u sem formato conhecido\n", d->path, it->num); return false; }
     c->used = true; c->d = d; c->it = it; c->bcd = vc_version(d);
+    for (int i = 0; i < d->nifaces; i++) {   /* unidades de controle da VideoControl */
+        usb_iface_t *v = &d->iface[i];
+        if (v->cls != 0x0E || v->sub != 1) continue;
+        const u8 *vx = v->alts[0].extra ? v->alts[0].extra : v->extra;
+        u16 vn = v->alts[0].extra ? v->alts[0].extra_len : v->extra_len;
+        if (vx) uvc_parse_units(vx, vn, &c->units);
+        c->vc_num = v->num;
+        break;
+    }
     it->priv = c;
     /* câmera bulk: o endpoint fica na alt 0 e precisa ser configurado já */
     int idx;
@@ -309,6 +320,30 @@ i64 uvc_syscall(process_t *pr, u64 op, u64 b, u64 cc, u64 d) {
         c->read_seq = c->seq;
         spin_unlock_irqrestore(&c->lock, f);
         return uvm_copy_out(pr, cc, c->user, n) ? (i64)n : -MOS_EFAULT;
+    }
+    case DEV_CAMERA_CTRL: {
+        if (!c) return -MOS_ENXIO;
+        gui_camera_ctrl_t q;
+        if (!uvm_copy_in(pr, &q, cc, sizeof q)) return -MOS_EFAULT;
+        const uvc_ctl_def *def = uvc_ctl((int)q.id);
+        if (!def) return -MOS_EINVAL;
+        q.supported = uvc_ctl_supported(&c->units, (int)q.id);
+        if (!q.supported) return uvm_copy_out(pr, cc, &q, sizeof q) ? -MOS_ENOTSUP : -MOS_EFAULT;
+        u8 unit = def->camera_terminal ? c->units.ct_id : c->units.pu_id;
+        u16 wv = (u16)(def->selector << 8), wi = (u16)(unit << 8 | c->vc_num);
+        u8 b[4] = {0};
+        if (q.set) {
+            if (c->open_pid && c->open_pid != pr->pid) return -MOS_EBUSY;   /* outro app está usando a câmera */
+            uvc_ctl_encode(def, q.value, b);
+            if (usb_control(c->d, 0x21, 0x01 /* SET_CUR */, wv, wi, def->size, b) < 0) return -MOS_EIO;
+        }
+        static const u8 req[5] = {0x82 /* MIN */, 0x83 /* MAX */, 0x84 /* RES */, 0x87 /* DEF */, 0x81 /* CUR */};
+        int *out[5] = {&q.min, &q.max, &q.res, &q.def, &q.cur};
+        for (int k = 0; k < 5; k++) {
+            memset(b, 0, sizeof b);
+            *out[k] = usb_control(c->d, 0xA1, req[k], wv, wi, def->size, b) >= 0 ? uvc_ctl_decode(def, b) : 0;
+        }
+        return uvm_copy_out(pr, cc, &q, sizeof q) ? 0 : -MOS_EFAULT;
     }
     case DEV_CAMERA_CLOSE:
         if (!c) return -MOS_ENXIO;

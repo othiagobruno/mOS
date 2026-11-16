@@ -253,6 +253,16 @@ long cx_syscall(long n, long a, long b, long c, long d, long e) {
         memcpy((void *)c, frame, (size_t)frame_len);
         return frame_len;
     case DEV_CAMERA_CLOSE: closes++; cam_open = 0; cam.open_pid = 0; return 0;
+    case DEV_CAMERA_CTRL: {   /* AE: manual e prioridade de abertura; foco automático; balanço automático */
+        gui_camera_ctrl_t *q = (gui_camera_ctrl_t *)c;
+        static int ae = 8, fa = 1, wb = 1;
+        int *slot = q->id == 11 ? &ae : q->id == 14 ? &fa : q->id == 7 ? &wb : 0;
+        q->supported = slot != 0;
+        if (!slot) return -45;
+        if (q->set) *slot = q->value;
+        q->cur = *slot; q->res = q->id == 11 ? (1 | 8) : 1; q->min = 0; q->max = 1;
+        return 0;
+    }
     }
     return -1;
 }
@@ -465,6 +475,17 @@ int main(void) {
     mic_on = 0;
     unlink(path);
 
+    /* modos de exposição, foco e balanço de branco pelos controles UVC */
+    cam_gone = 0;
+    expect(CALL(dev, "isExposureModeSupported:", signed char, 0L) && CALL(dev, "isExposureModeSupported:", signed char, 2L) &&
+           !CALL(dev, "isExposureModeSupported:", signed char, 3L) && CALL(dev, "exposureMode", long) == 2, "exposição automática");
+    CALL(dev, "setExposureMode:", void, 0L);
+    expect(CALL(dev, "exposureMode", long) == 0, "exposição travada (AE manual)");
+    CALL(dev, "setExposureMode:", void, 2L);
+    expect(CALL(dev, "exposureMode", long) == 2 && CALL(dev, "isFocusModeSupported:", signed char, 2L) && CALL(dev, "focusMode", long) == 2, "foco contínuo");
+    CALL(dev, "setFocusMode:", void, 0L);
+    CALL(dev, "setWhiteBalanceMode:", void, 0L);
+    expect(CALL(dev, "focusMode", long) == 0 && CALL(dev, "whiteBalanceMode", long) == 0 && CALL(dev, "isWhiteBalanceModeSupported:", signed char, 2L), "foco e balanço travados");
     printf("avcapture: %d/%d ok\n", total - fails, total);
     return fails != 0;
 }
