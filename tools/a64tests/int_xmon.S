@@ -1,4 +1,5 @@
-/* frente INT: monitor exclusivo sem ABA. O STR do mesmo valor, o de outro tamanho que
+/* a64cmp: nao-comparavel (store comum do mesmo PE derrubar o monitor local é IMPLEMENTATION DEFINED; o QEMU compara valor e não derruba)
+ * frente INT: monitor exclusivo sem ABA. O STR do mesmo valor, o de outro tamanho que
  * sobrepõe e o par (STP) derrubam o STXR/STXP. Endereço que não sobrepõe não derruba. */
 #include "int_chk.h"
     .text

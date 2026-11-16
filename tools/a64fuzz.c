@@ -30,7 +30,27 @@
  * testes próprios: MRS CNTVCT/CNTPCT(SS)/CNTFRQ (tempo e frequência do QEMU), MRS DCZID_EL0
  * (o QEMU anuncia 512 B e DZP=1 por causa da emulação do DC ZVA), PACGA (algoritmo de PAC).
  */
+#ifdef _WIN32
 #include <windows.h>
+#define SEP "\\"
+#else
+/* Linux: mesmas funções com POSIX (tools/a64-linux.sh fuzz) */
+#define _GNU_SOURCE
+#include <dirent.h>
+#include <fcntl.h>
+#include <signal.h>
+#include <sys/stat.h>
+#include <sys/wait.h>
+#include <time.h>
+#include <unistd.h>
+#define SEP "/"
+#include <strings.h>
+#define _stricmp strcasecmp
+#define MAX_PATH 4096
+typedef unsigned long DWORD;
+static DWORD GetTickCount(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return (DWORD)(t.tv_sec * 1000 + t.tv_nsec / 1000000); }
+static unsigned long long GetTickCount64(void) { struct timespec t; clock_gettime(CLOCK_REALTIME, &t); return (unsigned long long)t.tv_sec * 1000000000ull + (unsigned long long)t.tv_nsec; }
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -311,6 +331,7 @@ static char g_root[MAX_PATH], g_build[MAX_PATH], g_tmp[MAX_PATH];
 static char g_qemu[MAX_PATH], g_objdump[MAX_PATH], g_a64test[MAX_PATH], g_mon[MAX_PATH];
 static int g_quiet;
 
+#ifdef _WIN32
 static int run(const char *cmd, const char *outfile, DWORD timeout_ms) {
     STARTUPINFOA si; PROCESS_INFORMATION pi;
     memset(&si, 0, sizeof si); si.cb = sizeof si;
@@ -335,13 +356,43 @@ static int run(const char *cmd, const char *outfile, DWORD timeout_ms) {
     CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
     return (int)code;
 }
+#else
+static int run(const char *cmd, const char *outfile, DWORD timeout_ms) {
+    pid_t pid = fork();
+    if (pid < 0) { perror("a64fuzz: fork"); return -1; }
+    if (pid == 0) {
+        if (outfile) { int fd = open(outfile, O_WRONLY | O_CREAT | O_TRUNC, 0644); if (fd >= 0) { dup2(fd, 1); close(fd); } }
+        setpgid(0, 0);
+        execl("/bin/sh", "sh", "-c", cmd, (char *)NULL);
+        _exit(127);
+    }
+    DWORD t0 = GetTickCount();
+    int st = 0;
+    for (;;) {
+        pid_t r = waitpid(pid, &st, WNOHANG);
+        if (r == pid) break;
+        if (GetTickCount() - t0 > timeout_ms) {
+            kill(-pid, SIGKILL); kill(pid, SIGKILL); waitpid(pid, &st, 0);
+            fprintf(stderr, "a64fuzz: tempo esgotado: %s\n", cmd);
+            return -2;
+        }
+        struct timespec ts = { 0, 2000000 }; nanosleep(&ts, NULL);
+    }
+    return WIFEXITED(st) ? WEXITSTATUS(st) : 128 + WTERMSIG(st);
+}
+#endif
 static void *read_file(const char *p, size_t *n) {
     FILE *f = fopen(p, "rb"); if (!f) return NULL;
     fseek(f, 0, SEEK_END); long l = ftell(f); fseek(f, 0, SEEK_SET);
     void *b = malloc(l + 1); if (fread(b, 1, l, f) != (size_t)l) { fclose(f); free(b); return NULL; }
     fclose(f); ((char *)b)[l] = 0; if (n) *n = l; return b;
 }
+#ifdef _WIN32
 static int exists(const char *p) { return GetFileAttributesA(p) != INVALID_FILE_ATTRIBUTES; }
+#else
+static int exists(const char *p) { return access(p, F_OK) == 0; }
+#define DeleteFileA(p) unlink(p)
+#endif
 
 /* ------------------------------------------------------------------------------------------ */
 /* validade pelo LLVM                                                                          */
@@ -371,7 +422,7 @@ static void write_elf(const char *path, const u32 *w, u32 n) {
 }
 static void llvm_pass(const u32 *w, u32 n, const char *mattr, disinfo *d, int all) {
     char elf[MAX_PATH], out[MAX_PATH], cmd[2048];
-    snprintf(elf, sizeof elf, "%s\\dis.o", g_tmp); snprintf(out, sizeof out, "%s\\dis%d.txt", g_tmp, all);
+    snprintf(elf, sizeof elf, "%s" SEP "dis.o", g_tmp); snprintf(out, sizeof out, "%s" SEP "dis%d.txt", g_tmp, all);
     write_elf(elf, w, n);
     snprintf(cmd, sizeof cmd, "\"%s\" -d --mattr=%s \"%s\"", g_objdump, mattr, elf);
     run(cmd, out, 600000);
@@ -431,8 +482,8 @@ enum { ENG_INTERP, ENG_JIT, ENG_QEMU };
 #define JIT_FAILED 0xFFFFu   /* fz_result.kind: o a64test --jit caiu ou travou neste pedaço do lote */
 static fz_result *run_engine(int eng, const fz_case *c, u32 n, int tag) {
     char batch[MAX_PATH], res[MAX_PATH], cmd[4096];
-    snprintf(batch, sizeof batch, "%s\\lote%d_%d.bin", g_tmp, tag, eng);
-    snprintf(res, sizeof res, "%s\\res%d_%d.bin", g_tmp, tag, eng);
+    snprintf(batch, sizeof batch, "%s" SEP "lote%d_%d.bin", g_tmp, tag, eng);
+    snprintf(res, sizeof res, "%s" SEP "res%d_%d.bin", g_tmp, tag, eng);
     DeleteFileA(res);
     write_batch(batch, c, n, eng == ENG_QEMU ? res : NULL);
     int rc;
@@ -596,7 +647,7 @@ static void save_regress(const fz_case *k, int g, const char *dis) {
     u32 key = k->ninsn ? k->insn[0] : 0;
     for (u32 i = 1; i < k->ninsn; i++) key = key * 31 + k->insn[i];
     snprintf(name, sizeof name, "regress_%s_%08x", gn, key);
-    snprintf(path, sizeof path, "%s\\tools\\a64tests\\%s.S", g_root, name);
+    snprintf(path, sizeof path, "%s" SEP "tools" SEP "a64tests" SEP "%s.S", g_root, name);
     if (exists(path)) return;
     FILE *f = fopen(path, "w"); if (!f) return;
     fprintf(f, "/* %s: divergência achada pelo tools/a64fuzz (grupo %s, frente %s).\n", name, GROUPS[g].name, GROUPS[g].front);
@@ -625,11 +676,12 @@ static void save_regress(const fz_case *k, int g, const char *dis) {
     u64 s = k->scr_seed | 1;
     for (unsigned i = 0; i < FZ_SCR_SZ / 8; i++) fprintf(f, "%s0x%016llx%s", i % 4 ? ", " : "    .quad ", (unsigned long long)fz_rng(&s), i % 4 == 3 ? "\n" : "");
     fclose(f);
-    if (!g_quiet) printf("  salvo: tools\\a64tests\\%s.S\n", name);
+    if (!g_quiet) printf("  salvo: tools/a64tests/%s.S\n", name);
 }
 
 /* ------------------------------------------------------------------------------------------ */
 
+#ifdef _WIN32
 static void cleanup_tmp(void) {
     char pat[MAX_PATH], p[MAX_PATH]; WIN32_FIND_DATAA fd;
     snprintf(pat, sizeof pat, "%s\\*", g_tmp);
@@ -640,6 +692,17 @@ static void cleanup_tmp(void) {
     }
     RemoveDirectoryA(g_tmp);
 }
+#else
+static void cleanup_tmp(void) {
+    char p[MAX_PATH + 300];
+    DIR *d = opendir(g_tmp);
+    if (d) {
+        for (struct dirent *e; (e = readdir(d));) { if (e->d_name[0] == '.') continue; snprintf(p, sizeof p, "%s/%s", g_tmp, e->d_name); unlink(p); }
+        closedir(d);
+    }
+    rmdir(g_tmp);
+}
+#endif
 
 /* ------------------------------------------------------------------------------------------ */
 /* FMA do oráculo: o qemu-system-aarch64 do Windows (mingw) tem um caminho "hardfloat" que, com
@@ -763,6 +826,7 @@ int main(int argc, char **argv) {
     if (K < 1) K = 1; if (K > FZ_MAXINSN - 1) K = FZ_MAXINSN - 1;
     g_rng = seed * 0x9E3779B97F4A7C15ull + 1;
 
+#ifdef _WIN32
     GetModuleFileNameA(NULL, g_build, sizeof g_build);
     *strrchr(g_build, '\\') = 0;                       /* ...\build */
     strcpy(g_root, g_build); *strrchr(g_root, '\\') = 0;
@@ -773,6 +837,18 @@ int main(int argc, char **argv) {
     snprintf(g_mon, sizeof g_mon, "%s\\a64oracle\\mon.elf", g_build);
     const char *q = getenv("MOS_QEMU_A64"); strcpy(g_qemu, q ? q : "C:\\Program Files\\qemu\\qemu-system-aarch64.exe");
     const char *o = getenv("MOS_LLVM_OBJDUMP"); strcpy(g_objdump, o ? o : "C:\\Program Files\\LLVM\\bin\\llvm-objdump.exe");
+#else
+    { ssize_t l = readlink("/proc/self/exe", g_build, sizeof g_build - 1); if (l < 0) l = 0; g_build[l] = 0; }
+    { const char *b = getenv("A64FUZZ_BUILD"); if (b) snprintf(g_build, sizeof g_build, "%s/x", b); }
+    *strrchr(g_build, '/') = 0;                        /* .../build/a64l */
+    { const char *r = getenv("A64FUZZ_ROOT"); if (r) snprintf(g_root, sizeof g_root, "%s", r); else { strcpy(g_root, g_build); *strrchr(g_root, '/') = 0; *strrchr(g_root, '/') = 0; } }
+    snprintf(g_tmp, sizeof g_tmp, "%s/a64fuzz.tmp", g_build); mkdir(g_tmp, 0755);
+    { size_t l = strlen(g_tmp); snprintf(g_tmp + l, sizeof g_tmp - l, "/%lu", (unsigned long)getpid()); mkdir(g_tmp, 0755); }
+    { const char *t = getenv("MOS_A64TEST"); if (t) snprintf(g_a64test, sizeof g_a64test, "%s", t); else snprintf(g_a64test, sizeof g_a64test, "%s/a64host-jit", g_build); }
+    snprintf(g_mon, sizeof g_mon, "%s/mon.elf", g_build);
+    const char *q = getenv("MOS_QEMU_A64"); strcpy(g_qemu, q ? q : "/usr/bin/qemu-system-aarch64");
+    const char *o = getenv("MOS_LLVM_OBJDUMP"); strcpy(g_objdump, o ? o : "/usr/bin/llvm-objdump");
+#endif
     g_have_llvm = exists(g_objdump);
     if (!exists(g_qemu) || !exists(g_mon) || !exists(g_a64test)) {
         fprintf(stderr, "a64fuzz: falta %s\n", !exists(g_qemu) ? g_qemu : !exists(g_mon) ? g_mon : g_a64test); return 2;
