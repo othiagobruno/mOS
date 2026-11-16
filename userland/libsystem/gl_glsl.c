@@ -1511,14 +1511,22 @@ static void glsl_vs(gl_ctx_t *C, u32 e, u32 iid, gl_vtx_t *o) {
         o->nxfb = n;
     }
 }
-static void glsl_fs(gl_ctx_t *C, gl_frag_t *f) {
-    pg_t *g = g_run.g;
+/* entradas do fragmento: o próprio pixel (nb 0) ou o vizinho x+1 (1) / y+1 (2) pelas derivadas do raster */
+static void fs_load(gl_ctx_t *C, pg_t *g, gl_frag_t *f, int nb) {
     msl_lib_t *L = g->lib[1];
     for (int i = 0; i < g->nplain[1]; i++) memcpy(L->gmem + g->plain[1][i].off, g->init[1] + g->plain[1][i].off, (size_t)g->plain[1][i].size);
-    for (int i = 0; i < g->nvar; i++) { pv_t *v = &g->var[i]; memcpy(L->gmem + v->off[1], f->v[v->slot], (size_t)v->size); }
-    for (int i = 0; i < 13; i++) if (g->c_in[i] >= 0) memcpy(L->gmem + g->c_in[i], f->v[i], i == 12 ? 4 : 16);
+    float tmp[GLX_VAR][4];
+    const float (*src)[4] = (const float (*)[4])f->v;
+    if (nb) {
+        const float (*d)[4] = nb == 1 ? (const float (*)[4])f->dx : (const float (*)[4])f->dy;
+        for (int s = 0; s < g->nslots && s < GLX_VAR; s++)
+            for (int k = 0; k < 4; k++) tmp[s][k] = C->st.interp[s] == MSL_INTERP_FLAT ? f->v[s][k] : f->v[s][k] + d[s][k];
+        src = (const float (*)[4])tmp;
+    }
+    for (int i = 0; i < g->nvar; i++) { pv_t *v = &g->var[i]; memcpy(L->gmem + v->off[1], src[v->slot], (size_t)v->size); }
+    for (int i = 0; i < 13; i++) if (g->c_in[i] >= 0) memcpy(L->gmem + g->c_in[i], src[i], i == 12 ? 4 : 16);
     if (g->b_coord >= 0) {
-        float c[4] = {f->coord[0], f->coord[1], f->coord[2], f->coord[3]};
+        float c[4] = {f->coord[0] + (nb == 1), f->coord[1] + (nb == 2), f->coord[2], f->coord[3]};
         if (g->info[1].origin_ul) c[1] = (float)C->tgt.h - c[1];
         if (g->info[1].pixel_int) { c[0] -= 0.5f; c[1] -= 0.5f; }
         memcpy(L->gmem + g->b_coord, c, 16);
@@ -1527,11 +1535,34 @@ static void glsl_fs(gl_ctx_t *C, gl_frag_t *f) {
     if (g->b_pcoord >= 0) memcpy(L->gmem + g->b_pcoord, f->pcoord, 8);
     if (g->b_pid >= 0) { i32 v = (i32)f->prim_id; memcpy(L->gmem + g->b_pid, &v, 4); }
     if (g->b_depth >= 0) memcpy(L->gmem + g->b_depth, &f->coord[2], 4);
+}
+static int g_need_deriv;
+static void glsl_fs(gl_ctx_t *C, gl_frag_t *f) {
+    pg_t *g = g_run.g;
+    msl_lib_t *L = g->lib[1];
     msl_ctx_t ctx;
+    u8 dummy[64];
+    msl_deriv_t D;
+    if (g_need_deriv) {
+        /* vizinhos primeiro, gravando os argumentos de derivada e as coordenadas de textura */
+        D.mode = 0;
+        D.n[0] = D.n[1] = 0;
+        for (int nb = 1; nb <= 2; nb++) {
+            fs_load(C, g, f, nb);
+            memset(&ctx, 0, sizeof ctx);
+            D.mode = nb;
+            D.k = 0;
+            ctx.deriv = &D;
+            msl_run(g->main[1], &ctx, dummy);
+        }
+        D.mode = 3;
+        D.k = 0;
+    }
+    fs_load(C, g, f, 0);
     memset(&ctx, 0, sizeof ctx);
     memcpy(ctx.fragpos, f->coord, 16);
     ctx.front_facing = f->front;
-    u8 dummy[64];
+    if (g_need_deriv) ctx.deriv = &D;
     msl_run(g->main[1], &ctx, dummy);
     if (ctx.discarded) { f->discard = 1; return; }
     if (g->w_fcolor) { float c[4]; memcpy(c, L->gmem + g->b_fcolor, 16); for (int i = 0; i < GLX_DRAW; i++) memcpy(f->color[i], c, 16); }
@@ -1735,6 +1766,20 @@ void gl_glsl_stage(gl_ctx_t *C) {
     for (int i = 0; i < GLX_VAR; i++) S->interp[i] = MSL_INTERP_PERSP;
     if (g->compat && C->shade == GL_FLAT) for (int i = 0; i < 4; i++) S->interp[i] = MSL_INTERP_FLAT;
     for (int i = 0; i < g->nvar; i++) for (int k = 0; k < g->var[i].nslots; k++) S->interp[g->var[i].slot + k] = (u8)g->var[i].interp;
+    /* derivadas: o shader pede dFdx/dFdy/fwidth ou amostra textura com mipmap / filtros min e mag diferentes */
+    g_need_deriv = uses(g->fsrc_user, "dFdx") || uses(g->fsrc_user, "dFdy") || uses(g->fsrc_user, "fwidth") ||
+                   uses(g->fsrc_user, "dFdxFine") || uses(g->fsrc_user, "dFdyFine") || uses(g->fsrc_user, "dFdxCoarse") ||
+                   uses(g->fsrc_user, "dFdyCoarse") || uses(g->fsrc_user, "fwidthFine") || uses(g->fsrc_user, "fwidthCoarse");
+    for (int i = 0, k = 0; i < g->nuni && !g_need_deriv; i++) {
+        pu_t *u = &g->uni[i];
+        if (!u->sampler) continue;
+        for (int e = 0; e < u->arr; e++, k++) {
+            msl_samp_t *ss = &g->sstore[k];
+            msl_tex_t *mt = gl_tex_mt(C, C->tex[u->units[e]][u->target]);
+            if (u->off[1] >= 0 && mt->data && ((ss->mipf && mt->levels > 1) || ss->minf != ss->magf)) g_need_deriv = 1;
+        }
+    }
+    if (g_need_deriv) S->dmask = g->nslots >= 32 ? 0xffffffffu : (1u << g->nslots) - 1;
     S->nclip = GLX_CLIP;
     S->vs = glsl_vs;
     S->fs = glsl_fs;

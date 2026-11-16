@@ -279,6 +279,56 @@ static void t_bindable(void) {
     gl_ctx_destroy(C);
 }
 
+static void t_derivatives(void) {
+    gl_ctx_t *C = gl_ctx_create(0, 1, 4, 1, 8, 8, 1, 1, 1, 1);
+    gl_ctx_make_current(C);
+    char log[512];
+    const char *vs = "#version 330\nlayout(location=0) in vec2 pos;\nout vec2 uv;\nvoid main() { uv = pos * 0.5 + 0.5; gl_Position = vec4(pos, 0, 1); }\n";
+    const char *fs = "#version 330\nin vec2 uv;\nout vec4 o;\nvoid main() { o = vec4(dFdx(uv.x) * 8.0, dFdy(uv.y) * 8.0, fwidth(uv.x) * 4.0, 1.0); }\n";
+    GLuint p = prog(vs, fs, log, sizeof log);
+    CHECK(p != 0, "programa com dFdx liga");
+    if (!p) { gl_ctx_destroy(C); return; }
+    GLuint vao, vb;
+    glGenVertexArrays(1, &vao);
+    glBindVertexArray(vao);
+    float pos[] = {-1, -1, 1, -1, 1, 1, -1, -1, 1, 1, -1, 1};
+    glGenBuffers(1, &vb);
+    glBindBuffer(GL_ARRAY_BUFFER, vb);
+    glBufferData(GL_ARRAY_BUFFER, sizeof pos, pos, GL_STATIC_DRAW);
+    glVertexAttribPointer(0, 2, GL_FLOAT, 0, 0, 0);
+    glEnableVertexAttribArray(0);
+    glUseProgram(p);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+    u8 o[4];
+    px(3, 3, o);
+    CHECK(near(o[0], 255, 2) && near(o[1], 255, 2) && near(o[2], 128, 2), "dFdx/dFdy/fwidth %d %d %d", o[0], o[1], o[2]);
+    /* mipmap pela lod implícita: 4x4 vermelho, 2x2 verde, 1x1 azul; desenhado em 2x2 pixels -> nível 1 */
+    const char *fs2 = "#version 330\nin vec2 uv;\nuniform sampler2D t;\nout vec4 o;\nvoid main() { o = texture(t, uv); }\n";
+    GLuint p2 = prog(vs, fs2, log, sizeof log);
+    CHECK(p2 != 0, "programa com textura liga");
+    GLuint tex;
+    glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    u8 l0[64], l1[16], l2[4] = {0, 0, 255, 255};
+    for (int i = 0; i < 16; i++) { l0[i * 4] = 255; l0[i * 4 + 1] = 0; l0[i * 4 + 2] = 0; l0[i * 4 + 3] = 255; }
+    for (int i = 0; i < 4; i++) { l1[i * 4] = 0; l1[i * 4 + 1] = 255; l1[i * 4 + 2] = 0; l1[i * 4 + 3] = 255; }
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 4, 4, 0, GL_RGBA, GL_UNSIGNED_BYTE, l0);
+    glTexImage2D(GL_TEXTURE_2D, 1, GL_RGBA8, 2, 2, 0, GL_RGBA, GL_UNSIGNED_BYTE, l1);
+    glTexImage2D(GL_TEXTURE_2D, 2, GL_RGBA8, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, l2);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glUseProgram(p2);
+    glViewport(0, 0, 2, 2);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+    px(0, 0, o);
+    CHECK(o[1] == 255 && o[0] == 0 && o[2] == 0, "lod implícita escolhe o nível 1 %d %d %d", o[0], o[1], o[2]);
+    glViewport(0, 0, 8, 8);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+    px(5, 5, o);
+    CHECK(o[0] == 255 && o[1] == 0, "magnificação usa o nível 0 %d %d %d", o[0], o[1], o[2]);
+    gl_ctx_destroy(C);
+}
+
 void gl_glsl_host_tests(int *fails, int *checks) {
     F = fails;
     K = checks;
@@ -287,4 +337,5 @@ void gl_glsl_host_tests(int *fails, int *checks) {
     t_compat_glsl();
     t_xfb();
     t_bindable();
+    t_derivatives();
 }

@@ -16,7 +16,7 @@ double sin(double), cos(double), tan(double), asin(double), acos(double), atan(d
 double sinh(double), cosh(double), tanh(double), asinh(double), acosh(double), atanh(double);
 double exp(double), exp2(double), exp10(double), log(double), log2(double), log10(double), pow(double, double);
 double sqrt(double), floor(double), ceil(double), fmod(double, double), round(double), rint(double), trunc(double);
-double copysign(double, double);
+double copysign(double, double), fabs(double);
 ty_t *msl_tscal(int k);
 ty_t *msl_tvec(int k, int n, int packed);
 
@@ -532,11 +532,25 @@ static void builtin(node_t *n, fr_t *fr, reg_t *r) {
         }
         return;
     }
-    case B_DFDX: case B_DFDY: case B_FWIDTH:
+    case B_DFDX: case B_DFDY: case B_FWIDTH: {
+        msl_deriv_t *D = fr->ctx->deriv;
         r->n = n0;
         r->isint = a[0].isint;
         for (int i = 0; i < n0; i++) r->i[i] = 0;
+        if (!D || !D->mode || a[0].isint) return;
+        int k = D->k++;
+        if (D->mode <= 2) {
+            if (k < MSL_DERIV_MAX) { for (int i = 0; i < 4; i++) D->v[D->mode - 1][k][i] = i < n0 ? rd(&a[0], i) : 0; D->n[D->mode - 1] = k + 1; }
+            for (int i = 0; i < n0; i++) r->d[i] = 0;
+            return;
+        }
+        for (int i = 0; i < n0 && i < 4; i++) {
+            double c = rd(&a[0], i);
+            double dx = k < D->n[0] ? D->v[0][k][i] - c : 0, dy = k < D->n[1] ? D->v[1][k][i] - c : 0;
+            r->d[i] = b == B_DFDX ? dx : b == B_DFDY ? dy : fabs(dx) + fabs(dy);
+        }
         return;
+    }
     case B_SIMD_IDENT: case B_SIMD_SUM: *r = a[0]; return;
     case B_SIMD_BARRIER: r->isint = 1; r->i[0] = 0; return;
     case B_PACK_UNORM4X8: case B_PACK_SNORM4X8: {
@@ -712,8 +726,28 @@ static void tex_call(node_t *n, fr_t *fr, reg_t *r) {
             return;
         }
         int nc = tt->tex == MSL_TEX_1D || tt->tex == MSL_TEX_1D_ARRAY ? 1 : (tt->tex == MSL_TEX_3D || tt->tex == MSL_TEX_CUBE || tt->tex == MSL_TEX_CUBE_ARRAY) ? 3 : 2;
-        if (n->d && n->d->bi == B_BIAS) lod += s->lodbias;
-        else if (!(n->d && n->d->bi == B_LEVEL)) lod = s->lodbias;
+        msl_deriv_t *D = fr->ctx->deriv;
+        int implicit = !(n->d && (n->d->bi == B_LEVEL || n->d->bi == B_GRAD));
+        double ilod = 0;
+        if (implicit && D && D->mode) {
+            /* lod implícita: maior variação da coordenada em texels entre o pixel e os vizinhos */
+            int k = D->k++;
+            if (D->mode <= 2) { if (k < MSL_DERIV_MAX) { for (int i = 0; i < 3; i++) D->v[D->mode - 1][k][i] = cd[i]; D->v[D->mode - 1][k][3] = 0; D->n[D->mode - 1] = k + 1; } }
+            else if (k < D->n[0] && k < D->n[1]) {
+                double sz[3] = {s->normalized ? t->w : 1, s->normalized ? t->h : 1, s->normalized ? t->d : 1}, ax = 0, ay = 0;
+                int nc2 = tt->tex == MSL_TEX_1D || tt->tex == MSL_TEX_1D_ARRAY ? 1 : (tt->tex == MSL_TEX_3D || tt->tex == MSL_TEX_CUBE || tt->tex == MSL_TEX_CUBE_ARRAY) ? 3 : 2;
+                if (tt->tex == MSL_TEX_CUBE || tt->tex == MSL_TEX_CUBE_ARRAY) sz[0] = sz[1] = sz[2] = t->w * 0.5;
+                for (int i = 0; i < nc2; i++) {
+                    double dx = (D->v[0][k][i] - cd[i]) * sz[i], dy = (D->v[1][k][i] - cd[i]) * sz[i];
+                    ax += dx * dx;
+                    ay += dy * dy;
+                }
+                double m = ax > ay ? ax : ay;
+                ilod = m > 0 ? 0.5 * log2(m) : -1000;
+            }
+        }
+        if (n->d && n->d->bi == B_BIAS) lod += s->lodbias + ilod;
+        else if (!(n->d && n->d->bi == B_LEVEL)) lod = s->lodbias + ilod;
         msl_tex_sample(t, s, cd, nc, slice, lod, out);
         if (m == T_SAMPLE_CMP) {
             reg_t ref;
