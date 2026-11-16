@@ -47,6 +47,7 @@ static int s_fcvt_vec(T *t, int q, int dbl, int u, int mode, int n, int d, int s
 static int s_fpsc_elem(T *t, int kind, int dbl, int n, int m, int lane, int d);
 static int s_faddp_lo(T *t, int dbl, int sc, int n, int m, int d);
 static void s_lanecheck(T *t, int dbl, int q);
+static int s_fcmp16(T *t, int q, int kind, int abs, int n, int m, int d);
 static void s_wsc_rax(T *t, int d);
 static void s_widen(T *t, int x, int v, int hi, int sz, int sgn);
 static int s_dot(T *t, int q, int sa, int sb, int n, int m, int lane, int d);
@@ -1755,6 +1756,33 @@ static int s_fmaxmin_vec(T *t, int q, int dbl, int mn, int n, int m, int d) {
     s_st(t, d, 2, q);
     return 1;
 }
+/* Comparações FP16 vetoriais (4H/8H): kind como no s_fcmpv (0 EQ, 1 GE, 2 GT, 3 LE0, 4 LT0;
+ * m = 32 compara com zero; abs = FACGE/FACGT). As metades viram f32 (exato), a comparação é a do
+ * f32 e as máscaras de 32 bits voltam a 16 com packssdw. NaN e FPCR.FZ16 vão ao interpretador. */
+static int s_fcmp16(T *t, int q, int kind, int abs, int n, int m, int d) {
+    if (!jit_g.f16c) return 0;
+    fl_clobber(t);
+    x_test_ri(B, 0, XM(RCPU, OFF_FPCR), 1u << 19);
+    slow_if(t, CC_NE);
+    for (int half = 0; half < (q ? 2 : 1); half++) {
+        int r = half ? 5 : 0;
+        x_movq_ld(B, 1, VOE(n, 8 * half)); vcvtph2ps_r(t, 1, 1);
+        if (kind >= 3 || m == 32) s_zero(t, 2); else { x_movq_ld(B, 2, VOE(m, 8 * half)); vcvtph2ps_r(t, 2, 2); }
+        if (abs) { s_const(t, 3, 0x7FFFFFFF7FFFFFFFull); xop2(B, 0, 0x54, 1, XR(3)); xop2(B, 0, 0x54, 2, XR(3)); }
+        x_movdqa_ld(B, 3, XR(1));
+        xop2(B, 0, 0xC2, 3, XR(2)); xe8(B, 3);      /* cmpunordps */
+        xop2(B, XF_66, 0xD7, XAX, XR(3));
+        x_test_rr(B, 0, XAX, XAX);
+        slow_if(t, CC_NE);
+        if (kind == 0) { xop2(B, 0, 0xC2, 1, XR(2)); xe8(B, 0); x_movdqa_ld(B, r, XR(1)); }
+        else if (kind <= 2) { xop2(B, 0, 0xC2, 2, XR(1)); xe8(B, kind == 1 ? 2 : 1); x_movdqa_ld(B, r, XR(2)); }
+        else { xop2(B, 0, 0xC2, 1, XR(2)); xe8(B, kind == 3 ? 2 : 1); x_movdqa_ld(B, r, XR(1)); }
+    }
+    s_op(t, 0x6B, 0, q ? 5 : 0);                    /* packssdw: máscaras de 16 bits */
+    t->mxclean = 0;
+    s_st(t, d, 0, q);
+    return 1;
+}
 static int s_fpvec(T *t, a64_u32 w) {
     int q = (int)BIT(w, 30), u = (int)BIT(w, 29), a = (int)BIT(w, 23), dbl = (int)BIT(w, 22), op = (int)BITS(w, 13, 11);
     int m = (int)BITS(w, 20, 16), n = (int)BITS(w, 9, 5), d = (int)(w & 31);
@@ -2934,6 +2962,14 @@ static int tr_simd(T *t, a64_u32 w) {
         switch (BITS(w, 20, 17)) {
         case 0x0: return s_misc(t, w);
         case 0x8: return s_across(t, w);
+        case 0xC:                                   /* 2misc FP16 (bit 22 = 1): FCMxx #0 */
+            if (BIT(w, 22) && BIT(w, 23)) {
+                int q = (int)BIT(w, 30), u = (int)BIT(w, 29), op = (int)BITS(w, 16, 12), n = (int)BITS(w, 9, 5), d = (int)(w & 31);
+                if (op == 0x0C) return s_fcmp16(t, q, u ? 1 : 2, 0, n, 32, d);   /* FCMGE/FCMGT #0: 0 <= n, 0 < n */
+                if (op == 0x0D) return s_fcmp16(t, q, u ? 3 : 0, 0, n, 32, d);   /* FCMLE/FCMEQ #0 */
+                if (op == 0x0E && !u) return s_fcmp16(t, q, 4, 0, n, 32, d);     /* FCMLT #0 */
+            }
+            return 0;
         case 0x4:
             if (!(BITS(w, 31, 29) == 2 && BITS(w, 23, 22) == 0)) return 0;
             if (s_aes(t, w) || s_sha1h(t, w) || s_sha256su0(t, w)) return 1;
@@ -2956,8 +2992,11 @@ static int tr_simd(T *t, a64_u32 w) {
             if (!u && op == 2) return s_f16(t, a ? 0x5C : 0x58, lanes, d, n, m);
             if (u && !a && op == 3) return s_f16(t, 0x59, lanes, d, n, m);
             if (u && !a && op == 7) return s_f16(t, 0x5E, lanes, d, n, m);
+            if (op == 4 && !(!u && a)) return s_fcmp16(t, q, !u ? 0 : a ? 2 : 1, 0, n, m, d);   /* FCMEQ FCMGE FCMGT */
+            if (op == 5 && u) return s_fcmp16(t, q, a ? 2 : 1, 1, n, m, d);                  /* FACGE FACGT */
             return 0;
         }
+
         return 0;
     }
     if (!BIT(w, 21) && !BIT(w, 10) && !BIT(w, 15) && !BIT(w, 11) && !BIT(w, 29) && BITS(w, 23, 22) == 0 && s_sha256h(t, w))
