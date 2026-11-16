@@ -105,8 +105,7 @@ double __floattidf(__int128 a) {
 }
 
 /* ---- CoreFoundation / CoreText */
-id_ CFTimeZoneCopySystem(void);
-id_ CFTimeZoneCopyDefault(void) { return CFTimeZoneCopySystem(); }
+/* CFTimeZoneCopyDefault: fdn_i18n.c */
 
 id_ CTFontDescriptorCreateWithAttributes(id_ attrs);
 id_ objc_getClass(const char *n);

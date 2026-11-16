@@ -278,7 +278,6 @@ void CFDictionarySetValue(id_ d, id_ key, id_ val);
 id_ CFArrayCreateMutable(void *alloc, long cap, const void *cb);
 void CFArrayAppendValue(id_ a, id_ v);
 id_ CFArrayCreateCopy(void *alloc, id_ src);
-static id_ str1(const char *s) { id_ r = MSG1(id_, CLS("NSString"), "stringWithUTF8String:", s); return r ? objc_retain(r) : 0; }
 static const char *utf8(id_ s) { return s ? MSG0(const char *, s, "UTF8String") : 0; }
 
 extern char cx_cfconst_isa[] __asm__("__CFConstantStringClassReference");
@@ -388,18 +387,6 @@ unsigned char CFURLResourceIsReachable(id_ u, id_ *err) {
 }
 
 /* idiomas, fuso, preferências */
-id_ CFLocaleCopyPreferredLanguages(void) {
-    id_ a = MSG0(id_, CLS("NSLocale"), "preferredLanguages");
-    return a ? CFArrayCreateCopy(0, a) : CFArrayCreateMutable(0, 0, 0);
-}
-/* CFTimeZone = o nome IANA (CFString); TZ do ambiente, senão o do Brasil (padrão do mOS) */
-id_ CFTimeZoneCopySystem(void) {
-    const char *tz = getenv("TZ");
-    if (tz && *tz == ':') tz++;
-    return str1(tz && *tz ? tz : "America/Sao_Paulo");
-}
-id_ CFTimeZoneGetName(id_ tz) { return tz; }
-void CFTimeZoneResetSystem(void) {}
 /* CFPreferencesCopyAppValue / CFPreferencesAppSynchronize: prefs.c */
 
 /* FSEvents: userland/libsystem/fsevents.c (varredura stat/readdir; o kernel não tem fila de vnode). */

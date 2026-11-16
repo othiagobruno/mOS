@@ -358,6 +358,9 @@ bash "$ROOT/tools/string-fdn-teste.sh" "$ZIG" "$OUT/string-fdn"
 echo "==> Date, UUID, erros e Notification do Foundation Swift (teste de host)"
 bash "$ROOT/tools/fdn-tipos-teste.sh" "$ZIG" "$OUT/fdn-tipos"
 
+echo "==> Foundation sobre a ICU: locale, fuso, calendário e formatters (teste de host)"
+bash "$ROOT/tools/fdn-i18n-teste.sh" "$OUT/fdn-i18n"
+
 echo "==> compositor: sombra em cache igual à direta e tempo por quadro (teste de host)"
 "$ZIG" cc -O2 -ffreestanding -fno-builtin -mno-red-zone -fshort-wchar -I"$ROOT/kernel/include" -I"$ROOT" -std=gnu11 -w \
     -c "$ROOT/kernel/gfx/gfx.c" -o "$OUT/gfx_host.o"
@@ -448,6 +451,16 @@ cp -f "$ROOT/build/zlib-x86_64/LICENSE" "$ESP/mOS/usr/share/zlib/LICENSE"
 cp -f "$ROOT/build/curl-x86_64/COPYING" "$ESP/mOS/usr/share/curl/COPYING"
 cp -f "$ROOT/build/curl-x86_64/LICENSE.mbedtls" "$ESP/mOS/usr/share/curl/LICENSE.mbedtls"
 cp -f "$ROOT/assets/certs/cacert.pem" "$ESP/mOS/usr/share/curl/cacert.pem"
+# ICU4C 74.2 como /usr/lib/libicucore.A.dylib e os dados em /usr/share/icu (tools/build-icu.sh, porte do build-icu.ps1):
+# NSLocale, NSCalendar, formatters e transformações de NSString do libSystem, e o Intl do Claude Code.
+if MOS_ZIG="$ZIG" bash "$ROOT/tools/build-icu.sh" --jobs 2; then
+    mkdir -p "$ESP/mOS/usr/share/icu"
+    cp -f "$ROOT/build/icu/libicucore.A.dylib" "$ESP/mOS/usr/lib/libicucore.A.dylib"
+    cp -f "$ROOT/build/icu/icudt74l.dat" "$ESP/mOS/usr/share/icu/icudt74l.dat"
+    cp -f "$ROOT/build/icu/LICENSE" "$ESP/mOS/usr/share/icu/LICENSE" 2>/dev/null || true
+else
+    echo "build: libicucore não compilou" >&2; exit 1
+fi
 
 echo "==> git (/usr/bin/git, /usr/libexec/git-core; do fonte, com a libz e a libcurl acima)"
 MOS_ZIG="$ZIG" bash "$ROOT/tools/build-git.sh"

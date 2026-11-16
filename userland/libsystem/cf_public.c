@@ -78,200 +78,20 @@ long CFBagGetCount(id o) { bag_o *b = as_bag(o); return b ? cf_bag_count(&b->bag
 long CFBagGetCountOfValue(id o, const void *v) { bag_o *b = as_bag(o); return b ? cf_bag_count(&b->bag, v) : 0; }
 unsigned char CFBagContainsValue(id o, const void *v) { return CFBagGetCountOfValue(o, v) > 0; }
 
-/* ---- fuso: o objeto guarda o nome; CFTimeZoneCopySystem continua devolvendo a string ---- */
-typedef struct { int k; char name[96]; } tz_o;
-u64 CFTimeZoneGetTypeID(void) { return 27; }
-static const char *tz_name_of(id tz) {
-    if (!tz) return "UTC";
-    tz_o *t = is_box(tz) ? ((box_t *)tz)->p : 0;
-    if (t && t->k == K_TZ) return t->name;
-    return C(tz);
-}
-id CFTimeZoneCreateWithName(void *alloc, id name, unsigned char try_abbr) {
-    (void)alloc; (void)try_abbr;
-    tz_o *t = calloc(1, sizeof *t);
-    const char *n = C(name);
-    if (!t) return 0;
-    t->k = K_TZ;
-    if (!n[0]) n = "UTC";
-    memcpy(t->name, n, strlen(n) < 95 ? strlen(n) : 95);
-    return box_new(t);
-}
-long CFTimeZoneGetSecondsFromGMT(id tz, double at) { return cf_tz_offset(tz_name_of(tz), at); }
-id CFTimeZoneCopyAbbreviation(id tz, double at) { return S(cf_tz_abbr(tz_name_of(tz), at)); }
-
-/* ---- calendário gregoriano ---- */
-typedef struct { int k; char ident[40]; id tz; } cal_o;
 static void box_free_payload(void *p) {
     any_t *a = p;
     if (!a) return;
     if (a->k == K_BAG) free(((bag_o *)a)->bag.s);
-    if (a->k == K_CAL && ((cal_o *)a)->tz) objc_release(((cal_o *)a)->tz);
     free(a);
 }
-u64 CFCalendarGetTypeID(void) { return 28; }
-static cal_o *as_cal(id o) { cal_o *c = is_box(o) ? ((box_t *)o)->p : 0; return c && c->k == K_CAL ? c : 0; }
-id CFCalendarCreateWithIdentifier(void *alloc, id ident) {
-    (void)alloc;
-    cal_o *c = calloc(1, sizeof *c);
-    const char *n = C(ident);
-    if (!c) return 0;
-    c->k = K_CAL;
-    if (!n[0]) n = "gregorian";
-    memcpy(c->ident, n, strlen(n) < 39 ? strlen(n) : 39);
-    c->tz = objc_retain(CFTimeZoneCopySystem());
-    return box_new(c);
-}
-id CFCalendarCopyCurrent(void) { return CFCalendarCreateWithIdentifier(0, cx_str("gregorian")); }
-id CFCalendarGetIdentifier(id cal) { cal_o *c = as_cal(cal); return c ? S(c->ident) : 0; }
-id CFCalendarCopyTimeZone(id cal) { cal_o *c = as_cal(cal); return c && c->tz ? objc_retain(c->tz) : CFTimeZoneCopySystem(); }
-void CFCalendarSetTimeZone(id cal, id tz) {
-    cal_o *c = as_cal(cal);
-    if (!c || !tz) return;
-    if (c->tz) objc_release(c->tz);
-    c->tz = objc_retain(tz);
-}
-static double cal_abs(id cal, double at, int to_local) {
-    long off = CFTimeZoneGetSecondsFromGMT(as_cal(cal) ? as_cal(cal)->tz : 0, at);
-    return to_local ? at + off : at - off;
-}
-enum {
-    U_ERA = 1 << 1, U_YEAR = 1 << 2, U_MONTH = 1 << 3, U_DAY = 1 << 4,
-    U_HOUR = 1 << 5, U_MIN = 1 << 6, U_SEC = 1 << 7, U_WEEK = 1 << 8, U_WDAY = 1 << 9
-};
-unsigned char CFCalendarDecomposeAbsoluteTime(id cal, double at, unsigned long units, int *a, int *b, int *c, int *d, int *e, int *f) {
-    int y, mo, da, h, mi, s, wd, n = 0;
-    int *out[6];
-    cf_ymdhms_from_abs(cal_abs(cal, at, 1), &y, &mo, &da, &h, &mi, &s, &wd);
-    out[0] = a; out[1] = b; out[2] = c; out[3] = d; out[4] = e; out[5] = f;
-    if (units & U_ERA) { if (out[n]) *out[n] = 1; n++; }
-    if (units & U_YEAR) { if (out[n]) *out[n] = y; n++; }
-    if (units & U_MONTH) { if (out[n]) *out[n] = mo; n++; }
-    if (units & U_DAY) { if (out[n]) *out[n] = da; n++; }
-    if (units & U_HOUR) { if (out[n]) *out[n] = h; n++; }
-    if (units & U_MIN) { if (out[n]) *out[n] = mi; n++; }
-    if (units & U_SEC && n < 6) { if (out[n]) *out[n] = s; n++; }
-    if (units & U_WDAY && n < 6) { if (out[n]) *out[n] = wd; }
-    return 1;
-}
-unsigned char CFCalendarComposeAbsoluteTime(id cal, double *at, unsigned long units, int a, int b, int c, int d, int e, int f) {
-    int y = 2001, mo = 1, da = 1, h = 0, mi = 0, s = 0, n = 0;
-    int v[6] = {a, b, c, d, e, f};
-    if (units & U_ERA) n++;
-    if (units & U_YEAR) y = v[n++];
-    if (units & U_MONTH) mo = v[n++];
-    if (units & U_DAY) da = v[n++];
-    if (units & U_HOUR) h = v[n++];
-    if (units & U_MIN) mi = v[n++];
-    if (units & U_SEC && n < 6) s = v[n];
-    if (mo < 1) mo = 1;
-    if (da < 1) da = 1;
-    if (at) *at = cal_abs(cal, cf_abs_from_ymdhms(y, mo, da, h, mi, s), 0);
-    return 1;
-}
+/* CFTimeZone e CFCalendar são os NSTimeZone/NSCalendar de fdn_i18n.c */
 
 /* ---- attributed string (é o NSAttributedString) ---- */
 u64 CFAttributedStringGetTypeID(void) { return 31; }
 id CFAttributedStringGetString(id a) { return a ? MSG0(id, a, "string") : 0; }
 long CFAttributedStringGetLength(id a) { return CFStringGetLength(CFAttributedStringGetString(a)); }
 
-/* ---- formatador de número ---- */
-typedef struct { int k; char loc[32]; int style; } fmt_o;
-u64 CFNumberFormatterGetTypeID(void) { return 32; }
-id CFNumberFormatterCreate(void *alloc, id locale, long style) {
-    (void)alloc;
-    fmt_o *f = calloc(1, sizeof *f);
-    const char *id = locale ? C(CFLocaleGetIdentifier(locale)) : "pt_BR";
-    if (!f) return 0;
-    f->k = K_FMTN;
-    f->style = (int)style;
-    if (!id[0]) id = "pt_BR";
-    memcpy(f->loc, id, strlen(id) < 31 ? strlen(id) : 31);
-    return box_new(f);
-}
-static fmt_o *as_fmt(id o, int k) { fmt_o *f = is_box(o) ? ((box_t *)o)->p : 0; return f && f->k == k ? f : 0; }
-id CFNumberFormatterCreateStringWithNumber(id fmt, id num) {
-    fmt_o *f = as_fmt(fmt, K_FMTN);
-    char dec = ',', grp = '.', buf[64];
-    double d = num ? MSG0(double, num, "doubleValue") : 0;
-    long long iv = num ? MSG0(long long, num, "longLongValue") : 0;
-    int frac = (d == (double)iv) ? -1 : 2;
-    cf_locale_seps(f ? f->loc : "pt_BR", &dec, &grp);
-    if (f && f->style == 3) { d *= 100; iv = (long long)d; frac = -1; }
-    cf_fmt_grouped(f && f->style == 3 ? (long long)d : iv, frac, d, dec, grp, buf, (int)sizeof buf);
-    if (f && f->style == 3) {
-        unsigned long n = strlen(buf);
-        if (n + 1 < sizeof buf) { buf[n] = '%'; buf[n + 1] = 0; }
-    }
-    if (f && f->style == 2) {
-        char tmp[80];
-        const char *pre = !strncmp(f->loc, "en", 2) ? "$" : "R$ ";
-        memcpy(tmp, pre, strlen(pre));
-        memcpy(tmp + strlen(pre), buf, strlen(buf) + 1);
-        return S(tmp);
-    }
-    return S(buf);
-}
-id CFNumberFormatterCreateNumberFromString(id fmt, id str) {
-    fmt_o *f = as_fmt(fmt, K_FMTN);
-    char dec = ',', grp = '.';
-    const char *s = C(str);
-    char tmp[64];
-    int n = 0, saw = 0;
-    double v = 0, place = 0;
-    int neg = 0;
-    cf_locale_seps(f ? f->loc : "pt_BR", &dec, &grp);
-    if (*s == '-') { neg = 1; s++; }
-    for (; *s && n < 60; s++) {
-        if (*s == grp || *s == ' ') continue;
-        if (*s == dec) { saw = 1; place = 0.1; continue; }
-        if (*s < '0' || *s > '9') break;
-        if (!saw) v = v * 10 + (*s - '0');
-        else { v += (*s - '0') * place; place *= 0.1; }
-        tmp[n++] = *s;
-    }
-    (void)tmp;
-    if (neg) v = -v;
-    return CFNumberCreate(0, 6 /* kCFNumberFloat64Type */, &v);
-}
-
-/* ---- formatador de data ---- */
-u64 CFDateFormatterGetTypeID(void) { return 33; }
-id CFDateFormatterCreate(void *alloc, id locale, long date_style, long time_style) {
-    (void)alloc;
-    fmt_o *f = calloc(1, sizeof *f);
-    const char *id = locale ? C(CFLocaleGetIdentifier(locale)) : "pt_BR";
-    if (!f) return 0;
-    f->k = K_FMTD;
-    f->style = (int)((date_style & 7) | ((time_style & 7) << 4));
-    if (!id[0]) id = "pt_BR";
-    memcpy(f->loc, id, strlen(id) < 31 ? strlen(id) : 31);
-    return box_new(f);
-}
-id CFDateFormatterCreateStringWithDate(id fmt, id date) {
-    fmt_o *f = as_fmt(fmt, K_FMTD);
-    int ds = f ? (f->style & 7) : 1;
-    int ts = f ? ((f->style >> 4) & 7) : 1;
-    double at = date ? CFDateGetAbsoluteTime(date) : 0;
-    id tz = CFTimeZoneCopySystem();
-    long off = CFTimeZoneGetSecondsFromGMT(tz, at);
-    int y, mo, d, h, mi, s, wd;
-    char buf[80];
-    int o = 0;
-    static const char *mon[] = {"", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
-    if (tz) objc_release(tz);
-    cf_ymdhms_from_abs(at + off, &y, &mo, &d, &h, &mi, &s, &wd);
-    buf[0] = 0;
-    if (ds) {
-        if (ds >= 3) o += snprintf(buf + o, sizeof buf - (size_t)o, "%d %s %d", d, mon[mo], y);
-        else o += snprintf(buf + o, sizeof buf - (size_t)o, "%04d-%02d-%02d", y, mo, d);
-    }
-    if (ts) {
-        if (o && o + 1 < (int)sizeof buf) buf[o++] = ' ';
-        snprintf(buf + o, sizeof buf - (size_t)o, "%02d:%02d:%02d", h, mi, s);
-    }
-    return S(buf);
-}
+/* CFNumberFormatter e CFDateFormatter são os NSNumberFormatter/NSDateFormatter de fdn_formatters.c */
 
 /* ---- descritor de arquivo ---- */
 typedef void (*fd_cb_f)(void *fd, unsigned long flags, void *info);

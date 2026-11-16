@@ -141,40 +141,7 @@ id CFAutorelease(id o) { return o ? objc_autorelease(o) : 0; }
 id CFCopyDescription(id o) { return o ? objc_retain(MSG0(id, o, "description")) : 0; }
 
 /* ================================================================ locale e preferências */
-static id cur_locale_id(void) {
-    id l = MSG0(id, cls("NSLocale"), "currentLocale");
-    id s = l && resp(l, "localeIdentifier") ? MSG0(id, l, "localeIdentifier") : 0;
-    return s ? s : cx_str("pt_BR");
-}
-typedef struct { void *isa; id ident; } cfloc_t;
-static cx_class_t loc_c, loc_m;
-static id loc_new(id ident) {
-    cfloc_t *l = (cfloc_t *)cx_alloc_instance(&loc_c);
-    l->ident = objc_retain(ident ? ident : cx_str("pt_BR"));
-    return (id)l;
-}
-static id loc_ident(id self, SEL c) { (void)c; return ((cfloc_t *)self)->ident; }
-id CFLocaleCopyCurrent(void) { return loc_new(cur_locale_id()); }
-id CFLocaleCreate(void *alloc, id ident) { (void)alloc; return loc_new(ident); }
-/* chaves comparadas pelo texto (as constantes ficam em vscode_consts.c) */
-id CFLocaleGetIdentifier(id loc) {
-    return loc && resp(loc, "localeIdentifier") ? MSG0(id, loc, "localeIdentifier") : 0;
-}
-u64 CFLocaleGetTypeID(void) { return 25; }
-id CFLocaleGetValue(id loc, id key) {
-    const char *k = key ? cx_cstr(key) : "";
-    id ident = loc && resp(loc, "localeIdentifier") ? MSG0(id, loc, "localeIdentifier") : cur_locale_id();
-    const char *s = cx_cstr(ident);
-    const char *us = s;
-    while (*us && *us != '_' && *us != '-') us++;
-    if (!strcmp(k, "kCFLocaleCountryCodeKey")) return *us ? cx_str(us + 1) : cx_str("BR");
-    if (!strcmp(k, "kCFLocaleLanguageCodeKey")) return cx_str_n(s, (u64)(us - s));
-    if (!strcmp(k, "kCFLocaleIdentifierKey") || !strcmp(k, "localeIdentifier")) return ident;
-    if (!strcmp(k, "kCFLocaleDecimalSeparatorKey")) return cx_str(",");
-    if (!strcmp(k, "kCFLocaleGroupingSeparatorKey")) return cx_str(".");
-    if (!strcmp(k, "kCFLocaleUsesMetricSystemKey") || !strcmp(k, "kCFLocaleMeasurementSystemKey")) return cx_str("Metric");
-    return 0;
-}
+/* CFLocale é o NSLocale de fdn_i18n.c */
 u8 CFPreferencesGetAppBooleanValue(id key, id app, u8 *valid) {
     id v = CFPreferencesCopyAppValue(key, app);
     if (!v) { if (valid) *valid = 0; return 0; }
@@ -858,8 +825,6 @@ const char *NSGetSizeAndAlignment(const char *type, u64 *size, u64 *align) {
 /* ================================================================ classes internas */
 void cx_vscode_cf_classes(void) {
     cx_class_t *ob = cx_class_named("NSObject");
-    cx_define_class(&loc_c, &loc_m, "__mOSCFLocale", ob, 8);
-    cx_add_method(&loc_c, "localeIdentifier", (void *)loc_ident);
     cx_define_class(&uuid_c, &uuid_m, "__mOSCFUUID", ob, 16);
     cx_add_method(&uuid_c, "UUIDString", (void *)uuid_string);
     cx_add_method(&uuid_c, "description", (void *)uuid_string);

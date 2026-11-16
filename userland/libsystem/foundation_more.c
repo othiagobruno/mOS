@@ -28,20 +28,20 @@ int pipe(int *fds);
 
 #define CLASS(N) cx_class_t N##_c __asm__("OBJC_CLASS_$_" #N); cx_class_t N##_m __asm__("OBJC_METACLASS_$_" #N);
 CLASS(NSAffineTransform) CLASS(NSAppleEventDescriptor) CLASS(NSAssertionHandler) CLASS(NSBlockOperation)
-CLASS(NSBundleResourceRequest) CLASS(NSByteCountFormatter) CLASS(NSCachedURLResponse) CLASS(NSComparisonPredicate)
+CLASS(NSBundleResourceRequest) CLASS(NSCachedURLResponse) CLASS(NSComparisonPredicate)
 CLASS(NSCompoundPredicate) CLASS(NSCondition) CLASS(NSConditionLock) CLASS(NSCountedSet) CLASS(NSDataDetector)
-CLASS(NSDateComponentsFormatter) CLASS(NSDateFormatter) CLASS(NSDecimalNumber) CLASS(NSDecimalNumberHandler)
-CLASS(NSExpression) CLASS(NSFileCoordinator) CLASS(NSFileHandle) CLASS(NSFormatter) CLASS(NSHashTable)
+CLASS(NSDecimalNumber) CLASS(NSDecimalNumberHandler)
+CLASS(NSExpression) CLASS(NSFileCoordinator) CLASS(NSFileHandle) CLASS(NSHashTable)
 CLASS(NSHTTPCookie) CLASS(NSHTTPCookieStorage) CLASS(NSHTTPURLResponse) CLASS(NSIndexPath)
-CLASS(NSInvocationOperation) CLASS(NSISO8601DateFormatter) CLASS(NSItemProvider) CLASS(NSJSONSerialization)
-CLASS(NSKeyedArchiver) CLASS(NSKeyedUnarchiver) CLASS(NSLinguisticTagger) CLASS(NSListFormatter) CLASS(NSLock)
+CLASS(NSInvocationOperation) CLASS(NSItemProvider) CLASS(NSJSONSerialization)
+CLASS(NSKeyedArchiver) CLASS(NSKeyedUnarchiver) CLASS(NSLinguisticTagger) CLASS(NSLock)
 CLASS(NSMachBootstrapServer) CLASS(NSMachPort) CLASS(NSMapTable) CLASS(NSMeasurementFormatter)
 CLASS(NSMetadataItem) CLASS(NSMetadataQuery) CLASS(NSMutableAttributedString) CLASS(NSMutableCharacterSet)
 CLASS(NSMutableIndexSet) CLASS(NSMutableURLRequest) CLASS(NSNetService) CLASS(NSNetServiceBrowser)
-CLASS(NSNumberFormatter) CLASS(NSOperation) CLASS(NSOperationQueue) CLASS(NSPersonNameComponentsFormatter)
+CLASS(NSOperation) CLASS(NSOperationQueue)
 CLASS(NSPipe) CLASS(NSPointerArray) CLASS(NSPredicate) CLASS(NSProgress) CLASS(NSPropertyListSerialization)
 CLASS(NSProxy) CLASS(NSPurgeableData) CLASS(NSRecursiveLock) CLASS(NSRegularExpression)
-CLASS(NSRelativeDateTimeFormatter) CLASS(NSScanner) CLASS(NSScriptClassDescription) CLASS(NSScriptCommand)
+CLASS(NSScanner) CLASS(NSScriptClassDescription) CLASS(NSScriptCommand)
 CLASS(NSSecureUnarchiveFromDataTransformer) CLASS(NSSortDescriptor) CLASS(NSTask) CLASS(NSTextCheckingResult)
 CLASS(NSUndoManager) CLASS(NSUniqueIDSpecifier) CLASS(NSUnitAngle) CLASS(NSUnitDuration)
 CLASS(NSUnitInformationStorage) CLASS(NSUnitLength) CLASS(NSURLAuthenticationChallenge) CLASS(NSURLCache)
@@ -713,150 +713,13 @@ static id date_format(double unix_s, const char *pat) {
     free(o);
     return s;
 }
-static int parse_n(const char **p, int digits) {
-    int v = 0, k = 0;
-    while (k < digits && **p >= '0' && **p <= '9') { v = v * 10 + (**p - '0'); (*p)++; k++; }
-    return k ? v : -1;
-}
-static double date_parse(const char *text, const char *pat) {
-    if (!text) return 0;
-    if (!pat || !pat[0]) pat = "dd/MM/yyyy HH:mm:ss";
-    mos_tm_t t; memset(&t, 0, sizeof t); t.mday = 1;
-    const char *s = text;
-    for (const char *p = pat; *p && *s;) {
-        if (*p == '\'') { p++; while (*p && *p != '\'') { if (*s == *p) s++; p++; } if (*p == '\'') p++; continue; }
-        int k = fmt_n(p, 8), v;
-        switch (*p) {
-        case 'y': v = parse_n(&s, k >= 4 ? 4 : 2); if (v >= 0) t.year = (k <= 2 ? 2000 + v : v) - 1900; break;
-        case 'M':
-            if (k >= 3) {
-                int found = -1;
-                for (int i = 0; i < 12; i++) {
-                    const char *name = k >= 4 ? mos_meses_l[i] : mos_meses[i];
-                    u64 L = strlen(name);
-                    if (!strncasecmp(s, name, L)) { found = i; s += L; break; }
-                }
-                if (found >= 0) t.mon = found;
-            } else { v = parse_n(&s, 2); if (v > 0) t.mon = v - 1; }
-            break;
-        case 'd': v = parse_n(&s, 2); if (v > 0) t.mday = v; break;
-        case 'H': case 'h': v = parse_n(&s, 2); if (v >= 0) t.hour = v; break;
-        case 'm': v = parse_n(&s, 2); if (v >= 0) t.min = v; break;
-        case 's': v = parse_n(&s, 2); if (v >= 0) t.sec = v; break;
-        case 'a': if (!strncasecmp(s, "PM", 2)) { if (t.hour < 12) t.hour += 12; s += 2; } else if (!strncasecmp(s, "AM", 2)) s += 2; break;
-        case 'Z': if (*s == 'Z') s++; else if (*s == '+' || *s == '-') s += (*s && s[1]) ? 5 : 1; break;
-        default: if (*s == *p) s++; break;
-        }
-        p += k;
-    }
-    return (double)mktime(&t);
-}
-static id df_alloc(id cls, SEL c) { (void)c; box_t *o = (box_t *)cx_alloc_instance((cx_class_t *)cls); o->a = ns("dd/MM/yyyy HH:mm:ss"); return (id)o; }
-static void df_setfmt(id s, SEL c, id f) { (void)c; rel(BOX(s)->a); BOX(s)->a = retain(f); }
-static id df_fmt(id s, SEL c) { (void)c; return BOX(s)->a; }
-static id df_string(id s, SEL c, id date) { (void)c; return ar(date_format(date ? MSG0(double, date, "timeIntervalSince1970") : cx_now(), cs(BOX(s)->a))); }
-static id df_date(id s, SEL c, id str) {
-    (void)c;
-    double u = date_parse(cs(str), cs(BOX(s)->a));
-    return MSG(id, (id)&NSDate_c, "dateWithTimeIntervalSince1970:", u);
-}
-static id iso_string(id s, SEL c, id date) { (void)s; (void)c; return ar(date_format(date ? MSG0(double, date, "timeIntervalSince1970") : cx_now(), "yyyy-MM-dd'T'HH:mm:ss'Z'")); }
-static id iso_date(id s, SEL c, id str) { (void)s; (void)c; return MSG(id, (id)&NSDate_c, "dateWithTimeIntervalSince1970:", date_parse(cs(str), "yyyy-MM-dd'T'HH:mm:ss'Z'")); }
-static id nf_string(id s, SEL c, id num) {
-    (void)c;
-    char b[64];
-    int style = (int)BOX(s)->i;          /* 0 nenhum, 1 decimal, 2 moeda, 3 porcentagem */
-    double v = dval(num);
-    if (style == 3) v *= 100;
-    int frac = BOX(s)->j > 0 ? (int)BOX(s)->j : (style == 2 ? 2 : 0);
-    cx_snprintf(b, sizeof b, frac ? "%.*f" : "%.0f", frac, v);
-    if (style == 2) {
-        char m[80];
-        cx_snprintf(m, sizeof m, "R$ %s", b);
-        return ar(ns(m));
-    }
-    if (style == 3) { char m[80]; cx_snprintf(m, sizeof m, "%s%%", b); return ar(ns(m)); }
-    return ar(ns(b));
-}
-static id nf_number(id s, SEL c, id str) {
-    (void)s; (void)c;
-    const char *p = cs(str);
-    while (*p && (*p < '0' || *p > '9') && *p != '-' && *p != ',') p++;
-    char b[64];
-    u64 n = 0;
-    for (; *p && n + 1 < sizeof b; p++) b[n++] = *p == ',' ? '.' : *p;
-    b[n] = 0;
-    return ar(num_d(strtod(b, 0)));
-}
-static void nf_style(id s, SEL c, long st) { (void)c; BOX(s)->i = st; }
-static void nf_frac(id s, SEL c, long n) { (void)c; BOX(s)->j = n; }
-static id bc_string(id cls, SEL c, long long bytes, long style) {
-    (void)cls; (void)c;
-    double base = style == 0 ? 1000.0 : 1024.0;   /* file = 1000, memory = 1024 */
-    static const char *u[] = {"bytes", "KB", "MB", "GB", "TB"};
-    double v = (double)bytes;
-    int i = 0;
-    while (v >= base && i < 4) { v /= base; i++; }
-    char b[64];
-    cx_snprintf(b, sizeof b, i ? "%.1f %s" : "%.0f %s", v, u[i]);
-    return ar(ns(b));
-}
-static id bc_one(id s, SEL c, long long bytes) { (void)s; return bc_string(0, c, bytes, 0); }
-static id dur_string(id s, SEL c, double sec) {
-    (void)s; (void)c;
-    if (sec < 0) sec = -sec;
-    long t = (long)sec;
-    char b[64];
-    if (t >= 86400) cx_snprintf(b, sizeof b, "%ldd %ldh", t / 86400, (t % 86400) / 3600);
-    else if (t >= 3600) cx_snprintf(b, sizeof b, "%ldh %ldmin", t / 3600, (t % 3600) / 60);
-    else if (t >= 60) cx_snprintf(b, sizeof b, "%ldmin %lds", t / 60, t % 60);
-    else cx_snprintf(b, sizeof b, "%lds", t);
-    return ar(ns(b));
-}
-static id rel_string(id s, SEL c, id date, id ref) {
-    (void)s; (void)c;
-    double a = date ? MSG0(double, date, "timeIntervalSince1970") : cx_now();
-    double b = ref ? MSG0(double, ref, "timeIntervalSince1970") : cx_now();
-    double d = a - b;
-    if (d > -43200 && d < 43200) return ar(ns("hoje"));
-    if (d < 0 && d > -172800) return ar(ns("ontem"));
-    if (d > 0 && d < 172800) return ar(ns("amanhã"));
-    char buf[64];
-    cx_snprintf(buf, sizeof buf, "%+.0f dias", d / 86400.0);
-    return ar(ns(buf));
-}
-static id rel_one(id s, SEL c, id date) { return rel_string(s, c, date, 0); }
-static id list_string(id s, SEL c, id arr) {
-    (void)s; (void)c;
-    if (!arr) return ar(ns(""));
-    u64 n = MSG0(u64, arr, "count");
-    char *o = malloc(8); u64 len = 0, cap = 8; o[0] = 0;
-    for (u64 i = 0; i < n; i++) {
-        const char *it = cs(MSG(id, arr, "objectAtIndex:", i));
-        const char *sep = i == 0 ? "" : (i + 1 == n ? " e " : ", ");
-        u64 add = strlen(sep) + strlen(it);
-        if (len + add + 1 > cap) { cap = len + add + 32; o = realloc(o, cap); }
-        memcpy(o + len, sep, strlen(sep)); len += strlen(sep);
-        memcpy(o + len, it, strlen(it) + 1); len += strlen(it);
-    }
-    id r = ns(o); free(o); return ar(r);
-}
-static id name_string(id s, SEL c, id comp) {
-    (void)s; (void)c;
-    id g = comp ? MSG(id, comp, "valueForKey:", ns("givenName")) : 0;
-    id f = comp ? MSG(id, comp, "valueForKey:", ns("familyName")) : 0;
-    char b[256];
-    cx_snprintf(b, sizeof b, "%s%s%s", g ? cs(g) : "", (g && f) ? " " : "", f ? cs(f) : "");
-    rel(g); rel(f);
-    return ar(ns(b[0] ? b : ""));
-}
+/* NSDateFormatter e os outros formatters estão em fdn_formatters.c (ICU) */
 static id meas_string(id s, SEL c, id m) {
     (void)s; (void)c;
     char b[64];
     cx_snprintf(b, sizeof b, "%g", m ? dval(m) : 0);
     return ar(ns(b));
 }
-static id fmt_string_obj(id s, SEL c, id o) { (void)s; return df_string(s, c, o); }
 
 /* ---------------------------------------------------------------- scanner */
 static id sc_init(id s, SEL c, id str) { (void)c; BOX(s)->a = retain(str); BOX(s)->i = 0; return s; }
@@ -2922,35 +2785,7 @@ void cx_foundation_more_init(void) {
     M(NSConditionLock, "lockWhenCondition:", condlock_lockwhen); M(NSConditionLock, "unlockWithCondition:", condlock_unlockwith);
     M(NSConditionLock, "condition", condlock_cond);
 
-    DEF(&NSFormatter_c, &NSFormatter_m, "NSFormatter", ob, BEX);
-    M(NSFormatter, "stringForObjectValue:", fmt_string_obj);
-    DEF(&NSDateFormatter_c, &NSDateFormatter_m, "NSDateFormatter", &NSFormatter_c, 0);
-    CM(NSDateFormatter, "alloc", df_alloc);
-    M(NSDateFormatter, "setDateFormat:", df_setfmt); M(NSDateFormatter, "dateFormat", df_fmt);
-    M(NSDateFormatter, "stringFromDate:", df_string); M(NSDateFormatter, "dateFromString:", df_date);
-    M(NSDateFormatter, "stringForObjectValue:", df_string);
-    M(NSDateFormatter, "setLocale:", set_b); M(NSDateFormatter, "setTimeZone:", set_c);
-    DEF(&NSISO8601DateFormatter_c, &NSISO8601DateFormatter_m, "NSISO8601DateFormatter", &NSFormatter_c, 0);
-    M(NSISO8601DateFormatter, "stringFromDate:", iso_string); M(NSISO8601DateFormatter, "dateFromString:", iso_date);
-    DEF(&NSNumberFormatter_c, &NSNumberFormatter_m, "NSNumberFormatter", &NSFormatter_c, 0);
-    M(NSNumberFormatter, "setNumberStyle:", nf_style); M(NSNumberFormatter, "stringFromNumber:", nf_string);
-    M(NSNumberFormatter, "numberFromString:", nf_number); M(NSNumberFormatter, "stringForObjectValue:", nf_string);
-    M(NSNumberFormatter, "setMinimumFractionDigits:", nf_frac); M(NSNumberFormatter, "setMaximumFractionDigits:", nf_frac);
-    M(NSNumberFormatter, "setLenient:", noop);
-    DEF(&NSByteCountFormatter_c, &NSByteCountFormatter_m, "NSByteCountFormatter", &NSFormatter_c, 0);
-    CM(NSByteCountFormatter, "stringFromByteCount:countStyle:", bc_string);
-    M(NSByteCountFormatter, "stringFromByteCount:", bc_one);
-    DEF(&NSDateComponentsFormatter_c, &NSDateComponentsFormatter_m, "NSDateComponentsFormatter", &NSFormatter_c, 0);
-    M(NSDateComponentsFormatter, "stringFromTimeInterval:", dur_string); M(NSDateComponentsFormatter, "setAllowedUnits:", noop);
-    M(NSDateComponentsFormatter, "setUnitsStyle:", noop);
-    DEF(&NSRelativeDateTimeFormatter_c, &NSRelativeDateTimeFormatter_m, "NSRelativeDateTimeFormatter", &NSFormatter_c, 0);
-    M(NSRelativeDateTimeFormatter, "localizedStringForDate:relativeTo:", rel_string);
-    M(NSRelativeDateTimeFormatter, "stringForObjectValue:", rel_one);
-    DEF(&NSListFormatter_c, &NSListFormatter_m, "NSListFormatter", &NSFormatter_c, 0);
-    M(NSListFormatter, "stringFromObjectValue:", list_string); CM(NSListFormatter, "localizedStringByJoiningStrings:", list_string);
-    DEF(&NSPersonNameComponentsFormatter_c, &NSPersonNameComponentsFormatter_m, "NSPersonNameComponentsFormatter", &NSFormatter_c, 0);
-    M(NSPersonNameComponentsFormatter, "stringFromPersonNameComponents:", name_string);
-    DEF(&NSMeasurementFormatter_c, &NSMeasurementFormatter_m, "NSMeasurementFormatter", &NSFormatter_c, 0);
+    DEF(&NSMeasurementFormatter_c, &NSMeasurementFormatter_m, "NSMeasurementFormatter", cx_class_named("NSFormatter"), 0);
     M(NSMeasurementFormatter, "stringFromMeasurement:", meas_string); M(NSMeasurementFormatter, "stringFromUnit:", meas_string);
 
     DEF(&NSScanner_c, &NSScanner_m, "NSScanner", ob, BEX);
