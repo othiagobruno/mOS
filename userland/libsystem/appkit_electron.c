@@ -53,9 +53,7 @@ CS(NSWebResourceLoadDelegateDocumentOption)
 const double NSFontWidthExpanded = CX_FONT_WIDTH_EXPANDED;
 /* NSUpdateDynamicServices: appkit_services.c (relê os NSServices dos apps) */
 
-int cx_appkit_swift_main(int argc, char **argv) __asm__("$s6AppKit17NSApplicationMainys5Int32VAD_SpySpys4Int8VGSgGtF");
-int NSApplicationMain(int argc, const char **argv);
-int cx_appkit_swift_main(int argc, char **argv) { return NSApplicationMain(argc, (const char **)argv); }
+/* NSApplicationMain(_:_:) do Swift: no overlay libswiftAppKit (userland/frameworks/AppKit/AppKit_overlay.c) */
 
 #define K(N) cx_class_t N##_c __asm__("OBJC_CLASS_$_" #N); cx_class_t N##_m __asm__("OBJC_METACLASS_$_" #N);
 K(NSSplitViewController) K(NSSplitViewItem)

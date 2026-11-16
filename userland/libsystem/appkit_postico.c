@@ -736,23 +736,8 @@ AK(NSValueBinding, "value") AK(NSValueTransformerNameBindingOption, "NSValueTran
 AK(NSViewBoundsDidChangeNotification, "NSViewBoundsDidChangeNotification")
 const double NSViewNoIntrinsicMetric = -1;
 
-/* overlay Swift do AppKit (o Postico importa estes do AppKit.framework): CGRect.fill(using:),
- * CGRect.frame(withWidth:using:) e NSSound.beep(). Swift passa o CGRect como 4 doubles (xmm0-3) e a operação em rdi,
- * como a chamada C abaixo; o self de um método estático (a metaclasse) vai em r13 e não é usado. */
-extern void NSRectFillUsingOperation(pr_rect_t r, u64 op);
-extern void NSBeep(void);
-void ak_rect_fill(double x, double y, double w, double h, u64 op) __asm__("$sSo6CGRectV6AppKitE4fill5usingySo22NSCompositingOperationV_tF");
-void ak_rect_fill(double x, double y, double w, double h, u64 op) { NSRectFillUsingOperation((pr_rect_t){x, y, w, h}, op); }
-void ak_rect_frame(double x, double y, double w, double h, double width, u64 op)
-    __asm__("$sSo6CGRectV6AppKitE5frame9withWidth5usingy12CoreGraphics7CGFloatV_So22NSCompositingOperationVtF");
-void ak_rect_frame(double x, double y, double w, double h, double width, u64 op) {
-    (void)op;                                  /* as quatro bordas por dentro do retângulo */
-    extern void NSRectFill(pr_rect_t r);
-    NSRectFill((pr_rect_t){x, y, w, width}); NSRectFill((pr_rect_t){x, y + h - width, w, width});
-    NSRectFill((pr_rect_t){x, y, width, h}); NSRectFill((pr_rect_t){x + w - width, y, width, h});
-}
-void ak_sound_beep(void) __asm__("$sSo7NSSoundC6AppKitE4beepyyFZ");
-void ak_sound_beep(void) { NSBeep(); }
+/* CGRect.fill(using:), CGRect.frame(withWidth:using:) e NSSound.beep() do Swift: no overlay libswiftAppKit
+ * (userland/frameworks/AppKit/AppKit_overlay.c) */
 
 /* -[NSDictionary __swift_objectForKeyedSubscript:]: o subscript do overlay Foundation da Apple (código inlinável dos apps) */
 static id dict_swift_subscript(id self, SEL c, id key) { (void)c; return key ? MSG(id, self, "objectForKey:", key) : 0; }

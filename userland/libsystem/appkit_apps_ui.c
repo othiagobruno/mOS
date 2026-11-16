@@ -520,27 +520,8 @@ void cx_appkit_apps_ui_init(void) {
     IM(NSCIImageRep, "initWithCIImage:", ci_init); IM(NSCIImageRep, "CIImage", ci_image);
 
     { cx_class_t *v = cl("NSView"); if (v) cx_add_method(v, "addGestureRecognizer:", (void *)view_add_gr); if (v) cx_add_method(v, "mouseDown:", (void *)view_mouse_down); }
-    /* Símbolos Swift do overlay AppKit. O genérico (snapshot, diffable, metadata Mn)
-     * não tem runtime Swift aqui: devolve vazio. NSApplicationMain chama a função C. */
     /* sheets: appkit_sheets.c (janela filha de verdade) */
 }
 
-/* Overlay Swift do AppKit (libswiftAppKit). Sem metadata de tipo genérico: o dyld resolve
- * e a função devolve 0. NSApplicationMain encaminha para a entrada C. */
-#define SWIFT_STUB(fn, sym) void fn(void) __asm__(sym); void fn(void) {}
-SWIFT_STUB(sw_ip_item_section, "$s10Foundation9IndexPathV6AppKitE4item7sectionACSi_SitcfC")
-SWIFT_STUB(sw_ip_item, "$s10Foundation9IndexPathV6AppKitE4itemSivg")
-SWIFT_STUB(sw_ip_section, "$s10Foundation9IndexPathV6AppKitE7sectionSivg")
-SWIFT_STUB(sw_num_add, "$s6AppKit01_abB23NumericRawRepresentablePAAE1poiyxx_0D5ValueQztFZ")
-SWIFT_STUB(sw_num_sub, "$s6AppKit01_abB23NumericRawRepresentablePAAE1soiyxx_0D5ValueQztFZ")
-SWIFT_STUB(sw_snap_items, "$s6AppKit28NSDiffableDataSourceSnapshotV11appendItems_9toSectionySayq_G_xSgtF")
-SWIFT_STUB(sw_snap_secs, "$s6AppKit28NSDiffableDataSourceSnapshotV14appendSectionsyySayxGF")
-SWIFT_STUB(sw_snap_init, "$s6AppKit28NSDiffableDataSourceSnapshotVACyxq_GycfC")
-SWIFT_STUB(sw_snap_mn, "$s6AppKit28NSDiffableDataSourceSnapshotVMn")
-SWIFT_STUB(sw_diff_init, "$s6AppKit34NSCollectionViewDiffableDataSourceC010collectionD012itemProviderACyxq_GSo0cD0C_So0cD4ItemCSgAH_10Foundation9IndexPathVq_tctcfc")
-SWIFT_STUB(sw_diff_nitems, "$s6AppKit34NSCollectionViewDiffableDataSourceC010collectionD0_22numberOfItemsInSectionSiSo0cD0C_SitFTj")
-SWIFT_STUB(sw_diff_nsecs, "$s6AppKit34NSCollectionViewDiffableDataSourceC16numberOfSections2inSiSo0cD0C_tFTj")
-SWIFT_STUB(sw_diff_apply, "$s6AppKit34NSCollectionViewDiffableDataSourceC5apply_20animatingDifferences10completionyAA010NSDiffablefG8SnapshotVyxq_G_SbyycSgtFTj")
-SWIFT_STUB(sw_diff_mn, "$s6AppKit34NSCollectionViewDiffableDataSourceCMn")
-SWIFT_STUB(sw_prio_mc, "$sSo16NSLayoutPrioritya6AppKit01_cdD23NumericRawRepresentableACMc")
-SWIFT_STUB(sw_img_lit, "$sSo7NSImageC6AppKitE24imageLiteralResourceNameABSS_tcfC")
+/* Overlay Swift do AppKit (diffables, IndexPath, NSLayoutPriority, NSImage literal, NSApplicationMain): fica no
+ * libswiftAppKit, compilado de userland/frameworks/AppKit (tools/build-frameworks-objc.sh). */

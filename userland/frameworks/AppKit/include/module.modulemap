@@ -1,0 +1,6 @@
+// mOS — módulo clang AppKit mínimo para compilar o overlay Swift (AppKit.swift) com os nomes da Apple.
+// O AppKit de verdade é o do libSystem.mos (userland/libsystem/appkit*.c); isto só declara o que o overlay usa.
+module AppKit [system] {
+    header "AppKit_mos.h"
+    export *
+}
