@@ -1,0 +1,3 @@
+Cabeçalhos mínimos para compilar o OpenH264 (userland/third_party/openh264) freestanding dentro do libSystem do mOS
+(tools/build-midia.sh). Declaram só o que o decodificador usa, com a ABI Darwin do libSystem: timeval {long, int},
+pthread_mutex_t de 64 bytes, pthread_cond_t de 48, pthread_t ponteiro, sem_t int, constantes de sysconf/errno do macOS.
