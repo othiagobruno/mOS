@@ -215,6 +215,26 @@ typedef struct {
 /* GUI_WIN_FOCUS (id, GUI_FOCUS_OWNER, dona): a janela passa a ficar sempre acima da dona (outra janela do mesmo processo;
  * 0 desfaz), como as filhas do Cocoa (-[NSWindow addChildWindow:ordered:]). Não muda o foco agora. */
 #define GUI_FOCUS_OWNER 0x4F574E52
+/* Janela que já está na tela (-[NSWindow setFrame:display:], setContentSize:, setMinSize:, setLevel:...). O retângulo é
+ * sempre do conteúdo, em pontos (= pixels do GUI_WIN_CREATE): x, y do canto superior esquerdo, relativos ao canto superior
+ * esquerdo do monitor principal (y conta do topo da tela, com a barra de menus).
+ *   GUI_WIN_FOCUS (id, GUI_FOCUS_FRAME, gui_frame_t *in)     move e redimensiona. w ou h <= 0 só move. Se o tamanho mudar,
+ *                                                           volta um GEV_RESIZE com o novo tamanho, como no arrasto do usuário.
+ *                                                           A barra de título não passa para baixo da barra de menus.
+ *   GUI_WIN_FOCUS (id, GUI_FOCUS_GETFRAME, gui_frame_t *out) lê o retângulo atual (depois de o usuário mover ou redimensionar).
+ *   GUI_WIN_FOCUS (id, GUI_FOCUS_LIMITS, gui_limits_t *in)   mínimo e máximo do conteúdo para o redimensionamento pelo
+ *                                                           usuário e para o zoom/encaixe (0 = sem limite; mínimo real 160x90).
+ *   GUI_WIN_FOCUS (id, GUI_FOCUS_LEVEL, nível)               NSWindowLevel (0 normal, 3 flutuante, 8 modal, 25 status, 101
+ *                                                           popup...). Nível maior fica sempre acima; a filha herda o nível
+ *                                                           da dona se ele for maior. O foco não muda: dar o foco a uma janela
+ *                                                           normal não a põe acima das flutuantes.
+ * Todas devolvem 0, -MOS_EBADF (id) ou -MOS_EFAULT (ponteiro). */
+#define GUI_FOCUS_FRAME    0x4652414D
+#define GUI_FOCUS_GETFRAME 0x47465241
+#define GUI_FOCUS_LIMITS   0x4C494D53
+#define GUI_FOCUS_LEVEL    0x4C45564C
+typedef struct { int x, y, w, h; } gui_frame_t;
+typedef struct { int min_w, min_h, max_w, max_h; } gui_limits_t;
 
 /* eventos */
 enum { GEV_NONE, GEV_MOUSE_DOWN, GEV_MOUSE_UP, GEV_MOUSE_MOVE, GEV_RIGHT_DOWN, GEV_SCROLL,
