@@ -3,21 +3,11 @@
 # o download (rede, pouca RAM) corre fora da trava e já adianta o próximo app; extração e machocheck de arquivo com
 # 200 MB ou mais correm dentro de `flock /tmp/mos-pesado.lock nice -n 10` (descompactação grande); os menores, só com
 # `nice`. Tudo só com RAM disponível >= 3000 MB. O binário é apagado depois de medido.
-# Não roda o build: usa o libSystem.mos já compilado em build/. Uso: tools/corpus/varrer-tudo.sh [ids...]
+# Não roda o build: usa o libSystem da main do CI ou o já compilado em build/. Uso: tools/corpus/varrer-tudo.sh [ids...]
+# Sem ids mede um lote de 20 e sai 3 se ainda faltar: while tools/corpus/varrer-tudo.sh; [ $? = 3 ]; do :; done
 set -uo pipefail
 cd "$(dirname "$0")/../.."
 H=tools/corpus/harness.py
-ids=("$@")
-if [ ${#ids[@]} -eq 0 ]; then
-    # sem ids: os que ainda não têm medida com o hash atual do manifesto
-    mapfile -t ids < <(python3 -c "
-import json, pathlib
-for a in json.load(open('tools/corpus/manifest.json'))['apps']:
-    m = pathlib.Path('build/corpus') / a['id'] / 'medido.sha256'
-    if not (a.get('sha256') and m.is_file() and m.read_text().strip() == a['sha256']):
-        print(a['id'])")
-fi
-echo "varrer-tudo: ${#ids[@]} apps a medir"
 # libSystem: o da main compilado pelo CI (harness.py libsystem-ci), senão o build/ local já copiado
 python3 "$H" libsystem-ci >/dev/null 2>&1 || true
 if [ -f build/ci-lib/libSystem.mos ]; then
@@ -28,6 +18,29 @@ else
     LIBS=(--lib build/libSystem.mos --disco build/disco-x86 --lib-arm64 build/libSystem-arm64.mos --disco-arm64 build/disco-arm64)
     echo "varrer-tudo: libSystem local ($(cat build/libSystem.origem 2>/dev/null))"
 fi
+# libSystem diferente do da última medida: tudo o que foi medido com o outro é refeito
+atual=$(sha256sum "${LIBS[1]}" | cut -c1-16)
+if [ "$(cat build/corpus/libsystem-medido.txt 2>/dev/null)" != "$atual" ]; then
+    rm -f build/corpus/*/medido.sha256
+    mkdir -p build/corpus && echo "$atual" > build/corpus/libsystem-medido.txt
+fi
+ids=("$@")
+if [ ${#ids[@]} -eq 0 ]; then
+    # sem ids: os que ainda não têm medida com o hash atual do manifesto
+    mapfile -t ids < <(python3 -c "
+import json, pathlib
+for a in json.load(open('tools/corpus/manifest.json'))['apps']:
+    m = pathlib.Path('build/corpus') / a['id'] / 'medido.sha256'
+    if not (a.get('sha256') and m.is_file() and m.read_text().strip() == a['sha256']):
+        print(a['id'])")
+fi
+mais=0
+if [ $# -eq 0 ] && [ ${#ids[@]} -gt 20 ]; then
+    # lotes de 20: a cada lote o libSystem da main é conferido de novo (sai 3 quando ainda há apps)
+    ids=("${ids[@]:0:20}")
+    mais=1
+fi
+echo "varrer-tudo: ${#ids[@]} apps a medir neste lote"
 pre=""
 for i in "${!ids[@]}"; do
     id=${ids[$i]}
@@ -49,3 +62,5 @@ for i in "${!ids[@]}"; do
         --summary "build/corpus/$id.summary.json" "$id" 2>&1 | grep -v '^baixando' | tail -2
 done
 [ -n "$pre" ] && wait "$pre"
+[ $mais = 1 ] && exit 3
+exit 0

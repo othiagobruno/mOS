@@ -461,7 +461,7 @@ def cmd_gaps(args: argparse.Namespace) -> None:
     for app in man["apps"]:
         log = CACHE / app["id"] / "machocheck.txt"
         rep = CACHE / app["id"] / "relatorio.txt"
-        if not log.is_file() or not rep.is_file():
+        if not log.is_file() or not rep.is_file() or not medida_atual(app):
             continue
         texto = log.read_text(encoding="utf-8", errors="replace")
         imagens = 0
@@ -491,9 +491,10 @@ def cmd_gaps(args: argparse.Namespace) -> None:
     linhas = [
         "# Lacunas de compatibilidade no corpus macOS",
         "",
-        "Gerado por `python3 tools/corpus/harness.py gaps` depois de `machocheck --disco build/libunwind-x86`.",
-        "O disco aponta a libunwind do `tools/build.sh`. Não há `libc++.1.dylib` nem `libswift*` nessa árvore,",
-        "então os baldes libc++ e Swift continuam os imports que o bundle pede e o libSystem não exporta.",
+        "Gerado por `python3 tools/corpus/harness.py gaps` com as medidas atuais de `tools/corpus/varrer-tudo.sh`.",
+        f"libSystem medido: {origem_libsystem()}.",
+        "O disco é o da varredura: libunwind, libc++, libswift*, libz, libcurl e, com o artefato do CI, os frameworks do",
+        "mOS. Os baldes libc++ e Swift só contam o que nenhuma dessas exporta.",
         "Binários não estão no git. URLs e sha256 ficam em `tools/corpus/manifest.json`.",
         "",
         f"Apps com pelo menos uma imagem Mach-O x86_64: **{len(usados)}**.",
@@ -675,7 +676,7 @@ def le_relatorios(man: dict):
     for app in man["apps"]:
         rep = CACHE / app["id"] / "relatorio.txt"
         log = CACHE / app["id"] / "machocheck.txt"
-        if not rep.is_file() or not log.is_file():
+        if not rep.is_file() or not log.is_file() or not medida_atual(app):
             continue
         texto = log.read_text(encoding="utf-8", errors="replace")
         if imagens_no_log(texto) == 0:
@@ -691,6 +692,12 @@ def le_relatorios(man: dict):
                 itens.append((lib, sym, cat))
         out.append((app, arch, itens))
     return out
+
+
+def medida_atual(app: dict) -> bool:
+    """Medido com o hash atual do manifesto e com o libSystem atual (varrer-tudo.sh apaga medido.sha256 quando ele muda)."""
+    m = CACHE / app["id"] / "medido.sha256"
+    return bool(app.get("sha256")) and m.is_file() and m.read_text().strip() == app["sha256"]
 
 
 def origem_libsystem() -> str:
