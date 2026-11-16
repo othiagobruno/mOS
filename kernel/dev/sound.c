@@ -544,7 +544,26 @@ static i16 cap_gain(i16 s, i32 g) {
     return (i16)CLAMP(v, -32768, 32767);
 }
 
-void snd_capture(const i16 *src, u32 frames) {
+/* entrada externa (microfone USB, kernel/dev/uac.c): enquanto ligada, ela é a entrada do anel e a do codec fica de fora */
+static int ext_users;
+static bool ext_saved_on;
+static char ext_saved_name[80];
+static void capture_push(const i16 *src, u32 frames);
+void snd_capture(const i16 *src, u32 frames) { if (!ext_users) capture_push(src, frames); }
+void snd_capture_ext(const i16 *src, u32 frames) { if (ext_users) capture_push(src, frames); }
+void audio_input_attach(const char *name) {
+    if (!cap_ring) return;
+    if (!ext_users++) { ext_saved_on = cap_on; memcpy(ext_saved_name, inname, sizeof inname); }
+    cap_on = true;
+    snprintf(inname, sizeof inname, "%s", name && *name ? name : "Microfone USB");
+    kprintf("Áudio: entrada %s\n", inname);
+}
+void audio_input_detach(void) {
+    if (!ext_users || --ext_users) return;
+    cap_on = ext_saved_on;
+    memcpy(inname, ext_saved_name, sizeof inname);
+}
+static void capture_push(const i16 *src, u32 frames) {
     if (!cap_on || !cap_ring || !src || !frames) return;
     i32 g = cap_vol <= 0 ? 0 : (i32)cap_vol * 65536 / 100;
     while (frames) {

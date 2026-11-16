@@ -6,8 +6,8 @@
 
 static usb_dev_t devs[USB_MAX_DEVS];
 #define MAX_DRIVERS 16
-static const usb_driver_t *drivers[MAX_DRIVERS] = { &usb_hub_driver, &usb_hid_driver, &usb_msc_driver, &usb_bt_driver, &usb_xinput_driver, &usb_uvc_driver };
-static int ndrivers = 6;
+static const usb_driver_t *drivers[MAX_DRIVERS] = { &usb_hub_driver, &usb_hid_driver, &usb_msc_driver, &usb_bt_driver, &usb_xinput_driver, &usb_uvc_driver, &usb_uac_driver };
+static int ndrivers = 7;
 #define NDRIVERS ndrivers
 
 /* ------------------------------------------------------------------ transferências */
