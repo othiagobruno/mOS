@@ -134,7 +134,9 @@ def build_files(name, files, cflags, cxxflags):
     for f in files:
         o = os.path.join(out, os.path.splitext(os.path.basename(f))[0] + '.o')
         is_cxx = f.endswith(('.cpp', '.mm'))
-        code, txt = run([ZIG, 'c++' if is_cxx else 'cc'] + COMMON + (cxxflags if is_cxx else cflags) + [f, '-o', o])
+        # .mm: só a parte C++ (o trecho ObjC fica atrás de __OBJC__ e não é usado no mOS)
+        src = ['-x', 'c++', f] if f.endswith('.mm') else [f]
+        code, txt = run([ZIG, 'c++' if is_cxx else 'cc'] + COMMON + (cxxflags if is_cxx else cflags) + src + ['-o', o])
         if code:
             bad.append(os.path.basename(f))
             for l in [l for l in txt.splitlines() if 'error:' in l][:4]:
@@ -163,7 +165,7 @@ def stage_native():
            '-I' + s + '/OpenRenderBoxCxx/include', '-I' + s + '/OpenRenderBoxShimsCxx/include', '-I' + oag,
            '-isystem' + oag + '/SwiftCorelibs/include', '-isystem' + os.path.join(ROOT, 'userland', 'sdk', 'include'), '-fblocks',
            '-DOPENRENDERBOX', '-DOPENRENDERBOX_CF_CGTYPES', '-DOPENRENDERBOX_MOS']
-    build_files('OpenRenderBox', walk([s + '/OpenRenderBoxCxx', s + '/OpenRenderBoxShimsCxx'], ('.c', '.cpp')), inc + ['-std=c11'], inc + CXX)
+    build_files('OpenRenderBox', walk([s + '/OpenRenderBoxCxx', s + '/OpenRenderBoxShimsCxx'], ('.c', '.cpp', '.mm')), inc + ['-std=c11'], inc + CXX)
     # OpenSwiftUI_SPI (C do OpenSwiftUI): include próprio com o módulo principal e os Shims (menos o CoreText_Private,
     # que no mOS é módulo Swift); o mOS é plataforma não-Darwin (OPENSWIFTUI_MOS no OpenSwiftUITargetConditionals.h)
     spi = os.path.join(OSUI, 'OpenSwiftUI_SPI')
@@ -211,7 +213,8 @@ def stage_native():
         shutil.rmtree(spi_src)
     os.makedirs(spi_src)
     files = []
-    for f in walk([spi + '/Overlay', spi + '/Util'], ('.c',)):
+    # Shims/CSymbols: getSymbolPathName (dladdr). O dyld_Private.c não entra: o mOS tem o dyld de verdade no libSystem
+    for f in walk([spi + '/Overlay', spi + '/Util', spi + '/Shims/CSymbols'], ('.c',)):
         x = open(f, encoding='utf-8').read()
         n = re.sub(r'\$s15OpenSwiftUICore', '$s7SwiftUI', re.sub(r'\$s11OpenSwiftUI(?=\d)', '$s7SwiftUI', x))
         if n != x:
