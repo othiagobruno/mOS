@@ -1092,6 +1092,9 @@ static id still_codecs(id s, SEL c) { return pho_codecs(s, c); }
 static id still_pixfmts(id s, SEL c) { return pho_pixfmts(s, c); }
 
 /* ================================================================ gravação em arquivo */
+extern char cx_cfconst_isa[] __asm__("__CFConstantStringClassReference");
+static struct { void *isa; unsigned long long flags; const char *s; unsigned long long n; } recfin_s = {cx_cfconst_isa, 0x7c8, "AVErrorRecordingSuccessfullyFinishedKey", 39};
+const void *AVErrorRecordingSuccessfullyFinishedKey = &recfin_s;
 /* AVCaptureMovieFileOutput: H.264 (VTCompressionSession do avwriter.c) + LPCM 16 bits em QuickTime; AVCaptureAudioFileOutput:
  * só o áudio, no tipo de arquivo pedido (MOV, WAV). O AVAssetWriter é montado no primeiro quadro (o tamanho vem da câmera);
  * a sessão do escritor começa no pts desse quadro e a pausa desconta o tempo parado. */
@@ -1129,7 +1132,7 @@ static id rec_connections(id o) { id a = arr_new(); MSG(void, a, "addObject:", o
 static id rec_error(long code, int finished) {
     id info = dict_new();
     id yes = MSG(id, (id)cx_class_named("NSNumber"), "numberWithBool:", (BOOL)(finished ? YES : NO));
-    MSG(void, info, "setObject:forKey:", yes, cx_str("AVErrorRecordingSuccessfullyFinishedKey"));
+    MSG(void, info, "setObject:forKey:", yes, (id)AVErrorRecordingSuccessfullyFinishedKey);
     return MSG(id, (id)cx_class_named("NSError"), "errorWithDomain:code:userInfo:", cx_str("AVFoundationErrorDomain"), code, info);
 }
 typedef struct { id out, del, url, conns, err; int kind; } recjob_t;   /* kind 0 começou, 1 terminou, 2 pausou, 3 voltou */
