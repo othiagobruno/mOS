@@ -2883,6 +2883,7 @@ bool macho_load(process_t *p, const u8 *img, usize len, const char *arg, u64 *en
     if (args_ok) memcpy(sblkbuf + ep_off, ep, strlen(ep) + 1);
     u64 sbase = args_ok ? us_push(&st, sblkbuf, sblk, 8) : 0;
     if (!sbase) args_ok = false;
+    if (args_ok) { p->args_va = sbase; p->args_len = ep_off; p->args_argc = argc; p->args_envc = nenv; }   /* proc/darwin.c */
     for (int i = 0; args_ok && i < argc; i++) uargv[i] = sbase + soff[i];
     for (int i = 0; args_ok && i < nenv; i++) uenv[i] = sbase + soff[argc + i];
     uapple[0] = args_ok ? sbase + ep_off : 0;

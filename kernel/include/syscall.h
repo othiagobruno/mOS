@@ -103,6 +103,8 @@ enum {
     SYS_SETEUID = 103, /* (uid) -> 0 | -MOS_EPERM. Só real, efetivo ou saved. */
     SYS_SETEGID = 104, /* (gid) -> 0 | -MOS_EPERM. */
     SYS_FSMETA = 106,  /* (op, mos_fsmeta_t*) -> resultado | -errno   metadados de arquivo (MOS_FSM_*, kernel/lib/vfsmeta.c) */
+    /* 110: interface Darwin do kernel (kernel/proc/darwin.c, docs/darwin-bsd-mach.md). rdi = MOS_DW_* (abaixo). */
+    SYS_DARWIN = 110,
 };
 
 /* SYS_FSMETA: inode, dono, flags BSD, datas em ns e atributos estendidos de um arquivo ou pasta.
@@ -150,6 +152,47 @@ typedef struct {
     unsigned namelen;
     char name[256];
 } mos_fsm_dirent_t;
+
+/* SYS_DARWIN: dados do sistema e dos processos para sysctl, proc_info, host_info e task_info do libSystem. */
+enum {
+    MOS_DW_SYSINFO = 1,  /* (mos_dw_sysinfo_t *) -> 0 */
+    MOS_DW_HOSTNAME,     /* (buf, cap) -> tamanho sem o 0 final (o 0 é gravado se couber) */
+    MOS_DW_SETHOSTNAME,  /* (nome, len) -> 0 | -MOS_EPERM (só euid 0) | -MOS_EINVAL (len > 255) */
+    MOS_DW_PIDS,         /* (int *buf, cap em ints) -> quantidade de processos vivos (copia até cap, em ordem de pid) */
+    MOS_DW_PROC,         /* (pid, mos_dw_proc_t *) -> 0 | -MOS_ESRCH */
+    MOS_DW_ARGS,         /* (pid, buf, cap) -> bytes. Formato do KERN_PROCARGS2: int argc, caminho do executável,
+                          * zeros até 8 bytes, argv, envp (cada string com o 0). buf 0 = só o tamanho. */
+    MOS_DW_THREADS,      /* (pid, mos_dw_thread_t *buf, cap) -> quantidade de threads vivas (copia até cap) */
+};
+typedef struct {
+    unsigned long long mem_total, mem_free;    /* bytes de RAM */
+    unsigned long long boot_unix_us;           /* hora do boot (µs desde 1970, relógio do sistema) */
+    unsigned long long uptime_ms;
+    unsigned long long swap_total, swap_used;  /* bytes */
+    unsigned long long pageins, pageouts;      /* páginas trazidas/levadas da troca desde o boot */
+    unsigned int ncpu, nprocs, nthreads, nrunnable;
+    unsigned int cpu_ms_busy_lo, cpu_ms_busy_hi; /* reservado (0) */
+} mos_dw_sysinfo_t;
+#define MOS_DW_ST_RUN    1
+#define MOS_DW_ST_SLEEP  2
+#define MOS_DW_ST_STOP   3
+#define MOS_DW_ST_ZOMBIE 4
+typedef struct {
+    int pid, ppid, pgid, sid;
+    int uid, euid, suid, gid, egid, sgid;
+    int state, stopped, nthreads, flags;       /* MOS_DW_ST_*; flags: 1 vfork, 2 tem terminal de controle */
+    unsigned long long start_unix_us;          /* início do processo */
+    unsigned long long cpu_ms;                 /* soma das threads (vivas e já encerradas não entram) */
+    unsigned long long mem_bytes;              /* páginas residentes do processo */
+    unsigned long long vsize;                  /* faixa de endereços em uso (heap + mmap) */
+    char name[32];
+    char path[384];
+} mos_dw_proc_t;
+typedef struct {
+    unsigned long long tid, cpu_ms;
+    int state, suspend, qos, pad;              /* state: MOS_DW_ST_RUN/SLEEP; suspend: contagem do thread_suspend */
+    char name[32];
+} mos_dw_thread_t;
 
 #define MOS_DESK_BANNER 1
 #define MOS_DESK_TAKE   2

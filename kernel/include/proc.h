@@ -169,6 +169,10 @@ struct process {
     /* travas da tabela de páginas, 16 faixas de 2 MiB (VA>>21). depth 0 = livre. */
     struct { volatile u32 lk; int owner; int depth; u64 fl; } vmreg[16];
     u16 pcid;               /* 1..4095 com PCID; 0 = ainda sem (o escalonador atribui) */
+    /* bloco de strings argv+envp na pilha do processo (Mach-O; macho.c): KERN_PROCARGS2 e proc_pidinfo leem daqui
+     * (proc/darwin.c). args_va 0 = não registrado (ELF ou falha no carregamento). */
+    u64 args_va, args_len;
+    int args_argc, args_envc;
 };
 
 /* ---- portas Mach entre processos (proc/machipc.c) */
