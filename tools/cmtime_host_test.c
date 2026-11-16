@@ -70,6 +70,19 @@ cm_range_t CMTimeRangeFromTimeToTime(cm_time_t start, cm_time_t end);
 cm_time_t CMTimeMapTimeFromRangeToRange(cm_time_t t, cm_range_t from, cm_range_t to);
 cm_time_t CMTimeMapDurationFromRangeToRange(cm_time_t d, cm_range_t from, cm_range_t to);
 cm_time_t CMClockMakeHostTimeFromSystemUnits(unsigned long long units);
+cm_range_t CMTimeRangeGetUnion(cm_range_t a, cm_range_t b);
+cm_time_t CMSyncGetTime(void *);
+void *CMTimebaseGetMaster(void *);
+cm_time_t CMTimebaseGetTimeWithTimeScale(void *, i32, u32);
+int CMTimebaseSetRateAndAnchorTime(void *, double, cm_time_t, cm_time_t);
+int CMTimebaseAddTimer(void *, void *, void *);
+int CMTimebaseSetTimerNextFireTime(void *, void *, cm_time_t, u32);
+/* runloop do teste: guarda a data marcada (o CFRunLoop de verdade fica no libSystem) */
+static double fire_date = -1, cf_now = 1000;
+double CFAbsoluteTimeGetCurrent(void) { return cf_now; }
+void CFRunLoopTimerSetNextFireDate(void *t, double d) { (void)t; fire_date = d; }
+void CFRunLoopAddTimer(void *rl, void *t, const void *m) { (void)rl; (void)t; (void)m; }
+const void *kCFRunLoopCommonModes = "common";
 static int disparos;
 static void gatilho(void *ref, void *tok) { (void)tok; disparos += ref ? *(int *)ref : 1; }
 typedef struct { unsigned version; void *refcon; void *gd, *gp, *gdur, *ready; int (*compare)(void *, void *, void *); void *note; } qcb_t;
@@ -207,6 +220,21 @@ int main(void) {
         expect(fabs(CMTimeGetSeconds(d) - 6.0) < 1e-6, "mapeia duração 3 -> 6");
         cm_time_t h = CMClockMakeHostTimeFromSystemUnits(1500000000ULL);
         expect(fabs(CMTimeGetSeconds(h) - 1.5) < 1e-9, "unidades do host -> 1,5 s");
+    }
+    {   /* lacunas do corpus */
+        cm_range_t u = CMTimeRangeGetUnion(CMTimeRangeMake(CMTimeMake(1, 1), CMTimeMake(2, 1)), CMTimeRangeMake(CMTimeMake(5, 2), CMTimeMake(3, 1)));
+        expect(fabs(CMTimeGetSeconds(u.start) - 1) < 1e-9 && fabs(CMTimeGetSeconds(CMTimeAdd(u.start, u.duration)) - 5.5) < 1e-9, "união de intervalos");
+        void *clk2 = CMClockGetHostTimeClock(), *tb2 = 0;
+        gnow = 10;
+        CMTimebaseCreateWithSourceClock(0, clk2, &tb2);
+        expect(CMTimebaseGetMaster(tb2) == clk2 && fabs(CMTimeGetSeconds(CMSyncGetTime(clk2)) - 10) < 1e-6, "mestre e CMSyncGetTime");
+        expect(CMTimebaseSetRateAndAnchorTime(tb2, 0.5, CMTimeMake(100, 1), CMTimeMake(12, 1)) == 0, "rate e âncora");
+        gnow = 14;   /* 2 s de fonte depois da âncora, a 0,5: 101 s */
+        cm_time_t g = CMTimebaseGetTimeWithTimeScale(tb2, 600, 1);
+        expect(g.timescale == 600 && g.value == 60600, "tempo na escala pedida");
+        int tm = 0;
+        expect(CMTimebaseAddTimer(tb2, &tm, 0) == 0 && fire_date > 1e299, "timer de runloop parado ao entrar");
+        expect(CMTimebaseSetTimerNextFireTime(tb2, &tm, CMTimeMake(103, 1), 0) == 0 && fabs(fire_date - (cf_now + 4)) < 1e-6, "disparo em 2 s de timebase = 4 s de parede a 0,5");
     }
     if (fail) { fprintf(stderr, "%d falhas\n", fail); return 1; }
     printf("PASSOU\n");

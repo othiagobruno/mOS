@@ -592,3 +592,58 @@ int cm_timing_copy(const cm_timing_t *src, long nsrc, cm_timing_t *dst, long nds
 /* Nome antigo (macOS 10.8–12) do CMTimebaseCreateWithSourceClock; mesma semântica. */
 int CMTimebaseCreateWithMasterClock(void *a, void *clock, void **out) { return CMTimebaseCreateWithSourceClock(a, clock, out); }
 int CMTimebaseCreateWithMasterTimebase(void *a, void *master, void **out) { return CMTimebaseCreateWithSourceClock(a, master, out); }
+
+/* ---- lacunas do corpus: união de intervalos, tempo de relógio/timebase, mestre, âncora explícita */
+cm_range_t CMTimeRangeGetUnion(cm_range_t a, cm_range_t b) {
+    cm_time_t ae = CMTimeRangeGetEnd(a), be = CMTimeRangeGetEnd(b);
+    cm_time_t s = CMTimeCompare(a.start, b.start) <= 0 ? a.start : b.start, e = CMTimeCompare(ae, be) >= 0 ? ae : be;
+    cm_range_t r = {s, CMTimeSubtract(e, s)};
+    return r;
+}
+cm_time_t CMSyncGetTime(void *clock_or_timebase) {
+    cm_sync_t *c = clock_or_timebase;
+    if (!c) return T_BAD;
+    return CMTimeMakeWithSeconds(sync_seconds(c), 1000000000);
+}
+void *CMTimebaseGetMaster(void *tb) { cm_sync_t *t = tb; return t && t->kind == 2 ? t->source : 0; }
+cm_time_t CMTimebaseGetTimeWithTimeScale(void *tb, i32 scale, u32 method) {
+    cm_sync_t *t = tb;
+    if (!t || t->kind != 2) return T_BAD;
+    return CMTimeConvertScale(CMTimeMakeWithSeconds(sync_seconds(t), 1000000000), scale, method);
+}
+/* rate e âncora juntos: o timebase vale timebase_time quando a fonte vale source_time */
+int CMTimebaseSetRateAndAnchorTime(void *tb, double rate, cm_time_t timebase_time, cm_time_t source_time) {
+    cm_sync_t *t = tb;
+    if (!t || t->kind != 2 || is_nan(rate) || !is_num(timebase_time) || !is_num(source_time)) return -12752;
+    t->rate = rate;
+    t->anchor_tb = CMTimeGetSeconds(timebase_time);
+    t->anchor_src = CMTimeGetSeconds(source_time);
+    return 0;
+}
+/* timers de CFRunLoop: o disparo é marcado no relógio de parede pela distância no timebase / rate */
+double CFAbsoluteTimeGetCurrent(void);
+void CFRunLoopTimerSetNextFireDate(void *timer, double date);
+void CFRunLoopAddTimer(void *rl, void *timer, const void *mode);
+extern const void *kCFRunLoopCommonModes;
+int CMTimebaseAddTimer(void *tb, void *timer, void *runloop) {
+    cm_sync_t *t = tb;
+    if (!t || t->kind != 2 || !timer) return -12752;
+    if (timer_slot(t, timer, 1) < 0) return -12752;
+    if (runloop) CFRunLoopAddTimer(runloop, timer, kCFRunLoopCommonModes);
+    CFRunLoopTimerSetNextFireDate(timer, 1e300);   /* parado até SetTimerNextFireTime */
+    return 0;
+}
+int CMTimebaseRemoveTimer(void *tb, void *timer) {
+    int rc = CMTimebaseRemoveTimerDispatchSource(tb, timer);
+    if (!rc && timer) CFRunLoopTimerSetNextFireDate(timer, 1e300);
+    return rc;
+}
+int CMTimebaseSetTimerNextFireTime(void *tb, void *timer, cm_time_t fire, u32 flags) {
+    int rc = CMTimebaseSetTimerDispatchSourceNextFireTime(tb, timer, fire, flags);
+    if (rc) return rc;
+    cm_sync_t *t = tb;
+    double now = sync_seconds(t), when = CMTimeGetSeconds(fire);
+    double wall = t->rate > 0 && when >= now ? (when - now) / t->rate : t->rate > 0 ? 0 : 1e300;
+    CFRunLoopTimerSetNextFireDate(timer, wall >= 1e299 ? 1e300 : CFAbsoluteTimeGetCurrent() + wall);
+    return 0;
+}

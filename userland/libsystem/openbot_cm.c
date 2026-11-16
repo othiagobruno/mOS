@@ -77,6 +77,8 @@ typedef struct {
     size_t np, nal;
     u8 *cookie;                 /* magic cookie do áudio (esds/ASC, OpusHead, alac...) */
     size_t cookie_n;
+    void *layout;               /* AudioChannelLayout do áudio */
+    size_t layout_n;
 } fd_t;
 
 typedef struct {
@@ -363,7 +365,7 @@ int CMAudioFormatDescriptionGetRichestDecodableFormat(void *d, void *asbd) {
     return cm_copy_asbd(f ? f->asbd : 0, f && f->has_asbd, asbd, 40);
 }
 int CMAudioFormatDescriptionCreate(void *a, const void *asbd, size_t ls, const void *l, size_t cs, const void *c, id ext, void **out) {
-    (void)a; (void)ls; (void)l;
+    (void)a;
     if (!out || !asbd) return CM_BAD_FMT;
     u32 fmtid;
     memcpy(&fmtid, (const u8 *)asbd + 8, 4);   /* mFormatID: o subtipo, como no macOS */
@@ -372,6 +374,7 @@ int CMAudioFormatDescriptionCreate(void *a, const void *asbd, size_t ls, const v
     memcpy(f->asbd, asbd, sizeof f->asbd);
     f->has_asbd = 1;
     if (cs && c && (f->cookie = malloc(cs))) { memcpy(f->cookie, c, cs); f->cookie_n = cs; }
+    if (ls && l && (f->layout = malloc(ls))) { memcpy(f->layout, l, ls); f->layout_n = ls; }
     if (ext) { objc_release(f->ext); f->ext = objc_retain(ext); }
     *out = f;
     return 0;
@@ -872,3 +875,96 @@ cm_time_t CMSampleBufferGetOutputDecodeTimeStamp(void *s) {
     if (!b->has_opt || !(d.flags & 1) || !(b->times[0].presentationTimeStamp.flags & 1)) return d;
     return CMTimeAdd(d, CMTimeSubtract(b->opt, b->times[0].presentationTimeStamp));
 }
+
+/* ---- lacunas do corpus */
+CFCONST(kCMFormatDescriptionExtension_ContainsAlphaChannel, "ContainsAlphaChannel")
+CFCONST(kCMFormatDescriptionTransferFunction_ITU_R_709_2, "ITU_R_709_2")
+CFCONST(kCMSampleAttachmentKey_DependsOnOthers, "DependsOnOthers")
+CFCONST(kCMSampleBufferAttachmentKey_DroppedFrameReason, "DroppedFrameReason")
+CFCONST(kCMSampleBufferAttachmentKey_EndsPreviousSampleDuration, "EndsPreviousSampleDuration")
+const void *CMAudioFormatDescriptionGetChannelLayout(void *d, size_t *size) {
+    fd_t *f = as_fd(d);
+    if (size) *size = f ? f->layout_n : 0;
+    return f && f->layout_n ? f->layout : 0;
+}
+int CMFormatDescriptionCreate(void *a, u32 media, u32 sub, id ext, void **out) {
+    (void)a;
+    if (!out) return CM_BAD_FMT;
+    fd_t *f = fd_new(media, sub);
+    if (!f) return CM_BAD_FMT;
+    if (ext) { objc_release(f->ext); f->ext = objc_retain(MSG0(id, ext, "mutableCopy")); }
+    *out = f;
+    return 0;
+}
+typedef struct { double x, y, w, h; } cm_rect_t;
+/* CleanAperture (Width, Height, HorizontalOffset, VerticalOffset: deslocamento do centro) ou o quadro inteiro */
+cm_rect_t CMVideoFormatDescriptionGetCleanAperture(void *d, u8 top_left) {
+    (void)top_left;   /* a abertura é centrada: a origem fica igual nos dois sentidos de y */
+    fd_t *f = as_fd(d);
+    cm_rect_t r = {0, 0, f ? f->w : 0, f ? f->h : 0};
+    id ca = f && f->ext ? MSG(id, f->ext, "objectForKey:", cx_str("CleanAperture")) : 0;
+    if (!ca) return r;
+    id W = MSG(id, ca, "objectForKey:", cx_str("Width")), H = MSG(id, ca, "objectForKey:", cx_str("Height"));
+    id HO = MSG(id, ca, "objectForKey:", cx_str("HorizontalOffset")), VO = MSG(id, ca, "objectForKey:", cx_str("VerticalOffset"));
+    double w = W ? MSG0(double, W, "doubleValue") : r.w, h = H ? MSG0(double, H, "doubleValue") : r.h;
+    double ho = HO ? MSG0(double, HO, "doubleValue") : 0, vo = VO ? MSG0(double, VO, "doubleValue") : 0;
+    r.x = (f->w - w) / 2 + ho; r.y = (f->h - h) / 2 + vo; r.w = w; r.h = h;
+    return r;
+}
+int CMSampleBufferSetDataReady(void *s) { sb_t *b = as_sb(s); if (!b) return CM_BAD_SAMPLE; b->ready = 1; return 0; }
+/* CMTimeMakeFromDictionary: chaves value, timescale, flags, epoch */
+cm_time_t CMTimeMakeFromDictionary(id d) {
+    cm_time_t t = {0, 0, 0, 0};
+    if (!d) return t;
+    id v = MSG(id, d, "objectForKey:", cx_str("value")), s = MSG(id, d, "objectForKey:", cx_str("timescale"));
+    id fl = MSG(id, d, "objectForKey:", cx_str("flags")), ep = MSG(id, d, "objectForKey:", cx_str("epoch"));
+    if (!v || !s || !fl) return t;
+    t.value = MSG0(i64, v, "longLongValue");
+    t.timescale = (i32)MSG0(i64, s, "longLongValue");
+    t.flags = (u32)MSG0(i64, fl, "longLongValue");
+    t.epoch = ep ? MSG0(i64, ep, "longLongValue") : 0;
+    return t;
+}
+/* CMSimpleQueue: anel de ponteiros de um produtor e um consumidor */
+typedef struct { u32 magic; i32 cap; volatile i32 head, count; const void **e; } cm_sq_t;
+#define SQ_MAGIC 0x53514d43u
+int CMSimpleQueueCreate(void *a, i32 capacity, void **out) {
+    (void)a;
+    if (!out || capacity <= 0) return -12770;
+    cm_sq_t *q = calloc(1, sizeof *q);
+    if (!q || !(q->e = calloc((size_t)capacity, sizeof(void *)))) { free(q); return -12770; }
+    q->magic = SQ_MAGIC; q->cap = capacity;
+    *out = q;
+    return 0;
+}
+static cm_sq_t *sq(void *p) { cm_sq_t *q = p; return q && q->magic == SQ_MAGIC ? q : 0; }
+int CMSimpleQueueEnqueue(void *p, const void *e) {
+    cm_sq_t *q = sq(p);
+    if (!q || !e) return -12770;
+    if (__atomic_load_n(&q->count, __ATOMIC_ACQUIRE) >= q->cap) return -12771;   /* cheia */
+    q->e[(q->head + q->count) % q->cap] = e;
+    __atomic_add_fetch(&q->count, 1, __ATOMIC_RELEASE);
+    return 0;
+}
+const void *CMSimpleQueueDequeue(void *p) {
+    cm_sq_t *q = sq(p);
+    if (!q || __atomic_load_n(&q->count, __ATOMIC_ACQUIRE) <= 0) return 0;
+    const void *e = q->e[q->head];
+    q->head = (q->head + 1) % q->cap;
+    __atomic_sub_fetch(&q->count, 1, __ATOMIC_RELEASE);
+    return e;
+}
+const void *CMSimpleQueueGetHead(void *p) { cm_sq_t *q = sq(p); return q && q->count > 0 ? q->e[q->head] : 0; }
+int CMSimpleQueueReset(void *p) { cm_sq_t *q = sq(p); if (!q) return -12770; q->head = 0; q->count = 0; return 0; }
+i32 CMSimpleQueueGetCapacity(void *p) { cm_sq_t *q = sq(p); return q ? q->cap : 0; }
+i32 CMSimpleQueueGetCount(void *p) { cm_sq_t *q = sq(p); return q ? __atomic_load_n(&q->count, __ATOMIC_ACQUIRE) : 0; }
+/* CMMemoryPool: os blocos vêm do alocador padrão (o malloc do mOS já reaproveita); Invalidate desliga o pool */
+typedef struct { u32 magic; int valid; } cm_pool_t;
+void *CMMemoryPoolCreate(id options) { (void)options; cm_pool_t *p = calloc(1, sizeof *p); if (p) { p->magic = 0x4c4f4f50; p->valid = 1; } return p; }
+void *CMMemoryPoolGetAllocator(void *pool) { (void)pool; return 0; /* kCFAllocatorDefault */ }
+void CMMemoryPoolFlush(void *pool) { (void)pool; }
+void CMMemoryPoolInvalidate(void *pool) { cm_pool_t *p = pool; if (p && p->magic == 0x4c4f4f50) p->valid = 0; }
+/* relógio do dispositivo de áudio: o mOS tem uma saída; o relógio anda com o host, como o CMAudioClock */
+int CMAudioClockCreate(void *a, void **out);
+int CMAudioDeviceClockCreate(void *a, id uid, void **out) { (void)uid; return CMAudioClockCreate(a, out); }
+int CMAudioDeviceClockCreateFromAudioDeviceID(void *a, u32 dev, void **out) { (void)dev; return CMAudioClockCreate(a, out); }
