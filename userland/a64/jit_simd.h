@@ -1520,7 +1520,10 @@ static void vex_fma_r(T *t, unsigned op, int dbl, int x, int v, int r) {
 }
 /* núcleo do FP vetorial: x86 = opcode (58 add, 5C sub, 59 mul, 5E div; B8/BC fused), lane = -1 →
  * m vetorial, senão lane de m difundida (forma por elemento) */
-static int fpv_core(T *t, unsigned x86, int fma, int dbl, int q, int d, int n, int m, int lane) {
+static int fpv_core_x(T *t, unsigned x86, int fma, int dbl, int q, int d, int n, int m, int lane, int absr);
+static int fpv_core(T *t, unsigned x86, int fma, int dbl, int q, int d, int n, int m, int lane) { return fpv_core_x(t, x86, fma, dbl, q, d, n, m, lane, 0); }
+/* absr: |resultado| (FABD) */
+static int fpv_core_x(T *t, unsigned x86, int fma, int dbl, int q, int d, int n, int m, int lane, int absr) {
     fl_clobber(t);
     mx_clean(t);
     x_test_ri(B, 0, XM(RCPU, OFF_FPCR), 0x01C00000);
@@ -1541,6 +1544,7 @@ static int fpv_core(T *t, unsigned x86, int fma, int dbl, int q, int d, int n, i
     slow_if(t, CC_NE);
     s_lanecheck(t, dbl, q);
     ixc_if_pe(t);
+    if (absr) { s_const(t, 2, dbl ? 0x7FFFFFFFFFFFFFFFull : 0x7FFFFFFF7FFFFFFFull); s_op(t, 0xDB, 0, 2); }
     s_st(t, d, 0, q);
     return 1;
 }
@@ -1726,6 +1730,31 @@ static int s_faddp_lo(T *t, int dbl, int sc, int n, int m, int d) {
     s_st(t, d, 0, 0);
     return 1;
 }
+/* FMAX FMIN FMAXNM FMINNM vetoriais de S/D: maxps/minps, com a ordem dos zeros do ARM
+ * (a == b → a & b no max, a | b no min: max(-0, +0) = +0). NaN e FPCR.FZ: interpretador. */
+static int s_fmaxmin_vec(T *t, int q, int dbl, int mn, int n, int m, int d) {
+    int ps = dbl ? XF_66 : 0;
+    fl_clobber(t);
+    x_test_ri(B, 0, XM(RCPU, OFF_FPCR), 1u << 24);
+    slow_if(t, CC_NE);
+    if (q) { s_ld(t, 0, n); s_ld(t, 1, m); } else { x_movq_ld(B, 0, VO(n)); x_movq_ld(B, 1, VO(m)); }
+    x_movdqa_ld(B, 2, XR(0));
+    xop2(B, ps, 0xC2, 2, XR(1)); xe8(B, 3);         /* cmpunord */
+    xop2(B, XF_66, 0xD7, XAX, XR(2));
+    x_test_ri(B, 0, XR(XAX), q ? 0xFFFF : 0xFF);
+    slow_if(t, CC_NE);
+    x_movdqa_ld(B, 2, XR(0));
+    xop2(B, ps, 0xC2, 2, XR(1)); xe8(B, 0);         /* xmm2 = a == b */
+    x_movdqa_ld(B, 3, XR(0));
+    xop2(B, ps, mn ? 0x56 : 0x54, 3, XR(1));        /* orps / andps */
+    xop2(B, ps, mn ? 0x5D : 0x5F, 0, XR(1));        /* minps / maxps */
+    s_op(t, 0xDB, 3, 2);
+    xop2(B, XF_66, 0xDF, 2, XR(0));                 /* ~eq & max */
+    s_op(t, 0xEB, 2, 3);
+    t->mxclean = 0;
+    s_st(t, d, 2, q);
+    return 1;
+}
 static int s_fpvec(T *t, a64_u32 w) {
     int q = (int)BIT(w, 30), u = (int)BIT(w, 29), a = (int)BIT(w, 23), dbl = (int)BIT(w, 22), op = (int)BITS(w, 13, 11);
     int m = (int)BITS(w, 20, 16), n = (int)BITS(w, 9, 5), d = (int)(w & 31);
@@ -1733,6 +1762,9 @@ static int s_fpvec(T *t, a64_u32 w) {
     if (op == 4 && !(!u && a)) return s_fcmpv(t, q, dbl, !u ? 0 : a ? 2 : 1, 0, n, m, d, 0);   /* FCMEQ FCMGE FCMGT */
     if (op == 5 && u) return s_fcmpv(t, q, dbl, a ? 2 : 1, 1, n, m, d, 0);                  /* FACGE FACGT */
     if (!u && op == 2) return fpv_core(t, a ? 0x5C : 0x58, 0, dbl, q, d, n, m, -1);       /* FSUB / FADD */
+    if (u && a && op == 2) return fpv_core_x(t, 0x5C, 0, dbl, q, d, n, m, -1, 1);         /* FABD */
+    if (!u && !a && op == 3) return fpv_core(t, 0x59, 0, dbl, q, d, n, m, -1);            /* FMULX: 0 × inf dá IE → interpretador */
+    if (!u && (op == 0 || op == 6)) return s_fmaxmin_vec(t, q, dbl, a, n, m, d);           /* FMAXNM FMINNM FMAX FMIN */
     if (u && !a && op == 3) return fpv_core(t, 0x59, 0, dbl, q, d, n, m, -1);             /* FMUL */
     if (u && !a && op == 7) return q ? fpv_core(t, 0x5E, 0, dbl, q, d, n, m, -1) : 0;     /* FDIV (Q=0: 0/0 nas lanes zeradas) */
     if (!u && op == 1 && jit_g.fma) return fpv_core(t, a ? 0xBC : 0xB8, 1, dbl, q, d, n, m, -1);   /* FMLS / FMLA */
