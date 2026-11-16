@@ -304,6 +304,9 @@ if ($LASTEXITCODE -ne 0) {
         if ($LASTEXITCODE -ne 0) { Write-Host "machsemteste FAILED" -ForegroundColor Red; exit 1 }
         & $zig cc -target x86_64-macos -O1 -Wno-deprecated-declarations "$root\userland\tests-machtraps\main.c" -o "$pdir\machtrapsteste" "-Wl,-undefined,dynamic_lookup" 2>&1 | ForEach-Object { "$_" }
         if ($LASTEXITCODE -ne 0) { Write-Host "machtrapsteste FAILED" -ForegroundColor Red; exit 1 }
+        # portas de exceção Mach: falta resolvida pelo tratador, recusada, e EXC_CRASH de outro processo (crashpad)
+        & $zig cc -target x86_64-macos -O1 -Wno-deprecated-declarations "$root\userland\tests-excports\main.c" -o "$pdir\excportsteste" "-Wl,-undefined,dynamic_lookup" 2>&1 | ForEach-Object { "$_" }
+        if ($LASTEXITCODE -ne 0) { Write-Host "excportsteste FAILED" -ForegroundColor Red; exit 1 }
         # IPC POSIX nomeado (shm_open, sem_open entre processos), getattrlist/setattrlist e abort_with_reason
         & $zig cc -target x86_64-macos -O1 -Wno-deprecated-declarations "$root\userland\tests-posixipc\main.c" -o "$pdir\posixipcteste" "-Wl,-undefined,dynamic_lookup" 2>&1 | ForEach-Object { "$_" }
         if ($LASTEXITCODE -ne 0) { Write-Host "posixipcteste FAILED" -ForegroundColor Red; exit 1 }

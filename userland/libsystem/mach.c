@@ -165,13 +165,17 @@ void cx_mach_record_prot(u64 addr, u64 len, int prot) {
     cx_syscall(SYS_MACH_VM, (long)MACH_VM_PROTECT, (long)q, 0, 0, 0);
 }
 kern_return_t mach_vm_region(mach_port_t task, u64 *addr, u64 *size, int flavor, void *info, u32 *count, mach_port_t *obj) {
-    (void)task;
     if (obj) *obj = 0;
     if (!addr || !size || *addr < 0x400000000000ULL || *addr >= 0x440000000000ULL) return KERN_INVALID_ADDRESS;
     /* a proteção vem do kernel (machipc.c, MACH_VM_REGION): initprot dos segmentos Mach-O e o que o
-     * mprotect/mach_vm_protect pediram. Sem registro: a página, RWX (o NX está desligado no mOS). */
+     * mprotect/mach_vm_protect pediram. Sem registro: a página, RWX (o NX está desligado no mOS).
+     * Outra task (porta recebida numa mensagem, o crashpad): MACH_VM_TASK_REGION, com os mesmos campos. */
     u64 q[8] = {*addr, 0, 0, 7, 7, 0, 0, 0};
-    if (cx_syscall(SYS_MACH_VM, (long)MACH_VM_REGION, (long)q, 0, 0, 0) != KERN_SUCCESS) return KERN_INVALID_ADDRESS;
+    if (task && task != TASK_PORT) {
+        u64 t2[8] = {task, *addr, 0, 0, 0, 0, 0, 0};
+        if (cx_syscall(SYS_MACH_VM, (long)MACH_VM_TASK_REGION, (long)t2, 0, 0, 0) != KERN_SUCCESS) return KERN_INVALID_ADDRESS;
+        q[1] = t2[1]; q[2] = t2[2]; q[3] = t2[3]; q[4] = t2[4];
+    } else if (cx_syscall(SYS_MACH_VM, (long)MACH_VM_REGION, (long)q, 0, 0, 0) != KERN_SUCCESS) return KERN_INVALID_ADDRESS;
     *addr = q[1];
     *size = q[2];
 #if defined(__aarch64__)
@@ -244,6 +248,8 @@ kern_return_t task_for_pid(mach_port_t target, int pid, mach_port_t *task) {
 kern_return_t pid_for_task(mach_port_t task, int *pid) {
     if (!pid) return KERN_INVALID_ARGUMENT;
     if (task == TASK_PORT) { *pid = (int)SYS0(SYS_GETPID); return KERN_SUCCESS; }
+    u64 q[8] = {task, 0, 0, 0, 0, 0, 0, 0};           /* porta de task de outro processo (recebida numa mensagem) */
+    if (cx_syscall(SYS_MACH_VM, (long)MACH_VM_TASK_PID, (long)q, 0, 0, 0) == KERN_SUCCESS) { *pid = (int)q[1]; return KERN_SUCCESS; }
     *pid = 0;
     return KERN_FAILURE;
 }

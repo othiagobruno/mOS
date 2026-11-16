@@ -212,6 +212,10 @@ void _start(const char *arg) {
         int ms = spawn("machsemteste", 0);
         CHECK(ms > 0 && wait(ms) == 0, "machsemteste (Mach-O): semáforos Mach com o contrato do XNU");
     }
+    if (file_size("/Sistema/Programas/excportsteste") > 0) {   /* Mach-O: portas de exceção e EXC_CRASH (userland/tests-excports) */
+        int ex = spawn("excportsteste", 0);
+        CHECK(ex > 0 && wait(ex) == 0, "excportsteste (Mach-O): exceção Mach antes do sinal e EXC_CRASH com a memória do filho");
+    }
     if (file_size("/Sistema/Programas/machtrapsteste") > 0) {   /* Mach-O: mk_timer, clock_sleep, atributos (userland/tests-machtraps) */
         int mt = spawn("machtrapsteste", 0);
         CHECK(mt > 0 && wait(mt) == 0, "machtrapsteste (Mach-O): mk_timer, mach_wait_until, clock_sleep e mach_port_get_attributes");

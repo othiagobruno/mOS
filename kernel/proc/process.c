@@ -1512,6 +1512,68 @@ static const char *fault_name(u64 v) {
 static bool sig_fault(int_frame_t *f, thread_t *t, process_t *p, u64 cr2);
 static u64 proc_fault_(int_frame_t *f, u64 cr2);
 /* a falta pode matar o processo e trocar de thread: a que volta também passa pela entrega de sinais */
+/* ---- exceções Mach (kernel/proc/machipc.c). Antes do sinal, a falta vai à porta de exceção da thread ou da task
+ * (como no XNU); a morte por sinal fatal vira EXC_CRASH para a porta da task (o crashpad de todo Electron). */
+bool machipc_raise(thread_t *t, int_frame_t *f, int exc, i64 code0, i64 code1, bool crash);
+#define EXC_BAD_ACCESS 1
+#define EXC_BAD_INSTRUCTION 2
+#define EXC_ARITHMETIC 3
+#define EXC_BREAKPOINT 6
+#define EXC_CRASH 10
+static int exc_of_fault(const int_frame_t *f, u64 cr2, i64 *c0, i64 *c1) {
+    *c1 = 0;
+    switch (f->vector) {
+    case 14: *c0 = (f->error & 1) ? 2 : 1; *c1 = (i64)cr2; return EXC_BAD_ACCESS;   /* KERN_PROTECTION_FAILURE / INVALID_ADDRESS */
+    case 13:
+        if (f->error == ((3 << 3) | 2)) { *c0 = 2; return EXC_BREAKPOINT; }       /* int3 em ring 3: EXC_I386_BPT */
+        *c0 = 13; return EXC_BAD_ACCESS;                                           /* EXC_I386_GPFLT */
+    case 6: *c0 = 1; return EXC_BAD_INSTRUCTION;                                   /* EXC_I386_INVOP */
+    case 0: *c0 = 1; return EXC_ARITHMETIC;                                        /* EXC_I386_DIV */
+    case 16: *c0 = 5; return EXC_ARITHMETIC;                                       /* EXC_I386_EXTERR */
+    case 19: *c0 = 8; return EXC_ARITHMETIC;                                       /* EXC_I386_SSEEXTERR */
+    case 17: *c0 = 17; *c1 = (i64)cr2; return EXC_BAD_ACCESS;                      /* EXC_I386_ALIGNFLT */
+    case 1: *c0 = 1; return EXC_BREAKPOINT;                                        /* EXC_I386_SGL */
+    case 3: *c0 = 2; return EXC_BREAKPOINT;
+    }
+    return 0;
+}
+static int exc_of_sig(int sig) {
+    return sig == MOS_SIGSEGV || sig == MOS_SIGBUS ? EXC_BAD_ACCESS : sig == MOS_SIGILL ? EXC_BAD_INSTRUCTION :
+           sig == MOS_SIGFPE ? EXC_ARITHMETIC : sig == MOS_SIGTRAP ? EXC_BREAKPOINT : 0;
+}
+static bool sig_dumps_core(int sig) {
+    return sig == MOS_SIGQUIT || sig == MOS_SIGILL || sig == MOS_SIGTRAP || sig == MOS_SIGABRT || sig == MOS_SIGFPE ||
+           sig == MOS_SIGBUS || sig == MOS_SIGSEGV || sig == MOS_SIGSYS;
+}
+/* o processo vai morrer pelo sinal sig (código de saída code): EXC_CRASH primeiro, se a task tem a porta. true = a
+ * thread espera a resposta (o chamador troca de thread); a resposta chega a proc_exc_reply, que encerra o processo. */
+static bool exc_crash(thread_t *t, int_frame_t *f, int sig, int code) {
+    process_t *p = t->proc;
+    if (!p || p->crash_sent || !sig_dumps_core(sig)) return false;
+    p->crash_sent = true;
+    /* o formato do XNU, com o número de sinal do Darwin (o kernel usa BUS 30 e SYS 31; o libSystem troca por 10 e 12) */
+    int dsig = sig == MOS_SIGBUS ? 10 : sig == MOS_SIGSYS ? 12 : sig;
+    i64 c0 = (i64)(((u64)(dsig & 0xFF) << 24) | ((u64)(exc_of_sig(sig) & 0xF) << 20));
+    t->exc_crash_code = code;
+    return machipc_raise(t, f, EXC_CRASH, c0, 0, true);
+}
+/* machipc: a resposta da exceção chegou (handled = KERN_SUCCESS), ou o tratador sumiu sem responder */
+void proc_exc_reply(thread_t *t, bool handled, bool crash) {
+    t->wait_pid = 0;
+    if (crash) {
+        process_t *p = t->proc;
+        kprintf("proc: %s (pid %d) encerrado depois do EXC_CRASH (código %d)\n", p->name, p->pid, t->exc_crash_code);
+        finish(p, t->exc_crash_code);
+        return;
+    }
+    if (!handled) {
+        t->exc_skip = 1;                                  /* a instrução falta de novo e vai direto ao sinal */
+        if (t->exc_rewind && t->frame) ((int_frame_t *)t->frame)->rip -= 1;
+    }
+    t->exc_rewind = 0;
+    sched_wake(t);
+}
+
 u64 proc_fault(int_frame_t *f, u64 cr2) {
     u64 r = proc_fault_(f, cr2);
     return ((int_frame_t *)r)->cs & 3 ? proc_signal_check((int_frame_t *)r) : r;
@@ -1559,6 +1621,18 @@ static u64 proc_fault_(int_frame_t *f, u64 cr2) {
     }
     /* tracepoint de diagnóstico (proc/tracepoint.c): registra, devolve o byte original e repete a instrução */
     { extern bool tp_hit(process_t *p, int_frame_t *f); if (tp_hit(p, f)) return (u64)f; }
+    /* porta de exceção da thread ou da task (EXC_BAD_ACCESS...): antes do sinal, como no XNU. Respondeu
+     * KERN_SUCCESS: a thread retoma (o tratador consertou a memória ou os registradores); senão a mesma instrução
+     * falta de novo com exc_skip e segue para o sinal. */
+    if (t->exc_skip) t->exc_skip = 0;
+    else {
+        i64 c0, c1;
+        int exc = exc_of_fault(f, cr2, &c0, &c1);
+        bool bpt = f->vector == 13 && exc == EXC_BREAKPOINT;
+        if (bpt) f->rip += 1;                             /* o tratador vê o rip depois do int3, como no #BP do XNU */
+        if (exc && machipc_raise(t, f, exc, c0, c1, false)) { t->exc_rewind = bpt; return sched_switch(f); }
+        if (bpt) f->rip -= 1;
+    }
     /* o programa tem tratador para esta falha? vira sinal da thread (SIGSEGV/SIGBUS/SIGFPE/SIGILL/SIGTRAP) */
     if (sig_fault(f, t, p, cr2)) return proc_signal_check(f);
     char msg[160];
@@ -1613,7 +1687,14 @@ static u64 proc_fault_(int_frame_t *f, u64 cr2) {
         if (o) kprintf("proc:   chamadas:%s\n", line);
     }
     console_put(msg, strlen(msg));
-    finish(p, -(int)(f->vector == 14 ? 11 : 4 + f->vector));
+    {   /* morte sem tratador de sinal: EXC_CRASH à porta da task antes (o crashpad lê a memória e as threads) */
+        int code = -(int)(f->vector == 14 ? 11 : 4 + f->vector);
+        int sig = f->vector == 14 ? ((f->error & 1) && cr2 >= USER_BASE && cr2 < USER_END ? MOS_SIGBUS : MOS_SIGSEGV) : f->vector == 6 ? MOS_SIGILL :
+                  f->vector == 0 || f->vector == 16 || f->vector == 19 ? MOS_SIGFPE : f->vector == 1 || f->vector == 3 ? MOS_SIGTRAP :
+                  f->vector == 17 ? MOS_SIGBUS : MOS_SIGSEGV;
+        if (exc_crash(t, f, sig, code)) return sched_switch(f);
+        finish(p, code);
+    }
     return sched_switch(f);
 }
 
@@ -1750,6 +1831,7 @@ static bool sig_diag(void) {
 }
 static void sig_interrupt(thread_t *t) {
     process_t *p = t->proc;
+    if (t->wait_pid == -13) return;                       /* esperando a resposta de uma exceção Mach: o sinal fica pendente */
     if (sig_diag()) kprintf("sinal: %s pid %d thread %d acordada com EINTR (espera %d, syscall %llu)\n", p->name, p->pid, t->id,
                             t->state == TH_SLEEPING ? -100 : t->wait_pid, (unsigned long long)t->sys_nr);
     if (p->tty && p->tty->reader == t) p->tty->reader = NULL;
@@ -2050,6 +2132,7 @@ u64 proc_signal_check(int_frame_t *f) {
         }
         u64 h = p->sig_handler[sig];
         if (h == MOS_SIG_DFL || (!p->sig_tramp[sig] && !p->sig_restorer)) {   /* ação padrão: encerra */
+            if (exc_crash(t, f, sig, -sig)) return sched_switch(f);              /* abort(), SIGSEGV sem tratador: crashpad */
             sig_kill_default(p, sig);
             return sched_switch(f);
         }
@@ -3155,6 +3238,100 @@ static u64 futex_fast(int_frame_t *f, thread_t *t, process_t *p) {
     if (f->rax == SYS_FUTEX_WAKE) { f->rax = (u64)futex_wake_now(p, a, b); return (u64)f; }
     return futex_wait_locked(f, t, p, a, (u32)b, c);
 }
+/* thread_* do Mach sobre a thread q (a própria `self` do chamador não: suspender a si mesma e sair são tratados
+ * por quem chama). Usado pelo SYS_THREADCTL (threads do próprio processo) e pelo machipc (MACH_VM_THREAD_CTL: porta
+ * de thread de outro processo, que o crashpad e o profiler recebem). `cp` é quem chama: os registradores vão e vêm
+ * da memória dele. */
+i64 proc_threadctl(process_t *cp, thread_t *self, thread_t *q, u64 op, u64 arg) {
+    extern void sched_kick_thread(thread_t *t);
+    extern bool sched_thread_stopped(const thread_t *t);
+    if (!q || q->state == TH_DEAD) return -MOS_ESRCH;
+    /* parada e fora da CPU: suspensa, ou esperando a resposta de uma exceção Mach (o crashpad lê a que caiu) */
+    bool frozen = (sched_thread_stopped(q) || (q->state == TH_WAITING && q->wait_pid == -13)) && q->frame;
+    {   /* diagnóstico: as primeiras chamadas (quem suspende quem), para ver no log que o coletor do JSC usa isto */
+        static int vistos;
+        if (op == MOS_THR_SUSPEND && vistos < 10) {
+            vistos++;
+            kprintf("threadctl: %s pid %d: thread %d suspende a %d (rodando: %s)\n", cp->name, cp->pid, self ? self->id : -1,
+                    q->id, q->state == TH_RUNNING ? "sim" : "não");
+        }
+    }
+    switch (op) {
+    case MOS_THR_SUSPEND:
+        if (q == self) return -MOS_EINVAL;
+        if (q->suspend < 0xFFFF) q->suspend++;
+        sched_kick_thread(q);                     /* rodando em outro núcleo: o IPI a tira de lá */
+        return 0;
+    case MOS_THR_RESUME:
+        if (!q->suspend) return -MOS_EINVAL;
+        q->suspend--;
+        if (!q->suspend && q->state == TH_READY) sched_wake(q);   /* volta à fila de um núcleo */
+        return 0;
+    case MOS_THR_STOPPED: {
+        i64 r = frozen ? 1 : 0;
+        if (!r && q->suspend) sched_kick_thread(q);
+        return r;
+    }
+    case MOS_THR_GETSTATE: {
+        if (q == self || !frozen) return -MOS_EBUSY;
+        const int_frame_t *g = (const int_frame_t *)q->frame;
+        u64 regs[21] = { g->rax, g->rbx, g->rcx, g->rdx, g->rdi, g->rsi, g->rbp, g->rsp, g->r8, g->r9, g->r10, g->r11,
+                         g->r12, g->r13, g->r14, g->r15, g->rip, g->rflags, g->cs, 0, 0 };
+        return uvm_copy_out(cp, arg, regs, sizeof regs) ? 0 : -MOS_EFAULT;
+    }
+    case MOS_THR_SETSTATE: {   /* thread_set_state: só com a thread parada fora da CPU, e nunca para outro anel */
+        u64 regs[21];
+        if (q == self || !frozen || !(((int_frame_t *)q->frame)->cs & 3)) return -MOS_EBUSY;
+        if (!uvm_copy_in(cp, regs, arg, sizeof regs)) return -MOS_EFAULT;
+        if (regs[16] >= 0x0000800000000000ULL || regs[7] >= 0x0000800000000000ULL) return -MOS_EINVAL;   /* iretq não canônico */
+        int_frame_t *g = (int_frame_t *)q->frame;
+        g->rax = regs[0]; g->rbx = regs[1]; g->rcx = regs[2]; g->rdx = regs[3]; g->rdi = regs[4]; g->rsi = regs[5];
+        g->rbp = regs[6]; g->rsp = regs[7]; g->r8 = regs[8]; g->r9 = regs[9]; g->r10 = regs[10]; g->r11 = regs[11];
+        g->r12 = regs[12]; g->r13 = regs[13]; g->r14 = regs[14]; g->r15 = regs[15]; g->rip = regs[16];
+        g->rflags = (regs[17] & 0xDD5) | 0x202;          /* flags aritméticas, DF e TF + IF */
+        g->cs = 0x1B; g->ss = 0x23;
+        return 0;
+    }
+    case MOS_THR_TERMINATE: {  /* thread_terminate de outra thread: sai como no SYS_THREAD_EXIT, com código 0 */
+        process_t *tp = q->proc;
+        if (q == self || !tp) return -MOS_EINVAL;
+        if (q == tp->main) { finish(tp, 0); return 0; }  /* a principal leva o processo, como no XNU */
+        for (int i = 15; i > 0; i--) tp->texit[i] = tp->texit[i - 1];
+        tp->texit[0].tid = q->id; tp->texit[0].code = 0;
+        for (thread_t *w = sched_threads(); w; w = w->next)
+            if (w->state == TH_WAITING && w->proc == tp && w->join_tid == q->id) {
+                ((int_frame_t *)w->frame)->rax = 0;
+                w->join_tid = 0;
+                sched_wake(w);
+            }
+        if (tp->tty && tp->tty->reader == q) tp->tty->reader = NULL;
+        q->state = TH_DEAD;
+        sched_kick_thread(q);                     /* em outro núcleo: o IPI a tira de lá antes de a pilha sair */
+        return 0;
+    }
+    case MOS_THR_ABORT:        /* thread_abort(_safely): a espera em curso termina (EINTR / MACH_RCV_INTERRUPTED) */
+        if (q == self) return 0;
+        if (q->state == TH_WAITING && q->wait_pid == -7) {          /* mach_msg recebendo */
+            ((int_frame_t *)q->frame)->rax = 0x10004005;             /* MACH_RCV_INTERRUPTED */
+            q->mach_wait = NULL; q->mach_peek = false; q->mach_deadline = 0; q->wait_pid = 0;
+            sched_wake(q);
+        } else if ((q->state == TH_WAITING || q->state == TH_SLEEPING) && q->wait_pid != -13 && q->frame) {
+            sig_interrupt(q);
+            q->sig_intr = false;                          /* EINTR, sem refazer a syscall */
+        }
+        return 0;
+    case MOS_THR_SETQOS: sched_set_qos(q, (unsigned)arg); return 0;
+    case MOS_THR_SETPRIO: {    /* arg = prioridade Mach 0..127 | 0x100 fixa (sem decaimento). Acima de 63 só root, como no XNU. */
+        unsigned pri = (unsigned)(arg & 0xFF);
+        if (pri > 127) return -MOS_EINVAL;
+        if (pri > 63 && cp->euid != 0) return -MOS_EPERM;
+        sched_set_priority(q, pri, (arg & 0x100) != 0);
+        return 0;
+    }
+    case MOS_THR_AFFINITY: sched_set_affinity(q, arg); return 0;
+    }
+    return -MOS_EINVAL;
+}
 static u64 proc_syscall_(int_frame_t *f);
 /* a syscall pode bloquear e trocar de thread: a thread que volta ao ring 3 (talvez acordada por um sinal, com
  * rax = -EINTR) passa pela entrega de sinais, que também decide se a syscall interrompida é refeita */
@@ -4245,8 +4422,6 @@ static u64 proc_syscall_(int_frame_t *f) {
     case SYS_SIG: return sig_syscall(f, t, p);           /* ações, máscaras, sigsuspend, sigaltstack, sigwait */
     case SYS_WEB: { extern i64 web_user_syscall(process_t *p, u64 op, u64 id, u64 a, u64 b); r = web_user_syscall(p, a, b, c, f->r10); break; }   /* WKWebView (kernel/web/webview.c) */
     case SYS_THREADCTL: {   /* thread_suspend/resume/get_state do Mach (MOS_THR_*, syscall.h): o coletor do JavaScriptCore */
-        extern void sched_kick_thread(thread_t *t);
-        extern bool sched_thread_stopped(const thread_t *t);
         thread_t *q = NULL;
         if (a == MOS_THR_ROFILE) {
             extern int lazy_ro_file_at(process_t *p, u64 va, u64 *id, u64 *off);
@@ -4260,47 +4435,13 @@ static u64 proc_syscall_(int_frame_t *f) {
             if (w->proc == p && w->id == (int)b && w->state != TH_DEAD) { q = w; break; }
         if (!q && b == 0 && (a == MOS_THR_SETQOS || a == MOS_THR_AFFINITY || a == MOS_THR_SETPRIO)) q = t;
         if (!q) { r = -MOS_ESRCH; break; }
-        {   /* diagnóstico: as primeiras chamadas (quem suspende quem), para ver no log que o coletor do JSC usa isto */
-            static int vistos;
-            if (a == MOS_THR_SUSPEND && vistos < 10) {
-                vistos++;
-                kprintf("threadctl: %s pid %d: thread %d suspende a %d (rodando: %s)\n", p->name, p->pid, t->id, q->id,
-                        q->state == TH_RUNNING ? "sim" : "não");
-            }
-        }
-        if (a == MOS_THR_SUSPEND) {
+        if (a == MOS_THR_SUSPEND && q == t) {               /* a própria thread: dorme até alguém dar resume */
             if (q->suspend < 0xFFFF) q->suspend++;
-            if (q == t) { f->rax = 0; return sched_switch(f); }   /* a própria thread: dorme até alguém dar resume */
-            sched_kick_thread(q);                     /* rodando em outro núcleo: o IPI a tira de lá */
-            r = 0;
-        } else if (a == MOS_THR_RESUME) {
-            if (!q->suspend) { r = -MOS_EINVAL; break; }
-            q->suspend--;
-            if (!q->suspend && q->state == TH_READY) sched_wake(q);   /* volta à fila de um núcleo */
-            r = 0;
-        } else if (a == MOS_THR_STOPPED) {
-            r = sched_thread_stopped(q) ? 1 : 0;
-            if (!r && q->suspend) sched_kick_thread(q);
-        } else if (a == MOS_THR_GETSTATE) {
-            if (q == t || !sched_thread_stopped(q) || !q->frame) { r = -MOS_EBUSY; break; }
-            const int_frame_t *g = (const int_frame_t *)q->frame;
-            u64 regs[21] = { g->rax, g->rbx, g->rcx, g->rdx, g->rdi, g->rsi, g->rbp, g->rsp, g->r8, g->r9, g->r10, g->r11,
-                             g->r12, g->r13, g->r14, g->r15, g->rip, g->rflags, g->cs, 0, 0 };
-            r = uvm_copy_out(p, c, regs, sizeof regs) ? 0 : -MOS_EFAULT;
-        } else if (a == MOS_THR_SETQOS) {
-            sched_set_qos(q, (unsigned)c);
-            r = 0;
-        } else if (a == MOS_THR_SETPRIO) {
-            /* c = prioridade Mach 0..127 | 0x100 fixa (sem decaimento). Acima de 63 só root, como no XNU. */
-            unsigned pri = (unsigned)(c & 0xFF);
-            if (pri > 127) { r = -MOS_EINVAL; break; }
-            if (pri > 63 && p->euid != 0) { r = -MOS_EPERM; break; }
-            sched_set_priority(q, pri, (c & 0x100) != 0);
-            r = 0;
-        } else if (a == MOS_THR_AFFINITY) {
-            sched_set_affinity(q, c);
-            r = 0;
-        } else r = -MOS_EINVAL;
+            f->rax = 0;
+            return sched_switch(f);
+        }
+        if (a == MOS_THR_TERMINATE && q == t) { r = -MOS_EINVAL; break; }   /* a própria sai por SYS_THREAD_EXIT */
+        r = proc_threadctl(p, t, q, a, c);
         break;
     }
     case SYS_SIGKILL: r = proc_signal((int)a, (int)b) ? 0 : -MOS_ESRCH; break;
