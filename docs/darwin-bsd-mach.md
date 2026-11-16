@@ -93,7 +93,16 @@ Nos 28 bundles do corpus local (Firefox, GIMP, Inkscape, iTerm2, Rectangle, VLC 
 | F6 | **pronto** (15 nov.): `userland/libsystem/kqueue.c`, gancho de sinais em `libc.c`, `MOS_DW_EXITSTATUS` | `tools/kqueue_host.c` 33/33 (kernel falso) |
 | F9 (parte 1) | **pronto** (15 nov.): `userland/libsystem/launchdata.c`, `MOS_LAUNCHD_MACHSERVICES` no `init.c` | `tools/launchdata_host.c` 14/14 |
 | F10 | **pronto** (15 nov.): sandbox em `userland/libsystem/darwin.c` | `tools/sandbox_host.c` 11/11 |
-| F3, F4, F5, F7 (resto), F8, F9 (resto) | a fazer | — |
+| F3 (parte 1) | **pronto** (16 nov.): `MACH_OP_NAMES` no kernel, `userland/libsystem/machports.c` | `tools/machports_host.c` 15/15 |
+| F4/F5 (exceções, outra task/thread) | **pronto pelo Henrique** (PR #390, `userland/tests-excports` 18/18 na VM) | — |
+| F3 (resto), F5 (ptrace, syscall crua, exceção do host, EXC_RESOURCE/GUARD), F7 (resto), F8, F9 (resto) | a fazer | — |
+
+### F3 (parte 1) em detalhe
+
+`mach_port_names`, `mach_port_space_info` (tabela; a árvore não existe mais no XNU), `mach_port_space_basic_info`,
+`mach_port_get_srights` (só com receive), `mach_port_get_set_status`, `mach_port_kobject`/`kernel_object`/
+`kobject_description` (task, thread, host, porta comum), `mach_port_allocate_full/qos`, `mach_port_dnrequest_info`,
+`mach_port_rename` (KERN_NOT_SUPPORTED, removida do XNU). Só o próprio espaço de nomes.
 
 ### F10 em detalhe
 

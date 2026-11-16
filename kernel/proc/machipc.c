@@ -988,6 +988,21 @@ static u32 port_op(mspace_t *sp, u32 op, u64 *a) {
         a[1] = e->name;
         return KERN_SUCCESS;
     }
+    case MACH_OP_NAMES: {   /* nomes do espaço, na ordem em que estão (o XNU também não ordena) */
+        u64 n = 0;
+        for (u32 i = 0; i < sp->n; i++) {
+            ment_t *e = &sp->e[i];
+            if (!e->type) continue;
+            ent_fix(e);
+            if (a[0] && n < a[1]) {
+                mos_mach_name_t m = { e->name, e->type, e->srefs, e->drefs };
+                if (!uvm_copy_out(sp->proc, a[0] + n * sizeof m, &m, sizeof m)) return KERN_INVALID_ADDRESS;
+            }
+            n++;
+        }
+        a[2] = n;
+        return KERN_SUCCESS;
+    }
     case MACH_OP_FILEPORT_FD: {
         ment_t *e = ent_find(sp, (u32)a[0]);
         if (!e || !e->port || e->port->kind != KP_FILE || !e->port->file || !(e->type & T_SEND)) return KERN_INVALID_ARGUMENT;
