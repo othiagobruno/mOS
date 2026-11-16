@@ -220,7 +220,10 @@ próprias `0x4D00..`, ucontext/mcontext64 do Darwin arm64, ESR, tabela de sysctl
   bits) e 12 (`ARM64E_USERLAND24`: como o 9, ordinal de 24 bits). O 13 (`ARM64E_SHARED_CACHE`) tem outro desenho e só
   existe no cache compartilhado; ele e os formatos de kernel/firmware são recusados com mensagem. Até 15 nov. o código
   recusava o 9, lia o ordinal do 12 com 16 bits e tratava o 13 como se fosse o 12. Teste: `tools/chained_ptr_test.c`
-  (41 casos, valores montados com bitfields; com a regra antiga 3 falham). Ponta a ponta no machotest do Linux só o
+  (41 casos, valores montados com bitfields; com a regra antiga 3 falham). Com argumentos, o mesmo teste percorre as
+  cadeias de Mach-O reais: o arm64e da meta (`libswiftCompatibilitySpan.dylib` do Setapp, formato 1, 54 rebases
+  autenticados e 8 binds) e uma amostra de 57 Mach-O dos apps (formatos 1, 2 e 6): 150/150, nenhum ponteiro fora da
+  imagem nem cadeia fora da página; um decodificador que ignora o bit auth dá 54 fora da regra. Ponta a ponta no machotest do Linux só o
   formato 2 (`ld64.lld -fixup_chains`, x86_64): o lld não gera chained fixups de arm64e. Nos 2,9 GB de apps de
   `build/corpus` não há slice arm64e; todos os arm64 usam o 6.
 - **Runtime (`userland/a64rt`, `tools/build-a64rt.ps1`).** Laço `a64_run` por thread (o `rt_thread_t` mora na base
