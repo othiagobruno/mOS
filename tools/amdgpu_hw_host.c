@@ -3,11 +3,12 @@
  * linhas a cada leitura da posição e conta quadros, a trava de atualização responde no bit de status, e o
  * endereço novo do plano só vale (EARLIEST_INUSE) no vblank depois de soltar a trava.
  * Rodar da raiz:
- *   gcc -O2 -Wall -Wextra -DMOS_HOST_TEST -I kernel/dev/amdgpu -I tools tools/amdgpu_hw_host.c kernel/dev/amdgpu/engine.c kernel/dev/amdgpu/irq.c kernel/dev/amdgpu/gfx.c kernel/dev/amdgpu/compute.c kernel/dev/amdgpu/vm.c \
+ *   gcc -O2 -Wall -Wextra -DMOS_HOST_TEST -I kernel/dev/amdgpu -I tools tools/amdgpu_hw_host.c kernel/dev/amdgpu/engine.c kernel/dev/amdgpu/irq.c kernel/dev/amdgpu/gfx.c kernel/dev/amdgpu/compute.c kernel/dev/amdgpu/vm.c kernel/dev/amdgpu/abi.c kernel/dev/amdgpu/pm4check.c \
  *       kernel/dev/amdgpu/amdgpu.c kernel/dev/amdgpu/edid.c kernel/dev/amdgpu/ucode.c -o /tmp/amdgpu_hw && /tmp/amdgpu_hw */
 #include "amdgpu.h"
 #include "regs.h"
 #include "ucode.h"
+#include "pm4check.h"
 #include <stdarg.h>
 #include <stdlib.h>
 
@@ -108,6 +109,7 @@ static u64 ih_pushed, hpd_acks;
 static amdgpu_t *msi_target;   /* entrega da MSI: o driver esvazia o anel logo depois de cada entrada */
 static int in_msi;
 static u32 ih_ring_id;      /* ME/pipe/fila de quem gerou a entrada (dw0[23:16]) */
+static u32 ih_vmid;         /* VMID da entrada (dw0[27:24]) */
 static void ih_push(u32 client, u32 src, u32 ctx) {
     u32 c = regs[R_IH_RB_CNTL / 4];
     if (!(c & IH_RB_ENABLE) || (c & IH_MC_SPACE_MASK) != IH_MC_SPACE_BUS) return;
@@ -115,7 +117,7 @@ static void ih_push(u32 client, u32 src, u32 ctx) {
     u32 *ring = (u32 *)(uintptr_t)(((u64)(regs[R_IH_RB_BASE_HI / 4] & 0xFF) << 40) | ((u64)regs[R_IH_RB_BASE / 4] << 8));
     u32 *e = ring + ih_w / 4;
     memset(e, 0, 32);
-    e[0] = client | src << 8 | ih_ring_id << 16; e[1] = (u32)ih_pushed; e[4] = ctx;
+    e[0] = client | src << 8 | ih_ring_id << 16 | ih_vmid << 24; e[1] = (u32)ih_pushed; e[4] = ctx;
     ih_w = (ih_w + 32) & (bytes - 1);
     if (ih_w == regs[R_IH_RB_RPTR / 4]) ih_ovf = true;   /* alcançou o leitor: as mais antigas se perdem */
     ih_pushed++;
@@ -180,6 +182,7 @@ static uc_sim_t uc_rlc = {R_RLC_GPM_UCODE_ADDR, R_RLC_GPM_UCODE_DATA, RLC_UCODE_
                 uc_me  = {R_CP_ME_RAM_WADDR, R_CP_ME_RAM_DATA, 0, 0, 0, 0, 0, 0};
 static uc_sim_t *ucs[] = {&uc_rlc, &uc_pfp, &uc_ce, &uc_me};
 static bool smu_gfx_on, cp_dead, gfxoff_off, in_preamble, clear_state_done;
+static u32 sh_regs[0x400];
 static u32 sh_cfg[16], sh_bases[16], ctx_regs[0x400], srm_aram_words, scratch_writes;
 static u64 cp_packets, cp_bad, cp_ibs;
 static bool uc_ok(const uc_sim_t *u) { return u->ver && !u->bad && u->words == u->refdw; }
@@ -218,6 +221,10 @@ static void cp_exec(const u32 *buf, u32 pos, u32 end, u32 mask, int depth) {
             for (u32 i = 0; i < n; i++) ctx_regs[P(1) + i] = P(2 + i);
             break;
         case PM4_CLEAR_STATE: clear_state_done = !in_preamble; break;
+        case PM4C_SET_SH_REG:
+            if ((P(1) & 0xFFFF) + n > 0x400 || !n) { cp_bad++; break; }
+            for (u32 i = 0; i < n; i++) sh_regs[(P(1) & 0xFFFF) + i] = P(2 + i);
+            break;
         case PM4_SET_BASE: if (P(1) != PM4_CE_PARTITION_BASE) cp_bad++; break;
         case PM4_SET_UCONFIG_REG: {
             u32 o = P(1) & 0xFFFF;
@@ -244,19 +251,20 @@ static void cp_exec(const u32 *buf, u32 pos, u32 end, u32 mask, int depth) {
         }
         case PM4_INDIRECT_BUFFER: {
             u64 ib = ((u64)(P(2) & 0xFFFF) << 32) | (P(1) & ~3u);
-            u32 ctl = P(3), ndw = ctl & 0xFFFFF, vmid = (ctl >> 24) & 0xF;
-            static u32 ibuf[1 << 16];
-            if (depth || ndw > (1u << 16)) { cp_bad++; break; }
+            u32 ctl = P(3), ndw = ctl & 0xFFFFF, vmid = depth ? cur_vmid : (ctl >> 24) & 0xF;   /* o IB2 herda o VMID */
+            static u32 ibuf[2][1 << 16];
+            if (depth > 1 || ndw > (1u << 16) || (depth && (ctl >> 24))) { cp_bad++; break; }
             bool ok = true;
             for (u32 i = 0; i < ndw && ok; i++) {            /* busca dword a dword pela VM do IB */
                 const u8 *q = vm_ptr(vmid, ib + 4ull * i, false);
-                if (q) memcpy(&ibuf[i], q, 4); else ok = false;
+                if (q) memcpy(&ibuf[depth][i], q, 4); else ok = false;
             }
             if (!ok) { cp_bad++; break; }
             cp_ibs++;
+            u32 saved = cur_vmid;
             cur_vmid = vmid;
-            cp_exec(ibuf, 0, ndw, 0xFFFFFFFFu, depth + 1);
-            cur_vmid = 0;
+            cp_exec(ibuf[depth], 0, ndw, 0xFFFFFFFFu, depth + 1);
+            cur_vmid = saved;
             break;
         }
         default: printf("FALHOU: pacote PM4 desconhecido 0x%x\n", op); total++; cp_bad++; break;
@@ -1046,6 +1054,86 @@ static void test_gfx(void) {
     corrupt_me = false;
 }
 
+/* fences da ABI: o que abi.c sinalizou */
+static int fen_pid[64], fen_id[64], nfen;
+void gpu_fence_from_irq(int pid, unsigned fence) { if (nfen < 64) { fen_pid[nfen] = pid; fen_id[nfen] = (int)fence; nfen++; } }
+
+static void test_abi(void) {
+    cp_dead = mec_dead = false;
+    CHECK(engines_up() && eng.gfx_ok && eng.comp_ok, "motores para a ABI");
+    amdgpu_t *a = &eng;
+    amdgpu_set_main(a);
+    CHECK(amdgpu_abi_available(), "ABI AMD disponível");
+    u64 free0 = amdgpu_vram_free_bytes(a);
+    const int PID = 7;
+    u64 vbo = amdgpu_vram_alloc(a, 1u << 20);
+    u8 *ram = aligned_alloc(4096, 64 * 1024);
+    memset(ram, 0, 64 * 1024);
+    u64 va_v = 0, va_r = 0;
+    CHECK(!amdgpu_abi_bo_map(PID, vbo, 1u << 20, true, false, &va_v) && !amdgpu_abi_bo_map(PID, (u64)(uintptr_t)ram, 64 * 1024, false, false, &va_r) &&
+          va_v && va_r > va_v + (1u << 20), "BOs com VA na VM do processo");
+    amd_abi_bo_t bl[2] = {{va_v, 1u << 20, vbo, true}, {va_r, 64 * 1024, (u64)(uintptr_t)ram, false}};
+    /* IB1 na RAM: escreve na VRAM e chama um IB2 (também na RAM) que escreve na RAM */
+    u32 *ib = (u32 *)ram, *ib2 = (u32 *)(ram + 4096);
+    u32 k = 0;
+    ib[k++] = PM4_TYPE3(PM4C_SET_SH_REG, 1); ib[k++] = 0x48; ib[k++] = 0xABCD;
+    ib[k++] = PM4_TYPE3(PM4_WRITE_DATA, 3); ib[k++] = PM4_WD_DST_MEM; ib[k++] = (u32)(va_v + 64); ib[k++] = (u32)((va_v + 64) >> 32); ib[k++] = 0x1111;
+    ib[k++] = PM4_TYPE3(PM4_INDIRECT_BUFFER, 2); ib[k++] = (u32)(va_r + 4096); ib[k++] = (u32)((va_r + 4096) >> 32); ib[k++] = 5;
+    ib2[0] = PM4_TYPE3(PM4_WRITE_DATA, 3); ib2[1] = PM4_WD_DST_MEM; ib2[2] = (u32)(va_r + 8192); ib2[3] = (u32)((va_r + 8192) >> 32); ib2[4] = 0x2222;
+    amd_abi_ib_t il = {va_r, k};
+    nfen = 0;
+    u64 ticket = 0;
+    u64 cpb = cp_bad, vf0 = vm_faults;
+    int e = amdgpu_abi_submit(PID, 0, &il, 1, bl, 2, 41, &ticket);
+    u32 *vv = (u32 *)amd_host_phys(vbo);
+    CHECK(!e && ticket && amdgpu_abi_done(ticket), "lote enviado (%d)", e);
+    CHECK(sh_regs[0x48] == 0xABCD && vv[16] == 0x1111 && ((u32 *)ram)[2048] == 0x2222 && cp_bad == cpb && vm_faults == vf0, "IB1 e IB2 rodaram pela VM do processo (sh 0x%x v 0x%x r 0x%x bad %llu->%llu faltas %llu)", sh_regs[0x48], vv[16], ((u32 *)ram)[2048], cpb, cp_bad, vm_faults);
+    amdgpu_irq_process(a);
+    CHECK(nfen == 1 && fen_pid[0] == PID && fen_id[0] == 41, "fence sinalizada pelo EOP");
+    /* recusas: registrador privilegiado, IB fora dos BOs, IB2 aninhado, anel inválido */
+    ib[1] = 0x400;
+    CHECK(amdgpu_abi_submit(PID, 0, &il, 1, bl, 2, 42, NULL) == -MOS_EINVAL && nfen == 1, "SET_SH_REG fora da janela recusado, fence não sinaliza");
+    ib[1] = 0x48;
+    amd_abi_ib_t fora = {va_r + 64 * 1024 - 8, 4};
+    CHECK(amdgpu_abi_submit(PID, 0, &fora, 1, bl, 2, 0, NULL) == -MOS_EINVAL, "IB passa do fim do BO");
+    ib2[0] = PM4_TYPE3(PM4_INDIRECT_BUFFER, 2); ib2[1] = (u32)va_r; ib2[2] = (u32)(va_r >> 32); ib2[3] = 4;
+    CHECK(amdgpu_abi_submit(PID, 0, &il, 1, bl, 2, 0, NULL) == -MOS_EINVAL, "IB2 aninhado recusado");
+    ib2[0] = PM4_TYPE3(PM4_WRITE_DATA, 3); ib2[1] = PM4_WD_DST_MEM; ib2[2] = (u32)(va_r + 8192); ib2[3] = (u32)((va_r + 8192) >> 32); ib2[4] = 0x3333;
+    CHECK(amdgpu_abi_submit(PID, 2, &il, 1, bl, 2, 0, NULL) == -MOS_EINVAL, "anel inexistente");
+    /* compute, e a cópia: o processo troca o IB depois do envio e não muda o que a GPU leu */
+    e = amdgpu_abi_submit(PID, 1, &il, 1, bl, 2, 43, &ticket);
+    ib[7] = 0xBAD;
+    amdgpu_irq_process(a);
+    CHECK(!e && (ticket >> 32) == 1 && vv[16] == 0x1111 && ((u32 *)ram)[2048] == 0x3333 && nfen == 2 && fen_id[1] == 43, "lote na fila de compute");
+    /* o pool dá a volta: 3000 lotes de ~1 KiB */
+    u32 big[260];
+    memcpy(ram + 16384, ib, 4 * k);
+    for (u32 i = 0; i < 250; i++) ((u32 *)(ram + 16384))[k + i] = PM4_NOP_1DW;
+    (void)big;
+    amd_abi_ib_t il2 = {va_r + 16384, k + 250};
+    ((u32 *)(ram + 16384))[7] = 0x4444;
+    bool all = true;
+    for (int i = 0; i < 3000 && all; i++) all = !amdgpu_abi_submit(PID, i & 1, &il2, 1, bl, 2, 0, NULL);
+    CHECK(all && vv[16] == 0x4444 && a->gfx_timeouts == 0 && a->comp_timeouts == 0, "3000 lotes: o pool deu a volta");
+    /* falha de página no VMID do processo: contexto perdido */
+    u32 vmid = 0;
+    for (u32 v = 1; v < 16; v++) if (a->vmid_used >> v & 1) vmid = v;
+    ih_vmid = vmid;
+    ih_push(IH_CLIENT_UTCL2, IH_SRC_VM_FAULT, 0);
+    ih_vmid = 0;
+    CHECK(amdgpu_abi_lost(PID) && a->vm_faults == 1 && amdgpu_abi_submit(PID, 0, &il, 1, bl, 2, 0, NULL) == -MOS_EIO &&
+          (regs[GFXHUB_VM(R_VM_L2_PROT_FAULT_CNTL2) / 4] & PROT_FAULT_CLEAR_STATUS), "falha de página: contexto perdido e status limpo");
+    CHECK((regs[GFXHUB_VM(R_VM_CTX_CNTL(3)) / 4] & CTX_FAULT_INTERRUPTS) == CTX_FAULT_INTERRUPTS, "faltas avisam pelo IH");
+    /* saída do processo: VM e pool voltam; outro processo ganha VM nova */
+    amdgpu_abi_proc_exit(PID);
+    amdgpu_vram_free(a, vbo, 1u << 20);
+    CHECK(!amdgpu_abi_lost(PID) && a->vmid_used == 0 && amdgpu_vram_free_bytes(a) == free0, "saída do processo devolve VM e VRAM");
+    u64 va2 = 0;
+    CHECK(!amdgpu_abi_bo_map(8, (u64)(uintptr_t)ram, 4096, false, true, &va2) && va2 == va_v, "processo novo começa do zero");
+    amdgpu_abi_proc_exit(8);
+    free(ram);
+}
+
 int main(int argc, char **argv) {
     verbose = argc > 1 && argv[1][0] == '-';
     setvbuf(stdout, NULL, _IONBF, 0);
@@ -1055,6 +1143,7 @@ int main(int argc, char **argv) {
     test_present();
     test_engines();
     test_gfx();
+    test_abi();
     printf("amdgpu-hw-host: %d/%d ok\n", pass, total);
     return pass == total ? 0 : 1;
 }

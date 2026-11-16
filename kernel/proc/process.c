@@ -1246,6 +1246,7 @@ static void finish(process_t *p, int code) {
     { extern void net_user_exit(process_t *p); net_user_exit(p); }   /* conexões TCP do processo (kernel/net/usersock.c) */
     { extern void webview_user_exit(process_t *p); webview_user_exit(p); }   /* vistas do WKWebView (kernel/web/webview.c) */
     { extern void audio_stream_proc_exit(int pid); audio_stream_proc_exit(p->pid); }   /* streams de áudio (kernel/dev/sound.c) */
+    { extern void gpu_proc_exit(process_t *p); gpu_proc_exit(p); }   /* BOs, VM de GPU, contextos e fences (kernel/dev/gpu_abi.c) */
     { extern void lazy_exit(process_t *p); lazy_exit(p); orphan_gc(); }           /* faixas de memória sob demanda (kernel/mm/lazy.c) */
     for (process_t *c = procs; c; c = c->next) if (c->ppid == p->pid) c->ppid = 0;   /* órfãos */
     int parent = p->ppid;
@@ -3127,6 +3128,7 @@ static i64 proc_exec(int_frame_t *f, thread_t *t, process_t *p, char *path, char
     p->main = t;
     drop_pipe_waiters(p, t);
     compat_gui_proc_exit(p);
+    { extern void gpu_proc_exit(process_t *p); gpu_proc_exit(p); }   /* o programa novo não herda a GPU do antigo */
     { extern void lazy_exit(process_t *p); lazy_exit(p); orphan_gc(); }
     /* troca o espaço de endereçamento com np (que está no heap) e libera o antigo por ele. Nada de process_t
      * na pilha: com PROC_MAX_FDS = 256 a struct passa de 64 KiB e um "process_t old = {0}" aqui zerava a
