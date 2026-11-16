@@ -51,16 +51,7 @@ CS(NSWebArchiveTextDocumentType)
 CS(NSWebResourceLoadDelegateDocumentOption)
 
 const double NSFontWidthExpanded = CX_FONT_WIDTH_EXPANDED;
-int cx_services_epoch;
-
-void NSUpdateDynamicServices(void) {
-    id app = (id)cx_class_named("NSApplication");
-    cx_services_epoch++;
-    if (!app) return;
-    app = MSG0(id, app, "sharedApplication");
-    if (app && cx_responds(app->isa, sel_registerName("servicesMenu")))
-        (void)MSG0(id, app, "servicesMenu");
-}
+/* NSUpdateDynamicServices: appkit_services.c (relê os NSServices dos apps) */
 
 int cx_appkit_swift_main(int argc, char **argv) __asm__("$s6AppKit17NSApplicationMainys5Int32VAD_SpySpys4Int8VGSgGtF");
 int NSApplicationMain(int argc, const char **argv);

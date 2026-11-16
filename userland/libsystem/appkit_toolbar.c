@@ -65,6 +65,19 @@ static id attrs(double size, double r, double g, double b, double a) {
 }
 static void fill(R r, double R_, double G, double B, double A) { MSG0(void, cx_color(R_, G, B, A), "setFill"); NSRectFill(r); }
 #define BAR_H 28.0
+#define BAR_H_LABELS 52.0
+/* altura da faixa: no modo ícone e texto (NSToolbarDisplayModeIconAndLabel 1) com algum item de imagem, 52 pt (ícone em
+ * cima, rótulo embaixo); nos outros modos, 28 pt */
+static int tb_build(id tb, double width, id *objs, tbk_item *spec, tbk_out *out, double *chev);
+double cx_toolbar_bar_height(id tb) {
+    if (!tb || !cx_responds(object_getClass(tb), sel_registerName("displayMode")) || MSG0(i64, tb, "displayMode") != 1) return BAR_H;
+    id items = cx_responds(object_getClass(tb), sel_registerName("items")) ? MSG0(id, tb, "items") : 0;
+    for (u64 i = 0, n = items ? MSG0(u64, items, "count") : 0; i < n; i++) {
+        id it = MSG(id, items, "objectAtIndex:", i);
+        if (cx_responds(object_getClass(it), sel_registerName("image")) && MSG0(id, it, "image")) return BAR_H_LABELS;
+    }
+    return BAR_H;
+}
 #define CHEV_W 24.0
 #define TBMAX 128
 
@@ -168,7 +181,16 @@ static void tb_paint(id tb, R b) {
         id img = mode == 3 ? 0 : MSG0(id, it, "image");
         id label = MSG0(id, it, "label");
         if (!label || !cs(label)[0]) label = responds(it, "title") ? MSG0(id, it, "title") : 0;
-        if (img) {
+        if (img && mode == 1 && b.h >= 40) {     /* ícone e rótulo: ícone em cima, texto pequeno embaixo */
+            double s = 22;
+            R ir = {fr.x + (fr.w - s) / 2, fr.y + 2, s, s};
+            ((void (*)(id, SEL, R, R, u64, double))objc_msgSend)(img, sl("drawInRect:fromRect:operation:fraction:"), ir, (R){0, 0, 0, 0}, (u64)2, on ? 1.0 : 0.35);
+            if (label && cs(label)[0]) {
+                id a = attrs(10, 0.12, 0.12, 0.14, on ? 1 : 0.35);
+                S ts = m_tsize(label, a);
+                m_draw_at(label, (P){fr.x + (fr.w - ts.w) / 2, fr.y + fr.h - ts.h - 1}, a);
+            }
+        } else if (img) {
             double s = fr.h < 18 ? fr.h : 18;
             R ir = {fr.x + (fr.w - s) / 2, fr.y + (fr.h - s) / 2, s, s};
             ((void (*)(id, SEL, R, R, u64, double))objc_msgSend)(img, sl("drawInRect:fromRect:operation:fraction:"), ir, (R){0, 0, 0, 0}, (u64)2, on ? 1.0 : 0.35);
@@ -224,7 +246,7 @@ static void tb_click(id tb, id host, double x, double y, double w) {
     if (chev >= 0 && x >= chev) {   /* »: menu dos itens que não couberam */
         id menu = MSG(id, MSG0(id, (id)kls("NSMenu"), "alloc"), "initWithTitle:", cx_str(""));
         for (int i = 0; i < n; i++) if (!out[i].visible && !spec[i].flexible && !is_sep(MSG0(id, objs[i], "itemIdentifier"))) MSG(void, menu, "addItem:", menu_form(objs[i]));
-        id ch = cx_menu_popup_choose(menu, -1, host_to_screen(host, (P){chev, flipped ? BAR_H : 0}), MP_PLACE_CONTEXT, 0, 0, find_win_first(tb));
+        id ch = cx_menu_popup_choose(menu, -1, host_to_screen(host, (P){chev, flipped ? cx_toolbar_bar_height(tb) : 0}), MP_PLACE_CONTEXT, 0, 0, find_win_first(tb));
         if (ch) {
             for (int i = 0; i < n; i++) if (!out[i].visible && MSG0(id, ch, "title") && MSG(BOOL, MSG0(id, ch, "title"), "isEqual:", MSG0(id, objs[i], "label"))) { send_item(tb, objs[i]); ch = 0; break; }
             if (ch) cx_menu_perform(ch, find_win_first(tb));
@@ -238,7 +260,7 @@ static void tb_click(id tb, id host, double x, double y, double w) {
     if (MSG0(id, it, "view")) return;
     id menu = responds(it, "menu") ? MSG0(id, it, "menu") : 0;
     if (menu && item_on(it)) {   /* NSMenuToolbarItem: abre o menu embaixo do item */
-        id ch = cx_menu_popup_choose(menu, -1, host_to_screen(host, (P){out[i].x, flipped ? BAR_H : 0}), MP_PLACE_CONTEXT, out[i].w, 0, find_win_first(tb));
+        id ch = cx_menu_popup_choose(menu, -1, host_to_screen(host, (P){out[i].x, flipped ? cx_toolbar_bar_height(tb) : 0}), MP_PLACE_CONTEXT, out[i].w, 0, find_win_first(tb));
         if (ch) cx_menu_perform(ch, find_win_first(tb));
         return;
     }
@@ -263,13 +285,14 @@ static id tb_host(id self, SEL c, double width) {
     (void)c;
     id host = objc_getAssociatedObject(self, &k_host);
     if (!host) {
-        host = ((id (*)(id, SEL, R))objc_msgSend)(MSG0(id, (id)kls("_MOSToolbarView"), "alloc"), sl("initWithFrame:"), (R){0, 0, width, BAR_H});
+        host = ((id (*)(id, SEL, R))objc_msgSend)(MSG0(id, (id)kls("_MOSToolbarView"), "alloc"), sl("initWithFrame:"), (R){0, 0, width, cx_toolbar_bar_height(self)});
         if (!host) return 0;
         objc_setAssociatedObject(host, &k_host_tb, self, 0);
         objc_setAssociatedObject(self, &k_host, host, 1);
         objc_release(host);
     }
-    m_set_frame(host, (R){0, 0, width, BAR_H});
+    double bar_h = cx_toolbar_bar_height(self);
+    m_set_frame(host, (R){0, 0, width, bar_h});
     id objs[TBMAX]; tbk_item spec[TBMAX]; tbk_out out[TBMAX]; double chev;
     int n = tb_build(self, width, objs, spec, out, &chev);
     id subs = MSG0(id, host, "subviews");
@@ -285,7 +308,7 @@ static id tb_host(id self, SEL c, double width) {
         R vf = msg_rect(v, "frame");
         double h = vf.h > 1 && vf.h < 24 ? vf.h : 22;
         if (MSG0(id, v, "superview") != host) MSG(void, host, "addSubview:", v);
-        m_set_frame(v, (R){out[i].x + 2, (BAR_H - h) / 2, out[i].w - 4 > 1 ? out[i].w - 4 : 1, h});
+        m_set_frame(v, (R){out[i].x + 2, (bar_h - h) / 2, out[i].w - 4 > 1 ? out[i].w - 4 : 1, h});
     }
     return host;
 }

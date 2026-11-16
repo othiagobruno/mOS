@@ -52,7 +52,7 @@ static id empty_array(void) { return CFArrayCreate(0, 0, 0, &kCFTypeArrayCallBac
 static id token(void) { return objc_retain(MSG0(id, cls("NSObject"), "new")); }
 
 /* ================================================================ AppKit */
-void NSPerformService(id item, id pboard) { (void)item; (void)pboard; }
+/* NSPerformService: appkit_services.c (Serviços de verdade, por Apple Event) */
 id NSAccessibilityRoleDescription(id role, id subrole) { (void)subrole; return role; }
 id NSAccessibilityActionDescription(id action) { return action; }
 
