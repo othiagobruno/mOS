@@ -25,7 +25,11 @@ done
 sed 's/\.section \.rdata,"dr"/.section .rodata/' "$ROOT/kernel/arch/assets.S" > "$OUT/obj/assets.S"
 ( cd "$ROOT" && "$CC" -c "$OUT/obj/assets.S" -o "$OUT/obj/assets.o" )
 "$CC" ${XCFLAGS:-} -std=gnu11 -O1 -g -fno-pie -c "$ROOT/tools/web_host_shim.c" -o "$OUT/obj/shim.o"
-"$CC" ${XCFLAGS:-} -no-pie -o "$OUT/web_host" "${objs[@]}" "$OUT/obj/assets.o" "$OUT/obj/shim.o" -lm
+# criptografia do kernel (SubtleCrypto, getRandomValues) com o shim de host do TLS
+for f in crypto pk; do
+    "$CC" ${XCFLAGS:-} -std=gnu11 -O1 -g -w -fno-pie -DMOS_HOST_TEST -I"$ROOT/kernel/include" -I"$ROOT/tools" -c "$ROOT/kernel/net/$f.c" -o "$OUT/obj/k_$f.o"
+done
+"$CC" ${XCFLAGS:-} -no-pie -o "$OUT/web_host" "${objs[@]}" "$OUT/obj/assets.o" "$OUT/obj/shim.o" "$OUT/obj/k_crypto.o" "$OUT/obj/k_pk.o" -lm
 # referências WebP decodificadas pelo libwebp do Pillow (sem Pillow, os casos WebP avisam e não contam)
 python3 -I "$ROOT/tools/testdata/web/webp/ref.py" "$ROOT/tools/testdata/web/webp" "$OUT/webp-ref" 2>/dev/null || echo "aviso: sem Pillow, sem referências WebP"
 WEB_HOST_DIR="$ROOT/tools/testdata/web" WEB_HOST_REF="$OUT/webp-ref" "$OUT/web_host"

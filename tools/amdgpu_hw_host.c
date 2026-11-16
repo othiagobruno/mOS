@@ -50,6 +50,9 @@ static void scan(u32 lines) {
 #define CARVE 0x3F0000000ull     /* MC_VM_FB_OFFSET do boot_state */
 /* ---------- motores simulados: SMU, MMHUB e SDMA que executa os pacotes ---------- */
 static bool smu_alive = true, smu_sdma_on, sdma_dead;
+static bool gfxoff_allowed; static u64 gfxoff_enables, gc_off_writes;
+/* registradores do GC: segmento 0 até o começo do DCN e o segmento 1 inteiro */
+static bool is_gc_reg(u32 off) { u32 dw = off / 4; return (dw >= 0x2000 && dw < 0x34C0) || (dw >= 0xA000 && dw < 0x10000); }
 static u32 ucode_words, ucode_bad, ucode_loaded_ver;
 static const u32 *ucode_ref; static u32 ucode_ref_dw;
 static u64 sdma_packets, sdma_faults;
@@ -296,7 +299,15 @@ static const u32 *mec_code; static u32 mec_code_dw;
 static bool mec_dead, hqd_bad_select, hqd_was_active;
 static u64 db_rings, db_ignored;
 static bool is_hqd_reg(u32 off) { return off >= R_CP_MQD_BASE_ADDR && off <= R_CP_HQD_PQ_WPTR_HI; }
+static u64 gfx_db_rings;
 void amd_host_doorbell(u32 idx, u64 v) {
+    u32 gdb = regs[R_CP_RB_DOORBELL_CONTROL / 4];
+    if ((regs[R_RCC_DOORBELL_APER_EN / 4] & DOORBELL_APER_EN) && (gdb & CP_RB_DOORBELL_EN) && ((gdb & 0x0FFFFFFCu) >> 2) == idx) {
+        gfx_db_rings++;
+        regs[R_CP_RB0_WPTR / 4] = (u32)v;                     /* o CP aplica a máscara do anel */
+        cp_run();
+        return;
+    }
     u32 dbc = regs[R_CP_HQD_PQ_DOORBELL_CONTROL / 4];
     const u32 *ic = (const u32 *)mc_ptr_h(1, ((u64)regs[R_CP_CPC_IC_BASE_HI / 4] << 32) | regs[R_CP_CPC_IC_BASE_LO / 4], false);
     bool ok = !mec_dead && smu_gfx_on && (regs[R_RCC_DOORBELL_APER_EN / 4] & DOORBELL_APER_EN) && (regs[R_CP_PQ_STATUS / 4] & CP_PQ_STATUS_DOORBELL_EN) &&
@@ -496,7 +507,8 @@ static bool engine_wreg(u32 off, u32 v) {
         else if (v == SMU_MSG_POWER_UP_SDMA) smu_sdma_on = true;
         else if (v == SMU_MSG_POWER_DOWN_SDMA) smu_sdma_on = false;
         else if (v == SMU_MSG_POWER_UP_GFX) smu_gfx_on = true;
-        else if (v == SMU_MSG_DISABLE_GFXOFF) gfxoff_off = true;
+        else if (v == SMU_MSG_DISABLE_GFXOFF) { gfxoff_off = true; gfxoff_allowed = false; }
+        else if (v == SMU_MSG_ENABLE_GFXOFF) { gfxoff_allowed = true; gfxoff_enables++; }
         else regs[R_MP1_C2PMSG_90 / 4] = 0xFF;                        /* mensagem desconhecida */
         regs[R_MP1_C2PMSG_66 / 4] = v;
         return true;
@@ -539,6 +551,7 @@ u32 amd_host_rreg(u32 off) {
 
 void amd_host_wreg(u32 off, u32 v) {
     if (off >= AMD_MMIO_SIZE) { printf("FALHOU: escrita fora do BAR5 0x%x\n", off); total++; return; }
+    if (gfxoff_allowed && is_gc_reg(off)) gc_off_writes++;      /* com o GC dormindo a escrita se perderia */
     if (engine_wreg(off, v)) return;
     if (off == R_OTG_MASTER_UPDATE_LOCK(sim_otg)) { locked = v & OTG_UPDATE_LOCK; return; }
     regs[off / 4] = v;
@@ -895,7 +908,8 @@ static bool engines_up_rev(u32 rev_id) {
     }
     hqd_bad_select = hqd_was_active = false; db_rings = db_ignored = 0;
     smu_sdma_on = false; ucode_loaded_ver = 0; sdma_faults = 0; ih_w = 0; ih_ovf = false; ih_pushed = 0; hpd_acks = 0;
-    smu_gfx_on = gfxoff_off = in_preamble = clear_state_done = false;
+    smu_gfx_on = gfxoff_off = in_preamble = clear_state_done = gfxoff_allowed = false;
+    gc_off_writes = 0; gfxoff_enables = 0;
     memset(sh_cfg, 0xEE, sizeof sh_cfg); memset(sh_bases, 0xEE, sizeof sh_bases); memset(ctx_regs, 0, sizeof ctx_regs);
     srm_aram_words = scratch_writes = 0; cp_packets = cp_bad = cp_ibs = cp_faults = 0;
     msi_target = &eng;
@@ -1053,7 +1067,8 @@ static void test_gfx(void) {
     CHECK((regs[R_RLC_SPM_MC_CNTL / 4] & 0xF) == 0xF && regs[R_RLC_CGCG_CGLS_CTRL / 4] == 0, "SPM e clock gating");
     /* CP */
     u32 rb = regs[R_CP_RB0_CNTL / 4];
-    CHECK((rb & 0x3F) == 13 && ((rb >> 8) & 0x3F) == 11 && !(regs[R_CP_RB_DOORBELL_CONTROL / 4] & CP_RB_DOORBELL_EN) &&
+    CHECK((rb & 0x3F) == 13 && ((rb >> 8) & 0x3F) == 11 && (regs[R_CP_RB_DOORBELL_CONTROL / 4] & (CP_RB_DOORBELL_EN | 0x0FFFFFFCu)) == (CP_RB_DOORBELL_EN | 0x116u << 2) &&
+          regs[R_CP_RB_DOORBELL_RANGE_LOWER / 4] == 0x116u << 2 && a->gfx_db && gfx_db_rings >= 2 &&
           regs[R_CP_MAX_CONTEXT / 4] == 7 && regs[R_CP_DEVICE_ID / 4] == 1 && regs[R_CP_MEC_CNTL / 4] == 0, "anel 0 configurado");
     CHECK(clear_state_done && ctx_regs[13] == 0x40004000u && regs[R_VGT_INDEX_TYPE / 4] == 0, "preâmbulo de clear state executado (%d 0x%x)", clear_state_done, ctx_regs[13]);
     CHECK(regs[R_SCRATCH_REG0 / 4] == 0xDEADBEEFu && scratch_writes == 1 && a->gwb_cpu[8] == 0xDEADBEEFu, "teste do anel e do IB");
@@ -1301,6 +1316,44 @@ static void test_vblank_irq(void) {
     amdgpu_vram_free(a, b, 5120u * 1440 * 4);
 }
 
+static void test_gfxoff(void) {
+    cp_dead = mec_dead = false;
+    CHECK(engines_up() && eng.gfx_ok && eng.comp_ok, "motores para o GFXOFF");
+    amdgpu_t *a = &eng;
+    CHECK(a->gfxoff_cap && a->gfxoff_on && gfxoff_allowed && gfxoff_enables == 1, "GFXOFF entregue ao SMU");
+    u32 pg = regs[R_RLC_PG_CNTL / 4];
+    CHECK((pg & (PG_GFX_POWER_GATING | PG_SMU_SLOWDOWN_PU | PG_SMU_SLOWDOWN_PD)) == (PG_GFX_POWER_GATING | PG_SMU_SLOWDOWN_PU | PG_SMU_SLOWDOWN_PD) && !(pg & PG_CP_PG_DISABLE),
+          "power gating do GFX e do CP (0x%x)", pg);
+    CHECK(regs[R_RLC_PG_DELAY / 4] == 0x40101010u && ((regs[R_RLC_AUTO_PG_CTRL / 4] & AUTO_PG_IDLE_THRESH_MASK) >> AUTO_PG_IDLE_THRESH_SHIFT) == 0x55F0 &&
+          (regs[R_CP_RB_WPTR_POLL_CNTL / 4] >> 16) == 0x60 && (regs[R_PWR_MISC_CNTL_STATUS / 4] & PWR_GFX_RLC_CGPG_EN), "atrasos e controle do PG com o RLC");
+    /* tabela de saltos: CE, PFP, ME, MEC em sequência */
+    const u32 *jt = (const u32 *)mc_ptr_h(1, (u64)regs[R_RLC_JUMP_TABLE_RESTORE / 4] << 8, false);
+    static const char *sfx[4] = {"picasso_ce.bin", "picasso_pfp.bin", "picasso_me.bin", "picasso_mec.bin"};
+    bool ok = jt != NULL;
+    u32 at = 0;
+    for (int k = 0; k < 4 && ok; k++) {
+        u64 n; amd_ucode_t u;
+        const u8 *fw = amd_host_fw(sfx[k], &n);
+        ok = fw && !amd_ucode_parse(fw, (usize)n, UC_KIND_GFX, &u) && !memcmp(jt + at, u.ucode + u.jt_offset, 4ull * u.jt_size);
+        at += ok ? u.jt_size : 0;
+    }
+    CHECK(ok && at == a->cp_table_dw, "tabela de saltos do CP (%u dwords)", at);
+    /* com o GFXOFF ligado: envios por doorbell e acesso ao GC só segurando o GC ligado */
+    u64 w0 = gc_off_writes;
+    amd_vm_t *vm = amdgpu_vm_create(a);
+    u64 bo = amdgpu_vram_alloc(a, 64 * 1024);
+    CHECK(vm && !amdgpu_vm_map(a, vm, 0x500000000ull, bo, 64 * 1024, AMD_VM_VRAM | AMD_VM_WRITE), "VM com o GFXOFF ligado");
+    u32 *bp = (u32 *)amd_host_phys(bo);
+    bp[0] = PM4_TYPE3(PM4_WRITE_DATA, 3); bp[1] = PM4_WD_DST_MEM; bp[2] = 0x100u; bp[3] = 5; bp[4] = 0x0FF;
+    u32 s1 = amdgpu_gfx_submit_vm(a, vm, 0x500000000ull, 5), s2 = amdgpu_compute_submit_vm(a, vm, 0x500000000ull, 5);
+    CHECK(s1 && s2 && amdgpu_gfx_wait(a, s1) && amdgpu_compute_wait(a, s2) && bp[64] == 0x0FF, "envios acordam o GC pelo doorbell");
+    ih_vmid = vm->vmid; ih_push(IH_CLIENT_UTCL2, IH_SRC_VM_FAULT, 0); ih_vmid = 0;
+    amdgpu_vm_destroy(a, vm);
+    amdgpu_vram_free(a, bo, 64 * 1024);
+    CHECK(gc_off_writes == w0 && a->gfxoff_wakes > 0 && a->gfxoff_hold == 0 && gfxoff_allowed, "nenhum acesso ao GC com ele dormindo (%llu)", gc_off_writes - w0);
+    CHECK(!amdgpu_suspend(a, 3) && !a->gfxoff_on && !gfxoff_allowed && !(regs[R_RLC_PG_CNTL / 4] & PG_GFX_POWER_GATING), "S3 desliga o GFXOFF antes de parar o GC");
+}
+
 static int pm_regs_count;
 void amdgpu_pm_register(amdgpu_t *a) { (void)a; pm_regs_count++; }
 
@@ -1440,6 +1493,7 @@ int main(int argc, char **argv) {
     test_ddc();
     test_aux();
     test_vblank_irq();
+    test_gfxoff();
     printf("amdgpu-hw-host: %d/%d ok\n", pass, total);
     return pass == total ? 0 : 1;
 }

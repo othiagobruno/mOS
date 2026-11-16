@@ -99,6 +99,13 @@ Cada item fecha com teste de host (`tools/web_host.sh`) ou, quando depende da VM
    AbortSignal (`abort`, `timeout`, `any`), XMLHttpRequest com eventos de progresso, `upload`, `responseType`
    (json, arraybuffer, blob, document), cabeçalhos, síncrono, `abort` e `timeout`; DOMParser.
    Teste: `tools/web_host_fetch.c` (6 casos). Falta: `Response.body`/ReadableStream (Streams).
+6e. ✅ **structuredClone, MessageChannel e crypto** (`web_plat.c`, `web_crypto.c`): clone estruturado com ciclos, Map,
+   Set, Date, RegExp, buffers e views, erros, Blob/File, ImageData e `transfer` (também no `postMessage` entre
+   janelas); MessageChannel/MessagePort; `getRandomValues`/`randomUUID`; `crypto.subtle` sobre a criptografia do
+   kernel: digest SHA-1/256/384/512, HMAC, AES-GCM, AES-CTR, PBKDF2, HKDF, ECDSA e ECDH P-256/P-384, Ed25519,
+   X25519, verificação RSASSA-PKCS1-v1_5 e RSA-PSS, formatos raw/jwk/spki/pkcs8, wrapKey/unwrapKey.
+   Teste: `tools/web_host_plat.c` (vetores FIPS 180, RFC 2202/4231/6070/5869/8032, NIST SP 800-38A e OpenSSL).
+   Falta: geração e assinatura RSA, AES-CBC e AES-KW (o kernel só tem a cifra direta do AES).
 7. **WebGL 1/2** sobre o OpenGL do mOS (frente do Otavio) com reserva por software.
 8. **`<video>`/`<audio>`**: o motor publica o elemento; o `WebKit.framework` decodifica com AVFoundation/
    VideoToolbox (frente da Isabela) e devolve quadros e relógio ao motor; controles nativos desenhados pela vista.

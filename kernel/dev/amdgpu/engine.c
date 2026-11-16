@@ -95,13 +95,15 @@ static void hub_invalidate(amdgpu_t *a, int hub, u32 vmid_mask) {
 
 /* falha de página: libera o registro de status da hub para a próxima (gmc_v9_0_process_interrupt) */
 void amdgpu_vm_fault_ack(amdgpu_t *a, int hub) {
+    if (hub) amdgpu_gfxoff_get(a);
     a->vm_fault_status = RR(a, HV(hub, R_VM_L2_PROT_FAULT_STATUS));
     WR(a, HV(hub, R_VM_L2_PROT_FAULT_CNTL2), RR(a, HV(hub, R_VM_L2_PROT_FAULT_CNTL2)) | PROT_FAULT_CLEAR_STATUS);
+    if (hub) amdgpu_gfxoff_put(a);
 }
 
 void amdgpu_tlb_flush(amdgpu_t *a, u32 vmid_mask) {
     hub_invalidate(a, 0, vmid_mask);
-    if (a->gfxhub_ok) hub_invalidate(a, 1, vmid_mask);
+    if (a->gfxhub_ok) { amdgpu_gfxoff_get(a); hub_invalidate(a, 1, vmid_mask); amdgpu_gfxoff_put(a); }   /* a GFXHUB é do GC */
 }
 static void gmc_invalidate(amdgpu_t *a) { amdgpu_tlb_flush(a, INV_REQ_VMID0); }
 
@@ -493,6 +495,7 @@ int amdgpu_suspend(amdgpu_t *a, int state) {
     if (a->gfx_ok && a->gfx_seq && !amdgpu_gfx_wait(a, a->gfx_seq)) return -MOS_EBUSY;
     if (a->comp_ok && a->comp_seq && !amdgpu_compute_wait(a, a->comp_seq)) return -MOS_EBUSY;
     a->s3_engines = a->engines_tried && a->smu_ok;
+    amdgpu_gfx_pg_disable(a);                    /* GC ligado de vez para parar o CP e o RLC */
     if (a->comp_ok) WR(a, R_CP_MEC_CNTL, CP_MEC_RESET_ALL);
     if (a->gfx_ok) {
         WR(a, R_CP_ME_CNTL, RR(a, R_CP_ME_CNTL) | CP_ME_HALT_ALL | CP_ME_RESET_ALL);
