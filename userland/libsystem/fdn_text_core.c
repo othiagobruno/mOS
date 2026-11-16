@@ -346,3 +346,166 @@ UChar *tx_transform(const UChar *s, int32_t n, const char *id, int reverse, int3
     *on = len;
     return b;
 }
+
+/* ---------------------------------------------------------------- partes do NSString (fdn_string.c) */
+int tx_utf8_unit_at(const char *str, size_t n, size_t idx, UChar *out, size_t *total) {
+    const unsigned char *p = (const unsigned char *)str;
+    size_t k = 0;
+    for (size_t i = 0; i < n;) {
+        unsigned b = p[i];
+        uint32_t cp;
+        int w;
+        if (b < 0x80) { cp = b; w = 1; }
+        else if (b >= 0xF0 && i + 3 < n) { cp = ((uint32_t)(b & 7) << 18) | ((uint32_t)(p[i + 1] & 0x3F) << 12) | ((uint32_t)(p[i + 2] & 0x3F) << 6) | (p[i + 3] & 0x3F); w = 4; }
+        else if (b >= 0xE0 && b < 0xF0 && i + 2 < n) { cp = ((uint32_t)(b & 15) << 12) | ((uint32_t)(p[i + 1] & 0x3F) << 6) | (p[i + 2] & 0x3F); w = 3; }
+        else if (b >= 0xC0 && b < 0xE0 && i + 1 < n) { cp = ((uint32_t)(b & 31) << 6) | (p[i + 1] & 0x3F); w = 2; }
+        else { cp = 0xFFFD; w = 1; }
+        if (cp >= 0x10000) {
+            if (k == idx) { *out = (UChar)(0xD800 + ((cp - 0x10000) >> 10)); return 1; }
+            if (k + 1 == idx) { *out = (UChar)(0xDC00 + ((cp - 0x10000) & 0x3FF)); return 1; }
+            k += 2;
+        } else {
+            if (k == idx) { *out = (UChar)cp; return 1; }
+            k++;
+        }
+        i += (size_t)w;
+    }
+    if (total) *total = k;
+    return 0;
+}
+
+int tx_find_set(const UChar *u, int32_t a, int32_t e, unsigned opts, int (*has)(void *, uint32_t), void *ctx, int32_t *loc, int32_t *len) {
+    int back = (opts & TX_BACKWARDS) != 0, anch = (opts & TX_ANCHORED) != 0;
+    for (int32_t i = back ? e - 1 : a; back ? i >= a : i < e;) {
+        uint32_t cp = u[i];
+        int32_t st = i, w = 1;
+        if (!back && cp >= 0xD800 && cp <= 0xDBFF && i + 1 < e && u[i + 1] >= 0xDC00 && u[i + 1] <= 0xDFFF) {
+            cp = 0x10000 + ((cp - 0xD800) << 10) + (u[i + 1] - 0xDC00); w = 2;
+        } else if (back && cp >= 0xDC00 && cp <= 0xDFFF && i - 1 >= a && u[i - 1] >= 0xD800 && u[i - 1] <= 0xDBFF) {
+            cp = 0x10000 + ((uint32_t)(u[i - 1] - 0xD800) << 10) + (cp - 0xDC00); st = i - 1; w = 2;
+        }
+        if (has(ctx, cp)) { *loc = st; *len = w; return 1; }
+        if (anch) break;
+        i = back ? st - 1 : i + w;
+    }
+    return 0;
+}
+
+typedef struct { int32_t *v; int n, cap; } segs_t;
+static void seg_add(segs_t *g, int32_t a, int32_t b, int32_t ea, int32_t eb) {
+    if (g->n + 4 > g->cap) { g->cap = g->cap ? g->cap * 2 : 64; g->v = realloc(g->v, (size_t)g->cap * sizeof(int32_t)); }
+    g->v[g->n++] = a; g->v[g->n++] = b; g->v[g->n++] = ea; g->v[g->n++] = eb;
+}
+static int seg_cb(void *ctx, int32_t a, int32_t b) { seg_add(ctx, a, b, a, b); return 0; }
+
+int32_t *tx_enum(const UChar *u, int32_t n, int32_t a0, int32_t e0, int kind, const char *locale, int *count) {
+    segs_t g = { 0, 0, 0 };
+    if (kind == 0 || kind == 1) {
+        for (int32_t i = a0; i < e0;) {
+            int32_t s, e, ce;
+            tx_line(u, n, i, 0, kind == 1, &s, &e, &ce);
+            if (s < a0) s = a0;
+            if (e > e0) e = e0;
+            if (ce > e) ce = e;
+            if (ce < s) ce = s;
+            seg_add(&g, s, ce, s, e);
+            if (e <= i) break;
+            i = e;
+        }
+    } else if (kind == 2 || kind == 5 || kind == 6) {
+        for (int32_t i = a0; i < e0;) {
+            int32_t s, l;
+            tx_composed(u, n, i, &s, &l);
+            if (s < i) { l -= i - s; s = i; }
+            if (s + l > e0) l = e0 - s;
+            if (l <= 0) l = 1;
+            seg_add(&g, s, s + l, s, s + l);
+            i = s + l;
+        }
+    } else if (kind == 3 || kind == 4) {
+        segs_t w = { 0, 0, 0 };
+        tx_segments(u + a0, e0 - a0, kind == 3 ? 1 : 3, locale, seg_cb, &w);
+        int cnt = w.n / 4;
+        /* faixa envolvente: do fim da anterior até o começo da próxima (cobre espaços e pontuação) */
+        for (int k = 0; k < cnt; k++) {
+            int32_t s = a0 + w.v[k * 4], e = a0 + w.v[k * 4 + 1];
+            int32_t es = k == 0 ? a0 : g.v[g.n - 1];
+            int32_t ee = k + 1 < cnt ? a0 + w.v[(k + 1) * 4] : e0;
+            seg_add(&g, s, e, es, ee);
+        }
+        free(w.v);
+    }
+    *count = g.n / 4;
+    return g.v;
+}
+
+UChar *tx_replace(const UChar *u, int32_t n, int32_t loc, int32_t len, const UChar *t, int32_t tn,
+                  const UChar *p, int32_t pn, unsigned opts, int32_t *on, int32_t *count) {
+    *count = 0;
+    UChar *o = 0;
+    int32_t end = loc + len;
+    if (tn <= 0) goto copy;
+    if (opts & TX_REGEX) {
+        const fdn_icu_t *I = fdn_icu();
+        if (!I || !I->ok) goto copy;
+        UErrorCode e = U_ZERO_ERROR;
+        void *re = I->uregex_open(t, tn, (opts & TX_CASE) ? 2 : 0, 0, &e);
+        if (!re || U_FAILURE(e)) { if (re) I->uregex_close(re); goto copy; }
+        /* só a faixa: casa e troca nela e cola as pontas */
+        I->uregex_setText(re, u + loc, len, &e);
+        int32_t cnt = 0;
+        while (I->uregex_findNext(re, &e)) cnt++;
+        if (!cnt) { I->uregex_close(re); goto copy; }
+        I->uregex_reset(re, 0, &e);
+        e = U_ZERO_ERROR;
+        int32_t need = I->uregex_replaceAll(re, p, pn, 0, 0, &e);
+        UChar *mid = malloc((size_t)(need + 1) * sizeof(UChar));
+        e = U_ZERO_ERROR;
+        I->uregex_replaceAll(re, p, pn, mid, need + 1, &e);
+        I->uregex_close(re);
+        *on = loc + need + (n - end);
+        o = malloc((size_t)(*on + 1) * sizeof(UChar));
+        memcpy(o, u, (size_t)loc * 2);
+        memcpy(o + loc, mid, (size_t)need * 2);
+        memcpy(o + loc + need, u + end, (size_t)(n - end) * 2);
+        free(mid);
+        *count = cnt;
+        return o;
+    }
+    {
+        unsigned so = opts & ~(unsigned)(TX_BACKWARDS | TX_ANCHORED);
+        segs_t h = { 0, 0, 0 };
+        if (opts & TX_ANCHORED) {
+            int32_t l, m;
+            if (tx_search(u + loc, len, t, tn, so | TX_ANCHORED | (opts & TX_BACKWARDS), &l, &m)) seg_add(&h, loc + l, loc + l + m, 0, 0);
+        } else {
+            for (int32_t i = loc; i < end;) {
+                int32_t l, m;
+                if (!tx_search(u + i, end - i, t, tn, so, &l, &m) || m <= 0) break;
+                seg_add(&h, i + l, i + l + m, 0, 0);
+                i += l + m;
+            }
+        }
+        int k = h.n / 4;
+        if (!k) { free(h.v); goto copy; }
+        int32_t tot = n;
+        for (int j = 0; j < k; j++) tot += pn - (h.v[j * 4 + 1] - h.v[j * 4]);
+        o = malloc((size_t)(tot + 1) * sizeof(UChar));
+        int32_t pos = 0, w = 0;
+        for (int j = 0; j < k; j++) {
+            int32_t a = h.v[j * 4], b = h.v[j * 4 + 1];
+            memcpy(o + w, u + pos, (size_t)(a - pos) * 2); w += a - pos;
+            memcpy(o + w, p, (size_t)pn * 2); w += pn;
+            pos = b;
+        }
+        memcpy(o + w, u + pos, (size_t)(n - pos) * 2); w += n - pos;
+        free(h.v);
+        *on = w; *count = k;
+        return o;
+    }
+copy:
+    o = malloc((size_t)(n + 1) * sizeof(UChar));
+    memcpy(o, u, (size_t)n * 2);
+    *on = n;
+    return o;
+}
