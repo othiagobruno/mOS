@@ -90,64 +90,10 @@ char *strsignal(int sig) {
     cx_snprintf(other, sizeof other, "Unknown signal: %d", sig);
     return other;
 }
-/* libproc: pela lista de processos do kernel (SYS_PROCLIST) */
-static int proc_find(int pid, mos_procinfo_t *out) {
-    mos_procinfo_t pi;
-    for (long i = 0; SYS2(SYS_PROCLIST, i, &pi) == 1; i++) if (pi.pid == pid) { if (out) *out = pi; return 1; }
-    return 0;
-}
-int proc_pidpath(int pid, char *buf, u32 size) {
-    if (!buf || !size) { cx_errno = CX_EINVAL; return 0; }
-    if (pid == getpid()) {
-        u32 n = size;
-        if (_NSGetExecutablePath(buf, &n) != 0) { cx_errno = CX_ENOMEM; return 0; }
-        return (int)strlen(buf);
-    }
-    mos_procinfo_t pi;
-    if (!proc_find(pid, &pi)) { cx_errno = CX_ESRCH; return 0; }
-    pi.name[sizeof pi.name - 1] = 0;
-    return (int)strlcpy(buf, pi.name, size) < (int)size ? (int)strlen(buf) : 0;   /* o kernel só guarda o nome curto */
-}
-/* proc_name: o último componente do caminho (o MAXCOMLEN do XNU é 16; quem pede mais recebe o nome inteiro) */
-int proc_name(int pid, void *buf, u32 size) {
-    char path[1024];
-    if (!buf || !size) { cx_errno = CX_EINVAL; return 0; }
-    if (proc_pidpath(pid, path, sizeof path) <= 0) return 0;
-    const char *b = path;
-    for (const char *p = path; *p; p++) if (*p == '/') b = p + 1;
-    strlcpy(buf, b, size);
-    return (int)strlen(buf);
-}
-int proc_listchildpids(int ppid, int *buf, int bytes) {
-    int n = 0, cap = buf ? bytes / (int)sizeof(int) : 0;
-    mos_procinfo_t pi;
-    for (long i = 0; SYS2(SYS_PROCLIST, i, &pi) == 1; i++)
-        if (pi.ppid == ppid) { if (n < cap) buf[n] = pi.pid; n++; }
-    return buf ? (n < cap ? n : cap) * (int)sizeof(int) : n;   /* com buf: bytes preenchidos (como o libproc) */
-}
-int proc_listpgrppids(int pgrp, int *buf, int bytes) {
-    /* cada processo é o próprio grupo */
-    if (!proc_find(pgrp, 0)) return 0;
-    if (buf && bytes >= (int)sizeof(int)) { buf[0] = pgrp; return (int)sizeof(int); }
-    return 1;
-}
-/* proc_listpids(tipo, info, buf, bytes): PROC_ALL_PIDS 1, PGRP 2, TTY 3, UID 4, RUID 5, PPID 6. Sem buf: bytes
- * necessários (com folga, como o XNU). O mOS tem um usuário e cada processo é o próprio grupo. */
+/* libproc (proc_pidinfo, proc_listpids, proc_pidpath, proc_name, proc_pid_rusage...): procinfo.c */
+int proc_listpids(u32 type, u32 info, void *buf, int bytes);
+int proc_pidpath(int pid, void *buf, u32 size);
 unsigned getuid(void);
-int proc_listpids(u32 type, u32 info, void *buf, int bytes) {
-    int n = 0, cap = buf ? bytes / (int)sizeof(int) : 0, *out = buf;
-    mos_procinfo_t pi;
-    for (long i = 0; SYS2(SYS_PROCLIST, i, &pi) == 1; i++) {
-        int ok = type == 1 || type == 3 || ((type == 4 || type == 5) && info == getuid()) ||
-                 (type == 2 && (u32)pi.pid == info) || (type == 6 && (u32)pi.ppid == info);
-        if (!ok) continue;
-        if (n < cap) out[n] = pi.pid;
-        n++;
-    }
-    if (!buf) return (n + 16) * (int)sizeof(int);
-    return (n < cap ? n : cap) * (int)sizeof(int);
-}
-int proc_listallpids(void *buf, int bytes) { return proc_listpids(1, 0, buf, bytes) / (int)sizeof(int); }   /* em pids */
 /* proc_listpidspath: os processos (do filtro de proc_listpids) que usam o caminho — arquivo aberto, pasta atual ou
  * o executável. Com PROC_LISTPIDSPATH_PATH_IS_VOLUME (1) vale qualquer caminho dentro daquele volume (prefixo).
  * O mOS só enxerga os descritores do próprio processo; dos outros conta o executável. Volta em bytes, como o libproc. */
@@ -182,75 +128,6 @@ int proc_listpidspath(u32 type, u32 info, const char *path, u32 pathflags, void 
     if (!buf) return n * (int)sizeof(int);
     return (n < cap ? n : cap) * (int)sizeof(int);
 }
-/* proc_pidinfo: PROC_PIDTBSDINFO (3, proc_bsdinfo, 136 bytes), PROC_PIDTASKINFO (4, proc_taskinfo, 96),
- * PROC_PIDTASKALLINFO (2, as duas, 232) e PROC_PIDT_SHORTBSDINFO (13, proc_bsdshortinfo, 64), pela lista do
- * kernel (nome curto, estado, memória e CPU). Os outros sabores: ENOTSUP, 0. Devolve os bytes escritos. */
-static void fill_bsdinfo(u8 *b, const mos_procinfo_t *pi) {
-    memset(b, 0, 136);
-    u32 *w = (u32 *)b;
-    unsigned uid = getuid();
-    w[1] = pi->state == 1 || pi->state == 0 ? 2 : 3;            /* pbi_status: SRUN / SSLEEP */
-    w[3] = (u32)pi->pid; w[4] = (u32)pi->ppid;
-    w[5] = w[7] = w[9] = uid; w[6] = w[8] = w[10] = 20;          /* uid, gid (staff), ruid, rgid, svuid, svgid */
-    strlcpy((char *)b + 48, pi->name, 16);                       /* pbi_comm[MAXCOMLEN] */
-    strlcpy((char *)b + 64, pi->name, 32);                       /* pbi_name[2*MAXCOMLEN] */
-    w[25] = (u32)pi->pid;                                        /* pbi_pgid */
-}
-static void fill_taskinfo(u8 *b, const mos_procinfo_t *pi) {
-    memset(b, 0, 96);
-    u64 *q = (u64 *)b;
-    q[0] = pi->mem_kb * 1024 * 4;                                /* virtual_size: sem medida, uma estimativa folgada */
-    q[1] = pi->mem_kb * 1024;                                    /* resident_size */
-    q[2] = pi->cpu_ms * 1000000ULL;                              /* total_user (ns) */
-    u32 *w = (u32 *)(b + 48);
-    w[0] = 0;                                                    /* policy */
-    w[9] = 1; w[10] = pi->state == 1 ? 1 : 0; w[11] = 31;        /* threadnum, numrunning, priority */
-}
-int proc_pidinfo(int pid, int flavor, u64 arg, void *buf, int size) {
-    (void)arg;
-    mos_procinfo_t pi;
-    int need = flavor == 3 ? 136 : flavor == 4 ? 96 : flavor == 2 ? 232 : flavor == 13 ? 64 : 0;
-    if (!need) { cx_errno = CX_ENOTSUP; return 0; }
-    if (!proc_find(pid, &pi)) { cx_errno = CX_ESRCH; return 0; }
-    pi.name[sizeof pi.name - 1] = 0;
-    if (!buf || size < need) { cx_errno = CX_ENOMEM; return 0; }
-    u8 *b = buf;
-    if (flavor == 3) fill_bsdinfo(b, &pi);
-    else if (flavor == 4) fill_taskinfo(b, &pi);
-    else if (flavor == 2) { fill_bsdinfo(b, &pi); fill_taskinfo(b + 136, &pi); }
-    else {
-        u8 t[136];
-        fill_bsdinfo(t, &pi);
-        memset(b, 0, 64);
-        u32 *w = (u32 *)b, *s = (u32 *)t;
-        w[0] = s[3]; w[1] = s[4]; w[2] = s[25]; w[3] = s[1];     /* pid, ppid, pgid, status */
-        memcpy(b + 16, t + 48, 16);                              /* comm */
-        w[9] = s[5]; w[10] = s[6]; w[11] = s[7]; w[12] = s[8]; w[13] = s[9]; w[14] = s[10];
-    }
-    return need;
-}
-/* rusage_info_v0..v6 de bsd/sys/resource.h (XNU). O prefixo é o v0: 16 bytes de uuid e 10 u64.
- * ri_user_time sai em nanossegundos (cpu_ms do kernel); o Mach usa tempo absoluto. O mOS não tem
- * esse relógio, então a unidade aqui é 1 ns. ri_resident_size e ri_phys_footprint são mem_kb*1024. */
-static const int rusage_sz[] = {96, 144, 160, 232, 296, 304, 400};
-int proc_pid_rusage(int pid, int flavor, void *buf) {
-    mos_procinfo_t pi;
-    if (!buf) { cx_errno = CX_EFAULT; return -1; }
-    if (flavor < 0 || flavor > 6) { cx_errno = CX_EINVAL; return -1; }
-    if (!proc_find(pid, &pi)) { cx_errno = CX_ESRCH; return -1; }
-    unsigned char *b = buf;
-    memset(b, 0, (size_t)rusage_sz[flavor]);
-    unsigned long long *q = (unsigned long long *)(b + 16);
-    q[0] = pi.cpu_ms * 1000000ULL;
-    q[6] = pi.mem_kb * 1024ULL;
-    q[7] = q[6];
-    return 0;
-}
-int proc_signal_with_audittoken(const unsigned *tok, int sig) {
-    if (!tok) { cx_errno = CX_EINVAL; return -1; }
-    return kill((int)tok[5], sig);
-}
-
 /* ================================================================ arquivos */
 static unsigned cur_umask = 022;
 unsigned umask(unsigned m) { unsigned o = cur_umask; cur_umask = m & 0777; return o; }

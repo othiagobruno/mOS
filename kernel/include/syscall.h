@@ -214,7 +214,20 @@ enum {
     MOS_DW_ARGS,         /* (pid, buf, cap) -> bytes. Formato do KERN_PROCARGS2: int argc, caminho do executável,
                           * zeros até 8 bytes, argv, envp (cada string com o 0). buf 0 = só o tamanho. */
     MOS_DW_THREADS,      /* (pid, mos_dw_thread_t *buf, cap) -> quantidade de threads vivas (copia até cap) */
+    MOS_DW_FDS,          /* (pid, mos_dw_fd_t *buf, cap) -> quantidade de fds abertos (copia até cap, em ordem de fd) */
+    MOS_DW_CWD,          /* (pid, buf, cap) -> tamanho do caminho da pasta atual (0 final gravado se couber) */
 };
+#define MOS_DW_FD_FILE 1   /* mos_dw_fd_t.kind */
+#define MOS_DW_FD_PIPE 2
+#define MOS_DW_FD_PTY  3
+#define MOS_DW_FD_SOCK 4   /* socketpair e AF_UNIX */
+typedef struct {
+    int fd, kind;
+    unsigned flags;                            /* flags O_* do open (os do kernel) */
+    unsigned cloexec;
+    unsigned long long off;
+    char path[256];
+} mos_dw_fd_t;
 typedef struct {
     unsigned long long mem_total, mem_free;    /* bytes de RAM */
     unsigned long long boot_unix_us;           /* hora do boot (µs desde 1970, relógio do sistema) */

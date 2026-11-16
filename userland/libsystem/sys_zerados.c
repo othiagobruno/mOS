@@ -1594,7 +1594,6 @@ void nw_path_is_expensive(void) {}
 void nw_path_uses_interface_type(void) {}
 void nw_tcp_options_set_no_delay(void) {}
 void open_dprotected_np(void) {}
-void os_proc_available_memory(void) {}
 void os_signpost_id_generate(void) {}
 void os_signpost_id_make_with_pointer(void) {}
 void os_unfair_lock_assert_not_owner(void) {}

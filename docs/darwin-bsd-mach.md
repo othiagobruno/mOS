@@ -88,7 +88,26 @@ Nos 28 bundles do corpus local (Firefox, GIMP, Inkscape, iTerm2, Rectangle, VLC 
 | Fase | Estado | Teste |
 |---|---|---|
 | F1 | **pronto** (15 nov.): `SYS_DARWIN` no kernel (`kernel/proc/darwin.c`), `userland/libsystem/sysctl.c` | `tools/sysctl_host.c`: 89/89 no Ryzen R2544 do Thiago (CPUID real, kernel falso). Não rodou no QEMU (build proibido até o fim) |
-| F2..F10 | a fazer | — |
+| F2 | **pronto** (15 nov.): `userland/libsystem/procinfo.c`, `task_info`/`thread_info`/`host_info` em `mach.c`, `MOS_DW_FDS`/`MOS_DW_CWD` no kernel | `tools/procinfo_host.c`: 50/50 (kernel falso). Não rodou no QEMU |
+| F3..F10 | a fazer | — |
+
+### F2 em detalhe
+
+- `proc_pidinfo`: LISTFDS, TASKALLINFO, TBSDINFO, TASKINFO, THREADINFO, LISTTHREADS(IDS), VNODEPATHINFO (pasta atual e
+  raiz), PATHINFO, WORKQUEUEINFO, T_SHORTBSDINFO, THREADID64INFO, UNIQIDENTIFIERINFO, T_BSDINFOWITHUNIQID e ARCHINFO
+  com os dados do kernel (ids reais, sessão, estado, início, CPU, memória, threads, fds). `proc_pidfdinfo`: VNODEINFO,
+  VNODEPATHINFO (com `vinfo_stat` do `stat` real) e PIPEINFO. `proc_pid_rusage` v0..v6 (CPU, residente,
+  `phys_footprint` do `SYS_VMCTL` do Gustavo, início em abstime). `proc_listpids` por todos os filtros (pgrp, tty,
+  uid, ruid, ppid), `proc_pidpath`/`proc_name` de qualquer processo, `proc_terminate` (SIGKILL se limpo e ocioso),
+  rastreio dirty, monitores de CPU/wakeup, `os_proc_available_memory`.
+- `task_info`: BASIC_INFO_64, MACH_TASK_BASIC_INFO (com pico), THREAD_TIMES, EVENTS, POWER, DYLD, AUDIT_TOKEN e
+  SECURITY_TOKEN com os ids reais, FLAGS e VM_INFO (residente, comprimido, `phys_footprint`, faixa de endereços).
+  `thread_info`: BASIC (tempo, estado, suspensões), IDENTIFIER, EXTENDED e SCHED_TIMESHARE. `host_info`: BASIC (RAM
+  e núcleos físicos/lógicos reais), SCHED, PRIORITY, CAN_HAS_DEBUGGER, PREFERRED_USER_ARCH, MACH_MSG_TRAP.
+- Limites honestos: REGIONINFO/REGIONPATHINFO esperam o `mach_vm_region` de outra task (Henrique) e devolvem
+  ENOTSUP; sockets TCP/UDP e kqueues vivem no libSystem, então `proc_pidfdinfo` deles dá EBADF; o kernel não separa
+  tempo de usuário e de sistema nem conta faltas e mensagens (TASK_EVENTS_INFO zerado); o rastreio dirty vale para o
+  próprio processo (outro pid: EPERM).
 
 ### F1 em detalhe
 

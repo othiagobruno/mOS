@@ -208,7 +208,6 @@ int getdomainname(char *name, int len) { if (len > 0) name[0] = 0; return 0; }
 int responsibility_spawnattrs_setdisclaim(void *attr, int disclaim) { (void)attr; (void)disclaim; return 0; }
 int posix_spawnattr_set_csm_np(void *attr, u32 flags) { (void)attr; (void)flags; return 0; }
 int responsibility_get_pid_responsible_for_pid(int pid) { return pid; }
-int proc_pidfdinfo(int pid, int fd, int flavor, void *buf, int size) { (void)pid; (void)fd; (void)flavor; (void)buf; (void)size; set_errno(E_NOTSUP); return 0; }
 /* sem shell no caminho de popen: o Electron só usa para utilitários opcionais */
 void *popen(const char *cmd, const char *mode) { (void)cmd; (void)mode; set_errno(E_NOSYS); return 0; }
 int pclose(void *f) { (void)f; set_errno(10 /* ECHILD */); return -1; }

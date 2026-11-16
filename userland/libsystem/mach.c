@@ -285,18 +285,51 @@ static int info_fit(void *info, u32 *count, u32 bytes) {
     *count = bytes / 4;
     return 1;
 }
+/* dados reais do kernel (SYS_DARWIN, kernel/proc/darwin.c; SYS_VMCTL do Gustavo para o phys_footprint).
+ * Tempos em time_value_t {segundos, microssegundos}; o kernel não separa usuário e sistema: tudo vai em user_time. */
+static int ti_proc(mach_port_t task, mos_dw_proc_t *d, int *pid) {
+    int p = (int)SYS0(SYS_GETPID);
+    if (task && task != TASK_PORT && pid_for_task(task, &p) != KERN_SUCCESS) return 0;
+    if (pid) *pid = p;
+    if (SYS3(SYS_DARWIN, MOS_DW_PROC, p, d) == 0) return 1;
+    memset(d, 0, sizeof *d);                    /* kernel sem SYS_DARWIN: valores neutros */
+    d->pid = p; d->uid = d->euid = 501; d->gid = d->egid = 20; d->nthreads = 1;
+    d->mem_bytes = d->vsize = 64ull << 20;
+    return 1;
+}
+static cx_time_value_t tv_ms(u64 ms) { cx_time_value_t t = {(int)(ms / 1000), (int)(ms % 1000) * 1000}; return t; }
+static u64 ti_footprint(int pid, u64 resident) {
+    long r = SYS2(SYS_VMCTL, MOS_VM_FOOTPRINT, pid == (int)SYS0(SYS_GETPID) ? 0 : pid);
+    return r > 0 ? (u64)r : resident;
+}
+static u64 resident_peak;
 kern_return_t task_info(mach_port_t task, int flavor, void *info, u32 *count) {
-    if (task && task != TASK_PORT) return KERN_INVALID_ARGUMENT;
+    mos_dw_proc_t d;
+    int pid = 0;
+    if (!ti_proc(task, &d, &pid)) return KERN_INVALID_ARGUMENT;
+    if (pid == (int)SYS0(SYS_GETPID) && d.mem_bytes > resident_peak) resident_peak = d.mem_bytes;
+    u64 peak = resident_peak > d.mem_bytes ? resident_peak : d.mem_bytes;
     if (flavor == 5 && info_fit(info, count, sizeof(cx_task_basic64_t))) {          /* TASK_BASIC_INFO_64 */
         cx_task_basic64_t *b = info;
-        b->virtual_size = b->resident_size = 64ull << 20;
+        b->virtual_size = d.vsize; b->resident_size = d.mem_bytes;
+        b->user_time = tv_ms(d.cpu_ms);
         b->policy = 1;
         return KERN_SUCCESS;
     }
     if (flavor == 20 && info_fit(info, count, sizeof(cx_mach_task_basic_t))) {      /* MACH_TASK_BASIC_INFO */
         cx_mach_task_basic_t *b = info;
-        b->virtual_size = b->resident_size = b->resident_size_max = 64ull << 20;
+        b->virtual_size = d.vsize; b->resident_size = d.mem_bytes; b->resident_size_max = peak;
+        b->user_time = tv_ms(d.cpu_ms);
         b->policy = 1;
+        return KERN_SUCCESS;
+    }
+    if (flavor == 3 && info_fit(info, count, 16)) {                                /* TASK_THREAD_TIMES_INFO: threads vivas */
+        ((cx_time_value_t *)info)[0] = tv_ms(d.cpu_ms);
+        return KERN_SUCCESS;
+    }
+    if (flavor == 2 && info_fit(info, count, 32)) return KERN_SUCCESS;             /* TASK_EVENTS_INFO: o kernel não conta faltas/msgs */
+    if (flavor == 21 && info_fit(info, count, 48)) {                               /* TASK_POWER_INFO (ns) */
+        ((u64 *)info)[0] = d.cpu_ms * 1000000ull;
         return KERN_SUCCESS;
     }
     if (flavor == 17 && info_fit(info, count, sizeof(cx_task_dyld_t))) {            /* TASK_DYLD_INFO */
@@ -304,33 +337,75 @@ kern_return_t task_info(mach_port_t task, int flavor, void *info, u32 *count) {
         return KERN_SUCCESS;
     }
     if (flavor == 15 && info_fit(info, count, 32)) {                                /* TASK_AUDIT_TOKEN */
-        u32 *v = info;
-        v[0] = v[1] = v[3] = 501; v[2] = v[4] = 20; v[5] = (u32)SYS0(SYS_GETPID); v[7] = 1;
+        u32 *v = info;   /* auid, euid, egid, ruid, rgid, pid, asid, pidversion */
+        v[0] = (u32)d.uid; v[1] = (u32)d.euid; v[2] = (u32)d.egid; v[3] = (u32)d.uid; v[4] = (u32)d.gid;
+        v[5] = (u32)pid; v[6] = (u32)d.sid; v[7] = (u32)(d.start_unix_us / 1000);
         return KERN_SUCCESS;
     }
-    if (flavor == 13 && info_fit(info, count, 8)) { ((u32 *)info)[0] = 501; ((u32 *)info)[1] = 20; return KERN_SUCCESS; }
-    if ((flavor == 22 || flavor == 23) && info && count && *count >= 4) {          /* TASK_VM_INFO */
+    if (flavor == 13 && info_fit(info, count, 8)) { ((u32 *)info)[0] = (u32)d.euid; ((u32 *)info)[1] = (u32)d.egid; return KERN_SUCCESS; }   /* TASK_SECURITY_TOKEN */
+    if (flavor == 28 && info_fit(info, count, 4)) { ((u32 *)info)[0] = 1; return KERN_SUCCESS; }   /* TASK_FLAGS_INFO: TF_LP64 */
+    if ((flavor == 22 || flavor == 23) && info && count && *count >= 4) {          /* TASK_VM_INFO(_PURGEABLE) */
         u32 n = *count > 128 ? 128 : *count;
+        u8 *v = info;
         memset(info, 0, n * 4);
         *count = n;
-        if (n >= 2) ((u64 *)info)[0] = 64ull << 20;                                 /* virtual_size */
-        if (n >= 4) ((u32 *)info)[3] = (u32)vm_page_size;                                      /* page_size */
-        if (n >= 6) ((u64 *)info)[2] = 32ull << 20;                                 /* resident_size */
-        if (n >= 38) *(u64 *)((u8 *)info + 144) = 32ull << 20;                      /* phys_footprint */
+        u64 fp = ti_footprint(pid, d.mem_bytes);
+        u64 comp = fp > d.mem_bytes ? fp - d.mem_bytes : 0;
+        if (n >= 2) *(u64 *)(v + 0) = d.vsize;                                     /* virtual_size */
+        if (n >= 4) *(u32 *)(v + 12) = (u32)vm_page_size;                          /* page_size */
+        if (n >= 6) *(u64 *)(v + 16) = d.mem_bytes;                                /* resident_size */
+        if (n >= 8) *(u64 *)(v + 24) = peak;                                       /* resident_size_peak */
+        if (n >= 14) *(u64 *)(v + 48) = d.mem_bytes;                               /* internal */
+        if (n >= 16) *(u64 *)(v + 56) = peak;                                      /* internal_peak */
+        if (n >= 32) *(u64 *)(v + 120) = comp;                                     /* compressed */
+        if (n >= 34) *(u64 *)(v + 128) = comp;                                     /* compressed_peak */
+        if (n >= 38) *(u64 *)(v + 144) = fp;                                       /* phys_footprint */
+        if (n >= 40) *(u64 *)(v + 152) = 0x400000000000ull;                        /* min_address (USER_BASE) */
+        if (n >= 42) *(u64 *)(v + 160) = 0x440000000000ull;                        /* max_address (USER_END) */
+        if (n >= 44) *(u64 *)(v + 168) = fp;                                       /* ledger_phys_footprint_peak */
         return KERN_SUCCESS;
     }
     return KERN_INVALID_ARGUMENT;
 }
+static int ti_thread(u32 tid, mos_dw_thread_t *out) {
+    mos_dw_thread_t th[256];
+    long n = SYS4(SYS_DARWIN, MOS_DW_THREADS, SYS0(SYS_GETPID), th, 256);
+    for (long i = 0; i < n && i < 256; i++) if (th[i].tid == tid) { *out = th[i]; return 1; }
+    memset(out, 0, sizeof *out);
+    out->tid = tid; out->state = MOS_DW_ST_RUN;
+    return n < 0;                               /* sem SYS_DARWIN: a thread existe, sem números */
+}
 kern_return_t thread_info(mach_port_t thread, int flavor, void *info, u32 *count) {
     u32 tid = thread >= THREAD_BASE ? thread - THREAD_BASE : (u32)SYS0(SYS_GETTID);
+    mos_dw_thread_t t;
+    if (!ti_thread(tid, &t)) return KERN_INVALID_ARGUMENT;
+    static const int qpri[] = {4, 20, 31, 37, 47};
+    int pri = qpri[t.qos < 5 ? t.qos : 2];
     if (flavor == 3 && info_fit(info, count, sizeof(cx_thread_basic_t))) {          /* THREAD_BASIC_INFO */
-        ((cx_thread_basic_t *)info)->run_state = 1;                                 /* TH_STATE_RUNNING */
-        ((cx_thread_basic_t *)info)->policy = 1;
+        cx_thread_basic_t *b = info;
+        b->user_time = tv_ms(t.cpu_ms);
+        b->run_state = t.suspend ? 2 : t.state == MOS_DW_ST_RUN ? 1 : 3;           /* STOPPED / RUNNING / WAITING */
+        b->policy = 1;
+        b->suspend_count = t.suspend;
         return KERN_SUCCESS;
     }
     if (flavor == 4 && info_fit(info, count, sizeof(cx_thread_id_t))) {             /* THREAD_IDENTIFIER_INFO */
         ((cx_thread_id_t *)info)->thread_id = tid;
         ((cx_thread_id_t *)info)->thread_handle = tid;
+        return KERN_SUCCESS;
+    }
+    if (flavor == 5 && info_fit(info, count, 112)) {                               /* THREAD_EXTENDED_INFO */
+        u8 *b = info;
+        *(u64 *)b = t.cpu_ms * 1000000ull;
+        *(i32 *)(b + 20) = 1;
+        *(i32 *)(b + 24) = t.suspend ? 2 : t.state == MOS_DW_ST_RUN ? 1 : 3;
+        *(i32 *)(b + 36) = pri; *(i32 *)(b + 40) = pri; *(i32 *)(b + 44) = 63;
+        for (int i = 0; i < 31 && t.name[i]; i++) b[48 + i] = (u8)t.name[i];
+        return KERN_SUCCESS;
+    }
+    if (flavor == 10 && info_fit(info, count, 20)) {                               /* THREAD_SCHED_TIMESHARE_INFO */
+        i32 *w = info;
+        w[0] = 63; w[1] = pri; w[2] = pri;
         return KERN_SUCCESS;
     }
     return KERN_INVALID_ARGUMENT;
@@ -340,14 +415,42 @@ kern_return_t host_info(mach_port_t host, int flavor, void *info, u32 *count) {
     if (flavor == 1 && info_fit(info, count, sizeof(cx_host_basic_t))) {            /* HOST_BASIC_INFO */
         cx_host_basic_t *h = info;
         long c = SYS0(SYS_CPUS);
-        int n = c > 0 ? (int)c : 1;
-        h->max_cpus = h->avail_cpus = h->physical_cpu = h->physical_cpu_max = h->logical_cpu = h->logical_cpu_max = n;
-        h->memory_size = 0x80000000;
-        h->cpu_type = 0x01000007;                                                   /* CPU_TYPE_X86_64 */
-        h->cpu_subtype = 3;
-        h->max_mem = 2ull << 30;
+        int n = c > 0 ? (int)c : 1, ph = n;
+        size_t l = sizeof ph;
+        extern int sysctlbyname(const char *, void *, size_t *, void *, size_t);
+        if (sysctlbyname("hw.physicalcpu", &ph, &l, 0, 0) != 0 || ph < 1) ph = n;
+        mos_dw_sysinfo_t si;
+        u64 mem = SYS2(SYS_DARWIN, MOS_DW_SYSINFO, &si) == 0 ? si.mem_total : 2ull << 30;
+        h->max_cpus = h->avail_cpus = h->logical_cpu = h->logical_cpu_max = n;
+        h->physical_cpu = h->physical_cpu_max = ph;
+        h->memory_size = mem > 0x80000000ull ? (int)0x80000000u : (int)mem;          /* natural_t: o XNU também satura em 2 GiB */
+#if defined(__aarch64__)
+        h->cpu_type = 0x0100000c; h->cpu_subtype = 2;
+#else
+        h->cpu_type = 0x01000007; h->cpu_subtype = 3;                               /* CPU_TYPE_X86_64, X86_64_ALL */
+#endif
+        h->max_mem = mem;
         return KERN_SUCCESS;
     }
+    if (flavor == 3 && info_fit(info, count, 8)) {                                 /* HOST_SCHED_INFO: ms */
+        ((i32 *)info)[0] = 1; ((i32 *)info)[1] = 4;                                 /* timer de 1 ms, fatia de 4 ms (sched.c) */
+        return KERN_SUCCESS;
+    }
+    if (flavor == 5 && info_fit(info, count, 32)) {                                /* HOST_PRIORITY_INFO */
+        static const i32 pr[8] = {80, 80, 64, 31, 0, 0, 0, 95};
+        memcpy(info, pr, sizeof pr);
+        return KERN_SUCCESS;
+    }
+    if (flavor == 11 && info_fit(info, count, 4)) { ((i32 *)info)[0] = 1; return KERN_SUCCESS; }   /* HOST_CAN_HAS_DEBUGGER */
+    if (flavor == 12 && info_fit(info, count, 8)) {                                /* HOST_PREFERRED_USER_ARCH */
+#if defined(__aarch64__)
+        ((i32 *)info)[0] = 0x0100000c; ((i32 *)info)[1] = 2;
+#else
+        ((i32 *)info)[0] = 0x01000007; ((i32 *)info)[1] = 3;
+#endif
+        return KERN_SUCCESS;
+    }
+    if (flavor == 8) { if (count) *count = 0; return KERN_SUCCESS; }               /* HOST_MACH_MSG_TRAP */
     return KERN_INVALID_ARGUMENT;
 }
 /* host_page_size: a página que o processo vê (4 KiB no x86_64, 16 KiB no arm64) */

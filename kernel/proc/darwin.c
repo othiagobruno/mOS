@@ -193,6 +193,45 @@ static i64 dw_threads(process_t *p, int pid, u64 buf, u64 cap) {
     return n;
 }
 
+static i64 dw_fds(process_t *p, int pid, u64 buf, u64 cap) {
+    process_t *q = proc_find(pid);
+    if (!proc_live(q)) return -MOS_ESRCH;
+    if (p->euid != 0 && p->euid != q->uid) return -MOS_EPERM;
+    i64 n = 0;
+    for (int i = 0; i < PROC_MAX_FDS; i++) {
+        struct fdent *e = &q->fds[i];
+        if (!e->used) continue;
+        if (buf && (u64)n < cap) {
+            mos_dw_fd_t d;
+            memset(&d, 0, sizeof d);
+            d.fd = i;
+            d.kind = e->kind == FD_FILE ? MOS_DW_FD_FILE : (e->kind == FD_PIPE_R || e->kind == FD_PIPE_W) ? MOS_DW_FD_PIPE :
+                     (e->kind == FD_PTY_M || e->kind == FD_PTY_S) ? MOS_DW_FD_PTY : MOS_DW_FD_SOCK;
+            d.flags = (unsigned)e->flags;
+            d.off = e->off;
+            d.cloexec = (e->flags & MOS_O_CLOEXEC) != 0;
+            memcpy(d.path, e->path, sizeof d.path);
+            d.path[sizeof d.path - 1] = 0;
+            if (!uvm_copy_out(p, buf + (u64)n * sizeof d, &d, sizeof d)) return -MOS_EFAULT;
+        }
+        n++;
+    }
+    return n;
+}
+
+static i64 dw_cwd(process_t *p, int pid, u64 buf, u64 cap) {
+    process_t *q = proc_find(pid);
+    if (!proc_live(q)) return -MOS_ESRCH;
+    if (p->euid != 0 && p->euid != q->uid) return -MOS_EPERM;
+    char c[sizeof q->cwd + 1];
+    memcpy(c, q->cwd, sizeof q->cwd);
+    c[sizeof q->cwd] = 0;
+    if (!c[0]) { c[0] = '/'; c[1] = 0; }
+    usize n = strlen(c);
+    if (buf && cap && !uvm_copy_out(p, buf, c, n + 1 <= cap ? n + 1 : cap)) return -MOS_EFAULT;
+    return (i64)n;
+}
+
 i64 darwin_syscall(process_t *p, u64 op, u64 a, u64 b, u64 c) {
     switch (op) {
     case MOS_DW_SYSINFO:     return dw_sysinfo(p, a);
@@ -202,6 +241,8 @@ i64 darwin_syscall(process_t *p, u64 op, u64 a, u64 b, u64 c) {
     case MOS_DW_PROC:        return dw_proc(p, (int)a, b);
     case MOS_DW_ARGS:        return dw_args(p, (int)a, b, c);
     case MOS_DW_THREADS:     return dw_threads(p, (int)a, b, c);
+    case MOS_DW_FDS:         return dw_fds(p, (int)a, b, c);
+    case MOS_DW_CWD:         return dw_cwd(p, (int)a, b, c);
     default:                 return -MOS_EINVAL;
     }
 }
