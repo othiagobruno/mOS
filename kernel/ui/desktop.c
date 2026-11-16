@@ -3837,6 +3837,7 @@ void desktop_run(void) {
         net_poll();
         { extern void wifi_poll(void); wifi_poll(); }   /* varredura Wi-Fi mesmo com o cabo ativo */
         usb_poll();
+        acpi_poll();                              /* GPEs, EC, botão de energia e térmica (dev/acpi.c) */
         audio_poll();
         extern void persist_tick(void);
         persist_tick();
