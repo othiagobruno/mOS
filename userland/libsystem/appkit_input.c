@@ -610,6 +610,7 @@ void cx_appkit_input_init(void) {
     { extern void cx_appkit_controls2_init(void); cx_appkit_controls2_init(); } /* appkit_controls2.c: NSSearchField, NSColorWell/NSColorPanel, NSDatePicker */
     { extern void cx_appkit_document_init(void); cx_appkit_document_init(); } /* appkit_document.c: NSDocument, NSDocumentController */
     { extern void cx_appkit_toolbar_init(void); cx_appkit_toolbar_init(); }   /* appkit_toolbar.c: NSToolbar completa, grupos, personalização */
+    { extern void cx_appkit_filepromise_init(void); cx_appkit_filepromise_init(); } /* appkit_filepromise.c: promessas de arquivo no arrasto */
     cx_class_t *resp = cx_class_named("NSResponder");
     cx_class_t *view = cx_class_named("NSView");
     cx_class_t *obj = cx_class_named("NSObject");
