@@ -1199,7 +1199,8 @@ void cx_objc_boot(u64 sects, u64 n) {
     { extern void cx_compat_objc_extra_init(void); cx_compat_objc_extra_init(); }   /* compat_objc_extra.c: depois de todas as classes (o NSURL vem do cx_darwin_init) */
     { extern void cx_fdn_filemanager_init(void); cx_fdn_filemanager_init(); }   /* fdn_filemanager.c: NSFileManager completo, por último */
     { extern void cx_fdn_bundle_init(void); cx_fdn_bundle_init(); }   /* fdn_bundle.c: NSBundle/CFBundle completos, por cima do básico */
-    { extern void cx_fdn_coll_init(void); cx_fdn_coll_init(); }       /* fdn_coll.c: NSArray/NSDictionary completos, por cima do básico */
+    { extern void cx_fdn_coll_init(void); cx_fdn_coll_init(); }
+    { extern void cx_fdn_charset_init(void); cx_fdn_charset_init(); } /* fdn_charset.c: NSCharacterSet/CFCharacterSet sobre a ICU */       /* fdn_coll.c: NSArray/NSDictionary completos, por cima do básico */
     }
     if (n) cx_objc_init_image(sects, n);
 }

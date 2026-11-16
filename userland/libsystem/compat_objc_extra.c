@@ -48,27 +48,8 @@ static id bundle_with_ident(id cls, SEL c, id ident) {
     return 0;
 }
 
-/* +[NSCharacterSet characterSetWithCharactersInString:]: um conjunto que guarda os caracteres (subclasse própria) */
-static cx_class_t strset_c, strset_m;
-static int strset_inited;
+/* NSCharacterSet (inclusive os URL*AllowedCharacterSet): fdn_charset.c */
 extern id objc_autorelease(id);
-typedef struct { cx_class_t *isa; id chars; } strset_t;
-static BOOL strset_member(id self, SEL c, unsigned short ch) {
-    (void)c;
-    strset_t *s = (strset_t *)self;
-    u64 n = s->chars ? MSG0(u64, s->chars, "length") : 0;
-    for (u64 i = 0; i < n; i++) if (MSG(unsigned short, s->chars, "characterAtIndex:", i) == ch) return YES;
-    return NO;
-}
-static BOOL strset_long_member(id self, SEL c, u32 ch) { return ch < 0x10000 && strset_member(self, c, (unsigned short)ch); }
-static id cs_with_string(id cls, SEL c, id str) {
-    (void)cls; (void)c;
-    if (!strset_inited++) cx_define_class(&strset_c, &strset_m, "_MOSStringCharacterSet", cx_class_named("NSCharacterSet"), 8);
-    strset_t *s = (strset_t *)cx_alloc_instance(&strset_c);
-    s->chars = str ? MSG0(id, str, "copy") : 0;
-    return objc_autorelease((id)s);
-}
-
 /* NSURLSession com delegate: a sessão compartilhada do mOS (os blocos de conclusão funcionam; os callbacks do
  * delegate ainda não são chamados) e a configuração "em segundo plano" = a padrão */
 static id sess_with_cfg_delegate(id cls, SEL c, id cfg, id delegate, id queue) {
@@ -84,12 +65,6 @@ static id ret_nil(id self, SEL c) { (void)self; (void)c; return 0; }
 static long ret_zero(id self, SEL c) { (void)self; (void)c; return 0; }
 static id ret_self(id self, SEL c) { (void)c; return self; }
 
-/* codificação percentual (RFC 3986). Os conjuntos URL*AllowedCharacterSet são de string (acima), e o "permitido" de um
- * conjunto sem characterIsMember: é o não reservado (letras, dígitos, - . _ ~) */
-static id cs_url_query(id cls, SEL c) { return cs_with_string(cls, c, cx_str("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~!$'()*+,;=:@/?")); }
-static id cs_url_path(id cls, SEL c) { return cs_with_string(cls, c, cx_str("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~!$&'()*+,;=:@/")); }
-static id cs_url_host(id cls, SEL c) { return cs_with_string(cls, c, cx_str("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~!$&'()*+,;=:[]")); }
-static id cs_url_frag(id cls, SEL c) { return cs_url_query(cls, c); }
 static int hexv(int ch) { return ch >= '0' && ch <= '9' ? ch - '0' : ch >= 'a' && ch <= 'f' ? ch - 'a' + 10 : ch >= 'A' && ch <= 'F' ? ch - 'A' + 10 : -1; }
 void *malloc(size_t n);
 void free(void *p);
@@ -133,17 +108,9 @@ static id str_add_pct(id self, SEL c, id allowed) {
 void cx_compat_objc_extra_init(void) {
     add("NSString", "stringByRemovingPercentEncoding", (void *)str_remove_pct, 0);
     add("NSString", "stringByAddingPercentEncodingWithAllowedCharacters:", (void *)str_add_pct, 0);
-    add("NSCharacterSet", "URLQueryAllowedCharacterSet", (void *)cs_url_query, 1);
-    add("NSCharacterSet", "URLPathAllowedCharacterSet", (void *)cs_url_path, 1);
-    add("NSCharacterSet", "URLHostAllowedCharacterSet", (void *)cs_url_host, 1);
-    add("NSCharacterSet", "URLFragmentAllowedCharacterSet", (void *)cs_url_frag, 1);
     add("NSURL", "scheme", (void *)url_scheme, 0);
     add("NSBundle", "isEqualTo:", (void *)bundle_is_equal_to, 0);
     add("NSBundle", "bundleWithIdentifier:", (void *)bundle_with_ident, 1);
-    add("NSCharacterSet", "characterSetWithCharactersInString:", (void *)cs_with_string, 1);
-    if (!strset_inited++) cx_define_class(&strset_c, &strset_m, "_MOSStringCharacterSet", cx_class_named("NSCharacterSet"), 8);
-    cx_add_method(&strset_c, "characterIsMember:", (void *)strset_member);
-    cx_add_method(&strset_c, "longCharacterIsMember:", (void *)strset_long_member);
     add("NSURLSession", "sessionWithConfiguration:delegate:delegateQueue:", (void *)sess_with_cfg_delegate, 1);
     add("NSURLSessionConfiguration", "backgroundSessionConfigurationWithIdentifier:", (void *)cfg_background, 1);
     add("NSMutableURLRequest", "setNetworkServiceType:", (void *)noop1, 0);

@@ -25,6 +25,8 @@ if ! compgen -G "/usr/lib/x86_64-linux-gnu/libicui18n.so.*" >/dev/null && ! comp
 fi
 L="$ROOT/userland/libsystem"
 gcc -O1 -Wall -DFDN_ICU_HOST -I"$L" "$L/fdn_icu.c" "$L/fdn_i18n_core.c" "$ROOT/tools/fdn_i18n_test.c" -ldl -lm -o "$OUT/fdn_i18n_test"
+gcc -O1 -Wall -DFDN_ICU_HOST -I"$L" "$L/fdn_icu.c" "$L/fdn_charset_core.c" "$ROOT/tools/fdn_charset_test.c" -ldl -o "$OUT/fdn_charset_test"
+"$OUT/fdn_charset_test"
 gcc -O1 -Wall -Wno-format-truncation -DFDN_ICU_HOST -I"$L" "$L/fdn_icu.c" "$L/fdn_i18n_core.c" "$L/fdn_fmt_core.c" \
     "$ROOT/tools/fdn_fmt_test.c" -ldl -lm -o "$OUT/fdn_fmt_test"
 "$OUT/fdn_i18n_test"
