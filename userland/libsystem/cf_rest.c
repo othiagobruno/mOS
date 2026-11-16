@@ -74,14 +74,7 @@ id CFCopyHomeDirectoryURL(void) {
 const void *CFGetAllocator(id o) { (void)o; return 0; }
 long CFGetRetainCount(id o) { return o ? MSG0(long, o, "retainCount") : 0; }
 
-void CFSetApplyFunction(id s, void (*fn)(id, void *), void *ctx) {
-    long n = CFSetGetCount(s), i;
-    id *v = n ? calloc((size_t)n, sizeof *v) : 0;
-    if (!fn) { free(v); return; }
-    if (v) CFSetGetValues(s, v);
-    for (i = 0; i < n; i++) fn(v[i], ctx);
-    free(v);
-}
+/* CFSetApplyFunction: fdn_set.c */
 
 void CFStringAppendCString(id m, const char *s, unsigned enc) {
     id t; (void)enc;

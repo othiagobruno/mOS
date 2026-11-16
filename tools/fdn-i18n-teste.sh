@@ -7,6 +7,13 @@ OUT=${1:-/tmp/mos-fdn-i18n}
 mkdir -p "$OUT"
 # NSDecimal não usa a ICU: roda sempre
 gcc -O1 -Wall -I"$ROOT/userland/libsystem" "$ROOT/userland/libsystem/fdn_decimal_core.c" "$ROOT/tools/fdn_dec_test.c" -o "$OUT/fdn_dec_test"
+# tabela hash do NSSet/CFSet: com os cabeçalhos do libSystem e o include do zig
+ZIG_INC=$(dirname "$(readlink -f "$(command -v zig 2>/dev/null || echo /nao/existe)")")/lib/include
+if [ -d "$ZIG_INC" ]; then
+    gcc -O1 -w -fno-builtin -nostdinc -isystem "$ZIG_INC" -I"$ROOT/userland/libsystem" -I"$ROOT/userland/libsystem/kshim" \
+        "$ROOT/tools/fdn_set_test.c" -o "$OUT/fdn_set_test"
+    "$OUT/fdn_set_test"
+fi
 "$OUT/fdn_dec_test"
 if ! compgen -G "/usr/lib/x86_64-linux-gnu/libicui18n.so.*" >/dev/null && ! compgen -G "/usr/lib64/libicui18n.so.*" >/dev/null \
    && ! compgen -G "/usr/lib/libicui18n.so.*" >/dev/null; then

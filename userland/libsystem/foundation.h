@@ -6,6 +6,16 @@
 typedef struct { cx_class_t *isa; u64 flags; char *s; u64 n; } nsstr_t;       /* = layout de __cfstring */
 typedef struct { cx_class_t *isa; id *items; u64 n, cap; } nsarr_t;
 typedef struct { cx_class_t *isa; id *keys, *vals; u64 n, cap; } nsdict_t;
+/* NSSet/NSMutableSet/NSCountedSet (fdn_set.c): os 4 primeiros campos = nsarr_t; tabela hash em slots */
+typedef struct {
+    cx_class_t *isa;
+    id *items;
+    u64 n, cap;
+    u64 *slots, scap;
+    u64 *counts;            /* NSCountedSet */
+    struct cfset_cb *cb;    /* CFSet com callbacks próprios; 0 = objetos */
+    u64 mut;
+} nsset_t;
 typedef struct cx_timer {
     cx_class_t *isa;
     double interval, fire;
