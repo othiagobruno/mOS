@@ -1,5 +1,5 @@
 # Stubs exportados do mOS
-Auditoria somente de leitura do que ainda liga e não faz o trabalho. Contagem conferida em `userland/libsystem/sys_zerados.c`: <!--n:total-sys-->**559**<!--/n--> funções no formato `void nome(void) {}`. O recado de «cerca de 5404» não bate com o arquivo nesta main (`0c9c75e`). A lista símbolo a símbolo está em [stubs-full.txt](stubs-full.txt).
+Auditoria somente de leitura do que ainda liga e não faz o trabalho. Contagem conferida em `userland/libsystem/sys_zerados.c`: <!--n:total-sys-->**553**<!--/n--> funções no formato `void nome(void) {}`. O recado de «cerca de 5404» não bate com o arquivo nesta main (`0c9c75e`). A lista símbolo a símbolo está em [stubs-full.txt](stubs-full.txt).
 ## Onde vive cada parte
 | Componente | Caminho |
 |---|---|
@@ -50,7 +50,7 @@ A libswift de stdlib e de runtime deste arquivo é nossa. Foundation, CoreFounda
 | Quantidade | Grupo | Dono | Primeiro símbolo |
 |---:|---|---|---|
 | 154 | Network | Runtime C/C++ e Swift | `$s7Network10NWEndpointO4HostO13stringLiteralAESS_tcfC` |
-| 125 | Foundation | Sistemas | `$s10Foundation11FormatStylePAAs8DurationVAAE04TimebC0VRszrlE4time7patternA2G7PatternV_tFZ` |
+| 124 | Foundation | Sistemas | `$s10Foundation11FormatStylePAAs8DurationVAAE04TimebC0VRszrlE4time7patternA2G7PatternV_tFZ` |
 | 65 | CoreMedia | Sistemas | `$s9CoreMedia15CMTIME_IS_VALIDySbSo6CMTimeaF` |
 | 34 | AVFoundation | Frameworks Apple | `$s12AVFoundation15AVAsyncPropertyC6StatusO11descriptionSSvg` |
 | 27 | ObjC (sem módulo reconhecido) | a definir | `$sSo10OSLogStoreC0A0E10getEntries4with2at8matchings11AnySequenceVySo0A5EntryCGSo0A17EnumeratorOptionsV_So0A8PositionCSgSo11NSPredicateCSgtKF` |
@@ -63,7 +63,6 @@ A libswift de stdlib e de runtime deste arquivo é nossa. Foundation, CoreFounda
 | 10 | AppleArchive | Storage | `$s12AppleArchive0B10ByteStreamC015withCompressionD05using9writingTo9blockSize5flags11threadCount_xAA0bF0V_ACSiAA0B5FlagsVSixACKXEtKlFZ` |
 | 9 | Compression | Sistemas | `$s11Compression12OutputFilterC5writeyyxSgK10Foundation12DataProtocolRzlFTj` |
 | 7 | Accelerate | Runtime C/C++ e Swift | `$s10Accelerate6vImageO7OptionsV7noFlagsAEvgZ` |
-| 5 | Combine | Interface | `$sSo12NSURLSessionC10FoundationE17DataTaskPublisherV7Combine0E0ACMc` |
 | 4 | UniformTypeIdentifiers | Frameworks Apple | `$s22UniformTypeIdentifiers6UTTypeV10webArchiveACvgZ` |
 | 4 | filesystem (C) | Storage | `endfsent` |
 | 4 | libc/libm (C) | Runtime C/C++ e Swift | `__invert_f3` |
@@ -71,12 +70,12 @@ A libswift de stdlib e de runtime deste arquivo é nossa. Foundation, CoreFounda
 | 2 | Security (C) | Sistemas | `SecTaskCopyTeamIdentifier` |
 | 2 | xpc (C) | Kernel | `xpc_dictionary_get_audit_token` |
 
-Soma: **559**. Há ainda 25 `void *kCF…` / `kCFURL…` sem inicializador (ponteiro nulo), listados no anexo. Não são função.
+Soma: **553**. Há ainda 25 `void *kCF…` / `kCFURL…` sem inicializador (ponteiro nulo), listados no anexo. Não são função.
 <!-- gerado:tabela-grupos fim -->
 
 ### O que o grupo deveria fazer
-- **Swift (stdlib), <!--n:Swift (stdlib)-->17<!--/n-->. Runtime.** Metadados e witness tables. Corpo vazio: o binário liga e a chamada não materializa tipo nem compara. O primeiro símbolo da tabela é um associated type cujo módulo não parseou como Foundation; os <!--n:Foundation-->125<!--/n--> com módulo Foundation estão na linha de baixo.
-- **Foundation, <!--n:Foundation-->125<!--/n--> + <!--n:Foundation (C, NS*)-->0<!--/n--> `NS*`. Sistemas.** `URLRequest`, `JSONDecoder`, `Data`, `Date`, erros Cocoa/POSIX. Sem isso o app não decodifica JSON nem monta pedido HTTP. Não é PR do Runtime.
+- **Swift (stdlib), <!--n:Swift (stdlib)-->17<!--/n-->. Runtime.** Metadados e witness tables. Corpo vazio: o binário liga e a chamada não materializa tipo nem compara. O primeiro símbolo da tabela é um associated type cujo módulo não parseou como Foundation; os <!--n:Foundation-->124<!--/n--> com módulo Foundation estão na linha de baixo.
+- **Foundation, <!--n:Foundation-->124<!--/n--> + <!--n:Foundation (C, NS*)-->0<!--/n--> `NS*`. Sistemas.** `URLRequest`, `JSONDecoder`, `Data`, `Date`, erros Cocoa/POSIX. Sem isso o app não decodifica JSON nem monta pedido HTTP. Não é PR do Runtime.
 - **CoreFoundation, <!--n:CoreFoundation-->0<!--/n-->, e os <!--n:ponteiros-->25<!--/n--> ponteiros `kCF*`. Sistemas.** O mesmo vale para qualquer `CF*` que aparecer fora deste arquivo.
 - **CoreMedia, <!--n:CoreMedia-->65<!--/n-->, e Compression, <!--n:Compression-->9<!--/n-->. Sistemas.** Junto com VideoToolbox, Metal, ImageIO, libcurl e libz (zero stubs `void nome(void) {}` aqui).
 - **Security, <!--n:Security (C)-->2<!--/n-->. Sistemas.** `SecTaskCopyTeamIdentifier` e o vizinho. `SecTransformCreateGroupTransform` em `security.c` também.
@@ -86,7 +85,7 @@ Soma: **559**. Há ainda 25 `void *kCF…` / `kCFURL…` sem inicializador (pont
 - **filesystem <!--n:filesystem (C)-->4<!--/n--> e AppleArchive <!--n:AppleArchive-->10<!--/n-->. Storage.**
 - **Network <!--n:Network-->154<!--/n-->, `nw_*` <!--n:Network (C, nw_*)-->25<!--/n-->, libc/libm <!--n:libc/libm (C)-->4<!--/n-->, CommonCrypto <!--n:CommonCrypto (C)-->0<!--/n-->, Accelerate <!--n:Accelerate-->7<!--/n-->. Runtime C/C++ e Swift.**
 - **AVFoundation <!--n:AVFoundation-->34<!--/n-->, CoreAudio <!--n:CoreAudio-->13<!--/n-->, UniformTypeIdentifiers <!--n:UniformTypeIdentifiers-->4<!--/n-->. Frameworks Apple.** CloudKit (`CloudKit.c`) também.
-- **Combine, <!--n:Combine-->5<!--/n-->. Interface.**
+- **Combine, <!--n:Combine-->0<!--/n-->. Interface.**
 - **a definir:** <!--n:ObjC (sem módulo reconhecido)-->27<!--/n--> símbolos ObjC sem módulo reconhecido (há CloudKit mangled no meio; o arquivo `CloudKit.c` já tem dono). `posixmore.c` e `compat_agentes.c` também ficam assim: não entraram nesta leva.
 
 ## Outros corpos vazios ou que só devolvem 0/NULL
@@ -150,7 +149,7 @@ Nesta rodada não rodei `tools/build.sh`, QEMU nem a suíte de host. O estado ab
 | `operator new`, `__cxa_guard_*`, `std::string` em `libcxx.c` / `cxxabi.c` | Código com comportamento. Não reexecutado aqui. |
 | `_Unwind_RaiseException` e `_Unwind_DeleteException` | Código em `cxx_unwind.c`. Não reexecutado aqui. |
 | `compression_stream_*` e `crc32` | Código da zlib no #83. Não reexecutado aqui. |
-| <!--n:total-sys-->559<!--/n--> de `sys_zerados.c` e <!--n:total-swiftui-->46<!--/n--> de `swiftui_imports.c` | Stub. |
+| <!--n:total-sys-->553<!--/n--> de `sys_zerados.c` e <!--n:total-swiftui-->46<!--/n--> de `swiftui_imports.c` | Stub. |
 | `__cxa_throw` de `libcxx.c` | Stub que aborta. |
 | Unicode em `swiftrt.c` | Stub (ASCII/Latin-1 de caixa é real; normalização não). |
 | Exceção ObjC com libc++ no disco | Código em `objc_exc.c`. O harness citado é `tools/objc_eh_hosttest.c`. Não rodei. |

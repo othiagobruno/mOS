@@ -30,7 +30,7 @@ O caminho que importa é o do **Linux** (`tools/build.sh`, o que o `build-final.
 
 - [x] 1 libswiftUIKit no Linux (15 nov.): `tools/build-swift-uikit-objc.sh` no `build.sh`; ligação em dois níveis (0 `_swift_*` em busca plana); `tools/test-uikit-swift.sh` **28/28** no `build/machotest`; os 278 `$s5UIKit…` saíram de `sys_zerados.c` (o overlay exporta os 278 com o mesmo nome)
 - [x] 2 PhotosUI do Catalyst (15 nov.): framework ObjC + `libswiftPhotosUI`, `tools/test-photosui.sh` **18/18**, 27 stubs fora; detalhes em `docs/photosui.md`. Falta o PhotosUI do macOS (AppKit)
-- [ ] 3 Combine × Foundation
+- [x] 3 Combine × Foundation (16 nov.): `userland/sdk/swift-objc/Foundation/CombinePublishers.swift` (Timer.publish/TimerPublisher, NotificationCenter.Publisher, URLSession.DataTaskPublisher, KeyValueObservingPublisher, RunLoop e OperationQueue como Scheduler; JSONDecoder: TopLevelDecoder já vinha do swift-foundation); `tools/test-combine-foundation.sh` **17/17**; os 6 stubs `…7Combine…` restantes saíram. O DataTaskPublisher só foi provado no caminho de erro: o fetch real depende do NSURLSession (frente da Patricia)
 - [ ] 4 SwiftUI.framework no Linux
 - [ ] 5 SwiftUI completo
 - [ ] 6 UIKit Catalyst completo

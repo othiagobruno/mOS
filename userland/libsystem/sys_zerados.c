@@ -357,7 +357,6 @@ void $sSo12NSURLSessionC10FoundationE10AsyncBytesV04makeC8IteratorAE0F0VyF(void)
 void $sSo12NSURLSessionC10FoundationE10AsyncBytesV4taskSo0A8DataTaskCvg(void) {}
 void $sSo12NSURLSessionC10FoundationE10AsyncBytesVMa(void) {}
 void $sSo12NSURLSessionC10FoundationE10AsyncBytesVMn(void) {}
-void $sSo12NSURLSessionC10FoundationE17DataTaskPublisherV7Combine0E0ACMc(void) {}
 void $sSo12NSURLSessionC10FoundationE17DataTaskPublisherVMa(void) {}
 void $sSo12NSURLSessionC10FoundationE17DataTaskPublisherVMn(void) {}
 void $sSo12NSURLSessionC10FoundationE17dataTaskPublisher3forAbCE04DatadE0VAC10URLRequestV_tF(void) {}
@@ -428,7 +427,6 @@ void $sSo20NSNotificationCenterC10FoundationE13NotificationsCMa(void) {}
 void $sSo20NSNotificationCenterC10FoundationE13NotificationsCMn(void) {}
 void $sSo20NSNotificationCenterC10FoundationE13NotificationsCSciACMc(void) {}
 void $sSo20NSNotificationCenterC10FoundationE13notifications5named6objectAbCE13NotificationsCSo0A4Namea_yXlSgtF(void) {}
-void $sSo20NSNotificationCenterC10FoundationE9PublisherV7CombineAdCMc(void) {}
 void $sSo20NSNotificationCenterC10FoundationE9PublisherVMa(void) {}
 void $sSo20NSNotificationCenterC10FoundationE9PublisherVMn(void) {}
 void $sSo20NSNotificationCenterC10FoundationE9publisher3for6objectAbCE9PublisherVSo0A4Namea_yXlSgtF(void) {}
@@ -495,13 +493,10 @@ void $sSo6NSDataCST10FoundationMc(void) {}
 void $sSo6NSDataCSl10FoundationMc(void) {}
 void $sSo7NSCoderC10FoundationE12decodeObject2of6forKeyypSgSayyXlXpGSg_SStF(void) {}
 void $sSo7NSCoderC10FoundationE20decodeArrayOfObjects7ofClass6forKeySayxGSgxm_SStSo8NSObjectCRbzSo14NSSecureCodingRzlF(void) {}
-void $sSo7NSTimerC10FoundationE14TimerPublisherC7Combine011ConnectableD0ACMc(void) {}
-void $sSo7NSTimerC10FoundationE14TimerPublisherC7connect7Combine11Cancellable_pyF(void) {}
 void $sSo7NSTimerC10FoundationE14TimerPublisherCMa(void) {}
 void $sSo7NSTimerC10FoundationE14TimerPublisherCMn(void) {}
 void $sSo7NSTimerC10FoundationE7publish5every9tolerance2on2in7optionsAbCE14TimerPublisherCSd_SdSgSo9NSRunLoopCSo0kL4ModeaAnCE16SchedulerOptionsVSgtFZ(void) {}
 void $sSo8NSObjectC10FoundationE26KeyValueObservingPublisherVMn(void) {}
-void $sSo8NSObjectC10FoundationE26KeyValueObservingPublisherVy_xq_G7Combine0F0ACMc(void) {}
 void $sSo8NSObjectCs23CustomStringConvertible10FoundationMc(void) {}
 void $sSo9NSRunLoopC10FoundationE16SchedulerOptionsVMa(void) {}
 void $sSo9NSRunLoopC10FoundationE16SchedulerOptionsVMn(void) {}
@@ -510,7 +505,6 @@ void $sSo9NSRunLoopC10FoundationE17SchedulerTimeTypeV6StrideV12millisecondsyAGSi
 void $sSo9NSRunLoopC10FoundationE17SchedulerTimeTypeV6StrideV7secondsyAGSdFZ(void) {}
 void $sSo9NSRunLoopC10FoundationE17SchedulerTimeTypeV6StrideVMa(void) {}
 void $sSo9NSRunLoopC10FoundationE17SchedulerTimeTypeV6StrideVMn(void) {}
-void $sSo9NSRunLoopC7Combine9Scheduler10FoundationMc(void) {}
 void $sSo9NSScannerC10FoundationE9scanInt3214representations0D0VSgAbCE20NumberRepresentationO_tF(void) {}
 void $sSo9OS_os_logC0B0E16signpostsEnabledSbvg(void) {}
 void $sSo9OS_os_logC0B0E9subsystem8categoryABSS_SStcfC(void) {}
