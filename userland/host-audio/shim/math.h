@@ -2,9 +2,15 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+#ifndef INFINITY
 #define INFINITY (__builtin_huge_val())
+#endif
+#ifndef NAN
 #define NAN (__builtin_nan(""))
+#endif
+#ifndef HUGE_VAL
 #define HUGE_VAL (__builtin_huge_val())
+#endif
 double floor(double x);
 double ceil(double x);
 double fabs(double x);

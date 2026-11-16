@@ -8,7 +8,7 @@ set -eu
 OUT=$1; ZIG=$2; ZIGDIR=$3; JOBS=${4:-2}; ARCH=${5:-x86_64}
 R=$(cd "$(dirname "$0")/.." && pwd)
 D="$OUT/midia-$ARCH"; mkdir -p "$D"
-SH="$R/userland/host-audio/shim"; OP="$R/userland/third_party/opus"; FD="$R/userland/third_party/fdk-aac"
+SH="$R/userland/host-audio/shim"; SHM="$R/userland/host-audio/shim-midia"; OP="$R/userland/third_party/opus"; FD="$R/userland/third_party/fdk-aac"
 CF=(-target "$ARCH-freestanding-none" -O2 -g0 -ffreestanding -fno-stack-protector -fno-builtin -nostdlib -fpie -w)
 [ "$ARCH" = x86_64 ] && CF+=(-mno-red-zone)
 OPI=(-DHAVE_CONFIG_H -I"$OP" -I"$OP/include" -I"$OP/celt" -I"$OP/silk" -I"$OP/silk/fixed")
@@ -26,7 +26,7 @@ one() {
         "$ZIG" cc "${CF[@]}" -fvisibility=hidden "${OPI[@]}" -I"$SH" -isystem "$ZIGDIR/lib/include" -c "$src" -o "$obj"
     else
         "$ZIG" c++ "${CF[@]}" -std=c++11 -fno-exceptions -fno-rtti -nostdinc++ -fno-threadsafe-statics -fvisibility=hidden \
-            "${FDI[@]}" -I"$SH" -isystem "$ZIGDIR/lib/include" -c "$src" -o "$obj"
+            "${FDI[@]}" -I"$SHM" -I"$SH" -isystem "$ZIGDIR/lib/include" -c "$src" -o "$obj"
     fi
 }
 fail=0
@@ -41,7 +41,7 @@ while [ "$(jobs -rp | wc -l)" -gt 0 ]; do wait -n || fail=1; done
 "$ZIG" cc "${CF[@]}" -Wall "${OPI[@]}" -I"$R/userland/libsystem" -I"$SH" -isystem "$ZIGDIR/lib/include" \
     -c "$R/userland/host-audio/opus_glue.c" -o "$D/opus_glue.o"
 "$ZIG" c++ "${CF[@]}" -std=c++11 -fno-exceptions -fno-rtti -nostdinc++ -fno-threadsafe-statics \
-    "${FDI[@]}" -I"$R/userland/host-audio" -I"$SH" -isystem "$ZIGDIR/lib/include" \
+    "${FDI[@]}" -I"$R/userland/host-audio" -I"$SHM" -I"$SH" -isystem "$ZIGDIR/lib/include" \
     -c "$R/userland/host-audio/aac_glue.cpp" -o "$D/aac_glue.o"
 ls "$D"/*.o > "$D/objs.txt"
 echo "build-midia: $(wc -l < "$D/objs.txt") objetos ($ARCH)"
