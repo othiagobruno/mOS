@@ -81,20 +81,28 @@ static void add_imp(img_t *im, const char *name, int lib, int weak) {
     im->imps[im->nimp++] = (imp_t){strdup(name), lib, weak};
 }
 
+/* Trie de exports: cada nó tem um pai só. 'visto' marca os nós já lidos; um trie que aponta para trás
+ * (ciclo) ou para um nó já visitado não é refeito, senão o caminho cresce até a profundidade-limite e
+ * a busca fica exponencial (Telegram: >30 min). */
+static u8 *trie_visto;
 static void walk_trie(const u8 *base, const u8 *end, const u8 *node, char *buf, int len, int depth) {
-    if (node >= end || depth > 512) return;
+    if (node >= end || node < base || depth > 512) return;
+    size_t at = (size_t)(node - base);
+    if (trie_visto[at >> 3] & (1u << (at & 7))) return;
+    trie_visto[at >> 3] |= (u8)(1u << (at & 7));
     const u8 *p = node;
     u64 tsz = uleb(&p, end);
     if (tsz) { buf[len] = 0; set_add(&bundle_exports, buf); }
+    if (tsz > (u64)(end - p)) return;
     p += tsz;
     if (p >= end) return;
     u8 nch = *p++;
     for (u8 i = 0; i < nch && p < end; i++) {
         int l = len;
-        while (p < end && *p && l < 4000) buf[l++] = (char)*p++;
+        while (p < end && *p) { if (l < 4000) buf[l++] = (char)*p; p++; }   /* rótulo longo: corta o nome, não o passo */
         p++;
         u64 off = uleb(&p, end);
-        walk_trie(base, end, base + off, buf, l, depth + 1);
+        if (off < (u64)(end - base)) walk_trie(base, end, base + off, buf, l, depth + 1);
     }
 }
 
@@ -183,7 +191,12 @@ static void parse_macho(const char *path, const u8 *f, u64 flen) {
             }
         }
     }
-    if (trie) { static char buf[4096]; walk_trie(trie, trie + triesz, trie, buf, 0, 0); }
+    if (trie) {
+        static char buf[4096];
+        trie_visto = calloc(triesz / 8 + 1, 1);
+        if (trie_visto) walk_trie(trie, trie + triesz, trie, buf, 0, 0);
+        free(trie_visto); trie_visto = 0;
+    }
 }
 
 static void scan(const char *dir) {
