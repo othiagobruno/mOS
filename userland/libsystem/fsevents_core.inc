@@ -1,7 +1,7 @@
-/* Núcleo do FSEventStream. Incluído por fsevents.c (mOS) e por tools/fseventstest.c (FSE_HOST).
- * A Apple entrega pelo kernel; aqui um fio varre os caminhos com lstat/readdir e chama o
- * callback com o mesmo formato (char ** ou, no mOS com UseCFTypes, CFArray de CFString).
- * STUB rotulado no corpo: IgnoreSelf, MarkSelf, UseExtendedData, histórico em disco, UUID de volume.
+/* Núcleo do FSEventStream. Incluído por fsevents.c (mOS), tools/fsevents_kernel_test.c (mOS sobre o kernel no
+ * host) e tools/fseventstest.c (FSE_HOST). No mOS a entrega vem do journal do kernel (fse_kscan: ids do kernel,
+ * pid de quem mudou, rename em par, xattr/dono/FinderInfo); no FSE_HOST um fio varre com lstat/readdir.
+ * O callback recebe char **, CFArray de CFString (UseCFTypes) ou de CFDictionary (UseExtendedData).
  */
 #if defined(FSE_HOST)
 #ifndef _POSIX_C_SOURCE
@@ -331,8 +331,8 @@ typedef struct fse_stream {
     char roots[FSE_MAX_ROOTS][FSE_PATH];
     char excl[FSE_MAX_EXCL][FSE_PATH];
     fse_set base;
-    /* STUB: IgnoreSelf e MarkSelf ficam aqui e não filtram. O vnode não tem pid de quem escreveu. */
-    int ignore_self, mark_self;
+    int ignore_self, mark_self, ext_data;   /* no mOS valem pelo journal do kernel (pid de quem mudou) */
+    u64 kid, since;                         /* journal: último id lido; id pedido no Create */
     volatile int lock;
 } fse_stream;
 
@@ -681,6 +681,31 @@ static int fse_history(const fse_cfg *cfg, const fse_set *neu, fse_ev **ev, int 
     return 0;
 }
 
+#ifndef FSE_HOST
+fse_id CFDictionaryCreateMutable(void *alloc, long cap, const void *k, const void *v);
+void CFDictionarySetValue(fse_id d, const void *k, const void *v);
+fse_id CFNumberCreate(void *alloc, long type, const void *p);
+extern const char kCFTypeDictionaryKeyCallBacks, kCFTypeDictionaryValueCallBacks;
+extern const void *kFSEventStreamEventExtendedDataPathKey, *kFSEventStreamEventExtendedFileIDKey;
+static void *fse_wrap_ext(fse_ev *ev, int n, void **cookie) {
+    fse_id arr = CFArrayCreateMutable(0, n, 0);
+    int i;
+    if (!arr) return 0;
+    for (i = 0; i < n; i++) {
+        fse_id d = CFDictionaryCreateMutable(0, 2, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+        fse_id p = CFStringCreateWithCString(0, ev[i].path, 0x08000100u);
+        long long ino = (long long)ev[i].ino;
+        fse_id num = ev[i].ino ? CFNumberCreate(0, 4 /* kCFNumberSInt64Type */, &ino) : 0;
+        if (d && p) CFDictionarySetValue(d, kFSEventStreamEventExtendedDataPathKey, p);
+        if (d && num) CFDictionarySetValue(d, kFSEventStreamEventExtendedFileIDKey, num);
+        if (d) { CFArrayAppendValue(arr, d); CFRelease(d); }
+        if (p) CFRelease(p);
+        if (num) CFRelease(num);
+    }
+    *cookie = arr;
+    return arr;
+}
+#endif
 static void fse_call(fse_stream *s, fse_ev *ev, int n) {
     char **paths;
     u32 *flags;
@@ -693,6 +718,10 @@ static void fse_call(fse_stream *s, fse_ev *ev, int n) {
     ids = malloc((size_t)n * sizeof *ids);
     if (!paths || !flags || !ids) { free(paths); free(flags); free(ids); return; }
     for (i = 0; i < n; i++) { paths[i] = ev[i].path; flags[i] = ev[i].flags; ids[i] = ev[i].id; }
+#ifndef FSE_HOST
+    if (s->ext_data) packed = fse_wrap_ext(ev, n, &cookie);   /* CFArray de CFDictionary {path, fileID} */
+    else
+#endif
     packed = fse_wrap_paths(s->use_cf, paths, n, &cookie);
     if (packed) s->cb(s, s->info, (size_t)n, packed, flags, ids);
     fse_unwrap_paths(cookie);
@@ -733,7 +762,123 @@ static int fse_begin(fse_stream *s, int force, fse_cfg *cfg) {
     }
 }
 
+
+#ifndef FSE_HOST
+/* ======================================================================== modo journal (mOS)
+ * O kernel (kernel/lib/vfsevents.c) registra cada mudança do VFS com id, flags da Apple, inode, pid e caminho.
+ * O stream só lê o que veio depois do último id: nada de varrer a árvore. Os ids são os do kernel (continuam
+ * depois do reboot); um id que o anel já perdeu, ou de antes do boot, chega como KernelDropped|MustScanSubDirs. */
+int getpid(void);
+static int g_kmode = -1;
+static int fse_kmode(void) {
+    if (g_kmode < 0) {
+        mos_fsmeta_t rq = {0};
+        g_kmode = SYS2(SYS_FSMETA, MOS_FSM_EVENTID, &rq) >= 0;
+    }
+    return g_kmode;
+}
+static u64 fse_kernel_id(void) { mos_fsmeta_t rq = {0}; long r = SYS2(SYS_FSMETA, MOS_FSM_EVENTID, &rq); return r > 0 ? (u64)r : 0; }
+static u8 fse_kind_of(u32 f) { return f & FSEV_IS_DIR ? FSE_DIR : f & FSEV_IS_SYMLINK ? FSE_LNK : FSE_FILE; }
+static int fse_matches(const fse_cfg *c, const char *path) {
+    int i;
+    if (fse_excluded(c, path)) return 0;
+    for (i = 0; i < c->nroots; i++) if (fse_under(c->roots[i], path)) return 1;
+    return 0;
+}
+/* lê o journal desde *kid; acrescenta em ev os que valem para o stream */
+static int fse_kread(fse_stream *s, const fse_cfg *cfg, u64 *kid, fse_ev **ev, int *nev, int *cap, u64 *last_id) {
+    static mos_fsevent_t buf[32];   /* só o fio de varredura (ou FlushSync) usa; protegido pelo in_scan */
+    int me = getpid(), total = 0;
+    for (;;) {
+        mos_fsmeta_t rq = {0};
+        rq.pos = *kid;
+        rq.buf = (unsigned long long)buf;
+        rq.size = sizeof buf;
+        long n = SYS2(SYS_FSMETA, MOS_FSM_EVENTS, &rq);
+        if (n <= 0) break;
+        for (long i = 0; i < n; i++) {
+            mos_fsevent_t *k = &buf[i];
+            u32 f = k->flags;
+            *kid = k->id;
+            if (last_id) *last_id = k->id;
+            if (f & FSEV_KERNEL_DROPPED) {             /* lacuna: rescan nas raízes */
+                for (int r = 0; r < cfg->nroots; r++) {
+                    if (fse_ev_add(ev, nev, cap, cfg->roots[r], FSEV_KERNEL_DROPPED | FSEV_MUST_SCAN | FSEV_IS_DIR, FSE_DIR, 0, FSE_DEV) == 0)
+                        (*ev)[*nev - 1].id = k->id;
+                }
+                continue;
+            }
+            if (s->ignore_self && (int)k->pid == me) continue;
+            if (s->mark_self && (int)k->pid == me) f |= FSEV_OWN_EVENT;
+            if (cfg->watch_root && (f & (FSEV_REMOVED | FSEV_RENAMED))) {
+                for (int r = 0; r < cfg->nroots; r++)        /* a raiz (ou uma pasta acima dela) sumiu ou mudou de nome */
+                    if (fse_under(k->path, cfg->roots[r]))
+                        if (fse_ev_add(ev, nev, cap, cfg->roots[r], kFSEventStreamEventFlagRootChanged, FSE_DIR, 0, FSE_DEV) == 0)
+                            (*ev)[*nev - 1].id = k->id;
+            }
+            if (!fse_matches(cfg, k->path)) continue;
+            if (f & (FSEV_MOUNT | FSEV_UNMOUNT)) f &= ~FSEV_TYPE_MASK;   /* Mount/Unmount vêm sem tipo */
+            if (fse_ev_add(ev, nev, cap, k->path, f, fse_kind_of(k->flags), k->ino, FSE_DEV) != 0) return -1;
+            (*ev)[*nev - 1].id = k->id;
+            total++;
+        }
+        if (n < (long)(sizeof buf / sizeof buf[0])) break;
+    }
+    return total;
+}
+static void fse_kscan(fse_stream *s, int force) {
+    fse_cfg *cfg = calloc(1, sizeof *cfg);
+    fse_ev *ev = 0;
+    int nev = 0, cap = 0, deliver;
+    u64 kid, last = 0;
+    if (!cfg) return;
+    if (!fse_begin(s, force, cfg)) { free(cfg); return; }
+    fse_slock(&s->lock);
+    kid = s->kid;
+    fse_sunlock(&s->lock);
+    if (!cfg->primed) {
+        u64 now = fse_kernel_id();
+        if (cfg->need_history) {
+            kid = s->since;
+            if (kid > now) kid = now;
+            fse_kread(s, cfg, &kid, &ev, &nev, &cap, &last);
+            for (int r = 0; r < cfg->nroots && r < 1; r++)      /* um HistoryDone, como o fseventsd */
+                if (fse_ev_add(&ev, &nev, &cap, cfg->roots[r], kFSEventStreamEventFlagHistoryDone, FSE_DIR, 0, FSE_DEV) == 0)
+                    ev[nev - 1].id = kid;
+        } else kid = now;
+    } else fse_kread(s, cfg, &kid, &ev, &nev, &cap, &last);
+    if (!cfg->file_events && nev) {
+        u64 top = 0;
+        for (int i = 0; i < nev; i++) if (ev[i].id > top) top = ev[i].id;
+        fse_legacy(&ev, &nev, cfg);
+        for (int i = 0; i < nev; i++) ev[i].id = top;      /* pasta "mexeu": o id do evento mais novo */
+    }
+    fse_slock(&s->lock);
+    s->kid = kid;
+    s->primed = 1;
+    s->need_history = 0;
+    s->last_ms = fse_plat_now_ms();
+    if (nev) s->latest = ev[nev - 1].id;
+    deliver = !s->zombie && s->started && nev && s->cb;
+    s->in_scan = 0;
+    fse_sunlock(&s->lock);
+    if (deliver) fse_call(s, ev, nev);
+    free(ev);
+    free(cfg);
+    fse_unref(s);
+}
+#else
+static int fse_kmode(void) { return 0; }
+static void fse_kscan(fse_stream *s, int force) { (void)s; (void)force; }
+#endif
+
+static void fse_scan_tree(fse_stream *s, int force);
 static void fse_scan(fse_stream *s, int force) {
+    if (fse_kmode()) { fse_kscan(s, force); return; }
+    fse_scan_tree(s, force);
+}
+
+static void fse_scan_tree(fse_stream *s, int force) {
     fse_cfg *cfg;
     fse_walk walk;
     fse_set neu;
@@ -888,9 +1033,10 @@ void *FSEventStreamCreate(void *alloc, void *cb, void *ctx, void *paths, u64 sin
     s->nodefer = (flags & kFSEventStreamCreateFlagNoDefer) != 0;
     s->watch_root = (flags & kFSEventStreamCreateFlagWatchRoot) != 0;
     s->file_events = (flags & kFSEventStreamCreateFlagFileEvents) != 0;
-    s->ignore_self = (flags & kFSEventStreamCreateFlagIgnoreSelf) != 0; /* STUB: sem efeito */
-    s->mark_self = (flags & kFSEventStreamCreateFlagMarkSelf) != 0;     /* STUB: sem efeito */
-    (void)(flags & kFSEventStreamCreateFlagUseExtendedData);            /* STUB: sem dicionário extra */
+    s->ignore_self = (flags & kFSEventStreamCreateFlagIgnoreSelf) != 0;
+    s->mark_self = (flags & kFSEventStreamCreateFlagMarkSelf) != 0;
+    s->ext_data = (flags & kFSEventStreamCreateFlagUseExtendedData) && s->use_cf;   /* a Apple exige UseCFTypes */
+    s->since = since;
     ms = latency * 1000.0;
     if (ms < 0) ms = 0;
     if (ms > 600000.0) ms = 600000.0;
@@ -988,7 +1134,12 @@ u64 FSEventStreamGetLatestEventId(void *p) {
     fse_sunlock(&s->lock);
     return id;
 }
-u64 FSEventsGetCurrentEventId(void) { return g_eid; }
+u64 FSEventsGetCurrentEventId(void) {
+#ifndef FSE_HOST
+    if (fse_kmode()) return fse_kernel_id();
+#endif
+    return g_eid;
+}
 unsigned char FSEventsPurgeEventsForDeviceUpToEventId(int dev, u64 id) {
     (void)dev; (void)id;
     return 1; /* STUB: não há journal em disco para apagar */
@@ -1063,6 +1214,6 @@ void *FSEventStreamCopyPathsBeingWatched(void *p) {
 }
 void *FSEventStreamCopyDescription(void *p) {
     (void)p;
-    return CFStringCreateWithCString(0, "FSEventStream (mOS: varredura de stat/readdir)", 0x08000100u);
+    return CFStringCreateWithCString(0, fse_kmode() ? "FSEventStream (mOS: journal do kernel)" : "FSEventStream (mOS: varredura de stat/readdir)", 0x08000100u);
 }
 #endif

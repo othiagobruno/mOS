@@ -2,6 +2,7 @@
 #include "vfs.h"
 #include "fwlink.h"
 #include "account.h"
+#include "syscall.h"
 
 extern const char *account_home(void) __attribute__((weak));
 const char *home_sub(const char *sub) {
@@ -29,7 +30,7 @@ __attribute__((weak)) bool vfs_ext_writable(vnode_t *n) { (void)n; return false;
 
 static int ensuring;
 static void ensure(vnode_t *n) {
-    if (n && n->ext && !ensuring) { ensuring++; vfs_ensure(n); ensuring--; }
+    if (n && n->ext && !ensuring) { ensuring++; vfs_ev_mute++; vfs_ensure(n); vfs_ev_mute--; ensuring--; }
 }
 
 /* volumes externos (.dmg, APFS...) são somente leitura: o ancestral mais próximo com ext decide;
@@ -68,6 +69,7 @@ static vnode_t *add_child(vnode_t *dir, const char *name, bool isdir) {
     n->next = *pp;
     *pp = n;
     dir_changed(dir);
+    vfs_ev(n, FSEV_CREATED);
     persist_mark(n);
     return n;
 }
@@ -195,8 +197,33 @@ static void unlink_node(vnode_t *n) {
     n->next = NULL;
 }
 
+/* apagar uma árvore: um ItemRemoved por item (como o rm -r no macOS); acima de 2048, um MustScanSubDirs na raiz */
+static void ev_removed_tree(vnode_t *n) {
+    if (vfs_ev_mute) return;
+    int cap = 64, sp = 0, k = 0;
+    vnode_t **st = kmalloc(sizeof(vnode_t *) * (usize)cap);
+    if (!st) { vfs_ev(n, FSEV_REMOVED); return; }
+    st[sp++] = n;
+    while (sp) {
+        vnode_t *v = st[--sp];
+        if (k++ >= 2048) { vfs_ev(n, FSEV_REMOVED | FSEV_MUST_SCAN); break; }
+        if (v->dir) for (vnode_t *c = v->child; c; c = c->next) {
+            if (sp == cap) {
+                vnode_t **ns = kmalloc(sizeof(vnode_t *) * (usize)cap * 2);
+                if (!ns) break;
+                memcpy(ns, st, sizeof(vnode_t *) * (usize)sp);
+                kfree(st); st = ns; cap *= 2;
+            }
+            st[sp++] = c;
+        }
+        vfs_ev(v, FSEV_REMOVED);
+    }
+    kfree(st);
+}
+
 bool vfs_delete(vnode_t *n) {
     if (!n || n == &root || !n->parent || read_only(n) || vfs_is_volume(n)) return false; /* volume: vfs_eject */
+    ev_removed_tree(n);
     persist_delete(n);
     vnode_t *par = n->parent;
     unlink_node(n);
@@ -228,7 +255,7 @@ bool vfs_move(vnode_t *n, vnode_t *np, const char *newname) {
     while (*pp && strcasecmp((*pp)->name, name) < 0) pp = &(*pp)->next;
     n->next = *pp;
     *pp = n;
-    if (old) { persist_move(old, n); kfree(old); }
+    if (old) { vfs_ev_rename(n, old); persist_move(old, n); kfree(old); }
     return true;
 }
 

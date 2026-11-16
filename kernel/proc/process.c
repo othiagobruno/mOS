@@ -2584,12 +2584,27 @@ i64 file_store_at(const char *path, u64 off, const void *src, u64 len) {
     return (i64)len;
 }
 
+/* pid de quem está mudando o VFS (journal de eventos: IgnoreSelf/MarkSelf do FSEvents) */
+int vfs_ev_pid(void) { thread_t *t = thread_current(); return t && t->proc ? t->proc->pid : 0; }
+
 /* SYS_FSMETA: copia o pedido e os buffers; a regra fica em vfs_fsmeta (kernel/lib/vfsmeta.c, testada no host) */
 static i64 fsmeta_syscall(process_t *p, int op, u64 ureq) {
     mos_fsmeta_t rq;
     char path[256], name[VFS_XATTR_NAME_MAX + 2];
     vnode_t *v;
     if (!uvm_copy_in(p, &rq, ureq, sizeof rq)) return -MOS_EFAULT;
+    if (op == MOS_FSM_EVENTID) { u64 last = 0; vfs_ev_read(~0ull, NULL, 0, &last); return (i64)last; }
+    if (op == MOS_FSM_EVENTS) {                     /* journal (kernel/lib/vfsevents.c), em lotes de até 32 */
+        int max = (int)MIN(rq.size / sizeof(mos_fsevent_t), 32ull);
+        if (max <= 0) return -MOS_EINVAL;
+        mos_fsevent_t *ev = kmalloc(sizeof *ev * (usize)max);
+        if (!ev) return -MOS_ENOMEM;
+        int n = vfs_ev_read(rq.pos, ev, max, NULL);
+        i64 r = n;
+        if (n > 0 && !uvm_copy_out(p, rq.buf, ev, sizeof *ev * (usize)n)) r = -MOS_EFAULT;
+        kfree(ev);
+        return r;
+    }
     if (rq.fd >= 0) {
         if (fd_get(p, (u64)rq.fd) < 0) return -MOS_EBADF;
         if (p->fds[rq.fd].kind != FD_FILE || !p->fds[rq.fd].path[0] || p->fds[rq.fd].pty) return -MOS_EBADF;
@@ -3580,6 +3595,7 @@ static u64 proc_syscall_(int_frame_t *f) {
         if (vfs_authorize(cv, VFS_KR_WRITE_SECURITY, p->euid, p->egid)) { r = -MOS_EPERM; break; }   /* dono, root ou ACL */
         mode_apply(&cv->mode, (unsigned)b);
         vfs_meta_changed(cv);
+        vfs_ev(cv, FSEV_INODE_META);
         r = 0;
         break;
     }
@@ -3592,6 +3608,7 @@ static u64 proc_syscall_(int_frame_t *f) {
         if (vfs_authorize(fv, VFS_KR_WRITE_SECURITY, p->euid, p->egid)) { r = -MOS_EPERM; break; }
         fchmod_apply(&fv->mode, &p->fds[a].mode, (unsigned)b);
         vfs_meta_changed(fv);
+        vfs_ev(fv, FSEV_INODE_META);
         r = 0;
         break;
     }

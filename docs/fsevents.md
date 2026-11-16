@@ -1,40 +1,45 @@
 # FSEvents
 
-O kernel não avisa quando um arquivo muda. `FSEventStreamStart` entrega o callback por uma varredura em userland (`userland/libsystem/fsevents.c`), com `lstat` e `readdir`. Este texto é o que falta do lado do kernel; o kernel não foi alterado.
+## Como funciona
 
-## O que o VFS tem
+O kernel registra cada mudança do VFS num journal (`kernel/lib/vfsevents.c`): id crescente, flags
+`kFSEventStreamEventFlag*` da Apple, inode, pid de quem fez e caminho. O `FSEventStream` do libSystem
+(`userland/libsystem/fsevents_core.inc`, `fse_kscan`) lê só o que veio depois do último id que viu
+(`SYS_FSMETA` `MOS_FSM_EVENTS`/`MOS_FSM_EVENTID`): não varre mais a árvore.
 
-`vnode_t` (`kernel/include/vfs.h`) guarda o nome, o tamanho, `mtime` em milissegundos desde o boot (0 se veio do disco de boot) e os ponteiros da árvore. Não guarda inode. Não há `EVFILT_VNODE`, inotify nem fila de eventos: uma escrita só atualiza o nó (`kernel/lib/vfs.c`, `kernel/proc/process.c`).
-
-`fill_stat` exporta esse `mtime` em segundos (`boot + mtime / 1000`). O `lstat` do libSystem (`to_mac_stat` em `libc.c`) copia esses segundos, põe `st_dev = 0x1000002`, calcula `st_ino` com um hash do caminho e deixa `mtime_ns` em 0.
-
-## O que o fluxo faz
-
-Um fio (`fse_poll`) relê as raízes do fluxo. A diferença contra a foto anterior vira o callback da Apple:
-
-| Mudança | Flags |
+| Mudança no VFS | Evento |
 |---|---|
-| arquivo novo | `ItemCreated` + `ItemIsFile` |
-| pasta nova | `ItemCreated` + `ItemIsDir` |
-| link novo | `ItemCreated` + `ItemIsSymlink` |
-| tamanho ou mtime diferente | `ItemModified` + o tipo |
-| modo ou inode diferente | `ItemInodeMetaMod` + o tipo |
-| sumiu | `ItemRemoved` + o tipo |
-| sumiu e apareceu com o mesmo `st_ino` e `st_dev` | `ItemRenamed` + o tipo, nos dois caminhos |
+| criar arquivo/pasta | `ItemCreated` + tipo |
+| escrever, truncar | `ItemModified` (escritas seguidas, ainda não lidas, juntam num evento) |
+| apagar | `ItemRemoved`, um por item da árvore (acima de 2048, um `MustScanSubDirs` na raiz) |
+| renomear/mover | dois `ItemRenamed` seguidos (caminho velho e novo, mesmo inode) |
+| xattr | `ItemXattrMod`; `com.apple.FinderInfo` também `ItemFinderInfoMod` |
+| chown | `ItemChangeOwner` + `ItemInodeMetaMod`; chmod, chflags, utimes, ACL: `ItemInodeMetaMod` |
+| montar/ejetar volume | `Mount`/`Unmount` em `/Volumes/<nome>` (os itens do volume não viram eventos) |
+| apagado com fd aberto (`/tmp/.orfaos`) | `ItemRemoved` |
 
-Com `kFSEventStreamCreateFlagFileEvents` o caminho é o do próprio item. Sem a flag, o caminho é o da pasta (ou da raiz, se ela for um arquivo) e a flag leva `MustScanSubDirs`. `UseCFTypes` entrega um `CFArray` de `CFString`; sem ela, `char **`. Os ponteiros valem só durante o callback.
-
-`FlushSync` varre na hora, na thread de quem chamou. `FlushAsync` só pede a varredura ao fio. A latência junta as mudanças numa foto só: criar e apagar no mesmo intervalo some, porque a segunda foto já não tem o arquivo.
-
-`tools/fseventstest.c` compila o mesmo núcleo no Linux (`-DFSE_HOST`), onde `lstat` tem inode e nanossegundo de verdade.
+- **Ids** continuam depois do reboot (o próximo id vai no `\mOS\.vfsmeta`). Um id de antes do boot, ou que o anel
+  (8192 eventos) já perdeu, chega como `KernelDropped|MustScanSubDirs` na raiz; depois vem o que existe.
+- **sinceWhen**: repete o journal desde o id e termina com um `HistoryDone`.
+- **IgnoreSelf** pula os eventos do próprio processo; **MarkSelf** marca `OwnEvent`.
+- **WatchRoot**: a raiz (ou uma pasta acima) apagada ou renomeada dá `RootChanged`.
+- **UseExtendedData** (com `UseCFTypes`): CFArray de CFDictionary com `path` e `fileID`
+  (`kFSEventStreamEventExtendedDataPathKey`, `kFSEventStreamEventExtendedFileIDKey`).
+- Sem `FileEvents`, o caminho é a pasta e a flag leva `MustScanSubDirs` (o id é o do evento mais novo).
+- Latência junta os eventos até o prazo; `NoDefer` e `FlushAsync` acordam o fio em até 15 ms; `FlushSync` lê na hora.
+- Exclusões (`SetExclusionPaths`) valem para o caminho e o que estiver abaixo.
 
 ## O que continua de fora
 
-- Não há notificação. O fio acorda no máximo a cada 15 ms (`NoDefer` ou `FlushAsync`) e relê a árvore. Quanto maior a árvore, mais tarde o callback corre.
-- Dois writes no mesmo segundo, com o mesmo tamanho, não aparecem. O milissegundo está em `vnode_t.mtime` e se perde em `fill_stat`; `mtime_ns` fica 0.
-- No mOS o `st_ino` muda quando o caminho muda, então um rename não forma o par `ItemRenamed`. No host o inode é estável e o teste cobre o par.
-- Mais de 16384 entradas, ou mais de 32 níveis, emite uma vez `MustScanSubDirs|UserDropped` e guarda a última foto que coube. Não existe `KernelDropped` de uma fila do kernel.
-- `IgnoreSelf`, `MarkSelf` e `UseExtendedData` não têm efeito. O vnode não diz quem escreveu e não há dicionário estendido.
-- `ScheduleWithRunLoop` e `SetDispatchQueue` só guardam o ponteiro. O callback corre no fio da varredura, ou em quem chamou `Start` ou `FlushSync`. Não muda para a fila nem para o run loop.
-- `FSEventsCopyUUIDForDevice` e `FSEventsGetLastEventIdForDeviceBeforeTime` devolvem vazio: não há journal. `FSEventsPurgeEventsForDeviceUpToEventId` devolve sucesso e não apaga nada. `FSEventStreamCreateRelativeToDevice` ignora o device (há um volume só) e cai no `Create`.
-- A varredura não segue link simbólico para dentro. O link em si entra como `ItemIsSymlink`.
+- `ScheduleWithRunLoop` e `SetDispatchQueue` só guardam o ponteiro: o callback corre no fio do stream ou em quem chamou
+  `Start`/`FlushSync` (o run loop e o Dispatch são das frentes do Eduardo e da Fernanda).
+- `FSEventsCopyUUIDForDevice` devolve vazio e `FSEventsPurgeEventsForDeviceUpToEventId` não apaga nada (o journal é
+  só da RAM; o que sobrevive ao reboot é o id).
+- Mudanças feitas direto num volume de `/Volumes` por outro sistema não aparecem (só as que passam pelo VFS).
+
+## Testes
+
+- `sh tools/fsevents_kernel_test.sh`: o ramo do mOS sobre o VFS e o journal reais do kernel (23 verificações:
+  FileEvents, rename, xattr, exclusão, IgnoreSelf, MarkSelf, histórico, lacuna, modo pasta, latência, WatchRoot).
+- `gcc -std=c11 -O1 -DFSE_HOST tools/fseventstest.c -pthread`: o modo varredura no Linux (42).
+- `tools/vfsmeta_test.c` cobre o journal no kernel (juntar, rename, árvore, mudo, lacuna, id no `.vfsmeta`).

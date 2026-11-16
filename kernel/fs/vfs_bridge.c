@@ -200,7 +200,13 @@ bool vfs_eject(vnode_t *vol) {
         if (d->mnt == m) lru_unlink(d);
     }
     vol->ext = NULL; /* vira uma pasta comum só para poder ser removida */
-    if (!vfs_delete(vol)) { vol->ext = m->root; return false; }
+    char *vp = kmalloc(1024);
+    if (vp) vfs_path(vol, vp, 1024);
+    vfs_ev_mute++;                       /* os itens do volume não "somem": o volume sai (um evento Unmount) */
+    bool del = vfs_delete(vol);
+    vfs_ev_mute--;
+    if (!del) { vol->ext = m->root; kfree(vp); return false; }
+    if (vp) { vfs_ev_mount(vp, false); kfree(vp); }
     consent_revoke(m);
     dfs_unmount(m);
     return true;
@@ -247,7 +253,7 @@ void dfs_publish_new(dmount_t *before) {
         fit_name(m->root->name, name);
         snprintf(vpath, sizeof(vpath), "/Volumes/%s", name);
         vnode_t *v = vfs_mkdir(vpath);
-        if (v) v->ext = m->root;
+        if (v) { v->ext = m->root; vfs_ev_mount(vpath, true); }
     }
 }
 

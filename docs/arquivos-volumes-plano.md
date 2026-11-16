@@ -65,4 +65,5 @@ de host passando (o build do projeto fica para o fim, pela fila `build-final.sh`
 |---|---|
 | 1 Metadados do VFS | ✅ kernel + libSystem + teste de host (`tools/vfsmeta_test.c`, 78 verificações, ASan/UBSan limpos). Detalhes: `docs/vfs-metadados.md`. Falta no QEMU: só no build final. |
 | 2 Permissões e ACL | ✅ kernel (`vfsperm.c`) + `acl.c` + testes de host (115 + 26). |
-| 3–11 | a fazer |
+| 3 FSEvents | ✅ journal no kernel (`vfsevents.c`) + FSEventStream sobre ele (`docs/fsevents.md`); testes 130 + 23 + 42. EVFILT_VNODE: o journal está pronto, o `kevent` é da Renata. |
+| 4–11 | a fazer |

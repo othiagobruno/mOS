@@ -109,6 +109,14 @@ void vfs_guid_user(u8 g[16], u32 uid);
 void vfs_guid_group(u8 g[16], u32 gid);
 int  vfs_guid_id(const u8 g[16], u32 *id);                          /* 1 usuário, 2 grupo, 0 outro */     /* a data, com a hora do boot quando desconhecida */
 void persist_meta_mark(void);
+/* ---- journal de eventos (kernel/lib/vfsevents.c) para FSEvents/EVFILT_VNODE; flags FSEV_* do syscall.h */
+extern int vfs_ev_mute;                            /* > 0: mudanças não viram eventos (espelho de volume, ejetar) */
+void vfs_ev(vnode_t *n, u32 flags);
+void vfs_ev_rename(vnode_t *n, const char *old_path);
+void vfs_ev_mount(const char *path, bool mounted);
+void vfs_ev_set_base(u64 id);
+u64  vfs_ev_next_id(void);
+int  vfs_ev_read(u64 since, void *out_mos_fsevent, int max, u64 *latest);
 
 /* núcleo do SYS_FSMETA (syscall.h): rq e kbuf já no kernel; name = nome do xattr (ou NULL) */
 i64  vfs_fsmeta(vnode_t *v, int op, const void *rq, const char *name, void *kbuf, int euid, int egid);
