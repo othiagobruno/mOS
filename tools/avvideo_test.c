@@ -42,6 +42,29 @@ int main(int argc, char **argv) {
     }
     CHECKAT(-1.0, 0);                                                                      /* antes do começo: o primeiro */
     CHECKAT(dur + 5, ns - 1);                                                              /* depois do fim: o último */
+    /* leitura sequencial (AVAssetReader decodificado): todos os quadros, na ordem de exibição, iguais ao ffmpeg */
+    {
+        avv_t *q = avv_open_path(argv[1], &err);
+        avv_frame fr; int k = 0, seqbad = 0;
+        while (avv_next_frame(q, &fr) == 1) {
+            const unsigned char *R = ref + (long)k * fs;
+            for (int r = 0; r < h; r++) if (memcmp(fr.y + r * fr.sy, R + r * w, w)) { seqbad++; break; }
+            if (fr.pts != pts[k]) seqbad++;
+            k++;
+        }
+        if (seqbad || k != (int)ns) { printf("avvideo FALHA sequência: %d quadros de %u, %d errados\n", k, ns, seqbad); bad++; }
+        /* amostras comprimidas (AVAssetReader sem outputSettings): todas, a primeira é chave, dts <= pts, dts crescente */
+        double last_dts = -1e9; int rawbad = 0, syncs = 0;
+        for (uint32_t i = 0; i < ns; i++) {
+            const uint8_t *d; uint32_t sz; double p, dt, du; int sy;
+            if (avv_raw_sample(q, i, &d, &sz, &p, &dt, &du, &sy) || !sz || dt > p + 1e-9 || dt <= last_dts || du <= 0) rawbad++;
+            if (i == 0 && !sy) rawbad++;
+            syncs += sy; last_dts = dt;
+        }
+        uint32_t an; const uint8_t *avcc = avv_avcc(q, &an);
+        if (rawbad || !avcc || an < 7 || avcc[0] != 1) { printf("avvideo FALHA amostras comprimidas: %d problemas\n", rawbad); bad++; }
+        avv_close(q);
+    }
     /* BGRA, rotação e redução */
     {
         avv_frame fr;
@@ -78,6 +101,6 @@ int main(int argc, char **argv) {
     }
     avv_close(v);
     if (bad) { printf("avvideo FALHA %d de %d consultas\n", bad, checks); return 1; }
-    printf("avvideo ok %u quadros %dx%d, %.2f s, %.2f fps: %d consultas (sequência, entre quadros, aleatórias, bordas) iguais ao ffmpeg; BGRA, rotação e redução\n", ns, w, h, dur, fps, checks);
+    printf("avvideo ok %u quadros %dx%d, %.2f s, %.2f fps: %d consultas (sequência, entre quadros, aleatórias, bordas) iguais ao ffmpeg; leitura sequencial e amostras comprimidas; BGRA, rotação e redução\n", ns, w, h, dur, fps, checks);
     return 0;
 }

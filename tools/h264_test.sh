@@ -94,6 +94,13 @@ av() { # nome extensão entrada parâmetros...
 av av_gop12 mp4 "$A" -c:v libx264 -profile:v high -pix_fmt yuv420p -g 12 -x264-params bframes=3:b-pyramid=normal
 av av_mov_audio mov "-f lavfi -i testsrc=size=320x240:rate=30:duration=3 -f lavfi -i sine=d=3" -c:v libx264 -profile:v main -g 30 -c:a aac -pix_fmt yuv420p
 av av_720 mp4 "$H" -c:v libx264 -profile:v high -pix_fmt yuv420p -g 15
+# AVPlayerItemVideoOutput e AVPlayerLayer (avplayervideo.c de verdade, runtime em volta substituído)
+gcc -std=gnu11 -O1 -w -fno-builtin -I"$R/userland/libsystem/kshim" -I"$R/userland/libsystem" -I"$R/kernel/include" \
+    -c "$R/userland/libsystem/avplayervideo.c" -o "$T/apv.o" && gcc -O1 -w -I"$R/userland/libsystem" -c "$R/tools/avplayervideo_test.c" -o "$T/apvt.o" && \
+    g++ "$T/apvt.o" "$T/apv.o" "$T/avv.o" "$T/mp4d.o" "$T/glue.o" "$T"/o/*.o -lpthread -Wl,--unresolved-symbols=ignore-all -o "$T/apvt" || exit 1
+n=$((n+1))
+ffmpeg $F $A -c:v libx264 -profile:v main -bf 0 -pix_fmt yuv420p "$T/pv.mp4" && ffmpeg $F -i "$T/pv.mp4" -fps_mode passthrough -f rawvideo -pix_fmt yuv420p "$T/pv.ref"
+r=$("$T/apvt" "$T/pv.mp4" "$T/pv.ref" 2>/dev/null); echo "$r"; case "$r" in "avplayervideo ok"*) ok=$((ok+1));; esac
 # codificador I_PCM (h264sw.c) com ida e volta pelo mesmo decodificador e pelo ffmpeg
 gcc -std=c11 -O2 -w -c "$R/tools/vtcodec_test.c" -o "$T/vct.o" && gcc -std=gnu11 -O2 -w -I"$R/userland/libsystem" \
     -c "$R/userland/libsystem/h264sw.c" -o "$T/hsw.o" && g++ "$T/vct.o" "$T/hsw.o" "$T/glue.o" "$T"/o/*.o -lm -lpthread -o "$T/vct" || exit 1

@@ -316,3 +316,64 @@ int avv_to_bgra(const avv_frame *f, int rot, int out_w, int out_h, uint8_t **dst
     *dst = sc; *ow = out_w; *oh = out_h;
     return 0;
 }
+
+int avv_matrix(const avv_frame *f) {
+    int m = f->matrix;
+    if (m == 5) return 6;
+    if (m == 10) return 9;
+    if (m == 1 || m == 6 || m == 7 || m == 9) return m;
+    return f->h >= 720 ? 1 : 6;
+}
+void avv_to_nv12(const avv_frame *f, int dst_full, uint8_t *yp, long ybpr, uint8_t *uvp, long uvbpr) {
+    uint8_t ly[256], lc[256];
+    int same = !!f->full_range == !!dst_full;
+    for (int i = 0; i < 256; i++) {
+        if (same) { ly[i] = (uint8_t)i; lc[i] = (uint8_t)i; }
+        else if (dst_full) { ly[i] = (uint8_t)clamp8(((i - 16) * 255 * 2 + 219) / (219 * 2)); lc[i] = (uint8_t)clamp8(((i - 128) * 255 * 2 + (i >= 128 ? 224 : -224)) / (224 * 2) + 128); }
+        else { ly[i] = (uint8_t)((i * 219 * 2 + 255) / (255 * 2) + 16); lc[i] = (uint8_t)clamp8(((i - 128) * 224 * 2 + (i >= 128 ? 255 : -255)) / (255 * 2) + 128); }
+    }
+    for (int r = 0; r < f->h; r++) {
+        const uint8_t *s = f->y + (size_t_)r * f->sy;
+        uint8_t *d = yp + (size_t_)r * ybpr;
+        if (same) memcpy(d, s, (size_t_)f->w);
+        else for (int x = 0; x < f->w; x++) d[x] = ly[s[x]];
+    }
+    for (int r = 0; r < (f->h + 1) / 2; r++) {
+        const uint8_t *su = f->u + (size_t_)r * f->suv, *sv = f->v + (size_t_)r * f->suv;
+        uint8_t *d = uvp + (size_t_)r * uvbpr;
+        for (int x = 0; x < (f->w + 1) / 2; x++) { d[2 * x] = lc[su[x]]; d[2 * x + 1] = lc[sv[x]]; }
+    }
+}
+
+static void fill(avv_frame *out, const slot_t *s) {
+    int cw = (s->w + 1) / 2, ch = (s->h + 1) / 2;
+    out->y = s->buf; out->u = s->buf + (size_t_)s->w * s->h; out->v = out->u + (size_t_)cw * ch;
+    out->sy = s->w; out->suv = cw; out->w = s->w; out->h = s->h; out->pts = s->pts;
+    out->full_range = s->col.full_range; out->matrix = s->col.matrix; out->primaries = s->col.primaries; out->transfer = s->col.transfer;
+}
+int avv_next_frame(avv_t *v, avv_frame *out) {
+    if (!v || !out) return -1;
+    if (!v->dec && restart(v, 0)) return -1;
+    if (!v->qn) {
+        int r = pump(v);
+        if (r <= 0) return r;
+    }
+    take(v);
+    fill(out, &v->cur);
+    return 1;
+}
+int avv_raw_sample(avv_t *v, uint32_t i, const uint8_t **data, uint32_t *size, double *pts, double *dts, double *dur, int *sync) {
+    if (!v || i >= v->t->nsamples) return -1;
+    uint32_t sz = v->t->s[i].size;
+    if (sz > v->sample_cap) { uint8_t *b = realloc(v->sample, sz); if (!b) return -1; v->sample = b; v->sample_cap = sz; }
+    if (mp4_read_sample(&v->m, v->t, i, v->sample)) return -1;
+    double ts = v->t->timescale ? (double)v->t->timescale : 1;
+    if (data) *data = v->sample;
+    if (size) *size = sz;
+    if (pts) *pts = mp4_pts(v->t, i);
+    if (dts) *dts = mp4_pts(v->t, i) - (double)v->t->s[i].cto / ts;
+    if (dur) *dur = v->t->s[i].dur / ts;
+    if (sync) *sync = v->t->s[i].sync;
+    return 0;
+}
+const uint8_t *avv_avcc(const avv_t *v, uint32_t *n) { if (n) *n = v ? v->t->cfg_len : 0; return v ? v->t->cfg : 0; }
