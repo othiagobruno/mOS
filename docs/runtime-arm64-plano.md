@@ -37,6 +37,23 @@ com a última fatia da tabela; deveria preferir arm64 puro.
 3. **Swift arm64 no Linux**: as `libswift*` com fatia arm64 (o `tools/build-swift-arm64.ps1` faz no Windows) e
    Combine/SwiftUI/UIKit.
 4. **Frameworks**: fatia arm64 de cada framework da tabela, pelo mesmo script que gera o x86_64.
+### Convenção Swift: o que o compilador real diz (15 nov.)
+
+Conferido com `.tools/swift-6.4.2/usr/bin/swift-frontend -emit-ir -parse-stdlib` para x86_64 e arm64 (mesmo IR,
+só muda o registrador): método não-mutating de struct/enum leva `self` expandido nos **últimos argumentos normais**
+(1 ou 2 palavras, sem `swiftself`); método de classe, `mutating` e witness genérico levam `self` (ou o ponteiro) em
+`swiftself` (r13 / x20); init e `static` não têm `self`. Erro em `swifterror` (r12 / x21), resultado indireto em
+r14?/x8 conforme o LLVM, retorno até 4 palavras em rax..r8 / x0..x3. No libSystem arm64 as entradas novas usam
+`__attribute__((swiftcall))` + `swift_context`/`swift_error_result` (testado no triplo `arm64-apple-macos11-elf`:
+self em x20, erro em x21, retorno de 4 palavras em x0..x3), não asm à mão.
+
+Achado repassado ao Eduardo (dono): várias pontes x86 de `string_fdn.c`/`foundation_swift_data.c` leem r13/r14
+onde o Swift passa a String/Data em rdi/rsi (`String(format:)`, `data(using:)`, `_bridgeToObjectiveC`), e o
+`String(format:)` só trata um número e um texto. Por isso o arm64 **não** copia essas pontes: os símbolos
+`$sSS10Foundation…`/`$s10Foundation4Data…` do processo arm64 vêm do Swift Foundation real arm64 (item 3,
+combinando com a Fernanda o `build-libswift-real.sh` com `MOS_ARCH=arm64`). Os `swiftui_*.c` e `combine_*`
+seguem a mesma decisão depois de conferir contra o SwiftUI/Combine arm64 (Ricardo).
+
 5. **Convenção Swift arm64 no libSystem**: os fontes de `X86_SWIFTCC` com a versão arm64 (self `x20`, erro `x21`,
    resultado indireto `x8`, retorno `x0..x3`, `d0..d3`) e fora da lista nos dois scripts (`.sh` e `.ps1`).
 6. **`tools/build.sh`**: `verificar-imagem-arm64.py` sem `--relatorio` no fim, para a imagem não sair sem as fatias.
