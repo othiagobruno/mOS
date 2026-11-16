@@ -146,7 +146,36 @@ enum {
     MOS_FSM_ACCESS,        /* a = R 4 | W 2 | X 1 (0 = só existe); opts 1 = ids efetivos (faccessat AT_EACCESS) -> 0 | -EACCES */
     MOS_FSM_GETACL,        /* buf (0 = só o tamanho), size -> bytes da kauth_filesec (big-endian) | -ENOATTR */
     MOS_FSM_SETACL,        /* buf, size (0 = tirar a ACL) -> 0; precisa de WRITE_SECURITY (dono ou ACL) */
+    MOS_FSM_EVENTS,        /* sem alvo: pos = desde o id (exclusivo), buf = mos_fsevent_t[], size = bytes -> nº copiado.
+                            * Lacuna (id de outro boot ou que saiu do anel): 1º evento KernelDropped|MustScanSubDirs */
+    MOS_FSM_EVENTID,       /* sem alvo -> id do último evento do journal (FSEventsGetCurrentEventId) */
 };
+/* flags do journal (= kFSEventStreamEventFlag* da Apple) */
+#define FSEV_MUST_SCAN      0x00000001u
+#define FSEV_USER_DROPPED   0x00000002u
+#define FSEV_KERNEL_DROPPED 0x00000004u
+#define FSEV_HISTORY_DONE   0x00000010u
+#define FSEV_ROOT_CHANGED   0x00000020u
+#define FSEV_MOUNT          0x00000040u
+#define FSEV_UNMOUNT        0x00000080u
+#define FSEV_CREATED        0x00000100u
+#define FSEV_REMOVED        0x00000200u
+#define FSEV_INODE_META     0x00000400u
+#define FSEV_RENAMED        0x00000800u
+#define FSEV_MODIFIED       0x00001000u
+#define FSEV_FINDER         0x00002000u
+#define FSEV_OWNER          0x00004000u
+#define FSEV_XATTR          0x00008000u
+#define FSEV_IS_FILE        0x00010000u
+#define FSEV_IS_DIR         0x00020000u
+#define FSEV_IS_SYMLINK     0x00040000u
+#define FSEV_OWN_EVENT      0x00080000u
+#define FSEV_TYPE_MASK      (FSEV_IS_FILE | FSEV_IS_DIR | FSEV_IS_SYMLINK)
+typedef struct {
+    unsigned long long id, ino;
+    unsigned flags, pid;    /* pid de quem fez a mudança (0 = o kernel) */
+    char path[1024];
+} mos_fsevent_t;
 #define MOS_FSM_ATIME 1   /* máscaras do MOS_FSM_SETTIMES (= VT_* do vfs.h) */
 #define MOS_FSM_MTIME 2
 #define MOS_FSM_CTIME 4

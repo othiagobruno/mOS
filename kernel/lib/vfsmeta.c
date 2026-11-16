@@ -84,7 +84,7 @@ void vfs_touch(vnode_t *n, int which) {
     if (!n) return;
     i64 t = vfs_now_ns();
     if (which & VT_ATIME) n->atime_ns = t;
-    if (which & VT_MTIME) { n->mtime_ns = t; n->mtime = timer_ticks(); if (!n->mtime) n->mtime = 1; }
+    if (which & VT_MTIME) { n->mtime_ns = t; n->mtime = timer_ticks(); if (!n->mtime) n->mtime = 1; if (!n->dir) vfs_ev(n, FSEV_MODIFIED); }
     if (which & VT_CTIME) n->ctime_ns = t;
     if (which & VT_BTIME) n->btime_ns = t;
     if (!n->btime_ns) n->btime_ns = n->mtime_ns ? n->mtime_ns : t;
@@ -183,6 +183,7 @@ int vfs_xattr_set(vnode_t *n, const char *name, const void *val, u64 len, u64 po
     x->val = nv;
     x->len = (u32)newlen;
     n->xattr_bytes = n->xattr_bytes - old + newlen;
+    vfs_ev(n, is_finfo(name) ? FSEV_FINDER | FSEV_XATTR : FSEV_XATTR);
     if (is_finfo(name)) {                         /* kIsInvisible (bit 14 do Finder flags, byte 8) = UF_HIDDEN */
         bool inv = nv[8] & 0x40;
         if (inv) n->flags |= VFS_UF_HIDDEN; else n->flags &= ~VFS_UF_HIDDEN;
@@ -220,6 +221,7 @@ int vfs_xattr_remove(vnode_t *n, const char *name) {
         kfree(x);
         if (is_finfo(name)) n->flags &= ~VFS_UF_HIDDEN;
         if (empty) return -E_NOATTR;
+        vfs_ev(n, is_finfo(name) ? FSEV_FINDER | FSEV_XATTR : FSEV_XATTR);
         vfs_meta_changed(n);
         return 0;
     }
@@ -323,7 +325,9 @@ i64 vfs_fsmeta(vnode_t *v, int op, const void *rqv, const char *name, void *kbuf
             return r == -MOS_ENOATTR ? 0 : r;
         }
         if (!vfs_filesec_valid(kbuf, rq->size)) return -MOS_EINVAL;
-        return vfs_xattr_set(v, VFS_XATTR_SECURITY, kbuf, rq->size, 0, 0);
+        int r = vfs_xattr_set(v, VFS_XATTR_SECURITY, kbuf, rq->size, 0, 0);
+        if (!r) vfs_ev(v, FSEV_INODE_META);
+        return r;
     }
     case MOS_FSM_SETXATTR:
     case MOS_FSM_REMOVEXATTR: {
@@ -349,6 +353,7 @@ i64 vfs_fsmeta(vnode_t *v, int op, const void *rqv, const char *name, void *kbuf
         nf = (nf & ~VFS_UF_COMPRESSED)   /* compressão é do fs, não do usuário */ | (v->flags & VFS_UF_COMPRESSED);
         v->flags = nf;
         vfs_meta_changed(v);
+        vfs_ev(v, FSEV_INODE_META);
         return 0;
     }
     case MOS_FSM_CHOWN: {
@@ -366,6 +371,7 @@ i64 vfs_fsmeta(vnode_t *v, int op, const void *rqv, const char *name, void *kbuf
         v->gid = ng;
         if (changed && !root) v->mode &= ~06000u;   /* chown sem root tira setuid/setgid */
         vfs_meta_changed(v);
+        vfs_ev(v, FSEV_OWNER | FSEV_INODE_META);
         return 0;
     }
     case MOS_FSM_SETTIMES: {
@@ -393,6 +399,7 @@ i64 vfs_fsmeta(vnode_t *v, int op, const void *rqv, const char *name, void *kbuf
         i64 keep_c = v->ctime_ns;
         vfs_meta_changed(v);
         if (mask & VT_CTIME) v->ctime_ns = keep_c;    /* pedido explícito de ctime vale (root/restauração) */
+        vfs_ev(v, FSEV_INODE_META);
         return 0;
     }
     case MOS_FSM_READDIR: {
@@ -461,9 +468,10 @@ u8 *vmeta_build(vnode_t *root, vmeta_track_fn track, void *ctx, u64 *len) {
     vnode_t **st = kmalloc(sizeof(vnode_t *) * (usize)cap);
     if (!vp || !st) { kfree(vp); kfree(st); return NULL; }
     wput(&w, VMETA_MAGIC, 8);
-    w32(&w, 1);
+    w32(&w, 2);
     w32(&w, 0);                       /* registros (preenchido no fim) */
     w64(&w, ino_next);
+    w64(&w, vfs_ev_next_id());        /* v2: o journal de eventos continua do id certo depois do reboot */
     u32 count = 0;
     st[sp++] = root;
     while (sp && !w.err) {            /* iterativo: as árvores de node_modules passam de 64 níveis */
@@ -508,8 +516,10 @@ u8 *vmeta_build(vnode_t *root, vmeta_track_fn track, void *ctx, u64 *len) {
     return w.b;
 }
 
+static u64 hdr_len(const u8 *d) { return r32(d + 8) == 2 ? VMETA_HDR + 8 : VMETA_HDR; }
 bool vmeta_check(const u8 *d, u64 n, u64 *next_ino) {
-    if (!d || n < VMETA_HDR + 4 || memcmp(d, VMETA_MAGIC, 8) || r32(d + 8) != 1) return false;
+    if (!d || n < VMETA_HDR + 4 || memcmp(d, VMETA_MAGIC, 8) || (r32(d + 8) != 1 && r32(d + 8) != 2)) return false;
+    if (n < hdr_len(d) + 4) return false;
     if (vfs_crc32(d, n - 4) != r32(d + n - 4)) return false;
     if (next_ino) *next_ino = r64(d + 16);
     return true;
@@ -519,8 +529,9 @@ int vmeta_apply(const u8 *d, u64 n, vmeta_lookup_fn lookup, void *ctx) {
     u64 next = 0;
     if (!vmeta_check(d, n, &next)) return -1;
     vfs_ino_reserve(next ? next - 1 : 0);
+    if (r32(d + 8) == 2) vfs_ev_set_base(r64(d + 24));
     u32 count = r32(d + 12);
-    u64 o = VMETA_HDR, end = n - 4;
+    u64 o = hdr_len(d), end = n - 4;
     char path[1024];
     int ok = 0;
     for (u32 i = 0; i < count; i++) {

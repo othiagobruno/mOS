@@ -4,7 +4,7 @@
  * volta do \mOS\.vfsmeta (persistência no disco do sistema).
  *
  *   gcc -O1 -g -DMOS_HOST_TEST -Itools/vfsmeta_host -Ikernel/include -Itools tools/vfsmeta_test.c \
- *       kernel/lib/vfs.c kernel/lib/vfsmeta.c kernel/lib/vfsperm.c kernel/proc/cred.c -o /tmp/vfsmeta_test && /tmp/vfsmeta_test
+ *       kernel/lib/vfs.c kernel/lib/vfsmeta.c kernel/lib/vfsperm.c kernel/lib/vfsevents.c kernel/proc/cred.c -o /tmp/vfsmeta_test && /tmp/vfsmeta_test
  */
 #include "vfs_host_kernel.h"
 #include "vfs.h"
@@ -159,6 +159,78 @@ static void test_perms(void) {
     vnode_t *neto = vfs_write_file("/Users/Visitante/alheia/sub/neto", "n", 1);
     neto->mode = 0x10000u | 0600;
     CHECK(vfs_access(neto, 4, 503, 99) == 0);                  /* e continua descendo */
+}
+
+static int evs(u64 since, mos_fsevent_t *ev, int max) { return vfs_ev_read(since, ev, max, NULL); }
+static void test_events(void) {
+    static mos_fsevent_t ev[64];
+    u64 last = 0;
+    vfs_ev_read(~0ull, NULL, 0, &last);
+    u64 base = last;
+    vnode_t *f = vfs_write_file("/Users/Visitante/ev.txt", "a", 1);
+    vfs_append(f, "b", 1);
+    int n = evs(base, ev, 64);
+    CHECK(n == 1);                                             /* criar + escrever juntam num só */
+    CHECK(n >= 1 && !strcmp(ev[0].path, "/Users/Visitante/ev.txt") && (ev[0].flags & FSEV_CREATED) &&
+          (ev[0].flags & FSEV_MODIFIED) && (ev[0].flags & FSEV_IS_FILE) && ev[0].ino == f->ino);
+    u64 seen = ev[0].id;
+    vfs_append(f, "c", 1);                                     /* já lido: não junta mais */
+    n = evs(seen, ev, 64);
+    CHECK(n == 1 && ev[0].flags == (FSEV_MODIFIED | FSEV_IS_FILE) && ev[0].id == seen + 1);
+    seen = ev[0].id;
+    vnode_t *docs = vfs_lookup("/Users/Visitante/Documentos");
+    CHECK(vfs_move(f, docs, "ev2.txt"));
+    n = evs(seen, ev, 64);
+    CHECK(n == 2 && (ev[0].flags & FSEV_RENAMED) && (ev[1].flags & FSEV_RENAMED));
+    CHECK(n == 2 && !strcmp(ev[0].path, "/Users/Visitante/ev.txt") && !strcmp(ev[1].path, "/Users/Visitante/Documentos/ev2.txt"));
+    CHECK(n == 2 && ev[0].ino == ev[1].ino);
+    seen = ev[n - 1].id;
+    vfs_xattr_set(f, "user.x", "1", 1, 0, 0);
+    mos_fsmeta_t rq = {0};
+    rq.a = 0xffffffffu; rq.b = 80;
+    vfs_fsmeta(f, MOS_FSM_CHOWN, &rq, NULL, NULL, 501, 20);
+    n = evs(seen, ev, 64);
+    CHECK(n == 1 && (ev[0].flags & FSEV_XATTR) && (ev[0].flags & FSEV_OWNER) && (ev[0].flags & FSEV_INODE_META));
+    seen = ev[n - 1].id;
+    u8 fi[32] = {0}; fi[8] = 0x40;
+    vfs_xattr_set(f, "com.apple.FinderInfo", fi, 32, 0, 0);
+    n = evs(seen, ev, 64);
+    CHECK(n == 1 && (ev[0].flags & FSEV_FINDER));
+    seen = ev[n - 1].id;
+    /* apagar uma árvore: um evento por item */
+    vfs_mkdir("/Users/Visitante/arv/a/b");
+    vfs_write_file("/Users/Visitante/arv/a/b/c.txt", "c", 1);
+    n = evs(seen, ev, 64);
+    seen = ev[n - 1].id;
+    vfs_delete(vfs_lookup("/Users/Visitante/arv"));
+    n = evs(seen, ev, 64);
+    int rem = 0;
+    for (int i = 0; i < n; i++) if (ev[i].flags & FSEV_REMOVED) rem++;
+    CHECK(n == 4 && rem == 4);
+    seen = ev[n - 1].id;
+    /* a pasta-mãe que ganhou um filho não vira "modificada" */
+    vfs_write_file("/Users/Visitante/Documentos/novo2", "", 0);
+    n = evs(seen, ev, 64);
+    CHECK(n == 1 && (ev[0].flags & FSEV_CREATED));
+    seen = ev[n - 1].id;
+    /* mudo (espelho de volume): nada */
+    vfs_ev_mute++;
+    vfs_write_file("/Users/Visitante/mudo", "", 0);
+    vfs_ev_mute--;
+    CHECK(evs(seen, ev, 64) == 0);
+    /* lacuna: id de antes do boot */
+    vfs_ev_read(~0ull, NULL, 0, &last);
+    vfs_ev_set_base(last + 1000);
+    vfs_write_file("/Users/Visitante/depois", "", 0);
+    n = evs(5, ev, 64);
+    CHECK(n == 2 && (ev[0].flags & FSEV_KERNEL_DROPPED) && (ev[0].flags & FSEV_MUST_SCAN) && ev[1].id == last + 1000);
+    /* o .vfsmeta leva o próximo id */
+    u64 len = 0;
+    u8 *img = vmeta_build(vfs_root(), track_all, NULL, &len);
+    CHECK(img && vmeta_check(img, len, NULL) && img[8] == 2);
+    u64 nid = vfs_ev_next_id();
+    kfree(img);
+    CHECK(nid == last + 1001);
 }
 
 int main(void) {
@@ -329,15 +401,18 @@ int main(void) {
     kfree(img);
 
     /* ---- apagar solta os xattrs (sem vazamento) */
+    vfs_ev_mute++;                                           /* o anel de eventos guarda caminhos: fora da conta */
     long long before = g_live_allocs;
     vnode_t *z = vfs_write_file("/Users/Visitante/z", "z", 1);
     vfs_xattr_set(z, "k1", "v", 1, 0, 0);
     vfs_xattr_set(z, "k2", "v", 1, 0, 0);
     vfs_delete(z);
     CHECK(g_live_allocs == before);
+    vfs_ev_mute--;
     CHECK(meta_marks > 0);
 
     test_perms();
+    test_events();
     printf("vfsmeta: %d verificações, %d falha(s)\n", checks, fails);
     return fails != 0;
 }
