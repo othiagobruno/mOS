@@ -259,6 +259,9 @@ static int s_three_same_x(T *t, a64_u32 w, int sc) {
 
 static int s_misc_x(T *t, a64_u32 w, int sc);
 static int s_addlp(T *t, int q, int u, int size, int acc, int n, int d);
+static int s_fcvtln(T *t, int narrow, int q, int sz, int n, int d);
+static void mx_clean(T *t);
+static void ixc_if_pe(T *t);
 static int s_misc(T *t, a64_u32 w) { return s_misc_x(t, w, 0); }
 /* SADDLP / UADDLP / SADALP / UADALP: soma de pares vizinhos alargada (acc: + V[d]) */
 static int s_addlp(T *t, int q, int u, int size, int acc, int n, int d) {
@@ -284,6 +287,45 @@ static int s_addlp(T *t, int q, int u, int size, int acc, int n, int d) {
     }
     if (acc) { static const unsigned padd[3] = { 0xFD, 0xFE, 0xD4 }; s_ld(t, 1, d); s_op(t, padd[size], 0, 1); }
     s_st(t, d, 0, q);
+    return 1;
+}
+/* FCVTL/FCVTL2 (H→S, S→D) e FCVTN/FCVTN2 (S→H, D→S). Alargar é exato; estreitar arredonda em
+ * RN (o MXCSR limpo). NaN, FPCR fora do padrão (RMode, FZ, FZ16, DN, AHP) e exceções além de PE vão
+ * ao interpretador antes de gravar. */
+static int s_fcvtln(T *t, int narrow, int q, int sz, int n, int d) {
+    if (!sz && !jit_g.f16c) return 0;
+    fl_clobber(t);
+    mx_clean(t);
+    x_test_ri(B, 0, XM(RCPU, OFF_FPCR), 0x07C80000);
+    slow_if(t, CC_NE);
+    int src_d = narrow && sz;                       /* entrada em D? */
+    if (!narrow) {
+        x_movq_ld(B, 0, q ? VOE(n, 8) : VO(n));
+        if (!sz) vcvtph2ps_r(t, 0, 0);
+        x_movdqa_ld(B, 1, XR(0));
+        xop2(B, 0, 0xC2, 1, XR(0)); xe8(B, 3);      /* NaN (em f32: o alargamento de H é exato) */
+        xop2(B, XF_66, 0xD7, XAX, XR(1));
+        x_test_ri(B, 0, XR(XAX), sz ? 0xFF : 0xFFFF);
+        slow_if(t, CC_NE);
+        if (sz) xop2(B, 0, 0x5A, 0, XR(0));         /* cvtps2pd */
+    } else {
+        s_ld(t, 0, n);
+        x_movdqa_ld(B, 1, XR(0));
+        xop2(B, src_d ? XF_66 : 0, 0xC2, 1, XR(0)); xe8(B, 3);
+        xop2(B, XF_66, 0xD7, XAX, XR(1));
+        x_test_rr(B, 0, XAX, XAX);
+        slow_if(t, CC_NE);
+        if (sz) xop2(B, XF_66, 0x5A, 0, XR(0));     /* cvtpd2ps */
+        else { x_movdqa_ld(B, 1, XR(0)); vcvtps2ph_r(t, 0, 1); }   /* imediato 0: RN */
+    }
+    xop2(B, 0, 0xAE, 3, XM(XSP, 0));
+    x_test8_mi(B, XM(XSP, 0), 0x1F);
+    slow_if(t, CC_NE);
+    ixc_if_pe(t);
+    t->mxclean = 0;
+    if (!narrow) s_st(t, d, 0, 1);
+    else if (q) x_movq_st(B, VOE(d, 8), 0);
+    else s_st(t, d, 0, 0);
     return 1;
 }
 static int s_misc_x(T *t, a64_u32 w, int sc) {
@@ -336,6 +378,9 @@ static int s_misc_x(T *t, a64_u32 w, int sc) {
     case 0x12:                                      /* XTN / XTN2, SQXTUN */
         if (u) return s_qxtn(t, q, u, 0x12, size, n, d);
         return s_xtn(t, q, size, n, d);
+    case 0x16: case 0x17:                           /* FCVTN FCVTN2 / FCVTL FCVTL2 (size 0x) */
+        if (u || sc || (size & 2)) return 0;
+        return s_fcvtln(t, op == 0x16, q, size & 1, n, d);
     case 0x02: case 0x06:                           /* SADDLP UADDLP / SADALP UADALP */
         if (sc) return 0;
         return s_addlp(t, q, u, size, op == 0x06, n, d);
