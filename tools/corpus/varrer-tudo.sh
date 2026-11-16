@@ -4,7 +4,8 @@
 # 200 MB ou mais correm pelo mos-pesado (trava única do PC e limite de 2 GB); os menores, só com nice. Cada app só
 # começa com RAM disponível >= 4000 MB. O binário é apagado depois de medido.
 # Não roda o build: usa o libSystem já compilado em build/. Uso: tools/corpus/varrer-tudo.sh [ids...]
-# Sem ids mede um lote de LOTE apps (padrão 20) e sai 3 se ainda faltar.
+# Sem ids mede um lote de LOTE apps (padrão 20) e sai 3 se ainda faltar. PEQUENOS=1: só os que não precisam do
+# mos-pesado (download < 200 MB ou ainda não baixado); os grandes ficam no disco para quando a trava vagar.
 set -uo pipefail
 cd "$(dirname "$0")/../.."
 H=tools/corpus/harness.py
@@ -31,6 +32,15 @@ for a in json.load(open('tools/corpus/manifest.json'))['apps']:
         print(a['id'])")
 fi
 mais=0
+if [ $# -eq 0 ] && [ -n "${PEQUENOS:-}" ]; then
+    leves=()
+    for id in "${ids[@]}"; do
+        tam=$(du -sm "build/corpus/$id" 2>/dev/null | cut -f1)
+        [ "${tam:-0}" -lt 200 ] && leves+=("$id")
+    done
+    echo "varrer-tudo: $(( ${#ids[@]} - ${#leves[@]} )) grandes já baixados ficam para a trava"
+    ids=("${leves[@]}")
+fi
 LOTE=${LOTE:-20}
 if [ $# -eq 0 ] && [ ${#ids[@]} -gt "$LOTE" ]; then
     # um lote por chamada: a cada lote o libSystem é conferido de novo (sai 3 quando ainda há apps)
@@ -47,6 +57,7 @@ for id in "${ids[@]}"; do
     # arquivo pequeno (< 200 MB) não é descompactação grande: mede fora da trava; o resto vai pelo mos-pesado
     tam=$(du -sm "build/corpus/$id" 2>/dev/null | cut -f1)
     if [ "${tam:-999}" -lt 200 ]; then nice -n 10 tools/corpus/medir-um.sh "$id" "${LIBS[@]}"; continue; fi
+    if [ -n "${PEQUENOS:-}" ]; then echo "varrer-tudo: $id ($tam MB) fica para a trava"; continue; fi
     if ! flock -n /tmp/mos-pesado.lock true; then
         # trava ocupada e arquivo grande: vai para o fim do lote (o download fica no disco) e os pequenos seguem
         adiados+=("$id")
