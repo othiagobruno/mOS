@@ -375,7 +375,10 @@ enum {
     /* fileports: um descritor que viaja como direito de envio (o Mojo do Chromium passa arquivos assim) */
     MACH_OP_FILEPORT_MAKE,  /* a0 = fd -> a1 = nome (envio de uma porta que guarda uma cópia do descritor) */
     MACH_OP_FILEPORT_FD,    /* a0 = nome -> a1 = fd novo neste processo (mesmo arquivo/pipe, mesmo modo) */
+    /* mach_port_names / mach_port_space_info (docs/darwin-bsd-mach.md, F3) */
+    MACH_OP_NAMES,          /* a0 = mos_mach_name_t *buf (0 = só contar), a1 = cap -> a2 = quantidade de nomes no espaço */
 };
+typedef struct { unsigned int name, type, srefs, drefs; } mos_mach_name_t;   /* type = MACH_PORT_TYPE_* do XNU */
 
 /* SYS_MACH_BOOTSTRAP */
 enum { MACH_BS_CHECK_IN = 1, MACH_BS_LOOK_UP, MACH_BS_REGISTER,
