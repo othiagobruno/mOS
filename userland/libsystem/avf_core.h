@@ -15,7 +15,7 @@ double avf_clamp_io(double seconds);
 unsigned avf_record_permission(int tcc); /* 'undt' / 'grnt' / 'deny' */
 int avf_mic_pull(float *dst, unsigned frames); /* 0 ok (silêncio se o anel está vazio); -54 negado; -66680 sem TCC */
 unsigned avf_copy_capture(short *dst, unsigned frames, int *err);
-int avf_device_kinds(int *out, int cap); /* 1 = microfone embutido. Câmera não entra: não há driver. */
+int avf_device_kinds(int *out, int cap); /* 1 = microfone embutido. As câmeras USB vêm do DEV_CAMERA_INFO em avcapture.c. */
 int avf_cap_start(int has_mic, int has_cam, int *err); /* 1 corre. err 1 = TCC, 2 = sem dispositivo de quadro */
 unsigned avf_cap_pull(int running, short *dst, unsigned frames, int *err);
 /* O mesmo passo de AVPlayer: cx_audio_read_stereo + relógio. pos em segundos. rate 0 não anda. */
