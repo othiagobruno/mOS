@@ -29,6 +29,8 @@
 #include "opus_glue.h"
 #include "aac_glue.h"
 #include "../libsystem/mp4demux.h"
+#include "../libsystem/mkvdemux.h"
+#include "vorbis_glue.h"
 
 extern int cx_tcc_request(const char *service) __attribute__((weak));
 
@@ -68,7 +70,7 @@ int cx_pcm_s16_resample(const short *src, int nsrc, int src_rate, short *dst, in
 }
 
 typedef struct {
-    int kind;                 /* 1 mp3, 2 alac, 3 aac, 4 opus; 0 não é destes */
+    int kind;                 /* 1 mp3, 2 alac, 3 aac, 4 opus, 5 vorbis, 6 pcm; 0 não é destes */
     int status;               /* 0 decodificado, 1 reconhecido sem decodificador, -1 erro */
     const char *limit;
     int rate, channels, frames;
@@ -487,6 +489,73 @@ static int decode_mp3(const uint8_t *b, uint64_t n, cx_audiodec_out *o) {
     return 1;
 }
 
+/* ---- Matroska / WebM (mkvdemux.c): a primeira faixa de áudio. O começo perde o CodecDelay (pre-skip do Opus, priming
+ * do AAC/MP3) e o fim é a Duration do Segment, como o ffmpeg apresenta. */
+typedef struct { const mkv_file *f; const uint32_t *idx; } mkvpk;
+static const uint8_t *mkv_get(void *ctx, int i, int *n) {
+    mkvpk *m = ctx;
+    const mkv_packet *p = &m->f->p[m->idx[i]];
+    *n = (int)p->size;
+    return m->f->b + p->off;
+}
+static int decode_mkv(const uint8_t *b, uint64_t n, cx_audiodec_out *o) {
+    mkv_file f;
+    if (mkv_open_mem(&f, b, n)) return 0;
+    int ti = mkv_find_track(&f, 2);
+    if (ti < 0) { mkv_close(&f); return 0; }
+    const mkv_track *t = &f.t[ti];
+    uint32_t *idx = malloc((f.np ? f.np : 1) * sizeof *idx), cnt = 0;
+    if (!idx) { mkv_close(&f); o->status = -1; return 1; }
+    for (uint32_t i = 0; i < f.np; i++) if ((int)f.p[i].track == ti) idx[cnt++] = i;
+    mkvpk mp = {&f, idx};
+    pktsrc src = {mkv_get, &mp, (int)cnt};
+    double dur_s = f.duration_ns > 0 ? f.duration_ns / 1e9 : -1;
+    double delay_s = (double)t->codec_delay_ns / 1e9;
+    int r = 1;
+    if (!strcmp(t->codec, "A_OPUS")) {
+        cx_opus_head h;
+        if (!t->priv || cx_opus_head_ogg(t->priv, (int)t->priv_n, &h)) { o->kind = 4; o->status = -1; o->limit = "Opus sem OpusHead"; }
+        else {
+            long long sk = t->codec_delay_ns ? (long long)(delay_s * 48000 + 0.5) : h.preskip;
+            r = decode_opus_packets(&h, &src, sk, dur_s > 0 ? (long long)(dur_s * 48000 + 0.5) : -1, o);
+        }
+    } else if (!strcmp(t->codec, "A_AAC") && t->priv && t->priv_n >= 2) {
+        int rate = (int)(t->rate + 0.5);
+        r = decode_aac_packets(t->priv, (int)t->priv_n, &src, (long long)(delay_s * rate + 0.5), dur_s > 0 ? (long long)(dur_s * rate + 0.5) : -1, (unsigned)rate, o);
+    } else if (!strcmp(t->codec, "A_MPEG/L3") || !strcmp(t->codec, "A_MPEG/L2")) {
+        int rate = (int)(t->rate + 0.5);
+        r = decode_mp3_packets(&src, (long long)(delay_s * rate + 0.5), dur_s > 0 ? (long long)(dur_s * rate + 0.5) : -1, (unsigned)rate, o);
+    } else if (!strcmp(t->codec, "A_VORBIS")) {
+        const uint8_t **pk = malloc((cnt ? cnt : 1) * sizeof *pk);
+        uint32_t *ln = malloc((cnt ? cnt : 1) * sizeof *ln);
+        short *pcm = 0;
+        int ch = 0, rate = 0, frames = 0;
+        if (pk && ln) for (uint32_t i = 0; i < cnt; i++) { int k; pk[i] = mkv_get(&mp, (int)i, &k); ln[i] = (uint32_t)k; }
+        if (!pk || !ln || cx_vorbis_decode_packets(t->priv, t->priv_n, pk, ln, cnt, &pcm, &ch, &rate, &frames)) {
+            o->kind = 5; o->status = -1; o->limit = "Vorbis inválido";
+        } else {
+            pcmbuf pb = {pcm, (size_t)frames, (size_t)frames, ch};
+            trim(&pb, 0, dur_s > 0 ? (long long)(dur_s * rate + 0.5) : -1);   /* sem granulepos: o fim é a Duration */
+            r = finish(o, 5, pb.p, ch, rate, (int)pb.n);
+        }
+        free(pk); free(ln);
+    } else if (!strcmp(t->codec, "A_PCM/INT/LIT") && t->bits == 16 && t->channels) {
+        size_t tot = 0;
+        for (uint32_t i = 0; i < cnt; i++) tot += f.p[idx[i]].size;
+        short *pcm = malloc(tot ? tot : 2);
+        size_t at = 0;
+        for (uint32_t i = 0; pcm && i < cnt; i++) { memcpy((uint8_t *)pcm + at, b + f.p[idx[i]].off, f.p[idx[i]].size); at += f.p[idx[i]].size; }
+        if (!pcm) { o->status = -1; }
+        else r = finish(o, 6, pcm, (int)t->channels, (int)(t->rate + 0.5), (int)(tot / 2 / t->channels));
+    } else {
+        o->kind = 0; o->status = 1; o->limit = "codec de áudio do Matroska sem decodificador no mOS";
+    }
+    free(idx);
+    mkv_close(&f);
+    return r;
+}
+static int looks_vorbis(const uint8_t *b, uint64_t n) { return n >= 35 && !memcmp(b, "OggS", 4) && b[28] == 1 && !memcmp(b + 29, "vorbis", 6); }
+
 int cx_audiodec(const void *bytes, unsigned long long n, cx_audiodec_out *o) {
     if (!o) return 0;
     memset(o, 0, sizeof *o);
@@ -497,6 +566,12 @@ int cx_audiodec(const void *bytes, unsigned long long n, cx_audiodec_out *o) {
         if (cx_opus_decode_ogg(b, n, &pcm, &ch, &frames)) { o->kind = 4; o->status = -1; o->limit = "Ogg Opus inválido"; return 1; }
         return finish(o, 4, pcm, ch, 48000, frames);
     }
+    if (looks_vorbis(b, n)) {
+        short *pcm = 0; int ch = 0, rate = 0, frames = 0;
+        if (cx_vorbis_decode_ogg(b, n, &pcm, &ch, &rate, &frames)) { o->kind = 5; o->status = -1; o->limit = "Ogg Vorbis inválido"; return 1; }
+        return finish(o, 5, pcm, ch, rate, frames);
+    }
+    if (n >= 4 && b[0] == 0x1A && b[1] == 0x45 && b[2] == 0xDF && b[3] == 0xA3) return decode_mkv(b, n, o);   /* EBML: Matroska/WebM */
     if (looks_adts(b, n)) {
         short *pcm = 0; int ch = 0, rate = 0, frames = 0;
         if (cx_aac_decode_adts(b, n, 2, &pcm, &ch, &rate, &frames)) { o->kind = 3; o->status = -1; o->limit = "ADTS sem quadro AAC decodificável"; return 1; }
