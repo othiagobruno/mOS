@@ -54,7 +54,8 @@ login items, CloudKit/iCloud sem crash. Cada item só vira ✅ com teste de host
 | Fase | Estado | Teste |
 |---|---|---|
 | 1 SecKey | ✅ núcleo e API (15 nov.); falta ECIES e OAEP+AESGCM | `gcc -O2 -DMOS_HOST_TEST -Itools -Ikernel/include tools/seckeytest.c kernel/net/crypto.c kernel/net/pk.c -o /tmp/seckeytest`, `/tmp/seckeytest self` → ok; `python3 -I tools/seckeytest.py /tmp/seckeytest` → **225/225** contra o OpenSSL 3.5.5 (RSA 1024/2048/3072, EC P-256/384/521) |
-| 2–12 | a fazer | — |
+| 3 CommonCrypto | ✅ (15 nov.) | `python3 -I tools/cctest.py` → **512/512** contra OpenSSL/hashlib (AES ECB/CBC/CFB/CFB8/CTR/OFB/XTS/GCM, DES, 3DES, RC2, RC4, Blowfish, MD2/MD4/MD5/SHA-1/2, HMAC, PBKDF2) |
+| 2, 4–12 | a fazer | — |
 
 ## Fase 1 — o que entrou (15 nov.)
 
@@ -70,3 +71,13 @@ login items, CloudKit/iCloud sem crash. Cada item só vira ✅ com teste de host
 - Medido: geração RSA 2048 em ~0,5 s e 4096 em ~0,9 s no host (gcc -O2, Ryzen R2544).
 - Limites atuais: sem Secure Enclave (erro -4, como Mac sem T2); ECIES e OAEP+AESGCM dizem "não suportado";
   chave com `kSecAttrIsPermanent` ainda não vai ao Keychain (fase 2). Não rodou em VM (build proibido até o fim).
+
+## Fase 3 — CommonCrypto (15 nov.)
+
+- `commoncrypto_cryptor.inc` (incluído por `commoncrypto2.c`) troca o CCCryptor só-AES por um genérico:
+  AES, DES, 3DES, RC2, RC4, Blowfish; modos ECB, CBC, CFB, CFB8, CTR, OFB, RC4, XTS (`CCCryptorEncryptDataBlock`)
+  e GCM (`CCCryptorGCM*`, `CCCryptorGCMOneshot*`, IV de qualquer tamanho). `cc_ciphers.inc` tem as cifras; as tabelas
+  do Blowfish são os dígitos de pi calculados (Machin), não copiados.
+- HMAC e PBKDF2 com SHA-224 de verdade (antes caíam no SHA-256 sem avisar). Novos: `CC_SHA224*`, `CC_MD2*`,
+  `CC_MD4*`, `CCCalibratePBKDF`; os stubs desses nomes saíram de `sys_zerados.c`.
+- Fora: CAST5 (`kCCUnimplemented`, as S-boxes não são deriváveis e nenhum app medido pede), modos F8/LRW/CCM.

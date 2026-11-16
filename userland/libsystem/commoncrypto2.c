@@ -179,8 +179,10 @@ typedef union { CC_SHA1_CTX s1; CC_MD5_CTX m5; CC_SHA256_CTX s256; CC_SHA512_CTX
 typedef struct { u32_ alg; u32_ pad_; hctx_u h; u8_ opad[128]; } hmac_t;
 typedef char hmac_fits_[sizeof(hmac_t) <= 384 ? 1 : -1];
 static int h_block(u32_ alg) { return alg == kCCHmacAlgSHA384 || alg == kCCHmacAlgSHA512 ? 128 : 64; }
+static const u32_ sha224_iv[8] = {0xc1059ed8, 0x367cd507, 0x3070dd17, 0xf70e5939, 0xffc00b31, 0x68581511, 0x64f98fa7, 0xbefa4fa4};
 static int h_len(u32_ alg) {
     switch (alg) { case kCCHmacAlgSHA1: return 20; case kCCHmacAlgMD5: return 16; case kCCHmacAlgSHA256: return 32;
+                   case kCCHmacAlgSHA224: return 28;
                    case kCCHmacAlgSHA384: return 48; case kCCHmacAlgSHA512: return 64; }
     return 32;
 }
@@ -190,6 +192,7 @@ static void h_init(u32_ alg, hctx_u *h) {
     case kCCHmacAlgMD5: CC_MD5_Init(&h->m5); break;
     case kCCHmacAlgSHA384: CC_SHA384_Init(&h->s512); break;
     case kCCHmacAlgSHA512: CC_SHA512_Init(&h->s512); break;
+    case kCCHmacAlgSHA224: CC_SHA256_Init(&h->s256); memcpy(h->s256.hash, sha224_iv, sizeof sha224_iv); break;
     default: CC_SHA256_Init(&h->s256); break;
     }
 }
@@ -212,12 +215,12 @@ static void h_final(u32_ alg, hctx_u *h, u8_ *md) {
     case kCCHmacAlgMD5: CC_MD5_Final(md, &h->m5); break;
     case kCCHmacAlgSHA384: CC_SHA384_Final(md, &h->s512); break;
     case kCCHmacAlgSHA512: CC_SHA512_Final(md, &h->s512); break;
+    case kCCHmacAlgSHA224: { u8_ t[32]; CC_SHA256_Final(t, &h->s256); memcpy(md, t, 28); break; }
     default: CC_SHA256_Final(md, &h->s256); break;
     }
 }
 void CCHmacInit(void *ctx, u32_ alg, const void *key, size_t klen) {
     hmac_t *m = ctx;
-    if (alg == kCCHmacAlgSHA224) alg = kCCHmacAlgSHA256;     /* SHA-224 não implementado: o Chromium não usa */
     m->alg = alg;
     int bs = h_block(alg);
     u8_ k[128];
@@ -254,7 +257,7 @@ int CCKeyDerivationPBKDF(u32_ algorithm, const char *pw, size_t pwlen, const u8_
                          u32_ rounds, u8_ *out, size_t outlen) {
     if (algorithm != kCCPBKDF2 || !out || !rounds) return -4300;
     u32_ alg = prf == kCCPRFHmacAlgSHA1 ? kCCHmacAlgSHA1 : prf == kCCPRFHmacAlgSHA384 ? kCCHmacAlgSHA384 :
-               prf == kCCPRFHmacAlgSHA512 ? kCCHmacAlgSHA512 : kCCHmacAlgSHA256;
+               prf == kCCPRFHmacAlgSHA512 ? kCCHmacAlgSHA512 : prf == kCCPRFHmacAlgSHA224 ? kCCHmacAlgSHA224 : kCCHmacAlgSHA256;
     int hl = h_len(alg);
     u8_ u[64], t[64];
     for (u32_ blk = 1; outlen; blk++) {
@@ -361,152 +364,4 @@ static void aes_dec(const aes_key_t *k, const u8_ *in, u8_ *out) {
     memcpy(out, s, 16);
 }
 
-/* ---- CCCryptor */
-enum { kCCSuccess = 0, kCCParamError = -4300, kCCBufferTooSmall = -4301, kCCMemoryFailure = -4302,
-       kCCAlignmentError = -4303, kCCDecodeError = -4304, kCCUnimplemented = -4305 };
-enum { kCCEncrypt = 0, kCCDecrypt = 1 };
-enum { kCCAlgorithmAES = 0 };
-enum { kCCOptionPKCS7Padding = 1, kCCOptionECBMode = 2 };
-enum { kCCModeECB = 1, kCCModeCBC = 2, kCCModeCTR = 4 };
-typedef struct {
-    int op, mode, pad;
-    aes_key_t key;
-    u8_ iv[16];          /* CBC: bloco anterior; CTR: contador */
-    u8_ buf[16];         /* bytes pendentes (bloco incompleto ou último bloco guardado na decifragem) */
-    int nbuf;
-    u8_ ks[16]; int nks; /* CTR: fluxo de chave não usado */
-} cryptor_t;
-
-static void ctr_inc(u8_ *c) { for (int i = 15; i >= 0; i--) if (++c[i]) break; }
-static void do_block(cryptor_t *c, const u8_ *in, u8_ *out) {
-    u8_ t[16];
-    if (c->mode == kCCModeECB) { if (c->op == kCCEncrypt) aes_enc(&c->key, in, out); else aes_dec(&c->key, in, out); return; }
-    if (c->op == kCCEncrypt) {
-        for (int i = 0; i < 16; i++) t[i] = in[i] ^ c->iv[i];
-        aes_enc(&c->key, t, out);
-        memcpy(c->iv, out, 16);
-    } else {
-        u8_ prev[16];
-        memcpy(prev, in, 16);
-        aes_dec(&c->key, in, t);
-        for (int i = 0; i < 16; i++) out[i] = t[i] ^ c->iv[i];
-        memcpy(c->iv, prev, 16);
-    }
-}
-int CCCryptorCreateWithMode(u32_ op, u32_ mode, u32_ alg, u32_ padding, const void *iv, const void *key, size_t klen,
-                            const void *tweak, size_t tlen, int rounds, u32_ options, void **ref) {
-    (void)tweak; (void)tlen; (void)rounds; (void)options;
-    if (!ref) return kCCParamError;
-    if (alg != kCCAlgorithmAES) return kCCUnimplemented;
-    if (mode != kCCModeECB && mode != kCCModeCBC && mode != kCCModeCTR) return kCCUnimplemented;
-    cryptor_t *c = calloc(1, sizeof *c);
-    if (!c) return kCCMemoryFailure;
-    c->op = (int)op; c->mode = (int)mode; c->pad = padding == 1;
-    if (aes_setkey(&c->key, key, klen)) { free(c); return kCCParamError; }
-    if (iv) memcpy(c->iv, iv, 16);
-    *ref = c;
-    return kCCSuccess;
-}
-int CCCryptorCreate(u32_ op, u32_ alg, u32_ options, const void *key, size_t klen, const void *iv, void **ref) {
-    return CCCryptorCreateWithMode(op, (options & kCCOptionECBMode) ? kCCModeECB : kCCModeCBC, alg,
-                                   (options & kCCOptionPKCS7Padding) ? 1 : 0, iv, key, klen, 0, 0, 0, 0, ref);
-}
-int CCCryptorRelease(void *ref) { if (ref) { memset(ref, 0, sizeof(cryptor_t)); free(ref); } return kCCSuccess; }
-int CCCryptorReset(void *ref, const void *iv) {
-    cryptor_t *c = ref;
-    if (!c) return kCCParamError;
-    if (iv) memcpy(c->iv, iv, 16); else memset(c->iv, 0, 16);
-    c->nbuf = 0; c->nks = 0;
-    return kCCSuccess;
-}
-size_t CCCryptorGetOutputLength(void *ref, size_t inlen, int final) {
-    cryptor_t *c = ref;
-    if (!c) return 0;
-    if (c->mode == kCCModeCTR) return inlen;
-    size_t t = inlen + (size_t)c->nbuf;
-    if (final && c->pad && c->op == kCCEncrypt) return (t / 16 + 1) * 16;
-    return final ? (t + 15) / 16 * 16 : t / 16 * 16;
-}
-int CCCryptorUpdate(void *ref, const void *in, size_t inlen, void *out, size_t avail, size_t *moved) {
-    cryptor_t *c = ref;
-    const u8_ *p = in;
-    u8_ *o = out;
-    size_t w = 0;
-    if (!c) return kCCParamError;
-    if (c->mode == kCCModeCTR) {
-        if (avail < inlen) return kCCBufferTooSmall;
-        for (size_t i = 0; i < inlen; i++) {
-            if (!c->nks) { aes_enc(&c->key, c->iv, c->ks); ctr_inc(c->iv); c->nks = 16; }
-            o[i] = p[i] ^ c->ks[16 - c->nks--];
-        }
-        if (moved) *moved = inlen;
-        return kCCSuccess;
-    }
-    /* na decifragem com padding o último bloco completo fica guardado para o Final tirar o PKCS#7 */
-    int hold = c->op == kCCDecrypt && c->pad;
-    size_t need = CCCryptorGetOutputLength(c, inlen, 0);
-    if (hold && need >= 16 && (inlen + (size_t)c->nbuf) % 16 == 0) need -= 16;
-    if (avail < need) return kCCBufferTooSmall;
-    for (size_t i = 0; i < inlen; i++) {
-        if (c->nbuf == 16) {
-            if (w + 16 > avail) return kCCBufferTooSmall;
-            do_block(c, c->buf, o + w);
-            w += 16;
-            c->nbuf = 0;
-        }
-        c->buf[c->nbuf++] = p[i];
-    }
-    if (c->nbuf == 16 && !hold) {
-        if (w + 16 > avail) return kCCBufferTooSmall;
-        do_block(c, c->buf, o + w);
-        w += 16;
-        c->nbuf = 0;
-    }
-    if (moved) *moved = w;
-    return kCCSuccess;
-}
-int CCCryptorFinal(void *ref, void *out, size_t avail, size_t *moved) {
-    cryptor_t *c = ref;
-    u8_ *o = out;
-    if (moved) *moved = 0;
-    if (!c) return kCCParamError;
-    if (c->mode == kCCModeCTR) return kCCSuccess;
-    if (c->op == kCCEncrypt) {
-        if (!c->pad) { if (c->nbuf) return kCCAlignmentError; return kCCSuccess; }
-        if (avail < 16) return kCCBufferTooSmall;
-        u8_ v = (u8_)(16 - c->nbuf);
-        while (c->nbuf < 16) c->buf[c->nbuf++] = v;
-        do_block(c, c->buf, o);
-        c->nbuf = 0;
-        if (moved) *moved = 16;
-        return kCCSuccess;
-    }
-    if (!c->pad) return c->nbuf ? kCCAlignmentError : kCCSuccess;
-    if (c->nbuf != 16) return c->nbuf ? kCCAlignmentError : kCCDecodeError;
-    u8_ t[16];
-    do_block(c, c->buf, t);
-    c->nbuf = 0;
-    u8_ v = t[15];
-    if (!v || v > 16) return kCCDecodeError;
-    for (int i = 16 - v; i < 16; i++) if (t[i] != v) return kCCDecodeError;
-    size_t n = (size_t)(16 - v);
-    if (avail < n) return kCCBufferTooSmall;
-    memcpy(o, t, n);
-    if (moved) *moved = n;
-    return kCCSuccess;
-}
-int CCCrypt(u32_ op, u32_ alg, u32_ options, const void *key, size_t klen, const void *iv, const void *in, size_t inlen,
-            void *out, size_t avail, size_t *moved) {
-    void *ref = 0;
-    size_t a = 0, b = 0;
-    if (moved) *moved = 0;
-    int r = CCCryptorCreate(op, alg, options, key, klen, iv, &ref);
-    if (r) return r;
-    size_t need = CCCryptorGetOutputLength(ref, inlen, 1);
-    if (avail < need && !(op == kCCDecrypt)) { CCCryptorRelease(ref); if (moved) *moved = need; return kCCBufferTooSmall; }
-    r = CCCryptorUpdate(ref, in, inlen, out, avail, &a);
-    if (!r) r = CCCryptorFinal(ref, (u8_ *)out + a, avail - a, &b);
-    CCCryptorRelease(ref);
-    if (moved) *moved = r ? 0 : a + b;
-    return r;
-}
+#include "commoncrypto_cryptor.inc"
