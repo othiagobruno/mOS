@@ -35,6 +35,26 @@ void gpu_host_caps(u32 c) { host_caps = c; }
 #include "syscall.h"
 #include "proc.h"
 #include "gpu.h"
+#include "amdgpu/amdgpu.h"
+#endif
+
+/* BOs MOS_GPU_BO_GPU na VRAM da AMD (dev/amdgpu): alocador da VRAM, mapa de dispositivo WC no processo
+ * (gpu_user_map_io, sem refcount). Sem GPU AMD o BO fica na RAM, como antes. */
+#define GPU_VRAM_BO_MAX (64ull << 20)
+#ifndef MOS_GPU_HOST
+static bool vram_avail(void) { return amdgpu_main() != NULL; }
+static u64 vram_get(u64 n) {
+    u64 ph = amdgpu_vram_alloc(amdgpu_main(), n);
+    if (ph) memset((void *)(usize)ph, 0, (usize)n);
+    return ph;
+}
+static bool vram_is(u64 ph, u64 n) { return amdgpu_vram_owns(amdgpu_main(), ph, n); }
+static void vram_put(u64 ph, u64 n) { amdgpu_vram_free(amdgpu_main(), ph, n); }
+#else
+static bool vram_avail(void) { return false; }
+static u64 vram_get(u64 n) { (void)n; return 0; }
+static bool vram_is(u64 ph, u64 n) { (void)ph; (void)n; return false; }
+static void vram_put(u64 ph, u64 n) { (void)ph; (void)n; }
 #endif
 
 #define GPU_N 64
@@ -388,18 +408,20 @@ i64 gpu_syscall(process_t *p, u64 op, u64 user, u64 len, thread_t *self, int *bl
         mos_gpu_bo_t in;
         int e = rd(p, &in, user, len, sizeof in);
         if (e) return e;
-        if (!in.size || (in.size & 0xFFF) || in.size > (16ull << 20)) return -MOS_EINVAL;
+        bool in_vram = (in.flags & MOS_GPU_BO_GPU) && vram_avail();
+        if (!in.size || (in.size & 0xFFF) || in.size > (in_vram ? GPU_VRAM_BO_MAX : (16ull << 20))) return -MOS_EINVAL;
         if (in.ctx && !ctx_of(pid, in.ctx)) return -MOS_ENOENT;
         bo_t *b = 0;
         for (int i = 0; i < GPU_N; i++) if (!bos[i].used) { b = &bos[i]; break; }
         if (!b) return -MOS_ENOMEM;
         u64 phys = 0;
-        if (!dma_alloc((usize)in.size, &phys)) return -MOS_ENOMEM;
+        if (in_vram) { if (!(phys = vram_get(in.size))) return -MOS_ENOMEM; }
+        else if (!dma_alloc((usize)in.size, &phys)) return -MOS_ENOMEM;
         u32 id = seq_id++;
 #ifndef MOS_GPU_HOST
         if (in.ctx && (caps_now() & (MOS_GPU_CAP_VIRGL | MOS_GPU_CAP_VENUS))) {
             e = virtio_gpu_bo(in.ctx, id, in.size, 1);
-            if (e) { pmm_free(phys, in.size / 4096); return e; }
+            if (e) { if (in_vram) vram_put(phys, in.size); else pmm_free(phys, in.size / 4096); return e; }
         }
 #endif
         memset(b, 0, sizeof *b);
@@ -419,7 +441,10 @@ i64 gpu_syscall(process_t *p, u64 op, u64 user, u64 len, thread_t *self, int *bl
 #ifndef MOS_GPU_HOST
         if (b->ctx) virtio_gpu_bo(b->ctx, b->handle, b->size, 0);
 #endif
-        if (sharers == 1) pmm_free(b->phys, b->size / 4096);
+        if (sharers == 1) {
+            if (vram_is(b->phys, b->size)) vram_put(b->phys, b->size);
+            else pmm_free(b->phys, b->size / 4096);
+        }
         b->used = 0;
         return 0;
     }
@@ -436,7 +461,9 @@ i64 gpu_syscall(process_t *p, u64 op, u64 user, u64 len, thread_t *self, int *bl
 #else
         if (!p->mmap_next) p->mmap_next = USER_MMAP_BASE;
         u64 va = (p->mmap_next + 0xFFF) & ~0xFFFULL;
-        if (!gpu_user_map(p, va, b->phys, b->size, !!(b->flags & MOS_GPU_BO_WRITE))) return -MOS_ENOMEM;
+        bool ok = vram_is(b->phys, b->size) ? gpu_user_map_io(p, va, b->phys, b->size, !!(b->flags & MOS_GPU_BO_WRITE))
+                                            : gpu_user_map(p, va, b->phys, b->size, !!(b->flags & MOS_GPU_BO_WRITE));
+        if (!ok) return -MOS_ENOMEM;
         p->mmap_next = va + b->size + 4096;
         b->map = va;
 #endif
@@ -452,7 +479,8 @@ i64 gpu_syscall(process_t *p, u64 op, u64 user, u64 len, thread_t *self, int *bl
         bo_t *b = bo_of(pid, in.handle);
         if (!b || !b->mapped) return -MOS_ENOENT;
 #ifndef MOS_GPU_HOST
-        gpu_user_unmap(p, b->map, b->size);
+        if (vram_is(b->phys, b->size)) gpu_user_unmap_io(p, b->map, b->size);
+        else gpu_user_unmap(p, b->map, b->size);
 #endif
         b->mapped = 0;
         b->map = 0;
