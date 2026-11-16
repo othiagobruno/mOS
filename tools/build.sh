@@ -57,6 +57,10 @@ tail -1 /tmp/amdgpu_host.log
 gcc -O1 -Wall -DMOS_LIBSYS_SYSCALL -I userland/libsystem -c userland/libsystem/sysctl.c -o /tmp/sysctl_ls.o
 gcc -O1 -Wall tools/sysctl_host.c /tmp/sysctl_ls.o -o /tmp/sysctl_host
 /tmp/sysctl_host | tail -1
+# libproc do libSystem (F2): proc_pidinfo/pidfdinfo/rusage/listpids/terminate contra um kernel falso
+gcc -O1 -Wall -DMOS_LIBSYS_SYSCALL -I userland/libsystem -c userland/libsystem/procinfo.c -o /tmp/procinfo_ls.o
+gcc -O1 -Wall tools/procinfo_host.c /tmp/procinfo_ls.o -o /tmp/procinfo_host
+/tmp/procinfo_host | tail -1
 # GPU AMD: estado do display, vsync, troca no vblank, buffer duplo e VRAM contra um Picasso simulado
 gcc -O2 -Wall -Wextra -DMOS_HOST_TEST -I kernel/dev/amdgpu -I tools tools/amdgpu_hw_host.c kernel/dev/amdgpu/amdgpu.c \
     kernel/dev/amdgpu/edid.c kernel/dev/amdgpu/ucode.c -o /tmp/amdgpu_hw_host
