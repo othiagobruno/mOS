@@ -37,13 +37,19 @@ typedef struct msl_tex {
     u64 loff[16];              /* deslocamento de cada nível */
     u64 lbpr[16];              /* bytes por linha de cada nível */
     u64 lslice[16];            /* bytes por fatia (slice) de cada nível */
+    u32 swizzle;               /* MTLTextureSwizzleChannels (r | g<<8 | b<<16 | a<<24); 0 = identidade */
 } msl_tex_t;
 typedef struct msl_samp {
     int minf, magf, mipf;      /* 0 nearest, 1 linear; mip: 0 sem, 1 nearest, 2 linear */
     int addr[3];               /* MTLSamplerAddressMode */
     int normalized, compare, border;
     float lodmin, lodmax;
+    int bcustom;               /* 1: bcol é a cor de borda (GL_TEXTURE_BORDER_COLOR) */
+    float bcol[4];
+    float lodbias;
 } msl_samp_t;
+/* aplica o swizzle da textura a um texel já lido */
+void msl_tex_swizzle(const msl_tex_t *t, double v[4]);
 
 /* implementados no metal.c */
 void msl_tex_load(const msl_tex_t *t, int x, int y, int z, int slice, int lvl, double out[4]);

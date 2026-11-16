@@ -3,8 +3,7 @@
 #pragma once
 typedef struct __GLsync *GLsync;
 typedef void (*GLDEBUGPROC)(GLenum, GLenum, GLuint, GLenum, GLsizei, const char *, const void *);
-typedef void *GLhandleARB_ptr;
-typedef unsigned int GLhandleARB;
+typedef void *GLhandleARB;
 typedef char GLchar;
 typedef char GLcharARB;
 typedef signed char GLbyte;

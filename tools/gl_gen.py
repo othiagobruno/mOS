@@ -24,6 +24,7 @@ EXTS = ['GL_ARB_vertex_buffer_object','GL_ARB_shader_objects','GL_ARB_vertex_sha
         'GL_EXT_fog_coord','GL_ARB_point_parameters','GL_EXT_multi_draw_arrays','GL_ARB_transpose_matrix',
         'GL_EXT_geometry_shader4','GL_ARB_geometry_shader4','GL_EXT_draw_instanced','GL_ARB_draw_instanced',
         'GL_ARB_vertex_type_2_10_10_10_rev','GL_ARB_ES2_compatibility','GL_ARB_texture_swizzle']
+ENUM_ONLY = ['GL_KHR_debug', 'GL_ARB_imaging', 'GL_ARB_copy_buffer', 'GL_ARB_debug_output', 'GL_ARB_texture_float', 'GL_EXT_abgr', 'GL_ARB_texture_mirror_clamp_to_edge', 'GL_EXT_texture_sRGB_decode', 'GL_ARB_texture_view', 'GL_ARB_buffer_storage', 'GL_ARB_texture_cube_map_array', 'GL_ARB_depth_buffer_float', 'GL_ARB_texture_rg', 'GL_ARB_framebuffer_object', 'GL_ARB_half_float_vertex', 'GL_ARB_vertex_array_object', 'GL_ARB_internalformat_query']
 want_enum, want_cmd = set(), {}
 def take(req, tag):
     for e in req.findall('enum'): want_enum.add(e.get('name'))
@@ -35,6 +36,9 @@ for x in root.find('extensions'):
     if x.get('name') in EXTS:
         for r in x.findall('require'):
             if r.get('api') in (None, 'gl'): take(r, x.get('name'))
+    if x.get('name') in ENUM_ONLY:
+        for r in x.findall('require'):
+            for e in r.findall('enum'): want_enum.add(e.get('name'))
 vals = {}
 for es in root.findall('enums'):
     for e in es.findall('enum'):
@@ -53,7 +57,7 @@ def txt(el):
 protos = ['/* Gerado por tools/gl_gen.py a partir do gl.xml da Khronos (Apache-2.0). Não editar.',
           ' * Protótipos oficiais: o compilador confere as assinaturas do OpenGL do mOS. */', '#pragma once',
           'typedef struct __GLsync *GLsync;', 'typedef void (*GLDEBUGPROC)(GLenum, GLenum, GLuint, GLenum, GLsizei, const char *, const void *);',
-          'typedef void *GLhandleARB_ptr;', 'typedef unsigned int GLhandleARB;', 'typedef char GLchar;', 'typedef char GLcharARB;',
+          'typedef void *GLhandleARB;', 'typedef char GLchar;', 'typedef char GLcharARB;',
           'typedef signed char GLbyte;', 'typedef unsigned char GLubyte;', 'typedef short GLshort;', 'typedef unsigned short GLushort;',
           'typedef long long GLint64;', 'typedef unsigned long long GLuint64;', 'typedef void GLvoid;', 'typedef float GLclampf;',
           'typedef double GLclampd;', 'typedef unsigned short GLhalf;', 'typedef unsigned short GLhalfARB;',

@@ -41,6 +41,7 @@ void mx_tex_layout(mtex_t *m, u64 bpr0) {
     t->h = (int)m->h;
     t->d = (int)m->d;
     t->levels = m->levels;
+    t->swizzle = m->swizzle == 0x05040302u ? 0 : m->swizzle;
     int faces = m->type == MSL_TEX_CUBE || m->type == MSL_TEX_CUBE_ARRAY ? 6 : 1;
     t->slices = (m->arrlen ? m->arrlen : 1) * faces;
     u64 off = 0;

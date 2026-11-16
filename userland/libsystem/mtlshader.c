@@ -520,6 +520,7 @@ typedef struct {
     msl_fn_t *cur;
     int frame;
     u32 tgoff;
+    int glsl;                 /* dialeto GLSL do OpenGL: swizzle stpq, == de vetores devolve bool */
     node_t **ginit;           /* inicializadores de globais (avaliados no fim) */
     var_t **ginitv;
     int nginit, capginit;
@@ -1035,9 +1036,10 @@ static node_t *member(P_t *P, node_t *b, const char *name) {
         n->a = b;
         n->nswz = len;
         for (int i = 0; i < len; i++) {
-            const char *xy = "xyzw", *rg = "rgba";
+            const char *xy = "xyzw", *rg = "rgba", *st = "stpq";
             const char *p = strchr(xy, name[i]);
             int c = p ? (int)(p - xy) : (strchr(rg, name[i]) ? (int)(strchr(rg, name[i]) - rg) : -1);
+            if (c < 0 && P->glsl && strchr(st, name[i])) c = (int)(strchr(st, name[i]) - st);
             if (c < 0 || c >= nc) perr2(P, "swizzle inválido:", name);
             n->swz[i] = (u8)c;
         }
@@ -1368,6 +1370,19 @@ node_t *msl_binop(P_t *P, int op, node_t *l, node_t *r) {
     }
     if (!is_num(l->t) || !is_num(r->t)) perr(P, "operandos inválidos para o operador");
     ty_t *t;
+    if (P->glsl && (op == 'e' || op == 'n') && (shape(l->t) > 1 || shape(r->t) > 1 || l->t->k == K_MAT)) {
+        /* GLSL: == e != de vetores e matrizes comparam o todo e devolvem um bool */
+        node_t *c = mk(P, E_BIN, bool_shape(l->t->k == K_MAT ? ty_ncomp(l->t) : shape(arith(P, l->t, r->t, op))));
+        c->sub = op;
+        c->a = l;
+        c->b = r;
+        node_t *red = mk(P, E_BI, msl_tscal(K_BOOL));
+        red->bi = op == 'e' ? B_ALL : B_ANY;
+        red->v = msl_alloc(P->L, sizeof(node_t *));
+        red->v[0] = c;
+        red->nv = 1;
+        return red;
+    }
     if (op == 'e' || op == 'n' || op == '<' || op == '>' || op == 'l' || op == 'g') {
         ty_t *a = arith(P, l->t, r->t, op);
         t = bool_shape(shape(a));
@@ -1984,7 +1999,8 @@ static void top(P_t *P) {
 
 /* ================================================================ API */
 void msl_spirv_attach(msl_fn_t *f);
-msl_lib_t *msl_compile(const char *src, u64 n, const char *defines, char *err, int errn) {
+msl_lib_t *msl_compile(const char *src, u64 n, const char *defines, char *err, int errn) { return msl_compile2(src, n, defines, err, errn, 0); }
+msl_lib_t *msl_compile2(const char *src, u64 n, const char *defines, char *err, int errn, int flags) {
     msl_lib_t *L = calloc(1, sizeof *L);
     pp_t pp = {0};
     pp.L = L;
@@ -2031,7 +2047,10 @@ msl_lib_t *msl_compile(const char *src, u64 n, const char *defines, char *err, i
     P.L = L;
     P.t = toks.v;
     P.n = toks.n;
+    P.glsl = (flags & MSL_FLAG_GLSL) != 0;
     while (P.pos < P.n) top(&P);
+    L->globs = P.globals;
+    L->nglob = P.nglob;
     for (int i = 0; i < L->nfn; i++)
         if (!L->fns[i]->defined) {
             /* protótipo sem corpo só é erro se for chamado: o interpretador avisa */
@@ -2051,6 +2070,67 @@ msl_lib_t *msl_compile(const char *src, u64 n, const char *defines, char *err, i
     free(pp.keep.v);
     for (macro_t *m = pp.macros, *nx; m; m = nx) { nx = m->next; free(m); }
     return L;
+}
+/* só o pré-processador: devolve o texto expandido (um token por vez, quebras de linha preservadas pelo número
+ * da linha de origem), ou 0 com a mensagem em err. Usado pelo GLSL do OpenGL (gl_glsl.c). */
+char *msl_preprocess(const char *src, u64 n, const char *defines, char *err, int errn) {
+    msl_lib_t *L = calloc(1, sizeof *L);
+    pp_t pp = {0};
+    pp.L = L;
+    pp.err = err;
+    pp.errn = errn;
+    if (err && errn) err[0] = 0;
+    tvec_t raw = {0}, toks = {0};
+    char *out = 0;
+#if defined(__aarch64__)
+    int _setjmp(void *) __attribute__((returns_twice));
+    if (_setjmp(pp.jb)) {
+#else
+    if (__builtin_setjmp(pp.jb)) {
+#endif
+        out = 0;
+        goto done;
+    }
+    if (defines) {
+        const char *s = defines;
+        while (*s) {
+            const char *e = strchr(s, '\n');
+            if (!e) e = s + strlen(s);
+            const char *eq = memchr(s, '=', e - s);
+            char *name = adup(L, s, (int)((eq ? eq : e) - s));
+            char *val = eq ? adup(L, eq + 1, (int)(e - eq - 1)) : "1";
+            if (name[0]) mdef_str(&pp, name, val);
+            s = *e ? e + 1 : e;
+        }
+    }
+    lex(src, n, &raw);
+    preprocess(&pp, raw.v, raw.n, &toks, 0);
+    {
+        u64 cap = 64, len = 0;
+        for (int i = 0; i < toks.n; i++) cap += (u64)toks.v[i].n + 2;
+        cap += (u64)(toks.n ? toks.v[toks.n - 1].line : 0) + 16;
+        out = malloc(cap);
+        if (!out) goto done;
+        int line = 1;
+        for (int i = 0; i < toks.n; i++) {
+            tok_t *t = &toks.v[i];
+            while (line < t->line && len + 2 < cap) { out[len++] = '\n'; line++; }
+            if (len + (u64)t->n + 2 >= cap) break;
+            memcpy(out + len, t->p, (size_t)t->n);
+            len += (u64)t->n;
+            out[len++] = ' ';
+        }
+        out[len] = 0;
+    }
+done:
+    free(raw.v);
+    free(toks.v);
+    for (int i = 0; i < pp.nbufs; i++) free(pp.bufs[i]);
+    for (int i = 0; i < pp.keep.n; i++) free((void *)pp.keep.v[i].p);
+    free(pp.keep.v);
+    for (macro_t *m = pp.macros, *nx; m; m = nx) { nx = m->next; free(m); }
+    msl_lib_free(L);
+    return out;
 }
 void msl_lib_free(msl_lib_t *L) {
     if (!L) return;

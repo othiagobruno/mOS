@@ -1,14 +1,15 @@
 /*
  * mOS libSystem — NSOpenGL (NSOpenGLPixelFormat, NSOpenGLContext, NSOpenGLView) e a CGL que esses apps importam.
- * O mOS não tem OpenGL (nem por software: só Metal, em metal.c). Aqui o estado é real e coerente para o app
- * subir: o pixel format guarda os atributos pedidos e responde getValues/CGLDescribePixelFormat com eles; o
- * contexto conta referências, vira o current da thread (chave pthread), tranca e destranca de verdade, guarda os
- * parâmetros (swap interval, opacidade...) e a view. flushBuffer/CGLFlushDrawable não copiam pixel nenhum (não há
- * framebuffer de GL): só marcam a view para redesenho. A NSOpenGLView sem drawRect: do app pinta preto, como uma
- * superfície GL limpa.
- * CGLChoosePixelFormat continua recusando (kCGLBadPixelFormat): é por ela que o helper de GPU do Chromium desiste
- * do OpenGL e cai para o SwiftShader (metal_gate.c). O NSOpenGLPixelFormat monta o próprio CGLPixelFormatObj sem
- * passar por ela, e CGLCreateContext aceita esse objeto.
+ * Cada CGLContextObj tem um contexto do OpenGL por software (gl_ctx.c e vizinhos): 2.1 compat por padrão e
+ * 4.1 core com kCGLPFAOpenGLProfile 3_2_Core/GL4_Core. O pixel format guarda os atributos pedidos e responde
+ * getValues/CGLDescribePixelFormat com o que o renderizador de software tem; o contexto conta referências,
+ * vira o current da thread (chave pthread, que o gl* também usa), tranca e destranca, guarda os parâmetros.
+ * O framebuffer acompanha o tamanho da view (bounds × escala com wantsBestResolutionOpenGLSurface) ou o
+ * kCGLCPSurfaceBackingSize; flushBuffer/CGLFlushDrawable trocam os buffers e copiam o quadro para um IOSurface
+ * BGRA que vira o contents do layer da view (o compositor do QuartzCore desenha). CGLSetOffScreen copia para a
+ * memória do app. CGLTexImageIOSurface2D cria a textura a partir dos pixels do IOSurface.
+ * CGLChoosePixelFormat recusa só nos processos do Chromium/Electron: o caminho deles é o Metal/SwiftShader
+ * (metal_gate.c), e o OpenGL por software seria mais lento que esse.
  * Registro: cx_appkit_nsopengl_init(), chamado no cx_appkit_input_init (appkit_input.c), junto do Postico.
  */
 #include "foundation.h"
@@ -26,6 +27,29 @@ int pthread_setspecific(unsigned long k, const void *v);
 void *pthread_self(void);
 
 typedef struct { double x, y, w, h; } gl_rect_t;
+/* OpenGL por software (gl_ctx.c, gl_tex.c) */
+typedef struct gl_ctx gl_ctx_t;
+gl_ctx_t *gl_ctx_create(gl_ctx_t *share, int core, int major, int minor, int w, int h, int depth, int stencil, int dbl, int alpha);
+void gl_ctx_destroy(gl_ctx_t *C);
+void gl_ctx_make_current(gl_ctx_t *C);
+void gl_ctx_swap(gl_ctx_t *C);
+void gl_ctx_read_bgra(gl_ctx_t *C, u8 *dst, u64 dbpr, int w, int h);
+void gl_fb_resize(gl_ctx_t *C, int w, int h);
+void gl_ctx_size(gl_ctx_t *C, int *w, int *h);
+int gl_tex_from_surface(gl_ctx_t *C, u32 target, u32 ifmt, int w, int h, u32 fmt, u32 type, const u8 *base, u64 bpr);
+void *IOSurfaceGetBaseAddress(void *s);
+void *IOSurfaceGetBaseAddressOfPlane(void *s, u64 i);
+u64 IOSurfaceGetBytesPerRow(void *s);
+u64 IOSurfaceGetBytesPerRowOfPlane(void *s, u64 i);
+u64 IOSurfaceGetWidth(void *s);
+u64 IOSurfaceGetHeight(void *s);
+int IOSurfaceLock(void *s, u32 opts, u32 *seed);
+int IOSurfaceUnlock(void *s, u32 opts, u32 *seed);
+void *IOSurfaceCreate(id props);
+extern const void *kIOSurfaceWidth, *kIOSurfaceHeight, *kIOSurfaceBytesPerElement, *kIOSurfacePixelFormat;
+id cx_num_i(i64 v);
+u32 _dyld_image_count(void);
+const char *_dyld_get_image_name(u32 i);
 void objc_msgSend_stret(void);   /* NSRect (32 bytes) volta por ponteiro oculto: MSG0 leria o isa do buffer */
 #define MSGR(T, obj, sel) ((T (*)(id, SEL))objc_msgSend_stret)((id)(obj), sel_registerName(sel))
 typedef struct { double w, h; } gl_size_t;
@@ -37,7 +61,7 @@ K(NSOpenGLPixelFormat) K(NSOpenGLContext) K(NSOpenGLView)
 enum {
     kCGLNoError = 0, kCGLBadAttribute = 10000, kCGLBadProperty = 10001, kCGLBadPixelFormat = 10002,
     kCGLBadContext = 10004, kCGLBadValue = 10008, kCGLBadMatch = 10009, kCGLBadEnumeration = 10013,
-    kCGLBadAddress = 10014, kCGLBadRendererInfo = 10012, kCGLBadState = 10016,
+    kCGLBadAddress = 10014, kCGLBadRendererInfo = 10012, kCGLBadState = 10016, kCGLBadAlloc = 10007,
 };
 enum {
     PFA_AllRenderers = 1, PFA_TripleBuffer = 3, PFA_DoubleBuffer = 5, PFA_Stereo = 6, PFA_AuxBuffers = 7,
@@ -109,11 +133,38 @@ static int pix_value(const cgl_pix_t *p, u32 a) {
     }
 }
 
+void CGLReleasePixelFormat(void *pix);
+static int is_chromium(void) {
+    static int cached = -1;
+    if (cached >= 0) return cached;
+    cached = 0;
+    u32 n = _dyld_image_count();
+    for (u32 i = 0; i < n; i++) {
+        const char *nm = _dyld_get_image_name(i);
+        if (!nm) continue;
+        static const char *fw[] = {"Electron Framework", "Chromium Framework", "Chromium Embedded Framework", "Google Chrome Framework", "Microsoft Edge Framework", 0};
+        for (int k = 0; fw[k]; k++) {
+            const char *a = nm;
+            for (; *a; a++) { const char *x = a, *y = fw[k]; while (*x && *y && *x == *y) { x++; y++; } if (!*y) { cached = 1; return 1; } }
+        }
+    }
+    return 0;
+}
 int CGLChoosePixelFormat(const int *attrs, void **pix, int *npix) {
-    (void)attrs;
     if (pix) *pix = 0;
     if (npix) *npix = 0;
-    return kCGLBadPixelFormat;   /* sem OpenGL: o Chromium vai para o SwiftShader (ver o cabeçalho) */
+    if (!pix || !npix) return kCGLBadAddress;
+    if (is_chromium()) return kCGLBadPixelFormat;   /* ver o cabeçalho */
+    cgl_pix_t *p = pix_new((const u32 *)attrs);
+    if (!p) return kCGLBadAlloc;
+    if (p->set[PFA_OpenGLProfile]) {
+        int v = p->val[PFA_OpenGLProfile];
+        if (v != GL_PROFILE_LEGACY && v != 0x3200 && v != 0x4100) { CGLReleasePixelFormat(p); return kCGLBadPixelFormat; }
+    }
+    if (p->set[PFA_Accelerated] && p->set[PFA_NoRecovery]) { /* pede hardware sem recuperação: o renderizador é de software */ }
+    *pix = p;
+    *npix = 1;
+    return kCGLNoError;
 }
 int CGLDescribePixelFormat(void *pix, int vs, int attrib, int *value) {
     cgl_pix_t *p = pix_of(pix);
@@ -147,8 +198,14 @@ typedef struct cgl_ctx {
     void *lock_owner;
     int lock_depth;
     unsigned long flushes;
+    gl_ctx_t *gl;
+    id surf;                     /* IOSurface do último quadro apresentado */
+    int sw, sh;
+    void *off_base;              /* CGLSetOffScreen */
+    int off_w, off_h, off_rb;
+    int bsize[2];                /* kCGLCPSurfaceBackingSize */
 } cgl_ctx_t;
-enum { kCGLCPSwapRectangle = 200, kCGLCPSwapInterval = 222, kCGLCPSurfaceOrder = 235, kCGLCPSurfaceOpacity = 236,
+enum { kCGLCESurfaceBackingSize = 305, kCGLCPSwapRectangle = 200, kCGLCPSwapInterval = 222, kCGLCPSurfaceOrder = 235, kCGLCPSurfaceOpacity = 236,
        kCGLCPSurfaceBackingSize = 304, kCGLCPSurfaceSurfaceVolatile = 306, kCGLCPHasDrawable = 314,
        kCGLCPCurrentRendererID = 309, kCGLCPGPUVertexProcessing = 310, kCGLCPGPUFragmentProcessing = 311 };
 static cgl_ctx_t *ctx_of(void *c) { cgl_ctx_t *x = c; return x && x->magic == CTX_MAGIC ? x : 0; }
@@ -177,6 +234,10 @@ int CGLCreateContext(void *pix, void *share, void **ctx) {
     c->params[kCGLCPSurfaceOpacity] = 1;
     c->params[kCGLCPSurfaceOrder] = 1;
     c->params[kCGLCPCurrentRendererID] = (int)GL_RENDERER_SOFT;
+    int core = pix_value(p, PFA_OpenGLProfile) >= 0x3200;
+    c->gl = gl_ctx_create(share ? ((cgl_ctx_t *)share)->gl : 0, core, core ? 4 : 2, 1, 1, 1, pix_value(p, PFA_DepthSize) > 0,
+                          pix_value(p, PFA_StencilSize) > 0, p->set[PFA_DoubleBuffer] || p->set[PFA_TripleBuffer], 1);
+    if (!c->gl) { CGLReleasePixelFormat(p); free(c); return kCGLBadAlloc; }
     *ctx = c;
     return kCGLNoError;
 }
@@ -186,10 +247,13 @@ int CGLSetCurrentContext(void *ctx) {
     cur_init();
     if (!g_cur_ready) return kCGLBadState;
     pthread_setspecific(g_cur_key, ctx);
+    gl_ctx_make_current(ctx ? ((cgl_ctx_t *)ctx)->gl : 0);
     return kCGLNoError;
 }
 static void ctx_free(cgl_ctx_t *c) {
     if (CGLGetCurrentContext() == c) CGLSetCurrentContext(0);
+    gl_ctx_destroy(c->gl);
+    if (c->surf) objc_release(c->surf);
     CGLReleasePixelFormat(c->pix);
     c->magic = 0;
     free(c);
@@ -224,6 +288,7 @@ int CGLUnlockContext(void *ctx) {
     if (--c->lock_depth == 0) __atomic_store_n(&c->lock_owner, (void *)0, __ATOMIC_RELEASE);
     return kCGLNoError;
 }
+static void ctx_sync_size(cgl_ctx_t *c);
 int CGLSetParameter(void *ctx, int pname, const int *params) {
     cgl_ctx_t *c = ctx_of(ctx);
     if (!c) return kCGLBadContext;
@@ -231,6 +296,7 @@ int CGLSetParameter(void *ctx, int pname, const int *params) {
     if (pname < 0 || pname >= CTX_NPARAM) return kCGLBadEnumeration;
     if (pname == kCGLCPCurrentRendererID || pname == kCGLCPHasDrawable) return kCGLBadValue;   /* só leitura */
     c->params[pname] = params[0];
+    if (pname == kCGLCPSurfaceBackingSize) { c->bsize[0] = params[0]; c->bsize[1] = params[1]; ctx_sync_size(c); }
     return kCGLNoError;
 }
 int CGLGetParameter(void *ctx, int pname, int *params) {
@@ -238,16 +304,19 @@ int CGLGetParameter(void *ctx, int pname, int *params) {
     if (!c) return kCGLBadContext;
     if (!params) return kCGLBadAddress;
     if (pname < 0 || pname >= CTX_NPARAM) return kCGLBadEnumeration;
-    if (pname == kCGLCPHasDrawable) { params[0] = c->view != 0; return kCGLNoError; }
+    if (pname == kCGLCPHasDrawable) { params[0] = c->view != 0 || c->off_base != 0; return kCGLNoError; }
+    if (pname == kCGLCPSurfaceBackingSize) { params[0] = c->bsize[0]; params[1] = c->bsize[1]; return kCGLNoError; }
     if (pname == kCGLCPGPUVertexProcessing || pname == kCGLCPGPUFragmentProcessing) { params[0] = 0; return kCGLNoError; }
     params[0] = c->params[pname];
     return kCGLNoError;
 }
+static void ctx_sync_size(cgl_ctx_t *c);
 int CGLEnable(void *ctx, int pname) {
     cgl_ctx_t *c = ctx_of(ctx);
     if (!c) return kCGLBadContext;
     if (pname < 0 || pname >= CTX_NPARAM) return kCGLBadEnumeration;
     c->enabled[pname] = 1;
+    if (pname == kCGLCESurfaceBackingSize) ctx_sync_size(c);
     return kCGLNoError;
 }
 int CGLDisable(void *ctx, int pname) {
@@ -267,23 +336,100 @@ int CGLIsEnabled(void *ctx, int pname, int *enable) {
 }
 int CGLSetVirtualScreen(void *ctx, int vs) { cgl_ctx_t *c = ctx_of(ctx); if (!c) return kCGLBadContext; if (vs != 0) return kCGLBadValue; c->vscreen = vs; return kCGLNoError; }
 int CGLGetVirtualScreen(void *ctx, int *vs) { cgl_ctx_t *c = ctx_of(ctx); if (!c) return kCGLBadContext; if (!vs) return kCGLBadAddress; *vs = c->vscreen; return kCGLNoError; }
-/* sem framebuffer de GL: o flush conta e pede redesenho da view */
+/* tamanho do framebuffer: o da view (em pixels) ou o kCGLCPSurfaceBackingSize */
+static char glv_best_key;
+static void ctx_sync_size(cgl_ctx_t *c) {
+    if (c->off_base) return;
+    int w = 0, h = 0;
+    if (c->enabled[kCGLCESurfaceBackingSize]) { w = c->bsize[0]; h = c->bsize[1]; }
+    if ((!w || !h) && c->view) {
+        gl_rect_t b = MSGR(gl_rect_t, c->view, "bounds");
+        double sc = 1;
+        if (objc_getAssociatedObject(c->view, &glv_best_key)) {
+            id win = MSG0(id, c->view, "window");
+            double f = win ? MSG0(double, win, "backingScaleFactor") : 1;
+            if (f > 0) sc = f;
+        }
+        w = (int)(b.w * sc + 0.5);
+        h = (int)(b.h * sc + 0.5);
+    }
+    if (w > 0 && h > 0) gl_fb_resize(c->gl, w, h);
+}
+static void present_view(cgl_ctx_t *c) {
+    int w, h;
+    gl_ctx_size(c->gl, &w, &h);
+    if (!c->surf || c->sw != w || c->sh != h) {
+        if (c->surf) objc_release(c->surf);
+        id keys[4] = {(id)kIOSurfaceWidth, (id)kIOSurfaceHeight, (id)kIOSurfaceBytesPerElement, (id)kIOSurfacePixelFormat};
+        id vals[4] = {cx_num_i(w), cx_num_i(h), cx_num_i(4), cx_num_i(0x42475241 /* 'BGRA' */)};
+        id d = MSG(id, (id)cx_class_named("NSDictionary"), "dictionaryWithObjects:forKeys:count:", vals, keys, (u64)4);
+        for (int i = 0; i < 4; i++) objc_release(vals[i]);
+        c->surf = (id)IOSurfaceCreate(d);
+        c->sw = w;
+        c->sh = h;
+        if (!c->surf) return;
+    }
+    IOSurfaceLock(c->surf, 0, 0);
+    gl_ctx_read_bgra(c->gl, IOSurfaceGetBaseAddress(c->surf), IOSurfaceGetBytesPerRow(c->surf), w, h);
+    IOSurfaceUnlock(c->surf, 0, 0);
+    if (!MSG0(BOOL, c->view, "wantsLayer")) MSG(void, c->view, "setWantsLayer:", (BOOL)1);
+    id layer = MSG0(id, c->view, "layer");
+    if (layer) {
+        MSG(void, layer, "setContents:", c->surf);
+        MSG(void, layer, "setOpaque:", (BOOL)(c->params[kCGLCPSurfaceOpacity] != 0));
+    }
+}
 int CGLFlushDrawable(void *ctx) {
     cgl_ctx_t *c = ctx_of(ctx);
     if (!c) return kCGLBadContext;
     c->flushes++;
-    if (c->view) MSG(void, c->view, "setNeedsDisplay:", (BOOL)1);
+    gl_ctx_swap(c->gl);
+    if (c->off_base) {
+        int w, h;
+        gl_ctx_size(c->gl, &w, &h);
+        gl_ctx_read_bgra(c->gl, c->off_base, (u64)c->off_rb, w < c->off_w ? w : c->off_w, h < c->off_h ? h : c->off_h);
+    } else if (c->view) present_view(c);
     return kCGLNoError;
 }
-int CGLUpdateContext(void *ctx) { return ctx_of(ctx) ? kCGLNoError : kCGLBadContext; }
-int CGLClearDrawable(void *ctx) { cgl_ctx_t *c = ctx_of(ctx); if (!c) return kCGLBadContext; c->view = 0; return kCGLNoError; }
-int CGLSetOffScreen(void *ctx, int w, int h, int rowbytes, void *base) { (void)w; (void)h; (void)rowbytes; (void)base; return ctx_of(ctx) ? kCGLBadMatch : kCGLBadContext; }
+int CGLUpdateContext(void *ctx) { cgl_ctx_t *c = ctx_of(ctx); if (!c) return kCGLBadContext; ctx_sync_size(c); return kCGLNoError; }
+int CGLClearDrawable(void *ctx) { cgl_ctx_t *c = ctx_of(ctx); if (!c) return kCGLBadContext; c->view = 0; c->off_base = 0; return kCGLNoError; }
+int CGLSetOffScreen(void *ctx, int w, int h, int rowbytes, void *base) {
+    cgl_ctx_t *c = ctx_of(ctx);
+    if (!c) return kCGLBadContext;
+    if (w <= 0 || h <= 0 || rowbytes < w * 4 || !base) return kCGLBadValue;
+    c->off_base = base;
+    c->off_w = w;
+    c->off_h = h;
+    c->off_rb = rowbytes;
+    c->view = 0;
+    gl_fb_resize(c->gl, w, h);
+    return kCGLNoError;
+}
+int CGLGetOffScreen(void *ctx, int *w, int *h, int *rowbytes, void **base) {
+    cgl_ctx_t *c = ctx_of(ctx);
+    if (!c) return kCGLBadContext;
+    if (w) *w = c->off_w;
+    if (h) *h = c->off_h;
+    if (rowbytes) *rowbytes = c->off_rb;
+    if (base) *base = c->off_base;
+    return kCGLNoError;
+}
+/* tela cheia de CGL (obsoleta desde o 10.7): o macOS atual também recusa */
 int CGLSetFullScreen(void *ctx) { return ctx_of(ctx) ? kCGLBadMatch : kCGLBadContext; }
 int CGLSetFullScreenOnDisplay(void *ctx, u32 mask) { (void)mask; return ctx_of(ctx) ? kCGLBadMatch : kCGLBadContext; }
-/* IOSurface como textura exige GL de verdade */
+/* IOSurface como textura (GL_TEXTURE_RECTANGLE normalmente): os pixels do plano viram a imagem do nível 0 */
 int CGLTexImageIOSurface2D(void *ctx, u32 target, u32 ifmt, int w, int h, u32 fmt, u32 type, void *surf, u32 plane) {
-    (void)target; (void)ifmt; (void)w; (void)h; (void)fmt; (void)type; (void)surf; (void)plane;
-    return ctx_of(ctx) ? kCGLBadState : kCGLBadContext;
+    cgl_ctx_t *c = ctx_of(ctx);
+    if (!c) return kCGLBadContext;
+    if (!surf) return kCGLBadAddress;
+    const u8 *base = plane ? IOSurfaceGetBaseAddressOfPlane(surf, plane) : IOSurfaceGetBaseAddress(surf);
+    u64 bpr = plane ? IOSurfaceGetBytesPerRowOfPlane(surf, plane) : IOSurfaceGetBytesPerRow(surf);
+    if (!base) return kCGLBadValue;
+    if ((u64)w > IOSurfaceGetWidth(surf) || (u64)h > IOSurfaceGetHeight(surf)) return kCGLBadValue;
+    IOSurfaceLock(surf, 1, 0);
+    int r = gl_tex_from_surface(c->gl, target, ifmt, w, h, fmt, type, base, bpr);
+    IOSurfaceUnlock(surf, 1, 0);
+    return r ? kCGLNoError : kCGLBadValue;
 }
 void CGLGetVersion(int *major, int *minor) { if (major) *major = 1; if (minor) *minor = 2; }
 static int g_opts[16];
@@ -334,7 +480,7 @@ int CGLDescribeRenderer(void *rend, int idx, int prop, int *value) {
     case kCGLRPRendererID: *value = (int)GL_RENDERER_SOFT; break;
     case kCGLRPRendererCount: case kCGLRPOnline: case kCGLRPWindow: case kCGLRPMPSafe: case kCGLRPCompliant:
     case kCGLRPBackingStore: case kCGLRPDisplayMask: *value = 1; break;
-    case kCGLRPMajorGLVersion: *value = 2; break;
+    case kCGLRPMajorGLVersion: *value = 4; break;
     case kCGLRPVideoMemoryMegabytes: case kCGLRPTextureMemoryMegabytes: *value = 256; break;
     case kCGLRPAccelerated: case kCGLRPOffScreen: case kCGLRPFullScreen: case kCGLRPRobust: case kCGLRPMultiScreen: *value = 0; break;
     default: return kCGLBadProperty;
@@ -433,7 +579,7 @@ static void ctx_flush(id self, SEL c) { (void)c; CGLFlushDrawable(gl_get(self));
 static void ctx_set_view(id self, SEL c, id v) {
     (void)c;
     cgl_ctx_t *x = ctx_of(gl_get(self));
-    if (x) x->view = v;
+    if (x) { x->view = v; x->off_base = 0; ctx_sync_size(x); }
 }
 static id ctx_view(id self, SEL c) { (void)c; cgl_ctx_t *x = ctx_of(gl_get(self)); return x ? x->view : 0; }
 static void ctx_clear_drawable(id self, SEL c) { (void)c; CGLClearDrawable(gl_get(self)); }
@@ -455,7 +601,7 @@ static void ctx_dealloc(id self, SEL c) {
 }
 
 /* ---- NSOpenGLView: pixel format e contexto preguiçosos, prepareOpenGL uma vez antes do primeiro desenho */
-static char glv_fmt_key, glv_ctx_key, glv_prep_key, glv_best_key;
+static char glv_fmt_key, glv_ctx_key, glv_prep_key;
 static id glv_default_fmt(id cls, SEL c) {
     (void)cls; (void)c;
     return objc_autorelease(MSG0(id, MSG0(id, (id)&NSOpenGLPixelFormat_c, "alloc"), "init"));
@@ -513,6 +659,10 @@ void NSRectFill(gl_rect_t r);
 static void glv_draw(id self, SEL c, gl_rect_t r) {
     (void)c; (void)r;
     glv_prepare_once(self);
+    /* o app que não desenha no drawRect: vê a superfície GL limpa; depois do primeiro flush o layer já tem o quadro */
+    id x = objc_getAssociatedObject(self, &glv_ctx_key);
+    cgl_ctx_t *cx = x ? ctx_of(gl_get(x)) : 0;
+    if (cx && cx->flushes) return;
     id black = MSG(id, (id)cx_class_named("NSColor"), "colorWithCalibratedWhite:alpha:", 0.0, 1.0);
     if (black) MSG0(void, black, "setFill");
     NSRectFill(MSGR(gl_rect_t, self, "bounds"));

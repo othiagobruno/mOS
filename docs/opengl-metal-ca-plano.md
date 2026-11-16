@@ -8,8 +8,8 @@ Plano e estado honesto da frente. Atualizado a cada PR. Docs de detalhe: [metal.
 
 | Área | Estado na `main` | O que falta |
 |---|---|---|
-| CGL / NSOpenGL | Objetos e parâmetros coerentes (`appkit_nsopengl.c`), sem framebuffer; `CGLChoosePixelFormat` recusa sempre | Framebuffer real por contexto, `flushBuffer` que apresenta pixels na view, `CGLChoosePixelFormat` aceitando fora do Chromium, `CGLTexImageIOSurface2D` (13 apps), pbuffers/offscreen, contextos compartilhados |
-| OpenGL (`gl*`) | **Nada**: nenhum `gl*` exportado; 31 apps importam `NSOpenGLPixelFormat` | GL 2.1 compat (fixed function: matrizes, `glBegin`, luz, texenv, fog, listas) e GL 3.2–4.1 core (VBO/VAO/EBO, FBO/RBO, texturas 1D/2D/3D/cube/array/rect, GLSL 1.10–4.10, UBO, instancing, transform feedback, queries, sync), `glGetString`/`glGetIntegerv` coerentes |
+| CGL / NSOpenGL | ✅ (PR 2) framebuffer real, `flushBuffer` no layer, offscreen, `CGLTexImageIOSurface2D`; antes: objetos sem framebuffer | Framebuffer real por contexto, `flushBuffer` que apresenta pixels na view, `CGLChoosePixelFormat` aceitando fora do Chromium, `CGLTexImageIOSurface2D` (13 apps), pbuffers/offscreen, contextos compartilhados |
+| OpenGL (`gl*`) | 🟡 (PR 2) 1155 de 1203 comandos, 2.1 compat + 4.1 core por software, GLSL 1.10–4.10; ver [opengl.md](opengl.md) | GL 2.1 compat (fixed function: matrizes, `glBegin`, luz, texenv, fog, listas) e GL 3.2–4.1 core (VBO/VAO/EBO, FBO/RBO, texturas 1D/2D/3D/cube/array/rect, GLSL 1.10–4.10, UBO, instancing, transform feedback, queries, sync), `glGetString`/`glGetIntegerv` coerentes |
 | Metal (software) | API ampla + rasterizador + MSL + AIR com 17 opcodes (`metal.c`, `metalexec.c`, `mtlshader.c`, `mtlexec.c`, `mtlair*`) | AIR: `double`, atômicos, `fcmp` não ordenado, pack/unpack, conferência com `.metallib` de app; MSL: templates, métodos em struct, argument buffers, function constants; derivadas reais (`dfdx` = 0 hoje); simdgroup com mais de 1 thread; indirect command buffers, argument encoders, binary archives, encoders paralelos (hoje nil) |
 | Metal na GPU AMD | ABI r2: BO, IOSurface na memória da GPU, lote de compute validado; sem execução de shader | Compilador para a ISA GFX9 (Vega/Raven2) e submit pelo driver da Thais (frente 1). Depende de rings GFX/compute e gerência de VRAM dela |
 | Core Animation | Animações, shape/gradient/text layers, `CADisplayLink` | Transform 3D com rotação e perspectiva no compositor, `CAReplicatorLayer` gerando réplicas, `CAEmitterLayer` com partículas, `CATiledLayer` com tiles, `CARenderer` desenhando, `CATransaction` com animação implícita completa |
@@ -46,4 +46,10 @@ Cada passo tem teste de host em `tools/` e entra por PR na `main`. Build complet
 
 | PR | O que entrou | Teste |
 |---|---|---|
-| (este) | Plano; OpenGL por software (ver [opengl.md](opengl.md)) | `tools/gl_host.c` |
+| #243 | Plano; `mtltex.c`; cabeçalhos GL gerados do registro da Khronos | sintaxe freestanding |
+| (este) | OpenGL por software inteiro (fixed function, GLSL, FBO, UBO, transform feedback, queries), CGL/NSOpenGL apresentando na view; compilador MSL com modo GLSL; swizzle e cor de borda no amostrador | `gl_host` 66/66, `nsopengl_host` 0 falhas, `host-metal-gpu` ok |
+
+## Próximo (OpenGL)
+
+Avaliadores e `glAccum`; `ARB_vertex_program`; derivadas reais (quads 2×2 no raster e no interpretador) para
+`dFdx` e lod implícita do GLSL; geometry shader; pontilhado de linha/polígono; teste com app real na VM.
