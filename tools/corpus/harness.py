@@ -38,8 +38,18 @@ def download(url: str, dest: Path) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_suffix(dest.suffix + ".part")
     req = urllib.request.Request(url, headers={"User-Agent": "mOS-corpus-harness"})
-    with urllib.request.urlopen(req, timeout=120) as r, tmp.open("wb") as out:
-        shutil.copyfileobj(r, out)
+    with urllib.request.urlopen(req, timeout=120) as r:
+        tam = int(r.headers.get("Content-Length") or 0)
+        teto = int(os.environ.get("MOS_CORPUS_MAX_MB") or 0)
+        if teto and tam > teto << 20:
+            raise SystemExit(f"adiado: {tam >> 20} MB passa do teto de {teto} MB (fica para a trava)")
+        precisa = tam * 5 // 2 + (4 << 30)     # o arquivo e a extração (ver fetch_one)
+        livre = shutil.disk_usage(dest.parent).free
+        if livre < precisa:
+            raise SystemExit(f"sem espaço em disco para baixar e extrair ({tam >> 20} MB; precisa de "
+                             f"{precisa >> 30} GiB livres, há {livre >> 30} GiB)")
+        with tmp.open("wb") as out:
+            shutil.copyfileobj(r, out)
     tmp.replace(dest)
 
 

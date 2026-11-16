@@ -52,7 +52,13 @@ PESADO=/home/thiago/OpenBot/Shared/mos-tools/bin/mos-pesado
 espera_ram() { while [ "$(free -m | awk '/^Mem/{print $7}')" -lt 4000 ]; do sleep 60; done; }
 adiados=()
 for id in "${ids[@]}"; do
-    python3 "$H" baixar --fixar "$id" 2>&1 | grep -v '^baixando'
+    if [ -n "${PEQUENOS:-}" ]; then
+        saida=$(MOS_CORPUS_MAX_MB=200 python3 "$H" baixar --fixar "$id" 2>&1 | grep -v '^baixando')
+        if [[ "$saida" == *"adiado:"* ]]; then echo "varrer-tudo: $id passa de 200 MB, fica para a trava (não baixado)"; continue; fi
+        [ -n "$saida" ] && echo "$saida"
+    else
+        python3 "$H" baixar --fixar "$id" 2>&1 | grep -v '^baixando'
+    fi
     espera_ram
     # arquivo pequeno (< 200 MB) não é descompactação grande: mede fora da trava; o resto vai pelo mos-pesado
     tam=$(du -sm "build/corpus/$id" 2>/dev/null | cut -f1)
