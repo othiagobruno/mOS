@@ -25,6 +25,7 @@ static void vcvtph2ps_r(T *t, int x, int s);
 static void vcvtps2ph_r(T *t, int x, int s);
 static int s_qxtn(T *t, int q, int u, int op, int size, int n, int d);
 static int s_rshr(T *t, int x, int eb, int kind, int sh);
+static int s_fcvt_vec_f(T *t, int q, int dbl, int u, int mode, int n, int d, int sc, int fbits);
 static int s_addhn(T *t, int q, int u, int size, int sub, int n, int m, int d);
 static int s_ldst_single(T *t, a64_u32 w);
 static void s_round_packed(T *t, int pd, int dst, int src, int mode);
@@ -1052,6 +1053,18 @@ static int s_shift(T *t, a64_u32 w) {              /* AdvSIMD vetorial, deslocam
         if (eb == 64 && !q) return 0;
         return s_qshl_imm(t, q, u, op, eb, lsh, n, d, 0);
     }
+    if ((op == 0x1F || op == 0x1C) && eb >= 32) {    /* FCVTZS/FCVTZU e SCVTF/UCVTF de ponto fixo */
+        if (eb == 64 && !q) return 0;
+        int dbl = eb == 64, fb = rsh;
+        if (op == 0x1F) return (u && dbl) ? 0 : s_fcvt_vec_f(t, q, dbl, u, 3, n, d, 0, fb);
+        if (!s_scvtf(t, q, u, dbl, n, d, 0)) return 0;
+        /* escala por 2^-fbits: exata (o resultado nunca fica subnormal: |x| >= 2^-64) */
+        s_ld(t, 0, d);
+        if (dbl) s_const(t, 2, (a64_u64)(1023 - fb) << 52); else s_const(t, 2, (a64_u64)(127 - fb) << 23 | (a64_u64)(127 - fb) << 55);
+        xop2(B, dbl ? XF_66 : 0, 0x59, 0, XR(2));
+        s_st(t, d, 0, q);
+        return 1;
+    }
     if (u && (op == 0x08 || op == 0x0A)) {          /* SRI / SLI: insere os bits deslocados */
         if (eb == 64 && !q) return 0;
         int left = op == 0x0A, sh = left ? lsh : rsh;
@@ -1826,7 +1839,11 @@ static void s_fround(T *t, int dbl, int packed, int x, int mode) {   /* x = arre
     xop2(B, ps, 0x54, 3, XR(4));
     xop2(B, sd, 0x5C, x, XR(3));                    /* x -= 1 */
 }
-static int s_fcvt_vec(T *t, int q, int dbl, int u, int mode, int n, int d, int sc) {
+static int s_fcvt_vec_f(T *t, int q, int dbl, int u, int mode, int n, int d, int sc, int fbits);
+static int s_fcvt_vec(T *t, int q, int dbl, int u, int mode, int n, int d, int sc) { return s_fcvt_vec_f(t, q, dbl, u, mode, n, d, sc, 0); }
+/* fbits: ponto fixo (FCVTZS/FCVTZU #fbits): x * 2^fbits antes, exato (estouro vira inf e cai no
+ * resultado indefinido do cvtt) */
+static int s_fcvt_vec_f(T *t, int q, int dbl, int u, int mode, int n, int d, int sc, int fbits) {
     if (mode != 3 && !jit_g.sse41) return 0;
     fl_clobber(t);
     x_test_ri(B, 0, XM(RCPU, OFF_FPCR), 1u << 24);
@@ -1835,6 +1852,7 @@ static int s_fcvt_vec(T *t, int q, int dbl, int u, int mode, int n, int d, int s
     if (!dbl) {
         int req = sc ? 0x0F : q ? 0xFFFF : 0xFF;
         if (sc) x_movd_ld(B, 0, VO(n)); else if (q) s_ld(t, 0, n); else x_movq_ld(B, 0, VO(n));
+        if (fbits) { s_const(t, 2, (a64_u64)(127 + fbits) << 23 | (a64_u64)(127 + fbits) << 55); xop2(B, 0, 0x59, 0, XR(2)); }
         if (u) {
             s_zero(t, 2); s_op(t, 0x66, 2, 0);                  /* 0 > bits: sinal ligado */
             s_const(t, 4, 0x4EFFFFFF4EFFFFFFull);
@@ -1863,6 +1881,7 @@ static int s_fcvt_vec(T *t, int q, int dbl, int u, int mode, int n, int d, int s
         x_mov_rm(B, 1, XAX, VOE(n, 8 * e));
         if (u) { x_mov_ri(B, XCX, 0x43DFFFFFFFFFFFFFull); x_alu_rr(B, 1, A_CMP, XAX, XCX); slow_if(t, CC_A); }
         xop2(B, XF_66 | XF_W, 0x6E, 0, XR(XAX));               /* movq xmm0, rax */
+        if (fbits) { x_mov_ri(B, XCX, (a64_u64)(1023 + fbits) << 52); xop2(B, XF_66 | XF_W, 0x6E, 2, XR(XCX)); xop2(B, XF_F2, 0x59, 0, XR(2)); }
         s_fround(t, 1, 0, 0, mode);
         xop2(B, XF_F2 | XF_W, 0x2C, XAX, XR(0));               /* cvttsd2si rax, xmm0 */
         t->mxclean = 0;
