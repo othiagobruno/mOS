@@ -287,9 +287,7 @@ K(kSCDynamicStoreUseSessionKeys, "UseSessionKeys")
 K(NSPasteboardTypeHTML, "public.html") K(NSPasteboardTypeTIFF, "public.tiff")
 K(NSPasteboardURLReadingFileURLsOnlyKey, "NSPasteboardURLReadingFileURLsOnlyKey")
 
-/* proxies: CFNetworkCopyProxiesForURL e as chaves kCFProxy* estão em cfproxy.c */
-id_ CFNetworkExecuteProxyAutoConfigurationScript(id_ script, id_ url, void *cb, void *ctx) { (void)script; (void)url; (void)cb; (void)ctx; return 0; }
-id_ CFNetworkExecuteProxyAutoConfigurationURL(id_ pac, id_ url, void *cb, void *ctx) { (void)pac; (void)url; (void)cb; (void)ctx; return 0; }
+/* proxies: CFNetworkCopyProxiesForURL e as chaves kCFProxy* em cfproxy.c; PAC em cfpac.c */
 
 /* CFError: um NSError do mOS (CFGetTypeID = TID_ERROR); domínio e código numa tabela ao lado, porque o NSError do
  * mOS não guarda campos. A tabela é circular (256 erros vivos bastam: erros CF são curtos). */
