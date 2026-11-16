@@ -184,23 +184,27 @@ NATIVE(wg_import) {
 NATIVE(illegal) { UNUSED_ARGS; return js_throw_err(E_TYPE, "Construtor ilegal"); }
 NATIVE(loc_tostring) { UNUSED_ARGS; return js_getn(thisv, "href"); }
 
-static void worker_scope(js_page_t *p, const char *url, const char *name) {
+static void worker_scope(js_page_t *p, const char *url, const char *name, bool shared) {
     jsrealm *r = J.realm;
     jsobj *g = r->global;
     worker_strip(g);
-    /* DedicatedWorkerGlobalScope → WorkerGlobalScope → protótipo antigo do global */
+    /* (Dedicated|Shared)WorkerGlobalScope → WorkerGlobalScope → protótipo antigo do global */
+    const char *sn = shared ? "SharedWorkerGlobalScope" : "DedicatedWorkerGlobalScope";
     jsobj *wgs = js_newobj(g->proto), *dwgs = js_newobj(wgs);
     g->proto = dwgs;
-    jsobj *c1 = js_newctor(illegal, "WorkerGlobalScope", 0, wgs), *c2 = js_newctor(illegal, "DedicatedWorkerGlobalScope", 0, dwgs);
+    jsobj *c1 = js_newctor(illegal, "WorkerGlobalScope", 0, wgs), *c2 = js_newctor(illegal, sn, 0, dwgs);
     js_defn(g, "WorkerGlobalScope", jv_obj(c1), PF_NOENUM);
-    js_defn(g, "DedicatedWorkerGlobalScope", jv_obj(c2), PF_NOENUM);
-    js_defprop(dwgs, A[A_sym_toStringTag], jv_str(js_intern("DedicatedWorkerGlobalScope", -1)), PF_NOENUM | PF_RO);
+    js_defn(g, sn, jv_obj(c2), PF_NOENUM);
+    js_defprop(dwgs, A[A_sym_toStringTag], jv_str(js_intern(sn, -1)), PF_NOENUM | PF_RO);
     js_defn(g, "self", jv_obj(g), PF_NOENUM);
     js_defn(g, "name", jv_str(js_strz(name)), 0);
-    js_defn(g, "onmessage", JS_NULL, 0);
-    js_defn(g, "onmessageerror", JS_NULL, 0);
     js_defn(g, "onerror", JS_NULL, 0);
-    js_defnative(g, "postMessage", wg_post, 1, 0);
+    if (shared) js_defn(g, "onconnect", JS_NULL, 0);
+    else {
+        js_defn(g, "onmessage", JS_NULL, 0);
+        js_defn(g, "onmessageerror", JS_NULL, 0);
+        js_defnative(g, "postMessage", wg_post, 1, 0);
+    }
     js_defnative(g, "close", wg_close, 0, 0);
     js_defnative(g, "importScripts", wg_import, 1, 0);
     /* WorkerLocation: URL somente leitura */
@@ -217,10 +221,10 @@ static void worker_scope(js_page_t *p, const char *url, const char *name) {
     (void)p;
 }
 
-typedef struct { const char *url, *name; } wk_init_t;
+typedef struct { const char *url, *name; bool shared; } wk_init_t;
 static void wk_init(js_page_t *p, int phase, void *ctx) {
     wk_init_t *c = ctx;
-    if (phase == 0) worker_scope(p, c->url, c->name);
+    if (phase == 0) worker_scope(p, c->url, c->name, c->shared);
 }
 
 /* ============================================================ Worker (lado da dona) */
@@ -279,7 +283,7 @@ NATIVE(worker_ctor) {
         return jv_obj(o);
     }
     w->doc = doc_parse("", 0, url);
-    wk_init_t ic = { url, name->d };
+    wk_init_t ic = { url, name->d, false };
     w->page = js_page_new2(w->doc, url, 0, 0, wk_init, &ic);
     if (!w->page) { sb_free(&src); w->closing = true; w->errs_seen = -1; return jv_obj(o); }
     js_page_set_origin(w->page, js_page_origin(owner));   /* blob:/data: herdam a origem da dona */
@@ -320,8 +324,12 @@ static void wk_free(wk_t *w) {
     if (d) doc_free(d);
 }
 
+static void sw_pump(js_page_t *owner);
+static void sw_drop(js_page_t *owner);
+static bool sw_busy(js_page_t *owner);
 /* no tick da dona: roda os workers dela e entrega o que eles mandaram */
 void web_worker_pump(js_page_t *owner) {
+    sw_pump(owner);
     for (wk_t *w = workers; w; w = w->next) {
         if (w->owner != owner || w->freed) continue;
         jsobj *wo = w->obj;
@@ -371,14 +379,161 @@ void web_worker_pump(js_page_t *owner) {
 
 bool web_worker_busy(js_page_t *owner) {
     for (wk_t *w = workers; w; w = w->next) if (w->owner == owner && !w->freed) return true;
+    if (sw_busy(owner)) return true;
     return false;
 }
 
 void web_worker_drop(js_page_t *owner) {
+    sw_drop(owner);
     for (wk_t **pp = &workers; *pp;) {
         wk_t *w = *pp;
         if (w->owner == owner) { *pp = w->next; wk_free(w); kfree(w); continue; }
         pp = &w->next;
+    }
+}
+
+/* ============================================================ SharedWorker */
+/* um worker por (URL, nome, origem), com várias páginas clientes; quem roda o worker é o primeiro cliente vivo */
+#define SW_CLIENTS 32
+typedef struct sw {
+    js_page_t *page;
+    doc_t *doc;
+    char url[1024], name[256], origin[256];
+    struct { js_page_t *p; jsobj *obj; bool err_sent; } cl[SW_CLIENTS];
+    int ncl;
+    bool failed;
+    struct sw *next;
+} sw_t;
+static sw_t *shared_workers;
+
+static jsobj *sw_x(jsv v) {
+    if (!jv_iscls(v, CL_HOST) || !J.realm->p_sharedworker || !has_proto(jv_o(v), J.realm->p_sharedworker) || !jv_isobj(jv_o(v)->u.host.extra)) return NULL;
+    return jv_o(jv_o(v)->u.host.extra);
+}
+
+/* tarefa no worker: evento connect com a porta nova */
+NATIVE(sw_connect_task) {
+    UNUSED_ARGS;
+    jsobj *g = J.realm->global;
+    jsv port = self->u.nat.data;
+    jsv ctor = js_getn(jv_obj(g), "Event");
+    jsv t = jv_str(js_intern("connect", -1));
+    jsv ev = js_iscallable(ctor) ? js_construct(ctor, 1, &t, ctor) : JS_EXC;
+    if (ev == JS_EXC) { js_catch(); return JS_UNDEF; }
+    js_defprop(jv_o(ev), js_intern("data", -1), jv_str(A[A_empty]), 0);
+    js_defprop(jv_o(ev), js_intern("origin", -1), jv_str(A[A_empty]), 0);
+    js_defprop(jv_o(ev), js_intern("source", -1), port, 0);
+    js_defprop(jv_o(ev), js_intern("ports", -1), jv_obj(js_arr_from(&port, 1)), 0);
+    if (js_invoke(jv_obj(g), js_intern("dispatchEvent", -1), 1, &ev) == JS_EXC) js_report_exception();
+    return JS_UNDEF;
+}
+
+NATIVE(sw_ctor) {
+    UNUSED_ARGS;
+    if (!(flags & NF_NEW)) return js_throw_err(E_TYPE, "O construtor SharedWorker exige 'new'");
+    if (argc < 1) return js_throw_err(E_TYPE, "SharedWorker: é necessário 1 argumento");
+    js_page_t *owner = js_cur_page();
+    if (!owner) return js_throw_err(E_TYPE, "SharedWorker: sem página");
+    jsstr *u = js_tostr(ARG(0));
+    if (!u) return JS_EXC;
+    char url[1024];
+    if (!web_url_parse(u->d, js_page_base(owner), url, sizeof url)) return js_throw_dom("SyntaxError", "SharedWorker: URL inválido");
+    const char *org = js_page_origin(owner);
+    if (strncmp(url, "blob:", 5) && strncmp(url, "data:", 5) && strncmp(url, org, strlen(org)))
+        return js_throw_dom("SecurityError", "SharedWorker: o script precisa ser da mesma origem");
+    jsstr *name = js_strz("");
+    jsv opt = ARG(1);
+    if (jv_isobj(opt)) { jsv n = js_getn(opt, "name"); if (js_pending()) return JS_EXC; if (n != JS_UNDEF) opt = n; else opt = JS_UNDEF; }
+    if (opt != JS_UNDEF) { name = js_tostr(opt); if (!name) return JS_EXC; }
+    sw_t *s = NULL;
+    for (sw_t *q = shared_workers; q && !s; q = q->next)
+        if (!strcmp(q->url, url) && !strcmp(q->name, name->d) && !strcmp(q->origin, org) && q->ncl < SW_CLIENTS) s = q;
+    if (!s) {
+        s = kcalloc(1, sizeof *s);
+        if (!s) return js_throw_err(E_RANGE, "sem memória");
+        snprintf(s->url, sizeof s->url, "%s", url);
+        snprintf(s->name, sizeof s->name, "%s", name->d);
+        snprintf(s->origin, sizeof s->origin, "%s", org);
+        sbuf_t src = { 0 };
+        if (load_source(url, &src)) {
+            s->doc = doc_parse("", 0, url);
+            wk_init_t ic = { url, name->d, true };
+            s->page = js_page_new2(s->doc, url, 0, 0, wk_init, &ic);
+            if (s->page) {
+                js_page_set_origin(s->page, org);
+                js_page_eval(s->page, src.p ? src.p : "", src.len, url);
+            }
+        }
+        sb_free(&src);
+        if (!s->page) s->failed = true;
+        s->next = shared_workers;
+        shared_workers = s;
+    }
+    jsobj *o = js_newobj_cls(CL_HOST, jv_isobj(thisv) && jv_o(thisv)->proto ? jv_o(thisv)->proto : J.realm->p_sharedworker);
+    o->u.host.page = owner;
+    o->u.host.extra = jv_obj(js_arr_from((jsv[]){ jv_obj(js_newarr(0)) }, 1));
+    js_arr_push(hidden_arr(J.realm, "\x01" "sharedworkers"), jv_obj(o));
+    int ci = s->ncl++;
+    s->cl[ci].p = owner;
+    s->cl[ci].obj = o;
+    s->cl[ci].err_sent = false;
+    if (s->page) {
+        jsobj *wport;
+        jsobj *port = js_port_pair(js_page_realm(s->page), &wport);
+        js_defn(o, "port", jv_obj(port), PF_RO);
+        jsobj *t = js_newnative(sw_connect_task, "connect", 0, 0);
+        t->u.nat.data = jv_obj(wport);
+        js_page_add_timer(s->page, jv_obj(t), 0);
+    } else {
+        jsobj *wport;
+        js_defn(o, "port", jv_obj(js_port_pair(J.realm, &wport)), PF_RO);   /* porta sem ninguém do outro lado */
+    }
+    return jv_obj(o);
+}
+
+NATIVE(sw_method) {
+    UNUSED_ARGS;
+    jsobj *x = sw_x(thisv);
+    if (!x) return js_throw_err(E_TYPE, "Invocação ilegal: não é um SharedWorker");
+    return listen_op(jv_o(js_arr_get(x, 0)), argc, argv, self->u.nat.magic == 0);
+}
+
+static void sw_free(sw_t *s) {
+    js_page_t *pg = s->page;
+    doc_t *d = s->doc;
+    s->page = NULL;
+    s->doc = NULL;
+    if (pg) js_page_free(pg);
+    if (d) doc_free(d);
+}
+
+/* no tick de cada página: o primeiro cliente vivo roda o worker; erro de carga vai para os SharedWorker dela */
+static void sw_pump(js_page_t *owner) {
+    for (sw_t *s = shared_workers; s; s = s->next) {
+        for (int i = 0; i < s->ncl; i++) {
+            if (s->cl[i].p != owner) continue;
+            if (s->failed && !s->cl[i].err_sent) {
+                s->cl[i].err_sent = true;
+                fire_obj(s->cl[i].obj, jv_o(js_arr_get(jv_o(s->cl[i].obj->u.host.extra), 0)), "error", msg_event("error", JS_UNDEF, s->cl[i].obj));
+            }
+        }
+        if (s->page && s->ncl && s->cl[0].p == owner) js_page_tick(s->page);
+    }
+}
+
+static bool sw_busy(js_page_t *owner) {
+    for (sw_t *s = shared_workers; s; s = s->next) if (s->page && s->ncl && s->cl[0].p == owner && js_page_busy(s->page)) return true;
+    return false;
+}
+
+static void sw_drop(js_page_t *owner) {
+    for (sw_t **pp = &shared_workers; *pp;) {
+        sw_t *s = *pp;
+        int k = 0;
+        for (int i = 0; i < s->ncl; i++) if (s->cl[i].p != owner) s->cl[k++] = s->cl[i];
+        s->ncl = k;
+        if (!s->ncl) { *pp = s->next; sw_free(s); kfree(s); continue; }
+        pp = &s->next;
     }
 }
 
@@ -481,6 +636,12 @@ void js_worker_init(jsrealm *r) {
     js_defn(r->p_worker, "onmessage", JS_NULL, 0);
     js_defn(r->p_worker, "onmessageerror", JS_NULL, 0);
     js_defn(r->p_worker, "onerror", JS_NULL, 0);
+    r->p_sharedworker = js_newobj(et);
+    js_defn(g, "SharedWorker", jv_obj(js_newctor(sw_ctor, "SharedWorker", 1, r->p_sharedworker)), PF_NOENUM);
+    js_defprop(r->p_sharedworker, A[A_sym_toStringTag], jv_str(js_intern("SharedWorker", -1)), PF_NOENUM | PF_RO);
+    js_defnative(r->p_sharedworker, "addEventListener", sw_method, 2, 0);
+    js_defnative(r->p_sharedworker, "removeEventListener", sw_method, 2, 1);
+    js_defn(r->p_sharedworker, "onerror", JS_NULL, 0);
     r->p_bchannel = js_newobj(et);
     js_defn(g, "BroadcastChannel", jv_obj(js_newctor(bc_ctor, "BroadcastChannel", 1, r->p_bchannel)), PF_NOENUM);
     js_defprop(r->p_bchannel, A[A_sym_toStringTag], jv_str(js_intern("BroadcastChannel", -1)), PF_NOENUM | PF_RO);
