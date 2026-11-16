@@ -62,7 +62,7 @@ antes do build final (REGRAS.md).
 | 5 escalonador | pronto, sem VM | `tools/futexq_host.c`: 99 657 wakes iguais aos da varredura antiga (processo+va ou chave física), n limitado, chave física entre processos; prioridade QoS→Mach, decaimento e faixa 0..127 |
 | 6 limites | pronto, sem VM | `tools/vmpolicy_host.c`: pressão 1/2/4, rlimit (padrões, EPERM, EINVAL, corte no teto), vítima do jetsam, limite de footprint; `clang -fsyntax-only` no kernel e no libSystem |
 | 7 SMP sem trava grande | parcial | caminho rápido: `SYS_TIME`, `GETPID`, `GETTID`, `GET(E)UID/GID`, `CPUS` sem a trava (`proc_syscall_fast`, `arch/cpu.c`); PMM, heap, swap e tabelas de página já têm trava própria. Mach IPC, pipes/PTY, VFS e rede ainda rodam sob a trava grande |
-| 8 zero panic | parcial | `pkgextract.c:add_component` 33 KiB de frame → heap (`pkgtest` 58/58, 0 alocações vivas) |
+| 8 zero panic | parcial | `pkgextract.c:add_component` 33 KiB de frame → heap (`pkgtest` 58/58, 0 alocações vivas). `clang -fstack-usage -O2` em 189 arquivos do kernel (16 nov.): maior frame agora 9,4 KiB (`apps/arquivos.c:paint`, na thread do desktop, pilha de 1 MiB); no caminho de syscall o maior é `launchsvc.c` com 6,4 KiB (pilha de 32 KiB). Falta página de guarda nas pilhas do kernel |
 | 4 | aberto | — |
 
 ### Limites (item 6), como ficou
