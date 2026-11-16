@@ -5,12 +5,13 @@ Requer Pillow. Executar da raiz ou de qualquer diretório.
 Os tamanhos @2x indicam densidade; não adicionam detalhe ao original.
 """
 from pathlib import Path
+import json
 
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[1]
 SIZES = (16, 32, 64, 128, 256, 512, 1024)
-NAMES = ("arquivos", "horizonte", "terminal")
+NAMES = json.loads((ROOT / "assets/icones/catalogo.json").read_text())
 
 
 def main():

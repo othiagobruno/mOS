@@ -1,7 +1,7 @@
-/* mOS — ícones dos apps do sistema na linguagem visual do Tahoe (arte original do projeto, nada da Apple):
- * quadrado arredondado com degradê profundo, brilho no topo e borda especular, e símbolos em camadas de
- * vidro translúcido com realce na borda e sombra suave. Desenhados em vetor numa grade de 64 unidades;
- * o corpo ocupa 6..58 (81%, como a grade de ícones do macOS). icon_for() consulta tahoe_icon() primeiro. */
+/* mOS — catálogo dos 48 apps nativos, com PNGs originais em camadas sutis de vidro.
+ * Os desenhos vetoriais abaixo são a recuperação quando a arte não puder ser lida.
+ * Vetores numa grade de 64 unidades, com corpo em 6..58; os PNGs incluem a própria
+ * placa e margem externa. icon_for() consulta tahoe_icon() e mantém o cache. */
 #include "ui.h"
 #include "vfs.h"
 
@@ -10,7 +10,6 @@ extern surface_t *image_decode(const u8 *data, usize size);
 /* As artes rasterizadas usam os mesmos nomes de exec do registro de apps.
  * icon_for() mantém o resultado no seu cache por app/tamanho/tema. */
 static bool original_icon(const char *exec, surface_t *s, int x, int y, int size) {
-    if (strcmp(exec, "arquivos") && strcmp(exec, "horizonte") && strcmp(exec, "terminal")) return false;
     if (!s || size < 1 || size > 256) return false;
     int pixels = 16;
     while (pixels < size) pixels *= 2;
@@ -478,9 +477,9 @@ static const struct { const char *exec; tahoe_fn fn; } table[] = {
 /* desenha o ícone Tahoe do app; false se o app não tem um (usa o desenho próprio do app) */
 bool tahoe_icon(const char *exec, surface_t *s, int x, int y, int size) {
     if (!exec) return false;
-    if (original_icon(exec, s, x, y, size)) return true;
     for (int i = 0; i < (int)ARRAY_LEN(table); i++)
         if (!strcmp(table[i].exec, exec)) {
+            if (original_icon(exec, s, x, y, size)) return true;
             ic_t c = {s, (float)x, (float)y, size / 64.0f};
             table[i].fn(&c);
             return true;

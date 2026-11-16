@@ -418,12 +418,15 @@ surface_t *icon_for(app_t *a, int size) {
     extern bool horizonte_motor_bundle(const char *bundle);
     if (horizonte_motor_bundle(bundle)) { bundle = NULL; ex = "horizonte"; }   /* o motor Chromium do Horizonte: ícone do Horizonte */
     surface_t *bic = bundle ? macho_bundle_icon(bundle, size) : NULL;
+    bool native_icon = false;
     if (bic) gfx_blend(s, bic, 0, 0, 255);
-    else if (tahoe_icon(ex, s, 0, 0, size)) {}   /* ícones do sistema no estilo Tahoe (icons_tahoe.c) */
+    else if (tahoe_icon(ex, s, 0, 0, size)) native_icon = true;
     else if (a->draw_icon) a->draw_icon(s, 0, 0, size);
     /* Padrão do sistema: todo ícone de app é um quadrado arredondado. Ícones de outro formato
      * (redondos, recortados) são colocados, reduzidos, sobre uma placa clara (ou escura). */
-    if (a->exec && strcmp(a->exec, "downloads") && size >= 16) {
+    /* O catálogo nativo já inclui a placa e as margens: não acrescentar
+     * outra placa quando seus cantos transparentes passam pelo teste abaixo. */
+    if (!native_icon && a->exec && strcmp(a->exec, "downloads") && size >= 16) {
         /* 15% a partir do canto: dentro de um quadrado arredondado (raio ~22%), fora de um círculo */
         int k = size * 15 / 100;
         u32 c_tl = s->px[(usize)k * s->stride + k] >> 24, c_tr = s->px[(usize)k * s->stride + size - 1 - k] >> 24;
