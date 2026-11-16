@@ -199,7 +199,42 @@ static int is_valid_sfn(const char *s) {
     return 1;
 }
 
-static int lfn_count(node *n) { return is_valid_sfn(n->name) ? 0 : (int)((strlen(n->name) + 12) / 13); }
+/* Nome longo VFAT em UTF-16 (o que o kernel/fs/fat.c, o Linux e o firmware leem). Antes cada byte do UTF-8 virava uma
+ * unidade UTF-16: "Científica" aparecia como "CientÃ­fica" no mOS. Byte inválido vira '?', como no utf8_next do kernel;
+ * fora do BMP vira par substituto. Mais de 255 unidades não cabe no FAT: o mkimg para (fail-closed). */
+static int name_utf16(const char *s, uint16_t *out, int max) {
+    const unsigned char *p = (const unsigned char *)s;
+    int n = 0;
+    while (*p) {
+        uint32_t c = *p++;
+        if (c >= 0xF0 && (p[0] & 0xC0) == 0x80 && (p[1] & 0xC0) == 0x80 && (p[2] & 0xC0) == 0x80) {
+            c = (c & 7) << 18 | (p[0] & 63u) << 12 | (p[1] & 63u) << 6 | (p[2] & 63u); p += 3;
+        } else if (c >= 0xE0 && c < 0xF0 && (p[0] & 0xC0) == 0x80 && (p[1] & 0xC0) == 0x80) {
+            c = (c & 15) << 12 | (p[0] & 63u) << 6 | (p[1] & 63u); p += 2;
+        } else if (c >= 0xC0 && c < 0xE0 && (p[0] & 0xC0) == 0x80) {
+            c = (c & 31) << 6 | (p[0] & 63u); p += 1;
+        } else if (c >= 0x80) c = '?';
+        if (c >= 0x10000) {
+            if (n + 2 > max) return -1;
+            c -= 0x10000;
+            out[n++] = (uint16_t)(0xD800 | c >> 10);
+            out[n++] = (uint16_t)(0xDC00 | (c & 0x3FF));
+        } else {
+            if (n + 1 > max) return -1;
+            out[n++] = (uint16_t)c;
+        }
+    }
+    return n;
+}
+
+static int lfn_units(node *n) {
+    uint16_t w[256];
+    int k = name_utf16(n->name, w, 255);
+    if (k < 0) { fprintf(stderr, "mkimg: nome longo demais para o FAT (mais de 255 caracteres): %s\n", n->name); exit(1); }
+    return k;
+}
+
+static int lfn_count(node *n) { return is_valid_sfn(n->name) ? 0 : (lfn_units(n) + 12) / 13; }
 
 static void make_sfn(node *n, int idx) {
     memset(n->sfn, ' ', 11);
@@ -284,7 +319,8 @@ static void write_node(node *n) {
     for (node *c = n->child; c; c = c->next) {
         int nl = lfn_count(c);
         uint8_t ck = sfn_checksum(c->sfn);
-        size_t len = strlen(c->name);
+        uint16_t wn[256];
+        size_t len = nl ? (size_t)name_utf16(c->name, wn, 255) : 0;
         for (int i = nl; i >= 1; i--) {
             memset(e, 0, 32);
             e[0] = (uint8_t)i | (i == nl ? 0x40 : 0);
@@ -292,7 +328,7 @@ static void write_node(node *n) {
             static const int off[13] = {1, 3, 5, 7, 9, 14, 16, 18, 20, 22, 24, 28, 30};
             for (int k = 0; k < 13; k++) {
                 size_t ci = (size_t)(i - 1) * 13 + k;
-                uint16_t ch = ci < len ? (uint8_t)c->name[ci] : ci == len ? 0 : 0xFFFF;
+                uint16_t ch = ci < len ? wn[ci] : ci == len ? 0 : 0xFFFF;
                 wr16(e + off[k], ch);
             }
             e += 32;

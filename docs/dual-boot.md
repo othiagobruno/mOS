@@ -19,7 +19,7 @@ Antes de gravar, o script salva `efibootmgr -v` e a lista de arquivos da ESP em 
 ## Como usar (depois do build final)
 
 ```bash
-sudo tools/instalar-dual-boot.py --imagem build/mOS.img                       # simulação: mostra o plano, não grava
+tools/instalar-dual-boot.py --imagem build/mOS.img                            # simulação: sem root, não grava
 sudo tools/instalar-dual-boot.py --imagem build/mOS.img --gravar --proximo-boot   # instala; pede para digitar "sda1"
 ```
 
@@ -35,6 +35,8 @@ Para entrar no mOS: o próximo boot (com `--proximo-boot`), o menu de boot do fi
   `\EFI\BOOT\BOOTX64.EFI` do Ubuntu. Caminho ausente ou estranho volta ao padrão `/EFI/BOOT/BOOTX64.EFI` (pendrive).
 - Espaço: o sistema e os dados do mOS dividem o ~1 GiB livre da ESP. O script recusa se o payload + 25% + 32 MiB não couber.
 
+A imagem é lida com o `mtools` (`mcopy` da ESP da GPT do `mOS.img`), sem montar e sem root; só `--gravar` precisa de sudo.
+
 ## Segurança da gravação
 
 Simula por padrão; `--gravar` exige digitar o nome da partição. A origem inteira é conferida por SHA-256 contra o
@@ -45,11 +47,16 @@ e o Ubuntu não é tocado em nenhum ponto. Escrita fora de `\mOS` e `\EFI\mOS` �
 
 ## Testes
 
-- `tools/instalar-dual-boot-teste.sh`: 19/19 (ESP em pasta temporária com os arquivos do Ubuntu, stubs de `findmnt`,
+- `tools/instalar-dual-boot-teste.sh`: 23/23 (ESP em pasta temporária com os arquivos do Ubuntu, stubs de `findmnt`,
   `lsblk`, `efibootmgr` com NVRAM em arquivo e `update-grub`): simulação não grava, confirmação errada e origem
   corrompida recusam sem gravar, instalação, arquivos do Ubuntu intactos (SHA-256), BootOrder `0000,0002,0001,0003`,
   BootNext, GRUB com a UUID da ESP, reinstalar sem `--atualizar` recusa, atualizar troca o kernel e mantém contas,
-  desinstalar devolve a ESP ao estado inicial, `\mOS` alheio não é apagado.
+  desinstalar devolve a ESP ao estado inicial, `\mOS` alheio não é apagado; e uma imagem de verdade do `mkimg`
+  (GPT + FAT32 + manifesto) lida pelo mtools, instalada com nome acentuado, sem sobra no temporário; arquivo que não é
+  imagem recusado.
+- `tools/mkimg-nomes-teste.sh`: 13/13 (nomes longos com acento, CJK, emoji e 80 caracteres saem iguais pelo mtools e pelas
+  entradas LFN). A versão anterior do `mkimg` dava 4/13: gravava cada byte do UTF-8 como uma unidade UTF-16, e o mOS
+  mostrava "CientÃ­fica" no lugar de "Científica".
 - `tools/loaderpath_host.c`: 13/13 casos do caminho do carregador.
 
 Não testado ainda: boot real do mOS a partir de `\EFI\mOS` (precisa do build final) e a gravação na ESP do Thiago
