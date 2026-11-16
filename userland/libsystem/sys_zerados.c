@@ -1557,9 +1557,6 @@ void backtrace_async(void) {}
 void backtrace_from_fp(void) {}
 void cbrtl(void) {}
 void coshl(void) {}
-void dispatch_apply(void) {}
-void dispatch_data_create_map(void) {}
-void dispatch_queue_attr_make_initially_inactive(void) {}
 void endfsent(void) {}
 void erfcl(void) {}
 void erfl(void) {}

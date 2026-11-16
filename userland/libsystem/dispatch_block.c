@@ -14,6 +14,15 @@
 #include <time.h>
 typedef unsigned long long u64;
 static void mos_yield(void) { sched_yield(); }
+#include <linux/futex.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+static void mos_futex_wait(volatile int *a, int v, long ms) {
+    struct timespec t, *tp = 0;
+    if (ms >= 0) { t.tv_sec = ms / 1000; t.tv_nsec = (ms % 1000) * 1000000L; tp = &t; }
+    syscall(SYS_futex, a, FUTEX_WAIT_PRIVATE, v, tp, 0, 0);
+}
+static void mos_futex_wake(volatile int *a) { syscall(SYS_futex, a, FUTEX_WAKE_PRIVATE, 0x7fffffff, 0, 0, 0); }
 static u64 mos_now_ns(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -24,12 +33,17 @@ static u64 mos_now_ns(void) {
 void *malloc(size_t n);
 void free(void *p);
 static void mos_yield(void) { SYS0(SYS_YIELD); }
+int cx_futex_wait(volatile int *w, int expected, long ms);
+int cx_futex_wake(volatile int *w, int n);
+static void mos_futex_wait(volatile int *a, int v, long ms) { cx_futex_wait(a, v, ms); }
+static void mos_futex_wake(volatile int *a) { cx_futex_wake(a, 0x7fffffff); }
 static u64 mos_now_ns(void) { return (u64)SYS0(SYS_TIME) * 1000000ull; }
 #endif
 
 void *_Block_copy(const void *b);
 void _Block_release(const void *b);
 void dispatch_async(void *q, void *block);
+unsigned long long cx_dispatch_deadline_ns(unsigned long long t);
 
 #define DB_BARRIER 0x1u
 #define DB_DETACHED 0x2u
@@ -142,7 +156,7 @@ static void db_invoke(void *obj) {
     if (!p) return;
     if ((__atomic_load_n(&p->cancelled, __ATOMIC_ACQUIRE) & 1) == 0 && p->inner)
         run_inner(p->inner);
-    if (__sync_fetch_and_add(&p->performed, 1) == 0) fire_notes(p);
+    if (__sync_fetch_and_add(&p->performed, 1) == 0) { mos_futex_wake(&p->performed); fire_notes(p); }
 }
 
 static void *make_db(unsigned flags, int qos, int rel, void *block) {
@@ -213,15 +227,25 @@ long dispatch_block_wait(void *block, unsigned long long timeout) {
     if (!b || !b->priv || b->invoke != db_invoke) return 0;
     if (__atomic_load_n(&b->priv->performed, __ATOMIC_ACQUIRE) > 0) return 0;
     if (timeout == 0) return 1;
-    if (timeout == DB_TIME_FOREVER) {
-        while (__atomic_load_n(&b->priv->performed, __ATOMIC_ACQUIRE) == 0) mos_yield();
-        return 0;
-    }
+    unsigned long long limit = timeout == DB_TIME_FOREVER ? DB_TIME_FOREVER : cx_dispatch_deadline_ns(timeout);
+    /* performed só sobe de 0 para >0: espera no futex sobre ele, com prazo */
     while (__atomic_load_n(&b->priv->performed, __ATOMIC_ACQUIRE) == 0) {
-        if (mos_now_ns() >= timeout) return 1;
-        mos_yield();
+        long ms = -1;
+        if (limit != DB_TIME_FOREVER) {
+            unsigned long long now = mos_now_ns();
+            if (now >= limit) return 1;
+            ms = (long)((limit - now + 999999) / 1000000);
+        }
+        mos_futex_wait(&b->priv->performed, 0, ms);
     }
     return 0;
+}
+
+/* flags de um bloco de dispatch_block_create (dispatch.c lê DISPATCH_BLOCK_BARRIER no dispatch_async); 0 para bloco comum */
+unsigned cx_dispatch_block_flags(void *block) {
+    mos_db_t *b = block;
+    if (!b || b->invoke != db_invoke || b->desc != &db_desc || !b->priv) return 0;
+    return b->priv->dbflags;
 }
 
 void dispatch_block_notify(void *block, void *queue, void *notification) {

@@ -35,9 +35,20 @@ o runtime de verdade e o app chamava um `ret`.
    `OSSignpostIntervalState`, `OSSignpostError`, `OSAllocatedUnfairLock`, `os_log`, `os_signpost` sobre o `os_log_*` do libSystem. 27 stubs.
 4. **System** (`FilePath`, `FileDescriptor`, `Errno`, `FilePermissions`): implementação própria em Swift,
    dylib `/System/Library/Frameworks/System.framework/System`. 31 stubs.
-5. **libdispatch C**: `dispatch_apply`, `dispatch_data_create_map`, `dispatch_queue_attr_make_initially_inactive`,
-   `__pthread_workqueue_setkill`, `pthread_get_qos_class_np` e vizinhos; auditoria de `dispatch*.c` contra a API pública
-   (fontes, `dispatch_io`, `dispatch_data`, workloop, `dispatch_block_*`), com teste de host em `userland/tests-dispatch`.
+5. ✅ **libdispatch reescrita** (`userland/libsystem/dispatch.c`, `dispatch_source.c`, `dispatch_data.c`, `dispatch_io.c`,
+   `dispatch_plat.h`). Antes, todo `dispatch_async` rodava na hora, na thread de quem chamava. Agora:
+   pool de threads por QoS (6 classes, normal e overcommit, cresce quando o trabalho bloqueia), filas serial,
+   concorrente e workloop com barreira, hierarquia de destinos, suspend/resume/activate (filas inativas), `dispatch_sync`
+   com caminho rápido e entrega na thread principal para filas presas a ela, `dispatch_async_and_wait`, `dispatch_after`
+   e timers numa thread de prazos, `dispatch_apply` paralelo, grupos com prazo e notify, semáforos no futex, `dispatch_once`
+   no futex, specifics pela cadeia de destinos, `dispatch_assert_queue*` de verdade (aborta como o macOS), finalizador na
+   fila de destino, relógio de parede em `dispatch_time`/`dispatch_walltime`, `dispatch_async_swift_job`.
+   Fontes: timer (com contagem de disparos perdidos), DATA_ADD/OR/REPLACE, READ, WRITE, PROC (saída), SIGNAL, VNODE
+   (delete, write, extend, attrib, link, rename, revoke), MACH_RECV; MACH_SEND e MEMORYPRESSURE são aceitas e nunca disparam
+   (o kernel não gera esses eventos). Dados: create/map/concat/subrange/apply/copy_region e `dispatch_data_empty`.
+   `dispatch_io`: canal com fila serial, marca alta, barreira, `close` com STOP, cleanup no fim.
+   Teste: `sh tools/dispatch_hosttest.sh` (Linux, 41 de 41, cinco rodadas seguidas) e `tools/runtime-block-task-teste.sh`.
+   `userland/tests-dispatch` (Mach-O) não rodou: precisa da imagem (build proibido até o fim da frente).
 6. **Overlay Dispatch**: `DispatchDataIterator` (3 stubs).
 7. **Concurrency sobre o Dispatch**: conferir que o executor global do `libswift_Concurrency` real usa
    `dispatch_async_swift_job`/fila global com QoS, `Task.sleep` (`dispatch_after`), `MainActor` na fila principal.

@@ -62,19 +62,7 @@ int atexit_b(void *block) {
 }
 /* locale "C" do xlocale (o &__c_locale da libc++); as funções *_l do libSystem tratam qualquer locale como "C" */
 u8 _c_locale[512];                     /* no Mach-O: __c_locale */
-/* dispatch_data: no ObjC é um NSData. Destrutor padrão (NULL) copia; DISPATCH_DATA_DESTRUCTOR_FREE libera o buffer;
- * um bloco é chamado na fila assim que o conteúdo foi copiado */
-const void *_dispatch_data_destructor_free = (const void *)1;      /* no Mach-O: __dispatch_data_destructor_free */
-const void *_dispatch_data_destructor_munmap = (const void *)2;
-static void run_destructor(void *b) { ((void (*)(void *))((blk_t *)b)->invoke)(b); _Block_release(b); }
-id dispatch_data_create(const void *buf, size_t n, void *queue, void *destructor) {
-    id d = CFDataCreate(0, (const u8 *)buf, (long)n);
-    if (destructor == (void *)&_dispatch_data_destructor_free || destructor == (void *)1) free((void *)buf);
-    else if (destructor && destructor != (void *)&_dispatch_data_destructor_munmap && destructor != (void *)2)
-        dispatch_async_f(queue ? queue : dispatch_get_main_queue(), _Block_copy(destructor), run_destructor);
-    return d;
-}
-size_t dispatch_data_get_size(id d) { return d ? (size_t)MSG0(u64, d, "length") : 0; }
+/* dispatch_data_*: dispatch_data.c */
 
 /* CFPreferences por domínio: prefs.c */
 
