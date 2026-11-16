@@ -39,7 +39,7 @@ O `mmap_next` do processo é um cursor só, em passos de 4 KiB, e o `rt_alloc` d
 
 `macho.c` só estende a imagem quando o processo é arm64 (`ls_cur`). O `vmaddr` dos segmentos não muda (fixups e slide continuam iguais). O `vmax` da imagem sobe até o fim da página guest do último byte, e a proteção registrada de cada segmento sobe do mesmo jeito sem entrar no segmento seguinte. `__PAGEZERO` não entra. O `vmsize` gravado no segmento, inclusive o do `__TEXT` usado pelo cache de tradução, não muda.
 
-Os segmentos arm64 da Apple já nascem alinhados a 16 KiB entre si. A base da imagem (`USER_BASE + 0x01000000`) também é. O slide preserva o alinhamento. O espaço até a próxima imagem já anda de 64 KiB, então os bytes a mais da última página cabem nesse intervalo.
+Os segmentos arm64 da Apple já nascem alinhados a 16 KiB entre si. A base da imagem (`IMAGE_BASE`, hoje `USER_BASE + 64 MiB`) também é. O slide preserva o alinhamento. O espaço até a próxima imagem já anda de 64 KiB, então os bytes a mais da última página cabem nesse intervalo.
 
 ## O que este contrato não faz
 

@@ -14,7 +14,7 @@ LS=$ROOT/userland/libsystem
 TP=$ROOT/userland/third_party
 OBJ=$ROOT/build/libsystem-arm64
 OUT=$ROOT/build/libSystem-arm64.mos
-JOBS=${1:-$(nproc)}
+JOBS=${1:-2}   # regras de RAM do time: no máximo 2 jobs
 mkdir -p "$OBJ"
 TRIPLE=arm64-apple-macos11-elf
 # Os grupos e os -I são os do libSystem x86 em tools/build.sh: o math.h do kshim só entra na compressão (nos .S ele
@@ -122,6 +122,13 @@ done
 OBJS=()
 for f in "${SRC[@]}"; do OBJS+=("$OBJ/$(basename "$f").o"); done
 OBJS+=("$CRT")
+# o mesmo que o libSystem x86 liga (tools/build.sh): libm do musl (pow, atan2, ldexp, exp10...) e os codecs de mídia
+# (cx_opus_*, cx_aac_* do audiodec.c), agora em arm64 com a ABI Darwin
+bash "$ROOT/tools/build-libm-musl.sh" "$ZIG" aarch64 "$ROOT/build/libm-arm64" "$JOBS" || { echo "libSystem-arm64: libm falhou" >&2; exit 1; }
+mapfile -t LIBM_OBJS < "$ROOT/build/libm-arm64/objs.txt"
+bash "$ROOT/tools/build-midia.sh" "$ROOT/build" "$ZIG" "$ZIGDIR" "$JOBS" aarch64 || { echo "libSystem-arm64: mídia falhou" >&2; exit 1; }
+mapfile -t MIDIA_OBJS < "$ROOT/build/midia-aarch64/objs.txt"
+OBJS+=("${LIBM_OBJS[@]}" "${MIDIA_OBJS[@]}")
 for f in libunwind.cpp UnwindLevel1.c UnwindLevel1-gcc-ext.c UnwindRegistersSave.S UnwindRegistersRestore.S; do OBJS+=("$OBJ/uw_$f.o"); done
 printf '"%s"\n' "${OBJS[@]}" > "$OBJ/link.rsp"
 "$ZIG" ld.lld -m aarch64elf -pie --no-dynamic-linker -z notext -e cx_start --no-gc-sections --hash-style=sysv \
