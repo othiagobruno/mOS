@@ -317,6 +317,7 @@ static u16 page_refs(u64 phys) {
 /* mais um dono para a página (fork, imagem compartilhada, memória Mach) */
 static void page_ref_inc(u64 phys) {
     u64 pn = phys >> 12;
+    if (pmm_is_device(phys)) return;               /* VRAM (gpu_user_map_io): sem contagem */
     if (!pref || pn >= pref_n) return;
     u16 v = __atomic_load_n(&pref[pn], __ATOMIC_RELAXED), nv;
     do {
@@ -328,6 +329,7 @@ static void page_ref_inc(u64 phys) {
 /* larga uma referência à página; libera quando era a última */
 static void page_put(u64 phys) {
     u64 pn = phys >> 12;
+    if (pmm_is_device(phys)) return;               /* VRAM: nunca volta ao PMM */
     if (pref && pn < pref_n) {
         u16 v = __atomic_load_n(&pref[pn], __ATOMIC_RELAXED);
         for (;;) {
@@ -758,6 +760,31 @@ bool gpu_user_map(process_t *p, u64 va, u64 phys, u64 len, int rw) {
         if (!uvm_map_shared(p, va + i, phys + i, prot)) return false;
     return true;
 }
+
+/* VRAM (BAR da GPU, faixa de pmm_mark_device / vmm_map_wc) num processo: PTE de usuário write-combining
+ * (PWT = PAT1 = WC, a mesma do framebuffer), PTE_SHARED (fork não faz COW, vm_pageout não troca), NX, sem escrita
+ * se rw = 0 (PTE_NOW: mprotect não a liga). Sem refcount: page_put/page_ref_inc ignoram páginas de dispositivo, então
+ * gpu_user_unmap_io, munmap e a saída do processo só tiram a PTE. false = alinhamento, faixa fora de memória de
+ * dispositivo registrada, ou endereço já ocupado. */
+bool gpu_user_map_io(process_t *p, u64 va, u64 phys, u64 len, int rw) {
+    if (!p || (va & 0xFFF) || (phys & 0xFFF) || !len || (len & 0xFFF) || va + len < va) return false;
+    if (va < USER_BASE || va + len > USER_END || !pmm_is_device_range(phys, len)) return false;
+    for (u64 i = 0; i < len; i += 4096) {
+        vm_lock_range(p, va + i, 4096);
+        u64 *e = walk(p, va + i, true);
+        bool ok = e && !(*e & PTE_P) && !swap_is(*e);
+        if (ok) {
+            *e = ((phys + i) & PTE_ADDR) | PTE_P | PTE_U | PTE_SHARED | PTE_NX | (1ULL << 3) /* PWT: WC */ |
+                 (rw ? PTE_RW : PTE_NOW);
+            p->mem_pages++;
+            vm_flush(p, va + i);
+        }
+        vm_unlock_range(p, va + i, 4096);
+        if (!ok) { gpu_user_unmap(p, va, i); return false; }
+    }
+    return true;
+}
+bool gpu_user_unmap_io(process_t *p, u64 va, u64 len) { return gpu_user_unmap(p, va, len); }
 
 bool gpu_user_unmap(process_t *p, u64 va, u64 len) {
     if (!p || (va & 0xFFF) || !len) return false;
