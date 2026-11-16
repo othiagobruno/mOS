@@ -15,7 +15,7 @@ caminho: a aceleração pela Radeon Vega do Thiago depende do driver da frente 1
 | `gl_buf.c` | Buffers (todos os alvos, map/flush/copy), VAOs (inclusive APPLE), atributos e `glVertexAttrib*` |
 | `gl_tex.c` | Texturas 1D/2D/3D/cube/rect/arrays/buffer/multisample, todos os formatos internos do 4.1 e do compat (luminância, alfa, intensidade via swizzle), transferência de pixels em todos os formatos/tipos, S3TC e RGTC, mipmaps, samplers, `glTexStorage*`, `glCopyTex*`, `CGLTexImageIOSurface2D` |
 | `gl_fbo.c` | Renderbuffers, FBOs (EXT e core), completude, draw/read buffers, `glClear(Buffer*)`, `glReadPixels`, `glBlitFramebuffer` |
-| `gl_raster.c` | Pipeline: índices e primitive restart, cache de vértices, montagem de todas as primitivas (inclusive quads, polígonos e adjacência), transform feedback, recorte (−w..w, depth clamp, 8 planos), viewport, culling, polygon mode/offset, triângulos (top-left, perspectiva, flat/noperspective), linhas largas, pontos/sprites, scissor, alpha test, stencil, depth, blending (dual source), logic op, sRGB, máscaras, seleção e feedback |
+| `gl_raster.c` | Pipeline: índices e primitive restart, cache de vértices, montagem de todas as primitivas (inclusive quads, polígonos e adjacência), transform feedback, recorte (−w..w, depth clamp, 8 planos), viewport, culling, polygon mode/offset, triângulos (top-left, perspectiva, flat/noperspective), linhas largas, pontos/sprites, scissor, pontilhado de linha e de polígono, alpha test, stencil, depth, blending (dual source), logic op, sRGB, máscaras, seleção e feedback |
 | `gl_ffp.c` | Fixed function: matrizes, `glBegin/glEnd`, arrays de cliente (no VAO), luz completa, texgen, texenv/combine, fog, raster pos, `glDrawPixels`/`glBitmap`/`glCopyPixels`, seleção, `glPushAttrib`, listas de exibição |
 | `gl_glsl*.c` | GLSL 1.10–4.10: tradução para o dialeto do compilador de MSL, prelúdio com tipos, funções embutidas e todas as funções de textura, link, uniforms, blocos std140, embutidas do compat, programas separáveis e pipelines, `ARB_shader_objects` |
 | `gl_eval.c` | Avaliadores (`glMap*`, `glEval*`, `glMapGrid*`, `GL_AUTO_NORMAL`) e buffer de acumulação (`glAccum`) |
@@ -41,12 +41,12 @@ gcc -std=gnu11 -O1 -w -fno-builtin -I tools/hostinc -I $L -o /tmp/gl_host tools/
     $L/gl_glsl_tr.c $L/gl_glsl_pre.c $L/mtltex.c $L/mtlshader.c $L/mtlexec.c $L/mslspirv.c -lm -lpthread && /tmp/gl_host
 ```
 
-Resultado registrado (16 nov.): `gl_host: 95/95 ok`. Confere clear/scissor, cobertura exata de um triângulo
+Resultado registrado (16 nov.): `gl_host: 106/106 ok`. Confere clear/scissor, cobertura exata de um triângulo
 (496 pixels em 32×32), gradiente, flat, depth, stencil, blending, textura nearest/modulate/luminância, BGRA, DXT1,
 FBO + blit + renderbuffer, lista de exibição, luz difusa, fog, seleção, arrays de cliente, VBO/EBO, VAO do APPLE com
 buffer apagado, GLSL 4.10 core (atributos, uniforms, `out`, função com `out`, erro de compilação no log), textura +
 `discard` + UBO std140 (offsets e tamanho), GLSL 1.10 compat (`ftransform`, `gl_Color`, `gl_TexCoord`), MRT com
-`gl_FragData`, transform feedback com query, avaliador 2D com cor, `glGetMap`, `glAccum`, programas ARB (vp com `state.matrix.mvp`, fp com `TEX`, `program.local`, `KIL`, `MUL_SAT`, erro de sintaxe com posição), `EXT_bindable_uniform`, `dFdx`/`dFdy`/`fwidth` com valor conhecido, nível de mipmap escolhido pela lod implícita, geometry shader (ponto → quadrado com cor interpolada, triângulos com bloco e `gl_PrimitiveIDIn`, erro de modo incompatível). Também roda no `tools/build.sh`.
+`gl_FragData`, transform feedback com query, avaliador 2D com cor, `glGetMap`, `glAccum`, programas ARB (vp com `state.matrix.mvp`, fp com `TEX`, `program.local`, `KIL`, `MUL_SAT`, erro de sintaxe com posição), `EXT_bindable_uniform`, `dFdx`/`dFdy`/`fwidth` com valor conhecido, nível de mipmap escolhido pela lod implícita, geometry shader (ponto → quadrado com cor interpolada, triângulos com bloco e `gl_PrimitiveIDIn`, erro de modo incompatível), pontilhado de linha (padrão, fator, contador contínuo no strip e reiniciado em `GL_LINES`) e de polígono (`LSB_FIRST`, `glGetPolygonStipple`, `glPopAttrib`, lista de exibição). Também roda no `tools/build.sh`.
 
 `tools/nsopengl_host.c` (objetos compilados com as flags do libSystem): `CGLChoosePixelFormat`, contexto legado (2.1)
 e core (4.1), `flushBuffer` pondo o quadro BGRA no layer da view, `CGLSetOffScreen`, opções globais (`NSOpenGLGetOption`/`SetOption`/`GetVersion`), `CVOpenGLTextureCache` com `2vuy` e `420v`
@@ -69,8 +69,7 @@ Não houve VM nem app real nesta entrega: nada aqui diz que um app OpenGL espec�
   mipmap (ou filtros min e mag diferentes), o fragmento roda antes nos vizinhos x+1 e y+1 (varyings pelas derivadas
   analíticas do raster) e cada chamada usa a diferença; a lod implícita do `texture()` sai disso. Custa 3 execuções
   por pixel nesses shaders. Uma derivada cujo argumento depende de outra derivada usa 0 no vizinho.
-- Uma amostra por pixel (MSAA guarda uma amostra; o resolve é cópia). Sem anisotropia real. Sem pontilhado de linha
-  e de polígono no raster (o estado é guardado).
+- Uma amostra por pixel (MSAA guarda uma amostra; o resolve é cópia). Sem anisotropia real.
 - Subrotinas do GLSL e binários de programa não existem (`GL_NUM_PROGRAM_BINARY_FORMATS` = 0).
 - `KHR_debug`/`EXT_debug_label`: aceitos, sem mensagens nem rótulos guardados.
 - Desempenho de CPU com o interpretador: UI, ferramentas e cenas simples; jogos pesados ficam lentos.

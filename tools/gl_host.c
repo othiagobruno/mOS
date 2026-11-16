@@ -461,6 +461,82 @@ static void t_arb_programs(void) {
     gl_ctx_destroy(C);
 }
 
+/* pontilhado de linha (padrão e fator, contador contínuo no strip e reiniciado em GL_LINES) e de polígono */
+static void t_stipple(void) {
+    gl_ctx_t *C = mk(0, 32, 32);
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
+    glOrtho(0, 32, 0, 32, -1, 1);
+    glClearColor(0, 0, 0, 1);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glColor3f(1, 1, 1);
+    glEnable(GL_LINE_STIPPLE);
+    glLineStipple(2, 0x0F0F);
+    GLint v = 0;
+    glGetIntegerv(GL_LINE_STIPPLE_PATTERN, &v);
+    CHECK(v == 0x0F0F, "GL_LINE_STIPPLE_PATTERN %x", v);
+    glGetIntegerv(GL_LINE_STIPPLE_REPEAT, &v);
+    CHECK(v == 2, "GL_LINE_STIPPLE_REPEAT %d", v);
+    glBegin(GL_LINE_STRIP);
+    glVertex2f(0, 4.5f); glVertex2f(8, 4.5f); glVertex2f(32, 4.5f);
+    glEnd();
+    u8 o[4];
+    int on[4];
+    for (int k = 0; k < 4; k++) { px(2 + 8 * k, 4, o); on[k] = o[0] > 128; }
+    CHECK(on[0] && !on[1] && on[2] && !on[3], "strip: 8 acesos, 8 apagados (%d %d %d %d)", on[0], on[1], on[2], on[3]);
+    /* GL_LINES: cada segmento recomeça o contador */
+    glBegin(GL_LINES);
+    glVertex2f(0, 10.5f); glVertex2f(8, 10.5f); glVertex2f(8, 10.5f); glVertex2f(32, 10.5f);
+    glEnd();
+    px(10, 10, o);
+    CHECK(o[0] > 128, "GL_LINES recomeça o padrão no segundo segmento");
+    px(18, 10, o);
+    CHECK(o[0] < 128, "segundo segmento apagado de 16 a 23");
+    glDisable(GL_LINE_STIPPLE);
+    /* polígono: colunas pares acesas (0xAA com MSB primeiro); metade de baixo com o bit menos significativo primeiro */
+    GLubyte m[128];
+    for (int i = 0; i < 128; i++) m[i] = 0xAA;
+    glPolygonStipple(m);
+    glEnable(GL_POLYGON_STIPPLE);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glRectf(0, 0, 32, 32);
+    px(4, 20, o);
+    int a = o[0] > 128;
+    px(5, 20, o);
+    CHECK(a && o[0] < 128, "máscara MSB primeiro: x par aceso, ímpar apagado");
+    glPixelStorei(GL_UNPACK_LSB_FIRST, 1);
+    glPolygonStipple(m);
+    glPixelStorei(GL_UNPACK_LSB_FIRST, 0);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glRectf(0, 0, 32, 32);
+    px(4, 20, o);
+    a = o[0] > 128;
+    px(5, 20, o);
+    CHECK(!a && o[0] > 128, "LSB_FIRST inverte a ordem dos bits");
+    GLubyte back[128] = {0};
+    glGetPolygonStipple(back);
+    CHECK(back[0] == 0x55 && back[127] == 0x55, "glGetPolygonStipple devolve MSB primeiro (%x)", back[0]);
+    glPushAttrib(GL_POLYGON_STIPPLE_BIT | GL_LINE_BIT);
+    glLineStipple(1, 0x1234);
+    glPolygonStipple(m);
+    glPopAttrib();
+    glGetIntegerv(GL_LINE_STIPPLE_PATTERN, &v);
+    glGetPolygonStipple(back);
+    CHECK(v == 0x0F0F && back[0] == 0x55, "glPopAttrib restaura os pontilhados");
+    /* lista de exibição guarda a máscara já desempacotada */
+    GLuint L = glGenLists(1);
+    glNewList(L, GL_COMPILE);
+    glPolygonStipple(m);
+    glEndList();
+    glPixelStorei(GL_UNPACK_LSB_FIRST, 1);
+    glCallList(L);
+    glPixelStorei(GL_UNPACK_LSB_FIRST, 0);
+    glGetPolygonStipple(back);
+    CHECK(back[0] == 0xAA, "lista com a máscara do momento da compilação (%x)", back[0]);
+    CHECK(glGetError() == GL_NO_ERROR, "sem erro no pontilhado");
+    gl_ctx_destroy(C);
+}
+
 void gl_glsl_host_tests(int *fails, int *checks);
 int main(void) {
     t_clear_and_state();
@@ -472,6 +548,7 @@ int main(void) {
     t_arrays();
     t_eval_accum();
     t_arb_programs();
+    t_stipple();
     gl_glsl_host_tests(&fails, &checks);
     printf("gl_host: %d/%d ok\n", checks - fails, checks);
     return fails != 0;

@@ -52,8 +52,9 @@ Cada passo tem teste de host em `tools/` e entra por PR na `main`. Build complet
 | #359 | `ARB_vertex_program`/`ARB_fragment_program`, `EXT_bindable_uniform`: todos os 1203 comandos | `gl_host` 83/83, `nsopengl_host` 0 falhas |
 | #363 | Derivadas no GLSL por reexecução e lod implícita de mipmap | `gl_host` 88/88, `host-metal-gpu` ok |
 | #408 | Geometry shader | `gl_host` 95/95 |
-| (este) | Lacunas do corpus: `NSOpenGLGetOption`/`SetOption`/`GetVersion`, `CVOpenGLTextureCache`, CoreVideo planar e anexos, descritores de raytracing do Metal, `setVertexBuffers` do overlay Swift | `nsopengl_host` 0 falhas, `mtl_vbufs_test` ok |
+| #449 | Lacunas do corpus: `NSOpenGLGetOption`/`SetOption`/`GetVersion`, `CVOpenGLTextureCache`, CoreVideo planar e anexos, descritores de raytracing do Metal, `setVertexBuffers` do overlay Swift | `nsopengl_host` 0 falhas, `mtl_vbufs_test` ok |
+| (este) | Pontilhado de linha e de polígono | `gl_host` 106/106 |
 
 ## Próximo (OpenGL)
 
-pontilhado de linha/polígono; teste com app real na VM.
+MSAA com amostras; anisotropia; `KHR_debug` com mensagens; tesselação; teste com app real na VM.
