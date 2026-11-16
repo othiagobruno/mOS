@@ -24,6 +24,7 @@
  */
 #import <Foundation/Foundation.h>
 #include "coreimage_cpu.h"
+#include "qrgen.h"
 #include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -157,8 +158,10 @@ static uint32_t unpremul(uint32_t p) {
 + (CIImage *)imageWithBitmapData:(NSData *)data bytesPerRow:(long)bpr size:(CGSize)size format:(int)format colorSpace:(id)cs;
 - (CIImage *)imageByCroppingToRect:(CGRect)r;
 - (CIImage *)imageByApplyingTransform:(CGAffineTransform)t;
-- (CIImage *)imageByApplyingOrientation:(int)o;
 - (CGRect)extent;
+@end
+@interface CIImage (MOSMore)
+- (CIImage *)imageByApplyingOrientation:(int)o;
 @end
 
 static CIImage *wrap(mos_ci *m) {
@@ -305,7 +308,7 @@ NSString *const kCIInputVersionKey = @"inputVersion";
 /* ---------------------------------------------------------------- CIFilter por tabela
  * Cada filtro: nome, categorias, entradas (chave, tipo, padrão, mínimo/máximo do controle) e o construtor no
  * coreimage_cpu.c. setValue:forKey: guarda no dicionário; outputImage monta o nó com os valores atuais. */
-enum { T_IMAGE = 1, T_SCALAR, T_DISTANCE, T_ANGLE, T_POSITION, T_VECTOR, T_COLOR, T_RECT, T_TRANSFORM, T_COUNT };
+enum { T_IMAGE = 1, T_SCALAR, T_DISTANCE, T_ANGLE, T_POSITION, T_VECTOR, T_COLOR, T_RECT, T_TRANSFORM, T_COUNT, T_DATA, T_STRING };
 typedef struct { const char *key; int type; double def[4]; double smin, smax; } ci_in;
 typedef struct { const char *name; const char *cats[4]; ci_in in[6]; } ci_def;
 #define IMG {"inputImage", T_IMAGE, {0}, 0, 0}
@@ -364,6 +367,8 @@ static const ci_def ci_defs[] = {
      {IMG, {"inputRadius", T_DISTANCE, {2.5}, 0, 100}, {"inputIntensity", T_SCALAR, {0.5}, 0, 1}}},
     {"CISharpenLuminance", {"CICategorySharpen", "CICategoryVideo", "CICategoryStillImage"},
      {IMG, {"inputSharpness", T_SCALAR, {0.4}, 0, 2}, {"inputRadius", T_DISTANCE, {1.69}, 0, 20}}},
+    {"CIQRCodeGenerator", {"CICategoryGenerator", "CICategoryStillImage"},
+     {{"inputMessage", T_DATA, {0}, 0, 0}, {"inputCorrectionLevel", T_STRING, {0}, 0, 0}}},
     {"CIPixellate", {"CICategoryStylize", "CICategoryVideo", "CICategoryStillImage"},
      {IMG, {"inputCenter", T_POSITION, {150, 150}, 0, 0}, {"inputScale", T_DISTANCE, {8}, 1, 100}}},
 };
@@ -399,7 +404,8 @@ int mos_coreimage_real(void) { return 0xC1; }
 
 static id default_value(const ci_in *in) {
     switch (in->type) {
-    case T_IMAGE: return nil;
+    case T_IMAGE: case T_DATA: return nil;
+    case T_STRING: return @"M";   /* inputCorrectionLevel */
     case T_POSITION: return [CIVector vectorWithX:in->def[0] Y:in->def[1]];
     case T_VECTOR: case T_RECT: return [CIVector vectorWithX:in->def[0] Y:in->def[1] Z:in->def[2] W:in->def[3]];
     case T_COLOR: return [CIColor colorWithRed:in->def[0] green:in->def[1] blue:in->def[2] alpha:in->def[3]];
@@ -411,11 +417,13 @@ static const char *attr_type(int t) {
     switch (t) {
     case T_IMAGE: return "CIAttributeTypeImage"; case T_DISTANCE: return "CIAttributeTypeDistance"; case T_ANGLE: return "CIAttributeTypeAngle";
     case T_POSITION: return "CIAttributeTypePosition"; case T_COLOR: return "CIAttributeTypeColor"; case T_RECT: return "CIAttributeTypeRectangle";
-    case T_TRANSFORM: return "CIAttributeTypeTransform"; case T_COUNT: return "CIAttributeTypeCount"; case T_VECTOR: return 0;
+    case T_TRANSFORM: return "CIAttributeTypeTransform"; case T_COUNT: return "CIAttributeTypeCount"; case T_VECTOR: case T_DATA: case T_STRING: return 0;
     default: return "CIAttributeTypeScalar";
     }
 }
 static const char *attr_class(int t) {
+    if (t == T_DATA) return "NSData";
+    if (t == T_STRING) return "NSString";
     return t == T_IMAGE ? "CIImage" : t == T_POSITION || t == T_VECTOR || t == T_RECT ? "CIVector" : t == T_COLOR ? "CIColor" : t == T_TRANSFORM ? "NSAffineTransform" : "NSNumber";
 }
 
@@ -614,6 +622,30 @@ static const char *attr_class(int t) {
         r = bl2 ? mos_ci_blend(in, bl2, 0, sharpen ? MOS_CI_BL_SHARPEN_LUMA : MOS_CI_BL_UNSHARP, [self num:sharpen ? "inputSharpness" : "inputIntensity"]) : 0;
         mos_ci_release(cl); mos_ci_release(bl2);
         return wrap(r);
+    }
+    if (!strcmp(n, "CIQRCodeGenerator")) {
+        /* um pixel por módulo, módulo escuro preto e claro branco, com QR_MARGIN módulos claros em volta.
+         * A margem que a Apple usa não foi conferida num Mac (fica 1 módulo até medir). */
+        enum { QR_MARGIN = 1 };
+        id d = [values objectForKey:@"inputMessage"];
+        NSString *lv = [values objectForKey:@"inputCorrectionLevel"];
+        if (![d respondsToSelector:@selector(bytes)]) return nil;
+        const char *l = [lv isKindOfClass:[NSString class]] ? lv.UTF8String : "M";
+        int level = l[0] == 'L' ? 0 : l[0] == 'Q' ? 2 : l[0] == 'H' ? 3 : 1, size = 0;
+        static uint8_t mods[177 * 177];
+        if (mos_qr_encode([(NSData *)d bytes], (int)[(NSData *)d length], level, 0, -1, mods, &size) < 0) return nil;
+        int W = size + 2 * QR_MARGIN;
+        uint32_t *px = malloc((size_t)W * W * 4u);
+        if (!px) return nil;
+        for (int y = 0; y < W; y++)
+            for (int x = 0; x < W; x++) {
+                int mx = x - QR_MARGIN, my = y - QR_MARGIN;
+                int dark = mx >= 0 && my >= 0 && mx < size && my < size && mods[my * size + mx];
+                px[(size_t)y * W + x] = dark ? 0xFF000000u : 0xFFFFFFFFu;
+            }
+        CIImage *o = from_px(px, W, W);
+        free(px);
+        return o;
     }
     if (!strcmp(n, "CIPixellate")) { [self vec:"inputCenter" out:p n:2]; return wrap(mos_ci_pixellate(in, p[0], p[1], [self num:"inputScale"])); }
     return nil;

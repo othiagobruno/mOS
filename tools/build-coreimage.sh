@@ -14,6 +14,7 @@ trap 'rm -rf "$TMP"' EXIT
 "$ZIG" cc -target $ZT -O2 -c -fvisibility=hidden \
     -I"$SRC" \
     "$SRC/coreimage_cpu.c" -o "$TMP/cpu.o"
+"$ZIG" cc -target $ZT -O2 -c -fvisibility=hidden -I"$SRC" "$SRC/qrgen.c" -o "$TMP/qr.o"
 "$ZIG" cc -target $ZT -O2 -c -x objective-c -fblocks \
     -I"$ROOT/userland/sdk/include" -I"$SRC" -Wno-objc-root-class \
     "$SRC/CoreImage.m" -o "$TMP/ci.o"
@@ -22,5 +23,5 @@ dir="$DEST$install"
 mkdir -p "$(dirname "$dir")"
 "$ZIG" cc -target $ZT -shared -o "$dir" \
     -Wl,-install_name,"$install" -Wl,-undefined,dynamic_lookup \
-    "$TMP/ci.o" "$TMP/cpu.o"
+    "$TMP/ci.o" "$TMP/cpu.o" "$TMP/qr.o"
 echo "CoreImage: $dir"
