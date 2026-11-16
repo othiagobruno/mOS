@@ -303,28 +303,11 @@ u64 CFStringHashCString(const u8 *b, long n) {
     objc_release(s);
     return h;
 }
-void CFArrayExchangeValuesAtIndices(id a, long i, long j) {
-    if (!a || i == j) return;
-    id x = objc_retain(MSG(id, a, "objectAtIndex:", (u64)i)), y = objc_retain(MSG(id, a, "objectAtIndex:", (u64)j));
-    MSG(void, a, "replaceObjectAtIndex:withObject:", (u64)i, y);
-    MSG(void, a, "replaceObjectAtIndex:withObject:", (u64)j, x);
-    objc_release(x); objc_release(y);
-}
 typedef struct { long location, length; } cf_range_t;
 void CFArrayReplaceValues(id a, cf_range_t r, const id *vals, long n) {
     if (!a) return;
     for (long k = 0; k < r.length; k++) MSG(void, a, "removeObjectAtIndex:", (u64)r.location);
     for (long k = 0; k < n; k++) MSG(void, a, "insertObject:atIndex:", vals[k], (u64)(r.location + k));
-}
-unsigned char CFDictionaryContainsValue(id d, id v) {
-    if (!d) return 0;
-    id vals = MSG0(id, d, "allValues");
-    u64 n = vals ? MSG0(u64, vals, "count") : 0;
-    for (u64 i = 0; i < n; i++) {
-        id x = MSG(id, vals, "objectAtIndex:", i);
-        if (x == v || (x && v && MSG(BOOL, x, "isEqual:", v))) return 1;
-    }
-    return 0;
 }
 double CFRunLoopTimerGetInterval(void *t);
 unsigned char CFRunLoopTimerDoesRepeat(void *t) { return t && CFRunLoopTimerGetInterval(t) > 0; }

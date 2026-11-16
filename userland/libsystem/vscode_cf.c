@@ -7,6 +7,8 @@
  * trabalham em UTF-16 (GetCharacters, GetCharacterAtIndex) decodificam e indexam em UTF-16 de verdade.
  */
 #include "foundation.h"
+extern const char kCFTypeDictionaryKeyCallBacks[];   /* cfcollections.c: callbacks de objeto CF (retain/isEqual:) */
+extern const char kCFTypeDictionaryValueCallBacks[];   /* cfcollections.c: callbacks de objeto CF (retain/isEqual:) */
 
 void *malloc(size_t n);
 void *calloc(size_t n, size_t s);
@@ -525,7 +527,7 @@ u8 CFURLCopyResourcePropertyForKey(id url, id key, id *value, id *err) {
 id CFURLCopyResourcePropertiesForKeys(id url, id keys, id *err) {
     if (err) *err = 0;
     if (!url || !keys) return 0;
-    id d = CFDictionaryCreateMutable(0, 0, 0, 0);
+    id d = CFDictionaryCreateMutable(0, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
     if (!d) return 0;
     long n = CFArrayGetCount(keys);
     for (long i = 0; i < n; i++) {

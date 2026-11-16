@@ -12,6 +12,7 @@
 #include "foundation.h"
 #include "sys.h"
 #include "libc.h"
+extern const char kCFTypeArrayCallBacks[];   /* cfcollections.c: callbacks de objeto CF (retain/isEqual:) */
 
 typedef int OSStatus;
 id objc_retain(id o);
@@ -245,7 +246,7 @@ id TISCreateInputSourceList(id props, BOOL include_all) {
         ok = have && want && MSG(BOOL, have, "isEqual:", want);
     }
     const void *one = s;
-    return CFArrayCreate(0, ok ? &one : 0, ok ? 1 : 0, 0);
+    return CFArrayCreate(0, ok ? &one : 0, ok ? 1 : 0, &kCFTypeArrayCallBacks);
 }
 OSStatus TISSelectInputSource(id src) { return src == tis_src() || (src && MSG(BOOL, src, "isEqual:", tis_src())) ? 0 : paramErr; }
 OSStatus TISEnableInputSource(id src) { return TISSelectInputSource(src); }
