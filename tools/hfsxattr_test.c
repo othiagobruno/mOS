@@ -109,6 +109,28 @@ static void run(int drop_attr_tree) {
     CHECK(get(m, "/seed.txt", "com.exemplo.grande", NULL, 0) == -1 && get(m, "/seed.txt", "user.ação", NULL, 0) == -1);
     CHECK(get(m, "/seed.txt", "com.apple.FinderInfo", NULL, 0) == -1 && get(m, "/seed.txt", "com.apple.ResourceFork", NULL, 0) == -1);
     CHECK(get(m, "/seed.txt", "com.apple.quarantine", NULL, 0) == (i64)strlen(q));
+    /* modo, dono, flags e datas no catálogo */
+    dfs_attr_t at = {DA_MODE | DA_OWNER | DA_FLAGS | DA_TIMES, 0600, 501, 20, 0x8000 | 0x2 | 0x10000, 1000000000, 1100000000, 1200000000, 0};
+    CHECK(m->ops->setattr(m, "/seed.txt", &at));
+    /* link simbólico de verdade */
+    CHECK(m->ops->symlink(m, "/atalho", "seed.txt"));
+    CHECK(m->ops->sync(m));
+    remount();
+    m = hfs();
+    dnode_t *sn = look(m, "/seed.txt");
+    CHECK(sn && sn->mode == 0600 && sn->uid == 501 && sn->gid == 20);
+    CHECK(sn && sn->flags == (0x8000u | 0x2u | 0x10000u));
+    CHECK(sn && sn->btime == 1000000000 && sn->mtime == 1100000000 && sn->atime == 1200000000);
+    dnode_t *ln = look(m, "/atalho");
+    CHECK(ln && ln->type == DN_LINK);
+    u64 tl = 0;
+    u8 *tb = ln ? dfs_read_all(ln, 4096, &tl) : NULL;
+    CHECK(tb && tl == 8 && !memcmp(tb, "seed.txt", 8));
+    kfree(tb);
+    /* o conteúdo continua o mesmo; tira o uchg para poder apagar */
+    dfs_attr_t at2 = {DA_FLAGS, 0, 0, 0, 0, 0, 0, 0, 0};
+    CHECK(m->ops->setattr(m, "/seed.txt", &at2));
+    CHECK(m->ops->remove(m, "/atalho"));
     /* apagar o arquivo apaga os atributos */
     CHECK(m->ops->remove(m, "/Pasta"));
     CHECK(m->ops->sync(m));

@@ -118,6 +118,7 @@ static bool is_rsrc(const char *name) { return !strcmp(name, "com.apple.Resource
 static bool is_finfo(const char *name) { return !strcmp(name, "com.apple.FinderInfo"); }
 
 __attribute__((weak)) void vfs_xattr_load(vnode_t *n) { (void)n; }
+__attribute__((weak)) int vol_meta_write(vnode_t *n, unsigned mask) { (void)n; (void)mask; return 0; }
 __attribute__((weak)) int vol_xattr_write(vnode_t *n, const char *name, const void *val, u64 len, bool remove) {
     (void)n; (void)name; (void)val; (void)len; (void)remove;
     return 0;
@@ -387,7 +388,10 @@ i64 vfs_fsmeta(vnode_t *v, int op, const void *rqv, const char *name, void *kbuf
         if (!root && ((nf ^ v->flags) & VFS_SF_SETTABLE)) return -MOS_EPERM;
         if (!root && (v->flags & (VFS_SF_IMMUTABLE | VFS_SF_APPEND))) return -MOS_EPERM;
         nf = (nf & ~VFS_UF_COMPRESSED)   /* compressão é do fs, não do usuário */ | (v->flags & VFS_UF_COMPRESSED);
+        u32 oldf = v->flags;
         v->flags = nf;
+        int we = vol_meta_write(v, VFS_META_FLAGS);       /* volume de /Volumes: no disco */
+        if (we) { v->flags = oldf; return we; }
         vfs_meta_changed(v);
         vfs_ev(v, FSEV_INODE_META);
         return 0;
@@ -403,9 +407,12 @@ i64 vfs_fsmeta(vnode_t *v, int op, const void *rqv, const char *name, void *kbuf
             if (ng != v->gid && !vfs_in_group(ng, euid, egid)) return -MOS_EPERM;
         }
         bool changed = nu != v->uid || ng != v->gid;
+        u32 ou = v->uid, og = v->gid, om = v->mode;
         v->uid = nu;
         v->gid = ng;
         if (changed && !root) v->mode &= ~06000u;   /* chown sem root tira setuid/setgid */
+        int we = vol_meta_write(v, VFS_META_OWNER | (v->mode != om ? VFS_META_MODE : 0));
+        if (we) { v->uid = ou; v->gid = og; v->mode = om; return we; }
         vfs_meta_changed(v);
         vfs_ev(v, FSEV_OWNER | FSEV_INODE_META);
         return 0;
@@ -435,6 +442,7 @@ i64 vfs_fsmeta(vnode_t *v, int op, const void *rqv, const char *name, void *kbuf
         i64 keep_c = v->ctime_ns;
         vfs_meta_changed(v);
         if (mask & VT_CTIME) v->ctime_ns = keep_c;    /* pedido explícito de ctime vale (root/restauração) */
+        { int we = vol_meta_write(v, VFS_META_TIMES); if (we) return we; }
         vfs_ev(v, FSEV_INODE_META);
         return 0;
     }

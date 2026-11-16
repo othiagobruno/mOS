@@ -74,7 +74,7 @@ de host passando (o build do projeto fica para o fim, pela fila `build-final.sh`
 ## O que falta, em detalhe
 
 - **5 HFS+ completo** (`kernel/fs/hfsplus_wr.c`): xattr inline e em fork, FinderInfo e resource fork, árvore criada
-  quando falta: ✅ (`docs/volumes-graveis.md`). Falta: hard links (arquivo e pasta), links simbólicos de verdade, modo/dono/flags/
+  quando falta, modo/dono/flags/datas e links simbólicos: ✅ (`docs/volumes-graveis.md`). Falta: hard links (arquivo e pasta), links simbólicos de verdade, modo/dono/flags/
   datas do vnode no catálogo, FinderInfo, resource fork, decmpfs na escrita. TRIM do HFS+ e do FAT: ✅ (descarte
   depois do commit, `docs/volumes-graveis.md`); falta o do APFS (fase 6).
 - **6 APFS**: leitura completa (snapshots, clones, xattrs, links, compressão, volume selado) e escrita (B-tree COW,

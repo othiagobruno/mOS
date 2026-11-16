@@ -129,6 +129,14 @@ enum { DN_FILE = 1, DN_DIR = 2, DN_LINK = 3 };
 
 struct dnode;
 struct dmount;
+/* setattr: só os campos marcados em mask */
+enum { DA_MODE = 1, DA_OWNER = 2, DA_FLAGS = 4, DA_TIMES = 8 };
+typedef struct dfs_attr {
+    unsigned mask;
+    u16 mode;               /* 12 bits de permissão */
+    u32 uid, gid, flags;
+    i64 btime, mtime, atime, ctime;   /* segundos Unix */
+} dfs_attr_t;
 typedef struct dfs_ops {
     const char *name;
     bool (*readdir)(struct dmount *m, struct dnode *dir);              /* cria os filhos */
@@ -151,6 +159,9 @@ typedef struct dfs_ops {
     i64  (*listxattr)(struct dmount *m, struct dnode *n, char *buf, u64 cap);                  /* bytes ("a\0b\0"), -1 erro */
     bool (*setxattr)(struct dmount *m, const char *path, const char *name, const void *val, u64 len);
     bool (*removexattr)(struct dmount *m, const char *path, const char *name);
+    /* metadados BSD e links simbólicos (NULL = o fs não guarda) */
+    bool (*setattr)(struct dmount *m, const char *path, const struct dfs_attr *a);
+    bool (*symlink)(struct dmount *m, const char *path, const char *target);   /* cria ou substitui */
 } dfs_ops_t;
 
 /* uma imagem aberta: disco virtual + partições; vive enquanto houver volume montado dela */
@@ -183,6 +194,9 @@ typedef struct dnode {
     u16  mode;
     u64  size;
     i64  mtime;             /* segundos Unix */
+    u32  uid, gid, flags;   /* dono e st_flags (HFS+: ownerFlags | adminFlags << 16); has_owner = 1 se o fs guarda */
+    i64  btime, atime, ctime;
+    bool has_owner;
     u64  ino;               /* identificador interno do fs */
     const u8 *mem;          /* arquivos em RAM (vindos do boot) */
     dmount_t *mnt;           /* NULL = vnode em RAM */

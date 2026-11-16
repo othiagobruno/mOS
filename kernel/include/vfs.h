@@ -75,6 +75,11 @@ void vfs_xattr_attach(vnode_t *n, const char *name, const void *val, u64 len);  
 /* ganchos dos volumes (vfs_bridge.c; padrão = nada): ler os xattrs do driver e gravar através dele */
 void vfs_xattr_load(vnode_t *n);
 int  vol_xattr_write(vnode_t *n, const char *name, const void *val, u64 len, bool remove);   /* 0 ou -errno */
+int  vol_meta_write(vnode_t *n, unsigned mask);    /* DA_MODE/OWNER/FLAGS/TIMES (fs.h) pelo driver; 0 ou -errno */
+#define VFS_META_MODE  1
+#define VFS_META_OWNER 2
+#define VFS_META_FLAGS 4
+#define VFS_META_TIMES 8
 bool vfs_xattr_copy(vnode_t *dst, const vnode_t *src);
 bool vfs_immutable(vnode_t *n);                    /* uchg/schg: não pode mudar conteúdo, nome nem metadados */
 bool vfs_append_only(vnode_t *n);                  /* uappnd/sappnd: só acrescentar */

@@ -109,6 +109,17 @@ Limitações conhecidas:
   FinderInfo, ResourceFork, remover, remontar e reler, volume sem a árvore, `volimg check` limpo) e
   `sh tools/volxattr_test.sh` (10: VFS + ponte + driver; FAT recusa; arquivo pendente).
 
+## Modo, dono, flags, datas e links simbólicos no HFS+
+
+- Leitura: o `dnode` traz dono, `st_flags` (ownerFlags | adminFlags << 16; `UF_HIDDEN` = `kIsInvisible` do
+  FinderInfo) e as datas de criação, mudança de atributos e acesso; a ponte copia tudo para o vnode ao espelhar
+  (dono 99, o `_unknown` dos volumes externos, aparece como o usuário do mOS).
+- Gravação: chmod, chown, chflags e utimes num volume gravam no catálogo pelo driver (`hfs_wr_setattr`, numa
+  transação) antes de a RAM mudar; arquivo ainda pendente vai ao disco antes.
+- Links: um link do mOS (`#mOS-link:<alvo>`) gravado num volume HFS+ vira link simbólico de verdade (tipo `slnk`,
+  criador `rhap`, modo 0120755, alvo no fork de dados), que o macOS lê como link.
+- Testes: `sh tools/hfsxattr_test.sh` (99) e `sh tools/volxattr_test.sh` (19).
+
 ## TRIM (blk_discard)
 
 Blocos soltos (apagar, truncar, substituir) viram `blk_discard()` no SSD (`kernel/dev/storage.c`, ATA DATA SET

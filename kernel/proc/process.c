@@ -3743,7 +3743,9 @@ static u64 proc_syscall_(int_frame_t *f) {
         if (!cv) { r = -MOS_ENOENT; break; }
         if (vfs_immutable(cv)) { r = -MOS_EPERM; break; }
         if (vfs_authorize(cv, VFS_KR_WRITE_SECURITY, p->euid, p->egid)) { r = -MOS_EPERM; break; }   /* dono, root ou ACL */
+        unsigned om = cv->mode;
         mode_apply(&cv->mode, (unsigned)b);
+        { int we = vol_meta_write(cv, VFS_META_MODE); if (we) { cv->mode = om; r = we; break; } }   /* volume: no disco */
         vfs_meta_changed(cv);
         vfs_ev(cv, FSEV_INODE_META);
         r = 0;
@@ -3756,7 +3758,9 @@ static u64 proc_syscall_(int_frame_t *f) {
         if (!fv) { r = -MOS_ENOENT; break; }
         if (vfs_immutable(fv)) { r = -MOS_EPERM; break; }
         if (vfs_authorize(fv, VFS_KR_WRITE_SECURITY, p->euid, p->egid)) { r = -MOS_EPERM; break; }
+        unsigned om = fv->mode;
         fchmod_apply(&fv->mode, &p->fds[a].mode, (unsigned)b);
+        { int we = vol_meta_write(fv, VFS_META_MODE); if (we) { fv->mode = om; r = we; break; } }
         vfs_meta_changed(fv);
         vfs_ev(fv, FSEV_INODE_META);
         r = 0;
