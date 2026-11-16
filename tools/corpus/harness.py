@@ -273,7 +273,33 @@ def find_app(root: Path) -> Path | None:
         return total
 
     apps.sort(key=lambda p: (-peso(p), len(p.parts), str(p)))
+    # o mesmo app em dois pacotes, um por arquitetura (Google Drive: GoogleDrive_arm64.pkg e _x86_64.pkg):
+    # fica o que tem fatia x86_64, que o mOS roda direto
+    mesmos = [p for p in apps if p.name == apps[0].name]
+    for p in mesmos:
+        if tem_x86_64(p):
+            return p
     return apps[0]
+
+
+def tem_x86_64(bundle: Path) -> bool:
+    """O executável principal do bundle (Contents/MacOS/*) tem fatia x86_64 (fina ou universal)."""
+    macos = bundle / "Contents" / "MacOS"
+    if not macos.is_dir():
+        return False
+    for exe in sorted(macos.iterdir()):
+        try:
+            with exe.open("rb") as f:
+                cab = f.read(8 + 20 * 32)
+        except OSError:
+            continue
+        if cab[:4] == b"\xcf\xfa\xed\xfe":
+            return int.from_bytes(cab[4:8], "little") == 0x01000007
+        if cab[:4] in (b"\xca\xfe\xba\xbe", b"\xca\xfe\xba\xbf"):
+            n = int.from_bytes(cab[4:8], "big")
+            passo = 20 if cab[:4] == b"\xca\xfe\xba\xbe" else 32
+            return any(int.from_bytes(cab[8 + i * passo:12 + i * passo], "big") == 0x01000007 for i in range(min(n, 20)))
+    return False
 
 
 def nome_do_arquivo(app: dict, url: str) -> str:
