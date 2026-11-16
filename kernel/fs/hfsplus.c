@@ -193,9 +193,10 @@ static int attr_cmp(const u8 *k, const void *t) {
 /* lê o atributo estendido "name" do arquivo; retorna buffer (kfree) */
 static u8 *get_xattr(hfs_t *h, u32 file_id, const char *name, u64 *len) {
     if (!h->attr_root) return NULL;
-    u16 wname[64];
-    u32 nl = 0;
-    while (name[nl] && nl < 64) { wname[nl] = (u8)name[nl]; nl++; }
+    u16 wname[128];
+    int nl0 = hfs_name16(name, wname, 127);
+    if (nl0 < 0) return NULL;
+    u32 nl = (u32)nl0;
     attrkey_t key = {file_id, wname, nl};
     u32 leaf;
     int rec;
@@ -283,6 +284,8 @@ static bool add_entry(hfs_t *h, const u8 *k, const u8 *d, u32 dlen, void *ctx) {
         dnode_t *c = dfs_new_child(dir, name, DN_DIR, 0);
         if (!c) return false;
         c->ino = be32(d + 8);
+        hfs_file_t *df = kcalloc(1, sizeof(*df));        /* pasta: só o FinderInfo e o CNID */
+        if (df) { memcpy(df->finfo, d + 48, 32); df->file_id = be32(d + 8); c->priv = df; }
         c->mtime = (i64)be32(d + 16) - HFS_EPOCH_DELTA;
         c->mode = be16(d + 42) & 07777;
         return true;
@@ -293,6 +296,7 @@ static bool add_entry(hfs_t *h, const u8 *k, const u8 *d, u32 dlen, void *ctx) {
     if (!f) return false;
     memcpy(f->data, d + 88, 80);
     memcpy(f->rsrc, d + 168, 80);
+    memcpy(f->finfo, d + 48, 32);
     f->file_id = be32(d + 8);
     f->compressed = (d[41] & 0x20) != 0;
     bool link = ftype == FOURCC('s', 'l', 'n', 'k') && creator == FOURCC('r', 'h', 'a', 'p');
@@ -447,8 +451,89 @@ static bool hfs_enable_write(dmount_t *m) {
     return m->writable;
 }
 
+/* ---- atributos estendidos (leitura). O decmpfs (e o resource fork de um arquivo comprimido) não aparecem, como no
+ * macOS; FinderInfo e ResourceFork vêm dos campos do catálogo. */
+static u32 xattr_owner(dnode_t *n) {
+    hfs_file_t *f = n->priv;
+    if (!f) return (u32)n->ino;
+    return f->link_ino ? f->link_ino : f->file_id;
+}
+static bool finfo_set(const u8 *fi) { for (int i = 0; i < 32; i++) if (fi[i]) return true; return false; }
+static i64 hfs_getxattr(dmount_t *m, dnode_t *n, const char *name, void *buf, u64 cap) {
+    hfs_t *h = m->priv;
+    hfs_file_t *f = n->priv;
+    if (!strcmp(name, "com.apple.FinderInfo")) {
+        if (!f || !finfo_set(f->finfo)) return -1;
+        if (!buf) return 32;
+        if (cap < 32) return -2;
+        memcpy(buf, f->finfo, 32);
+        return 32;
+    }
+    if (!strcmp(name, "com.apple.ResourceFork")) {
+        if (!f || n->type == DN_DIR || f->compressed) return -1;
+        fork_t rf;
+        if (!be64(f->rsrc) || !hfs_fork_load(h, f->rsrc, f->file_id, 0xFF, &rf)) return -1;
+        i64 r = (i64)rf.size;
+        if (buf) {
+            if (cap < rf.size) r = -2;
+            else if (!hfs_fork_read(h, &rf, 0, buf, rf.size)) r = -1;
+        }
+        kfree(rf.ext);
+        return r;
+    }
+    if (!strcmp(name, "com.apple.decmpfs")) return -1;
+    u64 len = 0;
+    u8 *x = get_xattr(h, xattr_owner(n), name, &len);
+    if (!x) return -1;
+    i64 r = (i64)len;
+    if (buf) { if (cap < len) r = -2; else memcpy(buf, x, len); }
+    kfree(x);
+    return r;
+}
+static i64 hfs_listxattr(dmount_t *m, dnode_t *n, char *buf, u64 cap) {
+    hfs_t *h = m->priv;
+    hfs_file_t *f = n->priv;
+    u64 o = 0;
+#define PUTNAME(s) do { u64 _k = strlen(s) + 1; if (buf) { if (o + _k > cap) return -2; memcpy(buf + o, s, _k); } o += _k; } while (0)
+    if (f && finfo_set(f->finfo)) PUTNAME("com.apple.FinderInfo");
+    if (f && n->type != DN_DIR && !f->compressed && be64(f->rsrc)) PUTNAME("com.apple.ResourceFork");
+    if (h->attr_root) {
+        u32 id = xattr_owner(n);
+        attrkey_t key = {id, NULL, 0};
+        u32 leaf;
+        int rec;
+        if (bt_search(h, 2, &key, &leaf, &rec)) {
+            if (rec < 0) rec = 0;
+            for (int guard = 0; leaf && guard < 100000; guard++) {
+                if (!read_node(h, 2, leaf)) break;
+                const u8 *nd = h->node;
+                u16 nrec = be16(nd + 10);
+                u32 next = be32(nd);
+                bool done = false;
+                for (int i = rec; i < nrec; i++) {
+                    const u8 *k = nd + be16(nd + h->attr_ns - 2 * (i + 1));
+                    u32 kid = be32(k + 4);
+                    if (kid < id) continue;
+                    if (kid > id) { done = true; break; }
+                    if (be32(k + 8)) continue;                      /* extents adicionais de um atributo grande */
+                    char nm[768];
+                    utf16be_to_utf8(k + 14, MIN(be16(k + 12), 127u), nm, sizeof nm);
+                    if (!strcmp(nm, "com.apple.decmpfs")) continue;
+                    PUTNAME(nm);
+                }
+                if (done) break;
+                leaf = next;
+                rec = 0;
+            }
+        }
+    }
+#undef PUTNAME
+    return (i64)o;
+}
+
 static const dfs_ops_t HFS_OPS = {"HFS+", hfs_readdir, hfs_read, hfs_unmount, hfs_free_node, hfs_trim,
-                                  hfs_wr_write, hfs_wr_mkdir, hfs_wr_remove, hfs_wr_rename, hfs_wr_sync, hfs_enable_write};
+                                  hfs_wr_write, hfs_wr_mkdir, hfs_wr_remove, hfs_wr_rename, hfs_wr_sync, hfs_enable_write,
+                                  hfs_getxattr, hfs_listxattr, hfs_wr_setxattr, hfs_wr_removexattr};
 
 static bool tree_header(hfs_t *h, int tree, fork_t *f, u32 *ns, u32 *root) {
     if (!f->size) { *root = 0; return true; }

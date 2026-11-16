@@ -496,3 +496,51 @@ bool vfs_volume_info(vnode_t *vol, mos_statfs_t *o) {
     if (!m->writable) o->flags |= 1;
     return true;
 }
+
+/* ------------------------------------------------------------ atributos estendidos dos volumes
+ * Lidos do driver no primeiro uso do vnode (vfsmeta.c chama vfs_xattr_load) e gravados por ele antes de a RAM mudar
+ * (vol_xattr_write). Arquivo novo que ainda não foi para o disco é gravado antes do atributo. */
+static dnode_t *dnode_of(vnode_t *vol, vnode_t *n) {
+    if (n->ext) return n->ext;
+    char rel[1024], full[1300];
+    if (!rel_path(vol, n, rel, sizeof rel)) return NULL;
+    dmount_t *m = mount_of(vol);
+    snprintf(full, sizeof full, "/Volumes/%s%s", m->root->name, strcmp(rel, "/") ? rel : "");
+    return dfs_lookup(full);
+}
+void vfs_xattr_load(vnode_t *n) {
+    vnode_t *vol = volume_of(n);
+    if (!vol || !vol->ext) return;
+    dmount_t *m = mount_of(vol);
+    if (!m->ops->listxattr || !m->ops->getxattr) return;
+    dnode_t *d = dnode_of(vol, n);
+    if (!d) return;
+    i64 need = m->ops->listxattr(m, d, NULL, 0);
+    if (need <= 0) return;
+    char *names = kmalloc((usize)need);
+    if (!names) return;
+    i64 got = m->ops->listxattr(m, d, names, (u64)need);
+    for (i64 o = 0; got > 0 && o < got; o += (i64)strlen(names + o) + 1) {
+        i64 vl = m->ops->getxattr(m, d, names + o, NULL, 0);
+        if (vl < 0 || vl > (64ll << 20)) continue;
+        u8 *v = kmalloc(vl ? (usize)vl : 1);
+        if (v && m->ops->getxattr(m, d, names + o, v, (u64)vl) == vl) vfs_xattr_attach(n, names + o, v, (u64)vl);
+        kfree(v);
+    }
+    kfree(names);
+}
+int vol_xattr_write(vnode_t *n, const char *name, const void *val, u64 len, bool remove) {
+    vnode_t *vol = volume_of(n);
+    if (!vol || !vol->ext) return 0;                       /* fora de /Volumes: só na RAM (e no .vfsmeta) */
+    dmount_t *m = mount_of(vol);
+    if (!m->writable) return -MOS_EROFS;
+    if (!m->ops->setxattr || !m->ops->removexattr) return -MOS_ENOTSUP;   /* FAT: sem atributos */
+    char p[1024];
+    if (!rel_path(vol, n, p, sizeof p)) return -MOS_EINVAL;
+    if (!n->dir && n->dirty && !n->ext) {                  /* o arquivo ainda não chegou ao disco */
+        if (!m->ops->write_file(m, p, n->data ? n->data : (const u8 *)"", n->size)) return -MOS_EIO;
+        n->dirty = false;
+    }
+    bool ok = remove ? m->ops->removexattr(m, p, name) : m->ops->setxattr(m, p, name, val, len);
+    return ok ? 0 : -MOS_EIO;
+}

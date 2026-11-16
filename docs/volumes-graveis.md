@@ -89,10 +89,25 @@ Limitações conhecidas:
 - Hard links: gravar num link grava no inode; apagar um link que faz parte de uma cadeia de links
   (`kHFSHasLinkChainMask`) é recusado. Hard links de pasta não são tratados.
 - Volumes dentro de um wrapper HFS (discos muito antigos) ficam só leitura.
-- A árvore de atributos não cresce (só se apagam atributos); criar xattrs não está implementado.
 - Arquivos especiais (catálogo etc.) não usam extents overflow ao crescer.
 - O VFS do mOS compara nomes com diferença de maiúsculas e o FAT/HFS+ sem: criar `A.txt` ao lado de
   `a.txt` pelo VFS substitui o mesmo arquivo no disco.
+
+## Atributos estendidos no HFS+
+
+- O driver grava e lê xattrs na árvore de atributos (`hfsplus_wr.c`: `hfs_wr_setxattr`/`hfs_wr_removexattr`;
+  `hfsplus.c`: `getxattr`/`listxattr` das `dfs_ops`): inline (0x10) quando cabe em meio nó, senão em blocos próprios
+  (0x20, com registros 0x30 para extents além de 8); nomes UTF-8 em UTF-16; o catálogo marca
+  `kHFSHasAttributesMask` (e `kHFSHasSecurityMask` para a ACL em `com.apple.system.Security`).
+- Volume sem árvore de atributos: ela é criada na mesma transação (nós de 8 KiB, como o newfs_hfs).
+- `com.apple.FinderInfo` são os 32 bytes do registro do catálogo e `com.apple.ResourceFork` é o fork de recurso,
+  como no macOS; `com.apple.decmpfs` não aparece no `listxattr`.
+- O VFS lê os xattrs do volume no primeiro uso do vnode e grava pelo driver antes de mudar a RAM
+  (`vfs_bridge.c`: `vfs_xattr_load`, `vol_xattr_write`); arquivo novo ainda pendente vai ao disco antes do atributo.
+  FAT devolve `ENOTSUP` (o AppleDouble `._` dos volumes FAT fica para depois).
+- Testes: `sh tools/hfsxattr_test.sh` (79: inline, 300 KiB em fork, nome com acento, substituir, pasta, raiz,
+  FinderInfo, ResourceFork, remover, remontar e reler, volume sem a árvore, `volimg check` limpo) e
+  `sh tools/volxattr_test.sh` (10: VFS + ponte + driver; FAT recusa; arquivo pendente).
 
 ## TRIM (blk_discard)
 

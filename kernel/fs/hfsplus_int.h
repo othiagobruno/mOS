@@ -33,6 +33,7 @@ typedef struct {
 
 typedef struct {
     u8 data[80], rsrc[80];   /* HFSPlusForkData crus */
+    u8 finfo[32];            /* FinderInfo do catálogo (FndrFileInfo/DirInfo + Extended) */
     u32 file_id, link_ino;
     bool compressed;
     fork_t dfork;            /* extents completos (carregados na 1ª leitura) */
@@ -51,3 +52,6 @@ bool hfs_wr_mkdir(dmount_t *m, const char *path);
 bool hfs_wr_remove(dmount_t *m, const char *path);
 bool hfs_wr_rename(dmount_t *m, const char *from, const char *to);
 bool hfs_wr_sync(dmount_t *m);
+bool hfs_wr_setxattr(dmount_t *m, const char *path, const char *name, const void *val, u64 len);
+bool hfs_wr_removexattr(dmount_t *m, const char *path, const char *name);
+int  hfs_name16(const char *s, u16 *out, int max);   /* UTF-8 -> UTF-16 (sem decompor), -1 se inválido */
