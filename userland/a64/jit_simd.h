@@ -43,6 +43,7 @@ static int s_shift_scalar(T *t, a64_u32 w);
 static int s_shimm(T *t, int x, int eb, int kind, int sh);
 static int s_fcmpv(T *t, int q, int dbl, int kind, int abs, int n, int m, int d, int sc);
 static int s_fcvtz_vec(T *t, int q, int dbl, int u, int n, int d, int sc);
+static void s_widen(T *t, int x, int v, int hi, int sz, int sgn);
 static int s_scalar_simd(T *t, a64_u32 w);
 
 static void s_ld(T *t, int x, int v) { x_movdqu_ld(B, x, VO(v)); }
@@ -1578,6 +1579,30 @@ static int s_indexed(T *t, a64_u32 w) {
         return fpv_core(t, op == 5 ? 0xBC : 0xB8, 1, dbl, q, d, n, m, lane);
     }
     int key = (u << 4) | op;
+    if (op == 0x2 || op == 0x6 || op == 0xA) {      /* (S|U)MLAL (S|U)MLSL (S|U)MULL por elemento */
+        int sgn = !u;
+        if ((size != 1 && size != 2) || !jit_g.sse41) return 0;
+        int idx = size == 1 ? (H << 2) | (L << 1) | M : (H << 1) | L, m = size == 1 ? rm : (M << 4) | rm;
+        static const unsigned lo[3] = { 0x60, 0x61, 0x62 };
+        fl_clobber(t);
+        if (size == 1) x_movzx16(B, XAX, VOE(m, 2 * idx)); else x_mov_rm(B, 0, XAX, VOE(m, 4 * idx));
+        s_replicate(t, size);
+        xop2(B, XF_66 | XF_W, 0x6E, 1, XR(XAX));   /* xmm1 = elemento nas lanes estreitas de baixo */
+        s_zero(t, 5);
+        if (sgn) s_cmp(t, 0, size, 5, 1);
+        s_op(t, lo[size], 1, 5);                    /* alargado */
+        s_widen(t, 0, n, q, size, sgn);
+        if (size == 1) s_op38(t, 0x40, 0, 1);       /* pmulld */
+        else if (sgn) s_op38(t, 0x28, 0, 1);        /* pmuldq */
+        else s_op(t, 0xF4, 0, 1);                   /* pmuludq */
+        if (op != 0xA) {
+            s_ld(t, 2, d);
+            s_op(t, op == 0x2 ? (size == 1 ? 0xFE : 0xD4) : (size == 1 ? 0xFA : 0xFB), 2, 0);
+            x_movdqa_ld(B, 0, XR(2));
+        }
+        s_st(t, d, 0, 1);
+        return 1;
+    }
     if (key != 0x08 && key != 0x10 && key != 0x14) return 0;   /* MUL MLA MLS */
     if (size != 1 && size != 2) return 0;
     if (size == 2 && !jit_g.sse41) return 0;
@@ -1623,6 +1648,16 @@ static int s_3diff(T *t, a64_u32 w) {
         return 1;
     case 4: case 6:                                 /* ADDHN RADDHN / SUBHN RSUBHN */
         return s_addhn(t, q, u, size, op == 6, n, m, d);
+    case 5: case 7:                                 /* ABAL / ABDL: |a - b| nas lanes largas */
+        if (size < 2 && !jit_g.ssse3) return 0;
+        s_widen(t, 0, n, q, size, sgn);
+        s_widen(t, 1, m, q, size, sgn);
+        s_op(t, sub[size], 0, 1);
+        if (size == 2) { x_movdqa_ld(B, 1, XR(0)); s_signmask(t, 1, 64); s_op(t, 0xEF, 0, 1); s_op(t, 0xFB, 0, 1); }
+        else s_op38(t, size == 0 ? 0x1D : 0x1E, 0, 0);   /* pabsw / pabsd */
+        if (op == 5) { s_ld(t, 1, d); s_op(t, add[size], 0, 1); }
+        s_st(t, d, 0, 1);
+        return 1;
     case 8: case 10: case 12:                       /* MLAL MLSL MULL */
         if (size == 1 && !jit_g.sse41) return 0;
         if (size == 2 && sgn && !jit_g.sse41) return 0;
