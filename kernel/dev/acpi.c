@@ -14,6 +14,7 @@
 #include "kernel.h"
 #include "aml.h"
 #include "ui.h"
+#include "iommu.h"
 
 typedef struct PACKED { char sig[8]; u8 csum; char oem[6]; u8 rev; u32 rsdt; u32 len; u64 xsdt; u8 xcsum, r[3]; } rsdp_t;
 typedef struct PACKED { char sig[4]; u32 len; u8 rev, csum; char oem[6], oemtab[8]; u32 oemrev, creator, crev; } sdt_t;
@@ -454,6 +455,7 @@ static int cpu_temp_dC(void);
 
 void acpi_poll(void) {
     input_media_poll();
+    iommu_poll();
     if (!F.ok) return;
     u32 pm = __atomic_exchange_n(&g_pending_pm1, 0, __ATOMIC_ACQ_REL);
     if (pm & (PM1_PWRBTN)) {
@@ -665,11 +667,16 @@ void acpi_init(void) {
         irq_install(F.sci, sci_irq);
     }
     cpufreq_init();
+    iommu_init();                                    /* AMD-Vi pela IVRS (dev/iommu.c) */
     kprintf("ACPI: %d tabelas AML, %u nós, %u erros; SCI %u, PM1a 0x%llx, GPE0 0x%llx/%u, S3 %s, S5 %s, reset %s 0x%llx, %d zonas térmicas, CPU %d °C\n",
             F.ntables, aml_node_count(), aml_errors(), F.sci, F.pm1a_cnt.addr, F.gpe0.addr, F.gpe0_len,
             F.slp_ok[3] ? "ok" : "não", F.slp_ok[5] ? "ok" : "não",
             F.reset_ok ? "ok" : "não", F.reset.addr, g_ntz, cpu_temp_dC() / 10);
 }
+
+/* INTx de um dispositivo PCI pelo _PRT (modo PIC); pin 0 = INTA. -1 = sem rota */
+static u32 cfg32(u8 b, u8 d, u8 f, u8 o) { return pci_raw(b, d, f, o); }
+int acpi_pci_irq(u8 bus, u8 dev, u8 fn, u8 pin) { return g_aml_ok ? acpi_pci_irq_cfg(cfg32, bus, dev, fn, pin) : -1; }
 
 /* para os outros módulos (RTC: século; suspensão: FACS e PM1) */
 u8 acpi_rtc_century(void) { return F.century; }
