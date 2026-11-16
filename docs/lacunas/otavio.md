@@ -3,23 +3,23 @@
 Símbolos que os apps do corpus importam e o mOS não exporta, na frente de Otavio (OpenGL, Metal, Core Animation) (`TIME.md`).
 Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/harness.py donos`.
 
-**193** símbolos distintos.
+**205** símbolos distintos.
 
 | biblioteca | símbolo | apps | exemplos |
 |---|---|---:|---|
-| CoreVideo.framework | `_kCVPixelBufferIOSurfaceOpenGLTextureCompatibilityKey` | 8 | iina, krita, obs, rustdesk |
-| CoreVideo.framework | `_kCVImageBufferColorPrimaries_P22` | 7 | firefox, floorp, librewolf, mullvad-browser |
-| CoreVideo.framework | `_CVBufferGetAttachments` | 6 | iina, krita, obs, telegram |
-| CoreVideo.framework | `_CVDisplayLinkSetCurrentCGDisplayFromOpenGLContext` | 6 | krita, love, openrct2, shotcut |
-| AppKit.framework | `_NSOpenGLGetOption` | 5 | bitwarden, monitorcontrol, mos, rustdesk |
-| AppKit.framework | `_NSOpenGLGetVersion` | 5 | bitwarden, monitorcontrol, mos, rustdesk |
-| AppKit.framework | `_NSOpenGLSetOption` | 5 | bitwarden, monitorcontrol, mos, rustdesk |
-| CoreVideo.framework | `_CVImageBufferGetEncodedSize` | 3 | iina, obs, shotcut |
-| CoreVideo.framework | `_CVOpenGLTextureCacheCreate` | 3 | shotcut, telegram, wireshark-app |
-| CoreVideo.framework | `_CVOpenGLTextureCacheCreateTextureFromImage` | 3 | shotcut, telegram, wireshark-app |
-| CoreVideo.framework | `_CVOpenGLTextureCacheFlush` | 3 | shotcut, telegram, wireshark-app |
-| CoreVideo.framework | `_CVOpenGLTextureGetName` | 3 | shotcut, telegram, wireshark-app |
-| CoreVideo.framework | `_CVOpenGLTextureRelease` | 2 | shotcut, wireshark-app |
+| CoreVideo.framework | `_kCVPixelBufferIOSurfaceOpenGLTextureCompatibilityKey` | 9 | calibre, iina, krita, obs |
+| CoreVideo.framework | `_CVDisplayLinkSetCurrentCGDisplayFromOpenGLContext` | 8 | krita, love, moonlight, openrct2 |
+| CoreVideo.framework | `_kCVImageBufferColorPrimaries_P22` | 8 | firefox, floorp, librewolf, mullvad-browser |
+| AppKit.framework | `_NSOpenGLGetOption` | 7 | bitwarden, gemini, monitorcontrol, mos |
+| AppKit.framework | `_NSOpenGLGetVersion` | 7 | bitwarden, gemini, monitorcontrol, mos |
+| AppKit.framework | `_NSOpenGLSetOption` | 7 | bitwarden, gemini, monitorcontrol, mos |
+| CoreVideo.framework | `_CVBufferGetAttachments` | 7 | handbrake-app, iina, krita, obs |
+| CoreVideo.framework | `_CVImageBufferGetEncodedSize` | 5 | adobe-acrobat-reader, calibre, iina, obs |
+| CoreVideo.framework | `_CVOpenGLTextureCacheCreate` | 4 | calibre, shotcut, telegram, wireshark-app |
+| CoreVideo.framework | `_CVOpenGLTextureCacheCreateTextureFromImage` | 4 | calibre, shotcut, telegram, wireshark-app |
+| CoreVideo.framework | `_CVOpenGLTextureCacheFlush` | 4 | calibre, shotcut, telegram, wireshark-app |
+| CoreVideo.framework | `_CVOpenGLTextureGetName` | 4 | calibre, shotcut, telegram, wireshark-app |
+| CoreVideo.framework | `_CVOpenGLTextureRelease` | 3 | calibre, shotcut, wireshark-app |
 | Metal.framework | `_OBJC_CLASS_$_MTLAccelerationStructureBoundingBoxGeometryDescriptor` | 2 | blender, utm |
 | Metal.framework | `_OBJC_CLASS_$_MTLAccelerationStructureTriangleGeometryDescriptor` | 2 | blender, utm |
 | Metal.framework | `_OBJC_CLASS_$_MTLInstanceAccelerationStructureDescriptor` | 2 | blender, utm |
@@ -41,8 +41,18 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | OpenGL.framework | `_gluUnProject` | 2 | lmms, openscad |
 | AppKit.framework | `_OBJC_CLASS_$_NSOpenGLLayer` | 1 | zoom |
 | AppKit.framework | `_OBJC_METACLASS_$_NSOpenGLLayer` | 1 | zoom |
+| CoreVideo.framework | `_CVImageBufferGetColorSpace` | 1 | microsoft-teams |
+| CoreVideo.framework | `_CVImageBufferGetDisplaySize` | 1 | adobe-acrobat-reader |
 | CoreVideo.framework | `_CVOpenGLTextureGetTarget` | 1 | telegram |
 | CoreVideo.framework | `_kCVImageBufferChromaLocation_DV420` | 1 | vlc |
+| CoreVideo.framework | `_kCVImageBufferDisplayDimensionsKey` | 1 | handbrake-app |
+| CoreVideo.framework | `_kCVImageBufferDisplayHeightKey` | 1 | handbrake-app |
+| CoreVideo.framework | `_kCVImageBufferDisplayWidthKey` | 1 | handbrake-app |
+| CoreVideo.framework | `_kCVImageBufferFieldDetailTemporalBottomFirst` | 1 | handbrake-app |
+| CoreVideo.framework | `_kCVImageBufferFieldDetailTemporalTopFirst` | 1 | handbrake-app |
+| CoreVideo.framework | `_kCVPixelBufferExtendedPixelsBottomKey` | 1 | handbrake-app |
+| CoreVideo.framework | `_kCVPixelBufferExtendedPixelsRightKey` | 1 | handbrake-app |
+| CoreVideo.framework | `_kCVPixelFormatComponentRange_VideoRange` | 1 | handbrake-app |
 | CoreVideo.framework | `_kCVPixelFormatOpenGLCompatibility` | 1 | telegram |
 | Metal.framework | `_MTLMakeShaderCacheWritableByAllUsers` | 1 | utm |
 | Metal.framework | `_MTLSetShaderCachePath` | 1 | utm |
@@ -166,12 +176,14 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | OpenGL.framework | `_glResetHistogram` | 1 | xquartz |
 | OpenGL.framework | `_glResetMinmax` | 1 | xquartz |
 | OpenGL.framework | `_glSeparableFilter2D` | 1 | xquartz |
+| OpenGL.framework | `_gluBuild2DMipmaps` | 1 | adobe-acrobat-reader |
 | OpenGL.framework | `_gluCheckExtension` | 1 | lmms |
 | OpenGL.framework | `_gluCylinder` | 1 | kicad |
 | OpenGL.framework | `_gluDeleteQuadric` | 1 | kicad |
 | OpenGL.framework | `_gluDisk` | 1 | kicad |
 | OpenGL.framework | `_gluLookAt` | 1 | openscad |
 | OpenGL.framework | `_gluNewQuadric` | 1 | kicad |
+| OpenGL.framework | `_gluOrtho2D` | 1 | adobe-acrobat-reader |
 | OpenGL.framework | `_gluProject` | 1 | openscad |
 | OpenGL.framework | `_gluQuadricDrawStyle` | 1 | kicad |
 | OpenGL.framework | `_gluQuadricNormals` | 1 | kicad |

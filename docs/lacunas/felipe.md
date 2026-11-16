@@ -3,11 +3,11 @@
 Símbolos que os apps do corpus importam e o mOS não exporta, na frente de Felipe (Wi-Fi, Bluetooth, Ethernet) (`TIME.md`).
 Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/harness.py donos`.
 
-**13** símbolos distintos.
+**15** símbolos distintos.
 
 | biblioteca | símbolo | apps | exemplos |
 |---|---|---:|---|
-| CoreWLAN.framework | `_OBJC_CLASS_$_CWInterface` | 4 | hammerspoon, prusaslicer, stats, zoom |
+| CoreWLAN.framework | `_OBJC_CLASS_$_CWInterface` | 6 | adobe-acrobat-reader, hammerspoon, protonvpn, prusaslicer |
 | CoreWLAN.framework | `_CWBSSIDDidChangeNotification` | 1 | hammerspoon |
 | CoreWLAN.framework | `_CWCountryCodeDidChangeNotification` | 1 | hammerspoon |
 | CoreWLAN.framework | `_CWKeychainFindWiFiPassword` | 1 | prusaslicer |
@@ -20,3 +20,5 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | CoreWLAN.framework | `_CWSSIDDidChangeNotification` | 1 | hammerspoon |
 | CoreWLAN.framework | `_CWScanCacheDidUpdateNotification` | 1 | hammerspoon |
 | CoreWLAN.framework | `_OBJC_CLASS_$_CWChannel` | 1 | stats |
+| CoreWLAN.framework | `_OBJC_CLASS_$_CWNetworkProfile` | 1 | protonvpn |
+| CoreWLAN.framework | `_OBJC_METACLASS_$_CWNetworkProfile` | 1 | protonvpn |
