@@ -536,17 +536,19 @@ static gl_tex_t *tex_for_image(gl_ctx_t *C, GLenum target) {
     if (ti == 3 && face_of(target) < 0 && target != GL_TEXTURE_CUBE_MAP) { gl_err(C, GL_INVALID_ENUM); return 0; }
     return C->tex[C->unit][ti];
 }
-/* define o nível: w, h, d (camadas para arrays, 6 para cube, profundidade no 3D) */
-static gl_level_t *level_alloc(gl_ctx_t *C, gl_tex_t *t, int lvl, GLenum ifmt, int w, int h, int d) {
+/* define o nível: w, h, d (camadas para arrays, 6 para cube, profundidade no 3D); ns amostras por pixel
+ * nas texturas multisample (a amostra s da camada l fica na fatia l*ns + s) */
+#define level_alloc(C, t, lvl, ifmt, w, h, d) level_alloc_n(C, t, lvl, ifmt, w, h, d, 0)
+static gl_level_t *level_alloc_n(gl_ctx_t *C, gl_tex_t *t, int lvl, GLenum ifmt, int w, int h, int d, int ns) {
     if (lvl < 0 || lvl >= 16) { gl_err(C, GL_INVALID_VALUE); return 0; }
     int ok;
     int fmt = gl_ifmt_to_mtl(ifmt, &ok);
     if (!ok) { gl_err(C, GL_INVALID_VALUE); return 0; }
     if (w < 0 || h < 0 || d < 0 || w > 16384 || h > 16384 || d > 2048) { gl_err(C, GL_INVALID_VALUE); return 0; }
     gl_level_t *L = &t->lv[lvl];
-    i64 bytes = (i64)w * h * d * mx_bpp(fmt);
-    if (is_proxy(t->target)) { L->w = w; L->h = h; L->d = d; L->ifmt = ifmt; L->fmt = fmt; return L; }
-    if (L->w != w || L->h != h || L->d != d || L->fmt != fmt || !L->data) {
+    i64 bytes = (i64)w * h * d * mx_bpp(fmt) * (ns > 1 ? ns : 1);
+    if (is_proxy(t->target)) { L->w = w; L->h = h; L->d = d; L->ifmt = ifmt; L->fmt = fmt; L->ns = ns; return L; }
+    if (L->w != w || L->h != h || L->d != d || L->fmt != fmt || L->ns != ns || !L->data) {
         free(L->data);
         L->data = bytes ? calloc(1, (size_t)bytes) : 0;
         if (bytes && !L->data) { gl_err(C, GL_OUT_OF_MEMORY); return 0; }
@@ -555,6 +557,7 @@ static gl_level_t *level_alloc(gl_ctx_t *C, gl_tex_t *t, int lvl, GLenum ifmt, i
     L->cdata = 0;
     L->csize = 0;
     L->w = w; L->h = h; L->d = d;
+    L->ns = ns;
     L->ifmt = ifmt;
     L->fmt = fmt;
     t->dirty = 1;
@@ -796,19 +799,32 @@ static void storage(gl_ctx_t *C, GLenum target, GLsizei levels, GLenum ifmt, GLs
 void glTexStorage1D(GLenum t, GLsizei l, GLenum f, GLsizei w) { GLC(); storage(C, t, l, f, w, 1, 1); }
 void glTexStorage2D(GLenum t, GLsizei l, GLenum f, GLsizei w, GLsizei h) { GLC(); storage(C, t, l, f, w, h, 1); }
 void glTexStorage3D(GLenum t, GLsizei l, GLenum f, GLsizei w, GLsizei h, GLsizei d) { GLC(); storage(C, t, l, f, w, h, d); }
+/* texturas multisample: N amostras por texel guardadas como fatias (mtlshader.h) */
+static void tex_ms(gl_ctx_t *C, GLenum target, int arr, GLsizei samples, GLenum ifmt, GLsizei w, GLsizei h, GLsizei d, GLboolean fixed) {
+    GLenum want = arr ? GL_TEXTURE_2D_MULTISAMPLE_ARRAY : GL_TEXTURE_2D_MULTISAMPLE, proxy = arr ? GL_PROXY_TEXTURE_2D_MULTISAMPLE_ARRAY : GL_PROXY_TEXTURE_2D_MULTISAMPLE;
+    if (target != want && target != proxy) GLERR(GL_INVALID_ENUM, );
+    if (samples < 1 || w < 0 || h < 0 || d < 0) GLERR(GL_INVALID_VALUE, );
+    int ok;
+    int fmt = gl_ifmt_to_mtl(ifmt, &ok);
+    GLenum base = gl_ifmt_base(ifmt);
+    /* só formatos que dão para anexar: cor, profundidade e estêncil (nada de luminância, alfa ou comprimido) */
+    if (!ok || base == GL_ALPHA || base == GL_LUMINANCE || base == GL_LUMINANCE_ALPHA || base == GL_INTENSITY || is_compressed(ifmt)) GLERR(GL_INVALID_ENUM, );
+    int ns = mx_samples_ok(samples);
+    if (!ns) GLERR(GL_INVALID_OPERATION, );   /* samples acima de GL_MAX_*_SAMPLES */
+    (void)fmt;
+    gl_tex_t *t = tex_for_image(C, target);
+    if (!t) return;
+    if (t->immutable) GLERR(GL_INVALID_OPERATION, );
+    if (!level_alloc_n(C, t, 0, ifmt, w, h, arr ? d : 1, ns)) return;
+    t->fixed_loc = fixed != 0;
+}
 void glTexImage2DMultisample(GLenum target, GLsizei samples, GLenum ifmt, GLsizei w, GLsizei h, GLboolean fixed) {
     GLC();
-    (void)fixed;
-    if (samples < 1 || samples > 8) GLERR(GL_INVALID_VALUE, );
-    gl_tex_t *t = tex_for_image(C, target);
-    if (t) level_alloc(C, t, 0, ifmt, w, h, 1);   /* uma amostra por pixel: o resolve é cópia */
+    tex_ms(C, target, 0, samples, ifmt, w, h, 1, fixed);
 }
 void glTexImage3DMultisample(GLenum target, GLsizei samples, GLenum ifmt, GLsizei w, GLsizei h, GLsizei d, GLboolean fixed) {
     GLC();
-    (void)fixed;
-    if (samples < 1 || samples > 8) GLERR(GL_INVALID_VALUE, );
-    gl_tex_t *t = tex_for_image(C, target);
-    if (t) level_alloc(C, t, 0, ifmt, w, h, d);
+    tex_ms(C, target, 1, samples, ifmt, w, h, d, fixed);
 }
 void glTexBuffer(GLenum target, GLenum ifmt, GLuint buf) {
     GLC();
@@ -1034,8 +1050,8 @@ static int level_get(gl_ctx_t *C, GLenum target, int lvl, GLenum p, int *o) {
     case GL_TEXTURE_SHARED_SIZE: *o = has && fmt == 93 ? 5 : 0; return 1;
     case GL_TEXTURE_COMPRESSED: *o = has && is_compressed(L->ifmt); return 1;
     case GL_TEXTURE_COMPRESSED_IMAGE_SIZE: *o = (int)L->csize; if (!L->cdata) { gl_err(C, GL_INVALID_OPERATION); } return 1;
-    case GL_TEXTURE_SAMPLES: *o = 0; return 1;
-    case GL_TEXTURE_FIXED_SAMPLE_LOCATIONS: *o = 1; return 1;
+    case GL_TEXTURE_SAMPLES: *o = L->ns > 1 ? L->ns : 0; return 1;
+    case GL_TEXTURE_FIXED_SAMPLE_LOCATIONS: *o = L->ns > 1 ? t->fixed_loc : 1; return 1;
     case GL_TEXTURE_BUFFER_DATA_STORE_BINDING: *o = t->tbo ? (int)t->tbo->name : 0; return 1;
     case GL_TEXTURE_RED_TYPE: case GL_TEXTURE_GREEN_TYPE: case GL_TEXTURE_BLUE_TYPE: case GL_TEXTURE_ALPHA_TYPE:
     case GL_TEXTURE_LUMINANCE_TYPE: case GL_TEXTURE_INTENSITY_TYPE: case GL_TEXTURE_DEPTH_TYPE: {
@@ -1231,7 +1247,8 @@ int gl_tex_complete(gl_ctx_t *C, gl_tex_t *t) {
     if (b < 0 || b >= 16) return 0;
     gl_level_t *L0 = &t->lv[b];
     if (!L0->data || L0->w <= 0) return 0;
-    int mip = t->min_f != GL_NEAREST && t->min_f != GL_LINEAR;
+    int msaa = t->target == GL_TEXTURE_2D_MULTISAMPLE || t->target == GL_TEXTURE_2D_MULTISAMPLE_ARRAY;
+    int mip = !msaa && t->min_f != GL_NEAREST && t->min_f != GL_LINEAR;   /* multisample: só o nível 0, sem filtro */
     int is3d = t->target == GL_TEXTURE_3D, arr1d = t->target == GL_TEXTURE_1D_ARRAY;
     int top = b;
     if (mip) {
@@ -1262,7 +1279,9 @@ int gl_tex_complete(gl_ctx_t *C, gl_tex_t *t) {
     case GL_TEXTURE_1D_ARRAY: m->type = MSL_TEX_1D_ARRAY; break;
     case GL_TEXTURE_3D: m->type = MSL_TEX_3D; break;
     case GL_TEXTURE_CUBE_MAP: m->type = MSL_TEX_CUBE; break;
-    case GL_TEXTURE_2D_ARRAY: case GL_TEXTURE_2D_MULTISAMPLE_ARRAY: m->type = MSL_TEX_2D_ARRAY; break;
+    case GL_TEXTURE_2D_ARRAY: m->type = MSL_TEX_2D_ARRAY; break;
+    case GL_TEXTURE_2D_MULTISAMPLE: m->type = MSL_TEX_2D_MS; break;
+    case GL_TEXTURE_2D_MULTISAMPLE_ARRAY: m->type = MSL_TEX_2D_MS_ARRAY; break;
     case GL_TEXTURE_CUBE_MAP_ARRAY: m->type = MSL_TEX_CUBE_ARRAY; break;
     default: m->type = MSL_TEX_2D;
     }
@@ -1270,6 +1289,7 @@ int gl_tex_complete(gl_ctx_t *C, gl_tex_t *t) {
     m->h = arr1d ? 1 : L0->h;
     m->d = is3d ? L0->d : 1;
     m->slices = is3d ? 1 : arr1d ? L0->h : L0->d;
+    if (msaa) { m->samples = L0->ns > 1 ? L0->ns : 1; m->slices *= m->samples; }
     if (t->target == GL_TEXTURE_CUBE_MAP && L0->d != 6) return 0;
     /* níveis num bloco só, no layout do mx_texel */
     u64 off = 0;
@@ -1315,7 +1335,9 @@ int gl_tex_image(gl_tex_t *t, int lvl, int layer, msl_tex_t *m, int *nlayers) {
     if (nlayers) *nlayers = nl;
     if (layer < 0) layer = 0;
     if (layer >= nl) return 0;
-    m->data = L->data + (u64)layer * (arr1d ? m->lbpr[0] : m->lslice[0]);
+    int ns = L->ns > 1 ? L->ns : 1;
+    if (ns > 1) { m->type = MSL_TEX_2D_MS; m->samples = ns; m->slices = ns; }
+    m->data = L->data + (u64)layer * ns * (arr1d ? m->lbpr[0] : m->lslice[0]);
     (void)is3d;
     t->dirty = 1;   /* quem pede a imagem vai escrever nela */
     return 1;

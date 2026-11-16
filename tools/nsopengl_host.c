@@ -25,6 +25,7 @@ extern void *cx_msg_lookup(cx_class_t *cls, SEL sel);
 
 int CGLChoosePixelFormat(const int *attrs, void **pix, int *npix);
 int CGLDescribePixelFormat(void *pix, int vs, int attrib, int *value);
+void glGetIntegerv(unsigned p, int *v);
 int CGLCreateContext(void *pix, void *share, void **ctx);
 void *CGLGetCurrentContext(void);
 int CGLSetCurrentContext(void *ctx);
@@ -175,6 +176,20 @@ int main(void) {
         static const int bad[] = {99, 0x2100, 0};
         void *p2 = 0;
         expect("perfil inexistente recusado", CGLChoosePixelFormat(bad, &p2, &n) == 10002 && !p2);
+        /* multiamostra: kCGLPFASampleBuffers 1 + kCGLPFASamples 3 vira 4 amostras no framebuffer padrão */
+        static const int ms[] = {5, 55, 1, 56, 3, 0};
+        void *pm = 0, *cm = 0;
+        expect("pixel format multisample", CGLChoosePixelFormat(ms, &pm, &n) == 0 && pm);
+        expect("kCGLPFASamples 4", CGLDescribePixelFormat(pm, 0, 56, &v) == 0 && v == 4);
+        expect("kCGLPFASampleBuffers 1", CGLDescribePixelFormat(pm, 0, 55, &v) == 0 && v == 1);
+        expect("sem kCGLPFASampleBuffers: 0 amostras", CGLDescribePixelFormat(pix, 0, 56, &v) == 0 && v == 0);
+        int gs = 0, gb = 0;
+        expect("contexto multisample", CGLCreateContext(pm, 0, &cm) == 0 && cm && CGLSetCurrentContext(cm) == 0);
+        glGetIntegerv(0x80A9 /* GL_SAMPLES */, &gs);
+        glGetIntegerv(0x80A8 /* GL_SAMPLE_BUFFERS */, &gb);
+        expect("GL_SAMPLES 4 e GL_SAMPLE_BUFFERS 1 no contexto", gs == 4 && gb == 1);
+        CGLSetCurrentContext(0);
+        CGLReleaseContext(cm);
     }
     static const unsigned attrs[] = {5 /* DoubleBuffer */, 12 /* Depth */, 24, 13 /* Stencil */, 8, 99 /* Profile */, 0x3200, 0};
     id pf = MSG(id, MSG0(id, (id)cx_class_named("NSOpenGLPixelFormat"), "alloc"), "initWithAttributes:", attrs);

@@ -16,5 +16,11 @@ int mx_bpp(int fmt);
 int mx_isdepth(int fmt);
 int mx_hasstencil(int fmt);
 u8 *mx_texel(const msl_tex_t *t, int x, int y, int z, int slice, int lvl);
+/* multiamostra: posição (0..1 dentro do pixel) da amostra i com n amostras (padrão D3D/Metal, 1/2/4/8) */
+void mx_sample_pos(int n, int i, float xy[2]);
+int mx_samples_ok(int n);           /* arredonda para o número suportado (1, 2, 4, 8); 0 se n > 8 */
+static inline int mx_nsamp(const msl_tex_t *t) { return t->samples > 1 ? t->samples : 1; }
+/* resolve: média das amostras da camada (ou a amostra 0 para depth/stencil/inteiros) num texel de dst */
+void mx_resolve_texel(const msl_tex_t *src, int x, int y, int layer, double out[4]);
 static inline double mx_cl01(double v) { return v != v ? 0 : v < 0 ? 0 : v > 1 ? 1 : v; }
 static inline double mx_clm11(double v) { return v != v ? 0 : v < -1 ? -1 : v > 1 ? 1 : v; }
