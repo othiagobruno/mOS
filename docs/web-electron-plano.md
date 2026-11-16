@@ -86,8 +86,17 @@ Cada item fecha com teste de host (`tools/web_host.sh`) ou, quando depende da VM
     do motor com XOR (o número 0 não vira NULL) e o coletor varre a pilha da thread inteira, como o do JSC.
     Teste de host: `tools/jsc_host.sh` (34 verificações, inclusive o que o MacDown e o IINA chamam); o framework
     liga para x86_64-macos e entra no `build.sh`/`build.ps1`.
-    **Falta no JSC:** a API ObjC (`JSContext`, `JSValue`, `JSManagedValue`, `JSVirtualMachine`, `JSExport`,
-    blocos), `hasInstance` e `convertToType` dos `JSClass`, o slice arm64 e o `JSScript`/módulos.
+    ✅ **API ObjC** (`JSC.m`): `JSVirtualMachine` (referências gerenciadas), `JSContext` (subscritos,
+    `evaluateScript`, `exception`/`exceptionHandler`, `globalObject`, `name`, `currentContext`/`Callee`/`This`/
+    `Arguments`, `contextWithJSGlobalContextRef:`), `JSValue` (todos os `valueWith…`, `to…`, `is…`, `isEqual…`,
+    `isInstanceOf:`, `call`/`construct`/`invokeMethod`, propriedades por chave e índice, `defineProperty`),
+    `JSManagedValue`; conversões NSString/NSNumber/NSDate/NSArray/NSDictionary/NSNull nos dois sentidos, blocos
+    ObjC como funções JS (pela assinatura do bloco), `JSExport` com métodos, propriedades (de objeto e numéricas,
+    somente leitura respeitada) e `JSExportAs`. Chamadas nativas pelo protótipo de 6 inteiros + 8 FP (vale na
+    System V e no AAPCS64); structs por valor e mais de 6 inteiros lançam TypeError. Compila e liga para
+    x86_64-macos; teste na VM: `userland/tests-jsc` (`tools/build-jsctest.sh`, 12 verificações, roda no build final).
+    **Falta no JSC:** `hasInstance` e `convertToType` dos `JSClass`, structs (CGRect/NSRange) nas conversões ObjC,
+    o slice arm64 e o `JSScript`/módulos.
 12. **Mundos de conteúdo** (`WKContentWorld` isolado), esquemas próprios para sub-recursos, regras de conteúdo
     que bloqueiam, `WKDownload`, desafio de autenticação e painel de arquivo.
 13. **Electron/Chromium**: renderer e helpers de Cursor, Slack, Discord, Notion, Figma, Claude e ChatGPT abrindo;
@@ -103,6 +112,7 @@ Cada item fecha com teste de host (`tools/web_host.sh`) ou, quando depende da VM
 ## Diário
 
 - 15 nov.: harness de host do motor (`tools/web_host.sh`, 5/5).
+- 16 nov.: JavaScriptCore, API ObjC (compila e liga; `tests-jsc` para a VM).
 - 16 nov.: JavaScriptCore, API C (`tools/jsc_host.sh` 34/34; `web_host` 248/248).
 - 16 nov.: typed arrays (`typed_arrays`): 248/248.
 - 16 nov.: diálogos bloqueantes (`dialogo_bloqueante`, `dialogo_pagina_fechada`, `dialogo_em_async`, `geradores_e_async`): 215/215.

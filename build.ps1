@@ -165,6 +165,8 @@ foreach ($f in $jscsrc) {
     & $zig cc -target x86_64-macos -O2 -std=gnu11 -w -fno-builtin -fno-stack-protector -fvisibility=hidden "-I$root\kernel\include" "-I$root" `
         -c $f -o "$jscobj\$([IO.Path]::GetFileNameWithoutExtension($f)).o" 2>&1 | Select-String ' error' | ForEach-Object { "  $($_.Line)" }
 }
+& $zig cc -target x86_64-macos -O2 -c -x objective-c "-I$root\userland\sdk\include" -Wno-objc-root-class -Wno-objc-method-access `
+    "$root\userland\frameworks\JavaScriptCore\JSC.m" -o "$jscobj\JSC.o" 2>&1 | Select-String ' error' | ForEach-Object { "  $($_.Line)" }
 & $zig cc -target x86_64-macos -shared (Get-ChildItem "$jscobj\*.o" | ForEach-Object { $_.FullName }) -o "$jscdir\JavaScriptCore" `
     '-Wl,-install_name,/System/Library/Frameworks/JavaScriptCore.framework/Versions/A/JavaScriptCore' '-Wl,-undefined,dynamic_lookup' 2>&1 |
     Select-String ' error' | ForEach-Object { "  $($_.Line)" }

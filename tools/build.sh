@@ -673,7 +673,7 @@ mkdir -p "$WKDIR"
 echo "WebKit.framework ok"
 
 # JavaScriptCore.framework do mOS (userland/frameworks/JavaScriptCore): o motor JS do sistema (kernel/web/js_*.c, sem o
-# DOM) no processo do app, com a API C do JavaScriptCore por cima (jsc_api.c)
+# DOM) no processo do app, com a API C (jsc_api.c) e a ObjC (JSC.m) do JavaScriptCore por cima
 echo "==> JavaScriptCore.framework"
 JSCDIR="$ESP/mOS/System/Library/Frameworks/JavaScriptCore.framework/Versions/A"
 JSCOBJ="$OUT/jsc-obj"
@@ -682,6 +682,8 @@ for f in $(ls "$ROOT"/kernel/web/js_*.c | grep -v /js_dom.c) "$ROOT/kernel/web/u
     "$ZIG" cc -target x86_64-macos -O2 -std=gnu11 -w -fno-builtin -fno-stack-protector -fvisibility=hidden \
         -I"$ROOT/kernel/include" -I"$ROOT" -c "$f" -o "$JSCOBJ/$(basename "$f" .c).o"
 done
+"$ZIG" cc -target x86_64-macos -O2 -c -x objective-c -I"$ROOT/userland/sdk/include" -Wno-objc-root-class -Wno-objc-method-access \
+    "$ROOT/userland/frameworks/JavaScriptCore/JSC.m" -o "$JSCOBJ/JSC.o"
 "$ZIG" cc -target x86_64-macos -shared "$JSCOBJ"/*.o -o "$JSCDIR/JavaScriptCore" \
     -Wl,-install_name,/System/Library/Frameworks/JavaScriptCore.framework/Versions/A/JavaScriptCore \
     -Wl,-undefined,dynamic_lookup
