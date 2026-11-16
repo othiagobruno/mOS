@@ -84,6 +84,10 @@ timeout 30 /tmp/kqueue_host | tail -1
 gcc -O1 -Wall -Wno-builtin-declaration-mismatch -DMOS_LIBSYS_SYSCALL -I userland/libsystem -c userland/libsystem/launchdata.c -o /tmp/launchdata_ls.o
 gcc -O1 -Wall tools/launchdata_host.c /tmp/launchdata_ls.o -o /tmp/launchdata_host
 /tmp/launchdata_host | tail -1
+# sandbox do libSystem (F10): checagens, extensões com token, contêiner e spawnattrs
+gcc -O1 -w -DMOS_LIBSYS_SYSCALL -I userland/libsystem -c userland/libsystem/darwin.c -o /tmp/darwin_ls.o
+gcc -O1 tools/sandbox_host.c /tmp/darwin_ls.o -Wl,--unresolved-symbols=ignore-all -o /tmp/sandbox_host
+/tmp/sandbox_host | tail -1
 # GPU AMD: estado do display, vsync, troca no vblank, buffer duplo e VRAM contra um Picasso simulado
 gcc -O2 -Wall -Wextra -DMOS_HOST_TEST -I kernel/dev/amdgpu -I tools tools/amdgpu_hw_host.c kernel/dev/amdgpu/amdgpu.c \
     kernel/dev/amdgpu/edid.c kernel/dev/amdgpu/ucode.c -o /tmp/amdgpu_hw_host
