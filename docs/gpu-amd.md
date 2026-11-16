@@ -20,6 +20,12 @@ H_TOTAL 5400, V_TOTAL 1485: 5120x1440@60); `DIG1_DIG_FE_CNTL` 0x01000100 (FE lig
 0x10030200 (modo HDMI, FE do DIGB); `DIG1_HDMI_CONTROL` 0x0001001F; `PHYPLLB_PIXCLK_RESYNC_CNTL` 0x101 (PHY B);
 OTG1..3 desligados. Coerente com o VBIOS: HDMI = UNIPHY0 link B, DIG1.
 
+Tela dividida: no 5120x1440 o driver do Linux (e, pelo mesmo motivo de largura e relógio por pipe, o GOP) usa dois
+pipes: HUBP0 com x 0..2559 e HUBP3 com 2560..5119, a mesma superfície (pitch 5120), MPCC0 -> MPCC3 até o OPP0.
+O probe reconhece a divisão (planos com a mesma superfície, lado a lado, somando a largura) e a troca de quadro
+atualiza todos os HUBPs dela. Retrato dos 452 registradores do DCN nesse modo (fonte das contas do DML1):
+`tools/testdata/amdgpu/dcn-live-5120x1440.json`.
+
 As bases estão em dwords; registrador = base do segmento + deslocamento do header, vezes 4 em bytes.
 Tudo cabe nos 512 KiB do BAR5, sem acesso indireto.
 

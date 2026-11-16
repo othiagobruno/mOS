@@ -86,6 +86,7 @@ typedef struct {
     amd_otg_timing_t otg[AMD_NUM_OTG];
     amd_plane_t   plane[AMD_NUM_OTG];
     int           pipe;                  /* pipe que mostra o framebuffer do GOP; -1 = nenhum */
+    u32           split_mask;            /* HUBPs da tela (bit i = HUBP i): mais de um quando o GOP divide a tela */
     bool          uefi_match;            /* a superfície do pipe é exatamente o framebuffer do GOP */
     u64           uefi_mc;               /* endereço MC do framebuffer do GOP */
     u32           uefi_pitch_px;

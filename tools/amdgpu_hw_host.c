@@ -19,8 +19,8 @@ static int pass, total;
 static u32 regs[AMD_MMIO_SIZE / 4];
 static u64 now_ms;
 static u32 vline, frames;
-static bool locked, armed;
-static u32 pending_lo, pending_hi;
+static bool locked, armed_h[AMD_NUM_OTG];
+static u32 pending_lo_h[AMD_NUM_OTG], pending_hi_h[AMD_NUM_OTG];
 static bool verbose;
 static int sim_otg = 0;
 
@@ -32,13 +32,14 @@ static void scan(u32 lines) {
     u32 vt = vtotal_of();
     for (u32 k = 0; k < lines; k++) {
         vline++;
-        if (vline == vbs_of() && armed && !locked) {        /* troca no começo do vblank */
-            regs[R_DCSURF_EARLIEST_INUSE(sim_otg) / 4] = pending_lo;
-            regs[R_DCSURF_EARLIEST_INUSE_HI(sim_otg) / 4] = pending_hi;
-            regs[R_DCSURF_FLIP_CONTROL(sim_otg) / 4] &= ~FLIP_PENDING;
-            armed = false;
-            if (regs[R_DCSURF_FLIP_INTERRUPT(sim_otg) / 4] & FLIP_INT_ENABLE) ih_push(IH_CLIENT_DCE, IH_SRC_DC_FLIP0 + sim_otg, 0);
-        }
+        for (int h = 0; h < AMD_NUM_OTG; h++)               /* troca no começo do vblank (todos os HUBPs do OTG) */
+            if (vline == vbs_of() && armed_h[h] && !locked) {
+                regs[R_DCSURF_EARLIEST_INUSE(h) / 4] = pending_lo_h[h];
+                regs[R_DCSURF_EARLIEST_INUSE_HI(h) / 4] = pending_hi_h[h];
+                regs[R_DCSURF_FLIP_CONTROL(h) / 4] &= ~FLIP_PENDING;
+                armed_h[h] = false;
+                if (regs[R_DCSURF_FLIP_INTERRUPT(h) / 4] & FLIP_INT_ENABLE) ih_push(IH_CLIENT_DCE, IH_SRC_DC_FLIP0 + h, 0);
+            }
         if (vline == vbs_of() && (regs[R_OTG_GLOBAL_SYNC_STATUS(sim_otg) / 4] & OTG_VSTARTUP_INT_EN)) {
             regs[R_OTG_GLOBAL_SYNC_STATUS(sim_otg) / 4] |= OTG_VSTARTUP_OCCURRED;
             ih_push(IH_CLIENT_DCE, IH_SRC_DC_VSTARTUP0 + sim_otg, 0);
@@ -545,7 +546,7 @@ u32 amd_host_rreg(u32 off) {
     if (off == R_OTG_STATUS(sim_otg)) { scan(3); return vline >= vbs_of() ? OTG_V_BLANK : 0; }
     if (off == R_OTG_STATUS_FRAME_COUNT(sim_otg)) { scan(1); return frames; }
     if (off == R_OTG_MASTER_UPDATE_LOCK(sim_otg)) return locked ? (OTG_UPDATE_LOCK | OTG_UPDATE_LOCK_STATUS) : 0;
-    if (off == R_DCSURF_FLIP_CONTROL(sim_otg)) scan(11);
+    for (int h = 0; h < AMD_NUM_OTG; h++) if (off == R_DCSURF_FLIP_CONTROL(h)) scan(11);
     return regs[off / 4];
 }
 
@@ -555,12 +556,13 @@ void amd_host_wreg(u32 off, u32 v) {
     if (engine_wreg(off, v)) return;
     if (off == R_OTG_MASTER_UPDATE_LOCK(sim_otg)) { locked = v & OTG_UPDATE_LOCK; return; }
     regs[off / 4] = v;
-    if (off == R_DCSURF_PRIMARY_ADDR(sim_otg)) {
-        pending_lo = v; pending_hi = regs[R_DCSURF_PRIMARY_ADDR_HI(sim_otg) / 4];
-        armed = true;
-        regs[R_DCSURF_FLIP_CONTROL(sim_otg) / 4] |= FLIP_PENDING;
-        if (!locked) printf("aviso: endereço escrito sem a trava\n");
-    }
+    for (int h = 0; h < AMD_NUM_OTG; h++)
+        if (off == R_DCSURF_PRIMARY_ADDR(h)) {
+            pending_lo_h[h] = v; pending_hi_h[h] = regs[R_DCSURF_PRIMARY_ADDR_HI(h) / 4];
+            armed_h[h] = true;
+            regs[R_DCSURF_FLIP_CONTROL(h) / 4] |= FLIP_PENDING;
+            if (!locked) printf("aviso: endereço escrito sem a trava\n");
+        }
 }
 
 static u16 pci_cmd = 0x0006;
@@ -621,7 +623,7 @@ void kprintf(const char *fmt, ...) {
 static const u64 FB_MC = 0xF400000000ull;
 static void boot_state(const edid_mode_t *m, u32 rev_id) {
     memset(regs, 0, sizeof regs);
-    vline = 0; frames = 1000; locked = false; armed = false;
+    vline = 0; frames = 1000; locked = false; memset(armed_h, 0, sizeof armed_h);
     regs[R_RCC_DEV0_EPF0_STRAP0 / 4] = rev_id << STRAP0_ATI_REV_ID_SHIFT | 0x1234;
     regs[R_MC_VM_FB_LOCATION_BASE / 4] = 0xF400;
     regs[R_MC_VM_FB_LOCATION_TOP / 4] = 0xF40F;      /* 256 MiB */
@@ -796,7 +798,7 @@ static void test_flip_and_vram(void) {
     CHECK(n > 150 && amdgpu_vram_free_bytes(&a) < (1u << 20), "esgota a VRAM (%d MiB)", n);
 
     /* troca que nunca acontece (OTG parado): timeout sem travar */
-    armed = false;
+    memset(armed_h, 0, sizeof armed_h);
     regs[R_OTG_V_BLANK_START_END(0) / 4] = 0x7FFF;              /* vblank nunca chega na simulação */
     int r = amdgpu_flip(&a, b2, 5120, 1440, 5120 * 4, MOS_GPU_FMT_BGRA8, true);
     CHECK(r == -MOS_ETIMEDOUT && a.flip_timeouts == 1, "timeout %d", r);
@@ -1354,6 +1356,33 @@ static void test_gfxoff(void) {
     CHECK(!amdgpu_suspend(a, 3) && !a->gfxoff_on && !gfxoff_allowed && !(regs[R_RLC_PG_CNTL / 4] & PG_GFX_POWER_GATING), "S3 desliga o GFXOFF antes de parar o GC");
 }
 
+/* tela dividida como a do Picasso no 5120x1440: HUBP0 com x 0..2559 e HUBP3 com 2560..5119 */
+static void test_split(void) {
+    edid_mode_t m = mode_5120();
+    boot_state(&m, 1);
+    regs[R_DCSURF_PRI_VIEWPORT_DIM(0) / 4] = 2560 | 1440u << 16;
+    regs[R_DCHUBP_CNTL(3) / 4] = 0;
+    regs[R_DCSURF_SURFACE_CONFIG(3) / 4] = SURFACE_FMT_ARGB8888;
+    regs[R_DCSURF_PRI_VIEWPORT_START(3) / 4] = 2560;
+    regs[R_DCSURF_PRI_VIEWPORT_DIM(3) / 4] = 2560 | 1440u << 16;
+    regs[R_DCSURF_SURFACE_PITCH(3) / 4] = 5120 - 1;
+    regs[R_DCSURF_PRIMARY_ADDR(3) / 4] = (u32)FB_MC; regs[R_DCSURF_PRIMARY_ADDR_HI(3) / 4] = (u32)(FB_MC >> 32);
+    regs[R_DCSURF_EARLIEST_INUSE(3) / 4] = (u32)FB_MC; regs[R_DCSURF_EARLIEST_INUSE_HI(3) / 4] = (u32)(FB_MC >> 32);
+    regs[R_HUBPRET_CONTROL(3) / 4] = regs[R_HUBPRET_CONTROL(0) / 4];
+    pci_dev_t d = {0};
+    d.vendor = 0x1002; d.device = 0x15D8;
+    static amdgpu_t sp;
+    CHECK(amdgpu_probe(&sp, &d, 0xE0000000ull, 5120, 1440, 5120) && sp.pipe == 0 && sp.uefi_match && sp.split_mask == 0x9, "tela dividida em HUBP0 + HUBP3 (máscara 0x%x)", sp.split_mask);
+    u64 b = amdgpu_vram_alloc(&sp, 5120u * 1440 * 4), mc = sp.fb_start + (b - sp.bar0);
+    CHECK(b && !amdgpu_flip(&sp, b, 5120, 1440, 5120 * 4, MOS_GPU_FMT_BGRA8, true) && amdgpu_flip_done(&sp), "troca nos dois HUBPs");
+    CHECK(regs[R_DCSURF_EARLIEST_INUSE(0) / 4] == (u32)mc && regs[R_DCSURF_EARLIEST_INUSE(3) / 4] == (u32)mc &&
+          regs[R_DCSURF_PRI_VIEWPORT_START(3) / 4] == 2560, "as duas metades na superfície nova, cada uma com a sua janela");
+    CHECK(!amdgpu_flip(&sp, 0, 5120, 1440, 5120 * 4, MOS_GPU_FMT_BGRA8, true) && regs[R_DCSURF_EARLIEST_INUSE(3) / 4] == (u32)FB_MC, "volta ao GOP nos dois");
+    regs[R_DCSURF_PRI_VIEWPORT_START(3) / 4] = 2000;                 /* metades que não se encostam: não casa */
+    static amdgpu_t sq;
+    CHECK(amdgpu_probe(&sq, &d, 0xE0000000ull, 5120, 1440, 5120) && !sq.uefi_match && sq.split_mask == 0x1, "divisão estranha não casa (só o pipe 0, sem apresentar)");
+}
+
 static int pm_regs_count;
 void amdgpu_pm_register(amdgpu_t *a) { (void)a; pm_regs_count++; }
 
@@ -1494,6 +1523,7 @@ int main(int argc, char **argv) {
     test_aux();
     test_vblank_irq();
     test_gfxoff();
+    test_split();
     printf("amdgpu-hw-host: %d/%d ok\n", pass, total);
     return pass == total ? 0 : 1;
 }

@@ -146,19 +146,33 @@ bool amdgpu_probe(amdgpu_t *a, pci_dev_t *d, u64 uefi_fb, u32 w, u32 h, u32 pitc
 
     /* display: OTGs e planos; o pipe da tela é o plano que aponta para o framebuffer do GOP */
     a->uefi_mc = uefi_fb >= a->bar0 ? a->fb_start + (uefi_fb - a->bar0) : 0;
+    for (int i = 0; i < AMD_NUM_OTG; i++) { read_otg(a, i); read_plane(a, i); }   /* todos os planos: a divisão usa HUBP sem OTG */
     for (int i = 0; i < AMD_NUM_OTG; i++) {
-        read_otg(a, i);
-        read_plane(a, i);
         amd_otg_timing_t *t = &a->otg[i];
         amd_plane_t *p = &a->plane[i];
         if (!t->on) continue;
-        bool match = p->on && p->addr == a->uefi_mc && p->vp_w == w && p->vp_h == h;
+        /* o GOP pode dividir uma tela larga em vários pipes (no 5120x1440: HUBP0 com x 0..2559 e HUBP3 com
+         * 2560..5119, encadeados no MPC): planos ligados com a mesma superfície, lado a lado, somando a largura */
+        u32 mask = 0, covered = 0;
+        if (p->on && p->addr == a->uefi_mc && p->vp_x == 0 && p->vp_y == 0 && p->vp_h == h) {
+            mask = 1u << i; covered = p->vp_w;
+            for (bool grew = true; grew && covered < w;) {
+                grew = false;
+                for (int j = 0; j < AMD_NUM_OTG; j++) {
+                    amd_plane_t *q = &a->plane[j];
+                    if (!(mask >> j & 1) && q->on && q->addr == a->uefi_mc && q->vp_x == covered && q->vp_y == 0 && q->vp_h == h) {
+                        mask |= 1u << j; covered += q->vp_w; grew = true;
+                    }
+                }
+            }
+        }
+        bool match = mask && covered == w;
         kprintf("amdgpu:   OTG%d %ux%u total %ux%u%s; plano %s %ux%u pitch %u fmt %u sw %u MC 0x%llx%s\n", i,
                 t->hactive, t->vactive, t->htotal, t->vtotal, t->interlace ? " entrelaçado" : "",
                 p->on ? "ligado" : "desligado", p->vp_w, p->vp_h, p->pitch_px, p->format, p->sw_mode, p->addr,
-                match ? " = framebuffer do GOP" : "");
-        if (match && (a->pipe < 0 || !a->uefi_match)) { a->pipe = i; a->uefi_match = true; }
-        else if (a->pipe < 0 && p->on) a->pipe = i;
+                match ? (mask != 1u << i ? " = framebuffer do GOP (dividido em pipes)" : " = framebuffer do GOP") : "");
+        if (match && (a->pipe < 0 || !a->uefi_match)) { a->pipe = i; a->uefi_match = true; a->split_mask = mask; }
+        else if (a->pipe < 0 && p->on) { a->pipe = i; a->split_mask = 1u << i; }
     }
     if (a->pipe >= 0) {
         a->uefi_pitch_px = a->uefi_match ? a->plane[a->pipe].pitch_px : pitch_px;
@@ -266,24 +280,26 @@ int amdgpu_flip(amdgpu_t *a, u64 surf_phys, u32 w, u32 h, u32 stride, u32 format
         mc = a->fb_start + off; pitch_px = stride / 4; rgba = format == MOS_GPU_FMT_RGBA8;
     }
     otg_lock(a, i, true);
-    WR(a, R_DCSURF_TILING_CONFIG(i), RR(a, R_DCSURF_TILING_CONFIG(i)) & ~TILING_SW_MODE_MASK);
-    WR(a, R_DCSURF_SURFACE_CONFIG(i), (RR(a, R_DCSURF_SURFACE_CONFIG(i)) & ~SURFACE_PIXEL_FORMAT_MASK) | SURFACE_FMT_ARGB8888);
-    WR(a, R_DCSURF_SURFACE_PITCH(i), (RR(a, R_DCSURF_SURFACE_PITCH(i)) & ~PITCH_MASK) | ((pitch_px - 1) & PITCH_MASK));
-    u32 xb = RR(a, R_HUBPRET_CONTROL(i)) & ~XBAR_MASK;
-    xb |= rgba ? (3u << XBAR_CB_B_SHIFT | 2u << XBAR_CR_R_SHIFT) : (2u << XBAR_CB_B_SHIFT | 3u << XBAR_CR_R_SHIFT);
-    WR(a, R_HUBPRET_CONTROL(i), xb);
-    WR(a, R_DCSURF_FLIP_CONTROL(i), RR(a, R_DCSURF_FLIP_CONTROL(i)) & ~FLIP_TYPE_IMMEDIATE);   /* no vblank */
-    WR(a, R_DCSURF_PRIMARY_ADDR_HI(i), (u32)(mc >> 32) & 0xFFFF);
-    WR(a, R_DCSURF_PRIMARY_ADDR(i), (u32)mc);                       /* o endereço baixo arma a troca */
+    /* todos os HUBPs da tela (dividida ou não) recebem a mesma superfície; cada um mantém a sua janela (viewport) */
+    for (int j = 0; j < AMD_NUM_OTG; j++) {
+        if (!(a->split_mask >> j & 1)) continue;
+        WR(a, R_DCSURF_TILING_CONFIG(j), RR(a, R_DCSURF_TILING_CONFIG(j)) & ~TILING_SW_MODE_MASK);
+        WR(a, R_DCSURF_SURFACE_CONFIG(j), (RR(a, R_DCSURF_SURFACE_CONFIG(j)) & ~SURFACE_PIXEL_FORMAT_MASK) | SURFACE_FMT_ARGB8888);
+        WR(a, R_DCSURF_SURFACE_PITCH(j), (RR(a, R_DCSURF_SURFACE_PITCH(j)) & ~PITCH_MASK) | ((pitch_px - 1) & PITCH_MASK));
+        u32 xb = RR(a, R_HUBPRET_CONTROL(j)) & ~XBAR_MASK;
+        xb |= rgba ? (3u << XBAR_CB_B_SHIFT | 2u << XBAR_CR_R_SHIFT) : (2u << XBAR_CB_B_SHIFT | 3u << XBAR_CR_R_SHIFT);
+        WR(a, R_HUBPRET_CONTROL(j), xb);
+        WR(a, R_DCSURF_FLIP_CONTROL(j), RR(a, R_DCSURF_FLIP_CONTROL(j)) & ~FLIP_TYPE_IMMEDIATE);   /* no vblank */
+        WR(a, R_DCSURF_PRIMARY_ADDR_HI(j), (u32)(mc >> 32) & 0xFFFF);
+        WR(a, R_DCSURF_PRIMARY_ADDR(j), (u32)mc);                   /* o endereço baixo arma a troca */
+        a->plane[j].addr = mc; a->plane[j].pitch_px = pitch_px; a->plane[j].rgba = rgba;
+        a->plane[j].format = SURFACE_FMT_ARGB8888; a->plane[j].sw_mode = 0;
+    }
     otg_lock(a, i, false);
-    a->plane[i].addr = mc; a->plane[i].pitch_px = pitch_px; a->plane[i].rgba = rgba;
-    a->plane[i].format = SURFACE_FMT_ARGB8888; a->plane[i].sw_mode = 0;
     a->flips++;
     if (!wait) return 0;
     for (u32 n = 0; n < 2000000; n++) {
-        u32 fc = RR(a, R_DCSURF_FLIP_CONTROL(i));
-        u64 inuse = (u64)(RR(a, R_DCSURF_EARLIEST_INUSE_HI(i)) & 0xFFFF) << 32 | RR(a, R_DCSURF_EARLIEST_INUSE(i));
-        if (!(fc & FLIP_PENDING) && inuse == mc) return 0;
+        if (amdgpu_flip_done(a)) return 0;
 #ifndef MOS_HOST_TEST
         __asm__ volatile("pause");
 #endif
@@ -292,12 +308,16 @@ int amdgpu_flip(amdgpu_t *a, u64 surf_phys, u32 w, u32 h, u32 stride, u32 format
     return -MOS_ETIMEDOUT;
 }
 
+static bool hubp_flipped(amdgpu_t *a, int j, u64 mc) {
+    u64 inuse = (u64)(RR(a, R_DCSURF_EARLIEST_INUSE_HI(j)) & 0xFFFF) << 32 | RR(a, R_DCSURF_EARLIEST_INUSE(j));
+    return !(RR(a, R_DCSURF_FLIP_CONTROL(j)) & FLIP_PENDING) && inuse == mc;
+}
+
 bool amdgpu_flip_done(amdgpu_t *a) {
     if (!a || !a->ready || a->pipe < 0) return true;
-    int i = a->pipe;
-    u64 mc = a->plane[i].addr;
-    u64 inuse = (u64)(RR(a, R_DCSURF_EARLIEST_INUSE_HI(i)) & 0xFFFF) << 32 | RR(a, R_DCSURF_EARLIEST_INUSE(i));
-    return !(RR(a, R_DCSURF_FLIP_CONTROL(i)) & FLIP_PENDING) && inuse == mc;
+    for (int j = 0; j < AMD_NUM_OTG; j++)
+        if ((a->split_mask >> j & 1) && !hubp_flipped(a, j, a->plane[a->pipe].addr)) return false;
+    return true;
 }
 
 /* ------------------------------------------------------------ buffer duplo da tela */
