@@ -31,6 +31,8 @@ gcc -O1 -Wall -DFDN_ICU_HOST -I"$L" "$L/fdn_icu.c" "$L/fdn_text_core.c" "$ROOT/t
 "$OUT/fdn_text_test"
 gcc -O1 -Wall -DFDN_ICU_HOST -I"$L" "$L/fdn_icu.c" "$L/fdn_text_core.c" "$L/fdn_scanner_core.c" "$ROOT/tools/fdn_scanner_test.c" \
     -ldl -lm -o "$OUT/fdn_scanner_test"
+gcc -O1 -Wall -DFDN_ICU_HOST -I"$L" "$L/fdn_icu.c" "$L/fdn_encoding_core.c" "$ROOT/tools/fdn_encoding_test.c" -ldl -o "$OUT/fdn_encoding_test"
+"$OUT/fdn_encoding_test"
 "$OUT/fdn_scanner_test"
 "$OUT/fdn_charset_test"
 gcc -O1 -Wall -Wno-format-truncation -DFDN_ICU_HOST -I"$L" "$L/fdn_icu.c" "$L/fdn_i18n_core.c" "$L/fdn_fmt_core.c" \
