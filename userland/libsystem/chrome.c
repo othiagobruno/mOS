@@ -91,6 +91,7 @@ K(kVTProfileLevel_HEVC_Main42210_AutoLevel, "HEVC_Main42210_AutoLevel")
 K(kVTScalingMode_CropSourceToCleanAperture, "CropSourceToCleanAperture")
 /* CFNetwork / CoreGraphics / outros */
 K(kCGColorClear, "kCGColorClear")
+K(kCGColorWhite, "kCGColorWhite")
 K(UNErrorDomain, "UNErrorDomain") K(ASWebAuthenticationSessionErrorDomain, "com.apple.AuthenticationServices.WebAuthenticationSession")
 /* Foundation / AppKit (NSString constantes) */
 K(NSDebugDescriptionErrorKey, "NSDebugDescription") K(NSFilePosixPermissions, "NSFilePosixPermissions")

@@ -53,26 +53,7 @@ void NSPerformService(id item, id pboard) { (void)item; (void)pboard; }
 id NSAccessibilityRoleDescription(id role, id subrole) { (void)subrole; return role; }
 id NSAccessibilityActionDescription(id action) { return action; }
 
-/* ================================================================ CoreText: framesetter */
-/* o framesetter só é usado para medir texto de diálogos: devolve o atributo e mede pela fonte do sistema */
-id CTFramesetterCreateWithAttributedString(id astr) { return astr ? objc_retain(astr) : 0; }
-typedef struct { double w, h; } cg_size_t;
-cg_size_t CTFramesetterSuggestFrameSizeWithConstraints(id fs, struct { long loc, len; } range, id attrs,
-                                                       cg_size_t constraints, struct { long loc, len; } *fit) {
-    (void)range; (void)attrs;
-    id s = fs && cx_responds(object_getClass(fs), sel_registerName("string")) ? MSG0(id, fs, "string") : fs;
-    long n = s && cx_is_str(s) ? (long)MSG0(u64, s, "length") : 0;
-    double cw = 7.0, lh = 16.0;      /* 13 pt da fonte do sistema */
-    double maxw = constraints.w > 0 && constraints.w < 1e8 ? constraints.w : cw * (double)n;
-    long per = (long)(maxw / cw);
-    if (per < 1) per = 1;
-    long lines = (n + per - 1) / per;
-    if (lines < 1) lines = 1;
-    cg_size_t r = {n < per ? cw * (double)n : maxw, lh * (double)lines};
-    if (constraints.h > 0 && r.h > constraints.h) r.h = constraints.h;
-    if (fit) { fit->loc = 0; fit->len = n; }
-    return r;
-}
+/* CoreText: o framesetter está em coretext_frame.inc */
 
 /* ================================================================ ApplicationServices: acessibilidade */
 int cx_tcc_preflight(const char *service);

@@ -726,6 +726,7 @@ typedef struct {
     const void *uti;                         /* imagem: tipo de origem (ImageIO) */
     double decode[10]; int ndecode;
     void *pdf;                               /* CGPDFContext: o gravador (coregraphics_pdf.inc) */
+    int fss;                                 /* CGContextSetFontSmoothingStyle */
 } cgobj_t;
 #include "cg_pixel.inc"
 static void pw_flush(cgobj_t *o);
@@ -1098,6 +1099,21 @@ CGAffineTransform CGContextGetCTM(void *c) {
     t.a = o->ca; t.b = o->cb; t.c = o->cc; t.d = o->cd; t.tx = o->cu; t.ty = o->cv;
     return t;
 }
+/* CTM inteira (o par do GetCTM) e a base: no bitmap do mOS a base é a troca de eixo do começo, e a CTM do
+ * usuário fica relativa a ela */
+void CGContextSetCTM(void *c, CGAffineTransform t) {
+    cgobj_t *o = as_kind(c, CGK_BM);
+    if (!o) return;
+    o->ca = t.a; o->cb = t.b; o->cc = t.c; o->cd = t.d; o->cu = t.tx; o->cv = t.ty;
+}
+void CGContextSetBaseCTM(void *c, CGAffineTransform t) {
+    cgobj_t *o = as_kind(c, CGK_BM);
+    if (!o) return;
+    /* base nova × a troca de eixo do bitmap; a CTM do usuário volta à identidade sobre ela */
+    o->ca = t.a; o->cb = -t.b; o->cc = t.c; o->cd = -t.d; o->cu = t.tx; o->cv = (double)o->h - t.ty;
+}
+void CGContextSetFontSmoothingStyle(void *c, int style) { cgobj_t *o = as_kind(c, CGK_BM); if (o) o->fss = style; }
+int CGContextGetFontSmoothingStyle(void *c) { cgobj_t *o = as_kind(c, CGK_BM); return o ? o->fss : 0; }
 /* espaço do usuário -> dispositivo: no contexto de bitmap do mOS a CTM já é a transformação até os pixels */
 CGSize CGContextConvertSizeToDeviceSpace(void *c, CGSize s) { return CGSizeApplyAffineTransform(s, CGContextGetCTM(c)); }
 CGSize CGContextConvertSizeToUserSpace(void *c, CGSize s) {

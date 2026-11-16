@@ -751,6 +751,7 @@ static void draw_annotations(rnd *r, pdf_obj *page, pdf_obj *res) {
         pop(r);
     }
 }
+static int g_skip_annots;
 static void render_page(rnd *r, void *page) {
     pdf_doc *pd = cx_pdf_page_doc(page);
     pdf_obj *pg = CGPDFPageGetDictionary(page);
@@ -770,7 +771,7 @@ static void render_page(rnd *r, void *page) {
     pdf_page_contents(pd, pg, &c, &n);
     if (c) exec_content(r, c, n, res);
     free(c);
-    draw_annotations(r, pg, res);
+    if (!g_skip_annots) draw_annotations(r, pg, res);
     CGContextRestoreGState(r->ctx);
     if (r->textclip) CGPathRelease(r->textclip);
     for (int i = 0; i < r->nowned; i++) pcs_free(r->owned[i]);
@@ -782,6 +783,36 @@ void CGContextDrawPDFPage(void *ctx, void *page) {
     if (!r) return;
     r->ctx = ctx;
     render_page(r, page);
+    free(r);
+}
+/* PDFKit: a página sem as anotações (o PDFPage desenha as dele por cima) */
+void cx_pdf_draw_page_content(void *ctx, void *page) {
+    g_skip_annots = 1;
+    CGContextDrawPDFPage(ctx, page);
+    g_skip_annots = 0;
+}
+/* PDFKit: a aparência /N de uma anotação da página (o dicionário dela, de origem) */
+void cx_pdf_draw_annotation(void *ctx, void *page, pdf_obj *annot) {
+    pdf_doc *pd = cx_pdf_page_doc(page);
+    pdf_obj *pg = CGPDFPageGetDictionary(page);
+    if (!ctx || !pd || !pg || !annot) return;
+    rnd *r = calloc(1, sizeof *r);
+    if (!r) return;
+    r->ctx = ctx; r->pd = pd;
+    r->base = CGContextGetCTM(ctx);
+    gs_init(r);
+    pdf_obj *res = pdf_page_attr(pd, pg, "Resources");
+    /* a mesma regra do desenho da página, com uma lista de uma anotação só */
+    pdf_obj one = {0}, *arr[1] = {annot};
+    one.type = PO_ARRAY; one.n = 1; one.v.arr = arr;
+    pdf_obj fake = {0};
+    char *keys[1] = {"Annots"};
+    pdf_obj *vals[1] = {&one};
+    fake.type = PO_DICT; fake.n = 1; fake.v.dict.keys = keys; fake.v.dict.vals = vals; fake.ext = pd;
+    one.ext = pd;
+    draw_annotations(r, &fake, res);
+    for (int i = 0; i < r->nowned; i++) pcs_free(r->owned[i]);
+    for (int i = 0; i < r->nfonts; i++) font_free(r->fonts[i]);
     free(r);
 }
 /* para o PDFKit: percorre a página sem desenhar (num bitmap de 1×1 descartado) e entrega cada glifo */

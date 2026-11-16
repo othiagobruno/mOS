@@ -194,6 +194,87 @@ u32 cx_font_glyph_unicode(int face, int gid) {
     }
     return r->rev && gid < r->n ? r->rev[gid] : 0;
 }
+/* nome do glifo pela tabela 'post' formato 2 (nomes próprios da fonte; os 258 padrão do Mac ficam de fora) */
+int cx_font_glyph_post_name(int face, int gid, char *out, int cap) {
+    size_t n;
+    u8 *t = ct_table(face, 0x706F7374u, &n);
+    int ok = 0;
+    if (t && n >= 34 && g32(t) == 0x00020000u) {
+        u32 ng = g16(t + 32);
+        if (gid >= 0 && (u32)gid < ng && 34 + ng * 2 <= n) {
+            u32 idx = g16(t + 34 + gid * 2);
+            if (idx >= 258) {
+                const u8 *p = t + 34 + ng * 2, *end = t + n;
+                for (u32 k = 258; p < end; k++) {
+                    u32 len = *p;
+                    if (p + 1 + len > end) break;
+                    if (k == idx) {
+                        int m = (int)len < cap - 1 ? (int)len : cap - 1;
+                        memcpy(out, p + 1, (size_t)m);
+                        out[m] = 0;
+                        ok = m > 0;
+                        break;
+                    }
+                    p += 1 + len;
+                }
+            }
+        }
+    }
+    free(t);
+    return ok;
+}
+/* métricas da face pelas tabelas head/hhea/OS2/post, em em (unidade/upem), uma vez por face:
+ * m[0] upem, 1 ascendente, 2 descendente (positivo), 3 lineGap (hhea, como o Core Text), 4 altura de maiúscula,
+ * 5 altura de x, 6 ângulo itálico (graus), 7 posição e 8 espessura do sublinhado, 9..12 caixa (xMin yMin xMax yMax).
+ * Sem OS/2 v2, a altura de maiúscula e a de x saem da caixa do contorno de 'H' e 'x'. */
+static double fm_cache[96][13];
+static signed char fm_state[96];
+static int rs16(const u8 *p) { return (short)(p[0] << 8 | p[1]); }
+static int ru16(const u8 *p) { return p[0] << 8 | p[1]; }
+CGRect CGPathGetPathBoundingBox(const void *path);
+static double glyph_top(int face, u32 cp) {
+    long g = SYS5(GUI_FONT, GF_CMAP, face, cp, 0, 0);
+    if (g <= 0) return 0;
+    void *p = ct_em_path(face, (int)g);
+    if (!p) return 0;
+    CGRect r = CGPathGetPathBoundingBox(p);
+    CGPathRelease(p);
+    return r.origin.y + r.size.height;
+}
+int cx_font_metrics(int face, double *m) {
+    if (face < 0 || face >= 96) return 0;
+    if (fm_state[face] == 1) { memcpy(m, fm_cache[face], sizeof fm_cache[face]); return 1; }
+    if (fm_state[face] == -1) return 0;
+    size_t hl = 0, hhl = 0, ol = 0, pl = 0;
+    u8 *head = ct_table(face, 0x68656164u, &hl), *hhea = ct_table(face, 0x68686561u, &hhl);
+    u8 *os2 = ct_table(face, 0x4F532F32u, &ol), *post = ct_table(face, 0x706F7374u, &pl);
+    double *c = fm_cache[face];
+    int ok = head && hl >= 54 && ru16(head + 18) > 0;
+    if (ok) {
+        double u = ru16(head + 18);
+        memset(c, 0, sizeof fm_cache[face]);
+        c[0] = u;
+        for (int i = 0; i < 4; i++) c[9 + i] = rs16(head + 36 + 2 * i) / u;
+        if (hhea && hhl >= 10) { c[1] = rs16(hhea + 4) / u; c[2] = -rs16(hhea + 6) / u; c[3] = rs16(hhea + 8) / u; }
+        else if (os2 && ol >= 78) { c[1] = rs16(os2 + 68) / u; c[2] = -rs16(os2 + 70) / u; c[3] = rs16(os2 + 72) / u; }
+        else { c[1] = c[12]; c[2] = -c[10]; }
+        if (os2 && ol >= 90 && ru16(os2) >= 2) { c[5] = rs16(os2 + 86) / u; c[4] = rs16(os2 + 88) / u; }
+        if (post && pl >= 12) {
+            long ia = (long)((u32)post[4] << 24 | (u32)post[5] << 16 | (u32)post[6] << 8 | post[7]);
+            if (ia & 0x80000000L) ia -= 0x100000000L;
+            c[6] = ia / 65536.0;
+            c[7] = rs16(post + 8) / u;
+            c[8] = rs16(post + 10) / u;
+        }
+        if (c[8] <= 0) { c[8] = 0.05; c[7] = c[7] ? c[7] : -0.1; }
+    }
+    free(head); free(hhea); free(os2); free(post);
+    if (ok && c[4] <= 0) { double t = glyph_top(face, 'H'); c[4] = t > 0 ? t : 0.7; }
+    if (ok && c[5] <= 0) { double t = glyph_top(face, 'x'); c[5] = t > 0 ? t : 0.5; }
+    fm_state[face] = ok ? 1 : -1;
+    if (ok) memcpy(m, c, sizeof fm_cache[face]);
+    return ok;
+}
 /* a face tem contornos? (1 TrueType, 2 CFF, 0 não) */
 int cx_font_outline_kind(int face) { ct_face *f = ct_face_get(face); return f ? f->state : 0; }
 #ifdef CT_HOST

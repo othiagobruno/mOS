@@ -489,6 +489,16 @@ static pdf_obj *named_dest(pdf_doc *pd, pdf_obj *name) {
     }
     return 0;
 }
+/* o array final do destino (nome, string e dicionário /D resolvidos) */
+pdf_obj *cx_pdf_dest_array(pdf_doc *pd, pdf_obj *dest) {
+    dest = pdf_resolve(pd, dest);
+    for (int g = 0; dest && g < 4; g++) {
+        if (dest->type == PO_NAME || dest->type == PO_STRING) { dest = pdf_resolve(pd, named_dest(pd, dest)); continue; }
+        if (dest->type == PO_DICT) { dest = pdf_dict_get(pd, dest, "D"); continue; }
+        break;
+    }
+    return dest && dest->type == PO_ARRAY ? dest : 0;
+}
 int cx_pdf_dest_page(pdf_doc *pd, pdf_obj *dest) {
     for (int g = 0; dest && g < 4; g++) {
         if (dest->type == PO_NAME || dest->type == PO_STRING) { dest = named_dest(pd, dest); continue; }

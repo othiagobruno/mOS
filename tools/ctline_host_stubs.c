@@ -427,7 +427,15 @@ void CGContextSetTextMatrix(void *c, ct_tm t) {
     if (!b || b->magic != BM_MAGIC) return;
     b->a = t.a; b->b = t.b; b->c = t.c; b->d = t.d; b->tx = t.tx; b->ty = t.ty;
 }
+/* registro dos glifos desenhados (x, y no espaço do usuário, com a CTM simples abaixo) para os testes de ruby */
+int ct_test_nglyph; double ct_test_gx[512], ct_test_gy[512];
+static double hst_sx = 1, hst_tx, hst_ty, hst_save[3];
+__attribute__((weak)) void CGContextSaveGState(void *c) { (void)c; hst_save[0] = hst_sx; hst_save[1] = hst_tx; hst_save[2] = hst_ty; }
+__attribute__((weak)) void CGContextRestoreGState(void *c) { (void)c; hst_sx = hst_save[0]; hst_tx = hst_save[1]; hst_ty = hst_save[2]; }
+__attribute__((weak)) void CGContextTranslateCTM(void *c, double x, double y) { (void)c; hst_tx += x * hst_sx; hst_ty += y; }
+__attribute__((weak)) void CGContextScaleCTM(void *c, double x, double y) { (void)c; (void)y; hst_sx *= x; }
 int cx_bitmap_draw_glyph(void *ctx, double x, double y, const u8 *alpha, int gw, int gh, int left, int top) {
+    if (ct_test_nglyph < 512) { ct_test_gx[ct_test_nglyph] = hst_tx + x * hst_sx; ct_test_gy[ct_test_nglyph] = hst_ty + y; ct_test_nglyph++; }
     bm_t *b = ctx;
     if (!b || b->magic != BM_MAGIC || !alpha || gw <= 0 || gh <= 0) return 0;
     int ox = (int)x + left, oy = (int)y + top;
@@ -470,4 +478,29 @@ void host_runtime_init(void) {
     cx_add_method(&NSAstr_c, "string", (void *)astr_string);
     NSFontAttributeName = cx_str("NSFont");
     NSForegroundColorAttributeName = cx_str("NSColor");
+}
+
+/* ---- o que o Core Text passou a chamar (contornos, frame com caminho, texto em PDF): mínimo para o harness */
+typedef struct { double x, y, w, h; } hst_rect_t;
+typedef struct { double x, y; } hst_pt_t;
+__attribute__((weak)) void *cx_font_glyph_path(int face, int gid, double size, const void *m) { (void)face; (void)gid; (void)size; (void)m; return 0; }
+__attribute__((weak)) int cx_font_glyph_post_name(int face, int gid, char *out, int cap) { (void)face; (void)gid; (void)out; (void)cap; return 0; }
+__attribute__((weak)) unsigned cx_font_glyph_unicode(int face, int gid) { (void)face; (void)gid; return 0; }
+__attribute__((weak)) int cx_font_metrics(int face, double *m) { (void)face; (void)m; return 0; }
+__attribute__((weak)) int cx_pdfw_glyphs(void *ctx, int face, double size, const void *g, const void *p, size_t n) { (void)ctx; (void)face; (void)size; (void)g; (void)p; (void)n; return 0; }
+__attribute__((weak)) hst_pt_t CGContextGetTextPosition(void *c) { (void)c; hst_pt_t z = {0, 0}; return z; }
+/* caminho de retângulo: {retângulo} em memória própria (o harness só usa caminho de frame retangular) */
+__attribute__((weak)) void *CGPathCreateWithRect(hst_rect_t r, const void *m) { (void)m; hst_rect_t *p = malloc(sizeof *p); if (p) *p = r; return p; }
+__attribute__((weak)) hst_rect_t CGPathGetBoundingBox(const void *p) { hst_rect_t z = {0, 0, 0, 0}; return p ? *(const hst_rect_t *)p : z; }
+__attribute__((weak)) hst_rect_t CGPathGetPathBoundingBox(const void *p) { return CGPathGetBoundingBox(p); }
+__attribute__((weak)) void CGPathRelease(void *p) { free(p); }
+/* string de UTF-16 (o harness guarda bytes: o que não é ASCII vira '?') */
+__attribute__((weak)) id CFStringCreateWithCharacters(void *alloc, const u16 *c, long n) {
+    (void)alloc;
+    char *b = malloc((size_t)n + 1);
+    for (long i = 0; i < n; i++) b[i] = c[i] < 0x80 ? (char)c[i] : '?';
+    b[n] = 0;
+    id s = cx_str(b);
+    free(b);
+    return s;
 }
