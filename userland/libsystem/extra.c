@@ -636,9 +636,57 @@ int _NSGetExecutablePath(char *buf, u32 *size) {
     return 0;
 }
 
-/* destrutores de thread_local (C++/Rust): rodam no exit */
+/* destrutores de thread_local (C++/Rust, _tlv_atexit): rodam na SAÍDA DA THREAD (não só no fim do processo).
+ * Antes iam para o __cxa_atexit do processo, então o destrutor de um thread_local de uma thread de trabalho só
+ * rodava no exit (ou nunca, se a thread saía antes) — o tests-darwincxx pegava isso. Agora cada thread guarda a
+ * sua lista numa pthread key interna: o destrutor da key (rodado por cx_thread_run_dtors quando a thread acaba)
+ * executa os destrutores em ordem inversa de construção. A thread principal não passa por cx_thread_run_dtors, então
+ * um flush registrado uma vez no __cxa_atexit roda a lista dela no fim do processo. */
 int __cxa_atexit(void (*fn)(void *), void *arg, void *dso);
-void _tlv_atexit(void (*fn)(void *), void *obj) { __cxa_atexit(fn, obj, 0); }
+typedef struct { int n, cap; struct { void (*fn)(void *); void *obj; } *v; } tlv_list_t;
+static pthread_key_t tlv_key;
+static int tlv_key_state;                        /* 0 = nunca, 1 = criando, 2 = pronta */
+static int tlv_flush_reg;
+static void tlv_run_list(void *p) {
+    tlv_list_t *l = p;
+    if (!l) return;
+    for (int i = l->n - 1; i >= 0; i--) l->v[i].fn(l->v[i].obj);   /* ordem inversa de construção */
+    free(l->v);
+    free(l);
+}
+/* fim do processo: a thread que chama exit() (a principal) roda a sua própria lista */
+static void tlv_flush_main(void *unused) {
+    (void)unused;
+    tlv_list_t *l = (tlv_list_t *)pthread_getspecific(tlv_key);
+    if (l) { pthread_setspecific(tlv_key, 0); tlv_run_list(l); }
+}
+void _tlv_atexit(void (*fn)(void *), void *obj) {
+    if (tlv_key_state != 2) {                    /* cria a key uma vez (lazy) */
+        if (!__sync_bool_compare_and_swap(&tlv_key_state, 0, 1)) {
+            while (tlv_key_state == 1) { }        /* outra thread está criando */
+        } else {
+            if (pthread_key_create(&tlv_key, tlv_run_list) != 0) { tlv_key_state = 0; __cxa_atexit(fn, obj, 0); return; }
+            tlv_key_state = 2;
+        }
+    }
+    tlv_list_t *l = (tlv_list_t *)pthread_getspecific(tlv_key);
+    if (!l) {
+        l = calloc(1, sizeof *l);
+        if (!l) { __cxa_atexit(fn, obj, 0); return; }
+        pthread_setspecific(tlv_key, l);
+        if (!__sync_lock_test_and_set(&tlv_flush_reg, 1)) __cxa_atexit(tlv_flush_main, 0, 0);
+    }
+    if (l->n == l->cap) {
+        int nc = l->cap ? l->cap * 2 : 8;
+        void *nv = realloc(l->v, (size_t)nc * sizeof *l->v);
+        if (!nv) { __cxa_atexit(fn, obj, 0); return; }
+        l->v = nv;
+        l->cap = nc;
+    }
+    l->v[l->n].fn = fn;
+    l->v[l->n].obj = obj;
+    l->n++;
+}
 
 /* memória virtual */
 #define CX_MMAP_BASE 0x400100000000ULL   /* USER_MMAP_BASE do kernel */
