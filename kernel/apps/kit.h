@@ -2,6 +2,7 @@
 #pragma once
 #include "apps.h"
 #include "web.h"
+#include "audiostream.h"
 
 /* ------------------------------------------------------------ ícone: quadrado arredondado do sistema */
 static inline void kit_tile(surface_t *s, int x, int y, int sz, u32 top, u32 bot) {
@@ -314,6 +315,14 @@ static inline i16 *kit_load_wav(const char *path, u32 *frames_out) {
     }
     *frames_out = out_frames;
     return o;
+}
+
+/* MP3 progressivo (audiostream.c) a partir de um caminho do VFS; NULL se não for MP3 */
+static inline kit_stream_t *kit_stream_open(const char *path) {
+    vnode_t *v = vfs_lookup(path);
+    if (!v || v->dir || !v->size) return NULL;
+    vfs_ensure(v);
+    return kit_stream_open_mem(v->data, v->size);
 }
 
 /* ------------------------------------------------------------ JSON mínimo (leitura por caminho "a.b.c" ou "a.b[3]") */

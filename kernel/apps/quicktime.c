@@ -205,6 +205,7 @@ static struct {
     u64 frame_t, play_t0, acc_ms;
     bool playing;
     i16 *pcm;
+    kit_stream_t *mp3;        /* MP3 em decodificação: pcm e frames vêm dela */
     u32 frames, pos, pos0;
     u64 fed;
     /* gravação de tela */
@@ -220,7 +221,9 @@ static struct {
 static const char *films(void) { static char d[200]; snprintf(d, sizeof d, "%s/Filmes", CUR_HOME); vfs_mkdir(d); return d; }
 static void q_reset(void) {
     if (Q.anim.n) anim_free(&Q.anim);
-    if (Q.pcm) { kfree(Q.pcm); Q.pcm = NULL; }
+    if (Q.mp3) kit_stream_close(Q.mp3);        /* o pcm é dela */
+    else if (Q.pcm) kfree(Q.pcm);
+    Q.mp3 = NULL; Q.pcm = NULL; Q.frames = 0;
     Q.playing = false; Q.frame = 0; Q.pos = 0; Q.mode = Q_NONE;
 }
 static void q_open(const char *path) {
@@ -230,7 +233,12 @@ static void q_open(const char *path) {
     const char *e = vfs_ext(path);
     if (!strcasecmp(e, "gif")) { if (gif_load(path, &Q.anim)) Q.mode = Q_VIDEO; }
     else if (!strcasecmp(e, "wav")) { Q.pcm = kit_load_wav(path, &Q.frames); if (Q.pcm) Q.mode = Q_AUDIO; }
-    if (Q.mode == Q_NONE) notify("QuickTime Player", "Formato não suportado (use GIF animado ou WAV).");
+    else if (!strcasecmp(e, "mp3") && (Q.mp3 = kit_stream_open(path))) {
+        kit_stream_step(Q.mp3, 20000);
+        Q.pcm = kit_stream_pcm(Q.mp3); Q.frames = kit_stream_frames(Q.mp3);
+        if (Q.frames) Q.mode = Q_AUDIO;
+    }
+    if (Q.mode == Q_NONE) notify("QuickTime Player", "Formato não suportado (use GIF animado, WAV ou MP3).");
     if (Q.w) wm_set_title(Q.w, Q.name);
 }
 static u64 anim_total(void) { u64 t = 0; for (int i = 0; i < Q.anim.n; i++) t += Q.anim.delay[i]; return t; }
@@ -250,6 +258,7 @@ static void feed(void) {
     } else if (Q.mode == Q_AUDIO && Q.pcm) {
         u64 el = timer_ticks() - Q.play_t0;
         u32 cur = Q.pos0 + (u32)(el * 48);
+        if (cur >= Q.frames && Q.mp3 && !kit_stream_done(Q.mp3)) { Q.pos0 = Q.pos = Q.frames; Q.play_t0 = timer_ticks(); Q.fed = 0; return; }
         if (cur >= Q.frames) { Q.playing = false; Q.pos = 0; return; }
         Q.pos = cur;
         while (Q.fed < el + 300) {
@@ -368,7 +377,7 @@ static void paint(window_t *w, ui_t *u) {
         vnode_t *d = vfs_lookup(films());
         int k = 0, yy = y + 100;
         for (vnode_t *c = d && d->dir ? d->child : NULL; c && k < 6; c = c->next) {
-            if (c->dir || (strcasecmp(vfs_ext(c->name), "gif") && strcasecmp(vfs_ext(c->name), "wav"))) continue;
+            if (c->dir || (strcasecmp(vfs_ext(c->name), "gif") && strcasecmp(vfs_ext(c->name), "wav") && strcasecmp(vfs_ext(c->name), "mp3"))) continue;
             rect_t r = rect_make(u->cw / 2 - 200, yy, 400, 26);
             if (ui_hit(u, r)) gfx_round_rect(s, r.x, r.y, r.w, r.h, 6, RGBA(255, 255, 255, 24));
             text_draw_ellipsis(s, font_get(FONT_REGULAR), 12.5f, r.x + 10, r.y + 18, r.w - 20, RGB(220, 220, 226), c->name);
@@ -440,7 +449,13 @@ static void paint(window_t *w, ui_t *u) {
     if (Q.playing) u->repaint = true;
 }
 
-static void tick(app_t *a) { rec_screen_frame(); rec_audio_pump(); feed(); }
+static void mp3_pump(void) {
+    if (!Q.mp3 || kit_stream_done(Q.mp3)) return;
+    kit_stream_step(Q.mp3, 3000);                /* aos poucos: a mesa não para */
+    Q.pcm = kit_stream_pcm(Q.mp3); Q.frames = kit_stream_frames(Q.mp3);
+    if (Q.w) wm_invalidate(Q.w);                 /* a forma de onda cresce */
+}
+static void tick(app_t *a) { rec_screen_frame(); rec_audio_pump(); mp3_pump(); feed(); }
 static void on_close(window_t *w) { if (Q.mode == Q_RECSCREEN) rec_screen_stop(); if (Q.mode == Q_RECAUDIO) rec_audio_stop(); q_reset(); Q.w = NULL; }
 static void open_window(void) {
     if (Q.w) { wm_bring_app(&app_quicktime); wm_focus(Q.w); return; }
