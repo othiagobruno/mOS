@@ -266,7 +266,9 @@ static void put(u32 op, const void *payload, u32 n) {
     if (n) memcpy(cmd + ncmd + 8, payload, n);
     ncmd += len;
 }
+static int g_offscreen;   /* > 0: o lote está sendo gravado para um CGContext (cx_gc_record_*); nada vai à janela */
 static void flush_to(int gid) {
+    if (g_offscreen) return;
     if (ncmd) SYS3(GUI_DRAW, gid, cmd, ncmd);
     ncmd = 0;
 }
@@ -3992,6 +3994,18 @@ static id im_init_cg(id self, SEL c, void *cg, NSSize z) {
     s->cg = 0;
     return self;
 }
+/* appkit_offscreen.c (unlockFocus): troca os pixels da imagem pelos do bitmap em que o app desenhou */
+void cx_nsimage_set_pixels(id img, const u8 *src, long bpr, int w, int h, int premul) {
+    if (!img || !src || w <= 0 || h <= 0) return;
+    imgst_t *s = im(img);
+    u32 *px = malloc((size_t)w * (size_t)h * 4);
+    if (!px) return;
+    cx_px_import(src, bpr, w, h, premul, px);
+    free(s->px);
+    s->px = px; s->w = w; s->h = h;
+    if (s->dw <= 0 || s->dh <= 0) { s->dw = w; s->dh = h; }
+    s->cg = 0;   /* o CGImage em cache era dos pixels antigos (fica com quem já o pegou) */
+}
 static void im_cg_release(void *info, const void *data, size_t n) { (void)info; (void)n; free((void *)data); }
 /* o CGImage pertence à imagem (como no Cocoa, quem chama não libera); ARGB sem pré-multiplicar, 32 bits little */
 static void *im_cg_for_rect(id self, SEL c, NSRect *proposed, id ctx, id hints) {
@@ -5392,6 +5406,62 @@ id _NSDictionaryOfVariableBindings(id names, id first, ...) {
     }
     va_end(ap);
     return d;
+}
+
+/* ================================================================ desenho fora da janela
+ * Grava o lote de desenho (os mesmos comandos GC_* que iriam à janela) para o appkit_offscreen.c reproduzir num
+ * CGContext: NSImage lockFocus, cacheDisplayInRect:, dataWithPDFInsideRect:, impressão. Aninha (lockFocus dentro de
+ * um drawRect:). Enquanto grava, nada vai à janela e o gancho do QuartzCore fica desligado. */
+typedef struct {
+    u8 *cmd; u32 ncmd, capcmd;
+    ctx_t ctx;
+    double cx0, cy0, cx1, cy1;
+    i32 lclip[4]; BOOL lclip_on;
+    void (*hook)(id, int, double, double, double, double, double, double, double, double);
+} gcsave_t;
+void *cx_gc_record_begin(double w, double h, int flipped) {
+    gcsave_t *sv = calloc(1, sizeof *sv);
+    if (!sv) return 0;
+    sv->cmd = cmd; sv->ncmd = ncmd; sv->capcmd = capcmd;
+    sv->ctx = ctx;
+    sv->cx0 = clip_x0; sv->cy0 = clip_y0; sv->cx1 = clip_x1; sv->cy1 = clip_y1;
+    memcpy(sv->lclip, last_clip, sizeof last_clip); sv->lclip_on = last_clip_on;
+    sv->hook = cx_layer_draw_hook;
+    cmd = 0; ncmd = 0; capcmd = 0;
+    cx_layer_draw_hook = 0;
+    g_offscreen++;
+    clip_x0 = 0; clip_y0 = 0; clip_x1 = w; clip_y1 = h;
+    last_clip_on = NO;
+    ctx.tlx = 0; ctx.tly = 0; ctx.w = w; ctx.h = h; ctx.flipped = flipped ? YES : NO;
+    ctx.fill = ctx.stroke = 0xFF000000; ctx.line_width = 1; ctx.galpha = 1; ctx.blend = 0;
+    return sv;
+}
+const u8 *cx_gc_record_buffer(u32 *n) { if (n) *n = ncmd; return cmd; }
+void cx_gc_record_end(void *p) {
+    gcsave_t *sv = p;
+    if (!sv) return;
+    free(cmd);
+    cmd = sv->cmd; ncmd = sv->ncmd; capcmd = sv->capcmd;
+    ctx = sv->ctx;
+    clip_x0 = sv->cx0; clip_y0 = sv->cy0; clip_x1 = sv->cx1; clip_y1 = sv->cy1;
+    memcpy(last_clip, sv->lclip, sizeof last_clip); last_clip_on = sv->lclip_on;
+    cx_layer_draw_hook = sv->hook;
+    if (g_offscreen > 0) g_offscreen--;
+    free(sv);
+}
+/* desenha a view e as subviews no lote que está sendo gravado, com o retângulo r (coordenadas da view) em 0,0 */
+void cx_gc_record_view(id v, double rx, double ry, double rw, double rh) {
+    vstate_t *s = vs(v);
+    absr_t a;
+    a.w = s->frame.s.w; a.h = s->frame.s.h;
+    a.flipped = is_flipped(v);
+    a.tlx = -rx;
+    a.tly = a.flipped ? -ry : -(a.h - (ry + rh));
+    BOOL hid = s->hidden;
+    s->hidden = NO;   /* -cacheDisplayInRect: desenha a view mesmo fora da janela */
+    draw_view_tree(v, &a);
+    s->hidden = hid;
+    (void)rw;
 }
 
 void cx_appkit_init(void) {
