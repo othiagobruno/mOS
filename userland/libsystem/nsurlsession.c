@@ -1065,6 +1065,7 @@ static char *cfg_proxy_for(id cfg, const char *url) { return cx_proxy_for(cfg ? 
 
 /* ================================================================ sessão e tarefas */
 typedef struct task task_t;
+typedef struct stx stx_t;                 /* NSURLSessionStreamTask (nsurlsession_stream.inc) */
 typedef struct wsq { id msg; void *blk; struct wsq *next; } wsq_t;
 typedef struct wsx {
     wsq_t *send_head, *send_tail;      /* mensagens a mandar + blocos de conclusão */
@@ -1108,6 +1109,7 @@ struct task {
     id protocol_obj;                   /* NSURLProtocol do app atendendo esta tarefa */
     int cache_hit;
     struct wsx *wsx;                   /* NSURLSessionWebSocketTask */
+    stx_t *stx;                        /* NSURLSessionStreamTask */
     task_t *next;
 };
 typedef task_t NSURLSessionTask_t;
@@ -1173,8 +1175,10 @@ static id task_alloc_kind(id sess, int kind, id req) {
     LK(); t->ident = ++SS(sess)->next_id; ULK();
     return (id)t;
 }
+static void stx_free(stx_t *x);
 static void task_dealloc(id s, SEL c) {
     task_t *t = TK(s);
+    stx_free(t->stx);
     rel(t->session); rel(t->orig_req); rel(t->cur_req); rel(t->response); rel(t->error); rel(t->desc); rel(t->delegate);
     rel(t->metrics); rel(t->earliest); rel(t->upload_data); rel(t->upload_file); rel(t->resume_data_in); rel(t->body); rel(t->protocol_obj);
     if (t->handler) _Block_release(t->handler);
@@ -1772,9 +1776,11 @@ static int serve_cached(task_t *t, job_t *j, cache_ent_t *e) {
 }
 
 static void *ws_main(void *arg);
+static void *stream_main(void *arg);
 static void *task_main(void *arg) {
     task_t *t = arg;
     if (t->kind == T_WS) return ws_main(arg);
+    if (t->kind == T_STREAM) return stream_main(arg);
     void *pool = objc_autoreleasePoolPush();
     job_t *j = calloc(1, sizeof *j);
     j->t = t;
@@ -1919,11 +1925,13 @@ static void task_resume(id self, SEL c) {
     if (!t->started) { t->started = 1; task_start(t); }
 }
 static void task_suspend(id self, SEL c) { (void)c; if (TK(self)->state == ST_RUNNING) TK(self)->state = ST_SUSPENDED; }
+static void stx_cancel(task_t *t);
 static void task_cancel(id self, SEL c) {
     (void)c;
     task_t *t = TK(self);
     if (t->state == ST_COMPLETED) return;
     t->cancel = 1;
+    if (t->kind == T_STREAM) stx_cancel(t);
     int was_started = t->started;
     t->state = ST_CANCELING;
     if (!was_started) {                                          /* nunca rodou: completa com -999 */
@@ -2504,6 +2512,8 @@ static void cx_ws_register(void) {
 /* ================================================================ registro */
 static BOOL yes_(id s, SEL c) { (void)s; (void)c; return YES; }
 void cx_nw_init(void);
+#include "nsurlsession_stream.inc"
+
 void cx_urlsession_init(void) {
     cx_class_t *ob = &NSObject_c;
     cx_nw_init();                                     /* Network.framework (nwnet.c) */
@@ -2653,6 +2663,7 @@ void cx_urlsession_init(void) {
     DEF(NSURLSessionDownloadTask, &NSURLSessionTask_c);
     M(NSURLSessionDownloadTask, "cancelByProducingResumeData:", dl_cancel_resume);
     DEF(NSURLSessionStreamTask, &NSURLSessionTask_c);
+    stx_register();
     cx_ws_register();
     DEF(NSURLSessionTaskMetrics, ob);
     M(NSURLSessionTaskMetrics, "transactionMetrics", metrics_tx); M(NSURLSessionTaskMetrics, "taskInterval", metrics_interval);
