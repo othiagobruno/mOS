@@ -80,6 +80,10 @@ tail -1 /tmp/amdgpu_atom_host.log
 gcc -O2 -Wall -Wextra -DMOS_HOST_TEST -I kernel/dev/amdgpu -I tools tools/amdgpu_vbios_host.c kernel/dev/amdgpu/vbios.c kernel/dev/amdgpu/atom.c -o /tmp/amdgpu_vbios_host
 /tmp/amdgpu_vbios_host > /tmp/amdgpu_vbios_host.log || { cat /tmp/amdgpu_vbios_host.log; exit 1; }
 tail -1 /tmp/amdgpu_vbios_host.log
+# GPU AMD: DML1 (parâmetros de busca do HUBP) contra o registrador vivo do Picasso
+gcc -O2 -Wall -Wextra -DMOS_HOST_TEST -I kernel/dev/amdgpu tools/amdgpu_dml1_host.c kernel/dev/amdgpu/dml1.c -o /tmp/amdgpu_dml1_host
+/tmp/amdgpu_dml1_host > /tmp/amdgpu_dml1_host.log || { cat /tmp/amdgpu_dml1_host.log; exit 1; }
+tail -1 /tmp/amdgpu_dml1_host.log
 # sysctl do libSystem (docs/darwin-bsd-mach.md, F1): kernel falso de SYS_DARWIN e o CPUID real do host
 gcc -O1 -Wall -DMOS_LIBSYS_SYSCALL -I userland/libsystem -c userland/libsystem/sysctl.c -o /tmp/sysctl_ls.o
 gcc -O1 -Wall tools/sysctl_host.c /tmp/sysctl_ls.o -o /tmp/sysctl_host
