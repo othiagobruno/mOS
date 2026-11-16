@@ -50,6 +50,20 @@ void wifi_status(wifi_status_t *st);
 void wifi_set_enabled(bool on);
 
 /* ---------------- interface dos drivers de rádio (softMAC: a pilha monta os quadros 802.11) */
+/* o que a pilha sabe da rede associada; o driver usa para rate adaptation, filtros e economia de energia */
+typedef struct {
+    u8   bssid[6];
+    u16  aid;
+    int  primary, center, bw;     /* canal primário, central e largura (0 = 20, 1 = 40, 2 = 80 MHz) */
+    bool ht, vht, sgi20, sgi40, sgi80, ldpc, stbc;
+    u8   ht_mcs;                  /* máscara dos MCS 0-7 que o AP recebe */
+    u16  vht_mcs_map;             /* mapa VHT de RX do AP (2 bits por fluxo) */
+    u16  legacy;                  /* bits 0-3 CCK 1/2/5,5/11, 4-11 OFDM 6..54 */
+    u16  beacon_int;
+    u8   dtim_period;
+    int  rssi;
+} wifi_bss_t;
+
 typedef struct wifi_radio {
     const char *name;
     u8   mac[6];
@@ -58,6 +72,10 @@ typedef struct wifi_radio {
     bool (*tx)(struct wifi_radio *r, const u8 *frame, u16 len);              /* quadro 802.11 completo, sem FCS */
     int  (*rx)(struct wifi_radio *r, u8 *frame, u16 max, int *rssi);         /* 0 = nada; sem FCS */
     void (*poll)(struct wifi_radio *r);                                      /* opcional */
+    /* opcionais de um rádio 802.11ac: canal com largura, estado da associação e economia de energia */
+    bool (*set_chan)(struct wifi_radio *r, int primary, int center, int bw);
+    void (*bss)(struct wifi_radio *r, const wifi_bss_t *b);                   /* NULL = desassociado */
+    bool (*powersave)(struct wifi_radio *r, bool on);
     /* firmware com MLME próprio (fullMAC, ex.: Intel): se presente, a pilha delega scan/conexão */
     bool (*fw_connect)(struct wifi_radio *r, const char *ssid, const u8 *bssid, int channel, const u8 pmk[32]);
 } wifi_radio_t;

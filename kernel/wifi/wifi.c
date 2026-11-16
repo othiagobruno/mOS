@@ -7,7 +7,7 @@
 
 bool wifi_sim_init(void);
 __attribute__((weak)) bool wifi_iwl_probe(void) { return false; }      /* Intel (wifi/iwlwifi.c) */
-__attribute__((weak)) bool wifi_rtw_probe(void) { return false; }      /* Realtek (wifi/rtw88.c) */
+__attribute__((weak)) bool wifi_rtw_probe(void) { return false; }      /* Realtek RTL8821CE (wifi/rtw88/rtw8821c.c) */
 __attribute__((weak)) bool wifi_rt2800_probe(void) { return false; }   /* Ralink/MediaTek USB (wifi/rt2800usb.c) */
 
 static bool selftest;

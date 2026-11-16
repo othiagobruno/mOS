@@ -11,6 +11,8 @@
 #pragma once
 #ifdef MOS_HOST_TEST
 #include "host_shim.h"
+typedef struct pci_dev pci_dev_t;          /* o teste de host não usa o PCI */
+u64 timer_ticks(void);
 #else
 #include "kernel.h"
 #endif
@@ -99,3 +101,27 @@ typedef struct {
 } rtw_fw_t;
 #define RTW_FW_HDR 64
 bool rtw_fw_parse(const u8 *data, u32 size, rtw_fw_t *fw, char *err, int errlen);
+
+/* ---------------- potência de transmissão (rtw_pwr.c) */
+enum { RTW_RS_CCK, RTW_RS_OFDM, RTW_RS_HT1, RTW_RS_HT2, RTW_RS_VHT1, RTW_RS_VHT2, RTW_RS_NUM };
+#define RTW_CH5G 49
+#define RTW_BW_N 3                       /* 20, 40, 80 MHz */
+enum { RTW_REGD_FCC = 0, RTW_REGD_MKK = 1, RTW_REGD_ETSI = 2 };
+typedef struct {
+    i8 byr2[0x40], byr5[0x40];           /* deslocamento por taxa, relativo à referência da seção */
+    i8 base2[RTW_RS_NUM], base5[RTW_RS_NUM];
+    i8 lmt2[RTW_BW_N][RTW_RS_NUM][14];   /* limite relativo à mesma referência */
+    i8 lmt5[RTW_BW_N][RTW_RS_NUM][RTW_CH5G];
+} rtw_pwr_t;
+extern const u8 *const rtw_rate_sec[RTW_RS_NUM];
+extern const u8 rtw_rate_sec_n[RTW_RS_NUM];
+int  rtw_ch_idx(int band, int ch);                  /* band 0 = 2,4 GHz, 1 = 5 GHz */
+int  rtw_rate_section(u8 rate);
+int  rtw_ch_group(int ch, u8 rate);
+void rtw_pwr_init(rtw_pwr_t *p, const rtw_pg_table_t *pg, const rtw_lmt_table_t *lmt, int regd);
+i8   rtw_pwr_limit(const rtw_pwr_t *p, int band, int bw, u8 rate, int center, int primary);
+u8   rtw_pwr_base(const u8 *efuse_txpwr, int band, int bw, u8 rate, int ch);
+u8   rtw_pwr_index(const rtw_pwr_t *p, const u8 *efuse_txpwr, int band, int bw, u8 rate, int center, int primary);
+
+/* ---------------- driver (rtw8821c.c) */
+bool rtw8821c_attach(rtw_io_t *io, pci_dev_t *pci);
