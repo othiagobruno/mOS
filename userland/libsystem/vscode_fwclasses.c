@@ -55,7 +55,6 @@ cx_class_t AVCapturePhotoSettings_c __asm__("OBJC_CLASS_$_AVCapturePhotoSettings
 cx_class_t AVCaptureSession_c __asm__("OBJC_CLASS_$_AVCaptureSession"); cx_class_t AVCaptureSession_m __asm__("OBJC_METACLASS_$_AVCaptureSession");
 cx_class_t AVCaptureVideoDataOutput_c __asm__("OBJC_CLASS_$_AVCaptureVideoDataOutput"); cx_class_t AVCaptureVideoDataOutput_m __asm__("OBJC_METACLASS_$_AVCaptureVideoDataOutput");
 cx_class_t AVSampleBufferAudioRenderer_c __asm__("OBJC_CLASS_$_AVSampleBufferAudioRenderer"); cx_class_t AVSampleBufferAudioRenderer_m __asm__("OBJC_METACLASS_$_AVSampleBufferAudioRenderer");
-cx_class_t AVSampleBufferDisplayLayer_c __asm__("OBJC_CLASS_$_AVSampleBufferDisplayLayer"); cx_class_t AVSampleBufferDisplayLayer_m __asm__("OBJC_METACLASS_$_AVSampleBufferDisplayLayer");
 cx_class_t AVSampleBufferRenderSynchronizer_c __asm__("OBJC_CLASS_$_AVSampleBufferRenderSynchronizer"); cx_class_t AVSampleBufferRenderSynchronizer_m __asm__("OBJC_METACLASS_$_AVSampleBufferRenderSynchronizer");
 cx_class_t AVSpeechSynthesisVoice_c __asm__("OBJC_CLASS_$_AVSpeechSynthesisVoice"); cx_class_t AVSpeechSynthesisVoice_m __asm__("OBJC_METACLASS_$_AVSpeechSynthesisVoice");
 cx_class_t AVSpeechSynthesizer_c __asm__("OBJC_CLASS_$_AVSpeechSynthesizer"); cx_class_t AVSpeechSynthesizer_m __asm__("OBJC_METACLASS_$_AVSpeechSynthesizer");
@@ -159,7 +158,7 @@ void cx_framework_classes_init(void) {
     d(&AVCaptureSession_c, &AVCaptureSession_m, "AVCaptureSession", "NSObject");
     d(&AVCaptureVideoDataOutput_c, &AVCaptureVideoDataOutput_m, "AVCaptureVideoDataOutput", "NSObject");
     d(&AVSampleBufferAudioRenderer_c, &AVSampleBufferAudioRenderer_m, "AVSampleBufferAudioRenderer", "NSObject");
-    d(&AVSampleBufferDisplayLayer_c, &AVSampleBufferDisplayLayer_m, "AVSampleBufferDisplayLayer", "CALayer");
+    /* AVSampleBufferDisplayLayer: avplayervideo.c */
     d(&AVSampleBufferRenderSynchronizer_c, &AVSampleBufferRenderSynchronizer_m, "AVSampleBufferRenderSynchronizer", "NSObject");
     d(&AVSpeechSynthesisVoice_c, &AVSpeechSynthesisVoice_m, "AVSpeechSynthesisVoice", "NSObject");
     d(&AVSpeechSynthesizer_c, &AVSpeechSynthesizer_m, "AVSpeechSynthesizer", "NSObject");

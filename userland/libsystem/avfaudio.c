@@ -1270,9 +1270,13 @@ static id ses_route(id s, SEL c) {
 }
 static id route_outputs(id s, SEL c) { (void)c; return objc_getAssociatedObject(s, "outputs"); }
 
-/* ================================================================ AVAsset / AVPlayerItem / AVPlayer (áudio local) */
-typedef struct { cx_class_t *isa; id url; void *dec; int err; } avasset_t;
-typedef struct { cx_class_t *isa; id asset; i64 status; id error; double pos; } avitem_t;
+/* ================================================================ AVAsset / AVPlayerItem / AVPlayer (arquivos locais)
+ * Áudio: o arquivo inteiro decodificado pelo CoreAudio (cx_audio_open_path). Vídeo: avvideo.c (MP4/MOV, H.264), aberto
+ * para as faixas e a duração; os quadros saem pelo AVPlayerItemVideoOutput e pelo AVPlayerLayer (avplayervideo.c), cada
+ * um com o próprio leitor. Sem áudio, o relógio do AVPlayer anda pelo tempo do host. */
+#include "avvideo.h"
+typedef struct { cx_class_t *isa; id url; void *dec; int err; int has_vid, vw, vh, vrot; double vdur, vfps; } avasset_t;
+typedef struct { cx_class_t *isa; id asset; i64 status; id error; double pos; id outputs; } avitem_t;
 typedef struct {
     cx_class_t *isa;
     id item;
@@ -1282,6 +1286,8 @@ typedef struct {
     i64 status;
     id observers;                /* NSMutableArray de observadores periódicos */
     double last_obs;
+    id clock;                    /* NSTimer do relógio sem áudio */
+    double clock_pos, clock_host;
 } avpl_t;
 cx_class_t AVAsset_c __asm__("OBJC_CLASS_$_AVAsset"), AVAsset_m __asm__("OBJC_METACLASS_$_AVAsset");
 cx_class_t AVURLAsset_c __asm__("OBJC_CLASS_$_AVURLAsset"), AVURLAsset_m __asm__("OBJC_METACLASS_$_AVURLAsset");
@@ -1302,45 +1308,95 @@ static id asset_init(id s, SEL c, id url, id opts) {
     int e = 0;
     const char *path = cx_audio_url_path(url);
     AST(s)->dec = path ? cx_audio_open_path(path, &e) : 0;
-    AST(s)->err = AST(s)->dec ? 0 : (e ? e : -11828);
+    int ve = 0;
+    avv_t *v = path ? avv_open_path(path, &ve) : 0;
+    if (v) {   /* as informações ficam; cada saída de vídeo abre o próprio leitor */
+        uint32_t ns;
+        avv_info(v, &AST(s)->vw, &AST(s)->vh, &AST(s)->vdur, &AST(s)->vfps, &ns);
+        AST(s)->vrot = avv_rotation(v);
+        AST(s)->has_vid = 1;
+        avv_close(v);
+    }
+    AST(s)->err = AST(s)->dec || AST(s)->has_vid ? 0 : (e ? e : ve ? ve : -11828);
     return s;
 }
+static int asset_ok(id a) { return a && (AST(a)->dec || AST(a)->has_vid); }
 static id asset_with_url(id k, SEL c, id url) { (void)k; return objc_autorelease(asset_init(cx_alloc_instance(&AVURLAsset_c), c, url, 0)); }
 static id asset_with_url_opts(id k, SEL c, id url, id opts) { (void)k; return objc_autorelease(asset_init(cx_alloc_instance(&AVURLAsset_c), c, url, opts)); }
 static id asset_url(id s, SEL c) { (void)c; return AST(s)->url; }
-static cmtime_t asset_duration(id s, SEL c) { (void)c; void *d = AST(s)->dec; return d ? cm_seconds((double)cx_audio_frames(d) / cx_audio_rate(d)) : cm_invalid(); }
-static BOOL asset_playable(id s, SEL c) { (void)c; return AST(s)->dec != 0; }
-/* Áudio toca se o CoreAudio abriu o arquivo. Não há faixa de vídeo: o kernel não decodifica quadro. */
-extern id AVMediaTypeAudio;
-typedef struct { cx_class_t *isa; double dur, rate; u32 ch; } avtrack_t;
+static double asset_seconds(id s) {
+    void *d = AST(s)->dec;
+    double a = d ? (double)cx_audio_frames(d) / cx_audio_rate(d) : 0;
+    return AST(s)->has_vid && AST(s)->vdur > a ? AST(s)->vdur : a;
+}
+static cmtime_t asset_duration(id s, SEL c) { (void)c; return asset_ok(s) ? cm_seconds(asset_seconds(s)) : cm_invalid(); }
+static BOOL asset_playable(id s, SEL c) { (void)c; return asset_ok(s); }
+/* faixas: a de áudio (se o CoreAudio abriu o arquivo) e a de vídeo (se avvideo.c abriu) */
+extern id AVMediaTypeAudio, AVMediaTypeVideo;
+typedef struct { cx_class_t *isa; double dur, rate; u32 ch; int video, w, h, rot; double fps; i32 id_; } avtrack_t;
 cx_class_t AVAssetTrack_c __asm__("OBJC_CLASS_$_AVAssetTrack"), AVAssetTrack_m __asm__("OBJC_METACLASS_$_AVAssetTrack");
 #define TRK(o) ((avtrack_t *)(o))
-static id track_media(id s, SEL c) { (void)s; (void)c; return AVMediaTypeAudio; }
-static cmtime_t track_range(id s, SEL c) { (void)c; return cm_seconds(TRK(s)->dur); }
-static cmtime_t track_duration(id s, SEL c) { return track_range(s, c); }
-static i32 track_scale(id s, SEL c) { (void)c; return TRK(s)->rate > 0 ? (i32)(TRK(s)->rate + 0.5) : 1; }
-static BOOL track_yes(id s, SEL c) { (void)c; return TRK(s)->ch > 0; }
+static id track_media(id s, SEL c) { (void)c; return TRK(s)->video ? AVMediaTypeVideo : AVMediaTypeAudio; }
+typedef struct { cmtime_t start, duration; } cmtimerange_t;
+static cmtimerange_t track_range(id s, SEL c) { (void)c; cmtimerange_t r = {cm_seconds(0), cm_seconds(TRK(s)->dur)}; return r; }
+static cmtime_t track_duration(id s, SEL c) { (void)c; return cm_seconds(TRK(s)->dur); }
+static i32 track_scale(id s, SEL c) { (void)c; return TRK(s)->video ? 600 : TRK(s)->rate > 0 ? (i32)(TRK(s)->rate + 0.5) : 1; }
+static BOOL track_yes(id s, SEL c) { (void)c; return TRK(s)->video || TRK(s)->ch > 0; }
+typedef struct { double w, h; } cgsize_t;
+typedef struct { double a, b, c, d, tx, ty; } cgaffine_t;
+static cgsize_t track_size(id s, SEL c) { (void)c; cgsize_t z = {TRK(s)->video ? TRK(s)->w : 0, TRK(s)->video ? TRK(s)->h : 0}; return z; }
+static float track_fps(id s, SEL c) { (void)c; return TRK(s)->video ? (float)TRK(s)->fps : 0; }
+/* preferredTransform: a rotação do tkhd, com a translação que leva a imagem girada de volta ao primeiro quadrante */
+static cgaffine_t track_transform(id s, SEL c) {
+    (void)c;
+    double w = TRK(s)->w, h = TRK(s)->h;
+    cgaffine_t t = {1, 0, 0, 1, 0, 0};
+    if (!TRK(s)->video) return t;
+    if (TRK(s)->rot == 90) { t.a = 0; t.b = 1; t.c = -1; t.d = 0; t.tx = h; }
+    else if (TRK(s)->rot == 180) { t.a = -1; t.d = -1; t.tx = w; t.ty = h; }
+    else if (TRK(s)->rot == 270) { t.a = 0; t.b = -1; t.c = 1; t.d = 0; t.ty = w; }
+    return t;
+}
+static i32 track_id(id s, SEL c) { (void)c; return TRK(s)->id_; }
 static id asset_tracks(id s, SEL c) {
     (void)c;
     id arr = MSG0(id, cls("NSMutableArray"), "array");
     void *d = AST(s)->dec;
     avf_track_t info;
-    if (!d || !avf_describe_audio(cx_audio_frames(d), cx_audio_rate(d), cx_audio_channels(d), &info)) return arr;
-    avtrack_t *t = (avtrack_t *)cx_alloc_instance(&AVAssetTrack_c);
-    t->dur = info.duration;
-    t->rate = info.rate;
-    t->ch = info.channels;
-    MSG(void, arr, "addObject:", (id)t);
+    if (AST(s)->has_vid) {
+        avtrack_t *t = (avtrack_t *)cx_alloc_instance(&AVAssetTrack_c);
+        t->video = 1; t->w = AST(s)->vw; t->h = AST(s)->vh; t->rot = AST(s)->vrot; t->fps = AST(s)->vfps; t->dur = AST(s)->vdur; t->id_ = 1;
+        MSG(void, arr, "addObject:", (id)t);
+        objc_release((id)t);
+    }
+    if (d && avf_describe_audio(cx_audio_frames(d), cx_audio_rate(d), cx_audio_channels(d), &info)) {
+        avtrack_t *t = (avtrack_t *)cx_alloc_instance(&AVAssetTrack_c);
+        t->dur = info.duration;
+        t->rate = info.rate;
+        t->ch = info.channels;
+        t->id_ = AST(s)->has_vid ? 2 : 1;
+        MSG(void, arr, "addObject:", (id)t);
+        objc_release((id)t);
+    }
     return arr;
 }
 static id asset_tracks_media(id s, SEL c, id m) {
     const char *ms = m ? cx_cstr(m) : "";
-    if (ms && ms[0] && strcmp(ms, "soun") && strcmp(ms, "AVMediaTypeAudio")) return MSG0(id, cls("NSArray"), "array");
-    return asset_tracks(s, c);
+    int want_video = ms && (!strcmp(ms, "vide") || !strcmp(ms, "AVMediaTypeVideo"));
+    int want_audio = ms && (!strcmp(ms, "soun") || !strcmp(ms, "AVMediaTypeAudio"));
+    id all = asset_tracks(s, c), arr = MSG0(id, cls("NSMutableArray"), "array");
+    u64 n = MSG0(u64, all, "count");
+    for (u64 i = 0; i < n; i++) {
+        id t = MSG(id, all, "objectAtIndex:", i);
+        if ((TRK(t)->video && want_video) || (!TRK(t)->video && want_audio)) MSG(void, arr, "addObject:", t);
+    }
+    return arr;
 }
 static void asset_load(id s, SEL c, id keys, void *blk) { (void)s; (void)c; (void)keys; if (blk) CALL_BLOCK0(blk); }
-/* AVAssetReader / AVAssetWriter. Áudio PCM vira CMSampleBuffer e WAV.
- * Vídeo, texto e capítulo devolvem erro: não há decodificador nem câmera. */
+/* AVAssetReader / AVAssetWriter. Áudio PCM vira CMSampleBuffer e WAV. Vídeo (MP4/MOV, H.264, avvideo.c): com
+ * kCVPixelBufferPixelFormatTypeKey nas outputSettings sai decodificado em CVPixelBuffer ('420v', '420f' ou 'BGRA'), na
+ * ordem de exibição; com outputSettings nil sai como está no arquivo (AVCC, ordem de decodificação, kCMSampleAttachmentKey_NotSync
+ * nos quadros que não são chave), como na AVFoundation. Texto e capítulo devolvem erro. */
 extern void *cx_cm_audio_sample(const short *pcm, unsigned frames, double rate);
 extern void *CMSampleBufferGetDataBuffer(void *s);
 extern int CMBlockBufferGetDataPointer(void *b, size_t off, size_t *lenAt, size_t *total, char **ptr);
@@ -1350,8 +1406,13 @@ typedef struct {
     avf_read_t rd;
     u64 at;
     double rate;
+    id voutput;                 /* saída de vídeo (além da de áudio em output) */
+    avv_t *vid;
+    u32 vnext;
+    void *vfd;                  /* CMVideoFormatDescription das amostras comprimidas */
+    int a_done, v_done;
 } avrd_t;
-typedef struct { cx_class_t *isa; id track; int media; } avrdo_t;
+typedef struct { cx_class_t *isa; id track; int media; u32 fmt; int decoded; } avrdo_t;
 typedef struct {
     cx_class_t *isa;
     id url, error, input;
@@ -1374,6 +1435,7 @@ static int media_code(id m) {
     if (!strcmp(s, "chap")) return 4;
     return 0;
 }
+static void reader_part_done(avrd_t *r, int audio);
 static void reader_fail(avrd_t *r, int code, const char *msg) {
     r->rd.status = AVF_READ_FAILED;
     r->rd.err = code;
@@ -1384,7 +1446,7 @@ static id reader_init(id s, SEL c, id asset, id *err) {
     (void)c;
     setobj(&ARD(s)->asset, asset);
     ARD(s)->rd.status = AVF_READ_UNKNOWN;
-    if (!asset || !AST(asset)->dec) {
+    if (!asset_ok(asset)) {
         reader_fail(ARD(s), -11828, "O formato não é reconhecido pelo mOS.");
         if (err) *err = ARD(s)->error;
     }
@@ -1392,9 +1454,12 @@ static id reader_init(id s, SEL c, id asset, id *err) {
 }
 static BOOL reader_can_add(id s, SEL c, id out) {
     (void)c;
-    if (!out || ARD(s)->output || ARD(s)->rd.status == AVF_READ_FAILED) return 0;
+    if (!out || ARD(s)->rd.status == AVF_READ_FAILED || ARD(s)->rd.status == AVF_READ_READING) return 0;
     int media = ARO(out)->media;
-    return media == 1 && ARD(s)->asset && AST(ARD(s)->asset)->dec;
+    id a = ARD(s)->asset;
+    if (media == 1) return !ARD(s)->output && a && AST(a)->dec;
+    if (media == 2) return !ARD(s)->voutput && a && AST(a)->has_vid && ARO(out)->fmt != 1;   /* fmt 1: formato de pixel sem suporte */
+    return 0;
 }
 static void reader_add(id s, SEL c, id out) {
     (void)c;
@@ -1406,18 +1471,30 @@ static void reader_add(id s, SEL c, id out) {
         reader_fail(ARD(s), fail.err ? fail.err : -11821, "Não há decodificador para esta faixa. Vídeo, texto e capítulo não são lidos.");
         return;
     }
-    setobj(&ARD(s)->output, out);
+    if (ARO(out)->media == 2) setobj(&ARD(s)->voutput, out);
+    else setobj(&ARD(s)->output, out);
     objc_setAssociatedObject(out, "reader", s, 0);
 }
 static BOOL reader_start(id s, SEL c) {
     (void)c;
     avrd_t *r = ARD(s);
-    if (r->rd.status == AVF_READ_FAILED || !r->asset || !AST(r->asset)->dec || !r->output) return 0;
-    void *d = AST(r->asset)->dec;
-    r->rate = cx_audio_rate(d);
-    r->at = 0;
+    if (r->rd.status == AVF_READ_FAILED || !r->asset || (!r->output && !r->voutput)) return 0;
+    if (r->output) {
+        void *d = AST(r->asset)->dec;
+        r->rate = cx_audio_rate(d);
+        r->at = 0;
+    }
+    if (r->voutput) {
+        int e = 0;
+        if (r->vid) avv_close(r->vid);
+        r->vid = avv_open_path(cx_audio_url_path(AST(r->asset)->url), &e);
+        if (!r->vid) { reader_fail(r, e ? e : -11828, "A faixa de vídeo não pôde ser aberta."); return 0; }
+        r->vnext = 0;
+    }
+    r->a_done = !r->output;
+    r->v_done = !r->voutput;
     r->rd.status = AVF_READ_READING;
-    r->rd.media = 1;
+    r->rd.media = r->output ? 1 : 2;
     r->rd.err = 0;
     return 1;
 }
@@ -1431,14 +1508,14 @@ static id reader_copy(id s, SEL c) {
     void *d = r->asset ? AST(r->asset)->dec : 0;
     if (!d) { reader_fail(r, -11828, "O formato não é reconhecido pelo mOS."); return 0; }
     u64 total = cx_audio_frames(d);
-    if (r->at >= total) { r->rd.status = AVF_READ_COMPLETED; return 0; }
+    if (r->a_done || r->at >= total) { reader_part_done(r, 1); return 0; }
     u32 n = 1024;
     if (r->at + n > total) n = (u32)(total - r->at);
     float *st = calloc(n, 2 * sizeof(float));
     short *pcm = calloc(n, 4);
     if (!st || !pcm) { free(st); free(pcm); reader_fail(r, -11821, "Sem memória para a amostra de áudio."); return 0; }
     u32 got = cx_audio_read_stereo(d, r->at, n, st);
-    if (!got) { free(st); free(pcm); r->rd.status = AVF_READ_COMPLETED; return 0; }
+    if (!got) { free(st); free(pcm); reader_part_done(r, 1); return 0; }
     avf_read_t chunk;
     float *inter = malloc((size_t)got * 2 * sizeof(float));
     if (!inter || !avf_read_begin(&chunk, 1, st, 2, got) || avf_read_copy(&chunk, inter, got) != got) {
@@ -1459,17 +1536,117 @@ static id reader_copy(id s, SEL c) {
     free(pcm);
     if (!sample) { reader_fail(r, -11821, "A amostra de áudio não pôde ser montada."); return 0; }
     r->at += got;
-    if (r->at >= total) r->rd.status = AVF_READ_COMPLETED;
+    if (r->at >= total) reader_part_done(r, 1);
     return objc_autorelease((id)sample);
+}
+/* ---- vídeo */
+extern int CVPixelBufferCreate(void *a, u64 w, u64 h, u32 fmt, id attrs, void **out);
+extern int CVPixelBufferLockBaseAddress(void *p, u64 f);
+extern int CVPixelBufferUnlockBaseAddress(void *p, u64 f);
+extern void *CVPixelBufferGetBaseAddress(void *p);
+extern u64 CVPixelBufferGetBytesPerRow(void *p);
+extern void *CVPixelBufferGetBaseAddressOfPlane(void *p, u64 i);
+extern u64 CVPixelBufferGetBytesPerRowOfPlane(void *p, u64 i);
+extern int CMSampleBufferCreateReadyWithImageBuffer(void *a, void *img, void *fd, const void *timing, void **out);
+extern int CMSampleBufferCreateReady(void *a, void *db, void *fd, long ns, long nt, const void *t, long nsz, const size_t *sz, void **out);
+extern int CMBlockBufferCreateWithMemoryBlock(void *a, void *mem, size_t len, void *ba, const void *cb, size_t off, size_t dlen, u32 flags, void **out);
+extern int CMVideoFormatDescriptionCreateFromH264ParameterSets(void *a, size_t n, const u8 *const *p, const size_t *s, int nal, void **out);
+extern id CMSampleBufferGetSampleAttachmentsArray(void *s, u8 create);
+extern const void *kCMSampleAttachmentKey_NotSync, *kCFBooleanTrue;
+typedef struct { cmtime_t duration, pts, dts; } cm_timing_t_;
+static cmtime_t cm_exact(double s) { cmtime_t t = {(i64)(s * 90000 + (s >= 0 ? 0.5 : -0.5)), 90000, 1, 0}; return t; }
+static void reader_part_done(avrd_t *r, int audio) {
+    if (audio) r->a_done = 1; else r->v_done = 1;
+    if (r->a_done && r->v_done) r->rd.status = AVF_READ_COMPLETED;
+}
+/* avcC -> CMVideoFormatDescription (SPS e PPS, tamanho da NAL) */
+static void *fd_from_avcc(const u8 *a, u32 n) {
+    if (!a || n < 7) return 0;
+    const u8 *ps[32];
+    size_t sz[32];
+    int k = 0;
+    u32 p = 5;
+    int nsps = a[p++] & 31;
+    for (int pass = 0; pass < 2; pass++) {
+        int cnt = pass ? (p < n ? a[p++] : 0) : nsps;
+        for (int i = 0; i < cnt && k < 32; i++) {
+            if (p + 2 > n) return 0;
+            u32 len = (u32)a[p] << 8 | a[p + 1];
+            p += 2;
+            if (p + len > n) return 0;
+            ps[k] = a + p; sz[k] = len; k++;
+            p += len;
+        }
+    }
+    void *fd = 0;
+    if (CMVideoFormatDescriptionCreateFromH264ParameterSets(0, (size_t)k, ps, sz, (a[4] & 3) + 1, &fd)) return 0;
+    return fd;
+}
+static id reader_copy_video(avrd_t *r, avrdo_t *o) {
+    if (r->rd.status != AVF_READ_READING || r->v_done || !r->vid) return 0;
+    if (!o->decoded) {   /* como no arquivo */
+        const u8 *data; u32 size; double pts, dts, dur; int sync;
+        if (avv_raw_sample(r->vid, r->vnext, &data, &size, &pts, &dts, &dur, &sync)) { reader_part_done(r, 0); return 0; }
+        r->vnext++;
+        if (!r->vfd) { u32 n; const u8 *a = avv_avcc(r->vid, &n); r->vfd = fd_from_avcc(a, n); }
+        void *bb = 0, *sb = 0;
+        if (!r->vfd || CMBlockBufferCreateWithMemoryBlock(0, (void *)data, size, 0, 0, 0, size, 0, &bb)) { reader_fail(r, -11821, "A amostra de vídeo não pôde ser montada."); return 0; }
+        cm_timing_t_ tm = {cm_exact(dur), cm_exact(pts), cm_exact(dts)};
+        size_t ssz = size;
+        int rc = CMSampleBufferCreateReady(0, bb, r->vfd, 1, 1, &tm, 1, &ssz, &sb);
+        objc_release((id)bb);
+        if (rc || !sb) { reader_fail(r, -11821, "A amostra de vídeo não pôde ser montada."); return 0; }
+        if (!sync) {
+            id arr = CMSampleBufferGetSampleAttachmentsArray(sb, 1);
+            id d = arr && MSG0(u64, arr, "count") ? MSG(id, arr, "objectAtIndex:", (u64)0) : 0;
+            if (d) MSG(void, d, "setObject:forKey:", (id)kCFBooleanTrue, (id)kCMSampleAttachmentKey_NotSync);
+        }
+        return objc_autorelease((id)sb);
+    }
+    avv_frame f;
+    int r2 = avv_next_frame(r->vid, &f);
+    if (r2 <= 0) { if (r2 < 0) reader_fail(r, -11821, "Erro ao decodificar o vídeo."); else reader_part_done(r, 0); return 0; }
+    void *img = 0;
+    if (CVPixelBufferCreate(0, (u64)f.w, (u64)f.h, o->fmt, 0, &img) || !img) { reader_fail(r, -11821, "Sem memória para o quadro."); return 0; }
+    CVPixelBufferLockBaseAddress(img, 0);
+    if (o->fmt == 0x42475241u) {
+        u8 *px = 0;
+        int ow, oh;
+        if (!avv_to_bgra(&f, 0, 0, 0, &px, &ow, &oh)) {
+            u8 *d = CVPixelBufferGetBaseAddress(img);
+            u64 bpr = CVPixelBufferGetBytesPerRow(img);
+            for (int y = 0; y < oh; y++) memcpy(d + (u64)y * bpr, px + (u64)y * ow * 4, (size_t)ow * 4);
+            free(px);
+        }
+    } else {
+        avv_to_nv12(&f, o->fmt == 0x34323066u, CVPixelBufferGetBaseAddressOfPlane(img, 0), (long)CVPixelBufferGetBytesPerRowOfPlane(img, 0),
+                    CVPixelBufferGetBaseAddressOfPlane(img, 1), (long)CVPixelBufferGetBytesPerRowOfPlane(img, 1));
+    }
+    CVPixelBufferUnlockBaseAddress(img, 0);
+    double fps = AST(r->asset)->vfps > 0 ? AST(r->asset)->vfps : 30;
+    cm_timing_t_ tm = {cm_exact(1.0 / fps), cm_exact(f.pts), cm_invalid()};
+    void *sb = 0;
+    int rc = CMSampleBufferCreateReadyWithImageBuffer(0, img, 0, &tm, &sb);
+    objc_release((id)img);
+    if (rc || !sb) { reader_fail(r, -11821, "A amostra de vídeo não pôde ser montada."); return 0; }
+    return objc_autorelease((id)sb);
 }
 static id output_copy(id s, SEL c) {
     id reader = objc_getAssociatedObject(s, "reader");
-    return reader ? reader_copy(reader, c) : 0;
+    if (!reader) return 0;
+    return ARO(s)->media == 2 ? reader_copy_video(ARD(reader), ARO(s)) : reader_copy(reader, c);
 }
+extern const void *kCVPixelBufferPixelFormatTypeKey;
 static id rout_init(id s, SEL c, id track, id settings) {
-    (void)c; (void)settings;
+    (void)c;
     setobj(&ARO(s)->track, track);
-    ARO(s)->media = track ? 1 : 0;
+    ARO(s)->media = track ? (TRK(track)->video ? 2 : 1) : 0;
+    if (ARO(s)->media == 2 && settings) {
+        id v = MSG(id, settings, "objectForKey:", (id)kCVPixelBufferPixelFormatTypeKey);
+        u32 f = v ? (u32)MSG0(i64, v, "longLongValue") : 0x34323076u;
+        ARO(s)->decoded = 1;
+        ARO(s)->fmt = f == 0x34323076u || f == 0x34323066u || f == 0x42475241u ? f : 1;   /* 1: sem suporte (canAddOutput: NO) */
+    }
     return s;
 }
 static id rout_with(id k, SEL c, id track, id settings) {
@@ -1528,7 +1705,7 @@ static BOOL input_append(id s, SEL c, id sample) {
 static BOOL input_ready(id s, SEL c) { (void)s; (void)c; return 1; }
 static i64 asset_status_key(id s, SEL c, id key, id *err) {
     (void)c; (void)key;
-    if (AST(s)->dec) return 2;   /* AVKeyValueStatusLoaded */
+    if (asset_ok(s)) return 2;   /* AVKeyValueStatusLoaded */
     if (err) *err = error_with("AVFoundationErrorDomain", -11828, "O formato não é reconhecido pelo mOS.");
     return 3;                    /* AVKeyValueStatusFailed */
 }
@@ -1536,7 +1713,8 @@ static i64 asset_status_key(id s, SEL c, id key, id *err) {
 static id item_init_asset(id s, SEL c, id asset) {
     (void)c;
     setobj(&ITM(s)->asset, asset);
-    ITM(s)->status = asset && AST(asset)->dec ? 1 : 2;   /* ReadyToPlay / Failed */
+    ITM(s)->status = asset_ok(asset) ? 1 : 2;   /* ReadyToPlay / Failed */
+    ITM(s)->outputs = objc_retain(MSG0(id, cls("NSMutableArray"), "array"));
     if (ITM(s)->status == 2) ITM(s)->error = objc_retain(error_with("AVFoundationErrorDomain", -11828, "O formato não é reconhecido pelo mOS."));
     return s;
 }
@@ -1547,7 +1725,18 @@ static id item_asset(id s, SEL c) { (void)c; return ITM(s)->asset; }
 static i64 item_status(id s, SEL c) { (void)c; return ITM(s)->status; }
 static id item_error(id s, SEL c) { (void)c; return ITM(s)->error; }
 static cmtime_t item_duration(id s, SEL c) { (void)c; return ITM(s)->asset ? asset_duration(ITM(s)->asset, 0) : cm_invalid(); }
-static cmtime_t item_current(id s, SEL c) { (void)c; return cm_seconds(ITM(s)->pos); }
+static void clock_sync_item(id item);
+static cmtime_t item_current(id s, SEL c) { (void)c; clock_sync_item(s); return cm_seconds(ITM(s)->pos); }
+static id item_outputs(id s, SEL c) { (void)c; return ITM(s)->outputs; }
+static void item_add_output(id s, SEL c, id o) { (void)c; if (o && !MSG(BOOL, ITM(s)->outputs, "containsObject:", o)) MSG(void, ITM(s)->outputs, "addObject:", o); if (o) MSG(void, o, "mosAttachItem:", s); }
+static void item_remove_output(id s, SEL c, id o) { (void)c; if (o) { MSG(void, ITM(s)->outputs, "removeObject:", o); MSG(void, o, "mosAttachItem:", (id)0); } }
+static cgsize_t item_presentation(id s, SEL c) {
+    (void)c;
+    id a = ITM(s)->asset;
+    cgsize_t z = {0, 0};
+    if (a && AST(a)->has_vid) { int r = AST(a)->vrot == 90 || AST(a)->vrot == 270; z.w = r ? AST(a)->vh : AST(a)->vw; z.h = r ? AST(a)->vw : AST(a)->vh; }
+    return z;
+}
 
 static void apl_end_main(void *a) {
     id s = a;
@@ -1581,9 +1770,56 @@ static void apl_ensure(id s) {
 static double apl_duration(id s) {
     avpl_t *p = APL(s);
     if (!p->item || !ITM(p->item)->asset) return 0;
-    void *d = AST(ITM(p->item)->asset)->dec;
-    double rate = d ? cx_audio_rate(d) : 0;
-    return d && rate > 0 ? (double)cx_audio_frames(d) / rate : 0;
+    return asset_seconds(ITM(p->item)->asset);
+}
+/* ---- relógio sem áudio: posição = âncora + (agora - âncora do host) × rate, atualizada por um NSTimer de 1/60 s */
+double CFAbsoluteTimeGetCurrent(void);
+static id g_clock_players;   /* item -> player do relógio (para o currentTime do item) */
+static void clock_sync(id s) {
+    avpl_t *p = APL(s);
+    if (!p->clock || !p->item) return;
+    double d = apl_duration(s), pos = p->clock_pos + (CFAbsoluteTimeGetCurrent() - p->clock_host) * p->rate;
+    if (pos > d) pos = d;
+    if (pos < 0) pos = 0;
+    ITM(p->item)->pos = pos;
+}
+static void clock_sync_item(id item) {
+    if (!g_clock_players || !item) return;
+    u64 n = MSG0(u64, g_clock_players, "count");
+    for (u64 i = 0; i < n; i++) { id pl = MSG(id, g_clock_players, "objectAtIndex:", i); if (APL(pl)->item == item) clock_sync(pl); }
+}
+static void clock_stop(id s) {
+    avpl_t *p = APL(s);
+    if (!p->clock) return;
+    clock_sync(s);
+    MSG0(void, p->clock, "invalidate");
+    objc_release(p->clock);
+    p->clock = 0;
+    if (g_clock_players) MSG(void, g_clock_players, "removeObjectIdenticalTo:", s);
+}
+static void clock_rebase(id s) {
+    avpl_t *p = APL(s);
+    p->clock_pos = p->item ? ITM(p->item)->pos : 0;
+    p->clock_host = CFAbsoluteTimeGetCurrent();
+}
+static void apl_clock_tick(id s, SEL c, id timer) {
+    (void)c; (void)timer;
+    avpl_t *p = APL(s);
+    clock_sync(s);
+    if (p->item && p->rate > 0 && ITM(p->item)->pos >= apl_duration(s)) {
+        p->rate = 0;
+        clock_stop(s);
+        cx_post(cx_note(AVPlayerItemDidPlayToEndTimeNotification, p->item, 0));
+    }
+}
+static void clock_start(id s) {
+    avpl_t *p = APL(s);
+    if (p->clock) { clock_sync(s); clock_rebase(s); return; }
+    clock_rebase(s);
+    p->clock = objc_retain(MSG(id, cls("NSTimer"), "scheduledTimerWithTimeInterval:target:selector:userInfo:repeats:", 1.0 / 60, s,
+                               sel_registerName("mosClockTick:"), (id)0, (BOOL)YES));
+    if (!g_clock_players) g_clock_players = objc_retain(MSG0(id, cls("NSMutableArray"), "array"));
+    MSG(void, g_clock_players, "addObject:", s);
 }
 static avk_transport_t apl_transport(id s, int controls) {
     avpl_t *p = APL(s);
@@ -1597,11 +1833,18 @@ avk_transport_t cx_avplayer_transport(id player, int controls) {
 static void apl_set_rate(id s, SEL c, float r) {
     (void)c;
     avpl_t *p = APL(s);
+    clock_sync(s);
     avk_transport_t t = apl_transport(s, 1);
     if (r == 0) avk_pause(&t);
     else { if (t.rate) *t.rate = r; }
-    if (r != 0) { apl_ensure(s); if (p->eng) { cx_cae_set_rate(p->eng, cx_audio_rate(AST(ITM(p->item)->asset)->dec) * r); cx_cae_start(p->eng); } }
-    else if (p->eng) cx_cae_stop(p->eng, 1);
+    if (r != 0) {
+        apl_ensure(s);
+        if (p->eng) { cx_cae_set_rate(p->eng, cx_audio_rate(AST(ITM(p->item)->asset)->dec) * r); cx_cae_start(p->eng); }
+        else if (p->item && asset_ok(ITM(p->item)->asset)) clock_start(s);   /* só vídeo: o relógio do host */
+    } else {
+        if (p->eng) cx_cae_stop(p->eng, 1);
+        clock_stop(s);
+    }
 }
 static void apl_play(id s, SEL c) { (void)c; apl_set_rate(s, 0, 1.0f); }
 static void apl_pause(id s, SEL c) { (void)c; apl_set_rate(s, 0, 0); }
@@ -1617,15 +1860,25 @@ static i64 apl_time_control(id s, SEL c) { (void)c; return APL(s)->rate != 0 ? 2
 static void apl_replace(id s, SEL c, id item) {
     (void)c;
     avpl_t *p = APL(s);
+    clock_stop(s);
     if (p->eng) { cx_cae_free(p->eng); p->eng = 0; }
     setobj(&p->item, item);
     if (p->rate != 0) apl_set_rate(s, 0, p->rate);
 }
-static cmtime_t apl_current(id s, SEL c) { (void)c; return APL(s)->item ? cm_seconds(ITM(APL(s)->item)->pos) : cm_invalid(); }
+/* para avplayervideo.c (AVPlayerItemVideoOutput, AVPlayerLayer), sem passar CMTime por objc_msgSend */
+double cx_avitem_seconds(id item) { if (!item) return 0; clock_sync_item(item); return ITM(item)->pos; }
+const char *cx_avitem_video_path(id item) {
+    id a = item ? ITM(item)->asset : 0;
+    return a && AST(a)->has_vid ? cx_audio_url_path(AST(a)->url) : 0;
+}
+id cx_avplayer_item(id player) { return player ? APL(player)->item : 0; }
+float cx_avplayer_rate(id player) { return player ? APL(player)->rate : 0; }
+static cmtime_t apl_current(id s, SEL c) { (void)c; clock_sync(s); return APL(s)->item ? cm_seconds(ITM(APL(s)->item)->pos) : cm_invalid(); }
 static void apl_seek(id s, SEL c, cmtime_t t) {
     (void)c;
     avk_transport_t tr = apl_transport(s, 1);
     avk_seek(&tr, cm_to_sec(t));
+    if (APL(s)->clock) clock_rebase(s);
 }
 static void apl_seek_done(id s, SEL c, cmtime_t t, void *blk) { apl_seek(s, c, t); if (blk) ((void (*)(void *, BOOL))BLK_FN(blk))(blk, YES); }
 static void apl_seek_tol(id s, SEL c, cmtime_t t, cmtime_t a, cmtime_t b) { (void)a; (void)b; apl_seek(s, c, t); }
@@ -2103,6 +2356,8 @@ void cx_avfaudio_init(void) {
     M(AVAssetTrack, "duration", track_duration); M(AVAssetTrack, "naturalTimeScale", track_scale);
     M(AVAssetTrack, "isPlayable", track_yes); M(AVAssetTrack, "isEnabled", track_yes);
     M(AVAssetTrack, "isDecodable", track_yes);
+    M(AVAssetTrack, "naturalSize", track_size); M(AVAssetTrack, "nominalFrameRate", track_fps);
+    M(AVAssetTrack, "preferredTransform", track_transform); M(AVAssetTrack, "trackID", track_id);
     K(&AVURLAsset_c, &AVURLAsset_m, "AVURLAsset", &AVAsset_c, 0);
     CM(AVAsset, "assetWithURL:", asset_with_url); CM(AVURLAsset, "URLAssetWithURL:options:", asset_with_url_opts);
     M(AVURLAsset, "initWithURL:options:", asset_init); M(AVURLAsset, "URL", asset_url);
@@ -2140,6 +2395,8 @@ void cx_avfaudio_init(void) {
     M(AVPlayerItem, "initWithURL:", item_init_url); M(AVPlayerItem, "initWithAsset:", item_init_asset);
     M(AVPlayerItem, "asset", item_asset); M(AVPlayerItem, "status", item_status); M(AVPlayerItem, "error", item_error);
     M(AVPlayerItem, "duration", item_duration); M(AVPlayerItem, "currentTime", item_current);
+    M(AVPlayerItem, "outputs", item_outputs); M(AVPlayerItem, "addOutput:", item_add_output); M(AVPlayerItem, "removeOutput:", item_remove_output);
+    M(AVPlayerItem, "presentationSize", item_presentation);
     K(&AVPlayer_c, &AVPlayer_m, "AVPlayer", obj, sizeof(avpl_t) - 8);
     K(&AVQueuePlayer_c, &AVQueuePlayer_m, "AVQueuePlayer", &AVPlayer_c, 0);
     CM(AVPlayer, "playerWithURL:", apl_with_url); CM(AVPlayer, "playerWithPlayerItem:", apl_with_item);
@@ -2154,6 +2411,7 @@ void cx_avfaudio_init(void) {
     M(AVPlayer, "addPeriodicTimeObserverForInterval:queue:usingBlock:", apl_add_periodic);
     M(AVPlayer, "addBoundaryTimeObserverForTimes:queue:usingBlock:", apl_add_boundary);
     M(AVPlayer, "removeTimeObserver:", apl_remove_obs);
+    M(AVPlayer, "mosClockTick:", apl_clock_tick);
     K(&MOSAVTimeObserver_c, &MOSAVTimeObserver_m, "MOSAVTimeObserver", obj, sizeof(aplobs_t) - 8);
     M(MOSAVTimeObserver, "fire:", obs_fire);
 
@@ -2187,4 +2445,5 @@ void cx_avfaudio_init(void) {
     M(AVContentKeySession, "makeSecureTokenForExpirationDateOfPersistableContentKey:error:", ckey_token);
     { extern void cx_avkit_init(void); cx_avkit_init(); }
     { extern void cx_avimagegen_init(void); cx_avimagegen_init(); }
+    { extern void cx_avplayervideo_init(void); cx_avplayervideo_init(); }
 }

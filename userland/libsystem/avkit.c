@@ -37,6 +37,7 @@ cx_class_t AVPlayerView_c __asm__("OBJC_CLASS_$_AVPlayerView");
 cx_class_t AVPlayerView_m __asm__("OBJC_METACLASS_$_AVPlayerView");
 static const char k_style = 0, k_gravity = 0, k_fullscreen = 0;
 
+static void pvc_set_player(id s, SEL c, id p);
 static id pvc_init(id s, SEL c) {
     (void)c;
     objc_setAssociatedObject(s, &k_shows, cx_num_i(1), 1);
@@ -44,11 +45,40 @@ static id pvc_init(id s, SEL c) {
 }
 static id pvc_init_player(id s, SEL c, id player) {
     pvc_init(s, c);
-    if (player) objc_setAssociatedObject(s, &k_player, player, 1);
+    if (player) pvc_set_player(s, 0, player);
     return s;
 }
 static id pvc_player(id s, SEL c) { (void)c; return objc_getAssociatedObject(s, &k_player); }
-static void pvc_set_player(id s, SEL c, id p) { (void)c; objc_setAssociatedObject(s, &k_player, p, 1); }
+/* o vídeo: um AVPlayerLayer (avplayervideo.c) como sublayer do layer da view, do tamanho dela */
+static const char k_vlayer = 0;
+typedef struct { double x, y, w, h; } avk_rect_t;
+id objc_msgSend_stret(id self, SEL op, ...);
+static void attach_video_layer(id view, id player) {
+    if (!view) return;
+    id pl = objc_getAssociatedObject(view, &k_vlayer);
+    if (pl) { MSG(void, pl, "setPlayer:", player); return; }
+    if (!player) return;
+    cx_class_t *k = cx_class_named("AVPlayerLayer");
+    if (!k) return;
+    if (MSG(BOOL, view, "respondsToSelector:", sel_registerName("setWantsLayer:"))) MSG(void, view, "setWantsLayer:", (BOOL)YES);
+    id host = MSG0(id, view, "layer");
+    if (!host) return;
+    pl = MSG(id, (id)k, "playerLayerWithPlayer:", player);
+    if (!pl) return;
+    avk_rect_t b = ((avk_rect_t (*)(id, SEL))objc_msgSend_stret)(host, sel_registerName("bounds"));
+    MSG(void, pl, "setFrame:", b);
+    MSG(void, pl, "setAutoresizingMask:", (unsigned)(2 | 16));   /* kCALayerWidthSizable | kCALayerHeightSizable */
+    MSG(void, host, "addSublayer:", pl);
+    objc_setAssociatedObject(view, &k_vlayer, pl, 1);
+}
+static id pvc_view(id s, SEL c);
+static void pvc_set_player(id s, SEL c, id p) {
+    (void)c;
+    objc_setAssociatedObject(s, &k_player, p, 1);
+    /* AVPlayerView é a própria view; AVPlayerViewController desenha na view dele */
+    if (MSG(BOOL, s, "respondsToSelector:", sel_registerName("addSubview:"))) attach_video_layer(s, p);
+    else attach_video_layer(pvc_view(s, 0), p);
+}
 static BOOL pvc_shows(id s, SEL c) { (void)c; return shows_of(s) ? YES : NO; }
 static void pvc_set_shows(id s, SEL c, BOOL v) { (void)c; objc_setAssociatedObject(s, &k_shows, cx_num_i(v ? 1 : 0), 1); }
 static id pvc_view(id s, SEL c) {
@@ -56,7 +86,7 @@ static id pvc_view(id s, SEL c) {
     id v = objc_getAssociatedObject(s, &k_view);
     if (v) return v;
     v = existing_view();
-    if (v) objc_setAssociatedObject(s, &k_view, v, 1);
+    if (v) { objc_setAssociatedObject(s, &k_view, v, 1); attach_video_layer(v, pvc_player(s, 0)); }
     return v;
 }
 static void pvc_play(id s, SEL c) {
@@ -102,14 +132,19 @@ static id route_port(id s, SEL c, int i) { (void)s; (void)c; const char *p = avk
 static id route_name(id s, SEL c, int i) { (void)s; (void)c; const char *p = avk_route_name(i); return p ? cx_str(p) : 0; }
 
 /* AVPlayerView (AppKit): a NSView que mostra um AVPlayer. Guarda o player e as opções de apresentação; a reprodução
- * é a do AVPlayer de avfaudio.c (o mOS não tem AVPlayerLayer, então o quadro de vídeo não é desenhado na view). */
+ * é a do AVPlayer de avfaudio.c e o vídeo é um AVPlayerLayer (avplayervideo.c) no layer da view. */
 static long pv_style(id s, SEL c) { (void)c; id n = objc_getAssociatedObject(s, &k_style); return n ? MSG0(long, n, "longValue") : 1; }
 static void pv_set_style(id s, SEL c, long v) { (void)c; objc_setAssociatedObject(s, &k_style, cx_num_i(v), 1); }
 static id pv_gravity(id s, SEL c) { (void)c; id g = objc_getAssociatedObject(s, &k_gravity); return g ? g : cx_str("AVLayerVideoGravityResizeAspect"); }
-static void pv_set_gravity(id s, SEL c, id g) { (void)c; objc_setAssociatedObject(s, &k_gravity, g, 3); }
+static void pv_set_gravity(id s, SEL c, id g) {
+    (void)c;
+    objc_setAssociatedObject(s, &k_gravity, g, 3);
+    id pl = objc_getAssociatedObject(s, &k_vlayer);
+    if (pl) MSG(void, pl, "setVideoGravity:", g);
+}
 static BOOL pv_fullscreen(id s, SEL c) { (void)c; id n = objc_getAssociatedObject(s, &k_fullscreen); return n && MSG0(int, n, "intValue") ? YES : NO; }
 static void pv_set_fullscreen(id s, SEL c, BOOL v) { (void)c; objc_setAssociatedObject(s, &k_fullscreen, cx_num_i(v ? 1 : 0), 1); }
-static BOOL pv_ready(id s, SEL c) { (void)c; return pvc_player(s, 0) ? YES : NO; }
+static BOOL pv_ready(id s, SEL c) { (void)c; id pl = objc_getAssociatedObject(s, &k_vlayer); return pl && MSG0(BOOL, pl, "isReadyForDisplay") ? YES : NO; }
 static BOOL pv_no(id s, SEL c) { (void)s; (void)c; return NO; }
 static void pv_set_ignored_b(id s, SEL c, BOOL v) { (void)s; (void)c; (void)v; }
 
