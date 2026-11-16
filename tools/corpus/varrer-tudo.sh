@@ -40,28 +40,24 @@ fi
 echo "varrer-tudo: ${#ids[@]} apps a medir neste lote"
 PESADO=/home/thiago/OpenBot/Shared/mos-tools/bin/mos-pesado
 espera_ram() { while [ "$(free -m | awk '/^Mem/{print $7}')" -lt 4000 ]; do sleep 60; done; }
-mede() {
-    timeout 1800 python3 "$H" scan --tolerante --limpar --fixar --continuar \
-        "${LIBS[@]}" --summary "build/corpus/$1.summary.json" "$1" 2>&1 | grep -v '^baixando' | tail -2
-}
 adiados=()
 for id in "${ids[@]}"; do
     python3 "$H" baixar --fixar "$id" 2>&1 | grep -v '^baixando'
     espera_ram
     # arquivo pequeno (< 200 MB) não é descompactação grande: mede fora da trava; o resto vai pelo mos-pesado
     tam=$(du -sm "build/corpus/$id" 2>/dev/null | cut -f1)
-    if [ "${tam:-999}" -lt 200 ]; then nice -n 10 bash -c "$(declare -p H LIBS); $(declare -f mede); mede $id"; continue; fi
+    if [ "${tam:-999}" -lt 200 ]; then nice -n 10 tools/corpus/medir-um.sh "$id" "${LIBS[@]}"; continue; fi
     if ! flock -n /tmp/mos-pesado.lock true; then
         # trava ocupada e arquivo grande: vai para o fim do lote (o download fica no disco) e os pequenos seguem
         adiados+=("$id")
         echo "varrer-tudo: $id ($tam MB) adiado para o fim do lote"
         continue
     fi
-    "$PESADO" bash -c "$(declare -p H LIBS); $(declare -f mede); mede $id"
+    "$PESADO" tools/corpus/medir-um.sh "$id" "${LIBS[@]}"
 done
 for id in "${adiados[@]}"; do
     espera_ram
-    "$PESADO" bash -c "$(declare -p H LIBS); $(declare -f mede); mede $id"
+    "$PESADO" tools/corpus/medir-um.sh "$id" "${LIBS[@]}"
 done
 [ $mais = 1 ] && exit 3
 exit 0
