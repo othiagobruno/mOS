@@ -106,6 +106,9 @@ int         aml_call_int1(aml_node_t *scope, const char *path, u64 arg, u64 *out
 void        aml_val_free(aml_val_t *v);
 aml_val_t   aml_int(u64 v);
 int         aml_val_to_int(const aml_val_t *v, u64 *out);
+int         aml_make_buffer(aml_val_t *out, const u8 *data, u32 len);
+/* roteamento de INTx pelo _PRT em modo PIC (dev/acpi_prt.c): IRQ 0..15 ou -1 */
+int         acpi_pci_irq_cfg(u32 (*cfg)(u8 bus, u8 dev, u8 fn, u8 off), u8 bus, u8 dev, u8 fn, u8 pin);
 void        aml_path(aml_node_t *n, char *buf, u32 size);
 u32         aml_node_count(void);
 u32         aml_int_bits(void);

@@ -266,6 +266,7 @@ void   cpufreq_ap_tick(void);           /* tique do LAPIC de cada AP */
 int    cpufreq_current_mhz(void);
 int    cpufreq_states(u32 *mhz, int max);
 bool   acpi_ready(void);
+int    acpi_pci_irq(u8 bus, u8 dev, u8 fn, u8 pin);   /* INTx (0 = INTA) pelo _PRT, IRQ do 8259 ou -1 */
 const char *acpi_status(void);
 const void *acpi_find_table(const char *sig, int nth);
 bool   acpi_sleep_type(int state, u8 *a, u8 *b);

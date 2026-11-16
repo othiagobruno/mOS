@@ -453,6 +453,8 @@ static int to_str(ex_t *x, const aml_val_t *v, aml_val_t *out, int mode) {
     return fail(x, AML_ETYPE, "Package não converte para String");
 }
 
+int aml_make_buffer(aml_val_t *out, const u8 *data, u32 len) { return v_buf(out, data, len); }
+
 int aml_val_to_int(const aml_val_t *v, u64 *out) {
     ex_t x; memset(&x, 0, sizeof x);
     return to_int(&x, v, out) ? (x.err ? x.err : AML_ETYPE) : AML_OK;

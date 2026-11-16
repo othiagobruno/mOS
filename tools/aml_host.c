@@ -53,6 +53,11 @@ bool aml_os_io(u16 port, u32 bits, u64 *v, bool w) {
     nio++;
     for (u32 i = 0; i < bits / 8; i++) {
         u16 p = (u16)(port + i);
+        if (p == 0xC01) {  /* roteador de PIRQ do FCH: índice em 0xC00, dado em 0xC01 */
+            static u8 pirq[256];
+            if (w) pirq[io[0xC00]] = (u8)(*v >> (8 * i)); else *v |= (u64)pirq[io[0xC00]] << (8 * i);
+            continue;
+        }
         if (p == 0x71) {   /* CMOS indexado, como no hardware */
             if (w) cmos_ram[cmos_idx] = (u8)(*v >> (8 * i)); else *v |= (u64)cmos_ram[cmos_idx] << (8 * i);
             continue;
@@ -127,6 +132,13 @@ static void show(const char *label, aml_val_t *v, int ind) {
 }
 
 static int fails;
+/* PCI falso para o _PRT: 00:08.1 é ponte para o barramento 3 */
+static u32 fake_cfg(u8 bus, u8 dev, u8 fn, u8 off) {
+    if (bus == 0 && dev == 8 && fn == 0) { if (off == 0) return 0x14521022; if (off == 0x0C) return 0x00800000; return 0; }
+    if (bus == 0 && dev == 8 && fn == 1) { if (off == 0) return 0x15DB1022; if (off == 0x0C) return 0x00010000; if (off == 0x18) return 0x00030300; return 0; }
+    if (bus == 3 && dev == 0) { if (off == 0) return 0x15E01022; return 0; }
+    return 0xFFFFFFFF;
+}
 static void check(int ok, const char *what) { if (!ok) { fails++; printf("FALHOU: %s\n", what); } }
 
 typedef struct { int devs, hid, crs, prt; } count_t;
@@ -280,6 +292,15 @@ int main(int argc, char **argv) {
         printf("_WAK(3): %s\n", aml_strerror(r));
         check(r == AML_OK, "_WAK(3)");
         aml_val_free(&v);
+    }
+    /* roteamento de INTx em modo PIC: ponte 00:08.1 com barramento secundário 3 (GPU, USB, áudio do PC) */
+    {
+        u64 o; aml_call_int1(NULL, "\\_PIC", 0, &o);
+        int a = acpi_pci_irq_cfg(fake_cfg, 0, 0x14, 0, 0), b = acpi_pci_irq_cfg(fake_cfg, 3, 0, 3, 0), c = acpi_pci_irq_cfg(fake_cfg, 3, 0, 6, 2);
+        printf("_PRT modo PIC: 00:14.0 INTA -> IRQ %d, 03:00.3 INTA -> IRQ %d, 03:00.6 INTC -> IRQ %d\n", a, b, c);
+        check(a > 2 && a < 16 && c > 2 && c < 16, "_PRT resolve IRQs do 8259 (LNKA, LNKG)");
+        check(b == -1, "LNKE: _SRS do firmware não programa (bug da BIOS), rota recusada");
+        check(acpi_pci_irq_cfg(fake_cfg, 0, 0x14, 0, 0) == a && acpi_pci_irq_cfg(fake_cfg, 3, 0, 6, 2) == c, "_PRT estável (links já programados)");
     }
     aml_node_t *pwrb = aml_find(NULL, "\\_SB.PWRB");
     if (pwrb) check(aml_device_match(pwrb, "PNP0C0C"), "PWRB é PNP0C0C");
