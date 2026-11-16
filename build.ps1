@@ -313,6 +313,11 @@ if ($LASTEXITCODE -ne 0) {
         # os casos dos testes do Darling: F_GETPATH, morte por sinal, libproc, __thread e execl de si mesmo
         & $zig cc -target x86_64-macos -O1 "$root\userland\tests-darwinmisc\main.c" -o "$pdir\darwinmiscteste" "-Wl,-undefined,dynamic_lookup" 2>&1 | ForEach-Object { "$_" }
         if ($LASTEXITCODE -ne 0) { Write-Host "darwinmiscteste FAILED" -ForegroundColor Red; exit 1 }
+        # os casos C++ e ObjC/CF dos testes do Darling: exceções, thread_local, fstream, categoria, @try, super, stret/fpret, +load e a ponte CF
+        & $zig c++ -target x86_64-macos -O1 -std=c++17 "$root\userland\tests-darwincxx\main.cpp" -o "$pdir\darwincxxteste" "-Wl,-undefined,dynamic_lookup" 2>&1 | ForEach-Object { "$_" }
+        if ($LASTEXITCODE -ne 0) { Write-Host "darwincxxteste FAILED" -ForegroundColor Red; exit 1 }
+        & $zig cc -target x86_64-macos -O1 -x objective-c -Wno-deprecated-declarations "-I$root\userland\sdk\include" "$root\userland\tests-darwinobjc\main.m" -o "$pdir\darwinobjcteste" "-Wl,-undefined,dynamic_lookup" 2>&1 | ForEach-Object { "$_" }
+        if ($LASTEXITCODE -ne 0) { Write-Host "darwinobjcteste FAILED" -ForegroundColor Red; exit 1 }
         # simulated Wi-Fi radio + access point (kernel/wifi/sim.c); boot with run.ps1 -NoNet to test it end to end
         Set-Content -Path "$esp\mOS\Sistema\Biblioteca\wifi-simulado" -Value 'mOS-Teste' -Encoding ascii
     }
