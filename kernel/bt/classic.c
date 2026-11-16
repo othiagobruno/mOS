@@ -16,6 +16,11 @@
 #define PSM_HID_CTRL 0x0011
 #define PSM_HID_INTR 0x0013
 #define PSM_AVDTP    0x0019
+#define PSM_SDP      0x0001
+#define PSM_AVCTP    0x0017
+int sdp_handle(const u8 *q, int len, u8 *o, int max);     /* bt/avrcp.c */
+int avrcp_handle(const u8 *f, int len, u8 *o, int max);
+void avrcp_set_playing(bool on);
 #define MAXCH 6
 
 void input_hid_keyboard(u8 mods, const u8 keys[6]);
@@ -135,7 +140,7 @@ static void l2_signal(const u8 *p, int len) {
         switch (code) {
         case 0x02: {                                           /* pedido de conexão do dispositivo */
             u16 psm = le16(d), scid = le16(d + 2);
-            int i = (psm == PSM_HID_CTRL || psm == PSM_HID_INTR || psm == PSM_AVDTP) ? ch_new(psm) : -1;
+            int i = (psm == PSM_HID_CTRL || psm == PSM_HID_INTR || psm == PSM_AVDTP || psm == PSM_SDP || psm == PSM_AVCTP) ? ch_new(psm) : -1;
             u8 r[8];
             put16(r, i >= 0 ? c.ch[i].scid : 0); put16(r + 2, scid);
             put16(r + 4, i >= 0 ? 0 : 0x0002); put16(r + 6, 0);   /* 0 = ok, 2 = PSM não suportado */
@@ -197,6 +202,7 @@ static void av_start_stream(void) {
     c.started = timer_ticks();
     c.sent_frames = 0;
     c.av_st = 7;
+    avrcp_set_playing(true);
     rt = rh;
     audio_tap = tap;
     audio_route_bluetooth = true;
@@ -300,7 +306,12 @@ static void hid_rx(const u8 *p, int len) {
 static void chan_opened(int i) {
     kprintf("bt: canal L2CAP aberto (PSM 0x%04x, MTU remoto %u)\n", c.ch[i].psm, c.ch[i].rmtu);
     if (c.ch[i].psm == PSM_AVDTP) {
-        if (i == c.media_ch) { u8 d = (u8)(c.acp_seid << 2); c.av_st = 6; av_cmd(0x07, &d, 1); }
+        if (i == c.media_ch) {
+            u8 d = (u8)(c.acp_seid << 2); c.av_st = 6; av_cmd(0x07, &d, 1);
+            bool have = false;                                 /* botões do fone: abre o AVRCP se o fone ainda não abriu */
+            for (int k = 0; k < MAXCH; k++) if (c.ch[k].used && c.ch[k].psm == PSM_AVCTP) have = true;
+            if (!have) l2_connect(PSM_AVCTP);
+        }
         else if (c.sig_ch < 0) { c.sig_ch = i; c.av_st = 1; av_cmd(0x01, NULL, 0); }
     } else if (c.ch[i].psm == PSM_HID_CTRL) {
         c.hid_ctrl = i;
@@ -310,6 +321,8 @@ static void chan_opened(int i) {
     } else if (c.ch[i].psm == PSM_HID_INTR) {
         c.hid_intr = i;
         kprintf("bt: teclado/mouse Bluetooth pronto\n");
+    } else if (c.ch[i].psm == PSM_AVCTP) {
+        kprintf("bt: AVRCP pronto (botões do fone)\n");
     }
 }
 
@@ -494,6 +507,12 @@ bool classic_acl(const u8 *a, int len) {
     if (i < 0) return true;
     if (c.ch[i].psm == PSM_AVDTP && i == c.sig_ch) av_rx(d, l2len);
     else if (c.ch[i].psm == PSM_HID_INTR) hid_rx(d, l2len);
+    else if (c.ch[i].psm == PSM_SDP || c.ch[i].psm == PSM_AVCTP) {
+        static u8 out[600];
+        int max = c.ch[i].rmtu < (u16)sizeof out ? (int)c.ch[i].rmtu : (int)sizeof out;
+        int n = c.ch[i].psm == PSM_SDP ? sdp_handle(d, l2len, out, max) : avrcp_handle(d, l2len, out, max);
+        if (n > 0) l2_send(c.ch[i].dcid, out, (u16)n);
+    }
     return true;
 }
 

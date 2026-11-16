@@ -48,6 +48,9 @@ gcc -O1 -Wall -Wextra -DMOS_HOST_TEST -I tools -I kernel/include -I kernel/wifi/
     kernel/wifi/rtw88/rtw8821c.c kernel/wifi/rtw88/rtw_core.c kernel/wifi/rtw88/rtw_pwr.c \
     kernel/wifi/rtw88/rtw8821c_table.c -o /tmp/rtw88_chip
 /tmp/rtw88_chip firmware/rtw88/rtw8821c_fw.bin 2>/dev/null | tail -1
+# Bluetooth: servidor SDP e AVRCP (botões do fone)
+gcc -O1 -Wall -Wextra -DMOS_HOST_TEST -I tools -I kernel/include tools/avrcp_host.c kernel/bt/avrcp.c -o /tmp/avrcp_host
+/tmp/avrcp_host | tail -1
 # WPA3-SAE: vetores do IEEE 802.11-2020 anexo J.10 (caçar-e-bicar e H2E)
 gcc -O1 -Wall -Wextra -DMOS_HOST_TEST -I tools -I kernel/include tools/sae_host.c kernel/wifi/sae.c \
     kernel/bt/p256.c kernel/net/crypto.c kernel/bt/smp_crypto.c kernel/wifi/wpa.c -o /tmp/sae_host
