@@ -1393,7 +1393,7 @@ static id asset_tracks_media(id s, SEL c, id m) {
     return arr;
 }
 static void asset_load(id s, SEL c, id keys, void *blk) { (void)s; (void)c; (void)keys; if (blk) CALL_BLOCK0(blk); }
-/* AVAssetReader / AVAssetWriter. Áudio PCM vira CMSampleBuffer e WAV. Vídeo (MP4/MOV, H.264, avvideo.c): com
+/* AVAssetReader (o AVAssetWriter está em avwriter.c). Áudio PCM vira CMSampleBuffer. Vídeo (MP4/MOV, H.264, avvideo.c): com
  * kCVPixelBufferPixelFormatTypeKey nas outputSettings sai decodificado em CVPixelBuffer ('420v', '420f' ou 'BGRA'), na
  * ordem de exibição; com outputSettings nil sai como está no arquivo (AVCC, ordem de decodificação, kCMSampleAttachmentKey_NotSync
  * nos quadros que não são chave), como na AVFoundation. Texto e capítulo devolvem erro. */
@@ -1413,19 +1413,10 @@ typedef struct {
     int a_done, v_done;
 } avrd_t;
 typedef struct { cx_class_t *isa; id track; int media; u32 fmt; int decoded; } avrdo_t;
-typedef struct {
-    cx_class_t *isa;
-    id url, error, input;
-    avf_write_t wr;
-} avwr_t;
-typedef struct { cx_class_t *isa; id track; } awin_t;
 cx_class_t AVAssetReader_c __asm__("OBJC_CLASS_$_AVAssetReader"), AVAssetReader_m __asm__("OBJC_METACLASS_$_AVAssetReader");
 cx_class_t AVAssetReaderTrackOutput_c __asm__("OBJC_CLASS_$_AVAssetReaderTrackOutput"), AVAssetReaderTrackOutput_m __asm__("OBJC_METACLASS_$_AVAssetReaderTrackOutput");
-cx_class_t AVAssetWriter_c __asm__("OBJC_CLASS_$_AVAssetWriter"), AVAssetWriter_m __asm__("OBJC_METACLASS_$_AVAssetWriter");
-cx_class_t AVAssetWriterInput_c __asm__("OBJC_CLASS_$_AVAssetWriterInput"), AVAssetWriterInput_m __asm__("OBJC_METACLASS_$_AVAssetWriterInput");
 #define ARD(o) ((avrd_t *)(o))
 #define ARO(o) ((avrdo_t *)(o))
-#define AWR(o) ((avwr_t *)(o))
 static int media_code(id m) {
     const char *s = m ? cx_cstr(m) : "";
     if (!s) return 0;
@@ -1654,55 +1645,6 @@ static id rout_with(id k, SEL c, id track, id settings) {
     return objc_autorelease(rout_init(cx_alloc_instance(&AVAssetReaderTrackOutput_c), c, track, settings));
 }
 static id rout_track(id s, SEL c) { (void)c; return ARO(s)->track; }
-static id writer_init(id s, SEL c, id url, id ftype, id *err) {
-    (void)c;
-    setobj(&AWR(s)->url, url);
-    const char *ft = ftype ? cx_cstr(ftype) : "";
-    if (!avf_write_begin(&AWR(s)->wr, ft, 48000, 2)) {
-        id e = error_with("AVFoundationErrorDomain", AWR(s)->wr.err, "O mOS só grava WAV PCM. Vídeo e outros contêineres não são escritos.");
-        setobj(&AWR(s)->error, e);
-        if (err) *err = e;
-    }
-    return s;
-}
-static BOOL writer_can_add(id s, SEL c, id input) {
-    (void)c;
-    return input && !AWR(s)->input && AWR(s)->wr.status == AVF_WRITE_WRITING;
-}
-static void writer_add(id s, SEL c, id input) {
-    (void)c;
-    if (!writer_can_add(s, 0, input)) return;
-    setobj(&AWR(s)->input, input);
-    objc_setAssociatedObject(input, "writer", s, 0);
-}
-static BOOL writer_start(id s, SEL c) {
-    (void)c;
-    return AWR(s)->wr.status == AVF_WRITE_WRITING && AWR(s)->input;
-}
-static BOOL writer_finish(id s, SEL c) {
-    (void)c;
-    const char *path = cx_audio_url_path(AWR(s)->url);
-    if (!avf_write_finish(&AWR(s)->wr, path)) {
-        id e = error_with("AVFoundationErrorDomain", AWR(s)->wr.err ? AWR(s)->wr.err : -11822, "O WAV não foi gravado.");
-        setobj(&AWR(s)->error, e);
-        return 0;
-    }
-    return 1;
-}
-static void writer_cancel(id s, SEL c) { (void)c; avf_write_cancel(&AWR(s)->wr); }
-static i64 writer_status(id s, SEL c) { (void)c; return AWR(s)->wr.status; }
-static id writer_error(id s, SEL c) { (void)c; return AWR(s)->error; }
-static BOOL input_append(id s, SEL c, id sample) {
-    (void)c;
-    id w = objc_getAssociatedObject(s, "writer");
-    if (!w || !sample || AWR(w)->wr.status != AVF_WRITE_WRITING) return 0;
-    void *bb = CMSampleBufferGetDataBuffer(sample);
-    char *ptr = 0;
-    size_t total = 0;
-    if (!bb || CMBlockBufferGetDataPointer(bb, 0, 0, &total, &ptr) || !ptr || total < 4 || (total & 3)) return 0;
-    return avf_write_append(&AWR(w)->wr, (const short *)ptr, (unsigned)(total / 4)) != 0;
-}
-static BOOL input_ready(id s, SEL c) { (void)s; (void)c; return 1; }
 static i64 asset_status_key(id s, SEL c, id key, id *err) {
     (void)c; (void)key;
     if (asset_ok(s)) return 2;   /* AVKeyValueStatusLoaded */
@@ -2378,18 +2320,7 @@ void cx_avfaudio_init(void) {
     M(AVAssetReaderTrackOutput, "initWithTrack:outputSettings:", rout_init);
     M(AVAssetReaderTrackOutput, "track", rout_track);
     M(AVAssetReaderTrackOutput, "copyNextSampleBuffer", output_copy);
-    K(&AVAssetWriter_c, &AVAssetWriter_m, "AVAssetWriter", obj, sizeof(avwr_t) - 8);
-    M(AVAssetWriter, "initWithURL:fileType:error:", writer_init);
-    M(AVAssetWriter, "canAddInput:", writer_can_add);
-    M(AVAssetWriter, "addInput:", writer_add);
-    M(AVAssetWriter, "startWriting", writer_start);
-    M(AVAssetWriter, "finishWriting", writer_finish);
-    M(AVAssetWriter, "cancelWriting", writer_cancel);
-    M(AVAssetWriter, "status", writer_status);
-    M(AVAssetWriter, "error", writer_error);
-    K(&AVAssetWriterInput_c, &AVAssetWriterInput_m, "AVAssetWriterInput", obj, sizeof(awin_t) - 8);
-    M(AVAssetWriterInput, "appendSampleBuffer:", input_append);
-    M(AVAssetWriterInput, "isReadyForMoreMediaData", input_ready);
+    { extern void cx_avwriter_init(void); cx_avwriter_init(); }   /* AVAssetWriter: avwriter.c */
     K(&AVPlayerItem_c, &AVPlayerItem_m, "AVPlayerItem", obj, sizeof(avitem_t) - 8);
     CM(AVPlayerItem, "playerItemWithURL:", item_with_url); CM(AVPlayerItem, "playerItemWithAsset:", item_with_asset);
     M(AVPlayerItem, "initWithURL:", item_init_url); M(AVPlayerItem, "initWithAsset:", item_init_asset);
