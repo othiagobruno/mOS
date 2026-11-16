@@ -1,7 +1,7 @@
-/* mOS — ícones dos apps do sistema na linguagem visual do Tahoe (arte original do projeto, nada da Apple):
- * quadrado arredondado com degradê profundo, brilho no topo e borda especular, e símbolos em camadas de
- * vidro translúcido com realce na borda e sombra suave. Desenhados em vetor numa grade de 64 unidades;
- * o corpo ocupa 6..58 (81%, como a grade de ícones do macOS). icon_for() consulta tahoe_icon() primeiro. */
+/* mOS — catálogo dos 48 apps nativos, com PNGs originais em camadas sutis de vidro.
+ * Os desenhos vetoriais abaixo são a recuperação quando a arte não puder ser lida.
+ * Vetores numa grade de 64 unidades, com corpo em 6..58; os PNGs incluem a própria
+ * placa e margem externa. icon_for() consulta tahoe_icon() e mantém o cache. */
 #include "ui.h"
 #include "vfs.h"
 
@@ -10,12 +10,12 @@ extern surface_t *image_decode(const u8 *data, usize size);
 /* As artes rasterizadas usam os mesmos nomes de exec do registro de apps.
  * icon_for() mantém o resultado no seu cache por app/tamanho/tema. */
 static bool original_icon(const char *exec, surface_t *s, int x, int y, int size) {
-    if (strcmp(exec, "arquivos") && strcmp(exec, "horizonte") && strcmp(exec, "terminal")) return false;
     if (!s || size < 1 || size > 256) return false;
     int pixels = 16;
     while (pixels < size) pixels *= 2;
     char path[128];
-    snprintf(path, sizeof(path), "/Sistema/Biblioteca/Icones/%s-%d.png", exec, pixels);
+    bool calendar = !strcmp(exec, "calendario"), clock = !strcmp(exec, "relogio");
+    snprintf(path, sizeof(path), "/Sistema/Biblioteca/Icones/%s%s-%d.png", exec, calendar || clock ? "-base" : "", pixels);
     vnode_t *node = vfs_lookup(path);
     if (!node || node->dir || !vfs_ensure(node) || !node->data || node->size < 24 || node->size > 512 * 1024) return false;
     const u8 *d = node->data;
@@ -28,6 +28,35 @@ static bool original_icon(const char *exec, surface_t *s, int x, int y, int size
     if (!image) return false;
     gfx_blit_scaled(s, image, x, y, size, size, 255);
     surface_free(image);
+    if (calendar || clock) {
+        datetime_t now;
+        rtc_now(&now);
+        if (calendar) {
+            if (size >= 32) {
+                static const char *wd[] = {"DOM", "SEG", "TER", "QUA", "QUI", "SEX", "SÁB"};
+                static const char *mo[] = {"JAN", "FEV", "MAR", "ABR", "MAI", "JUN", "JUL", "AGO", "SET", "OUT", "NOV", "DEZ"};
+                char label[24];
+                snprintf(label, sizeof(label), "%s · %s", wd[now.weekday % 7], mo[(now.month + 11) % 12]);
+                text_draw_center(s, font_get(FONT_SEMIBOLD), size * 0.055f,
+                                 rect_make(x + size / 5, y + size / 4, size * 3 / 5, MAX(1, size * 6 / 100)),
+                                 RGB(255, 255, 255), label);
+            }
+            char day[4];
+            snprintf(day, sizeof(day), "%d", now.day);
+            text_draw_center(s, font_get(FONT_REGULAR), size * 0.34f,
+                             rect_make(x + size / 5, y + size * 34 / 100, size * 3 / 5, size * 42 / 100),
+                             RGB(38, 40, 46), day);
+        } else {
+            float cx = x + size * 0.5f, cy = y + size * 0.505f;
+            float hour = ((now.hour % 12) + now.minute / 60.0f) * 2 * PI_F / 12;
+            float minute = now.minute * 2 * PI_F / 60;
+            gfx_line(s, cx, cy, cx + fsin(hour) * size * 0.18f, cy - fcos(hour) * size * 0.18f,
+                     MAX(1.0f, size * 0.026f), RGB(35, 38, 44));
+            gfx_line(s, cx, cy, cx + fsin(minute) * size * 0.255f, cy - fcos(minute) * size * 0.255f,
+                     MAX(1.0f, size * 0.020f), RGB(35, 38, 44));
+            gfx_circle(s, cx, cy, MAX(0.7f, size * 0.016f), RGB(246, 106, 93));
+        }
+    }
     return true;
 }
 
@@ -478,9 +507,9 @@ static const struct { const char *exec; tahoe_fn fn; } table[] = {
 /* desenha o ícone Tahoe do app; false se o app não tem um (usa o desenho próprio do app) */
 bool tahoe_icon(const char *exec, surface_t *s, int x, int y, int size) {
     if (!exec) return false;
-    if (original_icon(exec, s, x, y, size)) return true;
     for (int i = 0; i < (int)ARRAY_LEN(table); i++)
         if (!strcmp(table[i].exec, exec)) {
+            if (original_icon(exec, s, x, y, size)) return true;
             ic_t c = {s, (float)x, (float)y, size / 64.0f};
             table[i].fn(&c);
             return true;

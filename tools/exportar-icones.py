@@ -5,17 +5,30 @@ Requer Pillow. Executar da raiz ou de qualquer diretório.
 Os tamanhos @2x indicam densidade; não adicionam detalhe ao original.
 """
 from pathlib import Path
+import json
+import shutil
 
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[1]
 SIZES = (16, 32, 64, 128, 256, 512, 1024)
-NAMES = ("arquivos", "horizonte", "terminal")
+NAMES = json.loads((ROOT / "assets/icones/catalogo.json").read_text())
+
+
+def export_bases(destination):
+    for name in ("calendario", "relogio"):
+        with Image.open(ROOT / f"assets/icones/bases/{name}.png") as source:
+            source = source.convert("RGBA")
+            for size in SIZES[:5]:
+                image = source.convert("RGBa").resize((size, size), Image.Resampling.LANCZOS).convert("RGBA")
+                image.save(destination / f"{name}-base-{size}.png")
 
 
 def main():
-    destination = ROOT / "root/mOS/Sistema/Biblioteca/Icones"
+    destination = ROOT / "assets/icones/png"
+    runtime = ROOT / "root/mOS/Sistema/Biblioteca/Icones"
     destination.mkdir(parents=True, exist_ok=True)
+    runtime.mkdir(parents=True, exist_ok=True)
     for name in NAMES:
         with Image.open(ROOT / f"assets/icones/originais/{name}.png") as source:
             source = source.convert("RGBA")
@@ -29,8 +42,12 @@ def main():
                     image = source.convert("RGBa").resize(
                         (pixels, pixels), Image.Resampling.LANCZOS
                     ).convert("RGBA")
-                    image.save(destination / f"{name}-{size}{suffix}.png")
+                    filename = f"{name}-{size}{suffix}.png"
+                    image.save(destination / filename)
+                    if density == 1 and size <= 256:
+                        shutil.copyfile(destination / filename, runtime / filename)
         print(f"{name}: 14 PNGs exportados")
+    export_bases(runtime)
 
 
 if __name__ == "__main__":

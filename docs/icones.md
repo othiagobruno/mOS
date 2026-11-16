@@ -1,128 +1,97 @@
-# Ícones do mOS
+# Ícones dos apps nativos do mOS
 
-## Entrega de 15/11/2026
+## Catálogo completo
 
-Primeiro conjunto rasterizado, revisto com camadas de vidro sutis e menos volume: **Arquivos, Horizonte e Terminal**. Os outros apps e os símbolos de sistema continuam com arte vetorial existente; esta entrega não conclui toda a frente.
+**48 de 48 apps nativos** de `kernel/apps/registry.c:all_apps[]` têm arte original rasterizada no estilo revisado: vista frontal, cantos contínuos, formas simples, camadas rasas de vidro e realces discretos. Esta entrega acrescenta os 45 que faltavam aos três primeiros do PR #265.
 
-Arte original gerada com a ferramenta imagegen. Nenhum arquivo ou glifo da Apple foi usado como referência. Os originais ficam em `assets/icones/originais/`; os prompts e detalhes da exportação em `assets/icones/README.md`.
+`assets/icones/catalogo.json` lista os nomes de execução; há um original RGBA por app em `assets/icones/originais/`. A verificação exige igualdade entre catálogo, registro, tabela de carregamento e arquivos originais, e rejeita originais repetidos.
 
-Cada um dos três ícones tem PNG RGBA em 16, 32, 64, 128, 256, 512 e 1024 px, mais as variantes @2x (32 a 2048 px): **42 arquivos**. `@2x` representa densidade; 2048 px é interpolado a partir do original gerado, não detalhe nativo adicional. Exportação reproduzível: `python3 tools/exportar-icones.py` (Pillow).
+Cada app tem PNG RGBA em **16, 32, 64, 128, 256, 512 e 1024 px**, mais as respectivas variantes **@2x** (32 a 2048 px): **672 PNGs públicos** em `assets/icones/png/`, mais **10 bases internas** de Calendário e Relógio (16 a 256 px). A imagem do sistema recebe apenas 250 PNGs pequenos (240 variantes normais até 256 px e as 10 bases); as resoluções maiores e @2x ficam fora do payload de boot. 2048 px é interpolado dos originais gerados, sem alegação de detalhe nativo adicional.
 
-## Carregamento
+## Carregamento no sistema
 
-- `kernel/ui/icons.c:icon_for()` mantém o cache por app, tamanho e tema, e preserva os ícones dos bundles externos.
-- `kernel/ui/icons_tahoe.c:original_icon()` procura `/Sistema/Biblioteca/Icones/<exec>-<tamanho>.png`, escolhendo a menor resolução que cobre o pedido de até 256 px. Decodifica PNG, escala para a superfície e libera a imagem temporária. Arquivo ausente, inválido ou falha de alocação retorna ao desenho vetorial existente.
-- As variantes de 512/1024 e @2x ficam disponíveis como arquivos, mas o cache atual de `icon_for()` limita a renderização a 256 px.
-- `kernel/ui/desktop.c` usa `icon_for()` no Dock, Busca, grade de apps e alternador. `kernel/ui/wm.c` usa o mesmo carregador nas janelas.
-- `tools/build.sh` copia `root/mOS/` para a imagem do sistema. A nova pasta entra nesse payload sem alterar o build.
+`kernel/ui/icons_tahoe.c:tahoe_icon()` verifica o nome na tabela de apps nativos e então carrega `/Sistema/Biblioteca/Icones/<exec>-<tamanho>.png`. A menor variante entre 16 e 256 px que cobre o pedido é decodificada e escalada para a superfície. A checagem de cabeçalho limita dimensões e alocação; a imagem temporária é liberada após o desenho. Arquivo ausente, inválido ou falha de alocação mantém o desenho vetorial existente.
 
-## Inventário de apps
+`kernel/ui/icons.c:icon_for()` preserva os ícones dos bundles externos e mantém o cache por app, tamanho e tema. O catálogo nativo já contém sua placa e margens: o carregador não coloca uma segunda placa em torno desses ícones, mesmo quando os cantos da arte são transparentes. Calendário e Relógio usam bases sem números/ponteiros fixos. O sistema desenha o dia, dia da semana/mês e ponteiros com o RTC; as entradas do cache expiram na troca do dia ou minuto. O tratamento existente do modo escuro continua aplicado após o desenho.
 
-Tabela de `kernel/ui/icons_tahoe.c`, cruzada com `kernel/apps/registry.c` e `docs/apps-sistema.md`. Os callbacks próprios dos apps em `kernel/apps/` continuam disponíveis quando não há entrada no catálogo.
+Dock, Busca, grade de apps e alternador em `kernel/ui/desktop.c`, e janelas em `kernel/ui/wm.c`, usam o mesmo `icon_for()`. As variantes de 512/1024 e @2x são entregáveis; o limite atual desse cache de renderização é 256 px. `tools/build.sh` copia `root/mOS/` para o payload sem necessidade de alterar o build. O verificador exige que as 240 variantes copiadas para runtime sejam idênticas à biblioteca pública e rejeita variantes grandes excedentes no payload.
 
-| Exec | Desenho vetorial existente | Arte usada nesta entrega |
+## Inventário dos apps
+
+| App nativo | Exec / nome dos PNGs | Vetor de recuperação |
 |---|---|---|
-| `arquivos` | `i_arquivos` | PNG novo |
-| `horizonte` | `i_horizonte` | PNG novo |
-| `terminal` | `i_terminal` | PNG novo |
-| `notas` | `i_notas` | Vetor existente |
-| `editor` | `i_editor` | Vetor existente |
-| `calculadora` | `i_calc` | Vetor existente |
-| `calendario` | `i_calendario` | Vetor existente |
-| `musica` | `i_musica` | Vetor existente |
-| `minas` | `i_minas` | Vetor existente |
-| `visualizador` | `i_visualizador` | Vetor existente |
-| `atividade` | `i_atividade` | Vetor existente |
-| `console` | `i_console` | Vetor existente |
-| `preferencias` | `i_prefs` | Vetor existente |
-| `sobre` | `i_sobre` | Vetor existente |
-| `componentes` | `i_componentes` | Vetor existente |
-| `instalador` | `i_instalador` | Vetor existente |
-| `lembretes` | `i_lembretes` | Vetor existente |
-| `contatos` | `i_contatos` | Vetor existente |
-| `relogio` | `i_relogio` | Vetor existente |
-| `stickies` | `i_stickies` | Vetor existente |
-| `xadrez` | `i_xadrez` | Vetor existente |
-| `sysinfo` | `i_sysinfo` | Vetor existente |
-| `disco` | `i_disco` | Vetor existente |
-| `captura` | `i_captura` | Vetor existente |
-| `medidor` | `i_medidor` | Vetor existente |
-| `fontes` | `i_fontes` | Vetor existente |
-| `grapher` | `i_grapher` | Vetor existente |
-| `gravador` | `i_gravador` | Vetor existente |
-| `fotos` | `i_fotos` | Vetor existente |
-| `diario` | `i_diario` | Vetor existente |
-| `dicas` | `i_dicas` | Vetor existente |
-| `freeform` | `i_freeform` | Vetor existente |
-| `tempo` | `i_tempo` | Vetor existente |
-| `mapas` | `i_mapas` | Vetor existente |
-| `bolsa` | `i_bolsa` | Vetor existente |
-| `script` | `i_script` | Vetor existente |
-| `senhas` | `i_senhas` | Vetor existente |
-| `dicionario` | `i_dicionario` | Vetor existente |
-| `chaves` | `i_chaves` | Vetor existente |
-| `audiomidi` | `i_audiomidi` | Vetor existente |
-| `paciencia` | `i_paciencia` | Vetor existente |
-| `jogos` | `i_jogos` | Vetor existente |
-| `atalhos` | `i_atalhos` | Vetor existente |
-| `mail` | `i_mail` | Vetor existente |
-| `livros` | `i_livros` | Vetor existente |
-| `quicktime` | `i_quicktime` | Vetor existente |
-| `automator` | `i_automator` | Vetor existente |
-| `imagecapture` | `i_imagecapture` | Vetor existente |
+| Arquivos | `arquivos` | `i_arquivos` |
+| Horizonte | `horizonte` | `i_horizonte` |
+| Terminal | `terminal` | `i_terminal` |
+| Notas | `notas` | `i_notas` |
+| Editor de Texto | `editor` | `i_editor` |
+| Calculadora | `calculadora` | `i_calc` |
+| Calendário | `calendario` | `i_calendario` |
+| Música | `musica` | `i_musica` |
+| Campo Minado | `minas` | `i_minas` |
+| Pré-Visualização | `visualizador` | `i_visualizador` |
+| Monitor de Atividade | `atividade` | `i_atividade` |
+| Console | `console` | `i_console` |
+| Ajustes do Sistema | `preferencias` | `i_prefs` |
+| Sobre este mOS | `sobre` | `i_sobre` |
+| Componentes | `componentes` | `i_componentes` |
+| Instalar mOS | `instalador` | `i_instalador` |
+| Lembretes | `lembretes` | `i_lembretes` |
+| Contatos | `contatos` | `i_contatos` |
+| Relógio | `relogio` | `i_relogio` |
+| Notas Autoadesivas | `stickies` | `i_stickies` |
+| Xadrez | `xadrez` | `i_xadrez` |
+| Informações do Sistema | `sysinfo` | `i_sysinfo` |
+| Utilitário de Disco | `disco` | `i_disco` |
+| Captura de Tela | `captura` | `i_captura` |
+| Medidor de Cor Digital | `medidor` | `i_medidor` |
+| Livro de Fontes | `fontes` | `i_fontes` |
+| Grapher | `grapher` | `i_grapher` |
+| Gravador | `gravador` | `i_gravador` |
+| Fotos | `fotos` | `i_fotos` |
+| Diário | `diario` | `i_diario` |
+| Dicas | `dicas` | `i_dicas` |
+| Freeform | `freeform` | `i_freeform` |
+| Tempo | `tempo` | `i_tempo` |
+| Mapas | `mapas` | `i_mapas` |
+| Bolsa | `bolsa` | `i_bolsa` |
+| Editor de Script | `script` | `i_script` |
+| Senhas | `senhas` | `i_senhas` |
+| Dicionário | `dicionario` | `i_dicionario` |
+| Acesso às Chaves | `chaves` | `i_chaves` |
+| Configuração de Áudio e MIDI | `audiomidi` | `i_audiomidi` |
+| Paciência | `paciencia` | `i_paciencia` |
+| Jogos | `jogos` | `i_jogos` |
+| Atalhos | `atalhos` | `i_atalhos` |
+| Mail | `mail` | `i_mail` |
+| Livros | `livros` | `i_livros` |
+| QuickTime Player | `quicktime` | `i_quicktime` |
+| Automator | `automator` | `i_automator` |
+| Captura de Imagem | `imagecapture` | `i_imagecapture` |
 
-## Pastas, arquivos, volumes e símbolos
+## Pastas, documentos e símbolos de sistema
 
-Funções existentes em `kernel/ui/icons.c`; os ícones de pasta/documento/disco/lixeira e glifos monocromáticos ainda são vetoriais. Os glifos preservam cor, estado de rede/volume, direção e contraste do tema.
+O escopo desta entrega é o conjunto completo de apps nativos. As funções abaixo de `kernel/ui/icons.c` continuam com os desenhos vetoriais existentes para pastas, documentos, discos, lixeira e símbolos dinâmicos. A frente de ícones de sistema continua separadamente pendente; a entrega dos 48 apps não é a conclusão de toda a iconografia do sistema.
 
-- `glyph_mos_logo`
-- `glyph_search`
-- `glyph_list`
-- `glyph_wifi`
-- `glyph_ethernet`
-- `glyph_bluetooth`
-- `glyph_speaker`
-- `glyph_chevron`
-- `glyph_plus`
-- `glyph_reload`
-- `glyph_check`
-- `glyph_gear`
-- `glyph_grid`
-- `glyph_house`
-- `glyph_clock`
-- `icon_folder`
-- `icon_document`
-- `icon_disk`
-- `icon_trash`
-- `icon_arquivos`
-- `icon_horizonte`
-- `icon_terminal`
-- `icon_prefs`
-- `icon_editor`
-- `icon_notas`
-- `icon_calc`
-- `icon_calendario`
-- `icon_atividade`
-- `icon_console`
-- `icon_musica`
-- `icon_minas`
-- `icon_visualizador`
-- `glyph_copy`
-- `glyph_globe`
-- `glyph_sb_recents`
-- `glyph_sb_shared`
-- `glyph_sb_desktop`
-- `glyph_sb_document`
-- `glyph_sb_download`
-- `glyph_sb_cloud`
-- `glyph_sb_home`
-- `glyph_sb_trash`
-- `glyph_sb_photo`
-- `glyph_sb_music`
-- `glyph_sb_apps`
-- `glyph_sb_disk`
-- `glyph_sidebar_toggle`
+`glyph_mos_logo`, `glyph_search`, `glyph_list`, `glyph_wifi`, `glyph_ethernet`, `glyph_bluetooth`, `glyph_speaker`, `glyph_chevron`, `glyph_plus`, `glyph_reload`, `glyph_check`, `glyph_gear`, `glyph_grid`, `glyph_house`, `glyph_clock`, `icon_folder`, `icon_document`, `icon_disk`, `icon_trash`, `icon_arquivos`, `icon_horizonte`, `icon_terminal`, `icon_prefs`, `icon_editor`, `icon_notas`, `icon_calc`, `icon_calendario`, `icon_atividade`, `icon_console`, `icon_musica`, `icon_minas`, `icon_visualizador`, `glyph_copy`, `glyph_globe`, `glyph_sb_recents`, `glyph_sb_shared`, `glyph_sb_desktop`, `glyph_sb_document`, `glyph_sb_download`, `glyph_sb_cloud`, `glyph_sb_home`, `glyph_sb_trash`, `glyph_sb_photo`, `glyph_sb_music`, `glyph_sb_apps`, `glyph_sb_disk`, `glyph_sidebar_toggle`
 
-## Verificação e limites
+## Reprodução e verificação
 
-Verificados os 42 PNGs (integridade, dimensões, RGBA, transparência e canto externo com alfa de no máximo 1/255), sintaxe de `kernel/ui/icons_tahoe.c` com Clang e `git diff --check`. Ainda não foi validada a renderização dentro do mOS, nem o comportamento visual no modo escuro. Nenhum build do projeto ou QEMU executado.
+```sh
+python3 tools/exportar-icones.py
+python3 tools/verificar-icones.py
+cc -std=c11 -ffreestanding -ffunction-sections -fdata-sections -Ikernel/include tools/test-icones-png.c -Wl,--gc-sections -o /tmp/mos-icon-png
+python3 tools/verificar-icones.py /tmp/mos-icon-png
+clang -std=c11 -ffreestanding -fsyntax-only -Ikernel/include kernel/ui/icons.c kernel/ui/icons_tahoe.c
+cc -std=c11 -ffreestanding -ffunction-sections -fdata-sections -Ikernel/include tools/test-icones-dinamicos.c -Wl,--gc-sections -lm -o /tmp/mos-icon-live
+/tmp/mos-icon-live
+git diff --check
+```
+
+O exportador/verificador exige Pillow; reduz com alfa pré-multiplicado e Lanczos. Foram conferidos cobertura, originais distintos, integridade, dimensões, RGBA, transparência, cantos externos com alfa até 8/255 e limite de arquivo do carregador nos 682 PNGs (672 variantes públicas e 10 bases). Os **250 PNGs de até 256 px** tiveram dimensões e hash de todos os pixels pré-multiplicados comparados entre o decodificador PNG real do kernel e Pillow. Todos coincidiram. O teste instrumentado do carregador confirmou os dias 1 e 31, horários 03:00 e 09:30, liberação da superfície temporária e recuperação por arquivo ausente/dimensão inválida. As duas unidades C alteradas passaram na checagem de sintaxe.
+
+Nenhum build do projeto ou QEMU foi executado. Renderização dentro do mOS, comportamento da recuperação vetorial no sistema em execução e aparência efetiva no modo escuro ainda não foram validados em uma sessão do sistema.
+
+## CI do repositório
+
+A execução inicial da CI deste PR falhou antes do build em `tools/test-mkimg-ls.sh`, ao tentar ler o objeto Git histórico `7b65273`, ausente no checkout da CI. Esse script e o workflow não foram alterados por esta entrega. Os testes de host dos ícones acima passaram; a CI global não deve ser descrita como aprovada.
