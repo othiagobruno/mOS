@@ -358,9 +358,6 @@ kern_return_t IOConnectCallStructMethod(unsigned c, unsigned sel, const void *in
 }
 
 /* ---- SystemConfiguration: interfaces de rede (lista vazia em vez de NULL: o Chrome itera) */
-id_ SCNetworkInterfaceCopyAll(void) { id_ a = MSG0(id_, CLS("NSArray"), "array"); return a ? objc_retain(a) : 0; }
-id_ SCNetworkInterfaceGetBSDName(void *i) { (void)i; return 0; }
-id_ SCNetworkInterfaceGetHardwareAddressString(void *i) { (void)i; return 0; }
 
 /* ---- LaunchServices / Spotlight */
 /* LSRegisterURL: openurl.c */

@@ -482,6 +482,46 @@ int res_9_mkquery(int op, const char *dname, int cls, int type, const u8 *data, 
     buf[n - 2] = (u8)(cls >> 8); buf[n - 1] = (u8)cls;
     return n;
 }
+int res_9_nmkquery(void *state, int op, const char *dname, int cls, int type, const u8 *data, int datalen, const u8 *newrr, u8 *buf, int buflen) {
+    (void)state;
+    return res_9_mkquery(op, dname, cls, type, data, datalen, newrr, buf, buflen);
+}
+/* manda uma mensagem pronta aos servidores (UDP, TCP se truncar) e devolve o tamanho da resposta */
+int res_9_nsend(void *state, const u8 *msg, int msglen, u8 *ans, int anslen) {
+    (void)state;
+    if (!msg || msglen < 12 || !ans || anslen < 12) { h_errno = NO_RECOVERY; return -1; }
+    int n = exchange(msg, msglen, ans, anslen);
+    if (n >= 2 && (ans[0] != msg[0] || ans[1] != msg[1])) { h_errno = TRY_AGAIN; return -1; }   /* id diferente */
+    return n;
+}
+int res_9_send(const u8 *msg, int msglen, u8 *ans, int anslen) { return res_9_nsend(0, msg, msglen, ans, anslen); }
+int res_nsend(void *state, const u8 *msg, int msglen, u8 *ans, int anslen) { return res_9_nsend(state, msg, msglen, ans, anslen); }
+int res_send(const u8 *msg, int msglen, u8 *ans, int anslen) { return res_9_nsend(0, msg, msglen, ans, anslen); }
+/* union res_sockaddr_union do macOS: 128 bytes por servidor (sockaddr_in/in6 no começo). Só IPv4 é usado. */
+int res_9_setservers(void *state, const void *set, int cnt) {
+    (void)state;
+    if (!R.inited) res_ninit(0);
+    const u8 *p = set;
+    int k = 0;
+    for (int i = 0; i < cnt && p && k < 3; i++, p += 128) {
+        if (p[1] != 2) continue;                                      /* AF_INET */
+        R.ns[k++] = (unsigned)p[4] << 24 | (unsigned)p[5] << 16 | (unsigned)p[6] << 8 | p[7];
+    }
+    if (k) R.nscount = k;
+    return k;
+}
+int res_9_getservers(void *state, void *set, int cnt) {
+    (void)state;
+    if (!R.inited) res_ninit(0);
+    u8 *p = set;
+    int k = 0;
+    for (; k < R.nscount && k < cnt && p; k++, p += 128) {
+        memset(p, 0, 128);
+        p[0] = 16; p[1] = 2; p[2] = 0; p[3] = 53;
+        p[4] = (u8)(R.ns[k] >> 24); p[5] = (u8)(R.ns[k] >> 16); p[6] = (u8)(R.ns[k] >> 8); p[7] = (u8)R.ns[k];
+    }
+    return k;
+}
 int res_mkquery(int op, const char *dname, int cls, int type, const u8 *data, int datalen, const u8 *newrr, u8 *buf, int buflen) {
     return res_9_mkquery(op, dname, cls, type, data, datalen, newrr, buf, buflen);
 }
