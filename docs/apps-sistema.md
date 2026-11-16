@@ -18,6 +18,11 @@ rodar até reiniciar. Um callback que passa de 10 s sem voltar (laço infinito) 
 "não respondeu". Com as interrupções desligadas, um AP vigia pelo HPET e manda um NMI ao núcleo 0 (o app é encerrado do
 mesmo jeito); travado dentro de uma seção crítica do kernel, vira tela de pânico com o nome do app.
 
+Ajustes > Privacidade e Segurança > Permissões dos apps: lê o registro do TCC (`decisions.txt`, via
+`kernel/ui/tcc_prompt_core.inc`) e mostra, por serviço (câmera, microfone, contatos, arquivos, automação, notificações,
+gravação de tela, acessibilidade…), cada app com um interruptor concedido/negado e "Remover" (apaga a linha, como o
+`tccutil reset`). O libSystem relê o arquivo a cada consulta, então a mudança vale na hora.
+
 Teclas de mídia (`KEY_VOL_*`, `KEY_MUTE`, `KEY_PLAY`…, kernel.h): o kernel muda o volume e trata energia/repouso; o
 desktop mostra o HUD de volume, manda play/próxima/anterior/parar para a Música quando ela está aberta (senão a tecla vai
 para a janela em foco), e Busca/Launchpad abrem os painéis. "Repouso" está no menu do logo e no alerta de desligar

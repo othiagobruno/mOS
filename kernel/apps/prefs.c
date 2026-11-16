@@ -15,6 +15,8 @@
 
 extern int g_kbd_layout;
 #include "i18n.h"
+#include "vfs.h"
+#include "kernel/ui/tcc_prompt_core.inc"   /* registro do TCC: parse, set e format (frente da Natalia) */
 extern int g_tz_offset_min;
 extern bool g_rtc_is_utc;
 extern bool g_notify_dnd, g_notify_sound;
@@ -1217,8 +1219,100 @@ static void paint_wall(void) {
 }
 
 /* ================================================================== Privacidade e Segurança */
+/* Permissões dos apps: o registro do TCC (decisions.txt, "bundle serviço granted|denied|pending" por linha). O libSystem
+ * relê o arquivo a cada consulta, então mudar aqui vale na hora para o app. Remover apaga a linha (= tccutil reset):
+ * o app volta a perguntar. */
+static const struct { const char *service, *title; } priv_titles[] = {
+    {TCC_PROMPT_SCREEN, "Gravação de Tela"}, {TCC_PROMPT_AX, "Acessibilidade"},
+    {"kTCCServiceCamera", "Câmera"}, {"kTCCServiceMicrophone", "Microfone"},
+    {"kTCCServiceAddressBook", "Contatos"}, {"kTCCServiceCalendar", "Calendários"}, {"kTCCServiceReminders", "Lembretes"},
+    {"kTCCServicePhotos", "Fotos"}, {"kTCCServicePhotosAdd", "Fotos (somente adicionar)"},
+    {"kTCCServiceSystemPolicyDesktopFolder", "Pasta Mesa"}, {"kTCCServiceSystemPolicyDocumentsFolder", "Pasta Documentos"},
+    {"kTCCServiceSystemPolicyDownloadsFolder", "Pasta Transferências"},
+    {"kTCCServiceSystemPolicyRemovableVolumes", "Volumes removíveis"}, {"kTCCServiceSystemPolicyNetworkVolumes", "Volumes de rede"},
+    {"kTCCServiceSystemPolicyAllFiles", "Acesso Total ao Disco"}, {"kTCCServiceListenEvent", "Monitoramento de Entrada"},
+    {"kTCCServicePostEvent", "Controle do Computador"}, {"kTCCServiceBluetoothAlways", "Bluetooth"},
+    {"kTCCServiceLocation", "Serviços de Localização"}, {"kTCCServiceSpeechRecognition", "Reconhecimento de Fala"},
+    {"kTCCServiceMediaLibrary", "Biblioteca de Mídia"}, {"kTCCServiceLocalNetwork", "Rede Local"},
+    {"kTCCServiceFocusStatus", "Foco"}, {"kTCCServiceWillow", "Casa"}, {"kTCCServiceSiri", "Siri"},
+    {"kTCCServiceAppleEvents", "Automação"}, {"userNotifications", "Notificações"},
+};
+
+/* serviço sem o "+alvo" (Apple Events) */
+static void priv_base(char *out, int cap, const char *service) {
+    const char *plus = strchr(service, '+');
+    int n = plus ? (int)(plus - service) : (int)strlen(service);
+    snprintf(out, cap, "%.*s", n, service);
+}
+
+static bool priv_save(const tcc_prompt_rec *recs, int n) {
+    static char buf[TCC_PROMPT_CAP * 400];
+    int m = tcc_prompt_format(buf, sizeof buf, recs, n);
+    return m >= 0 && vfs_write_file(TCC_PROMPT_FILE, buf, (usize)m) != NULL;
+}
+
+static void paint_priv_apps(void) {
+    static tcc_prompt_rec recs[TCC_PROMPT_CAP];
+    int n = 0;
+    vnode_t *v = vfs_lookup(TCC_PROMPT_FILE);
+    if (v && !v->dir) {
+        vfs_ensure(v);
+        char *txt = kmalloc(v->size + 1);
+        if (txt) { memcpy(txt, v->data, v->size); txt[v->size] = 0; n = tcc_prompt_parse(txt, recs, TCC_PROMPT_CAP); kfree(txt); }
+    }
+    section("Permissões dos apps");
+    if (!n) { footnote("Nenhum app pediu acesso ainda. Quando um app pedir câmera, microfone, arquivos ou outro recurso, ele aparece aqui.", 0); return; }
+    bool dirty = false;
+    int del = -1, shown = 0;
+    /* uma seção por serviço, na ordem da tabela; serviços desconhecidos no fim, com o nome cru */
+    for (int t = 0; t <= (int)ARRAY_LEN(priv_titles) && del < 0; t++) {
+        int idx[TCC_PROMPT_CAP], k = 0;
+        for (int i = 0; i < n; i++) {
+            char base[184];
+            priv_base(base, sizeof base, recs[i].service);
+            bool known = false;
+            for (unsigned j = 0; j < ARRAY_LEN(priv_titles); j++) if (!strcmp(base, priv_titles[j].service)) { known = true; break; }
+            if (t < (int)ARRAY_LEN(priv_titles) ? !strcmp(base, priv_titles[t].service) : !known) idx[k++] = i;
+        }
+        if (!k) continue;
+        const char *title = t < (int)ARRAY_LEN(priv_titles) ? priv_titles[t].title : "Outros serviços";
+        text_draw(U->s, F(FONT_REGULAR), 12, X0 + 8, Y + 12, T.text2, title);
+        Y += 20;
+        rect_t g = group(k);
+        for (int r = 0; r < k; r++) {
+            tcc_prompt_rec *x = &recs[idx[r]];
+            char app[184], sub[220] = "";
+            tcc_prompt_app_name(app, sizeof app, x->bundle);
+            const char *plus = strchr(x->service, '+');
+            if (plus) { char alvo[184]; tcc_prompt_app_name(alvo, sizeof alvo, plus + 1); snprintf(sub, sizeof sub, "controlar %s", alvo); }
+            else if (t == (int)ARRAY_LEN(priv_titles)) snprintf(sub, sizeof sub, "%s", x->service);
+            if (x->state == TCC_PROMPT_PENDING) snprintf(sub + strlen(sub), sizeof sub - strlen(sub), "%sesperando resposta", sub[0] ? " · " : "");
+            int y = g.y + 6 + r * RH;
+            if (r > 0) gfx_fill(U->s, g.x + 20, y, g.w - 40, 1, T.separator);
+            int tw = g.w - 20 - 170;
+            if (sub[0]) {
+                text_draw_ellipsis(U->s, F(FONT_REGULAR), 14, g.x + 20, y + 18, tw, T.text, app);
+                text_draw_ellipsis(U->s, F(FONT_REGULAR), 11.5f, g.x + 20, y + 33, tw, T.text2, sub);
+            } else text_draw_ellipsis(U->s, F(FONT_REGULAR), 14, g.x + 20, y + RH / 2 + 5, tw, T.text, app);
+            int id = 0x7C000 + idx[r] * 2;
+            bool on = x->state == TCC_PROMPT_GRANTED;
+            if (ui_switch_ex(U, id, g.x + g.w - 66, y + (RH - 20) / 2, 20, &on, true)) {
+                if (!tcc_prompt_set(recs, &n, TCC_PROMPT_CAP, x->bundle, x->service, on)) dirty = true;
+            }
+            int bw = text_width(F(FONT_REGULAR), 13, "Remover") + 24;
+            if (ui_button(U, id + 1, rect_make(g.x + g.w - 66 - 14 - bw, y + (RH - 26) / 2, bw, 26), "Remover", false)) del = idx[r];
+        }
+        shown += k;
+    }
+    if (del >= 0) { for (int i = del; i + 1 < n; i++) recs[i] = recs[i + 1]; n--; dirty = true; }
+    if (dirty && !priv_save(recs, n)) footnote("Não foi possível gravar as permissões.", RGB(230, 70, 60));
+    if (dirty) U->repaint = true;
+    footnote("Desligar nega o acesso na hora (o app consulta a cada uso). Remover apaga a decisão: o app volta a pedir.", 0);
+    (void)shown;
+}
+
 static void paint_priv(void) {
-    hero(P_PRIV, "Proteções do sistema: verificação de certificados, contas e senhas.", NULL, 0);
+    hero(P_PRIV, "Proteções do sistema: permissões dos apps, verificação de certificados, contas e senhas.", NULL, 0);
     section("Segurança da rede");
     rect_t g = group(2);
     bool verify = !g_tls_insecure;
@@ -1237,6 +1331,7 @@ static void paint_priv(void) {
     row_value(row(g2, 0, "Senhas das contas"), c);
     if (row_button(UI_ID, row(g2, 1, "Usuários e Grupos"), "Abrir…", false)) go(P_USERS, true);
     if (nopw) footnote("Contas sem senha entram direto. Defina uma senha em Usuários e Grupos para pedir senha ao iniciar.", 0);
+    paint_priv_apps();
 }
 
 /* ================================================================== Teclado */
