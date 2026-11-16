@@ -26,7 +26,7 @@ mapfile -t A64SRC < <(find "$ROOT/userland/a64" "$ROOT/userland/a64rt" -type f \
     -mcx16 -Wall -Wno-unused-function -Wno-unused-parameter -fno-strict-aliasing \
     -DA64_RUNTIME_MOS -DA64_HAVE_JIT -I"$ROOT/userland/a64" -I"$ROOT/userland/a64rt" \
     -Wl,--image-base=0x400041000000 -Wl,-e,_start "${A64SRC[@]}" -o "$A64/a64rt.mos" || { echo "a64rt: build FALHOU"; exit 1; }
-"$ROOT/tools/build-libsystem-arm64.sh" > "$W/libsystem-arm64.log" 2>&1 || { tail -20 "$W/libsystem-arm64.log"; echo "libSystem-arm64: build FALHOU"; exit 1; }
+"$ROOT/tools/build-libsystem-arm64.sh" ${MOS_JOBS:-2} > "$W/libsystem-arm64.log" 2>&1 || { tail -20 "$W/libsystem-arm64.log"; echo "libSystem-arm64: build FALHOU"; exit 1; }
 cp -f "$ROOT/build/libSystem-arm64.mos" "$A64/libSystem.mos"
 # @try/@catch: o __objc_personality_v0 do libSystem é o da libc++abi do disco (userland/libsystem/objc_exc.c)
 if [ -f "$ROOT/build/libcxx-arm64/libc++.1.dylib" ]; then mkdir -p "$VFS/usr/lib"; cp -f "$ROOT/build/libcxx-arm64/libc++.1.dylib" "$VFS/usr/lib/"
