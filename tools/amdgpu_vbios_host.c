@@ -105,6 +105,7 @@ int main(void) {
     CHECK(amdgpu_vbios_init(&a, vf, len) && a.vbios_ok, "VBIOS sintético");
     check_thiago(&a.vbios, "sintético");
     CHECK(a.vbios.fw_revision == 0x00120203 && a.vbios.conn[4].type == 0, "revisão do firmware e o mux fica de fora");
+    CHECK(a.vbios.mem_channels == 0, "sem integratedsysteminfo no sintético: canais ficam 0 (o driver usa 2)");
     /* registro sem terminador e lut sem o pino: sem DDC/HPD, sem estourar */
     w8(0x600 + 0x58 + 8, 0x07);
     w8(0x504 + 6, 0x77);
@@ -125,6 +126,7 @@ int main(void) {
         memset(&r, 0, sizeof r);
         CHECK(rn > 0x4C && amdgpu_vbios_init(&r, real, rn), "VBIOS real (%u bytes)", rn);
         check_thiago(&r.vbios, "real");
+        CHECK(r.vbios.mem_type == 26 && r.vbios.mem_channels == 2, "integratedsysteminfo real: DDR4 em 2 canais (%u %u)", r.vbios.mem_type, r.vbios.mem_channels);
         u8 fr, cr;
         CHECK(amd_atom_cmd_header(&r.atom, ATOM_CMD_SET_PIXEL_CLOCK, &fr, &cr) && fr == 1 && cr == 7 &&
               amd_atom_cmd_header(&r.atom, ATOM_CMD_DIG1_TRANSMITTER, &fr, &cr) && cr == 6 &&

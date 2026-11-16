@@ -376,7 +376,7 @@ void gpu_init(void) {
     if (owner && owner->vendor == 0x1002 && amd_dev.ready && owner->pci == amd_dev.pci) {
         amdgpu_set_main(&amd_dev);
         if (owner->ext_plugged > 1)
-            snprintf(notice, sizeof notice, "Monitores em %s. O mOS mostra a tela no monitor que a UEFI ligou; ligar as outras saídas da %s ainda depende do PHY e do PLL no driver da AMD.",
+            snprintf(notice, sizeof notice, "Monitores em %s. O mOS mostra a área de trabalho no monitor que a UEFI ligou; as outras saídas da %s ligam pela troca de modo (Ajustes > Monitores).",
                      owner->ports, owner->family);
         if (notice[0]) kprintf("gpu: %s\n", notice);
     }
@@ -396,8 +396,8 @@ int gpu_kms_available(void) {
 }
 
 /* Intel Gen9+: o plano já está ligado pelo firmware. Troca a superfície (deslocamento na abertura)
- * e o tamanho do pipe. AMD: o modo fica registrado; a superfície precisa cair na abertura da VRAM.
- * Sem programar PLL nem treino de link. */
+ * e o tamanho do pipe. AMD: outro tamanho é troca de modo completa (dev/amdgpu/display.c: modo do EDID, PLL, PHY,
+ * enlace, marcas d'água) na saída da tela; depois a superfície, que precisa cair na abertura da VRAM. */
 int gpu_kms_set(unsigned connector, unsigned w, unsigned h, unsigned stride, unsigned format, unsigned long long surf_phys) {
     if (!w || !h || stride < w * 4 || (format != MOS_GPU_FMT_BGRA8 && format != MOS_GPU_FMT_RGBA8)) return -MOS_EINVAL;
     gpu_info_t *g = NULL;
@@ -426,8 +426,16 @@ int gpu_kms_set(unsigned connector, unsigned w, unsigned h, unsigned stride, uns
     amdgpu_t *amd = amdgpu_main();
     if (g->vendor == 0x1002 && amd && g->pci == amd->pci && amd->pipe >= 0) {
         const amd_otg_timing_t *t = &amd->otg[amd->pipe];
-        /* outro tamanho é troca de modo (PLL, PHY, watermarks): ainda não existe neste driver */
-        if (w != t->hactive || h != t->vactive) return -MOS_EINVAL;
+        if (w != t->hactive || h != t->vactive) {
+            int c = amdgpu_display_main_conn(amd);
+            if (c < 0) return -MOS_ENOENT;
+            int e = amdgpu_display_set(amd, (u32)c, w, h, 0, true);
+            if (e) return e;
+            g->mode_w = w; g->mode_h = h;
+            t = &amd->otg[amd->pipe];
+            kprintf("gpu: AMD em %ux%u\n", w, h);
+            if (!surf_phys) return 0;                    /* superfície própria da saída, preta até o compositor desenhar */
+        }
         if (!surf_phys) {                                /* framebuffer do firmware: o compositor continua dono da tela */
             if (amd->scr_on) return 0;
             return amdgpu_flip(amd, 0, w, h, stride, format, true);

@@ -320,6 +320,7 @@ static void parse_hdmi_vsdb(edid_info_t *e, const u8 *p, u32 len) {
     if (len < 8) return;
     u8 f = p[7];
     u32 i = 8;
+    if ((f & 0x80) && len >= 10) { e->video_latency = p[8]; e->audio_latency = p[9]; }
     if (f & 0x80) i += 2;                       /* latência de vídeo/áudio */
     if (f & 0x40) i += 2;                       /* latência entrelaçada */
     if (!(f & 0x20) || i + 1 >= len) return;    /* sem HDMI_Video_present */
@@ -362,13 +363,25 @@ static void parse_cta(edid_info_t *e, const u8 *b) {
         if (i + 1 + len > end) break;
         if (tag == 2)
             for (u32 k = 0; k < len && nsvd < ARRAY_LEN(svd); k++) svd[nsvd++] = p[k];
+        else if (tag == 1)                      /* descritores curtos de áudio, 3 bytes cada */
+            for (u32 k = 0; k + 2 < len && e->nsad < 16; k += 3) {
+                u8 fmt = (p[k] >> 3) & 0xF;
+                if (!fmt) continue;
+                e->sad[e->nsad].format = fmt;
+                e->sad[e->nsad].channels = (u8)((p[k] & 7) + 1);
+                e->sad[e->nsad].rates = p[k + 1] & 0x7F;
+                e->sad[e->nsad].byte2 = p[k + 2];
+                e->nsad++;
+            }
+        else if (tag == 4 && len >= 1) e->speaker_alloc = p[0];
         else if (tag == 3 && len >= 3) {
             u32 oui = amd_le24(p);
             if (oui == 0x000C03) parse_hdmi_vsdb(e, p, len);
             else if (oui == 0xC45DD8) parse_hf_vsdb(e, p, len);
             else if (oui == 0x00001A && len >= 7 && p[5] && p[6] > p[5]) { e->vrr_min_hz = p[5]; e->vrr_max_hz = p[6]; }
         } else if (tag == 7 && len >= 1) {
-            if (p[0] == 0x0F) { y420_map = p + 1; y420_map_len = len - 1u; y420_all = len == 1; }
+            if (p[0] == 0x00 && len >= 2) { e->rgb_quant_selectable = (p[1] & 0x40) != 0; e->ycc_quant_selectable = (p[1] & 0x80) != 0; }
+            else if (p[0] == 0x0F) { y420_map = p + 1; y420_map_len = len - 1u; y420_all = len == 1; }
             else if (p[0] == 0x0E)              /* VDB só 4:2:0 */
                 for (u32 k = 1; k < len; k++) add_vic(e, p[k], false, true, false);
             else if (p[0] == 0x79 && len >= 4 && amd_le24(p + 1) == 0xC45DD8)
@@ -467,4 +480,14 @@ u32 edid_sink_max_tmds_khz(const edid_info_t *e) {
     if (e->hdmi_max_tmds_khz) return e->hdmi_max_tmds_khz;
     if (e->max_pclk_khz) return e->max_pclk_khz;
     return 165000;
+}
+
+/* CTA-861-H, tabela 3: VICs 1..64 são 4:3 (os SD da lista e o 640x480) ou 16:9; 65..92 e 103..107 são 64:27 e 98..102
+ * são 256:135 (sem código no AVI); 93..97 são 16:9. Acima de 107 o AVI vai sem dado de aspecto. */
+u8 edid_vic_aspect(u8 vic) {
+    static const u8 ar43[] = { 1, 2, 6, 8, 10, 12, 14, 17, 21, 23, 25, 27, 29, 35, 37, 41, 44, 48, 52, 54, 56, 58 };
+    if (!vic) return 0;
+    for (u32 i = 0; i < sizeof ar43; i++) if (ar43[i] == vic) return 1;
+    if (vic <= 64 || (vic >= 93 && vic <= 97)) return 2;
+    return 0;
 }

@@ -76,6 +76,47 @@ static bool smu_init(amdgpu_t *a) {
     return true;
 }
 
+/* Tabela de relógios (smu10_populate_clock_table + dcn10_resource_construct): DcefClocks e FClocks viram os limites
+ * do modelo de banda do DCN. Um nível zerado invalida a tabela inteira (verify_clock_values), e então ficam os
+ * padrões do dcn10_soc_defaults. Raven2 (DCN 1.01) tem 3 pipes; os canais vêm da VBIOS. */
+int amdgpu_smu_dpm_clocks(amdgpu_t *a) {
+    amd_dcnbw_soc_defaults(&a->bw_soc);
+    a->bw_soc.dcn101 = a->variant == AMD_RAVEN2;
+    a->bw_soc.num_pipes = a->variant == AMD_RAVEN2 ? 3 : 4;
+    a->bw_soc.channels = a->vbios.mem_channels ? a->vbios.mem_channels : 2;
+    if (a->vbios.dce_refclk_khz) a->bw_soc.refclk_khz = a->vbios.dce_refclk_khz;
+    a->dpm_clocks_ok = false;
+    if (!a->smu_ok || !a->gmc_ok) return -MOS_ENXIO;
+    if (!a->smu_table) {
+        a->smu_table = amdgpu_vram_alloc(a, 4096);
+        if (!a->smu_table) return -MOS_ENOMEM;
+    }
+    u8 *t = vram_cpu(a, a->smu_table);
+    memset(t, 0, SMU10_DPMCLOCKS_BYTES);
+    WMB();
+    u64 mc = vram_mc(a, a->smu_table);
+    int r = amdgpu_smu_send(a, SMU_MSG_SET_DRIVER_DRAM_HI, (u32)(mc >> 32), NULL);
+    if (!r) r = amdgpu_smu_send(a, SMU_MSG_SET_DRIVER_DRAM_LO, (u32)mc, NULL);
+    if (!r) r = amdgpu_smu_send(a, SMU_MSG_TRANSFER_SMU2DRAM, SMU10_TABLE_DPMCLOCKS, NULL);
+    if (r) return r;
+    u32 dcef[4], fclk[4];
+    bool ok = true;
+    for (u32 i = 0; i < 4; i++) {
+        u32 dv, fv;
+        memcpy(&dv, t + i * 8, 4);                      /* DcefClocks[i].Freq */
+        memcpy(&fv, t + (4 + 8 + i) * 8, 4);            /* FClocks[i].Freq */
+        dcef[i] = dv; fclk[i] = fv;
+        if (!dv || !fv) ok = false;
+    }
+    if (!ok) { kprintf("amdgpu: tabela de relógios do SMU vazia; padrões do DCN 1.0\n"); return 0; }
+    memcpy(a->bw_soc.dcfclk_mhz, dcef, sizeof dcef); a->bw_soc.ndcfclk = 4;
+    memcpy(a->bw_soc.fclk_mhz, fclk, sizeof fclk); a->bw_soc.nfclk = 4;
+    a->dpm_clocks_ok = true;
+    kprintf("amdgpu: fclk %u/%u/%u/%u MHz, dcfclk %u/%u/%u/%u MHz, %u canais\n", fclk[0], fclk[1], fclk[2], fclk[3],
+            dcef[0], dcef[1], dcef[2], dcef[3], a->bw_soc.channels);
+    return 0;
+}
+
 /* ------------------------------------------------------------ GMC (MMHUB 1.0) */
 /* As duas hubs (MMHUB: display, SDMA, IH; GFXHUB: CP e shaders) têm o mesmo conjunto de registradores em
  * lugares diferentes. hub 0 = MMHUB, 1 = GFXHUB. */
@@ -504,7 +545,9 @@ int amdgpu_suspend(amdgpu_t *a, int state) {
     if (a->sdma_ok) WR(a, R_SDMA_F32_CNTL, RR(a, R_SDMA_F32_CNTL) | SDMA_F32_HALT);
     if (a->ih_ok) WR(a, R_IH_RB_CNTL, RR(a, R_IH_RB_CNTL) & ~(IH_RB_ENABLE | IH_ENABLE_INTR));
     a->comp_ok = a->gfx_ok = a->sdma_ok = a->ih_ok = a->gmc_ok = a->gfxhub_ok = a->smu_ok = false;
+    amdgpu_display_save(a);                      /* a saída da UEFI, se o mOS ainda não trocou o modo */
     dpms(a, false);
+    a->dcn_inited = false;                       /* o DCN volta zerado do S3 */
     a->s3_count++;
     return 0;
 }
@@ -521,6 +564,7 @@ void amdgpu_resume(amdgpu_t *a, int state) {
     if (!amdgpu_ih_init(a)) kprintf("amdgpu: IH não voltou do S3; fences por polling\n");
     sdma_init(a);
     a->gfx_ok = amdgpu_gfx_init(a);
+    amdgpu_display_restore(a);                   /* DCN do zero e as telas de antes (PM_RESTORES_DISPLAY) */
     kprintf("amdgpu: motores de volta do S3 (SDMA %d, GFX %d, compute %d)\n", a->sdma_ok, a->gfx_ok, a->comp_ok);
 }
 
@@ -528,14 +572,15 @@ void amdgpu_resume(amdgpu_t *a, int state) {
 bool amdgpu_engines_init(amdgpu_t *a) {
     if (!a || !a->ready || a->engines_tried) return a && a->sdma_ok;
     a->engines_tried = true;
-    amdgpu_pm_register(a);
 #ifndef MOS_HOST_TEST
     amdgpu_vbios_load(a);                    /* saídas, linhas DDC/HPD e tabelas de comando (troca de modo) */
 #endif
+    amdgpu_pm_register(a);                   /* com o VBIOS, a saída volta do S3 (PM_RESTORES_DISPLAY) */
     a->smu_ok = smu_init(a);
     if (!a->smu_ok) { kprintf("amdgpu: sem SMU; motores da GPU ficam desligados\n"); return false; }
     a->gmc_ok = gmc_init(a);
     if (!a->gmc_ok) return false;
+    amdgpu_smu_dpm_clocks(a);
     if (!amdgpu_ih_init(a)) kprintf("amdgpu: sem IH; fences seguem por polling\n");
     bool sdma = sdma_init(a);
     a->gfx_ok = amdgpu_gfx_init(a);          /* motor 3D: independe do SDMA */

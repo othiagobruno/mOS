@@ -236,6 +236,11 @@
 #define SMU_MSG_DISABLE_GFXOFF        0x08u
 #define SMU_MSG_POWER_DOWN_SDMA       0x0Du
 #define SMU_MSG_POWER_UP_SDMA         0x0Eu
+#define SMU_MSG_SET_DRIVER_DRAM_HI    0x1Au     /* rv_ppsmc.h */
+#define SMU_MSG_SET_DRIVER_DRAM_LO    0x1Bu
+#define SMU_MSG_TRANSFER_SMU2DRAM     0x1Cu
+#define SMU10_TABLE_DPMCLOCKS         4u        /* smu10.h */
+#define SMU10_DPMCLOCKS_BYTES         160u      /* DpmClocks_t: Dcef[4], Soc[8], F[4], Mem[4] de {Freq MHz, Vol} */
 #define SMU_RESP_OK                   0x01u
 
 /* MMHUB 1.0: aberturas, TLB L1, cache L2, contexto 0 (GART) e invalidação */
@@ -260,6 +265,8 @@
 #define R_VM_L2_CTX_IDENT_PHYS_LO     MMHUB_REG(0x0695)
 #define R_VM_L2_CTX_IDENT_PHYS_HI     MMHUB_REG(0x0696)
 #define R_VM_CONTEXT0_CNTL            MMHUB_REG(0x06C0)
+#define R_VM_L2_FAULT_DEFAULT_LO      MMHUB_REG(0x068E)  /* VM_L2_PROTECTION_FAULT_DEFAULT_ADDR_LO32 */
+#define R_VM_L2_FAULT_DEFAULT_HI      MMHUB_REG(0x068F)
 #define R_VM_CTX0_PT_BASE_LO          MMHUB_REG(0x072B)
 #define R_VM_CTX0_PT_BASE_HI          MMHUB_REG(0x072C)
 #define R_VM_CTX0_PT_START_LO         MMHUB_REG(0x074B)
