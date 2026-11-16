@@ -65,7 +65,6 @@ cx_class_t CATapDescription_c __asm__("OBJC_CLASS_$_CATapDescription"); cx_class
 cx_class_t CIDetector_c __asm__("OBJC_CLASS_$_CIDetector"); cx_class_t CIDetector_m __asm__("OBJC_METACLASS_$_CIDetector");
 cx_class_t CIImage_c __asm__("OBJC_CLASS_$_CIImage"); cx_class_t CIImage_m __asm__("OBJC_METACLASS_$_CIImage");
 cx_class_t CLLocationManager_c __asm__("OBJC_CLASS_$_CLLocationManager"); cx_class_t CLLocationManager_m __asm__("OBJC_METACLASS_$_CLLocationManager");
-cx_class_t CWWiFiClient_c __asm__("OBJC_CLASS_$_CWWiFiClient"); cx_class_t CWWiFiClient_m __asm__("OBJC_METACLASS_$_CWWiFiClient");
 cx_class_t IOBluetoothDevice_c __asm__("OBJC_CLASS_$_IOBluetoothDevice"); cx_class_t IOBluetoothDevice_m __asm__("OBJC_METACLASS_$_IOBluetoothDevice");
 cx_class_t IOBluetoothDeviceInquiry_c __asm__("OBJC_CLASS_$_IOBluetoothDeviceInquiry"); cx_class_t IOBluetoothDeviceInquiry_m __asm__("OBJC_METACLASS_$_IOBluetoothDeviceInquiry");
 cx_class_t IOBluetoothHostController_c __asm__("OBJC_CLASS_$_IOBluetoothHostController"); cx_class_t IOBluetoothHostController_m __asm__("OBJC_METACLASS_$_IOBluetoothHostController");
@@ -170,7 +169,6 @@ void cx_framework_classes_init(void) {
     d(&CIDetector_c, &CIDetector_m, "CIDetector", "NSObject");
     d(&CIImage_c, &CIImage_m, "CIImage", "NSObject");
     d(&CLLocationManager_c, &CLLocationManager_m, "CLLocationManager", "NSObject");
-    d(&CWWiFiClient_c, &CWWiFiClient_m, "CWWiFiClient", "NSObject");
     d(&IOBluetoothDevice_c, &IOBluetoothDevice_m, "IOBluetoothDevice", "NSObject");
     d(&IOBluetoothDeviceInquiry_c, &IOBluetoothDeviceInquiry_m, "IOBluetoothDeviceInquiry", "NSObject");
     d(&IOBluetoothHostController_c, &IOBluetoothHostController_m, "IOBluetoothHostController", "NSObject");

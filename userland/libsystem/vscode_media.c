@@ -617,17 +617,6 @@ int krb5_kt_next_entry(void *ctx, void *kt, void *e, void *cur) { (void)ctx; (vo
 int krb5_kt_end_seq_get(void *ctx, void *kt, void *cur) { (void)ctx; (void)kt; (void)cur; return 0; }
 const char *error_message(long code) { (void)code; return "Kerberos indisponivel no mOS"; }
 
-/* ================================================================ libresolv: servidor DNS do QEMU */
-typedef union { struct { u8 len, family; u16 port; u32 addr; u8 zero[8]; } sin; u8 raw[128]; } res_sockaddr_t;
-int res_9_getservers(void *st, res_sockaddr_t *set, int cnt) {
-    (void)st;
-    if (cnt < 1) return 0;
-    memset(&set[0], 0, sizeof set[0]);
-    set[0].sin.len = 16; set[0].sin.family = 2; set[0].sin.port = (u16)(53 << 8);
-    set[0].sin.addr = 0x0302000Au;    /* 10.0.2.3 */
-    return 1;
-}
-
 /* ================================================================ UniformTypeIdentifiers */
 /* UTType: identificador + extensão e MIME preferidos. Os campos ext/mime NULL são perguntados ao Launch Services
  * (kernel, via openurl.c), que conhece os tipos do sistema e os declarados pelos apps instalados. */
