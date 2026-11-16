@@ -37,6 +37,8 @@ struct fatfs {
     u32 root_bytes;
     bool rw;
     char label[12];
+    struct { u32 first, count; } trim[64];   /* clusters soltos, descartados (TRIM) depois do flush da FAT */
+    int ntrim;
     struct { u32 blk; bool valid, dirty; u8 *data; } cache[FCACHE];
 };
 
@@ -146,11 +148,47 @@ static u32 alloc_cluster(fatfs_t *fs) {
     return 0;
 }
 
+/* TRIM: guarda a faixa solta (juntando com a vizinha); o descarte vem em fat_sync, depois que a FAT nova está no
+ * disco, e só do que continua livre: uma queda antes do flush nunca deixa um arquivo apontando para bloco zerado. */
+static void trim_note(fatfs_t *fs, u32 c) {
+    for (int i = 0; i < fs->ntrim; i++) {
+        if (fs->trim[i].first + fs->trim[i].count == c) { fs->trim[i].count++; return; }
+        if (c + 1 == fs->trim[i].first) { fs->trim[i].first = c; fs->trim[i].count++; return; }
+    }
+    if (fs->ntrim < (int)ARRAY_LEN(fs->trim)) { fs->trim[fs->ntrim].first = c; fs->trim[fs->ntrim].count = 1; fs->ntrim++; return; }
+    /* fila cheia: junta tudo numa faixa só que cubra o novo (o fat_sync confere cluster a cluster) */
+    u32 lo = c, hi = c + 1;
+    for (int i = 0; i < fs->ntrim; i++) { lo = MIN(lo, fs->trim[i].first); hi = MAX(hi, fs->trim[i].first + fs->trim[i].count); }
+    fs->ntrim = 1;
+    fs->trim[0].first = lo;
+    fs->trim[0].count = hi - lo;
+}
+#ifdef MOS_HOST_TEST
+bool (*fat_discard_hook)(blkdev_t *d, u64 off, u64 len);   /* tools/voltest.c */
+static bool do_discard(blkdev_t *d, u64 off, u64 len) { return fat_discard_hook ? fat_discard_hook(d, off, len) : false; }
+#else
+bool blk_discard(blkdev_t *d, u64 off, u64 len);
+static bool do_discard(blkdev_t *d, u64 off, u64 len) { return blk_discard(d, off, len); }
+#endif
+static void trim_flush(fatfs_t *fs) {
+    for (int i = 0; i < fs->ntrim; i++) {
+        u32 end = fs->trim[i].first + fs->trim[i].count, run = 0;
+        for (u32 c = fs->trim[i].first; c <= end; c++) {
+            bool fr = c < end && c >= 2 && c < fs->nclus + 2 && fat_get(fs, c) == 0;
+            if (fr) { run++; continue; }
+            if (run) do_discard(fs->dev, fs->data_off + (u64)(c - run - 2) * fs->clus, (u64)run * fs->clus);
+            run = 0;
+        }
+    }
+    fs->ntrim = 0;
+}
+
 static void free_chain(fatfs_t *fs, u32 c) {
     for (u32 guard = 0; !is_eoc(c) && guard <= fs->nclus; guard++) {
         u32 nx = fat_get(fs, c);
         fat_set(fs, c, 0);
         if (c < fs->hint) fs->hint = c;
+        trim_note(fs, c);
         c = nx;
     }
 }
@@ -561,7 +599,9 @@ bool fat_sync(fatfs_t *fs) {
         }
         kfree(s);
     }
-    return blk_flush(fs->dev) && ok;
+    bool fl = blk_flush(fs->dev) && ok;
+    if (fl && fs->ntrim) trim_flush(fs);   /* a FAT com os clusters livres já está no disco */
+    return fl;
 }
 
 fatfs_t *fat_mount(blkdev_t *dev) {

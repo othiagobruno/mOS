@@ -10,6 +10,10 @@
  */
 #include "fs.h"
 #include <time.h>
+#ifndef _WIN32
+#define _ftelli64 ftello
+#define _fseeki64 fseeko
+#endif
 
 long long g_live_allocs, g_live_bytes;
 static int fails, checks;
@@ -23,6 +27,11 @@ void rtc_now(datetime_t *dt) {
 }
 u32 rand32(void) { return (u32)rand() << 16 ^ (u32)rand(); }
 void dfs_publish_new(dmount_t *before) { (void)before; }
+/* sem o page cache do kernel (fs/pcache.c): leitura e escrita diretas (a queda simulada fica no write da imagem) */
+bool blk_read(blkdev_t *d, u64 off, void *buf, u64 len) { return d->read(d, off, buf, len); }
+bool blk_write(blkdev_t *d, u64 off, const void *buf, u64 len) { return d->write && d->write(d, off, buf, len); }
+bool blk_flush(blkdev_t *d) { return !d->flush || d->flush(d); }
+void pcache_drop(blkdev_t *d) { (void)d; }
 
 static u8 *img;
 static u64 img_size;
@@ -216,9 +225,15 @@ static int crash_test(const char *path, const char *checker) {
         char cmd[1024];
         char chk[512];
         snprintf(chk, sizeof chk, "%s", checker);
+#ifdef _WIN32
         for (char *q = chk; *q; q++) if (*q == '/') *q = '\\';   /* o cmd.exe não aceita "a/b.exe" */
+#endif
         /* o cmd /c tira o 1º e o último ": um par extra em volta de tudo */
+#ifdef _WIN32
         snprintf(cmd, sizeof cmd, "\"\"%s\" check \"%s\" > \"%s.check.txt\"\"", chk, path, path);
+#else
+        snprintf(cmd, sizeof cmd, "'%s' check '%s' > '%s.check.txt'", chk, path, path);
+#endif
         if (system(cmd) != 0) { printf("crash k=%d: volimg check acusou erros\n", k); bad++; }
     }
     free(base);
@@ -227,8 +242,23 @@ static int crash_test(const char *path, const char *checker) {
     return bad ? 1 : 0;
 }
 
+/* TRIM: o descarte zera os bytes de verdade (como um SSD). Se o driver descartasse um bloco em uso, as releituras e o
+ * volimg check acusariam. off é relativo ao dispositivo do volume: soma a base das fatias até a imagem. */
+extern bool (*fat_discard_hook)(blkdev_t *d, u64 off, u64 len);
+extern bool (*hfs_discard_hook)(blkdev_t *d, u64 off, u64 len);
+static long long discards, discard_bytes;
+static bool zero_discard(blkdev_t *d, u64 off, u64 len) {
+    while (d->parent) { off += d->base; d = d->parent; }
+    if (off + len > img_size) return false;
+    memset(img + off, 0, len);
+    discards++;
+    discard_bytes += (long long)len;
+    return true;
+}
 int main(int argc, char **argv) {
     setvbuf(stdout, NULL, _IONBF, 0);
+    fat_discard_hook = zero_discard;
+    hfs_discard_hook = zero_discard;
     if (argc < 2) { fprintf(stderr, "uso: voltest <imagem.img> [--mount]\n"); return 2; }
     FILE *f = fopen(argv[1], "rb");
     if (!f) { perror(argv[1]); return 1; }
@@ -274,6 +304,8 @@ int main(int argc, char **argv) {
             if (m->writable && strcmp(m->ops->name, "FAT")) { frag_test(m); break; }
         }
         unmount_all();
+        CHECK(discards > 0, "nenhum TRIM nos blocos soltos");
+        printf("TRIM: %lld descarte(s), %lld KiB\n", discards, discard_bytes >> 10);
         printf("%d volume(s) gravável(is), %d verificações, %d falha(s)\n", nw, checks, fails);
     }
     f = fopen(argv[1], "wb");

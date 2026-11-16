@@ -21,6 +21,10 @@
 #include <stdbool.h>
 #include <time.h>
 #include <ctype.h>
+#ifndef _WIN32
+#define _ftelli64 ftello   /* Linux/macOS: ftello é de 64 bits com _FILE_OFFSET_BITS=64 */
+#define _FILE_OFFSET_BITS 64
+#endif
 
 typedef uint8_t u8;
 typedef uint16_t u16;
@@ -1210,12 +1214,15 @@ static int detect(u8 *v, u64 size) {
     return 0;
 }
 
+#ifdef _WIN32
 #include <fcntl.h>
 #include <io.h>
 #include <windows.h>
 #include <shellapi.h>
+#endif
 int main(int argc, char **argv) {
     srand((unsigned)time(NULL));
+#ifdef _WIN32
     /* argv em UTF-8 (o CRT entrega na página de código ANSI) e saída binária (cat) */
     {
         int wn = 0;
@@ -1227,6 +1234,7 @@ int main(int argc, char **argv) {
         }
         _setmode(_fileno(stdout), _O_BINARY);
     }
+#endif
     quiet = argc > 1 && strcmp(argv[1], "check");
     if (argc < 3) {
         fprintf(stderr, "uso: volimg mkdisk <img> <MB> <spec>... | check <img> | ls <img> [n] | cat <img> <n> <caminho> | jinject <img> <n> <caminho> <texto>\n");
