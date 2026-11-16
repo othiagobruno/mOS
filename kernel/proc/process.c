@@ -3732,15 +3732,18 @@ static u64 proc_syscall_(int_frame_t *f) {
         r = (i64)b;
         break;
     case SYS_IMGATTACH: {                                   /* hdiutil attach (casks .dmg do Homebrew): monta pelo leitor do kernel */
-        extern int vfs_mount_file(vnode_t *f);
         if (!copy_path(p, path, a)) { r = -MOS_EFAULT; break; }
         vnode_t *img = vfs_lookup(path);
         if (!img || img->dir) { r = -MOS_ENOENT; break; }
+        if (vfs_access(img, 4, p->euid, p->egid)) { r = -MOS_EACCES; break; }
+        /* sem permissão de escrita no arquivo, a imagem monta só para leitura (como o hdiutil) */
+        bool img_ro = (c & MOS_IMG_RDONLY) || vfs_access(img, 2, p->euid, p->egid);
+        c &= 0xFFFFFFFFull;
         vnode_t *vols = vfs_lookup("/Volumes");
         vnode_t *had[64];
         int nhad = 0;
         for (vnode_t *ch = vols && vols->dir ? vols->child : NULL; ch && nhad < 64; ch = ch->next) had[nhad++] = ch;
-        int n = vfs_mount_file(img);
+        int n = vfs_mount_file_ex(img, img_ro);
         if (n <= 0) { r = -MOS_EINVAL; break; }             /* não é imagem conhecida, ou já montada */
         vols = vfs_lookup("/Volumes");
         char out[1024];

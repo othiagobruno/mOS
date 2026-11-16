@@ -231,11 +231,17 @@ static int probe_disk(blkdev_t *disk, const char *src, const char *fmt) {
     return n;
 }
 
+static int mount_disk_image(blkdev_t *disk, const char *path, u8 *owned);
+
 static int mount_image(const u8 *data, u64 size, const char *path, u8 *owned) {
     char err[96] = "";
     if (!s_root) dfs_init();
     blkdev_t *disk = dmg_open(data, size, err, sizeof(err));
     if (!disk) { kprintf("dfs: %s: %s\n", path, err); kfree(owned); return 0; }
+    return mount_disk_image(disk, path, owned);
+}
+
+static int mount_disk_image(blkdev_t *disk, const char *path, u8 *owned) {
     dimage_t *img = kcalloc(1, sizeof(*img));
     if (!img) { blk_release(disk); kfree(owned); return 0; }
     img->disk = disk;
@@ -270,6 +276,19 @@ int dfs_mount_disk(blkdev_t *disk, const char *name) {
 
 int dfs_mount_memory(const u8 *data, u64 size, const char *path) { return mount_image(data, size, path, NULL); }
 int dfs_mount_buffer(u8 *data, u64 size, const char *path) { return mount_image(data, size, path, data); }
+
+/* imagem gravável (UDRW/crua): data e arg passam a ser da imagem; formatos só leitura montam como dfs_mount_buffer */
+int dfs_mount_buffer_rw(u8 *data, u64 size, const char *path, dmg_sink_t sink, void *arg) {
+    char err[96] = "";
+    if (!s_root) dfs_init();
+    blkdev_t *disk = dmg_open_rw(data, size, sink, arg, err, sizeof(err));
+    if (!disk) {
+        if (err[0]) kprintf("dfs: %s: %s; montada só para leitura\n", path, err);
+        kfree(arg);
+        return mount_image(data, size, path, data);
+    }
+    return mount_disk_image(disk, path, NULL);
+}
 
 int dfs_mount_image(dnode_t *file) {
     char path[1024];

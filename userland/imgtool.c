@@ -1,4 +1,4 @@
-/* mOS — imgtool: monta e desmonta imagens de disco (.dmg) pelo leitor do kernel (fs/dmg.c, só leitura).
+/* mOS — imgtool: monta e desmonta imagens de disco (.dmg) pelo leitor do kernel (fs/dmg.c), só para leitura.
  * Usado pelo tools/brew-shims/diskutil para os casks .dmg do Homebrew.
  *   imgtool attach <caminho absoluto do .dmg>    imprime os pontos de montagem, um por linha
  *   imgtool detach <ponto de montagem>
@@ -13,7 +13,7 @@ void _start(const char *arg) {
     if (starts(arg, "attach ")) {
         char out[1024];
         out[0] = 0;
-        i64 n = sys3(SYS_IMGATTACH, (u64)(arg + 7), (u64)out, sizeof out);
+        i64 n = sys3(SYS_IMGATTACH, (u64)(arg + 7), (u64)out, sizeof out | MOS_IMG_RDONLY);   /* casks: só leitura, como o Homebrew */
         if (n <= 0) { err("imgtool: não foi possível montar a imagem\n"); exit(1); }
         puts(out);
         exit(0);

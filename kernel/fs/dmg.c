@@ -5,6 +5,12 @@
  * O plist traz um array "blkx" com tabelas "mish" (base64) que mapeiam setores do disco
  * virtual para chunks. Aqui tudo vira um blkdev_t; cada chunk só é descomprimido quando
  * algum setor dele é lido, com um pequeno cache LRU.
+ *
+ * Gravável (dmg_open_rw): imagem crua (sem "koly") ou UDIF só com chunks crus/zerados (UDRW), como o
+ * hdiutil do macOS monta para leitura e escrita. A escrita vai direto para os bytes do chunk cru dentro
+ * do arquivo (que fica numa cópia própria em RAM); trechos ZERO/IGNORE só aceitam zeros. No flush, os
+ * CRC32 do UDIF (de cada tabela blkx, do fork de dados e o mestre) são recalculados no lugar e o arquivo
+ * inteiro vai para o "sink" (a ponte do VFS grava no .dmg de origem).
  */
 #include "fs.h"
 
@@ -23,11 +29,26 @@ typedef struct {
 #define CACHE_SLOTS 6
 #define CACHE_BYTES (8ull << 20) /* teto do cache de chunks descomprimidos por imagem */
 
+typedef struct {            /* tabela blkx dentro do plist: onde está o base64 da mish, para regravar o CRC */
+    u64 b64off, b64len;     /* posição do texto entre <data> e </data> no arquivo */
+    u64 first, count;       /* setores cobertos */
+    u32 crc_type;
+    u32 crc;
+} blkx_t;
+
 typedef struct {
     const u8 *file;
     u64 fsize;
     chunk_t *ch;
     u32 nch;
+    /* modo gravável */
+    u8 *wfile;              /* = file, mas mutável (cópia do chamador) */
+    bool rw, raw, dirty;
+    blkx_t *bx;
+    u32 nbx;
+    u64 dfork, dforklen;    /* fork de dados (para o CRC do koly) */
+    dmg_sink_t sink;
+    void *sink_arg;
     struct { i64 idx; u8 *buf; u64 cap; u64 stamp; } cache[CACHE_SLOTS];
     u64 clock;
     char fmt[8];
@@ -57,6 +78,33 @@ static u64 b64_decode(const u8 *s, u64 n, u8 *out) {
         if (bits >= 8) { bits -= 8; out[o++] = (u8)(acc >> bits); }
     }
     return o;
+}
+
+static u32 crc_tab[256];
+static u32 crc32_upd(u32 c, const u8 *p, u64 n) {
+    if (!crc_tab[1])
+        for (u32 i = 0; i < 256; i++) { u32 x = i; for (int k = 0; k < 8; k++) x = x & 1 ? 0xEDB88320u ^ (x >> 1) : x >> 1; crc_tab[i] = x; }
+    c = ~c;
+    for (u64 i = 0; i < n; i++) c = crc_tab[(c ^ p[i]) & 0xFF] ^ (c >> 8);
+    return ~c;
+}
+
+/* regrava no lugar o base64 de s[0..n): mesmos bytes decodificados => mesmo número de dígitos; espaços e
+ * quebras de linha do plist ficam onde estavam */
+static bool b64_rewrite(u8 *s, u64 n, const u8 *bin, u64 blen) {
+    static const char T[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    u64 j = 0, need = (blen + 2) / 3 * 4;
+    for (u64 i = 0; i < n; i++) {
+        if (s[i] != '=' && b64v(s[i]) < 0) continue;
+        if (j >= need) return false;
+        u64 g = j / 4 * 3;
+        u32 v = (u32)bin[g] << 16 | (g + 1 < blen ? (u32)bin[g + 1] << 8 : 0) | (g + 2 < blen ? bin[g + 2] : 0);
+        int k = (int)(j % 4);
+        u8 c = k == 0 ? T[v >> 18] : k == 1 ? T[(v >> 12) & 63] : k == 2 ? (g + 1 < blen ? T[(v >> 6) & 63] : '=') : (g + 2 < blen ? T[v & 63] : '=');
+        s[i] = c;
+        j++;
+    }
+    return j == need;
 }
 
 static const u8 *find(const u8 *h, const u8 *end, const char *needle) {
@@ -170,7 +218,108 @@ static void dmg_release(blkdev_t *d) {
     dmg_t *g = d->ctx;
     for (int i = 0; i < CACHE_SLOTS; i++) kfree(g->cache[i].buf);
     kfree(g->ch);
+    kfree(g->bx);
+    if (g->rw) { kfree(g->wfile); kfree(g->sink_arg); }
     kfree(g);
+}
+
+/* ------------------------------------------------------------ escrita (UDRW / cru) */
+static bool all_zero(const u8 *p, u64 n) {
+    for (u64 i = 0; i < n; i++) if (p[i]) return false;
+    return true;
+}
+
+static bool rw_read(blkdev_t *d, u64 off, void *buf, u64 len) {
+    dmg_t *g = d->ctx;
+    if (g->raw) { memcpy(buf, g->file + off, len); return true; }
+    return dmg_read(d, off, buf, len);
+}
+
+static bool rw_write(blkdev_t *d, u64 off, const void *buf, u64 len) {
+    dmg_t *g = d->ctx;
+    const u8 *in = buf;
+    if (off > d->size || len > d->size - off) return false;
+    if (g->raw) { memcpy(g->wfile + off, in, len); g->dirty = true; return true; }
+    while (len) {
+        i64 idx = chunk_find(g, off / 512);
+        u64 n;
+        if (idx < 0) {                                  /* buraco no mapa: só cabem zeros */
+            n = MIN(len, 512 - off % 512);
+            if (!all_zero(in, n)) return false;
+        } else {
+            chunk_t *c = &g->ch[idx];
+            u64 cstart = c->sector * 512, in_off = off - cstart;
+            n = MIN(len, (c->sector + c->count) * 512 - off);
+            if (c->type == CH_RAW) {
+                u64 k = in_off < c->len ? MIN(n, c->len - in_off) : 0;
+                if (k) memcpy(g->wfile + c->off + in_off, in, k);
+                if (k < n && !all_zero(in + k, n - k)) return false;
+            } else if (!all_zero(in, n)) return false;  /* ZERO/IGNORE não têm bytes no arquivo */
+        }
+        g->dirty = true;
+        in += n; off += n; len -= n;
+    }
+    return true;
+}
+
+/* CRC32 dos setores [first, first+count) do disco virtual */
+static bool region_crc(blkdev_t *d, u64 first, u64 count, u32 *out) {
+    u8 *b = kmalloc(65536);
+    if (!b) return false;
+    u32 c = 0;
+    u64 off = first * 512, end = (first + count) * 512;
+    bool ok = true;
+    while (ok && off < end) {
+        u64 n = MIN(65536, end - off);
+        ok = dmg_read(d, off, b, n);
+        c = crc32_upd(c, b, n);
+        off += n;
+    }
+    kfree(b);
+    *out = c;
+    return ok;
+}
+
+static void wbe32(u8 *p, u32 v) { p[0] = (u8)(v >> 24); p[1] = (u8)(v >> 16); p[2] = (u8)(v >> 8); p[3] = (u8)v; }
+
+static bool rw_flush(blkdev_t *d) {
+    dmg_t *g = d->ctx;
+    if (!g->dirty) return true;
+    if (!g->raw) {
+        u8 *k = g->wfile + g->fsize - 512;
+        u8 *mish = NULL;
+        u64 mcap = 0;
+        for (u32 i = 0; i < g->nbx; i++) {
+            blkx_t *b = &g->bx[i];
+            if (b->crc_type != 2) continue;
+            u32 crc;
+            if (!region_crc(d, b->first, b->count, &crc)) { kfree(mish); return false; }
+            if (crc == b->crc) continue;
+            u64 need = b->b64len * 3 / 4 + 4;
+            if (need > mcap) { kfree(mish); mish = kmalloc(need); mcap = mish ? need : 0; if (!mish) return false; }
+            u64 ml = b64_decode(g->wfile + b->b64off, b->b64len, mish);
+            if (ml < 76) { kfree(mish); return false; }
+            wbe32(mish + 72, crc);
+            if (!b64_rewrite(g->wfile + b->b64off, b->b64len, mish, ml)) { kfree(mish); return false; }
+            b->crc = crc;
+        }
+        kfree(mish);
+        if (be32(k + 80) == 2 && g->dforklen && g->dfork + g->dforklen <= g->fsize - 512)
+            wbe32(k + 88, crc32_upd(0, g->wfile + g->dfork, g->dforklen));
+        if (be32(k + 352) == 2) {                       /* mestre: CRC32 dos CRCs das tabelas, em big-endian */
+            u32 mc = 0;
+            for (u32 i = 0; i < g->nbx; i++) {
+                if (g->bx[i].crc_type != 2) continue;
+                u8 be[4];
+                wbe32(be, g->bx[i].crc);
+                mc = crc32_upd(mc, be, 4);
+            }
+            wbe32(k + 360, mc);
+        }
+    }
+    if (g->sink && !g->sink(g->sink_arg, g->wfile, g->fsize)) return false;
+    g->dirty = false;
+    return true;
 }
 
 static int cmp_chunk(const chunk_t *a, const chunk_t *b) {
@@ -225,11 +374,20 @@ static bool add_mish(dmg_t *g, const u8 *m, u64 mlen, u64 data_fork_off, u32 *ca
     return true;
 }
 
-blkdev_t *dmg_open(const u8 *data, u64 size, char *err, usize errlen) {
+static blkdev_t *open_img(const u8 *data, u64 size, char *err, usize errlen, u8 *wdata, dmg_sink_t sink, void *arg) {
     if (size < 512) { snprintf(err, errlen, "arquivo muito pequeno"); return NULL; }
     const u8 *k = data + size - 512;
     if (be32(k) != 0x6B6F6C79) { /* "koly" ausente: imagem crua (UDRW/ISO/IMG) */
-        blkdev_t *d = blk_from_memory(data, size);
+        if (!wdata) return blk_from_memory(data, size);
+        dmg_t *g = kcalloc(1, sizeof(*g));
+        blkdev_t *d = g ? kcalloc(1, sizeof(*d)) : NULL;
+        if (!d) { kfree(g); return NULL; }
+        g->file = g->wfile = wdata; g->fsize = size; g->rw = g->raw = true;
+        g->sink = sink; g->sink_arg = arg;
+        strncpy(g->fmt, "RAW", sizeof(g->fmt) - 1);
+        d->size = size & ~511ull;
+        d->read = rw_read; d->write = rw_write; d->flush = rw_flush; d->release = dmg_release;
+        d->ctx = g;
         return d;
     }
     u64 dfork = be64(k + 24), xmloff = be64(k + 216), xmllen = be64(k + 224), sectors = be64(k + 492);
@@ -242,6 +400,9 @@ blkdev_t *dmg_open(const u8 *data, u64 size, char *err, usize errlen) {
     if (!g) return NULL;
     g->file = data;
     g->fsize = size;
+    g->dfork = dfork;
+    g->dforklen = be64(k + 32);
+    u32 bxcap = 0;
 
     const u8 *x = data + xmloff, *xe = x + xmllen;
     const u8 *p = find(x, xe, "<key>blkx</key>");
@@ -260,12 +421,25 @@ blkdev_t *dmg_open(const u8 *data, u64 size, char *err, usize errlen) {
         if (need > mcap) { kfree(mish); mish = kmalloc(need); mcap = mish ? need : 0; if (!mish) { ok = false; break; } }
         u64 ml = b64_decode(ds, (u64)(de - ds), mish);
         if (!add_mish(g, mish, ml, dfork, &cap, counts)) ok = false;
+        else if (wdata) {                                /* lembra onde a tabela está, para regravar o CRC */
+            if (g->nbx == bxcap) {
+                u32 nc = bxcap ? bxcap * 2 : 16;
+                blkx_t *nb = krealloc(g->bx, nc * sizeof(blkx_t));
+                if (!nb) { ok = false; break; }
+                g->bx = nb; bxcap = nc;
+            }
+            blkx_t *bx = &g->bx[g->nbx++];
+            bx->b64off = (u64)(ds - data); bx->b64len = (u64)(de - ds);
+            bx->first = be64(mish + 8); bx->count = be64(mish + 16);
+            bx->crc_type = be32(mish + 64); bx->crc = be32(mish + 72);
+        }
         p = de + 7;
     }
     kfree(mish);
     if (!ok || !g->nch) {
         snprintf(err, errlen, "tabela blkx inválida");
         kfree(g->ch);
+        kfree(g->bx);
         kfree(g);
         return NULL;
     }
@@ -280,20 +454,40 @@ blkdev_t *dmg_open(const u8 *data, u64 size, char *err, usize errlen) {
     else if (counts[0]) f = "UDRO";
     strncpy(g->fmt, f, sizeof(g->fmt) - 1);
 
+    if (wdata) {                                         /* gravável só se todos os chunks forem crus ou zerados */
+        bool can = true;
+        for (u32 i = 0; i < g->nch && can; i++) can = g->ch[i].type == CH_RAW || g->ch[i].type == CH_ZERO || g->ch[i].type == CH_IGNORE;
+        if (!can) {
+            snprintf(err, errlen, "%s só pode ser lido", f);
+            kfree(g->ch); kfree(g->bx); kfree(g);
+            return NULL;
+        }
+        g->rw = true;
+        g->wfile = wdata;
+        g->sink = sink; g->sink_arg = arg;
+    }
     u64 last = g->ch[g->nch - 1].sector + g->ch[g->nch - 1].count;
     if (sectors < last) sectors = last;
     blkdev_t *d = kcalloc(1, sizeof(*d));
-    if (!d) { dmg_release(&(blkdev_t){.ctx = g}); return NULL; }
+    if (!d) { g->rw = false; dmg_release(&(blkdev_t){.ctx = g}); return NULL; }   /* rw = false: data ainda é do chamador */
     d->size = sectors * 512;
     d->read = dmg_read;
+    if (g->rw) { d->write = rw_write; d->flush = rw_flush; }
     d->release = dmg_release;
     d->ctx = g;
-    kprintf("dmg: %s, %u chunks, %llu MiB (raw %u, zlib %u, bzip2 %u, lzfse %u, adc %u, lzma %u)\n", f, g->nch,
+    kprintf("dmg: %s%s, %u chunks, %llu MiB (raw %u, zlib %u, bzip2 %u, lzfse %u, adc %u, lzma %u)\n", f, g->rw ? " (leitura e escrita)" : "", g->nch,
             d->size >> 20, counts[0], counts[2], counts[3], counts[4], counts[1], counts[5]);
     return d;
 }
 
+blkdev_t *dmg_open(const u8 *data, u64 size, char *err, usize errlen) { return open_img(data, size, err, errlen, NULL, NULL, NULL); }
+
+blkdev_t *dmg_open_rw(u8 *data, u64 size, dmg_sink_t sink, void *arg, char *err, usize errlen) {
+    if (!data) return NULL;
+    return open_img(data, size, err, errlen, data, sink, arg);
+}
+
 const char *dmg_format_name(blkdev_t *d) {
-    if (d && d->read == dmg_read) return ((dmg_t *)d->ctx)->fmt;
+    if (d && d->release == dmg_release) return ((dmg_t *)d->ctx)->fmt;
     return "RAW";
 }

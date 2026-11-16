@@ -26,6 +26,7 @@ __attribute__((weak)) void dfs_mount_all(void) {}
 __attribute__((weak)) bool vfs_is_volume(vnode_t *n) { (void)n; return false; }
 __attribute__((weak)) bool vfs_eject(vnode_t *vol) { (void)vol; return false; }
 __attribute__((weak)) int vfs_mount_file(vnode_t *f) { (void)f; return 0; }
+__attribute__((weak)) int vfs_mount_file_ex(vnode_t *f, bool ro) { (void)f; (void)ro; return 0; }
 __attribute__((weak)) bool vfs_ext_writable(vnode_t *n) { (void)n; return false; }
 
 static int ensuring;

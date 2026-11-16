@@ -6,7 +6,8 @@
  *   imageinfo <imagem> [-plist] [-format]
  *   verify <imagem>
  *   create <saída> -size N[b|k|m|g|t] [-fs HFS+|JHFS+|HFSX|JHFSX|MS-DOS|FAT32] [-volname nome]
- *          [-format UDRW|UDRO|UDZO|ULFO|ULMO] [-layout GPTSPUD|NONE] [-ov]
+ *          [-format UDRW|UDRO|UDZO|ULFO|ULMO|UDTO] [-layout GPTSPUD|NONE] [-srcfolder pasta] [-ov]
+ *          (-srcfolder: UDRW temporária montada gravável pelo kernel, recebe a pasta e vira o formato pedido; padrão UDZO)
  *   convert <imagem> -format UDRW|UDRO|UDZO|ULFO|ULMO -o <saída> [-ov]
  * attach/detach/info pelo kernel (SYS_IMGATTACH/SYS_IMGDETACH, getfsstat); o resto no próprio processo
  * (userland/pkg/udif.c e volfmt.c). Discos: /dev/disk0s1 é o sistema; os de /Volumes são disk<N>s1 (N >= 2),
@@ -16,6 +17,7 @@
 #include "../pkg/volfmt.c"
 #ifdef __APPLE__
 #include <sys/mount.h>
+#include <sys/xattr.h>
 #endif
 
 static int quiet, plist;
@@ -75,8 +77,11 @@ static const char *hint_of(const char *kind) { return !strcmp(kind, "msdos") ? "
 
 static int cmd_attach(int argc, char **argv) {
     const char *img = 0;
+    int ro = 0;
     for (int i = 0; i < argc; i++) {
         if (!strcmp(argv[i], "-plist")) plist = 1;
+        else if (!strcmp(argv[i], "-readonly")) ro = 1;
+        else if (!strcmp(argv[i], "-readwrite")) ro = 0;
         else if (!strcmp(argv[i], "-quiet")) quiet = 1;
         else if (!strcmp(argv[i], "-mountpoint") || !strcmp(argv[i], "-mountroot") || !strcmp(argv[i], "-mountrandom") || !strcmp(argv[i], "-shadow")) i++;
         else if (argv[i][0] != '-') img = argv[i];
@@ -85,7 +90,7 @@ static int cmd_attach(int argc, char **argv) {
     char abs[1024];
     if (!realpath(img, abs)) { fprintf(stderr, "hdiutil: attach failed - No such file or directory\n"); return 1; }
     char out[1024] = "";
-    long n = sys3(54, (long)abs, (long)out, sizeof out);
+    long n = sys3(54, (long)abs, (long)out, (long)(sizeof out | (ro ? 1ull << 62 : 0)));   /* UDRW/crua: leitura e escrita */
     if (n <= 0) {
         vol_t v[32];                                      /* já montada: o hdiutil devolve o mesmo volume */
         int k = volumes(v, 32), found = 0;
@@ -208,29 +213,8 @@ static int write_image(const char *out, u8 *disk, u64 sectors, u32 type, int gpt
     uregion_t r[1] = {{"whole disk (Apple_HFS : 0)", 0, sectors}};
     return udif_write(out, disk, sectors, type, r, 1);
 }
-static int cmd_create(int argc, char **argv) {
-    const char *out = 0, *fs = "HFS+", *vol = "untitled", *fmt = "UDRW", *layout = "GPTSPUD";
-    u64 size = 0;
-    int ov = 0;
-    for (int i = 0; i < argc; i++) {
-        if (!strcmp(argv[i], "-size") && i + 1 < argc) size = parse_size(argv[++i]);
-        else if (!strcmp(argv[i], "-fs") && i + 1 < argc) fs = argv[++i];
-        else if (!strcmp(argv[i], "-volname") && i + 1 < argc) vol = argv[++i];
-        else if (!strcmp(argv[i], "-format") && i + 1 < argc) fmt = argv[++i];
-        else if (!strcmp(argv[i], "-layout") && i + 1 < argc) layout = argv[++i];
-        else if (!strcmp(argv[i], "-type") && i + 1 < argc) { if (strcmp(argv[++i], "UDIF")) { fprintf(stderr, "hdiutil: create: só -type UDIF\n"); return 1; } }
-        else if (!strcmp(argv[i], "-ov")) ov = 1;
-        else if (!strcmp(argv[i], "-srcfolder")) { fprintf(stderr, "hdiutil: create: -srcfolder ainda precisa da imagem gravável no kernel\n"); return 1; }
-        else if (argv[i][0] != '-') out = argv[i];
-    }
-    if (!out || !size) { fprintf(stderr, "hdiutil: create: falta a saída ou -size\n"); return 1; }
-    u32 type = fmt_type(fmt);
-    if (!type) { fprintf(stderr, "hdiutil: create: formato %s não suportado\n", fmt); return 1; }
-    char path[1100];
-    snprintf(path, sizeof path, "%s%s", out, strchr(out, '.') && strrchr(out, '.') > strrchr(out, '/') ? "" : type == 0xFFFF ? ".cdr" : ".dmg");
-    struct stat st;
-    if (!ov && stat(path, &st) == 0) { fprintf(stderr, "hdiutil: create failed - File exists\n"); return 1; }
-    int gpt = strcmp(layout, "NONE") != 0;
+/* imagem vazia formatada em path */
+static int create_blank(const char *path, u64 size, const char *fs, const char *vol, u32 type, int gpt) {
     u64 sectors = (size + 511) / 512;
     if (gpt) sectors += 40 + 34;
     u8 *disk = calloc(1, (size_t)(sectors * 512));
@@ -247,9 +231,187 @@ static int cmd_create(int argc, char **argv) {
     r = write_image(path, disk, sectors, type, gpt);
     free(disk);
     if (r < 0) { fprintf(stderr, "hdiutil: create failed - %s\n", pk_err); return 1; }
+    return 0;
+}
+
+/* ---- -srcfolder: a árvore vai para o volume de uma UDRW montada gravável pelo kernel */
+static u64 tree_bytes(const char *p, int depth) {
+    struct stat st;
+    if (lstat(p, &st) < 0) return 0;
+    u64 n = 4096 + (((u64)st.st_size + 4095) & ~4095ull);
+    if (!S_ISDIR(st.st_mode) || depth > 64) return n;
+    DIR *d = opendir(p);
+    if (!d) return n;
+    struct dirent *e;
+    char c[2048];
+    while ((e = readdir(d))) {
+        if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
+        snprintf(c, sizeof c, "%s/%s", p, e->d_name);
+        n += tree_bytes(c, depth + 1);
+    }
+    closedir(d);
+    return n;
+}
+
+static void copy_meta(const char *s, const char *t, const struct stat *st) {
+    if (S_ISLNK(st->st_mode)) return;
+    chmod(t, st->st_mode & 07777);
+#ifdef __APPLE__
+    ssize_t ln = listxattr(s, NULL, 0, XATTR_NOFOLLOW);
+    char *names = ln > 0 ? malloc((size_t)ln) : NULL;
+    if (names && listxattr(s, names, (size_t)ln, XATTR_NOFOLLOW) == ln)
+        for (char *k = names; k < names + ln; k += strlen(k) + 1) {
+            ssize_t vl = getxattr(s, k, NULL, 0, 0, XATTR_NOFOLLOW);
+            char *v = vl >= 0 ? malloc((size_t)vl + 1) : NULL;
+            if (v && getxattr(s, k, v, (size_t)vl, 0, XATTR_NOFOLLOW) == vl) setxattr(t, k, v, (size_t)vl, 0, XATTR_NOFOLLOW);
+            free(v);
+        }
+    free(names);
+#endif
+    struct timeval tv[2] = {{st->st_atime, 0}, {st->st_mtime, 0}};
+    utimes(t, tv);
+}
+
+static int copy_file(const char *s, const char *t) {
+    int in = open(s, O_RDONLY), out = in >= 0 ? open(t, O_WRONLY | O_CREAT | O_TRUNC, 0644) : -1;
+    char *b = out >= 0 ? malloc(1 << 20) : NULL;
+    int ok = b != NULL;
+    ssize_t n;
+    while (ok && (n = read(in, b, 1 << 20)) > 0) ok = write(out, b, (size_t)n) == n;
+    if (n < 0) ok = 0;
+    free(b);
+    if (in >= 0) close(in);
+    if (out >= 0 && close(out) < 0) ok = 0;
+    return ok ? 0 : -1;
+}
+
+/* copia o item s para t (pastas recursivamente): dados, links simbólicos, modo, datas e atributos estendidos */
+static int copy_item(const char *s, const char *t, int depth) {
+    struct stat st;
+    if (lstat(s, &st) < 0) return PKERR("%s: %s", s, strerror(errno));
+    if (S_ISLNK(st.st_mode)) {
+        char l[1024];
+        ssize_t k = readlink(s, l, sizeof l - 1);
+        if (k < 0) return PKERR("%s: %s", s, strerror(errno));
+        l[k] = 0;
+        return symlink(l, t) < 0 ? PKERR("%s: %s", t, strerror(errno)) : 0;
+    }
+    if (S_ISREG(st.st_mode)) {
+        if (copy_file(s, t) < 0) return PKERR("não foi possível copiar %s", s);
+        copy_meta(s, t, &st);
+        return 0;
+    }
+    if (!S_ISDIR(st.st_mode)) return 0;                   /* fifo, socket, dispositivo: o hdiutil também pula */
+    if (depth > 64) return PKERR("%s: pastas aninhadas demais", s);
+    if (depth && mkdir(t, 0755) < 0 && errno != EEXIST) return PKERR("%s: %s", t, strerror(errno));
+    DIR *d = opendir(s);
+    if (!d) return PKERR("%s: %s", s, strerror(errno));
+    struct dirent *e;
+    char cs[2048], ct[2048];
+    int r = 0;
+    while (!r && (e = readdir(d))) {
+        if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
+        snprintf(cs, sizeof cs, "%s/%s", s, e->d_name);
+        snprintf(ct, sizeof ct, "%s/%s", t, e->d_name);
+        r = copy_item(cs, ct, depth + 1);
+    }
+    closedir(d);
+    if (!r) copy_meta(s, t, &st);
+    return r;
+}
+
+static int convert_file(const char *in, const char *path, u32 type);
+
+static int create_srcfolder(const char *path, const char *src, u64 size, const char *fs, const char *vol, u32 type, int gpt) {
+    struct stat st;
+    if (stat(src, &st) < 0) { fprintf(stderr, "hdiutil: create failed - %s: No such file or directory\n", src); return 1; }
+    u64 need = tree_bytes(src, 0);
+    need = need + need / 4 + (16ull << 20);               /* catálogo, journal e folga, como o hdiutil */
+    if (size < need) size = need;
+    char tmp[1200], abs[1024], mnt[1024] = "";
+    snprintf(tmp, sizeof tmp, "%s.srcfolder-%d.dmg", path, (int)getpid());
+    if (create_blank(tmp, size, fs, vol, U_RAW, gpt)) return 1;
+    if (!realpath(tmp, abs)) { unlink(tmp); fprintf(stderr, "hdiutil: create failed - %s\n", strerror(errno)); return 1; }
+    long n = sys3(54, (long)abs, (long)mnt, sizeof mnt);  /* UDRW: o kernel monta para leitura e escrita */
+    char *nl = strchr(mnt, '\n');
+    if (nl) *nl = 0;
+    if (n <= 0 || !mnt[0]) { unlink(tmp); fprintf(stderr, "hdiutil: create failed - não foi possível montar a imagem temporária\n"); return 1; }
+    int r;
+    if (S_ISDIR(st.st_mode)) r = copy_item(src, mnt, 0);
+    else {
+        char t[2048];
+        const char *b = strrchr(src, '/');
+        snprintf(t, sizeof t, "%s/%s", mnt, b ? b + 1 : src);
+        r = copy_item(src, t, 1);
+    }
+    if (sys3(55, (long)mnt, 0, 0) < 0 && !r) r = PKERR("não foi possível ejetar %s", mnt);   /* o eject grava tudo no .dmg */
+    if (r < 0) { unlink(tmp); fprintf(stderr, "hdiutil: create failed - %s\n", pk_err); return 1; }
+    if (type == U_RAW) r = rename(tmp, path) < 0 ? PKERR("%s: %s", path, strerror(errno)) : 0;
+    else { r = convert_file(tmp, path, type); unlink(tmp); }
+    if (r) { if (type == U_RAW) unlink(tmp); fprintf(stderr, "hdiutil: create failed - %s\n", pk_err); return 1; }
+    return 0;
+}
+
+static int cmd_create(int argc, char **argv) {
+    const char *out = 0, *fs = "HFS+", *vol = 0, *fmt = 0, *layout = "GPTSPUD", *src = 0;
+    u64 size = 0;
+    int ov = 0;
+    for (int i = 0; i < argc; i++) {
+        if (!strcmp(argv[i], "-size") && i + 1 < argc) size = parse_size(argv[++i]);
+        else if (!strcmp(argv[i], "-fs") && i + 1 < argc) fs = argv[++i];
+        else if (!strcmp(argv[i], "-volname") && i + 1 < argc) vol = argv[++i];
+        else if (!strcmp(argv[i], "-format") && i + 1 < argc) fmt = argv[++i];
+        else if (!strcmp(argv[i], "-layout") && i + 1 < argc) layout = argv[++i];
+        else if (!strcmp(argv[i], "-type") && i + 1 < argc) { if (strcmp(argv[++i], "UDIF")) { fprintf(stderr, "hdiutil: create: só -type UDIF\n"); return 1; } }
+        else if (!strcmp(argv[i], "-srcfolder") && i + 1 < argc) src = argv[++i];
+        else if (!strcmp(argv[i], "-ov")) ov = 1;
+        else if (argv[i][0] != '-') out = argv[i];
+    }
+    if (!out || (!size && !src)) { fprintf(stderr, "hdiutil: create: falta a saída ou -size\n"); return 1; }
+    if (!fmt) fmt = src ? "UDZO" : "UDRW";                /* padrões do hdiutil */
+    u32 type = fmt_type(fmt);
+    if (!type) { fprintf(stderr, "hdiutil: create: formato %s não suportado\n", fmt); return 1; }
+    char path[1100], vbuf[256];
+    snprintf(path, sizeof path, "%s%s", out, strchr(out, '.') && strrchr(out, '.') > strrchr(out, '/') ? "" : type == 0xFFFF ? ".cdr" : ".dmg");
+    if (!vol && src) {                                    /* volume com o nome da pasta */
+        snprintf(vbuf, sizeof vbuf, "%s", src);
+        size_t l = strlen(vbuf);
+        while (l > 1 && vbuf[l - 1] == '/') vbuf[--l] = 0;
+        char *b = strrchr(vbuf, '/');
+        vol = b ? b + 1 : vbuf;
+    }
+    if (!vol) vol = "untitled";
+    struct stat st;
+    if (!ov && stat(path, &st) == 0) { fprintf(stderr, "hdiutil: create failed - File exists\n"); return 1; }
+    int gpt = strcmp(layout, "NONE") != 0;
+    int r = src ? create_srcfolder(path, src, size, fs, vol, type, gpt) : create_blank(path, size, fs, vol, type, gpt);
+    if (r) return r;
     if (!quiet) printf("created: %s\n", path);
     return 0;
 }
+static int convert_file(const char *in, const char *path, u32 type) {
+    udif_t u;
+    if (udif_open(&u, in) < 0) return -1;
+    int ok = 1;
+    u8 *disk = udif_expand(&u, &ok);
+    if (!disk) { udif_close(&u); return -1; }
+    if (!ok) { free(disk); udif_close(&u); return PKERR("checksum da imagem de origem não confere"); }
+    int r;
+    if (type == 0xFFFF) r = write_raw(path, disk, u.sectors);
+    else if (u.nb) {                                      /* mantém as partições da origem */
+        uregion_t *reg = calloc((size_t)u.nb, sizeof *reg);
+        for (int i = 0; i < u.nb; i++) { reg[i].name = u.b[i].name; reg[i].first = u.b[i].first; reg[i].count = u.b[i].count; }
+        r = udif_write(path, disk, u.sectors, type, reg, u.nb);
+        free(reg);
+    } else {
+        uregion_t reg[1] = {{"whole disk (Apple_HFS : 0)", 0, u.sectors}};
+        r = udif_write(path, disk, u.sectors, type, reg, 1);
+    }
+    free(disk);
+    udif_close(&u);
+    return r < 0 ? -1 : 0;
+}
+
 static int cmd_convert(int argc, char **argv) {
     const char *in = 0, *out = 0, *fmt = 0;
     int ov = 0;
@@ -266,25 +428,7 @@ static int cmd_convert(int argc, char **argv) {
     snprintf(path, sizeof path, "%s%s", out, strchr(out, '.') && strrchr(out, '.') > strrchr(out, '/') ? "" : type == 0xFFFF ? ".cdr" : ".dmg");
     struct stat st;
     if (!ov && stat(path, &st) == 0) { fprintf(stderr, "hdiutil: convert failed - File exists\n"); return 1; }
-    udif_t u;
-    if (udif_open(&u, in) < 0) { fprintf(stderr, "hdiutil: convert failed - %s\n", pk_err); return 1; }
-    int ok = 1;
-    u8 *disk = udif_expand(&u, &ok);
-    if (!disk) { fprintf(stderr, "hdiutil: convert failed - %s\n", pk_err); udif_close(&u); return 1; }
-    if (!ok) { fprintf(stderr, "hdiutil: convert failed - checksum da imagem de origem não confere\n"); free(disk); udif_close(&u); return 1; }
-    int r;
-    if (type == 0xFFFF) r = write_raw(path, disk, u.sectors);
-    else if (u.nb) {                                      /* mantém as partições da origem */
-        uregion_t *reg = calloc((size_t)u.nb, sizeof *reg);
-        for (int i = 0; i < u.nb; i++) { reg[i].name = u.b[i].name; reg[i].first = u.b[i].first; reg[i].count = u.b[i].count; }
-        r = udif_write(path, disk, u.sectors, type, reg, u.nb);
-        free(reg);
-    } else {
-        uregion_t reg[1] = {{"whole disk (Apple_HFS : 0)", 0, u.sectors}};
-        r = udif_write(path, disk, u.sectors, type, reg, 1);
-    }
-    free(disk);
-    udif_close(&u);
+    int r = convert_file(in, path, type);
     if (r < 0) { fprintf(stderr, "hdiutil: convert failed - %s\n", pk_err); return 1; }
     if (!quiet) printf("created: %s\n", path);
     return 0;

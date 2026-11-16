@@ -67,7 +67,7 @@ enum {
     SYS_PREAD,         /* 51: (fd, buf, n, deslocamento em r10) -> lidos      sem mexer na posição do fd (atômico entre threads) */
     SYS_PWRITE,        /* 52: (fd, buf, n, deslocamento em r10) -> escritos */
     SYS_FTRUNCATE,     /* 53: (fd, tamanho) -> 0                    muda o tamanho de um arquivo aberto (zeros ao crescer) */
-    SYS_IMGATTACH,     /* 54: (caminho .dmg, buf, cap) -> nº de volumes     monta em /Volumes; buf recebe os caminhos, um por linha (hdiutil) */
+    SYS_IMGATTACH,     /* 54: (caminho .dmg, buf, cap | MOS_IMG_RDONLY) -> nº de volumes   monta em /Volumes (UDRW/cru: leitura e escrita); buf recebe os caminhos, um por linha (hdiutil) */
     SYS_IMGDETACH,     /* 55: (ponto de montagem) -> 0              desmonta um volume de /Volumes */
     SYS_TTY,           /* 56: (op, a, b, c) -> ...                  pseudoterminais, sessões e grupos de processos (MOS_TTY_* abaixo, kernel/proc/pty.c) */
     SYS_LS,            /* 57: (op, mos_ls_req_t*) -> resultado      Launch Services: tipos, apps padrão, abrir (MOS_LS_* abaixo, kernel/compat/launchsvc.c) */
@@ -447,6 +447,7 @@ typedef struct { unsigned mask, port, behavior, flavor; } mos_exc_port_t;
 #define MOS_O_NONBLOCK 0x0800    /* leitura/escrita que esperaria devolve -EAGAIN (o kernel só consulta em terminais;
                                     nos pipes o libSystem decide pelo SYS_FSTAT) */
 #define MOS_O_CLOEXEC 0x1000000  /* valor do macOS: o fd fecha no execve */
+#define MOS_IMG_RDONLY (1ull << 62)  /* SYS_IMGATTACH, no cap: hdiutil attach -readonly */
 #define MOS_WNOHANG    1         /* SYS_WAITPID: não bloqueia (devolve 0) */
 #define MOS_WUNTRACED  2         /* também informa filho parado (status (sinal << 8) | 0x7f) */
 #define MOS_WCONTINUED 0x10      /* também informa filho que voltou a rodar (WIFCONTINUED: sinal 19) */

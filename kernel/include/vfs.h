@@ -162,6 +162,7 @@ void dfs_mount_all(void);      /* monta imagens .dmg/.img encontradas em /Volume
 bool vfs_is_volume(vnode_t *n); /* n é a raiz de um volume montado em /Volumes */
 bool vfs_eject(vnode_t *vol);   /* desmonta e libera o volume (n deixa de ser válido) */
 int  vfs_mount_file(vnode_t *f); /* monta uma imagem .dmg/.img; devolve nº de volumes criados (0 = falha/já montada) */
+int  vfs_mount_file_ex(vnode_t *f, bool readonly); /* idem; UDRW/crua fica gravável salvo readonly */
 bool vfs_is_read_only(vnode_t *n); /* dentro de um volume externo (somente leitura) */
 bool vfs_ext_writable(vnode_t *n); /* n->ext é de um volume gravável (FAT/HFS+ em disco) */
 bool vol_enable_write(vnode_t *vol, char *err, usize cap); /* consentimento do usuário para gravar NESTE volume (liberação só da faixa dele) */
