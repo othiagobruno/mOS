@@ -44,6 +44,7 @@ static int s_shimm(T *t, int x, int eb, int kind, int sh);
 static int s_fcmpv(T *t, int q, int dbl, int kind, int abs, int n, int m, int d, int sc);
 static int s_fcvtz_vec(T *t, int q, int dbl, int u, int n, int d, int sc);
 static void s_widen(T *t, int x, int v, int hi, int sz, int sgn);
+static int s_dot(T *t, int q, int sa, int sb, int n, int m, int lane, int d);
 static int s_scalar_simd(T *t, a64_u32 w);
 
 static void s_ld(T *t, int x, int v) { x_movdqu_ld(B, x, VO(v)); }
@@ -1536,6 +1537,29 @@ static int s_fcvtz_vec(T *t, int q, int dbl, int u, int n, int d, int sc) {
     s_st(t, d, 1, !sc);
     return 1;
 }
+/* SDOT / UDOT / USDOT / SUDOT: cada lane de 32 bits soma 4 produtos de bytes. Bytes alargados a
+ * 16 bits (pmovsx/zxbw), pmaddwd soma pares (|produto| <= 2^16, sem saturar) e phaddd junta os
+ * pares em quádruplas. sa/sb: n/m com sinal. lane >= 0: m é o grupo de 32 bits difundido. */
+static int s_dot(T *t, int q, int sa, int sb, int n, int m, int lane, int d) {
+    if (!jit_g.sse41 || !jit_g.ssse3) return 0;
+    s_ld(t, 0, n);
+    if (lane < 0) s_ld(t, 1, m);
+    else { xop2(B, XF_66, 0x70, 1, VO(m)); xe8(B, (a64_u8)(lane * 0x55)); }
+    s_op38(t, sa ? 0x20 : 0x30, 2, 0);             /* pmovsxbw / pmovzxbw */
+    s_op38(t, sb ? 0x20 : 0x30, 3, 1);
+    s_op(t, 0xF5, 2, 3);                            /* pmaddwd */
+    if (q) {
+        s_shiftdq(t, 0, 0, 8); s_shiftdq(t, 1, 0, 8);
+        s_op38(t, sa ? 0x20 : 0x30, 3, 0);
+        s_op38(t, sb ? 0x20 : 0x30, 4, 1);
+        s_op(t, 0xF5, 3, 4);
+        s_op38(t, 0x02, 2, 3);                      /* phaddd */
+    } else s_op38(t, 0x02, 2, 2);
+    s_ld(t, 1, d);
+    s_op(t, 0xFE, 2, 1);                            /* paddd */
+    s_st(t, d, 2, q);
+    return 1;
+}
 static int s_fpvec(T *t, a64_u32 w) {
     int q = (int)BIT(w, 30), u = (int)BIT(w, 29), a = (int)BIT(w, 23), dbl = (int)BIT(w, 22), op = (int)BITS(w, 13, 11);
     int m = (int)BITS(w, 20, 16), n = (int)BITS(w, 9, 5), d = (int)(w & 31);
@@ -1579,6 +1603,11 @@ static int s_indexed(T *t, a64_u32 w) {
         return fpv_core(t, op == 5 ? 0xBC : 0xB8, 1, dbl, q, d, n, m, lane);
     }
     int key = (u << 4) | op;
+    if ((op == 0xE && size == 2) || (op == 0xF && !u && (size == 2 || size == 0))) {   /* (S|U)DOT USDOT SUDOT por elemento */
+        int lane = (H << 1) | L, m = (M << 4) | rm;
+        if (op == 0xE) return s_dot(t, q, !u, !u, n, m, lane, d);
+        return size == 2 ? s_dot(t, q, 0, 1, n, m, lane, d) : s_dot(t, q, 1, 0, n, m, lane, d);
+    }
     if (op == 0x2 || op == 0x6 || op == 0xA) {      /* (S|U)MLAL (S|U)MLSL (S|U)MULL por elemento */
         int sgn = !u;
         if ((size != 1 && size != 2) || !jit_g.sse41) return 0;
@@ -2640,6 +2669,13 @@ static int tr_simd(T *t, a64_u32 w) {
     }
     if (BIT(w, 10)) {
         if (!BIT(w, 15) && BITS(w, 23, 21) == 0) return s_copy(t, w);
+        if (!BIT(w, 28) && !BIT(w, 21) && BIT(w, 15) && BITS(w, 23, 22) == 2) {   /* 3same_extra: SDOT UDOT USDOT */
+            int q = (int)BIT(w, 30), u = (int)BIT(w, 29), op = (int)BITS(w, 14, 11);
+            int n = (int)BITS(w, 9, 5), m = (int)BITS(w, 20, 16), d = (int)(w & 31);
+            if (op == 0x2) return s_dot(t, q, !u, !u, n, m, -1, d);
+            if (op == 0x3 && !u) return s_dot(t, q, 0, 1, n, m, -1, d);
+            return 0;
+        }
         if (BIT(w, 22) && !BIT(w, 21) && !BIT(w, 15) && !BIT(w, 14)) {   /* FP half vetorial (3same; bit 15 = 1 é 3same_extra) */
             int q = (int)BIT(w, 30), u = (int)BIT(w, 29), a = (int)BIT(w, 23), op = (int)BITS(w, 13, 11);
             int lanes = q ? 8 : 4, n = (int)BITS(w, 9, 5), m = (int)BITS(w, 20, 16), d = (int)(w & 31);
