@@ -1235,7 +1235,7 @@ static void finish(process_t *p, int code) {
     for (thread_t *t = sched_threads(); t; t = t->next)   /* todas as threads do processo */
         if (t->proc == p) {
             if (p->tty && p->tty->reader == t) p->tty->reader = NULL;
-            t->state = TH_DEAD;
+            sched_mark_dead(t);
         }
     { extern void smp_kick_proc(process_t *p); smp_kick_proc(p); }   /* as que rodam em outro núcleo saem do ring 3 já */
     pty_proc_exit(p);                                 /* líder de sessão: SIGHUP ao grupo em frente, a sessão perde o terminal */
@@ -3038,7 +3038,7 @@ static i64 proc_exec(int_frame_t *f, thread_t *t, process_t *p, char *path, char
     for (thread_t *o = sched_threads(); o; o = o->next)
         if (o->proc == p && o != t) {
             if (p->tty && p->tty->reader == o) p->tty->reader = NULL;
-            o->state = TH_DEAD;
+            sched_mark_dead(o);
         }
     { extern void smp_kick_proc(process_t *p); smp_kick_proc(p); }   /* idem nos outros núcleos (proc/sched.c) */
     p->main = t;
@@ -3111,6 +3111,50 @@ static void futex_woken(thread_t *w) {
     ((int_frame_t *)w->frame)->rax = 0;
     sched_wake(w);
 }
+/* fila da chave (proc/futexq.c): só as threads desta palavra. Sob a trava do escalonador, que também protege a fila. */
+static i64 futex_wake_now(process_t *p, u64 a, u64 b) {
+    u64 key = futex_shared_key(p, a);
+    sched_lock_public();
+    i64 n = futexq_wake(p, a, key, (int)(b ? (b > 0x7FFFFFFF ? 0x7FFFFFFF : b) : 1), futex_woken);
+    sched_unlock_public();
+    return n;
+}
+/* Confere a palavra e entra na fila sob a trava do escalonador: um FUTEX_WAKE (de qualquer núcleo, com ou sem a trava
+ * grande) não cai entre a leitura e a espera. A página está presente (quem chama garantiu). */
+static u64 futex_wait_locked(int_frame_t *f, thread_t *t, process_t *p, u64 a, u32 want, u64 tmo) {
+    u64 key = futex_shared_key(p, a);
+    sched_lock_public();
+    u64 *e = uvm_pte(p, a);
+    if (!e) { sched_unlock_public(); f->rax = (u64)-MOS_EFAULT; return (u64)f; }
+    u32 cur = __atomic_load_n((volatile u32 *)((*e & PTE_ADDR) + (a & 0xFFF)), __ATOMIC_ACQUIRE);
+    if (cur != want) { sched_unlock_public(); f->rax = (u64)-MOS_EAGAIN; return (u64)f; }
+    if (!tmo) { sched_unlock_public(); f->rax = (u64)-MOS_ETIMEDOUT; return (u64)f; }
+    t->futex_va = a;
+    t->futex_phys = key;
+    t->wake_at = tmo == ~0ULL ? 0 : timer_ticks() + tmo;   /* o prazo é do escalonador (wake_sleepers) */
+    t->wait_pid = -8;
+    t->state = TH_WAITING;
+    futexq_add(t);
+    f->rax = 0;                                             /* acordada por FUTEX_WAKE */
+    return sched_switch_locked(f);
+}
+/* futex e yield sem a trava grande, num AP (o BSP troca para threads do kernel, que precisam dela). 0 = vai pelo
+ * caminho normal (página ausente, BSP). in_nobkl: kick e shootdown esperam este núcleo enquanto ele lê a memória. */
+static u64 futex_fast(int_frame_t *f, thread_t *t, process_t *p) {
+    if (this_cpu() == 0) return 0;
+    u64 a = f->rdi, b = f->rsi, c = f->rdx;
+    sched_nobkl_enter();
+    if (f->rax == SYS_YIELD) {
+        sched_lock_public();
+        f->rax = 0;
+        t->state = TH_READY;
+        return sched_switch_locked(f);
+    }
+    if (a & 3) { f->rax = (u64)-MOS_EFAULT; return (u64)f; }
+    if (!uvm_pte(p, a)) { sched_nobkl_leave(); return 0; }   /* falta de página: precisa da trava grande */
+    if (f->rax == SYS_FUTEX_WAKE) { f->rax = (u64)futex_wake_now(p, a, b); return (u64)f; }
+    return futex_wait_locked(f, t, p, a, (u32)b, c);
+}
 static u64 proc_syscall_(int_frame_t *f);
 /* a syscall pode bloquear e trocar de thread: a thread que volta ao ring 3 (talvez acordada por um sinal, com
  * rax = -EINTR) passa pela entrega de sinais, que também decide se a syscall interrompida é refeita */
@@ -3147,6 +3191,7 @@ u64 proc_syscall_fast(int_frame_t *f) {
     case SYS_GETGID: f->rax = (u64)(i64)p->gid; break;
     case SYS_GETEGID: f->rax = (u64)(i64)p->egid; break;
     case SYS_CPUS: f->rax = (u64)(i64)smp_cpu_count(); break;
+    case SYS_FUTEX_WAIT: case SYS_FUTEX_WAKE: case SYS_YIELD: return futex_fast(f, t, p);
     default: return 0;
     }
     return (u64)f;
@@ -3215,28 +3260,17 @@ static u64 proc_syscall_(int_frame_t *f) {
 
     /* ---- futex: espera numa palavra de 32 bits do processo. O libSystem monta pthread_mutex/cond e os semáforos
      * em cima disto; antes eles giravam com SYS_YIELD e cada thread ociosa do Chromium (ThreadPool, V8, libuv)
-     * ficava sempre pronta, roubando a CPU de quem tinha trabalho. Conferir o valor e bloquear é atômico aqui:
-     * syscalls rodam com interrupções desligadas num núcleo só, então nenhum FUTEX_WAKE cai no meio. */
+     * ficava sempre pronta, roubando a CPU de quem tinha trabalho. Conferir o valor e bloquear é atômico sob a trava
+     * do escalonador (futex_wait_locked); nos APs o futex nem passa pela trava grande (futex_fast). */
     case SYS_FUTEX_WAIT: {
         dump_threads_maybe(f);       /* o despejo periódico também sai daqui: um app todo parado em futex não chama SYS_SLEEP */
         u32 cur;
-        if ((a & 3) || !uvm_copy_in(p, &cur, a, 4)) { r = -MOS_EFAULT; break; }
-        if (cur != (u32)b) { r = -MOS_EAGAIN; break; }
-        if (!c) { r = -MOS_ETIMEDOUT; break; }
-        t->futex_va = a;
-        t->futex_phys = futex_shared_key(p, a);
-        t->wake_at = c == ~0ULL ? 0 : timer_ticks() + c;    /* o prazo é do escalonador (wake_sleepers) */
-        t->wait_pid = -8;
-        t->state = TH_WAITING;
-        futexq_add(t);                                       /* fila da chave (proc/futexq.c) */
-        f->rax = 0;                                          /* acordada por FUTEX_WAKE */
-        return sched_switch(f);
+        if ((a & 3) || !uvm_copy_in(p, &cur, a, 4)) { r = -MOS_EFAULT; break; }   /* traz a página, se preciso */
+        return futex_wait_locked(f, t, p, a, (u32)b, c);
     }
-    case SYS_FUTEX_WAKE: {
-        /* fila da chave (proc/futexq.c): só as threads desta palavra, não todas as do sistema */
-        r = futexq_wake(p, a, futex_shared_key(p, a), (int)(b ? (b > 0x7FFFFFFF ? 0x7FFFFFFF : b) : 1), futex_woken);
+    case SYS_FUTEX_WAKE:
+        r = futex_wake_now(p, a, b);
         break;
-    }
     case SYS_TIME: r = (i64)timer_ticks(); break;
     case SYS_BRK:
         if (a == 0) r = (i64)p->brk;
@@ -4070,7 +4104,7 @@ static u64 proc_syscall_(int_frame_t *f) {
                 sched_wake(w);
                 w->join_tid = 0;
             }
-        t->state = TH_DEAD;
+        sched_mark_dead(t);
         return sched_switch(f);
     case SYS_THREAD_JOIN: {
         thread_t *j = NULL;
