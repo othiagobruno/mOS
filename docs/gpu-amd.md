@@ -39,7 +39,7 @@ Legenda: ✅ pronto com teste de host · 🔶 escrito, sem teste no hardware · 
 | F3 | SMU10 (MP1): caixa de mensagens, PowerUpGfx/Sdma, dispclk/dppclk/dcfclk/socclk mínimos | ⬜ | simulador de mailbox |
 | F4a | Display sem trocar o modo: leitura do timing de cada OTG e do plano de cada HUBP deixados pela UEFI, conferência com o framebuffer do GOP, vsync pelo OTG (vblank, posição, contador, taxa medida), troca de superfície no vblank (BGRA/RGBA linear, trava do OTG, confirmação por EARLIEST_INUSE), buffer duplo da tela do compositor na VRAM (WC), HPD, alocador de VRAM | ✅ escrito e testado no host | `tools/amdgpu_hw_host.c`: 190/190 (timing de 25+ modos ida e volta, 40 quadros com áreas sujas aleatórias iguais à superfície, travamento da troca volta ao GOP) |
 | F4b | Troca de modo e outras saídas: DDC/I2C e AUX por hardware (EDID ao vivo), DCCG/PLL, DIG + PHY por ATOM, HDMI (AVI, SCDC), DP (treino de link), DPP/MPC/OPP, watermarks, várias saídas | ⬜ | — |
-| F5 | Alocador de VRAM e BOs da ABI na VRAM: ✅ (F4a). Falta a GMC v9: gfxhub + mmhub, GART do sistema, VMID 1..15 com tabelas de 4 níveis, alocador de VRAM e GTT, BOs da ABI | ⬜ | host |
+| F5 | Alocador de VRAM e BOs da ABI na VRAM: ✅ (F4a). Falta a GMC v9: gfxhub + mmhub, GART do sistema, VMID 1..15 com tabelas de 4 níveis, GTT | ⬜ | host |
 | F6 | IH (OSSSYS 4.1): anel de interrupções, MSI, fontes vblank/pageflip/HPD/EOP/SDMA | ⬜ | host |
 | F7 | SDMA 4.1: microcódigo, anel, copy/fill linear, fences; cópia do compositor pela GPU | ⬜ | host |
 | F8 | GFX9: RLC, CP (PFP/CE/ME/MEC), golden registers do Picasso/Raven2, CSB, anel GFX, IBs, fences EOP, fila de compute (HQD) | ⬜ | host |
