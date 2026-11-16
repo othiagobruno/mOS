@@ -606,6 +606,57 @@ static int s_addhn(T *t, int q, int u, int size, int sub, int n, int m, int d) {
     return 1;
 }
 
+/* SQSHL / UQSHL / SQSHLU por imediato (op 0x0E e 0x0C), vetor ou escalar de qualquer largura.
+ * y = x << sh (com perda); a lane não satura quando desfazer o deslocamento devolve x
+ * (aritmético para SQSHL, lógico para UQSHL/SQSHLU). SQSHLU: x < 0 satura em 0.
+ * QC sai da máscara "ok" (o valor saturado pode coincidir com o y perdido, então não comparo
+ * resultados). Usa xmm0..xmm4 e rax. */
+static int s_qshl_imm(T *t, int q, int u, int op, int eb, int sh, int n, int d, int scalar) {
+    int sz = eb == 8 ? 0 : eb == 16 ? 1 : eb == 32 ? 2 : 3;
+    int sgn = op == 0x0E && !u, su = op == 0x0C;
+    if (op == 0x0C && !u) return 0;
+    if (sz == 3 && (!jit_g.sse41 || (su && !jit_g.sse42))) return 0;   /* antes de emitir qualquer byte */
+    if (scalar || !q) x_movq_ld(B, 0, VO(n)); else s_ld(t, 0, n);
+    x_movdqa_ld(B, 1, XR(0));
+    s_shimm(t, 1, eb, 0, sh);                       /* y */
+    x_movdqa_ld(B, 2, XR(1));
+    s_shimm(t, 2, eb, sgn ? 2 : 1, sh);             /* y desfeito */
+    s_cmp(t, 1, sz, 2, 0);                          /* xmm2 = ok (sem perda) */
+    if (su) {                                       /* ok &= x >= 0 */
+        s_zero(t, 3);
+        s_cmp(t, 0, sz, 3, 0);                      /* xmm3 = 0 > x */
+        xop2(B, XF_66, 0xDF, 3, XR(2));             /* pandn: xmm3 = ~neg & ok */
+        x_movdqa_ld(B, 2, XR(3));
+    }
+    /* QC: alguma lane do resultado sem ok */
+    fl_clobber(t);
+    xop2(B, XF_66, 0xD7, XAX, XR(2));               /* pmovmskb */
+    int req = scalar ? (1 << (eb / 8)) - 1 : q ? 0xFFFF : 0xFF;
+    x_alu_ri(B, 0, A_AND, XR(XAX), req);
+    x_alu_ri(B, 0, A_CMP, XR(XAX), req);
+    a64_u8 *j = x_jcc8(B, CC_E);
+    x_alu_ri(B, 0, A_OR, XM(RCPU, OFF_FPSR), FPSR_QC);
+    x_patch8(j, t->b.p);
+    if (sgn) {                                      /* saturado: (x >> (eb-1)) ^ MAX */
+        x_movdqa_ld(B, 3, XR(0));
+        s_shimm(t, 3, eb, 2, eb - 1);
+        static const a64_u64 mx[4] = { 0x7F7F7F7F7F7F7F7Full, 0x7FFF7FFF7FFF7FFFull, 0x7FFFFFFF7FFFFFFFull, 0x7FFFFFFFFFFFFFFFull };
+        s_const(t, 4, mx[sz]);
+        s_op(t, 0xEF, 3, 4);
+        s_op(t, 0xDB, 1, 2);                        /* y & ok */
+        xop2(B, XF_66, 0xDF, 2, XR(3));             /* ~ok & sat */
+        s_op(t, 0xEB, 1, 2);
+    } else {                                        /* saturado = tudo 1; SQSHLU negativo = 0 */
+        if (su) { x_movdqa_ld(B, 4, XR(0)); s_zero(t, 3); s_cmp(t, 0, sz, 3, 4); }   /* xmm3 = neg */
+        s_ones(t, 4);
+        s_op(t, 0xEF, 4, 2);                        /* ~ok */
+        s_op(t, 0xEB, 1, 4);                        /* y | ~ok */
+        if (su) xop2(B, XF_66, 0xDF, 3, XR(1)), x_movdqa_ld(B, 1, XR(3));   /* & ~neg */
+    }
+    if (scalar && eb < 64) { s_const2(t, 4, eb == 32 ? 0xFFFFFFFFull : eb == 16 ? 0xFFFFull : 0xFFull, 0); s_op(t, 0xDB, 1, 4); }
+    s_st(t, d, 1, q && !scalar);
+    return 1;
+}
 static int s_shift(T *t, a64_u32 w) {              /* AdvSIMD vetorial, deslocamento por imediato */
     int q = (int)BIT(w, 30), u = (int)BIT(w, 29), immh = (int)BITS(w, 22, 19), op = (int)BITS(w, 15, 11);
     int hb = (int)BITS(w, 22, 16), n = (int)BITS(w, 9, 5), d = (int)(w & 31);
@@ -640,6 +691,10 @@ static int s_shift(T *t, a64_u32 w) {              /* AdvSIMD vetorial, deslocam
         if (!q) { s_st(t, d, 0, 0); return 1; }
         x_movq_st(B, VOE(d, 8), 0);
         return 1;
+    }
+    if (op == 0x0C || op == 0x0E) {                 /* SQSHLU / SQSHL / UQSHL (imediato) */
+        if (eb == 64 && !q) return 0;
+        return s_qshl_imm(t, q, u, op, eb, lsh, n, d, 0);
     }
     if (op == 0x14) {                               /* SSHLL/USHLL (UXTL/SXTL): alarga a metade Q */
         if (eb == 64) return 0;
@@ -1035,7 +1090,7 @@ static int s_cvt(T *t, a64_u32 w) {
             else x_mov_rr(B, 1, XAX, hn);
             mx_clean(t);
             s_zero(t, 0);
-            s_cvtsi_rax(t, dbl, u && sf);          /* u64 com bit 63: (n>>1)*2, exato acima de 2^63 */
+            s_cvtsi_rax(t, dbl, u && sf);          /* u64 com bit 63: ((n>>1)|(n&1))*2 */
             xop2(B, 0, 0xAE, 3, XM(XSP, 0));
             ixc_if_pe(t);
             x_movdqu_st(B, VO(d), 0);
@@ -1857,26 +1912,21 @@ static void mx_reset(T *t) {
     t->mxclean = 1;
 }
 
-/* cvtsi2ss/sd de rax. uns: o bit 63 pode estar ligado; (n>>1)+(n>>1) é o dobro exato,
- * porque acima de 2^63 o ulp é pelo menos 2048 em f64 e muito maior em f32. */
+/* cvtsi2ss/sd de rax. uns: o bit 63 pode estar ligado; converte h = (n >> 1) | (n & 1) e dobra.
+ * O bit 0 vira "sticky": h tem os mesmos bits descartados que n (acima de 2^63 o ulp é pelo menos
+ * 2^11 em f64), então o arredondamento e o PE são os de n; o dobro é exato. Sem o sticky,
+ * h pode cair num empate que n não tem (2^63 + 1025 → 2^63 em vez de 2^63 + 2048). Usa rcx. */
 static void s_cvtsi_rax(T *t, int dbl, int uns) {
     int pf = (dbl ? XF_F2 : XF_F3) | XF_W;
     if (!uns) { xop2(B, pf, 0x2A, 0, XR(XAX)); return; }
     x_test_rr(B, 1, XAX, XAX);
     a64_u8 *jp = x_jcc32(B, CC_NS);
-    /* bit 0 perdido no >>1: o dobro de n>>1 acerta o valor (ulp >= 2048) mas é inexato */
-    x_test_ri(B, 0, XR(XAX), 1);
-    x_setcc(B, CC_NE, XCX);
-    x_mov8_mr(B, XM(XSP, 0), XCX);
+    x_mov_rr(B, 1, XCX, XAX);
+    x_alu_ri(B, 1, A_AND, XR(XCX), 1);
     x_shift_ri(B, 1, S_SHR, XAX, 1);
+    x_alu_rr(B, 1, A_OR, XAX, XCX);
     xop2(B, pf, 0x2A, 0, XR(XAX));
     xop2(B, dbl ? XF_F2 : XF_F3, 0x58, 0, XR(0));
-    x_test8_mi(B, XM(XSP, 0), 0xFF);
-    a64_u8 *jz = x_jcc8(B, CC_E);
-    xop2(B, 0, 0xAE, 3, XM(XSP, 4));
-    x_alu_ri(B, 0, A_OR, XM(XSP, 4), 0x20);
-    xop2(B, 0, 0xAE, 2, XM(XSP, 4));
-    if (!t->b.ovf) x_patch8(jz, t->b.p);
     a64_u8 *jd = x_jmp32(B);
     if (!t->b.ovf) x_patch32(jp, t->b.p);
     xop2(B, pf, 0x2A, 0, XR(XAX));
@@ -2251,26 +2301,28 @@ static int s_fcvt_gpr(T *t, int dbl, int sf, int rmode, int opc, int n, int d) {
     mx_clean(t);
     if (dbl) xop2(B, XF_66 | XF_W, 0x6E, 0, XR(XAX)); else x_movd_ld(B, 0, XR(XAX));
     if (away) {
-        x_movdqa_ld(B, 2, XR(0));
-        xop2(B, (dbl ? XF_F2 : XF_F3) | XF_W, 0x2C, XDX, XR(0));
-        xop2(B, (dbl ? XF_F2 : XF_F3) | XF_W, 0x2A, 1, XR(XDX));
-        xop2(B, dbl ? XF_66 : 0, 0x2E, 2, XR(1));
-        x_setcc(B, CC_NE, XCX);
+        /* empate longe do zero: r = trunc(x); d = x - r é exato (|x| < 2^62 e, abaixo de 2^52/2^23,
+         * x e r têm a mesma escala); |d| >= 0,5 leva r um passo para longe do zero. O truque
+         * x ± 0,5 erra quando a soma arredonda (0,49999997f, 2^52 + 1). */
+        int pf = dbl ? XF_F2 : XF_F3;
+        xop2(B, pf | XF_W, 0x2C, XDX, XR(0));                      /* rdx = trunc(x) */
+        xop2(B, pf | XF_W, 0x2A, 1, XR(XDX));                      /* xmm1 = r (exato) */
+        xop2(B, dbl ? XF_66 : 0, 0x2E, 0, XR(1));
+        x_setcc(B, CC_NE, XCX);                                    /* inexato: IXC */
         x_mov8_mr(B, XM(XSP, 0), XCX);
-        x_movdqa_ld(B, 0, XR(2));
+        xop2(B, pf, 0x5C, 0, XR(1));                               /* xmm0 = d */
         x_mov_ri(B, XAX, dbl ? 0x3fe0000000000000ull : 0x3f000000u);
         if (dbl) xop2(B, XF_66 | XF_W, 0x6E, 3, XR(XAX)); else x_movd_ld(B, 3, XR(XAX));
-        if (dbl) xop2(B, XF_66 | XF_W, 0x7E, 2, XR(XAX)); else x_movd_st(B, XR(XAX), 2);
-        x_test_rr(B, dbl, XAX, XAX);
-        a64_u8 *jneg = x_jcc32(B, CC_S);
-        xop2(B, dbl ? XF_F2 : XF_F3, 0x58, 0, XR(3));
-        s_round_packed(t, dbl ? 1 : 0, 0, 0, 1);
-        a64_u8 *jd = x_jmp32(B);
-        if (!t->b.ovf) x_patch32(jneg, t->b.p);
-        xop2(B, dbl ? XF_F2 : XF_F3, 0x5C, 0, XR(3));
-        s_round_packed(t, dbl ? 1 : 0, 0, 0, 2);
-        if (!t->b.ovf) x_patch32(jd, t->b.p);
-        xop2(B, (dbl ? XF_F2 : XF_F3) | (w64 ? XF_W : 0), 0x2C, XDX, XR(0));
+        xop2(B, dbl ? XF_66 : 0, 0x2F, 0, XR(3));                  /* comis d, 0,5 */
+        a64_u8 *jlo = x_jcc8(B, CC_B);
+        x_alu_ri(B, 1, A_ADD, XR(XDX), 1);
+        x_patch8(jlo, t->b.p);
+        x_mov_ri(B, XAX, dbl ? 0xbfe0000000000000ull : 0xbf000000u);
+        if (dbl) xop2(B, XF_66 | XF_W, 0x6E, 3, XR(XAX)); else x_movd_ld(B, 3, XR(XAX));
+        xop2(B, dbl ? XF_66 : 0, 0x2F, 3, XR(0));                  /* comis -0,5, d */
+        a64_u8 *jhi = x_jcc8(B, CC_B);
+        x_alu_ri(B, 1, A_SUB, XR(XDX), 1);
+        x_patch8(jhi, t->b.p);
         x_mov_rr(B, sf, hd, XDX);
         x_test8_mi(B, XM(XSP, 0), 0xFF);
         a64_u8 *jz = x_jcc8(B, CC_E);
@@ -2292,7 +2344,12 @@ static int s_fcvt_gpr(T *t, int dbl, int sf, int rmode, int opc, int n, int d) {
 
 static int s_shift_scalar(T *t, a64_u32 w) {
     int u = (int)BIT(w, 29), immh = (int)BITS(w, 22, 19);
-    if (!immh || BIT(w, 23) || !(immh & 8)) return 0;
+    if (!immh || BIT(w, 23)) return 0;
+    if (BITS(w, 15, 11) == 0x0C || BITS(w, 15, 11) == 0x0E) {   /* SQSHLU / SQSHL / UQSHL escalares */
+        int e = (immh & 8) ? 64 : (immh & 4) ? 32 : (immh & 2) ? 16 : 8;
+        return s_qshl_imm(t, 0, u, (int)BITS(w, 15, 11), e, (int)BITS(w, 22, 16) - e, (int)BITS(w, 9, 5), (int)(w & 31), 1);
+    }
+    if (!(immh & 8)) return 0;
     int eb = 64;
     int hb = (int)BITS(w, 22, 16), op = (int)BITS(w, 15, 11);
     int n = (int)BITS(w, 9, 5), d = (int)(w & 31);

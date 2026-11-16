@@ -30,7 +30,7 @@ build() {
     local base=(userland/a64/a64_fp.c userland/a64/a64_xmon.c userland/a64/engine.c userland/a64/interp*.c)
     (cd "$R" && $CC -O2 -g -mcx16 -Wall -Wno-unused-function -fno-strict-aliasing -pthread \
         tools/a64host.c "${base[@]}" -o "$O/a64host" -lm) || { echo "a64host: falhou"; return 1; }
-    (cd "$R" && $CC -O2 -g -mcx16 -Wall -Wno-unused-function -fno-strict-aliasing -pthread -DA64_HAVE_JIT \
+    (cd "$R" && $CC -O2 -g -mcx16 -Wall -Wno-unused-function -fno-strict-aliasing -pthread -DA64_HAVE_JIT -DA64_HOST_TOOL \
         tools/a64host.c "${base[@]}" userland/a64/jit*.c -o "$O/a64host-jit" -lm) || { echo "a64host-jit: falhou"; return 1; }
     $ZIG cc -target aarch64-freestanding-none -mcpu=cortex_a76 -O2 -g0 -ffreestanding -nostdlib -static -fno-pic \
         -fno-stack-protector -mgeneral-regs-only -fno-builtin -Wall -Wno-unused-function \

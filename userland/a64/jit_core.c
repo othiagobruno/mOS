@@ -450,7 +450,9 @@ static LONG CALLBACK jit_veh(EXCEPTION_POINTERS *e) {
 }
 #endif
 
-#ifdef _WIN32
+/* variáveis de ambiente de diagnóstico: só nos harnesses de host (Windows e o a64host do Linux,
+ * que compila com A64_HOST_TOOL); o a64rt do mOS não tem getenv aqui */
+#if defined(_WIN32) || defined(A64_HOST_TOOL)
 #include <stdio.h>
 #include <stdlib.h>
 static void jit_atexit(void) {
@@ -460,7 +462,7 @@ static void jit_atexit(void) {
             (unsigned long long)J.nwfault, (unsigned long long)J.ninval, (unsigned long long)J.nvol, (unsigned long long)J.nstale);
 }
 static void fbs_line(a64_u32 key, a64_u64 n, void *arg) { (void)arg; fprintf(stderr, "[jit] interp %08x x %llu\n", key, (unsigned long long)n); }
-static void fbs_print(void) { a64_jit_fbstat_dump(fbs_line, NULL, 60); }
+static void fbs_print(void) { const char *m = getenv("A64JIT_FBSTAT_MAX"); a64_jit_fbstat_dump(fbs_line, NULL, m ? atoi(m) : 60); }
 static void jit_env(void) {
     const char *s;
     if ((s = getenv("A64JIT_NONATIVE")) && *s == '1') jit_g.nonative = 1;
