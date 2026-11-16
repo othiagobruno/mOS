@@ -19,6 +19,7 @@ void vmm_map_wc(u64 phys, u64 size);
 #define MOS_EINVAL 22
 #define MOS_ETIMEDOUT 60
 #define MOS_EIO 5
+#define MOS_EAGAIN 35
 #define MOS_ENXIO 6
 #define MOS_EBUSY 16
 #define MOS_ENOMEM 12

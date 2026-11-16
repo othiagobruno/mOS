@@ -520,6 +520,9 @@ bool amdgpu_engines_init(amdgpu_t *a) {
     if (!a || !a->ready || a->engines_tried) return a && a->sdma_ok;
     a->engines_tried = true;
     amdgpu_pm_register(a);
+#ifndef MOS_HOST_TEST
+    amdgpu_vbios_load(a);                    /* saídas, linhas DDC/HPD e tabelas de comando (troca de modo) */
+#endif
     a->smu_ok = smu_init(a);
     if (!a->smu_ok) { kprintf("amdgpu: sem SMU; motores da GPU ficam desligados\n"); return false; }
     a->gmc_ok = gmc_init(a);
