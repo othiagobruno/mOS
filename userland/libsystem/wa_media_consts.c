@@ -224,3 +224,10 @@ WM(SKStoreProductParameterProviderToken, "pt")
 
 /* AVCoreAnimationBeginTimeAtZero: o beginTime "zero" que não vira o tempo atual no Core Animation. */
 const double AVCoreAnimationBeginTimeAtZero = 1e-100;
+WM(AVCaptureSessionPresetLow, "AVCaptureSessionPresetLow")
+WM(AVCaptureSessionPresetMedium, "AVCaptureSessionPresetMedium")
+WM(AVCaptureSessionPreset320x240, "AVCaptureSessionPreset320x240")
+WM(AVCaptureSessionPreset960x540, "AVCaptureSessionPreset960x540")
+WM(AVCaptureSessionPreset3840x2160, "AVCaptureSessionPreset3840x2160")
+WM(AVCaptureSessionPresetiFrame960x540, "AVCaptureSessionPresetiFrame960x540")
+WM(AVCaptureSessionPresetiFrame1280x720, "AVCaptureSessionPresetiFrame1280x720")

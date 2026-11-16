@@ -2278,3 +2278,27 @@ void cx_beep(void) {
     }
     play_pcm_48k(pcm, n);
 }
+
+/* ---- HostTime (CoreAudio/HostTime.h). O relógio de host é o mach_absolute_time; a conversão usa o
+ * mach_timebase_info, como no macOS, e não supõe nanossegundos. */
+int mach_timebase_info(u32 *info);
+static void host_tb(u64 *numer, u64 *denom) {
+    u32 tb[2] = {1, 1};
+    mach_timebase_info(tb);
+    *numer = tb[0] ? tb[0] : 1;
+    *denom = tb[1] ? tb[1] : 1;
+}
+u64 AudioGetCurrentHostTime(void) { return mach_absolute_time(); }
+double AudioGetHostClockFrequency(void) {
+    u64 n, d;
+    host_tb(&n, &d);
+    return 1e9 * (double)d / (double)n;
+}
+u32 AudioGetHostClockMinimumTimeDelta(void) { return 1; }
+static u64 mul_div(u64 v, u64 m, u64 dv) {
+    /* v * m / dv sem estourar 64 bits: m e dv vêm do timebase (pequenos) */
+    u64 q = v / dv, r = v % dv;
+    return q * m + r * m / dv;
+}
+u64 AudioConvertHostTimeToNanos(u64 t) { u64 n, d; host_tb(&n, &d); return mul_div(t, n, d); }
+u64 AudioConvertNanosToHostTime(u64 ns) { u64 n, d; host_tb(&n, &d); return mul_div(ns, d, n); }
