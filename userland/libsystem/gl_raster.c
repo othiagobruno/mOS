@@ -851,6 +851,7 @@ static gl_vtx_t *vtx(asm_t *A, u32 e) {
     gl_ctx_t *C = A->R->C;
     c->v.edge = 1;
     c->v.nxfb = 0;
+    c->v.layer = 0;
     A->R->S->vs(C, e, A->iid, &c->v);
     if (!c->v.edge) c->v.edge = 0;
     c->key = e;
@@ -894,24 +895,46 @@ static void prim_poly(asm_t *A, const u32 *e, int n, int pvi) {
 }
 /* ---- geometry shader */
 static rs_t *g_rs;   /* draw em andamento (o raster é síncrono) */
+/* camada do FBO em camadas para o primitivo (gl_Layer do GS); 0: camada fora do alvo, o primitivo não desenha */
+static int rs_layer(rs_t *R, int layer) {
+    gl_target_t *T = R->T;
+    if (!T->layered) return 1;
+    if (layer < 0 || layer >= T->nlayers) return 0;
+    gl_target_layer(T, layer);
+    return 1;
+}
+/* um primitivo de saída do GS: transform feedback (mesmo com GL_RASTERIZER_DISCARD), camada e raster */
+static void gs_out_prim(rs_t *R, gl_vtx_t **p, int k) {
+    gl_ctx_t *C = R->C;
+    if (R->capture) xfb_write(C, p, k);
+    if (R->sel < 0) { C->prims_generated++; return; }
+    if (!rs_layer(R, p[0]->layer)) { C->prims_generated++; return; }
+    gl_vtx_t a = *p[0], b = k > 1 ? *p[1] : a, c = k > 2 ? *p[2] : a;
+    if (k == 1) emit_point(R, &a);
+    else if (k == 2) emit_line(R, &a, &b, &b, 0);
+    else emit_tri(R, &a, &b, &c, &c);
+}
 void gl_raster_gs_emit(gl_ctx_t *C, GLenum outprim, gl_vtx_t *v, const u8 *cut, int n) {
     rs_t *R = g_rs;
     (void)C;
-    if (!R || R->sel < 0) return;
+    if (!R) return;
     int start = 0;
     for (int i = 0; i <= n; i++) {
         if (i < n && !(cut[i] && i > start)) continue;
         /* segmento [start, i) */
         int len = i - start;
         gl_vtx_t *s = v + start;
-        if (outprim == GL_POINTS) for (int k = 0; k < len; k++) emit_point(R, &s[k]);
-        else if (outprim == GL_LINE_STRIP) { R->ls_cnt = 0; for (int k = 0; k + 1 < len; k++) { gl_vtx_t a = s[k], b = s[k + 1]; emit_line(R, &a, &b, &b, 0); } }
+        if (outprim == GL_POINTS) for (int k = 0; k < len; k++) { gl_vtx_t *p[1] = {&s[k]}; gs_out_prim(R, p, 1); }
+        else if (outprim == GL_LINE_STRIP) { R->ls_cnt = 0; for (int k = 0; k + 1 < len; k++) { gl_vtx_t *p[2] = {&s[k], &s[k + 1]}; gs_out_prim(R, p, 2); } }
         else for (int k = 2; k < len; k++) {
-            gl_vtx_t a = s[k - 2], b = s[k - 1], c = s[k];
-            if (k & 1) emit_tri(R, &b, &a, &c, &c); else emit_tri(R, &a, &b, &c, &c);
+            /* strip: alterna a ordem para manter a orientação */
+            gl_vtx_t *p[3] = {&s[k - 2], &s[k - 1], &s[k]};
+            if (k & 1) { p[0] = &s[k - 1]; p[1] = &s[k - 2]; }
+            gs_out_prim(R, p, 3);
         }
         start = i;
     }
+    if (R->T->layered) gl_target_layer(R->T, 0);
 }
 /* ---- tesselação: os primitivos gerados vão ao GS (se houver) ou ao raster */
 void gl_raster_tess_emit(gl_ctx_t *C, int pv, gl_vtx_t *v, const u32 *ix, int nix) {
@@ -1066,14 +1089,17 @@ void gl_draw(gl_ctx_t *C, GLenum mode, i64 first, i64 count, GLenum itype, const
     if (!mode_ok(mode)) { gl_err(C, GL_INVALID_ENUM); return; }
     if (count < 0 || inst < 0 || first < 0) { gl_err(C, GL_INVALID_VALUE); return; }
     if (C->in_begin) { gl_err(C, GL_INVALID_OPERATION); return; }
-    if (C->xfb->active && !C->xfb->paused && mode != GL_PATCHES && xfb_base(mode) != C->xfb->prim) { gl_err(C, GL_INVALID_OPERATION); return; }
     if (!count || !inst) return;
     { extern int gl_cond_skip(void); if (gl_cond_skip()) return; }
     if (!gl_resolve_target(C, 1, &C->tgt)) { gl_err(C, GL_INVALID_FRAMEBUFFER_OPERATION); return; }
     if (!gl_stage_setup(C)) return;
     /* tesselação: só GL_PATCHES, e GL_PATCHES só com tesselação */
     if ((mode == GL_PATCHES) != (C->st.tess != 0)) { gl_err(C, GL_INVALID_OPERATION); return; }
-    if (C->st.tess && C->xfb->active && !C->xfb->paused && !C->st.gs && xfb_base(C->st.tess_out) != C->xfb->prim) { gl_err(C, GL_INVALID_OPERATION); return; }
+    /* transform feedback: o modo do glBeginTransformFeedback é o do último estágio (GS, tesselação ou o draw) */
+    if (C->xfb->active && !C->xfb->paused) {
+        GLenum last = C->st.gs ? xfb_base(C->st.gs_out) : C->st.tess ? xfb_base(C->st.tess_out) : xfb_base(mode);
+        if (last != C->xfb->prim) { gl_err(C, GL_INVALID_OPERATION); return; }
+    }
     if (C->st.gs && !C->st.tess) {
         /* o modo do draw tem de ser da família do primitivo de entrada do GS */
         GLenum fam = mode == GL_POINTS ? GL_POINTS : mode == GL_LINES || mode == GL_LINE_STRIP || mode == GL_LINE_LOOP ? GL_LINES :
@@ -1131,7 +1157,7 @@ void gl_draw(gl_ctx_t *C, GLenum mode, i64 first, i64 count, GLenum itype, const
     u32 *seq = malloc(sizeof(u32) * (size_t)(count > 4096 ? 4096 : count) + 64);
     if (!cache || !seq) { free(cache); free(seq); gl_err(C, GL_OUT_OF_MEMORY); return; }
     asm_t A = {&R, cache, 0, mode, xfb_base(mode), C->xfb->active && !C->xfb->paused && !C->st.gs && !C->st.tess};
-    R.capture = C->xfb->active && !C->xfb->paused && !C->st.gs;
+    R.capture = C->xfb->active && !C->xfb->paused;   /* com GS, captura as saídas do GS (gs_out_prim) */
     rs_t *prev_rs = g_rs;
     g_rs = &R;
     int restart = itype && gl_is_on(C, GL_PRIMITIVE_RESTART);

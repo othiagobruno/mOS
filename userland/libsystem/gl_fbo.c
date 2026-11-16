@@ -160,7 +160,15 @@ void glFramebufferTexture2D(GLenum t, GLenum a, GLenum tt, GLuint tex, GLint lvl
 void glFramebufferTexture1D(GLenum t, GLenum a, GLenum tt, GLuint tex, GLint lvl) { attach(t, a, GL_TEXTURE, tex, lvl, 0, tt); }
 void glFramebufferTexture3D(GLenum t, GLenum a, GLenum tt, GLuint tex, GLint lvl, GLint z) { attach(t, a, GL_TEXTURE, tex, lvl, z, tt); }
 void glFramebufferTextureLayer(GLenum t, GLenum a, GLuint tex, GLint lvl, GLint layer) { attach(t, a, GL_TEXTURE, tex, lvl, layer, 0); }
-void glFramebufferTexture(GLenum t, GLenum a, GLuint tex, GLint lvl) { attach(t, a, GL_TEXTURE, tex, lvl, 0, 0); }
+/* textura inteira: array, 3D e cube viram anexo em camadas (layer -1, gl_Layer escolhe a camada) */
+static int tex_is_layered(gl_ctx_t *C, GLuint tex) {
+    gl_tex_t *t = tex ? gl_names_get(&C->sh->texs, tex) : 0;
+    if (!t) return 0;
+    GLenum g = t->target;
+    return g == GL_TEXTURE_1D_ARRAY || g == GL_TEXTURE_2D_ARRAY || g == GL_TEXTURE_3D || g == GL_TEXTURE_CUBE_MAP ||
+           g == GL_TEXTURE_CUBE_MAP_ARRAY || g == GL_TEXTURE_2D_MULTISAMPLE_ARRAY;
+}
+void glFramebufferTexture(GLenum t, GLenum a, GLuint tex, GLint lvl) { GLC(); attach(t, a, GL_TEXTURE, tex, lvl, tex_is_layered(C, tex) ? -1 : 0, 0); }
 void glFramebufferRenderbuffer(GLenum t, GLenum a, GLenum rt, GLuint rb) {
     GLC();
     if (rt != GL_RENDERBUFFER) GLERR(GL_INVALID_ENUM, );
@@ -238,6 +246,17 @@ static GLenum fbo_status(gl_ctx_t *C, gl_fbo_t *f) {
     }
 #undef MS_SAME
     if (!any && !(f->def_w && f->def_h)) return GL_FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT;
+    /* em camadas: ou todos os anexos são, ou nenhum */
+    int nl = 0, nn = 0;
+    gl_att_t *all[GLX_DRAW + 2];
+    for (int i = 0; i < GLX_DRAW; i++) all[i] = &f->color[i];
+    all[GLX_DRAW] = &f->depth;
+    all[GLX_DRAW + 1] = &f->stencil;
+    for (int i = 0; i < GLX_DRAW + 2; i++) {
+        if (!all[i]->type) continue;
+        if (all[i]->type == GL_TEXTURE && all[i]->layer < 0) nl++; else nn++;
+    }
+    if (nl && nn) return GL_FRAMEBUFFER_INCOMPLETE_LAYER_TARGETS;
     for (int i = 0; i < GLX_DRAW; i++) {
         GLenum b = f->draw_buf[i];
         if (b >= GL_COLOR_ATTACHMENT0 && b < GL_COLOR_ATTACHMENT0 + GLX_DRAW && !f->color[b - GL_COLOR_ATTACHMENT0].type && !C->profile_core)
@@ -407,6 +426,32 @@ int gl_resolve_target(gl_ctx_t *C, int draw, gl_target_t *T) {
     if (!any) { w = f->def_w; h = f->def_h; }
     T->w = w;
     T->h = h;
+    /* anexos em camadas: base (camada 0) e passo entre camadas */
+    {
+        gl_att_t *src[GLX_DRAW + 2];
+        msl_tex_t *dst[GLX_DRAW + 2];
+        int n = 0;
+        if (draw) for (int i = 0; i < GLX_DRAW; i++) {
+            GLenum b = f->draw_buf[i];
+            if (b < GL_COLOR_ATTACHMENT0 || b >= GL_COLOR_ATTACHMENT0 + GLX_DRAW || !T->color[i]) continue;
+            src[n] = &f->color[b - GL_COLOR_ATTACHMENT0]; dst[n++] = T->color[i];
+        }
+        if (T->depth) { src[n] = &f->depth; dst[n++] = T->depth; }
+        if (T->stencil) { src[n] = &f->stencil; dst[n++] = T->stencil; }
+        for (int i = 0; i < n; i++) {
+            if (src[i]->type != GL_TEXTURE || src[i]->layer >= 0) continue;
+            gl_tex_t *tx = gl_names_get(&C->sh->texs, src[i]->name);
+            int nlay = 0;
+            msl_tex_t m;
+            if (!tx || !gl_tex_image(tx, src[i]->level, 0, &m, &nlay)) continue;
+            int ns = mx_nsamp(&m);
+            T->lt[T->layered] = dst[i];
+            T->lbase[T->layered] = dst[i]->data;
+            T->lstride[T->layered] = (tx->target == GL_TEXTURE_1D_ARRAY ? m.lbpr[0] : m.lslice[0]) * (u64)ns;
+            if (!T->layered || nlay < T->nlayers) T->nlayers = nlay;
+            T->layered++;
+        }
+    }
     T->samples = 1;
     for (int i = 0; i < T->ncolor; i++) if (T->color[i]) T->samples = mx_nsamp(T->color[i]);
     if (T->depth) T->samples = mx_nsamp(T->depth);
@@ -429,6 +474,10 @@ int gl_read_source(gl_ctx_t *C, msl_tex_t **src) {
         *src = (msl_tex_t *)gl_fb_resolved(C, *src);
     }
     return 1;
+}
+
+void gl_target_layer(gl_target_t *T, int layer) {
+    for (int i = 0; i < T->layered; i++) T->lt[i]->data = T->lbase[i] + (u64)layer * T->lstride[i];
 }
 
 /* ================================================================ clear */
@@ -492,11 +541,16 @@ static void clear_ds(gl_ctx_t *C, gl_target_t *T, int depth, double d, int stenc
 void gl_clear_target(gl_ctx_t *C, GLbitfield mask) {
     gl_target_t T;
     if (!gl_resolve_target(C, 1, &T)) { gl_err(C, GL_INVALID_FRAMEBUFFER_OPERATION); return; }
-    if (mask & GL_COLOR_BUFFER_BIT) {
-        double v[4] = {C->clear_c[0], C->clear_c[1], C->clear_c[2], C->clear_c[3]};
-        for (int i = 0; i < T.ncolor; i++) clear_color(C, &T, i, v, 0);
+    /* FBO em camadas: o glClear limpa todas */
+    for (int L = 0; L < (T.layered ? T.nlayers : 1); L++) {
+        if (T.layered) gl_target_layer(&T, L);
+        if (mask & GL_COLOR_BUFFER_BIT) {
+            double v[4] = {C->clear_c[0], C->clear_c[1], C->clear_c[2], C->clear_c[3]};
+            for (int i = 0; i < T.ncolor; i++) clear_color(C, &T, i, v, 0);
+        }
+        if (mask & (GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT)) clear_ds(C, &T, !!(mask & GL_DEPTH_BUFFER_BIT), C->clear_d, !!(mask & GL_STENCIL_BUFFER_BIT), C->clear_s);
     }
-    if (mask & (GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT)) clear_ds(C, &T, !!(mask & GL_DEPTH_BUFFER_BIT), C->clear_d, !!(mask & GL_STENCIL_BUFFER_BIT), C->clear_s);
+    if (T.layered) gl_target_layer(&T, 0);
     if (mask & GL_ACCUM_BUFFER_BIT) { void gl_accum_clear(gl_ctx_t *C); gl_accum_clear(C); }
 }
 void glClear(GLbitfield mask) {
@@ -511,12 +565,15 @@ static void clear_buf(GLenum buf, GLint db, const double *v, int isint) {
     GLC();
     gl_target_t T;
     if (!gl_resolve_target(C, 1, &T)) GLERR(GL_INVALID_FRAMEBUFFER_OPERATION, );
-    if (buf == GL_COLOR) {
-        if (db < 0 || db >= GLX_DRAW) GLERR(GL_INVALID_VALUE, );
-        clear_color(C, &T, db, v, isint);
-    } else if (buf == GL_DEPTH) clear_ds(C, &T, 1, v[0], 0, 0);
-    else if (buf == GL_STENCIL) clear_ds(C, &T, 0, 0, 1, (int)v[0]);
-    else GLERR(GL_INVALID_ENUM, );
+    if (buf != GL_COLOR && buf != GL_DEPTH && buf != GL_STENCIL) GLERR(GL_INVALID_ENUM, );
+    if (buf == GL_COLOR && (db < 0 || db >= GLX_DRAW)) GLERR(GL_INVALID_VALUE, );
+    for (int L = 0; L < (T.layered ? T.nlayers : 1); L++) {
+        if (T.layered) gl_target_layer(&T, L);
+        if (buf == GL_COLOR) clear_color(C, &T, db, v, isint);
+        else if (buf == GL_DEPTH) clear_ds(C, &T, 1, v[0], 0, 0);
+        else clear_ds(C, &T, 0, 0, 1, (int)v[0]);
+    }
+    if (T.layered) gl_target_layer(&T, 0);
 }
 void glClearBufferfv(GLenum b, GLint db, const GLfloat *v) { double d[4] = {v[0], b == GL_COLOR ? v[1] : 0, b == GL_COLOR ? v[2] : 0, b == GL_COLOR ? v[3] : 0}; clear_buf(b, db, d, 0); }
 void glClearBufferiv(GLenum b, GLint db, const GLint *v) { double d[4] = {v[0], b == GL_COLOR ? v[1] : 0, b == GL_COLOR ? v[2] : 0, b == GL_COLOR ? v[3] : 0}; clear_buf(b, db, d, 1); }
@@ -527,7 +584,8 @@ void glClearBufferfi(GLenum b, GLint db, GLfloat depth, GLint stencil) {
     if (b != GL_DEPTH_STENCIL) GLERR(GL_INVALID_ENUM, );
     gl_target_t T;
     if (!gl_resolve_target(C, 1, &T)) GLERR(GL_INVALID_FRAMEBUFFER_OPERATION, );
-    clear_ds(C, &T, 1, depth, 1, stencil);
+    for (int L = 0; L < (T.layered ? T.nlayers : 1); L++) { if (T.layered) gl_target_layer(&T, L); clear_ds(C, &T, 1, depth, 1, stencil); }
+    if (T.layered) gl_target_layer(&T, 0);
 }
 void glClearColorIiEXT(GLint r, GLint g, GLint b, GLint a) { glClearColor((float)r, (float)g, (float)b, (float)a); }
 void glClearColorIuiEXT(GLuint r, GLuint g, GLuint b, GLuint a) { glClearColor((float)r, (float)g, (float)b, (float)a); }

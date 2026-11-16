@@ -41,7 +41,7 @@ typedef struct {
     gl_buf_t *bbuf;            /* EXT_bindable_uniform */
 } pu_t;
 typedef struct { char *name; char *inst; ty_t *t; int off[NST], size140, binding, arr, rowmajor; int *mem; int nmem; } pb_t;
-typedef struct { int stage, off, comps, skip; } px_t;
+typedef struct { int stage, off, comps, skip, vstride; } px_t;   /* vstride: com GS, passo entre vértices emitidos */
 typedef struct { int src, dst, esize, arr; } tcopy_t;   /* saída do controle -> entrada da avaliação (arr: por vértice) */
 typedef struct {
     msl_lib_t *lib[NST];
@@ -61,13 +61,14 @@ typedef struct {
     po_t out[GLX_DRAW * 2]; int nout;
     pu_t *uni; int nuni, capuni, nloc;
     pb_t blk[GLX_UBO]; int nblk;
-    px_t xfb[64]; int nxfb, xfb_inter, xfb_comps[64], nxfb_groups;
+    px_t xfb[64]; int nxfb, xfb_inter, xfb_comps[64], nxfb_groups, xfb_gs;
     msl_samp_t *sstore; int nsstore;
     int needs_compat_uniforms;
     char *src_user[NST];       /* texto traduzido (sem prelúdio), para achar o que o shader usa */
     /* geometry shader */
     pv_t gvar[GLX_VAR]; int ngvar;          /* vértice -> geometria: off[0] no VS, off[1] = base do array no GS */
     int gs_n, gs_cut, gs_pos, gs_psize, gs_pidout, gs_in_arr, gs_pidin, gs_invid, gs_max, gs_inv;
+    int gs_layer, gs_clip, gw_layer, gw_clip;   /* gl_Layer e gl_ClipDistance por vértice emitido */
     GLenum gs_inp, gs_outp;
     /* tesselação */
     int ost;                   /* último estágio de vértice: 0 (VS) ou 4 (avaliação de tesselação) */
@@ -164,13 +165,14 @@ static msl_lib_t *compile_stage(gl_ctx_t *C, int stage, const char *src, gl_shin
         if (!ep) { free(tr); return 0; }
         int M = I->gs_max;
 #define EP(...) do { int _n = snprintf(ep + len, cap - len, __VA_ARGS__); if (_n > 0) len += (u64)_n < cap - len ? (u64)_n : cap - len - 1; } while (0)
-        EP("\nint __gs_n; int __gs_cut[%d]; float4 __gs_pos[%d]; float __gs_psize[%d]; int __gs_pid[%d];\n", M + 1, M, M, M);
+        EP("\nint __gs_n; int __gs_cut[%d]; float4 __gs_pos[%d]; float __gs_psize[%d]; int __gs_pid[%d]; int __gs_layer[%d]; float __gs_clip[%d][8];\n", M + 1, M, M, M, M, M);
         for (int i = 0; i < I->ndecl; i++) {
             gl_decl_t *d = &I->decl[i];
             if (d->storage != GS_OUT || !d->type) continue;
             EP("%s __gs_%s[%d]%s;\n", d->type, d->name, M, d->dims ? d->dims : "");
         }
-        EP("void EmitVertex() { if (__gs_n >= %d) return; __gs_pos[__gs_n] = gl_Position; __gs_psize[__gs_n] = gl_PointSize; __gs_pid[__gs_n] = gl_PrimitiveID;", M);
+        EP("void EmitVertex() { if (__gs_n >= %d) return; __gs_pos[__gs_n] = gl_Position; __gs_psize[__gs_n] = gl_PointSize; __gs_pid[__gs_n] = gl_PrimitiveID;"
+           " __gs_layer[__gs_n] = gl_Layer; for (int __c = 0; __c < 8; __c++) __gs_clip[__gs_n][__c] = gl_ClipDistance[__c];", M);
         for (int i = 0; i < I->ndecl; i++) {
             gl_decl_t *d = &I->decl[i];
             if (d->storage != GS_OUT || !d->type) continue;
@@ -764,6 +766,9 @@ static int link_prog(gl_ctx_t *C, gl_prog_t *p) {
         g->gs_n = g_off(g->lib[2], "__gs_n"); g->gs_cut = g_off(g->lib[2], "__gs_cut"); g->gs_pos = g_off(g->lib[2], "__gs_pos");
         g->gs_psize = g_off(g->lib[2], "__gs_psize"); g->gs_pidout = g_off(g->lib[2], "__gs_pid"); g->gs_in_arr = g_off(g->lib[2], "gl_in");
         g->gs_pidin = g_off(g->lib[2], "gl_PrimitiveIDIn"); g->gs_invid = g_off(g->lib[2], "gl_InvocationID");
+        g->gs_layer = g_off(g->lib[2], "__gs_layer"); g->gs_clip = g_off(g->lib[2], "__gs_clip");
+        g->gw_layer = uses(g->src_user[2], "gl_Layer");
+        g->gw_clip = uses(g->src_user[2], "gl_ClipDistance");
         g->gs_max = g->info[2].gs_max;
         g->gs_inv = g->info[2].gs_inv > 0 ? g->info[2].gs_inv : 1;
         g->gs_inp = g->info[2].gs_in;
@@ -1018,6 +1023,17 @@ static int link_prog(gl_ctx_t *C, gl_prog_t *p) {
         char *br = strchr(base, '[');
         if (br) { el = (int)strtol(br + 1, 0, 10); *br = 0; }
         gv_t v = find_glob(OL, base);
+        if (g->lib[2]) {
+            /* com GS, o que vai para o buffer são as saídas do GS: arrays __gs_<nome>[max_vertices] */
+            char gb[160];
+            snprintf(gb, sizeof gb, "__gs_%s", !strcmp(base, "gl_Position") ? "pos" : !strcmp(base, "gl_PointSize") ? "psize" :
+                     !strcmp(base, "gl_ClipDistance") ? "clip" : !strcmp(base, "gl_Layer") ? "layer" : base);
+            gv_t ga = find_glob(g->lib[2], gb);
+            if (ga.off < 0 || ga.t->k != K_ARRAY) { plog(p, "ERROR: varying de transform feedback desconhecido: %s\n", nm); pg_free(g); return 0; }
+            v.off = ga.off; v.t = ga.t->e; v.size = ga.t->e->size;
+            x->vstride = ga.t->e->size;
+            g->xfb_gs = 1;
+        }
         if (v.off < 0) { plog(p, "ERROR: varying de transform feedback desconhecido: %s\n", nm); pg_free(g); return 0; }
         ty_t *t = v.t;
         int off = v.off;
@@ -1885,6 +1901,7 @@ static void glsl_tess(gl_ctx_t *C, gl_vtx_t **in, int n, u32 prim) {
         msl_run(g->main[4], &ctx, dummy);
         out[k].edge = 1;
         out[k].nxfb = 0;
+        out[k].layer = 0;
         vtx_out(C, g, EL, &out[k]);
     }
     gl_raster_tess_emit(C, pv, out, ix, ni);
@@ -1936,7 +1953,21 @@ static void glsl_gs(gl_ctx_t *C, gl_vtx_t **in, int n, u32 prim) {
             memcpy(&o->psize, L->gmem + g->gs_psize + 4 * v, 4);
             if (!gl_is_on(C, GL_PROGRAM_POINT_SIZE)) o->psize = C->point_s;
             for (int c = 0; c < GLX_CLIP; c++) o->cd[c] = 1;
+            if (g->gw_clip && g->gs_clip >= 0) memcpy(o->cd, L->gmem + g->gs_clip + 32 * v, 4 * GLX_CLIP);
+            if (g->gw_layer && g->gs_layer >= 0) memcpy(&o->layer, L->gmem + g->gs_layer + 4 * v, 4);
             o->edge = 1;
+            /* transform feedback das saídas do GS */
+            if (g->nxfb && g->xfb_gs && C->xfb->active && !C->xfb->paused) {
+                int nn = 0;
+                for (int i = 0; i < g->nxfb && nn < 64; i++) {
+                    px_t *x = &g->xfb[i];
+                    for (int k = 0; k < x->comps && nn < 64; k++, nn++) {
+                        if (x->skip) { o->xfb[nn] = 0; continue; }
+                        memcpy(&o->xfb[nn], L->gmem + x->off + (i64)v * x->vstride + 4 * k, 4);
+                    }
+                }
+                o->nxfb = nn;
+            }
             for (int i = 0; i < g->nvar; i++) { pv_t *pv = &g->var[i]; memcpy(o->v[pv->slot], L->gmem + pv->off[0] + (i64)v * pv->size, (size_t)pv->size); }
             i32 c = 0;
             memcpy(&c, L->gmem + g->gs_cut + 4 * v, 4);
@@ -2149,7 +2180,7 @@ void gl_glsl_stage(gl_ctx_t *C) {
     }
     if (g_need_deriv) S->dmask = g->nslots >= 32 ? 0xffffffffu : (1u << g->nslots) - 1;
     S->nclip = GLX_CLIP;
-    if (g->lib[2]) { S->gs = glsl_gs; S->gs_in = g->gs_inp; }
+    if (g->lib[2]) { S->gs = glsl_gs; S->gs_in = g->gs_inp; S->gs_out = g->gs_outp; }
     if (g->tess) { S->tess = glsl_tess; S->tess_out = g->tpoint ? GL_POINTS : g->tmode == GL_ISOLINES ? GL_LINES : GL_TRIANGLES; }
     S->vs = glsl_vs;
     S->fs = glsl_fs;

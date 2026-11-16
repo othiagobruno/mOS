@@ -676,6 +676,117 @@ static void t_tess(void) {
     gl_ctx_destroy(C);
 }
 
+
+/* GS: render em camadas (gl_Layer) num FBO de array 2D e transform feedback das saídas do GS */
+static void t_gs_layer_xfb(void) {
+    gl_ctx_t *C = gl_ctx_create(0, 1, 4, 1, 8, 8, 1, 1, 1, 1);
+    gl_ctx_make_current(C);
+    char log[1024];
+    const char *vs = "#version 410 core\nlayout(location = 0) in vec2 pos;\nvoid main() { gl_Position = vec4(pos, 0.0, 1.0); }\n";
+    const char *gs = "#version 410 core\nlayout(triangles) in;\nlayout(triangle_strip, max_vertices = 12) out;\nuniform int extra;\nout float lv;\n"
+                     "void main() { for (int l = 0; l < 3 + extra; l++) { for (int i = 0; i < 3; i++) { gl_Layer = l; lv = float(l + 1) * 0.25;"
+                     " gl_Position = gl_in[i].gl_Position; EmitVertex(); } EndPrimitive(); } }\n";
+    const char *fs = "#version 410 core\nin float lv;\nout vec4 c;\nvoid main() { c = vec4(lv, 0.0, 0.0, 1.0); }\n";
+    GLuint p = prog3(vs, gs, fs, log, sizeof log);
+    CHECK(p != 0, "GS com gl_Layer liga");
+    if (!p) { gl_ctx_destroy(C); return; }
+    GLuint tex, fb, rb;
+    glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_2D_ARRAY, tex);
+    glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RGBA8, 4, 4, 3, 0, GL_RGBA, GL_UNSIGNED_BYTE, 0);
+    glGenFramebuffers(1, &fb);
+    glBindFramebuffer(GL_FRAMEBUFFER, fb);
+    glFramebufferTexture(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, tex, 0);
+    CHECK(glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE, "FBO em camadas completo");
+    GLint v = 0;
+    glGetFramebufferAttachmentParameteriv(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_FRAMEBUFFER_ATTACHMENT_LAYERED, &v);
+    CHECK(v == 1, "GL_FRAMEBUFFER_ATTACHMENT_LAYERED %d", v);
+    glGenRenderbuffers(1, &rb);
+    glBindRenderbuffer(GL_RENDERBUFFER, rb);
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, 4, 4);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, rb);
+    CHECK(glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_INCOMPLETE_LAYER_TARGETS, "camadas com anexo comum: incompleto");
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, 0);
+    /* glClear limpa as 3 camadas */
+    glViewport(0, 0, 4, 4);
+    glClearColor(0, 0, 1, 1);
+    glClear(GL_COLOR_BUFFER_BIT);
+    static u8 img[3 * 4 * 4 * 4];
+    glGetTexImage(GL_TEXTURE_2D_ARRAY, 0, GL_RGBA, GL_UNSIGNED_BYTE, img);
+    CHECK(img[2] == 255 && img[64 + 2] == 255 && img[128 + 2] == 255, "glClear nas 3 camadas: %d %d %d", img[2], img[66], img[130]);
+    GLuint vao, vbo;
+    glGenVertexArrays(1, &vao);
+    glBindVertexArray(vao);
+    glGenBuffers(1, &vbo);
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    float tri[] = {-1, -1, 3, -1, -1, 3};
+    glBufferData(GL_ARRAY_BUFFER, sizeof tri, tri, GL_STATIC_DRAW);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, 0);
+    glEnableVertexAttribArray(0);
+    glUseProgram(p);
+    glUniform1i(glGetUniformLocation(p, "extra"), 1);   /* a quarta camada (3) não existe: não desenha */
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+    glGetTexImage(GL_TEXTURE_2D_ARRAY, 0, GL_RGBA, GL_UNSIGNED_BYTE, img);
+    CHECK(near(img[0], 64, 1) && near(img[64], 128, 1) && near(img[128], 191, 1) && img[2] == 0, "gl_Layer escolhe a camada: %d %d %d", img[0], img[64], img[128]);
+    /* leitura por camada com glFramebufferTextureLayer */
+    glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, tex, 0, 2);
+    u8 o[4];
+    px(3, 3, o);
+    CHECK(near(o[0], 191, 1), "camada 2 lida pelo FBO: %d", o[0]);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    /* transform feedback das saídas do GS */
+    const char *vs2 = "#version 410 core\nlayout(location = 0) in vec2 pos;\nout float vx;\nvoid main() { vx = pos.x; gl_Position = vec4(pos, 0.0, 1.0); }\n";
+    const char *gs2 = "#version 410 core\nlayout(points) in;\nlayout(points, max_vertices = 2) out;\nin float vx[];\nout float val;\n"
+                      "void main() { val = vx[0] * 10.0; gl_Position = gl_in[0].gl_Position; EmitVertex(); val = vx[0] * 10.0 + 1.0; EmitVertex(); }\n";
+    const char *src[3] = {vs2, gs2, fs};
+    GLenum ty[3] = {GL_VERTEX_SHADER, GL_GEOMETRY_SHADER, GL_FRAGMENT_SHADER};
+    GLuint p2 = glCreateProgram();
+    for (int i = 0; i < 3; i++) {
+        const char *ss = i == 2 ? "#version 410 core\nout vec4 c;\nvoid main() { c = vec4(1.0); }\n" : src[i];
+        GLuint sh = glCreateShader(ty[i]);
+        glShaderSource(sh, 1, &ss, 0);
+        glCompileShader(sh);
+        glAttachShader(p2, sh);
+        glDeleteShader(sh);
+    }
+    const char *names[1] = {"val"};
+    glTransformFeedbackVaryings(p2, 1, names, GL_INTERLEAVED_ATTRIBS);
+    glLinkProgram(p2);
+    GLint ok = 0;
+    glGetProgramiv(p2, GL_LINK_STATUS, &ok);
+    if (!ok) { glGetProgramInfoLog(p2, sizeof log, 0, log); printf("link: %s\n", log); }
+    CHECK(ok, "GS com transform feedback de 'val' liga");
+    GLuint xb, q;
+    glGenBuffers(1, &xb);
+    glBindBuffer(GL_TRANSFORM_FEEDBACK_BUFFER, xb);
+    glBufferData(GL_TRANSFORM_FEEDBACK_BUFFER, 64, 0, GL_STATIC_READ);
+    glBindBufferBase(GL_TRANSFORM_FEEDBACK_BUFFER, 0, xb);
+    float pts[] = {0.1f, 0, 0.2f, 0, 0.3f, 0};
+    glBufferData(GL_ARRAY_BUFFER, sizeof pts, pts, GL_STATIC_DRAW);
+    glUseProgram(p2);
+    glEnable(GL_RASTERIZER_DISCARD);
+    glBeginTransformFeedback(GL_TRIANGLES);
+    glDrawArrays(GL_POINTS, 0, 3);
+    CHECK(glGetError() == GL_INVALID_OPERATION, "GS emite pontos e o feedback espera triângulos: erro");
+    glEndTransformFeedback();
+    glGenQueries(1, &q);
+    glBeginQuery(GL_TRANSFORM_FEEDBACK_PRIMITIVES_WRITTEN, q);
+    glBeginTransformFeedback(GL_POINTS);
+    glDrawArrays(GL_POINTS, 0, 3);
+    glEndTransformFeedback();
+    glEndQuery(GL_TRANSFORM_FEEDBACK_PRIMITIVES_WRITTEN);
+    glDisable(GL_RASTERIZER_DISCARD);
+    GLuint written = 0;
+    glGetQueryObjectuiv(q, GL_QUERY_RESULT, &written);
+    float got[6] = {0};
+    glGetBufferSubData(GL_TRANSFORM_FEEDBACK_BUFFER, 0, sizeof got, got);
+    int good = written == 6;
+    float want[6] = {1, 2, 2, 3, 3, 4};
+    for (int i = 0; i < 6; i++) if (got[i] < want[i] - 1e-4f || got[i] > want[i] + 1e-4f) good = 0;
+    CHECK(good, "feedback das saídas do GS (%u primitivos): %g %g %g %g %g %g", written, got[0], got[1], got[2], got[3], got[4], got[5]);
+    gl_ctx_destroy(C);
+}
+
 void gl_glsl_host_tests(int *fails, int *checks) {
     F = fails;
     K = checks;
@@ -688,4 +799,5 @@ void gl_glsl_host_tests(int *fails, int *checks) {
     t_geometry();
     t_msaa_glsl();
     t_tess();
+    t_gs_layer_xfb();
 }
