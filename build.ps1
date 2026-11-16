@@ -171,6 +171,12 @@ foreach ($f in $jscsrc) {
     '-Wl,-install_name,/System/Library/Frameworks/JavaScriptCore.framework/Versions/A/JavaScriptCore' '-Wl,-undefined,dynamic_lookup' 2>&1 |
     Select-String ' error' | ForEach-Object { "  $($_.Line)" }
 if (-not (Test-Path "$jscdir\JavaScriptCore")) { Write-Host 'JavaScriptCore.framework build FAILED' -ForegroundColor Red; exit 1 }
+# SafariServices.framework: a API das extensões do Safari num sistema sem Safari (userland\frameworks\SafariServices)
+$ssdir = "$esp\mOS\System\Library\Frameworks\SafariServices.framework\Versions\A"
+New-Item -ItemType Directory -Force $ssdir | Out-Null
+& $zig cc -target x86_64-macos -O2 -shared -x objective-c "-I$root\userland\sdk\include" -Wno-objc-root-class -Wno-objc-method-access `
+    "$root\userland\frameworks\SafariServices\SafariServices.m" -o "$ssdir\SafariServices" '-Wl,-install_name,/System/Library/Frameworks/SafariServices.framework/Versions/A/SafariServices' `
+    '-Wl,-undefined,dynamic_lookup' 2>&1 | Select-String ' error' | ForEach-Object { "  $($_.Line)" }
 # WebKit.framework do mOS (userland\frameworks\WebKit): WKWebView sobre o motor web do sistema (SYS_WEB, kernel/web/webview.c)
 $wkdir = "$esp\mOS\System\Library\Frameworks\WebKit.framework\Versions\A"
 New-Item -ItemType Directory -Force $wkdir | Out-Null

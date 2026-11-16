@@ -102,6 +102,15 @@ Cada item fecha com teste de host (`tools/web_host.sh`) ou, quando depende da VM
 13. **Electron/Chromium**: renderer e helpers de Cursor, Slack, Discord, Notion, Figma, Claude e ChatGPT abrindo;
     lacunas de libSystem medidas pelo `machocheck` repassadas aos donos (Leonardo, Eduardo, Beatriz, Natalia).
 
+14. ✅ **Lacunas do corpus (docs/lacunas/fabio.md)** — DOM ObjC do WebKit1 (`DOMNode`, `DOMElement`,
+    `DOMHTMLElement`, `DOMDocument`, `DOMHTMLDocument`, `DOMCharacterData`, `DOMText`, `DOMComment`, `DOMNodeList`,
+    `DOMHTMLCollection`; `WebFrame.DOMDocument` deixou de ser nil) sobre o JS da vista, as constantes
+    `WebAction*Key`, e o `SafariServices.framework` (`SFSafariApplication`, `SFSafariExtensionHandler`,
+    `SFSafariExtensionManager`, `SFSafariExtensionState`): sem Safari no mOS, `openWindowWithURL:` abre no
+    navegador padrão e o resto responde como um Mac sem o Safari. Das 33 lacunas, 11 eram classes que já existiam
+    no WebKit.framework (o machocheck do corpus não o carregava; avisado ao Igor). Falta: o `evaluateJavaScript`
+    async do overlay Swift (`libswiftWebKit`).
+
 ## Coordenação
 
 - Mariana (ImageIO): o decodificador WebP serve também ao `CGImageSource`.

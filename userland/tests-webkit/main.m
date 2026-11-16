@@ -9,6 +9,7 @@
  *   .\run.ps1 -Headless -Image build-wk\mOS.img -Serial build-wk\serial.log
  */
 #import <AppKit/AppKit.h>
+typedef unsigned long long u64;   /* o syscall.h usa u64; sem o mos.h o userland não o define */
 #include "../../kernel/include/syscall.h"
 
 /* ---- a API do WebKit que o teste usa (o SDK do mOS não traz os cabeçalhos; o binário liga ao framework) */

@@ -689,6 +689,15 @@ done
     -Wl,-undefined,dynamic_lookup
 echo "JavaScriptCore.framework ok"
 
+# SafariServices.framework (userland/frameworks/SafariServices): a API das extensões do Safari num sistema sem Safari
+echo "==> SafariServices.framework"
+SSDIR="$ESP/mOS/System/Library/Frameworks/SafariServices.framework/Versions/A"
+mkdir -p "$SSDIR"
+"$ZIG" cc -target x86_64-macos -O2 -shared -x objective-c -I"$ROOT/userland/sdk/include" -Wno-objc-root-class -Wno-objc-method-access \
+    "$ROOT/userland/frameworks/SafariServices/SafariServices.m" -o "$SSDIR/SafariServices" \
+    -Wl,-install_name,/System/Library/Frameworks/SafariServices.framework/Versions/A/SafariServices -Wl,-undefined,dynamic_lookup
+echo "SafariServices.framework ok"
+
 # CryptoKit.framework: o Swift de userland/frameworks/CryptoKit compilado com evolução de biblioteca
 # (tools/build-cryptokit-macho.sh), como o build.ps1 faz. Precisa do swift-frontend 6.4.2 oficial
 # (SWIFT_FRONTEND, SWIFTC ou .tools/swift-6.4.2); sem ele o framework fica de fora desta imagem.

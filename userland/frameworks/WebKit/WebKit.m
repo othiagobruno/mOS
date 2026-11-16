@@ -24,6 +24,7 @@
  *   tools/build-frameworks-objc.ps1 -Only WebKit
  */
 #import <AppKit/AppKit.h>
+typedef unsigned long long u64;   /* o syscall.h usa u64 em mos_desk_banner_t; o userland sem mos.h não o define */
 #include "../../../kernel/include/syscall.h"
 
 /* WebUIDelegate do WebKit1 (síncrono): a WebView legada é subclasse do WKWebView aqui */
@@ -447,6 +448,7 @@ static WKContentWorld *wk_world(NSString *n) {
 @interface WKWebView (MOSInternal)
 - (void)_mosHandlersChanged;
 - (void)_mosScriptsChanged;
+- (id)_mosEval:(NSString *)js error:(NSError **)err;
 @end
 
 #define WK_MAXVIEWS 64
@@ -2225,6 +2227,211 @@ static NSData *wa_bytes(id v) { return [v isKindOfClass:[NSData class]] ? v : ni
 - (NSString *)textEncodingName { return @"utf-8"; }
 @end
 
+
+/* ================================================================ DOM do WebKit1 (DOMNode, DOMElement, DOMDocument...)
+ * Cada objeto guarda o número do nó num registro da página (window.__mosDom); as propriedades e os métodos rodam no
+ * JavaScript da vista. O registro é do documento atual: depois de navegar, os objetos antigos respondem nil/0. */
+NSString *const WebActionNavigationTypeKey = @"WebActionNavigationTypeKey";
+NSString *const WebActionElementKey = @"WebActionElementKey";
+NSString *const WebActionButtonKey = @"WebActionButtonKey";
+NSString *const WebActionModifierFlagsKey = @"WebActionModifierFlagsKey";
+NSString *const WebActionOriginalURLKey = @"WebActionOriginalURLKey";
+
+static NSString *const kDomShim =
+    @"(window.__mosDom||(window.__mosDom={n:[null],d:document,id:function(x){if(!x)return 0;var t=this;if(t.d!==document){t.n=[null];t.d=document;}"
+     "for(var i=1;i<t.n.length;i++)if(t.n[i]===x)return i;t.n.push(x);return t.n.length-1;},"
+     "kind:function(i){var x=this.n[i];return x?x.nodeType:0;}}))";
+
+@interface DOMObject : NSObject {
+@public
+    WKWebView *_wv;   /* sem retenção: o objeto vive menos que a vista na prática */
+    int _nid;
+}
+@end
+@interface DOMNode : DOMObject
+@end
+@interface DOMNodeList : DOMObject {
+@public
+    NSArray *_items;
+}
+@end
+@interface DOMElement : DOMNode
+@end
+@interface DOMHTMLElement : DOMElement
+@end
+@interface DOMCharacterData : DOMNode
+@end
+@interface DOMText : DOMCharacterData
+@end
+@interface DOMComment : DOMCharacterData
+@end
+@interface DOMDocument : DOMNode
+@end
+@interface DOMHTMLDocument : DOMDocument
+@end
+@interface DOMHTMLCollection : DOMNodeList
+@end
+
+static id dom_eval(WKWebView *wv, NSString *js) {
+    if (!wv) return nil;
+    return [wv _mosEval:[NSString stringWithFormat:@"(function(){var D=%@;%@})()", kDomShim, js] error:NULL];
+}
+static DOMNode *dom_wrap(WKWebView *wv, id num) {
+    int i = [num isKindOfClass:[NSNumber class]] ? [num intValue] : 0;
+    if (i <= 0) return nil;
+    int t = [dom_eval(wv, [NSString stringWithFormat:@"return D.kind(%d)", i]) intValue];
+    Class c = t == 1 ? [DOMHTMLElement class] : t == 3 ? [DOMText class] : t == 8 ? [DOMComment class] : t == 9 ? [DOMHTMLDocument class] : [DOMNode class];
+    DOMNode *n = [[[c alloc] init] autorelease];
+    n->_wv = wv;
+    n->_nid = i;
+    return n;
+}
+static DOMNodeList *dom_list(WKWebView *wv, id arr, Class cls) {
+    NSMutableArray *a = [NSMutableArray array];
+    if ([arr isKindOfClass:[NSArray class]]) for (id x in arr) { DOMNode *n = dom_wrap(wv, x); if (n) [a addObject:n]; }
+    DOMNodeList *l = [[[cls alloc] init] autorelease];
+    l->_wv = wv;
+    l->_items = [a retain];
+    return l;
+}
+
+@implementation DOMObject
+- (id)_js:(NSString *)body { return dom_eval(_wv, [NSString stringWithFormat:@"var N=D.n[%d];if(!N)return null;%@", _nid, body]); }
+- (BOOL)isEqual:(id)o { return [o isKindOfClass:[DOMObject class]] && ((DOMObject *)o)->_nid == _nid && ((DOMObject *)o)->_wv == _wv; }
+- (NSUInteger)hash { return (NSUInteger)_nid; }
+@end
+
+@implementation DOMNode
+- (NSString *)_str:(NSString *)expr { id v = [self _js:[NSString stringWithFormat:@"var v=%@;return v==null?null:String(v);", expr]]; return [v isKindOfClass:[NSString class]] ? v : nil; }
+- (DOMNode *)_node:(NSString *)expr { return dom_wrap(_wv, [self _js:[NSString stringWithFormat:@"return D.id(%@);", expr]]); }
+- (NSString *)nodeName { return [self _str:@"N.nodeName"]; }
+- (unsigned short)nodeType { return (unsigned short)[[self _js:@"return N.nodeType;"] intValue]; }
+- (NSString *)nodeValue { return [self _str:@"N.nodeValue"]; }
+- (void)setNodeValue:(NSString *)v { [self _js:[NSString stringWithFormat:@"N.nodeValue=%@;", wk_js_literal(v ?: @"")]]; }
+- (NSString *)textContent { return [self _str:@"N.textContent"]; }
+- (void)setTextContent:(NSString *)v { [self _js:[NSString stringWithFormat:@"N.textContent=%@;", wk_js_literal(v ?: @"")]]; }
+- (DOMNode *)parentNode { return [self _node:@"N.parentNode"]; }
+- (DOMElement *)parentElement { return (DOMElement *)[self _node:@"N.parentElement"]; }
+- (DOMNode *)firstChild { return [self _node:@"N.firstChild"]; }
+- (DOMNode *)lastChild { return [self _node:@"N.lastChild"]; }
+- (DOMNode *)previousSibling { return [self _node:@"N.previousSibling"]; }
+- (DOMNode *)nextSibling { return [self _node:@"N.nextSibling"]; }
+- (DOMDocument *)ownerDocument { return (DOMDocument *)[self _node:@"N.ownerDocument||document"]; }
+- (DOMNodeList *)childNodes { return dom_list(_wv, [self _js:@"var r=[];for(var c=N.firstChild;c;c=c.nextSibling)r.push(D.id(c));return r;"], [DOMNodeList class]); }
+- (BOOL)hasChildNodes { return [[self _js:@"return N.firstChild!=null;"] boolValue]; }
+- (DOMNode *)_op:(NSString *)fmt with:(DOMNode *)a and:(DOMNode *)b {
+    if (a && a->_wv != _wv) return nil;
+    return [self _node:[NSString stringWithFormat:fmt, a ? a->_nid : 0, b ? b->_nid : 0]];
+}
+- (DOMNode *)appendChild:(DOMNode *)c { return [self _op:@"N.appendChild(D.n[%d])" with:c and:nil]; }
+- (DOMNode *)removeChild:(DOMNode *)c { return [self _op:@"N.removeChild(D.n[%d])" with:c and:nil]; }
+- (DOMNode *)insertBefore:(DOMNode *)c refChild:(DOMNode *)r { return [self _op:@"N.insertBefore(D.n[%d],D.n[%d]||null)" with:c and:r]; }
+- (DOMNode *)replaceChild:(DOMNode *)c oldChild:(DOMNode *)o { return [self _op:@"N.replaceChild(D.n[%d],D.n[%d])" with:c and:o]; }
+- (DOMNode *)cloneNode:(BOOL)deep { return [self _node:[NSString stringWithFormat:@"N.cloneNode(%@)", deep ? @"true" : @"false"]]; }
+- (BOOL)contains:(DOMNode *)o { return o && [[self _js:[NSString stringWithFormat:@"return N.contains(D.n[%d]);", o->_nid]] boolValue]; }
+- (BOOL)isSameNode:(DOMNode *)o { return [self isEqual:o]; }
+- (NSString *)description { return [NSString stringWithFormat:@"<%@ %@>", NSStringFromClass([self class]), [self nodeName] ?: @"?"]; }
+@end
+
+@implementation DOMNodeList
+- (unsigned)length { return (unsigned)[_items count]; }
+- (DOMNode *)item:(unsigned)i { return i < [_items count] ? [_items objectAtIndex:i] : nil; }
+- (void)dealloc { [_items release]; [super dealloc]; }
+@end
+@implementation DOMHTMLCollection
+- (DOMNode *)namedItem:(NSString *)name {
+    for (DOMNode *n in _items) if ([[(DOMElement *)n getAttribute:@"id"] isEqualToString:name] || [[(DOMElement *)n getAttribute:@"name"] isEqualToString:name]) return n;
+    return nil;
+}
+@end
+
+@implementation DOMElement
+- (NSString *)tagName { return [self _str:@"N.tagName"]; }
+- (NSString *)getAttribute:(NSString *)n { return [self _str:[NSString stringWithFormat:@"N.getAttribute(%@)", wk_js_literal(n ?: @"")]]; }
+- (void)setAttribute:(NSString *)n value:(NSString *)v { [self _js:[NSString stringWithFormat:@"N.setAttribute(%@,%@);", wk_js_literal(n ?: @""), wk_js_literal(v ?: @"")]]; }
+- (void)removeAttribute:(NSString *)n { [self _js:[NSString stringWithFormat:@"N.removeAttribute(%@);", wk_js_literal(n ?: @"")]]; }
+- (BOOL)hasAttribute:(NSString *)n { return [[self _js:[NSString stringWithFormat:@"return N.hasAttribute(%@);", wk_js_literal(n ?: @"")]] boolValue]; }
+- (DOMNodeList *)getElementsByTagName:(NSString *)t {
+    return dom_list(_wv, [self _js:[NSString stringWithFormat:@"var r=[],l=N.getElementsByTagName(%@);for(var i=0;i<l.length;i++)r.push(D.id(l[i]));return r;", wk_js_literal(t ?: @"*")]], [DOMNodeList class]);
+}
+- (DOMNodeList *)getElementsByClassName:(NSString *)c {
+    return dom_list(_wv, [self _js:[NSString stringWithFormat:@"var r=[],l=N.getElementsByClassName(%@);for(var i=0;i<l.length;i++)r.push(D.id(l[i]));return r;", wk_js_literal(c ?: @"")]], [DOMNodeList class]);
+}
+- (DOMElement *)querySelector:(NSString *)s { return (DOMElement *)[self _node:[NSString stringWithFormat:@"N.querySelector(%@)", wk_js_literal(s ?: @"")]]; }
+- (DOMNodeList *)querySelectorAll:(NSString *)s {
+    return dom_list(_wv, [self _js:[NSString stringWithFormat:@"var r=[],l=N.querySelectorAll(%@);for(var i=0;i<l.length;i++)r.push(D.id(l[i]));return r;", wk_js_literal(s ?: @"")]], [DOMNodeList class]);
+}
+- (int)offsetTop { return [[self _js:@"return N.offsetTop|0;"] intValue]; }
+- (int)offsetLeft { return [[self _js:@"return N.offsetLeft|0;"] intValue]; }
+- (int)offsetWidth { return [[self _js:@"return N.offsetWidth|0;"] intValue]; }
+- (int)offsetHeight { return [[self _js:@"return N.offsetHeight|0;"] intValue]; }
+- (int)scrollTop { return [[self _js:@"return N.scrollTop|0;"] intValue]; }
+- (void)setScrollTop:(int)v { [self _js:[NSString stringWithFormat:@"N.scrollTop=%d;", v]]; }
+- (void)scrollIntoView:(BOOL)top { [self _js:[NSString stringWithFormat:@"N.scrollIntoView(%@);", top ? @"true" : @"false"]]; }
+- (void)scrollIntoViewIfNeeded:(BOOL)c { [self scrollIntoView:c]; }
+- (void)focus { [self _js:@"if(N.focus)N.focus();"]; }
+- (void)blur { [self _js:@"if(N.blur)N.blur();"]; }
+- (DOMElement *)firstElementChild { return (DOMElement *)[self _node:@"N.firstElementChild"]; }
+- (DOMElement *)lastElementChild { return (DOMElement *)[self _node:@"N.lastElementChild"]; }
+- (unsigned)childElementCount { return (unsigned)[[self _js:@"return N.childElementCount|0;"] intValue]; }
+@end
+
+@implementation DOMHTMLElement
+- (NSString *)innerHTML { return [self _str:@"N.innerHTML"]; }
+- (void)setInnerHTML:(NSString *)h { [self _js:[NSString stringWithFormat:@"N.innerHTML=%@;", wk_js_literal(h ?: @"")]]; }
+- (NSString *)outerHTML { return [self _str:@"N.outerHTML"]; }
+- (void)setOuterHTML:(NSString *)h { [self _js:[NSString stringWithFormat:@"N.outerHTML=%@;", wk_js_literal(h ?: @"")]]; }
+- (NSString *)innerText { return [self _str:@"N.innerText!==undefined?N.innerText:N.textContent"]; }
+- (void)setInnerText:(NSString *)t { [self setTextContent:t]; }
+- (NSString *)idName { return [self getAttribute:@"id"]; }
+- (void)setIdName:(NSString *)v { [self setAttribute:@"id" value:v]; }
+- (NSString *)className { return [self _str:@"N.className"]; }
+- (void)setClassName:(NSString *)v { [self _js:[NSString stringWithFormat:@"N.className=%@;", wk_js_literal(v ?: @"")]]; }
+- (NSString *)title { return [self getAttribute:@"title"]; }
+- (NSString *)lang { return [self getAttribute:@"lang"]; }
+- (void)click { [self _js:@"if(N.click)N.click();"]; }
+@end
+
+@implementation DOMCharacterData
+- (NSString *)data { return [self _str:@"N.data"]; }
+- (void)setData:(NSString *)d { [self _js:[NSString stringWithFormat:@"N.data=%@;", wk_js_literal(d ?: @"")]]; }
+- (unsigned)length { return (unsigned)[[self _js:@"return (N.data||'').length;"] intValue]; }
+@end
+@implementation DOMText
+- (NSString *)wholeText { return [self data]; }
+@end
+@implementation DOMComment
+@end
+
+@implementation DOMDocument
+- (DOMElement *)documentElement { return (DOMElement *)[self _node:@"N.documentElement"]; }
+- (DOMHTMLElement *)body { return (DOMHTMLElement *)[self _node:@"N.body"]; }
+- (DOMHTMLElement *)head { return (DOMHTMLElement *)[self _node:@"N.head"]; }
+- (NSString *)title { return [self _str:@"N.title"]; }
+- (void)setTitle:(NSString *)t { [self _js:[NSString stringWithFormat:@"N.title=%@;", wk_js_literal(t ?: @"")]]; }
+- (NSString *)URL { return [self _str:@"N.URL||location.href"]; }
+- (NSString *)cookie { return [self _str:@"N.cookie"]; }
+- (DOMElement *)getElementById:(NSString *)i { return (DOMElement *)[self _node:[NSString stringWithFormat:@"N.getElementById(%@)", wk_js_literal(i ?: @"")]]; }
+- (DOMElement *)createElement:(NSString *)t { return (DOMElement *)[self _node:[NSString stringWithFormat:@"N.createElement(%@)", wk_js_literal(t ?: @"div")]]; }
+- (DOMText *)createTextNode:(NSString *)t { return (DOMText *)[self _node:[NSString stringWithFormat:@"N.createTextNode(%@)", wk_js_literal(t ?: @"")]]; }
+- (DOMNodeList *)getElementsByTagName:(NSString *)t {
+    return dom_list(_wv, [self _js:[NSString stringWithFormat:@"var r=[],l=N.getElementsByTagName(%@);for(var i=0;i<l.length;i++)r.push(D.id(l[i]));return r;", wk_js_literal(t ?: @"*")]], [DOMNodeList class]);
+}
+- (DOMNodeList *)getElementsByClassName:(NSString *)c {
+    return dom_list(_wv, [self _js:[NSString stringWithFormat:@"var r=[],l=N.getElementsByClassName(%@);for(var i=0;i<l.length;i++)r.push(D.id(l[i]));return r;", wk_js_literal(c ?: @"")]], [DOMNodeList class]);
+}
+- (DOMElement *)querySelector:(NSString *)s { return (DOMElement *)[self _node:[NSString stringWithFormat:@"N.querySelector(%@)", wk_js_literal(s ?: @"")]]; }
+- (DOMNodeList *)querySelectorAll:(NSString *)s {
+    return dom_list(_wv, [self _js:[NSString stringWithFormat:@"var r=[],l=N.querySelectorAll(%@);for(var i=0;i<l.length;i++)r.push(D.id(l[i]));return r;", wk_js_literal(s ?: @"")]], [DOMNodeList class]);
+}
+@end
+@implementation DOMHTMLDocument
+- (NSString *)domain { return [self _str:@"location.hostname"]; }
+- (void)open {}
+- (void)close {}
+- (void)write:(NSString *)t { [self _js:[NSString stringWithFormat:@"N.write(%@);", wk_js_literal(t ?: @"")]]; }
+@end
+
 @implementation WebFrame {
 @public
     WebView *_wv;
@@ -2248,7 +2455,7 @@ static NSData *wa_bytes(id v) { return [v isKindOfClass:[NSData class]] ? v : ni
 - (WebFrame *)parentFrame { return nil; }
 - (NSArray *)childFrames { return [NSArray array]; }
 - (WebFrame *)findFrameNamed:(NSString *)n { return self; }
-- (id)DOMDocument { return nil; }
+- (id)DOMDocument { return [_wv URL] || [_wv isLoading] ? dom_wrap(_wv, dom_eval(_wv, @"return D.id(document);")) : nil; }
 - (id)frameView { return _wv; }
 - (id)windowObject { return nil; }
 - (id)globalContext { return NULL; }
