@@ -390,7 +390,7 @@ static void hci_setup(void) {
 
 typedef struct {
     u16 size; u8 offset, qsel, rate, rate_id, macid, bw, seq_sel;
-    bool bmc, use_rate, dis_fb, dis_qselseq, en_hwseq, sgi, ldpc, stbc, ampdu, more;
+    bool bmc, use_rate, dis_fb, dis_qselseq, en_hwseq, sgi, ldpc, stbc, ampdu, more, nav_hdr, bt_null;
     u8 ampdu_factor, ampdu_density;
     u16 seq;
 } txinfo_t;
@@ -403,8 +403,8 @@ static void fill_txdesc(u8 *d, const txinfo_t *t) {
     memset(d, 0, TXDESC);
     put32(d + 0, t->size | (u32)t->offset << 16 | (u32)t->bmc << 24 | 1u << 26 | (u32)t->dis_qselseq << 31);
     put32(d + 4, t->macid | (u32)(t->qsel & 0x1F) << 8 | (u32)(t->rate_id & 0x1F) << 16 | (u32)t->more << 29);
-    put32(d + 8, (u32)t->ampdu << 12 | (u32)(t->ampdu_density & 7) << 20);
-    put32(d + 12, (u32)(t->seq_sel & 3) << 6 | (u32)t->use_rate << 8 | (u32)t->dis_fb << 10 | (u32)(t->ampdu_factor & 0x1F) << 17);
+    put32(d + 8, (u32)t->ampdu << 12 | (u32)(t->ampdu_density & 7) << 20 | (u32)t->bt_null << 23);
+    put32(d + 12, (u32)(t->seq_sel & 3) << 6 | (u32)t->use_rate << 8 | (u32)t->dis_fb << 10 | (u32)t->nav_hdr << 15 | (u32)(t->ampdu_factor & 0x1F) << 17);
     put32(d + 16, t->rate & 0x7F);
     put32(d + 20, (u32)t->sgi << 4 | (u32)(t->bw & 3) << 5 | (u32)t->ldpc << 7 | (u32)t->stbc << 8);
     put32(d + 32, (u32)t->en_hwseq << 15);
@@ -1087,6 +1087,41 @@ static void update_ra(bool reset) {
     fw_ra_info(mask, reset);
 }
 
+/* páginas reservadas para o LPS: o firmware manda sozinho o PS-Poll e os Null de economia de energia
+ * a partir delas. Página 0 (relativa ao início das do driver): vazia (o firmware a lê como beacon);
+ * 1 PS-Poll, 2 QoS Null, 3 Null — cada uma com o próprio descritor de TX. Depois, H2C 0x00 com as posições. */
+#define RSVD_PG 128
+static void put_rsvd(u8 *buf, int page, const u8 *frame, u16 len, bool pspoll, bool qosnull) {
+    u8 *p = buf + (RSVD_PG - TXDESC) + RSVD_PG * (page - 1);
+    txinfo_t t = {0};
+    t.qsel = QSEL_MGMT;
+    t.size = len; t.offset = TXDESC;
+    t.use_rate = t.dis_fb = true;
+    t.rate = D.band ? 0x04 : 0x00;
+    t.rate_id = D.band ? 7 : 8;
+    if (pspoll) t.nav_hdr = true; else { t.dis_qselseq = t.en_hwseq = true; }
+    t.bt_null = qosnull;
+    fill_txdesc(p, &t);
+    memcpy(p + TXDESC, frame, len);
+}
+static bool fw_rsvd_pages(const u8 *bssid, u16 aid) {
+    static u8 buf[(RSVD_PG - TXDESC) + RSVD_PG * 3];
+    memset(buf, 0, sizeof buf);
+    const u8 *me = D.ef.mac;
+    u8 ps[16] = {0xA4, 0x00, (u8)aid, (u8)((aid >> 8) | 0xC0)};
+    memcpy(ps + 4, bssid, 6); memcpy(ps + 10, me, 6);
+    u8 qn[26] = {0xC8, 0x01};
+    memcpy(qn + 4, bssid, 6); memcpy(qn + 10, me, 6); memcpy(qn + 16, bssid, 6);
+    u8 nl[24] = {0x48, 0x01};
+    memcpy(nl + 4, bssid, 6); memcpy(nl + 10, me, 6); memcpy(nl + 16, bssid, 6);
+    put_rsvd(buf, 1, ps, sizeof ps, true, false);
+    put_rsvd(buf, 2, qn, sizeof qn, false, true);
+    put_rsvd(buf, 3, nl, sizeof nl, false, false);
+    if (!write_rsvd_page(D.rsvd_boundary, buf, sizeof buf)) return false;
+    u8 h[8] = {0x00, 0 /* probe response */, 1 /* PS-Poll */, 3 /* Null */, 2 /* QoS Null */, 0, 0, 0};
+    return h2c_cmd(h);
+}
+
 static void r_bss(wifi_radio_t *r, const wifi_bss_t *b) {
     (void)r;
     if (!D.up) return;
@@ -1114,6 +1149,7 @@ static void r_bss(wifi_radio_t *r, const wifi_bss_t *b) {
     update_ra(!was);
     fw_wl_ch_info(true);
     coex_scbd(1 << 6, true);
+    if (!fw_rsvd_pages(b->bssid, b->aid)) { kprintf("rtw88: páginas do LPS não gravadas; LPS fica desligado\n"); D.ps_broken = true; }
     iqk();                                                   /* calibração com o canal da rede */
 }
 
