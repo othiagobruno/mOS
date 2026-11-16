@@ -74,9 +74,20 @@ Cada item fecha com teste de host (`tools/web_host.sh`) ou, quando depende da VM
 9. **AVIF** (AV1 intra + `av1C`/`ispe`/`pixi`/`alpha`) — junto da Isabela, que é dona do AV1.
 10. **PDF**: `createPDFWithConfiguration`/impressão (gerar PDF da pintura) e exibir PDF na vista (sobre o PDFKit/CG
     da Mariana).
-11. **JavaScriptCore.framework**: o motor Brisa compilado para o usuário, com a API C (`JSGlobalContextCreate`,
-    `JSEvaluateScript`, `JSValue*`, `JSObject*`, `JSString*`, classes) e a API ObjC (`JSContext`, `JSValue`,
-    `JSManagedValue`, `JSVirtualMachine`, `JSExport`).
+11. **JavaScriptCore.framework** — ✅ **API C** (`userland/frameworks/JavaScriptCore/jsc_api.c`): o motor do mOS
+    (`kernel/web/js_*.c` sem o DOM, mais `util.c`) no processo do app, atrás de uma trava recursiva; grupos e
+    contextos (cada contexto é um reino, inclusive com classe do objeto global), `JSEvaluateScript` (com `this`
+    próprio e microtarefas), `JSCheckScriptSyntax`, `JSGarbageCollect`, todo o `JSValue*` (tipos, igualdades,
+    `instanceof`, JSON, conversões, `Protect`), `JSString*` em UTF-16, `JSObject*` (propriedades por nome, índice e
+    chave, protótipo, chamada e construção, `MakeFunction`/`WithCallback`/`Constructor`/`Array`/`Date`/`Error`/
+    `RegExp`, nomes de propriedades), `JSClass` com valores e funções estáticas e os callbacks (`initialize`,
+    `finalize`, `hasProperty`, `get/set/deleteProperty`, `getPropertyNames`, `callAsFunction`,
+    `callAsConstructor`), e typed arrays (inclusive `...WithBytesNoCopy` com desalocador). `JSValueRef` é o valor
+    do motor com XOR (o número 0 não vira NULL) e o coletor varre a pilha da thread inteira, como o do JSC.
+    Teste de host: `tools/jsc_host.sh` (34 verificações, inclusive o que o MacDown e o IINA chamam); o framework
+    liga para x86_64-macos e entra no `build.sh`/`build.ps1`.
+    **Falta no JSC:** a API ObjC (`JSContext`, `JSValue`, `JSManagedValue`, `JSVirtualMachine`, `JSExport`,
+    blocos), `hasInstance` e `convertToType` dos `JSClass`, o slice arm64 e o `JSScript`/módulos.
 12. **Mundos de conteúdo** (`WKContentWorld` isolado), esquemas próprios para sub-recursos, regras de conteúdo
     que bloqueiam, `WKDownload`, desafio de autenticação e painel de arquivo.
 13. **Electron/Chromium**: renderer e helpers de Cursor, Slack, Discord, Notion, Figma, Claude e ChatGPT abrindo;
@@ -92,6 +103,7 @@ Cada item fecha com teste de host (`tools/web_host.sh`) ou, quando depende da VM
 ## Diário
 
 - 15 nov.: harness de host do motor (`tools/web_host.sh`, 5/5).
+- 16 nov.: JavaScriptCore, API C (`tools/jsc_host.sh` 34/34; `web_host` 248/248).
 - 16 nov.: typed arrays (`typed_arrays`): 248/248.
 - 16 nov.: diálogos bloqueantes (`dialogo_bloqueante`, `dialogo_pagina_fechada`, `dialogo_em_async`, `geradores_e_async`): 215/215.
 - 16 nov.: formulários em iframes (`iframe_formularios`): 199/199.

@@ -552,6 +552,10 @@ int     rx_exec(rxprog *p, const char *s, int len, int start, int *caps, bool st
 /* ============================================================ DOM (js_dom.c) */
 void   js_dom_init(jsrealm *r);
 void   js_mark_page(struct js_page *p);
+extern void (*js_host_finalize_hook)(jsobj *o);
+extern int  (*js_host_delete_hook)(jsobj *o, jsstr *k);
+extern void (*js_host_keys_hook)(jsobj *o, jsobj *out);
+extern u64 js_ref_xor;
 jsv    js_dom_get(jsobj *o, jsstr *k, bool *found);
 int    js_dom_set(jsobj *o, jsstr *k, jsv v);      /* 1 tratado, 0 não, -1 exceção */
 void   js_console_log(int level, const char *msg);

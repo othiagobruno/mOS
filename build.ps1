@@ -155,6 +155,20 @@ if (Test-Path $ck) {
     Copy-Item $ck "$ckdir\CryptoKit" -Force
     Write-Host 'CryptoKit.framework na imagem'
 }
+# JavaScriptCore.framework do mOS: o motor JS do sistema (kernel\web\js_*.c, sem o DOM) no processo do app e a API C
+$jscdir = "$esp\mOS\System\Library\Frameworks\JavaScriptCore.framework\Versions\A"
+$jscobj = "$root\$OutDir\jsc-obj"
+New-Item -ItemType Directory -Force $jscdir, $jscobj | Out-Null
+$jscsrc = @(Get-ChildItem "$root\kernel\web\js_*.c" | Where-Object { $_.Name -ne 'js_dom.c' } | ForEach-Object { $_.FullName }) +
+          @("$root\kernel\web\util.c", "$root\userland\frameworks\JavaScriptCore\jsc_api.c")
+foreach ($f in $jscsrc) {
+    & $zig cc -target x86_64-macos -O2 -std=gnu11 -w -fno-builtin -fno-stack-protector -fvisibility=hidden "-I$root\kernel\include" "-I$root" `
+        -c $f -o "$jscobj\$([IO.Path]::GetFileNameWithoutExtension($f)).o" 2>&1 | Select-String ' error' | ForEach-Object { "  $($_.Line)" }
+}
+& $zig cc -target x86_64-macos -shared (Get-ChildItem "$jscobj\*.o" | ForEach-Object { $_.FullName }) -o "$jscdir\JavaScriptCore" `
+    '-Wl,-install_name,/System/Library/Frameworks/JavaScriptCore.framework/Versions/A/JavaScriptCore' '-Wl,-undefined,dynamic_lookup' 2>&1 |
+    Select-String ' error' | ForEach-Object { "  $($_.Line)" }
+if (-not (Test-Path "$jscdir\JavaScriptCore")) { Write-Host 'JavaScriptCore.framework build FAILED' -ForegroundColor Red; exit 1 }
 # WebKit.framework do mOS (userland\frameworks\WebKit): WKWebView sobre o motor web do sistema (SYS_WEB, kernel/web/webview.c)
 $wkdir = "$esp\mOS\System\Library\Frameworks\WebKit.framework\Versions\A"
 New-Item -ItemType Directory -Force $wkdir | Out-Null
