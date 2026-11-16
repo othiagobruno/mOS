@@ -1451,7 +1451,17 @@ static bool hardlink_inode_key(hfs_wr_t *w, const u8 *rec, u8 *k) {
     return true;
 }
 
-bool hfs_wr_write(dmount_t *m, const char *path, const void *data, u64 len) {
+static bool write_impl(dmount_t *m, const char *path, const void *data, u64 len, bool link);
+bool hfs_wr_write(dmount_t *m, const char *path, const void *data, u64 len) { return write_impl(m, path, data, len, false); }
+/* link simbólico do HFS+: arquivo com tipo 'slnk', criador 'rhap', modo 0120755 e o alvo no fork de dados */
+bool hfs_wr_symlink(dmount_t *m, const char *path, const char *target) { return write_impl(m, path, target, strlen(target), true); }
+static void mark_link(u8 *d, bool link) {
+    if (!link) return;
+    put32(d + 48, FOURCC('s', 'l', 'n', 'k'));
+    put32(d + 52, FOURCC('r', 'h', 'a', 'p'));
+    put16(d + 42, 0120755);
+}
+static bool write_impl(dmount_t *m, const char *path, const void *data, u64 len, bool link) {
     hfs_wr_t *w = wr_of(m);
     if (!w) return false;
     begin_op(w);
@@ -1491,6 +1501,7 @@ bool hfs_wr_write(dmount_t *m, const char *path, const void *data, u64 len) {
             u32 now = hfs_now();
             put32(d + 16, now);
             put32(d + 20, now);
+            mark_link(d, link);
             node_dirty(w, T_CAT, node);
         } else ok = false;
     } else {
@@ -1504,6 +1515,7 @@ bool hfs_wr_write(dmount_t *m, const char *path, const void *data, u64 len) {
             put32(rec + 8, id);
             put32(rec + 12, now); put32(rec + 16, now); put32(rec + 20, now); put32(rec + 24, now);
             bsd_info(rec + 32, 0100644);
+            mark_link(rec, link);
             ok = bt_insert(w, T_CAT, k, kl, rec, 248) && thread_insert(w, id, REC_FILE_THREAD, parent, leaf, ln) &&
                  folder_adjust(w, parent, +1, 0);
             vh_count(w, +1, 0);
@@ -1947,6 +1959,35 @@ bool hfs_wr_removexattr(dmount_t *m, const char *path, const char *name) {
         ok = ok && cat_flags(w, k, 0, clear);
     }
     if (!ok) { tx_abort(w); return false; }
+    return tx_commit(w);
+}
+
+/* modo, dono, flags e datas do registro do catálogo (o tipo do arquivo no fileMode fica) */
+static u32 hdate_of(i64 unix_s) { return unix_s ? (u32)(unix_s + HFS_EPOCH_DELTA) : 0; }
+bool hfs_wr_setattr(dmount_t *m, const char *path, const dfs_attr_t *a) {
+    hfs_wr_t *w = wr_of(m);
+    if (!w || !a) return false;
+    begin_op(w);
+    u8 k[520];
+    u32 kl, id, dlen, node;
+    if (!xattr_target(w, path, k, &kl, &id)) { tx_abort(w); return false; }
+    u8 *d = bt_lookup(w, T_CAT, k, &dlen, &node);
+    if (!d || dlen < 88) { tx_abort(w); return false; }
+    if (a->mask & DA_MODE) put16(d + 42, (u16)((be16(d + 42) & 0170000) | (a->mode & 07777)));
+    if (a->mask & DA_OWNER) { put32(d + 32, a->uid); put32(d + 36, a->gid); }
+    if (a->mask & DA_FLAGS) {
+        u8 compressed = d[41] & UF_COMPRESSED;               /* compressão é do fs */
+        d[41] = (u8)((a->flags & 0xFF & ~UF_COMPRESSED) | compressed);
+        d[40] = (u8)(a->flags >> 16);
+        if (a->flags & 0x8000) d[56] |= 0x40; else d[56] &= (u8)~0x40;   /* UF_HIDDEN no kIsInvisible (FinderInfo) */
+    }
+    if (a->mask & DA_TIMES) {
+        if (a->btime) put32(d + 12, hdate_of(a->btime));
+        if (a->mtime) put32(d + 16, hdate_of(a->mtime));
+        if (a->atime) put32(d + 24, hdate_of(a->atime));
+    }
+    put32(d + 20, a->ctime ? hdate_of(a->ctime) : hfs_now());   /* attributeModDate */
+    node_dirty(w, T_CAT, node);
     return tx_commit(w);
 }
 

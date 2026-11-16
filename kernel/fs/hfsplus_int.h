@@ -54,4 +54,6 @@ bool hfs_wr_rename(dmount_t *m, const char *from, const char *to);
 bool hfs_wr_sync(dmount_t *m);
 bool hfs_wr_setxattr(dmount_t *m, const char *path, const char *name, const void *val, u64 len);
 bool hfs_wr_removexattr(dmount_t *m, const char *path, const char *name);
+bool hfs_wr_setattr(dmount_t *m, const char *path, const dfs_attr_t *a);
+bool hfs_wr_symlink(dmount_t *m, const char *path, const char *target);
 int  hfs_name16(const char *s, u16 *out, int max);   /* UTF-8 -> UTF-16 (sem decompor), -1 se inválido */

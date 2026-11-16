@@ -67,6 +67,8 @@ int main(int argc, char **argv) {
     vnode_t *h = vfs_lookup(hv), *fa = vfs_lookup(fv);
     CHECK(h && fa);
     if (!h || !fa) return 1;
+    CHECK(h->uid == 501 && h->gid == 20 && (h->mode & 07777) == 0644);   /* dono 99 do volume = o usuário */
+    CHECK(h->btime_ns > 0 && h->mtime_ns > 0);
     CHECK(vfs_xattr_set(h, "com.apple.quarantine", "0083;1;x;", 9, 0, 0) == 0);
     CHECK(vfs_xattr_set(fa, "com.apple.quarantine", "x", 1, 0, 0) == -MOS_ENOTSUP);   /* FAT não tem atributos */
     /* o driver tem o atributo no disco */
@@ -89,6 +91,35 @@ int main(int argc, char **argv) {
     CHECK(vfs_xattr_remove(h, "com.apple.quarantine") == 0);
     dn = dfs_lookup(hv);
     CHECK(dn && hm->ops->getxattr(hm, dn, "com.apple.quarantine", b, sizeof b) == -1);
+    /* metadados pelo VFS chegam ao disco */
+    mos_fsmeta_t rq = {0};
+    rq.a = 0x8000;                                       /* UF_HIDDEN */
+    CHECK(vfs_fsmeta(h, MOS_FSM_CHFLAGS, &rq, NULL, NULL, 501, 20) == 0);
+    rq = (mos_fsmeta_t){0};
+    rq.a = VT_MTIME; rq.t[1] = 1300000000ll * 1000000000ll;
+    CHECK(vfs_fsmeta(h, MOS_FSM_SETTIMES, &rq, NULL, NULL, 501, 20) == 0);
+    h->mode = 0x10000u | 0640;
+    CHECK(vol_meta_write(h, VFS_META_MODE) == 0);       /* o que o SYS_CHMOD faz */
+    /* link do mOS gravado no volume vira link simbólico de verdade */
+    char lp[300];
+    snprintf(lp, sizeof lp, "/Volumes/%s/atalho", hm->root->name);
+    CHECK(vfs_write_file(lp, "#mOS-link:seed.txt", 18) != NULL);
+    char vp[300];
+    snprintf(vp, sizeof vp, "/Volumes/%s", hm->root->name);
+    CHECK(vol_flush(vfs_lookup(vp)));
+    /* relê do disco por uma montagem nova do dfs */
+    while (dfs_mounts()) { dmount_t *x = dfs_mounts(); if (x->ops->sync) x->ops->sync(x); dfs_unmount(x); }
+    blkdev_t *d2 = calloc(1, sizeof *d2);
+    d2->size = img_size; d2->read = rd; d2->write = wr;
+    dfs_mount_disk(d2, "teste2");
+    hm = mnt("HFS+");
+    char dp[300];
+    snprintf(dp, sizeof dp, "/Volumes/%s/seed.txt", hm->root->name);
+    dnode_t *sd = dfs_lookup(dp);
+    CHECK(sd && sd->mode == 0640 && (sd->flags & 0x8000) && sd->mtime == 1300000000);
+    snprintf(dp, sizeof dp, "/Volumes/%s/atalho", hm->root->name);
+    dnode_t *at = dfs_lookup(dp);
+    CHECK(at && at->type == DN_LINK);
     hm->ops->sync(hm);
     f = fopen(argv[1], "wb"); fwrite(img, 1, img_size, f); fclose(f);
     printf("volxattr: %d verificações, %d falha(s)\n", checks, fails);

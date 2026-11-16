@@ -266,6 +266,18 @@ static bool cat_iterate(hfs_t *h, u32 parent, cat_cb cb, void *ctx) {
 }
 
 /* ------------------------------------------------------------ readdir/read */
+/* dono, flags e datas do registro do catálogo (HFSPlusBSDInfo em 32; datas em 12..28, desde 1904) */
+static i64 hdate(const u8 *p) { u32 v = be32(p); return v ? (i64)v - HFS_EPOCH_DELTA : 0; }
+static void bsd_of(dnode_t *c, const u8 *d) {
+    c->uid = be32(d + 32);
+    c->gid = be32(d + 36);
+    c->flags = (u32)d[41] | (u32)d[40] << 16;
+    if (d[56] & 0x40) c->flags |= 0x8000;                  /* UF_HIDDEN = kIsInvisible do FinderInfo */
+    c->btime = hdate(d + 12);
+    c->ctime = hdate(d + 20);
+    c->atime = hdate(d + 24);
+    c->has_owner = true;
+}
 static bool add_entry(hfs_t *h, const u8 *k, const u8 *d, u32 dlen, void *ctx) {
     dnode_t *dir = ctx;
     i16 type = (i16)be16(d);
@@ -288,6 +300,7 @@ static bool add_entry(hfs_t *h, const u8 *k, const u8 *d, u32 dlen, void *ctx) {
         if (df) { memcpy(df->finfo, d + 48, 32); df->file_id = be32(d + 8); c->priv = df; }
         c->mtime = (i64)be32(d + 16) - HFS_EPOCH_DELTA;
         c->mode = be16(d + 42) & 07777;
+        bsd_of(c, d);
         return true;
     }
     if (dlen < 248) return true;
@@ -307,6 +320,7 @@ static bool add_entry(hfs_t *h, const u8 *k, const u8 *d, u32 dlen, void *ctx) {
     c->ino = f->file_id;
     c->mtime = (i64)be32(d + 16) - HFS_EPOCH_DELTA;
     c->mode = be16(d + 42) & 07777;
+    bsd_of(c, d);
     c->priv = f;
     return true;
 }
@@ -533,7 +547,8 @@ static i64 hfs_listxattr(dmount_t *m, dnode_t *n, char *buf, u64 cap) {
 
 static const dfs_ops_t HFS_OPS = {"HFS+", hfs_readdir, hfs_read, hfs_unmount, hfs_free_node, hfs_trim,
                                   hfs_wr_write, hfs_wr_mkdir, hfs_wr_remove, hfs_wr_rename, hfs_wr_sync, hfs_enable_write,
-                                  hfs_getxattr, hfs_listxattr, hfs_wr_setxattr, hfs_wr_removexattr};
+                                  hfs_getxattr, hfs_listxattr, hfs_wr_setxattr, hfs_wr_removexattr,
+                                  hfs_wr_setattr, hfs_wr_symlink};
 
 static bool tree_header(hfs_t *h, int tree, fork_t *f, u32 *ns, u32 *root) {
     if (!f->size) { *root = 0; return true; }

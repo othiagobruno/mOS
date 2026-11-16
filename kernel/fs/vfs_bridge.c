@@ -75,6 +75,21 @@ static void fit_name(const char *src, char *dst) {
 
 static int mirroring;                 /* > 0: criando espelhos de um diretório (não é escrita do usuário) */
 
+/* modo, dono, flags e datas do volume no vnode espelho. Dono 99 (_unknown, o dos volumes externos do macOS) aparece
+ * como o usuário do mOS, como o macOS faz com a opção "ignorar permissões" */
+static void meta_from_dnode(vnode_t *v, dnode_t *c) {
+    if (c->mode) v->mode = (c->mode & 07777) | 0x10000u;
+    if (c->has_owner) {
+        v->uid = c->uid == 99 ? VFS_DEFAULT_UID : c->uid;
+        v->gid = c->gid == 99 ? VFS_DEFAULT_GID : c->gid;
+        v->flags = c->flags & ~(u32)0x20;                  /* UF_COMPRESSED é do driver */
+    }
+    if (c->mtime > 0) v->mtime_ns = c->mtime * 1000000000ll;
+    if (c->btime > 0) v->btime_ns = c->btime * 1000000000ll;
+    if (c->atime > 0) v->atime_ns = c->atime * 1000000000ll;
+    if (c->ctime > 0) v->ctime_ns = c->ctime * 1000000000ll;
+}
+
 static void mirror_dir(vnode_t *dir, dnode_t *d) {
     mirroring++;
     char *base = kmalloc(1024), *path = kmalloc(1024 + NAME_MAX_VFS + 2);
@@ -89,6 +104,7 @@ static void mirror_dir(vnode_t *dir, dnode_t *d) {
         if (!v) continue;
         v->ext = c;
         v->mtime = 0;
+        meta_from_dnode(v, c);
         if (c->type != DN_DIR) { v->data = NULL; v->size = c->size; v->cap = 0; }
     }
     d->mirrored = true;
@@ -436,6 +452,7 @@ void vol_move(const char *old_path, vnode_t *n) {
 }
 
 /* grava os arquivos sujos de uma subárvore de vol; devolve false se algum falhou */
+static bool write_node(dmount_t *m, const char *p, vnode_t *n);
 static bool flush_tree(vnode_t *vol, dmount_t *m, vnode_t *dir, int depth, int *count) {
     bool ok = true;
     if (depth > 64) return true;
@@ -444,7 +461,7 @@ static bool flush_tree(vnode_t *vol, dmount_t *m, vnode_t *dir, int depth, int *
         if (!c->dirty || c->ext) continue;
         char p[1024];
         if (!rel_path(vol, c, p, sizeof p)) continue;
-        if (m->ops->write_file(m, p, c->data ? c->data : (const u8 *)"", c->size)) { c->dirty = false; (*count)++; }
+        if (write_node(m, p, c)) { c->dirty = false; (*count)++; }
         else { kprintf("vol: \"%s\": falha ao gravar %s (%llu bytes)\n", m->volname, p, (u64)c->size); ok = false; }
     }
     return ok;
@@ -538,9 +555,47 @@ int vol_xattr_write(vnode_t *n, const char *name, const void *val, u64 len, bool
     char p[1024];
     if (!rel_path(vol, n, p, sizeof p)) return -MOS_EINVAL;
     if (!n->dir && n->dirty && !n->ext) {                  /* o arquivo ainda não chegou ao disco */
-        if (!m->ops->write_file(m, p, n->data ? n->data : (const u8 *)"", n->size)) return -MOS_EIO;
+        if (!write_node(m, p, n)) return -MOS_EIO;
         n->dirty = false;
     }
     bool ok = remove ? m->ops->removexattr(m, p, name) : m->ops->setxattr(m, p, name, val, len);
     return ok ? 0 : -MOS_EIO;
+}
+
+/* grava um arquivo pendente: link do mOS ("#mOS-link:") vira link simbólico de verdade no volume */
+static bool write_node(dmount_t *m, const char *p, vnode_t *n) {
+    static const char magic[] = "#mOS-link:";
+    if (n->data && n->size > sizeof magic - 1 && !memcmp(n->data, magic, sizeof magic - 1) && m->ops->symlink) {
+        char t[1024];
+        usize k = MIN(n->size - (sizeof magic - 1), sizeof t - 1);
+        memcpy(t, n->data + sizeof magic - 1, k);
+        t[k] = 0;
+        return m->ops->symlink(m, p, t);
+    }
+    return m->ops->write_file(m, p, n->data ? n->data : (const u8 *)"", n->size);
+}
+/* chmod/chown/chflags/utimes num volume: grava os campos pedidos pelo driver */
+int vol_meta_write(vnode_t *n, unsigned mask) {
+    vnode_t *vol = volume_of(n);
+    if (!vol || !vol->ext || vol == n) return 0;
+    dmount_t *m = mount_of(vol);
+    if (!m->writable) return -MOS_EROFS;
+    if (!m->ops->setattr) return 0;                        /* FAT: modo e dono não existem no disco */
+    char p[1024];
+    if (!rel_path(vol, n, p, sizeof p)) return -MOS_EINVAL;
+    if (!n->dir && n->dirty && !n->ext) {
+        if (!write_node(m, p, n)) return -MOS_EIO;
+        n->dirty = false;
+    }
+    dfs_attr_t a = {0};
+    a.mask = mask;
+    a.mode = (u16)(n->mode & 07777);
+    a.uid = n->uid;
+    a.gid = n->gid;
+    a.flags = n->flags;
+    a.btime = n->btime_ns / 1000000000ll;
+    a.mtime = n->mtime_ns / 1000000000ll;
+    a.atime = n->atime_ns / 1000000000ll;
+    a.ctime = n->ctime_ns / 1000000000ll;
+    return m->ops->setattr(m, p, &a) ? 0 : -MOS_EIO;
 }
