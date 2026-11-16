@@ -290,8 +290,14 @@ enum {
     KEY_PGUP, KEY_PGDN, KEY_DELETE, KEY_INSERT,
     KEY_F1, KEY_F2, KEY_F3, KEY_F4, KEY_F5, KEY_F6, KEY_F7, KEY_F8, KEY_F9, KEY_F10, KEY_F11, KEY_F12,
     KEY_LSHIFT, KEY_RSHIFT, KEY_LCTRL, KEY_LALT, KEY_LCMD, KEY_CAPS,
-    KEY_RCTRL, KEY_RALT, KEY_RCMD
+    KEY_RCTRL, KEY_RALT, KEY_RCMD,
+    /* teclas de mídia (HID Consumer/System Control, PS/2 E0 multimídia): o kernel já trata volume e energia;
+     * os eventos seguem para a interface (HUD) e para os apps (NX_KEYTYPE_* do AppKit) */
+    KEY_VOL_UP, KEY_VOL_DOWN, KEY_MUTE, KEY_PLAY, KEY_NEXT, KEY_PREV, KEY_STOP,
+    KEY_BRIGHT_UP, KEY_BRIGHT_DOWN, KEY_EJECT, KEY_POWER, KEY_SLEEP, KEY_SEARCH, KEY_LAUNCHPAD
 };
+void   input_media_usage(u32 usage, bool down);   /* uso HID (página << 16 | uso) */
+void   input_media_poll(void);                    /* laço principal: volume e energia das teclas de mídia */
 typedef struct {
     u8  type;
     u8  buttons;   /* bit0 esq, bit1 dir, bit2 meio */

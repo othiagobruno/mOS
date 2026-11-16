@@ -453,6 +453,7 @@ static void run_gpe(int num, bool edge) {
 static int cpu_temp_dC(void);
 
 void acpi_poll(void) {
+    input_media_poll();
     if (!F.ok) return;
     u32 pm = __atomic_exchange_n(&g_pending_pm1, 0, __ATOMIC_ACQ_REL);
     if (pm & (PM1_PWRBTN)) {

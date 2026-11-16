@@ -35,8 +35,8 @@ Legenda: ✅ pronto com teste de host · 🔧 em andamento · ⬜ não começou.
 | A8 | P-states `kernel/dev/cpufreq.c`: `_PSS/_PCT/_PPC` (FFixedHW → MSR 0xC0010062 por núcleo; APs no tique do LAPIC), carga por MPERF/TSC, sobe ≥ 70 %, desce ≤ 30 %. Sem `_PSS`, lê 0xC0010064.. O R2544 não tem `_CPC` (CPPC) | ✅ código; ⬜ hardware | harness: `_PCT[0]` = FFixedHW 64 bits 0xC0010062 e controle = índice; MSRs lidos no PC: P0 FID 0x86/DID 8 = 3350, P1 2000, P2 1600 MHz |
 | A9 | `_PRT` (roteamento de IRQ PCI) e IOAPIC pela MADT | ⬜ | |
 | U1 | xHCI 15e0/15e1: interrupções MSI, USB 3.x, quirks AMD, suspensão/retomada | ⬜ | |
-| U2 | Hubs Genesys (USB2 e USB3 SuperSpeed) | ⬜ | |
-| U3 | HID: Satechi 0c45:7016 (teclas de mídia, consumer page), mouse Sunplus | ⬜ | |
+| U2 | Hubs: USB 2 (Genesys 05e3:0610) já funcionava; SuperSpeed (05e3:0626) novo — descritor 0x2A, SET_HUB_DEPTH, bits de porta USB 3, warm reset (BH) para link Inactive/Compliance | ✅ código; ⬜ hardware | só sintaxe |
+| U3 | HID: teclado boot (Satechi interface 0) e mouse Sunplus (report id 1, X/Y 12 bits, roda) já funcionavam; teclas de mídia novas — `kernel/dev/hid_cc.c` (Consumer/System Control, array ou variável), `KEY_VOL_UP..KEY_LAUNCHPAD`, volume/mudo e botão de energia tratados no kernel; PS/2 E0 multimídia também | ✅ | `tools/hidcc_host.c` com os descritores reais do Satechi e do mouse (`tools/hidcc/*.rd`): `hidcc: ok` |
 | S1 | AHCI 7901: NCQ (já na main), TRIM por DATA SET MANAGEMENT (IDENTIFY 169/105/69), `blkdev_t.discard` + `blk_discard()` através das partições, com a política de escrita; FLUSH CACHE EXT | ✅ código; ⬜ hardware | `tools/disktest.c` (empacotamento das faixas, 48 bits, 64 por bloco): `disktest: ok` |
 | H1 | HDA: 15e3 com ALC269VC (fone 0x15 com HP+EAPD, microfone 0x18; snoop do FCH no reg. 0x42) + 15de HDMI/DP em `kernel/dev/hda_hdmi.c` (controlador próprio sem snoop, `clflush`, pin sense, ELD, conversor digital, espelho da mesma mistura) | ✅ código; ⬜ hardware | só sintaxe; codecs conferidos no `/proc/asound` do PC (ALC269VC, ATI aa01, monitor PG-CFCFS49U com LPCM 2 canais) |
 | H2 | ACP 15e2 (co-processador de áudio; DMIC) | ⬜ | |

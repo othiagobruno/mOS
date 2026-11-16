@@ -136,6 +136,50 @@ static void kbd_byte(u8 b) {
     kbd_scancode(b & 0x7F, ext, b & 0x80);
 }
 
+/* teclas de mídia: o evento sai já (pode ser IRQ do PS/2); a ação do sistema (volume, energia) fica numa
+ * fila curta que o laço principal executa em input_media_poll() */
+static int g_vol_before_mute = -1;
+static volatile u32 g_media_q[16];
+static volatile u32 g_media_w, g_media_r;
+static void media_key(i32 key, bool down) {
+    if (down && g_media_w - g_media_r < 16) { g_media_q[g_media_w % 16] = (u32)key; g_media_w++; }
+    emit_key(key, down);
+}
+
+void input_media_poll(void) {
+    while (g_media_r != g_media_w) {
+        i32 key = (i32)g_media_q[g_media_r % 16];
+        g_media_r++;
+        int v = audio_get_volume();
+        switch (key) {
+        case KEY_VOL_UP: audio_set_volume(MIN(100, v + 6)); g_vol_before_mute = -1; break;      /* 16 passos, como no Mac */
+        case KEY_VOL_DOWN: audio_set_volume(MAX(0, v - 6)); g_vol_before_mute = -1; break;
+        case KEY_MUTE:
+            if (g_vol_before_mute >= 0) { audio_set_volume(g_vol_before_mute); g_vol_before_mute = -1; }
+            else { g_vol_before_mute = v; audio_set_volume(0); }
+            break;
+        case KEY_POWER: { extern void desktop_shutdown_dialog(int kind); desktop_shutdown_dialog(0); break; }
+        }
+    }
+}
+
+void input_media_usage(u32 usage, bool down) {
+    i32 key = 0;
+    switch (usage) {
+    case 0x000C00E9: key = KEY_VOL_UP; break;     case 0x000C00EA: key = KEY_VOL_DOWN; break;
+    case 0x000C00E2: key = KEY_MUTE; break;       case 0x000C00CD: case 0x000C00B0: key = KEY_PLAY; break;
+    case 0x000C00B5: key = KEY_NEXT; break;       case 0x000C00B6: key = KEY_PREV; break;
+    case 0x000C00B7: key = KEY_STOP; break;       case 0x000C006F: key = KEY_BRIGHT_UP; break;
+    case 0x000C0070: key = KEY_BRIGHT_DOWN; break; case 0x000C00B8: key = KEY_EJECT; break;
+    case 0x000C0221: key = KEY_SEARCH; break;     case 0x000C029F: case 0x000C0223: key = KEY_LAUNCHPAD; break;
+    case 0x00010081: key = KEY_POWER; break;      case 0x00010082: key = KEY_SLEEP; break;
+    default: return;
+    }
+    u64 f = irq_save();
+    media_key(key, down);
+    irq_restore(f);
+}
+
 /* entrada comum para teclados não-PS/2 (USB HID): código = scancode set 1, bit 0x100 = prefixo E0 */
 void input_kbd_scancode(u16 code, bool up) {
     u64 f = irq_save();
@@ -164,6 +208,12 @@ static void kbd_scancode(u8 sc, bool ext, bool up) {
         case 0x49: key = KEY_PGUP; break;  case 0x51: key = KEY_PGDN; break;
         case 0x53: key = KEY_DELETE; break; case 0x52: key = KEY_INSERT; break;
         case 0x1C: key = KEY_ENTER; break; case 0x35: key = '/'; break;
+        /* PS/2 multimídia (set 1 com E0) */
+        case 0x30: media_key(KEY_VOL_UP, !up); return;   case 0x2E: media_key(KEY_VOL_DOWN, !up); return;
+        case 0x20: media_key(KEY_MUTE, !up); return;     case 0x22: media_key(KEY_PLAY, !up); return;
+        case 0x19: media_key(KEY_NEXT, !up); return;     case 0x10: media_key(KEY_PREV, !up); return;
+        case 0x24: media_key(KEY_STOP, !up); return;     case 0x5E: media_key(KEY_POWER, !up); return;
+        case 0x5F: media_key(KEY_SLEEP, !up); return;    case 0x65: media_key(KEY_SEARCH, !up); return;
         default: return;
         }
         emit_key(key, !up);

@@ -8,6 +8,7 @@
  */
 #include "usb.h"
 #include "compat_gui.h"      /* PAD_*: layout dos botões do GameController */
+#include "hid_cc.h"         /* teclas de mídia (Consumer/System Control) */
 
 #define MAX_HID 12
 
@@ -41,6 +42,10 @@ typedef struct {
     u8   gnbtn, grid;
     bool gids;
     int  pad;
+    /* teclas de mídia (type 4) */
+    hidcc_t *cc;
+    u32  cc_down[16];
+    int  cc_n;
 } hid_t;
 enum { GA_X, GA_Y, GA_Z, GA_RX, GA_RY, GA_RZ, GA_ACCEL, GA_BRAKE };
 
@@ -389,12 +394,35 @@ static void ds4_rumble(void *ctx, u8 strong, u8 weak) {
     usb_control(h->d, 0x21, 0x09, 0x0205, h->it->num, sizeof rep, rep);
 }
 
+/* ------------------------------------------------------------------ teclas de mídia */
+static void cc_report(hid_t *h, const u8 *r, u32 len) {
+    u32 now[16];
+    if (h->cc->ids && (!len || !h->cc->n)) return;
+    bool mine = !h->cc->ids;
+    for (int k = 0; k < h->cc->n && !mine; k++) if (h->cc->f[k].rid == r[0]) mine = true;
+    if (!mine) return;                                   /* outro relatório da mesma interface */
+    int n = hidcc_active(h->cc, r, len, now, 16);
+    for (int i = 0; i < h->cc_n; i++) {                  /* soltas */
+        bool still = false;
+        for (int j = 0; j < n; j++) if (now[j] == h->cc_down[i]) still = true;
+        if (!still) input_media_usage(h->cc_down[i], false);
+    }
+    for (int j = 0; j < n; j++) {                        /* novas */
+        bool was = false;
+        for (int i = 0; i < h->cc_n; i++) if (now[j] == h->cc_down[i]) was = true;
+        if (!was) input_media_usage(now[j], true);
+    }
+    memcpy(h->cc_down, now, sizeof(u32) * (u32)n);
+    h->cc_n = n;
+}
+
 /* ------------------------------------------------------------------ driver */
 static void hid_cb(usb_dev_t *d, u8 ep, u8 *data, u32 len, int status, void *ctx) {
     hid_t *h = ctx;
     if (!h->used || !h->active) return;
     if (h->type == 1) kbd_report(h, data, len);
     else if (h->type == 3) gp_report(h, data, len);
+    else if (h->type == 4) cc_report(h, data, len);
     else ptr_report(h, data, len);
 }
 
@@ -448,7 +476,13 @@ static void hid_start(usb_dev_t *d, usb_iface_t *it) {
             u8 *rd = kmalloc(MIN(rl, 4096));
             if (rd) {
                 int n = usb_control(d, 0x81, 6, (USB_DT_REPORT << 8), it->num, MIN(rl, 4096), rd);
-                if (n > 0) { gp = parse_gamepad(h, rd, n); if (!gp) ok = parse_report(h, rd, n); }   /* controle antes: ele também tem X/Y */
+                if (n > 0) {
+                    gp = parse_gamepad(h, rd, n); if (!gp) ok = parse_report(h, rd, n);   /* controle antes: ele também tem X/Y */
+                    if (!gp && !ok) {
+                        hidcc_t *cc = kcalloc(1, sizeof *cc);
+                        if (cc && hidcc_parse(cc, rd, n) > 0) h->cc = cc; else kfree(cc);
+                    }
+                }
                 kfree(rd);
             }
         }
@@ -469,6 +503,11 @@ static void hid_start(usb_dev_t *d, usb_iface_t *it) {
             kprintf("USB HID: apontador %s na interface %u (id %u, X %u bits @%u, Y %u bits @%u, %u botões%s)\n",
                     h->abs ? "absoluto" : "relativo", it->num, h->rid, h->x.size, h->x.off, h->y.size, h->y.off,
                     h->nbtn, h->wheel.have ? ", roda" : "");
+        } else if (h->cc) {
+            h->type = 4;
+            usb_control(d, 0x21, 0x0A, 0, it->num, 0, NULL);          /* SET_IDLE(0) */
+            if (d->kind == USB_KIND_UNKNOWN) usb_set_kind(d, USB_KIND_HID);
+            kprintf("USB HID: teclas de mídia na interface %u (%d campos%s)\n", it->num, h->cc->n, h->cc->ids ? ", com report id" : "");
         } else if (bootif && it->proto == 2) {
             h->type = 2; h->boot = true;
             usb_control(d, 0x21, 0x0B, 0, it->num, 0, NULL);
@@ -491,6 +530,8 @@ static void hid_detach(usb_dev_t *d, usb_iface_t *it) {
     if (!h) return;
     if (h->type == 1) kbd_release_all(h);
     if (h->type == 3) gamepad_detach(h->pad);
+    if (h->type == 4) { for (int i = 0; i < h->cc_n; i++) input_media_usage(h->cc_down[i], false); }
+    if (h->cc) kfree(h->cc);
     if (h->type == 2 && h->last_buttons) {
         input_event_t ev = {0};
         ev.type = EV_MOUSE;

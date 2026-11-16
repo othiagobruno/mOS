@@ -1,7 +1,8 @@
 /*
- * mOS — driver de hub USB 2.0 (e 1.1).  Funciona em cascata (hub atrás de hub).
- * Hubs SuperSpeed (USB 3) não são tratados: os dispositivos USB 2 atrás deles aparecem pela
- * metade USB 2 do mesmo hub, que é enumerada numa porta USB 2 do controlador.
+ * mOS — driver de hub USB 1.1, 2.0 e 3.x (SuperSpeed).  Funciona em cascata (hub atrás de hub).
+ * Um hub USB 3 (ex.: Genesys 05e3:0626) tem duas metades: a SuperSpeed (este driver com o descritor 0x2A,
+ * SET_HUB_DEPTH e os bits de porta do USB 3.2 §10.16.2.6) e a USB 2 (05e3:0610), enumerada à parte numa
+ * porta USB 2 do controlador. Dispositivos USB 3 aparecem na metade SuperSpeed; os USB 2, na outra.
  *
  * O endpoint de status (interrupt IN) só marca quais portas mudaram; o trabalho (GET_STATUS,
  * reset, enumeração) é feito em hub_poll(), fora do processamento de eventos.
@@ -12,10 +13,16 @@
 #define HUB_PORTS 15
 
 enum { PORT_CONNECTION = 0, PORT_ENABLE = 1, PORT_RESET = 4, PORT_POWER = 8,
-       C_PORT_CONNECTION = 16, C_PORT_ENABLE = 17, C_PORT_SUSPEND = 18, C_PORT_OVER_CURRENT = 19, C_PORT_RESET = 20 };
+       C_PORT_CONNECTION = 16, C_PORT_ENABLE = 17, C_PORT_SUSPEND = 18, C_PORT_OVER_CURRENT = 19, C_PORT_RESET = 20,
+       /* só SuperSpeed */
+       C_PORT_LINK_STATE = 25, C_PORT_CONFIG_ERROR = 26, BH_PORT_RESET = 28, C_BH_PORT_RESET = 29 };
+#define USB_DT_SS_HUB 0x2A
+/* wPortStatus SuperSpeed: 0 conexão, 1 habilitada, 3 sobrecorrente, 4 reset, 5-8 estado do link, 9 energia */
+#define SS_PLS(st) (((st) >> 5) & 15)
+enum { PLS_U0 = 0, PLS_RXDETECT = 5, PLS_INACTIVE = 6, PLS_POLLING = 7, PLS_COMPLIANCE = 10 };
 
 typedef struct {
-    bool used, ok, has_intr;
+    bool used, ok, has_intr, ss;
     usb_dev_t *d;
     u8  ep, nports;
     volatile u32 change;
@@ -37,7 +44,36 @@ static int port_status(hub_t *h, int port, u16 *st, u16 *ch) {
 static int set_feat(hub_t *h, int port, int f) { return usb_control(h->d, 0x23, 3, f, port, 0, NULL); }
 static int clr_feat(hub_t *h, int port, int f) { return usb_control(h->d, 0x23, 1, f, port, 0, NULL); }
 
+static void hub_attach_port_ss(hub_t *h, int port) {
+    sleep_ms(100);
+    u16 st = 0, ch = 0;
+    if (port_status(h, port, &st, &ch) < 0) return;
+    /* link em Inactive ou Compliance: só o warm reset (BH) recupera */
+    bool warm = SS_PLS(st) == PLS_INACTIVE || SS_PLS(st) == PLS_COMPLIANCE;
+    if (set_feat(h, port, warm ? BH_PORT_RESET : PORT_RESET) < 0) return;
+    u64 end = timer_ticks() + 800;
+    do {
+        sleep_ms(10);
+        if (port_status(h, port, &st, &ch) < 0) return;
+    } while ((st & (1 << 4)) && timer_ticks() < end);
+    if (ch & (1 << 4)) clr_feat(h, port, C_PORT_RESET);
+    if (ch & (1 << 5)) clr_feat(h, port, C_BH_PORT_RESET);
+    if (ch & (1 << 6)) clr_feat(h, port, C_PORT_LINK_STATE);
+    sleep_ms(10);
+    if (port_status(h, port, &st, &ch) < 0) return;
+    if (!(st & 1)) return;
+    if (!(st & 2) || SS_PLS(st) != PLS_U0) {
+        kprintf("USB hub [%s]: porta SS %d sem link U0 após reset (estado %u)\n", h->d->path, port, SS_PLS(st));
+        h->fail[port]++;
+        return;
+    }
+    kprintf("USB hub [%s]: dispositivo SuperSpeed na porta %d\n", h->d->path, port);
+    h->child[port] = usb_attach(h->d->hc, h->d, (u8)port, USB_SPEED_SUPER);
+    if (!h->child[port]) h->fail[port]++;
+}
+
 static void hub_attach_port(hub_t *h, int port) {
+    if (h->ss) { hub_attach_port_ss(h, port); return; }
     sleep_ms(100);                                         /* debounce */
     if (set_feat(h, port, PORT_RESET) < 0) return;
     u16 st = 0, ch = 0;
@@ -65,8 +101,14 @@ static void hub_service(hub_t *h, u32 mask) {
         u16 st, ch;
         if (port_status(h, p, &st, &ch) < 0) continue;
         if (ch & 1) clr_feat(h, p, C_PORT_CONNECTION);
-        if (ch & 2) clr_feat(h, p, C_PORT_ENABLE);
-        if (ch & 4) clr_feat(h, p, C_PORT_SUSPEND);
+        if (h->ss) {
+            if (ch & (1 << 5)) clr_feat(h, p, C_BH_PORT_RESET);
+            if (ch & (1 << 6)) clr_feat(h, p, C_PORT_LINK_STATE);
+            if (ch & (1 << 7)) { clr_feat(h, p, C_PORT_CONFIG_ERROR); kprintf("USB hub [%s]: erro de configuração do link na porta %d\n", h->d->path, p); }
+        } else {
+            if (ch & 2) clr_feat(h, p, C_PORT_ENABLE);
+            if (ch & 4) clr_feat(h, p, C_PORT_SUSPEND);
+        }
         if (ch & 8) { clr_feat(h, p, C_PORT_OVER_CURRENT); kprintf("USB hub [%s]: sobrecorrente na porta %d\n", h->d->path, p); }
         if (ch & 16) clr_feat(h, p, C_PORT_RESET);
         bool conn = st & 1;
@@ -106,19 +148,21 @@ static void hub_start(usb_dev_t *d, usb_iface_t *it) {
     hub_t *h = it->priv;
     if (!h) return;
     usb_set_kind(d, USB_KIND_HUB);
-    if (d->speed >= USB_SPEED_SUPER) {
-        kprintf("USB hub [%s]: hub SuperSpeed — não suportado (os dispositivos USB 2 aparecem pela metade USB 2 do hub)\n", d->path);
-        return;
+    h->ss = d->speed >= USB_SPEED_SUPER;
+    if (h->ss) {
+        /* SET_HUB_DEPTH: 0 para hub na porta raiz; o hub usa isso para achar sua parte da route string */
+        if (usb_control(d, 0x20, 12, d->depth, 0, 0, NULL) < 0)
+            kprintf("USB hub [%s]: SET_HUB_DEPTH falhou\n", d->path);
     }
     u8 b[16];
-    int r = usb_control(d, 0xA0, 6, USB_DT_HUB << 8, 0, sizeof b, b);
+    int r = usb_control(d, 0xA0, 6, (h->ss ? USB_DT_SS_HUB : USB_DT_HUB) << 8, 0, sizeof b, b);
     if (r < 7) { kprintf("USB hub [%s]: descritor do hub falhou (%d)\n", d->path, r); return; }
     h->nports = MIN(b[2], HUB_PORTS);
     u16 chars = b[3] | b[4] << 8;
     u32 pwr = b[5] * 2u;
     int ttt = (chars >> 5) & 3;
     if (usb_hub_configure(d, h->nports, false, ttt) < 0) kprintf("USB hub [%s]: contexto de hub não atualizado\n", d->path);
-    kprintf("USB hub [%s]: %u portas, TT think time %d, energia em %u ms\n", d->path, h->nports, ttt, pwr);
+    kprintf("USB hub [%s]: %s, %u portas, TT think time %d, energia em %u ms\n", d->path, h->ss ? "SuperSpeed" : "USB 2", h->nports, ttt, pwr);
     for (int p = 1; p <= h->nports; p++) set_feat(h, p, PORT_POWER);
     sleep_ms(MAX(pwr, 100u));
     h->ok = true;
