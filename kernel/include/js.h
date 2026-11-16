@@ -60,3 +60,13 @@ bool js_page_busy(js_page_t *p);                     /* scripts externos ou o ev
 /* liga a página de um iframe à do pai: parent, top, frameElement; about:blank/srcdoc herdam a origem */
 void js_page_link_frame(js_page_t *child, js_page_t *parent, node_t *iframe);
 void js_page_fire(js_page_t *p, node_t *target, const char *type, bool bubbles);   /* evento simples (load do iframe) */
+
+/* ---------- diálogos alert/confirm/prompt (o hospedeiro decide e pode suspender a execução até o app responder)
+ * kind: JS_DLG_*. Devolve 1 = OK, 0 = cancelar; no prompt, o texto vai em out (com OK). */
+enum { JS_DLG_ALERT, JS_DLG_CONFIRM, JS_DLG_PROMPT };
+typedef int (*js_dialog_fn)(void *ctx, js_page_t *p, int kind, const char *msg, const char *def, sbuf_t *out);
+void js_page_set_dialog(js_page_t *p, js_dialog_fn fn, void *ctx);   /* os iframes herdam do pai */
+/* suspensão da execução JS atual (chamada de dentro do gancho, antes de ceder a corrotina) */
+void *js_suspend_exec(void);
+void  js_resume_exec(void *e);
+const char *js_page_url(js_page_t *p);

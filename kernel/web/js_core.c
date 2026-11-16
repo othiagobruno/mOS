@@ -240,6 +240,7 @@ void gc_collect(void) {
     js_mark_pages();
     js_lib_mark();
     js_coro_gc_begin();
+    js_exec_mark(scan_range);
     if (J.entry > 0) scan_stack();
     gc_drain();
     /* pilhas de geradores suspensos: só as dos donos já alcançados (repete até estabilizar) */
@@ -1508,4 +1509,82 @@ void js_realm_free(jsrealm *r) {
     if (J.realm == r) J.realm = J.realms;
     kfree(r);
     if (J.entry == 0) gc_collect();
+}
+
+/* ============================================================ execuções suspensas (diálogos JS que esperam o app)
+ * Um alert/confirm/prompt que bloqueia suspende a execução inteira: a pilha C dela fica parada numa corrotina do
+ * hospedeiro (kernel/web/costack.c). Aqui o estado de execução do J é guardado e zerado, para que outras páginas
+ * rodem JS enquanto o diálogo está aberto; o coletor varre a pilha e as raízes de cada execução suspensa. */
+struct jsexec {
+    jsstate st;              /* cópia do J no momento da suspensão */
+    uptr sp;                 /* topo da pilha suspensa (o resto até st.stack_base é dela) */
+    u64 t;                   /* quando suspendeu (o orçamento de tempo não conta a espera) */
+    struct jsexec *next;
+};
+static jsexec_t *suspended;
+
+jsexec_t *js_exec_suspend(void) {
+    jsexec_t *e = kcalloc(1, sizeof(jsexec_t));
+    if (!e) return NULL;
+    uptr sp;
+    __asm__ volatile("movq %%rsp, %0" : "=r"(sp));
+    e->st = J;
+    e->sp = sp;
+    e->t = timer_ticks();
+    e->next = suspended;
+    suspended = e;
+    /* J ocioso: as listas permanentes (reinos, contadores do coletor) continuam */
+    J.interrupted = false;
+    J.exc = JS_UNDEF;
+    J.deadline = 0;
+    J.steps = 0;
+    J.stack_base = 0;
+    J.stack_limit = 0;
+    J.cur_coro = NULL;
+    J.entry = 0;
+    J.calldepth = 0;
+    J.nroots = 0;
+    J.line = 0;
+    J.srcname = NULL;
+    J.retval = JS_UNDEF;
+    J.label = NULL;
+    J.completion = JS_UNDEF;
+    J.newtarget = JS_UNDEF;
+    return e;
+}
+
+void js_exec_resume(jsexec_t *e) {
+    if (!e) return;
+    for (jsexec_t **pp = &suspended; *pp; pp = &(*pp)->next) if (*pp == e) { *pp = e->next; break; }
+    jsrealm *realms = J.realms;
+    bool gcr = J.gc_running;
+    u32 gcc = J.gc_count;
+    J = e->st;
+    J.realms = realms;
+    J.gc_running = gcr;
+    J.gc_count = gcc;
+    /* o reino de quem suspendeu pode ter saído (página fechada durante o diálogo) */
+    bool alive = false;
+    for (jsrealm *r = J.realms; r; r = r->next) if (r == J.realm) alive = true;
+    if (!alive) { J.realm = J.realms; J.interrupted = true; }
+    if (J.deadline) J.deadline += timer_ticks() - e->t;
+    kfree(e);
+}
+
+bool js_exec_any_suspended(void) { return suspended != NULL; }
+
+void js_exec_mark(void (*scan)(uptr lo, uptr hi)) {
+    for (jsexec_t *e = suspended; e; e = e->next) {
+        for (int i = 0; i < e->st.nroots; i++) gc_mark_val(e->st.roots[i]);
+        gc_mark_val(e->st.exc);
+        gc_mark_val(e->st.retval);
+        gc_mark_val(e->st.completion);
+        gc_mark_val(e->st.newtarget);
+        gc_mark_ptr(e->st.label);
+        gc_mark_ptr(e->st.srcname);
+        /* suspendeu dentro de um gerador/async: a pilha atual é a dele; as de quem o chamou vêm na cadeia */
+        uptr top = e->st.cur_coro ? js_coro_stack_top(e->st.cur_coro) : e->st.stack_base;
+        if (top && top > e->sp) scan(e->sp, top);
+        js_coro_scan_chain_from(e->st.cur_coro, scan);
+    }
 }

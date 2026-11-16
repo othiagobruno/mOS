@@ -378,6 +378,13 @@ jsv    js_invoke(jsv obj, jsstr *name, int argc, jsv *argv);
 int    js_instanceof(jsv v, jsv ctor);      /* 1/0, -1 exceção */
 
 /* entrada/saída do motor (pilha, orçamento) */
+/* execuções suspensas por diálogo bloqueante (js_core.c) */
+typedef struct jsexec jsexec_t;
+jsexec_t *js_exec_suspend(void);
+void   js_exec_resume(jsexec_t *e);
+void   js_exec_mark(void (*scan)(uptr lo, uptr hi));
+void   js_coro_scan_chain_from(struct jscoro *co, void (*scan)(uptr lo, uptr hi));
+uptr   js_coro_stack_top(struct jscoro *co);   /* topo da pilha da corrotina (gerador/async) */
 void   js_enter(void *frame);
 void   js_leave(void);
 bool   js_check_stack(void);                /* false = estourou (exceção lançada) */

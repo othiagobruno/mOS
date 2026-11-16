@@ -58,6 +58,8 @@ struct js_page {
     struct js_page *parent;
     node_t *frame_el;
     struct pmsg *msgs, *msgs_tail;
+    js_dialog_fn dialog;
+    void *dialog_ctx;
     struct js_page *next;
 };
 typedef struct pmsg { struct pmsg *next; char *json; int len; char origin[256]; jsobj *source; } pmsg_t;
@@ -1321,9 +1323,15 @@ void js_page_fire(js_page_t *p, node_t *target, const char *type, bool bubbles) 
     js_leave();
 }
 
+void js_page_set_dialog(js_page_t *p, js_dialog_fn fn, void *ctx) { if (p) { p->dialog = fn; p->dialog_ctx = ctx; } }
+void *js_suspend_exec(void) { return js_exec_suspend(); }
+void js_resume_exec(void *e) { js_exec_resume(e); }
+const char *js_page_url(js_page_t *p) { return p ? p->url : ""; }
+
 void js_page_link_frame(js_page_t *c, js_page_t *par, node_t *iframe) {
     if (!c || !par || c == par) return;
     c->parent = par;
+    if (!c->dialog) { c->dialog = par->dialog; c->dialog_ctx = par->dialog_ctx; }
     c->frame_el = iframe;
     if (!strncmp(c->url, "about:", 6) || !strncmp(c->url, "data:", 5)) snprintf(c->origin, sizeof c->origin, "%s", strncmp(c->url, "data:", 5) ? par->origin : "null");
     js_page_t *top = par;
@@ -2495,8 +2503,22 @@ NATIVE(doc_write) {
 /* window */
 NATIVE(w_alert) {
     UNUSED_ARGS;
-    jsstr *s = argc ? js_tostr(argv[0]) : A[A_empty];
+    jsstr *s = argc && argv[0] != JS_UNDEF ? js_tostr(argv[0]) : A[A_empty];
     if (!s) return JS_EXC;
+    js_page_t *dp = cur_page();
+    if (dp && dp->dialog) {
+        int kind = self->u.nat.magic == 1 ? JS_DLG_CONFIRM : self->u.nat.magic == 2 ? JS_DLG_PROMPT : JS_DLG_ALERT;
+        jsstr *def = NULL;
+        if (kind == JS_DLG_PROMPT && argc > 1 && argv[1] != JS_UNDEF) { def = js_tostr(argv[1]); if (!def) return JS_EXC; }
+        sbuf_t out = {0};
+        /* a string da mensagem fica viva na pilha suspensa (varrida pelo coletor) */
+        int ok = dp->dialog(dp->dialog_ctx, dp, kind, s->d, def ? def->d : NULL, &out);
+        jsv r = JS_UNDEF;
+        if (kind == JS_DLG_CONFIRM) r = jv_bool(ok);
+        else if (kind == JS_DLG_PROMPT) r = ok ? jv_str(js_strn(out.p ? out.p : "", out.len)) : JS_NULL;
+        sb_free(&out);
+        return r;
+    }
     char b[400];
     snprintf(b, sizeof b, "%s", s->d);
     js_page_t *p = cur_page();

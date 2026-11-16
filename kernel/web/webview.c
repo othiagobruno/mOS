@@ -109,6 +109,10 @@ typedef struct webview {
     char newwin_url[1024];
     u32 events;
     sbuf_t result;               /* resultado do último EVAL maior que o buffer do app (MOS_WEB_RESULT) */
+    /* diálogo JS bloqueante: a operação suspensa (corrotina) e o resultado de um EVAL que esperou */
+    struct wvop *dlg;
+    int eval_type;
+    bool eval_done;
 } webview_t;
 
 static webview_t *views[WV_MAX];
@@ -342,14 +346,15 @@ static void wv_post(void *ctx, const char *name, const char *body, int len, int 
  * framework chama o WKUIDelegate). confirm devolve false e prompt devolve null, como o WebKit sem UIDelegate. */
 static const char ALERT_SHIM[] =
     "(function(){var h=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.__mosAlert;"
-    "if(!h)return;window.alert=function(m){h.postMessage({kind:'alert',message:String(m===undefined?'':m)});};"
-    "window.confirm=function(m){h.postMessage({kind:'confirm',message:String(m===undefined?'':m)});return false;};"
-    "window.prompt=function(m,d){h.postMessage({kind:'prompt',message:String(m===undefined?'':m),"
-    "defaultText:d===undefined?null:String(d)});return null;};"
-    "window.close=function(){h.postMessage({kind:'close',message:''});};})();";
+    "if(!h)return;window.close=function(){h.postMessage({kind:'close',message:''});};})();";
+
+/* alert/confirm/prompt: com uma operação em corrotina, suspende até o app responder; sem ela (ou com outro diálogo
+ * aberto na vista), avisa o app por mensagem e devolve a resposta padrão do WebKit sem WKUIDelegate */
+static int wv_dialog(void *ctx, js_page_t *p, int kind, const char *msg, const char *def, sbuf_t *out);
 
 static void wv_page_init(js_page_t *p, int phase, void *ctx) {
     webview_t *w = ctx;
+    if (phase == 0) js_page_set_dialog(p, wv_dialog, w);
     if (phase == 0) {
         js_page_wk_bridge(p, wv_post, w);
         js_page_wk_handler(p, "__mosAlert", true);
@@ -1173,7 +1178,9 @@ static webview_t *wv_get(process_t *p, u64 id) {
 
 static i64 wv_free_call(void *w) { wv_free(w); return 0; }
 
+static void dialog_abort(webview_t *w);
 void webview_user_exit(process_t *p) {
+    for (int i = 0; i < WV_MAX; i++) if (views[i] && views[i]->pid == p->pid && views[i]->dlg) dialog_abort(views[i]);
     for (int i = 0; i < WV_MAX; i++)
         if (views[i] && views[i]->pid == p->pid) { webview_t *w = views[i]; views[i] = NULL; on_big_stack(wv_free_call, w); }
 }
@@ -1256,6 +1263,26 @@ static bool find_in_box(box_t *b, const char *needle, int nl, int *y) {
 }
 
 typedef struct { process_t *p; u64 op, id, a, b; } wvcall_t;
+
+/* ============================================================ operações em corrotina (diálogos que bloqueiam)
+ * Cada SYS_WEB roda numa costack. Um alert/confirm/prompt suspende a execução JS (js_suspend_exec) e a corrotina; a
+ * syscall volta ao app com MOS_WEB_EV_DIALOG, e MOS_WEB_DIALOG REPLY retoma do ponto exato. Enquanto isso a vista só
+ * aceita leituras; as outras vistas seguem normais (o estado de execução do motor foi guardado). */
+typedef struct wvop {
+    costack_t *cs;
+    wvcall_t call;
+    i64 ret;
+    webview_t *w;                /* vista do diálogo (preenchida pelo gancho) */
+    bool detached;               /* a syscall original já voltou: nada mais é copiado para o app */
+    int kind;
+    char *msg, *def, *frame;
+    int reply_ok;
+    char *reply;
+    webview_t *saved_cur;
+    doc_t *saved_paint;
+} wvop_t;
+static wvop_t *g_op;             /* operação rodando agora */
+static u8 *g_spare_stack;        /* uma pilha guardada para não alocar 1,5 MiB a cada PUMP */
 
 static i64 wv_dispatch(void *arg) {
     wvcall_t *c = arg;
@@ -1341,7 +1368,8 @@ static i64 wv_dispatch(void *arg) {
         if (w->vw <= 0 || w->vh <= 0) return 0;
         usize need = (usize)w->vw * (usize)w->vh * 4;
         if (b < need) return -MOS_EINVAL;
-        if (w->dirty || !w->surf || w->surf->w != w->vw || w->surf->h != w->vh) frame(w);
+        if (!w->dlg && (w->dirty || !w->surf || w->surf->w != w->vw || w->surf->h != w->vh)) frame(w);
+        if (g_op && g_op->detached) return 0;      /* retomado depois de um diálogo: o buffer do app já não é este */
         if (!w->surf) return -MOS_ENOMEM;
         surface_t *s = w->surf;
         if (w->opts & MOS_WEB_OPT_TRANSPARENT) {
@@ -1455,6 +1483,15 @@ static i64 wv_dispatch(void *arg) {
             if (w->doc == d0 && d0) { d0->need_layout = true; w->dirty = true; }
         }
     eval_out:
+        if (g_op && g_op->detached) {
+            /* este EVAL esperou um diálogo: a syscall já voltou; o app busca com MOS_WEB_EVALDONE */
+            sb_free(&w->result);
+            w->result = out;
+            w->eval_type = type;
+            w->eval_done = true;
+            w->events |= MOS_WEB_EV_EVALDONE;
+            return 0;
+        }
         E.type = type;
         {
             u32 n = (u32)out.len;
@@ -1608,6 +1645,20 @@ static i64 wv_dispatch(void *arg) {
         sb_free(&t);
         return ok ? (i64)n : -MOS_EFAULT;
     }
+    case MOS_WEB_EVALDONE: {
+        if (!w->eval_done) return -MOS_ENOENT;
+        mos_web_eval_t E;
+        if (!uvm_copy_in(p, &E, a, sizeof E)) return -MOS_EFAULT;
+        E.type = w->eval_type;
+        E.len = (u32)w->result.len;
+        if (E.len <= E.cap) {
+            if (E.len && E.out && !uvm_copy_out(p, E.out, w->result.p, E.len)) return -MOS_EFAULT;
+            sb_free(&w->result);
+        }
+        w->eval_done = false;
+        if (!uvm_copy_out(p, a, &E, sizeof E)) return -MOS_EFAULT;
+        return E.len;
+    }
     case MOS_WEB_RESULT: {
         u32 n = (u32)w->result.len;
         if (n > (u32)b) return -MOS_EINVAL;
@@ -1619,7 +1670,159 @@ static i64 wv_dispatch(void *arg) {
     return -MOS_EINVAL;
 }
 
+static char *dup_str(const char *s) {
+    if (!s) return NULL;
+    usize n = strlen(s);
+    char *d = kmalloc(n + 1);
+    if (d) memcpy(d, s, n + 1);
+    return d;
+}
+
+static void op_entry(void *arg) {
+    wvop_t *o = arg;
+    o->ret = wv_dispatch(&o->call);
+}
+
+static void op_free(wvop_t *o) {
+    if (o->cs) { u8 *st = cs_release(o->cs); if (!g_spare_stack) g_spare_stack = st; else kfree(st); }
+    kfree(o->msg); kfree(o->def); kfree(o->frame); kfree(o->reply);
+    kfree(o);
+}
+
+/* roda (ou retoma) a operação; devolve true se terminou */
+static bool op_run(wvop_t *o) {
+    wvop_t *prev = g_op;
+    bool prev_stack = g_on_stack;
+    g_op = o;
+    g_on_stack = true;                 /* chamadas aninhadas de on_big_stack já estão numa pilha grande */
+    bool done = cs_resume(o->cs);
+    g_on_stack = prev_stack;
+    g_op = prev;
+    return done;
+}
+
+static int wv_dialog(void *ctx, js_page_t *p, int kind, const char *msg, const char *def, sbuf_t *out) {
+    webview_t *w = ctx;
+    wvop_t *o = g_op;
+    if (!o || !o->cs || cs_current() != o->cs || w->dlg || !w->pid) {
+        /* não dá para esperar: o app recebe a mensagem (WKUIDelegate) e a página a resposta padrão */
+        sbuf_t j = {0};
+        sb_puts(&j, "{\"kind\":\"");
+        sb_puts(&j, kind == JS_DLG_CONFIRM ? "confirm" : kind == JS_DLG_PROMPT ? "prompt" : "alert");
+        sb_puts(&j, "\",\"message\":\"");
+        for (const char *q = msg; q && *q; q++) {
+            if (*q == '"' || *q == '\\') { sb_putc(&j, '\\'); sb_putc(&j, *q); }
+            else if ((u8)*q < 0x20) sb_printf(&j, "\\u%04x", (u8)*q);
+            else sb_putc(&j, *q);
+        }
+        sb_puts(&j, "\"}");
+        wv_post(w, "__mosAlert", j.p, j.len, JS_WK_JSON);
+        sb_free(&j);
+        return kind == JS_DLG_ALERT;
+    }
+    o->w = w;
+    o->kind = kind;
+    o->msg = dup_str(msg ? msg : "");
+    o->def = def ? dup_str(def) : NULL;
+    o->frame = dup_str(js_page_url(p));
+    o->reply_ok = kind == JS_DLG_ALERT;
+    o->saved_cur = g_cur;
+    o->saved_paint = g_paint_doc;
+    w->dlg = o;
+    w->events |= MOS_WEB_EV_DIALOG;
+    void *e = js_suspend_exec();
+    cs_yield();
+    /* retomado por MOS_WEB_DIALOG REPLY (ou cancelado na saída do processo) */
+    js_resume_exec(e);
+    g_cur = o->saved_cur;
+    g_paint_doc = o->saved_paint;
+    w->dlg = NULL;
+    int ok = o->reply_ok;
+    if (kind == JS_DLG_PROMPT && ok) sb_puts(out, o->reply ? o->reply : "");
+    kfree(o->msg); kfree(o->def); kfree(o->frame); kfree(o->reply);
+    o->msg = o->def = o->frame = o->reply = NULL;
+    return ok;
+}
+
+/* responde e retoma; se a operação suspensa era um EVAL, o resultado fica para MOS_WEB_EVALDONE */
+static void dialog_reply(webview_t *w, int ok, char *text) {
+    wvop_t *o = w->dlg;
+    if (!o) { kfree(text); return; }
+    kfree(o->reply);
+    o->reply = text;
+    o->reply_ok = ok;
+    if (op_run(o)) op_free(o);
+}
+
+/* processo saindo ou vista fechada com diálogo aberto: cancela até a operação terminar */
+static void dialog_abort(webview_t *w) {
+    for (int i = 0; i < 64 && w->dlg; i++) dialog_reply(w, 0, NULL);
+}
+
+static i64 web_dialog_op(process_t *p, webview_t *w, u64 a) {
+    mos_web_dialog_t D;
+    if (!uvm_copy_in(p, &D, a, sizeof D)) return -MOS_EFAULT;
+    wvop_t *o = w->dlg;
+    if (!o) return -MOS_ENOENT;
+    if (D.op == MOS_WEB_DLG_GET) {
+        D.kind = o->kind;
+        D.has_default = o->def != NULL;
+        const char *src[3] = {o->msg ? o->msg : "", o->def ? o->def : "", o->frame ? o->frame : ""};
+        unsigned long long dst[3] = {D.msg, D.def, D.frame_url};
+        unsigned cap[3] = {D.msg_cap, D.def_cap, D.frame_cap};
+        unsigned *len[3] = {&D.msg_len, &D.def_len, &D.frame_len};
+        for (int i = 0; i < 3; i++) {
+            usize n = strlen(src[i]);
+            *len[i] = (unsigned)n;
+            if (dst[i] && cap[i]) {
+                usize k = n < cap[i] - 1 ? n : cap[i] - 1;
+                if (k && !uvm_copy_out(p, dst[i], src[i], k)) return -MOS_EFAULT;
+                char z = 0;
+                if (!uvm_copy_out(p, dst[i] + k, &z, 1)) return -MOS_EFAULT;
+            }
+        }
+        return uvm_copy_out(p, a, &D, sizeof D) ? 0 : -MOS_EFAULT;
+    }
+    if (D.op == MOS_WEB_DLG_REPLY) {
+        char *t = NULL;
+        if (D.ok && D.text && D.text_len) {
+            if (D.text_len > (1u << 20)) return -MOS_EINVAL;
+            t = copy_in_str(p, D.text, D.text_len, 1u << 20);
+            if (!t) return -MOS_EFAULT;
+        }
+        dialog_reply(w, D.ok ? 1 : 0, t);
+        return 0;
+    }
+    return -MOS_EINVAL;
+}
+
 i64 web_user_syscall(process_t *p, u64 op, u64 id, u64 a, u64 b) {
     wvcall_t c = {p, op, id, a, b};
-    return on_big_stack(wv_dispatch, &c);
+    if (op != MOS_WEB_NEW) {
+        webview_t *w = wv_get(p, id);
+        if (w && w->dlg) {
+            /* vista esperando o app responder o diálogo */
+            switch (op) {
+            case MOS_WEB_DIALOG: return web_dialog_op(p, w, a);
+            case MOS_WEB_FREE: dialog_abort(w); break;      /* cancela e segue para liberar */
+            case MOS_WEB_PUMP: { u32 ev = w->events; w->events = 0; return ev; }
+            case MOS_WEB_PAINT: case MOS_WEB_INFO: case MOS_WEB_TAKEMSG: case MOS_WEB_HISTORY: case MOS_WEB_TEXT:
+            case MOS_WEB_RESULT: case MOS_WEB_EVALDONE: case MOS_WEB_HANDLER: break;
+            default: return -MOS_EBUSY;
+            }
+        } else if (w && op == MOS_WEB_DIALOG) return -MOS_ENOENT;
+    }
+    wvop_t *o = kcalloc(1, sizeof(wvop_t));
+    if (!o) return -MOS_ENOMEM;
+    o->call = c;
+    u8 *st = g_spare_stack;
+    g_spare_stack = NULL;
+    o->cs = cs_new_on(st, WV_STACK, op_entry, o);
+    if (!o->cs) { kfree(st); kfree(o); return on_big_stack(wv_dispatch, &c); }
+    if (op_run(o)) { i64 r = o->ret; op_free(o); return r; }
+    /* parou num diálogo: a syscall volta agora, e o resto da operação roda quando o app responder */
+    o->detached = true;
+    if (op == MOS_WEB_PUMP && o->w) { u32 ev = o->w->events | MOS_WEB_EV_DIALOG; o->w->events = 0; return ev; }
+    if (op == MOS_WEB_EVAL) return -MOS_EINPROGRESS;
+    return 0;
 }

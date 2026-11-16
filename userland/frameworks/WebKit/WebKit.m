@@ -12,10 +12,12 @@
  *    (e, com WKScriptMessageHandlerWithReply, a promessa do JavaScript resolve com a resposta do app);
  *  - toda navegação passa por webView:decidePolicyForNavigationAction:decisionHandler:;
  *  - WKURLSchemeHandler serve a navegação principal de esquemas próprios (app://...);
- *  - alert/confirm/prompt e window.close() chegam ao WKUIDelegate. O motor não para o script esperando a resposta:
- *    confirm devolve false e prompt devolve null para a página (o completionHandler do app é aceito e ignorado).
- * Limites: um mundo de conteúdo só (WKContentWorld é aceito e ignorado), sem quadros (iframes não carregam), sem
- * mídia, sem impressão/PDF, e os recursos de esquemas próprios só valem para o documento principal.
+ *  - alert/confirm/prompt param o script no kernel até o completionHandler do WKUIDelegate (ou o WebUIDelegate
+ *    síncrono do WebKit1); sem delegate, alert segue, confirm é false e prompt é null, como no WebKit. Com o diálogo
+ *    aberto, cargas, navegação e evaluateJavaScript da vista esperam e rodam quando ele fecha. window.close() chega
+ *    ao webViewDidClose:.
+ * Limites: um mundo de conteúdo só (WKContentWorld é aceito e ignorado), sem mídia, sem impressão/PDF, e os
+ * recursos de esquemas próprios só valem para o documento principal. Iframes carregam no motor (kernel/web/frame.c).
  * WebArchive/WebResource (WebKit1) guardam o plist da Apple (WebMainResource / WebSubresources /
  * WebSubframeArchives). `data` grava XML; `initWithData:` lê XML e bplist. Não há desafio de autenticação,
  * download (WKDownload) nem painel de arquivo: o motor não emite esses eventos, então o delegate não é chamado.
@@ -23,6 +25,14 @@
  */
 #import <AppKit/AppKit.h>
 #include "../../../kernel/include/syscall.h"
+
+/* WebUIDelegate do WebKit1 (síncrono): a WebView legada é subclasse do WKWebView aqui */
+@protocol WKMOSLegacyUIDelegate
+- (void)webView:(id)w runJavaScriptAlertPanelWithMessage:(NSString *)m initiatedByFrame:(id)f;
+- (BOOL)webView:(id)w runJavaScriptConfirmPanelWithMessage:(NSString *)m initiatedByFrame:(id)f;
+- (NSString *)webView:(id)w runJavaScriptTextInputPanelWithPrompt:(NSString *)p defaultText:(NSString *)d initiatedByFrame:(id)f;
+@end
+
 
 /* ---------------------------------------------------------------- o que o SDK mínimo do mOS não declara */
 typedef struct _NSZone NSZone;
@@ -950,6 +960,13 @@ static WKFrameInfo *wk_frame(WKWebView *wv, NSString *url) {
     int _cursor;
     BOOL _closed;
     NSMutableArray *_kernelHandlers;       /* nomes que o kernel conhece (MOS_WEB_HANDLER) */
+    /* alert/confirm/prompt que bloqueia: o script está parado no kernel até a resposta */
+    BOOL _dlgOpen;
+    NSMutableArray *_afterDialog;          /* chamadas que o kernel recusou (-MOS_EBUSY) com o diálogo aberto */
+    NSMutableArray *_evalWaiting;          /* completions de evaluateJavaScript que esperam o diálogo (FIFO) */
+    long _lastEvalRet;
+    BOOL _syncEvalDone;                    /* stringByEvaluatingJavaScriptFromString: esperando um diálogo */
+    id _syncEvalValue;
 }
 
 static NSString *const kReplyShimFmt =
@@ -1246,11 +1263,11 @@ static int wk_mods(NSEvent *e) {
     NSURL *u = [NSURL URLWithString:url];
     id sh = u ? [_config urlSchemeHandlerForURLScheme:[u scheme]] : nil;
     if (allow && sh) {
-        wk_sys(MOS_WEB_DECIDE, _wid, 0, 0);
+        if (wk_sys(MOS_WEB_DECIDE, _wid, 0, 0) == -MOS_EBUSY) { _reqSeq--; [self _mosAfterDialog:^{ [self _mosDecide:allow seq:seq url:url]; }]; return; }
         [self _mosStartSchemeTask:sh request:[NSURLRequest requestWithURL:u]];
         return;
     }
-    wk_sys(MOS_WEB_DECIDE, _wid, allow ? 1 : 0, 0);
+    if (wk_sys(MOS_WEB_DECIDE, _wid, allow ? 1 : 0, 0) == -MOS_EBUSY) { _reqSeq--; [self _mosAfterDialog:^{ [self _mosDecide:allow seq:seq url:url]; }]; return; }
     if (!allow) { [_pendingNav release]; _pendingNav = nil; }
 }
 
@@ -1342,6 +1359,86 @@ static int wk_mods(NSEvent *e) {
     free(M);
 }
 
+/* ---------------------------------------------------------------- diálogos que bloqueiam (MOS_WEB_EV_DIALOG) */
+- (void)_mosAfterDialog:(void (^)(void))b {
+    if (!_afterDialog) _afterDialog = [[NSMutableArray alloc] init];
+    [_afterDialog addObject:[[b copy] autorelease]];
+}
+- (void)_mosRunAfterDialog {
+    NSArray *run = [_afterDialog autorelease];
+    _afterDialog = nil;
+    for (void (^b)(void) in run) { if (_dlgOpen) [self _mosAfterDialog:b]; else b(); }
+}
+- (void)_mosDialogReply:(BOOL)ok text:(NSString *)text {
+    if (!_dlgOpen || _closed) return;
+    _dlgOpen = NO;
+    mos_web_dialog_t D;
+    memset(&D, 0, sizeof D);
+    D.op = MOS_WEB_DLG_REPLY;
+    D.ok = ok ? 1 : 0;
+    const char *t = text ? [text UTF8String] : NULL;
+    if (t) { D.text = (unsigned long long)(uintptr_t)t; D.text_len = (unsigned)strlen(t); }
+    [self retain];
+    wk_sys(MOS_WEB_DIALOG, _wid, (long)&D, 0);
+    /* o script seguiu: eventos (inclusive outro diálogo ou o fim do EVAL) chegam no PUMP */
+    [self _mosTick];
+    [self release];
+}
+- (void)_mosDialog {
+    if (_dlgOpen || _closed) return;
+    char msg[4096], def[2048], frame[1024];
+    mos_web_dialog_t D;
+    memset(&D, 0, sizeof D);
+    D.op = MOS_WEB_DLG_GET;
+    D.msg = (unsigned long long)(uintptr_t)msg; D.msg_cap = sizeof msg;
+    D.def = (unsigned long long)(uintptr_t)def; D.def_cap = sizeof def;
+    D.frame_url = (unsigned long long)(uintptr_t)frame; D.frame_cap = sizeof frame;
+    if (wk_sys(MOS_WEB_DIALOG, _wid, (long)&D, 0) != 0) return;
+    _dlgOpen = YES;
+    NSString *m = wk_cstr(msg), *dt = D.has_default ? wk_cstr(def) : nil;
+    WKFrameInfo *fi = wk_frame(self, wk_cstr(frame));
+    id u = _UIDelegate;
+    __block BOOL answered = NO;
+    if (D.kind == MOS_WEB_DLG_ALERT) {
+        if ([u respondsToSelector:@selector(webView:runJavaScriptAlertPanelWithMessage:initiatedByFrame:completionHandler:)])
+            [u webView:self runJavaScriptAlertPanelWithMessage:m initiatedByFrame:fi completionHandler:^{ if (!answered) { answered = YES; [self _mosDialogReply:YES text:nil]; } }];
+        else if ([u respondsToSelector:@selector(webView:runJavaScriptAlertPanelWithMessage:initiatedByFrame:)]) {
+            [(id<WKMOSLegacyUIDelegate>)u webView:self runJavaScriptAlertPanelWithMessage:m initiatedByFrame:fi];
+            [self _mosDialogReply:YES text:nil];
+        } else [self _mosDialogReply:YES text:nil];
+    } else if (D.kind == MOS_WEB_DLG_CONFIRM) {
+        if ([u respondsToSelector:@selector(webView:runJavaScriptConfirmPanelWithMessage:initiatedByFrame:completionHandler:)])
+            [u webView:self runJavaScriptConfirmPanelWithMessage:m initiatedByFrame:fi completionHandler:^(BOOL r) { if (!answered) { answered = YES; [self _mosDialogReply:r text:nil]; } }];
+        else if ([u respondsToSelector:@selector(webView:runJavaScriptConfirmPanelWithMessage:initiatedByFrame:)]) {
+            BOOL r = [(id<WKMOSLegacyUIDelegate>)u webView:self runJavaScriptConfirmPanelWithMessage:m initiatedByFrame:fi];
+            [self _mosDialogReply:r text:nil];
+        } else [self _mosDialogReply:NO text:nil];       /* sem WKUIDelegate o WebKit devolve false */
+    } else {
+        if ([u respondsToSelector:@selector(webView:runJavaScriptTextInputPanelWithPrompt:defaultText:initiatedByFrame:completionHandler:)])
+            [u webView:self runJavaScriptTextInputPanelWithPrompt:m defaultText:dt initiatedByFrame:fi completionHandler:^(NSString *r) { if (!answered) { answered = YES; [self _mosDialogReply:r != nil text:r]; } }];
+        else if ([u respondsToSelector:@selector(webView:runJavaScriptTextInputPanelWithPrompt:defaultText:initiatedByFrame:)]) {
+            NSString *r = [(id<WKMOSLegacyUIDelegate>)u webView:self runJavaScriptTextInputPanelWithPrompt:m defaultText:dt initiatedByFrame:fi];
+            [self _mosDialogReply:r != nil text:r];
+        } else [self _mosDialogReply:NO text:nil];       /* sem WKUIDelegate: null */
+    }
+}
+/* o EVAL que abriu o diálogo terminou: entrega ao completion que esperava (ordem de chegada) */
+- (void)_mosEvalDone {
+    size_t cap = 64 * 1024;
+    char *buf = malloc(cap);
+    if (!buf) return;
+    mos_web_eval_t E = {0, (unsigned long long)(uintptr_t)buf, 0, (unsigned)cap, 0, 0};
+    if (wk_sys(MOS_WEB_EVALDONE, _wid, (long)&E, 0) < 0) { free(buf); return; }
+    NSError *e = nil;
+    id v = [self _mosEvalValue:&E buf:buf error:&e];
+    id h = [_evalWaiting count] ? [[[_evalWaiting objectAtIndex:0] retain] autorelease] : nil;
+    if ([_evalWaiting count]) [_evalWaiting removeObjectAtIndex:0];
+    if (h && h != (id)[NSNull null]) ((void (^)(id, NSError *))h)(v, e);
+    _syncEvalDone = YES;
+    [_syncEvalValue release];
+    _syncEvalValue = [v retain];
+}
+
 - (void)_mosAlert:(id)body frame:(NSString *)src {
     if (![body isKindOfClass:[NSDictionary class]]) return;
     NSString *kind = [body objectForKey:@"kind"], *msg = [body objectForKey:@"message"];
@@ -1422,6 +1519,9 @@ static int wk_mods(NSEvent *e) {
     }
     [self _mosRefreshInfo:I events:ev];
     if (ev & MOS_WEB_EV_MSG) [self _mosHandleMessages];
+    if (ev & MOS_WEB_EV_EVALDONE) [self _mosEvalDone];
+    if (ev & MOS_WEB_EV_DIALOG) [self _mosDialog];
+    if (!_dlgOpen && [_afterDialog count]) [self _mosRunAfterDialog];
     if (ev & MOS_WEB_EV_NAVREQ) [self _mosNavRequest:I];
     if (ev & MOS_WEB_EV_NEWWIN) [self _mosNewWindow:I];
     if (ev & MOS_WEB_EV_FAIL) {
@@ -1495,7 +1595,10 @@ static int wk_mods(NSEvent *e) {
         NSString *ct = [request valueForHTTPHeaderField:@"Content-Type"];
         if (ct) strncpy(L.content_type, [ct UTF8String], sizeof L.content_type - 1);
     }
-    wk_sys(MOS_WEB_LOAD, _wid, (long)&L, 0);
+    if (wk_sys(MOS_WEB_LOAD, _wid, (long)&L, 0) == -MOS_EBUSY) {
+        NSURLRequest *rq = [request copy];
+        [self _mosAfterDialog:^{ [self loadRequest:rq]; [rq release]; }];
+    }
     return n;
 }
 /* conteúdo direto (loadHTMLString/loadData): pergunta à política como o WebKit e depois entrega ao motor */
@@ -1524,7 +1627,12 @@ static int wk_mods(NSEvent *e) {
     NSString *bs = [base absoluteString];
     L.base = bs ? (unsigned long long)(uintptr_t)[bs UTF8String] : 0;
     if (mime) strncpy(L.mime, [mime UTF8String], sizeof L.mime - 1);
-    wk_sys(MOS_WEB_LOAD, _wid, (long)&L, 0);
+    if (wk_sys(MOS_WEB_LOAD, _wid, (long)&L, 0) == -MOS_EBUSY) {
+        NSData *dt = [[NSData alloc] initWithBytes:bytes ? bytes : empty length:len];
+        NSString *mm = [mime copy];
+        NSURL *bu = [base copy];
+        [self _mosAfterDialog:^{ [self _mosLoadBytes:[dt bytes] length:[dt length] mime:mm base:bu]; [dt release]; [mm release]; [bu release]; }];
+    }
     return n;
 }
 - (WKNavigation *)loadHTMLString:(NSString *)html baseURL:(NSURL *)baseURL {
@@ -1541,14 +1649,15 @@ static int wk_mods(NSEvent *e) {
 - (WKNavigation *)loadSimulatedRequest:(NSURLRequest *)r response:(NSURLResponse *)resp responseData:(NSData *)data {
     return [self loadData:data MIMEType:[resp MIMEType] characterEncodingName:[resp textEncodingName] baseURL:[r URL]];
 }
-- (WKNavigation *)reload { WKNavigation *n = [self _mosBeginNav]; wk_sys(MOS_WEB_GO, _wid, MOS_WEB_GO_RELOAD, 0); return n; }
+- (void)_mosGo:(int)g { if (wk_sys(MOS_WEB_GO, _wid, g, 0) == -MOS_EBUSY) [self _mosAfterDialog:^{ wk_sys(MOS_WEB_GO, _wid, g, 0); }]; }
+- (WKNavigation *)reload { WKNavigation *n = [self _mosBeginNav]; [self _mosGo:MOS_WEB_GO_RELOAD]; return n; }
 - (WKNavigation *)reloadFromOrigin { return [self reload]; }
-- (void)stopLoading { wk_sys(MOS_WEB_GO, _wid, MOS_WEB_GO_STOP, 0); for (WKMOSSchemeTask *t in _schemeTasks) [self _mosStopTask:t]; }
-- (WKNavigation *)goBack { if (!_canBack) return nil; WKNavigation *n = [self _mosBeginNav]; wk_sys(MOS_WEB_GO, _wid, MOS_WEB_GO_BACK, 0); return n; }
-- (WKNavigation *)goForward { if (!_canForward) return nil; WKNavigation *n = [self _mosBeginNav]; wk_sys(MOS_WEB_GO, _wid, MOS_WEB_GO_FORWARD, 0); return n; }
+- (void)stopLoading { [self _mosGo:MOS_WEB_GO_STOP]; for (WKMOSSchemeTask *t in _schemeTasks) [self _mosStopTask:t]; }
+- (WKNavigation *)goBack { if (!_canBack) return nil; WKNavigation *n = [self _mosBeginNav]; [self _mosGo:MOS_WEB_GO_BACK]; return n; }
+- (WKNavigation *)goForward { if (!_canForward) return nil; WKNavigation *n = [self _mosBeginNav]; [self _mosGo:MOS_WEB_GO_FORWARD]; return n; }
 - (void)_mosGoRelative:(int)rel {
-    for (; rel < 0; rel++) wk_sys(MOS_WEB_GO, _wid, MOS_WEB_GO_BACK, 0);
-    for (; rel > 0; rel--) wk_sys(MOS_WEB_GO, _wid, MOS_WEB_GO_FORWARD, 0);
+    for (; rel < 0; rel++) [self _mosGo:MOS_WEB_GO_BACK];
+    for (; rel > 0; rel--) [self _mosGo:MOS_WEB_GO_FORWARD];
 }
 - (WKNavigation *)goToBackForwardListItem:(WKBackForwardListItem *)item {
     if (!item || !item->_rel) return nil;
@@ -1620,7 +1729,16 @@ static int wk_mods(NSEvent *e) {
     if (!buf) { if (err) *err = wk_error(WKErrorDomain, WKErrorUnknown, @"sem memória", nil); return nil; }
     mos_web_eval_t E = {(unsigned long long)(uintptr_t)s, (unsigned long long)(uintptr_t)buf, (unsigned)strlen(s), (unsigned)cap, 0, 0};
     long r = wk_sys(MOS_WEB_EVAL, _wid, (long)&E, 0);
+    _lastEvalRet = r;
+    if (r == -MOS_EINPROGRESS || r == -MOS_EBUSY) { free(buf); return nil; }   /* parou num diálogo, ou outro está aberto */
     if (r < 0) { free(buf); if (err) *err = wk_error(WKErrorDomain, WKErrorWebViewInvalidated, @"a vista não existe mais", nil); return nil; }
+    return [self _mosEvalValue:&E buf:buf error:err];
+}
+
+/* converte o resultado de MOS_WEB_EVAL/EVALDONE (libera buf) */
+- (id)_mosEvalValue:(mos_web_eval_t *)Ep buf:(char *)buf error:(NSError **)err {
+    mos_web_eval_t E = *Ep;
+    size_t cap = E.cap;
     if (E.len > cap) {
         char *nb = realloc(buf, E.len);
         if (!nb) { free(buf); return nil; }
@@ -1647,6 +1765,18 @@ static int wk_mods(NSEvent *e) {
 - (void)evaluateJavaScript:(NSString *)js completionHandler:(void (^)(id, NSError *))handler {
     NSError *e = nil;
     id v = [self _mosEval:js error:&e];
+    if (_lastEvalRet == -MOS_EBUSY) {           /* diálogo aberto: roda depois que ele fechar */
+        NSString *j = [js copy];
+        void (^h)(id, NSError *) = [handler copy];
+        [self _mosAfterDialog:^{ [self evaluateJavaScript:j completionHandler:h]; [j release]; [h release]; }];
+        return;
+    }
+    if (_lastEvalRet == -MOS_EINPROGRESS) {     /* este script abriu o diálogo: o resultado chega com EV_EVALDONE */
+        if (!_evalWaiting) _evalWaiting = [[NSMutableArray alloc] init];
+        id h = handler ? [[handler copy] autorelease] : (id)[NSNull null];
+        [_evalWaiting addObject:h];
+        return;
+    }
     if (!handler) return;
     [v retain];
     [e retain];
@@ -1672,6 +1802,13 @@ static int wk_mods(NSEvent *e) {
         names, body ?: @"", vals, aid, aid, aid];
     NSError *e = nil;
     [self _mosEval:js error:&e];
+    if (_lastEvalRet == -MOS_EBUSY) {             /* diálogo aberto: roda depois */
+        [_asyncHandlers removeObjectForKey:[NSNumber numberWithInt:aid]];
+        NSString *b2 = [body copy]; NSDictionary *a2 = [args copy];
+        void (^h2)(id, NSError *) = [handler copy];
+        [self _mosAfterDialog:^{ [self callAsyncJavaScript:b2 arguments:a2 inFrame:f inContentWorld:w completionHandler:h2]; [b2 release]; [a2 release]; [h2 release]; }];
+        return;
+    }
     if (e) {
         void (^hb)(id, NSError *) = [_asyncHandlers objectForKey:[NSNumber numberWithInt:aid]];
         if (hb) { [[hb retain] autorelease]; [_asyncHandlers removeObjectForKey:[NSNumber numberWithInt:aid]]; [e retain]; [self _mosDefer:^{ hb(nil, e); [e release]; }]; }
@@ -2164,6 +2301,19 @@ static NSData *wa_bytes(id v) { return [v isKindOfClass:[NSData class]] ? v : ni
 - (double)estimatedProgress { return [super estimatedProgress]; }
 - (NSString *)stringByEvaluatingJavaScriptFromString:(NSString *)js {
     id v = [self _mosEval:js error:NULL];
+    if (_lastEvalRet == -MOS_EINPROGRESS) {
+        /* API síncrona: o diálogo é atendido aqui mesmo (WebUIDelegate síncrono ou run loop) até o script terminar */
+        if (!_evalWaiting) _evalWaiting = [[NSMutableArray alloc] init];
+        [_evalWaiting addObject:[NSNull null]];
+        _syncEvalDone = NO;
+        for (int i = 0; i < 200000 && !_syncEvalDone && !_closed; i++) {
+            [self _mosTick];
+            if (!_syncEvalDone && _dlgOpen) [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.02]];
+        }
+        v = [[_syncEvalValue retain] autorelease];
+        [_syncEvalValue release];
+        _syncEvalValue = nil;
+    }
     if (!v || v == (id)[NSNull null]) return @"";
     if ([v isKindOfClass:[NSString class]]) return v;
     if ([v isKindOfClass:[NSNumber class]]) return [v stringValue];

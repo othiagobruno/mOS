@@ -65,8 +65,13 @@ nos binários públicos. A tabela e o que foi implementado por causa dela estão
 
 ## Limites conhecidos
 
-- **Diálogos.** `alert`/`confirm`/`prompt` não param o script esperando o app. O delegate recebe a mensagem;
-  `confirm` devolve `false` e `prompt` devolve `null` à página, como o WebKit sem `WKUIDelegate`.
+- **Diálogos.** `alert`/`confirm`/`prompt` param o script até o `completionHandler` do `WKUIDelegate` (ou o
+  `WebUIDelegate` síncrono da WebView legada). Cada SYS_WEB roda numa corrotina (`kernel/web/costack.c`); o diálogo
+  guarda o estado de execução do motor (`js_exec_suspend`), cede, e `MOS_WEB_DIALOG REPLY` retoma do ponto exato.
+  Enquanto ele está aberto, a vista só aceita leituras (PUMP não avança, PAINT mostra o último quadro) e o
+  framework adia cargas, navegação e `evaluateJavaScript`; as outras vistas seguem rodando JS, e o coletor varre a
+  pilha suspensa. O `evaluateJavaScript` que abriu o diálogo recebe o resultado depois (`MOS_WEB_EV_EVALDONE`).
+  Sem delegate, a resposta é a do WebKit: `confirm` é `false`, `prompt` é `null`.
 - **O que o motor ainda não suporta.** Iframes carregam, pintam, rodam JS, trocam `postMessage` e enviam
   formulários, mas sem `sandbox` nem `WKFrameInfo` ([web-electron-plano.md](web-electron-plano.md)). Mídia (`<video>`/`<audio>`), WebGL/canvas 3D e AVIF,
   impressão e PDF ficam de fora. Os completions de PDF e impressão devolvem erro.
