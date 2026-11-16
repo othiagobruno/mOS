@@ -314,6 +314,165 @@ id CTRubyAnnotationCreateWithAttributes(u8 alignment, u8 overhang, u8 position, 
     if (attrs && ct_num(ct_dict_get(attrs, (id)kCTRubyAnnotationSizeFactorAttributeName), &v)) r->size = v;
     return ct_obj_new(&CTRubyAnnotation_c, r);
 }
+/* ---- ruby desenhado: o texto de cada posição numa linha própria (fonte dos atributos ou a base × fator, 0,5
+ * por padrão), acima (Before, e InterCharacter no horizontal), abaixo (After) ou na linha depois da base (Inline).
+ * A linha fica mais alta pelo ruby; alinhamento Auto/Center, Start, End, DistributeLetter (sem folga nas pontas),
+ * DistributeSpace (meia folga nas pontas) e LineEdge; ScaleToFit encolhe na horizontal o ruby mais largo que a base;
+ * o overhang None/Start/End abre espaço em volta da base quando o ruby é mais largo (Auto deixa passar por cima). */
+void CGContextSaveGState(void *c);
+void CGContextRestoreGState(void *c);
+void CGContextTranslateCTM(void *c, double x, double y);
+void CGContextScaleCTM(void *c, double x, double y);
+enum { RUBY_AUTO = 0, RUBY_START = 1, RUBY_CENTER = 2, RUBY_END = 3, RUBY_DIST_LETTER = 4, RUBY_DIST_SPACE = 5, RUBY_LINE_EDGE = 6 };
+enum { RUBY_BEFORE = 0, RUBY_AFTER = 1, RUBY_INTER = 2, RUBY_INLINE = 3 };
+enum { OVER_AUTO = 0, OVER_START = 1, OVER_END = 2, OVER_NONE = 3 };
+static id ct_ruby_obj(id astr, long idx) {
+    if (!astr || idx < 0) return 0;
+    id v = ct_dict_get(ct_attrs(astr, idx), (id)kCTRubyAnnotationAttributeName);
+    return ct_inst(v, &CTRubyAnnotation_c) ? v : 0;
+}
+static id ct_ruby_font(ct_ruby_t *r, id base) {
+    id f = 0;
+    if (r->attrs) {
+        f = NSFontAttributeName ? ct_dict_get(r->attrs, NSFontAttributeName) : 0;
+        if (!f) f = ct_dict_get(r->attrs, (id)kCTFontAttributeName);
+    }
+    if (f) return objc_retain(f);
+    double k = r->size > 0 ? r->size : 0.5;
+    return base ? CTFontCreateCopyWithAttributes(base, fsize(base) * k, 0, 0) : font_of_size(13.0 * k, 0);
+}
+static ct_line_t *ct_ruby_line(ct_ruby_t *r, int pos, id base) {
+    id text = r->text[pos];
+    if (!text) return 0;
+    id f = ct_ruby_font(r, base);
+    ct_clus *g = 0;
+    long n = 0, seen = 0;
+    ct_build_font = f;
+    int ok = ct_build(0, text, &g, &n, &seen);
+    ct_build_font = 0;
+    objc_release(f);
+    if (!ok) return 0;
+    ct_line_t *L = calloc(1, sizeof *L);
+    if (!L) { for (long i = 0; i < n; i++) objc_release(g[i].font); free(g); return 0; }
+    L->g = g; L->n = n;
+    L->range.len = text ? (long)MSG0(u64, text, "length") : 0;
+    ct_recompute(L);
+    return L;
+}
+static int ct_ruby_flag(ct_ruby_t *r, id key) {
+    id v = r->attrs ? ct_dict_get(r->attrs, key) : 0;
+    double d;
+    return v && ct_num(v, &d) && d != 0;
+}
+static void ct_ruby_adjust(id astr, ct_clus *g, long n) {
+    for (long a = 0; a < n;) {
+        id ro = ct_ruby_obj(astr, g[a].idx);
+        long b = a + 1;
+        if (!ro) { a = b; continue; }
+        while (b < n && ct_ruby_obj(astr, g[b].idx) == ro) b++;
+        ct_ruby_t *r = ct_state(ro);
+        double bw = 0;
+        for (long i = a; i < b; i++) bw += g[i].adv;
+        ct_line_t *in = ct_ruby_line(r, RUBY_INLINE, g[a].font);
+        if (in) { g[b - 1].adv += in->width; g[b - 1].rpad += in->width; ct_free_line(in); }
+        double rw = 0;
+        for (int p = 0; p < 3; p++) { ct_line_t *L = ct_ruby_line(r, p, g[a].font); if (L) { if (L->width > rw) rw = L->width; ct_free_line(L); } }
+        if (rw > bw && !ct_ruby_flag(r, (id)kCTRubyAnnotationScaleToFitAttributeName)) {
+            double half = (rw - bw) / 2;
+            if (r->overhang == OVER_NONE || r->overhang == OVER_END) { g[a].lpad += half; g[a].adv += half; }
+            if (r->overhang == OVER_NONE || r->overhang == OVER_START) { g[b - 1].adv += half; g[b - 1].rpad += half; }
+        }
+        a = b;
+    }
+}
+/* segmentos de ruby na ordem visual: [a, b) em b->g, x do começo e da base (sem os espaços de overhang/inline) */
+typedef struct { ct_ruby_t *r; long a, b; double x, gx0, gx1, asc, desc; } ct_rseg;
+static int ct_ruby_next(ct_line_t *L, long *at, double *x, ct_rseg *s) {
+    while (*at < L->n) {
+        long a = *at;
+        id ro = ct_ruby_obj(L->astr, L->g[a].idx);
+        if (!ro) { *x += L->g[a].adv; (*at)++; continue; }
+        long b = a + 1;
+        while (b < L->n && ct_ruby_obj(L->astr, L->g[b].idx) == ro) b++;
+        s->r = ct_state(ro); s->a = a; s->b = b; s->x = *x;
+        double w = 0;
+        s->asc = s->desc = 0;
+        for (long i = a; i < b; i++) {
+            double as, de, ld;
+            ct_font_metrics(L->g[i].font, &as, &de, &ld);
+            if (as > s->asc) s->asc = as;
+            if (de > s->desc) s->desc = de;
+            w += L->g[i].adv;
+        }
+        s->gx0 = *x + L->g[a].lpad;
+        s->gx1 = *x + w - L->g[b - 1].rpad;
+        *x += w;
+        *at = b;
+        return 1;
+    }
+    return 0;
+}
+static void ct_ruby_metrics(ct_line_t *b) {
+    long at = 0;
+    double x = 0;
+    ct_rseg s;
+    while (ct_ruby_next(b, &at, &x, &s)) {
+        for (int p = 0; p < 3; p++) {
+            ct_line_t *L = ct_ruby_line(s.r, p, b->g[s.a].font);
+            if (!L) continue;
+            double h = L->ascent + L->descent;
+            if (p == RUBY_AFTER) { if (s.desc + h > b->descent) b->descent = s.desc + h; }
+            else if (s.asc + h > b->ascent) b->ascent = s.asc + h;
+            ct_free_line(L);
+        }
+    }
+}
+static void ct_ruby_paint(void *ctx, ct_line_t *L, double x, double y, double gap, double scale) {
+    if (scale != 1) {
+        CGContextSaveGState(ctx);
+        CGContextTranslateCTM(ctx, x, y);
+        CGContextScaleCTM(ctx, scale, 1);
+        x = 0; y = 0;
+    }
+    for (long i = 0; i < L->n; i++) {
+        ct_clus *g = &L->g[i];
+        if (g->cp > 0x20 && g->cp != 0x7F && g->adv > 0) ct_paint(ctx, x + g->lpad, y, g);
+        x += g->adv + gap;
+    }
+    if (scale != 1) CGContextRestoreGState(ctx);
+}
+static void ct_ruby_draw(ct_line_t *b, void *ctx, double x0, double y) {
+    long at = 0;
+    double x = 0;
+    ct_rseg s;
+    while (ct_ruby_next(b, &at, &x, &s)) {
+        id col = 0;
+        if (s.r->attrs) {
+            col = NSForegroundColorAttributeName ? ct_dict_get(s.r->attrs, NSForegroundColorAttributeName) : 0;
+            if (!col) col = ct_dict_get(s.r->attrs, (id)kCTForegroundColorAttributeName);
+        }
+        if (!col) col = ct_color_at(b->astr, b->g[s.a].idx);
+        if (ct_is_color(col)) cx_bm_set_fill(ctx, ct_argb(col));
+        double bw = s.gx1 - s.gx0;
+        for (int p = 0; p < 4; p++) {
+            ct_line_t *L = ct_ruby_line(s.r, p, b->g[s.a].font);
+            if (!L) continue;
+            double rw = L->width, gap = 0, scale = 1, rx;
+            int al = s.r->align;
+            if (al == RUBY_LINE_EDGE) al = s.a == 0 ? RUBY_START : s.b == b->n ? RUBY_END : RUBY_CENTER;
+            if (p == RUBY_INLINE) { rx = s.gx1; al = RUBY_START; }
+            else if (rw > bw && ct_ruby_flag(s.r, (id)kCTRubyAnnotationScaleToFitAttributeName)) { scale = bw / rw; rx = s.gx0; }
+            else if (rw < bw && al == RUBY_DIST_LETTER && L->n > 1) { gap = (bw - rw) / (double)(L->n - 1); rx = s.gx0; }
+            else if (rw < bw && al == RUBY_DIST_SPACE && L->n > 0) { gap = (bw - rw) / (double)L->n; rx = s.gx0 + gap / 2; }
+            else if (al == RUBY_START) rx = s.gx0;
+            else if (al == RUBY_END) rx = s.gx1 - rw;
+            else rx = s.gx0 + (bw - rw) / 2;
+            double ry = p == RUBY_INLINE ? y : p == RUBY_AFTER ? y - s.desc - L->ascent : y + s.asc + L->descent;
+            ct_ruby_paint(ctx, L, x0 + rx, ry, gap, scale);
+            ct_free_line(L);
+        }
+    }
+}
 id CTRubyAnnotationCreateCopy(id ruby) {
     ct_ruby_t *s = ct_inst(ruby, &CTRubyAnnotation_c) ? ct_state(ruby) : 0;
     if (!s) return 0;

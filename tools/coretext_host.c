@@ -94,6 +94,23 @@ static id line_at(id f, long i) { return ((id (*)(id, SEL, unsigned long))objc_m
 static double rd_w(void *r) { (void)r; return 40; }
 static double rd_a(void *r) { (void)r; return 30; }
 static double rd_d(void *r) { (void)r; return 5; }
+id CTRubyAnnotationCreate(unsigned char al, unsigned char ov, double size, id text[4]);
+id CTRubyAnnotationCreateWithAttributes(unsigned char al, unsigned char ov, unsigned char pos, id str, id attrs);
+extern const void *kCTRubyAnnotationAttributeName, *kCTRubyAnnotationScaleToFitAttributeName;
+void *ct_test_bitmap(int w, int h);
+void CTLineDraw(id line, void *ctx);
+extern int ct_test_nglyph; extern double ct_test_gx[], ct_test_gy[];
+/* linha com ruby: desenha e devolve largura, ascent e descent */
+static double ruby_line(const char *base, id ruby, double *as, double *de) {
+    id a = ct_test_astr(base, g_font, 0);
+    id at = ((id *)*(void **)((char *)a + 8))[1];
+    ((void (*)(id, SEL, id, id))objc_msgSend)(at, sel_registerName("setObject:forKey:"), ruby, (id)kCTRubyAnnotationAttributeName);
+    id l = CTLineCreateWithAttributedString(a);
+    ct_test_nglyph = 0;
+    CTLineDraw(l, ct_test_bitmap(200, 60));
+    return CTLineGetTypographicBounds(l, as, de, 0);
+}
+static id rtext(int pos, const char *s) { static id t[4]; for (int i = 0; i < 4; i++) t[i] = 0; t[pos] = cx_str(s); return (id)t; }
 int main(void) {
     host_runtime_init();
     cx_define_class(&Num_c, &Num_m, "NSNumber", cx_class_named("NSObject"), 8);
@@ -179,6 +196,35 @@ int main(void) {
     double ra_a, ra_d;
     double rw = CTLineGetTypographicBounds(line, &ra_a, &ra_d, 0);
     CHECK(NEAR(rw, 40) && NEAR(ra_a, 30) && NEAR(ra_d, 5), "run delegate: largura 40, ascent 30, descent 5");
+
+    /* ruby (fonte de teste 10: avanço 5,5; o ruby a 0,5 → 2,75, ascent 4,76, descent 1,205) */
+    {
+        double as, de, w;
+        w = ruby_line("xx", CTRubyAnnotationCreate(0, 0, 0.5, (id *)rtext(0, "abc")), &as, &de);
+        CHECK(NEAR(w, 11) && NEAR(as, 9.52 + 4.76 + 1.205) && NEAR(de, 2.41), "ruby acima: a linha sobe pela altura do ruby");
+        CHECK(ct_test_nglyph == 5 && NEAR(ct_test_gx[2], 1.375) && NEAR(ct_test_gx[4], 6.875) && NEAR(ct_test_gy[2], 9.52 + 1.205),
+              "ruby acima, centralizado: 3 glifos sobre a base");
+        w = ruby_line("xx", CTRubyAnnotationCreate(1, 0, 0.5, (id *)rtext(1, "abc")), &as, &de);
+        CHECK(NEAR(de, 2.41 + 5.965) && NEAR(ct_test_gx[2], 0) && NEAR(ct_test_gy[2], -2.41 - 4.76), "ruby abaixo, alinhado ao início");
+        w = ruby_line("xx", CTRubyAnnotationCreate(3, 0, 0.5, (id *)rtext(0, "abc")), &as, &de);
+        CHECK(NEAR(ct_test_gx[2], 11 - 8.25), "ruby alinhado ao fim");
+        w = ruby_line("xx", CTRubyAnnotationCreate(4, 0, 0.5, (id *)rtext(0, "ab")), &as, &de);
+        CHECK(NEAR(ct_test_gx[2], 0) && NEAR(ct_test_gx[3], 8.25), "DistributeLetter: pontas na base");
+        w = ruby_line("xx", CTRubyAnnotationCreate(5, 0, 0.5, (id *)rtext(0, "ab")), &as, &de);
+        CHECK(NEAR(ct_test_gx[2], 1.375) && NEAR(ct_test_gx[3], 6.875), "DistributeSpace: meia folga nas pontas");
+        w = ruby_line("x", CTRubyAnnotationCreate(0, 3, 0.5, (id *)rtext(0, "abcdef")), &as, &de);
+        CHECK(NEAR(w, 16.5) && NEAR(ct_test_gx[0], 5.5) && NEAR(ct_test_gx[1], 0), "overhang None: a base abre espaço e fica no meio");
+        w = ruby_line("x", CTRubyAnnotationCreate(0, 0, 0.5, (id *)rtext(0, "abcdef")), &as, &de);
+        CHECK(NEAR(w, 5.5) && NEAR(ct_test_gx[1], -5.5), "overhang Auto: o ruby passa por cima dos vizinhos");
+        id ra = ct_test_astr("x", g_font, 0);
+        id rat = ((id *)*(void **)((char *)ra + 8))[1];
+        ((void (*)(id, SEL, id, id))objc_msgSend)(rat, sel_registerName("setObject:forKey:"), cx_num_i(1), (id)kCTRubyAnnotationScaleToFitAttributeName);
+        w = ruby_line("x", CTRubyAnnotationCreateWithAttributes(0, 0, 0, cx_str("abcdef"), rat), &as, &de);
+        CHECK(NEAR(w, 5.5) && NEAR(ct_test_gx[1], 0) && NEAR(ct_test_gx[2], 2.75 / 3) && NEAR(ct_test_gx[6], 5.5 - 2.75 / 3),
+              "ScaleToFit: o ruby encolhe para a largura da base");
+        w = ruby_line("xx", CTRubyAnnotationCreate(0, 0, 0.5, (id *)rtext(3, "ab")), &as, &de);
+        CHECK(NEAR(w, 16.5) && NEAR(ct_test_gx[2], 11) && NEAR(ct_test_gy[2], 0) && NEAR(as, 9.52), "ruby inline: depois da base, na linha");
+    }
     /* fonte de verdade: DejaVu registrada pelo gerenciador */
     FILE *ff = fopen("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "rb");
     if (ff) {

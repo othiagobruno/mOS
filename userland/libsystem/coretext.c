@@ -1571,6 +1571,7 @@ typedef struct {
     u8 level;       /* nível bidi resolvido: ímpar = direita para esquerda */
     u8 rd;          /* run delegate: sem glifo, largura e métricas pelas callbacks */
     double rasc, rdesc;
+    double lpad, rpad;  /* ruby: espaço antes do glifo e depois (já dentro de adv): overhang e ruby inline */
 } ct_clus;
 typedef struct {
     id astr;
@@ -1709,6 +1710,8 @@ static void ct_font_metrics(id font, double *as, double *de, double *ld) {
     *de = s * 0.241;
     *ld = 0;
 }
+static void ct_ruby_metrics(ct_line_t *b);
+static void ct_ruby_draw(ct_line_t *b, void *ctx, double x0, double y);
 static void ct_recompute(ct_line_t *b) {
     b->width = b->ascent = b->descent = b->leading = 0;
     for (long i = 0; i < b->n; i++) {
@@ -1727,6 +1730,7 @@ static void ct_recompute(ct_line_t *b) {
         b->descent = de;
         b->leading = ld;
     }
+    if (b->astr) ct_ruby_metrics(b);
 }
 /* Bidi simplificado (UBA sem embeddings nem isolates): letras hebraicas/árabes e afins são fortes R;
  * dígitos (ASCII e arábico-índicos) são números, que tomam a direção do forte anterior (W2/W7) e sobem
@@ -1863,6 +1867,8 @@ static void ct_bidi_text(ct_line_t *b, const u16 *text, const u8 *lv, long ntext
 }
 static int ct_run_delegate_at(id astr, long idx, double *adv, double *asc, double *desc);
 static void ct_glyph_info_at(id astr, long idx, id font, u16 *glyph);
+static void ct_ruby_adjust(id astr, ct_clus *g, long n);
+static id ct_build_font;    /* fonte das linhas de ruby (sem texto atribuído) */
 static int ct_build(id astr, id str, ct_clus **out, long *nout, long *seen) {
     long len = str ? (long)MSG0(u64, str, "length") : 0;
     if (len < 0) len = 0;
@@ -1877,6 +1883,7 @@ static int ct_build(id astr, id str, ct_clus **out, long *nout, long *seen) {
         if (units < 1) units = 1;
         if (i + units > cap) break;
         id font = ct_font_at(astr, i);
+        if (!font) font = ct_build_font;
         if (!font) {
             if (!fallback) fallback = font_of_size(13.0, 0);
             font = fallback;
@@ -1898,6 +1905,7 @@ static int ct_build(id astr, id str, ct_clus **out, long *nout, long *seen) {
         i += units;
     }
     if (fallback) objc_release(fallback);
+    if (astr) ct_ruby_adjust(astr, g, n);
     *out = g;
     *nout = n;
     *seen = cap;
@@ -2091,9 +2099,10 @@ void CTLineDraw(id line, void *ctx) {
             id col = ct_color_at(b->astr, g->idx);
             if (ct_is_color(col)) cx_bm_set_fill(ctx, ct_argb(col));
         }
-        if (g->cp > 0x20 && g->cp != 0x7F && g->adv > 0) ct_paint(ctx, x, y, g);
+        if (g->cp > 0x20 && g->cp != 0x7F && g->adv > 0) ct_paint(ctx, x + g->lpad, y, g);
         x += g->adv;
     }
+    if (b->astr) ct_ruby_draw(b, ctx, m.tx, m.ty);
     m.tx += b->width;
     CGContextSetTextMatrix(ctx, m);
 }
@@ -2525,7 +2534,7 @@ static void ct_run_cache(ct_run_t *r) {
     for (i = 0; i < r->count; i++) {
         ct_clus *g = &r->line->g[r->begin + i];
         r->glyphs[i] = g->glyph;
-        r->pos[i].x = x;
+        r->pos[i].x = x + g->lpad;
         r->pos[i].y = 0;
         r->idxs[i] = g->idx < 0 ? 0 : g->idx;
         x += g->adv;
@@ -2550,7 +2559,7 @@ void CTRunGetPositions(id run, ct_range_t range, ct_pt_t *buf) {
     ct_run_bounds(r, range, &a, &b);
     if (!r || !buf) return;
     for (long i = 0; i < r->count; i++) {
-        if (i >= a && i < b) { buf[i - a].x = x; buf[i - a].y = 0; }
+        if (i >= a && i < b) { buf[i - a].x = x + r->line->g[r->begin + i].lpad; buf[i - a].y = 0; }
         x += r->line->g[r->begin + i].adv;
     }
 }
@@ -2604,7 +2613,7 @@ void CTRunDraw(id run, void *ctx, ct_range_t range) {
     for (long i = 0; i < a; i++) x += r->line->g[r->begin + i].adv;
     for (long i = a; i < b; i++) {
         ct_clus *g = &r->line->g[r->begin + i];
-        if (g->cp > 0x20 && g->cp != 0x7F && g->adv > 0) ct_paint(ctx, x, m.ty, g);
+        if (g->cp > 0x20 && g->cp != 0x7F && g->adv > 0) ct_paint(ctx, x + g->lpad, m.ty, g);
         x += g->adv;
     }
 }

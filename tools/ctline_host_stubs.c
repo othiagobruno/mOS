@@ -427,7 +427,15 @@ void CGContextSetTextMatrix(void *c, ct_tm t) {
     if (!b || b->magic != BM_MAGIC) return;
     b->a = t.a; b->b = t.b; b->c = t.c; b->d = t.d; b->tx = t.tx; b->ty = t.ty;
 }
+/* registro dos glifos desenhados (x, y no espaço do usuário, com a CTM simples abaixo) para os testes de ruby */
+int ct_test_nglyph; double ct_test_gx[512], ct_test_gy[512];
+static double hst_sx = 1, hst_tx, hst_ty, hst_save[3];
+__attribute__((weak)) void CGContextSaveGState(void *c) { (void)c; hst_save[0] = hst_sx; hst_save[1] = hst_tx; hst_save[2] = hst_ty; }
+__attribute__((weak)) void CGContextRestoreGState(void *c) { (void)c; hst_sx = hst_save[0]; hst_tx = hst_save[1]; hst_ty = hst_save[2]; }
+__attribute__((weak)) void CGContextTranslateCTM(void *c, double x, double y) { (void)c; hst_tx += x * hst_sx; hst_ty += y; }
+__attribute__((weak)) void CGContextScaleCTM(void *c, double x, double y) { (void)c; (void)y; hst_sx *= x; }
 int cx_bitmap_draw_glyph(void *ctx, double x, double y, const u8 *alpha, int gw, int gh, int left, int top) {
+    if (ct_test_nglyph < 512) { ct_test_gx[ct_test_nglyph] = hst_tx + x * hst_sx; ct_test_gy[ct_test_nglyph] = hst_ty + y; ct_test_nglyph++; }
     bm_t *b = ctx;
     if (!b || b->magic != BM_MAGIC || !alpha || gw <= 0 || gh <= 0) return 0;
     int ox = (int)x + left, oy = (int)y + top;

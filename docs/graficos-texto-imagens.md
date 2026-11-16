@@ -342,7 +342,7 @@ da lista são da Camila (avisado ao Igor).
 
 Testes: `tools/ct_layout_host.c` (com e sem ICU), `tools/coretext_host.c` 32/32 (framesetter com contas exatas,
 estilo, tabulação, truncagem, run delegate, nomes/idiomas de uma fonte real registrada), e os antigos
-`ctrun_host`/`ctapps_host` seguem verdes. Limite: o texto de ruby é guardado mas não desenhado.
+`ctrun_host`/`ctapps_host` seguem verdes.
 
 
 ### Passo 8 — CGPath booleanas e CGImageMetadata/XMP (PR de 16 nov. 2026)
@@ -360,3 +360,8 @@ estilo, tabulação, truncagem, run delegate, nomes/idiomas de uma fonte real re
   IPTC como no macOS), `CGImageDestinationAddImageAndMetadata` e `CGImageDestinationCopyImageSource` (mesmo formato,
   sem recomprimir, troca ou mescla, data e orientação). Testes: `tools/iio_xmp_host.py` (pacotes no estilo exiftool,
   relidos pelo PIL) e as seções 7–8 do `tools/imageio_cf_host.c` (ida e volta em JPEG/PNG/TIFF/GIF).
+- Core Text, depois: métricas do `CTFont` pelas tabelas da face (`cx_font_metrics` em `ct_outline.c`: ascendente,
+  descendente e leading do hhea, altura de maiúscula e de x da OS/2 v2 ou do contorno de H/x, ângulo itálico e
+  sublinhado do post, caixa do head), conferidas com o FreeType em 5 fontes (`tools/ct_outline_host.py`). Ruby
+  desenhado: acima, abaixo e inline, os 7 alinhamentos, `ScaleToFit`, overhang (None/Start/End abrem espaço em volta da
+  base), a linha mais alta pelo ruby e as posições do `CTRun` com o espaço do overhang (`tools/coretext_host.c`, 10 casos).
