@@ -53,3 +53,14 @@ void mmio_w16(volatile void *base, u32 off, u16 v);
 void mmio_w32(volatile void *base, u32 off, u32 v);
 
 bool r8169_probe(void);
+
+/* dev/pm.h (repouso) */
+#define PM_RESTORES_NET 2u
+typedef struct {
+    const char *name;
+    u32 flags;
+    int  (*suspend)(int state);
+    void (*resume)(int state);
+    const char *(*can_s3)(void);
+} pm_ops_t;
+void pm_register(const pm_ops_t *ops);

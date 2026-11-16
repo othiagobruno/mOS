@@ -201,6 +201,11 @@ static void rx_inject(const u8 *f, int len, u8 rate, int pwdb, bool c2h) {
 /* ---------------- a pilha (o mínimo): guarda o rádio */
 static wifi_radio_t *radio;
 void wifi_register_radio(wifi_radio_t *r) { radio = r; }
+static int lost_calls, pm_regs;
+void wifi_radio_lost(void) { lost_calls++; }
+typedef struct { const char *name; u32 flags; int (*suspend)(int); void (*resume)(int); const char *(*can_s3)(void); } pm_ops_t;
+void pm_register(const pm_ops_t *o) { if (o && (o->flags & 2)) pm_regs++; }
+void rtw8821c_pm(int phase);
 
 static u8 *load(const char *path, u32 *n) {
     FILE *f = fopen(path, "rb");
@@ -346,6 +351,20 @@ int main(int argc, char **argv) {
 
     radio->bss(radio, NULL);
     CHECK(((rd32raw(0x100) >> 16) & 3) == 0, "desassociação volta o tipo de rede para sem enlace");
+
+    /* repouso S3: desliga, a energia some, volta e pede reconexão à pilha */
+    CHECK(pm_regs == 1, "registro no pm.c com PM_RESTORES_NET");
+    radio->set_chan(radio, 36, 42, 2);
+    memset(cpumem_dmem, 0, 0x10000); memset(cpumem_imem, 0, 0x20000); memset(cpumem_emem, 0, 0x20000);
+    rtw8821c_pm(0);
+    CHECK(R[0x100] == 0xEA, "suspend: MAC desligado pela sequência de energia");
+    CHECK(!radio->tx(radio, probe, 26), "nada sai com o chip desligado");
+    memset(R + 0x1D00, 0, 0x100);                            /* potência perdida com a energia */
+    rtw8821c_pm(1);
+    rtw8821c_state(&band, &pr, &ce, &bw);
+    CHECK(!memcmp(cpumem_imem, fw.imem, fw.imem_size) && band == 1 && ce == 42 && bw == 2 && rd32raw(0x1D04) == 0x2A2A2A2A,
+          "resume: firmware de novo, canal 42/80 MHz e potência regravados");
+    CHECK(lost_calls == 1, "resume pede à pilha para reconectar");
 
     printf(g_fail ? "rtw88-chip: %d FALHA(S)\n" : "rtw88-chip: ok\n", g_fail);
     return g_fail != 0;

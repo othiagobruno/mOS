@@ -15,6 +15,11 @@
 #include "wifi.h"
 #ifndef MOS_HOST_TEST
 #include "vfs.h"
+#include "pm.h"
+#else
+#define PM_RESTORES_NET 2u
+typedef struct { const char *name; u32 flags; int (*suspend)(int); void (*resume)(int); const char *(*can_s3)(void); } pm_ops_t;
+void pm_register(const pm_ops_t *ops);
 #endif
 
 /* ============================================================ registradores */
@@ -1278,6 +1283,31 @@ static bool chip_start(void) {
     return true;
 }
 
+/* ============================================================ repouso (dev/pm.c)
+ * S3: o chip perde energia. Antes, o firmware é parado e o MAC desligado pela sequência de energia; na
+ * volta, a subida inteira de novo (firmware, MAC, PHY, coex), o canal anterior e a pilha reconecta. */
+static int rtw_suspend(int st) {
+    if (st != 3 || !D.up) return 0;
+    if (D.assoc) fw_media_status(false);
+    D.up = false;
+    D.assoc = false;
+    D.ps_on = false;
+    w8(R_CR, 0);                                             /* DMA e MAC parados */
+    mac_power_switch(false);
+    return 0;
+}
+static void rtw_resume(int st) {
+    if (st != 3 || D.up) return;
+    int p = D.primary, c = D.center, b = D.bw;
+    if (!chip_start()) { kprintf("rtw88: o Wi-Fi não voltou do repouso\n"); return; }
+    D.up = true;
+    D.band = -1;
+    set_chan(p ? p : 1, c ? c : 1, b);
+    kprintf("rtw88: de volta do repouso\n");
+    wifi_radio_lost();
+}
+static const pm_ops_t rtw_pm = {"Wi-Fi Realtek RTL8821CE", PM_RESTORES_NET, rtw_suspend, rtw_resume, NULL};
+
 /* sobe o chip: firmware já validado em D.fw; devolve false com o motivo no log */
 bool rtw8821c_attach(rtw_io_t *io, pci_dev_t *pci) {
     D.io = *io;
@@ -1324,6 +1354,7 @@ bool rtw8821c_attach(rtw_io_t *io, pci_dev_t *pci) {
     D.radio.bss = r_bss;
     D.radio.powersave = r_powersave;
     wifi_register_radio(&D.radio);
+    pm_register(&rtw_pm);
     return true;
 }
 
@@ -1389,4 +1420,5 @@ void rtw8821c_set_fw(const rtw_fw_t *fw) { D.fw = *fw; }
 const rtw_efuse_t *rtw8821c_efuse(void) { return &D.ef; }
 int rtw8821c_state(int *band, int *primary, int *center, int *bw) { *band = D.band; *primary = D.primary; *center = D.center; *bw = D.bw; return D.up; }
 bool rtw8821c_ps_broken(void) { return D.ps_broken; }
+void rtw8821c_pm(int phase) { if (phase) rtw_resume(3); else rtw_suspend(3); }
 #endif

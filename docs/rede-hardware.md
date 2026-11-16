@@ -109,3 +109,12 @@ A pilha ainda chama só `set_channel` (20 MHz) e não chama `bss`/`powersave`: i
 
 DMA de 32 bits: o RTL8821CE só endereça abaixo de 4 GiB e o PC tem 16 GB (2 GB reservados para a GPU,
 14 GB visíveis ao sistema). O driver usa `dma_alloc32` (Gustavo, PR #249), alocado na subida do driver.
+
+## Repouso S3 (com a Larissa, `kernel/dev/pm.c`)
+
+O r8169 e o RTL8821CE se registram com `pm_register` e `PM_RESTORES_NET`. No S3 o r8169 para TX/RX e,
+na volta, refaz reset, firmware/afinação do PHY, `hw_start_8168h_1` e os anéis (mesma memória); o
+RTL8821CE desliga o MAC pela sequência de energia e, na volta, sobe de novo (firmware, MAC, PHY, coex),
+volta ao canal e à largura de antes e chama `wifi_radio_lost()`, que refaz autenticação e handshake na
+mesma rede com a PMK guardada. O Bluetooth USB é reenumerado pelo xHCI. Testes: `r8169_host` 68/68 e
+`rtw88_chip_host` 37/37 com o caso de repouso.

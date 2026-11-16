@@ -508,6 +508,20 @@ void wifi_disconnect(void) {
     target.ssid[0] = 0;
 }
 
+/* o rádio perdeu o enlace sem a pilha saber (volta do repouso S3): refaz autenticação e handshake na
+ * mesma rede com a PMK guardada; sem rede, fica ociosa */
+void wifi_radio_lost(void) {
+    if (!radio) return;
+    keys_ok = gtk_ok = false;
+    bool had = target.ssid[0] && state >= WIFI_AUTHENTICATING && state <= WIFI_CONNECTED;
+    state = enabled ? WIFI_IDLE : WIFI_OFF;
+    if (!had || !enabled) return;
+    kprintf("wifi: reconectando a \"%s\" depois do repouso\n", target.ssid);
+    replay = 0;
+    tries = 0;
+    start_auth();
+}
+
 void wifi_set_enabled(bool on) {
     if (!on) wifi_disconnect();
     enabled = on;
