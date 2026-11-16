@@ -98,6 +98,17 @@ for fw in "$ROOT"/userland/frameworks/*/; do
             echo "$name: aviso: overlay Swift não compilado (falta swift-frontend ou o runtime real); só a parte ObjC/C" >&2
         fi
     fi
+    # overlay-only: a pasta é só o overlay Swift (ex.: AppKit, servido pelo libSystem.mos); os .c/.m vão para a dylib do
+    # overlay, e o framework não é ligado (um AppKit.framework aqui sombrearia o do libSystem, kernel/compat/macho.c)
+    only=0
+    if [ -f "$fw/overlay-only" ] && [ -n "$swdylib" ]; then
+        only=1
+        [ ${#objs[@]} -gt 0 ] && swobjs+=("${objs[@]}")
+        objs=()
+        if ls "$fw"*.swift >/dev/null 2>&1 && [ -n "$missing" ]; then echo "$name: overlay adiado" >&2; continue; fi
+        if [ "$bad" = 1 ] || [ ${#swobjs[@]} -eq 0 ]; then echo "$name: FALHOU" >&2; fails=$((fails + 1)); continue; fi
+    fi
+    if [ "$only" = 0 ]; then
     if [ "$bad" = 1 ] || [ ${#objs[@]} -eq 0 ]; then echo "$name: FALHOU" >&2; fails=$((fails + 1)); continue; fi
     case "$name" in
         lib*) install="/usr/lib/$name.dylib" ;;
@@ -117,6 +128,7 @@ for fw in "$ROOT"/userland/frameworks/*/; do
         fails=$((fails + 1))
         continue
     fi
+    fi
     if [ ${#swobjs[@]} -gt 0 ]; then
         mkdir -p "$(dirname "$DST$swdylib")"
         # o libswiftCore real em dois níveis, quando existe: em busca plana os swift_* iam para os do libSystem
@@ -133,6 +145,7 @@ for fw in "$ROOT"/userland/frameworks/*/; do
             echo "$name: overlay Swift -> $swdylib"
         fi
     fi
+    [ "$only" = 1 ] && continue
     for a in "${alias[@]}"; do
         mkdir -p "$(dirname "$DST$a")"
         cp -f "$out" "$DST$a"

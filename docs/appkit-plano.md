@@ -7,6 +7,30 @@ impressão, sheets/painéis, NSOpenPanel/NSSavePanel e Services.
 Regra deste doc: cada linha diz o que está pronto **com teste**, o que existe sem teste e o que falta. Nada aqui foi
 executado numa VM; o build do projeto só roda no fim (`build-final.sh`).
 
+## Estado em 16 nov. 2026
+
+Todas as fases têm código na `main`, com teste de host onde há lógica pura e compilação por arquivo em x86_64 e arm64.
+Nada disto rodou ainda na VM (o build do projeto fica para o fim, pela fila `build-final.sh`).
+
+| Parte | Onde | PR |
+|---|---|---|
+| Painéis abrir/salvar | `appkit_panel*.c` | #251 |
+| Menus, pop-up, contexto, ⌃clique, validação | `appkit_menupop*.c` | #284, #561 |
+| Controles (busca, cor, data, senha, segmentos, NSSwitch, NSMatrix, células) | `appkit_controls*.c`, `appkit_cells.c` | #291, #511 |
+| Documentos | `appkit_document.c` | #305, #370 |
+| Barra de ferramentas (com rótulos) | `appkit_toolbar*.c` | #348, #561 |
+| Pasteboard, promessas, Serviços | `appkit_pb_core.c`, `appkit_filepromise.c`, `appkit_services.c` | #403, #561 |
+| Impressão e desenho fora da janela | `appkit_print*.c`, `appkit_offscreen.c` | #443 |
+| Fila de eventos (nextEventMatchingMask:, sendEvent:) | `appkit.c`, `appkit_evq_core.c` | #557 |
+| Janelas: sheets, geometria na tela, nível, limites, abas | `appkit_sheets.c`, `appkit.c`, `appkit_tabs.c` | #559, #562, #574 |
+| Gestos, NSTouch, animação, fontes, NSTextBlock, PDF/EPS | `appkit_more.c` | #511 |
+| TextKit 1 e 2, NSTextView rico | `appkit_textkit*.c`, `appkit_textview.c`, `appkit_tk_core.c` | #566, #568 |
+| NSTableView completa | `appkit_table2.inc` | #564 |
+| NSCollectionView e layouts | `appkit_collection.c` | #572 |
+| NSTokenField, NSPathControl, NSBrowser, NSRuleEditor, NSPredicateEditor | `appkit_controls3.c` | #571 |
+| Acessibilidade (papéis, valores) | `appkit_ax.c`, `appkit_public.c` | #575 |
+| Overlay Swift (libswiftAppKit) | `userland/frameworks/AppKit/` | este PR |
+
 ## Como o AppKit do mOS é feito
 
 - Código em `userland/libsystem/appkit*.c`, em C, sobre o runtime ObjC próprio (`objc.h`: `cx_define_class`,
