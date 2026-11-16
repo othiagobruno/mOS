@@ -14,17 +14,20 @@ echo "varrer-tudo: libSystem local ($(cat build/libSystem.origem 2>/dev/null))"
 # libSystem diferente do da última medida: tudo o que foi medido com o outro é refeito
 atual=$(sha256sum "${LIBS[1]}" | cut -c1-16)
 if [ "$(cat build/corpus/libsystem-medido.txt 2>/dev/null)" != "$atual" ]; then
-    rm -f build/corpus/*/medido.sha256
+    rm -f build/corpus/*/medido.sha256 build/corpus/falhas.json
     mkdir -p build/corpus && echo "$atual" > build/corpus/libsystem-medido.txt
 fi
 ids=("$@")
 if [ ${#ids[@]} -eq 0 ]; then
-    # sem ids: os que ainda não têm medida com o hash atual do manifesto
+    # sem ids: os que ainda não têm medida com o hash atual do manifesto. Os de build/corpus/falhas.json ficam de fora
+    # (senão voltam em todo lote e o laço não termina); refazer um deles: varrer-tudo.sh <id>
     mapfile -t ids < <(python3 -c "
 import json, pathlib
+f = pathlib.Path('build/corpus/falhas.json')
+falhas = json.loads(f.read_text()) if f.is_file() else {}
 for a in json.load(open('tools/corpus/manifest.json'))['apps']:
     m = pathlib.Path('build/corpus') / a['id'] / 'medido.sha256'
-    if not (a.get('sha256') and m.is_file() and m.read_text().strip() == a['sha256']):
+    if a['id'] not in falhas and not (a.get('sha256') and m.is_file() and m.read_text().strip() == a['sha256']):
         print(a['id'])")
 fi
 mais=0

@@ -763,14 +763,15 @@
       "id": "warp",
       "nome": "Warp",
       "licenca": "não declarada no cask; download público do autor, usado só para medir (não redistribuído)",
-      "url": "https://app.warp.dev/download/brew?version=v0.2026.11.11.08.17.stable_01&package=dmg",
+      "url": "https://releases.warp.dev/stable/v0.2026.11.11.08.17.stable_01/Warp.dmg",
       "sha256": "8767bc168e167bfb43f7a5d3a66dc19eb576edab22fd8c6a909fa4f152fd85cb",
       "cask": "warp",
       "versao": "0.2026.11.11.08.17.stable_01",
       "tipo": "app",
       "homepage": "https://www.warp.dev/terminal",
       "rank_brew_365d": 28,
-      "instalacoes_365d": 131993
+      "instalacoes_365d": 131993,
+      "url_brew_404": "https://app.warp.dev/download/brew?version=v0.2026.11.11.08.17.stable_01&package=dmg"
     },
     {
       "id": "android-studio",
