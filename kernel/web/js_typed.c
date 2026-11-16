@@ -612,17 +612,9 @@ NATIVE(td_ctor) {
     js_defn(jv_o(thisv), "fatal", jv_bool(fatal), PF_RO);
     return thisv;
 }
-NATIVE(td_decode) {
-    UNUSED_ARGS;
-    jsv src = ARG(0);
-    const u8 *p = NULL;
-    u32 n = 0;
-    if (src == JS_UNDEF) return jv_str(A[A_empty]);
-    if (jv_iscls(src, CL_ARRAYBUFFER)) { p = buf_bytes(jv_o(src)); n = buf_len(jv_o(src)); }
-    else if (jv_iscls(src, CL_TYPED)) { jsobj *t = jv_o(src); n = js_typed_length(t) * ta_size[t->u.ta.kind]; p = n ? el_ptr(t, 0) : NULL; }
-    else if (jv_iscls(src, CL_DATAVIEW)) { jsobj *d = jv_o(src); p = buf_bytes(d->u.ta.buffer); if (p) p += d->u.ta.off; n = d->u.ta.len; }
-    else return js_throw_err(E_TYPE, "TextDecoder.decode precisa de um ArrayBuffer ou de uma view");
-    bool fatal = jv_isobj(thisv) && js_truthy(js_getn(thisv, "fatal"));
+/* UTF-8 do WHATWG: BOM removido, sequências inválidas viram U+FFFD (fatal: devolve NULL e *any_bad = true) */
+jsstr *js_utf8_decode(const u8 *p, u32 n, bool fatal, bool *any_bad) {
+    *any_bad = false;
     /* BOM no começo é removido */
     if (n >= 3 && p[0] == 0xEF && p[1] == 0xBB && p[2] == 0xBF) { p += 3; n -= 3; }
     sbuf_t sb = {0};
@@ -647,13 +639,30 @@ NATIVE(td_decode) {
                 lo = 0x80; hi = 0xBF;
             }
         }
-        if (bad && fatal) { sb_free(&sb); return js_throw_err(E_TYPE, "TextDecoder: UTF-8 inválido"); }
+        if (bad) { *any_bad = true; if (fatal) { sb_free(&sb); return NULL; } }
         char tmp[4];
         sb_putn(&sb, tmp, js_utf8_put(tmp, cp));
     }
     jsstr *r = js_strn(sb.p ? sb.p : "", sb.len);
     sb_free(&sb);
-    return jv_str(r);
+    return r;
+}
+
+NATIVE(td_decode) {
+    UNUSED_ARGS;
+    jsv src = ARG(0);
+    const u8 *p = NULL;
+    u32 n = 0;
+    if (src == JS_UNDEF) return jv_str(A[A_empty]);
+    if (jv_iscls(src, CL_ARRAYBUFFER)) { p = buf_bytes(jv_o(src)); n = buf_len(jv_o(src)); }
+    else if (jv_iscls(src, CL_TYPED)) { jsobj *t = jv_o(src); n = js_typed_length(t) * ta_size[t->u.ta.kind]; p = n ? el_ptr(t, 0) : NULL; }
+    else if (jv_iscls(src, CL_DATAVIEW)) { jsobj *d = jv_o(src); p = buf_bytes(d->u.ta.buffer); if (p) p += d->u.ta.off; n = d->u.ta.len; }
+    else return js_throw_err(E_TYPE, "TextDecoder.decode precisa de um ArrayBuffer ou de uma view");
+    bool fatal = jv_isobj(thisv) && js_truthy(js_getn(thisv, "fatal"));
+    bool bad = false;
+    jsstr *r = js_utf8_decode(p, n, fatal, &bad);
+    if (bad && fatal) return js_throw_err(E_TYPE, "TextDecoder: UTF-8 inválido");
+    return r ? jv_str(r) : JS_EXC;
 }
 
 /* ---------------------------------------------------------------- registro */
