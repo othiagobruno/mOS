@@ -58,10 +58,11 @@ static bool load_mec(amdgpu_t *a) {
     if (e) { kprintf("amdgpu: firmware %s %s\n", name, fw ? amd_ucode_error(e) : "não encontrado"); return false; }
     if (!u.jt_size) { kprintf("amdgpu: %s sem tabela de saltos\n", name); return false; }
     u64 bytes = ((u64)u.ucode_size_bytes + 0xFFFF) & ~0xFFFFull;
-    u64 code = amdgpu_vram_alloc(a, bytes);
+    bool again = a->mec_phys && a->mec_bytes == bytes;
+    u64 code = again ? a->mec_phys : amdgpu_vram_alloc(a, bytes);
     if (!code) { kprintf("amdgpu: sem VRAM para o microcódigo do MEC\n"); return false; }
 #ifndef MOS_HOST_TEST
-    vmm_map_wc(a->fb_phys + (code - a->bar0), bytes);
+    if (!again) vmm_map_wc(a->fb_phys + (code - a->bar0), bytes);
 #endif
     memcpy(amdgpu_vram_cpu(a, code), u.ucode, u.ucode_size_bytes);
     WMB();
@@ -231,6 +232,7 @@ static void release(amdgpu_t *a, u64 ring, u64 aux) {
     if (ring) amdgpu_vram_free(a, ring, AMD_COMP_RING_BYTES);
     if (aux) amdgpu_vram_free(a, aux, 64 * 1024);
     if (a->mec_phys) { amdgpu_vram_free(a, a->mec_phys, a->mec_bytes); a->mec_phys = 0; }
+    a->cring_phys = a->caux_phys = 0;
     a->cring_cpu = a->cwb_cpu = NULL;
 }
 
@@ -244,18 +246,22 @@ bool amdgpu_compute_init(amdgpu_t *a) {
 #endif
     WR(a, R_RCC_DOORBELL_APER_EN, RR(a, R_RCC_DOORBELL_APER_EN) | DOORBELL_APER_EN);
 
-    u64 ring = amdgpu_vram_alloc(a, AMD_COMP_RING_BYTES), aux = amdgpu_vram_alloc(a, 64 * 1024);
+    bool again = a->cring_phys != 0;         /* volta do S3 */
+    u64 ring = again ? a->cring_phys : amdgpu_vram_alloc(a, AMD_COMP_RING_BYTES), aux = again ? a->caux_phys : amdgpu_vram_alloc(a, 64 * 1024);
     if (!ring || !aux) { kprintf("amdgpu: sem VRAM para a fila de compute\n"); release(a, ring, aux); return false; }
 #ifndef MOS_HOST_TEST
-    vmm_map_wc(a->fb_phys + (ring - a->bar0), AMD_COMP_RING_BYTES);
-    vmm_map_wc(a->fb_phys + (aux - a->bar0), 64 * 1024);
+    if (!again) {
+        vmm_map_wc(a->fb_phys + (ring - a->bar0), AMD_COMP_RING_BYTES);
+        vmm_map_wc(a->fb_phys + (aux - a->bar0), 64 * 1024);
+    }
 #endif
     a->cring_phys = ring; a->cring_cpu = amdgpu_vram_cpu(a, ring); a->cring_mc = amdgpu_vram_to_mc(a, ring);
     a->cring_dw = AMD_COMP_RING_BYTES / 4; a->cwptr = 0;
     a->caux_phys = aux; a->mqd_mc = amdgpu_vram_to_mc(a, aux + AUX_MQD);
     a->cwb_cpu = amdgpu_vram_cpu(a, aux + AUX_WB); a->cwb_mc = amdgpu_vram_to_mc(a, aux + AUX_WB);
     memset((void *)a->cring_cpu, 0, AMD_COMP_RING_BYTES);
-    memset((void *)a->cwb_cpu, 0, 4096);
+    if (!again) memset((void *)a->cwb_cpu, 0, 4096);
+    else { a->cwb_cpu[0] = 0; a->cwb_cpu[4] = a->comp_seq; }
 
     bool ok = load_mec(a);
     if (ok) { compute_enable(a, true); ok = hqd_init(a); }
