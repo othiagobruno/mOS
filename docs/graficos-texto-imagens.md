@@ -186,3 +186,29 @@ LittleCMS sem device link otimizado); `colorsync_host self` 11/11; `tools/cg_con
 Limites: o contexto de bitmap não converte para o próprio espaço (desenha em sRGB mesmo num contexto P3); fora do
 gamut o recorte é por canal (sem mapeamento perceptual); sem compensação de ponto preto; perfil CMYK/cinza embutido
 em JPEG não se aplica (o decodificador já entrega RGB).
+
+### Passo 5a — PDF: leitor e API CGPDF (PR de 16 nov. 2026)
+
+- **Núcleo** (`pdf_core.c`/`pdf_core.h`, ISO 32000-1/-2): léxico completo, xref clássica, xref stream, híbrida
+  (`/XRefStm`), cadeia `/Prev` (atualização incremental, a seção mais nova ganha), reparo por varredura quando a
+  xref não confere ou não existe, object streams, `/Length` indireto ou errado, filtros FlateDecode e LZWDecode com
+  Predictor 2 e PNG, ASCIIHex, ASCII85, RunLength, Crypt/Identity; security handler padrão R2–R6 (RC4 40/128,
+  AES-128 V4, AES-256 V5 R5/R6 com SHA-256/384/512), senha de usuário e de dono, strings e streams decifrados por
+  objeto; árvore de páginas com proteção contra ciclos e atributos herdáveis; imagem inline no léxico.
+- **API** (`cgpdf.c`): `CGPDFDocument` (Provider/URL, páginas, criptografia, versão, catálogo, Info, ID, permissões,
+  outline com títulos, destinos e filhos — destinos nomeados e árvore `/Names`), `CGPDFPage` (caixas com as regras
+  de padrão e recorte pela MediaBox, rotação, dicionário, `GetDrawingTransform` com o `/Rotate`), `CGPDFObject`,
+  `Dictionary`, `Array` (com `ApplyFunction`/`ApplyBlock`), `Stream` (`CopyData` com formato JPEG/JPEG 2000),
+  `String` (`CopyTextString` com PDFDocEncoding, UTF-16BE e UTF-8; `CopyDate` com fuso), `CGPDFScanner`,
+  `CGPDFContentStream` (recursos herdados dos pais) e `CGPDFOperatorTable`.
+- O leitor antigo do `coregraphics_bm.inc` (só contava páginas) saiu.
+
+Testes: `tools/pdf_host.py` 92/92 — PDFs gerados no teste (xref clássica, stream, incremental, xref quebrada e
+ausente, cada filtro, R2/R3/R4/R6 com senha de usuário, de dono, errada e vazia, cifra feita em Python com a
+biblioteca `cryptography`) e PDFs do Ghostscript 10.06 (1.4, 1.7 com object streams, RC4 128); vetores de
+MD5/SHA-2/AES (FIPS-197)/RC4 em `pdf_host hash`. `tools/cg_context_test.c` 83/83 com a API nova (título UTF-16,
+data com fuso, arrays, scanner com imagem inline, outline).
+Ainda não: `CGContextDrawPDFPage` (próximo passo), `CGPDFContext`, PDFKit.
+
+`tools/libsystem-symcheck.sh`: compila os .c do libSystem em objetos e acusa símbolo forte duplicado (o que quebrou o
+link no PR #367) e indefinido nos arquivos dados. Rodar dentro da trava do time antes de cada PR.
