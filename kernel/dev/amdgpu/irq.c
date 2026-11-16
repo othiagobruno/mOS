@@ -50,12 +50,17 @@ static bool arm_msi(amdgpu_t *a) {
 /* ------------------------------------------------------------ anel */
 bool amdgpu_ih_init(amdgpu_t *a) {
     if (!a || !a->ready) return false;
+    /* na volta do S3 o anel e o writeback já existem (a RAM ficou em self-refresh): só os registradores somem */
+    bool again = a->ih_phys != 0;
+    u64 ring = a->ih_phys, wb = a->ih_wb_phys;
+    if (!again) {
 #ifdef MOS_HOST_TEST
-    u64 ring = amd_host_ram_alloc(AMD_IH_RING_BYTES);
-    u64 wb = amd_host_ram_page();
+        ring = amd_host_ram_alloc(AMD_IH_RING_BYTES);
+        wb = amd_host_ram_page();
 #else
-    u64 ring = pmm_alloc(AMD_IH_RING_BYTES / 4096), wb = pmm_alloc(1);
+        ring = pmm_alloc(AMD_IH_RING_BYTES / 4096); wb = pmm_alloc(1);
 #endif
+    }
     if (!ring || !wb) { kprintf("amdgpu: sem RAM para o anel do IH\n"); return false; }
     a->ih_phys = ring; a->ih_cpu = (volatile u32 *)(usize)ring; a->ih_dw = AMD_IH_RING_BYTES / 4;
     a->ih_wb_phys = wb; a->ih_wb = (volatile u32 *)(usize)wb;
@@ -74,7 +79,7 @@ bool amdgpu_ih_init(amdgpu_t *a) {
     u32 order = 0;
     while ((1u << order) < a->ih_dw) order++;
 #ifndef MOS_HOST_TEST
-    a->msi_on = arm_msi(a);
+    if (!again) a->msi_on = arm_msi(a);          /* o tratador já está no vetor; o pm.c restaura o espaço PCI */
 #else
     a->msi_on = true;
 #endif
@@ -119,6 +124,7 @@ static void hpd_irq(amdgpu_t *a, u32 i) {
 u32 amdgpu_irq_process(amdgpu_t *a) {
     if (!a || !a->ih_ok) return 0;
     u32 mask = a->ih_dw * 4 - 1, n = 0;
+    bool eop = false;
     u32 w = a->ih_wb[0];
     if (w & IH_WPTR_RB_OVERFLOW) {
         w = RR(a, R_IH_RB_WPTR);
@@ -137,9 +143,17 @@ u32 amdgpu_irq_process(amdgpu_t *a) {
         u32 client = e[0] & 0xFF, src = (e[0] >> 8) & 0xFF;
         if (client == IH_CLIENT_SDMA0 && src == IH_SRC_SDMA_TRAP) a->sdma_traps++;
         else if (client == IH_CLIENT_DCE && src == IH_SRC_DC_HPD) hpd_irq(a, e[4]);
+        else if ((client == IH_CLIENT_VMC || client == IH_CLIENT_UTCL2) && src == IH_SRC_VM_FAULT) {
+            u32 vmid = (e[0] >> 24) & 0xF;
+            a->vm_faults++;
+            amdgpu_vm_fault_ack(a, client == IH_CLIENT_UTCL2);
+            if (vmid) amdgpu_abi_vm_fault(vmid);
+            else kprintf("amdgpu: falha de página no VMID 0 (status 0x%x)\n", a->vm_fault_status);
+        }
         else if (client == IH_CLIENT_GRBM_CP && src == IH_SRC_CP_EOP) {
             if (((e[0] >> 16) & 0x0C) >> 2) a->comp_eops++;   /* ring_id: ME 1 = compute */
             else a->gfx_eops++;
+            eop = true;
         }
         else if (client == IH_CLIENT_GRBM_CP && (src == IH_SRC_CP_PRIV_REG || src == IH_SRC_CP_PRIV_INSTR || src == IH_SRC_CP_BAD_OPCODE)) {
             a->gfx_faults++;
@@ -154,6 +168,7 @@ u32 amdgpu_irq_process(amdgpu_t *a) {
         a->ih_rptr = (a->ih_rptr + 32) & mask;
     }
     WR(a, R_IH_RB_RPTR, a->ih_rptr);
+    if (eop) amdgpu_abi_poll();                  /* fences dos processos cujos lotes terminaram */
     return n;
 }
 

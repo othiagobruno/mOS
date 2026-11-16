@@ -97,6 +97,66 @@
 #define R_DC_HPD_INT_STATUS(i)        DCN_REG(0x1F14 + (i) * 8u)
 #define   DC_HPD_SENSE                0x2u
 
+/* DCN 1.0 — motor de I2C (DDC1..6) */
+#define AMD_DCN_BASE1                 0x00C0u
+#define DCN1_REG(off)                 AMD_SEG(AMD_DCN_BASE1, off)
+#define R_DC_I2C_CONTROL              DCN_REG(0x1E98)
+#define R_DC_I2C_ARBITRATION          DCN_REG(0x1E99)
+#define R_DC_I2C_SW_STATUS            DCN_REG(0x1E9B)
+#define R_DC_I2C_DDC_HW_STATUS(n)     DCN_REG(0x1E9C + (n))     /* n = 0..5 (DDC1..6) */
+#define R_DC_I2C_DDC_SPEED(n)         DCN_REG(0x1EA2 + 2 * (n))
+#define R_DC_I2C_DDC_SETUP(n)         DCN_REG(0x1EA3 + 2 * (n))
+#define R_DC_I2C_TRANSACTION(t)       DCN_REG(0x1EAE + (t))     /* t = 0..3 */
+#define R_DC_I2C_DATA                 DCN_REG(0x1EB2)
+#define R_MICROSECOND_TIME_BASE_DIV   DCN1_REG(0x007B)
+#define   I2C_GO                      0x1u
+#define   I2C_SOFT_RESET              0x2u
+#define   I2C_SEND_RESET              0x4u
+#define   I2C_SW_STATUS_RESET         0x8u
+#define   I2C_DDC_SELECT_SHIFT        8
+#define   I2C_DDC_SELECT_MASK         0x700u
+#define   I2C_TRANS_COUNT_SHIFT       20
+#define   I2C_TRANS_COUNT_MASK        0x300000u
+#define   I2C_ARB_STATUS_SHIFT        2
+#define   I2C_ARB_STATUS_MASK         0xCu
+#define   I2C_ARB_NO_QUEUED_SW_GO     0x10u
+#define   I2C_ARB_SW_USE_REQ          0x100000u
+#define   I2C_ARB_SW_DONE             0x200000u
+#define   I2C_ST_IDLE                 0u
+#define   I2C_ST_USED_BY_SW           1u
+#define   I2C_ST_USED_BY_HW           2u
+#define   I2C_SW_STATUS_MASK          0x3u
+#define   I2C_SW_DONE                 0x4u
+#define   I2C_SW_ABORTED              0x10u
+#define   I2C_SW_TIMEOUT              0x20u
+#define   I2C_SW_NACK                 0x100u
+#define   I2C_SETUP_DATA_DRIVE_EN     0x1u
+#define   I2C_SETUP_DATA_DRIVE_SEL    0x2u
+#define   I2C_SETUP_ENABLE            0x40u
+#define   I2C_SETUP_CLK_DRIVE_EN      0x80u
+#define   I2C_SETUP_DELAYS_MASK       0x00FFFF00u
+#define   I2C_SETUP_TIME_LIMIT_SHIFT  24
+#define   I2C_SPEED_THRESHOLD_MASK    0x3u
+#define   I2C_SPEED_SS_TIMING_SHIFT   8
+#define   I2C_SPEED_SS_TIMING_MASK    0x300u
+#define   I2C_SPEED_PRESCALE_SHIFT    16
+#define   I2C_TR_RW                   0x1u          /* 1 = leitura */
+#define   I2C_TR_STOP_ON_NACK         0x100u
+#define   I2C_TR_START                0x1000u
+#define   I2C_TR_STOP                 0x2000u
+#define   I2C_TR_COUNT_SHIFT          16
+#define   I2C_TR_COUNT_MASK           0x03FF0000u
+#define   I2C_DATA_RW                 0x1u          /* 1 = ler o buffer */
+#define   I2C_DATA_SHIFT              8
+#define   I2C_DATA_MASK               0xFF00u
+#define   I2C_INDEX_SHIFT             16
+#define   I2C_INDEX_WRITE             0x80000000u
+#define   USEC_BASE_DIV_MASK          0x7Fu
+#define   XTAL_REF_DIV_SHIFT          8
+#define   XTAL_REF_DIV_MASK           0x7F00u
+#define AMD_I2C_BUFFER   144u
+#define AMD_NUM_DDC      6
+
 #define AMD_NUM_OTG   4
 #define AMD_NUM_HPD   6
 #define AMD_MMIO_SIZE 0x80000u        /* 512 KiB do BAR5 */
@@ -158,6 +218,10 @@
 #define R_VM_CTX_PT_END_HI(n)         (R_VM_CTX0_PT_END_HI + 8u * (n))
 #define   CTX_DEPTH_4LEVEL            (3u << 1)      /* PDB2 -> PDB1 -> PDB0 -> PTB, blocos de 512 entradas */
 #define   CTX_FAULT_DEFAULTS          0x00555400u    /* range, dummy, PDE0, valid, read, write, exec: página de rascunho */
+#define   CTX_FAULT_INTERRUPTS        0x002AAA00u    /* e cada uma delas avisa pelo IH */
+#define R_VM_L2_PROT_FAULT_CNTL2      MMHUB_REG(0x0688)
+#define R_VM_L2_PROT_FAULT_STATUS     MMHUB_REG(0x068B)
+#define   PROT_FAULT_CLEAR_STATUS     0x1u
 #define   AMD_VM_MAX_PFN              (1ull << 36)   /* 48 bits de VA */
 #define R_VM_INV_ENG17_REQ            MMHUB_REG(0x06F4)
 #define R_VM_INV_ENG17_ACK            MMHUB_REG(0x0706)
@@ -583,6 +647,9 @@
 #define MQD_DYN_CU_MASK_BYTES        2056u           /* deslocamento da máscara dinâmica de CUs na alocação */
 #define R_RCC_DOORBELL_APER_EN        NBIF_REG(0x00C0)
 #define   DOORBELL_APER_EN            0x1u
+#define IH_CLIENT_VMC            0x12u          /* falha de página na MMHUB */
+#define IH_CLIENT_UTCL2          0x1Bu          /* falha de página na GFXHUB */
+#define IH_SRC_VM_FAULT          0u
 #define IH_CLIENT_GRBM_CP        0x14u
 #define IH_SRC_CP_EOP            181u
 #define IH_SRC_CP_PRIV_REG       184u

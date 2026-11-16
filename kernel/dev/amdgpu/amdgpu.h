@@ -89,7 +89,7 @@ typedef struct {
     /* motores (engine.c), ligados depois do VFS por amdgpu_engines_init */
     bool          engines_tried, smu_ok, gmc_ok, sdma_ok;
     u32           smu_version, sdma_fw_version;
-    u64           gart_start, gart_size, gart_table, dummy_page;
+    u64           gart_start, gart_size, gart_table, gart_scratch, dummy_page;
     u64          *gart_cpu;
     u8            gart_used[AMD_GART_PAGES / 8];
     u64           ring_phys, ring_mc, wb_phys, wb_mc;
@@ -122,8 +122,19 @@ typedef struct {
     u32           cring_dw, comp_seq;
     u64           cwptr;                 /* dwords, cresce sem dar a volta (o CP aplica a máscara) */
     u64           comp_timeouts, comp_eops, comp_ibs;
+    /* DDC (ddc.c): EDID ao vivo por linha e contadores do motor de I2C */
+    u8            ddc_edid[AMD_NUM_DDC][512];
+    u32           ddc_edid_len[AMD_NUM_DDC];
+    u32           ddc_mask;
+    u64           i2c_ops, i2c_errors;
+    /* repouso (engine.c, pm.c) */
+    bool          dpms_off, s3_engines;
+    u32           otg_saved;
+    u64           s3_count;
     /* VMs dos processos (vm.c): índice = VMID */
     u32           vmid_used;
+    u32           vm_fault_status;
+    u64           vm_faults;
     amd_vm_t      vms[16];
     /* VRAM livre: blocos de 64 KiB a partir do começo do BAR0 */
     u32           vram_lo, vram_hi;      /* faixa alocável, em blocos */
@@ -184,6 +195,7 @@ u32        amdgpu_sdma_done(amdgpu_t *a);
 void      *amdgpu_vram_cpu(const amdgpu_t *a, u64 bar_phys);
 /* invalida as TLBs das duas hubs para os VMIDs da máscara (bit n = VMID n) */
 void       amdgpu_tlb_flush(amdgpu_t *a, u32 vmid_mask);
+void       amdgpu_vm_fault_ack(amdgpu_t *a, int hub);
 /* programa reg = (reg & ~and_mask) | (or_mask & and_mask); and_mask 0xFFFFFFFF escreve or_mask direto */
 void       amdgpu_golden(amdgpu_t *a, u32 reg, u32 and_mask, u32 or_mask);
 
@@ -209,6 +221,22 @@ u64        amdgpu_vm_lookup(amdgpu_t *a, amd_vm_t *vm, u64 va, u64 *pte_out);
 u32        amdgpu_gfx_submit_vm(amdgpu_t *a, amd_vm_t *vm, u64 ib_va, u32 ndw);
 u32        amdgpu_compute_submit_vm(amdgpu_t *a, amd_vm_t *vm, u64 ib_va, u32 ndw);
 
+/* ABI de GPU revisão 3 (abi.c): VM por processo, VA por BO, lotes de IBs validados, fences pelo EOP */
+typedef struct { u64 va; u32 ndw; } amd_abi_ib_t;
+typedef struct { u64 va, size, phys; bool vram; } amd_abi_bo_t;   /* phys: BAR0 (VRAM) ou físico da RAM */
+bool       amdgpu_abi_available(void);
+int        amdgpu_abi_bo_map(int pid, u64 phys, u64 size, bool vram, bool exec, u64 *va);
+void       amdgpu_abi_bo_unmap(int pid, u64 va, u64 size);
+/* ring 0 = GFX, 1 = compute. fence != 0: gpu_fence_from_irq(pid, fence) quando o lote terminar. ticket_out:
+ * o lote, para amdgpu_abi_done (BO ocupado até lá). 0 ou -MOS_* */
+int        amdgpu_abi_submit(int pid, u32 ring, const amd_abi_ib_t *ibs, u32 nib, const amd_abi_bo_t *bos, u32 nbo, u32 fence, u64 *ticket_out);
+bool       amdgpu_abi_done(u64 ticket);
+void       amdgpu_abi_poll(void);
+void       amdgpu_abi_vm_fault(u32 vmid);
+bool       amdgpu_abi_lost(int pid);
+void       amdgpu_abi_proc_exit(int pid);
+void       amdgpu_abi_info(u32 *family, u32 *num_cu, u64 *vram, u64 *gtt);
+
 /* Compute: MEC1 com a HQD do pipe 0, fila 0, MQD na VRAM e doorbell no BAR2. Chamado por amdgpu_gfx_init
  * depois do anel GFX. Mesma convenção de IB e fence do anel GFX. */
 bool       amdgpu_compute_init(amdgpu_t *a);
@@ -217,6 +245,18 @@ bool       amdgpu_compute_wait(amdgpu_t *a, u32 seq);
 u32        amdgpu_compute_done(amdgpu_t *a);
 /* Monta o preâmbulo de clear state (CSB) em buf (NULL = só conta). Devolve o tamanho em dwords. Lógica pura. */
 u32        amdgpu_gfx_csb(u32 *buf);
+
+/* DDC por hardware (ddc.c). ddc = 0..5 (DDC1..6). EDID: tamanho lido (múltiplo de 128) ou -MOS_*.
+ * DDC/CI: VCP 0x10 = brilho. -MOS_ENXIO = ninguém responde na linha. */
+int        amdgpu_ddc_read_edid(amdgpu_t *a, u32 ddc, u8 *buf, u32 max);
+u32        amdgpu_ddc_probe(amdgpu_t *a);
+int        amdgpu_ddcci_get_vcp(amdgpu_t *a, u32 ddc, u8 vcp, u16 *cur, u16 *max);
+int        amdgpu_ddcci_set_vcp(amdgpu_t *a, u32 ddc, u8 vcp, u16 val);
+
+/* repouso: state 0 = s2idle (DPMS), 3 = S3 (motores param e voltam; a VRAM sobrevive). 0 ou -MOS_* */
+int        amdgpu_suspend(amdgpu_t *a, int state);
+void       amdgpu_resume(amdgpu_t *a, int state);
+void       amdgpu_pm_register(amdgpu_t *a);     /* pm.c: registra no dev/pm.c (no host, o teste conta a chamada) */
 
 /* ------------------------------------------------------------ interrupções (irq.c) */
 /* Anel do IH na RAM (endereço de barramento, com snoop), MSI no vetor compartilhado, trap do SDMA e hot-plug.

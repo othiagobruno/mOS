@@ -171,6 +171,48 @@ def extrai_pkg(archive: Path, dest: Path) -> None:
                 print(f"7z: {payload.relative_to(dest)} não abriu ({proc.returncode})", flush=True)
 
 
+MACHO_MAGICS = (b"\xcf\xfa\xed\xfe", b"\xce\xfa\xed\xfe", b"\xca\xfe\xba\xbe", b"\xca\xfe\xba\xbf")
+
+
+def tem_macho(root: Path) -> bool:
+    """Algum arquivo Mach-O (fino ou universal) sob root."""
+    for p in root.rglob("*"):
+        try:
+            if p.is_file() and not p.is_symlink() and p.stat().st_size >= 4096:
+                with p.open("rb") as f:
+                    if f.read(4) in MACHO_MAGICS:
+                        return True
+        except OSError:
+            pass
+    return False
+
+
+ANINHADOS = (".dmg", ".pkg", ".mpkg", ".zip")
+
+
+def acha_alvo(extracted: Path) -> Path | None:
+    """O que medir: o maior .app; senão abre o .dmg/.pkg/.zip que veio dentro (Steam: dmg no zip; Karabiner: pkg no
+    dmg) e procura de novo; senão a própria pasta, quando tem Mach-O (JDK, SDK do .NET, drivers de áudio e plugins de
+    linha de comando são distribuídos em .pkg sem .app, e o que roda são esses binários)."""
+    for _volta in range(3):
+        bundle = find_app(extracted)
+        if bundle is not None:
+            return bundle
+        internos = [p for p in extracted.rglob("*") if p.is_file() and p.suffix.lower() in ANINHADOS
+                    and not p.name.startswith("._")]
+        if not internos:
+            break
+        for interno in internos:
+            alvo = interno.parent / (interno.name + ".d")
+            try:
+                extract(interno, alvo)
+            except SystemExit as e:
+                print(f"{interno.name} interno não abriu: {str(e).splitlines()[0]}", flush=True)
+                alvo.mkdir(exist_ok=True)
+            interno.unlink()
+    return extracted if tem_macho(extracted) else None
+
+
 def find_app(root: Path) -> Path | None:
     apps = [p for p in root.rglob("*.app") if (p / "Contents").is_dir()]
     if not apps:
@@ -217,6 +259,23 @@ def detecta_formato(archive: Path) -> str:
     return ".dmg"
 
 
+def baixa_ou_arm64(app: dict, archive: Path) -> bool:
+    """Baixa app["url"]. Se a URL Intel deu 404 e o cask publica url_arm64 com sha256, o autor tirou o build Intel do ar
+    (LM Studio 0.4.28): o app passa a ser medido no arm64 (fatia arm64, libSystem arm64) e o manifesto guarda a URL
+    Intel antiga em url_x86_64_404. Devolve False nesse caso, para o chamador recomeçar com a URL nova."""
+    try:
+        download(app["url"], archive)
+        return True
+    except urllib.error.HTTPError as e:
+        if e.code != 404 or not app.get("url_arm64") or not app.get("sha256_arm64") or app["url"] == app["url_arm64"]:
+            raise
+    print(f"{app['id']}: URL Intel deu 404; usando a url_arm64 do cask", flush=True)
+    app["url_x86_64_404"] = app["url"]
+    app["url"], app["sha256"] = app["url_arm64"], app["sha256_arm64"]
+    app.pop("sha256_fixado_em", None)
+    return False
+
+
 def baixa_um(app: dict) -> tuple[Path, str]:
     """Só o download e o hash (rede, pouca RAM): fica fora da trava de trabalho pesado. Devolve (arquivo, sha256)."""
     dest_dir = CACHE / app["id"]
@@ -226,7 +285,8 @@ def baixa_um(app: dict) -> tuple[Path, str]:
         # cask com sha256 no_check: o primeiro download fixa o hash; scan --fixar grava no manifesto
         if not archive.is_file():
             print(f"baixando {app['id']} (hash a fixar)", flush=True)
-            download(app["url"], archive)
+            if not baixa_ou_arm64(app, archive):
+                return baixa_um(app)
         app["sha256"] = sha256_file(archive)
         app["sha256_fixado_em"] = time.strftime("%Y-%m-%d")
     digest = ""
@@ -235,7 +295,8 @@ def baixa_um(app: dict) -> tuple[Path, str]:
             if archive.exists():
                 archive.unlink()
             print(f"baixando {app['id']} (tentativa {tentativa})", flush=True)
-            download(app["url"], archive)
+            if not baixa_ou_arm64(app, archive):
+                return baixa_um(app)
         digest = sha256_file(archive)
         if digest == app["sha256"]:
             break
@@ -279,9 +340,9 @@ def run_one(mc: Path, lib: Path, disco, app: dict, lib_arm64: Path | None = None
     """Mede a fatia x86_64; um app só-arm64 (0 imagens x86_64) é medido na fatia arm64 com o libSystem arm64."""
     discos = disco if isinstance(disco, list) else [disco]
     extracted = fetch_one(app)
-    bundle = find_app(extracted)
+    bundle = acha_alvo(extracted)
     if bundle is None:
-        raise SystemExit(f"{app['id']}: nenhum .app no arquivo")
+        raise SystemExit(f"{app['id']}: nenhum .app nem Mach-O no arquivo")
     report = CACHE / app["id"] / "relatorio.txt"
     log = CACHE / app["id"] / "machocheck.txt"
     texto = roda_machocheck(mc, lib, discos, bundle, report, "x86_64")
@@ -330,31 +391,6 @@ def cmd_baixar(args: argparse.Namespace) -> None:
             atual = load_manifest()                  # relê: o scan de outro app pode ter gravado no meio
             atual["apps"] = [app if a["id"] == app["id"] else a for a in atual["apps"]]
             grava_manifesto(atual)
-
-
-def cmd_libsystem_ci(args: argparse.Namespace) -> None:
-    """Baixa o libSystem da main que o CI compilou (artefato libsystem-main do workflow 'corpus machocheck').
-
-    Só rede: o build fica no GitHub, não no PC do time. Grava em build/ci-lib e diz de qual commit veio.
-    """
-    destino = Path(args.dir)
-    runs = json.loads(subprocess.check_output(
-        ["gh", "run", "list", "--workflow", "compat-corpus.yml", "--branch", "main", "--event", "push",
-         "--status", "success", "--limit", "10", "--json", "databaseId,headSha"], cwd=ROOT, text=True))
-    for r in runs:
-        tmp = destino.with_name(destino.name + ".novo")
-        if tmp.exists():
-            shutil.rmtree(tmp)
-        p = subprocess.run(["gh", "run", "download", str(r["databaseId"]), "-n", "libsystem-main", "-D", str(tmp)],
-                           cwd=ROOT, text=True, capture_output=True)
-        if p.returncode == 0 and (tmp / "libSystem.mos").is_file():
-            if destino.exists():
-                shutil.rmtree(destino)
-            tmp.replace(destino)
-            print(f"libsystem-ci: main {r['headSha'][:10]} (run {r['databaseId']}) em {destino}")
-            return
-        shutil.rmtree(tmp, ignore_errors=True)
-    raise SystemExit("libsystem-ci: nenhum run verde da main com o artefato libsystem-main")
 
 
 def cmd_fetch(args: argparse.Namespace) -> None:
@@ -710,9 +746,6 @@ def medida_atual(app: dict) -> bool:
 
 
 def origem_libsystem() -> str:
-    ci = ROOT / "build" / "ci-lib" / "commit.txt"
-    if ci.is_file():
-        return f"main {ci.read_text().strip()[:10]} (artefato libsystem-main do CI)"
     local = ROOT / "build" / "libSystem.origem"
     return local.read_text().strip() if local.is_file() else "desconhecido"
 
@@ -933,9 +966,6 @@ def cmd_hosttest(args: argparse.Namespace) -> None:
 def main() -> None:
     p = argparse.ArgumentParser()
     sub = p.add_subparsers(dest="cmd", required=True)
-    lc = sub.add_parser("libsystem-ci")
-    lc.add_argument("--dir", default=str(ROOT / "build" / "ci-lib"))
-    lc.set_defaults(func=cmd_libsystem_ci)
     bx = sub.add_parser("baixar")
     bx.add_argument("--fixar", action="store_true")
     bx.add_argument("ids", nargs="+")

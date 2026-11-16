@@ -8,30 +8,26 @@
 set -uo pipefail
 cd "$(dirname "$0")/../.."
 H=tools/corpus/harness.py
-# libSystem: o da main compilado pelo CI (harness.py libsystem-ci), senão o build/ local já copiado
-python3 "$H" libsystem-ci >/dev/null 2>&1 || true
-if [ -f build/ci-lib/libSystem.mos ]; then
-    LIBS=(--lib build/ci-lib/libSystem.mos --disco build/ci-lib/disco-x86 --disco build/disco-x86)
-    [ -f build/ci-lib/libSystem-arm64.mos ] && LIBS+=(--lib-arm64 build/ci-lib/libSystem-arm64.mos --disco-arm64 build/disco-arm64)
-    echo "varrer-tudo: libSystem da main $(cat build/ci-lib/commit.txt 2>/dev/null | cut -c1-10)"
-else
-    LIBS=(--lib build/libSystem.mos --disco build/disco-x86 --lib-arm64 build/libSystem-arm64.mos --disco-arm64 build/disco-arm64)
-    echo "varrer-tudo: libSystem local ($(cat build/libSystem.origem 2>/dev/null))"
-fi
+# libSystem: o do build/ local (o build final pela fila renova; build/libSystem.origem diz de onde veio)
+LIBS=(--lib build/libSystem.mos --disco build/disco-x86 --lib-arm64 build/libSystem-arm64.mos --disco-arm64 build/disco-arm64)
+echo "varrer-tudo: libSystem local ($(cat build/libSystem.origem 2>/dev/null))"
 # libSystem diferente do da última medida: tudo o que foi medido com o outro é refeito
 atual=$(sha256sum "${LIBS[1]}" | cut -c1-16)
 if [ "$(cat build/corpus/libsystem-medido.txt 2>/dev/null)" != "$atual" ]; then
-    rm -f build/corpus/*/medido.sha256
+    rm -f build/corpus/*/medido.sha256 build/corpus/falhas.json
     mkdir -p build/corpus && echo "$atual" > build/corpus/libsystem-medido.txt
 fi
 ids=("$@")
 if [ ${#ids[@]} -eq 0 ]; then
-    # sem ids: os que ainda não têm medida com o hash atual do manifesto
+    # sem ids: os que ainda não têm medida com o hash atual do manifesto. Os de build/corpus/falhas.json ficam de fora
+    # (senão voltam em todo lote e o laço não termina); refazer um deles: varrer-tudo.sh <id>
     mapfile -t ids < <(python3 -c "
 import json, pathlib
+f = pathlib.Path('build/corpus/falhas.json')
+falhas = json.loads(f.read_text()) if f.is_file() else {}
 for a in json.load(open('tools/corpus/manifest.json'))['apps']:
     m = pathlib.Path('build/corpus') / a['id'] / 'medido.sha256'
-    if not (a.get('sha256') and m.is_file() and m.read_text().strip() == a['sha256']):
+    if a['id'] not in falhas and not (a.get('sha256') and m.is_file() and m.read_text().strip() == a['sha256']):
         print(a['id'])")
 fi
 mais=0

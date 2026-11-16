@@ -44,9 +44,11 @@ int CGDisplayUsesForceToGray(void) { return 0; }
 int CGDisplayUsesInvertedPolarity(void) { return 0; }
 int CGDisplayUsesOpenGLAcceleration(u32 d) { (void)d; return 0; }
 double CGDisplayRotation(u32 d) { (void)d; return 0.0; }
-u32 CGDisplayVendorNumber(u32 d) { (void)d; return 0; }
-u32 CGDisplayModelNumber(u32 d) { (void)d; return 0; }
-u32 CGDisplaySerialNumber(u32 d) { (void)d; return 0; }
+/* do EDID do monitor (displayservices.c); 0 sem GPU AMD ou sem EDID, como o macOS num monitor sem EDID */
+unsigned mos_display_vendor(unsigned d), mos_display_model(unsigned d), mos_display_serial(unsigned d);
+u32 CGDisplayVendorNumber(u32 d) { return mos_display_vendor(d); }
+u32 CGDisplayModelNumber(u32 d) { return mos_display_model(d); }
+u32 CGDisplaySerialNumber(u32 d) { return mos_display_serial(d); }
 u32 CGDisplayUnitNumber(u32 d) { (void)d; return 0; }
 int CGDisplayRegisterReconfigurationCallback(void *cb, void *info) { (void)cb; (void)info; return 0; }
 int CGDisplayRemoveReconfigurationCallback(void *cb, void *info) { (void)cb; (void)info; return 0; }

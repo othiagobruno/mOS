@@ -1,14 +1,15 @@
 /*
- * mOS — AVAssetImageGenerator (AVFoundation): quadro de um vídeo como CGImage (miniaturas).
+ * mOS — AVAssetImageGenerator (AVFoundation): quadro de um vídeo como CGImage (miniaturas, linha do tempo).
  *
- * O AVAsset do mOS (avfaudio.c) lê áudio; não há demultiplexador de MP4/MOV que entregue as amostras de vídeo ao
- * decodificador H.264 (h264sw.c). Então o gerador guarda as opções da API e, ao pedir um quadro, falha como a
- * AVFoundation falha com um asset sem vídeo decodificável: copyCGImageAtTime:actualTime:error: devolve NULL e
- * AVErrorOperationNotSupportedForAsset (-11838); generateCGImagesAsynchronouslyForTimes: chama o bloco com
- * AVAssetImageGeneratorFailed para cada tempo; o generateCGImageAsynchronouslyForTime: recebe o mesmo erro.
+ * O quadro vem de avvideo.c (MP4/MOV, H.264 pelo OpenH264 corrigido): o quadro exibido no tempo pedido (o último com
+ * pts <= t, que satisfaz qualquer tolerância), em BGRA com a faixa e a matriz do fluxo, girado pelo preferredTransform
+ * quando appliesPreferredTrackTransform é YES e reduzido para caber em maximumSize. actualTime é o pts do quadro.
+ * Asset sem vídeo decodificável: copyCGImageAtTime devolve NULL e AVErrorOperationNotSupportedForAsset (-11838), e os
+ * geradores assíncronos entregam AVAssetImageGeneratorFailed, como a AVFoundation.
  */
 #include "foundation.h"
 #include "libc.h"
+#include "avvideo.h"
 
 id objc_retain(id o);
 void objc_release(id o);
@@ -27,6 +28,8 @@ typedef struct {
     ig_size_t max;
     ig_cmtime_t tol_before, tol_after;
     id aperture;
+    avv_t *vid;                /* aberto no primeiro pedido */
+    int vid_err;
 } ig_t;
 typedef struct { void *isa; int flags, reserved; void (*invoke)(void *blk, ...); } ig_block_t;
 
@@ -36,7 +39,7 @@ static id ig_error(void) {
     id info = MSG0(id, (id)cx_class_named("NSMutableDictionary"), "dictionary");
     if (info) {
         MSG(void, info, "setObject:forKey:", cx_str("A operação não é suportada para esta mídia."), cx_str("NSLocalizedDescription"));
-        MSG(void, info, "setObject:forKey:", cx_str("O mOS ainda não decodifica quadros de vídeo de um AVAsset."), cx_str("NSLocalizedFailureReason"));
+        MSG(void, info, "setObject:forKey:", cx_str("O asset não tem uma faixa de vídeo H.264 (MP4/MOV) que o mOS decodifique."), cx_str("NSLocalizedFailureReason"));
     }
     return MSG(id, (id)cx_class_named("NSError"), "errorWithDomain:code:userInfo:", cx_str("AVFoundationErrorDomain"), (long long)-11838, info);
 }
@@ -54,6 +57,7 @@ static void ig_dealloc(id s, SEL c) {
     ig_t *g = (ig_t *)s;
     if (g->asset) objc_release(g->asset);
     if (g->aperture) objc_release(g->aperture);
+    if (g->vid) avv_close(g->vid);
     IMP d = class_getMethodImplementation(cx_class_named("NSObject"), sel_registerName("dealloc"));
     if (d) ((void (*)(id, SEL))d)(s, sel_registerName("dealloc"));
 }
@@ -74,12 +78,50 @@ static void ig_set_aperture(id s, SEL c, id a) {
     if (g->aperture) objc_release(g->aperture);
     g->aperture = n;
 }
-static void *ig_copy_image(id s, SEL c, ig_cmtime_t t, ig_cmtime_t *actual, id *err) {
-    (void)s; (void)c; (void)t;
-    if (actual) memset(actual, 0, sizeof *actual);
-    if (err) *err = ig_error();
-    return 0;
+void *CGDataProviderCreateWithData(void *info, const void *data, size_t size, void (*release)(void *, const void *, size_t));
+void *CGImageCreate(size_t w, size_t h, size_t bpc, size_t bpp, size_t bpr, const void *space, u32 info, void *prov, const void *dec, _Bool interp, int intent);
+void *CGColorSpaceCreateDeviceRGB(void);
+void CGColorSpaceRelease(void *c);
+void CGDataProviderRelease(void *p);
+void CGImageRelease(void *i);
+static void ig_free_pixels(void *info, const void *data, size_t n) { (void)info; (void)n; free((void *)data); }
+static const char *ig_path(id asset) {
+    id url = asset && MSG(BOOL, asset, "respondsToSelector:", sel_registerName("URL")) ? MSG0(id, asset, "URL") : 0;
+    id path = url ? MSG0(id, url, "path") : 0;
+    return path ? cx_cstr(path) : 0;
 }
+/* +1, ou 0 com o erro */
+static void *ig_make(ig_t *g, ig_cmtime_t t, ig_cmtime_t *actual, id *err) {
+    if (actual) memset(actual, 0, sizeof *actual);
+    if (!g->vid && !g->vid_err) {
+        int e = 0;
+        g->vid = avv_open_path(ig_path(g->asset), &e);
+        if (!g->vid) g->vid_err = e ? e : -11838;
+    }
+    if (!g->vid) { if (err) *err = ig_error(); return 0; }
+    double sec = t.timescale > 0 ? (double)t.value / t.timescale : 0;
+    if ((t.flags & 0x5) == 0x5) { double d; avv_info(g->vid, 0, 0, &d, 0, 0); sec = d; }   /* +infinito: o último quadro */
+    avv_frame f;
+    if (avv_frame_at(g->vid, sec, &f)) { if (err) *err = ig_error(); return 0; }
+    int rot = g->applies_transform ? avv_rotation(g->vid) : 0;
+    double nw = rot == 90 || rot == 270 ? f.h : f.w, nh = rot == 90 || rot == 270 ? f.w : f.h, k = 1;
+    if (g->max.w > 0 && nw > g->max.w) k = g->max.w / nw;
+    if (g->max.h > 0 && nh * k > g->max.h) k = g->max.h / nh;
+    int ow = 0, oh = 0;
+    uint8_t *px = 0;
+    if (avv_to_bgra(&f, rot, k < 1 ? (int)(nw * k + 0.5) : 0, k < 1 ? (int)(nh * k + 0.5) : 0, &px, &ow, &oh)) { if (err) *err = ig_error(); return 0; }
+    void *prov = CGDataProviderCreateWithData(0, px, (size_t)ow * oh * 4, ig_free_pixels);
+    void *cs = CGColorSpaceCreateDeviceRGB();
+    /* BGRA na memória = kCGImageAlphaNoneSkipFirst | kCGBitmapByteOrder32Little */
+    void *img = CGImageCreate((size_t)ow, (size_t)oh, 8, 32, (size_t)ow * 4, cs, 6 | 0x2000, prov, 0, 1, 0);
+    CGColorSpaceRelease(cs);
+    CGDataProviderRelease(prov);
+    if (!img) { if (err) *err = ig_error(); return 0; }
+    if (actual) { actual->value = (long long)(f.pts * 600 + (f.pts >= 0 ? 0.5 : -0.5)); actual->timescale = 600; actual->flags = 1; actual->epoch = 0; }
+    if (err) *err = 0;
+    return img;
+}
+static void *ig_copy_image(id s, SEL c, ig_cmtime_t t, ig_cmtime_t *actual, id *err) { (void)c; return ig_make((ig_t *)s, t, actual, err); }
 /* bloco: (CMTime requested, CGImageRef, CMTime actual, AVAssetImageGeneratorResult, NSError *) */
 static void ig_generate(id s, SEL c, id times, ig_block_t *blk) {
     (void)c;
@@ -89,18 +131,24 @@ static void ig_generate(id s, SEL c, id times, ig_block_t *blk) {
     ig_cmtime_t zero = {0, 0, 0, 0};
     for (long i = 0; i < n; i++) {
         id v = MSG(id, times, "objectAtIndex:", (unsigned long)i);
-        ig_cmtime_t req = zero;
+        ig_cmtime_t req = zero, act = zero;
         if (v) MSG(void, v, "getValue:", (void *)&req);
-        long result = g->cancelled ? 2 /* Cancelled */ : 1 /* Failed */;
-        ((void (*)(void *, ig_cmtime_t, void *, ig_cmtime_t, long, id))blk->invoke)(blk, req, 0, zero, result, g->cancelled ? 0 : ig_error());
+        if (g->cancelled) { ((void (*)(void *, ig_cmtime_t, void *, ig_cmtime_t, long, id))blk->invoke)(blk, req, 0, zero, 2 /* Cancelled */, 0); continue; }
+        id e = 0;
+        void *img = ig_make(g, req, &act, &e);
+        ((void (*)(void *, ig_cmtime_t, void *, ig_cmtime_t, long, id))blk->invoke)(blk, req, img, act, img ? 0 /* Succeeded */ : 1 /* Failed */, e);
+        if (img) CGImageRelease(img);
     }
 }
 /* macOS 13: (CGImageRef, CMTime actual, NSError *) */
 static void ig_generate_one(id s, SEL c, ig_cmtime_t t, ig_block_t *blk) {
-    (void)s; (void)c; (void)t;
+    (void)c;
     if (!blk || !blk->invoke) return;
-    ig_cmtime_t zero = {0, 0, 0, 0};
-    ((void (*)(void *, void *, ig_cmtime_t, id))blk->invoke)(blk, 0, zero, ig_error());
+    ig_cmtime_t act = {0, 0, 0, 0};
+    id e = 0;
+    void *img = ig_make((ig_t *)s, t, &act, &e);
+    ((void (*)(void *, void *, ig_cmtime_t, id))blk->invoke)(blk, img, act, e);
+    if (img) CGImageRelease(img);
 }
 static void ig_cancel(id s, SEL c) { (void)c; ((ig_t *)s)->cancelled = 1; }
 

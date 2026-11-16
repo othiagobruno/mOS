@@ -3,11 +3,12 @@
  * linhas a cada leitura da posição e conta quadros, a trava de atualização responde no bit de status, e o
  * endereço novo do plano só vale (EARLIEST_INUSE) no vblank depois de soltar a trava.
  * Rodar da raiz:
- *   gcc -O2 -Wall -Wextra -DMOS_HOST_TEST -I kernel/dev/amdgpu -I tools tools/amdgpu_hw_host.c kernel/dev/amdgpu/engine.c kernel/dev/amdgpu/irq.c kernel/dev/amdgpu/gfx.c kernel/dev/amdgpu/compute.c kernel/dev/amdgpu/vm.c \
+ *   gcc -O2 -Wall -Wextra -DMOS_HOST_TEST -I kernel/dev/amdgpu -I tools tools/amdgpu_hw_host.c kernel/dev/amdgpu/engine.c kernel/dev/amdgpu/irq.c kernel/dev/amdgpu/gfx.c kernel/dev/amdgpu/compute.c kernel/dev/amdgpu/vm.c kernel/dev/amdgpu/abi.c kernel/dev/amdgpu/pm4check.c kernel/dev/amdgpu/pm.c kernel/dev/amdgpu/ddc.c \
  *       kernel/dev/amdgpu/amdgpu.c kernel/dev/amdgpu/edid.c kernel/dev/amdgpu/ucode.c -o /tmp/amdgpu_hw && /tmp/amdgpu_hw */
 #include "amdgpu.h"
 #include "regs.h"
 #include "ucode.h"
+#include "pm4check.h"
 #include <stdarg.h>
 #include <stdlib.h>
 
@@ -108,6 +109,7 @@ static u64 ih_pushed, hpd_acks;
 static amdgpu_t *msi_target;   /* entrega da MSI: o driver esvazia o anel logo depois de cada entrada */
 static int in_msi;
 static u32 ih_ring_id;      /* ME/pipe/fila de quem gerou a entrada (dw0[23:16]) */
+static u32 ih_vmid;         /* VMID da entrada (dw0[27:24]) */
 static void ih_push(u32 client, u32 src, u32 ctx) {
     u32 c = regs[R_IH_RB_CNTL / 4];
     if (!(c & IH_RB_ENABLE) || (c & IH_MC_SPACE_MASK) != IH_MC_SPACE_BUS) return;
@@ -115,7 +117,7 @@ static void ih_push(u32 client, u32 src, u32 ctx) {
     u32 *ring = (u32 *)(uintptr_t)(((u64)(regs[R_IH_RB_BASE_HI / 4] & 0xFF) << 40) | ((u64)regs[R_IH_RB_BASE / 4] << 8));
     u32 *e = ring + ih_w / 4;
     memset(e, 0, 32);
-    e[0] = client | src << 8 | ih_ring_id << 16; e[1] = (u32)ih_pushed; e[4] = ctx;
+    e[0] = client | src << 8 | ih_ring_id << 16 | ih_vmid << 24; e[1] = (u32)ih_pushed; e[4] = ctx;
     ih_w = (ih_w + 32) & (bytes - 1);
     if (ih_w == regs[R_IH_RB_RPTR / 4]) ih_ovf = true;   /* alcançou o leitor: as mais antigas se perdem */
     ih_pushed++;
@@ -180,6 +182,7 @@ static uc_sim_t uc_rlc = {R_RLC_GPM_UCODE_ADDR, R_RLC_GPM_UCODE_DATA, RLC_UCODE_
                 uc_me  = {R_CP_ME_RAM_WADDR, R_CP_ME_RAM_DATA, 0, 0, 0, 0, 0, 0};
 static uc_sim_t *ucs[] = {&uc_rlc, &uc_pfp, &uc_ce, &uc_me};
 static bool smu_gfx_on, cp_dead, gfxoff_off, in_preamble, clear_state_done;
+static u32 sh_regs[0x400];
 static u32 sh_cfg[16], sh_bases[16], ctx_regs[0x400], srm_aram_words, scratch_writes;
 static u64 cp_packets, cp_bad, cp_ibs;
 static bool uc_ok(const uc_sim_t *u) { return u->ver && !u->bad && u->words == u->refdw; }
@@ -218,6 +221,10 @@ static void cp_exec(const u32 *buf, u32 pos, u32 end, u32 mask, int depth) {
             for (u32 i = 0; i < n; i++) ctx_regs[P(1) + i] = P(2 + i);
             break;
         case PM4_CLEAR_STATE: clear_state_done = !in_preamble; break;
+        case PM4C_SET_SH_REG:
+            if ((P(1) & 0xFFFF) + n > 0x400 || !n) { cp_bad++; break; }
+            for (u32 i = 0; i < n; i++) sh_regs[(P(1) & 0xFFFF) + i] = P(2 + i);
+            break;
         case PM4_SET_BASE: if (P(1) != PM4_CE_PARTITION_BASE) cp_bad++; break;
         case PM4_SET_UCONFIG_REG: {
             u32 o = P(1) & 0xFFFF;
@@ -244,19 +251,20 @@ static void cp_exec(const u32 *buf, u32 pos, u32 end, u32 mask, int depth) {
         }
         case PM4_INDIRECT_BUFFER: {
             u64 ib = ((u64)(P(2) & 0xFFFF) << 32) | (P(1) & ~3u);
-            u32 ctl = P(3), ndw = ctl & 0xFFFFF, vmid = (ctl >> 24) & 0xF;
-            static u32 ibuf[1 << 16];
-            if (depth || ndw > (1u << 16)) { cp_bad++; break; }
+            u32 ctl = P(3), ndw = ctl & 0xFFFFF, vmid = depth ? cur_vmid : (ctl >> 24) & 0xF;   /* o IB2 herda o VMID */
+            static u32 ibuf[2][1 << 16];
+            if (depth > 1 || ndw > (1u << 16) || (depth && (ctl >> 24))) { cp_bad++; break; }
             bool ok = true;
             for (u32 i = 0; i < ndw && ok; i++) {            /* busca dword a dword pela VM do IB */
                 const u8 *q = vm_ptr(vmid, ib + 4ull * i, false);
-                if (q) memcpy(&ibuf[i], q, 4); else ok = false;
+                if (q) memcpy(&ibuf[depth][i], q, 4); else ok = false;
             }
             if (!ok) { cp_bad++; break; }
             cp_ibs++;
+            u32 saved = cur_vmid;
             cur_vmid = vmid;
-            cp_exec(ibuf, 0, ndw, 0xFFFFFFFFu, depth + 1);
-            cur_vmid = 0;
+            cp_exec(ibuf[depth], 0, ndw, 0xFFFFFFFFu, depth + 1);
+            cur_vmid = saved;
             break;
         }
         default: printf("FALHOU: pacote PM4 desconhecido 0x%x\n", op); total++; cp_bad++; break;
@@ -325,7 +333,88 @@ static bool gc_wreg(u32 off, u32 v) {
     return false;
 }
 
+/* ---------- motor de I2C do DCN simulado: um monitor (EDID com 3 blocos, DDC/CI) numa linha ---------- */
+static u8 i2c_buf[256]; static u32 i2c_wlen, i2c_rp;
+static int mon_ddc = 4;                 /* DDC5: a linha do HDMI */
+static u8 mon_edid[384]; static u8 mon_seg, mon_off;
+static u16 mon_bright = 50; static u8 mon_reply[11]; static bool mon_has_reply, i2c_hw_owned;
+static u64 i2c_gos;
+static void mon_init(void) {
+    static const u8 hdr[8] = {0, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0};
+    for (int i = 0; i < 384; i++) mon_edid[i] = (u8)(i * 13 + 7);
+    memcpy(mon_edid, hdr, 8);
+    mon_edid[126] = 2;
+    for (int b = 0; b < 3; b++) { u8 sum = 0; for (int i = 0; i < 127; i++) sum = (u8)(sum + mon_edid[b * 128 + i]); mon_edid[b * 128 + 127] = (u8)(0x100 - sum); }
+}
+static bool i2c_dev_write(u32 ddc, u8 addr, const u8 *p, u32 n) {
+    if ((int)ddc != mon_ddc) return false;
+    if (addr == 0x30) { if (n) mon_seg = p[0]; return true; }
+    if (addr == 0x50) { if (n) mon_off = p[0]; return true; }
+    if (addr == 0x37) {
+        u8 c = 0x6E; for (u32 i = 0; i + 1 < n; i++) c ^= p[i];
+        if (n < 5 || c != p[n - 1] || p[0] != 0x51) return true;          /* lixo: o monitor ignora */
+        if (p[1] == 0x82 && p[2] == 0x01) {
+            u8 vcp = p[3];
+            u8 r[11] = {0x6E, 0x88, 0x02, (u8)(vcp == 0x10 ? 0 : 1), vcp, 0, 0, 100, (u8)(mon_bright >> 8), (u8)mon_bright, 0};
+            u8 k = 0x50; for (int i = 0; i < 10; i++) k ^= r[i];
+            r[10] = k; memcpy(mon_reply, r, 11); mon_has_reply = true;
+        } else if (p[1] == 0x84 && p[2] == 0x03 && p[3] == 0x10) mon_bright = (u16)(p[4] << 8 | p[5]);
+        return true;
+    }
+    return false;
+}
+static bool i2c_dev_read(u32 ddc, u8 addr, u8 *out, u32 n) {
+    if ((int)ddc != mon_ddc) return false;
+    if (addr == 0x50) { for (u32 i = 0; i < n; i++) { u32 at = mon_seg * 256u + mon_off + i; out[i] = at < 384 ? mon_edid[at] : 0xFF; } mon_off = (u8)(mon_off + n); return true; }
+    if (addr == 0x37) { if (!mon_has_reply) return false; memcpy(out, mon_reply, n < 11 ? n : 11); mon_has_reply = false; return true; }
+    return false;
+}
+static void i2c_go(u32 ctl) {
+    u32 ddc = (ctl & I2C_DDC_SELECT_MASK) >> I2C_DDC_SELECT_SHIFT, n = ((ctl & I2C_TRANS_COUNT_MASK) >> I2C_TRANS_COUNT_SHIFT) + 1;
+    u32 arb = (regs[R_DC_I2C_ARBITRATION / 4] & I2C_ARB_STATUS_MASK) >> I2C_ARB_STATUS_SHIFT;
+    u32 st = I2C_SW_DONE;
+    if (arb != I2C_ST_USED_BY_SW || !(regs[R_DC_I2C_DDC_SETUP(ddc) / 4] & I2C_SETUP_ENABLE) || !(regs[R_DC_I2C_DDC_SPEED(ddc) / 4] >> 16)) st = I2C_SW_ABORTED;
+    u32 pos = 0, out = i2c_wlen;
+    for (u32 t = 0; t < n && st == I2C_SW_DONE; t++) {
+        u32 tr = regs[R_DC_I2C_TRANSACTION(t) / 4], len = (tr & I2C_TR_COUNT_MASK) >> I2C_TR_COUNT_SHIFT;
+        u8 ab = i2c_buf[pos++];
+        bool rd = tr & I2C_TR_RW;
+        if (rd != (ab & 1)) { st = I2C_SW_ABORTED; break; }
+        if (rd) { if (out + len > AMD_I2C_BUFFER || !i2c_dev_read(ddc, ab >> 1, i2c_buf + out, len)) st = I2C_SW_NACK | I2C_SW_DONE; out += len; }
+        else { if (!i2c_dev_write(ddc, ab >> 1, i2c_buf + pos, len)) st = I2C_SW_NACK | I2C_SW_DONE; pos += len; }
+    }
+    mon_seg = 0;                           /* o ponteiro de segmento do E-DDC volta a 0 depois do STOP */
+    regs[R_DC_I2C_SW_STATUS / 4] = st;
+    i2c_gos++;
+}
+static bool i2c_wreg(u32 off, u32 v) {
+    if (off == R_DC_I2C_ARBITRATION) {
+        u32 r = v & ~(I2C_ARB_SW_USE_REQ | I2C_ARB_SW_DONE | I2C_ARB_STATUS_MASK);
+        u32 st = (regs[off / 4] & I2C_ARB_STATUS_MASK) >> I2C_ARB_STATUS_SHIFT;
+        if (i2c_hw_owned) st = I2C_ST_USED_BY_HW;
+        else if (v & I2C_ARB_SW_DONE) st = I2C_ST_IDLE;
+        else if (v & I2C_ARB_SW_USE_REQ) st = I2C_ST_USED_BY_SW;
+        regs[off / 4] = r | st << I2C_ARB_STATUS_SHIFT;
+        return true;
+    }
+    if (off == R_DC_I2C_DATA) {
+        u32 d = (v & I2C_DATA_MASK) >> I2C_DATA_SHIFT;
+        if (v & I2C_DATA_RW) { if (v & I2C_INDEX_WRITE) i2c_rp = (v >> I2C_INDEX_SHIFT) & 0x3FF; return true; }
+        if (v & I2C_INDEX_WRITE) i2c_wlen = (v >> I2C_INDEX_SHIFT) & 0x3FF;
+        if (i2c_wlen < sizeof i2c_buf) i2c_buf[i2c_wlen++] = (u8)d;
+        return true;
+    }
+    if (off == R_DC_I2C_CONTROL) {
+        if (v & I2C_SW_STATUS_RESET) regs[R_DC_I2C_SW_STATUS / 4] = 0;
+        regs[off / 4] = v & ~(I2C_GO | I2C_SW_STATUS_RESET);
+        if (v & I2C_GO) i2c_go(v);
+        return true;
+    }
+    return false;
+}
+
 static bool engine_wreg(u32 off, u32 v) {
+    if (i2c_wreg(off, v)) return true;
     if (gc_wreg(off, v)) return true;
     if (off == R_MP1_C2PMSG_66) {
         if (!smu_alive) return true;
@@ -363,6 +452,7 @@ static bool engine_wreg(u32 off, u32 v) {
 }
 
 u32 amd_host_rreg(u32 off) {
+    if (off == R_DC_I2C_DATA) { u32 d = i2c_rp < sizeof i2c_buf ? i2c_buf[i2c_rp] : 0; i2c_rp++; return d << I2C_DATA_SHIFT; }
     if (off == R_VM_INV_ENG17_SEM) return 1;
     if (off >= AMD_MMIO_SIZE) { printf("FALHOU: leitura fora do BAR5 0x%x\n", off); total++; return 0xFFFFFFFFu; }
     if (off == R_OTG_STATUS_POSITION(sim_otg)) { scan(7); return vline; }
@@ -1046,6 +1136,166 @@ static void test_gfx(void) {
     corrupt_me = false;
 }
 
+static void test_ddc(void) {
+    edid_mode_t m = mode_5120();
+    boot_state(&m, 1);
+    pci_dev_t d = {0};
+    d.vendor = 0x1002; d.device = 0x15D8;
+    static amdgpu_t dd;
+    CHECK(amdgpu_probe(&dd, &d, 0xE0000000ull, 5120, 1440, 5120), "probe para o DDC");
+    regs[R_MICROSECOND_TIME_BASE_DIV / 4] = 48 | 2u << XTAL_REF_DIV_SHIFT;   /* 48 MHz / 2 */
+    mon_init();
+    CHECK(amdgpu_ddc_probe(&dd) == 1u << mon_ddc && dd.ddc_edid_len[mon_ddc] == 384 && !memcmp(dd.ddc_edid[mon_ddc], mon_edid, 384),
+          "EDID ao vivo pela linha do HDMI (3 blocos, segmento E-DDC) (máscara 0x%x, %u bytes)", dd.ddc_mask, dd.ddc_edid_len[mon_ddc]);
+    CHECK((regs[R_DC_I2C_DDC_SPEED(mon_ddc) / 4] >> 16) == 240 && !(regs[R_DC_I2C_DDC_SETUP(mon_ddc) / 4] & I2C_SETUP_ENABLE) &&
+          ((regs[R_DC_I2C_ARBITRATION / 4] & I2C_ARB_STATUS_MASK) >> I2C_ARB_STATUS_SHIFT) == I2C_ST_IDLE, "100 kHz e motor devolvido");
+    u8 buf[512];
+    CHECK(amdgpu_ddc_read_edid(&dd, 0, buf, sizeof buf) == -MOS_ENXIO, "linha vazia: ninguém responde");
+    CHECK(amdgpu_ddc_read_edid(&dd, mon_ddc, buf, 256) == 256, "para no limite do buffer");
+    mon_edid[100] ^= 1;
+    CHECK(amdgpu_ddc_read_edid(&dd, mon_ddc, buf, sizeof buf) == -MOS_EIO, "soma do bloco 0 errada");
+    mon_edid[100] ^= 1;
+    mon_edid[300] ^= 1;
+    CHECK(amdgpu_ddc_read_edid(&dd, mon_ddc, buf, sizeof buf) == 256, "bloco de extensão ruim fica de fora");
+    mon_edid[300] ^= 1;
+    u16 cur = 0, max = 0;
+    CHECK(!amdgpu_ddcci_get_vcp(&dd, mon_ddc, 0x10, &cur, &max) && cur == 50 && max == 100, "brilho pelo DDC/CI (%u/%u)", cur, max);
+    CHECK(!amdgpu_ddcci_set_vcp(&dd, mon_ddc, 0x10, 80) && !amdgpu_ddcci_get_vcp(&dd, mon_ddc, 0x10, &cur, NULL) && cur == 80 && mon_bright == 80, "brilho ajustado");
+    CHECK(amdgpu_ddcci_get_vcp(&dd, mon_ddc, 0xF0, &cur, NULL) == -MOS_ENOENT, "controle que o monitor não tem");
+    CHECK(amdgpu_ddcci_get_vcp(&dd, 1, 0x10, &cur, NULL) == -MOS_ENXIO, "sem DDC/CI na linha");
+    i2c_hw_owned = true;
+    regs[R_DC_I2C_ARBITRATION / 4] = I2C_ST_USED_BY_HW << I2C_ARB_STATUS_SHIFT;
+    CHECK(amdgpu_ddc_read_edid(&dd, mon_ddc, buf, sizeof buf) == -MOS_EBUSY, "motor com o firmware");
+    i2c_hw_owned = false;
+    regs[R_DC_I2C_ARBITRATION / 4] = 0;
+    CHECK(dd.i2c_errors > 0 && dd.i2c_ops > 10, "contadores");
+}
+
+static int pm_regs_count;
+void amdgpu_pm_register(amdgpu_t *a) { (void)a; pm_regs_count++; }
+
+/* repouso: s2idle desliga o sincronismo; S3 apaga os registradores (a VRAM fica) e os motores voltam */
+static void test_pm(void) {
+    cp_dead = mec_dead = false;
+    pm_regs_count = 0;
+    CHECK(engines_up() && eng.gfx_ok && eng.comp_ok && pm_regs_count == 1, "motores e registro no pm");
+    amdgpu_t *a = &eng;
+    CHECK(!amdgpu_suspend(a, 0) && !(regs[R_OTG_CONTROL(0) / 4] & OTG_MASTER_EN) && a->dpms_off, "s2idle: saída sem sincronismo");
+    amdgpu_resume(a, 0);
+    CHECK((regs[R_OTG_CONTROL(0) / 4] & OTG_MASTER_EN) && !a->dpms_off, "s2idle: saída de volta");
+    /* trabalho antes do S3: uma VM com um BO na VRAM */
+    amd_vm_t *vm = amdgpu_vm_create(a);
+    u64 bo = amdgpu_vram_alloc(a, 64 * 1024);
+    CHECK(vm && !amdgpu_vm_map(a, vm, 0x400000000ull, bo, 64 * 1024, AMD_VM_VRAM | AMD_VM_WRITE), "VM antes do S3");
+    u32 *bp = (u32 *)amd_host_phys(bo);
+    bp[0] = PM4_TYPE3(PM4_WRITE_DATA, 3); bp[1] = PM4_WD_DST_MEM; bp[2] = 0x100u; bp[3] = 4; bp[4] = 0x5E5E;
+    u32 s1 = amdgpu_gfx_submit_vm(a, vm, 0x400000000ull, 5);
+    CHECK(s1 && amdgpu_gfx_wait(a, s1) && bp[64] == 0x5E5E, "IB antes do S3");
+    u32 gseq = a->gfx_seq, cseq = a->comp_seq, sseq = a->sdma_seq;
+    CHECK(!amdgpu_suspend(a, 3) && !a->gfx_ok && !a->sdma_ok && (regs[R_CP_ME_CNTL / 4] & CP_ME_HALT_ALL) &&
+          (regs[R_SDMA_F32_CNTL / 4] & SDMA_F32_HALT) && !(regs[R_IH_RB_CNTL / 4] & IH_RB_ENABLE), "S3: motores parados");
+    CHECK(!amdgpu_gfx_submit_vm(a, vm, 0x400000000ull, 5) && !amdgpu_sdma_fill(a, 0, 0, 4), "nada é enviado durante o S3");
+    /* o S3 apaga o chip: registradores de volta ao estado de boot, microcódigos e SMU zerados; a VRAM fica */
+    edid_mode_t m = mode_5120();
+    boot_state(&m, 1);
+    smu_sdma_on = smu_gfx_on = false; ucode_loaded_ver = 0; ucode_words = 0;
+    for (usize i = 0; i < ARRAY_LEN(ucs); i++) ucs[i]->words = ucs[i]->ver = ucs[i]->bad = 0;
+    uc_mec.words = uc_mec.ver = uc_mec.bad = 0;
+    amdgpu_resume(a, 3);
+    CHECK(a->smu_ok && a->gmc_ok && a->ih_ok && a->sdma_ok && a->gfx_ok && a->comp_ok && smu_gfx_on && smu_sdma_on, "S3: motores de volta (smu %d gmc %d ih %d sdma %d gfx %d comp %d)", a->smu_ok, a->gmc_ok, a->ih_ok, a->sdma_ok, a->gfx_ok, a->comp_ok);
+    CHECK(regs[GFXHUB_VM(R_VM_CTX_PT_BASE_LO(vm->vmid)) / 4] == (u32)((CARVE + (vm->root - 0xE0000000ull)) | 1) &&
+          (regs[R_VM_CTX0_PT_BASE_LO / 4] & 1), "S3: tabelas da GART e da VM religadas");
+    bp[4] = 0x6F6F;
+    u32 s2 = amdgpu_gfx_submit_vm(a, vm, 0x400000000ull, 5);
+    CHECK(s2 == gseq + 2 && amdgpu_gfx_wait(a, s2) && bp[64] == 0x6F6F, "S3: o processo continua de onde estava (fence %u)", s2);
+    u32 s3 = amdgpu_compute_submit_vm(a, vm, 0x400000000ull, 5);
+    u32 s4 = amdgpu_sdma_fill(a, amdgpu_vram_to_mc(a, bo) + 512, 0x77, 4);
+    CHECK(s3 > cseq && amdgpu_compute_wait(a, s3) && s4 > sseq && amdgpu_sdma_wait(a, s4) && bp[128] == 0x77, "S3: compute e SDMA de volta");
+    CHECK(a->s3_count == 1 && pm_regs_count == 1, "registro feito uma vez só");
+    amdgpu_vm_destroy(a, vm);
+    amdgpu_vram_free(a, bo, 64 * 1024);
+}
+
+/* fences da ABI: o que abi.c sinalizou */
+static int fen_pid[64], fen_id[64], nfen;
+void gpu_fence_from_irq(int pid, unsigned fence) { if (nfen < 64) { fen_pid[nfen] = pid; fen_id[nfen] = (int)fence; nfen++; } }
+
+static void test_abi(void) {
+    cp_dead = mec_dead = false;
+    CHECK(engines_up() && eng.gfx_ok && eng.comp_ok, "motores para a ABI");
+    amdgpu_t *a = &eng;
+    amdgpu_set_main(a);
+    CHECK(amdgpu_abi_available(), "ABI AMD disponível");
+    u64 free0 = amdgpu_vram_free_bytes(a);
+    const int PID = 7;
+    u64 vbo = amdgpu_vram_alloc(a, 1u << 20);
+    u8 *ram = aligned_alloc(4096, 64 * 1024);
+    memset(ram, 0, 64 * 1024);
+    u64 va_v = 0, va_r = 0;
+    CHECK(!amdgpu_abi_bo_map(PID, vbo, 1u << 20, true, false, &va_v) && !amdgpu_abi_bo_map(PID, (u64)(uintptr_t)ram, 64 * 1024, false, false, &va_r) &&
+          va_v && va_r > va_v + (1u << 20), "BOs com VA na VM do processo");
+    amd_abi_bo_t bl[2] = {{va_v, 1u << 20, vbo, true}, {va_r, 64 * 1024, (u64)(uintptr_t)ram, false}};
+    /* IB1 na RAM: escreve na VRAM e chama um IB2 (também na RAM) que escreve na RAM */
+    u32 *ib = (u32 *)ram, *ib2 = (u32 *)(ram + 4096);
+    u32 k = 0;
+    ib[k++] = PM4_TYPE3(PM4C_SET_SH_REG, 1); ib[k++] = 0x48; ib[k++] = 0xABCD;
+    ib[k++] = PM4_TYPE3(PM4_WRITE_DATA, 3); ib[k++] = PM4_WD_DST_MEM; ib[k++] = (u32)(va_v + 64); ib[k++] = (u32)((va_v + 64) >> 32); ib[k++] = 0x1111;
+    ib[k++] = PM4_TYPE3(PM4_INDIRECT_BUFFER, 2); ib[k++] = (u32)(va_r + 4096); ib[k++] = (u32)((va_r + 4096) >> 32); ib[k++] = 5;
+    ib2[0] = PM4_TYPE3(PM4_WRITE_DATA, 3); ib2[1] = PM4_WD_DST_MEM; ib2[2] = (u32)(va_r + 8192); ib2[3] = (u32)((va_r + 8192) >> 32); ib2[4] = 0x2222;
+    amd_abi_ib_t il = {va_r, k};
+    nfen = 0;
+    u64 ticket = 0;
+    u64 cpb = cp_bad, vf0 = vm_faults;
+    int e = amdgpu_abi_submit(PID, 0, &il, 1, bl, 2, 41, &ticket);
+    u32 *vv = (u32 *)amd_host_phys(vbo);
+    CHECK(!e && ticket && amdgpu_abi_done(ticket), "lote enviado (%d)", e);
+    CHECK(sh_regs[0x48] == 0xABCD && vv[16] == 0x1111 && ((u32 *)ram)[2048] == 0x2222 && cp_bad == cpb && vm_faults == vf0, "IB1 e IB2 rodaram pela VM do processo (sh 0x%x v 0x%x r 0x%x bad %llu->%llu faltas %llu)", sh_regs[0x48], vv[16], ((u32 *)ram)[2048], cpb, cp_bad, vm_faults);
+    amdgpu_irq_process(a);
+    CHECK(nfen == 1 && fen_pid[0] == PID && fen_id[0] == 41, "fence sinalizada pelo EOP");
+    /* recusas: registrador privilegiado, IB fora dos BOs, IB2 aninhado, anel inválido */
+    ib[1] = 0x400;
+    CHECK(amdgpu_abi_submit(PID, 0, &il, 1, bl, 2, 42, NULL) == -MOS_EINVAL && nfen == 1, "SET_SH_REG fora da janela recusado, fence não sinaliza");
+    ib[1] = 0x48;
+    amd_abi_ib_t fora = {va_r + 64 * 1024 - 8, 4};
+    CHECK(amdgpu_abi_submit(PID, 0, &fora, 1, bl, 2, 0, NULL) == -MOS_EINVAL, "IB passa do fim do BO");
+    ib2[0] = PM4_TYPE3(PM4_INDIRECT_BUFFER, 2); ib2[1] = (u32)va_r; ib2[2] = (u32)(va_r >> 32); ib2[3] = 4;
+    CHECK(amdgpu_abi_submit(PID, 0, &il, 1, bl, 2, 0, NULL) == -MOS_EINVAL, "IB2 aninhado recusado");
+    ib2[0] = PM4_TYPE3(PM4_WRITE_DATA, 3); ib2[1] = PM4_WD_DST_MEM; ib2[2] = (u32)(va_r + 8192); ib2[3] = (u32)((va_r + 8192) >> 32); ib2[4] = 0x3333;
+    CHECK(amdgpu_abi_submit(PID, 2, &il, 1, bl, 2, 0, NULL) == -MOS_EINVAL, "anel inexistente");
+    /* compute, e a cópia: o processo troca o IB depois do envio e não muda o que a GPU leu */
+    e = amdgpu_abi_submit(PID, 1, &il, 1, bl, 2, 43, &ticket);
+    ib[7] = 0xBAD;
+    amdgpu_irq_process(a);
+    CHECK(!e && (ticket >> 32) == 1 && vv[16] == 0x1111 && ((u32 *)ram)[2048] == 0x3333 && nfen == 2 && fen_id[1] == 43, "lote na fila de compute");
+    /* o pool dá a volta: 3000 lotes de ~1 KiB */
+    u32 big[260];
+    memcpy(ram + 16384, ib, 4 * k);
+    for (u32 i = 0; i < 250; i++) ((u32 *)(ram + 16384))[k + i] = PM4_NOP_1DW;
+    (void)big;
+    amd_abi_ib_t il2 = {va_r + 16384, k + 250};
+    ((u32 *)(ram + 16384))[7] = 0x4444;
+    bool all = true;
+    for (int i = 0; i < 3000 && all; i++) all = !amdgpu_abi_submit(PID, i & 1, &il2, 1, bl, 2, 0, NULL);
+    CHECK(all && vv[16] == 0x4444 && a->gfx_timeouts == 0 && a->comp_timeouts == 0, "3000 lotes: o pool deu a volta");
+    /* falha de página no VMID do processo: contexto perdido */
+    u32 vmid = 0;
+    for (u32 v = 1; v < 16; v++) if (a->vmid_used >> v & 1) vmid = v;
+    ih_vmid = vmid;
+    ih_push(IH_CLIENT_UTCL2, IH_SRC_VM_FAULT, 0);
+    ih_vmid = 0;
+    CHECK(amdgpu_abi_lost(PID) && a->vm_faults == 1 && amdgpu_abi_submit(PID, 0, &il, 1, bl, 2, 0, NULL) == -MOS_EIO &&
+          (regs[GFXHUB_VM(R_VM_L2_PROT_FAULT_CNTL2) / 4] & PROT_FAULT_CLEAR_STATUS), "falha de página: contexto perdido e status limpo");
+    CHECK((regs[GFXHUB_VM(R_VM_CTX_CNTL(3)) / 4] & CTX_FAULT_INTERRUPTS) == CTX_FAULT_INTERRUPTS, "faltas avisam pelo IH");
+    /* saída do processo: VM e pool voltam; outro processo ganha VM nova */
+    amdgpu_abi_proc_exit(PID);
+    amdgpu_vram_free(a, vbo, 1u << 20);
+    CHECK(!amdgpu_abi_lost(PID) && a->vmid_used == 0 && amdgpu_vram_free_bytes(a) == free0, "saída do processo devolve VM e VRAM");
+    u64 va2 = 0;
+    CHECK(!amdgpu_abi_bo_map(8, (u64)(uintptr_t)ram, 4096, false, true, &va2) && va2 == va_v, "processo novo começa do zero");
+    amdgpu_abi_proc_exit(8);
+    free(ram);
+}
+
 int main(int argc, char **argv) {
     verbose = argc > 1 && argv[1][0] == '-';
     setvbuf(stdout, NULL, _IONBF, 0);
@@ -1055,6 +1305,9 @@ int main(int argc, char **argv) {
     test_present();
     test_engines();
     test_gfx();
+    test_abi();
+    test_pm();
+    test_ddc();
     printf("amdgpu-hw-host: %d/%d ok\n", pass, total);
     return pass == total ? 0 : 1;
 }

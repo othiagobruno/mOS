@@ -93,6 +93,12 @@ static void hub_invalidate(amdgpu_t *a, int hub, u32 vmid_mask) {
     if (n >= SPIN_MAX) a->gmc_timeouts++;
 }
 
+/* falha de página: libera o registro de status da hub para a próxima (gmc_v9_0_process_interrupt) */
+void amdgpu_vm_fault_ack(amdgpu_t *a, int hub) {
+    a->vm_fault_status = RR(a, HV(hub, R_VM_L2_PROT_FAULT_STATUS));
+    WR(a, HV(hub, R_VM_L2_PROT_FAULT_CNTL2), RR(a, HV(hub, R_VM_L2_PROT_FAULT_CNTL2)) | PROT_FAULT_CLEAR_STATUS);
+}
+
 void amdgpu_tlb_flush(amdgpu_t *a, u32 vmid_mask) {
     hub_invalidate(a, 0, vmid_mask);
     if (a->gfxhub_ok) hub_invalidate(a, 1, vmid_mask);
@@ -103,7 +109,7 @@ static void gmc_invalidate(amdgpu_t *a) { amdgpu_tlb_flush(a, INV_REQ_VMID0); }
 static void hub_setup_vmids(amdgpu_t *a, int hub) {
     for (u32 n = 1; n < 16; n++) {
         u32 t = RR(a, HV(hub, R_VM_CTX_CNTL(n))) & ~0x007FFFFFu;
-        WR(a, HV(hub, R_VM_CTX_CNTL(n)), t | CTX0_ENABLE | CTX_DEPTH_4LEVEL | CTX_FAULT_DEFAULTS);
+        WR(a, HV(hub, R_VM_CTX_CNTL(n)), t | CTX0_ENABLE | CTX_DEPTH_4LEVEL | CTX_FAULT_DEFAULTS | CTX_FAULT_INTERRUPTS);
         WR(a, HV(hub, R_VM_CTX_PT_START_LO(n)), 0);
         WR(a, HV(hub, R_VM_CTX_PT_START_HI(n)), 0);
         WR(a, HV(hub, R_VM_CTX_PT_END_LO(n)), (u32)(AMD_VM_MAX_PFN - 1));
@@ -169,6 +175,23 @@ static void hub_setup(amdgpu_t *a, int hub, u64 pt, u64 scratch_phys) {
 static bool gmc_init(amdgpu_t *a) {
     a->gart_size = (u64)AMD_GART_PAGES * 4096;
     a->gart_start = a->fb_start >= a->gart_size ? 0 : ((a->fb_top + 1 + 0xFFFFFFFFull) & ~0xFFFFFFFFull);
+    if (a->gart_table) {                     /* volta do S3: a tabela e as páginas continuam na VRAM/RAM */
+        u64 pt = (a->fb_phys + (a->gart_table - a->bar0)) | AMD_PDE_VALID;
+        u64 sp = a->fb_phys + (a->gart_scratch - a->bar0);
+        hub_setup(a, 0, pt, sp);
+        hub_setup(a, 1, pt, sp);
+        a->gfxhub_ok = true;
+        for (u32 v = 1; v < 16; v++) {        /* VMs dos processos */
+            if (!(a->vmid_used >> v & 1)) continue;
+            u64 base = (a->fb_phys + (a->vms[v].root - a->bar0)) | AMD_PDE_VALID;
+            for (int hub = 0; hub < 2; hub++) {
+                WR(a, HV(hub, R_VM_CTX_PT_BASE_LO(v)), (u32)base);
+                WR(a, HV(hub, R_VM_CTX_PT_BASE_HI(v)), (u32)(base >> 32));
+            }
+        }
+        amdgpu_tlb_flush(a, 0xFFFFu);
+        return true;
+    }
     u64 tbl = amdgpu_vram_alloc(a, (u64)AMD_GART_PAGES * 8);
     u64 scratch = amdgpu_vram_alloc(a, 4096);
     if (!tbl || !scratch) { kprintf("amdgpu: sem VRAM para a GART\n"); return false; }
@@ -182,6 +205,7 @@ static bool gmc_init(amdgpu_t *a) {
     u64 dummy = amd_host_ram_page();
 #endif
     a->gart_table = tbl;
+    a->gart_scratch = scratch;
     a->gart_cpu = vram_cpu(a, tbl);
     memset(a->gart_cpu, 0, (usize)AMD_GART_PAGES * 8);
     memset(a->gart_used, 0, sizeof a->gart_used);
@@ -351,17 +375,21 @@ static bool sdma_init(amdgpu_t *a) {
     int e = fw ? amd_ucode_parse(fw, (usize)len, UC_KIND_SDMA, &uc) : -1;
     if (e) { kprintf("amdgpu: firmware %s %s\n", name, fw ? amd_ucode_error(e) : "não encontrado"); return false; }
 
-    u64 ring = amdgpu_vram_alloc(a, AMD_SDMA_RING_BYTES), wb = amdgpu_vram_alloc(a, 4096);
+    bool again = a->ring_phys != 0;          /* volta do S3: anel e writeback continuam na VRAM */
+    u64 ring = again ? a->ring_phys : amdgpu_vram_alloc(a, AMD_SDMA_RING_BYTES), wb = again ? a->wb_phys : amdgpu_vram_alloc(a, 4096);
     if (!ring || !wb) { kprintf("amdgpu: sem VRAM para o anel do SDMA\n"); return false; }
 #ifndef MOS_HOST_TEST
-    vmm_map_wc(a->fb_phys + (ring - a->bar0), AMD_SDMA_RING_BYTES);
-    vmm_map_wc(a->fb_phys + (wb - a->bar0), 4096);
+    if (!again) {
+        vmm_map_wc(a->fb_phys + (ring - a->bar0), AMD_SDMA_RING_BYTES);
+        vmm_map_wc(a->fb_phys + (wb - a->bar0), 4096);
+    }
 #endif
     a->ring_phys = ring; a->ring_cpu = vram_cpu(a, ring); a->ring_mc = vram_mc(a, ring);
     a->ring_dw = AMD_SDMA_RING_BYTES / 4; a->ring_wptr = 0;
     a->wb_phys = wb; a->wb_cpu = vram_cpu(a, wb); a->wb_mc = vram_mc(a, wb);
     memset((void *)a->ring_cpu, 0, AMD_SDMA_RING_BYTES);
-    memset((void *)a->wb_cpu, 0, 4096);
+    if (!again) memset((void *)a->wb_cpu, 0, 4096);
+    else { a->wb_cpu[0] = 0; a->wb_cpu[4] = a->sdma_seq; }   /* fences antigas já passaram (o suspend esperou) */
 
     /* golden da família 4.1 e o GB_ADDR_CONFIG da variante */
     golden(a, R_SDMA_CHICKEN_BITS, 0xFE931F07u, 0x02831D07u);
@@ -431,10 +459,67 @@ static bool sdma_init(amdgpu_t *a) {
     return true;
 }
 
+/* ------------------------------------------------------------ repouso */
+/* s2idle (state 0): a saída perde o sincronismo (OTG parado) e o monitor dorme; a GPU fica ligada.
+ * S3 (state 3): espera os motores esvaziarem e os para; a VRAM da APU (RAM em self-refresh) guarda anéis,
+ * tabelas e BOs, e a volta só reprograma os registradores. A saída de vídeo depois do S3 precisa da troca de
+ * modo completa (F4b): até lá o driver se registra sem PM_RESTORES_DISPLAY e o pm.c não escolhe o S3. */
+static void dpms(amdgpu_t *a, bool on) {
+    if (a->pipe < 0) return;
+    u32 r = R_OTG_CONTROL(a->pipe);
+    if (!on && !a->dpms_off) {
+        amdgpu_vblank_wait(a);
+        a->otg_saved = RR(a, r);
+        WR(a, r, a->otg_saved & ~OTG_MASTER_EN);
+        a->dpms_off = true;
+    } else if (on && a->dpms_off) {
+        WR(a, r, a->otg_saved | OTG_MASTER_EN);
+        a->dpms_off = false;
+        amdgpu_vblank_wait(a);
+    }
+}
+
+int amdgpu_suspend(amdgpu_t *a, int state) {
+    if (!a || !a->ready) return 0;
+    if (state == 0) { dpms(a, false); return 0; }
+    /* S3: esvazia (as fences em voo terminam) e para cada motor */
+    if (a->sdma_ok && a->sdma_seq && !amdgpu_sdma_wait(a, a->sdma_seq)) return -MOS_EBUSY;
+    if (a->gfx_ok && a->gfx_seq && !amdgpu_gfx_wait(a, a->gfx_seq)) return -MOS_EBUSY;
+    if (a->comp_ok && a->comp_seq && !amdgpu_compute_wait(a, a->comp_seq)) return -MOS_EBUSY;
+    a->s3_engines = a->engines_tried && a->smu_ok;
+    if (a->comp_ok) WR(a, R_CP_MEC_CNTL, CP_MEC_RESET_ALL);
+    if (a->gfx_ok) {
+        WR(a, R_CP_ME_CNTL, RR(a, R_CP_ME_CNTL) | CP_ME_HALT_ALL | CP_ME_RESET_ALL);
+        WR(a, R_RLC_CNTL, RR(a, R_RLC_CNTL) & ~RLC_ENABLE_F32);
+    }
+    if (a->sdma_ok) WR(a, R_SDMA_F32_CNTL, RR(a, R_SDMA_F32_CNTL) | SDMA_F32_HALT);
+    if (a->ih_ok) WR(a, R_IH_RB_CNTL, RR(a, R_IH_RB_CNTL) & ~(IH_RB_ENABLE | IH_ENABLE_INTR));
+    a->comp_ok = a->gfx_ok = a->sdma_ok = a->ih_ok = a->gmc_ok = a->gfxhub_ok = a->smu_ok = false;
+    dpms(a, false);
+    a->s3_count++;
+    return 0;
+}
+
+void amdgpu_resume(amdgpu_t *a, int state) {
+    if (!a || !a->ready) return;
+    if (state == 0) { dpms(a, true); return; }
+    a->dpms_off = false;                     /* o OTG perdeu o estado junto com o resto */
+    if (!a->s3_engines) return;
+    a->smu_ok = smu_init(a);
+    if (!a->smu_ok) { kprintf("amdgpu: SMU não voltou do S3\n"); return; }
+    a->gmc_ok = gmc_init(a);
+    if (!a->gmc_ok) return;
+    if (!amdgpu_ih_init(a)) kprintf("amdgpu: IH não voltou do S3; fences por polling\n");
+    sdma_init(a);
+    a->gfx_ok = amdgpu_gfx_init(a);
+    kprintf("amdgpu: motores de volta do S3 (SDMA %d, GFX %d, compute %d)\n", a->sdma_ok, a->gfx_ok, a->comp_ok);
+}
+
 /* ------------------------------------------------------------ entrada: depois do VFS (firmware) */
 bool amdgpu_engines_init(amdgpu_t *a) {
     if (!a || !a->ready || a->engines_tried) return a && a->sdma_ok;
     a->engines_tried = true;
+    amdgpu_pm_register(a);
     a->smu_ok = smu_init(a);
     if (!a->smu_ok) { kprintf("amdgpu: sem SMU; motores da GPU ficam desligados\n"); return false; }
     a->gmc_ok = gmc_init(a);
