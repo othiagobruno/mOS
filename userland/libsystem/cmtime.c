@@ -589,3 +589,6 @@ int cm_timing_copy(const cm_timing_t *src, long nsrc, cm_timing_t *dst, long nds
     memcpy(dst, src, (size_t)nsrc * sizeof *src);
     return 0;
 }
+/* Nome antigo (macOS 10.8–12) do CMTimebaseCreateWithSourceClock; mesma semântica. */
+int CMTimebaseCreateWithMasterClock(void *a, void *clock, void **out) { return CMTimebaseCreateWithSourceClock(a, clock, out); }
+int CMTimebaseCreateWithMasterTimebase(void *a, void *master, void **out) { return CMTimebaseCreateWithSourceClock(a, master, out); }
