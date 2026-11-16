@@ -9,9 +9,15 @@
 #include <stdlib.h>
 #include <stdint.h>
 
-void swap_use(void *mem, unsigned n);
-unsigned long long swap_store(unsigned long long phys, int nx, int jwp);
-void swap_load(unsigned long long pte, unsigned long long page);
+void swap_init(void);
+unsigned long long swap_store(unsigned long long phys, unsigned long long pte);
+_Bool swap_load(unsigned long long pte, unsigned long long page);
+/* o que o swap comprimido pede ao kernel (mm/swap.c, mm/vmcomp.c) */
+long long g_live_allocs, g_live_bytes;
+unsigned long long pmm_total_pages(void) { return 4096; }
+unsigned long long pmm_free_pages(void) { return 4096; }
+unsigned long long vmc_host_page_alloc(void) { return (unsigned long long)(uintptr_t)aligned_alloc(4096, 4096); }
+void vmc_host_page_free(unsigned long long p) { free((void *)(uintptr_t)p); }
 
 static int falhas;
 static void check(int cond, const char *msg) {
@@ -48,11 +54,11 @@ int main(void) {
     check(page[0x022] == 1 && page[0x025] == 14, "commpage: 1 cpu e página de 16 KiB");
     check(*(unsigned short *)(page + 0x026) == 64, "commpage: linha de cache 64");
 
-    unsigned char part[2 * 4096], src[4096], dst[4096];
+    unsigned char src[4096], dst[4096];
     memset(src, 0x5A, sizeof src);
     src[0] = 0x11; src[4095] = 0x22;
-    swap_use(part, 2);
-    unsigned long long pte = swap_store((unsigned long long)(uintptr_t)src, 1, 0);
+    swap_init();
+    unsigned long long pte = swap_store((unsigned long long)(uintptr_t)src, 1ULL << 63);
     memset(src, 0, sizeof src);
     memset(dst, 0, sizeof dst);
     swap_load(pte, (unsigned long long)(uintptr_t)dst);

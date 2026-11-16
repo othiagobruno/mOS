@@ -17,6 +17,7 @@
 #include "syscall.h"
 #include "account.h"
 #include "fs.h"
+#include "vmcomp.h"
 
 #define PTE_P  1ULL
 #define PTE_RW 2ULL
@@ -211,6 +212,44 @@ u64 *uvm_pte(process_t *p, u64 va) {
     return e && (*e & PTE_P) ? e : NULL;
 }
 
+/* PTE de swap em e (mm/swap.c): página nova com o dado de volta e os bits de origem (RW, JWP, NX).
+ * true também se outro núcleo já a trouxe. false = sem memória ou slot corrompido. */
+static bool swap_in(process_t *p, u64 *e, u64 va) {
+    u64 spte = *e;
+    if (!swap_is(spte)) return (spte & PTE_P) != 0;
+    u64 pg = pmm_alloc(1);
+    if (!pg) return false;
+    bool ok = false;
+    vm_lock_range(p, va, 4096);
+    if (*e != spte) ok = (*e & PTE_P) != 0;
+    else if (swap_load(spte, pg)) {
+        *e = pg | PTE_P | PTE_U | (spte & SWAP_KEEP);
+        p->mem_pages++;
+        if (p->swap_pages) p->swap_pages--;
+        pg = 0;
+        ok = true;
+    }
+    vm_unlock_range(p, va, 4096);
+    if (pg) pmm_free(pg, 1);
+    return ok;
+}
+/* PTE de swap que sai sem voltar (munmap, MADV_DONTNEED, substituição): solta o slot */
+static void swap_drop(process_t *p, u64 *e) {
+    if (!swap_is(*e)) return;
+    swap_release(*e);
+    *e = 0;
+    if (p->swap_pages) p->swap_pages--;
+}
+/* página presente para o kernel ler ou escrever: a que já está, a que volta do swap, ou a da memória sob demanda */
+bool lazy_fault(process_t *p, u64 va);
+static u64 *pte_in(process_t *p, u64 va) {
+    u64 *e = uvm_pte(p, va);
+    if (e) return e;
+    e = walk(p, va, false);
+    if (e && swap_is(*e)) return swap_in(p, e, va) ? uvm_pte(p, va) : NULL;
+    return lazy_fault(p, va) ? uvm_pte(p, va) : NULL;
+}
+
 bool uvm_map(process_t *p, u64 va, u64 len) {
     u64 end = va + len;
     bool ok = true;
@@ -220,6 +259,10 @@ bool uvm_map(process_t *p, u64 va, u64 len) {
         u64 *e = walk(p, a, true);
         if (!e) { ok = false; break; }
         if (*e & PTE_P) continue;
+        if (swap_is(*e)) {                      /* página trocada: volta o dado, não uma página zerada */
+            if (!swap_in(p, e, a)) { ok = false; break; }
+            continue;
+        }
         u64 pg = pmm_alloc(1);
         if (!pg) { ok = false; break; }
         memset((void *)pg, 0, 4096);
@@ -243,6 +286,7 @@ bool uvm_map(process_t *p, u64 va, u64 len) {
 #define PTE_NOW (1ULL << 53)
 #define UVM_PROT_MAYW 8         /* em prot de uvm_map_shared / lazy: a escrita pode ser ligada depois */
 #define PTE_NX (1ULL << 63)     /* só vale com EFER.NXE (mm/memory.c); o mapa do kernel não usa este bit */
+#define PTE_A  (1ULL << 5)      /* Accessed: o relógio do vm_pageout zera e confere na volta seguinte */
 static u16 *pref;
 static u64 pref_n;
 
@@ -362,6 +406,7 @@ bool uvm_map_phys(process_t *p, u64 va, u64 phys, int rw) {
     u64 *e = walk(p, va & ~0xFFFULL, true);
     if (!e) return false;
     if (*e & PTE_P) { page_put(*e & PTE_ADDR); p->mem_pages--; }
+    else swap_drop(p, e);
     uvm_page_get(phys);
     *e = (phys & PTE_ADDR) | PTE_P | PTE_U | ((rw & UVM_PHYS_W) ? PTE_RW : 0) | (rw ? 0 : PTE_NOW);
     p->mem_pages++;
@@ -388,7 +433,7 @@ void mm_release_span(process_t *p, u64 a, u64 len) {
             gone[ng++] = *e & 0x000FFFFFFFFFF000ULL;
             p->mem_pages--;
             __asm__ volatile("invlpg (%0)" :: "r"(va) : "memory");
-        }
+        } else swap_drop(p, e);
         *e = 0;
         va += 4096;
         if (ng == 64 || (ng && va >= a + len)) {
@@ -408,7 +453,7 @@ int mm_span_taken(process_t *p, u64 a, u64 len) {
     for (u64 va = a; va < a + len; ) {
         u64 *e = walk(p, va, false);
         if (!e) { va = (va + 0x200000) & ~0x1FFFFFULL; continue; }
-        if (*e & PTE_P) return 1;
+        if ((*e & PTE_P) || swap_is(*e)) return 1;
         va += 4096;
     }
     return 0;
@@ -434,6 +479,7 @@ bool uvm_map_cow(process_t *p, u64 va, u64 phys) {
     u64 *e = walk(p, va & ~0xFFFULL, true);
     if (e) {
         if (*e & PTE_P) { page_put(*e & PTE_ADDR); p->mem_pages--; }
+        else swap_drop(p, e);
         uvm_page_get(phys);
         *e = (phys & PTE_ADDR) | PTE_P | PTE_U | PTE_COW;
         p->mem_pages++;
@@ -449,7 +495,7 @@ bool uvm_install(process_t *p, u64 va, u64 phys) {
     bool ok = false;
     vm_lock_range(p, va, 4096);
     u64 *e = walk(p, va & ~0xFFFULL, true);
-    if (e && !(*e & PTE_P)) {
+    if (e && !(*e & PTE_P) && !swap_is(*e)) {
         *e = (phys & PTE_ADDR) | PTE_P | PTE_RW | PTE_U;
         p->mem_pages++;
         vm_flush(p, va);
@@ -460,42 +506,127 @@ bool uvm_install(process_t *p, u64 va, u64 phys) {
 }
 u16 uvm_page_refs(u64 phys) { return page_refs(phys); }
 
+/* ------------------------------------------------------------ vm_pageout: relógio de páginas e compressor
+ *
+ * Roda com a trava grande, em ponto seguro: na thread vm_pageout (acordada pelo pmm_alloc abaixo do piso) ou na falta
+ * de página vinda do ring 3. Nunca de dentro do pmm_alloc: quem aloca pode estar no meio de uma PTE.
+ *
+ * Relógio (segunda chance): o cursor (processo, endereço) anda pelas PTEs de usuário. Página com Accessed perde o bit
+ * e fica; sem o bit, é candidata. Só sai página anônima privada de um dono (sem COW, sem MAP_SHARED, sem PTE_NOW).
+ * Lote de até 64 por processo: as PTEs ficam ausentes, um shootdown só tira a tradução de todos os núcleos, e só então
+ * a página é comprimida (nenhum núcleo escreve nela depois da cópia). A que não comprime volta para a PTE de antes.
+ * Interrupções desligadas no lote: a thread do desktop (que herda a trava no fim da fatia) não vê a PTE no meio. */
+#define PO_BATCH 64
+static int po_pid = -1;
+static u64 po_va;
+
+static int pageout_batch(process_t *p, u64 **pte, u64 *vas, int n) {
+    u64 old[PO_BATCH];
+    int got = 0;
+    u64 fl = irq_save();
+    for (int k = 0; k < n; k++) { old[k] = *pte[k]; *pte[k] = old[k] & ~PTE_P; }
+    {
+        u64 cur = read_cr3() & ~0xFFFULL & ~(1ULL << 63);
+        if (cur == ((u64)p->pml4 & ~0xFFFULL))
+            for (int k = 0; k < n; k++) __asm__ volatile("invlpg (%0)" :: "r"(vas[k]) : "memory");
+        smp_tlb_shootdown((u64)p->pml4);
+    }
+    for (int k = 0; k < n; k++) {
+        u64 phys = old[k] & PTE_ADDR;
+        u64 neu = swap_store(phys, old[k]);
+        if (!neu) { *pte[k] = old[k]; continue; }
+        *pte[k] = neu;
+        page_put(phys);
+        if (p->mem_pages) p->mem_pages--;
+        p->swap_pages++;
+        got++;
+    }
+    irq_restore(fl);
+    return got;
+}
+
+/* uma rodada: até liberar `want` páginas ou olhar `budget` PTEs. Devolve quantas saíram. */
+static int pageout_round(int want, int budget) {
+    extern bool lazy_is_anon(process_t *p, u64 va);
+    int got = 0, seen = 0, wrapped = 0;
+    process_t *p = procs;
+    if (po_pid >= 0) {
+        process_t *q = procs;
+        while (q && q->pid != po_pid) q = q->next;
+        if (q) p = q;
+        else po_va = 0;
+    }
+    while (got < want && seen < budget) {
+        if (!p) {
+            if (wrapped++) break;
+            p = procs;
+            po_va = 0;
+            continue;
+        }
+        if (p->exited || !p->pml4 || p->pml4_borrowed) { p = p->next; po_va = 0; continue; }
+        u64 *pte[PO_BATCH], vas[PO_BATCH];
+        int n = 0;
+        u64 va = po_va < USER_BASE ? USER_BASE : po_va;
+        while (va < USER_END && n < PO_BATCH && seen < budget) {
+            int ui = (int)((va >> 39) & 511);
+            if (!(p->pml4[ui] & PTE_P)) { va = ((va >> 39) + 1) << 39; continue; }
+            u64 *pdpt = (u64 *)(p->pml4[ui] & PTE_ADDR);
+            int i = (int)((va >> 30) & 511);
+            if (!(pdpt[i] & PTE_P)) { va = ((va >> 30) + 1) << 30; continue; }
+            u64 *pd = (u64 *)(pdpt[i] & PTE_ADDR);
+            int j = (int)((va >> 21) & 511);
+            if (!(pd[j] & PTE_P)) { va = ((va >> 21) + 1) << 21; continue; }
+            u64 *pt = (u64 *)(pd[j] & PTE_ADDR);
+            u64 *e = &pt[(va >> 12) & 511];
+            u64 x = *e;
+            seen++;
+            if ((x & PTE_P) && (x & PTE_U) && !(x & (PTE_SHARED | PTE_COW | PTE_NOW))) {
+                if (x & PTE_A) __atomic_and_fetch(e, ~PTE_A, __ATOMIC_RELAXED);   /* segunda chance */
+                else if (page_refs(x & PTE_ADDR) <= 1 && lazy_is_anon(p, va)) { pte[n] = e; vas[n] = va; n++; }
+            }
+            va += 4096;
+        }
+        if (n) got += pageout_batch(p, pte, vas, n);
+        if (va >= USER_END) { p = p->next; po_va = 0; }
+        else po_va = va;
+        po_pid = p ? p->pid : -1;
+    }
+    return got;
+}
+
 void mem_pressure(void) {
     if (swap_busy() || !swap_floor()) return;
     swap_set_busy(1);
-    int got = 0;
-    extern bool lazy_is_anon(process_t *p, u64 va);
-    for (process_t *p = procs; p && got < 32; p = p->next) {
-        if (p->exited || !p->pml4 || p->pml4_borrowed) continue;
-        for (int k = 0; k < USER_PML4_SLOTS && got < 32; k++) {
-            int ui = USER_PML4_FIRST + k;
-            if (!(p->pml4[ui] & PTE_P)) continue;
-            u64 *pdpt = (u64 *)(p->pml4[ui] & PTE_ADDR);
-            for (int i = 0; i < 512 && got < 32; i++) {
-                if (!(pdpt[i] & PTE_P)) continue;
-                u64 *pd = (u64 *)(pdpt[i] & PTE_ADDR);
-                for (int j = 0; j < 512 && got < 32; j++) {
-                    if (!(pd[j] & PTE_P)) continue;
-                    u64 *pt = (u64 *)(pd[j] & PTE_ADDR);
-                    for (int n = 0; n < 512 && got < 32; n++) {
-                        u64 e = pt[n];
-                        if (!(e & PTE_P) || (e & PTE_SHARED) || (e & PTE_COW)) continue;
-                        u64 phys = e & PTE_ADDR;
-                        u64 va = ((u64)ui << 39) | ((u64)i << 30) | ((u64)j << 21) | ((u64)n << 12);
-                        if (page_refs(phys) > 1 || !lazy_is_anon(p, va)) continue;
-                        u64 neu = swap_store(phys, (e & PTE_NX) != 0, (e & PTE_JWP) != 0);
-                        if (!neu) { swap_set_busy(0); return; }
-                        pt[n] = neu;
-                        page_put(phys);
-                        if (p->mem_pages) p->mem_pages--;
-                        got++;
-                    }
-                }
-            }
-        }
-    }
-    if (got) kprintf("swap: %d páginas anônimas foram para a partição\n", got);
+    u64 fl = swap_floor(), fr = pmm_free_pages();
+    int want = fr < fl + fl / 2 ? (int)(fl + fl / 2 - fr) : 0;
+    if (want > 2048) want = 2048;
+    if (want < PO_BATCH) want = PO_BATCH;
+    pageout_round(want, 65536);
     swap_set_busy(0);
+}
+
+static thread_t *pageout_th;
+static volatile u32 pageout_req;
+void vm_pageout_kick(void) {
+    thread_t *t = pageout_th;
+    __atomic_store_n(&pageout_req, 1, __ATOMIC_RELAXED);
+    if (t && t->state == TH_SLEEPING) t->wake_at = 0;     /* wake_sleepers a acorda no próximo tique */
+}
+static void pageout_main(void *arg) {
+    (void)arg;
+    for (;;) {
+        u64 fl = swap_floor();
+        if (fl && pmm_free_pages() < fl + fl / 2) {
+            __atomic_store_n(&pageout_req, 0, __ATOMIC_RELAXED);
+            u32 before = (u32)pmm_free_pages();
+            mem_pressure();
+            /* nada saiu (tudo quente ou incompressível): espera um pouco para o relógio não girar à toa */
+            kthread_sleep(pmm_free_pages() > before ? 10 : 200);
+        } else kthread_sleep(__atomic_load_n(&pageout_req, __ATOMIC_RELAXED) ? 1 : 500);
+    }
+}
+void vm_pageout_start(void) {
+    if (!pageout_th) pageout_th = kthread_create("vm_pageout", pageout_main, NULL);
 }
 
 /* MAP_SHARED: a página do cache ganha mais um dono e entra com PTE_SHARED (o fork não a transforma em COW).
@@ -518,7 +649,7 @@ bool gpu_user_unmap(process_t *p, u64 va, u64 len) {
         u64 ph = *e & PTE_ADDR;
         *e = 0;
         p->mem_pages--;
-        __asm__ volatile("invlpg (%0)" :: "r"(a) : "memory");
+        vm_flush(p, a);                         /* outros núcleos também largam a tradução antes do frame sair */
         page_put(ph);
     }
     return true;
@@ -531,6 +662,7 @@ bool uvm_map_shared(process_t *p, u64 va, u64 phys, u8 prot) {
     u64 *e = walk(p, va & ~0xFFFULL, true);
     if (!e) { vm_unlock_range(p, va, 4096); return false; }
     if (*e & PTE_P) { vm_unlock_range(p, va, 4096); return true; }
+    swap_drop(p, e);
     page_ref_inc(phys);
     u64 bits = PTE_P | PTE_U | PTE_SHARED;
     if (prot & 2) bits |= PTE_RW;
@@ -599,6 +731,11 @@ bool uvm_protect(process_t *p, u64 va, u64 len, u8 prot) {
             if (prot & 4) *e &= ~PTE_NX;
             else *e |= PTE_NX;
             vm_flush(p, a);
+        } else if (swap_is(*e)) {              /* trocada: a proteção nova vai na PTE de swap e volta com a página */
+            if (prot & 2) *e = (*e | PTE_RW) & ~PTE_JWP;
+            else *e &= ~PTE_RW;
+            if (prot & 4) *e &= ~PTE_NX;
+            else *e |= PTE_NX;
         }
         a += 4096;
     }
@@ -673,8 +810,7 @@ int uvm_alias_map(process_t *p, u64 *dst_io, u64 src, u64 len) {
     u64 done = 0;
     for (u64 i = 0; i < len; i += 4096) {
         u64 sva = src + i;
-        u64 *e = uvm_pte(p, sva);
-        if (!e && lazy_fault(p, sva)) e = uvm_pte(p, sva);
+        u64 *e = pte_in(p, sva);
         if (!e) { alias_drop(p, dst, done); return -MOS_ENOMEM; }
         if ((*e & PTE_COW) && !cow_break(p, e, sva)) { alias_drop(p, dst, done); return -MOS_ENOMEM; }
         e = uvm_pte(p, sva);
@@ -700,8 +836,7 @@ bool lazy_fault(process_t *p, u64 va);   /* kernel/mm/lazy.c: memória sob deman
 bool uvm_copy_out(process_t *p, u64 va, const void *src, usize len) {
     const u8 *s = src;
     while (len) {
-        u64 *e = uvm_pte(p, va);
-        if (!e && lazy_fault(p, va)) e = uvm_pte(p, va);
+        u64 *e = pte_in(p, va);
         if (!e) return false;
         if ((*e & PTE_COW) && !cow_break(p, e, va)) return false;   /* o kernel também respeita o COW */
         /* página só-leitura que outro espaço também enxerga (MAP_SHARED, memória Mach, cache do JIT, BO de GPU):
@@ -718,8 +853,7 @@ bool uvm_copy_out(process_t *p, u64 va, const void *src, usize len) {
 bool uvm_copy_in(process_t *p, void *dst, u64 va, usize len) {
     u8 *d = dst;
     while (len) {
-        u64 *e = uvm_pte(p, va);
-        if (!e && lazy_fault(p, va)) e = uvm_pte(p, va);
+        u64 *e = pte_in(p, va);
         if (!e) return false;
         usize k = MIN(len, 4096 - (va & 0xFFF));
         memcpy(d, (u8 *)((*e & PTE_ADDR) + (va & 0xFFF)), k);
@@ -767,7 +901,7 @@ static void free_level(u64 *t, int level) {
 static bool cow_copy_level(process_t *dst, u64 *s, u64 *d, int level) {
     for (int i = 0; i < 512; i++) {
         if (!(s[i] & PTE_P)) {
-            if (level == 1 && swap_is(s[i])) { d[i] = s[i]; swap_hold(s[i]); dst->mem_pages++; }
+            if (level == 1 && swap_is(s[i])) { d[i] = s[i]; swap_hold(s[i]); dst->swap_pages++; }
             continue;
         }
         if (level == 1) {
@@ -1252,17 +1386,13 @@ static u64 proc_fault_(int_frame_t *f, u64 cr2) {
     }
     /* página ausente numa faixa de memória sob demanda (mmap anônimo, kernel/mm/lazy.c): página zerada e repete */
     if (f->vector == 14 && !(f->error & 1)) {
+        /* falta vinda do ring 3 é ponto seguro (nenhuma trava de faixa nossa): com a RAM quase no fim, uma rodada do
+         * relógio aqui mesmo, sem esperar a thread vm_pageout */
+        if ((f->cs & 3) && swap_floor() && pmm_free_pages() < swap_floor() / 4) mem_pressure();
         u64 *se = walk(p, cr2, false);
         if (se && swap_is(*se)) {
-            u64 pg = pmm_alloc(1);
-            if (pg) {
-                swap_load(*se, pg);
-                int nx = (*se & PTE_NX) != 0, jwp = (*se & PTE_JWP) != 0;
-                *se = pg | PTE_P | PTE_U | (jwp ? PTE_JWP : PTE_RW) | (nx ? PTE_NX : 0);
-                p->mem_pages++;
-                __asm__ volatile("invlpg (%0)" :: "r"(cr2) : "memory");
-                return (u64)f;
-            }
+            if (swap_in(p, se, cr2)) return (u64)f;
+            if (swap_is(*se) && (f->cs & 3)) { mem_pressure(); if (swap_in(p, se, cr2)) return (u64)f; }
         }
         extern bool lazy_fault(process_t *p, u64 va);
         if (lazy_fault(p, cr2)) return (u64)f;
@@ -3479,7 +3609,7 @@ static u64 proc_syscall_(int_frame_t *f) {
                     p->mem_pages--;
                     gone[ng++] = ph;
                     __asm__ volatile("invlpg (%0)" :: "r"(va) : "memory");
-                }
+                } else if (swap_is(*e) && lazy_is_anon(p, va)) swap_drop(p, e);   /* volta como página zerada */
                 va += 4096;
                 if (ng == 64 || (ng && va >= a + b)) {
                     smp_tlb_shootdown((u64)p->pml4);
@@ -3504,7 +3634,7 @@ static u64 proc_syscall_(int_frame_t *f) {
                 gone[ng++] = *e & 0x000FFFFFFFFFF000ULL;
                 p->mem_pages--;
                 __asm__ volatile("invlpg (%0)" :: "r"(va) : "memory");
-            }
+            } else swap_drop(p, e);
             *e = 0;
             va += 4096;
             if (ng == 64 || (ng && va >= a + b)) {

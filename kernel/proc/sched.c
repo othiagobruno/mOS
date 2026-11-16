@@ -588,6 +588,18 @@ u64 sched_switch(int_frame_t *f) {
     return switch_to(c, f, t);
 }
 
+/* thread do kernel dorme `ms` sem ocupar o núcleo: sai da CPU no próximo tique (irq_exit vê que não está RUNNING) e
+ * volta pelo wake_sleepers. wake_at = 0 escrito por outro (vm_pageout_kick) acorda antes. O desktop usa sleep_ms. */
+void kthread_sleep(u64 ms) {
+    thread_t *t = thread_current();
+    if (t == &thread0 || t->proc || t->id < 0) { sleep_ms(ms); return; }
+    u64 fl = irq_save();
+    t->wake_at = timer_ticks() + (ms ? ms : 1);
+    t->state = TH_SLEEPING;
+    irq_restore(fl);
+    while (__atomic_load_n(&t->state, __ATOMIC_ACQUIRE) == TH_SLEEPING) hlt();
+}
+
 /* threads do kernel encerram por aqui: marca como morta e entra num hlt até o escalonador trocar */
 void thread_exit(void) {
     cli();
