@@ -264,6 +264,8 @@ def imagens_no_log(texto: str) -> int:
 
 def roda_machocheck(mc: Path, lib: Path, discos: list[Path], bundle: Path, report: Path, arch: str) -> str:
     cmd = [str(mc), "--arch", arch]
+    if any((Path(d) / "Frameworks").is_dir() for d in discos):
+        cmd.append("--disco-todo")      # frameworks do mOS (WebKit, CryptoKit, UIKit...) entram na resolução
     for d in discos:
         cmd += ["--disco", str(d)]
     cmd += [str(lib), str(bundle), str(report)]

@@ -32,6 +32,7 @@ jobs:
           cp build/libSystem-arm64.mos /tmp/libsystem-main/ 2>/dev/null || true
           cp -r /tmp/mos-linux-build/libunwind-x86 /tmp/libsystem-main/disco-x86/
           cp -r /tmp/mos-linux-build/esp/mOS/usr/lib /tmp/libsystem-main/disco-x86/usr-lib
+          cp -r /tmp/mos-linux-build/esp/mOS/System/Library/Frameworks /tmp/libsystem-main/disco-x86/Frameworks
           cp -r /tmp/mos-linux-build/esp/mOS/Sistema/Biblioteca/a64 /tmp/libsystem-main/disco-arm64/a64 2>/dev/null || true
           echo "${GITHUB_SHA}" > /tmp/libsystem-main/commit.txt
       - name: artefato libsystem-main
