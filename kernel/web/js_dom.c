@@ -66,7 +66,7 @@ struct js_page {
     void *dialog_ctx;
     struct js_page *next;
 };
-typedef struct pmsg { struct pmsg *next; char *json; int len; char origin[256]; jsobj *source; } pmsg_t;
+typedef struct pmsg { struct pmsg *next; jsv val; char origin[256]; jsobj *source; } pmsg_t;   /* val: clone estruturado */
 
 static js_page_t *pages;
 
@@ -182,7 +182,7 @@ void js_mark_page(js_page_t *p) {
     for (int i = 0; i < p->ntimers; i++) { gc_mark_val(p->timers[i].fn); gc_mark_ptr(p->timers[i].args); }
     for (int i = 0; i < p->nnets; i++) gc_mark_ptr(p->nets[i].target);
     for (int i = 0; i < p->nscripts; i++) gc_mark_val(p->scripts[i].job);
-    for (pmsg_t *m = p->msgs; m; m = m->next) gc_mark_ptr(m->source);
+    for (pmsg_t *m = p->msgs; m; m = m->next) { gc_mark_ptr(m->source); gc_mark_val(m->val); }
 }
 
 void js_mark_pages(void) { for (js_page_t *p = pages; p; p = p->next) js_mark_page(p); }
@@ -1307,11 +1307,12 @@ NATIVE(w_postmessage) {
         if (strcmp(to, "*") && strcmp(to, "/") && strncmp(to, dst->origin, strlen(dst->origin))) return JS_UNDEF;   /* origem errada: descarta */
         if (!strcmp(to, "/") && src && strcmp(src->origin, dst->origin)) return JS_UNDEF;
     }
-    jsv js = js_json_stringify(ARG(0), JS_UNDEF, JS_UNDEF);
-    if (js == JS_EXC) return JS_EXC;
+    /* clone estruturado agora (instantâneo da mensagem); na entrega, outro clone no reino de destino */
+    jsv val = js_structured_clone(ARG(0));
+    if (val == JS_EXC) return JS_EXC;
     pmsg_t *m = kcalloc(1, sizeof(pmsg_t));
     if (!m) return JS_UNDEF;
-    if (jv_isstr(js)) { m->len = (int)jv_s(js)->len; m->json = kmalloc((usize)m->len + 1); if (m->json) { memcpy(m->json, jv_s(js)->d, (usize)m->len); m->json[m->len] = 0; } }
+    m->val = val;
     snprintf(m->origin, sizeof m->origin, "%s", src ? src->origin : "null");
     m->source = src && src->realm ? src->realm->global : NULL;
     if (dst->msgs_tail) dst->msgs_tail->next = m; else dst->msgs = m;
@@ -1325,14 +1326,13 @@ static void deliver_messages(js_page_t *p) {
         p->msgs = m->next;
         if (!p->msgs) p->msgs_tail = NULL;
         jsobj *ev = new_event(p, js_intern("message", -1), false);
-        jsv data = JS_UNDEF;
-        if (m->json) { data = js_json_parse(js_strn(m->json, m->len), JS_UNDEF); if (data == JS_EXC) { J.exc = JS_UNDEF; data = JS_UNDEF; } }
+        jsv data = js_structured_clone(m->val);
+        if (data == JS_EXC) { js_catch(); data = JS_UNDEF; }
         js_defprop(ev, js_intern("data", -1), data, 0);
         js_defprop(ev, js_intern("origin", -1), jv_str(js_strz(m->origin)), 0);
         js_defprop(ev, js_intern("source", -1), m->source ? jv_obj(m->source) : JS_NULL, 0);
         js_defprop(ev, js_intern("lastEventId", -1), jv_str(A[A_empty]), 0);
         js_defprop(ev, js_intern("ports", -1), jv_obj(js_arr_from(NULL, 0)), 0);
-        kfree(m->json);
         kfree(m);
         dispatch(p, NULL, ev);
         js_run_jobs();
@@ -3096,6 +3096,7 @@ void js_dom_init(jsrealm *r) {
     js_blob_init(r);
     js_url_init(r);
     js_fetch_init(r);   /* fetch, Headers, Request, Response, FormData, AbortController, XMLHttpRequest */
+    js_plat_init(r);    /* structuredClone, MessageChannel, crypto */
     jsobj *dpp = js_newobj(op);
     js_defnative(dpp, "parseFromString", domparser_parse, 2, 0);
     js_defn(g, "DOMParser", jv_obj(js_newctor(domparser_ctor, "DOMParser", 0, dpp)), PF_NOENUM);
@@ -3270,7 +3271,7 @@ void js_page_free(js_page_t *p) {
     kfree(p->nets);
     web_fetch_drop(p);
     for (int i = 0; i < p->nxdocs; i++) doc_free(p->xdocs[i]);
-    while (p->msgs) { pmsg_t *m = p->msgs; p->msgs = m->next; kfree(m->json); kfree(m); }
+    while (p->msgs) { pmsg_t *m = p->msgs; p->msgs = m->next; kfree(m); }
     for (js_page_t *q = pages; q; q = q->next) if (q->parent == p) q->parent = NULL;
     kfree(p->scripts);
     kfree(p->timers);
