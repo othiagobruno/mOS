@@ -22,7 +22,8 @@
     CKShareParticipant, CKUserIdentity, CKUserIdentityLookupInfo, CKQuery, CKQueryCursor, CKServerChangeToken,
     CKSubscription, CKNotificationInfo, CKOperationConfiguration, CKOperationGroup, CKAsset, CKReference;
 
-/* NSOperation: os dois Foundation.h (o do libSystem e o do importador Swift) não declaram */
+/* NSOperation: o Foundation.h do libSystem não declara; o do importador Swift (MOS_SWIFT_OBJC) já declara */
+#if !defined(MOS_SWIFT_OBJC)
 @interface NSOperation : NSObject
 - (void)start;
 - (void)main;
@@ -33,6 +34,7 @@
 @property (nullable, copy) void (^completionBlock)(void);
 - (void)waitUntilFinished;
 @end
+#endif
 
 /* ---------------------------------------------------------------- erros */
 CK_EXTERN NSString *const CKErrorDomain;
