@@ -353,7 +353,7 @@ void icon_visualizador(surface_t *s, int x, int y, int sz) {
 }
 
 /* ------------------------------------------------------------ cache por tamanho */
-typedef struct { app_t *a; int size; bool dark; surface_t *s; } icache_t;
+typedef struct { app_t *a; int size; bool dark; surface_t *s; u64 time_key; } icache_t;
 static icache_t icache[256];
 static int nicache;
 
@@ -410,7 +410,20 @@ static void icon_make_dark(surface_t *s) {
 surface_t *icon_for(app_t *a, int size) {
     size = CLAMP(size, 8, 256);
     bool dark = T.dark;
-    for (int i = 0; i < nicache; i++) if (icache[i].a == a && icache[i].size == size && icache[i].dark == dark) return icache[i].s;
+    u64 time_key = 0;
+    if (a->exec && (!strcmp(a->exec, "calendario") || !strcmp(a->exec, "relogio"))) {
+        datetime_t now;
+        rtc_now(&now);
+        time_key = ((u64)now.year * 13 + now.month) * 32 + now.day;
+        if (!strcmp(a->exec, "relogio")) time_key = (time_key * 24 + now.hour) * 60 + now.minute;
+    }
+    for (int i = 0; i < nicache; i++) if (icache[i].a == a && icache[i].size == size && icache[i].dark == dark) {
+        if (icache[i].time_key == time_key) return icache[i].s;
+        surface_free(icache[i].s);
+        memmove(icache + i, icache + i + 1, sizeof(icache_t) * (nicache - i - 1));
+        nicache--;
+        break;
+    }
     surface_t *s = surface_new(size, size);
     memset(s->px, 0, (usize)size * size * 4);
     /* apps do macOS: o ícone do próprio bundle (.icns), se o mOS conseguir ler */
@@ -446,7 +459,7 @@ surface_t *icon_for(app_t *a, int size) {
     }
     if (dark) icon_make_dark(s);
     if (nicache == ARRAY_LEN(icache)) { surface_free(icache[0].s); memmove(icache, icache + 1, sizeof(icache_t) * (nicache - 1)); nicache--; }
-    icache[nicache++] = (icache_t){a, size, dark, s};
+    icache[nicache++] = (icache_t){a, size, dark, s, time_key};
     return s;
 }
 

@@ -14,7 +14,8 @@ static bool original_icon(const char *exec, surface_t *s, int x, int y, int size
     int pixels = 16;
     while (pixels < size) pixels *= 2;
     char path[128];
-    snprintf(path, sizeof(path), "/Sistema/Biblioteca/Icones/%s-%d.png", exec, pixels);
+    bool calendar = !strcmp(exec, "calendario"), clock = !strcmp(exec, "relogio");
+    snprintf(path, sizeof(path), "/Sistema/Biblioteca/Icones/%s%s-%d.png", exec, calendar || clock ? "-base" : "", pixels);
     vnode_t *node = vfs_lookup(path);
     if (!node || node->dir || !vfs_ensure(node) || !node->data || node->size < 24 || node->size > 512 * 1024) return false;
     const u8 *d = node->data;
@@ -27,6 +28,35 @@ static bool original_icon(const char *exec, surface_t *s, int x, int y, int size
     if (!image) return false;
     gfx_blit_scaled(s, image, x, y, size, size, 255);
     surface_free(image);
+    if (calendar || clock) {
+        datetime_t now;
+        rtc_now(&now);
+        if (calendar) {
+            if (size >= 32) {
+                static const char *wd[] = {"DOM", "SEG", "TER", "QUA", "QUI", "SEX", "SÁB"};
+                static const char *mo[] = {"JAN", "FEV", "MAR", "ABR", "MAI", "JUN", "JUL", "AGO", "SET", "OUT", "NOV", "DEZ"};
+                char label[24];
+                snprintf(label, sizeof(label), "%s · %s", wd[now.weekday % 7], mo[(now.month + 11) % 12]);
+                text_draw_center(s, font_get(FONT_SEMIBOLD), size * 0.055f,
+                                 rect_make(x + size / 5, y + size / 4, size * 3 / 5, MAX(1, size * 6 / 100)),
+                                 RGB(255, 255, 255), label);
+            }
+            char day[4];
+            snprintf(day, sizeof(day), "%d", now.day);
+            text_draw_center(s, font_get(FONT_REGULAR), size * 0.34f,
+                             rect_make(x + size / 5, y + size * 34 / 100, size * 3 / 5, size * 42 / 100),
+                             RGB(38, 40, 46), day);
+        } else {
+            float cx = x + size * 0.5f, cy = y + size * 0.505f;
+            float hour = ((now.hour % 12) + now.minute / 60.0f) * 2 * PI_F / 12;
+            float minute = now.minute * 2 * PI_F / 60;
+            gfx_line(s, cx, cy, cx + fsin(hour) * size * 0.18f, cy - fcos(hour) * size * 0.18f,
+                     MAX(1.0f, size * 0.026f), RGB(35, 38, 44));
+            gfx_line(s, cx, cy, cx + fsin(minute) * size * 0.255f, cy - fcos(minute) * size * 0.255f,
+                     MAX(1.0f, size * 0.020f), RGB(35, 38, 44));
+            gfx_circle(s, cx, cy, MAX(0.7f, size * 0.016f), RGB(246, 106, 93));
+        }
+    }
     return true;
 }
 

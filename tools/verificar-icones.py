@@ -33,23 +33,28 @@ def main():
     expected = set()
     runtime_files, runtime_pixels = [], []
     destination = ROOT / "root/mOS/Sistema/Biblioteca/Icones"
-    for name in names:
-        source = originals / f"{name}.png"
+    artworks = [(name, originals / f"{name}.png", SIZES, (1, 2)) for name in names]
+    bases = ROOT / "assets/icones/bases"
+    require({p.stem for p in bases.glob("*.png")} == {"calendario", "relogio"}, "Bases dinâmicas faltantes ou excedentes")
+    artworks += [(name + "-base", bases / f"{name}.png", SIZES[:5], (1,)) for name in ("calendario", "relogio")]
+    for name, source, sizes, densities in artworks:
         digest = hashlib.sha256(source.read_bytes()).digest()
         require(digest not in digests, f"Original repetido: {name}")
         digests.add(digest)
         with Image.open(source) as image:
             image.load()
             require(image.width == image.height and image.mode == "RGBA", f"Original inválido: {name}")
-        for size in SIZES:
-            for density in (1, 2):
+        for size in sizes:
+            for density in densities:
                 suffix = "@2x" if density == 2 else ""
                 filename = f"{name}-{size}{suffix}.png"
                 expected.add(filename)
                 path = destination / filename
                 require(path.exists(), f"Exportação ausente: {filename}")
                 with Image.open(path) as image:
-                    image.load()  # CRC e fluxo comprimido precisam ser decodificáveis.
+                    image.verify()
+                with Image.open(path) as image:
+                    image.load()
                     pixels = size * density
                     require(image.size == (pixels, pixels) and image.mode == "RGBA", f"Formato incorreto: {filename}")
                     require(image.getchannel("A").getextrema() == (0, 255), f"Alfa inválido: {filename}")
@@ -57,7 +62,8 @@ def main():
                     require(max(image.getpixel(p)[3] for p in corners) <= 8, f"Canto opaco: {filename}")
                     if len(sys.argv) > 1 and density == 1 and size <= 256:
                         hash_value = 14695981039346656037
-                        for r, g, b, a in image.getdata():
+                        pixels_data = image.get_flattened_data() if hasattr(image, "get_flattened_data") else image.getdata()
+                        for r, g, b, a in pixels_data:
                             pixel = a << 24 | (r * a // 255) << 16 | (g * a // 255) << 8 | b * a // 255
                             hash_value = ((hash_value ^ pixel) * 1099511628211) & ((1 << 64) - 1)
                         runtime_files.append(str(path))
@@ -70,8 +76,8 @@ def main():
                                  capture_output=True, text=True, check=True)
         actual = [tuple(map(int, line.split())) for line in decoded.stdout.splitlines()]
         require(actual == runtime_pixels, "Pixels do decodificador do kernel diferem do Pillow")
-        print(f"{len(actual)} PNGs de runtime: pixels idênticos entre kernel e Pillow")
-    print(f"{len(names)}/{len(registered)} apps; {len(digests)} originais distintos; {len(expected)} PNGs válidos")
+        print(f"{len(actual)} PNGs de até 256 px: pixels idênticos entre kernel e Pillow")
+    print(f"{len(names)}/{len(registered)} apps; {len(digests)} fontes distintas (inclui 2 bases); {len(expected)} PNGs válidos")
 
 
 if __name__ == "__main__":

@@ -14,6 +14,15 @@ SIZES = (16, 32, 64, 128, 256, 512, 1024)
 NAMES = json.loads((ROOT / "assets/icones/catalogo.json").read_text())
 
 
+def export_bases(destination):
+    for name in ("calendario", "relogio"):
+        with Image.open(ROOT / f"assets/icones/bases/{name}.png") as source:
+            source = source.convert("RGBA")
+            for size in SIZES[:5]:
+                image = source.convert("RGBa").resize((size, size), Image.Resampling.LANCZOS).convert("RGBA")
+                image.save(destination / f"{name}-base-{size}.png")
+
+
 def main():
     destination = ROOT / "root/mOS/Sistema/Biblioteca/Icones"
     destination.mkdir(parents=True, exist_ok=True)
@@ -32,6 +41,7 @@ def main():
                     ).convert("RGBA")
                     image.save(destination / f"{name}-{size}{suffix}.png")
         print(f"{name}: 14 PNGs exportados")
+    export_bases(destination)
 
 
 if __name__ == "__main__":

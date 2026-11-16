@@ -6,13 +6,13 @@
 
 `assets/icones/catalogo.json` lista os nomes de execução; há um original RGBA por app em `assets/icones/originais/`. A verificação exige igualdade entre catálogo, registro, tabela de carregamento e arquivos originais, e rejeita originais repetidos.
 
-Cada app tem PNG RGBA em **16, 32, 64, 128, 256, 512 e 1024 px**, mais as respectivas variantes **@2x** (32 a 2048 px): **672 PNGs**. 2048 px é interpolado dos originais gerados, sem alegação de detalhe nativo adicional.
+Cada app tem PNG RGBA em **16, 32, 64, 128, 256, 512 e 1024 px**, mais as respectivas variantes **@2x** (32 a 2048 px): **672 PNGs**, mais **10 bases internas** de Calendário e Relógio (16 a 256 px). 2048 px é interpolado dos originais gerados, sem alegação de detalhe nativo adicional.
 
 ## Carregamento no sistema
 
 `kernel/ui/icons_tahoe.c:tahoe_icon()` verifica o nome na tabela de apps nativos e então carrega `/Sistema/Biblioteca/Icones/<exec>-<tamanho>.png`. A menor variante entre 16 e 256 px que cobre o pedido é decodificada e escalada para a superfície. A checagem de cabeçalho limita dimensões e alocação; a imagem temporária é liberada após o desenho. Arquivo ausente, inválido ou falha de alocação mantém o desenho vetorial existente.
 
-`kernel/ui/icons.c:icon_for()` preserva os ícones dos bundles externos e mantém o cache por app, tamanho e tema. O catálogo nativo já contém sua placa e margens: o carregador não coloca uma segunda placa em torno desses ícones, mesmo quando os cantos da arte são transparentes. O tratamento existente do modo escuro continua aplicado após o desenho.
+`kernel/ui/icons.c:icon_for()` preserva os ícones dos bundles externos e mantém o cache por app, tamanho e tema. O catálogo nativo já contém sua placa e margens: o carregador não coloca uma segunda placa em torno desses ícones, mesmo quando os cantos da arte são transparentes. Calendário e Relógio usam bases sem números/ponteiros fixos. O sistema desenha o dia, dia da semana/mês e ponteiros com o RTC; as entradas do cache expiram na troca do dia ou minuto. O tratamento existente do modo escuro continua aplicado após o desenho.
 
 Dock, Busca, grade de apps e alternador em `kernel/ui/desktop.c`, e janelas em `kernel/ui/wm.c`, usam o mesmo `icon_for()`. As variantes de 512/1024 e @2x são entregáveis; o limite atual desse cache de renderização é 256 px. `tools/build.sh` copia `root/mOS/` para o payload sem necessidade de alterar o build.
 
@@ -83,9 +83,11 @@ python3 tools/verificar-icones.py
 cc -std=c11 -ffreestanding -ffunction-sections -fdata-sections -Ikernel/include tools/test-icones-png.c -Wl,--gc-sections -o /tmp/mos-icon-png
 python3 tools/verificar-icones.py /tmp/mos-icon-png
 clang -std=c11 -ffreestanding -fsyntax-only -Ikernel/include kernel/ui/icons.c kernel/ui/icons_tahoe.c
+cc -std=c11 -ffreestanding -ffunction-sections -fdata-sections -Ikernel/include tools/test-icones-dinamicos.c -Wl,--gc-sections -lm -o /tmp/mos-icon-live
+/tmp/mos-icon-live
 git diff --check
 ```
 
-O exportador/verificador exige Pillow; reduz com alfa pré-multiplicado e Lanczos. Foram conferidos cobertura, originais distintos, integridade, dimensões, RGBA, transparência, cantos externos com alfa até 8/255 e limite de arquivo do carregador nos 672 PNGs. Os **240 PNGs usados em runtime** tiveram dimensões e hash de todos os pixels pré-multiplicados comparados entre o decodificador PNG real do kernel e Pillow. Todos coincidiram. As duas unidades C alteradas passaram na checagem de sintaxe.
+O exportador/verificador exige Pillow; reduz com alfa pré-multiplicado e Lanczos. Foram conferidos cobertura, originais distintos, integridade, dimensões, RGBA, transparência, cantos externos com alfa até 8/255 e limite de arquivo do carregador nos 682 PNGs (672 variantes públicas e 10 bases). Os **250 PNGs de até 256 px** tiveram dimensões e hash de todos os pixels pré-multiplicados comparados entre o decodificador PNG real do kernel e Pillow. Todos coincidiram. O teste instrumentado do carregador confirmou os dias 1 e 31, horários 03:00 e 09:30, liberação da superfície temporária e recuperação por arquivo ausente/dimensão inválida. As duas unidades C alteradas passaram na checagem de sintaxe.
 
 Nenhum build do projeto ou QEMU foi executado. Renderização dentro do mOS, comportamento da recuperação vetorial no sistema em execução e aparência efetiva no modo escuro ainda não foram validados em uma sessão do sistema.

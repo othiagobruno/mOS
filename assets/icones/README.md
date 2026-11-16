@@ -61,6 +61,10 @@ Referência de linguagem visual: [apresentação oficial do Tahoe](https://www.a
 | `automator` | Três nós azuis em degraus ligados por setas, engrenagem no nó central. |
 | `imagecapture` | Câmera grafite com lente azul, cartão de imagem e seta de importação. |
 
+## Bases dinâmicas
+
+As duas artes em `bases/` foram editadas com imagegen a partir dos próprios originais: Calendário sem o número 15 e Relógio sem ponteiros/pivô, preservando formas, cores e marcações. O exportador gera cinco resoluções de cada base. O carregador desenha a data e hora reais sobre elas; os 672 arquivos públicos continuam como amostras estáticas.
+
 ## Arquivos
 
 - `originais/<exec>.png`: 48 originais RGBA preservados.
