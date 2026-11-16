@@ -64,6 +64,11 @@ tail -1 /tmp/amdgpu_host.log
 gcc -O2 -Wall -Wextra -DMOS_HOST_TEST -I kernel/dev/amdgpu tools/amdgpu_pm4_host.c kernel/dev/amdgpu/pm4check.c -o /tmp/amdgpu_pm4_host
 /tmp/amdgpu_pm4_host > /tmp/amdgpu_pm4_host.log || { cat /tmp/amdgpu_pm4_host.log; exit 1; }
 tail -1 /tmp/amdgpu_pm4_host.log
+# driver de usuário da GPU AMD (libSystem) contra o validador de PM4 do kernel
+gcc -O1 -DMOS_HOST_TEST -I kernel/dev/amdgpu -c kernel/dev/amdgpu/pm4check.c -o /tmp/pm4check_amdws.o
+gcc -std=gnu11 -O1 -w -fno-builtin -I tools/hostinc -I userland/libsystem tools/amdws_host.c userland/libsystem/amdws.c /tmp/pm4check_amdws.o -o /tmp/amdws_host
+/tmp/amdws_host > /tmp/amdws_host.log || { cat /tmp/amdws_host.log; exit 1; }
+tail -1 /tmp/amdws_host.log
 # GPU AMD: interpretador ATOM e leitura do VBIOS (VFCT, atomfirmware). Com MOS_VFCT=<cópia da VFCT> confere o VBIOS real.
 gcc -O2 -Wall -Wextra -DMOS_HOST_TEST -I kernel/dev/amdgpu tools/amdgpu_atom_host.c kernel/dev/amdgpu/atom.c -o /tmp/amdgpu_atom_host
 /tmp/amdgpu_atom_host > /tmp/amdgpu_atom_host.log || { cat /tmp/amdgpu_atom_host.log; exit 1; }
