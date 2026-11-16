@@ -817,10 +817,6 @@ int wcscoll(const wchar_t_ *a, const wchar_t_ *b);
 wchar_t_ btowc(int c);
 int wctob(wchar_t_ c);
 void *localeconv(void);
-int vs___tolower_l(int c, void *loc) __asm__("___tolower_l");
-int vs___tolower_l(int c, void *loc) { (void)loc; return __tolower(c); }
-int vs___toupper_l(int c, void *loc) __asm__("___toupper_l");
-int vs___toupper_l(int c, void *loc) { (void)loc; return c >= 'a' && c <= 'z' ? c - 32 : c; }
 wchar_t_ btowc_l(int c, void *loc) { (void)loc; return btowc(c); }
 int wctob_l(wchar_t_ c, void *loc) { (void)loc; return wctob(c); }
 void *localeconv_l(void *loc) { (void)loc; return localeconv(); }

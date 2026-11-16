@@ -26,8 +26,10 @@ Este documento separa o que está pronto e testado do que falta. "Teste de host"
 2. **Caracteres largos e multibyte.** Núcleo UTF-8 **feito** (`userland/libsystem/multibyte.c`,
    `tools/multibyte_hosttest.sh` 2074/2074): `mbrtowc`/`mbtowc`/`mblen`/`mbrlen`/`wctomb`/`wcrtomb`/`mbsinit`
    restartáveis e estritos (rejeitam codificação longa demais, substitutos e > U+10FFFF; guardam a sequência pela
-   metade no `mbstate_t`). Falta: `getwc`/`ungetwc`/`fputwc` ainda só ASCII (`vscode_libc.c`), `towupper`/`iswalpha`
-   e `wcwidth` com tabela Unicode de verdade (hoje por faixas aproximadas), `swprintf`/`vfwprintf`, `wcstod`/`wcstold`.
+   metade no `mbstate_t`). Classes/caixa de caractere largo **feitas** (`userland/libsystem/wctype_wide.c` com as
+   tabelas Unicode do musl, `tools/wctype_hosttest.sh` 35/35): `iswalpha`/…/`towupper`/`towlower`/`wcwidth`/`wctype`/
+   `iswctype` e os nomes extendidos da Apple `___runetype`/`___tolower`/`___toupper` (e `_l`), antes só ASCII.
+   Falta: `getwc`/`ungetwc`/`fputwc` acima de ASCII (`vscode_libc.c`), `swprintf`/`vfwprintf`, `wcstod`/`wcstold`.
 3. **long double no stdio.** `strtold`/`strtold_l`/`wcstold` reduzem a double e o `printf("%Lf")` converte para double
    (`stdio.c`). Plano: `floatscan` e conversão de 80 bits exatas (algoritmo do musl, MIT).
 4. **Stubs C de `sys_zerados.c` desta frente.** **Feito** (`userland/libsystem/libc_bsd.c` + `swiftsupport.c`,

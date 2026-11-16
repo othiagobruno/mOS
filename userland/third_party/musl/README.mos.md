@@ -12,4 +12,8 @@ Apple, `features.h`, `endian.h`, `bits/alltypes.h`, `atomic.h`), `aliases.c` (os
 triplo do Darwin não tem alias), `apple.c` (nomes que só a libm da Apple exporta) e `srcs.sh` (lista de fontes por
 arquitetura). As funções de `<fenv.h>` estão em `userland/libsystem/fenv.c`.
 
-Compilação: `tools/build-libm-musl.sh`; teste: `tools/libm_hosttest.sh`.
+Tabelas de ctype largo (`src/ctype/alpha.h`, `nonspacing.h`, `wide.h`, `punct.h`, `casemap.h`): só os dados do musl
+(MIT). A lógica (`iswalpha`, `towupper`, `wcwidth`, `___runetype`...) está em `userland/libsystem/wctype_wide.c`;
+teste `tools/wctype_hosttest.sh`.
+
+Compilação da libm: `tools/build-libm-musl.sh`; teste: `tools/libm_hosttest.sh`.

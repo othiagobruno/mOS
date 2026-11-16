@@ -619,8 +619,6 @@ int __istype(int c, unsigned long mask) { return !!__maskrune(c, mask); }
 int __isctype(int c, unsigned long mask) { return !!__maskrune(c, mask); }
 int __tolower(int c) { return (c >= 'A' && c <= 'Z') ? c + 32 : c; }
 int __toupper(int c) { return (c >= 'a' && c <= 'z') ? c - 32 : c; }
-int ___tolower(int c) { return __tolower(c); }
-int ___toupper(int c) { return __toupper(c); }
 int tolower(int c) { return __tolower(c); }
 int toupper(int c) { return __toupper(c); }
 int isalpha(int c) { return (c | 32) >= 'a' && (c | 32) <= 'z'; }
