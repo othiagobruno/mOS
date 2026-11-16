@@ -8,9 +8,12 @@
 #define VAR_ARRAYS 1
 #define HAVE_LRINT 1
 #define HAVE_LRINTF 1
-/* arredondamento par como o lrint da libm, em instrução (frintx/cvtsd2si), sem chamada à libm */
+/* arredondamento par como o lrint da libm, em instrução (frintx/cvtsd2si), sem chamada à libm. No teste de host
+ * hospedado (glibc) o math.h declara lrint e o macro quebraria a declaração: lá vale a libm. */
+#if !__STDC_HOSTED__
 #define lrint(x) ((long)__builtin_rint(x))
 #define lrintf(x) ((long)__builtin_rintf(x))
+#endif
 #define PACKAGE_VERSION "1.5.2"
 /* a API do libopus não é exportação do libSystem do macOS: fica escondida, só a casca cx_opus_* aparece */
 #define OPUS_EXPORT

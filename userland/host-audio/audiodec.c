@@ -507,3 +507,131 @@ int cx_audiodec(const void *bytes, unsigned long long n, cx_audiodec_out *o) {
     if (looks_mp3(b, n)) return decode_mp3(b, n, o);
     return 0;
 }
+
+/* ================================================================ decodificador por pacote
+ * O AudioConverter (AAC/MP3/Opus/ALAC -> LPCM) e o AudioFileStream usam este caminho: um pacote de entrada vira
+ * PCM 16 bits intercalado. O cookie é o kAudioConverterDecompressionMagicCookie do app: esds (AAC, como no
+ * AudioFile), AudioSpecificConfig cru, OpusHead ou a caixa 'alac'. Sem cookie, AAC-LC/HE e Opus mono/estéreo
+ * saem da ASBD. */
+typedef struct cx_pdec {
+    int kind;                 /* 1 mp3, 2 alac, 3 aac, 4 opus */
+    void *h;                  /* aac / opus */
+    mp3dec_t mp3;
+    alac_st alac;
+    int ch, rate;
+} cx_pdec;
+
+static int sfi_of(int rate) {
+    static const int t[13] = {96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350};
+    for (int i = 0; i < 13; i++) if (t[i] == rate) return i;
+    return -1;
+}
+/* AudioSpecificConfig mínimo a partir da ASBD: LC (aot 2) ou HE v1 com SBR explícito (aot 5). */
+static int asc_from_asbd(uint32_t fmt, int rate, int ch, uint8_t *out) {
+    uint32_t bits = 0; int nb = 0;
+#define PUT(v, n) do { bits = bits << (n) | ((uint32_t)(v) & ((1u << (n)) - 1)); nb += (n); } while (0)
+    int he = fmt == MP4_FOURCC('a', 'a', 'c', 'h');
+    int core = he ? rate / 2 : rate;
+    int sc = sfi_of(core), so = sfi_of(rate);
+    if (sc < 0 || so < 0 || ch < 1 || ch > 7) return 0;
+    if (he) { PUT(5, 5); PUT(sc, 4); PUT(ch, 4); PUT(so, 4); PUT(2, 5); }
+    else { PUT(2, 5); PUT(sc, 4); PUT(ch, 4); }
+    PUT(0, 3); /* GASpecificConfig: frameLength 1024, sem dependsOnCoreCoder, sem extensão */
+#undef PUT
+    int nbytes = (nb + 7) / 8;
+    bits <<= nbytes * 8 - nb;
+    for (int i = nbytes - 1; i >= 0; i--) { out[i] = (uint8_t)bits; bits >>= 8; }
+    return nbytes;
+}
+
+cx_pdec *cx_pdec_open(uint32_t fmt, const uint8_t *cookie, int cookie_n, double rate, int ch) {
+    cx_pdec *d = calloc(1, sizeof *d);
+    if (!d) return 0;
+    d->rate = (int)(rate + 0.5);
+    d->ch = ch;
+    if (fmt == MP4_FOURCC('.', 'm', 'p', '3') || fmt == MP4_FOURCC('.', 'm', 'p', '2') || fmt == MP4_FOURCC('.', 'm', 'p', '1')) {
+        d->kind = 1;
+        mp3dec_init(&d->mp3);
+        return d;
+    }
+    if (fmt == MP4_FOURCC('a', 'l', 'a', 'c')) {
+        d->kind = 2;
+        if (cookie && cookie_n >= 24 && !alac_open(&d->alac, cookie, cookie_n)) return d;
+        free(d);
+        return 0;
+    }
+    if (fmt == MP4_FOURCC('o', 'p', 'u', 's')) {
+        d->kind = 4;
+        cx_opus_head h;
+        if (!cookie || cx_opus_head_ogg(cookie, cookie_n, &h)) {
+            memset(&h, 0, sizeof h);
+            h.channels = ch > 0 ? ch : 2; h.streams = 1; h.coupled = h.channels == 2; h.map[1] = 1;
+            if (h.channels > 2) { free(d); return 0; }
+        }
+        d->h = cx_opus_open(&h);
+        d->ch = h.channels;
+        d->rate = 48000;
+        if (d->h) return d;
+        free(d);
+        return 0;
+    }
+    if (fmt == MP4_FOURCC('a', 'a', 'c', ' ') || fmt == MP4_FOURCC('a', 'a', 'c', 'h') || fmt == MP4_FOURCC('a', 'a', 'c', 'p') ||
+        fmt == MP4_FOURCC('a', 'a', 'c', 'l') || fmt == MP4_FOURCC('a', 'a', 'c', 'e') || fmt == MP4_FOURCC('a', 'a', 'c', 'f') ||
+        fmt == MP4_FOURCC('u', 's', 'a', 'c')) {
+        d->kind = 3;
+        const uint8_t *asc = 0;
+        int asc_n = 0;
+        uint8_t own[8];
+        if (cookie && cookie_n > 0) {
+            /* o cookie do CoreAudio é o ES_Descriptor (tag 3), às vezes dentro de uma caixa esds */
+            if (cookie_n > 12 && !memcmp(cookie + 4, "esds", 4)) { cookie += 12; cookie_n -= 12; }
+            if (cookie[0] == 3 && !esds_asc(cookie, cookie_n, &asc, &asc_n)) {}
+            else { asc = cookie; asc_n = cookie_n; }
+        }
+        if (!asc) { asc_n = asc_from_asbd(fmt, d->rate, ch, own); asc = own; }
+        d->h = asc_n > 0 ? cx_aac_open(asc, asc_n, CX_AAC_RAW, 0) : 0;
+        if (d->h) return d;
+    }
+    free(d);
+    return 0;
+}
+
+/* Um pacote. Devolve quadros (0 = ainda sem saída), < 0 erro. pcm com espaço para max_frames * 8 canais. */
+int cx_pdec_decode(cx_pdec *d, const uint8_t *pkt, int n, int16_t *pcm, int max_frames, int *ch, int *rate) {
+    if (!d || !pkt || n < 1 || !pcm) return -1;
+    int got = 0;
+    switch (d->kind) {
+    case 1: {
+        mp3dec_frame_info_t info;
+        if (max_frames < MINIMP3_MAX_SAMPLES_PER_FRAME / 2) return -1;
+        got = mp3dec_decode_frame(&d->mp3, pkt, n, pcm, &info);
+        if (got > 0) { d->ch = info.channels; d->rate = info.hz; }
+        break;
+    }
+    case 2:
+        if (alac_decode(&d->alac, pkt, n, pcm, max_frames, &got)) return -2;
+        d->ch = (int)d->alac.cfg.numChannels;
+        d->rate = (int)d->alac.cfg.sampleRate;
+        break;
+    case 3: {
+        int c = 0, r = 0;
+        got = cx_aac_decode(d->h, pkt, n, pcm, max_frames * 8, &c, &r);
+        if (got > 0) { d->ch = c; d->rate = r; }
+        break;
+    }
+    case 4:
+        got = cx_opus_decode(d->h, pkt, n, pcm, max_frames);
+        break;
+    }
+    if (ch) *ch = d->ch;
+    if (rate) *rate = d->rate;
+    return got;
+}
+
+void cx_pdec_close(cx_pdec *d) {
+    if (!d) return;
+    if (d->kind == 2) alac_close(&d->alac);
+    if (d->kind == 3) cx_aac_close(d->h);
+    if (d->kind == 4) cx_opus_close(d->h);
+    free(d);
+}

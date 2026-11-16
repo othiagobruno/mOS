@@ -1,6 +1,6 @@
 /* Entrada em C do decodificador ALAC da Apple (Apache-2.0, ver APPLE_LICENSE.txt).
- * O miolo (Golomb, preditor, unmix) é o código da Apple. Esta casca cobre o quadro
- * de 16 bits; outras profundidades devolvem erro em vez de fingir o resultado. */
+ * O miolo (Golomb, preditor) é o código da Apple. Esta casca reconstrói 16, 20, 24 e 32 bits (com os bytes
+ * deslocados) em int32 alinhado à esquerda, como o unmix20/24/32 da Apple, e alac_decode corta para 16 bits. */
 #include <stdlib.h>
 #include <string.h>
 #include "ALACBitUtilities.h"
@@ -17,14 +17,12 @@
 
 typedef struct {
     ALACSpecificConfig cfg;
-    int32_t *mixU, *mixV, *pred;
+    int32_t *mixU, *mixV, *pred, *pcm32;
     uint16_t *shift;
 } alac_st;
 
-static void zero16(int16_t *buffer, uint32_t n, uint32_t stride) {
-    if (stride == 1) { memset(buffer, 0, n * sizeof(int16_t)); return; }
-    for (uint32_t i = 0; i < n * stride; i += stride) buffer[i] = 0;
-}
+/* amostra de bitDepth bits (já com os bytes deslocados) -> int32 alinhado à esquerda */
+static inline int32_t alac_left(int32_t v, uint32_t depth) { return (int32_t)((uint32_t)v << (32 - depth)); }
 static int32_t fill_element(BitBuffer *bits) {
     int16_t count = BitBufferReadSmall(bits, 4);
     if (count == 15) count = (int16_t)(count + (int16_t)BitBufferReadSmall(bits, 8) - 1);
@@ -50,6 +48,8 @@ int alac_open(alac_st *s, const uint8_t *cookie, int cookie_len) {
     int n = cookie_len;
     if (n >= 12 && p[4] == 'f' && p[5] == 'r' && p[6] == 'm' && p[7] == 'a') { p += 12; n -= 12; }
     if (n >= 12 && p[4] == 'a' && p[5] == 'l' && p[6] == 'a' && p[7] == 'c') { p += 12; n -= 12; }
+    /* conteúdo da caixa 'alac' com versão/flags na frente (o frameLength nunca é 0) */
+    if (n >= 28 && !p[0] && !p[1] && !p[2] && !p[3]) { p += 4; n -= 4; }
     if (n < 24) return -1;
     s->cfg.frameLength = ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) | ((uint32_t)p[2] << 8) | p[3];
     s->cfg.compatibleVersion = p[4];
@@ -63,24 +63,26 @@ int alac_open(alac_st *s, const uint8_t *cookie, int cookie_len) {
     s->cfg.avgBitRate = ((uint32_t)p[16] << 24) | ((uint32_t)p[17] << 16) | ((uint32_t)p[18] << 8) | p[19];
     s->cfg.sampleRate = ((uint32_t)p[20] << 24) | ((uint32_t)p[21] << 16) | ((uint32_t)p[22] << 8) | p[23];
     if (s->cfg.compatibleVersion > kALACVersion) return -1;
-    if (s->cfg.bitDepth != 16) return -2; /* 20/24/32: o miolo existe, a saída deste quadro não */
+    if (s->cfg.bitDepth != 16 && s->cfg.bitDepth != 20 && s->cfg.bitDepth != 24 && s->cfg.bitDepth != 32) return -2;
     if (s->cfg.frameLength < 1 || s->cfg.frameLength > 16384) return -1;
     if (s->cfg.numChannels < 1 || s->cfg.numChannels > 8) return -1;
     s->mixU = calloc((size_t)s->cfg.frameLength, sizeof(int32_t));
     s->mixV = calloc((size_t)s->cfg.frameLength, sizeof(int32_t));
     s->pred = calloc((size_t)s->cfg.frameLength, sizeof(int32_t));
+    /* os bytes deslocados de até dois canais (uint16 cada): o mesmo tamanho do pred, como no ALACDecoder */
     s->shift = (uint16_t *)s->pred;
-    if (!s->mixU || !s->mixV || !s->pred) { free(s->mixU); free(s->mixV); free(s->pred); return -1; }
+    s->pcm32 = calloc((size_t)s->cfg.frameLength * s->cfg.numChannels, sizeof(int32_t));
+    if (!s->mixU || !s->mixV || !s->pred || !s->pcm32) { free(s->mixU); free(s->mixV); free(s->pred); free(s->pcm32); return -1; }
     return 0;
 }
 void alac_close(alac_st *s) {
     if (!s) return;
-    free(s->mixU); free(s->mixV); free(s->pred);
+    free(s->mixU); free(s->mixV); free(s->pred); free(s->pcm32);
     memset(s, 0, sizeof *s);
 }
 
-/* devolve 0 e *got quadros intercalados em out (capacidade em quadros). */
-int alac_decode(alac_st *s, const uint8_t *pkt, int pkt_len, int16_t *out, int out_frames, int *got) {
+/* devolve 0 e *got quadros intercalados em out (int32 alinhado à esquerda; capacidade em quadros). */
+int alac_decode32(alac_st *s, const uint8_t *pkt, int pkt_len, int32_t *out, int out_frames, int *got) {
     if (!s || !s->mixU || !pkt || pkt_len < 1 || !out || !got) return -1;
     BitBuffer bits;
     BitBufferInit(&bits, (uint8_t *)pkt, (uint32_t)pkt_len);
@@ -105,6 +107,7 @@ int alac_decode(alac_st *s, const uint8_t *pkt, int pkt_len, int16_t *out, int o
             uint8_t escape = header & 1;
             uint32_t chanBits = s->cfg.bitDepth - bytesShifted * 8;
             if (partial) { numSamples = BitBufferRead(&bits, 16) << 16; numSamples |= BitBufferRead(&bits, 16); }
+            if (numSamples > s->cfg.frameLength) { status = kALAC_ParamError; break; }
             int16_t coefs[32];
             uint8_t numU = 0, modeU = 0;
             uint32_t denShift = 0;
@@ -137,8 +140,10 @@ int alac_decode(alac_st *s, const uint8_t *pkt, int pkt_len, int16_t *out, int o
                 uint32_t shift = bytesShifted * 8;
                 for (uint32_t i = 0; i < numSamples; i++) s->shift[i] = (uint16_t)BitBufferRead(&shiftBits, (uint8_t)shift);
             }
-            int16_t *o = out + channelIndex;
-            for (uint32_t i = 0, j = 0; i < numSamples; i++, j += numChannels) o[j] = (int16_t)s->mixU[i];
+            int32_t *o = out + channelIndex;
+            uint32_t sh = bytesShifted * 8u;
+            for (uint32_t i = 0, j = 0; i < numSamples; i++, j += numChannels)
+                o[j] = alac_left(sh ? (int32_t)((uint32_t)s->mixU[i] << sh | s->shift[i]) : s->mixU[i], s->cfg.bitDepth);
             channelIndex += 1;
             *got = (int)numSamples;
         } else if (tag == ID_CPE) {
@@ -153,6 +158,7 @@ int alac_decode(alac_st *s, const uint8_t *pkt, int pkt_len, int16_t *out, int o
             uint8_t escape = header & 1;
             uint32_t chanBits = s->cfg.bitDepth - bytesShifted * 8 + 1;
             if (partial) { numSamples = BitBufferRead(&bits, 16) << 16; numSamples |= BitBufferRead(&bits, 16); }
+            if (numSamples > s->cfg.frameLength) { status = kALAC_ParamError; break; }
             int16_t coefsU[32], coefsV[32];
             uint8_t numU = 0, numV = 0, modeU = 0, modeV = 0, mixBits = 0;
             int8_t mixRes = 0;
@@ -202,7 +208,16 @@ int alac_decode(alac_st *s, const uint8_t *pkt, int pkt_len, int16_t *out, int o
                     s->shift[i + 1] = (uint16_t)BitBufferRead(&shiftBits, (uint8_t)shift);
                 }
             }
-            unmix16(s->mixU, s->mixV, out + channelIndex, numChannels, (int32_t)numSamples, mixBits, mixRes);
+            /* unmix (o mesmo de unmix16/20/24/32 da Apple) e os bytes deslocados de volta embaixo */
+            int32_t *o = out + channelIndex;
+            uint32_t sh = bytesShifted * 8u;
+            for (uint32_t i = 0, j = 0; i < numSamples; i++, j += numChannels) {
+                int32_t l = s->mixU[i], r = s->mixV[i];
+                if (mixRes != 0) { l = s->mixU[i] + s->mixV[i] - ((mixRes * s->mixV[i]) >> mixBits); r = l - s->mixV[i]; }
+                if (sh) { l = (int32_t)((uint32_t)l << sh | s->shift[2 * i]); r = (int32_t)((uint32_t)r << sh | s->shift[2 * i + 1]); }
+                o[j] = alac_left(l, s->cfg.bitDepth);
+                o[j + 1] = alac_left(r, s->cfg.bitDepth);
+            }
             channelIndex += 2;
             *got = (int)numSamples;
         } else if (tag == ID_CCE || tag == ID_PCE) { status = kALAC_ParamError; break; }
@@ -212,6 +227,16 @@ int alac_decode(alac_st *s, const uint8_t *pkt, int pkt_len, int16_t *out, int o
         else { status = kALAC_ParamError; break; }
         if (channelIndex >= numChannels) break;
     }
-    for (; channelIndex < numChannels; channelIndex++) zero16(out + channelIndex, numSamples, numChannels);
+    for (; channelIndex < numChannels; channelIndex++)
+        for (uint32_t i = 0; i < numSamples; i++) out[i * numChannels + channelIndex] = 0;
+    *got = (int)numSamples;
     return status == ALAC_noErr ? 0 : -1;
+}
+
+/* o mesmo em PCM de 16 bits: os 16 bits de cima (o corte que o ffmpeg e o AudioConverter fazem de 24 para 16) */
+int alac_decode(alac_st *s, const uint8_t *pkt, int pkt_len, int16_t *out, int out_frames, int *got) {
+    if (!s || !s->pcm32 || !out || !got) return -1;
+    int r = alac_decode32(s, pkt, pkt_len, s->pcm32, out_frames, got);
+    if (r == 0) for (long i = 0; i < (long)*got * (long)s->cfg.numChannels; i++) out[i] = (int16_t)(s->pcm32[i] >> 16);
+    return r;
 }
