@@ -129,6 +129,12 @@ struct process {
     bool exited;
     u64 mem_pages;
     u64 swap_pages;              /* páginas deste processo no swap comprimido (mm/swap.c) */
+    /* limites (SYS_VMCTL, vmpolicy.h): rlim_set = já tem valores próprios (senão vale o padrão). mem_limit em páginas,
+     * 0 = sem limite; jprio = prioridade de jetsam (0 no kcalloc = padrão 10). Herdados no fork e no spawn. */
+    u64 rlim_cur[9], rlim_max[9];
+    u8 rlim_set, jprio_set;
+    u8 jprio;
+    u64 mem_limit;
     u64 start_ms;
     thread_t *main;
     struct process *next;

@@ -60,7 +60,22 @@ antes do build final (REGRAS.md).
 | 2 swap no compressor | pronto | `tools/vmcomp_host.c`: 4000 páginas, fork com dois donos, munmap solta o slot, zona volta a 0 páginas; `resto_host` com a API nova |
 | 3 correções de swap | pronto, sem VM | `clang -fsyntax-only` nos arquivos do kernel; QEMU só no build final |
 | 5 escalonador | pronto, sem VM | `tools/futexq_host.c`: 99 657 wakes iguais aos da varredura antiga (processo+va ou chave física), n limitado, chave física entre processos; prioridade QoS→Mach, decaimento e faixa 0..127 |
-| 4, 6–8 | aberto | — |
+| 6 limites | pronto, sem VM | `tools/vmpolicy_host.c`: pressão 1/2/4, rlimit (padrões, EPERM, EINVAL, corte no teto), vítima do jetsam, limite de footprint; `clang -fsyntax-only` no kernel e no libSystem |
+| 4, 7, 8 | aberto | — |
+
+### Limites (item 6), como ficou
+
+- `SYS_VMCTL` (120): `MOS_VM_STATS` (RAM, compressor, pageins/outs, nível de pressão, jetsam), `GETRLIM`/`SETRLIM`
+  por processo (herdados no fork, vfork e spawn), `SETLIMIT` (footprint em MiB, como o memorystatus), `SETJPRIO`
+  (prioridade de jetsam 0..210) e `FOOTPRINT` (residente + comprimido).
+- Falta de página que passa do limite de footprint encerra o processo com SIGKILL (log `memorystatus:`).
+- Pressão crítica (livre < metade do piso) por 3 s sem o compressor liberar nada: `jetsam:` encerra o processo de menor
+  prioridade de jetsam e maior footprint (pid 1 e prioridade ≥ 180 nunca).
+- `RLIMIT_DATA` vale no `brk`. `NOFILE` e `STACK` mostram o teto real do kernel no cur (256 fds, 2 MiB) e aceitam max maior,
+  como o XNU.
+- libSystem: `getrlimit`/`setrlimit` reais; `kern.memorystatus_vm_pressure_level` do `sysctl.c` (da Renata) lê o nível do
+  kernel; `host_statistics64(HOST_VM_INFO64)` com livres, internas, compressor e pageins/outs no layout de 38 palavras;
+  `pthread_setschedparam` liga `MOS_THR_SETPRIO` (FIFO/RR fixas).
 
 ### Escalonador (item 5), como ficou
 

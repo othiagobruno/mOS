@@ -105,7 +105,29 @@ enum {
     SYS_FSMETA = 106,  /* (op, mos_fsmeta_t*) -> resultado | -errno   metadados de arquivo (MOS_FSM_*, kernel/lib/vfsmeta.c) */
     /* 110: interface Darwin do kernel (kernel/proc/darwin.c, docs/darwin-bsd-mach.md). rdi = MOS_DW_* (abaixo). */
     SYS_DARWIN = 110,
+    SYS_VMCTL = 120,   /* (op, a, b) -> resultado | -errno   memória virtual: estatísticas, rlimit, limites (MOS_VM_* abaixo) */
 };
+
+/* SYS_VMCTL (proc/process.c, política em vmpolicy.h). pid 0 = o próprio processo. */
+enum {
+    MOS_VM_STATS = 1,      /* (mos_vmstats_t*) -> 0                       RAM, compressor, pressão (host_statistics64, sysctl) */
+    MOS_VM_GETRLIM,        /* (res, mos_rlim_t*) -> 0 | -EINVAL          getrlimit */
+    MOS_VM_SETRLIM,        /* (res, const mos_rlim_t*) -> 0 | -EINVAL | -EPERM   setrlimit */
+    MOS_VM_SETLIMIT,       /* (pid, MiB) -> 0 | -ESRCH | -EPERM          limite de footprint (memorystatus); 0 = nenhum */
+    MOS_VM_SETJPRIO,       /* (pid, 0..210) -> 0 | -ESRCH | -EPERM       prioridade de jetsam (JETSAM_PRIORITY_*) */
+    MOS_VM_FOOTPRINT,      /* (pid) -> bytes | -ESRCH                    residente + comprimido (phys_footprint) */
+};
+typedef struct { unsigned long long cur, max; } mos_rlim_t;
+typedef struct {
+    unsigned long long page_size, total_pages, free_pages;
+    unsigned long long resident_pages;        /* páginas de usuário de todos os processos */
+    unsigned long long compressed_pages;      /* páginas guardadas no compressor (inclui as zero) */
+    unsigned long long compressor_pages;      /* páginas físicas que a zona do compressor ocupa */
+    unsigned long long pageouts, pageins, rejected;
+    unsigned long long jetsam_kills;
+    unsigned int pressure_level;              /* 1 normal, 2 aviso, 4 crítico */
+    unsigned int memorystatus_level;          /* % disponível */
+} mos_vmstats_t;
 
 /* SYS_FSMETA: inode, dono, flags BSD, datas em ns e atributos estendidos de um arquivo ou pasta.
  * O alvo é fd (>= 0) ou path (fd = -1). O kernel nunca segue um link no ÚLTIMO componente: o libSystem resolve

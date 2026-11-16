@@ -428,10 +428,25 @@ static u32 ncpu(void) { return 1; }
 kern_return_t host_statistics64(mach_port_t host, int flavor, void *info, u32 *count) {
     (void)host;
     if (flavor == HOST_VM_INFO64 || flavor == HOST_VM_INFO) {
+        /* vm_statistics(64): free, active, inactive, wire, depois contadores. Números do kernel (SYS_VMCTL).
+         * Layout do vm_statistics64 (38 palavras): u64 a partir da palavra 4 (zero_fill, reactivations, pageins, pageouts...),
+         * decompressions 24, compressions 26, compressor_page_count 32, internal 35, total_uncompressed 36. */
         u32 n = count ? *count : 0;
         u32 *w = info;
         for (u32 i = 0; i < n; i++) w[i] = 0;
-        if (n >= 4) { w[0] = 65536; w[1] = 32768; w[2] = 16384; w[3] = 16384; }   /* páginas livres/ativas/... */
+        mos_vmstats_t st;
+        if (SYS2(SYS_VMCTL, MOS_VM_STATS, &st) != 0) { st.free_pages = 65536; st.resident_pages = 32768; st.total_pages = 131072; st.compressed_pages = st.compressor_pages = st.pageins = st.pageouts = 0; }
+        u64 wired = st.total_pages > st.free_pages + st.resident_pages ? st.total_pages - st.free_pages - st.resident_pages : 0;
+        if (n >= 4) { w[0] = (u32)st.free_pages; w[1] = (u32)st.resident_pages; w[2] = 0; w[3] = (u32)wired; }
+        if (flavor == HOST_VM_INFO64 && n >= 38) {
+            u64 *q = (u64 *)(w + 4);
+            q[2] = st.pageins; q[3] = st.pageouts;                      /* pageins, pageouts (u64) */
+            *(u64 *)(w + 24) = st.pageins;                              /* decompressions */
+            *(u64 *)(w + 26) = st.pageouts;                             /* compressions */
+            w[32] = (u32)st.compressor_pages;                           /* compressor_page_count */
+            w[35] = (u32)st.resident_pages;                             /* internal_page_count */
+            *(u64 *)(w + 36) = st.compressed_pages;                     /* total_uncompressed_pages_in_compressor */
+        }
         return KERN_SUCCESS;
     }
     if (flavor == HOST_CPU_LOAD_INFO) {
