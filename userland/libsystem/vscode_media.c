@@ -175,7 +175,8 @@ typedef struct {
     void *dec_ref;
     void *dec_st;              /* decodificação: cx_h264 (OpenH264 corrigido, host-audio/h264_glue.cpp) */
     int display_order;         /* kVTDecodeFrame_EnableTemporalProcessing no primeiro quadro */
-    u32 out_fmt;               /* '420v' (padrão), '420f' ou 'BGRA' */
+    u32 out_fmt;               /* '420v' (padrão), '420f', 'BGRA', '2vuy', 'yuvs' ou 'y420' */
+    int dst_w, dst_h;          /* kCVPixelBufferWidth/HeightKey: escala da saída (0 = o tamanho do quadro) */
     u8 *ps;                    /* SPS e PPS já entregues ao decodificador (Annex B) */
     int ps_n;
     u64 seq;
@@ -267,7 +268,14 @@ const void *CVTransferFunctionGetStringForIntegerCodePoint(int c);
 extern const void *kCVPixelBufferPixelFormatTypeKey, *kCVImageBufferYCbCrMatrixKey, *kCVImageBufferColorPrimariesKey,
     *kCVImageBufferTransferFunctionKey;
 
-static int vt_fmt_ok(u32 f) { return f == VT_FMT_420V || f == VT_FMT_420F || f == VT_FMT_BGRA; }
+#include "avcap_conv.h"
+#include "sck_core.h"
+static int vt_fmt_ok(u32 f) { return f == VT_FMT_420V || f == VT_FMT_420F || f == VT_FMT_BGRA || f == AVC_FMT_2VUY || f == AVC_FMT_YUVS || f == AVC_FMT_Y420; }
+extern const void *kCVPixelBufferWidthKey, *kCVPixelBufferHeightKey;
+static int vt_attr_int(id attrs, const void *key) {
+    id v = attrs ? MSG(id, attrs, "objectForKey:", (id)key) : 0;
+    return v ? (int)MSG0(i64, v, "longLongValue") : 0;
+}
 /* destinationImageBufferAttributes: kCVPixelBufferPixelFormatTypeKey é um número ou uma lista em ordem de preferência */
 static int vt_pick_fmt(id attrs, u32 *out) {
     *out = VT_FMT_420V;   /* o padrão do decodificador H.264 do macOS */
@@ -307,6 +315,9 @@ OSStatus VTDecompressionSessionCreate(void *a, void *fd, id spec, id attrs, cons
     if (!s) return kVTCouldNotFindVideoDecoderErr;
     s->codec = codec ? codec : kCMVideoCodecType_H264;
     s->out_fmt = fmt;
+    s->dst_w = vt_attr_int(attrs, kCVPixelBufferWidthKey);
+    s->dst_h = vt_attr_int(attrs, kCVPixelBufferHeightKey);
+    if (s->dst_w < 0 || s->dst_h < 0 || (s->dst_w > 0) != (s->dst_h > 0)) s->dst_w = s->dst_h = 0;
     s->display_order = -1;
     if (cb) {   /* sem callback: só DecodeFrameWithOutputHandler */
         const vt_dec_rec *rec = (const vt_dec_rec *)cb;
@@ -384,6 +395,65 @@ static struct vt_pend *vt_pend_take(vts_t *v, u64 tag) {
     for (int i = 0; i < 64; i++) if (v->pend[i].used && v->pend[i].tag == tag) return &v->pend[i];
     return 0;
 }
+/* saída com escala ou fora dos formatos nativos: RGB na matriz do fluxo, escala bilinear e de volta em BT.601
+ * (avcap_conv.c), com o anexo de matriz dizendo 601; +1 */
+int CVPixelBufferCreateWithBytes(void *a, u64 w, u64 h, u32 fmt, void *base, u64 bpr, void (*rel)(void *, const void *), void *ctx, id attrs, void **out);
+int CVPixelBufferCreateWithPlanarBytes(void *a, u64 w, u64 h, u32 fmt, void *d, u64 ds, u64 np, void **pb, u64 *pw, u64 *ph, u64 *pr,
+                                       void *rel, void *ctx, id attrs, void **out);
+static void vt_free1(void *ctx, const void *base) { (void)base; free(ctx); }
+static void vt_freep(void *ctx, const void *d, u64 sz, u64 np, const void **pl) { (void)d; (void)sz; (void)np; (void)pl; free(ctx); }
+static void *vt_transfer(vts_t *v, const u8 *y, const u8 *u, const u8 *v2, int sy, int suv, int w, int h, const cx_h264_color *c, int matrix) {
+    int ow = v->dst_w ? v->dst_w : w, oh = v->dst_h ? v->dst_h : h;
+    u8 *rgb = malloc((size_t)w * h * 4);
+    if (!rgb) return 0;
+    vt_to_bgra(y, u, v2, sy, suv, w, h, c->full_range, matrix, rgb, (u64)w * 4);
+    u8 *scaled = rgb;
+    if (ow != w || oh != h) {
+        scaled = malloc((size_t)ow * oh * 4);
+        if (!scaled) { free(rgb); return 0; }
+        sck_rect r = {0, 0, ow, oh};
+        sck_place((const uint32_t *)rgb, w, h, w, (uint32_t *)scaled, ow, oh, r, 0xFF000000u);
+        free(rgb);
+    }
+    void *img = 0;
+    if (v->out_fmt == VT_FMT_BGRA) {
+        CVPixelBufferCreateWithBytes(0, (u64)ow, (u64)oh, VT_FMT_BGRA, scaled, (u64)ow * 4, vt_free1, scaled, 0, &img);
+        if (!img) free(scaled);
+        return img;
+    }
+    size_t bpr[3], rows[3];
+    int np = avc_planes(v->out_fmt, ow, oh, bpr, rows);
+    size_t total = 0, off[3];
+    for (int i = 0; i < np; i++) { off[i] = total; total += bpr[i] * rows[i]; }
+    u8 *mem = np ? malloc(total) : 0;
+    if (!mem) { free(scaled); return 0; }
+    u8 *pl[3] = {mem + off[0], np > 1 ? mem + off[1] : 0, np > 2 ? mem + off[2] : 0};
+    avc_convert(AVC_SRC_BGRA, scaled, (size_t)ow * oh * 4, ow, oh, v->out_fmt, pl, bpr);
+    free(scaled);
+    if (np == 1) CVPixelBufferCreateWithBytes(0, (u64)ow, (u64)oh, v->out_fmt, mem, bpr[0], vt_free1, mem, 0, &img);
+    else {
+        void *pb[3] = {pl[0], pl[1], pl[2]};
+        u64 pw[3], ph[3], pr[3];
+        for (int i = 0; i < np; i++) { pw[i] = i ? (u64)(ow + 1) / 2 : (u64)ow; ph[i] = rows[i]; pr[i] = bpr[i]; }
+        CVPixelBufferCreateWithPlanarBytes(0, (u64)ow, (u64)oh, v->out_fmt, mem, total, (u64)np, pb, pw, ph, pr, (void *)vt_freep, mem, 0, &img);
+    }
+    if (!img) { free(mem); return 0; }
+    cx_h264_color c601 = *c;
+    c601.matrix = 6;
+    c601.full_range = v->out_fmt == VT_FMT_420F;
+    vt_attach_color(img, &c601, 6);
+    return img;
+}
+/* a mesma conversão para quem tem um quadro I420 (composição de vídeo, testes): formato e tamanho de saída; +1 */
+void *cx_vt_convert_frame(u32 fmt, int dw, int dh, const u8 *y, const u8 *u, const u8 *v, int sy, int suv, int w, int h, int full, int matrix) {
+    vts_t t;
+    memset(&t, 0, sizeof t);
+    t.out_fmt = fmt; t.dst_w = dw; t.dst_h = dh;
+    cx_h264_color c;
+    memset(&c, 0, sizeof c);
+    c.full_range = full; c.matrix = matrix;
+    return vt_transfer(&t, y, u, v, sy, suv, w, h, &c, matrix);
+}
 /* um quadro saiu do decodificador: monta o CVPixelBuffer e chama quem pediu, com o pts e o refCon daquela amostra */
 static void vt_emit(void *ctx, const u8 *y, const u8 *u, const u8 *v2, int sy, int suv, int w, int h, u64 tag, const cx_h264_color *c) {
     vts_t *v = ctx;
@@ -397,11 +467,19 @@ static void vt_emit(void *ctx, const u8 *y, const u8 *u, const u8 *v2, int sy, i
         return;
     }
     void *img = 0;
+    int matrix = vt_matrix(c, h);
+    if ((v->dst_w && (v->dst_w != w || v->dst_h != h)) || !(v->out_fmt == VT_FMT_420V || v->out_fmt == VT_FMT_420F || v->out_fmt == VT_FMT_BGRA)) {
+        img = vt_transfer(v, y, u, v2, sy, suv, w, h, c, matrix);
+        if (!img) { q.fn(q.ref, q.frame_ref, kVTPixelTransferNotSupportedErr, 0, 0, q.pts, q.dur); return; }
+        v->w = w; v->h = h;
+        q.fn(q.ref, q.frame_ref, 0, 0, img, q.pts, q.dur);
+        objc_release((id)img);
+        return;
+    }
     if (CVPixelBufferCreate(0, (u64)w, (u64)h, v->out_fmt, 0, &img) != 0 || !img) {
         q.fn(q.ref, q.frame_ref, kVTCouldNotFindVideoDecoderErr, 0, 0, q.pts, q.dur);
         return;
     }
-    int matrix = vt_matrix(c, h);
     CVPixelBufferLockBaseAddress(img, 0);
     if (v->out_fmt == VT_FMT_BGRA)
         vt_to_bgra(y, u, v2, sy, suv, w, h, c->full_range, matrix, CVPixelBufferGetBaseAddress(img), CVPixelBufferGetBytesPerRow(img));
@@ -535,6 +613,21 @@ OSStatus VTDecompressionSessionCopyBlackPixelBuffer(void *s, void **out) {
     if (out) *out = 0;
     if (!v || !out) return kVTInvalidSessionErr;
     w = v->w > 1 ? v->w : 16; h = v->h > 1 ? v->h : 16;
+    if (v->dst_w || !(v->out_fmt == VT_FMT_420V || v->out_fmt == VT_FMT_420F || v->out_fmt == VT_FMT_BGRA)) {
+        /* mesmo caminho dos quadros: preto em I420 de vídeo, escala e formato da sessão */
+        u8 *yp = malloc((size_t)w * h), *cp = malloc((size_t)((w + 1) / 2) * ((h + 1) / 2));
+        if (!yp || !cp) { free(yp); free(cp); return kVTCouldNotFindVideoDecoderErr; }
+        memset(yp, 16, (size_t)w * h);
+        memset(cp, 128, (size_t)((w + 1) / 2) * ((h + 1) / 2));
+        cx_h264_color c;
+        memset(&c, 0, sizeof c);
+        c.matrix = 6;
+        img = vt_transfer(v, yp, cp, cp, w, (w + 1) / 2, w, h, &c, 6);
+        free(yp); free(cp);
+        if (!img) return kVTCouldNotFindVideoDecoderErr;
+        *out = img;
+        return 0;
+    }
     if (CVPixelBufferCreate(0, (u64)w, (u64)h, v->out_fmt, 0, &img) != 0 || !img) return kVTCouldNotFindVideoDecoderErr;
     CVPixelBufferLockBaseAddress(img, 0);
     if (v->out_fmt == VT_FMT_BGRA) {
