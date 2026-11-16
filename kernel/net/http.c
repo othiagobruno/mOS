@@ -15,8 +15,11 @@ enum { CH_SIZE, CH_DATA, CH_DATA_END, CH_TRAILER, CH_DONE };
 
 typedef struct {
     /* requisição */
-    char method[8];
+    char method[16];
     char req_ct[96];
+    char *req_hdrs;         /* cabeçalhos extras da requisição ("Nome: valor\r\n"...) */
+    bool manual_redirect;
+    char *resp_hdrs; u32 resp_len;
     u8  *req_body;
     u32  req_len;
     /* URL atual */
@@ -178,21 +181,43 @@ static bool start_url(http_req_t *r, const char *url) {
     /* monta a requisição */
     char hp[280];
     host_port(p, hp, sizeof hp);
-    usize hcap = strlen(p->path) + strlen(hp) + strlen(p->req_ct) + 512;
+    usize hcap = strlen(p->path) + strlen(hp) + strlen(p->req_ct) + (p->req_hdrs ? strlen(p->req_hdrs) : 0) + 512;
     char *head = kmalloc(hcap);
     if (!head) { snprintf(r->error, sizeof r->error, "sem memória"); r->state = -1; return false; }
     int hl;
-    bool has_body = !strcmp(p->method, "POST");
-    if (has_body)
-        hl = snprintf(head, hcap,
-                      "%s %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: " HTTP_USER_AGENT "\r\nAccept: */*\r\n"
-                      "Accept-Encoding: identity\r\nConnection: close\r\nContent-Type: %s\r\nContent-Length: %u\r\n\r\n",
-                      p->method, p->path, hp, p->req_ct[0] ? p->req_ct : "application/octet-stream", p->req_len);
-    else
-        hl = snprintf(head, hcap,
-                      "%s %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: " HTTP_USER_AGENT "\r\nAccept: */*\r\n"
-                      "Accept-Encoding: identity\r\nConnection: close\r\n\r\n",
-                      p->method, p->path, hp);
+    bool has_body = p->req_len || !strcmp(p->method, "POST") || !strcmp(p->method, "PUT") || !strcmp(p->method, "PATCH");
+    /* cabeçalhos do chamador, menos os que o cliente controla; User-Agent e Accept só se ele não deu */
+    const char *xh = p->req_hdrs ? p->req_hdrs : "";
+    bool has_ua = false, has_accept = false, has_ct = false;
+    for (const char *l = xh; *l;) {
+        const char *e = strstr(l, "\r\n");
+        usize ln = e ? (usize)(e - l) : strlen(l);
+        if (!strncasecmp(l, "User-Agent:", 11)) has_ua = true;
+        if (!strncasecmp(l, "Accept:", 7)) has_accept = true;
+        if (!strncasecmp(l, "Content-Type:", 13)) has_ct = true;
+        l += ln + (e ? 2 : 0);
+    }
+    hcap += strlen(xh);
+    char *hb = kmalloc(hcap);
+    if (!hb) { kfree(head); snprintf(r->error, sizeof r->error, "sem memória"); r->state = -1; return false; }
+    usize k = 0;
+    for (const char *l = xh; *l;) {
+        const char *e = strstr(l, "\r\n");
+        usize ln = e ? (usize)(e - l) : strlen(l);
+        bool skip = !strncasecmp(l, "Host:", 5) || !strncasecmp(l, "Content-Length:", 15) || !strncasecmp(l, "Connection:", 11) ||
+                    !strncasecmp(l, "Transfer-Encoding:", 18) || !strncasecmp(l, "Accept-Encoding:", 16) || ln == 0;
+        if (!skip && k + ln + 3 < hcap) { memcpy(hb + k, l, ln); k += ln; hb[k++] = '\r'; hb[k++] = '\n'; }
+        l += ln + (e ? 2 : 0);
+    }
+    hb[k] = 0;
+    char ctl[128] = "";
+    if (has_body && !has_ct && (p->req_len || p->req_ct[0])) snprintf(ctl, sizeof ctl, "Content-Type: %s\r\n", p->req_ct[0] ? p->req_ct : "application/octet-stream");
+    char cll[48] = "";
+    if (has_body) snprintf(cll, sizeof cll, "Content-Length: %u\r\n", p->req_len);
+    hl = snprintf(head, hcap, "%s %s HTTP/1.1\r\nHost: %s\r\n%s%sAccept-Encoding: identity\r\nConnection: close\r\n%s%s%s\r\n",
+                  p->method, p->path, hp, has_ua ? "" : "User-Agent: " HTTP_USER_AGENT "\r\n", has_accept ? "" : "Accept: */*\r\n",
+                  hb, ctl, cll);
+    kfree(hb);
     if (hl < 0 || (usize)hl >= hcap) { kfree(head); snprintf(r->error, sizeof r->error, "URL longa demais"); r->state = -1; return false; }
     u32 bl = has_body ? p->req_len : 0;
     p->out = kmalloc((usize)hl + bl);
@@ -212,7 +237,7 @@ static http_req_t *req_new(const char *url, const char *method) {
     if (!p) { kfree(r); return NULL; }
     r->priv = p;
     p->sock = -1;
-    strcpy(p->method, method);
+    snprintf(p->method, sizeof p->method, "%s", method);
     if (url && strlen(url) >= sizeof r->url) {          /* recusa em vez de cortar: o servidor veria outra URL */
         snprintf(r->url, sizeof r->url, "%.200s…", url);
         snprintf(r->error, sizeof r->error, "URL longa demais (%u bytes, máximo %u)", (unsigned)strlen(url), (unsigned)MOS_URL_MAX - 1);
@@ -244,6 +269,27 @@ http_req_t *http_post(const char *url, const char *content_type, const void *bod
     return r;
 }
 
+http_req_t *http_request(const char *url, const char *method, const char *headers, const void *body, u32 len, int redirect) {
+    http_req_t *r = req_new(url, method && *method ? method : "GET");
+    if (!r || r->state) return r;
+    hp_t *p = r->priv;
+    p->manual_redirect = redirect == 1;
+    if (headers && *headers) {
+        usize hl = strlen(headers);
+        p->req_hdrs = kmalloc(hl + 1);
+        if (!p->req_hdrs) { snprintf(r->error, sizeof r->error, "sem memória"); r->state = -1; return r; }
+        memcpy(p->req_hdrs, headers, hl + 1);
+    }
+    if (len) {
+        p->req_body = kmalloc(len);
+        if (!p->req_body) { snprintf(r->error, sizeof r->error, "sem memória"); r->state = -1; return r; }
+        memcpy(p->req_body, body, len);
+        p->req_len = len;
+    }
+    start_url(r, r->url);
+    return r;
+}
+
 void http_free(http_req_t *r) {
     if (!r) return;
     hp_t *p = r->priv;
@@ -252,9 +298,12 @@ void http_free(http_req_t *r) {
         kfree(p->out);
         kfree(p->hdr);
         kfree(p->req_body);
+        kfree(p->req_hdrs);
+        kfree(p->resp_hdrs);
         kfree(p);
     }
     kfree(r->body);
+    kfree(r->headers);
     kfree(r);
 }
 
@@ -303,6 +352,7 @@ static void finish(http_req_t *r) {
     xp_close(p);
     if (!r->body) { r->body = kmalloc(1); if (r->body) r->body[0] = 0; }
     snprintf(r->location, sizeof r->location, "%s", p->cur);
+    if (p->resp_hdrs) { kfree(r->headers); r->headers = p->resp_hdrs; p->resp_hdrs = NULL; p->resp_len = 0; }
     p->phase = P_DONE;
     r->state = 1;
 }
@@ -396,6 +446,7 @@ static int on_header(http_req_t *r, u32 end) {
         return 0;
     }
     r->status = status;
+    kfree(p->resp_hdrs); p->resp_hdrs = NULL; p->resp_len = 0;
     char *location = p->scratch;
     location[0] = 0;
     bool loc_long = false;
@@ -412,6 +463,19 @@ static int on_header(http_req_t *r, u32 end) {
             char *name = line, *val = colon + 1;
             trim(&name, colon);
             trim(&val, val + strlen(val));
+            {
+                /* guarda o cabeçalho para quem chamou (Headers do fetch/XHR) */
+                usize nl2 = strlen(name), vl2 = strlen(val);
+                char *nb = krealloc(p->resp_hdrs, p->resp_len + nl2 + vl2 + 5);
+                if (nb) {
+                    p->resp_hdrs = nb;
+                    memcpy(nb + p->resp_len, name, nl2); p->resp_len += (u32)nl2;
+                    nb[p->resp_len++] = ':'; nb[p->resp_len++] = ' ';
+                    memcpy(nb + p->resp_len, val, vl2); p->resp_len += (u32)vl2;
+                    nb[p->resp_len++] = '\r'; nb[p->resp_len++] = '\n';
+                    nb[p->resp_len] = 0;
+                }
+            }
             if (!strcasecmp(name, "Content-Length")) {
                 i64 v = 0;
                 bool ok = isdigit(*val);
@@ -434,14 +498,15 @@ static int on_header(http_req_t *r, u32 end) {
 
     bool is_redir = status == 301 || status == 302 || status == 303 || status == 307 || status == 308;
     if (is_redir && loc_long) return fail(r, "redirecionamento %d com URL longa demais", status);
-    bool redirect = is_redir && location[0];
+    bool redirect = is_redir && location[0] && !p->manual_redirect;
     if (redirect) {
         if (p->redirects >= HTTP_MAX_REDIR) return fail(r, "redirecionamentos em excesso");
         p->redirects++;
+        r->redirects = p->redirects;
         char *next = p->next;
         if (!resolve_location(p, location, next, sizeof p->next)) return fail(r, "redirecionamento %d com URL longa demais", status);
         kprintf("http: %d → %.160s%s (%u bytes)\n", status, next, strlen(next) > 160 ? "…" : "", (unsigned)strlen(next));
-        if (status == 303 || ((status == 301 || status == 302) && !strcmp(p->method, "POST"))) {
+        if ((status == 303 && strcmp(p->method, "HEAD")) || ((status == 301 || status == 302) && !strcmp(p->method, "POST"))) {
             strcpy(p->method, "GET");
             kfree(p->req_body); p->req_body = NULL; p->req_len = 0;
         }

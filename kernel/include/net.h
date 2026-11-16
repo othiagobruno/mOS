@@ -127,9 +127,14 @@ typedef struct http_req {
     int state;                /* interno */
     void *priv;
     u64 max_body;             /* 0 = padrão (128 MB); defina logo depois do http_get, antes do 1º http_poll */
+    char *headers;            /* cabeçalhos da resposta final, "Nome: valor\r\n" cada (kmalloc; NULL se nenhum) */
+    int redirects;            /* redirecionamentos seguidos */
 } http_req_t;
 http_req_t *http_get(const char *url);
 http_req_t *http_post(const char *url, const char *content_type, const void *body, u32 len);
+/* qualquer método; headers = "Nome: valor\r\n"... (Host, Content-Length, Connection e Transfer-Encoding são do cliente).
+ * redirect: 0 segue (até 5), 1 devolve a resposta 3xx sem seguir */
+http_req_t *http_request(const char *url, const char *method, const char *headers, const void *body, u32 len, int redirect);
 int  http_poll(http_req_t *r);                /* 0 em andamento, 1 concluído, -1 erro */
 void http_free(http_req_t *r);
 float http_progress(http_req_t *r);           /* 0..1 (estimado) */

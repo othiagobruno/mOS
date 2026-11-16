@@ -237,6 +237,7 @@ typedef struct jsrealm {
     jsobj *p_abuf, *p_dview, *p_typed, *p_ta[11];   /* ArrayBuffer, DataView, %TypedArray% e um por tipo */
     /* Canvas 2D (canvas_js.c) e DOMException */
     jsobj *p_img;             /* HTMLImageElement.prototype (= Image.prototype) */
+    jsobj *p_headers, *p_formdata, *p_request, *p_abortsig, *p_abortctl, *p_xhrup;   /* web_fetch.c */
     jsobj *p_blob, *p_file, *p_freader, *p_progress, *p_url, *p_usp, *p_imgbitmap;   /* web_blob.c, web_url.c */
     jsobj *p_domexc, *p_canvas, *p_ctx2d, *p_cgrad, *p_cpat, *p_path2d, *p_imgdata, *p_tmetrics, *p_dommatrix;
     u32 jobpos;
@@ -575,6 +576,17 @@ bool   js_blob_bytes(jsv v, const u8 **d, u32 *n, const char **type);
 jsobj *js_blob_new(const u8 *d, u32 n, const char *type);
 jsv    js_blob_from_url(const char *url);
 bool   web_url_parse(const char *in, const char *base, char *out, int cap);
+jsstr *js_usp_string(jsv v);                       /* URLSearchParams serializado, NULL se não for um */
+/* fetch, XMLHttpRequest e companhia (web_fetch.c) */
+void   js_fetch_init(jsrealm *r);
+void   web_fetch_pump(struct js_page *p);
+bool   web_fetch_pending(struct js_page *p);
+void   web_fetch_drop(struct js_page *p);
+jsobj *js_abort_signal_new(void);
+void   js_abort_signal(jsobj *sig, jsv reason);
+void   js_abort_follow(jsobj *own, jsv parent);
+bool   js_form_entries(jsv form, jsv submitter, jsobj *list);
+jsv    js_dom_parse_document(const char *url, jsstr *src, const char *mime);
 void   js_mark_page(struct js_page *p);
 extern void (*js_host_finalize_hook)(jsobj *o);
 extern int  (*js_host_delete_hook)(jsobj *o, jsstr *k);

@@ -99,6 +99,8 @@ typedef struct http_req {
     int state;
     void *priv;
     u64 max_body;
+    char *headers;
+    int redirects;
 } http_req_t;
 
 static const char *ctype_for(const char *n) {
@@ -134,8 +136,57 @@ http_req_t *http_get(const char *url) {
     return r;
 }
 http_req_t *http_post(const char *url, const char *ct, const void *b, u32 n) { (void)ct; (void)b; (void)n; return http_get(url); }
+/* http://teste/__eco devolve método, cabeçalhos e corpo recebidos; __status/NNN responde com esse código;
+ * __redir vai para /__eco com 302. O resto vem do diretório de testes. */
+http_req_t *http_request(const char *url, const char *method, const char *hdrs, const void *body, u32 len, int redirect) {
+    const char *eco = "http://teste/__eco", *stp = "http://teste/__status/", *rd = "http://teste/__redir";
+    if (!strcmp(url, "http://teste/__lento")) {
+        /* nunca responde: para timeout e abort */
+        http_req_t *r = calloc(1, sizeof *r);
+        snprintf(r->url, sizeof r->url, "%s", url);
+        return r;
+    }
+    if (!strncmp(url, rd, strlen(rd))) {
+        if (redirect == 1) {
+            http_req_t *r = calloc(1, sizeof *r);
+            snprintf(r->url, sizeof r->url, "%s", url); snprintf(r->location, sizeof r->location, "%s", url);
+            r->status = 302; r->state = 1; r->body = calloc(1, 1);
+            r->headers = strdup("Location: /__eco\r\n");
+            return r;
+        }
+        http_req_t *r = http_request(eco, method, hdrs, body, len, 0);
+        r->redirects = 1;
+        return r;
+    }
+    if (!strncmp(url, eco, strlen(eco))) {
+        http_req_t *r = calloc(1, sizeof *r);
+        snprintf(r->url, sizeof r->url, "%s", url); snprintf(r->location, sizeof r->location, "%s", url);
+        size_t cap = 256 + (hdrs ? strlen(hdrs) : 0) + len;
+        r->body = malloc(cap);
+        int k = snprintf((char *)r->body, cap, "%s\n%s\n", method, hdrs ? hdrs : "");
+        if (len) memcpy(r->body + k, body, len);
+        r->body_len = (u32)(k + len);
+        r->body[r->body_len] = 0;
+        r->status = 200; r->state = 1;
+        snprintf(r->content_type, sizeof r->content_type, "text/plain");
+        r->headers = strdup("Content-Type: text/plain\r\nX-Teste: um\r\nSet-Cookie: a=1\r\nX-Teste: dois\r\n");
+        return r;
+    }
+    if (!strncmp(url, stp, strlen(stp))) {
+        http_req_t *r = calloc(1, sizeof *r);
+        snprintf(r->url, sizeof r->url, "%s", url); snprintf(r->location, sizeof r->location, "%s", url);
+        r->status = atoi(url + strlen(stp)); r->state = 1;
+        r->body = (u8 *)strdup("corpo"); r->body_len = 5;
+        r->headers = strdup("Content-Type: text/plain\r\n");
+        return r;
+    }
+    (void)redirect;
+    http_req_t *r = http_get(url);
+    if (r->state == 1 && r->content_type[0]) { char b[160]; snprintf(b, sizeof b, "Content-Type: %s\r\n", r->content_type); r->headers = strdup(b); }
+    return r;
+}
 int  http_poll(http_req_t *r) { return r->state; }
-void http_free(http_req_t *r) { if (r) { free(r->body); free(r); } }
+void http_free(http_req_t *r) { if (r) { free(r->body); free(r->headers); free(r); } }
 float http_progress(http_req_t *r) { return r->state ? 1.0f : 0.0f; }
 
 /* ---------- utilidades para os testes (o teste usa os headers do kernel e não vê a stdio) */
@@ -166,3 +217,7 @@ void crypto_random(void *buf, size_t len) {
     u8 *p = buf;
     while (len) { ssize_t r = getrandom(p, len, 0); if (r <= 0) abort(); p += r; len -= (size_t)r; }
 }
+void net_poll(void) {}
+/* pausa real (temporizadores de JS que dependem do relógio) */
+#include <unistd.h>
+void host_sleep_ms(int ms) { struct timespec ts = { ms / 1000, (long)(ms % 1000) * 1000000L }; nanosleep(&ts, NULL); }

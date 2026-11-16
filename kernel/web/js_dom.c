@@ -14,7 +14,7 @@ typedef struct { node_t *n; http_req_t *req; char url[512]; char *text; int len;
 typedef struct {
     http_req_t *req;
     jsobj *target;           /* promessa (fetch) ou objeto XHR */
-    int kind;                /* 0 fetch, 1 XHR */
+    int kind;                /* 2 módulo ES (fetch e XHR ficam em web_fetch.c) */
     int state;               /* 0 em andamento (http), 1 pronto, 2 erro */
     int status;
     char url[1024];
@@ -36,6 +36,8 @@ struct js_page {
     jsobj *document, *location, *winlist, *storage, *session, *keep;
     jsobj *imgdec;              /* img.decode() pendentes: [elemento, promessa, ...] */
     bool img_scan;              /* <img> do documento já registrados para o load da janela */
+    doc_t *xdocs[64];           /* documentos de DOMParser e XHR document, vivos até a página fechar */
+    int nxdocs;
     jtimer_t *timers;
     int ntimers, ctimers, next_timer;
     jnet_t *nets;
@@ -1531,8 +1533,18 @@ static jsv ctrl_value(node_t *n) {
     ctrl_t *c = n->ctrl;
     if (n->tag == T_SELECT) {
         if (c && c->nopts) return jv_str(js_strz(c->vals[CLAMP(c->sel, 0, c->nopts - 1)]));
+        /* sem controle (fora do layout): a <option selected>, senão a primeira */
         node_t *first = NULL;
-        for (node_t *o = node_find_tag(n, T_OPTION); o; o = NULL) first = o;
+        for (node_t *o = n->first; o; o = o->next) {
+            node_t *opts[2] = { o, NULL };
+            if (o->type == N_ELEM && o->tag == T_OPTGROUP) opts[0] = o->first;
+            for (node_t *q = opts[0]; q; q = o->tag == T_OPTGROUP ? q->next : NULL) {
+                if (q->type != N_ELEM || q->tag != T_OPTION) continue;
+                if (!first) first = q;
+                if (node_attr(q, "selected")) { first = q; goto achou; }
+            }
+        }
+    achou:
         if (!first) return jv_str(A[A_empty]);
         const char *v = node_attr(first, "value");
         if (v) return jv_str(js_strz(v));
@@ -1622,10 +1634,18 @@ static jsv geom(js_page_t *p, node_t *n, int what) {
 static const char *bool_attrs[] = {"disabled", "hidden", "readonly", "required", "selected", "multiple", "autofocus", "open", NULL};
 static const char *str_attrs[] = {"id", "title", "name", "placeholder", "lang", "alt", "rel", "target", "action", "method", "for", "role", NULL};
 
+/* documento dono de um nó: o da página ou um criado por DOMParser/XHR */
+static doc_t *doc_for(js_page_t *p, node_t *n) {
+    node_t *top = n;
+    while (top && top->parent) top = top->parent;
+    for (int i = 0; i < p->nxdocs; i++) if (p->xdocs[i]->root == top) return p->xdocs[i];
+    return p->doc;
+}
+
 static jsv node_get(jsobj *o, jsstr *k, bool *found) {
     js_page_t *p = o->u.host.page;
     node_t *n = o->u.host.node;
-    doc_t *d = p->doc;
+    doc_t *d = doc_for(p, n);
     *found = true;
     if (keyis(k, "nodeType")) return jv_int(n->type == N_DOC ? 9 : n->type == N_TEXT ? 3 : 1);
     if (keyis(k, "parentNode")) return n->parent ? wrapv(p, n->parent) : JS_NULL;
@@ -1635,7 +1655,7 @@ static jsv node_get(jsobj *o, jsstr *k, bool *found) {
     if (keyis(k, "nextSibling")) return wrapv(p, n->next);
     if (keyis(k, "previousSibling")) return wrapv(p, n->prev);
     if (keyis(k, "childNodes")) return children_array(p, n, false);
-    if (keyis(k, "ownerDocument")) return n->type == N_DOC ? JS_NULL : jv_obj(p->document);
+    if (keyis(k, "ownerDocument")) return n->type == N_DOC ? JS_NULL : d == p->doc ? jv_obj(p->document) : wrapv(p, d->root);
     if (n->tag == T_IFRAME && keyis(k, "srcdoc")) return str_or_empty(node_attr(n, "srcdoc"));
     if (n->tag == T_IMG) {
         bool c_ = keyis(k, "complete"), nw = keyis(k, "naturalWidth"), nh = keyis(k, "naturalHeight"), cs = keyis(k, "currentSrc");
@@ -2841,111 +2861,10 @@ static void net_start(js_page_t *p, const char *url, const char *method, const c
     snprintf(n->err, sizeof n->err, "esquema de URL não suportado");
 }
 
-static jsobj *headers_obj(js_page_t *p, const char *ctype, int blen);
-
-NATIVE(hdr_get) {
-    UNUSED_ARGS;
-    jsstr *k = js_tostr(ARG(0));
-    if (!k) return JS_EXC;
-    jsv ct = self->u.nat.data, ln = self->u.nat.data2;
-    bool has = self->u.nat.magic == 1;
-    if (!strcasecmp(k->d, "content-type")) return has ? jv_bool(jv_isstr(ct) && jv_s(ct)->len) : (jv_isstr(ct) && jv_s(ct)->len ? ct : JS_NULL);
-    if (!strcasecmp(k->d, "content-length")) return has ? JS_TRUE : js_tostrv(ln);
-    return has ? JS_FALSE : JS_NULL;
-}
-
-static jsobj *headers_obj(js_page_t *p, const char *ctype, int blen) {
-    jsobj *h = js_newobj(p->realm->p_object);
-    jsobj *g = js_newnative(hdr_get, "get", 1, 0), *has = js_newnative(hdr_get, "has", 1, 1);
-    g->u.nat.data = has->u.nat.data = jv_str(js_strz(ctype));
-    g->u.nat.data2 = has->u.nat.data2 = jv_int(blen);
-    js_defn(h, "get", jv_obj(g), PF_NOENUM);
-    js_defn(h, "has", jv_obj(has), PF_NOENUM);
-    return h;
-}
-
-static jsstr *net_text(jnet_t *n) {
-    if (!n->body || !n->blen) return A[A_empty];
-    usize ul;
-    char *u = charset_to_utf8((const u8 *)n->body, (usize)n->blen, NULL, &ul);
-    if (!u) return A[A_empty];
-    jsstr *s = js_strn(u, (int)ul);
-    kfree(u);
-    return s;
-}
-
-static void xhr_fire(js_page_t *p, jsobj *x, const char *type) {
-    jsobj *ev = new_event(p, js_intern(type, -1), false);
-    js_defprop(ev, A[A_target], jv_obj(x), 0);
-    js_defprop(ev, js_intern("currentTarget", -1), jv_obj(x), 0);
-    char on[40];
-    snprintf(on, sizeof on, "on%s", type);
-    jsprop *h = js_ownprop(x, js_intern(on, -1));
-    if (h && js_iscallable(h->v)) call_handler(h->v, jv_obj(x), ev, false);
-    jsprop *ls = js_ownprop(x, js_intern("\x01ouvintes", -1));
-    if (ls && jv_isobj(ls->v)) {
-        jsobj *l = js_arr_from(jv_o(ls->v)->arr, (int)jv_o(ls->v)->alen);
-        for (u32 i = 0; i + 1 < l->alen; i += 2)
-            if (jv_isstr(l->arr[i]) && !strcmp(jv_s(l->arr[i])->d, type)) call_handler(l->arr[i + 1], jv_obj(x), ev, false);
-    }
-}
-
-/* entrega o resultado ao script */
 static void net_deliver(js_page_t *p, jnet_t *n) {
-    if (n->kind == 2) {
-        js_module_fetched(n->target, n->body, n->blen, n->status, n->state == 2 ? n->err : NULL);
-        return;
-    }
-    if (n->kind == 0) {
-        jsobj *prom = n->target;
-        if (n->state == 2) {
-            js_promise_reject(prom, jv_obj(js_make_err(E_TYPE, js_str_fmt("Falha ao buscar %s: %s", n->url, n->err))));
-            return;
-        }
-        jsobj *r = js_newobj(p->realm->p_response);
-        js_defn(r, "status", jv_int(n->status), 0);
-        js_defn(r, "ok", jv_bool(n->status >= 200 && n->status < 300), 0);
-        js_defn(r, "statusText", jv_str(js_strz(n->status == 200 ? "OK" : n->status == 404 ? "Not Found" : "")), 0);
-        js_defn(r, "url", jv_str(js_strz(n->url)), 0);
-        js_defn(r, "type", jv_str(js_strz("basic")), 0);
-        js_defn(r, "redirected", JS_FALSE, 0);
-        js_defn(r, "bodyUsed", JS_FALSE, 0);
-        js_defn(r, "headers", jv_obj(headers_obj(p, n->ctype, n->blen)), 0);
-        js_defn(r, "\x01" "corpo", jv_str(net_text(n)), PF_NOENUM);
-        js_defn(r, "\x01" "bytes", jv_obj(js_blob_new((const u8 *)n->body, n->body ? (u32)n->blen : 0, n->ctype)), PF_NOENUM);
-        js_promise_resolve(prom, jv_obj(r));
-        return;
-    }
-    jsobj *x = n->target;
-    if (js_ownprop(x, js_intern("\x01" "abortado", -1))) return;
-    if (n->state == 2) {
-        js_defn(x, "readyState", jv_int(4), 0);
-        js_defn(x, "status", jv_int(0), 0);
-        char b[300];
-        snprintf(b, sizeof b, "XMLHttpRequest: falha em %s (%s)", n->url, n->err);
-        js_console_log(2, b);
-        xhr_fire(p, x, "readystatechange");
-        xhr_fire(p, x, "error");
-        xhr_fire(p, x, "loadend");
-        return;
-    }
-    jsstr *text = net_text(n);
-    js_defn(x, "status", jv_int(n->status), 0);
-    js_defn(x, "statusText", jv_str(js_strz(n->status == 200 ? "OK" : n->status == 404 ? "Not Found" : "")), 0);
-    js_defn(x, "responseText", jv_str(text), 0);
-    js_defn(x, "responseURL", jv_str(js_strz(n->url)), 0);
-    js_defn(x, "\x01" "ctype", jv_str(js_strz(n->ctype)), PF_NOENUM);
-    jsv resp = jv_str(text);
-    jsprop *rt = js_ownprop(x, js_intern("responseType", -1));
-    if (rt && jv_isstr(rt->v) && !strcmp(jv_s(rt->v)->d, "json")) {
-        resp = js_json_parse(text, JS_UNDEF);
-        if (resp == JS_EXC) { js_catch(); resp = JS_NULL; }
-    }
-    js_defn(x, "response", resp, 0);
-    js_defn(x, "readyState", jv_int(4), 0);
-    xhr_fire(p, x, "readystatechange");
-    xhr_fire(p, x, "load");
-    xhr_fire(p, x, "loadend");
+    (void)p;
+    /* só módulos ES passam por aqui; fetch e XMLHttpRequest ficam em web_fetch.c */
+    js_module_fetched(n->target, n->body, n->blen, n->status, n->state == 2 ? n->err : NULL);
 }
 
 /* avança as requisições pendentes; devolve true se entregou alguma */
@@ -2988,208 +2907,10 @@ static bool pump_nets(js_page_t *p) {
     return any;
 }
 
-NATIVE(w_fetch) {
-    UNUSED_ARGS;
-    js_page_t *p = cur_page();
-    if (!p) return JS_UNDEF;
-    jsobj *prom = js_promise_new();
-    jsv input = ARG(0);
-    if (jv_isobj(input)) { input = js_getn(input, "url"); TRYV(input); }
-    jsstr *u = js_tostr(input);
-    if (!u) return JS_EXC;
-    char url[1024];
-    url_resolve(p->doc->base, u->d, url, sizeof url);
-    const char *method = "GET";
-    char mb[16] = "GET", ct[96] = "";
-    jsstr *body = NULL;
-    jsv init = ARG(1);
-    if (jv_isobj(init)) {
-        jsv m = js_getn(init, "method");
-        TRYV(m);
-        if (m != JS_UNDEF) { jsstr *ms = js_tostr(m); if (!ms) return JS_EXC; snprintf(mb, sizeof mb, "%s", ms->d); method = mb; }
-        jsv b = js_getn(init, "body");
-        TRYV(b);
-        if (!jv_isnullish(b)) { body = js_tostr(b); if (!body) return JS_EXC; }
-        jsv h = js_getn(init, "headers");
-        TRYV(h);
-        if (jv_isobj(h)) {
-            jsv c1 = js_getn(h, "Content-Type");
-            TRYV(c1);
-            if (c1 == JS_UNDEF) { c1 = js_getn(h, "content-type"); TRYV(c1); }
-            if (jv_isstr(c1)) snprintf(ct, sizeof ct, "%s", jv_s(c1)->d);
-        }
-    }
-    if (!strncmp(url, "blob:", 5)) {
-        /* blob: da página: resposta local, sem rede */
-        const u8 *b;
-        u32 bl;
-        const char *type;
-        jsv blob = js_blob_from_url(u->d);
-        if (strcmp(method, "GET") || !js_blob_bytes(blob, &b, &bl, &type)) {
-            js_promise_reject(prom, jv_obj(js_make_err(E_TYPE, js_str_fmt("Falha ao buscar %s", u->d))));
-            return jv_obj(prom);
-        }
-        jsobj *r = js_newobj(p->realm->p_response);
-        js_defn(r, "status", jv_int(200), 0);
-        js_defn(r, "ok", JS_TRUE, 0);
-        js_defn(r, "statusText", jv_str(js_strz("OK")), 0);
-        js_defn(r, "url", jv_str(u), 0);
-        js_defn(r, "type", jv_str(js_strz("basic")), 0);
-        js_defn(r, "redirected", JS_FALSE, 0);
-        js_defn(r, "bodyUsed", JS_FALSE, 0);
-        js_defn(r, "headers", jv_obj(headers_obj(p, type, (int)bl)), 0);
-        bool bad;
-        jsstr *t = js_utf8_decode(b, bl, false, &bad);
-        js_defn(r, "\x01" "corpo", jv_str(t ? t : A[A_empty]), PF_NOENUM);
-        js_defn(r, "\x01" "bytes", blob, PF_NOENUM);
-        js_promise_resolve(prom, jv_obj(r));
-        return jv_obj(prom);
-    }
-    net_start(p, url, method, body ? body->d : NULL, body ? (int)body->len : 0, ct, 0, prom);
-    return jv_obj(prom);
-}
-
-static jsv resp_body(jsv thisv) {
-    if (!jv_isobj(thisv)) return js_throw_err(E_TYPE, "Response: objeto incompatível");
-    jsprop *b = js_ownprop(jv_o(thisv), js_intern("\x01" "corpo", -1));
-    if (!b) return js_throw_err(E_TYPE, "Response: objeto incompatível");
-    js_defn(jv_o(thisv), "bodyUsed", JS_TRUE, 0);
-    return b->v;
-}
-
-NATIVE(resp_text) {
-    UNUSED_ARGS;
-    jsv b = resp_body(thisv);
-    TRYV(b);
-    jsobj *pr = js_promise_new();
-    if (self->u.nat.magic >= 2) {
-        /* arrayBuffer() e blob(): os bytes da resposta */
-        jsprop *bp = js_ownprop(jv_o(thisv), js_intern("\x01" "bytes", -1));
-        const u8 *d = NULL;
-        u32 n = 0;
-        const char *type = "";
-        if (bp) js_blob_bytes(bp->v, &d, &n, &type);
-        if (self->u.nat.magic == 3) js_promise_resolve(pr, bp ? bp->v : jv_obj(js_blob_new(NULL, 0, "")));
-        else {
-            jsobj *ab = js_abuf_new(n);
-            if (ab && n) memcpy(ab->u.buf.data, d, n);
-            js_promise_resolve(pr, jv_obj(ab));
-        }
-    } else if (self->u.nat.magic == 0) js_promise_resolve(pr, b);
-    else {
-        jsv v = js_json_parse(jv_s(b), JS_UNDEF);
-        if (v == JS_EXC) js_promise_reject(pr, js_catch());
-        else js_promise_resolve(pr, v);
-    }
-    return jv_obj(pr);
-}
-
-static jsobj *this_xhr(jsv thisv) {
-    if (jv_isobj(thisv) && js_ownprop(jv_o(thisv), js_intern("\x01xhr", -1))) return jv_o(thisv);
-    js_throw_err(E_TYPE, "XMLHttpRequest: objeto incompatível");
-    return NULL;
-}
-
-NATIVE(xhr_ctor) {
-    UNUSED_ARGS;
-    if (!(flags & NF_NEW)) return js_throw_err(E_TYPE, "O construtor XMLHttpRequest exige 'new'");
-    jsobj *x = jv_o(thisv);
-    js_defn(x, "\x01xhr", JS_TRUE, PF_NOENUM);
-    js_defn(x, "readyState", jv_int(0), 0);
-    js_defn(x, "status", jv_int(0), 0);
-    js_defn(x, "statusText", jv_str(A[A_empty]), 0);
-    js_defn(x, "responseText", jv_str(A[A_empty]), 0);
-    js_defn(x, "response", jv_str(A[A_empty]), 0);
-    js_defn(x, "responseType", jv_str(A[A_empty]), 0);
-    js_defn(x, "onload", JS_NULL, 0);
-    js_defn(x, "onerror", JS_NULL, 0);
-    js_defn(x, "onreadystatechange", JS_NULL, 0);
-    return thisv;
-}
-
-NATIVE(xhr_method) {
-    UNUSED_ARGS;
-    js_page_t *p = cur_page();
-    jsobj *x = this_xhr(thisv);
-    if (!x || !p) return x ? JS_UNDEF : JS_EXC;
-    switch (self->u.nat.magic) {
-    case 0: { /* open(method, url, async) */
-        jsstr *m = js_tostr(ARG(0));
-        if (!m) return JS_EXC;
-        jsstr *u = js_tostr(ARG(1));
-        if (!u) return JS_EXC;
-        char url[1024];
-        url_resolve(p->doc->base, u->d, url, sizeof url);
-        js_defn(x, "\x01metodo", jv_str(m), PF_NOENUM);
-        js_defn(x, "\x01url", jv_str(js_strz(url)), PF_NOENUM);
-        js_defn(x, "\x01sinc", jv_bool(argc > 2 && !js_truthy(argv[2])), PF_NOENUM);
-        js_delprop(x, js_intern("\x01" "abortado", -1));
-        js_defn(x, "readyState", jv_int(1), 0);
-        xhr_fire(p, x, "readystatechange");
-        return JS_UNDEF;
-    }
-    case 1: { /* send(body) */
-        jsprop *u = js_ownprop(x, js_intern("\x01url", -1)), *m = js_ownprop(x, js_intern("\x01metodo", -1));
-        if (!u) return js_throw_err(E_ERROR, "InvalidStateError: chame open() antes de send()");
-        jsstr *body = jv_isnullish(ARG(0)) ? NULL : js_tostr(ARG(0));
-        if (!jv_isnullish(ARG(0)) && !body) return JS_EXC;
-        jsprop *ct = js_ownprop(x, js_intern("\x01" "ctype_req", -1));
-        net_start(p, jv_s(u->v)->d, m ? jv_s(m->v)->d : "GET", body ? body->d : NULL, body ? (int)body->len : 0,
-                  ct && jv_isstr(ct->v) ? jv_s(ct->v)->d : NULL, 1, x);
-        /* XHR síncrono: arquivos locais são entregues na hora; rede continua assíncrona */
-        jsprop *sync = js_ownprop(x, js_intern("\x01sinc", -1));
-        if (sync && sync->v == JS_TRUE && p->nnets && p->nets[p->nnets - 1].target == x && p->nets[p->nnets - 1].state != 0) {
-            jnet_t done = p->nets[--p->nnets];
-            net_deliver(p, &done);
-            kfree(done.body);
-        }
-        return JS_UNDEF;
-    }
-    case 2: { /* setRequestHeader */
-        jsstr *k = js_tostr(ARG(0));
-        if (!k) return JS_EXC;
-        if (!strcasecmp(k->d, "content-type")) { jsv v = js_tostrv(ARG(1)); TRYV(v); js_defn(x, "\x01" "ctype_req", v, PF_NOENUM); }
-        return JS_UNDEF;
-    }
-    case 3: { /* getResponseHeader */
-        jsstr *k = js_tostr(ARG(0));
-        if (!k) return JS_EXC;
-        jsprop *ct = js_ownprop(x, js_intern("\x01" "ctype", -1));
-        if (!strcasecmp(k->d, "content-type") && ct) return ct->v;
-        return JS_NULL;
-    }
-    case 4: { /* getAllResponseHeaders */
-        jsprop *ct = js_ownprop(x, js_intern("\x01" "ctype", -1));
-        if (!ct) return jv_str(A[A_empty]);
-        return jv_str(js_str_fmt("content-type: %s\r\n", jv_s(ct->v)->d));
-    }
-    case 5: /* abort */
-        js_defn(x, "\x01" "abortado", JS_TRUE, PF_NOENUM);
-        for (int i = 0; i < p->nnets; i++)
-            if (p->nets[i].target == x && p->nets[i].req) { http_free(p->nets[i].req); p->nets[i].req = NULL; p->nets[i].state = 2; }
-        js_defn(x, "readyState", jv_int(0), 0);
-        return JS_UNDEF;
-    case 6: case 7: { /* addEventListener / removeEventListener */
-        jsstr *t = js_tostr(ARG(0));
-        if (!t) return JS_EXC;
-        jsstr *key = js_intern("\x01ouvintes", -1);
-        jsprop *ls = js_ownprop(x, key);
-        if (!ls) { js_defn(x, "\x01ouvintes", jv_obj(js_newarr(0)), PF_NOENUM); ls = js_ownprop(x, key); }
-        jsobj *l = jv_o(ls->v);
-        if (self->u.nat.magic == 6) { js_arr_push(l, jv_str(t)); js_arr_push(l, ARG(1)); }
-        else for (u32 i = 0; i + 1 < l->alen; i += 2)
-            if (js_str_eq(jv_s(l->arr[i]), t) && l->arr[i + 1] == ARG(1)) {
-                memmove(l->arr + i, l->arr + i + 2, sizeof(jsv) * (l->alen - i - 2));
-                l->alen -= 2;
-                break;
-            }
-        return JS_UNDEF;
-    }
-    }
-    return JS_UNDEF;
-}
-
 /* ============================================================ montagem do reino */
+static jsv domparser_ctor(jsv thisv, int argc, jsv *argv, jsobj *self, int flags);
+static jsv domparser_parse(jsv thisv, int argc, jsv *argv, jsobj *self, int flags);
+
 void js_dom_init(jsrealm *r) {
     js_page_t *p = r->page;
     jsobj *g = r->global, *op = r->p_object;
@@ -3368,29 +3089,114 @@ void js_dom_init(jsrealm *r) {
     p->session->u.host.extra = JS_TRUE;
     js_defn(g, "localStorage", jv_obj(p->storage), PF_NOENUM);
     js_defn(g, "sessionStorage", jv_obj(p->session), PF_NOENUM);
-    /* rede */
-    js_defnative(g, "fetch", w_fetch, 1, 0);
-    r->p_response = js_newobj(op);
-    js_defnative(r->p_response, "text", resp_text, 0, 0);
-    js_defnative(r->p_response, "json", resp_text, 0, 1);
-    js_defnative(r->p_response, "arrayBuffer", resp_text, 0, 2);
-    js_defnative(r->p_response, "blob", resp_text, 0, 3);
-    r->p_xhr = js_newobj(op);
-    jsobj *xc = js_newctor(xhr_ctor, "XMLHttpRequest", 0, r->p_xhr);
-    js_defn(g, "XMLHttpRequest", jv_obj(xc), PF_NOENUM);
-    static const char *xm[] = {"open", "send", "setRequestHeader", "getResponseHeader", "getAllResponseHeaders", "abort",
-                               "addEventListener", "removeEventListener"};
-    for (u32 i = 0; i < ARRAY_LEN(xm); i++) js_defnative(r->p_xhr, xm[i], xhr_method, 1, (int)i);
-    js_defn(xc, "UNSENT", jv_int(0), 0);
-    js_defn(xc, "OPENED", jv_int(1), 0);
-    js_defn(xc, "DONE", jv_int(4), 0);
     jsobj *scr = js_newobj(op);
     js_defn(scr, "width", jv_int(1280), 0);
     js_defn(scr, "height", jv_int(800), 0);
     js_defn(g, "screen", jv_obj(scr), PF_NOENUM);
     js_blob_init(r);
     js_url_init(r);
+    js_fetch_init(r);   /* fetch, Headers, Request, Response, FormData, AbortController, XMLHttpRequest */
+    jsobj *dpp = js_newobj(op);
+    js_defnative(dpp, "parseFromString", domparser_parse, 2, 0);
+    js_defn(g, "DOMParser", jv_obj(js_newctor(domparser_ctor, "DOMParser", 0, dpp)), PF_NOENUM);
     js_canvas_init(r);
+}
+
+/* HTML → Document separado (DOMParser, XHR responseType "document") */
+jsv js_dom_parse_document(const char *url, jsstr *src, const char *mime) {
+    js_page_t *p = cur_page();
+    if (!p) return JS_NULL;
+    (void)mime;
+    if (p->nxdocs >= (int)ARRAY_LEN(p->xdocs)) return js_throw_err(E_RANGE, "documentos demais criados por DOMParser nesta página");
+    doc_t *d = doc_parse(src->d, src->len, url && *url ? url : p->url);
+    if (!d) return js_throw_err(E_RANGE, "sem memória para o documento");
+    p->xdocs[p->nxdocs++] = d;
+    jsobj *o = wrap(p, d->root);
+    return o ? jv_obj(o) : JS_NULL;
+}
+
+NATIVE(domparser_ctor) {
+    UNUSED_ARGS;
+    if (!(flags & NF_NEW)) return js_throw_err(E_TYPE, "O construtor DOMParser exige 'new'");
+    return jv_obj(js_newobj(jv_isobj(thisv) && jv_o(thisv)->proto ? jv_o(thisv)->proto : J.realm->p_object));
+}
+
+NATIVE(domparser_parse) {
+    UNUSED_ARGS;
+    if (argc < 2) return js_throw_err(E_TYPE, "parseFromString: são necessários 2 argumentos");
+    jsstr *src = js_tostr(ARG(0));
+    if (!src) return JS_EXC;
+    jsstr *t = js_tostr(ARG(1));
+    if (!t) return JS_EXC;
+    static const char *ok[] = { "text/html", "text/xml", "application/xml", "application/xhtml+xml", "image/svg+xml" };
+    bool valid = false;
+    for (u32 i = 0; i < ARRAY_LEN(ok); i++) if (!strcmp(t->d, ok[i])) valid = true;
+    if (!valid) return js_throw_err(E_TYPE, "parseFromString: tipo '%s' não suportado", t->d);
+    js_page_t *p = cur_page();
+    return js_dom_parse_document(p ? p->url : "about:blank", src, t->d);
+}
+
+/* entradas de um <form> para FormData (ordem do documento, regras de envio do HTML) */
+static void form_walk(js_page_t *p, node_t *form, node_t *n, node_t *submitter, jsobj *list) {
+    for (node_t *c = n->first; c; c = c->next) {
+        if (c->type != N_ELEM) continue;
+        if (c->tag == T_INPUT || c->tag == T_SELECT || c->tag == T_TEXTAREA || c->tag == T_BUTTON) {
+            const char *name = node_attr(c, "name");
+            const char *ty = node_attr(c, "type");
+            bool disabled = node_attr(c, "disabled") != NULL;
+            for (node_t *a = c->parent; a && a != form; a = a->parent) if (a->tag == T_FIELDSET && node_attr(a, "disabled")) disabled = true;
+            bool is_btn = c->tag == T_BUTTON || (ty && (!strcasecmp(ty, "submit") || !strcasecmp(ty, "button") || !strcasecmp(ty, "reset") || !strcasecmp(ty, "image")));
+            if (disabled || (is_btn && c != submitter)) { if (c->first) form_walk(p, form, c, submitter, list); continue; }
+            if (ty && (!strcasecmp(ty, "checkbox") || !strcasecmp(ty, "radio")) && !ctrl_checked(c)) continue;
+            if (c->tag == T_INPUT && ty && !strcasecmp(ty, "image") && name) {
+                char nb[300];
+                snprintf(nb, sizeof nb, "%s.x", name); js_arr_push(list, jv_str(js_strz(nb))); js_arr_push(list, jv_str(js_strz("0")));
+                snprintf(nb, sizeof nb, "%s.y", name); js_arr_push(list, jv_str(js_strz(nb))); js_arr_push(list, jv_str(js_strz("0")));
+                continue;
+            }
+            if (!name || !*name) continue;
+            if (c->tag == T_INPUT && ty && !strcasecmp(ty, "file")) {
+                /* sem arquivo escolhido: File vazio, como os navegadores */
+                jsobj *f = js_blob_new(NULL, 0, "application/octet-stream");
+                jsv ctor = js_getn(jv_obj(p->realm->global), "File"), parts = jv_obj(js_arr_from((jsv[]){ jv_obj(f) }, 1));
+                jsobj *opt = js_newobj(p->realm->p_object);
+                js_defn(opt, "type", jv_str(js_strz("application/octet-stream")), 0);
+                jsv a[3] = { parts, jv_str(A[A_empty]), jv_obj(opt) };
+                jsv file = js_construct(ctor, 3, a, ctor);
+                if (file == JS_EXC) { js_catch(); continue; }
+                js_arr_push(list, jv_str(js_strz(name)));
+                js_arr_push(list, file);
+                continue;
+            }
+            if (c->tag == T_SELECT && node_attr(c, "multiple") && c->ctrl) {
+                /* só a opção marcada no controle; sem controle, as <option selected> */
+                js_arr_push(list, jv_str(js_strz(name)));
+                js_arr_push(list, ctrl_value(c));
+                continue;
+            }
+            if (c->tag == T_SELECT && node_attr(c, "multiple")) {
+                for (node_t *o = c->first; o; o = o->next)
+                    if (o->type == N_ELEM && o->tag == T_OPTION && node_attr(o, "selected")) { js_arr_push(list, jv_str(js_strz(name))); js_arr_push(list, ctrl_value(o)); }
+                continue;
+            }
+            jsv v = ctrl_value(c);
+            if (c->tag == T_INPUT && ty && !strcasecmp(ty, "hidden") && !strcasecmp(name, "_charset_")) v = jv_str(js_strz("UTF-8"));
+            js_arr_push(list, jv_str(js_strz(name)));
+            js_arr_push(list, v);
+            continue;
+        }
+        if (c->first) form_walk(p, form, c, submitter, list);
+    }
+}
+
+bool js_form_entries(jsv form, jsv submitter, jsobj *list) {
+    node_t *f = node_of(form);
+    js_page_t *p = page_of(form);
+    if (!f || !p || f->tag != T_FORM) return false;
+    node_t *s = submitter == JS_UNDEF || submitter == JS_NULL ? NULL : node_of(submitter);
+    if (s && form_of(s) != f) { js_throw_dom("NotFoundError", "FormData: o submitter não pertence ao formulário"); return false; }
+    form_walk(p, f, f, s, list);
+    return true;
 }
 
 /* ponte para o Canvas 2D (canvas_js.c) */
@@ -3462,6 +3268,8 @@ void js_page_free(js_page_t *p) {
     for (int i = 0; i < p->nscripts; i++) { if (p->scripts[i].req) http_free(p->scripts[i].req); kfree(p->scripts[i].text); }
     for (int i = 0; i < p->nnets; i++) { if (p->nets[i].req) http_free(p->nets[i].req); kfree(p->nets[i].body); }
     kfree(p->nets);
+    web_fetch_drop(p);
+    for (int i = 0; i < p->nxdocs; i++) doc_free(p->xdocs[i]);
     while (p->msgs) { pmsg_t *m = p->msgs; p->msgs = m->next; kfree(m->json); kfree(m); }
     for (js_page_t *q = pages; q; q = q->next) if (q->parent == p) q->parent = NULL;
     kfree(p->scripts);
@@ -3489,6 +3297,7 @@ bool js_page_tick(js_page_t *p) {
     if (p->spos >= p->nscripts && p->mpos >= p->nscripts) maybe_load_events(p);   /* imagens e load da janela */
     run_timers(p);
     if (p->nnets) pump_nets(p);
+    web_fetch_pump(p);
     js_run_jobs();
     gc_maybe();
     J.realm = saved;
@@ -3500,7 +3309,7 @@ bool js_page_tick(js_page_t *p) {
 
 int js_page_next_ms(js_page_t *p) {
     if (!p) return -1;
-    if (p->spos < p->nscripts || p->mpos < p->nscripts || p->nnets) return 10;
+    if (p->spos < p->nscripts || p->mpos < p->nscripts || p->nnets || web_fetch_pending(p)) return 10;
     u64 now = timer_ticks();
     int best = -1;
     for (int i = 0; i < p->ntimers; i++) {
