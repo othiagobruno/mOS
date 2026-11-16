@@ -77,9 +77,10 @@ O fio continua o de `xpc.c` (os dois lados são esta lib). Não usa AF_UNIX e n�
 
 `SecItemAdd` / `CopyMatching` / `Update` / `Delete` para senha genérica e de internet continuam em `security.c`. O arquivo `$HOME/Library/Keychains/mos-keychain.txt` na versão 2 é `mOS-keychain 2\n` + nonce + ciphertext + MAC. A chave é HMAC-SHA256 do nome de login (`USER`, senão `LOGNAME`, senão o último componente de `HOME`, senão `visitante`), com sal fixo `mOS-keychain-v2`. Não é senha e não é credencial: quem sabe o login abre o arquivo. A versão 1 (texto) ainda é lida e a gravação seguinte passa para a versão 2. MAC ruim marca o arquivo como bloqueado e a gravação devolve `errSecNotAvailable`, sem apagar o que estava no disco.
 
-## URLSession — dados, download, resposta e dois desafios
+## URLSession
 
-Há callbacks de dados e de download em `foundation_more.c`. No `https`, o handshake usa o SecureTransport (motor TLS do kernel: cadeia, datas, nome e raízes da Mozilla). O delegate recebe `NSURLAuthenticationMethodServerTrust` depois do handshake, com `serverTrust` apontando para o `SecTrust` da cadeia. Certificado inválido falha o handshake (`-1200`) e não é aceito. `SecTrustEvaluate` reavalia a cadeia com o mesmo `x509.c`, contra essas raízes. Resposta 401 com `WWW-Authenticate: Basic` chama `NSURLAuthenticationMethodHTTPBasic` (o método da tarefa primeiro). `UseCredential` repete o pedido uma vez com `Authorization`. `Cancel`/`Reject` entregam `NSURLErrorDomain` -999 e não entregam o corpo. `URLSession:dataTask:didReceiveResponse:completionHandler:` roda na entrega: 0 cancela o corpo, 1 entrega, 2 trata como download. O bloco é de pilha e vale durante a chamada do delegate. Não é um `NSURLSession` completo.
+Saiu daqui: o sistema de carga de URL (NSURLSession, cookies, cache, credenciais, NSURLConnection) agora está em
+`userland/libsystem/nsurlsession.c` sobre o núcleo `mnet`. Estado e limites em [rede-apps.md](rede-apps.md).
 
 ## CoreML — só o dicionário da voz
 

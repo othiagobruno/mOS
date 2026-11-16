@@ -82,7 +82,7 @@ flowchart TD
 | 2. TLS (ALPN) | ALPN configurável e lido de volta; versão e cifra reais no SecureTransport. Falta: retomada por ticket, certificado de cliente, lado servidor | `tools/tls_local_test.c`: 14/14 contra `openssl s_server` (h2 em 1.3 e 1.2, queda para http/1.1, servidor sem ALPN) |
 | 3. HTTP/2 | codec pronto (`mnet_h2.c`); ainda não ligado a API pública | `tools/mnet_host_test.c`: 9 MiB por janelas, 103 + 200 + trailers, CONTINUATION, PING, RST, GOAWAY, erros; servidor h2c do mnet contra o `curl --http2-prior-knowledge` do host (nghttp2): 201 e 64 KB de corpo |
 | 4a. Motor do cliente | pronto (`mnet_client.c`, `mnet_decode.c`, `mnet_url.c`); ainda não ligado ao NSURLSession | `tools/mnet_client_test.c`: 22/22 contra `tools/mnet_http_servidor.py` (keep-alive, 5 redirects, laço, 303, 307 com corpo, delegate recusando redirect, gzip, chunked, cookies no redirect, tempo esgotado, erros); com `rede`: 35/35, HTTP/2 real por ALPN sobre o TLS do mOS em google, cloudflare, github e example.com, reuso de conexão, certificado vencido recusado |
-| 4b. NSURLSession novo | não iniciado | — |
+| 4b. NSURLSession novo | escrito e compilado (`nsurlsession.c`, `urlsession_io.c`, `mnet_cache.c`); o antigo saiu de `foundation_more.c` (combinado com o Eduardo, que acrescentou a API de `NSURLRequest`/`NSHTTPURLResponse` no PR #316) | regras de cache: `mnet_host_test` 736/736; motor por baixo: `mnet_client_test` 35/35. As classes ObjC **não** rodaram: não há harness de host com o runtime ObjC; o primeiro teste delas é o build final |
 | 5–10 | não iniciado | — |
 
 ### Etapa 1 — o que está no código
@@ -131,3 +131,33 @@ Ainda não ligado a nenhuma API pública: isso entra nas etapas 2–4.
 - Erros com os códigos de `NSURLErrorDomain` (-1001 tempo, -1003 nome, -1004 conexão, -1005 perdida, -1007, -1015,
   -1200 TLS...). Cancelamento por flag, conferida a cada 250 ms.
 - Limite conhecido: pedidos simultâneos para a mesma origem em HTTP/2 usam conexões separadas (sem multiplexar).
+
+### Etapa 4b — NSURLSession e companhia (`userland/libsystem/nsurlsession.c`)
+
+- **Configuração**: default, ephemeral (jar e cache próprios, em memória), background (identificador guardado; roda em
+  primeiro plano, não há daemon de transferência). Todos os campos públicos, cabeçalhos adicionais, proxy
+  (`connectionProxyDictionary` HTTP/HTTPS/SOCKS), tempos de pedido e de recurso, política de cache e de cookies.
+- **Tarefas**: dados, envio (dados, arquivo, fluxo com `needNewBodyStream:`), download (arquivo temporário entregue a
+  `didFinishDownloadingToURL:` e apagado depois, progresso, `cancelByProducingResumeData:` e retomada por `Range` +
+  `If-Range`). `resume`/`suspend` (suspender segura a entrega)/`cancel` (-999), estado, contadores, prioridade,
+  `earliestBeginDate`, delegate por tarefa, métricas (`NSURLSessionTaskMetrics` com protocolo h2/http1.1 e reuso).
+- **Delegate**: fila serial da sessão, ou a principal quando o app passou `mainQueue`; resposta (permitir, cancelar,
+  virar download), dados, redirect (trocar ou recusar o pedido), desafios, envio, cache (`willCacheResponse:`),
+  conclusão, `didBecomeInvalidWithError:` em `finishTasksAndInvalidate`/`invalidateAndCancel`, `getTasks`/`getAllTasks`,
+  `reset`/`flush`.
+- **Autenticação**: Basic e Digest (MD5, SHA-256, `-sess`, `qop=auth`), usuário da URL, `NSURLCredentialStorage`
+  (sessão em memória, permanente no Keychain como senha de internet), desafio ao delegate com contagem de falhas,
+  407 de proxy. Confiança do servidor: desafio `ServerTrust` com o `SecTrust` da cadeia em toda conexão TLS nova;
+  como o kernel já recusa cadeia inválida, um app não consegue aceitar certificado autoassinado. NTLM/Negotiate: não
+  há; o 401 é entregue.
+- **Cookies**: `NSHTTPCookie` (propriedades, `cookiesWithResponseHeaderFields:forURL:` separando Set-Cookie juntados
+  por vírgula, `requestHeaderFieldsWithCookies:`) e `NSHTTPCookieStorage` sobre o jar do mnet, persistido em
+  `~/Library/Cookies/mos-cookies.txt` (formato Netscape), com as três políticas e as notificações de mudança.
+- **Cache**: `NSURLCache` em memória e em disco (`~/Library/Caches/<bundle>/mos-urlcache`), chave URL + Vary, frescor e
+  revalidação pelas regras de `mnet_cache.c`, 304 mesclado, políticas de pedido 0–5, `NSCachedURLResponse` completo.
+- **NSURLProtocol**: classes registradas (globais e `protocolClasses`) interceptam pedidos; o cliente entrega resposta,
+  dados, redirect, falha e resposta do cache para a tarefa. Propriedades por pedido (`setProperty:forKey:inRequest:`).
+- **NSURLConnection**: síncrono, assíncrono com `NSOperationQueue`, e com delegate (resposta, dados, redirect, envio,
+  cache, desafio com `sender`), em cima de uma sessão própria.
+- **Fora (por enquanto)**: `NSURLSessionWebSocketTask` e `NSURLSessionStreamTask` (etapa 5), multiplexação HTTP/2 de
+  vários pedidos numa conexão, APIs Swift `async` (`URLSession.data(for:)` etc.) que ficam na ponte Swift.

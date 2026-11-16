@@ -7,7 +7,6 @@
  */
 #include "foundation.h"
 #include "libc.h"
-#include "urlsession_auth.inc"
 #include "urlrequest_fields.h"
 
 id objc_retain(id o);
@@ -28,11 +27,11 @@ int pipe(int *fds);
 
 #define CLASS(N) cx_class_t N##_c __asm__("OBJC_CLASS_$_" #N); cx_class_t N##_m __asm__("OBJC_METACLASS_$_" #N);
 CLASS(NSAffineTransform) CLASS(NSAppleEventDescriptor) CLASS(NSAssertionHandler) CLASS(NSBlockOperation)
-CLASS(NSBundleResourceRequest) CLASS(NSCachedURLResponse) CLASS(NSComparisonPredicate)
+CLASS(NSBundleResourceRequest) CLASS(NSComparisonPredicate)
 CLASS(NSCompoundPredicate) CLASS(NSCondition) CLASS(NSConditionLock) CLASS(NSCountedSet) CLASS(NSDataDetector)
 CLASS(NSDecimalNumber) CLASS(NSDecimalNumberHandler)
 CLASS(NSExpression) CLASS(NSFileCoordinator) CLASS(NSFileHandle) CLASS(NSHashTable)
-CLASS(NSHTTPCookie) CLASS(NSHTTPCookieStorage) CLASS(NSHTTPURLResponse) CLASS(NSIndexPath)
+CLASS(NSHTTPURLResponse) CLASS(NSIndexPath)
 CLASS(NSInvocationOperation) CLASS(NSItemProvider) CLASS(NSJSONSerialization)
 CLASS(NSKeyedArchiver) CLASS(NSKeyedUnarchiver) CLASS(NSLinguisticTagger) CLASS(NSLock)
 CLASS(NSMachBootstrapServer) CLASS(NSMachPort) CLASS(NSMapTable) CLASS(NSMeasurementFormatter)
@@ -44,12 +43,12 @@ CLASS(NSProxy) CLASS(NSPurgeableData) CLASS(NSRecursiveLock) CLASS(NSRegularExpr
 CLASS(NSScanner) CLASS(NSScriptClassDescription) CLASS(NSScriptCommand)
 CLASS(NSSecureUnarchiveFromDataTransformer) CLASS(NSSortDescriptor) CLASS(NSTask) CLASS(NSTextCheckingResult)
 CLASS(NSUndoManager) CLASS(NSUniqueIDSpecifier) CLASS(NSUnitAngle) CLASS(NSUnitDuration)
-CLASS(NSUnitInformationStorage) CLASS(NSUnitLength) CLASS(NSURLAuthenticationChallenge) CLASS(NSURLCache)
-CLASS(NSURLComponents) CLASS(NSURLConnection) CLASS(NSURLCredential) CLASS(NSURLProtectionSpace)
-CLASS(NSURLProtocol) CLASS(NSURLQueryItem) CLASS(NSURLRequest) CLASS(NSURLResponse)
-CLASS(NSURLSession) CLASS(NSURLSessionConfiguration) CLASS(NSURLSessionDataTask) CLASS(NSURLSessionDownloadTask)
-CLASS(NSURLSessionTask) CLASS(NSURLSessionTaskMetrics) CLASS(NSURLSessionTaskTransactionMetrics)
-CLASS(NSURLSessionUploadTask) CLASS(NSUserActivity) CLASS(NSUserNotification) CLASS(NSUserNotificationCenter)
+CLASS(NSUnitInformationStorage) CLASS(NSUnitLength)
+CLASS(NSURLComponents)
+CLASS(NSURLQueryItem) CLASS(NSURLRequest) CLASS(NSURLResponse)
+
+
+CLASS(NSUserActivity) CLASS(NSUserNotification) CLASS(NSUserNotificationCenter)
 CLASS(NSUUID) CLASS(NSValueTransformer) CLASS(NSXMLParser) CLASS(NSXPCConnection)
 CLASS(NSXPCInterface) CLASS(NSXPCListener) CLASS(NSXPCListenerEndpoint)
 
@@ -1252,7 +1251,6 @@ static BOOL task_running(id s, SEL c) { (void)c; return BOX(s)->fl ? YES : NO; }
 static void task_term(id s, SEL c) { (void)c; if (BOX(s)->i > 0) SYS2(SYS_KILL, BOX(s)->i, 15); BOX(s)->fl = 0; }
 
 /* ---------------------------------------------------------------- URL e sessão */
-static id url_abs(id u) { return u ? MSG0(id, u, "absoluteString") : 0; }
 static int url_split(const char *s, char *scheme, char *host, int *port, const char **path) {
     const char *p = strstr(s, "://");
     if (!p) return 0;
@@ -1352,12 +1350,6 @@ static id req_mcopy(id s, SEL c) { (void)c; return req_copy_as(s, &NSMutableURLR
 static id req_mcopy_zone(id s, SEL c, void *z) { (void)z; return req_mcopy(s, c); }
 static id req_body(id s, SEL c) { (void)c; return BOX(s)->e; }
 static void req_set_body(id s, SEL c, id d) { (void)c; rel(BOX(s)->e); BOX(s)->e = retain(d); }
-static id resp_make(id url, int status, id headers, long long len) {
-    box_t *o = (box_t *)cx_alloc_instance(&NSHTTPURLResponse_c);
-    o->a = retain(url); o->i = status; o->b = retain(headers); o->j = len;
-    resp_parse_ct((id)o, headers ? hdr_value(headers, ns("Content-Type")) : 0);
-    return (id)o;
-}
 static id resp_url(id s, SEL c) { (void)c; return BOX(s)->a; }
 static long resp_status(id s, SEL c) { (void)c; return (long)BOX(s)->i; }
 static id resp_headers(id s, SEL c) { (void)c; return BOX(s)->b; }
@@ -1572,507 +1564,11 @@ static id hresp_s_status_string(id k, SEL c, i64 code) {
     for (size_t i = 0; i < sizeof t / sizeof t[0]; i++) if (t[i].code == code) return ns(t[i].s);
     return ns(code < 200 ? "informational" : code < 300 ? "success" : code < 400 ? "redirected" : code < 500 ? "client error" : "server error");
 }
+int pthread_create(unsigned long *t, const void *attr, void *(*fn)(void *), void *arg);   /* NSOperationQueue */
 static id resp_copy(id s, SEL c) { (void)c; return retain(s); }
 static id resp_copy_zone(id s, SEL c, void *z) { (void)z; return resp_copy(s, c); }
 static void resp_dealloc(id s, SEL c) { if (BOX(s)->p) { rel((id)BOX(s)->p); BOX(s)->p = 0; } box_dealloc(s, c); }
 
-typedef struct { int flags, family, socktype, protocol; unsigned addrlen; char *canon; void *addr; void *next; } ai_t;
-int getaddrinfo(const char *, const char *, const ai_t *, ai_t **);
-void freeaddrinfo(ai_t *);
-int socket(int, int, int);
-int clock_gettime(int, void *);
-int connect(int, const void *, unsigned);
-long send(int, const void *, size_t, int);
-long recv(int, void *, size_t, int);
-typedef int OSStatus;
-typedef unsigned char Boolean;
-OSStatus SSLNewContext(Boolean, void **);
-OSStatus SSLDisposeContext(void *);
-OSStatus SSLSetIOFuncs(void *, void *, void *);
-OSStatus SSLSetConnection(void *, const void *);
-OSStatus SSLSetPeerDomainName(void *, const char *, size_t);
-OSStatus SSLHandshake(void *);
-OSStatus SSLWrite(void *, const void *, size_t, size_t *);
-OSStatus SSLRead(void *, void *, size_t, size_t *);
-OSStatus SSLCopyPeerTrust(void *, id *);
-
-static int tls_read(const void *conn, void *data, size_t *len) {
-    long n = recv(*(const int *)conn, data, *len, 0);
-    if (n < 0) return -9803;
-    if (n == 0) return -9805;
-    *len = (size_t)n;
-    return 0;
-}
-static int tls_write(const void *conn, const void *data, size_t *len) {
-    long n = send(*(const int *)conn, data, *len, 0);
-    if (n <= 0) return -36;
-    *len = (size_t)n;
-    return 0;
-}
-static long io_write(void *tls, int fd, const void *b, size_t n) {
-    size_t off = 0;
-    while (off < n) {
-        if (tls) { size_t d = 0; if (SSLWrite(tls, (const u8 *)b + off, n - off, &d)) return -1; off += d; }
-        else { long k = send(fd, (const u8 *)b + off, n - off, 0); if (k <= 0) return -1; off += (size_t)k; }
-    }
-    return (long)off;
-}
-static long io_read(void *tls, int fd, void *b, size_t n) {
-    if (tls) { size_t d = 0; OSStatus st = SSLRead(tls, b, n, &d); if (st && st != -9805) return d ? (long)d : -1; return (long)d; }
-    return recv(fd, b, n, 0);
-}
-static id http_do(id req, id *err, int (*after_tls)(void *ctx, id trust), void *actx) {
-    if (err) *err = 0;
-    char scheme[16], host[256];
-    int port = 0;
-    const char *path = "/";
-    if (!url_split(cs(url_abs(req_url(req, 0))), scheme, host, &port, &path)) {
-        if (err) *err = make_err("NSURLErrorDomain", -1000, "URL inválida");
-        return 0;
-    }
-    char portb[8];
-    cx_snprintf(portb, sizeof portb, "%d", port);
-    ai_t hint; memset(&hint, 0, sizeof hint); hint.family = 2; hint.socktype = 1;
-    ai_t *res = 0;
-    if (getaddrinfo(host, portb, &hint, &res) || !res) { if (err) *err = make_err("NSURLErrorDomain", -1003, "host não encontrado"); return 0; }
-    int fd = socket(2, 1, 6);
-    if (fd < 0 || connect(fd, res->addr, res->addrlen)) { freeaddrinfo(res); if (fd >= 0) close(fd); if (err) *err = make_err("NSURLErrorDomain", -1004, "conexão recusada"); return 0; }
-    freeaddrinfo(res);
-    long long deadline = 0;
-    {
-        struct { long long sec, nsec; } ts;
-        double tmo = req_timeout(req, 0);
-        if (clock_gettime(6, &ts) == 0 && tmo > 0)
-            deadline = ts.sec * 1000 + ts.nsec / 1000000 + (long long)(tmo * 1000);
-    }
-    void *tls = 0;
-    if (!strcmp(scheme, "https")) {
-        if (SSLNewContext(0, &tls) || !tls) { close(fd); if (err) *err = make_err("NSURLErrorDomain", -1200, "TLS indisponível"); return 0; }
-        SSLSetIOFuncs(tls, (void *)tls_read, (void *)tls_write);
-        SSLSetConnection(tls, &fd);
-        SSLSetPeerDomainName(tls, host, strlen(host));
-        if (SSLHandshake(tls)) { SSLDisposeContext(tls); close(fd); if (err) *err = make_err("NSURLErrorDomain", -1200, "handshake TLS falhou"); return 0; }
-        id trust = 0;
-        SSLCopyPeerTrust(tls, &trust);
-        if (after_tls && after_tls(actx, trust)) {
-            if (trust) rel(trust);
-            SSLDisposeContext(tls); close(fd);
-            if (err) *err = make_err("NSURLErrorDomain", -999, "desafio do servidor cancelado");
-            return 0;
-        }
-        if (trust) rel(trust);
-    }
-    id body = req_body(req, 0);
-    u64 blen = body ? MSG0(u64, body, "length") : 0;
-    char head[1024];
-    cx_snprintf(head, sizeof head, "%s %s HTTP/1.1\r\nHost: %s\r\nConnection: close\r\nUser-Agent: mOS-Foundation\r\n",
-                cs(req_method(req, 0)), path, host);
-    if (blen) {
-        char extra[64];
-        cx_snprintf(extra, sizeof extra, "Content-Length: %llu\r\n", (unsigned long long)blen);
-        strlcat(head, extra, sizeof head);
-    }
-    id hdrs = req_headers(req, 0);
-    if (hdrs) {
-        id keys = MSG0(id, hdrs, "allKeys");
-        u64 kn = keys ? MSG0(u64, keys, "count") : 0;
-        for (u64 i = 0; i < kn; i++) {
-            id k = MSG(id, keys, "objectAtIndex:", i);
-            char line[512];
-            cx_snprintf(line, sizeof line, "%s: %s\r\n", cs(k), cs(MSG(id, hdrs, "objectForKey:", k)));
-            strlcat(head, line, sizeof head);
-        }
-        rel(keys);
-    }
-    strlcat(head, "\r\n", sizeof head);
-    if (io_write(tls, fd, head, strlen(head)) < 0) { if (tls) SSLDisposeContext(tls); close(fd); if (err) *err = make_err("NSURLErrorDomain", -1005, "falha ao enviar"); return 0; }
-    if (blen) io_write(tls, fd, MSG0(const void *, body, "bytes"), blen);
-    u8 *buf = 0; u64 n = 0, cap = 0;
-    for (;;) {
-        u8 tmp[4096];
-        long k;
-        if (deadline) {
-            struct { long long sec, nsec; } ts;
-            if (clock_gettime(6, &ts) == 0 && ts.sec * 1000 + ts.nsec / 1000000 > deadline) {
-                free(buf);
-                if (tls) SSLDisposeContext(tls);
-                close(fd);
-                if (err) *err = make_err("NSURLErrorDomain", -1001, "tempo esgotado");
-                return 0;
-            }
-        }
-        k = io_read(tls, fd, tmp, sizeof tmp);
-        if (k < 0) break;
-        if (k == 0) break;
-        if (n + (u64)k > cap) { cap = (n + (u64)k) * 2 + 64; buf = realloc(buf, cap); }
-        memcpy(buf + n, tmp, (u64)k); n += (u64)k;
-        if (!tls && k < (long)sizeof tmp) {
-            /* pode haver mais; continua até 0 */
-        }
-    }
-    if (tls) SSLDisposeContext(tls);
-    close(fd);
-    int status = 0;
-    u64 hdr_end = 0;
-    id fields = mutdict();
-    if (buf && n >= 12 && !strncmp((char *)buf, "HTTP/", 5)) {
-        const char *sp = strchr((char *)buf, ' ');
-        if (sp) status = atoi(sp + 1);
-        char *he = 0;
-        for (u64 i = 0; i + 3 < n; i++) if (buf[i] == '\r' && buf[i + 1] == '\n' && buf[i + 2] == '\r' && buf[i + 3] == '\n') { he = (char *)buf + i; hdr_end = i + 4; break; }
-        if (he) {
-            char *line = (char *)buf;
-            *he = 0;
-            line = strchr(line, '\n');
-            while (line && line < he) {
-                line++;
-                char *nl = strchr(line, '\n');
-                if (nl) *nl = 0;
-                char *col = strchr(line, ':');
-                if (col) {
-                    *col = 0;
-                    char *val = col + 1;
-                    while (*val == ' ') val++;
-                    dset(fields, ns(line), ns(val));
-                }
-                line = nl;
-            }
-        }
-    }
-    u64 body_n = hdr_end < n ? n - hdr_end : 0;
-    id data = MSG(id, (id)&NSData_c, "dataWithBytes:length:", buf && body_n ? buf + hdr_end : (void *)"", body_n);
-    id response = resp_make(req_url(req, 0), status, fields, (long long)body_n);
-    rel(fields);
-    free(buf);
-    id pair = mutarr();
-    cx_arr_add(pair, data); rel(data);
-    cx_arr_add(pair, response); rel(response);
-    return pair;
-}
-static id conn_send(id cls, SEL c, id req, id *resp, id *err) {
-    (void)cls; (void)c;
-    id e = 0;
-    id pair = http_do(req, &e, 0, 0);
-    if (err) *err = e ? ar(e) : 0;
-    else if (e) rel(e);
-    if (!pair) { if (resp) *resp = 0; return 0; }
-    id data = MSG(id, pair, "objectAtIndex:", (u64)0);
-    id response = MSG(id, pair, "objectAtIndex:", (u64)1);
-    if (resp) *resp = response ? ar(retain(response)) : 0;
-    id out = data ? ar(retain(data)) : 0;
-    rel(pair);
-    return out;
-}
-
-static id task_make(cx_class_t *cls, id req, void *block) {
-    box_t *o = (box_t *)cx_alloc_instance(cls);
-    o->a = retain(req);
-    o->p = block ? _Block_copy(block) : 0;
-    return (id)o;
-}
-static id sess_shared(id cls, SEL c) { (void)c; static id s; if (!s) s = cx_alloc_instance((cx_class_t *)cls); return s; }
-static id sess_cfg(id cls, SEL c) { (void)cls; (void)c; static id s; if (!s) s = cx_alloc_instance(&NSURLSessionConfiguration_c); return s; }
-static id sess_data_task(id s, SEL c, id req, void *block) { (void)s; (void)c; return ar(task_make(&NSURLSessionDataTask_c, req, block)); }
-static id sess_data_url(id s, SEL c, id url, void *block) {
-    id req = req_with((id)&NSURLRequest_c, c, url);
-    return sess_data_task(s, c, req, block);
-}
-static id sess_dl_task(id s, SEL c, id req, void *block) { (void)s; return sess_data_task(s, c, req, block); }
-static id sess_up_task(id s, SEL c, id req, id body, void *block) { (void)s; req_set_body(req, c, body); return sess_data_task(s, c, req, block); }
-typedef struct { id task; } task_job_t;
-int pthread_create(unsigned long *t, const void *attr, void *(*fn)(void *), void *arg);
-extern cx_class_t _NSConcreteStackBlock_c __asm__("_NSConcreteStackBlock");
-static BOOL dlg_has(id d, const char *sel);
-
-/* Bloco de conclusão passado ao delegate. O invoke fica no offset 16, como o clang emite.
- * O delegate chama o bloco antes de voltar: a decisão é síncrona nesta tarefa. */
-typedef struct {
-    void *isa;
-    int flags, reserved;
-    void *invoke;
-    void *desc;
-    int *slot;
-    id *cred;
-} us_blk_t;
-static struct { unsigned long reserved, size; } us_blk_desc = {0, sizeof(us_blk_t)};
-static void us_chal_invoke(void *self, long disp, id cred) {
-    us_blk_t *b = self;
-    if (b->slot) *b->slot = (int)disp;
-    if (b->cred && cred) *b->cred = objc_retain(cred);
-}
-static void us_disp_invoke(void *self, long disp) {
-    us_blk_t *b = self;
-    if (b->slot) *b->slot = (int)disp;
-}
-static void us_blk_init(us_blk_t *b, void *invoke, int *slot, id *cred) {
-    memset(b, 0, sizeof *b);
-    b->isa = &_NSConcreteStackBlock_c;
-    b->invoke = invoke;
-    b->desc = &us_blk_desc;
-    b->slot = slot;
-    b->cred = cred;
-}
-static id us_space(const char *host, int port, const char *proto, const char *realm, const char *method, id trust) {
-    box_t *o = (box_t *)cx_alloc_instance(&NSURLProtectionSpace_c);
-    o->a = ns(host ? host : "");
-    o->b = ns(realm ? realm : "");
-    o->c = ns(method);
-    o->e = ns(proto ? proto : "");
-    o->i = port;
-    if (trust) o->p = objc_retain(trust);
-    return (id)o;
-}
-static id us_chal_obj(id space) {
-    box_t *o = (box_t *)cx_alloc_instance(&NSURLAuthenticationChallenge_c);
-    o->a = retain(space);
-    return (id)o;
-}
-static const char *field_get(id fields, const char *name) {
-    if (!fields || !name) return 0;
-    id keys = MSG0(id, fields, "allKeys");
-    u64 kn = keys ? MSG0(u64, keys, "count") : 0;
-    const char *found = 0;
-    for (u64 i = 0; i < kn && !found; i++) {
-        id k = MSG(id, keys, "objectAtIndex:", i);
-        if (k && us_casecmp(cs(k), name) == 0) {
-            id v = MSG(id, fields, "objectForKey:", k);
-            found = v ? cs(v) : 0;
-        }
-    }
-    rel(keys);
-    return found;
-}
-/* Basic prefere o método da tarefa; o desafio de servidor (TLS) prefere o da sessão.
- * Sem o método, a disposição fica a padrão. Devolve a disposição e, se houver, a credencial +1. */
-static int sess_challenge(id task, int basic, const char *host, int port, const char *proto, const char *realm, id *cred_out, id trust) {
-    if (cred_out) *cred_out = 0;
-    id sess = (id)BOX(task)->i;
-    id dlg = sess ? BOX(sess)->b : 0;
-    const char *sel_task = "URLSession:task:didReceiveChallenge:completionHandler:";
-    const char *sel_sess = "URLSession:didReceiveChallenge:completionHandler:";
-    int use_task = basic && dlg_has(dlg, sel_task);
-    if (!use_task && !dlg_has(dlg, sel_sess)) {
-        if (dlg_has(dlg, sel_task)) use_task = 1;
-        else return US_AUTH_DEFAULT;
-    }
-    id space = us_space(host, port, proto, realm, basic ? US_METHOD_BASIC : US_METHOD_SERVER, basic ? 0 : trust);
-    id chal = us_chal_obj(space);
-    int slot = US_AUTH_DEFAULT;
-    id cred = 0;
-    us_blk_t blk;
-    us_blk_init(&blk, (void *)us_chal_invoke, &slot, &cred);
-    if (use_task) MSG(void, dlg, sel_task, sess, task, chal, &blk);
-    else MSG(void, dlg, sel_sess, sess, chal, &blk);
-    if (cred_out) *cred_out = cred;
-    else if (cred) objc_release(cred);
-    rel(chal);
-    rel(space);
-    return slot;
-}
-static int sess_response_disp(id task, id resp) {
-    id sess = (id)BOX(task)->i;
-    id dlg = sess ? BOX(sess)->b : 0;
-    const char *sel = "URLSession:dataTask:didReceiveResponse:completionHandler:";
-    if (!dlg_has(dlg, sel)) return US_DISP_ALLOW;
-    int slot = US_DISP_ALLOW;
-    us_blk_t blk;
-    us_blk_init(&blk, (void *)us_disp_invoke, &slot, 0);
-    MSG(void, dlg, sel, sess, task, resp, &blk);
-    return slot;
-}
-static void sess_fail(id task, const char *why) {
-    rel(BOX(task)->e);
-    BOX(task)->e = make_err("NSURLErrorDomain", -999, why);
-    BOX(task)->fl = 2;
-    void sess_deliver_to_delegate(id t, id data);
-    sess_deliver_to_delegate(task, 0);
-}
-static int sess_apply_basic(id task, id cred) {
-    const char *user = cred && BOX(cred)->a ? cs(BOX(cred)->a) : 0;
-    const char *pass = cred && BOX(cred)->b ? cs(BOX(cred)->b) : "";
-    if (!user) return 0;
-    char auth[512];
-    if (us_basic_value(user, pass, auth, sizeof auth) != 0) return 0;
-    id req = BOX(task)->a;
-    if (!req) return 0;
-    if (!BOX(req)->c) BOX(req)->c = mutdict();
-    id val = ns(auth), key = ns("Authorization");
-    if (BOX(req)->c && val && key) MSG(void, BOX(req)->c, "setObject:forKey:", val, key);
-    rel(val);
-    rel(key);
-    return 1;
-}
-static int tls_after(void *ctx, id trust) {
-    struct { id task; char *host; int port; const char *scheme; } *a = ctx;
-    int d = sess_challenge(a->task, 0, a->host, a->port, a->scheme, 0, 0, trust);
-    return d == US_AUTH_CANCEL || d == US_AUTH_REJECT;
-}
-static void *task_thread(void *arg) {
-    task_job_t *j = arg;
-    id task = j->task;
-    free(j);
-    id err = 0, pair = 0;
-    char scheme[16] = "", host[256] = "";
-    int port = 0;
-    const char *path = "/";
-    id req = BOX(task)->a;
-    id abs = req ? url_abs(req_url(req, 0)) : 0;
-    int split = abs && url_split(cs(abs), scheme, host, &port, &path);
-    id dlg = BOX(task)->i ? BOX((id)BOX(task)->i)->b : 0;
-    struct { id task; char *host; int port; const char *scheme; } chal = { task, host, port, scheme };
-    pair = http_do(BOX(task)->a, &err, dlg && split && !strcmp(scheme, "https") ? tls_after : 0, &chal);
-    if (dlg && pair && split) {
-        id resp0 = MSG(id, pair, "objectAtIndex:", (u64)1);
-        long status = resp0 ? (long)BOX(resp0)->i : 0;
-        const char *www = field_get(resp0 ? BOX(resp0)->b : 0, "WWW-Authenticate");
-        char realm[128];
-        if (status == 401 && us_is_basic(www, realm, sizeof realm)) {
-            id cred = 0;
-            int d = sess_challenge(task, 1, host, port, scheme, realm, &cred, 0);
-            if (d == US_AUTH_CANCEL || d == US_AUTH_REJECT) {
-                rel(pair); rel(err); if (cred) objc_release(cred);
-                sess_fail(task, "desafio Basic cancelado");
-                return 0;
-            }
-            if (d == US_AUTH_USE && sess_apply_basic(task, cred)) {
-                rel(pair); rel(err); err = 0;
-                pair = http_do(BOX(task)->a, &err, 0, 0);
-            }
-            if (cred) objc_release(cred);
-        }
-    }
-    id data = 0, resp = 0;
-    if (pair) {
-        data = MSG(id, pair, "objectAtIndex:", (u64)0);
-        resp = MSG(id, pair, "objectAtIndex:", (u64)1);
-    }
-    BOX(task)->b = retain(resp);
-    BOX(task)->c = retain(data);
-    BOX(task)->e = retain(err);
-    BOX(task)->fl = 2;
-    if (BOX(task)->p) {
-        void (*inv)(void *, id, id, id) = *(void **)((u8 *)BOX(task)->p + 16);
-        inv(BOX(task)->p, data, resp, err);
-    } else if (BOX(task)->i) {
-        void sess_deliver_to_delegate(id task, id data);
-        sess_deliver_to_delegate(task, data);
-    }
-    rel(pair); rel(err);
-    return 0;
-}
-
-/* ---- sessões com delegate (sessionWithConfiguration:delegate:delegateQueue:). A sessão guarda configuração (a),
- * delegate (b) e fila (c); as tarefas criadas sem bloco de conclusão guardam a sessão (i) e, se forem de download,
- * j = 1. Ao terminar o HTTP (task_thread), o delegate recebe, na ordem e numa função só (a ordem fica garantida):
- *   dados:     URLSession:dataTask:didReceiveData:
- *   download:  URLSession:downloadTask:didWriteData:totalBytesWritten:totalBytesExpectedToWrite:, depois
- *              URLSession:downloadTask:didFinishDownloadingToURL: com o corpo num arquivo temporário (apagado depois,
- *              como na Apple: quem quer o arquivo o move durante a chamada);
- *   sempre:    URLSession:task:didCompleteWithError:
- * Na fila principal quando o delegate pediu a mainQueue (callbacks de interface); senão numa fila global.
- * Antes do HTTP, URL https pergunta URLSession:didReceiveChallenge: (método de servidor, TLS).
- * Resposta 401 com WWW-Authenticate Basic pergunta o desafio da tarefa e, se o delegate manda
- * credencial, repete o pedido com Authorization. didReceiveResponse:completionHandler: roda
- * na entrega: 0 cancela o corpo, 1 entrega, 2 trata como download. O bloco é chamado pelo
- * delegate antes de ele voltar. */
-void *dispatch_get_main_queue(void);
-void *dispatch_get_global_queue(long prio, unsigned long flags);
-void dispatch_async_f(void *q, void *ctx, void (*fn)(void *));
-static BOOL dlg_has(id d, const char *sel) { return d && MSG(BOOL, d, "respondsToSelector:", sel_registerName(sel)); }
-typedef struct { id task, data; } dlg_job_t;
-static void dlg_run(void *arg) {
-    dlg_job_t *j = arg;
-    id task = j->task, data = j->data, sess = (id)BOX(task)->i, dlg = BOX(sess)->b;
-    i64 n = data ? (i64)MSG0(u64, data, "length") : 0;
-    id body = data;
-    if (!BOX(task)->j && BOX(task)->b) {
-        int disp = sess_response_disp(task, BOX(task)->b);
-        if (disp == US_DISP_DOWNLOAD) BOX(task)->j = 1;
-        else if (disp == US_DISP_CANCEL) {
-            body = 0;
-            n = 0;
-            if (!BOX(task)->e) BOX(task)->e = make_err("NSURLErrorDomain", -999, "resposta cancelada pelo delegate");
-        }
-    }
-    if (BOX(task)->j) {                                              /* download */
-        static int seq;
-        char path[64];
-        cx_snprintf(path, sizeof path, "/tmp/CFNetworkDownload_mOS_%d.tmp", ++seq);
-        id p = cx_str(path);
-        if (body) MSG(BOOL, body, "writeToFile:atomically:", p, (BOOL)1);
-        else MSG(BOOL, MSG0(id, (id)cx_class_named("NSData"), "data"), "writeToFile:atomically:", p, (BOOL)1);
-        if (dlg_has(dlg, "URLSession:downloadTask:didWriteData:totalBytesWritten:totalBytesExpectedToWrite:"))
-            MSG(void, dlg, "URLSession:downloadTask:didWriteData:totalBytesWritten:totalBytesExpectedToWrite:", sess, task, n, n, n);
-        if (dlg_has(dlg, "URLSession:downloadTask:didFinishDownloadingToURL:")) {
-            id u = MSG(id, (id)cx_class_named("NSURL"), "fileURLWithPath:", p);
-            MSG(void, dlg, "URLSession:downloadTask:didFinishDownloadingToURL:", sess, task, u);
-        }
-        MSG(BOOL, MSG0(id, (id)cx_class_named("NSFileManager"), "defaultManager"), "removeItemAtPath:error:", p, (id *)0);
-    } else if (n && body && dlg_has(dlg, "URLSession:dataTask:didReceiveData:")) {
-        MSG(void, dlg, "URLSession:dataTask:didReceiveData:", sess, task, body);
-    }
-    {   /* uma linha no stderr por tarefa com delegate (com stderr-serial vai para o log serial): URL, status, bytes, erro */
-        id req = BOX(task)->a, url = req ? MSG0(id, req, "URL") : 0, us = url ? MSG0(id, url, "absoluteString") : 0;
-        id resp = BOX(task)->b, er = BOX(task)->e;
-        long st = resp && MSG(BOOL, resp, "respondsToSelector:", sel_registerName("statusCode")) ? MSG0(long, resp, "statusCode") : -1;
-        id ed = er ? MSG0(id, er, "description") : 0;
-        char line[600];
-        int len = cx_snprintf(line, sizeof line, "NSURLSession[delegate]: %s %.200s -> status %ld, %ld bytes%s%.200s\n",
-                              BOX(task)->j ? "download" : "dados", us ? cs(us) : "?", st, (long)n, ed ? ", erro " : "", ed ? cs(ed) : "");
-        if (len > 0) { extern long write(int, const void *, unsigned long); write(2, line, (unsigned long)(len < (int)sizeof line ? len : (int)sizeof line - 1)); }
-    }
-    if (dlg_has(dlg, "URLSession:task:didCompleteWithError:"))
-        MSG(void, dlg, "URLSession:task:didCompleteWithError:", sess, task, BOX(task)->e);
-    rel(data); rel(task);
-    free(j);
-}
-void sess_deliver_to_delegate(id task, id data) {
-    id sess = (id)BOX(task)->i;
-    if (!sess || !BOX(sess)->b) return;
-    dlg_job_t *j = malloc(sizeof *j);
-    if (!j) return;
-    j->task = retain(task); j->data = retain(data);
-    id mainq = MSG0(id, (id)cx_class_named("NSOperationQueue"), "mainQueue");
-    dispatch_async_f(BOX(sess)->c && BOX(sess)->c == mainq ? dispatch_get_main_queue() : dispatch_get_global_queue(0, 0), j, dlg_run);
-}
-static id sess_with_delegate(id cls, SEL c, id cfg, id dlg, id queue) {
-    (void)c;
-    box_t *o = (box_t *)cx_alloc_instance((cx_class_t *)cls);
-    o->a = retain(cfg); o->b = retain(dlg); o->c = retain(queue);
-    return ar((id)o);
-}
-static id sess_get_delegate(id s, SEL c) { (void)c; return BOX(s)->b; }
-static id sess_get_queue(id s, SEL c) { (void)c; return BOX(s)->c; }
-static id sess_get_cfg(id s, SEL c) { (void)c; return BOX(s)->a; }
-static id sess_task_nocb(id s, cx_class_t *cls, id req, int dl) {
-    id t = task_make(cls, req, 0);
-    BOX(t)->i = (i64)s; BOX(t)->j = dl;
-    return ar(t);
-}
-static id sess_data_task_nb(id s, SEL c, id req) { (void)c; return sess_task_nocb(s, &NSURLSessionDataTask_c, req, 0); }
-static id sess_data_url_nb(id s, SEL c, id url) { return sess_task_nocb(s, &NSURLSessionDataTask_c, req_with((id)&NSURLRequest_c, c, url), 0); }
-static id sess_dl_task_nb(id s, SEL c, id req) { (void)c; return sess_task_nocb(s, &NSURLSessionDownloadTask_c, req, 1); }
-static id sess_dl_url_nb(id s, SEL c, id url) { return sess_task_nocb(s, &NSURLSessionDownloadTask_c, req_with((id)&NSURLRequest_c, c, url), 1); }
-/* getAllTasksWithCompletionHandler: as tarefas do mOS não ficam registradas na sessão: lista vazia */
-static void sess_all_tasks(id s, SEL c, void *block) {
-    (void)s; (void)c;
-    if (!block) return;
-    void (*inv)(void *, id) = *(void **)((u8 *)block + 16);
-    inv(block, MSG0(id, (id)cx_class_named("NSArray"), "array"));
-}
-static void task_resume(id s, SEL c) {
-    (void)c;
-    if (BOX(s)->fl) return;
-    BOX(s)->fl = 1;
-    task_job_t *j = malloc(sizeof *j);
-    j->task = retain(s);
-    unsigned long tid = 0;
-    if (pthread_create(&tid, 0, task_thread, j)) task_thread(j);
-}
-static void task_cancel(id s, SEL c) { (void)c; BOX(s)->fl2 = 1; }
-static id task_resp(id s, SEL c) { (void)c; return BOX(s)->b; }
-static id task_err(id s, SEL c) { (void)c; return BOX(s)->e; }
-static int task_state(id s, SEL c) { (void)c; return BOX(s)->fl; }
 
 static id comp_make(id cls, SEL c, id s) {
     (void)c;
@@ -2141,37 +1637,6 @@ static id qitem_make(id cls, SEL c, id n, id v) { (void)c; box_t *o = (box_t *)c
 static id qitem_name(id s, SEL c) { (void)c; return BOX(s)->a; }
 static id qitem_value(id s, SEL c) { (void)c; return BOX(s)->b; }
 
-static id cookie_with(id cls, SEL c, id props) {
-    (void)c;
-    box_t *o = (box_t *)cx_alloc_instance((cx_class_t *)cls);
-    o->a = retain(props);
-    return ar((id)o);
-}
-static id cookie_name(id s, SEL c) { (void)c; return BOX(s)->a ? dget(BOX(s)->a, "Name") : 0; }
-static id cookie_value(id s, SEL c) { (void)c; return BOX(s)->a ? dget(BOX(s)->a, "Value") : 0; }
-static id cookie_domain(id s, SEL c) { (void)c; return BOX(s)->a ? dget(BOX(s)->a, "Domain") : 0; }
-static id cookiestore(id cls, SEL c) { (void)c; static id s; if (!s) { s = cx_alloc_instance((cx_class_t *)cls); BOX(s)->a = mutarr(); } return s; }
-static void cookie_set(id s, SEL c, id cookie, id url) {
-    (void)c; (void)url;
-    if (cookie) cx_arr_add(BOX(s)->a, cookie);
-}
-static id cookie_for(id s, SEL c, id url) {
-    (void)c; (void)url;
-    return BOX(s)->a;
-}
-static void cookie_del(id s, SEL c, id cookie) { (void)c; if (BOX(s)->a && cookie) MSG(void, BOX(s)->a, "removeObject:", cookie); }
-
-static id cache_shared(id cls, SEL c) { (void)c; static id s; if (!s) { s = cx_alloc_instance((cx_class_t *)cls); BOX(s)->a = mutdict(); } return s; }
-static void cache_store(id s, SEL c, id cached, id req) {
-    (void)c;
-    if (!cached || !req) return;
-    id key = url_abs(req_url(req, c));
-    if (key) MSG(void, BOX(s)->a, "setObject:forKey:", cached, key);
-}
-static id cache_get(id s, SEL c, id req) { (void)c; id key = url_abs(req_url(req, c)); return key && BOX(s)->a ? MSG(id, BOX(s)->a, "objectForKey:", key) : 0; }
-static id cached_make(id cls, SEL c, id resp, id data) { (void)c; box_t *o = (box_t *)cx_alloc_instance((cx_class_t *)cls); o->a = retain(resp); o->b = retain(data); return ar((id)o); }
-static id cached_resp(id s, SEL c) { (void)c; return BOX(s)->a; }
-static id cached_data(id s, SEL c) { (void)c; return BOX(s)->b; }
 
 /* ---------------------------------------------------------------- arquivo coordenado, operações, progresso, undo */
 static void coord_read(id s, SEL c, id url, u64 opt, id *err, void *block) {
@@ -2650,15 +2115,7 @@ static id note_alloc(id cls, SEL c) { (void)c; return cx_alloc_instance((cx_clas
 static void set_a(id s, SEL c, id v) { (void)c; rel(BOX(s)->a); BOX(s)->a = retain(v); }
 static void set_b(id s, SEL c, id v) { (void)c; rel(BOX(s)->b); BOX(s)->b = retain(v); }
 static void set_c(id s, SEL c, id v) { (void)c; rel(BOX(s)->c); BOX(s)->c = retain(v); }
-static long space_port(id s, SEL c) { (void)c; return (long)BOX(s)->i; }
-static BOOL space_proxy(id s, SEL c) { (void)s; (void)c; return NO; }
 static void box_dealloc(id s, SEL c);
-static id space_trust(id s, SEL c) { (void)c; return (id)BOX(s)->p; }
-static void space_dealloc(id s, SEL c) {
-    if (BOX(s)->p) { rel((id)BOX(s)->p); BOX(s)->p = 0; }
-    box_dealloc(s, c);
-}
-static long chal_prev(id s, SEL c) { (void)c; return (long)BOX(s)->i; }
 static void box_dealloc(id s, SEL c) {
     rel(BOX(s)->a); rel(BOX(s)->b); rel(BOX(s)->c); rel(BOX(s)->e);
     BOX(s)->a = BOX(s)->b = BOX(s)->c = BOX(s)->e = 0;
@@ -3105,32 +2562,6 @@ void cx_foundation_more_init(void) {
     M(NSURLResponse, "copy", resp_copy); M(NSURLResponse, "copyWithZone:", resp_copy_zone); M(NSURLResponse, "dealloc", resp_dealloc);
     CM(NSURLResponse, "supportsSecureCoding", req_secure);
 
-    DEF(&NSURLSessionTask_c, &NSURLSessionTask_m, "NSURLSessionTask", ob, BEX);
-    M(NSURLSessionTask, "resume", task_resume); M(NSURLSessionTask, "cancel", task_cancel);
-    M(NSURLSessionTask, "suspend", noop); M(NSURLSessionTask, "response", task_resp); M(NSURLSessionTask, "error", task_err);
-    M(NSURLSessionTask, "state", task_state);
-    DEF(&NSURLSessionDataTask_c, &NSURLSessionDataTask_m, "NSURLSessionDataTask", &NSURLSessionTask_c, 0);
-    DEF(&NSURLSessionDownloadTask_c, &NSURLSessionDownloadTask_m, "NSURLSessionDownloadTask", &NSURLSessionTask_c, 0);
-    DEF(&NSURLSessionUploadTask_c, &NSURLSessionUploadTask_m, "NSURLSessionUploadTask", &NSURLSessionTask_c, 0);
-    DEF(&NSURLSessionConfiguration_c, &NSURLSessionConfiguration_m, "NSURLSessionConfiguration", ob, BEX);
-    CM(NSURLSessionConfiguration, "defaultSessionConfiguration", sess_cfg);
-    CM(NSURLSessionConfiguration, "ephemeralSessionConfiguration", sess_cfg);
-    DEF(&NSURLSession_c, &NSURLSession_m, "NSURLSession", ob, BEX);
-    CM(NSURLSession, "sharedSession", sess_shared);
-    CM(NSURLSession, "sessionWithConfiguration:", sess_shared);
-    M(NSURLSession, "dataTaskWithRequest:completionHandler:", sess_data_task);
-    M(NSURLSession, "dataTaskWithURL:completionHandler:", sess_data_url);
-    M(NSURLSession, "downloadTaskWithRequest:completionHandler:", sess_dl_task);
-    M(NSURLSession, "uploadTaskWithRequest:fromData:completionHandler:", sess_up_task);
-    M(NSURLSession, "invalidateAndCancel", noop); M(NSURLSession, "finishTasksAndInvalidate", noop);
-    CM(NSURLSession, "sessionWithConfiguration:delegate:delegateQueue:", sess_with_delegate);
-    M(NSURLSession, "delegate", sess_get_delegate); M(NSURLSession, "delegateQueue", sess_get_queue); M(NSURLSession, "configuration", sess_get_cfg);
-    M(NSURLSession, "dataTaskWithRequest:", sess_data_task_nb); M(NSURLSession, "dataTaskWithURL:", sess_data_url_nb);
-    M(NSURLSession, "downloadTaskWithRequest:", sess_dl_task_nb); M(NSURLSession, "downloadTaskWithURL:", sess_dl_url_nb);
-    M(NSURLSession, "getAllTasksWithCompletionHandler:", sess_all_tasks);
-    CM(NSURLSessionConfiguration, "backgroundSessionConfigurationWithIdentifier:", sess_cfg);
-    DEF(&NSURLSessionTaskMetrics_c, &NSURLSessionTaskMetrics_m, "NSURLSessionTaskMetrics", ob, BEX);
-    DEF(&NSURLSessionTaskTransactionMetrics_c, &NSURLSessionTaskTransactionMetrics_m, "NSURLSessionTaskTransactionMetrics", ob, BEX);
 
     DEF(&NSURLComponents_c, &NSURLComponents_m, "NSURLComponents", ob, BEX);
     CM(NSURLComponents, "componentsWithString:", comp_make);
@@ -3140,36 +2571,6 @@ void cx_foundation_more_init(void) {
     DEF(&NSURLQueryItem_c, &NSURLQueryItem_m, "NSURLQueryItem", ob, BEX);
     CM(NSURLQueryItem, "queryItemWithName:value:", qitem_make);
     M(NSURLQueryItem, "name", qitem_name); M(NSURLQueryItem, "value", qitem_value);
-    DEF(&NSHTTPCookie_c, &NSHTTPCookie_m, "NSHTTPCookie", ob, BEX);
-    CM(NSHTTPCookie, "cookieWithProperties:", cookie_with);
-    M(NSHTTPCookie, "name", cookie_name); M(NSHTTPCookie, "value", cookie_value); M(NSHTTPCookie, "domain", cookie_domain);
-    DEF(&NSHTTPCookieStorage_c, &NSHTTPCookieStorage_m, "NSHTTPCookieStorage", ob, BEX);
-    CM(NSHTTPCookieStorage, "sharedHTTPCookieStorage", cookiestore);
-    M(NSHTTPCookieStorage, "setCookie:forURL:", cookie_set); M(NSHTTPCookieStorage, "setCookie:", cookie_set);
-    M(NSHTTPCookieStorage, "cookiesForURL:", cookie_for); M(NSHTTPCookieStorage, "cookies", cookie_for);
-    M(NSHTTPCookieStorage, "deleteCookie:", cookie_del);
-    DEF(&NSURLCache_c, &NSURLCache_m, "NSURLCache", ob, BEX);
-    CM(NSURLCache, "sharedURLCache", cache_shared);
-    M(NSURLCache, "storeCachedResponse:forRequest:", cache_store); M(NSURLCache, "cachedResponseForRequest:", cache_get);
-    DEF(&NSCachedURLResponse_c, &NSCachedURLResponse_m, "NSCachedURLResponse", ob, BEX);
-    CM(NSCachedURLResponse, "alloc", lock_alloc);
-    M(NSCachedURLResponse, "initWithResponse:data:", cached_make);
-    M(NSCachedURLResponse, "response", cached_resp); M(NSCachedURLResponse, "data", cached_data);
-    DEF(&NSURLConnection_c, &NSURLConnection_m, "NSURLConnection", ob, BEX);
-    CM(NSURLConnection, "sendSynchronousRequest:returningResponse:error:", conn_send);
-    DEF(&NSURLCredential_c, &NSURLCredential_m, "NSURLCredential", ob, BEX);
-    CM(NSURLCredential, "credentialWithUser:password:persistence:", qitem_make);
-    M(NSURLCredential, "user", get_a); M(NSURLCredential, "password", get_b);
-    DEF(&NSURLProtectionSpace_c, &NSURLProtectionSpace_m, "NSURLProtectionSpace", ob, BEX);
-    M(NSURLProtectionSpace, "host", get_a); M(NSURLProtectionSpace, "realm", get_b); M(NSURLProtectionSpace, "authenticationMethod", get_c);
-    M(NSURLProtectionSpace, "protocol", get_e); M(NSURLProtectionSpace, "port", space_port);
-    M(NSURLProtectionSpace, "isProxy", space_proxy); M(NSURLProtectionSpace, "serverTrust", space_trust);
-    M(NSURLProtectionSpace, "dealloc", space_dealloc);
-    DEF(&NSURLAuthenticationChallenge_c, &NSURLAuthenticationChallenge_m, "NSURLAuthenticationChallenge", ob, BEX);
-    M(NSURLAuthenticationChallenge, "protectionSpace", get_a); M(NSURLAuthenticationChallenge, "proposedCredential", get_b);
-    M(NSURLAuthenticationChallenge, "previousFailureCount", chal_prev); M(NSURLAuthenticationChallenge, "dealloc", box_dealloc);
-    DEF(&NSURLProtocol_c, &NSURLProtocol_m, "NSURLProtocol", ob, BEX);
-    CM(NSURLProtocol, "registerClass:", noop); CM(NSURLProtocol, "canInitWithRequest:", yes_m);
 
     DEF(&NSOperation_c, &NSOperation_m, "NSOperation", ob, BEX);
     CM(NSOperation, "alloc", op_alloc);

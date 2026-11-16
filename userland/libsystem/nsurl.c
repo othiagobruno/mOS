@@ -557,6 +557,7 @@ static id pi_os_string(id self, SEL c) { (void)self; (void)c; return ns_str("Ver
 void cx_darwin_init(void) {
     extern void cx_foundation_more_init(void);
     cx_foundation_more_init();                  /* o resto do Foundation (classes e símbolos que os apps importam) */
+    { void cx_urlsession_init(void); cx_urlsession_init(); }   /* NSURLSession, cookies, cache (nsurlsession.c) */
     extern void cx_coreml_init(void);
     cx_coreml_init();                           /* MLDictionaryFeatureProvider (voz do OpenBot) */
     extern void **cx_tsd(void);

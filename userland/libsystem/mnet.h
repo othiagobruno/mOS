@@ -245,6 +245,7 @@ typedef struct mnet_io {
     long long (*unix_time)(void *env);              /* segundos Unix (cookies) */
     void (*lock)(void *env);                        /* protege o pool (NULL = um só fio) */
     void (*unlock)(void *env);
+    void *(*copy_trust)(void *env, void *conn);     /* SecTrustRef da cadeia do servidor (+1) ou NULL */
 } mnet_io_t;
 typedef struct mnet_pool_ent mnet_pool_ent_t;
 typedef struct {
@@ -284,9 +285,28 @@ typedef struct {
     int (*on_redirect)(void *ctx, const mnet_resp_t *r, char **url);
     void (*on_sent)(void *ctx, long long sent, long long total);
     volatile int *cancel;                           /* != 0: cancela no próximo ponto de E/S */
+    mnet_jar_t *jar;                                /* jar deste pedido (sessão efêmera); NULL = o do cliente */
+    int no_store_cookies;                           /* manda cookies, mas não guarda os Set-Cookie (política "nunca") */
+    /* conexão TLS nova: trust = SecTrustRef (pode ser NULL); != 0 cancela (desafio de servidor recusado) */
+    int (*on_tls)(void *ctx, const char *host, int port, void *trust);
+    void (*release_trust)(void *trust);
 } mnet_req_t;
 void mnet_client_init(mnet_client_t *c, const mnet_io_t *io);
 void mnet_client_close_idle(mnet_client_t *c);
 /* 0 ok (resposta em *r, corpo já entregue por on_body) ou MNET_E_*; msg recebe o texto do erro */
 int mnet_fetch(mnet_client_t *c, const mnet_req_t *q, mnet_resp_t *r, char *msg, size_t msglen);
 void mnet_resp_free(mnet_resp_t *r);
+
+/* libSystem (urlsession_io.c): transporte do mOS e o cliente/jar compartilhados do processo */
+const mnet_io_t *cx_mnet_io(void);
+mnet_client_t *cx_mnet_client(void);
+mnet_jar_t *cx_mnet_jar(void);
+
+/* ---- cache HTTP privado (RFC 9111): só as regras; o armazenamento é do NSURLCache */
+int mnet_cache_storable(const char *method, int status, const mnet_hdrs_t *req, const mnet_hdrs_t *resp);
+long long mnet_cache_fresh_left(const mnet_hdrs_t *resp, int status, long long req_time, long long resp_time, long long now);
+int mnet_cache_req_revalidate(const mnet_hdrs_t *req);
+int mnet_cache_must_revalidate(const mnet_hdrs_t *resp);
+int mnet_cache_validators(const mnet_hdrs_t *stored, mnet_hdrs_t *req);
+void mnet_cache_merge_304(mnet_hdrs_t *stored, const mnet_hdrs_t *r304);
+char *mnet_cache_vary_key(const mnet_hdrs_t *resp, const mnet_hdrs_t *req);
