@@ -8,6 +8,8 @@
 # A Foundation do libSystem (NSLocale, NSCalendar, formatters, transformações de NSString) chama esta biblioteca.
 #
 #   tools/build-icu.sh [--force] [--jobs N]     (padrão: 2 jobs, regra de RAM do time)
+# MOS_ARCH=arm64: a fatia arm64 em build/icu-arm64 (processo arm64 do tradutor, docs/runtime-arm64-plano.md), ligada na
+# libc++ arm64 de build/libcxx-arm64; o .dat é o mesmo (little-endian nas duas). O tools/build.sh junta com o lipo-mos.py.
 # Fonte: .tools/icu-dl/icu4c-74_2-src.tgz (baixa com SHA-256 conferido) ou MOS_ICU_TGZ.
 set -uo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -20,8 +22,11 @@ zig=${MOS_ZIG:-}
 if [ -z "$zig" ]; then for z in "$root"/.tools/zig-*/zig; do [ -x "$z" ] && { zig=$z; break; }; done; fi
 [ -z "$zig" ] && zig=$(command -v zig || true)
 [ -x "${zig:-/}" ] || { echo "build-icu: falta o zig" >&2; exit 1; }
-tgt=x86_64-macos.12.0
-out="$root/build/icu"
+case "${MOS_ARCH:-x86_64}" in
+    x86_64) tgt=x86_64-macos.12.0; out="$root/build/icu"; cxx="$root/build/libcxx/libc++.1.dylib" ;;
+    arm64) tgt=aarch64-macos.12.0; out="$root/build/icu-arm64"; cxx="$root/build/libcxx-arm64/libc++.1.dylib" ;;
+    *) echo "MOS_ARCH=$MOS_ARCH: use x86_64 ou arm64" >&2; exit 1 ;;
+esac
 dylib="$out/libicucore.A.dylib"
 dat="$out/icudt74l.dat"
 if [ -s "$dylib" ] && [ -s "$dat" ] && [ $force = 0 ]; then exit 0; fi
@@ -40,7 +45,6 @@ if [ ! -f "$src/common/uloc.cpp" ]; then
     fi
     tar xzf "$tgz" -C "$dl" || exit 1
 fi
-cxx="$root/build/libcxx/libc++.1.dylib"
 if [ ! -f "$cxx" ]; then MOS_ZIG="$zig" bash "$root/tools/build-libcxx.sh" "$root/build/libcxx" || exit 1; fi
 mkdir -p "$out/obj" "$out/inc"
 cfg="$out/icu_mos_config.h"
@@ -91,4 +95,4 @@ printf '"%s"\n' "${objs[@]}" > "$out/link.rsp"
 [ -s "$dylib" ] || { echo "build-icu: link falhou" >&2; exit 1; }
 cp -f "$src/data/in/icudt74l.dat" "$dat"
 cp -f "$dl/icu/LICENSE" "$out/LICENSE" 2>/dev/null || true
-echo "OK: build/icu/libicucore.A.dylib ($(( $(stat -c %s "$dylib") / 1024 )) KiB) e icudt74l.dat ($(( $(stat -c %s "$dat") / 1024 )) KiB)"
+echo "OK: $dylib ($(( $(stat -c %s "$dylib") / 1024 )) KiB) e icudt74l.dat ($(( $(stat -c %s "$dat") / 1024 )) KiB)"

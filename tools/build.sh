@@ -697,6 +697,8 @@ LIPO=(python3 -I "$ROOT/tools/lipo-mos.py")
 "${LIPO[@]}" -o "$ESP/mOS/usr/lib/libz.1.dylib" "$ROOT/build/zlib-x86_64/libz.1.dylib" "$ROOT/build/zlib-arm64/libz.1.dylib"
 "${LIPO[@]}" -o "$ESP/mOS/usr/lib/libsqlite3.dylib" "$ROOT/build/sqlite/libsqlite3.dylib" "$ROOT/build/sqlite-arm64/libsqlite3.dylib"
 "${LIPO[@]}" -o "$ESP/mOS/usr/lib/libcurl.4.dylib" "$ROOT/build/curl-x86_64/libcurl.4.dylib" "$ROOT/build/curl-arm64/libcurl.4.dylib"
+MOS_ZIG="$ZIG" MOS_ARCH=arm64 bash "$ROOT/tools/build-icu.sh" --jobs 2
+"${LIPO[@]}" -o "$ESP/mOS/usr/lib/libicucore.A.dylib" "$ROOT/build/icu/libicucore.A.dylib" "$ROOT/build/icu-arm64/libicucore.A.dylib"
 if [ -f "$ESP/mOS/usr/lib/libxml2.2.dylib" ]; then
     MOS_ZIG="$ZIG" MOS_ARCH=arm64 bash "$ROOT/tools/build-libxml2.sh" "$ROOT/build/libxml2-arm64/libxml2.2.dylib"
     "${LIPO[@]}" -o "$ESP/mOS/usr/lib/libxml2.2.dylib" "$ROOT/build/libxml2/libxml2.2.dylib" "$ROOT/build/libxml2-arm64/libxml2.2.dylib"
