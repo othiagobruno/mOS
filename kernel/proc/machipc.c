@@ -429,7 +429,7 @@ static int enqueue(kport_t *dest, kmsg_t *m) {
         w->mach_wait = NULL;
         w->mach_peek = false;
         w->mach_deadline = 0;
-        w->state = TH_READY;
+        sched_wake(w);
     }
     return KERN_SUCCESS;
 }

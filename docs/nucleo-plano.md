@@ -59,7 +59,23 @@ antes do build final (REGRAS.md).
 | 1 compressor | pronto | `tools/vmcomp_host.c`: zero 3 B, texto 251 B (6 %), esparso 24 %, página cheia 13 %; 20 000 páginas mistas ida e volta iguais; fluxo cortado ou com sobra recusado; ~400 MiB/s comprimindo no host |
 | 2 swap no compressor | pronto | `tools/vmcomp_host.c`: 4000 páginas, fork com dois donos, munmap solta o slot, zona volta a 0 páginas; `resto_host` com a API nova |
 | 3 correções de swap | pronto, sem VM | `clang -fsyntax-only` nos arquivos do kernel; QEMU só no build final |
-| 4–8 | aberto | — |
+| 5 escalonador | pronto, sem VM | `tools/futexq_host.c`: 99 657 wakes iguais aos da varredura antiga (processo+va ou chave física), n limitado, chave física entre processos; prioridade QoS→Mach, decaimento e faixa 0..127 |
+| 4, 6–8 | aberto | — |
+
+### Escalonador (item 5), como ficou
+
+- Prioridade Mach por thread: `base_pri` vem da QoS (47/37/31/20/4, como no XNU) ou de `MOS_THR_SETPRIO`
+  (`SYS_THREADCTL`, `pri | 0x100` = fixa; acima de 63 só root). Efetiva = base − 1 a cada 8 ms de CPU recente
+  (meia-vida de 100 ms), até −16; a fixa não decai. Fila por núcleo em 32 baldes (efetiva/4) com bitmap.
+- Preempção: thread pronta num balde acima da atual troca no próximo tique, sem esperar o fim da fatia.
+  Núcleo ocioso recebe o IPI 0xF2 na hora em que uma thread entra na fila dele.
+- `sched_wake` em todos os 22 pontos que escreviam `TH_READY` direto (pipes, terminal, Mach, unix, GPU, sinais, wait).
+  `sweep_ready` virou rede de segurança a cada 100 ms e loga o primeiro resgate.
+- Dormentes: a varredura só roda quando o prazo mais próximo vence, quando alguém bloqueia (sched_switch) ou muda
+  prazo de fora (`sched_deadline_dirty`), e no máximo a cada 50 ms. Antes: todo tique de todo núcleo.
+- Futex: `proc/futexq.c`, hash de 512 baldes por (processo, va) e pela chave física (`futex_shared_key`, PR #236).
+- `tools/ptytest.c` ganhou o `proc_job_signal` que faltava para ligar; ele continua caindo (SIGSEGV) também na main,
+  antes desta mudança. É harness do terminal, não do núcleo.
 
 ## Pedidos de outras frentes
 

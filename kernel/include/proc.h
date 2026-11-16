@@ -99,6 +99,15 @@ typedef struct thread {
     u8 rq_cpu;
     u64 affinity;
     struct thread *rq_next;
+    /* prioridade Mach 0..127 (sched.c): base_pri vem da QoS ou de MOS_THR_SETPRIO; pri_fixed tira o decaimento.
+     * usage: ms de CPU recentes, metade a cada 100 ms (usage_at); a prioridade efetiva cai com ele. rq_q = balde (eff/4). */
+    u8 base_pri, pri_fixed, rq_q;
+    u32 usage;
+    u64 usage_at;
+    /* filas de futex (proc/futexq.c): lista 0 por (processo, va), lista 1 pela chave física */
+    struct thread *fq_next[2], *fq_prev[2];
+    u16 fq_b[2];
+    u8 fq_on;
 } thread_t;
 
 /* sessão de terminal: entrada (stdin) e saída (stdout/stderr) de um grupo de processos */
@@ -208,6 +217,13 @@ u64       sched_irq_exit(int_frame_t *f, bool timer);   /* devolve o frame a res
 u64       sched_switch(int_frame_t *f);         /* a thread atual bloqueou/saiu: escolhe outra */
 void      sched_make_ready(thread_t *t);
 void      sched_set_qos(thread_t *t, unsigned darwin_qos);
+void      sched_set_priority(thread_t *t, unsigned pri, bool fixed);   /* Mach 0..127 */
+void      sched_wake(thread_t *t);           /* pronta e na fila de um núcleo (acorda o núcleo ocioso) */
+void      sched_deadline_dirty(void);        /* um prazo (wake_at, mach_deadline) mudou fora de uma troca */
+void      futexq_add(thread_t *t);
+void      futexq_remove(thread_t *t);
+int       futexq_wake(process_t *p, u64 va, u64 key, int n, void (*wake)(thread_t *));
+u32       futexq_count(void);
 void      sched_set_affinity(thread_t *t, u64 cpu_mask);
 u16       sched_alloc_pcid(void);
 thread_t *sched_threads(void);

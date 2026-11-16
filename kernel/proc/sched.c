@@ -43,7 +43,8 @@ typedef struct {
     volatile u8 release;       /* sched_post solta a trava */
     volatile u8 spinning;      /* esperando a trava com interrupções abertas (BSP) */
     bool online;
-    thread_t *rq_h[5], *rq_t[5];   /* filas por classe de QoS, maior prioridade no índice 0 */
+    thread_t *rq_h[32], *rq_t[32]; /* baldes de prioridade (efetiva / 4): o 31 corre primeiro */
+    u32 rq_bits;                   /* bit q = balde q não vazio */
     int rq_n;
     volatile u16 flush_pcid;       /* PCID a invalidar; 0xFFFF = o TLB inteiro */
 } pcpu_t;
@@ -239,17 +240,27 @@ static int pick_cpu(const thread_t *t) {
     }
     return best;
 }
+/* prioridade efetiva agora (smp_perf.h): base da QoS ou do MOS_THR_SETPRIO, menos o uso recente de CPU */
+static int eff_pri(thread_t *t) {
+    u64 now = timer_ticks();
+    if (now - t->usage_at >= 100) {
+        t->usage = smp_usage_decay(t->usage, t->usage_at, now);
+        t->usage_at = now - (now - t->usage_at) % 100;
+    }
+    return smp_eff_pri(t->base_pri ? t->base_pri : 31, t->usage, t->pri_fixed);
+}
 static void rq_unlink(thread_t *t) {
     pcpu_t *c;
     int q;
     thread_t **pp, *prev = NULL;
     if (!t || !t->on_rq) return;
-    q = t->qos < 5 ? t->qos : 2;
+    q = t->rq_q & 31;
     c = &pc[t->rq_cpu < MAX_CPUS ? t->rq_cpu : 0];
     for (pp = &c->rq_h[q]; *pp && *pp != t; pp = &(*pp)->rq_next) prev = *pp;
     if (!*pp) { t->on_rq = 0; return; }
     *pp = t->rq_next;
     if (c->rq_t[q] == t) c->rq_t[q] = prev;
+    if (!c->rq_h[q]) c->rq_bits &= ~(1u << q);
     t->rq_next = NULL;
     t->on_rq = 0;
     if (c->rq_n) c->rq_n--;
@@ -259,19 +270,29 @@ static void rq_put(thread_t *t) {
     int q, cpu;
     if (!t || t->on_rq || t == &thread0 || t->state != TH_READY || thread_parked(t)) return;
     if (t->id < 0) return;                 /* ocioso do AP */
-    q = t->qos < 5 ? t->qos : 2;
+    q = eff_pri(t) >> 2;
     cpu = pick_cpu(t);
     c = &pc[cpu];
     t->rq_next = NULL;
     t->rq_cpu = (u8)cpu;
+    t->rq_q = (u8)q;
     if (c->rq_t[q]) c->rq_t[q]->rq_next = t;
     else c->rq_h[q] = t;
     c->rq_t[q] = t;
+    c->rq_bits |= 1u << q;
     t->on_rq = 1;
     c->rq_n++;
+    /* núcleo ocioso: o IPI 0xF2 passa pelo irq_exit como um tique e ele pega a thread agora, não no próximo 1 ms */
+    if (cpu && cpu != this_cpu() && pc[cpu].online && pc[cpu].cur == pc[cpu].idle) smp_send_ipi(cpu, VEC_KICK);
 }
 void sched_make_ready(thread_t *t) {
     if (t->state == TH_DEAD || t->state == TH_RUNNING) return;
+    t->state = TH_READY;
+    rq_put(t);
+}
+/* acordar de uma espera: pronta e na fila. A thread atual (yield) também: o switch_to não a perde. */
+void sched_wake(thread_t *t) {
+    if (!t || t->state == TH_DEAD) return;
     t->state = TH_READY;
     rq_put(t);
 }
@@ -279,6 +300,17 @@ void sched_set_qos(thread_t *t, unsigned darwin_qos) {
     if (!t) return;
     rq_unlink(t);
     t->qos = (u8)smp_qos_from_darwin(darwin_qos);
+    t->base_pri = (u8)smp_qos_base_pri(t->qos);
+    t->pri_fixed = 0;
+    if (t->state == TH_READY) rq_put(t);
+}
+/* thread_policy_set / pthread_setschedparam: prioridade Mach. fixed = sem decaimento (THREAD_PRECEDENCE, FIFO). */
+void sched_set_priority(thread_t *t, unsigned pri, bool fixed) {
+    if (!t) return;
+    if (pri > 127) pri = 127;
+    rq_unlink(t);
+    t->base_pri = (u8)(pri ? pri : 1);
+    t->pri_fixed = fixed;
     if (t->state == TH_READY) rq_put(t);
 }
 void sched_set_affinity(thread_t *t, u64 cpu_mask) {
@@ -329,6 +361,8 @@ static thread_t *new_thread(const char *name, process_t *p) {
     strncpy(t->name, name, sizeof t->name - 1);
     t->proc = p;
     t->qos = 2;                                 /* QOS_CLASS_DEFAULT */
+    t->base_pri = 31;
+    t->usage_at = timer_ticks();
     return t;
 }
 
@@ -391,6 +425,7 @@ static void reap(void) {
                         t->proc ? t->proc->pid : -1, t, kheap_live(t), t->kstack, kheap_live(t->kstack));
             *pp = t->next;
             rq_unlink(t);
+            futexq_remove(t);
             for (int i = 0; i < ncpu; i++) if (pc[i].last_user == t) pc[i].last_user = NULL;
             if (t->proc) proc_thread_exited(t);
             kfree(t->kstack);
@@ -400,39 +435,71 @@ static void reap(void) {
 }
 
 static void account(pcpu_t *c) {
-    u64 now = timer_ticks();
-    c->cur->cpu_ms += now - c->last_account;
+    u64 now = timer_ticks(), d = now - c->last_account;
+    thread_t *t = c->cur;
+    t->cpu_ms += d;
+    if (t != &thread0 && t != c->idle) {
+        t->usage = smp_usage_decay(t->usage, t->usage_at, now);
+        if (now - t->usage_at >= 100) t->usage_at = now - (now - t->usage_at) % 100;
+        t->usage = t->usage + d > 0xFFFFFF ? 0xFFFFFF : t->usage + (u32)d;
+    }
     c->last_account = now;
 }
 
+/* Prazos: SYS_SLEEP e VTIME do terminal (TH_SLEEPING, wake_at), recepção Mach (-7, mach_deadline), futex (-8) e
+ * cerca de GPU (-12) com wake_at. A varredura de todas as threads só roda quando o prazo mais próximo venceu, quando
+ * alguém bloqueou com prazo (sched_switch marca) ou mudou um prazo de fora (sched_deadline_dirty), e no máximo a cada
+ * 50 ms como rede de segurança. Antes rodava em todo tique de todo núcleo. */
+static u64 next_due, last_scan;
+static volatile int due_dirty = 1;
+void sched_deadline_dirty(void) { due_dirty = 1; }
+
 static void wake_sleepers(void) {
     u64 now = timer_ticks();
+    if (!due_dirty && now < next_due && now - last_scan < 50) return;
+    due_dirty = 0;
+    last_scan = now;
+    u64 due = ~0ULL;
     for (thread_t *t = threads; t; t = t->next) {
-        if (t->state == TH_SLEEPING && now >= t->wake_at) { t->state = TH_READY; rq_put(t); }
+        if (t->state == TH_SLEEPING) {
+            if (now >= t->wake_at) { t->state = TH_READY; rq_put(t); }
+            else if (t->wake_at < due) due = t->wake_at;
+            continue;
+        }
+        if (t->state != TH_WAITING) continue;
         /* recepção Mach com prazo (machipc.c): o rax de "tempo esgotado" já está no frame */
-        else if (t->state == TH_WAITING && t->wait_pid == -7 && t->mach_deadline && now >= t->mach_deadline) {
-            t->mach_deadline = 0;
-            t->mach_wait = NULL;
-            t->mach_peek = false;
-            t->state = TH_READY;
-            rq_put(t);
+        if (t->wait_pid == -7 && t->mach_deadline) {
+            if (now >= t->mach_deadline) {
+                t->mach_deadline = 0;
+                t->mach_wait = NULL;
+                t->mach_peek = false;
+                t->state = TH_READY;
+                rq_put(t);
+            } else if (t->mach_deadline < due) due = t->mach_deadline;
         }
         /* SYS_FUTEX_WAIT com prazo (process.c): volta com -ETIMEDOUT */
-        else if (t->state == TH_WAITING && t->wait_pid == -8 && t->wake_at && now >= t->wake_at) {
-            ((int_frame_t *)t->frame)->rax = (u64)-60;      /* -MOS_ETIMEDOUT (syscall.h) */
-            t->wake_at = 0;
-            t->futex_va = 0;
-            t->state = TH_READY;
-            rq_put(t);
+        else if (t->wait_pid == -8 && t->wake_at) {
+            if (now >= t->wake_at) {
+                ((int_frame_t *)t->frame)->rax = (u64)-60;      /* -MOS_ETIMEDOUT (syscall.h) */
+                t->wake_at = 0;
+                t->futex_va = 0;
+                futexq_remove(t);
+                t->state = TH_READY;
+                rq_put(t);
+            } else if (t->wake_at < due) due = t->wake_at;
         }
         /* SYS_GPU MOS_GPU_FENCE_WAIT (wait_pid = -12): prazo em wake_at */
-        else if (t->state == TH_WAITING && t->wait_pid == -12 && t->wake_at && now >= t->wake_at) {
-            ((int_frame_t *)t->frame)->rax = (u64)-60;
-            t->wake_at = 0;
-            t->futex_va = 0;
-            t->state = TH_READY;
+        else if (t->wait_pid == -12 && t->wake_at) {
+            if (now >= t->wake_at) {
+                ((int_frame_t *)t->frame)->rax = (u64)-60;
+                t->wake_at = 0;
+                t->futex_va = 0;
+                t->state = TH_READY;
+                rq_put(t);
+            } else if (t->wake_at < due) due = t->wake_at;
         }
     }
+    next_due = due;
 }
 
 /* thread_suspend do Mach, ou o processo inteiro parado (SIGSTOP e os de job control) */
@@ -441,12 +508,24 @@ static bool thread_parked(const thread_t *t) {
 }
 
 /* varre quem ficou READY fora da fila (acordado por outro subsistema) e o enfileira */
+/* Quem acorda outra thread chama sched_wake (fila na hora). Isto é a rede de segurança para algum caminho que ainda
+ * escreva TH_READY direto: roda no máximo a cada 100 ms, não mais em toda escolha. Quantas resgatou fica em
+ * sched_rescued; o primeiro resgate vai ao log com o nome da thread, para achar o caminho. */
+static u64 last_sweep;
+static u32 sched_rescued;
 static void sweep_ready(void) {
+    u64 now = timer_ticks();
+    if (now - last_sweep < 100) return;
+    last_sweep = now;
     for (thread_t *t = threads; t; t = t->next)
-        if (t->state == TH_READY && !t->on_rq && !on_cpu(t)) rq_put(t);
+        if (t->state == TH_READY && !t->on_rq && !on_cpu(t)) {
+            if (!sched_rescued++) kprintf("sched: thread %d \"%s\" pronta fora da fila (resgatada)\n", t->id, t->name);
+            rq_put(t);
+        }
 }
 static thread_t *take_q(pcpu_t *c, int me) {
-    for (int q = 0; q < 5; q++) {
+    for (u32 bits = c->rq_bits; bits; bits &= ~(1u << (31 - __builtin_clz(bits)))) {
+        int q = 31 - __builtin_clz(bits);
         thread_t *t = c->rq_h[q];
         int guard = 0;
         while (t && guard++ < 100000) {
@@ -514,7 +593,7 @@ static u64 switch_to(pcpu_t *c, int_frame_t *f, thread_t *to) {
     if (to == from) { from->state = TH_RUNNING; return (u64)f; }
     account(c);
     from->frame = (u64)f;
-    if (from->state == TH_RUNNING) { from->state = TH_READY; rq_put(from); }
+    if (from->state == TH_RUNNING || from->state == TH_READY) { from->state = TH_READY; rq_put(from); }
     if (from != &thread0 && from != c->idle) c->last_user = from;
     if (gs_switch) { from->gs_base = rd_msr(MSR_GS_BASE); wr_msr(MSR_GS_BASE, to->gs_base); }
     c->cur = to;
@@ -568,7 +647,9 @@ static u64 irq_exit(int_frame_t *f, bool timer) {
         thread_t *t = next_ready(me, c->last_user);
         return t ? switch_to(c, f, t) : (u64)f;
     }
-    if (cur->state == TH_RUNNING && !thread_parked(cur) &&
+    /* balde local mais alto que o da atual: troca já, sem esperar o fim da fatia */
+    bool higher = c->rq_bits && (31 - __builtin_clz(c->rq_bits)) > (eff_pri(cur) >> 2);
+    if (!higher && cur->state == TH_RUNNING && !thread_parked(cur) &&
         timer_ticks() - c->slice_start < (u64)(cur->qos == 0 ? 8 : cur->qos == 1 ? 6 : cur->qos == 3 ? 2 : cur->qos == 4 ? 1 : SCHED_SLICE_MS))
         return (u64)f;
     reap();
@@ -582,6 +663,7 @@ static u64 irq_exit(int_frame_t *f, bool timer) {
 u64 sched_switch(int_frame_t *f) {
     int me = this_cpu();
     pcpu_t *c = &pc[me];
+    if (c->cur->state == TH_SLEEPING || c->cur->state == TH_WAITING) due_dirty = 1;   /* talvez com prazo novo */
     wake_sleepers();
     thread_t *t = next_ready(me, c->cur);
     if (!t || t == c->cur) t = c->cur->state == TH_RUNNING && !thread_parked(c->cur) ? c->cur : c->idle;
@@ -596,6 +678,7 @@ void kthread_sleep(u64 ms) {
     u64 fl = irq_save();
     t->wake_at = timer_ticks() + (ms ? ms : 1);
     t->state = TH_SLEEPING;
+    due_dirty = 1;
     irq_restore(fl);
     while (__atomic_load_n(&t->state, __ATOMIC_ACQUIRE) == TH_SLEEPING) hlt();
 }

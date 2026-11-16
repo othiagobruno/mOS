@@ -83,7 +83,7 @@ static void tty_feed_reader(tty_t *t) {
     }
     bool ok = !n || uvm_copy_out(r->proc, r->read_buf, tmp, n);
     ((int_frame_t *)r->frame)->rax = ok ? (u64)n : (u64)-MOS_EFAULT;
-    r->state = TH_READY;
+    sched_wake(r);
     t->reader = NULL;
 }
 
@@ -611,6 +611,7 @@ void vm_pageout_kick(void) {
     thread_t *t = pageout_th;
     __atomic_store_n(&pageout_req, 1, __ATOMIC_RELAXED);
     if (t && t->state == TH_SLEEPING) t->wake_at = 0;     /* wake_sleepers a acorda no próximo tique */
+    sched_deadline_dirty();
 }
 static void pageout_main(void *arg) {
     (void)arg;
@@ -1074,7 +1075,7 @@ static void vfork_wake(process_t *child) {
     process_t *par = pp ? find(pp) : NULL;
     if (!par) return;
     for (thread_t *t = sched_threads(); t; t = t->next)
-        if (t->proc == par && t->state == TH_WAITING && t->wait_pid == -12) t->state = TH_READY;
+        if (t->proc == par && t->state == TH_WAITING && t->wait_pid == -12) sched_wake(t);
 }
 static void finish(process_t *p, int code) {
     if (p->exited) return;
@@ -1113,18 +1114,18 @@ static void finish(process_t *p, int code) {
             if (t->wait_status) uvm_copy_out(t->proc, t->wait_status, &st, sizeof st);
             ((int_frame_t *)t->frame)->rax = (u64)p->pid;
             t->wait_posix = false;
-            t->state = TH_READY;
+            sched_wake(t);
             reported = true;
         } else if (t->wait_posix) {
             continue;
         } else if (t->wait_pid == p->pid) {
             ((int_frame_t *)t->frame)->rax = (u64)(i64)code;
-            t->state = TH_READY;
+            sched_wake(t);
             reported = true;
         } else if (t->wait_pid == -1 && !reported && t->proc && t->proc->pid == p->ppid) {
             if (t->wait_status) uvm_copy_out(t->proc, t->wait_status, &code, sizeof code);
             ((int_frame_t *)t->frame)->rax = (u64)p->pid;
-            t->state = TH_READY;
+            sched_wake(t);
             reported = true;
         }
     }
@@ -1626,7 +1627,7 @@ static void sig_interrupt(thread_t *t) {
     t->sig_wait_set = 0;
     ((int_frame_t *)t->frame)->rax = (u64)-MOS_EINTR;
     t->sig_intr = true;
-    t->state = TH_READY;
+    sched_wake(t);
 }
 
 /* sigwait em andamento que aceita sig: entrega direto (devolve true) */
@@ -1642,7 +1643,7 @@ static bool sig_to_waiter(process_t *p, thread_t *only, int sig, const siginfo_k
         }
         ((int_frame_t *)t->frame)->rax = (u64)sig;
         t->wait_pid = 0; t->sig_wait_set = 0; t->wake_at = 0; t->wait_status = 0;
-        t->state = TH_READY;
+        sched_wake(t);
         return true;
     }
     return false;
@@ -1677,7 +1678,7 @@ static void report_child_event(process_t *p, int st, bool cont) {
         ((int_frame_t *)w->frame)->rax = (u64)p->pid;
         w->wait_posix = false;
         w->wait_pid = 0;
-        w->state = TH_READY;
+        sched_wake(w);
         if (cont) p->cont_unreported = 0;
         else p->stop_unreported = 0;
         return;
@@ -1717,6 +1718,8 @@ static void proc_continue(process_t *p) {
     p->stopped = 0;
     p->stop_unreported = 0;
     p->cont_unreported = 1;
+    for (thread_t *t = sched_threads(); t; t = t->next)   /* SIGCONT: as prontas voltam às filas */
+        if (t->proc == p && t->state == TH_READY) sched_wake(t);
     report_child_event(p, stop_status(MOS_SIGCONT), true);
     notify_parent_cld(p, MOS_CLD_CONTINUED, MOS_SIGCONT);
 }
@@ -1876,7 +1879,7 @@ u64 proc_signal_check(int_frame_t *f) {
     if (!p || (f->cs & 3) != 3) return (u64)f;
     if (p->exited) return t->state == TH_DEAD ? sched_switch(f) : (u64)f;   /* morto agora (kill -9 em si mesmo): não volta */
     if (p->stopped) {                                    /* SIGSTOP em si mesmo, ou o kick de outro núcleo */
-        if (t->state == TH_RUNNING) t->state = TH_READY;
+        if (t->state == TH_RUNNING) sched_wake(t);
         return sched_switch(f);
     }
     for (;;) {
@@ -1898,7 +1901,7 @@ u64 proc_signal_check(int_frame_t *f) {
             if (sig != MOS_SIGSTOP && p->sig_handler[sig] > MOS_SIG_IGN && (p->sig_tramp[sig] || p->sig_restorer))
                 return sig_deliver(f, t, p, sig, &k);
             proc_stop(p, sig);
-            if (t->state == TH_RUNNING) t->state = TH_READY;
+            if (t->state == TH_RUNNING) sched_wake(t);
             return sched_switch(f);
         }
         u64 h = p->sig_handler[sig];
@@ -2190,12 +2193,12 @@ static void pipe_service(pipe_t *pp) {
         thread_t *r = pp->rwait;
         if (r && r->state == TH_WAITING) {
             i64 n = pipe_try_read(pp, r->proc, r->read_buf, r->read_len);
-            if (n != -EAGAIN_) { ((int_frame_t *)r->frame)->rax = (u64)n; r->state = TH_READY; pp->rwait = NULL; }
+            if (n != -EAGAIN_) { ((int_frame_t *)r->frame)->rax = (u64)n; sched_wake(r); pp->rwait = NULL; }
         } else pp->rwait = NULL;
         thread_t *w = pp->wwait;
         if (w && w->state == TH_WAITING) {
             i64 n = pipe_try_write(pp, w->proc, w->read_buf, w->read_len);
-            if (n != -EAGAIN_) { ((int_frame_t *)w->frame)->rax = (u64)n; w->state = TH_READY; pp->wwait = NULL; }
+            if (n != -EAGAIN_) { ((int_frame_t *)w->frame)->rax = (u64)n; sched_wake(w); pp->wwait = NULL; }
             if (n == -MOS_EPIPE && w->proc && !w->proc->exited) proc_signal(w->proc->pid, MOS_SIGPIPE);
         } else pp->wwait = NULL;
     }
@@ -2859,6 +2862,10 @@ static u64 futex_shared_key(process_t *p, u64 va) {
     if (!(*e & PTE_SHARED) && page_refs(*e & PTE_ADDR) <= 1) return 0;
     return (*e & PTE_ADDR) | (va & 0xFFF);
 }
+static void futex_woken(thread_t *w) {
+    ((int_frame_t *)w->frame)->rax = 0;
+    sched_wake(w);
+}
 static u64 proc_syscall_(int_frame_t *f);
 /* a syscall pode bloquear e trocar de thread: a thread que volta ao ring 3 (talvez acordada por um sinal, com
  * rax = -EINTR) passa pela entrega de sinais, que também decide se a syscall interrompida é refeita */
@@ -2937,7 +2944,7 @@ static u64 proc_syscall_(int_frame_t *f) {
         return sched_switch(f);
     case SYS_YIELD:
         f->rax = 0;
-        t->state = TH_READY;
+        sched_wake(t);
         return sched_switch(f);
 
     /* ---- futex: espera numa palavra de 32 bits do processo. O libSystem monta pthread_mutex/cond e os semáforos
@@ -2955,22 +2962,13 @@ static u64 proc_syscall_(int_frame_t *f) {
         t->wake_at = c == ~0ULL ? 0 : timer_ticks() + c;    /* o prazo é do escalonador (wake_sleepers) */
         t->wait_pid = -8;
         t->state = TH_WAITING;
+        futexq_add(t);                                       /* fila da chave (proc/futexq.c) */
         f->rax = 0;                                          /* acordada por FUTEX_WAKE */
         return sched_switch(f);
     }
     case SYS_FUTEX_WAKE: {
-        i64 n = 0;
-        u64 key = futex_shared_key(p, a);
-        for (thread_t *w = sched_threads(); w && n < (i64)(b ? b : 1); w = w->next) {
-            if (w->state != TH_WAITING || w->wait_pid != -8) continue;
-            if (!(w->proc == p && w->futex_va == a) && !(key && w->futex_phys == key)) continue;
-            ((int_frame_t *)w->frame)->rax = 0;
-            w->futex_va = 0;
-            w->wake_at = 0;
-            w->state = TH_READY;
-            n++;
-        }
-        r = n;
+        /* fila da chave (proc/futexq.c): só as threads desta palavra, não todas as do sistema */
+        r = futexq_wake(p, a, futex_shared_key(p, a), (int)(b ? (b > 0x7FFFFFFF ? 0x7FFFFFFF : b) : 1), futex_woken);
         break;
     }
     case SYS_TIME: r = (i64)timer_ticks(); break;
@@ -3773,7 +3771,7 @@ static u64 proc_syscall_(int_frame_t *f) {
         for (thread_t *w = sched_threads(); w; w = w->next)
             if (w->state == TH_WAITING && w->proc == p && w->join_tid == t->id) {
                 ((int_frame_t *)w->frame)->rax = (u64)(i64)(int)a;
-                w->state = TH_READY;
+                sched_wake(w);
                 w->join_tid = 0;
             }
         t->state = TH_DEAD;
@@ -3923,7 +3921,7 @@ static u64 proc_syscall_(int_frame_t *f) {
         }
         for (thread_t *w = sched_threads(); w; w = w->next)
             if (w->proc == p && w->id == (int)b && w->state != TH_DEAD) { q = w; break; }
-        if (!q && b == 0 && (a == MOS_THR_SETQOS || a == MOS_THR_AFFINITY)) q = t;
+        if (!q && b == 0 && (a == MOS_THR_SETQOS || a == MOS_THR_AFFINITY || a == MOS_THR_SETPRIO)) q = t;
         if (!q) { r = -MOS_ESRCH; break; }
         {   /* diagnóstico: as primeiras chamadas (quem suspende quem), para ver no log que o coletor do JSC usa isto */
             static int vistos;
@@ -3941,6 +3939,7 @@ static u64 proc_syscall_(int_frame_t *f) {
         } else if (a == MOS_THR_RESUME) {
             if (!q->suspend) { r = -MOS_EINVAL; break; }
             q->suspend--;
+            if (!q->suspend && q->state == TH_READY) sched_wake(q);   /* volta à fila de um núcleo */
             r = 0;
         } else if (a == MOS_THR_STOPPED) {
             r = sched_thread_stopped(q) ? 1 : 0;
@@ -3953,6 +3952,13 @@ static u64 proc_syscall_(int_frame_t *f) {
             r = uvm_copy_out(p, c, regs, sizeof regs) ? 0 : -MOS_EFAULT;
         } else if (a == MOS_THR_SETQOS) {
             sched_set_qos(q, (unsigned)c);
+            r = 0;
+        } else if (a == MOS_THR_SETPRIO) {
+            /* c = prioridade Mach 0..127 | 0x100 fixa (sem decaimento). Acima de 63 só root, como no XNU. */
+            unsigned pri = (unsigned)(c & 0xFF);
+            if (pri > 127) { r = -MOS_EINVAL; break; }
+            if (pri > 63 && p->euid != 0) { r = -MOS_EPERM; break; }
+            sched_set_priority(q, pri, (c & 0x100) != 0);
             r = 0;
         } else if (a == MOS_THR_AFFINITY) {
             sched_set_affinity(q, c);

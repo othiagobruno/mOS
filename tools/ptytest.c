@@ -37,6 +37,9 @@ static thread_t *threads;
 process_t *proc_list(void) { return procs; }
 process_t *proc_find(int pid) { for (process_t *p = procs; p; p = p->next) if (p->pid == pid) return p; return NULL; }
 thread_t *sched_threads(void) { return threads; }
+void sched_wake(thread_t *t) { t->state = TH_READY; }
+/* controle de job (process.c): no host o processo está sempre em primeiro plano */
+int proc_job_signal(process_t *p, thread_t *th, int sig) { (void)p; (void)th; (void)sig; return 0; }
 static bool def_ignored(int s) {
     return s == MOS_SIGCHLD || s == MOS_SIGURG || s == MOS_SIGCONT || s == MOS_SIGWINCH || s == MOS_SIGINFO ||
            s == MOS_SIGIO || s == MOS_SIGSTOP || s == MOS_SIGTSTP || s == MOS_SIGTTIN || s == MOS_SIGTTOU;

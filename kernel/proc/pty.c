@@ -460,7 +460,7 @@ static void pty_wake(pty_t *t) {
             ((int_frame_t *)w->frame)->rax = (u64)n;
             w->pty_wait = NULL;
             w->wake_at = 0;
-            w->state = TH_READY;
+            sched_wake(w);
             progress = true;
         }
         if (!progress) break;
@@ -474,7 +474,7 @@ static void pty_fail_waiters(pty_t *t, i64 err) {
         if (w->state == TH_WAITING || w->state == TH_SLEEPING) {
             ((int_frame_t *)w->frame)->rax = (u64)err;
             w->wake_at = 0;
-            w->state = TH_READY;
+            sched_wake(w);
         }
         w->pty_wait = NULL;
     }
@@ -493,7 +493,7 @@ u64 pty_rw(int_frame_t *f, thread_t *th, process_t *p, int fd, bool rd, u64 buf,
         if (how == 1) {                               /* parou: a syscall recomeça depois do SIGCONT */
             f->rip -= 2;
             f->rax = th->sys_nr;
-            if (th->state == TH_RUNNING) th->state = TH_READY;
+            if (th->state == TH_RUNNING) sched_wake(th);
             return sched_switch(f);
         }
         if (how == 2) {                               /* tratador: EINTR, ou SA_RESTART na entrega */
