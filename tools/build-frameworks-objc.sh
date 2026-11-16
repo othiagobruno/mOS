@@ -6,15 +6,22 @@
 # runtime de tools/build-libswift-real.sh (Swift.swiftmodule, overlays e /tmp/mos-swift-resdir); sem eles o
 # framework sai só com a parte ObjC/C, e o aviso diz isso.
 #   tools/build-frameworks-objc.sh [destino] [Nome,...]     destino padrão: build/swift/objc/dylib
+# MOS_ARCH=arm64: a fatia arm64 (processo arm64 do tradutor, docs/runtime-arm64-plano.md) em build/swift/objc-arm64/dylib,
+# com o runtime Swift arm64 de build/swift/objc-arm64; o tools/build.sh junta as duas árvores com o lipo-mos.py --arvore.
 set -uo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-DST=${1:-$ROOT/build/swift/objc/dylib}
+ARCH=${MOS_ARCH:-x86_64}
+case "$ARCH" in
+    x86_64) ZT=x86_64-macos; SWT=x86_64-apple-macos26; OBJC="$ROOT/build/swift/objc" ;;
+    arm64) ZT=aarch64-macos; SWT=arm64-apple-macos26; OBJC="$ROOT/build/swift/objc-arm64" ;;
+    *) echo "MOS_ARCH=$ARCH: use x86_64 ou arm64" >&2; exit 1 ;;
+esac
+DST=${1:-$OBJC/dylib}
 ONLY=${2:-}
 ZIG=${MOS_ZIG:-$(command -v zig || true)}
 if [ -z "$ZIG" ] || [ ! -x "$ZIG" ]; then echo "build-frameworks-objc: falta zig (MOS_ZIG ou PATH)" >&2; exit 1; fi
-TARGET=${MOS_ZIG_TARGET:-x86_64-macos}
+TARGET=${MOS_ZIG_TARGET:-$ZT}
 FE=${SWIFTC:-$ROOT/.tools/swift-6.4.2/usr/bin/swift-frontend}
-OBJC="$ROOT/build/swift/objc"
 RES=/tmp/mos-swift-resdir
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
@@ -56,13 +63,13 @@ for fw in "$ROOT"/userland/frameworks/*/; do
             if ls "$fw"iface/*.swift >/dev/null 2>&1; then
                 mkdir -p "$TMP/iface-$name"
                 for i in "$fw"iface/*.swift; do
-                    "$FE" -frontend -emit-module -target x86_64-apple-macos26 -resource-dir "$RES" -parse-as-library -O \
+                    "$FE" -frontend -emit-module -target $SWT -resource-dir "$RES" -parse-as-library -O \
                         -module-name "$(basename "$i" .swift)" -enable-library-evolution -I "$OBJC" -I "$OBJC/overlays" \
                         -I "$ROOT/.tools/swift-src/stdlib/public/SwiftShims/swift/shims" -module-cache-path "$OBJC/modcache" -o "$TMP/iface-$name/$(basename "$i" .swift).swiftmodule" "$i" 2>>"$so.err"
                 done
                 inc+=(-I "$TMP/iface-$name")
             fi
-            if "$FE" -frontend -c -target x86_64-apple-macos26 -resource-dir "$RES" -module-name "$name" -parse-as-library -O \
+            if "$FE" -frontend -c -target $SWT -resource-dir "$RES" -module-name "$name" -parse-as-library -O \
                     -enable-library-evolution -import-underlying-module "${inc[@]}" -I "$OBJC" -I "$OBJC/overlays" \
                     -I "$ROOT/.tools/swift-src/stdlib/public/SwiftShims/swift/shims" -module-cache-path "$OBJC/modcache" \
                     -Xcc "-isystem$OBJC/sdk/include" -Xcc -Wno-nullability-completeness -Xcc -DMOS_SWIFT_OBJC=1 \
@@ -101,9 +108,9 @@ for fw in "$ROOT"/userland/frameworks/*/; do
         mkdir -p "$(dirname "$DST$swdylib")"
         # o libswiftCore real em dois níveis, quando existe: em busca plana os swift_* iam para os do libSystem
         swcore=()
-        [ -f "$ROOT/build/swift/objc/dylib/usr/lib/swift/libswiftCore.dylib" ] && \
-            ! grep -a -q 'STUB mOS libswift' "$ROOT/build/swift/objc/dylib/usr/lib/swift/libswiftCore.dylib" && \
-            swcore=("$ROOT/build/swift/objc/dylib/usr/lib/swift/libswiftCore.dylib")
+        [ -f "$OBJC/dylib/usr/lib/swift/libswiftCore.dylib" ] && \
+            ! grep -a -q 'STUB mOS libswift' "$OBJC/dylib/usr/lib/swift/libswiftCore.dylib" && \
+            swcore=("$OBJC/dylib/usr/lib/swift/libswiftCore.dylib")
         if ! "$ZIG" cc -target "$TARGET" -shared -o "$DST$swdylib" "-Wl,-install_name,$swdylib" -Wl,-undefined,dynamic_lookup \
                 "${swobjs[@]}" "${swcore[@]}" 2>"$TMP/$name.swlink"; then
             head -8 "$TMP/$name.swlink" | sed 's/^/  /' >&2

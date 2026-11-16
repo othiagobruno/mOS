@@ -9,6 +9,8 @@ arquitetura do processo. Alinhamento das fatias: 2^14 no arm64 (página de 16 Ki
   tools/lipo-mos.py --info arquivo                    # lista as fatias
   tools/lipo-mos.py --archs arquivo                   # só os nomes, separados por espaço
   tools/lipo-mos.py --thin arm64 -o saida arquivo      # extrai uma fatia
+  tools/lipo-mos.py --arvore <raiz> <arvore-arm64>       # cada Mach-O da árvore arm64 entra como fatia no arquivo de
+                                                       # mesmo caminho em <raiz> (que precisa existir e ser Mach-O)
 """
 import os
 import struct
@@ -96,6 +98,43 @@ def create(out, inputs):
     return [arch_name(c, s) for c, s, _, _ in parts]
 
 
+def arvore(raiz, outra):
+    """junta cada Mach-O de `outra` no arquivo de mesmo caminho relativo em `raiz`; devolve (juntados, problemas)"""
+    feitos, prob = [], []
+    for d, _, files in os.walk(outra):
+        for fn in sorted(files):
+            src = os.path.join(d, fn)
+            if os.path.islink(src) or not os.path.isfile(src):
+                continue
+            with open(src, "rb") as f:
+                head = f.read(4)
+            if head not in (b"\xcf\xfa\xed\xfe", b"\xca\xfe\xba\xbe", b"\xca\xfe\xba\xbf"):
+                continue
+            rel = os.path.relpath(src, outra)
+            dst = os.path.join(raiz, rel)
+            if not os.path.isfile(dst):
+                prob.append("%s: não existe em %s" % (rel, raiz))
+                continue
+            try:
+                with open(dst, "rb") as f:
+                    base = slices(f.read())
+                with open(src, "rb") as f:
+                    novas = slices(f.read())
+                tem = {(c, s & 0xFF if c == CPU_ARM64 else 0) for c, s, _, _ in base}
+                base += [x for x in novas if (x[0], x[1] & 0xFF if x[0] == CPU_ARM64 else 0) not in tem]
+                data = build(base)
+            except ValueError as e:
+                prob.append("%s: %s" % (rel, e))
+                continue
+            tmp = dst + ".lipo-tmp"
+            with open(tmp, "wb") as f:
+                f.write(data)
+            os.chmod(tmp, 0o755)
+            os.replace(tmp, dst)
+            feitos.append(rel)
+    return feitos, prob
+
+
 def main(argv):
     out = thin = None
     mode = "create"
@@ -117,6 +156,15 @@ def main(argv):
         else:
             files.append(a)
         i += 1
+    if files and files[0] == "--arvore":
+        if len(files) != 3:
+            print("uso: lipo-mos.py --arvore <raiz> <arvore>", file=sys.stderr)
+            return 1
+        feitos, prob = arvore(files[1], files[2])
+        for p in prob:
+            print("lipo-mos: " + p, file=sys.stderr)
+        print("lipo-mos --arvore: %d universal(is), %d problema(s)" % (len(feitos), len(prob)))
+        return 1 if prob else 0
     try:
         if mode in ("info", "archs"):
             if len(files) != 1:

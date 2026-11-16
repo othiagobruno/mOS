@@ -694,6 +694,14 @@ if [ -f "$ESP/mOS/usr/lib/libxml2.2.dylib" ]; then
     MOS_ZIG="$ZIG" MOS_ARCH=arm64 bash "$ROOT/tools/build-libxml2.sh" "$ROOT/build/libxml2-arm64/libxml2.2.dylib"
     "${LIPO[@]}" -o "$ESP/mOS/usr/lib/libxml2.2.dylib" "$ROOT/build/libxml2/libxml2.2.dylib" "$ROOT/build/libxml2-arm64/libxml2.2.dylib"
 fi
+# Frameworks do mOS (userland/frameworks: UIKit, CoreData, WebKit, CoreImage...) com a fatia arm64: a mesma árvore do
+# x86_64, compilada com MOS_ARCH=arm64, entra arquivo por arquivo nos Mach-O que já estão na ESP.
+echo "==> frameworks universais (x86_64 + arm64)"
+A64FW="$ROOT/build/swift/objc-arm64/dylib"
+rm -rf "$A64FW/System"
+MOS_ZIG="$ZIG" MOS_ARCH=arm64 bash "$ROOT/tools/build-frameworks-objc.sh" "$A64FW" || echo "aviso: algum framework arm64 não compilou" >&2
+bash "$ROOT/tools/build-coreimage.sh" "$ZIG" "$A64FW" arm64
+"${LIPO[@]}" --arvore "$ESP/mOS" "$A64FW" || echo "aviso: fatia arm64 sem par x86_64 na ESP (verificar-imagem-arm64.py lista)" >&2
 
 KEY=${MOS_CHAVE_ATUALIZACAO:-$ROOT/tools/chave-atualizacao.semente}
 REV=$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo local)
@@ -708,3 +716,5 @@ rm -f "$OUT/mOS.img"
 echo "OK: $OUT/mOS.img"
 ls -lh "$OUT/BOOTX64.EFI" "$OUT/mOS.img"
 python3 "$ROOT/tools/verificar-imagem-apps.py" "$ESP"
+# o que ainda falta para o processo arm64 (docs/runtime-arm64-plano.md); vira obrigatório quando a lista zerar
+python3 -I "$ROOT/tools/verificar-imagem-arm64.py" --relatorio "$ESP"
