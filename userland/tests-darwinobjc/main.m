@@ -110,20 +110,6 @@ int main(void) {
     long double v = [CasoFilha valor];
     EXPECT(v == 6.0L, 1, "long double na volta pelo super (fpret)");
 
-    printf("exceções ObjC\n");
-    int etapa = 0;
-    NSString *nome = nil;
-    @try {
-        @throw [NSException exceptionWithName:@"MinhaExcecao" reason:@"teste" userInfo:nil];
-    } @catch (NSException *e) {
-        nome = [e name];
-        etapa = 1;
-    } @finally {
-        etapa = etapa * 10 + 2;
-    }
-    EXPECT([nome isEqualToString:@"MinhaExcecao"], 1, "@catch recebe a NSException");
-    EXPECT(etapa, 12, "@finally roda depois do @catch");
-
     printf("ponte CF e Foundation\n");
     CFStringRef cs = CFSTR("Test");
     EXPECT(strcmp([(NSString *)cs UTF8String], "Test"), 0, "CFSTR como NSString (UTF8String)");
@@ -148,6 +134,21 @@ int main(void) {
     EXPECT(FSRefMakePath(&ref, (UInt8 *)path, sizeof path), 0, "FSRefMakePath");
     EXPECT(realpath("/tmp", want) && strcmp(path, want) == 0, 1, "o caminho volta igual");
     CFRelease(url);
+
+    /* por último: uma exceção que o runtime não pegue encerra o processo, e o resto não pode ficar sem resultado */
+    printf("exceções ObjC\n");
+    int etapa = 0;
+    NSString *nome = nil;
+    @try {
+        @throw [NSException exceptionWithName:@"MinhaExcecao" reason:@"teste" userInfo:nil];
+    } @catch (NSException *e) {
+        nome = [e name];
+        etapa = 1;
+    } @finally {
+        etapa = etapa * 10 + 2;
+    }
+    EXPECT([nome isEqualToString:@"MinhaExcecao"], 1, "@catch recebe a NSException");
+    EXPECT(etapa, 12, "@finally roda depois do @catch");
 
     [pool release];
     printf("darwinobjc: %d/%d ok\n", total - fails, total);
