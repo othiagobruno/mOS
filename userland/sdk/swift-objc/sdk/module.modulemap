@@ -9,6 +9,7 @@ module Darwin [system] [extern_c] {
     module sysdir { export * }
     module uuid { export * }
     module Mach { export * }   // import Darwin.Mach (swift-system: MachPort.swift)
+    module os { module lock { export * } }   // import Darwin.os.lock (Observation: Locking.swift)
 }
 
 module MachO [system] [extern_c] {
