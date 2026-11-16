@@ -98,3 +98,30 @@ long cx_consumer_put(void *consumer, const void *bytes, size_t n) {
     }
     return (long)k;
 }
+
+/* deflate (zlib) de um buffer inteiro: os streams FlateDecode do CGPDFContext */
+#define Z_SOLO 1
+#include "../third_party/zlib/zlib.h"
+static void *cz_alloc(void *q, unsigned n, unsigned m) { (void)q; return calloc((size_t)n, (size_t)m); }
+static void cz_free(void *q, void *p) { (void)q; free(p); }
+int cx_deflate(const u8 *in, size_t n, u8 **out, size_t *on) {
+    z_stream z;
+    memset(&z, 0, sizeof z);
+    z.zalloc = cz_alloc;
+    z.zfree = cz_free;
+    if (deflateInit2_(&z, 6, Z_DEFLATED, 15, 8, Z_DEFAULT_STRATEGY, ZLIB_VERSION, (int)sizeof(z_stream)) != Z_OK) return -1;
+    size_t cap = deflateBound(&z, (uLong)n) + 64;
+    u8 *b = malloc(cap);
+    if (!b) { deflateEnd(&z); return -1; }
+    z.next_in = (Bytef *)in;
+    z.avail_in = (uInt)n;
+    z.next_out = b;
+    z.avail_out = (uInt)cap;
+    int r = deflate(&z, Z_FINISH);
+    size_t got = cap - z.avail_out;
+    deflateEnd(&z);
+    if (r != Z_STREAM_END) { free(b); return -1; }
+    *out = b;
+    *on = got;
+    return 0;
+}

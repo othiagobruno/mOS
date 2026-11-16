@@ -208,7 +208,74 @@ ausente, cada filtro, R2/R3/R4/R6 com senha de usuário, de dono, errada e vazia
 biblioteca `cryptography`) e PDFs do Ghostscript 10.06 (1.4, 1.7 com object streams, RC4 128); vetores de
 MD5/SHA-2/AES (FIPS-197)/RC4 em `pdf_host hash`. `tools/cg_context_test.c` 83/83 com a API nova (título UTF-16,
 data com fuso, arrays, scanner com imagem inline, outline).
-Ainda não: `CGContextDrawPDFPage` (próximo passo), `CGPDFContext`, PDFKit.
+Ainda não: PDFKit.
 
 `tools/libsystem-symcheck.sh`: compila os .c do libSystem em objetos e acusa símbolo forte duplicado (o que quebrou o
 link no PR #367) e indefinido nos arquivos dados. Rodar dentro da trava do time antes de cada PR.
+
+### Passo 5b — PDF: desenho da página (PR de 16 nov. 2026)
+
+`CGContextDrawPDFPage` (`cgpdf_draw.c`, sobre o próprio CoreGraphics; o stub do `vscode_frameworks.c` saiu):
+- **Conteúdo**: estado gráfico completo (`q/Q/cm/w/J/j/M/d/i/gs`), paths, `W/W*` aplicado depois da pintura, os
+  10 operadores de pintura, cores em todos os espaços (`pdf_color.inc`: Device*, Cal*, Lab, ICCBased, Indexed,
+  Separation/DeviceN com função de tinta, Pattern com e sem cor), ExtGState (LW, LC, LJ, ML, D, FL, CA, ca, BM com
+  os 16 modos, Font, SMask de luminosidade/alfa com BC e TR, desenhada num bitmap e aplicada com `ClipToMask`).
+- **Padrões**: ladrilho desenhado célula a célula no espaço do padrão (Matrix exata, PaintType 1 e 2); shading
+  pattern. **Shadings** (`pdf_shade.inc`): 2 e 3 viram `CGShading` com `CGFunction`; 1 e 4–7 passam por um raster
+  próprio por pixel (Gouraud, sem fendas; patches de Coons e tensor subdivididos). **Funções** (`pdf_func.inc`):
+  tipos 0 (amostrada, interpolação multilinear), 2, 3 e 4 (calculadora PostScript compilada).
+- **Imagens** (`pdf_image.inc`): todos os bpc, Decode, ImageMask com a cor/padrão de preenchimento, Mask por cor e
+  por stream, SMask, Matte, imagem inline com abreviações, DCT pelo ImageIO, CCITT G3/G4 (`pdf_ccitt.inc`, T.4/T.6).
+- **Texto** (`pdf_font.inc`, `pdf_glyph.inc`, `pdf_enc.inc`): Type0/CID (CMaps embutidos, Identity, usecmap, W/W2,
+  DW2, escrita vertical), Type1 (eexec, Subrs, flex, seac), Type1C/CFF (Type 2 charstrings, CID-keyed com FDSelect),
+  TrueType (glyf simples e composto, cmap 3/1, 3/0, 1/0, post), Type3 (CharProcs com d0/d1), fonte do sistema
+  quando não embutida; Differences e as codificações Standard/WinAnsi/MacRoman/Symbol; os 8 modos de `Tr`
+  (recorte acumulado até `ET`), Tc/Tw/Tz/TL/Ts, TJ.
+- **Form XObject** com Matrix/BBox e grupo de transparência (camada), conteúdo opcional (`BDC /OC`, OCMD, `/D /OFF`),
+  aparência `/N` das anotações (sem Hidden/NoView/Popup), recorte pela CropBox.
+- `cx_pdf_page_glyphs`: percorre a página e entrega cada glifo (Unicode + caixa na página) — base do texto do PDFKit.
+- Correção no CoreGraphics achada aqui: `CGImageCreate` com `kCGBitmapByteOrder32Little` lia os componentes na ordem
+  errada (afetava ImageIO, captura de tela e todo app que cria imagem BGRA).
+
+Testes: `tools/cgpdf_draw_host.py` 17/17 — o mOS desenha cada PDF num bitmap e compara pixel a pixel com o poppler
+(`pdftoppm`) ou o Ghostscript: paths/traços/tracejado, recortes, CMYK/Indexed, imagens 8 e 16 bits, máscaras
+(estêncil, SMask, SMask com Matte, por cor, inline), CCITT G4 do PIL, shadings 2/3/4/6, ladrilho, form + grupo + blend + conteúdo
+opcional, máscara suave do ExtGState, Type3, anotação, texto CFF e TrueType do Ghostscript e Type 1 (Nimbus da URW)
+embutido à mão. `tools/cg_context_test.c` 83/83.
+Limites: JPX (JPEG 2000) e JBIG2 não decodificam (a imagem não aparece); SMask do ExtGState só em contexto de bitmap.
+Fonte não embutida usa a do sistema com contornos reais (passo 5c).
+
+### Passo 5c — CGPDFContext e contornos vetoriais das fontes (PR de 16 nov. 2026)
+
+**Contornos** (`ct_outline.c`): o kernel só entrega o raster dos glifos; agora as tabelas da face (`GUI_FONT`/
+`GF_TABLE`) são lidas uma vez e os contornos saem dos leitores do PDF (TrueType glyf/loca com compostos, CFF/OpenType
+com CID). `CTFontCreatePathForGlyph` devolve o contorno de verdade (com a matriz do chamador) — antes era a caixa do
+glifo. Também: avanço em milésimos de em e Unicode do glifo (cmap 3/10, 3/1 ou 0/x invertida segmento a segmento).
+
+**CGPDFContext** (`coregraphics_pdf.inc`): `CGPDFContextCreate`/`CreateWithURL`, `BeginPage` (caixas Media/Crop/Bleed/
+Trim/Art por página), `EndPage`, `CGContextBeginPage`/`EndPage`, `Close`, `SetURLForRect`, `SetDestinationForRect`,
+`AddDestinationAtPoint`, `SetOutline`, `AddDocumentMetadata`, `BeginTag`/`EndTag` (marked content + árvore de
+estrutura com ParentTree, Alt/ActualText/T/Lang), as chaves `kCGPDFContext*`/`kCGPDFOutline*`/`kCGPDFTagProperty*`.
+O contexto é um bitmap do tamanho da página com um gravador: paths e traços saem vetoriais (o traço como contorno já
+calculado), recortes como `W n`/`W* n`, máscara como SMask de luminosidade, imagens como XObject com SMask, gradientes e
+`CGShading` como shading 2/3 com função amostrada, camadas como form com grupo de transparência, alfa e os 16 blend
+modes do PDF no ExtGState, texto do CTFont em fonte Type3 com os contornos da face e ToUnicode (selecionável). O que o
+PDF não expressa (sombra, padrão, gradiente cônico, blend Porter-Duff) é pintado no bitmap e sai como imagem no lugar
+certo da ordem. Info em UTF-16, PDF/A-2B (XMP + OutputIntent sRGB do nosso ICC), cifra padrão RC4 40/128 (R2/R3) com
+senha de usuário/dono e as permissões (`AllowsPrinting`/`AllowsCopying`/`AccessPermissions`).
+Correção achada no caminho: `CGContextFillRect`/`ClearRect` com CTM girada pintavam a caixa envolvente.
+
+Testes: `tools/cgpdf_write_host.py` 21/21 — a mesma cena em PDF e em bitmap, o PDF rasterizado pelo poppler bate com
+o bitmap (erro médio 1,7/255); texto extraído pelo `pdftotext`, metadados/tags/páginas pelo `pdfinfo`, links,
+destinos, outline, cifra (usuário abre, sem senha não abre, dono decifra, página cifrada = sem cifra) e o PDF relido
+pelo nosso `CGContextDrawPDFPage` (erro médio 1,8). `tools/ct_outline_host.py` 19/19 glifos (DejaVu, Inter, JetBrains
+Mono, Noto Sans JP CFF, Noto Arabic) contra o FreeType. `cg_context_test` 83/83, `cgpdf_draw_host` 17/17.
+Limites: o texto em PDF sai em Type3 (contornos), não com a fonte TrueType embutida; o raster de reserva é a 72 dpi.
+
+**Base do PDFKit** (mesmo PR): `pdf_write.c` regrava um PDF novo com páginas copiadas de documentos abertos
+(ordem, junção, rotação, caixas, anotações de origem e novas com destino na página nova, outline, Info), com os
+objetos alcançáveis copiados uma vez e referência à árvore antiga virando null; e `cx_pdf_page_text` (cgpdf_draw.c)
+dá o texto da página com a caixa de cada caractere (espaços e quebras inferidos; `Tc` não vira espaço).
+Testes: `tools/pdf_write_host.py` 12/12 (cada página regravada = a de origem no poppler; texto CFF e Type3 preservados;
+PDF cifrado destravado sai sem cifra) e o texto de 4 PDFs igual ao do `pdftotext` (no `cgpdf_draw_host.py`).
+

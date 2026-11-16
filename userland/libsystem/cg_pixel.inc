@@ -222,7 +222,12 @@ typedef struct {
 static double sample_at(const unpack_t *u, const u8 *row, size_t x, size_t k) {
     size_t bit = x * u->bpp + k * u->bpc;
     u32 ord = BI_ORDER(u->info);
-    if (u->bpc == 8) return row[bit >> 3] / 255.0;
+    if (u->bpc == 8) {
+        /* palavra de 32 (16) bits em little-endian: o componente k fica no byte espelhado da palavra */
+        if (ord == BO_32L && u->bpp == 32) return row[x * 4 + 3 - k] / 255.0;
+        if (ord == BO_16L && u->bpp == 16) return row[x * 2 + 1 - k] / 255.0;
+        return row[bit >> 3] / 255.0;
+    }
     if (u->bpc == 16) {
         const u8 *p = row + (bit >> 3);
         int le = ord == BO_16L || ord == BO_32L;

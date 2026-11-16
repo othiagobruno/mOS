@@ -3,7 +3,7 @@
  *   zig cc -g -O1 -fno-sanitize=all -ffreestanding -fno-builtin -w -Iuserland/libsystem/kshim -Iuserland/libsystem/fsinc \
  *     -Ikernel/include -Iuserland/libsystem -c userland/libsystem/coregraphics.c -o /tmp/cg-lib.o
  *   zig cc -std=gnu11 -O1 -w -D_DEFAULT_SOURCE -Iuserland/libsystem tools/cg_context_test.c /tmp/cg-lib.o \
- *     (e cgpdf.c, pdf_core.c compilados igual ao coregraphics.c)
+ *     (e cgpdf.c, pdf_core.c, cg_consumer.c compilados igual ao coregraphics.c; ct_outline.c com -DCT_HOST)
  *     userland/libsystem/cg_raster.c userland/libsystem/cgimage_crop.c -DCS_HOST userland/libsystem/colorsync.c -lm -lz \
  *     -o /tmp/cg_context_test && /tmp/cg_context_test
  */
@@ -148,6 +148,7 @@ static void addpath_el(void *c, const void *e0) {
     const elem_t *e = e0;
     if (e->type == 0) cx_bm_move(c, e->pts[0].x, e->pts[0].y);
     else if (e->type == 1) cx_bm_line(c, e->pts[0].x, e->pts[0].y);
+    else if (e->type == 2) { int cx_bm_quad(const void *, double, double, double, double); cx_bm_quad(c, e->pts[0].x, e->pts[0].y, e->pts[1].x, e->pts[1].y); }
     else if (e->type == 3) cx_bm_curve(c, e->pts[0].x, e->pts[0].y, e->pts[1].x, e->pts[1].y, e->pts[2].x, e->pts[2].y);
     else if (e->type == 4) cx_bm_close(c);
 }
@@ -208,6 +209,18 @@ void *CFArrayCreate(void *al, const void **v, long n, const void *cb) { (void)al
 void *CFDictionaryCreateMutable(void *al, long c, const void *k, const void *v) { (void)al; (void)c; (void)k; (void)v; void **o = alloc_of(&dict_cls); return o; }
 void CFDictionarySetValue(void *d, const void *k, const void *v) { (void)d; (void)k; (void)v; }
 void *CFNumberCreate(void *al, long t, const void *p) { (void)al; (void)t; (void)p; return alloc_of(&date_cls); }
+/* o que o gravador de PDF (coregraphics_pdf.inc) chama; os testes que usam de verdade definem os seus */
+#ifndef CG_TEST_OWN_CF
+__attribute__((weak)) void *CFDictionaryGetValue(void *d, const void *k) { (void)d; (void)k; return 0; }
+__attribute__((weak)) void *CFURLGetString(void *u) { (void)u; return 0; }
+__attribute__((weak)) void *CFRetain(void *o) { return objc_retain(o); }
+__attribute__((weak)) uint8_t CFNumberGetValue(void *n, long t, void *out) { (void)n; (void)t; (void)out; return 0; }
+__attribute__((weak)) void CFDataAppendBytes(void *d, const uint8_t *b, long n) { (void)d; (void)b; (void)n; }
+__attribute__((weak)) const void *kCFBooleanTrue;
+#endif
+#ifndef CG_TEST_OWN_SYS5
+__attribute__((weak)) long ct_host_sys5(long n, long op, long face, long tag, void *buf, long cap) { (void)n; (void)op; (void)face; (void)tag; (void)buf; (void)cap; return -1; }
+#endif
 
 /* ---------------------------------------------------------------- API sob teste */
 void *CGBitmapContextCreate(void *data, size_t w, size_t h, size_t bpc, size_t bpr, void *space, uint32_t info);

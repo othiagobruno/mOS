@@ -357,8 +357,10 @@ ct_rect_t CTFontGetBoundingRectsForGlyphs(id f, int orientation, const u16 *glyp
     return uni;
 }
 double cx_bm_scale(const void *ctx);
+int cx_pdfw_glyphs(void *ctx, int face, double size, const u16 *glyphs, const void *pos, size_t n);
 void CTFontDrawGlyphs(id f, const u16 *glyphs, const ct_pt_t *pos, size_t n, void *ctx) {
     if (!f || !glyphs || !pos || !ctx || !font_live()) return;
+    if (cx_pdfw_glyphs(ctx, fweight(f), fsize(f), glyphs, pos, n)) return;   /* CGPDFContext: texto vetorial (Type3) */
     double sc = cx_bm_scale(ctx);
     float sz = (float)(fsize(f) * (sc > 0 ? sc : 1));
     for (size_t i = 0; i < n; i++) {
@@ -369,13 +371,16 @@ void CTFontDrawGlyphs(id f, const u16 *glyphs, const ct_pt_t *pos, size_t n, voi
         free(buf);
     }
 }
-/* Ainda sem contornos vetoriais (o kernel só entrega o raster). Mas o Skia (SkScalerContext_Mac::generateMetrics)
- * pergunta CTFontCreatePathForGlyph(f, g, NULL) a todo glifo de avanço zero e, se o caminho vier vazio, o trata como
- * vazio: os pontos do árabe (ccmp os separa em marcas), os diacríticos combinantes e os niqqud sumiam. Sem matriz,
- * devolve a caixa do glifo quando ele tem tinta; com matriz (o caminho de verdade, texto muito grande) segue NULL. */
+/* Contornos de verdade (ct_outline.c lê glyf/CFF da face pelo kernel). O Skia (SkScalerContext_Mac::generateMetrics)
+ * pergunta CTFontCreatePathForGlyph(f, g, NULL) a todo glifo de avanço zero e trata caminho vazio como glifo vazio:
+ * por isso, numa face sem contornos legíveis, sem matriz devolve a caixa do raster quando o glifo tem tinta. */
 void *CGPathCreateWithRect(ct_rect_t r, const void *m);
+void *cx_font_glyph_path(int face, int gid, double size, const void *matrix);
 void *CTFontCreatePathForGlyph(id f, u16 g, const void *matrix) {
-    if (matrix || !f || !font_live()) return 0;
+    if (!f || !font_live()) return 0;
+    void *p = cx_font_glyph_path(fweight(f), g, fsize(f), matrix);
+    if (p) return p;
+    if (matrix) return 0;
     i16 w = 0, h = 0, left = 0, top = 0;
     if (!glyph_box(f, g, (float)fsize(f), &w, &h, &left, &top) || w <= 0 || h <= 0) return 0;
     return CGPathCreateWithRect((ct_rect_t){left, -(double)(top + h), w, h}, 0);

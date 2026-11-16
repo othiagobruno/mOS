@@ -414,13 +414,8 @@ int CGSSetWindowWarp(int cid, int wid, int w, int h, const void *mesh) { (void)c
 int CGSSetWindowTransform(int cid, int wid, cg_affine_t t) { (void)cid; (void)wid; (void)t; return 0; }
 int CGSSetWindowCaptureExcludeShape(int cid, int wid, void *region) { (void)cid; (void)wid; (void)region; return 0; }
 void *CGRegionCreateWithRect(cg_rect_t r) { (void)r; return token(); }
-/* PDF: sem gerador de PDF; o "Salvar como PDF" do Chromium informa a falha */
+/* CGPDFContext: coregraphics_pdf.inc */
 /* CGDataConsumer está em cg_consumer.c */
-void *CGPDFContextCreate(void *consumer, const cg_rect_t *box, id info) { (void)consumer; (void)box; (void)info; return 0; }
-void CGPDFContextClose(void *c) { (void)c; }
-void CGContextBeginPage(void *c, const cg_rect_t *box) { (void)c; (void)box; }
-void CGContextEndPage(void *c) { (void)c; }
-void CGContextDrawPDFPage(void *c, void *page) { (void)c; (void)page; }
 static void prov_release(void *info, const void *data, size_t n) { (void)data; (void)n; if (info) objc_release((id)info); }
 void *CGDataProviderCreateWithCFData(id data) {
     if (!data) return 0;

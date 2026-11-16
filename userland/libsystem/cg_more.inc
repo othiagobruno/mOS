@@ -25,6 +25,7 @@ void CFRelease(void *o);
 
 /* ---------------------------------------------------------------- recorte */
 /* máscara: image mask (0 pinta) ou imagem cinza (branco = visível); esticada para rect no espaço do usuário */
+static void pw_clip_mask(cgobj_t *o, CGRect rect, const cgobj_t *m);
 void CGContextClipToMask(void *c, CGRect rect, void *mask) {
     cgobj_t *o = bm(c), *m = as_kind(mask, CGK_IM);
     cg_bmx_t *g = bmx(o);
@@ -55,6 +56,7 @@ void CGContextClipToMask(void *c, CGRect rect, void *mask) {
     if (g->mask) for (size_t i = 0; i < n; i++) nm[i] = (u8)(nm[i] * g->mask[i] / 255);
     free(g->mask);
     g->mask = nm;
+    if (o->pdf) pw_clip_mask(o, rect, m);
     if (x0 > o->cl) o->cl = x0;
     if (y0 > o->ct) o->ct = y0;
     if (x1 < o->cr) o->cr = x1;
@@ -465,6 +467,7 @@ void CGContextDrawShading(void *c, void *shading) {
     if (!ctm_inverse(o, &ia, &ib, &ic, &id, &itx, &ity)) return;
     u32 lut[256];
     shade_lut(h, lut);
+    if (o->pdf && pw_shading(o, lut, ((const cgfunc_t *)h->fn)->dom[0], ((const cgfunc_t *)h->fn)->dom[1], h->radial, h->p0, h->r0, h->p1, h->r1, h->e0, h->e1)) return;
     int flags = (h->e0 ? 1 : 0) | (h->e1 ? 2 : 0);
     u32 k = (u32)((o->gx ? o->gx->galpha : 1) * 255 + 0.5);
     int sh = shadow_begin(o);

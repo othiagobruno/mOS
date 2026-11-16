@@ -725,8 +725,10 @@ typedef struct {
     void *space;                             /* espaço de cor (retido) */
     const void *uti;                         /* imagem: tipo de origem (ImageIO) */
     double decode[10]; int ndecode;
+    void *pdf;                               /* CGPDFContext: o gravador (coregraphics_pdf.inc) */
 } cgobj_t;
 #include "cg_pixel.inc"
+static void pw_flush(cgobj_t *o);
 static void cg_derived_layout(cgobj_t *n);
 static void bmx_free(cgobj_t *o);
 static void bmx_save(cgobj_t *o);
@@ -736,9 +738,11 @@ static cx_class_t BM_c, BM_m, IM_c, IM_m, PR_c, PR_m;
 static int cg_ready;
 extern void cx_object_free(id o);
 extern u32 cx_cg_fill_argb(void);
+static void pw_dealloc(cgobj_t *o);
 static void cg_dealloc(id self, SEL c) {
     (void)c;
     cgobj_t *o = (cgobj_t *)self;
+    if (o->pdf) pw_dealloc(o);
     if (o->kind == CGK_PR && o->rel_cb) o->rel_cb(o->cb_info, o->data, (size_t)o->cb_size);
     if (o->kind == CGK_IM && o->cb_info) objc_release((id)o->cb_info);
     if (o->kind == CGK_BM) {
@@ -991,7 +995,7 @@ CGAffineTransform CGContextGetTextMatrix(void *c) {
 void cx_cg_note_blend(int mode);
 void CGContextSetBlendMode(void *c, int mode) {
     cgobj_t *o = as_kind(c, CGK_BM);
-    if (o) { o->blend = (u8)mode; return; }
+    if (o) { if (o->pdf && o->blend != (u8)mode) pw_flush(o); o->blend = (u8)mode; return; }
     cx_cg_note_blend(mode);
 }
 static void shadow_note(cg_bmx_t *g, int x, int y);
@@ -999,8 +1003,14 @@ static int shadow_begin(cgobj_t *o);
 static void shadow_end(cgobj_t *o, int on);
 static u32 scale_px(u32 p, u32 k);
 static u32 fill_src(cgobj_t *o, int x, int y);
+static void pw_note(cgobj_t *o, int x, int y);
+static void pw_save(cgobj_t *o);
+static void pw_restore(cgobj_t *o);
+static void pw_clip_box(cgobj_t *o, int x0, int y0, int x1, int y1);
+static void pw_reset_clip(cgobj_t *o);
+static int pw_draw_image(cgobj_t *o, CGRect rect, cgobj_t *im);
 static void blend_at(cgobj_t *o, int x, int y, u32 src) {
-    int mode = o->blend;
+    int mode = o->pdf ? 0 : o->blend;          /* contexto PDF: o blend vale na hora de compor a imagem no PDF */
     if (x < o->cl || y < o->ct || x >= o->cr || y >= o->cbt) return;
     if (o->gx && o->gx->mask) {                /* recorte por path/máscara: a fonte vale só na cobertura */
         u32 k = o->gx->mask[(size_t)y * o->w + x];
@@ -1014,6 +1024,7 @@ static void blend_at(cgobj_t *o, int x, int y, u32 src) {
         return;
     }
     if (!cx_cg_blend_zero_src_matters(mode) && !(src >> 24)) return;
+    if (o->pdf) pw_note(o, x, y);
     u8 *dp = o->data + (size_t)y * o->bpr + (size_t)x * o->bpp;
     u32 dst = ctx_get(o, dp);
     ctx_put(o, dp, cx_cg_blend_px(mode, src, dst));
@@ -1108,12 +1119,14 @@ int cx_bm_save(const void *c) {
     o->blendstk[o->gsp] = o->blend;
     o->gsp++;
     bmx_save(o);
+    if (o->pdf) pw_save(o);
     return 1;
 }
 int cx_bm_restore(const void *c) {
     cgobj_t *o = as_kind(c, CGK_BM);
     if (!o) return 0;
     if (o->gsp <= 0) return 1;
+    if (o->pdf) pw_restore(o);
     o->gsp--;
     o->ca = o->gstk[o->gsp][0]; o->cb = o->gstk[o->gsp][1]; o->cc = o->gstk[o->gsp][2];
     o->cd = o->gstk[o->gsp][3]; o->cu = o->gstk[o->gsp][4]; o->cv = o->gstk[o->gsp][5];
@@ -1147,9 +1160,21 @@ static void clamp_box(cgobj_t *o, int *x0, int *y0, int *x1, int *y1) {
     if (*x1 > o->cr) *x1 = o->cr;
     if (*y1 > o->cbt) *y1 = o->cbt;
 }
+static void fill_poly(cgobj_t *o, const cgr_poly *poly, int eo, u32 solid, int use_solid);
 int cx_bm_fill_rect(const void *c, double x, double y, double w, double h) {
     cgobj_t *o = as_kind(c, CGK_BM);
     if (!o || !o->data) return 0;
+    int rotated = (o->cb > 1e-12 || o->cb < -1e-12 || o->cc > 1e-12 || o->cc < -1e-12);
+    if (o->pdf || rotated) {                    /* PDF, ou CTM girada/inclinada: o retângulo é um polígono */
+        cgr_poly p;
+        cgr_init(&p);
+        double xs[4] = {x, x + w, x + w, x}, ys[4] = {y, y, y + h, y + h};
+        for (int i = 0; i < 4; i++) { double dx, dy; ctm_of(o, xs[i], ys[i], &dx, &dy); if (i) cgr_line(&p, dx, dy); else cgr_move(&p, dx, dy); }
+        cgr_close(&p);
+        fill_poly(o, &p, 0, 0, 0);
+        cgr_free(&p);
+        return 1;
+    }
     int x0, y0, x1, y1;
     dev_box(o, x, y, w, h, &x0, &y0, &x1, &y1);
     clamp_box(o, &x0, &y0, &x1, &y1);
@@ -1162,6 +1187,23 @@ int cx_bm_fill_rect(const void *c, double x, double y, double w, double h) {
 int cx_bm_clear_rect(const void *c, double x, double y, double w, double h) {
     cgobj_t *o = as_kind(c, CGK_BM);
     if (!o || !o->data) return 0;
+    if (!o->pdf && (o->cb > 1e-12 || o->cb < -1e-12 || o->cc > 1e-12 || o->cc < -1e-12)) {
+        u8 b = o->blend;                        /* CTM girada: o polígono com blend clear */
+        o->blend = 16;
+        cx_bm_fill_rect(c, x, y, w, h);
+        o->blend = b;
+        return 1;
+    }
+    if (o->pdf) {                               /* PDF: limpar = papel branco */
+        u32 f = o->fill; u8 b = o->blend;
+        o->fill = 0xFFFFFFFFu; o->blend = 0;
+        double ga = o->gx ? o->gx->galpha : 1;
+        if (o->gx) o->gx->galpha = 1;
+        cx_bm_fill_rect(c, x, y, w, h);
+        if (o->gx) o->gx->galpha = ga;
+        o->fill = f; o->blend = b;
+        return 1;
+    }
     int x0, y0, x1, y1;
     dev_box(o, x, y, w, h, &x0, &y0, &x1, &y1);
     clamp_box(o, &x0, &y0, &x1, &y1);
@@ -1178,6 +1220,7 @@ void CGContextClipToRect(void *c, CGRect rect) {
     dev_box(o, rect.origin.x, rect.origin.y, rect.size.width, rect.size.height, &x0, &y0, &x1, &y1);
     clamp_box(o, &x0, &y0, &x1, &y1);
     o->cl = x0; o->ct = y0; o->cr = x1; o->cbt = y1;
+    if (o->pdf) pw_clip_box(o, x0, y0, x1, y1);
 }
 /* CGContextResetClip: volta ao bitmap inteiro (o recorte do CGContextClipToRect some). */
 void CGContextResetClip(void *c) {
@@ -1185,6 +1228,7 @@ void CGContextResetClip(void *c) {
     if (!o) return;
     o->cl = 0; o->ct = 0; o->cr = (i32)o->w; o->cbt = (i32)o->h;
     if (o->gx) { free(o->gx->mask); o->gx->mask = 0; }
+    if (o->pdf) pw_reset_clip(o);
 }
 /* cópia do conteúdo como CGImage (ARGB pré-multiplicado por dentro); bitmapInfo, bpc e espaço do contexto */
 void *CGBitmapContextCreateImage(void *c) {
@@ -1258,6 +1302,7 @@ void CGContextDrawImage(void *c, CGRect rect, void *image) {
     if (!o || !im || !o->data || !im->data || rect.size.width == 0 || rect.size.height == 0) return;
     double det = o->ca * o->cd - o->cb * o->cc;
     if (det > -1e-12 && det < 1e-12) return;
+    if (o->pdf && pw_draw_image(o, rect, im)) return;
     double xs[4], ys[4];
     double rx[2] = {rect.origin.x, rect.origin.x + rect.size.width};
     double ry[2] = {rect.origin.y, rect.origin.y + rect.size.height};
@@ -1466,3 +1511,5 @@ void *CGDataProviderCopyData(void *p) {
 
 #include "coregraphics_bm.inc"
 #include "cg_more.inc"
+#include "coregraphics_pdf.inc"
+static void pw_dealloc(cgobj_t *o) { pw_close(o); pw_free(o->pdf); o->pdf = 0; }
