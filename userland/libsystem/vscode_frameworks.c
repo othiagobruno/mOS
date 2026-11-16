@@ -177,19 +177,16 @@ OSStatus TransformProcessType(const void *psn, u32 type) { (void)psn; (void)type
 /* ---- impressão (PM*): sem impressora; o diálogo do Chromium mostra "nenhuma impressora" */
 #define kPMNoDefaultPrinter (-30872)
 #define kPMGeneralError (-30870)
-OSStatus PMRelease(void *o) { if (o) objc_release((id)o); return 0; }
 OSStatus PMPrinterCreateFromPrinterID(id pid, void **out) { (void)pid; if (out) *out = 0; return kPMNoDefaultPrinter; }
 #define PM_FAIL1(name, T1) OSStatus name(T1 a) { (void)a; return kPMGeneralError; }
 #define PM_FAIL2(name, T1, T2) OSStatus name(T1 a, T2 b) { (void)a; (void)b; return kPMGeneralError; }
 #define PM_FAIL3(name, T1, T2, T3) OSStatus name(T1 a, T2 b, T3 c) { (void)a; (void)b; (void)c; return kPMGeneralError; }
 #define PM_OUT0(name) OSStatus name(void *a, void **out) { (void)a; if (out) *out = 0; return kPMGeneralError; }
-PM_FAIL2(PMGetAdjustedPaperRect, void *, void *)
 PM_FAIL2(PMGetAdjustedPageRect, void *, void *)
 PM_FAIL3(PMPrinterGetIndexedPrinterResolution, void *, u32, void *)
 PM_FAIL2(PMPrinterGetPrinterResolutionCount, void *, u32 *)
 PM_FAIL2(PMGetOrientation, void *, u16 *)
 id PMPrinterGetID(void *p) { (void)p; return 0; }
-PM_FAIL2(PMPrintSettingsSetJobName, void *, id)
 PM_OUT0(PMSessionCopyDestinationLocation)
 PM_OUT0(PMSessionCopyDestinationFormat)
 PM_FAIL2(PMSessionGetDestinationType, void *, u16 *)
@@ -207,7 +204,6 @@ PM_OUT0(PMGetPageFormatPaper)
 PM_OUT0(PMPrinterGetPaperList)
 PM_FAIL2(PMSetDuplex, void *, u32)
 PM_FAIL2(PMSetCollate, void *, u8)
-PM_FAIL3(PMSetCopies, void *, u32, u8)
 OSStatus PMSessionSetDestination(void *s, void *ps, u16 type, id fmt, id loc) { (void)s; (void)ps; (void)type; (void)fmt; (void)loc; return kPMGeneralError; }
 PM_FAIL2(PMSessionSetCurrentPMPrinter, void *, void *)
 OSStatus PMPrinterSetOutputResolution(void *p, void *ps, const void *res) { (void)p; (void)ps; (void)res; return kPMGeneralError; }

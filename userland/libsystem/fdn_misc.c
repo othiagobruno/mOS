@@ -390,35 +390,3 @@ id CFURLCreateFromFileSystemRepresentationRelativeToBase(void *alloc, const u8 *
     snprintf(full, sizeof full, "%s%s%s", bp, *bp && bp[strlen(bp) - 1] == '/' ? "" : "/", p);
     return CFURLCreateFromFileSystemRepresentation(alloc, (const u8 *)full, (long)strlen(full), dir);
 }
-/* FSRef (80 bytes opacos): uma etiqueta e o índice de uma tabela de caminhos do processo */
-typedef struct { u8 hidden[80]; } fsref_t;
-static char *fsref_paths[4096];
-static int fsref_n;
-static int fsref_lock;
-unsigned char CFURLGetFSRef(id url, fsref_t *ref) {
-    if (!url || !ref) return 0;
-    const char *p = cx_cstr(MSG0(id, url, "path"));
-    if (!*p || access(p, 0) != 0) return 0;
-    while (__sync_lock_test_and_set(&fsref_lock, 1)) {}
-    int k = -1;
-    for (int i = 0; i < fsref_n; i++) if (!strcmp(fsref_paths[i], p)) { k = i; break; }
-    if (k < 0 && fsref_n < 4096) {
-        size_t l = strlen(p);
-        char *c = malloc(l + 1);
-        if (c) { memcpy(c, p, l + 1); fsref_paths[fsref_n] = c; k = fsref_n++; }
-    }
-    __sync_lock_release(&fsref_lock);
-    if (k < 0) return 0;
-    memset(ref, 0, sizeof *ref);
-    memcpy(ref->hidden, "mOSfsref", 8);
-    memcpy(ref->hidden + 8, &k, sizeof k);
-    return 1;
-}
-id CFURLCreateFromFSRef(void *alloc, const fsref_t *ref) {
-    if (!ref || memcmp(ref->hidden, "mOSfsref", 8)) return 0;
-    int k;
-    memcpy(&k, ref->hidden + 8, sizeof k);
-    if (k < 0 || k >= fsref_n) return 0;
-    const char *p = fsref_paths[k];
-    return CFURLCreateFromFileSystemRepresentation(alloc, (const u8 *)p, (long)strlen(p), (u8)is_dir_path(p));
-}
