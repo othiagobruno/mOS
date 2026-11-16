@@ -25,6 +25,11 @@ static void bmx_free(cgobj_t *o) {
     free(x->mask);
     for (int i = 0; i < x->gsp; i++) free(x->gs[i].mask);
     free(x->tile);
+    free(x->stile);
+    free(x->sbuf);
+    if (x->font) objc_release((id)x->font);
+    for (int i = 0; i < x->gsp; i++) if (x->gs[i].font) objc_release((id)x->gs[i].font);
+    if (x->ctfont) objc_release((id)x->ctfont);
     for (int i = 0; i < x->nlayer; i++) free(o->data != x->layer_data[i] ? x->layer_data[i] : 0);
     free(x);
     o->gx = 0;
@@ -38,6 +43,8 @@ static void bmx_save(cgobj_t *o) {
     g->ndash = x->ndash; g->cap = x->cap; g->join = x->join; g->galpha = x->galpha; g->aa = x->aa;
     g->sdx = x->sdx; g->sdy = x->sdy; g->sblur = x->sblur; g->scolor = x->scolor;
     g->pattern = x->pattern_on;
+    g->interp = x->interp; g->flat = x->flat; g->charsp = x->charsp; g->fsize = x->fsize; g->tmode = x->tmode;
+    g->font = x->font ? (void *)objc_retain((id)x->font) : 0;
     g->mask = 0;
     if (x->mask) {                               /* o recorte volta no restore: guarda uma cópia */
         size_t n = (size_t)o->w * o->h;
@@ -54,6 +61,10 @@ static void bmx_restore(cgobj_t *o) {
     x->ndash = g->ndash; x->cap = g->cap; x->join = g->join; x->galpha = g->galpha; x->aa = g->aa;
     x->sdx = g->sdx; x->sdy = g->sdy; x->sblur = g->sblur; x->scolor = g->scolor;
     x->pattern_on = g->pattern;
+    x->interp = g->interp; x->flat = g->flat; x->charsp = g->charsp; x->fsize = g->fsize; x->tmode = g->tmode;
+    if (x->font) objc_release((id)x->font);
+    x->font = g->font;
+    g->font = 0;
     free(x->mask);
     x->mask = g->mask;
     g->mask = 0;
@@ -79,8 +90,93 @@ static u32 fill_src(cgobj_t *o, int x, int y) {
         if (ty < 0) ty += g->th;
         return scale_px(g->tile[(size_t)ty * g->tw + tx], (u32)(g->galpha * 255 + 0.5));
     }
-    return premul(o->fill ? o->fill : 0xFF000000u, g ? g->galpha : 1);
+    return premul(o->fill, g ? g->galpha : 1);           /* 0 = transparente (o contexto nasce com preto) */
 }
+
+/* ---------------------------------------------------------------- sombra
+ * Com sombra ligada, a operação de desenho inteira vai para g->sbuf ("source over", já com recorte e alfa
+ * global). No fim: a sombra (alfa do buffer, borrado e deslocado, na cor da sombra) e depois o conteúdo são
+ * compostos no destino com o blend mode do momento. Como no macOS, deslocamento e blur estão no espaço base
+ * (y para cima): no bitmap, dy do dispositivo = −height. Blur: gaussiana de sigma = blur/2, por 3 caixas. */
+static void shadow_note(cg_bmx_t *g, int x, int y) {
+    if (x < g->sx0) g->sx0 = x;
+    if (x > g->sx1) g->sx1 = x;
+    if (y < g->sy0) g->sy0 = y;
+    if (y > g->sy1) g->sy1 = y;
+}
+static int shadow_begin(cgobj_t *o) {
+    cg_bmx_t *g = o ? o->gx : 0;
+    if (!g || g->sbuf || !(g->scolor >> 24) || !o->data) return 0;
+    g->sbuf = calloc((size_t)o->w * o->h, 4);
+    if (!g->sbuf) return 0;
+    g->sx0 = (int)o->w; g->sy0 = (int)o->h; g->sx1 = -1; g->sy1 = -1;
+    return 1;
+}
+static void box_blur(u8 *a, u8 *tmp, int w, int h, int r) {
+    if (r < 1) return;
+    for (int pass = 0; pass < 3; pass++) {
+        for (int y = 0; y < h; y++) {                       /* horizontal */
+            u8 *row = a + (size_t)y * w, *out = tmp + (size_t)y * w;
+            int acc = 0;
+            for (int x = -r; x <= r; x++) acc += x >= 0 && x < w ? row[x] : 0;
+            for (int x = 0; x < w; x++) {
+                out[x] = (u8)(acc / (2 * r + 1));
+                int add = x + r + 1, sub = x - r;
+                acc += (add < w ? row[add] : 0) - (sub >= 0 ? row[sub] : 0);
+            }
+        }
+        for (int x = 0; x < w; x++) {                       /* vertical */
+            int acc = 0;
+            for (int y = -r; y <= r; y++) acc += y >= 0 && y < h ? tmp[(size_t)y * w + x] : 0;
+            for (int y = 0; y < h; y++) {
+                a[(size_t)y * w + x] = (u8)(acc / (2 * r + 1));
+                int add = y + r + 1, sub = y - r;
+                acc += (add < h ? tmp[(size_t)add * w + x] : 0) - (sub >= 0 ? tmp[(size_t)sub * w + x] : 0);
+            }
+        }
+    }
+}
+static void shadow_end(cgobj_t *o, int on) {
+    if (!on) return;
+    cg_bmx_t *g = o->gx;
+    u32 *buf = g->sbuf;
+    g->sbuf = 0;
+    if (!buf) return;
+    if (g->sx1 < g->sx0) { free(buf); return; }
+    double sigma = g->sblur > 0 ? g->sblur / 2 : 0;
+    int r = sigma > 0 ? (int)((sqrt(12 * sigma * sigma / 3 + 1) - 1) / 2 + 0.5) : 0;
+    int pad = 3 * r + 1;
+    int dx = (int)floor(g->sdx + 0.5), dy = (int)floor(-g->sdy + 0.5);
+    int bx0 = g->sx0 - pad, by0 = g->sy0 - pad, bw = g->sx1 - g->sx0 + 1 + 2 * pad, bh = g->sy1 - g->sy0 + 1 + 2 * pad;
+    u8 *a = calloc((size_t)bw * bh, 1), *tmp = malloc((size_t)bw * bh);
+    if (a && tmp) {
+        for (int y = g->sy0; y <= g->sy1; y++)
+            for (int x = g->sx0; x <= g->sx1; x++) a[(size_t)(y - by0) * bw + (x - bx0)] = (u8)(buf[(size_t)y * o->w + x] >> 24);
+        box_blur(a, tmp, bw, bh, r);
+        u32 sa = g->scolor >> 24, sr = (g->scolor >> 16) & 255, sg = (g->scolor >> 8) & 255, sb = g->scolor & 255;
+        for (int y = 0; y < bh; y++)
+            for (int x = 0; x < bw; x++) {
+                u32 k = a[(size_t)y * bw + x];
+                if (!k) continue;
+                u32 A = k * sa / 255;
+                blend_at(o, bx0 + x + dx, by0 + y + dy, A << 24 | (sr * A / 255) << 16 | (sg * A / 255) << 8 | (sb * A / 255));
+            }
+    }
+    free(a);
+    free(tmp);
+    u8 *mask = g->mask;
+    g->mask = 0;                                         /* o conteúdo já passou pelo recorte ao entrar no buffer */
+    for (int y = g->sy0; y <= g->sy1; y++)
+        for (int x = g->sx0; x <= g->sx1; x++) {
+            u32 p = buf[(size_t)y * o->w + x];
+            if (p >> 24) blend_at(o, x, y, p);
+        }
+    g->mask = mask;
+    free(buf);
+}
+/* para o coretext.c: uma linha de texto inteira projeta uma sombra só */
+int cx_bm_shadow_begin(const void *c) { return shadow_begin(as_kind(c, CGK_BM)); }
+void cx_bm_shadow_end(const void *c, int on) { shadow_end(as_kind(c, CGK_BM), on); }
 
 /* ---------------------------------------------------------------- path no espaço do dispositivo */
 static double dev_tol(cgobj_t *o) { (void)o; return 0.2; }
@@ -165,7 +261,9 @@ static void paint_row(void *ctx, int y, int x0, int x1, const uint8_t *cov) {
 }
 static void fill_poly(cgobj_t *o, const cgr_poly *poly, int eo, u32 solid, int use_solid) {
     paint_t pt = {o, solid, use_solid};
+    int sh = shadow_begin(o);
     cgr_fill(poly, eo, o->cl, o->ct, o->cr, o->cbt, paint_row, &pt);
+    shadow_end(o, sh);
 }
 static int ctm_inverse(cgobj_t *o, double *ia, double *ib, double *ic, double *id, double *itx, double *ity) {
     double det = o->ca * o->cd - o->cb * o->cc;
@@ -202,6 +300,18 @@ static int stroke_outline(cgobj_t *o, const cgr_poly *path, cgr_poly *out) {
     return 1;
 }
 
+/* contorno do traço: cor do traço, ou o ladrilho do padrão de traço (CGContextSetStrokePattern) */
+static void stroke_paint(cgobj_t *o, const cgr_poly *out) {
+    cg_bmx_t *g = o->gx;
+    if (g->spattern_on && g->stile) {
+        u32 *t = g->tile; int tw = g->tw, th = g->th, on = g->pattern_on;
+        g->tile = g->stile; g->tw = g->stw; g->th = g->sth; g->pattern_on = 1;
+        fill_poly(o, out, 0, 0, 0);
+        g->tile = t; g->tw = tw; g->th = th; g->pattern_on = on;
+        return;
+    }
+    fill_poly(o, out, 0, premul(g->stroke, g->galpha), 1);
+}
 int cx_bm_fill(const void *c, int eo) {
     cgobj_t *o = bm(c); cg_bmx_t *g = bmx(o);
     if (!g) return 0;
@@ -215,7 +325,7 @@ int cx_bm_stroke(const void *c) {
     if (o->data) {
         cgr_poly out;
         cgr_init(&out);
-        if (stroke_outline(o, &g->path, &out)) fill_poly(o, &out, 0, premul(g->stroke, g->galpha), 1);
+        if (stroke_outline(o, &g->path, &out)) stroke_paint(o, &out);
         cgr_free(&out);
     }
     cgr_clear(&g->path);
@@ -233,15 +343,17 @@ int cx_bm_draw(const void *c, int mode) {
         for (int i = a + 1; i < b; i++) cgr_line(&keep, g->path.pts[i].x, g->path.pts[i].y);
         if (g->path.closed[k]) cgr_close(&keep);
     }
+    int sh = shadow_begin(o);                   /* preencher e traçar: uma sombra só */
     if (mode == 0 || mode == 3) fill_poly(o, &keep, 0, 0, 0);
     if (mode == 1 || mode == 4) fill_poly(o, &keep, 1, 0, 0);
     cgr_clear(&g->path);
     if (mode >= 2) {
         cgr_poly out;
         cgr_init(&out);
-        if (stroke_outline(o, &keep, &out)) fill_poly(o, &out, 0, premul(g->stroke, g->galpha), 1);
+        if (stroke_outline(o, &keep, &out)) stroke_paint(o, &out);
         cgr_free(&out);
     }
+    shadow_end(o, sh);
     cgr_free(&keep);
     return 1;
 }
@@ -558,6 +670,7 @@ static void draw_gradient(void *c, const cggrad_t *gr, int radial, CGPoint p0, d
     cgr_grad g = {gr->n, gr->loc, gr->rgba};
     double ga = o->gx ? o->gx->galpha : 1;
     u32 k = (u32)(ga * 255 + 0.5);
+    int sh = shadow_begin(o);
     for (int y = o->ct; y < o->cbt; y++)
         for (int x = o->cl; x < o->cr; x++) {
             double ux = ia * (x + 0.5) + ic * (y + 0.5) + itx, uy = ib * (x + 0.5) + id * (y + 0.5) + ity, t;
@@ -565,53 +678,64 @@ static void draw_gradient(void *c, const cggrad_t *gr, int radial, CGPoint p0, d
                             : cgr_linear_t(ux, uy, p0.x, p0.y, p1.x, p1.y, (int)opts, &t);
             if (ok) blend_at(o, x, y, scale_px(cgr_grad_at(&g, t), k));
         }
+    shadow_end(o, sh);
 }
 void CGContextDrawLinearGradient(void *c, void *g, CGPoint start, CGPoint end, u32 opts) { draw_gradient(c, g, 0, start, 0, end, 0, opts); }
 void CGContextDrawRadialGradient(void *c, void *g, CGPoint c0, double r0, CGPoint c1, double r1, u32 opts) { draw_gradient(c, g, 1, c0, r0, c1, r1, opts); }
 
 /* ---------------------------------------------------------------- camadas de transparência */
-static int bm_premul(const cgobj_t *o) { u32 a = o->info & 31; return a == 1 || a == 2; }
+/* A camada é sempre ARGB pré-multiplicado (32 bpp, ordem 32 little), seja qual for o formato do contexto:
+ * num contexto sem alfa (cinza 8, RGB pulado) a camada precisa de alfa para ser composta. */
 void CGContextBeginTransparencyLayerWithRect(void *c, CGRect r, id aux) {
     (void)r; (void)aux;
     cgobj_t *o = bm(c); cg_bmx_t *g = bmx(o);
     if (!g || !o->data || g->nlayer >= 4) return;
-    size_t n = (size_t)o->bpr * o->h;
+    size_t n = (size_t)o->w * 4 * o->h;
     u8 *fresh = calloc(n ? n : 1, 1);
     if (!fresh) return;
-    g->layer_data[g->nlayer] = o->data;
-    g->layer_alpha[g->nlayer] = g->galpha;
-    g->layer_owns[g->nlayer] = 1;
-    g->nlayer++;
+    int L = g->nlayer++;
+    g->layer_data[L] = o->data;
+    g->layer_alpha[L] = g->galpha;
+    g->layer_owns[L] = 1;
+    g->lfmt[L] = o->fmt; g->linfo[L] = o->info; g->lbpr[L] = o->bpr; g->lbpp[L] = o->bpp;
+    g->lshadow[L][0] = g->sdx; g->lshadow[L][1] = g->sdy; g->lshadow[L][2] = g->sblur; g->lscolor[L] = g->scolor;
+    g->lblend[L] = o->blend;
     o->data = fresh;
+    o->fmt = PF_RGB32; o->info = AI_PFIRST | BO_32L; o->bpr = o->w * 4; o->bpp = 4;
     cx_bm_save(c);
     g->galpha = 1;                              /* dentro da camada desenha opaco; o alfa vale na composição */
+    g->scolor = 0;                              /* e sem sombra: a sombra é da camada inteira */
+    o->blend = 0;
 }
 void CGContextBeginTransparencyLayer(void *c, id aux) { CGRect r = {{0, 0}, {0, 0}}; CGContextBeginTransparencyLayerWithRect(c, r, aux); }
+static int shadow_begin(cgobj_t *o);
+static void shadow_end(cgobj_t *o, int on);
 void CGContextEndTransparencyLayer(void *c) {
     cgobj_t *o = bm(c); cg_bmx_t *g = o ? o->gx : 0;
     if (!g || !g->nlayer) return;
     cx_bm_restore(c);
-    g->nlayer--;
+    int L = --g->nlayer;
     u8 *layer = o->data;
-    o->data = g->layer_data[g->nlayer];
-    u32 k = (u32)(g->layer_alpha[g->nlayer] * 255 + 0.5);
-    int pm = bm_premul(o);
-    /* compõe a camada inteira de uma vez: o recorte e a máscara do momento valem (blend_at) */
+    o->data = g->layer_data[L];
+    o->fmt = g->lfmt[L]; o->info = g->linfo[L]; o->bpr = g->lbpr[L]; o->bpp = g->lbpp[L];
+    g->sdx = g->lshadow[L][0]; g->sdy = g->lshadow[L][1]; g->sblur = g->lshadow[L][2]; g->scolor = g->lscolor[L];
+    o->blend = g->lblend[L];
+    u32 k = (u32)(g->layer_alpha[L] * 255 + 0.5);
+    /* compõe a camada inteira de uma vez, com a sombra e o blend do momento; o recorte já valeu ao desenhar */
     u8 *saved_mask = g->mask;
-    g->mask = 0;                                 /* o conteúdo da camada já respeitou o recorte ao ser desenhado */
-    for (u32 y = 0; y < o->h; y++)
+    g->mask = 0;
+    int sh = shadow_begin(o);
+    for (u32 y = 0; y < o->h; y++) {
+        const u32 *row = (const u32 *)(layer + (size_t)y * o->w * 4);
         for (u32 x = 0; x < o->w; x++) {
-            const u8 *sp = layer + (size_t)y * o->bpr + (size_t)x * o->bpp;
-            u32 p;
-            if (o->bpp == 1) p = (u32)sp[0] << 24;
-            else {
-                p = px_argb(sp, o->info);
-                if (!pm) { u32 a = p >> 24; p = a << 24 | (((p >> 16) & 255) * a / 255) << 16 | (((p >> 8) & 255) * a / 255) << 8 | ((p & 255) * a / 255); }
-            }
-            if (!(p >> 24)) continue;
+            u32 p = row[x];
+            if (!(p >> 24) && !cx_cg_blend_zero_src_matters(o->blend)) continue;
+            if (!(p >> 24)) continue;               /* fora do que a camada pintou o destino fica */
             blend_at(o, (int)x, (int)y, scale_px(p, k));
         }
+    }
     g->mask = saved_mask;
+    shadow_end(o, sh);
     free(layer);
 }
 
@@ -680,7 +804,7 @@ void CGContextSetFillPattern(void *c, void *pattern, const double *comps) {
     u32 *px = malloc((size_t)tw * th * 4);
     if (px) {
         for (int y = 0; y < th; y++)
-            for (int x = 0; x < tw; x++) px[(size_t)y * tw + x] = px_argb(t->data + (size_t)y * t->bpr + (size_t)x * 4, t->info);
+            for (int x = 0; x < tw; x++) px[(size_t)y * tw + x] = ctx_get(t, t->data + (size_t)y * t->bpr + (size_t)x * t->bpp);
         free(g->tile);
         g->tile = px; g->tw = tw; g->th = th; g->pattern_on = 1;
     }
@@ -760,10 +884,13 @@ void *CGImageCreateCopy(void *img) {
     memcpy(n->data, o->data, (size_t)o->bpr * o->h);
     n->w = o->w; n->h = o->h; n->bpr = o->bpr; n->bpp = o->bpp; n->info = o->info; n->owns = 1; n->cb_size = o->cb_size;
     n->blend = o->blend;
+    n->ismask = o->ismask; n->shint = o->shint; n->sbpc = o->sbpc; n->sbpp = o->sbpp; n->uti = o->uti;
+    n->ndecode = o->ndecode; memcpy(n->decode, o->decode, sizeof n->decode);
+    if (o->space) n->space = objc_retain((id)o->space);
     return n;
 }
 /* imagens que não saíram de um CGImageSource não têm tipo, como no macOS */
-const void *CGImageGetUTType(void *img) { (void)img; return 0; }
+const void *CGImageGetUTType(void *img) { cgobj_t *o = as_kind(img, CGK_IM); return o ? o->uti : 0; }
 int CGImageGetRenderingIntent(void *img) { cgobj_t *o = as_kind(img, CGK_IM); return o ? o->blend : 0; }
 
 CSNAME(kCGColorSpaceITUR_709, "kCGColorSpaceITUR_709")

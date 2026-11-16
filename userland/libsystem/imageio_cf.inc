@@ -217,6 +217,7 @@ long read(int fd, void *b, unsigned long n);
 long write(int fd, const void *b, unsigned long n);
 int close(int fd);
 void cx_object_free(id o);
+void cx_cgimage_set_uti(void *img, const void *uti);
 
 enum { kNumSInt64 = 4, kNumF64 = 13, UTF8 = 0x08000100 };
 enum { ST_COMPLETE = 0, ST_INCOMPLETE = -1, ST_HEADER = -2, ST_UNKNOWN = -3, ST_INVALID = -4, ST_EOF = -5 };
@@ -488,7 +489,9 @@ void *CGImageSourceCreateImageAtIndex(void *src, size_t i, void *opts) {
         free(r);
         return img;
     }
-    return make_cgimage(f->px, f->w, f->h, f->has_alpha);
+    void *img = make_cgimage(f->px, f->w, f->h, f->has_alpha);
+    if (img) cx_cgimage_set_uti(img, uti_cfstr(s->img.uti));
+    return img;
 }
 void *CGImageSourceCreateThumbnailAtIndex(void *src, size_t i, void *opts) {
     isrc_t *s = as_src(src);

@@ -434,7 +434,7 @@ static void free_bytes(void *info, const void *data, size_t size) {
     if (mos_ci_ctx_render(&ctx, im->img, r.origin.x, r.origin.y, w, h, px) != 0) { free(px); return nil; }
     void *prov = CGDataProviderCreateWithData(0, px, (size_t)w * (size_t)h * 4u, free_bytes);
     if (!prov) { free(px); return nil; }
-    void *cg = CGImageCreate((size_t)w, (size_t)h, 8, 32, (size_t)w * 4u, 0, 4, prov, 0, 0, 0);
+    void *cg = CGImageCreate((size_t)w, (size_t)h, 8, 32, (size_t)w * 4u, 0, 4 | 0x2000 /* AlphaFirst, 32 little: px é 0xAARRGGBB */, prov, 0, 0, 0);
     CGDataProviderRelease(prov);
     return cg;
 }

@@ -125,6 +125,54 @@ void CGContextAddLineToPoint(void *c, double x, double y) { cx_bm_line(c, x, y);
 void CGContextAddCurveToPoint(void *c, double a, double b, double d, double e, double x, double y) { cx_bm_curve(c, a, b, d, e, x, y); }
 void CGContextStrokePath(void *c) { cx_bm_stroke(c); }
 
+
+/* ---- o que cg_more.inc chama de outros arquivos do libSystem */
+int cx_bm_ellipse(const void *, double, double, double, double);
+int cx_bm_draw(const void *, int);
+void CFRelease(void *o) { objc_release(o); }
+void CGContextAddRect(void *c, CGRect r) { cx_bm_rect(c, r.origin.x, r.origin.y, r.size.width, r.size.height); }
+void CGContextDrawPath(void *c, int m) { cx_bm_draw(c, m); }
+void CGContextSetRGBFillColor(void *c, double r, double g, double b, double a) {
+    cx_bm_set_fill(c, (uint32_t)(a * 255 + .5) << 24 | (uint32_t)(r * 255 + .5) << 16 | (uint32_t)(g * 255 + .5) << 8 | (uint32_t)(b * 255 + .5));
+}
+void CGContextSetRGBStrokeColor(void *c, double r, double g, double b, double a) {
+    cx_bm_set_stroke(c, (uint32_t)(a * 255 + .5) << 24 | (uint32_t)(r * 255 + .5) << 16 | (uint32_t)(g * 255 + .5) << 8 | (uint32_t)(b * 255 + .5));
+}
+void CGPathApply(const void *path, void *info, void (*fn)(void *, const void *));
+typedef struct { int type; CGPoint *pts; } elem_t;
+static void addpath_el(void *c, const void *e0) {
+    const elem_t *e = e0;
+    if (e->type == 0) cx_bm_move(c, e->pts[0].x, e->pts[0].y);
+    else if (e->type == 1) cx_bm_line(c, e->pts[0].x, e->pts[0].y);
+    else if (e->type == 3) cx_bm_curve(c, e->pts[0].x, e->pts[0].y, e->pts[1].x, e->pts[1].y, e->pts[2].x, e->pts[2].y);
+    else if (e->type == 4) cx_bm_close(c);
+}
+void CGContextAddPath(void *c, const void *p) { CGPathApply(p, c, addpath_el); }
+void *cx_str(const char *s) { (void)s; return (void *)1; }
+int mos_img_decode(const uint8_t *d, size_t n, void *o) { (void)d; (void)n; (void)o; return -1; }
+/* CTFont falsa: cada glifo é um bloco de 4x4 px na posição, avanço 5 */
+static mcls font_cls = {"FakeCTFont", 0, 16, {{0, 0}}, 0};
+static int drawn_glyphs;
+void *CTFontCreateWithGraphicsFont(void *f, double s, const void *m, void *a) { (void)f; (void)s; (void)m; (void)a; return alloc_of(&font_cls); }
+void *CTFontCreateWithName(void *n, double s, const void *m) { (void)n; (void)s; (void)m; return alloc_of(&font_cls); }
+int cx_bitmap_draw_glyph(void *ctx, double x, double y, const uint8_t *alpha, int gw, int gh, int left, int top);
+void CTFontDrawGlyphs(void *f, const uint16_t *g, const CGPoint *p, size_t n, void *ctx) {
+    static const uint8_t box[16] = {255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255};
+    (void)f; (void)g;
+    for (size_t i = 0; i < n; i++) { cx_bitmap_draw_glyph(ctx, p[i].x, p[i].y, box, 4, 4, 0, -4); drawn_glyphs++; }
+}
+double CTFontGetAdvancesForGlyphs(void *f, int o, const uint16_t *g, CGSize *adv, long n) { (void)f; (void)o; (void)g; for (long i = 0; adv && i < n; i++) { adv[i].width = 5; adv[i].height = 0; } return 5.0 * n; }
+uint8_t CTFontGetGlyphsForCharacters(void *f, const uint16_t *c, uint16_t *g, long n) { (void)f; for (long i = 0; i < n; i++) g[i] = c[i]; return 1; }
+void *CTFontCreatePathForGlyph(void *f, uint16_t g, const CGAffineTransform *m) {
+    (void)f; (void)g;
+    void *CGPathCreateMutable(void);
+    void CGPathAddRect(void *, const CGAffineTransform *, CGRect);
+    void *p = CGPathCreateMutable();
+    CGRect r = {{0, 0}, {4, 4}};
+    CGPathAddRect(p, m, r);
+    return p;
+}
+
 /* ---------------------------------------------------------------- API sob teste */
 void *CGBitmapContextCreate(void *data, size_t w, size_t h, size_t bpc, size_t bpr, void *space, uint32_t info);
 void CGContextRelease(void *c);
@@ -172,6 +220,7 @@ int CGPointEqualToPoint(CGPoint a, CGPoint b);
 extern const void *kCGColorSpaceDCIP3;
 
 static int fails;
+void ramp(void *info, const double *in, double *out) { (void)info; out[0] = in[0]; out[1] = 0; out[2] = 0; out[3] = 1; }
 #define CHECK(c, m) do { if (!(c)) { fprintf(stderr, "FAIL %s\n", m); fails++; } else printf("ok %s\n", m); } while (0)
 
 /* bitmap 64x64 premultipliedLast (RGBA): pixel (x, y) do dispositivo, y para baixo */
@@ -332,6 +381,197 @@ int main(void) {
     CHECK(CGSizeEqualToSize(s1, s2) && !CGPointEqualToPoint(q1, q2), "CGSizeEqualToSize / CGPointEqualToPoint");
     CHECK(kCGColorSpaceDCIP3 && !strcmp(cx_cstr((void *)kCGColorSpaceDCIP3), "kCGColorSpaceDCIP3"), "kCGColorSpaceDCIP3");
 
+
+    /* ===== CGContext completo (15 nov. 2026) ===== */
+    {
+        void CGContextSetBlendMode(void *, int);
+        void CGContextFillRect(void *, CGRect);
+        /* Multiply = 1 (antes o mOS tratava 1 como Copy) */
+        void *b = ctx();
+        cx_bm_set_fill(b, 0xFF808080u); cx_bm_fill_rect(b, 0, 0, 64, 64);
+        CGContextSetBlendMode(b, 1);
+        cx_bm_set_fill(b, 0xFFFF0000u); cx_bm_fill_rect(b, 0, 0, 8, 8);
+        CHECK(px(b, 1, 62)[0] == 128 && px(b, 1, 62)[1] == 0, "blend Multiply (1): cinza × vermelho = (128,0,0)");
+        CGContextSetBlendMode(b, 2);
+        cx_bm_set_fill(b, 0xFF0000FFu); cx_bm_fill_rect(b, 10, 0, 8, 8);
+        CHECK(px(b, 11, 62)[2] == 255 && px(b, 11, 62)[0] == 128, "blend Screen (2): (128,128,255)");
+        CGContextSetBlendMode(b, 17);
+        cx_bm_set_fill(b, 0x00000000u); cx_bm_fill_rect(b, 20, 0, 8, 8);
+        CHECK(px(b, 21, 62)[3] == 0, "blend Copy (17) com cor transparente apaga");
+        CGContextSetBlendMode(b, 23);
+        cx_bm_set_fill(b, 0xFF000000u); cx_bm_fill_rect(b, 30, 0, 8, 8);
+        CHECK(px(b, 31, 62)[3] == 0 && px(b, 41, 62)[3] == 255, "blend DestinationOut (23)");
+        CGContextSetBlendMode(b, 10);
+        cx_bm_set_fill(b, 0xFFFFFFFFu); cx_bm_fill_rect(b, 44, 0, 8, 8);
+        CHECK(px(b, 45, 62)[0] == 127 || px(b, 45, 62)[0] == 128, "blend Difference (10): branco − cinza");
+        CGContextRelease(b);
+
+        /* ordem de bytes: PremultipliedFirst sem Little = A,R,G,B na memória; com 32Little = B,G,R,A */
+        void *a1 = CGBitmapContextCreate(0, 4, 4, 8, 16, 0, 2);
+        cx_bm_set_fill(a1, 0xFFFF0000u); cx_bm_fill_rect(a1, 0, 0, 4, 4);
+        uint8_t *d1 = CGBitmapContextGetData(a1);
+        CHECK(d1[0] == 255 && d1[1] == 255 && d1[2] == 0, "PremultipliedFirst (big): A R G B");
+        void *a2 = CGBitmapContextCreate(0, 4, 4, 8, 16, 0, 2 | 0x2000);
+        cx_bm_set_fill(a2, 0xFFFF0000u); cx_bm_fill_rect(a2, 0, 0, 4, 4);
+        uint8_t *d2 = CGBitmapContextGetData(a2);
+        CHECK(d2[0] == 0 && d2[2] == 255 && d2[3] == 255, "PremultipliedFirst|32Little: B G R A");
+        CGContextRelease(a1); CGContextRelease(a2);
+
+        /* cinza 8 bits sem alfa (antes: NULL) e 16 bits por componente */
+        void *CGColorSpaceCreateDeviceGray(void);
+        void *gs = CGColorSpaceCreateDeviceGray();
+        void *g8 = CGBitmapContextCreate(0, 8, 8, 8, 8, gs, 0);
+        CHECK(g8 != 0, "contexto cinza 8 bits sem alfa existe");
+        cx_bm_set_fill(g8, 0xFFFFFFFFu); cx_bm_fill_rect(g8, 0, 0, 4, 8);
+        CHECK(((uint8_t *)CGBitmapContextGetData(g8))[0] == 255 && ((uint8_t *)CGBitmapContextGetData(g8))[7] == 0, "cinza: branco à esquerda, preto à direita");
+        void *CGBitmapContextGetColorSpace(void *);
+        CHECK(CGBitmapContextGetColorSpace(g8) == gs, "CGBitmapContextGetColorSpace devolve o espaço do contexto");
+        void *c16 = CGBitmapContextCreate(0, 4, 4, 16, 32, 0, 1 | 0x1000);
+        CHECK(c16 != 0, "contexto RGBA 16 bpc");
+        cx_bm_set_fill(c16, 0xFF00FF00u); cx_bm_fill_rect(c16, 0, 0, 4, 4);
+        uint16_t *w16 = CGBitmapContextGetData(c16);
+        CHECK(w16[1] == 0xFFFF && w16[0] == 0 && w16[3] == 0xFFFF, "RGBA 16 bpc little: G e A = 0xFFFF");
+        void *cf = CGBitmapContextCreate(0, 4, 4, 32, 64, 0, 1 | 0x100 | 0x2000);
+        CHECK(cf != 0, "contexto RGBA float");
+        cx_bm_set_fill(cf, 0x80FF0000u); cx_bm_fill_rect(cf, 0, 0, 4, 4);
+        float *fp = CGBitmapContextGetData(cf);
+        CHECK(fabsf(fp[0] - 128 / 255.f) < 0.01f && fabsf(fp[3] - 128 / 255.f) < 0.01f, "float: vermelho a 50% pré-multiplicado");
+        CGContextRelease(c16); CGContextRelease(cf);
+
+        /* sombra: um quadrado com sombra deslocada (4, −4) aparece abaixo e à direita */
+        void CGContextSetShadowWithColor(void *, CGSize, double, void *);
+        void *s = ctx();
+        void *black = cx_color(0, 0, 0, 1);
+        CGSize off = {4, -4};
+        CGContextSetShadowWithColor(s, off, 0, black);
+        red(s);
+        cx_bm_fill_rect(s, 10, 40, 10, 10);
+        CHECK(px(s, 22, 64 - 38)[3] == 255 && px(s, 22, 64 - 38)[0] == 0, "sombra dura deslocada (4,−4) em preto");
+        CHECK(px(s, 12, 64 - 48)[0] == 255, "o quadrado vermelho fica por cima da sombra");
+        CGContextRelease(s);
+        s = ctx();
+        CGContextSetShadowWithColor(s, off, 6, black);
+        red(s);
+        cx_bm_fill_rect(s, 20, 20, 10, 10);
+        int a_near = px(s, 31, 64 - 18)[3], a_far = px(s, 40, 64 - 10)[3];
+        CHECK(a_near > a_far && a_near > 0 && a_near < 255, "sombra borrada decai com a distância");
+        CGContextRelease(s);
+
+        /* ClipToMask com imagem cinza: branco deixa pintar */
+        void *CGDataProviderCreateWithData(void *, const void *, size_t, void *);
+        void *CGImageCreate(size_t, size_t, size_t, size_t, size_t, const void *, uint32_t, void *, const void *, int, int);
+        void CGContextClipToMask(void *, CGRect, void *);
+        uint8_t mpx[4] = {255, 0, 0, 255};                  /* 2x2: branco preto / preto branco */
+        void *mp = CGDataProviderCreateWithData(0, mpx, 4, 0);
+        void *mimg = CGImageCreate(2, 2, 8, 8, 2, gs, 0, mp, 0, 0, 0);
+        CHECK(mimg != 0, "CGImage cinza 8 bits");
+        void *m = ctx();
+        CGRect all = {{0, 0}, {64, 64}};
+        CGContextClipToMask(m, all, mimg);
+        red(m);
+        cx_bm_fill_rect(m, 0, 0, 64, 64);
+        CHECK(px(m, 10, 10)[3] == 255 && px(m, 50, 10)[3] == 0 && px(m, 50, 50)[3] == 255, "ClipToMask: quadrantes brancos pintados");
+        CGContextRelease(m);
+
+        /* CGImageMaskCreate: 1 bit, 0 pinta; desenha com a cor de preenchimento */
+        void *CGImageMaskCreate(size_t, size_t, size_t, size_t, size_t, void *, const double *, int);
+        void CGContextDrawImage(void *, CGRect, void *);
+        uint8_t bits[2] = {0x0F, 0x0F};                     /* 8x2: 4 pinta, 4 mascara */
+        void *bp = CGDataProviderCreateWithData(0, bits, 2, 0);
+        void *msk = CGImageMaskCreate(8, 2, 1, 1, 1, bp, 0, 0);
+        CHECK(msk != 0, "CGImageMaskCreate 1 bit");
+        void *dm = ctx();
+        cx_bm_set_fill(dm, 0xFF0000FFu);
+        CGRect r8 = {{0, 0}, {64, 64}};
+        void CGContextSetInterpolationQuality(void *, int);
+        CGContextSetInterpolationQuality(dm, 1);
+        CGContextDrawImage(dm, r8, msk);
+        CHECK(px(dm, 4, 10)[2] == 255 && px(dm, 60, 10)[3] == 0, "image mask pinta a cor de preenchimento só onde é 0");
+        CGContextRelease(dm);
+
+        /* CGImageCreate com 16 bpc e com 1 bit cinza */
+        uint16_t p16[4] = {0, 0xFFFF, 0, 0xFFFF};          /* um pixel RGBA16 big-endian? não: ordem 16 little */
+        void *pp16 = CGDataProviderCreateWithData(0, p16, 8, 0);
+        void *i16 = CGImageCreate(1, 1, 16, 64, 8, 0, 3 | 0x1000, pp16, 0, 0, 0);
+        int CGImageGetBitsPerComponent_(void *);
+        CHECK(i16 != 0, "CGImageCreate RGBA 16 bpc");
+        uint8_t one[1] = {0xA0};
+        void *p1 = CGDataProviderCreateWithData(0, one, 1, 0);
+        void *i1 = CGImageCreate(4, 1, 1, 1, 1, gs, 0, p1, 0, 0, 0);
+        CHECK(i1 != 0, "CGImageCreate cinza 1 bit");
+        void *t1 = ctx();
+        CGRect r4 = {{0, 0}, {4, 1}};
+        CGContextDrawImage(t1, r4, i1);
+        CHECK(px(t1, 0, 63)[0] == 255 && px(t1, 1, 63)[0] == 0 && px(t1, 2, 63)[0] == 255, "1 bit: 1010 → branco preto branco");
+        CGContextRelease(t1);
+
+        /* ClipToRects: união */
+        void CGContextClipToRects(void *, const CGRect *, size_t);
+        void *cr = ctx();
+        CGRect rs[2] = {{{0, 0}, {10, 10}}, {{30, 30}, {10, 10}}};
+        CGContextClipToRects(cr, rs, 2);
+        red(cr);
+        cx_bm_fill_rect(cr, 0, 0, 64, 64);
+        CHECK(fabs(coverage(cr) - 200) < 1, "ClipToRects: 2 × 100 px");
+        CGContextRelease(cr);
+
+        /* consultas ao path */
+        _Bool CGContextIsPathEmpty(void *);
+        CGPoint CGContextGetPathCurrentPoint(void *);
+        CGRect CGContextGetPathBoundingBox(void *);
+        _Bool CGContextPathContainsPoint(void *, CGPoint, int);
+        void CGContextAddLines(void *, const CGPoint *, size_t);
+        void *q = ctx();
+        CGContextScaleCTM(q, 2, 2);
+        CHECK(CGContextIsPathEmpty(q), "IsPathEmpty no começo");
+        CGPoint tri[3] = {{1, 1}, {11, 1}, {6, 9}};
+        CGContextAddLines(q, tri, 3);
+        CGPoint cp = CGContextGetPathCurrentPoint(q);
+        if (fabs(cp.x - 6) > 1e-6 || fabs(cp.y - 9) > 1e-6) printf("  ponto atual %g %g\n", cp.x, cp.y);
+        CHECK(!CGContextIsPathEmpty(q) && fabs(cp.x - 6) < 1e-6 && fabs(cp.y - 9) < 1e-6, "GetPathCurrentPoint no espaço do usuário");
+        CGRect bb = CGContextGetPathBoundingBox(q);
+        CHECK(fabs(bb.origin.x - 1) < 1e-6 && fabs(bb.size.width - 10) < 1e-6 && fabs(bb.size.height - 8) < 1e-6, "GetPathBoundingBox");
+        CGPoint in = {6, 3}, outp = {1, 8};
+        CHECK(CGContextPathContainsPoint(q, in, 0) && !CGContextPathContainsPoint(q, outp, 0), "PathContainsPoint");
+        CGContextRelease(q);
+
+        /* shading axial com CGFunction */
+        typedef struct { uint32_t v; void (*eval)(void *, const double *, double *); void (*rel)(void *); } fcb;
+        void ramp(void *info, const double *in, double *out);
+        void *CGFunctionCreate(void *, size_t, const double *, size_t, const double *, const fcb *);
+        void *CGShadingCreateAxial(void *, CGPoint, CGPoint, void *, int, int);
+        void CGContextDrawShading(void *, void *);
+        void *CGColorSpaceCreateDeviceRGB(void);
+        double dom[2] = {0, 1}, rng[8] = {0, 1, 0, 1, 0, 1, 0, 1};
+        fcb cb = {0, ramp, 0};
+        void *fn = CGFunctionCreate(0, 1, dom, 4, rng, &cb);
+        CGPoint s0 = {0, 0}, s1 = {64, 0};
+        void *sh = CGShadingCreateAxial(CGColorSpaceCreateDeviceRGB(), s0, s1, fn, 1, 1);
+        void *sc = ctx();
+        CGContextDrawShading(sc, sh);
+        CHECK(px(sc, 1, 32)[0] < 10 && px(sc, 62, 32)[0] > 245 && px(sc, 32, 32)[0] > 110 && px(sc, 32, 32)[0] < 145, "DrawShading axial: rampa de vermelho");
+        CGContextRelease(sc);
+
+        /* texto: ShowGlyphsAtPoint usa a fonte do contexto e anda a posição */
+        void CGContextSetFont(void *, void *);
+        void CGContextSetFontSize(void *, double);
+        void CGContextShowGlyphsAtPoint(void *, double, double, const uint16_t *, size_t);
+        CGPoint CGContextGetTextPosition(void *);
+        void CGContextSetTextDrawingMode(void *, int);
+        void *tc = ctx();
+        CGContextSetFont(tc, alloc_of(&font_cls));
+        CGContextSetFontSize(tc, 12);
+        red(tc);
+        uint16_t gl[3] = {1, 2, 3};
+        CGContextShowGlyphsAtPoint(tc, 10, 10, gl, 3);
+        CGPoint tp = CGContextGetTextPosition(tc);
+        CHECK(drawn_glyphs == 3 && fabs(tp.x - 25) < 1e-6, "ShowGlyphsAtPoint: 3 glifos, posição andou 15");
+        CHECK(fabs(coverage(tc) - 48) < 1, "glifos pintados (3 × 16 px)");
+        CGContextSetTextDrawingMode(tc, 3);
+        CGContextShowGlyphsAtPoint(tc, 40, 40, gl, 3);
+        CHECK(fabs(coverage(tc) - 48) < 1, "modo invisível não pinta");
+        CGContextRelease(tc);
+    }
     if (fails) { fprintf(stderr, "cg_context: %d falhas\n", fails); return 1; }
     printf("cg_context: ok (0 falhas)\n");
     return 0;

@@ -409,16 +409,8 @@ id CGColorSpaceCopyICCData(void *space) { (void)space; return 0; }
 /* fontes CG: o Skia usa CTFont; com NULL ele não segue o caminho de CGFont */
 void CGFontRelease(void *f) { if (f) objc_release((id)f); }
 u16 CGFontGetGlyphWithGlyphName(void *f, id name) { (void)f; (void)name; return 0; }
-void CGContextSetFont(void *c, void *f) { (void)c; (void)f; }
-void CGContextSetFontSize(void *c, double s) { (void)c; (void)s; }
-void CGContextShowGlyphsAtPositions(void *c, const u16 *g, const cg_pt_t *p, size_t n) { (void)c; (void)g; (void)p; (void)n; }
-void CGContextClipToMask(void *c, cg_rect_t r, void *mask) { (void)c; (void)r; (void)mask; }
-void *CGImageMaskCreate(size_t w, size_t h, size_t bpc, size_t bpp, size_t bpr, void *prov, const double *dec, u8 interp) {
-    (void)w; (void)h; (void)bpc; (void)bpp; (void)bpr; (void)prov; (void)dec; (void)interp; return 0;
-}
 void CGContextConcatCTM(void *c, cg_affine_t t);
 void CGContextRotateCTM(void *c, double a) { cg_affine_t t = {cos(a), sin(a), -sin(a), cos(a), 0, 0}; CGContextConcatCTM(c, t); }
-cg_rect_t CGContextConvertRectToDeviceSpace(void *c, cg_rect_t r) { (void)c; return r; }
 /* WindowServer privado (CGS*): sucesso sem efeito */
 int CGSSetWindowAlpha(int cid, int wid, float a) { (void)cid; (void)wid; (void)a; return 0; }
 int CGSSetWindowWarp(int cid, int wid, int w, int h, const void *mesh) { (void)cid; (void)wid; (void)w; (void)h; (void)mesh; return 0; }

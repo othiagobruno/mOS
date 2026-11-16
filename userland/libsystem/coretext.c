@@ -2675,3 +2675,227 @@ void cx_coretext_init(void) {
     ct_lines_init();
     cx_cfhost_init();
 }
+
+/* ======================================================================== métricas do CGFont (tabelas sfnt)
+ * Unidades da fonte (glyph space), como o CGFont do macOS. Fontes sem os bytes sfnt (face do kernel sem cópia)
+ * caem no CTFont equivalente. */
+typedef struct { double x, y, w, h; } cgf_rect_t;
+static const u8 *cgf_tab(void *font, u32 tag, long *len) {
+    cgf_t *g = cgf_of(font);
+    *len = 0;
+    return g ? cgf_table(g->b, g->n, tag, len) : 0;
+}
+static int cgf_i16(const u8 *p) { return (int)(short)cgf_rd16(p); }
+int CGFontGetUnitsPerEm(void *font) {
+    long l;
+    const u8 *t = cgf_tab(font, 0x68656164u, &l);           /* 'head' */
+    return t && l >= 20 ? (int)cgf_rd16(t + 18) : 1000;
+}
+int CGFontGetAscent(void *font) { long l; const u8 *t = cgf_tab(font, 0x68686561u, &l); return t && l >= 36 ? cgf_i16(t + 4) : 0; }
+int CGFontGetDescent(void *font) { long l; const u8 *t = cgf_tab(font, 0x68686561u, &l); return t && l >= 36 ? cgf_i16(t + 6) : 0; }
+int CGFontGetLeading(void *font) { long l; const u8 *t = cgf_tab(font, 0x68686561u, &l); return t && l >= 36 ? cgf_i16(t + 8) : 0; }
+/* 'OS/2' versão ≥ 2: sxHeight (86) e sCapHeight (88); sem eles, a altura de 'x' e de 'H' pelo glyf */
+static int cgf_glyph_bbox(void *font, u16 gid, int *bb);
+u16 cgf_cmap_lookup(void *font, u32 cp);
+int CGFontGetXHeight(void *font) {
+    long l;
+    const u8 *t = cgf_tab(font, 0x4F532F32u, &l);
+    if (t && l >= 90 && cgf_rd16(t) >= 2) return cgf_i16(t + 86);
+    int bb[4];
+    return cgf_glyph_bbox(font, cgf_cmap_lookup(font, 'x'), bb) ? bb[3] : CGFontGetUnitsPerEm(font) / 2;
+}
+int CGFontGetCapHeight(void *font) {
+    long l;
+    const u8 *t = cgf_tab(font, 0x4F532F32u, &l);
+    if (t && l >= 90 && cgf_rd16(t) >= 2) return cgf_i16(t + 88);
+    int bb[4];
+    return cgf_glyph_bbox(font, cgf_cmap_lookup(font, 'H'), bb) ? bb[3] : CGFontGetUnitsPerEm(font) * 7 / 10;
+}
+cgf_rect_t CGFontGetFontBBox(void *font) {
+    long l;
+    const u8 *t = cgf_tab(font, 0x68656164u, &l);
+    cgf_rect_t r = {0, 0, 0, 0};
+    if (t && l >= 44) {
+        int x0 = cgf_i16(t + 36), y0 = cgf_i16(t + 38), x1 = cgf_i16(t + 40), y1 = cgf_i16(t + 42);
+        r.x = x0; r.y = y0; r.w = x1 - x0; r.h = y1 - y0;
+    }
+    return r;
+}
+double CGFontGetItalicAngle(void *font) {
+    long l;
+    const u8 *t = cgf_tab(font, 0x706F7374u, &l);            /* 'post': Fixed 16.16 */
+    return t && l >= 8 ? (double)(int)cgf_rd32(t + 4) / 65536.0 : 0;
+}
+/* sem Private DICT de CFF à mão, a estimativa usual a partir do peso do OS/2 */
+double CGFontGetStemV(void *font) {
+    long l;
+    const u8 *t = cgf_tab(font, 0x4F532F32u, &l);
+    double w = t && l >= 6 ? cgf_rd16(t + 4) : 400;
+    return 50 + (w / 65) * (w / 65);
+}
+_Bool CGFontGetGlyphAdvances(void *font, const u16 *glyphs, size_t n, int *adv) {
+    long lh, lm;
+    const u8 *hh = cgf_tab(font, 0x68686561u, &lh), *hm = cgf_tab(font, 0x686D7478u, &lm);
+    if (!hh || !hm || lh < 36 || !glyphs || !adv) return 0;
+    u32 nh = cgf_rd16(hh + 34);
+    if (!nh) return 0;
+    for (size_t i = 0; i < n; i++) {
+        u32 gi = glyphs[i] < nh ? glyphs[i] : nh - 1;
+        adv[i] = (long)gi * 4 + 2 <= lm ? (int)cgf_rd16(hm + gi * 4) : 0;
+    }
+    return 1;
+}
+/* caixa do glifo pelo glyf/loca; CFF: pelo contorno do CTFont no tamanho de 1 em */
+void *CTFontCreatePathForGlyph(id f, u16 g, const void *matrix);
+typedef struct { double x, y, w, h; } cgf_r2;
+cgf_r2 CGPathGetPathBoundingBox(const void *path);
+void CGPathRelease(void *p);
+static int cgf_glyph_bbox(void *font, u16 gid, int *bb) {
+    long lh, ll, lg;
+    const u8 *head = cgf_tab(font, 0x68656164u, &lh), *loca = cgf_tab(font, 0x6C6F6361u, &ll), *glyf = cgf_tab(font, 0x676C7966u, &lg);
+    if (head && loca && glyf && lh >= 52) {
+        int longfmt = cgf_i16(head + 50);
+        u32 a, b;
+        if (longfmt) { if ((long)(gid + 2) * 4 > ll) return 0; a = cgf_rd32(loca + gid * 4); b = cgf_rd32(loca + gid * 4 + 4); }
+        else { if ((long)(gid + 2) * 2 > ll) return 0; a = cgf_rd16(loca + gid * 2) * 2; b = cgf_rd16(loca + gid * 2 + 2) * 2; }
+        if (b <= a) { bb[0] = bb[1] = bb[2] = bb[3] = 0; return 1; }   /* glifo vazio (espaço) */
+        if ((long)a + 10 > lg) return 0;
+        bb[0] = cgf_i16(glyf + a + 2); bb[1] = cgf_i16(glyf + a + 4); bb[2] = cgf_i16(glyf + a + 6); bb[3] = cgf_i16(glyf + a + 8);
+        return 1;
+    }
+    int upem = CGFontGetUnitsPerEm(font);
+    id ct = CTFontCreateWithGraphicsFont(font, upem, 0, 0);
+    if (!ct) return 0;
+    void *p = CTFontCreatePathForGlyph(ct, gid, 0);
+    objc_release(ct);
+    if (!p) { bb[0] = bb[1] = bb[2] = bb[3] = 0; return 1; }
+    cgf_r2 r = CGPathGetPathBoundingBox(p);
+    CGPathRelease(p);
+    bb[0] = (int)r.x; bb[1] = (int)r.y; bb[2] = (int)(r.x + r.w); bb[3] = (int)(r.y + r.h);
+    return 1;
+}
+_Bool CGFontGetGlyphBBoxes(void *font, const u16 *glyphs, size_t n, cgf_rect_t *out) {
+    if (!glyphs || !out) return 0;
+    for (size_t i = 0; i < n; i++) {
+        int bb[4];
+        if (!cgf_glyph_bbox(font, glyphs[i], bb)) return 0;
+        out[i].x = bb[0]; out[i].y = bb[1]; out[i].w = bb[2] - bb[0]; out[i].h = bb[3] - bb[1];
+    }
+    return 1;
+}
+/* cmap formato 4 e 12 (Unicode) do CGFont */
+u16 cgf_cmap_lookup(void *font, u32 cp) {
+    long l;
+    const u8 *t = cgf_tab(font, 0x636D6170u, &l);
+    if (!t || l < 4) return 0;
+    u32 n = cgf_rd16(t + 2);
+    const u8 *best = 0;
+    int bestfmt = 0;
+    for (u32 i = 0; i < n && 4 + (long)i * 8 + 8 <= l; i++) {
+        u32 pid = cgf_rd16(t + 4 + i * 8), eid = cgf_rd16(t + 6 + i * 8), off = cgf_rd32(t + 8 + i * 8);
+        if ((long)off + 4 > l) continue;
+        u32 fmt = cgf_rd16(t + off);
+        if (!(pid == 0 || (pid == 3 && (eid == 1 || eid == 10)))) continue;
+        if (fmt == 12 && bestfmt != 12) { best = t + off; bestfmt = 12; }
+        else if (fmt == 4 && !bestfmt) { best = t + off; bestfmt = 4; }
+    }
+    if (!best) return 0;
+    if (bestfmt == 12) {
+        u32 ng = cgf_rd32(best + 12);
+        for (u32 i = 0; i < ng; i++) {
+            const u8 *g = best + 16 + i * 12;
+            if (g + 12 > t + l) break;
+            u32 s = cgf_rd32(g), e = cgf_rd32(g + 4);
+            if (cp >= s && cp <= e) return (u16)(cgf_rd32(g + 8) + cp - s);
+        }
+        return 0;
+    }
+    if (cp > 0xFFFF) return 0;
+    u32 seg = cgf_rd16(best + 6) / 2;
+    const u8 *ends = best + 14, *starts = ends + seg * 2 + 2, *deltas = starts + seg * 2, *ranges = deltas + seg * 2;
+    if (ranges + seg * 2 > t + l) return 0;
+    for (u32 i = 0; i < seg; i++) {
+        u32 e = cgf_rd16(ends + i * 2), s = cgf_rd16(starts + i * 2);
+        if (cp > e) continue;
+        if (cp < s) return 0;
+        u32 d = cgf_rd16(deltas + i * 2), r = cgf_rd16(ranges + i * 2);
+        if (!r) return (u16)(cp + d);
+        const u8 *gp = ranges + i * 2 + r + (cp - s) * 2;
+        if (gp + 2 > t + l) return 0;
+        u32 gv = cgf_rd16(gp);
+        return gv ? (u16)(gv + d) : 0;
+    }
+    return 0;
+}
+/* tags das tabelas, na ordem do diretório */
+id CGFontCopyTableTags(void *font) {
+    cgf_t *g = cgf_of(font);
+    if (!g || g->n < 12) return 0;
+    const u8 *b = g->b;
+    long base = 0;
+    if (cgf_rd32(b) == 0x74746366u && g->n >= 16) base = cgf_rd32(b + 12);     /* 'ttcf': a primeira fonte */
+    if (base + 12 > g->n) return 0;
+    u32 nt = cgf_rd16(b + base + 4);
+    id arr = MSG0(id, cls("NSMutableArray"), "array");
+    for (u32 i = 0; i < nt && base + 12 + (long)i * 16 + 16 <= g->n; i++) MSG(void, arr, "addObject:", cx_num_i((i64)cgf_rd32(b + base + 12 + i * 16)));
+    return objc_retain(arr);
+}
+id CGFontCopyFullName(void *font) {
+    long l;
+    char nm[160];
+    const u8 *t = cgf_tab(font, 0x6E616D65u, &l);
+    if (!t) return font && !cgf_of(font) ? CTFontCopyFullName((id)font) : 0;
+    name_entry(t, l, 4, nm, (int)sizeof nm);
+    return nm[0] ? objc_retain(cx_str(nm)) : 0;
+}
+u64 CGFontGetTypeID(void) { return 0x2AC; }
+/* fvar: um dicionário por eixo (nome, mínimo, máximo, padrão), como kCGFontVariationAxis* */
+CTCONST(kCGFontVariationAxisName, "kCGFontVariationAxisName")
+CTCONST(kCGFontVariationAxisMinValue, "kCGFontVariationAxisMinValue")
+CTCONST(kCGFontVariationAxisMaxValue, "kCGFontVariationAxisMaxValue")
+CTCONST(kCGFontVariationAxisDefaultValue, "kCGFontVariationAxisDefaultValue")
+static void cgf_tagstr(u32 tag, char *s) { s[0] = (char)(tag >> 24); s[1] = (char)(tag >> 16); s[2] = (char)(tag >> 8); s[3] = (char)tag; s[4] = 0; }
+id CGFontCopyVariationAxes(void *font) {
+    long l, ln;
+    const u8 *t = cgf_tab(font, 0x66766172u, &l), *nt = cgf_tab(font, 0x6E616D65u, &ln);
+    if (!t || l < 16) return 0;
+    u32 off = cgf_rd16(t + 4), cnt = cgf_rd16(t + 8), sz = cgf_rd16(t + 10);
+    id arr = MSG0(id, cls("NSMutableArray"), "array");
+    for (u32 i = 0; i < cnt && (long)off + (long)(i + 1) * sz <= l; i++) {
+        const u8 *a = t + off + i * sz;
+        char name[64];
+        name[0] = 0;
+        if (nt) name_entry(nt, ln, (int)cgf_rd16(a + 18), name, (int)sizeof name);
+        if (!name[0]) cgf_tagstr(cgf_rd32(a), name);
+        id d = MSG0(id, cls("NSMutableDictionary"), "dictionary");
+        MSG(void, d, "setObject:forKey:", cx_str(name), (id)kCGFontVariationAxisName);
+        MSG(void, d, "setObject:forKey:", cx_num_d((int)cgf_rd32(a + 4) / 65536.0), (id)kCGFontVariationAxisMinValue);
+        MSG(void, d, "setObject:forKey:", cx_num_d((int)cgf_rd32(a + 8) / 65536.0), (id)kCGFontVariationAxisDefaultValue);
+        MSG(void, d, "setObject:forKey:", cx_num_d((int)cgf_rd32(a + 12) / 65536.0), (id)kCGFontVariationAxisMaxValue);
+        MSG(void, arr, "addObject:", d);
+    }
+    return objc_retain(arr);
+}
+/* variações em vigor: nome do eixo → valor (sem instância aplicada, os padrões) */
+id CGFontCopyVariations(void *font) {
+    id axes = CGFontCopyVariationAxes(font);
+    if (!axes) return 0;
+    id d = MSG0(id, cls("NSMutableDictionary"), "dictionary");
+    long n = MSG0(long, axes, "count");
+    for (long i = 0; i < n; i++) {
+        id a = MSG(id, axes, "objectAtIndex:", i);
+        id v = MSG(id, a, "objectForKey:", (id)kCGFontVariationAxisDefaultValue), k = MSG(id, a, "objectForKey:", (id)kCGFontVariationAxisName);
+        if (v && k) MSG(void, d, "setObject:forKey:", v, k);
+    }
+    objc_release(axes);
+    return objc_retain(d);
+}
+/* cópia com variações: os mesmos bytes (o rasterizador do kernel desenha a instância padrão) */
+void *CGFontCreateCopyWithVariations(void *font, id variations) {
+    cgf_t *g = cgf_of(font);
+    (void)variations;
+    if (!g) return font ? (void *)objc_retain((id)font) : 0;
+    return cgfont_from_bytes(g->b, g->n, g->fid);
+}
+/* subconjunto PostScript (Type 1/Type 3) não é gerado: o CGPDFContext embute a fonte inteira (FontFile2/3) */
+_Bool CGFontCanCreatePostScriptSubset(void *font, int format) { (void)font; (void)format; return 0; }

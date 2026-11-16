@@ -34,9 +34,9 @@ Cada passo fecha com teste de host em `tools/` e PR mergeado na `main`.
 2. ✅ **WebP** (leitura; o ImageIO da Apple também não grava WebP). Ver "Passo 2" abaixo.
 3. **HEIC/HEIF/AVIF** (contêiner ISOBMFF, grade de tiles, alfa auxiliar, EXIF; HEVC intra e AV1
    intra para os quadros). Combinar com a Isabela (VideoToolbox HEVC) para não haver dois decodificadores.
-4. **CGImage completo**: 1/2/4/8/16 bits, float, cinza, cinza+alfa, CMYK, `decode`, máscara
+4. ✅ **CGImage completo** (passo 3 abaixo): 1/2/4/8/16 bits, float, cinza, cinza+alfa, CMYK, `decode`, máscara
    (`CGImageMaskCreate`, `CGImageCreateWithMask`, `CGImageCreateWithMaskingColors`), sem teto de 32 MiB.
-5. **CGContext completo**: sombra desenhada (blur gaussiano), os 28 blend modes, interpolação
+5. ✅ **CGContext completo** (passo 3 abaixo): sombra desenhada (blur gaussiano), os 28 blend modes, interpolação
    na `CGContextDrawImage` com transformação, `CGBitmapContextGetColorSpace`, contextos 16 bits/float,
    `CGContextDrawTiledImage`, `CGContextClipToMask`, glifos e modos de texto.
 6. **ColorSync e espaços de cor**: perfis ICC (leitura, `CGColorSpaceCreateWithICCData`,
@@ -110,3 +110,47 @@ HEIC/AVIF são o passo 3.
 - Teste: `tools/imageio_host.py` ganhou 5 casos contra o PIL (libwebp): sem perda RGBA e RGB pixel a pixel,
   com perda e com alfa erro médio ≤ 2, animado de 3 quadros pixel a pixel com loop 4 (46 casos no total).
   `tools/imageio_cf_host.c`: 35 verificações (8 tipos de leitura).
+
+### Passo 3 — CGContext, CGImage e CGFont completos (PR de 15 nov. 2026)
+
+Régua: a lista da API pública C de CoreGraphics/Core Text/ImageIO/ColorSync (711 funções). Antes deste passo
+318 não existiam no libSystem; depois, 238 — nenhuma de CGContext, CGImage, CGBitmapContext, CGDataProvider,
+CGFunction, CGShading, CGLayer ou CGFont. As que sobram são de ColorSync/ICC, PDF, Core Text, CGPath booleanas e
+CGImageMetadata (passos seguintes).
+
+- **Blend modes**: os 28 de `CGBlendMode`, com a numeração da Apple (`cg_blend.h`). Antes 1 era tratado como
+  Copy (na Apple é Multiply), 2 como Multiply e 3 como Screen; o resto caía em Normal.
+- **Formatos** (`cg_pixel.inc`): `CGImageCreate` aceita 1/2/4/5/8/16 bits e float 32, cinza/RGB/CMYK/indexado,
+  todas as combinações de alfa, ordem 16/32 little/big e `decode`. `CGBitmapContextCreate` aceita só-alfa, cinza 8
+  e 16, cinza+alfa, RGB 32 bpp nas 8 combinações, RGB 555, RGBA 16 bpc, RGBA float e CMYK 8. Antes: só 8 bits
+  RGBA/A8, a ordem de bytes era ignorada (PremultipliedFirst sem `32Little` saía BGRA) e contexto cinza voltava NULL.
+  O CoreImage (`CoreImage.m`) e o UIKit (`UIKitAnimation.m`) passavam `info` sem `kCGBitmapByteOrder32Little`
+  contando com o erro; as duas linhas ganharam `| 0x2000`, que é o layout que gravam.
+- **Sombra desenhada**: a operação vai para um buffer, a sombra (alfa borrado por 3 caixas ≈ gaussiana de sigma
+  blur/2, deslocada no espaço base) e depois o conteúdo são compostos. Vale para path, retângulo, imagem, gradiente,
+  shading, glifo e camada de transparência (que agora é sempre ARGB pré-multiplicado, também em contexto sem alfa).
+- **Máscaras**: `CGContextClipToMask` (image mask ou imagem cinza), `CGImageMaskCreate`, `CGImageCreateWithMask`,
+  `CGImageCreateWithMaskingColors`; `CGContextClipToRects`.
+- **Imagem**: interpolação bilinear (salvo `kCGInterpolationNone` ou `shouldInterpolate` falso),
+  `CGContextDrawTiledImage` limitado ao recorte, `CGImageCreateWithPNG/JPEGDataProvider`,
+  `CGImageCreateCopyWithColorSpace`, `IsMask`, `GetDecode`, `GetShouldInterpolate`, `GetByteOrderInfo`,
+  `GetPixelFormatInfo`, `GetUTType` (posto pelo ImageIO).
+- **Path e cor**: `AddLines`, `AddRects`, `AddArcToPoint`, `IsPathEmpty`, `GetPathCurrentPoint`,
+  `GetPathBoundingBox`, `PathContainsPoint`, `EOFillPath` (antes preenchia com a regra não nula), `DrawPathDirect`,
+  `SetFillColor`/`SetStrokeColor` pelo espaço de cor, `SetStrokeColorSpace`, CMYK, `SetStrokePattern`,
+  conversões de ponto e retângulo para o dispositivo e de volta.
+- **Texto no CGContext**: `SetFont`, `SetFontSize`, `SetCharacterSpacing`, `SetTextPosition/GetTextPosition`,
+  `ShowGlyphs`, `ShowGlyphsAtPoint`, `ShowGlyphsAtPositions`, `ShowGlyphsWithAdvances`, `SelectFont`, `ShowText`,
+  `ShowTextAtPoint` (MacRoman) e os 8 modos de `SetTextDrawingMode` (traço e recorte pelos contornos dos glifos).
+- **Shading**: `CGFunctionCreate`, `CGShadingCreateAxial/Radial`, `CGContextDrawShading`, `CGContextDrawConicGradient`.
+- **DataProvider**: `CreateWithFilename`, `CreateSequential`, `CreateDirect`, `GetInfo`, `GetTypeID`.
+- **CGFont**: `GetUnitsPerEm`, `Ascent/Descent/Leading`, `CapHeight/XHeight`, `FontBBox`, `ItalicAngle`, `StemV`
+  (estimado pelo peso), `GetGlyphAdvances`, `GetGlyphBBoxes` (glyf/loca; CFF pelo contorno), `CopyTableTags`,
+  `CopyFullName`, `CopyVariationAxes`, `CopyVariations`, `CreateCopyWithVariations`, `CanCreatePostScriptSubset`.
+
+Teste: `tools/cg_context_test.c` passou de 26 para 58 verificações (blend modes, ordem de bytes, cinza/16 bits/
+float, sombra dura e borrada, ClipToMask, image mask, 1 bit, ClipToRects, consultas ao path, shading, texto e modo
+invisível), todas ok. Limites: `CGFontCreateCopyWithVariations` devolve os mesmos contornos (o rasterizador do
+kernel desenha a instância padrão); `CGFontCanCreatePostScriptSubset` responde não; as métricas de CGFont não
+têm teste de host (o harness do Core Text precisa de runtime ObjC completo); a intenção de renderização não muda
+pixel (o mOS desenha em sRGB até o passo de ColorSync).
