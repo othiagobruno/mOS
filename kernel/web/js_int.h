@@ -237,6 +237,7 @@ typedef struct jsrealm {
     jsobj *p_abuf, *p_dview, *p_typed, *p_ta[11];   /* ArrayBuffer, DataView, %TypedArray% e um por tipo */
     /* Canvas 2D (canvas_js.c) e DOMException */
     jsobj *p_img;             /* HTMLImageElement.prototype (= Image.prototype) */
+    jsobj *p_mutobs, *p_mutrec, *p_resizeobs, *p_interobs, *p_domrect;   /* web_obs.c */
     jsobj *p_msgport, *p_msgchannel, *p_msgevent, *p_cryptokey;   /* web_plat.c, web_crypto.c */
     jsobj *p_headers, *p_formdata, *p_request, *p_abortsig, *p_abortctl, *p_xhrup;   /* web_fetch.c */
     jsobj *p_blob, *p_file, *p_freader, *p_progress, *p_url, *p_usp, *p_imgbitmap;   /* web_blob.c, web_url.c */
@@ -526,6 +527,7 @@ int    js_iter_step(jsv it, jsv *out);            /* 1 valor, 0 fim, -1 exceçã
 jsobj *js_promise_new(void);
 void   js_promise_resolve(jsobj *p, jsv v);
 void   js_promise_reject(jsobj *p, jsv v);
+enum { JOB_CALL, JOB_REACTION, JOB_THENABLE };   /* tipos de microtarefa */
 void   js_enqueue_job(jsv fn, jsv arg0, jsv arg1, int kind);
 bool   js_run_jobs(void);                         /* microtarefas; true se executou alguma */
 jsv    js_json_stringify(jsv v, jsv replacer, jsv space);
@@ -592,6 +594,15 @@ jsv    js_dom_parse_document(const char *url, jsstr *src, const char *mime);
 void   js_plat_init(jsrealm *r);
 jsobj *js_subtle_init(jsrealm *r);
 jsv    js_structured_clone(jsv v);
+/* observadores (web_obs.c) e geometria para eles (js_dom.c) */
+void   js_obs_init(jsrealm *r);
+void   web_obs_tick(struct js_page *p);
+void   js_mo_batch(int delta);
+void   js_mo_child(node_t *par, node_t *added, node_t *removed, node_t *prev, node_t *next);
+void   js_mo_attr(node_t *n, const char *name, const char *old);
+void   js_mo_data(node_t *n, const char *old);
+bool   js_node_geom(struct js_page *p, node_t *n, float g[10]);  /* borda x,y,w,h, conteúdo x,y,w,h (documento), padding esq./cima */
+void   js_page_viewport_rect(struct js_page *p, int *x, int *y, int *w, int *h);
 void   js_mark_page(struct js_page *p);
 extern void (*js_host_finalize_hook)(jsobj *o);
 extern int  (*js_host_delete_hook)(jsobj *o, jsstr *k);

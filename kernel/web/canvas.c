@@ -628,12 +628,42 @@ static void composite(canvas2d_t *c, const layer_t *L, int op, float alpha) {
 
 static bool shadow_on(const cstate_t *st) { return (st->shcolor >> 24) && (st->shblur > 0 || st->shx != 0 || st->shy != 0); }
 
-/* margem além do canvas que a sombra pode trazer para dentro */
-static void shadow_margin(const cstate_t *st, int *mx, int *my) {
-    if (!shadow_on(st)) { *mx = *my = 0; return; }
-    int r = (int)fceil(st->shblur * 1.5f) + 2;
-    *mx = (int)fceil(fabs_(st->shx)) + r;
-    *my = (int)fceil(fabs_(st->shy)) + r;
+/* caixas da gaussiana do desfoque da sombra (σ = shadowBlur/2, limitado a 128: além disso o resultado já é liso) */
+static int blur_boxes(const cstate_t *st, int boxes[3]) {
+    boxes[0] = boxes[1] = boxes[2] = 0;
+    float sigma = st->shblur / 2;
+    if (sigma > 128) sigma = 128;
+    if (!(sigma > 0)) return 0;
+    float wi = sqrtf_(12 * sigma * sigma / 3 + 1);
+    int wl = (int)ffloor(wi);
+    if (!(wl & 1)) wl--;
+    int wu = wl + 2;
+    float mi = (12 * sigma * sigma - 3 * wl * wl - 12 * wl - 9) / (-4.0f * wl - 4);
+    int m = (int)(mi + (mi >= 0 ? 0.5f : -0.5f));
+    int pad = 0;
+    for (int i = 0; i < 3; i++) { boxes[i] = ((i < m ? wl : wu) - 1) / 2; pad += boxes[i]; }
+    return pad;
+}
+
+/* deslocamento da sombra em pixels inteiros, limitado (além do canvas ela some de qualquer jeito) */
+static void shadow_offset(const canvas2d_t *c, int *dx, int *dy) {
+    float lim = (float)(c->w + c->h + 1024);
+    float x = clampf(c->st.shx, -lim, lim), y = clampf(c->st.shy, -lim, lim);
+    *dx = (int)ffloor(x + 0.5f);
+    *dy = (int)ffloor(y + 0.5f);
+}
+
+/* passadas de desenho: [sombra] e forma. A sombra rasteriza a forma onde ela, deslocada, cai no canvas */
+typedef struct { int x0, y0, x1, y1; bool shadow; } pass_t;
+static int draw_passes(const canvas2d_t *c, pass_t out[2]) {
+    int n = 0;
+    if (shadow_on(&c->st)) {
+        int boxes[3], pad = blur_boxes(&c->st, boxes), dx, dy;
+        shadow_offset(c, &dx, &dy);
+        out[n++] = (pass_t){ -dx - pad, -dy - pad, c->w - dx + pad, c->h - dy + pad, true };
+    }
+    out[n++] = (pass_t){ 0, 0, c->w, c->h, false };
+    return n;
 }
 
 static void box_blur(u8 *a, u8 *tmp, int w, int h, int r, bool horiz) {
@@ -655,41 +685,30 @@ static void box_blur(u8 *a, u8 *tmp, int w, int h, int r, bool horiz) {
     memcpy(a, tmp, (usize)w * h);
 }
 
-static void draw_layer(canvas2d_t *c, layer_t *L) {
+/* desenha a camada como sombra (desfocada, colorida e deslocada) ou como a forma */
+static void draw_layer(canvas2d_t *c, layer_t *L, bool shadow) {
     cstate_t *st = &c->st;
-    if (shadow_on(st) && L->w > 0 && L->h > 0) {
-        float sigma = st->shblur / 2;
-        int boxes[3] = { 0, 0, 0 };
-        int pad = 0;
-        if (sigma > 0) {
-            /* três caixas que aproximam a gaussiana */
-            float wi = sqrtf_(12 * sigma * sigma / 3 + 1);
-            int wl = (int)ffloor(wi);
-            if (!(wl & 1)) wl--;
-            int wu = wl + 2;
-            float mi = (12 * sigma * sigma - 3 * wl * wl - 12 * wl - 9) / (-4.0f * wl - 4);
-            int m = (int)(mi + (mi >= 0 ? 0.5f : -0.5f));
-            for (int i = 0; i < 3; i++) { boxes[i] = ((i < m ? wl : wu) - 1) / 2; pad += boxes[i]; }
-        }
-        int sw = L->w + 2 * pad, sh = L->h + 2 * pad;
-        u8 *a = kcalloc((usize)sw * sh, 1), *tmp = kmalloc((usize)sw * sh);
-        u32 *spx = kmalloc((usize)sw * sh * 4);
-        if (a && tmp && spx) {
-            for (int y = 0; y < L->h; y++)
-                for (int x = 0; x < L->w; x++) a[(usize)(y + pad) * sw + x + pad] = (u8)(L->px[(usize)y * L->w + x] >> 24);
-            for (int i = 0; i < 3; i++) if (boxes[i] > 0) { box_blur(a, tmp, sw, sh, boxes[i], true); box_blur(a, tmp, sw, sh, boxes[i], false); }
-            u32 col = premul(st->shcolor, 1.0f);
-            for (usize i = 0; i < (usize)sw * sh; i++) spx[i] = mul_px(col, a[i]);
-            layer_t S = { L->x - pad + (int)ffloor(st->shx + 0.5f), L->y - pad + (int)ffloor(st->shy + 0.5f), sw, sh, spx };
-            composite(c, &S, st->op, st->alpha);
-        }
-        kfree(a); kfree(tmp); kfree(spx);
+    if (!shadow) { composite(c, L, st->op, st->alpha); return; }
+    if (L->w <= 0 || L->h <= 0) return;
+    int boxes[3], pad = blur_boxes(st, boxes), dx, dy;
+    shadow_offset(c, &dx, &dy);
+    int sw = L->w + 2 * pad, sh = L->h + 2 * pad;
+    u8 *a = kcalloc((usize)sw * sh, 1), *tmp = kmalloc((usize)sw * sh);
+    u32 *spx = kmalloc((usize)sw * sh * 4);
+    if (a && tmp && spx) {
+        for (int y = 0; y < L->h; y++)
+            for (int x = 0; x < L->w; x++) a[(usize)(y + pad) * sw + x + pad] = (u8)(L->px[(usize)y * L->w + x] >> 24);
+        for (int i = 0; i < 3; i++) if (boxes[i] > 0) { box_blur(a, tmp, sw, sh, boxes[i], true); box_blur(a, tmp, sw, sh, boxes[i], false); }
+        u32 col = premul(st->shcolor, 1.0f);
+        for (usize i = 0; i < (usize)sw * sh; i++) spx[i] = mul_px(col, a[i]);
+        layer_t S = { L->x - pad + dx, L->y - pad + dy, sw, sh, spx };
+        composite(c, &S, st->op, st->alpha);
     }
-    composite(c, L, st->op, st->alpha);
+    kfree(a); kfree(tmp); kfree(spx);
 }
 
 /* máscara de cobertura → camada pintada */
-static void paint_mask(canvas2d_t *c, const mask_t *M, const psrc_t *P) {
+static void paint_mask(canvas2d_t *c, const mask_t *M, const psrc_t *P, bool shadow) {
     if (!M->a) return;
     layer_t L = { M->x, M->y, M->w, M->h, kmalloc((usize)M->w * M->h * 4) };
     if (!L.px) return;
@@ -701,26 +720,30 @@ static void paint_mask(canvas2d_t *c, const mask_t *M, const psrc_t *P) {
             lr[x] = m ? mul_px(psrc_at(P, M->x + x + 0.5f, M->y + y + 0.5f), m) : 0;
         }
     }
-    draw_layer(c, &L);
+    draw_layer(c, &L, shadow);
     kfree(L.px);
 }
 
-static mask_t path_mask(canvas2d_t *c, const path_t *p, const mat_t *m, bool evenodd, bool for_paint) {
+/* cobertura do caminho numa região (padrão: o canvas) */
+static mask_t path_mask_in(const path_t *p, const mat_t *m, bool evenodd, int x0, int y0, int x1, int y1) {
     edges_t E = { 0 };
     rs_edges_from_path(&E, p, m);
-    int mx = 0, my = 0;
-    if (for_paint) shadow_margin(&c->st, &mx, &my);
-    mask_t M = rs_rasterize(&E, evenodd, -mx, -my, c->w + mx, c->h + my);
+    mask_t M = rs_rasterize(&E, evenodd, x0, y0, x1, y1);
     if (E.e) kfree(E.e);
     return M;
 }
+static mask_t path_mask(canvas2d_t *c, const path_t *p, const mat_t *m, bool evenodd) { return path_mask_in(p, m, evenodd, 0, 0, c->w, c->h); }
 
 static void fill_dev(canvas2d_t *c, const path_t *p, const mat_t *m, bool evenodd, const cpaint_t *paint) {
     psrc_t P;
     if (!psrc_make(c, paint, &P)) return;
-    mask_t M = path_mask(c, p, m, evenodd, true);
-    paint_mask(c, &M, &P);
-    if (M.a) kfree(M.a);
+    pass_t ps[2];
+    int np = draw_passes(c, ps);
+    for (int i = 0; i < np; i++) {
+        mask_t M = path_mask_in(p, m, evenodd, ps[i].x0, ps[i].y0, ps[i].x1, ps[i].y1);
+        paint_mask(c, &M, &P, ps[i].shadow);
+        if (M.a) kfree(M.a);
+    }
 }
 
 /* ================================================================ fill, stroke, clip */
@@ -770,7 +793,7 @@ void canvas_clip(canvas2d_t *c, const pcmd_t *pc, const mat_t *pm, bool evenodd)
     if (!c->s) return;
     path_t p;
     pc_build(pc, pm, 0.2f, false, &p);
-    mask_t M = path_mask(c, &p, &MID, evenodd, false);
+    mask_t M = path_mask(c, &p, &MID, evenodd);
     rs_path_free(&p);
     usize n = (usize)c->w * c->h;
     u8 *nc = kcalloc(n, 1);
@@ -799,7 +822,7 @@ void canvas_clear_rect(canvas2d_t *c, float x, float y, float w, float h) {
     path_t p;
     pc_build(&pc, &MID, 0.2f, false, &p);
     pc_free(&pc);
-    mask_t M = path_mask(c, &p, &MID, false, false);
+    mask_t M = path_mask(c, &p, &MID, false);
     rs_path_free(&p);
     if (!M.a) return;
     u32 keep = c->opaque ? 0xFF000000u : 0;
@@ -875,9 +898,6 @@ void canvas_draw_image(canvas2d_t *c, const u32 *px, int iw, int ih, int stride,
     path_t p;
     pc_build(&pc, &MID, 0.2f, false, &p);
     pc_free(&pc);
-    mask_t M = path_mask(c, &p, &MID, false, true);
-    rs_path_free(&p);
-    if (!M.a) return;
     /* redução forte com suavização: filtro de área antes da amostragem bilinear */
     surface_t *tmp = NULL;
     float sc = mscale(&c->st.m);
@@ -895,37 +915,44 @@ void canvas_draw_image(canvas2d_t *c, const u32 *px, int iw, int ih, int stride,
     int lx = (int)ffloor(sx), ly = (int)ffloor(sy), hx = MIN(iw - 1, (int)fceil(sx + sw) - 1), hy = MIN(ih - 1, (int)fceil(sy + sh) - 1);
     if (lx < 0) lx = 0;
     if (ly < 0) ly = 0;
-    layer_t L = { M.x, M.y, M.w, M.h, kmalloc((usize)M.w * M.h * 4) };
-    if (L.px) {
-        float rx = sw / dw, ry = sh / dh;
-        for (int y = 0; y < M.h; y++)
-            for (int x = 0; x < M.w; x++) {
-                u32 m = M.a[(usize)y * M.w + x];
-                u32 *o = &L.px[(usize)y * M.w + x];
-                if (!m) { *o = 0; continue; }
-                float ux, uy;
-                mapp(&inv, M.x + x + 0.5f, M.y + y + 0.5f, &ux, &uy);
-                float u = sx + (ux - dx) * rx, v = sy + (uy - dy) * ry;
-                u32 col;
-                if (!c->st.smooth) {
-                    int ix = (int)ffloor(u), iy = (int)ffloor(v);
-                    ix = ix < lx ? lx : ix > hx ? hx : ix;
-                    iy = iy < ly ? ly : iy > hy ? hy : iy;
-                    col = px[(usize)iy * stride + ix];
-                } else {
-                    u -= 0.5f; v -= 0.5f;
-                    int ix = (int)ffloor(u), iy = (int)ffloor(v);
-                    u32 fx = (u32)clampf((u - ix) * 256, 0, 256), fy = (u32)clampf((v - iy) * 256, 0, 256);
-                    int x0 = ix < lx ? lx : ix > hx ? hx : ix, x1 = ix + 1 < lx ? lx : ix + 1 > hx ? hx : ix + 1;
-                    int y0 = iy < ly ? ly : iy > hy ? hy : iy, y1 = iy + 1 < ly ? ly : iy + 1 > hy ? hy : iy + 1;
-                    col = bilerp(px[(usize)y0 * stride + x0], px[(usize)y0 * stride + x1], px[(usize)y1 * stride + x0], px[(usize)y1 * stride + x1], fx, fy);
+    float rx = sw / dw, ry = sh / dh;
+    pass_t ps[2];
+    int np = draw_passes(c, ps);
+    for (int pi = 0; pi < np; pi++) {
+        mask_t M = path_mask_in(&p, &MID, false, ps[pi].x0, ps[pi].y0, ps[pi].x1, ps[pi].y1);
+        if (!M.a) continue;
+        layer_t L = { M.x, M.y, M.w, M.h, kmalloc((usize)M.w * M.h * 4) };
+        if (L.px) {
+            for (int y = 0; y < M.h; y++)
+                for (int x = 0; x < M.w; x++) {
+                    u32 m = M.a[(usize)y * M.w + x];
+                    u32 *o = &L.px[(usize)y * M.w + x];
+                    if (!m) { *o = 0; continue; }
+                    float ux, uy;
+                    mapp(&inv, M.x + x + 0.5f, M.y + y + 0.5f, &ux, &uy);
+                    float u = sx + (ux - dx) * rx, v = sy + (uy - dy) * ry;
+                    u32 col;
+                    if (!c->st.smooth) {
+                        int ix = (int)ffloor(u), iy = (int)ffloor(v);
+                        ix = ix < lx ? lx : ix > hx ? hx : ix;
+                        iy = iy < ly ? ly : iy > hy ? hy : iy;
+                        col = px[(usize)iy * stride + ix];
+                    } else {
+                        u -= 0.5f; v -= 0.5f;
+                        int ix = (int)ffloor(u), iy = (int)ffloor(v);
+                        u32 fx = (u32)clampf((u - ix) * 256, 0, 256), fy = (u32)clampf((v - iy) * 256, 0, 256);
+                        int x0 = ix < lx ? lx : ix > hx ? hx : ix, x1 = ix + 1 < lx ? lx : ix + 1 > hx ? hx : ix + 1;
+                        int y0 = iy < ly ? ly : iy > hy ? hy : iy, y1 = iy + 1 < ly ? ly : iy + 1 > hy ? hy : iy + 1;
+                        col = bilerp(px[(usize)y0 * stride + x0], px[(usize)y0 * stride + x1], px[(usize)y1 * stride + x0], px[(usize)y1 * stride + x1], fx, fy);
+                    }
+                    *o = mul_px(col, m);
                 }
-                *o = mul_px(col, m);
-            }
-        draw_layer(c, &L);
-        kfree(L.px);
+            draw_layer(c, &L, ps[pi].shadow);
+            kfree(L.px);
+        }
+        kfree(M.a);
     }
-    kfree(M.a);
+    rs_path_free(&p);
     surface_free(tmp);
 }
 
@@ -1088,36 +1115,36 @@ void canvas_text(canvas2d_t *c, const char *s, int len, float x, float y, float 
     mapp(&t2d, 0, (float)B.h, &xs[2], &ys[2]); mapp(&t2d, (float)B.w, (float)B.h, &xs[3], &ys[3]);
     float minx = xs[0], maxx = xs[0], miny = ys[0], maxy = ys[0];
     for (int i = 1; i < 4; i++) { minx = MIN(minx, xs[i]); maxx = MAX(maxx, xs[i]); miny = MIN(miny, ys[i]); maxy = MAX(maxy, ys[i]); }
-    int mx, my;
-    shadow_margin(st, &mx, &my);
-    int X0 = MAX((int)ffloor(minx), -mx), Y0 = MAX((int)ffloor(miny), -my);
-    int X1 = MIN((int)fceil(maxx), c->w + mx), Y1 = MIN((int)fceil(maxy), c->h + my);
     psrc_t P;
-    if (X1 > X0 && Y1 > Y0 && psrc_make(c, stroke ? &st->stroke : &st->fill, &P)) {
+    pass_t ps[2];
+    int np = psrc_make(c, stroke ? &st->stroke : &st->fill, &P) ? draw_passes(c, ps) : 0;
+    for (int pi = 0; pi < np; pi++) {
+        int X0 = MAX((int)ffloor(minx), ps[pi].x0), Y0 = MAX((int)ffloor(miny), ps[pi].y0);
+        int X1 = MIN((int)fceil(maxx), ps[pi].x1), Y1 = MIN((int)fceil(maxy), ps[pi].y1);
+        if (X1 <= X0 || Y1 <= Y0) continue;
         layer_t L = { X0, Y0, X1 - X0, Y1 - Y0, kmalloc((usize)(X1 - X0) * (Y1 - Y0) * 4) };
-        if (L.px) {
-            for (int yy = 0; yy < L.h; yy++)
-                for (int xx = 0; xx < L.w; xx++) {
-                    float tx, ty;
-                    mapp(&d2t, X0 + xx + 0.5f, Y0 + yy + 0.5f, &tx, &ty);
-                    tx -= 0.5f; ty -= 0.5f;
-                    int ix = (int)ffloor(tx), iy = (int)ffloor(ty);
-                    u32 cov = 0;
-                    if (ix >= -1 && iy >= -1 && ix < B.w && iy < B.h) {
-                        float fx = tx - ix, fy = ty - iy;
-                        float a00 = (ix >= 0 && iy >= 0) ? B.a[(usize)iy * B.w + ix] : 0;
-                        float a10 = (ix + 1 < B.w && iy >= 0) ? B.a[(usize)iy * B.w + ix + 1] : 0;
-                        float a01 = (ix >= 0 && iy + 1 < B.h) ? B.a[(usize)(iy + 1) * B.w + ix] : 0;
-                        float a11 = (ix + 1 < B.w && iy + 1 < B.h) ? B.a[(usize)(iy + 1) * B.w + ix + 1] : 0;
-                        float v = (a00 * (1 - fx) + a10 * fx) * (1 - fy) + (a01 * (1 - fx) + a11 * fx) * fy;
-                        cov = (u32)(v + 0.5f);
-                        if (cov > 255) cov = 255;
-                    }
-                    L.px[(usize)yy * L.w + xx] = cov ? mul_px(psrc_at(&P, X0 + xx + 0.5f, Y0 + yy + 0.5f), cov) : 0;
+        if (!L.px) continue;
+        for (int yy = 0; yy < L.h; yy++)
+            for (int xx = 0; xx < L.w; xx++) {
+                float tx, ty;
+                mapp(&d2t, X0 + xx + 0.5f, Y0 + yy + 0.5f, &tx, &ty);
+                tx -= 0.5f; ty -= 0.5f;
+                int ix = (int)ffloor(tx), iy = (int)ffloor(ty);
+                u32 cov = 0;
+                if (ix >= -1 && iy >= -1 && ix < B.w && iy < B.h) {
+                    float fx = tx - ix, fy = ty - iy;
+                    float a00 = (ix >= 0 && iy >= 0) ? B.a[(usize)iy * B.w + ix] : 0;
+                    float a10 = (ix + 1 < B.w && iy >= 0) ? B.a[(usize)iy * B.w + ix + 1] : 0;
+                    float a01 = (ix >= 0 && iy + 1 < B.h) ? B.a[(usize)(iy + 1) * B.w + ix] : 0;
+                    float a11 = (ix + 1 < B.w && iy + 1 < B.h) ? B.a[(usize)(iy + 1) * B.w + ix + 1] : 0;
+                    float v = (a00 * (1 - fx) + a10 * fx) * (1 - fy) + (a01 * (1 - fx) + a11 * fx) * fy;
+                    cov = (u32)(v + 0.5f);
+                    if (cov > 255) cov = 255;
                 }
-            draw_layer(c, &L);
-            kfree(L.px);
-        }
+                L.px[(usize)yy * L.w + xx] = cov ? mul_px(psrc_at(&P, X0 + xx + 0.5f, Y0 + yy + 0.5f), cov) : 0;
+            }
+        draw_layer(c, &L, ps[pi].shadow);
+        kfree(L.px);
     }
     kfree(B.a);
 }
