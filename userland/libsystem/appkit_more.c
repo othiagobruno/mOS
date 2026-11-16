@@ -1662,3 +1662,44 @@ void cx_appkit_more_init(void) {
     PROP(k, "isEnabled", "setEnabled:", spEnabled); ADD(k, "enabled", g_spEnabled); ADD(k, "_cxActivate:", sp_activate);
     (void)font_size;
 }
+
+/* ================================================================ overlay Swift do AppKit (funções) */
+/* convenção Swift: CGRect/CGPoint/CGSize vão em registradores de ponto flutuante; o self de uma struct carregável vai
+ * por último nos registradores inteiros; o contexto de um closure e o self de uma classe vão em swiftself (r13/x20). */
+void NSRectClip(R r);
+void NSShowAnimationEffect(u64 effect, P center, S size, id delegate, SEL did_end, void *ctx);
+void ak_rect_clip(double x, double y, double w, double h) __asm__("$sSo6CGRectV6AppKitE4clipyyF");
+void ak_rect_clip(double x, double y, double w, double h) { NSRectClip((R){x, y, w, h}); }
+/* NSEvent.SpecialKey é RawRepresentable sobre Int: os getters estáticos devolvem o valor bruto */
+long ak_special_up(void) __asm__("$sSo7NSEventC6AppKitE10SpecialKeyV7upArrowAEvgZ");
+long ak_special_up(void) { return 0xF700; }
+long ak_special_down(void) __asm__("$sSo7NSEventC6AppKitE10SpecialKeyV9downArrowAEvgZ");
+long ak_special_down(void) { return 0xF701; }
+/* NSEvent.specialKey: Optional<SpecialKey> volta em (valor, marca de nil) */
+typedef struct { long value; unsigned char none; } ak_opt_key;
+static int is_special_key(unsigned c) {
+    return (c >= 0xF700 && c <= 0xF8FF) || c == 3 || c == 8 || c == 9 || c == 10 || c == 12 || c == 13 || c == 25 || c == 127 ||
+           c == 0x2028 || c == 0x2029;
+}
+__attribute__((swiftcall)) ak_opt_key ak_event_special(__attribute__((swift_context)) void *ev) __asm__("$sSo7NSEventC6AppKitE10specialKeyAbCE07SpecialE0VSgvg");
+__attribute__((swiftcall)) ak_opt_key ak_event_special(__attribute__((swift_context)) void *ev) {
+    ak_opt_key r = {0, 1};
+    id e = (id)ev;
+    if (!e) return r;
+    u64 t = MSG0(u64, e, "type");
+    if (t != 10 && t != 11) return r;                     /* só keyDown/keyUp */
+    id ch = MSG0(id, e, "charactersIgnoringModifiers");
+    if (!ch || !MSG0(u64, ch, "length")) return r;
+    unsigned c = MSG(unsigned short, ch, "characterAtIndex:", (u64)0);
+    if (!is_special_key(c)) return r;
+    r.value = (long)c; r.none = 0;
+    return r;
+}
+/* NSAnimationEffect.show(centeredAt:size:completionHandler:): o efeito roda e depois o closure */
+typedef __attribute__((swiftcall)) void (*ak_closure_fn)(__attribute__((swift_context)) void *ctx);
+__attribute__((swiftcall)) void ak_effect_show(double px, double py, double w, double h, ak_closure_fn fn, void *ctx, u64 effect)
+    __asm__("$sSo17NSAnimationEffectV6AppKitE4show10centeredAt4size17completionHandlerySo7CGPointV_So6CGSizeVyyctF");
+__attribute__((swiftcall)) void ak_effect_show(double px, double py, double w, double h, ak_closure_fn fn, void *ctx, u64 effect) {
+    NSShowAnimationEffect(effect, (P){px, py}, (S){w, h}, (id)0, (SEL)0, (void *)0);
+    if (fn) fn(ctx);
+}
