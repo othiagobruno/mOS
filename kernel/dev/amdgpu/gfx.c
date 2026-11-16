@@ -471,7 +471,9 @@ bool amdgpu_gfx_init(amdgpu_t *a) {
     if (load_fw(a, "gpu_info", UC_KIND_GPU_INFO, &gi) && gi.gi_num_cu_per_sh && gi.gi_num_cu_per_sh <= 16) cu_per_sh = gi.gi_num_cu_per_sh;
 
     /* memória: anel (64 KiB), writeback (4 KiB) e um bloco com o CSB e o IB de teste */
-    u64 ring = amdgpu_vram_alloc(a, AMD_GFX_RING_BYTES), wb = amdgpu_vram_alloc(a, 4096), aux = amdgpu_vram_alloc(a, 64 * 1024);
+    bool again = a->gring_phys != 0;         /* volta do S3: anel, writeback e CSB continuam na VRAM */
+    u64 ring = again ? a->gring_phys : amdgpu_vram_alloc(a, AMD_GFX_RING_BYTES), wb = again ? a->gwb_phys : amdgpu_vram_alloc(a, 4096),
+        aux = again ? a->csb_phys : amdgpu_vram_alloc(a, 64 * 1024);
     if (!ring || !wb || !aux) {
         kprintf("amdgpu: sem VRAM para o anel do GFX\n");
         if (ring) amdgpu_vram_free(a, ring, AMD_GFX_RING_BYTES);
@@ -480,15 +482,18 @@ bool amdgpu_gfx_init(amdgpu_t *a) {
         return false;
     }
 #ifndef MOS_HOST_TEST
-    vmm_map_wc(a->fb_phys + (ring - a->bar0), AMD_GFX_RING_BYTES);
-    vmm_map_wc(a->fb_phys + (wb - a->bar0), 4096);
-    vmm_map_wc(a->fb_phys + (aux - a->bar0), 64 * 1024);
+    if (!again) {
+        vmm_map_wc(a->fb_phys + (ring - a->bar0), AMD_GFX_RING_BYTES);
+        vmm_map_wc(a->fb_phys + (wb - a->bar0), 4096);
+        vmm_map_wc(a->fb_phys + (aux - a->bar0), 64 * 1024);
+    }
 #endif
     a->gring_phys = ring; a->gring_cpu = amdgpu_vram_cpu(a, ring); a->gring_mc = amdgpu_vram_to_mc(a, ring);
     a->gring_dw = AMD_GFX_RING_BYTES / 4;
     a->gwb_phys = wb; a->gwb_cpu = amdgpu_vram_cpu(a, wb); a->gwb_mc = amdgpu_vram_to_mc(a, wb);
     memset((void *)a->gring_cpu, 0, AMD_GFX_RING_BYTES);
-    memset((void *)a->gwb_cpu, 0, 4096);
+    if (!again) memset((void *)a->gwb_cpu, 0, 4096);
+    else { a->gwb_cpu[0] = 0; a->gwb_cpu[4] = a->gfx_seq; }
     a->csb_phys = aux; a->csb_mc = amdgpu_vram_to_mc(a, aux);
     a->csb_dw = amdgpu_gfx_csb(amdgpu_vram_cpu(a, aux));
 
@@ -512,6 +517,7 @@ bool amdgpu_gfx_init(amdgpu_t *a) {
         amdgpu_vram_free(a, wb, 4096);
         amdgpu_vram_free(a, aux, 64 * 1024);
         a->gring_cpu = a->gwb_cpu = NULL;
+        a->gring_phys = a->gwb_phys = a->csb_phys = 0;
         kprintf("amdgpu: motor 3D desligado; tela e SDMA seguem\n");
         return false;
     }

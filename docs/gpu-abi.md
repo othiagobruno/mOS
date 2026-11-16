@@ -198,6 +198,11 @@ deslocamento 0x201. O BO de cada IB também precisa estar na lista de BOs do lot
 Uma falha de página da GPU no VMID do contexto o marca como perdido: os submits seguintes devolvem
 `-MOS_EIO`.
 
+Monitores (também da revisão 3, só com a GPU AMD): `MOS_GPU_DISPLAY_INFO` devolve o EDID lido ao vivo pela linha
+DDC do monitor `index` (0 = o primeiro que responde; `-MOS_ENOENT` depois do último) e a linha (`connector`, 1..6);
+`MOS_GPU_DISPLAY_BRIGHTNESS` lê o brilho por DDC/CI (VCP 0x10) e, com `MOS_GPU_DISPLAY_SET`, grava
+`brightness` (limitado a `brightness_max`) antes. Sem DDC/CI no monitor: `-MOS_ENOENT`/`-MOS_ENXIO`.
+
 ## O que esta revisão não fixa
 
 Codificação interna do virtio-gpu, endereços de registrador Intel ou AMD, e

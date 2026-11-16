@@ -50,12 +50,17 @@ static bool arm_msi(amdgpu_t *a) {
 /* ------------------------------------------------------------ anel */
 bool amdgpu_ih_init(amdgpu_t *a) {
     if (!a || !a->ready) return false;
+    /* na volta do S3 o anel e o writeback já existem (a RAM ficou em self-refresh): só os registradores somem */
+    bool again = a->ih_phys != 0;
+    u64 ring = a->ih_phys, wb = a->ih_wb_phys;
+    if (!again) {
 #ifdef MOS_HOST_TEST
-    u64 ring = amd_host_ram_alloc(AMD_IH_RING_BYTES);
-    u64 wb = amd_host_ram_page();
+        ring = amd_host_ram_alloc(AMD_IH_RING_BYTES);
+        wb = amd_host_ram_page();
 #else
-    u64 ring = pmm_alloc(AMD_IH_RING_BYTES / 4096), wb = pmm_alloc(1);
+        ring = pmm_alloc(AMD_IH_RING_BYTES / 4096); wb = pmm_alloc(1);
 #endif
+    }
     if (!ring || !wb) { kprintf("amdgpu: sem RAM para o anel do IH\n"); return false; }
     a->ih_phys = ring; a->ih_cpu = (volatile u32 *)(usize)ring; a->ih_dw = AMD_IH_RING_BYTES / 4;
     a->ih_wb_phys = wb; a->ih_wb = (volatile u32 *)(usize)wb;
@@ -74,7 +79,7 @@ bool amdgpu_ih_init(amdgpu_t *a) {
     u32 order = 0;
     while ((1u << order) < a->ih_dw) order++;
 #ifndef MOS_HOST_TEST
-    a->msi_on = arm_msi(a);
+    if (!again) a->msi_on = arm_msi(a);          /* o tratador já está no vetor; o pm.c restaura o espaço PCI */
 #else
     a->msi_on = true;
 #endif

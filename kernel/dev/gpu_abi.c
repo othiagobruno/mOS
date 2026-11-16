@@ -817,6 +817,44 @@ i64 gpu_syscall(process_t *p, u64 op, u64 user, u64 len, thread_t *self, int *bl
         }
         return -MOS_ENOENT;
     }
+    case MOS_GPU_DISPLAY_INFO:
+    case MOS_GPU_DISPLAY_BRIGHTNESS: {
+#ifndef MOS_GPU_HOST
+        static mos_gpu_display_t dsp;
+        int e = rd(p, &dsp, user, len, sizeof dsp);
+        if (e) return e;
+        amdgpu_t *a = amdgpu_main();
+        if (!a) return -MOS_ENOENT;
+        if (!a->ddc_mask) amdgpu_ddc_probe(a);
+        int line = -1;
+        for (u32 d = 0, k = 0; d < AMD_NUM_DDC; d++)
+            if (a->ddc_mask >> d & 1) { if (k == dsp.index) { line = (int)d; break; } k++; }
+        if (line < 0) return -MOS_ENOENT;
+        dsp.connector = (unsigned)line + 1;
+        if ((u32)op == MOS_GPU_DISPLAY_INFO) {
+            int n = amdgpu_ddc_read_edid(a, (u32)line, a->ddc_edid[line], sizeof a->ddc_edid[line]);   /* ao vivo */
+            if (n > 0) a->ddc_edid_len[line] = (u32)n;
+            dsp.edid_len = a->ddc_edid_len[line];
+            memcpy(dsp.edid, a->ddc_edid[line], dsp.edid_len);
+        } else {
+            u16 cur = 0, max = 0;
+            if (dsp.flags & MOS_GPU_DISPLAY_SET) {
+                e = amdgpu_ddcci_get_vcp(a, (u32)line, 0x10, &cur, &max);
+                if (e) return e;
+                if (dsp.brightness > max) dsp.brightness = max;
+                e = amdgpu_ddcci_set_vcp(a, (u32)line, 0x10, (u16)dsp.brightness);
+                if (e) return e;
+            }
+            e = amdgpu_ddcci_get_vcp(a, (u32)line, 0x10, &cur, &max);
+            if (e) return e;
+            dsp.brightness = cur;
+            dsp.brightness_max = max;
+        }
+        return wr(p, user, &dsp, sizeof dsp);
+#else
+        return -MOS_ENOENT;
+#endif
+    }
     case MOS_GPU_KMS_GET: {
         mos_gpu_kms_t in;
         int e = rd(p, &in, user, len, 4);

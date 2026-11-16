@@ -38,7 +38,9 @@ enum {
     MOS_GPU_IOSURF_EXPORT,     /* mos_gpu_iosurface_t   preenche token */
     MOS_GPU_IOSURF_DESTROY,    /* mos_gpu_iosurface_t   não libera o BO */
     MOS_GPU_KMS_GET,           /* mos_gpu_kms_t         modo atual */
-    MOS_GPU_KMS_SET            /* mos_gpu_kms_t         framebuffer + modo; sem 3D */
+    MOS_GPU_KMS_SET,           /* mos_gpu_kms_t         framebuffer + modo; sem 3D */
+    MOS_GPU_DISPLAY_INFO,      /* mos_gpu_display_t     revisão 3: EDID ao vivo do monitor index (0 = primeiro) */
+    MOS_GPU_DISPLAY_BRIGHTNESS /* mos_gpu_display_t     revisão 3: flags SET grava brightness; sempre devolve o atual */
 };
 
 /* mos_gpu_info_t.caps */
@@ -156,6 +158,19 @@ typedef struct {
  * sinaliza a fence. */
 /* revisão 3: lote AMD (cmd_bytes até MOS_GPU_AMD_BATCH_MAX). Depois do cabeçalho vêm nib mos_gpu_amd_ib_t e
  * nbo handles (u32) dos BOs que os IBs usam. */
+/* revisão 3: monitor ligado à GPU (DDC por hardware). brightness por DDC/CI (VCP 0x10); sem DDC/CI,
+ * DISPLAY_BRIGHTNESS devolve -MOS_ENOENT. */
+#define MOS_GPU_DISPLAY_SET 1u
+typedef struct {
+    unsigned index;            /* entrada: 0..n-1; -MOS_ENOENT depois do último */
+    unsigned flags;            /* MOS_GPU_DISPLAY_SET em DISPLAY_BRIGHTNESS */
+    unsigned edid_len;         /* bytes válidos em edid (múltiplo de 128) */
+    unsigned brightness;       /* atual (e o novo, com SET) */
+    unsigned brightness_max;
+    unsigned connector;        /* linha DDC (1..6) */
+    unsigned char edid[512];
+} mos_gpu_display_t;
+
 #define MOS_GPU_AMD_BATCH_VER 1u
 #define MOS_GPU_AMD_BATCH_MAX 4096u
 #define MOS_GPU_AMD_RING_GFX     0u
