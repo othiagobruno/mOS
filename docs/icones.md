@@ -2,7 +2,7 @@
 
 ## Entrega de 15/11/2026
 
-Primeiro conjunto rasterizado: **Arquivos, Horizonte e Terminal**. Os outros apps e os símbolos de sistema continuam com arte vetorial existente; esta entrega não conclui toda a frente.
+Primeiro conjunto rasterizado, revisto com camadas de vidro sutis e menos volume: **Arquivos, Horizonte e Terminal**. Os outros apps e os símbolos de sistema continuam com arte vetorial existente; esta entrega não conclui toda a frente.
 
 Arte original gerada com a ferramenta imagegen. Nenhum arquivo ou glifo da Apple foi usado como referência. Os originais ficam em `assets/icones/originais/`; os prompts e detalhes da exportação em `assets/icones/README.md`.
 
