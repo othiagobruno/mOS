@@ -13,6 +13,12 @@ int avrcp_handle(const u8 *f, int len, u8 *o, int max);
 void avrcp_set_playing(bool on);
 static u32 last_usage; static int ups, downs;
 void input_media_usage(u32 usage, bool down) { last_usage = usage; if (down) downs++; else ups++; }
+static int sysvol = 30;
+void audio_set_volume(int pct) { sysvol = pct; }
+int audio_get_volume(void) { return sysvol; }
+int avrcp_ct_start(u8 *o);
+int avrcp_volume_poll(u8 *o);
+bool avrcp_abs_volume(void);
 
 /* acha o valor do atributo id dentro de uma lista DES{id valor ...} */
 static const u8 *find_attr(const u8 *l, int n, u16 id) {
@@ -87,6 +93,24 @@ int main(void) {
     const u8 pid[] = {0x90, 0x11, 0x0F, 0x00, 0x48, 0x7C, 0x44, 0x00};
     n = avrcp_handle(pid, sizeof pid, o, sizeof o);
     CHECK(n == 3 && (o[0] & 1), "AVCTP: PID errado -> IPID");
+    /* volume absoluto: o mOS como controle */
+    n = avrcp_ct_start(o);
+    CHECK(n == 14 && !(o[0] & 0x02) && o[3] == 0x01 && o[9] == 0x10 && o[13] == 0x03, "volume: GetCapabilities(eventos) para o fone");
+    u8 lbl = o[0];
+    u8 r1[18] = {(u8)(lbl | 0x02), 0x11, 0x0E, 0x0C, 0x48, 0x00, 0x00, 0x19, 0x58, 0x10, 0x00, 0x00, 0x04, 0x03, 2, 0x01, 0x0D};
+    n = avrcp_handle(r1, 17, o, sizeof o);
+    CHECK(n == 18 && o[3] == 0x03 && o[9] == 0x31 && o[13] == 0x0D && avrcp_abs_volume(), "o fone tem VOLUME_CHANGED: registra a notificação");
+    u8 r2[16] = {(u8)(o[0] | 0x02), 0x11, 0x0E, 0x0F, 0x48, 0x00, 0x00, 0x19, 0x58, 0x31, 0x00, 0x00, 0x02, 0x0D, 0x40};
+    n = avrcp_handle(r2, 15, o, sizeof o);
+    CHECK(n == 0 && sysvol == 0x40 * 100 / 127, "INTERIM: volume do fone (64/127) vira o do sistema (%d %%)", sysvol);
+    CHECK(avrcp_volume_poll(o) == 0, "sem mudança local: nada é enviado (sem eco)");
+    u8 r3[16] = {0x52, 0x11, 0x0E, 0x0D, 0x48, 0x00, 0x00, 0x19, 0x58, 0x31, 0x00, 0x00, 0x02, 0x0D, 0x7F};
+    n = avrcp_handle(r3, 15, o, sizeof o);
+    CHECK(sysvol == 100 && n == 18 && o[9] == 0x31, "CHANGED no fone: volume 100 %% e registra de novo");
+    sysvol = 25;
+    n = avrcp_volume_poll(o);
+    CHECK(n == 14 && o[3] == 0x00 && o[9] == 0x50 && o[13] == 25 * 127 / 100, "volume do sistema mudou: SetAbsoluteVolume(%u)", o[13]);
+    CHECK(avrcp_volume_poll(o) == 0, "SetAbsoluteVolume só uma vez por mudança");
     printf(fails ? "avrcp: %d FALHA(S)\n" : "avrcp: ok\n", fails);
     return fails != 0;
 }

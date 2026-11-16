@@ -9,10 +9,16 @@
  * (play, pausa, parar, próxima, anterior, volume, mudo) e viram teclas de mídia do sistema
  * (input_media_usage, página Consumer). UNIT INFO, SUBUNIT INFO, GetCapabilities (empresa e eventos),
  * GetPlayStatus e RegisterNotification (estado de reprodução) respondidos; o resto, NOT IMPLEMENTED.
+ *
+ * Papel de controle (volume absoluto, AVRCP 1.4+): ao abrir o canal o mOS pergunta os eventos do fone;
+ * se ele tiver VOLUME_CHANGED (0x0D), registra a notificação, aplica no sistema o volume que o fone
+ * informa (0..127 -> 0..100 %) e manda SetAbsoluteVolume quando o volume do sistema muda.
  */
 #ifdef MOS_HOST_TEST
 #include "host_shim.h"
 void input_media_usage(u32 usage, bool down);
+void audio_set_volume(int pct);
+int  audio_get_volume(void);
 #else
 #include "kernel.h"
 #endif
@@ -213,6 +219,7 @@ int sdp_handle(const u8 *q, int len, u8 *o, int max) {
 }
 
 /* ============================================================ AVRCP (alvo) */
+int avrcp_ct_response(const u8 *f, int len, u8 *o);
 enum { AVC_CONTROL = 0, AVC_STATUS = 1, AVC_NOTIFY = 3, AVC_NOT_IMPL = 8, AVC_ACCEPTED = 9, AVC_REJECTED = 10,
        AVC_STABLE = 12, AVC_CHANGED = 13, AVC_INTERIM = 15 };
 static bool playing;
@@ -245,7 +252,7 @@ static int vendor_rsp(u8 *o, u8 ctype, u8 pdu, const u8 *params, u16 n) {
 
 int avrcp_handle(const u8 *f, int len, u8 *o, int max) {
     if (len < 6 || max < 64) return 0;
-    if (f[0] & 0x02) return 0;                                 /* é resposta: o mOS não manda comandos ainda */
+    if (f[0] & 0x02) return avrcp_ct_response(f, len, o);    /* resposta a um comando nosso (volume absoluto) */
     if ((f[0] & 0x0C) != 0) return 0;                          /* só pacote único */
     o[0] = (u8)((f[0] & 0xF0) | 0x02);                         /* mesma transação, resposta */
     o[1] = f[1]; o[2] = f[2];
@@ -306,4 +313,57 @@ int avrcp_handle(const u8 *f, int len, u8 *o, int max) {
         return 6 + (an > 8 ? 8 : an);
     }
     (void)ctype;
+}
+
+/* ============================================================ AVRCP (controle: volume absoluto) */
+static struct { bool on, supported; u8 label; int last; } ct;
+
+static int vendor_cmd(u8 *o, u8 ctype, u8 pdu, const u8 *params, u16 n) {
+    ct.label = (u8)((ct.label + 1) & 0x0F);
+    o[0] = (u8)(ct.label << 4);                                /* comando, pacote único */
+    be16(o + 1, 0x110E);
+    return vendor_rsp(o, ctype, pdu, params, n);
+}
+
+int avrcp_ct_start(u8 *o) {                                    /* GetCapabilities(eventos) */
+    ct.on = true; ct.supported = false; ct.last = -1;
+    static const u8 p[] = {0x03};
+    return vendor_cmd(o, AVC_STATUS, 0x10, p, 1);
+}
+void avrcp_ct_stop(void) { ct.on = ct.supported = false; }
+bool avrcp_abs_volume(void) { return ct.supported; }
+
+static int register_volume(u8 *o) { static const u8 p[] = {0x0D, 0, 0, 0, 0}; return vendor_cmd(o, AVC_NOTIFY, 0x31, p, 5); }
+
+/* resposta do fone a um comando nosso: pode gerar o próximo comando (devolve o tamanho) */
+int avrcp_ct_response(const u8 *f, int len, u8 *o) {
+    if (len < 13 || f[5] != 0x00 || f[6] != 0x00 || f[7] != 0x19 || f[8] != 0x58) return 0;
+    u8 rt = f[3] & 0x0F, pdu = f[9];
+    const u8 *pp = f + 13;
+    u16 pn = rd16(f + 11);
+    if (13 + pn > len) return 0;
+    if (pdu == 0x10 && rt == AVC_STABLE && pn >= 2 && pp[0] == 0x03) {
+        for (int i = 0; i < pp[1] && 2 + i < pn; i++) if (pp[2 + i] == 0x0D) ct.supported = true;
+        return ct.supported ? register_volume(o) : 0;
+    }
+    if (pdu == 0x31 && pn >= 2 && pp[0] == 0x0D && (rt == AVC_INTERIM || rt == AVC_CHANGED)) {
+        int pct = (pp[1] & 0x7F) * 100 / 127;
+        ct.last = pct;
+        audio_set_volume(pct);
+        return rt == AVC_CHANGED ? register_volume(o) : 0;    /* a notificação vale uma vez: registra de novo */
+    }
+    if (pdu == 0x50 && rt == AVC_ACCEPTED && pn >= 1) ct.last = (pp[0] & 0x7F) * 100 / 127;
+    return 0;
+}
+
+/* chamado no laço: volume do sistema mudou -> SetAbsoluteVolume */
+int avrcp_volume_poll(u8 *o) {
+    if (!ct.on || !ct.supported) return 0;
+    int v = audio_get_volume();
+    if (v < 0) v = 0;
+    if (v > 100) v = 100;
+    if (v == ct.last) return 0;
+    ct.last = v;
+    u8 p = (u8)(v * 127 / 100);
+    return vendor_cmd(o, AVC_CONTROL, 0x50, &p, 1);
 }
