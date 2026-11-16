@@ -522,10 +522,6 @@ void $ss8DurationV10FoundationE15TimeFormatStyleVMa(void) {}
 void $ss8DurationV10FoundationE9formattedy12FormatOutputQzxAC0D5StyleRzAB0D5InputRtzlF(void) {}
 void *OBJC_CLASS_$_NSOutputStream;
 void *OBJC_CLASS_$_NSStream;
-void *OBJC_CLASS_$_SwiftNativeNSObject;
-void *OBJC_CLASS_$__TtCs12_SwiftObject;
-void *OBJC_METACLASS_$_SwiftNativeNSObject;
-void *OBJC_METACLASS_$__TtCs12_SwiftObject;
 void SecTaskCopyTeamIdentifier(void) {}
 void SecTaskCreateWithAuditToken(void) {}
 void __invert_f3(void) {}
