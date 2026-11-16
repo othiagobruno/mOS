@@ -289,6 +289,7 @@ static bool rlc_resume(amdgpu_t *a, u32 cu_per_sh) {
         }
         WR(a, R_RLC_SRM_CNTL, RR(a, R_RLC_SRM_CNTL) | SRM_ENABLE);
     }
+    amdgpu_gfx_pg_init(a);                        /* tabela de saltos e atrasos do power gating (GFXOFF) */
     put_ucode(a, R_RLC_GPM_UCODE_ADDR, R_RLC_GPM_UCODE_DATA, RLC_UCODE_START, &rlc);
     a->rlc_fw_version = rlc.ucode_version;
     rlc_lbpw(a, cu_per_sh);
@@ -307,11 +308,12 @@ static void cp_gfx_enable(amdgpu_t *a, bool on) {
     UDELAY(50);
 }
 
+#define GFX_DB_INDEX (AMD_DB_GFX_RING0 << 1)          /* em dwords */
 static u32 gring_rptr(amdgpu_t *a) { return a->gwb_cpu[0] & (a->gring_dw - 1); }
 
 static bool gring_room(amdgpu_t *a, u32 ndw) {
     for (u32 n = 0; n < SPIN_MAX; n++) {
-        u32 used = (a->gring_wptr - gring_rptr(a)) & (a->gring_dw - 1);
+        u32 used = ((u32)a->gring_wptr - gring_rptr(a)) & (a->gring_dw - 1);
         if (a->gring_dw - used > ndw + 256 + 8) return true;
         if (!a->msi_on && !(n & 1023)) amdgpu_irq_process(a);
         CPU_RELAX();
@@ -320,13 +322,20 @@ static bool gring_room(amdgpu_t *a, u32 ndw) {
     return false;
 }
 
-static void gput(amdgpu_t *a, u32 v) { a->gring_cpu[a->gring_wptr & (a->gring_dw - 1)] = v; a->gring_wptr++; }
+static void gput(amdgpu_t *a, u32 v) { a->gring_cpu[(u32)a->gring_wptr & (a->gring_dw - 1)] = v; a->gring_wptr++; }
 
 static void gcommit(amdgpu_t *a) {
     while (a->gring_wptr & 0xFF) gput(a, PM4_NOP_1DW);      /* o CP busca em blocos de 256 dwords */
     WMB();
-    WR(a, R_CP_RB0_WPTR, a->gring_wptr & (a->gring_dw - 1));
-    WR(a, R_CP_RB0_WPTR_HI, 0);
+    if (a->gfx_db) {                                /* doorbell: acorda o GFX mesmo com o GFXOFF ligado */
+        a->gwb_cpu[2] = (u32)a->gring_wptr;
+        a->gwb_cpu[3] = (u32)(a->gring_wptr >> 32);
+        WMB();
+        amdgpu_doorbell64(a, GFX_DB_INDEX, a->gring_wptr);
+    } else {
+        WR(a, R_CP_RB0_WPTR, (u32)a->gring_wptr & (a->gring_dw - 1));
+        WR(a, R_CP_RB0_WPTR_HI, 0);
+    }
 }
 
 static u32 gfence(amdgpu_t *a) {
@@ -409,8 +418,11 @@ static bool cp_resume(amdgpu_t *a) {
     WR(a, R_CP_RB0_CNTL, cntl);
     WR(a, R_CP_RB0_BASE, (u32)(a->gring_mc >> 8));
     WR(a, R_CP_RB0_BASE_HI, (u32)(a->gring_mc >> 40));
-    WR(a, R_CP_RB_DOORBELL_CONTROL, RR(a, R_CP_RB_DOORBELL_CONTROL) & ~CP_RB_DOORBELL_EN);  /* WPTR por registrador */
-    WR(a, R_CP_RB_DOORBELL_RANGE_LOWER, 0);
+    a->gfx_db = amdgpu_doorbell_init(a);
+    u32 dbc = RR(a, R_CP_RB_DOORBELL_CONTROL) & ~(CP_RB_DOORBELL_EN | 0x0FFFFFFCu);
+    if (a->gfx_db) dbc |= GFX_DB_INDEX << 2 | CP_RB_DOORBELL_EN;     /* sem BAR2: WPTR por registrador */
+    WR(a, R_CP_RB_DOORBELL_CONTROL, dbc);
+    WR(a, R_CP_RB_DOORBELL_RANGE_LOWER, a->gfx_db ? GFX_DB_INDEX << 2 : 0);
     WR(a, R_CP_RB_DOORBELL_RANGE_UPPER, CP_RB_DOORBELL_UPPER_MASK);
 
     /* liga e manda o preâmbulo de clear state, a base do CE e o tipo de índice */
@@ -523,6 +535,7 @@ bool amdgpu_gfx_init(amdgpu_t *a) {
     }
     a->gfx_ok = true;
     if (!amdgpu_compute_init(a)) kprintf("amdgpu: sem fila de compute; o anel GFX segue\n");
+    amdgpu_gfx_pg_enable(a);                       /* GFXOFF por último: daqui em diante o GC dorme quando ocioso */
     kprintf("amdgpu: GFX 9 no ar: %u CUs (máscara 0x%x), GB_ADDR_CONFIG 0x%x, PFP 0x%x CE 0x%x ME 0x%x RLC 0x%x\n",
             a->cu_count, a->cu_mask, a->gb_addr_config, a->pfp_fw_version, a->ce_fw_version, a->me_fw_version, a->rlc_fw_version);
     return true;

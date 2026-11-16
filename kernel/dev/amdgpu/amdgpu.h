@@ -128,7 +128,13 @@ typedef struct {
     u64           csb_phys, csb_mc; u32 csb_dw;        /* preâmbulo de clear state para o RLC */
     u64           gring_phys, gring_mc, gwb_phys, gwb_mc;
     volatile u32 *gring_cpu, *gwb_cpu;   /* gwb[0] = rptr (dwords), gwb[4] = última fence, gwb[8] = teste */
-    u32           gring_dw, gring_wptr, gfx_seq;
+    u32           gring_dw, gfx_seq;
+    u64           gring_wptr;                /* dwords, cresce sem dar a volta (o doorbell leva os 64 bits) */
+    bool          gfx_db;                    /* anel GFX por doorbell (necessário para o GFXOFF) */
+    /* GFXOFF (gfxoff.c) */
+    bool          gfxoff_cap, gfxoff_on;
+    u32           gfxoff_hold, cp_table_dw;
+    u64           cp_table_phys, gfxoff_wakes;
     u64           gfx_timeouts, gfx_eops, gfx_faults, gfx_ibs, gfx_idle_irqs;
     /* compute (compute.c): MEC1 pipe 0 fila 0, doorbells no BAR2 */
     bool          comp_ok;
@@ -263,6 +269,14 @@ void       amdgpu_abi_info(u32 *family, u32 *num_cu, u64 *vram, u64 *gtt);
 /* Compute: MEC1 com a HQD do pipe 0, fila 0, MQD na VRAM e doorbell no BAR2. Chamado por amdgpu_gfx_init
  * depois do anel GFX. Mesma convenção de IB e fence do anel GFX. */
 bool       amdgpu_compute_init(amdgpu_t *a);
+bool       amdgpu_doorbell_init(amdgpu_t *a);
+/* GFXOFF: pg_init no rlc_resume, pg_enable depois dos anéis; get/put em volta de acesso a registrador do GC */
+bool       amdgpu_gfx_pg_init(amdgpu_t *a);
+void       amdgpu_gfx_pg_enable(amdgpu_t *a);
+void       amdgpu_gfx_pg_disable(amdgpu_t *a);
+void       amdgpu_gfxoff_get(amdgpu_t *a);
+void       amdgpu_gfxoff_put(amdgpu_t *a);
+void       amdgpu_doorbell64(amdgpu_t *a, u32 dw_index, u64 v);
 u32        amdgpu_compute_submit(amdgpu_t *a, u64 ib_mc, u32 ndw);
 bool       amdgpu_compute_wait(amdgpu_t *a, u32 seq);
 u32        amdgpu_compute_done(amdgpu_t *a);

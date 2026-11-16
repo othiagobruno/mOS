@@ -675,6 +675,7 @@
 #define AMD_DB_KIQ          0x00u                    /* índices de doorbell de 64 bits (layout da Vega10) */
 #define AMD_DB_MEC_RING0    0x03u
 #define AMD_DB_USERQ_END    0x8Au
+#define AMD_DB_GFX_RING0    0x8Bu
 /* MQD (struct v9_mqd, 512 dwords): índices em dwords */
 #define MQD_DW                       512u
 #define MQD_header                     0
@@ -716,6 +717,33 @@
 #define IH_CLIENT_VMC            0x12u          /* falha de página na MMHUB */
 #define IH_CLIENT_UTCL2          0x1Bu          /* falha de página na GFXHUB */
 #define IH_SRC_VM_FAULT          0u
+/* GFXOFF e power gating do GFX (gfxoff.c) */
+#define R_RLC_PG_CNTL                 GC_REG(0x0EC43)
+#define R_RLC_JUMP_TABLE_RESTORE      GC_REG(0x0EC1E)
+#define R_RLC_PG_DELAY                GC_REG(0x0EC4D)
+#define R_RLC_PG_DELAY_2              GC_REG(0x0EC1F)
+#define R_RLC_PG_DELAY_3              GC_REG(0x0EC78)
+#define R_RLC_AUTO_PG_CTRL            GC_REG(0x0EC55)
+#define R_CP_RB_WPTR_POLL_CNTL        GC_REG(0x021C2)
+#define R_RLC_SAFE_MODE               GC_REG(0x0EC05)
+#define AMD_PWR_BASE0                 0x16A00u          /* ip_discovery do Picasso */
+#define R_PWR_MISC_CNTL_STATUS        AMD_SEG(AMD_PWR_BASE0, 0x0183)
+#define   PG_GFX_POWER_GATING         0x1u
+#define   PG_CP_PG_DISABLE            0x8000u
+#define   PG_SMU_SLOWDOWN_PU          0x20000u
+#define   PG_SMU_SLOWDOWN_PD          0x40000u
+#define   IDLE_POLL_COUNT_MASK        0xFFFF0000u
+#define   PG_DELAY_2_SERDES_MASK      0xFF00u
+#define   PG_DELAY_3_CGCG_MASK        0xFFu
+#define   AUTO_PG_IDLE_THRESH_SHIFT   3
+#define   AUTO_PG_IDLE_THRESH_MASK    0x7FFF8u
+#define   PWR_GFX_RLC_CGPG_EN         0x1u
+#define   PWR_GFXOFF_STATUS_MASK      0x6u
+#define   PWR_GFXOFF_STATUS_SHIFT     1
+#define   RLC_SAFE_MODE_CMD           0x1u
+#define   RLC_SAFE_MODE_ENTER         0x2u
+#define SMU_MSG_ENABLE_GFXOFF         0x07u
+
 #define IH_CLIENT_GRBM_CP        0x14u
 #define IH_SRC_CP_EOP            181u
 #define IH_SRC_CP_PRIV_REG       184u

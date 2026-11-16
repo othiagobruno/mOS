@@ -236,15 +236,24 @@ static void release(amdgpu_t *a, u64 ring, u64 aux) {
     a->cring_cpu = a->cwb_cpu = NULL;
 }
 
-bool amdgpu_compute_init(amdgpu_t *a) {
-    if (!a || !a->gfx_ok) return false;
-    a->db_phys = pci_bar_addr(a->pci, 2);
-    if (!a->db_phys) { kprintf("amdgpu: sem BAR2 de doorbells\n"); return false; }
+/* abertura de doorbells (BAR2) e o enable no NBIO; usada pelo anel GFX e pela fila de compute */
+bool amdgpu_doorbell_init(amdgpu_t *a) {
+    if (!a->db_phys) {
+        a->db_phys = pci_bar_addr(a->pci, 2);
+        if (!a->db_phys) { kprintf("amdgpu: sem BAR2 de doorbells\n"); return false; }
 #ifndef MOS_HOST_TEST
-    vmm_map_mmio(a->db_phys, 64 * 1024);
-    a->db = (volatile u8 *)(usize)a->db_phys;
+        vmm_map_mmio(a->db_phys, 64 * 1024);
+        a->db = (volatile u8 *)(usize)a->db_phys;
 #endif
+    }
     WR(a, R_RCC_DOORBELL_APER_EN, RR(a, R_RCC_DOORBELL_APER_EN) | DOORBELL_APER_EN);
+    return true;
+}
+
+void amdgpu_doorbell64(amdgpu_t *a, u32 dw_index, u64 v) { DB64(a, dw_index, v); }
+
+bool amdgpu_compute_init(amdgpu_t *a) {
+    if (!a || !a->gfx_ok || !amdgpu_doorbell_init(a)) return false;
 
     bool again = a->cring_phys != 0;         /* volta do S3 */
     u64 ring = again ? a->cring_phys : amdgpu_vram_alloc(a, AMD_COMP_RING_BYTES), aux = again ? a->caux_phys : amdgpu_vram_alloc(a, 64 * 1024);
